@@ -1,0 +1,22 @@
+# Environments
+.env
+.venv/
+env/
+venv/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Project specifics
+data_dumps/
+GEMINI.md

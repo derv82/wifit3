@@ -1,0 +1,1 @@
+# Wireless scanning logic (mocked)
