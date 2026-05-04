@@ -40,10 +40,21 @@ OS-agnostic abstraction for network cards.
 * **WPS Pixie Dust:** Determine if the market share of vulnerable routers in 2026 warrants prioritizing this, or if we focus purely on WPA2/WPA3 PMKID/Handshakes first.
 
 ## Implementation Phases
-1. **Phase 1: MVP Scanner & TUI:** 
-   * Basic scaffolding of the `Textual` TUI.
-   * Implement a native Scapy sniffer listening on a single channel to populate the TUI with Access Points in real-time (no polling delay).
-   * Verify Npcap compatibility/Monitor Mode capabilities on Windows without getting blocked by channel hopping implementations.
-2. **Phase 2: Interface & Channel Hopping:** OS-agnostic Interface Manager (getting a card into Monitor Mode automatically and implementing channel hopping for Linux and Windows).
-3. **Phase 3: Attack Workflows:** Implementing Native Deauths and Handshake/PMKID capturing.
-4. **Phase 4: Polish & Export:** Theming, PCAP exporting, cracking handoffs (passing clean captures to Hashcat), and expanding attack logic (Evil Twin/WPA3).
+- [x] **Phase 1: MVP Scanner & TUI:** 
+   - Scaffolding of the `Textual` TUI.
+   - Implemented a native Scapy sniffer to populate the TUI with Access Points.
+   - Structured project into a professional `src-layout` (`wifit3.engine`, `wifit3.ui`, `wifit3.interface`).
+- [x] **Phase 2: Interface & Channel Hopping:** 
+   - OS-agnostic Interface Manager (`manager.py`) with Windows `WlanAPI` bindings (`manager_win.py`).
+   - Automatically detects monitor mode support via Npcap's `WlanHelper.exe`.
+   - Background thread orchestrating automated channel hopping for live capture.
+- [ ] **Phase 3: Attack Workflows:** Implementing Native Deauths and Handshake/PMKID capturing.
+   - **Next Session Goal:** Refine TUI to be more "hackerish" (reduce ASCII art header size).
+   - Implement Target Selection (navigating the DataTable to lock onto a specific BSSID).
+- [ ] **Phase 4: Polish & Export:** Theming, PCAP exporting, cracking handoffs (passing clean captures to Hashcat), and expanding attack logic (Evil Twin/WPA3).
+
+## Developer Notes (Current Status)
+* **Windows Monitor Mode:** Requires Npcap installed with ✅ **Support raw 802.11 Traffic (and monitor mode)** checked, and ❌ **WinPcap API-compatible mode** UNCHECKED. 
+* **Hardware Limitations:** Built-in Intel Wi-Fi cards (like Wi-Fi 7 BE200) do NOT support raw 802.11 via Npcap on Windows. A compatible USB adapter (like ALFA) is required.
+* **WlanHelper Quirks:** When calling `WlanHelper.exe <guid> mode monitor`, the GUID must be passed **without** curly braces (e.g., `53812C72-AB51...`). `shell=True` is also often required for Python subprocesses to inherit necessary permissions.
+* **Scapy on Windows:** When sniffing with Npcap in monitor mode, `sniff(..., monitor=True)` is mandatory to receive raw 802.11 headers instead of Ethernet frames.

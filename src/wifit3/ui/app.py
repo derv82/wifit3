@@ -16,14 +16,7 @@ logger.remove()
 logger.add("debug.log", rotation="10 MB", level="DEBUG")
 
 ASCII_ART = r"""
-[bold green]
-           _  __ _  _    _____ 
-          (_)/ _(_)| |  |____ |
- __      ___| |_  _| |_     / /
- \ \ /\ / / |  _|| | __|    \ \\
-  \ V  V /| | |  | | |_ .___/ /
-   \_/\_/ |_|_|  |_|\__||____/ 
-[/bold green]
+[bold green]w i f i t 3[/bold green]  [dim green]// wireless auditor[/dim green]
 """
 
 class WifiteApp(App):
