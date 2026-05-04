@@ -7,6 +7,13 @@ import sys
 
 from ..engine.scanner import Scanner
 from ..engine.models import AccessPoint
+from ..interface.manager import InterfaceManager
+from loguru import logger
+import sys
+
+# Remove default sink and add file sink only
+logger.remove()
+logger.add("debug.log", rotation="10 MB", level="DEBUG")
 
 ASCII_ART = r"""
 [bold green]
@@ -54,8 +61,10 @@ class WifiteApp(App):
 
     def __init__(self):
         super().__init__()
+        self.interface_manager = InterfaceManager()
         self.scanner = Scanner(callback=self.on_ap_discovered)
         self.ap_cache: Dict[str, AccessPoint] = {}
+        self.active_interface = None
 
     def compose(self) -> ComposeResult:
         yield Vertical(Static(ASCII_ART, id="header-area"))
@@ -72,8 +81,10 @@ class WifiteApp(App):
     def on_mount(self) -> None:
         log = self.query_one(RichLog)
         log.write("[bold cyan]Wifit3 initialized.[/bold cyan]")
-        log.write("Press [bold green]'s'[/bold green] for simulation mode.")
+        log.write("Press [bold green]'s'[/bold green] to start scanning.")
         log.write("Press [bold green]'i'[/bold green] to list local interfaces.")
+        # Pre-refresh interfaces
+        self.interface_manager.refresh()
 
     def on_ap_discovered(self, ap: AccessPoint) -> None:
         self.call_from_thread(self.update_table, ap)
@@ -99,32 +110,58 @@ class WifiteApp(App):
 
     def action_scan(self):
         log = self.query_one(RichLog)
-        if not self.scanner.is_running:
-            log.write("[bold green]Starting Scanner (Simulation)...[/bold green]")
-            self.scanner.is_running = True
-            self.run_simulation()
-        else:
+        if self.scanner.is_running:
             log.write("[yellow]Scanner is already running.[/yellow]")
+            return
+
+        # Look for a monitor-capable interface
+        if not self.active_interface:
+            for iface in self.interface_manager.interfaces:
+                if iface.can_monitor():
+                    self.active_interface = iface
+                    break
+        
+        if self.active_interface:
+            log.write(f"[bold green]Starting Live Scan on {self.active_interface.description}...[/bold green]")
+            
+            # Temporary: print for terminal debug, and log for TUI debug
+            success = self.active_interface.set_monitor(True)
+            if success:
+                log.write("[cyan]Monitor mode enabled.[/cyan]")
+                self.interface_manager.start_hopping(self.active_interface, interval=1.0)
+                self.scanner.start(interface=self.active_interface.name)
+            else:
+                log.write("[bold red]ERROR: WlanHelper failed to set monitor mode.[/bold red]")
+                log.write("[red]Check terminal scrollback after quitting for raw error details.[/red]")
+                self.run_simulation()
+        else:
+            log.write("[bold yellow]No monitor-capable hardware found. Starting Simulation...[/bold yellow]")
+            self.run_simulation()
+
+    def run_simulation(self):
+        self.scanner.is_running = True
+        self.run_simulation_task()
 
     @work(exclusive=True, thread=True)
-    def run_simulation(self):
+    def run_simulation_task(self):
         self.scanner.simulate_discovery()
 
     def action_stop(self):
         self.scanner.stop()
+        self.interface_manager.stop_hopping()
+        if self.active_interface:
+            self.active_interface.set_monitor(False)
+            
         log = self.query_one(RichLog)
         log.write("[bold orange3]Scanner stopped.[/bold orange3]")
 
     def action_interfaces(self):
         log = self.query_one(RichLog)
-        if sys.platform == "win32":
-            from ..interface.manager import get_windows_interfaces
-            ifaces = get_windows_interfaces()
-            log.write("[bold cyan]Wireless Interfaces Found:[/bold cyan]")
-            for iface in ifaces:
-                log.write(f"- {iface['description']}")
-        else:
-            log.write("[yellow]Interface discovery only implemented for Windows currently.[/yellow]")
+        self.interface_manager.refresh()
+        log.write("[bold cyan]Wireless Interfaces Found:[/bold cyan]")
+        for iface in self.interface_manager.interfaces:
+            can_mon = "YES" if iface.can_monitor() else "NO"
+            log.write(f"- {iface.description} [bold]Monitor: {can_mon}[/bold]")
         
     def action_attack(self):
         log = self.query_one(RichLog)

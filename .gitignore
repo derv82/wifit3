@@ -20,3 +20,4 @@ htmlcov/
 # Project specifics
 data_dumps/
 GEMINI.md
+debug.log

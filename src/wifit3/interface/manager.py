@@ -1,75 +1,136 @@
-import ctypes
-from ctypes import wintypes
+import sys
+import subprocess
+import threading
+import time
+from typing import List, Optional
+from scapy.all import conf
 from loguru import logger
 
-# Windows Wireless LAN API constants and structures
-# https://docs.microsoft.com/en-us/windows/win32/api/wlanapi/
+# Import platform-specific discovery
+if sys.platform == "win32":
+    from .manager_win import get_windows_interfaces
+else:
+    def get_windows_interfaces(): return []
 
-class WLAN_INTERFACE_INFO(ctypes.Structure):
-    _fields_ = [
-        ("InterfaceGuid", ctypes.c_byte * 16),
-        ("strInterfaceDescription", ctypes.c_wchar * 256),
-        ("isState", ctypes.c_uint),
-    ]
-
-class WLAN_INTERFACE_INFO_LIST(ctypes.Structure):
-    _fields_ = [
-        ("dwNumberOfItems", ctypes.c_uint),
-        ("dwIndex", ctypes.c_uint),
-        ("InterfaceInfo", WLAN_INTERFACE_INFO * 1),
-    ]
-
-def get_windows_interfaces():
-    """Uses WlanAPI.dll to list wireless interfaces on Windows."""
-    try:
-        wlanapi = ctypes.windll.wlanapi
-        handle = wintypes.HANDLE()
-        negotiated_version = wintypes.DWORD()
+class Interface:
+    def __init__(self, name: str, description: str, guid: Optional[str] = None):
+        self.name = name
+        self.description = description
+        self.guid = guid
+        self.is_monitor = False
+        self.scapy_iface = None
         
-        # WlanOpenHandle
-        res = wlanapi.WlanOpenHandle(2, None, ctypes.byref(negotiated_version), ctypes.byref(handle))
-        if res != 0:
-            logger.error(f"WlanOpenHandle failed with error {res}")
-            return []
+        # Match with Scapy's interface objects
+        for iface in conf.ifaces.values():
+            if guid and hasattr(iface, 'guid') and guid.lower() in iface.guid.lower():
+                self.scapy_iface = iface
+                break
+            if name == iface.name or description == iface.description:
+                self.scapy_iface = iface
+                break
 
-        # WlanEnumInterfaces
-        interface_list_ptr = ctypes.pointer(WLAN_INTERFACE_INFO_LIST())
-        res = wlanapi.WlanEnumInterfaces(handle, None, ctypes.byref(interface_list_ptr))
-        if res != 0:
-            wlanapi.WlanCloseHandle(handle, None)
-            logger.error(f"WlanEnumInterfaces failed with error {res}")
-            return []
+    def can_monitor(self) -> bool:
+        if sys.platform != "win32" or not self.guid:
+            return False 
+        
+        # WlanHelper wants the raw GUID string (no braces)
+        raw_guid = self.guid.strip("{}")
+        try:
+            result = subprocess.run(
+                ["C:\\Windows\\System32\\Npcap\\WlanHelper.exe", raw_guid, "modes"],
+                capture_output=True, text=True, check=False
+            )
+            return "monitor" in result.stdout.lower()
+        except Exception:
+            return False
 
-        interfaces = []
-        if interface_list_ptr.contents.dwNumberOfItems > 0:
-            # Re-cast to get the actual number of items
-            class ACTUAL_INTERFACE_LIST(ctypes.Structure):
-                _fields_ = [
-                    ("dwNumberOfItems", ctypes.c_uint),
-                    ("dwIndex", ctypes.c_uint),
-                    ("InterfaceInfo", WLAN_INTERFACE_INFO * interface_list_ptr.contents.dwNumberOfItems),
-                ]
-            actual_list = ctypes.cast(interface_list_ptr, ctypes.POINTER(ACTUAL_INTERFACE_LIST))
-            for i in range(actual_list.contents.dwNumberOfItems):
-                info = actual_list.contents.InterfaceInfo[i]
-                interfaces.append({
-                    "description": info.strInterfaceDescription,
-                    "guid": bytes(info.InterfaceGuid).hex()
-                })
+    def set_monitor(self, enable: bool) -> bool:
+        if sys.platform != "win32" or not self.guid:
+            return False
+            
+        raw_guid = self.guid.strip("{}")
+        mode = "monitor" if enable else "managed"
+        modes_to_try = [mode, "1" if enable else "0"]
+        
+        logger.debug(f"Setting Monitor Mode ({enable}) for {self.description}")
+        for m in modes_to_try:
+            try:
+                logger.debug(f"Attempting WlanHelper.exe {raw_guid} mode {m} (shell=True)")
+                result = subprocess.run(
+                    ["C:\\Windows\\System32\\Npcap\\WlanHelper.exe", raw_guid, "mode", m],
+                    check=True, capture_output=True, text=True, shell=True
+                )
+                logger.info(f"SUCCESS: {self.description} -> {m}")
+                self.is_monitor = enable
+                return True
+            except subprocess.CalledProcessError as e:
+                logger.warning(f"FAILED mode {m}: Out='{e.stdout.strip()}' Err='{e.stderr.strip()}'")
+            except Exception as e:
+                logger.error(f"Unexpected error: {str(e)}")
+        
+        return False
 
-        wlanapi.WlanFreeMemory(interface_list_ptr)
-        wlanapi.WlanCloseHandle(handle, None)
-        return interfaces
-    except Exception as e:
-        logger.error(f"Error calling WlanAPI: {e}")
-        return []
+class InterfaceManager:
+    def __init__(self):
+        self.interfaces: List[Interface] = []
+        self._hopper_thread: Optional[threading.Thread] = None
+        self._stop_hopping = threading.Event()
+        self.current_channel = 1
 
-if __name__ == "__main__":
-    import sys
-    if sys.platform == "win32":
-        print("Discovering Windows Interfaces...")
-        ifaces = get_windows_interfaces()
-        for iface in ifaces:
-            print(f"- {iface['description']} (GUID: {iface['guid']})")
-    else:
-        print("Not on Windows.")
+    def refresh(self):
+        self.interfaces = []
+        if sys.platform == "win32":
+            win_ifaces = get_windows_interfaces()
+            for w in win_ifaces:
+                scapy_name = None
+                for s_name, s_iface in conf.ifaces.items():
+                    if hasattr(s_iface, 'guid') and w['guid'].lower() in s_iface.guid.lower():
+                        scapy_name = s_name
+                        break
+                
+                if scapy_name:
+                    self.interfaces.append(Interface(
+                        name=scapy_name,
+                        description=w['description'],
+                        guid=w['guid']
+                    ))
+        logger.info(f"Discovered {len(self.interfaces)} wireless interfaces.")
+
+    def start_hopping(self, interface: Interface, channels: List[int] = None, interval: float = 0.5):
+        if not channels:
+            channels = [1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 5, 10]
+            
+        self._stop_hopping.clear()
+        self._hopper_thread = threading.Thread(
+            target=self._hop_loop, 
+            args=(interface, channels, interval),
+            daemon=True
+        )
+        self._hopper_thread.start()
+
+    def _hop_loop(self, interface: Interface, channels: List[int], interval: float):
+        import itertools
+        channel_cycle = itertools.cycle(channels)
+        
+        raw_guid = interface.guid.strip("{}") if interface.guid else interface.name
+        logger.debug(f"Starting hopper loop on {interface.description} (GUID: {raw_guid})")
+        
+        while not self._stop_hopping.is_set():
+            channel = next(channel_cycle)
+            try:
+                if sys.platform == "win32":
+                    subprocess.run(
+                        ["C:\\Windows\\System32\\Npcap\\WlanHelper.exe", raw_guid, "channel", str(channel)],
+                        check=True, capture_output=True, shell=True
+                    )
+                self.current_channel = channel
+                logger.debug(f"Hopped to channel {channel}")
+            except Exception as e:
+                logger.warning(f"Failed to hop to channel {channel}: {e}")
+            
+            time.sleep(interval)
+
+    def stop_hopping(self):
+        self._stop_hopping.set()
+        if self._hopper_thread:
+            self._hopper_thread.join(timeout=1.0)

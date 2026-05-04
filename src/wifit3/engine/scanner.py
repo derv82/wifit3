@@ -14,11 +14,14 @@ class Scanner:
         self._thread: Optional[threading.Thread] = None
 
     def _handle_packet(self, packet):
+        # DIAGNOSTIC: Log every packet summary
+        logger.debug(f"PKT: {packet.summary()}")
+
         if not (packet.haslayer(Dot11Beacon) or packet.haslayer(Dot11ProbeResp)):
             return
 
         bssid = packet[Dot11].addr3
-        ssid = None
+        logger.debug(f"Found AP: {bssid}")
         
         # Extract SSID from Dot11Elt (Information Element)
         if packet.haslayer(Dot11Elt):
@@ -71,11 +74,15 @@ class Scanner:
         logger.info(f"Scanner started on interface: {interface or 'default'}")
 
     def _run_sniff(self, interface: Optional[str]):
+        # Give the driver a moment to stabilize after mode switch
+        time.sleep(2.0)
         try:
+            logger.debug(f"Starting sniff on {interface} with monitor=True...")
             sniff(
                 iface=interface, 
                 prn=self._handle_packet, 
                 store=0, 
+                monitor=True,
                 stop_filter=lambda x: not self.is_running
             )
         except Exception as e:
