@@ -14,14 +14,74 @@ def read_bulk_in(dev, ep_in):
     while True:
         try:
             # We use a short timeout so the thread doesn't lock up if the air is quiet
-            data = dev.read(ep_in.bEndpointAddress, buffer_size, timeout=100)
-            
+            raw_array = dev.read(ep_in.bEndpointAddress, buffer_size, timeout=100)
+            data = bytes(raw_array)  # Convert PyUSB array.array to native bytes
             # If we get here, the hardware physically received a packet!
-            print(f"\n[+] BOOM! Received {len(data)} bytes from the air!")
             
-            # Print the first 32 bytes to inspect the Realtek RX Descriptor
-            hex_dump = ' '.join([f"{b:02x}" for b in data[:32]])
-            print(f"    Raw Header: {hex_dump} ...")
+            # Format MAC address helper
+            def mac_str(mac_bytes):
+                return ':'.join(f'{b:02x}' for b in mac_bytes)
+
+            if len(data) >= 10:
+                fc = data[0]
+                frame_type = (fc >> 2) & 0x03
+                frame_subtype = (fc >> 4) & 0x0f
+
+                types = {0: "Mgt", 1: "Ctrl", 2: "Data"}
+                type_str = types.get(frame_type, f"Type {frame_type}")
+                sub_str = f"Sub {frame_subtype}"
+
+                # Beacons, Probes, and Data frames (typically 24 byte header)
+                if frame_type in [0, 2] and len(data) >= 24:
+                    if frame_type == 0 and frame_subtype == 8: sub_str = "Beacon"
+                    elif frame_type == 0 and frame_subtype == 4: sub_str = "ProbeReq"
+                    elif frame_type == 0 and frame_subtype == 12: sub_str = "Deauth"
+                    elif frame_type == 2: sub_str = "Data"
+                    
+                    addr1 = mac_str(data[4:10])  # Destination (DA)
+                    addr2 = mac_str(data[10:16]) # Source (SA)
+                    addr3 = mac_str(data[16:22]) # BSSID
+                    
+                    # 1. SSID Extraction (Parsing 802.11 Information Elements)
+                    ssid = ""
+                    if frame_type == 0 and frame_subtype in [4, 8]: # Probes and Beacons
+                        # Beacons have 12 bytes of fixed params after the header. Probes have 0.
+                        offset = 36 if frame_subtype == 8 else 24
+                        
+                        # Loop through the tags until we find Tag Number 0 (SSID)
+                        while offset < len(data) - 1:
+                            tag_num = data[offset]
+                            tag_len = data[offset+1]
+                            
+                            if tag_num == 0: 
+                                ssid_bytes = data[offset+2 : offset+2+tag_len]
+                                ssid = ssid_bytes.decode('utf-8', errors='ignore')
+                                break
+                                
+                            offset += 2 + tag_len # Jump to the next tag
+                    
+                    # 2. Monitor Mode Proof
+                    # If the destination isn't Broadcast, the hardware filter is bypassed.
+                    proof = ""
+                    if addr1 != "ff:ff:ff:ff:ff:ff":
+                        proof = "  [🎯 PROOF OF MONITOR MODE: Caught 3rd-party Unicast]"
+
+                    ssid_display = f" | SSID: '{ssid}'" if ssid else ""
+                    print(f"    -> 802.11 {type_str:<4} ({sub_str:<8}) | DA: {addr1} | SA: {addr2}{ssid_display}{proof}")
+                
+                # Control frames (typically 10-16 byte header)
+                elif frame_type == 1:
+                    if frame_subtype == 13: sub_str = "ACK"
+                    elif frame_subtype == 11: sub_str = "RTS"
+                    elif frame_subtype == 12: sub_str = "CTS"
+                    
+                    addr1 = mac_str(data[4:10])  # Destination (DA)
+                    
+                    proof = ""
+                    if addr1 != "ff:ff:ff:ff:ff:ff":
+                        proof = "  [🎯 PROOF OF MONITOR MODE]"
+                        
+                    print(f"    -> 802.11 {type_str:<4} ({sub_str:<8}) | DA: {addr1} {proof}")
             
         except usb.core.USBError as e:
             # Print the actual string of the error
