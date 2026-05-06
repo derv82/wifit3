@@ -8,9 +8,9 @@ Wifite1 was a monolithic script. Wifite2 introduced a modular class design but r
 Wifit3 is a clean-slate reimagining. It aims to shed the legacy dependency hell by handling wireless protocols natively in Python, while providing a beautiful, responsive, and highly customizable Terminal User Interface (TUI).
 
 ## Core Tenets
-1. **Native First:** Packet parsing, injection, and handshake verification are handled entirely in native Python via Scapy. 
-2. **Textual TUI:** A primary focus on UI/UX using the `Textual` framework. Expect themes, resizable layouts, ASCII art, and a highly polished, responsive interface unhindered by background subprocess blocking.
-3. **Cross-Platform (Second):** While Linux remains the primary target, the architecture will abstract interface controls to allow Windows (via NPcap) and macOS support where hardware/driver combinations permit. If cross-platform proves too hostile regarding Monitor Mode drivers, a native Linux-only Wifit3 is still a massive net win.
+1. **Native First:** Packet parsing, injection, and handshake verification are handled entirely in native Python via Scapy and Pyusb. 
+2. **Cross-Platform (Second):** While Linux remains the primary target, the architecture will abstract interface controls to allow Windows (via NPcap) and macOS support where hardware/driver combinations permit. If cross-platform proves too hostile regarding Monitor Mode drivers, a native Linux-only Wifit3 is still a massive net win.
+3. **Textual TUI:** A primary focus on UI/UX using the `Textual` framework. Expect themes, resizable layouts, ASCII art, and a highly polished, responsive interface unhindered by background subprocess blocking.
 
 ## Key Differences from Wifite2
 * **Dependency Pruning:** Wifite2 relied heavily on `airodump-ng`, `aireplay-ng`, etc., for core loops. Wifit3 strips this away. The *only* carried-over dependency concept is tools for enabling Monitor Mode (e.g., `airmon-ng` on Linux, potentially custom driver setups on Windows/OSX). Everything else—scanning, deauths, capturing—is pure Python.

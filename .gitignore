@@ -19,5 +19,5 @@ htmlcov/
 
 # Project specifics
 data_dumps/
-GEMINI.md
+usb_dumps/
 debug.log
