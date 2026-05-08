@@ -1,28 +1,39 @@
-### `NEXT-STEPS.md`
+# Handoff for Next Agent: Wifit3 AR9271 Driver
 
-#### Phase 1: Linux Validation & Optimization (Immediate)
-Before expanding the scope, we must prove the core premise: cross-platform execution using the exact same user-space driver.
-* **Linux Hot-Wire:** Boot into a Linux Live USB, detach the kernel driver (`sudo rmmod rtl8187`), and run the existing Windows MVP script.
-* **Speed Run:** The native Linux driver is conservative with initialization timing. Experiment with compressing the micro-delays in `boot_sequence.py` (e.g., clamp max sleep to 5ms or 10ms) to outpace `airmon-ng`'s boot time without crashing the baseband Phase-Locked Loops.
+## Current State: Massive Breakthrough
+We have successfully reverse-engineered and implemented the complex "Soft-MAC" initialization for the Atheros AR9271 (ath9k_htc) directly in Python using PyUSB. We completely abandoned the `mac80211` assumptions and are now speaking the hardware's native protocol.
 
-#### Phase 2: TUI Integration & API Refactoring (Short-term)
-To connect the raw hardware bypass to a user-facing terminal interface, the monolithic MVP script needs to be broken down into a callable API.
-* **State Machine Breakdown:** Split the 8,000-command `FULL_BOOT_SEQUENCE` into logical chunks so the TUI can trigger specific actions.
-  * `adapter.boot_into_monitor_mode()`
-  * `adapter.listen()` (Async background thread)
-  * `adapter.send_deauth(bssid, client)`
-* **Event Emitter / Callback Architecture:** Design an async event loop where the background USB reading thread parses `dpkt` / native 802.11 frames and emits events (`on_beacon`, `on_handshake`, `on_ack`) back to the TUI to update the UI without blocking the main thread.
-* **The "Demo" Milestone:** Successfully execute a targeted deauth attack natively from Windows and capture the WPA handshake in the TUI, proving parity with native Linux tools.
+The script `scripts/ar9271/main.py` successfully:
+1. **Detects** if the device is "Cold" (uninitialized, lacking Bulk endpoints).
+2. **Uploads Firmware:** Blasts `htc_9271_cleanroom.fw` in 512-byte chunks to EP0.
+3. **Boots the MCU:** Sends the precise `0x31` Boot Command and `0x23` CPU Wakeup/Reset command to execute the firmware.
+4. **Re-connects:** Re-finds the device without a physical unplug, as the hardware transitions EP4 to a Bulk/Interrupt OUT endpoint and exposes the data pipes (EP82/EP83).
+5. **HTC Connect Sequence:** (The breakthrough!) The script polls EP 0x83 for the `HTC_MSG_READY_ID` (0x0001), then sends an `HTC_MSG_CONNECT_SERVICE_ID` (0x0002) for the WMI Service (0x0100) on EP 0x04. The firmware successfully ACKs this and assigns a logical endpoint for WMI.
+6. **WMI State Machine:** The `WMIManager` now wraps the `Channel 6` Golden Sequence (a massive series of PHY/AGC register calibration writes) with properly incrementing, Big-Endian Sequence IDs.
 
-#### Phase 3: Hardware Expansion (Mid-term)
-The RTL8187 is mapped. The process must now be repeated to prove the capture-and-crack pipeline works on modern chipsets.
-* **Acquisition:** Source major chipset families currently supported by commercial injection drivers (e.g., Atheros, Ralink, modern Realtek/Mediatek).
-* **Capture Pipeline:** Use USBPcap + CommView/Acrylic to generate `.pcap` files for these new cards.
-* **Sequence Extraction:** Run the proven extraction scripts to pull the interleaved READ/WRITE/SET_CONFIG sequences and raw firmware blobs.
+## The Immediate Issue: Command 6 Timeout
+Because the HTC Connect Sequence was implemented, the hardware successfully received and ACK'd the first **5** WMI commands of our Channel 6 Golden Sequence on EP 0x04.
 
-#### Phase 4: The Hardware Abstraction Layer (Long-term)
-Do not build the abstraction layer until 3 or 4 distinct chipsets are fully mapped. Once the common lifecycle patterns are understood, build the bridge.
-* **Generic Interface:** Define the standard operations every card must fulfill regardless of underlying hardware.
-* **Implementation Variants:**
-  * `RegisterBlaster`: For older chipsets (like the RTL8187) that require thousands of individual control transfers to initialize registers.
-  * `FirmwareBlaster`: For modern chipsets that require a contiguous binary blob uploaded via Bulk endpoints before control transfers are accepted. 
+However, it times out (Errno 10060) on **Command 6**.
+
+```text
+[*] Starting USB single-consumer thread...
+[*] Executing Golden Sequence for Channel 6...
+    -> Firing: [ 6 / 67 ] [-] USB Write Error (Seq 6): [Errno 10060] Operation timed out
+```
+
+## Next Steps for the Agent
+Your mission is to fix the timeout starting at Command 6 in the Golden Sequence.
+
+**Theories to Investigate:**
+1. **HTC Credits Exhaustion:** Our `wmi_state.py` expects Credit Reports on the Bulk IN pipe, but it might not be parsing them correctly or from the right endpoint. If the script blasts 5 commands, it might have consumed the initial 5 credits granted by the firmware. When it tries to send the 6th, the firmware's RX buffer is full, so it drops the USB OUT transaction (causing the `10060` timeout). You need to verify if the single-consumer thread (`usb_manager._reader_loop`) is actually receiving and parsing Credit Reports from EP 0x82 or EP 0x83.
+2. **Logical Endpoint Routing:** The HTC Connect Response told us which *Logical Endpoint* the WMI service was mapped to (e.g., `Assigned to HTC Endpoint: 01`). Our `ar9271_golden_template.py` hardcodes the HTC Header (the first 6 bytes of the WMI packet). Are we sending the WMI commands to Endpoint `0x00` in the HTC header when we should be sending them to the assigned `0x01`? Check `wmi_state.py` and the Golden Templates.
+3. **Endpoint Polling Mismatch:** Are the HTC Credits or WMI ACKs arriving on EP 0x83 (Interrupt IN) instead of EP 0x82 (Bulk IN)? The `_reader_loop` only polls `self.ep_in` (which is EP 0x82). It might be missing the ACKs because it's not polling EP 0x83.
+
+**Files to focus on:**
+* `scripts/ar9271/main.py`
+* `scripts/ar9271/usb_manager.py`
+* `scripts/ar9271/wmi_state.py`
+* `ar9271_golden_template.py` (and the `build_template.py` generator script)
+
+Good luck. You are incredibly close to native packet injection.
