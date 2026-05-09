@@ -42,8 +42,7 @@ class WlanDeviceManager:
                 info = self.SUPPORTED_DEVICES[vid_pid]
                 logger.info(f"Found supported hardware: {info['desc']}")
                 
-                # Currently hardcoded for AR9271 lifecycle, we can abstract this
-                # when adding Realtek chips later.
+                # Currently hardcoded for AR9271 lifecycle
                 if info["name"] == "AR9271":
                     warm_dev = await self._ensure_ar9271_firmware(dev)
                     if warm_dev:
@@ -62,13 +61,9 @@ class WlanDeviceManager:
         try:
             cfg = dev.get_active_configuration()
             intf = cfg[(0,0)]
-        except usb.core.USBError as e:
-            logger.warning(f"Could not get configuration, device might be uninitialized: {e}")
-            # If we can't get config, assume it's cold.
+        except usb.core.USBError:
             intf = [] 
             
-        # A cold AR9271 (no firmware) has EP4 as an Interrupt OUT endpoint.
-        # Once the firmware is loaded, EP4 changes to a Bulk OUT endpoint.
         ep4 = usb.util.find_descriptor(intf, custom_match=lambda e: e.bEndpointAddress == 0x04)
         
         is_cold = False
@@ -76,7 +71,6 @@ class WlanDeviceManager:
             if usb.util.endpoint_type(ep4.bmAttributes) == usb.util.ENDPOINT_TYPE_INTR:
                 is_cold = True
         else:
-            # If EP4 is missing entirely, it's definitely cold or stuck.
             is_cold = True
 
         if is_cold:
@@ -93,22 +87,22 @@ class WlanDeviceManager:
             success = FirmwareLoader.load(dev, fw_bytes)
             
             if success:
-                logger.info("Waiting 3 seconds for AR9271 to re-enumerate on the bus...")
+                logger.info("Waiting 3 seconds for AR9271 to re-enumerate...")
                 await asyncio.sleep(3)
                 
-                # Re-acquire the handle
-                warm_dev = usb.core.find(idVendor=0x0cf3, idProduct=0x9271)
+                import libusb_package
+                backend = libusb_package.get_libusb1_backend()
+                warm_dev = usb.core.find(idVendor=0x0cf3, idProduct=0x9271, backend=backend)
                 if warm_dev:
                     logger.info("AR9271 successfully warmed up!")
                     return warm_dev
                 else:
-                    logger.error("AR9271 failed to re-enumerate after firmware upload.")
+                    logger.error("AR9271 failed to re-enumerate.")
                     return None
             else:
                 logger.error("Firmware upload failed.")
                 return None
         
-        # Already warm
         return dev
 
     def get_interface(self, name: str) -> Optional[WlanInterface]:

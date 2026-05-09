@@ -7,8 +7,7 @@ class HTCProtocol:
     Responsible for transport headers and credit flow control.
     """
     
-    # HTC Header: [Endpoint(1)] [Flags(1)] [PayloadLen(2, BE)] [Padding(2)]
-    # Total 6 bytes.
+    # 4-byte header + 2-byte alignment padding = 6 bytes total offset
     HTC_HDR_FMT = ">BBHH"
     HTC_HDR_LEN = 6
 
@@ -21,7 +20,7 @@ class HTCProtocol:
         return self._credits_available
 
     def update_credits(self, count: int):
-        """Updates the available TX credits from a firmware report."""
+        """Updates the available TX credits."""
         self._credits_available = count
 
     def consume_credit(self):
@@ -30,36 +29,26 @@ class HTCProtocol:
             self._credits_available -= 1
 
     def pack(self, endpoint: int, payload: bytes, flags: int = 0) -> bytes:
-        """
-        Wraps a payload in an HTC header.
-        """
-        # Note: Some versions use a 4-byte header, but AR9271/ath9k_htc 
-        # usually expects 6 bytes (4 header + 2 padding).
-        header = struct.pack(self.HTC_HDR_FMT, endpoint, flags, len(payload), 0)
+        """Wraps a payload in a 6-byte HTC header (4 bytes hdr + 2 bytes pad)."""
+        # Length field includes the internal 2-byte alignment padding
+        header = struct.pack(self.HTC_HDR_FMT, endpoint, flags, len(payload) + 2, 0)
         return header + payload
 
     def unpack(self, data: bytes) -> Tuple[int, int, bytes]:
-        """
-        Unwraps an HTC packet.
-        Returns: (endpoint, flags, payload)
-        """
+        """Unwraps an HTC packet (skipping 6-byte header)."""
         if len(data) < self.HTC_HDR_LEN:
             raise ValueError(f"Packet too short for HTC header: {len(data)} bytes")
 
         endpoint, flags, payload_len, _ = struct.unpack(self.HTC_HDR_FMT, data[:self.HTC_HDR_LEN])
-        
-        # Guard against malformed length fields
-        actual_payload = data[self.HTC_HDR_LEN : self.HTC_HDR_LEN + payload_len]
+        # Skip 6 bytes total. actual_payload excludes the 2 bytes of internal padding.
+        actual_payload = data[self.HTC_HDR_LEN : 4 + payload_len]
         return endpoint, flags, actual_payload
 
     def parse_credit_report(self, data: bytes) -> Optional[int]:
         """
-        Checks if a packet is an HTC Credit Report and extracts the count.
-        Typically found in packets starting with EP 1 or EP 0 depending on firmware.
+        Checks for credit reports in traffic.
+        Heuristic: EP 1, Flags 0, count at offset 16 (includes 6-byte header).
         """
-        # Based on research: EP 1, Flags 0, with credit count at offset 16 (for some FW)
-        # or as part of a dedicated HTC Control message on EP 0.
-        if len(data) >= 16 and data[0] == 0x01:
-            # Simple heuristic from wmi_state.py
+        if len(data) >= 17 and data[0] == 0x01:
             return data[16]
         return None
