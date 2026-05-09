@@ -18,6 +18,8 @@ __pycache__/
 htmlcov/
 
 # Project specifics
+data_dumps/
 usb_dumps/
+scratch/
 debug.log
 usb_transactions.log
