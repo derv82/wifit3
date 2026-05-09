@@ -79,18 +79,6 @@ class FirmwareLoader:
             )
             print("    -> Boot command sent (0x31).")
             
-            # 2. The CPU Wakeup / Reset Latch Clear
-            # Found in PCAP immediately after 0x31: bmReq 0x23, bReq 0x01, wVal 0x0010, wInd 0x0007
-            dev.ctrl_transfer(
-                0x23,   # bmRequestType (Class OUT)
-                0x01,   # bRequest
-                0x0010, # wValue (Usually a reset bit flag)
-                0x0007, # wIndex (Usually a register offset)
-                b'',
-                timeout=1000
-            )
-            print("    -> CPU Wakeup sent (0x23).")
-            
         except usb.core.USBError as e:
             print(f"[*] Device reset triggered (Expected USBError during boot: {e}).")
             

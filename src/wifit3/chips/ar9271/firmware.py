@@ -15,13 +15,14 @@ class FirmwareLoader:
 
     # Standard Atheros firmware upload request parameters
     BM_REQ_VENDOR_OUT = 0x40
-    B_REQ_FW_DOWNLOAD = 0x30
-    B_REQ_FW_BOOT = 0x31
+    FIRMWARE_DOWNLOAD = 0x30
+    FIRMWARE_DOWNLOAD_COMP = 0x31
 
     @staticmethod
     def load(dev: usb.core.Device, firmware_data: bytes) -> bool:
         """
         Uploads firmware in chunks and triggers execution.
+        [Driver Source Reference](/data_dumps/ath9k-source-v6.8/hif_usb.c#1070).
         """
         logger.info(f"Starting firmware upload ({len(firmware_data)} bytes)...")
         
@@ -39,7 +40,7 @@ class FirmwareLoader:
             try:
                 dev.ctrl_transfer(
                     FirmwareLoader.BM_REQ_VENDOR_OUT,
-                    FirmwareLoader.B_REQ_FW_DOWNLOAD,
+                    FirmwareLoader.FIRMWARE_DOWNLOAD,
                     wValue,
                     wIndex,
                     chunk,
@@ -57,36 +58,32 @@ class FirmwareLoader:
     @staticmethod
     def trigger_boot(dev: usb.core.Device) -> bool:
         """
-        Sends the specific commands to jump to the firmware entry point and wakeup the CPU.
+        Sends the specific commands to jump to the firmware entry point.
+        [Driver Source Reference](/data_dumps/ath9k-source-v6.8/hif_usb.c#1102).
         """
+        import usb.util
         try:
             # 1. Firmware Download Complete / Boot Trigger
             # Found in PCAP: bRequest=0x31, wValue=0x9030 (Execution address)
             dev.ctrl_transfer(
                 FirmwareLoader.BM_REQ_VENDOR_OUT,
-                FirmwareLoader.B_REQ_FW_BOOT,
-                0x9030,
+                FirmwareLoader.FIRMWARE_DOWNLOAD_COMP,
+                0x9030, # FIRMWARE_TEXT >> 8
                 0x0000,
                 b'',
                 timeout=1000
             )
-            
-            # 2. CPU Wakeup / Reset Latch Clear
-            # Found in PCAP: bmReq=0x23 (Class OUT), bReq=0x01, wVal=0x0010, wInd=0x0007
-            dev.ctrl_transfer(
-                0x23,   # bmRequestType (Class, Interface, Recipient: Interface)
-                0x01,   # bRequest
-                0x0010, # wValue
-                0x0007, # wIndex
-                b'',
-                timeout=1000
-            )
-            logger.info("Boot commands sent (0x31, 0x23).")
-            return True
+            logger.info("Boot command sent (FIRMWARE_DOWNLOAD_COMP).")
             
         except usb.core.USBError as e:
             # Note: On Windows, the boot command often triggers a device reset,
             # which might manifest as a USBError (Pipe error or Timeout).
             # This is usually a sign of success.
             logger.warning(f"Device reset triggered during boot (Expected USBError): {e}")
-            return True
+            
+        finally:
+            # The device must be released so Windows can process the soft-reset
+            # and transition the endpoints from Interrupt OUT to Bulk OUT
+            usb.util.dispose_resources(dev)
+            
+        return True

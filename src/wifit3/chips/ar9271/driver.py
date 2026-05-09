@@ -114,6 +114,8 @@ class AR9271Driver:
                     continue
                 
                 data = bytes(raw)
+                from .usb_logger import USBInterceptor
+                USBInterceptor.log_rx(USB_EP_DATA_WMI_IN, data)
                 
                 # 1. Check for Credit Reports / HTC Control
                 credit_count = self.htc.parse_credit_report(data)
@@ -145,6 +147,8 @@ class AR9271Driver:
                 await asyncio.sleep(0.01)
 
     async def _usb_write(self, endpoint: int, data: bytes):
+        from .usb_logger import USBInterceptor
+        USBInterceptor.log_tx(endpoint, data)
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self.dev.write, endpoint, data)
 

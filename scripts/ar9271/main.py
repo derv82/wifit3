@@ -48,6 +48,14 @@ def main():
         success = FirmwareLoader.load_firmware(dev, fw_path)
         if success:
             print("[*] Firmware uploaded and boot command sent.")
+            usb.util.dispose_resources(dev)
+            print("[*] Waiting 3 seconds for device to re-enumerate...")
+            time.sleep(3)
+            dev = usb.core.find(backend=libusb_backend, idVendor=0x0cf3, idProduct=0x9271)
+            if dev is None:
+                print("[-] Device did not re-enumerate after firmware upload.")
+                sys.exit(1)
+            print("[+] Device re-enumerated successfully!")
         else:
             print("[-] Firmware upload failed.")
             sys.exit(1)
