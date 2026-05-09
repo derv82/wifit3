@@ -1,8 +1,7 @@
 import asyncio
 import logging
 import usb.core
-import usb.util
-from typing import Optional, Dict, List
+from typing import Optional, Dict
 
 from .protocol.htc import HTCProtocol
 from .protocol.wmi import WMIProtocol
@@ -14,7 +13,7 @@ logger = logging.getLogger(__name__)
 class AR9271Driver:
     """
     Main Driver for the Atheros AR9271.
-    Orchestrates protocols, heartbeat, and device state.
+    Orchestrates protocols, and device state.
     """
     
     def __init__(self, dev: usb.core.Device):
@@ -25,12 +24,12 @@ class AR9271Driver:
         
         self.is_running = False
         self._reader_task: Optional[asyncio.Task] = None
-        self._heartbeat_task: Optional[asyncio.Task] = None
         
         self._event_queues: Dict[int, asyncio.Queue] = {
             # Map SeqID -> Queue for ACKs
         }
         self._rx_queue = asyncio.Queue()
+        self.supported_channels = []  # Populate from 1-time WMI register query during/after connect()
 
     async def connect(self):
         """
@@ -42,29 +41,20 @@ class AR9271Driver:
         self.is_running = True
         self._reader_task = asyncio.create_task(self._reader_loop())
         
-        # 2. Wait for HTC Ready on EP 0x83 (HTC Control IN)
-        # In a real driver, we'd wait for the reader to signal this.
-        # For simplicity in this implementation, we assume it arrives.
-        
+        # TODO 2. Wait for HTC Ready on EP 0x83 (HTC Control IN)
+        # XXX In a real driver, we'd wait for the reader to signal this.
+        # XXX For simplicity in this implementation, we assume it arrives.
+        # NOTE We do not want a *simple* implementation!
+
         # 3. Connect WMI Service
         # HTC_MSG_CONNECT_SERVICE_ID (0x0002)
         # [EP=0] [Flags=0] [Len=10] [Pad=0] [Msg=0x0002] [Svc=0x0100] ...
+        # TODO Use imported constants to craft this message. HTC_* + WMI_* + whatever bytes.
         connect_msg = bytearray.fromhex("0000000a000000000002010000000304")
         await self._usb_write(USB_EP_WMI_CMD_OUT, connect_msg)
-        
-        # 4. Start Heartbeat
-        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-        logger.info("AR9271 Connected and Heartbeat started.")
 
-    async def _heartbeat_loop(self):
-        """Sends WMI_ECHO every 150ms to prevent firmware hang."""
-        while self.is_running:
-            try:
-                await self.send_wmi_command(WMI_ECHO_CMDID, b'', wait_for_ack=False)
-                await asyncio.sleep(0.150)
-            except Exception as e:
-                logger.error(f"Heartbeat error: {e}")
-                break
+        # TODO: Query WMI for frequencies/channels list, populate self.supported_channels
+        #       OR hardcode the list of channels if it's constant for all AR9217 HW variants.
 
     async def send_wmi_command(self, command_id: int, payload: bytes, wait_for_ack: bool = True):
         """
@@ -173,6 +163,4 @@ class AR9271Driver:
         self.is_running = False
         if self._reader_task:
             self._reader_task.cancel()
-        if self._heartbeat_task:
-            self._heartbeat_task.cancel()
         logger.info("AR9271 Driver closed.")

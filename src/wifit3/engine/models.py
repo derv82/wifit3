@@ -10,3 +10,5 @@ class AccessPoint(BaseModel):
     signal: int = Field(default=-100)
     encryption: Optional[str] = Field(default="Unknown")
     beacons: int = Field(default=0)
+
+# TODO: class Client (name?) representing an AP client (bottom table in airodump-ng).
