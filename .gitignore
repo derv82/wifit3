@@ -21,3 +21,4 @@ htmlcov/
 data_dumps/
 usb_dumps/
 debug.log
+usb_transactions.log

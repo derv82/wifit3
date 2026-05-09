@@ -27,13 +27,16 @@ class WlanDeviceManager:
         Scans PyUSB. Discovers supported devices, handles firmware upload
         if they are cold, and wraps the warm handle in a WlanInterface.
         """
+        import libusb_package
+        backend = libusb_package.get_libusb1_backend()
+        
         # Ensure clean state before refreshing
         for iface in self.interfaces:
             await iface.close()
         self.interfaces = []
         
         # Find all devices on the bus
-        for dev in usb.core.find(find_all=True):
+        for dev in usb.core.find(find_all=True, backend=backend):
             vid_pid = (dev.idVendor, dev.idProduct)
             if vid_pid in self.SUPPORTED_DEVICES:
                 info = self.SUPPORTED_DEVICES[vid_pid]
@@ -83,7 +86,11 @@ class WlanDeviceManager:
             
             # Find the fw file relative to the project root
             fw_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), "htc_9271_cleanroom.fw")
-            success = FirmwareLoader.load(dev, fw_path)
+            
+            with open(fw_path, 'rb') as f:
+                fw_bytes = f.read()
+                
+            success = FirmwareLoader.load(dev, fw_bytes)
             
             if success:
                 logger.info("Waiting 3 seconds for AR9271 to re-enumerate on the bus...")
