@@ -11,6 +11,7 @@ from .transport import AR9271USBTransport
 from .protocol.wmi import WMIProtocol
 from .protocol.metadata import AthMetadataLayer
 from .constants import *
+from wifit3.wlan.packet import WlanFrameParser
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,7 @@ class AR9271Driver:
         self.transport.subscribe(0, self._on_wmi_packet)
         self.transport.subscribe(self.wmi_endpoint_id, self._on_wmi_packet)
         
-        cal_path = Path(__file__).parent / "sequences" / "ar9271_v14_init.json"
+        cal_path = Path(__file__).parent / "assets" / "ar9271_v14_init.json"
         try:
             with open(cal_path, 'r') as f:
                 payloads = json.load(f)
@@ -165,11 +166,14 @@ class AR9271Driver:
                 self._wmi_ready_event.set()
                 
             # 3. Handle live RX traffic (Beacons, etc.)
-            elif ev_id == 0x1400: # WMI_RX_EVENTID
-                # Log first 16 bytes of data for celebration
-                hex_data = wmi_payload[:16].hex()
-                logger.debug(f"RX Packet Captured: {hex_data}...")
-
+            elif ev_id == 0x1002: # WMI_RECV_PDU_EVENTID
+                ssid, rssi, frame = WlanFrameParser.parse_wmi_rx(wmi_payload)
+                if ssid:
+                    logger.info(f"[SSID] Captured Beacon: {ssid} (RSSI: {rssi} dBm)")
+                else:
+                    # Generic frame or noise
+                    logger.debug(f"RX Frame: RSSI={rssi} LEN={len(frame) if frame else 0}")
+            
             elif ev_id & 0x1000:
                 logger.debug(f"Async WMI Event: ID={hex(ev_id)} LEN={len(wmi_payload)}")
                 
