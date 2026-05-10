@@ -62,26 +62,25 @@ class AR9271Driver:
         # WMI Service (0x0100) -> DL=3, UL=4
         wmi_payload = struct.pack(">HHHBBBB", 0x0002, 0x0100, 0, 3, 4, 0, 0)
         await self.transport.send(0, wmi_payload, is_wmi=False)
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.001) # Accelerated
         
         others = [0x0101, 0x0102, 0x0103, 0x0104, 0x0107, 0x0108, 0x0106, 0x0105]
         for svc_id in others:
             payload = struct.pack(">HHHBBBB", 0x0002, svc_id, 0, 2, 1, 0, 0)
             await self.transport.send(0, payload, is_wmi=False)
-            await asyncio.sleep(0.005)
+            await asyncio.sleep(0.001) # Accelerated
 
         logger.info("[3/5] Configuring HTC Pipe (Pipe 1 -> 33 Credits)...")
         config_pipe = struct.pack(">HBB", 0x0005, 1, self.total_credits)
         await self.transport.send(0, config_pipe, is_wmi=False)
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.005)
 
         logger.info("[4/5] Completing HTC Handshake...")
         setup_done = struct.pack(">H", 0x0004)
         await self.transport.send(0, setup_done, is_wmi=False)
         
         self.transport.reset_pipes()
-        # Deep breath for the silicon
-        await asyncio.sleep(0.1) 
+        await asyncio.sleep(0.05) # Half-breath
 
         # 6. Ultimate Calibration Marathon
         logger.info("[5/5] Replaying 1,200-Packet Calibration Table...")
@@ -121,11 +120,12 @@ class AR9271Driver:
             logger.error(f"Calibration file not found at {cal_path}")
             return False
 
-        logger.info("Waiting up to 5s for Target Ready (0x1001) and MAC verification...")
+        logger.info("Waiting for Target Ready and MAC verification...")
         try:
-            await asyncio.wait_for(self._wmi_ready_event.wait(), timeout=5.0)
+            # Accelerated wait: v1.4 usually responds within 500ms post-marathon
+            await asyncio.wait_for(self._wmi_ready_event.wait(), timeout=1.5)
         except asyncio.TimeoutError:
-            logger.warning("Timed out waiting for WMI Target Ready event.")
+            logger.warning("Timed out waiting for WMI Target Ready event. Proceeding anyway...")
         
         logger.info("AR9271 Driver successfully connected.")
         return True
@@ -192,7 +192,8 @@ class AR9271Driver:
         
         if wait_for_ack:
             try:
-                res_ev_id, res_payload = await asyncio.wait_for(ack_queue.get(), timeout=1.0)
+                # Register ACKs are near-instant (<5ms)
+                res_ev_id, res_payload = await asyncio.wait_for(ack_queue.get(), timeout=0.2)
                 if command_id == WMI_REG_READ_CMDID and len(res_payload) >= 4:
                     val = struct.unpack(">I", res_payload[-4:])[0]
                     logger.info(f"Register Read Response: {hex(val)}")

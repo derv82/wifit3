@@ -87,17 +87,22 @@ class WlanDeviceManager:
             success = FirmwareLoader.load(dev, fw_bytes)
             
             if success:
-                logger.info("Waiting 3 seconds for AR9271 to re-enumerate...")
-                await asyncio.sleep(3)
+                logger.info("Waiting for AR9271 to re-enumerate...")
+                # Dynamic wait: poll for device instead of fixed 3s sleep
+                warm_dev = None
+                for _ in range(12): # 12 * 250ms = 3s total timeout
+                    await asyncio.sleep(0.25)
+                    import libusb_package
+                    backend = libusb_package.get_libusb1_backend()
+                    warm_dev = usb.core.find(idVendor=0x0cf3, idProduct=0x9271, backend=backend)
+                    if warm_dev:
+                        break
                 
-                import libusb_package
-                backend = libusb_package.get_libusb1_backend()
-                warm_dev = usb.core.find(idVendor=0x0cf3, idProduct=0x9271, backend=backend)
                 if warm_dev:
                     logger.info("AR9271 successfully warmed up!")
                     return warm_dev
                 else:
-                    logger.error("AR9271 failed to re-enumerate.")
+                    logger.error("AR9271 failed to re-enumerate within 3s.")
                     return None
             else:
                 logger.error("Firmware upload failed.")
