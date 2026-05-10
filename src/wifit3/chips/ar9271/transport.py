@@ -139,53 +139,53 @@ class AR9271USBTransport:
 
     async def _handle_incoming(self, data: bytes, ep_addr: int):
         """Parses headers, handles trailers/credits, and dispatches to subscribers."""
-        # 1. Handle Hardware Encapsulation (EP 0x82 only)
-        if ep_addr == USB_EP_DATA_WMI_IN: # 0x82
-            # Skip 12-byte Hardware RX Descriptor to find the HTC Header
-            if len(data) < 12 + self.htc.HTC_HDR_STD_LEN:
-                return
-            htc_raw = data[12:]
-        else:
-            htc_raw = data
-
-        # 2. Unpack HTC Header
-        try:
-            htc_ep, flags, trailer_len, payload = self.htc.unpack(htc_raw, ep_addr)
-        except Exception as e:
-            logger.debug(f"HTC Unpack fail on EP {hex(ep_addr)}: {e}")
-            return
+        # 1. Pipe-Aware Offset Strike
+        # Bulk IN (0x82) has 4-byte HIF header; Interrupt IN (0x83) does not.
+        ptr = 4 if ep_addr == USB_EP_DATA_WMI_IN else 0
         
-        # 3. Handle HTC Trailers (Credit Reports)
-        if flags & 0x02: # HTC_FLAGS_RECV_TRAILER
-            if trailer_len > 0 and len(payload) >= trailer_len:
-                # Trailer is at the VERY end of the specified payload
-                trailer = payload[-trailer_len:]
-                # Clean payload is everything BEFORE the trailer
-                actual_payload = payload[:-trailer_len]
+        while ptr + self.htc.HTC_HDR_STD_LEN <= len(data):
+            # 2. Unpack HTC Header
+            try:
+                htc_raw = data[ptr:]
+                ep, flags, p_len, ctrl = struct.unpack(">BBH4s", htc_raw[:8])
                 
-                # Parse 2-byte trailer records: [EPID][Credits]
-                start_off = 0
-                if len(trailer) >= 2 and trailer[0] == 0x00 and trailer[1] == 0xC6:
-                    start_off = 2
+                # Payload follows header and includes trailer (if flag set)
+                payload = htc_raw[8 : 8 + p_len]
+                trailer_len = ctrl[0]
+            except Exception as e:
+                logger.debug(f"HTC Unpack fail on EP {hex(ep_addr)} at offset {ptr}: {e}")
+                break
+            
+            # 3. Handle HTC Trailers (Credit Reports)
+            actual_payload = payload
+            if flags & 0x02: # HTC_FLAGS_RECV_TRAILER
+                if trailer_len > 0 and len(payload) >= trailer_len:
+                    trailer = payload[-trailer_len:]
+                    actual_payload = payload[:-trailer_len]
                     
-                for i in range(start_off, len(trailer), 2):
-                    if i + 1 < len(trailer):
-                        rep_ep = trailer[i]
-                        rep_count = trailer[i+1]
-                        if rep_ep < 22: # ENDPOINT_MAX
-                            await self.credit_manager.update(rep_ep, rep_count)
-                
-                payload = actual_payload
+                    # Credit Replenishment records are 2 bytes: [EPID][Credits]
+                    start_off = 0
+                    if len(trailer) >= 2 and trailer[0] == 0x00 and trailer[1] == 0xC6:
+                        start_off = 2
+                    for i in range(start_off, len(trailer), 2):
+                        if i + 1 < len(trailer):
+                            rep_ep, rep_count = trailer[i], trailer[i+1]
+                            if rep_ep < 22:
+                                await self.credit_manager.update(rep_ep, rep_count)
+            
+            # 4. Special Case: READY message on EP 0 (Handshake)
+            if ep == 0 and len(actual_payload) >= 6:
+                res = self.htc.parse_ready_msg(actual_payload)
+                if res:
+                    credits, _ = res
+                    self.credit_manager.set_initial(1, credits)
+                    self.credit_manager.set_initial(2, credits)
 
-        # 4. Special Case: READY message on EP 0 contains initial credits
-        if htc_ep == 0 and len(payload) >= 6:
-            res = self.htc.parse_ready_msg(payload)
-            if res:
-                credits, _ = res
-                self.credit_manager.set_initial(1, credits)
-                self.credit_manager.set_initial(2, credits)
-
-        # 5. Dispatch to subscribers
-        if htc_ep in self._subscribers:
-            for cb in self._subscribers[htc_ep]:
-                cb(payload)
+            # 5. Dispatch to subscribers
+            if ep in self._subscribers:
+                for cb in self._subscribers[ep]:
+                    cb(actual_payload)
+                    
+            # 6. Advance to next bundled HTC frame
+            # Total packet size = 8-byte header + p_len (which includes trailer)
+            ptr += 8 + p_len

@@ -11,11 +11,6 @@ class WlanFrameParser:
     Avoids heavy dependencies like Scapy.
     """
 
-    # --- WMI RX Status (v1.4) ---
-    # According to Lead: 30 bytes fixed length
-    # RSSI is at index 14, Rate at index 17
-    WMI_RX_STATUS_LEN = 30
-    
     # --- 802.11 Constants ---
     TYPE_MGMT = 0x00
     SUBTYPE_BEACON = 0x08
@@ -24,32 +19,46 @@ class WlanFrameParser:
     @staticmethod
     def parse_wmi_rx(payload: bytes) -> Tuple[Optional[str], Optional[int], Optional[bytes]]:
         """
-        Parses a WMI_RX_EVENTID payload.
-        Offsets: [0-29] WMI_RX_STATUS, [30+] 802.11 Frame
+        Parses a WMI RX event payload (Stripped: Status Block + 802.11 Frame).
+        Uses a high-fidelity signature hunt to find the 802.11 frame start.
         Returns: (ssid, rssi, raw_frame)
         """
-        if len(payload) < WlanFrameParser.WMI_RX_STATUS_LEN + 24:
+        if len(payload) < 32: 
             return None, None, None
 
-        # 1. Extract Metadata
-        # rssi = payload[14], rate = payload[17]
-        # Atheros RSSI is usually in dBm relative to noise floor
-        rssi = payload[14]
-        if rssi > 128: rssi -= 256 # Handle signed byte
-
-        # 2. Re-align to 802.11 Frame
-        # Lead says frame starts at offset 30 (WMI_RX_STATUS ends there)
-        # Note: 42 was the offset from the START of the URB (including 12-byte HIF/HTC)
-        frame = payload[WlanFrameParser.WMI_RX_STATUS_LEN:]
+        # 1. Extract RSSI (Dynamic Strike for v1.4)
+        # Verified SNR/RSSI units at Status Indices 8, 9, and 11.
+        raw_rssi = max(payload[8], payload[9], payload[11])
+        rssi = raw_rssi - 95 if raw_rssi > 0 else -95
         
-        if len(frame) < 24:
+        # 2. High-Fidelity Signature Hunt (Dynamic Offset)
+        # We look for [FrameControl][Duration][BcastMAC] signature
+        frame = None
+        for off in [32, 36, 40, 44, 48]:
+            if len(payload) >= off + 24:
+                fc = payload[off]
+                ftype = (fc & 0x0C) >> 2
+                
+                # Management Check: Signature includes Broadcast MAC at Addr1
+                if ftype == 0:
+                    if payload[off+4 : off+10] == b'\xff\xff\xff\xff\xff\xff':
+                        frame = payload[off:]
+                        break
+                
+                # Data Check: Usually starts with 0x08 or 0x88
+                elif ftype == 2:
+                    # Stricter check for data could go here
+                    frame = payload[off:]
+                    break
+        
+        if not frame:
             return None, rssi, None
 
-        # 3. Basic 802.11 Header Check
+        # 3. SSID Extraction (Management frames only)
         fc = frame[0]
         ftype = (fc & 0x0C) >> 2
         subtype = (fc & 0xF0) >> 4
-
+        
         ssid = None
         if ftype == WlanFrameParser.TYPE_MGMT:
             if subtype == WlanFrameParser.SUBTYPE_BEACON or subtype == WlanFrameParser.SUBTYPE_PROBE_RESP:
@@ -60,30 +69,21 @@ class WlanFrameParser:
     @staticmethod
     def _extract_ssid(frame: bytes) -> Optional[str]:
         """
-        Surgically extracts SSID from 802.11 management frames.
-        Skip: Header(24) + Fixed Params(12) = 36 bytes
-        Then parse Information Elements (IEs).
+        Surgically extracts SSID from Tag 0. Handles hidden SSIDs.
         """
-        if len(frame) < 38:
-            return None
-
-        # Offset to first IE
-        ptr = 36
+        if len(frame) < 38: return None
+        ptr = 36 # Skip 24-byte HDR + 12-byte Fixed Params
         
-        # IE Loop: [ID(1)] [LEN(1)] [DATA(N)]
         while ptr + 2 <= len(frame):
-            ie_id = frame[ptr]
-            ie_len = frame[ptr + 1]
+            tag_id = frame[ptr]
+            tag_len = frame[ptr + 1]
+            if ptr + 2 + tag_len > len(frame): break
             
-            if ptr + 2 + ie_len > len(frame):
-                break
-                
-            if ie_id == 0: # SSID Tag
+            if tag_id == 0:
+                if tag_len == 0: return "<hidden>"
                 try:
-                    return frame[ptr + 2 : ptr + 2 + ie_len].decode('utf-8', errors='ignore')
-                except Exception:
-                    return "<hex:" + frame[ptr + 2 : ptr + 2 + ie_len].hex() + ">"
-            
-            ptr += 2 + ie_len
-            
+                    res = frame[ptr+2 : ptr+2+tag_len].decode('utf-8', errors='ignore')
+                    return res if any(c.isprintable() for c in res) else f"<hex:{res.encode().hex()}>"
+                except: return "<decode_error>"
+            ptr += 2 + tag_len
         return None

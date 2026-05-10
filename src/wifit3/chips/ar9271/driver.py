@@ -85,9 +85,10 @@ class AR9271Driver:
 
         # 6. Ultimate Calibration Marathon
         logger.info("[5/5] Replaying 1,200-Packet Calibration Table...")
-        # Subscribe to both Management (0) and WMI (1) for the Bulk stream
+        # Subscribe to Management (0), WMI (1), and CAB (3) for the Bulk stream
         self.transport.subscribe(0, self._on_wmi_packet)
-        self.transport.subscribe(self.wmi_endpoint_id, self._on_wmi_packet)
+        self.transport.subscribe(1, self._on_wmi_packet)
+        self.transport.subscribe(3, self._on_wmi_packet)
         
         cal_path = Path(__file__).parent / "assets" / "ar9271_v14_init.json"
         try:
@@ -159,20 +160,21 @@ class AR9271Driver:
                 self._event_queues[seq].put_nowait((ev_id, wmi_payload))
                 return
             
-            # 2. Async Target Ready (0x1001) - can arrive on EP 0 or 1
-            if ev_id == WMI_READY_EVENTID: # 0x1001
+            # 2. Async Target Ready - can arrive on EP 0 or 1
+            if ev_id == WMI_READY_EVENTID or ev_id == WMI_READY_EP0_ID:
                 self.mac_address = ":".join(f"{b:02x}" for b in wmi_payload[:6])
                 logger.info(f"[!!!] AR9271 SILICON MAC VERIFIED: {self.mac_address}")
                 self._wmi_ready_event.set()
                 
-            # 3. Handle live RX traffic (Beacons, etc.)
-            elif ev_id == 0x1002: # WMI_RECV_PDU_EVENTID
+            # 3. Handle live RX traffic (Beacons, Data, etc.)
+            # v1.4 uses 0x0400 or 0x0000; mainline uses 0x1002.
+            elif ev_id in [WMI_RECV_PDU_EVENTID, WMI_RECV_PDU_V14_ID, WMI_RECV_PDU_V14_BCN_ID]:
                 ssid, rssi, frame = WlanFrameParser.parse_wmi_rx(wmi_payload)
                 if ssid:
                     logger.info(f"[SSID] Captured Beacon: {ssid} (RSSI: {rssi} dBm)")
                 else:
                     # Generic frame or noise
-                    logger.debug(f"RX Frame: RSSI={rssi} LEN={len(frame) if frame else 0}")
+                    logger.debug(f"RX Frame Captured: ID={hex(ev_id)} RSSI={rssi} LEN={len(frame) if frame else 0}")
             
             elif ev_id & 0x1000:
                 logger.debug(f"Async WMI Event: ID={hex(ev_id)} LEN={len(wmi_payload)}")

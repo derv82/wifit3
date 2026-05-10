@@ -59,17 +59,27 @@ class HTCProtocol:
         """
         Unwraps an HTC packet. 
         Returns: (endpoint_id, flags, trailer_len, payload)
-        Note: payload STILL CONTAINS the trailer.
+        
+        Note: v1.4 Bulk (0x82) uses swapped [Flags][EP] header.
         """
         if len(data) < self.HTC_HDR_STD_LEN:
             raise ValueError(f"Packet too short for HTC header: {len(data)} bytes")
             
-        ep, flags, p_len, ctrl = struct.unpack(self.HTC_HDR_STD_FMT, data[:self.HTC_HDR_STD_LEN])
+        # Standard: [EP][Flags][Len(2)][Ctrl(4)]
+        # Bulk v1.4: [Flags][EP][Len(2)][Ctrl(4)]
+        b0, b1, p_len, ctrl = struct.unpack(self.HTC_HDR_STD_FMT, data[:self.HTC_HDR_STD_LEN])
         
+        if endpoint_address == 0x82:
+            flags = b0
+            ep = b1
+        else:
+            ep = b0
+            flags = b1
+            
         # trailer_len is in the first byte of the 4-byte control field (ctrl[0])
         trailer_len = ctrl[0]
         
-        # Extract payload (includes WMI + Trailer)
+        # Extract payload
         payload = data[self.HTC_HDR_STD_LEN : self.HTC_HDR_STD_LEN + p_len]
         return ep, flags, trailer_len, payload
 
