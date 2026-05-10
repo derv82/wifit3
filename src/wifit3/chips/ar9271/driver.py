@@ -2,8 +2,10 @@ import asyncio
 import logging
 import struct
 import json
+import os
 import usb.core
 from typing import Optional, Dict, List, Tuple
+from pathlib import Path
 
 from .transport import AR9271USBTransport
 from .protocol.wmi import WMIProtocol
@@ -37,13 +39,14 @@ class AR9271Driver:
         self.total_credits = 0
 
         # Subscribe to transport packets
+        # EP 0 for HTC/WMI Management, EP 1 for WMI Commands/Events
         self.transport.subscribe(0, self._on_htc_control)
 
     async def connect(self):
         """
-        Performs the event-driven HTC/WMI handshake and 'Golden Query' sequence.
+        Performs the event-driven HTC/WMI handshake and 'Ultimate Marathon' replay.
         """
-        logger.info("Starting AR9271 Handshake via USBTransport...")
+        logger.info("Starting AR9271 Handshake via USBTransport (Final Marathon)...")
         
         await self.transport.start()
         
@@ -55,6 +58,7 @@ class AR9271Driver:
             return False
 
         logger.info("[2/5] Connecting 9 services...")
+        # WMI Service (0x0100) -> DL=3, UL=4
         wmi_payload = struct.pack(">HHHBBBB", 0x0002, 0x0100, 0, 3, 4, 0, 0)
         await self.transport.send(0, wmi_payload, is_wmi=False)
         await asyncio.sleep(0.01)
@@ -75,48 +79,44 @@ class AR9271Driver:
         await self.transport.send(0, setup_done, is_wmi=False)
         
         self.transport.reset_pipes()
-        # Increased 100ms delay to allow MIPS core and PLLs to settle
+        # Deep breath for the silicon
         await asyncio.sleep(0.1) 
 
-        # 6. Skip-and-Stream Calibration Replay
-        logger.info("[5/5] Replaying Calibration Table (Skip-and-Stream Mode)...")
+        # 6. Ultimate Calibration Marathon
+        logger.info("[5/5] Replaying 1,200-Packet Calibration Table...")
+        # Subscribe to both Management (0) and WMI (1) for the Bulk stream
+        self.transport.subscribe(0, self._on_wmi_packet)
         self.transport.subscribe(self.wmi_endpoint_id, self._on_wmi_packet)
         
+        cal_path = Path(__file__).parent / "sequences" / "ar9271_v14_init.json"
         try:
-            with open('scratch/cal_payloads.json', 'r') as f:
+            with open(cal_path, 'r') as f:
                 payloads = json.load(f)
             
-            logger.info(f"Replaying {len(payloads)} WMI packets sequentially...")
-            consecutive_failures = 0
+            logger.info(f"Replaying {len(payloads)} packets sequentially...")
             for i, p_hex in enumerate(payloads):
                 raw_wmi = bytes.fromhex(p_hex)
                 cmd_id, p_seq = struct.unpack(">HH", raw_wmi[:4])
                 payload_data = raw_wmi[4:]
                 
-                # Use send_wmi_command which handles Credit Wait and Synchronous ACK
+                # Rigid Stop-and-Wait for 1-slot mailbox
                 success = await self.send_wmi_command(cmd_id, payload_data, wait_for_ack=True)
                 
                 if not success:
                     logger.warning(f"Timeout at packet {i} (Cmd {hex(cmd_id)}). Continuing...")
-                    consecutive_failures += 1
-                    if consecutive_failures > 20:
-                        logger.error("Too many consecutive stalls. Subsystem is dead.")
-                        return False
-                else:
-                    consecutive_failures = 0
                 
-                if i > 0 and i % 100 == 0:
+                if i > 0 and i % 200 == 0:
                     logger.info(f"Progress: {i}/{len(payloads)} registers processed.")
                     
-            logger.info("Calibration stream complete. Triggering Radio Init...")
+            logger.info("Calibration marathon complete. Triggering Radio Init...")
             
-            # Final Trigger Sequence (Wait for every ACK)
+            # Final Trigger Sequence
             await self.send_wmi_command(WMI_SET_MODE_CMDID, struct.pack(">H", 0x0001))
             await self.send_wmi_command(0x0006, b"") # INIT
             await self.send_wmi_command(WMI_START_RECV_CMDID, b"")
             
         except FileNotFoundError:
-            logger.error("Calibration payloads file not found.")
+            logger.error(f"Calibration file not found at {cal_path}")
             return False
 
         logger.info("Waiting up to 5s for Target Ready (0x1001) and MAC verification...")
@@ -129,7 +129,7 @@ class AR9271Driver:
         return True
 
     def _on_htc_control(self, payload: bytes):
-        """Callback for EP 0 packets."""
+        """Callback for EP 0 packets arriving on Interrupt pipe (0x83)."""
         if len(payload) < 2: return
         msg_id = struct.unpack(">H", payload[:2])[0]
         if msg_id == 0x0001: # READY
@@ -147,18 +147,32 @@ class AR9271Driver:
             self._htc_config_done_event.set()
 
     def _on_wmi_packet(self, payload: bytes):
-        """Callback for WMI packets."""
+        """Callback for WMI and Management packets arriving on Bulk pipe (0x82)."""
         try:
+            # Note: For EP 0 packets on Bulk, unpack_event still works because 
+            # they follow the [ID(2)][Seq(2)] pattern.
             ev_id, seq, wmi_payload = self.wmi.unpack_event(payload)
+            
+            # 1. ACK matching for synchronous commands
             if seq in self._event_queues:
                 self._event_queues[seq].put_nowait((ev_id, wmi_payload))
                 return
+            
+            # 2. Async Target Ready (0x1001) - can arrive on EP 0 or 1
             if ev_id == WMI_READY_EVENTID: # 0x1001
                 self.mac_address = ":".join(f"{b:02x}" for b in wmi_payload[:6])
                 logger.info(f"[!!!] AR9271 SILICON MAC VERIFIED: {self.mac_address}")
                 self._wmi_ready_event.set()
+                
+            # 3. Handle live RX traffic (Beacons, etc.)
+            elif ev_id == 0x1400: # WMI_RX_EVENTID
+                # Log first 16 bytes of data for celebration
+                hex_data = wmi_payload[:16].hex()
+                logger.debug(f"RX Packet Captured: {hex_data}...")
+
             elif ev_id & 0x1000:
-                logger.info(f"[*] Async WMI Event: ID={hex(ev_id)} LEN={len(wmi_payload)}")
+                logger.debug(f"Async WMI Event: ID={hex(ev_id)} LEN={len(wmi_payload)}")
+                
         except Exception as e:
             logger.debug(f"WMI Unpack fail: {e}")
 
@@ -167,7 +181,9 @@ class AR9271Driver:
         if wait_for_ack:
             ack_queue = asyncio.Queue()
             self._event_queues[seq] = ack_queue
+            
         await self.transport.send(self.wmi_endpoint_id, wmi_payload, is_wmi=True)
+        
         if wait_for_ack:
             try:
                 res_ev_id, res_payload = await asyncio.wait_for(ack_queue.get(), timeout=1.0)
@@ -176,7 +192,6 @@ class AR9271Driver:
                     logger.info(f"Register Read Response: {hex(val)}")
                 return True
             except asyncio.TimeoutError:
-                logger.warning(f"Timeout waiting for ACK for WMI Command {hex(command_id)} (Seq {seq})")
                 return False
             finally:
                 if seq in self._event_queues:
