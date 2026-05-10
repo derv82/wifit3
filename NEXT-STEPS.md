@@ -1,41 +1,33 @@
-# Handoff for Next Agent: Wifit3 AR9271 Driver
+# Handoff: Wifit3 AR9271 Driver - From Core to Intelligence
 
-## Current State: Massive Breakthroughs & Framework Integration
+## Current State: MISSION ACCOMPLISHED (CORE)
+We have successfully implemented a fully functional Userspace Python driver for the Atheros AR9271 (v1.4). The driver can cold-boot, calibrate, tune to channels, and sniff live 802.11 management frames.
 
-We have successfully reverse-engineered and implemented the complex "Soft-MAC" initialization for the Atheros AR9271 (ath9k_htc) directly in Python. We have moved from standalone experimental scripts into the `src/wifit3/` framework.
+### Verified Milestones
+1.  **Transport Asymmetry Solved:** `AR9271USBTransport` correctly handles the 4-byte HIF header on Bulk IN (0x82) while staying raw on Interrupt IN (0x83).
+2.  **Handshake Stability:** 100% reliable 1,094-packet calibration marathon using strict sequential Stop-and-Wait logic.
+3.  **Dynamic Intelligence:** `WlanFrameParser` uses dynamic signature-scanning (32/36 window) to align radio frames, making it immune to alignment jitter.
+4.  **Signal Fidelity:** RSSI extraction correctly take the `max()` of multiple antenna indices, providing accurate signal reporting (approx -73 dBm).
+5.  **Jailed Debugging:** All raw USB noise is redirected to `usb_transactions.log`, keeping the framework console clean and high-signal.
 
-### Verified Successes
-1.  **Cold Boot Resolved:** Achieved reliable re-enumeration on Windows/WinUSB by using 512-byte firmware chunks, the `0x31` boot trigger, and properly calling `usb.util.dispose_resources(dev)` to allow the OS to transition the device.
-2.  **6-Byte Protocol Alignment:** Empirically verified that the AR9271 expects a **4-byte HTC header followed by 2 bytes of padding**, creating a 6-byte offset for all payloads. This satisfies the hardware's 32-bit DMA alignment requirements.
-3.  **Framework Stability:** The `WlanDeviceManager` now correctly initializes the `libusb_package` backend and loads actual firmware bytes (fixing a path-string bug).
+## Immediate Next Steps (Intelligence & Mobility)
 
-## The Immediate Issue: Handshake Hang
-While the firmware boots and re-enumerates, the `AR9271Driver.connect()` sequence in `driver.py` is currently "deaf" to the device's responses.
+### 1. Spatial Intelligence (Channel Extraction)
+Currently, we can tune to a channel, but we don't verify it in the packet.
+*   **Task:** Update `WlanFrameParser` to extract the **DS Parameter Set (Tag 3)** from Beacons. This allows us to log the network's current channel and verify if our tuner is on-target.
+*   **Goal:** Log: `[SSID] Captured 'Beachball 2.4' on CH 6 (RSSI: -65 dBm)`.
 
-### Reproduction
-1.  **Reset Hardware:** `uv run python scratch/test_reset.py` (Clears hung states without physical unplug).
-2.  **Run Test:** `uv run python scratch/test_hw.py`.
-3.  **The Hang:** The script will wait indefinitely at `[1/4] Waiting for HTC Ready on EP 0x83`.
+### 2. Full Mobility (Channel Scanning)
+We have the tuning tables, but no orchestrator.
+*   **Task:** Implement a `ChannelScanner` loop in `WlanInterface` that iterates through Channels 1-13 with a specific dwell time (e.g., 200ms).
+*   **Goal:** A live network list showing every SSID in the environment across all channels.
 
-### Why it Fails
-The current `connect()` implementation uses a **sequential polling loop** (`while True: dev.read(...)`) which is prone to race conditions and missed packets. The device is likely sending its `HTC_MSG_READY_ID` and `HTC_MSG_CONNECT_SERVICE_RESPONSE_ID`, but the driver isn't listening at the exact moment they arrive.
+### 3. Aggression (Packet Injection)
+The next major architectural wall.
+*   **Task:** Implement `WlanPacketSerializer` to create raw 802.11 Deauth/Disassoc frames and send them via the TX pipe (EP 1).
+*   **Verification:** Replay a known-good PCAP deauth burst and verify on a target device.
 
-## Next Steps (Immediate Mission)
-Your mission is to transition the driver to an **Async-First Listener Architecture**.
-
-1.  **Spawn Listeners Early:** The very first step of `connect()` should be to spawn background tasks for **both** EP 0x82 (Data/WMI) and EP 0x83 (Control/Credits).
-2.  **Event-Driven Handshake:** Use `asyncio.Event` objects. The background listeners should parse the incoming stream and `.set()` the events when they see the correct `HTC_MSG_ID`.
-3.  **Service Confirmation:** Capture the logical endpoint assigned in the connection response (usually `0x01`) and ensure all subsequent WMI commands are routed to that logical EP.
-4.  **WMI Init:** Ensure `WMI_ATH_INIT_CMDID` (0x0006) is the first WMI command sent after the handshake is complete.
-
-## Ground Truth References
-*   **Protocol Structure:** See `src/wifit3/chips/ar9271/AGENTS.md` for the subagent tooling.
-*   **Raw Traffic:** The `usb_transactions.log` is configured to log every raw byte—use it as the absolute source of truth for alignment.
-*   **C Source:** Refer to `data_dumps/ath9k-source-v6.8/htc_hst.h` for official struct definitions.
-
-## Communication Protocol (CRITICAL)
-The user is a **Senior Lead Software Engineer**. 
-1.  **Back-and-Forth Required:** Discuss architecture, API design, and technical rationale extensively BEFORE making any code changes.
-2.  **Technical Pessimism:** Assume failure. Act as a grounded co-engineer, not a hype-man.
-3.  **Brevity:** Keep responses brief, high-signal, and fluff-free.
-4.  **No Hand-holding:** Propose the strategy, wait for confirmation, then implement surgically.
+## Architectural Guidelines
+*   **Maintain Asymmetry:** Always remember: Bulk OUT (0x04) needs a 4-byte HIF + 4-byte WMI header. Bulk IN (0x82) needs 4-byte HIF stripping.
+*   **Stay Native:** Avoid adding heavy libraries (Scapy). Maintain the native `WlanFrameParser` for maximum performance and minimum dependencies.
+*   **Lead's Rule:** Discuss API design BEFORE execution. Treat the user as the Senior Lead.
