@@ -94,46 +94,50 @@ class USBInterceptor:
         if not data:
             return "EMPTY"
             
-        if len(data) < 6:
+        if len(data) < 8:
             return f"RAW: {data.hex()}"
             
-        # Very rough structural parser just for logging clarity
-        # HTC Header is first 6 bytes
+        # HTC Header is 8 bytes
         htc_ep = data[0]
         htc_flags = data[1]
         htc_len = struct.unpack_from(">H", data, 2)[0]
+        trailer_len = data[4]
         
         parsed = f"HTC_EP={htc_ep} LEN={htc_len}"
         
-        if len(data) >= 10:
-            cmd_event_id = struct.unpack_from(">H", data, 8)[0]
-            seq_id = struct.unpack_from(">H", data, 10)[0] if len(data) >= 12 else 0
+        # Determine WMI offset
+        # For OUT, we have a 12-byte total shift (8 bytes hdr + 4 bytes WMI/pad logic)
+        # But wait, our pack_wmi uses 6+2. 
+        # Actually, let's just look for the WMI header after the HTC header.
+        
+        # WMI payload usually starts at offset 8 for IN.
+        # For OUT, it depends on whether it's Control (EP 0) or WMI (EP 1).
+        
+        hdr_len = 8
+        if len(data) >= hdr_len + 4:
+            # Check for WMI Header [ID(2)][SEQ(2)]
+            wmi_id = struct.unpack_from(">H", data, hdr_len)[0]
+            seq_id = struct.unpack_from(">H", data, hdr_len + 2)[0]
             
-            if direction == "OUT":
-                # Check HTC Control vs WMI
-                if htc_ep == 0:
-                    name = HTC_MESSAGES.get(cmd_event_id, f"UNKNOWN_HTC_0x{cmd_event_id:04X}")
-                    parsed += f" | {name}"
-                    # Check for HTC_MSG_CONNECT_SERVICE_ID
-                    if cmd_event_id == 0x0002 and len(data) >= 14:
-                        svc_id = struct.unpack_from(">H", data, 10)[0]
-                        svc_name = HTC_SERVICES.get(svc_id, f"0x{svc_id:04X}")
-                        parsed += f" [SVC={svc_name}]"
-                else:
-                    name = WMI_COMMANDS.get(cmd_event_id, f"UNKNOWN_WMI_0x{cmd_event_id:04X}")
+            if htc_ep == 0:
+                # HTC Control Message
+                name = HTC_MESSAGES.get(wmi_id, f"UNKNOWN_HTC_0x{wmi_id:04X}")
+                parsed += f" | {name}"
+                if wmi_id == 0x0002 and len(data) >= hdr_len + 8:
+                    svc_id = struct.unpack_from(">H", data, hdr_len + 2)[0]
+                    svc_name = HTC_SERVICES.get(svc_id, f"0x{svc_id:04X}")
+                    parsed += f" [SVC={svc_name}]"
+                elif wmi_id == 0x0003 and len(data) >= hdr_len + 6:
+                    status = data[hdr_len + 4]
+                    epid = data[hdr_len + 5]
+                    parsed += f" [Status={status} Assigned EP={epid}]"
+            else:
+                # WMI Command or Event
+                if direction == "OUT":
+                    name = WMI_COMMANDS.get(wmi_id, f"UNKNOWN_WMI_CMD_0x{wmi_id:04X}")
                     parsed += f" | {name} SEQ={seq_id}"
-            else: # IN
-                if htc_ep == 0:
-                    name = HTC_MESSAGES.get(cmd_event_id, f"UNKNOWN_HTC_0x{cmd_event_id:04X}")
-                    parsed += f" | {name}"
-                    # Check for HTC_MSG_CONNECT_SERVICE_RESPONSE_ID
-                    if cmd_event_id == 0x0003 and len(data) >= 14:
-                        svc_id = struct.unpack_from(">H", data, 10)[0]
-                        assigned_ep = data[13]
-                        svc_name = HTC_SERVICES.get(svc_id, f"0x{svc_id:04X}")
-                        parsed += f" [SVC={svc_name} -> Assigned EP=0x{assigned_ep:02X}]"
                 else:
-                    name = WMI_EVENTS.get(cmd_event_id, f"UNKNOWN_WMI_EVT_0x{cmd_event_id:04X}")
+                    name = WMI_EVENTS.get(wmi_id, WMI_COMMANDS.get(wmi_id, f"UNKNOWN_WMI_EVT_0x{wmi_id:04X}"))
                     parsed += f" | {name} SEQ={seq_id}"
                     
         return f"{parsed} | RAW={data.hex()}"
