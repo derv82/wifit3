@@ -63,9 +63,25 @@ class AR9271USBTransport:
     async def start(self):
         """Spawns the background listener tasks."""
         self.is_running = True
+        
+        # 1. Control Listener (Single task is fine for Interrupt EP 0x83)
         self._listeners.append(asyncio.create_task(self._read_loop(USB_EP_HTC_CTRL_IN, "Control")))
-        self._listeners.append(asyncio.create_task(self._read_loop(USB_EP_DATA_WMI_IN, "Data/WMI")))
-        logger.info("USB Transport started.")
+        
+        # 2. Data/WMI Listeners (Multi-URB Pressure for Bulk EP 0x82)
+        # Spawning 4 concurrent tasks to keep the DMA pipeline full
+        for i in range(4):
+            self._listeners.append(asyncio.create_task(self._read_loop(USB_EP_DATA_WMI_IN, f"Data-{i}")))
+            
+        logger.info(f"USB Transport started with 5 listeners (Pressure=4 on 0x82).")
+
+    def reset_pipes(self):
+        """Resets toggle bits and clears stalls on critical endpoints."""
+        try:
+            self.dev.clear_halt(USB_EP_DATA_WMI_IN)
+            self.dev.clear_halt(USB_EP_WMI_CMD_OUT)
+            logger.info("USB Pipes reset (Toggle bits cleared).")
+        except Exception as e:
+            logger.warning(f"Failed to reset pipes: {e}")
 
     async def stop(self):
         """Shuts down listeners and releases resources."""
@@ -123,10 +139,23 @@ class AR9271USBTransport:
 
     async def _handle_incoming(self, data: bytes, ep_addr: int):
         """Parses headers, handles trailers/credits, and dispatches to subscribers."""
-        # 1. Unpack HTC Header
-        htc_ep, flags, trailer_len, payload = self.htc.unpack(data, ep_addr)
+        # 1. Handle Hardware Encapsulation (EP 0x82 only)
+        if ep_addr == USB_EP_DATA_WMI_IN: # 0x82
+            # Skip 12-byte Hardware RX Descriptor to find the HTC Header
+            if len(data) < 12 + self.htc.HTC_HDR_STD_LEN:
+                return
+            htc_raw = data[12:]
+        else:
+            htc_raw = data
+
+        # 2. Unpack HTC Header
+        try:
+            htc_ep, flags, trailer_len, payload = self.htc.unpack(htc_raw, ep_addr)
+        except Exception as e:
+            logger.debug(f"HTC Unpack fail on EP {hex(ep_addr)}: {e}")
+            return
         
-        # 2. Handle HTC Trailers (Credit Reports)
+        # 3. Handle HTC Trailers (Credit Reports)
         if flags & 0x02: # HTC_FLAGS_RECV_TRAILER
             if trailer_len > 0 and len(payload) >= trailer_len:
                 # Trailer is at the VERY end of the specified payload
@@ -135,7 +164,6 @@ class AR9271USBTransport:
                 actual_payload = payload[:-trailer_len]
                 
                 # Parse 2-byte trailer records: [EPID][Credits]
-                # Heuristic: First 2 bytes can be a watchdog/pattern (0x00C6), skip if so.
                 start_off = 0
                 if len(trailer) >= 2 and trailer[0] == 0x00 and trailer[1] == 0xC6:
                     start_off = 2
@@ -148,19 +176,16 @@ class AR9271USBTransport:
                             await self.credit_manager.update(rep_ep, rep_count)
                 
                 payload = actual_payload
-            else:
-                logger.warning(f"HTC Trailer flag set but invalid trailer_len: {trailer_len}")
 
-        # 3. Special Case: READY message on EP 0 contains initial credits
+        # 4. Special Case: READY message on EP 0 contains initial credits
         if htc_ep == 0 and len(payload) >= 6:
             res = self.htc.parse_ready_msg(payload)
             if res:
                 credits, _ = res
-                # Initial credits for logical endpoints (usually EP 1 and EP 2)
                 self.credit_manager.set_initial(1, credits)
                 self.credit_manager.set_initial(2, credits)
 
-        # 4. Dispatch to subscribers
+        # 5. Dispatch to subscribers
         if htc_ep in self._subscribers:
             for cb in self._subscribers[htc_ep]:
                 cb(payload)

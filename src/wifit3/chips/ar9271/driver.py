@@ -1,8 +1,9 @@
 import asyncio
 import logging
 import struct
+import json
 import usb.core
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Tuple
 
 from .transport import AR9271USBTransport
 from .protocol.wmi import WMIProtocol
@@ -31,7 +32,7 @@ class AR9271Driver:
         self._event_queues: Dict[int, asyncio.Queue] = {}
         
         # State tracking
-        self.wmi_endpoint_id = HTC_ENDPOINT_WMI # Updated after connect
+        self.wmi_endpoint_id = HTC_ENDPOINT_WMI
         self.mac_address = None
         self.total_credits = 0
 
@@ -40,27 +41,20 @@ class AR9271Driver:
 
     async def connect(self):
         """
-        Performs the event-driven HTC/WMI handshake using the 'Golden Query' sequence.
+        Performs the event-driven HTC/WMI handshake and 'Golden Query' sequence.
         """
-        logger.info("Starting AR9271 Handshake via USBTransport (Golden Query)...")
+        logger.info("Starting AR9271 Handshake via USBTransport...")
         
-        # 1. Start Transport
         await self.transport.start()
         
-        # 2. Wait for HTC Ready (ID 1)
-        logger.info("[1/6] Waiting for HTC Ready...")
+        logger.info("[1/5] Waiting for HTC Ready...")
         try:
             await asyncio.wait_for(self._htc_ready_event.wait(), timeout=5.0)
         except asyncio.TimeoutError:
             logger.error("Timed out waiting for HTC Ready signal.")
             return False
 
-        # 3. Connect Nine Services (TShark Verified Pipes)
-        # WMI (0x0100) -> DL=3, UL=4
-        # Others -> DL=2, UL=1
-        logger.info("[2/6] Connecting 9 services...")
-        
-        # WMI Service
+        logger.info("[2/5] Connecting 9 services...")
         wmi_payload = struct.pack(">HHHBBBB", 0x0002, 0x0100, 0, 3, 4, 0, 0)
         await self.transport.send(0, wmi_payload, is_wmi=False)
         await asyncio.sleep(0.01)
@@ -71,39 +65,66 @@ class AR9271Driver:
             await self.transport.send(0, payload, is_wmi=False)
             await asyncio.sleep(0.005)
 
-        # 4. Config Pipe (ID 5) - Assign credits to Pipe 1
-        logger.info("[3/6] Configuring HTC Pipe (Pipe 1 -> 33 Credits)...")
+        logger.info("[3/5] Configuring HTC Pipe (Pipe 1 -> 33 Credits)...")
         config_pipe = struct.pack(">HBB", 0x0005, 1, self.total_credits)
         await self.transport.send(0, config_pipe, is_wmi=False)
         await asyncio.sleep(0.01)
 
-        # 5. Send Setup Complete (ID 4)
-        logger.info("[4/6] Completing HTC Handshake...")
+        logger.info("[4/5] Completing HTC Handshake...")
         setup_done = struct.pack(">H", 0x0004)
         await self.transport.send(0, setup_done, is_wmi=False)
         
-        await asyncio.sleep(0.02) 
+        self.transport.reset_pipes()
+        # Increased 100ms delay to allow MIPS core and PLLs to settle
+        await asyncio.sleep(0.1) 
 
-        # 6. WMI Handshake
-        logger.info("[5/6] Probing Hardware (REG_READ 0x4020)...")
-        # WMI is now active on its assigned EP
+        # 6. Skip-and-Stream Calibration Replay
+        logger.info("[5/5] Replaying Calibration Table (Skip-and-Stream Mode)...")
         self.transport.subscribe(self.wmi_endpoint_id, self._on_wmi_packet)
         
-        # Seq 1: The 'Golden Query'
-        if not await self.send_wmi_command(WMI_REG_READ_CMDID, struct.pack(">I", 0x00004020)):
-            logger.error("Golden Register Query (0x4020) failed. Subsystem is non-responsive.")
-            return False
+        try:
+            with open('scratch/cal_payloads.json', 'r') as f:
+                payloads = json.load(f)
             
-        # Seq 2: Version Query
-        logger.info("[6/6] Querying Firmware Version...")
-        if not await self.send_wmi_command(WMI_GET_FW_VERSION, b""):
-            return False
+            logger.info(f"Replaying {len(payloads)} WMI packets sequentially...")
+            consecutive_failures = 0
+            for i, p_hex in enumerate(payloads):
+                raw_wmi = bytes.fromhex(p_hex)
+                cmd_id, p_seq = struct.unpack(">HH", raw_wmi[:4])
+                payload_data = raw_wmi[4:]
+                
+                # Use send_wmi_command which handles Credit Wait and Synchronous ACK
+                success = await self.send_wmi_command(cmd_id, payload_data, wait_for_ack=True)
+                
+                if not success:
+                    logger.warning(f"Timeout at packet {i} (Cmd {hex(cmd_id)}). Continuing...")
+                    consecutive_failures += 1
+                    if consecutive_failures > 20:
+                        logger.error("Too many consecutive stalls. Subsystem is dead.")
+                        return False
+                else:
+                    consecutive_failures = 0
+                
+                if i > 0 and i % 100 == 0:
+                    logger.info(f"Progress: {i}/{len(payloads)} registers processed.")
+                    
+            logger.info("Calibration stream complete. Triggering Radio Init...")
             
-        # Seq 3: Radio Init
-        logger.info("Initializing Radio core...")
-        if not await self.send_wmi_command(0x0006, b""):
-            return False
+            # Final Trigger Sequence (Wait for every ACK)
+            await self.send_wmi_command(WMI_SET_MODE_CMDID, struct.pack(">H", 0x0001))
+            await self.send_wmi_command(0x0006, b"") # INIT
+            await self.send_wmi_command(WMI_START_RECV_CMDID, b"")
             
+        except FileNotFoundError:
+            logger.error("Calibration payloads file not found.")
+            return False
+
+        logger.info("Waiting up to 5s for Target Ready (0x1001) and MAC verification...")
+        try:
+            await asyncio.wait_for(self._wmi_ready_event.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("Timed out waiting for WMI Target Ready event.")
+        
         logger.info("AR9271 Driver successfully connected.")
         return True
 
@@ -111,12 +132,10 @@ class AR9271Driver:
         """Callback for EP 0 packets."""
         if len(payload) < 2: return
         msg_id = struct.unpack(">H", payload[:2])[0]
-        
         if msg_id == 0x0001: # READY
             credits = struct.unpack(">H", payload[2:4])[0]
             self.total_credits = credits
             self._htc_ready_event.set()
-            
         elif msg_id == 0x0003: # CONNECT_RSP
             svc_id = struct.unpack(">H", payload[2:4])[0]
             status, epid = struct.unpack(">BB", payload[4:6])
@@ -124,7 +143,6 @@ class AR9271Driver:
                 if svc_id == 0x0100:
                     self.wmi_endpoint_id = epid
                 logger.debug(f"Service {hex(svc_id)} connected on EP {epid}")
-
         elif msg_id == 0x0006: # CONFIG_PIPE_RSP
             self._htc_config_done_event.set()
 
@@ -132,17 +150,15 @@ class AR9271Driver:
         """Callback for WMI packets."""
         try:
             ev_id, seq, wmi_payload = self.wmi.unpack_event(payload)
-            
-            # ACK matching
             if seq in self._event_queues:
                 self._event_queues[seq].put_nowait((ev_id, wmi_payload))
                 return
-                
-            # Async Events
-            if ev_id == WMI_READY_EVENTID:
+            if ev_id == WMI_READY_EVENTID: # 0x1001
                 self.mac_address = ":".join(f"{b:02x}" for b in wmi_payload[:6])
-                logger.info(f"Verified AR9271 MAC Address: {self.mac_address}")
+                logger.info(f"[!!!] AR9271 SILICON MAC VERIFIED: {self.mac_address}")
                 self._wmi_ready_event.set()
+            elif ev_id & 0x1000:
+                logger.info(f"[*] Async WMI Event: ID={hex(ev_id)} LEN={len(wmi_payload)}")
         except Exception as e:
             logger.debug(f"WMI Unpack fail: {e}")
 
@@ -155,7 +171,6 @@ class AR9271Driver:
         if wait_for_ack:
             try:
                 res_ev_id, res_payload = await asyncio.wait_for(ack_queue.get(), timeout=1.0)
-                # Log register values for the Golden Query
                 if command_id == WMI_REG_READ_CMDID and len(res_payload) >= 4:
                     val = struct.unpack(">I", res_payload[-4:])[0]
                     logger.info(f"Register Read Response: {hex(val)}")
