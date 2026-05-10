@@ -139,11 +139,15 @@ class AR9271USBTransport:
 
     async def _handle_incoming(self, data: bytes, ep_addr: int):
         """Parses headers, handles trailers/credits, and dispatches to subscribers."""
-        # 1. Pipe-Aware Offset Strike
-        # Bulk IN (0x82) has 4-byte HIF header; Interrupt IN (0x83) does not.
-        ptr = 4 if ep_addr == USB_EP_DATA_WMI_IN else 0
-        
+        ptr = 0
         while ptr + self.htc.HTC_HDR_STD_LEN <= len(data):
+            # 1. Handle HIF USB Header (4 bytes) per-packet on Bulk pipe
+            if ep_addr == USB_EP_DATA_WMI_IN:
+                if ptr + 4 + self.htc.HTC_HDR_STD_LEN > len(data):
+                    break
+                # Skip 4-byte HIF header ([Len:2][Pad:2])
+                ptr += 4
+                
             # 2. Unpack HTC Header
             try:
                 htc_raw = data[ptr:]
@@ -187,5 +191,5 @@ class AR9271USBTransport:
                     cb(actual_payload)
                     
             # 6. Advance to next bundled HTC frame
-            # Total packet size = 8-byte header + p_len (which includes trailer)
-            ptr += 8 + p_len
+            # The AR9271 hardware pads packets to 4-byte boundaries for DMA.
+            ptr += (8 + p_len + 3) & ~3

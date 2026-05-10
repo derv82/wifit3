@@ -1,4 +1,3 @@
-import struct
 import logging
 from typing import Optional, List, Tuple
 
@@ -69,21 +68,63 @@ class WlanFrameParser:
     @staticmethod
     def _extract_ssid(frame: bytes) -> Optional[str]:
         """
-        Surgically extracts SSID from Tag 0. Handles hidden SSIDs.
+        Surgically extracts SSID from Tag 0. Handles hidden SSIDs and junk data.
         """
         if len(frame) < 38: return None
         ptr = 36 # Skip 24-byte HDR + 12-byte Fixed Params
+
+        if WlanFrameParser.is_frame_corrupt(frame, ptr):
+            return None
         
         while ptr + 2 <= len(frame):
             tag_id = frame[ptr]
             tag_len = frame[ptr + 1]
-            if ptr + 2 + tag_len > len(frame): break
+
+            tag_start = ptr + 2
+            tag_end = tag_start + tag_len
+            if tag_end > len(frame):
+                break # bounds check
             
             if tag_id == 0:
-                if tag_len == 0: return "<hidden>"
+                if tag_len == 0:
+                    return "<hidden>"
+
+                if tag_len > 32:
+                    return None # SSID max length is 32
+                
+                ssid_bytes = frame[tag_start : tag_end]
+                if any(b < 0x20 and b not in (0x09, 0x0a, 0x0d) for b in ssid_bytes):
+                    return None # Assume corruption
+                
                 try:
-                    res = frame[ptr+2 : ptr+2+tag_len].decode('utf-8', errors='ignore')
-                    return res if any(c.isprintable() for c in res) else f"<hex:{res.encode().hex()}>"
-                except: return "<decode_error>"
-            ptr += 2 + tag_len
+                    return ssid_bytes.decode('utf-8', errors='backslashreplace')
+                except:
+                    return None  # Assume corruption
+                
+            ptr = tag_end
         return None
+
+    @staticmethod
+    def is_frame_corrupt(frame, ptr):
+        # SPEC: Tag 0 (SSID) MUST be first
+        if frame[ptr] != 0: return True
+        
+        # Check only first 3 tags to avoid hitting the trailing padding
+        count = 0
+        while ptr + 2 <= len(frame) and count < 3:
+            t_id, t_len = frame[ptr], frame[ptr+1]
+            
+            # 1. Bounds check
+            if ptr + 2 + t_len > len(frame): return True
+            
+            # 2. Strict Ordering check (Spec 9.4.2.1)
+            if count == 0 and t_id != 0: return True # SSID
+            if count == 1 and t_id != 1: 
+                # If Tag 0 is followed by something other than Tag 1, 
+                # it's shifted/corrupt.
+                return True 
+                
+            ptr += 2 + t_len
+            count += 1
+            
+        return False # First few tags are spec-compliant

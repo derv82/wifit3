@@ -38,6 +38,7 @@ class AR9271Driver:
         self.wmi_endpoint_id = HTC_ENDPOINT_WMI
         self.mac_address = None
         self.total_credits = 0
+        self._discovered_ssids = set()
 
         # Subscribe to transport packets
         # EP 0 for HTC/WMI Management, EP 1 for WMI Commands/Events
@@ -123,7 +124,7 @@ class AR9271Driver:
         logger.info("Waiting for Target Ready and MAC verification...")
         try:
             # Accelerated wait: v1.4 usually responds within 500ms post-marathon
-            await asyncio.wait_for(self._wmi_ready_event.wait(), timeout=1.5)
+            await asyncio.wait_for(self._wmi_ready_event.wait(), timeout=3.0)
         except asyncio.TimeoutError:
             logger.warning("Timed out waiting for WMI Target Ready event. Proceeding anyway...")
         
@@ -151,8 +152,6 @@ class AR9271Driver:
     def _on_wmi_packet(self, payload: bytes):
         """Callback for WMI and Management packets arriving on Bulk pipe (0x82)."""
         try:
-            # Note: For EP 0 packets on Bulk, unpack_event still works because 
-            # they follow the [ID(2)][Seq(2)] pattern.
             ev_id, seq, wmi_payload = self.wmi.unpack_event(payload)
             
             # 1. ACK matching for synchronous commands
@@ -167,14 +166,11 @@ class AR9271Driver:
                 self._wmi_ready_event.set()
                 
             # 3. Handle live RX traffic (Beacons, Data, etc.)
-            # v1.4 uses 0x0400 or 0x0000; mainline uses 0x1002.
             elif ev_id in [WMI_RECV_PDU_EVENTID, WMI_RECV_PDU_V14_ID, WMI_RECV_PDU_V14_BCN_ID]:
                 ssid, rssi, frame = WlanFrameParser.parse_wmi_rx(wmi_payload)
-                if ssid:
+                if ssid and ssid not in self._discovered_ssids:
                     logger.info(f"[SSID] Captured Beacon: {ssid} (RSSI: {rssi} dBm)")
-                else:
-                    # Generic frame or noise
-                    logger.debug(f"RX Frame Captured: ID={hex(ev_id)} RSSI={rssi} LEN={len(frame) if frame else 0}")
+                    self._discovered_ssids.add(ssid)
             
             elif ev_id & 0x1000:
                 logger.debug(f"Async WMI Event: ID={hex(ev_id)} LEN={len(wmi_payload)}")
