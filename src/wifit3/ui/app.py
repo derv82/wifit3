@@ -1,19 +1,15 @@
+import asyncio
 from textual.app import App, ComposeResult
 from textual.widgets import Header, Footer, DataTable, RichLog, Static
 from textual.containers import Horizontal, Vertical
 from textual import work
 from typing import Dict
-import sys
 
-from ..engine.scanner import Scanner
-from ..engine.models import AccessPoint
-from ..interface.manager import InterfaceManager
-from loguru import logger
-import sys
+from wifit3.wlan.manager import WlanDeviceManager
+from wifit3.engine.models import AccessPoint
+import logging
 
-# Remove default sink and add file sink only
-logger.remove()
-logger.add("debug.log", rotation="10 MB", level="DEBUG")
+logger = logging.getLogger(__name__)
 
 ASCII_ART = r"""
 [bold green]w i f i t 3[/bold green]  [dim green]// wireless auditor[/dim green]
@@ -48,114 +44,112 @@ class WifiteApp(App):
         ("s", "scan", "Start Scan"),
         ("x", "stop", "Stop Scan"),
         ("i", "interfaces", "List Interfaces"),
-        ("a", "attack", "Attack"),
         ("q", "quit", "Quit")
     ]
 
     def __init__(self):
         super().__init__()
-        self.interface_manager = InterfaceManager()
-        self.scanner = Scanner(callback=self.on_ap_discovered)
+        self.device_manager = WlanDeviceManager()
         self.ap_cache: Dict[str, AccessPoint] = {}
         self.active_interface = None
+        self._refresh_timer = None
 
     def compose(self) -> ComposeResult:
         yield Vertical(Static(ASCII_ART, id="header-area"))
         with Horizontal():
             table = DataTable()
+            table.add_column("CH", key="channel")
             table.add_column("BSSID", key="bssid")
+            table.add_column("PWR", key="signal")
+            table.add_column("ENC", key="encryption")
             table.add_column("SSID", key="ssid")
-            table.add_column("Signal", key="signal")
             table.add_column("Beacons", key="beacons")
             yield table
             yield RichLog(highlight=True, markup=True)
         yield Footer()
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         log = self.query_one(RichLog)
         log.write("[bold cyan]Wifit3 initialized.[/bold cyan]")
         log.write("Press [bold green]'s'[/bold green] to start scanning.")
         log.write("Press [bold green]'i'[/bold green] to list local interfaces.")
-        # Pre-refresh interfaces
-        self.interface_manager.refresh()
+        
+        # Start the 60FPS UI polling loop
+        self._refresh_timer = self.set_interval(1 / 60, self.refresh_dashboard)
 
-    def on_ap_discovered(self, ap: AccessPoint) -> None:
-        self.call_from_thread(self.update_table, ap)
-
-    def update_table(self, ap: AccessPoint) -> None:
+    def refresh_dashboard(self) -> None:
+        if not self.active_interface:
+            return
+            
         table = self.query_one(DataTable)
-        # Use the BSSID string directly as the key
-        if ap.bssid not in self.ap_cache:
-            self.ap_cache[ap.bssid] = ap
-            table.add_row(
-                ap.bssid, 
-                ap.ssid or "<Hidden>", 
-                f"{ap.signal}dBm", 
-                str(ap.beacons), 
-                key=ap.bssid
-            )
-        else:
-            self.ap_cache[ap.bssid] = ap
-            # update_cell needs the row_key and column_key
-            table.update_cell(ap.bssid, "ssid", ap.ssid or "<Hidden>")
-            table.update_cell(ap.bssid, "signal", f"{ap.signal}dBm")
-            table.update_cell(ap.bssid, "beacons", str(ap.beacons))
+        
+        # 60 FPS safe in-place updates
+        for ap in self.active_interface.get_access_points():
+            if ap.bssid not in self.ap_cache:
+                self.ap_cache[ap.bssid] = ap
+                table.add_row(
+                    str(ap.channel),
+                    ap.bssid,
+                    f"{ap.signal}dBm",
+                    ap.encryption,
+                    ap.ssid or "<Hidden>",
+                    str(ap.beacons),
+                    key=ap.bssid
+                )
+            else:
+                self.ap_cache[ap.bssid] = ap
+                table.update_cell(ap.bssid, "channel", str(ap.channel))
+                table.update_cell(ap.bssid, "signal", f"{ap.signal}dBm")
+                table.update_cell(ap.bssid, "encryption", ap.encryption)
+                table.update_cell(ap.bssid, "ssid", ap.ssid or "<Hidden>")
+                table.update_cell(ap.bssid, "beacons", str(ap.beacons))
+                
+        # Simple sorting by signal strength
+        table.sort("signal", reverse=True)
 
-    def action_scan(self):
+    async def action_scan(self):
         log = self.query_one(RichLog)
-        if self.scanner.is_running:
+        if self.active_interface:
             log.write("[yellow]Scanner is already running.[/yellow]")
             return
 
-        # Look for a monitor-capable interface
-        if not self.active_interface:
-            for iface in self.interface_manager.interfaces:
-                if iface.can_monitor():
-                    self.active_interface = iface
-                    break
+        log.write("[bold cyan]Discovering interfaces...[/bold cyan]")
+        interfaces = await self.device_manager.refresh()
         
-        if self.active_interface:
-            log.write(f"[bold green]Starting Live Scan on {self.active_interface.description}...[/bold green]")
+        if not interfaces:
+            log.write("[bold red]No supported hardware found.[/bold red]")
+            return
             
-            # Temporary: print for terminal debug, and log for TUI debug
-            success = self.active_interface.set_monitor(True)
-            if success:
-                log.write("[cyan]Monitor mode enabled.[/cyan]")
-                self.interface_manager.start_hopping(self.active_interface, interval=1.0)
-                self.scanner.start(interface=self.active_interface.name)
-            else:
-                log.write("[bold red]ERROR: WlanHelper failed to set monitor mode.[/bold red]")
-                log.write("[red]Check terminal scrollback after quitting for raw error details.[/red]")
-                self.run_simulation()
-        else:
-            log.write("[bold yellow]No monitor-capable hardware found. Starting Simulation...[/bold yellow]")
-            self.run_simulation()
+        self.active_interface = interfaces[0]
+        log.write(f"[bold green]Starting Live Scan on {self.active_interface.description}...[/bold green]")
+        
+        # Connect to hardware (HTC/WMI Handshake)
+        log.write("[cyan]Connecting to hardware (Monitor Mode)...[/cyan]")
+        await self.active_interface.connect()
+        
+        # Start channel hopping
+        log.write("[cyan]Starting channel hopper...[/cyan]")
+        await self.active_interface.start_hopping(interval=0.25)
+        
+        log.write("[bold green]Scanning Active![/bold green]")
 
-    def run_simulation(self):
-        self.scanner.is_running = True
-        self.run_simulation_task()
-
-    @work(exclusive=True, thread=True)
-    def run_simulation_task(self):
-        self.scanner.simulate_discovery()
-
-    def action_stop(self):
-        self.scanner.stop()
-        self.interface_manager.stop_hopping()
+    async def action_stop(self):
+        log = self.query_one(RichLog)
         if self.active_interface:
-            self.active_interface.set_monitor(False)
-            
-        log = self.query_one(RichLog)
-        log.write("[bold orange3]Scanner stopped.[/bold orange3]")
+            log.write("[bold orange3]Stopping hardware...[/bold orange3]")
+            await self.active_interface.close()
+            self.active_interface = None
+            log.write("[bold orange3]Scanner stopped.[/bold orange3]")
 
-    def action_interfaces(self):
+    async def action_interfaces(self):
         log = self.query_one(RichLog)
-        self.interface_manager.refresh()
+        log.write("[bold cyan]Refreshing USB Bus...[/bold cyan]")
+        interfaces = await self.device_manager.refresh()
         log.write("[bold cyan]Wireless Interfaces Found:[/bold cyan]")
-        for iface in self.interface_manager.interfaces:
-            can_mon = "YES" if iface.can_monitor() else "NO"
-            log.write(f"- {iface.description} [bold]Monitor: {can_mon}[/bold]")
-        
-    def action_attack(self):
-        log = self.query_one(RichLog)
-        log.write("[bold red]Attack logic not yet implemented.[/bold red]")
+        for iface in interfaces:
+            log.write(f"- {iface.name}: {iface.description}")
+            
+    async def action_quit(self):
+        if self.active_interface:
+            await self.active_interface.close()
+        self.exit()

@@ -1,7 +1,9 @@
 import asyncio
 import logging
 import time
-from typing import List, Optional, Callable, Any
+from typing import List, Optional, Callable, Any, Dict
+
+from wifit3.engine.models import AccessPoint
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +18,62 @@ class WlanInterface:
         self.description = description
         self.current_channel = 1
         
+        self.access_points: Dict[str, AccessPoint] = {}
+        
         self._rx_callbacks: List[Callable[[bytes, int, float], None]] = []
         self._hopping_task: Optional[asyncio.Task] = None
         self._is_hopping = False
+        
+        if hasattr(self.driver, 'register_rx_callback'):
+            self.driver.register_rx_callback(self._on_frame_parsed)
+
+    def _on_frame_parsed(self, parsed: dict):
+        """
+        Mutator callback. Receives a flat dictionary from the hardware driver
+        and updates the AccessPoint registry.
+        """
+        frame_type = parsed.get("type")
+        bssid = parsed.get("bssid")
+        
+        if not bssid or bssid == "Unknown" or bssid == "ff:ff:ff:ff:ff:ff":
+            return
+            
+        rssi = parsed.get("rssi", -100)
+        
+        # We primarily build APs from beacons and probe responses
+        if frame_type in ("beacon", "probe_resp"):
+            ssid = parsed.get("ssid")
+            channel = parsed.get("channel", self.current_channel)
+            enc = parsed.get("encryption", "OPEN")
+            
+            if bssid not in self.access_points:
+                self.access_points[bssid] = AccessPoint(
+                    bssid=bssid,
+                    ssid=ssid if ssid != "<hidden>" else None,
+                    channel=channel,
+                    signal=rssi,
+                    encryption=enc,
+                    beacons=1 if frame_type == "beacon" else 0
+                )
+            else:
+                ap = self.access_points[bssid]
+                if frame_type == "beacon":
+                    ap.beacons += 1
+                
+                # Update SSID if it was hidden and we now see it (or vice-versa, but usually hidden -> seen)
+                if ssid and ssid != "<hidden>":
+                    ap.ssid = ssid
+                
+                # Smooth RSSI (simple average for now, could use EMA)
+                ap.signal = (ap.signal + rssi) // 2
+                
+                # Update channel if it shifted
+                ap.channel = channel
+                ap.encryption = enc
+
+    def get_access_points(self) -> List[AccessPoint]:
+        """Returns a list of discovered Access Points."""
+        return list(self.access_points.values())
 
     async def connect(self):
         """Initializes the underlying hardware handshake."""
