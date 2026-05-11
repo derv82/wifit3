@@ -181,7 +181,7 @@ class WlanInterface:
         logger.warning(f"Driver for {self.name} does not support injection.")
         return False
     
-    async def deauth(self, ap_bssid: str, client_bssid: str, burst_count: int = 50):
+    async def deauth(self, ap_bssid: str, client_bssid: str, burst_count: int = 10):
         """
         Sends a burst of Deauthentication frames to the AP and the Client.
         """

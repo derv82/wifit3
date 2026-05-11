@@ -34,6 +34,19 @@ class WifiteApp(App):
         background: #000000;
         color: #00FF00;
     }
+    DataTable > .datatable--cursor {
+        background: #00FF00;
+        color: #000000;
+        text-style: bold;
+    }
+    DataTable > .datatable--header {
+        background: #000000;
+        color: #00FF00;
+        text-style: bold;
+    }
+    DataTable > .datatable--hover {
+        background: #003300;
+    }
     RichLog {
         width: 30%;
         background: #000000;
@@ -57,9 +70,9 @@ class WifiteApp(App):
     def compose(self) -> ComposeResult:
         yield Vertical(Static(ASCII_ART, id="header-area"))
         with Horizontal():
-            table = DataTable()
-            table.add_column("CH", key="channel")
+            table = DataTable(cursor_type="row")
             table.add_column("BSSID", key="bssid")
+            table.add_column("CH", key="channel")
             table.add_column("PWR", key="signal")
             table.add_column("ENC", key="encryption")
             table.add_column("SSID", key="ssid")
@@ -70,7 +83,7 @@ class WifiteApp(App):
 
     async def on_mount(self) -> None:
         log = self.query_one(RichLog)
-        log.write("[bold cyan]Wifit3 initialized.[/bold cyan]")
+        log.write("[bold green]Wifit3 initialized.[/bold green]")
         log.write("Press [bold green]'s'[/bold green] to start scanning.")
         log.write("Press [bold green]'i'[/bold green] to list local interfaces.")
         
@@ -88,8 +101,8 @@ class WifiteApp(App):
             if ap.bssid not in self.ap_cache:
                 self.ap_cache[ap.bssid] = ap
                 table.add_row(
-                    str(ap.channel),
                     ap.bssid,
+                    str(ap.channel),
                     f"{ap.signal}dBm",
                     ap.encryption,
                     ap.ssid or "<Hidden>",
