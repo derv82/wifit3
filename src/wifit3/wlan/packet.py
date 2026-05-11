@@ -115,7 +115,7 @@ class WlanFrameParser:
                 result["ssid"] = tags.get("ssid")
                 result["channel"] = tags.get("channel", 1)
                 result["encryption"] = tags.get("encryption", "OPEN")
-            elif subtype == WlanFrameParser.SUBTYPE_PROBE_REQ:
+            elif subtype in (WlanFrameParser.SUBTYPE_PROBE_REQ, WlanFrameParser.SUBTYPE_ASSOC_REQ):
                 tags = WlanFrameParser._parse_tags(frame, subtype)
                 if tags is None: return None
                 result["ssid"] = tags.get("ssid")
@@ -129,6 +129,16 @@ class WlanFrameParser:
                 llc_snap = frame[header_len:header_len+8]
                 if llc_snap == b'\xaa\xaa\x03\x00\x00\x00\x88\x8e':
                     result["type"] = "eapol"
+                    # Extract EAPOL metadata
+                    eapol_start = header_len + 8
+                    if len(frame) >= eapol_start + 17: # Header(4) + DescType(1) + KeyInfo(2) + KeyLen(2) + Replay(8)
+                        eapol_type = frame[eapol_start + 1]
+                        if eapol_type == 3: # EAPOL-Key
+                            import struct
+                            key_info = struct.unpack(">H", frame[eapol_start+5 : eapol_start+7])[0]
+                            replay_counter = frame[eapol_start+9 : eapol_start+17]
+                            result["eapol_key_info"] = key_info
+                            result["eapol_replay_counter"] = replay_counter
         else:
             result["type"] = f"ctrl_{subtype}"
 

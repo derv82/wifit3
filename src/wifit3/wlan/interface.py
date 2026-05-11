@@ -3,7 +3,7 @@ import logging
 import time
 from typing import List, Optional, Callable, Any, Dict
 
-from wifit3.engine.models import AccessPoint
+from wifit3.engine.models import AccessPoint, Client, Handshake
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +19,7 @@ class WlanInterface:
         self.current_channel = 1
         
         self.access_points: Dict[str, AccessPoint] = {}
+        self.clients: Dict[str, Client] = {}
         
         self._rx_callbacks: List[Callable[[bytes, int, float], None]] = []
         self._hopping_task: Optional[asyncio.Task] = None
@@ -60,8 +61,10 @@ class WlanInterface:
                 if frame_type == "beacon":
                     ap.beacons += 1
                 
-                # Update SSID if it was hidden and we now see it (or vice-versa, but usually hidden -> seen)
+                # Update SSID if it was hidden and we now see it (DECLOAKING via Probe Response)
                 if ssid and ssid != "<hidden>":
+                    if not ap.ssid or ap.ssid == "<hidden>":
+                        logger.info(f"DECLOAKED: {bssid} -> {ssid} via Probe Response")
                     ap.ssid = ssid
                 
                 # Smooth RSSI (simple average for now, could use EMA)
@@ -70,6 +73,69 @@ class WlanInterface:
                 # Update channel if it shifted
                 ap.channel = channel
                 ap.encryption = enc
+
+        # Client Tracking
+        if frame_type in ("probe_req", "assoc_req", "data", "eapol", "deauth", "assoc_resp"):
+            client_mac = None
+            source = parsed.get("source")
+            dest = parsed.get("dest")
+            
+            if frame_type == "probe_req":
+                client_mac = source
+            else:
+                # Deduce client MAC (the one that isn't the BSSID)
+                if source and source != bssid: client_mac = source
+                elif dest and dest != bssid: client_mac = dest
+            
+            if client_mac and client_mac != "ff:ff:ff:ff:ff:ff":
+                if client_mac not in self.clients:
+                    self.clients[client_mac] = Client(mac=client_mac, signal=rssi)
+                client = self.clients[client_mac]
+                client.signal = (client.signal + rssi) // 2
+                client.packets += 1
+                
+                # Track association
+                if frame_type in ("assoc_req", "data", "eapol"):
+                    if bssid: client.bssid = bssid
+                    
+                # Track probed SSIDs
+                if frame_type == "probe_req":
+                    ssid = parsed.get("ssid")
+                    if ssid and ssid != "<hidden>":
+                        client.probed_ssids.add(ssid)
+                        
+                # Decloak via Assoc Req
+                if frame_type == "assoc_req" and bssid in self.access_points:
+                    ssid = parsed.get("ssid")
+                    if ssid and ssid != "<hidden>":
+                        ap = self.access_points[bssid]
+                        if not ap.ssid or ap.ssid == "<hidden>":
+                            ap.ssid = ssid
+                            logger.info(f"DECLOAKED: {bssid} -> {ssid} via Assoc Req from {client_mac}")
+
+        # Handshake tracking
+        if frame_type == "eapol" and bssid in self.access_points:
+            client_mac = parsed.get("source") if parsed.get("dest") == bssid else parsed.get("dest")
+            if client_mac:
+                ap = self.access_points[bssid]
+                if not ap.handshake or ap.handshake.client_mac != client_mac:
+                    ap.handshake = Handshake(bssid=bssid, client_mac=client_mac)
+                
+                raw_frame = parsed.get("raw")
+                replay = parsed.get("eapol_replay_counter")
+                if replay and raw_frame:
+                    replay_hex = replay.hex()
+                    frames = ap.handshake.eapol_frames_by_replay.setdefault(replay_hex, [])
+                    # Simple deduplication
+                    if raw_frame not in frames:
+                        frames.append(raw_frame)
+                        logger.info(f"[EAPOL] Saved frame for {bssid} <-> {client_mac} (Replay: {replay_hex})")
+
+        # Beacon handling (ensure beacon frame is saved for handshake)
+        if frame_type == "beacon" and bssid in self.access_points:
+            ap = self.access_points[bssid]
+            if ap.handshake and not ap.handshake.beacon_frame:
+                ap.handshake.beacon_frame = parsed.get("raw")
 
     def get_access_points(self) -> List[AccessPoint]:
         """Returns a list of discovered Access Points."""
