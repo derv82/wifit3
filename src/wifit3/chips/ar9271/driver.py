@@ -194,10 +194,33 @@ class AR9271Driver:
                 
             # 3. Handle live RX traffic (Beacons, Data, etc.)
             elif ev_id in [WMI_RECV_PDU_EVENTID, WMI_RECV_PDU_V14_ID, WMI_RECV_PDU_V14_BCN_ID]:
-                ssid, rssi, frame = WlanFrameParser.parse_wmi_rx(wmi_payload)
-                if ssid and ssid not in self._discovered_ssids:
-                    logger.info(f"[SSID] Captured Beacon: {ssid} (RSSI: {rssi} dBm)")
-                    self._discovered_ssids.add(ssid)
+                parsed = WlanFrameParser.parse_wmi_rx(wmi_payload)
+                if parsed:
+                    frame_type = parsed.get("type")
+                    bssid = parsed.get("bssid", "Unknown")
+                    rssi = parsed.get("rssi", -100)
+                    
+                    if frame_type == "beacon":
+                        ssid = parsed.get("ssid")
+                        if ssid and ssid not in self._discovered_ssids:
+                            enc = parsed.get("encryption", "OPEN")
+                            ch = parsed.get("channel", "?")
+                            logger.info(f"[{bssid}] [CH {ch}] Beacon: '{ssid}' ({enc}) [RSSI {rssi} dBm]")
+                            self._discovered_ssids.add(ssid)
+                    elif frame_type == "probe_req":
+                        ssid = parsed.get("ssid")
+                        source = parsed.get("source")
+                        if ssid and f"probe:{source}:{ssid}" not in self._discovered_ssids:
+                            logger.info(f"[{source}] Probe Request for: '{ssid}'")
+                            self._discovered_ssids.add(f"probe:{source}:{ssid}")
+                    elif frame_type == "deauth":
+                        source = parsed.get("source")
+                        dest = parsed.get("dest")
+                        logger.warning(f"[DEAUTH] {source} -> {dest}")
+                    elif frame_type == "eapol":
+                        source = parsed.get("source")
+                        dest = parsed.get("dest")
+                        logger.info(f"[!!! EAPOL HANDSHAKE !!!] {source} <-> {dest} [RSSI {rssi} dBm]")
             
             elif ev_id & 0x1000:
                 logger.debug(f"Async WMI Event: ID={hex(ev_id)} LEN={len(wmi_payload)}")
@@ -233,7 +256,7 @@ class AR9271Driver:
                     
             if command_id == WMI_REG_READ_CMDID and len(res_payload) >= 4:
                 val = struct.unpack(">I", res_payload[-4:])[0]
-                logger.info(f"Register Read Response: {hex(val)}")
+                #logger.info(f"Register Read Response: {hex(val)}")
                 
         return True
 

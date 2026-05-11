@@ -1,80 +1,207 @@
 import logging
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict, Any
 
 logger = logging.getLogger(__name__)
 
 class WlanFrameParser:
     """
     Lightweight, native 802.11 parser for AR9271.
-    Handles WMI_RX_STATUS metadata and basic management frame extraction.
-    Avoids heavy dependencies like Scapy.
+    Handles WMI_RX_STATUS metadata and extracts a rich dictionary of attributes.
     """
 
     # --- 802.11 Constants ---
     TYPE_MGMT = 0x00
-    SUBTYPE_BEACON = 0x08
+    TYPE_CTRL = 0x01
+    TYPE_DATA = 0x02
+
+    SUBTYPE_ASSOC_REQ = 0x00
+    SUBTYPE_ASSOC_RESP = 0x01
+    SUBTYPE_PROBE_REQ = 0x04
     SUBTYPE_PROBE_RESP = 0x05
+    SUBTYPE_BEACON = 0x08
+    SUBTYPE_DEAUTH = 0x0c
+    
+    SUBTYPE_DATA = 0x00
+    SUBTYPE_QOS_DATA = 0x08
 
     @staticmethod
-    def parse_wmi_rx(payload: bytes) -> Tuple[Optional[str], Optional[int], Optional[bytes]]:
+    def parse_wmi_rx(payload: bytes) -> Optional[Dict[str, Any]]:
         """
-        Parses a WMI RX event payload (Stripped: Status Block + 802.11 Frame).
-        Uses a high-fidelity signature hunt to find the 802.11 frame start.
-        Returns: (ssid, rssi, raw_frame)
+        Parses a WMI RX event payload.
+        Returns a dictionary representing the 802.11 frame, or None if invalid.
         """
         if len(payload) < 32: 
-            return None, None, None
+            return None
 
-        # 1. Extract RSSI (Dynamic Strike for v1.4)
-        # Verified SNR/RSSI units at Status Indices 8, 9, and 11.
+        # 1. Extract RSSI
         raw_rssi = max(payload[8], payload[9], payload[11])
         rssi = raw_rssi - 95 if raw_rssi > 0 else -95
         
         # 2. High-Fidelity Signature Hunt (Dynamic Offset)
-        # We look for [FrameControl][Duration][BcastMAC] signature
         frame = None
         for off in [32, 36, 40, 44, 48]:
             if len(payload) >= off + 24:
-                fc = payload[off]
-                ftype = (fc & 0x0C) >> 2
-                
-                # Management Check: Signature includes Broadcast MAC at Addr1
-                if ftype == 0:
-                    if payload[off+4 : off+10] == b'\xff\xff\xff\xff\xff\xff':
-                        frame = payload[off:]
-                        break
-                
-                # Data Check: Usually starts with 0x08 or 0x88
-                elif ftype == 2:
-                    # Stricter check for data could go here
-                    frame = payload[off:]
+                potential_frame = payload[off:]
+                if WlanFrameParser._is_valid_frame(potential_frame):
+                    frame = potential_frame
                     break
         
         if not frame:
-            return None, rssi, None
+            return None
 
-        # 3. SSID Extraction (Management frames only)
-        fc = frame[0]
-        ftype = (fc & 0x0C) >> 2
-        subtype = (fc & 0xF0) >> 4
+        fc0 = frame[0]
+        fc1 = frame[1]
+        ftype = (fc0 & 0x0C) >> 2
+        subtype = (fc0 & 0xF0) >> 4
         
-        ssid = None
-        if ftype == WlanFrameParser.TYPE_MGMT:
-            if subtype == WlanFrameParser.SUBTYPE_BEACON or subtype == WlanFrameParser.SUBTYPE_PROBE_RESP:
-                ssid = WlanFrameParser._extract_ssid(frame)
+        to_ds = (fc1 & 0x01) != 0
+        from_ds = (fc1 & 0x02) != 0
 
-        return ssid, rssi, frame
+        # Parse MAC Addresses
+        addr1 = WlanFrameParser._mac_to_str(frame[4:10])
+        addr2 = WlanFrameParser._mac_to_str(frame[10:16])
+        addr3 = WlanFrameParser._mac_to_str(frame[16:22])
+        
+        bssid = None
+        source = None
+        dest = None
+
+        if not to_ds and not from_ds: # Ad-hoc, Mgmt, or Ctrl
+            dest = addr1
+            source = addr2
+            bssid = addr3
+        elif not to_ds and from_ds: # AP -> Client
+            dest = addr1
+            bssid = addr2
+            source = addr3
+        elif to_ds and not from_ds: # Client -> AP
+            bssid = addr1
+            source = addr2
+            dest = addr3
+        else: # WDS
+            return None # Ignore WDS for now
+            
+        result = {
+            "type_id": ftype,
+            "subtype_id": subtype,
+            "bssid": bssid,
+            "source": source,
+            "dest": dest,
+            "rssi": rssi,
+            "raw": frame
+        }
+
+        # Subtype Identification
+        if ftype == WlanFrameParser.TYPE_MGMT:
+            if subtype == WlanFrameParser.SUBTYPE_BEACON:
+                result["type"] = "beacon"
+            elif subtype == WlanFrameParser.SUBTYPE_PROBE_REQ:
+                result["type"] = "probe_req"
+            elif subtype == WlanFrameParser.SUBTYPE_PROBE_RESP:
+                result["type"] = "probe_resp"
+            elif subtype == WlanFrameParser.SUBTYPE_DEAUTH:
+                result["type"] = "deauth"
+            elif subtype == WlanFrameParser.SUBTYPE_ASSOC_REQ:
+                result["type"] = "assoc_req"
+            elif subtype == WlanFrameParser.SUBTYPE_ASSOC_RESP:
+                result["type"] = "assoc_resp"
+            else:
+                result["type"] = f"mgmt_{subtype}"
+                
+            # Parse Tags for Beacons and Probe Responses
+            if subtype in (WlanFrameParser.SUBTYPE_BEACON, WlanFrameParser.SUBTYPE_PROBE_RESP):
+                tags = WlanFrameParser._parse_tags(frame, subtype)
+                if tags is None: return None
+                result["ssid"] = tags.get("ssid")
+                result["channel"] = tags.get("channel", 1)
+                result["encryption"] = tags.get("encryption", "OPEN")
+            elif subtype == WlanFrameParser.SUBTYPE_PROBE_REQ:
+                tags = WlanFrameParser._parse_tags(frame, subtype)
+                if tags is None: return None
+                result["ssid"] = tags.get("ssid")
+                
+        elif ftype == WlanFrameParser.TYPE_DATA:
+            result["type"] = "data"
+            # Check for EAPOL (Handshake)
+            # LLC/SNAP header (AA AA 03 00 00 00 88 8E) follows the QoS/Data header
+            header_len = 26 if subtype == WlanFrameParser.SUBTYPE_QOS_DATA else 24
+            if len(frame) >= header_len + 8:
+                llc_snap = frame[header_len:header_len+8]
+                if llc_snap == b'\xaa\xaa\x03\x00\x00\x00\x88\x8e':
+                    result["type"] = "eapol"
+        else:
+            result["type"] = f"ctrl_{subtype}"
+
+        return result
 
     @staticmethod
-    def _extract_ssid(frame: bytes) -> Optional[str]:
-        """
-        Surgically extracts SSID from Tag 0. Handles hidden SSIDs and junk data.
-        """
-        if len(frame) < 38: return None
-        ptr = 36 # Skip 24-byte HDR + 12-byte Fixed Params
+    def _is_valid_frame(frame: bytes) -> bool:
+        if len(frame) < 24: return False
+        fc0, fc1 = frame[0], frame[1]
+        if (fc0 & 0x03) != 0: return False # Version must be 0
+        
+        ftype = (fc0 & 0x0C) >> 2
+        subtype = (fc0 & 0xF0) >> 4
+        
+        if ftype == 0: # Mgmt
+            # Enforce Strict Tag Ordering for Mgmt Frames
+            if subtype in (WlanFrameParser.SUBTYPE_BEACON, WlanFrameParser.SUBTYPE_PROBE_RESP):
+                ptr = 36
+            elif subtype == WlanFrameParser.SUBTYPE_PROBE_REQ:
+                ptr = 24
+            elif subtype == WlanFrameParser.SUBTYPE_DEAUTH:
+                return len(frame) >= 26
+            else:
+                return True
+                
+            if len(frame) <= ptr + 2:
+                return False
+                
+            # SPEC: Tag 0 (SSID) MUST be first
+            if frame[ptr] != 0: 
+                return False
+                
+            # Check Tag 1 (Supported Rates)
+            t0_len = frame[ptr+1]
+            ptr += 2 + t0_len
+            
+            if len(frame) > ptr + 2:
+                # If Tag 0 is followed by something other than Tag 1, 
+                # it's shifted/corrupt noise.
+                if frame[ptr] != 1:
+                    return False
+            
+            return True
 
-        if WlanFrameParser.is_frame_corrupt(frame, ptr):
+        return True
+
+    @staticmethod
+    def _mac_to_str(mac_bytes: bytes) -> str:
+        if len(mac_bytes) != 6: return "00:00:00:00:00:00"
+        return ":".join(f"{b:02x}" for b in mac_bytes)
+
+    @staticmethod
+    def _parse_tags(frame: bytes, subtype: int) -> Optional[Dict[str, Any]]:
+        """
+        Parses 802.11 Information Elements (Tags) from management frames.
+        Returns a dictionary of parsed info (ssid, channel, encryption) or None if corrupt.
+        """
+        parsed = {}
+        if subtype in (WlanFrameParser.SUBTYPE_BEACON, WlanFrameParser.SUBTYPE_PROBE_RESP):
+            ptr = 36 # Skip 24-byte HDR + 12-byte Fixed Params
+        elif subtype == WlanFrameParser.SUBTYPE_PROBE_REQ:
+            ptr = 24 # 24-byte HDR + 0-byte Fixed Params
+        else:
+            return parsed
+
+        if len(frame) < ptr + 2: return None
+        
+        # Strict validation: The first tag MUST be Tag 0 (SSID)
+        if frame[ptr] != 0:
             return None
+        
+        has_wpa = False
+        has_rsn = False
         
         while ptr + 2 <= len(frame):
             tag_id = frame[ptr]
@@ -84,47 +211,50 @@ class WlanFrameParser:
             tag_end = tag_start + tag_len
             if tag_end > len(frame):
                 break # bounds check
+                
+            tag_data = frame[tag_start : tag_end]
             
-            if tag_id == 0:
+            if tag_id == 0: # SSID
                 if tag_len == 0:
-                    return "<hidden>"
-
-                if tag_len > 32:
-                    return None # SSID max length is 32
-                
-                ssid_bytes = frame[tag_start : tag_end]
-                if any(b < 0x20 and b not in (0x09, 0x0a, 0x0d) for b in ssid_bytes):
-                    return None # Assume corruption
-                
-                try:
-                    return ssid_bytes.decode('utf-8', errors='backslashreplace')
-                except:
-                    return None  # Assume corruption
-                
+                    parsed["ssid"] = "<hidden>"
+                elif tag_len <= 32:
+                    # Validate against completely corrupted text
+                    if any(b < 0x20 and b not in (0x09, 0x0a, 0x0d) for b in tag_data):
+                        return None # Corrupt frame masquerading as valid
+                    try:
+                        parsed["ssid"] = tag_data.decode('utf-8', errors='ignore')
+                    except:
+                        pass
+            elif tag_id == 3: # DS Parameter Set (Channel)
+                if tag_len == 1:
+                    parsed["channel"] = tag_data[0]
+            elif tag_id == 48: # RSN (WPA2/WPA3)
+                has_rsn = True
+            elif tag_id == 221: # Vendor Specific
+                if tag_len >= 4:
+                    oui = tag_data[:3]
+                    oui_type = tag_data[3]
+                    if oui == b'\x00\x50\xf2':
+                        if oui_type == 1: # WPA
+                            has_wpa = True
+                        elif oui_type == 4: # WPS
+                            parsed["wps"] = True
+                            
             ptr = tag_end
-        return None
-
-    @staticmethod
-    def is_frame_corrupt(frame, ptr):
-        # SPEC: Tag 0 (SSID) MUST be first
-        if frame[ptr] != 0: return True
-        
-        # Check only first 3 tags to avoid hitting the trailing padding
-        count = 0
-        while ptr + 2 <= len(frame) and count < 3:
-            t_id, t_len = frame[ptr], frame[ptr+1]
             
-            # 1. Bounds check
-            if ptr + 2 + t_len > len(frame): return True
-            
-            # 2. Strict Ordering check (Spec 9.4.2.1)
-            if count == 0 and t_id != 0: return True # SSID
-            if count == 1 and t_id != 1: 
-                # If Tag 0 is followed by something other than Tag 1, 
-                # it's shifted/corrupt.
-                return True 
+        if has_rsn:
+            parsed["encryption"] = "WPA2" # Or WPA3, could differentiate by AKM suites later
+        elif has_wpa:
+            parsed["encryption"] = "WPA"
+        else:
+            if len(frame) >= 36:
+                # Need to check capability info in fixed params for WEP
+                cap_info = int.from_bytes(frame[34:36], byteorder='little')
+                if cap_info & 0x0010: # Privacy bit
+                    parsed["encryption"] = "WEP"
+                else:
+                    parsed["encryption"] = "OPEN"
+            else:
+                parsed["encryption"] = "OPEN"
                 
-            ptr += 2 + t_len
-            count += 1
-            
-        return False # First few tags are spec-compliant
+        return parsed
