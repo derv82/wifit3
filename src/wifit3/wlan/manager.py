@@ -2,7 +2,7 @@ import asyncio
 import logging
 import usb.core
 import usb.util
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from wifit3.chips.ar9271.driver import AR9271Driver
 from .interface import WlanInterface
@@ -44,71 +44,71 @@ class WlanDeviceManager:
                 
                 # Currently hardcoded for AR9271 lifecycle
                 if info["name"] == "AR9271":
-                    warm_dev = await self._ensure_ar9271_firmware(dev)
+                    warm_dev, was_already_warm = await self._ensure_ar9271_firmware(dev)
                     if warm_dev:
-                        driver_instance = info["driver_class"](warm_dev)
+                        driver_instance = info["driver_class"](warm_dev, is_warm=was_already_warm)
                         iface = WlanInterface(driver_instance, f"wlan{len(self.interfaces)}", info["desc"])
                         self.interfaces.append(iface)
 
         logger.info(f"Discovered {len(self.interfaces)} native WlanInterfaces.")
         return self.interfaces
 
-    async def _ensure_ar9271_firmware(self, dev: usb.core.Device) -> Optional[usb.core.Device]:
+    async def _ensure_ar9271_firmware(self, dev: usb.core.Device) -> Tuple[Optional[usb.core.Device], bool]:
         """
-        Checks if AR9271 is cold. If so, uploads firmware and waits for re-enumeration.
-        Returns a warm usb.core.Device handle.
+        Safely checks if AR9271 is cold or warm.
+        If cold, uploads firmware and waits for re-enumeration.
+        Returns a tuple of (warm usb.core.Device handle, was_already_warm).
         """
+        # Passive Detection: Try to read from Bulk IN (EP 0x82)
+        # If the device is WARM and in monitor mode, it will return radio frames.
+        # If the device is COLD, the BootROM will timeout without corrupting its state.
+        is_warm = False
         try:
-            cfg = dev.get_active_configuration()
-            intf = cfg[(0,0)]
-        except usb.core.USBError:
-            intf = [] 
-            
-        ep4 = usb.util.find_descriptor(intf, custom_match=lambda e: e.bEndpointAddress == 0x04)
-        
-        is_cold = False
-        if ep4 is not None:
-            if usb.util.endpoint_type(ep4.bmAttributes) == usb.util.ENDPOINT_TYPE_INTR:
-                is_cold = True
-        else:
-            is_cold = True
+            # Short timeout, we just want to see if the pipe is active
+            data = dev.read(0x82, 512, timeout=100)
+            if len(data) > 0:
+                is_warm = True
+        except usb.core.USBError as e:
+            # Timeout or Pipe Error means it's likely COLD
+            pass
 
-        if is_cold:
-            logger.info("AR9271 is COLD (No Firmware). Initiating upload sequence...")
-            from wifit3.chips.ar9271.firmware import FirmwareLoader
-            import os
-            
-            # Find the fw file relative to the project root
-            fw_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), "htc_9271_cleanroom.fw")
-            
-            with open(fw_path, 'rb') as f:
-                fw_bytes = f.read()
-                
-            success = FirmwareLoader.load(dev, fw_bytes)
-            
-            if success:
-                logger.info("Waiting for AR9271 to re-enumerate...")
-                # Dynamic wait: poll for device instead of fixed 3s sleep
-                warm_dev = None
-                for _ in range(12): # 12 * 250ms = 3s total timeout
-                    await asyncio.sleep(0.25)
-                    import libusb_package
-                    backend = libusb_package.get_libusb1_backend()
-                    warm_dev = usb.core.find(idVendor=0x0cf3, idProduct=0x9271, backend=backend)
-                    if warm_dev:
-                        break
-                
-                if warm_dev:
-                    logger.info("AR9271 successfully warmed up!")
-                    return warm_dev
-                else:
-                    logger.error("AR9271 failed to re-enumerate within 3s.")
-                    return None
-            else:
-                logger.error("Firmware upload failed.")
-                return None
+        if is_warm:
+            logger.info("AR9271 is already WARM (Active Firmware detected). Skipping upload.")
+            return dev, True
+
+        logger.info("AR9271 is COLD (No Firmware). Initiating upload sequence...")
+        from wifit3.chips.ar9271.firmware import FirmwareLoader
+        import os
         
-        return dev
+        # Find the fw file relative to the project root
+        fw_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), "htc_9271_cleanroom.fw")
+        
+        with open(fw_path, 'rb') as f:
+            fw_bytes = f.read()
+            
+        success = FirmwareLoader.load(dev, fw_bytes)
+        
+        if success:
+            logger.info("Waiting for AR9271 to re-enumerate...")
+            # Dynamic wait: poll for device instead of fixed 3s sleep
+            warm_dev = None
+            for _ in range(12): # 12 * 250ms = 3s total timeout
+                await asyncio.sleep(0.25)
+                import libusb_package
+                backend = libusb_package.get_libusb1_backend()
+                warm_dev = usb.core.find(idVendor=0x0cf3, idProduct=0x9271, backend=backend)
+                if warm_dev:
+                    break
+            
+            if warm_dev:
+                logger.info("AR9271 successfully warmed up!")
+                return warm_dev, False
+            else:
+                logger.error("AR9271 failed to re-enumerate within 3s.")
+                return None, False
+        else:
+            logger.error("Firmware upload failed.")
+            return None, False
 
     def get_interface(self, name: str) -> Optional[WlanInterface]:
         for iface in self.interfaces:

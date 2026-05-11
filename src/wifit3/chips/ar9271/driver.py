@@ -21,10 +21,11 @@ class AR9271Driver:
     Orchestrates protocols and device state using the USBTransport abstraction.
     """
     
-    def __init__(self, dev: usb.core.Device):
+    def __init__(self, dev: usb.core.Device, is_warm: bool = False):
         self.transport = AR9271USBTransport(dev)
         self.wmi = WMIProtocol()
         self.meta = AthMetadataLayer()
+        self.is_warm = is_warm
         
         # Handshake Events
         self._htc_ready_event = asyncio.Event()
@@ -48,6 +49,32 @@ class AR9271Driver:
         """
         Performs the event-driven HTC/WMI handshake and 'Ultimate Marathon' replay.
         """
+        if self.is_warm:
+            logger.info("Device is already WARM. Re-attaching to existing HTC/WMI streams...")
+            self.total_credits = 33 # Assume default from previous handshake
+            self.wmi_endpoint_id = HTC_ENDPOINT_WMI # WMI is mapped to HTC endpoint 1
+            
+            # Seed the CreditManager to prevent deadlocks since we skipped the HTC_READY handshake
+            self.transport.credit_manager.set_initial(self.wmi_endpoint_id, self.total_credits)
+            self.transport.credit_manager.set_initial(HTC_ENDPOINT_WLAN_DATA, self.total_credits)
+            
+            self._htc_ready_event.set()
+            self._htc_config_done_event.set()
+            self._wmi_ready_event.set()
+            
+            # We MUST clear the halt/toggle bits on the pipes so Bulk OUT doesn't drop packets
+            self.transport.reset_pipes()
+            await asyncio.sleep(0.05)
+            
+            await self.transport.start()
+            
+            # Subscribe to the data streams
+            self.transport.subscribe(0, self._on_wmi_packet)
+            self.transport.subscribe(1, self._on_wmi_packet)
+            self.transport.subscribe(3, self._on_wmi_packet)
+            logger.info("AR9271 Driver successfully re-attached to WARM device.")
+            return True
+
         logger.info("Starting AR9271 Handshake via USBTransport (Final Marathon)...")
         
         await self.transport.start()
@@ -190,15 +217,24 @@ class AR9271Driver:
             try:
                 # Register ACKs are near-instant (<5ms)
                 res_ev_id, res_payload = await asyncio.wait_for(ack_queue.get(), timeout=0.2)
-                if command_id == WMI_REG_READ_CMDID and len(res_payload) >= 4:
-                    val = struct.unpack(">I", res_payload[-4:])[0]
-                    logger.info(f"Register Read Response: {hex(val)}")
-                return True
             except asyncio.TimeoutError:
-                return False
+                logger.debug(f"Timeout waiting for ACK on Cmd {hex(command_id)}. Resending to sync toggle bit...")
+                # The hardware often ignores clear_halt(), leaving the USB toggle bit desynced.
+                # The first packet is dropped, but the host advances its toggle bit.
+                # Resending it forces a match!
+                await self.transport.send(self.wmi_endpoint_id, wmi_payload, is_wmi=True)
+                try:
+                    res_ev_id, res_payload = await asyncio.wait_for(ack_queue.get(), timeout=0.2)
+                except asyncio.TimeoutError:
+                    return False
             finally:
                 if seq in self._event_queues:
                     del self._event_queues[seq]
+                    
+            if command_id == WMI_REG_READ_CMDID and len(res_payload) >= 4:
+                val = struct.unpack(">I", res_payload[-4:])[0]
+                logger.info(f"Register Read Response: {hex(val)}")
+                
         return True
 
     async def set_channel(self, channel: int):

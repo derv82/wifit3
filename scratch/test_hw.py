@@ -29,12 +29,12 @@ async def test_hw():
     
     # The reader loop is now running, and usb_transactions.log should be filling up.
     
-    print("[*] Attempting to set Channel 6...")
-    success = await iface.set_channel(6)
+    print("[*] Attempting to set Channel 1...")
+    success = await iface.set_channel(1)
     if success:
-        print("[+] Successfully tuned to Channel 6!")
+        print("[+] Successfully tuned to Channel 1!")
     else:
-        print("[-] Failed to tune to Channel 6.")
+        print("[-] Failed to tune to Channel 1.")
 
     print("[*] Waiting 5 seconds to observe traffic...")
     await asyncio.sleep(5)
