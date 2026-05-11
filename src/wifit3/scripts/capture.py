@@ -39,14 +39,14 @@ class LogHelper:
         cmd_string = " ".join(cmd_list)
         
         with open(log_file, "a") as f:
-            f.write(f"[{self._timestamp()}] --------------\n")
+            f.write(f"-----------------------------------\n")
             f.write(f"[{self._timestamp()}] Executing: {cmd_string}\n")
             if stdout_text:
                 f.write(f"{stdout_text}")
                 if not stdout_text.endswith('\n'):
                     f.write("\n")
             f.write(f"[{self._timestamp()}] Execution completed in {elapsed_time:.3f}s, return code: {return_code}\n")
-            f.write("[ ] --------------\n")
+            f.write(f"-----------------------------------\n")
 
 
 class Capture:
