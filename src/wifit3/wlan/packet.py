@@ -123,14 +123,33 @@ class WlanFrameParser:
         elif ftype == WlanFrameParser.TYPE_DATA:
             result["type"] = "data"
             # Check for EAPOL (Handshake)
-            # LLC/SNAP header (AA AA 03 00 00 00 88 8E) follows the QoS/Data header
-            header_len = 26 if subtype == WlanFrameParser.SUBTYPE_QOS_DATA else 24
+            # MAC header length is dynamic based on flags
+            header_len = 24
+            
+            # 1. Add 6 bytes if Address 4 is present (WDS)
+            if to_ds and from_ds:
+                header_len += 6
+                
+            # 2. Add 2 bytes if QoS Subtype
+            if subtype & 0x08:
+                header_len += 2
+                
+            # 3. Add 4 bytes if HT Control is present (Check Order bit in FC1)
+            if fc1 & 0x80:
+                header_len += 4
+
             if len(frame) >= header_len + 8:
-                llc_snap = frame[header_len:header_len+8]
-                if llc_snap == b'\xaa\xaa\x03\x00\x00\x00\x88\x8e':
+                # The hardware DMA engine pads the 802.11 header so the payload is 4-byte aligned.
+                # If the header is 26 bytes, it adds 2 bytes of padding (e.g. `00 00`), pushing LLC to offset 28.
+                # We use a sliding window to gracefully find the LLC/SNAP signature regardless of padding.
+                llc_snap_sig = b'\xaa\xaa\x03\x00\x00\x00\x88\x8e'
+                search_window = frame[header_len : header_len + 16]
+                sig_idx = search_window.find(llc_snap_sig)
+                
+                if sig_idx != -1:
                     result["type"] = "eapol"
                     # Extract EAPOL metadata
-                    eapol_start = header_len + 8
+                    eapol_start = header_len + sig_idx + 8
                     if len(frame) >= eapol_start + 17: # Header(4) + DescType(1) + KeyInfo(2) + KeyLen(2) + Replay(8)
                         eapol_type = frame[eapol_start + 1]
                         if eapol_type == 3: # EAPOL-Key
@@ -148,12 +167,14 @@ class WlanFrameParser:
     def _is_valid_frame(frame: bytes) -> bool:
         if len(frame) < 24: return False
         fc0, fc1 = frame[0], frame[1]
-        if (fc0 & 0x03) != 0: return False # Version must be 0
+        
+        # Protocol version must be 0
+        if (fc0 & 0x03) != 0: return False 
         
         ftype = (fc0 & 0x0C) >> 2
         subtype = (fc0 & 0xF0) >> 4
         
-        if ftype == 0: # Mgmt
+        if ftype == WlanFrameParser.TYPE_MGMT:
             # Enforce Strict Tag Ordering for Mgmt Frames
             if subtype in (WlanFrameParser.SUBTYPE_BEACON, WlanFrameParser.SUBTYPE_PROBE_RESP):
                 ptr = 36
@@ -183,7 +204,26 @@ class WlanFrameParser:
             
             return True
 
-        return True
+        if ftype == WlanFrameParser.TYPE_DATA:
+            # EAPOL frames are rarely very large, but must at least hold a header
+            # Check if addresses look like valid MACs (not all zeros/broadcast usually for source)
+            # This helps the 'Hunt' loop distinguish between random USB noise and a frame
+            if len(frame) < 24:
+                return False
+                
+            addr1 = frame[4:10]
+            addr2 = frame[10:16]
+            addr3 = frame[16:22]
+            
+            # Source MAC (usually addr2 or addr3) should rarely be broadcast or all zeros
+            if addr2 == b'\x00\x00\x00\x00\x00\x00' or addr2 == b'\xff\xff\xff\xff\xff\xff':
+                return False
+            if addr3 == b'\x00\x00\x00\x00\x00\x00' or addr3 == b'\xff\xff\xff\xff\xff\xff':
+                return False
+                
+            return True
+
+        return False
 
     @staticmethod
     def _mac_to_str(mac_bytes: bytes) -> str:

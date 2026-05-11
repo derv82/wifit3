@@ -138,7 +138,7 @@ packet = create_reg_write(5, 0x9874, 0x30a27777)
 ```
 
 ## Updating an Existing Template (The "Slurp" Fix)
-If you are modifying a captured blob (like your 500-byte init table), use struct.pack_into to surgically update just the Sequence ID without touching the rest of the data.
+If you are modifying a captured blob (like your 500-byte init table), use struct.pack_into to update just the Sequence ID without touching the rest of the data.
 
 ```python
 def update_sequence_id(data_mutable, new_seq_id):
@@ -241,7 +241,7 @@ These are the most common signals the firmware sends back. Filtering for these a
 ------------------------------
 
 ## 3. WMI_REG_WRITE (0x15) Structure Detail
-Since this is your "workhorse" command for replaying the register blasts, here are the surgical offsets for your template:
+Since this is your "workhorse" command for replaying the register blasts, here are the offsets for your template:
 
 | Field | Offset | Length | Type |
 |---|---|---|---|

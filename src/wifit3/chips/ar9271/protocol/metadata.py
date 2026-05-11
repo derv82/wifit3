@@ -63,21 +63,43 @@ class AthMetadataLayer:
         return frame_data, rssi, rs_datalen
 
     @staticmethod
-    def pack_tx(frame_data: bytes, rate_idx: int = 0x0B, no_ack: bool = True) -> bytes:
+    def pack_tx_mgmt(frame_data: bytes, no_ack: bool = True) -> bytes:
         """
-        Packs a TX descriptor for packet injection.
+        Packs a TX management descriptor (`tx_mgmt_hdr`) for packet injection.
+        The ath9k_htc driver expects this 8-byte header for management frames
+        (like Deauth, Auth, Probe Requests) before the 802.11 MAC header.
+        
+        struct tx_mgmt_hdr {
+            u8 node_idx;  (0)
+            u8 vif_idx;   (0)
+            u8 tidno;     (0)
+            u8 flags;     (1 for NO_ACK)
+            u8 key_type;  (0)
+            u8 keyix;     (0xFF for none)
+            u8 cookie;    (0)
+            u8 pad;       (0)
+        }
         """
-        ts_flags = AthMetadataLayer.TX_FLAG_NO_ACK if no_ack else 0
+        flags = AthMetadataLayer.TX_FLAG_NO_ACK if no_ack else 0
         
         tx_desc = struct.pack(
-            AthMetadataLayer.TX_FMT,
-            len(frame_data), # ts_datalen
-            rate_idx,         # ts_rate
-            ts_flags,         # ts_flags
-            0,                # ts_retry
-            1,                # ts_antenna
-            0,                # ts_tstamp
-            0                 # ts_reserved
+            "BBBBBBBB",
+            0,          # node_idx
+            0,          # vif_idx
+            0,          # tidno
+            flags,      # flags
+            0,          # key_type
+            0xFF,       # keyix
+            0,          # cookie
+            0           # pad
         )
         
         return tx_desc + frame_data
+
+    @staticmethod
+    def pack_tx(frame_data: bytes, rate_idx: int = 0x0B, no_ack: bool = True) -> bytes:
+        """
+        Backward compatibility. Re-routes to the correct management packer
+        since our driver currently only injects Mgmt frames (Deauths).
+        """
+        return AthMetadataLayer.pack_tx_mgmt(frame_data, no_ack)

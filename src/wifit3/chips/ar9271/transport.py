@@ -91,7 +91,7 @@ class AR9271USBTransport:
         self._listeners = []
         logger.info("USB Transport stopped.")
 
-    async def send(self, htc_ep_id: int, payload: bytes, is_wmi: bool = True):
+    async def send(self, htc_ep_id: int, payload: bytes, is_wmi: bool = True, is_data: bool = False):
         """
         Encapsulates and sends a packet, waiting for credits if necessary.
         """
@@ -104,12 +104,22 @@ class AR9271USBTransport:
         else:
             packet = self.htc.pack_control(htc_ep_id, payload)
             
-        # 3. Write to USB (Bulk Out EP 0x04)
         from .usb_logger import USBInterceptor
-        USBInterceptor.log_tx(USB_EP_WMI_CMD_OUT, packet)
-        
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self.dev.write, USB_EP_WMI_CMD_OUT, packet)
+
+        # 3. Route to the correct USB Endpoint
+        if is_data:
+            # Data frames go to the Bulk OUT endpoint (0x01) and require a 4-byte HIF header
+            USB_EP_WLAN_TX = 0x01
+            hif_header = struct.pack("<HH", len(packet), 0x697e)
+            bulk_packet = hif_header + packet
+            
+            USBInterceptor.log_tx(USB_EP_WLAN_TX, bulk_packet)
+            await loop.run_in_executor(None, self.dev.write, USB_EP_WLAN_TX, bulk_packet)
+        else:
+            # WMI Commands and HTC Management go to the Interrupt OUT endpoint (0x04)
+            USBInterceptor.log_tx(USB_EP_WMI_CMD_OUT, packet)
+            await loop.run_in_executor(None, self.dev.write, USB_EP_WMI_CMD_OUT, packet)
 
     async def _read_loop(self, ep_addr: int, name: str):
         """Continuous polling of an IN endpoint."""

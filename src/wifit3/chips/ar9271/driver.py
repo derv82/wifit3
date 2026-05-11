@@ -37,6 +37,7 @@ class AR9271Driver:
         
         # State tracking
         self.wmi_endpoint_id = HTC_ENDPOINT_WMI
+        self.data_endpoint_id = 5
         self.mac_address = None
         self.total_credits = 0
         self._rx_callback = None
@@ -56,10 +57,11 @@ class AR9271Driver:
             logger.info("Device is already WARM. Re-attaching to existing HTC/WMI streams...")
             self.total_credits = 33 # Assume default from previous handshake
             self.wmi_endpoint_id = HTC_ENDPOINT_WMI # WMI is mapped to HTC endpoint 1
+            self.data_endpoint_id = 5 # Default Data EP
             
             # Seed the CreditManager to prevent deadlocks since we skipped the HTC_READY handshake
             self.transport.credit_manager.set_initial(self.wmi_endpoint_id, self.total_credits)
-            self.transport.credit_manager.set_initial(HTC_ENDPOINT_WLAN_DATA, self.total_credits)
+            self.transport.credit_manager.set_initial(self.data_endpoint_id, self.total_credits)
             
             self._htc_ready_event.set()
             self._htc_config_done_event.set()
@@ -246,6 +248,20 @@ class AR9271Driver:
         for cmd_id, payload in sequence:
             success = await self.send_wmi_command(cmd_id, payload)
             if not success: return False
+        return True
+
+    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
+        """
+        Injects a raw 802.11 frame onto the air.
+        Wraps the frame in the `ath_tx_status` hardware descriptor.
+        """
+        # Pack the hardware TX descriptor (rate 0x0B, no_ack flag)
+        tx_payload = self.meta.pack_tx(frame_bytes, rate_idx=0x0B, no_ack=use_no_ack)
+        
+        # Dispatch to the dynamic Data endpoint (usually EP 5)
+        # is_wmi=False means it uses the standard 8-byte HTC header, not the WMI variant
+        # is_data=True means it must go to Bulk OUT (EP 0x01) with a 4-byte HIF header!
+        await self.transport.send(self.data_endpoint_id, tx_payload, is_wmi=False, is_data=True)
         return True
 
     async def close(self):

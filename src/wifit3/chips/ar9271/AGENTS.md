@@ -12,7 +12,7 @@ All subagents must operate within a **Windows PowerShell** environment.
 ## 0.1 Tooling Strategy (Context Efficiency)
 To prevent context bloat and tool failure:
 1.  **Deterministic Tools**: ALWAYS use the Python scripts in `./scratch/` to interact with complex data.
-    *   Use `python scratch/source_grep.py <dir/file> --token <token>` or `--hex` for surgical source code searches. Do NOT use raw grep/Select-String.
+    *   Use `python scratch/source_grep.py <dir/file> --token <token>` or `--hex` for source code searches. Do NOT use raw grep/Select-String.
     *   Use `python scratch/pcap_slicer.py <log_file> <pcap_file>` BEFORE analyzing a pcap to map commands to exact frame boundaries based on absolute Epoch time.
 2.  **Bypass Ignore Patterns**: `read_file` and `grep_search` often fail on `data_dumps` due to `.gitignore`. Use the `scratch/source_grep.py` script.
 3.  **tshark Filters**: Use standard USB field names. 
@@ -33,7 +33,7 @@ To prevent context bloat and tool failure:
 
 ### Prompt Template
 ```markdown
-You are the LogPcapAnalyzerAgent. Your task is to perform surgical analysis on USB traffic to verify hardware behavior.
+You are the LogPcapAnalyzerAgent. Your task is to perform analysis on USB traffic to verify hardware behavior.
 
 CONTEXT:
 - Platform: Windows PowerShell
@@ -67,7 +67,7 @@ CONTEXT:
 - Source Tree: `data_dumps\ath9k-source-v6.8`
 
 INSTRUCTIONS:
-1. REQUIRED FIRST STEP: Use `python scratch/source_grep.py data_dumps/ath9k-source-v6.8 --token [Pattern]` to surgically locate the constant. DO NOT use raw PowerShell grep/Select-String.
+1. REQUIRED FIRST STEP: Use `python scratch/source_grep.py data_dumps/ath9k-source-v6.8 --token [Pattern]` to locate the constant. DO NOT use raw PowerShell grep/Select-String.
 2. Identify the `#define` or enum member name (e.g., `WMI_REG_WRITE_CMDID`).
 3. Extract any surrounding comments that explain the purpose or register offsets.
 4. Provide the fully qualified constant name and its functional description.
