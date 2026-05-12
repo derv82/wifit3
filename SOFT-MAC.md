@@ -281,8 +281,3 @@ def send_and_wait(dev, cmd_data, global_seq):
         except usb.core.USBError:
             break # Handle timeout
 ```
-
-This structural map should get your pyusb engine past the AR9271's stateful nature. Good luck with the porting—it’s a beast of a card to tame.
-
-Do you have the byte signatures for the 802.11 TX/RX descriptors next, or are you just focusing on the control path for now?
-

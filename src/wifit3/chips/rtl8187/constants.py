@@ -5,7 +5,7 @@
 # --- USB Endpoints (Physical RTL8187L) ---
 # Verified for ALFA AWUS036H
 USB_EP_BULK_IN             = 0x81
-USB_EP_BULK_OUT            = 0x03
+USB_EP_BULK_OUT            = 0x02
 
 # --- Register Offsets (Partial) ---
 MAC0                       = 0x0000  # MAC Address bytes 0-3
@@ -13,7 +13,12 @@ MAC4                       = 0x0004  # MAC Address bytes 4-5
 TCR                        = 0x0040  # Transmit Configuration Register
 RCR                        = 0x0044  # Receive Configuration Register
 CR                         = 0x0037  # Command Register
-MSR                        = 0x0058  # Media Status Register (0x08=Monitor Mode)
+MSR                        = 0x0058  # Media Status Register
+MSR_NO_LINK                = 0x00
+MSR_ADHOC                  = 0x04
+MSR_INFRA                  = 0x08
+MSR_MASTER                 = 0x0C
+MSR_ENEDCA                 = 0x10
 EEPROM_CMD                 = 0x0001
 
 # --- RF / Baseband Registers ---

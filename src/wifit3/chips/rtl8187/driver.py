@@ -49,8 +49,13 @@ class RTL8187Driver:
             try:
                 if cmd_type == "WRITE":
                     self.transport.write_custom(wVal, wIdx, data)
+                elif cmd_type == "WRITE_AND_WAIT":
+                    self.transport.write_custom(wVal, wIdx, data)
+                    # Block until an ACK is received on the interrupt/status endpoint.
+                    # Based on PCAP flow, we expect a 1-byte ACK from the device.
+                    self.transport.read_custom(wVal, wIdx, 1)
                 elif cmd_type == "READ":
-                    self.transport.read_custom(wVal, wIdx, data) 
+                    self.transport.read_custom(wVal, wIdx, data)
                 elif cmd_type == "SET_CONFIG":
                     self.dev.set_configuration()
                 
@@ -71,7 +76,17 @@ class RTL8187Driver:
         self.transport.reset_pipes()
         await asyncio.sleep(0.1) # Breather after incantation
 
-        logger.info("RTL8187 Hardware Ready (MAC Read Skipped to prevent state corruption).")
+        # PHASE 2: Lock into Monitor Mode
+        # 1. Set MSR to NO_LINK (0x00) to stop autonomous background scanning
+        logger.info("Setting RTL8187 to Monitor Mode (Disabling Auto-Scan)...")
+        self.transport.write_reg8(MSR, MSR_NO_LINK)
+        
+        # 2. Set RCR to accept all packets (Promiscuous)
+        # We reuse the 4-byte RCR value from the PCAP but ensure bit 0 (AAP) is set.
+        # 0x909cfc0b: Includes Broadcast, Multicast, Mgmt, Data, and Promiscuous (AAP)
+        self.transport.write_reg32(RCR, [0x0b, 0xfc, 0x9c, 0x90])
+
+        logger.info("RTL8187 Hardware Ready (Monitor Mode Active).")
         
         # Start read loop
         self.is_running = True
@@ -81,20 +96,22 @@ class RTL8187Driver:
 
     async def _high_res_sleep(self, seconds: float):
         """
-        Precise sleep that bypasses Windows' 15.6ms timer resolution.
-        Uses asyncio.sleep for the bulk, and time.perf_counter() for the tail.
+        High-resolution sleep that bypasses Windows' 15.6ms timer resolution.
+        - Delays < 20ms: Pure busy-wait loop using time.perf_counter().
+        - Delays >= 20ms: asyncio.sleep (OS-friendly) + 2ms busy-wait tail.
         """
         import time
-        start = time.perf_counter()
-        
-        # If delay is long enough, yield the CPU for the majority of it.
-        # We leave a 20ms buffer to ensure we don't 'over-sleep' due to OS jitter.
-        if seconds > 0.030:
-            await asyncio.sleep(seconds - 0.020)
-            
-        # Precise busy-wait for the remaining time.
-        while (time.perf_counter() - start) < seconds:
-            pass
+        if seconds < 0.020:
+            # For short durations, busy-wait to bypass Windows scheduler jitter.
+            start = time.perf_counter()
+            while (time.perf_counter() - start) < seconds:
+                pass
+        else:
+            # For longer durations, use OS sleep then busy-wait the final 2ms.
+            await asyncio.sleep(seconds - 0.002)
+            start = time.perf_counter()
+            while (time.perf_counter() - start) < 0.002:
+                pass
 
     async def _read_loop(self):
         """Continuous polling of the Bulk IN endpoint."""
@@ -113,9 +130,8 @@ class RTL8187Driver:
                 
                 data = bytes(raw)
                 
-                # RTL8187 Specific: The raw frame might have a header or trailer.
-                # In MVP, we assumed direct 802.11 frame start.
-                # TODO: Identify and extract hardware RSSI if possible.
+                # RTL8187 Specific: The raw frame might have a hardware trailer.
+                # WlanFrameParser naturally ignores trailing garbage due to bounds checks.
                 rssi = -50 
                 
                 parsed = WlanFrameParser.parse_80211_frame(data, rssi)
@@ -133,7 +149,8 @@ class RTL8187Driver:
     async def set_channel(self, channel: int) -> bool:
         """
         Tunes the RTL8187 to a specific frequency.
-        Currently supports Ch 1 and 6 via extracted PCAP sequences.
+        Replays the full 156-instruction sequence for the requested channel,
+        which includes necessary baseband and AGC recalibration steps.
         """
         if channel == self.current_channel:
             return True
@@ -156,6 +173,9 @@ class RTL8187Driver:
             try:
                 if cmd_type == "WRITE":
                     self.transport.write_custom(wVal, wIdx, data)
+                elif cmd_type == "WRITE_AND_WAIT":
+                    self.transport.write_custom(wVal, wIdx, data)
+                    self.transport.read_custom(wVal, wIdx, 1)
                 elif cmd_type == "READ":
                     self.transport.read_custom(wVal, wIdx, data)
                 
@@ -171,16 +191,19 @@ class RTL8187Driver:
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
         """
         Injects a raw 802.11 frame.
-        RTL8187 requires a TX descriptor before the frame.
+        RTL8187 requires a 12-byte TX descriptor prepended to the frame.
         """
-        # TODO: Implement real RTL8187 TX descriptor
-        # For now, let's see if raw frame works (unlikely for most hard-macs)
-        # Linux rtl8187 driver prepends a 9-byte or 14-byte descriptor.
-        logger.warning("RTL8187 Frame Injection not fully implemented (missing TX descriptor).")
+        frame_len = len(frame_bytes)
+        
+        # 12-byte TX Descriptor:
+        # Byte 0-1: Frame length (12 lower bits) combined with a TX flag (0x8000)
+        # Byte 2-11: Zeros (no advanced rate control or fragmentation configured for MVP)
+        tx_desc = struct.pack("<H", frame_len | 0x8000) + bytes(10)
+        payload = tx_desc + frame_bytes
         
         loop = asyncio.get_running_loop()
         try:
-            await loop.run_in_executor(None, self.dev.write, USB_EP_BULK_OUT, frame_bytes)
+            await loop.run_in_executor(None, self.dev.write, USB_EP_BULK_OUT, payload)
             return True
         except Exception as e:
             logger.error(f"RTL8187 Injection failed: {e}")

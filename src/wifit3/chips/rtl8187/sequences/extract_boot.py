@@ -6,8 +6,7 @@ def extract_ultimate_bootstrap(pcap_file, output_file):
     
     cmd = [
         "tshark.exe", "-r", pcap_file,
-        # We capture up to T=18.0s (airmon-ng completes before T=18s, ch1 tune starts T=20s)
-        "-Y", "frame.time_relative <= 18.0 and (usb.bmRequestType == 0x40 or usb.bmRequestType == 0xc0 or usb.bmRequestType == 0x00)",
+        "-Y", "frame.number <= 16400 and (usb.bmRequestType == 0x40 or usb.bmRequestType == 0xc0 or usb.bmRequestType == 0x00)",
         "-T", "fields",
         "-e", "frame.time_relative",
         "-e", "usb.bmRequestType",
@@ -53,20 +52,38 @@ def extract_ultimate_bootstrap(pcap_file, output_file):
         elif bmReq == "0x00" and bReq == "9":
             raw_commands.append((float(t_str), "SET_CONFIG", "0", "0", "0"))
 
-    print(f"[*] Found {len(raw_commands)} instructions. Calculating EXACT micro-delays...")
+    # Pairing ACK Logic
+    processed_commands = []
+    i = 0
+    while i < len(raw_commands):
+        t, cmd, w, idx, data = raw_commands[i]
+        
+        if cmd == "WRITE" and i + 1 < len(raw_commands):
+            t_next, next_cmd, next_w, next_idx, next_data = raw_commands[i+1]
+            if next_cmd == "READ" and next_w == w:
+                processed_commands.append((t, "WRITE_AND_WAIT", w, idx, data))
+                i += 2
+                continue
+                
+        processed_commands.append((t, cmd, w, idx, data))
+        i += 1
+
+    print(f"[*] Found {len(processed_commands)} instructions.")
     
     writes_with_delay = []
-    for i in range(len(raw_commands)):
-        t_current, cmd_type, w_val, w_idx, data = raw_commands[i]
+    for i in range(len(processed_commands)):
+        t_current, cmd_type, w_val, w_idx, data = processed_commands[i]
         
-        if i < len(raw_commands) - 1:
-            t_next = raw_commands[i+1][0]
-            delay = max(0.0, t_next - t_current) # EXACT DELAY
+        if i < len(processed_commands) - 1:
+            t_next = processed_commands[i+1][0]
+            delay = t_next - t_current
             
-            # The Linux driver uses msleep(200) as its maximum hardware wait.
-            # Any delay > 200ms in the PCAP is an artifact of host CPU lag (e.g. airmon-ng running).
-            # We cap it to 0.2s to prevent insane wall-clock lags during boot.
-            delay = min(delay, 0.200)
+            # If the delay is very small (< 5ms), it's likely just host/bus latency.
+            # We set these to 0.0 to execute as fast as the host can send them.
+            if delay < 0.005:
+                delay = 0.0
+            else:
+                delay = min(delay, 0.200)
         else:
             delay = 0.010
             
@@ -76,8 +93,8 @@ def extract_ultimate_bootstrap(pcap_file, output_file):
         f.write("# Auto-generated Interleaved Hardware Bootstrap\n\n")
         f.write("FULL_BOOT_SEQUENCE = [\n")
         for c_type, w, idx, data, d in writes_with_delay:
-            if c_type == "WRITE":
-                byte_list = [f"0x{data[i:i+2]}" for i in range(0, len(data), 2)]
+            if c_type == "WRITE" or c_type == "WRITE_AND_WAIT":
+                byte_list = [f"0x{data[j:j+2]}" for j in range(0, len(data), 2)]
                 f.write(f"    ('{c_type}', {w}, {idx}, [{', '.join(byte_list)}], {d:.4f}),\n")
             elif c_type == "READ":
                 f.write(f"    ('{c_type}', {w}, {idx}, {data}, {d:.4f}),\n")
