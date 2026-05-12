@@ -1,13 +1,13 @@
-# AR9271 Subagent Scaffolding
+# RT5572 Subagent Scaffolding
 
 This document defines the specialized subagents used to bridge the gap between raw hardware telemetry and high-level Python drivers.
 
 ## 0. Platform Requirements (CRITICAL)
-All subagents must operate within a **Windows PowerShell** environment.
+All subagents MUST operate within a **Windows PowerShell** environment.
 - **DO NOT** use `&&`. Use `;` or separate lines.
-- **DO NOT** use `grep`. Use `Select-String`.
+- **DO NOT** use `grep`. Use `rg` (ripgrep) which is available in the environment.
 - **DO NOT** use `tail`. Use `Select-Object -Last N`.
-- **DO NOT** use `|`. While PowerShell supports piping, prefer explicit variable assignment for complex filtering to avoid encoding issues.
+- **DO NOT** use `-c` unless you are specifically trying to limit the total number of packets read from the file. It stops the entire process after N packets, it does not filter results. Use `Select-Object -First N` in PowerShell instead.
 
 ## 0.1 Tooling Strategy (Context Efficiency)
 To prevent context bloat and tool failure:
@@ -21,14 +21,14 @@ To prevent context bloat and tool failure:
     *   **Endpoint Number**: `usb.endpoint_address.number == 2`
     *   **Payloads**: `usb.capdata`
     *   **Limit Output**: Always use `-c 10` or `-c 20` to avoid overwhelming the context with raw packet data.
-    *   **Example**: `tshark -r usb_dumps/ar9271/awus036nha_1.pcap -Y "frame.number >= 1543 and frame.number <= 6406 and usb.endpoint_address == 0x82" -T fields -e usb.capdata -c 10`
+    *   **Example**: `tshark -r ./usb_dumps/rt25572/pau09n600_1.pcap -Y "frame.number >= 1543 and frame.number <= 6406 and usb.endpoint_address == 0x82" -T fields -e usb.capdata`
 
 ## 1. LogPcapAnalyzerAgent
 **Role**: Context Compression & Differential Analysis.
 **Objective**: Ingest multi-megabyte .pcap files and high-resolution driver logs to verify state-machine transitions and timing.
 
 ### Ground Truth Resources
-- **Golden PCAPs**: `usb_dumps\ar9271\*.pcap`
+- **Golden PCAPs**: `usb_dumps\rt5572\*.pcap`
 - **Driver Logs**: `data_dumps\logs\*.log` (Expected)
 
 ### Prompt Template
@@ -37,7 +37,7 @@ You are the LogPcapAnalyzerAgent. Your task is to perform analysis on USB traffi
 
 CONTEXT:
 - Platform: Windows PowerShell
-- Target Device: Atheros AR9271 (ath9k_htc)
+- Target Device: RT5572 (rt2x00)
 - Ground Truth: USB Packet captures and Logs in `usb_dumps\`
 - Goal: [Specific hypothesis to verify, e.g., "Analyze register pokes during channel hop to 1"]
 
@@ -52,22 +52,22 @@ INSTRUCTIONS:
 
 ## 2. SourceInvestigatorAgent
 **Role**: Architectural Mapping & Rosetta Stone.
-**Objective**: Map hex constants found in PCAPs/Logs to the `ath9k_htc` kernel source code.
+**Objective**: Map hex constants found in PCAPs/Logs to the `./data_dumsp/rt2x00/` kernel source code.
 
 ### Ground Truth Resources
-- **Kernel Source**: `data_dumps\ath9k-source-v6.8`
+- **Kernel Source**: `data_dumps\rt2x000`
 
 ### Prompt Template
 ```markdown
-You are the SourceInvestigatorAgent. Your task is to find the ground truth for hex constants within the ath9k_htc source code.
+You are the SourceInvestigatorAgent. Your task is to find the ground truth for hex constants within the rt2x00 source code.
 
 CONTEXT:
 - Platform: Windows PowerShell
 - Hex Constant/Token: [e.g., 0x0015 or WMI_REG_WRITE_CMDID]
-- Source Tree: `data_dumps\ath9k-source-v6.8`
+- Source Tree: `data_dumps\rt2x000`
 
 INSTRUCTIONS:
-1. REQUIRED FIRST STEP: Use `python scratch/source_grep.py data_dumps/ath9k-source-v6.8 --token [Pattern]` to locate the constant. DO NOT use raw PowerShell grep/Select-String.
+1. REQUIRED FIRST STEP: Use `python scratch/source_grep.py data_dumps/rt2x00 --token [Pattern]` to locate the constant. DO NOT use raw PowerShell grep/Select-String.
 2. Identify the `#define` or enum member name (e.g., `WMI_REG_WRITE_CMDID`).
 3. Extract any surrounding comments that explain the purpose or register offsets.
 4. Provide the fully qualified constant name and its functional description.
