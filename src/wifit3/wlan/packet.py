@@ -25,28 +25,12 @@ class WlanFrameParser:
     SUBTYPE_QOS_DATA = 0x08
 
     @staticmethod
-    def parse_wmi_rx(payload: bytes) -> Optional[Dict[str, Any]]:
+    def parse_80211_frame(frame: bytes, rssi: int) -> Optional[Dict[str, Any]]:
         """
-        Parses a WMI RX event payload.
-        Returns a dictionary representing the 802.11 frame, or None if invalid.
+        Generic 802.11 frame parser.
+        Receives a raw 802.11 frame and an RSSI value.
         """
-        if len(payload) < 32: 
-            return None
-
-        # 1. Extract RSSI
-        raw_rssi = max(payload[8], payload[9], payload[11])
-        rssi = raw_rssi - 95 if raw_rssi > 0 else -95
-        
-        # 2. High-Fidelity Signature Hunt (Dynamic Offset)
-        frame = None
-        for off in [32, 36, 40, 44, 48]:
-            if len(payload) >= off + 24:
-                potential_frame = payload[off:]
-                if WlanFrameParser._is_valid_frame(potential_frame):
-                    frame = potential_frame
-                    break
-        
-        if not frame:
+        if not WlanFrameParser._is_valid_frame(frame):
             return None
 
         fc0 = frame[0]

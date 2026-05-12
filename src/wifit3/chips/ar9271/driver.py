@@ -199,7 +199,7 @@ class AR9271Driver:
                 
             # 3. Handle live RX traffic (Beacons, Data, etc.)
             elif ev_id in [WMI_RECV_PDU_EVENTID, WMI_RECV_PDU_V14_ID, WMI_RECV_PDU_V14_BCN_ID]:
-                parsed = WlanFrameParser.parse_wmi_rx(wmi_payload)
+                parsed = self.wmi.parse_rx_frame(wmi_payload)
                 if parsed and self._rx_callback:
                     self._rx_callback(parsed)
             

@@ -5,6 +5,7 @@ import usb.util
 from typing import List, Optional, Tuple
 
 from wifit3.chips.ar9271.driver import AR9271Driver
+from wifit3.chips.rtl8187.driver import RTL8187Driver
 from .interface import WlanInterface
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ class WlanDeviceManager:
         # Supported Hardware Registry
         self.SUPPORTED_DEVICES = {
             (0x0cf3, 0x9271): {"name": "AR9271", "driver_class": AR9271Driver, "desc": "Atheros AR9271 / ALFA AWUS036NHA"},
+            (0x0bda, 0x8187): {"name": "RTL8187", "driver_class": RTL8187Driver, "desc": "Realtek RTL8187L / ALFA AWUS036H"},
         }
 
     async def refresh(self) -> List[WlanInterface]:
@@ -42,13 +44,20 @@ class WlanDeviceManager:
                 info = self.SUPPORTED_DEVICES[vid_pid]
                 logger.info(f"Found supported hardware: {info['desc']}")
                 
-                # Currently hardcoded for AR9271 lifecycle
+                # AR9271 Specific lifecycle (firmware upload)
                 if info["name"] == "AR9271":
                     warm_dev, was_already_warm = await self._ensure_ar9271_firmware(dev)
                     if warm_dev:
                         driver_instance = info["driver_class"](warm_dev, is_warm=was_already_warm)
                         iface = WlanInterface(driver_instance, f"wlan{len(self.interfaces)}", info["desc"])
                         self.interfaces.append(iface)
+
+                # RTL8187 Specific lifecycle (usually warm)
+                elif info["name"] == "RTL8187":
+                    # RTL8187 doesn't require firmware upload in most cases
+                    driver_instance = info["driver_class"](dev, is_warm=True)
+                    iface = WlanInterface(driver_instance, f"wlan{len(self.interfaces)}", info["desc"])
+                    self.interfaces.append(iface)
 
         logger.info(f"Discovered {len(self.interfaces)} native WlanInterfaces.")
         return self.interfaces

@@ -1,5 +1,6 @@
 import struct
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any
+from wifit3.wlan.packet import WlanFrameParser
 
 class WMIProtocol:
     """
@@ -39,6 +40,34 @@ class WMIProtocol:
         event_id, seq_id = struct.unpack(self.WMI_HDR_FMT, data[:self.WMI_HDR_LEN])
         payload = data[self.WMI_HDR_LEN:]
         return event_id, seq_id, payload
+
+    @staticmethod
+    def parse_rx_frame(payload: bytes) -> Optional[Dict[str, Any]]:
+        """
+        AR9271-specific: Parses a WMI RX event payload.
+        Extracts metadata from the WMI wrapper and delegates to the generic parser.
+        """
+        if len(payload) < 32: 
+            return None
+
+        # 1. Extract RSSI (specific to AR9271 WMI layout)
+        raw_rssi = max(payload[8], payload[9], payload[11])
+        rssi = raw_rssi - 95 if raw_rssi > 0 else -95
+        
+        # 2. High-Fidelity Signature Hunt (Dynamic Offset)
+        # The WMI wrapper pads the 802.11 frame at various offsets.
+        frame = None
+        for off in [32, 36, 40, 44, 48]:
+            if len(payload) >= off + 24:
+                potential_frame = payload[off:]
+                if WlanFrameParser._is_valid_frame(potential_frame):
+                    frame = potential_frame
+                    break
+        
+        if not frame:
+            return None
+
+        return WlanFrameParser.parse_80211_frame(frame, rssi)
 
     # Common Command IDs
     WMI_ECHO_CMDID = 0x0001
