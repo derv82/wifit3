@@ -227,7 +227,7 @@ class WlanInterface:
         for i in range(burst_count):
             await self.send_raw(client_deauth, use_no_ack=True)
             await self.send_raw(ap_deauth, use_no_ack=True)
-            time.sleep(0.01)
+            await asyncio.sleep(0.01)
             
 
     async def start_hopping(self, channels: List[int] = None, interval: float = 0.5):
