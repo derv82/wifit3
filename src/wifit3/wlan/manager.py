@@ -54,8 +54,16 @@ class WlanDeviceManager:
 
                 # RTL8187 Specific lifecycle (usually warm)
                 elif info["name"] == "RTL8187":
-                    # RTL8187 doesn't require firmware upload in most cases
-                    driver_instance = info["driver_class"](dev, is_warm=True)
+                    # Passive Detection: Try to read from Bulk IN (EP 0x81)
+                    is_warm = False
+                    try:
+                        data = dev.read(0x81, 64, timeout=100)
+                        if len(data) > 0:
+                            is_warm = True
+                    except usb.core.USBError:
+                        pass
+                    
+                    driver_instance = info["driver_class"](dev, is_warm=is_warm)
                     iface = WlanInterface(driver_instance, f"wlan{len(self.interfaces)}", info["desc"])
                     self.interfaces.append(iface)
 

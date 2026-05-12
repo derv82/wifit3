@@ -32,6 +32,13 @@ class RTL8187Driver:
 
     async def connect(self) -> bool:
         """Runs the boot sequence 'incantation' and identifies the hardware."""
+        if self.is_warm:
+            logger.info("Device is already WARM. Skipping bootstrap sequence.")
+            self.transport.reset_pipes()
+            self.is_running = True
+            self._read_task = asyncio.create_task(self._read_loop())
+            return True
+
         logger.info("Initializing RTL8187 hardware sequence...")
         
         try:
