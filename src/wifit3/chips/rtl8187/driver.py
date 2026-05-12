@@ -34,7 +34,7 @@ class RTL8187Driver:
         """Runs the boot sequence 'incantation' and identifies the hardware."""
         if self.is_warm:
             logger.info("Device is already WARM. Skipping bootstrap sequence.")
-            self.transport.reset_pipes()
+            # self.transport.reset_pipes()
             self.is_running = True
             self._read_task = asyncio.create_task(self._read_loop())
             return True
@@ -159,9 +159,6 @@ class RTL8187Driver:
         Replays the full 156-instruction sequence for the requested channel,
         which includes necessary baseband and AGC recalibration steps.
         """
-        if channel == self.current_channel:
-            return True
-            
         logger.info(f"Tuning RTL8187 to Channel {channel}...")
         
         try:
