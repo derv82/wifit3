@@ -1,11 +1,13 @@
 import subprocess
+import os
 
 def extract_ultimate_bootstrap(pcap_file, output_file):
-    print(f"[*] Extracting full Interleaved Sequence (Reads + Writes) up to Frame 16400...")
+    print(f"[*] Extracting full Interleaved Sequence (Reads + Writes) from {pcap_file}...")
     
     cmd = [
         "tshark.exe", "-r", pcap_file,
-        "-Y", "frame.number <= 16400 and (usb.bmRequestType == 0x40 or usb.bmRequestType == 0xc0 or usb.bmRequestType == 0x00)",
+        # We capture up to T=18.0s (airmon-ng completes before T=18s, ch1 tune starts T=20s)
+        "-Y", "frame.time_relative <= 18.0 and (usb.bmRequestType == 0x40 or usb.bmRequestType == 0xc0 or usb.bmRequestType == 0x00)",
         "-T", "fields",
         "-e", "frame.time_relative",
         "-e", "usb.bmRequestType",
@@ -51,7 +53,7 @@ def extract_ultimate_bootstrap(pcap_file, output_file):
         elif bmReq == "0x00" and bReq == "9":
             raw_commands.append((float(t_str), "SET_CONFIG", "0", "0", "0"))
 
-    print(f"[*] Found {len(raw_commands)} instructions. Calculating micro-delays...")
+    print(f"[*] Found {len(raw_commands)} instructions. Calculating EXACT micro-delays...")
     
     writes_with_delay = []
     for i in range(len(raw_commands)):
@@ -59,8 +61,12 @@ def extract_ultimate_bootstrap(pcap_file, output_file):
         
         if i < len(raw_commands) - 1:
             t_next = raw_commands[i+1][0]
-            delay = t_next - t_current
-            delay = max(0.001, min(delay, 0.500)) 
+            delay = max(0.0, t_next - t_current) # EXACT DELAY
+            
+            # The Linux driver uses msleep(200) as its maximum hardware wait.
+            # Any delay > 200ms in the PCAP is an artifact of host CPU lag (e.g. airmon-ng running).
+            # We cap it to 0.2s to prevent insane wall-clock lags during boot.
+            delay = min(delay, 0.200)
         else:
             delay = 0.010
             
@@ -79,7 +85,10 @@ def extract_ultimate_bootstrap(pcap_file, output_file):
                 f.write(f"    ('{c_type}', 0, 0, 0, {d:.4f}),\n")
         f.write("]\n")
 
-    print("[+] Done! Interleaved boot_sequence.py generated.")
+    print(f"[+] Done! Interleaved sequence saved to {output_file}")
 
 if __name__ == "__main__":
-    extract_ultimate_bootstrap(r"usb_dumps\round2\awus036h_1.pcap", "boot_sequence.py")
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    pcap_file = os.path.normpath(os.path.join(base_dir, "../../../../../usb_dumps/captures_rtl8187/capture-1.pcap"))
+    output_file = os.path.join(base_dir, "init.py")
+    extract_ultimate_bootstrap(pcap_file, output_file)

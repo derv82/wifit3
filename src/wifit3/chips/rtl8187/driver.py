@@ -40,26 +40,38 @@ class RTL8187Driver:
             logger.error("Could not find RTL8187 boot sequence (sequences/init.py).")
             return False
 
-        # Execute the 'Incantation'
+        # Execute the 'Incantation' with high-res precision for EVERY command.
+        # This provides a steady heartbeat the hardware needs to stay in sync.
         total_cmds = len(FULL_BOOT_SEQUENCE)
+        logger.info(f"Blasting {total_cmds} setup commands (Precise Heartbeat)...")
+        
         for i, (cmd_type, wVal, wIdx, data, delay) in enumerate(FULL_BOOT_SEQUENCE):
             try:
                 if cmd_type == "WRITE":
                     self.transport.write_custom(wVal, wIdx, data)
                 elif cmd_type == "READ":
-                    self.transport.read_custom(wVal, wIdx, data) # data is length here
+                    self.transport.read_custom(wVal, wIdx, data) 
                 elif cmd_type == "SET_CONFIG":
                     self.dev.set_configuration()
+                
+                # Honor the recorded delay with microsecond precision.
+                # Small gaps (like 1ms) will use a high-res busy-wait.
+                # Long gaps (like 200ms) will yield the CPU via asyncio.sleep.
+                await self._high_res_sleep(delay)
+
+                if i > 0 and i % 500 == 0:
+                    logger.info(f"Initialization Progress: {i}/{total_cmds} steps completed.")
+                    
             except usb.core.USBError as e:
                 if cmd_type != "SET_CONFIG":
-                    logger.warning(f"USB Error during boot sequence at step {i}: {e}")
-            
-            if delay > 0:
-                await asyncio.sleep(delay)
+                    logger.error(f"FATAL: USB Error during boot sequence at step {i} (Reg {hex(wVal)}): {e}")
+                    return False
 
-        # Identify MAC
-        self.mac_address = self._read_mac()
-        logger.info(f"RTL8187 Hardware Ready. MAC: {self.mac_address}")
+        # Reset pipes to clear stalls and flush FIFO buffers (Crucial step from mvp.py)
+        self.transport.reset_pipes()
+        await asyncio.sleep(0.1) # Breather after incantation
+
+        logger.info("RTL8187 Hardware Ready (MAC Read Skipped to prevent state corruption).")
         
         # Start read loop
         self.is_running = True
@@ -67,19 +79,22 @@ class RTL8187Driver:
         
         return True
 
-    def _read_mac(self) -> str:
-        """Reads the MAC address from the chipset registers."""
-        try:
-            m0 = self.transport.read_reg32(MAC0)
-            m4 = self.transport.read_reg16(MAC4)
-            mac = [
-                m0 & 0xFF, (m0 >> 8) & 0xFF, (m0 >> 16) & 0xFF, (m0 >> 24) & 0xFF,
-                m4 & 0xFF, (m4 >> 8) & 0xFF
-            ]
-            return ":".join(f"{b:02x}" for b in mac)
-        except Exception as e:
-            logger.error(f"Failed to read MAC address: {e}")
-            return "00:00:00:00:00:00"
+    async def _high_res_sleep(self, seconds: float):
+        """
+        Precise sleep that bypasses Windows' 15.6ms timer resolution.
+        Uses asyncio.sleep for the bulk, and time.perf_counter() for the tail.
+        """
+        import time
+        start = time.perf_counter()
+        
+        # If delay is long enough, yield the CPU for the majority of it.
+        # We leave a 20ms buffer to ensure we don't 'over-sleep' due to OS jitter.
+        if seconds > 0.030:
+            await asyncio.sleep(seconds - 0.020)
+            
+        # Precise busy-wait for the remaining time.
+        while (time.perf_counter() - start) < seconds:
+            pass
 
     async def _read_loop(self):
         """Continuous polling of the Bulk IN endpoint."""
@@ -118,16 +133,38 @@ class RTL8187Driver:
     async def set_channel(self, channel: int) -> bool:
         """
         Tunes the RTL8187 to a specific frequency.
-        Currently supports Ch 1 and 6.
+        Currently supports Ch 1 and 6 via extracted PCAP sequences.
         """
-        # TODO: Implement Full Spectrum support from captures.
         if channel == self.current_channel:
             return True
             
         logger.info(f"Tuning RTL8187 to Channel {channel}...")
         
-        # Placeholder for real channel switching logic.
-        # This usually involves poking BB and RF registers.
+        try:
+            from .sequences.tuning import TUNING_SEQUENCES
+        except ImportError:
+            logger.error("Could not find RTL8187 tuning sequences.")
+            return False
+            
+        if channel not in TUNING_SEQUENCES:
+            logger.error(f"Channel {channel} is not yet supported for RTL8187.")
+            return False
+            
+        sequence = TUNING_SEQUENCES[channel]
+        
+        for i, (cmd_type, wVal, wIdx, data, delay) in enumerate(sequence):
+            try:
+                if cmd_type == "WRITE":
+                    self.transport.write_custom(wVal, wIdx, data)
+                elif cmd_type == "READ":
+                    self.transport.read_custom(wVal, wIdx, data)
+                
+                await self._high_res_sleep(delay)
+                    
+            except usb.core.USBError as e:
+                logger.error(f"USB Error during channel tuning at step {i}: {e}")
+                return False
+
         self.current_channel = channel
         return True
 
