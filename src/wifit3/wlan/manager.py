@@ -6,6 +6,8 @@ from typing import List, Optional, Tuple
 
 from wifit3.chips.ar9271.driver import AR9271Driver
 from wifit3.chips.rtl8187.driver import RTL8187Driver
+from wifit3.chips.rt5572.driver import RT5572Driver
+from wifit3.chips.rt5572.transport import RT5572USBTransport
 from .interface import WlanInterface
 
 logger = logging.getLogger(__name__)
@@ -22,6 +24,7 @@ class WlanDeviceManager:
         self.SUPPORTED_DEVICES = {
             (0x0cf3, 0x9271): {"name": "AR9271", "driver_class": AR9271Driver, "desc": "Atheros AR9271 / ALFA AWUS036NHA"},
             (0x0bda, 0x8187): {"name": "RTL8187", "driver_class": RTL8187Driver, "desc": "Realtek RTL8187L / ALFA AWUS036H"},
+            (0x148f, 0x5572): {"name": "RT5572", "driver_class": RT5572Driver, "desc": "Ralink RT5572 / Panda PAU09 N600"},
         }
 
     async def refresh(self) -> List[WlanInterface]:
@@ -66,6 +69,15 @@ class WlanDeviceManager:
                     driver_instance = info["driver_class"](dev, is_warm=is_warm)
                     iface = WlanInterface(driver_instance, f"wlan{len(self.interfaces)}", info["desc"])
                     self.interfaces.append(iface)
+
+                # RT5572 Specific lifecycle (firmware upload)
+                elif info["name"] == "RT5572":
+                    warm_dev, was_already_warm = await self._ensure_rt5572_firmware(dev)
+                    if warm_dev:
+                        transport = RT5572USBTransport(warm_dev)
+                        driver_instance = info["driver_class"](transport, is_warm=was_already_warm)
+                        iface = WlanInterface(driver_instance, f"wlan{len(self.interfaces)}", info["desc"])
+                        self.interfaces.append(iface)
 
         logger.info(f"Discovered {len(self.interfaces)} native WlanInterfaces.")
         return self.interfaces
@@ -126,6 +138,27 @@ class WlanDeviceManager:
         else:
             logger.error("Firmware upload failed.")
             return None, False
+
+    async def _ensure_rt5572_firmware(self, dev: usb.core.Device) -> Tuple[Optional[usb.core.Device], bool]:
+        """
+        Safely checks if RT5572 is cold or warm.
+        Returns a tuple of (warm usb.core.Device handle, was_already_warm).
+        """
+        # Passive Detection: Try to read PBF_SYS_CTRL (0x1008)
+        # Bit 7 (PBF_SYS_CTRL_READY) is only set after the MCU boots.
+        try:
+            # RT5572 uses bRequest 7 for multi-read
+            res = dev.ctrl_transfer(0xc0, 0x07, 0, 0x1008, 4)
+            val = res[0] | (res[1] << 8) | (res[2] << 16) | (res[3] << 24)
+            if val & (1 << 7):
+                logger.info(f"RT5572 is already WARM (PBF Ready).")
+                return dev, True
+        except usb.core.USBError:
+            pass
+
+        # If we got here, it's likely COLD or just plugged in.
+        logger.info("RT5572 appears COLD (PBF Not Ready).")
+        return dev, False
 
     def get_interface(self, name: str) -> Optional[WlanInterface]:
         for iface in self.interfaces:

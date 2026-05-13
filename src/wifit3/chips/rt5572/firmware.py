@@ -38,14 +38,6 @@ class RT5572FirmwareLoader:
                 
         logger.info("Firmware upload complete.")
         
-        # 3. Kick the MCU (Release reset)
-        # From PCAP: Reg 0x1004 (MAC_SYS_CTRL) might be used.
-        # Actually, Req 1 Val 0x11 Idx 0 was seen earlier.
-        try:
-            transport.set_device_mode(0x11)
-            logger.info("MCU Kicked (Device mode set to 0x11).")
-        except usb.core.USBError as e:
-            logger.error(f"Failed to kick MCU: {e}")
-            return False
-            
+        # 3. Kick logic removed from here as it varies by chip revision
+        # and is handled in the main Driver boot sequence.
         return True

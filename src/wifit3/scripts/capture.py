@@ -11,8 +11,6 @@ from pathlib import Path
 # Wifit3 High-Precision Automated Capture Engine (Python)
 # ==============================================================================
 # This script uses an ABSOLUTE timeline (target_t).
-# If you schedule a command for target_t=20.0, it executes exactly 20 seconds
-# after the timeline starts. No rolling offsets, no confusing math.
 # ==============================================================================
 
 class LogHelper:
@@ -40,7 +38,7 @@ class LogHelper:
         
         with open(log_file, "a") as f:
             f.write(f"-----------------------------------\n")
-            f.write(f"[{self._timestamp()}] Executing: {cmd_string}\n")
+            f.write(f"[{self._timestamp() - elapsed_time}] Executing: {cmd_string}\n")
             if stdout_text:
                 f.write(f"{stdout_text}")
                 if not stdout_text.endswith('\n'):
@@ -51,6 +49,7 @@ class LogHelper:
 
 class Capture:
     TARGET_BSSID = "aa:bb:cc:dd:ee:01"
+    CLIENT_BSSID = "04:2E:C1:51:43:B8"
     USBMON = "usbmon3"
     BASE_IFACE = "wlan1"
     
@@ -60,6 +59,7 @@ class Capture:
         self.chipset = "unknown"
         self.tshark_proc = None
         self.tshark_log = None
+        self.supports_5g = False
         
         self.temp_dir_obj = tempfile.TemporaryDirectory(prefix="wifit3_cap_")
         self.temp_dir = Path(self.temp_dir_obj.name)
@@ -175,13 +175,15 @@ class Capture:
         self.logger.log_main(f"[{time.time():.3f}] --> INSERT THE USB CARD NOW <--")
         
         # ======================================================================
-        # THE TIMELINE (ABSOLUTE OFFSETS)
+        # THE TIMELINE (RUNNING CURSOR)
         # ======================================================================
+        cursor_t = 10.0
         
         # T=10.0s: Start monitor mode
-        stdout = self.run_at(10.0, ["sudo", "airmon-ng", "start", self.BASE_IFACE], timeout=8.0)
+        self.run_at(cursor_t, ["sudo", "airmon-ng", "start", self.BASE_IFACE], timeout=8.0)
+        cursor_t += 8.0
         
-        # --- Interface & Chipset Parsing Logic ---
+        # --- Interface Parsing Logic ---
         iw_out = subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout
         target_phy = None
         current_phy = None
@@ -207,7 +209,16 @@ class Capture:
         if not self.mon_iface:
             self.logger.log_main(f"[!] Warning: Could not find monitor interface on {target_phy}. Falling back to {self.BASE_IFACE}.")
             self.mon_iface = self.BASE_IFACE
-            
+
+        # --- 5GHz Support Detection ---
+        freq_out = subprocess.run(["iwlist", self.mon_iface, "freq"], capture_output=True, text=True).stdout
+        if "5." in freq_out:
+            self.supports_5g = True
+            self.logger.log_main("[*] 5GHz Support Detected.")
+        else:
+            self.logger.log_main("[!] 5GHz Support NOT detected. Skipping 5GHz sequence.")
+        
+        # --- Chipset Parsing ---
         airmon_check = subprocess.run(["airmon-ng"], capture_output=True, text=True).stdout
         for line in airmon_check.splitlines():
             if self.BASE_IFACE in line:
@@ -220,24 +231,37 @@ class Capture:
         self.logger.log_main(f"[*] Detected Chipset/Driver:  {self.chipset}")
         # -----------------------------------------
         
-        # T=20.0s to T=31.0s: 2.4GHz Hopping
-        for i, ch in enumerate(range(1, 13)):
-            self.run_at(20.0 + i, ["sudo", "iw", "dev", self.mon_iface, "set", "channel", str(ch)], timeout=0.8)
+        # 2.4GHz Hopping
+        cursor_t = max(cursor_t, 20.0) # Ensure we start hopping at least at T=20
+        for ch in range(1, 13):
+            self.run_at(cursor_t, ["sudo", "iw", "dev", self.mon_iface, "set", "channel", str(ch)], timeout=0.8)
+            cursor_t += 1.0
             
-        # T=32.0s to T=35.0s: 5GHz Hopping
-        for i, ch in enumerate([36, 44, 149, 157]):
-            self.run_at(32.0 + i, ["sudo", "iw", "dev", self.mon_iface, "set", "channel", str(ch)], timeout=0.8)
+        # 5GHz Hopping (Conditional)
+        if self.supports_5g:
+            channels_5g = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144, 149, 153, 157, 161, 165]
+            for ch in channels_5g:
+                self.run_at(cursor_t, ["sudo", "iw", "dev", self.mon_iface, "set", "channel", str(ch)], timeout=0.8)
+                cursor_t += 1.0
             
-        # T=36.0s: Return to Channel 1
-        self.run_at(36.0, ["sudo", "iw", "dev", self.mon_iface, "set", "channel", "1"], timeout=1.8)
+        # Return to Channel 1 (Critical for injection test)
+        self.run_at(cursor_t, ["sudo", "iw", "dev", self.mon_iface, "set", "channel", "1"], timeout=0.8)
+        cursor_t += 1.0
         
-        # T=38.0s: Aireplay Test
-        self.run_at(38.0, ["sudo", "aireplay-ng", "-a", self.TARGET_BSSID, "--test", self.mon_iface], timeout=6.0)
+        # Aireplay Test (Injection)
+        self.run_at(cursor_t, ["sudo", "aireplay-ng", "-a", self.TARGET_BSSID, "--test", self.mon_iface], timeout=6.0)
+        cursor_t += 8.0
         
-        # T=45.0s: Cleanup
-        # We don't use run_at for cleanup because it doesn't run a subprocess, it just wraps up.
-        # So we manually sleep until T=45.0s
-        expected_cleanup = self.start_time + 45.0
+        # Aireplay Deauth
+        self.run_at(cursor_t, ["sudo", "aireplay-ng",
+                               "-0", "1", # 1 packet
+                               "-a", self.TARGET_BSSID,
+                               "-c", self.CLIENT_BSSID,
+                               self.mon_iface], timeout=6.0)
+        cursor_t += 8.0
+        
+        # Cleanup
+        expected_cleanup = self.start_time + cursor_t
         now = time.time()
         if now < expected_cleanup:
             time.sleep(expected_cleanup - now)
