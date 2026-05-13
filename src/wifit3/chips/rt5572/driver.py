@@ -134,13 +134,10 @@ class RT5572Driver:
             self.transport.set_device_mode(0, 0x08)
             logger.info("MCU Boot Signal sent.")
 
-            # 7. Final MCU Init (from rt2800_load_firmware)
-            # (MCU kick is handled dynamically inside INIT_SEQ)
-            
             # Wait for MCU to process the signal
             await asyncio.sleep(0.1)
 
-        # 7.5 Full Hardware Initialization Sequence (Run for both COLD and WARM)
+        # 6 Full Hardware Initialization Sequence (Run for both COLD and WARM)
         # BBP and RF must be re-initialized every time we connect.
         logger.info(f"Replaying {len(rt5572_init.INIT_SEQ)} initialization registers...")
         for i, (idx, val) in enumerate(rt5572_init.INIT_SEQ):
@@ -151,7 +148,7 @@ class RT5572Driver:
                 logger.info("USB Endpoints Reset (Mid-Init).")
             self.transport.write_multi(idx, bytes.fromhex(val))
 
-        # 6. Read MAC Address (From EEPROM)
+        # 7. Read MAC Address (From EEPROM)
         # EEPROM offsets for MAC are typically 0x0002, 0x0003, 0x0004
         eeprom_mac0 = self.transport.read_eeprom(0x0002)
         eeprom_mac1 = self.transport.read_eeprom(0x0003)

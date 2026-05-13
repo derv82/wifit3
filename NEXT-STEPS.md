@@ -5,9 +5,8 @@ We have successfully implemented [a fully functional Userspace Python driver for
 
 ## NEXT STEPS
 
-### AR5572
+### RT5372 & RT3572
 
-* User TODO: Need to capture newer pcaps & logs using the latest `src/wifit3/scripts/capture.py` on Kali Linux (v6.8).
 * Sequencing Scripts: Firmware extraction, Boot sequence extraction, Channel Hopping sequence extraction.
 * USB Transport layer.
 * Driver:

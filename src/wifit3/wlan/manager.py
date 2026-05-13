@@ -144,20 +144,23 @@ class WlanDeviceManager:
         Safely checks if RT5572 is cold or warm.
         Returns a tuple of (warm usb.core.Device handle, was_already_warm).
         """
-        # Passive Detection: Try to read PBF_SYS_CTRL (0x1008)
-        # Bit 7 (PBF_SYS_CTRL_READY) is only set after the MCU boots.
+        # Passive Detection: Read PBF_SYS_CTRL (0x0400).
+        # Probing shows COLD hardware returns 0x2080 (Bit 13 set).
+        # Initialized hardware returns 0x0f80 (Bit 13 cleared).
         try:
             # RT5572 uses bRequest 7 for multi-read
-            res = dev.ctrl_transfer(0xc0, 0x07, 0, 0x1008, 4)
+            res = dev.ctrl_transfer(0xc0, 0x07, 0, 0x0400, 4)
             val = res[0] | (res[1] << 8) | (res[2] << 16) | (res[3] << 24)
-            if val & (1 << 7):
-                logger.info(f"RT5572 is already WARM (PBF Ready).")
+
+            # If Bit 13 is cleared, the MCU has finished its internal init.
+            if not (val & (1 << 13)):
+                logger.info(f"RT5572 is already WARM (PBF State: {hex(val)}).")
                 return dev, True
         except usb.core.USBError:
             pass
 
         # If we got here, it's likely COLD or just plugged in.
-        logger.info("RT5572 appears COLD (PBF Not Ready).")
+        logger.info("RT5572 appears COLD (Hardware Uninitialized).")
         return dev, False
 
     def get_interface(self, name: str) -> Optional[WlanInterface]:

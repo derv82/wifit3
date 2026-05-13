@@ -27,16 +27,6 @@ class RT5572USBTransport:
         self._callback = None
         self._is_running = False
 
-        # Debug: Log endpoints
-        try:
-            cfg = self.dev.get_active_configuration()
-            intf = cfg[(0,0)]
-            logger.info("Available USB Endpoints:")
-            for ep in intf:
-                logger.info(f"  EP: {hex(ep.bEndpointAddress)} (Type: {ep.bmAttributes & 0x03})")
-        except Exception as e:
-            logger.error(f"Failed to query endpoints: {e}")
-
     def subscribe(self, callback):
         self._callback = callback
 
