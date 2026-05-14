@@ -10,6 +10,12 @@ def parse_log(log_path):
     try:
         with open(log_path, 'r') as f:
             for line in f:
+                if '--> INSERT THE USB CARD NOW <--' in line:
+                    match = re.search(r"^\[(\d+\.\d+)\].*", line)
+                    if match:
+                        epoch = float(match.group(1))
+                        commands.append({'epoch': epoch, 'cmd': '<hardware_plugin_and_initialization>'})
+                    continue
                 match = pattern.search(line)
                 if match:
                     epoch = float(match.group(1))
@@ -75,8 +81,8 @@ def slice_pcap(pcap_path, commands):
 
 def main():
     parser = argparse.ArgumentParser(description="Map python capture logs to PCAP frames based on absolute Epoch time.")
-    parser.add_argument("log_path", help="Path to the python capture log (e.g., main.log)")
-    parser.add_argument("pcap_path", help="Path to the corresponding .pcap file")
+    parser.add_argument("log_path", help="Path to the 'main' capture log (usb_data/captures_<chip>/capture-1_logs/main.log)")
+    parser.add_argument("pcap_path", help="Path to the corresponding .pcap file (usb_data/captures_<chip>/capture-1.pcap)")
     
     args = parser.parse_args()
     
