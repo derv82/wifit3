@@ -4,6 +4,7 @@ from textual.widgets import Header, Footer, DataTable, RichLog
 from textual.containers import Vertical, Horizontal
 from textual.binding import Binding
 from rich.markup import escape
+from rich.text import Text
 
 from wifit3.engine.models import AccessPoint
 from typing import Dict
@@ -14,10 +15,11 @@ class ScannerView(Screen):
     BINDINGS = [
         Binding("q", "app.quit", "Quit", show=True),
         Binding("c", "change_channel", "Channel Filter", show=True),
-        Binding("left", "sort_left", "Sort Prev", show=True),
-        Binding("right", "sort_right", "Sort Next", show=True),
-        Binding("s", "toggle_sort_dir", "Sort Asc/Desc", show=True),
-        Binding("l", "toggle_log", "Toggle Log", show=True)
+        Binding("s", "cycle_sort", "Sort Col", show=True),
+        Binding("o", "toggle_sort_dir", "Sort Asc/Desc", show=True),
+        Binding("l", "toggle_log", "Toggle Log", show=True),
+        Binding("home", "scroll_home", "Top", show=False, priority=True),
+        Binding("end", "scroll_end", "Bottom", show=False, priority=True)
     ]
 
     _COLUMNS = [
@@ -97,11 +99,11 @@ class ScannerView(Screen):
             if ap.bssid not in self.ap_cache:
                 self.ap_cache[ap.bssid] = ap
                 table.add_row(
-                    escape(ap.bssid),
+                    Text(ap.bssid),
                     str(ap.channel),
                     f"{ap.signal}dBm",
                     enc_display,
-                    escape(ap.ssid or "<Hidden>"),
+                    Text(ap.ssid or "<Hidden>"),
                     beacons_str,
                     key=ap.bssid
                 )
@@ -110,13 +112,14 @@ class ScannerView(Screen):
                 old_ssid = self.ap_cache[ap.bssid].ssid
                 if not old_ssid and ap.ssid:
                     log = self.query_one("#system-log", RichLog)
-                    log.write(f"[bold yellow][*] Decloaked Hidden Network: {escape(ap.bssid)} -> {escape(ap.ssid)}[/bold yellow]")
+                    msg = Text.from_markup(f"[bold yellow][*] Decloaked Hidden Network: {escape(ap.bssid)} -> {escape(ap.ssid)}[/bold yellow]", emoji=False)
+                    log.write(msg)
                 
                 self.ap_cache[ap.bssid] = ap
                 table.update_cell(ap.bssid, "channel", str(ap.channel))
                 table.update_cell(ap.bssid, "signal", f"{ap.signal}dBm")
                 table.update_cell(ap.bssid, "encryption", enc_display)
-                table.update_cell(ap.bssid, "ssid", escape(ap.ssid or "<Hidden>"))
+                table.update_cell(ap.bssid, "ssid", Text(ap.ssid or "<Hidden>"))
                 table.update_cell(ap.bssid, "beacons", beacons_str)
                 
         self._apply_sort()
@@ -159,12 +162,7 @@ class ScannerView(Screen):
         log_widget = self.query_one("#system-log")
         log_widget.display = not log_widget.display
 
-    def action_sort_left(self) -> None:
-        self._sort_idx = (self._sort_idx - 1) % len(self._COLUMNS)
-        self._update_column_headers()
-        self._apply_sort()
-
-    def action_sort_right(self) -> None:
+    def action_cycle_sort(self) -> None:
         self._sort_idx = (self._sort_idx + 1) % len(self._COLUMNS)
         self._update_column_headers()
         self._apply_sort()

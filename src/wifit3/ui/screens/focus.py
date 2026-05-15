@@ -3,6 +3,8 @@ from textual.screen import Screen
 from textual.widgets import Header, Footer, DataTable, Button, Label, Static
 from textual.containers import Vertical, Horizontal, Grid
 from textual.binding import Binding
+from rich.text import Text
+from rich.markup import escape
 
 from wifit3.engine.models import AccessPoint
 
@@ -97,8 +99,9 @@ class FocusView(Screen):
             return
             
         # Update AP Labels
-        self.query_one("#lbl-ssid", Label).update(f"[bold white]{self.target_ap.ssid or '<Hidden>'}[/bold white]")
-        self.query_one("#lbl-bssid", Label).update(f"BSSID: {self.target_ap.bssid}")
+        msg_ssid = Text.from_markup(f"[bold white]{escape(self.target_ap.ssid or '<Hidden>')}[/bold white]", emoji=False)
+        self.query_one("#lbl-ssid", Label).update(msg_ssid)
+        self.query_one("#lbl-bssid", Label).update(Text(f"BSSID: {self.target_ap.bssid}"))
         self.query_one("#lbl-channel", Label).update(f"Channel: {self.target_ap.channel}")
         
         elapsed = time.time() - self.target_ap.first_seen
@@ -138,7 +141,7 @@ class FocusView(Screen):
                         self._known_clients.add(mac)
                         client_table.add_row(
                             checkbox, 
-                            mac, 
+                            Text(mac), 
                             f"{client.signal}dBm", 
                             str(client.packets),
                             key=mac
