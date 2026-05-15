@@ -51,7 +51,9 @@ class WMIProtocol:
             return None
 
         # 1. Extract RSSI (specific to AR9271 WMI layout)
-        raw_rssi = max(payload[8], payload[9], payload[11])
+        # ath_rx_status is a 16-byte header at the start of the WMI payload.
+        # Format usually places rs_rssi at offset 6 based on ath9k_htc structs.
+        raw_rssi = payload[6]
         rssi = raw_rssi - 95 if raw_rssi > 0 else -95
         
         # 2. High-Fidelity Signature Hunt (Dynamic Offset)

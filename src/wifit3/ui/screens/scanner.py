@@ -25,7 +25,7 @@ class ScannerView(Screen):
         ("signal", "PWR"),
         ("encryption", "ENC"),
         ("ssid", "SSID"),
-        ("beacons", "Beacons")
+        ("beacons", "Beacons/sec")
     ]
 
     def __init__(self):
@@ -75,6 +75,7 @@ class ScannerView(Screen):
         table.refresh()
 
     def refresh_table(self) -> None:
+        import time
         if not self.app.active_interface:
             return
             
@@ -85,6 +86,12 @@ class ScannerView(Screen):
             enc_display = ap.encryption
             if ap.wpa3:
                 enc_display = "WPA3 (Trans)" if ap.transition_mode else "WPA3"
+            
+            # Calculate beacon rate
+            elapsed = time.time() - ap.first_seen
+            if elapsed < 1.0: elapsed = 1.0
+            rate = ap.beacons / elapsed
+            beacons_str = f"{ap.beacons} ({rate:.1f}/s)"
                 
             if ap.bssid not in self.ap_cache:
                 self.ap_cache[ap.bssid] = ap
@@ -94,7 +101,7 @@ class ScannerView(Screen):
                     f"{ap.signal}dBm",
                     enc_display,
                     ap.ssid or "<Hidden>",
-                    str(ap.beacons),
+                    beacons_str,
                     key=ap.bssid
                 )
             else:
@@ -109,7 +116,7 @@ class ScannerView(Screen):
                 table.update_cell(ap.bssid, "signal", f"{ap.signal}dBm")
                 table.update_cell(ap.bssid, "encryption", enc_display)
                 table.update_cell(ap.bssid, "ssid", ap.ssid or "<Hidden>")
-                table.update_cell(ap.bssid, "beacons", str(ap.beacons))
+                table.update_cell(ap.bssid, "beacons", beacons_str)
                 
         self._apply_sort()
 
@@ -129,9 +136,12 @@ class ScannerView(Screen):
         def safe_sort(val):
             if isinstance(val, str):
                 if val.endswith("dBm"): return int(val[:-3])
+                # For beacons like "100 (5.0/s)"
+                if "(" in val:
+                    parts = val.split()
+                    if parts[0].isdigit(): return int(parts[0])
                 if val.isdigit(): return int(val)
                 if val.startswith("-") and val[1:].isdigit(): return int(val)
-                # Textual might pass Rich text, fallback string conversion
             return str(val).lower()
             
         table.sort(sort_key, key=safe_sort, reverse=self._sort_reverse)
@@ -162,6 +172,16 @@ class ScannerView(Screen):
         self._sort_reverse = not self._sort_reverse
         self._update_column_headers()
         self._apply_sort()
+
+    def action_scroll_home(self) -> None:
+        table = self.query_one("#ap-table", DataTable)
+        if table.row_count > 0:
+            table.move_cursor(row=0, animate=True)
+            
+    def action_scroll_end(self) -> None:
+        table = self.query_one("#ap-table", DataTable)
+        if table.row_count > 0:
+            table.move_cursor(row=table.row_count - 1, animate=True)
 
     def action_change_channel(self) -> None:
         log = self.query_one("#system-log", RichLog)

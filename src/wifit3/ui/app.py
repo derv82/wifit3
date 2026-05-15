@@ -18,21 +18,8 @@ class WifiteApp(App):
     TITLE = "wifit3 - Wireless Auditor"
     
     # Textual supports extensive CSS for styling components.
-    # We will refine this as we build out the specific widgets.
+    # We removed the global green/black override so the default Textual theme (which has visible scrollbars) works properly.
     CSS = """
-    Screen {
-        background: #000000;
-        color: #00FF00;
-    }
-    Header {
-        background: #003300;
-        color: #00FF00;
-        text-style: bold;
-    }
-    Footer {
-        background: #002200;
-        color: #00FF00;
-    }
     #ascii-art {
         content-align: center middle;
         margin-bottom: 2;
@@ -48,39 +35,26 @@ class WifiteApp(App):
     ListView {
         width: 60%;
         height: auto;
-        border: solid green;
     }
     DataTable {
         width: 100%;
         height: 1fr;
-        border: solid green;
-    }
-    DataTable > .datatable--cursor {
-        background: #00FF00;
-        color: #000000;
-        text-style: bold;
-    }
-    DataTable > .datatable--header {
-        background: #003300;
-        color: #00FF00;
-        text-style: bold;
     }
     RichLog {
         height: 10;
-        border-top: solid green;
+        border-top: solid $primary;
     }
     #focus-container {
         padding: 1;
     }
     .panel-title {
-        background: #003300;
-        color: #00FF00;
         text-style: bold;
         width: 100%;
         content-align: center middle;
+        background: $boost;
     }
     .info-box {
-        border: solid green;
+        border: solid $primary;
         width: 1fr;
         padding: 1;
     }
@@ -92,7 +66,7 @@ class WifiteApp(App):
     }
     #attack-panel {
         height: auto;
-        border: solid green;
+        border: solid $primary;
         padding: 1;
     }
     .button-row {
@@ -110,6 +84,7 @@ class WifiteApp(App):
         self.device_manager = WlanDeviceManager()
         self.active_interface = None
         self.target_ap: Optional[AccessPoint] = None
+        self.theme = "textual-dark"
 
     def on_mount(self) -> None:
         """Register screens and push the initial SplashView."""

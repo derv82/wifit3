@@ -33,6 +33,7 @@ class AccessPoint(BaseModel):
     signal: int = Field(default=-100)
     encryption: Optional[str] = Field(default="Unknown")
     beacons: int = Field(default=0)
+    first_seen: float = Field(default_factory=lambda: __import__("time").time())
     wpa3: bool = Field(default=False)
     transition_mode: bool = Field(default=False)
     pmf_capable: bool = Field(default=False)

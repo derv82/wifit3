@@ -133,12 +133,21 @@ class AR9271Driver:
                 cmd_id, p_seq = struct.unpack(">HH", raw_wmi[:4])
                 payload_data = raw_wmi[4:]
                 
-                # Rigid Stop-and-Wait for 1-slot mailbox
-                success = await self.send_wmi_command(cmd_id, payload_data, wait_for_ack=True)
+                # Robust retry loop for calibration packets
+                success = False
+                for attempt in range(3):
+                    try:
+                        success = await self.send_wmi_command(cmd_id, payload_data, wait_for_ack=True)
+                        if success:
+                            break
+                    except usb.core.USBError as e:
+                        logger.warning(f"USBError at packet {i} (Attempt {attempt}): {e}")
+                        self.transport.reset_pipes()
+                        await asyncio.sleep(0.01)
                 
                 if not success:
-                    logger.warning(f"Timeout at packet {i} (Cmd {hex(cmd_id)}). Continuing...")
-                
+                    logger.warning(f"Failed to process packet {i} (Cmd {hex(cmd_id)}).")
+                    
                 if i > 0 and i % 200 == 0:
                     logger.info(f"Progress: {i}/{len(payloads)} registers processed.")
                     

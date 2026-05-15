@@ -11,7 +11,8 @@ class FocusView(Screen):
 
     BINDINGS = [
         Binding("escape", "go_back", "Back to Scanner", show=True),
-        Binding("q", "app.quit", "Quit", show=True)
+        Binding("q", "app.quit", "Quit", show=True),
+        Binding("enter", "toggle_client", "Select Client", show=False)
     ]
 
     def __init__(self):
@@ -19,6 +20,7 @@ class FocusView(Screen):
         self.target_ap: AccessPoint = None
         self._refresh_timer = None
         self._known_clients = set()
+        self._selected_clients = set()
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -31,6 +33,7 @@ class FocusView(Screen):
                     Label(id="lbl-ssid", classes="bold-title"),
                     Label(id="lbl-bssid"),
                     Label(id="lbl-channel"),
+                    Label(id="lbl-pwr-beacons"),
                     classes="info-box"
                 )
                 yield Vertical(
@@ -79,6 +82,7 @@ class FocusView(Screen):
             
         # Reset UI state
         self._known_clients.clear()
+        self._selected_clients.clear()
         self.query_one("#client-table", DataTable).clear()
         
         # Tune the card to the target channel
@@ -88,6 +92,7 @@ class FocusView(Screen):
         self.update_ui()
 
     def update_ui(self) -> None:
+        import time
         if not self.target_ap or not self.is_current:
             return
             
@@ -95,6 +100,11 @@ class FocusView(Screen):
         self.query_one("#lbl-ssid", Label).update(f"[bold white]{self.target_ap.ssid or '<Hidden>'}[/bold white]")
         self.query_one("#lbl-bssid", Label).update(f"BSSID: {self.target_ap.bssid}")
         self.query_one("#lbl-channel", Label).update(f"Channel: {self.target_ap.channel}")
+        
+        elapsed = time.time() - self.target_ap.first_seen
+        if elapsed < 1.0: elapsed = 1.0
+        rate = self.target_ap.beacons / elapsed
+        self.query_one("#lbl-pwr-beacons", Label).update(f"PWR: {self.target_ap.signal}dBm | Beacons: {self.target_ap.beacons} ({rate:.1f}/s)")
         
         self.query_one("#lbl-enc", Label).update(f"Encryption: {self.target_ap.encryption}")
         
@@ -123,18 +133,32 @@ class FocusView(Screen):
             client_table = self.query_one("#client-table", DataTable)
             for mac, client in iface.clients.items():
                 if client.bssid == self.target_ap.bssid:
+                    checkbox = "[X]" if mac in self._selected_clients else "[ ]"
                     if mac not in self._known_clients:
                         self._known_clients.add(mac)
                         client_table.add_row(
-                            "[ ]", 
+                            checkbox, 
                             mac, 
                             f"{client.signal}dBm", 
                             str(client.packets),
                             key=mac
                         )
                     else:
+                        client_table.update_cell(mac, "select", checkbox)
                         client_table.update_cell(mac, "signal", f"{client.signal}dBm")
                         client_table.update_cell(mac, "packets", str(client.packets))
+                        
+            # Enable/Disable Deauth Selected button
+            self.query_one("#btn-deauth-sel", Button).disabled = len(self._selected_clients) == 0
+
+    async def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Handle ENTER key on a client row to toggle selection."""
+        mac = event.row_key.value
+        if mac in self._selected_clients:
+            self._selected_clients.remove(mac)
+        else:
+            self._selected_clients.add(mac)
+        self.update_ui()
 
     async def action_go_back(self) -> None:
         """Return to the scanner and resume channel hopping."""

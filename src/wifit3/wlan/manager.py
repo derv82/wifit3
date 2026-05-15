@@ -85,26 +85,14 @@ class WlanDeviceManager:
 
     async def _ensure_ar9271_firmware(self, dev: usb.core.Device) -> Tuple[Optional[usb.core.Device], bool]:
         """
-        Safely checks if AR9271 is cold or warm.
-        If cold, uploads firmware and waits for re-enumeration.
-        Returns a tuple of (warm usb.core.Device handle, was_already_warm).
+        Forces cold initialization (loading firmware) to ensure reliable hardware state.
         """
-        is_warm = False
-        # try:
-        #     # Short timeout, we just want to see if the pipe is active
-        #     data = dev.read(0x82, 512, timeout=100)
-        #     is_warm = True
-        # except usb.core.USBError as e:
-        #     # Timeout means the endpoint exists and firmware is running, but no data.
-        #     # Errno 10060 (Windows), 110/116 (Linux), or string match.
-        #     if e.errno in (10060, 110, 116) or "timeout" in str(e).lower():
-        #         is_warm = True
+        logger.info("AR9271 forcing COLD initialization.")
         
-        # if is_warm:
-        #     logger.info("AR9271 is already WARM (Active Firmware detected). Skipping upload.")
-        #     return dev, True
+        # We can leave the detection code here but bypassed.
+        # [Detection logic logic currently bypassed]
 
-        logger.info("AR9271 is COLD (forced). Initiating upload sequence...")
+        logger.info("AR9271 initiating firmware upload...")
         from wifit3.chips.ar9271.firmware import FirmwareLoader
         import os
         
@@ -120,19 +108,18 @@ class WlanDeviceManager:
             logger.info("Waiting for AR9271 to re-enumerate...")
             # Dynamic wait: poll for device instead of fixed 3s sleep
             warm_dev = None
-            for _ in range(12): # 12 * 250ms = 3s total timeout
+            for _ in range(12): 
                 await asyncio.sleep(0.25)
                 import libusb_package
                 backend = libusb_package.get_libusb1_backend()
                 warm_dev = usb.core.find(idVendor=0x0cf3, idProduct=0x9271, backend=backend)
-                if warm_dev:
-                    break
+                if warm_dev: break
             
             if warm_dev:
                 logger.info("AR9271 successfully warmed up!")
                 return warm_dev, False
             else:
-                logger.error("AR9271 failed to re-enumerate within 3s.")
+                logger.error("AR9271 failed to re-enumerate.")
                 return None, False
         else:
             logger.error("Firmware upload failed.")
