@@ -5,12 +5,21 @@ from pathlib import Path
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.widgets import Static, ListView, ListItem, Label, Header, Footer, ProgressBar
+from textual.message import Message
 from textual.containers import Vertical, Center
+from textual import work
 from rich.text import Text
 
 from wifit3.wlan.manager import WlanDeviceManager
 
 logger = logging.getLogger(__name__)
+
+class DriverProgress(Message):
+    """Message sent from background threads to update the splash progress."""
+    def __init__(self, percentage: float, message: str) -> None:
+        super().__init__()
+        self.percentage = percentage
+        self.message = message
 
 def load_logo() -> Text:
     """Load the ANSI logo from assets."""
@@ -99,6 +108,17 @@ class SplashView(Screen):
         else:
             self.query_one("#status-label", Label).update("Scanning for compatible hardware... (0 found)")
 
+    def on_driver_progress(self, event: DriverProgress) -> None:
+        """Handle progress updates sent via message from background threads."""
+        self.query_one("#init-progress", ProgressBar).progress = event.percentage * 100
+        self.query_one("#status-label", Label).update(f"[bold yellow]{event.message}[/bold yellow]")
+
+        # Trigger screen transition only when the UI thread processes the '100%' message
+        # AND we have successfully assigned the interface to the app state.
+        if event.percentage >= 1.0 and self.app.active_interface:
+            self.app.switch_screen("scanner")
+
+
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
         iface_name = event.item.name
         iface = self.device_manager.get_interface(iface_name)
@@ -107,34 +127,41 @@ class SplashView(Screen):
             if self._refresh_timer:
                 self._refresh_timer.pause()
             
-            # Give UI feedback
-            status_label = self.query_one("#status-label", Label)
-            progress_bar = self.query_one("#init-progress", ProgressBar)
-            progress_bar.display = True
-            progress_bar.progress = 0
-            
+            # Show progress UI
+            self.query_one("#init-progress", ProgressBar).display = True
             self.query_one("#device-list", ListView).disabled = True
             
-            def update_progress(percentage: float, message: str):
-                status_label.update(f"[bold yellow]{message}[/bold yellow]")
-                progress_bar.progress = percentage * 100
+            # Start the connection worker and return immediately!
+            # This keeps the UI thread 100% free to process progress messages.
+            self.perform_connect(iface)
 
-            # Yield to the event loop so the UI has a chance to render the 
-            # 'Initialization' status and show the Progress Bar before we block.
-            await asyncio.sleep(0.1)
+    @work(exclusive=True)
+    async def perform_connect(self, iface) -> None:
+        """Textual Worker that manages the connection lifecycle."""
+        def update_progress(percentage: float, message: str):
+            self.post_message(DriverProgress(percentage, message))
 
+        try:
             # Mount the interface (connect)
-            try:
-                await iface.connect(progress_cb=update_progress)
-                # Pass the active interface back to the main app and transition
+            # This method internally offloads heavy procedural loops to a thread
+            success = await iface.connect(progress_cb=update_progress)
+            
+            if success:
+                # Pass the active interface back to the main app
+                # The transition to 'scanner' is handled by on_driver_progress
                 self.app.active_interface = iface
-                self.app.push_screen("scanner")
-            except Exception as e:
-                logger.exception(f"Failed to connect to {iface.name}")
-                status_label.update(f"[bold red]Initialization Failed: {e}[/bold red]")
-                self.query_one("#device-list", ListView).disabled = False
-                progress_bar.display = False
-                if self._refresh_timer:
-                    self._refresh_timer.resume()
-            finally:
-                self._is_initializing = False
+                
+                # Signal completion one last time
+                update_progress(1.0, "Initialization Complete. Starting Scanner...")
+            else:
+                raise RuntimeError("Hardware failed to initialize.")
+
+        except Exception as e:
+            logger.exception(f"Failed to connect to {iface.name}")
+            self.query_one("#status-label", Label).update(f"[bold red]Initialization Failed: {e}[/bold red]")
+            self.query_one("#device-list", ListView).disabled = False
+            self.query_one("#init-progress", ProgressBar).display = False
+            if self._refresh_timer:
+                self._refresh_timer.resume()
+        finally:
+            self._is_initializing = False

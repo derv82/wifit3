@@ -3,6 +3,7 @@ import logging
 import struct
 import json
 import os
+import time
 import usb.core
 import usb.util
 from typing import Optional, Dict, List, Tuple
@@ -176,51 +177,10 @@ class AR9271Driver:
         await asyncio.sleep(0.05) # Half-breath
 
         # 6. Ultimate Calibration Marathon
-        _update(0.65, "Replaying 1,200-Packet Calibration Table...")
-        # Subscribe to Management (0), WMI (1), and CAB (3) for the Bulk stream
-        self.transport.subscribe(0, self._on_wmi_packet)
-        self.transport.subscribe(1, self._on_wmi_packet)
-        self.transport.subscribe(3, self._on_wmi_packet)
-        
-        cal_path = Path(__file__).parent / "assets" / "ar9271_v14_init.json"
-        try:
-            with open(cal_path, 'r') as f:
-                payloads = json.load(f)
-            
-            total_payloads = len(payloads)
-            for i, p_hex in enumerate(payloads):
-                raw_wmi = bytes.fromhex(p_hex)
-                cmd_id, p_seq = struct.unpack(">HH", raw_wmi[:4])
-                payload_data = raw_wmi[4:]
-                
-                # Robust retry loop for calibration packets
-                success = False
-                for attempt in range(3):
-                    try:
-                        success = await self.send_wmi_command(cmd_id, payload_data, wait_for_ack=True)
-                        if success:
-                            break
-                    except usb.core.USBError as e:
-                        logger.warning(f"USBError at packet {i} (Attempt {attempt}): {e}")
-                        self.transport.reset_pipes()
-                        await asyncio.sleep(0.01)
-                
-                if not success:
-                    logger.warning(f"Failed to process packet {i} (Cmd {hex(cmd_id)}).")
-                    
-                if i > 0 and i % 100 == 0:
-                    prog = 0.65 + (0.3 * (i / total_payloads))
-                    _update(prog, f"Replaying registers... ({i}/{total_payloads})")
-                    
-            _update(0.95, "Calibration complete. Triggering Radio Init...")
-            
-            # Final Trigger Sequence
-            await self.send_wmi_command(WMI_SET_MODE_CMDID, struct.pack(">H", 0x0001))
-            await self.send_wmi_command(0x0006, b"") # INIT
-            await self.send_wmi_command(WMI_START_RECV_CMDID, b"")
-            
-        except FileNotFoundError:
-            logger.error(f"Calibration file not found at {cal_path}")
+        # We offload this tightly-coupled loop to a background thread to prevent UI freezing.
+        loop = asyncio.get_running_loop()
+        success = await asyncio.to_thread(self._replay_calibration_sync, _update, loop)
+        if not success:
             return False
 
         _update(0.98, "Waiting for Target Ready and MAC verification...")
@@ -232,6 +192,69 @@ class AR9271Driver:
         
         _update(1.0, f"AR9271 Driver successfully connected. MAC: {self.mac_address}")
         return True
+
+    def _replay_calibration_sync(self, update_cb, loop) -> bool:
+        """
+        Synchronous version of the 1,200-packet calibration marathon.
+        Offloaded to a background thread to keep the UI fluid.
+        """
+        update_cb(0.65, "Replaying 1,200-Packet Calibration Table...")
+        # Subscribe to Management (0), WMI (1), and CAB (3) for the Bulk stream
+        self.transport.subscribe(0, self._on_wmi_packet)
+        self.transport.subscribe(1, self._on_wmi_packet)
+        self.transport.subscribe(3, self._on_wmi_packet)
+        
+        cal_path = Path(__file__).parent / "assets" / "ar9271_v14_init.json"
+        try:
+            with open(cal_path, 'r') as f:
+                payloads = json.load(f)
+            
+            total_payloads = len(payloads)
+            
+            for i, p_hex in enumerate(payloads):
+                raw_wmi = bytes.fromhex(p_hex)
+                cmd_id, p_seq = struct.unpack(">HH", raw_wmi[:4])
+                payload_data = raw_wmi[4:]
+                
+                # Robust retry loop for calibration packets
+                success = False
+                for attempt in range(3):
+                    try:
+                        # We must bridge back to the event loop for the async transport send/wait
+                        future = asyncio.run_coroutine_threadsafe(
+                            self.send_wmi_command(cmd_id, payload_data, wait_for_ack=True), 
+                            loop
+                        )
+                        success = future.result()
+                        if success:
+                            break
+                    except Exception as e:
+                        logger.warning(f"Error at packet {i} (Attempt {attempt}): {e}")
+                        self.transport.reset_pipes()
+                        time.sleep(0.01)
+                
+                if not success:
+                    logger.warning(f"Failed to process packet {i} (Cmd {hex(cmd_id)}).")
+                    
+                if i > 0 and i % 100 == 0:
+                    prog = 0.65 + (0.3 * (i / total_payloads))
+                    update_cb(prog, f"Replaying registers... ({i}/{total_payloads})")
+                    
+            update_cb(0.95, "Calibration complete. Triggering Radio Init...")
+            
+            # Final Trigger Sequence
+            asyncio.run_coroutine_threadsafe(self.send_wmi_command(WMI_SET_MODE_CMDID, struct.pack(">H", 0x0001)), loop).result()
+            asyncio.run_coroutine_threadsafe(self.send_wmi_command(0x0006, b""), loop).result()
+            asyncio.run_coroutine_threadsafe(self.send_wmi_command(WMI_START_RECV_CMDID, b""), loop).result()
+            
+            return True
+            
+        except FileNotFoundError:
+            logger.error(f"Calibration file not found at {cal_path}")
+            return False
+        except Exception as e:
+            logger.error(f"Calibration marathon failed: {e}")
+            return False
 
     async def _check_if_warm(self) -> bool:
         """

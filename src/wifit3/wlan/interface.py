@@ -143,9 +143,9 @@ class WlanInterface:
         """Returns a list of discovered Access Points."""
         return list(self.access_points.values())
 
-    async def connect(self, progress_cb: Optional[Callable[[float, str], None]] = None):
+    async def connect(self, progress_cb: Optional[Callable[[float, str], None]] = None) -> bool:
         """Initializes the underlying hardware handshake."""
-        await self.driver.connect(progress_cb=progress_cb)
+        return await self.driver.connect(progress_cb=progress_cb)
 
     async def set_channel(self, channel: int) -> bool:
         """Translates a channel number into the driver's register sequences."""
