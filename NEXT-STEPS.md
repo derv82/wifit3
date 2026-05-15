@@ -14,10 +14,6 @@ That said, we ONLY support 3 cards. And there's absolutely no actual "attacks" i
 
 ## NEXT STEP: HARDWARE SUPPORT
 
-### Immediate Harware Support: RT5372 (PAU05) & RT3572 (AWUS051NH v2)
-
-* **DONE:** Implemented as part of the generic `rt2800usb` driver.
-
 ### Future Hardware Support (en-route)
 
 - AC1900      (RTL8814AU)
@@ -55,9 +51,11 @@ We want to avoid WEP as it's outdated. But all other attacks that Wifite2 can do
   - PixieWPS: Port the logic to Python (could be massive), Tracks vendor-specific "bad RNG" for generated E-hashes. Cracks known vendors with bad RNG in seconds/minutes.
 * WPA3 downgrade attack (when in transition mode) -- this is just forcing a WPA2 4-way handshake right?
 * WPA3 SAE crackable Group Numbers (19, 20, 22-24).
+  - See [WPA3-SAE-Group-Detection.md](./WPA3-SAE-Group-Detection.md).
   - Need to better understand what this is before implementing ("i have no idea what's going on").
   - It seems like we just send 1 association frame to the AP, and it responds with a "REJECT" if that group number isn't supported -- we can just sniff these response frames to identify what group numbers the AP is susceptible to.
   - wifite2 uses wpa_supplication to attempt authenticating with the AP, I think 1 frame injection outta do it?
+* Other WPA3 notes in [WPA3-Frames.md](./WPA3-Frames.md).
 * Evil Twin (selecting 2nd interface).
   - Never used this, I'm not sure how effective these attacks are.
 

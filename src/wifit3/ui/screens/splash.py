@@ -113,11 +113,6 @@ class SplashView(Screen):
         self.query_one("#init-progress", ProgressBar).progress = event.percentage * 100
         self.query_one("#status-label", Label).update(f"[bold yellow]{event.message}[/bold yellow]")
 
-        # Trigger screen transition only when the UI thread processes the '100%' message
-        # AND we have successfully assigned the interface to the app state.
-        if event.percentage >= 1.0 and self.app.active_interface:
-            self.app.switch_screen("scanner")
-
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
         iface_name = event.item.name
@@ -148,11 +143,14 @@ class SplashView(Screen):
             
             if success:
                 # Pass the active interface back to the main app
-                # The transition to 'scanner' is handled by on_driver_progress
                 self.app.active_interface = iface
                 
-                # Signal completion one last time
-                update_progress(1.0, "Initialization Complete. Starting Scanner...")
+                # We are safely back on the main thread here, just switch!
+                self.query_one("#init-progress", ProgressBar).progress = 100
+                self.query_one("#status-label", Label).update("[bold green]Initialization Complete. Starting Scanner...[/bold green]")
+                
+                await asyncio.sleep(0.5)
+                self.app.switch_screen("scanner")
             else:
                 raise RuntimeError("Hardware failed to initialize.")
 
