@@ -3,6 +3,7 @@ from textual.screen import Screen
 from textual.widgets import Header, Footer, DataTable, RichLog
 from textual.containers import Vertical, Horizontal
 from textual.binding import Binding
+from rich.markup import escape
 
 from wifit3.engine.models import AccessPoint
 from typing import Dict
@@ -96,11 +97,11 @@ class ScannerView(Screen):
             if ap.bssid not in self.ap_cache:
                 self.ap_cache[ap.bssid] = ap
                 table.add_row(
-                    ap.bssid,
+                    escape(ap.bssid),
                     str(ap.channel),
                     f"{ap.signal}dBm",
                     enc_display,
-                    ap.ssid or "<Hidden>",
+                    escape(ap.ssid or "<Hidden>"),
                     beacons_str,
                     key=ap.bssid
                 )
@@ -109,13 +110,13 @@ class ScannerView(Screen):
                 old_ssid = self.ap_cache[ap.bssid].ssid
                 if not old_ssid and ap.ssid:
                     log = self.query_one("#system-log", RichLog)
-                    log.write(f"[bold yellow][*] Decloaked Hidden Network: {ap.bssid} -> {ap.ssid}[/bold yellow]")
+                    log.write(f"[bold yellow][*] Decloaked Hidden Network: {escape(ap.bssid)} -> {escape(ap.ssid)}[/bold yellow]")
                 
                 self.ap_cache[ap.bssid] = ap
                 table.update_cell(ap.bssid, "channel", str(ap.channel))
                 table.update_cell(ap.bssid, "signal", f"{ap.signal}dBm")
                 table.update_cell(ap.bssid, "encryption", enc_display)
-                table.update_cell(ap.bssid, "ssid", ap.ssid or "<Hidden>")
+                table.update_cell(ap.bssid, "ssid", escape(ap.ssid or "<Hidden>"))
                 table.update_cell(ap.bssid, "beacons", beacons_str)
                 
         self._apply_sort()
