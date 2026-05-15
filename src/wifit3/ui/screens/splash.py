@@ -1,13 +1,16 @@
 import sys
 import asyncio
+import logging
 from pathlib import Path
 from textual.app import ComposeResult
 from textual.screen import Screen
-from textual.widgets import Static, ListView, ListItem, Label, Header, Footer
+from textual.widgets import Static, ListView, ListItem, Label, Header, Footer, ProgressBar
 from textual.containers import Vertical, Center
 from rich.text import Text
 
 from wifit3.wlan.manager import WlanDeviceManager
+
+logger = logging.getLogger(__name__)
 
 def load_logo() -> Text:
     """Load the ANSI logo from assets."""
@@ -50,6 +53,9 @@ class SplashView(Screen):
                 yield Label("Scanning for compatible hardware...", id="status-label")
             
             with Center():
+                yield ProgressBar(total=100, show_eta=False, id="init-progress")
+            
+            with Center():
                 yield ListView(id="device-list")
                 
         yield Footer()
@@ -67,6 +73,7 @@ class SplashView(Screen):
             return "[yellow]OS Notice:[/yellow] Experimental platform. Your mileage may vary."
 
     async def on_mount(self) -> None:
+        self.query_one("#init-progress").display = False
         # Poll USB bus every second
         self._refresh_timer = self.set_interval(1.0, self.poll_usb)
 
@@ -101,16 +108,33 @@ class SplashView(Screen):
                 self._refresh_timer.pause()
             
             # Give UI feedback
-            self.query_one("#status-label", Label).update(f"[bold yellow]Initializing {iface.name}... This may take a few seconds.[/bold yellow]")
+            status_label = self.query_one("#status-label", Label)
+            progress_bar = self.query_one("#init-progress", ProgressBar)
+            progress_bar.display = True
+            progress_bar.progress = 0
+            
             self.query_one("#device-list", ListView).disabled = True
             
-            # Force UI update to process the label and disabled state before blocking
+            def update_progress(percentage: float, message: str):
+                status_label.update(f"[bold yellow]{message}[/bold yellow]")
+                progress_bar.progress = percentage * 100
+
+            # Yield to the event loop so the UI has a chance to render the 
+            # 'Initialization' status and show the Progress Bar before we block.
             await asyncio.sleep(0.1)
-            
+
             # Mount the interface (connect)
-            await iface.connect()
-            
-            # Pass the active interface back to the main app and transition
-            self.app.active_interface = iface
-            self.app.push_screen("scanner")
-            self._is_initializing = False
+            try:
+                await iface.connect(progress_cb=update_progress)
+                # Pass the active interface back to the main app and transition
+                self.app.active_interface = iface
+                self.app.push_screen("scanner")
+            except Exception as e:
+                logger.exception(f"Failed to connect to {iface.name}")
+                status_label.update(f"[bold red]Initialization Failed: {e}[/bold red]")
+                self.query_one("#device-list", ListView).disabled = False
+                progress_bar.display = False
+                if self._refresh_timer:
+                    self._refresh_timer.resume()
+            finally:
+                self._is_initializing = False

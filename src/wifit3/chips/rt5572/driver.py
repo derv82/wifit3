@@ -79,11 +79,16 @@ class RT5572Driver:
         except Exception as e:
             logger.debug(f"Frame parse fail: {e}")
 
-    async def connect(self, firmware_path: Optional[str] = None):
+    async def connect(self, firmware_path: Optional[str] = None, progress_cb=None):
         """
         Orchestrates the device cold-boot and initialization.
         """
-        logger.info("Initializing RT5572...")
+        def _update(pct, msg):
+            if progress_cb:
+                progress_cb(pct, msg)
+            logger.info(f"Progress {int(pct*100)}%: {msg}")
+
+        _update(0.05, "Identifying RT5572 hardware...")
         
         # 1. Identify Hardware
         mac_csr0 = self.transport.read_reg32(MAC_CSR0)
@@ -91,13 +96,15 @@ class RT5572Driver:
         logger.info(f"MAC_CSR0: {hex(mac_csr0)}, ASIC_VER: {hex(asic_ver)}")
 
         if self.is_warm:
-            logger.info("Device is already WARM. skipping firmware upload.")
+            _update(0.1, "Device is already WARM. Skipping firmware upload.")
         else:
             # 2. Stabilization (COLD BOOT ONLY)
+            _update(0.1, "Stabilizing hardware for cold boot...")
             self.transport.write_reg32(AUTOWAKEUP_CFG, 0)
             self.transport.write_reg32(WPDMA_GLO_CFG, 0)
             
             # 3. Load Firmware
+            _update(0.15, "Loading firmware into MCU memory...")
             if firmware_path is None or not Path(firmware_path).exists():
                 # Fallback to internal assets if no path provided
                 firmware_path = Path(__file__).parent / "assets" / "rt5572.bin"
@@ -114,22 +121,27 @@ class RT5572Driver:
             if not RT5572FirmwareLoader.load(self.transport, fw_bytes):
                 raise RuntimeError("Firmware upload failed")
 
+            _update(0.4, "Finalizing firmware upload...")
             # Finalize firmware upload by clearing mailbox
             # (Matches frame 745/747 in trace)
             self.transport.write_reg32(H2M_MAILBOX_CID, 0xffffffff)
             self.transport.write_reg32(H2M_MAILBOX_STATUS, 0xffffffff)
 
             # 4. Wait for PBF (Post-Boot)
-            for _ in range(100):
+            _update(0.45, "Waiting for PBF System stabilization...")
+            for i in range(100):
                 pbf_ctrl = self.transport.read_reg32(PBF_SYS_CTRL)
                 if pbf_ctrl & PBF_SYS_CTRL_READY:
                     logger.info("PBF System Ready.")
                     break
+                if i % 10 == 0:
+                    _update(0.45 + (i * 0.001), f"Waiting for PBF... ({i}/100)")
                 await asyncio.sleep(0.01)
             else:
                 logger.warning("PBF System NOT ready, firmware might not be executing.")
 
             # 5. Kick MCU (Boot Signal)
+            _update(0.55, "Sending MCU Boot Signal...")
             # Based on trace: Req 1, Val 0x8, Idx 0
             self.transport.set_device_mode(0, 0x08)
             logger.info("MCU Boot Signal sent.")
@@ -139,16 +151,23 @@ class RT5572Driver:
 
         # 6 Full Hardware Initialization Sequence (Run for both COLD and WARM)
         # BBP and RF must be re-initialized every time we connect.
-        logger.info(f"Replaying {len(rt5572_init.INIT_SEQ)} initialization registers...")
+        total_init = len(rt5572_init.INIT_SEQ)
+        _update(0.6, f"Replaying {total_init} initialization registers...")
         for i, (idx, val) in enumerate(rt5572_init.INIT_SEQ):
             if i == 15:
                 # Matches Req 1, Val 1, Idx 0 (USB_MODE_RESET) from the kernel trace
                 # Must be sent exactly while MAC_SYS_CTRL is in reset (index 14)
                 self.transport.set_device_mode(0, 0x01)
                 logger.info("USB Endpoints Reset (Mid-Init).")
+            
             self.transport.write_multi(idx, bytes.fromhex(val))
+            
+            if i > 0 and i % 50 == 0:
+                prog = 0.6 + (0.3 * (i / total_init))
+                _update(prog, f"Initializing registers... ({i}/{total_init})")
 
         # 7. Read MAC Address (From EEPROM)
+        _update(0.95, "Reading MAC address from EEPROM...")
         # EEPROM offsets for MAC are typically 0x0002, 0x0003, 0x0004
         eeprom_mac0 = self.transport.read_eeprom(0x0002)
         eeprom_mac1 = self.transport.read_eeprom(0x0003)
@@ -165,10 +184,11 @@ class RT5572Driver:
         await self.set_channel(1)
         
         # 9. Start transport polling (ONLY AFTER INIT)
+        _update(0.98, "Starting transport polling...")
         await self.transport.start()
         self._is_running = True
         
-        logger.info("RT5572 Boot Sequence Complete.")
+        _update(1.0, f"RT5572 Driver successfully connected. MAC: {self.mac_address}")
 
     async def set_channel(self, channel: int) -> bool:
         """

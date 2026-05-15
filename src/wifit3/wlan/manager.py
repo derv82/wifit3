@@ -30,8 +30,8 @@ class WlanDeviceManager:
 
     async def refresh(self) -> List[WlanInterface]:
         """
-        Scans PyUSB. Discovers supported devices, handles firmware upload
-        if they are cold, and wraps the warm handle in a WlanInterface.
+        Scans PyUSB. Discovers supported devices and wraps them in a WlanInterface.
+        Initialization (firmware upload, etc.) is now handled by the driver's connect() method.
         """
         import libusb_package
         backend = libusb_package.get_libusb1_backend()
@@ -48,63 +48,31 @@ class WlanDeviceManager:
                 info = self.SUPPORTED_DEVICES[vid_pid]
                 logger.info(f"Found supported hardware: {info['desc']}")
                 
-                # AR9271 Specific lifecycle (Delayed Initialization)
-                if info["name"] == "AR9271":
-                    # We pass is_warm=False by default; the driver will probe in connect()
-                    driver_instance = info["driver_class"](dev, is_warm=False)
-                    iface = WlanInterface(driver_instance, f"wlan{len(self.interfaces)}", info["desc"])
-                    self.interfaces.append(iface)
-
-                # RTL8187 Specific lifecycle (usually warm)
-                elif info["name"] == "RTL8187":
-                    # Passive Detection: Try to read from Bulk IN (EP 0x81)
-                    is_warm = False
-                    try:
-                        data = dev.read(0x81, 64, timeout=100)
-                        if len(data) > 0:
-                            is_warm = True
-                    except usb.core.USBError:
-                        pass
-                    
-                    driver_instance = info["driver_class"](dev, is_warm=is_warm)
-                    iface = WlanInterface(driver_instance, f"wlan{len(self.interfaces)}", info["desc"])
-                    self.interfaces.append(iface)
-
-                # RT5572 Specific lifecycle (firmware upload)
-                elif info["name"] == "RT5572":
-                    warm_dev, was_already_warm = await self._ensure_rt5572_firmware(dev)
-                    if warm_dev:
-                        transport = RT5572USBTransport(warm_dev)
-                        driver_instance = info["driver_class"](transport, is_warm=was_already_warm)
-                        iface = WlanInterface(driver_instance, f"wlan{len(self.interfaces)}", info["desc"])
-                        self.interfaces.append(iface)
+                # Create driver instance
+                if info["name"] == "RT5572":
+                    # RT5572 needs its transport early for warmth probing in manager if we want to keep it passive,
+                    # but let's move that logic into the driver's __init__ or a class method for consistency.
+                    transport = RT5572USBTransport(dev)
+                    is_warm = await self._is_rt5572_warm(dev)
+                    driver_instance = info["driver_class"](transport, is_warm=is_warm)
+                else:
+                    # AR9271 and RTL8187 can handle their own warmth probing in connect() or be passed a guess
+                    driver_instance = info["driver_class"](dev)
+                
+                iface = WlanInterface(driver_instance, f"wlan{len(self.interfaces)}", info["desc"])
+                self.interfaces.append(iface)
 
         logger.info(f"Discovered {len(self.interfaces)} native WlanInterfaces.")
         return self.interfaces
 
-    async def _ensure_rt5572_firmware(self, dev: usb.core.Device) -> Tuple[Optional[usb.core.Device], bool]:
-        """
-        Safely checks if RT5572 is cold or warm.
-        Returns a tuple of (warm usb.core.Device handle, was_already_warm).
-        """
-        # Passive Detection: Read PBF_SYS_CTRL (0x0400).
-        # Probing shows COLD hardware returns 0x2080 (Bit 13 set).
-        # Initialized hardware returns 0x0f80 (Bit 13 cleared).
+    async def _is_rt5572_warm(self, dev: usb.core.Device) -> bool:
+        """Passive warmth check for RT5572."""
         try:
-            # RT5572 uses bRequest 7 for multi-read
             res = dev.ctrl_transfer(0xc0, 0x07, 0, 0x0400, 4)
             val = res[0] | (res[1] << 8) | (res[2] << 16) | (res[3] << 24)
-
-            # If Bit 13 is cleared, the MCU has finished its internal init.
-            if not (val & (1 << 13)):
-                logger.info(f"RT5572 is already WARM (PBF State: {hex(val)}).")
-                return dev, True
-        except usb.core.USBError:
-            pass
-
-        # If we got here, it's likely COLD or just plugged in.
-        logger.info("RT5572 appears COLD (Hardware Uninitialized).")
-        return dev, False
+            return not (val & (1 << 13))
+        except Exception:
+            return False
 
     def get_interface(self, name: str) -> Optional[WlanInterface]:
         for iface in self.interfaces:

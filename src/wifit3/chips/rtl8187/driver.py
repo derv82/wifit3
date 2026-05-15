@@ -16,10 +16,10 @@ class RTL8187Driver:
     Implements standard chipset interface for wifit3.
     """
     
-    def __init__(self, dev: usb.core.Device, is_warm: bool = True):
+    def __init__(self, dev: usb.core.Device, is_warm: bool = False):
         self.dev = dev
         self.transport = RTL8187USBTransport(dev)
-        self.is_warm = is_warm # RTL8187 usually warm on plug
+        self.is_warm = is_warm
         self.is_running = False
         
         self.mac_address = None
@@ -30,16 +30,36 @@ class RTL8187Driver:
     def register_rx_callback(self, cb):
         self._rx_callback = cb
 
-    async def connect(self) -> bool:
+    async def connect(self, progress_cb=None) -> bool:
         """Runs the boot sequence 'incantation' and identifies the hardware."""
+        def _update(pct, msg):
+            if progress_cb:
+                progress_cb(pct, msg)
+            logger.info(f"Progress {int(pct*100)}%: {msg}")
+
+        _update(0.05, "Probing RTL8187 hardware state...")
+        
+        # Passive Detection: Try to read from Bulk IN (EP 0x81).
+        # Warm hardware will either have data or a standard timeout.
+        # Cold hardware often rejects or stalls the Bulk pipe early.
+        try:
+            loop = asyncio.get_running_loop()
+            # Short read attempt to see if firmware is responsive
+            data = await loop.run_in_executor(None, self.dev.read, USB_EP_BULK_IN, 64, 100)
+            if len(data) >= 0:
+                self.is_warm = True
+        except usb.core.USBError:
+            self.is_warm = False
+
         if self.is_warm:
-            logger.info("Device is already WARM. Skipping bootstrap sequence.")
+            _update(0.1, "Device is already WARM. Skipping bootstrap sequence.")
             # self.transport.reset_pipes()
             self.is_running = True
             self._read_task = asyncio.create_task(self._read_loop())
+            _update(1.0, "RTL8187 Driver successfully re-attached.")
             return True
 
-        logger.info("Initializing RTL8187 hardware sequence...")
+        _update(0.05, "Initializing RTL8187 hardware sequence...")
         
         try:
             from .sequences.init import FULL_BOOT_SEQUENCE
@@ -50,7 +70,7 @@ class RTL8187Driver:
         # Execute the 'Incantation' with high-res precision for EVERY command.
         # This provides a steady heartbeat the hardware needs to stay in sync.
         total_cmds = len(FULL_BOOT_SEQUENCE)
-        logger.info(f"Blasting {total_cmds} setup commands (Precise Heartbeat)...")
+        _update(0.1, f"Blasting {total_cmds} setup commands (Precise Heartbeat)...")
         
         for i, (cmd_type, wVal, wIdx, data, delay) in enumerate(FULL_BOOT_SEQUENCE):
             try:
@@ -72,7 +92,8 @@ class RTL8187Driver:
                 await self._high_res_sleep(delay)
 
                 if i > 0 and i % 500 == 0:
-                    logger.info(f"Initialization Progress: {i}/{total_cmds} steps completed.")
+                    prog = 0.1 + (0.8 * (i / total_cmds))
+                    _update(prog, f"Initialization Progress: {i}/{total_cmds} steps completed.")
                     
             except usb.core.USBError as e:
                 if cmd_type != "SET_CONFIG":
@@ -80,12 +101,13 @@ class RTL8187Driver:
                     return False
 
         # Reset pipes to clear stalls and flush FIFO buffers (Crucial step from mvp.py)
+        _update(0.95, "Resetting USB pipes and flushing buffers...")
         self.transport.reset_pipes()
         await asyncio.sleep(0.1) # Breather after incantation
 
         # PHASE 2: Lock into Monitor Mode
         # 1. Set MSR to NO_LINK (0x00) to stop autonomous background scanning
-        logger.info("Setting RTL8187 to Monitor Mode (Disabling Auto-Scan)...")
+        _update(0.98, "Locking into Monitor Mode (Disabling Auto-Scan)...")
         self.transport.write_reg8(MSR, MSR_NO_LINK)
         
         # 2. Set RCR to accept all packets (Promiscuous)
@@ -99,6 +121,7 @@ class RTL8187Driver:
         self.is_running = True
         self._read_task = asyncio.create_task(self._read_loop())
         
+        _update(1.0, "RTL8187 Driver successfully connected.")
         return True
 
     async def _high_res_sleep(self, seconds: float):
