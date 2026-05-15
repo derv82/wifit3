@@ -89,18 +89,16 @@ class WlanDeviceManager:
         If cold, uploads firmware and waits for re-enumeration.
         Returns a tuple of (warm usb.core.Device handle, was_already_warm).
         """
-        # Passive Detection: Try to read from Bulk IN (EP 0x82)
-        # If the device is WARM and in monitor mode, it will return radio frames.
-        # If the device is COLD, the BootROM will timeout without corrupting its state.
         is_warm = False
         try:
             # Short timeout, we just want to see if the pipe is active
             data = dev.read(0x82, 512, timeout=100)
-            if len(data) > 0:
-                is_warm = True
+            is_warm = True
         except usb.core.USBError as e:
-            # Timeout or Pipe Error means it's likely COLD
-            pass
+            # Timeout means the endpoint exists and firmware is running, but no data.
+            # Errno 10060 (Windows), 110/116 (Linux), or string match.
+            if e.errno in (10060, 110, 116) or "timeout" in str(e).lower():
+                is_warm = True
 
         if is_warm:
             logger.info("AR9271 is already WARM (Active Firmware detected). Skipping upload.")
