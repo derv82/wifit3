@@ -28,7 +28,7 @@ class LogHelper:
         sys.stdout.write(f"{msg}\r\n")
         sys.stdout.flush()
             
-    def log_cmd(self, cmd_list, stdout_text, return_code, elapsed_time):
+    def log_cmd(self, cmd_list, stdout_text, return_code, start_exec, elapsed_time):
         tool_name = cmd_list[0]
         if tool_name == "sudo" and len(cmd_list) > 1:
             tool_name = cmd_list[1]
@@ -38,12 +38,12 @@ class LogHelper:
         
         with open(log_file, "a") as f:
             f.write(f"-----------------------------------\n")
-            f.write(f"[{self._timestamp() - elapsed_time}] Executing: {cmd_string}\n")
+            f.write(f"[{start_exec:.3f}] Executing: {cmd_string}\n")
             if stdout_text:
                 f.write(f"{stdout_text}")
                 if not stdout_text.endswith('\n'):
                     f.write("\n")
-            f.write(f"[{self._timestamp()}] Execution completed in {elapsed_time:.3f}s, return code: {return_code}\n")
+            f.write(f"[{time.time():.3f}] Execution completed in {elapsed_time:.3f}s, return code: {return_code}\n")
             f.write(f"-----------------------------------\n")
 
 
@@ -99,7 +99,7 @@ class Capture:
         # 4. Log
         elapsed = time.time() - start_exec
         combined_output = (res.stdout or "") + (res.stderr or "")
-        self.logger.log_cmd(cmd_list, combined_output, res.returncode, elapsed)
+        self.logger.log_cmd(cmd_list, combined_output, res.returncode, start_exec, elapsed)
         
         return combined_output
         

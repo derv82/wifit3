@@ -9,14 +9,14 @@ def test_log_helper(tmp_path):
     logger = LogHelper(tmp_path)
     
     with patch('time.time', return_value=12345.678):
-        logger.log_cmd(["echo", "hello"], "hello\n", 0, 0.5)
+        logger.log_cmd(["echo", "hello"], "hello\n", 0, 12345.178, 0.5)
         
     log_file = tmp_path / "echo.log"
     assert log_file.exists()
     content = log_file.read_text()
     
-    assert "[12345.678] --------------" in content
-    assert "[12345.678] Executing: echo hello" in content
+    assert "-----------------------------------" in content
+    assert "[12345.178] Executing: echo hello" in content
     assert "hello\n" in content
     assert "[12345.678] Execution completed in 0.500s, return code: 0" in content
 

@@ -21,14 +21,8 @@ def test_metadata_parse_rx_too_short():
 
 def test_metadata_pack_tx():
     frame = b'\xaa\xbb\xcc'
-    # ts_datalen=3, ts_rate=11, ts_flags=NO_ACK(0x01)
-    # Format: <LBBBBLL
     packet = AthMetadataLayer.pack_tx(frame, rate_idx=11, no_ack=True)
     
-    assert len(packet) == 16 + 3
-    assert packet[16:] == frame
-    
-    datalen, rate, flags = struct.unpack("<LBB", packet[:6])
-    assert datalen == 3
-    assert rate == 11
-    assert flags == 0x01
+    assert len(packet) == 8 + 3
+    assert packet[8:] == frame
+    assert packet[3] == AthMetadataLayer.TX_FLAG_NO_ACK

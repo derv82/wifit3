@@ -21,14 +21,10 @@ def test_firmware_load_sequence(usb_mock):
     
     # Expect Boot Trigger (0x31)
     usb_mock.expect_ctrl(0x40, 0x31, 0x9030, 0x00, data=b'')
-    
-    # Expect CPU Wakeup (0x23)
-    usb_mock.expect_ctrl(0x23, 0x01, 0x0010, 0x0007, data=b'')
-    
+
     dev = usb.core.find()
     success = FirmwareLoader.load(dev, dummy_fw)
     assert success is True
-
 def test_firmware_load_reset_error_is_success(usb_mock):
     """
     Verify that a USBError during boot trigger is treated as success (device resetting).

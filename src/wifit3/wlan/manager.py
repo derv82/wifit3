@@ -4,9 +4,6 @@ import usb.core
 import usb.util
 from typing import List, Optional, Tuple
 
-from wifit3.chips.ar9271.driver import AR9271Driver
-from wifit3.chips.rtl8187.driver import RTL8187Driver
-from wifit3.chips.rt5572.driver import RT5572Driver
 from wifit3.chips.rt5572.transport import RT5572USBTransport
 from .interface import WlanInterface
 
@@ -19,6 +16,10 @@ class WlanDeviceManager:
     """
     def __init__(self):
         self.interfaces: List[WlanInterface] = []
+        
+        from wifit3.chips.ar9271.driver import AR9271Driver
+        from wifit3.chips.rtl8187.driver import RTL8187Driver
+        from wifit3.chips.rt5572.driver import RT5572Driver
         
         # Supported Hardware Registry
         self.SUPPORTED_DEVICES = {
@@ -109,8 +110,8 @@ class WlanDeviceManager:
         from wifit3.chips.ar9271.firmware import FirmwareLoader
         import os
         
-        # Find the fw file relative to the project root
-        fw_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), "htc_9271_cleanroom.fw")
+        # Find the fw file relative to the driver directory
+        fw_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chips", "ar9271", "assets", "htc_9271_cleanroom.fw")
         
         with open(fw_path, 'rb') as f:
             fw_bytes = f.read()

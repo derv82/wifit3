@@ -29,6 +29,7 @@ class PyUSBMock:
         self.expectations = []
         self.call_index = 0
         self.device = MagicMock(spec=usb.core.Device)
+        self.device._ctx = MagicMock()
         
         # Wire up the mock device to our replayer
         self.device.ctrl_transfer.side_effect = self._handle_ctrl
