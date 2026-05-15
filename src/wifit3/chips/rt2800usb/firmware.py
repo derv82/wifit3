@@ -3,22 +3,22 @@ import usb.core
 import time
 from typing import Optional
 
-from .transport import RT5572USBTransport
+from .transport import RT2800USBTransport
 from .constants import MCU_CODE_BASE
 
 logger = logging.getLogger(__name__)
 
-class RT5572FirmwareLoader:
+class RT2800USBFirmwareLoader:
     """
-    Handles uploading firmware to the Ralink rt5572 MCU.
+    Handles uploading firmware to the Ralink rt2800usb family MCU.
     """
     
     @staticmethod
-    def load(transport: RT5572USBTransport, fw_bytes: bytes) -> bool:
+    def load(transport: RT2800USBTransport, fw_bytes: bytes) -> bool:
         """
         Uploads the firmware in 64-byte chunks.
         """
-        logger.info(f"Uploading {len(fw_bytes)} bytes of firmware to rt5572...")
+        logger.info(f"Uploading {len(fw_bytes)} bytes of firmware to rt2800usb...")
         
         # 1. MCU Preparation (Reset, mailbox, etc.)
         # Based on PCAP, there are some register writes before the upload.

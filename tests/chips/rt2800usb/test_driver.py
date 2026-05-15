@@ -1,11 +1,11 @@
 import pytest
 import asyncio
 import usb.core
-from wifit3.chips.rt5572.driver import RT5572Driver
-from wifit3.chips.rt5572.transport import RT5572USBTransport
+from wifit3.chips.rt2800usb.driver import RT2800USBDriver
+from wifit3.chips.rt2800usb.transport import RT2800USBTransport
 
 @pytest.mark.asyncio
-async def test_rt5572_connect_warm(usb_mock):
+async def test_rt2800usb_connect_warm(usb_mock):
     dev = usb.core.find()
     
     # Expected read MAC_CSR0 (0x1000)
@@ -20,11 +20,11 @@ async def test_rt5572_connect_warm(usb_mock):
     usb_mock.expect_ctrl(0xc0, 0x09, 0, 0x0003).respond_with([0x33, 0x44])
     usb_mock.expect_ctrl(0xc0, 0x09, 0, 0x0004).respond_with([0x55, 0x66])
     
-    transport = RT5572USBTransport(dev)
-    driver = RT5572Driver(transport, is_warm=True)
+    transport = RT2800USBTransport(dev)
+    driver = RT2800USBDriver(transport, is_warm=True, chip_id="rt5572")
     
     with pytest.MonkeyPatch.context() as m:
-        from wifit3.chips.rt5572.assets import rt5572_init
+        from wifit3.chips.rt2800usb.assets import rt5572_init
         m.setattr(rt5572_init, "INIT_SEQ", []) # Skip the 400+ register writes
         
         async def mock_set_channel(*args, **kwargs):

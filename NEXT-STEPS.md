@@ -4,7 +4,7 @@
 We have successfully implemented fully functional Userspace Python drivers for:
 * [Atheros AR9271](./src/wifit3/chips/ar9271/) (v1.4).
 * [Alfa/Realtek RTL8187](./src/wifit3/chips/rtl8187/).
-* [Ralink RT5572 (rt2800usb)](./src/wifit3/chips/rt5572/).
+* [Ralink RT2800USB (RT5572, RT3572, RT5372)](./src/wifit3/chips/rt2800usb/).
 
 The drivers can cold-boot, warm-boot, tune to channels, inject and sniff live 802.11 management frames.
 
@@ -14,17 +14,9 @@ That said, we ONLY support 3 cards. And there's absolutely no actual "attacks" i
 
 ## NEXT STEP: HARDWARE SUPPORT
 
-### Immediate Harware Support: RT5372 & RT3572
+### Immediate Harware Support: RT5372 (PAU05) & RT3572 (AWUS051NH v2)
 
-* Should be VERY similar to the RT5572 (already implemented).
-* Sequencing Scripts: Firmware extraction, Boot sequence extraction, Channel Hopping sequence extraction.
-* USB Transport layer.
-* Driver:
-  - Device boot init, Firmware uploading
-  - Channel hop
-  - 80211 frame parsing
-  - Packet injection TX (deauth)
-* WlanInterface & WlanDeviceManager integration
+* **DONE:** Implemented as part of the generic `rt2800usb` driver.
 
 ### Future Hardware Support (en-route)
 

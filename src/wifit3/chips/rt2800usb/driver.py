@@ -3,35 +3,49 @@ import asyncio
 import struct
 import json
 import time
+import importlib
 from typing import Optional
 from pathlib import Path
 
-from .transport import RT5572USBTransport
-from .firmware import RT5572FirmwareLoader
+from .transport import RT2800USBTransport
+from .firmware import RT2800USBFirmwareLoader
 from .constants import *
 
 from wifit3.wlan.packet import WlanFrameParser
 
-from .assets import rt5572_tuning, rt5572_init
-
 logger = logging.getLogger(__name__)
 
-class RT5572Driver:
+class RT2800USBDriver:
     """
-    Userspace driver for the Ralink RT5572 (rt2800usb).
+    Unified Userspace driver for the Ralink rt2800usb family (RT5572, RT3572, RT5372).
     """
     RXINFO_SIZE = 4
-    RXWI_SIZE = 24
     TXINFO_SIZE = 4
-    TXWI_SIZE = 20
 
-    def __init__(self, transport: RT5572USBTransport, is_warm: bool = False):
+    def __init__(self, transport: RT2800USBTransport, is_warm: bool = False, chip_id: str = "rt5572"):
         self.transport = transport
         self.mac_address: Optional[str] = None
         self._rx_callback = None
         self._is_running = False
         self.is_warm = is_warm
         self.parser = WlanFrameParser()
+        self.chip_id = chip_id.lower()
+
+        # Dynamic descriptor sizes based on chip architecture
+        if self.chip_id == "rt5572":
+            self.rxwi_size = 24
+            self.txwi_size = 20
+        else:
+            self.rxwi_size = 16
+            self.txwi_size = 16
+
+        # Dynamically load assets based on chip_id
+        try:
+            self.assets_init = importlib.import_module(f"wifit3.chips.rt2800usb.assets.{self.chip_id}_init")
+            self.assets_tuning = importlib.import_module(f"wifit3.chips.rt2800usb.assets.{self.chip_id}_tuning")
+        except ImportError as e:
+            logger.error(f"Failed to load assets for chip {self.chip_id}: {e}")
+            raise ValueError(f"Unsupported or missing assets for chip {self.chip_id}")
 
         # Subscribe to transport polling
         self.transport.subscribe(self._on_bulk_in)
@@ -42,9 +56,9 @@ class RT5572Driver:
     def _on_bulk_in(self, data: bytes):
         """
         Processes raw data from the Bulk IN endpoint.
-        Format: [RXINFO (4)] [RXWI (16)] [802.11 Frame] [Pad] [RXD (4)]
+        Format: [RXINFO (4)] [RXWI (16/24)] [802.11 Frame] [Pad] [RXD (4)]
         """
-        if len(data) < self.RXINFO_SIZE + self.RXWI_SIZE:
+        if len(data) < self.RXINFO_SIZE + self.rxwi_size:
             logger.debug(f"RX Drop: Too short ({len(data)} bytes)")
             return
 
@@ -52,7 +66,7 @@ class RT5572Driver:
         # Word 0: [15:0] USB_DMA_RX_PKT_LEN
         rx_pkt_len = struct.unpack("<H", data[0:2])[0]
         
-        if rx_pkt_len <= self.RXWI_SIZE or rx_pkt_len > len(data) - self.RXINFO_SIZE:
+        if rx_pkt_len <= self.rxwi_size or rx_pkt_len > len(data) - self.RXINFO_SIZE:
             logger.debug(f"RX Drop: Bad rx_pkt_len {rx_pkt_len} (Data len: {len(data)})")
             return
 
@@ -63,7 +77,7 @@ class RT5572Driver:
 
         # 3. Extract 802.11 Frame
         # Frame starts after RXINFO and RXWI
-        frame_bytes = data[self.RXINFO_SIZE + self.RXWI_SIZE : self.RXINFO_SIZE + rx_pkt_len]
+        frame_bytes = data[self.RXINFO_SIZE + self.rxwi_size : self.RXINFO_SIZE + rx_pkt_len]
         
         if len(frame_bytes) < 10:
             logger.debug(f"RX Drop: Extracted frame too short ({len(frame_bytes)})")
@@ -99,7 +113,7 @@ class RT5572Driver:
             await self.set_channel(1)
             await self.transport.start()
             self._is_running = True
-            _update(1.0, f"RT5572 Driver successfully connected. MAC: {self.mac_address}")
+            _update(1.0, f"{self.chip_id.upper()} Driver successfully connected. MAC: {self.mac_address}")
             return True
         
         return False
@@ -108,7 +122,7 @@ class RT5572Driver:
         """
         Synchronous version of the boot and init sequence for background thread.
         """
-        update_cb(0.05, "Identifying RT5572 hardware...")
+        update_cb(0.05, f"Identifying {self.chip_id.upper()} hardware...")
         
         # 1. Identify Hardware
         mac_csr0 = self.transport.read_reg32(MAC_CSR0)
@@ -127,18 +141,24 @@ class RT5572Driver:
             update_cb(0.15, "Loading firmware into MCU memory...")
             if firmware_path is None or not Path(firmware_path).exists():
                 # Fallback to internal assets if no path provided
-                firmware_path = Path(__file__).parent / "assets" / "rt5572.bin"
+                firmware_path = Path(__file__).parent / "assets" / f"{self.chip_id}.bin"
                 
             try:
                 with open(firmware_path, "rb") as f:
                     fw_bytes = f.read()
             except FileNotFoundError:
                 # Last resort: try to find it in the scripts folder if it was just extracted
-                firmware_path = Path("scripts/rt5572/rt5572.bin")
-                with open(firmware_path, "rb") as f:
-                    fw_bytes = f.read()
+                firmware_path = Path(f"scripts/{self.chip_id}/{self.chip_id}.bin")
+                try:
+                    with open(firmware_path, "rb") as f:
+                        fw_bytes = f.read()
+                except FileNotFoundError:
+                    # Final fallback: use rt5572.bin as they share firmware
+                    firmware_path = Path(__file__).parent / "assets" / "rt5572.bin"
+                    with open(firmware_path, "rb") as f:
+                        fw_bytes = f.read()
             
-            if not RT5572FirmwareLoader.load(self.transport, fw_bytes):
+            if not RT2800USBFirmwareLoader.load(self.transport, fw_bytes):
                 logger.error("Firmware upload failed")
                 return False
 
@@ -170,9 +190,10 @@ class RT5572Driver:
             time.sleep(0.1)
 
         # 6 Full Hardware Initialization Sequence (Run for both COLD and WARM)
-        total_init = len(rt5572_init.INIT_SEQ)
+        init_seq = getattr(self.assets_init, "INIT_SEQ", [])
+        total_init = len(init_seq)
         update_cb(0.6, f"Replaying {total_init} initialization registers...")
-        for i, (idx, val) in enumerate(rt5572_init.INIT_SEQ):
+        for i, (idx, val) in enumerate(init_seq):
             if i == 15:
                 # Matches Req 1, Val 1, Idx 0 (USB_MODE_RESET) from the kernel trace
                 self.transport.set_device_mode(0, 0x01)
@@ -203,12 +224,12 @@ class RT5572Driver:
         """
         Replays the captured register sequence for the given channel.
         """
-        sequence = rt5572_tuning.get_sequence(channel)
+        sequence = self.assets_tuning.get_sequence(channel)
         if not sequence:
-            logger.warning(f"No tuning sequence for Channel {channel}")
+            logger.warning(f"No tuning sequence for Channel {channel} on {self.chip_id}")
             return False
 
-        logger.debug(f"Tuning RT5572 to Channel {channel}...")
+        logger.debug(f"Tuning {self.chip_id.upper()} to Channel {channel}...")
         
         for idx, val in sequence:
             # The extracted val is a hex string literal representing the exact byte order.
@@ -223,7 +244,7 @@ class RT5572Driver:
         """
         # 1. Construct TXINFO (4 bytes)
         # Word 0: [15:0] Len, [24] WIV=1, [26:25] QSEL=2 (EDCA)
-        pkt_len = self.TXWI_SIZE + len(frame_bytes)
+        pkt_len = self.txwi_size + len(frame_bytes)
         txinfo = pkt_len | TXINFO_W0_WIV | TXINFO_W0_QSEL_EDCA
         
         # 2. Construct TXWI (24 bytes / 6 words)
@@ -236,7 +257,7 @@ class RT5572Driver:
         txwi_w1 = (len(frame_bytes) << 16)
         
         # Build TXWI buffer
-        txwi = bytearray(self.TXWI_SIZE)
+        txwi = bytearray(self.txwi_size)
         struct.pack_into("<I", txwi, 0, txwi_w0)
         struct.pack_into("<I", txwi, 4, txwi_w1)
         
@@ -250,4 +271,4 @@ class RT5572Driver:
     async def close(self):
         self._is_running = False
         await self.transport.stop()
-        logger.info("RT5572 Driver closed.")
+        logger.info(f"{self.chip_id.upper()} Driver closed.")

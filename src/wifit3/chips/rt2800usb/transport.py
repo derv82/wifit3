@@ -11,9 +11,9 @@ from .constants import (
 
 logger = logging.getLogger(__name__)
 
-class RT5572USBTransport:
+class RT2800USBTransport:
     """
-    Transport layer for Ralink rt5572 (rt2800usb).
+    Transport layer for Ralink rt2800usb family (rt5572, rt3572, rt5372).
     Handles Vendor Control Transfers for register access and firmware loading.
     """
     
@@ -34,7 +34,7 @@ class RT5572USBTransport:
         if self._is_running: return
         self._is_running = True
         self._rx_task = asyncio.create_task(self._poll_loop())
-        logger.info("RT5572 Transport started (Bulk IN polling enabled).")
+        logger.info("RT2800USB Transport started (Bulk IN polling enabled).")
 
     async def stop(self):
         self._is_running = False
@@ -44,7 +44,7 @@ class RT5572USBTransport:
                 await self._rx_task
             except asyncio.CancelledError:
                 pass
-        logger.info("RT5572 Transport stopped.")
+        logger.info("RT2800USB Transport stopped.")
 
     async def send_bulk(self, data: bytes):
         """Sends a raw packet to the Bulk OUT endpoint."""
