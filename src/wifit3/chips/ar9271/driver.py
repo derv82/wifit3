@@ -44,7 +44,7 @@ class AR9271Driver:
         self.total_credits = 0
         self._rx_callback = None
 
-        # Initial subscription
+        # EP 0 for HTC/WMI Management, EP 1 for WMI Commands/Events
         self.transport.subscribe(0, self._on_htc_control)
 
     def register_rx_callback(self, cb):
@@ -105,10 +105,11 @@ class AR9271Driver:
         if self.is_warm:
             # OPTIMIZATION: Fast re-attach for already-running firmware
             logger.info("Device is already WARM. Re-attaching to existing HTC/WMI streams...")
-            self.total_credits = 33 
-            self.wmi_endpoint_id = HTC_ENDPOINT_WMI 
-            self.data_endpoint_id = 5 
+            self.total_credits = 33 # Assume default from previous handshake
+            self.wmi_endpoint_id = HTC_ENDPOINT_WMI # WMI is mapped to HTC endpoint 1
+            self.data_endpoint_id = 5 # Default Data EP
             
+            # Seed the CreditManager to prevent deadlocks since we skipped the HTC_READY handshake
             self.transport.credit_manager.set_initial(self.wmi_endpoint_id, self.total_credits)
             self.transport.credit_manager.set_initial(self.data_endpoint_id, self.total_credits)
             
@@ -116,13 +117,14 @@ class AR9271Driver:
             self._htc_config_done_event.set()
             self._wmi_ready_event.set()
             
-            # Clear any stale state in the hardware pipes
+            # We MUST clear the halt/toggle bits on the pipes so Bulk OUT doesn't drop packets
             self.transport.reset_pipes()
             await asyncio.sleep(0.05)
             
             await self.transport.start()
             
             # Subscribe to the data streams
+            # Subscribe to Management (0), WMI (1), and CAB (3) for the Bulk stream
             self.transport.subscribe(0, self._on_wmi_packet)
             self.transport.subscribe(1, self._on_wmi_packet)
             self.transport.subscribe(3, self._on_wmi_packet)
@@ -163,10 +165,11 @@ class AR9271Driver:
         await self.transport.send(0, setup_done, is_wmi=False)
         
         self.transport.reset_pipes()
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.05) # Half-breath
 
         # 6. Ultimate Calibration Marathon
         logger.info("[5/5] Replaying 1,200-Packet Calibration Table...")
+        # Subscribe to Management (0), WMI (1), and CAB (3) for the Bulk stream
         self.transport.subscribe(0, self._on_wmi_packet)
         self.transport.subscribe(1, self._on_wmi_packet)
         self.transport.subscribe(3, self._on_wmi_packet)
@@ -182,10 +185,20 @@ class AR9271Driver:
                 cmd_id, p_seq = struct.unpack(">HH", raw_wmi[:4])
                 payload_data = raw_wmi[4:]
                 
-                # Rigid Stop-and-Wait for 1-slot mailbox
-                success = await self.send_wmi_command(cmd_id, payload_data, wait_for_ack=True)
+                # Robust retry loop for calibration packets
+                success = False
+                for attempt in range(3):
+                    try:
+                        success = await self.send_wmi_command(cmd_id, payload_data, wait_for_ack=True)
+                        if success:
+                            break
+                    except usb.core.USBError as e:
+                        logger.warning(f"USBError at packet {i} (Attempt {attempt}): {e}")
+                        self.transport.reset_pipes()
+                        await asyncio.sleep(0.01)
+                
                 if not success:
-                    logger.warning(f"Timeout at packet {i} (Cmd {hex(cmd_id)}). Continuing...")
+                    logger.warning(f"Failed to process packet {i} (Cmd {hex(cmd_id)}).")
                     
                 if i > 0 and i % 200 == 0:
                     logger.info(f"Progress: {i}/{len(payloads)} registers processed.")
@@ -194,7 +207,7 @@ class AR9271Driver:
             
             # Final Trigger Sequence
             await self.send_wmi_command(WMI_SET_MODE_CMDID, struct.pack(">H", 0x0001))
-            await self.send_wmi_command(0x0006, b"") 
+            await self.send_wmi_command(0x0006, b"") # INIT
             await self.send_wmi_command(WMI_START_RECV_CMDID, b"")
             
         except FileNotFoundError:
@@ -203,6 +216,7 @@ class AR9271Driver:
 
         logger.info("Waiting for Target Ready and MAC verification...")
         try:
+            # Accelerated wait: v1.4 usually responds within 500ms post-marathon
             await asyncio.wait_for(self._wmi_ready_event.wait(), timeout=3.0)
         except asyncio.TimeoutError:
             logger.warning("Timed out waiting for WMI Target Ready event. Proceeding anyway...")
@@ -286,7 +300,10 @@ class AR9271Driver:
                 # Register ACKs are near-instant (<5ms)
                 res_ev_id, res_payload = await asyncio.wait_for(ack_queue.get(), timeout=0.2)
             except asyncio.TimeoutError:
-                logger.debug(f"Timeout waiting for ACK on Cmd {hex(command_id)}. Resending...")
+                logger.debug(f"Timeout waiting for ACK on Cmd {hex(command_id)}. Resending to sync toggle bit...")
+                # The hardware often ignores clear_halt(), leaving the USB toggle bit desynced.
+                # The first packet is dropped, but the host advances its toggle bit.
+                # Resending it forces a match!
                 await self.transport.send(self.wmi_endpoint_id, wmi_payload, is_wmi=True)
                 try:
                     res_ev_id, res_payload = await asyncio.wait_for(ack_queue.get(), timeout=0.2)
@@ -310,8 +327,14 @@ class AR9271Driver:
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
         """
         Injects a raw 802.11 frame onto the air.
+        Wraps the frame in the `ath_tx_status` hardware descriptor.
         """
+        # Pack the hardware TX descriptor (rate 0x0B, no_ack flag)
         tx_payload = self.meta.pack_tx(frame_bytes, rate_idx=0x0B, no_ack=use_no_ack)
+        
+        # Dispatch to the dynamic Data endpoint (usually EP 5)
+        # is_wmi=False means it uses the standard 8-byte HTC header, not the WMI variant
+        # is_data=True means it must go to Bulk OUT (EP 0x01) with a 4-byte HIF header!
         await self.transport.send(self.data_endpoint_id, tx_payload, is_wmi=False, is_data=True)
         return True
 
