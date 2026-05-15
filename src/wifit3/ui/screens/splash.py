@@ -23,7 +23,7 @@ class DriverProgress(Message):
 
 def load_logo() -> Text:
     """Load the ANSI logo from assets."""
-    logo_path = Path(__file__).parent.parent / "assets" / "logo.ans"
+    logo_path = Path(__file__).parent.parent / "assets" / "logo_sm.ans"
     try:
         if logo_path.exists():
             return Text.from_ansi(logo_path.read_text(encoding="utf-8"))
