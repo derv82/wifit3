@@ -52,10 +52,8 @@ class WlanDeviceManager:
                 
                 # Create driver instance
                 if info["driver_class"].__name__ == "RT2800USBDriver":
-                    # RT2800USB needs its transport early for warmth probing
                     transport = RT2800USBTransport(dev)
-                    is_warm = await self._is_rt2800usb_warm(dev)
-                    driver_instance = info["driver_class"](transport, is_warm=is_warm, chip_id=info["chip_id"])
+                    driver_instance = info["driver_class"](transport, chip_id=info["chip_id"])
                 else:
                     # AR9271 and RTL8187 can handle their own warmth probing in connect() or be passed a guess
                     driver_instance = info["driver_class"](dev)
@@ -65,15 +63,6 @@ class WlanDeviceManager:
 
         logger.info(f"Discovered {len(self.interfaces)} native WlanInterfaces.")
         return self.interfaces
-
-    async def _is_rt2800usb_warm(self, dev: usb.core.Device) -> bool:
-        """Passive warmth check for RT2800USB family."""
-        try:
-            res = dev.ctrl_transfer(0xc0, 0x07, 0, 0x0400, 4)
-            val = res[0] | (res[1] << 8) | (res[2] << 16) | (res[3] << 24)
-            return not (val & (1 << 13))
-        except Exception:
-            return False
 
     def get_interface(self, name: str) -> Optional[WlanInterface]:
         for iface in self.interfaces:

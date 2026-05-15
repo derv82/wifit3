@@ -22,12 +22,12 @@ class RT2800USBDriver:
     RXINFO_SIZE = 4
     TXINFO_SIZE = 4
 
-    def __init__(self, transport: RT2800USBTransport, is_warm: bool = False, chip_id: str = "rt5572"):
+    def __init__(self, transport: RT2800USBTransport, chip_id: str = "rt5572"):
         self.transport = transport
         self.mac_address: Optional[str] = None
         self._rx_callback = None
         self._is_running = False
-        self.is_warm = is_warm
+        self.is_warm = False
         self.parser = WlanFrameParser()
         self.chip_id = chip_id.lower()
 
@@ -128,6 +128,10 @@ class RT2800USBDriver:
         mac_csr0 = self.transport.read_reg32(MAC_CSR0)
         asic_ver = self.transport.read_reg32(ASIC_VER_ID)
         logger.info(f"MAC_CSR0: {hex(mac_csr0)}, ASIC_VER: {hex(asic_ver)}")
+
+        # Check warmth state passively exactly once before boot
+        pbf_ctrl = self.transport.read_reg32(PBF_SYS_CTRL)
+        self.is_warm = not bool(pbf_ctrl & (1 << 13))
 
         if self.is_warm:
             update_cb(0.1, "Device is already WARM. Skipping firmware upload.")
