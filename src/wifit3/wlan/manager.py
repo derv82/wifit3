@@ -90,21 +90,21 @@ class WlanDeviceManager:
         Returns a tuple of (warm usb.core.Device handle, was_already_warm).
         """
         is_warm = False
-        try:
-            # Short timeout, we just want to see if the pipe is active
-            data = dev.read(0x82, 512, timeout=100)
-            is_warm = True
-        except usb.core.USBError as e:
-            # Timeout means the endpoint exists and firmware is running, but no data.
-            # Errno 10060 (Windows), 110/116 (Linux), or string match.
-            if e.errno in (10060, 110, 116) or "timeout" in str(e).lower():
-                is_warm = True
+        # try:
+        #     # Short timeout, we just want to see if the pipe is active
+        #     data = dev.read(0x82, 512, timeout=100)
+        #     is_warm = True
+        # except usb.core.USBError as e:
+        #     # Timeout means the endpoint exists and firmware is running, but no data.
+        #     # Errno 10060 (Windows), 110/116 (Linux), or string match.
+        #     if e.errno in (10060, 110, 116) or "timeout" in str(e).lower():
+        #         is_warm = True
+        
+        # if is_warm:
+        #     logger.info("AR9271 is already WARM (Active Firmware detected). Skipping upload.")
+        #     return dev, True
 
-        if is_warm:
-            logger.info("AR9271 is already WARM (Active Firmware detected). Skipping upload.")
-            return dev, True
-
-        logger.info("AR9271 is COLD (No Firmware). Initiating upload sequence...")
+        logger.info("AR9271 is COLD (forced). Initiating upload sequence...")
         from wifit3.chips.ar9271.firmware import FirmwareLoader
         import os
         
