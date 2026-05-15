@@ -4,6 +4,7 @@ import struct
 import json
 import os
 import usb.core
+import usb.util
 from typing import Optional, Dict, List, Tuple
 from pathlib import Path
 
@@ -22,6 +23,7 @@ class AR9271Driver:
     """
     
     def __init__(self, dev: usb.core.Device, is_warm: bool = False):
+        # Initial transport for whatever handle we were given (Cold or Warm)
         self.transport = AR9271USBTransport(dev)
         self.wmi = WMIProtocol()
         self.meta = AthMetadataLayer()
@@ -42,8 +44,7 @@ class AR9271Driver:
         self.total_credits = 0
         self._rx_callback = None
 
-        # Subscribe to transport packets
-        # EP 0 for HTC/WMI Management, EP 1 for WMI Commands/Events
+        # Initial subscription
         self.transport.subscribe(0, self._on_htc_control)
 
     def register_rx_callback(self, cb):
@@ -51,15 +52,63 @@ class AR9271Driver:
 
     async def connect(self):
         """
-        Performs the event-driven HTC/WMI handshake and 'Ultimate Marathon' replay.
+        Performs the event-driven HTC/WMI handshake.
+        Handles COLD -> WARM transition if necessary.
         """
-        if self.is_warm:
-            logger.info("Device is already WARM. Re-attaching to existing HTC/WMI streams...")
-            self.total_credits = 33 # Assume default from previous handshake
-            self.wmi_endpoint_id = HTC_ENDPOINT_WMI # WMI is mapped to HTC endpoint 1
-            self.data_endpoint_id = 5 # Default Data EP
+        # 1. Single check for warmth
+        self.is_warm = await self._check_if_warm()
+        
+        if not self.is_warm:
+            logger.info("AR9271 is COLD (BootROM). Initiating firmware upload...")
+            from .firmware import FirmwareLoader
             
-            # Seed the CreditManager to prevent deadlocks since we skipped the HTC_READY handshake
+            # Find the fw file relative to the driver directory
+            fw_path = Path(__file__).parent / "assets" / "htc_9271_cleanroom.fw"
+            with open(fw_path, 'rb') as f:
+                fw_bytes = f.read()
+                
+            # load() handles dispose_resources(dev) internally
+            success = FirmwareLoader.load(self.transport.dev, fw_bytes)
+            if not success:
+                logger.error("Firmware upload failed.")
+                return False
+                
+            logger.info("Waiting for AR9271 to re-enumerate...")
+            warm_dev = None
+            import libusb_package
+            backend = libusb_package.get_libusb1_backend()
+            
+            for _ in range(12): # 3 second total wait
+                await asyncio.sleep(0.25)
+                warm_dev = usb.core.find(idVendor=0x0cf3, idProduct=0x9271, backend=backend)
+                if warm_dev:
+                    break
+                
+            if not warm_dev:
+                logger.error("AR9271 failed to re-enumerate after boot.")
+                return False
+                
+            logger.info("AR9271 successfully warmed up. Re-initializing transport...")
+            
+            # Create a FRESH transport and reset events for the new handle
+            self.transport = AR9271USBTransport(warm_dev)
+            self.transport.subscribe(0, self._on_htc_control)
+            
+            self._htc_ready_event = asyncio.Event()
+            self._htc_config_done_event = asyncio.Event()
+            self._wmi_ready_event = asyncio.Event()
+            self._event_queues = {}
+            
+            # We are no longer initially warm; we must do the full handshake
+            self.is_warm = False 
+
+        if self.is_warm:
+            # OPTIMIZATION: Fast re-attach for already-running firmware
+            logger.info("Device is already WARM. Re-attaching to existing HTC/WMI streams...")
+            self.total_credits = 33 
+            self.wmi_endpoint_id = HTC_ENDPOINT_WMI 
+            self.data_endpoint_id = 5 
+            
             self.transport.credit_manager.set_initial(self.wmi_endpoint_id, self.total_credits)
             self.transport.credit_manager.set_initial(self.data_endpoint_id, self.total_credits)
             
@@ -67,7 +116,7 @@ class AR9271Driver:
             self._htc_config_done_event.set()
             self._wmi_ready_event.set()
             
-            # We MUST clear the halt/toggle bits on the pipes so Bulk OUT doesn't drop packets
+            # Clear any stale state in the hardware pipes
             self.transport.reset_pipes()
             await asyncio.sleep(0.05)
             
@@ -80,6 +129,7 @@ class AR9271Driver:
             logger.info("AR9271 Driver successfully re-attached to WARM device.")
             return True
 
+        # --- FULL HANDSHAKE (The Final Marathon) ---
         logger.info("Starting AR9271 Handshake via USBTransport (Final Marathon)...")
         
         await self.transport.start()
@@ -95,13 +145,13 @@ class AR9271Driver:
         # WMI Service (0x0100) -> DL=3, UL=4
         wmi_payload = struct.pack(">HHHBBBB", 0x0002, 0x0100, 0, 3, 4, 0, 0)
         await self.transport.send(0, wmi_payload, is_wmi=False)
-        await asyncio.sleep(0.001) # Accelerated
+        await asyncio.sleep(0.001)
         
         others = [0x0101, 0x0102, 0x0103, 0x0104, 0x0107, 0x0108, 0x0106, 0x0105]
         for svc_id in others:
             payload = struct.pack(">HHHBBBB", 0x0002, svc_id, 0, 2, 1, 0, 0)
             await self.transport.send(0, payload, is_wmi=False)
-            await asyncio.sleep(0.001) # Accelerated
+            await asyncio.sleep(0.001)
 
         logger.info("[3/5] Configuring HTC Pipe (Pipe 1 -> 33 Credits)...")
         config_pipe = struct.pack(">HBB", 0x0005, 1, self.total_credits)
@@ -113,11 +163,10 @@ class AR9271Driver:
         await self.transport.send(0, setup_done, is_wmi=False)
         
         self.transport.reset_pipes()
-        await asyncio.sleep(0.05) # Half-breath
+        await asyncio.sleep(0.05)
 
         # 6. Ultimate Calibration Marathon
         logger.info("[5/5] Replaying 1,200-Packet Calibration Table...")
-        # Subscribe to Management (0), WMI (1), and CAB (3) for the Bulk stream
         self.transport.subscribe(0, self._on_wmi_packet)
         self.transport.subscribe(1, self._on_wmi_packet)
         self.transport.subscribe(3, self._on_wmi_packet)
@@ -133,20 +182,10 @@ class AR9271Driver:
                 cmd_id, p_seq = struct.unpack(">HH", raw_wmi[:4])
                 payload_data = raw_wmi[4:]
                 
-                # Robust retry loop for calibration packets
-                success = False
-                for attempt in range(3):
-                    try:
-                        success = await self.send_wmi_command(cmd_id, payload_data, wait_for_ack=True)
-                        if success:
-                            break
-                    except usb.core.USBError as e:
-                        logger.warning(f"USBError at packet {i} (Attempt {attempt}): {e}")
-                        self.transport.reset_pipes()
-                        await asyncio.sleep(0.01)
-                
+                # Rigid Stop-and-Wait for 1-slot mailbox
+                success = await self.send_wmi_command(cmd_id, payload_data, wait_for_ack=True)
                 if not success:
-                    logger.warning(f"Failed to process packet {i} (Cmd {hex(cmd_id)}).")
+                    logger.warning(f"Timeout at packet {i} (Cmd {hex(cmd_id)}). Continuing...")
                     
                 if i > 0 and i % 200 == 0:
                     logger.info(f"Progress: {i}/{len(payloads)} registers processed.")
@@ -155,7 +194,7 @@ class AR9271Driver:
             
             # Final Trigger Sequence
             await self.send_wmi_command(WMI_SET_MODE_CMDID, struct.pack(">H", 0x0001))
-            await self.send_wmi_command(0x0006, b"") # INIT
+            await self.send_wmi_command(0x0006, b"") 
             await self.send_wmi_command(WMI_START_RECV_CMDID, b"")
             
         except FileNotFoundError:
@@ -164,13 +203,29 @@ class AR9271Driver:
 
         logger.info("Waiting for Target Ready and MAC verification...")
         try:
-            # Accelerated wait: v1.4 usually responds within 500ms post-marathon
             await asyncio.wait_for(self._wmi_ready_event.wait(), timeout=3.0)
         except asyncio.TimeoutError:
             logger.warning("Timed out waiting for WMI Target Ready event. Proceeding anyway...")
         
         logger.info("AR9271 Driver successfully connected.")
         return True
+
+    async def _check_if_warm(self) -> bool:
+        """
+        Probes the device to see if firmware is already active.
+        Based on the last known good 'midnight' logic.
+        """
+        try:
+            # We use the current handle to try a short bulk read.
+            # If the firmware is running, it will either return data or timeout.
+            # If it's a BootROM, it might Pipe Error or timeout.
+            loop = asyncio.get_running_loop()
+            data = await loop.run_in_executor(None, self.transport.dev.read, 0x82, 512, 100)
+            # If we got any data, it's definitely warm.
+            return len(data) > 0
+        except Exception:
+            # Any error (including timeout) means we assume it's cold or unresponsive.
+            return False
 
     def _on_htc_control(self, payload: bytes):
         """Callback for EP 0 packets arriving on Interrupt pipe (0x83)."""
@@ -231,10 +286,7 @@ class AR9271Driver:
                 # Register ACKs are near-instant (<5ms)
                 res_ev_id, res_payload = await asyncio.wait_for(ack_queue.get(), timeout=0.2)
             except asyncio.TimeoutError:
-                logger.debug(f"Timeout waiting for ACK on Cmd {hex(command_id)}. Resending to sync toggle bit...")
-                # The hardware often ignores clear_halt(), leaving the USB toggle bit desynced.
-                # The first packet is dropped, but the host advances its toggle bit.
-                # Resending it forces a match!
+                logger.debug(f"Timeout waiting for ACK on Cmd {hex(command_id)}. Resending...")
                 await self.transport.send(self.wmi_endpoint_id, wmi_payload, is_wmi=True)
                 try:
                     res_ev_id, res_payload = await asyncio.wait_for(ack_queue.get(), timeout=0.2)
@@ -244,10 +296,6 @@ class AR9271Driver:
                 if seq in self._event_queues:
                     del self._event_queues[seq]
                     
-            if command_id == WMI_REG_READ_CMDID and len(res_payload) >= 4:
-                val = struct.unpack(">I", res_payload[-4:])[0]
-                #logger.info(f"Register Read Response: {hex(val)}")
-                
         return True
 
     async def set_channel(self, channel: int):
@@ -262,14 +310,8 @@ class AR9271Driver:
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
         """
         Injects a raw 802.11 frame onto the air.
-        Wraps the frame in the `ath_tx_status` hardware descriptor.
         """
-        # Pack the hardware TX descriptor (rate 0x0B, no_ack flag)
         tx_payload = self.meta.pack_tx(frame_bytes, rate_idx=0x0B, no_ack=use_no_ack)
-        
-        # Dispatch to the dynamic Data endpoint (usually EP 5)
-        # is_wmi=False means it uses the standard 8-byte HTC header, not the WMI variant
-        # is_data=True means it must go to Bulk OUT (EP 0x01) with a 4-byte HIF header!
         await self.transport.send(self.data_endpoint_id, tx_payload, is_wmi=False, is_data=True)
         return True
 

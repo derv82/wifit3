@@ -140,9 +140,13 @@ class AR9271USBTransport:
                 await self._handle_incoming(data, ep_addr)
 
             except usb.core.USBError as e:
-                if e.errno not in (10060, 110): # Timeout is normal
+                # Suppress normal timeout (10060/110) AND Access Denied (13) during re-enumeration spam
+                if e.errno not in (10060, 110, 13): 
                     logger.error(f"Transport {name} USBError: {e}")
-                await asyncio.sleep(0.001)
+                
+                # If we get Access Denied, it's a sign the handle is stale or OS locked.
+                # We sleep longer to avoid hammering the CPU.
+                await asyncio.sleep(0.1 if e.errno == 13 else 0.001)
             except Exception as e:
                 logger.error(f"Transport {name} Error: {e}")
                 await asyncio.sleep(0.01)

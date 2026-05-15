@@ -48,13 +48,12 @@ class WlanDeviceManager:
                 info = self.SUPPORTED_DEVICES[vid_pid]
                 logger.info(f"Found supported hardware: {info['desc']}")
                 
-                # AR9271 Specific lifecycle (firmware upload)
+                # AR9271 Specific lifecycle (Delayed Initialization)
                 if info["name"] == "AR9271":
-                    warm_dev, was_already_warm = await self._ensure_ar9271_firmware(dev)
-                    if warm_dev:
-                        driver_instance = info["driver_class"](warm_dev, is_warm=was_already_warm)
-                        iface = WlanInterface(driver_instance, f"wlan{len(self.interfaces)}", info["desc"])
-                        self.interfaces.append(iface)
+                    # We pass is_warm=False by default; the driver will probe in connect()
+                    driver_instance = info["driver_class"](dev, is_warm=False)
+                    iface = WlanInterface(driver_instance, f"wlan{len(self.interfaces)}", info["desc"])
+                    self.interfaces.append(iface)
 
                 # RTL8187 Specific lifecycle (usually warm)
                 elif info["name"] == "RTL8187":
@@ -82,48 +81,6 @@ class WlanDeviceManager:
 
         logger.info(f"Discovered {len(self.interfaces)} native WlanInterfaces.")
         return self.interfaces
-
-    async def _ensure_ar9271_firmware(self, dev: usb.core.Device) -> Tuple[Optional[usb.core.Device], bool]:
-        """
-        Forces cold initialization (loading firmware) to ensure reliable hardware state.
-        """
-        logger.info("AR9271 forcing COLD initialization.")
-        
-        # We can leave the detection code here but bypassed.
-        # [Detection logic logic currently bypassed]
-
-        logger.info("AR9271 initiating firmware upload...")
-        from wifit3.chips.ar9271.firmware import FirmwareLoader
-        import os
-        
-        # Find the fw file relative to the driver directory
-        fw_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chips", "ar9271", "assets", "htc_9271_cleanroom.fw")
-        
-        with open(fw_path, 'rb') as f:
-            fw_bytes = f.read()
-            
-        success = FirmwareLoader.load(dev, fw_bytes)
-        
-        if success:
-            logger.info("Waiting for AR9271 to re-enumerate...")
-            # Dynamic wait: poll for device instead of fixed 3s sleep
-            warm_dev = None
-            for _ in range(12): 
-                await asyncio.sleep(0.25)
-                import libusb_package
-                backend = libusb_package.get_libusb1_backend()
-                warm_dev = usb.core.find(idVendor=0x0cf3, idProduct=0x9271, backend=backend)
-                if warm_dev: break
-            
-            if warm_dev:
-                logger.info("AR9271 successfully warmed up!")
-                return warm_dev, False
-            else:
-                logger.error("AR9271 failed to re-enumerate.")
-                return None, False
-        else:
-            logger.error("Firmware upload failed.")
-            return None, False
 
     async def _ensure_rt5572_firmware(self, dev: usb.core.Device) -> Tuple[Optional[usb.core.Device], bool]:
         """
