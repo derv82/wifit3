@@ -1,23 +1,27 @@
 import sys
 import asyncio
+from pathlib import Path
 from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.widgets import Static, ListView, ListItem, Label, Header, Footer
 from textual.containers import Vertical, Center
+from rich.text import Text
 
 from wifit3.wlan.manager import WlanDeviceManager
 
-ASCII_ART = r"""
-[bold green]
-               _    ___   _    _     _______ 
-              (_)  / __) (_)  | |   (_______)
- _ _ _  _   _  _ _| |__   _  _| |_       _   
-| | | || | | || (_   __) | |(_   _)     | |  
-| | | || |_| || | | |    | |  | |_    __| |  
- \___/  \____||_| |_|    |_|   \__)  (_____) 
-[/bold green]
-[dim green]// Python-Native Wireless Auditor[/dim green]
-"""
+def load_logo() -> Text:
+    """Load the ANSI logo from assets."""
+    logo_path = Path(__file__).parent.parent / "assets" / "logo.ans"
+    try:
+        if logo_path.exists():
+            return Text.from_ansi(logo_path.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    
+    # Fallback
+    return Text.from_markup("[bold green]Wifit3[/bold green]\n[dim green]// Wireless Auditor[/dim green]")
+
+LOGO = load_logo()
 
 class SplashView(Screen):
     """The initial splash and device selection screen."""
@@ -37,7 +41,7 @@ class SplashView(Screen):
         yield Header(show_clock=False)
         with Vertical(id="splash-container"):
             with Center():
-                yield Static(ASCII_ART, id="ascii-art")
+                yield Static(LOGO, id="ascii-art")
             
             with Center():
                 yield Static(self._get_os_warning(), id="os-warning")
