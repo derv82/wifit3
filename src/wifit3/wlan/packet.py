@@ -236,6 +236,10 @@ class WlanFrameParser:
         
         has_wpa = False
         has_rsn = False
+        has_wpa3 = False
+        transition_mode = False
+        pmf_capable = False
+        pmf_required = False
         
         while ptr + 2 <= len(frame):
             tag_id = frame[ptr]
@@ -264,6 +268,35 @@ class WlanFrameParser:
                     parsed["channel"] = tag_data[0]
             elif tag_id == 48: # RSN (WPA2/WPA3)
                 has_rsn = True
+                try:
+                    if len(tag_data) >= 2:
+                        p = 6
+                        if len(tag_data) >= p + 2:
+                            pairwise_count = int.from_bytes(tag_data[p:p+2], byteorder='little')
+                            p += 2 + (4 * pairwise_count)
+                            if len(tag_data) >= p + 2:
+                                akm_count = int.from_bytes(tag_data[p:p+2], byteorder='little')
+                                p += 2
+                                has_psk = False
+                                has_sae = False
+                                for _ in range(akm_count):
+                                    if p + 4 <= len(tag_data):
+                                        akm_suite = tag_data[p:p+4]
+                                        if akm_suite == b'\x00\x0f\xac\x02':
+                                            has_psk = True
+                                        elif akm_suite == b'\x00\x0f\xac\x08':
+                                            has_sae = True
+                                        p += 4
+                                
+                                has_wpa3 = has_sae
+                                transition_mode = has_psk and has_sae
+
+                                if len(tag_data) >= p + 2:
+                                    rsn_caps = int.from_bytes(tag_data[p:p+2], byteorder='little')
+                                    pmf_capable = bool(rsn_caps & 0x0080) # Bit 7
+                                    pmf_required = bool(rsn_caps & 0x0040) # Bit 6
+                except Exception:
+                    pass
             elif tag_id == 221: # Vendor Specific
                 if tag_len >= 4:
                     oui = tag_data[:3]
@@ -276,8 +309,15 @@ class WlanFrameParser:
                             
             ptr = tag_end
             
-        if has_rsn:
-            parsed["encryption"] = "WPA2" # Or WPA3, could differentiate by AKM suites later
+        parsed["wpa3"] = has_wpa3
+        parsed["transition_mode"] = transition_mode
+        parsed["pmf_capable"] = pmf_capable
+        parsed["pmf_required"] = pmf_required
+        
+        if has_wpa3:
+            parsed["encryption"] = "WPA3"
+        elif has_rsn:
+            parsed["encryption"] = "WPA2"
         elif has_wpa:
             parsed["encryption"] = "WPA"
         else:
