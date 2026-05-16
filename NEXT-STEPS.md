@@ -1,43 +1,61 @@
 # Wifit3 Current Staus & Next Steps
 
-## Current State: MISSION ACCOMPLISHED (CORE)
+## Current State: Supported Chipsets
 We have successfully implemented fully functional Userspace Python drivers for:
 * [Atheros AR9271](./src/wifit3/chips/ar9271/) (v1.4).
 * [Alfa/Realtek RTL8187](./src/wifit3/chips/rtl8187/).
 * [Ralink RT2800USB (RT5572, RT3572, RT5372)](./src/wifit3/chips/rt2800usb/).
 
-The drivers can cold-boot, warm-boot, tune to channels, inject and sniff live 802.11 management frames.
+The "Minnie Drivers" can cold-boot, warm-boot, tune to channels, inject and sniff live 802.11 management frames.
 
 And the UI is amazing, shows progress while intializing wireless cards, scanner view, "Focus" view all work on all 3 cards.
 
 That said, we ONLY support 3 cards. And there's absolutely no actual "attacks" implemented yet. Except handshake capture (we detect, but we have no way to save a .pcap or .pcapng).
 
-## NEXT STEP: HARDWARE SUPPORT
+## NEXT STEP: *MORE* HARDWARE SUPPORT
 
-### Future Hardware Support (en-route)
+- AWUS036AXML (MT7921AU):
+  - USB: 3.0
+  - Kali Linux Chipset: `mt7921u`
+  - Captures & Logs: `./usb_dumps/captures_mt7921u/`
+  - Driver Source: `./data_dumps/mt7921-source-v6.8/`
+- AWUS036ACH  (RTL8812AU):
+  - USB: 3.0
+  - Kali Linux Chipset: `rtw88_8812au`
+  - Captures & Logs: `./usb_dumps/captures_rtw88_8812au/`
+  - Driver Source: `./data_dumps/rtw88-source-v6.8/`
+- AWUS036ACS  (RTL8821AU):
+  - USB: 2.0
+  - Kali Linux Chipset: `rtw88_8821au`
+  - Captures & Logs: `./usb_dumps/captures_rtw88_8821au/`
+  - Driver Source: `./data_dumps/rtw88-source-v6.8/`
+- AC1300      (RTL8822BU):
+  - USB: 2.0
+  - Kali Linux Chipset: `rtw88_8822bu`
+  - Captures & Logs: `./usb_dumps/captures_rtw88_8822bu/`
+  - Driver Source: `./data_dumps/rtw88-source-v6.8/`
+
+### *Near-Future* Hardware Support (en-route)
 
 - AC1900      (RTL8814AU)
-- AWUS036AXML (MT7921AU)
-- AWUS036ACH  (RTL8812AU)
 - AWUS036ACHM (MT7610U)
 - AWUS036ACM  (MT7612U)
-- AWUS036ACS  (RTL8811AU)
 - AWUS036NH   (RT3070) -> same chipset the older PAU05 uses.
-- TP-Link Archer T3U Plus (RTL8812BU)
 
-### Hardware to order (maybe)
+### *Distant Future* Hardware Support (need $$$ will make more Minnie Drivers)
 
 - TP-Link Archer T2U Plus (RTL8821AU / RTL8811AU)
 - *[Generic]* (MT7601U) -> Cheapest dongle, "Hello World" of wifi cards, broke/weird packet injection.
   - Buy: Just search "MT7601U" on eBay or Amazon; they are the tiny ones with a blue LED.
 
-### NEXT STEP: Attack Stack (engine)
+## NEXT STEP: Attack Stack Engine
 
 No actual functioning attacks (yet).
 
-We want to avoid WEP as it's outdated. But all other attacks that Wifite2 can do now we should be able to do.
+We want to avoid WEP as it's outdated. But all other attacks that Wifite2 can do now we should be able to do, natively in Python.
 
 * 4-way Handshake capture (via client deauth)
+  - We already detect the handshake packets in the WlanManager.
   - Indicate when we have a handshake in the "Focus" UI view.
   - Auto-save handshakes to ./handshakes/? (current directory)? Or prompt user where to save (dialog window).
 * PMKID extraction (see `hcxdumptool` and [this page](https://hashcat.net/forum/thread-7717.html) for details)
