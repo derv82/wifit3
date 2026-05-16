@@ -20,6 +20,7 @@ class WlanDeviceManager:
         from wifit3.chips.ar9271.driver import AR9271Driver
         from wifit3.chips.rtl8187.driver import RTL8187Driver
         from wifit3.chips.rt2800usb.driver import RT2800USBDriver
+        from wifit3.chips.mt7921au.driver import MT7921AUDriver
         
         # Supported Hardware Registry
         self.SUPPORTED_DEVICES = {
@@ -28,6 +29,7 @@ class WlanDeviceManager:
             (0x148f, 0x5572): {"name": "RT5572", "driver_class": RT2800USBDriver, "desc": "Ralink RT5572 / Panda PAU09 N600", "chip_id": "rt5572"},
             (0x148f, 0x3572): {"name": "RT3572", "driver_class": RT2800USBDriver, "desc": "Ralink RT3572 / ALFA AWUS051NH v2", "chip_id": "rt3572"},
             (0x148f, 0x5372): {"name": "RT5372", "driver_class": RT2800USBDriver, "desc": "Ralink RT5372 / Panda PAU05", "chip_id": "rt5372"},
+            (0x0e8d, 0x7961): {"name": "MT7921AU", "driver_class": MT7921AUDriver, "desc": "Mediatek MT7921AU / ALFA AWUS036AXML"},
         }
 
     async def refresh(self) -> List[WlanInterface]:
