@@ -69,13 +69,22 @@ engine/
   └─ attacks/            Attack implementations (SAE probe, etc.)
 
 chips/<chipset>/
-  ├─ driver.py           Implements WlanDriver Protocol
-  ├─ transport.py        Raw USB read/write + async RX loop
+  ├─ driver.py           Implements WlanDriver Protocol; declares SUPPORTED_IDS + SUPPORTED_CHANNELS
+  ├─ transport.py        Raw USB read/write (control transfers + bulk I/O)
   ├─ firmware.py         Firmware upload logic
   ├─ constants.py        Register addresses, command IDs, magic bytes
+  ├─ mac.py / phy.py     (post-bring-up family) MAC / BB / RF / EFUSE port from kernel C
+  ├─ chan.py / fifo.py   Channel tune, set_channel, FIFO partitioning
+  ├─ rx.py / tx.py       RX descriptor decode + frame iter / TX descriptor build + bulk-OUT
+  ├─ power_seq.py        rtw_pwr_seq_cmd translations + run_pwr_seq runtime
+  ├─ phy_cond.py         rtw_parse_tbl_phy_cond walker (for rtw88-family init tables)
   └─ assets/ or sequences/
        init.py / tuning.py   Captured USB register-write sequences (replayed at runtime)
+       *_tbl.py              For rtw88 family: flat-u32 init tables ported 1:1 from kernel C
+       <chip>_fw.bin         Firmware blob (pcap-extracted, byte-verified vs linux-firmware)
 ```
+
+Not every chip uses every module — `mac.py`/`phy.py`/`chan.py`/`tx.py` etc. are the rtw88-family split. AR9271 lives mostly in `driver.py` + `protocol/`. MT7921AU has its own `firmware.py` + `sequences/`. Add modules as the chip's protocol needs them.
 
 ### Supported Hardware
 
@@ -86,19 +95,41 @@ chips/<chipset>/
 | Ralink RT5572 | 148f:5572 | rt2800usb family |
 | Ralink RT3572 | 148f:3572 | rt2800usb family |
 | Ralink RT5372 | 148f:5372 | rt2800usb family |
+| **Realtek RTL8821AU** | **0bda:0811** | **rtw88 family — WiFi 5 (2.4 + 5 GHz), legacy MCUFWDL FW path** |
 | Mediatek MT7921AU | 0e8d:7961 | WiFi 6 — MCU Unified Commands, Little Endian |
 
-RT2800USB variants share `RT2800USBDriver`; the `chip_id` string selects the correct RXWI/TXWI sizes and init assets.
+RT2800USB variants share `RT2800USBDriver`; the `chip_id` string (carried in `DeviceID.extras`) selects the right RXWI/TXWI sizes and init assets.
 
 ### Adding a New Chipset
 
-1. Create `src/wifit3/chips/<name>/` with `driver.py`, `transport.py`, `firmware.py`, `constants.py`.
-2. `driver.py` must satisfy `WlanDriver` in `wifit3.engine.protocols`.
-3. Register VID:PID → driver class in `WlanDeviceManager.SUPPORTED_DEVICES`.
+The manager is a generic VID:PID discovery loop — each driver declares its own hardware. To register a new chip:
+
+1. Create `src/wifit3/chips/<name>/` with at minimum `driver.py`, `transport.py`, `constants.py` (+ `firmware.py` if the chip needs a FW upload).
+2. `driver.py` must satisfy the `WlanDriver` Protocol (`wifit3.engine.protocols`). Concretely:
+   - Class attr `SUPPORTED_IDS: list[DeviceID]` — every VID:PID this driver claims, with a human-readable description and any chip-id discriminator in `extras={}`.
+   - Class attr `SUPPORTED_CHANNELS: list[int]` — every channel the driver can tune to (consumed by `WlanInterface.start_hopping`).
+   - Classmethod `from_usb_device(cls, dev, id_entry) -> Driver` — driver-side construction (transport wrapping, chip_id reads from `extras`, etc.). Keeps the manager free of chip-specific switches.
+   - Runtime methods: `connect()`, `set_channel()`, `inject_frame()`, `close()`, plus the `register_rx_callback()` hook.
+3. Add the driver class to `_all_drivers()` in `wifit3/wlan/manager.py` (lazy registry — order is the priority for VID:PID disambiguation).
+4. Drop a `<CHIP>.md` ground-truth doc next to the driver with `[SRC]`/`[WIRE]` citations.
+
+The cold-vs-warm distinction is a per-driver concern: if a previous session left the chip running, `connect()` should detect that and skip the bring-up. See `chips/rtl8821au/mac.py:is_chip_warm()` + `driver.py:_warm_reattach` for the pattern (light reattach + smoke-test the bulk-IN pipe; surface a clear "please replug" message if the USB pipe is wedged — that path can't always be recovered in userland on Windows+WinUSB).
 
 ### AR9271 Protocol Notes (Soft-MAC)
 
 Channel changes require replaying a ~500-byte WMI_REG_WRITE (0x15) sequence with dynamically injected Sequence IDs, then patching register `0x9874` (AR_PHY_SYNTH_CONTROL) with the Fractional-N Synthesizer Word for the target channel. Static PCAP replay fails because the firmware rejects out-of-order Sequence IDs. See `SOFT-MAC.md` and `QUIRKS.md` for byte offsets and the WMI header format.
+
+### RTL8821AU Protocol Notes (rtw88 family — legacy MCUFWDL)
+
+WiFi 5, 2.4 + 5 GHz, 1T1R. Cleanroom-RE'd from `data_dumps/rtw88-source-v6.18/`; FW blob byte-verified vs `linux-firmware/rtw88/rtw8821a_fw.bin`. Full bring-up runs in userland on Windows (WinUSB via Zadig) and Linux:
+
+- **FW upload**: legacy `MCUFWDL` path (8051 wlan CPU). All control transfers — `bRequest=0x05`, `wValue=FW_START_ADDR_LEGACY(0x1000)+offset`. ACK is `BIT_FWDL_CHK_RPT` of `REG_MCUFW_CTRL(0x0080)`; running confirmation is `FW_READY_LEGACY=0xC6`.
+- **Init tables**: `mac_tbl` / `agc_tbl` / `bb_tbl` / `rf_a_tbl` ported 1:1 from `rtw8821a_table.c`. Runtime walker `chips/rtl8821au/phy_cond.py` mirrors `rtw_parse_tbl_phy_cond` + `check_positive` line-for-line. Branches gate on (intf, rfe); no `cut` dependency for 8821A.
+- **EFUSE optional for RX**: rfe=0 ELSE-branch defaults are sufficient for monitor-mode capture on AWUS036ACS. EFUSE read becomes necessary for accurate TX power + BT coex.
+- **Channel tune**: `chan.py:set_channel_2g_20mhz` / `set_channel_5g_20mhz`. Unified `_switch_channel` does the centre-frequency-area write + RF18 SIPI writes (RFREG_MASK=0xfffff, encoded as `((addr<<20)|(data & 0xfffff)) & 0x0fffffff`).
+- **Warm reattach**: `mac.is_chip_warm()` checks FW_READY_LEGACY + MACTXEN|MACRXEN. Driver skips the entire bring-up and just resumes USB polling. 1.5 s RX smoke test detects wedged bulk-IN pipes and tells the user to replug.
+
+When porting other rtw88 chips (8812au, 8822bu, 8814au), most of this stack should slot in: the phy_cond walker, the SIPI primitives, the `pwr_seq` runtime, the tx_desc/rx_desc layouts are family-shared. The big delta is the FW upload path — 8822bu/8814au use modern `iddma` rather than legacy `MCUFWDL`.
 
 ### MT7921AU Protocol Notes
 
