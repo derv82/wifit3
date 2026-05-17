@@ -15,25 +15,26 @@ That said, we ONLY support 3 cards. And there's absolutely no actual "attacks" i
 ## NEXT STEP: *MORE* HARDWARE SUPPORT
 
 - AWUS036AXML (MT7921AU):
-  - USB: 3.0
+  - USB: 3.0 (USB 2.0 required on Windows due to WinUSB FW_SCATTER 4-packet stall)
   - Kali Linux Chipset: `mt7921u`
   - Captures & Logs: `./usb_dumps/captures_mt7921u/`
-  - Driver Source: `./data_dumps/mt7921-source-v6.8/`
+  - Driver Source: `./data_dumps/mt76-source-v6.18/`
+  - **Status: PAUSED 2026-05-17.** Cold-boot firmware load gets through PATCH + RAM upload + FW_START_REQ with byte-identical wire bytes to Linux pcap, but the chip's EP0 dies post-FW_START_REQ on Windows/WinUSB and FW_N9_RDY never sets. See `src/wifit3/chips/mt7921au/MT7921AU.md` "Session pause snapshot" for verified-correct state, blocker hypotheses, and recommended next move (test on Kali first to bisect Windows-vs-code).
 - AWUS036ACH  (RTL8812AU):
   - USB: 3.0
   - Kali Linux Chipset: `rtw88_8812au`
   - Captures & Logs: `./usb_dumps/captures_rtw88_8812au/`
-  - Driver Source: `./data_dumps/rtw88-source-v6.8/`
+  - Driver Source: `./data_dumps/rtw88-source-v6.18/`
 - AWUS036ACS  (RTL8821AU):
   - USB: 2.0
   - Kali Linux Chipset: `rtw88_8821au`
   - Captures & Logs: `./usb_dumps/captures_rtw88_8821au/`
-  - Driver Source: `./data_dumps/rtw88-source-v6.8/`
+  - Driver Source: `./data_dumps/rtw88-source-v6.18/`
 - AC1300      (RTL8822BU):
   - USB: 2.0
   - Kali Linux Chipset: `rtw88_8822bu`
   - Captures & Logs: `./usb_dumps/captures_rtw88_8822bu/`
-  - Driver Source: `./data_dumps/rtw88-source-v6.8/`
+  - Driver Source: `./data_dumps/rtw88-source-v6.18/`
 
 ### *Near-Future* Hardware Support (en-route)
 

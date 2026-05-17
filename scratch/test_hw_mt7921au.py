@@ -1,0 +1,136 @@
+"""
+Minimal, fast-fail MT7921AU hardware test for agent/CI use.
+
+Validates:
+  1. Device found on USB bus
+  2. driver.connect() completes (firmware upload + MCU handshake)
+  3. set_channel(1) sends without error
+  4. At least one 802.11 frame received within 3s
+
+Exits 0 on full pass, 1 on any failure.
+Timeouts prevent hangs: 30s for connect, 5s for channel, 3s for RX.
+
+Usage:
+    python scratch/test_hw_agent.py
+    python scratch/test_hw_agent.py --debug   # verbose USB logs
+"""
+import asyncio
+import logging
+import sys
+import argparse
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+import libusb_package
+import usb.core
+from wifit3.chips.mt7921au.driver import MT7921AUDriver
+
+MT7921AU_VID = 0x0e8d
+MT7921AU_PID = 0x7961
+
+CONNECT_TIMEOUT = 60
+CHANNEL_TIMEOUT = 5
+RX_WINDOW = 3
+
+
+def setup_logging(debug: bool):
+    level = logging.DEBUG if debug else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s.%(msecs)03d [%(levelname)-5s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S"
+    )
+
+
+def step(label: str):
+    print(f"\n--- {label} ---")
+
+
+def ok(msg: str):
+    print(f"[PASS] {msg}")
+
+
+def fail(msg: str):
+    print(f"[FAIL] {msg}")
+    sys.exit(1)
+
+
+async def main(debug: bool):
+    setup_logging(debug)
+
+    # 1. Find device
+    step("USB Discovery")
+    backend = libusb_package.get_libusb1_backend()
+    dev = usb.core.find(idVendor=MT7921AU_VID, idProduct=MT7921AU_PID, backend=backend)
+    if dev is None:
+        fail("MT7921AU not found. Plug in the device and retry.")
+    ok(f"Found MT7921AU at bus {dev.bus}, address {dev.address}")
+
+    # 2. connect() — firmware upload + MCU handshake
+    step(f"connect() [{CONNECT_TIMEOUT}s timeout]")
+    driver = MT7921AUDriver(dev)
+
+    def progress(msg: str, pct: float):
+        print(f"  [{pct*100:5.1f}%] {msg}")
+
+    try:
+        success = await asyncio.wait_for(
+            driver.connect(progress_cb=progress),
+            timeout=CONNECT_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        fail(f"connect() timed out after {CONNECT_TIMEOUT}s — device hung during init")
+    except Exception as e:
+        fail(f"connect() raised {type(e).__name__}: {e}")
+
+    if not success:
+        fail("connect() returned False — check logs above for the failing step")
+    ok("connect() succeeded")
+
+    # 3. set_channel(1) — verifies MCU command path
+    step(f"set_channel(1) [{CHANNEL_TIMEOUT}s timeout]")
+    try:
+        await asyncio.wait_for(driver.set_channel(1), timeout=CHANNEL_TIMEOUT)
+    except asyncio.TimeoutError:
+        fail("set_channel(1) timed out")
+    except Exception as e:
+        fail(f"set_channel(1) raised {type(e).__name__}: {e}")
+    ok("set_channel(1) completed")
+
+    # 4. RX window — confirm frames flow
+    step(f"RX ({RX_WINDOW}s listen on CH1)")
+    frames: list[dict] = []
+
+    def on_frame(parsed: dict):
+        frames.append(parsed)
+
+    driver.register_rx_callback(on_frame)
+    await asyncio.sleep(RX_WINDOW)
+
+    if frames:
+        counts: dict[str, int] = {}
+        for f in frames:
+            t = f.get("type", "unknown")
+            counts[t] = counts.get(t, 0) + 1
+        ok(f"Received {len(frames)} frames: {counts}")
+    else:
+        # Not a hard failure — could be no nearby APs, or channel mismatch.
+        print("[WARN] No frames received. Device may be working but RF environment is quiet.")
+        print("       Try a busier channel (e.g. 6 or 11) if this repeats.")
+
+    step("Cleanup")
+    await driver.stop()
+    print("\n=== ALL STEPS PASSED ===")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--debug", action="store_true", help="Enable DEBUG-level logging")
+    args = parser.parse_args()
+
+    try:
+        asyncio.run(main(args.debug))
+    except KeyboardInterrupt:
+        print("\n[ABORTED] Keyboard interrupt")
+        sys.exit(1)

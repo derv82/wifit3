@@ -1,82 +1,439 @@
+"""
+MT7921AU firmware loader.
+
+Verified against usb_dumps/captures_mt7921u/capture-3.pcap and
+data_dumps/mt76-source-v6.18/mt76_connac_mcu.c (mt76_connac2_load_patch,
+mt76_connac_mcu_send_ram_firmware).
+
+See src/wifit3/chips/mt7921au/MT7921AU.md for wire-format details.
+"""
 import logging
 import struct
 import asyncio
+import usb.core
+import usb.util
 from pathlib import Path
 
 from .transport import MT7921AUTransport
-from .constants import FIRMWARE_WM, FIRMWARE_ROM_PATCH
+from .constants import *
 
 logger = logging.getLogger(__name__)
 
+
 class MT7921AUFirmwareLoader:
-    """
-    Handles parsing and loading the multi-stage firmware for MT7921AU.
-    """
+    """Multi-stage firmware uploader: ROM patch first, then WM RAM blob."""
+
     def __init__(self, transport: MT7921AUTransport, assets_dir: Path):
         self.transport = transport
         self.assets_dir = assets_dir
 
-    def _build_mcu_header(self, payload_len: int) -> bytes:
-        """
-        Builds the 12-byte SDIO/MCU header for Mediatek chips.
-        """
-        total_len = payload_len + 12
-        word0 = total_len
-        word1 = total_len | 0x41000000
-        word2 = 0x80010000
-        return struct.pack("<III", word0, word1, word2)
-
-    async def _upload_chunked(self, data: bytes, chunk_size: int = 1392):
-        """
-        Uploads data to the MCU by chopping it into chunks, adding the MCU header,
-        and optionally padding the frame.
-        """
-        for i in range(0, len(data), chunk_size):
-            chunk = data[i:i+chunk_size]
-            hdr = self._build_mcu_header(len(chunk))
-            
-            packet = hdr + chunk
-            
-            # Mediatek requires padding: round_up(len, 4) + 4 - len
-            # If length is already mod 4, it adds 4 bytes of padding.
-            pad_len = ((len(packet) + 3) & ~3) + 4 - len(packet)
-            packet += b'\x00' * pad_len
-            
-            await self.transport.send_bulk(packet)
-            # Give the USB bus a tiny moment to breathe
-            await asyncio.sleep(0.001)
+    # ------------------------------------------------------------------
+    # Top-level orchestration
+    # ------------------------------------------------------------------
 
     async def load_firmware(self) -> bool:
-        """
-        Orchestrates the firmware upload sequence.
-        """
         logger.info("Starting MT7921AU firmware upload sequence...")
-        
-        # Load ROM Patch
-        patch_path = self.assets_dir / FIRMWARE_WM
-        if not patch_path.exists():
-            logger.error(f"Firmware missing: {patch_path}")
+
+        # Claim Interface 3 — the vendor-specific iface that owns 0x84/0x85/0x08/0x04.
+        # NOTE: do NOT call set_configuration() on Windows / WinUSB. It resets
+        # the host-side data toggles to zero but does NOT send a SET_CONFIG over
+        # the wire, so the device-side toggles stay in their previous state.
+        # The host/device toggles then desync after ~4 packets and the bulk OUT
+        # pipe silently NAKs everything afterward.
+        logger.info(f"Claiming interface {INTERFACE_NUM}...")
+        try:
+            usb.util.claim_interface(self.transport.dev, INTERFACE_NUM)
+            # Force toggle alignment on the operational endpoints.
+            for ep in (EP_OUT_FW, EP_OUT_MCU, EP_IN_BULK, EP_IN_MCU):
+                self.transport.clear_halt(ep)
+        except Exception as e:
+            logger.debug(f"Interface prep: {e}")
+        await asyncio.sleep(0.2)
+
+        chip_id = self.transport.read_reg32(MT_CHIP_ID_ADDR)
+        if (chip_id & 0xFFFF) != MT_CHIP_ID_EXPECTED:
+            logger.error(f"Unexpected chip ID 0x{chip_id:x} (expected lower 16 = 0x{MT_CHIP_ID_EXPECTED:x})")
             return False
-            
-        with open(patch_path, 'rb') as f:
-            patch_data = f.read()
-            
-        # The Linux driver strips the first 192 bytes of the ROM Patch header
-        logger.info(f"Uploading ROM Patch ({len(patch_data)} bytes)...")
-        await self._upload_chunked(patch_data[192:])
-        
-        # Load RAM Code
-        ram_path = self.assets_dir / FIRMWARE_ROM_PATCH
-        if not ram_path.exists():
-            logger.error(f"Firmware missing: {ram_path}")
+        logger.info(f"MT7921 detected: chip_id=0x{chip_id:x}")
+
+        # Warm-boot short-circuit.
+        misc = self.transport.read_reg32_unified(MT_CONN_ON_MISC)
+        if (misc & MT_TOP_MISC2_FW_N9_RDY) == MT_TOP_MISC2_FW_N9_RDY:
+            logger.info(f"Firmware already running (MT_CONN_ON_MISC=0x{misc:x}). Skipping upload.")
+            return True
+
+        logger.info("Sending MCU power-on...")
+        self.transport.send_vendor_request(
+            MT_VEND_WRITE_RECIPIENT, MT_VEND_POWER_ON, 0x0000, 0x0001
+        )
+
+        if not await self._poll_reg(MT_CONN_ON_MISC, MT_TOP_MISC2_FW_PWR_ON,
+                                    MT_TOP_MISC2_FW_PWR_ON, attempts=50, delay=0.01):
+            logger.error("MCU power-on timeout")
             return False
-            
-        with open(ram_path, 'rb') as f:
-            ram_data = f.read()
-            
-        # The Linux driver strips the first 128 bytes of the RAM Code header
-        logger.info(f"Uploading RAM Code ({len(ram_data)} bytes)...")
-        await self._upload_chunked(ram_data[128:])
-        
-        logger.info("Firmware payload fully transferred.")
+        logger.info("MCU powered on.")
+
+        # WLCFG init: enables MT_TICK_1US_EN.
+        self._dma_init()
+
+        self.transport.write_reg32_unified(MT_UDMA_TX_QSEL, MT_FW_DL_EN)
+        val = self.transport.read_reg32_unified(MT_UDMA_TX_QSEL)
+        if (val & MT_FW_DL_EN) != MT_FW_DL_EN:
+            logger.error(f"MT_UDMA_TX_QSEL write rejected (read back 0x{val:x})")
+            return False
+
+        # Background EP 0x85 reader so the device always has a listener for
+        # command-response/ack traffic.
+        await self.transport.start_mcu_drainer()
+
+        try:
+            if not await self._load_patch():
+                return False
+
+            # Mirror Linux behavior observed in capture-3 between patch and RAM
+            # upload (~89 ms after PATCH_SEM_RELEASE): two boot-status reads with
+            # wValue=0x30, wLength=64. Source unknown (possibly btusb concurrent
+            # init, possibly mt76 reset path). Cheap to replicate, side-effect-free.
+            for i in range(2):
+                bs = self.transport.read_boot_status(length=64)
+                logger.debug(f"boot_status[{i}] ({len(bs)} B): {bs[:32].hex()}{'...' if len(bs)>32 else ''}")
+
+            # Drain any MCU responses that arrived during patch upload, so we can
+            # see what the device sent back (now that DL_MODE_NEED_RSP bit is correct).
+            drained = 0
+            while not self.transport._mcu_rx_queue.empty():
+                resp = self.transport._mcu_rx_queue.get_nowait()
+                logger.info(f"post-patch MCU drain msg {drained} ({len(resp)} B): {resp[:32].hex()}{'...' if len(resp)>32 else ''}")
+                drained += 1
+            logger.info(f"post-patch MCU drain: {drained} response(s) consumed")
+
+            if not await self._load_ram():
+                return False
+
+            # Drain again post-RAM-upload (before FW_START_REQ has been polled).
+            drained = 0
+            while not self.transport._mcu_rx_queue.empty():
+                resp = self.transport._mcu_rx_queue.get_nowait()
+                logger.info(f"post-ram MCU drain msg {drained} ({len(resp)} B): {resp[:32].hex()}{'...' if len(resp)>32 else ''}")
+                drained += 1
+            logger.info(f"post-ram MCU drain: {drained} response(s) consumed")
+
+            # Linux order: poll FW_N9_RDY BEFORE clearing MT_UDMA_TX_QSEL.
+            # Clearing early can confuse the device mid-boot.
+            logger.info("Waiting for firmware to boot (FW_N9_RDY)...")
+            if not await self._poll_reg(MT_CONN_ON_MISC, MT_TOP_MISC2_FW_N9_RDY,
+                                        MT_TOP_MISC2_FW_N9_RDY,
+                                        attempts=30, delay=0.2, read_timeout_ms=500):
+                # Diagnostic fallback: probe whether EP0 is alive AT ALL via three
+                # independent read paths. Linux's pcap shows EP0 responsive within
+                # ~18 ms of FW_START_REQ; if all three time out for us, firmware
+                # never started executing (cf. FW_START_REQ jumping into bad PC).
+                logger.error("FW_N9_RDY timeout — running EP0 liveness diagnostics:")
+                try:
+                    chip = self.transport.read_reg32(MT_CHIP_ID_ADDR)
+                    logger.error(f"  standard-bus read MT_HW_CHIPID(0x70010200) = 0x{chip:08x} (cold-boot value was 0x7961xxxx)")
+                except Exception as e:
+                    logger.error(f"  standard-bus read MT_HW_CHIPID FAILED: {e}")
+                try:
+                    misc_std = self.transport.read_reg32(MT_CONN_ON_MISC)
+                    logger.error(f"  standard-bus read MT_CONN_ON_MISC(0x7c0600f0) = 0x{misc_std:08x}")
+                except Exception as e:
+                    logger.error(f"  standard-bus read MT_CONN_ON_MISC FAILED: {e}")
+                try:
+                    bs = self.transport.read_boot_status(length=64)
+                    logger.error(f"  boot_status read ({len(bs)} B): {bs[:32].hex()}")
+                except Exception as e:
+                    logger.error(f"  boot_status read FAILED: {e}")
+                logger.error(f"  MCU drain queue size after FW_START_REQ: {self.transport._mcu_rx_queue.qsize()}")
+                # Drain anything that arrived too late
+                drained = 0
+                while not self.transport._mcu_rx_queue.empty():
+                    resp = self.transport._mcu_rx_queue.get_nowait()
+                    logger.error(f"    late MCU msg {drained} ({len(resp)} B): {resp[:32].hex()}")
+                    drained += 1
+                final = self.transport.read_reg32_unified(MT_CONN_ON_MISC)
+                logger.error(f"Firmware readiness timeout (unified MT_CONN_ON_MISC=0x{final:x})")
+                return False
+        finally:
+            await self.transport.stop_mcu_drainer()
+
+        # Firmware is now running — clear the FW_DL_EN flag.
+        self.transport.write_reg32_unified(MT_UDMA_TX_QSEL, 0)
+
+        logger.info("MT7921AU firmware ready.")
+        return True
+
+    def _rmw(self, addr: int, clear_mask: int, set_mask: int):
+        """Read-modify-write a unified-bus register."""
+        val = self.transport.read_reg32_unified(addr)
+        new = (val & ~clear_mask) | set_mask
+        self.transport.write_reg32_unified(addr, new)
+        logger.debug(f"rmw 0x{addr:08x}: 0x{val:08x} → 0x{new:08x}")
+
+    def _dma_init(self):
+        """
+        Pre-patch DMA init. Mirrors mt792xu_wfdma_init + WLCFG portion of
+        mt792xu_dma_init, in the same order as capture-3 pcap:
+
+        1. DMASHDL scheduler block (pcap frames 14102-14136). Group quotas,
+           queue maps, scheduler sets. Without this, the WM firmware boots
+           into a state where its TX scheduler has no work-dispatch config
+           and the chip never asserts FW_N9_RDY.
+        2. MT_WFDMA_DUMMY_CR NEED_REINIT (pcap frames 14138/14140).
+        3. WLCFG_0/_1 setup (pcap frames 14142-14156).
+
+        Skipped:
+        - mt792xu_dma_prefetch (TX_RING_EXT_CTRL): runtime QoS, not boot-critical.
+        - mt792xu_dma_rx_evt_ep4: setting USB_RXEVT_EP4_EN moves MCU responses
+          from EP 0x85 to EP 0x84 (empirically verified 2026-05-17). Our send/
+          response pairing assumes EP 0x85; leaving the bit cleared keeps it
+          that way.
+        - mt792xu_epctl_rst_opt: pcap shows the bulk-EP reset bits are already
+          clear on cold boot, and UHW bus is inaccessible from WinUSB anyway
+          (Errno 5 on bmRequestType 0x5E/0xDE).
+        """
+        self._dmashdl_init()
+
+        # MT_WFDMA_DUMMY_CR |= NEED_REINIT
+        self._rmw(MT_WFDMA_DUMMY_CR, 0, MT_WFDMA_NEED_REINIT)
+
+        self._rmw(MT_UDMA_WLCFG_0, MT_WL_RX_FLUSH, 0)
+        self._rmw(MT_UDMA_WLCFG_0, 0,
+                  MT_WL_RX_EN | MT_WL_TX_EN | MT_WL_RX_MPSZ_PAD0 | MT_TICK_1US_EN)
+        self._rmw(MT_UDMA_WLCFG_0, MT_WL_RX_AGG_TO | MT_WL_RX_AGG_LMT, 0)
+        self._rmw(MT_UDMA_WLCFG_1, MT_WL_RX_AGG_PKT_LMT, 0)
+
+    def _dmashdl_init(self):
+        """DMA scheduler initialization. Matches mt792xu_wfdma_init's DMASHDL
+        block byte-for-byte (constants from mt792x_usb.c:153-173).
+
+        Group quotas: groups 0-4 get min=0x3, max=0xfff; groups 5-15 are zeroed.
+        Q_MAP/SCHED_SET values are magic constants from upstream — they map
+        priority queues onto scheduler groups for the connac2 TX path.
+        """
+        # REFILL: top 16 bits = 0xffe0
+        self._rmw(MT_DMASHDL_REFILL, MT_DMASHDL_REFILL_MASK, 0xffe00000)
+        # Clear GROUP_SEQ_ORDER in PAGE
+        self._rmw(MT_DMASHDL_PAGE, MT_DMASHDL_GROUP_SEQ_ORDER, 0)
+        # PKT_MAX_SIZE: PLE=1, PSE=0
+        self._rmw(MT_DMASHDL_PKT_MAX_SIZE,
+                  MT_DMASHDL_PKT_MAX_SIZE_PLE | MT_DMASHDL_PKT_MAX_SIZE_PSE,
+                  1)  # PLE field at bit 0, value 1; PSE field cleared
+
+        # Group quotas — Linux's loop bodies.
+        # min field = bits 11:0, max field = bits 27:16
+        for i in range(5):
+            self.transport.write_reg32_unified(
+                MT_DMASHDL_GROUP_QUOTA(i),
+                (0xfff << MT_DMASHDL_GROUP_QUOTA_MAX_SHIFT) | (0x3 << MT_DMASHDL_GROUP_QUOTA_MIN_SHIFT),
+            )
+        for i in range(5, 16):
+            self.transport.write_reg32_unified(MT_DMASHDL_GROUP_QUOTA(i), 0)
+
+        # Q_MAP magic constants
+        self.transport.write_reg32_unified(MT_DMASHDL_Q_MAP(0), 0x32013201)
+        self.transport.write_reg32_unified(MT_DMASHDL_Q_MAP(1), 0x32013201)
+        self.transport.write_reg32_unified(MT_DMASHDL_Q_MAP(2), 0x55555444)
+        self.transport.write_reg32_unified(MT_DMASHDL_Q_MAP(3), 0x55555444)
+
+        # SCHED_SET magic constants
+        self.transport.write_reg32_unified(MT_DMASHDL_SCHED_SET(0), 0x76540132)
+        self.transport.write_reg32_unified(MT_DMASHDL_SCHED_SET(1), 0xFEDCBA98)
+
+    async def _poll_reg(self, addr: int, mask: int, expected: int,
+                        attempts: int = 50, delay: float = 0.01,
+                        read_timeout_ms: int = 200) -> bool:
+        """
+        Poll a unified-bus register until (val & mask) == expected.
+
+        read_timeout_ms is the per-attempt control-transfer timeout. After
+        FW_START_REQ the USB controller can be unresponsive for a few hundred
+        ms while firmware boots — keep this short so we fail fast and retry.
+        Inline the read to override the default 1s read_reg32_unified timeout.
+        """
+        wValue = (addr >> 16) & 0xFFFF
+        wIndex = addr & 0xFFFF
+        last_logged_val = None
+        for i in range(attempts):
+            res = self.transport.read_vendor_request(
+                MT_VEND_READ_RECIPIENT, MT_VEND_READ_REG_REQ,
+                wValue, wIndex, 4, timeout=read_timeout_ms,
+            )
+            if len(res) >= 4:
+                val = struct.unpack("<I", res)[0]
+                if val != last_logged_val:
+                    logger.debug(f"poll 0x{addr:08x} attempt {i}: 0x{val:08x}")
+                    last_logged_val = val
+                if (val & mask) == expected:
+                    return True
+            elif i % 10 == 0:
+                logger.debug(f"poll 0x{addr:08x} attempt {i}: read failed")
+            await asyncio.sleep(delay)
+        return False
+
+    # ------------------------------------------------------------------
+    # ROM patch upload (mt76_connac2_load_patch equivalent)
+    # ------------------------------------------------------------------
+
+    async def _load_patch(self) -> bool:
+        path = self.assets_dir / FIRMWARE_ROM_PATCH
+        if not path.exists():
+            logger.error(f"Missing patch firmware: {path}")
+            return False
+        data = path.read_bytes()
+        if len(data) < PATCH_HDR_SIZE:
+            logger.error(f"Patch file too small: {len(data)} bytes")
+            return False
+
+        # Parse mt76_connac2_patch_hdr — BE fields.
+        # desc.n_region at offset 44 (BE u32).
+        n_region = struct.unpack(">I", data[44:48])[0]
+        build_date = data[0:16].rstrip(b"\x00").decode("ascii", errors="replace")
+        logger.info(f"Patch: build_date={build_date!r} n_region={n_region}")
+        if n_region == 0 or n_region > 16:
+            logger.error(f"Implausible patch n_region={n_region}")
+            return False
+
+        # 1. Acquire patch semaphore.
+        resp = await self.transport.send_mcu_command(
+            MCU_CMD_PATCH_SEM_CONTROL,
+            struct.pack("<I", PATCH_SEM_GET),
+        )
+        if resp is None:
+            logger.error("PATCH_SEM_CONTROL get: no response")
+            return False
+        logger.debug(f"PATCH_SEM get response: {resp[:32].hex()}")
+
+        try:
+            # 2. For each section, send PATCH_START_REQ then FW_SCATTER chunks.
+            for i in range(n_region):
+                sec_off = PATCH_HDR_SIZE + i * PATCH_SEC_SIZE
+                sec = data[sec_off:sec_off + PATCH_SEC_SIZE]
+                # mt76_connac2_patch_sec — BE
+                # type @ 0, offs @ 4, size @ 8, info.addr @ 12, info.len @ 16
+                offs = struct.unpack(">I", sec[4:8])[0]
+                addr = struct.unpack(">I", sec[12:16])[0]
+                length = struct.unpack(">I", sec[16:20])[0]
+                logger.info(f"Patch section {i}: addr=0x{addr:08x} len={length} offs=0x{offs:x}")
+
+                # PATCH_START_REQ is fire-and-forget on this device — Linux
+                # pcap (capture-3) shows zero EP 0x85 completions during patch
+                # upload despite source code claiming wait=true.
+                await self.transport.send_mcu_command(
+                    MCU_CMD_PATCH_START_REQ,
+                    struct.pack("<III", addr, length, DL_MODE_NEED_RSP),
+                    wait_resp=False,
+                )
+
+                if not await self._send_fw_chunks(data, offs, length, label=f"patch sec {i}"):
+                    return False
+
+            # 3. Close patch session. Fire-and-forget (no EP 0x85 response in pcap).
+            await self.transport.send_mcu_command(
+                MCU_CMD_PATCH_FINISH_REQ,
+                struct.pack("<I", 0),  # check_crc = 0
+                wait_resp=False,
+            )
+        finally:
+            # 4. Always release semaphore.
+            await self.transport.send_mcu_command(
+                MCU_CMD_PATCH_SEM_CONTROL,
+                struct.pack("<I", PATCH_SEM_RELEASE),
+            )
+
+        logger.info("ROM patch loaded.")
+        return True
+
+    # ------------------------------------------------------------------
+    # WM RAM upload (mt76_connac_mcu_send_ram_firmware equivalent)
+    # ------------------------------------------------------------------
+
+    async def _load_ram(self) -> bool:
+        path = self.assets_dir / FIRMWARE_WM
+        if not path.exists():
+            logger.error(f"Missing WM firmware: {path}")
+            return False
+        data = path.read_bytes()
+        if len(data) < FW_TRAILER_SIZE:
+            logger.error(f"WM file too small: {len(data)} bytes")
+            return False
+
+        # mt76_connac2_fw_trailer sits at the END of the file.
+        trailer_off = len(data) - FW_TRAILER_SIZE
+        trailer = data[trailer_off:]
+        # chip_id @ 0, eco_code @ 1, n_region @ 2, format_ver @ 3, format_flag @ 4
+        n_region = trailer[2]
+        fw_ver = trailer[8:18].rstrip(b"\x00").decode("ascii", errors="replace")
+        build_date = trailer[18:33].rstrip(b"\x00").decode("ascii", errors="replace")
+        logger.info(f"WM: chip_id=0x{trailer[0]:02x} n_region={n_region} ver={fw_ver!r} build={build_date!r}")
+        if n_region == 0 or n_region > 16:
+            logger.error(f"Implausible WM n_region={n_region}")
+            return False
+
+        # Regions sit immediately before the trailer:
+        #   region[i] @ (trailer_off - (n_region - i) * FW_REGION_SIZE)
+        # The raw data starts at offset 0 and is read sequentially across regions.
+        offset = 0
+        override_addr = 0
+        for i in range(n_region):
+            reg_off = trailer_off - (n_region - i) * FW_REGION_SIZE
+            reg = data[reg_off:reg_off + FW_REGION_SIZE]
+            # All __le32 / u8 fields
+            addr = struct.unpack("<I", reg[16:20])[0]
+            length = struct.unpack("<I", reg[20:24])[0]
+            feature_set = reg[24]
+            logger.info(f"WM region {i}: addr=0x{addr:08x} len={length} feature_set=0x{feature_set:02x}")
+
+            if feature_set & FW_FEATURE_NON_DL:
+                logger.info(f"  → NON_DL, skipping upload")
+                offset += length
+                continue
+
+            if feature_set & FW_FEATURE_OVERRIDE_ADDR:
+                override_addr = addr
+
+            # Fire-and-forget per Linux capture-3 behavior.
+            await self.transport.send_mcu_command(
+                MCU_CMD_TARGET_ADDRESS_LEN_REQ,
+                struct.pack("<III", addr, length, DL_MODE_NEED_RSP),
+                wait_resp=False,
+            )
+
+            if not await self._send_fw_chunks(data, offset, length, label=f"WM region {i}"):
+                return False
+            offset += length
+
+        # Boot the firmware. Fire-and-forget — success signal is FW_N9_RDY going high.
+        option = FW_START_OVERRIDE if override_addr else 0
+        await self.transport.send_mcu_command(
+            MCU_CMD_FW_START_REQ,
+            struct.pack("<II", option, override_addr),
+            wait_resp=False,
+        )
+        logger.info(f"FW_START_REQ sent (override=0x{override_addr:x}, option=0x{option:x})")
+
+        return True
+
+    # ------------------------------------------------------------------
+    # Shared chunked sender
+    # ------------------------------------------------------------------
+
+    async def _send_fw_chunks(self, blob: bytes, offset: int, length: int, label: str) -> bool:
+        import time
+        sent = 0
+        chunk_idx = 0
+        while sent < length:
+            cur = min(MAX_FW_CHUNK, length - sent)
+            chunk = blob[offset + sent: offset + sent + cur]
+            t0 = time.monotonic()
+            if not await self.transport.send_fw_chunk(chunk, timeout_ms=5000):
+                logger.error(f"FW_SCATTER failed for {label} at chunk {chunk_idx} (offset {sent}/{length})")
+                return False
+            dt = (time.monotonic() - t0) * 1000
+            if dt > 50 or chunk_idx < 5:
+                logger.debug(f"FW_SCATTER {label} chunk {chunk_idx}: {cur}B in {dt:.0f}ms")
+            sent += cur
+            chunk_idx += 1
+            await asyncio.sleep(0)
+        logger.info(f"FW_SCATTER {label}: {sent} bytes in {chunk_idx} chunks")
         return True
