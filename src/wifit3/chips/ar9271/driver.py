@@ -13,6 +13,7 @@ from .transport import AR9271USBTransport
 from .protocol.wmi import WMIProtocol
 from .protocol.metadata import AthMetadataLayer
 from .constants import *
+from wifit3.engine.protocols import DeviceID
 from wifit3.wlan.packet import WlanFrameParser
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,15 @@ class AR9271Driver:
     Main Driver for the Atheros AR9271.
     Orchestrates protocols and device state using the USBTransport abstraction.
     """
-    
+
+    SUPPORTED_IDS = [
+        DeviceID(0x0cf3, 0x9271, "Atheros AR9271 / ALFA AWUS036NHA"),
+    ]
+
+    @classmethod
+    def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "AR9271Driver":
+        return cls(dev)
+
     def __init__(self, dev: usb.core.Device, is_warm: bool = False):
         # Initial transport for whatever handle we were given (Cold or Warm)
         self.transport = AR9271USBTransport(dev)

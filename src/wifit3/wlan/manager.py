@@ -1,69 +1,107 @@
-import asyncio
+"""USB-bus scan + driver dispatch.
+
+The manager has zero chipset-specific knowledge. Each driver declares
+its own VID:PIDs via :attr:`SUPPORTED_IDS` and constructs itself via
+:py:meth:`from_usb_device`; the manager just iterates the bus and asks
+each driver "is this yours?".
+
+Driver imports are deferred to the first :func:`_all_drivers` call to
+sidestep the cycle through ``wifit3.wlan.__init__`` that would otherwise
+form on first import.
+"""
+from __future__ import annotations
+
 import logging
+from typing import List, Optional, Type
+
+import libusb_package
 import usb.core
 import usb.util
-from typing import List, Optional, Tuple
 
-from wifit3.chips.rt2800usb.transport import RT2800USBTransport
+from wifit3.engine.protocols import DeviceID, WlanDriver
+
 from .interface import WlanInterface
 
 logger = logging.getLogger(__name__)
 
-class WlanDeviceManager:
+
+_ALL_DRIVERS: List[Type[WlanDriver]] | None = None
+
+
+def _all_drivers() -> List[Type[WlanDriver]]:
+    """The driver registry, built once on first call.
+
+    Order is the priority order for VID:PID disambiguation (only matters
+    if two drivers ever claim the same pair).
     """
-    Scans the USB bus for supported chipsets, handles firmware cold-boots,
-    and returns high-level WlanInterface abstractions.
-    """
-    def __init__(self):
-        self.interfaces: List[WlanInterface] = []
-        
+    global _ALL_DRIVERS
+    if _ALL_DRIVERS is None:
         from wifit3.chips.ar9271.driver import AR9271Driver
-        from wifit3.chips.rtl8187.driver import RTL8187Driver
-        from wifit3.chips.rt2800usb.driver import RT2800USBDriver
         from wifit3.chips.mt7921au.driver import MT7921AUDriver
-        
-        # Supported Hardware Registry
-        self.SUPPORTED_DEVICES = {
-            (0x0cf3, 0x9271): {"name": "AR9271", "driver_class": AR9271Driver, "desc": "Atheros AR9271 / ALFA AWUS036NHA"},
-            (0x0bda, 0x8187): {"name": "RTL8187", "driver_class": RTL8187Driver, "desc": "Realtek RTL8187L / ALFA AWUS036H"},
-            (0x148f, 0x5572): {"name": "RT5572", "driver_class": RT2800USBDriver, "desc": "Ralink RT5572 / Panda PAU09 N600", "chip_id": "rt5572"},
-            (0x148f, 0x3572): {"name": "RT3572", "driver_class": RT2800USBDriver, "desc": "Ralink RT3572 / ALFA AWUS051NH v2", "chip_id": "rt3572"},
-            (0x148f, 0x5372): {"name": "RT5372", "driver_class": RT2800USBDriver, "desc": "Ralink RT5372 / Panda PAU05", "chip_id": "rt5372"},
-            (0x0e8d, 0x7961): {"name": "MT7921AU", "driver_class": MT7921AUDriver, "desc": "Mediatek MT7921AU / ALFA AWUS036AXML"},
-        }
+        from wifit3.chips.rt2800usb.driver import RT2800USBDriver
+        from wifit3.chips.rtl8187.driver import RTL8187Driver
+        from wifit3.chips.rtl8821au.driver import RTL8821AUDriver
+
+        _ALL_DRIVERS = [
+            AR9271Driver,
+            RTL8187Driver,
+            RT2800USBDriver,
+            RTL8821AUDriver,
+            MT7921AUDriver,
+        ]
+    return _ALL_DRIVERS
+
+
+def _match_driver(
+    dev: usb.core.Device,
+) -> Optional[tuple[Type[WlanDriver], DeviceID]]:
+    """Find the first registered driver that claims `dev`."""
+    for driver_cls in _all_drivers():
+        for entry in driver_cls.SUPPORTED_IDS:
+            if entry.vid == dev.idVendor and entry.pid == dev.idProduct:
+                return driver_cls, entry
+    return None
+
+
+class WlanDeviceManager:
+    """Scans PyUSB, dispatches to driver factories, returns WlanInterfaces."""
+
+    def __init__(self) -> None:
+        self.interfaces: List[WlanInterface] = []
 
     async def refresh(self) -> List[WlanInterface]:
-        """
-        Scans PyUSB. Discovers supported devices and wraps them in a WlanInterface.
-        Initialization (firmware upload, etc.) is now handled by the driver's connect() method.
-        """
-        import libusb_package
         backend = libusb_package.get_libusb1_backend()
-        
-        # Ensure clean state before refreshing
+
+        # Clean state.
         for iface in self.interfaces:
             await iface.close()
         self.interfaces = []
-        
-        # Find all devices on the bus
-        for dev in usb.core.find(find_all=True, backend=backend):
-            vid_pid = (dev.idVendor, dev.idProduct)
-            if vid_pid in self.SUPPORTED_DEVICES:
-                info = self.SUPPORTED_DEVICES[vid_pid]
-                logger.info(f"Found supported hardware: {info['desc']}")
-                
-                # Create driver instance
-                if info["driver_class"].__name__ == "RT2800USBDriver":
-                    transport = RT2800USBTransport(dev)
-                    driver_instance = info["driver_class"](transport, chip_id=info["chip_id"])
-                else:
-                    # AR9271 and RTL8187 can handle their own warmth probing in connect() or be passed a guess
-                    driver_instance = info["driver_class"](dev)
-                
-                iface = WlanInterface(driver_instance, f"wlan{len(self.interfaces)}", info["desc"])
-                self.interfaces.append(iface)
 
-        logger.info(f"Discovered {len(self.interfaces)} native WlanInterfaces.")
+        for dev in usb.core.find(find_all=True, backend=backend):
+            match = _match_driver(dev)
+            if match is None:
+                continue
+            driver_cls, id_entry = match
+            logger.info(
+                "Found supported hardware: %s (vid=%04x pid=%04x)",
+                id_entry.description, id_entry.vid, id_entry.pid,
+            )
+            try:
+                driver = driver_cls.from_usb_device(dev, id_entry)
+            except Exception as e:
+                logger.exception(
+                    "Failed to construct %s for %04x:%04x: %s",
+                    driver_cls.__name__, id_entry.vid, id_entry.pid, e,
+                )
+                continue
+            iface = WlanInterface(
+                driver,
+                f"wlan{len(self.interfaces)}",
+                id_entry.description,
+            )
+            self.interfaces.append(iface)
+
+        logger.info("Discovered %d native WlanInterfaces.", len(self.interfaces))
         return self.interfaces
 
     def get_interface(self, name: str) -> Optional[WlanInterface]:
@@ -72,7 +110,7 @@ class WlanDeviceManager:
                 return iface
         return None
 
-    async def close_all(self):
+    async def close_all(self) -> None:
         for iface in self.interfaces:
             await iface.close()
         self.interfaces = []

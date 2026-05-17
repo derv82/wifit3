@@ -7,6 +7,7 @@ from typing import Optional, Dict, Any
 
 from .transport import RTL8187USBTransport
 from .constants import *
+from wifit3.engine.protocols import DeviceID
 from wifit3.wlan.packet import WlanFrameParser
 
 logger = logging.getLogger(__name__)
@@ -16,7 +17,15 @@ class RTL8187Driver:
     Driver for the Realtek RTL8187L (e.g. AWUS036H).
     Implements standard chipset interface for wifit3.
     """
-    
+
+    SUPPORTED_IDS = [
+        DeviceID(0x0bda, 0x8187, "Realtek RTL8187L / ALFA AWUS036H"),
+    ]
+
+    @classmethod
+    def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RTL8187Driver":
+        return cls(dev)
+
     def __init__(self, dev: usb.core.Device, is_warm: bool = False):
         self.dev = dev
         self.transport = RTL8187USBTransport(dev)

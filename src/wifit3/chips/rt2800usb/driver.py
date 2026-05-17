@@ -11,9 +11,14 @@ from .transport import RT2800USBTransport
 from .firmware import RT2800USBFirmwareLoader
 from .constants import *
 
+from wifit3.engine.protocols import DeviceID
 from wifit3.wlan.packet import WlanFrameParser
 
 logger = logging.getLogger(__name__)
+
+
+import usb.core
+
 
 class RT2800USBDriver:
     """
@@ -21,6 +26,17 @@ class RT2800USBDriver:
     """
     RXINFO_SIZE = 4
     TXINFO_SIZE = 4
+
+    SUPPORTED_IDS = [
+        DeviceID(0x148f, 0x5572, "Ralink RT5572 / Panda PAU09 N600", extras={"chip_id": "rt5572"}),
+        DeviceID(0x148f, 0x3572, "Ralink RT3572 / ALFA AWUS051NH v2", extras={"chip_id": "rt3572"}),
+        DeviceID(0x148f, 0x5372, "Ralink RT5372 / Panda PAU05",       extras={"chip_id": "rt5372"}),
+    ]
+
+    @classmethod
+    def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RT2800USBDriver":
+        chip_id = id_entry.extras.get("chip_id", "rt5572")
+        return cls(RT2800USBTransport(dev), chip_id=chip_id)
 
     def __init__(self, transport: RT2800USBTransport, chip_id: str = "rt5572"):
         self.transport = transport

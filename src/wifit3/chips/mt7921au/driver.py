@@ -6,17 +6,30 @@ import struct
 from pathlib import Path
 from typing import Optional, Callable
 
+import usb.core
+
 from .transport import MT7921AUTransport
 from .firmware import MT7921AUFirmwareLoader
 from .constants import *
+from wifit3.engine.protocols import DeviceID
 from wifit3.wlan.packet import WlanFrameParser
 
 logger = logging.getLogger(__name__)
+
 
 class MT7921AUDriver:
     """
     Unified Userspace driver for the Mediatek MT7921AU (WiFi 6).
     """
+
+    SUPPORTED_IDS = [
+        DeviceID(0x0e8d, 0x7961, "Mediatek MT7921AU / ALFA AWUS036AXML"),
+    ]
+
+    @classmethod
+    def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "MT7921AUDriver":
+        return cls(dev)
+
     def __init__(self, dev):
         self.dev = dev
         self.transport = MT7921AUTransport(dev)
