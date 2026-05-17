@@ -99,18 +99,39 @@ def write_rf_masked(transport: RTL8821AUTransport, addr: int, mask: int, data: i
 # Sub-helpers — only the 8821A 1T1R 2.4 GHz code paths
 # ---------------------------------------------------------------------------
 
+def _lookup_fc_area(channel: int) -> int:
+    """Mirrors the channel→fc_area switch in rtw88xxa_switch_channel."""
+    if 36 <= channel <= 48:
+        return 0x494
+    if 50 <= channel <= 64:
+        return 0x453
+    if 100 <= channel <= 116:
+        return 0x452
+    if channel >= 118:
+        return 0x412
+    return 0x96A   # 2.4 GHz default
+
+
+def _lookup_rf_mod_ag(channel: int) -> int:
+    """Mirrors the channel→rf_mod_ag switch in rtw88xxa_switch_channel."""
+    if 36 <= channel <= 64:
+        return 0x101
+    if 100 <= channel <= 140:
+        return 0x301
+    if channel > 140:
+        return 0x501
+    return 0x000   # 2.4 GHz default
+
+
 def _switch_channel(transport: RTL8821AUTransport, channel: int) -> None:
-    """rtw88xxa.c:1324, 2.4 GHz branch.
+    """rtw88xxa.c:1324, unified for 2.4 GHz and 5 GHz.
 
-    For ch 1..14 the default `fc_area = 0x96a` and `rf_mod_ag = 0x000`.
+    Writes the centre-frequency area (REG_CLKTRK) then two SIPI writes
+    to RF18 (band/RFSI bits, then channel index).
     """
-    if not (1 <= channel <= 14):
-        raise ValueError(f"2.4 GHz channel must be 1..14, got {channel}")
-
-    fc_area = 0x96A
+    fc_area = _lookup_fc_area(channel)
     transport.write32_mask(REG_CLKTRK, 0x1FFE0000, fc_area)
-
-    rf_mod_ag = 0x000
+    rf_mod_ag = _lookup_rf_mod_ag(channel)
     write_rf_masked(transport, RF_CFGCH, RF18_RFSI_MASK | RF18_BAND_MASK, rf_mod_ag)
     write_rf_masked(transport, RF_CFGCH, RF18_CHANNEL_MASK, channel)
 
@@ -161,7 +182,47 @@ def set_channel_2g_20mhz(
     Args:
         primary_chan_idx: 0 = DONT_CARE (mac80211 default for 20MHz).
     """
+    if not (1 <= channel <= 14):
+        raise ValueError(f"2.4 GHz channel must be 1..14, got {channel}")
     logger.info("set_channel_2g_20mhz: ch=%d primary_idx=%d", channel, primary_chan_idx)
     _switch_channel(transport, channel)
     _post_set_bw_mode_20mhz(transport, primary_chan_idx)
     _set_channel_rf_20mhz(transport)
+
+
+# Valid 5 GHz channels (rtw88 supports the full UNII range; we expose the
+# subset that doesn't require DFS clearance from a regulator).
+CHANNELS_5G_NON_DFS = (
+    36, 40, 44, 48,                 # UNII-1 (5.18 – 5.24 GHz)
+    149, 153, 157, 161, 165,        # UNII-3 (5.745 – 5.825 GHz)
+)
+CHANNELS_5G_DFS = (
+    52, 56, 60, 64,                 # UNII-2A
+    100, 104, 108, 112, 116, 120, 124, 128,
+    132, 136, 140, 144,             # UNII-2C
+)
+CHANNELS_5G_ALL = CHANNELS_5G_NON_DFS + CHANNELS_5G_DFS
+
+
+def set_channel_5g_20mhz(
+    transport: RTL8821AUTransport,
+    channel: int,
+    *,
+    primary_chan_idx: int = 0,
+) -> None:
+    """Tune to a 5 GHz channel at 20 MHz bandwidth.
+
+    Caller must have already band-switched to 5G via
+    :func:`phy.switch_band_5g_20mhz`. This just runs the
+    channel/bw-specific writes.
+    """
+    if channel not in CHANNELS_5G_ALL:
+        raise ValueError(f"unsupported 5 GHz channel: {channel}")
+    logger.info("set_channel_5g_20mhz: ch=%d primary_idx=%d", channel, primary_chan_idx)
+    _switch_channel(transport, channel)
+    _post_set_bw_mode_20mhz(transport, primary_chan_idx)
+    _set_channel_rf_20mhz(transport)
+
+
+def channel_band_is_2g(channel: int) -> bool:
+    return channel <= 14

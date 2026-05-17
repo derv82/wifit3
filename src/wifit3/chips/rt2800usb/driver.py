@@ -32,6 +32,10 @@ class RT2800USBDriver:
         DeviceID(0x148f, 0x3572, "Ralink RT3572 / ALFA AWUS051NH v2", extras={"chip_id": "rt3572"}),
         DeviceID(0x148f, 0x5372, "Ralink RT5372 / Panda PAU05",       extras={"chip_id": "rt5372"}),
     ]
+    # Conservative default: 2.4 GHz only. Some rt2800usb variants (RT5572/
+    # RT3572) physically support 5 GHz but the current driver path here
+    # hasn't been wired/verified for it — tighten this when that lands.
+    SUPPORTED_CHANNELS = list(range(1, 14))
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RT2800USBDriver":

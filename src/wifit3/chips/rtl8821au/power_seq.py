@@ -101,6 +101,38 @@ CARD_ENABLE_FLOW_8821A: Sequence[Sequence[Sequence[int]]] = (
 )
 
 
+# rtw8821a_table.c:2145 — trans_act_to_cardemu_8821a
+ACT_TO_CARDEMU = (
+    (0x001F, CUT_ALL, INTF_ALL,             ADDR_MAC, CMD_WRITE,   0xFF,                0),
+    (0x004F, CUT_ALL, INTF_ALL,             ADDR_MAC, CMD_WRITE,   1 << 0,              0),
+    (0x0049, CUT_ALL, INTF_ALL,             ADDR_MAC, CMD_WRITE,   1 << 1,              0),
+    (0x0006, CUT_ALL, INTF_USB,             ADDR_MAC, CMD_WRITE,   1 << 0,              1 << 0),
+    (0x0005, CUT_ALL, INTF_ALL,             ADDR_MAC, CMD_WRITE,   1 << 1,              1 << 1),
+    (0x0005, CUT_ALL, INTF_ALL,             ADDR_MAC, CMD_POLLING, 1 << 1,              0),
+    (0x0000, CUT_ALL, INTF_USB | INTF_SDIO, ADDR_MAC, CMD_WRITE,   1 << 5,              1 << 5),
+    (0x0020, CUT_ALL, INTF_USB | INTF_SDIO, ADDR_MAC, CMD_WRITE,   1 << 0,              0),
+    (0xFFFF, CUT_ALL, INTF_ALL,             0,        CMD_END,     0,                   0),
+)
+
+# rtw8821a_table.c:2193 — trans_cardemu_to_carddis_8821a
+CARDEMU_TO_CARDDIS = (
+    (0x0007, CUT_ALL, INTF_SDIO,            ADDR_MAC,  CMD_WRITE,   0xFF,                0x20),
+    (0x0005, CUT_ALL, INTF_USB | INTF_SDIO, ADDR_MAC,  CMD_WRITE,   (1 << 3) | (1 << 4), 1 << 3),
+    (0x0005, CUT_ALL, INTF_PCI,             ADDR_MAC,  CMD_WRITE,   1 << 2,              1 << 2),
+    (0x004A, CUT_ALL, INTF_USB,             ADDR_MAC,  CMD_WRITE,   1 << 0,              1),
+    (0x0023, CUT_ALL, INTF_SDIO,            ADDR_MAC,  CMD_WRITE,   1 << 4,              1 << 4),
+    (0x0086, CUT_ALL, INTF_SDIO,            ADDR_SDIO, CMD_WRITE,   1 << 0,              1 << 0),
+    (0x0086, CUT_ALL, INTF_SDIO,            ADDR_SDIO, CMD_POLLING, 1 << 1,              0),
+    (0xFFFF, CUT_ALL, INTF_ALL,             0,         CMD_END,     0,                   0),
+)
+
+# Top-level flow (rtw8821a_table.c:2247)
+CARD_DISABLE_FLOW_8821A: Sequence[Sequence[Sequence[int]]] = (
+    ACT_TO_CARDEMU,
+    CARDEMU_TO_CARDDIS,
+)
+
+
 def _poll(transport: RTL8821AUTransport, addr: int, mask: int, target: int,
           attempts: int = 1000, interval_s: float = 0.001) -> bool:
     """Poll `addr` byte until `(read & mask) == (target & mask)`.
@@ -170,4 +202,10 @@ def run_pwr_seq(transport: RTL8821AUTransport,
 def card_enable_flow_8821a(transport: RTL8821AUTransport) -> None:
     """Run the full power-on sequence for the 8821A on a USB host."""
     for sub in CARD_ENABLE_FLOW_8821A:
+        run_pwr_seq(transport, sub, intf_mask=INTF_USB, cut_mask=CUT_ALL)
+
+
+def card_disable_flow_8821a(transport: RTL8821AUTransport) -> None:
+    """Run the full power-off sequence for the 8821A on a USB host."""
+    for sub in CARD_DISABLE_FLOW_8821A:
         run_pwr_seq(transport, sub, intf_mask=INTF_USB, cut_mask=CUT_ALL)

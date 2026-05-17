@@ -46,6 +46,14 @@ class WlanDriver(Protocol):
     SUPPORTED_IDS: ClassVar[List[DeviceID]]
     """All USB VID:PID combinations this driver claims."""
 
+    # ---- Capabilities -------------------------------------------------
+    SUPPORTED_CHANNELS: ClassVar[List[int]]
+    """All channel numbers this driver can tune to. Consumed by the UI
+    (channel hopping default, range validation, etc.). 2.4 GHz channels
+    are 1..14; 5 GHz channels are 36..165. Drivers that only support
+    2.4 GHz should list 1..13 (or whatever their PHY actually supports).
+    """
+
     @classmethod
     def from_usb_device(
         cls, dev: usb.core.Device, id_entry: DeviceID

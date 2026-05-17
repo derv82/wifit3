@@ -25,6 +25,11 @@ class MT7921AUDriver:
     SUPPORTED_IDS = [
         DeviceID(0x0e8d, 0x7961, "Mediatek MT7921AU / ALFA AWUS036AXML"),
     ]
+    # Conservative default: 2.4 GHz only. The MT7921AU is a Wi-Fi 6
+    # dual-band radio so it *can* do 5 GHz, but this driver's bring-up
+    # is paused at the WinUSB EP0 step (see MT7921AU.md) — expand once
+    # full 5 GHz tuning is verified.
+    SUPPORTED_CHANNELS = list(range(1, 14))
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "MT7921AUDriver":

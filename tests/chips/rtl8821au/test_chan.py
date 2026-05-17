@@ -121,3 +121,64 @@ def test_set_channel_2g_20mhz_l1pkth_is_8_for_1t1r():
     set_channel_2g_20mhz(t, 1)
     l1 = [w for w in t.writes if w[1] == REG_L1PKTH]
     assert l1[-1][2] & 0x03C00000 == (8 << 22)
+
+
+# --- 5 GHz ---
+
+from wifit3.chips.rtl8821au.chan import (
+    _lookup_fc_area,
+    _lookup_rf_mod_ag,
+    channel_band_is_2g,
+    set_channel_5g_20mhz,
+    CHANNELS_5G_ALL,
+)
+
+
+def test_channel_band_is_2g_split():
+    for ch in (1, 6, 11, 14):
+        assert channel_band_is_2g(ch) is True
+    for ch in (36, 48, 100, 165):
+        assert channel_band_is_2g(ch) is False
+
+
+def test_lookup_fc_area_branches():
+    # rtw88xxa.c:1330..1346
+    assert _lookup_fc_area(1) == 0x96A
+    assert _lookup_fc_area(36) == 0x494
+    assert _lookup_fc_area(48) == 0x494
+    assert _lookup_fc_area(52) == 0x453
+    assert _lookup_fc_area(100) == 0x452
+    assert _lookup_fc_area(118) == 0x412
+    assert _lookup_fc_area(165) == 0x412
+
+
+def test_lookup_rf_mod_ag_branches():
+    assert _lookup_rf_mod_ag(1) == 0x000
+    assert _lookup_rf_mod_ag(36) == 0x101
+    assert _lookup_rf_mod_ag(64) == 0x101
+    assert _lookup_rf_mod_ag(100) == 0x301
+    assert _lookup_rf_mod_ag(140) == 0x301
+    assert _lookup_rf_mod_ag(149) == 0x501
+
+
+def test_set_channel_5g_uses_correct_fc_area():
+    t = MockTransport()
+    t._store(REG_3WIRE_SWA, [0, 0, 0, 0])
+    set_channel_5g_20mhz(t, 36)
+    clktrk = [w for w in t.writes if w[1] == REG_CLKTRK][-1]
+    # fc_area=0x494 placed at shift 17 (lowest bit of 0x1ffe0000)
+    assert (clktrk[2] >> 17) & 0xFFF == 0x494
+
+
+def test_set_channel_5g_rejects_invalid_channel():
+    import pytest as _pytest
+    t = MockTransport()
+    t._store(REG_3WIRE_SWA, [0, 0, 0, 0])
+    with _pytest.raises(ValueError):
+        set_channel_5g_20mhz(t, 33)
+
+
+def test_channels_5g_disjoint_from_24g():
+    assert 1 not in CHANNELS_5G_ALL
+    assert 36 in CHANNELS_5G_ALL
+    assert 165 in CHANNELS_5G_ALL

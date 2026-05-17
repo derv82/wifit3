@@ -30,17 +30,34 @@ import usb.util
 from wifit3.engine.protocols import DeviceID, ProgressCallback
 from wifit3.wlan.packet import WlanFrameParser
 
-from .chan import set_channel_2g_20mhz
+from .chan import (
+    CHANNELS_5G_ALL,
+    CHANNELS_5G_NON_DFS,
+    channel_band_is_2g,
+    set_channel_2g_20mhz,
+    set_channel_5g_20mhz,
+)
 from .firmware import (
     download_firmware_legacy,
     download_firmware_validate_legacy,
     en_download_firmware_legacy,
     load_firmware_blob,
 )
-from .mac import mac_power_on, post_fw_mac_init, pre_fw_init
-from .phy import EfuseDefaults, post_mac_init_phy
+from .mac import is_chip_warm, mac_power_on, post_fw_mac_init, pre_fw_init
+from .phy import (
+    EfuseDefaults,
+    post_mac_init_phy,
+    switch_band_2g_20mhz,
+    switch_band_5g_20mhz,
+)
 from .rx import iter_bulk_frames, probe_endpoints
 from .transport import RTL8821AUTransport
+from .tx import (
+    TX_DESC_QSEL_MGMT,
+    build_tx_desc_mgmt,
+    pick_bulk_out_ep,
+    write_bulk,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +72,10 @@ class RTL8821AUDriver:
     SUPPORTED_IDS = [
         DeviceID(0x0BDA, 0x0811, "Realtek RTL8821AU / ALFA AWUS036ACS"),
     ]
+    # 2.4 GHz channels 1..13 + non-DFS 5 GHz UNII-1 (36..48) + UNII-3
+    # (149..165). DFS channels are excluded by default to avoid the
+    # regulator-required clearance dance.
+    SUPPORTED_CHANNELS = list(range(1, 14)) + list(CHANNELS_5G_NON_DFS)
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RTL8821AUDriver":
@@ -67,6 +88,7 @@ class RTL8821AUDriver:
         self._rx_task: Optional[asyncio.Task] = None
         self._rx_running = False
         self._bulk_in_ep: Optional[int] = None
+        self._bulk_out_eps: list[int] = []
         self._claimed = False
         self._efuse = EfuseDefaults()
 
@@ -74,6 +96,7 @@ class RTL8821AUDriver:
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
         self.current_channel: int = 1
+        self.current_band_is_2g: bool = True
 
     # ---- discovery hook ---------------------------------------------------
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
@@ -96,6 +119,42 @@ class RTL8821AUDriver:
         usb.util.claim_interface(self.dev, 0)
         self._claimed = True
         logger.info("claimed USB interface 0")
+
+    def _reset_bulk_pipes(self) -> None:
+        """Clear halts on bulk-IN + bulk-OUT pipes so warm restarts resume RX.
+
+        After a warm reattach the chip's MAC state is intact but the USB
+        host controller may still consider the pipes halted from the
+        previous session, AND the chip's internal RX FIFO can be wedged
+        from frames that arrived after the prior session stopped polling.
+
+        We do two things:
+          1. `dev.clear_halt(ep)` per endpoint — host-side data toggle reset.
+          2. Drain whatever bulk-IN bytes the host has buffered with a few
+             short reads so subsequent reads get fresh data.
+
+        Failures here are non-fatal.
+        """
+        eps = [self._bulk_in_ep] if self._bulk_in_ep is not None else []
+        eps += self._bulk_out_eps
+        for ep in eps:
+            try:
+                self.dev.clear_halt(ep)
+                logger.debug("cleared halt on endpoint 0x%02x", ep)
+            except (usb.core.USBError, NotImplementedError) as e:
+                logger.debug("clear_halt(0x%02x) skipped: %s", ep, e)
+
+        # Drain stale bulk-IN bytes (best-effort, short timeouts).
+        if self._bulk_in_ep is not None:
+            drained = 0
+            for _ in range(8):
+                try:
+                    data = self.dev.read(self._bulk_in_ep, 16384, 20)
+                    drained += len(data)
+                except usb.core.USBError:
+                    break
+            if drained:
+                logger.debug("drained %d stale bytes from bulk-IN", drained)
 
     def _release(self) -> None:
         if not self._claimed:
@@ -120,84 +179,189 @@ class RTL8821AUDriver:
             _progress(0.00, "Claiming USB interface")
             await loop.run_in_executor(None, self._claim)
 
-            _progress(0.05, "MAC power-on")
-            await loop.run_in_executor(None, mac_power_on, self.transport)
+            # Warm-state probe: if a prior session left FW running + MAC
+            # enabled, we just reattach — no FW upload, no MAC/PHY init,
+            # no channel re-tune. Mirrors AR9271/RTL8187's `is_warm` path.
+            _progress(0.05, "Probing chip state")
+            warm = await loop.run_in_executor(None, is_chip_warm, self.transport)
+            if warm:
+                logger.info("RTL8821AU is WARM — reattaching to running session")
+                return await self._warm_reattach(_progress)
 
-            _progress(0.10, "Pre-FW init (LLT + DROP_DATA_EN)")
-            fifo = await loop.run_in_executor(None, pre_fw_init, self.transport)
-
-            _progress(0.20, "Enable FW download")
-            await loop.run_in_executor(
-                None, en_download_firmware_legacy, self.transport, True
-            )
-
-            _progress(0.30, "Uploading firmware")
-            fw = await loop.run_in_executor(None, load_firmware_blob)
-            await loop.run_in_executor(
-                None,
-                lambda: download_firmware_legacy(self.transport, fw, None, False),
-            )
-
-            _progress(0.55, "Disable FW download")
-            await loop.run_in_executor(
-                None, en_download_firmware_legacy, self.transport, False
-            )
-
-            _progress(0.60, "Validating FW (FW_READY_LEGACY)")
-            ok_run, last = await loop.run_in_executor(
-                None, download_firmware_validate_legacy, self.transport
-            )
-            if not ok_run:
-                logger.error("FW_READY_LEGACY not satisfied (REG_MCUFW_CTRL=0x%08x)", last)
-                return False
-
-            _progress(0.70, "Post-FW MAC init")
-            await loop.run_in_executor(None, post_fw_mac_init, self.transport, fifo)
-
-            _progress(0.85, "PHY init (mac/bb/agc/rf tables)")
-            await loop.run_in_executor(None, post_mac_init_phy, self.transport, self._efuse)
-
-            _progress(0.95, "Tuning to channel 1")
-            await loop.run_in_executor(None, set_channel_2g_20mhz, self.transport, 1)
-            self.current_channel = 1
-
-            # Discover bulk-IN endpoint and start the RX loop.
-            eps = probe_endpoints(self.dev)
-            if not eps.bulk_in:
-                logger.error("no bulk-IN endpoint discovered")
-                return False
-            self._bulk_in_ep = eps.primary_bulk_in
-            self._rx_running = True
-            self._rx_task = asyncio.create_task(self._rx_loop())
-
-            self.is_warm = True
-            _progress(1.00, "RTL8821AU online")
-            return True
+            logger.info("RTL8821AU is COLD — running full bring-up")
+            return await self._cold_bring_up(_progress)
 
         except (IOError, usb.core.USBError, NotImplementedError) as e:
             logger.error("RTL8821AU connect failed: %s", e)
             return False
 
+    async def _cold_bring_up(self, _progress) -> bool:
+        loop = asyncio.get_event_loop()
+
+        _progress(0.10, "MAC power-on (cold)")
+        await loop.run_in_executor(None, mac_power_on, self.transport)
+
+        _progress(0.15, "Pre-FW init (LLT + DROP_DATA_EN)")
+        fifo = await loop.run_in_executor(None, pre_fw_init, self.transport)
+
+        _progress(0.25, "Enable FW download")
+        await loop.run_in_executor(
+            None, en_download_firmware_legacy, self.transport, True
+        )
+
+        _progress(0.35, "Uploading firmware")
+        fw = await loop.run_in_executor(None, load_firmware_blob)
+        await loop.run_in_executor(
+            None,
+            lambda: download_firmware_legacy(self.transport, fw, None, False),
+        )
+
+        _progress(0.55, "Disable FW download")
+        await loop.run_in_executor(
+            None, en_download_firmware_legacy, self.transport, False
+        )
+
+        _progress(0.60, "Validating FW (FW_READY_LEGACY)")
+        ok_run, last = await loop.run_in_executor(
+            None, download_firmware_validate_legacy, self.transport
+        )
+        if not ok_run:
+            logger.error("FW_READY_LEGACY not satisfied (REG_MCUFW_CTRL=0x%08x)", last)
+            return False
+
+        _progress(0.70, "Post-FW MAC init")
+        await loop.run_in_executor(None, post_fw_mac_init, self.transport, fifo)
+
+        _progress(0.85, "PHY init (mac/bb/agc/rf tables)")
+        await loop.run_in_executor(None, post_mac_init_phy, self.transport, self._efuse)
+
+        _progress(0.95, "Tuning to channel 1")
+        await loop.run_in_executor(None, set_channel_2g_20mhz, self.transport, 1)
+        self.current_channel = 1
+
+        return await self._finish_attach(_progress, from_warm=False)
+
+    async def _warm_reattach(self, _progress) -> bool:
+        """Reattach to a running chip: just resume USB polling.
+
+        We can't reliably re-sync the USB bulk-IN pipe in userland on
+        Windows/WinUSB after a previous session closed. The kernel does
+        it via URB resubmission and an unload/reload that we can't fully
+        replicate. If the pipe is wedged, RX will be silent; we detect
+        that in :meth:`_rx_smoke_test` and surface an actionable error
+        pointing the user at a replug.
+        """
+        _progress(0.50, "Warm chip — skipping FW + init")
+        return await self._finish_attach(_progress, from_warm=True)
+
+    async def _finish_attach(self, _progress, *, from_warm: bool) -> bool:
+        """Common tail: probe endpoints, clear halts, start RX loop."""
+        loop = asyncio.get_event_loop()
+        eps = probe_endpoints(self.dev)
+        if not eps.bulk_in:
+            logger.error("no bulk-IN endpoint discovered")
+            return False
+        self._bulk_in_ep = eps.primary_bulk_in
+        self._bulk_out_eps = list(eps.bulk_out)
+
+        # Clear any stale halts on the bulk pipes — important after a
+        # warm reattach (host stack may still consider them halted from
+        # the previous session), harmless on cold.
+        await loop.run_in_executor(None, self._reset_bulk_pipes)
+
+        # On the warm path, verify that bulk-IN is actually delivering
+        # before we hand back. If it's wedged, surface a clear replug
+        # message instead of silently failing later in the user's flow.
+        if from_warm and not await self._rx_smoke_test():
+            logger.error(
+                "RTL8821AU: warm reattach succeeded but bulk-IN is wedged "
+                "(no frames in 1500ms). Please unplug + replug the dongle "
+                "and try again — the USB pipe state from the previous "
+                "session can't be reset in userland on Windows/WinUSB."
+            )
+            return False
+
+        self._rx_running = True
+        self._rx_task = asyncio.create_task(self._rx_loop())
+        self.is_warm = True
+        _progress(1.00, "RTL8821AU online")
+        return True
+
+    async def _rx_smoke_test(self, attempts: int = 15, timeout_ms: int = 100) -> bool:
+        """Single bulk-IN read with a generous timeout; return True if any
+        byte arrived. Channel 1 on a busy 2.4 GHz environment delivers a
+        beacon every ~100 ms so 1.5 s is plenty of margin."""
+        loop = asyncio.get_event_loop()
+
+        def _try_read():
+            try:
+                return bytes(self.dev.read(self._bulk_in_ep, 16384, timeout_ms))
+            except usb.core.USBError:
+                return b""
+
+        for _ in range(attempts):
+            data = await loop.run_in_executor(None, _try_read)
+            if data:
+                logger.info("RX smoke test: got %d bytes — pipe is alive", len(data))
+                return True
+        return False
+
     # ---- set_channel ------------------------------------------------------
     async def set_channel(self, channel: int) -> bool:
-        if not (1 <= channel <= 13):
-            logger.warning("RTL8821AU: channel %d not supported (1..13 only)", channel)
+        is_2g = channel_band_is_2g(channel)
+        if is_2g and not (1 <= channel <= 14):
+            logger.warning("RTL8821AU: invalid 2.4 GHz channel %d", channel)
             return False
+        if not is_2g and channel not in CHANNELS_5G_ALL:
+            logger.warning("RTL8821AU: unsupported 5 GHz channel %d", channel)
+            return False
+
         loop = asyncio.get_event_loop()
         try:
-            await loop.run_in_executor(
-                None, set_channel_2g_20mhz, self.transport, channel
-            )
+            # Band switch only when crossing 2G↔5G.
+            if is_2g != self.current_band_is_2g:
+                if is_2g:
+                    await loop.run_in_executor(
+                        None, switch_band_2g_20mhz, self.transport, self._efuse
+                    )
+                else:
+                    await loop.run_in_executor(
+                        None, switch_band_5g_20mhz, self.transport, self._efuse
+                    )
+                self.current_band_is_2g = is_2g
+
+            tune = set_channel_2g_20mhz if is_2g else set_channel_5g_20mhz
+            await loop.run_in_executor(None, tune, self.transport, channel)
             self.current_channel = channel
             return True
-        except (IOError, usb.core.USBError) as e:
+        except (IOError, usb.core.USBError, ValueError) as e:
             logger.error("set_channel(%d) failed: %s", channel, e)
             return False
 
-    # ---- inject_frame (TX not yet implemented) ---------------------------
+    # ---- inject_frame (MGMT queue, bulk-OUT) ------------------------------
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
-        logger.warning("RTL8821AU: inject_frame not yet implemented (M7)")
-        return False
+        if not self._bulk_out_eps:
+            logger.error("inject_frame: no bulk-OUT endpoints (driver not connected?)")
+            return False
+        try:
+            desc = build_tx_desc_mgmt(frame_bytes, band_is_2g=True)
+        except ValueError as e:
+            logger.error("inject_frame: bad MPDU: %s", e)
+            return False
+        ep = pick_bulk_out_ep(self._bulk_out_eps, queue=TX_DESC_QSEL_MGMT)
+        payload = desc + frame_bytes
+        loop = asyncio.get_event_loop()
+        try:
+            sent = await loop.run_in_executor(
+                None, lambda: write_bulk(self.dev, ep, payload, timeout_ms=200)
+            )
+        except usb.core.USBError as e:
+            logger.error("inject_frame: bulk-OUT to 0x%02x failed: %s", ep, e)
+            return False
+        if sent != len(payload):
+            logger.warning("inject_frame: short write %d/%d to 0x%02x", sent, len(payload), ep)
+            return False
+        return True
 
     # ---- RX loop ----------------------------------------------------------
     async def _rx_loop(self) -> None:

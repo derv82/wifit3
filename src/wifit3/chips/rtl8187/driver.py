@@ -21,6 +21,8 @@ class RTL8187Driver:
     SUPPORTED_IDS = [
         DeviceID(0x0bda, 0x8187, "Realtek RTL8187L / ALFA AWUS036H"),
     ]
+    # 2.4 GHz only.
+    SUPPORTED_CHANNELS = list(range(1, 14))
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RTL8187Driver":

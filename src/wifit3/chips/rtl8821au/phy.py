@@ -273,13 +273,39 @@ def _phy_set_rfe_reg_24g(transport: RTL8821AUTransport, efuse: EfuseDefaults) ->
         transport.write32_mask(REG_RFE_PINMUX_A, 0x0700, 0x7)
 
 
-def _set_channel_bb_swing_2g(transport: RTL8821AUTransport, efuse: EfuseDefaults) -> None:
-    """Mirrors rtw88xxa_set_channel_bb_swing (rtw88xxa.c:757) for 2G.
+def _phy_set_rfe_reg_5g(transport: RTL8821AUTransport) -> None:
+    """Mirrors rtw8821a_phy_set_rfe_reg_5g (rtw88xxa.c:805).
 
-    8821A is 1T1R so path B's TXSCALE write is harmless. We skip
-    pwrtrack_init (M4d) — pure software state.
+    Turn ON the 5G RF PA and LNA paths; bypass the 2G external LNA.
     """
-    swing = BB_SWING_2G_DEFAULT  # efuse.tx_bb_swing_2g=0 → swing2setting[0]
+    transport.write32_mask(REG_RFE_PINMUX_A, 0xF000, 0x5)
+    transport.write32_mask(REG_RFE_PINMUX_A, 0xF0,   0x4)
+    transport.write32_mask(REG_RFE_INV_A, 1 << 20, 0)
+    transport.write32_mask(REG_RFE_INV_A, 1 << 22, 0)
+    transport.write32_mask(REG_RFE_PINMUX_A, 0x07,   0x7)
+    transport.write32_mask(REG_RFE_PINMUX_A, 0x0700, 0x7)
+
+
+def _set_ext_band_switch_5g(transport: RTL8821AUTransport) -> None:
+    """5 GHz branch of rtw8821a_set_ext_band_switch (rtw88xxa.c:766).
+
+    Same prelude as 2G; differs in REG_RFE_INV_A BIT(29)|BIT(28) = 2.
+    """
+    transport.write32_mask(REG_LED_CFG, BIT_DPDT_SEL_EN, 0)
+    transport.write32_mask(REG_LED_CFG, BIT_DPDT_WL_SEL, 1)
+    transport.write32_mask(REG_RFE_INV_A, 0x0F, 7)
+    transport.write32_mask(REG_RFE_INV_A, 0xF0, 7)
+    transport.write32_mask(REG_RFE_INV_A, (1 << 29) | (1 << 28), 2)
+
+
+def _set_channel_bb_swing(transport: RTL8821AUTransport, efuse: EfuseDefaults) -> None:
+    """Mirrors rtw88xxa_set_channel_bb_swing (rtw88xxa.c:757).
+
+    Same code on both bands — the only band-specific bit is which EFUSE
+    swing setting is read, but with rfe=0 defaults both bands collapse to
+    BB_SWING_2G_DEFAULT (0x200). pwrtrack_init is deferred to M4d.
+    """
+    swing = BB_SWING_2G_DEFAULT
     transport.write32_mask(REG_TXSCALE_A, BB_SWING_MASK, swing)
     transport.write32_mask(REG_TXSCALE_B, BB_SWING_MASK, swing)
 
@@ -298,7 +324,56 @@ def switch_band_2g_20mhz(transport: RTL8821AUTransport, efuse: EfuseDefaults) ->
     transport.write32_mask(REG_RRSR, 0xFFFFF, BASIC_RATES_2G)
     transport.write8_clr(REG_CCK_CHECK, BIT_CHECK_CCK_EN)
 
-    _set_channel_bb_swing_2g(transport, efuse)
+    _set_channel_bb_swing(transport, efuse)
+
+
+def switch_band_5g_20mhz(transport: RTL8821AUTransport, efuse: EfuseDefaults) -> None:
+    """Mirrors rtw88xxa_switch_band(5G, 20MHz) for 8821A (rtw88xxa.c:972).
+
+    Differs from the 2G path in:
+      * ext_band_switch writes REG_RFE_INV_A bits[29:28]=2 (vs 1)
+      * REG_CCK_CHECK gets BIT_CHECK_CCK_EN *set* (vs clear)
+      * Polls REG_TXPKT_EMPTY for TX-drained state (50us * 50 attempts)
+      * REG_TXSCALE_A bits[11:8] = 1 (vs 0)
+      * REG_TXPSEL bits[7:4] = 0 (vs 1)
+      * REG_CCK_RX bits[27:24] = 0xF (vs 1)
+      * basic_rates: only OFDM 6/12/24 (CCK not on 5 GHz)
+    """
+    if (not efuse.btcoex) and efuse.ant_div_cfg == 0:
+        _set_ext_band_switch_5g(transport)
+
+    _phy_set_rfe_reg_5g(transport)
+
+    transport.write8_set(REG_CCK_CHECK, BIT_CHECK_CCK_EN)
+    _poll_txpkt_empty(transport)
+
+    transport.write32_set(REG_RXPSEL, BIT_RX_PSEL_RST)
+    transport.write32_mask(REG_TXSCALE_A, 0xF00, 1)
+
+    transport.write32_mask(REG_TXPSEL, 0xF0, 0)
+    transport.write32_mask(REG_CCK_RX, 0x0F000000, 0xF)
+    # OFDM 6M | 12M | 24M
+    basic_rates_5g = (1 << 4) | (1 << 6) | (1 << 8)
+    transport.write32_mask(REG_RRSR, 0xFFFFF, basic_rates_5g)
+
+    _set_channel_bb_swing(transport, efuse)
+
+
+REG_TXPKT_EMPTY = 0x041A   # reg.h:386
+
+
+def _poll_txpkt_empty(transport: RTL8821AUTransport,
+                      max_attempts: int = 50, interval_s: float = 50e-6) -> None:
+    """Wait for REG_TXPKT_EMPTY bits[5:4] = 0x3 (both HI/MGT queues drained).
+
+    Mirrors the read_poll_timeout_atomic in rtw88xxa.c:978. 50 attempts at
+    ~50us each = 2.5 ms budget. The kernel uses ``(reg & 0x30) == 0x30``.
+    """
+    for _ in range(max_attempts):
+        if transport.read16(REG_TXPKT_EMPTY) & 0x30 == 0x30:
+            return
+        time.sleep(interval_s)
+    logger.warning("TXPKT_EMPTY poll timed out before band switch (continuing)")
 
 
 # ---------------------------------------------------------------------------

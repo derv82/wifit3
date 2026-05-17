@@ -231,18 +231,26 @@ class WlanInterface:
             
 
     async def start_hopping(self, channels: List[int] = None, interval: float = 0.5):
-        """Spawns an asyncio task to loop through channels."""
+        """Spawns an asyncio task to loop through channels.
+
+        If `channels` is omitted, uses the driver's `SUPPORTED_CHANNELS`
+        capability. Falls back to the canonical 2.4 GHz set for drivers
+        that pre-date the capability declaration.
+        """
         if self._is_hopping:
             return
-            
+
         if not channels:
-            # Default 2.4GHz hopper.
-            # TODO Rely on self.driver.supported_channels instead (once ready)
-            channels = [1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 5, 10]
-            
+            channels = getattr(self.driver, "SUPPORTED_CHANNELS", None)
+            if not channels:
+                channels = [1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 5, 10]
+
         self._is_hopping = True
         self._hopping_task = asyncio.create_task(self._hop_loop(channels, interval))
-        logger.info(f"Started channel hopping on {self.name}")
+        logger.info(
+            "Started channel hopping on %s across %d channel(s)",
+            self.name, len(channels),
+        )
 
     async def _hop_loop(self, channels: List[int], interval: float):
         import itertools

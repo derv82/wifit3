@@ -136,11 +136,18 @@ from .constants import (
 )
 from .fifo import FifoConf, set_trx_fifo_info
 from .power_seq import (
+    CARD_DISABLE_FLOW_8821A,
     CARD_ENABLE_FLOW_8821A,
     INTF_USB,
     run_pwr_seq,
 )
 from .transport import RTL8821AUTransport
+
+# REG_SYS_STATUS1+1 BIT(0) is the USB-only secondary "is the chip off?" tell
+# (mac.c:293). When set, the chip considers itself powered down even if
+# REG_CR is non-0xEA.
+REG_SYS_STATUS1 = 0x00F4
+BIT_USB_PWR_OFF = 1 << 0  # at REG_SYS_STATUS1+1
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +170,20 @@ def mac_pre_system_cfg(transport: RTL8821AUTransport) -> None:
         transport.write8(REG_LDO_SWR_CTRL, SPS_SEL)
 
 
+def _is_chip_powered(transport: RTL8821AUTransport) -> bool:
+    """Mirror the USB+8051 branch of mac.c:291.
+
+    The chip is OFF when either:
+      * REG_CR == 0xEA  (kernel's primary "off" sentinel), or
+      * REG_SYS_STATUS1+1 has BIT(0) set (USB-only secondary tell).
+    """
+    if transport.read8(REG_CR) == REG_CR_OFF_VALUE:
+        return False
+    if transport.read8(REG_SYS_STATUS1 + 1) & BIT_USB_PWR_OFF:
+        return False
+    return True
+
+
 def mac_power_switch(transport: RTL8821AUTransport, pwr_on: bool) -> bool:
     """USB+8051 path of `rtw_mac_power_switch` (mac.c:272).
 
@@ -170,15 +191,12 @@ def mac_power_switch(transport: RTL8821AUTransport, pwr_on: bool) -> bool:
         True  if pwr_seq ran successfully (state changed)
         False if the device was already in the requested state (`-EALREADY`)
     """
-    cur_pwr = transport.read8(REG_CR) != REG_CR_OFF_VALUE
+    cur_pwr = _is_chip_powered(transport)
     if pwr_on == cur_pwr:
-        logger.debug("mac_power_switch: already %s (REG_CR != 0xEA)", "on" if pwr_on else "off")
+        logger.debug("mac_power_switch: already %s", "on" if pwr_on else "off")
         return False
 
-    pwr_seq = CARD_ENABLE_FLOW_8821A  # only the on-flow is needed for our milestone
-    if not pwr_on:
-        raise NotImplementedError("power-off flow not implemented (not needed for FW upload)")
-
+    pwr_seq = CARD_ENABLE_FLOW_8821A if pwr_on else CARD_DISABLE_FLOW_8821A
     for sub in pwr_seq:
         run_pwr_seq(transport, sub, intf_mask=INTF_USB)
     return True
@@ -199,23 +217,54 @@ def mac_init_system_cfg_legacy(transport: RTL8821AUTransport) -> None:
 
 
 def mac_power_on(transport: RTL8821AUTransport) -> None:
-    """Run the complete MAC power-on flow that leaves the device ready for FW upload.
+    """Cold-plug MAC power-on flow.
 
-    Mirrors `rtw_mac_power_on` (mac.c:378). On a fresh cold-plug the flow is:
+    Mirrors the cold-plug branch of `rtw_mac_power_on` (mac.c:378):
         1. mac_pre_system_cfg
-        2. mac_power_switch(True) — runs card_enable_flow_8821a
+        2. mac_power_switch(True) — card_enable_flow_8821a
         3. mac_init_system_cfg_legacy
-    If the device reports it is already powered (`-EALREADY`), the kernel
-    cycles it off-then-on; we implement only the cold-plug path for now.
+
+    Raises if the chip reports it is already powered. Callers that want
+    to handle a warm device should detect that BEFORE invoking this:
+    typically via :func:`is_chip_warm` from this module, and then skip
+    the bring-up entirely and just reattach to the running session.
+    The kernel's power-cycle-on-EALREADY path is intentionally *not*
+    mirrored here — empirically it leaves the bulk-IN pipe in a state
+    where RX is dead until a fresh USB re-enumeration.
     """
     mac_pre_system_cfg(transport)
     changed = mac_power_switch(transport, True)
     if not changed:
-        raise NotImplementedError(
-            "device reported -EALREADY (power-cycle path). "
-            "Unplug, wait 5s, replug, and retry."
+        raise IOError(
+            "mac_power_on: chip already powered. The caller should detect "
+            "this with is_chip_warm() and skip the bring-up instead."
         )
     mac_init_system_cfg_legacy(transport)
+
+
+def is_chip_warm(transport: RTL8821AUTransport) -> bool:
+    """Return True if the chip looks like it has FW running + MAC enabled.
+
+    Signal: REG_MCUFW_CTRL has all four FW_READY_LEGACY bits set AND the
+    MAC has its TX/RX engines enabled (REG_CR bits 6+7). This is the
+    state the chip is in after a successful :func:`mac_power_on` →
+    FW upload + validate → post_fw_mac_init chain — i.e. exactly what a
+    previous wifit3 session would leave behind.
+    """
+    from .constants import (
+        BIT_MACRXEN,
+        BIT_MACTXEN,
+        FW_READY_LEGACY,
+        REG_MCUFW_CTRL,
+    )
+    try:
+        mcufw = transport.read32(REG_MCUFW_CTRL)
+        cr = transport.read8(REG_CR)
+    except IOError:
+        return False
+    fw_running = (mcufw & FW_READY_LEGACY) == FW_READY_LEGACY
+    mac_enabled = (cr & (BIT_MACTXEN | BIT_MACRXEN)) == (BIT_MACTXEN | BIT_MACRXEN)
+    return fw_running and mac_enabled
 
 
 # ---------------------------------------------------------------------------
