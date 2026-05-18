@@ -132,20 +132,74 @@ class WlanFrameParser:
                 
                 if sig_idx != -1:
                     result["type"] = "eapol"
-                    # Extract EAPOL metadata
+                    # Extract EAPOL metadata. Layout (offsets from eapol_start):
+                    #   0   802.1X version (1B)
+                    #   1   802.1X type    (1B) — must be 3 (EAPOL-Key)
+                    #   2   802.1X length  (2B)
+                    #   4   Key Desc Type  (1B) — 2=RSN, 254=WPA
+                    #   5   Key Info       (2B, BE)
+                    #   7   Key Length     (2B)
+                    #   9   Replay Counter (8B)
+                    #   17  Key Nonce      (32B)
+                    #   49  Key IV         (16B)
+                    #   65  Key RSC        (8B)
+                    #   73  Reserved       (8B)
+                    #   81  Key MIC        (16B)
+                    #   97  Key Data Length (2B, BE)
+                    #   99  Key Data       (variable)
                     eapol_start = header_len + sig_idx + 8
-                    if len(frame) >= eapol_start + 17: # Header(4) + DescType(1) + KeyInfo(2) + KeyLen(2) + Replay(8)
+                    if len(frame) >= eapol_start + 99:
                         eapol_type = frame[eapol_start + 1]
-                        if eapol_type == 3: # EAPOL-Key
+                        if eapol_type == 3:  # EAPOL-Key
                             import struct
-                            key_info = struct.unpack(">H", frame[eapol_start+5 : eapol_start+7])[0]
-                            replay_counter = frame[eapol_start+9 : eapol_start+17]
+                            key_info = struct.unpack(">H", frame[eapol_start + 5: eapol_start + 7])[0]
+                            replay_counter = frame[eapol_start + 9: eapol_start + 17]
+                            nonce = frame[eapol_start + 17: eapol_start + 49]
+                            mic = frame[eapol_start + 81: eapol_start + 97]
+                            key_data_len = struct.unpack(">H", frame[eapol_start + 97: eapol_start + 99])[0]
+
                             result["eapol_key_info"] = key_info
                             result["eapol_replay_counter"] = replay_counter
+                            result["eapol_nonce"] = nonce
+                            result["eapol_mic"] = mic
+                            result["eapol_key_data_len"] = key_data_len
+                            result["eapol_msg_num"] = WlanFrameParser._classify_eapol_msg(key_info, key_data_len)
         else:
             result["type"] = f"ctrl_{subtype}"
 
         return result
+
+    # Key Info bit masks (802.11i, 16-bit BE field):
+    #   bit 6 = INSTALL, bit 7 = KEY_ACK, bit 8 = KEY_MIC
+    _KI_INSTALL = 0x0040
+    _KI_ACK = 0x0080
+    _KI_MIC = 0x0100
+
+    @staticmethod
+    def _classify_eapol_msg(key_info: int, key_data_len: int) -> int:
+        """Classify an EAPOL-Key frame as M1/M2/M3/M4 of the 4-way handshake.
+
+        Returns 1-4, or 0 if the frame doesn't fit any of the four canonical
+        roles (e.g. group rekey, malformed flags).
+
+        M1: ACK=1, MIC=0, INSTALL=0
+        M2: ACK=0, MIC=1, INSTALL=0, key data present (RSN IE)
+        M3: ACK=1, MIC=1, INSTALL=1
+        M4: ACK=0, MIC=1, INSTALL=0, key data empty
+        """
+        install = bool(key_info & WlanFrameParser._KI_INSTALL)
+        ack = bool(key_info & WlanFrameParser._KI_ACK)
+        mic = bool(key_info & WlanFrameParser._KI_MIC)
+
+        if ack and not mic and not install:
+            return 1
+        if ack and mic and install:
+            return 3
+        if not ack and mic and not install:
+            # M2 vs M4 disambiguated by Key Data presence: M2 carries the
+            # supplicant's RSN IE, M4 carries nothing.
+            return 2 if key_data_len > 0 else 4
+        return 0
 
     @staticmethod
     def _is_valid_frame(frame: bytes) -> bool:

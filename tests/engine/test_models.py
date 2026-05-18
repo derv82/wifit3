@@ -1,5 +1,6 @@
 import pytest
-from wifit3.engine.models import AccessPoint, Client, Handshake
+from wifit3.engine.models import AccessPoint, Client, EapolFrame, Handshake
+
 
 def test_access_point_model_defaults():
     ap = AccessPoint(bssid="00:11:22:33:44:55", ssid="Test_WiFi", signal=-50)
@@ -10,17 +11,29 @@ def test_access_point_model_defaults():
     assert ap.wpa3 is False
     assert ap.pmf_capable is False
 
+
+def _eapol(msg_num: int, replay: int) -> EapolFrame:
+    return EapolFrame(
+        raw=bytes([msg_num, replay & 0xFF]),
+        msg_num=msg_num,
+        replay_hex=replay.to_bytes(8, "big").hex(),
+        nonce=b"\x00" * 32,
+        mic=b"\x00" * 16,
+        key_data_len=0,
+    )
+
+
 def test_handshake_is_complete():
     hs = Handshake(bssid="00:11:22:33:44:55", client_mac="AA:BB:CC:DD:EE:FF")
     assert not hs.is_complete
-    
+
     hs.beacon_frame = b"fake_beacon"
     assert not hs.is_complete
-    
-    # Add one EAPOL frame
-    hs.eapol_frames_by_replay["01020304"] = [b"frame1"]
+
+    # Single M1 alone → not yet a pair
+    hs.eapol_frames.append(_eapol(1, replay=5))
     assert not hs.is_complete
-    
-    # Add a second EAPOL frame with the same replay counter
-    hs.eapol_frames_by_replay["01020304"].append(b"frame2")
+
+    # A matching M2 (same replay counter) completes the pair
+    hs.eapol_frames.append(_eapol(2, replay=5))
     assert hs.is_complete

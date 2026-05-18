@@ -1,39 +1,95 @@
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, List, Set, Dict
+from typing import Optional, List, Set, Dict, Tuple
+
+
+class EapolFrame(BaseModel):
+    """
+    A single parsed EAPOL-Key frame, classified by its role in the 4-way
+    handshake (M1/M2/M3/M4) and tagged with the fields a cracker needs.
+    """
+    raw: bytes
+    msg_num: int  # 1, 2, 3, 4, or 0 if unclassified (group rekey etc.)
+    replay_hex: str
+    nonce: bytes
+    mic: bytes
+    key_data_len: int
+
+
+def _replay_to_int(replay_hex: str) -> int:
+    return int.from_bytes(bytes.fromhex(replay_hex), "big")
+
 
 class Handshake(BaseModel):
     """
-    Represents a captured WPA/WPA2 4-way handshake (or a PMKID capture)
-    for a specific (BSSID, client_mac) pair.
-    Contains the raw binary frames needed to generate a valid .pcap for hashcat -m 22000.
+    Captured WPA/WPA2 4-way handshake (or PMKID) for one (BSSID, client_mac)
+    pair. ``is_complete`` is True only when the stored EAPOL frames actually
+    form a hashcat-crackable pair (M1+M2, M2+M3, M3+M4, or M1+M4) — two M1
+    retries with the same replay counter no longer mistakenly qualify.
     """
     bssid: str
     client_mac: str
     beacon_frame: Optional[bytes] = None
 
-    # Key: Replay Counter (hex string) -> Value: List of raw EAPOL frames
-    # M1 and M2 share the exact same replay counter, guaranteeing a valid pair!
-    # We never wipe entries — only accumulate, so a fresh M3/M4 pair can't
-    # destroy an already-complete M1/M2 pair before the user saves it.
-    eapol_frames_by_replay: Dict[str, List[bytes]] = Field(default_factory=dict)
+    # All EAPOL-Key frames we've seen for this client, in arrival order.
+    # We never wipe — only append-with-dedup — so once a valid pair is
+    # captured nothing can clobber it.
+    eapol_frames: List[EapolFrame] = Field(default_factory=list)
 
     # Captured PMKID bytes (16 B from RSN IE in EAPOL M1). Forward-compat —
     # populated by the PMKID attack path when it lands.
     pmkid: Optional[bytes] = None
 
+    # -- Crack-validity -------------------------------------------------------
+
+    def find_valid_pair(self) -> Optional[Tuple[EapolFrame, EapolFrame]]:
+        """Return the lowest-numbered hashcat-valid (a, b) pair, else None.
+
+        Accepted pairs (per `hcxpcapngtool` semantics):
+          M1+M2  (same replay counter)
+          M2+M3  (M3.replay == M2.replay + 1)
+          M3+M4  (same replay counter)
+          M1+M4  (M4.replay == M1.replay + 1)
+        """
+        by_msg: Dict[int, List[EapolFrame]] = {}
+        for f in self.eapol_frames:
+            if f.msg_num:
+                by_msg.setdefault(f.msg_num, []).append(f)
+
+        for a in by_msg.get(1, []):
+            for b in by_msg.get(2, []):
+                if a.replay_hex == b.replay_hex:
+                    return (a, b)
+        for a in by_msg.get(2, []):
+            for b in by_msg.get(3, []):
+                if _replay_to_int(b.replay_hex) == _replay_to_int(a.replay_hex) + 1:
+                    return (a, b)
+        for a in by_msg.get(3, []):
+            for b in by_msg.get(4, []):
+                if a.replay_hex == b.replay_hex:
+                    return (a, b)
+        for a in by_msg.get(1, []):
+            for b in by_msg.get(4, []):
+                if _replay_to_int(b.replay_hex) == _replay_to_int(a.replay_hex) + 1:
+                    return (a, b)
+        return None
+
     @property
     def is_complete(self) -> bool:
-        """
-        A handshake is usable for cracking if we have the AP's beacon and
-        at least two EAPOL frames sharing the same replay counter (an M1/M2 pair).
-        """
         if not self.beacon_frame:
             return False
-        return any(len(frames) >= 2 for frames in self.eapol_frames_by_replay.values())
+        return self.find_valid_pair() is not None
+
+    @property
+    def captured_messages(self) -> Set[int]:
+        """Set of message numbers (1-4) we've seen, ignoring unclassified."""
+        return {f.msg_num for f in self.eapol_frames if f.msg_num}
 
     @property
     def total_eapol_frames(self) -> int:
-        return sum(len(frames) for frames in self.eapol_frames_by_replay.values())
+        return len(self.eapol_frames)
+
+    def has_frame(self, raw: bytes) -> bool:
+        return any(f.raw == raw for f in self.eapol_frames)
 
 class AccessPoint(BaseModel):
     model_config = ConfigDict(validate_assignment=True)

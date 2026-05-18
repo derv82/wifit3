@@ -3,7 +3,7 @@ import logging
 import time
 from typing import List, Optional, Callable, Any, Dict
 
-from wifit3.engine.models import AccessPoint, Client, Handshake
+from wifit3.engine.models import AccessPoint, Client, Handshake, EapolFrame
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,9 @@ class WlanInterface:
         # Handshake tracking — per-client, never wiped.
         if frame_type == "eapol" and bssid in self.access_points:
             client_mac = parsed.get("source") if parsed.get("dest") == bssid else parsed.get("dest")
-            if client_mac:
+            raw_frame = parsed.get("raw")
+            replay = parsed.get("eapol_replay_counter")
+            if client_mac and raw_frame and replay:
                 ap = self.access_points[bssid]
                 hs = ap.handshakes.get(client_mac)
                 if hs is None:
@@ -129,15 +131,21 @@ class WlanInterface:
                     )
                     ap.handshakes[client_mac] = hs
 
-                raw_frame = parsed.get("raw")
-                replay = parsed.get("eapol_replay_counter")
-                if replay and raw_frame:
-                    replay_hex = replay.hex()
-                    frames = hs.eapol_frames_by_replay.setdefault(replay_hex, [])
-                    # Simple deduplication
-                    if raw_frame not in frames:
-                        frames.append(raw_frame)
-                        logger.info(f"[EAPOL] Saved frame for {bssid} <-> {client_mac} (Replay: {replay_hex})")
+                if not hs.has_frame(raw_frame):
+                    eapol = EapolFrame(
+                        raw=raw_frame,
+                        msg_num=parsed.get("eapol_msg_num", 0),
+                        replay_hex=replay.hex(),
+                        nonce=parsed.get("eapol_nonce", b""),
+                        mic=parsed.get("eapol_mic", b""),
+                        key_data_len=parsed.get("eapol_key_data_len", 0),
+                    )
+                    hs.eapol_frames.append(eapol)
+                    msg_label = f"M{eapol.msg_num}" if eapol.msg_num else "EAPOL-?"
+                    logger.info(
+                        f"[{msg_label}] {bssid} <-> {client_mac} "
+                        f"(replay {eapol.replay_hex})"
+                    )
 
         # Beacon handling: stash the most recent beacon on the AP, and
         # back-fill any existing handshakes that don't have one yet (covers

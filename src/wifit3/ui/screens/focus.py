@@ -35,7 +35,8 @@ class FocusView(Screen):
         self._known_clients: Set[str] = set()
         self._selected_clients: Set[str] = set()
         # Event-log de-dup state — see _poll_capture_events.
-        self._seen_replay_counts: Dict[str, Dict[str, int]] = {}
+        # client_mac -> set of (msg_num, replay_hex) tuples already logged.
+        self._seen_eapol: Dict[str, Set[tuple]] = {}
         self._completed_clients: Set[str] = set()
         self._pmkid_clients: Set[str] = set()
 
@@ -113,7 +114,7 @@ class FocusView(Screen):
         # Reset UI state for the new target
         self._known_clients.clear()
         self._selected_clients.clear()
-        self._seen_replay_counts.clear()
+        self._seen_eapol.clear()
         self._completed_clients.clear()
         self._pmkid_clients.clear()
         self.query_one("#client-table", DataTable).clear()
@@ -234,12 +235,7 @@ class FocusView(Screen):
                 continue
             checkbox = "[X]" if mac in self._selected_clients else "[ ]"
             hs = ap.handshakes.get(mac)
-            if hs and hs.is_complete:
-                hs_label = "[green]Complete[/green]"
-            elif hs and hs.total_eapol_frames:
-                hs_label = f"[yellow]{hs.total_eapol_frames}/4[/yellow]"
-            else:
-                hs_label = "[dim]—[/dim]"
+            hs_label = self._format_handshake_label(hs)
             hs_text = Text.from_markup(hs_label, emoji=False)
 
             if mac not in self._known_clients:
@@ -264,29 +260,26 @@ class FocusView(Screen):
         if ap is None:
             return
         for client_mac, hs in ap.handshakes.items():
-            prev_counts = self._seen_replay_counts.setdefault(client_mac, {})
-            for replay_hex, frames in hs.eapol_frames_by_replay.items():
-                n = len(frames)
-                prev = prev_counts.get(replay_hex, 0)
-                if n > prev:
-                    prev_counts[replay_hex] = n
-                    if prev == 0:
-                        self._log(
-                            f"[green][+][/green] EAPOL from "
-                            f"[bold]{client_mac}[/bold] "
-                            f"(replay {replay_hex}, {n} frame)"
-                        )
-                    else:
-                        self._log(
-                            f"[bold green][++][/bold green] EAPOL pair grew: "
-                            f"[bold]{client_mac}[/bold] replay {replay_hex} → "
-                            f"{n} frames"
-                        )
+            seen = self._seen_eapol.setdefault(client_mac, set())
+            for f in hs.eapol_frames:
+                key = (f.msg_num, f.replay_hex)
+                if key in seen:
+                    continue
+                seen.add(key)
+                msg_label = f"M{f.msg_num}" if f.msg_num else "EAPOL-?"
+                self._log(
+                    f"[green][+][/green] [bold]{msg_label}[/bold] from "
+                    f"[bold]{client_mac}[/bold] (replay {f.replay_hex})"
+                )
             if hs.is_complete and client_mac not in self._completed_clients:
                 self._completed_clients.add(client_mac)
+                pair = hs.find_valid_pair()
+                pair_label = (
+                    f"M{pair[0].msg_num}+M{pair[1].msg_num}" if pair else "?"
+                )
                 self._log(
-                    f"[bold green][✓] 4-WAY HANDSHAKE COMPLETE[/bold green] "
-                    f"for client [bold]{client_mac}[/bold] "
+                    f"[bold green][✓] HANDSHAKE COMPLETE[/bold green] "
+                    f"({pair_label}) for client [bold]{client_mac}[/bold] "
                     f"— press [bold]s[/bold] to save"
                 )
             if hs.pmkid and client_mac not in self._pmkid_clients:
@@ -295,6 +288,31 @@ class FocusView(Screen):
                     f"[bold yellow][✓] PMKID captured[/bold yellow] "
                     f"from [bold]{client_mac}[/bold]"
                 )
+
+    @staticmethod
+    def _format_handshake_label(hs) -> str:
+        """Build the markup label shown in the per-client Handshake column."""
+        if hs is None or not hs.total_eapol_frames:
+            return "[dim]—[/dim]"
+        if hs.is_complete:
+            pair = hs.find_valid_pair()
+            if pair:
+                return f"[bold green]M{pair[0].msg_num}+M{pair[1].msg_num} ✓[/bold green]"
+            return "[bold green]Complete[/bold green]"
+        # Partial — show what we have, with retry counts if any
+        from collections import Counter
+        counts = Counter(f.msg_num for f in hs.eapol_frames if f.msg_num)
+        parts = []
+        for n in sorted(counts):
+            if counts[n] > 1:
+                parts.append(f"M{n}×{counts[n]}")
+            else:
+                parts.append(f"M{n}")
+        # Note unclassified frames if any
+        unclassified = sum(1 for f in hs.eapol_frames if not f.msg_num)
+        if unclassified:
+            parts.append(f"?×{unclassified}")
+        return "[yellow]" + ",".join(parts) + "[/yellow]"
 
     # ----- Event log helper --------------------------------------------------
 
@@ -356,8 +374,8 @@ class FocusView(Screen):
             if hs.beacon_frame and not beacon_added:
                 frames.append(hs.beacon_frame)
                 beacon_added = True
-            for replay_frames in hs.eapol_frames_by_replay.values():
-                frames.extend(replay_frames)
+            for f in hs.eapol_frames:
+                frames.append(f.raw)
 
         n_complete = sum(1 for hs in ap.handshakes.values() if hs.is_complete)
         n_pmkid = sum(1 for hs in ap.handshakes.values() if hs.pmkid)

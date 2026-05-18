@@ -18,6 +18,7 @@ __pycache__/
 htmlcov/
 
 # Project specifics
+captures/
 data_dumps/
 usb_dumps/
 scratch/
