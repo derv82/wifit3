@@ -114,6 +114,12 @@ class AccessPoint(BaseModel):
     # AFTER the first beacon still get a beacon stamped onto them.
     last_beacon_frame: Optional[bytes] = Field(default=None)
 
+    # Raw RSN IE bytes (tag 48, including the 2-byte tag header) as
+    # advertised in the AP's beacons. Used by the PMKID harvester to echo
+    # the AP's exact RSN config in its forged Assoc Req — some APs reject
+    # mismatched IEs with status 40 / unsupported-cipher.
+    rsn_ie: Optional[bytes] = Field(default=None)
+
     # Per-client handshake captures, keyed by client MAC. Replaces the old
     # single-handshake-per-AP field — multiple clients can be capturing
     # simultaneously and we must not overwrite a complete one when a new

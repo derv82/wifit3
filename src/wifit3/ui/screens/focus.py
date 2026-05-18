@@ -15,6 +15,7 @@ from rich.markup import escape
 from wifit3.engine.models import AccessPoint
 from wifit3.engine.hc22000 import write_hc22000
 from wifit3.engine.pcap import write_pcap
+from wifit3.engine.attacks.pmkid_harvest import PmkidHarvestAttack
 
 logger = logging.getLogger(__name__)
 
@@ -231,8 +232,11 @@ class FocusView(Screen):
     def _refresh_clients(self, iface) -> None:
         ap = self.target_ap
         client_table = self.query_one("#client-table", DataTable)
+        forged = iface.forged_macs
         for mac, client in iface.clients.items():
             if client.bssid != ap.bssid:
+                continue
+            if mac in forged:
                 continue
             checkbox = "[X]" if mac in self._selected_clients else "[ ]"
             hs = ap.handshakes.get(mac)
@@ -260,7 +264,16 @@ class FocusView(Screen):
         ap = self.target_ap
         if ap is None:
             return
+        iface = getattr(self.app, "active_interface", None)
+        forged = iface.forged_macs if iface else set()
         for client_mac, hs in ap.handshakes.items():
+            # Forged MACs from our own active attacks: the attack already
+            # logs its own outcome.
+            if client_mac in forged:
+                if hs.pmkid:
+                    self._pmkid_clients.add(client_mac)
+                continue
+
             seen = self._seen_eapol.setdefault(client_mac, set())
             for f in hs.eapol_frames:
                 key = (f.msg_num, f.replay_hex)
@@ -345,7 +358,7 @@ class FocusView(Screen):
         elif bid == "btn-deauth-sel":
             self._log("[dim]Deauth Selected — not yet wired in this build.[/dim]")
         elif bid == "btn-pmkid":
-            self._log("[dim]PMKID Harvest attack — not yet wired in this build.[/dim]")
+            self.run_worker(self._run_pmkid_harvest(), exclusive=True)
         elif bid == "btn-sae-probe":
             self._log("[dim]SAE Group Probe — not yet wired in this build.[/dim]")
         elif bid == "btn-wpa3-down":
@@ -353,6 +366,38 @@ class FocusView(Screen):
 
     def action_save_capture(self) -> None:
         self._save_capture()
+
+    async def _run_pmkid_harvest(self) -> None:
+        """Worker: run a PMKID harvest against the focused AP."""
+        ap = self.target_ap
+        iface = getattr(self.app, "active_interface", None)
+        if not ap or not iface:
+            self._log("[red]No target / interface — aborting PMKID harvest.[/red]")
+            return
+
+        self._log(
+            f"[bold cyan][PMKID][/bold cyan] Starting harvest on "
+            f"[bold]{escape(ap.ssid or '<hidden>')}[/bold] ({ap.bssid}) "
+            f"CH {ap.channel}"
+        )
+        attack = PmkidHarvestAttack(iface, ap)
+        try:
+            pmkid = await attack.run()
+        except Exception as exc:
+            logger.exception("PMKID harvest crashed")
+            self._log(f"[bold red][PMKID] crashed:[/bold red] {escape(str(exc))}")
+            return
+
+        if pmkid:
+            self._log(
+                f"[bold green][PMKID] ✓ Harvested:[/bold green] [bold]{pmkid.hex()}[/bold] — "
+                f"press 'S' to save hashline."
+            )
+        else:
+            self._log(
+                "[yellow][PMKID] No PMKID after all attempts.[/yellow] "
+                "AP may not advertise a PMKID KDE, or PMF / status rejected us."
+            )
 
     async def action_go_back(self) -> None:
         """Return to the scanner and resume channel hopping."""

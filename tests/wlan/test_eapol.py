@@ -98,6 +98,91 @@ def test_parser_extracts_full_eapol_fields():
     assert parsed["eapol_key_data_len"] == 0
 
 
+# ---- PMKID KDE extraction -------------------------------------------------------
+
+def _pmkid_kde(pmkid: bytes) -> bytes:
+    """Build a valid PMKID KDE: 0xDD <len=0x14> 00 0F AC 04 <pmkid>."""
+    assert len(pmkid) == 16
+    return b"\xdd\x14\x00\x0f\xac\x04" + pmkid
+
+
+def test_parser_extracts_pmkid_from_m1_key_data():
+    bssid = bytes.fromhex("AABBCCDDEEFF")
+    client = bytes.fromhex("112233445566")
+    pmkid = bytes.fromhex("ad2fad48da558cdfeb19cea25e2ce5af")
+
+    frame = _build_eapol_frame(
+        bssid_bytes=bssid,
+        client_bytes=client,
+        key_info=0x0080 | 0x0008,  # M1
+        replay_counter=b"\x00" * 7 + b"\x01",
+        key_data=_pmkid_kde(pmkid),
+    )
+    parsed = WlanFrameParser.parse_80211_frame(frame, -42)
+    assert parsed is not None
+    assert parsed["eapol_msg_num"] == 1
+    assert parsed.get("eapol_pmkid") == pmkid
+
+
+def test_parser_no_pmkid_when_key_data_empty():
+    frame = _build_eapol_frame(
+        bssid_bytes=bytes.fromhex("AABBCCDDEEFF"),
+        client_bytes=bytes.fromhex("112233445566"),
+        key_info=0x0080 | 0x0008,
+        replay_counter=b"\x00" * 7 + b"\x01",
+        key_data=b"",
+    )
+    parsed = WlanFrameParser.parse_80211_frame(frame, -42)
+    assert parsed is not None
+    assert "eapol_pmkid" not in parsed
+
+
+def test_parser_ignores_all_zero_pmkid():
+    """Some APs ship a zero-filled placeholder KDE — not crackable; skip it."""
+    frame = _build_eapol_frame(
+        bssid_bytes=bytes.fromhex("AABBCCDDEEFF"),
+        client_bytes=bytes.fromhex("112233445566"),
+        key_info=0x0080 | 0x0008,
+        replay_counter=b"\x00" * 7 + b"\x01",
+        key_data=_pmkid_kde(b"\x00" * 16),
+    )
+    parsed = WlanFrameParser.parse_80211_frame(frame, -42)
+    assert parsed is not None
+    assert "eapol_pmkid" not in parsed
+
+
+def test_parser_finds_pmkid_among_multiple_kdes():
+    """Some APs concatenate multiple KDEs. PMKID may not be first."""
+    pmkid = bytes.fromhex("11223344556677889900aabbccddeeff")
+    # Bogus vendor KDE first, then the real PMKID KDE
+    other_kde = b"\xdd\x06\x00\x0f\xac\x07\x00\x00"  # arbitrary 8-byte KDE
+    frame = _build_eapol_frame(
+        bssid_bytes=bytes.fromhex("AABBCCDDEEFF"),
+        client_bytes=bytes.fromhex("112233445566"),
+        key_info=0x0080 | 0x0008,
+        replay_counter=b"\x00" * 7 + b"\x01",
+        key_data=other_kde + _pmkid_kde(pmkid),
+    )
+    parsed = WlanFrameParser.parse_80211_frame(frame, -42)
+    assert parsed.get("eapol_pmkid") == pmkid
+
+
+def test_parser_rejects_truncated_kde():
+    """A KDE whose declared length runs past the buffer must not raise."""
+    # Length byte says 0x14 (20 B follow) but we only provide 5.
+    truncated = b"\xdd\x14\x00\x0f\xac\x04"
+    frame = _build_eapol_frame(
+        bssid_bytes=bytes.fromhex("AABBCCDDEEFF"),
+        client_bytes=bytes.fromhex("112233445566"),
+        key_info=0x0080 | 0x0008,
+        replay_counter=b"\x00" * 7 + b"\x01",
+        key_data=truncated,
+    )
+    parsed = WlanFrameParser.parse_80211_frame(frame, -42)
+    assert parsed is not None
+    assert "eapol_pmkid" not in parsed
+
+
 # ---- Handshake pair-detection tests --------------------------------------------
 
 def _ef(msg_num, replay_int, raw=None):

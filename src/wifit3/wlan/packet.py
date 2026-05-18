@@ -163,7 +163,8 @@ class WlanFrameParser:
                             result["eapol_nonce"] = nonce
                             result["eapol_mic"] = mic
                             result["eapol_key_data_len"] = key_data_len
-                            result["eapol_msg_num"] = WlanFrameParser._classify_eapol_msg(key_info, key_data_len)
+                            msg_num = WlanFrameParser._classify_eapol_msg(key_info, key_data_len)
+                            result["eapol_msg_num"] = msg_num
                             # Slice the 802.1X portion (header + full key
                             # descriptor + key data). This is what hashcat's
                             # mode 22000 hashline embeds; storing it now
@@ -173,6 +174,17 @@ class WlanFrameParser:
                                 result["eapol_payload"] = bytes(
                                     frame[eapol_start: eapol_start + total_eapol_len]
                                 )
+                                # The PMKID ships in the AP's M1 Key Data as
+                                # a KDE (Type=0xDD, OUI=00:0F:AC, DataType=0x04).
+                                # Walking unconditionally on any frame with key
+                                # data is harmless — only M1 ever carries one.
+                                if key_data_len > 0:
+                                    key_data = frame[
+                                        eapol_start + 99 : eapol_start + 99 + key_data_len
+                                    ]
+                                    pmkid = WlanFrameParser._extract_pmkid_kde(key_data)
+                                    if pmkid is not None:
+                                        result["eapol_pmkid"] = pmkid
         else:
             result["type"] = f"ctrl_{subtype}"
 
@@ -209,6 +221,45 @@ class WlanFrameParser:
             # supplicant's RSN IE, M4 carries nothing.
             return 2 if key_data_len > 0 else 4
         return 0
+
+    # PMKID KDE: 0xDD <len=0x14> 00 0F AC 04 <16-byte PMKID>
+    # Encapsulated in EAPOL-Key Key Data (sometimes within a "GTK/PMKID
+    # KDE wrapper" alongside other KDEs). We walk the Key Data as a
+    # sequence of (Type, Length, Value) records, where Type=0xDD denotes
+    # a vendor-specific KDE and the OUI+DataType discriminates it.
+    _PMKID_KDE_OUI = b"\x00\x0f\xac"
+    _PMKID_KDE_DATA_TYPE = 0x04
+
+    @staticmethod
+    def _extract_pmkid_kde(key_data: bytes) -> Optional[bytes]:
+        """Walk the EAPOL Key Data for a PMKID KDE; return the 16-byte
+        PMKID if present, else None.
+
+        Key Data is a stream of KDEs (vendor-specific IE format):
+            Type (1B) | Length (1B) | Value (Length B)
+        For a PMKID KDE: Type=0xDD, Length>=20, Value=OUI(3)+DataType(1)+PMKID(16).
+        """
+        i = 0
+        n = len(key_data)
+        while i + 2 <= n:
+            kde_type = key_data[i]
+            kde_len = key_data[i + 1]
+            value_start = i + 2
+            value_end = value_start + kde_len
+            if value_end > n:
+                return None
+            if kde_type == 0xDD and kde_len >= 4 + 16:
+                if (
+                    key_data[value_start : value_start + 3] == WlanFrameParser._PMKID_KDE_OUI
+                    and key_data[value_start + 3] == WlanFrameParser._PMKID_KDE_DATA_TYPE
+                ):
+                    pmkid = bytes(key_data[value_start + 4 : value_start + 4 + 16])
+                    # Some APs include a PMKID KDE with all-zero bytes as a
+                    # placeholder. Treat as "no PMKID" — uncrackable anyway.
+                    if pmkid != b"\x00" * 16:
+                        return pmkid
+            i = value_end
+        return None
 
     @staticmethod
     def _is_valid_frame(frame: bytes) -> bool:
@@ -331,6 +382,9 @@ class WlanFrameParser:
                     parsed["channel"] = tag_data[0]
             elif tag_id == 48: # RSN (WPA2/WPA3)
                 has_rsn = True
+                # Preserve the raw IE bytes (with tag header) so the PMKID
+                # harvester can echo the AP's exact RSN config in Assoc Req.
+                parsed["rsn_ie_raw"] = bytes(frame[ptr : tag_end])
                 try:
                     if len(tag_data) >= 2:
                         p = 6

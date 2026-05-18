@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from typing import List, Optional, Callable, Any, Dict
+from typing import List, Optional, Callable, Any, Dict, Set
 
 from wifit3.engine.models import AccessPoint, Client, Handshake, EapolFrame
 
@@ -20,7 +20,13 @@ class WlanInterface:
         
         self.access_points: Dict[str, AccessPoint] = {}
         self.clients: Dict[str, Client] = {}
-        
+
+        # MACs we forged for our own active attacks (e.g. PMKID harvest).
+        # Frames addressed to these MACs come from the AP, but they aren't
+        # "real clients" — skip client registration and don't append EAPOL
+        # retries to the handshake. PMKID extraction still runs.
+        self.forged_macs: Set[str] = set()
+
         self._rx_callbacks: List[Callable[[bytes, int, float], None]] = []
         self._hopping_task: Optional[asyncio.Task] = None
         self._is_hopping = False
@@ -35,11 +41,18 @@ class WlanInterface:
         """
         frame_type = parsed.get("type")
         bssid = parsed.get("bssid")
-        
+        rssi = parsed.get("rssi", -100)
+
+        # Fan out the raw frame to any (rx_callback,) subscribers (used by
+        # attacks like SAEGroupProbeAttack that watch for specific reply
+        # frames). Done early so subscribers see frames even when our own
+        # state-update path bails on bssid filtering below.
+        raw = parsed.get("raw")
+        if raw is not None and self._rx_callbacks:
+            self._fire_rx_callbacks(raw, rssi)
+
         if not bssid or bssid == "Unknown" or bssid == "ff:ff:ff:ff:ff:ff":
             return
-            
-        rssi = parsed.get("rssi", -100)
         
         # We primarily build APs from beacons and probe responses
         if frame_type in ("beacon", "probe_resp"):
@@ -76,6 +89,12 @@ class WlanInterface:
                 ap.channel = channel
                 ap.encryption = enc
 
+            # Always stash the latest RSN IE bytes (covers both new + existing
+            # AP branches above). PMKID harvest echoes this into its Assoc Req.
+            rsn_ie = parsed.get("rsn_ie_raw")
+            if rsn_ie:
+                self.access_points[bssid].rsn_ie = rsn_ie
+
         # Client Tracking
         if frame_type in ("probe_req", "assoc_req", "data", "eapol", "deauth", "assoc_resp"):
             client_mac = None
@@ -89,7 +108,7 @@ class WlanInterface:
                 if source and source != bssid: client_mac = source
                 elif dest and dest != bssid: client_mac = dest
             
-            if client_mac and client_mac != "ff:ff:ff:ff:ff:ff":
+            if client_mac and client_mac != "ff:ff:ff:ff:ff:ff" and client_mac not in self.forged_macs:
                 if client_mac not in self.clients:
                     self.clients[client_mac] = Client(mac=client_mac, signal=rssi)
                 client = self.clients[client_mac]
@@ -131,7 +150,13 @@ class WlanInterface:
                     )
                     ap.handshakes[client_mac] = hs
 
-                if not hs.has_frame(raw_frame):
+                # For forged MACs (our own active-attack STAs) we still keep
+                # the Handshake entry so PMKID has somewhere to land, but we
+                # skip the EAPOL frame list — those are just AP retries of M1
+                # we'll never respond to. Avoids the spurious "Partial x1" in
+                # the per-client handshake column.
+                is_forged = client_mac in self.forged_macs
+                if not is_forged and not hs.has_frame(raw_frame):
                     eapol = EapolFrame(
                         raw=raw_frame,
                         msg_num=parsed.get("eapol_msg_num", 0),
@@ -146,6 +171,15 @@ class WlanInterface:
                     logger.info(
                         f"[{msg_label}] {bssid} <-> {client_mac} "
                         f"(replay {eapol.replay_hex})"
+                    )
+
+                # Passive PMKID capture: AP's M1 sometimes carries a PMKID
+                # KDE in Key Data. First non-zero PMKID wins — never clobber.
+                pmkid = parsed.get("eapol_pmkid")
+                if pmkid and not hs.pmkid:
+                    hs.pmkid = pmkid
+                    logger.info(
+                        f"[PMKID] {bssid} <-> {client_mac} captured {pmkid.hex()}"
                     )
 
         # Beacon handling: stash the most recent beacon on the AP, and
@@ -174,6 +208,15 @@ class WlanInterface:
         if success:
             self.current_channel = channel
         return success
+
+    def register_forged_mac(self, mac: Any) -> None:
+        """Mark ``mac`` as one we forged for an active attack. Accepts bytes
+        (6 B) or a colon-separated string. Idempotent."""
+        if isinstance(mac, bytes):
+            mac_str = ":".join(f"{b:02x}" for b in mac)
+        else:
+            mac_str = str(mac).lower()
+        self.forged_macs.add(mac_str)
 
     def register_rx_callback(self, callback_func: Callable[[bytes, int, float], None]):
         """

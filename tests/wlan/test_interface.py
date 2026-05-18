@@ -37,6 +37,100 @@ def test_wlan_interface_caching(mocker):
     assert aps[0].beacons == 2
     assert aps[0].signal == -45  # Averaged (-40 + -50) // 2
 
+def test_forged_mac_does_not_create_client_or_append_eapol(mocker):
+    """When an attack registers a forged STA MAC, frames addressed to it
+    should: (a) not show up in iface.clients, (b) still create a Handshake
+    so PMKID has a home, but (c) NOT append EAPOL frames to that handshake
+    (those are just AP retries of M1 we'll never answer)."""
+    mock_driver = mocker.MagicMock()
+    iface = WlanInterface(driver_instance=mock_driver, name="wlan0", description="Test")
+
+    # Beacon to seed AP
+    iface._on_frame_parsed({
+        "type": "beacon",
+        "bssid": "aa:bb:cc:dd:ee:ff",
+        "source": "aa:bb:cc:dd:ee:ff",
+        "dest": "ff:ff:ff:ff:ff:ff",
+        "rssi": -40,
+        "ssid": "TestAP",
+        "channel": 1,
+        "encryption": "WPA2",
+        "raw": b"\x00" * 36,
+    })
+
+    forged = "02:aa:bb:cc:dd:ee"
+    iface.register_forged_mac(forged)
+
+    # Simulate AP -> us EAPOL M1 with a PMKID KDE already parsed out.
+    pmkid = bytes.fromhex("ad2fad48da558cdfeb19cea25e2ce5af")
+    iface._on_frame_parsed({
+        "type": "eapol",
+        "bssid": "aa:bb:cc:dd:ee:ff",
+        "source": "aa:bb:cc:dd:ee:ff",
+        "dest": forged,
+        "rssi": -45,
+        "raw": b"\x00" * 100,
+        "eapol_msg_num": 1,
+        "eapol_replay_counter": b"\x00" * 8,
+        "eapol_nonce": b"\x01" * 32,
+        "eapol_mic": b"\x00" * 16,
+        "eapol_key_data_len": 22,
+        "eapol_payload": b"\x00" * 121,
+        "eapol_pmkid": pmkid,
+    })
+
+    # (a) forged MAC must NOT appear in clients
+    assert forged not in iface.clients
+
+    # (b) Handshake exists for forged STA — PMKID lives there
+    ap = iface.access_points["aa:bb:cc:dd:ee:ff"]
+    hs = ap.handshakes[forged]
+    assert hs.pmkid == pmkid
+
+    # (c) EAPOL frames list stays empty — no "Partial x1" in the UI
+    assert hs.eapol_frames == []
+
+
+def test_real_client_still_creates_handshake_with_eapol_frames(mocker):
+    """Counterpart to the forged-MAC test: a real client (not in
+    iface.forged_macs) gets normal client + handshake registration."""
+    mock_driver = mocker.MagicMock()
+    iface = WlanInterface(driver_instance=mock_driver, name="wlan0", description="Test")
+
+    iface._on_frame_parsed({
+        "type": "beacon",
+        "bssid": "aa:bb:cc:dd:ee:ff",
+        "source": "aa:bb:cc:dd:ee:ff",
+        "dest": "ff:ff:ff:ff:ff:ff",
+        "rssi": -40,
+        "ssid": "TestAP",
+        "channel": 1,
+        "encryption": "WPA2",
+        "raw": b"\x00" * 36,
+    })
+
+    real_client = "11:22:33:44:55:66"
+    iface._on_frame_parsed({
+        "type": "eapol",
+        "bssid": "aa:bb:cc:dd:ee:ff",
+        "source": "aa:bb:cc:dd:ee:ff",
+        "dest": real_client,
+        "rssi": -45,
+        "raw": b"\x00" * 100,
+        "eapol_msg_num": 1,
+        "eapol_replay_counter": b"\x00" * 8,
+        "eapol_nonce": b"\x01" * 32,
+        "eapol_mic": b"\x00" * 16,
+        "eapol_key_data_len": 0,
+        "eapol_payload": b"\x00" * 99,
+    })
+
+    assert real_client in iface.clients
+    ap = iface.access_points["aa:bb:cc:dd:ee:ff"]
+    assert real_client in ap.handshakes
+    assert len(ap.handshakes[real_client].eapol_frames) == 1
+
+
 def test_wlan_interface_decloaking(mocker):
     mock_driver = mocker.MagicMock()
     iface = WlanInterface(driver_instance=mock_driver, name="wlan0", description="Test Interface")
