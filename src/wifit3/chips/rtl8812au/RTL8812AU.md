@@ -1,0 +1,314 @@
+# RTL8812AU — verified facts (M1 scope)
+
+Cleanroom-RE'd from `data_dumps/rtw88-source-v6.18/` + cold-boot pcap
+`usb_dumps/captures_rtw88_8812au/capture-1.pcap`. Every claim here cites
+either `[SRC]` (kernel source) or `[WIRE]` (pcap observation). Anything
+not below is a hypothesis.
+
+## Device identity
+
+- **VID:PID**: `0BDA:8812` (first entry of `rtw_8812au_id_table` in
+  `rtw8812au.c:11`). 30 other PIDs claim the same chip; we add them as
+  users surface them. `[SRC]`
+- **USB speed on the AWUS036ACH**: **HighSpeed (USB 2.0)**, NOT
+  SuperSpeed despite the box. `[WIRE]` (probed locally 2026-05-17):
+  - `bcdUSB = 0x0200`
+  - bulk `wMaxPacketSize = 512` (HS max; SS would be 1024)
+  - no SuperSpeed Endpoint Companion descriptors
+  - PyUSB `dev.speed = 3` (= `LIBUSB_SPEED_HIGH`, NOT `LIBUSB_SPEED_SUPER` = 4)
+- **Endpoints** (Interface 0, vendor-specific): bulk-IN `0x81`,
+  bulk-OUT `0x02`/`0x03`/`0x04`, interrupt-IN `0x85` (64B @ bInterval=1).
+  All bulk EPs `wMaxPacketSize = 512`. `[WIRE]`
+
+The rtw88 driver has `rtw_usb_switch_mode` to opt INTO USB 3.0, but it's
+not called on default cold boots, so the card stays on HS. We never call
+it either, side-stepping all WinUSB SuperSpeed concerns (NRDY/ERDY,
+RAW_IO, etc.).
+
+## Architecture overview
+
+- **rtw88 88xxA family**, sibling to RTL8821AU. Shares `rtw88xxa_power_on`,
+  the legacy MCUFWDL FW path, the bitfield-rfe `phy_cond` walker, and the
+  88xxA SIPI / power_seq runtime with 8821au. `[SRC] rtw88xxa.c`
+- **2T2R** (vs 8821au's 1T1R). `rf_sipi_addr = {REG_LSSI_WRITE_A,
+  REG_LSSI_WRITE_B}` in `rtw8812a_hw_spec`. M2+ work needs to write RF18
+  on both paths (mirror 8822bu's pattern). `[SRC] rtw8812a.c:1071`
+- **Bands**: 2.4 GHz + 5 GHz (`band = RTW_BAND_2G | RTW_BAND_5G`). `[SRC] rtw8812a.c:1057`
+- **wlan CPU = 8051** (`wlan_cpu = RTW_WCPU_8051`), so FW upload uses
+  the **legacy MCUFWDL** path (same as 8821au), NOT the modern iDDMA
+  path used by 8822b/c/8814a. `[SRC] rtw8812a.c:1042`
+- **TX desc**: `tx_pkt_desc_sz = 40` (same as 8821au, NOT 48 like 8822bu).
+  `rx_pkt_desc_sz = 24` (same as the rest of rtw88). `[SRC] rtw8812a.c:1043`
+- **FIFO**: `txff_size = 131072`, `page_size = 512`, `rsvd_drv_pg_num = 9`
+  → `rsvd_boundary = 247` (vs 8821au's 248). `[SRC] rtw8812a.c:1050`
+
+## M1: cold-boot through FW_READY_LEGACY
+
+### Bring-up sequence (verified against `rtw88xxa_power_on` ordering)
+
+1. **8812a-specific RF reset** (`rtw88xxa.c:1036..1041`). 4 byte-writes,
+   both RF paths out of reset:
+   - `write8(REG_RF_CTRL=0x1F, 5)`
+   - `write8(REG_RF_CTRL=0x1F, 7)`
+   - `write8(REG_RF_B_CTRL=0x76, 5)`
+   - `write8(REG_RF_B_CTRL=0x76, 7)`
+2. **mac_pre_system_cfg** — clear `REG_RSV_CTRL`, pick LDO_SEL vs SPS_SEL
+   based on `REG_SYS_CFG1` bit 24. Same as 8821au. `[SRC] mac.c:62`
+3. **`card_enable_flow_8812a`** — `CARDDIS_TO_CARDEMU` (13 entries) +
+   `CARDEMU_TO_ACT` (9 entries). Ported 1:1 from
+   `rtw8812a_table.c:2259..2373`. Filter by `INTF_USB`. `[SRC]`
+4. **mac_init_system_cfg_legacy** — `REG_CR=0xFF` → 2ms → `REG_HWSEQ_CTRL=0x7F`
+   → 2ms → `REG_SYS_CLKR |= BIT_WAKEPAD_EN` → `REG_GPIO_MUXCFG &= ~BIT_EN_SIC`
+   → `REG_CR=0x02FF`. Same as 8821au. `[SRC] mac.c:355`
+5. **pre_fw_init** — `set_trx_fifo_info` (pure Python; returns
+   `rsvd_boundary=247`) → **`llt_init(247)`** (256 LLT writes) →
+   `REG_TXDMA_OFFSET_CHK |= BIT_DROP_DATA_EN`. `[SRC] rtw88xxa.c:1055..1067`
+6. **`en_download_firmware_legacy(True)`** — reset 8051, set `BIT_MCUFWDL_EN`,
+   clear `BIT_ROM_DLEN` in `REG_MCUFW_CTRL`. `[SRC] mac.c:835`
+7. **`download_firmware_legacy(fw_bytes)`** — strip 32B legacy header,
+   upload each 4096B page via 196/8/1 byte control-OUT chunks to
+   wValue=0x1000+offset. Pre-arm `BIT_FWDL_CHK_RPT`, then poll it for
+   up to 1s after the last byte. `[SRC] mac.c:892 + usb.c:168`
+8. **`en_download_firmware_legacy(False)`** — clear `BIT_MCUFWDL_EN`.
+9. **`download_firmware_validate_legacy`** — set `BIT_MCUFWDL_RDY`,
+   clear `BIT_WINTINI_RDY`, toggle wlan_cpu off/on, poll
+   `REG_MCUFW_CTRL & FW_READY_LEGACY (0xC6) == 0xC6`. Pass = M1 done.
+   `[SRC] mac.c:924`
+
+### Firmware blob
+
+- **Asset path**: `src/wifit3/chips/rtl8812au/assets/rtw8812a_fw.bin` =
+  canonical `linux-firmware/rtw88/rtw8812a_fw.bin` (27030 bytes total =
+  32B `rtw_fw_hdr_legacy` + 26998B body).
+- **Full-blob SHA-256**: `abdcca4e8bf76ebfba23d433de310ffefebd0ff9d01990639d4cd9602b32b71a`
+- **Body SHA-256** (`bytes[32:]`): `41f2dd4f3ab132ffaebfc6dfe50a9bcd74807e5fcab7bdf511e4bcb31ad90cc8`
+- **Byte-verify vs Kali pcap** ✓ confirmed 2026-05-17. The body bytes in
+  the linux-firmware blob are byte-for-byte identical to the
+  pcap-extracted body from
+  `usb_dumps/captures_rtw88_8812au/capture-1.pcap` frames 201..729
+  (control-OUT, `bRequest=0x05`, `wValue in [0x1000, 0x1FFF]`,
+  concatenated in pcap order).
+- **Wire layout** = 7 pages: 6 × 4096B full pages + 1 × 2422B tail.
+- **Re-extraction**: `python scratch/extract_rtw8812a_fw.py` reproduces
+  the body from the pcap (writes body-only file; not used by the runtime
+  loader, which now reads the canonical linux-firmware blob directly).
+
+### Pcap frame map (capture-1, cold boot)
+
+`[WIRE]` from `scratch/extract_rtw8812a_fw.py`:
+
+| page | start frame | body offset | size |
+|-----:|------------:|------------:|-----:|
+| 0    | 201         | 0x000000    | 4096 |
+| 1    | 289         | 0x001000    | 4096 |
+| 2    | 377         | 0x002000    | 4096 |
+| 3    | 465         | 0x003000    | 4096 |
+| 4    | 553         | 0x004000    | 4096 |
+| 5    | 641         | 0x005000    | 4096 |
+| 6    | 729         | 0x006000    | 2422 |
+
+Cold-boot phase = frames 1..3144 per `scratch/pcap_slicer.py`.
+
+## M5: warm reattach (FW-warm tier)
+
+Landed 2026-05-17 alongside M1.
+
+**`is_chip_warm(transport)`** in `mac.py` returns True if
+`(REG_MCUFW_CTRL & FW_READY_LEGACY) == FW_READY_LEGACY` (= 0xC6) on a
+fresh USB claim. That's the exact bit pattern
+`download_firmware_validate_legacy` leaves behind after M1, so reading
+it back tells us "FW is still running from a previous session".
+
+`RTL8812AUDriver.connect()` now branches:
+
+- **Cold path** (`is_chip_warm` returns False): runs the full M1
+  `_cold_bring_up` — `mac_power_on → pre_fw_init → download_firmware →
+  validate`.
+- **Warm path** (`is_chip_warm` returns True): logs the state, marks
+  `is_warm=True`, returns immediately. No power_seq, no FW upload, no
+  CPU reset.
+
+Test harness behaviour:
+
+- `phase_open` prints `REG_MCUFW_CTRL` + the warm/cold verdict.
+- `phase_fw` short-circuits to a one-line ACK on a warm chip; the
+  cold path lives in `_phase_fw_cold`.
+- `phase_validate` is idempotent — runs the CPU reset + FW_READY poll on
+  warm or cold (handy for "are you SURE this FW is still healthy?").
+
+**Tier scope today**: only "FW-warm". The full "MAC-warm" tier (also
+ANDing in `BIT_MACTXEN|BIT_MACRXEN` of REG_CR) will land with M2, once
+the post-FW MAC init actually sets those bits. Until then, even after a
+warm reattach the chip has no MAC TX/RX enabled — so M5 alone doesn't
+let us RX or TX; it just removes the FW-upload tax from the dev loop.
+
+**If a warm reattach misbehaves** (e.g. control transfers stop
+responding): unplug, wait a few seconds, replug, rerun. Per
+`[[feedback_warm_reattach]]`, we do NOT try to run `pwr_off_seq` from
+userland — empirically it leaves WinUSB pipes wedged.
+
+## M2+M3 bundle: MAC init → PHY init → channel → RX beacons
+
+Landed 2026-05-17. Built atop M1 + M5 in a single bundled milestone per
+"slice looser" guidance. Demoable end-state: `--phase beacon` sees Wi-Fi
+networks on channel 1.
+
+### Files added/touched
+
+| File | Purpose |
+|---|---|
+| `scripts/rtl8812au/extract_init_tables.py` | Parses `rtw8812a_table.c` → 5 asset modules. |
+| `assets/{mac,agc,bb,rf_a,rf_b}_tbl.py` | Auto-generated flat u32 tables (224..864 u32s each). |
+| `mac.py` (+= `post_fw_mac_init` + 9 helpers) | REG_CR enables, queue tables, EDCA, beacons, ARFB. |
+| `mac.py` (`ChipState`, `probe_chip_state`) | M2-c: 3-tier warm-state (COLD / FW_WARM / FULLY_WARM). |
+| `phy.py` (new) | BB/RF table loaders + `switch_band_2g_20mhz` + `post_mac_init_phy`. |
+| `chan.py` (new) | `set_channel_2g_20mhz` for 2T2R (RF18 writes on both paths). |
+| `rx.py` (new) | Jaguar phy_status RSSI parser + rx_common re-exports. |
+| `driver.py` (rewritten) | Full bring-up: cold + FW-warm + fully-warm + RX loop. |
+| `scratch/test_hw_rtl8812au.py` | + `--phase channel`, `--phase beacon`. |
+
+### M2 deltas vs 8821a worth noting
+
+| Topic | 8821a (1T1R) | **8812a (2T2R)** |
+|---|---|---|
+| FIFO `rsvd_drv_pg_num` | 8 | **9** |
+| Page table index | `[2]` (2 bulkout) | **`[3]` (3 bulkout)** |
+| `REG_PBP` write | — | **0x30 = PBP_512(TX) \| PBP_64(RX)** |
+| `REG_AMPDU_MAX_TIME` | `0x5E` | **`0x70`** |
+| `REG_FAST_EDCA_CTRL` | `0x03087777` | **(not written)** |
+| `REG_FWHW_TXQ_CTRL` post | set to `0x80` | **clear BIT(7)** |
+| `tx_aggregation` | writes DWBCN0 *and* DWBCN1 | **DWBCN0 only** |
+| `usb_tx_agg_desc_num` | `6` | **`1`** |
+
+### M3 deltas
+
+| Topic | 8821a (1T1R) | **8812a (2T2R)** |
+|---|---|---|
+| Pre-pwr_seq | — | **RF reset both paths (REG_RF_CTRL=5,7; REG_RF_B_CTRL=5,7)** |
+| `phy_bb_config` crystal mask | `0x00FFF000` | **`0x7FF80000`** |
+| `phy_rf_config` | load `rf_a` only | **load `rf_a` + `rf_b`** |
+| `switch_band(2G)` extras | `set_ext_band_switch_2g` (8821a-only) | **`BWINDICATION=1`, `PDMFTH 17:13=0x17`, `PDMFTH 3:1=0x04`, `CCASEL=0`** |
+| RFE pinmux helper | `_phy_set_rfe_reg_24g` (8821a-version) | **`_phy_set_rfe_reg_24g_8812a` (rfe-option 0 path)** |
+| `_switch_channel` | path A only | **iterate paths A+B, with CCA-frozen RF18 writes + `_phy_fix_spur` between rf_mod_ag and channel writes** |
+| `post_set_bw_mode_20mhz` `L1PKTH` | `8` (1T1R) | **`7` (2T2R)** |
+| `_set_channel_rf_20mhz` | path A only | **paths A+B** |
+
+### Warm-state tiers (M5 + M2-c)
+
+| State | REG_MCUFW_CTRL ∋ FW_READY | REG_CR ∋ MACTXEN+MACRXEN | Driver action |
+|---|---|---|---|
+| `COLD` | no | no | Full bring-up (M1+M2-b+M2-d+M3-a). |
+| `FW_WARM` | yes | no | Skip M1; run M2-b + M2-d + M3-a. |
+| `FULLY_WARM` | yes | yes | Skip everything; reattach + RX. |
+
+`_finish_attach` runs a 1.5 s bulk-IN smoke test on the fully-warm path
+and surfaces "please replug" if the pipe is wedged (rare on Windows
+where WinUSB can't always recover pipe state from a previous session).
+
+### Test harness phase chain (after M3-b)
+
+```
+open  →  fw  →  validate  →  mac_init  →  phy  →  channel  →  beacon
+                                                              ^ pass = 1+ BSSIDs
+```
+
+Each phase prints its pass-line. Re-running the harness on a warm chip
+auto-skips the upload + validate work — saves ~1 s per iteration during
+debug.
+
+## M4: TX inject (deauth) — PASSED 2026-05-17
+
+Demo-verified: 10/10 deauth bulk-OUT bursts sent to NETGEAR2G, target client
+(user's phone) reconnected — confirmed by re-capturing the 4-way EAPOL
+handshake on the same channel after the deauth burst.
+
+### Files
+
+| File | Purpose |
+|---|---|
+| `tx.py` (new) | 40-byte tx_pkt_desc builder (W7 XOR checksum), MGMT-queue qsel encoding, queue→bulk-OUT EP mapper for 3-bulkout AWUS036ACH, `build_deauth_frame` helper. |
+| `driver.py` (updated) | `inject_frame` + `_arm_tx_queues` workaround (see below). |
+| `scratch/test_hw_rtl8812au.py` | `--phase tx` + `--target-bssid`/`--target-client`/`--tx-count` CLI flags. |
+
+### Per-chip wire layout
+
+- `tx_pkt_desc_sz = 40` (same as 8821a, *not* 48 like 8822bu).
+- `old_datarate_fb_limit = True` (`rtw8812a.c:1083`) → W4 `DATARATE_FB_LIMIT = 0x1F`.
+- TX checksum: XOR of 16 u16 words into W7[15:0] (family-shared via
+  `rtw88_base.tx_common.fill_txdesc_checksum`).
+- Deauth frame is 26B (FC=0xC000, dur=0, RA=client, TA=BSSID, BSSID, seq=0,
+  reason=7). Total bulk-OUT payload = 40B desc + 26B MPDU = 66B.
+
+### Endpoint mapping (3-bulkout AWUS036ACH)
+
+`bulk_out = [0x02, 0x03, 0x04]` in descriptor order. Per
+`rqpn_table_8812a[3]`:
+
+| Queue | DMA lane | EP index | EP addr |
+|---|---|---|---|
+| BEACON/HIGH | HIGH | 0 | 0x02 |
+| MGMT | NORMAL | 1 | **0x03** |
+| BK/BE | LOW | 2 | 0x04 |
+
+### `_arm_tx_queues` quirk
+
+⚠ Empirically discovered 2026-05-17: on 8812au, REG_RQPN / REG_RQPN_NPQ
+/ REG_TXDMA_PQ_MAP all read back as 0 between `post_fw_mac_init`
+(which writes them) and a subsequent TX attempt, *even though* nothing
+in our code path writes 0 to them. The bulk-OUT then NAKs every MGMT
+frame indefinitely (USB ETIMEDOUT after 200ms × 10 frames).
+
+Workaround: re-arm by re-running `init_queue_reserved_page +
+init_tx_buffer_boundary + init_queue_priority` right before injecting.
+Costs ~3 control writes per inject burst, idempotent.
+
+After re-arm:
+- `REG_RQPN = 0x00D61010` (BIT_LD_RQPN bit 31 auto-clears, bits 0..23
+  persist: pubq=0xD6=214, lq=0x10=16, hq=0x10=16)
+- `REG_TXDMA_PQ_MAP = 0xE5F0` (VOQ→HIGH, VIQ→HIGH, BEQ→LOW, BKQ→LOW,
+  MGQ→NORMAL, HIQ→HIGH)
+
+Suspects for what clears the queue state mid-bring-up:
+1. **2T2R rf_b table load** — only 8812au does this; 8821au is 1T1R.
+2. **8812a-specific phy_bb_config writes** (RF_B_CTRL reset, AFE_CTRL3
+   crystal_cap mask 0x7FF80000 vs 8821a's 0x00FFF000).
+3. Some other side-effect of the 4 extra inline pokes in 8812a's
+   `post_mac_init_phy` that 8821a doesn't have.
+
+Not pinned down yet. M-LATER: bisect which write clears the queue
+state, fix at source so the workaround can come out.
+
+## What M1..M4 does NOT do
+
+Out of scope, will be M2+:
+
+- **Post-FW MAC init** (`rtw88xxa_power_on` lines 1083..1175). REG_CR
+  MAC_TXEN/RXEN, queue tables, EDCA, beacon params, AMPDU. Needed for
+  RX/TX to actually deliver frames.
+- **PHY init** — mac/agc/bb/rf_a/rf_b tables (~5000 register writes via
+  `rtw_parse_tbl_phy_cond` family walker, which already exists in
+  `rtw88_base/phy_cond.py` with the bitfield-rfe `chip_id` we use).
+- **2T2R RF path B**. SIPI primitives in `rtw88_base/rf_sipi.py` are
+  already path-parameterised. Apply to all RF18 / channel-tune writes
+  in M6.
+- **Channel tune**, RX descriptor decode, TX descriptor build, warm
+  reattach. All deferred.
+
+## Known WinUSB caveats (mostly NOT applicable, kept here for context)
+
+The AWUS036AXML (MT7921AU) bring-up uncovered several WinUSB / USB 3.0
+SuperSpeed quirks. Since the AWUS036ACH negotiates as HS, **none of them
+should bite us** — but documenting in case M2+ ever flips the chip to SS
+mode (via `rtw_usb_switch_mode`):
+
+- WinUSB serializes bulk-IN URBs one at a time unless `RAW_IO` is set.
+  `libusb 1.0.27` added `LIBUSB_OPTION_WINUSB_RAW_IO` to fix this; our
+  bundled `libusb_package` ships `1.0.26`, so we *can't* enable RAW_IO
+  without bumping the dependency.
+- USB 3.0 NRDY/ERDY mishandling caused the MT7921AU FW_SCATTER 4-packet
+  bulk-OUT stall. Doesn't apply at HS.
+- Bulk-OUT ZLP terminator needed when transfer length is a multiple of
+  `wMaxPacketSize`. At HS `wMaxPacketSize=512`; legacy MCUFWDL chunks
+  are 196/8/1, never hit the boundary.
+
+See `feedback_usb_speed_check.md` in memory for the broader rule.
