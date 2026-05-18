@@ -99,6 +99,19 @@ class WlanFrameParser:
                 result["ssid"] = tags.get("ssid")
                 result["channel"] = tags.get("channel", 1)
                 result["encryption"] = tags.get("encryption", "OPEN")
+                # WPA3 / PMF / cipher details surfaced from the RSN IE walker.
+                # Pre-fix these were computed but silently dropped here, leaving
+                # the security panel stuck on defaults.
+                result["wpa3"] = tags.get("wpa3", False)
+                result["transition_mode"] = tags.get("transition_mode", False)
+                result["pmf_capable"] = tags.get("pmf_capable", False)
+                result["pmf_required"] = tags.get("pmf_required", False)
+                result["pairwise_cipher"] = tags.get("pairwise_cipher")
+                result["akms"] = tags.get("akms", [])
+                if "rsn_ie_raw" in tags:
+                    result["rsn_ie_raw"] = tags["rsn_ie_raw"]
+                if "wps" in tags:
+                    result["wps"] = tags["wps"]
             elif subtype in (WlanFrameParser.SUBTYPE_PROBE_REQ, WlanFrameParser.SUBTYPE_ASSOC_REQ):
                 tags = WlanFrameParser._parse_tags(frame, subtype)
                 if tags is None: return None
@@ -354,7 +367,9 @@ class WlanFrameParser:
         transition_mode = False
         pmf_capable = False
         pmf_required = False
-        
+        pairwise_cipher: Optional[str] = None
+        akms: List[str] = []
+
         while ptr + 2 <= len(frame):
             tag_id = frame[ptr]
             tag_len = frame[ptr + 1]
@@ -363,9 +378,9 @@ class WlanFrameParser:
             tag_end = tag_start + tag_len
             if tag_end > len(frame):
                 break # bounds check
-                
+
             tag_data = frame[tag_start : tag_end]
-            
+
             if tag_id == 0: # SSID
                 if tag_len == 0:
                     parsed["ssid"] = "<hidden>"
@@ -385,35 +400,14 @@ class WlanFrameParser:
                 # Preserve the raw IE bytes (with tag header) so the PMKID
                 # harvester can echo the AP's exact RSN config in Assoc Req.
                 parsed["rsn_ie_raw"] = bytes(frame[ptr : tag_end])
-                try:
-                    if len(tag_data) >= 2:
-                        p = 6
-                        if len(tag_data) >= p + 2:
-                            pairwise_count = int.from_bytes(tag_data[p:p+2], byteorder='little')
-                            p += 2 + (4 * pairwise_count)
-                            if len(tag_data) >= p + 2:
-                                akm_count = int.from_bytes(tag_data[p:p+2], byteorder='little')
-                                p += 2
-                                has_psk = False
-                                has_sae = False
-                                for _ in range(akm_count):
-                                    if p + 4 <= len(tag_data):
-                                        akm_suite = tag_data[p:p+4]
-                                        if akm_suite == b'\x00\x0f\xac\x02':
-                                            has_psk = True
-                                        elif akm_suite == b'\x00\x0f\xac\x08':
-                                            has_sae = True
-                                        p += 4
-                                
-                                has_wpa3 = has_sae
-                                transition_mode = has_psk and has_sae
-
-                                if len(tag_data) >= p + 2:
-                                    rsn_caps = int.from_bytes(tag_data[p:p+2], byteorder='little')
-                                    pmf_capable = bool(rsn_caps & 0x0080) # Bit 7
-                                    pmf_required = bool(rsn_caps & 0x0040) # Bit 6
-                except Exception:
-                    pass
+                rsn = WlanFrameParser._parse_rsn_ie(tag_data)
+                if rsn is not None:
+                    pairwise_cipher = rsn["pairwise"]
+                    akms = rsn["akms"]
+                    pmf_capable = rsn["pmf_capable"]
+                    pmf_required = rsn["pmf_required"]
+                    has_wpa3 = "SAE" in akms
+                    transition_mode = "SAE" in akms and "PSK" in akms
             elif tag_id == 221: # Vendor Specific
                 if tag_len >= 4:
                     oui = tag_data[:3]
@@ -423,29 +417,176 @@ class WlanFrameParser:
                             has_wpa = True
                         elif oui_type == 4: # WPS
                             parsed["wps"] = True
-                            
+
             ptr = tag_end
-            
+
         parsed["wpa3"] = has_wpa3
         parsed["transition_mode"] = transition_mode
         parsed["pmf_capable"] = pmf_capable
         parsed["pmf_required"] = pmf_required
-        
-        if has_wpa3:
-            parsed["encryption"] = "WPA3"
-        elif has_rsn:
-            parsed["encryption"] = "WPA2"
-        elif has_wpa:
-            parsed["encryption"] = "WPA"
-        else:
-            if len(frame) >= 36:
-                # Need to check capability info in fixed params for WEP
-                cap_info = int.from_bytes(frame[34:36], byteorder='little')
-                if cap_info & 0x0010: # Privacy bit
-                    parsed["encryption"] = "WEP"
-                else:
-                    parsed["encryption"] = "OPEN"
-            else:
-                parsed["encryption"] = "OPEN"
-                
+        parsed["pairwise_cipher"] = pairwise_cipher
+        parsed["akms"] = akms
+        parsed["encryption"] = WlanFrameParser._format_encryption_label(
+            frame=frame,
+            has_rsn=has_rsn,
+            has_wpa=has_wpa,
+            akms=akms,
+            pairwise_cipher=pairwise_cipher,
+        )
         return parsed
+
+    # ---- RSN IE helpers -----------------------------------------------------
+
+    # Suite-OUI prefix shared by every IEEE-standard cipher + AKM suite.
+    _SUITE_OUI = b"\x00\x0f\xac"
+
+    _CIPHER_NAMES = {
+        0x01: "WEP-40",
+        0x02: "TKIP",
+        0x04: "CCMP",
+        0x05: "WEP-104",
+        0x06: "BIP-CMAC-128",
+        0x08: "GCMP-128",
+        0x09: "GCMP-256",
+        0x0A: "CCMP-256",
+    }
+    _AKM_NAMES = {
+        0x01: "EAP",      # 802.1X (Enterprise)
+        0x02: "PSK",
+        0x03: "FT-EAP",
+        0x04: "FT-PSK",
+        0x05: "EAP-SHA256",
+        0x06: "PSK-SHA256",
+        0x08: "SAE",      # WPA3
+        0x09: "FT-SAE",
+        0x0B: "EAP-SUITE-B",
+        0x12: "OWE",      # Enhanced Open
+    }
+
+    @classmethod
+    def _suite_name(cls, suite: bytes, table: Dict[int, str]) -> Optional[str]:
+        if len(suite) != 4 or suite[:3] != cls._SUITE_OUI:
+            return None
+        return table.get(suite[3])
+
+    @classmethod
+    def _parse_rsn_ie(cls, tag_data: bytes) -> Optional[Dict[str, Any]]:
+        """Parse the RSN IE body (tag 48 contents, sans the 2-byte header).
+
+        Returns dict with pairwise (str|None), akms (list[str]), pmf_capable,
+        pmf_required — or None if the IE is malformed.
+
+        Field layout (per IEEE 802.11-2020 § 9.4.2.24):
+            Version (2 B LE) | Group Cipher Suite (4 B) |
+            Pairwise Suite Count (2 B LE) | Pairwise Suite List (4 B × N) |
+            AKM Suite Count    (2 B LE) | AKM Suite List    (4 B × N) |
+            RSN Capabilities   (2 B LE) | [optional PMKID list, GMCS, ...]
+        """
+        try:
+            n = len(tag_data)
+            # Need at least version (2) + group cipher (4) + 2 size fields (2+2) = 10.
+            if n < 10:
+                return None
+            p = 6  # skip version + group cipher
+            pairwise_count = int.from_bytes(tag_data[p:p+2], "little")
+            p += 2
+            if p + 4 * pairwise_count > n:
+                return None
+            pairwise: Optional[str] = None
+            for i in range(pairwise_count):
+                name = cls._suite_name(tag_data[p:p+4], cls._CIPHER_NAMES)
+                # Stick with the first listed pairwise cipher (the AP's
+                # preferred one). Some APs list TKIP+CCMP for compatibility;
+                # CCMP is conventionally listed first.
+                if pairwise is None and name is not None:
+                    pairwise = name
+                p += 4
+            if p + 2 > n:
+                return None
+            akm_count = int.from_bytes(tag_data[p:p+2], "little")
+            p += 2
+            if p + 4 * akm_count > n:
+                return None
+            akms: List[str] = []
+            for _ in range(akm_count):
+                name = cls._suite_name(tag_data[p:p+4], cls._AKM_NAMES)
+                if name is not None and name not in akms:
+                    akms.append(name)
+                p += 4
+            pmf_capable = False
+            pmf_required = False
+            if p + 2 <= n:
+                rsn_caps = int.from_bytes(tag_data[p:p+2], "little")
+                pmf_capable = bool(rsn_caps & 0x0080)  # Bit 7 (MFPC)
+                pmf_required = bool(rsn_caps & 0x0040)  # Bit 6 (MFPR)
+            return {
+                "pairwise": pairwise,
+                "akms": akms,
+                "pmf_capable": pmf_capable,
+                "pmf_required": pmf_required,
+            }
+        except Exception:
+            return None
+
+    @staticmethod
+    def _format_encryption_label(
+        *,
+        frame: bytes,
+        has_rsn: bool,
+        has_wpa: bool,
+        akms: List[str],
+        pairwise_cipher: Optional[str],
+    ) -> str:
+        """Build an airodump-style encryption label.
+
+        Examples:
+            "WPA2-PSK-CCMP"
+            "WPA3-SAE-CCMP"
+            "WPA2/WPA3-PSK+SAE-CCMP"   (transition mode)
+            "WPA2-EAP-CCMP"
+            "WPA-PSK"                  (legacy WPA1 vendor IE only)
+            "OPEN" / "WEP"
+        """
+        if has_rsn:
+            has_sae = "SAE" in akms
+            has_psk = "PSK" in akms or "PSK-SHA256" in akms
+            has_eap = any(a.startswith("EAP") or a == "FT-EAP" for a in akms)
+            has_owe = "OWE" in akms
+
+            if has_sae and has_psk:
+                wpa_tag = "WPA2/WPA3"
+                akm_tag = "PSK+SAE"
+            elif has_sae:
+                wpa_tag = "WPA3"
+                akm_tag = "SAE"
+            elif has_owe:
+                wpa_tag = "OWE"
+                akm_tag = None
+            else:
+                wpa_tag = "WPA2"
+                if has_eap and has_psk:
+                    akm_tag = "PSK+EAP"
+                elif has_eap:
+                    akm_tag = "EAP"
+                elif has_psk:
+                    akm_tag = "PSK"
+                else:
+                    # Unknown AKM(s) — fall back to listing them.
+                    akm_tag = "+".join(akms) if akms else None
+
+            parts = [wpa_tag]
+            if akm_tag:
+                parts.append(akm_tag)
+            if pairwise_cipher:
+                parts.append(pairwise_cipher)
+            return "-".join(parts)
+
+        if has_wpa:
+            # Legacy WPA1 vendor IE — TKIP is the universal assumption.
+            return "WPA-PSK-TKIP"
+
+        if len(frame) >= 36:
+            cap_info = int.from_bytes(frame[34:36], byteorder='little')
+            if cap_info & 0x0010:  # Privacy bit
+                return "WEP"
+        return "OPEN"
