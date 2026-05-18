@@ -1,47 +1,57 @@
 # Wifit3 Current Staus & Next Steps
 
 ## Current State: Supported Chipsets
-We have successfully implemented fully functional Userspace Python drivers for:
-* [Atheros AR9271](./src/wifit3/chips/ar9271/) (v1.4).
-* [Alfa/Realtek RTL8187](./src/wifit3/chips/rtl8187/).
-* [Ralink RT2800USB (RT5572, RT3572, RT5372)](./src/wifit3/chips/rt2800usb/).
 
-The "Minnie Drivers" can cold-boot, warm-boot, tune to channels, inject and sniff live 802.11 management frames.
+Fully-functional userspace Python drivers (cold + warm bring-up, channel hop, inject + sniff, integrated with the TUI):
 
-And the UI is amazing, shows progress while intializing wireless cards, scanner view, "Focus" view all work on all 3 cards.
+| Card / Family | Driver | Bands | Status |
+|---|---|---|---|
+| Atheros AR9271 | `chips/ar9271/` | 2.4 GHz | DONE (v1.4) |
+| Alfa/Realtek RTL8187 | `chips/rtl8187/` | 2.4 GHz | DONE |
+| Ralink RT2800USB (RT5572 / RT3572 / RT5372) | `chips/rt2800usb/` | 2.4 + 5 GHz (RT5572) | DONE |
+| Realtek RTL8821AU (AWUS036ACS) | `chips/rtl8821au/` | 2.4 + 5 GHz | DONE 2026-05-17, 27 BSSIDs/8s on ch1 |
+| Realtek RTL8822BU (TP-Link T3U Plus, AC1300) | `chips/rtl8822bu/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-17, full RX + TX inject + 5G |
+| **Realtek RTL8812AU (AWUS036ACH)** | `chips/rtl8812au/` | **2.4 + 5 GHz, 2T2R** | **DONE 2026-05-17, RX + deauth confirmed by handshake re-capture** |
+| Mediatek MT7921AU (AWUS036AXML) | `chips/mt7921au/` (scaffold) | — | PAUSED — see [[MT7921AU.md]] (EP0 dies post-FW_START_REQ on WinUSB; blocked on libusb bump for RAW_IO support) |
 
-That said, we ONLY support 3 cards. And there's absolutely no actual "attacks" implemented yet. Except handshake capture (we detect, but we have no way to save a .pcap or .pcapng).
+Family-shared infrastructure under `chips/rtw88_base/` covers transport,
+phy_cond walker, power_seq runtime, RF SIPI, TX checksum, RX-desc parser,
+and the legacy MCUFWDL FW upload — both 88xxA chips (8821a + 8812a) and
+the modern 8822b share through it.
 
-## NEXT STEP: *MORE* HARDWARE SUPPORT
+Attack stack so far: handshake **detection** (the 4-way EAPOL pair is
+parsed live), deauth inject (verified on 8812au by re-capturing handshake
+after target client reconnect). Pcap save and PMKID extract not yet
+implemented.
 
-- AWUS036AXML (MT7921AU):
-  - USB: 3.0 (USB 2.0 required on Windows due to WinUSB FW_SCATTER 4-packet stall)
-  - Kali Linux Chipset: `mt7921u`
-  - Captures & Logs: `./usb_dumps/captures_mt7921u/`
-  - Driver Source: `./data_dumps/mt76-source-v6.18/`
-  - **Status: PAUSED 2026-05-17.** Cold-boot firmware load gets through PATCH + RAM upload + FW_START_REQ with byte-identical wire bytes to Linux pcap, but the chip's EP0 dies post-FW_START_REQ on Windows/WinUSB and FW_N9_RDY never sets. See `src/wifit3/chips/mt7921au/MT7921AU.md` "Session pause snapshot" for verified-correct state, blocker hypotheses, and recommended next move (test on Kali first to bisect Windows-vs-code).
-- AWUS036ACH  (RTL8812AU):
-  - USB: 3.0
-  - Kali Linux Chipset: `rtw88_8812au`
-  - Captures & Logs: `./usb_dumps/captures_rtw88_8812au/`
-  - Driver Source: `./data_dumps/rtw88-source-v6.18/`
-- AWUS036ACS  (RTL8821AU):
-  - USB: 2.0
-  - Kali Linux Chipset: `rtw88_8821au`
-  - Captures & Logs: `./usb_dumps/captures_rtw88_8821au/`
-  - Driver Source: `./data_dumps/rtw88-source-v6.18/`
-- AC1300      (RTL8822BU):
-  - USB: 2.0
-  - Kali Linux Chipset: `rtw88_8822bu`
-  - Captures & Logs: `./usb_dumps/captures_rtw88_8822bu/`
-  - Driver Source: `./data_dumps/rtw88-source-v6.18/`
+## Open work on RTL8812AU (the just-landed chipset)
 
-### *Near-Future* Hardware Support (en-route)
+Two follow-ups are tracked, both deferred but small:
 
-- AC1900      (RTL8814AU)
+1. **Queue-clear bisect** — `REG_RQPN / REG_RQPN_NPQ / REG_TXDMA_PQ_MAP`
+   get silently cleared somewhere in `post_mac_init_phy`, working around
+   it via `_arm_tx_queues` before each `inject_frame`. The bisect
+   diagnostic landed in commit `2c7a465`; user runs `--debug` once and
+   we see exactly which step does the clear. Pin down root cause +
+   remove the workaround.
+2. **EFUSE-read verification + sensitivity confirmation** — EFUSE-read
+   landed in `71699d7`. Awaiting hw test to confirm:
+   (a) EFUSE values readable on AWUS036ACH (rfe_option, ext_lna, etc.),
+   (b) feeding them into the bring-up actually fixes the "only-NETGEAR2G"
+   sensitivity gap from earlier testing.
+
+## NEXT STEP: M-LAST and 1.0
+
+Per [[project-m-last-libusb-bump]] memory: bump `libusb_package` to
+≥1.0.27 + enable `LIBUSB_OPTION_WINUSB_RAW_IO` to unblock MT7921AU on
+Windows. That's the last chipset gating wifit3 1.0.
+
+### Other hardware queued (when we get back to it)
+
+- AC1900      (RTL8814AU) — 4T4R, modern iDDMA path. Bigger delta from 8822bu.
 - AWUS036ACHM (MT7610U)
 - AWUS036ACM  (MT7612U)
-- AWUS036NH   (RT3070) -> same chipset the older PAU05 uses.
+- AWUS036NH   (RT3070) — same chipset the older PAU05 uses.
 
 ### *Distant Future* Hardware Support (need $$$ will make more Minnie Drivers)
 

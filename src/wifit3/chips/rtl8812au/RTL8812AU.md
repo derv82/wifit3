@@ -278,7 +278,92 @@ Suspects for what clears the queue state mid-bring-up:
 Not pinned down yet. M-LATER: bisect which write clears the queue
 state, fix at source so the workaround can come out.
 
-## What M1..M4 does NOT do
+## MX bundle (post-M4 polish) — 2026-05-17
+
+### MX-a: queue-clear bisect (awaiting hw test)
+
+Diagnostic readback added in `post_mac_init_phy` via `_log_queue_state`.
+Running `scratch/test_hw_rtl8812au.py --debug` prints
+`REG_RQPN / REG_TXDMA_PQ_MAP` after each major init step (mac_tbl,
+phy_bb_config, phy_rf_config, switch_band, inline-pokes, drv_info_cfg).
+Once the user identifies which step flips them from non-zero to 0, we
+can fix at source and remove the `_arm_tx_queues` workaround.
+
+### MX-b: rate-aware CCK RSSI parser ✓
+
+`parse_jaguar_phy_status_rssi` (in `rx.py`) now branches on rate per
+`rtw88xxa.c:1518` `rtw88xxa_query_phy_status`:
+
+- **CCK** (DESC_RATE0..3): extract `lna_idx` (w1[15:13]) + `vga_idx`
+  (w1[12:8]), feed through `rtw8812a_cck_rx_pwr` lookup (8 LNA branches,
+  each with its own VGA-based slope).
+- **OFDM / HT / VHT**: extract `gain_a` (w0[6:0]) + `gain_b` (w0[14:8]),
+  formula `rssi = gain - 110`, take `max` across active paths (2T2R).
+
+Also threaded `RxPktStat` through `rx_common.iter_bulk_frames`'s
+`phy_status_rssi` callback so future chips can also rate-branch.
+8821au's own `iter_bulk_frames` is unaffected (kept its OFDM-only
+parser; rarely shows noisy RSSI in practice on the slower card).
+
+### MX-c: EFUSE read ✓ (awaiting hw verification)
+
+New `efuse.py` ports `rtw88xxa_read_efuse` + `rtw8812a_read_amplifier_type`
++ `rtw8812a_read_rfe_type`. Pipeline:
+
+```
+_efuse_grant(on)              # REG_EFUSE_ACCESS + SYS_FUNC_EN + SYS_CLKR
+_switch_efuse_bank_wifi
+dump_physical_efuse_map       # 512 reads via REG_EFUSE_CTRL[BITS_EF_ADDR]
+parse_logical_efuse_map       # word-header walker → byte-addressable map
+extract @ {0xB9 xtal_k, 0xBC pa_type, 0xBD lna_2g, 0xBF lna_5g,
+           0xC1 rf_board_option, 0xCA rfe_option_raw, 0xD0 mac_addr}
+_classify_amplifier           # derive ext_pa_2g, ext_lna_2g, etc.
+_resolve_rfe_option           # final rfe_option per kernel logic
+_efuse_grant(off)
+```
+
+Driver's `connect()` now reads EFUSE after `_claim` and replaces
+`self._efuse` (was `EfuseDefaults()`) with the real values. Falls back
+to defaults if the read times out, with a warning. The MAC address is
+also populated from the EFUSE.
+
+Harness: `--phase efuse` runs the read in isolation + prints all raw +
+derived values. `--phase all` uses EFUSE values for phy init unless
+`--rfe / --ext-lna / --ext-pa` CLI overrides are given.
+
+Hypothesis: this fixes the "only-NETGEAR2G" sensitivity gap once we get
+the actual rfe_option (likely `rfe_option=3` for high-power
+AWUS036ACH) feeding into phy_bb_config + switch_band.
+
+### MX-d: 5 GHz support ✓ (awaiting hw test on ch36+)
+
+`phy.py`:
+- `_phy_set_rfe_reg_5g_8812a` — all 6 rfe_option cases per
+  `rtw8812a_phy_set_rfe_reg_5g` (rtw88xxa.c:874).
+- `_poll_txpkt_empty` — 2.5ms poll for HI+MGT queues drained before
+  band switch.
+- `switch_band_5g_20mhz` — 8812A else-branch of `rtw88xxa_switch_band`
+  (CCK_CHECK set, RXPSEL reset, BWINDICATION=2, PDMFTH 17:13=0x15 /
+  3:1=0x04, CCASEL=1, rfe_reg_5g, TXPSEL=0, CCK_RX=0xF, basic_rates =
+  OFDM 6/12/24M only).
+
+`chan.py`:
+- `set_channel_5g_20mhz(channel)` — wraps `_switch_channel` +
+  `_post_set_bw_mode_20mhz` + `_set_channel_rf_20mhz` (all of which
+  already understand 5G channel ranges via the fc_area / rf_mod_ag
+  lookups).
+
+Driver:
+- `SUPPORTED_CHANNELS = list(range(1, 14)) + list(CHANNELS_5G_NON_DFS)`
+  (= 22 channels: 2.4 GHz 1..13 + non-DFS 5 GHz 36/40/44/48/149/153/157/161/165).
+- `set_channel` detects band crossing, calls `switch_band_*_20mhz`
+  before `set_channel_*_20mhz`. `current_band_is_2g` tracks state.
+
+DFS channels (52..144) excluded from `SUPPORTED_CHANNELS` since
+wifit3 doesn't implement DFS clearance, but `set_channel` will accept
+them if explicitly requested (channels are in `CHANNELS_5G_ALL`).
+
+## What M1..M4 + MX does NOT do
 
 Out of scope, will be M2+:
 
