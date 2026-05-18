@@ -43,6 +43,7 @@ from .chan import (
     set_channel_2g_20mhz,
 )
 from .constants import USB_PID_AWUS036ACH, USB_VID_REALTEK
+from .efuse import efuse_defaults_from_read, read_efuse_8812a
 from .firmware import (
     download_firmware_legacy,
     download_firmware_validate_legacy,
@@ -178,6 +179,27 @@ class RTL8812AUDriver:
         try:
             _progress(0.00, "Claiming USB interface")
             await loop.run_in_executor(None, self._claim)
+
+            _progress(0.03, "Reading EFUSE")
+            try:
+                read = await loop.run_in_executor(
+                    None, read_efuse_8812a, self.transport
+                )
+                self._efuse = efuse_defaults_from_read(read, rf_path_num=2)
+                if read.mac_addr and read.mac_addr != b"\xff" * 6:
+                    self.mac_address = ":".join(f"{b:02x}" for b in read.mac_addr)
+                logger.info(
+                    "EfuseDefaults from chip: rfe_option=%d ext_lna_2g=%d "
+                    "ext_pa_2g=%d xtal_k=0x%02x",
+                    self._efuse.rfe_option, self._efuse.ext_lna_2g,
+                    self._efuse.ext_pa_2g, self._efuse.crystal_cap,
+                )
+            except (IOError, OSError) as e:
+                logger.warning(
+                    "EFUSE read failed (%s) — falling back to hardcoded defaults. "
+                    "Sensitivity may be degraded.", e,
+                )
+                # self._efuse stays at __init__'s EfuseDefaults()
 
             _progress(0.05, "Probing chip state")
             state = await loop.run_in_executor(
