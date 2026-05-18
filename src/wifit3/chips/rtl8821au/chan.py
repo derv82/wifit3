@@ -23,27 +23,26 @@ References:
 from __future__ import annotations
 
 import logging
-import time
+
+from wifit3.chips.rtw88_base.rf_sipi import (
+    RFREG_MASK,
+    read_rf as _shared_read_rf,
+    write_rf_masked as _shared_write_rf_masked,
+)
 
 from .constants import (
     BIT_RFMOD,
-    REG_3WIRE_SWA,
     REG_ADC160,
     REG_ADCCLK,
     REG_CLKTRK,
     REG_DATA_SC,
-    REG_HSSI_READ,
     REG_L1PKTH,
-    REG_LSSI_WRITE_A,
-    REG_PI_READ_A,
-    REG_SI_READ_A,
     REG_WMAC_TRXPTCL_CTL,
     RF18_BAND_MASK,
     RF18_BW_MASK,
     RF18_CHANNEL_MASK,
     RF18_RFSI_MASK,
     RF_CFGCH,
-    RFREG_MASK,
     RTW_CHANNEL_WIDTH_20,
 )
 from .transport import RTL8821AUTransport
@@ -51,48 +50,14 @@ from .transport import RTL8821AUTransport
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# RF SIPI read / write (path A)
-# ---------------------------------------------------------------------------
-
-def _ffs(mask: int) -> int:
-    return (mask & -mask).bit_length() - 1
-
-
 def read_rf(transport: RTL8821AUTransport, addr: int, mask: int = RFREG_MASK) -> int:
-    """SIPI read of RF reg `addr` (path A), shifted into `mask`'s position.
-
-    Mirrors rtw88xxa_phy_read_rf (rtw88xxa.c:1245) for the 8821A 1T1R
-    path. Always udelays 20us (8821A unconditionally does this regardless
-    of cut).
-    """
-    addr &= 0xFF
-    pi_mode = (transport.read32(REG_3WIRE_SWA) >> 2) & 1   # BIT(2)
-    transport.write32_mask(REG_HSSI_READ, 0xFF, addr)
-    time.sleep(20e-6)
-    read_reg = REG_PI_READ_A if pi_mode else REG_SI_READ_A
-    cur = transport.read32(read_reg)
-    shift = _ffs(mask)
-    return (cur & mask) >> shift
+    """SIPI read of RF reg `addr` (path A) — 8821A unconditional 20us udelay."""
+    return _shared_read_rf(transport, addr, mask, path="a", udelay_us=20.0)
 
 
 def write_rf_masked(transport: RTL8821AUTransport, addr: int, mask: int, data: int) -> None:
-    """SIPI write to RF reg `addr` (path A) with mask-aware RMW.
-
-    Mirrors rtw_phy_write_rf_reg_sipi (phy.c:1029). If `mask == RFREG_MASK`
-    the kernel skips the read-back; otherwise it reads, merges, writes.
-    """
-    addr &= 0xFF
-    mask &= RFREG_MASK
-
-    if mask != RFREG_MASK:
-        old = read_rf(transport, addr, RFREG_MASK)
-        shift = _ffs(mask)
-        data = (old & ~mask) | ((data << shift) & mask)
-
-    data_and_addr = ((addr << 20) | (data & RFREG_MASK)) & 0x0FFFFFFF
-    transport.write32(REG_LSSI_WRITE_A, data_and_addr)
-    time.sleep(13e-6)
+    """SIPI write to RF reg `addr` (path A) — 8821A unconditional 13us udelay."""
+    _shared_write_rf_masked(transport, addr, mask, data, path="a", udelay_us=13.0)
 
 
 # ---------------------------------------------------------------------------
