@@ -1,0 +1,141 @@
+"""Realtek RTL8822BU (rtw88 family, modern iDDMA FW path) protocol constants.
+
+Verified against `data_dumps/rtw88-source-v6.18/rtw8822b{,u}.{c,h}` +
+`usb_dumps/captures_rtw88_8822bu/capture-1.pcap`. See RTL8822BU.md for
+provenance citations on each fact.
+
+Re-exports the family-shared register addresses from
+:mod:`wifit3.chips.rtw88_base.registers` and adds the 8822b-specific bits.
+"""
+
+from __future__ import annotations
+
+# --- Re-export the common rtw88 register surface ---------------------------
+from wifit3.chips.rtw88_base.registers import (  # noqa: F401
+    BASIC_RATES_2G,
+    BIT_CHECK_SUM_OK,
+    BIT_DDMACH0_CHKSUM_CONT,
+    BIT_DDMACH0_CHKSUM_EN,
+    BIT_DDMACH0_CHKSUM_STS,
+    BIT_DDMACH0_DDMA_MODE,
+    BIT_DDMACH0_OWN,
+    BIT_DDMACH0_RESET_CHKSUM_STS,
+    BIT_DIS_TSF_UDT,
+    BIT_DMEM_CHKSUM_OK,
+    BIT_DMEM_DW_OK,
+    BIT_EN_BCN_FUNCTION,
+    BIT_FEN_CPUEN,
+    BIT_FW_DW_RDY,
+    BIT_FW_INIT_RDY,
+    BIT_H2CQ_FULL,
+    BIT_HCI_TXDMA_EN,
+    BIT_IMEM_CHKSUM_OK,
+    BIT_IMEM_DW_OK,
+    BIT_MACRXEN,
+    BIT_MACTXEN,
+    BIT_MASK_DDMACH0_DLEN,
+    BIT_MCUFWDL_EN,
+    BIT_ROM_DLEN,
+    BIT_ROM_PGE,
+    BIT_TXDMA_EN,
+    BIT_WLMCU_IOIF,
+    DESC_RATE1M,
+    DESC_RATE2M,
+    DESC_RATE5_5M,
+    DESC_RATE6M,
+    DESC_RATE11M,
+    DESC_RATE12M,
+    DESC_RATE24M,
+    OCPBASE_DMEM_88XX,
+    OCPBASE_RXBUF_FW_88XX,
+    OCPBASE_TXBUF_88XX,
+    REG_BCN_CTRL,
+    REG_CR,
+    REG_DDMA_CH0CTRL,
+    REG_DDMA_CH0DA,
+    REG_DDMA_CH0SA,
+    REG_DWBCN0_CTRL,
+    REG_FIFOPAGE_CTRL_2,
+    REG_FIFOPAGE_INFO_1,
+    REG_FIFOPAGE_INFO_2,
+    REG_FIFOPAGE_INFO_3,
+    REG_FIFOPAGE_INFO_4,
+    REG_FWHW_TXQ_CTRL,
+    REG_H2CQ_CSR,
+    REG_HIMR0,
+    REG_HIMR1,
+    REG_LLT_INIT,
+    REG_MCUFW_CTRL,
+    REG_RQPN,
+    REG_RQPN_CTRL_2,
+    REG_RSV_CTRL,
+    REG_SYS_CFG1,
+    REG_SYS_CFG2,
+    REG_SYS_CLKR,
+    REG_SYS_FUNC_EN,
+    REG_TXDMA_PQ_MAP,
+    REG_TXDMA_STATUS,
+    RTW_CHANNEL_WIDTH_20,
+    RTW_DMA_MAPPING_EXTRA,
+    RTW_DMA_MAPPING_HIGH,
+    RTW_DMA_MAPPING_LOW,
+    RTW_DMA_MAPPING_NORMAL,
+    TX_DESC_QSEL_BEACON,
+    TX_DESC_QSEL_H2C,
+    TX_DESC_QSEL_HIGH,
+    TX_DESC_QSEL_MGMT,
+)
+
+# --- USB IDs (rtw_8822bu_id_table in rtw8822bu.c) --------------------------
+# Full list is large; we register the popular ones, especially the TP-Link
+# T3U / T3U Plus variants. Add more here as users report dongles.
+USB_IDS_8822BU: tuple[tuple[int, int, str], ...] = (
+    # TP-Link Archer T3U Plus v1 — the user's lab device
+    (0x2357, 0x0138, "TP-Link Archer T3U Plus (RTL8822BU)"),
+    (0x2357, 0x012D, "TP-Link Archer T3U v1 (RTL8822BU)"),
+    (0x2357, 0x0115, "TP-Link Archer T4U V3 (RTL8822BU)"),
+    (0x2357, 0x012E, "TP-Link RTL8822BU"),
+    (0x2357, 0x0116, "TP-Link RTL8822BU"),
+    (0x2357, 0x0117, "TP-Link RTL8822BU"),
+    (0x0BDA, 0xB812, "Realtek RTL8822BU"),
+    (0x0BDA, 0xB82C, "Realtek RTL8822BU"),
+    (0x0BDA, 0xB81A, "Realtek RTL8822BU (default)"),
+    (0x0B05, 0x1841, "ASUS USB-AC55 B1 (RTL8822BU)"),
+    (0x0B05, 0x184C, "ASUS U2 (RTL8822BU)"),
+    (0x0B05, 0x19AA, "ASUS USB-AC58 rev A1 (RTL8822BU)"),
+    (0x2001, 0x331E, "D-Link DWA-181 (RTL8822BU)"),
+    (0x2001, 0x331C, "D-Link DWA-182 D1 (RTL8822BU)"),
+    (0x13B1, 0x0043, "Linksys WUSB6400M (RTL8822BU)"),
+    (0x13B1, 0x0045, "Linksys WUSB3600 v2 (RTL8822BU)"),
+    (0x0846, 0x9055, "Netgear A6150 (RTL8822BU)"),
+    (0x7392, 0xB822, "Edimax EW-7822ULC (RTL8822BU)"),
+    (0x7392, 0xC822, "Edimax EW-7822UTC (RTL8822BU)"),
+    (0x7392, 0xD822, "Edimax (RTL8822BU)"),
+    (0x7392, 0xE822, "Edimax (RTL8822BU)"),
+    (0x7392, 0xF822, "Edimax EW-7822UAD (RTL8822BU)"),
+    (0x2C4E, 0x0107, "Mercusys MA30H (RTL8822BU)"),
+    (0x2C4E, 0x010A, "Mercusys MA30N (RTL8822BU)"),
+    (0x0411, 0x03D1, "BUFFALO WI-U2-866DM (RTL8822BU)"),
+    (0x0411, 0x03D0, "BUFFALO WI-U3-866DHP (RTL8822BU)"),
+)
+
+# --- Chip parameters (rtw_chip_info from rtw8822b.c:2496..2618) ------------
+TX_PKT_DESC_SZ = 48              # rtw8822b.c (.tx_pkt_desc_sz)
+RX_PKT_DESC_SZ = 24              # rtw8822b.c (.rx_pkt_desc_sz)
+PAGE_SIZE = 128                  # rtw8822b.c (.page_size)
+TXFF_SIZE = 65536                # rtw8822b.c (.txff_size)
+RXFF_SIZE = 24576                # rtw8822b.c (.rxff_size)
+
+# --- FW upload (modern iDDMA path; see mac.c:776 __rtw_download_firmware) --
+FW_HDR_SIZE = 64                 # rtw_fw_hdr (fw.h:316)
+FW_HDR_CHKSUM_SIZE = 8           # fw.h:13
+DLFW_MAX_CHUNK_SIZE = 0x1000     # 4096 bytes per tx_pkt + iddma cycle
+
+# --- FW_READY for modern path ----------------------------------------------
+# `FW_READY` constant from mac.c:751 — used after upload to confirm the
+# wlan CPU is alive. It's the BIT_CHECK_SUM_OK group OR'd with the FW init
+# ready bit.
+FW_READY_MODERN = BIT_CHECK_SUM_OK | BIT_FW_INIT_RDY | BIT_FW_DW_RDY
+FW_READY_MASK_MODERN = (
+    BIT_CHECK_SUM_OK | BIT_FW_INIT_RDY | BIT_FW_DW_RDY | BIT_MCUFWDL_EN
+)
