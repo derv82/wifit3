@@ -23,24 +23,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
+This repo uses **`uv`** for env management. The system `python` on PATH does NOT have project deps — always run Python via `uv run` (or `.venv\Scripts\python.exe`). Quick import probes like `python -c "import textual"` from the agent will fail with `ModuleNotFoundError` — use `uv run python -c "..."` instead.
+
 ```bash
 # Install (editable, with dev deps)
-pip install -e ".[dev]"   # or: uv sync --group dev
+uv sync --group dev               # preferred; or: pip install -e ".[dev]"
 
 # Run
-python -m wifit3
+uv run python -m wifit3
 
 # Tests
-pytest                          # all tests
-pytest tests/chips/ar9271/      # single module
-pytest tests/wlan/test_parser.py::TestWlanFrameParser::test_beacon
+uv run pytest                          # all tests
+uv run pytest tests/chips/ar9271/      # single module
+uv run pytest tests/wlan/test_parser.py::TestWlanFrameParser::test_beacon
 
 # Lint / format
-ruff check src/
-ruff format src/
+uv run ruff check src/
+uv run ruff format src/
 
 # Textual live dev (hot-reload)
-textual run --dev src/wifit3/ui/app.py
+uv run textual run --dev src/wifit3/ui/app.py
 ```
 
 Tests require no hardware — all USB interactions are mocked via `pytest-mock`. `asyncio_mode = "auto"` is set globally, so async tests require no decorator.

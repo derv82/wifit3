@@ -11,7 +11,7 @@ Fully-functional userspace Python drivers (cold + warm bring-up, channel hop, in
 | Ralink RT2800USB (RT5572 / RT3572 / RT5372) | `chips/rt2800usb/` | 2.4 + 5 GHz (RT5572) | DONE |
 | Realtek RTL8821AU (AWUS036ACS) | `chips/rtl8821au/` | 2.4 + 5 GHz | DONE 2026-05-17, 27 BSSIDs/8s on ch1 |
 | Realtek RTL8822BU (TP-Link T3U Plus, AC1300) | `chips/rtl8822bu/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-17, full RX + TX inject + 5G |
-| **Realtek RTL8812AU (AWUS036ACH)** | `chips/rtl8812au/` | **2.4 + 5 GHz, 2T2R** | **DONE 2026-05-17, RX + deauth confirmed by handshake re-capture** |
+| Realtek RTL8812AU (AWUS036ACH) | `chips/rtl8812au/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-17, RX + deauth confirmed by handshake re-capture |
 | Mediatek MT7921AU (AWUS036AXML) | `chips/mt7921au/` (scaffold) | — | PAUSED — see [[MT7921AU.md]] (EP0 dies post-FW_START_REQ on WinUSB; blocked on libusb bump for RAW_IO support) |
 
 Family-shared infrastructure under `chips/rtw88_base/` covers transport,

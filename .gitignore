@@ -23,3 +23,6 @@ usb_dumps/
 scratch/
 debug.log
 usb_transactions.log
+
+# If it starts with a dot, committed it gets not
+.*

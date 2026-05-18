@@ -7,7 +7,9 @@ from rich.markup import escape
 from rich.text import Text
 
 from wifit3.engine.models import AccessPoint
-from typing import Dict
+from typing import Dict, List, Optional
+
+from .channel_filter import ChannelFilterDialog
 
 class ScannerView(Screen):
     """The main AP scanning list screen."""
@@ -37,6 +39,8 @@ class ScannerView(Screen):
         self._refresh_timer = None
         self._sort_idx = 2 # Default to "signal" (PWR)
         self._sort_reverse = True
+        # None = hop on every channel the driver supports.
+        self._channel_filter: Optional[List[int]] = None
 
     def compose(self) -> ComposeResult:
         # A simple header with gradient-like styling (CSS handles the look)
@@ -184,7 +188,84 @@ class ScannerView(Screen):
 
     def action_change_channel(self) -> None:
         log = self.query_one("#system-log", RichLog)
-        log.write("[bold yellow][!] Channel filter dialog not yet implemented.[/bold yellow]")
+        iface = self.app.active_interface
+        if not iface:
+            log.write("[bold red][!] No active interface.[/bold red]")
+            return
+
+        supported = getattr(iface.driver, "SUPPORTED_CHANNELS", None)
+        if not supported:
+            log.write(
+                "[bold red][!] Driver did not declare SUPPORTED_CHANNELS.[/bold red]"
+            )
+            return
+
+        dialog = ChannelFilterDialog(
+            supported_channels=list(supported),
+            current_filter=self._channel_filter,
+        )
+        self.app.push_screen(dialog, self._on_channel_filter_result)
+
+    async def _on_channel_filter_result(
+        self, result: Optional[List[int]]
+    ) -> None:
+        log = self.query_one("#system-log", RichLog)
+        if result is None:
+            log.write("[dim]Channel filter unchanged.[/dim]")
+            return
+
+        iface = self.app.active_interface
+        if not iface:
+            return
+
+        self._channel_filter = result
+        await iface.stop_hopping()
+
+        # Drop APs we'll no longer see on the filtered set. Without this,
+        # the table keeps showing stale 5 GHz rows after the user narrows
+        # to 2.4 GHz (and vice versa) until each entry ages out — which it
+        # currently never does.
+        dropped = self._prune_aps_outside(result)
+
+        await iface.start_hopping(channels=result, interval=0.25)
+
+        ch_24 = [c for c in result if c <= 14]
+        ch_5 = [c for c in result if c > 14]
+        parts = []
+        if ch_24:
+            parts.append(f"{len(ch_24)} on 2.4 GHz")
+        if ch_5:
+            parts.append(f"{len(ch_5)} on 5 GHz")
+        summary = " + ".join(parts) if parts else f"{len(result)} channels"
+        log.write(
+            f"[bold green][+] Hopping {summary}:[/bold green] {result}"
+        )
+        if dropped:
+            log.write(f"[dim]  Cleared {dropped} AP(s) outside the filter.[/dim]")
+
+    def _prune_aps_outside(self, channels: List[int]) -> int:
+        """Remove APs whose channel is not in *channels* from the registry,
+        local cache, and DataTable. Returns the number of APs dropped."""
+        iface = self.app.active_interface
+        if not iface:
+            return 0
+        keep = set(channels)
+        table = self.query_one("#ap-table", DataTable)
+
+        stale = [
+            bssid
+            for bssid, ap in iface.access_points.items()
+            if ap.channel not in keep
+        ]
+        for bssid in stale:
+            iface.access_points.pop(bssid, None)
+            self.ap_cache.pop(bssid, None)
+            try:
+                table.remove_row(bssid)
+            except Exception:
+                # Row may already be gone if a race occurred with refresh_table.
+                pass
+        return len(stale)
 
     async def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         bssid = event.row_key.value
