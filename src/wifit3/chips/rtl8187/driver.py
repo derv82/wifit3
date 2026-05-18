@@ -50,18 +50,20 @@ class RTL8187Driver:
             logger.info(f"Progress {int(pct*100)}%: {msg}")
 
         _update(0.05, "Probing RTL8187 hardware state...")
-        
+
         # Passive Detection: Try to read from Bulk IN (EP 0x81).
         # Warm hardware will either have data or a standard timeout.
         # Cold hardware often rejects or stalls the Bulk pipe early.
-        try:
-            loop = asyncio.get_running_loop()
-            # Short read attempt to see if firmware is responsive
-            data = await loop.run_in_executor(None, self.dev.read, USB_EP_BULK_IN, 64, 100)
-            if len(data) >= 0:
-                self.is_warm = True
-        except usb.core.USBError:
-            self.is_warm = False
+        # Skip the probe if the caller already asserted the state.
+        if not self.is_warm:
+            try:
+                loop = asyncio.get_running_loop()
+                # Short read attempt to see if firmware is responsive
+                data = await loop.run_in_executor(None, self.dev.read, USB_EP_BULK_IN, 64, 100)
+                if len(data) >= 0:
+                    self.is_warm = True
+            except usb.core.USBError:
+                self.is_warm = False
 
         if self.is_warm:
             _update(0.1, "Device is already WARM. Skipping bootstrap sequence.")

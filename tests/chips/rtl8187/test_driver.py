@@ -3,11 +3,15 @@ import asyncio
 import usb.core
 from unittest.mock import patch
 from wifit3.chips.rtl8187.driver import RTL8187Driver
+from wifit3.chips.rtl8187.constants import USB_EP_BULK_IN
 
 @pytest.mark.asyncio
 async def test_rtl8187_connect_cold(usb_mock):
     dev = usb.core.find()
-    
+
+    # Warmth probe: a USBError on the bulk-IN read signals cold, so connect() runs the bootstrap.
+    usb_mock.expect_read(USB_EP_BULK_IN, 64).error_with(usb.core.USBError("cold"))
+
     # Define a tiny mock sequence
     mock_seq = [
         ("WRITE", 0x1234, 0x5678, [0xaa], 0),
@@ -15,7 +19,7 @@ async def test_rtl8187_connect_cold(usb_mock):
         ("WRITE_AND_WAIT", 0x2222, 0x3333, [0xbb], 0),
         ("SET_CONFIG", 0, 0, 0, 0)
     ]
-    
+
     # 1. WRITE
     usb_mock.expect_ctrl(0x40, 5, 0x1234, 0x5678)
     

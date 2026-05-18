@@ -72,9 +72,10 @@ class AR9271Driver:
                 progress_cb(pct, msg)
             logger.info(f"Progress {int(pct*100)}%: {msg}")
 
-        # 1. Single check for warmth
-        _update(0.05, "Probing hardware state...")
-        self.is_warm = await self._check_if_warm()
+        # 1. Single check for warmth (skip if caller already asserted warmth)
+        if not self.is_warm:
+            _update(0.05, "Probing hardware state...")
+            self.is_warm = await self._check_if_warm()
         
         if not self.is_warm:
             _update(0.1, "AR9271 is COLD. Initiating firmware upload...")
