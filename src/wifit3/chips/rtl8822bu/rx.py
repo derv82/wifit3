@@ -20,13 +20,16 @@ from wifit3.chips.rtw88_base.rx_common import (  # noqa: F401  (re-exports)
 )
 
 
-def parse_phy_status_rssi_8822b(buf: bytes, offset: int) -> int | None:
+def parse_phy_status_rssi_8822b(
+    buf: bytes, offset: int, _stat: RxPktStat
+) -> int | None:
     """Mirror `rtw8822b.c:query_phy_status_page0` / `_page1` for RSSI.
 
     Returns approximate RSSI in dBm. Page 0 (CCK) reports a single PWDB at
     byte 1 of the phy_status; page 1 (OFDM/HT/VHT) reports PWDB_A and
     PWDB_B at bytes 1 and 2 — we take the max for a "what the receiver saw"
-    estimate.
+    estimate. The phy_status page byte is self-describing, so RxPktStat is
+    unused here (signature matches the shared PhyStatusRssi callback).
     """
     if len(buf) - offset < 4:
         return None

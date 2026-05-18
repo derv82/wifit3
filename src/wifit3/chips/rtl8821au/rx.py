@@ -44,6 +44,7 @@ RX_PKT_DESC_SZ = 24      # 8821A chip param
 PHY_STATUS_BYTES = 8     # rtw_jaguar_phy_status_rpt is 8x u32 = 32B but
                          # drv_info_sz returns multiples of 8B and a Jaguar
                          # status frame is reported as drv_info_sz=4 → 32B.
+DESC_RATE11M = 0x03      # last CCK rate; anything > this is OFDM/HT/VHT
 
 
 @dataclass(frozen=True)
@@ -134,18 +135,40 @@ def parse_rx_pkt_desc(buf: bytes, offset: int = 0) -> RxPktStat:
     )
 
 
-def parse_jaguar_phy_status_rssi(buf: bytes, offset: int) -> int | None:
-    """Extract RSSI from rtw_jaguar_phy_status_rpt.w1 (8821A path).
+def _rtw8821a_cck_rx_pwr(lna_idx: int, vga_idx: int) -> int:
+    """Port of rtw8821a_cck_rx_pwr (rtw8821a.c:19-39). Returns dBm.
 
-    Per rtw88xxa.c:1523, the gain is in w1[6:0] for path A. Convert to
-    dBm: dbm = -(95 - gain) ≈ -95..-25 dBm. Returns None if buffer short.
+    Note: lna_idx=3 is intentionally absent from the kernel switch — it
+    falls through to default and returns 0.
+    """
+    lna_gain_table = (15, -1, -17, 0, -30, -38)
+    if lna_idx in (0, 1, 2, 4, 5):
+        return lna_gain_table[lna_idx] - 2 * vga_idx
+    return 0
+
+
+def parse_jaguar_phy_status_rssi(
+    buf: bytes, offset: int, stat: RxPktStat,
+) -> int | None:
+    """Port of rtw88xxa_query_phy_status (rtw88xxa.c:1518) for the 8821A path.
+
+    Rate-aware (mirrors the kernel branch on `pkt_stat->rate`):
+      - CCK (rate <= DESC_RATE11M): lna_idx/vga_idx in w1 → 8821a CCK table.
+      - OFDM/HT/VHT: gain_a in w0[6:0] → dBm = gain_a - 110.
+    8821A is 1T1R, so we only read path A (no path-B max-reduction).
+    Returns None only if the buffer is too short.
     """
     if len(buf) - offset < 8:
         return None
-    w1 = struct.unpack_from("<I", buf, offset + 4)[0]
-    gain = w1 & 0x7F          # RTW_JGRPHY_W1_GAIN_A
-    # rtw88 maps gain → rssi via: rssi_db = -95 + gain
-    return -95 + gain
+    w0, w1 = struct.unpack_from("<2I", buf, offset)
+
+    if stat.rate <= DESC_RATE11M:
+        vga_idx = (w1 >> 8) & 0x1F     # RTW_JGRPHY_W1_AGC_RPT_VGA_IDX
+        lna_idx = (w1 >> 13) & 0x07    # RTW_JGRPHY_W1_AGC_RPT_LNA_IDX
+        return _rtw8821a_cck_rx_pwr(lna_idx, vga_idx)
+
+    gain_a = w0 & 0x7F                 # RTW_JGRPHY_W0_GAIN_A
+    return gain_a - 110
 
 
 def iter_bulk_frames(buf: bytes) -> Iterator[tuple[RxPktStat, bytes, int | None]]:
@@ -170,7 +193,7 @@ def iter_bulk_frames(buf: bytes) -> Iterator[tuple[RxPktStat, bytes, int | None]
 
         rssi = None
         if stat.phy_status_present and stat.drv_info_sz >= 8:
-            rssi = parse_jaguar_phy_status_rssi(buf, pos + RX_PKT_DESC_SZ)
+            rssi = parse_jaguar_phy_status_rssi(buf, pos + RX_PKT_DESC_SZ, stat)
 
         mpdu_start = pos + stat.mpdu_offset
         mpdu = bytes(buf[mpdu_start: mpdu_start + stat.pkt_len])

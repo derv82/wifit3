@@ -28,6 +28,7 @@ import time
 
 from .constants import (
     BIT_DIS_TSF_UDT,
+    BIT_APP_PHYSTS,
     BIT_EN_BCN_FUNCTION,
     BIT_DMA_BURST_CNT,
     BIT_DMA_BURST_SIZE_512,
@@ -105,6 +106,7 @@ from .constants import (
     REG_RX_PKT_LIMIT,
     REG_RXDMA_MODE,
     REG_RXDMA_STATUS,
+    REG_RCR,
     REG_RXFLTMAP0,
     REG_RXFLTMAP1,
     REG_RXFLTMAP2,
@@ -122,6 +124,7 @@ from .constants import (
     REG_USTIME_EDCA,
     REG_USTIME_TSF,
     REG_WMAC_LBK_BF_HD,
+    REG_WMAC_OPTION_FUNCTION,
     REPORT_BUF,
     RQPN_USB2_BE,
     RQPN_USB2_BK,
@@ -484,8 +487,13 @@ def post_fw_mac_init(transport: RTL8821AUTransport, fifo: FifoConf) -> None:
     # 1089: REG_TRXFF_BNDY + 2 (u16)
     transport.write16(REG_TRXFF_BNDY + 2, RXFF_SIZE - REPORT_BUF - 1)
 
-    # 1097
+    # 1097 — rtw_drv_info_cfg (mac.c:1373). Sets PHY_STATUS_SIZE, enables
+    # BIT_APP_PHYSTS so the chip appends a Jaguar phy_status report to every
+    # RX frame's drv_info area (needed for RSSI), and clears the two PHYSTS
+    # option bits at REG_WMAC_OPTION_FUNCTION+4 per mac.c:1386.
     transport.write8(REG_RX_DRVINFO_SZ, PHY_STATUS_SIZE)
+    transport.write32_set(REG_RCR, BIT_APP_PHYSTS)
+    transport.write32_clr(REG_WMAC_OPTION_FUNCTION + 4, (1 << 8) | (1 << 9))
 
     # 1099-1100
     transport.write32(REG_HIMR0, 0)

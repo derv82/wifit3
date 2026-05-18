@@ -174,6 +174,8 @@ REG_ACKTO = 0x0640
 REG_RXFLTMAP0 = 0x06A0
 REG_RXFLTMAP1 = 0x06A2
 REG_RXFLTMAP2 = 0x06A4
+REG_RCR = 0x0608                       # reg.h:502
+REG_WMAC_OPTION_FUNCTION = 0x07D0      # reg.h
 REG_USB_MOD = 0xF008
 REG_USB3_RXITV = 0xF050
 
@@ -186,6 +188,7 @@ BIT_MACRXEN = 1 << 7                  # bit 7 of byte 0 at REG_CR
 BIT_MACTXEN = 1 << 6                  # bit 6 of byte 0 at REG_CR
 BIT_DIS_TSF_UDT = 1 << 4              # REG_BCN_CTRL (also high byte)
 BIT_EN_BCN_FUNCTION = 1 << 3          # REG_BCN_CTRL
+BIT_APP_PHYSTS = 1 << 28              # REG_RCR — append phy_status to drv_info
 
 # REG_RXDMA_MODE encoding (used by rtw_usb_init_burst_pkt_len).
 BIT_DMA_MODE = 1 << 1
