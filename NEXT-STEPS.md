@@ -20,9 +20,13 @@ and the legacy MCUFWDL FW upload — both 88xxA chips (8821a + 8812a) and
 the modern 8822b share through it.
 
 Attack stack so far: handshake **detection** (the 4-way EAPOL pair is
-parsed live), deauth inject (verified on 8812au by re-capturing handshake
-after target client reconnect). Pcap save and PMKID extract not yet
-implemented.
+parsed live, now per-client so simultaneous clients never overwrite each
+other), **per-AP capture display + pcap save** in Focus view (linktype-105
+libpcap, hashcat -m 22000 ready via `hcxpcapngtool`), deauth inject
+(verified on 8812au by re-capturing handshake after target client
+reconnect). PMKID extract not yet implemented — the model has a
+forward-compat `Handshake.pmkid` slot and the UI displays its status, but
+the actual Auth/Assoc-Req injection + RSN-IE PMKID parse is still TODO.
 
 ## Open work on RTL8812AU (the just-landed chipset)
 
@@ -66,9 +70,19 @@ No actual functioning attacks (yet).
 We want to avoid WEP as it's outdated. But all other attacks that Wifite2 can do now we should be able to do, natively in Python.
 
 * 4-way Handshake capture (via client deauth)
-  - We already detect the handshake packets in the WlanManager.
-  - Indicate when we have a handshake in the "Focus" UI view.
-  - Auto-save handshakes to ./handshakes/? (current directory)? Or prompt user where to save (dialog window).
+  - We already detect the handshake packets in the WlanManager. ✅
+  - Indicate when we have a handshake in the "Focus" UI view. ✅ (CAPTURE
+    column + per-client Handshake column + EVENT LOG, all live-updating).
+  - ✅ Save button writes `./captures/<ssid>_<bssid>_<ts>.pcap` (linktype
+    105, hashcat-ready). Per-AP file containing the beacon + every EAPOL
+    we have for every client that handshook on this BSSID.
+  - **Open: dynamic channel re-steering.** If the AP CSA-jumps to another
+    channel or shows stronger signal elsewhere (multi-band AP advertising
+    on both 2.4 and 5), Focus stays glued to whatever channel was current
+    on entry. Future QoL: periodically probe nearby channels (<100 ms
+    each) and re-tune if the AP's beacon rate/RSSI is higher there.
+    Likely tied to ESSID-based targeting (one logical AP can have multiple
+    BSSIDs across bands).
 * PMKID extraction (see `hcxdumptool` and [this page](https://hashcat.net/forum/thread-7717.html) for details)
   - Could be a massive undertaking.
   - It looks like hcxdumptool just has chipset-specific optimizations for capturing packets... But there might be more than it's doing.

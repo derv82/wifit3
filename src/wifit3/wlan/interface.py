@@ -115,29 +115,41 @@ class WlanInterface:
                             ap.ssid = ssid
                             logger.info(f"DECLOAKED: {bssid} -> {ssid} via Assoc Req from {client_mac}")
 
-        # Handshake tracking
+        # Handshake tracking — per-client, never wiped.
         if frame_type == "eapol" and bssid in self.access_points:
             client_mac = parsed.get("source") if parsed.get("dest") == bssid else parsed.get("dest")
             if client_mac:
                 ap = self.access_points[bssid]
-                if not ap.handshake or ap.handshake.client_mac != client_mac:
-                    ap.handshake = Handshake(bssid=bssid, client_mac=client_mac)
-                
+                hs = ap.handshakes.get(client_mac)
+                if hs is None:
+                    hs = Handshake(
+                        bssid=bssid,
+                        client_mac=client_mac,
+                        beacon_frame=ap.last_beacon_frame,
+                    )
+                    ap.handshakes[client_mac] = hs
+
                 raw_frame = parsed.get("raw")
                 replay = parsed.get("eapol_replay_counter")
                 if replay and raw_frame:
                     replay_hex = replay.hex()
-                    frames = ap.handshake.eapol_frames_by_replay.setdefault(replay_hex, [])
+                    frames = hs.eapol_frames_by_replay.setdefault(replay_hex, [])
                     # Simple deduplication
                     if raw_frame not in frames:
                         frames.append(raw_frame)
                         logger.info(f"[EAPOL] Saved frame for {bssid} <-> {client_mac} (Replay: {replay_hex})")
 
-        # Beacon handling (ensure beacon frame is saved for handshake)
+        # Beacon handling: stash the most recent beacon on the AP, and
+        # back-fill any existing handshakes that don't have one yet (covers
+        # the case where EAPOL arrived before the first beacon).
         if frame_type == "beacon" and bssid in self.access_points:
             ap = self.access_points[bssid]
-            if ap.handshake and not ap.handshake.beacon_frame:
-                ap.handshake.beacon_frame = parsed.get("raw")
+            raw_beacon = parsed.get("raw")
+            if raw_beacon:
+                ap.last_beacon_frame = raw_beacon
+                for hs in ap.handshakes.values():
+                    if not hs.beacon_frame:
+                        hs.beacon_frame = raw_beacon
 
     def get_access_points(self) -> List[AccessPoint]:
         """Returns a list of discovered Access Points."""

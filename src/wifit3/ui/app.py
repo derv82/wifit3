@@ -59,15 +59,30 @@ class WifiteApp(App):
         padding: 1;
     }
     #ap-info-panel {
-        height: 8;
+        height: 9;
     }
     #client-panel {
         height: 1fr;
+        min-height: 6;
+    }
+    #bottom-row {
+        height: 11;
     }
     #attack-panel {
-        height: auto;
+        width: 1fr;
+        height: 100%;
         border: solid $primary;
-        padding: 1;
+        padding: 0 1;
+    }
+    #event-log-panel {
+        width: 1fr;
+        height: 100%;
+        border: solid $primary;
+        padding: 0 1;
+    }
+    #focus-event-log {
+        height: 1fr;
+        border: none;
     }
     .button-row {
         height: auto;
@@ -75,7 +90,8 @@ class WifiteApp(App):
         margin-top: 1;
     }
     Button {
-        margin-right: 2;
+        margin-right: 1;
+        min-width: 12;
     }
     """
 
