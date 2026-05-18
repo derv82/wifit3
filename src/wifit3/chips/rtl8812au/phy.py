@@ -38,6 +38,7 @@ from wifit3.chips.rtw88_base.phy_cond import (
 from .assets import agc_tbl, bb_tbl, mac_tbl, rf_a_tbl, rf_b_tbl
 from .constants import (
     BASIC_RATES_2G,
+    BASIC_RATES_5G,
     BB_SWING_2G_DEFAULT,
     BB_SWING_MASK,
     BIT_CCK_RPT_FORMAT,
@@ -51,6 +52,7 @@ from .constants import (
     BIT_RX_PSEL_RST,
     REG_ACLK_MON,
     REG_AFE_CTRL3,
+    REG_ANTSEL_SW,
     REG_BAR_MODE_CTRL,
     REG_BWINDICATION,
     REG_CCASEL,
@@ -76,6 +78,7 @@ from .constants import (
     REG_RXPSEL,
     REG_SYS_FUNC_EN,
     REG_SYS_SDIO_CTRL,
+    REG_TXPKT_EMPTY,
     REG_TXPSEL,
     REG_TXSCALE_A,
     REG_TXSCALE_B,
@@ -332,6 +335,111 @@ def switch_band_2g_20mhz(transport: RTL8812AUTransport, efuse: EfuseDefaults) ->
     transport.write32_mask(REG_CCK_RX, 0x0F000000, 0x1)
     transport.write32_mask(REG_RRSR, 0xFFFFF, BASIC_RATES_2G)
     transport.write8_clr(REG_CCK_CHECK, BIT_CHECK_CCK_EN)
+
+    _set_channel_bb_swing(transport, efuse)
+
+
+# ---------------------------------------------------------------------------
+# 5 GHz band switch (rtw88xxa.c:972..1003 — 8812A else-branch)
+# ---------------------------------------------------------------------------
+
+def _phy_set_rfe_reg_5g_8812a(transport: RTL8812AUTransport, efuse: EfuseDefaults) -> None:
+    """Port of rtw8812a_phy_set_rfe_reg_5g (rtw88xxa.c:874..924).
+
+    All 6 rfe_option cases. Common default is case 0 (PINMUX=0x77337717,
+    INV-mask 0x3FF00000 = 0x010 on both paths).
+    """
+    rfe = efuse.rfe_option
+    if rfe == 0:
+        transport.write32(REG_RFE_PINMUX_A, 0x77337717)
+        transport.write32(REG_RFE_PINMUX_B, 0x77337717)
+        transport.write32_mask(REG_RFE_INV_A, RFE_INV_MASK, 0x010)
+        transport.write32_mask(REG_RFE_INV_B, RFE_INV_MASK, 0x010)
+    elif rfe == 1:
+        if efuse.btcoex:
+            transport.write32_mask(REG_RFE_PINMUX_A, 0xFFFFFF, 0x337717)
+            transport.write32(REG_RFE_PINMUX_B, 0x77337717)
+            transport.write32_mask(REG_RFE_INV_A, 0x33F00000, 0x000)
+            transport.write32_mask(REG_RFE_INV_B, RFE_INV_MASK, 0x000)
+        else:
+            transport.write32(REG_RFE_PINMUX_A, 0x77337717)
+            transport.write32(REG_RFE_PINMUX_B, 0x77337717)
+            transport.write32_mask(REG_RFE_INV_A, RFE_INV_MASK, 0x000)
+            transport.write32_mask(REG_RFE_INV_B, RFE_INV_MASK, 0x000)
+    elif rfe in (2, 4):
+        transport.write32(REG_RFE_PINMUX_A, 0x77337777)
+        transport.write32(REG_RFE_PINMUX_B, 0x77337777)
+        transport.write32_mask(REG_RFE_INV_A, RFE_INV_MASK, 0x010)
+        transport.write32_mask(REG_RFE_INV_B, RFE_INV_MASK, 0x010)
+    elif rfe == 3:
+        transport.write32(REG_RFE_PINMUX_A, 0x54337717)
+        transport.write32(REG_RFE_PINMUX_B, 0x54337717)
+        transport.write32_mask(REG_RFE_INV_A, RFE_INV_MASK, 0x010)
+        transport.write32_mask(REG_RFE_INV_B, RFE_INV_MASK, 0x010)
+        transport.write32_mask(REG_ANTSEL_SW, 0x00000303, 0x1)
+    elif rfe == 5:
+        transport.write8(REG_RFE_PINMUX_A + 2, 0x33)
+        transport.write32(REG_RFE_PINMUX_B, 0x77337777)
+        transport.write8_set(REG_RFE_INV_A + 3, 1 << 0)
+        transport.write32_mask(REG_RFE_INV_B, RFE_INV_MASK, 0x010)
+    elif rfe == 6:
+        transport.write32(REG_RFE_PINMUX_A, 0x07737717)
+        transport.write32(REG_RFE_PINMUX_B, 0x07737717)
+        transport.write32(REG_RFE_INV_A, 0x00000077)
+        transport.write32(REG_RFE_INV_B, 0x00000077)
+    else:
+        logger.warning("rfe_option=%d not handled for 8812a 5G; falling through to case 0",
+                       rfe)
+        transport.write32(REG_RFE_PINMUX_A, 0x77337717)
+        transport.write32(REG_RFE_PINMUX_B, 0x77337717)
+        transport.write32_mask(REG_RFE_INV_A, RFE_INV_MASK, 0x010)
+        transport.write32_mask(REG_RFE_INV_B, RFE_INV_MASK, 0x010)
+
+
+def _poll_txpkt_empty(transport: RTL8812AUTransport,
+                      max_attempts: int = 50, interval_s: float = 50e-6) -> None:
+    """Wait for REG_TXPKT_EMPTY bits[5:4] == 0x3 (HI + MGT queues drained).
+
+    Mirrors the read_poll_timeout_atomic in rtw88xxa.c:978 (50 attempts ×
+    ~50us = 2.5ms budget). The kernel uses `(reg & 0x30) == 0x30`.
+    """
+    import time as _t
+    for _ in range(max_attempts):
+        if transport.read16(REG_TXPKT_EMPTY) & 0x30 == 0x30:
+            return
+        _t.sleep(interval_s)
+    logger.warning("TXPKT_EMPTY poll timed out before band switch (continuing)")
+
+
+def switch_band_5g_20mhz(transport: RTL8812AUTransport, efuse: EfuseDefaults) -> None:
+    """Port of rtw88xxa_switch_band(5G, 20MHz) for 8812A (rtw88xxa.c:972..1003).
+
+    8812A 5G order differs from 2G:
+      1. write CCK_CHECK BIT_CHECK_CCK_EN (5G doesn't use CCK; gates BB)
+      2. poll TXPKT_EMPTY (wait for HI/MGT queues to drain)
+      3. RXPSEL reset
+      4. BWINDICATION = 2, PDMFTH 17:13 = 0x15, PDMFTH 3:1 = 0x04, CCASEL = 1
+      5. rtw8812a_phy_set_rfe_reg_5g (different pinmux from 2G)
+      6. TXPSEL bits[7:4] = 0, CCK_RX bits[27:24] = 0xF
+      7. basic_rates = OFDM 6/12/24 only
+
+    Skips the 8821A-only `rtw8821a_set_ext_band_switch`.
+    """
+    transport.write8_set(REG_CCK_CHECK, BIT_CHECK_CCK_EN)
+    _poll_txpkt_empty(transport)
+
+    transport.write32_set(REG_RXPSEL, BIT_RX_PSEL_RST)
+
+    # 8812A else-branch (rtw88xxa.c:986..993)
+    transport.write32_mask(REG_BWINDICATION, 0x3, 0x2)
+    transport.write32_mask(REG_PDMFTH, 0x3E000, 0x15)
+    transport.write32_mask(REG_PDMFTH, 0x0E, 0x04)
+    transport.write32_mask(REG_CCASEL, 0x3, 1)
+    _phy_set_rfe_reg_5g_8812a(transport, efuse)
+
+    transport.write32_mask(REG_TXPSEL, 0xF0, 0)
+    transport.write32_mask(REG_CCK_RX, 0x0F000000, 0xF)
+    transport.write32_mask(REG_RRSR, 0xFFFFF, BASIC_RATES_5G)
 
     _set_channel_bb_swing(transport, efuse)
 

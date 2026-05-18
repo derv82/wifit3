@@ -198,8 +198,9 @@ def set_channel_2g_20mhz(
     _set_channel_rf_20mhz(transport)
 
 
-# 5 GHz channels — exposed for completeness but the band-switch helper
-# for 5G hasn't been ported yet (M-LATER).
+# 5 GHz channels — non-DFS subset exposed by default. DFS channels need
+# regulator clearance and are off-limits without dynamic-frequency-selection
+# infrastructure that wifit3 doesn't implement.
 CHANNELS_5G_NON_DFS = (36, 40, 44, 48, 149, 153, 157, 161, 165)
 CHANNELS_5G_DFS = (
     52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144,
@@ -209,3 +210,25 @@ CHANNELS_5G_ALL = CHANNELS_5G_NON_DFS + CHANNELS_5G_DFS
 
 def channel_band_is_2g(channel: int) -> bool:
     return channel <= 14
+
+
+def set_channel_5g_20mhz(
+    transport: RTL8812AUTransport,
+    channel: int,
+    *,
+    primary_chan_idx: int = 0,
+) -> None:
+    """Tune to a 5 GHz channel at 20 MHz bandwidth (2T2R).
+
+    Caller must have already band-switched to 5G via
+    :func:`phy.switch_band_5g_20mhz`. This just does the channel/bw RF
+    writes — _switch_channel already understands 5G channel ranges via
+    the fc_area + rf_mod_ag lookups.
+    """
+    from .constants import RTW_CHANNEL_WIDTH_20
+    if channel not in CHANNELS_5G_ALL:
+        raise ValueError(f"unsupported 5 GHz channel: {channel}")
+    logger.info("set_channel_5g_20mhz: ch=%d primary_idx=%d", channel, primary_chan_idx)
+    _switch_channel(transport, channel, RTW_CHANNEL_WIDTH_20)
+    _post_set_bw_mode_20mhz(transport, primary_chan_idx)
+    _set_channel_rf_20mhz(transport)

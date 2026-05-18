@@ -38,9 +38,11 @@ from wifit3.engine.protocols import DeviceID, ProgressCallback
 from wifit3.wlan.packet import WlanFrameParser
 
 from .chan import (
+    CHANNELS_5G_ALL,
     CHANNELS_5G_NON_DFS,
     channel_band_is_2g,
     set_channel_2g_20mhz,
+    set_channel_5g_20mhz,
 )
 from .constants import USB_PID_AWUS036ACH, USB_VID_REALTEK
 from .efuse import efuse_defaults_from_read, read_efuse_8812a
@@ -61,7 +63,12 @@ from .mac import (
     pre_fw_init,
     probe_chip_state,
 )
-from .phy import EfuseDefaults, post_mac_init_phy
+from .phy import (
+    EfuseDefaults,
+    post_mac_init_phy,
+    switch_band_2g_20mhz,
+    switch_band_5g_20mhz,
+)
 from .rx import iter_bulk_frames, probe_endpoints
 from .transport import RTL8812AUTransport
 from .tx import (
@@ -86,8 +93,9 @@ class RTL8812AUDriver:
         DeviceID(USB_VID_REALTEK, USB_PID_AWUS036ACH,
                  "Realtek RTL8812AU / ALFA AWUS036ACH"),
     ]
-    # M3-b: 2.4 GHz only for now. 5 GHz band-switch + channel tune is M-LATER.
-    SUPPORTED_CHANNELS = list(range(1, 14))
+    # 2.4 GHz channels 1..13 + non-DFS 5 GHz (UNII-1 + UNII-3). DFS channels
+    # are excluded by default to avoid the regulator-required clearance.
+    SUPPORTED_CHANNELS = list(range(1, 14)) + list(CHANNELS_5G_NON_DFS)
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RTL8812AUDriver":
@@ -327,20 +335,31 @@ class RTL8812AUDriver:
 
     # ---- set_channel ------------------------------------------------------
     async def set_channel(self, channel: int) -> bool:
-        if not channel_band_is_2g(channel):
-            logger.warning(
-                "RTL8812AU: 5 GHz channel %d not yet supported (M-LATER)",
-                channel,
-            )
-            return False
-        if not (1 <= channel <= 13):
+        is_2g = channel_band_is_2g(channel)
+        if is_2g and not (1 <= channel <= 14):
             logger.warning("RTL8812AU: invalid 2.4 GHz channel %d", channel)
             return False
+        if not is_2g and channel not in CHANNELS_5G_ALL:
+            logger.warning("RTL8812AU: unsupported 5 GHz channel %d", channel)
+            return False
+
         loop = asyncio.get_event_loop()
         try:
-            await loop.run_in_executor(
-                None, set_channel_2g_20mhz, self.transport, channel
-            )
+            # Band-switch only when crossing 2G↔5G. switch_band_*_20mhz does
+            # the RFE pinmux + BB cleanup needed for the new band.
+            if is_2g != self.current_band_is_2g:
+                if is_2g:
+                    await loop.run_in_executor(
+                        None, switch_band_2g_20mhz, self.transport, self._efuse
+                    )
+                else:
+                    await loop.run_in_executor(
+                        None, switch_band_5g_20mhz, self.transport, self._efuse
+                    )
+                self.current_band_is_2g = is_2g
+
+            tune = set_channel_2g_20mhz if is_2g else set_channel_5g_20mhz
+            await loop.run_in_executor(None, tune, self.transport, channel)
             self.current_channel = channel
             return True
         except (IOError, usb.core.USBError, ValueError) as e:

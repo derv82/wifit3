@@ -320,6 +320,13 @@ REG_ADCCLK = 0x08AC
 REG_ADC160 = 0x08C4
 REG_L1PKTH = 0x0848
 
+# 5 GHz switch_band extras (rtw88xxa.c:927).
+REG_TXPKT_EMPTY = 0x041A
+REG_ANTSEL_SW = 0x0900
+
+# 5 GHz basic rates: OFDM 6M / 12M / 24M only (no CCK on 5 GHz).
+BASIC_RATES_5G = (1 << DESC_RATE6M) | (1 << DESC_RATE12M) | (1 << DESC_RATE24M)
+
 # REG_WMAC_TRXPTCL_CTL bits (used by post_set_bw_mode).
 BIT_RFMOD = (1 << 7) | (1 << 8)
 BIT_RFMOD_40M = 1 << 7
