@@ -279,25 +279,54 @@ def phy_rf_config(transport: RTL8812AUTransport, efuse: EfuseDefaults) -> None:
 # ---------------------------------------------------------------------------
 
 def _phy_set_rfe_reg_24g_8812a(transport: RTL8812AUTransport, efuse: EfuseDefaults) -> None:
-    """Port of rtw8812a_phy_set_rfe_reg_24g (rtw88xxa.c:821).
+    """Port of rtw8812a_phy_set_rfe_reg_24g (rtw88xxa.c:821..872).
 
-    Only rfe_option=0 (= EfuseDefaults case) is exercised here. cases 1-6
-    will be wired in M-LATER when we actually read EFUSE. The case-0 path
-    is the cleanest — no antenna-diversity / BT-coex routing.
+    All 6 rfe_option cases. Critical for cards like AWUS036ACH which
+    burn rfe_option=3 (IFEM-ext, PINMUX=0x54337770 with antenna switch)
+    in EFUSE — using the wrong PINMUX leaves the chip's RF front-end
+    routed for an internal-LNA-only card and kills 2.4 GHz sensitivity.
     """
-    if efuse.rfe_option == 0 or efuse.rfe_option == 2:
+    rfe = efuse.rfe_option
+    if rfe in (0, 2):
         transport.write32(REG_RFE_PINMUX_A, 0x77777777)
         transport.write32(REG_RFE_PINMUX_B, 0x77777777)
         transport.write32_mask(REG_RFE_INV_A, RFE_INV_MASK, 0x000)
         transport.write32_mask(REG_RFE_INV_B, RFE_INV_MASK, 0x000)
+    elif rfe == 1:
+        if efuse.btcoex:
+            transport.write32_mask(REG_RFE_PINMUX_A, 0xFFFFFF, 0x777777)
+            transport.write32(REG_RFE_PINMUX_B, 0x77777777)
+            transport.write32_mask(REG_RFE_INV_A, 0x33F00000, 0x000)
+            transport.write32_mask(REG_RFE_INV_B, RFE_INV_MASK, 0x000)
+        else:
+            transport.write32(REG_RFE_PINMUX_A, 0x77777777)
+            transport.write32(REG_RFE_PINMUX_B, 0x77777777)
+            transport.write32_mask(REG_RFE_INV_A, RFE_INV_MASK, 0x000)
+            transport.write32_mask(REG_RFE_INV_B, RFE_INV_MASK, 0x000)
+    elif rfe == 3:
+        transport.write32(REG_RFE_PINMUX_A, 0x54337770)
+        transport.write32(REG_RFE_PINMUX_B, 0x54337770)
+        transport.write32_mask(REG_RFE_INV_A, RFE_INV_MASK, 0x010)
+        transport.write32_mask(REG_RFE_INV_B, RFE_INV_MASK, 0x010)
+        transport.write32_mask(REG_ANTSEL_SW, 0x00000303, 0x1)
+    elif rfe == 4:
+        transport.write32(REG_RFE_PINMUX_A, 0x77777777)
+        transport.write32(REG_RFE_PINMUX_B, 0x77777777)
+        transport.write32_mask(REG_RFE_INV_A, RFE_INV_MASK, 0x001)
+        transport.write32_mask(REG_RFE_INV_B, RFE_INV_MASK, 0x001)
+    elif rfe == 5:
+        transport.write8(REG_RFE_PINMUX_A + 2, 0x77)
+        transport.write32(REG_RFE_PINMUX_B, 0x77777777)
+        transport.write8_clr(REG_RFE_INV_A + 3, 1 << 0)
+        transport.write32_mask(REG_RFE_INV_B, RFE_INV_MASK, 0x000)
+    elif rfe == 6:
+        transport.write32(REG_RFE_PINMUX_A, 0x07772770)
+        transport.write32(REG_RFE_PINMUX_B, 0x07772770)
+        transport.write32(REG_RFE_INV_A, 0x00000077)
+        transport.write32(REG_RFE_INV_B, 0x00000077)
     else:
-        # M-LATER: cases 1, 3, 4, 5, 6 (EFUSE-driven). Until then, default
-        # to the case-0 behaviour rather than silently skipping.
-        logger.warning(
-            "rfe_option=%d not yet implemented for 8812a 2G; "
-            "falling through to case-0 defaults",
-            efuse.rfe_option,
-        )
+        logger.warning("rfe_option=%d not handled for 8812a 2G; falling "
+                       "through to case-0 defaults", rfe)
         transport.write32(REG_RFE_PINMUX_A, 0x77777777)
         transport.write32(REG_RFE_PINMUX_B, 0x77777777)
         transport.write32_mask(REG_RFE_INV_A, RFE_INV_MASK, 0x000)

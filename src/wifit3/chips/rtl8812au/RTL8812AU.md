@@ -280,14 +280,31 @@ state, fix at source so the workaround can come out.
 
 ## MX bundle (post-M4 polish) — 2026-05-17
 
-### MX-a: queue-clear bisect (awaiting hw test)
+### MX-a: queue regs are write-only on 8812au (explained)
 
-Diagnostic readback added in `post_mac_init_phy` via `_log_queue_state`.
-Running `scratch/test_hw_rtl8812au.py --debug` prints
-`REG_RQPN / REG_TXDMA_PQ_MAP` after each major init step (mac_tbl,
-phy_bb_config, phy_rf_config, switch_band, inline-pokes, drv_info_cfg).
-Once the user identifies which step flips them from non-zero to 0, we
-can fix at source and remove the `_arm_tx_queues` workaround.
+Bisect output (2026-05-17 hw test):
+
+```
+[Q-bisect] pre-post_mac_init_phy            RQPN=0x00000000  PQ_MAP=0x0000
+[Q-bisect] post mac_tbl                     RQPN=0x00000000  PQ_MAP=0x0000
+[Q-bisect] post phy_bb_config               RQPN=0x00000000  PQ_MAP=0x0000
+[Q-bisect] post phy_rf_config               RQPN=0x00000000  PQ_MAP=0x0000
+[Q-bisect] post switch_band_2g_20mhz        RQPN=0x00000000  PQ_MAP=0x0000
+[Q-bisect] post inline-pokes                RQPN=0x00000000  PQ_MAP=0x0000
+[Q-bisect] post drv_info_cfg                RQPN=0x00000000  PQ_MAP=0x0000
+```
+
+All zeros from the very first checkpoint — meaning the regs read back
+as 0 EVEN BEFORE `post_mac_init_phy` runs. Best explanation:
+`REG_RQPN`, `REG_RQPN_NPQ`, `REG_TXDMA_PQ_MAP` are **write-only "load"
+registers** on this chip. Writes latch the queue config into internal
+hardware state; readback always returns 0. The chip needs the
+`BIT_LD_RQPN` "commit" gesture **close to TX time** — without a fresh
+commit before bulk-OUT, MGMT queue NAKs every frame.
+
+`_arm_tx_queues` in `driver.py` re-issues the three writes before each
+`inject_frame`. Cheap (~3 control transfers), idempotent, robust.
+Workaround retained; this is hardware behavior, not a code bug.
 
 ### MX-b: rate-aware CCK RSSI parser ✓
 

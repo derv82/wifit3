@@ -369,17 +369,17 @@ class RTL8812AUDriver:
     def _arm_tx_queues(self) -> None:
         """Re-program REG_RQPN / REG_RQPN_NPQ / REG_TXDMA_PQ_MAP.
 
-        On 8812au, these get silently cleared somewhere between
-        ``post_fw_mac_init`` (which writes them) and a subsequent TX
-        attempt. Empirically, every TX bulk-OUT after a full bring-up
-        times out unless we re-arm the queue mapping first. Re-arming is
-        idempotent and cheap (~3 control writes), so we just do it
-        before every inject burst.
+        These appear to be **write-only "load" registers** on 8812au:
+        writing them latches the queue config into internal hardware
+        state, but readback always returns 0 (bisect on 2026-05-17
+        confirmed every checkpoint inside post_mac_init_phy reads back 0,
+        starting from pre-post_mac_init_phy itself). The chip needs the
+        BIT_LD_RQPN "commit" gesture close to TX time — without a fresh
+        commit before bulk-OUT, the MGMT queue NAKs every frame
+        indefinitely (USB ETIMEDOUT).
 
-        Root cause not yet pinned down — most likely a side-effect of
-        the 2T2R rf_b table load or some other 8812a-specific phy init
-        that 8821au doesn't do. TODO for M-LATER: bisect which phy step
-        clears the queue state, fix at source.
+        Cheap (~3 control writes), idempotent. Calling before each
+        inject_frame is robust and the cost is negligible.
         """
         fifo = set_trx_fifo_info()
         init_queue_reserved_page(self.transport, fifo)
