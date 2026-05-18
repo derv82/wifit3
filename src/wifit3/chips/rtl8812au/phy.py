@@ -457,10 +457,15 @@ def _log_queue_state(transport: RTL8812AUTransport, label: str) -> None:
     write in post_mac_init_phy.
     """
     from .constants import REG_RQPN, REG_TXDMA_PQ_MAP
+    # DEBUG-level so this only fires when the user explicitly passes --debug
+    # to the test harness. Two control-transfer reads per call; cheap but
+    # noisy if it printed every cold boot.
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
     rqpn = transport.read32(REG_RQPN)
     pq_map = transport.read16(REG_TXDMA_PQ_MAP)
-    logger.info("[Q-bisect] %-32s RQPN=0x%08x  PQ_MAP=0x%04x",
-                label, rqpn, pq_map)
+    logger.debug("[Q-bisect] %-32s RQPN=0x%08x  PQ_MAP=0x%04x",
+                 label, rqpn, pq_map)
 
 
 def post_mac_init_phy(transport: RTL8812AUTransport, efuse: EfuseDefaults) -> None:
