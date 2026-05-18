@@ -340,6 +340,21 @@ def switch_band_2g_20mhz(transport: RTL8812AUTransport, efuse: EfuseDefaults) ->
 # Orchestrator (rtw88xxa.c:1083..1217 minus what M2-b already did)
 # ---------------------------------------------------------------------------
 
+def _log_queue_state(transport: RTL8812AUTransport, label: str) -> None:
+    """Diagnostic: log REG_RQPN + REG_TXDMA_PQ_MAP for MX-a bisection.
+
+    These two registers get silently cleared between post_fw_mac_init and
+    TX attempts on 8812au, requiring the _arm_tx_queues workaround in
+    driver.py. To find the offending step, call this after each major
+    write in post_mac_init_phy.
+    """
+    from .constants import REG_RQPN, REG_TXDMA_PQ_MAP
+    rqpn = transport.read32(REG_RQPN)
+    pq_map = transport.read16(REG_TXDMA_PQ_MAP)
+    logger.info("[Q-bisect] %-32s RQPN=0x%08x  PQ_MAP=0x%04x",
+                label, rqpn, pq_map)
+
+
 def post_mac_init_phy(transport: RTL8812AUTransport, efuse: EfuseDefaults) -> None:
     """Run the BB/RF/band-switch chunk after M2-b's post_fw_mac_init.
 
@@ -353,17 +368,24 @@ def post_mac_init_phy(transport: RTL8812AUTransport, efuse: EfuseDefaults) -> No
       * rtw_phy_init (DIG calibration loop init)
       * rtw88xxa_pwrtrack_init (pure software state)
     """
+    _log_queue_state(transport, "pre-post_mac_init_phy")
+
     # 1083 — mac_tbl
     load_mac_table(transport, efuse)
+    _log_queue_state(transport, "post mac_tbl")
 
     # 1177-1178 — BB + RF tables
     phy_bb_config(transport, efuse)
+    _log_queue_state(transport, "post phy_bb_config")
+
     phy_rf_config(transport, efuse)
+    _log_queue_state(transport, "post phy_rf_config")
 
     # 1180-1181 — 8812a 1T config: skipped (we're 2T2R).
 
     # 1183 — switch to 2.4 GHz, 20 MHz
     switch_band_2g_20mhz(transport, efuse)
+    _log_queue_state(transport, "post switch_band_2g_20mhz")
 
     # 1185-1191
     transport.write32(RTW_SEC_CMD_REG, (1 << 31) | (1 << 30))
@@ -394,6 +416,7 @@ def post_mac_init_phy(transport: RTL8812AUTransport, efuse: EfuseDefaults) -> No
     transport.write8(REG_USB_HRPWM, 0)
     # 1217 — REG_FWHW_TXQ_CTRL set BIT(12) (byte 1, BIT(4))
     transport.write8_set(REG_FWHW_TXQ_CTRL + 1, 1 << 4)
+    _log_queue_state(transport, "post inline-pokes")
 
     # 1219 — read cck_high_power (informational, RX side uses it later).
     val = transport.read32(REG_CCK_RPT_FORMAT)
@@ -421,3 +444,4 @@ def post_mac_init_phy(transport: RTL8812AUTransport, efuse: EfuseDefaults) -> No
         transport.read32(_REG_RCR),
         transport.read8(_REG_RX_DRVINFO_SZ),
     )
+    _log_queue_state(transport, "post drv_info_cfg (end of post_mac_init_phy)")

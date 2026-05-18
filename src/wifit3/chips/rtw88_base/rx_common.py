@@ -109,7 +109,9 @@ def parse_rx_pkt_desc(buf: bytes, offset: int = 0) -> RxPktStat:
 
 
 # A phy-status RSSI parser is per-chip; pass it in here.
-PhyStatusRssi = Callable[[bytes, int], int | None]
+# It receives the buffer, the offset where phy_status starts (= rx_desc_end),
+# and the parsed RxPktStat (for rate-aware branching, e.g. CCK vs OFDM).
+PhyStatusRssi = Callable[[bytes, int, "RxPktStat"], int | None]
 
 
 def iter_bulk_frames(
@@ -138,7 +140,7 @@ def iter_bulk_frames(
         rssi = None
         if (stat.phy_status_present and stat.drv_info_sz >= 8
                 and phy_status_rssi is not None):
-            rssi = phy_status_rssi(buf, pos + RX_PKT_DESC_SZ)
+            rssi = phy_status_rssi(buf, pos + RX_PKT_DESC_SZ, stat)
 
         mpdu_start = pos + stat.mpdu_offset
         mpdu = bytes(buf[mpdu_start: mpdu_start + stat.pkt_len])
