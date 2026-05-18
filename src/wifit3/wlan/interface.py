@@ -59,7 +59,11 @@ class WlanInterface:
             ssid = parsed.get("ssid")
             channel = parsed.get("channel", self.current_channel)
             enc = parsed.get("encryption", "OPEN")
-            
+            wpa3 = parsed.get("wpa3", False)
+            transition_mode = parsed.get("transition_mode", False)
+            pmf_capable = parsed.get("pmf_capable", False)
+            pmf_required = parsed.get("pmf_required", False)
+
             if bssid not in self.access_points:
                 self.access_points[bssid] = AccessPoint(
                     bssid=bssid,
@@ -67,7 +71,11 @@ class WlanInterface:
                     channel=channel,
                     signal=rssi,
                     encryption=enc,
-                    beacons=1 if frame_type == "beacon" else 0
+                    beacons=1 if frame_type == "beacon" else 0,
+                    wpa3=wpa3,
+                    transition_mode=transition_mode,
+                    pmf_capable=pmf_capable,
+                    pmf_required=pmf_required,
                 )
                 if ssid and ssid != "<hidden>":
                     logger.info(f"[NEW AP] Found '{ssid}' ({bssid}) on CH {channel}")
@@ -75,19 +83,25 @@ class WlanInterface:
                 ap = self.access_points[bssid]
                 if frame_type == "beacon":
                     ap.beacons += 1
-                
+
                 # Update SSID if it was hidden and we now see it (DECLOAKING via Probe Response)
                 if ssid and ssid != "<hidden>":
                     if not ap.ssid or ap.ssid == "<hidden>":
                         logger.info(f"DECLOAKED: {bssid} -> {ssid} via Probe Response")
                     ap.ssid = ssid
-                
+
                 # Smooth RSSI (simple average for now, could use EMA)
                 ap.signal = (ap.signal + rssi) // 2
-                
+
                 # Update channel if it shifted
                 ap.channel = channel
                 ap.encryption = enc
+                # WPA3 / PMF advertising can change as APs reload config — refresh
+                # on every beacon so the Focus security panel stays in sync.
+                ap.wpa3 = wpa3
+                ap.transition_mode = transition_mode
+                ap.pmf_capable = pmf_capable
+                ap.pmf_required = pmf_required
 
             # Always stash the latest RSN IE bytes (covers both new + existing
             # AP branches above). PMKID harvest echoes this into its Assoc Req.

@@ -131,6 +131,57 @@ def test_real_client_still_creates_handshake_with_eapol_frames(mocker):
     assert len(ap.handshakes[real_client].eapol_frames) == 1
 
 
+def test_wpa3_and_pmf_flags_propagate_to_access_point(mocker):
+    """Parser detects wpa3 / transition_mode / pmf_capable / pmf_required from
+    the RSN IE; WlanInterface must copy them to the AccessPoint model so the
+    Focus security panel can render them."""
+    mock_driver = mocker.MagicMock()
+    iface = WlanInterface(driver_instance=mock_driver, name="wlan0", description="Test")
+
+    # New AP: pure WPA3-SAE, PMF required
+    iface._on_frame_parsed({
+        "type": "beacon",
+        "bssid": "aa:bb:cc:dd:ee:ff",
+        "source": "aa:bb:cc:dd:ee:ff",
+        "dest": "ff:ff:ff:ff:ff:ff",
+        "rssi": -40,
+        "ssid": "SAE-AP",
+        "channel": 1,
+        "encryption": "WPA3",
+        "wpa3": True,
+        "transition_mode": False,
+        "pmf_capable": True,
+        "pmf_required": True,
+        "raw": b"\x00" * 36,
+    })
+    ap = iface.access_points["aa:bb:cc:dd:ee:ff"]
+    assert ap.wpa3 is True
+    assert ap.transition_mode is False
+    assert ap.pmf_capable is True
+    assert ap.pmf_required is True
+    assert ap.encryption == "WPA3"
+
+    # Second beacon: AP switched to transition mode (rare in practice but
+    # exercises the update path). Flags must refresh.
+    iface._on_frame_parsed({
+        "type": "beacon",
+        "bssid": "aa:bb:cc:dd:ee:ff",
+        "source": "aa:bb:cc:dd:ee:ff",
+        "dest": "ff:ff:ff:ff:ff:ff",
+        "rssi": -42,
+        "ssid": "SAE-AP",
+        "channel": 1,
+        "encryption": "WPA3",
+        "wpa3": True,
+        "transition_mode": True,
+        "pmf_capable": True,
+        "pmf_required": False,
+        "raw": b"\x00" * 36,
+    })
+    assert ap.transition_mode is True
+    assert ap.pmf_required is False
+
+
 def test_wlan_interface_decloaking(mocker):
     mock_driver = mocker.MagicMock()
     iface = WlanInterface(driver_instance=mock_driver, name="wlan0", description="Test Interface")
