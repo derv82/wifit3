@@ -13,6 +13,7 @@ from rich.text import Text
 from rich.markup import escape
 
 from wifit3.engine.models import AccessPoint
+from wifit3.engine.hc22000 import write_hc22000
 from wifit3.engine.pcap import write_pcap
 
 logger = logging.getLogger(__name__)
@@ -383,10 +384,13 @@ class FocusView(Screen):
         captures_dir = Path("captures")
         safe_ssid = re.sub(r"[^A-Za-z0-9_-]", "_", ap.ssid or "hidden")[:24] or "hidden"
         safe_bssid = ap.bssid.replace(":", "-")
-        path = captures_dir / f"{safe_ssid}_{safe_bssid}_{int(time.time())}.pcap"
+        stem = f"{safe_ssid}_{safe_bssid}_{int(time.time())}"
+        pcap_path = captures_dir / f"{stem}.pcap"
+        hc_path = captures_dir / f"{stem}.hc22000"
 
         try:
-            n_written = write_pcap(path, frames)
+            n_written = write_pcap(pcap_path, frames)
+            n_hashlines = write_hc22000(hc_path, ap)
         except Exception as exc:
             logger.exception("Save capture failed")
             self._log(f"[bold red]Save failed:[/bold red] {escape(str(exc))}")
@@ -400,5 +404,16 @@ class FocusView(Screen):
         summary = " + ".join(parts) if parts else f"{n_written} frame(s)"
         self._log(
             f"[bold green]Saved {summary}[/bold green] "
-            f"({n_written} frames) → [bold]{escape(str(path))}[/bold]"
+            f"({n_written} frames) → [bold]{escape(str(pcap_path))}[/bold]"
         )
+        if n_hashlines:
+            self._log(
+                f"[bold green]+ {n_hashlines} hashline(s)[/bold green] "
+                f"→ [bold]{escape(str(hc_path))}[/bold] "
+                f"[dim](hashcat -m 22000)[/dim]"
+            )
+        else:
+            self._log(
+                "[dim]  (no hc22000 hashline produced — "
+                "hidden SSID or truncated capture)[/dim]"
+            )

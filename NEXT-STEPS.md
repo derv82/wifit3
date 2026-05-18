@@ -20,13 +20,16 @@ and the legacy MCUFWDL FW upload — both 88xxA chips (8821a + 8812a) and
 the modern 8822b share through it.
 
 Attack stack so far: handshake **detection** (the 4-way EAPOL pair is
-parsed live, now per-client so simultaneous clients never overwrite each
-other), **per-AP capture display + pcap save** in Focus view (linktype-105
-libpcap, hashcat -m 22000 ready via `hcxpcapngtool`), deauth inject
-(verified on 8812au by re-capturing handshake after target client
-reconnect). PMKID extract not yet implemented — the model has a
-forward-compat `Handshake.pmkid` slot and the UI displays its status, but
-the actual Auth/Assoc-Req injection + RSN-IE PMKID parse is still TODO.
+parsed live, M1-M4 classified from Key Info bits, per-client so
+simultaneous clients never overwrite each other), **per-AP capture
+display + dual save** in Focus view (writes both a linktype-105 libpcap
+AND a hashcat-native `.hc22000` hashline file — no `hcxpcapngtool`
+needed), deauth inject (verified on 8812au by re-capturing handshake
+after target client reconnect). PMKID extract not yet implemented — the
+model has a forward-compat `Handshake.pmkid` slot and the UI displays
+its status, but the actual Auth/Assoc-Req injection + RSN-IE PMKID
+parse is still TODO (once it lands, the PMKID hashline path is already
+wired through `engine/hc22000.py`).
 
 ## Open work on RTL8812AU (the just-landed chipset)
 
@@ -72,10 +75,12 @@ We want to avoid WEP as it's outdated. But all other attacks that Wifite2 can do
 * 4-way Handshake capture (via client deauth)
   - We already detect the handshake packets in the WlanManager. ✅
   - Indicate when we have a handshake in the "Focus" UI view. ✅ (CAPTURE
-    column + per-client Handshake column + EVENT LOG, all live-updating).
-  - ✅ Save button writes `./captures/<ssid>_<bssid>_<ts>.pcap` (linktype
-    105, hashcat-ready). Per-AP file containing the beacon + every EAPOL
-    we have for every client that handshook on this BSSID.
+    column + per-client Handshake column + EVENT LOG, all live-updating;
+    pair validity correctly checked via M1/M2/M3/M4 classification, not
+    just replay-counter grouping).
+  - ✅ Save button writes BOTH `./captures/<ssid>_<bssid>_<ts>.pcap`
+    (libpcap, beacon + all EAPOL frames) AND `<...>.hc22000` (hashcat
+    mode-22000 hashlines — eliminates the `hcxpcapngtool` dependency).
   - **Open: dynamic channel re-steering.** If the AP CSA-jumps to another
     channel or shows stronger signal elsewhere (multi-band AP advertising
     on both 2.4 and 5), Focus stays glued to whatever channel was current

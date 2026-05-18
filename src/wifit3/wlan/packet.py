@@ -164,6 +164,15 @@ class WlanFrameParser:
                             result["eapol_mic"] = mic
                             result["eapol_key_data_len"] = key_data_len
                             result["eapol_msg_num"] = WlanFrameParser._classify_eapol_msg(key_info, key_data_len)
+                            # Slice the 802.1X portion (header + full key
+                            # descriptor + key data). This is what hashcat's
+                            # mode 22000 hashline embeds; storing it now
+                            # avoids re-finding LLC/SNAP at save time.
+                            total_eapol_len = 99 + key_data_len
+                            if len(frame) >= eapol_start + total_eapol_len:
+                                result["eapol_payload"] = bytes(
+                                    frame[eapol_start: eapol_start + total_eapol_len]
+                                )
         else:
             result["type"] = f"ctrl_{subtype}"
 

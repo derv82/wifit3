@@ -13,6 +13,10 @@ class EapolFrame(BaseModel):
     nonce: bytes
     mic: bytes
     key_data_len: int
+    # 802.1X version byte through end of key data — i.e. the portion of the
+    # frame hashcat embeds in the mode-22000 hashline. May be empty if the
+    # capture was truncated.
+    eapol_payload: bytes = b""
 
 
 def _replay_to_int(replay_hex: str) -> int:
