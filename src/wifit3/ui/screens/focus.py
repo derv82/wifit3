@@ -2,7 +2,7 @@ import logging
 import re
 import time
 from pathlib import Path
-from typing import Dict, Set
+from typing import Set
 
 from textual.app import ComposeResult
 from textual.screen import Screen
@@ -12,10 +12,17 @@ from textual.binding import Binding
 from rich.text import Text
 from rich.markup import escape
 
-from wifit3.engine.models import AccessPoint
+from wifit3.engine.models import AccessPoint, Handshake
 from wifit3.engine.hc22000 import write_hc22000
 from wifit3.engine.pcap import write_pcap
 from wifit3.engine.attacks.pmkid_harvest import PmkidHarvestAttack
+
+from ..capture_events import CaptureEvent, CaptureEventDetector
+from ..encryption_format import (
+    format_encryption_markup,
+    format_pmf_markup,
+    format_wpa3_mode_markup,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +34,7 @@ class FocusView(Screen):
         Binding("escape", "go_back", "Back to Scanner", show=True),
         Binding("q", "app.quit", "Quit", show=True),
         Binding("s", "save_capture", "Save Capture", show=True),
-        Binding("enter", "toggle_client", "Select Client", show=False)
+        Binding("space", "toggle_client", "Select Client", show=True),
     ]
 
     def __init__(self):
@@ -36,11 +43,10 @@ class FocusView(Screen):
         self._refresh_timer = None
         self._known_clients: Set[str] = set()
         self._selected_clients: Set[str] = set()
-        # Event-log de-dup state — see _poll_capture_events.
-        # client_mac -> set of (msg_num, replay_hex) tuples already logged.
-        self._seen_eapol: Dict[str, Set[tuple]] = {}
-        self._completed_clients: Set[str] = set()
-        self._pmkid_clients: Set[str] = set()
+        # Granular: also surfaces every new EAPOL frame, not just completions.
+        self._events = CaptureEventDetector(granular_eapol=True)
+
+    # ----- Compose / mount ---------------------------------------------------
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -50,18 +56,18 @@ class FocusView(Screen):
             with Horizontal(id="ap-info-panel"):
                 yield Vertical(
                     Label("TARGET INFO", classes="panel-title"),
-                    Label(id="lbl-ssid", classes="bold-title"),
+                    Label(id="lbl-ssid"),
                     Label(id="lbl-bssid"),
                     Label(id="lbl-channel"),
-                    Label(id="lbl-first-seen"),
-                    classes="info-box"
+                    Label(id="lbl-last-beacon"),
+                    classes="info-box",
                 )
                 yield Vertical(
                     Label("SECURITY", classes="panel-title"),
                     Label(id="lbl-enc"),
                     Label(id="lbl-pmf"),
                     Label(id="lbl-wpa3"),
-                    classes="info-box"
+                    classes="info-box",
                 )
                 yield Vertical(
                     Label("CAPTURE", classes="panel-title"),
@@ -69,27 +75,25 @@ class FocusView(Screen):
                     Label(id="lbl-pwr"),
                     Label(id="lbl-handshake"),
                     Label(id="lbl-pmkid"),
-                    classes="info-box"
+                    classes="info-box",
                 )
 
-            # Middle: Client list (with handshake-status column)
             with Vertical(id="client-panel"):
                 yield Label("CLIENTS", classes="panel-title")
                 client_table = DataTable(cursor_type="row", id="client-table")
                 client_table.add_column("[ ]", key="select")
                 client_table.add_column("MAC Address", key="mac")
-                client_table.add_column("PWR", key="signal")
-                client_table.add_column("Frames", key="packets")
-                client_table.add_column("Handshake", key="handshake")
+                client_table.add_column("POWER", key="signal")
+                client_table.add_column("PKTS", key="packets")
+                client_table.add_column("CAPTURES", key="captures")
                 yield client_table
 
-            # Bottom: ATTACKS (left) | EVENT LOG (right)
             with Horizontal(id="bottom-row"):
                 with Vertical(id="attack-panel"):
                     yield Label("ATTACKS", classes="panel-title")
                     with Horizontal(classes="button-row"):
                         yield Button("Deauth All", variant="error", id="btn-deauth-all")
-                        yield Button("Deauth Sel", variant="warning", id="btn-deauth-sel", disabled=True)
+                        yield Button("Deauth [x]", variant="warning", id="btn-deauth-sel", disabled=True)
                         yield Button("PMKID", variant="primary", id="btn-pmkid")
                     with Horizontal(classes="button-row"):
                         yield Button("SAE Probe", variant="primary", id="btn-sae-probe", disabled=True)
@@ -113,12 +117,10 @@ class FocusView(Screen):
         if not self.target_ap:
             return
 
-        # Reset UI state for the new target
+        # Reset per-target state.
         self._known_clients.clear()
         self._selected_clients.clear()
-        self._seen_eapol.clear()
-        self._completed_clients.clear()
-        self._pmkid_clients.clear()
+        self._events.reset()
         self.query_one("#client-table", DataTable).clear()
         self.query_one("#focus-event-log", RichLog).clear()
 
@@ -142,56 +144,74 @@ class FocusView(Screen):
 
         ap = self.target_ap
 
-        # Identity panel (rarely changes)
-        msg_ssid = Text.from_markup(
-            f"[bold white]{escape(ap.ssid or '<Hidden>')}[/bold white]",
-            emoji=False,
+        # TARGET INFO panel.
+        self.query_one("#lbl-ssid", Label).update(
+            Text.from_markup(
+                f"ESSID: [bold cyan]{escape(ap.ssid or '<Hidden>')}[/bold cyan]",
+                emoji=False,
+            )
         )
-        self.query_one("#lbl-ssid", Label).update(msg_ssid)
         self.query_one("#lbl-bssid", Label).update(Text(f"BSSID: {ap.bssid}"))
-        self.query_one("#lbl-channel", Label).update(f"Channel: {ap.channel}")
-        age_s = max(0, int(time.time() - ap.first_seen))
-        self.query_one("#lbl-first-seen", Label).update(
-            f"Age: {age_s // 60:02d}:{age_s % 60:02d}"
+        # While in FocusView the hopper is always stopped — channel is locked.
+        self.query_one("#lbl-channel", Label).update(
+            Text.from_markup(
+                f"Channel: {ap.channel} [green](Locked)[/green]",
+                emoji=False,
+            )
+        )
+        last_seen_s = max(0, int(time.time() - ap.last_seen))
+        self.query_one("#lbl-last-beacon", Label).update(
+            f"Last Beacon: {last_seen_s}s ago"
         )
 
-        # Security panel
-        self.query_one("#lbl-enc", Label).update(f"Encryption: {ap.encryption}")
-        pmf_status = "Disabled"
-        if ap.pmf_required:
-            pmf_status = "Required"
-        elif ap.pmf_capable:
-            pmf_status = "Capable (Optional)"
-        self.query_one("#lbl-pmf", Label).update(f"PMF: {pmf_status}")
+        # SECURITY panel.
+        self.query_one("#lbl-enc", Label).update(
+            Text.from_markup(
+                "Encryption: " + format_encryption_markup(ap, detailed=True),
+                emoji=False,
+            )
+        )
+        self.query_one("#lbl-pmf", Label).update(
+            Text.from_markup(f"PMF: {format_pmf_markup(ap)}", emoji=False)
+        )
 
-        wpa3_status = "N/A"
+        wpa3_label = self.query_one("#lbl-wpa3", Label)
+        wpa3_markup = format_wpa3_mode_markup(ap)
+        if wpa3_markup is None:
+            wpa3_label.display = False
+        else:
+            wpa3_label.display = True
+            wpa3_label.update(
+                Text.from_markup(f"WPA3: {wpa3_markup}", emoji=False)
+            )
+
+        # Attack-button enable/disable based on AP capability.
         btn_sae = self.query_one("#btn-sae-probe", Button)
         btn_down = self.query_one("#btn-wpa3-down", Button)
         btn_pmkid = self.query_one("#btn-pmkid", Button)
         if ap.wpa3:
-            wpa3_status = "Transition Mode" if ap.transition_mode else "Pure WPA3-SAE"
             btn_sae.disabled = False
             btn_down.disabled = False
-            # PMKID is only useful against WPA2 and WPA3-Transition (the WPA2
-            # portion); pure SAE PMKID is not crackable with current attacks.
+            # PMKID is only useful against WPA2 + WPA3-Transition (the WPA2
+            # portion). Pure SAE PMKID isn't crackable with current attacks.
             btn_pmkid.disabled = not ap.transition_mode
         else:
             btn_sae.disabled = True
             btn_down.disabled = True
             btn_pmkid.disabled = False
-        self.query_one("#lbl-wpa3", Label).update(f"WPA3: {wpa3_status}")
 
-        # Capture panel (dynamic)
+        # CAPTURE panel (dynamic).
         elapsed = max(1.0, time.time() - ap.first_seen)
         rate = ap.beacons / elapsed
         self.query_one("#lbl-beacons", Label).update(
             f"Beacons: {ap.beacons} ({rate:.1f}/s)"
         )
-        self.query_one("#lbl-pwr", Label).update(f"PWR: {ap.signal} dBm")
+        self.query_one("#lbl-pwr", Label).update(f"POWER: {ap.signal} dBm")
 
         n_complete = sum(1 for hs in ap.handshakes.values() if hs.is_complete)
         n_partial = sum(
-            1 for hs in ap.handshakes.values()
+            1
+            for hs in ap.handshakes.values()
             if not hs.is_complete and hs.total_eapol_frames > 0
         )
         if n_complete:
@@ -209,25 +229,28 @@ class FocusView(Screen):
         n_pmkid = sum(1 for hs in ap.handshakes.values() if hs.pmkid)
         pmkid_text = (
             f"[bold green]Captured x{n_pmkid}[/bold green]"
-            if n_pmkid else "[dim]Not captured[/dim]"
+            if n_pmkid
+            else "[dim]Not captured[/dim]"
         )
         self.query_one("#lbl-pmkid", Label).update(
             Text.from_markup(f"PMKID:     {pmkid_text}", emoji=False)
         )
 
-        # Save button enable/disable
+        # Save button.
         self.query_one("#btn-save", Button).disabled = not ap.has_capture
 
-        # Clients
+        # Clients.
         iface = getattr(self.app, "active_interface", None)
         if iface:
             self._refresh_clients(iface)
 
-        # Detect & log capture events
-        self._poll_capture_events()
+        # Drain new capture events into the log.
+        self._drain_capture_events(ap, iface.forged_macs if iface else set())
 
-        # Deauth-selected button
+        # Deauth-selected button.
         self.query_one("#btn-deauth-sel", Button).disabled = not self._selected_clients
+
+    # ----- Client table ------------------------------------------------------
 
     def _refresh_clients(self, iface) -> None:
         ap = self.target_ap
@@ -240,80 +263,55 @@ class FocusView(Screen):
                 continue
             checkbox = "[X]" if mac in self._selected_clients else "[ ]"
             hs = ap.handshakes.get(mac)
-            hs_label = self._format_handshake_label(hs)
-            hs_text = Text.from_markup(hs_label, emoji=False)
+            captures_text = Text.from_markup(
+                self._format_captures_label(hs), emoji=False
+            )
 
             if mac not in self._known_clients:
                 self._known_clients.add(mac)
                 client_table.add_row(
                     checkbox,
                     Text(mac),
-                    f"{client.signal}dBm",
-                    str(client.packets),
-                    hs_text,
+                    Text(f"{client.signal} dBm", justify="right"),
+                    Text(str(client.packets), justify="right"),
+                    captures_text,
                     key=mac,
                 )
             else:
                 client_table.update_cell(mac, "select", checkbox)
-                client_table.update_cell(mac, "signal", f"{client.signal}dBm")
-                client_table.update_cell(mac, "packets", str(client.packets))
-                client_table.update_cell(mac, "handshake", hs_text)
-
-    def _poll_capture_events(self) -> None:
-        """Diff current handshake/PMKID state against last tick; log changes."""
-        ap = self.target_ap
-        if ap is None:
-            return
-        iface = getattr(self.app, "active_interface", None)
-        forged = iface.forged_macs if iface else set()
-        for client_mac, hs in ap.handshakes.items():
-            # Forged MACs from our own active attacks: the attack already
-            # logs its own outcome.
-            if client_mac in forged:
-                if hs.pmkid:
-                    self._pmkid_clients.add(client_mac)
-                continue
-
-            seen = self._seen_eapol.setdefault(client_mac, set())
-            for f in hs.eapol_frames:
-                key = (f.msg_num, f.replay_hex)
-                if key in seen:
-                    continue
-                seen.add(key)
-                msg_label = f"M{f.msg_num}" if f.msg_num else "EAPOL-?"
-                self._log(
-                    f"[green][+][/green] [bold]{msg_label}[/bold] from "
-                    f"[bold]{client_mac}[/bold] (replay {f.replay_hex})"
+                client_table.update_cell(
+                    mac, "signal", Text(f"{client.signal} dBm", justify="right")
                 )
-            if hs.is_complete and client_mac not in self._completed_clients:
-                self._completed_clients.add(client_mac)
-                pair = hs.find_valid_pair()
-                pair_label = (
-                    f"M{pair[0].msg_num}+M{pair[1].msg_num}" if pair else "?"
+                client_table.update_cell(
+                    mac, "packets", Text(str(client.packets), justify="right")
                 )
-                self._log(
-                    f"[bold green][✓] HANDSHAKE COMPLETE[/bold green] "
-                    f"({pair_label}) for client [bold]{client_mac}[/bold] "
-                    f"— press [bold]s[/bold] to save"
-                )
-            if hs.pmkid and client_mac not in self._pmkid_clients:
-                self._pmkid_clients.add(client_mac)
-                self._log(
-                    f"[bold yellow][✓] PMKID captured[/bold yellow] "
-                    f"from [bold]{client_mac}[/bold]"
-                )
+                client_table.update_cell(mac, "captures", captures_text)
 
     @staticmethod
-    def _format_handshake_label(hs) -> str:
-        """Build the markup label shown in the per-client Handshake column."""
-        if hs is None or not hs.total_eapol_frames:
+    def _format_captures_label(hs: Handshake | None) -> str:
+        """Build the markup label shown in the per-client CAPTURES column.
+
+        Folds in a `+PMK` suffix when a PMKID was harvested for the same
+        client. PMKIDs without any EAPOL frames still display as `PMK`.
+        """
+        if hs is None or (not hs.total_eapol_frames and not hs.pmkid):
             return "[dim]—[/dim]"
+
+        # PMKID-only (no EAPOL frames captured).
+        if not hs.total_eapol_frames and hs.pmkid:
+            return "[bold green]PMK[/bold green]"
+
         if hs.is_complete:
             pair = hs.find_valid_pair()
             if pair:
-                return f"[bold green]M{pair[0].msg_num}+M{pair[1].msg_num} ✓[/bold green]"
-            return "[bold green]Complete[/bold green]"
-        # Partial — show what we have, with retry counts if any
+                base = f"[bold green]M{pair[0].msg_num}+M{pair[1].msg_num} ✓[/bold green]"
+            else:
+                base = "[bold green]Complete[/bold green]"
+            if hs.pmkid:
+                base += " [bold green]+PMK[/bold green]"
+            return base
+
+        # Partial — show what we have, with retry counts if any.
         from collections import Counter
         counts = Counter(f.msg_num for f in hs.eapol_frames if f.msg_num)
         parts = []
@@ -322,13 +320,39 @@ class FocusView(Screen):
                 parts.append(f"M{n}×{counts[n]}")
             else:
                 parts.append(f"M{n}")
-        # Note unclassified frames if any
         unclassified = sum(1 for f in hs.eapol_frames if not f.msg_num)
         if unclassified:
             parts.append(f"?×{unclassified}")
-        return "[yellow]" + ",".join(parts) + "[/yellow]"
+        label = "[yellow]" + ",".join(parts) + "[/yellow]"
+        if hs.pmkid:
+            label += " [bold green]+PMK[/bold green]"
+        return label
 
-    # ----- Event log helper --------------------------------------------------
+    # ----- Capture-event log -------------------------------------------------
+
+    def _drain_capture_events(self, ap: AccessPoint, forged_macs: Set[str]) -> None:
+        for ev in self._events.poll(ap, forged_macs=forged_macs):
+            self._log_capture_event(ev)
+
+    def _log_capture_event(self, ev: CaptureEvent) -> None:
+        client = escape(ev.client_mac)
+        if ev.kind == "eapol":
+            msg_label = f"M{ev.msg_num}" if ev.msg_num else "EAPOL-?"
+            self._log(
+                f"[green]→[/green] [bold]{msg_label}[/bold] from "
+                f"[bold]{client}[/bold] (replay {ev.replay_hex})"
+            )
+        elif ev.kind == "handshake_complete":
+            self._log(
+                f"[bold green]✓ HANDSHAKE COMPLETE[/bold green] "
+                f"({ev.pair_label}) for client [bold]{client}[/bold] "
+                f"— press [bold]s[/bold] to save"
+            )
+        elif ev.kind == "pmkid":
+            self._log(
+                f"[bold yellow]✓ PMKID captured[/bold yellow] "
+                f"from [bold]{client}[/bold]"
+            )
 
     def _log(self, markup: str) -> None:
         ts = time.strftime("%H:%M:%S")
@@ -340,9 +364,25 @@ class FocusView(Screen):
 
     # ----- Actions / handlers ------------------------------------------------
 
-    async def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """ENTER on a client row toggles its selection checkbox."""
-        mac = event.row_key.value
+    async def on_data_table_row_selected(
+        self, event: DataTable.RowSelected
+    ) -> None:
+        """ENTER on a client row toggles selection (Textual emits this for ENTER)."""
+        self._toggle_client_selection(event.row_key.value)
+
+    def action_toggle_client(self) -> None:
+        """SPACE keybinding — toggles the currently-highlighted client."""
+        table = self.query_one("#client-table", DataTable)
+        try:
+            mac = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+        except Exception:
+            return
+        if mac:
+            self._toggle_client_selection(mac)
+
+    def _toggle_client_selection(self, mac: str | None) -> None:
+        if not mac:
+            return
         if mac in self._selected_clients:
             self._selected_clients.remove(mac)
         else:
@@ -372,11 +412,11 @@ class FocusView(Screen):
         ap = self.target_ap
         iface = getattr(self.app, "active_interface", None)
         if not ap or not iface:
-            self._log("[red]No target / interface — aborting PMKID harvest.[/red]")
+            self._log("[red]✗ No target / interface — aborting PMKID harvest.[/red]")
             return
 
         self._log(
-            f"[bold cyan][PMKID][/bold cyan] Starting harvest on "
+            f"[bold cyan]→ PMKID[/bold cyan] harvesting on "
             f"[bold]{escape(ap.ssid or '<hidden>')}[/bold] ({ap.bssid}) "
             f"CH {ap.channel}"
         )
@@ -385,35 +425,33 @@ class FocusView(Screen):
             pmkid = await attack.run()
         except Exception as exc:
             logger.exception("PMKID harvest crashed")
-            self._log(f"[bold red][PMKID] crashed:[/bold red] {escape(str(exc))}")
+            self._log(f"[bold red]✗ PMKID crashed:[/bold red] {escape(str(exc))}")
             return
 
         if pmkid:
             self._log(
-                f"[bold green][PMKID] ✓ Harvested:[/bold green] [bold]{pmkid.hex()}[/bold] — "
-                f"press 'S' to save hashline."
+                f"[bold green]✓ PMKID harvested:[/bold green] "
+                f"[bold]{pmkid.hex()}[/bold] — press 's' to save hashline."
             )
         else:
             self._log(
-                "[yellow][PMKID] No PMKID after all attempts.[/yellow] "
+                "[yellow]⚠ PMKID: no result after all attempts.[/yellow] "
                 "AP may not advertise a PMKID KDE, or PMF / status rejected us."
             )
 
     async def action_go_back(self) -> None:
-        """Return to the scanner and resume channel hopping."""
         if getattr(self.app, "active_interface", None):
             await self.app.active_interface.start_hopping(interval=0.25)
         self.app.pop_screen()
 
-    # ----- Save ----------------------------------------------------------------
+    # ----- Save --------------------------------------------------------------
 
     def _save_capture(self) -> None:
         ap = self.target_ap
         if not ap or not ap.has_capture:
-            self._log("[red]Nothing to save yet.[/red]")
+            self._log("[yellow]⚠ Nothing to save yet.[/yellow]")
             return
 
-        # Collect frames: one beacon (dedup) + all EAPOL frames across clients.
         frames: list[bytes] = []
         beacon_added = False
         for hs in ap.handshakes.values():
@@ -438,7 +476,7 @@ class FocusView(Screen):
             n_hashlines = write_hc22000(hc_path, ap)
         except Exception as exc:
             logger.exception("Save capture failed")
-            self._log(f"[bold red]Save failed:[/bold red] {escape(str(exc))}")
+            self._log(f"[bold red]✗ Save failed:[/bold red] {escape(str(exc))}")
             return
 
         parts: list[str] = []
@@ -448,12 +486,12 @@ class FocusView(Screen):
             parts.append(f"{n_pmkid} PMKID(s)")
         summary = " + ".join(parts) if parts else f"{n_written} frame(s)"
         self._log(
-            f"[bold green]Saved {summary}[/bold green] "
+            f"[bold green]✓ Saved {summary}[/bold green] "
             f"({n_written} frames) → [bold]{escape(str(pcap_path))}[/bold]"
         )
         if n_hashlines:
             self._log(
-                f"[bold green]+ {n_hashlines} hashline(s)[/bold green] "
+                f"[bold green]✓ {n_hashlines} hashline(s)[/bold green] "
                 f"→ [bold]{escape(str(hc_path))}[/bold] "
                 f"[dim](hashcat -m 22000)[/dim]"
             )

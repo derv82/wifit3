@@ -1,3 +1,5 @@
+import time
+
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List, Set, Dict, Tuple
 
@@ -103,8 +105,16 @@ class AccessPoint(BaseModel):
     channel: int = Field(default=1)
     signal: int = Field(default=-100)
     encryption: Optional[str] = Field(default="Unknown")
+    # Structured security fields surfaced from the RSN IE parser. The UI uses
+    # these to render colorized + AKM-dimmed labels; `encryption` (above) is
+    # still the airodump-style string for saved captures + logs.
+    akms: List[str] = Field(default_factory=list)
+    pairwise_cipher: Optional[str] = Field(default=None)
     beacons: int = Field(default=0)
-    first_seen: float = Field(default_factory=lambda: __import__("time").time())
+    first_seen: float = Field(default_factory=lambda: time.time())
+    # Most recent beacon/probe-resp timestamp. Drives "Last Beacon: Ns ago"
+    # in FocusView and the stale-row dim-out in ScannerView.
+    last_seen: float = Field(default_factory=lambda: time.time())
     wpa3: bool = Field(default=False)
     transition_mode: bool = Field(default=False)
     pmf_capable: bool = Field(default=False)

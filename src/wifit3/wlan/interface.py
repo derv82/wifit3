@@ -59,6 +59,8 @@ class WlanInterface:
             ssid = parsed.get("ssid")
             channel = parsed.get("channel", self.current_channel)
             enc = parsed.get("encryption", "OPEN")
+            akms = parsed.get("akms", []) or []
+            pairwise_cipher = parsed.get("pairwise_cipher")
             wpa3 = parsed.get("wpa3", False)
             transition_mode = parsed.get("transition_mode", False)
             pmf_capable = parsed.get("pmf_capable", False)
@@ -71,6 +73,8 @@ class WlanInterface:
                     channel=channel,
                     signal=rssi,
                     encryption=enc,
+                    akms=list(akms),
+                    pairwise_cipher=pairwise_cipher,
                     beacons=1 if frame_type == "beacon" else 0,
                     wpa3=wpa3,
                     transition_mode=transition_mode,
@@ -96,12 +100,18 @@ class WlanInterface:
                 # Update channel if it shifted
                 ap.channel = channel
                 ap.encryption = enc
+                ap.akms = list(akms)
+                ap.pairwise_cipher = pairwise_cipher
                 # WPA3 / PMF advertising can change as APs reload config — refresh
                 # on every beacon so the Focus security panel stays in sync.
                 ap.wpa3 = wpa3
                 ap.transition_mode = transition_mode
                 ap.pmf_capable = pmf_capable
                 ap.pmf_required = pmf_required
+
+            # Always bump the recency clock on the AP we just saw — drives
+            # stale-row dim-out and "Last Beacon: Ns ago" in FocusView.
+            self.access_points[bssid].last_seen = time.time()
 
             # Always stash the latest RSN IE bytes (covers both new + existing
             # AP branches above). PMKID harvest echoes this into its Assoc Req.

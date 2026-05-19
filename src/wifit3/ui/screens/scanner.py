@@ -1,15 +1,28 @@
+import time
+from typing import Dict, List, Optional
+
 from textual.app import ComposeResult
-from textual.screen import Screen
-from textual.widgets import Header, Footer, DataTable, RichLog
-from textual.containers import Vertical, Horizontal
 from textual.binding import Binding
+from textual.containers import Vertical
+from textual.screen import Screen
+from textual.widgets import DataTable, Footer, Header, RichLog
 from rich.markup import escape
 from rich.text import Text
 
 from wifit3.engine.models import AccessPoint
-from typing import Dict, List, Optional
 
+from ..capture_events import CaptureEvent, CaptureEventDetector
+from ..encryption_format import format_encryption_markup
 from .channel_filter import ChannelFilterDialog
+
+
+# Dim a row this many seconds after the last frame from its BSSID.
+STALE_THRESHOLD_S = 15.0
+
+# Sort the table on its own cadence instead of every value-update tick —
+# stops rows from bouncing on every signal/beacon update.
+SORT_INTERVAL_S = 2.0
+
 
 class ScannerView(Screen):
     """The main AP scanning list screen."""
@@ -21,146 +34,315 @@ class ScannerView(Screen):
         Binding("o", "toggle_sort_dir", "Sort Asc/Desc", show=True),
         Binding("l", "toggle_log", "Toggle Log", show=True),
         Binding("home", "scroll_home", "Top", show=False, priority=True),
-        Binding("end", "scroll_end", "Bottom", show=False, priority=True)
+        Binding("end", "scroll_end", "Bottom", show=False, priority=True),
     ]
 
+    # (column_key, display_label). Order here = on-screen order.
     _COLUMNS = [
         ("bssid", "BSSID"),
         ("channel", "CH"),
-        ("signal", "PWR"),
-        ("encryption", "ENC"),
+        ("signal", "POWER"),
+        ("beacons", "BEACONS"),
+        ("clients", "#CLI"),
+        ("encryption", "ENCRYPT"),
         ("ssid", "SSID"),
-        ("beacons", "Beacons/sec")
     ]
+
+    # Columns whose values are right-aligned numerics.
+    _RIGHT_ALIGNED = {"channel", "signal", "beacons", "clients"}
 
     def __init__(self):
         super().__init__()
         self.ap_cache: Dict[str, AccessPoint] = {}
+        # Track stale-state per row so we only re-style on transitions.
+        self._stale_cache: Dict[str, bool] = {}
         self._refresh_timer = None
-        self._sort_idx = 2 # Default to "signal" (PWR)
+        self._sort_timer = None
+        # Default to POWER, descending (most signal at top).
+        self._sort_idx = 2
         self._sort_reverse = True
         # None = hop on every channel the driver supports.
         self._channel_filter: Optional[List[int]] = None
+        # Capture-event detector — coarse (no per-EAPOL spam in the scanner).
+        self._events = CaptureEventDetector(granular_eapol=False)
+
+    # ----- Compose / mount ---------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        # A simple header with gradient-like styling (CSS handles the look)
         yield Header(show_clock=True)
-        
         with Vertical():
             table = DataTable(cursor_type="row", id="ap-table")
             for key, label in self._COLUMNS:
                 table.add_column(label, key=key)
             yield table
-            
-            # Collapsible Log
             yield RichLog(id="system-log", markup=True, highlight=True)
-            
         yield Footer()
 
     async def on_mount(self) -> None:
         log = self.query_one("#system-log", RichLog)
         log.write("[bold green]Scanner Initialized.[/bold green]")
+        log.write(
+            f"[dim]Greyed-out rows = no beacons seen for "
+            f"{int(STALE_THRESHOLD_S)}s+ (out of range / off-channel).[/dim]"
+        )
         self._update_column_headers()
-        
-        # We assume self.app.active_interface is set by SplashView before pushing this screen
-        if self.app.active_interface:
-            log.write(f"[cyan]Starting channel hopper on {self.app.active_interface.name}...[/cyan]")
-            await self.app.active_interface.start_hopping(interval=0.25)
-            # Start the 60FPS UI polling loop
-            self._refresh_timer = self.set_interval(1 / 60, self.refresh_table)
 
-    def _update_column_headers(self):
+        if self.app.active_interface:
+            log.write(
+                f"[cyan]Starting channel hopper on "
+                f"{self.app.active_interface.name}...[/cyan]"
+            )
+            await self.app.active_interface.start_hopping(interval=0.25)
+            # 60 FPS in-place value updates — no resort.
+            self._refresh_timer = self.set_interval(1 / 60, self.refresh_table)
+            # Lazy resort + stale-row check.
+            self._sort_timer = self.set_interval(
+                SORT_INTERVAL_S, self._apply_sort_and_stale
+            )
+
+    # ----- Column header / sort indicator ------------------------------------
+
+    def _update_column_headers(self) -> None:
         table = self.query_one("#ap-table", DataTable)
         sort_key, _ = self._COLUMNS[self._sort_idx]
         indicator = " ▼" if self._sort_reverse else " ▲"
-        
+
         for key, base_label in self._COLUMNS:
             label = base_label + indicator if key == sort_key else base_label
-            # In Textual, updating column labels requires accessing columns dict
             if key in table.columns:
                 table.columns[key].label = label
         table.refresh()
 
+    # ----- Per-tick refresh --------------------------------------------------
+
     def refresh_table(self) -> None:
-        import time
         if not self.app.active_interface:
             return
-            
+        iface = self.app.active_interface
         table = self.query_one("#ap-table", DataTable)
-        
-        # 60 FPS safe in-place updates
-        for ap in self.app.active_interface.get_access_points():
-            enc_display = ap.encryption
-            if ap.wpa3:
-                enc_display = "WPA3 (Trans)" if ap.transition_mode else "WPA3"
-            
-            # Calculate beacon rate
-            elapsed = time.time() - ap.first_seen
-            if elapsed < 1.0: elapsed = 1.0
-            rate = ap.beacons / elapsed
-            beacons_str = f"{ap.beacons} ({rate:.1f}/s)"
-                
+
+        # Pre-compute per-AP client counts in a single pass over iface.clients
+        # (avoids O(N×M) inside the AP loop below).
+        client_counts: Dict[str, int] = {}
+        for c in iface.clients.values():
+            if c.bssid and c.mac not in iface.forged_macs:
+                client_counts[c.bssid] = client_counts.get(c.bssid, 0) + 1
+
+        now = time.time()
+
+        for ap in iface.get_access_points():
+            n_cli = client_counts.get(ap.bssid, 0)
+            is_stale = (now - ap.last_seen) > STALE_THRESHOLD_S
+            cells = self._build_cells(ap, n_cli, is_stale)
+
             if ap.bssid not in self.ap_cache:
                 self.ap_cache[ap.bssid] = ap
-                table.add_row(
-                    Text(ap.bssid),
-                    str(ap.channel),
-                    f"{ap.signal}dBm",
-                    enc_display,
-                    Text(ap.ssid or "<Hidden>"),
-                    beacons_str,
-                    key=ap.bssid
-                )
+                self._stale_cache[ap.bssid] = is_stale
+                table.add_row(*cells, key=ap.bssid)
             else:
-                # Check for decloak event
+                # Decloak event — already logged here.
                 old_ssid = self.ap_cache[ap.bssid].ssid
                 if not old_ssid and ap.ssid:
-                    log = self.query_one("#system-log", RichLog)
-                    msg = Text.from_markup(f"[bold yellow][*] Decloaked Hidden Network: {escape(ap.bssid)} -> {escape(ap.ssid)}[/bold yellow]", emoji=False)
-                    log.write(msg)
-                
+                    self._write_log(
+                        Text.from_markup(
+                            f"[bold yellow][*] Decloaked Hidden Network: "
+                            f"{escape(ap.bssid)} -> {escape(ap.ssid)}[/bold yellow]",
+                            emoji=False,
+                        )
+                    )
+
                 self.ap_cache[ap.bssid] = ap
-                table.update_cell(ap.bssid, "channel", str(ap.channel))
-                table.update_cell(ap.bssid, "signal", f"{ap.signal}dBm")
-                table.update_cell(ap.bssid, "encryption", enc_display)
-                table.update_cell(ap.bssid, "ssid", Text(ap.ssid or "<Hidden>"))
-                table.update_cell(ap.bssid, "beacons", beacons_str)
-                
+                self._stale_cache[ap.bssid] = is_stale
+                for (key, _), cell in zip(self._COLUMNS, cells):
+                    table.update_cell(ap.bssid, key, cell)
+
+            # Drain new capture events for this AP into the log.
+            self._drain_capture_events(ap, iface.forged_macs)
+
+    def _apply_sort_and_stale(self) -> None:
+        """Re-sort the table and refresh stale-row styling. Runs every 2 s."""
+        self._refresh_stale_rows()
         self._apply_sort()
 
-    def _apply_sort(self):
+    def _refresh_stale_rows(self) -> None:
+        """Re-style any row whose stale-state changed since the last tick."""
+        if not self.app.active_interface:
+            return
+        iface = self.app.active_interface
+        table = self.query_one("#ap-table", DataTable)
+        now = time.time()
+
+        client_counts: Dict[str, int] = {}
+        for c in iface.clients.values():
+            if c.bssid and c.mac not in iface.forged_macs:
+                client_counts[c.bssid] = client_counts.get(c.bssid, 0) + 1
+
+        for bssid, ap in self.ap_cache.items():
+            is_stale = (now - ap.last_seen) > STALE_THRESHOLD_S
+            if self._stale_cache.get(bssid) == is_stale:
+                continue
+            # Stale-state flipped — rebuild all cells for this row.
+            self._stale_cache[bssid] = is_stale
+            cells = self._build_cells(ap, client_counts.get(bssid, 0), is_stale)
+            for (key, _), cell in zip(self._COLUMNS, cells):
+                try:
+                    table.update_cell(bssid, key, cell)
+                except Exception:
+                    pass
+
+    # ----- Cell construction -------------------------------------------------
+
+    def _build_cells(
+        self, ap: AccessPoint, n_clients: int, is_stale: bool
+    ) -> List[Text]:
+        """Build the per-column Text cells for one AP row."""
+        if is_stale:
+            return [
+                Text(ap.bssid, style="dim"),
+                Text(str(ap.channel), justify="right", style="dim"),
+                Text(f"{ap.signal} dBm", justify="right", style="dim"),
+                Text(str(ap.beacons), justify="right", style="dim"),
+                Text(str(n_clients) if n_clients else "", justify="right", style="dim"),
+                Text(self._strip_markup(format_encryption_markup(ap)), style="dim"),
+                Text(self._ssid_plain(ap), style="dim italic"),
+            ]
+        return [
+            Text(ap.bssid),
+            Text(str(ap.channel), justify="right"),
+            Text(f"{ap.signal} dBm", justify="right"),
+            Text(str(ap.beacons), justify="right"),
+            Text(str(n_clients) if n_clients else "", justify="right"),
+            Text.from_markup(format_encryption_markup(ap), emoji=False),
+            self._ssid_markup(ap),
+        ]
+
+    @staticmethod
+    def _ssid_plain(ap: AccessPoint) -> str:
+        """Plain text SSID + capture markers for stale rows."""
+        base = ap.ssid or "<Hidden>"
+        markers = ScannerView._capture_marker_text(ap)
+        return f"{base} {markers}".rstrip()
+
+    def _ssid_markup(self, ap: AccessPoint) -> Text:
+        """Italic SSID with optional dim '<Hidden>' and capture markers."""
+        if ap.ssid:
+            text = Text(ap.ssid, style="white italic")
+        else:
+            text = Text("<Hidden>", style="dim italic")
+        markers_markup = self._capture_marker_markup(ap)
+        if markers_markup:
+            text.append(" ")
+            text.append_text(Text.from_markup(markers_markup, emoji=False))
+        return text
+
+    @staticmethod
+    def _capture_marker_text(ap: AccessPoint) -> str:
+        """Plain '✓HS ✓PMK' string (stale rows / non-markup contexts)."""
+        parts: List[str] = []
+        has_hs = any(hs.is_complete for hs in ap.handshakes.values())
+        has_pmk = any(hs.pmkid for hs in ap.handshakes.values())
+        if has_hs:
+            parts.append("✓HS")
+        if has_pmk:
+            parts.append("✓PMK")
+        return " ".join(parts)
+
+    @staticmethod
+    def _capture_marker_markup(ap: AccessPoint) -> str:
+        """Rich-markup '[green]✓HS[/green] [green]✓PMK[/green]' string."""
+        parts: List[str] = []
+        has_hs = any(hs.is_complete for hs in ap.handshakes.values())
+        has_pmk = any(hs.pmkid for hs in ap.handshakes.values())
+        if has_hs:
+            parts.append("[green]✓HS[/green]")
+        if has_pmk:
+            parts.append("[green]✓PMK[/green]")
+        return " ".join(parts)
+
+    @staticmethod
+    def _strip_markup(markup: str) -> str:
+        """Strip Rich markup tags from a string. For stale rows we want
+        flat dim text, not nested colors competing with the dim style."""
+        return Text.from_markup(markup, emoji=False).plain
+
+    # ----- Capture-event logging ---------------------------------------------
+
+    def _drain_capture_events(self, ap: AccessPoint, forged_macs) -> None:
+        for ev in self._events.poll(ap, forged_macs=forged_macs):
+            self._log_capture_event(ev)
+
+    def _log_capture_event(self, ev: CaptureEvent) -> None:
+        ap_label = escape(ev.ssid or ev.bssid)
+        client = escape(ev.client_mac)
+        if ev.kind == "handshake_complete":
+            pair = ev.pair_label or "?"
+            msg = (
+                f"[bold green]✓ HANDSHAKE[/bold green] ({pair}) on "
+                f"[bold]{ap_label}[/bold] from [bold]{client}[/bold]"
+            )
+        elif ev.kind == "pmkid":
+            msg = (
+                f"[bold green]✓ PMKID[/bold green] on "
+                f"[bold]{ap_label}[/bold] from [bold]{client}[/bold]"
+            )
+        else:
+            return  # eapol events suppressed in scanner
+        self._write_log(Text.from_markup(msg, emoji=False))
+
+    def _write_log(self, text) -> None:
+        try:
+            log = self.query_one("#system-log", RichLog)
+        except Exception:
+            return
+        log.write(text)
+
+    # ----- Sort --------------------------------------------------------------
+
+    def _apply_sort(self) -> None:
         table = self.query_one("#ap-table", DataTable)
         if table.row_count == 0:
             return
-            
-        # Track current cursor to prevent bouncing
+
         try:
-            current_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+            current_key = table.coordinate_to_cell_key(
+                table.cursor_coordinate
+            ).row_key
         except Exception:
             current_key = None
 
         sort_key, _ = self._COLUMNS[self._sort_idx]
-        
-        def safe_sort(val):
-            if isinstance(val, str):
-                if val.endswith("dBm"): return int(val[:-3])
-                # For beacons like "100 (5.0/s)"
-                if "(" in val:
-                    parts = val.split()
-                    if parts[0].isdigit(): return int(parts[0])
-                if val.isdigit(): return int(val)
-                if val.startswith("-") and val[1:].isdigit(): return int(val)
-            return str(val).lower()
-            
-        table.sort(sort_key, key=safe_sort, reverse=self._sort_reverse)
-        
-        # Restore cursor
+
+        def _key(val):
+            if isinstance(val, Text):
+                val = val.plain
+            s = str(val).strip()
+            if not s:
+                # Empty client-count cells sort to the bottom regardless of
+                # direction by mapping to -inf in descending mode, but we
+                # can't change direction here. Sentinel 0 is fine for now.
+                return 0
+            # Strip non-numeric suffix (e.g. " dBm")
+            head = s.split()[0]
+            try:
+                return int(head)
+            except ValueError:
+                pass
+            try:
+                return float(head)
+            except ValueError:
+                pass
+            return s.lower()
+
+        table.sort(sort_key, key=_key, reverse=self._sort_reverse)
+
         if current_key:
             try:
                 new_idx = table.get_row_index(current_key)
                 table.move_cursor(row=new_idx, animate=False)
             except Exception:
                 pass
+
+    # ----- Actions -----------------------------------------------------------
 
     def action_toggle_log(self) -> None:
         log_widget = self.query_one("#system-log")
@@ -180,7 +362,7 @@ class ScannerView(Screen):
         table = self.query_one("#ap-table", DataTable)
         if table.row_count > 0:
             table.move_cursor(row=0, animate=True)
-            
+
     def action_scroll_end(self) -> None:
         table = self.query_one("#ap-table", DataTable)
         if table.row_count > 0:
@@ -220,13 +402,7 @@ class ScannerView(Screen):
 
         self._channel_filter = result
         await iface.stop_hopping()
-
-        # Drop APs we'll no longer see on the filtered set. Without this,
-        # the table keeps showing stale 5 GHz rows after the user narrows
-        # to 2.4 GHz (and vice versa) until each entry ages out — which it
-        # currently never does.
         dropped = self._prune_aps_outside(result)
-
         await iface.start_hopping(channels=result, interval=0.25)
 
         ch_24 = [c for c in result if c <= 14]
@@ -241,11 +417,11 @@ class ScannerView(Screen):
             f"[bold green][+] Hopping {summary}:[/bold green] {result}"
         )
         if dropped:
-            log.write(f"[dim]  Cleared {dropped} AP(s) outside the filter.[/dim]")
+            log.write(
+                f"[dim]  Cleared {dropped} AP(s) outside the filter.[/dim]"
+            )
 
     def _prune_aps_outside(self, channels: List[int]) -> int:
-        """Remove APs whose channel is not in *channels* from the registry,
-        local cache, and DataTable. Returns the number of APs dropped."""
         iface = self.app.active_interface
         if not iface:
             return 0
@@ -260,6 +436,7 @@ class ScannerView(Screen):
         for bssid in stale:
             iface.access_points.pop(bssid, None)
             self.ap_cache.pop(bssid, None)
+            self._stale_cache.pop(bssid, None)
             try:
                 table.remove_row(bssid)
             except Exception:
@@ -267,13 +444,13 @@ class ScannerView(Screen):
                 pass
         return len(stale)
 
-    async def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+    async def on_data_table_row_selected(
+        self, event: DataTable.RowSelected
+    ) -> None:
         bssid = event.row_key.value
         target_ap = self.ap_cache.get(bssid)
         if target_ap:
-            # Stop the channel hopper before entering Focus Mode
             if self.app.active_interface:
                 await self.app.active_interface.stop_hopping()
-                
             self.app.target_ap = target_ap
             self.app.push_screen("focus")
