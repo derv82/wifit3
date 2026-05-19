@@ -13,7 +13,7 @@ Fully-functional userspace Python drivers (cold + warm bring-up, channel hop, in
 | Realtek RTL8822BU (TP-Link T3U Plus, AC1300) | `chips/rtl8822bu/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-17, full RX + TX inject + 5G |
 | Realtek RTL8812AU (AWUS036ACH) | `chips/rtl8812au/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-17, RX + deauth confirmed by handshake re-capture |
 | Realtek RTL8188EUS (TP-Link TL-WN722N v2/v3) | `chips/rtl8188eus/` | 2.4 GHz, 1T1R | DONE 2026-05-19, M1-M8 complete; passive 4-way handshake + active PMKID harvest verified live |
-| Mediatek MT7921AU (AWUS036AXML) | `chips/mt7921au/` (scaffold) | — | PAUSED — see [[MT7921AU.md]] (EP0 dies post-FW_START_REQ on WinUSB; blocked on libusb bump for RAW_IO support) |
+| Mediatek MT7921AU (AWUS036AXML) | `chips/mt7921au/` (scaffold) | — | PAUSED — see [[MT7921AU.md]] + [[KALI-HANDOFF-2026-05-19.md]] (EP0 dies post-FW_START_REQ on WinUSB; Kali run 2026-05-19 failed earlier — likely kernel-driver collision, need clean blacklist+replug retest before code-bug hypothesis stands) |
 
 Family-shared infrastructure under `chips/rtw88_base/` covers transport,
 phy_cond walker, power_seq runtime, RF SIPI, TX checksum, RX-desc parser,
@@ -52,14 +52,35 @@ Two follow-ups are tracked, both deferred but small:
 
 Per [[project-m-last-libusb-bump]] memory: bump `libusb_package` to
 ≥1.0.27 + enable `LIBUSB_OPTION_WINUSB_RAW_IO` to unblock MT7921AU on
-Windows. That's the last chipset gating wifit3 1.0.
+Windows. Pre-requisite: the Kali blacklist+replug retest in
+[[KALI-HANDOFF-2026-05-19.md]] to rule out the kernel-driver-collision
+theory before assuming the WinUSB hypothesis is the real blocker.
+That's the last chipset gating wifit3 1.0.
 
-### Other hardware queued (when we get back to it)
+### Other hardware queued (captures landed 2026-05-19, on deck)
 
-- AC1900      (RTL8814AU) — 4T4R, modern iDDMA path. Bigger delta from 8822bu.
-- AWUS036ACHM (MT7610U)
-- AWUS036ACM  (MT7612U)
-- AWUS036NH   (RT3070) — same chipset the older PAU05 uses.
+User trip to Kali brought back fresh cold-boot pcaps + `airmon-ng`/`iw`/`tshark`
+logs for three of the four queued cards. Each capture lives at
+`usb_dumps/captures_<driver>/` with the standard `capture-N.pcap` +
+`capture-N_logs/main.log` layout the existing tooling already consumes
+(`scratch/pcap_slicer.py`, `scratch/source_intel.py`). Remaining gate
+before driver work starts on any of these is **kernel source extraction
+to `data_dumps/<driver>-source-v6.18/` + firmware-blob byte-verify against
+`linux-firmware/`** (same workflow as the 8821au/8822bu/8812au bring-ups).
+
+| Card | Chip | Kernel module | Captures | Source | FW | Notes |
+|------|------|---------------|----------|--------|----|-------|
+| AC1900       | RTL8814AU | `rtw88_8814au` | ✅ `captures_rtw88_8814au/` (3) | ⏳ | ⏳ | 4T4R, modern iDDMA path. Bigger delta from 8822bu — 4 RF paths instead of 2, larger txbf init. Family-shared `rtw88_base/` should still cover transport / phy_cond / power_seq / SIPI. |
+| AWUS036ACHM  | MT7610U   | `mt76x0u`      | ✅ `captures_mt76x0u/` (3)      | ⏳ | ⏳ | mt76 family, sibling of mt7921 in structure but older WiFi-5 PHY. Single-chain. 5GHz support detected by airmon at capture time. |
+| AWUS036ACM   | MT7612U   | `mt76x2u`      | ✅ `captures_mt76x2u/` (2)      | ⏳ | ⏳ | mt76 family, 2T2R WiFi-5. Likely shares mt76 USB transport (mt76u, MCU CMD format) with mt7921au — could front-load mt76 base infrastructure into a shared `chips/mt76_base/` if it pays off across mt76x0/mt76x2/mt7921. |
+| AWUS036NH    | RT3070    | `rt2800usb`    | (not yet)                       | ⏳ | ⏳ | Same chipset as the older PAU05 dongle. Should slot into the existing `chips/rt2800usb/` driver — likely a `DeviceID` + chip-id extras entry + minor RXWI/TXWI tweaks, not a from-scratch port. |
+
+Next mechanical steps when picking one of these up:
+
+1. `pcap_slicer.py usb_dumps/captures_<driver>/capture-1_logs/main.log usb_dumps/captures_<driver>/capture-1.pcap` — get the frame-range map for "plug in → firmware load → channel hop → packets flow". Pick the cold-boot capture (usually capture-1 or -3; -2 tends to be a warm boot where the kernel skipped FW load).
+2. Pull pristine kernel source for the relevant driver subdir into `data_dumps/<driver>-source-v6.18/` (kernel.org tag `v6.18`, same version as Kali's runtime kernel — keeps `source_intel.py` citations version-aligned).
+3. Extract the firmware blob from frame N of the cold-boot pcap (`scratch/extract_fw_*.py` patterns already used for rtw88) and byte-verify against `linux-firmware/<driver>/*.bin`. Ship the pcap-extracted blob in `chips/<driver>/assets/` per [[firmware-extraction]] memory.
+4. M1 = FW upload + FW_READY ACK only. Demoable, ~few hundred lines, no PHY init. Per [[milestone-sizing]] memory.
 
 ### *Distant Future* Hardware Support (need $$$ will make more Minnie Drivers)
 
