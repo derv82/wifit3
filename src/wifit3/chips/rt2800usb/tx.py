@@ -35,7 +35,6 @@ import usb.core
 
 from .constants import (
     RT_RT5592,
-    TXINFO_QSEL_MGMT,
     TXINFO_W0_QSEL,
     TXINFO_W0_USB_DMA_TX_PKT_LEN,
     TXINFO_W0_WIV,
@@ -50,8 +49,14 @@ from .constants import (
     TXWI_W1_PACKETID_ENTRY,
     TXWI_W1_PACKETID_QUEUE,
     TXWI_W1_WIRELESS_CLI_ID,
-    USB_EP_BULK_OUT_MGMT,
+    USB_EP_BULK_OUT_AC_BE,
 )
+
+# Kernel `rt2800usb_write_tx_desc` hardcodes QSEL=2 (EDCA) for EVERY
+# TX frame, including management. The "MGMT QSEL" thing earlier was
+# wrong — there's only one QSEL the chip accepts on the bulk-OUT data
+# path.
+QSEL_EDCA = 2
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +81,7 @@ def build_tx_descriptors(
     use_no_ack: bool = True,
     mcs: int = 0,
     phymode: int = TXWI_PHYMODE_CCK,
-    qsel: int = TXINFO_QSEL_MGMT,
+    qsel: int = QSEL_EDCA,
 ) -> bytes:
     """Build the TXINFO + TXWI prefix for an 802.11 frame.
 
@@ -122,7 +127,7 @@ def inject_frame(
     frame: bytes,
     *,
     txwi_size: int = TXWI_DESC_SIZE_4WORDS,
-    ep: int = USB_EP_BULK_OUT_MGMT,
+    ep: int = USB_EP_BULK_OUT_AC_BE,
     use_no_ack: bool = True,
     mcs: int = 0,
     phymode: int = TXWI_PHYMODE_CCK,
@@ -130,9 +135,18 @@ def inject_frame(
 ) -> int:
     """Build TX descriptors + pad-align frame + bulk-OUT write.
 
+    Wire layout (kernel rt2800usb_get_tx_data_len, rt2800usb.c:440-451):
+
+        [TXINFO 4B] [TXWI 16/20B] [802.11 frame] [4-byte align pad]
+        [4-byte USB end pad]
+
+    The trailing 4-byte USB end pad is mandatory — kernel comment:
+    "USB end pad(4 bytes) is needed at each USB bulk out packet end."
+    Without it the chip silently drops bulk-OUT writes (Errno 10060
+    timeout — controller forwards bytes, chip never accepts).
+
     Returns bytes accepted by the controller. Raises USBError on
-    transport failure. Default timeout is 1s (matches our rtl8187
-    pattern — unicast inject can take ~140ms if the chip retries).
+    transport failure.
     """
     if not frame:
         raise ValueError("frame is empty")
@@ -144,9 +158,10 @@ def inject_frame(
         use_no_ack=use_no_ack, mcs=mcs, phymode=phymode,
     )
 
-    # 4-byte align the frame
+    # 4-byte align the frame body, then add the mandatory 4-byte USB
+    # end pad. Kernel: `roundup(skb_len, 4) + 4`.
     pad_len = (-len(frame)) & 3
-    payload = prefix + frame + (b"\x00" * pad_len)
+    payload = prefix + frame + (b"\x00" * pad_len) + b"\x00\x00\x00\x00"
 
     sent = dev.write(ep, payload, timeout_ms)
     if sent != len(payload):

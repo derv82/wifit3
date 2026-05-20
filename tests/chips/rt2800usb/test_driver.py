@@ -631,18 +631,18 @@ def test_set_channel_writes_correct_synth_for_each_2g_channel(monkeypatch):
 def test_build_tx_descriptors_default_shape():
     """For a 26-byte deauth + use_no_ack=True + MCS=0/CCK, the
     descriptors should set MPDU byte count = 26, ACK = 0, NSEQ = 1,
-    WCID = 0xFF, WIV = 1, QSEL = MGMT."""
+    WCID = 0xFF, WIV = 1, QSEL = EDCA (2 — kernel hardcodes this)."""
     import struct
     from wifit3.chips.rt2800usb.tx import build_tx_descriptors
     desc = build_tx_descriptors(26, txwi_size=16, use_no_ack=True)
     assert len(desc) == 4 + 16  # TXINFO + TXWI
 
     txinfo_w0, txwi_w0, txwi_w1, txwi_w2, txwi_w3 = struct.unpack("<5I", desc)
-    # TXINFO: pkt_len = TXWI(16) + aligned(26→28) = 44; WIV=1; QSEL=0(MGMT)
+    # TXINFO: pkt_len = TXWI(16) + aligned(26→28) = 44; WIV=1; QSEL=2(EDCA)
     assert (txinfo_w0 & 0xFFFF) == 44
     assert txinfo_w0 & (1 << 24), "WIV should be set"
-    # MGMT qsel = 0 → bits[26:25] = 0
-    assert ((txinfo_w0 >> 25) & 0x3) == 0
+    # EDCA qsel = 2 → bits[26:25] = 2
+    assert ((txinfo_w0 >> 25) & 0x3) == 2
     # TXWI_W0: MCS=0, PHYMODE=CCK (0) — entire word should be 0
     assert txwi_w0 == 0
     # TXWI_W1: ACK=0, NSEQ=1, WCID=0xFF, MPDU=26, QID=2, ENTRY=1
