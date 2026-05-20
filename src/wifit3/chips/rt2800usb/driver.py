@@ -1,298 +1,375 @@
-import logging
+"""rt2800usb driver — Panda PAU05 (RT5372) / Panda PAU09 (RT5572) /
+ALFA AWUS051NH v2 (RT3572).
+
+Currently scoped to RT5372 (single-band, single-stream — the smallest
+of the three). RT3572 + RT5572 land as follow-on milestones once the
+shared rt2x00_base/ shape is extracted.
+
+Bring-up flow (mirrors ``rt2800_probe_hw`` from
+data_dumps/rt2x00-source-v6.18/rt2800lib.c, with the rt2x00 framework
++ rt2x00usb layers flattened into wifit3's per-chip module shape):
+
+    connect()
+      ├─ claim USB interface
+      ├─ read_chip_id              MAC_CSR0 → silicon ID + revision      [M1]
+      ├─ read_perm_mac             MAC_ADDR_DW0/DW1                      [M1]
+      ├─ is_chip_warm              WLAN_EN + PBF_SYS_CTRL.READY          [M1]
+      ├─ cold_bring_up
+      │   ├─ rt2x00usb_load_firmware                                     [M2a]
+      │   ├─ rt2800_init_registers                                       [M2b]
+      │   ├─ rt2800_init_bbp                                             [M2b]
+      │   ├─ rt2800_init_rfcsr_5370                                      [M2c]
+      │   └─ rt2800_enable_radio
+      ├─ probe_endpoints + RX loop                                       [M3]
+      └─ set_channel(default)                                            [M4]
+
+Milestone status:
+  * M1:  chip-id probe + warm detection.                              [DONE]
+  * M2a:  rt2870.bin firmware upload + MCU boot.                       [DONE]
+  * M2b-1: rt2800usb_init_registers — USB-side bootstrap.            [DONE]
+  * M2b-2: rt2800_init_registers — big MAC config.                   [DONE]
+  * M2b-3: rt2800_init_bbp_53xx — baseband init.                     [DONE]
+  * M2c: rt2800_init_rfcsr_5392 — RF chain init.                     [DONE]
+  * M3:  RX desc decode + RX loop.                                   [DONE]
+  * M4: set_channel for 2.4 GHz (1..14).                             [DONE]
+  * M5 (current): inject_frame builds TXINFO + TXWI + bulk-OUT 0x06
+    (MGMT EP). 1 Mbps CCK + WCID broadcast + sequence-generated.
+  * M6: see top-level NEXT-STEPS.md.
+"""
+from __future__ import annotations
+
 import asyncio
-import struct
-import json
-import time
-import importlib
-from typing import Optional
-from pathlib import Path
+import logging
+from typing import Callable, Optional
 
-from .transport import RT2800USBTransport
-from .firmware import RT2800USBFirmwareLoader
-from .constants import *
+import usb.core
+import usb.util
 
-from wifit3.engine.protocols import DeviceID
+from wifit3.engine.protocols import DeviceID, ProgressCallback
+
+from .constants import (
+    USB_PID_RT3572,
+    USB_PID_RT5372,
+    USB_PID_RT5572,
+    USB_VID_RALINK,
+)
 from wifit3.wlan.packet import WlanFrameParser
+
+from .bbp import init_bbp_53xx
+from .chan import set_channel as _set_channel
+from .firmware import load_firmware, load_firmware_blob
+from .mac import ChipId, is_chip_warm, read_chip_id, read_perm_mac, usb_init_registers
+from .reg_init import init_registers
+from .rfcsr import init_rfcsr
+from .rx import parse_rx_urb, probe_endpoints, read_rx_burst, rxwi_size_for_silicon
+from .transport import RT2800USBTransport
+from .tx import inject_frame as _inject_frame, txwi_size_for_silicon
 
 logger = logging.getLogger(__name__)
 
 
-import usb.core
-
-
 class RT2800USBDriver:
+    """Driver for the rt2800usb family (RT3572 / RT5372 / RT5572).
+
+    Per-variant differences (RX/TX desc size, RF init, 5 GHz support)
+    are dispatched at runtime via the ``chip_id`` carried in DeviceID
+    extras + the silicon ID read from MAC_CSR0 at connect() time.
     """
-    Unified Userspace driver for the Ralink rt2800usb family (RT5572, RT3572, RT5372).
-    """
-    RXINFO_SIZE = 4
-    TXINFO_SIZE = 4
 
     SUPPORTED_IDS = [
-        DeviceID(0x148f, 0x5572, "Ralink RT5572 / Panda PAU09 N600", extras={"chip_id": "rt5572"}),
-        DeviceID(0x148f, 0x3572, "Ralink RT3572 / ALFA AWUS051NH v2", extras={"chip_id": "rt3572"}),
-        DeviceID(0x148f, 0x5372, "Ralink RT5372 / Panda PAU05",       extras={"chip_id": "rt5372"}),
+        DeviceID(USB_VID_RALINK, USB_PID_RT5372,
+                 "Ralink RT5372 / Panda PAU05",
+                 extras={"chip_id": "rt5372"}),
+        DeviceID(USB_VID_RALINK, USB_PID_RT3572,
+                 "Ralink RT3572 / ALFA AWUS051NH v2",
+                 extras={"chip_id": "rt3572"}),
+        DeviceID(USB_VID_RALINK, USB_PID_RT5572,
+                 "Ralink RT5572 / Panda PAU09 N600",
+                 extras={"chip_id": "rt5572"}),
     ]
-    # Conservative default: 2.4 GHz only. Some rt2800usb variants (RT5572/
-    # RT3572) physically support 5 GHz but the current driver path here
-    # hasn't been wired/verified for it — tighten this when that lands.
+    # 2.4 GHz only for now. RT3572 + RT5572 will extend this to 5 GHz
+    # in their respective M4 follow-on milestones.
     SUPPORTED_CHANNELS = list(range(1, 14))
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RT2800USBDriver":
-        chip_id = id_entry.extras.get("chip_id", "rt5572")
-        return cls(RT2800USBTransport(dev), chip_id=chip_id)
+        chip_id_hint = id_entry.extras.get("chip_id", "")
+        return cls(dev, chip_id_hint=chip_id_hint)
 
-    def __init__(self, transport: RT2800USBTransport, chip_id: str = "rt5572"):
-        self.transport = transport
+    def __init__(self, dev: usb.core.Device, *, chip_id_hint: str = ""):
+        self.dev = dev
+        self.transport = RT2800USBTransport(dev)
+        self._rx_callback: Optional[Callable[[dict], None]] = None
+        self._rx_task: Optional[asyncio.Task] = None
+        self._rx_running = False
+        self._bulk_in_ep: Optional[int] = None
+        self._rxwi_size: int = 16          # set at connect-time from silicon_id
+        self._claimed = False
+
+        # WlanDriver Protocol surface area.
         self.mac_address: Optional[str] = None
-        self._rx_callback = None
-        self._is_running = False
-        self.is_warm = False
-        self.parser = WlanFrameParser()
-        self.chip_id = chip_id.lower()
+        self.is_warm: bool = False
+        self.current_channel: int = 1
+        self.chip_id: Optional[ChipId] = None
+        self.chip_id_hint = chip_id_hint   # from VID:PID; e.g. "rt5372"
 
-        # Dynamic descriptor sizes based on chip architecture
-        if self.chip_id == "rt5572":
-            self.rxwi_size = 24
-            self.txwi_size = 20
-        else:
-            self.rxwi_size = 16
-            self.txwi_size = 16
-
-        # Dynamically load assets based on chip_id
-        try:
-            self.assets_init = importlib.import_module(f"wifit3.chips.rt2800usb.assets.{self.chip_id}_init")
-            self.assets_tuning = importlib.import_module(f"wifit3.chips.rt2800usb.assets.{self.chip_id}_tuning")
-        except ImportError as e:
-            logger.error(f"Failed to load assets for chip {self.chip_id}: {e}")
-            raise ValueError(f"Unsupported or missing assets for chip {self.chip_id}")
-
-        # Subscribe to transport polling
-        self.transport.subscribe(self._on_bulk_in)
-
-    def register_rx_callback(self, cb):
+    def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_callback = cb
 
-    def _on_bulk_in(self, data: bytes):
-        """
-        Processes raw data from the Bulk IN endpoint.
-        Format: [RXINFO (4)] [RXWI (16/24)] [802.11 Frame] [Pad] [RXD (4)]
-        """
-        if len(data) < self.RXINFO_SIZE + self.rxwi_size:
-            logger.debug(f"RX Drop: Too short ({len(data)} bytes)")
+    # ---- USB claim helpers ----------------------------------------------
+    def _claim(self) -> None:
+        if self._claimed:
             return
-
-        # 1. Parse RXINFO (First 4 bytes)
-        # Word 0: [15:0] USB_DMA_RX_PKT_LEN
-        rx_pkt_len = struct.unpack("<H", data[0:2])[0]
-        
-        if rx_pkt_len <= self.rxwi_size or rx_pkt_len > len(data) - self.RXINFO_SIZE:
-            logger.debug(f"RX Drop: Bad rx_pkt_len {rx_pkt_len} (Data len: {len(data)})")
-            return
-
-        # 2. Extract RXWI (Next 24 bytes for RT5592 arch)
-        # Word 2: [7:0] RSSI0 (at offset 8 in RXWI)
-        rssi_raw = data[self.RXINFO_SIZE + 8]
-        rssi = rssi_raw - 120 # Default RSSI offset from rt2800.h
-
-        # 3. Extract 802.11 Frame
-        # Frame starts after RXINFO and RXWI
-        frame_bytes = data[self.RXINFO_SIZE + self.rxwi_size : self.RXINFO_SIZE + rx_pkt_len]
-        
-        if len(frame_bytes) < 10:
-            logger.debug(f"RX Drop: Extracted frame too short ({len(frame_bytes)})")
-            return
-            
-        # 4. Parse and Callback
         try:
-            parsed = self.parser.parse_80211_frame(frame_bytes, rssi)
-            if parsed:
-                if self._rx_callback:
-                    self._rx_callback(parsed)
-            else:
-                logger.debug(f"RX Drop: Parser returned None for header {frame_bytes[:2].hex()}")
-        except Exception as e:
-            logger.debug(f"Frame parse fail: {e}")
+            if self.dev.is_kernel_driver_active(0):
+                self.dev.detach_kernel_driver(0)
+                logger.info("detached kernel driver from interface 0")
+        except (NotImplementedError, usb.core.USBError) as e:
+            logger.debug("kernel-driver detach skipped: %s", e)
+        try:
+            self.dev.set_configuration()
+        except usb.core.USBError as e:
+            raise IOError(f"set_configuration failed: {e}") from e
+        usb.util.claim_interface(self.dev, 0)
+        self._claimed = True
 
-    async def connect(self, firmware_path: Optional[str] = None, progress_cb=None):
+    def _release(self) -> None:
+        if not self._claimed:
+            return
+        try:
+            usb.util.release_interface(self.dev, 0)
+            usb.util.dispose_resources(self.dev)
+        except usb.core.USBError as e:
+            logger.warning("USB release warning: %s", e)
+        self._claimed = False
+
+    # ---- connect --------------------------------------------------------
+    async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
+        """M1 connect: claim → identify → exit.
+
+        M2 will wire in the real cold_bring_up.
         """
-        Orchestrates the device cold-boot and initialization.
-        """
-        def _update(pct, msg):
+        loop = asyncio.get_event_loop()
+
+        def _progress(pct: float, msg: str) -> None:
             if progress_cb:
                 progress_cb(pct, msg)
-            logger.info(f"Progress {int(pct*100)}%: {msg}")
+            logger.info("[%3d%%] %s", int(pct * 100), msg)
 
-        # --- HEAVY LIFTING OFF-RAMP ---
-        # We offload the procedural grind to a background thread.
-        # This keeps the main UI event loop responsive.
-        success = await asyncio.to_thread(self._bootstrap_sync, firmware_path, _update)
-        
-        if success:
-            # We need to run these async parts on the main loop
-            await self.set_channel(1)
-            await self.transport.start()
-            self._is_running = True
-            _update(1.0, f"{self.chip_id.upper()} Driver successfully connected. MAC: {self.mac_address}")
-            return True
-        
-        return False
+        try:
+            _progress(0.10, "Claiming USB interface")
+            await loop.run_in_executor(None, self._claim)
 
-    def _bootstrap_sync(self, firmware_path: Optional[str], update_cb) -> bool:
-        """
-        Synchronous version of the boot and init sequence for background thread.
-        """
-        update_cb(0.05, f"Identifying {self.chip_id.upper()} hardware...")
-        
-        # 1. Identify Hardware
-        mac_csr0 = self.transport.read_reg32(MAC_CSR0)
-        asic_ver = self.transport.read_reg32(ASIC_VER_ID)
-        logger.info(f"MAC_CSR0: {hex(mac_csr0)}, ASIC_VER: {hex(asic_ver)}")
-
-        # Check warmth state passively exactly once before boot
-        pbf_ctrl = self.transport.read_reg32(PBF_SYS_CTRL)
-        self.is_warm = not bool(pbf_ctrl & (1 << 13))
-
-        if self.is_warm:
-            update_cb(0.1, "Device is already WARM. Skipping firmware upload.")
-        else:
-            # 2. Stabilization (COLD BOOT ONLY)
-            update_cb(0.1, "Stabilizing hardware for cold boot...")
-            self.transport.write_reg32(AUTOWAKEUP_CFG, 0)
-            self.transport.write_reg32(WPDMA_GLO_CFG, 0)
-            
-            # 3. Load Firmware
-            update_cb(0.15, "Loading firmware into MCU memory...")
-            if firmware_path is None or not Path(firmware_path).exists():
-                # Fallback to internal assets if no path provided
-                firmware_path = Path(__file__).parent / "assets" / f"{self.chip_id}.bin"
-                
-            try:
-                with open(firmware_path, "rb") as f:
-                    fw_bytes = f.read()
-            except FileNotFoundError:
-                # Last resort: try to find it in the scripts folder if it was just extracted
-                firmware_path = Path(f"scripts/{self.chip_id}/{self.chip_id}.bin")
-                try:
-                    with open(firmware_path, "rb") as f:
-                        fw_bytes = f.read()
-                except FileNotFoundError:
-                    # Final fallback: use rt5572.bin as they share firmware
-                    firmware_path = Path(__file__).parent / "assets" / "rt5572.bin"
-                    with open(firmware_path, "rb") as f:
-                        fw_bytes = f.read()
-            
-            if not RT2800USBFirmwareLoader.load(self.transport, fw_bytes):
-                logger.error("Firmware upload failed")
+            _progress(0.40, "Reading MAC_CSR0 (chip ID + revision)")
+            self.chip_id = await loop.run_in_executor(
+                None, read_chip_id, self.transport
+            )
+            logger.info(
+                "chip_id: %s rev=0x%04x (raw MAC_CSR0=0x%08x, hint=%s)",
+                self.chip_id.name, self.chip_id.revision,
+                self.chip_id.raw, self.chip_id_hint,
+            )
+            if not self.chip_id.is_supported:
+                logger.error(
+                    "silicon ID 0x%04x not in M1 supported set "
+                    "(RT3572, RT5390, RT5592)",
+                    self.chip_id.silicon_id,
+                )
                 return False
 
-            update_cb(0.4, "Finalizing firmware upload...")
-            # Finalize firmware upload by clearing mailbox
-            self.transport.write_reg32(H2M_MAILBOX_CID, 0xffffffff)
-            self.transport.write_reg32(H2M_MAILBOX_STATUS, 0xffffffff)
+            _progress(0.60, "Reading permanent MAC")
+            mac_bytes = await loop.run_in_executor(
+                None, read_perm_mac, self.transport
+            )
+            self.mac_address = ":".join(f"{b:02x}" for b in mac_bytes)
+            logger.info("mac_address: %s", self.mac_address)
 
-            # 4. Wait for PBF (Post-Boot)
-            update_cb(0.45, "Waiting for PBF System stabilization...")
-            for i in range(100):
-                pbf_ctrl = self.transport.read_reg32(PBF_SYS_CTRL)
-                if pbf_ctrl & PBF_SYS_CTRL_READY:
-                    logger.info("PBF System Ready.")
-                    break
-                if i % 10 == 0:
-                    update_cb(0.45 + (i * 0.001), f"Waiting for PBF... ({i}/100)")
-                time.sleep(0.01)
-            else:
-                logger.warning("PBF System NOT ready, firmware might not be executing.")
+            _progress(0.30, "Probing warm/cold state")
+            warm = await loop.run_in_executor(
+                None, is_chip_warm, self.transport
+            )
+            self.is_warm = warm
+            logger.info("is_warm: %s", warm)
+            if warm:
+                logger.info(
+                    "warm chip — re-running FW upload anyway (M2a; warm "
+                    "short-circuit will land once M2b/c stabilize the "
+                    "post-init register state)"
+                )
 
-            # 5. Kick MCU (Boot Signal)
-            update_cb(0.55, "Sending MCU Boot Signal...")
-            # Based on trace: Req 1, Val 0x8, Idx 0
-            self.transport.set_device_mode(0, 0x08)
-            logger.info("MCU Boot Signal sent.")
+            _progress(0.40, "Uploading rt2870.bin firmware + MCU boot")
+            fw_bytes = await loop.run_in_executor(None, load_firmware_blob)
+            try:
+                await loop.run_in_executor(
+                    None,
+                    lambda: load_firmware(
+                        self.transport,
+                        fw_bytes,
+                        silicon_id=self.chip_id.silicon_id,
+                        progress_cb=lambda p, m: _progress(0.40 + 0.55 * p, m),
+                    ),
+                )
+            except IOError as e:
+                logger.error("firmware load failed: %s", e)
+                return False
 
-            # Wait for MCU to process the signal
-            time.sleep(0.1)
+            _progress(0.95, "Verifying post-FW state (PBF.READY)")
+            from .constants import PBF_SYS_CTRL, PBF_SYS_CTRL_READY
+            pbf = await loop.run_in_executor(None, self.transport.read32, PBF_SYS_CTRL)
+            if not (pbf & PBF_SYS_CTRL_READY):
+                logger.error(
+                    "post-FW PBF.READY not set (PBF_SYS_CTRL=0x%08x)", pbf
+                )
+                return False
+            logger.info("post-FW PBF_SYS_CTRL=0x%08x — READY latched", pbf)
 
-        # 6 Full Hardware Initialization Sequence (Run for both COLD and WARM)
-        init_seq = getattr(self.assets_init, "INIT_SEQ", [])
-        total_init = len(init_seq)
-        update_cb(0.6, f"Replaying {total_init} initialization registers...")
-        for i, (idx, val) in enumerate(init_seq):
-            if i == 15:
-                # Matches Req 1, Val 1, Idx 0 (USB_MODE_RESET) from the kernel trace
-                self.transport.set_device_mode(0, 0x01)
-                logger.info("USB Endpoints Reset (Mid-Init).")
-            
-            self.transport.write_multi(idx, bytes.fromhex(val))
-            
-            if i > 0 and i % 50 == 0:
-                prog = 0.6 + (0.3 * (i / total_init))
-                update_cb(prog, f"Initializing registers... ({i}/{total_init})")
+            _progress(0.95, "Running rt2800usb_init_registers (M2b-1)")
+            try:
+                await loop.run_in_executor(None, usb_init_registers, self.transport)
+            except (IOError, usb.core.USBError) as e:
+                logger.error("usb_init_registers failed: %s", e)
+                return False
 
-        # 7. Read MAC Address (From EEPROM)
-        update_cb(0.95, "Reading MAC address from EEPROM...")
-        eeprom_mac0 = self.transport.read_eeprom(0x0002)
-        eeprom_mac1 = self.transport.read_eeprom(0x0003)
-        eeprom_mac2 = self.transport.read_eeprom(0x0004)
-        
-        self.mac_address = ":".join(f"{b:02x}" for b in [
-            eeprom_mac0 & 0xff, (eeprom_mac0 >> 8) & 0xff,
-            eeprom_mac1 & 0xff, (eeprom_mac1 >> 8) & 0xff,
-            eeprom_mac2 & 0xff, (eeprom_mac2 >> 8) & 0xff
-        ])
-        logger.info(f"Device MAC: {self.mac_address}")
-        
-        return True
+            pbf2 = await loop.run_in_executor(None, self.transport.read32, PBF_SYS_CTRL)
+            pre_init = 1 << 13
+            if pbf2 & pre_init:
+                logger.warning(
+                    "post-init PBF still has pre-init bit set (0x%08x)", pbf2
+                )
 
-    async def set_channel(self, channel: int) -> bool:
-        """
-        Replays the captured register sequence for the given channel.
-        """
-        sequence = self.assets_tuning.get_sequence(channel)
-        if not sequence:
-            logger.warning(f"No tuning sequence for Channel {channel} on {self.chip_id}")
+            _progress(0.96, "Running rt2800_init_registers (M2b-2 MAC config)")
+            try:
+                await loop.run_in_executor(
+                    None,
+                    lambda: init_registers(self.transport, self.chip_id.silicon_id),
+                )
+            except (IOError, usb.core.USBError) as e:
+                logger.error("init_registers failed: %s", e)
+                return False
+
+            _progress(0.97, "Running init_bbp_53xx (M2b-3 baseband init)")
+            try:
+                await loop.run_in_executor(
+                    None,
+                    lambda: init_bbp_53xx(self.transport, self.chip_id.silicon_id),
+                )
+            except (IOError, usb.core.USBError, ValueError) as e:
+                logger.error("init_bbp_53xx failed: %s", e)
+                return False
+
+            _progress(0.98, "Running init_rfcsr (M2c RF init)")
+            try:
+                await loop.run_in_executor(
+                    None,
+                    lambda: init_rfcsr(self.transport, self.chip_id.silicon_id),
+                )
+            except (IOError, usb.core.USBError, NotImplementedError) as e:
+                logger.error("init_rfcsr failed: %s", e)
+                return False
+
+            _progress(0.99, "Tuning to default channel 1 (M4)")
+            try:
+                await loop.run_in_executor(
+                    None,
+                    lambda: _set_channel(self.transport, self.chip_id.silicon_id, 1),
+                )
+                self.current_channel = 1
+            except (ValueError, IOError, usb.core.USBError, NotImplementedError) as e:
+                logger.warning("default-channel tune failed: %s", e)
+
+            _progress(1.00, "Probing endpoints + starting RX loop")
+            self._rxwi_size = rxwi_size_for_silicon(self.chip_id.silicon_id)
+            eps = probe_endpoints(self.dev)
+            self._bulk_in_ep = eps.primary_bulk_in
+            self._rx_running = True
+            self._rx_task = asyncio.create_task(self._rx_loop())
+
+            self.is_warm = True
+            return True
+
+        except (IOError, usb.core.USBError, NotImplementedError) as e:
+            logger.error("rt2800usb M1 connect failed: %s", e)
             return False
 
-        logger.debug(f"Tuning {self.chip_id.upper()} to Channel {channel}...")
-        
-        for idx, val in sequence:
-            # The extracted val is a hex string literal representing the exact byte order.
-            # To send it exactly as it appeared on the wire, we pack as big-endian.
-            self.transport.write_multi(idx, bytes.fromhex(val))
-            
+    # ---- RX loop --------------------------------------------------------
+    async def _rx_loop(self) -> None:
+        loop = asyncio.get_event_loop()
+        ep = self._bulk_in_ep
+        assert ep is not None
+        logger.info("rt2800usb RX loop started on EP 0x%02x (RXWI=%dB)",
+                    ep, self._rxwi_size)
+        while self._rx_running:
+            try:
+                buf = await loop.run_in_executor(None, read_rx_burst, self.dev, ep)
+            except usb.core.USBError as e:
+                logger.error("rt2800usb bulk-IN error: %s", e)
+                await asyncio.sleep(0.05)
+                continue
+            except Exception as e:
+                logger.exception("rt2800usb RX loop unexpected error: %s", e)
+                await asyncio.sleep(0.05)
+                continue
+            if buf is None:
+                continue
+            rx = parse_rx_urb(buf, rxwi_size=self._rxwi_size)
+            if rx is None or rx.has_fcs_error:
+                continue
+            parsed = WlanFrameParser.parse_80211_frame(rx.mpdu, rx.rssi_dbm)
+            if parsed is not None and self._rx_callback is not None:
+                try:
+                    self._rx_callback(parsed)
+                except Exception as e:
+                    logger.exception("rx_callback raised: %s", e)
+        logger.info("rt2800usb RX loop stopped")
+
+    # ---- channel tune (M4) ----------------------------------------------
+    async def set_channel(self, channel: int) -> bool:
+        if self.chip_id is None:
+            logger.error("set_channel(%d): connect() must run first", channel)
+            return False
+        try:
+            await asyncio.get_event_loop().run_in_executor(
+                None, _set_channel, self.transport, self.chip_id.silicon_id, channel,
+            )
+        except ValueError as e:
+            logger.warning("rt2800usb set_channel: %s", e)
+            return False
+        except (IOError, usb.core.USBError, NotImplementedError) as e:
+            logger.error("rt2800usb set_channel(%d): %s", channel, e)
+            return False
+        self.current_channel = channel
         return True
 
+    # ---- TX inject (M5) -------------------------------------------------
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
-        """
-        Injects a raw 802.11 frame by wrapping it in Ralink TX descriptors.
-        """
-        # 1. Construct TXINFO (4 bytes)
-        # Word 0: [15:0] Len, [24] WIV=1, [26:25] QSEL=2 (EDCA)
-        pkt_len = self.txwi_size + len(frame_bytes)
-        txinfo = pkt_len | TXINFO_W0_WIV | TXINFO_W0_QSEL_EDCA
-        
-        # 2. Construct TXWI (24 bytes / 6 words)
-        # Word 0: PHYMODE, MCS, BW, STBC, SHORT_GI etc.
-        txwi_w0 = 0
-        if not use_no_ack:
-            txwi_w0 |= TXWI_W0_ACK
-        
-        # Word 1: PacketID, CliID, MPDU Total Byte Count
-        txwi_w1 = (len(frame_bytes) << 16)
-        
-        # Build TXWI buffer
-        txwi = bytearray(self.txwi_size)
-        struct.pack_into("<I", txwi, 0, txwi_w0)
-        struct.pack_into("<I", txwi, 4, txwi_w1)
-        
-        # 3. Assemble full packet
-        full_pkt = struct.pack("<I", txinfo) + txwi + frame_bytes
-        
-        # 4. Send to Bulk OUT
-        await self.transport.send_bulk(full_pkt)
-        return True
+        if self.chip_id is None:
+            logger.error("inject_frame: connect() must run first")
+            return False
+        # rt2800 uses TXWI size that varies by silicon — pre-compute.
+        txwi_sz = txwi_size_for_silicon(self.chip_id.silicon_id)
+        try:
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: _inject_frame(
+                    self.dev, frame_bytes,
+                    txwi_size=txwi_sz, use_no_ack=use_no_ack,
+                ),
+            )
+            return True
+        except ValueError as e:
+            logger.warning("rt2800usb inject_frame bad frame: %s", e)
+            return False
+        except usb.core.USBError as e:
+            logger.error("rt2800usb inject_frame USBError: %s", e)
+            return False
 
-    async def close(self):
-        self._is_running = False
-        await self.transport.stop()
-        logger.info(f"{self.chip_id.upper()} Driver closed.")
+    async def close(self) -> None:
+        self._rx_running = False
+        if self._rx_task:
+            self._rx_task.cancel()
+            try:
+                await self._rx_task
+            except asyncio.CancelledError:
+                pass
+        self._release()
+        logger.info("rt2800usb driver closed")

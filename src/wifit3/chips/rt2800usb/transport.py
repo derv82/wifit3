@@ -1,137 +1,190 @@
-import usb.core
+"""Vendor control-transfer transport for rt2800usb chips.
+
+Mirrors the rt2x00usb register-access helpers (rt2x00usb.c:45-80,
+``rt2x00usb_vendor_request``).
+
+Wire format for a 4-byte register read/write:
+
+    bmRequestType = 0xC0 IN / 0x40 OUT
+    bRequest      = 7 (USB_MULTI_READ) / 6 (USB_MULTI_WRITE)
+    wValue        = 0
+    wIndex        = register address    ← address goes HERE, not in wValue
+    wLength       = 4 (or longer for multi-byte writes)
+    data          = u32 LE register value
+
+**Subtle gotcha**: the kernel `rt2x00usb_vendor_request` takes
+``(const u16 offset, const u16 value)`` as the 4th/5th args, but its
+internal ``usb_control_msg`` call passes ``value`` to ``wValue`` and
+``offset`` to ``wIndex`` — i.e. the addresses goes in **wIndex** even
+though the wrapper parameter is named ``offset``. For register access,
+``value`` is always 0. Verified empirically: any other ordering returns
+the same stale word (e.g. 0x00020208) for every address.
+
+EEPROM (USB_EEPROM_READ = 9) is one-shot — the kernel reads the whole
+EEPROM in a single transfer with wValue=wIndex=0; the chip just
+streams bytes from offset 0.
+
+USB_DEVICE_MODE = 1 carries the "MCU boot" + "reset" signals where
+the *value* goes in wValue and *mode* in wIndex (no data payload).
+"""
+from __future__ import annotations
+
 import logging
-import asyncio
-from typing import List, Union, Optional
+from typing import Sequence, Union
+
+import usb.core
 
 from .constants import (
-    USB_EP_BULK_IN, USB_EP_BULK_OUT, USB_SINGLE_WRITE, USB_SINGLE_READ, 
-    USB_MULTI_WRITE, USB_MULTI_READ, USB_DEVICE_MODE, USB_EEPROM_READ,
-    H2M_MAILBOX_CSR, HOST_CMD_CSR
+    USB_DEVICE_MODE,
+    USB_EEPROM_READ,
+    USB_MULTI_READ,
+    USB_MULTI_WRITE,
+    USB_SINGLE_READ,
+    USB_SINGLE_WRITE,
+    USB_VENDOR_REQUEST_IN,
+    USB_VENDOR_REQUEST_OUT,
 )
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_TIMEOUT_MS = 1000   # kernel rt2x00usb default is 1000 ms
+
+# Kernel CSR_CACHE_SIZE (rt2x00usb.h:37). Every multi-byte register
+# access (incl. the 4-KB firmware blob upload) must be chunked into
+# transfers no larger than this — the chip's USB controller silently
+# fails or stalls on larger control transfers. Verified empirically:
+# a single 4096-byte FW upload caused USB_MODE_FIRMWARE to either time
+# out or pipe-stall depending on the chip's prior state.
+CSR_CACHE_SIZE = 64
+
+
 class RT2800USBTransport:
-    """
-    Transport layer for Ralink rt2800usb family (rt5572, rt3572, rt5372).
-    Handles Vendor Control Transfers for register access and firmware loading.
-    """
-    
-    BM_REQ_VENDOR_OUT = 0x40
-    BM_REQ_VENDOR_IN  = 0xc0
+    """Vendor control-transfer transport. Bulk endpoints are claimed by
+    the rx/tx modules, not here."""
 
-    def __init__(self, dev: usb.core.Device):
+    def __init__(self, dev: usb.core.Device, timeout_ms: int = _DEFAULT_TIMEOUT_MS):
         self.dev = dev
-        self._loop = asyncio.get_event_loop()
-        self._rx_task: Optional[asyncio.Task] = None
-        self._callback = None
-        self._is_running = False
+        self.timeout_ms = timeout_ms
 
-    def subscribe(self, callback):
-        self._callback = callback
-
-    async def start(self):
-        if self._is_running: return
-        self._is_running = True
-        self._rx_task = asyncio.create_task(self._poll_loop())
-        logger.info("RT2800USB Transport started (Bulk IN polling enabled).")
-
-    async def stop(self):
-        self._is_running = False
-        if self._rx_task:
-            self._rx_task.cancel()
-            try:
-                await self._rx_task
-            except asyncio.CancelledError:
-                pass
-        logger.info("RT2800USB Transport stopped.")
-
-    async def send_bulk(self, data: bytes):
-        """Sends a raw packet to the Bulk OUT endpoint."""
-        await self._loop.run_in_executor(
-            None, self.dev.write, USB_EP_BULK_OUT, data, 1000
+    # ---- 4-byte (32-bit) register access --------------------------------
+    # wValue=0, wIndex=addr — see module docstring for the wValue/wIndex
+    # gotcha. Verified empirically (any other ordering returns the same
+    # 0x00020208 stale word for every address).
+    def read32(self, addr: int) -> int:
+        data = self.dev.ctrl_transfer(
+            USB_VENDOR_REQUEST_IN, USB_MULTI_READ,
+            0, addr, 4, self.timeout_ms,
         )
+        b = bytes(data)
+        return b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24)
 
-    async def _poll_loop(self):
-        """
-        Background loop to poll the Bulk IN endpoint for RX traffic.
-        """
-        while self._is_running:
-            try:
-                # Read from Bulk IN (0x82)
-                # Max packet size for High-Speed USB Bulk is 512, 
-                # but Ralink uses aggregation so we might get larger chunks.
-                data = await self._loop.run_in_executor(
-                    None, self.dev.read, USB_EP_BULK_IN, 4096, 100
-                )
-                if data and self._callback:
-                    self._callback(bytes(data))
-            except usb.core.USBError as e:
-                # Timeout is normal (error code 60 or 'Operation timed out')
-                if e.errno == 110 or "timeout" in str(e).lower():
-                    await asyncio.sleep(0.01)
-                    continue
-                logger.error(f"USB Read Error: {e}")
-                await asyncio.sleep(0.1)
-            except Exception as e:
-                logger.error(f"Transport Poll Error: {e}")
-                await asyncio.sleep(0.1)
-
-    def write_reg32(self, reg: int, val: int):
-        """4-byte register write (Little Endian)."""
-        data = [
+    def write32(self, addr: int, val: int) -> None:
+        payload = bytes((
             val & 0xFF,
             (val >> 8) & 0xFF,
             (val >> 16) & 0xFF,
-            (val >> 24) & 0xFF
-        ]
-        # Use MULTI_WRITE (0x06) for 32-bit registers as seen in trace
-        self.dev.ctrl_transfer(self.BM_REQ_VENDOR_OUT, USB_MULTI_WRITE, 0, reg, data)
+            (val >> 24) & 0xFF,
+        ))
+        sent = self.dev.ctrl_transfer(
+            USB_VENDOR_REQUEST_OUT, USB_MULTI_WRITE,
+            0, addr, payload, self.timeout_ms,
+        )
+        if sent != 4:
+            raise IOError(f"write32(0x{addr:04x}) short: {sent}/4")
 
-    def read_reg32(self, reg: int) -> int:
-        """4-byte register read (Little Endian)."""
-        # Use MULTI_READ (0x07) for 32-bit registers
-        res = self.dev.ctrl_transfer(self.BM_REQ_VENDOR_IN, USB_MULTI_READ, 0, reg, 4)
-        return res[0] | (res[1] << 8) | (res[2] << 16) | (res[3] << 24)
-
-    def write_multi(self, addr: int, data: Union[bytes, List[int]]):
-        """Multi-byte write (e.g., for firmware upload to 0x3000)."""
-        self.dev.ctrl_transfer(self.BM_REQ_VENDOR_OUT, USB_MULTI_WRITE, 0, addr, data)
-
+    # ---- multi-byte read/write (kernel rt2x00usb_register_multiread) ----
+    # Both are chunked to CSR_CACHE_SIZE (64 B) per transfer — see the
+    # CSR_CACHE_SIZE comment above. Kernel does the same in
+    # rt2x00usb_vendor_request_buff (rt2x00usb.c:114-143).
     def read_multi(self, addr: int, length: int) -> bytes:
-        """Multi-byte read."""
-        res = self.dev.ctrl_transfer(self.BM_REQ_VENDOR_IN, USB_MULTI_READ, 0, addr, length)
-        return bytes(res)
+        chunks: list[bytes] = []
+        remaining = length
+        off = addr
+        while remaining > 0:
+            bsize = min(CSR_CACHE_SIZE, remaining)
+            data = self.dev.ctrl_transfer(
+                USB_VENDOR_REQUEST_IN, USB_MULTI_READ,
+                0, off, bsize, self.timeout_ms,
+            )
+            chunks.append(bytes(data))
+            off += bsize
+            remaining -= bsize
+        return b"".join(chunks)
 
-    def write_eeprom(self, addr: int, val: int):
-        """Write to EEPROM."""
-        # TODO: Implement based on PCAP analysis
-        pass
+    def write_multi(self, addr: int, payload: Union[bytes, Sequence[int]]) -> None:
+        payload = bytes(payload)
+        remaining = len(payload)
+        off = addr
+        pos = 0
+        while remaining > 0:
+            bsize = min(CSR_CACHE_SIZE, remaining)
+            sent = self.dev.ctrl_transfer(
+                USB_VENDOR_REQUEST_OUT, USB_MULTI_WRITE,
+                0, off, payload[pos:pos + bsize], self.timeout_ms,
+            )
+            if sent != bsize:
+                raise IOError(
+                    f"write_multi(0x{off:04x}) short chunk: {sent}/{bsize}"
+                )
+            off += bsize
+            pos += bsize
+            remaining -= bsize
 
-    def read_eeprom(self, addr: int) -> int:
-        """Read from EEPROM."""
-        # bRequest 9 is EEPROM read. addr is wIndex.
-        res = self.dev.ctrl_transfer(self.BM_REQ_VENDOR_IN, 0x09, 0, addr, 2)
-        return res[0] | (res[1] << 8)
+    # ---- 1-byte register access (USB_SINGLE_*) --------------------------
+    def read8(self, addr: int) -> int:
+        data = self.dev.ctrl_transfer(
+            USB_VENDOR_REQUEST_IN, USB_SINGLE_READ,
+            0, addr, 1, self.timeout_ms,
+        )
+        return bytes(data)[0]
 
-    def set_device_mode(self, mode: int, value: int = 0):
-        """Sets the device mode (bRequest 1)."""
-        # value is wValue, mode is wIndex
-        self.dev.ctrl_transfer(self.BM_REQ_VENDOR_OUT, USB_DEVICE_MODE, value, mode, None)
+    def write8(self, addr: int, val: int) -> None:
+        self.dev.ctrl_transfer(
+            USB_VENDOR_REQUEST_OUT, USB_SINGLE_WRITE,
+            0, addr, [val & 0xFF], self.timeout_ms,
+        )
 
-    def mcu_request(self, command: int, token: int = 0, arg0: int = 0, arg1: int = 0):
+    # ---- EEPROM (93C66 on older chips, EFUSE-shadowed on RT5390/5592) --
+    def read_eeprom(self, length: int) -> bytes:
+        """Read ``length`` bytes from the EEPROM in one shot.
+
+        Kernel `rt2x00usb_eeprom_read` (rt2x00usb.h:170-176) always
+        issues a single transfer with ``wValue=0, wIndex=0`` and
+        ``wLength=length`` — the chip streams the whole EEPROM
+        contents from byte 0. There's no per-word addressing.
         """
-        Sends an MCU request by writing to H2M_MAILBOX_CSR and HOST_CMD_CSR.
-        """
-        # 1. Prepare Mailbox
-        # Bit 31: Owner (1 for Host)
-        # Bits 24-31: Token
-        # Bits 8-15: Arg1
-        # Bits 0-7: Arg0
-        mailbox = (1 << 31) | (token << 24) | (arg1 << 8) | arg0
-        self.write_reg32(H2M_MAILBOX_CSR, mailbox)
+        data = self.dev.ctrl_transfer(
+            USB_VENDOR_REQUEST_IN, USB_EEPROM_READ,
+            0, 0, length, self.timeout_ms,
+        )
+        return bytes(data)
 
-        # 2. Trigger Command
-        # Bits 0-7: Command
-        host_cmd = command & 0xFF
-        self.write_reg32(HOST_CMD_CSR, host_cmd)
+    # ---- USB_DEVICE_MODE (FW boot signal + USB resets) ------------------
+    def set_device_mode(self, mode: int, value: int) -> None:
+        """USB_DEVICE_MODE vendor request with no data phase.
+
+        Kernel uses this for:
+          * USB_MODE_RESET  (req=1, val=1)
+          * MCU boot signal (req=1, val=0x08)
+          * USB_MODE_FIRMWARE (val=USB_MODE_FIRMWARE)
+        """
+        self.dev.ctrl_transfer(
+            USB_VENDOR_REQUEST_OUT, USB_DEVICE_MODE,
+            value, mode, b"", self.timeout_ms,
+        )
+
+    # ---- read/modify/write convenience ----------------------------------
+    def write32_set(self, addr: int, mask: int) -> None:
+        self.write32(addr, self.read32(addr) | mask)
+
+    def write32_clr(self, addr: int, mask: int) -> None:
+        self.write32(addr, self.read32(addr) & (~mask & 0xFFFFFFFF))
+
+    def write32_mask(self, addr: int, mask: int, value: int) -> None:
+        """Set the bits in ``mask`` of ``addr`` to the corresponding
+        bits of ``value`` (shifted to land in ``mask``).  Mirrors the
+        kernel ``rt2x00_set_field32`` helper."""
+        cur = self.read32(addr)
+        shift = (mask & -mask).bit_length() - 1
+        new = (cur & ~mask) | ((value << shift) & mask)
+        self.write32(addr, new & 0xFFFFFFFF)
