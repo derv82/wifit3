@@ -55,10 +55,14 @@ from .constants import (
 )
 from wifit3.wlan.packet import WlanFrameParser
 
-from .bbp import init_bbp_53xx
+from .bbp import init_bbp_53xx, prepare_bbp
 from .chan import set_channel as _set_channel
+from .eeprom import parse_eeprom, read_eeprom_efuse
 from .firmware import load_firmware, load_firmware_blob
-from .mac import ChipId, is_chip_warm, read_chip_id, read_perm_mac, usb_init_registers
+from .mac import (
+    ChipId, enable_radio, is_chip_warm, read_chip_id, read_perm_mac,
+    usb_init_registers, write_mac_address,
+)
 from .reg_init import init_registers
 from .rfcsr import init_rfcsr
 from .rx import parse_rx_urb, probe_endpoints, read_rx_burst, rxwi_size_for_silicon
@@ -105,6 +109,7 @@ class RT2800USBDriver:
         self._bulk_in_ep: Optional[int] = None
         self._rxwi_size: int = 16          # set at connect-time from silicon_id
         self._claimed = False
+        self._eeprom = None                 # EepromValues post-EFUSE-read
 
         # WlanDriver Protocol surface area.
         self.mac_address: Optional[str] = None
@@ -237,6 +242,22 @@ class RT2800USBDriver:
                     "post-init PBF still has pre-init bit set (0x%08x)", pbf2
                 )
 
+            _progress(0.93, "Reading EFUSE (MAC + LNA + freq calibration)")
+            try:
+                eeprom_buf = await loop.run_in_executor(None, read_eeprom_efuse, self.transport)
+                self._eeprom = parse_eeprom(eeprom_buf)
+                self.mac_address = ":".join(f"{b:02x}" for b in self._eeprom.mac_address)
+                logger.info(
+                    "EFUSE: MAC=%s, lna_gain_bg=%d, freq_offset=%d, "
+                    "nic_conf0=0x%04x, nic_conf1=0x%04x",
+                    self.mac_address, self._eeprom.lna_gain_bg,
+                    self._eeprom.freq_offset, self._eeprom.nic_conf0,
+                    self._eeprom.nic_conf1,
+                )
+            except (IOError, usb.core.USBError) as e:
+                logger.error("EFUSE read failed: %s", e)
+                return False
+
             _progress(0.96, "Running rt2800_init_registers (M2b-2 MAC config)")
             try:
                 await loop.run_in_executor(
@@ -245,6 +266,13 @@ class RT2800USBDriver:
                 )
             except (IOError, usb.core.USBError) as e:
                 logger.error("init_registers failed: %s", e)
+                return False
+
+            _progress(0.965, "Preparing BBP (MCU_BOOT_SIGNAL + wait_bbp_ready)")
+            try:
+                await loop.run_in_executor(None, prepare_bbp, self.transport)
+            except (IOError, usb.core.USBError) as e:
+                logger.error("prepare_bbp failed: %s", e)
                 return False
 
             _progress(0.97, "Running init_bbp_53xx (M2b-3 baseband init)")
@@ -267,11 +295,27 @@ class RT2800USBDriver:
                 logger.error("init_rfcsr failed: %s", e)
                 return False
 
+            _progress(0.985, "Enabling radio (MAC TX/RX + WPDMA + USB DMA)")
+            try:
+                await loop.run_in_executor(None, enable_radio, self.transport)
+            except (IOError, usb.core.USBError) as e:
+                logger.error("enable_radio failed: %s", e)
+                return False
+
+            # Program the EEPROM-derived MAC so RX matching engine has identity.
+            await loop.run_in_executor(
+                None, write_mac_address, self.transport, self._eeprom.mac_address,
+            )
+
             _progress(0.99, "Tuning to default channel 1 (M4)")
             try:
                 await loop.run_in_executor(
                     None,
-                    lambda: _set_channel(self.transport, self.chip_id.silicon_id, 1),
+                    lambda: _set_channel(
+                        self.transport, self.chip_id.silicon_id, 1,
+                        lna_gain=self._eeprom.lna_gain_bg,
+                        freq_offset=self._eeprom.freq_offset,
+                    ),
                 )
                 self.current_channel = 1
             except (ValueError, IOError, usb.core.USBError, NotImplementedError) as e:
@@ -327,9 +371,15 @@ class RT2800USBDriver:
         if self.chip_id is None:
             logger.error("set_channel(%d): connect() must run first", channel)
             return False
+        lna = self._eeprom.lna_gain_bg if self._eeprom else 0
+        freq = self._eeprom.freq_offset if self._eeprom else 0
         try:
             await asyncio.get_event_loop().run_in_executor(
-                None, _set_channel, self.transport, self.chip_id.silicon_id, channel,
+                None,
+                lambda: _set_channel(
+                    self.transport, self.chip_id.silicon_id, channel,
+                    lna_gain=lna, freq_offset=freq,
+                ),
             )
         except ValueError as e:
             logger.warning("rt2800usb set_channel: %s", e)

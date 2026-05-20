@@ -29,6 +29,10 @@ from .constants import (
     BBP_CSR_CFG_READ_CONTROL,
     BBP_CSR_CFG_REGNUM,
     BBP_CSR_CFG_VALUE,
+    H2M_BBP_AGENT,
+    H2M_INT_SRC,
+    H2M_MAILBOX_CSR,
+    MCU_BOOT_SIGNAL,
     REGISTER_BUSY_COUNT,
     RT_RT5390,
     RT_RT5392,
@@ -102,6 +106,74 @@ def init_freq_calibration(t: RT2800USBTransport) -> None:
     """[SRC] rt2800lib.c:6387-6391."""
     bbp_write(t, 142, 1)
     bbp_write(t, 143, 57)
+
+
+# ----------------------------------------------------------------------
+# wait_bbp_rf_ready + wait_bbp_ready — kernel preludes that MUST run
+# between init_registers and init_bbp/init_rfcsr.
+#
+# [SRC] rt2800lib.c:2225-2241 (wait_bbp_rf_ready)
+#       rt2800lib.c:2243-2266 (wait_bbp_ready)
+#       rt2800lib.c:10797-10827 (rt2800_enable_radio orchestration)
+# ----------------------------------------------------------------------
+MAC_STATUS_CFG = 0x1200
+MAC_STATUS_CFG_BBP_RF_BUSY = 0x00000003   # bits 0+1
+
+
+def wait_bbp_rf_ready(t: RT2800USBTransport) -> bool:
+    """Poll MAC_STATUS_CFG until BBP_RF_BUSY (bits 0-1) clears.
+    Returns True on success."""
+    for _ in range(REGISTER_BUSY_COUNT):
+        reg = t.read32(MAC_STATUS_CFG)
+        if not (reg & MAC_STATUS_CFG_BBP_RF_BUSY):
+            return True
+        time.sleep(0.000_05)
+    logger.warning("MAC_STATUS_CFG.BBP_RF_BUSY never cleared")
+    return False
+
+
+def wait_bbp_ready(t: RT2800USBTransport) -> bool:
+    """Reactivate BBP after FW load, then poll BBP[0] until it has a
+    real value (not 0x00 or 0xff).  Mirrors the kernel comment
+    "BBP was enabled after firmware was loaded, but we need to
+    reactivate it now."
+    """
+    t.write32(H2M_BBP_AGENT, 0)
+    t.write32(H2M_MAILBOX_CSR, 0)
+    time.sleep(0.001)
+    for _ in range(REGISTER_BUSY_COUNT):
+        v = bbp_read(t, 0)
+        if v not in (0x00, 0xFF):
+            return True
+        time.sleep(0.000_05)
+    logger.warning("BBP[0] never returned a valid value")
+    return False
+
+
+def prepare_bbp(t: RT2800USBTransport) -> None:
+    """Bring the BBP up between init_registers and init_bbp.
+
+    Order from rt2800_enable_radio (rt2800lib.c:10797-10827):
+      1. wait_bbp_rf_ready (MAC_STATUS_CFG.BBP_RF_BUSY clears)
+      2. H2M_BBP_AGENT = 0, H2M_MAILBOX_CSR = 0, H2M_INT_SRC = 0
+      3. mcu_request(MCU_BOOT_SIGNAL, 0, 0, 0)
+      4. msleep(1)
+      5. wait_bbp_ready (re-arm H2M + poll BBP[0])
+
+    Without this prelude, subsequent init_bbp / init_rfcsr writes appear
+    to succeed (BBP_CSR_CFG protocol completes) but the BBP→RF chain
+    never activates and bulk-IN stays silent.
+    """
+    from .firmware import mcu_request
+    if not wait_bbp_rf_ready(t):
+        raise IOError("BBP/RF still busy — chip wedged")
+    t.write32(H2M_BBP_AGENT, 0)
+    t.write32(H2M_MAILBOX_CSR, 0)
+    t.write32(H2M_INT_SRC, 0)
+    mcu_request(t, MCU_BOOT_SIGNAL, token=0, arg0=0, arg1=0)
+    time.sleep(0.001)
+    if not wait_bbp_ready(t):
+        raise IOError("BBP[0] never came up — MCU_BOOT_SIGNAL may have failed")
 
 
 # ----------------------------------------------------------------------
@@ -188,11 +260,32 @@ def init_bbp_53xx(t: RT2800USBTransport, silicon_id: int) -> None:
         bbp_write(t, 134, 0xD0)
         bbp_write(t, 135, 0xF6)
 
-    # Deferred:
+    # Deferred (need EEPROM):
     #   disable_unused_dac_adc       (EEPROM NIC_CONF0)
     #   antenna diversity setup      (EEPROM NIC_CONF1)
     #   Bluetooth coex GPIO_CTRL     (EEPROM has_cap_bt_coexist)
     #   BBP150/151/154 hw antenna    (rev-dependent)
-    #   BBP152 RX_DEFAULT_ANT        (EEPROM-derived ant index)
+
+    # BBP152 RX_DEFAULT_ANT — actually selects which antenna feeds the
+    # RX path. Kernel reads EEPROM NIC_CONF1 for the `ant` value:
+    #   ant = 0 → BBP152.RX_DEFAULT_ANT = 1 (bit 7)
+    #   ant = 1 → BBP152.RX_DEFAULT_ANT = 0
+    # Without EEPROM `ant` defaults to 0 → set bit 7. R-M-W preserves
+    # other bits.
+    value = bbp_read(t, 152)
+    value |= 0x80
+    bbp_write(t, 152, value & 0xFF)
+
+    # rt2800_disable_unused_dac_adc — for 1T1R operation, kernel
+    # powers up ADC1 (clears BBP138 bit 1) and powers down unused
+    # DAC1 (sets BBP138 bit 5). Kernel reads EEPROM_NIC_CONF0 for
+    # TX/RX path counts; we hardcode the 1T1R values since that's
+    # what RT5390/RT5392 silicon is. Without this write the chip's
+    # default ADC1 power-down state silently blackholes RX.
+    # [SRC] rt2800lib.c:6434-6446
+    value = bbp_read(t, 138)
+    value &= ~0x02    # BBP138_RX_ADC1 — clear = power UP ADC1
+    value |= 0x20     # BBP138_TX_DAC1 — set = power DOWN unused DAC1
+    bbp_write(t, 138, value & 0xFF)
 
     init_freq_calibration(t)

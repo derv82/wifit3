@@ -32,9 +32,22 @@ from .constants import (
     RFCSR30_TX_H20M,
     RT_RT5392,
 )
+from .bbp import bbp_write
 from .firmware import mcu_request
 from .rfcsr import rfcsr_read, rfcsr_write
 from .transport import RT2800USBTransport
+
+# Addresses + bit-fields needed for the TX_PIN_CFG / TX_BAND_CFG dance
+# at the end of channel tune.  [SRC] rt2800.h:1241-1280
+_TX_PIN_CFG = 0x1328
+_TX_PIN_CFG_PA_PE_G0_EN = 0x00000002
+_TX_PIN_CFG_LNA_PE_A0_EN = 0x00000100
+_TX_PIN_CFG_LNA_PE_G0_EN = 0x00000200
+_TX_PIN_CFG_RFTR_EN = 0x00010000
+_TX_PIN_CFG_TRSW_EN = 0x00040000
+
+_TX_BAND_CFG = 0x132C
+_TX_BAND_CFG_BG = 0x00000004     # 1 = 2.4 GHz routing
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +92,23 @@ def freq_cal_mode1_usb(t: RT2800USBTransport, freq_offset: int = 0) -> None:
     )
 
 
-def set_channel(t: RT2800USBTransport, silicon_id: int, channel: int) -> None:
+def set_channel(
+    t: RT2800USBTransport,
+    silicon_id: int,
+    channel: int,
+    *,
+    lna_gain: int = 0,
+    freq_offset: int = 0,
+) -> None:
     """Tune to a 2.4 GHz channel.  Supports RT5390/RT5392 only at M-now.
+
+    ``lna_gain`` (EEPROM word 0x22 low byte) is subtracted from 0x37
+    when writing BBP62/63/64 noise floor; chip-default for our PAU05
+    has been observed working without it but kernel always applies.
+
+    ``freq_offset`` (EEPROM word 0x1D low byte) is the chip's
+    per-unit frequency calibration value, fed to RFCSR17.CODE via
+    ``MCU_FREQ_OFFSET``.
 
     Raises ValueError on out-of-range channel.
     """
@@ -116,7 +144,7 @@ def set_channel(t: RT2800USBTransport, silicon_id: int, channel: int) -> None:
     rfcsr_write(t, 1, rfcsr & 0xFF)
 
     # Freq offset cal (USB path → MCU command).
-    freq_cal_mode1_usb(t, freq_offset=0)
+    freq_cal_mode1_usb(t, freq_offset=freq_offset)
 
     # Skip BT coex / R55+R59 channel-specific writes (we don't have
     # the EEPROM cap_bt_coexist bit).
@@ -132,7 +160,35 @@ def set_channel(t: RT2800USBTransport, silicon_id: int, channel: int) -> None:
     rfcsr |= RFCSR3_VCOCAL_EN
     rfcsr_write(t, 3, rfcsr & 0xFF)
 
-    # Kernel sleeps ~1ms here implicitly via subsequent register-access
+    # BBP noise-floor writes — critical for RX path. Kernel uses
+    # `0x37 - lna_gain` (EEPROM-derived).  [SRC] rt2800lib.c:4302-4305
+    nf = (0x37 - (lna_gain & 0xFF)) & 0xFF
+    bbp_write(t, 62, nf)
+    bbp_write(t, 63, nf)
+    bbp_write(t, 64, nf)
+    bbp_write(t, 86, 0x00)            # RT5392 path; RT6352 uses 0x38
+
+    # TX_BAND_CFG — select 2.4 GHz routing.  [SRC] rt2800lib.c:4346-4351
+    t.write32(_TX_BAND_CFG, _TX_BAND_CFG_BG)
+
+    # TX_PIN_CFG — electrically enable LNA + PA hardware paths. Without
+    # these the antenna is disconnected from the RF chain regardless of
+    # MAC/BBP state.  RT5392 = 1T1R, channel ≤ 14:
+    #   * PA_PE_G0_EN     enable primary 2.4G PA
+    #   * LNA_PE_A0_EN    primary 5G LNA (kernel always sets, harmless)
+    #   * LNA_PE_G0_EN    primary 2.4G LNA
+    #   * RFTR_EN + TRSW_EN  TX/RX switch enables
+    # [SRC] rt2800lib.c:4380-4411
+    tx_pin = (
+        _TX_PIN_CFG_PA_PE_G0_EN
+        | _TX_PIN_CFG_LNA_PE_A0_EN
+        | _TX_PIN_CFG_LNA_PE_G0_EN
+        | _TX_PIN_CFG_RFTR_EN
+        | _TX_PIN_CFG_TRSW_EN
+    )
+    t.write32(_TX_PIN_CFG, tx_pin)
+
+    # Kernel sleeps ~1ms implicitly via subsequent register-access
     # latency. We add an explicit small delay.
     time.sleep(0.001)
 
