@@ -24,6 +24,7 @@ import time
 from .constants import (
     BBP4_MAC_IF_CTRL,
     BBP27_RX_CHAIN_SEL,
+    BBP105_MLD,
     BBP_CSR_CFG,
     BBP_CSR_CFG_BBP_RW_MODE,
     BBP_CSR_CFG_BUSY,
@@ -38,6 +39,7 @@ from .constants import (
     RT_RT3572,
     RT_RT5390,
     RT_RT5392,
+    RT_RT5592,
 )
 from .transport import RT2800USBTransport
 
@@ -372,6 +374,173 @@ def init_bbp_3572(
 
 
 # ----------------------------------------------------------------------
+# rt2800_init_bbp_early — common 16-write BBP prelude used by every
+# RT3052/RT3593/RT5592 family init. Pulled out as a helper because all
+# three share it (kernel rt2800lib.c:6414-6432).
+# ----------------------------------------------------------------------
+def init_bbp_early(t: RT2800USBTransport) -> None:
+    bbp_write(t, 65, 0x2c)
+    bbp_write(t, 66, 0x38)
+    bbp_write(t, 68, 0x0b)
+    bbp_write(t, 69, 0x12)
+    bbp_write(t, 70, 0x0a)
+    bbp_write(t, 73, 0x10)
+    bbp_write(t, 81, 0x37)
+    bbp_write(t, 82, 0x62)
+    bbp_write(t, 83, 0x6a)
+    bbp_write(t, 84, 0x99)
+    bbp_write(t, 86, 0x00)
+    bbp_write(t, 91, 0x04)
+    bbp_write(t, 92, 0x00)
+    bbp_write(t, 103, 0x00)
+    bbp_write(t, 105, 0x05)
+    bbp_write(t, 106, 0x35)
+
+
+# ----------------------------------------------------------------------
+# rt2800_init_bbp_5592_glrt — write the GLRT (Generalized Likelihood
+# Ratio Test) noise-figure table via the BBP195/196 indirect-write pair.
+# BBP195 = offset (128 + i), BBP196 = value. 70 bytes total, offsets
+# 128..211 with the holes at 198..199 = 0x00.
+#
+# [SRC] rt2800lib.c:6393-6412
+# ----------------------------------------------------------------------
+_RT5592_GLRT_TABLE = (
+    # 128..137
+    0xE0, 0x1F, 0x38, 0x32, 0x08, 0x28, 0x19, 0x0A, 0xFF, 0x00,
+    # 138..147
+    0x16, 0x10, 0x10, 0x0B, 0x36, 0x2C, 0x26, 0x24, 0x42, 0x36,
+    # 148..157
+    0x30, 0x2D, 0x4C, 0x46, 0x3D, 0x40, 0x3E, 0x42, 0x3D, 0x40,
+    # 158..167
+    0x3C, 0x34, 0x2C, 0x2F, 0x3C, 0x35, 0x2E, 0x2A, 0x49, 0x41,
+    # 168..177
+    0x36, 0x31, 0x30, 0x30, 0x0E, 0x0D, 0x28, 0x21, 0x1C, 0x16,
+    # 178..187
+    0x50, 0x4A, 0x43, 0x40, 0x10, 0x10, 0x10, 0x10, 0x00, 0x00,
+    # 188..197
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    # 198..207
+    0x00, 0x00, 0x7D, 0x14, 0x32, 0x2C, 0x36, 0x4C, 0x43, 0x2C,
+    # 208..211
+    0x2E, 0x36, 0x30, 0x6E,
+)
+
+
+def bbp_glrt_write(t: RT2800USBTransport, offset: int, value: int) -> None:
+    """GLRT-table indirect-write: BBP195=offset, BBP196=value.
+
+    The GLRT registers (128..221) aren't directly addressable through
+    BBP_CSR_CFG — they share the address space via this index/data pair.
+    [SRC] rt2800lib.c:216-221 (rt2800_bbp_glrt_write)
+    """
+    bbp_write(t, 195, offset & 0xFF)
+    bbp_write(t, 196, value & 0xFF)
+
+
+def init_bbp_5592_glrt(t: RT2800USBTransport) -> None:
+    """Replay the 70-byte GLRT init table starting at offset 128."""
+    for i, value in enumerate(_RT5592_GLRT_TABLE):
+        bbp_glrt_write(t, 128 + i, value)
+
+
+# ----------------------------------------------------------------------
+# rt2800_init_bbp_5592 — RT5592 (dual-band RF5592) BBP init.
+# [SRC] rt2800lib.c:6967-7039
+#
+# Two EEPROM-dependent branches:
+#   1. BBP105.MLD — set when rx_chain_num == 2 (kernel reads from
+#      default_ant; we take rx_chain_num as a kwarg, defaulting to 2
+#      which matches the unburned-EFUSE default per [[efuse-first-for-rt2800-rx]]).
+#   2. BBP152.RX_DEFAULT_ANT — picks main vs aux antenna based on
+#      EEPROM_NIC_CONF1.ANT_DIVERSITY. We default to main (ant=0 →
+#      RX_DEFAULT_ANT=1) per kernel fallthrough when ANT_DIVERSITY != 3.
+#
+# Deferred:
+#   * REV_RT5592C+ rev gates (BBP103=0xc0, BBP254 bit 7) — logged but
+#     not applied until we see the chip rev on hw and confirm. Easy to
+#     add post-hw-test.
+# ----------------------------------------------------------------------
+def init_bbp_5592(
+    t: RT2800USBTransport,
+    *,
+    rxpath: int = 2,
+    ant_diversity: int = 0,
+    chip_rev: int = 0,
+) -> None:
+    init_bbp_early(t)
+
+    # BBP105.MLD — bit 2 = (rx_chain_num == 2).
+    value = bbp_read(t, 105)
+    if rxpath == 2:
+        value |= BBP105_MLD
+    else:
+        value &= ~BBP105_MLD & 0xFF
+    bbp_write(t, 105, value & 0xFF)
+
+    bbp4_mac_if_ctrl(t)
+
+    bbp_write(t, 20, 0x06)
+    bbp_write(t, 31, 0x08)
+    bbp_write(t, 65, 0x2C)
+    bbp_write(t, 68, 0xDD)
+    bbp_write(t, 69, 0x1A)
+    bbp_write(t, 70, 0x05)
+    bbp_write(t, 73, 0x13)
+    bbp_write(t, 74, 0x0F)
+    bbp_write(t, 75, 0x4F)
+    bbp_write(t, 76, 0x28)
+    bbp_write(t, 77, 0x59)
+    bbp_write(t, 84, 0x9A)
+    bbp_write(t, 86, 0x38)
+    bbp_write(t, 88, 0x90)
+    bbp_write(t, 91, 0x04)
+    bbp_write(t, 92, 0x02)
+    bbp_write(t, 95, 0x9A)
+    bbp_write(t, 98, 0x12)
+    bbp_write(t, 103, 0xC0)
+    bbp_write(t, 104, 0x92)
+    # Kernel comment: "FIXME BBP105 overwrite" — the earlier MLD bit gets
+    # clobbered here. Faithful port (the chip clearly tolerates this).
+    bbp_write(t, 105, 0x3C)
+    bbp_write(t, 106, 0x35)
+    bbp_write(t, 128, 0x12)
+    bbp_write(t, 134, 0xD0)
+    bbp_write(t, 135, 0xF6)
+    bbp_write(t, 137, 0x0F)
+
+    init_bbp_5592_glrt(t)
+
+    # Kernel re-asserts bbp4_mac_if_ctrl after GLRT — port verbatim.
+    bbp4_mac_if_ctrl(t)
+
+    # BBP152.RX_DEFAULT_ANT — set bit 7 for main antenna (ant=0), clear
+    # for aux antenna (ant=1). Kernel decision: ant = (div_mode == 3) ? 1 : 0.
+    value = bbp_read(t, 152)
+    if ant_diversity == 3:
+        value &= ~0x80 & 0xFF       # aux antenna
+    else:
+        value |= 0x80                # main antenna (default)
+    bbp_write(t, 152, value & 0xFF)
+
+    # REV_RT5592C+ rev-gated extras. Logged for now — fold into the
+    # rev-gate once we see the chip rev on hw and confirm. The kernel
+    # writes BBP254 bit 7 + BBP103=0xc0 only for REV_RT5592C+.
+    # See REV_RT5592C constant; chip_rev=0 means "rev unknown / don't apply".
+    from .constants import REV_RT5592C
+    if chip_rev >= REV_RT5592C:
+        value = bbp_read(t, 254)
+        value |= 0x80
+        bbp_write(t, 254, value & 0xFF)
+
+    init_freq_calibration(t)
+
+    bbp_write(t, 84, 0x19)
+    if chip_rev >= REV_RT5592C:
+        bbp_write(t, 103, 0xC0)
+
+
+# ----------------------------------------------------------------------
 # Public BBP-init dispatcher. Picks the right per-silicon init.
 # ----------------------------------------------------------------------
 def init_bbp(
@@ -380,11 +549,20 @@ def init_bbp(
     *,
     txpath: int = 1,
     rxpath: int = 1,
+    ant_diversity: int = 0,
+    chip_rev: int = 0,
 ) -> None:
     if silicon_id == RT_RT3572:
         init_bbp_3572(t, txpath=txpath, rxpath=rxpath)
     elif silicon_id in (RT_RT5390, RT_RT5392):
         init_bbp_53xx(t, silicon_id)
+    elif silicon_id == RT_RT5592:
+        init_bbp_5592(
+            t,
+            rxpath=rxpath,
+            ant_diversity=ant_diversity,
+            chip_rev=chip_rev,
+        )
     else:
         raise NotImplementedError(
             f"BBP init for silicon 0x{silicon_id:04x} not yet ported"

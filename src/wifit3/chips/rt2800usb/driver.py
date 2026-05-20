@@ -55,6 +55,9 @@ import usb.util
 from wifit3.engine.protocols import DeviceID, ProgressCallback
 
 from .constants import (
+    EEPROM_NIC_CONF1_ANT_DIVERSITY_MASK,
+    EEPROM_NIC_CONF1_ANT_DIVERSITY_SHIFT,
+    RT_RT5592,
     USB_PID_RT3572,
     USB_PID_RT5372,
     USB_PID_RT5572,
@@ -63,7 +66,7 @@ from .constants import (
 from wifit3.wlan.packet import WlanFrameParser
 
 from .bbp import init_bbp, prepare_bbp
-from .chan import CHANNELS_5G_NON_DFS, set_channel as _set_channel
+from .chan import CHANNELS_5G_NON_DFS, is_xtal_40mhz, set_channel as _set_channel
 from .eeprom import parse_eeprom, read_eeprom_efuse
 from .firmware import load_firmware, load_firmware_blob
 from .mac import (
@@ -130,6 +133,10 @@ class RT2800USBDriver:
         self.current_channel: int = 1
         self.chip_id: Optional[ChipId] = None
         self.chip_id_hint = chip_id_hint   # from VID:PID; e.g. "rt5372"
+        # RT5592-only: probed at connect() time from MAC_DEBUG_INDEX.XTAL.
+        # Picks which of rf_vals_5592_xtal20 / xtal40 the channel tune
+        # consults (PAU09 N600's actual xtal isn't documented).
+        self._xtal_40mhz: bool = False
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_callback = cb
@@ -295,6 +302,16 @@ class RT2800USBDriver:
             # (2 RX / 1 TX) so we don't power down the wrong chains.
             txpath = self._eeprom.txpath if self._eeprom else 1
             rxpath = self._eeprom.rxpath if self._eeprom else 1
+            # RT5592 needs ANT_DIVERSITY from NIC_CONF1 to pick BBP152
+            # (main vs aux antenna). Kernel default-path: ant=0 (main)
+            # when NIC_CONF1.ANT_DIVERSITY != 3.
+            ant_diversity = 0
+            if self._eeprom is not None:
+                ant_diversity = (
+                    (self._eeprom.nic_conf1 & EEPROM_NIC_CONF1_ANT_DIVERSITY_MASK)
+                    >> EEPROM_NIC_CONF1_ANT_DIVERSITY_SHIFT
+                )
+            chip_rev = self.chip_id.revision
 
             _progress(0.97, "Running init_bbp (M2b-3 baseband init)")
             try:
@@ -303,6 +320,8 @@ class RT2800USBDriver:
                     lambda: init_bbp(
                         self.transport, self.chip_id.silicon_id,
                         txpath=txpath, rxpath=rxpath,
+                        ant_diversity=ant_diversity,
+                        chip_rev=chip_rev,
                     ),
                 )
             except (IOError, usb.core.USBError, ValueError, NotImplementedError) as e:
@@ -313,7 +332,11 @@ class RT2800USBDriver:
             try:
                 self._rf_cal = await loop.run_in_executor(
                     None,
-                    lambda: init_rfcsr(self.transport, self.chip_id.silicon_id),
+                    lambda: init_rfcsr(
+                        self.transport, self.chip_id.silicon_id,
+                        freq_offset=self._eeprom.freq_offset if self._eeprom else 0,
+                        chip_rev=chip_rev,
+                    ),
                 )
             except (IOError, usb.core.USBError, NotImplementedError) as e:
                 logger.error("init_rfcsr failed: %s", e)
@@ -339,6 +362,18 @@ class RT2800USBDriver:
             await loop.run_in_executor(
                 None, write_mac_address, self.transport, self._eeprom.mac_address,
             )
+
+            # Probe xtal for RT5592 (RF5592 has dual xtal-20/40 channel
+            # tables; the silicon surfaces which crystal is fitted via
+            # MAC_DEBUG_INDEX.XTAL — NOT EEPROM).
+            if self.chip_id.silicon_id == RT_RT5592:
+                self._xtal_40mhz = await loop.run_in_executor(
+                    None, is_xtal_40mhz, self.transport
+                )
+                logger.info(
+                    "RT5592 xtal: %s MHz (MAC_DEBUG_INDEX.XTAL=%d)",
+                    "40" if self._xtal_40mhz else "20", int(self._xtal_40mhz),
+                )
 
             _progress(0.99, "Tuning to default channel 1 (M4)")
             try:
@@ -404,7 +439,9 @@ class RT2800USBDriver:
 
         RT5392 just wants freq_offset + lna_gain. RT3572 also needs
         the filter calibration + chain counts + per-band LNA gain +
-        external-LNA flags from NIC_CONF1. The ``channel`` arg lets us
+        external-LNA flags from NIC_CONF1. RT5592 needs chain counts +
+        BT-coex + xtal selection (but NOT cal_result — RF5592 has no
+        rt2800_rx_filter_calibration step). The ``channel`` arg lets us
         pick the right per-band fields (lna_a vs lna_bg).
         """
         if self._eeprom is None:
@@ -422,6 +459,13 @@ class RT2800USBDriver:
                 rx_chain_num=self._eeprom.rxpath,
                 has_cap_bt_coexist=self._eeprom.has_cap_bt_coexist,
                 has_cap_external_lna_a=self._eeprom.has_cap_external_lna_a,
+            )
+        elif self.chip_id is not None and self.chip_id.silicon_id == RT_RT5592:
+            kwargs.update(
+                tx_chain_num=self._eeprom.txpath,
+                rx_chain_num=self._eeprom.rxpath,
+                has_cap_bt_coexist=self._eeprom.has_cap_bt_coexist,
+                xtal_40mhz=self._xtal_40mhz,
             )
         return kwargs
 

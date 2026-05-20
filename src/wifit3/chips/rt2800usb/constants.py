@@ -277,6 +277,18 @@ BBP27_RX_CHAIN_SEL = 0x60
 # deferred since it needs EEPROM antenna-diversity reading).
 BBP152_RX_DEFAULT_ANT = 0x80
 
+# RT5592-only BBP fields. [SRC] rt2800.h:2272, 2301
+BBP105_MLD = 0x04           # bit 2 — set when rx_chain_num == 2
+BBP254_BIT7 = 0x80          # set by init_bbp_5592 only on REV_RT5592C+
+
+# Chip revision constants used by RT5592 rev-gating.  [SRC] rt2800.h:90
+REV_RT5592C = 0x0221
+
+# RT5592 TX power bounds — applied to RFCSR49/50.TX_POWER ceiling.
+# [SRC] rt2800lib.c:3299-3300
+POWER_BOUND = 0x27          # 2.4 GHz
+POWER_BOUND_5G = 0x2b       # 5 GHz
+
 # ----------------------------------------------------------------------
 # RF_CSR_CFG indirect access (M2c).  [SRC] rt2800.h:626-632
 # Different bit layout from BBP_CSR_CFG — DATA in low byte, REGNUM in
@@ -304,6 +316,21 @@ LDO_CFG0_LDO_CORE_VLEVEL = 0x1C000000   # bits[28:26]
 GPIO_CTRL = 0x0228
 GPIO_CTRL_VAL7 = 0x00000080
 GPIO_CTRL_DIR7 = 0x00008000
+
+# MAC_DEBUG_INDEX — RT5592 xtal-clock detection. The XTAL bit indicates
+# 40 MHz crystal (1) vs 20 MHz crystal (0); this selects which of the two
+# RF channel tables (xtal20 vs xtal40) the driver consults. RF5592 is the
+# only chip in the rt2800 family that surfaces this via a register —
+# other chips do it through EEPROM_NIC_CONF2 instead.
+# [SRC] rt2800.h:709-710, rt2800lib.c:11844-11852
+MAC_DEBUG_INDEX = 0x05E8
+MAC_DEBUG_INDEX_XTAL = 0x80000000
+
+# EEPROM_NIC_CONF1.ANT_DIVERSITY — bits[12:11]. 3 = aux antenna,
+# anything else = main antenna. Used by init_bbp_5592 to pick
+# BBP152.RX_DEFAULT_ANT. [SRC] rt2800.h:2717
+EEPROM_NIC_CONF1_ANT_DIVERSITY_MASK = 0x1800
+EEPROM_NIC_CONF1_ANT_DIVERSITY_SHIFT = 11
 
 # RFCSR bit-fields used by M2c.
 RFCSR30_RF_CALIBRATION = 0x80
@@ -346,8 +373,17 @@ RFCSR7_BIT3 = 0x08
 RFCSR7_BIT4 = 0x10
 RFCSR7_BITS67 = 0xC0
 
+# RFCSR9 field packing for RF5592 synthesizer (5-field rf_channel
+# {N,K,mod,R} → split into RFCSR8/9/11). [SRC] rt2800.h:2379-2382
+RFCSR9_K = 0x0F                 # bits[3:0] — K
+RFCSR9_N = 0x10                 # bit 4 — high bit of N (low 8 bits go in RFCSR8)
+RFCSR9_MOD = 0x80               # bit 7 — high bit of (mod - 8)
+
 # RFCSR11 — R field (bits[1:0]) for the synthesizer divider.
 RFCSR11_R = 0x03
+# RFCSR11_MOD — bits[7:6], low two bits of (mod - 8) on RF5592.
+# [SRC] rt2800.h:2389
+RFCSR11_MOD = 0xC0
 
 # RFCSR12/13 — TX_POWER + DR0 fields (used by config_channel_rf3052).
 # [SRC] rt2800.h:2398-2405
@@ -383,6 +419,18 @@ RFCSR31_RX_H20M = 0x20
 # but we leave these alone in our M4 minimal port (no EEPROM TX power yet).
 RFCSR49_TX = 0x3F
 RFCSR50_TX = 0x3F
+
+# RFCSR49/50_EP — bits[7:6]. Set by config_channel_rf55xx only when
+# is_type_ep is true (we keep is_type_ep=False, matching the kernel's
+# constant default since type_ep isn't surfaced through EEPROM yet).
+# [SRC] rt2800.h:2544, 2555
+RFCSR49_EP = 0xC0
+RFCSR50_EP = 0xC0
+
+# RFCSR17 freq-offset code field — used by freq_cal_mode1 to clamp
+# the freq trim. [SRC] rt2800.h:2426
+RFCSR17_CODE = 0x7F
+FREQ_OFFSET_BOUND = 0x5F        # rt2800lib.c:2445
 
 # ----------------------------------------------------------------------
 # RX descriptor sizes (M3).  [SRC] rt2800usb.h:61 + rt2800.h

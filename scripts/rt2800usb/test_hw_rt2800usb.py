@@ -313,32 +313,84 @@ def phase_bbpinit(transport: RT2800USBTransport) -> None:
 
     chip = read_chip_id(transport)
 
-    # RT3572 init_bbp wants txpath/rxpath. Pull from EFUSE so the
-    # disable_unused_dac_adc tail is correct. For RT5392 we still
-    # pass the same kwargs but the helper hardcodes 1T1R inside
-    # init_bbp_53xx so they're ignored.
+    # RT3572 and RT5592 init_bbp want txpath/rxpath (RT5592 also wants
+    # ant_diversity from NIC_CONF1 + chip rev for rev-gated extras).
+    # RT5392 ignores both — init_bbp_53xx pins 1T1R internally — but we
+    # still pass the same kwargs uniformly.
     txpath = rxpath = 1
-    if chip.silicon_id == 0x3572:
-        step("Reading EFUSE for txpath/rxpath (RT3572 needs them)")
+    ant_diversity = 0
+    if chip.silicon_id in (0x3572, 0x5592):
+        step("Reading EFUSE for txpath/rxpath / ant_diversity")
         eeprom_buf = read_eeprom_efuse(transport)
         ee = parse_eeprom(eeprom_buf)
         txpath = max(1, ee.txpath)
         rxpath = max(1, ee.rxpath)
-        print(f"  NIC_CONF0 = 0x{ee.nic_conf0:04x}  txpath={txpath} rxpath={rxpath}")
+        ant_diversity = (ee.nic_conf1 & 0x1800) >> 11
+        print(
+            f"  NIC_CONF0=0x{ee.nic_conf0:04x}  txpath={txpath} rxpath={rxpath}"
+        )
+        print(
+            f"  NIC_CONF1=0x{ee.nic_conf1:04x}  ant_diversity={ant_diversity} "
+            "(3 = aux antenna, else = main)"
+        )
 
     step(f"Run init_bbp for silicon 0x{chip.silicon_id:04x}")
     import time as _t
     t0 = _t.perf_counter()
     try:
-        init_bbp(transport, chip.silicon_id, txpath=txpath, rxpath=rxpath)
+        init_bbp(
+            transport, chip.silicon_id,
+            txpath=txpath, rxpath=rxpath,
+            ant_diversity=ant_diversity,
+            chip_rev=chip.revision,
+        )
     except (IOError, usb.core.USBError, ValueError, NotImplementedError) as e:
         fail(f"init_bbp raised: {e}")
     dt = _t.perf_counter() - t0
     ok(f"init_bbp completed in {dt * 1000:.0f} ms")
 
     step("Spot-check BBP register values")
-    # Per-silicon expected values from kernel init_bbp_{53xx,3572}.
-    if chip.silicon_id == 0x3572:
+    # Per-silicon expected values from kernel init_bbp_{53xx,3572,5592}.
+    if chip.silicon_id == 0x5592:
+        # init_bbp_5592: init_bbp_early sets BBP65=0x2c, then the 5592
+        # body overwrites several registers. Final expected values are
+        # taken from the kernel function's last write to each register.
+        # BBP[4] must have MAC_IF_CTRL bit 6 set (bbp4_mac_if_ctrl
+        # asserted twice). BBP[195/196] are the GLRT index/data pair —
+        # we sample the last value written (BBP196 holds 0x6e for
+        # offset 211, the last entry). BBP[152] bit 7 should be set
+        # for main antenna (ant != 3).
+        # [SRC] rt2800lib.c:6967-7039
+        bbp4 = bbp_read(transport, 4)
+        bbp20 = bbp_read(transport, 20)
+        bbp31 = bbp_read(transport, 31)
+        bbp65 = bbp_read(transport, 65)
+        bbp68 = bbp_read(transport, 68)
+        bbp84 = bbp_read(transport, 84)    # final write = 0x19, not 0x9a
+        bbp105 = bbp_read(transport, 105)  # final write = 0x3c (clobbers MLD)
+        bbp137 = bbp_read(transport, 137)
+        bbp152 = bbp_read(transport, 152)
+        print(f"  BBP[4]   = 0x{bbp4:02x}  (need bit 6 = 0x40 set)")
+        print(f"  BBP[20]  = 0x{bbp20:02x}  (expected 0x06)")
+        print(f"  BBP[31]  = 0x{bbp31:02x}  (expected 0x08)")
+        print(f"  BBP[65]  = 0x{bbp65:02x}  (expected 0x2C)")
+        print(f"  BBP[68]  = 0x{bbp68:02x}  (expected 0xDD)")
+        print(f"  BBP[84]  = 0x{bbp84:02x}  (expected 0x19 — final value, not the 0x9A intermediate)")
+        print(f"  BBP[105] = 0x{bbp105:02x}  (expected 0x3C — final value, clobbers MLD bit)")
+        print(f"  BBP[137] = 0x{bbp137:02x}  (expected 0x0F)")
+        print(f"  BBP[152] = 0x{bbp152:02x}  (need bit 7 set for main antenna)")
+        all_ok = (
+            (bbp4 & 0x40) == 0x40
+            and bbp20 == 0x06
+            and bbp31 == 0x08
+            and bbp65 == 0x2C
+            and bbp68 == 0xDD
+            and bbp84 == 0x19
+            and bbp105 == 0x3C
+            and bbp137 == 0x0F
+            and (bbp152 & 0x80) == 0x80
+        )
+    elif chip.silicon_id == 0x3572:
         # init_bbp_3572: BBP31=0x08, BBP65=0x2c, BBP66=0x38, BBP91=0x04,
         # BBP106=0x35, no BBP[4] MAC_IF_CTRL (it's set in usb_init_registers
         # earlier — and a R-M-W BBP[4] doesn't happen in init_bbp_3572).
@@ -394,11 +446,21 @@ def phase_rfinit(transport: RT2800USBTransport) -> "object":
     phase_bbpinit(transport)
 
     chip = read_chip_id(transport)
+    # For RT5592 we need EFUSE freq_offset before init_rfcsr fires.
+    rf_freq_offset = 0
+    if chip.silicon_id == 0x5592:
+        ee = parse_eeprom(read_eeprom_efuse(transport))
+        rf_freq_offset = ee.freq_offset
+        print(f"  EFUSE freq_offset = {rf_freq_offset} (RT5592 init_rfcsr needs this)")
     step(f"Run init_rfcsr for silicon 0x{chip.silicon_id:04x} ({chip.name})")
     import time as _t
     t0 = _t.perf_counter()
     try:
-        cal = init_rfcsr(transport, chip.silicon_id)
+        cal = init_rfcsr(
+            transport, chip.silicon_id,
+            freq_offset=rf_freq_offset,
+            chip_rev=chip.revision,
+        )
     except (IOError, usb.core.USBError, NotImplementedError) as e:
         fail(f"init_rfcsr raised: {e}")
     dt = _t.perf_counter() - t0
@@ -406,7 +468,70 @@ def phase_rfinit(transport: RT2800USBTransport) -> "object":
 
     step("Spot-check RFCSR values")
     all_ok = True
-    if chip.silicon_id == 0x3572:
+    if chip.silicon_id == 0x5592:
+        # init_rfcsr_5592 table values [SRC] rt2800lib.c:8462-8503.
+        # A handful of registers are diagnostic-only because the chip
+        # auto-manages bits after the cal kick:
+        #   RFCSR1: kernel writes 0x3F, but the chip clears the TX_PD
+        #     bits while TX is disabled (we only enabled RX). Observed
+        #     post-init: 0x17 (RX0|RX1 enabled, TX0|TX1 cleared). The
+        #     value gets re-written to 0x3F on every channel tune, so
+        #     post-init noise here is harmless.
+        #   RFCSR2: kernel writes 0x80 (cal kick) + sleeps 1ms. After
+        #     the cal completes the chip leaves low bits as status.
+        #   RFCSR63: kernel writes 0x07. Some revs of the chip auto-
+        #     clear bit 0 (observed 0x06 on rev 0x0222). The init
+        #     value lands; the chip then post-processes.
+        # Everything in the strict-check list maps to a single kernel
+        # write that should land unchanged.
+        strict_checks = [
+            ("RFCSR[3]",  3,  0x08, 0xFF),
+            ("RFCSR[5]",  5,  0x10, 0xFF),
+            ("RFCSR[6]",  6,  0xE4, 0xFF),
+            ("RFCSR[19]", 19, 0x4D, 0xFF),
+            ("RFCSR[26]", 26, 0x82, 0xFF),
+            ("RFCSR[33]", 33, 0xC0, 0xFF),
+            ("RFCSR[35]", 35, 0x12, 0xFF),
+            ("RFCSR[47]", 47, 0x0C, 0xFF),
+            ("RFCSR[53]", 53, 0x22, 0xFF),
+        ]
+        info_checks = [
+            ("RFCSR[1]",  1,  0x3F, "chip clears TX_PD bits while TX disabled (re-set by set_channel)"),
+            ("RFCSR[2]",  2,  0x80, "cal kick — chip auto-clears bit 7 + may set status bits"),
+            ("RFCSR[63]", 63, 0x07, "some revs clear bit 0 post-init"),
+            ("RFCSR[27]", 27, None, f"chip_rev=0x{chip.revision:04x}: expect 0x03 if rev < 0x0221"),
+        ]
+        for name, word, expected, mask in strict_checks:
+            raw = rfcsr_read(transport, word)
+            actual = raw & mask
+            marker = "OK" if actual == expected else "MISMATCH"
+            suffix = "" if mask == 0xFF else f" (raw=0x{raw:02x}, masked 0x{mask:02x})"
+            print(f"  {name:10s} = 0x{actual:02x}  (expected 0x{expected:02x}){suffix} [{marker}]")
+            if actual != expected:
+                all_ok = False
+        for name, word, kernel_wrote, note in info_checks:
+            v = rfcsr_read(transport, word)
+            tag = "" if kernel_wrote is None else f"(kernel wrote 0x{kernel_wrote:02x})"
+            print(f"  {name:10s} = 0x{v:02x}  {tag} — INFO: {note}")
+        # RFCSR38/39 RX_LO disables (normal_mode_setup_5xxx).
+        rfcsr38 = rfcsr_read(transport, 38)
+        rfcsr39 = rfcsr_read(transport, 39)
+        print(f"  RFCSR[38].RX_LO1_EN = {bool(rfcsr38 & 0x20)}  (expected False, full=0x{rfcsr38:02x})")
+        print(f"  RFCSR[39].RX_LO2_EN = {bool(rfcsr39 & 0x80)}  (expected False, full=0x{rfcsr39:02x})")
+        if rfcsr38 & 0x20:
+            all_ok = False
+        if rfcsr39 & 0x80:
+            all_ok = False
+        # RFCSR30.RX_VCM = 2 (bits[4:3]).
+        rfcsr30 = rfcsr_read(transport, 30)
+        rx_vcm = (rfcsr30 & 0x18) >> 3
+        print(f"  RFCSR[30].RX_VCM = {rx_vcm}  (expected 2, full=0x{rfcsr30:02x})")
+        if rx_vcm != 2:
+            all_ok = False
+        if cal is not None:
+            print("  NOTE: init_rfcsr returned non-None cal for RT5592 — unexpected")
+            all_ok = False
+    elif chip.silicon_id == 0x3572:
         # init_rfcsr_3572 table values [SRC] rt2800lib.c:7907-7937.
         # RFCSR6 has R2=1 R-M-W applied AFTER the table write of 0x4a;
         # the table writes 0x4A then OR's 0x40 → 0x4A | 0x40 = 0x4A
@@ -646,6 +771,16 @@ def phase_rx(
             rx_chain_num=ee.rxpath,
             has_cap_bt_coexist=ee.has_cap_bt_coexist,
             has_cap_external_lna_a=ee.has_cap_external_lna_a,
+        )
+    elif chip.silicon_id == 0x5592:
+        from wifit3.chips.rt2800usb.chan import is_xtal_40mhz
+        xtal_40 = is_xtal_40mhz(transport)
+        print(f"  MAC_DEBUG_INDEX.XTAL → xtal_40mhz={xtal_40}")
+        channel_kwargs.update(
+            tx_chain_num=ee.txpath,
+            rx_chain_num=ee.rxpath,
+            has_cap_bt_coexist=ee.has_cap_bt_coexist,
+            xtal_40mhz=xtal_40,
         )
     _set_channel(transport, chip.silicon_id, channel, **channel_kwargs)
     ok(f"tuned to ch {channel}")

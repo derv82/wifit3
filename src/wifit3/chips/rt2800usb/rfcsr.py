@@ -20,18 +20,21 @@ from dataclasses import dataclass
 from .bbp import bbp4_mac_if_ctrl, bbp_read, bbp_write
 from .constants import (
     BBP4_BANDWIDTH,
+    FREQ_OFFSET_BOUND,
     LDO_CFG0,
     LDO_CFG0_BGSEL,
     LDO_CFG0_LDO_CORE_VLEVEL,
     OPT_14_CSR,
     OPT_14_CSR_BIT0,
     REGISTER_BUSY_COUNT,
+    REV_RT5592C,
     RF_CSR_CFG,
     RF_CSR_CFG_BUSY,
     RF_CSR_CFG_DATA,
     RF_CSR_CFG_REGNUM,
     RF_CSR_CFG_WRITE,
     RFCSR6_R2,
+    RFCSR17_CODE,
     RFCSR17_TX_LO1_EN,
     RFCSR17_TXMIXER_GAIN,
     RFCSR22_BASEBAND_LOOPBACK,
@@ -42,8 +45,12 @@ from .constants import (
     RT_RT3572,
     RT_RT5390,
     RT_RT5392,
+    RT_RT5592,
 )
 from .transport import RT2800USBTransport
+
+# MCU command for freq offset update on USB.  [SRC] rt2800.h
+MCU_FREQ_OFFSET = 0x74
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +99,29 @@ def rfcsr_read(t: RT2800USBTransport, word: int) -> int:
     if reg == 0xFFFFFFFF:
         return 0xFF
     return reg & RF_CSR_CFG_DATA
+
+
+# ----------------------------------------------------------------------
+# rt2800_freq_cal_mode1 (USB branch) — clamp freq_offset to
+# FREQ_OFFSET_BOUND and push it to RFCSR17.CODE via the MCU_FREQ_OFFSET
+# request. Used both by init_rfcsr_5xxx (after the bulk RFCSR table) and
+# by every channel tune on RF53xx / RF55xx silicon.
+# [SRC] rt2800lib.c:2447-2480
+# ----------------------------------------------------------------------
+def freq_cal_mode1_usb(t: RT2800USBTransport, freq_offset: int = 0) -> None:
+    """USB version of freq_cal_mode1: clamp + MCU_FREQ_OFFSET.
+
+    For non-USB the kernel walks the freq trim incrementally; on USB the
+    MCU does the walk for us via the MCU_FREQ_OFFSET command.
+    """
+    from .firmware import mcu_request
+
+    code = min(freq_offset & RFCSR17_CODE, FREQ_OFFSET_BOUND)
+    rfcsr17 = rfcsr_read(t, 17)
+    mcu_request(
+        t, MCU_FREQ_OFFSET,
+        token=0xFF, arg0=code & 0xFF, arg1=rfcsr17 & 0xFF,
+    )
 
 
 # ----------------------------------------------------------------------
@@ -442,24 +472,96 @@ def init_rfcsr_3572(
     return cal
 
 
+# ----------------------------------------------------------------------
+# rt2800_init_rfcsr_5592 — RF5592 (RT5572) RF chain init.
+# [SRC] rt2800lib.c:8462-8503
+#
+# Shape mirrors init_rfcsr_5392 but with the 5592-specific 21-write
+# table + RFCSR2=0x80 cal kick + freq_cal_mode1 + rev-gated extras.
+# normal_mode_setup_5xxx and led_open_drain_enable are reused as-is
+# (they're already silicon-agnostic helpers).
+#
+# Rev gating:
+#   * chip_rev >= REV_RT5592C → BBP103 = 0xc0    (DC filter enable)
+#   * chip_rev <  REV_RT5592C → RFCSR27 = 0x03
+# Exactly one fires (REV_RT5592C is the boundary). Both are safe no-ops
+# if we pass chip_rev=0 — we'd skip the BBP103 write (matching the
+# "rev unknown, don't touch" stance from init_bbp_5592) and apply the
+# RFCSR27=0x03 write. Hw test will pin down the rev and we can refine.
+# ----------------------------------------------------------------------
+_RT5592_RFCSR_INIT_TABLE = (
+    # [SRC] rt2800lib.c:8466-8486
+    (1, 0x3F),  (3, 0x08),  (5, 0x10),  (6, 0xE4),
+    (7, 0x00),  (14, 0x00), (15, 0x00), (16, 0x00),
+    (18, 0x03), (19, 0x4D), (20, 0x10), (21, 0x8D),
+    (26, 0x82), (28, 0x00), (29, 0x10), (33, 0xC0),
+    (34, 0x07), (35, 0x12), (47, 0x0C), (53, 0x22),
+    (63, 0x07),
+)
+
+
+def init_rfcsr_5592(
+    t: RT2800USBTransport,
+    *,
+    freq_offset: int = 0,
+    chip_rev: int = 0,
+) -> None:
+    """Port of rt2800_init_rfcsr_5592 (rt2800lib.c:8462-8503).
+
+    Runs:
+      * rf_init_calibration(RFCSR30)
+      * 21-entry RT5592 RFCSR table
+      * RFCSR2 = 0x80 (cal kick) + 1ms sleep
+      * freq_cal_mode1_usb(freq_offset)
+      * REV_RT5592C+: BBP103 = 0xc0  (DC filter enable)
+      * normal_mode_setup_5xxx
+      * < REV_RT5592C: RFCSR27 = 0x03
+      * led_open_drain_enable
+    """
+    rf_init_calibration(t, 30)
+
+    for word, value in _RT5592_RFCSR_INIT_TABLE:
+        rfcsr_write(t, word, value)
+
+    rfcsr_write(t, 2, 0x80)
+    time.sleep(0.001)
+
+    freq_cal_mode1_usb(t, freq_offset=freq_offset)
+
+    if chip_rev >= REV_RT5592C:
+        bbp_write(t, 103, 0xC0)
+
+    normal_mode_setup_5xxx(t)
+
+    if chip_rev < REV_RT5592C:
+        rfcsr_write(t, 27, 0x03)
+
+    led_open_drain_enable(t)
+
+
 # Public dispatcher — picks the right RF init for the silicon.
 def init_rfcsr(
     t: RT2800USBTransport,
     silicon_id: int,
     *,
     txmixer_gain_24g: int = 0,
+    freq_offset: int = 0,
+    chip_rev: int = 0,
 ):
     """Initialise the RF chain for the given silicon.
 
     Returns RfFilterCal for chips that produce one (RT3572 via
     _rx_filter_calibration); None for chips that don't need
-    runtime-captured calibration values (RT5390/RT5392).
+    runtime-captured calibration values (RT5390/RT5392/RT5592).
     """
     if silicon_id == RT_RT5392:
         init_rfcsr_5392(t)
         return None
     if silicon_id == RT_RT3572:
         return init_rfcsr_3572(t, txmixer_gain_24g=txmixer_gain_24g)
+    if silicon_id == RT_RT5592:
+        init_rfcsr_5592(t, freq_offset=freq_offset, chip_rev=chip_rev)
+        return None
     if silicon_id == RT_RT5390:
         raise NotImplementedError(
             "rt2800_init_rfcsr_5390 not yet ported — user's hw is RT5392, "

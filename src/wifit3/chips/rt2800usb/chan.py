@@ -24,7 +24,12 @@ import logging
 import time
 from typing import Optional
 
-from .bbp import bbp_read, bbp_write, bbp_write_with_rx_chain
+from .bbp import (
+    bbp_glrt_write,
+    bbp_read,
+    bbp_write,
+    bbp_write_with_rx_chain,
+)
 from .constants import (
     BBP3_HT40_MINUS,
     BBP4_BANDWIDTH,
@@ -34,6 +39,11 @@ from .constants import (
     GPIO_CTRL,
     GPIO_CTRL_DIR7,
     GPIO_CTRL_VAL7,
+    LDO_CFG0,
+    LDO_CFG0_LDO_CORE_VLEVEL,
+    MAC_DEBUG_INDEX,
+    MAC_DEBUG_INDEX_XTAL,
+    POWER_BOUND,
     RFCSR1_PLL_PD,
     RFCSR1_RF_BLOCK_EN,
     RFCSR1_RX0_PD,
@@ -51,6 +61,10 @@ from .constants import (
     RFCSR7_BIT4,
     RFCSR7_BITS67,
     RFCSR7_RF_TUNING,
+    RFCSR9_K,
+    RFCSR9_MOD,
+    RFCSR9_N,
+    RFCSR11_MOD,
     RFCSR11_R,
     RFCSR12_DR0,
     RFCSR12_TX_POWER,
@@ -60,8 +74,11 @@ from .constants import (
     RFCSR23_FREQ_OFFSET,
     RFCSR30_RX_H20M,
     RFCSR30_TX_H20M,
+    RFCSR49_TX,
+    RFCSR50_TX,
     RT_RT3572,
     RT_RT5392,
+    RT_RT5592,
     TX_BAND_CFG_A,
     TX_BAND_CFG_BG_BIT,
     TX_BAND_CFG_HT40_MINUS,
@@ -78,8 +95,7 @@ from .constants import (
     TX_PIN_CFG_RFTR_EN_BIT,
     TX_PIN_CFG_TRSW_EN_BIT,
 )
-from .firmware import mcu_request
-from .rfcsr import RfFilterCal, rfcsr_read, rfcsr_write
+from .rfcsr import RfFilterCal, freq_cal_mode1_usb, rfcsr_read, rfcsr_write
 from .transport import RT2800USBTransport
 
 logger = logging.getLogger(__name__)
@@ -165,23 +181,6 @@ CHANNELS_5G_DFS = (
     100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140,
 )
 CHANNELS_5G_ALL = CHANNELS_5G_NON_DFS + CHANNELS_5G_DFS
-
-# MCU command for freq offset update on USB.  [SRC] rt2800.h
-MCU_FREQ_OFFSET = 0x74
-
-
-def freq_cal_mode1_usb(t: RT2800USBTransport, freq_offset: int = 0) -> None:
-    """USB version of freq_cal_mode1 (rt2800lib.c:2447-2480).
-
-    Only RF53xx silicon uses this — RF3052 writes freq_offset directly
-    to RFCSR23 inside its config_channel function.
-    """
-    rfcsr17 = rfcsr_read(t, 17)
-    mcu_request(
-        t, MCU_FREQ_OFFSET,
-        token=0xFF, arg0=freq_offset & 0xFF, arg1=rfcsr17 & 0xFF,
-    )
-
 
 # ----------------------------------------------------------------------
 # RF53xx 2.4 GHz channel tune (RT5390/RT5392).
@@ -572,6 +571,308 @@ def _set_channel_3572(
 
 
 # ----------------------------------------------------------------------
+# RT5592 / RF5592 channel tables — 2.4 GHz only for M-B1; 5 GHz rows
+# land in M-B2 along with the 5 GHz config-channel branch.
+#
+# Channel struct is 5-field (channel, N, K, mod, R) — encoded into
+# RFCSR8/9/11 via RFCSR9_K/_N/_MOD + RFCSR11_R/_MOD. The N/K/mod/R
+# values differ between xtal20 and xtal40 — picked at runtime from
+# MAC_DEBUG_INDEX.XTAL.
+#
+# [SRC] rt2800lib.c:11578-11710 (rf_vals_5592_xtal20 / xtal40)
+# ----------------------------------------------------------------------
+_RF_VALS_5592_XTAL20_2G = {
+    # channel: (N, K, mod, R)
+    1:  (482, 4, 10, 3),
+    2:  (483, 4, 10, 3),
+    3:  (484, 4, 10, 3),
+    4:  (485, 4, 10, 3),
+    5:  (486, 4, 10, 3),
+    6:  (487, 4, 10, 3),
+    7:  (488, 4, 10, 3),
+    8:  (489, 4, 10, 3),
+    9:  (490, 4, 10, 3),
+    10: (491, 4, 10, 3),
+    11: (492, 4, 10, 3),
+    12: (493, 4, 10, 3),
+    13: (494, 4, 10, 3),
+    14: (496, 8, 10, 3),
+}
+
+_RF_VALS_5592_XTAL40_2G = {
+    # channel: (N, K, mod, R)
+    1:  (241, 2, 10, 3),
+    2:  (241, 7, 10, 3),
+    3:  (242, 2, 10, 3),
+    4:  (242, 7, 10, 3),
+    5:  (243, 2, 10, 3),
+    6:  (243, 7, 10, 3),
+    7:  (244, 2, 10, 3),
+    8:  (244, 7, 10, 3),
+    9:  (245, 2, 10, 3),
+    10: (245, 7, 10, 3),
+    11: (246, 2, 10, 3),
+    12: (246, 7, 10, 3),
+    13: (247, 2, 10, 3),
+    14: (248, 4, 10, 3),
+}
+
+
+def is_xtal_40mhz(t: RT2800USBTransport) -> bool:
+    """Read MAC_DEBUG_INDEX.XTAL — 1 = 40 MHz crystal, 0 = 20 MHz.
+
+    The PAU09 N600's actual xtal isn't documented; we read it at
+    runtime and pick the matching RF channel table. Kernel does the
+    same probe in rt2800_probe_hw_mode.  [SRC] rt2800lib.c:11844-11852
+    """
+    return bool(t.read32(MAC_DEBUG_INDEX) & MAC_DEBUG_INDEX_XTAL)
+
+
+# ----------------------------------------------------------------------
+# RT5572 / RF5592 2.4 GHz channel tune.
+#
+# Mirrors rt2800_config_channel_rf55xx (rt2800lib.c:3485-3758) for the
+# `rf->channel <= 14` branch, then the post-RF tail of
+# rt2800_config_channel (lines 4257-4555) for the bits that fire on
+# RT5592 specifically. M-B2 will extend to the 5 GHz branch.
+#
+# Defaults match kernel constants at the top of config_channel_rf55xx:
+#   is_11b = false       (we don't run pure CCK)
+#   is_type_ep = false   (no high-power ext-PA chip variant)
+#
+# Deferred for M-B1 (folds into M-B2):
+#   * rt2800_iq_calibrate — RT5592-only per-tune IQ trim from EFUSE.
+#     Without it RX should still work, just degraded SNR. If 2.4G
+#     proves silent on hw, we pull it forward.
+# ----------------------------------------------------------------------
+def _set_channel_5592_2g(
+    t: RT2800USBTransport,
+    channel: int,
+    *,
+    n: int,
+    k: int,
+    mod: int,
+    r: int,
+    freq_offset: int = 0,
+    lna_gain: int = 0,
+    tx_chain_num: int = 2,
+    rx_chain_num: int = 2,
+    has_cap_bt_coexist: bool = False,
+    default_power1: int = 0,
+    default_power2: int = 0,
+) -> None:
+    # ---- (1) LDO_CFG0 — VLEVEL=0 for HT20 2.4 GHz. [SRC] 3498-3501 ----
+    reg = t.read32(LDO_CFG0)
+    reg = (reg & ~LDO_CFG0_LDO_CORE_VLEVEL) | ((0 << 26) & LDO_CFG0_LDO_CORE_VLEVEL)
+    t.write32(LDO_CFG0, reg & 0xFFFFFFFF)
+
+    # ---- (2) Synthesizer: RFCSR8/9/11 packed from {N, K, mod, R} ----
+    # [SRC] 3504-3515
+    rfcsr_write(t, 8, n & 0xFF)
+
+    rfcsr = rfcsr_read(t, 9)
+    rfcsr = (rfcsr & ~RFCSR9_K) | (k & RFCSR9_K)
+    rfcsr = (rfcsr & ~RFCSR9_N) | (((n & 0x100) >> 8 << 4) & RFCSR9_N)
+    rfcsr = (rfcsr & ~RFCSR9_MOD) | ((((mod - 8) & 0x4) >> 2 << 7) & RFCSR9_MOD)
+    rfcsr_write(t, 9, rfcsr & 0xFF)
+
+    rfcsr = rfcsr_read(t, 11)
+    rfcsr = (rfcsr & ~RFCSR11_R) | ((r - 1) & RFCSR11_R)
+    rfcsr = (rfcsr & ~RFCSR11_MOD) | (((mod - 8) & 0x3) << 6 & RFCSR11_MOD)
+    rfcsr_write(t, 11, rfcsr & 0xFF)
+
+    # ---- (3) 2.4 GHz fixed-value RFCSR block. [SRC] 3517-3547 ----
+    rfcsr_write(t, 10, 0x90)
+    # Kernel comment: "FIXME: RF11 overwrite?" — kernel deliberately
+    # clobbers the synthesizer R/MOD bits from step 2 with 0x4A here.
+    # Faithful port.
+    rfcsr_write(t, 11, 0x4A)
+    rfcsr_write(t, 12, 0x52)
+    rfcsr_write(t, 13, 0x42)
+    rfcsr_write(t, 22, 0x40)
+    rfcsr_write(t, 24, 0x4A)
+    rfcsr_write(t, 25, 0x80)
+    rfcsr_write(t, 27, 0x42)
+    rfcsr_write(t, 36, 0x80)
+    rfcsr_write(t, 37, 0x08)
+    rfcsr_write(t, 38, 0x89)
+    rfcsr_write(t, 39, 0x1B)
+    rfcsr_write(t, 40, 0x0D)
+    rfcsr_write(t, 41, 0x9B)
+    rfcsr_write(t, 42, 0xD5)
+    rfcsr_write(t, 43, 0x72)
+    rfcsr_write(t, 44, 0x0E)
+    rfcsr_write(t, 45, 0xA2)
+    rfcsr_write(t, 46, 0x6B)
+    rfcsr_write(t, 48, 0x10)
+    rfcsr_write(t, 51, 0x3E)
+    rfcsr_write(t, 52, 0x48)
+    rfcsr_write(t, 54, 0x38)
+    rfcsr_write(t, 56, 0xA1)
+    rfcsr_write(t, 57, 0x00)
+    rfcsr_write(t, 58, 0x39)
+    rfcsr_write(t, 60, 0x45)
+    rfcsr_write(t, 61, 0x91)
+    rfcsr_write(t, 62, 0x39)
+
+    # ---- (4) Channel-edge tweaks. [SRC] 3551-3553 ----
+    # RFCSR23/59 = 0x07 for ch 1-10, 0x06 for ch 11-14.
+    rfcsr23_59 = 0x07 if channel <= 10 else 0x06
+    rfcsr_write(t, 23, rfcsr23_59)
+    rfcsr_write(t, 59, rfcsr23_59)
+
+    # ---- (5) OFDM mode (is_11b=false, is_type_ep=false). [SRC] 3568 ----
+    rfcsr_write(t, 55, 0x43)
+
+    # ---- (6) TX power: RFCSR49/50.TX_POWER clamped to POWER_BOUND.
+    # [SRC] 3680-3696 — is_type_ep=false so EP bits stay clear.
+    rfcsr = rfcsr_read(t, 49)
+    p1 = min(default_power1, POWER_BOUND)
+    rfcsr = (rfcsr & ~RFCSR49_TX) | (p1 & RFCSR49_TX)
+    rfcsr_write(t, 49, rfcsr & 0xFF)
+
+    rfcsr = rfcsr_read(t, 50)
+    p2 = min(default_power2, POWER_BOUND)
+    rfcsr = (rfcsr & ~RFCSR50_TX) | (p2 & RFCSR50_TX)
+    rfcsr_write(t, 50, rfcsr & 0xFF)
+
+    # ---- (7) RFCSR1 chain power-domain enables. [SRC] 3698-3714 ----
+    # RT5592 convention: "PD" bits are active-high CHAIN-ENABLE on this
+    # silicon (the naming is misleading — RT3572 inverts the semantic).
+    # Confirmed by RT5392 baseline (driver works with all PD bits set
+    # for its 1T1R chain). For 2T2R RT5592: TX0+TX1+RX0+RX1 all set.
+    rfcsr = rfcsr_read(t, 1)
+    rfcsr |= RFCSR1_RF_BLOCK_EN | RFCSR1_PLL_PD
+    if tx_chain_num >= 1:
+        rfcsr |= RFCSR1_TX0_PD
+    else:
+        rfcsr &= ~RFCSR1_TX0_PD & 0xFF
+    if tx_chain_num == 2:
+        rfcsr |= RFCSR1_TX1_PD
+    else:
+        rfcsr &= ~RFCSR1_TX1_PD & 0xFF
+    rfcsr &= ~RFCSR1_TX2_PD & 0xFF
+    if rx_chain_num >= 1:
+        rfcsr |= RFCSR1_RX0_PD
+    else:
+        rfcsr &= ~RFCSR1_RX0_PD & 0xFF
+    if rx_chain_num == 2:
+        rfcsr |= RFCSR1_RX1_PD
+    else:
+        rfcsr &= ~RFCSR1_RX1_PD & 0xFF
+    rfcsr &= ~RFCSR1_RX2_PD & 0xFF
+    rfcsr_write(t, 1, rfcsr & 0xFF)
+
+    # ---- (8) RFCSR6 = 0xe4, RFCSR30 = 0x10 (HT20). [SRC] 3715-3720 ----
+    rfcsr_write(t, 6, 0xE4)
+    rfcsr_write(t, 30, 0x10)
+
+    # ---- (9) Non-11b → RFCSR31/32 = 0x80. [SRC] 3722-3725 ----
+    rfcsr_write(t, 31, 0x80)
+    rfcsr_write(t, 32, 0x80)
+
+    # ---- (10) Freq trim + VCOCAL kick. [SRC] 3728, 3731-3733 ----
+    freq_cal_mode1_usb(t, freq_offset=freq_offset)
+    rfcsr = rfcsr_read(t, 3)
+    rfcsr |= RFCSR3_VCOCAL_EN
+    rfcsr_write(t, 3, rfcsr & 0xFF)
+
+    # ---- (11) BBP62/63/64 NF + BBP79/80/81/82 band-specific values.
+    # [SRC] 3736-3743
+    nf = (0x37 - (lna_gain & 0xFF)) & 0xFF
+    bbp_write(t, 62, nf)
+    bbp_write(t, 63, nf)
+    bbp_write(t, 64, nf)
+    bbp_write(t, 79, 0x1C)
+    bbp_write(t, 80, 0x0E)
+    bbp_write(t, 81, 0x3A)
+    bbp_write(t, 82, 0x62)
+
+    # ---- (12) GLRT band-conditional 6-pair writes. [SRC] 3746-3757 ----
+    bbp_glrt_write(t, 128, 0xE0)
+    bbp_glrt_write(t, 129, 0x1F)
+    bbp_glrt_write(t, 130, 0x38)
+    bbp_glrt_write(t, 131, 0x32)
+    bbp_glrt_write(t, 133, 0x28)
+    bbp_glrt_write(t, 124, 0x19)
+
+    # ---- (13) Post-RF tail of rt2800_config_channel ------------------
+    # BBP62/63/64 NF + BBP86=0 (else branch of 4258-4306).
+    # The earlier NF writes (step 11) and these are duplicates; faithful
+    # port matches kernel order.
+    bbp_write(t, 62, nf)
+    bbp_write(t, 63, nf)
+    bbp_write(t, 64, nf)
+    bbp_write(t, 86, 0x00)
+
+    # BBP82/75 band-specific overwrite. [SRC] 4308-4326 — RT5592 enters
+    # the inner branch (not RT5390/RT5392/RT6352). No has_cap_external_lna_bg
+    # default → BBP82=0x84, BBP75=0x50.
+    bbp_write(t, 82, 0x84)
+    bbp_write(t, 75, 0x50)
+
+    # TX_BAND_CFG — HT20, no A bit, BG=1. [SRC] 4347-4351
+    reg = t.read32(TX_BAND_CFG_REG)
+    reg &= ~TX_BAND_CFG_HT40_MINUS
+    reg &= ~TX_BAND_CFG_A
+    reg |= TX_BAND_CFG_BG_BIT
+    t.write32(TX_BAND_CFG_REG, reg & 0xFFFFFFFF)
+
+    # TX_PIN_CFG — start from 0 (RT5592 is not RT6352). PAs per
+    # tx_chain_num switch (2.4G uses G enables), LNAs per rx_chain_num
+    # (both A and G enables set for every active chain — kernel does
+    # this for every chip in the post-RF tail). [SRC] 4356-4411
+    tx_pin = 0
+    if tx_chain_num >= 2:
+        tx_pin |= TX_PIN_CFG_PA_PE_G1_EN
+    if has_cap_bt_coexist:
+        tx_pin |= TX_PIN_CFG_PA_PE_G0_EN_BIT
+    else:
+        tx_pin |= TX_PIN_CFG_PA_PE_G0_EN_BIT     # 2.4 GHz → G0
+
+    if rx_chain_num >= 2:
+        tx_pin |= TX_PIN_CFG_LNA_PE_A1_EN | TX_PIN_CFG_LNA_PE_G1_EN
+    tx_pin |= TX_PIN_CFG_LNA_PE_A0_EN_BIT | TX_PIN_CFG_LNA_PE_G0_EN_BIT
+
+    tx_pin |= TX_PIN_CFG_RFTR_EN_BIT | TX_PIN_CFG_TRSW_EN_BIT
+    t.write32(TX_PIN_CFG_REG, tx_pin & 0xFFFFFFFF)
+
+    # RT5592-only block. [SRC] 4485-4493
+    # BBP141 GLRT = 0x1a (HT20).
+    bbp_glrt_write(t, 141, 0x1A)
+    # BBP66 AGC = (0x1c for 2.4G) + 2*lna_gain, fanned across RX chains.
+    bbp66 = (0x1C + 2 * (lna_gain & 0xFF)) & 0xFF
+    bbp_write_with_rx_chain(t, 66, bbp66, rx_chain_num=rx_chain_num)
+    # rt2800_iq_calibrate(channel) — DEFERRED to M-B2 (needs EFUSE
+    # IQ cal bytes). Without it, IQ trim falls back to chip defaults;
+    # expected impact is degraded SNR, not RX silence.
+
+    # BBP4 BANDWIDTH = 0 (HT20). [SRC] 4526-4528
+    bbp = bbp_read(t, 4)
+    bbp &= ~BBP4_BANDWIDTH
+    bbp_write(t, 4, bbp & 0xFF)
+
+    # BBP3 HT40_MINUS = 0 (HT20). [SRC] 4530-4532
+    bbp = bbp_read(t, 3)
+    bbp &= ~BBP3_HT40_MINUS
+    bbp_write(t, 3, bbp & 0xFF)
+
+    time.sleep(0.001)
+
+    # Clear channel-activity counters as a side-effect of reading.
+    t.read32(CH_IDLE_STA)
+    t.read32(CH_BUSY_STA)
+    t.read32(CH_BUSY_STA_SEC)
+
+    logger.debug(
+        "set_channel_5592: ch=%d N=%d K=%d mod=%d R=%d "
+        "tx/rx_chain=(%d,%d) lna_gain=%d freq_off=%d bbp66=0x%02x",
+        channel, n, k, mod, r,
+        tx_chain_num, rx_chain_num, lna_gain, freq_offset, bbp66,
+    )
+
+
+# ----------------------------------------------------------------------
 # Public dispatcher.
 # ----------------------------------------------------------------------
 def set_channel(
@@ -590,6 +891,7 @@ def set_channel(
     has_cap_external_lna_a: bool = False,
     default_power1: int = 0,
     default_power2: int = 0,
+    xtal_40mhz: bool = False,
 ) -> None:
     """Tune to ``channel`` on the given silicon.
 
@@ -598,18 +900,23 @@ def set_channel(
     ``freq_offset`` and ``lna_gain``). RT3572 needs the cal_result
     plus chain counts; pass them in or the call will fail.
     """
-    if channel not in _RF_VALS_3X:
-        raise ValueError(
-            f"channel {channel} not in rf_vals_3x table (valid: 1..14, "
-            "36-173 per kernel rt2800lib.c:11435-11494)"
-        )
     if silicon_id == RT_RT5392:
+        if channel not in _RF_VALS_3X:
+            raise ValueError(
+                f"channel {channel} not in rf_vals_3x table (valid: 1..14, "
+                "36-173 per kernel rt2800lib.c:11435-11494)"
+            )
         if channel > 14:
             raise ValueError(
                 f"RT5392 is 2.4 GHz only; channel {channel} not supported"
             )
         _set_channel_5392(t, channel, freq_offset=freq_offset, lna_gain=lna_gain)
     elif silicon_id == RT_RT3572:
+        if channel not in _RF_VALS_3X:
+            raise ValueError(
+                f"channel {channel} not in rf_vals_3x table (valid: 1..14, "
+                "36-173 per kernel rt2800lib.c:11435-11494)"
+            )
         _set_channel_3572(
             t, channel,
             freq_offset=freq_offset,
@@ -621,6 +928,31 @@ def set_channel(
             rx_chain_num=rx_chain_num,
             has_cap_bt_coexist=has_cap_bt_coexist,
             has_cap_external_lna_a=has_cap_external_lna_a,
+            default_power1=default_power1,
+            default_power2=default_power2,
+        )
+    elif silicon_id == RT_RT5592:
+        if channel > 14:
+            raise NotImplementedError(
+                f"RT5592 channel {channel} > 14 not yet supported — "
+                "M-B2 will add the 5 GHz path (config_channel_rf55xx 5G branch + "
+                "rt2800_iq_calibrate)"
+            )
+        table = _RF_VALS_5592_XTAL40_2G if xtal_40mhz else _RF_VALS_5592_XTAL20_2G
+        if channel not in table:
+            raise ValueError(
+                f"RT5592 channel {channel} not in rf_vals_5592_xtal{'40' if xtal_40mhz else '20'} "
+                "2.4 GHz table"
+            )
+        n, k, mod, r = table[channel]
+        _set_channel_5592_2g(
+            t, channel,
+            n=n, k=k, mod=mod, r=r,
+            freq_offset=freq_offset,
+            lna_gain=lna_gain,
+            tx_chain_num=tx_chain_num,
+            rx_chain_num=rx_chain_num,
+            has_cap_bt_coexist=has_cap_bt_coexist,
             default_power1=default_power1,
             default_power2=default_power2,
         )

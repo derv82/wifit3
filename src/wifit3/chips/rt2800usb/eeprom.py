@@ -155,30 +155,43 @@ class EepromValues:
     def rxpath(self) -> int:
         """RX chain count, from NIC_CONF0 RXPATH field (bits[3:0]).
 
-        Special case: unburned EFUSE (NIC_CONF0 = 0x0000 or 0xFFFF)
-        returns kernel's documented default of 2 RX paths. Kernel
-        rt2800_validate_eeprom (rt2800lib.c:11050) only applies this
-        default when the read is 0xFFFF; we extend it to 0x0000 because
-        on Windows we've observed RT3572 chips that EFUSE-readback
-        zeros for the NIC_CONF fields (genuinely unburned vs. erased).
-        Without this override, set_channel_3572 powers down the
-        secondary chains via RFCSR1.RX1/2_PD, the chip's PHY ends up
-        misconfigured for the actual 2T2R hardware, and all RX frames
-        decode with FCS errors. [SRC] rt2800.h:2681
+        Special case: when EFUSE looks unburned, return kernel's
+        documented default of 2 RX paths. Kernel rt2800_validate_eeprom
+        (rt2800lib.c:11050) only applies this default when the read is
+        0xFFFF; we extend it to additional patterns we've observed on
+        unburned dongles in the wild:
+
+          * NIC_CONF0 = 0x0000 — RT3572 (AWUS051NH v2) reads zeros.
+          * NIC_CONF0 = 0x0F0F — RT5572 (Panda PAU09 N600) reads this
+            "0xF per nibble" factory pattern; gives txpath=0 (impossible)
+            and rxpath=15 (impossible, max is 3T3R).
+
+        Robust check: if either field is outside [1, 3], the entire word
+        is unburned. Without this override, _set_channel_5592_2g (and
+        likewise the RT3572 path) would power down legitimate chains
+        and bulk-IN goes silent. [SRC] rt2800.h:2681
         """
-        rxpath = self.nic_conf0 & 0x000F
-        if self.nic_conf0 in (0x0000, 0xFFFF):
-            return 2     # kernel default for unburned NIC_CONF0
-        return rxpath
+        if self._nic_conf0_looks_unburned():
+            return 2
+        return self.nic_conf0 & 0x000F
 
     @property
     def txpath(self) -> int:
         """TX chain count, from NIC_CONF0 TXPATH field (bits[7:4]).
         Same unburned-EFUSE handling as ``rxpath``: kernel's default
         is 1 TX path. [SRC] rt2800.h:2682, rt2800lib.c:11052"""
-        if self.nic_conf0 in (0x0000, 0xFFFF):
-            return 1     # kernel default for unburned NIC_CONF0
+        if self._nic_conf0_looks_unburned():
+            return 1
         return (self.nic_conf0 & 0x00F0) >> 4
+
+    def _nic_conf0_looks_unburned(self) -> bool:
+        """True if NIC_CONF0 looks unprogrammed: all-zero, all-set, or
+        decoded txpath/rxpath outside the physical [1, 3] range."""
+        if self.nic_conf0 in (0x0000, 0xFFFF, 0x0F0F):
+            return True
+        raw_rxpath = self.nic_conf0 & 0x000F
+        raw_txpath = (self.nic_conf0 & 0x00F0) >> 4
+        return raw_rxpath < 1 or raw_rxpath > 3 or raw_txpath < 1 or raw_txpath > 3
 
 
 def _word(eeprom: bytes, word_offset: int) -> int:
