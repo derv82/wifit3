@@ -10,18 +10,20 @@ All subagents MUST operate within a **Windows PowerShell** environment.
 - **DO NOT** use `-c` with `tshark` 
 
 ## 1. Tooling Strategy (Context Efficiency)
-To prevent context bloat and tool failure, always use the deterministic scripts in `./scratch/`:
+The deterministic scripts in `./scripts/` are the source of truth for hardware-level lookups:
 
-1. **Source Intelligence**: Use `python scratch/source_intel.py <source_dir> <hex_or_token>` for mapping telemetry to code.
-   - It automatically finds registers, bitfields, and parent/child relationships.
-   - It summarizes results if more than 10 matches are found to prevent context flooding.
-2. **PCAP Slicing**: Use `python scratch/pcap_slicer.py <log_file> <pcap_file>` BEFORE analyzing a pcap.
+1. **PCAP Slicing**: Use `python scripts/pcap_slicer.py <log_file> <pcap_file>` BEFORE analyzing a pcap.
    - This maps commands in `main.log` to exact frame boundaries in the `.pcap` based on absolute Epoch time.
+2. **Source Intelligence**: Use `Grep` / `Read` directly against `data_dumps/<chipset>-source/` for register/macro lookups.
+   - Example: `Grep "#define\s+REG_FOO" data_dumps/rtw88-source-v6.18/ --glob "*.h" -A 3`
+   - Match the exact `BIT(n)` macros — never infer bit positions from names (see `feedback_grep_bits_dont_guess` memory).
 3. **Traffic Analysis**: Use `tshark.exe` for specific frame extraction.
    - **Endpoint Address**: `usb.endpoint_address == 0x82`
    - **Control Transfers**: `usb.setup.bRequest`, `usb.setup.wValue`, `usb.setup.wIndex`.
    - **Payloads**: `usb.capdata`
    - **Limit Output**: Use `| Select-Object -First N` in PowerShell. NEVER use tshark's `-c` unless you are specifically trying to limit *the total number of packets read from the file*. It **stops the entire process** after N packets, it does **not** filter results.
+4. **Control-transfer diff** (rt2800usb family): `python scripts/rt2800usb/rt2800_ctrl_diff.py` decodes vendor control transfers and diffs the kernel's bring-up sequence against ours.
+5. **Frame payload peek**: `python scripts/peek_frame.py <pcap> <frame_no>...` dumps the raw payload of specific frame numbers.
 
 ## 2. HardwareReverseEngineer
 **Role**: Protocol Analyst & State Machine Mapper.
@@ -35,7 +37,7 @@ To prevent context bloat and tool failure, always use the deterministic scripts 
 ### Workflow: Log + PCAP = Truth
 1. **Slicing**: Run `pcap_slicer.py` to find the `start_frame` and `end_frame` for the target command (e.g., "Set Channel 6").
 2. **Extraction**: Use `tshark` to extract the unique frames within that range.
-3. **Intel**: Use `source_intel.py` on the hex values (addresses/masks) found in those frames to identify their names and purposes in the kernel source.
+3. **Intel**: Map every unique register address or bitmask to the kernel source via `Grep` / `Read` against `data_dumps/<chip_source>/`.
 4. **Synthesis**: Update the Python driver's `constants.py` and `sequences/` logic based on findings.
 
 ### Prompt Template
@@ -47,9 +49,9 @@ CONTEXT:
 - Goal: [Specific hypothesis, e.g., "Analyze register pokes during channel hop to 1"]
 
 INSTRUCTIONS:
-1. REQUIRED FIRST STEP: Run `python scratch/pcap_slicer.py <log_file> <pcap_file>` to determine the EXACT frame number boundaries for the target command.
+1. REQUIRED FIRST STEP: Run `python scripts/pcap_slicer.py <log_file> <pcap_file>` to determine the EXACT frame number boundaries for the target command.
 2. Extract unique packets using `tshark.exe` within the slice bounds.
-3. Map every unique register address or bitmask found in the traffic to the kernel source using `python scratch/source_intel.py data_dumps/<chip_source> <hex_value>`.
+3. Map every unique register address or bitmask found in the traffic to a symbol in `data_dumps/<chip_source>/` using `Grep`.
 4. Output a concise table of Findings: [Frame #] | [Source Symbol] | [Value/Action] | [Result].
 5. Provide the updated `constants.py` entries or sequence steps.
 ```

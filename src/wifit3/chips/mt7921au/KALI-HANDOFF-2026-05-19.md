@@ -16,7 +16,7 @@ Most likely culprit: **the kernel `mt7921u` driver was still bound to the device
 ## What was tested
 
 ```bash
-sudo .venv/bin/python scratch/test_hw_mt7921au.py
+sudo .venv/bin/python scripts/mt7921au/test_hw_mt7921au.py
 ```
 
 (Running from the project root on Kali, against the device freshly enumerated on Bus 4 at SuperSpeed.)
@@ -46,7 +46,7 @@ Confirmed:
 ## Test output
 
 ```
-sudo .venv/bin/python scratch/test_hw_mt7921au.py
+sudo .venv/bin/python scripts/mt7921au/test_hw_mt7921au.py
 --- USB Discovery ---
 [PASS] Found MT7921AU at bus 4, address 26
 --- connect() [60s timeout] ---
@@ -147,7 +147,7 @@ lsusb -t | grep -A1 'Dev .*If 3'   # Should show Driver=[none] for If 3
 dmesg | tail -20                    # Should NOT show any mt7921u lines after replug
 
 # Then run the test
-sudo .venv/bin/python scratch/test_hw_mt7921au.py
+sudo .venv/bin/python scripts/mt7921au/test_hw_mt7921au.py
 ```
 
 Note: `btusb` will still claim Interfaces 0/1/2. That's fine — we only want Interface 3.
@@ -205,7 +205,7 @@ Carrying forward from the 2026-05-17 snapshot — none of this was challenged by
 
 ## RESOLUTION — 2026-05-19 evening: kernel-driver-collision was correct, but a deeper blocker is now exposed
 
-User ran `scratch/kali_test_mt7921au.sh` (this session's diagnostic
+User ran `scripts/kali_test_mt7921au.sh` (this session's diagnostic
 script — installs the blacklist, `rmmod`s the mt76 family, prompts for
 replug, runs the test, bundles dmesg/lsusb/usbmon). Two runs in
 `usb_dumps/wifit3-kali-bundle/run-20260519T191052Z/` (fresh device) and
@@ -282,6 +282,6 @@ agenda):
 on both runs (see `tshark.log` line 3 in each bundle). Standard Kali
 setup: tshark drops to `wireshark` group, can't write into a
 `kali:kali` dir. Logs alone were enough to call the failure, but
-`scratch/kali_test_mt7921au.sh` should be fixed to either chown the
+`scripts/kali_test_mt7921au.sh` should be fixed to either chown the
 bundle dir to include the `wireshark` group, or write the pcap to
 `/tmp` and move. Worth doing before the next bring-up retest.

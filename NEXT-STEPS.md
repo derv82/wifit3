@@ -75,7 +75,7 @@ Concrete plan for M-LAST:
 2. **Hw-test on Windows first** — faster turnaround, the symptom
    (FW_START_REQ then EP0 dead) is well-characterised there.
 3. **If Windows unblocks → confirm on Kali** with a clean
-   blacklist+replug (use `scratch/kali_test_mt7921au.sh`, after fixing
+   blacklist+replug (use `scripts/kali_test_mt7921au.sh`, after fixing
    its tshark `Permission denied` bug).
 4. **If Windows still fails** → re-derive from Linux's pcap how the
    kernel sequences URBs around FW_START_REQ. The libusb-bump +
@@ -90,7 +90,7 @@ User trip to Kali brought back fresh cold-boot pcaps + `airmon-ng`/`iw`/`tshark`
 logs for three of the four queued cards. Each capture lives at
 `usb_dumps/captures_<driver>/` with the standard `capture-N.pcap` +
 `capture-N_logs/main.log` layout the existing tooling already consumes
-(`scratch/pcap_slicer.py`, `scratch/source_intel.py`). Remaining gate
+(`scripts/pcap_slicer.py`, plus `Grep`/`Read` against `data_dumps/<driver>-source-v6.18/`). Remaining gate
 before driver work starts on any of these is **kernel source extraction
 to `data_dumps/<driver>-source-v6.18/` + firmware-blob byte-verify against
 `linux-firmware/`** (same workflow as the 8821au/8822bu/8812au bring-ups).
@@ -105,8 +105,8 @@ to `data_dumps/<driver>-source-v6.18/` + firmware-blob byte-verify against
 Next mechanical steps when picking one of these up:
 
 1. `pcap_slicer.py usb_dumps/captures_<driver>/capture-1_logs/main.log usb_dumps/captures_<driver>/capture-1.pcap` — get the frame-range map for "plug in → firmware load → channel hop → packets flow". Pick the cold-boot capture (usually capture-1 or -3; -2 tends to be a warm boot where the kernel skipped FW load).
-2. Pull pristine kernel source for the relevant driver subdir into `data_dumps/<driver>-source-v6.18/` (kernel.org tag `v6.18`, same version as Kali's runtime kernel — keeps `source_intel.py` citations version-aligned).
-3. Extract the firmware blob from frame N of the cold-boot pcap (`scratch/extract_fw_*.py` patterns already used for rtw88) and byte-verify against `linux-firmware/<driver>/*.bin`. Ship the pcap-extracted blob in `chips/<driver>/assets/` per [[firmware-extraction]] memory.
+2. Pull pristine kernel source for the relevant driver subdir into `data_dumps/<driver>-source-v6.18/` (kernel.org tag `v6.18`, same version as Kali's runtime kernel — keeps `Grep`/`Read` citations version-aligned).
+3. Extract the firmware blob from frame N of the cold-boot pcap (mirror the `scripts/rtl8812au/extract_rtw8812a_fw.py` pattern already used for rtw88) and byte-verify against `linux-firmware/<driver>/*.bin`. Ship the pcap-extracted blob in `chips/<driver>/assets/` per [[firmware-extraction]] memory.
 4. M1 = FW upload + FW_READY ACK only. Demoable, ~few hundred lines, no PHY init. Per [[milestone-sizing]] memory.
 
 ### *Distant Future* Hardware Support (need $$$ will make more Minnie Drivers)

@@ -3,7 +3,7 @@
 # Wifit3 — MT7921AU Kali test-run collector
 # =========================================
 #
-# Runs scratch/test_hw_mt7921au.py under controlled conditions on Kali and
+# Runs scripts/mt7921au/test_hw_mt7921au.py under controlled conditions on Kali and
 # bundles every artefact we need to diagnose the bring-up failure, so we don't
 # have to keep rebooting back into Kali. Targets the open questions in
 # src/wifit3/chips/mt7921au/KALI-HANDOFF-2026-05-19.md:
@@ -12,14 +12,14 @@
 #   2. Did our PATCH_SEM_GET bulk OUT hit the wire, or fail inside libusb?
 #   3. Why did the device migrate buses mid-session last time?
 #
-# Companion to scratch/kali_dump.sh (static info dump) — this one is the
+# Companion to scripts/kali_dump.sh (static info dump) — this one is the
 # dynamic test-run + usbmon trace.
 #
 # REQUIRES: a wifit3 checkout on Kali with `uv sync` already run (so
 # .venv/bin/python exists). MT7921AU plugged in, target user has sudo.
 #
 # USAGE
-#   ./scratch/kali_test_mt7921au.sh [output-base-dir]
+#   ./scripts/kali_test_mt7921au.sh [output-base-dir]
 #
 #   default base dir: ~/wifit3-kali-bundle
 #   final tarball:    <base>/wifit3-mt7921au-<UTC-TS>.tar.gz
@@ -36,7 +36,7 @@ PID=7961
 TARGET_DESC="MT7921AU ($VID:$PID)"
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TEST_SCRIPT="$REPO_ROOT/scratch/test_hw_mt7921au.py"
+TEST_SCRIPT="$REPO_ROOT/scripts/mt7921au/test_hw_mt7921au.py"
 VENV_PY="$REPO_ROOT/.venv/bin/python"
 
 OUT_BASE="${1:-$HOME/wifit3-kali-bundle}"

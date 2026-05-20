@@ -60,7 +60,7 @@ End-to-end M1 wall time = ~1.23 ms (frame 2495 → 2727, ~ 200 µs polling).
 
 ### Status: DONE 2026-05-18 (verified on TL-WN722N v2/v3)
 
-Hardware test: `scratch/test_hw_rtl8188eus.py --phase all --debug` passed first-shot. `MCU_WINT_INIT_READY` set 4.1 ms after `start_firmware` invocation (kernel ground truth from capture-1 is ~1.23 ms; the ~3× overhead is WinUSB control-transfer latency on Windows vs Linux usbmon).
+Hardware test: `scripts/rtl8188eus/test_hw_rtl8188eus.py --phase all --debug` passed first-shot. `MCU_WINT_INIT_READY` set 4.1 ms after `start_firmware` invocation (kernel ground truth from capture-1 is ~1.23 ms; the ~3× overhead is WinUSB control-transfer latency on Windows vs Linux usbmon).
 
 ## 7. M2 — Post-FW MAC init + LLT + MAC TX/RX enable
 
@@ -99,7 +99,7 @@ The kernel runs `init_queue_reserved_page` + `init_queue_priority` + `REG_TRXFF_
 
 ### Success criterion
 
-`scratch/test_hw_rtl8188eus.py --phase mac --debug` reports:
+`scripts/rtl8188eus/test_hw_rtl8188eus.py --phase mac --debug` reports:
 - `REG_CR` has bits `CR_MAC_TX_ENABLE` (0x40) and `CR_MAC_RX_ENABLE` (0x80) set
 - `post_fw_mac_init` completes without raising
 - `init_llt_table`'s 176 polled writes all return to `LLT_OP_INACTIVE` within `LLT_WRITE_POLL_MAX=20` polls per write
@@ -129,7 +129,7 @@ Implemented in `firmware.py` + `driver.py._power_on`. Three kernel functions por
 
 ### Success criterion
 
-`scratch/test_hw_rtl8188eus.py` reports:
+`scripts/rtl8188eus/test_hw_rtl8188eus.py` reports:
 - `REG_SYS_CFG = 0x<some-nonzero>` (chip ID readout works)
 - `download_firmware` completes without raising
 - `MCU_WINT_INIT_READY` set within `RTL8XXXU_FIRMWARE_POLL_MAX × 100 µs = 100 ms`
@@ -181,7 +181,7 @@ Total wire writes: 192 + 130 + 91 = 413, plus 4 × `time.sleep(0.05)` for the RF
 
 ### Success criterion
 
-`scratch/test_hw_rtl8188eus.py --phase phy --debug` reports:
+`scripts/rtl8188eus/test_hw_rtl8188eus.py --phase phy --debug` reports:
 - 413 register writes complete without `USBTimeoutError`
 - `REG_CR` readback post-PHY-init is non-bogus (not 0x0000 or 0xFFFF) — chip not wedged
 
@@ -211,7 +211,7 @@ Implemented in `chan.py`. Restricted to the 20 MHz / 2.4 GHz subset:
 
 ### Success criterion
 
-`scratch/test_hw_rtl8188eus.py --phase channel --debug` reports:
+`scripts/rtl8188eus/test_hw_rtl8188eus.py --phase channel --debug` reports:
 - `set_channel_2g_20mhz` completes without raising
 - Round-trip `read_rfreg(RF_A, RF6052_REG_MODE_AG)` returns a value where bits[9:0] == channel number and bits[11:10] == `MODE_AG_BW_20MHZ_8723B (0xC00)`
 - This is the **first round-trip SIPI read+write proof** in the bring-up — M3 was write-only.
@@ -258,7 +258,7 @@ Implemented across two new modules + an addition to `mac.py`:
 
 ### Success criterion
 
-`scratch/test_hw_rtl8188eus.py --phase beacon --debug --beacon-secs 5` reports ≥ 1 distinct beacon BSSID on channel 1 (or the channel passed via `--channel`). The phase prints per-BSSID counts + SSID + RSSI.
+`scripts/rtl8188eus/test_hw_rtl8188eus.py --phase beacon --debug --beacon-secs 5` reports ≥ 1 distinct beacon BSSID on channel 1 (or the channel passed via `--channel`). The phase prints per-BSSID counts + SSID + RSSI.
 
 ### Driver Protocol surface
 
@@ -303,7 +303,7 @@ Implemented in `tx.py` + `mac.init_queue_priority_2ep`. The 8188e fileops:
 
 ### Success criterion
 
-`scratch/test_hw_rtl8188eus.py --phase tx --bssid <BSSID> --count 20` reports:
+`scripts/rtl8188eus/test_hw_rtl8188eus.py --phase tx --bssid <BSSID> --count 20` reports:
 - 20/20 sends complete without `USBError` / pipe stall
 - All `send_mgmt_frame` returns equal `len(desc) + len(mpdu) = 58 bytes` written
 - Unit-test (already passing): `XOR over full 32 B = 0x0000` confirms checksum encode round-trips
@@ -407,7 +407,7 @@ If `read_efuse_map` raises (rare — usually means we didn't claim USB cleanly o
 
 ### Success criterion
 
-`scratch/test_hw_rtl8188eus.py --phase efuse` reports a non-fallback CCK / HT40-1s power index (e.g. `0x2E` rather than `0x22`) and a real MAC address (not `00:00:00:00:00:00` or `FF:FF:FF:FF:FF:FF`). Then re-run `--phase tx --bssid <your-AP> --client <your-phone> --count 20` and confirm the phone disconnects.
+`scripts/rtl8188eus/test_hw_rtl8188eus.py --phase efuse` reports a non-fallback CCK / HT40-1s power index (e.g. `0x2E` rather than `0x22`) and a real MAC address (not `00:00:00:00:00:00` or `FF:FF:FF:FF:FF:FF`). Then re-run `--phase tx --bssid <your-AP> --client <your-phone> --count 20` and confirm the phone disconnects.
 
 ## 14. Critical kernel quirks the port preserves
 

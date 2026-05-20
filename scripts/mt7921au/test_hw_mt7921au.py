@@ -11,8 +11,8 @@ Exits 0 on full pass, 1 on any failure.
 Timeouts prevent hangs: 30s for connect, 5s for channel, 3s for RX.
 
 Usage:
-    python scratch/test_hw_agent.py
-    python scratch/test_hw_agent.py --debug   # verbose USB logs
+    python scripts/mt7921au/test_hw_mt7921au.py
+    python scripts/mt7921au/test_hw_mt7921au.py --debug   # verbose USB logs
 """
 import asyncio
 import logging
@@ -20,7 +20,7 @@ import sys
 import argparse
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 import libusb_package
 import usb.core

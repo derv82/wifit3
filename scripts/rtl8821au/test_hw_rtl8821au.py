@@ -16,13 +16,13 @@
   --phase all      : open through beacon (default).
 
 Usage:
-    uv run python scratch/test_hw_rtl8821au.py                 # all
-    uv run python scratch/test_hw_rtl8821au.py --phase open
-    uv run python scratch/test_hw_rtl8821au.py --phase fw --debug
-    uv run python scratch/test_hw_rtl8821au.py --phase mac_init --debug
-    uv run python scratch/test_hw_rtl8821au.py --phase phy --debug
-    uv run python scratch/test_hw_rtl8821au.py --phase channel --debug
-    uv run python scratch/test_hw_rtl8821au.py --phase beacon --debug
+    uv run python scripts/rtl8821au/test_hw_rtl8821au.py                 # all
+    uv run python scripts/rtl8821au/test_hw_rtl8821au.py --phase open
+    uv run python scripts/rtl8821au/test_hw_rtl8821au.py --phase fw --debug
+    uv run python scripts/rtl8821au/test_hw_rtl8821au.py --phase mac_init --debug
+    uv run python scripts/rtl8821au/test_hw_rtl8821au.py --phase phy --debug
+    uv run python scripts/rtl8821au/test_hw_rtl8821au.py --phase channel --debug
+    uv run python scripts/rtl8821au/test_hw_rtl8821au.py --phase beacon --debug
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ import logging
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 import libusb_package
 import usb.core

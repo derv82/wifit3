@@ -10,8 +10,8 @@
   --phase all      : open through beacon (default).
 
 Usage:
-    .venv/Scripts/python.exe scratch/test_hw_rtl8822bu.py --phase open
-    .venv/Scripts/python.exe scratch/test_hw_rtl8822bu.py --debug
+    .venv/Scripts/python.exe scripts/rtl8822bu/test_hw_rtl8822bu.py --phase open
+    .venv/Scripts/python.exe scripts/rtl8822bu/test_hw_rtl8822bu.py --debug
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ import logging
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 import libusb_package
 import usb.core

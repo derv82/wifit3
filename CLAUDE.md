@@ -4,18 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Session Cheatsheet
 
-- **Platform**: Dev machine is Windows + PowerShell. Bash tool is available, but `scratch/AGENTS.md` has PowerShell-isms worth respecting (no `&&` chaining, no Unix `grep`/`tail`, never pass `-c` to `tshark` since it limits *input* not output).
+- **Platform**: Dev machine is Windows + PowerShell. Bash tool is available, but `scripts/AGENTS.md` has PowerShell-isms worth respecting (no `&&` chaining, no Unix `grep`/`tail`, never pass `-c` to `tshark` since it limits *input* not output).
 - **Cross-platform by design**: Wifit3 uses PyUSB + `libusb_package` so drivers run on Windows (with Zadig binding the device to WinUSB) AND Linux (after `rmmod <kernel_driver>`). No Kali boot is needed for normal dev — that's the whole point of going userland.
 - **Hardware testing is the USER's job**, not the agent's. The loop is:
   1. Agent proposes code changes.
-  2. User runs `python scratch/test_hw_mt7921au.py` (optionally `--debug`) and pastes output.
+  2. User runs `python scripts/<chipset>/test_hw_<chipset>.py` (optionally `--debug`) and pastes output.
   3. Agent reads output, iterates.
   Do not try to flash/test hardware yourself.
 - **Device gets borked? User replugs.** That resets cold-boot state. You can suggest "please unplug, wait a few seconds, replug, then rerun" if a previous attempt left it stuck.
-- **Reverse-engineering workflow**: when porting a kernel driver, the kernel C is the spec but `usb_dumps/captures_*/capture-N.pcap` is the ground truth. Use the deterministic helpers in `scratch/` instead of ad-hoc tshark queries:
-  - `python scratch/pcap_slicer.py <main.log> <pcap>` — maps `capture.py` log timestamps to pcap frame ranges (e.g. "firmware upload happens in frames 14182–14400").
-  - `python scratch/source_intel.py data_dumps/<chip-source>/ <hex_or_token>` — locates register/macro definitions in the kernel source, with parent-register context.
-  - See `scratch/AGENTS.md` for the full tooling brief.
+- **Reverse-engineering workflow**: when porting a kernel driver, the kernel C is the spec but `usb_dumps/captures_*/capture-N.pcap` is the ground truth. Use the deterministic helpers in `scripts/` instead of ad-hoc tshark queries:
+  - `python scripts/pcap_slicer.py <main.log> <pcap>` — maps `capture.py` log timestamps to pcap frame ranges (e.g. "firmware upload happens in frames 14182–14400").
+  - For register/macro lookups in kernel sources, use `Grep` / `Read` directly against `data_dumps/<chip-source>/` (e.g. `Grep #define\s+REG_FOO data_dumps/rtw88-source-v6.18/ --glob "*.h"`).
+  - See `scripts/AGENTS.md` for the full tooling brief.
 - **Captures are made by `src/wifit3/scripts/capture.py`** on the Kali persistent USB. Each capture comes with a `*_logs/main.log` (absolute-epoch timeline) that `pcap_slicer.py` consumes.
 - **Per-chipset ground-truth docs**: each chip dir has a `<CHIP>.md` (e.g. `chips/mt7921au/MT7921AU.md`) that accumulates *verified* facts decoded from its pcap. Treat anything not in that doc as a hypothesis. Update the doc as facts are confirmed so future sessions don't re-derive them.
 - **Lead's rule** (from `NEXT-STEPS.md`): discuss class design (`GenericDriver` vs `WlanInterface` responsibilities, etc.) BEFORE execution. Treat the user as Senior Lead.

@@ -89,13 +89,13 @@ RAW_IO, etc.).
   (control-OUT, `bRequest=0x05`, `wValue in [0x1000, 0x1FFF]`,
   concatenated in pcap order).
 - **Wire layout** = 7 pages: 6 × 4096B full pages + 1 × 2422B tail.
-- **Re-extraction**: `python scratch/extract_rtw8812a_fw.py` reproduces
+- **Re-extraction**: `python scripts/rtl8812au/extract_rtw8812a_fw.py` reproduces
   the body from the pcap (writes body-only file; not used by the runtime
   loader, which now reads the canonical linux-firmware blob directly).
 
 ### Pcap frame map (capture-1, cold boot)
 
-`[WIRE]` from `scratch/extract_rtw8812a_fw.py`:
+`[WIRE]` from `scripts/rtl8812au/extract_rtw8812a_fw.py`:
 
 | page | start frame | body offset | size |
 |-----:|------------:|------------:|-----:|
@@ -107,7 +107,7 @@ RAW_IO, etc.).
 | 5    | 641         | 0x005000    | 4096 |
 | 6    | 729         | 0x006000    | 2422 |
 
-Cold-boot phase = frames 1..3144 per `scratch/pcap_slicer.py`.
+Cold-boot phase = frames 1..3144 per `scripts/pcap_slicer.py`.
 
 ## M5: warm reattach (FW-warm tier)
 
@@ -165,7 +165,7 @@ networks on channel 1.
 | `chan.py` (new) | `set_channel_2g_20mhz` for 2T2R (RF18 writes on both paths). |
 | `rx.py` (new) | Jaguar phy_status RSSI parser + rx_common re-exports. |
 | `driver.py` (rewritten) | Full bring-up: cold + FW-warm + fully-warm + RX loop. |
-| `scratch/test_hw_rtl8812au.py` | + `--phase channel`, `--phase beacon`. |
+| `scripts/rtl8812au/test_hw_rtl8812au.py` | + `--phase channel`, `--phase beacon`. |
 
 ### M2 deltas vs 8821a worth noting
 
@@ -228,7 +228,7 @@ handshake on the same channel after the deauth burst.
 |---|---|
 | `tx.py` (new) | 40-byte tx_pkt_desc builder (W7 XOR checksum), MGMT-queue qsel encoding, queue→bulk-OUT EP mapper for 3-bulkout AWUS036ACH, `build_deauth_frame` helper. |
 | `driver.py` (updated) | `inject_frame` + `_arm_tx_queues` workaround (see below). |
-| `scratch/test_hw_rtl8812au.py` | `--phase tx` + `--target-bssid`/`--target-client`/`--tx-count` CLI flags. |
+| `scripts/rtl8812au/test_hw_rtl8812au.py` | `--phase tx` + `--target-bssid`/`--target-client`/`--tx-count` CLI flags. |
 
 ### Per-chip wire layout
 

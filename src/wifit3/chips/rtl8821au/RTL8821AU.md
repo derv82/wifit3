@@ -21,7 +21,7 @@ verified — do not let speculation accumulate here.
 
 ## Capture-1 timeline (frames)
 
-Mapped via `scratch/pcap_slicer.py`:
+Mapped via `scripts/pcap_slicer.py`:
 
 | Phase                                | Frames        | Notes |
 |--------------------------------------|---------------|-------|
