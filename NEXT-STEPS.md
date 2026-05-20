@@ -9,6 +9,7 @@ Fully-functional userspace Python drivers (cold + warm bring-up, channel hop, in
 | Atheros AR9271 | `chips/ar9271/` | 2.4 GHz | DONE (v1.4) |
 | Alfa/Realtek RTL8187 | `chips/rtl8187/` | 2.4 GHz | DONE |
 | Ralink RT2800USB (RT5372 / RT3572 / RT5572) | `chips/rt2800usb/` | 2.4 GHz (RT5372 1T1R); 2.4 + 5 GHz (RT3572 + RT5572 2T2R) | DONE 2026-05-20 — all three silicons hw-verified including 5 GHz monitor + TX inject on RT5392 |
+| Mediatek MT7612U (AWUS036ACM, Alfa) | `chips/mt76x2u/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-20 — full attack stack hw-verified; deauth on NETGEAR2G recaptured EAPOL M1+M3 live |
 | Realtek RTL8821AU (AWUS036ACS) | `chips/rtl8821au/` | 2.4 + 5 GHz | DONE 2026-05-17, 27 BSSIDs/8s on ch1 |
 | Realtek RTL8822BU (TP-Link T3U Plus, AC1300) | `chips/rtl8822bu/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-17, full RX + TX inject + 5G |
 | Realtek RTL8812AU (AWUS036ACH) | `chips/rtl8812au/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-17, RX + deauth confirmed by handshake re-capture |
@@ -99,7 +100,7 @@ to `data_dumps/<driver>-source-v6.18/` + firmware-blob byte-verify against
 |------|------|---------------|----------|--------|----|-------|
 | AC1900       | RTL8814AU | `rtw88_8814au` | ✅ `captures_rtw88_8814au/` (3) | ⏳ | ⏳ | 4T4R, modern iDDMA path. Bigger delta from 8822bu — 4 RF paths instead of 2, larger txbf init. Family-shared `rtw88_base/` should still cover transport / phy_cond / power_seq / SIPI. |
 | AWUS036ACHM  | MT7610U   | `mt76x0u`      | ✅ `captures_mt76x0u/` (3)      | ⏳ | ⏳ | mt76 family, sibling of mt7921 in structure but older WiFi-5 PHY. Single-chain. 5GHz support detected by airmon at capture time. |
-| AWUS036ACM   | MT7612U   | `mt76x2u`      | ✅ `captures_mt76x2u/` (3, re-captured 2026-05-19 via USBMON4 after the first set came back empty) | ⏳ | ⏳ | mt76 family, 2T2R WiFi-5. Likely shares mt76 USB transport (mt76u, MCU CMD format) with mt7921au — could front-load mt76 base infrastructure into a shared `chips/mt76_base/` if it pays off across mt76x0/mt76x2/mt7921. **Slow card quirks observed during capture (2026-05-19):** channel switches need ~2 s of breathing room (user patched local `capture.py` to accommodate, not committed); `aireplay-ng` injection latencies >10 s. Worth replicating in the wifit3 driver's `set_channel()` and inject paths — likely a real firmware constraint, not a capture-host artifact. |
+| AWUS036ACM   | MT7612U   | `mt76x2u`      | ✅ `captures_mt76x2u/` (3) | ✅ | ✅ | **DONE 2026-05-20** — see `chips/mt76x2u/MT76X2U.md`. The "~2 s channel-switch breathing room" noted during capture turned out to be a **capture-host artifact, NOT a chip constraint** — our wifit3 driver does the full kernel-faithful 5-cal-MCU-CMD switch in ~150 ms (see `--phase hop` output). The `aireplay-ng` >10s latency was likely the same Kali-host effect. Defer `chips/mt76_base/` until MT7921AU revives — two impls aren't enough yet to know which seam to factor. |
 | AWUS036NH    | RT3070    | `rt2800usb`    | (not yet)                       | ⏳ | ⏳ | Same chipset as the older PAU05 dongle. Should slot into the existing `chips/rt2800usb/` driver — likely a `DeviceID` + chip-id extras entry + minor RXWI/TXWI tweaks, not a from-scratch port. |
 
 Next mechanical steps when picking one of these up:

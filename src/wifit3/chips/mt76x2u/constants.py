@@ -1,0 +1,307 @@
+"""MT7612U / mt76x2u register + vendor-request constants.
+
+SPDX-License-Identifier: GPL-2.0-or-later
+Ported from Linux mt76 (kernel v6.18) by wifit3, 2026.
+
+All register addresses and vendor request codes were derived from
+``data_dumps/mt76-source-v6.18/`` and confirmed against
+``usb_dumps/captures_mt76x2u/capture-1.pcap`` cold-boot traffic.
+"""
+
+# ---------------------------------------------------------------------------
+# Known VID:PIDs claimed by mt76x2u in the kernel id_table.
+# [SRC] data_dumps/mt76-source-v6.18/mt76x2/usb.c:12
+# ---------------------------------------------------------------------------
+USB_IDS_MT76X2U = [
+    (0x0b05, 0x1833, "Asus USB-AC54 (MT7612U)"),
+    (0x0b05, 0x17eb, "Asus USB-AC55 (MT7612U)"),
+    (0x0b05, 0x180b, "Asus USB-N53 B1 (MT7612U)"),
+    (0x0e8d, 0x7612, "Alfa AWUS036ACM / Aukey USBAC1200 (MT7612U)"),
+    (0x057c, 0x8503, "AVM FRITZ!WLAN AC860 (MT7612U)"),
+    (0x7392, 0xb711, "Edimax EW-7722UAC (MT7612U)"),
+    (0x0e8d, 0x7632, "HC-M7662BU1 (MT7662U)"),
+    (0x0471, 0x2126, "LiteOn WN4516R (MT7612U)"),
+    (0x0471, 0x7600, "LiteOn WN4519R (MT7612U)"),
+    (0x2c4e, 0x0103, "Mercury UD13 (MT7612U)"),
+    (0x0846, 0x9014, "Netgear WNDA3100v3 (MT7612U)"),
+    (0x0846, 0x9053, "Netgear A6210 (MT7612U)"),
+    (0x045e, 0x02e6, "Xbox One Wireless Adapter (MT7612U)"),
+    (0x045e, 0x02fe, "Xbox One Wireless Adapter (MT7612U)"),
+    (0x2357, 0x0137, "TP-Link TL-WDN6200 (MT7612U)"),
+]
+
+# ---------------------------------------------------------------------------
+# Vendor request codes (enum mt76_usb_vendor_req).
+# [SRC] data_dumps/mt76-source-v6.18/mt76.h:617
+# ---------------------------------------------------------------------------
+MT_VEND_DEV_MODE     = 0x01  # device-mode write (FW reset, IVB, ...)
+MT_VEND_POWER_ON     = 0x04
+MT_VEND_MULTI_WRITE  = 0x06  # default register write
+MT_VEND_MULTI_READ   = 0x07  # default register read
+MT_VEND_READ_EEPROM  = 0x09
+MT_VEND_WRITE_FCE    = 0x42  # FCE-bus write (firmware DMA programming)
+MT_VEND_WRITE_CFG    = 0x46
+MT_VEND_READ_CFG     = 0x47
+MT_VEND_READ_EXT     = 0x63
+MT_VEND_WRITE_EXT    = 0x66
+MT_VEND_FEATURE_SET  = 0x91
+
+# Virtual-address-space markers (kernel strips before encoding wValue/wIndex).
+# [SRC] mt76.h:612
+MT_VEND_TYPE_EEPROM = 1 << 31
+MT_VEND_TYPE_CFG    = 1 << 30
+MT_VEND_TYPE_MASK   = MT_VEND_TYPE_EEPROM | MT_VEND_TYPE_CFG
+
+# ---------------------------------------------------------------------------
+# Register addresses.
+# [SRC] data_dumps/mt76-source-v6.18/mt76x02_regs.h
+# ---------------------------------------------------------------------------
+MT_ASIC_VERSION = 0x0000  # mt76x02 ASIC version (REV_E1..E5 in low nibble)
+
+# FCE-bus registers (target of MT_VEND_WRITE_FCE during FW upload).
+# [SRC] data_dumps/mt76-source-v6.18/mt76x02_usb_mcu.c:15
+MT_FCE_DMA_ADDR = 0x0230
+MT_FCE_DMA_LEN  = 0x0234
+MT_TX_CPU_FROM_FCE_CPU_DESC_IDX = 0x09a8
+
+# MCU registers (polled for FW-ready signals).
+# [SRC] data_dumps/mt76-source-v6.18/mt76x02_mcu.h:13
+# [SRC] data_dumps/mt76-source-v6.18/mt76x2/mcu.h:13
+MT_MCU_COM_REG0      = 0x0730  # main FW running latch (bit 0)
+MT_MCU_CLOCK_CTL     = 0x0708  # rev>=E3 ROM-patch-applied latch (bit 0)
+MT_MCU_SEMAPHORE_03  = 0x07BC  # ROM-patch semaphore (NOT used for MT7612)
+
+# Frontend-cmd-engine config regs (programmed before FW upload).
+# [SRC] mt76x02_regs.h:242,259-263
+MT_FCE_PSE_CTRL              = 0x0800
+MT_TX_CPU_FROM_FCE_BASE_PTR  = 0x09a0
+MT_TX_CPU_FROM_FCE_MAX_COUNT = 0x09a4
+MT_FCE_PDMA_GLOBAL_CONF      = 0x09c4
+MT_FCE_SKIP_FS               = 0x0a6c
+
+# USB-DMA-cfg (CFG-bus address — top bit set in virtual address).
+# [SRC] mt76x02_regs.h:77-87
+MT_USB_U3DMA_CFG = 0x9018  # within CFG bus
+MT_USB_DMA_CFG_RX_BULK_AGG_TOUT  = 0x000000ff
+MT_USB_DMA_CFG_RX_DROP_OR_PAD    = 1 << 18
+MT_USB_DMA_CFG_RX_BULK_AGG_EN    = 1 << 21
+MT_USB_DMA_CFG_RX_BULK_EN        = 1 << 22
+MT_USB_DMA_CFG_TX_BULK_EN        = 1 << 23
+MT_USB_DMA_CFG_RX_BUSY           = 1 << 30
+MT_USB_DMA_CFG_TX_BUSY           = 1 << 31
+
+# ---------------------------------------------------------------------------
+# WLAN function-control / MTCMOS power gating (used by power_on / reset_wlan).
+# [SRC] mt76x02_regs.h:33-104, mt76x2/init.c:56 (mt76x2_reset_wlan).
+# MT_WLAN_FUN_CTRL is on the DEFAULT bus; the 0x130/0x148/etc. addresses
+# referenced in mt76x2u_power_on go through MT_VEND_ADDR(CFG, ...).
+# ---------------------------------------------------------------------------
+MT_WLAN_FUN_CTRL                = 0x0080
+MT_WLAN_FUN_CTRL_WLAN_EN        = 1 << 0
+MT_WLAN_FUN_CTRL_WLAN_CLK_EN    = 1 << 1
+MT_WLAN_FUN_CTRL_WLAN_RESET_RF  = 1 << 2
+MT_WLAN_FUN_CTRL_FRC_WL_ANT_SEL = 1 << 5
+
+MT_WLAN_MTC_CTRL_MTCMOS_PWR_UP  = 1 << 0
+MT_WLAN_MTC_CTRL_PWR_ACK        = 1 << 12
+MT_WLAN_MTC_CTRL_PWR_ACK_S      = 1 << 13
+MT_WLAN_MTC_CTRL_STATE_UP       = 1 << 28
+
+# ---------------------------------------------------------------------------
+# MAC / PHY / WPDMA register addresses (default bus unless noted).
+# [SRC] mt76x02_regs.h.
+# ---------------------------------------------------------------------------
+MT_WPDMA_GLO_CFG               = 0x0208
+MT_WPDMA_GLO_CFG_TX_DMA_BUSY   = 1 << 1
+MT_WPDMA_GLO_CFG_RX_DMA_BUSY   = 1 << 3
+MT_WPDMA_DELAY_INT_CFG         = 0x0210
+
+MT_WMM_AIFSN                   = 0x0214
+MT_WMM_CWMIN                   = 0x0218
+MT_WMM_CWMAX                   = 0x021C
+MT_TSO_CTRL                    = 0x0250
+MT_HEADER_TRANS_CTRL_REG       = 0x0260
+MT_US_CYC_CFG                  = 0x02a4
+MT_US_CYC_CNT_MASK             = 0xFF
+MT_PBF_SYS_CTRL                = 0x0400
+MT_PBF_CFG                     = 0x0404
+MT_PBF_TX_MAX_PCNT             = 0x0408
+MT_PBF_RX_MAX_PCNT             = 0x040C
+
+MT_FCE_L2_STUFF                = 0x080C
+MT_FCE_L2_STUFF_WR_MPDU_LEN_EN = 1 << 4    # [SRC] mt76x02_regs.h:251
+MT_FCE_WLAN_FLOW_CONTROL1      = 0x0824
+
+# Bit-field positions used by xtal_fixup. [SRC] mt76x02_regs.h:314,321
+MT_XIFS_TIME_CFG_OFDM_SIFS_SHIFT = 8   # GENMASK(15, 8)
+MT_XIFS_TIME_CFG_OFDM_SIFS_MASK  = 0xFF << 8
+MT_BKOFF_SLOT_CFG_CC_DELAY_SHIFT = 8   # GENMASK(11, 8)
+MT_BKOFF_SLOT_CFG_CC_DELAY_MASK  = 0xF << 8
+
+MT_COEXCFG0                    = 0x0040
+MT_COEXCFG0_COEX_EN            = 1 << 0
+MT_EFUSE_CTRL                  = 0x0024
+MT_PAUSE_ENABLE_CONTROL1       = 0x0a38
+
+MT_MAC_SYS_CTRL                = 0x1004
+MT_MAC_SYS_CTRL_RESET_CSR      = 1 << 0
+MT_MAC_SYS_CTRL_RESET_BBP      = 1 << 1
+MT_MAC_SYS_CTRL_ENABLE_TX      = 1 << 2
+MT_MAC_SYS_CTRL_ENABLE_RX      = 1 << 3
+
+MT_MAC_ADDR_DW0                = 0x1008
+MT_MAC_ADDR_DW1                = 0x100C
+MT_MAC_BSSID_DW0               = 0x1010
+MT_MAC_BSSID_DW1               = 0x1014
+MT_MAX_LEN_CFG                 = 0x1018
+MT_AMPDU_MAX_LEN_20M1S         = 0x1030
+MT_AMPDU_MAX_LEN_20M2S         = 0x1034
+
+MT_XIFS_TIME_CFG               = 0x1100
+MT_BKOFF_SLOT_CFG              = 0x1104
+MT_TBTT_SYNC_CFG               = 0x1118
+MT_MAC_STATUS                  = 0x1200
+MT_MAC_STATUS_TX               = 1 << 0
+MT_MAC_STATUS_RX               = 1 << 1
+MT_PWR_PIN_CFG                 = 0x1204
+MT_AUX_CLK_CFG                 = 0x120C
+MT_DACCLK_EN_DLY_CFG           = 0x1264
+
+MT_TX_BAND_CFG                 = 0x132C
+MT_TX_BAND_CFG_UPPER_40M       = 1 << 0
+MT_TX_BAND_CFG_5G              = 1 << 1
+MT_TX_BAND_CFG_2G              = 1 << 2
+
+MT_TX_PWR_CFG_0                = 0x1314
+MT_TX_PWR_CFG_1                = 0x1318
+MT_TX_PWR_CFG_2                = 0x131C
+MT_TX_PWR_CFG_3                = 0x1320
+MT_TX_PWR_CFG_4                = 0x1324
+MT_TX_SW_CFG0                  = 0x1330
+MT_TX_SW_CFG1                  = 0x1334
+MT_TX_SW_CFG2                  = 0x1338
+MT_TXOP_CTRL_CFG               = 0x1340
+MT_TX_RTS_CFG                  = 0x1344
+MT_TX_TIMEOUT_CFG              = 0x1348
+MT_TX_RETRY_CFG                = 0x134C
+MT_TX_LINK_CFG                 = 0x1350
+MT_VHT_HT_FBK_CFG1             = 0x1358
+MT_CCK_PROT_CFG                = 0x1364
+MT_OFDM_PROT_CFG               = 0x1368
+MT_MM20_PROT_CFG               = 0x136C
+MT_MM40_PROT_CFG               = 0x1370
+MT_GF20_PROT_CFG               = 0x1374
+MT_GF40_PROT_CFG               = 0x1378
+MT_EXP_ACK_TIME                = 0x1380
+MT_HT_FBK_TO_LEGACY            = 0x1384
+MT_TX_ALC_CFG_4                = 0x13C0
+MT_TX_ALC_VGA3                 = 0x13C8
+MT_TX_PWR_CFG_7                = 0x13D4
+MT_TX_PWR_CFG_8                = 0x13D8
+MT_TX_PWR_CFG_9                = 0x13DC
+MT_TX_PROT_CFG6                = 0x13E0
+MT_TX_PROT_CFG7                = 0x13E4
+MT_TX_PROT_CFG8                = 0x13E8
+MT_PIFS_TX_CFG                 = 0x13EC
+
+MT_RX_FILTR_CFG                = 0x1400
+MT_AUTO_RSP_CFG                = 0x1404
+MT_LEGACY_BASIC_RATE           = 0x1408
+MT_HT_BASIC_RATE               = 0x140C
+MT_HT_CTRL_CFG                 = 0x1410
+MT_EXT_CCA_CFG                 = 0x141C
+MT_EXT_CCA_CFG_CCA0_SHIFT      = 0
+MT_EXT_CCA_CFG_CCA1_SHIFT      = 2
+MT_EXT_CCA_CFG_CCA2_SHIFT      = 4
+MT_EXT_CCA_CFG_CCA3_SHIFT      = 6
+MT_EXT_CCA_CFG_CCA_MASK_SHIFT  = 8
+MT_TX_SW_CFG3                  = 0x1478
+MT_PN_PAD_MODE                 = 0x150C
+MT_TXOP_HLDR_ET                = 0x1608
+MT_PROT_AUTO_TX_CFG            = 0x1648
+
+# BBP regions (default bus). Macro: MT_BBP(type, n) = base + n*4.
+MT_BBP_CORE_BASE               = 0x2000
+MT_BBP_IBI_BASE                = 0x2100
+MT_BBP_AGC_BASE                = 0x2300
+MT_BBP_TXBE_BASE               = 0x2700
+MT_BBP_RXO_BASE                = 0x2900
+
+# Bitfield positions in BBP registers (we treat these as raw masks).
+MT_BBP_CORE_R1_BW_SHIFT        = 3   # GENMASK(4, 3) = bits 4..3
+MT_BBP_CORE_R1_BW_MASK         = 0b11 << 3
+MT_BBP_AGC_R0_CTRL_CHAN_SHIFT  = 8
+MT_BBP_AGC_R0_CTRL_CHAN_MASK   = 0b11 << 8
+MT_BBP_AGC_R0_BW_SHIFT         = 12
+MT_BBP_AGC_R0_BW_MASK          = 0b111 << 12
+MT_BBP_TXBE_R0_CTRL_CHAN_SHIFT = 0
+MT_BBP_TXBE_R0_CTRL_CHAN_MASK  = 0b11
+
+# Special-case BBP regs used directly during set_channel post-MCU.
+# [SRC] mt76x2/usb_phy.c:161-168
+MT_BBP_AGC_R61                 = MT_BBP_AGC_BASE + 61 * 4   # 0x23f4
+MT_BBP_AGC_R7                  = MT_BBP_AGC_BASE + 7 * 4    # 0x231c
+MT_BBP_AGC_R11                 = MT_BBP_AGC_BASE + 11 * 4   # 0x232c
+MT_BBP_AGC_R2                  = MT_BBP_AGC_BASE + 2 * 4    # 0x2308
+MT_BBP_RXO_R13                 = MT_BBP_RXO_BASE + 13 * 4   # 0x2934
+MT_BBP_TXO_R4_ADDR             = 0x2600 + 4 * 4             # 0x2610 (MT_BBP_TXO_BASE)
+MT_BBP_AGC_R0                  = MT_BBP_AGC_BASE + 0 * 4    # 0x2300
+MT_BBP_TXBE_R5                 = MT_BBP_TXBE_BASE + 5 * 4   # 0x2714
+MT_BBP_CORE_R1                 = MT_BBP_CORE_BASE + 1 * 4   # 0x2004
+
+# CFG-bus power-on raw addresses (used as MT_VEND_TYPE_CFG | <addr>).
+# [SRC] mt76x2/usb_init.c:28-104
+MT_CFG_RF_BG                   = 0x0130  # RF analog bias / LDO/AFE/ABB/ADDA enables
+MT_CFG_RF_PATCH_PWR_CTRL_14C   = 0x014C  # last write in power_on_rf_patch
+MT_CFG_RF_PATCH_PWR_CTRL_1C    = 0x001C
+MT_CFG_RF_PATCH_PWR_CTRL_14    = 0x0014
+MT_CFG_WLAN_MTC_CTRL           = 0x0148
+MT_CFG_AD_DA_PWR_DN            = 0x1204  # within CFG bus address space
+MT_CFG_WLAN_FUNC_EN            = 0x0080  # equals MT_WLAN_FUN_CTRL but via CFG bus path used elsewhere
+MT_CFG_BBP_SW_RESET            = 0x0064  # bit(18) BBP reset
+
+# ---------------------------------------------------------------------------
+# USB endpoint order (kernel iterates intf descriptors and assigns by index).
+# [SRC] data_dumps/mt76-source-v6.18/usb.c:292
+# [SRC] mt76.h:632 (enum mt76u_in_ep / mt76u_out_ep)
+# [WIRE] confirmed via pyusb dump of 0e8d:7612 on dev machine.
+# Endpoint order in descriptor: bulk-IN 0x84, 0x85; bulk-OUT 0x08, 0x04, 0x05,
+# 0x06, 0x07, 0x09.
+# ---------------------------------------------------------------------------
+EP_IN_PKT_RX       = 0x84   # MT_EP_IN_PKT_RX (in_ep[0])
+EP_IN_CMD_RESP     = 0x85   # MT_EP_IN_CMD_RESP (in_ep[1])
+EP_OUT_INBAND_CMD  = 0x08   # MT_EP_OUT_INBAND_CMD (out_ep[0]) — FW upload + MCU
+EP_OUT_AC_BE       = 0x04   # MT_EP_OUT_AC_BE (out_ep[1])
+EP_OUT_AC_BK       = 0x05   # MT_EP_OUT_AC_BK (out_ep[2])
+EP_OUT_AC_VI       = 0x06   # MT_EP_OUT_AC_VI (out_ep[3])
+EP_OUT_AC_VO       = 0x07   # MT_EP_OUT_AC_VO (out_ep[4])
+EP_OUT_HCCA        = 0x09   # MT_EP_OUT_HCCA (out_ep[5])
+
+# ---------------------------------------------------------------------------
+# Firmware blob sizes (verified by extract_mt7662_fw.py from capture-1).
+# These are body sizes — no header was on the wire.
+# ---------------------------------------------------------------------------
+ROM_PATCH_BODY_SIZE = 26320
+ILM_SIZE            = 64448
+DLM_SIZE            = 17428
+
+# Firmware upload offsets in chip SRAM.
+# [SRC] data_dumps/mt76-source-v6.18/mt76x2/usb_mcu.c:17
+MT76U_MCU_ILM_OFFSET       = 0x080000
+MT76U_MCU_DLM_OFFSET       = 0x110000
+MT76U_MCU_DLM_OFFSET_E3    = 0x110800  # rev>=E3 adds 0x800
+MT76U_MCU_ROM_PATCH_OFFSET = 0x090000
+
+MCU_FW_URB_MAX_PAYLOAD      = 0x3900   # 14592 — ILM/DLM chunk size
+MCU_ROM_PATCH_MAX_PAYLOAD   = 2048     # ROM patch chunk size
+MT_CMD_HDR_LEN              = 4        # mt76 info header per chunk
+
+# ROM patch is gated by MT_MCU_SEMAPHORE_03 only on non-MT7612 silicon.
+# For MT7612, `rom_protect = !is_mt7612(dev)` evaluates false → SKIP semaphore.
+# [SRC] mt76x2/usb_mcu.c:59  → THIS is why MT7612 sidesteps the MT7921 wall.
+
+# ASIC revisions (low 16 bits of MT_ASIC_VERSION readback).
+# [SRC] mt76x2/mt76x2.h
+MT76XX_REV_E1 = 0x22
+MT76XX_REV_E3 = 0x33
+MT76XX_REV_E4 = 0x44
