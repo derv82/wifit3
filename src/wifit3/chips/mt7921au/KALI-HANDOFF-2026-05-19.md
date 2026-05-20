@@ -202,3 +202,86 @@ Carrying forward from the 2026-05-17 snapshot — none of this was challenged by
 1. Was `mt7921u` actually bound to the device's If 3 at `18:51:19.647` on Kali? (Resolve via `dmesg -T` + lsusb timestamps.)
 2. Why did the device migrate Bus 4 → Bus 2 mid-session? Manual replug, or kernel-initiated reset?
 3. If Step 1 produces a clean run and the failure recurs at PATCH_SEM_GET, what does the `transport.py` send path look like for cid `0x10` seq `0x01`? Last-known-good is "byte-for-byte matches capture-3 frame 14182" — has anything changed since the 2026-05-17 snapshot was taken? (Check git log; the snapshot didn't enumerate untracked changes.)
+
+## RESOLUTION — 2026-05-19 evening: kernel-driver-collision was correct, but a deeper blocker is now exposed
+
+User ran `scratch/kali_test_mt7921au.sh` (this session's diagnostic
+script — installs the blacklist, `rmmod`s the mt76 family, prompts for
+replug, runs the test, bundles dmesg/lsusb/usbmon). Two runs in
+`usb_dumps/wifit3-kali-bundle/run-20260519T191052Z/` (fresh device) and
+`.../run-20260519T191446Z/` (replug after Run 1 wedged the chip).
+
+### Run 1 — kernel-driver-collision theory CONFIRMED
+
+`dmesg_during.txt`: no `mt7921u` lines anywhere during the test window.
+`device_sysfs_post_replug.txt` and `device_sysfs_post_test.txt`: both
+show `4-2:1.3 -> (none)`. Blacklist+rmmod held perfectly. No bus
+migration (`device_migration.txt`: `MIGRATED=no`).
+
+Test progress was dramatically further than the original 2026-05-19
+run:
+
+- ✅ PATCH_SEM_GET (cid=0x10 seq=0x01) — **the prior failure point** —
+  succeeded, got real response on EP 0x85.
+- ✅ PATCH_START_REQ + 23 FW_SCATTER chunks (92 KB patch).
+- ✅ PATCH_FINISH_REQ + PATCH_SEM_REL.
+- ✅ All 4 WM RAM regions uploaded (89 + 67 + 4 + 13 chunks, ~700 KB).
+- ❌ FW_START_REQ bulk OUT (cid=0x02 seq=0x09, EP 0x08): 2-s timeout
+  (`[Errno 110] Operation timed out`).
+- ❌ Subsequent vendor reads on EP0: ~25 s of `Errno 110` timeouts.
+- ❌ dmesg post-test: `usb 4-2: Failed to suspend device, error -110`
+  (the kernel itself can't talk to the chip anymore).
+
+So **the original Kali-side question — "is `mt7921u` colliding with our
+test?" — gets a clean YES.** Blacklist+rmmod+replug fixes the
+PATCH_SEM_GET failure entirely.
+
+### The new wall — and it's the SAME as Windows
+
+Run 1's failure point (FW_START_REQ → EP0 dead) is the same blocker
+the 2026-05-17 session pause documented as
+"Windows/WinUSB-only". With this Kali run it's now reproduced on
+**Kali + libusb + USB-3 SuperSpeed**, so the WinUSB-specific
+attribution is wrong. The earlier "Hypothesis #1 — WinUSB mishandles
+firmware-handoff USB event" can be retired.
+
+### Run 2 — also reproduces the "4-packet stall"
+
+Run 2 ran ~4 s after replug (Run 1 had ~10 s), starting from a chip
+that Run 1 had left in a half-dead state. It failed earlier — at the
+first FW_SCATTER chunk, with a **short bulk write of 4096/4104 bytes**.
+That is the canonical "Windows 4-packet stall" pattern (see
+[MT7921AU.md § "FW_SCATTER 4-packet stall"](./MT7921AU.md#fw_scatter-4-packet-stall-windows--winusb--usb-30))
+now reproduced on Linux + libusb. So that's also not WinUSB-specific.
+
+### What's now the leading hypothesis
+
+**Shallow bulk-IN URB pool** (Hypothesis #2 from the
+2026-05-17 snapshot, previously a side bet). Linux's kernel driver
+pre-submits 128 URBs per IN endpoint via `mt76u_alloc_queues` before
+firmware traffic flies; we submit one bulk-IN read at a time on a
+drainer thread. The boot ROM appears to use USB-3 flow control across
+both directions simultaneously — if we're not in a posted state to
+receive an internal ACK or event, the device stops accepting OUTs.
+
+Concrete next code change (deferred — saving as the next session's
+agenda):
+
+1. Restructure `transport.py` to use libusb async URB API
+   (`libusb_submit_transfer`) instead of sync `Endpoint.read()`.
+2. Pre-submit ~32 URBs on EP 0x84 and EP 0x85 before the first MCU
+   command, refill on completion.
+3. Hw-test on Windows first (faster turnaround, original symptom is
+   well-characterised there); if the FW_START_REQ wall comes down,
+   confirm on Kali; if not, we re-derive from Linux's pcap how it
+   actually sequences URBs around FW_START_REQ.
+
+### Side note: pcap captures lost both runs
+
+`sudo tshark -w "$OUT_DIR/usbmon0.pcap"` returned `Permission denied`
+on both runs (see `tshark.log` line 3 in each bundle). Standard Kali
+setup: tshark drops to `wireshark` group, can't write into a
+`kali:kali` dir. Logs alone were enough to call the failure, but
+`scratch/kali_test_mt7921au.sh` should be fixed to either chown the
+bundle dir to include the `wireshark` group, or write the pcap to
+`/tmp` and move. Worth doing before the next bring-up retest.

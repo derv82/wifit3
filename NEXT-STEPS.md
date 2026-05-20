@@ -13,7 +13,7 @@ Fully-functional userspace Python drivers (cold + warm bring-up, channel hop, in
 | Realtek RTL8822BU (TP-Link T3U Plus, AC1300) | `chips/rtl8822bu/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-17, full RX + TX inject + 5G |
 | Realtek RTL8812AU (AWUS036ACH) | `chips/rtl8812au/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-17, RX + deauth confirmed by handshake re-capture |
 | Realtek RTL8188EUS (TP-Link TL-WN722N v2/v3) | `chips/rtl8188eus/` | 2.4 GHz, 1T1R | DONE 2026-05-19, M1-M8 complete; passive 4-way handshake + active PMKID harvest verified live |
-| Mediatek MT7921AU (AWUS036AXML) | `chips/mt7921au/` (scaffold) | — | PAUSED — see [[MT7921AU.md]] + [[KALI-HANDOFF-2026-05-19.md]] (EP0 dies post-FW_START_REQ on WinUSB; Kali run 2026-05-19 failed earlier — likely kernel-driver collision, need clean blacklist+replug retest before code-bug hypothesis stands) |
+| Mediatek MT7921AU (AWUS036AXML) | `chips/mt7921au/` (scaffold) | — | PAUSED — see [[MT7921AU.md]] + [[KALI-HANDOFF-2026-05-19.md]] (kernel-driver-collision confirmed + fixed via blacklist+rmmod+replug; 2026-05-19 evening Kali re-run got past PATCH_SEM_GET and uploaded all firmware, but **FW_START_REQ wall reproduces on Kali too** — not WinUSB-specific. Leading hypothesis: shallow bulk-IN URB pool — needs libusb async URB queue) |
 
 Family-shared infrastructure under `chips/rtw88_base/` covers transport,
 phy_cond walker, power_seq runtime, RF SIPI, TX checksum, RX-desc parser,
@@ -50,11 +50,38 @@ Two follow-ups are tracked, both deferred but small:
 
 ## NEXT STEP: M-LAST and 1.0
 
-Per [[project-m-last-libusb-bump]] memory: bump `libusb_package` to
-≥1.0.27 + enable `LIBUSB_OPTION_WINUSB_RAW_IO` to unblock MT7921AU on
-Windows. Pre-requisite: the Kali blacklist+replug retest in
-[[KALI-HANDOFF-2026-05-19.md]] to rule out the kernel-driver-collision
-theory before assuming the WinUSB hypothesis is the real blocker.
+**Plan revised 2026-05-19 evening** based on the post-blacklist Kali re-run
+(bundles in `usb_dumps/wifit3-kali-bundle/run-2026051*`). The libusb-bump
++ `LIBUSB_OPTION_WINUSB_RAW_IO` work in [[project-m-last-libusb-bump]] is
+**Windows-only** — and the FW_START_REQ blocker now reproduces on Kali +
+libusb too, so that knob can't be the full unlock.
+
+New leading hypothesis: **shallow bulk-IN URB pool.** Linux's
+`mt76u_alloc_queues` pre-submits 128 URBs per IN endpoint before any
+firmware traffic; our `transport.py` does one-at-a-time sync reads on a
+drainer thread. The boot ROM appears to use USB-3 flow control across
+both directions simultaneously, so if we're not in a posted state to
+receive an internal ACK/event, the device stops accepting OUTs (which
+matches both the FW_SCATTER 4-packet stall AND the FW_START_REQ EP0
+death — both now reproduced on Kali).
+
+Concrete plan for M-LAST:
+
+1. **Restructure `transport.py`** to use the libusb async URB API
+   (`libusb_submit_transfer`) instead of `Endpoint.read()`. Pre-submit
+   ~32 URBs each on EP 0x84 and EP 0x85 before the first MCU command,
+   refill on completion. Likely involves dropping to `libusb1` direct
+   from PyUSB.
+2. **Hw-test on Windows first** — faster turnaround, the symptom
+   (FW_START_REQ then EP0 dead) is well-characterised there.
+3. **If Windows unblocks → confirm on Kali** with a clean
+   blacklist+replug (use `scratch/kali_test_mt7921au.sh`, after fixing
+   its tshark `Permission denied` bug).
+4. **If Windows still fails** → re-derive from Linux's pcap how the
+   kernel sequences URBs around FW_START_REQ. The libusb-bump +
+   WINUSB_RAW_IO knob is still worth trying as a secondary, but is not
+   the primary fix any more.
+
 That's the last chipset gating wifit3 1.0.
 
 ### Other hardware queued (captures landed 2026-05-19, on deck)
@@ -72,7 +99,7 @@ to `data_dumps/<driver>-source-v6.18/` + firmware-blob byte-verify against
 |------|------|---------------|----------|--------|----|-------|
 | AC1900       | RTL8814AU | `rtw88_8814au` | ✅ `captures_rtw88_8814au/` (3) | ⏳ | ⏳ | 4T4R, modern iDDMA path. Bigger delta from 8822bu — 4 RF paths instead of 2, larger txbf init. Family-shared `rtw88_base/` should still cover transport / phy_cond / power_seq / SIPI. |
 | AWUS036ACHM  | MT7610U   | `mt76x0u`      | ✅ `captures_mt76x0u/` (3)      | ⏳ | ⏳ | mt76 family, sibling of mt7921 in structure but older WiFi-5 PHY. Single-chain. 5GHz support detected by airmon at capture time. |
-| AWUS036ACM   | MT7612U   | `mt76x2u`      | ✅ `captures_mt76x2u/` (2)      | ⏳ | ⏳ | mt76 family, 2T2R WiFi-5. Likely shares mt76 USB transport (mt76u, MCU CMD format) with mt7921au — could front-load mt76 base infrastructure into a shared `chips/mt76_base/` if it pays off across mt76x0/mt76x2/mt7921. |
+| AWUS036ACM   | MT7612U   | `mt76x2u`      | ✅ `captures_mt76x2u/` (3, re-captured 2026-05-19 via USBMON4 after the first set came back empty) | ⏳ | ⏳ | mt76 family, 2T2R WiFi-5. Likely shares mt76 USB transport (mt76u, MCU CMD format) with mt7921au — could front-load mt76 base infrastructure into a shared `chips/mt76_base/` if it pays off across mt76x0/mt76x2/mt7921. **Slow card quirks observed during capture (2026-05-19):** channel switches need ~2 s of breathing room (user patched local `capture.py` to accommodate, not committed); `aireplay-ng` injection latencies >10 s. Worth replicating in the wifit3 driver's `set_channel()` and inject paths — likely a real firmware constraint, not a capture-host artifact. |
 | AWUS036NH    | RT3070    | `rt2800usb`    | (not yet)                       | ⏳ | ⏳ | Same chipset as the older PAU05 dongle. Should slot into the existing `chips/rt2800usb/` driver — likely a `DeviceID` + chip-id extras entry + minor RXWI/TXWI tweaks, not a from-scratch port. |
 
 Next mechanical steps when picking one of these up:
