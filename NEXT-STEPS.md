@@ -8,7 +8,7 @@ Fully-functional userspace Python drivers (cold + warm bring-up, channel hop, in
 |---|---|---|---|
 | Atheros AR9271 | `chips/ar9271/` | 2.4 GHz | DONE (v1.4) |
 | Alfa/Realtek RTL8187 | `chips/rtl8187/` | 2.4 GHz | DONE |
-| Ralink RT2800USB (RT5572 / RT3572 / RT5372) | `chips/rt2800usb/` | 2.4 + 5 GHz (RT5572) | DONE |
+| Ralink RT2800USB (RT5372 / RT3572 / RT5572) | `chips/rt2800usb/` | 2.4 GHz (RT5372 1T1R); 2.4 + 5 GHz (RT3572 + RT5572 2T2R) | DONE 2026-05-20 — all three silicons hw-verified including 5 GHz monitor + TX inject on RT5392 |
 | Realtek RTL8821AU (AWUS036ACS) | `chips/rtl8821au/` | 2.4 + 5 GHz | DONE 2026-05-17, 27 BSSIDs/8s on ch1 |
 | Realtek RTL8822BU (TP-Link T3U Plus, AC1300) | `chips/rtl8822bu/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-17, full RX + TX inject + 5G |
 | Realtek RTL8812AU (AWUS036ACH) | `chips/rtl8812au/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-17, RX + deauth confirmed by handshake re-capture |
@@ -52,8 +52,8 @@ Two follow-ups are tracked, both deferred but small:
 
 **Plan revised 2026-05-19 evening** based on the post-blacklist Kali re-run
 (bundles in `usb_dumps/wifit3-kali-bundle/run-2026051*`). The libusb-bump
-+ `LIBUSB_OPTION_WINUSB_RAW_IO` work in [[project-m-last-libusb-bump]] is
-**Windows-only** — and the FW_START_REQ blocker now reproduces on Kali +
++ `LIBUSB_OPTION_WINUSB_RAW_IO` work (memory: [[project-m-last-mt7921au-urb-pool]])
+is **Windows-only** — and the FW_START_REQ blocker now reproduces on Kali +
 libusb too, so that knob can't be the full unlock.
 
 New leading hypothesis: **shallow bulk-IN URB pool.** Linux's

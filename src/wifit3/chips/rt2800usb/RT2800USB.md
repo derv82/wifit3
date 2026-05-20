@@ -1,9 +1,16 @@
-# RT5372 (RT5392 silicon) — Ground-Truth Doc
+# rt2800usb family — Ground-Truth Doc
 
-Ralink RT2800USB-family chipset shipped on the Panda PAU05 dongle. USB
-PID 0x5372 but the on-chip MAC_CSR0 reports silicon 0x5392 — the
-chipset name doesn't match the marketing SKU. Same code path covers
-several Panda/TPLINK rebrands.
+Covers Ralink rt2800usb-family chipsets supported by wifit3:
+
+| Silicon | Marketing | Dongle               | USB ID    | Bands       | Chains | Status |
+|---------|-----------|----------------------|-----------|-------------|--------|--------|
+| 0x5392  | RT5372    | Panda PAU05          | 148f:5372 | 2.4 GHz     | 1T1R   | DONE   |
+| 0x3572  | RT3572    | ALFA AWUS051NH v2    | 148f:3572 | 2.4 + 5 GHz | 2T2R   | DONE   |
+| 0x5592  | RT5572    | Panda PAU09 N600     | 148f:5572 | 2.4 + 5 GHz | 2T2R   | DONE   |
+
+Note: USB PID is named after the marketing SKU (e.g. RT5372), but the
+on-chip MAC_CSR0 reports the silicon ID (e.g. RT5392) — the two diverge
+on all three rebrands.
 
 Every fact below is either:
 - **[SRC]** a direct citation from `data_dumps/rt2x00-source-v6.18/`, or
@@ -14,27 +21,26 @@ verified — do not let speculation accumulate here.
 
 ---
 
-## Test hardware
+## Test hardware (per silicon)
 
-- **Card**: Panda Wireless PAU05 (N150 single-band 2.4 GHz)
-- **USB VID:PID**: `148f:5372`  [WIRE M1]
-- **Silicon ID** (MAC_CSR0 high word): **0x5392 rev 0x0223**  [WIRE M1]
-- **RF chip**: RT5390/RT5392 family — single-band 2.4 GHz, 1T1R
-- **USB**: 2.0 high-speed (`bcdUSB=0x0200`)  [WIRE M1]
-- **OUI** on PAU05: depends on dongle batch — read by `--phase open`
-  after `--phase macinit` lands (cold dongle reports `00:00:00:00:00:00`
-  for MAC_ADDR_DW0/1 because EEPROM isn't auto-loaded into the CSR until
-  init runs)
+- **PAU05** (silicon 0x5392 rev 0x0223): N150 single-band 2.4 GHz,
+  1T1R. USB 2.0 high-speed. Reference chip for the family-wide MAC /
+  FW / RX/TX desc / EFUSE bring-up.
+- **AWUS051NH v2** (silicon 0x3572): RT3572 + RF3052. 2T2R 2.4 +
+  5 GHz. USB 2.0. EFUSE NIC_CONF0=0x0000 (unburned → defaults to
+  2T2R per [[feedback_unburned_efuse_freq_offset]]). Filter calibration
+  loop (`init_rfcsr_3572` → `_rx_filter_calibration_3572`) produces
+  per-bw RFCSR24/31 values replayed on every channel tune.
+- **PAU09 N600** (silicon 0x5592 rev 0x0222 = REV_RT5592C+): RT5572 +
+  RF5592. 2T2R 2.4 + 5 GHz. USB 2.0. EFUSE NIC_CONF0=NIC_CONF1=0x0F0F
+  (unburned, factory-test pattern — handled by
+  `EepromValues._nic_conf0_looks_unburned()`; see
+  [[feedback_pau09_efuse_0f0f]]). MAC_DEBUG_INDEX.XTAL surfaces 20-
+  vs 40-MHz xtal selection (RF5592-specific). Per-tune IQ calibration
+  via BBP158/159 indirect pair runs on every channel set.
 
-The driver also claims:
-- **148f:3572** — ALFA AWUS051NH v2 — silicon 0x3572  [WIRE M1]
-- **148f:5572** — Panda PAU09 N600 — silicon 0x5592  [WIRE M1]
-
-RT3572 + RT5572 are *recognised* by `--phase open` (M1) but their MAC
-init + BBP/RF paths are stubbed — only RT5392 gets the full bring-up
-through M5. Extending to the other two is straightforward (different
-RF init function from rt2800lib.c, same MAC/USB plumbing) once a
-batch porting session has hw access to all three.
+The driver claims all three VID:PIDs and dispatches per `silicon_id`
+read from MAC_CSR0 at connect time.
 
 ---
 
@@ -71,36 +77,41 @@ advances 64 bytes per chunk. This is implemented in
 ```
 connect()
   ├─ claim USB interface
-  ├─ read_chip_id              MAC_CSR0 decode → silicon 0x5392 [M1]
-  ├─ read_perm_mac             MAC_ADDR_DW0/DW1 read (cold = zeros) [M1]
-  ├─ is_chip_warm              PBF.READY + ~pre_init_bit13            [M1]
-  ├─ load_firmware             rt2870.bin 4-KB upload via 64B chunks
-  │                            → kick USB_MODE_FIRMWARE
-  │                            → wait PBF_SYS_CTRL.READY
-  │                            → MCU_BOOT_SIGNAL                      [M2a]
+  ├─ read_chip_id              MAC_CSR0 decode → silicon_id + revision  [M1]
+  ├─ read_perm_mac             MAC_ADDR_DW0/DW1 read (cold = zeros)    [M1]
+  ├─ is_chip_warm              PBF.READY + ~pre_init_bit13              [M1]
+  ├─ load_firmware             rt2870.bin / rt5572.bin upload via 64B
+  │                            chunks → USB_MODE_FIRMWARE → wait
+  │                            PBF_SYS_CTRL.READY → MCU_BOOT_SIGNAL    [M2a]
   ├─ usb_init_registers        clear PBF pre-init bit 13 + USB_MODE_RESET
-  │                            + MAC_SYS_CTRL reset                   [M2b-1]
+  │                            + MAC_SYS_CTRL reset                    [M2b-1]
+  ├─ read EFUSE                512-byte EFUSE dump → MAC, freq_offset,
+  │                            lna_gain_bg/a, NIC_CONF0/1, IQ cal      [M2b-2]
   ├─ init_registers            ~50 MAC config writes (basic rates,
   │                            BCN_TIME, TX/RX timing, retry, prot,
-  │                            LED, USB DMA, MCS fallback, error-cnt
-  │                            clear)                                 [M2b-2]
-  ├─ init_bbp_53xx             ~30 BBP writes for RT5390/RT5392      [M2b-3]
-  ├─ init_rfcsr_5392           RFCSR2 cal + 56-entry RFCSR init +
-  │                            normal_mode_setup_5xxx + LED OD       [M2c]
-  ├─ set_channel(1)            default tune to channel 1             [M4]
-  └─ start RX loop             async bulk-IN poll                    [M3]
+  │                            LED, USB DMA, MCS fallback)             [M2b-3]
+  ├─ init_bbp(silicon_id)      per-silicon dispatcher:
+  │                              0x5392 → init_bbp_53xx (~30 BBP writes)
+  │                              0x3572 → init_bbp_3572 (~18 BBP writes)
+  │                              0x5592 → init_bbp_5592 (+ GLRT 70-byte
+  │                                       table via BBP195/196 indirect) [M2b-4]
+  ├─ init_rfcsr(silicon_id)    per-silicon dispatcher:
+  │                              0x5392 → init_rfcsr_5392 (56-entry table)
+  │                              0x3572 → init_rfcsr_3572 (30-entry table
+  │                                       + rx_filter_calibration loop
+  │                                       → RfFilterCal for chan tune)
+  │                              0x5592 → init_rfcsr_5592 (21-entry table
+  │                                       + rev-gated extras)            [M2c]
+  ├─ enable_radio              MAC TX/RX + WPDMA + USB DMA + RX filter
+  │                            (RT3572 also fires MCU_CURRENT)          [M3]
+  ├─ set_channel(silicon, ch)  per-silicon channel tune (see below)     [M4]
+  └─ start RX loop             async bulk-IN poll                       [M3]
 ```
 
-**Verified [WIRE] outcomes:**
-- M1: silicon=0x5392 rev=0x0223 ✓
-- M2a: FW boot in 0.03s, PBF_SYS_CTRL=0x00002f80 (READY+pre-init bit 13)
-- M2b-1: PBF.READY still set + pre-init bit 13 cleared (0x00000f80)
-- M2b-2: 50 MAC writes in 7ms; spot-checks (LEGACY_BASIC_RATE=0x13F,
-  HT_BASIC_RATE=0x8003, TX_SW_CFG0=0x404, PBF_MAX_PCNT=0x1F3FBF9F,
-  AUTO_RSP_CFG=0x07) all OK
-
-**Code-only (not yet hw-verified, see "Run list for review" below):**
-- M2b-3, M2c, M3, M4, M5
+All milestones M1-M4 [WIRE]-verified on all three silicons. See the
+git log for per-milestone hw outcomes (commits 2ec75b2, 32bffbb,
+b19cad3, 8080a02, 217135a). M5 (TX inject) verified on RT5392 (deauth
+→ EAPOL re-capture).
 
 ---
 
@@ -108,16 +119,16 @@ connect()
 
 [SRC] `rt2800usb.c:205-265` (`rt2800usb_write_firmware`)
 
-- **Blob**: `assets/rt5572.bin` — 4096 bytes (the USB half of
-  `rt2870.bin`; linux-firmware ships 8192 bytes total = PCI half +
-  USB half, we pre-stripped to 4 KB).
+- **Blob**: `assets/rt5572.bin` — 4096 bytes. Single FW image shared
+  across all rt2800usb-family chips (kernel `firmware/rt2870.bin` is
+  the same blob doubled: PCI half + USB half; we ship the USB half).
 - **CRC**: trailing 2 bytes = CRC-CCITT (LSB-first, reversed poly
   `0x8408`, init `0xFFFF`) over the first 4094 bytes, then `swab16`.
   Our `_crc_ccitt` matches the Linux `crc_ccitt` lib function (NOT
   the MSB-first "CCITT-FALSE/XModem" variant — easy to confuse).
 - **Upload destination**: `FIRMWARE_IMAGE_BASE` = `0x3000` via
-  `USB_MULTI_WRITE` (chunked 64B per control transfer per CSR cache
-  limit).
+  `USB_MULTI_WRITE` (chunked 64B per control transfer per
+  [[rt2x00usb_csr_cache_size]]).
 - **Execution kick**: `USB_DEVICE_MODE` vendor request with
   `wValue=USB_MODE_FIRMWARE=8`, `wIndex=0`.
 - **Boot signal**: `MCU_BOOT_SIGNAL=0x72` via `mcu_request` (writes
@@ -202,30 +213,41 @@ We default `inject_frame` to EP 0x06 with `QSEL=MGMT`. EDCA-OUT EPs
 
 ## Channel tune
 
+Per-silicon dispatcher in `chan.py:set_channel(silicon_id, channel)`:
+
+| Silicon | RF chip | Function           | Bands       | Channel table              |
+|---------|---------|--------------------|-------------|----------------------------|
+| 0x5392  | RF53xx  | `_set_channel_5392`| 2.4 GHz     | `_RF_VALS_3X` (1-14)       |
+| 0x3572  | RF3052  | `_set_channel_3572`| 2.4 + 5 GHz | `_RF_VALS_3X` (1-14, 36-173) |
+| 0x5592  | RF5592  | `_set_channel_5592_{2g,5g}` | 2.4 + 5 GHz | `_RF_VALS_5592_XTAL{20,40}` |
+
+**RF53xx + RF3052** share the 3-field `(rf1, rf2, rf3)` synth encoding
+that goes into RFCSR8/9/11 (RF53xx) or RFCSR2/6/3 (RF3052).
+
+**RF5592** uses a different 5-field `(channel, N, K, mod, R)` synth
+encoding packed into RFCSR8/9/11 via bitfield masks (RFCSR9.K + .N +
+.MOD, RFCSR11.R + .MOD). Two channel tables (xtal20 / xtal40) — picked
+at runtime from `MAC_DEBUG_INDEX.XTAL` because the RF5592 PCB can be
+fitted with either crystal.
+
 [SRC] `rt2800lib.c:3387-3483` (config_channel_rf53xx),
-      `rt2800lib.c:11435-11449` (rf_vals_3x table, 2.4 GHz)
+      `rt2800lib.c:2547-2795` (config_channel_rf3052),
+      `rt2800lib.c:3485-3758` (config_channel_rf55xx),
+      `rt2800lib.c:11435-11707` (channel tables).
 
-Per-channel synthesizer values from `rf_vals_3x` — kernel-shipped
-table of `(channel, rf1, rf2, rf3)` tuples:
+**Per-tune IQ calibration** (RF5592-only): kernel writes 6 BBP158/159
+indirect pairs on every channel set (TX0/TX1 × gain/phase × per-band
+selection + 2 global RF IQ comp/imbal bytes). EFUSE bytes at
+0x130-0x14F. We do this on both 2.4 GHz and 5 GHz tunes — even though
+the bytes are typically 0xFF (unburned) on retail dongles, the
+`0xFF → 0` kernel fallback keeps the chip happy. See
+[[feedback_rt5592_chip_auto_managed_rfcsr]] for why RFCSR readback
+post-init doesn't always match what we wrote.
 
-| ch | rf1 | rf2 | rf3 |
-|----|-----|-----|-----|
-| 1  | 241 | 2   | 2   |
-| 6  | 243 | 2   | 7   |
-| 11 | 246 | 2   | 2   |
-| 13 | 247 | 2   | 2   |
-| 14 | 248 | 2   | 4   |
-
-Tune sequence:
-1. `RFCSR8 = rf1`  (synthesizer N)
-2. `RFCSR9 = rf3`  (mod)
-3. `RFCSR11.R = rf2`  (divider)
-4. *(skipped — needs EEPROM)* `RFCSR49.TX / RFCSR50.TX` = per-channel TX power
-5. `RFCSR1` |= `RX0_PD|TX0_PD|RX1_PD|TX1_PD|RF_BLOCK_EN|PLL_PD`
-6. `freq_cal_mode1` → `mcu_request(MCU_FREQ_OFFSET=0x74)`
-7. *(skipped — needs EEPROM)* BT coex / R55+R59 channel-specific writes
-8. `RFCSR30.{TX,RX}_H20M = 0` (20 MHz mode)
-9. `RFCSR3.VCOCAL_EN = 1` (kick VCO re-cal on new channel)
+**Channel-edge tweaks** (RF5592, 5 GHz): kernel has 5 per-channel
+breakpoints at ch 50/52, 116/118, 124/126, 128/130, 138/140, 153/155
+for RFCSR23/24/51/55/56/58/59/62. All ported verbatim in
+`_set_channel_5592_5g` — see [[feedback_port_all_cases]].
 
 ---
 
@@ -326,25 +348,26 @@ all EFUSE reads (32 iterations × 7 ctrl xfers each, hitting
 
 ---
 
-## Deferred (post-M6)
+## Deferred (post-feature-complete polish)
 
 1. **Real warm reattach** — skip FW + init when the chip's already
    post-init, just resume bulk-IN polling.
-2. **RT3572 + RT5572 bring-up paths** — different `init_rfcsr_*` per
-   silicon, different config_channel branches (RF3052 for RT3572,
-   RF5592 for RT5572). 5 GHz support comes with these.
-3. **L2 padding strip** in `parse_rx_urb` — needed for QoS data frames
+2. **L2 padding strip** in `parse_rx_urb` — needed for QoS data frames
    with non-4-aligned MAC headers.
-4. **EEPROM-aware RSSI** — `base_val - eeprom_offset - lna_gain - raw`.
+3. **EEPROM-aware RSSI** — `base_val - eeprom_offset - lna_gain - raw`.
    We now have `lna_gain` and `rssi_bg_offset0/1` but rx.py still
    uses simplified `base_val - max(raw)`. Wire EFUSE values in.
-5. **TX power per channel** — `RFCSR49/50.TX` writes in
-   `config_channel_rf53xx`. Currently skipped (RX works fine without).
-6. **WCID + IVEIV table clears** — kernel does 256-entry loops; we
+4. **TX power per channel** — `RFCSR49/50.TX` writes (only on RT5392).
+   Currently skipped (RX works fine without; RT3572/RT5572 already
+   write these from `default_power1/2` defaults).
+5. **WCID + IVEIV table clears** — kernel does 256-entry loops; we
    skip since monitor mode never associates.
-7. **93C66 EEPROM fallback** — older RT2870 dongles don't have
+6. **93C66 EEPROM fallback** — older RT2870 dongles don't have
    EFUSE; `efuse_detect` would return False. Would need to port the
    USB_EEPROM_READ one-shot 512-byte streaming path.
+7. **AWUS036NH (RT3070)** — fresh chip not yet supported. Captures
+   not yet collected; pcap drop-in extension once captures land.
+   See `NEXT-STEPS.md` "Other hardware queued" section.
 
 ---
 
