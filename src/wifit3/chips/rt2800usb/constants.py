@@ -336,9 +336,15 @@ RFCSR6_R1 = 0x03                # bits[1:0] — synthesizer R1
 RFCSR6_TXDIV = 0x0C             # bits[3:2] — TX divider (2 for 2.4G, 1 for 5G)
 RFCSR6_R2 = 0x40                # bit 6 — set by init_rfcsr_3572
 
-# RFCSR7_RF_TUNING — bit 0. Kicked at end of channel tune to trigger
-# the new RF settings. [SRC] rt2800.h:2368
+# RFCSR7 — bit 0 RF_TUNING is the channel-tune kick (both bands).
+# BIT2/BIT3/BIT4/BITS67 are used by RF3052's 5 GHz path to override
+# RFCSR7 (RMW); 2.4 GHz writes RFCSR7=0xD8 outright.
+# [SRC] rt2800.h:2368-2374
 RFCSR7_RF_TUNING = 0x01
+RFCSR7_BIT2 = 0x04
+RFCSR7_BIT3 = 0x08
+RFCSR7_BIT4 = 0x10
+RFCSR7_BITS67 = 0xC0
 
 # RFCSR11 — R field (bits[1:0]) for the synthesizer divider.
 RFCSR11_R = 0x03
@@ -452,6 +458,7 @@ TX_BAND_CFG_A = 0x00000002        # 1 = 5 GHz routing
 TX_BAND_CFG_BG_BIT = 0x00000004   # 1 = 2.4 GHz routing (already used by chan.py)
 
 TX_PIN_CFG_REG = 0x1328
+TX_PIN_CFG_PA_PE_A0_EN_BIT = 0x00000001    # 5 GHz primary PA (RF3052+)
 TX_PIN_CFG_PA_PE_G0_EN_BIT = 0x00000002
 TX_PIN_CFG_PA_PE_A1_EN = 0x00000004        # 2T2R 5 GHz secondary PA
 TX_PIN_CFG_PA_PE_G1_EN = 0x00000008        # 2T2R 2.4 GHz secondary PA

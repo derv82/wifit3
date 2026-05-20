@@ -628,13 +628,15 @@ def phase_rx(
         freq_offset_override if freq_offset_override is not None
         else ee.freq_offset
     )
+    is_2g = channel <= 14
+    lna_gain = ee.lna_gain_bg if is_2g else ee.lna_gain_a
     step(
-        f"Tune to channel {channel} (lna_gain={ee.lna_gain_bg}, "
-        f"freq_offset={effective_freq_offset}"
+        f"Tune to channel {channel} ({'2.4G' if is_2g else '5G'}, "
+        f"lna_gain={lna_gain}, freq_offset={effective_freq_offset}"
         f"{' [OVERRIDE]' if freq_offset_override is not None else ''})"
     )
     channel_kwargs = {
-        "lna_gain": ee.lna_gain_bg,
+        "lna_gain": lna_gain,
         "freq_offset": effective_freq_offset,
     }
     if chip.silicon_id == 0x3572:
@@ -642,6 +644,8 @@ def phase_rx(
             cal_result=cal,
             tx_chain_num=ee.txpath,    # ee handles unburned-EFUSE default
             rx_chain_num=ee.rxpath,
+            has_cap_bt_coexist=ee.has_cap_bt_coexist,
+            has_cap_external_lna_a=ee.has_cap_external_lna_a,
         )
     _set_channel(transport, chip.silicon_id, channel, **channel_kwargs)
     ok(f"tuned to ch {channel}")

@@ -133,8 +133,23 @@ class EepromValues:
     nic_conf1: int            # u16
     freq_offset: int          # u8 (low byte of FREQ word)
     lna_gain_bg: int          # u8 (low byte of LNA word — 2.4 GHz LNA gain)
+    lna_gain_a: int           # u8 (high byte of LNA word — 5 GHz LNA-A gain)
     rssi_bg_offset0: int
     rssi_bg_offset1: int
+
+    # NIC_CONF1 capability bits — kernel `rt2x00_has_cap_*`.
+    # [SRC] rt2800.h:1815-1828 (EEPROM_NIC_CONF1 layout)
+    @property
+    def has_cap_bt_coexist(self) -> bool:
+        return bool(self.nic_conf1 & 0x2000)         # bit 13
+
+    @property
+    def has_cap_external_lna_bg(self) -> bool:
+        return bool(self.nic_conf1 & 0x0100)         # bit 8
+
+    @property
+    def has_cap_external_lna_a(self) -> bool:
+        return bool(self.nic_conf1 & 0x0200)         # bit 9
 
     @property
     def rxpath(self) -> int:
@@ -173,15 +188,32 @@ def _word(eeprom: bytes, word_offset: int) -> int:
 
 
 # Default crystal-compensation value to use when EFUSE freq_offset is
-# unburned (0x00 or 0xFF). Found experimentally for AWUS051NH v2 / RT3572
-# (sweep 0/20/40/60: best parse rate at ~40-60). The kernel only checks
-# for 0xFF in rt2800_validate_eeprom (rt2800lib.c:11088) and defaults to
-# 0; we extend the check to 0x00 because freq_offset=0 with an unburned
-# chip puts the synth several MHz off-center for the requested channel
-# and only the strongest local APs come through. A sensible non-zero
-# default keeps wifit3 usable on unburned dongles; a runtime auto-scan
-# would be more robust per-unit but adds startup latency — deferred.
-UNBURNED_FREQ_OFFSET_DEFAULT = 30
+# unburned (0x00 or 0xFF). The kernel only checks 0xFFFF in
+# rt2800_validate_eeprom (rt2800lib.c:11088) and falls through with
+# freq_offset=0; we extend the check to 0x00 because freq_offset=0
+# with an unburned chip puts the synth several MHz off-center for the
+# requested channel and yields 0 URBs of decodable RX on our test hw.
+#
+# Picking the value:
+#   * Kernel pcap evidence — `usb_dumps/captures_rt2800usb_rt3572/`:
+#       - rt2800lib.c:7929 init_rfcsr_3572 writes a hardcoded 0x3C to
+#         RFCSR23 as the chip's post-init magic value (NOT a freq trim).
+#       - rt2800lib.c:2722 (config_channel_rf3052) does the real RMW:
+#         read RFCSR23, set FREQ_OFFSET field from EFUSE, write back.
+#         Pcap captures-1/2/3 all show 0x35 → that dongle's burned
+#         EFUSE FREQ low byte = 0x35 = 53 decimal.
+#   * Sweep on USER's unburned AWUS051NH v2 (M-A1, 2026-05-20):
+#         freq_offset 0/20/40/60 → 0 / 27% / 41% / 48% parse rate.
+#         Monotonically increasing across the tested range → best of
+#         the sweep is 60 (838 parsed / 18 BSSIDs / 10 s).
+#
+# 60 is the empirical peak on the user's hw, 53 is one other dongle's
+# burn value. Per-unit crystal varies, so neither is universal.
+# UNBURNED_FREQ_OFFSET_DEFAULT below picks 60 (sweep peak on user's
+# tested chip); future runtime auto-scan would be per-chip principled
+# but adds ~1 s startup latency. Tracked in the
+# "deferred-from-M-A1" list in project_rt2800usb_rt3572 memory.
+UNBURNED_FREQ_OFFSET_DEFAULT = 60
 
 
 def parse_eeprom(eeprom: bytes) -> EepromValues:
@@ -203,14 +235,15 @@ def parse_eeprom(eeprom: bytes) -> EepromValues:
     # UNBURNED_FREQ_OFFSET_DEFAULT comment for the experimental basis.
     if freq in (0x00, 0xFF):
         logger.warning(
-            "EFUSE freq_offset=0x%02x looks unburned — applying default %d. "
-            "If RX is poor, override with a different value; sweep "
-            "freq_offset 20/30/40/50/60 to find this unit's optimum.",
+            "EFUSE freq_offset=0x%02x looks unburned — applying default %d "
+            "(sweep peak on M-A1 test hw; kernel-pcap evidence on a "
+            "burned RT3572 used 53). Override via --freq-offset if poor.",
             freq, UNBURNED_FREQ_OFFSET_DEFAULT,
         )
         freq = UNBURNED_FREQ_OFFSET_DEFAULT
     lna_word = _word(eeprom, EEPROM_OFFSET_LNA)
     lna_bg = lna_word & 0xFF
+    lna_a = (lna_word >> 8) & 0xFF
     rssi_bg = _word(eeprom, EEPROM_OFFSET_RSSI_BG)
     return EepromValues(
         mac_address=mac,
@@ -218,6 +251,7 @@ def parse_eeprom(eeprom: bytes) -> EepromValues:
         nic_conf1=nic1,
         freq_offset=freq,
         lna_gain_bg=lna_bg,
+        lna_gain_a=lna_a,
         rssi_bg_offset0=rssi_bg & 0xFF,
         rssi_bg_offset1=(rssi_bg >> 8) & 0xFF,
     )

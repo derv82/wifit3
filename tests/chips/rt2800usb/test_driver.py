@@ -75,9 +75,15 @@ def test_supported_ids_cover_all_three_variants():
     assert hints == {"rt5372", "rt3572", "rt5572"}
 
 
-def test_supported_channels_are_2g_only():
-    # 2.4 GHz only at M1 — RT3572/RT5572 will extend to 5 GHz later
-    assert RT2800USBDriver.SUPPORTED_CHANNELS == list(range(1, 14))
+def test_supported_channels_covers_2g_plus_5g_non_dfs():
+    """M-A2 extends to 5 GHz non-DFS channels. RT5392 will fail-soft on
+    these (driver.set_channel returns False); RT3572 + RT5572 use them."""
+    from wifit3.chips.rt2800usb.chan import CHANNELS_5G_NON_DFS
+    expected = list(range(1, 14)) + list(CHANNELS_5G_NON_DFS)
+    assert RT2800USBDriver.SUPPORTED_CHANNELS == expected
+    # Spot-check that the canonical non-DFS UNII channels are all present.
+    for ch in (36, 40, 44, 48, 149, 153, 157, 161, 165):
+        assert ch in RT2800USBDriver.SUPPORTED_CHANNELS
 
 
 def _set_mac_csr0(t: FakeTransport, silicon: int, revision: int) -> None:
@@ -669,14 +675,385 @@ def test_rxwi_size_for_silicon():
 # M4 set_channel tests
 # ----------------------------------------------------------------------
 def test_set_channel_rejects_out_of_range(monkeypatch):
+    """Channels outside the rf_vals_3x table raise ValueError. 36 used
+    to be rejected; M-A2 added it. Use channels that aren't in either
+    band's kernel table (15, 50, 99, 142 — half-channels exist there
+    so we pick truly unused numbers)."""
     import pytest
     import wifit3.chips.rt2800usb.chan as chan_mod
-    from wifit3.chips.rt2800usb.constants import RT_RT5392
+    from wifit3.chips.rt2800usb.constants import RT_RT3572, RT_RT5392
+    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
+                      bbp25=0x00, bbp26=0x00)
     t = RfcsrFakeTransport()
-    for bad in (0, 15, 100, -1, 36):  # 36 is 5 GHz, not supported at M4
+    for bad in (0, 15, 30, 99, 200, -1):
         with pytest.raises(ValueError):
-            chan_mod.set_channel(t, RT_RT5392, bad)
+            chan_mod.set_channel(t, RT_RT3572, bad, cal_result=cal)
+    # RT5392 silicon rejects ANY 5 GHz channel (even table-valid ones).
+    with pytest.raises(ValueError, match="2.4 GHz only"):
+        chan_mod.set_channel(t, RT_RT5392, 36)
+
+
+def test_set_channel_3572_5g_synth_table_channel_36(monkeypatch):
+    """5 GHz channel 36 → rf1=0x56, rf2=0, rf3=4. RT3572 routes these
+    to RFCSR 2/6_R1/3."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.constants import RT_RT3572
+    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal, rfcsr_read
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+
+    t = RfcsrFakeTransport()
+    cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
+                      bbp25=0x44, bbp26=0x55)
+    chan_mod.set_channel(
+        t, RT_RT3572, 36,
+        cal_result=cal, tx_chain_num=2, rx_chain_num=2,
+    )
+    assert rfcsr_read(t, 2) == 0x56
+    assert rfcsr_read(t, 3) == 4
+    # RFCSR6.R1 should hold rf2 = 0; final RFCSR6 also has TXDIV (5G→1)
+    rfcsr6 = rfcsr_read(t, 6)
+    assert (rfcsr6 & 0x03) == 0, f"RFCSR6.R1 = {rfcsr6 & 0x03} (rf2 must be 0)"
+    # RFCSR6.TXDIV = bits[3:2]; 5G → 1
+    assert ((rfcsr6 & 0x0C) >> 2) == 1, f"RFCSR6.TXDIV bits = {(rfcsr6 & 0x0C) >> 2}"
+
+
+def test_set_channel_3572_5g_band_dependent_r1_txdiv(monkeypatch):
+    """RFCSR5.R1 and RFCSR6.TXDIV must flip per band."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.constants import RT_RT3572
+    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal, rfcsr_read
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
+                      bbp25=0, bbp26=0)
+
+    # 2.4G: R1=1, TXDIV=2
+    t2g = RfcsrFakeTransport()
+    chan_mod.set_channel(t2g, RT_RT3572, 1, cal_result=cal,
+                         tx_chain_num=2, rx_chain_num=2)
+    rfcsr5_2g = rfcsr_read(t2g, 5)
+    rfcsr6_2g = rfcsr_read(t2g, 6)
+    assert ((rfcsr5_2g & 0x0C) >> 2) == 1, "2.4G RFCSR5.R1 should be 1"
+    assert ((rfcsr6_2g & 0x0C) >> 2) == 2, "2.4G RFCSR6.TXDIV should be 2"
+
+    # 5G: R1=2, TXDIV=1
+    t5g = RfcsrFakeTransport()
+    chan_mod.set_channel(t5g, RT_RT3572, 36, cal_result=cal,
+                         tx_chain_num=2, rx_chain_num=2)
+    rfcsr5_5g = rfcsr_read(t5g, 5)
+    rfcsr6_5g = rfcsr_read(t5g, 6)
+    assert ((rfcsr5_5g & 0x0C) >> 2) == 2, "5G RFCSR5.R1 should be 2"
+    assert ((rfcsr6_5g & 0x0C) >> 2) == 1, "5G RFCSR6.TXDIV should be 1"
+
+
+def test_set_channel_3572_5g_subband_unii1(monkeypatch):
+    """ch <= 64 sub-band (UNII-1/2): RFCSR19=0xB7, 20=0xF6, 25=0x3D."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.constants import RT_RT3572
+    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal, rfcsr_read
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
+                      bbp25=0, bbp26=0)
+    t = RfcsrFakeTransport()
+    chan_mod.set_channel(t, RT_RT3572, 48, cal_result=cal,
+                         tx_chain_num=2, rx_chain_num=2)
+    assert rfcsr_read(t, 19) == 0xB7
+    assert rfcsr_read(t, 20) == 0xF6
+    assert rfcsr_read(t, 25) == 0x3D
+    assert rfcsr_read(t, 26) == 0x87
+    assert rfcsr_read(t, 29) == 0x9F
+
+
+def test_set_channel_3572_5g_subband_hyperlan(monkeypatch):
+    """64 < ch <= 128 sub-band: RFCSR19=0x74, 20=0xF4, 25=0x01."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.constants import RT_RT3572
+    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal, rfcsr_read
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
+                      bbp25=0, bbp26=0)
+    t = RfcsrFakeTransport()
+    chan_mod.set_channel(t, RT_RT3572, 100, cal_result=cal,
+                         tx_chain_num=2, rx_chain_num=2)
+    assert rfcsr_read(t, 19) == 0x74
+    assert rfcsr_read(t, 20) == 0xF4
+    assert rfcsr_read(t, 25) == 0x01
+
+
+def test_set_channel_3572_5g_subband_unii3(monkeypatch):
+    """ch > 128 sub-band: RFCSR19=0x72, 20=0xF3, 25=0x01."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.constants import RT_RT3572
+    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal, rfcsr_read
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
+                      bbp25=0, bbp26=0)
+    t = RfcsrFakeTransport()
+    chan_mod.set_channel(t, RT_RT3572, 149, cal_result=cal,
+                         tx_chain_num=2, rx_chain_num=2)
+    assert rfcsr_read(t, 19) == 0x72
+    assert rfcsr_read(t, 20) == 0xF3
+    assert rfcsr_read(t, 25) == 0x01
+
+
+def test_set_channel_3572_5g_writes_bbp82_0x94(monkeypatch):
+    """RT3572 5 GHz post-RF BBP82 = 0x94 (vs 0x84 for 2.4 GHz)."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.bbp import bbp_read
+    from wifit3.chips.rt2800usb.constants import RT_RT3572
+    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
+                      bbp25=0, bbp26=0)
+
+    t5g = RfcsrFakeTransport()
+    chan_mod.set_channel(t5g, RT_RT3572, 36, cal_result=cal,
+                         tx_chain_num=2, rx_chain_num=2)
+    assert bbp_read(t5g, 82) == 0x94
+
+    t2g = RfcsrFakeTransport()
+    chan_mod.set_channel(t2g, RT_RT3572, 1, cal_result=cal,
+                         tx_chain_num=2, rx_chain_num=2)
+    assert bbp_read(t2g, 82) == 0x84
+
+
+def test_set_channel_3572_5g_bbp25_26_hardcoded(monkeypatch):
+    """5 GHz hardcodes BBP25 = 0x09, BBP26 = 0xFF (IQ phase correction);
+    2.4 GHz restores from cal_result.bbp25/26."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.bbp import bbp_read
+    from wifit3.chips.rt2800usb.constants import RT_RT3572
+    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
+                      bbp25=0x44, bbp26=0x55)
+
+    t5g = RfcsrFakeTransport()
+    chan_mod.set_channel(t5g, RT_RT3572, 36, cal_result=cal,
+                         tx_chain_num=2, rx_chain_num=2)
+    assert bbp_read(t5g, 25) == 0x09
+    assert bbp_read(t5g, 26) == 0xFF
+
+    t2g = RfcsrFakeTransport()
+    chan_mod.set_channel(t2g, RT_RT3572, 1, cal_result=cal,
+                         tx_chain_num=2, rx_chain_num=2)
+    assert bbp_read(t2g, 25) == 0x44
+    assert bbp_read(t2g, 26) == 0x55
+
+
+def test_set_channel_3572_5g_agc_formula(monkeypatch):
+    """5 GHz AGC: BBP66 = 0x22 + (lna_gain * 5) // 3.
+    2.4 GHz: BBP66 = 0x1C + 2*lna_gain."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.bbp import bbp_read
+    from wifit3.chips.rt2800usb.constants import RT_RT3572
+    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
+                      bbp25=0, bbp26=0)
+
+    # lna_gain = 0 → 5G BBP66 = 0x22, 2.4G BBP66 = 0x1C
+    t5g = RfcsrFakeTransport()
+    chan_mod.set_channel(t5g, RT_RT3572, 36, cal_result=cal,
+                         lna_gain=0, tx_chain_num=2, rx_chain_num=2)
+    assert bbp_read(t5g, 66) == 0x22
+
+    t2g = RfcsrFakeTransport()
+    chan_mod.set_channel(t2g, RT_RT3572, 1, cal_result=cal,
+                         lna_gain=0, tx_chain_num=2, rx_chain_num=2)
+    assert bbp_read(t2g, 66) == 0x1C
+
+    # lna_gain = 6 → 5G BBP66 = 0x22 + (6*5)//3 = 0x22 + 10 = 0x2C
+    #              → 2.4G BBP66 = 0x1C + 2*6 = 0x28
+    t5g2 = RfcsrFakeTransport()
+    chan_mod.set_channel(t5g2, RT_RT3572, 36, cal_result=cal,
+                         lna_gain=6, tx_chain_num=2, rx_chain_num=2)
+    assert bbp_read(t5g2, 66) == 0x2C
+
+    t2g2 = RfcsrFakeTransport()
+    chan_mod.set_channel(t2g2, RT_RT3572, 1, cal_result=cal,
+                         lna_gain=6, tx_chain_num=2, rx_chain_num=2)
+    assert bbp_read(t2g2, 66) == 0x28
+
+
+def test_set_channel_3572_5g_rfcsr7_bits_set(monkeypatch):
+    """5 GHz RMWs RFCSR7: BIT2 + BIT4 set, BIT3 + BITS67 cleared.
+    Starting from 2.4G's hardcoded 0xD8 (set by a prior 2.4G call),
+    the 5G branch transforms it to (0xD8 & ~(BIT3|BITS67)) | (BIT2|BIT4)
+    = (0xD8 & ~(0x08 | 0xC0)) | (0x04 | 0x10) = 0x10 | 0x14 = 0x14.
+
+    Then the channel-tune kick adds RF_TUNING (bit 0) → 0x15."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.constants import RT_RT3572
+    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal, rfcsr_read, rfcsr_write
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
+                      bbp25=0, bbp26=0)
+
+    t = RfcsrFakeTransport()
+    rfcsr_write(t, 7, 0xD8)            # simulate post-2.4G state
+    chan_mod.set_channel(t, RT_RT3572, 36, cal_result=cal,
+                         tx_chain_num=2, rx_chain_num=2)
+    rfcsr7 = rfcsr_read(t, 7)
+    # Bits set: BIT2 (0x04), BIT4 (0x10), RF_TUNING (0x01) — the kick.
+    assert rfcsr7 & 0x04, f"RFCSR7.BIT2 not set: 0x{rfcsr7:02x}"
+    assert rfcsr7 & 0x10, f"RFCSR7.BIT4 not set: 0x{rfcsr7:02x}"
+    # Bits cleared: BIT3 (0x08), BITS67 (0xC0).
+    assert not (rfcsr7 & 0x08), f"RFCSR7.BIT3 still set: 0x{rfcsr7:02x}"
+    assert not (rfcsr7 & 0xC0), f"RFCSR7.BITS67 still set: 0x{rfcsr7:02x}"
+
+
+def test_set_channel_3572_5g_gpio_ctrl_val7_clear(monkeypatch):
+    """GPIO_CTRL bit 7 (band switch): 1 for 2.4G, 0 for 5G."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.constants import GPIO_CTRL, GPIO_CTRL_VAL7, RT_RT3572
+    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
+                      bbp25=0, bbp26=0)
+
+    t5g = RfcsrFakeTransport()
+    chan_mod.set_channel(t5g, RT_RT3572, 36, cal_result=cal,
+                         tx_chain_num=2, rx_chain_num=2)
+    assert not (t5g.read32(GPIO_CTRL) & GPIO_CTRL_VAL7), "5G must clear VAL7"
+
+    t2g = RfcsrFakeTransport()
+    chan_mod.set_channel(t2g, RT_RT3572, 1, cal_result=cal,
+                         tx_chain_num=2, rx_chain_num=2)
+    assert t2g.read32(GPIO_CTRL) & GPIO_CTRL_VAL7, "2.4G must set VAL7"
+
+
+def test_set_channel_3572_5g_tx_pin_uses_a_pa(monkeypatch):
+    """5 GHz TX_PIN_CFG: PA_PE_A0_EN (bit 0) for primary, PA_PE_A1_EN
+    (bit 2) for secondary. 2.4G uses G0/G1 instead."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.constants import (
+        RT_RT3572, TX_PIN_CFG_REG,
+        TX_PIN_CFG_PA_PE_A0_EN_BIT, TX_PIN_CFG_PA_PE_A1_EN,
+        TX_PIN_CFG_PA_PE_G0_EN_BIT, TX_PIN_CFG_PA_PE_G1_EN,
+    )
+    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
+                      bbp25=0, bbp26=0)
+
+    # 5 GHz, 2T2R
+    t5g = RfcsrFakeTransport()
+    chan_mod.set_channel(t5g, RT_RT3572, 36, cal_result=cal,
+                         tx_chain_num=2, rx_chain_num=2)
+    tx_pin_5g = t5g.read32(TX_PIN_CFG_REG)
+    assert tx_pin_5g & TX_PIN_CFG_PA_PE_A0_EN_BIT, "5G must set PA_PE_A0_EN"
+    assert tx_pin_5g & TX_PIN_CFG_PA_PE_A1_EN, "5G/2T must set PA_PE_A1_EN"
+    assert not (tx_pin_5g & TX_PIN_CFG_PA_PE_G0_EN_BIT), "5G must NOT set PA_PE_G0_EN"
+    assert not (tx_pin_5g & TX_PIN_CFG_PA_PE_G1_EN), "5G must NOT set PA_PE_G1_EN"
+
+    # 2.4 GHz, 2T2R
+    t2g = RfcsrFakeTransport()
+    chan_mod.set_channel(t2g, RT_RT3572, 1, cal_result=cal,
+                         tx_chain_num=2, rx_chain_num=2)
+    tx_pin_2g = t2g.read32(TX_PIN_CFG_REG)
+    assert tx_pin_2g & TX_PIN_CFG_PA_PE_G0_EN_BIT, "2.4G must set PA_PE_G0_EN"
+    assert tx_pin_2g & TX_PIN_CFG_PA_PE_G1_EN, "2.4G/2T must set PA_PE_G1_EN"
+    assert not (tx_pin_2g & TX_PIN_CFG_PA_PE_A0_EN_BIT), "2.4G must NOT set PA_PE_A0_EN"
+    assert not (tx_pin_2g & TX_PIN_CFG_PA_PE_A1_EN), "2.4G must NOT set PA_PE_A1_EN"
+
+
+def test_set_channel_3572_5g_tx_band_cfg(monkeypatch):
+    """TX_BAND_CFG: 5G sets A bit, clears BG bit. 2.4G is reversed."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.constants import (
+        RT_RT3572, TX_BAND_CFG_A, TX_BAND_CFG_BG_BIT, TX_BAND_CFG_REG,
+    )
+    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
+                      bbp25=0, bbp26=0)
+
+    t5g = RfcsrFakeTransport()
+    chan_mod.set_channel(t5g, RT_RT3572, 36, cal_result=cal,
+                         tx_chain_num=2, rx_chain_num=2)
+    band_5g = t5g.read32(TX_BAND_CFG_REG)
+    assert band_5g & TX_BAND_CFG_A
+    assert not (band_5g & TX_BAND_CFG_BG_BIT)
+
+    t2g = RfcsrFakeTransport()
+    chan_mod.set_channel(t2g, RT_RT3572, 1, cal_result=cal,
+                         tx_chain_num=2, rx_chain_num=2)
+    band_2g = t2g.read32(TX_BAND_CFG_REG)
+    assert not (band_2g & TX_BAND_CFG_A)
+    assert band_2g & TX_BAND_CFG_BG_BIT
+
+
+def test_set_channel_3572_5g_freq_offset_to_rfcsr23(monkeypatch):
+    """Sanity-check: freq_offset arg still lands in RFCSR23 low 7 bits
+    on the 5 GHz path (the bug-prone area highlighted in the M-A2
+    handoff doc — easy to miss if the 5G branch shadows the RFCSR23
+    write)."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.constants import RT_RT3572
+    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal, rfcsr_read
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
+                      bbp25=0, bbp26=0)
+    t = RfcsrFakeTransport()
+    chan_mod.set_channel(t, RT_RT3572, 36, cal_result=cal,
+                         freq_offset=53, tx_chain_num=2, rx_chain_num=2)
+    assert (rfcsr_read(t, 23) & 0x7F) == 53
+
+
+def test_eeprom_unburned_default_is_60():
+    """Pcap-derived value: kernel-pcap (captures_rt2800usb_rt3572) shows
+    RFCSR23 channel-tune writes = 0x35 (53 decimal) on a burned dongle.
+    Sweep on user's unburned dongle peaks at 60. We pick 60 as the
+    'sweep-peak' default — see eeprom.py module comment for rationale."""
+    from wifit3.chips.rt2800usb.eeprom import (
+        UNBURNED_FREQ_OFFSET_DEFAULT, parse_eeprom,
+    )
+    assert UNBURNED_FREQ_OFFSET_DEFAULT == 60
+
+    # parse_eeprom should apply the default for both 0x00 and 0xFF FREQ
+    # low bytes (NOT just the kernel-checked 0xFFFF).
+    buf = bytearray(0x200)
+    # FREQ word at offset 0x1D × 2 = 0x3A.
+    buf[0x3A] = 0x00
+    buf[0x3B] = 0x00
+    ee = parse_eeprom(bytes(buf))
+    assert ee.freq_offset == 60
+
+    buf[0x3A] = 0xFF
+    ee = parse_eeprom(bytes(buf))
+    assert ee.freq_offset == 60
+
+    # A non-empty value passes through.
+    buf[0x3A] = 0x35
+    ee = parse_eeprom(bytes(buf))
+    assert ee.freq_offset == 0x35
+
+
+def test_eeprom_exposes_lna_gain_a_and_capabilities():
+    """M-A2: per-band LNA + NIC_CONF1 capability flags must be plumbed
+    so _channel_kwargs() can hand the right values to set_channel."""
+    from wifit3.chips.rt2800usb.eeprom import parse_eeprom
+    buf = bytearray(0x200)
+    # LNA word at offset 0x22 × 2 = 0x44.
+    buf[0x44] = 0x10    # lna_bg
+    buf[0x45] = 0x20    # lna_a (high byte of LNA word)
+    # NIC_CONF1 at offset 0x1B × 2 = 0x36. Bits we care about:
+    #   bit 8 = external_lna_bg, bit 9 = external_lna_a, bit 13 = bt_coexist.
+    nic1 = (1 << 9) | (1 << 13)  # external_lna_a + bt_coexist
+    buf[0x36] = nic1 & 0xFF
+    buf[0x37] = (nic1 >> 8) & 0xFF
+    # FREQ word — non-empty so default doesn't fire.
+    buf[0x3A] = 0x35
+    buf[0x3B] = 0x00
+
+    ee = parse_eeprom(bytes(buf))
+    assert ee.lna_gain_bg == 0x10
+    assert ee.lna_gain_a == 0x20
+    assert ee.has_cap_bt_coexist is True
+    assert ee.has_cap_external_lna_a is True
+    assert ee.has_cap_external_lna_bg is False
 
 
 def test_set_channel_rejects_unsupported_silicon(monkeypatch):

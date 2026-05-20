@@ -3,7 +3,7 @@ ALFA AWUS051NH v2 (RT3572).
 
   * RT5372 (silicon RT5392): 2.4 GHz, 1T1R — DONE.
   * RT3572 (silicon RT3572): 2.4 GHz, 2T2R — DONE (M-A1).
-                              5 GHz — TBD (M-A2).
+                              5 GHz, 2T2R — DONE (M-A2, awaiting hw-verify).
   * RT5572 (silicon RT5592): 2.4 + 5 GHz, 2T2R — TBD (M-B1 + M-B2).
 
 Family-shared infrastructure (transport, FW upload, MAC config, RX/TX
@@ -63,7 +63,7 @@ from .constants import (
 from wifit3.wlan.packet import WlanFrameParser
 
 from .bbp import init_bbp, prepare_bbp
-from .chan import set_channel as _set_channel
+from .chan import CHANNELS_5G_NON_DFS, set_channel as _set_channel
 from .eeprom import parse_eeprom, read_eeprom_efuse
 from .firmware import load_firmware, load_firmware_blob
 from .mac import (
@@ -98,9 +98,12 @@ class RT2800USBDriver:
                  "Ralink RT5572 / Panda PAU09 N600",
                  extras={"chip_id": "rt5572"}),
     ]
-    # 2.4 GHz only for now. RT3572 + RT5572 will extend this to 5 GHz
-    # in their respective M4 follow-on milestones.
-    SUPPORTED_CHANNELS = list(range(1, 14))
+    # 2.4 GHz channels 1..13 are claimed by all three chips. 5 GHz
+    # channels are advertised on the class so the scanner / hopper
+    # picks them up for RT3572 + RT5572; RT5392 will fail-soft if the
+    # hopper asks it to tune one. (See chan.set_channel: RT5392 raises
+    # ValueError for ch > 14 and driver.set_channel returns False.)
+    SUPPORTED_CHANNELS = list(range(1, 14)) + list(CHANNELS_5G_NON_DFS)
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RT2800USBDriver":
@@ -343,7 +346,7 @@ class RT2800USBDriver:
                     None,
                     lambda: _set_channel(
                         self.transport, self.chip_id.silicon_id, 1,
-                        **self._channel_kwargs(),
+                        **self._channel_kwargs(1),
                     ),
                 )
                 self.current_channel = 1
@@ -396,18 +399,20 @@ class RT2800USBDriver:
         logger.info("rt2800usb RX loop stopped")
 
     # ---- channel tune (M4) ----------------------------------------------
-    def _channel_kwargs(self) -> dict:
+    def _channel_kwargs(self, channel: int = 1) -> dict:
         """Bundle the per-silicon kwargs that set_channel needs.
 
         RT5392 just wants freq_offset + lna_gain. RT3572 also needs
-        the filter calibration + chain counts + BT-coex flag. Centralised
-        here so both the connect-time tune and runtime set_channel pull
-        from the same place.
+        the filter calibration + chain counts + per-band LNA gain +
+        external-LNA flags from NIC_CONF1. The ``channel`` arg lets us
+        pick the right per-band fields (lna_a vs lna_bg).
         """
         if self._eeprom is None:
             return {"lna_gain": 0, "freq_offset": 0}
+        is_2g = channel <= 14
+        lna_gain = self._eeprom.lna_gain_bg if is_2g else self._eeprom.lna_gain_a
         kwargs = {
-            "lna_gain": self._eeprom.lna_gain_bg,
+            "lna_gain": lna_gain,
             "freq_offset": self._eeprom.freq_offset,
         }
         if self.chip_id is not None and self.chip_id.silicon_id == 0x3572:
@@ -415,7 +420,8 @@ class RT2800USBDriver:
                 cal_result=self._rf_cal,
                 tx_chain_num=self._eeprom.txpath,
                 rx_chain_num=self._eeprom.rxpath,
-                has_cap_bt_coexist=False,    # no EEPROM nic_conf1 wiring yet
+                has_cap_bt_coexist=self._eeprom.has_cap_bt_coexist,
+                has_cap_external_lna_a=self._eeprom.has_cap_external_lna_a,
             )
         return kwargs
 
@@ -423,7 +429,7 @@ class RT2800USBDriver:
         if self.chip_id is None:
             logger.error("set_channel(%d): connect() must run first", channel)
             return False
-        kwargs = self._channel_kwargs()
+        kwargs = self._channel_kwargs(channel)
         try:
             await asyncio.get_event_loop().run_in_executor(
                 None,
