@@ -15,8 +15,14 @@ from __future__ import annotations
 import logging
 import time
 
-from .bbp import bbp4_mac_if_ctrl
+from dataclasses import dataclass
+
+from .bbp import bbp4_mac_if_ctrl, bbp_read, bbp_write
 from .constants import (
+    BBP4_BANDWIDTH,
+    LDO_CFG0,
+    LDO_CFG0_BGSEL,
+    LDO_CFG0_LDO_CORE_VLEVEL,
     OPT_14_CSR,
     OPT_14_CSR_BIT0,
     REGISTER_BUSY_COUNT,
@@ -25,9 +31,15 @@ from .constants import (
     RF_CSR_CFG_DATA,
     RF_CSR_CFG_REGNUM,
     RF_CSR_CFG_WRITE,
+    RFCSR6_R2,
+    RFCSR17_TX_LO1_EN,
+    RFCSR17_TXMIXER_GAIN,
+    RFCSR22_BASEBAND_LOOPBACK,
     RFCSR30_RX_VCM,
+    RFCSR31_RX_H20M,
     RFCSR38_RX_LO1_EN,
     RFCSR39_RX_LO2_EN,
+    RT_RT3572,
     RT_RT5390,
     RT_RT5392,
 )
@@ -182,17 +194,278 @@ def init_rfcsr_5392(t: RT2800USBTransport) -> None:
     led_open_drain_enable(t)
 
 
+# ----------------------------------------------------------------------
+# RT3572 / RF3052 RF init.
+# ----------------------------------------------------------------------
+@dataclass(frozen=True)
+class RfFilterCal:
+    """Per-bandwidth filter calibration result returned by
+    rt2800_rx_filter_calibration.  These values need to be replayed
+    into the channel-tune path (RFCSR24/RFCSR31) on every channel
+    change, so the driver caches them after init_rfcsr_3572 returns.
+
+    bbp25/bbp26 are also captured by the calibration helper because
+    rt2800_config_channel_rf3052 restores them at the start of every
+    tune (kernel comment: "Restore BBP 25 & 26 for 2.4 GHz").
+    """
+    calibration_bw20: int
+    calibration_bw40: int
+    bbp25: int
+    bbp26: int
+
+
+_RT3572_RFCSR_INIT_TABLE = (
+    # (rfcsr_index, value) — [SRC] rt2800lib.c:7907-7937
+    (0,  0x70), (1,  0x81), (2,  0xF1), (3,  0x02),
+    (4,  0x4C), (5,  0x05), (6,  0x4A), (7,  0xD8),
+    (9,  0xC3), (10, 0xF1), (11, 0xB9), (12, 0x70),
+    (13, 0x65), (14, 0xA0), (15, 0x53), (16, 0x4C),
+    (17, 0x23), (18, 0xAC), (19, 0x93), (20, 0xB3),
+    (21, 0xD0), (22, 0x00), (23, 0x3C), (24, 0x16),
+    (25, 0x15), (26, 0x85), (27, 0x00), (28, 0x00),
+    (29, 0x9B), (30, 0x09), (31, 0x10),
+)
+
+
+def _init_rx_filter(
+    t: RT2800USBTransport, *, bw40: bool, filter_target: int
+) -> int:
+    """Port of rt2800_init_rx_filter (rt2800lib.c:7320-7383).
+
+    Tunes RFCSR24 so the chip's RX filter has the right passband/
+    stopband response. Iterates BBP55 readings while bumping RFCSR24,
+    stopping when the passband-stopband ratio crosses the target.
+    Returns the final RFCSR24 value (which the channel-tune path
+    will replay).
+    """
+    rfcsr24 = 0x27 if bw40 else 0x07
+    rfcsr_write(t, 24, rfcsr24)
+
+    bbp = bbp_read(t, 4)
+    bbp = (bbp & ~BBP4_BANDWIDTH) | ((2 * int(bw40) << 3) & BBP4_BANDWIDTH)
+    bbp_write(t, 4, bbp & 0xFF)
+
+    rfcsr = rfcsr_read(t, 31)
+    if bw40:
+        rfcsr |= RFCSR31_RX_H20M
+    else:
+        rfcsr &= ~RFCSR31_RX_H20M & 0xFF
+    rfcsr_write(t, 31, rfcsr)
+
+    rfcsr = rfcsr_read(t, 22)
+    rfcsr |= RFCSR22_BASEBAND_LOOPBACK
+    rfcsr_write(t, 22, rfcsr & 0xFF)
+
+    # Probe passband: write BBP24=0, repeatedly tap BBP25=0x90, read
+    # BBP55 until non-zero (kernel: "Set power & frequency of passband
+    # test tone").
+    #
+    # NB: kernel uses msleep(1) here. We use 5 ms because Python's
+    # time.sleep(0.001) on Windows has terrible granularity (system
+    # tick = 15.6 ms by default → sleep(1ms) returns either ~0 ms or
+    # ~16 ms). 5 ms is large enough that even a coarse Windows tick
+    # gives the BBP enough settle time; on Linux it's just slightly
+    # over-cautious. Without enough settle, BBP[55] reads 0 and the
+    # calibration loop falsely concludes (passband-stopband=0) <= tgt
+    # → never exits → RFCSR24/31 max out at meaningless values →
+    # downstream RX path detects energy but every decoded frame
+    # CRC-errors out, so DROP_CRC_ERR in RX_FILTER_CFG drops them all
+    # before any URB reaches the host (observed on AWUS051NH v2).
+    _SETTLE = 0.005
+
+    bbp_write(t, 24, 0)
+    passband = 0
+    passband_samples: list[int] = []
+    for i in range(100):
+        bbp_write(t, 25, 0x90)
+        time.sleep(_SETTLE)
+        passband = bbp_read(t, 55)
+        if i < 5 or i % 20 == 0:
+            passband_samples.append(passband)
+        if passband:
+            break
+    logger.debug(
+        "_init_rx_filter passband (bw40=%s) samples (first/sparse): %s, final=0x%02x",
+        bw40, [f"0x{x:02x}" for x in passband_samples], passband,
+    )
+
+    # Probe stopband: BBP24=0x06, walk RFCSR24 up while
+    # (passband - stopband) <= filter_target.
+    bbp_write(t, 24, 0x06)
+    overtuned = 0
+    stopband_samples: list[tuple[int, int]] = []  # (iter, stopband)
+    for i in range(100):
+        bbp_write(t, 25, 0x90)
+        time.sleep(_SETTLE)
+        stopband = bbp_read(t, 55)
+        if i < 5 or i % 20 == 0:
+            stopband_samples.append((i, stopband))
+        if (passband - stopband) <= filter_target:
+            rfcsr24 = (rfcsr24 + 1) & 0xFF
+            if (passband - stopband) == filter_target:
+                overtuned += 1
+        else:
+            break
+        rfcsr_write(t, 24, rfcsr24)
+    logger.debug(
+        "_init_rx_filter stopband (bw40=%s) samples (iter, val): %s",
+        bw40, [(i, f"0x{x:02x}") for i, x in stopband_samples],
+    )
+
+    if overtuned:
+        rfcsr24 = (rfcsr24 - 1) & 0xFF
+    rfcsr_write(t, 24, rfcsr24)
+    logger.debug(
+        "_init_rx_filter(bw40=%s, tgt=0x%02x): passband=0x%02x "
+        "stopband=0x%02x rfcsr24=0x%02x overtuned=%d",
+        bw40, filter_target, passband, stopband, rfcsr24, overtuned,
+    )
+    return rfcsr24
+
+
+def _rx_filter_calibration_3572(t: RT2800USBTransport) -> RfFilterCal:
+    """Port of rt2800_rx_filter_calibration for RT3572 path.
+
+    Two _init_rx_filter passes (bw20 / bw40), then capture BBP25/26
+    for replay during channel switching, then restore the chip state
+    (BBP24 + RFCSR22 loopback off + BBP4 back to BW20).
+    [SRC] rt2800lib.c:7398-7442
+    """
+    # RT3572 path uses target 0x13 / 0x15 (not RT3070's 0x16 / 0x19).
+    bw20 = _init_rx_filter(t, bw40=False, filter_target=0x13)
+    bw40 = _init_rx_filter(t, bw40=True, filter_target=0x15)
+
+    # Save BBP25/26 — kernel: "for later use in channel switching (for 3052)"
+    bbp25 = bbp_read(t, 25)
+    bbp26 = bbp_read(t, 26)
+
+    # Restore chip state.
+    bbp_write(t, 24, 0)
+
+    rfcsr = rfcsr_read(t, 22)
+    rfcsr &= ~RFCSR22_BASEBAND_LOOPBACK & 0xFF
+    rfcsr_write(t, 22, rfcsr)
+
+    bbp = bbp_read(t, 4)
+    bbp = bbp & ~BBP4_BANDWIDTH    # BW20
+    bbp_write(t, 4, bbp & 0xFF)
+
+    return RfFilterCal(
+        calibration_bw20=bw20,
+        calibration_bw40=bw40,
+        bbp25=bbp25,
+        bbp26=bbp26,
+    )
+
+
+def _normal_mode_setup_3xxx(
+    t: RT2800USBTransport, *, txmixer_gain_24g: int = 0
+) -> None:
+    """Port of rt2800_normal_mode_setup_3xxx for the RT3572 path.
+
+    [SRC] rt2800lib.c:7444-7513
+
+    For RT3572 silicon (not RT3070/3071/3090/3390), the kernel's
+    only mandatory write is RFCSR17_TX_LO1_EN = 0. The optional
+    RFCSR17_TXMIXER_GAIN write fires only if txmixer_gain_24g >= 2
+    (min_gain for non-RT3070 chips); we default to 0 (EEPROM not
+    yet wired), which skips it.
+
+    The kernel's RT3071/3090/3390 trailing branch (RFCSR1/15/20/21
+    RX_LO tweaks) doesn't apply to RT3572 — RT3572 falls off the
+    end of the `else if` chain.
+    """
+    rfcsr = rfcsr_read(t, 17)
+    rfcsr &= ~RFCSR17_TX_LO1_EN & 0xFF
+    # RFCSR17_R conditional: RT3572 doesn't match the kernel's
+    # rt2x00_rt_rev_lt branches (it's not RT3070/3071/3090/3390),
+    # so no R-bit set here.
+    min_gain = 2  # RT3572 == not RT3070, so min_gain == 2
+    if txmixer_gain_24g >= min_gain:
+        rfcsr = (rfcsr & ~RFCSR17_TXMIXER_GAIN) | (
+            txmixer_gain_24g & RFCSR17_TXMIXER_GAIN
+        )
+    rfcsr_write(t, 17, rfcsr & 0xFF)
+
+
+def _ldo_cfg0_dance(t: RT2800USBTransport) -> None:
+    """LDO_CFG0 two-step write from rt2800_init_rfcsr_3572.
+
+    Mirrors lines 7943-7951:
+      VLEVEL=3, BGSEL=1   → write
+      msleep(1)
+      VLEVEL=0, BGSEL=1   → write
+    """
+    reg = t.read32(LDO_CFG0)
+    reg = (reg & ~LDO_CFG0_LDO_CORE_VLEVEL) | ((3 << 26) & LDO_CFG0_LDO_CORE_VLEVEL)
+    reg = (reg & ~LDO_CFG0_BGSEL) | ((1 << 24) & LDO_CFG0_BGSEL)
+    t.write32(LDO_CFG0, reg & 0xFFFFFFFF)
+    time.sleep(0.001)
+    reg = t.read32(LDO_CFG0)
+    reg = (reg & ~LDO_CFG0_LDO_CORE_VLEVEL) | ((0 << 26) & LDO_CFG0_LDO_CORE_VLEVEL)
+    reg = (reg & ~LDO_CFG0_BGSEL) | ((1 << 24) & LDO_CFG0_BGSEL)
+    t.write32(LDO_CFG0, reg & 0xFFFFFFFF)
+
+
+def init_rfcsr_3572(
+    t: RT2800USBTransport, *, txmixer_gain_24g: int = 0
+) -> RfFilterCal:
+    """Port of rt2800_init_rfcsr_3572 (rt2800lib.c:7900-7956).
+
+    Runs:
+      * rf_init_calibration(RFCSR30)  (RT3572 cal kick — not RFCSR2)
+      * 30-entry RFCSR init table
+      * R-M-W RFCSR6 R2=1
+      * LDO_CFG0 dance (BGSEL + LDO_CORE_VLEVEL)
+      * rx_filter_calibration (returns calibration_bw20/bw40 + bbp25/26)
+      * led_open_drain_enable
+      * normal_mode_setup_3xxx
+
+    Returns the RX filter calibration values, which the driver caches
+    for the per-channel set_channel calls.
+    """
+    rf_init_calibration(t, 30)
+
+    for word, value in _RT3572_RFCSR_INIT_TABLE:
+        rfcsr_write(t, word, value)
+
+    # R-M-W RFCSR6 R2=1
+    rfcsr = rfcsr_read(t, 6)
+    rfcsr |= RFCSR6_R2
+    rfcsr_write(t, 6, rfcsr & 0xFF)
+
+    _ldo_cfg0_dance(t)
+
+    cal = _rx_filter_calibration_3572(t)
+    led_open_drain_enable(t)
+    _normal_mode_setup_3xxx(t, txmixer_gain_24g=txmixer_gain_24g)
+    return cal
+
+
 # Public dispatcher — picks the right RF init for the silicon.
-def init_rfcsr(t: RT2800USBTransport, silicon_id: int) -> None:
+def init_rfcsr(
+    t: RT2800USBTransport,
+    silicon_id: int,
+    *,
+    txmixer_gain_24g: int = 0,
+):
+    """Initialise the RF chain for the given silicon.
+
+    Returns RfFilterCal for chips that produce one (RT3572 via
+    _rx_filter_calibration); None for chips that don't need
+    runtime-captured calibration values (RT5390/RT5392).
+    """
     if silicon_id == RT_RT5392:
         init_rfcsr_5392(t)
-    elif silicon_id == RT_RT5390:
+        return None
+    if silicon_id == RT_RT3572:
+        return init_rfcsr_3572(t, txmixer_gain_24g=txmixer_gain_24g)
+    if silicon_id == RT_RT5390:
         raise NotImplementedError(
             "rt2800_init_rfcsr_5390 not yet ported — user's hw is RT5392, "
             "RT5390 path is a follow-on milestone if a different dongle "
             "shows up that uses the older silicon."
         )
-    else:
-        raise NotImplementedError(
-            f"RF init for silicon 0x{silicon_id:04x} not yet ported"
-        )
+    raise NotImplementedError(
+        f"RF init for silicon 0x{silicon_id:04x} not yet ported"
+    )

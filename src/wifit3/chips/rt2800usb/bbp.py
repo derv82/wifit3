@@ -23,6 +23,7 @@ import time
 
 from .constants import (
     BBP4_MAC_IF_CTRL,
+    BBP27_RX_CHAIN_SEL,
     BBP_CSR_CFG,
     BBP_CSR_CFG_BBP_RW_MODE,
     BBP_CSR_CFG_BUSY,
@@ -34,6 +35,7 @@ from .constants import (
     H2M_MAILBOX_CSR,
     MCU_BOOT_SIGNAL,
     REGISTER_BUSY_COUNT,
+    RT_RT3572,
     RT_RT5390,
     RT_RT5392,
 )
@@ -106,6 +108,44 @@ def init_freq_calibration(t: RT2800USBTransport) -> None:
     """[SRC] rt2800lib.c:6387-6391."""
     bbp_write(t, 142, 1)
     bbp_write(t, 143, 57)
+
+
+# ----------------------------------------------------------------------
+# rt2800_disable_unused_dac_adc — power-saving tweak that's also a hard
+# gate for RX on 1T1R silicon (without it, ADC1 is held in powerdown and
+# bulk-IN goes silent). Kernel reads EEPROM_NIC_CONF0 for the TX/RX
+# path counts; we take them as args so the caller can pass either real
+# EEPROM values or the hw-pinned defaults for chips with a fixed config.
+#
+# [SRC] rt2800lib.c:6434-6446
+# ----------------------------------------------------------------------
+def disable_unused_dac_adc(
+    t: RT2800USBTransport, *, txpath: int, rxpath: int
+) -> None:
+    value = bbp_read(t, 138)
+    if txpath == 1:
+        value |= 0x20       # BBP138_TX_DAC1 — power DOWN unused DAC1
+    if rxpath == 1:
+        value &= ~0x02      # BBP138_RX_ADC1 — power UP ADC1 (clear = active)
+    bbp_write(t, 138, value & 0xFF)
+
+
+# ----------------------------------------------------------------------
+# rt2800_bbp_write_with_rx_chain — fan-out a BBP write across each
+# active RX path. The kernel writes BBP27.RX_CHAIN_SEL to switch which
+# chain's BBP register is exposed, then writes the target word. Used
+# by config_channel_rf3052 for the AGC init (BBP66).
+#
+# [SRC] rt2800lib.c:4011-4024
+# ----------------------------------------------------------------------
+def bbp_write_with_rx_chain(
+    t: RT2800USBTransport, word: int, value: int, *, rx_chain_num: int
+) -> None:
+    for chain in range(rx_chain_num):
+        reg = bbp_read(t, 27)
+        reg = (reg & ~BBP27_RX_CHAIN_SEL) | ((chain << 5) & BBP27_RX_CHAIN_SEL)
+        bbp_write(t, 27, reg & 0xFF)
+        bbp_write(t, word, value & 0xFF)
 
 
 # ----------------------------------------------------------------------
@@ -276,16 +316,76 @@ def init_bbp_53xx(t: RT2800USBTransport, silicon_id: int) -> None:
     value |= 0x80
     bbp_write(t, 152, value & 0xFF)
 
-    # rt2800_disable_unused_dac_adc — for 1T1R operation, kernel
-    # powers up ADC1 (clears BBP138 bit 1) and powers down unused
-    # DAC1 (sets BBP138 bit 5). Kernel reads EEPROM_NIC_CONF0 for
-    # TX/RX path counts; we hardcode the 1T1R values since that's
-    # what RT5390/RT5392 silicon is. Without this write the chip's
-    # default ADC1 power-down state silently blackholes RX.
-    # [SRC] rt2800lib.c:6434-6446
-    value = bbp_read(t, 138)
-    value &= ~0x02    # BBP138_RX_ADC1 — clear = power UP ADC1
-    value |= 0x20     # BBP138_TX_DAC1 — set = power DOWN unused DAC1
-    bbp_write(t, 138, value & 0xFF)
+    # rt2800_disable_unused_dac_adc — without this write the chip's
+    # default ADC1 power-down state silently blackholes RX on 1T1R
+    # silicon. RT5390/RT5392 are always 1T1R so we pin both args to 1.
+    disable_unused_dac_adc(t, txpath=1, rxpath=1)
 
     init_freq_calibration(t)
+
+
+# ----------------------------------------------------------------------
+# rt2800_init_bbp_3572 — ~18 BBP writes for the RT3572 baseband.
+# Smaller than init_bbp_53xx; doesn't depend on silicon revision.
+# Kernel ends with disable_unused_dac_adc which we call with EEPROM-
+# derived path counts (AWUS051NH v2 is 2T2R so on that hw the helper
+# is effectively a no-op — the kernel-correct behaviour).
+#
+# [SRC] rt2800lib.c:6764-6799
+# ----------------------------------------------------------------------
+def init_bbp_3572(
+    t: RT2800USBTransport, *, txpath: int = 2, rxpath: int = 2
+) -> None:
+    bbp_write(t, 31, 0x08)
+
+    bbp_write(t, 65, 0x2c)
+    bbp_write(t, 66, 0x38)
+
+    bbp_write(t, 69, 0x12)
+    bbp_write(t, 73, 0x10)
+
+    bbp_write(t, 70, 0x0a)
+
+    bbp_write(t, 79, 0x13)
+    bbp_write(t, 80, 0x05)
+    bbp_write(t, 81, 0x33)
+
+    bbp_write(t, 82, 0x62)
+
+    bbp_write(t, 83, 0x6a)
+
+    bbp_write(t, 84, 0x99)
+
+    bbp_write(t, 86, 0x00)
+
+    bbp_write(t, 91, 0x04)
+
+    bbp_write(t, 92, 0x00)
+
+    bbp_write(t, 103, 0xC0)
+
+    bbp_write(t, 105, 0x05)
+
+    bbp_write(t, 106, 0x35)
+
+    disable_unused_dac_adc(t, txpath=txpath, rxpath=rxpath)
+
+
+# ----------------------------------------------------------------------
+# Public BBP-init dispatcher. Picks the right per-silicon init.
+# ----------------------------------------------------------------------
+def init_bbp(
+    t: RT2800USBTransport,
+    silicon_id: int,
+    *,
+    txpath: int = 1,
+    rxpath: int = 1,
+) -> None:
+    if silicon_id == RT_RT3572:
+        init_bbp_3572(t, txpath=txpath, rxpath=rxpath)
+    elif silicon_id in (RT_RT5390, RT_RT5392):
+        init_bbp_53xx(t, silicon_id)
+    else:
+        raise NotImplementedError(
+            f"BBP init for silicon 0x{silicon_id:04x} not yet ported"
+        )

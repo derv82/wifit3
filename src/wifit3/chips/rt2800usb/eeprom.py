@@ -136,11 +136,52 @@ class EepromValues:
     rssi_bg_offset0: int
     rssi_bg_offset1: int
 
+    @property
+    def rxpath(self) -> int:
+        """RX chain count, from NIC_CONF0 RXPATH field (bits[3:0]).
+
+        Special case: unburned EFUSE (NIC_CONF0 = 0x0000 or 0xFFFF)
+        returns kernel's documented default of 2 RX paths. Kernel
+        rt2800_validate_eeprom (rt2800lib.c:11050) only applies this
+        default when the read is 0xFFFF; we extend it to 0x0000 because
+        on Windows we've observed RT3572 chips that EFUSE-readback
+        zeros for the NIC_CONF fields (genuinely unburned vs. erased).
+        Without this override, set_channel_3572 powers down the
+        secondary chains via RFCSR1.RX1/2_PD, the chip's PHY ends up
+        misconfigured for the actual 2T2R hardware, and all RX frames
+        decode with FCS errors. [SRC] rt2800.h:2681
+        """
+        rxpath = self.nic_conf0 & 0x000F
+        if self.nic_conf0 in (0x0000, 0xFFFF):
+            return 2     # kernel default for unburned NIC_CONF0
+        return rxpath
+
+    @property
+    def txpath(self) -> int:
+        """TX chain count, from NIC_CONF0 TXPATH field (bits[7:4]).
+        Same unburned-EFUSE handling as ``rxpath``: kernel's default
+        is 1 TX path. [SRC] rt2800.h:2682, rt2800lib.c:11052"""
+        if self.nic_conf0 in (0x0000, 0xFFFF):
+            return 1     # kernel default for unburned NIC_CONF0
+        return (self.nic_conf0 & 0x00F0) >> 4
+
 
 def _word(eeprom: bytes, word_offset: int) -> int:
     """Read a 16-bit LE word at the given word offset (× 2 = byte offset)."""
     byte_offset = word_offset * 2
     return eeprom[byte_offset] | (eeprom[byte_offset + 1] << 8)
+
+
+# Default crystal-compensation value to use when EFUSE freq_offset is
+# unburned (0x00 or 0xFF). Found experimentally for AWUS051NH v2 / RT3572
+# (sweep 0/20/40/60: best parse rate at ~40-60). The kernel only checks
+# for 0xFF in rt2800_validate_eeprom (rt2800lib.c:11088) and defaults to
+# 0; we extend the check to 0x00 because freq_offset=0 with an unburned
+# chip puts the synth several MHz off-center for the requested channel
+# and only the strongest local APs come through. A sensible non-zero
+# default keeps wifit3 usable on unburned dongles; a runtime auto-scan
+# would be more robust per-unit but adds startup latency — deferred.
+UNBURNED_FREQ_OFFSET_DEFAULT = 30
 
 
 def parse_eeprom(eeprom: bytes) -> EepromValues:
@@ -156,6 +197,18 @@ def parse_eeprom(eeprom: bytes) -> EepromValues:
     nic0 = _word(eeprom, EEPROM_OFFSET_NIC_CONF0)
     nic1 = _word(eeprom, EEPROM_OFFSET_NIC_CONF1)
     freq = _word(eeprom, EEPROM_OFFSET_FREQ) & 0xFF
+    # Unburned-EFUSE handling: 0x00 and 0xFF both indicate "no crystal
+    # calibration was burned at the factory". Apply a sensible default
+    # so the chip is approximately on-frequency. See module-level
+    # UNBURNED_FREQ_OFFSET_DEFAULT comment for the experimental basis.
+    if freq in (0x00, 0xFF):
+        logger.warning(
+            "EFUSE freq_offset=0x%02x looks unburned — applying default %d. "
+            "If RX is poor, override with a different value; sweep "
+            "freq_offset 20/30/40/50/60 to find this unit's optimum.",
+            freq, UNBURNED_FREQ_OFFSET_DEFAULT,
+        )
+        freq = UNBURNED_FREQ_OFFSET_DEFAULT
     lna_word = _word(eeprom, EEPROM_OFFSET_LNA)
     lna_bg = lna_word & 0xFF
     rssi_bg = _word(eeprom, EEPROM_OFFSET_RSSI_BG)

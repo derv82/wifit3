@@ -166,7 +166,9 @@ H2M_MAILBOX_CSR_OWNER = 0xFF000000
 # HOST_CMD_CSR bit-field
 HOST_CMD_CSR_HOST_COMMAND = 0x000000FF
 
-# MCU command tokens (rt2800.h:3033+)
+# MCU command tokens (rt2800.h:3026-3033)
+MCU_CURRENT = 0x36       # RT3070/RT3071/RT3572 USB-only — called by enable_radio
+                         # between init_rfcsr and MAC_SYS_CTRL enable.
 MCU_BOOT_SIGNAL = 0x72
 
 # MAC_SYS_CTRL bit-fields (used in M2b)
@@ -251,8 +253,25 @@ BBP_CSR_CFG_READ_CONTROL = 0x00010000
 BBP_CSR_CFG_BUSY = 0x00020000
 BBP_CSR_CFG_BBP_RW_MODE = 0x00080000
 
-# BBP4 bit-field used by rt2800_bbp4_mac_if_ctrl
+# BBP3_HT40_MINUS — bit 5. Cleared in HT20 monitor mode at end of
+# config_channel. [SRC] rt2800.h:2234
+BBP3_HT40_MINUS = 0x20
+
+# BBP4 bit-fields. MAC_IF_CTRL set by rt2800_bbp4_mac_if_ctrl;
+# BANDWIDTH used by RX filter calibration. [SRC] rt2800.h:2241-2242
 BBP4_MAC_IF_CTRL = 0x40
+BBP4_BANDWIDTH = 0x18           # bits[4:3]
+
+# Channel-activity counters cleared at the end of every channel tune
+# (kernel reads-without-using, which side-effect-clears them).
+# [SRC] rt2800.h:1012-1022
+CH_IDLE_STA = 0x1130
+CH_BUSY_STA = 0x1134
+CH_BUSY_STA_SEC = 0x1138
+
+# BBP27_RX_CHAIN_SEL — bits[6:5]. Used by bbp_write_with_rx_chain to
+# walk a write across each RX path's per-chain register. [SRC] rt2800.h:2246
+BBP27_RX_CHAIN_SEL = 0x60
 
 # BBP152 bit-field for RX antenna default (used by init_bbp_53xx,
 # deferred since it needs EEPROM antenna-diversity reading).
@@ -274,6 +293,18 @@ RF_CSR_CFG_BUSY = 0x00020000
 OPT_14_CSR = 0x0114
 OPT_14_CSR_BIT0 = 0x00000001
 
+# LDO_CFG0 — used by init_rfcsr_3572 (BGSEL + LDO_CORE_VLEVEL dance).
+# [SRC] rt2800.h:684-691
+LDO_CFG0 = 0x05D4
+LDO_CFG0_BGSEL = 0x03000000             # bits[25:24]
+LDO_CFG0_LDO_CORE_VLEVEL = 0x1C000000   # bits[28:26]
+
+# GPIO_CTRL — used by config_channel_rf3052 (band-switch GPIO #7).
+# [SRC] rt2800.h:450-462
+GPIO_CTRL = 0x0228
+GPIO_CTRL_VAL7 = 0x00000080
+GPIO_CTRL_DIR7 = 0x00008000
+
 # RFCSR bit-fields used by M2c.
 RFCSR30_RF_CALIBRATION = 0x80
 RFCSR30_RX_VCM = 0x18         # bits[4:3], value 2 = 0x10
@@ -282,19 +313,65 @@ RFCSR30_RX_H20M = 0x04
 RFCSR38_RX_LO1_EN = 0x20
 RFCSR39_RX_LO2_EN = 0x80
 
-# RFCSR1 (used by config_channel_rf53xx)
+# RFCSR1 (used by config_channel_rf53xx + config_channel_rf3052)
 RFCSR1_RF_BLOCK_EN = 0x01
 RFCSR1_PLL_PD = 0x02
 RFCSR1_RX0_PD = 0x04
 RFCSR1_TX0_PD = 0x08
 RFCSR1_RX1_PD = 0x10
 RFCSR1_TX1_PD = 0x20
+RFCSR1_RX2_PD = 0x40           # [SRC] rt2800.h:2317 — needed for 2T2R RT3572
+RFCSR1_TX2_PD = 0x80           # [SRC] rt2800.h:2318
 
 # RFCSR3 VCO cal enable (kicked at end of config_channel for RF53xx).
 RFCSR3_VCOCAL_EN = 0x80
 
+# RFCSR5_R1 — bits[3:2] of RFCSR5. Used by config_channel_rf3052
+# (1 for 2.4 GHz, 2 for 5 GHz). [SRC] rt2800.h:2354
+RFCSR5_R1 = 0x0C
+
+# RFCSR6 fields used by RF3052 RT3572 init + channel tune.
+# [SRC] rt2800.h:2359-2361
+RFCSR6_R1 = 0x03                # bits[1:0] — synthesizer R1
+RFCSR6_TXDIV = 0x0C             # bits[3:2] — TX divider (2 for 2.4G, 1 for 5G)
+RFCSR6_R2 = 0x40                # bit 6 — set by init_rfcsr_3572
+
+# RFCSR7_RF_TUNING — bit 0. Kicked at end of channel tune to trigger
+# the new RF settings. [SRC] rt2800.h:2368
+RFCSR7_RF_TUNING = 0x01
+
 # RFCSR11 — R field (bits[1:0]) for the synthesizer divider.
 RFCSR11_R = 0x03
+
+# RFCSR12/13 — TX_POWER + DR0 fields (used by config_channel_rf3052).
+# [SRC] rt2800.h:2398-2405
+RFCSR12_TX_POWER = 0x1F         # bits[4:0]
+RFCSR12_DR0 = 0xE0              # bits[7:5]
+RFCSR13_TX_POWER = 0x1F
+RFCSR13_DR0 = 0xE0
+
+# RFCSR16_TXMIXER_GAIN — bits[2:0]. Used by config_channel_rf3052
+# (EEPROM-derived; default 0 means leave at chip default).
+# [SRC] rt2800.h:2416
+RFCSR16_TXMIXER_GAIN = 0x07
+
+# RFCSR17 — used by normal_mode_setup_3xxx.  [SRC] rt2800.h:2423-2425
+RFCSR17_TXMIXER_GAIN = 0x07     # bits[2:0]
+RFCSR17_TX_LO1_EN = 0x08        # bit 3 — cleared by normal_mode_setup_3xxx
+RFCSR17_R = 0x20                # bit 5
+
+# RFCSR22 — baseband-loopback toggle used by RX filter calibration.
+# [SRC] rt2800.h:2449
+RFCSR22_BASEBAND_LOOPBACK = 0x01
+
+# RFCSR23_FREQ_OFFSET — bits[6:0]. RF3052 writes freq_offset directly to
+# this register (no MCU command needed, unlike RF53xx).
+# [SRC] rt2800.h:2455
+RFCSR23_FREQ_OFFSET = 0x7F
+
+# RFCSR31_RX_H20M — bit 5. Used by RX filter calibration's BW40 path.
+# [SRC] rt2800.h:2501
+RFCSR31_RX_H20M = 0x20
 
 # RFCSR49/50 TX power (low 6 bits) — referenced by config_channel_rf53xx
 # but we leave these alone in our M4 minimal port (no EEPROM TX power yet).
@@ -362,6 +439,28 @@ RXD_W0_CRC_ERROR = 0x00000100
 USB_EP_BULK_IN = 0x84      # RXdata
 USB_EP_BULK_OUT_MGMT = 0x06
 USB_EP_BULK_OUT_AC_BE = 0x02
+
+# ----------------------------------------------------------------------
+# TX_BAND_CFG + TX_PIN_CFG (used by config_channel_rf3052 + rf53xx).
+# Shared between RT5392 and RT3572 — the dispatcher in chan.py writes
+# the same register, but RT3572 sets bit A for 5 GHz routing on top of
+# the existing BG bit. [SRC] rt2800.h:1241-1280
+# ----------------------------------------------------------------------
+TX_BAND_CFG_REG = 0x132C
+TX_BAND_CFG_HT40_MINUS = 0x00000001
+TX_BAND_CFG_A = 0x00000002        # 1 = 5 GHz routing
+TX_BAND_CFG_BG_BIT = 0x00000004   # 1 = 2.4 GHz routing (already used by chan.py)
+
+TX_PIN_CFG_REG = 0x1328
+TX_PIN_CFG_PA_PE_G0_EN_BIT = 0x00000002
+TX_PIN_CFG_PA_PE_A1_EN = 0x00000004        # 2T2R 5 GHz secondary PA
+TX_PIN_CFG_PA_PE_G1_EN = 0x00000008        # 2T2R 2.4 GHz secondary PA
+TX_PIN_CFG_LNA_PE_A0_EN_BIT = 0x00000100
+TX_PIN_CFG_LNA_PE_G0_EN_BIT = 0x00000200
+TX_PIN_CFG_LNA_PE_A1_EN = 0x00000400       # 2T2R 5 GHz secondary LNA
+TX_PIN_CFG_LNA_PE_G1_EN = 0x00000800       # 2T2R 2.4 GHz secondary LNA
+TX_PIN_CFG_RFTR_EN_BIT = 0x00010000
+TX_PIN_CFG_TRSW_EN_BIT = 0x00040000
 
 # Default for inject_frame.
 USB_EP_BULK_OUT = USB_EP_BULK_OUT_MGMT

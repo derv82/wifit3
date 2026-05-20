@@ -1,9 +1,16 @@
 """rt2800usb driver — Panda PAU05 (RT5372) / Panda PAU09 (RT5572) /
 ALFA AWUS051NH v2 (RT3572).
 
-Currently scoped to RT5372 (single-band, single-stream — the smallest
-of the three). RT3572 + RT5572 land as follow-on milestones once the
-shared rt2x00_base/ shape is extracted.
+  * RT5372 (silicon RT5392): 2.4 GHz, 1T1R — DONE.
+  * RT3572 (silicon RT3572): 2.4 GHz, 2T2R — DONE (M-A1).
+                              5 GHz — TBD (M-A2).
+  * RT5572 (silicon RT5592): 2.4 + 5 GHz, 2T2R — TBD (M-B1 + M-B2).
+
+Family-shared infrastructure (transport, FW upload, MAC config, RX/TX
+descriptor builders, USB end-pad / QSEL=2 / EP=0x02, EFUSE bring-up,
+warm reattach) is silicon-agnostic. Per-silicon code lives in
+``init_bbp_*`` / ``init_rfcsr_*`` / ``_set_channel_*`` functions,
+dispatched at runtime by ``silicon_id``.
 
 Bring-up flow (mirrors ``rt2800_probe_hw`` from
 data_dumps/rt2x00-source-v6.18/rt2800lib.c, with the rt2x00 framework
@@ -55,7 +62,7 @@ from .constants import (
 )
 from wifit3.wlan.packet import WlanFrameParser
 
-from .bbp import init_bbp_53xx, prepare_bbp
+from .bbp import init_bbp, prepare_bbp
 from .chan import set_channel as _set_channel
 from .eeprom import parse_eeprom, read_eeprom_efuse
 from .firmware import load_firmware, load_firmware_blob
@@ -64,7 +71,7 @@ from .mac import (
     usb_init_registers, write_mac_address,
 )
 from .reg_init import init_registers
-from .rfcsr import init_rfcsr
+from .rfcsr import RfFilterCal, init_rfcsr
 from .rx import parse_rx_urb, probe_endpoints, read_rx_burst, rxwi_size_for_silicon
 from .transport import RT2800USBTransport
 from .tx import inject_frame as _inject_frame, txwi_size_for_silicon
@@ -110,6 +117,9 @@ class RT2800USBDriver:
         self._rxwi_size: int = 16          # set at connect-time from silicon_id
         self._claimed = False
         self._eeprom = None                 # EepromValues post-EFUSE-read
+        # RT3572-only: filter calibration values + saved BBP25/26 from
+        # init_rfcsr_3572, replayed on every channel tune.
+        self._rf_cal: Optional[RfFilterCal] = None
 
         # WlanDriver Protocol surface area.
         self.mac_address: Optional[str] = None
@@ -275,29 +285,49 @@ class RT2800USBDriver:
                 logger.error("prepare_bbp failed: %s", e)
                 return False
 
-            _progress(0.97, "Running init_bbp_53xx (M2b-3 baseband init)")
+            # Path counts from EEPROM (RT5392 hw is always 1T1R so it
+            # ignores these; RT3572 hw is typically 2T2R, EFUSE-derived).
+            # EepromValues.{tx,rx}path handles the unburned-EFUSE case
+            # (0x0000 or 0xFFFF NIC_CONF0) by returning kernel defaults
+            # (2 RX / 1 TX) so we don't power down the wrong chains.
+            txpath = self._eeprom.txpath if self._eeprom else 1
+            rxpath = self._eeprom.rxpath if self._eeprom else 1
+
+            _progress(0.97, "Running init_bbp (M2b-3 baseband init)")
             try:
                 await loop.run_in_executor(
                     None,
-                    lambda: init_bbp_53xx(self.transport, self.chip_id.silicon_id),
+                    lambda: init_bbp(
+                        self.transport, self.chip_id.silicon_id,
+                        txpath=txpath, rxpath=rxpath,
+                    ),
                 )
-            except (IOError, usb.core.USBError, ValueError) as e:
-                logger.error("init_bbp_53xx failed: %s", e)
+            except (IOError, usb.core.USBError, ValueError, NotImplementedError) as e:
+                logger.error("init_bbp failed: %s", e)
                 return False
 
             _progress(0.98, "Running init_rfcsr (M2c RF init)")
             try:
-                await loop.run_in_executor(
+                self._rf_cal = await loop.run_in_executor(
                     None,
                     lambda: init_rfcsr(self.transport, self.chip_id.silicon_id),
                 )
             except (IOError, usb.core.USBError, NotImplementedError) as e:
                 logger.error("init_rfcsr failed: %s", e)
                 return False
+            if self._rf_cal is not None:
+                logger.info(
+                    "RF filter cal: bw20=0x%02x bw40=0x%02x bbp25=0x%02x bbp26=0x%02x",
+                    self._rf_cal.calibration_bw20, self._rf_cal.calibration_bw40,
+                    self._rf_cal.bbp25, self._rf_cal.bbp26,
+                )
 
             _progress(0.985, "Enabling radio (MAC TX/RX + WPDMA + USB DMA)")
             try:
-                await loop.run_in_executor(None, enable_radio, self.transport)
+                await loop.run_in_executor(
+                    None,
+                    lambda: enable_radio(self.transport, self.chip_id.silicon_id),
+                )
             except (IOError, usb.core.USBError) as e:
                 logger.error("enable_radio failed: %s", e)
                 return False
@@ -313,8 +343,7 @@ class RT2800USBDriver:
                     None,
                     lambda: _set_channel(
                         self.transport, self.chip_id.silicon_id, 1,
-                        lna_gain=self._eeprom.lna_gain_bg,
-                        freq_offset=self._eeprom.freq_offset,
+                        **self._channel_kwargs(),
                     ),
                 )
                 self.current_channel = 1
@@ -367,18 +396,40 @@ class RT2800USBDriver:
         logger.info("rt2800usb RX loop stopped")
 
     # ---- channel tune (M4) ----------------------------------------------
+    def _channel_kwargs(self) -> dict:
+        """Bundle the per-silicon kwargs that set_channel needs.
+
+        RT5392 just wants freq_offset + lna_gain. RT3572 also needs
+        the filter calibration + chain counts + BT-coex flag. Centralised
+        here so both the connect-time tune and runtime set_channel pull
+        from the same place.
+        """
+        if self._eeprom is None:
+            return {"lna_gain": 0, "freq_offset": 0}
+        kwargs = {
+            "lna_gain": self._eeprom.lna_gain_bg,
+            "freq_offset": self._eeprom.freq_offset,
+        }
+        if self.chip_id is not None and self.chip_id.silicon_id == 0x3572:
+            kwargs.update(
+                cal_result=self._rf_cal,
+                tx_chain_num=self._eeprom.txpath,
+                rx_chain_num=self._eeprom.rxpath,
+                has_cap_bt_coexist=False,    # no EEPROM nic_conf1 wiring yet
+            )
+        return kwargs
+
     async def set_channel(self, channel: int) -> bool:
         if self.chip_id is None:
             logger.error("set_channel(%d): connect() must run first", channel)
             return False
-        lna = self._eeprom.lna_gain_bg if self._eeprom else 0
-        freq = self._eeprom.freq_offset if self._eeprom else 0
+        kwargs = self._channel_kwargs()
         try:
             await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: _set_channel(
                     self.transport, self.chip_id.silicon_id, channel,
-                    lna_gain=lna, freq_offset=freq,
+                    **kwargs,
                 ),
             )
         except ValueError as e:

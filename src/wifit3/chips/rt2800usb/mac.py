@@ -201,16 +201,24 @@ def _wait_wpdma_ready(t: RT2800USBTransport) -> bool:
     return False
 
 
-def enable_radio(t: RT2800USBTransport) -> None:
+def enable_radio(t: RT2800USBTransport, silicon_id: int = 0) -> None:
     """Enable RX + TX on the radio.  Call AFTER all init_* steps.
 
     Port of rt2800usb_enable_radio (rt2800usb.c:296-318) +
     rt2800_enable_radio (rt2800lib.c:10790-10860) minus the LED MCU
     setup (needs EEPROM).
+
+    ``silicon_id`` is used to trigger the RT3070/RT3071/RT3572 USB-only
+    MCU_CURRENT request that the kernel makes between init_rfcsr and
+    MAC_SYS_CTRL enable. Default 0 = skip (back-compat for RT5392 path).
     """
     from .constants import (
         MAC_SYS_CTRL_ENABLE_RX,
         MAC_SYS_CTRL_ENABLE_TX,
+        MCU_CURRENT,
+        RT_RT3070,
+        RT_RT3071,
+        RT_RT3572,
         USB_DMA_CFG,
         USB_DMA_CFG_PHY_CLEAR,
         USB_DMA_CFG_RX_BULK_AGG_EN,
@@ -239,6 +247,19 @@ def enable_radio(t: RT2800USBTransport) -> None:
     # init_rfcsr inside this — we already ran those.
     if not _wait_wpdma_ready(t):
         raise IOError("WPDMA never reported idle (second wait)")
+
+    # 2a) RT3070/3071/3572 USB-only MCU_CURRENT request.
+    # [SRC] rt2800lib.c:10829-10836. The kernel sleeps 200µs before and
+    # 10µs after. Without this, RX-side calibration registers stay in
+    # a half-applied state — symptom: chip detects energy (false CCAs
+    # in RX_STA_CNT1 increment) but all decoded frames come back with
+    # CRC errors, so DROP_CRC_ERR in RX_FILTER_CFG blocks every URB.
+    if silicon_id in (RT_RT3070, RT_RT3071, RT_RT3572):
+        from .firmware import mcu_request
+        time.sleep(0.000_2)         # udelay(200)
+        mcu_request(t, MCU_CURRENT, token=0, arg0=0, arg1=0)
+        time.sleep(0.000_01)        # udelay(10)
+        logger.debug("MCU_CURRENT sent for RT3070/3071/3572-family chip")
 
     # 3) MCU_BOOT_SIGNAL + H2M setup — MOVED to bbp.prepare_bbp which
     # runs BETWEEN init_registers and init_bbp. Kernel does this
@@ -275,7 +296,7 @@ def enable_radio(t: RT2800USBTransport) -> None:
     #
     # Keep only DROP_CRC_ERROR + DROP_VER_ERROR (real packet errors,
     # not address filtering). Everything else cleared.
-    monitor_rx_filter = 0x00000011  # CRC_ERROR | VER_ERROR
+    monitor_rx_filter = 0x00000011   # CRC_ERROR | VER_ERROR
     t.write32(0x1400, monitor_rx_filter)  # RX_FILTER_CFG
 
     # 9) MAC address programming — moved out of enable_radio. Callers
