@@ -465,7 +465,9 @@ class RT2800USBDriver:
                 tx_chain_num=self._eeprom.txpath,
                 rx_chain_num=self._eeprom.rxpath,
                 has_cap_bt_coexist=self._eeprom.has_cap_bt_coexist,
+                has_cap_external_lna_a=self._eeprom.has_cap_external_lna_a,
                 xtal_40mhz=self._xtal_40mhz,
+                iq_cal=self._eeprom.iq_cal,
             )
         return kwargs
 

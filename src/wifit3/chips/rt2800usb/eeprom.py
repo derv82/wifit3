@@ -71,6 +71,28 @@ EEPROM_OFFSET_FREQ = 0x1D
 EEPROM_OFFSET_LNA = 0x22
 EEPROM_OFFSET_RSSI_BG = 0x23
 
+# RT5592 IQ calibration byte offsets — kernel uses rt2x00_eeprom_byte()
+# directly, so these are BYTE offsets into the EFUSE dump, not word
+# offsets. [SRC] rt2800.h:2963-2988
+EEPROM_BYTE_IQ_GAIN_CAL_TX0_2G              = 0x130
+EEPROM_BYTE_IQ_PHASE_CAL_TX0_2G             = 0x131
+EEPROM_BYTE_IQ_GAIN_CAL_TX1_2G              = 0x133
+EEPROM_BYTE_IQ_PHASE_CAL_TX1_2G             = 0x134
+EEPROM_BYTE_RF_IQ_COMPENSATION_CONTROL      = 0x13C
+EEPROM_BYTE_RF_IQ_IMBALANCE_COMPENSATION    = 0x13D
+EEPROM_BYTE_IQ_GAIN_CAL_TX0_CH36_TO_CH64_5G  = 0x144
+EEPROM_BYTE_IQ_PHASE_CAL_TX0_CH36_TO_CH64_5G = 0x145
+EEPROM_BYTE_IQ_GAIN_CAL_TX0_CH100_TO_CH138_5G  = 0x146
+EEPROM_BYTE_IQ_PHASE_CAL_TX0_CH100_TO_CH138_5G = 0x147
+EEPROM_BYTE_IQ_GAIN_CAL_TX0_CH140_TO_CH165_5G  = 0x148
+EEPROM_BYTE_IQ_PHASE_CAL_TX0_CH140_TO_CH165_5G = 0x149
+EEPROM_BYTE_IQ_GAIN_CAL_TX1_CH36_TO_CH64_5G  = 0x14A
+EEPROM_BYTE_IQ_PHASE_CAL_TX1_CH36_TO_CH64_5G = 0x14B
+EEPROM_BYTE_IQ_GAIN_CAL_TX1_CH100_TO_CH138_5G  = 0x14C
+EEPROM_BYTE_IQ_PHASE_CAL_TX1_CH100_TO_CH138_5G = 0x14D
+EEPROM_BYTE_IQ_GAIN_CAL_TX1_CH140_TO_CH165_5G  = 0x14E
+EEPROM_BYTE_IQ_PHASE_CAL_TX1_CH140_TO_CH165_5G = 0x14F
+
 
 def _set_field32(reg: int, mask: int, value: int) -> int:
     shift = (mask & -mask).bit_length() - 1
@@ -124,6 +146,111 @@ def read_eeprom_efuse(t: RT2800USBTransport) -> bytes:
 
 
 # ----------------------------------------------------------------------
+# RT5592 IQ calibration — kernel rt2800_iq_calibrate (rt2800lib.c:4026-4110)
+# reads 6 bytes per tune from the EEPROM dump: 2 each (gain, phase) for
+# TX0 and TX1, plus 2 global IQ compensation/imbalance bytes. The 2 G/
+# 5 G byte addresses differ per band, hence the helper that maps a
+# channel to the right offsets.
+#
+# Kernel convention: 0xFF means "unprogrammed" → use 0 instead. We
+# materialise that here so the channel-tune code path stays simple.
+# ----------------------------------------------------------------------
+@dataclass(frozen=True)
+class IqCalibration:
+    """Per-band IQ cal bytes pulled from the EFUSE dump at parse time."""
+    # 2.4 GHz pair (TX0 + TX1, gain + phase each).
+    tx0_gain_2g: int
+    tx0_phase_2g: int
+    tx1_gain_2g: int
+    tx1_phase_2g: int
+    # 5 GHz UNII-1/2 (ch 36-64).
+    tx0_gain_5g_lo: int
+    tx0_phase_5g_lo: int
+    tx1_gain_5g_lo: int
+    tx1_phase_5g_lo: int
+    # 5 GHz UNII-2-ext (ch 100-138).
+    tx0_gain_5g_mid: int
+    tx0_phase_5g_mid: int
+    tx1_gain_5g_mid: int
+    tx1_phase_5g_mid: int
+    # 5 GHz UNII-3 (ch 140-165).
+    tx0_gain_5g_hi: int
+    tx0_phase_5g_hi: int
+    tx1_gain_5g_hi: int
+    tx1_phase_5g_hi: int
+    # Global RF IQ compensation + imbalance.
+    rf_iq_comp: int
+    rf_iq_imbal: int
+
+    def for_channel(self, channel: int) -> "IqCalChannel":
+        """Pick the band-specific cal bytes for `channel`."""
+        if channel <= 14:
+            return IqCalChannel(
+                tx0_gain=self.tx0_gain_2g,
+                tx0_phase=self.tx0_phase_2g,
+                tx1_gain=self.tx1_gain_2g,
+                tx1_phase=self.tx1_phase_2g,
+                rf_iq_comp=self.rf_iq_comp,
+                rf_iq_imbal=self.rf_iq_imbal,
+            )
+        if 36 <= channel <= 64:
+            return IqCalChannel(
+                tx0_gain=self.tx0_gain_5g_lo,
+                tx0_phase=self.tx0_phase_5g_lo,
+                tx1_gain=self.tx1_gain_5g_lo,
+                tx1_phase=self.tx1_phase_5g_lo,
+                rf_iq_comp=self.rf_iq_comp,
+                rf_iq_imbal=self.rf_iq_imbal,
+            )
+        if 100 <= channel <= 138:
+            return IqCalChannel(
+                tx0_gain=self.tx0_gain_5g_mid,
+                tx0_phase=self.tx0_phase_5g_mid,
+                tx1_gain=self.tx1_gain_5g_mid,
+                tx1_phase=self.tx1_phase_5g_mid,
+                rf_iq_comp=self.rf_iq_comp,
+                rf_iq_imbal=self.rf_iq_imbal,
+            )
+        if 140 <= channel <= 165:
+            return IqCalChannel(
+                tx0_gain=self.tx0_gain_5g_hi,
+                tx0_phase=self.tx0_phase_5g_hi,
+                tx1_gain=self.tx1_gain_5g_hi,
+                tx1_phase=self.tx1_phase_5g_hi,
+                rf_iq_comp=self.rf_iq_comp,
+                rf_iq_imbal=self.rf_iq_imbal,
+            )
+        # Channels outside the kernel's known sub-bands — kernel falls
+        # through to `cal = 0` in this case.
+        return IqCalChannel(
+            tx0_gain=0, tx0_phase=0, tx1_gain=0, tx1_phase=0,
+            rf_iq_comp=self.rf_iq_comp,
+            rf_iq_imbal=self.rf_iq_imbal,
+        )
+
+
+@dataclass(frozen=True)
+class IqCalChannel:
+    """Resolved-for-this-channel IQ cal bytes (kernel rt2x00_eeprom_byte
+    on the per-band offset). All bytes have already been mapped through
+    the kernel's `0xFF → 0` unprogrammed-fallback convention."""
+    tx0_gain: int
+    tx0_phase: int
+    tx1_gain: int
+    tx1_phase: int
+    rf_iq_comp: int
+    rf_iq_imbal: int
+
+
+def _eeprom_byte_or_zero(buf: bytes, offset: int) -> int:
+    """rt2x00_eeprom_byte with the kernel's 0xFF → 0 fallback baked in.
+    The IQ comp/imbal control bytes get the same treatment per
+    rt2800lib.c:4103, 4109 (`cal != 0xff ? cal : 0`)."""
+    b = buf[offset] if offset < len(buf) else 0xFF
+    return b if b != 0xFF else 0
+
+
+# ----------------------------------------------------------------------
 # Parsers for the EEPROM byte buffer
 # ----------------------------------------------------------------------
 @dataclass(frozen=True)
@@ -136,6 +263,7 @@ class EepromValues:
     lna_gain_a: int           # u8 (high byte of LNA word — 5 GHz LNA-A gain)
     rssi_bg_offset0: int
     rssi_bg_offset1: int
+    iq_cal: "IqCalibration | None" = None    # RT5592-only; None for other chips
 
     # NIC_CONF1 capability bits — kernel `rt2x00_has_cap_*`.
     # [SRC] rt2800.h:1815-1828 (EEPROM_NIC_CONF1 layout)
@@ -258,6 +386,30 @@ def parse_eeprom(eeprom: bytes) -> EepromValues:
     lna_bg = lna_word & 0xFF
     lna_a = (lna_word >> 8) & 0xFF
     rssi_bg = _word(eeprom, EEPROM_OFFSET_RSSI_BG)
+
+    # RT5592 IQ cal bytes. Always parsed (only RT5572 uses them; other
+    # chips just get an unused IqCalibration struct full of zeros).
+    iq_cal = IqCalibration(
+        tx0_gain_2g=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX0_2G),
+        tx0_phase_2g=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX0_2G),
+        tx1_gain_2g=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX1_2G),
+        tx1_phase_2g=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX1_2G),
+        tx0_gain_5g_lo=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX0_CH36_TO_CH64_5G),
+        tx0_phase_5g_lo=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX0_CH36_TO_CH64_5G),
+        tx1_gain_5g_lo=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX1_CH36_TO_CH64_5G),
+        tx1_phase_5g_lo=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX1_CH36_TO_CH64_5G),
+        tx0_gain_5g_mid=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX0_CH100_TO_CH138_5G),
+        tx0_phase_5g_mid=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX0_CH100_TO_CH138_5G),
+        tx1_gain_5g_mid=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX1_CH100_TO_CH138_5G),
+        tx1_phase_5g_mid=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX1_CH100_TO_CH138_5G),
+        tx0_gain_5g_hi=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX0_CH140_TO_CH165_5G),
+        tx0_phase_5g_hi=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX0_CH140_TO_CH165_5G),
+        tx1_gain_5g_hi=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX1_CH140_TO_CH165_5G),
+        tx1_phase_5g_hi=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX1_CH140_TO_CH165_5G),
+        rf_iq_comp=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_RF_IQ_COMPENSATION_CONTROL),
+        rf_iq_imbal=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_RF_IQ_IMBALANCE_COMPENSATION),
+    )
+
     return EepromValues(
         mac_address=mac,
         nic_conf0=nic0,
@@ -267,4 +419,5 @@ def parse_eeprom(eeprom: bytes) -> EepromValues:
         lna_gain_a=lna_a,
         rssi_bg_offset0=rssi_bg & 0xFF,
         rssi_bg_offset1=(rssi_bg >> 8) & 0xFF,
+        iq_cal=iq_cal,
     )

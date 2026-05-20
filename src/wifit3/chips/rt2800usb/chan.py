@@ -44,6 +44,7 @@ from .constants import (
     MAC_DEBUG_INDEX,
     MAC_DEBUG_INDEX_XTAL,
     POWER_BOUND,
+    POWER_BOUND_5G,
     RFCSR1_PLL_PD,
     RFCSR1_RF_BLOCK_EN,
     RFCSR1_RX0_PD,
@@ -95,6 +96,7 @@ from .constants import (
     TX_PIN_CFG_RFTR_EN_BIT,
     TX_PIN_CFG_TRSW_EN_BIT,
 )
+from .eeprom import IqCalChannel, IqCalibration
 from .rfcsr import RfFilterCal, freq_cal_mode1_usb, rfcsr_read, rfcsr_write
 from .transport import RT2800USBTransport
 
@@ -581,8 +583,8 @@ def _set_channel_3572(
 #
 # [SRC] rt2800lib.c:11578-11710 (rf_vals_5592_xtal20 / xtal40)
 # ----------------------------------------------------------------------
-_RF_VALS_5592_XTAL20_2G = {
-    # channel: (N, K, mod, R)
+_RF_VALS_5592_XTAL20 = {
+    # channel: (N, K, mod, R) — [SRC] rt2800lib.c:11578-11642
     1:  (482, 4, 10, 3),
     2:  (483, 4, 10, 3),
     3:  (484, 4, 10, 3),
@@ -597,10 +599,57 @@ _RF_VALS_5592_XTAL20_2G = {
     12: (493, 4, 10, 3),
     13: (494, 4, 10, 3),
     14: (496, 8, 10, 3),
+    # 5 GHz UNII-1/2 (ch 36-64).
+    36: (172, 8, 12, 1),
+    38: (173, 0, 12, 1),
+    40: (173, 4, 12, 1),
+    42: (173, 8, 12, 1),
+    44: (174, 0, 12, 1),
+    46: (174, 4, 12, 1),
+    48: (174, 8, 12, 1),
+    50: (175, 0, 12, 1),
+    52: (175, 4, 12, 1),
+    54: (175, 8, 12, 1),
+    56: (176, 0, 12, 1),
+    58: (176, 4, 12, 1),
+    60: (176, 8, 12, 1),
+    62: (177, 0, 12, 1),
+    64: (177, 4, 12, 1),
+    # 5 GHz UNII-2-ext (ch 100-140).
+    100: (183, 4, 12, 1),
+    102: (183, 8, 12, 1),
+    104: (184, 0, 12, 1),
+    106: (184, 4, 12, 1),
+    108: (184, 8, 12, 1),
+    110: (185, 0, 12, 1),
+    112: (185, 4, 12, 1),
+    114: (185, 8, 12, 1),
+    116: (186, 0, 12, 1),
+    118: (186, 4, 12, 1),
+    120: (186, 8, 12, 1),
+    122: (187, 0, 12, 1),
+    124: (187, 4, 12, 1),
+    126: (187, 8, 12, 1),
+    128: (188, 0, 12, 1),
+    130: (188, 4, 12, 1),
+    132: (188, 8, 12, 1),
+    134: (189, 0, 12, 1),
+    136: (189, 4, 12, 1),
+    138: (189, 8, 12, 1),
+    140: (190, 0, 12, 1),
+    # 5 GHz UNII-3 (ch 149-165).
+    149: (191, 6, 12, 1),
+    151: (191, 10, 12, 1),
+    153: (192, 2, 12, 1),
+    155: (192, 6, 12, 1),
+    157: (192, 10, 12, 1),
+    159: (193, 2, 12, 1),
+    161: (193, 6, 12, 1),
+    165: (194, 2, 12, 1),
 }
 
-_RF_VALS_5592_XTAL40_2G = {
-    # channel: (N, K, mod, R)
+_RF_VALS_5592_XTAL40 = {
+    # channel: (N, K, mod, R) — [SRC] rt2800lib.c:11644-11707
     1:  (241, 2, 10, 3),
     2:  (241, 7, 10, 3),
     3:  (242, 2, 10, 3),
@@ -615,6 +664,53 @@ _RF_VALS_5592_XTAL40_2G = {
     12: (246, 7, 10, 3),
     13: (247, 2, 10, 3),
     14: (248, 4, 10, 3),
+    # 5 GHz UNII-1/2 (ch 36-64).
+    36: (86, 4, 12, 1),
+    38: (86, 6, 12, 1),
+    40: (86, 8, 12, 1),
+    42: (86, 10, 12, 1),
+    44: (87, 0, 12, 1),
+    46: (87, 2, 12, 1),
+    48: (87, 4, 12, 1),
+    50: (87, 6, 12, 1),
+    52: (87, 8, 12, 1),
+    54: (87, 10, 12, 1),
+    56: (88, 0, 12, 1),
+    58: (88, 2, 12, 1),
+    60: (88, 4, 12, 1),
+    62: (88, 6, 12, 1),
+    64: (88, 8, 12, 1),
+    # 5 GHz UNII-2-ext (ch 100-140).
+    100: (91, 8, 12, 1),
+    102: (91, 10, 12, 1),
+    104: (92, 0, 12, 1),
+    106: (92, 2, 12, 1),
+    108: (92, 4, 12, 1),
+    110: (92, 6, 12, 1),
+    112: (92, 8, 12, 1),
+    114: (92, 10, 12, 1),
+    116: (93, 0, 12, 1),
+    118: (93, 2, 12, 1),
+    120: (93, 4, 12, 1),
+    122: (93, 6, 12, 1),
+    124: (93, 8, 12, 1),
+    126: (93, 10, 12, 1),
+    128: (94, 0, 12, 1),
+    130: (94, 2, 12, 1),
+    132: (94, 4, 12, 1),
+    134: (94, 6, 12, 1),
+    136: (94, 8, 12, 1),
+    138: (94, 10, 12, 1),
+    140: (95, 0, 12, 1),
+    # 5 GHz UNII-3 (ch 149-165).
+    149: (95, 9, 12, 1),
+    151: (95, 11, 12, 1),
+    153: (96, 1, 12, 1),
+    155: (96, 3, 12, 1),
+    157: (96, 5, 12, 1),
+    159: (96, 7, 12, 1),
+    161: (96, 9, 12, 1),
+    165: (97, 1, 12, 1),
 }
 
 
@@ -626,6 +722,42 @@ def is_xtal_40mhz(t: RT2800USBTransport) -> bool:
     same probe in rt2800_probe_hw_mode.  [SRC] rt2800lib.c:11844-11852
     """
     return bool(t.read32(MAC_DEBUG_INDEX) & MAC_DEBUG_INDEX_XTAL)
+
+
+# ----------------------------------------------------------------------
+# rt2800_iq_calibrate — RT5592-only per-tune IQ trim.
+# Writes 8 BBP158/159 pairs (TX0/TX1 × gain/phase × per-band selection)
+# + 2 global pairs (RF IQ compensation + imbalance). Called from
+# _set_channel_5592_{2g,5g} after the channel-tune RF writes settle.
+# [SRC] rt2800lib.c:4026-4110
+# ----------------------------------------------------------------------
+def iq_calibrate(t: RT2800USBTransport, channel: int, iq: IqCalChannel | None) -> None:
+    """Apply per-channel IQ trim. If ``iq`` is None, falls back to the
+    all-zero kernel default (matches kernel's `cal = 0` when channel is
+    outside any known sub-band)."""
+    if iq is None:
+        iq = IqCalChannel(0, 0, 0, 0, 0, 0)
+
+    # TX0 IQ Gain  ─ BBP158=0x2c, BBP159=cal.
+    bbp_write(t, 158, 0x2C)
+    bbp_write(t, 159, iq.tx0_gain & 0xFF)
+    # TX0 IQ Phase ─ BBP158=0x2d, BBP159=cal.
+    bbp_write(t, 158, 0x2D)
+    bbp_write(t, 159, iq.tx0_phase & 0xFF)
+    # TX1 IQ Gain  ─ BBP158=0x4a, BBP159=cal.
+    bbp_write(t, 158, 0x4A)
+    bbp_write(t, 159, iq.tx1_gain & 0xFF)
+    # TX1 IQ Phase ─ BBP158=0x4b, BBP159=cal.
+    bbp_write(t, 158, 0x4B)
+    bbp_write(t, 159, iq.tx1_phase & 0xFF)
+
+    # Global RF IQ compensation + imbalance. Kernel applies the
+    # 0xFF→0 fallback per byte; EepromValues._eeprom_byte_or_zero
+    # already did it, so we pass through verbatim.
+    bbp_write(t, 158, 0x04)
+    bbp_write(t, 159, iq.rf_iq_comp & 0xFF)
+    bbp_write(t, 158, 0x03)
+    bbp_write(t, 159, iq.rf_iq_imbal & 0xFF)
 
 
 # ----------------------------------------------------------------------
@@ -660,6 +792,7 @@ def _set_channel_5592_2g(
     has_cap_bt_coexist: bool = False,
     default_power1: int = 0,
     default_power2: int = 0,
+    iq_cal: IqCalChannel | None = None,
 ) -> None:
     # ---- (1) LDO_CFG0 — VLEVEL=0 for HT20 2.4 GHz. [SRC] 3498-3501 ----
     reg = t.read32(LDO_CFG0)
@@ -843,9 +976,8 @@ def _set_channel_5592_2g(
     # BBP66 AGC = (0x1c for 2.4G) + 2*lna_gain, fanned across RX chains.
     bbp66 = (0x1C + 2 * (lna_gain & 0xFF)) & 0xFF
     bbp_write_with_rx_chain(t, 66, bbp66, rx_chain_num=rx_chain_num)
-    # rt2800_iq_calibrate(channel) — DEFERRED to M-B2 (needs EFUSE
-    # IQ cal bytes). Without it, IQ trim falls back to chip defaults;
-    # expected impact is degraded SNR, not RX silence.
+    # rt2800_iq_calibrate — per-tune IQ trim from EEPROM.
+    iq_calibrate(t, channel, iq_cal)
 
     # BBP4 BANDWIDTH = 0 (HT20). [SRC] 4526-4528
     bbp = bbp_read(t, 4)
@@ -873,6 +1005,272 @@ def _set_channel_5592_2g(
 
 
 # ----------------------------------------------------------------------
+# RT5572 / RF5592 5 GHz channel tune.
+#
+# Mirrors the `rf->channel > 14` branch of rt2800_config_channel_rf55xx
+# (rt2800lib.c:3573-3677) plus the 5 GHz post-RF tail from
+# rt2800_config_channel (4328-4345, 4485-4493). Three sub-bands with
+# overlapping per-channel breakpoint tweaks — UNII-1/2 (ch 36-64),
+# UNII-2-ext (ch 100-138), UNII-3 (ch 140-165). Kernel comments call
+# out half-channel offsets (38/42/46/50/...) that the table includes
+# for 20/40-MHz secondary-channel pairing; we tune them the same way.
+# ----------------------------------------------------------------------
+def _set_channel_5592_5g(
+    t: RT2800USBTransport,
+    channel: int,
+    *,
+    n: int,
+    k: int,
+    mod: int,
+    r: int,
+    freq_offset: int = 0,
+    lna_gain: int = 0,
+    tx_chain_num: int = 2,
+    rx_chain_num: int = 2,
+    has_cap_external_lna_a: bool = False,
+    default_power1: int = 0,
+    default_power2: int = 0,
+    iq_cal: IqCalChannel | None = None,
+) -> None:
+    # ---- (1) LDO_CFG0 — VLEVEL=5 for HT20 5 GHz. [SRC] 3498-3501 ----
+    reg = t.read32(LDO_CFG0)
+    reg = (reg & ~LDO_CFG0_LDO_CORE_VLEVEL) | ((5 << 26) & LDO_CFG0_LDO_CORE_VLEVEL)
+    t.write32(LDO_CFG0, reg & 0xFFFFFFFF)
+
+    # ---- (2) Synthesizer: RFCSR8/9/11 packed from {N, K, mod, R} ----
+    # Identical to 2.4 GHz path. [SRC] 3504-3515
+    rfcsr_write(t, 8, n & 0xFF)
+
+    rfcsr = rfcsr_read(t, 9)
+    rfcsr = (rfcsr & ~RFCSR9_K) | (k & RFCSR9_K)
+    rfcsr = (rfcsr & ~RFCSR9_N) | (((n & 0x100) >> 8 << 4) & RFCSR9_N)
+    rfcsr = (rfcsr & ~RFCSR9_MOD) | ((((mod - 8) & 0x4) >> 2 << 7) & RFCSR9_MOD)
+    rfcsr_write(t, 9, rfcsr & 0xFF)
+
+    rfcsr = rfcsr_read(t, 11)
+    rfcsr = (rfcsr & ~RFCSR11_R) | ((r - 1) & RFCSR11_R)
+    rfcsr = (rfcsr & ~RFCSR11_MOD) | (((mod - 8) & 0x3) << 6 & RFCSR11_MOD)
+    rfcsr_write(t, 11, rfcsr & 0xFF)
+
+    # ---- (3) 5 GHz fixed-value RFCSR block. [SRC] 3574-3589 ----
+    # Kernel comment: "FIMXE: RF11 overwrite" — clobbers synthesizer
+    # bits from step 2 (faithful port).
+    rfcsr_write(t, 10, 0x97)
+    rfcsr_write(t, 11, 0x40)
+    rfcsr_write(t, 25, 0xBF)
+    rfcsr_write(t, 27, 0x42)
+    rfcsr_write(t, 36, 0x00)
+    rfcsr_write(t, 37, 0x04)
+    rfcsr_write(t, 38, 0x85)
+    rfcsr_write(t, 40, 0x42)
+    rfcsr_write(t, 41, 0xBB)
+    rfcsr_write(t, 42, 0xD7)
+    rfcsr_write(t, 45, 0x41)
+    rfcsr_write(t, 48, 0x00)
+    rfcsr_write(t, 57, 0x77)
+    rfcsr_write(t, 60, 0x05)
+    rfcsr_write(t, 61, 0x01)
+
+    # ---- (4) Sub-band conditionals. ----
+    if 36 <= channel <= 64:
+        # UNII-1/2 block. [SRC] 3593-3620
+        rfcsr_write(t, 12, 0x2E)
+        rfcsr_write(t, 13, 0x22)
+        rfcsr_write(t, 22, 0x60)
+        rfcsr_write(t, 23, 0x7F)
+        rfcsr_write(t, 24, 0x09 if channel <= 50 else 0x07)
+        rfcsr_write(t, 39, 0x1C)
+        rfcsr_write(t, 43, 0x5B)
+        rfcsr_write(t, 44, 0x40)
+        rfcsr_write(t, 46, 0x00)
+        rfcsr_write(t, 51, 0xFE)
+        rfcsr_write(t, 52, 0x0C)
+        rfcsr_write(t, 54, 0xF8)
+        if channel <= 50:
+            rfcsr_write(t, 55, 0x06)
+            rfcsr_write(t, 56, 0xD3)
+        else:
+            rfcsr_write(t, 55, 0x04)
+            rfcsr_write(t, 56, 0xBB)
+        rfcsr_write(t, 58, 0x15)
+        rfcsr_write(t, 59, 0x7F)
+        rfcsr_write(t, 62, 0x15)
+    elif 100 <= channel <= 165:
+        # UNII-2-ext + UNII-3 block. [SRC] 3622-3673
+        rfcsr_write(t, 12, 0x0E)
+        rfcsr_write(t, 13, 0x42)
+        rfcsr_write(t, 22, 0x40)
+        if channel <= 153:
+            rfcsr_write(t, 23, 0x3C)
+            rfcsr_write(t, 24, 0x06)
+        else:
+            rfcsr_write(t, 23, 0x38)
+            rfcsr_write(t, 24, 0x05)
+        if channel <= 138:
+            rfcsr_write(t, 39, 0x1A)
+            rfcsr_write(t, 43, 0x3B)
+            rfcsr_write(t, 44, 0x20)
+            rfcsr_write(t, 46, 0x18)
+        else:
+            rfcsr_write(t, 39, 0x18)
+            rfcsr_write(t, 43, 0x1B)
+            rfcsr_write(t, 44, 0x10)
+            rfcsr_write(t, 46, 0x08)
+        rfcsr_write(t, 51, 0xFC if channel <= 124 else 0xEC)
+        # Kernel writes RFCSR52=0x06 on both sides of the 138/140
+        # split (same value), so this is unconditional.
+        rfcsr_write(t, 52, 0x06)
+        rfcsr_write(t, 54, 0xEB)
+        rfcsr_write(t, 55, 0x01 if channel <= 138 else 0x00)
+        rfcsr_write(t, 56, 0xBB if channel <= 128 else 0xAB)
+        rfcsr_write(t, 58, 0x1D if channel <= 116 else 0x15)
+        rfcsr_write(t, 59, 0x3F if channel <= 138 else 0x7C)
+        rfcsr_write(t, 62, 0x1D if channel <= 116 else 0x15)
+    else:
+        raise ValueError(
+            f"channel {channel} outside RF5592 5 GHz sub-bands (36-64 + 100-165)"
+        )
+
+    # ---- (5) TX power: RFCSR49/50.TX_POWER clamped to POWER_BOUND_5G.
+    # [SRC] 3680-3696 — is_type_ep=false so EP bits stay clear.
+    rfcsr = rfcsr_read(t, 49)
+    p1 = min(default_power1, POWER_BOUND_5G)
+    rfcsr = (rfcsr & ~RFCSR49_TX) | (p1 & RFCSR49_TX)
+    rfcsr_write(t, 49, rfcsr & 0xFF)
+
+    rfcsr = rfcsr_read(t, 50)
+    p2 = min(default_power2, POWER_BOUND_5G)
+    rfcsr = (rfcsr & ~RFCSR50_TX) | (p2 & RFCSR50_TX)
+    rfcsr_write(t, 50, rfcsr & 0xFF)
+
+    # ---- (6) RFCSR1 chain power-domain enables. [SRC] 3698-3714 ----
+    # Same as 2.4G — 2T2R: TX0+TX1+RX0+RX1 active, TX2/RX2 off.
+    # (No BT coex on 5 GHz so the bt_coexist branch is irrelevant.)
+    rfcsr = rfcsr_read(t, 1)
+    rfcsr |= RFCSR1_RF_BLOCK_EN | RFCSR1_PLL_PD
+    if tx_chain_num >= 1:
+        rfcsr |= RFCSR1_TX0_PD
+    else:
+        rfcsr &= ~RFCSR1_TX0_PD & 0xFF
+    if tx_chain_num == 2:
+        rfcsr |= RFCSR1_TX1_PD
+    else:
+        rfcsr &= ~RFCSR1_TX1_PD & 0xFF
+    rfcsr &= ~RFCSR1_TX2_PD & 0xFF
+    if rx_chain_num >= 1:
+        rfcsr |= RFCSR1_RX0_PD
+    else:
+        rfcsr &= ~RFCSR1_RX0_PD & 0xFF
+    if rx_chain_num == 2:
+        rfcsr |= RFCSR1_RX1_PD
+    else:
+        rfcsr &= ~RFCSR1_RX1_PD & 0xFF
+    rfcsr &= ~RFCSR1_RX2_PD & 0xFF
+    rfcsr_write(t, 1, rfcsr & 0xFF)
+
+    # ---- (7) RFCSR6 = 0xe4, RFCSR30 = 0x10 (HT20). [SRC] 3715-3720 ----
+    rfcsr_write(t, 6, 0xE4)
+    rfcsr_write(t, 30, 0x10)
+
+    # ---- (8) Non-11b → RFCSR31/32 = 0x80. [SRC] 3722-3725 ----
+    rfcsr_write(t, 31, 0x80)
+    rfcsr_write(t, 32, 0x80)
+
+    # ---- (9) Freq trim + VCOCAL kick. [SRC] 3728, 3731-3733 ----
+    freq_cal_mode1_usb(t, freq_offset=freq_offset)
+    rfcsr = rfcsr_read(t, 3)
+    rfcsr |= RFCSR3_VCOCAL_EN
+    rfcsr_write(t, 3, rfcsr & 0xFF)
+
+    # ---- (10) BBP62/63/64 NF + BBP79/80/81/82 5 GHz values.
+    # [SRC] 3736-3743
+    nf = (0x37 - (lna_gain & 0xFF)) & 0xFF
+    bbp_write(t, 62, nf)
+    bbp_write(t, 63, nf)
+    bbp_write(t, 64, nf)
+    bbp_write(t, 79, 0x18)
+    bbp_write(t, 80, 0x08)
+    bbp_write(t, 81, 0x38)
+    bbp_write(t, 82, 0x92)
+
+    # ---- (11) GLRT band-conditional 6-pair writes. [SRC] 3746-3757 ----
+    # 5 GHz values from the (rf->channel <= 14 ? : ) ternaries.
+    bbp_glrt_write(t, 128, 0xF0)
+    bbp_glrt_write(t, 129, 0x1E)
+    bbp_glrt_write(t, 130, 0x28)
+    bbp_glrt_write(t, 131, 0x20)
+    bbp_glrt_write(t, 133, 0x7F)
+    bbp_glrt_write(t, 124, 0x7F)
+
+    # ---- (12) Post-RF tail of rt2800_config_channel ------------------
+    # BBP62/63/64 NF re-write + BBP86=0 (else branch of 4258-4306).
+    bbp_write(t, 62, nf)
+    bbp_write(t, 63, nf)
+    bbp_write(t, 64, nf)
+    bbp_write(t, 86, 0x00)
+
+    # BBP82/75 5 GHz overwrite. [SRC] 4328-4345 — RT5592 enters the
+    # !RT3572 && !RT3593/3883 && !RT6352 branch → BBP82 = 0xf2.
+    # BBP75 depends on has_cap_external_lna_a.
+    bbp_write(t, 82, 0xF2)
+    bbp_write(t, 75, 0x46 if has_cap_external_lna_a else 0x50)
+
+    # TX_BAND_CFG — HT20, A=1 (5 GHz), BG=0. [SRC] 4347-4351
+    reg = t.read32(TX_BAND_CFG_REG)
+    reg &= ~TX_BAND_CFG_HT40_MINUS
+    reg |= TX_BAND_CFG_A
+    reg &= ~TX_BAND_CFG_BG_BIT
+    t.write32(TX_BAND_CFG_REG, reg & 0xFFFFFFFF)
+
+    # TX_PIN_CFG — start from 0 (RT5592 is not RT6352). PAs use A-side
+    # for 5 GHz. LNAs set BOTH A- and G-side enables per chain (kernel
+    # does this regardless of band). [SRC] 4356-4411
+    tx_pin = 0
+    if tx_chain_num >= 2:
+        tx_pin |= TX_PIN_CFG_PA_PE_A1_EN
+    tx_pin |= TX_PIN_CFG_PA_PE_A0_EN_BIT
+
+    if rx_chain_num >= 2:
+        tx_pin |= TX_PIN_CFG_LNA_PE_A1_EN | TX_PIN_CFG_LNA_PE_G1_EN
+    tx_pin |= TX_PIN_CFG_LNA_PE_A0_EN_BIT | TX_PIN_CFG_LNA_PE_G0_EN_BIT
+
+    tx_pin |= TX_PIN_CFG_RFTR_EN_BIT | TX_PIN_CFG_TRSW_EN_BIT
+    t.write32(TX_PIN_CFG_REG, tx_pin & 0xFFFFFFFF)
+
+    # RT5592-only block. [SRC] 4485-4493
+    bbp_glrt_write(t, 141, 0x1A)
+    # BBP66 AGC: 0x24 for 5G (vs 0x1c for 2.4G) + 2*lna_gain.
+    bbp66 = (0x24 + 2 * (lna_gain & 0xFF)) & 0xFF
+    bbp_write_with_rx_chain(t, 66, bbp66, rx_chain_num=rx_chain_num)
+    iq_calibrate(t, channel, iq_cal)
+
+    # BBP4 BANDWIDTH = 0 (HT20). [SRC] 4526-4528
+    bbp = bbp_read(t, 4)
+    bbp &= ~BBP4_BANDWIDTH
+    bbp_write(t, 4, bbp & 0xFF)
+
+    # BBP3 HT40_MINUS = 0 (HT20). [SRC] 4530-4532
+    bbp = bbp_read(t, 3)
+    bbp &= ~BBP3_HT40_MINUS
+    bbp_write(t, 3, bbp & 0xFF)
+
+    time.sleep(0.001)
+
+    # Clear channel-activity counters as a side-effect of reading.
+    t.read32(CH_IDLE_STA)
+    t.read32(CH_BUSY_STA)
+    t.read32(CH_BUSY_STA_SEC)
+
+    logger.debug(
+        "set_channel_5592_5g: ch=%d N=%d K=%d mod=%d R=%d "
+        "tx/rx_chain=(%d,%d) lna_gain=%d freq_off=%d bbp66=0x%02x ext_lna_a=%s",
+        channel, n, k, mod, r,
+        tx_chain_num, rx_chain_num, lna_gain, freq_offset, bbp66,
+        has_cap_external_lna_a,
+    )
+
+
+# ----------------------------------------------------------------------
 # Public dispatcher.
 # ----------------------------------------------------------------------
 def set_channel(
@@ -892,6 +1290,7 @@ def set_channel(
     default_power1: int = 0,
     default_power2: int = 0,
     xtal_40mhz: bool = False,
+    iq_cal: IqCalibration | None = None,
 ) -> None:
     """Tune to ``channel`` on the given silicon.
 
@@ -932,30 +1331,39 @@ def set_channel(
             default_power2=default_power2,
         )
     elif silicon_id == RT_RT5592:
-        if channel > 14:
-            raise NotImplementedError(
-                f"RT5592 channel {channel} > 14 not yet supported — "
-                "M-B2 will add the 5 GHz path (config_channel_rf55xx 5G branch + "
-                "rt2800_iq_calibrate)"
-            )
-        table = _RF_VALS_5592_XTAL40_2G if xtal_40mhz else _RF_VALS_5592_XTAL20_2G
+        table = _RF_VALS_5592_XTAL40 if xtal_40mhz else _RF_VALS_5592_XTAL20
         if channel not in table:
             raise ValueError(
-                f"RT5592 channel {channel} not in rf_vals_5592_xtal{'40' if xtal_40mhz else '20'} "
-                "2.4 GHz table"
+                f"RT5592 channel {channel} not in rf_vals_5592_xtal{'40' if xtal_40mhz else '20'}"
             )
         n, k, mod, r = table[channel]
-        _set_channel_5592_2g(
-            t, channel,
-            n=n, k=k, mod=mod, r=r,
-            freq_offset=freq_offset,
-            lna_gain=lna_gain,
-            tx_chain_num=tx_chain_num,
-            rx_chain_num=rx_chain_num,
-            has_cap_bt_coexist=has_cap_bt_coexist,
-            default_power1=default_power1,
-            default_power2=default_power2,
-        )
+        iq_for_ch = iq_cal.for_channel(channel) if iq_cal is not None else None
+        if channel <= 14:
+            _set_channel_5592_2g(
+                t, channel,
+                n=n, k=k, mod=mod, r=r,
+                freq_offset=freq_offset,
+                lna_gain=lna_gain,
+                tx_chain_num=tx_chain_num,
+                rx_chain_num=rx_chain_num,
+                has_cap_bt_coexist=has_cap_bt_coexist,
+                default_power1=default_power1,
+                default_power2=default_power2,
+                iq_cal=iq_for_ch,
+            )
+        else:
+            _set_channel_5592_5g(
+                t, channel,
+                n=n, k=k, mod=mod, r=r,
+                freq_offset=freq_offset,
+                lna_gain=lna_gain,
+                tx_chain_num=tx_chain_num,
+                rx_chain_num=rx_chain_num,
+                has_cap_external_lna_a=has_cap_external_lna_a,
+                default_power1=default_power1,
+                default_power2=default_power2,
+                iq_cal=iq_for_ch,
+            )
     else:
         raise NotImplementedError(
             f"set_channel for silicon 0x{silicon_id:04x} not yet validated"

@@ -780,7 +780,9 @@ def phase_rx(
             tx_chain_num=ee.txpath,
             rx_chain_num=ee.rxpath,
             has_cap_bt_coexist=ee.has_cap_bt_coexist,
+            has_cap_external_lna_a=ee.has_cap_external_lna_a,
             xtal_40mhz=xtal_40,
+            iq_cal=ee.iq_cal,
         )
     _set_channel(transport, chip.silicon_id, channel, **channel_kwargs)
     ok(f"tuned to ch {channel}")

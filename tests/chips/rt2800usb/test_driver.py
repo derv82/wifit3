@@ -1422,15 +1422,15 @@ def test_init_rfcsr_5592_rev_gate_5592c_writes_bbp103(monkeypatch):
     assert rfm.rfcsr_read(t, 27) == 0x00
 
 
-def test_set_channel_5592_rejects_5g_in_m_b1(monkeypatch):
-    """RT5592 + channel 36 raises NotImplementedError (M-B2 territory)."""
+def test_set_channel_5592_rejects_channel_not_in_table(monkeypatch):
+    """A non-table channel (e.g. ch 2.4 GHz 15) raises ValueError."""
     import pytest
     import wifit3.chips.rt2800usb.chan as chan_mod
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
 
     t = RfcsrFakeTransport()
-    with pytest.raises(NotImplementedError, match="M-B2"):
-        chan_mod.set_channel(t, RT_RT5592, 36, xtal_40mhz=True)
+    with pytest.raises(ValueError, match="not in rf_vals_5592"):
+        chan_mod.set_channel(t, RT_RT5592, 15, xtal_40mhz=True)
 
 
 def test_set_channel_5592_2g_xtal40_writes_rfcsr8_for_ch1(monkeypatch):
@@ -1587,6 +1587,379 @@ def test_is_xtal_40mhz_reads_mac_debug_index_bit():
     # Other bits set but not bit 31 — still 20 MHz.
     t.write32(MAC_DEBUG_INDEX, 0x7FFFFFFF)
     assert is_xtal_40mhz(t) is False
+
+
+# ----------------------------------------------------------------------
+# M-B2 RT5572 5 GHz tests — _set_channel_5592_5g + IQ cal.
+# ----------------------------------------------------------------------
+def test_iq_calibration_struct_unburned_ff_maps_to_zero():
+    """0xFF bytes in EFUSE → 0 in IqCalibration (kernel convention)."""
+    from wifit3.chips.rt2800usb.eeprom import parse_eeprom
+    buf = bytearray(0x200)
+    # All-FF EFUSE bytes — typical for an unprogrammed dongle.
+    for i in range(len(buf)):
+        buf[i] = 0xFF
+    # FREQ word must NOT be 0xFFFF for the default-injection path to skip;
+    # set it to a normal value (just for this test).
+    buf[0x3A] = 0x35
+    buf[0x3B] = 0x00
+    ee = parse_eeprom(bytes(buf))
+    assert ee.iq_cal is not None
+    assert ee.iq_cal.tx0_gain_2g == 0
+    assert ee.iq_cal.tx0_phase_2g == 0
+    assert ee.iq_cal.rf_iq_comp == 0
+    assert ee.iq_cal.rf_iq_imbal == 0
+
+
+def test_iq_calibration_picks_correct_band_for_channel():
+    """for_channel(N) selects the right per-band byte tuple."""
+    from wifit3.chips.rt2800usb.eeprom import IqCalibration
+    iq = IqCalibration(
+        tx0_gain_2g=0x10, tx0_phase_2g=0x11, tx1_gain_2g=0x12, tx1_phase_2g=0x13,
+        tx0_gain_5g_lo=0x20, tx0_phase_5g_lo=0x21, tx1_gain_5g_lo=0x22, tx1_phase_5g_lo=0x23,
+        tx0_gain_5g_mid=0x30, tx0_phase_5g_mid=0x31, tx1_gain_5g_mid=0x32, tx1_phase_5g_mid=0x33,
+        tx0_gain_5g_hi=0x40, tx0_phase_5g_hi=0x41, tx1_gain_5g_hi=0x42, tx1_phase_5g_hi=0x43,
+        rf_iq_comp=0xAA, rf_iq_imbal=0xBB,
+    )
+    # 2.4 GHz
+    c = iq.for_channel(6)
+    assert c.tx0_gain == 0x10 and c.tx1_phase == 0x13 and c.rf_iq_comp == 0xAA
+    # UNII-1/2
+    c = iq.for_channel(36)
+    assert c.tx0_gain == 0x20 and c.tx1_phase == 0x23
+    c = iq.for_channel(64)
+    assert c.tx0_gain == 0x20
+    # UNII-2-ext
+    c = iq.for_channel(100)
+    assert c.tx0_gain == 0x30 and c.tx1_phase == 0x33
+    c = iq.for_channel(138)
+    assert c.tx0_gain == 0x30
+    # UNII-3
+    c = iq.for_channel(140)
+    assert c.tx0_gain == 0x40 and c.tx1_phase == 0x43
+    c = iq.for_channel(165)
+    assert c.tx0_gain == 0x40
+    # Channels outside known sub-bands fall through to cal=0.
+    c = iq.for_channel(170)
+    assert c.tx0_gain == 0 and c.tx0_phase == 0
+    # Global IQ comp/imbal still carried through.
+    assert c.rf_iq_comp == 0xAA
+    assert c.rf_iq_imbal == 0xBB
+
+
+def test_iq_calibrate_writes_bbp158_159_pairs():
+    """iq_calibrate writes 6 BBP158/159 index/data pairs (TX0/TX1
+    gain/phase + global RF IQ compensation + imbalance)."""
+    import wifit3.chips.rt2800usb.bbp as bbp_mod
+    from wifit3.chips.rt2800usb.chan import iq_calibrate
+    from wifit3.chips.rt2800usb.eeprom import IqCalChannel
+
+    iq = IqCalChannel(
+        tx0_gain=0x11, tx0_phase=0x22,
+        tx1_gain=0x33, tx1_phase=0x44,
+        rf_iq_comp=0x55, rf_iq_imbal=0x66,
+    )
+    t = BbpFakeTransport()
+    iq_calibrate(t, 6, iq)
+    # After the sequence, BBP158/159 hold the LAST pair's values:
+    # BBP158=0x03 (imbal indirect), BBP159=0x66 (imbal value).
+    assert bbp_mod.bbp_read(t, 158) == 0x03
+    assert bbp_mod.bbp_read(t, 159) == 0x66
+
+
+def test_set_channel_5592_5g_unii1_writes_rfcsr10_0x97(monkeypatch):
+    """5 GHz fixed-block first write — RFCSR10 = 0x97 (vs 2.4G's 0x90)."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
+
+    t = RfcsrFakeTransport()
+    chan_mod.set_channel(
+        t, RT_RT5592, 36,
+        xtal_40mhz=True, tx_chain_num=2, rx_chain_num=2,
+    )
+    assert rfcsr_read(t, 10) == 0x97
+
+
+def test_set_channel_5592_5g_synth_pack_xtal40(monkeypatch):
+    """xtal40 ch 36 → N=86 → RFCSR8 = 0x56. Spot-check across UNII bands."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
+
+    # ch 36 → N=86, ch 100 → N=91, ch 149 → N=95, ch 165 → N=97 (xtal40)
+    cases = [(36, 86), (100, 91), (149, 95), (165, 97)]
+    for ch, expected_n in cases:
+        t = RfcsrFakeTransport()
+        chan_mod.set_channel(
+            t, RT_RT5592, ch,
+            xtal_40mhz=True, tx_chain_num=2, rx_chain_num=2,
+        )
+        assert rfcsr_read(t, 8) == expected_n & 0xFF, (
+            f"ch={ch}: RFCSR8 = 0x{rfcsr_read(t, 8):02x}, expected 0x{expected_n & 0xFF:02x}"
+        )
+
+
+def test_set_channel_5592_5g_unii1_ch36_uses_rfcsr24_0x09(monkeypatch):
+    """ch <= 50 in UNII-1/2 → RFCSR24 = 0x09."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
+
+    t = RfcsrFakeTransport()
+    chan_mod.set_channel(
+        t, RT_RT5592, 36,
+        xtal_40mhz=True, tx_chain_num=2, rx_chain_num=2,
+    )
+    assert rfcsr_read(t, 24) == 0x09
+
+
+def test_set_channel_5592_5g_unii1_ch52_uses_rfcsr24_0x07(monkeypatch):
+    """ch >= 52 in UNII-1/2 → RFCSR24 = 0x07 + RFCSR55 = 0x04 + RFCSR56 = 0xBB."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
+
+    t = RfcsrFakeTransport()
+    chan_mod.set_channel(
+        t, RT_RT5592, 52,
+        xtal_40mhz=True, tx_chain_num=2, rx_chain_num=2,
+    )
+    assert rfcsr_read(t, 24) == 0x07
+    assert rfcsr_read(t, 55) == 0x04
+    assert rfcsr_read(t, 56) == 0xBB
+
+
+def test_set_channel_5592_5g_unii3_ch153_uses_rfcsr23_0x3c(monkeypatch):
+    """ch <= 153 in UNII-2-ext/UNII-3 block → RFCSR23 = 0x3C, RFCSR24 = 0x06."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
+
+    t = RfcsrFakeTransport()
+    chan_mod.set_channel(
+        t, RT_RT5592, 153,
+        xtal_40mhz=True, tx_chain_num=2, rx_chain_num=2,
+    )
+    assert rfcsr_read(t, 23) == 0x3C
+    assert rfcsr_read(t, 24) == 0x06
+
+
+def test_set_channel_5592_5g_unii3_ch157_uses_rfcsr23_0x38(monkeypatch):
+    """ch >= 155 in UNII-3 → RFCSR23 = 0x38, RFCSR24 = 0x05."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
+
+    t = RfcsrFakeTransport()
+    chan_mod.set_channel(
+        t, RT_RT5592, 157,
+        xtal_40mhz=True, tx_chain_num=2, rx_chain_num=2,
+    )
+    assert rfcsr_read(t, 23) == 0x38
+    assert rfcsr_read(t, 24) == 0x05
+
+
+def test_set_channel_5592_5g_unii2ext_ch100_breakpoints(monkeypatch):
+    """ch <= 138 in 100-165 block uses the 'low' tuple for RFCSR39/43/44/46."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
+
+    t = RfcsrFakeTransport()
+    chan_mod.set_channel(
+        t, RT_RT5592, 100,
+        xtal_40mhz=True, tx_chain_num=2, rx_chain_num=2,
+    )
+    assert rfcsr_read(t, 39) == 0x1A
+    assert rfcsr_read(t, 43) == 0x3B
+    assert rfcsr_read(t, 44) == 0x20
+    assert rfcsr_read(t, 46) == 0x18
+
+
+def test_set_channel_5592_5g_unii2ext_ch140_breakpoints(monkeypatch):
+    """ch >= 140 in 100-165 block uses the 'high' tuple for RFCSR39/43/44/46."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.rfcsr import rfcsr_read
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
+
+    t = RfcsrFakeTransport()
+    chan_mod.set_channel(
+        t, RT_RT5592, 149,
+        xtal_40mhz=True, tx_chain_num=2, rx_chain_num=2,
+    )
+    assert rfcsr_read(t, 39) == 0x18
+    assert rfcsr_read(t, 43) == 0x1B
+    assert rfcsr_read(t, 44) == 0x10
+    assert rfcsr_read(t, 46) == 0x08
+
+
+def test_set_channel_5592_5g_writes_bbp82_0xf2(monkeypatch):
+    """5 GHz post-RF tail overwrites BBP82 with 0xF2 (vs 2.4G's 0x84)."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.bbp import bbp_read
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
+
+    t = RfcsrFakeTransport()
+    chan_mod.set_channel(
+        t, RT_RT5592, 36,
+        xtal_40mhz=True, tx_chain_num=2, rx_chain_num=2,
+    )
+    assert bbp_read(t, 82) == 0xF2
+
+
+def test_set_channel_5592_5g_bbp75_with_ext_lna_a(monkeypatch):
+    """has_cap_external_lna_a=True → BBP75 = 0x46 (vs default 0x50)."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.bbp import bbp_read
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
+
+    t = RfcsrFakeTransport()
+    chan_mod.set_channel(
+        t, RT_RT5592, 36,
+        xtal_40mhz=True, tx_chain_num=2, rx_chain_num=2,
+        has_cap_external_lna_a=True,
+    )
+    assert bbp_read(t, 75) == 0x46
+
+    t2 = RfcsrFakeTransport()
+    chan_mod.set_channel(
+        t2, RT_RT5592, 36,
+        xtal_40mhz=True, tx_chain_num=2, rx_chain_num=2,
+        has_cap_external_lna_a=False,
+    )
+    assert bbp_read(t2, 75) == 0x50
+
+
+def test_set_channel_5592_5g_tx_band_cfg_a_bit(monkeypatch):
+    """5 GHz → TX_BAND_CFG.A = 1, .BG = 0."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.constants import (
+        TX_BAND_CFG_A, TX_BAND_CFG_BG_BIT, TX_BAND_CFG_REG,
+    )
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
+
+    t = RfcsrFakeTransport()
+    chan_mod.set_channel(
+        t, RT_RT5592, 36,
+        xtal_40mhz=True, tx_chain_num=2, rx_chain_num=2,
+    )
+    reg = t.read32(TX_BAND_CFG_REG)
+    assert reg & TX_BAND_CFG_A, "A bit must be set for 5 GHz"
+    assert not (reg & TX_BAND_CFG_BG_BIT), "BG bit must be clear for 5 GHz"
+
+
+def test_set_channel_5592_5g_tx_pin_cfg_uses_a_side_pas(monkeypatch):
+    """5 GHz TX_PIN_CFG: A-side PAs (A0+A1), LNAs on both A+G sides per
+    active chain. G-side PAs must be clear."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.constants import (
+        TX_PIN_CFG_LNA_PE_A0_EN_BIT, TX_PIN_CFG_LNA_PE_A1_EN,
+        TX_PIN_CFG_LNA_PE_G0_EN_BIT, TX_PIN_CFG_LNA_PE_G1_EN,
+        TX_PIN_CFG_PA_PE_A0_EN_BIT, TX_PIN_CFG_PA_PE_A1_EN,
+        TX_PIN_CFG_PA_PE_G0_EN_BIT, TX_PIN_CFG_PA_PE_G1_EN,
+        TX_PIN_CFG_REG,
+    )
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
+
+    t = RfcsrFakeTransport()
+    chan_mod.set_channel(
+        t, RT_RT5592, 36,
+        xtal_40mhz=True, tx_chain_num=2, rx_chain_num=2,
+    )
+    tx_pin = t.read32(TX_PIN_CFG_REG)
+    # PA: A0 + A1 set; G0/G1 cleared.
+    assert tx_pin & TX_PIN_CFG_PA_PE_A0_EN_BIT
+    assert tx_pin & TX_PIN_CFG_PA_PE_A1_EN
+    assert not (tx_pin & TX_PIN_CFG_PA_PE_G0_EN_BIT)
+    assert not (tx_pin & TX_PIN_CFG_PA_PE_G1_EN)
+    # LNAs: BOTH A- and G-side enables for every active chain.
+    assert tx_pin & TX_PIN_CFG_LNA_PE_A0_EN_BIT
+    assert tx_pin & TX_PIN_CFG_LNA_PE_A1_EN
+    assert tx_pin & TX_PIN_CFG_LNA_PE_G0_EN_BIT
+    assert tx_pin & TX_PIN_CFG_LNA_PE_G1_EN
+
+
+def test_set_channel_5592_5g_bbp66_agc_formula(monkeypatch):
+    """5 GHz BBP66 AGC = 0x24 + 2*lna_gain (vs 0x1c for 2.4G)."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.bbp import bbp_read
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
+
+    t = RfcsrFakeTransport()
+    chan_mod.set_channel(
+        t, RT_RT5592, 36,
+        xtal_40mhz=True, tx_chain_num=2, rx_chain_num=2,
+        lna_gain=4,
+    )
+    assert bbp_read(t, 66) == (0x24 + 2 * 4) & 0xFF   # 0x2C
+
+
+def test_set_channel_5592_5g_iq_cal_runs_per_tune(monkeypatch):
+    """When iq_cal is plumbed in, the BBP158/159 last-pair leaves
+    BBP158=0x03 (RF IQ imbalance index) + BBP159=<imbal byte>."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.bbp import bbp_read
+    from wifit3.chips.rt2800usb.eeprom import IqCalibration
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
+
+    iq = IqCalibration(
+        tx0_gain_2g=0, tx0_phase_2g=0, tx1_gain_2g=0, tx1_phase_2g=0,
+        tx0_gain_5g_lo=0x10, tx0_phase_5g_lo=0x11,
+        tx1_gain_5g_lo=0x12, tx1_phase_5g_lo=0x13,
+        tx0_gain_5g_mid=0, tx0_phase_5g_mid=0, tx1_gain_5g_mid=0, tx1_phase_5g_mid=0,
+        tx0_gain_5g_hi=0, tx0_phase_5g_hi=0, tx1_gain_5g_hi=0, tx1_phase_5g_hi=0,
+        rf_iq_comp=0x77, rf_iq_imbal=0x88,
+    )
+    t = RfcsrFakeTransport()
+    chan_mod.set_channel(
+        t, RT_RT5592, 36,
+        xtal_40mhz=True, tx_chain_num=2, rx_chain_num=2,
+        iq_cal=iq,
+    )
+    # Final BBP158/159 pair is the RF IQ imbalance indirect write.
+    assert bbp_read(t, 158) == 0x03
+    assert bbp_read(t, 159) == 0x88
+
+
+def test_set_channel_5592_2g_iq_cal_still_runs(monkeypatch):
+    """2 GHz path now also calls iq_calibrate (was deferred in M-B1).
+    Final BBP158/159 = 0x03 / rf_iq_imbal."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.bbp import bbp_read
+    from wifit3.chips.rt2800usb.eeprom import IqCalibration
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    monkeypatch.setattr(chan_mod, "freq_cal_mode1_usb", lambda *_a, **_kw: None)
+
+    iq = IqCalibration(
+        tx0_gain_2g=0x21, tx0_phase_2g=0x22, tx1_gain_2g=0, tx1_phase_2g=0,
+        tx0_gain_5g_lo=0, tx0_phase_5g_lo=0, tx1_gain_5g_lo=0, tx1_phase_5g_lo=0,
+        tx0_gain_5g_mid=0, tx0_phase_5g_mid=0, tx1_gain_5g_mid=0, tx1_phase_5g_mid=0,
+        tx0_gain_5g_hi=0, tx0_phase_5g_hi=0, tx1_gain_5g_hi=0, tx1_phase_5g_hi=0,
+        rf_iq_comp=0, rf_iq_imbal=0x99,
+    )
+    t = RfcsrFakeTransport()
+    chan_mod.set_channel(
+        t, RT_RT5592, 1,
+        xtal_40mhz=True, tx_chain_num=2, rx_chain_num=2,
+        iq_cal=iq,
+    )
+    assert bbp_read(t, 158) == 0x03
+    assert bbp_read(t, 159) == 0x99
 
 
 def test_is_chip_warm_distinguishes_cold_pre_init_from_warm():
