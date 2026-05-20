@@ -6,8 +6,10 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, RichLog
+from rich.color import Color
 from rich.markup import escape
-from rich.text import Text
+from rich.style import Style
+from rich.text import Span, Text
 
 from wifit3.engine.models import AccessPoint
 
@@ -16,12 +18,48 @@ from ..encryption_format import format_encryption_markup
 from .channel_filter import ChannelFilterDialog
 
 
-# Dim a row this many seconds after the last frame from its BSSID.
-STALE_THRESHOLD_S = 15.0
+# Rows fade their foreground toward the theme background over this duration,
+# then get evicted on the next sort tick.
+FADE_DURATION_S = 30.0
+
+# Floor on row brightness — rows never fade past this fraction of original
+# color before eviction. Keeps the final few seconds legible instead of
+# punching black gaps in the table.
+MIN_BRIGHTNESS = 0.2
 
 # Sort the table on its own cadence instead of every value-update tick —
-# stops rows from bouncing on every signal/beacon update.
+# stops rows from bouncing on every signal/beacon update. Same tick evicts
+# fully-faded APs.
 SORT_INTERVAL_S = 2.0
+
+
+def _hex_rgb(h: str) -> tuple[int, int, int]:
+    h = h.lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def _fade_text(text: Text, factor: float, bg: tuple[int, int, int]) -> Text:
+    """Blend every span's foreground toward `bg` by `factor` (0..1)."""
+    if factor <= 0:
+        return text
+
+    def _fade(style):
+        if isinstance(style, str):
+            style = Style.parse(style) if style else Style()
+        if style.color is None:
+            return style
+        t = style.color.get_truecolor()
+        s = 1.0 - factor
+        return style + Style(color=Color.from_rgb(
+            t.red * s + bg[0] * factor,
+            t.green * s + bg[1] * factor,
+            t.blue * s + bg[2] * factor,
+        ))
+
+    out = text.copy()
+    out.style = _fade(out.style)
+    out.spans = [Span(sp.start, sp.end, _fade(sp.style)) for sp in out.spans]
+    return out
 
 
 class ScannerView(Screen):
@@ -54,8 +92,6 @@ class ScannerView(Screen):
     def __init__(self):
         super().__init__()
         self.ap_cache: Dict[str, AccessPoint] = {}
-        # Track stale-state per row so we only re-style on transitions.
-        self._stale_cache: Dict[str, bool] = {}
         self._refresh_timer = None
         self._sort_timer = None
         # Default to POWER, descending (most signal at top).
@@ -82,8 +118,8 @@ class ScannerView(Screen):
         log = self.query_one("#system-log", RichLog)
         log.write("[bold green]Scanner Initialized.[/bold green]")
         log.write(
-            f"[dim]Greyed-out rows = no beacons seen for "
-            f"{int(STALE_THRESHOLD_S)}s+ (out of range / off-channel).[/dim]"
+            f"[dim]Rows fade out over {int(FADE_DURATION_S)}s of silence "
+            f"(out of range / off-channel), then disappear.[/dim]"
         )
         self._update_column_headers()
 
@@ -93,11 +129,12 @@ class ScannerView(Screen):
                 f"{self.app.active_interface.name}...[/cyan]"
             )
             await self.app.active_interface.start_hopping(interval=0.25)
-            # 60 FPS in-place value updates — no resort.
-            self._refresh_timer = self.set_interval(1 / 60, self.refresh_table)
-            # Lazy resort + stale-row check.
+            # 15 FPS in-place value updates — no resort. Beacons arrive ~10 Hz
+            # per AP at best, so 15 Hz is plenty and 4x cheaper than 60.
+            self._refresh_timer = self.set_interval(1 / 15, self.refresh_table)
+            # Lazy resort + evict expired APs.
             self._sort_timer = self.set_interval(
-                SORT_INTERVAL_S, self._apply_sort_and_stale
+                SORT_INTERVAL_S, self._apply_sort_and_evict
             )
 
     # ----- Column header / sort indicator ------------------------------------
@@ -129,15 +166,29 @@ class ScannerView(Screen):
                 client_counts[c.bssid] = client_counts.get(c.bssid, 0) + 1
 
         now = time.time()
+        tv = self.app.theme_variables
+        bg = _hex_rgb(tv.get("background", "#000000"))
+        # Cache resolved theme fg on self so _build_cells / _ssid_markup can
+        # pick it up without threading params (refresh tick is the only caller).
+        self._theme_fg = tv.get("foreground", "#ffffff")
 
         for ap in iface.get_access_points():
+            age = now - ap.last_seen
+            if age >= FADE_DURATION_S:
+                # Eviction runs on the 2 s sort tick — don't drop mid-frame.
+                continue
+
             n_cli = client_counts.get(ap.bssid, 0)
-            is_stale = (now - ap.last_seen) > STALE_THRESHOLD_S
-            cells = self._build_cells(ap, n_cli, is_stale)
+            # Quadratic ease-in: cells stay bright through the first half,
+            # then fade fast. Capped at 1-MIN_BRIGHTNESS to stay readable.
+            factor = min(1.0 - MIN_BRIGHTNESS, (age / FADE_DURATION_S) ** 2)
+            cells = [
+                _fade_text(c, factor, bg)
+                for c in self._build_cells(ap, n_cli)
+            ]
 
             if ap.bssid not in self.ap_cache:
                 self.ap_cache[ap.bssid] = ap
-                self._stale_cache[ap.bssid] = is_stale
                 table.add_row(*cells, key=ap.bssid)
             else:
                 # Decloak event — already logged here.
@@ -152,100 +203,70 @@ class ScannerView(Screen):
                     )
 
                 self.ap_cache[ap.bssid] = ap
-                self._stale_cache[ap.bssid] = is_stale
                 for (key, _), cell in zip(self._COLUMNS, cells):
                     table.update_cell(ap.bssid, key, cell)
 
             # Drain new capture events for this AP into the log.
             self._drain_capture_events(ap, iface.forged_macs)
 
-    def _apply_sort_and_stale(self) -> None:
-        """Re-sort the table and refresh stale-row styling. Runs every 2 s."""
-        self._refresh_stale_rows()
+    def _apply_sort_and_evict(self) -> None:
+        """Re-sort the table and drop fully-faded APs. Runs every 2 s."""
+        self._evict_expired_aps()
         self._apply_sort()
 
-    def _refresh_stale_rows(self) -> None:
-        """Re-style any row whose stale-state changed since the last tick."""
+    def _evict_expired_aps(self) -> None:
         if not self.app.active_interface:
             return
         iface = self.app.active_interface
         table = self.query_one("#ap-table", DataTable)
         now = time.time()
 
-        client_counts: Dict[str, int] = {}
-        for c in iface.clients.values():
-            if c.bssid and c.mac not in iface.forged_macs:
-                client_counts[c.bssid] = client_counts.get(c.bssid, 0) + 1
-
-        for bssid, ap in self.ap_cache.items():
-            is_stale = (now - ap.last_seen) > STALE_THRESHOLD_S
-            if self._stale_cache.get(bssid) == is_stale:
-                continue
-            # Stale-state flipped — rebuild all cells for this row.
-            self._stale_cache[bssid] = is_stale
-            cells = self._build_cells(ap, client_counts.get(bssid, 0), is_stale)
-            for (key, _), cell in zip(self._COLUMNS, cells):
-                try:
-                    table.update_cell(bssid, key, cell)
-                except Exception:
-                    pass
+        to_drop = [
+            bssid for bssid, ap in self.ap_cache.items()
+            if (now - ap.last_seen) >= FADE_DURATION_S
+        ]
+        for bssid in to_drop:
+            iface.access_points.pop(bssid, None)
+            self.ap_cache.pop(bssid, None)
+            try:
+                table.remove_row(bssid)
+            except Exception:
+                pass
 
     # ----- Cell construction -------------------------------------------------
 
-    def _build_cells(
-        self, ap: AccessPoint, n_clients: int, is_stale: bool
-    ) -> List[Text]:
-        """Build the per-column Text cells for one AP row."""
-        if is_stale:
-            return [
-                Text(ap.bssid, style="dim"),
-                Text(str(ap.channel), justify="right", style="dim"),
-                Text(f"{ap.signal} dBm", justify="right", style="dim"),
-                Text(str(ap.beacons), justify="right", style="dim"),
-                Text(str(n_clients) if n_clients else "", justify="right", style="dim"),
-                Text(self._strip_markup(format_encryption_markup(ap)), style="dim"),
-                Text(self._ssid_plain(ap), style="dim italic"),
-            ]
+    def _build_cells(self, ap: AccessPoint, n_clients: int) -> List[Text]:
+        """Build the per-column full-color Text cells for one AP row.
+        Aging is applied by the caller via `_fade_text`.
+
+        Detail parens like `(PSK)` get theme-fg so they fade with the row
+        rather than competing with row-age as a separate signal — the row
+        fade is the AP's health indicator.
+        """
+        fg = self._theme_fg
         return [
-            Text(ap.bssid),
-            Text(str(ap.channel), justify="right"),
-            Text(f"{ap.signal} dBm", justify="right"),
-            Text(str(ap.beacons), justify="right"),
-            Text(str(n_clients) if n_clients else "", justify="right"),
-            Text.from_markup(format_encryption_markup(ap), emoji=False),
+            Text(ap.bssid, style=fg),
+            Text(str(ap.channel), justify="right", style=fg),
+            Text(f"{ap.signal} dBm", justify="right", style=fg),
+            Text(str(ap.beacons), justify="right", style=fg),
+            Text(str(n_clients) if n_clients else "", justify="right", style=fg),
+            # style=fg gives the bare '→' between WPA3/WPA2 a fadeable base color.
+            Text.from_markup(format_encryption_markup(ap, muted=fg), emoji=False, style=fg),
             self._ssid_markup(ap),
         ]
 
-    @staticmethod
-    def _ssid_plain(ap: AccessPoint) -> str:
-        """Plain text SSID + capture markers for stale rows."""
-        base = ap.ssid or "<Hidden>"
-        markers = ScannerView._capture_marker_text(ap)
-        return f"{base} {markers}".rstrip()
-
     def _ssid_markup(self, ap: AccessPoint) -> Text:
-        """Italic SSID with optional dim '<Hidden>' and capture markers."""
+        """Bold for real SSIDs; italic '<Hidden>' otherwise. Same fg either
+        way — italic alone signals the placeholder."""
         if ap.ssid:
-            text = Text(ap.ssid, style="white italic")
+            text = Text(ap.ssid, style=f"{self._theme_fg} bold")
         else:
-            text = Text("<Hidden>", style="dim italic")
+            text = Text("<Hidden>", style=f"{self._theme_fg} italic")
         markers_markup = self._capture_marker_markup(ap)
         if markers_markup:
             text.append(" ")
             text.append_text(Text.from_markup(markers_markup, emoji=False))
         return text
-
-    @staticmethod
-    def _capture_marker_text(ap: AccessPoint) -> str:
-        """Plain '✓HS ✓PMK' string (stale rows / non-markup contexts)."""
-        parts: List[str] = []
-        has_hs = any(hs.is_complete for hs in ap.handshakes.values())
-        has_pmk = any(hs.pmkid for hs in ap.handshakes.values())
-        if has_hs:
-            parts.append("✓HS")
-        if has_pmk:
-            parts.append("✓PMK")
-        return " ".join(parts)
 
     @staticmethod
     def _capture_marker_markup(ap: AccessPoint) -> str:
@@ -258,12 +279,6 @@ class ScannerView(Screen):
         if has_pmk:
             parts.append("[green]✓PMK[/green]")
         return " ".join(parts)
-
-    @staticmethod
-    def _strip_markup(markup: str) -> str:
-        """Strip Rich markup tags from a string. For stale rows we want
-        flat dim text, not nested colors competing with the dim style."""
-        return Text.from_markup(markup, emoji=False).plain
 
     # ----- Capture-event logging ---------------------------------------------
 
@@ -436,7 +451,6 @@ class ScannerView(Screen):
         for bssid in stale:
             iface.access_points.pop(bssid, None)
             self.ap_cache.pop(bssid, None)
-            self._stale_cache.pop(bssid, None)
             try:
                 table.remove_row(bssid)
             except Exception:

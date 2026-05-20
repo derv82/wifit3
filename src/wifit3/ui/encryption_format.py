@@ -14,7 +14,6 @@ _COLOR_WPA3 = "red"
 _COLOR_WPA2 = "green"
 _COLOR_WPA_LEGACY = "red"
 _COLOR_WEP = "red"
-_COLOR_OPEN = "dim"
 _COLOR_OWE = "yellow"
 
 
@@ -44,8 +43,9 @@ def _detail_markup(
     akms_tok: str,
     cipher: Optional[str],
     show_cipher: bool,
+    muted: str = "dim",
 ) -> str:
-    """Build the dim-parens detail suffix, e.g. ` [dim](PSK)[/dim]`."""
+    """Build the muted-parens detail suffix, e.g. ` [dim](PSK)[/dim]`."""
     inner_parts: List[str] = []
     if akms_tok:
         inner_parts.append(akms_tok)
@@ -53,15 +53,23 @@ def _detail_markup(
         inner_parts.append(cipher)
     if not inner_parts:
         return ""
-    return f" [dim]({'·'.join(inner_parts)})[/dim]"
+    return f" [{muted}]({'·'.join(inner_parts)})[/{muted}]"
 
 
-def format_encryption_markup(ap: AccessPoint, detailed: bool = False) -> str:
+def format_encryption_markup(
+    ap: AccessPoint, detailed: bool = False, muted: str = "dim"
+) -> str:
     """Return Rich-markup for the ENCRYPT cell.
 
     ``detailed=False`` (scanner) drops CCMP from the cipher detail since
     it's the universal modern pairwise cipher and just adds noise.
     ``detailed=True`` (focus view) keeps the cipher visible.
+
+    ``muted`` overrides the default Rich ``"dim"`` attribute for the
+    parenthesised detail / fallback strings. Pass a concrete hex color
+    (e.g. resolved from ``app.theme_variables["foreground-darken-3"]``)
+    when the caller needs the muted text to participate in a color
+    blend — Rich's ``dim`` has no color triplet and is skipped by blenders.
     """
     akms_tok = _simplified_akms(ap.akms)
     cipher = ap.pairwise_cipher
@@ -71,12 +79,12 @@ def format_encryption_markup(ap: AccessPoint, detailed: bool = False) -> str:
     # WPA3 Transition (has both SAE and PSK) — render as WPA3→WPA2.
     if ap.wpa3 and ap.transition_mode:
         head = f"[{_COLOR_WPA3}]WPA3[/{_COLOR_WPA3}]→[{_COLOR_WPA2}]WPA2[/{_COLOR_WPA2}]"
-        return head + _detail_markup(akms_tok, cipher, show_cipher)
+        return head + _detail_markup(akms_tok, cipher, show_cipher, muted)
 
     # Pure WPA3-SAE.
     if ap.wpa3:
         head = f"[{_COLOR_WPA3}]WPA3[/{_COLOR_WPA3}]"
-        return head + _detail_markup(akms_tok, cipher, show_cipher)
+        return head + _detail_markup(akms_tok, cipher, show_cipher, muted)
 
     # OWE (Enhanced Open).
     if "OWE" in ap.akms:
@@ -85,22 +93,22 @@ def format_encryption_markup(ap: AccessPoint, detailed: bool = False) -> str:
     # Any RSN-based modern WPA2 — we have AKMs in the list.
     if ap.akms:
         head = f"[{_COLOR_WPA2}]WPA2[/{_COLOR_WPA2}]"
-        return head + _detail_markup(akms_tok, cipher, show_cipher)
+        return head + _detail_markup(akms_tok, cipher, show_cipher, muted)
 
     # Fallback to the legacy encryption string for OPEN/WEP/WPA1.
     enc = (ap.encryption or "").upper()
     if enc == "OPEN" or not enc or enc == "UNKNOWN":
-        return f"[{_COLOR_OPEN}]OPEN[/{_COLOR_OPEN}]"
+        return f"[{muted}]OPEN[/{muted}]"
     if enc == "WEP":
         return f"[{_COLOR_WEP}]WEP[/{_COLOR_WEP}]"
     if enc.startswith("WPA-") or enc == "WPA":
         # Legacy WPA1 vendor IE — TKIP universal.
         head = f"[{_COLOR_WPA_LEGACY}]WPA[/{_COLOR_WPA_LEGACY}]"
-        tail = " [dim](PSK·TKIP)[/dim]" if detailed else " [dim](PSK)[/dim]"
+        tail = f" [{muted}](PSK·TKIP)[/{muted}]" if detailed else f" [{muted}](PSK)[/{muted}]"
         return head + tail
 
-    # Unknown — show raw string dim.
-    return f"[dim]{enc}[/dim]"
+    # Unknown — show raw string muted.
+    return f"[{muted}]{enc}[/{muted}]"
 
 
 def format_pmf_markup(ap: AccessPoint) -> str:

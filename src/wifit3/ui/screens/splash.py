@@ -70,8 +70,9 @@ class SplashView(Screen):
         yield Footer()
 
     def _get_os_warning(self) -> str:
+        warn = self.app.theme_variables.get("text-warning", "yellow")
         if sys.platform == "win32":
-            return ("[yellow]Windows Notice:[/yellow] You must install the WinUSB driver\n"
+            return (f"[{warn}]Windows Notice:[/{warn}] You must install the WinUSB driver\n"
                     "for your wireless card using Zadig before Wifit3 can see it.")
         elif sys.platform == "linux":
             return ("[red]Linux Notice:[/red] Your OS driver is currently controlling the card.\n"
@@ -79,7 +80,7 @@ class SplashView(Screen):
                     "[bold]sudo rmmod <chipset>[/bold]\n"
                     "We will prompt you before running this automatically.")
         else:
-            return "[yellow]OS Notice:[/yellow] Experimental platform. Your mileage may vary."
+            return f"[{warn}]OS Notice:[/{warn}] Experimental platform. Your mileage may vary."
 
     async def on_mount(self) -> None:
         self.query_one("#init-progress").display = False
@@ -110,8 +111,9 @@ class SplashView(Screen):
 
     def on_driver_progress(self, event: DriverProgress) -> None:
         """Handle progress updates sent via message from background threads."""
+        warn = self.app.theme_variables.get("text-warning", "yellow")
         self.query_one("#init-progress", ProgressBar).progress = event.percentage * 100
-        self.query_one("#status-label", Label).update(f"[bold yellow]{event.message}[/bold yellow]")
+        self.query_one("#status-label", Label).update(f"[bold {warn}]{event.message}[/bold {warn}]")
 
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
