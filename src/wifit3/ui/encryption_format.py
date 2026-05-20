@@ -10,11 +10,16 @@ from typing import List, Optional
 from wifit3.engine.models import AccessPoint
 
 
-_COLOR_WPA3 = "red"
-_COLOR_WPA2 = "green"
-_COLOR_WPA_LEGACY = "red"
-_COLOR_WEP = "red"
-_COLOR_OWE = "yellow"
+# Actionability palette: color signals what's worth targeting, not "how
+# strong" the protocol is. The scanner is a target-picker, so colors
+# should answer "is wifit3 going to crack this?"
+#   bright_green = attackable today (we have an attack)
+#   yellow       = interesting but no attack yet (PRs welcome)
+#   red          = out of scope (we don't support cracking this protocol)
+#   dim (muted)  = no attack needed (OPEN networks)
+_ATTACKABLE = "bright_green"
+_NO_ATTACK_YET = "yellow"
+_OUT_OF_SCOPE = "red"
 
 
 def _simplified_akms(akms: List[str]) -> str:
@@ -61,9 +66,11 @@ def format_encryption_markup(
 ) -> str:
     """Return Rich-markup for the ENCRYPT cell.
 
-    ``detailed=False`` (scanner) drops CCMP from the cipher detail since
-    it's the universal modern pairwise cipher and just adds noise.
-    ``detailed=True`` (focus view) keeps the cipher visible.
+    ``detailed=False`` (scanner) drops the pairwise cipher entirely — from
+    an attacker's perspective CCMP / GCMP-128 / GCMP-256 all funnel into
+    the same hashcat ``-m 22000`` hashline, so the cipher choice doesn't
+    open or close any wifit3 attack. Keep the scanner cell tight.
+    ``detailed=True`` (focus view) keeps the cipher visible for reference.
 
     ``muted`` overrides the default Rich ``"dim"`` attribute for the
     parenthesised detail / fallback strings. Pass a concrete hex color
@@ -73,26 +80,33 @@ def format_encryption_markup(
     """
     akms_tok = _simplified_akms(ap.akms)
     cipher = ap.pairwise_cipher
-    # In scanner mode, suppress CCMP. In detailed mode, show it as-is.
-    show_cipher = detailed or (cipher is not None and cipher != "CCMP")
+    show_cipher = detailed and cipher is not None
 
-    # WPA3 Transition (has both SAE and PSK) — render as WPA3→WPA2.
+    # WPA3 Transition (has both SAE and PSK) — render as WPA3→2.
+    # Both sides _ATTACKABLE because the WPA2 lane is reachable via PMKID.
+    # The "WPA3→2" symbol already encodes PSK+SAE — that's the literal
+    # definition of WPA3 Personal Transition mode (AP advertises both
+    # AKM 2 / PSK and AKM 8 / SAE). So in scanner mode we suppress the
+    # AKM detail entirely; detailed mode still surfaces it in case of
+    # rare WPA3-Enterprise transition configs (PSK+SAE+EAP).
     if ap.wpa3 and ap.transition_mode:
-        head = f"[{_COLOR_WPA3}]WPA3[/{_COLOR_WPA3}]→[{_COLOR_WPA2}]WPA2[/{_COLOR_WPA2}]"
+        head = f"[{_ATTACKABLE}]WPA3[/{_ATTACKABLE}]→[{_ATTACKABLE}]2[/{_ATTACKABLE}]"
+        if not detailed:
+            return head
         return head + _detail_markup(akms_tok, cipher, show_cipher, muted)
 
-    # Pure WPA3-SAE.
+    # Pure WPA3-SAE — no usable attack yet.
     if ap.wpa3:
-        head = f"[{_COLOR_WPA3}]WPA3[/{_COLOR_WPA3}]"
+        head = f"[{_NO_ATTACK_YET}]WPA3[/{_NO_ATTACK_YET}]"
         return head + _detail_markup(akms_tok, cipher, show_cipher, muted)
 
-    # OWE (Enhanced Open).
+    # OWE (Enhanced Open) — no attack yet.
     if "OWE" in ap.akms:
-        return f"[{_COLOR_OWE}]OWE[/{_COLOR_OWE}]"
+        return f"[{_NO_ATTACK_YET}]OWE[/{_NO_ATTACK_YET}]"
 
-    # Any RSN-based modern WPA2 — we have AKMs in the list.
+    # Any RSN-based modern WPA2 — attackable.
     if ap.akms:
-        head = f"[{_COLOR_WPA2}]WPA2[/{_COLOR_WPA2}]"
+        head = f"[{_ATTACKABLE}]WPA2[/{_ATTACKABLE}]"
         return head + _detail_markup(akms_tok, cipher, show_cipher, muted)
 
     # Fallback to the legacy encryption string for OPEN/WEP/WPA1.
@@ -100,10 +114,10 @@ def format_encryption_markup(
     if enc == "OPEN" or not enc or enc == "UNKNOWN":
         return f"[{muted}]OPEN[/{muted}]"
     if enc == "WEP":
-        return f"[{_COLOR_WEP}]WEP[/{_COLOR_WEP}]"
+        return f"[{_OUT_OF_SCOPE}]WEP[/{_OUT_OF_SCOPE}]"
     if enc.startswith("WPA-") or enc == "WPA":
-        # Legacy WPA1 vendor IE — TKIP universal.
-        head = f"[{_COLOR_WPA_LEGACY}]WPA[/{_COLOR_WPA_LEGACY}]"
+        # Legacy WPA1 vendor IE — TKIP universal. Out of scope for wifit3.
+        head = f"[{_OUT_OF_SCOPE}]WPA[/{_OUT_OF_SCOPE}]"
         tail = f" [{muted}](PSK·TKIP)[/{muted}]" if detailed else f" [{muted}](PSK)[/{muted}]"
         return head + tail
 
@@ -124,12 +138,15 @@ def format_pmf_markup(ap: AccessPoint) -> str:
 
 
 def format_wpa3_mode_markup(ap: AccessPoint) -> Optional[str]:
-    """Color-coded WPA3 sub-line for the SECURITY panel.
+    """Actionability-colored WPA3 sub-line for the SECURITY panel.
 
     Returns ``None`` when the AP isn't WPA3 — caller should hide the line.
     """
     if not ap.wpa3:
         return None
     if ap.transition_mode:
-        return f"[{_COLOR_WPA3}]WPA3[/{_COLOR_WPA3}]→[{_COLOR_WPA2}]WPA2[/{_COLOR_WPA2}] [dim](Transition)[/dim]"
-    return f"[{_COLOR_WPA2}]Pure WPA3-SAE[/{_COLOR_WPA2}]"
+        return (
+            f"[{_ATTACKABLE}]WPA3[/{_ATTACKABLE}]→"
+            f"[{_ATTACKABLE}]2[/{_ATTACKABLE}] [dim](Transition)[/dim]"
+        )
+    return f"[{_NO_ATTACK_YET}]Pure WPA3-SAE[/{_NO_ATTACK_YET}]"

@@ -27,6 +27,25 @@ from ..encryption_format import (
 logger = logging.getLogger(__name__)
 
 
+def _format_duration(seconds: int) -> str:
+    """Human-readable duration for the Focus 'Last Beacon' line.
+    Examples: '5s', '1m 12s', '1h 4m', '2d 3h'. Drops the lower unit
+    when it's zero to keep the line tight."""
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        m, s = divmod(seconds, 60)
+        return f"{m}m {s}s" if s else f"{m}m"
+    if seconds < 86400:
+        h, rem = divmod(seconds, 3600)
+        m = rem // 60
+        return f"{h}h {m}m" if m else f"{h}h"
+    d, rem = divmod(seconds, 86400)
+    h = rem // 3600
+    return f"{d}d {h}h" if h else f"{d}d"
+
+
 class FocusView(Screen):
     """The Attack/Focus mode for a specific AP."""
 
@@ -145,11 +164,12 @@ class FocusView(Screen):
         ap = self.target_ap
 
         # TARGET INFO panel.
+        if ap.ssid:
+            ssid_markup = f"[bold cyan]{escape(ap.ssid)}[/bold cyan]"
+        else:
+            ssid_markup = "[italic bold cyan]<Hidden>[/italic bold cyan]"
         self.query_one("#lbl-ssid", Label).update(
-            Text.from_markup(
-                f"ESSID: [bold cyan]{escape(ap.ssid or '<Hidden>')}[/bold cyan]",
-                emoji=False,
-            )
+            Text.from_markup(f"ESSID: {ssid_markup}", emoji=False)
         )
         self.query_one("#lbl-bssid", Label).update(Text(f"BSSID: {ap.bssid}"))
         # While in FocusView the hopper is always stopped — channel is locked.
@@ -161,7 +181,7 @@ class FocusView(Screen):
         )
         last_seen_s = max(0, int(time.time() - ap.last_seen))
         self.query_one("#lbl-last-beacon", Label).update(
-            f"Last Beacon: {last_seen_s}s ago"
+            f"Last Beacon: {_format_duration(last_seen_s)} ago"
         )
 
         # SECURITY panel.

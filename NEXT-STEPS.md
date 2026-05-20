@@ -261,5 +261,51 @@ Since we are using Rich and Textual, we have several tiers of icons available:
 We could eventually replace the "ENC" text with a 🔒 icon and use vertical block characters (▂▄▆█) for the "PWR" column to make it look much more modern.
 
 
+## NEXT STEP: User Persistence + Decloak DB
+
+**Scope:** likely an entire session of work — covers app config, user preferences, and a long-lived BSSID→SSID mapping. Three distinct concerns that should share a storage layer.
+
+### 1. Persistent user config
+
+Settings the user changes during a session and would want to keep across runs:
+* Theme selection (currently hardcoded to `textual-dark` in `ui/app.py`)
+* Default sort column + direction in Scanner (`_sort_idx`, `_sort_reverse`)
+* Fade toggle state + fade-duration constants if we ever make them configurable
+* `hashcat` binary path (for future "crack handshake" wiring)
+* Capture output directory (currently hardcoded to `captures/`)
+* Default channel filter (e.g. "I only care about 2.4 GHz unless I say so")
+
+### 2. Decloaked SSID database
+
+When a hidden AP gets decloaked via a Probe Response carrying the real SSID, we currently log the mapping to the system-log and then *lose it on app exit*. Should persist.
+
+Schema sketch:
+```
+bssid TEXT PRIMARY KEY
+ssid TEXT
+first_seen TIMESTAMP
+last_seen TIMESTAMP
+sighting_count INTEGER     -- # of distinct beacon/probe-response captures
+confidence FLOAT           -- 0..1, see below
+sources INTEGER            -- bitmask: 1=beacon-decloak, 2=probe-response, 4=manual
+```
+
+**Confidence counter** — defense against MDK3-style probe-response spam. If we see `bssid=AA:BB:CC:11:22:33 → ssid="totally-real-WiFi"` exactly once, confidence is low. If we see the same mapping consistently over hundreds of frames across multiple sessions, confidence is high. Cap at 1.0. Decay slowly on conflicting evidence (e.g. same BSSID claiming a different SSID).
+
+UI integration: when the scanner sees a "hidden" AP whose BSSID matches a high-confidence entry, render the stored SSID with a `(decloaked)` muted suffix and italic style. Low-confidence entries shown with a `?` suffix to flag them as speculative.
+
+### 3. Storage layer
+
+* **Format:** SQLite (one DB, multiple tables: `config`, `decloaked_ssids`, future `oui_overrides`). Lightweight, atomic writes, fast lookups.
+* **Location:** XDG-compliant on Linux (`~/.config/wifit3/wifit3.db`), platform-native on Windows (`%APPDATA%/wifit3/wifit3.db`). Use `platformdirs` for cross-platform resolution.
+* **Migration:** version the schema from day one (`PRAGMA user_version`), expect to alter as features land.
+* **Privacy note:** the decloak DB is a passive sniffing artifact — document clearly in ETHICS/SAFETY checklist that the file contains evidence of nearby networks the user has been in range of.
+
+### Open questions
+* Should config live in TOML (human-editable) with only the decloak DB in SQLite? Possibly cleaner separation.
+* Auto-prune old decloak entries (e.g. drop entries unseen for >90 days), or grow forever?
+* When user runs wifit3 on a different machine — does the DB roam? (Probably not; treat as per-machine.)
+
+
 ## Architectural Guidelines
 *  **Lead's Rule:** Discuss class design (e.g., `GenericDriver` vs `WlanInterface` responsibilities) BEFORE execution. Treat the user as the Senior Lead.

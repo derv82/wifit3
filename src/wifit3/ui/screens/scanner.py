@@ -18,14 +18,14 @@ from ..encryption_format import format_encryption_markup
 from .channel_filter import ChannelFilterDialog
 
 
-# Rows fade their foreground toward the theme background over this duration,
-# then get evicted on the next sort tick.
+# Rows fade their foreground toward the DataTable's row background ($surface)
+# over this duration, then get evicted on the next sort tick.
 FADE_DURATION_S = 30.0
 
-# Floor on row brightness — rows never fade past this fraction of original
-# color before eviction. Keeps the final few seconds legible instead of
-# punching black gaps in the table.
-MIN_BRIGHTNESS = 0.2
+# Fresh rows stay at full brightness for this long before any fade starts —
+# both as a "this AP is alive" signal and to absorb the inevitable 1-2s
+# update jitter without the row starting to fade mid-conversation.
+GRACE_DURATION_S = 7.0
 
 # Sort the table on its own cadence instead of every value-update tick —
 # stops rows from bouncing on every signal/beacon update. Same tick evicts
@@ -70,17 +70,21 @@ class ScannerView(Screen):
         Binding("c", "change_channel", "Channel Filter", show=True),
         Binding("s", "cycle_sort", "Sort Col", show=True),
         Binding("o", "toggle_sort_dir", "Sort Asc/Desc", show=True),
+        Binding("f", "toggle_fade", "Toggle Fade", show=True),
         Binding("l", "toggle_log", "Toggle Log", show=True),
         Binding("home", "scroll_home", "Top", show=False, priority=True),
         Binding("end", "scroll_end", "Bottom", show=False, priority=True),
     ]
 
     # (column_key, display_label). Order here = on-screen order.
+    # Headers are stored without the sort-indicator suffix; _update_column_headers
+    # always appends 2 chars (" ▼", " ▲", or "  ") so column widths stay stable
+    # regardless of which column is currently sorted.
     _COLUMNS = [
         ("bssid", "BSSID"),
         ("channel", "CH"),
         ("signal", "POWER"),
-        ("beacons", "BEACONS"),
+        ("beacons", "🥓"),
         ("clients", "#CLI"),
         ("encryption", "ENCRYPT"),
         ("ssid", "SSID"),
@@ -88,6 +92,12 @@ class ScannerView(Screen):
 
     # Columns whose values are right-aligned numerics.
     _RIGHT_ALIGNED = {"channel", "signal", "beacons", "clients"}
+
+    # Beacon-flash window — when ap.beacons increments, the 🥓 cell is
+    # rendered bold for this many seconds. Long enough to be visible
+    # (~3 refresh ticks at 15 Hz), short enough to not blur into a
+    # continuous highlight on heavily-beaconing APs.
+    BEACON_FLASH_S = 0.2
 
     def __init__(self):
         super().__init__()
@@ -101,6 +111,13 @@ class ScannerView(Screen):
         self._channel_filter: Optional[List[int]] = None
         # Capture-event detector — coarse (no per-EAPOL spam in the scanner).
         self._events = CaptureEventDetector(granular_eapol=False)
+        # Per-BSSID prev-beacon-count + flash-deadline for "beacon arrived"
+        # cell highlight. Cleared alongside ap_cache during eviction.
+        self._prev_beacons: Dict[str, int] = {}
+        self._beacon_flash_until: Dict[str, float] = {}
+        # Fade toggle (default on). When off: rows stay at full brightness
+        # regardless of age, and the silent-AP eviction pass is skipped.
+        self._fade_enabled: bool = True
 
     # ----- Compose / mount ---------------------------------------------------
 
@@ -108,8 +125,11 @@ class ScannerView(Screen):
         yield Header(show_clock=True)
         with Vertical():
             table = DataTable(cursor_type="row", id="ap-table")
+            # Reserve 2 chars in every header so DataTable's auto-width
+            # accounts for the sort indicator from creation — otherwise
+            # narrow columns (e.g. "🥓s") get clipped when sorted.
             for key, label in self._COLUMNS:
-                table.add_column(label, key=key)
+                table.add_column(label + "  ", key=key)
             yield table
             yield RichLog(id="system-log", markup=True, highlight=True)
         yield Footer()
@@ -118,8 +138,9 @@ class ScannerView(Screen):
         log = self.query_one("#system-log", RichLog)
         log.write("[bold green]Scanner Initialized.[/bold green]")
         log.write(
-            f"[dim]Rows fade out over {int(FADE_DURATION_S)}s of silence "
-            f"(out of range / off-channel), then disappear.[/dim]"
+            f"[dim]Rows stay bright for {int(GRACE_DURATION_S)}s after a beacon, "
+            f"then fade out over {int(FADE_DURATION_S - GRACE_DURATION_S)}s of silence "
+            f"and disappear. Press [bold]f[/bold] to toggle fading.[/dim]"
         )
         self._update_column_headers()
 
@@ -142,12 +163,12 @@ class ScannerView(Screen):
     def _update_column_headers(self) -> None:
         table = self.query_one("#ap-table", DataTable)
         sort_key, _ = self._COLUMNS[self._sort_idx]
-        indicator = " ▼" if self._sort_reverse else " ▲"
+        active = " ▼" if self._sort_reverse else " ▲"
 
         for key, base_label in self._COLUMNS:
-            label = base_label + indicator if key == sort_key else base_label
+            suffix = active if key == sort_key else "  "
             if key in table.columns:
-                table.columns[key].label = label
+                table.columns[key].label = base_label + suffix
         table.refresh()
 
     # ----- Per-tick refresh --------------------------------------------------
@@ -167,24 +188,47 @@ class ScannerView(Screen):
 
         now = time.time()
         tv = self.app.theme_variables
-        bg = _hex_rgb(tv.get("background", "#000000"))
+        # Fade toward $surface (the actual DataTable row bg), not $background
+        # (the screen bg). Crucial on themes where surface is lighter than
+        # background — fading to black would crush text on the cursor row.
+        bg = _hex_rgb(tv.get("surface", tv.get("background", "#000000")))
         # Cache resolved theme fg on self so _build_cells / _ssid_markup can
         # pick it up without threading params (refresh tick is the only caller).
         self._theme_fg = tv.get("foreground", "#ffffff")
 
+        # Length of the actual fade phase (after the grace window).
+        fade_span = max(0.001, FADE_DURATION_S - GRACE_DURATION_S)
+
+        fade_enabled = self._fade_enabled
+
         for ap in iface.get_access_points():
             age = now - ap.last_seen
-            if age >= FADE_DURATION_S:
+            if fade_enabled and age >= FADE_DURATION_S:
                 # Eviction runs on the 2 s sort tick — don't drop mid-frame.
                 continue
 
             n_cli = client_counts.get(ap.bssid, 0)
-            # Quadratic ease-in: cells stay bright through the first half,
-            # then fade fast. Capped at 1-MIN_BRIGHTNESS to stay readable.
-            factor = min(1.0 - MIN_BRIGHTNESS, (age / FADE_DURATION_S) ** 2)
+            # Grace window: stay at full brightness as a "this AP is alive"
+            # signal. After that, linear fade to bg over fade_span.
+            # When fade is toggled off, all rows render at full brightness.
+            if not fade_enabled or age <= GRACE_DURATION_S:
+                factor = 0.0
+            else:
+                factor = min(1.0, (age - GRACE_DURATION_S) / fade_span)
+
+            # Beacon-arrival flash: bump the deadline whenever the count
+            # increments since we last saw this AP. First-sight rows skip
+            # the flash — the row is already at full brightness from the
+            # grace window, no extra signal needed.
+            prev = self._prev_beacons.get(ap.bssid)
+            if prev is not None and ap.beacons > prev:
+                self._beacon_flash_until[ap.bssid] = now + self.BEACON_FLASH_S
+            self._prev_beacons[ap.bssid] = ap.beacons
+            flash_bacon = now < self._beacon_flash_until.get(ap.bssid, 0.0)
+
             cells = [
                 _fade_text(c, factor, bg)
-                for c in self._build_cells(ap, n_cli)
+                for c in self._build_cells(ap, n_cli, flash_bacon=flash_bacon)
             ]
 
             if ap.bssid not in self.ap_cache:
@@ -217,6 +261,10 @@ class ScannerView(Screen):
     def _evict_expired_aps(self) -> None:
         if not self.app.active_interface:
             return
+        # When fade is toggled off the user has explicitly asked to keep
+        # all sightings — never evict silently.
+        if not self._fade_enabled:
+            return
         iface = self.app.active_interface
         table = self.query_one("#ap-table", DataTable)
         now = time.time()
@@ -228,6 +276,8 @@ class ScannerView(Screen):
         for bssid in to_drop:
             iface.access_points.pop(bssid, None)
             self.ap_cache.pop(bssid, None)
+            self._prev_beacons.pop(bssid, None)
+            self._beacon_flash_until.pop(bssid, None)
             try:
                 table.remove_row(bssid)
             except Exception:
@@ -235,20 +285,27 @@ class ScannerView(Screen):
 
     # ----- Cell construction -------------------------------------------------
 
-    def _build_cells(self, ap: AccessPoint, n_clients: int) -> List[Text]:
+    def _build_cells(
+        self, ap: AccessPoint, n_clients: int, flash_bacon: bool = False
+    ) -> List[Text]:
         """Build the per-column full-color Text cells for one AP row.
         Aging is applied by the caller via `_fade_text`.
 
         Detail parens like `(PSK)` get theme-fg so they fade with the row
         rather than competing with row-age as a separate signal — the row
         fade is the AP's health indicator.
+
+        ``flash_bacon`` bolds the 🥓 cell for one flash window when a
+        beacon just arrived — positive "AP is alive" signal that
+        complements the negative staleness signal of the row fade.
         """
         fg = self._theme_fg
+        bacon_style = f"{fg} bold" if flash_bacon else fg
         return [
             Text(ap.bssid, style=fg),
             Text(str(ap.channel), justify="right", style=fg),
             Text(f"{ap.signal} dBm", justify="right", style=fg),
-            Text(str(ap.beacons), justify="right", style=fg),
+            Text(str(ap.beacons), justify="right", style=bacon_style),
             Text(str(n_clients) if n_clients else "", justify="right", style=fg),
             # style=fg gives the bare '→' between WPA3/WPA2 a fadeable base color.
             Text.from_markup(format_encryption_markup(ap, muted=fg), emoji=False, style=fg),
@@ -327,28 +384,37 @@ class ScannerView(Screen):
 
         sort_key, _ = self._COLUMNS[self._sort_idx]
 
+        reverse = self._sort_reverse
+
         def _key(val):
             if isinstance(val, Text):
                 val = val.plain
             s = str(val).strip()
-            if not s:
-                # Empty client-count cells sort to the bottom regardless of
-                # direction by mapping to -inf in descending mode, but we
-                # can't change direction here. Sentinel 0 is fine for now.
-                return 0
-            # Strip non-numeric suffix (e.g. " dBm")
-            head = s.split()[0]
-            try:
-                return int(head)
-            except ValueError:
-                pass
-            try:
-                return float(head)
-            except ValueError:
-                pass
-            return s.lower()
+            is_empty = not s
 
-        table.sort(sort_key, key=_key, reverse=self._sort_reverse)
+            if is_empty:
+                primary: object = 0
+            else:
+                # Strip non-numeric suffix (e.g. " dBm")
+                head = s.split()[0]
+                try:
+                    primary = int(head)
+                except ValueError:
+                    try:
+                        primary = float(head)
+                    except ValueError:
+                        primary = s.lower()
+
+            # Force empties to the bottom in BOTH sort directions. table.sort
+            # sorts ascending by key then reverses if reverse=True, so the
+            # "bottom" of the final list = the FIRST element after the sort.
+            #   ascending  (reverse=False): empties want LARGEST  → sentinel 1
+            #   descending (reverse=True):  empties want SMALLEST → sentinel 0
+            # Reduces to: sentinel = 1 iff is_empty XOR reverse.
+            sentinel = int(is_empty != reverse)
+            return (sentinel, primary)
+
+        table.sort(sort_key, key=_key, reverse=reverse)
 
         if current_key:
             try:
@@ -362,6 +428,21 @@ class ScannerView(Screen):
     def action_toggle_log(self) -> None:
         log_widget = self.query_one("#system-log")
         log_widget.display = not log_widget.display
+
+    def action_toggle_fade(self) -> None:
+        self._fade_enabled = not self._fade_enabled
+        log = self.query_one("#system-log", RichLog)
+        if self._fade_enabled:
+            log.write(
+                f"[bold green][+] Fade ON[/bold green] "
+                f"[dim](rows fade after {int(GRACE_DURATION_S)}s, "
+                f"evict at {int(FADE_DURATION_S)}s)[/dim]"
+            )
+        else:
+            log.write(
+                "[bold yellow][+] Fade OFF[/bold yellow] "
+                "[dim](rows stay full-bright, no eviction)[/dim]"
+            )
 
     def action_cycle_sort(self) -> None:
         self._sort_idx = (self._sort_idx + 1) % len(self._COLUMNS)
@@ -451,6 +532,8 @@ class ScannerView(Screen):
         for bssid in stale:
             iface.access_points.pop(bssid, None)
             self.ap_cache.pop(bssid, None)
+            self._prev_beacons.pop(bssid, None)
+            self._beacon_flash_until.pop(bssid, None)
             try:
                 table.remove_row(bssid)
             except Exception:
@@ -468,3 +551,24 @@ class ScannerView(Screen):
                 await self.app.active_interface.stop_hopping()
             self.app.target_ap = target_ap
             self.app.push_screen("focus")
+
+    def on_data_table_header_selected(
+        self, event: DataTable.HeaderSelected
+    ) -> None:
+        """Click a column header to sort by it; click again to flip direction.
+
+        Mirrors the keyboard model: switching columns keeps the current
+        direction (like the 's' binding), re-clicking the active column
+        toggles asc/desc (like the 'o' binding).
+        """
+        key = event.column_key.value
+        for idx, (col_key, _) in enumerate(self._COLUMNS):
+            if col_key != key:
+                continue
+            if idx == self._sort_idx:
+                self._sort_reverse = not self._sort_reverse
+            else:
+                self._sort_idx = idx
+            self._update_column_headers()
+            self._apply_sort()
+            return
