@@ -190,3 +190,68 @@ def test_rsn_ie_raw_round_trip():
     frame = _build_beacon(rsn_ie=rsn)
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
     assert parsed["rsn_ie_raw"] == rsn
+
+
+# ---- Channel parsing (2.4 GHz DS Param + 5 GHz HT Op + VHT Op) -------------
+
+def _ds_param_ie(channel: int) -> bytes:
+    """Tag 3 (DS Parameter Set) — 1-byte channel. Present on 2.4 GHz
+    beacons; vendor-optional on 5 GHz (most APs omit it there)."""
+    return bytes([3, 1, channel])
+
+
+def _ht_op_ie(primary_channel: int) -> bytes:
+    """Tag 61 (HT Operation) — 22-byte body, first byte = primary channel.
+    Present on every 802.11n/ac AP regardless of band."""
+    body = bytes([primary_channel]) + b"\x00" * 21
+    return bytes([61, len(body)]) + body
+
+
+def _vht_op_ie(center_seg0: int) -> bytes:
+    """Tag 192 (VHT Operation) — 5-byte body. Byte 1 is Channel Center
+    Frequency Segment 0 = primary channel for 20 MHz BSSes."""
+    body = bytes([0x00, center_seg0, 0x00, 0x00, 0x00])
+    return bytes([192, len(body)]) + body
+
+
+def test_channel_from_ds_param_ie_2ghz():
+    """2.4 GHz beacon → DS Param IE present, sets channel."""
+    frame = _build_beacon() + _ds_param_ie(6)
+    parsed = WlanFrameParser.parse_80211_frame(frame, -50)
+    assert parsed["channel"] == 6
+
+
+def test_channel_from_ht_op_ie_when_ds_param_missing():
+    """5 GHz beacon with HT Op IE but no DS Param IE → channel from HT Op."""
+    frame = _build_beacon() + _ht_op_ie(153)
+    parsed = WlanFrameParser.parse_80211_frame(frame, -50)
+    assert parsed["channel"] == 153
+
+
+def test_channel_ds_param_wins_over_ht_op():
+    """When both are present and disagree (shouldn't happen on a sane AP),
+    DS Param IE wins — it's the authoritative 802.11-2020 9.4.2.3 source."""
+    # HT Op IE before DS Param IE in tag order.
+    frame = _build_beacon() + _ht_op_ie(36) + _ds_param_ie(40)
+    parsed = WlanFrameParser.parse_80211_frame(frame, -50)
+    assert parsed["channel"] == 40
+    # And the other way round — DS Param IE first.
+    frame2 = _build_beacon() + _ds_param_ie(40) + _ht_op_ie(36)
+    parsed2 = WlanFrameParser.parse_80211_frame(frame2, -50)
+    assert parsed2["channel"] == 40
+
+
+def test_channel_vht_op_used_as_last_resort():
+    """When neither DS Param nor HT Op is present, VHT Op IE fills in."""
+    frame = _build_beacon() + _vht_op_ie(149)
+    parsed = WlanFrameParser.parse_80211_frame(frame, -50)
+    assert parsed["channel"] == 149
+
+
+def test_channel_absent_when_no_ie_provides_it():
+    """Beacon without any channel-bearing IE → parser does NOT synthesise
+    channel=1 (pre-fix behaviour that mis-tagged 5 GHz APs missing DS Param
+    IE as channel 1). Caller falls back to chip's current_channel."""
+    frame = _build_beacon()
+    parsed = WlanFrameParser.parse_80211_frame(frame, -50)
+    assert "channel" not in parsed

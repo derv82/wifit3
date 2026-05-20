@@ -97,7 +97,13 @@ class WlanFrameParser:
                 tags = WlanFrameParser._parse_tags(frame, subtype)
                 if tags is None: return None
                 result["ssid"] = tags.get("ssid")
-                result["channel"] = tags.get("channel", 1)
+                # Don't synthesise channel=1 when _parse_tags found nothing
+                # — caller (interface._on_frame_parsed) falls back to the
+                # chip's current tuned channel, which is correct on either
+                # band. The pre-fix default of 1 mis-tagged every 5 GHz
+                # beacon whose vendor omitted the DS Parameter Set IE.
+                if "channel" in tags:
+                    result["channel"] = tags["channel"]
                 result["encryption"] = tags.get("encryption", "OPEN")
                 # WPA3 / PMF / cipher details surfaced from the RSN IE walker.
                 # Pre-fix these were computed but silently dropped here, leaving
@@ -369,6 +375,18 @@ class WlanFrameParser:
         pmf_required = False
         pairwise_cipher: Optional[str] = None
         akms: List[str] = []
+        # Channel sources, in preference order:
+        #   1. DS Parameter Set (tag 3)  — present on every 2.4 GHz beacon,
+        #      OPTIONAL on 5 GHz per 802.11-2020 9.4.2.3 (most APs omit it).
+        #   2. HT Operation (tag 61)     — primary channel byte; present on
+        #      every 802.11n/ac AP regardless of band.
+        #   3. VHT Operation (tag 192)   — channel center freq seg 0;
+        #      tertiary fallback for VHT-only oddities.
+        # Without 2 + 3, 5 GHz APs whose vendor omits the DS Param IE were
+        # silently mis-reported as channel 1 (the old default).
+        channel_ds: Optional[int] = None
+        channel_ht: Optional[int] = None
+        channel_vht: Optional[int] = None
 
         while ptr + 2 <= len(frame):
             tag_id = frame[ptr]
@@ -394,7 +412,18 @@ class WlanFrameParser:
                         pass
             elif tag_id == 3: # DS Parameter Set (Channel)
                 if tag_len == 1:
-                    parsed["channel"] = tag_data[0]
+                    channel_ds = tag_data[0]
+            elif tag_id == 61: # HT Operation — primary channel = first byte
+                if tag_len >= 1:
+                    channel_ht = tag_data[0]
+            elif tag_id == 192: # VHT Operation — center freq seg 0 at byte 1
+                # IE layout (802.11ac-2013 8.4.2.157):
+                #   byte 0 = Channel Width
+                #   byte 1 = Channel Center Freq Segment 0  ← primary on 20 MHz
+                #   byte 2 = Channel Center Freq Segment 1
+                #   bytes 3-4 = Basic VHT-MCS Set
+                if tag_len >= 2:
+                    channel_vht = tag_data[1]
             elif tag_id == 48: # RSN (WPA2/WPA3)
                 has_rsn = True
                 # Preserve the raw IE bytes (with tag header) so the PMKID
@@ -419,6 +448,17 @@ class WlanFrameParser:
                             parsed["wps"] = True
 
             ptr = tag_end
+
+        # Pick the best channel signal we have. DS Param IE is authoritative
+        # when present (matches the 2.4 GHz "official" channel byte). HT Op
+        # IE is the only universal cross-band source. Caller (interface.py)
+        # falls back to its tuned channel when we report nothing.
+        if channel_ds is not None:
+            parsed["channel"] = channel_ds
+        elif channel_ht is not None:
+            parsed["channel"] = channel_ht
+        elif channel_vht is not None:
+            parsed["channel"] = channel_vht
 
         parsed["wpa3"] = has_wpa3
         parsed["transition_mode"] = transition_mode
