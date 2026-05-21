@@ -2,7 +2,7 @@ import logging
 import re
 import time
 from pathlib import Path
-from typing import Set
+from typing import Optional, Set
 
 from textual.app import ComposeResult
 from textual.screen import Screen
@@ -17,6 +17,7 @@ from wifit3.engine.hc22000 import write_hc22000
 from wifit3.engine.pcap import write_pcap
 from wifit3.engine.attacks.pmkid_harvest import PmkidHarvestAttack
 from wifit3.engine.attacks.sae_probe import SAEGroupProbeAttack
+from wifit3.engine.attacks.wpa3_downgrade import WPA3DowngradeAttack
 
 from ..capture_events import CaptureEvent, CaptureEventDetector
 from ..encryption_format import (
@@ -65,6 +66,10 @@ class FocusView(Screen):
         self._selected_clients: Set[str] = set()
         # Granular: also surfaces every new EAPOL frame, not just completions.
         self._events = CaptureEventDetector(granular_eapol=True)
+        # WPA3 Downgrade is a long-running probe-response-spoof daemon. Held
+        # here so the button can toggle Start/Stop and so target/screen
+        # transitions can tear it down deterministically.
+        self._wpa3_down_attack: Optional[WPA3DowngradeAttack] = None
 
     # ----- Compose / mount ---------------------------------------------------
 
@@ -134,6 +139,11 @@ class FocusView(Screen):
         await self._init_target()
 
     async def _init_target(self) -> None:
+        # Always tear down any running WPA3 Down daemon — its forged template
+        # is bound to the PREVIOUS target's BSSID/SSID/channel, so it'd inject
+        # the wrong payload for a new target. Safe no-op if nothing's running.
+        self._stop_wpa3_down()
+
         self.target_ap = getattr(self.app, "target_ap", None)
         if not self.target_ap:
             return
@@ -228,7 +238,9 @@ class FocusView(Screen):
         btn_pmkid = self.query_one("#btn-pmkid", Button)
         if ap.wpa3:
             btn_sae.disabled = False
-            btn_down.disabled = False
+            # WPA3 Downgrade only works against transition-mode APs (pure WPA3
+            # clients refuse a WPA2-only ad from a known-SAE network).
+            btn_down.disabled = not ap.transition_mode
             # PMKID is only useful against WPA2 + WPA3-Transition (the WPA2
             # portion). Pure SAE PMKID isn't crackable with current attacks.
             btn_pmkid.disabled = not ap.transition_mode
@@ -236,6 +248,10 @@ class FocusView(Screen):
             btn_sae.disabled = True
             btn_down.disabled = True
             btn_pmkid.disabled = False
+        # WPA3 Down button label reflects daemon state.
+        btn_down.label = (
+            "Stop WPA3 Down" if self._wpa3_down_attack else "WPA3 Down"
+        )
 
         # CAPTURE panel (dynamic).
         elapsed = max(1.0, time.time() - ap.first_seen)
@@ -461,7 +477,7 @@ class FocusView(Screen):
         elif bid == "btn-sae-probe":
             self.run_worker(self._run_sae_probe(), exclusive=True)
         elif bid == "btn-wpa3-down":
-            self._log("[dim]WPA3 Downgrade — not yet wired in this build.[/dim]")
+            self._toggle_wpa3_down()
 
     def action_save_capture(self) -> None:
         self._save_capture()
@@ -572,7 +588,67 @@ class FocusView(Screen):
                 "unauthenticated Auth, or we're off-channel.[/dim]"
             )
 
+    def _toggle_wpa3_down(self) -> None:
+        """Button handler: Start the spoof daemon if idle, Stop it if running."""
+        if self._wpa3_down_attack:
+            self._stop_wpa3_down()
+        else:
+            self._start_wpa3_down()
+
+    def _start_wpa3_down(self) -> None:
+        ap = self.target_ap
+        iface = getattr(self.app, "active_interface", None)
+        if not ap or not iface:
+            self._log("[red]✗ No target / interface — cannot start WPA3 Down.[/red]")
+            return
+        if not ap.ssid:
+            self._log(
+                "[yellow]⚠ Cannot run WPA3 Down on a hidden AP — "
+                "SSID unknown, no probe-response payload to forge.[/yellow]"
+            )
+            return
+        if not ap.transition_mode:
+            self._log(
+                "[yellow]⚠ Target is pure WPA3 (no WPA2 fallback advertised) — "
+                "downgrade not possible.[/yellow]"
+            )
+            return
+        try:
+            self._wpa3_down_attack = WPA3DowngradeAttack(
+                iface, ap, log_callback=self._log
+            )
+            self._wpa3_down_attack.start()
+        except Exception as exc:
+            logger.exception("WPA3 Down start failed")
+            self._log(f"[bold red]✗ WPA3 Down failed to start:[/bold red] {escape(str(exc))}")
+            self._wpa3_down_attack = None
+            return
+        self._log(
+            f"[bold cyan]→ WPA3 Downgrade ACTIVE[/bold cyan] on "
+            f"[bold]{escape(ap.ssid)}[/bold] ({ap.bssid}) — watching for probe "
+            f"requests. Natural reconnection may take minutes to hours."
+        )
+
+    def _stop_wpa3_down(self) -> None:
+        if not self._wpa3_down_attack:
+            return
+        stats = self._wpa3_down_attack.stop()
+        self._wpa3_down_attack = None
+        duration = max(1, int(time.time() - stats.started_at))
+        self._log(
+            f"[bold red]✗ WPA3 Downgrade STOPPED[/bold red] after "
+            f"{_format_duration(duration)} — "
+            f"saw {stats.probes_seen} probes "
+            f"({stats.directed_probes} directed, {stats.wildcard_probes} wildcard), "
+            f"sent {stats.responses_sent} forged responses"
+            + (f" ({stats.responses_failed} failed)" if stats.responses_failed else "")
+            + "."
+        )
+
     async def action_go_back(self) -> None:
+        # Tear down the WPA3 Down daemon if running — Scanner view doesn't own
+        # the AP's channel and the RX callback would keep firing forever.
+        self._stop_wpa3_down()
         # Hopper restart happens in ScannerView.on_screen_resume — it owns
         # the channel filter; restarting here would silently widen it.
         self.app.pop_screen()
