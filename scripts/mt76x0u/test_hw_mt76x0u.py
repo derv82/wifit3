@@ -11,6 +11,8 @@
   --phase set_ch6 : phy + set_channel(6) full chain (M4a).
   --phase rx_drain : set_ch6 + bulk-IN drain on EP 0x84 for 3s (M4b).
   --phase rx_parse : rx_drain + RX descriptor decode + WlanFrameParser hookup (M4c).
+  --phase scan_2g  : hop 2.4 GHz ch 1-13 with 400 ms dwell (M5a).
+  --phase scan_full : hop 2.4 GHz + non-DFS 5 GHz (M5b).
   --phase all    : runs the latest milestone.
 
 Usage:
@@ -301,6 +303,90 @@ async def phase_rx_parse(driver: MT76x0UDriver, seconds: float) -> None:
     ok("M4c complete — full RX path working end-to-end. M5 next: scan loop + hopping.")
 
 
+def _print_scan_summary(result: dict, label: str) -> None:
+    """Print the scan summary airodump-ng style — per-channel counts AND
+    per-BSSID details with SSIDs. Per [[no-ssids-in-commits]] this is fine
+    in interactive test output; the rule is only about persisted git
+    artifacts."""
+    info(f"=== {label} per-channel ===")
+    info(f"{'ch':>4}  {'tune_ms':>7}  {'beacons':>7}  {'bssids':>6}  "
+         f"{'rssi_max':>8}  bytes")
+    for ch, c in sorted(result["per_channel"].items()):
+        rssi = f"{c['rssi_dbm_max']:>4} dBm" if c["rssi_dbm_max"] is not None else "  -   "
+        flag = "" if not c.get("set_channel_failed") else " (set_channel FAILED)"
+        info(f"{ch:>4}  {c['tune_ms']:>7.1f}  {c['beacons']:>7d}  "
+             f"{c['bssids']:>6d}  {rssi:>8}  {c['bytes']}{flag}")
+    info(f"TOTAL: {result['total_beacons']} beacons / "
+         f"{result['total_bssids']} unique BSSIDs / "
+         f"{result['channels_dwelt']} channels hopped")
+
+    if result.get("bssids"):
+        info("\n=== APs seen ===")
+        info(f"{'BSSID':<17}  {'CH':>3}  {'#bcn':>4}  {'RSSI':>5}  ENC      SSID")
+        # Sort by strongest RSSI first.
+        sorted_bssids = sorted(
+            result["bssids"].items(),
+            key=lambda kv: -(kv[1]["rssi_dbm_max"] or -200),
+        )
+        for bssid, b in sorted_bssids:
+            chs = ",".join(str(c) for c in sorted(b["channels"]))
+            ssid = b["ssid"] or "<hidden>"
+            # SSID display: real value to user (per memory clarification).
+            info(f"{bssid:<17}  {chs:>3}  {b['beacons']:>4}  "
+                 f"{b['rssi_dbm_max']:>5} {b['encryption']:<8} {ssid}")
+
+
+async def phase_scan_2g(driver: MT76x0UDriver, dwell_ms: int) -> None:
+    """M5a — synchronous hop through 2.4 GHz channels 1..13."""
+    step(f"M5a — hop 2.4 GHz channels 1..13 with {dwell_ms} ms dwell each")
+    info(f"Estimated wall-clock: {13 * (dwell_ms + 60) / 1000:.1f}s "
+         f"(dwell + ~60 ms tune per channel)")
+    result = driver.scan_channels(list(range(1, 14)), dwell_ms=dwell_ms)
+    _print_scan_summary(result, "2.4 GHz scan")
+
+    fails = [ch for ch, c in result["per_channel"].items()
+             if c.get("set_channel_failed")]
+    if fails:
+        fail(f"set_channel failed on channels: {fails}")
+    if result["total_bssids"] == 0:
+        fail("Zero unique BSSIDs across all 13 channels — RX path broken on hop?")
+
+    ok(f"M5a complete: 2.4 GHz hop saw {result['total_bssids']} BSSIDs / "
+       f"{result['total_beacons']} beacons in "
+       f"{13 * (dwell_ms + 60) / 1000:.1f}s")
+
+
+async def phase_scan_full(driver: MT76x0UDriver, dwell_ms: int) -> None:
+    """M5b — hop 2.4 GHz + non-DFS 5 GHz (22 channels total).
+
+    SUPPORTED_CHANNELS comes from the driver class attribute. For MT7610U
+    this is currently ch 1-13 + UNII-1 (36/40/44/48) + UNII-3 (149-165).
+    """
+    channels = list(driver.SUPPORTED_CHANNELS)
+    step(f"M5b — hop {len(channels)} channels ({channels[0]}..{channels[-1]}) "
+         f"with {dwell_ms} ms dwell each")
+    info(f"Estimated wall-clock: {len(channels) * (dwell_ms + 60) / 1000:.1f}s")
+    result = driver.scan_channels(channels, dwell_ms=dwell_ms)
+    _print_scan_summary(result, "Full scan (2.4 + non-DFS 5 GHz)")
+
+    fails = [ch for ch, c in result["per_channel"].items()
+             if c.get("set_channel_failed")]
+    if fails:
+        fail(f"set_channel failed on channels: {fails}")
+    # Loose check — if 5 GHz channels all show 0 BSSIDs it might just be no
+    # APs in range; not necessarily a failure. We just require SOMETHING.
+    if result["total_bssids"] == 0:
+        fail("Zero unique BSSIDs across all channels")
+
+    fg_count = sum(1 for ch in channels if ch <= 14
+                   and result["per_channel"][ch]["beacons"] > 0)
+    fa_count = sum(1 for ch in channels if ch > 14
+                   and result["per_channel"][ch]["beacons"] > 0)
+    ok(f"M5b complete: scan saw {result['total_bssids']} BSSIDs / "
+       f"{result['total_beacons']} beacons across "
+       f"{fg_count} G-band + {fa_count} A-band channels with activity")
+
+
 async def phase_phy(driver: MT76x0UDriver) -> None:
     """M3d.2 — confirm full phy_init landed (RF init + rxpath + txdac)."""
     step("M3d.2 — phy_init assertions")
@@ -439,9 +525,13 @@ def main() -> int:
     parser.add_argument(
         "--phase",
         choices=["probe", "fw", "mcu", "mac", "bbp", "eeprom", "ant", "phy",
-                 "set_ch6", "rx_drain", "rx_parse", "all"],
+                 "set_ch6", "rx_drain", "rx_parse", "scan_2g", "scan_full", "all"],
         default="all",
         help="Which milestone to test (default: all)",
+    )
+    parser.add_argument(
+        "--dwell-ms", type=int, default=400,
+        help="Per-channel dwell time in ms for --phase scan_* (default: 400)",
     )
     parser.add_argument("--debug", action="store_true", help="Enable DEBUG logging")
     parser.add_argument(
@@ -464,7 +554,8 @@ def main() -> int:
         # in order. Adding a new --phase X requires appending "X" to every
         # tuple ABOVE the X clause.
         ALL_PHASES = ("fw", "mcu", "mac", "bbp", "eeprom", "ant", "phy",
-                      "set_ch6", "rx_drain", "rx_parse", "all")
+                      "set_ch6", "rx_drain", "rx_parse",
+                      "scan_2g", "scan_full", "all")
         if args.phase in ALL_PHASES:
             # driver.connect() runs M1+M2+M3a+M3b+M3c+M3d together.
             asyncio.run(phase_fw(driver))
@@ -486,6 +577,12 @@ def main() -> int:
             asyncio.run(phase_rx_drain(driver, args.rx_seconds))
         if args.phase in ALL_PHASES[9:]:
             asyncio.run(phase_rx_parse(driver, args.rx_seconds))
+        # scan_* phases stop here — they wrap connect()/set_channel and
+        # hop, but they don't pull in rx_parse (which targets ch 6 only).
+        if args.phase == "scan_2g":
+            asyncio.run(phase_scan_2g(driver, args.dwell_ms))
+        if args.phase == "scan_full" or args.phase == "all":
+            asyncio.run(phase_scan_full(driver, args.dwell_ms))
         return 0
     finally:
         try:

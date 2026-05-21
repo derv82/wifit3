@@ -388,14 +388,9 @@ class MT76x0UDriver:
             progress_cb(1.00, "M3d complete — phy_init done")
         return True
 
-    async def set_channel(self, channel: int) -> bool:
-        """M4a.1 scaffold: runs steps 1-8 + ch-14 BBP bit of mt76x0_phy_set_channel
-        for 20 MHz monitor mode. RF freq programming (PLL) + per-channel BBP
-        params + VCO enable + calibrate are deferred to M4a.2 / M4a.3.
-
-        Returns True on success. Stores post-state register readback on
-        `self.last_set_channel_state` for hw test assertions.
-        """
+    def _set_channel_sync(self, channel: int) -> bool:
+        """Sync core of `set_channel` — usable from sync contexts (M5 hop
+        loop) and from the async Protocol method below."""
         try:
             self.last_set_channel_state = set_channel_20mhz(
                 self.transport, self.mcu, channel,
@@ -407,6 +402,13 @@ class MT76x0UDriver:
         except (PHYInitError, MCUError, usb.core.USBError) as e:
             logger.error("MT7610U: set_channel(%d) failed: %s", channel, e)
             return False
+
+    async def set_channel(self, channel: int) -> bool:
+        """Runs the full `mt76x0_phy_set_channel` chain (M4a) for 20 MHz
+        monitor mode. Body is synchronous; the `async def` exists for the
+        WlanDriver Protocol contract.
+        """
+        return self._set_channel_sync(channel)
 
     def enable_trx(self) -> None:
         """M4b — enable MAC TX+RX engines. [SRC] mt76x02_mac.c:1071-1072.
@@ -423,6 +425,166 @@ class MT76x0UDriver:
         )
         logger.info("MT7610U: MAC TRX enabled "
                     "(MAC_SYS_CTRL = ENABLE_TX | ENABLE_RX = 0x0C)")
+
+    def _drain_bulk_in_to_empty(self, max_iters: int = 32,
+                                bufsize: int = 2048) -> int:
+        """Drain EP 0x84 with a tight 20ms timeout until empty. Returns the
+        number of bytes drained. Used between channel changes to keep the
+        chip's RX-DMA from backing up while we're issuing MCU commands."""
+        bytes_drained = 0
+        for _ in range(max_iters):
+            try:
+                chunk = self.transport.bulk_in(
+                    EP_IN_PKT_RX, bufsize, timeout_ms=20,
+                )
+            except usb.core.USBError as e:
+                if (getattr(e, "backend_error_code", None) == -7
+                        or getattr(e, "errno", None) == 110):
+                    break
+                logger.warning("_drain_bulk_in_to_empty: USBError: %s", e)
+                break
+            if not chunk:
+                break
+            bytes_drained += len(chunk)
+        return bytes_drained
+
+    def scan_channels(
+        self, channels: list[int], dwell_ms: int = 400, bufsize: int = 2048,
+    ) -> dict:
+        """M5 — synchronously hop through `channels`, drain + parse on each
+        for `dwell_ms` ms, return per-channel + per-BSSID summary.
+
+        Returns a dict with `per_channel` + `bssids` (per-BSSID aggregate
+        across all channels). Caller decides whether to print BSSIDs/SSIDs
+        ([[no-ssids-in-commits]] applies to GIT artifacts, not interactive
+        test output).
+
+        Robustness:
+          - Disables RX (clears MAC_SYS_CTRL ENABLE_RX) before each
+            `set_channel`, re-enables after. Necessary because the chip
+            wedges if MCU commands run while RX-DMA is backed up — observed
+            on hops past ch 6 with TRX always-on.
+          - Drains EP 0x84 to empty before set_channel as belt-and-suspenders.
+        """
+        import time as _time
+
+        from wifit3.wlan.packet import WlanFrameParser
+
+        from .constants import (
+            MT_MAC_SYS_CTRL,
+            MT_MAC_SYS_CTRL_ENABLE_RX,
+            MT_MAC_SYS_CTRL_ENABLE_TX,
+        )
+        from .rx import decode_rx_packet
+
+        # Per-BSSID aggregate across all channels.
+        # bssid -> {ssid, channel_seen, encryption, beacons, rssi_dbm_max, last_ch}
+        bssids_seen: dict[str, dict] = {}
+
+        per_channel: dict[int, dict] = {}
+        total_beacons = 0
+        dwell_seconds = dwell_ms / 1000.0
+
+        # Start with TRX disabled. We'll toggle around set_channel.
+        self.transport.write32(MT_MAC_SYS_CTRL, MT_MAC_SYS_CTRL_ENABLE_TX)
+
+        for ch in channels:
+            # Pause RX before channel change. TX stays on (kernel pattern).
+            self.transport.write32(MT_MAC_SYS_CTRL, MT_MAC_SYS_CTRL_ENABLE_TX)
+            # Drain anything the chip already pushed before we paused.
+            self._drain_bulk_in_to_empty()
+
+            t0 = _time.monotonic()
+            try:
+                ok2 = self._set_channel_sync(ch)
+            except Exception as e:
+                logger.warning("scan_channels: ch %d set_channel exception: %s", ch, e)
+                ok2 = False
+            tune_ms = (_time.monotonic() - t0) * 1000.0
+
+            if not ok2:
+                per_channel[ch] = {
+                    "beacons": 0, "bssids": 0, "bytes": 0,
+                    "rssi_dbm_max": None, "tune_ms": tune_ms,
+                    "set_channel_failed": True,
+                }
+                continue
+
+            # Re-enable RX for the dwell.
+            self.transport.write32(
+                MT_MAC_SYS_CTRL,
+                MT_MAC_SYS_CTRL_ENABLE_TX | MT_MAC_SYS_CTRL_ENABLE_RX,
+            )
+
+            ch_bssids: set[str] = set()
+            ch_beacons = 0
+            ch_bytes = 0
+            ch_rssi_max: Optional[int] = None
+            deadline = _time.monotonic() + dwell_seconds
+            while _time.monotonic() < deadline:
+                try:
+                    chunk = self.transport.bulk_in(
+                        EP_IN_PKT_RX, bufsize, timeout_ms=100,
+                    )
+                except usb.core.USBError as e:
+                    if (getattr(e, "backend_error_code", None) == -7
+                            or getattr(e, "errno", None) == 110):
+                        continue
+                    logger.warning("scan_channels: ch %d USBError: %s", ch, e)
+                    continue
+                if not chunk:
+                    continue
+                ch_bytes += len(chunk)
+                rx = decode_rx_packet(bytes(chunk))
+                if rx is None:
+                    continue
+                if ch_rssi_max is None or rx.rssi_dbm > ch_rssi_max:
+                    ch_rssi_max = rx.rssi_dbm
+                parsed = WlanFrameParser.parse_80211_frame(rx.frame, rx.rssi_dbm)
+                if parsed is None:
+                    continue
+                if (parsed.get("type_id") == WlanFrameParser.TYPE_MGMT
+                        and parsed.get("subtype_id") == WlanFrameParser.SUBTYPE_BEACON):
+                    ch_beacons += 1
+                    bssid = parsed.get("bssid")
+                    if not bssid:
+                        continue
+                    ch_bssids.add(bssid)
+                    entry = bssids_seen.setdefault(bssid, {
+                        "ssid": parsed.get("ssid"),
+                        "encryption": parsed.get("encryption", "?"),
+                        "channel_seen_on": ch,
+                        "beacons": 0,
+                        "rssi_dbm_max": rx.rssi_dbm,
+                        "channels": set(),
+                    })
+                    entry["beacons"] += 1
+                    if rx.rssi_dbm > entry["rssi_dbm_max"]:
+                        entry["rssi_dbm_max"] = rx.rssi_dbm
+                    entry["channels"].add(ch)
+                    # Track the first non-empty SSID we get.
+                    if not entry["ssid"] and parsed.get("ssid"):
+                        entry["ssid"] = parsed.get("ssid")
+
+            per_channel[ch] = {
+                "beacons":      ch_beacons,
+                "bssids":       len(ch_bssids),
+                "bytes":        ch_bytes,
+                "rssi_dbm_max": ch_rssi_max,
+                "tune_ms":      tune_ms,
+            }
+            total_beacons += ch_beacons
+
+        # Park with RX disabled (caller can re-enable if it wants more).
+        self.transport.write32(MT_MAC_SYS_CTRL, MT_MAC_SYS_CTRL_ENABLE_TX)
+
+        return {
+            "per_channel":     per_channel,
+            "bssids":          bssids_seen,
+            "total_bssids":    len(bssids_seen),
+            "total_beacons":   total_beacons,
+            "channels_dwelt":  len(channels),
+        }
 
     def drain_bulk_in_parsed(
         self, duration_seconds: float, bufsize: int = 2048,
