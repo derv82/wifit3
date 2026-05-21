@@ -10,6 +10,7 @@
   --phase phy    : ant + phy_rf_init + set_rxpath + set_txdac (M3d.2 → full M3 done).
   --phase set_ch6 : phy + set_channel(6) full chain (M4a).
   --phase rx_drain : set_ch6 + bulk-IN drain on EP 0x84 for 3s (M4b).
+  --phase rx_parse : rx_drain + RX descriptor decode + WlanFrameParser hookup (M4c).
   --phase all    : runs the latest milestone.
 
 Usage:
@@ -261,6 +262,45 @@ async def phase_rx_drain(driver: MT76x0UDriver, seconds: float) -> None:
     ok("M4b complete - raw bytes flowing in via bulk-IN. M4c next: RXWI strip + parser.")
 
 
+async def phase_rx_parse(driver: MT76x0UDriver, seconds: float) -> None:
+    """M4c — drain bulk-IN + decode RX descriptor + parse 802.11 frame.
+
+    Does NOT print SSIDs/BSSIDs in the test output (per
+    [[no-ssids-in-commits]] — these logs end up in chat scrollback that
+    could land in commit messages). Counts only.
+    """
+    step(f"M4c — decoded RX (drain + RXWI strip + parser) for {seconds}s")
+    driver.enable_trx()
+    info(f"Draining + parsing EP 0x84 for {seconds}s...")
+    c = driver.drain_bulk_in_parsed(duration_seconds=seconds)
+
+    info(f"USB:   bytes={c['bytes']}  xfers={c['xfers']}  "
+         f"timeouts={c['timeouts']}  errors={c['errors']}")
+    info(f"decode: decoded={c['decoded']}  decode_failures={c['decode_failures']}  "
+         f"parse_failures={c['parse_failures']}")
+    info(f"frame breakdown: beacon={c['beacon']}  probe_resp={c['probe_resp']}  "
+         f"probe_req={c['probe_req']}  deauth/disassoc={c['deauth_disassoc']}  "
+         f"other_mgmt={c['other_mgmt']}  data={c['data']}  ctrl={c['ctrl']}")
+    info(f"unique BSSIDs seen: {c['unique_bssids']} (count only — values not printed)")
+    if "rssi_min" in c:
+        info(f"RSSI raw (rssi[0]):  min={c['rssi_min']}  mean={c['rssi_mean']}  "
+             f"max={c['rssi_max']}  (signed int8; needs EFUSE-cal offset for real dBm)")
+
+    if c["errors"] > 0:
+        fail(f"USB errors during drain: {c['errors']}")
+    if c["decoded"] == 0:
+        fail("Zero packets decoded — RX descriptor decode failed for every chunk")
+    if c["beacon"] == 0 and c["probe_resp"] == 0:
+        fail(f"Zero beacons/probe_resps decoded in {seconds}s on ch 6 — "
+             f"either no APs in range, parser rejecting them, or RXWI offsets wrong. "
+             f"(Got {c['decoded']} decoded packets, "
+             f"{c['data']} data + {c['other_mgmt']} other_mgmt.)")
+
+    ok(f"Parsed {c['beacon'] + c['probe_resp']} beacon/probe_resp frames from "
+       f"{c['unique_bssids']} unique BSSIDs in {seconds:.1f}s on ch 6")
+    ok("M4c complete — full RX path working end-to-end. M5 next: scan loop + hopping.")
+
+
 async def phase_phy(driver: MT76x0UDriver) -> None:
     """M3d.2 — confirm full phy_init landed (RF init + rxpath + txdac)."""
     step("M3d.2 — phy_init assertions")
@@ -399,7 +439,7 @@ def main() -> int:
     parser.add_argument(
         "--phase",
         choices=["probe", "fw", "mcu", "mac", "bbp", "eeprom", "ant", "phy",
-                 "set_ch6", "rx_drain", "all"],
+                 "set_ch6", "rx_drain", "rx_parse", "all"],
         default="all",
         help="Which milestone to test (default: all)",
     )
@@ -424,7 +464,7 @@ def main() -> int:
         # in order. Adding a new --phase X requires appending "X" to every
         # tuple ABOVE the X clause.
         ALL_PHASES = ("fw", "mcu", "mac", "bbp", "eeprom", "ant", "phy",
-                      "set_ch6", "rx_drain", "all")
+                      "set_ch6", "rx_drain", "rx_parse", "all")
         if args.phase in ALL_PHASES:
             # driver.connect() runs M1+M2+M3a+M3b+M3c+M3d together.
             asyncio.run(phase_fw(driver))
@@ -444,6 +484,8 @@ def main() -> int:
             asyncio.run(phase_set_ch6(driver))
         if args.phase in ALL_PHASES[8:]:
             asyncio.run(phase_rx_drain(driver, args.rx_seconds))
+        if args.phase in ALL_PHASES[9:]:
+            asyncio.run(phase_rx_parse(driver, args.rx_seconds))
         return 0
     finally:
         try:

@@ -424,6 +424,98 @@ class MT76x0UDriver:
         logger.info("MT7610U: MAC TRX enabled "
                     "(MAC_SYS_CTRL = ENABLE_TX | ENABLE_RX = 0x0C)")
 
+    def drain_bulk_in_parsed(
+        self, duration_seconds: float, bufsize: int = 2048,
+        timeout_ms: int = 200,
+    ) -> dict:
+        """M4c — drain EP 0x84, decode each packet via `rx.decode_rx_packet`,
+        feed the 802.11 frame to `WlanFrameParser`. Returns aggregated stats
+        WITHOUT leaking SSIDs/BSSIDs (per [[no-ssids-in-commits]]):
+          - total bytes / xfers / timeouts / errors / decode_failures
+          - count by frame type/subtype (beacon / probe_req / probe_resp /
+            data / other_mgmt / ctrl)
+          - unique BSSID count (set size, not the values)
+          - parsed RSSI min/max/mean
+        """
+        import time as _time
+
+        from wifit3.wlan.packet import WlanFrameParser
+
+        from .rx import decode_rx_packet
+
+        counters = {
+            "bytes": 0, "xfers": 0, "timeouts": 0, "errors": 0,
+            "decoded": 0, "decode_failures": 0,
+            "beacon": 0, "probe_req": 0, "probe_resp": 0,
+            "deauth_disassoc": 0,
+            "other_mgmt": 0, "data": 0, "ctrl": 0,
+            "parse_failures": 0,
+        }
+        bssids: set[str] = set()
+        rssi_values: list[int] = []
+
+        deadline = _time.monotonic() + duration_seconds
+        while _time.monotonic() < deadline:
+            try:
+                chunk = self.transport.bulk_in(
+                    EP_IN_PKT_RX, bufsize, timeout_ms=timeout_ms,
+                )
+            except usb.core.USBError as e:
+                if (getattr(e, "backend_error_code", None) == -7
+                        or getattr(e, "errno", None) == 110):
+                    counters["timeouts"] += 1
+                    continue
+                counters["errors"] += 1
+                logger.warning("drain_bulk_in_parsed: USBError: %s", e)
+                continue
+
+            if not chunk:
+                continue
+            counters["bytes"] += len(chunk)
+            counters["xfers"] += 1
+
+            rx = decode_rx_packet(bytes(chunk))
+            if rx is None:
+                counters["decode_failures"] += 1
+                continue
+            counters["decoded"] += 1
+
+            parsed = WlanFrameParser.parse_80211_frame(rx.frame, rx.rssi_dbm)
+            if parsed is None:
+                counters["parse_failures"] += 1
+                continue
+
+            ftype = parsed.get("type_id")
+            subtype = parsed.get("subtype_id")
+            if ftype == WlanFrameParser.TYPE_MGMT:
+                if subtype == WlanFrameParser.SUBTYPE_BEACON:
+                    counters["beacon"] += 1
+                elif subtype == WlanFrameParser.SUBTYPE_PROBE_REQ:
+                    counters["probe_req"] += 1
+                elif subtype == WlanFrameParser.SUBTYPE_PROBE_RESP:
+                    counters["probe_resp"] += 1
+                elif subtype in (0x0A, 0x0C):    # disassoc, deauth
+                    counters["deauth_disassoc"] += 1
+                else:
+                    counters["other_mgmt"] += 1
+            elif ftype == WlanFrameParser.TYPE_DATA:
+                counters["data"] += 1
+            elif ftype == WlanFrameParser.TYPE_CTRL:
+                counters["ctrl"] += 1
+
+            bssid = parsed.get("bssid")
+            if bssid:
+                bssids.add(bssid)
+
+            rssi_values.append(rx.rssi_dbm)
+
+        if rssi_values:
+            counters["rssi_min"] = min(rssi_values)
+            counters["rssi_max"] = max(rssi_values)
+            counters["rssi_mean"] = sum(rssi_values) // len(rssi_values)
+        counters["unique_bssids"] = len(bssids)
+        return counters
+
     def drain_bulk_in(
         self, duration_seconds: float, bufsize: int = 2048,
         timeout_ms: int = 200,
