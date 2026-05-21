@@ -159,6 +159,17 @@ class MCUChannel:
                 return None
             return self._wait_resp(seq)
 
+    # ---- CMD_CALIBRATION_OP convenience -----------------------------
+    def calibrate(self, cal_type: int, param: int) -> None:
+        """Port of `mt76x02_mcu_calibrate` ([SRC] mt76x02_mcu.c:117-143).
+
+        Sends `CMD_CALIBRATION_OP` with payload `<le32 type, le32 param>`,
+        wait=True. The is_mt76x2e branch is mmio-only — never taken on USB.
+        """
+        from .constants import CMD_CALIBRATION_OP
+        payload = struct.pack("<II", cal_type & 0xFFFFFFFF, param & 0xFFFFFFFF)
+        self.send_msg(CMD_CALIBRATION_OP, payload, wait_resp=True)
+
     # ---- CMD_FUN_SET_OP convenience ---------------------------------
     def function_select(self, func: int, value: int) -> None:
         """Port of `mt76x02_mcu_function_select` — [SRC] mt76x02_mcu.c:82-99.

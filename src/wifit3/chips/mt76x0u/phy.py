@@ -515,6 +515,135 @@ def _build_ext_cca_chan() -> list[int]:
 EXT_CCA_CHAN = _build_ext_cca_chan()
 
 
+def phy_set_chan_bbp_params(
+    transport: MT76x0UTransport, rf_bw_band: int, lna_gain: int = 0,
+) -> int:
+    """Port of `mt76x0_phy_set_chan_bbp_params` (mt76x0/phy.c:399-424).
+
+    Iterates BBP_SWITCH_TAB; writes each entry where `(rf_bw_band & item.bw_band)
+    == rf_bw_band` (item's mask is a SUPERSET of rf_bw_band). Special-case
+    for MT_BBP(AGC, 8): adjusts the AGC_GAIN field by `lna_gain * 2`
+    before writing.
+
+    Returns the count of writes performed.
+    """
+    from .constants import (
+        MT_BBP_AGC_GAIN_MASK,
+        MT_BBP_AGC_GAIN_SHIFT,
+    )
+    from .initvals_bbp import BBP_SWITCH_TAB
+
+    agc8_reg = MT_BBP_AGC(8)
+    writes = 0
+    for bw_band, reg, value in BBP_SWITCH_TAB:
+        if (bw_band & rf_bw_band) != rf_bw_band:
+            continue
+        if reg == agc8_reg:
+            # Kernel: gain = FIELD_GET(MT_BBP_AGC_GAIN, val); gain -= lna_gain*2;
+            #         val &= ~MT_BBP_AGC_GAIN; val |= FIELD_PREP(...);
+            gain = (value & MT_BBP_AGC_GAIN_MASK) >> MT_BBP_AGC_GAIN_SHIFT
+            gain = (gain - lna_gain * 2) & 0x7F   # u8 wrap to GAIN field width
+            adjusted = (value & ~MT_BBP_AGC_GAIN_MASK) | (gain << MT_BBP_AGC_GAIN_SHIFT)
+            transport.write32(reg, adjusted)
+        else:
+            transport.write32(reg, value)
+        writes += 1
+    logger.info("phy_set_chan_bbp_params: %d writes for rf_bw_band=0x%04x "
+                "lna_gain=%d", writes, rf_bw_band, lna_gain)
+    return writes
+
+
+def init_agc_gain(transport: MT76x0UTransport) -> tuple[int, int]:
+    """Port of `mt76x02_init_agc_gain` (mt76x02_phy.c:193-203).
+
+    Reads MT_BBP(AGC, 8) and MT_BBP(AGC, 9), extracts MT_BBP_AGC_GAIN field
+    from each. Caller is responsible for storing these for the runtime
+    calibration loop (we don't have that loop in monitor mode, but the
+    values are read for parity + future use).
+
+    Returns (agc_gain_init_0, agc_gain_init_1).
+    """
+    from .constants import (
+        MT_BBP_AGC_GAIN_MASK,
+        MT_BBP_AGC_GAIN_SHIFT,
+    )
+    val8 = transport.read32(MT_BBP_AGC(8))
+    val9 = transport.read32(MT_BBP_AGC(9))
+    g0 = (val8 & MT_BBP_AGC_GAIN_MASK) >> MT_BBP_AGC_GAIN_SHIFT
+    g1 = (val9 & MT_BBP_AGC_GAIN_MASK) >> MT_BBP_AGC_GAIN_SHIFT
+    return (g0, g1)
+
+
+def phy_calibrate(
+    transport: MT76x0UTransport, mcu: MCUChannel,
+    channel: int, power_on: bool = False,
+) -> None:
+    """Port of `mt76x0_phy_calibrate` (mt76x0/phy.c:861-911).
+
+    For `power_on=False` (per-channel cal):
+      1. Save MT_TX_ALC_CFG_0, zero it.
+      2. Sleep 500-700 us.
+      3. Save MT_BBP(IBI, 9), write 0xffffff7e.
+      4. val = 0x600 (2.4 GHz) or 0x701/0x801/0x901 (5 GHz tiered).
+      5. CMD_CALIBRATION_OP(MCU_CAL_FULL, val).
+      6. CMD_CALIBRATION_OP(MCU_CAL_LC, is_5ghz).
+      7. Sleep 15-20 ms.
+      8. Restore MT_BBP(IBI, 9) and MT_TX_ALC_CFG_0.
+      9. CMD_CALIBRATION_OP(MCU_CAL_RXDCOC, 1).
+
+    For `power_on=True` (post-firmware): adds MCU_CAL_R + MCU_CAL_VCO prelude.
+    We skip the TSSI dc-calibrate sub-block since tssi_enabled requires
+    EFUSE NIC_CONF_1 BIT(13) which is set per-card; for our card we treat
+    it as disabled (display-only field).
+
+    Kernel is_mt7630 short-circuit — we never match (USB 7610U).
+    """
+    import time as _time
+    from .constants import (
+        MCU_CAL_FULL,
+        MCU_CAL_LC,
+        MCU_CAL_R,
+        MCU_CAL_RXDCOC,
+        MCU_CAL_VCO,
+        MT_BBP_IBI,
+        MT_TX_ALC_CFG_0,
+    )
+
+    is_5ghz = channel > 14
+
+    if power_on:
+        mcu.calibrate(MCU_CAL_R, 0)
+        mcu.calibrate(MCU_CAL_VCO, channel)
+        _time.sleep(0.000020)   # usleep_range(10, 20)
+        # We skip the tssi_enabled branch — RX-only monitor mode.
+
+    tx_alc = transport.read32(MT_TX_ALC_CFG_0)
+    transport.write32(MT_TX_ALC_CFG_0, 0)
+    _time.sleep(0.0007)         # usleep_range(500, 700)
+
+    ibi9_reg = MT_BBP_IBI(9)
+    reg_val = transport.read32(ibi9_reg)
+    transport.write32(ibi9_reg, 0xFFFFFF7E)
+
+    if is_5ghz:
+        if channel < 100:
+            val = 0x701
+        elif channel < 140:
+            val = 0x801
+        else:
+            val = 0x901
+    else:
+        val = 0x600
+    logger.info("phy_calibrate: CMD_CAL_FULL param=0x%x", val)
+    mcu.calibrate(MCU_CAL_FULL, val)
+    mcu.calibrate(MCU_CAL_LC, 1 if is_5ghz else 0)
+    _time.sleep(0.018)          # usleep_range(15000, 20000) ~= 15-20 ms
+
+    transport.write32(ibi9_reg, reg_val)
+    transport.write32(MT_TX_ALC_CFG_0, tx_alc)
+    mcu.calibrate(MCU_CAL_RXDCOC, 1)
+
+
 def phy_set_chan_rf_params(
     transport: MT76x0UTransport, mcu: MCUChannel,
     channel: int, rf_bw_band: int, efuse_full=None,
@@ -761,11 +890,24 @@ def set_channel_20mhz(
         transport.clear_bits(MT_BBP_CORE(1), 0x20)
 
     # Step 11 (skipped — display only): mt76x0_read_rx_gain.
-    # Step 12 (DEFERRED to M4a.3): mt76x0_phy_set_chan_bbp_params.
-    # Step 13 (DEFERRED to M4a.3): VCO enable.
-    # Steps 15-17 (DEFERRED to M4a.3): init_agc_gain, phy_calibrate, set_txpower.
-    logger.info("set_channel_20mhz: M4a.3 deferred — VCO enable + calibrate "
-                "+ AGC init")
+    # Without it, lna_gain stays at the default 0; AGC,8 isn't adjusted.
+
+    # Step 12: mt76x0_phy_set_chan_bbp_params — per-channel BBP tweaks.
+    phy_set_chan_bbp_params(transport, rf_bw_band, lna_gain=0)
+
+    # Step 13: enable VCO. [SRC] mt76x0/phy.c:1006.
+    rf_set(mcu, MT_RF(0, 4), 0x80)
+
+    # Step 15: mt76x02_init_agc_gain — read AGC gain init values.
+    agc_gain_init = init_agc_gain(transport)
+    logger.info("set_channel_20mhz: agc_gain_init = [0x%02x, 0x%02x]",
+                agc_gain_init[0], agc_gain_init[1])
+
+    # Step 16: mt76x0_phy_calibrate(power_on=False).
+    phy_calibrate(transport, mcu, channel=channel, power_on=False)
+
+    # Step 17 SKIPPED: mt76x0_phy_set_txpower — TX path only.
+    logger.info("set_channel_20mhz: M4a complete (TX power deferred — RX-only)")
 
     # Read post-state for assertions.
     from .constants import MT_BBP_TXBE
@@ -778,17 +920,23 @@ def set_channel_20mhz(
     }
 
     # PLL readbacks for M4a.2 assertion — confirm the freq_item landed.
-    rf_regs_to_read = [MT_RF(0, r) for r in (29, 33, 34, 35, 36, 37)]
+    rf_regs_to_read = [MT_RF(0, r) for r in (4, 29, 33, 34, 35, 36, 37)]
     try:
         rf_vals = mcu.random_read(MT_MCU_MEMMAP_RF, rf_regs_to_read)
-        state["rf_b0_r29"] = rf_vals[0] & 0xFF   # pll_n low byte
-        state["rf_b0_r33"] = rf_vals[1] & 0xFF
-        state["rf_b0_r34"] = rf_vals[2] & 0xFF
-        state["rf_b0_r35"] = rf_vals[3] & 0xFF
-        state["rf_b0_r36"] = rf_vals[4] & 0xFF
-        state["rf_b0_r37"] = rf_vals[5] & 0xFF
+        state["rf_b0_r4"]  = rf_vals[0] & 0xFF   # VCO enable bit 7
+        state["rf_b0_r29"] = rf_vals[1] & 0xFF   # pll_n low byte
+        state["rf_b0_r33"] = rf_vals[2] & 0xFF
+        state["rf_b0_r34"] = rf_vals[3] & 0xFF
+        state["rf_b0_r35"] = rf_vals[4] & 0xFF
+        state["rf_b0_r36"] = rf_vals[5] & 0xFF
+        state["rf_b0_r37"] = rf_vals[6] & 0xFF
     except Exception as e:
         logger.warning("set_channel_20mhz: PLL readback failed (non-fatal): %s", e)
+
+    # M4a.3 readbacks: BBP(AGC, 8) and AGC init gains.
+    state["bbp_agc_8"] = transport.read32(MT_BBP_AGC(8))
+    state["agc_gain_init_0"] = agc_gain_init[0]
+    state["agc_gain_init_1"] = agc_gain_init[1]
     return state
 
 

@@ -467,6 +467,28 @@ CMD_CALIBRATION_OP  = 31
 CMD_BEACON_OP       = 32
 CMD_ANTENNA_OP      = 33
 
+# MCU calibrate types — [SRC] mt76x0/mcu.h:22-37 (enum mcu_calibrate).
+MCU_CAL_R               = 1
+MCU_CAL_RXDCOC          = 2
+MCU_CAL_LC              = 3
+MCU_CAL_LOFT            = 4
+MCU_CAL_TXIQ            = 5
+MCU_CAL_BW              = 6
+MCU_CAL_DPD             = 7
+MCU_CAL_RXIQ            = 8
+MCU_CAL_TXDCOC          = 9
+MCU_CAL_RX_GROUP_DELAY  = 10
+MCU_CAL_TX_GROUP_DELAY  = 11
+MCU_CAL_VCO             = 12
+MCU_CAL_NO_SIGNAL       = 0xFE
+MCU_CAL_FULL            = 0xFF
+
+# MT_BBP(AGC, 8) GAIN bit-field — [SRC] mt76x02_regs.h:636.
+MT_BBP_AGC_GAIN_MASK    = 0x7F00       # GENMASK(14, 8)
+MT_BBP_AGC_GAIN_SHIFT   = 8
+
+# MT_TX_ALC_CFG_0 already in M3a — needed here for phy_calibrate's save/restore.
+
 # CMD_FUN_SET_OP sub-functions — [SRC] mt76x02_mcu.h:62-72 (enum mcu_function)
 Q_SELECT          = 1
 BW_SETTING        = 2
