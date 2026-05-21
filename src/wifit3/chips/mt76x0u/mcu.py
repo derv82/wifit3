@@ -42,6 +42,7 @@ from .constants import (
     MT_MCU_MSG_LEN_MASK,
     MT_MCU_MSG_PORT_SHIFT,
     MT_MCU_MSG_TYPE_CMD,
+    MT_MCU_REG_PAIRS_PER_CMD,
     MT_RX_FCE_INFO_CMD_SEQ_MASK,
     MT_RX_FCE_INFO_CMD_SEQ_SHIFT,
     MT_RX_FCE_INFO_EVT_TYPE_MASK,
@@ -183,14 +184,28 @@ class MCUChannel:
     def random_write(
         self, base: int, reg_pairs: list[tuple[int, int]],
     ) -> None:
-        """Write N (reg, value) pairs via CMD_RANDOM_WRITE. Wire addr = base + reg."""
+        """Write N (reg, value) pairs via CMD_RANDOM_WRITE.
+
+        Chunks at MT_MCU_REG_PAIRS_PER_CMD (= MT_INBAND_PACKET_MAX_LEN / 8 = 24)
+        pairs per command, matching kernel `mt76x02u_mcu_wr_rp`
+        ([SRC] mt76x02_usb_mcu.c:132-163). Only the LAST chunk uses `wait_resp=true`
+        (kernel: `cnt == n`); intermediate chunks fire-and-forget.
+
+        Wire address = `base + reg` for each pair.
+        """
         if not reg_pairs:
             return
-        payload = b"".join(
-            struct.pack("<II", (base + reg) & 0xFFFFFFFF, val & 0xFFFFFFFF)
-            for reg, val in reg_pairs
-        )
-        self.send_msg(CMD_RANDOM_WRITE, payload, wait_resp=True)
+        n = len(reg_pairs)
+        i = 0
+        while i < n:
+            chunk = reg_pairs[i: i + MT_MCU_REG_PAIRS_PER_CMD]
+            i += len(chunk)
+            is_last = i == n
+            payload = b"".join(
+                struct.pack("<II", (base + reg) & 0xFFFFFFFF, val & 0xFFFFFFFF)
+                for reg, val in chunk
+            )
+            self.send_msg(CMD_RANDOM_WRITE, payload, wait_resp=is_last)
 
     def random_read(self, base: int, regs: list[int]) -> list[int]:
         """Read N 32-bit registers via CMD_RANDOM_READ. Wire addr = base + reg.

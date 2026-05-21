@@ -18,9 +18,10 @@ import usb.core
 
 from wifit3.engine.protocols import DeviceID, ProgressCallback
 
-from .constants import USB_IDS_MT76X0U
+from .constants import MT_MAC_STATUS, USB_IDS_MT76X0U
 from .eeprom import EEPROMError, EFUSEInfo, read_efuse_summary
 from .firmware import FirmwareError, FirmwareUploader
+from .mac import MACInitError, init_mac_registers, wait_for_txrx_idle, wait_for_wpdma
 from .mcu import MCUChannel, MCUError, mcu_init_smoke_test
 from .transport import MT76x0UTransport
 
@@ -65,10 +66,11 @@ class MT76x0UDriver:
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
         self._rx_callback: Optional[Callable[[dict], None]] = None
-        # M1 + M2 results, populated by connect().
+        # M1 + M2 + M3a results, populated by connect().
         self.fw_info: Optional[dict] = None
         self.efuse_info: Optional[EFUSEInfo] = None
         self.mcu_smoke: Optional[dict] = None
+        self.mac_status_after_init: Optional[int] = None
 
     # ---- Hooks --------------------------------------------------------
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
@@ -147,26 +149,55 @@ class MT76x0UDriver:
                 h["fw_ver_str"], h["build_ver"], h["build_time"], result["polls"],
             )
 
-        # ---- M2: post-FW init that arms the MCU response path ----------
-        # [SRC] mt76x0/usb.c:151-177 — init_hardware steps after mcu_init.
-        # Without these, MCU bulk-IN reads on EP 0x85 time out because the
-        # RX-DMA + MAC engines aren't reset / armed yet.
+        # Post-FW driver flow mirrors mt76x0u_init_hardware (mt76x0/usb.c:151)
+        # which after mcu_init does:
+        #   init_usb_dma → wait_for_wpdma → wait_for_mac → reset_csr_bbp →
+        #   Q_SELECT → init_mac_registers → wait_for_txrx_idle → init_bbp → ...
+        # M1 covered through mcu_init. M2 added init_usb_dma + reset_csr_bbp +
+        # Q_SELECT (out of strict kernel order; works because USB chip has no
+        # WPDMA busy state to wait on). M3a inserts the missing waits + the
+        # MAC reg init + wait_for_txrx_idle.
+
+        # ---- Post-FW step 6: init_usb_dma (kernel mt76x0_init_usb_dma).
         if progress_cb:
-            progress_cb(0.93, "init_usb_dma (RX_DROP_OR_PAD toggle)")
+            progress_cb(0.91, "init_usb_dma (RX_DROP_OR_PAD toggle)")
         try:
             uploader.init_usb_dma()
-            if progress_cb:
-                progress_cb(0.94, "reset_csr_bbp (200ms MAC reset)")
-            uploader.reset_csr_bbp()
         except usb.core.USBError as e:
-            logger.error("MT7610U: post-FW init failed: %s", e)
+            logger.error("MT7610U: init_usb_dma failed: %s", e)
             return False
 
-        # ---- M2: MCU init — Q_SELECT first (kernel's first MCU command).
-        # [SRC] mt76x0/init.c:183 — `mt76x02_mcu_function_select(dev, Q_SELECT, 1)`.
+        # ---- M3a step 7: wait_for_wpdma. [SRC] mt76x02_dma.h:54-60,
+        # [SRC] mt76x0/init.c:175. Returns immediately on USB (no WPDMA busy).
+        if progress_cb:
+            progress_cb(0.92, "wait_for_wpdma")
+        if not wait_for_wpdma(self.transport):
+            logger.error("MT7610U: wait_for_wpdma timed out")
+            return False
+
+        # ---- M3a step 8: wait_for_mac (second time, post-FW upload).
+        # Kernel does this in init_hardware:179. Already done once during M1
+        # (after chip_onoff), but the kernel re-checks here too — port faithfully.
+        if progress_cb:
+            progress_cb(0.93, "wait_for_mac (post-FW)")
+        try:
+            uploader.wait_for_mac()
+        except FirmwareError as e:
+            logger.error("MT7610U: wait_for_mac (post-FW) failed: %s", e)
+            return False
+
+        # ---- Post-FW step 9: reset_csr_bbp [SRC] mt76x0/init.c:182.
+        if progress_cb:
+            progress_cb(0.94, "reset_csr_bbp (200ms MAC reset)")
+        try:
+            uploader.reset_csr_bbp()
+        except usb.core.USBError as e:
+            logger.error("MT7610U: reset_csr_bbp failed: %s", e)
+            return False
+
+        # ---- Post-FW step 10: Q_SELECT [SRC] mt76x0/init.c:183 —
+        # `mt76x02_mcu_function_select(dev, Q_SELECT, 1)`.
         # [WIRE] capture-2.pcap:423 payload `01000000 01000000`.
-        # Without this Q_SELECT, subsequent MCU commands time out — the chip's
-        # MCU only starts servicing commands after seeing the queue-select.
         if progress_cb:
             progress_cb(0.95, "MCU Q_SELECT (CMD_FUN_SET_OP, no-wait)")
         try:
@@ -176,7 +207,9 @@ class MT76x0UDriver:
             logger.error("MT7610U: MCU Q_SELECT failed: %s", e)
             return False
 
-        # ---- M2: MCU smoke-test + EFUSE read ---------------------------
+        # ---- M2 diagnostic: MCU smoke-test ----------------------------
+        # Verifies the MCU command channel before we drive the init tables
+        # through it. Kept from M2 — not strictly in kernel flow but cheap.
         if progress_cb:
             progress_cb(0.96, "MCU CMD_RANDOM_READ smoke test")
         try:
@@ -195,8 +228,33 @@ class MT76x0UDriver:
             logger.error("MT7610U: MCU smoke test failed: %s", e)
             return False
 
+        # ---- M3a step 11: init_mac_registers [SRC] mt76x0/init.c:187.
+        # Uploads common_mac_reg_table + mt76x0_mac_reg_table via MCU, then
+        # 4 direct register tweaks (release MAC reset, EXT_CCA_CFG, FCE_L2_STUFF,
+        # WMM_CTRL).
         if progress_cb:
-            progress_cb(0.98, "Reading EFUSE")
+            progress_cb(0.96, "init_mac_registers (66 table + 4 direct writes)")
+        try:
+            init_mac_registers(self.transport, self.mcu)
+        except (MCUError, MACInitError, usb.core.USBError) as e:
+            logger.error("MT7610U: init_mac_registers failed: %s", e)
+            return False
+
+        # ---- M3a step 12: wait_for_txrx_idle [SRC] mt76x0/init.c:189.
+        if progress_cb:
+            progress_cb(0.97, "wait_for_txrx_idle (MAC_STATUS TX|RX=0)")
+        if not wait_for_txrx_idle(self.transport):
+            logger.error("MT7610U: wait_for_txrx_idle timed out")
+            return False
+        self.mac_status_after_init = self.transport.read32(MT_MAC_STATUS)
+        logger.info("MT7610U: MAC_STATUS after init = 0x%08x (TX|RX idle)",
+                    self.mac_status_after_init)
+
+        # ---- M2 (out-of-order): EFUSE summary --------------------------
+        # Kernel reads full EFUSE later in init_hardware (step 11), but our
+        # M2 just reads the small summary we display. Safe out-of-order.
+        if progress_cb:
+            progress_cb(0.98, "Reading EFUSE summary")
         try:
             self.efuse_info = read_efuse_summary(self.transport)
         except (EEPROMError, usb.core.USBError) as e:
@@ -215,7 +273,7 @@ class MT76x0UDriver:
         )
 
         if progress_cb:
-            progress_cb(1.00, "M2 complete — MCU + EFUSE ready")
+            progress_cb(1.00, "M3a complete — MAC init done, TX|RX idle")
         return True
 
     async def set_channel(self, channel: int) -> bool:

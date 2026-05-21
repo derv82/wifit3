@@ -94,8 +94,125 @@ MT_TX_CPU_FROM_FCE_MAX_COUNT      = 0x09a4
 MT_TX_CPU_FROM_FCE_CPU_DESC_IDX   = 0x09a8
 MT_FCE_PDMA_GLOBAL_CONF           = 0x09c4
 MT_FCE_SKIP_FS                    = 0x0a6c
-MT_MAC_CSR0                       = 0x1000   # ASIC version probe (used by wait_for_mac)
+# ============================================================
+# WPDMA — present on USB even though it's mostly a PCIe-path concept;
+# kernel still polls it during init_hardware. [SRC] mt76x02_regs.h:125-135
+# ============================================================
+MT_WPDMA_GLO_CFG                  = 0x0208
+MT_WPDMA_GLO_CFG_TX_DMA_BUSY      = 1 << 1   # BIT(1)
+MT_WPDMA_GLO_CFG_RX_DMA_BUSY      = 1 << 3   # BIT(3)
+
+# ============================================================
+# M3a — registers touched by init_mac_registers (mt76x0/init.c:110-134).
+# Most addresses live in mt76x02_regs.h. The two tables under
+# initvals_init.py reference all of these.
+# ============================================================
+# Beacon offset table base, [SRC] mt76x02_regs.h:193-194
+MT_BCN_OFFSET_BASE                = 0x041c
+def MT_BCN_OFFSET(n: int) -> int:
+    return MT_BCN_OFFSET_BASE + (n << 2)
+
+# PBF (packet buffer) — [SRC] mt76x02_regs.h:175-191
+MT_PBF_SYS_CTRL                   = 0x0400
+MT_PBF_CFG                        = 0x0404
+MT_PBF_TX_MAX_PCNT                = 0x0408
+MT_PBF_RX_MAX_PCNT                = 0x040c
+
+# FCE L2 stuff — [SRC] mt76x02_regs.h:246-255
+MT_FCE_L2_STUFF                   = 0x080c
+MT_FCE_L2_STUFF_WR_MPDU_LEN_EN    = 1 << 4   # BIT(4)
+
+# IO + LDO + low-addr — [SRC] mt76x02_regs.h:40-75
+MT_LDO_CTRL_0                     = 0x006c
+MT_LDO_CTRL_1                     = 0x0070
+MT_IOCFG_6                        = 0x0124
+
+# DMA-side / TSO — [SRC] mt76x02_regs.h:163-164
+MT_TSO_CTRL                       = 0x0250
+MT_HEADER_TRANS_CTRL_REG          = 0x0260
+
+# WMM (MT76x0-only alias of FCE_DMA_ADDR address space; bit 11:0 controls
+# tx ring rules for queues 8/9). [SRC] mt76x02_regs.h:158 — note this
+# shares 0x0230 with FCE_DMA_ADDR but post-FW the chip treats it as WMM.
+MT_WMM_CTRL                       = 0x0230
+
+# MAC + addr + BSSID — [SRC] mt76x02_regs.h:267-294
+MT_MAC_CSR0                       = 0x1000   # ASIC version probe (wait_for_mac)
 MT_MAC_SYS_CTRL                   = 0x1004   # [SRC] mt76x02_regs.h:269
+MT_MAC_ADDR_DW0                   = 0x1008
+MT_MAC_ADDR_DW1                   = 0x100c
+MT_MAC_BSSID_DW0                  = 0x1010
+MT_MAC_BSSID_DW1                  = 0x1014
+MT_MAX_LEN_CFG                    = 0x1018
+MT_LED_CFG                        = 0x102c
+MT_AMPDU_MAX_LEN_20M1S            = 0x1030
+
+# Timing / backoff — [SRC] mt76x02_regs.h:312-319
+MT_XIFS_TIME_CFG                  = 0x1100
+MT_BKOFF_SLOT_CFG                 = 0x1104
+
+# MAC status — [SRC] mt76x02_regs.h:363-365
+MT_MAC_STATUS                     = 0x1200
+MT_MAC_STATUS_TX                  = 1 << 0   # BIT(0)
+MT_MAC_STATUS_RX                  = 1 << 1   # BIT(1)
+
+# Power-related MAC registers — [SRC] mt76x02_regs.h:367-373
+MT_PWR_PIN_CFG                    = 0x1204
+MT_BB_PA_MODE_CFG1                = 0x1218
+MT_RF_PA_MODE_CFG1                = 0x1220
+
+# TX power tables — [SRC] mt76x02_regs.h:387-408
+MT_TX_PWR_CFG_0                   = 0x1314
+MT_TX_PWR_CFG_1                   = 0x1318
+MT_TX_PWR_CFG_2                   = 0x131c
+MT_TX_PWR_CFG_3                   = 0x1320
+MT_TX_PWR_CFG_4                   = 0x1324
+MT_TX_PWR_CFG_7                   = 0x13d4
+MT_TX_PWR_CFG_8                   = 0x13d8
+MT_TX_PWR_CFG_9                   = 0x13dc
+
+# TX SW/CTRL — [SRC] mt76x02_regs.h:410-428
+MT_TX_SW_CFG0                     = 0x1330
+MT_TX_SW_CFG1                     = 0x1334
+MT_TX_SW_CFG2                     = 0x1338
+MT_TXOP_CTRL_CFG                  = 0x1340
+MT_TX_RTS_CFG                     = 0x1344
+MT_TX_TIMEOUT_CFG                 = 0x1348
+MT_TX_RETRY_CFG                   = 0x134c
+MT_TX_LINK_CFG                    = 0x1350
+MT_VHT_HT_FBK_CFG1                = 0x1358
+
+# Protection rate configs — [SRC] mt76x02_regs.h:441-446
+MT_CCK_PROT_CFG                   = 0x1364
+MT_OFDM_PROT_CFG                  = 0x1368
+MT_MM20_PROT_CFG                  = 0x136c
+MT_MM40_PROT_CFG                  = 0x1370
+MT_GF20_PROT_CFG                  = 0x1374
+MT_GF40_PROT_CFG                  = 0x1378
+
+# ACK + ALC — [SRC] mt76x02_regs.h:470, 487, 502
+MT_EXP_ACK_TIME                   = 0x1380
+MT_TX_ALC_CFG_0                   = 0x13b0
+MT_TX0_BB_GAIN_ATTEN              = 0x13c0   # MT76x0-only
+
+# More TX prot configs — [SRC] mt76x02_regs.h:506-508
+MT_TX_PROT_CFG6                   = 0x13e0
+MT_TX_PROT_CFG7                   = 0x13e4
+MT_TX_PROT_CFG8                   = 0x13e8
+
+# RX filter + rate base + HT — [SRC] mt76x02_regs.h:512-538
+MT_RX_FILTR_CFG                   = 0x1400
+MT_AUTO_RSP_CFG                   = 0x1404
+MT_LEGACY_BASIC_RATE              = 0x1408
+MT_HT_BASIC_RATE                  = 0x140c
+MT_HT_CTRL_CFG                    = 0x1410
+
+# Extended CCA — [SRC] mt76x02_regs.h:542
+MT_EXT_CCA_CFG                    = 0x141c
+
+# PN pad mode + TXOP holder — [SRC] mt76x02_regs.h:552-555
+MT_PN_PAD_MODE                    = 0x150c
+MT_TXOP_HLDR_ET                   = 0x1608
 
 # MT_MAC_SYS_CTRL bit fields. Kernel pre-FW writes 0x2c = ENABLE_TX | ENABLE_RX | BIT(5).
 MT_MAC_SYS_CTRL_RESET_CSR         = 1 << 0
@@ -185,6 +302,11 @@ MCU_SEND_TIMEOUT_MS = 500       # [SRC] mt76x02_usb_mcu.c:95
 # [SRC] mt76x02_mcu.h:19, [SRC] mt76x0/init.c:84 (RANDOM_WRITE macro).
 # [WIRE] capture-2.pcap:427 — every addr in the payload is 0x00411xxx.
 MT_MCU_MEMMAP_WLAN = 0x410000
+
+# Max payload bytes per CMD_RANDOM_WRITE / CMD_RANDOM_READ. [SRC] mt76x02_mcu.h:18.
+# Random-write helpers chunk pairs at MT_INBAND_PACKET_MAX_LEN / 8 = 24 pairs.
+MT_INBAND_PACKET_MAX_LEN = 192
+MT_MCU_REG_PAIRS_PER_CMD = MT_INBAND_PACKET_MAX_LEN // 8   # = 24
 
 # ============================================================
 # FW upload constants — [SRC] mt76x0/mcu.h:14-15 + usb_mcu.c:13-14

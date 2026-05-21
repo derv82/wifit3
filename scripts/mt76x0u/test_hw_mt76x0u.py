@@ -3,6 +3,7 @@
   --phase probe : USB enumeration + claim + MAC_CSR0 read (M0).
   --phase fw    : probe + FW upload + FW_READY ack (M1).
   --phase mcu   : fw + MCU CMD_RANDOM_READ round-trip + EFUSE summary (M2).
+  --phase mac   : mcu + init_mac_registers + wait_for_txrx_idle (M3a).
   --phase all   : runs the latest milestone.
 
 Usage:
@@ -127,6 +128,21 @@ async def phase_fw(driver: MT76x0UDriver) -> None:
         ok(f"FW_READY ack after {driver.fw_info['polls']} poll(s)")
 
 
+async def phase_mac(driver: MT76x0UDriver) -> None:
+    """M3a — confirm MAC init landed and TX|RX is idle."""
+    step("M3a — MAC init assertions")
+    if driver.mac_status_after_init is None:
+        fail("MAC_STATUS post-init not populated — was connect() called?")
+    mac_status = driver.mac_status_after_init
+    tx_bit = mac_status & 0x1
+    rx_bit = (mac_status >> 1) & 0x1
+    if tx_bit or rx_bit:
+        fail(f"MAC_STATUS=0x{mac_status:08x} — TX or RX bit still set "
+             f"(TX={tx_bit} RX={rx_bit})")
+    ok(f"MAC_STATUS post-init = 0x{mac_status:08x} (TX|RX = 0, idle)")
+    ok("M3a complete")
+
+
 async def phase_mcu(driver: MT76x0UDriver) -> None:
     """M2 — confirm MCU + EFUSE results landed on the driver instance.
     (driver.connect() runs M1+M2 together; this phase asserts both worked.)"""
@@ -160,7 +176,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="MT76x0U hardware test driver")
     parser.add_argument(
         "--phase",
-        choices=["probe", "fw", "mcu", "all"],
+        choices=["probe", "fw", "mcu", "mac", "all"],
         default="all",
         help="Which milestone to test (default: all)",
     )
@@ -177,12 +193,15 @@ def main() -> int:
             asyncio.run(phase_probe(driver))
             # If we're running "all", we want the chip in a known state for
             # the next phase. Probe is read-only so we just continue.
-        if args.phase in ("fw", "mcu", "all"):
-            # driver.connect() runs M1+M2 together. --phase=fw stops after
-            # the FW report; --phase=mcu / all also asserts MCU + EFUSE.
+        if args.phase in ("fw", "mcu", "mac", "all"):
+            # driver.connect() runs M1+M2+M3a together. --phase=fw stops after
+            # the FW report; --phase=mcu adds MCU+EFUSE asserts; --phase=mac /
+            # all also asserts MAC init landed.
             asyncio.run(phase_fw(driver))
-        if args.phase in ("mcu", "all"):
+        if args.phase in ("mcu", "mac", "all"):
             asyncio.run(phase_mcu(driver))
+        if args.phase in ("mac", "all"):
+            asyncio.run(phase_mac(driver))
         return 0
     finally:
         try:
