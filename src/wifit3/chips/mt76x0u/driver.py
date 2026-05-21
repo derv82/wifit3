@@ -31,7 +31,7 @@ from .mac import (
     wait_for_wpdma,
 )
 from .mcu import MCUChannel, MCUError, mcu_init_smoke_test
-from .phy import PHYInitError, init_bbp, phy_init
+from .phy import PHYInitError, init_bbp, phy_init, set_channel_20mhz
 from .transport import MT76x0UTransport
 
 logger = logging.getLogger(__name__)
@@ -87,6 +87,9 @@ class MT76x0UDriver:
         self.bbp_agc0_after_phy: Optional[int] = None
         self.bbp_txbe5_after_phy: Optional[int] = None
         self.rf_b0_r22_after_phy: Optional[int] = None
+        # M4a.1 result from set_channel().
+        self.current_channel: Optional[int] = None
+        self.last_set_channel_state: Optional[dict] = None
 
     # ---- Hooks --------------------------------------------------------
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
@@ -378,8 +381,23 @@ class MT76x0UDriver:
         return True
 
     async def set_channel(self, channel: int) -> bool:
-        """Not implemented in M1 — lands in M3."""
-        raise NotImplementedError("MT7610U set_channel is an M3 milestone")
+        """M4a.1 scaffold: runs steps 1-8 + ch-14 BBP bit of mt76x0_phy_set_channel
+        for 20 MHz monitor mode. RF freq programming (PLL) + per-channel BBP
+        params + VCO enable + calibrate are deferred to M4a.2 / M4a.3.
+
+        Returns True on success. Stores post-state register readback on
+        `self.last_set_channel_state` for hw test assertions.
+        """
+        try:
+            self.last_set_channel_state = set_channel_20mhz(
+                self.transport, self.mcu, channel,
+            )
+            self.current_channel = channel
+            logger.info("MT7610U: set_channel(%d) M4a.1 scaffold OK", channel)
+            return True
+        except (PHYInitError, MCUError, usb.core.USBError) as e:
+            logger.error("MT7610U: set_channel(%d) failed: %s", channel, e)
+            return False
 
     async def inject_frame(self, frame_bytes: bytes,
                            use_no_ack: bool = True) -> bool:

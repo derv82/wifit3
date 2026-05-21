@@ -8,6 +8,7 @@
   --phase eeprom : bbp + full EEPROM init + mac_setaddr (M3c).
   --phase ant    : eeprom + phy_ant_select (M3d.1).
   --phase phy    : ant + phy_rf_init + set_rxpath + set_txdac (M3d.2 → full M3 done).
+  --phase set_ch6 : phy + set_channel(6) scaffold (M4a.1).
   --phase all    : runs the latest milestone.
 
 Usage:
@@ -130,6 +131,58 @@ async def phase_fw(driver: MT76x0UDriver) -> None:
     else:
         ok(f"FW version: {h['fw_ver_str']}  build 0x{h['build_ver']:04x}  time {h['build_time']!r}")
         ok(f"FW_READY ack after {driver.fw_info['polls']} poll(s)")
+
+
+async def phase_set_ch6(driver: MT76x0UDriver) -> None:
+    """M4a.1 — call set_channel(6), assert post-state registers."""
+    step("M4a.1 — set_channel(6) scaffold assertions")
+    ok2 = await driver.set_channel(6)
+    if not ok2:
+        fail("driver.set_channel(6) returned False")
+    s = driver.last_set_channel_state
+    if s is None:
+        fail("last_set_channel_state not populated")
+
+    # MT_TX_BAND_CFG: bit 2 (2G) set, bit 1 (5G) clear, bit 0 (UPPER_40M) clear.
+    tx_band = s["tx_band_cfg"]
+    if not (tx_band & 0x4):
+        fail(f"MT_TX_BAND_CFG=0x{tx_band:08x} — 2G bit (BIT 2) not set")
+    if tx_band & 0x2:
+        fail(f"MT_TX_BAND_CFG=0x{tx_band:08x} — 5G bit (BIT 1) still set")
+    if tx_band & 0x1:
+        fail(f"MT_TX_BAND_CFG=0x{tx_band:08x} — UPPER_40M bit (BIT 0) set "
+             f"(expected clear for group_index=0)")
+    ok(f"MT_TX_BAND_CFG = 0x{tx_band:08x} (2G set, 5G clear, UPPER_40M clear)")
+
+    # MT_EXT_CCA_CFG: low 12 bits should be ext_cca_chan[0] = (0|1<<2|2<<4|3<<6|1<<8) = 0x1D8
+    # (and ED_CCA_MASK upper bits preserved from M3a's 0xf000).
+    ext_cca = s["ext_cca_cfg"]
+    expected_low = 0x0 | (0x1 << 2) | (0x2 << 4) | (0x3 << 6) | (0x1 << 8)
+    actual_low = ext_cca & 0xFFF
+    if actual_low != expected_low:
+        fail(f"MT_EXT_CCA_CFG low 12 bits = 0x{actual_low:03x}, "
+             f"expected 0x{expected_low:03x} (ext_cca_chan[0])")
+    ok(f"MT_EXT_CCA_CFG = 0x{ext_cca:08x} (CCA fields match group_index=0)")
+
+    # BBP(CORE, 1) bit 5 (Japan TX filter) should be CLEAR for ch 6.
+    core_1 = s["bbp_core_1"]
+    if core_1 & 0x20:
+        fail(f"BBP(CORE, 1)=0x{core_1:08x} — bit 5 (Japan TX filter) set "
+             f"(should be clear for ch != 14)")
+    ok(f"BBP(CORE, 1) = 0x{core_1:08x} (bit 5 cleared — non-Japan-14)")
+
+    # BBP(AGC, 0).R0_BW = 1 (BW_20), R0_CTRL_CHAN = 0 (group_index 0).
+    agc_0 = s["bbp_agc_0"]
+    r0_bw = (agc_0 >> 12) & 0x7
+    r0_ctrl = (agc_0 >> 8) & 0x3
+    if r0_bw != 1:
+        fail(f"BBP(AGC, 0).R0_BW = {r0_bw}, expected 1 (BW_20)")
+    if r0_ctrl != 0:
+        fail(f"BBP(AGC, 0).R0_CTRL_CHAN = {r0_ctrl}, expected 0")
+    ok(f"BBP(AGC, 0) = 0x{agc_0:08x} (R0_BW=1 BW_20, R0_CTRL_CHAN=0)")
+
+    ok("M4a.1 complete — set_channel scaffold runs cleanly; "
+       "freq programming (PLL) deferred to M4a.2")
 
 
 async def phase_phy(driver: MT76x0UDriver) -> None:
@@ -269,7 +322,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="MT76x0U hardware test driver")
     parser.add_argument(
         "--phase",
-        choices=["probe", "fw", "mcu", "mac", "bbp", "eeprom", "ant", "phy", "all"],
+        choices=["probe", "fw", "mcu", "mac", "bbp", "eeprom", "ant", "phy",
+                 "set_ch6", "all"],
         default="all",
         help="Which milestone to test (default: all)",
     )
@@ -286,21 +340,26 @@ def main() -> int:
             asyncio.run(phase_probe(driver))
             # If we're running "all", we want the chip in a known state for
             # the next phase. Probe is read-only so we just continue.
-        if args.phase in ("fw", "mcu", "mac", "bbp", "eeprom", "ant", "phy", "all"):
+        # Every phase pulls in all upstream phases — connect()/asserts must run
+        # in order. Adding a new --phase X requires appending "X" to every
+        # tuple ABOVE the X clause.
+        if args.phase in ("fw", "mcu", "mac", "bbp", "eeprom", "ant", "phy", "set_ch6", "all"):
             # driver.connect() runs M1+M2+M3a+M3b+M3c+M3d together.
             asyncio.run(phase_fw(driver))
-        if args.phase in ("mcu", "mac", "bbp", "eeprom", "ant", "phy", "all"):
+        if args.phase in ("mcu", "mac", "bbp", "eeprom", "ant", "phy", "set_ch6", "all"):
             asyncio.run(phase_mcu(driver))
-        if args.phase in ("mac", "bbp", "eeprom", "ant", "phy", "all"):
+        if args.phase in ("mac", "bbp", "eeprom", "ant", "phy", "set_ch6", "all"):
             asyncio.run(phase_mac(driver))
-        if args.phase in ("bbp", "eeprom", "ant", "phy", "all"):
+        if args.phase in ("bbp", "eeprom", "ant", "phy", "set_ch6", "all"):
             asyncio.run(phase_bbp(driver))
-        if args.phase in ("eeprom", "ant", "phy", "all"):
+        if args.phase in ("eeprom", "ant", "phy", "set_ch6", "all"):
             asyncio.run(phase_eeprom(driver))
-        if args.phase in ("ant", "phy", "all"):
+        if args.phase in ("ant", "phy", "set_ch6", "all"):
             asyncio.run(phase_ant(driver))
-        if args.phase in ("phy", "all"):
+        if args.phase in ("phy", "set_ch6", "all"):
             asyncio.run(phase_phy(driver))
+        if args.phase in ("set_ch6", "all"):
+            asyncio.run(phase_set_ch6(driver))
         return 0
     finally:
         try:

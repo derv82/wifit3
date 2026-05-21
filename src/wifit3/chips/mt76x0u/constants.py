@@ -18,7 +18,7 @@ from __future__ import annotations
 USB_IDS_MT76X0U: list[tuple[int, int, str]] = [
     (0x148F, 0x7610, "MediaTek MT7610U reference"),
     (0x13B1, 0x003E, "Linksys AE6000"),
-    (0x0E8D, 0x7610, "Sabrent NTWLAC / MediaTek MT7610U"),
+    (0x0E8D, 0x7610, "MediaTek MT7610U (Alfa AWUS036ACM/ACHM, Sabrent NTWLAC, etc.)"),
     (0x7392, 0xa711, "Edimax 7711mac"),
     (0x7392, 0xb711, "Edimax / Elecom"),
     (0x148F, 0x761a, "TP-Link TL-WDN5200"),
@@ -280,8 +280,61 @@ MT_LEGACY_BASIC_RATE              = 0x1408
 MT_HT_BASIC_RATE                  = 0x140c
 MT_HT_CTRL_CFG                    = 0x1410
 
-# Extended CCA — [SRC] mt76x02_regs.h:542
+# Extended CCA — [SRC] mt76x02_regs.h:542-548
 MT_EXT_CCA_CFG                    = 0x141c
+MT_EXT_CCA_CFG_CCA0_MASK          = 0x3        # GENMASK(1, 0)
+MT_EXT_CCA_CFG_CCA0_SHIFT         = 0
+MT_EXT_CCA_CFG_CCA1_MASK          = 0xC        # GENMASK(3, 2)
+MT_EXT_CCA_CFG_CCA1_SHIFT         = 2
+MT_EXT_CCA_CFG_CCA2_MASK          = 0x30       # GENMASK(5, 4)
+MT_EXT_CCA_CFG_CCA2_SHIFT         = 4
+MT_EXT_CCA_CFG_CCA3_MASK          = 0xC0       # GENMASK(7, 6)
+MT_EXT_CCA_CFG_CCA3_SHIFT         = 6
+MT_EXT_CCA_CFG_CCA_MASK_MASK      = 0xF00      # GENMASK(11, 8)
+MT_EXT_CCA_CFG_CCA_MASK_SHIFT     = 8
+MT_EXT_CCA_CFG_ED_CCA_MASK_MASK   = 0xF000     # GENMASK(15, 12)
+MT_EXT_CCA_CFG_ED_CCA_MASK_SHIFT  = 12
+
+# TX band cfg — [SRC] mt76x02_regs.h:398-401
+MT_TX_BAND_CFG                    = 0x132c
+MT_TX_BAND_CFG_UPPER_40M          = 1 << 0     # BIT(0)
+MT_TX_BAND_CFG_5G                 = 1 << 1     # BIT(1)
+MT_TX_BAND_CFG_2G                 = 1 << 2     # BIT(2)
+
+# Per-band TX correction + VGA — [SRC] mt76x02_regs.h:482, 504
+MT_TX0_RF_GAIN_CORR               = 0x13a0
+MT_TX_ALC_VGA3                    = 0x13c8
+
+# BBP bit fields used by mt76x02_phy_set_bw / set_band — [SRC] mt76x02_regs.h:621-641
+MT_BBP_CORE_R1_BW_MASK            = 0x18       # GENMASK(4, 3)
+MT_BBP_CORE_R1_BW_SHIFT           = 3
+MT_BBP_AGC_R0_CTRL_CHAN_MASK      = 0x300      # GENMASK(9, 8)
+MT_BBP_AGC_R0_CTRL_CHAN_SHIFT     = 8
+MT_BBP_AGC_R0_BW_MASK             = 0x7000     # GENMASK(14, 12)
+MT_BBP_AGC_R0_BW_SHIFT            = 12
+MT_BBP_TXBE_R0_CTRL_CHAN_MASK     = 0x3        # GENMASK(1, 0)
+MT_BBP_TXBE_R0_CTRL_CHAN_SHIFT    = 0
+
+# BW_SETTING values for CMD_FUN_SET_OP(BW_SETTING, ...) — [SRC] mt76x0/phy.c:475
+BW_SETTING_BW20                   = 0
+BW_SETTING_BW40                   = 1
+BW_SETTING_BW80                   = 2
+BW_SETTING_BW10                   = 4
+
+# 802.11 channel-width enum (subset; only what wifit3 cares about).
+# Maps to nl80211_chan_width — we just use these as opaque tags.
+NL80211_CHAN_WIDTH_20_NOHT        = 0
+NL80211_CHAN_WIDTH_20             = 1
+NL80211_CHAN_WIDTH_40             = 2
+NL80211_CHAN_WIDTH_80             = 3
+NL80211_CHAN_WIDTH_80P80          = 4
+NL80211_CHAN_WIDTH_160            = 5
+NL80211_CHAN_WIDTH_5              = 6
+NL80211_CHAN_WIDTH_10             = 7
+
+# nl80211 band — [SRC] nl80211.h, used as int tags.
+NL80211_BAND_2GHZ                 = 0
+NL80211_BAND_5GHZ                 = 1
 
 # PN pad mode + TXOP holder — [SRC] mt76x02_regs.h:552-555
 MT_PN_PAD_MODE                    = 0x150c
