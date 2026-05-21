@@ -149,7 +149,6 @@ class ScannerView(Screen):
                 f"[cyan]Starting channel hopper on "
                 f"{self.app.active_interface.name}...[/cyan]"
             )
-            await self.app.active_interface.start_hopping(interval=0.25)
             # 15 FPS in-place value updates — no resort. Beacons arrive ~10 Hz
             # per AP at best, so 15 Hz is plenty and 4x cheaper than 60.
             self._refresh_timer = self.set_interval(1 / 15, self.refresh_table)
@@ -157,6 +156,19 @@ class ScannerView(Screen):
             self._sort_timer = self.set_interval(
                 SORT_INTERVAL_S, self._apply_sort_and_evict
             )
+
+    async def on_screen_resume(self) -> None:
+        # Owns hopper restart so focus/dialog children don't have to know
+        # about _channel_filter. start_hopping is idempotent, so the dialog
+        # callback (which has already restarted with a new filter) is a
+        # no-op here; returning from focus (where the hopper was stopped)
+        # restarts it with the saved filter.
+        iface = self.app.active_interface
+        if not iface:
+            return
+        await iface.start_hopping(
+            channels=self._channel_filter, interval=0.25
+        )
 
     # ----- Column header / sort indicator ------------------------------------
 

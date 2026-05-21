@@ -460,8 +460,8 @@ class FocusView(Screen):
             )
 
     async def action_go_back(self) -> None:
-        if getattr(self.app, "active_interface", None):
-            await self.app.active_interface.start_hopping(interval=0.25)
+        # Hopper restart happens in ScannerView.on_screen_resume — it owns
+        # the channel filter; restarting here would silently widen it.
         self.app.pop_screen()
 
     # ----- Save --------------------------------------------------------------
