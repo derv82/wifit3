@@ -214,6 +214,52 @@ MT_EXT_CCA_CFG                    = 0x141c
 MT_PN_PAD_MODE                    = 0x150c
 MT_TXOP_HLDR_ET                   = 0x1608
 
+# ============================================================
+# BBP register groups — [SRC] mt76x02_regs.h:604-617.
+# MT_BBP(_type, _n) = MT_BBP_<type>_BASE + (n << 2)
+# ============================================================
+MT_BBP_CORE_BASE                  = 0x2000
+MT_BBP_IBI_BASE                   = 0x2100
+MT_BBP_AGC_BASE                   = 0x2300
+MT_BBP_TXC_BASE                   = 0x2400
+MT_BBP_RXC_BASE                   = 0x2500
+MT_BBP_TXO_BASE                   = 0x2600
+MT_BBP_TXBE_BASE                  = 0x2700
+MT_BBP_RXFE_BASE                  = 0x2800
+MT_BBP_RXO_BASE                   = 0x2900
+MT_BBP_DFS_BASE                   = 0x2a00
+MT_BBP_TR_BASE                    = 0x2b00
+MT_BBP_CAL_BASE                   = 0x2c00
+MT_BBP_DSC_BASE                   = 0x2e00
+MT_BBP_PFMU_BASE                  = 0x2f00
+
+
+def MT_BBP_CORE(n: int) -> int: return MT_BBP_CORE_BASE + (n << 2)
+def MT_BBP_IBI(n: int)  -> int: return MT_BBP_IBI_BASE  + (n << 2)
+def MT_BBP_AGC(n: int)  -> int: return MT_BBP_AGC_BASE  + (n << 2)
+def MT_BBP_TXC(n: int)  -> int: return MT_BBP_TXC_BASE  + (n << 2)
+def MT_BBP_RXC(n: int)  -> int: return MT_BBP_RXC_BASE  + (n << 2)
+def MT_BBP_TXO(n: int)  -> int: return MT_BBP_TXO_BASE  + (n << 2)
+def MT_BBP_TXBE(n: int) -> int: return MT_BBP_TXBE_BASE + (n << 2)
+def MT_BBP_RXFE(n: int) -> int: return MT_BBP_RXFE_BASE + (n << 2)
+def MT_BBP_RXO(n: int)  -> int: return MT_BBP_RXO_BASE  + (n << 2)
+def MT_BBP_CAL(n: int)  -> int: return MT_BBP_CAL_BASE  + (n << 2)
+
+
+# RF band + bandwidth tags for `mt76x0_bbp_switch_tab` filtering.
+# [SRC] mt76x0/phy.h:9-19
+RF_G_BAND                         = 0x0100
+RF_A_BAND                         = 0x0200
+RF_A_BAND_LB                      = 0x0400
+RF_A_BAND_MB                      = 0x0800
+RF_A_BAND_HB                      = 0x1000
+RF_A_BAND_11J                     = 0x2000
+
+RF_BW_20                          = 1
+RF_BW_40                          = 2
+RF_BW_10                          = 4
+RF_BW_80                          = 8
+
 # MT_MAC_SYS_CTRL bit fields. Kernel pre-FW writes 0x2c = ENABLE_TX | ENABLE_RX | BIT(5).
 MT_MAC_SYS_CTRL_RESET_CSR         = 1 << 0
 MT_MAC_SYS_CTRL_RESET_BBP         = 1 << 1

@@ -23,6 +23,7 @@ from .eeprom import EEPROMError, EFUSEInfo, read_efuse_summary
 from .firmware import FirmwareError, FirmwareUploader
 from .mac import MACInitError, init_mac_registers, wait_for_txrx_idle, wait_for_wpdma
 from .mcu import MCUChannel, MCUError, mcu_init_smoke_test
+from .phy import PHYInitError, init_bbp
 from .transport import MT76x0UTransport
 
 logger = logging.getLogger(__name__)
@@ -66,11 +67,12 @@ class MT76x0UDriver:
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
         self._rx_callback: Optional[Callable[[dict], None]] = None
-        # M1 + M2 + M3a results, populated by connect().
+        # M1 + M2 + M3a + M3b results, populated by connect().
         self.fw_info: Optional[dict] = None
         self.efuse_info: Optional[EFUSEInfo] = None
         self.mcu_smoke: Optional[dict] = None
         self.mac_status_after_init: Optional[int] = None
+        self.bbp_version: Optional[int] = None
 
     # ---- Hooks --------------------------------------------------------
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
@@ -242,13 +244,25 @@ class MT76x0UDriver:
 
         # ---- M3a step 12: wait_for_txrx_idle [SRC] mt76x0/init.c:189.
         if progress_cb:
-            progress_cb(0.97, "wait_for_txrx_idle (MAC_STATUS TX|RX=0)")
+            progress_cb(0.96, "wait_for_txrx_idle (MAC_STATUS TX|RX=0)")
         if not wait_for_txrx_idle(self.transport):
             logger.error("MT7610U: wait_for_txrx_idle timed out")
             return False
         self.mac_status_after_init = self.transport.read32(MT_MAC_STATUS)
         logger.info("MT7610U: MAC_STATUS after init = 0x%08x (TX|RX idle)",
                     self.mac_status_after_init)
+
+        # ---- M3b: init_bbp [SRC] mt76x0/init.c:192.
+        # phy_wait_bbp_ready, then bbp_init_tab (54 pairs MCU), then 20
+        # filtered switch_tab entries direct-write, then dcoc_tab (9 pairs MCU).
+        if progress_cb:
+            progress_cb(0.97, "init_bbp (BBP wait + 3 tables)")
+        try:
+            self.bbp_version = init_bbp(self.transport, self.mcu)
+        except (PHYInitError, MCUError, usb.core.USBError) as e:
+            logger.error("MT7610U: init_bbp failed: %s", e)
+            return False
+        logger.info("MT7610U: BBP version = 0x%08x", self.bbp_version)
 
         # ---- M2 (out-of-order): EFUSE summary --------------------------
         # Kernel reads full EFUSE later in init_hardware (step 11), but our
@@ -273,7 +287,7 @@ class MT76x0UDriver:
         )
 
         if progress_cb:
-            progress_cb(1.00, "M3a complete — MAC init done, TX|RX idle")
+            progress_cb(1.00, "M3b complete — MAC + BBP init done")
         return True
 
     async def set_channel(self, channel: int) -> bool:
