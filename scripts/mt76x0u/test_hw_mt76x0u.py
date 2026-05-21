@@ -8,7 +8,8 @@
   --phase eeprom : bbp + full EEPROM init + mac_setaddr (M3c).
   --phase ant    : eeprom + phy_ant_select (M3d.1).
   --phase phy    : ant + phy_rf_init + set_rxpath + set_txdac (M3d.2 → full M3 done).
-  --phase set_ch6 : phy + set_channel(6) scaffold (M4a.1).
+  --phase set_ch6 : phy + set_channel(6) full chain (M4a).
+  --phase rx_drain : set_ch6 + bulk-IN drain on EP 0x84 for 3s (M4b).
   --phase all    : runs the latest milestone.
 
 Usage:
@@ -234,6 +235,32 @@ async def phase_set_ch6(driver: MT76x0UDriver) -> None:
     ok("M4a.3 complete — set_channel(6) full chain done; chip tuned + calibrated for ch 6")
 
 
+async def phase_rx_drain(driver: MT76x0UDriver, seconds: float) -> None:
+    """M4b — enable TRX + drain bulk-IN for N seconds; report stats."""
+    step(f"M4b — enable TRX + drain bulk-IN on EP 0x84 for {seconds}s")
+    driver.enable_trx()
+    info(f"Draining EP 0x84 for {seconds}s (timeout 200ms per xfer)...")
+    stats = driver.drain_bulk_in(duration_seconds=seconds)
+
+    info(f"drain stats: bytes={stats['bytes']} xfers={stats['xfers']} "
+         f"timeouts={stats['timeouts']} errors={stats['errors']}")
+    if stats["first_chunk"]:
+        head = stats["first_chunk"].hex(" ")
+        info(f"first bulk-IN chunk[:32] = {head}")
+
+    if stats["errors"] > 0:
+        fail(f"drain_bulk_in: {stats['errors']} USB errors (not timeouts)")
+    if stats["bytes"] == 0:
+        fail(f"drain_bulk_in: ZERO bytes in {seconds}s - RX path not delivering "
+             f"(check TRX enable, RX filter, channel tune, antenna)")
+
+    rate = stats["bytes"] / seconds
+    ok(f"drain_bulk_in: {stats['bytes']} bytes in {seconds:.1f}s "
+       f"= {rate:.0f} B/s across {stats['xfers']} xfers "
+       f"({stats['timeouts']} empty polls)")
+    ok("M4b complete - raw bytes flowing in via bulk-IN. M4c next: RXWI strip + parser.")
+
+
 async def phase_phy(driver: MT76x0UDriver) -> None:
     """M3d.2 — confirm full phy_init landed (RF init + rxpath + txdac)."""
     step("M3d.2 — phy_init assertions")
@@ -372,11 +399,15 @@ def main() -> int:
     parser.add_argument(
         "--phase",
         choices=["probe", "fw", "mcu", "mac", "bbp", "eeprom", "ant", "phy",
-                 "set_ch6", "all"],
+                 "set_ch6", "rx_drain", "all"],
         default="all",
         help="Which milestone to test (default: all)",
     )
     parser.add_argument("--debug", action="store_true", help="Enable DEBUG logging")
+    parser.add_argument(
+        "--rx-seconds", type=float, default=3.0,
+        help="Seconds to drain bulk-IN for --phase rx_drain (default: 3.0)",
+    )
     args = parser.parse_args()
 
     setup_logging(args.debug)
@@ -392,23 +423,27 @@ def main() -> int:
         # Every phase pulls in all upstream phases — connect()/asserts must run
         # in order. Adding a new --phase X requires appending "X" to every
         # tuple ABOVE the X clause.
-        if args.phase in ("fw", "mcu", "mac", "bbp", "eeprom", "ant", "phy", "set_ch6", "all"):
+        ALL_PHASES = ("fw", "mcu", "mac", "bbp", "eeprom", "ant", "phy",
+                      "set_ch6", "rx_drain", "all")
+        if args.phase in ALL_PHASES:
             # driver.connect() runs M1+M2+M3a+M3b+M3c+M3d together.
             asyncio.run(phase_fw(driver))
-        if args.phase in ("mcu", "mac", "bbp", "eeprom", "ant", "phy", "set_ch6", "all"):
+        if args.phase in ALL_PHASES[1:]:
             asyncio.run(phase_mcu(driver))
-        if args.phase in ("mac", "bbp", "eeprom", "ant", "phy", "set_ch6", "all"):
+        if args.phase in ALL_PHASES[2:]:
             asyncio.run(phase_mac(driver))
-        if args.phase in ("bbp", "eeprom", "ant", "phy", "set_ch6", "all"):
+        if args.phase in ALL_PHASES[3:]:
             asyncio.run(phase_bbp(driver))
-        if args.phase in ("eeprom", "ant", "phy", "set_ch6", "all"):
+        if args.phase in ALL_PHASES[4:]:
             asyncio.run(phase_eeprom(driver))
-        if args.phase in ("ant", "phy", "set_ch6", "all"):
+        if args.phase in ALL_PHASES[5:]:
             asyncio.run(phase_ant(driver))
-        if args.phase in ("phy", "set_ch6", "all"):
+        if args.phase in ALL_PHASES[6:]:
             asyncio.run(phase_phy(driver))
-        if args.phase in ("set_ch6", "all"):
+        if args.phase in ALL_PHASES[7:]:
             asyncio.run(phase_set_ch6(driver))
+        if args.phase in ALL_PHASES[8:]:
+            asyncio.run(phase_rx_drain(driver, args.rx_seconds))
         return 0
     finally:
         try:

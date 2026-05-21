@@ -18,7 +18,15 @@ import usb.core
 
 from wifit3.engine.protocols import DeviceID, ProgressCallback
 
-from .constants import MT_MAC_STATUS, MT_RX_FILTR_CFG, USB_IDS_MT76X0U
+from .constants import (
+    EP_IN_PKT_RX,
+    MT_MAC_STATUS,
+    MT_MAC_SYS_CTRL,
+    MT_MAC_SYS_CTRL_ENABLE_RX,
+    MT_MAC_SYS_CTRL_ENABLE_TX,
+    MT_RX_FILTR_CFG,
+    USB_IDS_MT76X0U,
+)
 from .eeprom import EEPROMError, EFUSEFullInfo, read_efuse_full
 from .firmware import FirmwareError, FirmwareUploader
 from .mac import (
@@ -399,6 +407,58 @@ class MT76x0UDriver:
         except (PHYInitError, MCUError, usb.core.USBError) as e:
             logger.error("MT7610U: set_channel(%d) failed: %s", channel, e)
             return False
+
+    def enable_trx(self) -> None:
+        """M4b — enable MAC TX+RX engines. [SRC] mt76x02_mac.c:1071-1072.
+
+        The kernel always writes ENABLE_TX | ENABLE_RX together (the chip
+        misbehaves if only one is set). RX filter stays at the cached
+        default (0x00017f97 — drop CRC/PHY/VER errors, accept everything
+        else; OTHER_BSS bit is already 0 in the default, so we'll see
+        frames from any BSS).
+        """
+        self.transport.write32(
+            MT_MAC_SYS_CTRL,
+            MT_MAC_SYS_CTRL_ENABLE_TX | MT_MAC_SYS_CTRL_ENABLE_RX,
+        )
+        logger.info("MT7610U: MAC TRX enabled "
+                    "(MAC_SYS_CTRL = ENABLE_TX | ENABLE_RX = 0x0C)")
+
+    def drain_bulk_in(
+        self, duration_seconds: float, bufsize: int = 2048,
+        timeout_ms: int = 200,
+    ) -> dict:
+        """M4b — drain EP 0x84 bulk-IN for N seconds. Returns stats dict
+        with `bytes`, `xfers`, `timeouts`, `errors`.
+
+        Each bulk-IN response is a `[mt76 RX desc][802.11 frame][padding]`
+        blob; we don't decode it here (M4c will). Goal is to confirm raw
+        bytes are flowing — i.e., the chip is actually receiving on the
+        configured channel.
+        """
+        import time as _time
+        stats = {"bytes": 0, "xfers": 0, "timeouts": 0, "errors": 0,
+                 "first_chunk": None}
+        deadline = _time.monotonic() + duration_seconds
+        while _time.monotonic() < deadline:
+            try:
+                data = self.transport.bulk_in(
+                    EP_IN_PKT_RX, bufsize, timeout_ms=timeout_ms,
+                )
+                if data:
+                    stats["bytes"] += len(data)
+                    stats["xfers"] += 1
+                    if stats["first_chunk"] is None:
+                        stats["first_chunk"] = bytes(data[:32])
+            except usb.core.USBError as e:
+                # libusb backend ETIMEDOUT (-7) or PyUSB errno.ETIMEDOUT.
+                if (getattr(e, "backend_error_code", None) == -7
+                        or getattr(e, "errno", None) == 110):
+                    stats["timeouts"] += 1
+                    continue
+                stats["errors"] += 1
+                logger.warning("drain_bulk_in: USBError: %s", e)
+        return stats
 
     async def inject_frame(self, frame_bytes: bytes,
                            use_no_ack: bool = True) -> bool:
