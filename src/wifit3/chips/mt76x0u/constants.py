@@ -78,6 +78,12 @@ MT_CMB_CTRL_PLL_LD                = 1 << 23  # BIT(23)
 
 MT_COEXCFG3                       = 0x004c   # [SRC] mt76x02_regs.h:38
 
+# RF misc — toggle external PA enable bits for A/G band.
+# [SRC] mt76x02_regs.h:209
+MT_RF_MISC                        = 0x0518
+MT_RF_MISC_EXT_PA_A_BAND          = 1 << 2     # BIT(2) — per phy.c:367 comment
+MT_RF_MISC_EXT_PA_G_BAND          = 1 << 3     # BIT(3) — per phy.c:368 comment
+
 MT_WLAN_FUN_CTRL                  = 0x0080   # chip on/off + reset
 # MT_WLAN_FUN_CTRL bits — [SRC] mt76x02_regs.h:34-56
 MT_WLAN_FUN_CTRL_WLAN_EN          = 1 << 0
@@ -303,7 +309,13 @@ MT_TX_BAND_CFG_2G                 = 1 << 2     # BIT(2)
 
 # Per-band TX correction + VGA — [SRC] mt76x02_regs.h:482, 504
 MT_TX0_RF_GAIN_CORR               = 0x13a0
+MT_TX0_RF_GAIN_ATTEN              = 0x13a8     # MT76x0-only — [SRC] mt76x02_regs.h:485
+MT_TX_ALC_CFG_1                   = 0x13b4     # already in M3a but re-declare for clarity
 MT_TX_ALC_VGA3                    = 0x13c8
+
+# EFUSE NIC_CONF_0 PA-internal bits — [SRC] mt76x02_eeprom.h:103-104
+MT_EE_NIC_CONF_0_PA_INT_2G        = 1 << 8     # BIT(8)
+MT_EE_NIC_CONF_0_PA_INT_5G        = 1 << 9     # BIT(9)
 
 # BBP bit fields used by mt76x02_phy_set_bw / set_band — [SRC] mt76x02_regs.h:621-641
 MT_BBP_CORE_R1_BW_MASK            = 0x18       # GENMASK(4, 3)
@@ -490,6 +502,19 @@ MT_MCU_MEMMAP_RF = 0x80000000
 def MT_RF(bank: int, reg: int) -> int:
     """[SRC] mt76x0/phy.h:21 — `MT_RF(bank, reg) = (bank << 16) | reg`."""
     return (bank << 16) | reg
+
+
+# RF register bit-field masks used by mt76x0_phy_set_chan_rf_params.
+# [SRC] mt76x0/phy.h:32-40
+MT_RF_PLL_DEN_MASK                = 0x1F       # GENMASK(4, 0)
+MT_RF_PLL_K_MASK                  = 0x1F       # GENMASK(4, 0)
+MT_RF_SDM_RESET_MASK              = 0x80       # BIT(7)
+MT_RF_SDM_MASH_PRBS_MASK          = 0x7C       # GENMASK(6, 2)
+MT_RF_SDM_BP_MASK                 = 0x02       # BIT(1)
+MT_RF_ISI_ISO_MASK                = 0xC0       # GENMASK(7, 6)
+MT_RF_PFD_DLY_MASK                = 0x30       # GENMASK(5, 4)
+MT_RF_CLK_SEL_MASK                = 0x0C       # GENMASK(3, 2)
+MT_RF_XO_DIV_MASK                 = 0x03       # GENMASK(1, 0)
 
 # ============================================================
 # FW upload constants — [SRC] mt76x0/mcu.h:14-15 + usb_mcu.c:13-14

@@ -181,8 +181,31 @@ async def phase_set_ch6(driver: MT76x0UDriver) -> None:
         fail(f"BBP(AGC, 0).R0_CTRL_CHAN = {r0_ctrl}, expected 0")
     ok(f"BBP(AGC, 0) = 0x{agc_0:08x} (R0_BW=1 BW_20, R0_CTRL_CHAN=0)")
 
-    ok("M4a.1 complete — set_channel scaffold runs cleanly; "
-       "freq programming (PLL) deferred to M4a.2")
+    # M4a.2: PLL readbacks for ch 6 should match FREQUENCY_PLAN entry exactly.
+    from wifit3.chips.mt76x0u.initvals_freq import find_freq_item
+    expected = find_freq_item(6, False)
+    if "rf_b0_r29" in s:
+        expected_r29 = expected.pll_n & 0xFF      # 0xA2 for ch 6
+        if s["rf_b0_r29"] != expected_r29:
+            fail(f"MT_RF(0, 29) = 0x{s['rf_b0_r29']:02x}, expected 0x{expected_r29:02x} "
+                 f"(pll_n low byte for ch 6)")
+        ok(f"MT_RF(0, 29) = 0x{s['rf_b0_r29']:02x}  (pll_n low byte matches FREQUENCY_PLAN[ch=6])")
+        for reg_name, key, exp in [
+            ("R33", "rf_b0_r33", expected.pllR33),
+            ("R34", "rf_b0_r34", expected.pllR34),
+            ("R35", "rf_b0_r35", expected.pllR35),
+            ("R36", "rf_b0_r36", expected.pllR36),
+            ("R37", "rf_b0_r37", expected.pllR37),
+        ]:
+            actual = s[key]
+            if actual != exp:
+                fail(f"MT_RF(0, {reg_name[1:]}) = 0x{actual:02x}, expected 0x{exp:02x}")
+        ok(f"MT_RF(0, 33-37) = 0x{s['rf_b0_r33']:02x}/{s['rf_b0_r34']:02x}/"
+           f"{s['rf_b0_r35']:02x}/{s['rf_b0_r36']:02x}/{s['rf_b0_r37']:02x} "
+           f"(all PLL R33-R37 match FREQUENCY_PLAN[ch=6])")
+    else:
+        info("PLL readbacks not captured (MCU read failed)")
+    ok("M4a.2 complete — set_channel + PLL programming")
 
 
 async def phase_phy(driver: MT76x0UDriver) -> None:

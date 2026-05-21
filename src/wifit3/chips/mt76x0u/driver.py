@@ -391,9 +391,10 @@ class MT76x0UDriver:
         try:
             self.last_set_channel_state = set_channel_20mhz(
                 self.transport, self.mcu, channel,
+                efuse_full=self.efuse_full,
             )
             self.current_channel = channel
-            logger.info("MT7610U: set_channel(%d) M4a.1 scaffold OK", channel)
+            logger.info("MT7610U: set_channel(%d) OK", channel)
             return True
         except (PHYInitError, MCUError, usb.core.USBError) as e:
             logger.error("MT7610U: set_channel(%d) failed: %s", channel, e)

@@ -28,6 +28,7 @@ from .constants import (
     MT_MCU_MEMMAP_WLAN,
     MT_RF,
     MT_WLAN_FUN_CTRL,
+    RF_A_BAND,
     RF_BW_20,
     RF_G_BAND,
 )
@@ -514,10 +515,178 @@ def _build_ext_cca_chan() -> list[int]:
 EXT_CCA_CHAN = _build_ext_cca_chan()
 
 
+def phy_set_chan_rf_params(
+    transport: MT76x0UTransport, mcu: MCUChannel,
+    channel: int, rf_bw_band: int, efuse_full=None,
+) -> None:
+    """Port of `mt76x0_phy_set_chan_rf_params` (mt76x0/phy.c:232-397).
+
+    Programs the PLL for the target channel:
+      1. Check `SDM_CHANNEL` membership → use SDM_FREQUENCY_PLAN if so.
+      2. Look up the freq_item for `channel`; updates `rf_band` from the
+         item's `band` field.
+      3. Write 5 PLL regs (R37..R33) directly + 11 RF RMW operations
+         (R32 b7b5/b4b0, R31 b7b5/b4b0, R30 sdm_reset_n/mash/bp/n_high,
+         R28 isi_iso/pfd_dly/clk_sel, R24 xo_div) + 3 plain rf_wr
+         (R29 pll_n_low, R26/R27 sdm_k low/mid).
+      4. bw_switch_tab pass: writes entries matching `rf_bw == bw_band` OR
+         (`rf_bw == bw_band & 0xFF` AND `rf_band & bw_band`).
+      5. band_switch_tab pass: writes entries with `bw_band & rf_band`.
+      6. Clear MT_RF_MISC bits 2-3.
+      7. Ext-PA branch (only if EFUSE PA_INT_X bit is clear): set MT_RF_MISC
+         BIT(2) for 5G or BIT(3) for 2G, then write matching ext_pa_tab entries.
+      8. Per-band TX gain / ALC registers (2G uses 0x63707400, 5G uses 0x686A7800).
+    """
+    from .constants import (
+        MT_EE_NIC_CONF_0_PA_INT_2G,
+        MT_EE_NIC_CONF_0_PA_INT_5G,
+        MT_RF_CLK_SEL_MASK,
+        MT_RF_ISI_ISO_MASK,
+        MT_RF_MISC,
+        MT_RF_MISC_EXT_PA_A_BAND,
+        MT_RF_MISC_EXT_PA_G_BAND,
+        MT_RF_PFD_DLY_MASK,
+        MT_RF_PLL_DEN_MASK,
+        MT_RF_PLL_K_MASK,
+        MT_RF_SDM_BP_MASK,
+        MT_RF_SDM_MASH_PRBS_MASK,
+        MT_RF_SDM_RESET_MASK,
+        MT_RF_XO_DIV_MASK,
+        MT_TX0_RF_GAIN_ATTEN,
+        MT_TX_ALC_CFG_1,
+    )
+    from .initvals_rf import RF_BAND_SWITCH_TAB, RF_BW_SWITCH_TAB
+    from .initvals_freq import RF_EXT_PA_TAB, SDM_CHANNEL, find_freq_item
+
+    rf_band = rf_bw_band & 0xFF00
+    rf_bw = rf_bw_band & 0x00FF
+
+    use_sdm = channel in SDM_CHANNEL
+    fi = find_freq_item(channel, use_sdm)
+    if fi is None:
+        raise PHYInitError(
+            f"phy_set_chan_rf_params: no freq_item for channel {channel}"
+        )
+    # Per kernel: `rf_band = mt76x0_frequency_plan[i].band;` — overrides
+    # the rf_bw_band-derived band with the per-channel-specific band tag.
+    rf_band = fi.band
+    logger.info("phy_set_chan_rf_params: ch=%d sdm=%s pll_n=0x%04x "
+                "pll_sdm_k=0x%05x rf_band=0x%04x",
+                channel, use_sdm, fi.pll_n, fi.pll_sdm_k, rf_band)
+
+    # PLL R37..R33 — straight rf_wr.
+    rf_wr(mcu, MT_RF(0, 37), fi.pllR37)
+    rf_wr(mcu, MT_RF(0, 36), fi.pllR36)
+    rf_wr(mcu, MT_RF(0, 35), fi.pllR35)
+    rf_wr(mcu, MT_RF(0, 34), fi.pllR34)
+    rf_wr(mcu, MT_RF(0, 33), fi.pllR33)
+
+    # R32: top 3 bits (mask 0xE0), then bottom 5 bits (PLL_DEN_MASK).
+    rf_rmw(mcu, MT_RF(0, 32), 0xE0, fi.pllR32_b7b5)
+    rf_rmw(mcu, MT_RF(0, 32), MT_RF_PLL_DEN_MASK, fi.pllR32_b4b0)
+
+    # R31: top 3 bits, then bottom 5 (PLL_K).
+    rf_rmw(mcu, MT_RF(0, 31), 0xE0, fi.pllR31_b7b5)
+    rf_rmw(mcu, MT_RF(0, 31), MT_RF_PLL_K_MASK, fi.pllR31_b4b0)
+
+    # R30 bit 7 (SDM reset). On SDM channels, pulse it (clear then set).
+    if use_sdm:
+        rf_clear(mcu, MT_RF(0, 30), MT_RF_SDM_RESET_MASK)
+        rf_set(mcu, MT_RF(0, 30), MT_RF_SDM_RESET_MASK)
+    else:
+        rf_rmw(mcu, MT_RF(0, 30), MT_RF_SDM_RESET_MASK, fi.pllR30_b7)
+
+    # R30 bits 6:2 (sdmmash_prbs,sin) + R30 bit 1 (sdm_bp).
+    rf_rmw(mcu, MT_RF(0, 30), MT_RF_SDM_MASH_PRBS_MASK, fi.pllR30_b6b2)
+    rf_rmw(mcu, MT_RF(0, 30), MT_RF_SDM_BP_MASK, fi.pllR30_b1 << 1)
+
+    # pll_n: low 8 bits to R29, top bit to R30 bit 0.
+    rf_wr(mcu, MT_RF(0, 29), fi.pll_n & 0xFF)
+    rf_rmw(mcu, MT_RF(0, 30), 0x1, (fi.pll_n >> 8) & 0x1)
+
+    # R28: bits 7:6 isi_iso, bits 5:4 pfd_dly, bits 3:2 clksel.
+    rf_rmw(mcu, MT_RF(0, 28), MT_RF_ISI_ISO_MASK, fi.pllR28_b7b6)
+    rf_rmw(mcu, MT_RF(0, 28), MT_RF_PFD_DLY_MASK, fi.pllR28_b5b4)
+    rf_rmw(mcu, MT_RF(0, 28), MT_RF_CLK_SEL_MASK, fi.pllR28_b3b2)
+
+    # pll_sdm_k (3 bytes): R26 = low, R27 = mid, R28 bits 1:0 = high.
+    rf_wr(mcu, MT_RF(0, 26), fi.pll_sdm_k & 0xFF)
+    rf_wr(mcu, MT_RF(0, 27), (fi.pll_sdm_k >> 8) & 0xFF)
+    rf_rmw(mcu, MT_RF(0, 28), 0x3, (fi.pll_sdm_k >> 16) & 0x3)
+
+    # R24 bits 1:0 — xo_div.
+    rf_rmw(mcu, MT_RF(0, 24), MT_RF_XO_DIV_MASK, fi.pllR24_b1b0)
+
+    # bw_switch_tab — per-channel-bw RF tweaks. Kernel:
+    #   if (rf_bw == item->bw_band) write;
+    #   else if ((rf_bw == (item->bw_band & 0xFF)) && (rf_band & item->bw_band)) write;
+    bw_writes = 0
+    for bw_band, reg, value in RF_BW_SWITCH_TAB:
+        if rf_bw == bw_band:
+            rf_wr(mcu, reg, value)
+            bw_writes += 1
+        elif rf_bw == (bw_band & 0xFF) and (rf_band & bw_band):
+            rf_wr(mcu, reg, value)
+            bw_writes += 1
+    logger.info("phy_set_chan_rf_params: rf_bw_switch_tab → %d writes "
+                "for rf_bw=0x%02x rf_band=0x%04x",
+                bw_writes, rf_bw, rf_band)
+
+    # band_switch_tab — per-band RF tweaks.
+    band_writes = 0
+    for bw_band, reg, value in RF_BAND_SWITCH_TAB:
+        if bw_band & rf_band:
+            rf_wr(mcu, reg, value)
+            band_writes += 1
+    logger.info("phy_set_chan_rf_params: rf_band_switch_tab → %d writes",
+                band_writes)
+
+    # Clear MT_RF_MISC bits 2-3 (will be set in the ext_pa branch below).
+    transport.clear_bits(MT_RF_MISC, 0xC)
+
+    # Ext PA branch — only if EFUSE PA_INT_X bit is CLEAR for this band.
+    is_2g = bool(rf_band & RF_G_BAND)
+    if efuse_full is not None:
+        nic0 = efuse_full.nic_conf_0
+        if is_2g:
+            pa_int = bool(nic0 & MT_EE_NIC_CONF_0_PA_INT_2G)
+        else:
+            pa_int = bool(nic0 & MT_EE_NIC_CONF_0_PA_INT_5G)
+        ext_pa_enabled = not pa_int
+    else:
+        # Caller didn't pass efuse_full — assume ext PA off (conservative).
+        ext_pa_enabled = False
+
+    if ext_pa_enabled:
+        if rf_band & RF_A_BAND:
+            transport.set_bits(MT_RF_MISC, MT_RF_MISC_EXT_PA_A_BAND)
+        else:
+            transport.set_bits(MT_RF_MISC, MT_RF_MISC_EXT_PA_G_BAND)
+        ext_writes = 0
+        for bw_band, reg, value in RF_EXT_PA_TAB:
+            if bw_band & rf_band:
+                rf_wr(mcu, reg, value)
+                ext_writes += 1
+        logger.info("phy_set_chan_rf_params: ext PA enabled → %d ext_pa_tab writes",
+                    ext_writes)
+
+    # Per-band TX gain / ALC.
+    if rf_band & RF_G_BAND:
+        transport.write32(MT_TX0_RF_GAIN_ATTEN, 0x63707400)
+        # ALC_CFG_1: clear most bits, preserve the upper-masked subset.
+        cur = transport.read32(MT_TX_ALC_CFG_1)
+        transport.write32(MT_TX_ALC_CFG_1, cur & 0x896400FF)
+    else:
+        transport.write32(MT_TX0_RF_GAIN_ATTEN, 0x686A7800)
+        cur = transport.read32(MT_TX_ALC_CFG_1)
+        transport.write32(MT_TX_ALC_CFG_1, cur & 0x890400FF)
+
+
 def set_channel_20mhz(
     transport: MT76x0UTransport, mcu: MCUChannel, channel: int,
+    efuse_full=None,
 ) -> dict:
-    """M4a.1 scaffold of `mt76x0_phy_set_channel` for 20 MHz monitor RX.
+    """Port of `mt76x0_phy_set_channel` for 20 MHz monitor RX.
 
     [SRC] mt76x0/phy.c:913-1016. Steps 1-7 + channel-14 BBP bit only.
     Steps 8-9 (set_chan_rf_params, set_chan_bbp_params), VCO enable,
@@ -579,9 +748,11 @@ def set_channel_20mhz(
     # Step 8: mt76x0_phy_set_band — RF table + per-band tweaks.
     phy_set_band_mt76x0(transport, mcu, band)
 
-    # Step 9 (DEFERRED to M4a.2): mt76x0_phy_set_chan_rf_params.
-    logger.info("set_channel_20mhz: M4a.2 deferred — set_chan_rf_params "
-                "(freq_plan PLL programming for actual frequency lock)")
+    # Step 9: mt76x0_phy_set_chan_rf_params — PLL programming for the
+    # target frequency. [SRC] mt76x0/phy.c:232-397.
+    phy_set_chan_rf_params(
+        transport, mcu, channel, rf_bw_band, efuse_full=efuse_full,
+    )
 
     # Step 10: Japan TX filter at channel 14.
     if channel == 14:
@@ -598,13 +769,27 @@ def set_channel_20mhz(
 
     # Read post-state for assertions.
     from .constants import MT_BBP_TXBE
-    return {
+    state = {
         "tx_band_cfg": transport.read32(MT_TX_BAND_CFG),
         "ext_cca_cfg": transport.read32(MT_EXT_CCA_CFG),
         "bbp_core_1":  transport.read32(MT_BBP_CORE(1)),
         "bbp_agc_0":   transport.read32(MT_BBP_AGC(0)),
         "bbp_txbe_0":  transport.read32(MT_BBP_TXBE(0)),
     }
+
+    # PLL readbacks for M4a.2 assertion — confirm the freq_item landed.
+    rf_regs_to_read = [MT_RF(0, r) for r in (29, 33, 34, 35, 36, 37)]
+    try:
+        rf_vals = mcu.random_read(MT_MCU_MEMMAP_RF, rf_regs_to_read)
+        state["rf_b0_r29"] = rf_vals[0] & 0xFF   # pll_n low byte
+        state["rf_b0_r33"] = rf_vals[1] & 0xFF
+        state["rf_b0_r34"] = rf_vals[2] & 0xFF
+        state["rf_b0_r35"] = rf_vals[3] & 0xFF
+        state["rf_b0_r36"] = rf_vals[4] & 0xFF
+        state["rf_b0_r37"] = rf_vals[5] & 0xFF
+    except Exception as e:
+        logger.warning("set_channel_20mhz: PLL readback failed (non-fatal): %s", e)
+    return state
 
 
 def phy_init(
