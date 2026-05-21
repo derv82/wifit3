@@ -32,6 +32,8 @@ from typing import Iterator
 import usb.core
 
 from .constants import (
+    DESC_RATE_LAST_CCK,
+    PHY_STATS_CCK_AGC_RPT_OFFSET,
     PHY_STATS_PWDB_OFFSET,
     PHY_STATS_SZ_8188E,
     RX_FRAME_ALIGN_8188E,
@@ -125,22 +127,48 @@ def parse_rxdesc16(buf: bytes, offset: int = 0) -> RxDesc16:
     )
 
 
-def parse_phystats_rssi(buf: bytes, offset: int) -> int | None:
-    """Port of `rtl8723au_rx_parse_phystats` OFDM branch (core.c:5658).
+# Port of `rtl8188e_cck_rssi` (8188e.c:1309-1331). LNA-index → gain-dB
+# lookup. Two tables exist in the kernel keyed on `priv->chip_cut >= 8`
+# (cut I, SMIC silicon). Retail TL-WN722N v2/v3 dongles are TSMC (cut
+# A-D), so we default to the TSMC table. If we ever support a SMIC
+# build, route through chip_cut detection (REG_SYS_CFG bits).
+_CCK_LNA_GAIN_TSMC = (29, 20, 12, 3, -6, -15, -24, -33)  # 8188e.c:1314
 
-    Returns ``(cck_sig_qual_ofdm_pwdb_all >> 1) - 110`` in dBm, or None if
-    the buffer is too short. CCK rates would normally route through the
-    8188e-specific LNA/VGA table (`rtl8188e_cck_rssi`, 8188e.c:1309) — for
-    now we use the OFDM formula for all rates; CCK reads a few dB low.
 
-    `cck_sig_qual_ofdm_pwdb_all` lives at byte ``PHY_STATS_PWDB_OFFSET=4``
-    within `struct rtl8723au_phy_stats` — NOT byte 6 as a naive read of
-    the struct might suggest. `struct phy_rx_agc_info` (rtl8xxxu.h:593) is
-    a SINGLE u8 with `gain:7, trsw:1` bitfields, so `path_agc[2]` totals
-    2 bytes (not 4). Followed by `ch_corr[2]` (2 bytes). pwdb at offset 4.
+def _rtl8188e_cck_rssi(cck_agc_rpt: int) -> int:
+    """Port of `rtl8188e_cck_rssi` (8188e.c:1316-1331), TSMC silicon path.
+
+    The single byte at phy_stats offset 5 packs:
+        bits[7:5] = LNA index  → indexes the gain table
+        bits[4:0] = VGA index  → each step subtracts 2 dB
+    """
+    lna_idx = (cck_agc_rpt >> 5) & 0x07
+    vga_idx = cck_agc_rpt & 0x1F
+    return _CCK_LNA_GAIN_TSMC[lna_idx] - (2 * vga_idx)
+
+
+def parse_phystats_rssi(buf: bytes, offset: int, rxmcs: int) -> int | None:
+    """Port of `rtl8723au_rx_parse_phystats` (core.c:5628-5660).
+
+    Rate-aware: CCK rates (rxmcs <= DESC_RATE_LAST_CCK = 3) route through
+    the 8188e LNA/VGA lookup `rtl8188e_cck_rssi` (8188e.c:1309); OFDM and
+    above use ``(pwdb_all >> 1) - 110`` (core.c:5658).
+
+    Without rate awareness, applying the OFDM formula to CCK frames reads
+    -90+ dBm on strong APs — 2.4 GHz beacons are almost all CCK 1 Mbps,
+    so this hits every visible BSSID.
+
+    Byte offsets within `struct rtl8723au_phy_stats` (rtl8xxxu.h:604):
+      4  cck_sig_qual_ofdm_pwdb_all  ← OFDM branch
+      5  cck_agc_rpt_ofdm_cfosho_a   ← CCK branch (LNA/VGA packed)
     """
     if len(buf) - offset < PHY_STATS_SZ_8188E:
         return None
+
+    if rxmcs <= DESC_RATE_LAST_CCK:
+        cck_agc_rpt = buf[offset + PHY_STATS_CCK_AGC_RPT_OFFSET]
+        return _rtl8188e_cck_rssi(cck_agc_rpt)
+
     pwdb = buf[offset + PHY_STATS_PWDB_OFFSET]
     return (pwdb >> 1) - 110
 
@@ -167,7 +195,9 @@ def iter_bulk_frames(
 
         rssi: int | None = None
         if desc.phy_stats_present and desc.drv_info_sz_bytes >= PHY_STATS_SZ_8188E:
-            rssi = parse_phystats_rssi(buf, pos + RX_PKT_DESC_SZ_8188E)
+            rssi = parse_phystats_rssi(
+                buf, pos + RX_PKT_DESC_SZ_8188E, desc.rxmcs,
+            )
 
         if desc.rpt_sel == 0:
             mpdu_start = pos + desc.mpdu_offset

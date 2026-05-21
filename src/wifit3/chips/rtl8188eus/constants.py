@@ -273,6 +273,19 @@ PHY_STATS_SZ_8188E = 32                  # REG_RX_DRVINFO_SZ=4 → 4 * 8 = 32 by
 # (single u8 with `gain:7, trsw:1` bitfields, rtl8xxxu.h:593-599).
 PHY_STATS_PWDB_OFFSET = 4
 
+# Byte offset of `cck_agc_rpt_ofdm_cfosho_a` within the same phy_stats
+# struct (rtl8xxxu.h:608) — the byte immediately after pwdb_all. This is
+# the CCK LNA/VGA report consumed by `rtl8188e_cck_rssi` (8188e.c:1309):
+#   bits[7:5] = LNA index  (CCK_AGC_RPT_LNA_IDX_MASK = GENMASK(7,5))
+#   bits[4:0] = VGA index  (CCK_AGC_RPT_VGA_IDX_MASK = GENMASK(4,0))
+PHY_STATS_CCK_AGC_RPT_OFFSET = 5
+
+# Last CCK rate code in the rxdesc16 W3 RXMCS field. Rates 0..3 = CCK
+# (1/2/5.5/11 Mbps); rate >= 4 = DESC_RATE_6M and above (OFDM/HT/VHT).
+# Mirrors `DESC_RATE_6M = 0x04` (rtl8xxxu.h:437) used in the kernel
+# branch at core.c:5637.
+DESC_RATE_LAST_CCK = 0x03
+
 # ---- M6 TX descriptor + queue routing --------------------------------
 TX_DESC_SZ_8188E = 32                    # sizeof(struct rtl8xxxu_txdesc32)
 
