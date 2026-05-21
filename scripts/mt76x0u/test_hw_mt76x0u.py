@@ -6,6 +6,8 @@
   --phase mac    : mcu + init_mac_registers + wait_for_txrx_idle (M3a).
   --phase bbp    : mac + init_bbp (M3b).
   --phase eeprom : bbp + full EEPROM init + mac_setaddr (M3c).
+  --phase ant    : eeprom + phy_ant_select (M3d.1).
+  --phase phy    : ant + phy_rf_init + set_rxpath + set_txdac (M3d.2 → full M3 done).
   --phase all    : runs the latest milestone.
 
 Usage:
@@ -130,6 +132,61 @@ async def phase_fw(driver: MT76x0UDriver) -> None:
         ok(f"FW_READY ack after {driver.fw_info['polls']} poll(s)")
 
 
+async def phase_phy(driver: MT76x0UDriver) -> None:
+    """M3d.2 — confirm full phy_init landed (RF init + rxpath + txdac)."""
+    step("M3d.2 — phy_init assertions")
+    if driver.bbp_agc0_after_phy is None:
+        fail("MT_BBP(AGC, 0) post-phy not populated")
+    if driver.bbp_txbe5_after_phy is None:
+        fail("MT_BBP(TXBE, 5) post-phy not populated")
+    agc0 = driver.bbp_agc0_after_phy
+    txbe5 = driver.bbp_txbe5_after_phy
+    # set_rxpath for 1T1R clears BIT(3) and BIT(4) of AGC(0).
+    if agc0 & ((1 << 3) | (1 << 4)):
+        fail(f"MT_BBP(AGC, 0)=0x{agc0:08x} — BIT(3) or BIT(4) still set "
+             f"(set_rxpath should have cleared both for 1T1R)")
+    ok(f"MT_BBP(AGC, 0) post-phy = 0x{agc0:08x} (BIT 3|4 cleared → single-stream RX)")
+    # set_txdac for 1T1R clears bits 0+1 of TXBE(5).
+    if txbe5 & 0x3:
+        fail(f"MT_BBP(TXBE, 5)=0x{txbe5:08x} — bits 0/1 still set "
+             f"(set_txdac should have cleared for 1T1R)")
+    ok(f"MT_BBP(TXBE, 5) post-phy = 0x{txbe5:08x} (bits 0/1 cleared → single-stream TX)")
+    if driver.rf_b0_r22_after_phy is not None:
+        # The freq cal writes min(efuse_full.freq_offset & 0xff, 0xbf) → MT_RF(0, 22).
+        expected = min(driver.efuse_full.freq_offset & 0xFF, 0xBF)
+        if driver.rf_b0_r22_after_phy != expected:
+            fail(f"MT_RF(0, 22) readback 0x{driver.rf_b0_r22_after_phy:02x} != "
+                 f"expected 0x{expected:02x} (freq_offset={driver.efuse_full.freq_offset})")
+        ok(f"MT_RF(0, 22) freq cal = 0x{driver.rf_b0_r22_after_phy:02x} "
+           f"(matches min(freq_offset, 0xbf) = 0x{expected:02x})")
+    else:
+        info("MT_RF(0, 22) readback skipped (MCU read failed earlier)")
+    ok("M3d.2 complete — full M3 done")
+
+
+async def phase_ant(driver: MT76x0UDriver) -> None:
+    """M3d.1 — confirm phy_ant_select landed."""
+    step("M3d.1 — phy_ant_select assertions")
+    if driver.wlan_fun_ctrl_after_ant is None or driver.coexcfg3_after_ant is None:
+        fail("ant_select post-state not populated")
+    wlan = driver.wlan_fun_ctrl_after_ant
+    coex3 = driver.coexcfg3_after_ant
+    # Kernel guarantees: WLAN_FUN_CTRL bit 5 (FRC_WL_ANT_SEL) is cleared.
+    if wlan & (1 << 5):
+        fail(f"WLAN_FUN_CTRL=0x{wlan:08x} has FRC_WL_ANT_SEL (BIT 5) set "
+             f"(should be cleared by ant_select)")
+    ok(f"WLAN_FUN_CTRL post-ant = 0x{wlan:08x} (FRC_WL_ANT_SEL cleared)")
+    # COEXCFG3: bits 2-5 are cleared, then per-mode bits set. For dual-band
+    # single-antenna we expect BIT(3)|BIT(4) set.
+    if (coex3 & 0x18) != 0x18:
+        info(f"COEXCFG3=0x{coex3:08x} — BIT(3)|BIT(4) not both set; mode "
+             f"may differ from single-antenna 2.4+5GHz (check log)")
+    else:
+        ok(f"COEXCFG3 post-ant = 0x{coex3:08x} (BIT(3)|BIT(4) set — "
+           f"single antenna, dual-band)")
+    ok("M3d.1 complete")
+
+
 async def phase_eeprom(driver: MT76x0UDriver) -> None:
     """M3c — confirm full EEPROM init + mac_setaddr landed."""
     step("M3c — EEPROM init + mac_setaddr assertions")
@@ -212,7 +269,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="MT76x0U hardware test driver")
     parser.add_argument(
         "--phase",
-        choices=["probe", "fw", "mcu", "mac", "bbp", "eeprom", "all"],
+        choices=["probe", "fw", "mcu", "mac", "bbp", "eeprom", "ant", "phy", "all"],
         default="all",
         help="Which milestone to test (default: all)",
     )
@@ -229,17 +286,21 @@ def main() -> int:
             asyncio.run(phase_probe(driver))
             # If we're running "all", we want the chip in a known state for
             # the next phase. Probe is read-only so we just continue.
-        if args.phase in ("fw", "mcu", "mac", "bbp", "eeprom", "all"):
-            # driver.connect() runs M1+M2+M3a+M3b+M3c together.
+        if args.phase in ("fw", "mcu", "mac", "bbp", "eeprom", "ant", "phy", "all"):
+            # driver.connect() runs M1+M2+M3a+M3b+M3c+M3d together.
             asyncio.run(phase_fw(driver))
-        if args.phase in ("mcu", "mac", "bbp", "eeprom", "all"):
+        if args.phase in ("mcu", "mac", "bbp", "eeprom", "ant", "phy", "all"):
             asyncio.run(phase_mcu(driver))
-        if args.phase in ("mac", "bbp", "eeprom", "all"):
+        if args.phase in ("mac", "bbp", "eeprom", "ant", "phy", "all"):
             asyncio.run(phase_mac(driver))
-        if args.phase in ("bbp", "eeprom", "all"):
+        if args.phase in ("bbp", "eeprom", "ant", "phy", "all"):
             asyncio.run(phase_bbp(driver))
-        if args.phase in ("eeprom", "all"):
+        if args.phase in ("eeprom", "ant", "phy", "all"):
             asyncio.run(phase_eeprom(driver))
+        if args.phase in ("ant", "phy", "all"):
+            asyncio.run(phase_ant(driver))
+        if args.phase in ("phy", "all"):
+            asyncio.run(phase_phy(driver))
         return 0
     finally:
         try:

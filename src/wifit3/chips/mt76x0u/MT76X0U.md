@@ -316,9 +316,187 @@ in `[base, base+len)`. Length must be a positive multiple of 16.
 - `FREQ_OFFSET = 22` (signed).
 - Block at offset 0x010 reports unburned (`0xFF × 16`) — handled correctly.
 
+## M3 — `init_hardware` continuation
+
+After M2 (MCU + Q_SELECT + small EFUSE summary), the kernel's
+`mt76x0_init_hardware` ([SRC] mt76x0/init.c:171-213) continues with MAC
+config tables, BBP init, full EFUSE cache, per-vif state clears, MAC
+address writes, and the PHY init chain. Wifit3 ports this in four
+sub-commits (M3a-d) that share `driver.connect()`.
+
+The kernel's flow inside `mt76x0_init_hardware` (line numbers from the
+referenced function body):
+
+| Step | Function | M3 sub | Notes |
+|---|---|---|---|
+| 1 | `mt76x02_wait_for_wpdma` | M3a | poll WPDMA_GLO_CFG TX/RX_DMA_BUSY = 0 (USB returns immediately) |
+| 2 | `mt76x02_wait_for_mac` (2nd time) | M3a | re-check MAC_CSR0 is alive post-FW |
+| 3 | `mt76x0_reset_csr_bbp` | (M2 had it) | MAC reset cycle; M2 ran this early |
+| 4 | `mt76x02_mcu_function_select(Q_SELECT, 1)` | (M2 had it) | first MCU command; M2 ran this early |
+| 5 | `mt76x0_init_mac_registers` | M3a | upload 2 MAC tables via MCU + 4 direct writes |
+| 6 | `mt76x02_wait_for_txrx_idle` | M3a | poll MAC_STATUS TX|RX = 0, 100 ms |
+| 7 | `mt76x0_init_bbp` | M3b | wait BBP, upload bbp_init+dcoc, filtered switch_tab |
+| 8 | cache `MT_RX_FILTR_CFG` | M3c | one read; default value used by M4's monitor filter |
+| 9 | clear all 16×4 shared keys | M3c | RMW MT_SKEY_MODE + 32B zero per (vif, key) |
+| 10 | clear all 256 WCIDs | M3c | WCID_ATTR=0; for idx<128 also zero WCID_ADDR (8B) |
+| 11 | `mt76x0_eeprom_init` | M3c | full 512 B EFUSE cache + decoded chip_cap/temp/freq |
+| 12 | `mt76x0_phy_init` | M3d | ant_select + rf_init + rxpath + txdac |
+
+### M3a — `init_mac_registers` + WPDMA/TXRX idle waits
+
+[SRC] mt76x0/init.c:110-134 (`mt76x0_init_mac_registers`),
+mt76x02_dma.h:54-60 (`mt76x02_wait_for_wpdma`),
+mt76x02.h:252-258 (`mt76x02_wait_for_txrx_idle`).
+
+The MAC init runs two large register-pair tables via MCU
+`CMD_RANDOM_WRITE`, then 4 explicit register tweaks:
+
+| Table | File | Entries | Path |
+|---|---|---|---|
+| `common_mac_reg_table` | initvals_init.py | 31 | MCU CMD_RANDOM_WRITE (chunks 24+7) |
+| `mt76x0_mac_reg_table` | initvals_init.py | 35 | MCU CMD_RANDOM_WRITE (chunks 24+11) |
+
+Explicit writes after the tables:
+1. `mt76_clear(MT_MAC_SYS_CTRL, 0x3)` — release CSR+BBP reset.
+2. `mt76_set(MT_EXT_CCA_CFG, 0xf000)` — set `ED_CCA_MASK` field to 0xF.
+3. `mt76_clear(MT_FCE_L2_STUFF, BIT(4))` — disable `WR_MPDU_LEN_EN`.
+4. `mt76_rmw(MT_WMM_CTRL, 0x3ff, 0x201)` — define TX-ring 8/9 rules.
+
+The chunking matches WIRE evidence at capture-2: f425 = 24 pairs (seq=0,
+no-wait), f427 = 7 pairs (seq=1, wait), f431 = 24 pairs, f433 = 11 pairs.
+Each `CMD_RANDOM_WRITE` payload addr is `MT_MCU_MEMMAP_WLAN + reg` =
+`0x410000 + reg`. [WIRE] capture-2:f427 payload starts with addr
+`0x00411370` for `MT_MM40_PROT_CFG=0x1370` ✓.
+
+[HW] After M3a: `MT_MAC_STATUS = 0x00000000` (TX|RX bits both clear, MAC
+engines idle and ready for BBP init).
+
+### M3b — `init_bbp` (BBP wait + 3 tables)
+
+[SRC] mt76x0/init.c:87-108 (`mt76x0_init_bbp`),
+mt76x0/phy.c:185-203 (`mt76x0_phy_wait_bbp_ready`).
+
+| Step | Detail | Path |
+|---|---|---|
+| `phy_wait_bbp_ready` | busy-poll `MT_BBP(CORE, 0)` up to 20×; break on non-0 / non-~0 (= BBP version) | direct read |
+| `bbp_init_tab` (58 entries) | bank CORE/IBI/AGC/TXC/RXC/TXO/TXBE/RXFE/RXO init | MCU CMD_RANDOM_WRITE |
+| `bbp_switch_tab` (48 entries) | host filters by `(RF_G_BAND \| RF_BW_20) & bw_band == (RF_G_BAND \| RF_BW_20)`; 20 entries match for the default 2.4 GHz / 20 MHz init | direct vendor `mt76_wr` per entry |
+| `dcoc_tab` (9 entries) | DCOC calibration init | MCU CMD_RANDOM_WRITE |
+
+[WIRE] capture-2: f465-503 = 20 direct vendor writes to RF AGC + RXFE
+registers (`0x2310, 0x2318, 0x2320, 0x2330, ..., 0x2800`) — exactly the
+20 filtered `bbp_switch_tab` entries my port produces. First filtered
+entry `MT_BBP(AGC, 4) = 0x2310 = 0x1FEDA049` matches WIRE f465. Last
+`MT_BBP(RXFE, 0) = 0x2800 = 0x3D5000E0` matches WIRE f503.
+
+[HW] After M3b: `MT_BBP(CORE, 0)` reads `0xf000f200` (= BBP version on
+this silicon).
+
+### M3c — full EEPROM init + key/wcid clears + `mac_setaddr`
+
+[SRC] mt76x0/init.c:196-205 (the loop block in init_hardware),
+mt76x0/eeprom.c:312-353 (`mt76x0_eeprom_init`),
+mt76x02_mac.c:727-758 (`mt76x02_mac_setaddr`),
+mt76x02_mac.c:58-77 (`mt76x02_mac_shared_key_setup`),
+mt76x02_mac.c:148-167 (`mt76x02_mac_wcid_setup`).
+
+| Step | Detail | Transactions |
+|---|---|---|
+| cache `MT_RX_FILTR_CFG` | one read; stored on `driver.rxfilter_default` for M4 to base its monitor-mode filter on | 1 read |
+| clear shared keys | 16 vifs × 4 keys = 64 iter; each = 1 RMW (SKEY_MODE) + 8× u32 zero (SKEY) | ~640 vendor xfers |
+| clear WCIDs | 256 iter; attr=0; for idx<128 also 2× u32 zero (WCID_ADDR) | ~512 vendor xfers |
+| `load_full_eeprom` | 32 × `efuse_read_block` (16 B each) → 512 B cache | 32 × (1 W + ~N polls + 1 R + 4 R) |
+| `check_eeprom` | u16 at offset 0, fallback to MT_EE_PCI_ID; must be 0x7610 / 0x7650 | (cache) |
+| read MT_EE_VERSION | high byte = version, low byte = fae | (cache) |
+| `mt76x02_mac_setaddr` | 4 direct writes (ADDR_DW0/DW1 + BSSID_DW0/DW1) + 1 RMW (BSSID_DW1 MBEACON_N=7) + 16-iter `mac_set_bssid` (each = 1 W + 1 RMW) | ~52 vendor xfers |
+
+Wall-clock M3c on the dev card: ~1.5 s, dominated by the key/wcid clears.
+
+`mac_set_bssid` masks `idx &= 7`, so the 16-iter loop writes 8 unique
+slots twice — kernel behavior preserved.
+
+[HW] After M3c on the dev card:
+- `chip_id = 0x7610`, `version = 0x02`, `fae = 0x04`
+- `tx_path = 1`, `rx_path = 1` (1T1R as expected for MT7610U)
+- `has_2ghz = True`, `has_5ghz = True` (BOARD_TYPE = 3 → dual-band default)
+- `freq_offset = 22`, `temp_offset = -5`
+- `MT_RX_FILTR_CFG` default = `0x00017f97`
+- `MT_MAC_ADDR_DW0` readback round-trips: matches first 4 bytes of the
+  EFUSE MAC (mac_setaddr write confirmed reaching the chip).
+
+### M3d — `phy_init` (ant_select + rf_init + rxpath + txdac)
+
+[SRC] mt76x0/phy.c:1207-1215 (`mt76x0_phy_init`).
+
+Four sub-functions:
+
+| Sub | [SRC] | Detail |
+|---|---|---|
+| `phy_ant_select` | phy.c:426-470 | reads ANTENNA / NIC_CONF_2 EFUSE fields; updates MT_WLAN_FUN_CTRL + MT_COEXCFG3 |
+| `phy_rf_init` | phy.c:1157-1205 | 6 RF tables + freq cal + DAC reset + VCO cal trigger |
+| `mt76x02_phy_set_rxpath` | mt76x02_phy.c:12-31 | for 1T1R takes default branch: clear BIT(3)|BIT(4) of BBP(AGC, 0) |
+| `mt76x02_phy_set_txdac` | mt76x02_phy.c:34-47 | for 1T1R takes default branch: clear bits 0|1 of BBP(TXBE, 5) |
+
+**RF register access (USB-side)** — `mt76x0_rf_wr/rr/rmw/set/clear`,
+[SRC] mt76x0/phy.c:102-165. RF regs are addressed as
+`MT_RF(bank, reg) = (bank << 16) | reg` and accessed via MCU
+CMD_RANDOM_WRITE/READ with `base = MT_MCU_MEMMAP_RF = 0x80000000` (vs
+`MT_MCU_MEMMAP_WLAN = 0x410000` for MAC regs). So MT_RF(0, 22) on the
+wire is `0x80000000 + 0x16 = 0x80000016`.
+
+**`phy_rf_init` step-by-step** ([SRC] phy.c:1157-1205):
+
+| # | Step | Tables / writes |
+|---|---|---|
+| 1 | `rf_patch_reg_array(RF_CENTRAL_TAB)` — per-entry `rf_wr` after chip-variant override | 44 entries, bank 0 |
+| 2 | `rf_patch_reg_array(RF_2G_CHANNEL_0_TAB)` | 68 entries, bank 5 |
+| 3 | `RF_RANDOM_WRITE(RF_5G_CHANNEL_0_TAB)` — bulk MCU CMD_RANDOM_WRITE (base=MT_MCU_MEMMAP_RF) | 38 entries, bank 6 |
+| 4 | `RF_RANDOM_WRITE(RF_VGA_CHANNEL_0_TAB)` | 35 entries, bank 7 |
+| 5 | filtered `RF_BW_SWITCH_TAB` direct rf_wr | 9 of 41 entries (RF_BW_20 alone, or (G_BAND \| BW_20)) |
+| 6 | filtered `RF_BAND_SWITCH_TAB` direct rf_wr | 10 of 43 entries (RF_G_BAND mask) |
+| 7 | freq cal: `rf_wr(MT_RF(0, 22), min(freq_offset & 0xff, 0xbf))` + readback | 1 W + 1 R |
+| 8 | DAC reset: rf_set / rf_clear / rf_set MT_RF(0, 73) BIT(7) | 3 RMWs |
+| 9 | VCO cal trigger: rf_set(MT_RF(0, 4), 0x80) | 1 RMW |
+
+**Chip-variant overrides** ([SRC] phy.c:1125-1152): `rf_patch_reg_array`
+overrides 3 specific entries based on chip variant. For our USB-MT7610U
+card (NOT mt7610e, NOT mt7630, NOT mmio):
+
+| Reg | Table value | Override | Match? |
+|---|---|---|---|
+| MT_RF(0, 3)  | 0x73 | USB → 0x73 | ✓ identical |
+| MT_RF(0, 21) | 0x12 | not-mt7610e → 0x12 | ✓ identical |
+| MT_RF(5, 2)  | 0x0C | not-mt7630 / not-mt7610e → 0x0C | ✓ identical |
+
+So the override is a no-op for our card — but the function stays in the
+port as documentation (and for future mt7610e/mt7630 support).
+
+[HW] After M3d on the dev card:
+- `MT_BBP(AGC, 0) = 0x00021400` (BIT 3 + BIT 4 cleared — single-stream
+  RX path selected, BBP table-init value otherwise preserved)
+- `MT_BBP(TXBE, 5) = 0x00000000` (bits 0/1 cleared — single-stream TX DAC)
+- `MT_RF(0, 22) = 0x16` (freq cal matches `min(22, 0xbf)` for our
+  EFUSE freq_offset = 22)
+
+### File / module organization after M3
+
+| Module | Responsibility |
+|---|---|
+| `transport.py` | vendor xfers + retry loop + bulk in/out |
+| `mcu.py` | MCU command channel (send_msg / wait_resp / random_write / random_read / function_select) |
+| `firmware.py` | M1 FW upload + post-FW init (init_usb_dma + reset_csr_bbp + wait_for_mac helpers) |
+| `mac.py` | M3a MAC init + M3c key/wcid clears + mac_setaddr |
+| `phy.py` | M3b init_bbp + M3d ant_select + rf_* primitives + phy_rf_init + set_rxpath/txdac + phy_init |
+| `eeprom.py` | M2 narrow EFUSE read (superseded) + M3c full EEPROM cache + decoders |
+| `initvals_init.py` | M3a tables (common_mac, mt76x0_mac) — 66 entries |
+| `initvals_bbp.py` | M3b tables (bbp_init, dcoc, bbp_switch + filter) — 115 entries |
+| `initvals_rf.py` | M3d tables (rf_central, rf_2g/5g/vga ch0, rf_bw/band_switch) — 269 entries |
+| `driver.py` | Orchestrates M1+M2+M3 in `connect()` |
+| `constants.py` | All register addresses + bit fields, every one with [SRC] line |
+
 ## Constants — verified by grep
 
-All values used in M1+M2 with their kernel source line.
+All values used in M1+M2+M3 with their kernel source line.
 
 | Symbol | Value | Source |
 |---|---|---|
@@ -391,3 +569,61 @@ All values used in M1+M2 with their kernel source line.
 | `MT_EE_USAGE_MAP_END` | 0x1FC | mt76x02_eeprom.h:93 |
 | `BOARD_TYPE_2GHZ` | 1 | mt76x02_eeprom.c:80 |
 | `BOARD_TYPE_5GHZ` | 2 | mt76x02_eeprom.c:77 |
+| **M3 additions** | | |
+| `MT_COEXCFG3` | 0x004c | mt76x02_regs.h:38 |
+| `MT_WPDMA_GLO_CFG` | 0x0208 | mt76x02_regs.h:125 |
+| `MT_WPDMA_GLO_CFG_TX_DMA_BUSY` | BIT(1) | mt76x02_regs.h:127 |
+| `MT_WPDMA_GLO_CFG_RX_DMA_BUSY` | BIT(3) | mt76x02_regs.h:129 |
+| `MT_WMM_CTRL` | 0x0230 (MT76x0 alias) | mt76x02_regs.h:158 |
+| `MT_FCE_L2_STUFF` | 0x080c | mt76x02_regs.h:246 |
+| `MT_FCE_L2_STUFF_WR_MPDU_LEN_EN` | BIT(4) | mt76x02_regs.h:251 |
+| `MT_MAC_ADDR_DW0` / `_DW1` | 0x1008 / 0x100c | mt76x02_regs.h:275-276 |
+| `MT_MAC_ADDR_DW1_U2ME_MASK` | GENMASK(23,16) | mt76x02_regs.h:277 |
+| `MT_MAC_BSSID_DW0` / `_DW1` | 0x1010 / 0x1014 | mt76x02_regs.h:279-280 |
+| `MT_MAC_BSSID_DW1_MBSS_MODE` | GENMASK(17,16) | mt76x02_regs.h:282 |
+| `MT_MAC_BSSID_DW1_MBEACON_N` | GENMASK(20,18) | mt76x02_regs.h:283 |
+| `MT_MAC_BSSID_DW1_MBSS_LOCAL_BIT` | BIT(21) | mt76x02_regs.h:284 |
+| `MT_MAC_APC_BSSID_BASE` | 0x1090 | mt76x02_regs.h:306 |
+| `MT_MAC_APC_BSSID_L/H(n)` | base + n*8 [+4] | mt76x02_regs.h:307-308 |
+| `MT_MAC_APC_BSSID_H_ADDR` | GENMASK(15,0) | mt76x02_regs.h:309 |
+| `MT_RX_FILTR_CFG` | 0x1400 | mt76x02_regs.h:512 |
+| `MT_EXT_CCA_CFG` | 0x141c | mt76x02_regs.h:542 |
+| `MT_MAC_STATUS` | 0x1200 | mt76x02_regs.h:363 |
+| `MT_MAC_STATUS_TX` / `_RX` | BIT(0) / BIT(1) | mt76x02_regs.h:364-365 |
+| `MT_BBP_*_BASE` (CORE..PFMU) | 0x2000..0x2f00 stepped | mt76x02_regs.h:604-617 |
+| `MT_BBP(_type, _n)` | `MT_BBP_<type>_BASE + (n<<2)` | mt76x02_regs.h:619 |
+| `RF_G_BAND` / `RF_A_BAND` | 0x0100 / 0x0200 | mt76x0/phy.h:9-10 |
+| `RF_A_BAND_{LB,MB,HB,11J}` | 0x0400..0x2000 | mt76x0/phy.h:11-14 |
+| `RF_BW_{20,40,10,80}` | 1 / 2 / 4 / 8 | mt76x0/phy.h:16-19 |
+| `MT_MCU_MEMMAP_RF` | 0x80000000 | mt76x0/mcu.h:20 |
+| `MT_RF(bank, reg)` | `(bank<<16) \| reg` | mt76x0/phy.h:21 |
+| `MT_INBAND_PACKET_MAX_LEN` | 192 | mt76x02_mcu.h:18 |
+| `MT_MCU_REG_PAIRS_PER_CMD` | 192/8 = 24 | derived; kernel chunks at this size |
+| **EFUSE (additional)** | | |
+| `MT76X0_EEPROM_SIZE` | 512 | mt76x0/eeprom.h:16 |
+| `MT76X0U_EE_MAX_VER` | 0x0c | mt76x0/eeprom.h:15 |
+| `MT_EE_VERSION` | 0x002 | mt76x02_eeprom.h:14 |
+| `MT_EE_PCI_ID` | 0x00A | mt76x02_eeprom.h:16 |
+| `MT_EE_ANTENNA` | 0x022 | mt76x02_eeprom.h:17 |
+| `MT_EE_ANTENNA_DUAL` | BIT(15) | mt76x02_eeprom.h:98 |
+| `MT_EE_CFG1_INIT` | 0x024 | mt76x02_eeprom.h:18 |
+| `MT_EE_NIC_CONF_2` | 0x042 | mt76x02_eeprom.h:24 |
+| `MT_EE_NIC_CONF_2_ANT_OPT` | BIT(3) | mt76x02_eeprom.h:114 |
+| `MT_EE_NIC_CONF_2_ANT_DIV` | BIT(4) | mt76x02_eeprom.h:115 |
+| `MT_EE_2G_TARGET_POWER` | 0x0d0 | mt76x02_eeprom.h:67 |
+| `MT_EE_TSSI_BOUND4` | 0x0da | mt76x02_eeprom.h:73 |
+| **MCU + cipher** | | |
+| `MT_INBAND_PACKET_MAX_LEN / 8` (chunk limit) | 24 | mt76x02_usb_mcu.c:136 |
+| `CMD_FUN_SET_OP` | 1 | mt76x02_mcu.h:31 |
+| `MT76X02_CIPHER_NONE` | 0 | mt76x02_regs.h:696-706 (enum, first member) |
+| **WCID + SKEY** | | |
+| `MT_WCID_ADDR_BASE` | 0x1800 | mt76x02_regs.h:643 |
+| `MT_WCID_ADDR(n)` | base + n*8 | mt76x02_regs.h:644 |
+| `MT_WCID_ATTR_BASE` | 0xa800 | mt76x02_regs.h:654 |
+| `MT_WCID_ATTR(n)` | base + n*4 | mt76x02_regs.h:655 |
+| `MT_WCID_ATTR_BSS_IDX` | GENMASK(6,4) | mt76x02_regs.h:659 |
+| `MT_WCID_ATTR_BSS_IDX_EXT` | BIT(11) | mt76x02_regs.h:662 |
+| `MT_SKEY_BASE_0/1` | 0xac00 / 0xb400 | mt76x02_regs.h:666-667 |
+| `MT_SKEY_MODE_BASE_0/1` | 0xb000 / 0xb3f0 | mt76x02_regs.h:672-673 |
+| `MT_SKEY_MODE_MASK` | GENMASK(3,0) = 0xF | mt76x02_regs.h:677 |
+| `MT_SKEY_MODE_SHIFT(bss, idx)` | `4*(idx + 4*(bss & 1))` | mt76x02_regs.h:678 |

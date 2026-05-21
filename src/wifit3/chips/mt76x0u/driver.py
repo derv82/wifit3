@@ -31,7 +31,7 @@ from .mac import (
     wait_for_wpdma,
 )
 from .mcu import MCUChannel, MCUError, mcu_init_smoke_test
-from .phy import PHYInitError, init_bbp
+from .phy import PHYInitError, init_bbp, phy_init
 from .transport import MT76x0UTransport
 
 logger = logging.getLogger(__name__)
@@ -75,13 +75,18 @@ class MT76x0UDriver:
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
         self._rx_callback: Optional[Callable[[dict], None]] = None
-        # M1 + M2 + M3a + M3b + M3c results, populated by connect().
+        # M1 + M2 + M3a + M3b + M3c + M3d results, populated by connect().
         self.fw_info: Optional[dict] = None
         self.efuse_full: Optional[EFUSEFullInfo] = None
         self.mcu_smoke: Optional[dict] = None
         self.mac_status_after_init: Optional[int] = None
         self.bbp_version: Optional[int] = None
         self.rxfilter_default: Optional[int] = None
+        self.wlan_fun_ctrl_after_ant: Optional[int] = None
+        self.coexcfg3_after_ant: Optional[int] = None
+        self.bbp_agc0_after_phy: Optional[int] = None
+        self.bbp_txbe5_after_phy: Optional[int] = None
+        self.rf_b0_r22_after_phy: Optional[int] = None
 
     # ---- Hooks --------------------------------------------------------
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
@@ -330,15 +335,46 @@ class MT76x0UDriver:
         # [SRC] mt76x02_mac.c:727-758. Writes MAC + BSSID regs and clears
         # 16 per-vif BSSID slots.
         if progress_cb:
-            progress_cb(0.98, "mac_setaddr (MAC + BSSID regs + 16 slot clear)")
+            progress_cb(0.96, "mac_setaddr (MAC + BSSID regs + 16 slot clear)")
         try:
             mac_setaddr(self.transport, self.efuse_full.mac_bytes)
         except (MACInitError, usb.core.USBError) as e:
             logger.error("MT7610U: mac_setaddr failed: %s", e)
             return False
 
+        # ---- M3d: mt76x0_phy_init.
+        # [SRC] mt76x0/phy.c:1207-1215. Wraps:
+        #   phy_ant_select → phy_rf_init (RF tables + cal) → set_rxpath → set_txdac.
         if progress_cb:
-            progress_cb(1.00, "M3c complete — EEPROM init done")
+            progress_cb(0.97, "phy_init (ant_select + rf_init + rxpath + txdac)")
+        try:
+            phy_init(self.transport, self.mcu, self.efuse_full)
+        except (PHYInitError, usb.core.USBError) as e:
+            logger.error("MT7610U: phy_init failed: %s", e)
+            return False
+
+        # Readback for assertions. We capture state after the full phy_init.
+        from .constants import (
+            MT_BBP_AGC,
+            MT_BBP_TXBE,
+            MT_COEXCFG3 as _MT_COEXCFG3,
+            MT_MCU_MEMMAP_RF,
+            MT_RF,
+            MT_WLAN_FUN_CTRL as _MT_WLAN_FUN_CTRL,
+        )
+        self.wlan_fun_ctrl_after_ant = self.transport.read32(_MT_WLAN_FUN_CTRL)
+        self.coexcfg3_after_ant = self.transport.read32(_MT_COEXCFG3)
+        self.bbp_agc0_after_phy = self.transport.read32(MT_BBP_AGC(0))
+        self.bbp_txbe5_after_phy = self.transport.read32(MT_BBP_TXBE(5))
+        # Read MT_RF(0, 22) via MCU to confirm freq cal write landed.
+        try:
+            rf22 = self.mcu.random_read(MT_MCU_MEMMAP_RF, [MT_RF(0, 22)])[0]
+            self.rf_b0_r22_after_phy = rf22 & 0xFF
+        except (MCUError, usb.core.USBError) as e:
+            logger.warning("MT7610U: MT_RF(0,22) readback failed (non-fatal): %s", e)
+
+        if progress_cb:
+            progress_cb(1.00, "M3d complete — phy_init done")
         return True
 
     async def set_channel(self, channel: int) -> bool:

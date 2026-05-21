@@ -76,6 +76,8 @@ MT_CMB_CTRL                       = 0x0020   # [SRC] mt76x02_regs.h:14
 MT_CMB_CTRL_XTAL_RDY              = 1 << 22  # BIT(22)
 MT_CMB_CTRL_PLL_LD                = 1 << 23  # BIT(23)
 
+MT_COEXCFG3                       = 0x004c   # [SRC] mt76x02_regs.h:38
+
 MT_WLAN_FUN_CTRL                  = 0x0080   # chip on/off + reset
 # MT_WLAN_FUN_CTRL bits — [SRC] mt76x02_regs.h:34-56
 MT_WLAN_FUN_CTRL_WLAN_EN          = 1 << 0
@@ -223,6 +225,14 @@ MT_EE_TEMP_OFFSET                 = 0x0d1
 MT_EE_5G_TARGET_POWER             = 0x0d2
 MT_EE_TSSI_BOUND4                 = 0x0da
 MT_EE_TSSI_BOUND_COMPENSATION     = 0x0db   # MT_EE_FREQ_OFFSET_COMPENSATION
+
+# EFUSE fields used by ant_select. [SRC] mt76x02_eeprom.h:17, 18, 24, 98, 114-115.
+MT_EE_ANTENNA                     = 0x022
+MT_EE_CFG1_INIT                   = 0x024
+MT_EE_NIC_CONF_2                  = 0x042
+MT_EE_ANTENNA_DUAL                = 1 << 15        # BIT(15)
+MT_EE_NIC_CONF_2_ANT_OPT          = 1 << 3         # BIT(3)
+MT_EE_NIC_CONF_2_ANT_DIV          = 1 << 4         # BIT(4)
 
 # TX power tables — [SRC] mt76x02_regs.h:387-408
 MT_TX_PWR_CFG_0                   = 0x1314
@@ -416,6 +426,17 @@ MT_MCU_MEMMAP_WLAN = 0x410000
 # Random-write helpers chunk pairs at MT_INBAND_PACKET_MAX_LEN / 8 = 24 pairs.
 MT_INBAND_PACKET_MAX_LEN = 192
 MT_MCU_REG_PAIRS_PER_CMD = MT_INBAND_PACKET_MAX_LEN // 8   # = 24
+
+# RF register MCU base. [SRC] mt76x0/mcu.h:20.
+# rf_wr/rr go through CMD_RANDOM_WRITE/READ with base=MT_MCU_MEMMAP_RF
+# instead of MT_MCU_MEMMAP_WLAN. The "offset" within the RF space is
+# `MT_RF(bank, reg) = (bank << 16) | reg`.
+MT_MCU_MEMMAP_RF = 0x80000000
+
+
+def MT_RF(bank: int, reg: int) -> int:
+    """[SRC] mt76x0/phy.h:21 — `MT_RF(bank, reg) = (bank << 16) | reg`."""
+    return (bank << 16) | reg
 
 # ============================================================
 # FW upload constants — [SRC] mt76x0/mcu.h:14-15 + usb_mcu.c:13-14
