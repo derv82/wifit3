@@ -2,6 +2,7 @@
 
   --phase probe : USB enumeration + claim + MAC_CSR0 read (M0).
   --phase fw    : probe + FW upload + FW_READY ack (M1).
+  --phase mcu   : fw + MCU CMD_RANDOM_READ round-trip + EFUSE summary (M2).
   --phase all   : runs the latest milestone.
 
 Usage:
@@ -110,8 +111,9 @@ async def phase_probe(driver: MT76x0UDriver) -> None:
 
 
 async def phase_fw(driver: MT76x0UDriver) -> None:
-    """M1 — full bring-up: chip on + FW upload + FW_READY ack."""
-    step("M1 — firmware upload to FW_READY ack")
+    """M1+M2 — full bring-up via driver.connect(): chip on + FW upload +
+    FW_READY ack + MCU smoke + EFUSE summary."""
+    step("M1+M2 — firmware + MCU + EFUSE bring-up")
     success = await driver.connect(progress_cb=progress)
     if not success:
         fail("driver.connect() returned False — see logs above")
@@ -119,18 +121,46 @@ async def phase_fw(driver: MT76x0UDriver) -> None:
         fail("driver.connect() succeeded but fw_info is None")
     h = driver.fw_info.get("header")
     if driver.fw_info["skipped"]:
-        ok("Warm boot — FW was already running (no upload needed)")
-        return
-    ok(f"FW version: {h['fw_ver_str']}  build 0x{h['build_ver']:04x}  time {h['build_time']!r}")
-    ok(f"FW_READY ack after {driver.fw_info['polls']} poll(s)")
-    ok("M1 complete")
+        info("Warm boot — FW was already running (no upload needed)")
+    else:
+        ok(f"FW version: {h['fw_ver_str']}  build 0x{h['build_ver']:04x}  time {h['build_time']!r}")
+        ok(f"FW_READY ack after {driver.fw_info['polls']} poll(s)")
+
+
+async def phase_mcu(driver: MT76x0UDriver) -> None:
+    """M2 — confirm MCU + EFUSE results landed on the driver instance.
+    (driver.connect() runs M1+M2 together; this phase asserts both worked.)"""
+    step("M2 — MCU + EFUSE assertions")
+    if driver.mcu_smoke is None:
+        fail("MCU smoke result not populated — was connect() called?")
+    if not driver.mcu_smoke["match"]:
+        fail(
+            f"MCU smoke mismatch: direct=0x{driver.mcu_smoke['via_vendor_read']:08x} "
+            f"vs MCU=0x{driver.mcu_smoke['via_mcu_read']:08x}"
+        )
+    ok(
+        f"MCU CMD_RANDOM_READ round-trip OK "
+        f"(MAC_CSR0 via MCU = 0x{driver.mcu_smoke['via_mcu_read']:08x}, "
+        f"matches direct read)"
+    )
+
+    e = driver.efuse_info
+    if e is None:
+        fail("EFUSE info not populated — was connect() called?")
+    ok(f"EFUSE MAC address  : {e.mac_address}")
+    ok(f"EFUSE TX/RX path   : {e.tx_path} / {e.rx_path}")
+    ok(f"EFUSE bands        : "
+       f"{'2.4 ' if e.has_2ghz else ''}{'5 ' if e.has_5ghz else ''}GHz")
+    ok(f"EFUSE freq_offset  : {e.freq_offset}")
+    ok(f"EFUSE NIC_CONF_0/1 : 0x{e.nic_conf_0:04x} / 0x{e.nic_conf_1:04x}")
+    ok("M2 complete")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="MT76x0U hardware test driver")
     parser.add_argument(
         "--phase",
-        choices=["probe", "fw", "all"],
+        choices=["probe", "fw", "mcu", "all"],
         default="all",
         help="Which milestone to test (default: all)",
     )
@@ -147,10 +177,12 @@ def main() -> int:
             asyncio.run(phase_probe(driver))
             # If we're running "all", we want the chip in a known state for
             # the next phase. Probe is read-only so we just continue.
-        if args.phase in ("fw", "all"):
-            # When --phase=fw alone, we still need to have claimed the
-            # interface; driver.connect() claims again (idempotent in transport).
+        if args.phase in ("fw", "mcu", "all"):
+            # driver.connect() runs M1+M2 together. --phase=fw stops after
+            # the FW report; --phase=mcu / all also asserts MCU + EFUSE.
             asyncio.run(phase_fw(driver))
+        if args.phase in ("mcu", "all"):
+            asyncio.run(phase_mcu(driver))
         return 0
     finally:
         try:

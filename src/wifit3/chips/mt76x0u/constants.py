@@ -122,10 +122,69 @@ MT_MCU_COM_REG0_FW_READY          = 1 << 0   # BIT(0)
 # [SRC] mt76x02_dma.h:33-46
 # ============================================================
 MT_MCU_MSG_LEN_MASK     = 0xFFFF        # GENMASK(15,0)
+MT_MCU_MSG_CMD_SEQ_SHIFT = 16           # GENMASK(19,16) — 4-bit cmd sequence id
+MT_MCU_MSG_CMD_SEQ_MASK = 0xF << 16
+MT_MCU_MSG_CMD_TYPE_SHIFT = 20          # GENMASK(26,20) — 7-bit cmd code
+MT_MCU_MSG_CMD_TYPE_MASK = 0x7F << 20
 MT_MCU_MSG_PORT_SHIFT   = 27            # GENMASK(29,27)
 MT_MCU_MSG_PORT_MASK    = 0x7 << 27
 MT_MCU_MSG_TYPE_CMD     = 1 << 30       # BIT(30)
 CPU_TX_PORT             = 2             # enum dma_msg_port — mt76x02_dma.h:43-51
+
+# MCU response RX-FCE header (first 4 bytes of bulk-IN payload on EP 0x85).
+# [SRC] mt76x02_dma.h:25-26
+MT_RX_FCE_INFO_CMD_SEQ_SHIFT = 16       # GENMASK(19,16)
+MT_RX_FCE_INFO_CMD_SEQ_MASK = 0xF << 16
+MT_RX_FCE_INFO_EVT_TYPE_SHIFT = 20      # GENMASK(23,20)
+MT_RX_FCE_INFO_EVT_TYPE_MASK = 0xF << 20
+
+# enum mt76_mcu_evt_type — [SRC] dma.h:150-158. Implicit 0-based.
+EVT_CMD_DONE = 0
+EVT_CMD_ERROR = 1
+EVT_CMD_RETRY = 2
+
+# MCU command codes — [SRC] mt76x02_usb_mcu.c (inline `const int` declarations).
+CMD_FUN_SET_OP      = 1
+CMD_LOAD_CR         = 2
+CMD_INIT_GAIN_OP    = 3
+CMD_DYNC_VGA_OP     = 6
+CMD_TDLS_CH_SW      = 7
+CMD_BURST_WRITE     = 8
+CMD_READ_MODIFY_WRITE = 9
+CMD_RANDOM_READ     = 10
+CMD_BURST_READ      = 11
+CMD_RANDOM_WRITE    = 12
+CMD_LED_MODE_OP     = 16
+CMD_POWER_SAVING_OP = 20
+CMD_WOW_CONFIG      = 21
+CMD_WOW_QUERY       = 22
+CMD_WOW_FEATURE     = 24
+CMD_CARRIER_DETECT_OP = 28
+CMD_RADOR_DETECT_OP = 29
+CMD_SWITCH_CHANNEL_OP = 30
+CMD_CALIBRATION_OP  = 31
+CMD_BEACON_OP       = 32
+CMD_ANTENNA_OP      = 33
+
+# CMD_FUN_SET_OP sub-functions — [SRC] mt76x02_mcu.h:62-72 (enum mcu_function)
+Q_SELECT          = 1
+BW_SETTING        = 2
+USB2_SW_DISCONNECT = 2
+USB3_SW_DISCONNECT = 3
+LOG_FW_DEBUG_MSG  = 4
+GET_FW_VERSION    = 5
+
+# MCU response URB buffer size — [SRC] mt76.h:661
+MCU_RESP_URB_SIZE = 1024
+MCU_RESP_TIMEOUT_MS = 300       # [SRC] mt76x02_usb_mcu.c:46
+MCU_RESP_MAX_RETRY = 5          # [SRC] mt76x02_usb_mcu.c:44
+MCU_SEND_TIMEOUT_MS = 500       # [SRC] mt76x02_usb_mcu.c:95
+
+# Base address used by every MCU register access. Kernel `mt76x02u_mcu_wr_rp`
+# / `_rd_rp` send `base + reg` on the wire (e.g. reg 0x1000 → wire 0x00411000).
+# [SRC] mt76x02_mcu.h:19, [SRC] mt76x0/init.c:84 (RANDOM_WRITE macro).
+# [WIRE] capture-2.pcap:427 — every addr in the payload is 0x00411xxx.
+MT_MCU_MEMMAP_WLAN = 0x410000
 
 # ============================================================
 # FW upload constants — [SRC] mt76x0/mcu.h:14-15 + usb_mcu.c:13-14
@@ -143,6 +202,51 @@ MCU_FW_CHUNK_DATA_MAX        = 14584 - 8     # 14576 — info(4)+pad(4) deducted
 #   u8     pad[4]
 #   char   build_time[16]
 MT76X02_FW_HEADER_SIZE       = 32
+
+# ============================================================
+# EFUSE — [SRC] mt76x02_regs.h:18-28 + mt76x02_eeprom.h:14-95
+# ============================================================
+MT_EFUSE_CTRL                = 0x0024
+MT_EFUSE_DATA_BASE           = 0x0028   # MT_EFUSE_DATA(n) = base + 4*n, n=0..3
+
+MT_EFUSE_CTRL_AOUT_MASK      = 0x3F           # GENMASK(5, 0)
+MT_EFUSE_CTRL_MODE_SHIFT     = 6              # GENMASK(7, 6)
+MT_EFUSE_CTRL_MODE_MASK      = 0x3 << 6
+MT_EFUSE_CTRL_AIN_SHIFT      = 16             # GENMASK(25, 16)
+MT_EFUSE_CTRL_AIN_MASK       = 0x3FF << 16
+MT_EFUSE_CTRL_KICK           = 1 << 30        # BIT(30)
+MT_EFUSE_CTRL_SEL            = 1 << 31        # BIT(31) — set means EFUSE present
+
+# EFUSE read modes — [SRC] mt76x02_eeprom.h:121-124
+MT_EE_READ           = 0   # logical (with fallback to defaults if unburned)
+MT_EE_PHYSICAL_READ  = 1   # raw EFUSE without fallback
+
+# EFUSE logical-field offsets — [SRC] mt76x02_eeprom.h:14-95 (enum mt76x02_eeprom_field)
+MT_EE_CHIP_ID                = 0x000
+MT_EE_VERSION                = 0x002
+MT_EE_MAC_ADDR               = 0x004
+MT_EE_PCI_ID                 = 0x00A
+MT_EE_ANTENNA                = 0x022
+MT_EE_NIC_CONF_0             = 0x034
+MT_EE_NIC_CONF_1             = 0x036
+MT_EE_COUNTRY_REGION_5GHZ    = 0x038
+MT_EE_COUNTRY_REGION_2GHZ    = 0x039
+MT_EE_FREQ_OFFSET            = 0x03A
+MT_EE_NIC_CONF_2             = 0x042
+MT_EE_USAGE_MAP_START        = 0x1E0
+MT_EE_USAGE_MAP_END          = 0x1FC
+MT_EFUSE_USAGE_MAP_SIZE      = MT_EE_USAGE_MAP_END - MT_EE_USAGE_MAP_START + 1
+
+# NIC_CONF_0 bit fields — [SRC] mt76x02_eeprom.h:100-106
+MT_EE_NIC_CONF_0_RX_PATH_MASK     = 0x000F     # GENMASK(3, 0)
+MT_EE_NIC_CONF_0_TX_PATH_MASK     = 0x00F0     # GENMASK(7, 4)
+MT_EE_NIC_CONF_0_TX_PATH_SHIFT    = 4
+MT_EE_NIC_CONF_0_BOARD_TYPE_MASK  = 0x3000     # GENMASK(13, 12)
+MT_EE_NIC_CONF_0_BOARD_TYPE_SHIFT = 12
+
+# BOARD_TYPE values — [SRC] mt76x02_eeprom.c:76-82
+BOARD_TYPE_2GHZ = 1
+BOARD_TYPE_5GHZ = 2
 
 # ============================================================
 # Bring-up timing (from usb_mcu.c kernel comments).

@@ -51,8 +51,10 @@ from .constants import (
     MT_TX_CPU_FROM_FCE_CPU_DESC_IDX,
     MT_TX_CPU_FROM_FCE_MAX_COUNT,
     MT_USB_DMA_CFG,
+    MT_USB_DMA_CFG_RX_BULK_AGG_EN,
     MT_USB_DMA_CFG_RX_BULK_AGG_TOUT_MASK,
     MT_USB_DMA_CFG_RX_BULK_EN,
+    MT_USB_DMA_CFG_RX_DROP_OR_PAD,
     MT_USB_DMA_CFG_TX_BULK_EN,
     MT_USB_DMA_CFG_UDMA_TX_WL_DROP,
     MT_WLAN_FUN_CTRL,
@@ -430,3 +432,46 @@ class FirmwareUploader:
 
         self._report(1.00, "FW upload complete")
         return {"skipped": False, "polls": polls, "header": header}
+
+    # ------------------------------------------------------------------
+    # Post-FW init (steps run by mt76x0u_init_hardware AFTER mcu_init).
+    # These are M2 prerequisites — without them the MCU response path is
+    # not armed and MCU bulk-IN reads on EP 0x85 time out.
+    # ------------------------------------------------------------------
+    def init_usb_dma(self) -> None:
+        """`mt76x0_init_usb_dma` — [SRC] mt76x0/usb.c:46-71. [WIRE] f401-411.
+
+        1. read DMA_CFG, set RX_BULK_EN|TX_BULK_EN, clear RX_BULK_AGG_EN, write.
+        2. read MT_MCU_COM_REG0 (MCU-ready warning only — kernel doesn't fail).
+        3. RX_DROP_OR_PAD set then clear (toggle).
+        """
+        val = self.t.read32(MT_USB_DMA_CFG)
+        val |= MT_USB_DMA_CFG_RX_BULK_EN | MT_USB_DMA_CFG_TX_BULK_EN
+        val &= ~MT_USB_DMA_CFG_RX_BULK_AGG_EN
+        self.t.write32(MT_USB_DMA_CFG, val)
+
+        mcu_status = self.t.read32(MT_MCU_COM_REG0)
+        if not (mcu_status & MT_MCU_COM_REG0_FW_READY):
+            logger.warning("init_usb_dma: MT_MCU_COM_REG0 FW_READY bit cleared "
+                           "(0x%08x) — kernel only warns; continuing", mcu_status)
+
+        val = self.t.read32(MT_USB_DMA_CFG)
+        self.t.write32(MT_USB_DMA_CFG, val | MT_USB_DMA_CFG_RX_DROP_OR_PAD)
+        self.t.write32(MT_USB_DMA_CFG, val & ~MT_USB_DMA_CFG_RX_DROP_OR_PAD)
+
+    def reset_csr_bbp(self) -> None:
+        """`mt76x0_reset_csr_bbp` — [SRC] mt76x0/init.c:72-81. [WIRE] f417-421.
+
+        Writes MAC_SYS_CTRL = RESET_CSR | RESET_BBP, sleeps 200 ms, then
+        clears those bits via RMW. This is the MAC reset cycle that arms
+        the MCU response DMA — MCU bulk-IN reads stall until this runs.
+        """
+        from .constants import (
+            MT_MAC_SYS_CTRL_RESET_BBP,
+            MT_MAC_SYS_CTRL_RESET_CSR,
+        )
+        reset_mask = MT_MAC_SYS_CTRL_RESET_CSR | MT_MAC_SYS_CTRL_RESET_BBP
+        self.t.write32(MT_MAC_SYS_CTRL, reset_mask)
+        time.sleep(0.200)   # kernel: msleep(200)
+        cur = self.t.read32(MT_MAC_SYS_CTRL)
+        self.t.write32(MT_MAC_SYS_CTRL, cur & ~reset_mask)

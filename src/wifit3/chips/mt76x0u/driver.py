@@ -19,7 +19,9 @@ import usb.core
 from wifit3.engine.protocols import DeviceID, ProgressCallback
 
 from .constants import USB_IDS_MT76X0U
+from .eeprom import EEPROMError, EFUSEInfo, read_efuse_summary
 from .firmware import FirmwareError, FirmwareUploader
+from .mcu import MCUChannel, MCUError, mcu_init_smoke_test
 from .transport import MT76x0UTransport
 
 logger = logging.getLogger(__name__)
@@ -59,11 +61,14 @@ class MT76x0UDriver:
         self.dev = dev
         self.id_entry = id_entry
         self.transport = MT76x0UTransport(dev)
+        self.mcu = MCUChannel(self.transport)
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
         self._rx_callback: Optional[Callable[[dict], None]] = None
-        # M1 result, populated by connect().
+        # M1 + M2 results, populated by connect().
         self.fw_info: Optional[dict] = None
+        self.efuse_info: Optional[EFUSEInfo] = None
+        self.mcu_smoke: Optional[dict] = None
 
     # ---- Hooks --------------------------------------------------------
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
@@ -141,8 +146,76 @@ class MT76x0UDriver:
                 "MT7610U: FW v%s build 0x%04x (%s) — ready after %d poll(s)",
                 h["fw_ver_str"], h["build_ver"], h["build_time"], result["polls"],
             )
+
+        # ---- M2: post-FW init that arms the MCU response path ----------
+        # [SRC] mt76x0/usb.c:151-177 — init_hardware steps after mcu_init.
+        # Without these, MCU bulk-IN reads on EP 0x85 time out because the
+        # RX-DMA + MAC engines aren't reset / armed yet.
         if progress_cb:
-            progress_cb(1.00, "M1 complete — FW_READY")
+            progress_cb(0.93, "init_usb_dma (RX_DROP_OR_PAD toggle)")
+        try:
+            uploader.init_usb_dma()
+            if progress_cb:
+                progress_cb(0.94, "reset_csr_bbp (200ms MAC reset)")
+            uploader.reset_csr_bbp()
+        except usb.core.USBError as e:
+            logger.error("MT7610U: post-FW init failed: %s", e)
+            return False
+
+        # ---- M2: MCU init — Q_SELECT first (kernel's first MCU command).
+        # [SRC] mt76x0/init.c:183 — `mt76x02_mcu_function_select(dev, Q_SELECT, 1)`.
+        # [WIRE] capture-2.pcap:423 payload `01000000 01000000`.
+        # Without this Q_SELECT, subsequent MCU commands time out — the chip's
+        # MCU only starts servicing commands after seeing the queue-select.
+        if progress_cb:
+            progress_cb(0.95, "MCU Q_SELECT (CMD_FUN_SET_OP, no-wait)")
+        try:
+            from .constants import Q_SELECT
+            self.mcu.function_select(Q_SELECT, 1)
+        except (MCUError, usb.core.USBError) as e:
+            logger.error("MT7610U: MCU Q_SELECT failed: %s", e)
+            return False
+
+        # ---- M2: MCU smoke-test + EFUSE read ---------------------------
+        if progress_cb:
+            progress_cb(0.96, "MCU CMD_RANDOM_READ smoke test")
+        try:
+            self.mcu_smoke = mcu_init_smoke_test(self.mcu, self.transport)
+            if not self.mcu_smoke["match"]:
+                logger.error(
+                    "MT7610U: MCU smoke test mismatch (direct=0x%08x vs mcu=0x%08x)",
+                    self.mcu_smoke["via_vendor_read"], self.mcu_smoke["via_mcu_read"],
+                )
+                return False
+            logger.info(
+                "MT7610U: MCU CMD_RANDOM_READ round-trip OK "
+                "(MAC_CSR0 via MCU = 0x%08x)", self.mcu_smoke["via_mcu_read"],
+            )
+        except (MCUError, usb.core.USBError) as e:
+            logger.error("MT7610U: MCU smoke test failed: %s", e)
+            return False
+
+        if progress_cb:
+            progress_cb(0.98, "Reading EFUSE")
+        try:
+            self.efuse_info = read_efuse_summary(self.transport)
+        except (EEPROMError, usb.core.USBError) as e:
+            logger.error("MT7610U: EFUSE read failed: %s", e)
+            return False
+        self.mac_address = self.efuse_info.mac_address
+        logger.info(
+            "MT7610U EFUSE: MAC=%s  tx=%d rx=%d  bands=%s%s  freq_off=%s  "
+            "nic_conf0=0x%04x nic_conf1=0x%04x",
+            self.efuse_info.mac_address, self.efuse_info.tx_path,
+            self.efuse_info.rx_path,
+            "2.4 " if self.efuse_info.has_2ghz else "",
+            "5 " if self.efuse_info.has_5ghz else "",
+            self.efuse_info.freq_offset, self.efuse_info.nic_conf_0,
+            self.efuse_info.nic_conf_1,
+        )
+
+        if progress_cb:
+            progress_cb(1.00, "M2 complete — MCU + EFUSE ready")
         return True
 
     async def set_channel(self, channel: int) -> bool:

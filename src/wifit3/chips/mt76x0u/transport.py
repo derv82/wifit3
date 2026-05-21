@@ -273,3 +273,13 @@ class MT76x0UTransport:
                 f"bulk_out(ep=0x{ep:02x}, len={len(data)}): wrote {n} bytes"
             )
         return n
+
+    def bulk_in(self, ep: int, max_len: int, timeout_ms: int = _BULK_TIMEOUT_MS) -> bytes:
+        """Read up to `max_len` bytes from a bulk-IN endpoint.
+
+        On a timeout this raises usb.core.USBError (errno 10060 / Win, 110 / Lin).
+        Callers handle that case explicitly — MCU `wait_resp` retries on timeout
+        per kernel mt76x02u_mcu_wait_resp (5 attempts).
+        """
+        data = self.dev.read(ep, max_len, timeout=timeout_ms)
+        return bytes(data)
