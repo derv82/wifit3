@@ -1,118 +1,163 @@
+"""SAE Group Probe — enumerate which SAE finite cyclic groups a WPA3 AP accepts.
+
+For each candidate group we inject an Authentication frame with algo=3 (SAE),
+transaction=1 (Commit), status=0, and a dummy scalar + element. The AP doesn't
+need to validate the math — it parses the group ID first and rejects with status
+77 (UNSUPPORTED_FINITE_CYCLIC_GROUP) if it doesn't support that group, or accepts
+with status 0 / 76 (ANTI_CLOGGING_TOKEN_REQ) if it does. Either response is a
+fingerprint of the AP's SAE config.
+
+Dragonblood-relevant groups: 22, 23, 24 (legacy FFC groups) — APs that still
+support these alongside Group 19 are vulnerable to the side-channel attacks in
+CVE-2019-9494 / 9495.
+"""
+
+import asyncio
+import logging
+import os
 import struct
 import time
-import logging
-import asyncio
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
+
 from wifit3.engine.models import AccessPoint
 
 logger = logging.getLogger(__name__)
 
+
+# 802.11 status codes relevant to SAE Commit responses.
+STATUS_SUCCESS = 0
+STATUS_UNSPECIFIED_FAILURE = 1  # AP parsed past group-check, rejected the (dummy) scalar/element math
+STATUS_ANTI_CLOGGING_TOKEN_REQ = 76
+STATUS_UNSUPPORTED_GROUP = 77
+
+
+def _random_client_mac() -> bytes:
+    """Locally-administered, unicast MAC (LAA bit set, multicast bit clear)."""
+    return bytes([0x02]) + os.urandom(5)
+
+
 class SAEGroupProbeAttack:
-    """
-    Probes an Access Point for vulnerable SAE Groups (like Dragonblood 22, 23, 24).
-    Sends a dummy SAE Commit and listens for the status code in the response.
-    """
-    
-    def __init__(self, iface, target: AccessPoint):
+    """Probe an AP for which SAE finite cyclic groups it accepts."""
+
+    def __init__(self, iface, target: AccessPoint, source_mac: Optional[bytes] = None):
         self.iface = iface
         self.target = target
-        self.results: Dict[int, str] = {}
-        
-    def _craft_sae_commit(self, bssid_mac: bytes, source_mac: bytes, group_id: int) -> bytes:
-        # Frame Control: Mgmt (0x00), Auth (0x0B -> 11) -> 0xB0 0x00
-        # Duration: 0x00 0x00
-        # Addr1 (Dest): bssid_mac
-        # Addr2 (Source): source_mac
-        # Addr3 (BSSID): bssid_mac
-        # Seq Control: 0x00 0x00
-        
-        fc = b'\xb0\x00'
-        duration = b'\x00\x00'
-        seq_ctrl = b'\x00\x00'
-        
-        mac_header = fc + duration + bssid_mac + source_mac + bssid_mac + seq_ctrl
-        
-        # Auth Body
-        # Auth Algorithm: 3 (SAE) -> \x03\x00
-        # Auth Transaction: 1 -> \x01\x00
-        # Status Code: 0 -> \x00\x00
-        # Group ID: 2 bytes
-        # Dummy Scalar & Element: just some random bytes, e.g., 32 bytes each
-        
-        auth_algo = b'\x03\x00'
-        transaction = b'\x01\x00'
-        status = b'\x00\x00'
-        group = struct.pack("<H", group_id)
-        
-        # 32 bytes scalar + 32 bytes element is fine for P-256 (Group 19).
-        # We just need enough bytes so the AP parses it as a Commit, 
-        # even if the math is wrong, it should still evaluate if the group is supported first.
-        dummy_scalar = b'\x11' * 32
-        dummy_element = b'\x22' * 32
-        
-        body = auth_algo + transaction + status + group + dummy_scalar + dummy_element
-        return mac_header + body
+        # Tuple of (label, detail) per group so the UI can colour by risk.
+        self.results: Dict[int, Tuple[str, str]] = {}
+        self.source_mac = source_mac or _random_client_mac()
+        self.iface.register_forged_mac(self.source_mac)
 
-    async def run(self, groups_to_test=(19, 20, 22, 23, 24), timeout=1.0):
-        """
-        Runs the probe against specified SAE groups.
-        """
+    def _craft_sae_commit(self, bssid_mac: bytes, source_mac: bytes, group_id: int) -> bytes:
+        # MAC header: Mgmt(00) + Auth(1011) subtype → FC byte0=0xB0, byte1=0x00.
+        # Addr1=BSSID(dest), Addr2=us(source), Addr3=BSSID. Seq filled by HW.
+        mac_header = (
+            b"\xb0\x00"
+            + b"\x00\x00"
+            + bssid_mac
+            + source_mac
+            + bssid_mac
+            + b"\x00\x00"
+        )
+
+        # Auth body: algo=3 (SAE), transaction=1 (Commit), status=0, group_id (2B LE),
+        # then dummy scalar (32B) + element (32B). Math is irrelevant — the AP rejects
+        # at group-check before validating the scalar/element.
+        auth_algo = b"\x03\x00"
+        transaction = b"\x01\x00"
+        status = b"\x00\x00"
+        group = struct.pack("<H", group_id)
+        dummy_scalar = b"\x11" * 32
+        dummy_element = b"\x22" * 32
+
+        return mac_header + auth_algo + transaction + status + group + dummy_scalar + dummy_element
+
+    @staticmethod
+    def _classify(status_code: Optional[int]) -> Tuple[str, str]:
+        """Return (short_label, detail) for a given SAE Commit response status."""
+        if status_code is None:
+            return ("Timeout", "No response (frame dropped or AP ignored)")
+        if status_code == STATUS_SUCCESS:
+            return ("Supported", "Status 0 — group accepted, AP sent Commit reply")
+        if status_code == STATUS_ANTI_CLOGGING_TOKEN_REQ:
+            return ("Supported", "Status 76 — anti-clogging token required (group OK)")
+        if status_code == STATUS_UNSPECIFIED_FAILURE:
+            # AP parsed past the group-check and only then failed validating our
+            # dummy scalar/element. Strong evidence the group itself is accepted.
+            return ("Supported", "Status 1 — AP rejected our dummy Commit math (group OK)")
+        if status_code == STATUS_UNSUPPORTED_GROUP:
+            return ("Rejected", "Status 77 — group not supported by AP")
+        return ("Unknown", f"Status {status_code}")
+
+    async def run(self, groups_to_test=(19, 20, 21, 22, 23, 24), timeout: float = 1.0):
+        """Probe each group sequentially. Skips groups already cached on the
+        AccessPoint (``target.sae_groups``) and writes new definitive results
+        back to that cache. Returns ``{group_id: (label, detail)}`` covering
+        BOTH cached and freshly-probed groups, so the UI can render the full
+        picture on every run."""
         if not self.target.wpa3:
             logger.warning(f"Target {self.target.bssid} is not marked as WPA3.")
 
-        # Convert MAC string to bytes
-        bssid_bytes = bytes(int(x, 16) for x in self.target.bssid.split(':'))
-        source_mac = b'\x02\x11\x22\x33\x44\x55' 
-        
+        # Defensive channel tune — Focus view should have done this, but if the
+        # hopper resumed for any reason the probe would silently miss responses.
+        if self.iface.current_channel != self.target.channel:
+            await self.iface.set_channel(self.target.channel)
+
+        bssid_bytes = bytes(int(x, 16) for x in self.target.bssid.split(":"))
+        cache = self.target.sae_groups
+
+        # Seed results from cache so the returned dict is cumulative.
+        for group, verdict in cache.items():
+            if verdict == "supported":
+                self.results[group] = ("Supported", "Cached from prior probe")
+            elif verdict == "rejected":
+                self.results[group] = ("Rejected", "Cached from prior probe")
+
         for group in groups_to_test:
-            logger.info(f"Probing SAE Group {group} on {self.target.bssid}")
-            frame = self._craft_sae_commit(bssid_bytes, source_mac, group)
-            
-            # State for callback
+            if cache.get(group) in ("supported", "rejected"):
+                logger.info(f"[SAE] Group {group} cached as {cache[group]} — skipping.")
+                continue
+
+            logger.info(f"[SAE] Probing Group {group} on {self.target.bssid}")
+            frame = self._craft_sae_commit(bssid_bytes, self.source_mac, group)
+
             response_status: Optional[int] = None
-            
+
             def auth_callback(frame_bytes: bytes, rssi: int, ts: float):
                 nonlocal response_status
-                if len(frame_bytes) >= 24 + 6:
-                    fc0 = frame_bytes[0]
-                    # Check if Authentication frame (Type 0, Subtype 11 -> 0xB0)
-                    if (fc0 & 0xFC) == 0xB0:
-                        addr1 = frame_bytes[4:10]
-                        addr2 = frame_bytes[10:16]
-                        if addr1 == source_mac and addr2 == bssid_bytes:
-                            # MAC header is typically 24 bytes
-                            body = frame_bytes[24:]
-                            algo = struct.unpack("<H", body[0:2])[0]
-                            seq = struct.unpack("<H", body[2:4])[0]
-                            if algo == 3 and seq == 1:
-                                status_code = struct.unpack("<H", body[4:6])[0]
-                                response_status = status_code
+                # Need MAC header (24B) + algo (2) + seq (2) + status (2).
+                if len(frame_bytes) < 30:
+                    return
+                # FC byte0: type=Mgmt(00), subtype=Auth(1011) → 0xB0; mask out version.
+                if (frame_bytes[0] & 0xFC) != 0xB0:
+                    return
+                addr1 = frame_bytes[4:10]
+                addr2 = frame_bytes[10:16]
+                # AP → us: Addr1=our forged MAC, Addr2=AP BSSID.
+                if addr1 != self.source_mac or addr2 != bssid_bytes:
+                    return
+                body = frame_bytes[24:]
+                algo = struct.unpack("<H", body[0:2])[0]
+                seq = struct.unpack("<H", body[2:4])[0]
+                if algo == 3 and seq == 1:
+                    response_status = struct.unpack("<H", body[4:6])[0]
 
-            # Register listener
             self.iface.register_rx_callback(auth_callback)
-            
-            # Send frame
-            await self.iface.send_raw(frame, use_no_ack=True)
-            
-            # Wait for response
-            start_time = time.time()
-            while time.time() - start_time < timeout:
-                if response_status is not None:
-                    break
-                await asyncio.sleep(0.05)
-                
-            # Unregister listener
-            if hasattr(self.iface, '_rx_callbacks') and auth_callback in self.iface._rx_callbacks:
-                self.iface._rx_callbacks.remove(auth_callback)
-            
-            if response_status == 0:
-                self.results[group] = "Supported"
-            elif response_status == 77:
-                self.results[group] = "Rejected (Unsupported)"
-            else:
-                if response_status is None:
-                    self.results[group] = "Timeout (Dropped)"
-                else:
-                    self.results[group] = f"Unknown Status ({response_status})"
+            try:
+                await self.iface.send_raw(frame, use_no_ack=True)
+
+                deadline = time.time() + timeout
+                while time.time() < deadline and response_status is None:
+                    await asyncio.sleep(0.05)
+            finally:
+                self.iface.unregister_rx_callback(auth_callback)
+
+            label, detail = self._classify(response_status)
+            self.results[group] = (label, detail)
+            # Only cache definitive verdicts — timeouts / unknowns get re-probed.
+            if label == "Supported":
+                cache[group] = "supported"
+            elif label == "Rejected":
+                cache[group] = "rejected"
+            logger.info(f"[SAE] Group {group}: {label} — {detail}")
 
         return self.results

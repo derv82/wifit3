@@ -16,6 +16,7 @@ from wifit3.engine.models import AccessPoint, Handshake
 from wifit3.engine.hc22000 import write_hc22000
 from wifit3.engine.pcap import write_pcap
 from wifit3.engine.attacks.pmkid_harvest import PmkidHarvestAttack
+from wifit3.engine.attacks.sae_probe import SAEGroupProbeAttack
 
 from ..capture_events import CaptureEvent, CaptureEventDetector
 from ..encryption_format import (
@@ -86,6 +87,7 @@ class FocusView(Screen):
                     Label(id="lbl-enc"),
                     Label(id="lbl-pmf"),
                     Label(id="lbl-wpa3"),
+                    Label(id="lbl-sae-groups"),
                     classes="info-box",
                 )
                 yield Vertical(
@@ -205,6 +207,21 @@ class FocusView(Screen):
                 Text.from_markup(f"WPA3: {wpa3_markup}", emoji=False)
             )
 
+        # SAE Groups — populated by the SAE probe attack, cached on the AP.
+        # Hidden until we have at least one probe result. Supported groups are
+        # coloured by Dragonblood risk (22/23/24 = red attackable, others green).
+        sae_label = self.query_one("#lbl-sae-groups", Label)
+        if ap.sae_groups:
+            sae_label.display = True
+            sae_label.update(
+                Text.from_markup(
+                    f"SAE Groups: {self._format_sae_groups_markup(ap)}",
+                    emoji=False,
+                )
+            )
+        else:
+            sae_label.display = False
+
         # Attack-button enable/disable based on AP capability.
         btn_sae = self.query_one("#btn-sae-probe", Button)
         btn_down = self.query_one("#btn-wpa3-down", Button)
@@ -306,6 +323,28 @@ class FocusView(Screen):
                     mac, "packets", Text(str(client.packets), justify="right")
                 )
                 client_table.update_cell(mac, "captures", captures_text)
+
+    _DRAGONBLOOD_GROUPS = {22, 23, 24}
+
+    @classmethod
+    def _format_sae_groups_markup(cls, ap: AccessPoint) -> str:
+        """Render `ap.sae_groups` as a compact, colour-coded inline list.
+
+        Supported Dragonblood groups → bold red (attackable).
+        Other supported groups       → green.
+        Rejected groups              → dim.
+        """
+        parts = []
+        for group in sorted(ap.sae_groups.keys()):
+            verdict = ap.sae_groups[group]
+            if verdict == "supported":
+                if group in cls._DRAGONBLOOD_GROUPS:
+                    parts.append(f"[bold red]{group}[/bold red]")
+                else:
+                    parts.append(f"[green]{group}[/green]")
+            elif verdict == "rejected":
+                parts.append(f"[dim]{group}[/dim]")
+        return ", ".join(parts) if parts else "[dim]—[/dim]"
 
     @staticmethod
     def _format_captures_label(hs: Handshake | None) -> str:
@@ -420,7 +459,7 @@ class FocusView(Screen):
         elif bid == "btn-pmkid":
             self.run_worker(self._run_pmkid_harvest(), exclusive=True)
         elif bid == "btn-sae-probe":
-            self._log("[dim]SAE Group Probe — not yet wired in this build.[/dim]")
+            self.run_worker(self._run_sae_probe(), exclusive=True)
         elif bid == "btn-wpa3-down":
             self._log("[dim]WPA3 Downgrade — not yet wired in this build.[/dim]")
 
@@ -457,6 +496,80 @@ class FocusView(Screen):
             self._log(
                 "[yellow]⚠ PMKID: no result after all attempts.[/yellow] "
                 "AP may not advertise a PMKID KDE, or PMF / status rejected us."
+            )
+
+    async def _run_sae_probe(self) -> None:
+        """Worker: enumerate which SAE groups the focused AP accepts."""
+        ap = self.target_ap
+        iface = getattr(self.app, "active_interface", None)
+        if not ap or not iface:
+            self._log("[red]✗ No target / interface — aborting SAE probe.[/red]")
+            return
+
+        self._log(
+            f"[bold cyan]→ SAE Group Probe[/bold cyan] on "
+            f"[bold]{escape(ap.ssid or '<hidden>')}[/bold] ({ap.bssid}) CH {ap.channel}"
+        )
+        attack = SAEGroupProbeAttack(iface, ap)
+        try:
+            results = await attack.run()
+        except Exception as exc:
+            logger.exception("SAE probe crashed")
+            self._log(f"[bold red]✗ SAE probe crashed:[/bold red] {escape(str(exc))}")
+            return
+
+        # Dragonblood-vulnerable groups — auditor view: supporting these is
+        # GOOD news (the AP is attackable). Render supported groups in red
+        # when they're Dragonblood-relevant, green when they're modern.
+        DRAGONBLOOD = {22, 23, 24}
+        supported_groups = []
+        dragonblood_hits = []
+        for group, (label, detail) in results.items():
+            if label == "Supported":
+                supported_groups.append(group)
+                if group in DRAGONBLOOD:
+                    color = "bold red"
+                    dragonblood_hits.append(group)
+                else:
+                    color = "green"
+                self._log(
+                    f"  Group [bold]{group:>2}[/bold]: "
+                    f"[{color}]{label}[/{color}] [dim]— {escape(detail)}[/dim]"
+                )
+            elif label == "Rejected":
+                self._log(
+                    f"  Group [bold]{group:>2}[/bold]: "
+                    f"[dim]{label} — {escape(detail)}[/dim]"
+                )
+            else:
+                self._log(
+                    f"  Group [bold]{group:>2}[/bold]: "
+                    f"[yellow]{label}[/yellow] [dim]— {escape(detail)}[/dim]"
+                )
+
+        # Verdict polarity from the auditor's perspective: Dragonblood-vulnerable
+        # is GREEN (attack works), not-vulnerable is RED (no attack here).
+        if dragonblood_hits:
+            self._log(
+                f"[bold green]✓ Vulnerable to Dragonblood[/bold green] "
+                f"(supported: {', '.join(str(g) for g in dragonblood_hits)}) "
+                f"[dim]— CVE-2019-9494/9495 side-channel.[/dim]"
+            )
+            self._log(
+                "[dim]  Next: capture a handshake, then run "
+                "[bold]dragonblood-tools[/bold] "
+                "(github.com/vanhoefm/dragonblood) to recover the passphrase.[/dim]"
+            )
+        elif supported_groups:
+            self._log(
+                f"[bold red]✗ Not vulnerable to Dragonblood[/bold red] "
+                f"(supported: {', '.join(str(g) for g in supported_groups)})"
+            )
+        else:
+            self._log(
+                "[bold yellow]⚠ Unable to determine supported SAE groups[/bold yellow] "
+                "[dim]— AP may have rate-limited us, PMF is rejecting "
+                "unauthenticated Auth, or we're off-channel.[/dim]"
             )
 
     async def action_go_back(self) -> None:

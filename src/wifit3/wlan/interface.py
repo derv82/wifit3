@@ -244,11 +244,16 @@ class WlanInterface:
 
     def register_rx_callback(self, callback_func: Callable[[bytes, int, float], None]):
         """
-        UI registers a function here. 
+        UI registers a function here.
         Expected signature: func(frame_bytes, rssi, timestamp)
         """
         if callback_func not in self._rx_callbacks:
             self._rx_callbacks.append(callback_func)
+
+    def unregister_rx_callback(self, callback_func: Callable[[bytes, int, float], None]):
+        """Idempotent inverse of register_rx_callback."""
+        if callback_func in self._rx_callbacks:
+            self._rx_callbacks.remove(callback_func)
 
     def _fire_rx_callbacks(self, frame_bytes: bytes, rssi: int):
         ts = time.time()
