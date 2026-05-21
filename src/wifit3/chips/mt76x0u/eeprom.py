@@ -35,6 +35,10 @@ from typing import Optional
 from .constants import (
     BOARD_TYPE_2GHZ,
     BOARD_TYPE_5GHZ,
+    MT76X0_EEPROM_SIZE,
+    MT76X0U_EE_MAX_VER,
+    MT_EE_2G_TARGET_POWER,
+    MT_EE_CHIP_ID,
     MT_EE_FREQ_OFFSET,
     MT_EE_MAC_ADDR,
     MT_EE_NIC_CONF_0,
@@ -44,8 +48,11 @@ from .constants import (
     MT_EE_NIC_CONF_0_TX_PATH_MASK,
     MT_EE_NIC_CONF_0_TX_PATH_SHIFT,
     MT_EE_NIC_CONF_1,
+    MT_EE_PCI_ID,
     MT_EE_PHYSICAL_READ,
     MT_EE_READ,
+    MT_EE_TSSI_BOUND4,
+    MT_EE_VERSION,
     MT_EFUSE_CTRL,
     MT_EFUSE_CTRL_AIN_MASK,
     MT_EFUSE_CTRL_AIN_SHIFT,
@@ -130,6 +137,224 @@ def efuse_get_data(
         block = efuse_read_block(transport, base + i, mode=mode)
         buf[i: i + EFUSE_BLOCK_SIZE] = block
     return bytes(buf)
+
+
+class EEPROMCache:
+    """Full 512-byte EFUSE buffer + accessor mirroring `mt76x02_eeprom_get`.
+
+    [SRC] mt76x0/eeprom.h:16 — MT76X0_EEPROM_SIZE = 512.
+    [SRC] mt76x02_eeprom.h `mt76x02_eeprom_get` returns u16 at offset.
+    """
+
+    def __init__(self, data: bytes):
+        if len(data) != MT76X0_EEPROM_SIZE:
+            raise EEPROMError(
+                f"EEPROMCache: expected {MT76X0_EEPROM_SIZE} bytes, got {len(data)}"
+            )
+        self.data = bytes(data)
+
+    def get_u8(self, offset: int) -> int:
+        return self.data[offset]
+
+    def get_u16(self, offset: int) -> int:
+        """Equivalent of `mt76x02_eeprom_get(dev, field)`. Returns LE u16."""
+        return int.from_bytes(self.data[offset: offset + 2], "little")
+
+    def get_bytes(self, offset: int, length: int) -> bytes:
+        return bytes(self.data[offset: offset + length])
+
+
+def load_full_eeprom(transport: MT76x0UTransport) -> EEPROMCache:
+    """`mt76x0_load_eeprom` — load 512 bytes from EFUSE into a cache.
+
+    [SRC] mt76x0/eeprom.c:293-310. The kernel first tries `mt76_eeprom_init`
+    (loads from a host-side stored file or DT EEPROM partition); on USB we
+    don't have either of those, so we always fall through to
+    `mt76x0_efuse_physical_size_check` + `mt76x02_get_efuse_data`. The size-
+    check uses MT_EE_PHYSICAL_READ; the actual cache load uses MT_EE_READ.
+
+    Returns an EEPROMCache wrapping the 512-byte buffer.
+    """
+    # Kernel does a physical-size check first (mt76x0_efuse_physical_size_check),
+    # which scans the usage-map region for free slots. For our purposes we
+    # accept any EFUSE that read returns and let check_eeprom() validate the
+    # chip_id field instead — that's the meaningful sanity check.
+    raw = efuse_get_data(transport, 0, MT76X0_EEPROM_SIZE, mode=MT_EE_READ)
+    return EEPROMCache(raw)
+
+
+def check_eeprom(cache: EEPROMCache) -> int:
+    """`mt76x0_check_eeprom` — verify the EEPROM chip-id field.
+
+    [SRC] mt76x0/eeprom.c:273-291. Reads u16 at offset 0 (CHIP_ID); if zero,
+    falls back to offset MT_EE_PCI_ID. Must be 0x7610 or 0x7650 for mt76x0u.
+
+    Returns the validated chip_id. Raises EEPROMError on mismatch.
+    """
+    chip_id = cache.get_u16(MT_EE_CHIP_ID)
+    if chip_id == 0:
+        chip_id = cache.get_u16(MT_EE_PCI_ID)
+    if chip_id not in (0x7610, 0x7650):
+        raise EEPROMError(
+            f"EEPROM chip_id 0x{chip_id:04x} not in (0x7610, 0x7650)"
+        )
+    return chip_id
+
+
+def _field_valid_u8(val: int) -> bool:
+    """`mt76x02_field_valid` — kernel macro `val != 0xff`. [SRC] mt76x02.h."""
+    return val != 0xFF
+
+
+def _sign_extend(val: int, width_bits: int) -> int:
+    """`mt76x02_sign_extend(val, width)` — sign-extend an N-bit value."""
+    sign_bit = 1 << (width_bits - 1)
+    mask = (1 << width_bits) - 1
+    val &= mask
+    if val & sign_bit:
+        val -= (1 << width_bits)
+    return val
+
+
+def decode_chip_cap(cache: EEPROMCache) -> dict:
+    """Port of `mt76x0_set_chip_cap` + `mt76x02_eeprom_parse_hw_cap`.
+
+    [SRC] mt76x0/eeprom.c:48-80 + mt76x02_eeprom.c:72-89.
+
+    Returns a dict with has_2ghz, has_5ghz, tx_path, rx_path,
+    nic_conf_0/1, plus a list of warnings the kernel would log.
+    """
+    nic0 = cache.get_u16(MT_EE_NIC_CONF_0)
+    nic1 = cache.get_u16(MT_EE_NIC_CONF_1)
+
+    board = (nic0 & 0x3000) >> 12       # MT_EE_NIC_CONF_0_BOARD_TYPE
+    if board == BOARD_TYPE_5GHZ:
+        has_2g, has_5g = False, True
+    elif board == BOARD_TYPE_2GHZ:
+        has_2g, has_5g = True, False
+    else:
+        has_2g, has_5g = True, True     # default (kernel fall-through)
+
+    rx_path = nic0 & 0x000F
+    tx_path = (nic0 & 0x00F0) >> 4
+
+    warnings = []
+    # Kernel: `if (!mt76x02_field_valid(nic_conf1 & 0xff)) nic_conf1 &= 0xff00;`
+    if (nic1 & 0xFF) == 0xFF:
+        nic1 = nic1 & 0xFF00
+    # Kernel: `if (nic_conf1 & MT_EE_NIC_CONF_1_HW_RF_CTRL) warn`
+    if nic1 & (1 << 0):
+        warnings.append("HW_RF_CTRL set in NIC_CONF_1 — kernel doesn't support that")
+    # Kernel: validate tx/rx path each <= 1.
+    if rx_path > 1 or tx_path > 1:
+        warnings.append(f"invalid tx-rx stream (tx={tx_path}, rx={rx_path})")
+
+    return {
+        "has_2ghz": has_2g, "has_5ghz": has_5g,
+        "tx_path": tx_path, "rx_path": rx_path,
+        "nic_conf_0": nic0, "nic_conf_1": nic1,
+        "board_type": board, "warnings": warnings,
+    }
+
+
+def decode_temp_offset(cache: EEPROMCache) -> int:
+    """`mt76x0_set_temp_offset` — [SRC] mt76x0/eeprom.c:82-91.
+
+    Reads the high byte of MT_EE_2G_TARGET_POWER as a signed 8-bit value.
+    Default to -10 if the byte is 0xFF (unburned).
+    """
+    val = cache.get_u16(MT_EE_2G_TARGET_POWER) >> 8
+    if _field_valid_u8(val):
+        return _sign_extend(val, 8)
+    return -10
+
+
+def decode_freq_offset(cache: EEPROMCache) -> int:
+    """`mt76x0_set_freq_offset` — [SRC] mt76x0/eeprom.c:93-108.
+
+    Returns the unsigned u8 at MT_EE_FREQ_OFFSET (0 if unburned), minus a
+    sign-extended compensation from MT_EE_TSSI_BOUND4 high byte.
+    """
+    val = cache.get_u8(MT_EE_FREQ_OFFSET)
+    if not _field_valid_u8(val):
+        val = 0
+    freq_offset = val
+
+    comp = cache.get_u16(MT_EE_TSSI_BOUND4) >> 8
+    if not _field_valid_u8(comp):
+        comp = 0
+    freq_offset -= _sign_extend(comp, 8)
+    return freq_offset
+
+
+@dataclass
+class EFUSEFullInfo:
+    """Decoded full EFUSE — what wifit3 actually consumes."""
+
+    chip_id: int                # 0x7610 or 0x7650
+    version: int                # MT_EE_VERSION high byte
+    fae: int                    # MT_EE_VERSION low byte
+    mac_address: str            # "xx:xx:xx:xx:xx:xx"
+    mac_bytes: bytes
+    has_2ghz: bool
+    has_5ghz: bool
+    tx_path: int
+    rx_path: int
+    nic_conf_0: int
+    nic_conf_1: int
+    temp_offset: int
+    freq_offset: int
+    cap_warnings: list
+    cache: EEPROMCache          # raw cache for future per-channel TX power lookups
+
+
+def read_efuse_full(transport: MT76x0UTransport) -> EFUSEFullInfo:
+    """Port of `mt76x0_eeprom_init` (mt76x0/eeprom.c:312-353).
+
+    Loads the full 512-byte EFUSE into a cache, validates chip_id, reads
+    version/fae, extracts MAC, decodes chip_cap + temp_offset + freq_offset.
+    Returns an EFUSEFullInfo populated with all decoded fields.
+
+    Does NOT write MAC to chip registers — caller is responsible for calling
+    `mt76x02_mac_setaddr` separately (the kernel does this in eeprom_init but
+    we keep MAC-write side-effects in mac.py).
+    """
+    cache = load_full_eeprom(transport)
+    chip_id = check_eeprom(cache)
+
+    ver_word = cache.get_u16(MT_EE_VERSION)
+    version = (ver_word >> 8) & 0xFF
+    fae = ver_word & 0xFF
+    if version > MT76X0U_EE_MAX_VER:
+        logger.warning("EEPROM version 0x%02x > MT76X0U_EE_MAX_VER=0x%02x — "
+                       "may be unsupported", version, MT76X0U_EE_MAX_VER)
+    logger.info("EEPROM ver=0x%02x fae=0x%02x chip_id=0x%04x",
+                version, fae, chip_id)
+
+    mac_bytes = cache.get_bytes(MT_EE_MAC_ADDR, 6)
+    mac_str = ":".join(f"{b:02x}" for b in mac_bytes)
+
+    cap = decode_chip_cap(cache)
+    for w in cap["warnings"]:
+        logger.warning("EEPROM cap: %s", w)
+
+    return EFUSEFullInfo(
+        chip_id=chip_id,
+        version=version,
+        fae=fae,
+        mac_address=mac_str,
+        mac_bytes=mac_bytes,
+        has_2ghz=cap["has_2ghz"],
+        has_5ghz=cap["has_5ghz"],
+        tx_path=cap["tx_path"],
+        rx_path=cap["rx_path"],
+        nic_conf_0=cap["nic_conf_0"],
+        nic_conf_1=cap["nic_conf_1"],
+        temp_offset=decode_temp_offset(cache),
+        freq_offset=decode_freq_offset(cache),
+        cap_warnings=cap["warnings"],
+        cache=cache,
+    )
 
 
 @dataclass

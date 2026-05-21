@@ -161,6 +161,69 @@ MT_PWR_PIN_CFG                    = 0x1204
 MT_BB_PA_MODE_CFG1                = 0x1218
 MT_RF_PA_MODE_CFG1                = 0x1220
 
+# MAC addr + BSSID bit fields — [SRC] mt76x02_regs.h:277-287
+MT_MAC_ADDR_DW1_U2ME_MASK         = 0xFF << 16    # GENMASK(23, 16)
+MT_MAC_BSSID_DW1_MBSS_MODE_SHIFT  = 16            # GENMASK(17, 16)
+MT_MAC_BSSID_DW1_MBSS_MODE_MASK   = 0x3 << 16
+MT_MAC_BSSID_DW1_MBEACON_N_SHIFT  = 18            # GENMASK(20, 18)
+MT_MAC_BSSID_DW1_MBEACON_N_MASK   = 0x7 << 18
+MT_MAC_BSSID_DW1_MBSS_LOCAL_BIT   = 1 << 21       # BIT(21)
+
+# Per-vif BSSID slots — [SRC] mt76x02_regs.h:306-310
+MT_MAC_APC_BSSID_BASE             = 0x1090
+def MT_MAC_APC_BSSID_L(n: int) -> int: return MT_MAC_APC_BSSID_BASE + (n * 8)
+def MT_MAC_APC_BSSID_H(n: int) -> int: return MT_MAC_APC_BSSID_BASE + (n * 8) + 4
+MT_MAC_APC_BSSID_H_ADDR_MASK      = 0xFFFF        # GENMASK(15, 0)
+
+# WCID — [SRC] mt76x02_regs.h:643-664
+MT_WCID_ADDR_BASE                 = 0x1800
+def MT_WCID_ADDR(n: int) -> int: return MT_WCID_ADDR_BASE + (n * 8)
+MT_WCID_ATTR_BASE                 = 0xa800
+def MT_WCID_ATTR(n: int) -> int: return MT_WCID_ATTR_BASE + (n * 4)
+MT_WCID_ATTR_BSS_IDX_SHIFT        = 4             # GENMASK(6, 4)
+MT_WCID_ATTR_BSS_IDX_MASK         = 0x7 << 4
+MT_WCID_ATTR_BSS_IDX_EXT          = 1 << 11       # BIT(11)
+
+# Shared keys + cipher modes — [SRC] mt76x02_regs.h:666-678
+MT_SKEY_BASE_0                    = 0xac00
+MT_SKEY_BASE_1                    = 0xb400
+MT_SKEY_MODE_BASE_0               = 0xb000
+MT_SKEY_MODE_BASE_1               = 0xb3f0
+MT_SKEY_MODE_MASK                 = 0xF           # GENMASK(3, 0)
+
+
+def MT_SKEY(bss: int, idx: int) -> int:
+    """[SRC] mt76x02_regs.h:670 — 32-byte slot for shared-key data."""
+    if bss & 8:
+        return MT_SKEY_BASE_1 + (4 * (bss & 7) + idx) * 32
+    return MT_SKEY_BASE_0 + (4 * bss + idx) * 32
+
+
+def MT_SKEY_MODE(bss: int) -> int:
+    """[SRC] mt76x02_regs.h:676 — per-bss cipher mode register."""
+    if bss & 8:
+        return MT_SKEY_MODE_BASE_1 + ((bss & 7) // 2) * 4
+    return MT_SKEY_MODE_BASE_0 + (bss // 2) * 4
+
+
+def MT_SKEY_MODE_SHIFT(bss: int, idx: int) -> int:
+    """[SRC] mt76x02_regs.h:678."""
+    return 4 * (idx + 4 * (bss & 1))
+
+
+MT76X02_CIPHER_NONE               = 0    # enum mt76x02_cipher_type:0
+
+# Per-card EEPROM sizing — [SRC] mt76x0/eeprom.h:15-16
+MT76X0_EEPROM_SIZE                = 512
+MT76X0U_EE_MAX_VER                = 0x0c
+
+# Additional EFUSE field offsets — [SRC] mt76x02_eeprom.h
+MT_EE_2G_TARGET_POWER             = 0x0d0
+MT_EE_TEMP_OFFSET                 = 0x0d1
+MT_EE_5G_TARGET_POWER             = 0x0d2
+MT_EE_TSSI_BOUND4                 = 0x0da
+MT_EE_TSSI_BOUND_COMPENSATION     = 0x0db   # MT_EE_FREQ_OFFSET_COMPENSATION
+
 # TX power tables — [SRC] mt76x02_regs.h:387-408
 MT_TX_PWR_CFG_0                   = 0x1314
 MT_TX_PWR_CFG_1                   = 0x1318

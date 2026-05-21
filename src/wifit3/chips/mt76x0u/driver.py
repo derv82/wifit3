@@ -18,10 +18,18 @@ import usb.core
 
 from wifit3.engine.protocols import DeviceID, ProgressCallback
 
-from .constants import MT_MAC_STATUS, USB_IDS_MT76X0U
-from .eeprom import EEPROMError, EFUSEInfo, read_efuse_summary
+from .constants import MT_MAC_STATUS, MT_RX_FILTR_CFG, USB_IDS_MT76X0U
+from .eeprom import EEPROMError, EFUSEFullInfo, read_efuse_full
 from .firmware import FirmwareError, FirmwareUploader
-from .mac import MACInitError, init_mac_registers, wait_for_txrx_idle, wait_for_wpdma
+from .mac import (
+    MACInitError,
+    clear_shared_keys,
+    clear_wcids,
+    init_mac_registers,
+    mac_setaddr,
+    wait_for_txrx_idle,
+    wait_for_wpdma,
+)
 from .mcu import MCUChannel, MCUError, mcu_init_smoke_test
 from .phy import PHYInitError, init_bbp
 from .transport import MT76x0UTransport
@@ -67,12 +75,13 @@ class MT76x0UDriver:
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
         self._rx_callback: Optional[Callable[[dict], None]] = None
-        # M1 + M2 + M3a + M3b results, populated by connect().
+        # M1 + M2 + M3a + M3b + M3c results, populated by connect().
         self.fw_info: Optional[dict] = None
-        self.efuse_info: Optional[EFUSEInfo] = None
+        self.efuse_full: Optional[EFUSEFullInfo] = None
         self.mcu_smoke: Optional[dict] = None
         self.mac_status_after_init: Optional[int] = None
         self.bbp_version: Optional[int] = None
+        self.rxfilter_default: Optional[int] = None
 
     # ---- Hooks --------------------------------------------------------
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
@@ -253,10 +262,10 @@ class MT76x0UDriver:
                     self.mac_status_after_init)
 
         # ---- M3b: init_bbp [SRC] mt76x0/init.c:192.
-        # phy_wait_bbp_ready, then bbp_init_tab (54 pairs MCU), then 20
+        # phy_wait_bbp_ready, then bbp_init_tab (58 pairs MCU), then 20
         # filtered switch_tab entries direct-write, then dcoc_tab (9 pairs MCU).
         if progress_cb:
-            progress_cb(0.97, "init_bbp (BBP wait + 3 tables)")
+            progress_cb(0.85, "init_bbp (BBP wait + 3 tables)")
         try:
             self.bbp_version = init_bbp(self.transport, self.mcu)
         except (PHYInitError, MCUError, usb.core.USBError) as e:
@@ -264,30 +273,72 @@ class MT76x0UDriver:
             return False
         logger.info("MT7610U: BBP version = 0x%08x", self.bbp_version)
 
-        # ---- M2 (out-of-order): EFUSE summary --------------------------
-        # Kernel reads full EFUSE later in init_hardware (step 11), but our
-        # M2 just reads the small summary we display. Safe out-of-order.
-        if progress_cb:
-            progress_cb(0.98, "Reading EFUSE summary")
+        # ---- M3c step 13: cache RX_FILTR_CFG. [SRC] mt76x0/init.c:196 —
+        # `dev->mt76.rxfilter = mt76_rr(dev, MT_RX_FILTR_CFG);`
         try:
-            self.efuse_info = read_efuse_summary(self.transport)
-        except (EEPROMError, usb.core.USBError) as e:
-            logger.error("MT7610U: EFUSE read failed: %s", e)
+            self.rxfilter_default = self.transport.read32(MT_RX_FILTR_CFG)
+            logger.info("MT7610U: RX_FILTR_CFG default = 0x%08x",
+                        self.rxfilter_default)
+        except usb.core.USBError as e:
+            logger.error("MT7610U: RX_FILTR_CFG read failed: %s", e)
             return False
-        self.mac_address = self.efuse_info.mac_address
+
+        # ---- M3c step 14: clear all 16x4 shared keys.
+        # [SRC] mt76x0/init.c:198-200.
+        if progress_cb:
+            progress_cb(0.88, "clear_shared_keys (16 vifs × 4 keys)")
+        try:
+            clear_shared_keys(self.transport)
+        except usb.core.USBError as e:
+            logger.error("MT7610U: clear_shared_keys failed: %s", e)
+            return False
+
+        # ---- M3c step 15: clear all 256 WCIDs.
+        # [SRC] mt76x0/init.c:202-203.
+        if progress_cb:
+            progress_cb(0.92, "clear_wcids (256 entries)")
+        try:
+            clear_wcids(self.transport)
+        except usb.core.USBError as e:
+            logger.error("MT7610U: clear_wcids failed: %s", e)
+            return False
+
+        # ---- M3c step 16: full eeprom_init.
+        # [SRC] mt76x0/init.c:205 + mt76x0/eeprom.c:312-353.
+        if progress_cb:
+            progress_cb(0.96, "eeprom_init (full 512-byte EFUSE)")
+        try:
+            self.efuse_full = read_efuse_full(self.transport)
+        except (EEPROMError, usb.core.USBError) as e:
+            logger.error("MT7610U: eeprom_init failed: %s", e)
+            return False
+        self.mac_address = self.efuse_full.mac_address
         logger.info(
-            "MT7610U EFUSE: MAC=%s  tx=%d rx=%d  bands=%s%s  freq_off=%s  "
-            "nic_conf0=0x%04x nic_conf1=0x%04x",
-            self.efuse_info.mac_address, self.efuse_info.tx_path,
-            self.efuse_info.rx_path,
-            "2.4 " if self.efuse_info.has_2ghz else "",
-            "5 " if self.efuse_info.has_5ghz else "",
-            self.efuse_info.freq_offset, self.efuse_info.nic_conf_0,
-            self.efuse_info.nic_conf_1,
+            "MT7610U EFUSE: chip_id=0x%04x ver=0x%02x fae=0x%02x  MAC=%s  "
+            "tx=%d rx=%d  bands=%s%s  freq_off=%d  temp_off=%d  "
+            "nic0=0x%04x nic1=0x%04x",
+            self.efuse_full.chip_id, self.efuse_full.version,
+            self.efuse_full.fae, self.efuse_full.mac_address,
+            self.efuse_full.tx_path, self.efuse_full.rx_path,
+            "2.4 " if self.efuse_full.has_2ghz else "",
+            "5 " if self.efuse_full.has_5ghz else "",
+            self.efuse_full.freq_offset, self.efuse_full.temp_offset,
+            self.efuse_full.nic_conf_0, self.efuse_full.nic_conf_1,
         )
 
+        # ---- M3c step 17: mt76x02_mac_setaddr.
+        # [SRC] mt76x02_mac.c:727-758. Writes MAC + BSSID regs and clears
+        # 16 per-vif BSSID slots.
         if progress_cb:
-            progress_cb(1.00, "M3b complete — MAC + BBP init done")
+            progress_cb(0.98, "mac_setaddr (MAC + BSSID regs + 16 slot clear)")
+        try:
+            mac_setaddr(self.transport, self.efuse_full.mac_bytes)
+        except (MACInitError, usb.core.USBError) as e:
+            logger.error("MT7610U: mac_setaddr failed: %s", e)
+            return False
+
+        if progress_cb:
+            progress_cb(1.00, "M3c complete — EEPROM init done")
         return True
 
     async def set_channel(self, channel: int) -> bool:

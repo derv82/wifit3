@@ -3,9 +3,10 @@
   --phase probe : USB enumeration + claim + MAC_CSR0 read (M0).
   --phase fw    : probe + FW upload + FW_READY ack (M1).
   --phase mcu   : fw + MCU CMD_RANDOM_READ round-trip + EFUSE summary (M2).
-  --phase mac   : mcu + init_mac_registers + wait_for_txrx_idle (M3a).
-  --phase bbp   : mac + init_bbp (M3b).
-  --phase all   : runs the latest milestone.
+  --phase mac    : mcu + init_mac_registers + wait_for_txrx_idle (M3a).
+  --phase bbp    : mac + init_bbp (M3b).
+  --phase eeprom : bbp + full EEPROM init + mac_setaddr (M3c).
+  --phase all    : runs the latest milestone.
 
 Usage:
     uv run python scripts/mt76x0u/test_hw_mt76x0u.py --phase probe
@@ -129,6 +130,39 @@ async def phase_fw(driver: MT76x0UDriver) -> None:
         ok(f"FW_READY ack after {driver.fw_info['polls']} poll(s)")
 
 
+async def phase_eeprom(driver: MT76x0UDriver) -> None:
+    """M3c — confirm full EEPROM init + mac_setaddr landed."""
+    step("M3c — EEPROM init + mac_setaddr assertions")
+    e = driver.efuse_full
+    if e is None:
+        fail("efuse_full not populated — was connect() called?")
+    if e.chip_id not in (0x7610, 0x7650):
+        fail(f"chip_id 0x{e.chip_id:04x} unexpected (want 0x7610 or 0x7650)")
+    ok(f"EEPROM chip_id = 0x{e.chip_id:04x}, ver=0x{e.version:02x}, fae=0x{e.fae:02x}")
+    if e.mac_bytes == b"\xff\xff\xff\xff\xff\xff" or e.mac_bytes == b"\x00" * 6:
+        fail(f"MAC address invalid: {e.mac_address}")
+    ok(f"EFUSE MAC: {e.mac_address}")
+    ok(f"chip cap: tx={e.tx_path} rx={e.rx_path}  "
+       f"2.4G={e.has_2ghz} 5G={e.has_5ghz}")
+    if e.cap_warnings:
+        for w in e.cap_warnings:
+            info(f"cap warning: {w}")
+    ok(f"freq_offset={e.freq_offset}  temp_offset={e.temp_offset}")
+    if driver.rxfilter_default is None:
+        fail("rxfilter_default not populated")
+    ok(f"RX_FILTR_CFG default = 0x{driver.rxfilter_default:08x}")
+
+    # Verify mac_setaddr writeback: read MT_MAC_ADDR_DW0 and confirm the
+    # low 4 MAC bytes round-trip.
+    from wifit3.chips.mt76x0u.constants import MT_MAC_ADDR_DW0
+    mac_dw0 = driver.transport.read32(MT_MAC_ADDR_DW0)
+    expected_dw0 = int.from_bytes(e.mac_bytes[:4], "little")
+    if mac_dw0 != expected_dw0:
+        fail(f"MAC_ADDR_DW0 readback 0x{mac_dw0:08x} != expected 0x{expected_dw0:08x}")
+    ok(f"MAC_ADDR_DW0 readback OK (0x{mac_dw0:08x} = first 4 bytes of MAC)")
+    ok("M3c complete")
+
+
 async def phase_bbp(driver: MT76x0UDriver) -> None:
     """M3b — confirm BBP init landed and BBP version is sensible."""
     step("M3b — BBP init assertions")
@@ -157,9 +191,8 @@ async def phase_mac(driver: MT76x0UDriver) -> None:
 
 
 async def phase_mcu(driver: MT76x0UDriver) -> None:
-    """M2 — confirm MCU + EFUSE results landed on the driver instance.
-    (driver.connect() runs M1+M2 together; this phase asserts both worked.)"""
-    step("M2 — MCU + EFUSE assertions")
+    """M2 — confirm MCU smoke landed. (EFUSE moved to phase_eeprom in M3c.)"""
+    step("M2 — MCU assertions")
     if driver.mcu_smoke is None:
         fail("MCU smoke result not populated — was connect() called?")
     if not driver.mcu_smoke["match"]:
@@ -172,16 +205,6 @@ async def phase_mcu(driver: MT76x0UDriver) -> None:
         f"(MAC_CSR0 via MCU = 0x{driver.mcu_smoke['via_mcu_read']:08x}, "
         f"matches direct read)"
     )
-
-    e = driver.efuse_info
-    if e is None:
-        fail("EFUSE info not populated — was connect() called?")
-    ok(f"EFUSE MAC address  : {e.mac_address}")
-    ok(f"EFUSE TX/RX path   : {e.tx_path} / {e.rx_path}")
-    ok(f"EFUSE bands        : "
-       f"{'2.4 ' if e.has_2ghz else ''}{'5 ' if e.has_5ghz else ''}GHz")
-    ok(f"EFUSE freq_offset  : {e.freq_offset}")
-    ok(f"EFUSE NIC_CONF_0/1 : 0x{e.nic_conf_0:04x} / 0x{e.nic_conf_1:04x}")
     ok("M2 complete")
 
 
@@ -189,7 +212,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="MT76x0U hardware test driver")
     parser.add_argument(
         "--phase",
-        choices=["probe", "fw", "mcu", "mac", "bbp", "all"],
+        choices=["probe", "fw", "mcu", "mac", "bbp", "eeprom", "all"],
         default="all",
         help="Which milestone to test (default: all)",
     )
@@ -206,16 +229,17 @@ def main() -> int:
             asyncio.run(phase_probe(driver))
             # If we're running "all", we want the chip in a known state for
             # the next phase. Probe is read-only so we just continue.
-        if args.phase in ("fw", "mcu", "mac", "bbp", "all"):
-            # driver.connect() runs M1+M2+M3a+M3b together. Phases below add
-            # their own asserts but share the same connect() run.
+        if args.phase in ("fw", "mcu", "mac", "bbp", "eeprom", "all"):
+            # driver.connect() runs M1+M2+M3a+M3b+M3c together.
             asyncio.run(phase_fw(driver))
-        if args.phase in ("mcu", "mac", "bbp", "all"):
+        if args.phase in ("mcu", "mac", "bbp", "eeprom", "all"):
             asyncio.run(phase_mcu(driver))
-        if args.phase in ("mac", "bbp", "all"):
+        if args.phase in ("mac", "bbp", "eeprom", "all"):
             asyncio.run(phase_mac(driver))
-        if args.phase in ("bbp", "all"):
+        if args.phase in ("bbp", "eeprom", "all"):
             asyncio.run(phase_bbp(driver))
+        if args.phase in ("eeprom", "all"):
+            asyncio.run(phase_eeprom(driver))
         return 0
     finally:
         try:
