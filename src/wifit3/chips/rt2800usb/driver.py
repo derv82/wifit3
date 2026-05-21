@@ -101,11 +101,22 @@ class RT2800USBDriver:
                  "Ralink RT5572 / Panda PAU09 N600",
                  extras={"chip_id": "rt5572"}),
     ]
-    # 2.4 GHz channels 1..13 are claimed by all three chips. 5 GHz
-    # channels are advertised on the class so the scanner / hopper
-    # picks them up for RT3572 + RT5572; RT5392 will fail-soft if the
-    # hopper asks it to tune one. (See chan.set_channel: RT5392 raises
-    # ValueError for ch > 14 and driver.set_channel returns False.)
+    # Per-chip band capability — narrowed at __init__ time from chip_id_hint
+    # so a 2.4-only chip like RT5372 (PAU05) doesn't claim 5 GHz channels.
+    # Previously the class attribute over-declared 5 GHz for every variant,
+    # which the diag harness flagged as "tune failed" on RT5372 even though
+    # the runtime correctly rejected the channels.
+    #     0x5392 silicon (RT5372 / PAU05)        → 2.4 only
+    #     0x3572 silicon (RT3572 / AWUS051NH v2) → 2.4 + 5 GHz non-DFS
+    #     0x5592 silicon (RT5572 / PAU09 N600)   → 2.4 + 5 GHz non-DFS
+    _CHANNELS_BY_CHIP: dict = {
+        "rt5372": list(range(1, 14)),
+        "rt3572": list(range(1, 14)) + list(CHANNELS_5G_NON_DFS),
+        "rt5572": list(range(1, 14)) + list(CHANNELS_5G_NON_DFS),
+    }
+    # Class-level fallback = union of all variants. Used only if a hint is
+    # missing (e.g. test code instantiates without going through
+    # from_usb_device). Instance __init__ overlays the per-chip list.
     SUPPORTED_CHANNELS = list(range(1, 14)) + list(CHANNELS_5G_NON_DFS)
 
     @classmethod
@@ -133,6 +144,12 @@ class RT2800USBDriver:
         self.current_channel: int = 1
         self.chip_id: Optional[ChipId] = None
         self.chip_id_hint = chip_id_hint   # from VID:PID; e.g. "rt5372"
+        # Narrow the channel capability to this specific chip if we know
+        # which one we're attached to. Falls through to the class-level
+        # union when the hint is empty (test paths, future variants).
+        per_chip = self._CHANNELS_BY_CHIP.get(chip_id_hint)
+        if per_chip is not None:
+            self.SUPPORTED_CHANNELS = per_chip
         # RT5592-only: probed at connect() time from MAC_DEBUG_INDEX.XTAL.
         # Picks which of rf_vals_5592_xtal20 / xtal40 the channel tune
         # consults (PAU09 N600's actual xtal isn't documented).
