@@ -30,7 +30,14 @@ class WlanInterface:
         self._rx_callbacks: List[Callable[[bytes, int, float], None]] = []
         self._hopping_task: Optional[asyncio.Task] = None
         self._is_hopping = False
-        
+        # Serializes start_hopping / stop_hopping so they can't interleave.
+        # Without this, stop_hopping's `await task.cancel()` yields control
+        # while _is_hopping is already False, letting a concurrent
+        # start_hopping (e.g. from a screen-resume callback) create a new
+        # task whose reference then gets clobbered when stop_hopping clears
+        # _hopping_task. Orphaned tasks ping-pong the chip across channels.
+        self._hop_lock = asyncio.Lock()
+
         if hasattr(self.driver, 'register_rx_callback'):
             self.driver.register_rx_callback(self._on_frame_parsed)
 
@@ -330,38 +337,25 @@ class WlanInterface:
         capability. Falls back to the canonical 2.4 GHz set for drivers
         that pre-date the capability declaration.
         """
-        if self._is_hopping:
-            return
+        async with self._hop_lock:
+            if self._is_hopping:
+                return
 
-        if not channels:
-            channels = getattr(self.driver, "SUPPORTED_CHANNELS", None)
             if not channels:
-                channels = [1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 5, 10]
+                channels = getattr(self.driver, "SUPPORTED_CHANNELS", None)
+                if not channels:
+                    channels = [1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 5, 10]
 
-        # Respect driver's minimum hop interval — some chips (e.g. mt76x0u)
-        # can't reliably handle rapid channel changes and produce 1.5 s MCU
-        # timeouts when hopped faster than their advertised minimum. The
-        # caller's `interval` is a target; we never go below the driver's
-        # `MIN_HOP_INTERVAL_S` floor.
-        min_interval = getattr(self.driver, "MIN_HOP_INTERVAL_S", 0.0)
-        if interval < min_interval:
+            self._is_hopping = True
+            self._hopping_task = asyncio.create_task(self._hop_loop(channels, interval))
             logger.info(
-                "%s: requested hop interval %.2fs < driver min %.2fs — using min",
-                self.name, interval, min_interval,
+                "Started channel hopping on %s across %d channel(s) every %.2fs",
+                self.name, len(channels), interval,
             )
-            interval = min_interval
-
-        self._is_hopping = True
-        self._hopping_task = asyncio.create_task(self._hop_loop(channels, interval))
-        logger.info(
-            "Started channel hopping on %s across %d channel(s) every %.2fs",
-            self.name, len(channels), interval,
-        )
 
     async def _hop_loop(self, channels: List[int], interval: float):
         import itertools
         channel_cycle = itertools.cycle(channels)
-        
         while self._is_hopping:
             channel = next(channel_cycle)
             await self.set_channel(channel)
@@ -369,15 +363,20 @@ class WlanInterface:
 
     async def stop_hopping(self):
         """Cancels the hopping task."""
-        self._is_hopping = False
-        if self._hopping_task:
-            self._hopping_task.cancel()
-            try:
-                await self._hopping_task
-            except asyncio.CancelledError:
-                pass
+        async with self._hop_lock:
+            task = self._hopping_task
+            # Clear state FIRST so a concurrent start_hopping (which would
+            # have been blocked on _hop_lock) sees a clean slate when it
+            # acquires the lock after we release it.
+            self._is_hopping = False
             self._hopping_task = None
-        logger.info(f"Stopped channel hopping on {self.name}")
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            logger.info(f"Stopped channel hopping on {self.name}")
 
     async def close(self):
         """Halts the driver loops and releases the USB interface."""
