@@ -471,15 +471,20 @@ def phy_set_band_mt76x0(
     )
     if band == NL80211_BAND_2GHZ:
         mcu.random_write(MT_MCU_MEMMAP_RF, RF_2G_CHANNEL_0_TAB)
-        rf_wr(mcu, MT_RF(5, 0), 0x45)
-        rf_wr(mcu, MT_RF(6, 0), 0x44)
+        # 2 single-pair writes → 1 batched (saves 1 MCU round-trip).
+        mcu.random_write(MT_MCU_MEMMAP_RF, [
+            (MT_RF(5, 0), 0x45),
+            (MT_RF(6, 0), 0x44),
+        ])
         transport.write32(MT_TX_ALC_VGA3, 0x00050007)
         transport.write32(MT_TX0_RF_GAIN_CORR, 0x003E0002)
     elif band == NL80211_BAND_5GHZ:
         from .initvals_rf import RF_5G_CHANNEL_0_TAB as _5G
         mcu.random_write(MT_MCU_MEMMAP_RF, _5G)
-        rf_wr(mcu, MT_RF(5, 0), 0x44)
-        rf_wr(mcu, MT_RF(6, 0), 0x45)
+        mcu.random_write(MT_MCU_MEMMAP_RF, [
+            (MT_RF(5, 0), 0x44),
+            (MT_RF(6, 0), 0x45),
+        ])
         transport.write32(MT_TX_ALC_VGA3, 0x00000005)
         transport.write32(MT_TX0_RF_GAIN_CORR, 0x01010102)
     else:
@@ -703,12 +708,16 @@ def phy_set_chan_rf_params(
                 "pll_sdm_k=0x%05x rf_band=0x%04x",
                 channel, use_sdm, fi.pll_n, fi.pll_sdm_k, rf_band)
 
-    # PLL R37..R33 — straight rf_wr.
-    rf_wr(mcu, MT_RF(0, 37), fi.pllR37)
-    rf_wr(mcu, MT_RF(0, 36), fi.pllR36)
-    rf_wr(mcu, MT_RF(0, 35), fi.pllR35)
-    rf_wr(mcu, MT_RF(0, 34), fi.pllR34)
-    rf_wr(mcu, MT_RF(0, 33), fi.pllR33)
+    # PLL R37..R33 — 5 pairs batched into 1 CMD_RANDOM_WRITE (was 5
+    # separate MCU commands, each costing one host->chip->host round-trip).
+    # Chip accepts up to 24 pairs per CMD_RANDOM_WRITE.
+    mcu.random_write(MT_MCU_MEMMAP_RF, [
+        (MT_RF(0, 37), fi.pllR37),
+        (MT_RF(0, 36), fi.pllR36),
+        (MT_RF(0, 35), fi.pllR35),
+        (MT_RF(0, 34), fi.pllR34),
+        (MT_RF(0, 33), fi.pllR33),
+    ])
 
     # R32: top 3 bits (mask 0xE0), then bottom 5 bits (PLL_DEN_MASK).
     rf_rmw(mcu, MT_RF(0, 32), 0xE0, fi.pllR32_b7b5)
@@ -749,26 +758,32 @@ def phy_set_chan_rf_params(
     # bw_switch_tab — per-channel-bw RF tweaks. Kernel:
     #   if (rf_bw == item->bw_band) write;
     #   else if ((rf_bw == (item->bw_band & 0xFF)) && (rf_band & item->bw_band)) write;
-    bw_writes = 0
-    for bw_band, reg, value in RF_BW_SWITCH_TAB:
-        if rf_bw == bw_band:
-            rf_wr(mcu, reg, value)
-            bw_writes += 1
-        elif rf_bw == (bw_band & 0xFF) and (rf_band & bw_band):
-            rf_wr(mcu, reg, value)
-            bw_writes += 1
+    #
+    # Filter then batch into a single CMD_RANDOM_WRITE — was N
+    # separate MCU commands (typically 9 for our default ch6 G+BW20).
+    bw_pairs = [
+        (reg, value)
+        for bw_band, reg, value in RF_BW_SWITCH_TAB
+        if rf_bw == bw_band
+        or (rf_bw == (bw_band & 0xFF) and (rf_band & bw_band))
+    ]
+    if bw_pairs:
+        mcu.random_write(MT_MCU_MEMMAP_RF, bw_pairs)
     logger.info("phy_set_chan_rf_params: rf_bw_switch_tab → %d writes "
-                "for rf_bw=0x%02x rf_band=0x%04x",
-                bw_writes, rf_bw, rf_band)
+                "(batched) for rf_bw=0x%02x rf_band=0x%04x",
+                len(bw_pairs), rf_bw, rf_band)
 
-    # band_switch_tab — per-band RF tweaks.
-    band_writes = 0
-    for bw_band, reg, value in RF_BAND_SWITCH_TAB:
-        if bw_band & rf_band:
-            rf_wr(mcu, reg, value)
-            band_writes += 1
-    logger.info("phy_set_chan_rf_params: rf_band_switch_tab → %d writes",
-                band_writes)
+    # band_switch_tab — per-band RF tweaks. Filter + batch (was 10
+    # separate MCU commands for our G band default).
+    band_pairs = [
+        (reg, value)
+        for bw_band, reg, value in RF_BAND_SWITCH_TAB
+        if bw_band & rf_band
+    ]
+    if band_pairs:
+        mcu.random_write(MT_MCU_MEMMAP_RF, band_pairs)
+    logger.info("phy_set_chan_rf_params: rf_band_switch_tab → %d writes (batched)",
+                len(band_pairs))
 
     # Clear MT_RF_MISC bits 2-3 (will be set in the ext_pa branch below).
     transport.clear_bits(MT_RF_MISC, 0xC)
@@ -791,13 +806,16 @@ def phy_set_chan_rf_params(
             transport.set_bits(MT_RF_MISC, MT_RF_MISC_EXT_PA_A_BAND)
         else:
             transport.set_bits(MT_RF_MISC, MT_RF_MISC_EXT_PA_G_BAND)
-        ext_writes = 0
-        for bw_band, reg, value in RF_EXT_PA_TAB:
-            if bw_band & rf_band:
-                rf_wr(mcu, reg, value)
-                ext_writes += 1
-        logger.info("phy_set_chan_rf_params: ext PA enabled → %d ext_pa_tab writes",
-                    ext_writes)
+        # Filter + batch (was up to 11 per-entry MCU commands on 5G).
+        ext_pairs = [
+            (reg, value)
+            for bw_band, reg, value in RF_EXT_PA_TAB
+            if bw_band & rf_band
+        ]
+        if ext_pairs:
+            mcu.random_write(MT_MCU_MEMMAP_RF, ext_pairs)
+        logger.info("phy_set_chan_rf_params: ext PA enabled → %d ext_pa_tab writes (batched)",
+                    len(ext_pairs))
 
     # Per-band TX gain / ALC.
     if rf_band & RF_G_BAND:

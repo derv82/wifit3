@@ -338,11 +338,24 @@ class WlanInterface:
             if not channels:
                 channels = [1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 5, 10]
 
+        # Respect driver's minimum hop interval — some chips (e.g. mt76x0u)
+        # can't reliably handle rapid channel changes and produce 1.5 s MCU
+        # timeouts when hopped faster than their advertised minimum. The
+        # caller's `interval` is a target; we never go below the driver's
+        # `MIN_HOP_INTERVAL_S` floor.
+        min_interval = getattr(self.driver, "MIN_HOP_INTERVAL_S", 0.0)
+        if interval < min_interval:
+            logger.info(
+                "%s: requested hop interval %.2fs < driver min %.2fs — using min",
+                self.name, interval, min_interval,
+            )
+            interval = min_interval
+
         self._is_hopping = True
         self._hopping_task = asyncio.create_task(self._hop_loop(channels, interval))
         logger.info(
-            "Started channel hopping on %s across %d channel(s)",
-            self.name, len(channels),
+            "Started channel hopping on %s across %d channel(s) every %.2fs",
+            self.name, len(channels), interval,
         )
 
     async def _hop_loop(self, channels: List[int], interval: float):

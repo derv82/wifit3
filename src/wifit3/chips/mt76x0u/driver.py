@@ -70,6 +70,18 @@ class MT76x0UDriver:
         + [149, 153, 157, 161, 165]
     )
 
+    # mt76x0u chip needs ~1s settle between channel changes. Empirically
+    # measured (flighttest_channel_lag.py longhop workload): at 0.25s
+    # interval we see ~7 × 1500ms MCU-response timeouts per 30s; at 1.0s
+    # interval we see ~1. WlanInterface respects this floor when starting
+    # the hop loop.
+    #
+    # Root cause not fully isolated — likely chip's MCU/cal subsystem
+    # background work overlapping with our hop's MCU commands. Kernel hops
+    # at 1s (per `iw set channel` in capture-2 logs) so this matches what
+    # the chip's expected to handle.
+    MIN_HOP_INTERVAL_S = 1.0
+
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device,
                         id_entry: DeviceID) -> "MT76x0UDriver":
