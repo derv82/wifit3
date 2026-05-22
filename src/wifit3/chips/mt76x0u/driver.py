@@ -10,6 +10,7 @@ chips/mt76x2u/driver.py — same family, no shared imports.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Callable, Optional
@@ -41,6 +42,7 @@ from .mac import (
 from .mcu import MCUChannel, MCUError, mcu_init_smoke_test
 from .phy import PHYInitError, init_bbp, phy_init, set_channel_20mhz
 from .transport import MT76x0UTransport
+from .wire_log import WIRE_LOG
 
 logger = logging.getLogger(__name__)
 
@@ -69,18 +71,6 @@ class MT76x0UDriver:
         + [36, 40, 44, 48]
         + [149, 153, 157, 161, 165]
     )
-
-    # mt76x0u chip needs ~1s settle between channel changes. Empirically
-    # measured (flighttest_channel_lag.py longhop workload): at 0.25s
-    # interval we see ~7 × 1500ms MCU-response timeouts per 30s; at 1.0s
-    # interval we see ~1. WlanInterface respects this floor when starting
-    # the hop loop.
-    #
-    # Root cause not fully isolated — likely chip's MCU/cal subsystem
-    # background work overlapping with our hop's MCU commands. Kernel hops
-    # at 1s (per `iw set channel` in capture-2 logs) so this matches what
-    # the chip's expected to handle.
-    MIN_HOP_INTERVAL_S = 1.0
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device,
@@ -130,6 +120,7 @@ class MT76x0UDriver:
     # ---- Lifecycle ----------------------------------------------------
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         """M1: USB reset + claim interface + FW upload to FW_READY ack."""
+        WIRE_LOG.marker("begin connect")
         # ---- usb_reset_device equivalent. [SRC] mt76x0/usb.c:249
         # The kernel probe path does this BEFORE any chip access. On Linux
         # the implicit usb open often triggers a similar reset; on Windows +
@@ -551,6 +542,7 @@ class MT76x0UDriver:
 
         if progress_cb:
             progress_cb(1.00, "MT7610U live — TX gated, RX flowing")
+        WIRE_LOG.marker("end connect")
         return True
 
     def _set_channel_sync(self, channel: int) -> bool:
@@ -564,24 +556,39 @@ class MT76x0UDriver:
         """
         if channel == self.current_channel:
             return True
+        WIRE_LOG.marker(f"begin set_channel({channel})")
         try:
-            self.last_set_channel_state = set_channel_20mhz(
-                self.transport, self.mcu, channel,
-                efuse_full=self.efuse_full,
-            )
+            # Kernel mac80211 invokes mt76x0_phy_set_channel TWICE per
+            # `iw set channel` (once via .config(CONF_CHANGE_CHANNEL), once
+            # via the chandef-update path). Empirical: 2x BW_SETTING, 2x RF
+            # writes, 6x cal commands in every kernel set_channel(N) pcap
+            # window. Single-shot leaves the chip's MCU mid-state and the
+            # next channel switch's first command wedges. See wire-diff
+            # against usb_dumps/captures_mt76x0u/capture-2.pcap.
+            for _invocation in (1, 2):
+                self.last_set_channel_state = set_channel_20mhz(
+                    self.transport, self.mcu, channel,
+                    efuse_full=self.efuse_full,
+                )
             self.current_channel = channel
             logger.info("MT7610U: set_channel(%d) OK", channel)
+            WIRE_LOG.marker(f"end set_channel({channel}) OK")
             return True
         except (PHYInitError, MCUError, usb.core.USBError) as e:
             logger.error("MT7610U: set_channel(%d) failed: %s", channel, e)
+            WIRE_LOG.marker(f"end set_channel({channel}) FAIL: {e!r}")
             return False
 
     async def set_channel(self, channel: int) -> bool:
-        """Runs the full `mt76x0_phy_set_channel` chain (M4a) for 20 MHz
-        monitor mode. Body is synchronous; the `async def` exists for the
-        WlanDriver Protocol contract.
+        """Runs the full `mt76x0_phy_set_channel` chain for 20 MHz monitor mode.
+
+        The body is synchronous (~150 MCU commands via PyUSB), so we offload
+        to the default executor — mirrors `chips/rtl8188eus/driver.py`. Calling
+        the sync helper directly here would block the asyncio event loop for
+        the full set_channel duration and freeze the UI + the RX drainer.
         """
-        return self._set_channel_sync(channel)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._set_channel_sync, channel)
 
     def enable_trx(self) -> None:
         """M4b — enable MAC TX+RX engines. [SRC] mt76x02_mac.c:1071-1072.
@@ -913,6 +920,7 @@ class MT76x0UDriver:
             return False
 
     async def close(self) -> None:
+        WIRE_LOG.marker("close")
         if self._rx_drainer is not None:
             try:
                 await self._rx_drainer.stop()
@@ -920,3 +928,4 @@ class MT76x0UDriver:
                 logger.debug("MT7610U: rx_drainer.stop ignored: %s", e)
             self._rx_drainer = None
         self.transport.dispose()
+        WIRE_LOG.close()

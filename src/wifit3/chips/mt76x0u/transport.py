@@ -39,6 +39,8 @@ from .constants import (
     MT_VEND_MULTI_WRITE,
     MT_VEND_WRITE_FCE,
 )
+from .wire_format import fmt_fw_chunk, fmt_mcu_in, fmt_mcu_out, fmt_vendor
+from .wire_log import WIRE_LOG
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +179,10 @@ class MT76x0UTransport:
         )
         if len(data) != 4:
             raise RuntimeError(f"read32(0x{addr:08x}): got {len(data)} bytes, expected 4")
+        if WIRE_LOG.enabled:
+            WIRE_LOG.emit(fmt_vendor(MT_VEND_MULTI_READ, is_in=True,
+                                     wValue=wValue, wIndex=wIndex,
+                                     wLength=4, data=bytes(data)))
         return struct.unpack("<I", bytes(data))[0]
 
     def write32(self, addr: int, val: int) -> None:
@@ -198,6 +204,10 @@ class MT76x0UTransport:
             raise RuntimeError(
                 f"write32(0x{addr:08x}, 0x{val:08x}): wrote {n} bytes, expected 4"
             )
+        if WIRE_LOG.enabled:
+            WIRE_LOG.emit(fmt_vendor(MT_VEND_MULTI_WRITE, is_in=False,
+                                     wValue=wValue, wIndex=wIndex,
+                                     wLength=4, data=payload))
 
     def set_bits(self, addr: int, mask: int) -> int:
         """`mt76_set(reg, mask)` equivalent — RMW, returns the new value."""
@@ -237,6 +247,10 @@ class MT76x0UTransport:
                     f"single_wr(reg=0x{reg:04x}+{offset}, half=0x{half:04x}) "
                     f"returned {n}"
                 )
+            if WIRE_LOG.enabled:
+                WIRE_LOG.emit(fmt_vendor(MT_VEND_WRITE_FCE, is_in=False,
+                                         wValue=half, wIndex=reg + offset,
+                                         wLength=0, data=b""))
 
     # ------------------------------------------------------------------
     # MT_VEND_DEV_MODE generic — FW reset and IVB trigger share this
@@ -262,6 +276,10 @@ class MT76x0UTransport:
                 f"vendor_dev_mode(wVal=0x{wValue:04x}, wLen=0x{wLen:04x}) "
                 f"transferred {n} bytes, expected {expected}"
             )
+        if WIRE_LOG.enabled:
+            WIRE_LOG.emit(fmt_vendor(MT_VEND_DEV_MODE, is_in=False,
+                                     wValue=wValue, wIndex=0,
+                                     wLength=wLen, data=data))
 
     # ------------------------------------------------------------------
     # Bulk OUT (FW chunks on EP 0x08).
@@ -272,6 +290,10 @@ class MT76x0UTransport:
             raise RuntimeError(
                 f"bulk_out(ep=0x{ep:02x}, len={len(data)}): wrote {n} bytes"
             )
+        # Wire-log only EP 0x08 (MCU + FW chunks). EPs 0x04/0x05/0x06 carry
+        # 802.11 TX which is volatile and intentionally excluded from the diff.
+        if WIRE_LOG.enabled and ep == 0x08:
+            WIRE_LOG.emit(fmt_mcu_out(data))   # fmt_mcu_out auto-detects FW chunks
         return n
 
     def bulk_in(self, ep: int, max_len: int, timeout_ms: int = _BULK_TIMEOUT_MS) -> bytes:
@@ -282,7 +304,12 @@ class MT76x0UTransport:
         per kernel mt76x02u_mcu_wait_resp (5 attempts).
         """
         data = self.dev.read(ep, max_len, timeout=timeout_ms)
-        return bytes(data)
+        out = bytes(data)
+        # Wire-log only EP 0x85 (MCU responses). EP 0x84 is 802.11 RX —
+        # high-volume and intentionally excluded from the diff.
+        if WIRE_LOG.enabled and ep == 0x85:
+            WIRE_LOG.emit(fmt_mcu_in(out))
+        return out
 
     # ------------------------------------------------------------------
     # Async wrappers for the asyncio RX drainer / TX inject from async
