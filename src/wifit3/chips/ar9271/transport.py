@@ -46,11 +46,16 @@ class AR9271USBTransport:
         self.dev = dev
         self.htc = HTCProtocol()
         self.credit_manager = CreditManager()
-        
+
         self.is_running = False
         self._listeners: List[asyncio.Task] = []
         self._subscribers: Dict[int, List[Callable[[bytes], None]]] = {}
-        
+
+        # Bulk-IN stream reassembly buffer — accumulates partial HIF chunks
+        # across USB transfer boundaries. Mirrors the kernel's
+        # ath9k_hif_usb_rx_stream / remain_skb pair (hif_usb.c:553).
+        self._rx_buf = bytearray()
+
         # State
         self.wmi_ep_id = 1 # Default
 
@@ -63,16 +68,20 @@ class AR9271USBTransport:
     async def start(self):
         """Spawns the background listener tasks."""
         self.is_running = True
-        
-        # 1. Control Listener (Single task is fine for Interrupt EP 0x83)
+        self._rx_buf.clear()
+
         self._listeners.append(asyncio.create_task(self._read_loop(USB_EP_HTC_CTRL_IN, "Control")))
-        
-        # 2. Data/WMI Listeners (Multi-URB Pressure for Bulk EP 0x82)
-        # Spawning 4 concurrent tasks to keep the DMA pipeline full
-        for i in range(4):
-            self._listeners.append(asyncio.create_task(self._read_loop(USB_EP_DATA_WMI_IN, f"Data-{i}")))
-            
-        logger.info(f"USB Transport started with 5 listeners (Pressure=4 on 0x82).")
+        # Single Bulk-IN reader. Earlier versions spawned 4 concurrent
+        # _read_loop tasks here under the banner of "Multi-URB Pressure",
+        # which produced ~40 % FCS-corrupt frames in hw test (2026-05-22):
+        # PyUSB's sync dev.read() through run_in_executor lets URB
+        # completions race and split bundled HTC frames across consumers.
+        # The kernel achieves multi-URB depth via libusb_submit_transfer
+        # from ONE consumer — that's the right port, but a single reader
+        # is already low-corruption enough at current traffic levels.
+        self._listeners.append(asyncio.create_task(self._read_loop(USB_EP_DATA_WMI_IN, "Data")))
+
+        logger.info("USB Transport started with 2 listeners (Control + Data).")
 
     def reset_pipes(self):
         """Resets toggle bits and clears stalls on critical endpoints."""
@@ -152,58 +161,99 @@ class AR9271USBTransport:
                 await asyncio.sleep(0.01)
 
     async def _handle_incoming(self, data: bytes, ep_addr: int):
-        """Parses headers, handles trailers/credits, and dispatches to subscribers."""
-        ptr = 0
-        while ptr + self.htc.HTC_HDR_STD_LEN <= len(data):
-            # 1. Handle HIF USB Header (4 bytes) per-packet on Bulk pipe
-            if ep_addr == USB_EP_DATA_WMI_IN:
-                if ptr + 4 + self.htc.HTC_HDR_STD_LEN > len(data):
-                    break
-                # Skip 4-byte HIF header ([Len:2][Pad:2])
-                ptr += 4
-                
-            # 2. Unpack HTC Header
-            try:
-                htc_raw = data[ptr:]
-                ep, flags, p_len, ctrl = struct.unpack(">BBH4s", htc_raw[:8])
-                
-                # Payload follows header and includes trailer (if flag set)
-                payload = htc_raw[8 : 8 + p_len]
-                trailer_len = ctrl[0]
-            except Exception as e:
-                logger.debug(f"HTC Unpack fail on EP {hex(ep_addr)} at offset {ptr}: {e}")
-                break
-            
-            # 3. Handle HTC Trailers (Credit Reports)
-            actual_payload = payload
-            if flags & 0x02: # HTC_FLAGS_RECV_TRAILER
-                if trailer_len > 0 and len(payload) >= trailer_len:
-                    trailer = payload[-trailer_len:]
-                    actual_payload = payload[:-trailer_len]
-                    
-                    # Credit Replenishment records are 2 bytes: [EPID][Credits]
-                    start_off = 0
-                    if len(trailer) >= 2 and trailer[0] == 0x00 and trailer[1] == 0xC6:
-                        start_off = 2
-                    for i in range(start_off, len(trailer), 2):
-                        if i + 1 < len(trailer):
-                            rep_ep, rep_count = trailer[i], trailer[i+1]
-                            if rep_ep < 22:
-                                await self.credit_manager.update(rep_ep, rep_count)
-            
-            # 4. Special Case: READY message on EP 0 (Handshake)
-            if ep == 0 and len(actual_payload) >= 6:
-                res = self.htc.parse_ready_msg(actual_payload)
-                if res:
-                    credits, _ = res
-                    self.credit_manager.set_initial(1, credits)
-                    self.credit_manager.set_initial(2, credits)
+        """Routes an incoming URB to the right parser.
 
-            # 5. Dispatch to subscribers
-            if ep in self._subscribers:
-                for cb in self._subscribers[ep]:
-                    cb(actual_payload)
-                    
-            # 6. Advance to next bundled HTC frame
-            # The AR9271 hardware pads packets to 4-byte boundaries for DMA.
-            ptr += (8 + p_len + 3) & ~3
+        Bulk-IN (0x82) carries HIF-wrapped HTC frames that can be bundled in
+        one URB and/or split across URBs — see _handle_bulk_in below.
+        Interrupt-IN (0x83) carries one un-wrapped HTC frame per URB.
+        """
+        if ep_addr == USB_EP_DATA_WMI_IN:
+            await self._handle_bulk_in(data)
+        else:
+            await self._process_htc_frame(bytes(data))
+
+    async def _handle_bulk_in(self, data: bytes):
+        """Kernel-faithful HIF stream reassembler for Bulk-IN.
+
+        Each chunk on the wire is `[pkt_len: LE16][pkt_tag: LE16][HTC frame
+        of pkt_len B][pad to 4 B]`. Multiple chunks can share a URB; a chunk
+        can also straddle URB boundaries — bytes carry over in self._rx_buf
+        until enough of them have arrived to decode the next chunk.
+
+        Mirrors data_dumps/ath9k-source-v6.18/hif_usb.c:553-712. Notably, a
+        bad tag means the stream is desynced — we drop the buffer (kernel
+        does the same via `goto invalid_pkt`).
+        """
+        self._rx_buf.extend(data)
+
+        while len(self._rx_buf) >= 4:
+            pkt_len = int.from_bytes(self._rx_buf[0:2], "little")
+            pkt_tag = int.from_bytes(self._rx_buf[2:4], "little")
+
+            if pkt_tag != ATH_USB_RX_STREAM_MODE_TAG:
+                logger.warning(
+                    f"HIF tag mismatch: 0x{pkt_tag:04x} — dropping "
+                    f"{len(self._rx_buf)} buffered bytes (stream desync)"
+                )
+                self._rx_buf.clear()
+                return
+
+            if pkt_len == 0 or pkt_len > 2 * HIF_MAX_RX_BUF_SIZE:
+                logger.warning(f"HIF pkt_len out of range: {pkt_len} — flushing buffer")
+                self._rx_buf.clear()
+                return
+
+            pad_len = (4 - (pkt_len & 0x3)) & 0x3
+            total = 4 + pkt_len + pad_len
+
+            if len(self._rx_buf) < total:
+                # Frame hasn't fully landed yet — leave it in _rx_buf and
+                # wait for the next URB to bring the rest.
+                return
+
+            htc_frame = bytes(self._rx_buf[4 : 4 + pkt_len])
+            del self._rx_buf[:total]
+            await self._process_htc_frame(htc_frame)
+
+    async def _process_htc_frame(self, htc_frame: bytes):
+        """Unpack one fully-reassembled HTC frame and dispatch."""
+        if len(htc_frame) < self.htc.HTC_HDR_STD_LEN:
+            return
+
+        try:
+            ep, flags, p_len, ctrl = struct.unpack(">BBH4s", htc_frame[:8])
+        except struct.error as e:
+            logger.debug(f"HTC unpack fail: {e}")
+            return
+
+        payload = htc_frame[8 : 8 + p_len]
+        trailer_len = ctrl[0]
+
+        actual_payload = payload
+        if flags & 0x02:  # HTC_FLAGS_RECV_TRAILER
+            if trailer_len > 0 and len(payload) >= trailer_len:
+                trailer = payload[-trailer_len:]
+                actual_payload = payload[:-trailer_len]
+
+                # Credit-report records are 2 bytes each: [EPID][Credits].
+                # The optional 0x00 0xC6 header marks "credit-report block";
+                # skip past it when present.
+                start_off = 0
+                if len(trailer) >= 2 and trailer[0] == 0x00 and trailer[1] == 0xC6:
+                    start_off = 2
+                for i in range(start_off, len(trailer), 2):
+                    if i + 1 < len(trailer):
+                        rep_ep, rep_count = trailer[i], trailer[i + 1]
+                        if rep_ep < 22:
+                            await self.credit_manager.update(rep_ep, rep_count)
+
+        if ep == 0 and len(actual_payload) >= 6:
+            res = self.htc.parse_ready_msg(actual_payload)
+            if res:
+                credits, _ = res
+                self.credit_manager.set_initial(1, credits)
+                self.credit_manager.set_initial(2, credits)
+
+        if ep in self._subscribers:
+            for cb in self._subscribers[ep]:
+                cb(actual_payload)

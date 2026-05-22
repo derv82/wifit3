@@ -50,6 +50,12 @@ USB_EP_WMI_CMD_OUT         = 0x04  # Bulk OUT
 USB_EP_HTC_CTRL_IN         = 0x83  # Interrupt IN (Control/Ready)
 USB_EP_DATA_WMI_IN         = 0x82  # Bulk IN (Data/Events)
 
+# --- HIF stream constants (per ath9k-source-v6.18/hif_usb.h:50-51) ---
+# 4-byte HIF header on Bulk pipes: [pkt_len: LE16][pkt_tag: LE16]
+ATH_USB_RX_STREAM_MODE_TAG = 0x4e00   # tag on every RX HIF chunk
+ATH_USB_TX_STREAM_MODE_TAG = 0x697e   # tag on every TX HIF chunk
+HIF_MAX_RX_BUF_SIZE        = 16384    # ath9k-source-v6.18/hif_usb.h:60
+
 # --- Calibration Constants ---
 AR_PHY_SYNTH_CONTROL       = 0x9874
 AR_PHY_RESET               = 0x9860
