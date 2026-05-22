@@ -98,10 +98,22 @@ class MT76x0UDriver:
         # M4a.1 result from set_channel().
         self.current_channel: Optional[int] = None
         self.last_set_channel_state: Optional[dict] = None
+        # M6 — WlanInterface RX hook + background drainer (set in connect()).
+        self._rx_callback: Optional[Callable[[dict], None]] = None
+        self._rx_drainer = None   # rx.RxDrainer | None — typed late to dodge circulars
 
     # ---- Hooks --------------------------------------------------------
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
+        """WlanInterface hook (Protocol). Stored and used by the RxDrainer
+        background task started in `connect()`."""
         self._rx_callback = cb
+
+    def _on_decoded_rx(self, parsed: dict) -> None:
+        """Bridge: each parsed frame from the RxDrainer → the WlanInterface
+        callback (if any)."""
+        cb = self._rx_callback
+        if cb is not None:
+            cb(parsed)
 
     # ---- Lifecycle ----------------------------------------------------
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
@@ -252,7 +264,21 @@ class MT76x0UDriver:
                 "(MAC_CSR0 via MCU = 0x%08x)", self.mcu_smoke["via_mcu_read"],
             )
         except (MCUError, usb.core.USBError) as e:
-            logger.error("MT7610U: MCU smoke test failed: %s", e)
+            # Per [[feedback_warm_reattach]] — MCU timing out usually means
+            # the chip is wedged from a previous session (RX-DMA backed up,
+            # MAC in unclean state). dev.reset() resets USB but not chip RAM.
+            # Surface an actionable error instead of cascading timeouts.
+            if self.is_warm:
+                logger.error(
+                    "MT7610U: MCU smoke FAILED on WARM boot (%s).\n"
+                    "  The chip is wedged from a previous session — its MAC "
+                    "or RX-DMA is in a bad state that survived USB reset.\n"
+                    "  → Please UNPLUG the dongle, wait ~3 seconds, REPLUG, "
+                    "and retry. (Cold boot will reinitialize everything.)",
+                    e,
+                )
+            else:
+                logger.error("MT7610U: MCU smoke test failed: %s", e)
             return False
 
         # ---- M3a step 11: init_mac_registers [SRC] mt76x0/init.c:187.
@@ -384,8 +410,136 @@ class MT76x0UDriver:
         except (MCUError, usb.core.USBError) as e:
             logger.warning("MT7610U: MT_RF(0,22) readback failed (non-fatal): %s", e)
 
+        # ----- M6 (TX-on-air): missing pieces at the bottom of
+        # mt76x0u_init_hardware + mt76x0u_start. Without these the chip
+        # accepts bulk-OUT but EDCA never grants TXOP, so frames queue
+        # in MAC TX FIFO but never modulate onto RF.
+        #
+        # [SRC] mt76x0/usb.c:171-174 (TXOP_CTRL_CFG + US_CYC_CFG —
+        # end of mt76x0u_init_hardware) + mt76x0/usb.c:107-115
+        # (mt76x02u_mac_start + phy_calibrate(true) — mt76x0u_start).
+        from .constants import (
+            MT_TXOP_CTRL_CFG,
+            MT_TXOP_EXT_CCA_DLY_DEFAULT,
+            MT_TXOP_EXT_CCA_DLY_SHIFT,
+            MT_TXOP_TRUN_EN_DEFAULT,
+            MT_TXOP_TRUN_EN_SHIFT,
+            MT_US_CYC_CFG,
+            MT_US_CYC_CNT_DEFAULT,
+            MT_US_CYC_CNT_MASK,
+        )
         if progress_cb:
-            progress_cb(1.00, "M3d complete — phy_init done")
+            progress_cb(0.965, "TXOP_CTRL_CFG + US_CYC_CFG (TX EDCA grants)")
+        try:
+            # MT_US_CYC_CFG: RMW the low 8 bits (CNT field) to 0x1e.
+            us_cyc = self.transport.read32(MT_US_CYC_CFG)
+            us_cyc = (us_cyc & ~MT_US_CYC_CNT_MASK) | MT_US_CYC_CNT_DEFAULT
+            self.transport.write32(MT_US_CYC_CFG, us_cyc)
+            # MT_TXOP_CTRL_CFG: full overwrite (kernel uses mt76_wr, not rmw).
+            self.transport.write32(
+                MT_TXOP_CTRL_CFG,
+                (MT_TXOP_TRUN_EN_DEFAULT << MT_TXOP_TRUN_EN_SHIFT)
+                | (MT_TXOP_EXT_CCA_DLY_DEFAULT << MT_TXOP_EXT_CCA_DLY_SHIFT),
+            )
+            logger.info("MT7610U: TXOP_CTRL_CFG + US_CYC_CFG written "
+                        "(EDCA TXOP grants now possible)")
+        except usb.core.USBError as e:
+            logger.error("MT7610U: TXOP/US_CYC write failed: %s", e)
+            return False
+
+        # mt76x02u_mac_start: staged ENABLE_TX → wait_for_wpdma → write
+        # RX_FILTR_CFG → ENABLE_TX|ENABLE_RX → wait_for_wpdma.
+        # MT_MAC_SYS_CTRL_ENABLE_RX / _ENABLE_TX already imported at top.
+        if progress_cb:
+            progress_cb(0.97, "mac_start (staged TRX enable)")
+        try:
+            self.transport.write32(MT_MAC_SYS_CTRL, MT_MAC_SYS_CTRL_ENABLE_TX)
+            wait_for_wpdma(self.transport, timeout_ms=200)
+            # MONITOR-mode RX filter. Take cached default (0x00017f97) and
+            # CLEAR bit 2 (MT_RX_FILTR_CFG_PROMISC). The kernel name is
+            # misleading: the bit actually means "DROP unicast not
+            # addressed to me". STA mode wants it set (kernel's default);
+            # monitor mode wants it cleared so we see all unicast traffic
+            # — including EAPOL handshakes between every nearby client
+            # and its AP. [SRC] mt76x0/main.c:80-86 (IEEE80211_CONF_CHANGE_MONITOR
+            # branch) + mt76x2u/mac.py monitor branch.
+            #
+            # Bit 3 OTHER_BSS is already 0 in the default; explicit-clear
+            # for monitor parity. Result: 0x00017f97 → 0x00017f93.
+            MT_RX_FILTR_CFG_PROMISC   = 1 << 2
+            MT_RX_FILTR_CFG_OTHER_BSS = 1 << 3
+            base = (self.rxfilter_default if self.rxfilter_default is not None
+                    else 0x00017F97)
+            monitor_filter = base & ~(
+                MT_RX_FILTR_CFG_PROMISC | MT_RX_FILTR_CFG_OTHER_BSS
+            )
+            self.transport.write32(MT_RX_FILTR_CFG, monitor_filter)
+            logger.info(
+                "MT7610U: RX_FILTR_CFG = 0x%08x (monitor — DROP_UC_NOME + "
+                "DROP_OTHER_BSS bits cleared; was 0x%08x default)",
+                monitor_filter, base,
+            )
+
+            # MONITOR-mode address-match override. M3c's mac_setaddr
+            # ports kernel verbatim: MT_MAC_ADDR_DW1 has U2ME_MASK=0xff
+            # (strict-match unicast first-byte to our MAC) and
+            # MT_MAC_BSSID_DW1 has MBSS_MODE=3 + MBSS_LOCAL + MBEACON_N=7
+            # (multi-BSSID AP-mode framing). Together these cause the
+            # chip's address-match engine to DROP unicast DATA frames
+            # not destined for our MAC, even with RX_FILTR_CFG.PROMISC
+            # cleared. mt76x2u (working monitor sibling) deliberately
+            # writes BARE MAC values to both registers — match that.
+            #
+            # Symptom this fixes: unicast MGMT (probe-resp/auth/assoc)
+            # comes through fine but unicast DATA (incl. EAPOL hand-
+            # shakes) is invisible.
+            from .constants import MT_MAC_ADDR_DW1, MT_MAC_BSSID_DW1
+            if self.efuse_full is not None:
+                mac_bytes = self.efuse_full.mac_bytes
+                mac_hi = int.from_bytes(mac_bytes[4:6], "little")
+                # Plain MAC upper 2 bytes — no U2ME_MASK, no AP-mode bits.
+                self.transport.write32(MT_MAC_ADDR_DW1, mac_hi)
+                self.transport.write32(MT_MAC_BSSID_DW1, mac_hi)
+                logger.info(
+                    "MT7610U: MT_MAC_ADDR_DW1=0x%08x, MT_MAC_BSSID_DW1=0x%08x "
+                    "(U2ME_MASK + MBSS_MODE/LOCAL/MBEACON_N cleared for monitor)",
+                    mac_hi, mac_hi,
+                )
+            self.transport.write32(
+                MT_MAC_SYS_CTRL,
+                MT_MAC_SYS_CTRL_ENABLE_TX | MT_MAC_SYS_CTRL_ENABLE_RX,
+            )
+            wait_for_wpdma(self.transport, timeout_ms=50)
+        except (usb.core.USBError, MACInitError) as e:
+            logger.error("MT7610U: mac_start failed: %s", e)
+            return False
+
+        # phy_calibrate(power_on=True) — runs CAL_R + CAL_VCO before the
+        # normal CAL_FULL/CAL_LC/CAL_RXDCOC chain. Required for TX RF to
+        # actually emit. Kernel calls this from mt76x0u_start after
+        # mt76x02u_mac_start. Channel: 6 (we tune properly via set_channel
+        # later; this is just the chip's first-time RF cal handshake).
+        if progress_cb:
+            progress_cb(0.98, "phy_calibrate(power_on=True) — CAL_R + CAL_VCO + ...")
+        try:
+            from .phy import phy_calibrate
+            phy_calibrate(self.transport, self.mcu, channel=6, power_on=True)
+            logger.info("MT7610U: initial phy_calibrate(power_on=True) OK")
+        except (MCUError, usb.core.USBError) as e:
+            logger.error("MT7610U: initial phy_calibrate failed: %s", e)
+            return False
+
+        # ----- Background RX drainer (now that TRX is fully live) -----
+        from .rx import RxDrainer
+        if progress_cb:
+            progress_cb(0.99, "Starting RX drainer")
+        self._rx_drainer = RxDrainer(
+            self.transport, frame_callback=self._on_decoded_rx,
+        )
+        await self._rx_drainer.start()
+
+        if progress_cb:
+            progress_cb(1.00, "MT7610U live — TX gated, RX flowing")
         return True
 
     def _set_channel_sync(self, channel: int) -> bool:
@@ -716,8 +870,34 @@ class MT76x0UDriver:
 
     async def inject_frame(self, frame_bytes: bytes,
                            use_no_ack: bool = True) -> bool:
-        """Not implemented in M1 — lands in M4."""
-        raise NotImplementedError("MT7610U inject_frame is an M4 milestone")
+        """M6a — inject a raw 802.11 frame via EP 0x09 (MGMT queue).
+
+        `use_no_ack=True` (Protocol default) skips ACK_REQ — appropriate
+        for spoofed-source frames (deauths/disassocs) where the target
+        wouldn't ACK to a random MAC anyway. Pass False for unicast frames
+        from a real associated station MAC.
+        """
+        from .tx import TXError, inject_80211_frame
+        try:
+            n = inject_80211_frame(
+                self.transport, frame_bytes,
+                request_ack=not use_no_ack, wcid=0xFF,
+            )
+            logger.debug("MT7610U: inject_frame(%d bytes) → %d bulk-OUT bytes",
+                         len(frame_bytes), n)
+            return True
+        except TXError as e:
+            logger.error("MT7610U: inject_frame failed: %s", e)
+            return False
+        except usb.core.USBError as e:
+            logger.error("MT7610U: inject_frame USB error: %s", e)
+            return False
 
     async def close(self) -> None:
+        if self._rx_drainer is not None:
+            try:
+                await self._rx_drainer.stop()
+            except Exception as e:
+                logger.debug("MT7610U: rx_drainer.stop ignored: %s", e)
+            self._rx_drainer = None
         self.transport.dispose()

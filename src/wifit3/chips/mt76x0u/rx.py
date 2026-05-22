@@ -33,9 +33,14 @@ Total header size before the 802.11 frame = MT_DMA_HDR_LEN + MT_RX_RXWI_LEN
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import struct
-from typing import Iterator, NamedTuple, Optional
+from typing import Callable, Iterator, NamedTuple, Optional
+
+import usb.core
+
+from .constants import EP_IN_PKT_RX
 
 logger = logging.getLogger(__name__)
 
@@ -113,10 +118,6 @@ def decode_rx_packet(data: bytes) -> Optional[RxFrame]:
     if rxinfo & (MT_RXINFO_CRCERR | MT_RXINFO_ICVERR | MT_RXINFO_MICERR):
         return None
 
-    # L2PAD requires header-length-aware stripping; defer.
-    if rxinfo & MT_RXINFO_L2PAD:
-        return None
-
     mpdu_len = (ctl & MT_RXWI_CTL_MPDU_LEN_MASK) >> MT_RXWI_CTL_MPDU_LEN_SHIFT
     wcid     = ctl & MT_RXWI_CTL_WCID_MASK
     if mpdu_len < 10 or mpdu_len > 4096:
@@ -134,13 +135,113 @@ def decode_rx_packet(data: bytes) -> Optional[RxFrame]:
     # Kernel treats raw value as s8.
     rssi_raw = struct.unpack_from("<b", data, MT_DMA_HDR_LEN + 12)[0]
 
+    frame = bytes(data[frame_start:frame_end])
+
+    # L2PAD handling — kernel `mt76x02_remove_hdr_pad` inserts 2 bytes
+    # between the 802.11 header and the body when the MAC header isn't
+    # 4-byte aligned. Most relevant for QoS DATA frames (26-byte hdr →
+    # not 4-aligned → L2PAD set). EAPOL handshake frames usually ride
+    # over QoS DATA, so dropping L2PAD = missing every EAPOL frame.
+    # Fix: strip the 2 pad bytes from offset hdrlen.
+    # [SRC] mt76x02_mac.c:792-831 (RX path); mt76x2u rx.py:96-101.
+    if rxinfo & MT_RXINFO_L2PAD and len(frame) >= 2:
+        hdrlen = _ieee80211_hdrlen(frame[0], frame[1])
+        if 0 < hdrlen < len(frame) - 2:
+            frame = frame[:hdrlen] + frame[hdrlen + 2:]
+
+    # FCS strip — mt76 leaves the trailing 4-byte FCS in mpdu_len; the
+    # parser doesn't validate it. Stripping makes IE walkers' end-of-frame
+    # bounds match expectations.
+    if len(frame) >= 4:
+        frame = frame[:-4]
+
     return RxFrame(
-        frame=bytes(data[frame_start:frame_end]),
+        frame=frame,
         rssi_dbm=rssi_raw,
-        mpdu_len=mpdu_len,
+        mpdu_len=len(frame),    # post-pad-strip + FCS-strip
         rxinfo=rxinfo,
         wcid=wcid,
     )
+
+
+def _ieee80211_hdrlen(fc0: int, fc1: int) -> int:
+    """Compute the 802.11 MAC header length from frame_control bytes.
+    [SRC] mt76x2u/rx.py:124-138 (same logic — IEEE 802.11-2020 §9.2)."""
+    ftype = (fc0 & 0x0C) >> 2
+    subtype = (fc0 & 0xF0) >> 4
+    if ftype == 1:    # CTRL — RTS/CTS/ACK most common, 10 bytes
+        return 10
+    base = 24
+    if (fc1 & 0x03) == 0x03:    # WDS: ToDS|FromDS → 4 addresses
+        base = 30
+    if ftype == 2 and (subtype & 0x08):    # QoS DATA → +2 QoS control bytes
+        base += 2
+    return base
+
+
+def decode_rx_inventory(data: bytes) -> Optional[dict]:
+    """Diagnostic decoder — returns a structured dict with EVERY field of the
+    RX descriptor + the first 32 bytes of the 802.11 frame, without filtering
+    or stripping ANYTHING. Used by --phase rx_inventory to figure out what
+    the chip is actually delivering and what we're (mis)dropping.
+
+    Returns None only for buffers too small to contain a header. Specifically
+    does NOT drop on CRCERR / L2PAD / MPDU_LEN out of range — those are
+    reported as fields so the caller can decide.
+    """
+    if len(data) < MT_DMA_HDR_LEN + MT_RX_RXWI_LEN:
+        return {"too_short": True, "raw_len": len(data)}
+
+    dma_len = struct.unpack_from("<H", data, 0)[0]
+    rxinfo, ctl = struct.unpack_from("<II", data, MT_DMA_HDR_LEN)
+    tid_sn = struct.unpack_from("<H", data, MT_DMA_HDR_LEN + 8)[0]
+    rate   = struct.unpack_from("<H", data, MT_DMA_HDR_LEN + 10)[0]
+    rssi   = list(struct.unpack_from("<bbbb", data, MT_DMA_HDR_LEN + 12))
+
+    mpdu_len = (ctl & MT_RXWI_CTL_MPDU_LEN_MASK) >> MT_RXWI_CTL_MPDU_LEN_SHIFT
+    wcid     = ctl & MT_RXWI_CTL_WCID_MASK
+    frame_start = HEADER_SIZE
+    frame_end = min(frame_start + mpdu_len, len(data))
+    raw_frame = bytes(data[frame_start:frame_end])
+    fc0 = raw_frame[0] if raw_frame else 0
+    fc1 = raw_frame[1] if len(raw_frame) > 1 else 0
+    ftype = (fc0 & 0x0C) >> 2
+    subtype = (fc0 & 0xF0) >> 4
+
+    flags = []
+    for name, mask in [
+        ("BA", MT_RXINFO_BA), ("DATA", MT_RXINFO_DATA),
+        ("NULL", MT_RXINFO_NULL), ("FRAG", MT_RXINFO_FRAG),
+        ("UNICAST", MT_RXINFO_UNICAST), ("MCAST", MT_RXINFO_MULTICAST),
+        ("BCAST", MT_RXINFO_BROADCAST), ("MYBSS", MT_RXINFO_MYBSS),
+        ("CRCERR", MT_RXINFO_CRCERR), ("ICVERR", MT_RXINFO_ICVERR),
+        ("MICERR", MT_RXINFO_MICERR), ("AMSDU", MT_RXINFO_AMSDU),
+        ("HTC", MT_RXINFO_HTC), ("RSSI", MT_RXINFO_RSSI),
+        ("L2PAD", MT_RXINFO_L2PAD), ("AMPDU", MT_RXINFO_AMPDU),
+        ("DECRYPT", MT_RXINFO_DECRYPT),
+    ]:
+        if rxinfo & mask:
+            flags.append(name)
+
+    return {
+        "too_short": False,
+        "raw_len":   len(data),
+        "dma_len":   dma_len,
+        "rxinfo":    rxinfo,
+        "ctl":       ctl,
+        "tid_sn":    tid_sn,
+        "rate":      rate,
+        "rssi":      rssi,
+        "wcid":      wcid,
+        "mpdu_len":  mpdu_len,
+        "flags":     flags,
+        "fc0":       fc0,
+        "fc1":       fc1,
+        "ftype":     ftype,     # 0=MGMT, 1=CTRL, 2=DATA
+        "subtype":   subtype,
+        "frame_head_hex": raw_frame[:32].hex(" "),
+        "frame_len_seen": len(raw_frame),
+    }
 
 
 def iter_rx_frames(chunks: Iterator[bytes]) -> Iterator[RxFrame]:
@@ -150,3 +251,91 @@ def iter_rx_frames(chunks: Iterator[bytes]) -> Iterator[RxFrame]:
         rx = decode_rx_packet(chunk)
         if rx is not None:
             yield rx
+
+
+# ---------------------------------------------------------------------------
+# Async RX drainer — background asyncio task that pulls bulk-IN chunks off
+# EP 0x84, decodes each, and pushes the parsed dict to a callback. Required
+# for WlanInterface integration (which expects driver.register_rx_callback).
+# Pattern mirrored from mt76x2u sibling driver.
+# ---------------------------------------------------------------------------
+
+class RxDrainer:
+    """Background reader on EP 0x84. For each URB: decode → parse → callback.
+
+    The callback receives a dict shaped like WlanFrameParser.parse_80211_frame
+    (which is what WlanInterface._on_frame_parsed expects).
+    """
+
+    def __init__(self, transport, frame_callback: Optional[Callable] = None,
+                 max_urb_bytes: int = 2048):
+        self.transport = transport
+        self.frame_callback = frame_callback
+        self.max_urb_bytes = max_urb_bytes
+        self._task: Optional[asyncio.Task] = None
+        self._running = False
+        # Stats (helpful for debugging)
+        self.rx_count = 0
+        self.decoded = 0
+        self.decode_failures = 0
+        self.parse_failures = 0
+        self.dispatched = 0
+
+    async def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._task = asyncio.create_task(self._loop())
+
+    async def stop(self) -> None:
+        self._running = False
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+
+    async def _loop(self) -> None:
+        # Defer the WlanFrameParser import to avoid a circular at module load.
+        from wifit3.wlan.packet import WlanFrameParser
+
+        while self._running:
+            try:
+                data = await self.transport.async_bulk_in(
+                    EP_IN_PKT_RX, self.max_urb_bytes, timeout_ms=100,
+                )
+            except asyncio.CancelledError:
+                break
+            except usb.core.USBError as e:
+                # ETIMEDOUT is normal (no frame in 100 ms); other errors logged.
+                if (getattr(e, "backend_error_code", None) == -7
+                        or getattr(e, "errno", None) == 110):
+                    continue
+                logger.debug("RxDrainer: USBError: %s", e)
+                await asyncio.sleep(0.01)
+                continue
+            except Exception as e:
+                logger.debug("RxDrainer: %s", e)
+                await asyncio.sleep(0.01)
+                continue
+
+            if not data:
+                continue
+            self.rx_count += 1
+            rx = decode_rx_packet(bytes(data))
+            if rx is None:
+                self.decode_failures += 1
+                continue
+            self.decoded += 1
+            parsed = WlanFrameParser.parse_80211_frame(rx.frame, rx.rssi_dbm)
+            if parsed is None:
+                self.parse_failures += 1
+                continue
+            if self.frame_callback is not None:
+                try:
+                    self.frame_callback(parsed)
+                    self.dispatched += 1
+                except Exception as e:
+                    logger.debug("RxDrainer callback error: %s", e)

@@ -54,7 +54,61 @@ EP_OUT_AC_BE        = 0x04   # out_ep[1]
 EP_OUT_AC_BK        = 0x05   # out_ep[2]
 EP_OUT_AC_VI        = 0x06   # out_ep[3]
 EP_OUT_AC_VO        = 0x07   # out_ep[4]
-EP_OUT_HCCA         = 0x09   # out_ep[5]
+EP_OUT_HCCA         = 0x09   # out_ep[5]  <- MGMT TX queue (qsel=MGMT triggered by ep==HCCA)
+
+# ---------------------------------------------------------------------------
+# M6: TX descriptor bit-fields.
+# ---------------------------------------------------------------------------
+# DMA-info word ([SRC] mt76x02_dma.h:12-21).
+MT_TXD_INFO_LEN_MASK       = 0xFFFF       # GENMASK(15, 0)
+MT_TXD_INFO_LEN_SHIFT      = 0
+MT_TXD_INFO_NEXT_VLD       = 1 << 16
+MT_TXD_INFO_TX_BURST       = 1 << 17
+MT_TXD_INFO_80211          = 1 << 19      # set: payload is 802.11 frame (not Ethernet)
+MT_TXD_INFO_TSO            = 1 << 20
+MT_TXD_INFO_CSO            = 1 << 21
+MT_TXD_INFO_WIV            = 1 << 24      # set: "wcid invalid" - no HW key
+MT_TXD_INFO_QSEL_MASK      = 0x06000000   # GENMASK(26, 25)
+MT_TXD_INFO_QSEL_SHIFT     = 25
+MT_TXD_INFO_DPORT_MASK     = 0x38000000   # GENMASK(29, 27)
+MT_TXD_INFO_DPORT_SHIFT    = 27
+
+# mt76_qsel - [SRC] dma.h:143-148
+MT_QSEL_MGMT               = 0
+MT_QSEL_HCCA               = 1
+MT_QSEL_EDCA               = 2
+MT_QSEL_EDCA_2             = 3
+
+# dma_msg_port - [SRC] mt76x02_dma.h:43-51
+WLAN_PORT                  = 0
+CPU_RX_PORT                = 1
+# CPU_TX_PORT already defined later as 2 (mt76x02_dma.h:46).
+HOST_PORT                  = 3
+
+# TXWI ack_ctl bits - [SRC] mt76x02_mac.h:131-133.
+MT_TXWI_ACK_CTL_REQ        = 1 << 0       # request ACK from receiver
+MT_TXWI_ACK_CTL_NSEQ       = 1 << 1       # firmware-assigned sequence
+MT_TXWI_ACK_CTL_BA_WIN_MASK = 0xFC        # GENMASK(7, 2)
+MT_TXWI_ACK_CTL_BA_WIN_SHIFT = 2
+
+# TXWI sizes.
+MT_TXWI_SIZE               = 20           # sizeof(struct mt76x02_txwi)
+
+# Bottom of mt76x0u_init_hardware ([SRC] mt76x0/usb.c:171-174) — written
+# at the end of init_hardware, AFTER mt76x0_init_hardware (full PHY init).
+# Without these the TX engine queues frames but never actually transmits:
+# TXOP_TRUN_EN gates TX opportunity grants from the EDCA scheduler.
+MT_US_CYC_CFG              = 0x02a4       # [SRC] mt76x02_regs.h:166
+MT_US_CYC_CNT_MASK         = 0xFF         # GENMASK(7, 0)
+MT_US_CYC_CNT_DEFAULT      = 0x1e
+
+MT_TXOP_CTRL_CFG           = 0x1340       # [SRC] mt76x02_regs.h:414
+MT_TXOP_TRUN_EN_MASK       = 0x3F         # GENMASK(5, 0)
+MT_TXOP_TRUN_EN_SHIFT      = 0
+MT_TXOP_EXT_CCA_DLY_MASK   = 0xFF00       # GENMASK(15, 8)
+MT_TXOP_EXT_CCA_DLY_SHIFT  = 8
+MT_TXOP_TRUN_EN_DEFAULT    = 0x3F         # all 6 TX rings eligible for TXOP
+MT_TXOP_EXT_CCA_DLY_DEFAULT = 0x58
 
 # ============================================================
 # Vendor bRequest codes — mt76 family shared.

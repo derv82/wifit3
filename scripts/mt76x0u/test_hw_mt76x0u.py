@@ -13,6 +13,8 @@
   --phase rx_parse : rx_drain + RX descriptor decode + WlanFrameParser hookup (M4c).
   --phase scan_2g  : hop 2.4 GHz ch 1-13 with 400 ms dwell (M5a).
   --phase scan_full : hop 2.4 GHz + non-DFS 5 GHz (M5b).
+  --phase tx_smoke : set_ch6 + inject 10 placeholder deauths (M6a — chip-side smoke).
+  --phase rx_inventory : diagnostic — dump every RX descriptor seen, no filtering.
   --phase all    : runs the latest milestone.
 
 Usage:
@@ -387,6 +389,238 @@ async def phase_scan_full(driver: MT76x0UDriver, dwell_ms: int) -> None:
        f"{fg_count} G-band + {fa_count} A-band channels with activity")
 
 
+async def phase_tx_smoke(driver: MT76x0UDriver) -> None:
+    """M6a — TX path smoke test. Inject 10 deauth frames addressed to a
+    placeholder MAC. Just confirms the chip accepts the descriptor (no
+    USB stall, no error). For real attack-validation see M6b.
+
+    We use a deauth-style frame (26 bytes) because it's the simplest
+    well-defined mgmt frame the chip will route through the MAC TX engine.
+    """
+    from wifit3.chips.mt76x0u.tx import build_deauth_frame
+
+    step("M6a — TX path smoke (10 × deauth on ch 6)")
+
+    # Make sure we're tuned and TRX enabled. set_channel(6) was the M4a
+    # pattern; do it again to be sure.
+    ok2 = await driver.set_channel(6)
+    if not ok2:
+        fail("set_channel(6) failed before tx_smoke")
+    driver.enable_trx()
+
+    # Placeholder addresses — NOT a real attack, just exercises the TX
+    # descriptor + bulk-OUT path. Chip will transmit these on ch 6 with
+    # bogus addresses; no client will respond.
+    dst   = bytes.fromhex("aabbccddeeff")
+    src   = bytes.fromhex("112233445566")
+    bssid = bytes.fromhex("112233445566")
+    frame = build_deauth_frame(dst, src, bssid, reason=7)
+    info(f"deauth frame ({len(frame)} bytes) → {frame.hex(' ')}")
+
+    n_ok = 0
+    n_fail = 0
+    import time as _t
+    t0 = _t.monotonic()
+    for i in range(10):
+        ok_inj = await driver.inject_frame(frame, use_no_ack=True)
+        if ok_inj:
+            n_ok += 1
+        else:
+            n_fail += 1
+            info(f"inject #{i + 1} failed")
+        _t.sleep(0.05)   # 50 ms between injects
+    elapsed_ms = (_t.monotonic() - t0) * 1000.0
+
+    info(f"inject results: {n_ok} OK / {n_fail} failed in {elapsed_ms:.0f} ms")
+    if n_fail > 0:
+        fail(f"M6a: {n_fail}/{10} injects failed — TX path broken")
+    ok(f"M6a complete — 10/10 injects accepted by chip in {elapsed_ms:.0f} ms. "
+       f"M6b next: real deauth attack on a target BSSID.")
+
+
+async def phase_rx_inventory(driver: MT76x0UDriver, channel: int,
+                              seconds: float, max_detail_lines: int) -> None:
+    """Diagnostic — camp on `channel`, dump EVERY bulk-IN packet with full
+    descriptor decode. No filtering. Goal: figure out which frame types
+    the chip is delivering and which (if any) we're mis-rejecting.
+
+    For each packet prints: rxinfo flags, ftype/subtype, mpdu_len, rate,
+    rssi[0], first 32 bytes of the 802.11 frame, decoded BSSID for mgmt.
+    """
+    from wifit3.chips.mt76x0u.rx import decode_rx_inventory
+    from wifit3.chips.mt76x0u.constants import EP_IN_PKT_RX
+
+    step(f"rx_inventory — camp on ch {channel} for {seconds}s, dump all bulk-IN")
+
+    # The driver's connect() already started an RxDrainer. We need to STOP it
+    # so this diagnostic can have exclusive bulk-IN access; otherwise the
+    # drainer steals frames before we see them.
+    if driver._rx_drainer is not None:
+        info("Stopping background RxDrainer for exclusive bulk-IN access")
+        await driver._rx_drainer.stop()
+        driver._rx_drainer = None
+
+    ok2 = await driver.set_channel(channel)
+    if not ok2:
+        fail(f"set_channel({channel}) failed")
+    info(f"Tuned to ch {channel}. Reconnect your phone to the AP NOW to "
+         f"capture EAPOL.")
+
+    # Counters by ftype/subtype, rxinfo flag, and reject reason
+    by_ftype = {0: 0, 1: 0, 2: 0, 3: 0}  # 0=MGMT, 1=CTRL, 2=DATA, 3=ext
+    by_subtype_in_data = {}     # subtype histogram within DATA frames
+    by_subtype_in_mgmt = {}     # subtype histogram within MGMT frames
+    flag_counts = {}
+    rate_histogram = {}         # rate field histogram
+    n_packets = 0
+    # DATA frame destination classifier (based on addr1, NOT rxinfo flag).
+    n_data_bcast = 0
+    n_data_mcast = 0
+    n_data_unicast_by_addr = 0
+    # EAPOL search (full frame, multiple patterns):
+    #   `888e` = bare ethertype (after LLC/SNAP)
+    #   `aa aa 03 00 00 00 88 8e` = full LLC/SNAP header
+    #   `02 03` at start of EAPOL packet (version 2 type 3 = key descriptor)
+    n_eapol_ethertype_anywhere = 0
+    n_llc_snap_eapol = 0
+    n_data_protected = 0
+    # Sample storage: hex dumps of the first 4 unicast DATA frames seen
+    # so we can manually inspect for EAPOL or other patterns.
+    sample_unicast_data: list[bytes] = []
+    n_with_l2pad = 0
+    n_with_decrypt = 0
+    n_with_crcerr = 0
+    n_with_micerr = 0
+    n_with_icverr = 0
+    bssids_mgmt = set()
+    detail_lines_printed = 0
+
+    import time as _t
+    deadline = _t.monotonic() + seconds
+    while _t.monotonic() < deadline:
+        try:
+            chunk = driver.transport.bulk_in(EP_IN_PKT_RX, 2048, timeout_ms=200)
+        except usb.core.USBError as e:
+            if (getattr(e, "backend_error_code", None) == -7
+                    or getattr(e, "errno", None) == 110):
+                continue
+            info(f"USBError: {e}")
+            continue
+        if not chunk:
+            continue
+        n_packets += 1
+        d = decode_rx_inventory(bytes(chunk))
+        if d is None or d.get("too_short"):
+            info(f"[#{n_packets:>4d}] too_short raw_len={d['raw_len'] if d else 0}")
+            continue
+
+        # Update aggregates
+        by_ftype[d["ftype"]] = by_ftype.get(d["ftype"], 0) + 1
+        if d["ftype"] == 0:
+            by_subtype_in_mgmt[d["subtype"]] = by_subtype_in_mgmt.get(d["subtype"], 0) + 1
+            # Try to extract BSSID (addr3 at offset 16).
+            if d["frame_len_seen"] >= 22:
+                frame = bytes.fromhex(d["frame_head_hex"].replace(" ", ""))
+                bssid = ":".join(f"{b:02x}" for b in frame[16:22])
+                bssids_mgmt.add(bssid)
+        elif d["ftype"] == 2:
+            by_subtype_in_data[d["subtype"]] = by_subtype_in_data.get(d["subtype"], 0) + 1
+
+            # Pull the FULL frame bytes (not just first 32) for proper
+            # destination + EAPOL classification. The d["frame_head_hex"]
+            # is only 32 bytes; we need to re-extract from the chunk.
+            # The chunk is the raw bulk-IN packet — frame starts at offset 36
+            # (MT_DMA_HDR_LEN + MT_RX_RXWI_LEN).
+            full_frame = bytes(chunk[36:36 + d["mpdu_len"]])
+            if len(full_frame) >= 16:
+                addr1 = full_frame[4:10]
+                if addr1 == b"\xff" * 6:
+                    n_data_bcast += 1
+                elif addr1[0] & 0x01:
+                    n_data_mcast += 1
+                else:
+                    n_data_unicast_by_addr += 1
+                    if len(sample_unicast_data) < 4:
+                        sample_unicast_data.append(full_frame[:96])
+
+                # Protected bit in FC1
+                if d["fc1"] & 0x40:
+                    n_data_protected += 1
+
+                # EAPOL search — multiple patterns in full frame:
+                if b"\x88\x8e" in full_frame:
+                    n_eapol_ethertype_anywhere += 1
+                if b"\xaa\xaa\x03\x00\x00\x00\x88\x8e" in full_frame:
+                    n_llc_snap_eapol += 1
+        for fl in d["flags"]:
+            flag_counts[fl] = flag_counts.get(fl, 0) + 1
+        if "L2PAD" in d["flags"]:
+            n_with_l2pad += 1
+        if "DECRYPT" in d["flags"]:
+            n_with_decrypt += 1
+        if "CRCERR" in d["flags"]:
+            n_with_crcerr += 1
+        if "MICERR" in d["flags"]:
+            n_with_micerr += 1
+        if "ICVERR" in d["flags"]:
+            n_with_icverr += 1
+        rate_histogram[d["rate"]] = rate_histogram.get(d["rate"], 0) + 1
+
+        # Per-frame detail line (bounded)
+        if detail_lines_printed < max_detail_lines:
+            ftype_name = {0: "MGMT", 1: "CTRL", 2: "DATA", 3: "EXT"}.get(d["ftype"], "?")
+            flag_str = "|".join(d["flags"][:6])
+            info(f"[#{n_packets:>4d}] {ftype_name}.{d['subtype']:>2d}  "
+                 f"len={d['mpdu_len']:>4d}  rate=0x{d['rate']:04x}  "
+                 f"rssi={d['rssi'][0]:>4d}  wcid={d['wcid']:>3d}  "
+                 f"flags=[{flag_str}]  "
+                 f"frame={d['frame_head_hex'][:35]}")
+            detail_lines_printed += 1
+
+    # ----- Summary -----
+    info("")
+    info(f"=== rx_inventory summary ({n_packets} bulk-IN packets in {seconds:.1f}s) ===")
+    info(f"  Frame types: MGMT={by_ftype[0]}  CTRL={by_ftype[1]}  DATA={by_ftype[2]}  EXT={by_ftype[3]}")
+    info(f"  MGMT subtypes: {dict(sorted(by_subtype_in_mgmt.items()))}")
+    info("    (0=AssocReq 1=AssocResp 4=ProbeReq 5=ProbeResp 8=Beacon 10=Disassoc 11=Auth 12=Deauth 13=Action)")
+    info(f"  DATA subtypes: {dict(sorted(by_subtype_in_data.items()))}")
+    info("    (0=Data 4=Null 8=QoSData 12=QoSNull)")
+    info(f"  Unique MGMT BSSIDs:    {len(bssids_mgmt)}")
+    info(f"  DATA destinations (from addr1):  "
+         f"bcast={n_data_bcast}  mcast={n_data_mcast}  unicast={n_data_unicast_by_addr}")
+    info(f"  DATA frames with PROTECTED bit set: {n_data_protected}")
+    info("  EAPOL detection (anywhere in full frame, not just head[:32]):")
+    info(f"    0x888E ethertype:           {n_eapol_ethertype_anywhere}")
+    info(f"    full LLC/SNAP EAPOL hdr:    {n_llc_snap_eapol}")
+
+    if sample_unicast_data:
+        info("")
+        info(f"  Sample unicast DATA frames (first {len(sample_unicast_data)} seen, first 96 bytes each):")
+        for i, sample in enumerate(sample_unicast_data):
+            info(f"    [{i}] len={len(sample)} hex={sample.hex(' ')}")
+    else:
+        info("  (No unicast DATA frames captured — addr1 was bcast/mcast on every DATA frame)")
+    info("  Flag histogram (over all packets):")
+    for flag in sorted(flag_counts, key=lambda f: -flag_counts[f]):
+        info(f"    {flag:<10s} {flag_counts[flag]:>5d}")
+    info(f"  Special-flag totals: L2PAD={n_with_l2pad}  DECRYPT={n_with_decrypt}  "
+         f"CRCERR={n_with_crcerr}  MICERR={n_with_micerr}  ICVERR={n_with_icverr}")
+    info(f"  Top 5 TXWI rate values: "
+         f"{sorted(rate_histogram.items(), key=lambda kv: -kv[1])[:5]}")
+
+    if by_ftype[2] == 0:
+        info("")
+        info("⚠ No DATA frames received AT ALL on ch %d. Either:" % channel)
+        info("    - The chip's RX filter is blocking DATA frames")
+        info("    - No DATA traffic is being broadcast in your area on this channel")
+        info("    - The chip is mis-tuned and only beacons (broadcast at high power) reach us")
+    elif n_eapol_ethertype_anywhere == 0:
+        info("")
+        info("⚠ DATA frames received but ZERO contain the EAPOL ethertype (0x888E).")
+        info("    Either no actual EAPOL traffic occurred in the window,")
+        info("    or unicast DATA is being filtered (check unicast count above).")
+
+
 async def phase_phy(driver: MT76x0UDriver) -> None:
     """M3d.2 — confirm full phy_init landed (RF init + rxpath + txdac)."""
     step("M3d.2 — phy_init assertions")
@@ -525,9 +759,22 @@ def main() -> int:
     parser.add_argument(
         "--phase",
         choices=["probe", "fw", "mcu", "mac", "bbp", "eeprom", "ant", "phy",
-                 "set_ch6", "rx_drain", "rx_parse", "scan_2g", "scan_full", "all"],
+                 "set_ch6", "rx_drain", "rx_parse", "scan_2g", "scan_full",
+                 "tx_smoke", "rx_inventory", "all"],
         default="all",
         help="Which milestone to test (default: all)",
+    )
+    parser.add_argument(
+        "--inventory-channel", type=int, default=1,
+        help="Channel to camp on for --phase rx_inventory (default: 1)",
+    )
+    parser.add_argument(
+        "--inventory-seconds", type=float, default=10.0,
+        help="How long to capture for --phase rx_inventory (default: 10s)",
+    )
+    parser.add_argument(
+        "--inventory-max-detail", type=int, default=120,
+        help="Max per-frame detail lines to print (default: 120)",
     )
     parser.add_argument(
         "--dwell-ms", type=int, default=400,
@@ -577,12 +824,27 @@ def main() -> int:
             asyncio.run(phase_rx_drain(driver, args.rx_seconds))
         if args.phase in ALL_PHASES[9:]:
             asyncio.run(phase_rx_parse(driver, args.rx_seconds))
-        # scan_* phases stop here — they wrap connect()/set_channel and
-        # hop, but they don't pull in rx_parse (which targets ch 6 only).
+        # scan_* and tx_smoke phases stop here — they wrap connect()/set_channel
+        # but don't pull in rx_parse (which targets ch 6 only).
         if args.phase == "scan_2g":
             asyncio.run(phase_scan_2g(driver, args.dwell_ms))
-        if args.phase == "scan_full" or args.phase == "all":
+        if args.phase == "scan_full":
             asyncio.run(phase_scan_full(driver, args.dwell_ms))
+        if args.phase == "tx_smoke":
+            asyncio.run(phase_tx_smoke(driver))
+        if args.phase == "rx_inventory":
+            # rx_inventory needs connect() to have run first (chip tuned + TRX on).
+            # Add to ALL_PHASES upstream is awkward because it's a diagnostic;
+            # call phase_fw directly here.
+            asyncio.run(phase_fw(driver))
+            asyncio.run(phase_rx_inventory(
+                driver, args.inventory_channel, args.inventory_seconds,
+                args.inventory_max_detail,
+            ))
+        if args.phase == "all":
+            # "all" runs the latest milestone, currently scan_full + tx_smoke.
+            asyncio.run(phase_scan_full(driver, args.dwell_ms))
+            asyncio.run(phase_tx_smoke(driver))
         return 0
     finally:
         try:

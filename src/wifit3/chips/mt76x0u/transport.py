@@ -283,3 +283,23 @@ class MT76x0UTransport:
         """
         data = self.dev.read(ep, max_len, timeout=timeout_ms)
         return bytes(data)
+
+    # ------------------------------------------------------------------
+    # Async wrappers for the asyncio RX drainer / TX inject from async
+    # contexts. PyUSB itself is sync; run on the default executor.
+    # ------------------------------------------------------------------
+    async def async_bulk_in(self, ep: int, max_len: int,
+                            timeout_ms: int = _BULK_TIMEOUT_MS) -> bytes:
+        import asyncio
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, lambda: self.bulk_in(ep, max_len, timeout_ms),
+        )
+
+    async def async_bulk_out(self, ep: int, data: bytes,
+                             timeout_ms: int = _BULK_TIMEOUT_MS) -> int:
+        import asyncio
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, lambda: self.bulk_out(ep, data, timeout_ms),
+        )
