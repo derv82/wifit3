@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import logging
 import sys
@@ -8,9 +9,14 @@ sys.path.append(str(Path(__file__).parent.parent / "src"))
 
 from wifit3.wlan.manager import WlanDeviceManager
 
-async def test_hw():
-    logging.basicConfig(level=logging.INFO)
-    print("[*] Starting Framework Hardware Test...")
+async def test_hw(debug: bool = False):
+    level = logging.DEBUG if debug else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)-5s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    print(f"[*] Starting Framework Hardware Test... (debug={debug})")
     
     manager = WlanDeviceManager()
     
@@ -51,8 +57,12 @@ async def test_hw():
     print("[+] Test complete.")
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--debug", action="store_true",
+                        help="enable DEBUG logging (frame bytes, bulk-OUT sizes, etc.)")
+    args = parser.parse_args()
     try:
-        asyncio.run(test_hw())
+        asyncio.run(test_hw(debug=args.debug))
     except KeyboardInterrupt:
         pass
     except Exception as e:

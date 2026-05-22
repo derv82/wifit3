@@ -41,15 +41,17 @@ from .constants import (
     TXWI_DESC_SIZE_4WORDS,
     TXWI_DESC_SIZE_5WORDS,
     TXWI_PHYMODE_CCK,
+    TXWI_TX_OP_NONE,
     TXWI_W0_MCS,
     TXWI_W0_PHYMODE,
+    TXWI_W0_TX_OP,
     TXWI_W1_ACK,
     TXWI_W1_MPDU_TOTAL_BYTE_COUNT,
     TXWI_W1_NSEQ,
     TXWI_W1_PACKETID_ENTRY,
     TXWI_W1_PACKETID_QUEUE,
     TXWI_W1_WIRELESS_CLI_ID,
-    USB_EP_BULK_OUT_AC_BE,
+    USB_EP_BULK_OUT_AC_VO,
 )
 
 # Kernel `rt2800usb_write_tx_desc` hardcodes QSEL=2 (EDCA) for EVERY
@@ -100,20 +102,31 @@ def build_tx_descriptors(
     # USB_DMA_NEXT_VALID = 0 (single packet)
     # USB_DMA_TX_BURST = 0 (no burst)
 
-    # TXWI_W0 — rate + PHY mode
+    # TXWI_W0 — rate + PHY mode + TX_OP
+    # Kernel uses HT_TXOP_NONE (3) for mgmt: chip skips RTS/CTS handshake.
+    # With TX_OP=0 (HT_TXOP_RTS, the default field value), chip tries to
+    # acquire TXOP via RTS first; for spoofed-srcMAC mgmt frames the RTS
+    # round-trip fails and the actual data frame never goes on air, even
+    # though TX_STA_FIFO flags TX_SUCCESS=1.
     txwi_w0 = 0
     txwi_w0 = _set_field32(txwi_w0, TXWI_W0_MCS, mcs)
     txwi_w0 = _set_field32(txwi_w0, TXWI_W0_PHYMODE, phymode)
-    # MIMO_PS/AMPDU/TX_OP/BW/SHORT_GI/STBC/IFS/FRAG/CF_ACK/TS = 0
+    txwi_w0 = _set_field32(txwi_w0, TXWI_W0_TX_OP, TXWI_TX_OP_NONE)
+    # MIMO_PS/AMPDU/BW/SHORT_GI/STBC/IFS/FRAG/CF_ACK/TS = 0
 
     # TXWI_W1 — ACK / WCID / length / packet id
+    # Field choices below mirror kernel rt2800usb aireplay-ng deauth TXWI
+    # (verified against capture-1.pcap frame 43087): WCID=0, NSEQ=0,
+    # PACKETID_QUEUE=0, PACKETID_ENTRY=2. Earlier choices (WCID=0xFF,
+    # NSEQ=1, PACKETID_QUEUE=2, PACKETID_ENTRY=1) were producing
+    # TX_SUCCESS=1 but no on-air emission on RT3572.
     txwi_w1 = 0
     txwi_w1 = _set_field32(txwi_w1, TXWI_W1_ACK, 0 if use_no_ack else 1)
-    txwi_w1 = _set_field32(txwi_w1, TXWI_W1_NSEQ, 1)              # let HW gen seqnum
-    txwi_w1 = _set_field32(txwi_w1, TXWI_W1_WIRELESS_CLI_ID, 0xFF)  # broadcast
+    txwi_w1 = _set_field32(txwi_w1, TXWI_W1_NSEQ, 0)              # use seqctl from frame
+    txwi_w1 = _set_field32(txwi_w1, TXWI_W1_WIRELESS_CLI_ID, 0)   # broadcast/unassoc
     txwi_w1 = _set_field32(txwi_w1, TXWI_W1_MPDU_TOTAL_BYTE_COUNT, frame_len)
-    txwi_w1 = _set_field32(txwi_w1, TXWI_W1_PACKETID_QUEUE, 2)
-    txwi_w1 = _set_field32(txwi_w1, TXWI_W1_PACKETID_ENTRY, 1)
+    txwi_w1 = _set_field32(txwi_w1, TXWI_W1_PACKETID_QUEUE, 0)
+    txwi_w1 = _set_field32(txwi_w1, TXWI_W1_PACKETID_ENTRY, 2)
 
     # TXWI W2..(N-1) are IV/EIV/etc — kernel zeros them when no
     # encryption is in play. Pad to txwi_size.
@@ -127,7 +140,7 @@ def inject_frame(
     frame: bytes,
     *,
     txwi_size: int = TXWI_DESC_SIZE_4WORDS,
-    ep: int = USB_EP_BULK_OUT_AC_BE,
+    ep: int = USB_EP_BULK_OUT_AC_VO,
     use_no_ack: bool = True,
     mcs: int = 0,
     phymode: int = TXWI_PHYMODE_CCK,
@@ -163,6 +176,8 @@ def inject_frame(
     pad_len = (-len(frame)) & 3
     payload = prefix + frame + (b"\x00" * pad_len) + b"\x00\x00\x00\x00"
 
+    logger.debug("bulk-OUT EP 0x%02x payload (%dB): %s",
+                 ep, len(payload), payload.hex())
     sent = dev.write(ep, payload, timeout_ms)
     if sent != len(payload):
         logger.warning(

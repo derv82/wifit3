@@ -1185,9 +1185,12 @@ def test_set_channel_writes_correct_synth_for_each_2g_channel(monkeypatch):
 # M5 TX inject tests
 # ----------------------------------------------------------------------
 def test_build_tx_descriptors_default_shape():
-    """For a 26-byte deauth + use_no_ack=True + MCS=0/CCK, the
-    descriptors should set MPDU byte count = 26, ACK = 0, NSEQ = 1,
-    WCID = 0xFF, WIV = 1, QSEL = EDCA (2 — kernel hardcodes this)."""
+    """For a 26-byte deauth + use_no_ack=True + MCS=0/CCK, the descriptors
+    mirror kernel rt2800usb aireplay-ng deauth TXWI (verified against
+    usb_dumps/captures_rt2800usb_rt3572/capture-1.pcap frame 43087):
+    MPDU byte count = 26, ACK = 0, NSEQ = 0, WCID = 0, WIV = 1,
+    QSEL = EDCA (2), TX_OP = HT_TXOP_NONE (3), PACKETID_QUEUE = 0,
+    PACKETID_ENTRY = 2."""
     import struct
     from wifit3.chips.rt2800usb.tx import build_tx_descriptors
     desc = build_tx_descriptors(26, txwi_size=16, use_no_ack=True)
@@ -1199,16 +1202,17 @@ def test_build_tx_descriptors_default_shape():
     assert txinfo_w0 & (1 << 24), "WIV should be set"
     # EDCA qsel = 2 → bits[26:25] = 2
     assert ((txinfo_w0 >> 25) & 0x3) == 2
-    # TXWI_W0: MCS=0, PHYMODE=CCK (0) — entire word should be 0
-    assert txwi_w0 == 0
-    # TXWI_W1: ACK=0, NSEQ=1, WCID=0xFF, MPDU=26, QID=2, ENTRY=1
+    # TXWI_W0: MCS=0, PHYMODE=CCK(0), TX_OP=HT_TXOP_NONE(3) — bits[9:8] = 3
+    assert ((txwi_w0 >> 8) & 0x3) == 3, "TX_OP should be HT_TXOP_NONE"
+    assert ((txwi_w0 >> 16) & 0x7F) == 0, "MCS should be 0"
+    assert ((txwi_w0 >> 30) & 0x3) == 0, "PHYMODE should be CCK"
+    # TXWI_W1: ACK=0, NSEQ=0, WCID=0, MPDU=26, QID=0, ENTRY=2 — matches kernel
     assert (txwi_w1 & 1) == 0, "ACK should be 0 for use_no_ack"
-    assert (txwi_w1 >> 1) & 1 == 1, "NSEQ should be 1"
-    assert ((txwi_w1 >> 8) & 0xFF) == 0xFF, "WCID should be 0xFF (broadcast)"
+    assert (txwi_w1 >> 1) & 1 == 0, "NSEQ should be 0 (use seqctl from frame)"
+    assert ((txwi_w1 >> 8) & 0xFF) == 0, "WCID should be 0 (kernel broadcast slot)"
     assert ((txwi_w1 >> 16) & 0xFFF) == 26, "MPDU_TOTAL_BYTE_COUNT should be 26"
-    # PACKETID_QUEUE=2, PACKETID_ENTRY=1
-    assert ((txwi_w1 >> 28) & 0x3) == 2
-    assert ((txwi_w1 >> 30) & 0x3) == 1
+    assert ((txwi_w1 >> 28) & 0x3) == 0, "PACKETID_QUEUE should be 0"
+    assert ((txwi_w1 >> 30) & 0x3) == 2, "PACKETID_ENTRY should be 2"
     # TXWI W2/W3 = 0 (no encryption IV)
     assert txwi_w2 == 0
     assert txwi_w3 == 0

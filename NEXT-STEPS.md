@@ -8,7 +8,7 @@ Fully-functional userspace Python drivers (cold + warm bring-up, channel hop, in
 |---|---|---|---|
 | Atheros AR9271 | `chips/ar9271/` | 2.4 GHz | DONE (v1.4) |
 | Alfa/Realtek RTL8187 | `chips/rtl8187/` | 2.4 GHz | DONE |
-| Ralink RT2800USB (RT5372 / RT3572 / RT5572) | `chips/rt2800usb/` | 2.4 GHz (RT5372 1T1R); 2.4 + 5 GHz (RT3572 + RT5572 2T2R) | DONE 2026-05-20 — all three silicons hw-verified including 5 GHz monitor + TX inject on RT5392 |
+| Ralink RT2800USB (RT5372 / RT5572) | `chips/rt2800usb/` | 2.4 GHz (RT5372 1T1R); 2.4 + 5 GHz (RT5572 2T2R) | DONE 2026-05-20 — RT5372 + RT5572 (silicon RT5392/RT5592) hw-verified for scan + monitor + TX inject. RT3572 split out to known-broken below. |
 | Mediatek MT7612U (AWUS036ACM, Alfa) | `chips/mt76x2u/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-20 — full attack stack hw-verified; deauth on NETGEAR2G recaptured EAPOL M1+M3 live |
 | Realtek RTL8821AU (AWUS036ACS) | `chips/rtl8821au/` | 2.4 + 5 GHz | DONE 2026-05-17, 27 BSSIDs/8s on ch1 |
 | Realtek RTL8822BU (TP-Link T3U Plus, AC1300) | `chips/rtl8822bu/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-17, full RX + TX inject + 5G |
@@ -37,16 +37,44 @@ Tracked here so they don't fall on the floor between sessions:
   regression in the HTC/WMI RX path or `chips/ar9271/` descriptor
   handling. First thorough test against the current RX pipeline in
   a while, so the regression window is wide.
-- **Ralink RT3572 (AWUS051NH v2) — forged-srcMAC PMKID/SAE failure.**
-  Scanning + deauth-driven real-client 4-way handshake capture both
-  work fine on this card. But PMKID and SAE Probe get **zero AP
-  responses** — no Auth Response, no Assoc Response, no M1.
-  Specifically a "forged srcMAC" issue: the AP doesn't respond to our
-  Auth Req. The sister rt2800usb silicons (RT5572 / RT5392) work
-  after `b887282`, so this is RT3572-specific (silicon? TX-rate?
-  AP-side rate-limit?). Next step: external sniffer watching the
-  channel to confirm whether our Auth Req with the spoofed source MAC
-  is even hitting the air.
+- **Ralink RT3572 (AWUS051NH v2) — TX RF-silent on Windows, paused
+  pending Kali usbmon diff.** All digital indicators say the chip is
+  transmitting (TX_STA_FIFO entries with TX_SUCCESS=1, TX_STA_CNT1
+  counter increments, bulk-OUT URBs accepted) but a known-good sniffer
+  card (AWUS036ACS) 5cm away on the same channel sees **zero deauths
+  on-air** during a 40-frame burst. Same hardware works under the Kali
+  kernel driver (`aireplay-ng --test` shows "Injection is working").
+  Conclusively: chip's analog/RF stage isn't emitting in our driver.
+
+  Investigation 2026-05-22 found and fixed several real issues along
+  the way that should land regardless of whether RT3572 ever works:
+    - TXWI now matches kernel byte-for-byte (TX_OP=HT_TXOP_NONE,
+      WCID=0, NSEQ=0, PACKETID_QUEUE=0, PACKETID_ENTRY=2). Previously
+      we used 0xFF/1/2/1 which on rtw88 and mt76 chips works but on
+      rt2800 the chip's TX engine treats `TX_OP=HT_TXOP_RTS` as
+      "do RTS/CTS first" — silent drop for spoofed-srcMAC unicast.
+    - Inject endpoint switched from EP 0x02 (AC_VI) to EP 0x01 (AC_VO)
+      to match where the kernel sends mgmt frames.
+    - `TX_SW_CFG0` made silicon-specific in `init_registers`: kernel
+      writes 0x400 for RT3572, 0x404 for RT5390/RT5392, 0x404 for
+      RT5592. We were hardcoding 0x404 for all silicons — undocumented
+      vendor-magic register.
+    - WCID + WCID_ATTR table now cleared per kernel pattern (256× 0xFF
+      for WCID entries via `memset(0xFF)`, 256× 0 for ATTR). Previously
+      not cleared at all — chip's reset state left CIPHER bits with
+      possibly-non-zero RAM contents.
+    - `MCU_WAKEUP` (cmd 0x31, arg1=2) sent before `enable_radio` to
+      match `rt2800usb_set_device_state(STATE_RADIO_ON)`.
+    - `TX_PWR_CFG_0..4` per-rate TX power tables now written (kernel
+      sources from EEPROM_TXPOWER_BYRATE; we fall back to 0x0A per
+      4-bit rate field on unburned EFUSE).
+    - `txpath/rxpath` forced to 2 for RT3572 when EFUSE is unburned
+      (NIC_CONF0=0x0000) so `init_bbp_3572` keeps DAC1 powered.
+
+  None of those fixes restored on-air RF. Next step: run wifit3 on
+  Kali to rule out Windows/WinUSB vs driver. If Kali also fails,
+  `usbmon` diff between `aireplay-ng --test` (works) and wifit3 (fails)
+  will expose the missing register write or sequence.
 - **Mediatek MT7921AU** — separate, fully detailed below in
   **NEXT STEP: MT7921AU**. Driver paused on FW_START_REQ wall.
 

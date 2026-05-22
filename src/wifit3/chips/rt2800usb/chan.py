@@ -84,6 +84,11 @@ from .constants import (
     TX_BAND_CFG_BG_BIT,
     TX_BAND_CFG_HT40_MINUS,
     TX_BAND_CFG_REG,
+    TX_PWR_CFG_0,
+    TX_PWR_CFG_1,
+    TX_PWR_CFG_2,
+    TX_PWR_CFG_3,
+    TX_PWR_CFG_4,
     TX_PIN_CFG_LNA_PE_A0_EN_BIT,
     TX_PIN_CFG_LNA_PE_A1_EN,
     TX_PIN_CFG_LNA_PE_G0_EN_BIT,
@@ -555,6 +560,27 @@ def _set_channel_3572(
     bbp_write(t, 3, bbp & 0xFF)
 
     time.sleep(0.001)
+
+    # ---- (11) Per-rate TX power (kernel rt2800_config_txpower_rt28xx) ----
+    # The firmware reads TX_PWR_CFG_0..4 to pick TX power for each modulation
+    # rate. Without this, the chip's TX engine reports TX_SUCCESS but emits
+    # near-zero RF power (we verified this on the user's AWUS051NH v2:
+    # FIFO showed VALID+TX_SUCCESS but phone/AP never saw the frames).
+    # Kernel sources these from EEPROM TXPOWER_BYRATE per-channel; we don't
+    # parse those tables yet, and this card has unburned EFUSE anyway. Write
+    # a moderate same-value-across-rates default so all rates emit at usable
+    # power. 0x0A per 4-bit field ≈ ~10/15 = ~67% of max power index.
+    # TODO: parse EEPROM TXPOWER_BYRATE + apply rt2800_compensate_txpower.
+    _RT3572_TX_PWR_CFG_DEFAULT = 0x0A0A0A0A
+    for reg in (TX_PWR_CFG_0, TX_PWR_CFG_1, TX_PWR_CFG_2, TX_PWR_CFG_3, TX_PWR_CFG_4):
+        t.write32(reg, _RT3572_TX_PWR_CFG_DEFAULT)
+
+    # BBP1.TX_POWER_CTRL = 0 — global TX power offset of 0 dBm (no
+    # -6/-12/+6 adjustment). Kernel rt2800_config_txpower_rt28xx sets this
+    # based on delta from EEPROM; we just zero it for unburned EEPROM.
+    bbp1 = bbp_read(t, 1)
+    bbp1 &= ~0x03   # BBP1_TX_POWER_CTRL = bits[1:0]
+    bbp_write(t, 1, bbp1 & 0xFF)
 
     # Clear channel-activity counters as a side-effect of reading.
     t.read32(CH_IDLE_STA)

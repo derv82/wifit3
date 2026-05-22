@@ -221,6 +221,8 @@ RX_STA_CNT2 = 0x1708
 TX_STA_CNT0 = 0x170C
 TX_STA_CNT1 = 0x1710
 TX_STA_CNT2 = 0x1714
+TX_STA_FIFO = 0x1718    # per-frame TX status FIFO (read-to-pop, VALID bit = entry present)
+MAC_STATUS_CFG = 0x1200 # bit 0 = BBP/RF busy on TX, bit 1 = busy on RX
 HT_FBK_CFG0 = 0x1500
 HT_FBK_CFG1 = 0x1504
 LG_FBK_CFG0 = 0x1508
@@ -493,6 +495,13 @@ RXD_W0_CRC_ERROR = 0x00000100
 USB_EP_BULK_IN = 0x84      # RXdata
 USB_EP_BULK_OUT_MGMT = 0x06
 USB_EP_BULK_OUT_AC_BE = 0x02
+# Kernel rt2x00usb_assign_endpoint maps queues to bulk-OUT EPs in
+# descriptor order: 1st bulk-OUT (= 0x01) is AC_VO. Mgmt frames in
+# mac80211 default to the highest-priority queue (AC_VO), so kernel
+# inject (aireplay-ng deauths) all go through EP 0x01. Verified from
+# usb_dumps/captures_rt2800usb_rt3572/capture-1.pcap frame 43087.
+# [SRC] rt2x00usb.c:579-595
+USB_EP_BULK_OUT_AC_VO = 0x01
 
 # ----------------------------------------------------------------------
 # TX_BAND_CFG + TX_PIN_CFG (used by config_channel_rf3052 + rf53xx).
@@ -504,6 +513,19 @@ TX_BAND_CFG_REG = 0x132C
 TX_BAND_CFG_HT40_MINUS = 0x00000001
 TX_BAND_CFG_A = 0x00000002        # 1 = 5 GHz routing
 TX_BAND_CFG_BG_BIT = 0x00000004   # 1 = 2.4 GHz routing (already used by chan.py)
+
+# Per-rate TX power config — chip firmware reads these for each frame's
+# modulation rate to determine final TX power. Each register holds 8 ×
+# 4-bit power values across rates. Kernel populates these from EEPROM
+# TXPOWER_BYRATE in rt2800_config_txpower_rt28xx (rt2800lib.c:5407+).
+# With unburned EEPROM these stay at chip reset value (~0) and gate
+# emit to near-zero RF regardless of RFCSR12/13.TX_POWER.
+# [SRC] rt2800.h:1115-1235
+TX_PWR_CFG_0 = 0x1314    # CCK 1/2/5.5/11 Mbps + OFDM 6/9/12/18 Mbps
+TX_PWR_CFG_1 = 0x1318    # OFDM 24/36/48/54 + MCS 0..3
+TX_PWR_CFG_2 = 0x131C    # MCS 4..11
+TX_PWR_CFG_3 = 0x1320    # MCS 12..15 + STBC
+TX_PWR_CFG_4 = 0x1324    # STBC extras
 
 TX_PIN_CFG_REG = 0x1328
 TX_PIN_CFG_PA_PE_A0_EN_BIT = 0x00000001    # 5 GHz primary PA (RF3052+)
@@ -540,9 +562,19 @@ TXINFO_QSEL_MGMT = 0
 
 # TXWI_W0 fields
 TXWI_W0_FRAG = 0x00000001
+TXWI_W0_TX_OP = 0x00000300            # 0=HT_TXOP_RTS, 1=PIFS, 2=SIFS, 3=NONE
 TXWI_W0_MCS = 0x007F0000
 TXWI_W0_BW = 0x00800000
 TXWI_W0_PHYMODE = 0xC0000000          # 0 = CCK, 1 = OFDM, 2 = HT/MM, 3 = HT/GF
+
+# Kernel uses HT_TXOP_NONE (3) for mgmt frames — chip skips RTS/CTS
+# handshake. With our default 0 (HT_TXOP_RTS), chip tries to acquire
+# TXOP via RTS first; for spoofed-srcMAC mgmt frames the RTS handshake
+# fails silently and the actual data frame never goes on air, even
+# though TX_STA_FIFO reports TX_SUCCESS=1 for the queue dequeue.
+# Diagnosed 2026-05-22 by comparing kernel pcap aireplay-ng deauth TXWI
+# against ours. [SRC] rt2x00reg.h:78 (HT_TXOP_NONE=3)
+TXWI_TX_OP_NONE = 3
 
 TXWI_PHYMODE_CCK = 0
 TXWI_PHYMODE_OFDM = 1

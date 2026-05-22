@@ -264,11 +264,32 @@ def init_registers(t: RT2800USBTransport, silicon_id: int) -> None:
     reg = _set_field32(reg, _BKOFF_SLOT_CFG_CC_DELAY_TIME, 2)
     t.write32(BKOFF_SLOT_CFG, reg)
 
-    # 7) RT5390/RT5392 path: TX_SW_CFG0/1/2 = 0x404 / 0x080606 / 0
-    # (RT5392 silicon = our PAU05's chipset).
-    t.write32(TX_SW_CFG0, 0x00000404)
-    t.write32(TX_SW_CFG1, 0x00080606)
-    t.write32(TX_SW_CFG2, 0x00000000)
+    # 7) TX_SW_CFG0/1/2 — silicon-specific vendor-magic TX timing regs.
+    # Each silicon has different values; using the wrong values causes
+    # the chip to misconfigure TX timings, sometimes producing
+    # TX_SUCCESS=1 in TX_STA_FIFO but no actual on-air RF emission.
+    # Discovered 2026-05-22: had previously hardcoded the RT5390/RT5392
+    # values for ALL silicons, which is wrong for RT3572 (TX_SW_CFG0
+    # bit 2 differs) — broke deauth/PMKID injection on AWUS051NH v2.
+    # [SRC] rt2800lib.c:5965-5994
+    from .constants import RT_RT3572, RT_RT5390, RT_RT5392, RT_RT5592
+    if silicon_id == RT_RT3572:
+        t.write32(TX_SW_CFG0, 0x00000400)   # bit 2 = 0, NOT 0x404
+        t.write32(TX_SW_CFG1, 0x00080606)
+        # Kernel deliberately does NOT write TX_SW_CFG2 for RT3572 —
+        # it falls through the else-if chain after the SW_CFG1 write.
+    elif silicon_id in (RT_RT5390, RT_RT5392):
+        t.write32(TX_SW_CFG0, 0x00000404)
+        t.write32(TX_SW_CFG1, 0x00080606)
+        t.write32(TX_SW_CFG2, 0x00000000)
+    elif silicon_id == RT_RT5592:
+        t.write32(TX_SW_CFG0, 0x00000404)
+        t.write32(TX_SW_CFG1, 0x00000000)
+        t.write32(TX_SW_CFG2, 0x00000000)
+    else:
+        # Fallback — generic chip (kernel rt2800lib.c:6026-6028).
+        t.write32(TX_SW_CFG0, 0x00000000)
+        t.write32(TX_SW_CFG1, 0x00080606)
 
     # 8) TX_LINK_CFG
     reg = t.read32(TX_LINK_CFG)
@@ -401,8 +422,35 @@ def init_registers(t: RT2800USBTransport, silicon_id: int) -> None:
     # 22) PWR_PIN_CFG
     t.write32(PWR_PIN_CFG, 0x00000003)
 
-    # 23) Key/IVEIV/beacon clear loops + rt2800_config_wcid/delete_wcid
-    # — deferred (not needed for monitor mode; see module docstring).
+    # 23) WCID + WCID_ATTR table clear. Kernel rt2800_init_registers
+    # (rt2800lib.c:6245-6248) zeros all 256 WCID attr entries via
+    # rt2800_delete_wcid_attr. Each attr entry contains CIPHER bits
+    # (bits[3:1]) — if non-zero, the TX engine tries to encrypt frames
+    # using a key it doesn't have. Result: chip reports TX_SUCCESS=1 in
+    # TX_STA_FIFO but emits garbage on-air with a broken FCS, which
+    # phones/APs silently drop. We hit exactly that on RT3572 with our
+    # WCID=0xFF inject. Diagnosed 2026-05-22 by following the trail:
+    # bulk-OUT OK → TX_STA_FIFO TX_SUCCESS=1 → still no on-air response.
+    # Each write is a ~1 ms USB control transfer, so 256 entries × 2
+    # tables ≈ 0.5 s — acceptable one-time startup cost.
+    _MAC_WCID_BASE = 0x1800
+    _MAC_WCID_ATTRIBUTE_BASE = 0x6800
+    for i in range(256):
+        # WCID entry = 8 bytes. Kernel `rt2800_config_wcid(NULL, i)` does
+        # `memset(&wcid_entry, 0xff, sizeof(wcid_entry))` — fills the
+        # whole 8-byte struct (6-byte MAC + 2-byte pad) with 0xFF, NOT
+        # 0x00. The MAC field 0xFFFFFFFFFFFF means "broadcast / no real
+        # station here" — the TX engine treats this as a safe sentinel.
+        # Writing zeros instead makes WCID entries claim MAC 00:00:00:
+        # 00:00:00 which may confuse rate-adaptation / PA-gain lookups
+        # even though TX_STA_FIFO still flags TX_SUCCESS. Fixed
+        # 2026-05-22 after diagnosing the regression in RT3572 inject.
+        # [SRC] rt2800lib.c:1671-1686
+        t.write32(_MAC_WCID_BASE + i * 8, 0xFFFFFFFF)
+        t.write32(_MAC_WCID_BASE + i * 8 + 4, 0xFFFFFFFF)
+        # WCID attr entry = 4 bytes (u32). Kernel writes 0 here —
+        # CIPHER bits cleared = no encryption attempted on this WCID.
+        t.write32(_MAC_WCID_ATTRIBUTE_BASE + i * 4, 0)
 
     # 24) USB clock-cycle config.
     reg = t.read32(US_CYC_CNT)

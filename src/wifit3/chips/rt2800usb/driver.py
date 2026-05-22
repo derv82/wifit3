@@ -137,6 +137,11 @@ class RT2800USBDriver:
         # RT3572-only: filter calibration values + saved BBP25/26 from
         # init_rfcsr_3572, replayed on every channel tune.
         self._rf_cal: Optional[RfFilterCal] = None
+        # Debug instrumentation: snapshot TX-side regs on first inject + on
+        # every inject (TX_STA_CNT0/1 are read-to-clear so we get TX-event
+        # deltas across the burst). One-shot snapshot covers TX_PIN_CFG,
+        # TX_BAND_CFG, RFCSR1/12/13 — these don't change frame-to-frame.
+        self._first_inject_dumped: bool = False
 
         # WlanDriver Protocol surface area.
         self.mac_address: Optional[str] = None
@@ -319,6 +324,25 @@ class RT2800USBDriver:
             # (2 RX / 1 TX) so we don't power down the wrong chains.
             txpath = self._eeprom.txpath if self._eeprom else 1
             rxpath = self._eeprom.rxpath if self._eeprom else 1
+            # RT3572 on AWUS051NH v2 ships 2T2R hw with unburned EFUSE.
+            # init_bbp_3572 → disable_unused_dac_adc(txpath=1) sets
+            # BBP138.TX_DAC1=1 (powers DAC1 down). With DAC1 off, the
+            # TX1 chain has no data path — if the dongle wires its
+            # primary antenna to chain 1 (path B), the chip happily
+            # flags TX_SUCCESS in TX_STA_FIFO but emits ~nothing.
+            # Override to 2T2R here so DAC1 stays on. Matches the
+            # tx_chain_num=2 override applied in _channel_kwargs.
+            if (self.chip_id is not None
+                and self.chip_id.silicon_id == 0x3572
+                and self._eeprom is not None
+                and self._eeprom.nic_conf0 in (0x0000, 0xFFFF)):
+                logger.info(
+                    "RT3572 unburned EFUSE (NIC_CONF0=0x%04x) — forcing 2T2R "
+                    "init so DAC1 stays powered + both chains feed PAs",
+                    self._eeprom.nic_conf0,
+                )
+                txpath = 2
+                rxpath = 2
             # RT5592 needs ANT_DIVERSITY from NIC_CONF1 to pick BBP152
             # (main vs aux antenna). Kernel default-path: ant=0 (main)
             # when NIC_CONF1.ANT_DIVERSITY != 3.
@@ -364,6 +388,29 @@ class RT2800USBDriver:
                     self._rf_cal.calibration_bw20, self._rf_cal.calibration_bw40,
                     self._rf_cal.bbp25, self._rf_cal.bbp26,
                 )
+
+            _progress(0.984, "Sending MCU_WAKEUP (chip → STATE_AWAKE)")
+            # Kernel rt2800usb_set_device_state(STATE_RADIO_ON) does this
+            # before enable_radio: send MCU_WAKEUP (0x31), sleep 1 ms,
+            # then enable the radio. Without WAKEUP, the chip may stay in
+            # a half-asleep state where the MAC TX FSM dequeues frames and
+            # reports TX_SUCCESS in TX_STA_FIFO but the analog PA never
+            # powers up — so frames go nowhere on-air even though every
+            # digital indicator looks fine. RX may still work because
+            # incoming-frame detection auto-wakes part of the chip.
+            # [SRC] rt2800usb.c:336-351
+            from .firmware import mcu_request
+            try:
+                await loop.run_in_executor(
+                    None,
+                    lambda: mcu_request(
+                        self.transport, command=0x31, token=0xFF,
+                        arg0=0, arg1=2,
+                    ),
+                )
+                await asyncio.sleep(0.001)
+            except (IOError, usb.core.USBError) as e:
+                logger.warning("MCU_WAKEUP failed (continuing): %s", e)
 
             _progress(0.985, "Enabling radio (MAC TX/RX + WPDMA + USB DMA)")
             try:
@@ -470,12 +517,35 @@ class RT2800USBDriver:
             "freq_offset": self._eeprom.freq_offset,
         }
         if self.chip_id is not None and self.chip_id.silicon_id == 0x3572:
+            # TX power: RT3572's _set_channel writes RFCSR12/13.TX_POWER on
+            # every tune. Kernel sources this per-channel from EEPROM
+            # TXPOWER_BG/A tables; we don't parse those yet, and the user's
+            # AWUS051NH v2 is unburned anyway. Without a fallback default_power
+            # = 0, AP can't hear our injected frames. Picking high values
+            # near the 5-bit max (31) for 2.4 GHz so on-air RSSI is sufficient
+            # for AP to respond to forged frames. For 5G the field is
+            # encoded as a 4-bit split (see _tx_power_5g), so cap at 15.
+            # TODO: parse EEPROM_TXPOWER_BG1/BG2/A1/A2 per-channel tables
+            # when EFUSE is burned.
+            is_2g = channel <= 14
+            # tx_chain_num override: AWUS051NH v2 is documented 2T2R hw,
+            # but its EFUSE reads NIC_CONF0=0x0000 (unburned) so the kernel-
+            # default fallback in eeprom.py returns txpath=1. With txpath=1,
+            # _set_channel_3572 powers down TX1/TX2 chains via RFCSR1 and
+            # only enables PA_PE_G0 — if this dongle is wired with the
+            # primary RF route through chain 1 (path B), TX is silent
+            # regardless of power. Force 2T2R since silicon supports it.
+            txpath = self._eeprom.txpath
+            if self._eeprom.nic_conf0 in (0x0000, 0xFFFF):
+                txpath = 2
             kwargs.update(
                 cal_result=self._rf_cal,
-                tx_chain_num=self._eeprom.txpath,
+                tx_chain_num=txpath,
                 rx_chain_num=self._eeprom.rxpath,
                 has_cap_bt_coexist=self._eeprom.has_cap_bt_coexist,
                 has_cap_external_lna_a=self._eeprom.has_cap_external_lna_a,
+                default_power1=24 if is_2g else 12,
+                default_power2=24 if is_2g else 12,
             )
         elif self.chip_id is not None and self.chip_id.silicon_id == RT_RT5592:
             kwargs.update(
@@ -515,16 +585,29 @@ class RT2800USBDriver:
         if self.chip_id is None:
             logger.error("inject_frame: connect() must run first")
             return False
-        # rt2800 uses TXWI size that varies by silicon — pre-compute.
         txwi_sz = txwi_size_for_silicon(self.chip_id.silicon_id)
+
+        loop = asyncio.get_event_loop()
+        if logger.isEnabledFor(logging.DEBUG) and not self._first_inject_dumped:
+            await loop.run_in_executor(None, self._dump_tx_state, "pre-first-inject")
+            self._first_inject_dumped = True
+
+        logger.debug(
+            "inject_frame: ch=%d len=%d no_ack=%s txwi=%dB frame=%s",
+            self.current_channel, len(frame_bytes), use_no_ack, txwi_sz,
+            frame_bytes[:32].hex(),
+        )
         try:
-            await asyncio.get_event_loop().run_in_executor(
+            sent = await loop.run_in_executor(
                 None,
                 lambda: _inject_frame(
                     self.dev, frame_bytes,
                     txwi_size=txwi_sz, use_no_ack=use_no_ack,
                 ),
             )
+            logger.debug("inject_frame: bulk-OUT accepted %d bytes", sent)
+            if logger.isEnabledFor(logging.DEBUG):
+                await loop.run_in_executor(None, self._dump_tx_counters, "post-inject")
             return True
         except ValueError as e:
             logger.warning("rt2800usb inject_frame bad frame: %s", e)
@@ -532,6 +615,78 @@ class RT2800USBDriver:
         except usb.core.USBError as e:
             logger.error("rt2800usb inject_frame USBError: %s", e)
             return False
+
+    def _dump_tx_state(self, tag: str) -> None:
+        """One-shot dump of TX-side register state. Called on the first
+        inject_frame so we can see what the chip thinks PA enables / band
+        config / chain power-down state look like AFTER channel tune."""
+        from .bbp import bbp_read
+        from .constants import (
+            LDO_CFG0, MAC_STATUS_CFG, MAC_SYS_CTRL, TX_BAND_CFG_REG,
+            TX_PIN_CFG_REG, TX_PWR_CFG_0, TX_SW_CFG0, WPDMA_GLO_CFG,
+        )
+        from .rfcsr import rfcsr_read
+        try:
+            mac_sys = self.transport.read32(MAC_SYS_CTRL)
+            tx_pin = self.transport.read32(TX_PIN_CFG_REG)
+            tx_band = self.transport.read32(TX_BAND_CFG_REG)
+            tx_sw0 = self.transport.read32(TX_SW_CFG0)
+            mac_status = self.transport.read32(MAC_STATUS_CFG)
+            wpdma = self.transport.read32(WPDMA_GLO_CFG)
+            tx_pwr_cfg_0 = self.transport.read32(TX_PWR_CFG_0)
+            ldo_cfg0 = self.transport.read32(LDO_CFG0)
+            rfcsr1 = rfcsr_read(self.transport, 1)
+            rfcsr2 = rfcsr_read(self.transport, 2)
+            rfcsr3 = rfcsr_read(self.transport, 3)
+            rfcsr6 = rfcsr_read(self.transport, 6)
+            rfcsr12 = rfcsr_read(self.transport, 12)
+            rfcsr13 = rfcsr_read(self.transport, 13)
+            bbp1 = bbp_read(self.transport, 1)
+            logger.debug(
+                "[%s] MAC_SYS=0x%08x MAC_STATUS=0x%08x WPDMA=0x%08x "
+                "TX_PIN=0x%08x TX_BAND=0x%08x TX_SW0=0x%08x "
+                "TX_PWR_0=0x%08x LDO_CFG0=0x%08x BBP1=0x%02x "
+                "RFCSR1=0x%02x RFCSR2=0x%02x RFCSR3=0x%02x RFCSR6=0x%02x "
+                "RFCSR12=0x%02x RFCSR13=0x%02x",
+                tag, mac_sys, mac_status, wpdma,
+                tx_pin, tx_band, tx_sw0, tx_pwr_cfg_0, ldo_cfg0, bbp1,
+                rfcsr1, rfcsr2, rfcsr3, rfcsr6, rfcsr12, rfcsr13,
+            )
+        except (IOError, usb.core.USBError) as e:
+            logger.debug("[%s] register read failed: %s", tag, e)
+
+    def _dump_tx_counters(self, tag: str) -> None:
+        """Read TX_STA_CNT0/1 + drain TX_STA_FIFO. CNT0/1 are read-to-clear
+        aggregates. TX_STA_FIFO is the per-frame status FIFO — each read
+        pops one entry. VALID bit (0x1) set means a real entry; if we get
+        all-zero entries, the FIFO is empty (= no frames actually TX'd by
+        chip). Drain up to 8 entries per call."""
+        from .constants import TX_STA_CNT0, TX_STA_CNT1, TX_STA_FIFO
+        try:
+            cnt0 = self.transport.read32(TX_STA_CNT0)
+            cnt1 = self.transport.read32(TX_STA_CNT1)
+            # TX_STA_CNT0: bits[15:0] = TX_FAIL_COUNT, bits[31:16] = TX_BEACON_COUNT
+            # TX_STA_CNT1: bits[15:0] = TX_SUCCESS_COUNT, bits[31:16] = TX_RETRANSMIT_COUNT
+            # [SRC] rt2800.h:1889-1898
+            tx_fail = cnt0 & 0xFFFF
+            tx_beacon = (cnt0 >> 16) & 0xFFFF
+            tx_ok = cnt1 & 0xFFFF
+            tx_retry = (cnt1 >> 16) & 0xFFFF
+            fifo_entries = []
+            for _ in range(8):
+                entry = self.transport.read32(TX_STA_FIFO)
+                if not (entry & 0x1):
+                    break
+                fifo_entries.append(entry)
+            logger.debug(
+                "[%s] CNT0=0x%08x CNT1=0x%08x "
+                "→ ok=%d fail=%d retry=%d beacon=%d | FIFO drained %d: %s",
+                tag, cnt0, cnt1, tx_ok, tx_fail, tx_retry, tx_beacon,
+                len(fifo_entries),
+                " ".join(f"0x{e:08x}" for e in fifo_entries) or "(empty)",
+            )
+        except (IOError, usb.core.USBError) as e:
+            logger.debug("[%s] TX counter read failed: %s", tag, e)
 
     async def close(self) -> None:
         self._rx_running = False
