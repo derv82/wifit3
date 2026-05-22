@@ -173,13 +173,28 @@ def write_mac_address(t: RT2800USBTransport, mac: bytes) -> None:
 
     Without this set to a real value, RX may stay silent on some chip
     revs because the MAC matching engine has no valid identity.
-    UNICAST_TO_ME_MASK = 0xFF means full MAC must match for unicast-
-    to-me — doesn't affect broadcast/multicast capture.
+
+    UNICAST_TO_ME_MASK lives in MAC_ADDR_DW1 bits [23:16] and gates
+    whether the chip's RX path accepts unicast frames not addressed to
+    its own MAC. Kernel default (STA mode) is 0xFF — strict-match all
+    8 bits of the unicast destination's first byte, so frames addressed
+    to anyone else are dropped. We clear it to 0 because wifit3 is
+    always-monitor: PMKID/SAE/handshake-capture all rely on receiving
+    unicast DATA addressed to a *forged* source MAC the chip doesn't
+    recognise as itself. Without this, the AP's M1 reply to our forged
+    Assoc Req is silently dropped before reaching the RX URB.
+
+    mt76 analog: chips/mt76x0u/driver.py rewrites MT_MAC_ADDR_DW1 with
+    U2ME_MASK cleared for the same reason.
+
+    Realtek analog: chips/rtl8xxxu / rtw88 set RCR with ACCEPT_DATA +
+    ACCEPT_AP, which similarly opens unicast-not-to-me on those families.
     """
     if len(mac) != 6:
         raise ValueError(f"MAC must be 6 bytes, got {len(mac)}")
     dw0 = mac[0] | (mac[1] << 8) | (mac[2] << 16) | (mac[3] << 24)
-    dw1 = (0xFF << 16) | (mac[5] << 8) | mac[4]
+    # UNICAST_TO_ME_MASK=0 in the high bits — see docstring.
+    dw1 = (mac[5] << 8) | mac[4]
     t.write32(0x1008, dw0)   # MAC_ADDR_DW0
     t.write32(0x100C, dw1)   # MAC_ADDR_DW1
 

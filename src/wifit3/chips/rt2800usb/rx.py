@@ -165,13 +165,20 @@ def parse_rx_urb(buf: bytes, *, rxwi_size: int = RXWI_DESC_SIZE_4WORDS) -> Optio
     crc_error = bool(rxd_w0 & RXD_W0_CRC_ERROR)
 
     # 802.11 frame: starts right after RXWI, mpdu_len bytes long.
-    # mpdu_len includes FCS (chip is in RX_INCLUDES_FCS-equivalent mode
-    # for monitor) — strip the last 4 bytes for the parser.
+    # NOTE 2026-05-22: previously this stripped the trailing 4 bytes
+    # assuming "mpdu_len includes FCS". Live wire-diagnostics on EAPOL
+    # M1 frames (PMKID harvest path on RT5572 / PAU09) showed the strip
+    # was clipping the last 4 bytes of payload — same symptom and same
+    # fix as chips/mt76x0u/rx.py. The chip apparently already strips
+    # FCS for these frames, so our extra strip removed actual data.
+    # IE walkers in the parser are self-bounded by tag lengths so the
+    # extra 4 trailing bytes (if FCS *is* present for some frame types)
+    # are harmless garbage that downstream parsing ignores.
     frame_start = RXINFO_DESC_SIZE + rxwi_size
     frame_end = frame_start + mpdu_len
     if frame_end > len(buf):
         return None
-    mpdu = bytes(buf[frame_start: frame_end - 4])  # strip FCS
+    mpdu = bytes(buf[frame_start: frame_end])
 
     rssi = _agc_to_rssi_simple(rxwi_w2)
 

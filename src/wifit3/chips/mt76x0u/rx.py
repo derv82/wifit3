@@ -149,11 +149,17 @@ def decode_rx_packet(data: bytes) -> Optional[RxFrame]:
         if 0 < hdrlen < len(frame) - 2:
             frame = frame[:hdrlen] + frame[hdrlen + 2:]
 
-    # FCS strip — mt76 leaves the trailing 4-byte FCS in mpdu_len; the
-    # parser doesn't validate it. Stripping makes IE walkers' end-of-frame
-    # bounds match expectations.
-    if len(frame) >= 4:
-        frame = frame[:-4]
+    # FCS strip — DISABLED EXPERIMENTALLY 2026-05-22 while diagnosing
+    # PMKID-on-ACHM failure. The kernel comment said "mt76 leaves the
+    # trailing 4-byte FCS in mpdu_len" but live wire-diagnostics on
+    # forged-MAC EAPOL M1 show that stripping 4 bytes here clips the
+    # last 4 bytes of a 16-byte PMKID. Hypothesis: this chip may strip
+    # FCS itself for some frame types and the additional strip removes
+    # useful payload. Restore if IE parsing breaks elsewhere — beacon
+    # IE walkers should be self-bounded by tag lengths so this should
+    # be safe.
+    # if len(frame) >= 4:
+    #     frame = frame[:-4]
 
     return RxFrame(
         frame=frame,

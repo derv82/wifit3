@@ -193,14 +193,19 @@ class WlanFrameParser:
                                 result["eapol_payload"] = bytes(
                                     frame[eapol_start: eapol_start + total_eapol_len]
                                 )
-                                # The PMKID ships in the AP's M1 Key Data as
-                                # a KDE (Type=0xDD, OUI=00:0F:AC, DataType=0x04).
-                                # Walking unconditionally on any frame with key
-                                # data is harmless — only M1 ever carries one.
-                                if key_data_len > 0:
-                                    key_data = frame[
-                                        eapol_start + 99 : eapol_start + 99 + key_data_len
-                                    ]
+                            # PMKID / key_data extraction — split out of the
+                            # full-frame check above. Some chips (observed on
+                            # mt76x0u / rt2800usb RT5572) deliver EAPOL M1 a
+                            # few bytes short; the PMKID KDE sits at the START
+                            # of key_data, so a complete KDE can still be
+                            # recovered even when the trailing few bytes of
+                            # key_data are missing. (See `eapol_payload` above
+                            # for the hashcat-grade full-frame guard.)
+                            if key_data_len > 0:
+                                key_data = frame[
+                                    eapol_start + 99 : eapol_start + 99 + key_data_len
+                                ]
+                                if key_data:
                                     pmkid = WlanFrameParser._extract_pmkid_kde(key_data)
                                     if pmkid is not None:
                                         result["eapol_pmkid"] = pmkid
