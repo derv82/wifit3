@@ -335,6 +335,42 @@ class FirmwareUploader:
                             f"time {header['build_time']!r}  "
                             f"(ilm={header['ilm_len']} dlm={header['dlm_len']})")
 
+        # ---- Step 0z: WARM chip pre-reset.
+        # If WLAN_EN is set at entry, the chip has FW running from a
+        # previous session. We MUST do the WLAN_RESET hardware reset BEFORE
+        # the pre-clean clears WLAN_EN, because chip_onoff(reset=True)'s
+        # reset cycle is gated on `if val & WLAN_EN` — once pre-clean
+        # clears WLAN_EN, the bring-up's reset cycle skips, FW survives,
+        # fw_reset (vendor cmd) only partially kills it, and the
+        # subsequent bulk-OUT FW upload truncates mid-chunk.
+        #
+        # This block does the cycle directly:
+        #   - assert GPIO_OUT_EN + WLAN_RESET + WLAN_RESET_RF (with WLAN_EN
+        #     still set), write
+        #   - sleep
+        #   - clear the RESET bits, write
+        #   - then fall through to the normal pre-clean → bring-up flow,
+        #     which will see WLAN_EN=0 (because we kept it set + then
+        #     pre-clean clears it) and do a clean cold-boot upload.
+        initial_val = self.t.read32(MT_WLAN_FUN_CTRL)
+        if initial_val & MT_WLAN_FUN_CTRL_WLAN_EN:
+            self._report(0.01,
+                f"WARM chip detected (WLAN_FUN_CTRL=0x{initial_val:08x}) — "
+                f"forcing WLAN_RESET hardware cycle")
+            val = initial_val
+            val |= MT_WLAN_FUN_CTRL_GPIO_OUT_EN
+            val &= ~MT_WLAN_FUN_CTRL_FRC_WL_ANT_SEL
+            val |= (MT_WLAN_FUN_CTRL_WLAN_RESET
+                    | MT_WLAN_FUN_CTRL_WLAN_RESET_RF)
+            self.t.write32(MT_WLAN_FUN_CTRL, val)
+            time.sleep(UDELAY_20US)
+            val &= ~(MT_WLAN_FUN_CTRL_WLAN_RESET
+                     | MT_WLAN_FUN_CTRL_WLAN_RESET_RF)
+            self.t.write32(MT_WLAN_FUN_CTRL, val)
+            # Settle: chip's MCU is mid-reset; brief sleep so subsequent
+            # vendor writes don't time-out hitting a wedged USB pipe.
+            time.sleep(0.020)   # 20 ms
+
         # ---- Step 0a: chip OFF cycle. [SRC] mt76x0/usb.c:259
         # Kernel probe explicitly does this with the comment
         # "Disable the HW, otherwise MCU fail to initialize on hot reboot".
@@ -358,10 +394,24 @@ class FirmwareUploader:
         self.t.write32(MT_USB_DMA_CFG,
                        MT_USB_DMA_CFG_RX_BULK_EN | MT_USB_DMA_CFG_TX_BULK_EN)
 
-        # ---- Step 4: FW-already-running short-circuit
-        if self.firmware_running():
-            self._report(1.00, "FW already running — skipping upload (warm boot)")
-            return {"skipped": True, "polls": 0, "header": header}
+        # ---- Step 4: warm-boot detection (informational only)
+        # Past iterations short-circuited here ("FW already running — skip
+        # upload"). That fails: the pre-clean cleared WLAN_EN, so the
+        # subsequent chip_onoff(reset=True) skipped its conditional reset
+        # cycle (kernel: `if (val & WLAN_EN) { assert RESET; deassert; }`).
+        # WLAN_EN was just toggled, leaving the WLAN clock restarted but
+        # the MCU command channel in stale state from the previous session.
+        # Result: FW_READY bit stays set, but MCU bulk-IN times out on
+        # every command.
+        #
+        # The kernel itself has no such short-circuit — it always runs the
+        # full upload. The `fw_reset` we issue a few steps down (DEV_MODE
+        # wValue=0x1) kills any running FW first, so re-upload is safe.
+        # Cost: ~700 ms FW upload per process start. Worth it for warm-reattach
+        # reliability — no more "please replug" cycles between test runs.
+        was_warm = self.firmware_running()
+        if was_warm:
+            self._report(0.06, "FW already running — will force-reset and re-upload")
 
         # ---- Step 5: MAC_SYS_CTRL = 0x2c (kernel does this magic write)
         self.t.write32(MT_MAC_SYS_CTRL, MT_MAC_SYS_CTRL_PRE_FW_VALUE)
@@ -431,7 +481,8 @@ class FirmwareUploader:
         self.t.write32(MT_FCE_PSE_CTRL, 1)
 
         self._report(1.00, "FW upload complete")
-        return {"skipped": False, "polls": polls, "header": header}
+        return {"skipped": False, "polls": polls, "header": header,
+                "was_warm": was_warm}
 
     # ------------------------------------------------------------------
     # Post-FW init (steps run by mt76x0u_init_hardware AFTER mcu_init).

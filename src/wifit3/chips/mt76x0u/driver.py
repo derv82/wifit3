@@ -178,11 +178,15 @@ class MT76x0UDriver:
             return False
 
         self.fw_info = result
-        self.is_warm = result["skipped"]
-        if result["skipped"]:
-            logger.info("MT7610U: warm boot — FW already running")
+        self.is_warm = result.get("was_warm", False)
+        h = result["header"]
+        if self.is_warm:
+            logger.info(
+                "MT7610U: warm chip detected — force-reset + re-upload OK. "
+                "FW v%s build 0x%04x (%s) — ready after %d poll(s)",
+                h["fw_ver_str"], h["build_ver"], h["build_time"], result["polls"],
+            )
         else:
-            h = result["header"]
             logger.info(
                 "MT7610U: FW v%s build 0x%04x (%s) — ready after %d poll(s)",
                 h["fw_ver_str"], h["build_ver"], h["build_time"], result["polls"],
@@ -264,21 +268,16 @@ class MT76x0UDriver:
                 "(MAC_CSR0 via MCU = 0x%08x)", self.mcu_smoke["via_mcu_read"],
             )
         except (MCUError, usb.core.USBError) as e:
-            # Per [[feedback_warm_reattach]] — MCU timing out usually means
-            # the chip is wedged from a previous session (RX-DMA backed up,
-            # MAC in unclean state). dev.reset() resets USB but not chip RAM.
-            # Surface an actionable error instead of cascading timeouts.
-            if self.is_warm:
-                logger.error(
-                    "MT7610U: MCU smoke FAILED on WARM boot (%s).\n"
-                    "  The chip is wedged from a previous session — its MAC "
-                    "or RX-DMA is in a bad state that survived USB reset.\n"
-                    "  → Please UNPLUG the dongle, wait ~3 seconds, REPLUG, "
-                    "and retry. (Cold boot will reinitialize everything.)",
-                    e,
-                )
-            else:
-                logger.error("MT7610U: MCU smoke test failed: %s", e)
+            # Even after the warm-boot force-reupload, MCU smoke can fail
+            # if the chip's MAC/RX-DMA is so wedged that a USB reset +
+            # full FW reload can't clear it. Surface an actionable replug
+            # message — that's the only known recovery path.
+            logger.error(
+                "MT7610U: MCU smoke test failed: %s\n"
+                "  Chip appears wedged beyond what FW re-upload can fix.\n"
+                "  -> Please UNPLUG the dongle, wait ~3 seconds, REPLUG, "
+                "and retry.", e,
+            )
             return False
 
         # ---- M3a step 11: init_mac_registers [SRC] mt76x0/init.c:187.
@@ -544,7 +543,15 @@ class MT76x0UDriver:
 
     def _set_channel_sync(self, channel: int) -> bool:
         """Sync core of `set_channel` — usable from sync contexts (M5 hop
-        loop) and from the async Protocol method below."""
+        loop) and from the async Protocol method below.
+
+        Short-circuits if we're already tuned to `channel`. The
+        WlanInterface hop loop calls set_channel every `interval` seconds
+        even when pinned to a single channel; re-tuning to the same channel
+        is ~150 MCU commands of wasted work that blocks the asyncio loop.
+        """
+        if channel == self.current_channel:
+            return True
         try:
             self.last_set_channel_state = set_channel_20mhz(
                 self.transport, self.mcu, channel,
