@@ -6,7 +6,7 @@ Fully-functional userspace Python drivers (cold + warm bring-up, channel hop, in
 
 | Card / Family | Driver | Bands | Status |
 |---|---|---|---|
-| Atheros AR9271 | `chips/ar9271/` | 2.4 GHz | DONE (v1.4) |
+| Atheros AR9271 (AWUS036NHA) | `chips/ar9271/` | 2.4 GHz, 1T1R | DONE 2026-05-22 — cleanroom-FW RX protocol fully RE'd (36-B header, rs_status + FCS gating, kernel-faithful HIF reassembler); PMKID + EAPOL M1-M4 hw-verified |
 | Alfa/Realtek RTL8187 | `chips/rtl8187/` | 2.4 GHz | DONE |
 | Ralink RT2800USB (RT5372 / RT5572) | `chips/rt2800usb/` | 2.4 GHz (RT5372 1T1R); 2.4 + 5 GHz (RT5572 2T2R) | DONE 2026-05-20 — RT5372 + RT5572 (silicon RT5392/RT5592) hw-verified for scan + monitor + TX inject. RT3572 split out to known-broken below. |
 | Mediatek MT7612U (AWUS036ACM, Alfa) | `chips/mt76x2u/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-20 — full attack stack hw-verified; deauth on NETGEAR2G recaptured EAPOL M1+M3 live |
@@ -23,20 +23,10 @@ the modern 8822b share through it.
 
 ## Known broken / partial-support cases
 
-Cross-card PMKID + SAE Probe verification on 2026-05-22 surfaced three
+Cross-card PMKID + SAE Probe verification on 2026-05-22 surfaced two
 chip-specific issues that aren't covered by the per-chipset rows above.
 Tracked here so they don't fall on the floor between sessions:
 
-- **Atheros AR9271 (AWUS036NHA) — RX corruption.** Scanning shows
-  garbled SSIDs (multiple variants of one real ESSID — e.g. `Shipwreck-5G`
-  / `ShiTbk-5G` / `Shipwrgk-5G`), repeating BSSID suffixes (`cb:a3`,
-  `27:e4`), and uniform unrealistic RSSI (~-94 dBm on every row).
-  PMKID hangs without timing out. Classic bit-flipped reads or
-  off-by-N descriptor decode. Driver was DONE (v1.4) originally and
-  has lived through many shared-module changes since — likely a
-  regression in the HTC/WMI RX path or `chips/ar9271/` descriptor
-  handling. First thorough test against the current RX pipeline in
-  a while, so the regression window is wide.
 - **Ralink RT3572 (AWUS051NH v2) — TX RF-silent on Windows, paused
   pending Kali usbmon diff.** All digital indicators say the chip is
   transmitting (TX_STA_FIFO entries with TX_SUCCESS=1, TX_STA_CNT1
