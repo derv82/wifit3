@@ -100,11 +100,17 @@ def decode_urb(urb: bytes) -> Optional[dict]:
             if 0 < hdrlen < len(frame) - 2:
                 frame = frame[:hdrlen] + frame[hdrlen + 2:]
 
-    # FCS strip — mt76 leaves the trailing 4-byte FCS in mpdu_len. The
-    # WlanFrameParser doesn't validate FCS; we strip it so payload offsets
-    # match without surprise.
-    if len(frame) >= 4:
-        frame = frame[:-4]
+    # FCS strip — DISABLED 2026-05-22 (commit b887282 — see
+    # chips/mt76x0u/rx.py + chips/rt2800usb/rx.py for the same fix).
+    # The kernel comment ("mt76 leaves trailing 4-byte FCS in mpdu_len")
+    # turned out to be wrong for forged-MAC EAPOL M1 frames on this chip
+    # family: the chip already excludes FCS from mpdu_len, and the
+    # additional strip here clipped the last 4 bytes of payload —
+    # specifically the tail 4 bytes of a 16-byte PMKID inside the M1's
+    # key_data. IE walkers are self-bounded by tag lengths so any FCS
+    # bytes that DO survive for other frame types are inert.
+    # if len(frame) >= 4:
+    #     frame = frame[:-4]
 
     # RSSI: prefer chain 0. The kernel applies a gain offset
     # (mt76x02_mac_get_rssi); for M4 we use the raw byte (signed int8).
