@@ -99,18 +99,7 @@ Not every chip uses every module — `mac.py`/`phy.py`/`chan.py`/`tx.py` etc. ar
 
 ### Supported Hardware
 
-| Chip | VID:PID | Architecture |
-|------|---------|--------------|
-| Atheros AR9271 | 0cf3:9271 | Soft-MAC — WMI over HTC, Big Endian, strict Sequence IDs |
-| Realtek RTL8187L | 0bda:8187 | Hard-MAC — USB control transfers |
-| Ralink RT5572 | 148f:5572 | rt2800usb family |
-| Ralink RT3572 | 148f:3572 | rt2800usb family |
-| Ralink RT5372 | 148f:5372 | rt2800usb family |
-| **Realtek RTL8821AU** | **0bda:0811** | **rtw88 family — WiFi 5 (2.4 + 5 GHz), legacy MCUFWDL FW path** |
-| **Realtek RTL8822BU** | **2357:0138** (+24 more) | **rtw88 family — WiFi 5 (2.4 + 5 GHz), 2T2R, modern iDDMA FW path** |
-| Mediatek MT7921AU | 0e8d:7961 | WiFi 6 — MCU Unified Commands, Little Endian |
-
-RT2800USB variants share `RT2800USBDriver`; the `chip_id` string (carried in `DeviceID.extras`) selects the right RXWI/TXWI sizes and init assets.
+See `NEXT-STEPS.md` for the current supported-hardware table (chip → VID:PID → status → notes).
 
 ### Adding a New Chipset
 
@@ -127,40 +116,9 @@ The manager is a generic VID:PID discovery loop — each driver declares its own
 
 The cold-vs-warm distinction is a per-driver concern: if a previous session left the chip running, `connect()` should detect that and skip the bring-up. See `chips/rtl8821au/mac.py:is_chip_warm()` + `driver.py:_warm_reattach` for the pattern (light reattach + smoke-test the bulk-IN pipe; surface a clear "please replug" message if the USB pipe is wedged — that path can't always be recovered in userland on Windows+WinUSB).
 
-### AR9271 Protocol Notes (Soft-MAC)
+### Per-chipset Protocol Notes
 
-Channel changes require replaying a ~500-byte WMI_REG_WRITE (0x15) sequence with dynamically injected Sequence IDs, then patching register `0x9874` (AR_PHY_SYNTH_CONTROL) with the Fractional-N Synthesizer Word for the target channel. Static PCAP replay fails because the firmware rejects out-of-order Sequence IDs. See `SOFT-MAC.md` and `QUIRKS.md` for byte offsets and the WMI header format.
-
-### RTL8821AU Protocol Notes (rtw88 family — legacy MCUFWDL)
-
-WiFi 5, 2.4 + 5 GHz, 1T1R. Cleanroom-RE'd from `data_dumps/rtw88-source-v6.18/`; FW blob byte-verified vs `linux-firmware/rtw88/rtw8821a_fw.bin`. Full bring-up runs in userland on Windows (WinUSB via Zadig) and Linux:
-
-- **FW upload**: legacy `MCUFWDL` path (8051 wlan CPU). All control transfers — `bRequest=0x05`, `wValue=FW_START_ADDR_LEGACY(0x1000)+offset`. ACK is `BIT_FWDL_CHK_RPT` of `REG_MCUFW_CTRL(0x0080)`; running confirmation is `FW_READY_LEGACY=0xC6`.
-- **Init tables**: `mac_tbl` / `agc_tbl` / `bb_tbl` / `rf_a_tbl` ported 1:1 from `rtw8821a_table.c`. Runtime walker `chips/rtl8821au/phy_cond.py` mirrors `rtw_parse_tbl_phy_cond` + `check_positive` line-for-line. Branches gate on (intf, rfe); no `cut` dependency for 8821A.
-- **EFUSE optional for RX**: rfe=0 ELSE-branch defaults are sufficient for monitor-mode capture on AWUS036ACS. EFUSE read becomes necessary for accurate TX power + BT coex.
-- **Channel tune**: `chan.py:set_channel_2g_20mhz` / `set_channel_5g_20mhz`. Unified `_switch_channel` does the centre-frequency-area write + RF18 SIPI writes (RFREG_MASK=0xfffff, encoded as `((addr<<20)|(data & 0xfffff)) & 0x0fffffff`).
-- **Warm reattach**: `mac.is_chip_warm()` checks FW_READY_LEGACY + MACTXEN|MACRXEN. Driver skips the entire bring-up and just resumes USB polling. 1.5 s RX smoke test detects wedged bulk-IN pipes and tells the user to replug.
-
-When porting other rtw88 chips (8812au, 8822bu, 8814au), most of this stack should slot in: the phy_cond walker, the SIPI primitives, the `pwr_seq` runtime, the tx_desc/rx_desc layouts are family-shared. The big delta is the FW upload path — 8822bu/8814au use modern `iddma` rather than legacy `MCUFWDL`.
-
-### RTL8822BU Protocol Notes (rtw88 family — modern iDDMA)
-
-WiFi 5, 2.4 + 5 GHz, **2T2R**, no 8051 (modern wlan CPU). Confirmed on the TP-Link Archer T3U Plus v1 (`2357:0138`, CUT_D). 25 known VID:PIDs from rtw8822bu.c's id_table. Full-bring-up runs in userland on Windows (WinUSB) and Linux:
-
-- **FW upload (M2)**: modern `iDDMA` path — TX descriptor + chunk on bulk-OUT EP 0x05 (BEACON qsel → HIGH-priority lane), then iDDMA register triggers (REG_DDMA_CH0SA/DA/CTRL with OWN | CHKSUM_EN). FW file = 64-byte rtw_fw_hdr + 11216-byte DMEM + 149960-byte IMEM; our pcap-extracted blob is 161176 B, byte-for-byte verified vs `linux-firmware/rtw88/rtw8822b_fw.bin[64:]`. ~106 ms end-to-end.
-- **FW_READY (M3)**: `(REG_MCUFW_CTRL & 0xCFFF) == 0xC078` (FW_INIT_RDY | FW_DW_RDY | IMEM_DW_OK | DMEM_DW_OK | IMEM_CHKSUM_OK | DMEM_CHKSUM_OK).
-- **PHY init (M4)**: 5 tables (mac + agc + bb + rf_a + rf_b, ~5000 register writes) loaded via shared `rtw88_base/phy_cond.py` walker with `chip_id=OTHER` (scalar-rfe semantics; 8822b uses `cond.rfe != drv_cond.rfe`, NOT bitfield like 8821a). `EfuseDefaults` uses `rfe_option=3` (= IFEM with ext, matches most retail dongles in id_table). Skips `config_trx_mode`, `phy_rfe_init`, `pwrtrack_init`, `phy_bf_init`, `phy_init` DIG — not needed for monitor RX. ~950 ms.
-- **MAC init for RX (M5)**: REG_CR = MAC_TRX_ENABLE, RX filters open (`REG_RXFLTMAP0=0x0FFFFFFF`, `REG_RCR=0xE400220E`), drv_info + APP_PHYSTS, USB burst size 512.
-- **Priority queue init (M7, needed for MGMT TX)**: `mac.init_priority_queue_8822b` ports `__priority_queue_cfg` — FIFO page tables + auto LLT init. Without this, MGMT bulk-OUT stalls.
-- **Channel tune (M6)**: `chan.set_channel_2g_20mhz` / `_5g_20mhz`. Full port of `rtw8822b_set_channel`: BB + MAC + RF18 + rxdfir + toggle_igi + CCA + RFE/TRSW switch. 2T2R writes RF18 on both paths A and B. 5G uses rfbe lookup from `LOW_BAND[]` / `MIDDLE_BAND[]` / `HIGH_BAND[]` tables.
-- **TX inject (M7)**: 48-byte tx_pkt_desc (vs 8821a's 40), MGMT qsel → bulk-OUT EP 0x05. `old_datarate_fb_limit = False` for 8822b (vs True for 8821a) — DO NOT set W4 FB_LIMIT.
-- **Warm reattach**: `mac.is_chip_warm()` checks `FW_INIT_RDY | FW_DW_RDY` in REG_MCUFW_CTRL + `MACTXEN | MACRXEN` in REG_CR. Same "please replug" pattern as 8821a if bulk-IN pipe is wedged.
-
-**Critical bit-position bug to avoid**: `BIT_HCI_TXDMA_EN = BIT(0)` and `BIT_TXDMA_EN = BIT(2)` (NOT BIT(2) and BIT(3) as one might guess). Wrong bits silently break bulk-OUT — chip won't accept any TX, manifests as USBTimeoutError. See `chips/rtl8822bu/RTL8822BU.md` for the full bit-vs-bug audit table.
-
-### MT7921AU Protocol Notes
-
-WiFi 6, little-endian, `mt76` family. The scaffolding under `chips/mt7921au/` is unverified — see `src/wifit3/chips/mt7921au/MT7921AU.md` for facts confirmed against `usb_dumps/captures_mt7921u/capture-3.pcap`. Kernel source under `data_dumps/mt76-source-v6.18/`.
+See `chips/<chipset>/<CHIP>.md` for per-chipset protocol notes — FW upload path, PHY/MAC init, channel-tune semantics, warm-reattach behaviour, and per-chip bit-position gotchas. Each chip's ground-truth doc accumulates `[SRC]/[WIRE]/[HW]` citations against the kernel source and the cold-boot pcap.
 
 ### Frame Flow (RX)
 
