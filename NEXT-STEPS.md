@@ -21,6 +21,35 @@ phy_cond walker, power_seq runtime, RF SIPI, TX checksum, RX-desc parser,
 and the legacy MCUFWDL FW upload — both 88xxA chips (8821a + 8812a) and
 the modern 8822b share through it.
 
+## Known broken / partial-support cases
+
+Cross-card PMKID + SAE Probe verification on 2026-05-22 surfaced three
+chip-specific issues that aren't covered by the per-chipset rows above.
+Tracked here so they don't fall on the floor between sessions:
+
+- **Atheros AR9271 (AWUS036NHA) — RX corruption.** Scanning shows
+  garbled SSIDs (multiple variants of one real ESSID — e.g. `Shipwreck-5G`
+  / `ShiTbk-5G` / `Shipwrgk-5G`), repeating BSSID suffixes (`cb:a3`,
+  `27:e4`), and uniform unrealistic RSSI (~-94 dBm on every row).
+  PMKID hangs without timing out. Classic bit-flipped reads or
+  off-by-N descriptor decode. Driver was DONE (v1.4) originally and
+  has lived through many shared-module changes since — likely a
+  regression in the HTC/WMI RX path or `chips/ar9271/` descriptor
+  handling. First thorough test against the current RX pipeline in
+  a while, so the regression window is wide.
+- **Ralink RT3572 (AWUS051NH v2) — forged-srcMAC PMKID/SAE failure.**
+  Scanning + deauth-driven real-client 4-way handshake capture both
+  work fine on this card. But PMKID and SAE Probe get **zero AP
+  responses** — no Auth Response, no Assoc Response, no M1.
+  Specifically a "forged srcMAC" issue: the AP doesn't respond to our
+  Auth Req. The sister rt2800usb silicons (RT5572 / RT5392) work
+  after `b887282`, so this is RT3572-specific (silicon? TX-rate?
+  AP-side rate-limit?). Next step: external sniffer watching the
+  channel to confirm whether our Auth Req with the spoofed source MAC
+  is even hitting the air.
+- **Mediatek MT7921AU** — separate, fully detailed below in
+  **NEXT STEP: MT7921AU**. Driver paused on FW_START_REQ wall.
+
 ## Open work on RTL8812AU (the just-landed chipset)
 
 Two follow-ups are tracked, both deferred but small:
