@@ -170,7 +170,29 @@ WEP attacks scoped in [`src/wifit3/engine/attacks/wep/README.md`](src/wifit3/eng
   - We landed PMKID extraction, wired it into the UI, it works well.
   - It appears hcxdumptool has chipset-specific optimizations for capturing packets... But there might be more that it's doing.
 * WPS & Pixie Dust
-  - WPS detection at the packet level (shown in Scanner & Focus views).
+  - **WPS column (Scanner) — Tier 2.** Detection already half-exists: the
+    parser sets `parsed["wps"]=True` on the vendor IE (tag 221, OUI
+    `00:50:F2`, OUI-type `0x04`) at `wlan/packet.py:461`, but it's dropped —
+    `AccessPoint` has no `wps` field and `interface.py` doesn't copy it, so
+    nothing reaches the UI. Tier 2 = parse the WPS IE's nested big-endian
+    TLVs (2-B attr id, 2-B len, value) and surface attacker-relevant state:
+      - `0x1057` **AP Setup Locked** (1 = PIN locked out — the single most
+        important field; locked APs are why Reaver wastes hours).
+      - `0x104A` **Version** + `0x1049` WFA Version2 subelement → WPS 1.0 vs 2.0.
+      - `0x1044` **Setup State** (1 = not configured, 2 = configured).
+      - `0x1008` **Config Methods** bitmask (PBC vs PIN/Label/Display/Keypad).
+      - `0x1041` **Selected Registrar** + `0x1012` **Device Password ID**
+        (0x0004 = PBC window open right now; 0x0000 = PIN).
+    - Plumbing: structured fields on `AccessPoint` (`wps: bool`,
+      `wps_locked`, `wps_version`, `wps_config_methods`,
+      `wps_device_password_id`), copied in `interface.py:_on_frame_parsed`,
+      rendered as a Scanner column (`WPS` / `WPS🔒` locked / `WPS2`). Same
+      column-wiring shape as the recent `💻` clients column. Add a unit
+      test against a captured WPS beacon IE. Est. ~1-2h.
+    - WPS info appears in **both** beacons and probe responses; locked/
+      state/version are reliably in beacons. Sets up the Pixie-Dust attack
+      module below (great fit for the old Ralink/RT2570 + Realtek silicon,
+      which are heavily bad-RNG-vulnerable).
   - Bully/Reaver-style PIN brute forcing with backoff on rate limits, precise ETAs (could take days/weeks).
   - PixieWPS: Tracks vendor-specific "bad RNG" for generated E-hashes. Cracks known vendors with bad RNG in seconds/minutes. TODO: Port the logic to Python (could be massive), 
 * WPA3 downgrade attack (when in transition mode) -- implemented by responding to probe requests.
