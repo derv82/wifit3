@@ -23,6 +23,7 @@ from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDe
 from ..encryption_format import (
     format_encryption_markup,
     format_pmf_markup,
+    format_wps_markup,
     format_wpa3_mode_markup,
 )
 
@@ -90,6 +91,7 @@ class FocusView(Screen):
                 yield Vertical(
                     Label("SECURITY", classes="panel-title"),
                     Label(id="lbl-enc"),
+                    Label(id="lbl-wps"),
                     Label(id="lbl-pmf"),
                     Label(id="lbl-wpa3"),
                     Label(id="lbl-sae-groups"),
@@ -203,6 +205,14 @@ class FocusView(Screen):
                 emoji=False,
             )
         )
+        wps_label = self.query_one("#lbl-wps", Label)
+        wps_markup = format_wps_markup(ap)
+        if wps_markup is None:
+            wps_label.display = False
+        else:
+            wps_label.display = True
+            wps_label.update(Text.from_markup(f"WPS: {wps_markup}", emoji=False))
+
         self.query_one("#lbl-pmf", Label).update(
             Text.from_markup(f"PMF: {format_pmf_markup(ap)}", emoji=False)
         )
