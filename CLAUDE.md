@@ -5,6 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Session Cheatsheet
 
 - **Platform**: Dev machine is Windows + PowerShell. Bash tool is available, but `scripts/AGENTS.md` has PowerShell-isms worth respecting (no `&&` chaining, no Unix `grep`/`tail`, never pass `-c` to `tshark` since it limits *input* not output).
+- **Git**: Commit directly to `master`; branch, switch branches, or make worktrees only when asked. The working tree is shared across concurrent sessions — `git status` may show files, and tests may fail, from work that isn't yours; stage only your task's files (`git add <paths>`, never `-A`/`.`).
 - **Cross-platform by design**: Wifit3 uses PyUSB + `libusb_package` so drivers run on Windows (with Zadig binding the device to WinUSB) AND Linux (after `rmmod <kernel_driver>`). No Kali boot is needed for normal dev — that's the whole point of going userland.
 - **Hardware testing is the USER's job**, not the agent's. The loop is:
   1. Agent proposes code changes.
