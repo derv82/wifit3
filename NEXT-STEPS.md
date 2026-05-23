@@ -62,10 +62,15 @@ Tracked here so they don't fall on the floor between sessions:
     - `txpath/rxpath` forced to 2 for RT3572 when EFUSE is unburned
       (NIC_CONF0=0x0000) so `init_bbp_3572` keeps DAC1 powered.
 
-  None of those fixes restored on-air RF. Next step: run wifit3 on
-  Kali to rule out Windows/WinUSB vs driver. If Kali also fails,
-  `usbmon` diff between `aireplay-ng --test` (works) and wifit3 (fails)
-  will expose the missing register write or sequence.
+  None of those fixes restored on-air RF. **Update 2026-05-23: the Kali
+  ruling-out is done.** Captures landed in
+  `usb_dumps/captures_rt3572_tx_diff/` (Phase A = kernel `rt2800usb` +
+  `aireplay-ng`, working; Phase B = wifit3 with kernel modules unloaded,
+  failing). wifit3 reproduced the RF-silent symptom on Kali too — so this
+  is **driver-side, not a Windows/WinUSB artifact**. Next step is purely
+  offline: diff the Phase-A vs Phase-B usbmon pcaps to find the missing /
+  wrong register write or sequence keeping the analog stage silent. No
+  further hardware needed to make progress.
 - **Mediatek MT7921AU** — separate, fully detailed below in
   **NEXT STEP: MT7921AU**. Driver paused on FW_START_REQ wall.
 
@@ -80,22 +85,23 @@ Check items off as they land; add new ones as fresh dependencies surface.
   scan, unplug. Saves to `usb_dumps/captures_rt2500usb/`. See "Distant
   Future Hardware Support" below.
 
-- [ ] **AWUS051NHv2 (RT3572) usbmon diff** — unblock the TX-RF-silent
-  issue. Single script `scripts/kali_test_rt3572_tx_diff.sh` runs both
-  captures back-to-back:
-  - **Phase A**: `aireplay-ng -0` deauth burst against the hardcoded
-    target AP/client (~20 s), kernel `rt2800usb` driver — the working
-    baseline.
-  - **Phase B**: `scripts/test_hw.py` running wifit3's deauth against the
-    same AP/client, kernel `rt2800usb / rt2x00usb / rt2x00lib` unloaded
-    so wifit3 owns the device — the failing case. (Phase B doubles as the
-    "does wifit3 fail on Kali too?" check; if it works here, the silent-
-    TX is WinUSB-specific instead of driver-side.)
+- [x] **AWUS051NHv2 (RT3572) usbmon diff** — **CAPTURED 2026-05-23**, in
+  `usb_dumps/captures_rt3572_tx_diff/`. Both phases landed:
+  - **Phase A** (`aireplay.pcap`, 38,922 usbmon frames + `aireplay.log`):
+    `aireplay-ng -0` deauth burst under the kernel `rt2800usb` driver —
+    the working baseline. `aireplay.log` shows ACKs incrementing, so
+    injection is confirmed on-air for this card under Linux.
+  - **Phase B** (`wifit3.pcap`, 9,122 usbmon frames + `wifit3_test_hw.log`):
+    wifit3's deauth via `test_hw.py` with the kernel modules unloaded so
+    wifit3 owns the device — the failing case. **The RF-silent symptom
+    reproduced on Kali**: bulk-OUT accepted, `TX_STA_CNT1` increments,
+    `TX_STA_FIFO` drains with TX_SUCCESS — same digital-success signature
+    as Windows. So the silent-TX is **driver-side, NOT WinUSB-specific**.
 
-  Both pcaps saved to `usb_dumps/captures_rt3572_tx_diff/`. Once landed,
-  the register-write diff will expose the missing/wrong BBP / RFCSR /
-  TX_PIN_CFG / LDO_CFG0 write keeping the analog stage silent. See
-  "Known broken / partial-support cases" above.
+  Remaining work is now a **dev-machine task, no more hardware needed**:
+  diff the two usbmon pcaps (kernel-baseline vs wifit3) to expose the
+  missing/wrong BBP / RFCSR / TX_PIN_CFG / LDO_CFG0 write keeping the
+  analog stage silent. See "Known broken / partial-support cases" above.
 
 - [x] *(Not needed)* **MT7921AU / AWUS036AXML** — existing captures in
   `usb_dumps/wifit3-kali-bundle/run-2026051*` already prove the
