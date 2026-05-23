@@ -69,6 +69,47 @@ Tracked here so they don't fall on the floor between sessions:
 - **Mediatek MT7921AU** — separate, fully detailed below in
   **NEXT STEP: MT7921AU**. Driver paused on FW_START_REQ wall.
 
+## Kali Trip TODO
+
+Persistent shopping list of captures / experiments that need a Kali boot.
+Check items off as they land; add new ones as fresh dependencies surface.
+
+- [ ] **Buffalo RT2500USB cold-boot capture** — first bring-up artifact for a
+  new `chips/rt2500usb/` driver. Standard `scripts/capture.py` pattern:
+  plug card, kernel loads `rt2500usb` module, `airmon-ng start`, brief
+  scan, unplug. Saves to `usb_dumps/captures_rt2500usb/`. See "Distant
+  Future Hardware Support" below.
+
+- [ ] **AWUS051NHv2 (RT3572) usbmon diff** — unblock the TX-RF-silent
+  issue. Two captures of equivalent activity, side by side:
+  - [ ] `aireplay-ng --test wlan0` against an AP on a known channel
+    (~30 s of TX activity, kernel rt2x00 driver — the working baseline).
+  - [ ] `wifit3` deauth attack against the same AP/channel, with kernel
+    `rt2800usb / rt2x00usb / rt2x00lib` unloaded so wifit3 owns the device
+    (the failing case).
+
+  Both saved to `usb_dumps/captures_rt3572_tx_diff/`. Once landed, the
+  register-write diff will expose the missing/wrong BBP / RFCSR /
+  TX_PIN_CFG / LDO_CFG0 write keeping the analog stage silent. See
+  "Known broken / partial-support cases" above.
+
+- [ ] **(Bonus) `wifit3 --debug` running on Kali against NHv2** — confirms
+  whether the silent-TX is OS-agnostic. Almost certainly is, but rules
+  out the WinUSB layer cleanly so we don't chase a Windows ghost.
+
+- [x] *(Not needed)* **MT7921AU / AWUS036AXML** — existing captures in
+  `usb_dumps/wifit3-kali-bundle/run-2026051*` already prove the
+  FW_START_REQ wall is OS-agnostic. Next step is the Windows-side libusb
+  async URB restructure (see "NEXT STEP: MT7921AU" below). No fresh
+  Kali captures required unless that restructure fails to unblock.
+
+Net of one Kali trip:
+- Buffalo → full bring-up unblocked (mechanical, ~M1 in a day per recent
+  mt76x0u precedent).
+- RT3572 → patch missing register write from usbmon diff → unblocked.
+- MT7921AU → still needs the Windows-side transport rewrite, but doesn't
+  *need* this trip.
+
 ## Open work on RTL8812AU (the just-landed chipset)
 
 Two follow-ups are tracked, both deferred but small:
