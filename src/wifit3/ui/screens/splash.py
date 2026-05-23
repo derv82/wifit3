@@ -9,10 +9,35 @@ from textual.message import Message
 from textual.containers import Vertical, Center
 from textual import work
 from rich.text import Text
+from rich.style import Style
 
 from wifit3.wlan.manager import WlanDeviceManager
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_BG = Style(bgcolor="default")
+
+
+def _make_black_transparent(logo: Text) -> Text:
+    """Null out black (0,0,0) backgrounds so the logo inherits the theme
+    background instead of painting its own black canvas.
+
+    The art colors each glyph via its background, so only bgcolor matters:
+    black backgrounds become the terminal default (which Textual renders as
+    the widget/theme background); every other color is left untouched.
+    """
+    def transparent_if_black(style):
+        if not isinstance(style, Style) or style.bgcolor is None:
+            return style
+        try:
+            if tuple(style.bgcolor.get_truecolor()) == (0, 0, 0):
+                return style + _DEFAULT_BG
+        except Exception:
+            pass
+        return style
+
+    logo.spans = [s._replace(style=transparent_if_black(s.style)) for s in logo.spans]
+    return logo
 
 class DriverProgress(Message):
     """Message sent from background threads to update the splash progress."""
@@ -26,7 +51,9 @@ def load_logo() -> Text:
     logo_path = Path(__file__).parent.parent / "assets" / "logo_sm.ans"
     try:
         if logo_path.exists():
-            return Text.from_ansi(logo_path.read_text(encoding="utf-8"))
+            return _make_black_transparent(
+                Text.from_ansi(logo_path.read_text(encoding="utf-8"))
+            )
     except Exception:
         pass
     
