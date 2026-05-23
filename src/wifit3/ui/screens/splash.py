@@ -15,23 +15,39 @@ from wifit3.wlan.manager import WlanDeviceManager
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_BG = Style(bgcolor="default")
+def _without_bgcolor(style: Style) -> Style:
+    """Return a copy of ``style`` with the background color unset.
+
+    Rich styles are immutable and ``+ Style(bgcolor=None)`` is a no-op
+    (None means "no override"), so we rebuild preserving every other
+    attribute. An unset bgcolor lets Textual composite the actual
+    widget/theme background through (true transparency), unlike
+    ``"default"`` which resolves to the terminal's hard default (black).
+    """
+    return Style(
+        color=style.color,
+        bold=style.bold, dim=style.dim, italic=style.italic,
+        underline=style.underline, blink=style.blink, blink2=style.blink2,
+        reverse=style.reverse, conceal=style.conceal, strike=style.strike,
+        underline2=style.underline2, frame=style.frame,
+        encircle=style.encircle, overline=style.overline, link=style.link,
+    )
 
 
 def _make_black_transparent(logo: Text) -> Text:
-    """Null out black (0,0,0) backgrounds so the logo inherits the theme
+    """Drop black (0,0,0) backgrounds so the logo inherits the theme
     background instead of painting its own black canvas.
 
     The art colors each glyph via its background, so only bgcolor matters:
-    black backgrounds become the terminal default (which Textual renders as
-    the widget/theme background); every other color is left untouched.
+    black-background spans get their bgcolor unset (transparent); every
+    other color is left untouched.
     """
     def transparent_if_black(style):
         if not isinstance(style, Style) or style.bgcolor is None:
             return style
         try:
             if tuple(style.bgcolor.get_truecolor()) == (0, 0, 0):
-                return style + _DEFAULT_BG
+                return _without_bgcolor(style)
         except Exception:
             pass
         return style
