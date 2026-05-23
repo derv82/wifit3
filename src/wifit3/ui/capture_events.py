@@ -15,17 +15,29 @@ from typing import Iterator, Optional, Set, Tuple
 from wifit3.engine.models import AccessPoint
 
 
+# Human-readable labels for AccessPoint.decloak_method / CaptureEvent.method.
+# Centralised so Scanner + Focus render the same wording (and future decloak
+# sources only need to be added here).
+DECLOAK_METHOD_LABELS = {
+    "beacon": "Beacon Leak",
+    "probe_resp": "Probe Response",
+    "assoc_req": "Association Request",
+}
+
+
 @dataclass(frozen=True)
 class CaptureEvent:
-    kind: str  # "eapol" | "handshake_complete" | "pmkid"
+    kind: str  # "eapol" | "handshake_complete" | "pmkid" | "decloak"
     bssid: str
-    client_mac: str
+    client_mac: str = ""  # empty for AP-scoped events like decloak
     ssid: Optional[str] = None
     # eapol-only
     msg_num: Optional[int] = None
     replay_hex: Optional[str] = None
     # handshake_complete-only
     pair_label: Optional[str] = None
+    # decloak-only: "probe_resp" | "assoc_req" (future: "mbssid_ie", "beacon_leak")
+    method: Optional[str] = None
 
 
 class CaptureEventDetector:
@@ -42,12 +54,19 @@ class CaptureEventDetector:
         self._seen_eapol: dict[Tuple[str, str], Set[Tuple[int, str]]] = {}
         self._completed: Set[Tuple[str, str]] = set()
         self._pmkid: Set[Tuple[str, str]] = set()
+        # BSSIDs we've observed as hidden during this detector's lifetime.
+        # Required so we only fire "decloak" on an actual None→SSID transition
+        # we witnessed — not for APs that already had an SSID on first poll.
+        self._seen_hidden: Set[str] = set()
+        self._decloak_announced: Set[str] = set()
 
     def reset(self) -> None:
         """Drop all state. Useful when refocusing on a new target."""
         self._seen_eapol.clear()
         self._completed.clear()
         self._pmkid.clear()
+        self._seen_hidden.clear()
+        self._decloak_announced.clear()
 
     def poll(
         self,
@@ -56,6 +75,25 @@ class CaptureEventDetector:
         forged_macs: Set[str] = frozenset(),
     ) -> Iterator[CaptureEvent]:
         """Yield ``CaptureEvent``s for state newly observed on ``ap``."""
+        # Decloak detection: we must have *observed* this AP as hidden during
+        # our lifetime before we can announce its decloak. Entering Focus on
+        # an already-decloaked AP therefore stays silent (old news), while
+        # Scanner — which saw it from the first beacon — fires once.
+        if not ap.ssid or ap.ssid == "<hidden>":
+            self._seen_hidden.add(ap.bssid)
+        else:
+            if (
+                ap.bssid in self._seen_hidden
+                and ap.bssid not in self._decloak_announced
+            ):
+                self._decloak_announced.add(ap.bssid)
+                yield CaptureEvent(
+                    kind="decloak",
+                    bssid=ap.bssid,
+                    ssid=ap.ssid,
+                    method=ap.decloak_method,
+                )
+
         for client_mac, hs in ap.handshakes.items():
             key = (ap.bssid, client_mac)
 

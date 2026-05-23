@@ -1,11 +1,72 @@
 import asyncio
 import logging
 import time
+from pathlib import Path
 from typing import List, Optional, Callable, Any, Dict, Set
 
 from wifit3.engine.models import AccessPoint, Client, Handshake, EapolFrame
 
 logger = logging.getLogger(__name__)
+
+
+# Append a hex+ASCII dump of every frame that triggers a decloak. Lives in
+# CWD so a `dir` lands it; cheap (decloaks are rare). Investigates whether
+# short-SSID decloaks ("F", "7", etc.) are legit, parser bugs, or spoofed
+# probe responses on the channel.
+DECLOAK_LOG_PATH = Path("wifit3-decloak.log")
+
+
+def _log_decloak_frame(
+    bssid: str, ssid: str, method: str, frame_type: str, raw: Optional[bytes]
+) -> None:
+    """Append a forensic dump of the frame that triggered a decloak. Silent
+    on failure — must never break the RX loop."""
+    if not raw:
+        return
+    try:
+        with DECLOAK_LOG_PATH.open("a", encoding="utf-8") as f:
+            ts = time.strftime("%Y-%m-%d %H:%M:%S")
+            f.write(f"=== {ts}  {method}  type={frame_type}  len={len(raw)} ===\n")
+            f.write(f"  bssid={bssid}  ssid={ssid!r}\n")
+            for i in range(0, len(raw), 16):
+                chunk = raw[i : i + 16]
+                hex_part = " ".join(f"{b:02x}" for b in chunk)
+                ascii_part = "".join(
+                    chr(b) if 0x20 <= b < 0x7F else "." for b in chunk
+                )
+                f.write(f"  {i:04x}  {hex_part:<48}  {ascii_part}\n")
+            f.write("\n")
+    except Exception:
+        pass
+
+
+def _bssid_bit_diff(a: str, b: str) -> int:
+    """Hamming distance between two ``aa:bb:…``-formatted BSSIDs (count of
+    differing bits across all 48). Returns 48 (sentinel — fully different)
+    for malformed input so callers naturally reject it from the sibling
+    set."""
+    pa = a.lower().split(":")
+    pb = b.lower().split(":")
+    if len(pa) != 6 or len(pb) != 6:
+        return 48
+    try:
+        return sum(
+            bin(int(x, 16) ^ int(y, 16)).count("1") for x, y in zip(pa, pb)
+        )
+    except ValueError:
+        return 48
+
+
+def _bssid_byte_diff(a: str, b: str) -> int:
+    """Count differing bytes between two ``aa:bb:…``-formatted BSSIDs.
+    Complements ``_bssid_bit_diff``: vendor schemes that deliberately
+    randomize multiple bits inside a single byte (e.g. ``42 / 3c`` =
+    6-bits-in-1-byte) need the byte-level branch."""
+    pa = a.lower().split(":")
+    pb = b.lower().split(":")
+    if len(pa) != 6 or len(pb) != 6:
+        return 6
+    return sum(1 for x, y in zip(pa, pb) if x != y)
 
 class WlanInterface:
     """
@@ -88,24 +149,36 @@ class WlanInterface:
                     pmf_capable=pmf_capable,
                     pmf_required=pmf_required,
                 )
+                self._recompute_siblings_for(bssid)
                 if ssid and ssid != "<hidden>":
                     logger.info(f"[NEW AP] Found '{ssid}' ({bssid}) on CH {channel}")
             else:
                 ap = self.access_points[bssid]
+                old_channel = ap.channel
                 if frame_type == "beacon":
                     ap.beacons += 1
 
-                # Update SSID if it was hidden and we now see it (DECLOAKING via Probe Response)
+                # Update SSID if it was hidden and we now see it. Method label
+                # tracks the actual frame type: "beacon" for the rare case where
+                # a hidden AP starts broadcasting its SSID in beacons (reconfig
+                # / firmware quirk), "probe_resp" for the normal directed-probe
+                # echo path. CaptureEventDetector fires a UI event off this.
                 if ssid and ssid != "<hidden>":
                     if not ap.ssid or ap.ssid == "<hidden>":
-                        logger.info(f"DECLOAKED: {bssid} -> {ssid} via Probe Response")
+                        ap.decloak_method = frame_type  # "beacon" or "probe_resp"
+                        _log_decloak_frame(
+                            bssid, ssid, frame_type, frame_type, parsed.get("raw")
+                        )
                     ap.ssid = ssid
 
                 # Smooth RSSI (simple average for now, could use EMA)
                 ap.signal = (ap.signal + rssi) // 2
 
-                # Update channel if it shifted
+                # Update channel if it shifted — sibling links are
+                # channel-scoped, so re-evaluate on actual moves.
                 ap.channel = channel
+                if old_channel != channel:
+                    self._recompute_siblings_for(bssid)
                 ap.encryption = enc
                 ap.akms = list(akms)
                 ap.pairwise_cipher = pairwise_cipher
@@ -162,8 +235,11 @@ class WlanInterface:
                     if ssid and ssid != "<hidden>":
                         ap = self.access_points[bssid]
                         if not ap.ssid or ap.ssid == "<hidden>":
+                            ap.decloak_method = "assoc_req"
+                            _log_decloak_frame(
+                                bssid, ssid, "assoc_req", frame_type, parsed.get("raw")
+                            )
                             ap.ssid = ssid
-                            logger.info(f"DECLOAKED: {bssid} -> {ssid} via Assoc Req from {client_mac}")
 
         # Handshake tracking — per-client, never wiped.
         if frame_type == "eapol" and bssid in self.access_points:
@@ -224,6 +300,52 @@ class WlanInterface:
                 for hs in ap.handshakes.values():
                     if not hs.beacon_frame:
                         hs.beacon_frame = raw_beacon
+
+    SIBLING_BIT_DIFF_MAX = 4
+
+    def _recompute_siblings_for(self, bssid: str) -> None:
+        """Refresh sibling links for ``bssid`` against the whole registry.
+
+        Sibling rule: same channel AND (Hamming distance ≤ 4 bits OR
+        exactly one byte differs). Two-branch OR because vendors use two
+        distinct schemes:
+          - Multi-byte single-bit flips (U/L bit + 1-2 bits elsewhere) →
+            caught by the bit-diff branch (2 bits across 2 bytes is the
+            common shape).
+          - Single-byte multi-bit randomization (deliberately distinct
+            first byte) → caught by the byte-diff branch (up to 8 bits
+            packed into one byte still reads as a sibling).
+        FP rate with ~50 APs in range is still ~10⁻⁶ — the same-channel
+        constraint does most of the disambiguation work.
+
+        Mutates the sibling list on ``bssid`` AND on every counterpart so
+        the relationship stays bidirectional. Called when an AP is added
+        or its channel actually changes; O(N) per call.
+        """
+        ap = self.access_points.get(bssid)
+        if not ap:
+            return
+        new_siblings: List[str] = []
+        for other_bssid, other_ap in self.access_points.items():
+            if other_bssid == bssid:
+                continue
+            same_channel = other_ap.channel == ap.channel
+            bit_d = _bssid_bit_diff(bssid, other_bssid)
+            byte_d = _bssid_byte_diff(bssid, other_bssid)
+            is_sibling = (
+                same_channel
+                and bit_d > 0
+                and (bit_d <= self.SIBLING_BIT_DIFF_MAX or byte_d == 1)
+            )
+            if is_sibling:
+                new_siblings.append(other_bssid)
+                if bssid not in other_ap.siblings:
+                    other_ap.siblings.append(bssid)
+            else:
+                # Channel mismatch or too divergent — drop any stale link.
+                if bssid in other_ap.siblings:
+                    other_ap.siblings.remove(bssid)
+        ap.siblings = new_siblings
 
     def get_access_points(self) -> List[AccessPoint]:
         """Returns a list of discovered Access Points."""

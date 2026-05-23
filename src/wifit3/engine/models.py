@@ -130,6 +130,19 @@ class AccessPoint(BaseModel):
     # mismatched IEs with status 40 / unsupported-cipher.
     rsn_ie: Optional[bytes] = Field(default=None)
 
+    # How this AP's SSID was learned, if it was ever hidden. None means
+    # we either never saw it hidden, or it's still hidden. Set once at
+    # the moment of transition by WlanInterface and consumed by the
+    # CaptureEventDetector to surface a "Decloaked" event.
+    decloak_method: Optional[str] = Field(default=None)
+
+    # BSSIDs we believe are virtual interfaces of the same physical radio
+    # (e.g. Main + Guest + IoT on the same router). Rule (5-of-6 byte
+    # match + same channel) catches both "increment last byte" and
+    # "locally-administered first byte" vendor schemes — see
+    # WlanInterface._recompute_siblings_for. Maintained bidirectionally.
+    siblings: List[str] = Field(default_factory=list)
+
     # Cached SAE-Commit probe results, keyed by finite-cyclic group ID.
     # Values are "supported" or "rejected"; timeouts / unknowns are NOT stored
     # so the next probe re-tries them. Used to skip already-determined groups

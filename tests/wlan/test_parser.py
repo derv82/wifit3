@@ -60,6 +60,35 @@ def test_wlan_frame_parser_validates():
     # A random bunch of bytes too small to be a frame
     assert WlanFrameParser.parse_80211_frame(b'\x00\x01\x02', -50) is None
 
+def test_wlan_frame_parser_ignores_second_ssid_ie():
+    """Spec: SSID IE is mandatory and FIRST. Any later tag-0 we encounter
+    while walking IEs is malformed-frame OR — more commonly — the walker
+    straying into trailing bytes (unstripped FCS, hw metadata). Either way
+    we must NOT overwrite the canonical SSID with that junk.
+
+    Regression for the AR9271-FCS-leak bug: a hidden beacon would
+    occasionally "decloak" to short random strings like "F" / "7" / "/:"
+    because the trailing CRC32 bytes happened to look like `00 02 2f 3a`.
+    """
+    fc = b"\x80\x00"
+    dur = b"\x00\x00"
+    addr1 = b"\xff\xff\xff\xff\xff\xff"
+    addr2 = b"\x11\x22\x33\x44\x55\x66"
+    mac_hdr = fc + dur + addr1 + addr2 + addr2 + b"\x00\x00"
+    fixed = b"\x00" * 12
+
+    legit_hidden_ssid = b"\x00\x00"       # SSID IE: length 0 → hidden
+    rates = b"\x01\x04\x82\x84\x8b\x96"
+    bogus_late_ssid = b"\x00\x02/:"       # exactly the bytes that bit us
+
+    frame = mac_hdr + fixed + legit_hidden_ssid + rates + bogus_late_ssid
+
+    parsed = WlanFrameParser.parse_80211_frame(frame, -50)
+    assert parsed is not None
+    # Stays "<hidden>" — the late tag-0 must be ignored.
+    assert parsed["ssid"] == "<hidden>"
+
+
 def test_wlan_frame_parser_extracts_ssid():
     # Construct a minimal fake beacon frame to test tag parsing
     # MAC Header (24 bytes)

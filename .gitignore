@@ -24,6 +24,7 @@ usb_dumps/
 scratch/
 debug.log
 usb_transactions.log
+wifit3-decloak.log
 
 # If it starts with a dot, committed it gets not
 .*

@@ -393,6 +393,13 @@ class WlanFrameParser:
         channel_ht: Optional[int] = None
         channel_vht: Optional[int] = None
 
+        # Per 802.11 the SSID IE is mandatory and FIRST. Any later tag_id=0
+        # we run into is either a malformed frame or — more commonly — the
+        # walker straying into trailing bytes (FCS, hardware metadata that
+        # wasn't stripped, etc.). Honor only the first occurrence; bogus
+        # "decloak" events on hidden APs traced back to exactly this.
+        seen_ssid = False
+
         while ptr + 2 <= len(frame):
             tag_id = frame[ptr]
             tag_len = frame[ptr + 1]
@@ -404,7 +411,8 @@ class WlanFrameParser:
 
             tag_data = frame[tag_start : tag_end]
 
-            if tag_id == 0: # SSID
+            if tag_id == 0 and not seen_ssid: # SSID (only the first)
+                seen_ssid = True
                 if tag_len == 0:
                     parsed["ssid"] = "<hidden>"
                 elif tag_len <= 32:

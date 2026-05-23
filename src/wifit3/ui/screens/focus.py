@@ -19,7 +19,7 @@ from wifit3.engine.attacks.pmkid_harvest import PmkidHarvestAttack
 from wifit3.engine.attacks.sae_probe import SAEGroupProbeAttack
 from wifit3.engine.attacks.wpa3_downgrade import WPA3DowngradeAttack
 
-from ..capture_events import CaptureEvent, CaptureEventDetector
+from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector
 from ..encryption_format import (
     format_encryption_markup,
     format_pmf_markup,
@@ -427,6 +427,13 @@ class FocusView(Screen):
             self._log(
                 f"[bold yellow]✓ PMKID captured[/bold yellow] "
                 f"from [bold]{client}[/bold]"
+            )
+        elif ev.kind == "decloak":
+            method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
+            self._log(
+                f"[bold]Decloaked[/bold] [cyan]{escape(ev.bssid)}[/cyan] → "
+                f"[green]{escape(ev.ssid or '')}[/green] "
+                f"[dim]via {method_label}[/dim]"
             )
 
     def _log(self, markup: str) -> None:

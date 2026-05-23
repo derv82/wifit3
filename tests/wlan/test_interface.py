@@ -185,7 +185,7 @@ def test_wpa3_and_pmf_flags_propagate_to_access_point(mocker):
 def test_wlan_interface_decloaking(mocker):
     mock_driver = mocker.MagicMock()
     iface = WlanInterface(driver_instance=mock_driver, name="wlan0", description="Test Interface")
-    
+
     # Hidden network beacon
     parsed_beacon = {
         "type": "beacon",
@@ -194,10 +194,11 @@ def test_wlan_interface_decloaking(mocker):
         "ssid": "<hidden>"
     }
     iface._on_frame_parsed(parsed_beacon)
-    
+
     ap = iface.access_points["11:22:33:44:55:66"]
     assert ap.ssid is None
-    
+    assert ap.decloak_method is None
+
     # Decloak via probe response
     parsed_probe = {
         "type": "probe_resp",
@@ -206,5 +207,198 @@ def test_wlan_interface_decloaking(mocker):
         "ssid": "Hidden_No_More"
     }
     iface._on_frame_parsed(parsed_probe)
-    
+
     assert ap.ssid == "Hidden_No_More"
+    assert ap.decloak_method == "probe_resp"
+
+
+def test_wlan_interface_decloaking_via_assoc_req(mocker):
+    mock_driver = mocker.MagicMock()
+    iface = WlanInterface(driver_instance=mock_driver, name="wlan0", description="Test")
+
+    iface._on_frame_parsed({
+        "type": "beacon",
+        "bssid": "11:22:33:44:55:66",
+        "rssi": -60,
+        "ssid": "<hidden>",
+    })
+    ap = iface.access_points["11:22:33:44:55:66"]
+    assert ap.ssid is None
+
+    iface._on_frame_parsed({
+        "type": "assoc_req",
+        "bssid": "11:22:33:44:55:66",
+        "source": "aa:aa:aa:aa:aa:aa",
+        "dest": "11:22:33:44:55:66",
+        "rssi": -65,
+        "ssid": "TestSSID",
+    })
+
+    assert ap.ssid == "TestSSID"
+    assert ap.decloak_method == "assoc_req"
+
+
+def test_wlan_interface_decloak_method_not_overwritten(mocker):
+    """First decloak method wins; later probe-resps shouldn't reclassify it."""
+    mock_driver = mocker.MagicMock()
+    iface = WlanInterface(driver_instance=mock_driver, name="wlan0", description="Test")
+
+    iface._on_frame_parsed({
+        "type": "beacon",
+        "bssid": "11:22:33:44:55:66",
+        "rssi": -60,
+        "ssid": "<hidden>",
+    })
+    iface._on_frame_parsed({
+        "type": "assoc_req",
+        "bssid": "11:22:33:44:55:66",
+        "source": "aa:aa:aa:aa:aa:aa",
+        "dest": "11:22:33:44:55:66",
+        "rssi": -65,
+        "ssid": "TestSSID",
+    })
+    iface._on_frame_parsed({
+        "type": "probe_resp",
+        "bssid": "11:22:33:44:55:66",
+        "rssi": -60,
+        "ssid": "TestSSID",
+    })
+
+    ap = iface.access_points["11:22:33:44:55:66"]
+    assert ap.decloak_method == "assoc_req"
+
+
+# ---------------------------------------------------------------------------
+# Sibling detection (virtual-BSSID clustering)
+# ---------------------------------------------------------------------------
+
+def _seed_beacon(iface, bssid: str, channel: int, ssid="Foo"):
+    iface._on_frame_parsed({
+        "type": "beacon",
+        "bssid": bssid,
+        "rssi": -60,
+        "ssid": ssid,
+        "channel": channel,
+    })
+
+
+def test_siblings_last_byte_differs(mocker):
+    """Last-byte-increment vendor scheme (1 bit diff in byte 5)."""
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="x")
+    _seed_beacon(iface, "aa:bb:cc:dd:ee:00", channel=44, ssid="TestSSID")
+    _seed_beacon(iface, "aa:bb:cc:dd:ee:02", channel=44, ssid="<hidden>")
+
+    a = iface.access_points["aa:bb:cc:dd:ee:00"]
+    b = iface.access_points["aa:bb:cc:dd:ee:02"]
+    assert a.siblings == ["aa:bb:cc:dd:ee:02"]
+    assert b.siblings == ["aa:bb:cc:dd:ee:00"]
+
+
+def test_siblings_first_byte_differs(mocker):
+    """Locally-administered first byte vendor scheme (3-bit diff in byte 0)."""
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="x")
+    _seed_beacon(iface, "00:bb:cc:dd:ee:ff", channel=10, ssid="TestSSID")
+    _seed_beacon(iface, "07:bb:cc:dd:ee:ff", channel=10, ssid="<hidden>")
+
+    a = iface.access_points["00:bb:cc:dd:ee:ff"]
+    b = iface.access_points["07:bb:cc:dd:ee:ff"]
+    assert a.siblings == ["07:bb:cc:dd:ee:ff"]
+    assert b.siblings == ["00:bb:cc:dd:ee:ff"]
+
+
+def test_siblings_different_channel_no_match(mocker):
+    """Same near-identical BSSIDs but different channels — NOT siblings."""
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="x")
+    _seed_beacon(iface, "aa:bb:cc:dd:ee:00", channel=1, ssid="Foo")
+    _seed_beacon(iface, "aa:bb:cc:dd:ee:02", channel=6, ssid="Bar")
+
+    assert iface.access_points["aa:bb:cc:dd:ee:00"].siblings == []
+    assert iface.access_points["aa:bb:cc:dd:ee:02"].siblings == []
+
+
+def test_siblings_two_bytes_two_bits_matches(mocker):
+    """Multi-byte single-bit vendor scheme: 2 bits across 2 bytes.
+        02:bb:cc:00:ee:ff   visible
+        00:bb:cc:01:ee:ff   <hidden>
+    Two BYTES differ (positions 0 and 3) but only 2 BITS total: the U/L
+    bit on byte 0 (02↔00) and bit 0 on byte 3 (00↔01). The byte-count
+    rule we shipped first missed this; bit-count catches it."""
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="x")
+    _seed_beacon(iface, "02:bb:cc:00:ee:ff", channel=11, ssid="TestSSID")
+    _seed_beacon(iface, "00:bb:cc:01:ee:ff", channel=11, ssid="<hidden>")
+
+    a = iface.access_points["02:bb:cc:00:ee:ff"]
+    b = iface.access_points["00:bb:cc:01:ee:ff"]
+    assert a.siblings == ["00:bb:cc:01:ee:ff"]
+    assert b.siblings == ["02:bb:cc:00:ee:ff"]
+
+
+def test_siblings_one_byte_many_bits_matches(mocker):
+    """Single-byte multi-bit vendor scheme: 6 bits all in byte 0.
+        00:bb:cc:dd:ee:ff   visible
+        3f:bb:cc:dd:ee:ff   <hidden>
+    ONE byte differs (byte 0) but it differs by 6 bits (00=00000000,
+    3f=00111111). Pure Hamming-distance threshold of 4 misses this; the
+    byte-diff=1 OR-branch catches it."""
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="x")
+    _seed_beacon(iface, "00:bb:cc:dd:ee:ff", channel=2, ssid="TestSSID")
+    _seed_beacon(iface, "3f:bb:cc:dd:ee:ff", channel=2, ssid="<hidden>")
+
+    a = iface.access_points["00:bb:cc:dd:ee:ff"]
+    b = iface.access_points["3f:bb:cc:dd:ee:ff"]
+    assert a.siblings == ["3f:bb:cc:dd:ee:ff"]
+    assert b.siblings == ["00:bb:cc:dd:ee:ff"]
+
+
+def test_siblings_too_many_bits_AND_too_many_bytes_no_match(mocker):
+    """Both branches must fail to count as 'not a sibling'. Here byte-diff
+    is 2 (above 1) AND bit-diff is 5 (above 4) → no match."""
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="x")
+    _seed_beacon(iface, "aa:bb:cc:dd:ee:00", channel=44, ssid="Foo")
+    # ee→e9 = 3 bits, 00→03 = 2 bits → 5 bits total, 2 bytes total.
+    _seed_beacon(iface, "aa:bb:cc:dd:e9:03", channel=44, ssid="Bar")
+
+    assert iface.access_points["aa:bb:cc:dd:ee:00"].siblings == []
+    assert iface.access_points["aa:bb:cc:dd:e9:03"].siblings == []
+
+
+def test_siblings_zero_byte_diff_no_match(mocker):
+    """An AP is never its own sibling; same bssid → ignored (we already
+    early-return on identity)."""
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="x")
+    _seed_beacon(iface, "aa:bb:cc:dd:ee:00", channel=44, ssid="Foo")
+    iface._recompute_siblings_for("aa:bb:cc:dd:ee:00")
+    assert iface.access_points["aa:bb:cc:dd:ee:00"].siblings == []
+
+
+def test_siblings_three_way_cluster(mocker):
+    """Three virtual BSSIDs on the same channel — all link bidirectionally
+    to the other two."""
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="x")
+    _seed_beacon(iface, "aa:bb:cc:dd:ee:02", channel=6, ssid="Main")
+    _seed_beacon(iface, "aa:bb:cc:dd:ee:03", channel=6, ssid="<hidden>")
+    _seed_beacon(iface, "aa:bb:cc:dd:ee:05", channel=6, ssid="Guest")
+
+    a = iface.access_points["aa:bb:cc:dd:ee:02"]
+    b = iface.access_points["aa:bb:cc:dd:ee:03"]
+    c = iface.access_points["aa:bb:cc:dd:ee:05"]
+    assert sorted(a.siblings) == ["aa:bb:cc:dd:ee:03", "aa:bb:cc:dd:ee:05"]
+    assert sorted(b.siblings) == ["aa:bb:cc:dd:ee:02", "aa:bb:cc:dd:ee:05"]
+    assert sorted(c.siblings) == ["aa:bb:cc:dd:ee:02", "aa:bb:cc:dd:ee:03"]
+
+
+def test_siblings_channel_change_drops_stale_link(mocker):
+    """If a sibling roams to a different channel, the link drops on both
+    sides on the next beacon — they're no longer co-radio."""
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="x")
+    _seed_beacon(iface, "aa:bb:cc:dd:ee:00", channel=44, ssid="Foo")
+    _seed_beacon(iface, "aa:bb:cc:dd:ee:02", channel=44, ssid="Bar")
+    a = iface.access_points["aa:bb:cc:dd:ee:00"]
+    b = iface.access_points["aa:bb:cc:dd:ee:02"]
+    assert a.siblings and b.siblings
+
+    # b hops to a different channel
+    _seed_beacon(iface, "aa:bb:cc:dd:ee:02", channel=149, ssid="Bar")
+
+    assert iface.access_points["aa:bb:cc:dd:ee:00"].siblings == []
+    assert iface.access_points["aa:bb:cc:dd:ee:02"].siblings == []

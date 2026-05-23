@@ -13,9 +13,10 @@ from rich.text import Span, Text
 
 from wifit3.engine.models import AccessPoint
 
-from ..capture_events import CaptureEvent, CaptureEventDetector
+from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector
 from ..encryption_format import format_encryption_markup
 from .channel_filter import ChannelFilterDialog
+from .decloak_test_dialog import DecloakSsidDialog
 
 
 # Rows fade their foreground toward the DataTable's row background ($surface)
@@ -70,6 +71,8 @@ class ScannerView(Screen):
         Binding("c", "change_channel", "Channel Filter", show=True),
         Binding("s", "cycle_sort", "Sort Col", show=True),
         Binding("o", "toggle_sort_dir", "Sort Asc/Desc", show=True),
+        Binding("d", "decloak", "Decloak Sel", show=True),
+        Binding("D", "decloak_test", "Decloak Test", show=True),
         Binding("f", "toggle_fade", "Toggle Fade", show=True),
         Binding("l", "toggle_log", "Toggle Log", show=True),
         Binding("home", "scroll_home", "Top", show=False, priority=True),
@@ -109,6 +112,9 @@ class ScannerView(Screen):
         self._sort_reverse = True
         # None = hop on every channel the driver supports.
         self._channel_filter: Optional[List[int]] = None
+        # Guards re-entry into action_decloak. Set/cleared in the background
+        # task so the action handler can return immediately.
+        self._decloak_in_progress = False
         # Capture-event detector — coarse (no per-EAPOL spam in the scanner).
         self._events = CaptureEventDetector(granular_eapol=False)
         # Per-BSSID prev-beacon-count + flash-deadline for "beacon arrived"
@@ -325,17 +331,44 @@ class ScannerView(Screen):
         ]
 
     def _ssid_markup(self, ap: AccessPoint) -> Text:
-        """Bold for real SSIDs; italic '<Hidden>' otherwise. Same fg either
-        way — italic alone signals the placeholder."""
+        """Three SSID rendering states:
+          - Confirmed       → bold     ("RealNetwork")
+          - Hidden, no hint → italic   ("<Hidden>")
+          - Hidden, guess   → italic + trailing '?'  ("SiblingName?")
+        Italic carries the 'hidden' signal across both hidden states; the
+        '?' marks 'guessed via sibling BSSID'. Note: must not use 'dim' on
+        the guess state — the AP-fade pipeline owns dim/fade for stale
+        rows, and stacking would corrupt the fade animation.
+        """
         if ap.ssid:
             text = Text(ap.ssid, style=f"{self._theme_fg} bold")
         else:
-            text = Text("<Hidden>", style=f"{self._theme_fg} italic")
+            sib_ssid = self._best_named_sibling_ssid(ap)
+            if sib_ssid:
+                text = Text(f"{sib_ssid}?", style=f"{self._theme_fg} italic")
+            else:
+                text = Text("<Hidden>", style=f"{self._theme_fg} italic")
         markers_markup = self._capture_marker_markup(ap)
         if markers_markup:
             text.append(" ")
             text.append_text(Text.from_markup(markers_markup, emoji=False))
         return text
+
+    def _best_named_sibling_ssid(self, ap: AccessPoint) -> Optional[str]:
+        """Pick the sibling SSID to display for a hidden AP. Returns the
+        SSID of the highest-beacon-count non-hidden sibling, or None when
+        no sibling has surfaced its SSID yet (every sibling also hidden)."""
+        iface = self.app.active_interface
+        if not iface or not ap.siblings:
+            return None
+        best_ssid: Optional[str] = None
+        best_beacons = -1
+        for sib_bssid in ap.siblings:
+            sib_ap = iface.access_points.get(sib_bssid)
+            if sib_ap and sib_ap.ssid and sib_ap.beacons > best_beacons:
+                best_ssid = sib_ap.ssid
+                best_beacons = sib_ap.beacons
+        return best_ssid
 
     @staticmethod
     def _capture_marker_markup(ap: AccessPoint) -> str:
@@ -369,6 +402,13 @@ class ScannerView(Screen):
                 f"[bold green]✓ PMKID[/bold green] on "
                 f"[bold]{ap_label}[/bold] from [bold]{client}[/bold]"
             )
+        elif ev.kind == "decloak":
+            method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
+            msg = (
+                f"[bold]Decloaked[/bold] [cyan]{escape(ev.bssid)}[/cyan] → "
+                f"[green]{escape(ev.ssid or '')}[/green] "
+                f"[dim]via {method_label}[/dim]"
+            )
         else:
             return  # eapol events suppressed in scanner
         self._write_log(Text.from_markup(msg, emoji=False))
@@ -378,6 +418,13 @@ class ScannerView(Screen):
             log = self.query_one("#system-log", RichLog)
         except Exception:
             return
+        # RichLog's emoji shortcode expansion is on by default — it'll happily
+        # turn :ab: / :cd: inside a BSSID into 🆎 / 💿 (Unicode regional /
+        # optical-disc emoji). Disable it whenever we hand in a markup string.
+        # Pre-built Text objects (from _log_capture_event) come in already-
+        # rendered, so they pass through unchanged.
+        if isinstance(text, str):
+            text = Text.from_markup(text, emoji=False)
         log.write(text)
 
     # ----- Sort --------------------------------------------------------------
@@ -397,6 +444,12 @@ class ScannerView(Screen):
         sort_key, _ = self._COLUMNS[self._sort_idx]
 
         reverse = self._sort_reverse
+        # Only numeric columns try the int/float fast path. For text columns
+        # (SSID, BSSID, ENCRYPT) we ALWAYS use the lowercased string, so a
+        # cell like "7" (a real decloaked single-char SSID) stays a string
+        # and doesn't mix int with neighbour cells like "MyNetwork" —
+        # Python rejects that comparison with a TypeError mid-sort.
+        is_numeric_col = sort_key in self._RIGHT_ALIGNED
 
         def _key(val):
             if isinstance(val, Text):
@@ -405,8 +458,10 @@ class ScannerView(Screen):
             is_empty = not s
 
             if is_empty:
-                primary: object = 0
-            else:
+                # Match the column's primary type so empties compare cleanly
+                # against populated cells. Mixing 0 with "foo" was the bug.
+                primary: object = 0 if is_numeric_col else ""
+            elif is_numeric_col:
                 # Strip non-numeric suffix (e.g. " dBm")
                 head = s.split()[0]
                 try:
@@ -415,7 +470,12 @@ class ScannerView(Screen):
                     try:
                         primary = float(head)
                     except ValueError:
-                        primary = s.lower()
+                        # Numeric column with garbage content — sort it last
+                        # rather than crashing. Shouldn't happen for the
+                        # current set of numeric columns.
+                        primary = float("inf") if not reverse else float("-inf")
+            else:
+                primary = s.lower()
 
             # Force empties to the bottom in BOTH sort directions. table.sort
             # sorts ascending by key then reverses if reverse=True, so the
@@ -475,6 +535,197 @@ class ScannerView(Screen):
         table = self.query_one("#ap-table", DataTable)
         if table.row_count > 0:
             table.move_cursor(row=table.row_count - 1, animate=True)
+
+    def action_decloak(self) -> None:
+        """Validate selection + spawn the actual attack as a background task,
+        returning immediately so the TUI stays responsive (sort / scroll /
+        other actions don't queue behind the 5-second sweep)."""
+        if self._decloak_in_progress:
+            self._write_log(
+                "[yellow]Decloak already running. Wait for it to finish.[/yellow]"
+            )
+            return
+        iface = self.app.active_interface
+        if not iface:
+            self._write_log("[bold red][!] No active interface.[/bold red]")
+            return
+        table = self.query_one("#ap-table", DataTable)
+        try:
+            bssid = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+        except Exception:
+            return
+        if not bssid:
+            return
+        ap = iface.access_points.get(bssid)
+        if not ap:
+            return
+        if ap.ssid:
+            self._write_log(
+                f"[yellow]'d' targets hidden APs — '{escape(ap.ssid)}' is already known.[/yellow]"
+            )
+            return
+        base = self._best_named_sibling_ssid(ap)
+        if not base:
+            self._write_log(
+                f"[yellow]No named sibling for {escape(bssid)} — nothing to guess from.[/yellow]"
+            )
+            return
+
+        self._decloak_in_progress = True
+        # Defer all the awaitable work into a background task — action_decloak
+        # itself returns synchronously here so subsequent keypresses (sort,
+        # scroll, even another 'd' which gets the busy message) don't queue
+        # behind a ~5-second `await attack.run()`.
+        import asyncio
+        asyncio.create_task(self._run_decloak(iface, ap, base))
+
+    async def _run_decloak(self, iface, ap, base: str) -> None:
+        from wifit3.engine.attacks.decloak import DecloakAttack, build_candidates
+
+        bssid = ap.bssid
+        candidates = build_candidates(base)
+        self._write_log(
+            f"[cyan]Decloaking[/cyan] [bold]{escape(bssid)}[/bold] — "
+            f"base [bold]{escape(base)}[/bold], {len(candidates)} candidates on CH {ap.channel}"
+        )
+
+        try:
+            # Stop hopping so the channel stays locked while we wait for echoes.
+            # Restore in the inner `finally` so a crashed attack still resumes
+            # scanning — and preserves the current channel filter instead of
+            # dumping the user back into the default all-channels sweep.
+            await iface.stop_hopping()
+            # Snapshot beacon count from the target so we can report at the
+            # end whether RX was even hearing the AP during the sweep. If 0,
+            # something's wrong with the channel/radio, not the candidate list.
+            beacons_before = (
+                iface.access_points[bssid].beacons
+                if bssid in iface.access_points
+                else 0
+            )
+            try:
+                attack = DecloakAttack(iface, ap, base_ssid=base)
+                result = await attack.run()
+                ap_state = iface.access_points.get(bssid)
+                beacons_heard = (ap_state.beacons - beacons_before) if ap_state else 0
+                if result is None:
+                    if beacons_heard == 0:
+                        # Hard signal: RX wasn't even seeing the AP. Channel
+                        # mistuned, radio busy, or the AP went silent.
+                        self._write_log(
+                            f"[bold red]Decloak failed[/bold red] for {escape(bssid)} — "
+                            f"[bold]no beacons heard from target during sweep[/bold] "
+                            f"(channel/radio issue, not a candidate-list issue)."
+                        )
+                    else:
+                        self._write_log(
+                            f"[yellow]Decloak exhausted[/yellow] for {escape(bssid)} — "
+                            f"no candidate elicited a response "
+                            f"([italic]{beacons_heard} beacons heard from target, "
+                            f"RX is working — candidate list just didn't match[/italic])."
+                        )
+                # Success log is fired by the existing CaptureEventDetector
+                # pipeline (it observes the SSID flip on the next poll).
+            finally:
+                await iface.start_hopping(
+                    channels=self._channel_filter, interval=0.25
+                )
+        finally:
+            self._decloak_in_progress = False
+
+    def action_decloak_test(self) -> None:
+        """Pipeline-verification mode: pops a dialog asking for SSID(s) and
+        probes the selected AP with those exact strings (no sibling lookup,
+        no suffix generation). Intended for testing against a router
+        deliberately configured with a known hidden SSID."""
+        if self._decloak_in_progress:
+            self._write_log(
+                "[yellow]Decloak already running. Wait for it to finish.[/yellow]"
+            )
+            return
+        iface = self.app.active_interface
+        if not iface:
+            self._write_log("[bold red][!] No active interface.[/bold red]")
+            return
+        table = self.query_one("#ap-table", DataTable)
+        try:
+            bssid = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+        except Exception:
+            return
+        if not bssid:
+            return
+        ap = iface.access_points.get(bssid)
+        if not ap:
+            return
+
+        # Pre-fill: sibling SSID first (if any), then AP's own SSID (visible
+        # APs being tested for TX), else empty.
+        prefill = self._best_named_sibling_ssid(ap) or (ap.ssid or "")
+
+        def _on_submit(ssids: Optional[List[str]]) -> None:
+            if not ssids:
+                self._write_log("[dim]Decloak test cancelled.[/dim]")
+                return
+            self._decloak_in_progress = True
+            import asyncio
+            asyncio.create_task(self._run_decloak_test(iface, ap, ssids))
+
+        self.app.push_screen(DecloakSsidDialog(bssid, prefill), _on_submit)
+
+    async def _run_decloak_test(
+        self, iface, ap, ssids: List[str]
+    ) -> None:
+        from wifit3.engine.attacks.decloak import DecloakAttack
+
+        bssid = ap.bssid
+        self._write_log(
+            f"[cyan]Decloak test[/cyan] [bold]{escape(bssid)}[/bold] — "
+            f"{len(ssids)} explicit SSID(s) on CH {ap.channel}"
+        )
+
+        try:
+            await iface.stop_hopping()
+            beacons_before = (
+                iface.access_points[bssid].beacons
+                if bssid in iface.access_points
+                else 0
+            )
+            try:
+                attack = DecloakAttack(
+                    iface, ap, base_ssid="", candidates_override=ssids
+                )
+                result = await attack.run()
+                ap_state = iface.access_points.get(bssid)
+                beacons_heard = (
+                    (ap_state.beacons - beacons_before) if ap_state else 0
+                )
+                if result is None:
+                    if beacons_heard == 0:
+                        self._write_log(
+                            f"[bold red]Test failed[/bold red] for {escape(bssid)} — "
+                            f"[bold]no beacons heard from target during sweep[/bold] "
+                            f"(channel/radio issue, not an SSID-list issue)."
+                        )
+                    else:
+                        # For a HIDDEN target this means "no SSID matched". For
+                        # an already-VISIBLE target the existing decloak path
+                        # can't surface a "success" anyway (ap.ssid is already
+                        # set, no transition to detect) — same message reads
+                        # correctly either way.
+                        self._write_log(
+                            f"[yellow]Test exhausted[/yellow] for {escape(bssid)} — "
+                            f"no SSID matched "
+                            f"([italic]{beacons_heard} beacons heard, "
+                            f"RX is working[/italic])."
+                        )
+                # Success: CaptureEventDetector fires the "Decloaked …" event
+                # via the normal SSID-transition path. Nothing extra needed.
+            finally:
+                await iface.start_hopping(
+                    channels=self._channel_filter, interval=0.25
+                )
+        finally:
+            self._decloak_in_progress = False
 
     def action_change_channel(self) -> None:
         log = self.query_one("#system-log", RichLog)
