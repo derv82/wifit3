@@ -266,20 +266,25 @@ def apply_monitor_filter(t: RT2500USBTransport) -> None:
     rt2500usb_config_filter (rt2500usb.c:399-427).
 
     We surface every *real* frame from every BSS — clear DISABLE_RX and
-    the DROP_* bits for control / not-to-me / to-DS / bcast / mcast, and
-    keep FCS-failed frames (DROP_CRC=0, header is often still readable).
+    the DROP_* bits for control / not-to-me / to-DS / bcast / mcast.
 
-    But we drop pure noise: DROP_PHYSICAL (PLCP/demod failures — these
-    arrive as multi-KB garbage URBs with bogus length fields) and
-    DROP_VERSION_ERROR (malformed; the kernel sets this unconditionally).
-    Clearing DROP_PHYSICAL flooded the full-speed bus with ~93% junk and
-    starved real frames — verified on hardware [[feedback_monitor_mode_deviation]].
+    We drop the error classes the RX loop discards anyway: DROP_PHYSICAL
+    (PLCP/demod failures) + DROP_CRC (FCS failures) + DROP_VERSION_ERROR
+    (malformed; the kernel sets this unconditionally). Final value 0x0046.
+
+    Two hardware findings drove this:
+      * Clearing DROP_PHYSICAL flooded the full-speed bus with ~93% PLCP
+        junk and starved real frames.
+      * DROP_CRC=0 then kept FCS-failed frames — but the RX loop drops all
+        FCS-fail in software, so it was pure cost: ~45% of URBs were
+        multi-KB FCS-fail noise (bogus length, invalid frame types) we
+        received and threw away. Dropping at the hardware reclaims the bus
+        with zero output change. [[feedback_monitor_mode_deviation]]
     """
     reg = t.read16(TXRX_CSR2)
-    # Accept (clear): real frames from any BSS, including FCS-failed.
+    # Accept (clear): real frames from any BSS.
     for field in (
         TXRX_CSR2_DISABLE_RX,
-        TXRX_CSR2_DROP_CRC,
         TXRX_CSR2_DROP_CONTROL,
         TXRX_CSR2_DROP_NOT_TO_ME,
         TXRX_CSR2_DROP_TODS,
@@ -287,9 +292,10 @@ def apply_monitor_filter(t: RT2500USBTransport) -> None:
         TXRX_CSR2_DROP_BROADCAST,
     ):
         reg = set_field16(reg, field, 0)
-    # Drop (set): demodulation noise and malformed frames.
+    # Drop (set): the error classes the RX loop discards anyway.
+    reg = set_field16(reg, TXRX_CSR2_DROP_CRC, 1)
     reg = set_field16(reg, TXRX_CSR2_DROP_PHYSICAL, 1)
     reg = set_field16(reg, TXRX_CSR2_DROP_VERSION_ERROR, 1)
     t.write16(TXRX_CSR2, reg)
     logger.debug("monitor filter: TXRX_CSR2 = 0x%04x "
-                 "(accept real; drop PLCP+version noise)", reg)
+                 "(accept real; drop CRC+PLCP+version errors)", reg)

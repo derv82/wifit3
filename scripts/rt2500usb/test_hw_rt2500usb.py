@@ -103,13 +103,16 @@ from wifit3.chips.rt2500usb.transport import RT2500USBTransport, get_field16
 from wifit3.wlan.packet import WlanFrameParser
 
 # After apply_monitor_filter: accept bits must be CLEAR (we surface these
-# frames, incl. FCS-failed); noise bits must be SET (drop PLCP + version).
+# frames); error bits must be SET (drop CRC + PLCP + version — the RX loop
+# discards all of these anyway).
 _TXRX_CSR2_ACCEPT_MASK = (
-    TXRX_CSR2_DISABLE_RX | TXRX_CSR2_DROP_CRC | TXRX_CSR2_DROP_CONTROL
+    TXRX_CSR2_DISABLE_RX | TXRX_CSR2_DROP_CONTROL
     | TXRX_CSR2_DROP_NOT_TO_ME | TXRX_CSR2_DROP_TODS
     | TXRX_CSR2_DROP_MULTICAST | TXRX_CSR2_DROP_BROADCAST
 )
-_TXRX_CSR2_NOISE_MASK = TXRX_CSR2_DROP_PHYSICAL | TXRX_CSR2_DROP_VERSION_ERROR
+_TXRX_CSR2_NOISE_MASK = (
+    TXRX_CSR2_DROP_CRC | TXRX_CSR2_DROP_PHYSICAL | TXRX_CSR2_DROP_VERSION_ERROR
+)
 
 _RF_NAMES = {
     RF2522: "RF2522", RF2523: "RF2523", RF2524: "RF2524",

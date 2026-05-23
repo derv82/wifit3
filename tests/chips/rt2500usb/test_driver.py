@@ -36,6 +36,7 @@ from wifit3.chips.rt2500usb.constants import (
     TXRX_CSR1,
     TXRX_CSR1_AUTO_SEQUENCE,
     TXRX_CSR2,
+    TXRX_CSR2_DROP_CRC,
     TXRX_CSR2_DROP_PHYSICAL,
     TXRX_CSR2_DROP_VERSION_ERROR,
     TXRX_CSR21,
@@ -196,9 +197,12 @@ def test_parse_rx_urb_too_short():
 def test_apply_monitor_filter_value():
     t = FakeTransport()
     apply_monitor_filter(t)
-    # Accept real frames (all accept bits clear), drop PLCP + version noise.
-    assert t.regs[TXRX_CSR2] == (TXRX_CSR2_DROP_PHYSICAL | TXRX_CSR2_DROP_VERSION_ERROR)
-    assert t.regs[TXRX_CSR2] == 0x0044
+    # Accept real frames (accept bits clear); drop the CRC/PLCP/version error
+    # classes the RX loop discards anyway.
+    assert t.regs[TXRX_CSR2] == (
+        TXRX_CSR2_DROP_CRC | TXRX_CSR2_DROP_PHYSICAL | TXRX_CSR2_DROP_VERSION_ERROR
+    )
+    assert t.regs[TXRX_CSR2] == 0x0046
 
 
 # ----------------------------------------------------------------------

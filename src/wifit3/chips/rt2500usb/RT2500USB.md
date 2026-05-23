@@ -169,14 +169,20 @@ aireplay test 4385–9842, deauth 9843–15248.
 The kernel `config_filter` (399-427) sets TXRX_CSR2 DROP_* bits per the
 mac80211 filter flags (STA mode). wifit3 is always-monitor, so `mac.py
 apply_monitor_filter` opens the filter for real frames from all BSSes
-(clear DISABLE_RX + DROP_CONTROL/NOT_TO_ME/TODS/MCAST/BCAST/CRC) **but
-keeps the noise-drop bits set**: DROP_PHYSICAL=1 + DROP_VERSION_ERROR=1.
-Final value **TXRX_CSR2 = 0x0044**. `[HW]`
+(clear DISABLE_RX + DROP_CONTROL/NOT_TO_ME/TODS/MCAST/BCAST) **but drops
+the error classes the RX loop discards anyway**: DROP_CRC=1 +
+DROP_PHYSICAL=1 + DROP_VERSION_ERROR=1. Final value **TXRX_CSR2 = 0x0046**.
+`[HW]`
 
-Clearing DROP_PHYSICAL (first attempt) flooded the full-speed bus with
-PLCP-failure garbage — 93% of URBs (6584/7068 in 10s) were multi-KB
-noise with bogus lengths, starving real frames. DROP_CRC stays 0 so
-FCS-failed frames still surface (lead's call). `[HW]`
+Two hardware findings (via `--phase rx` drains) drove this:
+- Clearing DROP_PHYSICAL flooded the full-speed bus with PLCP-failure
+  garbage — 93% of URBs (6584/7068 in 10s) were multi-KB noise.
+- With DROP_PHYSICAL fixed, ~45% of URBs were still large FCS-fail noise
+  (bogus length, invalid frame types — a one-off back-walk diagnostic
+  confirmed these are single corrupt frames, **not** coalesced multi-frame
+  transfers). Since the RX loop drops every FCS-fail frame in software,
+  DROP_CRC=0 was pure
+  bus cost; DROP_CRC=1 reclaims it with zero output change.
 See [[feedback_monitor_mode_deviation]].
 
 ## Milestones
