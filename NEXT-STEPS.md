@@ -75,48 +75,6 @@ Tracked here so they don't fall on the floor between sessions:
 - **Mediatek MT7921AU** — separate, fully detailed below in
   **NEXT STEP: MT7921AU**. Driver paused on FW_START_REQ wall.
 
-## Kali Trip TODO
-
-Persistent shopping list of captures / experiments that need a Kali boot.
-Check items off as they land; add new ones as fresh dependencies surface.
-
-- [ ] **Buffalo RT2500USB cold-boot capture** — first bring-up artifact for a
-  new `chips/rt2500usb/` driver. Standard `scripts/capture.py` pattern:
-  plug card, kernel loads `rt2500usb` module, `airmon-ng start`, brief
-  scan, unplug. Saves to `usb_dumps/captures_rt2500usb/`. See "Distant
-  Future Hardware Support" below.
-
-- [x] **AWUS051NHv2 (RT3572) usbmon diff** — **CAPTURED 2026-05-23**, in
-  `usb_dumps/captures_rt3572_tx_diff/`. Both phases landed:
-  - **Phase A** (`aireplay.pcap`, 38,922 usbmon frames + `aireplay.log`):
-    `aireplay-ng -0` deauth burst under the kernel `rt2800usb` driver —
-    the working baseline. `aireplay.log` shows ACKs incrementing, so
-    injection is confirmed on-air for this card under Linux.
-  - **Phase B** (`wifit3.pcap`, 9,122 usbmon frames + `wifit3_test_hw.log`):
-    wifit3's deauth via `test_hw.py` with the kernel modules unloaded so
-    wifit3 owns the device — the failing case. **The RF-silent symptom
-    reproduced on Kali**: bulk-OUT accepted, `TX_STA_CNT1` increments,
-    `TX_STA_FIFO` drains with TX_SUCCESS — same digital-success signature
-    as Windows. So the silent-TX is **driver-side, NOT WinUSB-specific**.
-
-  Remaining work is now a **dev-machine task, no more hardware needed**:
-  diff the two usbmon pcaps (kernel-baseline vs wifit3) to expose the
-  missing/wrong BBP / RFCSR / TX_PIN_CFG / LDO_CFG0 write keeping the
-  analog stage silent. See "Known broken / partial-support cases" above.
-
-- [x] *(Not needed)* **MT7921AU / AWUS036AXML** — existing captures in
-  `usb_dumps/wifit3-kali-bundle/run-2026051*` already prove the
-  FW_START_REQ wall is OS-agnostic. Next step is the Windows-side libusb
-  async URB restructure (see "NEXT STEP: MT7921AU" below). No fresh
-  Kali captures required unless that restructure fails to unblock.
-
-Net of one Kali trip:
-- Buffalo → full bring-up unblocked (mechanical, ~M1 in a day per recent
-  mt76x0u precedent).
-- RT3572 → patch missing register write from usbmon diff → unblocked.
-- MT7921AU → still needs the Windows-side transport rewrite, but doesn't
-  *need* this trip.
-
 ## Open work on RTL8812AU (the just-landed chipset)
 
 Two follow-ups are tracked, both deferred but small:
@@ -180,8 +138,6 @@ to `data_dumps/<driver>-source-v6.18/` + firmware-blob byte-verify against
 | Card | Chip | Kernel module | Captures | Source | FW | Notes |
 |------|------|---------------|----------|--------|----|-------|
 | AC1900       | RTL8814AU | `rtw88_8814au` | ✅ `captures_rtw88_8814au/` (3) | ⏳ | ⏳ | 4T4R, modern iDDMA path. Bigger delta from 8822bu — 4 RF paths instead of 2, larger txbf init. Family-shared `rtw88_base/` should still cover transport / phy_cond / power_seq / SIPI. |
-| AWUS036ACM   | MT7612U   | `mt76x2u`      | ✅ `captures_mt76x2u/` (3) | ✅ | ✅ | **DONE 2026-05-20** — see `chips/mt76x2u/MT76X2U.md`. The "~2 s channel-switch breathing room" noted during capture turned out to be a **capture-host artifact, NOT a chip constraint** — our wifit3 driver does the full kernel-faithful 5-cal-MCU-CMD switch in ~150 ms (see `--phase hop` output). The `aireplay-ng` >10s latency was likely the same Kali-host effect. Defer `chips/mt76_base/` until MT7921AU revives — two impls aren't enough yet to know which seam to factor. |
-| AWUS036ACHM  | MT7610U   | `mt76x0u`      | ✅ `captures_mt76x0u/` (3)      | ✅ | ✅ | **DONE 2026-05-22** — see commit history `49df6f4`..`b887282`. M1 (FW upload) through M6 (deauth + EAPOL) + PMKID/SAE landed in one push. PMKID capture re-verified by user post-decloak-session. Single-chain WiFi-5; defer `chips/mt76_base/` factoring (see MT7612U row above). |
 
 Next mechanical steps when picking one of these up:
 
@@ -199,11 +155,10 @@ Next mechanical steps when picking one of these up:
 
 ## NEXT STEP: Attack Stack Engine
 
-No actual functioning attacks (yet).
-
 WEP attacks scoped in [`src/wifit3/engine/attacks/wep/README.md`](src/wifit3/engine/attacks/wep/README.md) — ARP-replay + MVP shell-out PTW first (~1 week), full-native PTW + fragmentation + chopchop second (~2-3 weeks). All other attacks that Wifite2 can do, we should be able to do natively in Python.
 
 * 4-way Handshake capture (via client deauth)
+  - Landed capture detection in Focus view (option to Save). I think Scanner view detects handshakes as well?
   - **Open: dynamic channel re-steering.** If the AP CSA-jumps to another
     channel or shows stronger signal elsewhere (multi-band AP advertising
     on both 2.4 and 5), Focus stays glued to whatever channel was current
