@@ -90,6 +90,7 @@ class ScannerView(Screen):
         ("beacons", "🥓"),
         ("clients", "💻"),
         ("encryption", "ENCRYPT"),
+        ("wps", "WPS"),
         ("ssid", "SSID"),
     ]
 
@@ -329,6 +330,14 @@ class ScannerView(Screen):
         """
         fg = self._theme_fg
         bacon_style = f"{fg} bold" if flash_bacon else fg
+        # WPS cell: empty when absent; "WPS 🔒" when locked (PIN attacks
+        # rate-limited → Reaver/Pixie won't progress). Version (1.0/2.0) is
+        # kept on the model for the Focus panel / Pixie targeting but omitted
+        # here — nearly everything is WPS 2.0, so the digit was just noise.
+        if ap.wps:
+            wps_cell = Text("WPS 🔒" if ap.wps_locked else "WPS", style=fg)
+        else:
+            wps_cell = Text("", style=fg)
         return [
             Text(ap.bssid, style=fg),
             Text(str(ap.channel), justify="right", style=fg),
@@ -337,6 +346,7 @@ class ScannerView(Screen):
             Text(str(n_clients) if n_clients else "", justify="right", style=fg),
             # style=fg gives the bare '→' between WPA3/WPA2 a fadeable base color.
             Text.from_markup(format_encryption_markup(ap, muted=fg), emoji=False, style=fg),
+            wps_cell,
             self._ssid_markup(ap),
         ]
 

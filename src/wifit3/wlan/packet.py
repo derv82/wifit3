@@ -116,8 +116,13 @@ class WlanFrameParser:
                 result["akms"] = tags.get("akms", [])
                 if "rsn_ie_raw" in tags:
                     result["rsn_ie_raw"] = tags["rsn_ie_raw"]
-                if "wps" in tags:
-                    result["wps"] = tags["wps"]
+                for wps_key in (
+                    "wps", "wps_locked", "wps_version", "wps_state",
+                    "wps_config_methods", "wps_device_password_id",
+                    "wps_selected_registrar",
+                ):
+                    if wps_key in tags:
+                        result[wps_key] = tags[wps_key]
             elif subtype in (WlanFrameParser.SUBTYPE_PROBE_REQ, WlanFrameParser.SUBTYPE_ASSOC_REQ):
                 tags = WlanFrameParser._parse_tags(frame, subtype)
                 if tags is None: return None
@@ -352,6 +357,77 @@ class WlanFrameParser:
         if len(mac_bytes) != 6: return "00:00:00:00:00:00"
         return ":".join(f"{b:02x}" for b in mac_bytes)
 
+    # WPS attribute IDs (big-endian) we care about. WSC spec §12.
+    _WPS_ATTR_VERSION = 0x104A
+    _WPS_ATTR_STATE = 0x1044
+    _WPS_ATTR_AP_SETUP_LOCKED = 0x1057
+    _WPS_ATTR_SELECTED_REGISTRAR = 0x1041
+    _WPS_ATTR_DEVICE_PASSWORD_ID = 0x1012
+    _WPS_ATTR_CONFIG_METHODS = 0x1008
+    _WPS_ATTR_VENDOR_EXTENSION = 0x1049
+
+    @staticmethod
+    def _wps_version2(vext: bytes) -> Optional[int]:
+        """Pull the WPS 2.0 Version2 value from a WPS Vendor Extension
+        attribute. The value is the WFA vendor id (00:37:2A) followed by
+        1-byte-id / 1-byte-len subelements; Version2 is subelement 0x00.
+        """
+        if len(vext) < 3 or vext[:3] != b"\x00\x37\x2a":
+            return None
+        j = 3
+        while j + 2 <= len(vext):
+            sub_id = vext[j]
+            sub_len = vext[j + 1]
+            j += 2
+            if j + sub_len > len(vext):
+                break
+            if sub_id == 0x00 and sub_len >= 1:   # Version2
+                return vext[j]
+            j += sub_len
+        return None
+
+    @staticmethod
+    def _parse_wps_ie(data: bytes) -> Dict[str, Any]:
+        """Walk the WPS IE's nested big-endian TLVs (``data`` = bytes after
+        the OUI + OUI-type) and surface the attacker-relevant subset.
+
+        Each TLV is a 2-byte attribute id, 2-byte length, then value.
+        Missing attributes leave their fields at the model defaults.
+        """
+        out: Dict[str, Any] = {"wps": True}
+        version1 = False
+        version2 = 0
+        i, n = 0, len(data)
+        while i + 4 <= n:
+            attr = (data[i] << 8) | data[i + 1]
+            ln = (data[i + 2] << 8) | data[i + 3]
+            i += 4
+            if i + ln > n:
+                break
+            val = data[i:i + ln]
+            i += ln
+            if attr == WlanFrameParser._WPS_ATTR_AP_SETUP_LOCKED and ln >= 1:
+                out["wps_locked"] = val[0] == 0x01
+            elif attr == WlanFrameParser._WPS_ATTR_STATE and ln >= 1:
+                out["wps_state"] = val[0]          # 1=unconfigured, 2=configured
+            elif attr == WlanFrameParser._WPS_ATTR_CONFIG_METHODS and ln >= 2:
+                out["wps_config_methods"] = (val[0] << 8) | val[1]
+            elif attr == WlanFrameParser._WPS_ATTR_DEVICE_PASSWORD_ID and ln >= 2:
+                out["wps_device_password_id"] = (val[0] << 8) | val[1]
+            elif attr == WlanFrameParser._WPS_ATTR_SELECTED_REGISTRAR and ln >= 1:
+                out["wps_selected_registrar"] = val[0] == 0x01
+            elif attr == WlanFrameParser._WPS_ATTR_VERSION and ln >= 1:
+                version1 = True
+            elif attr == WlanFrameParser._WPS_ATTR_VENDOR_EXTENSION:
+                v2 = WlanFrameParser._wps_version2(val)
+                if v2 is not None:
+                    version2 = v2
+        if version2 >= 0x20:
+            out["wps_version"] = "2.0"
+        elif version1:
+            out["wps_version"] = "1.0"
+        return out
+
     @staticmethod
     def _parse_tags(frame: bytes, subtype: int) -> Optional[Dict[str, Any]]:
         """
@@ -458,7 +534,10 @@ class WlanFrameParser:
                         if oui_type == 1: # WPA
                             has_wpa = True
                         elif oui_type == 4: # WPS
-                            parsed["wps"] = True
+                            # tag_data = OUI(3) + type(1) + WPS TLVs.
+                            parsed.update(
+                                WlanFrameParser._parse_wps_ie(tag_data[4:])
+                            )
 
             ptr = tag_end
 

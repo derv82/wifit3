@@ -120,6 +120,15 @@ class AccessPoint(BaseModel):
     pmf_capable: bool = Field(default=False)
     pmf_required: bool = Field(default=False)
 
+    # WPS state decoded from the WPS vendor IE (tag 221, OUI 00:50:F2 type 4)
+    # in beacons / probe responses. `wps_locked` is the key attack signal —
+    # locked APs rate-limit PIN attempts so Reaver/Pixie won't progress.
+    wps: bool = Field(default=False)
+    wps_locked: bool = Field(default=False)
+    wps_version: Optional[str] = Field(default=None)        # "1.0" / "2.0"
+    wps_config_methods: int = Field(default=0)              # 0x1008 bitmask
+    wps_device_password_id: Optional[int] = Field(default=None)  # 0x0004 = PBC
+
     # Most recent raw beacon bytes — used so per-client handshakes created
     # AFTER the first beacon still get a beacon stamped onto them.
     last_beacon_frame: Optional[bytes] = Field(default=None)

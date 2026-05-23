@@ -56,6 +56,53 @@ def _rsn_ie(
     body += struct.pack("<H", rsn_caps)
     return bytes([48, len(body)]) + body
 
+
+def _wps_ie(*, locked: bool = False, version2: bool = False,
+            configured: bool = True) -> bytes:
+    """Build a WPS vendor IE (tag 221, OUI 00:50:F2, OUI-type 4) with the
+    nested big-endian TLVs. AP Setup Locked is always emitted (as real APs
+    do) so both the locked and unlocked decode paths are exercised."""
+    def tlv(attr: int, val: bytes) -> bytes:
+        return struct.pack(">HH", attr, len(val)) + val
+
+    body = tlv(0x104A, b"\x10")                                   # Version 1.0
+    body += tlv(0x1044, b"\x02" if configured else b"\x01")      # Setup State
+    body += tlv(0x1057, b"\x01" if locked else b"\x00")          # AP Setup Locked
+    body += tlv(0x1008, b"\x00\x84")                             # Config Methods
+    body += tlv(0x1012, b"\x00\x00")                             # Device Password ID (PIN)
+    if version2:
+        body += tlv(0x1049, b"\x00\x37\x2a" + b"\x00\x01\x20")  # Vendor Ext → Version2
+    payload = b"\x00\x50\xf2\x04" + body
+    return bytes([0xDD, len(payload)]) + payload
+
+
+def test_wps_open_beacon():
+    r = WlanFrameParser.parse_80211_frame(
+        _build_beacon(wpa_vendor_ie=_wps_ie(locked=False)), -50)
+    assert r["wps"] is True
+    assert r["wps_locked"] is False
+    assert r["wps_version"] == "1.0"
+
+
+def test_wps_locked_beacon():
+    r = WlanFrameParser.parse_80211_frame(
+        _build_beacon(wpa_vendor_ie=_wps_ie(locked=True)), -50)
+    assert r["wps"] is True
+    assert r["wps_locked"] is True
+
+
+def test_wps_version2_beacon():
+    r = WlanFrameParser.parse_80211_frame(
+        _build_beacon(wpa_vendor_ie=_wps_ie(version2=True)), -50)
+    assert r["wps"] is True
+    assert r["wps_version"] == "2.0"
+
+
+def test_no_wps_ie_absent():
+    r = WlanFrameParser.parse_80211_frame(
+        _build_beacon(rsn_ie=_rsn_ie()), -50)
+    assert not r.get("wps", False)
+
 def test_wlan_frame_parser_validates():
     # A random bunch of bytes too small to be a frame
     assert WlanFrameParser.parse_80211_frame(b'\x00\x01\x02', -50) is None

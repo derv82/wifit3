@@ -133,6 +133,11 @@ class WlanInterface:
             transition_mode = parsed.get("transition_mode", False)
             pmf_capable = parsed.get("pmf_capable", False)
             pmf_required = parsed.get("pmf_required", False)
+            wps = parsed.get("wps", False)
+            wps_locked = parsed.get("wps_locked", False)
+            wps_version = parsed.get("wps_version")
+            wps_config_methods = parsed.get("wps_config_methods", 0)
+            wps_device_password_id = parsed.get("wps_device_password_id")
 
             if bssid not in self.access_points:
                 self.access_points[bssid] = AccessPoint(
@@ -148,6 +153,11 @@ class WlanInterface:
                     transition_mode=transition_mode,
                     pmf_capable=pmf_capable,
                     pmf_required=pmf_required,
+                    wps=wps,
+                    wps_locked=wps_locked,
+                    wps_version=wps_version,
+                    wps_config_methods=wps_config_methods,
+                    wps_device_password_id=wps_device_password_id,
                 )
                 self._recompute_siblings_for(bssid)
                 if ssid and ssid != "<hidden>":
@@ -188,6 +198,15 @@ class WlanInterface:
                 ap.transition_mode = transition_mode
                 ap.pmf_capable = pmf_capable
                 ap.pmf_required = pmf_required
+                # Only refresh WPS when this frame actually carried the IE —
+                # a probe response without it must not clear a known WPS flag.
+                # (locked/state CAN change, so re-read when present.)
+                if wps:
+                    ap.wps = True
+                    ap.wps_locked = wps_locked
+                    ap.wps_version = wps_version
+                    ap.wps_config_methods = wps_config_methods
+                    ap.wps_device_password_id = wps_device_password_id
 
             # Always bump the recency clock on the AP we just saw — drives
             # stale-row dim-out and "Last Beacon: Ns ago" in FocusView.
