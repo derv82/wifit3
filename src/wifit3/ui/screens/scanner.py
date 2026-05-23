@@ -88,7 +88,7 @@ class ScannerView(Screen):
         ("channel", "CH"),
         ("signal", "POWER"),
         ("beacons", "🥓"),
-        ("clients", "#CLI"),
+        ("clients", "💻"),
         ("encryption", "ENCRYPT"),
         ("ssid", "SSID"),
     ]
@@ -181,12 +181,22 @@ class ScannerView(Screen):
     def _update_column_headers(self) -> None:
         table = self.query_one("#ap-table", DataTable)
         sort_key, _ = self._COLUMNS[self._sort_idx]
-        active = " ▼" if self._sort_reverse else " ▲"
+        arrow = "▼" if self._sort_reverse else "▲"
 
         for key, base_label in self._COLUMNS:
-            suffix = active if key == sort_key else "  "
+            is_sorted = key == sort_key
+            if key in self._RIGHT_ALIGNED:
+                # Right-justify so the label sits over the right-aligned
+                # numbers (no gap), with the sort arrow floating left over
+                # the empty space to the left of the digits.
+                prefix = f"{arrow} " if is_sorted else "  "
+                label = Text(prefix + base_label, justify="right")
+            else:
+                # Left-aligned text columns: arrow trails the label.
+                suffix = f" {arrow}" if is_sorted else "  "
+                label = Text(base_label + suffix, justify="left")
             if key in table.columns:
-                table.columns[key].label = base_label + suffix
+                table.columns[key].label = label
         table.refresh()
 
     # ----- Per-tick refresh --------------------------------------------------
