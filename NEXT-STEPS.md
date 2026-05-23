@@ -153,7 +153,7 @@ Next mechanical steps when picking one of these up:
 
 No actual functioning attacks (yet).
 
-We want to avoid WEP as it's outdated. But all other attacks that Wifite2 can do now we should be able to do, natively in Python.
+WEP attacks scoped in [`src/wifit3/engine/attacks/wep/README.md`](src/wifit3/engine/attacks/wep/README.md) — ARP-replay + MVP shell-out PTW first (~1 week), full-native PTW + fragmentation + chopchop second (~2-3 weeks). All other attacks that Wifite2 can do, we should be able to do natively in Python.
 
 * 4-way Handshake capture (via client deauth)
   - **Open: dynamic channel re-steering.** If the AP CSA-jumps to another

@@ -9,4 +9,5 @@ The attacks use common WlanInterface methods when applicable:
   - iface.register_listener(dot11_callback, filter=None) -> for capturing & filtering 802.11 packets
   - iface.send_raw() to inject the unique specific malicious frames (Pixie/WPS, WPA3 PMKID stuff?).
 
-Note: Skip WEP for now; low ROI for effort (WEP=DEAD).
+WEP attacks scoped in [`wep/README.md`](wep/README.md) — M1..M8 milestones, IV
+capture → ARP replay → MVP shell-out crack → native PTW.
