@@ -10,6 +10,7 @@ Fully-functional userspace Python drivers (cold + warm bring-up, channel hop, in
 | Alfa/Realtek RTL8187 | `chips/rtl8187/` | 2.4 GHz | DONE |
 | Ralink RT2800USB (RT5372 / RT5572) | `chips/rt2800usb/` | 2.4 GHz (RT5372 1T1R); 2.4 + 5 GHz (RT5572 2T2R) | DONE 2026-05-20 — RT5372 + RT5572 (silicon RT5392/RT5592) hw-verified for scan + monitor + TX inject. RT3572 split out to known-broken below. |
 | Mediatek MT7612U (AWUS036ACM, Alfa) | `chips/mt76x2u/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-20 — full attack stack hw-verified; deauth on NETGEAR2G recaptured EAPOL M1+M3 live |
+| Mediatek MT7610U (AWUS036ACHM, Alfa) | `chips/mt76x0u/` | 2.4 + 5 GHz, 1T1R | DONE 2026-05-22 — M1→full attack stack landed in ~24 h (commits `49df6f4`..`b887282`); PMKID capture hw-verified by user. mt76 family, single-chain WiFi-5 sibling of MT7612U. |
 | Realtek RTL8821AU (AWUS036ACS) | `chips/rtl8821au/` | 2.4 + 5 GHz | DONE 2026-05-17, 27 BSSIDs/8s on ch1 |
 | Realtek RTL8822BU (TP-Link T3U Plus, AC1300) | `chips/rtl8822bu/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-17, full RX + TX inject + 5G |
 | Realtek RTL8812AU (AWUS036ACH) | `chips/rtl8812au/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-17, RX + deauth confirmed by handshake re-capture |
@@ -131,8 +132,8 @@ to `data_dumps/<driver>-source-v6.18/` + firmware-blob byte-verify against
 | Card | Chip | Kernel module | Captures | Source | FW | Notes |
 |------|------|---------------|----------|--------|----|-------|
 | AC1900       | RTL8814AU | `rtw88_8814au` | ✅ `captures_rtw88_8814au/` (3) | ⏳ | ⏳ | 4T4R, modern iDDMA path. Bigger delta from 8822bu — 4 RF paths instead of 2, larger txbf init. Family-shared `rtw88_base/` should still cover transport / phy_cond / power_seq / SIPI. |
-| AWUS036ACHM  | MT7610U   | `mt76x0u`      | ✅ `captures_mt76x0u/` (3)      | ⏳ | ⏳ | mt76 family, sibling of mt7921 in structure but older WiFi-5 PHY. Single-chain. 5GHz support detected by airmon at capture time. |
 | AWUS036ACM   | MT7612U   | `mt76x2u`      | ✅ `captures_mt76x2u/` (3) | ✅ | ✅ | **DONE 2026-05-20** — see `chips/mt76x2u/MT76X2U.md`. The "~2 s channel-switch breathing room" noted during capture turned out to be a **capture-host artifact, NOT a chip constraint** — our wifit3 driver does the full kernel-faithful 5-cal-MCU-CMD switch in ~150 ms (see `--phase hop` output). The `aireplay-ng` >10s latency was likely the same Kali-host effect. Defer `chips/mt76_base/` until MT7921AU revives — two impls aren't enough yet to know which seam to factor. |
+| AWUS036ACHM  | MT7610U   | `mt76x0u`      | ✅ `captures_mt76x0u/` (3)      | ✅ | ✅ | **DONE 2026-05-22** — see commit history `49df6f4`..`b887282`. M1 (FW upload) through M6 (deauth + EAPOL) + PMKID/SAE landed in one push. PMKID capture re-verified by user post-decloak-session. Single-chain WiFi-5; defer `chips/mt76_base/` factoring (see MT7612U row above). |
 
 Next mechanical steps when picking one of these up:
 
