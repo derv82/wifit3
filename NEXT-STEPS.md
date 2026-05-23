@@ -81,21 +81,21 @@ Check items off as they land; add new ones as fresh dependencies surface.
   Future Hardware Support" below.
 
 - [ ] **AWUS051NHv2 (RT3572) usbmon diff** — unblock the TX-RF-silent
-  issue. Two captures of equivalent activity, side by side:
-  - [ ] `aireplay-ng --test wlan0` against an AP on a known channel
-    (~30 s of TX activity, kernel rt2x00 driver — the working baseline).
-  - [ ] `wifit3` deauth attack against the same AP/channel, with kernel
-    `rt2800usb / rt2x00usb / rt2x00lib` unloaded so wifit3 owns the device
-    (the failing case).
+  issue. Single script `scripts/kali_test_rt3572_tx_diff.sh` runs both
+  captures back-to-back:
+  - **Phase A**: `aireplay-ng -0` deauth burst against the hardcoded
+    target AP/client (~20 s), kernel `rt2800usb` driver — the working
+    baseline.
+  - **Phase B**: `scripts/test_hw.py` running wifit3's deauth against the
+    same AP/client, kernel `rt2800usb / rt2x00usb / rt2x00lib` unloaded
+    so wifit3 owns the device — the failing case. (Phase B doubles as the
+    "does wifit3 fail on Kali too?" check; if it works here, the silent-
+    TX is WinUSB-specific instead of driver-side.)
 
-  Both saved to `usb_dumps/captures_rt3572_tx_diff/`. Once landed, the
-  register-write diff will expose the missing/wrong BBP / RFCSR /
+  Both pcaps saved to `usb_dumps/captures_rt3572_tx_diff/`. Once landed,
+  the register-write diff will expose the missing/wrong BBP / RFCSR /
   TX_PIN_CFG / LDO_CFG0 write keeping the analog stage silent. See
   "Known broken / partial-support cases" above.
-
-- [ ] **(Bonus) `wifit3 --debug` running on Kali against NHv2** — confirms
-  whether the silent-TX is OS-agnostic. Almost certainly is, but rules
-  out the WinUSB layer cleanly so we don't chase a Windows ghost.
 
 - [x] *(Not needed)* **MT7921AU / AWUS036AXML** — existing captures in
   `usb_dumps/wifit3-kali-bundle/run-2026051*` already prove the
