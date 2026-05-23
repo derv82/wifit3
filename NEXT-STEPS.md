@@ -9,6 +9,7 @@ Fully-functional userspace Python drivers (cold + warm bring-up, channel hop, in
 | Atheros AR9271 (AWUS036NHA) | `chips/ar9271/` | 2.4 GHz, 1T1R | DONE 2026-05-22 — cleanroom-FW RX protocol fully RE'd (36-B header, rs_status + FCS gating, kernel-faithful HIF reassembler); PMKID + EAPOL M1-M4 hw-verified |
 | Alfa/Realtek RTL8187 | `chips/rtl8187/` | 2.4 GHz | DONE |
 | Ralink RT2800USB (RT5372 / RT5572) | `chips/rt2800usb/` | 2.4 GHz (RT5372 1T1R); 2.4 + 5 GHz (RT5572 2T2R) | DONE 2026-05-20 — RT5372 + RT5572 (silicon RT5392/RT5592) hw-verified for scan + monitor + TX inject. RT3572 split out to known-broken below. |
+| Ralink RT2500USB / RT2570 (Buffalo "Nintendo Wi-Fi USB Connector") | `chips/rt2500usb/` | 2.4 GHz, RF2525E | DONE 2026-05-23 — no-firmware register-only userland bring-up; M1-M5 hw-verified. Scan/monitor in TUI (309 frames / 15 BSSIDs on ch1, monitor filter TXRX_CSR2=0x0044); TX inject (1 Mbps CCK) deauth recaptured EAPOL M1+M3 + PMKID live. See [[RT2500USB.md]]. |
 | Mediatek MT7612U (AWUS036ACM, Alfa) | `chips/mt76x2u/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-20 — full attack stack hw-verified; deauth on NETGEAR2G recaptured EAPOL M1+M3 live |
 | Mediatek MT7610U (AWUS036ACHM, Alfa) | `chips/mt76x0u/` | 2.4 + 5 GHz, 1T1R | DONE 2026-05-22 — M1→full attack stack landed in ~24 h (commits `49df6f4`..`b887282`); PMKID capture hw-verified by user. mt76 family, single-chain WiFi-5 sibling of MT7612U. |
 | Realtek RTL8821AU (AWUS036ACS) | `chips/rtl8821au/` | 2.4 + 5 GHz | DONE 2026-05-17, 27 BSSIDs/8s on ch1 |
