@@ -592,12 +592,18 @@ def _build_rt2800_rx_urb(frame_body: bytes, *, rssi_byte: int = 40, crc_error: b
                           mcs: int = 4) -> bytes:
     """Build a synthetic RX URB matching the kernel layout for RT539x:
 
-      [RXINFO 4B] [RXWI 16B] [802.11 frame + 4B FCS] [RXD 4B]
+      [RXINFO 4B] [RXWI 16B] [802.11 frame] [RXD 4B]
+
+    Kernel docs say MPDU byte count includes a trailing 4-byte FCS, but
+    live RT5572 / RT5372 diagnostics (see chips/rt2800usb/rx.py:168-181)
+    showed the chip pre-strips FCS before the URB lands. Verified on
+    PAU09 + PAU05 via PMKID harvest landing a clean 16-byte hash; the
+    older `[:-4]` strip was clipping real EAPOL M1 payload. So this
+    helper feeds frame_body as-is with no synthetic FCS appended — that's
+    what `parse_rx_urb` actually sees on the wire.
     """
     import struct
-    fcs = b"\xaa\xbb\xcc\xdd"
-    frame_with_fcs = frame_body + fcs
-    mpdu_len = len(frame_with_fcs)
+    mpdu_len = len(frame_body)
 
     # rx_pkt_len covers RXWI + frame; doesn't include RXD.
     rxwi_size = 16
@@ -616,10 +622,12 @@ def _build_rt2800_rx_urb(frame_body: bytes, *, rssi_byte: int = 40, crc_error: b
         rxd_w0 |= 0x100
     rxd = struct.pack("<I", rxd_w0)
 
-    return rxinfo + rxwi + frame_with_fcs + rxd
+    return rxinfo + rxwi + frame_body + rxd
 
 
-def test_parse_rx_urb_decodes_trailer_strips_fcs():
+def test_parse_rx_urb_decodes_trailer():
+    """RX URB decode produces the 802.11 frame bytes verbatim — no
+    synthetic FCS strip, since the chip pre-strips before delivery."""
     from wifit3.chips.rt2800usb.rx import parse_rx_urb
     body = b"\x80\x00" + b"\x00" * 22 + b"BEACON"   # 30-byte body
     urb = _build_rt2800_rx_urb(body, rssi_byte=40)
