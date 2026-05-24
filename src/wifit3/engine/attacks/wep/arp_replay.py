@@ -186,11 +186,9 @@ class WepArpReplay:
         """Halt TX without tearing down — for the frag/chopchop sub-modes that
         need exclusive use of the radio."""
         self._paused = True
-        self._log("[dim]· debug: ARP replay PAUSED (handed radio to frag)[/dim]")
 
     def resume(self) -> None:
         self._paused = False
-        self._log("[dim]· debug: ARP replay RESUMED[/dim]")
 
     @property
     def is_active(self) -> bool:
@@ -367,11 +365,6 @@ class WepArpReplay:
                 self._winner = None
                 self._current = None
                 self.stats.has_winner = False
-                self._log(
-                    f"[dim]· debug: ARP replay DEMOTED seed "
-                    f"({self._STALL_DEMOTE_AFTER:.0f}s no IVs despite re-auth) "
-                    f"→ re-testing candidates[/dim]"
-                )
             return
 
         # Testing a candidate: judge only after a full trial window.
