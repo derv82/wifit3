@@ -26,6 +26,10 @@ debug.log
 usb_transactions.log
 wifit3-decloak.log
 wifit3-wep-arp*.log
+# WEP fragmentation/chopchop probe captures — real on-air frames from the
+# user's environment; never commit (see no-SSIDs/BSSIDs-in-commits rule).
+wifit3-wep-frag*.pcap
+wifit3-wep-*.pcap
 
 # If it starts with a dot, committed it gets not
 .*
