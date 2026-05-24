@@ -190,6 +190,8 @@ class WepCampaign:
         user stops or switches — never auto-stops."""
         if not self._active or self.frag is not None:
             return
+        self._log("[dim]· debug: FRAG START — pausing replay, frag takes the "
+                  "radio[/dim]")
         self.replay.pause()
         self.frag = WepFragmentation(
             self.iface,
@@ -207,6 +209,8 @@ class WepCampaign:
         replay (its locked-on seed, if any, survives)."""
         if self.frag is None:
             return
+        self._log("[dim]· debug: FRAG STOP (user) — handing radio back to "
+                  "replay[/dim]")
         self.frag.stop()
         self.frag = None
         self.replay.resume()
@@ -216,6 +220,8 @@ class WepCampaign:
         store logged it as a replay seed). The daemon stopped itself; just drop
         our handle and resume replay, which will pick the new seed up."""
         self.frag = None
+        self._log("[dim]· debug: FRAG SUCCESS handoff — frag stopped, resuming "
+                  "replay with the forged seed[/dim]")
         self._log(
             "[green]→ Fragmentation seeded replay[/green] [dim](resuming ARP "
             "replay with the AP's relayed ARP)[/dim]"
