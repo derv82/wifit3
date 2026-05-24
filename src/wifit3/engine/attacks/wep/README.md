@@ -156,16 +156,28 @@ decides on its own is *success* (→ resume replay), because that's unambiguous;
    a GF(2) trailing-byte solve, gated by a decrypt→check-residue oracle).
    11 offline tests in `tests/engine/test_wep_crypto.py`. So the ENTIRE crypto
    surface of frag + chopchop is built and proven with zero hardware.
-2. **`fragmentation.py` / `chopchop.py` (still skeletons)** — daemon shape like
-   `WepArpReplay` (`start`/`stop`, state, `log_callback`); on success call back
-   into the campaign (`on_forged_arp`) to hand over the forged ARP + resume
+2. **Fragmentation send-side primitives — ✅ DONE + offline-verified** (`build_fragments`,
+   `seed_keystream_from_arp`, `arp_request_plaintext` in `wep_crypto.py`; 5 new
+   tests). KEY SIMPLIFICATION: the frag payload is itself a **broadcast ARP**, so
+   one round collapses three things — the AP's relay is simultaneously (a) the
+   oracle's success signal, (b) a directly replayable ARP seed, and (c) ~40 B of
+   fresh keystream (XOR vs our known 36-B plaintext). Seed PRGA is free from a
+   captured broadcast ARP (fixed SNAP+ethertype `AA AA 03 00 00 00 08 06`). 8-B
+   seed → 4 data bytes/fragment → 16×4=64 ≥ the 36-B ARP. The send-side tests
+   prove SELF-CONSISTENCY (a simulated reassembly round-trips) — NOT that the
+   real AP reassembles+relays; only the probe can establish that.
+3. **`scripts/wep/frag_probe.py` — ✅ READY for hardware** (the README's
+   recommended first hardware step): fake-auths, sends fragmented broadcast-ARP
+   rounds, dumps EVERY RX frame timestamped to a `.pcap` + console log, flags
+   candidate relays (fresh-IV FromDS broadcast WEP data from our forged SA). The
+   pcap is the ground truth (spec+pcap model). **NEXT: run at the dd-wrt box,
+   read the pcap, then code `fragmentation.py`'s oracle to what's observed.**
+4. **`fragmentation.py` / `chopchop.py` daemons (still skeletons)** — daemon shape
+   like `WepArpReplay` (`start`/`stop`, state, `log_callback`); on success call
+   back into the campaign (`on_forged_arp`) to hand over the forged ARP + resume
    replay. The **oracle detection** (recognizing the AP's relayed frame on the
-   air) is the part that needs the live AP — the hardware-in-the-loop work.
-   Recommended first hardware step: a small probe that sends one frag round and
-   dumps every received frame (à la the old `wifit3-wep-arp.log`) to
-   characterize how the target relays reassembled frames, then code the oracle
-   to what's observed.
-3. **Campaign + Focus wiring** — Frag/Chop buttons, mutual exclusion via
+   air) is the part that needs the live AP — finalize it from the probe's pcap.
+5. **Campaign + Focus wiring** — Frag/Chop buttons, mutual exclusion via
    pause/resume, success→resume-replay, failure→KEEP-RETRYING + progress tally.
 
 ### Skeleton files

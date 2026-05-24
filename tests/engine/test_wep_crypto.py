@@ -9,9 +9,12 @@ import random
 
 from wifit3.engine.attacks.wep.wep_crypto import (
     CRC32_RESIDUE,
+    arp_request_plaintext,
+    build_fragments,
     chop_last_byte_and_fixup,
     forge_arp_request,
     icv,
+    seed_keystream_from_arp,
     wep_encrypt,
     _crc,
     _CRC_TABLE,
@@ -139,3 +142,101 @@ def test_chopchop_iterates_keeping_frames_valid():
         p = bytes(b ^ k for b, k in zip(body, ks))
         assert zlib.crc32(p) & 0xFFFFFFFF == CRC32_RESIDUE   # current frame valid
         body = chop_last_byte_and_fixup(body, p[-1])         # guess its last byte
+
+
+# ---- Fragmentation (M5) ----------------------------------------------------
+#
+# These prove the SEND side is self-consistent: a simulated AP that decrypts +
+# reassembles our fragments recovers exactly what we fragmented. That's a
+# consistency check, NOT proof the real dd-wrt box reassembles + relays — only
+# the on-air probe (scripts/wep/frag_probe.py) can establish that.
+
+_SNAP_ARP_PREFIX = bytes([0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00, 0x08, 0x06])
+
+
+def _arp_body(keystream: bytes, iv: bytes, plaintext: bytes) -> bytes:
+    """Build a captured-looking WEP ARP body: IV ++ KeyID(0) ++ RC4(pt++icv)."""
+    return iv + b"\x00" + wep_encrypt(keystream, plaintext)
+
+
+def test_seed_keystream_recovers_known_prga():
+    ks = bytes((i * 5 + 9) & 0xFF for i in range(40))
+    iv = bytes([0x11, 0x22, 0x33])
+    pt = arp_request_plaintext(
+        sender_mac=bytes.fromhex("020000000099"),
+        sender_ip=bytes([10, 0, 0, 5]),
+        target_ip=bytes([10, 0, 0, 1]),
+    )
+    body = _arp_body(ks, iv, pt)
+    # The 8-byte seed must equal the real first 8 keystream bytes...
+    assert seed_keystream_from_arp(body, want=8) == ks[:8]
+    # ...and shorter requests are honored (6 protocol-agnostic SNAP bytes).
+    assert seed_keystream_from_arp(body, want=6) == ks[:6]
+
+
+def test_seed_keystream_rejects_oversize_request():
+    body = _arp_body(bytes(range(40)), bytes(3), b"\x00" * 36)
+    with pytest.raises(ValueError):
+        seed_keystream_from_arp(body, want=9)   # >8 is not known plaintext
+
+
+def _reassemble(fragments: list, keystream: bytes) -> bytes:
+    """Stand-in for the AP: validate each fragment's WEP framing + ICV, check
+    the More-Fragments / fragment-number bookkeeping, and concatenate the
+    decrypted payload chunks back into the original MSDU."""
+    out = bytearray()
+    for i, frame in enumerate(fragments):
+        fc1 = frame[1]
+        assert fc1 & 0x01, "ToDS must be set"
+        assert fc1 & 0x40, "Protected must be set"
+        more = bool(fc1 & 0x04)
+        assert more == (i < len(fragments) - 1), "More-Fragments bit wrong"
+        seq_ctl = struct.unpack("<H", frame[22:24])[0]
+        assert (seq_ctl & 0x0F) == i, "fragment number wrong"
+        body = frame[24:]
+        cipher = body[4:]                       # skip IV(3)+KeyID(1)
+        plain = bytes(b ^ k for b, k in zip(cipher, keystream))
+        data, trailer = plain[:-4], plain[-4:]
+        assert trailer == icv(data), "fragment ICV invalid"
+        out += data
+    return bytes(out)
+
+
+def test_build_fragments_roundtrips_through_simulated_reassembly():
+    ks = bytes((i * 7 + 1) & 0xFF for i in range(8))   # 8-byte seed → 4 B/frag
+    iv = bytes([0xAB, 0xCD, 0xEF])
+    payload = arp_request_plaintext(
+        sender_mac=bytes.fromhex("020000000042"),
+        sender_ip=bytes([192, 168, 6, 66]),
+        target_ip=bytes([192, 168, 6, 1]),
+    )                                                  # 36 bytes → 9 fragments
+    frags = build_fragments(
+        ks, iv, payload,
+        bssid=bytes.fromhex("001122334455"),
+        source_mac=bytes.fromhex("020000000042"),
+        dest_mac=b"\xff" * 6,
+    )
+    assert len(frags) == 9                             # ceil(36 / 4)
+    assert _reassemble(frags, ks) == payload
+    # The seed extracted from the reassembled+re-encrypted relay would let us
+    # forge ARPs directly: the relayed plaintext starts with the SNAP prefix.
+    assert payload[:8] == _SNAP_ARP_PREFIX
+
+
+def test_build_fragments_rejects_payload_too_big_for_seed():
+    ks = bytes(range(8))                               # 4 data bytes/fragment
+    with pytest.raises(ValueError):
+        build_fragments(
+            ks, bytes(3), b"\x00" * 100,               # 100 → 25 frags > 16
+            bssid=b"\x00" * 6, source_mac=b"\x00" * 6, dest_mac=b"\xff" * 6,
+        )
+
+
+def test_build_fragments_single_fragment_has_no_more_frag_bit():
+    ks = bytes(range(40))                              # 36 data bytes/fragment
+    frags = build_fragments(
+        ks, bytes(3), b"\x01\x02\x03",
+        bssid=b"\x00" * 6, source_mac=b"\x00" * 6, dest_mac=b"\xff" * 6,
+    )
+    assert len(frags) == 1
+    assert not (frags[0][1] & 0x04)                    # lone fragment: no MoreFrag
