@@ -81,3 +81,81 @@ User has a box of ~2017-era routers — many of those still support WEP. Plan: d
 - Does our existing RX path surface WEP-encrypted data frames cleanly, or do some chips auto-decrypt / drop them? Should sanity-check on each working driver (`ar9271`, `rt2800usb`, `rtl8821au`, `rtl8822bu`, `rtl8812au`, `rtl8188eus`, `mt76x2u`, `mt76x0u`) — monitor-mode promiscuous RX usually delivers the encrypted bytes verbatim, but worth confirming.
 - IV-dump file format: stick with `.ivs` (aircrack native, compact) or `.cap` (pcap-format, inspectable in Wireshark, ties into existing pcap export plumbing)? Lean `.cap` for symmetry with our handshake export.
 - Should chopchop / fragmentation actually land before M4 ships, or after? Argument for after: ARP replay covers ≥90% of WEP-with-client cases; the fallbacks are for edge cases that may never come up in real testing.
+
+---
+
+## M5/M6 — Fragmentation (-5) + ChopChop (-4): refined design (2026-05-24)
+
+**Status:** M1–M4 + native PTW (M7) all shipped + hardware-verified. This
+section supersedes the auto-escalation idea sketched in Phase 2 above.
+
+### State machine — human-driven, NOT auto-escalation
+
+The earlier "replay → frag → chop ladder that auto-advances on failure" is
+**dropped.** Two reasons:
+- ARP Replay is never *provably* failed (may just need a client / a deauth).
+- Frag/Chop failure is **ambiguous** — no AP response could be out-of-range, a
+  TX glitch, *or* a genuinely immune AP, and we can't tell which. So we can
+  never honestly auto-advance on "exhausted."
+
+So transitions are **user-driven**, with exactly one auto-transition: on
+**success** (which is unambiguous).
+
+**ARP Replay is the IV engine + home base. Frag and Chop are two alternative
+"manufacture an ARP seed" sub-modes** for when replay has no ARP (no client
+traffic). All three are mutually-exclusive TX activities (one half-duplex
+radio) — which is why `WepArpReplay` already has `pause()`/`resume()`.
+
+```
+Generate IVs ─► REPLAYING (fake-auth underneath; waits for / replays ARPs)
+   │  user clicks Frag ─► pause replay ─► FRAGMENTING
+   │  user clicks Chop ─► pause replay ─► CHOPPING
+   │  (click the other mode = stop current + start it — click-to-switch)
+   │
+   FRAGMENTING/CHOPPING ──success(keystream→forged ARP)──► hand to replay,
+                                                          resume ─► REPLAYING
+   FRAGMENTING/CHOPPING ──failure/timeout──► STAY (surface a hint, no auto-switch)
+   Stop IVs ─► tear everything down
+```
+
+### Button UX (Focus, WEP target, campaign running)
+
+- **Frag** and **Chop** buttons appear alongside the running campaign, each a
+  Start↔Stop toggle, **always enabled** (no disable-the-other dance — clicking
+  one stops the other → click-to-switch, Tab-friendly).
+- The campaign owns the "only one TX activity at a time" invariant via
+  `replay.pause()`/`resume()`.
+
+### Both attacks reduce to: keystream → forge ARP → feed replay
+
+- **Fragmentation [Bittau 2005]:** XOR a captured frame against the known
+  LLC/SNAP prefix → 8 bytes of keystream. Send ≤16 tiny fragments (each
+  encrypted with that keystream) of a known-plaintext frame; the AP reassembles
+  + re-encrypts under one fresh IV + relays it → capture that → recover a
+  *longer* keystream (~1500 B). Enough keystream → forge a broadcast ARP.
+- **ChopChop [KoreK 2004]:** chop the last byte of a captured frame, guess its
+  plaintext (256 tries), fix the ICV (CRC32 is linear), send; the AP relays it
+  iff the guess was right (the oracle). Walk backwards → full plaintext +
+  keystream, no key. → forge a broadcast ARP.
+
+### Build order (de-risk like we did the cracker)
+
+1. **`wep_crypto.py` FIRST — offline, fully unit-testable, no hardware:**
+   CRC32/ICV, `wep_encrypt(keystream, plaintext) -> body`,
+   `forge_arp_request(keystream, ...) -> frame`, and the ChopChop linear-ICV
+   fix-up (`chop_last_byte_and_fixup(frame, plaintext_guess) -> shorter_frame`).
+   Test: chop+fixup round-trips, forged ARP decrypts to a valid ARP, ICV
+   verifies. This is the trickiest correctness and it needs zero hardware.
+2. **`fragmentation.py` / `chopchop.py`** — daemon shape like `WepArpReplay`
+   (`start`/`stop`, state, `log_callback`); on success call back into the
+   campaign to hand over the forged ARP + resume replay. The **oracle
+   detection** (recognizing the AP's relayed frame on the air) is the part that
+   needs the live AP — that's the hardware-in-the-loop work.
+3. **Campaign + Focus wiring** — Frag/Chop buttons, mutual exclusion via
+   pause/resume, success→resume-replay, failure→stay+hint.
+
+### Skeleton files
+
+`wep_crypto.py`, `fragmentation.py`, `chopchop.py` exist as stubs with the
+interface + algorithm docstrings + `NotImplementedError` on the hardware bits.
+Start there.
