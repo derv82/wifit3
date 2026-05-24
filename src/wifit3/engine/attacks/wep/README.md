@@ -86,8 +86,21 @@ User has a box of ~2017-era routers — many of those still support WEP. Plan: d
 
 ## M5/M6 — Fragmentation (-5) + ChopChop (-4): refined design (2026-05-24)
 
-**Status:** M1–M4 + native PTW (M7) all shipped + hardware-verified. This
-section supersedes the auto-escalation idea sketched in Phase 2 above.
+**Status:** M1–M4 + native PTW (M7) shipped + hardware-verified. **M5
+Fragmentation is now DONE + hardware-verified end-to-end** (offline crypto →
+on-air probe → `en_hwseq=0` software-seq TX fix on rtl8821au → `WepFragmentation`
+daemon → campaign + Focus "Frag" button → live crack of the dd-wrt box). **M6
+ChopChop is the only attack left** (its crypto `chop_last_byte_and_fixup` is
+done; next is its own oracle probe, then daemon, then a "Chop" toggle next to
+Frag). This section supersedes the auto-escalation idea sketched in Phase 2.
+
+Known minor: post-frag replay IV-rate (~50-80/s) trails replay off a real
+client ARP (~150-200/s) — the forged ARP (default sender/target 192.168.1.x)
+doesn't amplify like a real host's ARP. Fine for frag's no-client use case
+(still cracks in ~2 min); optional future lever is a configurable forged-ARP
+target IP. Injection rate is the ADAPTIVE BURST CLIMBER in `arp_replay.py` —
+maximize raw IVs/s by driving toward the AP's rebroadcast ceiling; do NOT
+"optimize capture%" (a vanity metric — proven worse on hardware).
 
 ### State machine — human-driven, NOT auto-escalation
 
@@ -187,16 +200,20 @@ decides on its own is *success* (→ resume replay), because that's unambiguous;
    our SA appeared"** → tell the campaign, which resumes ARP replay (the new
    seed is in the store). Tooling: `scripts/wep/frag_probe.py` (inject + dump) +
    `scripts/wep/analyze_frag_pcap.py` (`--key` decrypt-verify).
-5. **`fragmentation.py` / `chopchop.py` daemons (still skeletons)** — daemon shape
-   like `WepArpReplay` (`start`/`stop`, state, `log_callback`). Frag's oracle is
-   now pinned (item 4); ChopChop still needs its own analogous probe (its crypto
-   `chop_last_byte_and_fixup` is done) — same approach: inject, dump, read the
-   relayed shortened frame, code the accept/reject oracle to it.
-6. **Campaign + Focus wiring** — Frag/Chop buttons, mutual exclusion via
-   pause/resume, success→resume-replay, failure→KEEP-RETRYING + progress tally.
+5. **`fragmentation.py` DONE + wired** (`WepFragmentation`): seeds from any WEP
+   data frame (LLC/SNAP known-plaintext, ethertype 0x0800 then 0x0806 — NOT a
+   replayable ARP), fragments a broadcast ARP under a shared sw_seq, watches the
+   pinned oracle, hands the relay to the campaign on success (immediate handoff),
+   keeps retrying on a barren round. Campaign owns the Frag sub-mode
+   (`start_frag`/`stop_frag`/`_on_frag_success`, replay pause/resume); Focus has
+   the "Frag" toggle. **`chopchop.py` is still a skeleton** — next: its own probe
+   (inject a chopped guess, dump, read the relayed shortened frame / accept-vs-
+   reject signal, gold-standard-verify vs the key), then the daemon, then a "Chop"
+   toggle. No sw_seq needed for chop (single frames, not a reassembled train).
 
-### Skeleton files
+### File status
 
-`fragmentation.py`, `chopchop.py` are skeletons (interface + algorithm
-docstrings + `NotImplementedError` on the oracle bits). `wep_crypto.py` is
-fully implemented + tested — the daemons import its forging core.
+`wep_crypto.py` and `fragmentation.py` are fully implemented + tested +
+hardware-verified. `chopchop.py` is still a skeleton (interface + algorithm
+docstring + `NotImplementedError`); its crypto (`chop_last_byte_and_fixup`) is
+done in `wep_crypto.py`, so only the live-AP oracle + daemon + UI remain.
