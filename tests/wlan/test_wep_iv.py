@@ -113,3 +113,12 @@ def test_arp_seen_counts_all_sizes():
     c.record_arp_candidate(BSSID, b"\x00" * 368)    # wrong size, still 'seen'
     assert c.arp_seen_count(BSSID) == 2
     assert c.arp_candidate_count(BSSID) == 1
+
+
+def test_crack_samples_dedup_by_iv():
+    c = WepIvCollector()
+    assert c.record_crack_sample(BSSID, b"\x01\x02\x03", b"\xaa" * 16) is True
+    assert c.record_crack_sample(BSSID, b"\x01\x02\x03", b"\xbb" * 16) is False  # dup IV
+    assert c.record_crack_sample(BSSID, b"\x04\x05\x06", b"\xcc" * 16) is True
+    assert c.crack_sample_count(BSSID) == 2
+    assert c.crack_samples(BSSID)[0] == (b"\x01\x02\x03", b"\xaa" * 16)

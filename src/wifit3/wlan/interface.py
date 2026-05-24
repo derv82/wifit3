@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List, Optional, Callable, Any, Dict, Set
 
 from wifit3.engine.models import AccessPoint, Client, Handshake, EapolFrame
-from wifit3.wlan.wep_iv import WepIvCollector
+from wifit3.wlan.wep_iv import ARP_REQUEST_LENGTHS, WepIvCollector
 
 logger = logging.getLogger(__name__)
 
@@ -246,6 +246,11 @@ class WlanInterface:
                     self.wep_collector.record_arp_candidate(
                         bssid, raw, source=parsed.get("source")
                     )
+                    # ARP-sized broadcast frame → known plaintext → a PTW
+                    # crack sample (IV + first 16 ciphertext bytes).
+                    cipher = parsed.get("wep_cipher")
+                    if cipher and len(cipher) == 16 and len(raw) in ARP_REQUEST_LENGTHS:
+                        self.wep_collector.record_crack_sample(bssid, iv, cipher)
 
         # Client Tracking
         if frame_type in ("probe_req", "assoc_req", "data", "wep_data", "eapol", "deauth", "assoc_resp"):

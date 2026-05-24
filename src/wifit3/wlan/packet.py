@@ -160,6 +160,13 @@ class WlanFrameParser:
                     result["type"] = "wep_data"
                     result["wep_iv"] = bytes(frame[header_len : header_len + 3])
                     result["wep_keyid"] = (keyid_byte >> 6) & 0x03
+                    # First 16 ciphertext bytes (after the 4-byte IV header).
+                    # XORed with the known ARP plaintext these give the
+                    # keystream the PTW cracker votes on.
+                    cipher_start = header_len + 4
+                    result["wep_cipher"] = bytes(
+                        frame[cipher_start : cipher_start + 16]
+                    )
                 # Encrypted body — no plaintext LLC/SNAP to find below.
                 return result
 

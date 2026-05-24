@@ -100,6 +100,12 @@ class WepIvCollector:
         # Per-BSSID count of ALL broadcast WEP frames seen (both directions,
         # any size) — for visibility ("N seen / M usable seeds").
         self._arp_seen: Dict[str, int] = {}
+        # Per-BSSID PTW crack samples: (iv, cipher16) for ARP-sized broadcast
+        # frames (known plaintext), deduped by IV. This is the cracker's input
+        # — kept separate from the small replay-seed ring because the cracker
+        # needs tens of thousands of distinct IVs.
+        self._crack_samples: Dict[str, List[tuple]] = {}
+        self._crack_ivs: Dict[str, Set[bytes]] = {}
 
     def record(self, bssid: str, iv: bytes, now: Optional[float] = None) -> WepStats:
         """Tally one WEP Data frame's IV for ``bssid``.
@@ -183,3 +189,23 @@ class WepIvCollector:
         """All broadcast WEP frames seen (any size/direction) — for the UI's
         'N seen / M usable' visibility."""
         return self._arp_seen.get(bssid, 0)
+
+    # ---- PTW crack samples --------------------------------------------------
+
+    def record_crack_sample(self, bssid: str, iv: bytes, cipher: bytes) -> bool:
+        """Store one (IV, cipher) PTW sample, deduped by IV. Caller passes
+        these only for ARP-sized broadcast frames, where the plaintext (hence
+        keystream) is known. Returns True if it was a new IV."""
+        seen = self._crack_ivs.setdefault(bssid, set())
+        if iv in seen:
+            return False
+        seen.add(iv)
+        self._crack_samples.setdefault(bssid, []).append((bytes(iv), bytes(cipher)))
+        return True
+
+    def crack_samples(self, bssid: str) -> List[tuple]:
+        """Append-only list of (iv, cipher16) PTW samples for ``bssid``."""
+        return self._crack_samples.get(bssid, [])
+
+    def crack_sample_count(self, bssid: str) -> int:
+        return len(self._crack_samples.get(bssid, ()))

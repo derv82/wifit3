@@ -115,6 +115,7 @@ class FocusView(Screen):
                     Label(id="lbl-ivs"),
                     Label(id="lbl-ivs-eta"),
                     Label(id="lbl-replay"),
+                    Label(id="lbl-crack"),
                     classes="info-box",
                 )
 
@@ -281,6 +282,7 @@ class FocusView(Screen):
         else:
             self.query_one("#lbl-fakeauth", Label).display = False
             self.query_one("#lbl-replay", Label).display = False
+            self.query_one("#lbl-crack", Label).display = False
             if ap.wpa3:
                 btn_sae.disabled = False
                 # WPA3 Downgrade only works against transition-mode APs (pure
@@ -396,13 +398,16 @@ class FocusView(Screen):
         the running Generate IVs campaign."""
         fa_label = self.query_one("#lbl-fakeauth", Label)
         replay_label = self.query_one("#lbl-replay", Label)
+        crack_label = self.query_one("#lbl-crack", Label)
         fa_label.display = True
         replay_label.display = True
+        crack_label.display = True
 
         campaign = self._wep_campaign
         if campaign is None:
             fa_label.update(Text.from_markup("Fake-Auth: [dim]Off[/dim]", emoji=False))
             replay_label.update(Text.from_markup("Replay: [dim]Off[/dim]", emoji=False))
+            crack_label.update(Text.from_markup("Crack: [dim]Off[/dim]", emoji=False))
             return
 
         # Fake-auth state.
@@ -450,6 +455,20 @@ class FocusView(Screen):
         else:
             rmarkup = "[dim]Idle[/dim]"
         replay_label.update(Text.from_markup(f"Replay: {rmarkup}", emoji=False))
+
+        # Crack state.
+        cr = campaign.cracker
+        if campaign.recovered_key is not None:
+            kh = campaign.recovered_key.hex()
+            cmarkup = f"[bold green]✓ KEY {kh}[/bold green]"
+        elif cr.ready:
+            cmarkup = f"[cyan]attempting…[/cyan] [dim]({cr.sample_count:,} samples)[/dim]"
+        else:
+            cmarkup = (
+                f"[dim]collecting {cr.sample_count:,}/"
+                f"{cr.ready_threshold:,}[/dim]"
+            )
+        crack_label.update(Text.from_markup(f"Crack: {cmarkup}", emoji=False))
 
     # ----- Client table ------------------------------------------------------
 
