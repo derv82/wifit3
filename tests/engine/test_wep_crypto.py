@@ -131,6 +131,26 @@ def test_chopchop_fixup_valid_for_correct_guess_only():
         assert zlib.crc32(p_wrong) & 0xFFFFFFFF != CRC32_RESIDUE
 
 
+def test_chopchop_exactly_one_valid_guess_per_step():
+    """EXACTLY one byte value per chop step produces a valid-ICV (relayable)
+    frame — the uniqueness ChopChop's byte-walk relies on. Exhaustive over all
+    256 guesses, many random frames. (Any >1 the AP relays on the air is an
+    echo of the single valid frame, not a second valid byte.)"""
+    rng = random.Random(7)
+    for _ in range(120):
+        ks = bytes(rng.randrange(256) for _ in range(48))
+        data = bytes(rng.randrange(256) for _ in range(rng.randrange(8, 44)))
+        body = wep_encrypt(ks, data)              # valid frame (data ++ icv)
+        valid = [
+            g for g in range(256)
+            if zlib.crc32(
+                bytes(b ^ k for b, k in zip(chop_last_byte_and_fixup(body, g), ks))
+            ) & 0xFFFFFFFF == CRC32_RESIDUE
+        ]
+        # Exactly one — and it's the true last byte of (data ++ ICV).
+        assert valid == [(data + icv(data))[-1]]
+
+
 def test_chopchop_iterates_keeping_frames_valid():
     """Iterated chopping: guess the CURRENT frame's last plaintext byte each
     round (a fixup rewrites the trailing bytes, so it's not the original's) →
