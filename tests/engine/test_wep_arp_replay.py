@@ -5,7 +5,6 @@ our MAC before injecting, so the stub keys IV "gain" on the candidate's body
 marker byte (which survives re-addressing) rather than the exact bytes.
 """
 import asyncio
-import time
 
 from wifit3.engine.models import AccessPoint
 from wifit3.engine.attacks.wep.arp_replay import WepArpReplay
@@ -53,12 +52,13 @@ def _replay(mocker, collector, **kw):
         return True
 
     iface.send_raw = _send
-    r = WepArpReplay(iface, ap, collector, rx_window=0.0, **kw)
-    # Logic tests want instant cycles: a huge injection rate makes the P&O pace
-    # ~0 (start() re-reads _PO_START_PPS, so override both). P&O's own logic is
-    # tested directly via _maybe_adjust_rate below.
-    r._PO_START_PPS = 1e9
-    r._rate = 1e9
+    r = WepArpReplay(iface, ap, collector, **kw)
+    # Instant cycles for logic tests: a tiny burst (rate is now a per-window
+    # packet COUNT) + a zero-length window (no 1s wait). start() re-reads
+    # _PO_START_PPS, so override it too. P&O's own logic is tested directly.
+    r._WINDOW_S = 0.0
+    r._rate = 4
+    r._PO_START_PPS = 4
     return r
 
 
@@ -135,56 +135,45 @@ async def test_pause_resume(mocker):
     r.stop()
 
 
-# ---- P&O rate controller ---------------------------------------------------
-# Drive _maybe_adjust_rate directly with a controlled IVs/s, by setting an
-# elapsed dwell window and the IV delta on the fake collector.
+# ---- P&O rate controller (per-1s-window) -----------------------------------
+# Drive _maybe_adjust_rate directly: set the last window's IVs/s + prev, call it.
 
 
-def _po_setup(mocker, rate=100.0, step=16.0, prev=50.0):
-    coll = FakeCollector({0xAA: 5}, [GOOD])
-    r = _replay(mocker, coll)
+def _po_setup(mocker, rate=100.0, step=32.0, prev=50.0):
+    r = _replay(mocker, FakeCollector({0xAA: 5}, [GOOD]))
     r.state = "replaying"
     r._rate = rate
     r._rate_step = step
     r._po_prev_ivs_s = prev
-    # Put the dwell just past the (configurable) threshold so the step fires.
-    r._test_dwell = r._PO_DWELL_S + 1.0
-    r._po_window_start = time.time() - r._test_dwell
-    r._po_window_ivs0 = coll._unique
-    return r, coll
-
-
-def _feed_ivs_per_s(r, coll, ivs_per_s):
-    """Add the IV count that yields ``ivs_per_s`` over this dwell."""
-    coll._unique += round(ivs_per_s * r._test_dwell)
+    return r
 
 
 def test_po_keeps_direction_when_ivs_improve(mocker):
-    r, coll = _po_setup(mocker, rate=100.0, step=16.0, prev=50.0)
-    _feed_ivs_per_s(r, coll, 60.0)     # 60 > prev 50 → improved
+    r = _po_setup(mocker, rate=100.0, step=32.0, prev=50.0)
+    r._last_ivs_s = 60.0            # 60 > prev 50 → improved
     r._maybe_adjust_rate()
-    assert r._rate_step == 16.0     # same direction
-    assert r._rate == 116.0
+    assert r._rate_step == 32.0     # same direction
+    assert r._rate == 132.0
 
 
 def test_po_reverses_when_ivs_drop(mocker):
-    r, coll = _po_setup(mocker, rate=100.0, step=16.0, prev=50.0)
-    _feed_ivs_per_s(r, coll, 30.0)     # 30 < 50 (beyond deadband) → worse
+    r = _po_setup(mocker, rate=100.0, step=32.0, prev=50.0)
+    r._last_ivs_s = 30.0           # 30 < 50 (beyond deadband) → worse
     r._maybe_adjust_rate()
-    assert r._rate_step == -16.0    # reversed
-    assert r._rate == 84.0
+    assert r._rate_step == -32.0    # reversed
+    assert r._rate == 68.0
 
 
-def test_po_holds_and_resets_window_when_not_replaying(mocker):
-    r, _ = _po_setup(mocker)
+def test_po_holds_and_resets_baseline_when_not_replaying(mocker):
+    r = _po_setup(mocker)
     r.state = "testing"
     r._maybe_adjust_rate()
-    assert r._rate == 100.0         # unchanged while not replaying
-    assert r._po_window_start > 0   # window reset to now
+    assert r._rate == 100.0          # unchanged while not replaying
+    assert r._po_prev_ivs_s == -1.0  # baseline reset for the next replay run
 
 
 def test_po_clamps_to_max(mocker):
-    r, coll = _po_setup(mocker, rate=495.0, step=16.0, prev=50.0)
-    _feed_ivs_per_s(r, coll, 80.0)     # improving → keeps +step → 511, clamped
+    r = _po_setup(mocker, rate=985.0, step=32.0, prev=50.0)
+    r._last_ivs_s = 80.0           # improving → keeps +step → 1017, clamped
     r._maybe_adjust_rate()
     assert r._rate == r._PO_MAX_PPS

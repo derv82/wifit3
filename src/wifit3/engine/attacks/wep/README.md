@@ -100,47 +100,43 @@ doesn't amplify like a real host's ARP. Fine for frag's no-client use case
 (still cracks in ~2 min); optional future lever is a configurable forged-ARP
 target IP.
 
-### ARP-replay rate control: P&O (IMPLEMENTED 2026-05-24, PENDING HW validation)
+### ARP-replay rate control: per-second burst + P&O (IMPLEMENTED 2026-05-24, PENDING HW validation)
 
-**Replaced the adaptive burst climber with perturb-and-observe** (`arp_replay.py`,
-`_maybe_adjust_rate`). Control var = injection pps; objective = IVs/s measured
-over a `_PO_DWELL_S=8.0`s dwell (long enough to beat per-dwell IV-count noise —
-at ~30 IVs/s a 3s dwell's ±10% Poisson noise drowned the gradient); step
-`_PO_STEP_PPS=32`, start `_PO_START_PPS=96`, bounds `[24, 500]`, reverse only on
-a >`_PO_IMPROVE_EPS=3%` drop (noise deadband — may still need raising if it
-dithers). Runs only while `replaying`. 4 offline tests cover keep-direction /
-reverse / hold-when-not-replaying / clamp.
-**Needs hardware validation:** confirm it converges to and hovers near the IVs/s
-peak (the ~80-120 pps the box liked), doesn't oscillate wildly, and recovers
-post-frag. Watch the heartbeat `X pps → Y IVs/s`. Tunables if it's twitchy:
-bigger dwell (slower, steadier), smaller step (tighter hover).
+**Deliberately simple**, after the "clever" pacing proved both jittery and
+self-limiting. Each 1-second window (`_WINDOW_S`) injects `rate` packets in one
+big burst at the card's full speed, then sleeps out the rest of the second — a
+single ~1s sleep, immune to Windows' ~15ms timer granularity that the old
+sub-cycle pacing fought (and the old small-burst + 0.15s rx-window left the
+radio idle most of each cycle, capping the duty cycle). Then perturb-and-observe
+on `rate` (`_maybe_adjust_rate`): if this window's IVs/s beat the last, keep the
+step direction, else reverse — the rate walks toward more IVs/s and dithers at
+the peak, **wherever the AP actually tops out (no low-ceiling assumption).**
+`_PO_STEP_PPS=32`, start `_PO_START_PPS=100`, bounds `[20,1000]`,
+`_PO_IMPROVE_EPS=5%`. 4 offline tests (keep/reverse/hold/clamp).
 
-**Why we got here — the climber was NOT trusted:** evidence it was
-*suboptimal*, only that it beat a static 400 pps.
+**HW validation TODO:** does it climb to a real peak and hold? Crucially — does
+IVs/s *scale* with rate (→ the AP wasn't the bottleneck; the old PACING was) or
+plateau (→ genuinely AP-limited)? Watch heartbeat `X pps → Y IVs/s` (pps is the
+smooth target now). Tunables: `_WINDOW_S` (longer=steadier/laggier), step,
+deadband.
 
-- **Hardware evidence (2026-05-24, user):** at ~350-400 pps it got ~30 IVs/s,
-  but at ~80-120 pps it got ~80 IVs/s. **More injection → FEWER IVs/s.** So
-  there's an interior optimum (~100 pps-ish on the dd-wrt box) and the climber
-  overshoots it. Both a too-low fixed cap (the reverted 150) and the climber's
-  runaway (~400) miss it.
-- **Why the climber is wrong:** it hill-climbs **burst size** on **per-cycle IV
-  gain**, but the AP's relay has a **~1-2s delay**, so a burst's IVs land in
-  *later* cycles → the per-cycle signal is misattributed noise. You can't
-  gradient-climb a sub-delay measurement.
+**History (don't repeat):** the adaptive burst climber hill-climbed burst size
+on per-cycle gain → overshot; a fixed 150-pps cap under-drove; a fixed 400
+over-drove. Optimize IVs/s (the real objective), not pps or capture% — see
+[[feedback_optimize_real_metric]].
+
+- **Earlier observations (treat as hypotheses, NOT settled):** at ~350-400 pps
+  the climber got ~30 IVs/s but at ~80-120 pps got ~80 IVs/s. That *looked* like
+  an interior optimum / AP rebroadcast-ceiling — but the user rightly disputes
+  the AP-limited assumption: the old PACING (sub-15ms sleeps, tiny duty cycle)
+  could itself be what capped throughput. The per-second-burst model is partly
+  to settle this: if IVs/s now scales up with rate, the AP was never the limit.
 - **The objective is IVs/s** (≈ time-to-crack), NOT pps and NOT capture% (a
   vanity metric — see [[feedback_optimize_real_metric]]).
-- **The right shape (user's framing, a known standard):** closed-loop
-  extremum-seeking / **perturb-and-observe** (cf. solar MPPT). Control variable =
-  injection rate (pps). Objective = IVs/s measured over a window **longer than
-  the relay delay** (~2-3s). Step the rate, wait > delay, measure IVs/s, follow
-  the gradient, settle/hover at the pleateau. Start slow, climb, hover.
-- **Diagnostics already in place:** the 8s heartbeat now logs `X pps → Y IVs/s`
-  (pps = literal injected/cycle, NOT estimated from capture%). IVs/s is stable;
-  pps bounces — another reason to control on IVs/s.
 - **Frag injection is SEPARATE + low-rate:** `WepFragmentation._inject_round`
   sends ~9 fragments then sleeps `_ROUND_GAP=0.2s` ≈ **~45 pps**, fixed cadence,
-  NOT the climber. It just needs one successful round (usually round 1), so it's
-  not hammering the AP and isn't part of this rework.
+  NOT this controller. It just needs one successful round (usually round 1), so
+  it's not hammering the AP and isn't part of this rework.
 
 ### State machine — human-driven, NOT auto-escalation
 

