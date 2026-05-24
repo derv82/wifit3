@@ -149,22 +149,27 @@ decides on its own is *success* (→ resume replay), because that's unambiguous;
 
 ### Build order (de-risk like we did the cracker)
 
-1. **`wep_crypto.py` FIRST — offline, fully unit-testable, no hardware:**
-   CRC32/ICV, `wep_encrypt(keystream, plaintext) -> body`,
-   `forge_arp_request(keystream, ...) -> frame`, and the ChopChop linear-ICV
-   fix-up (`chop_last_byte_and_fixup(frame, plaintext_guess) -> shorter_frame`).
-   Test: chop+fixup round-trips, forged ARP decrypts to a valid ARP, ICV
-   verifies. This is the trickiest correctness and it needs zero hardware.
-2. **`fragmentation.py` / `chopchop.py`** — daemon shape like `WepArpReplay`
-   (`start`/`stop`, state, `log_callback`); on success call back into the
-   campaign to hand over the forged ARP + resume replay. The **oracle
-   detection** (recognizing the AP's relayed frame on the air) is the part that
-   needs the live AP — that's the hardware-in-the-loop work.
+1. ~~**`wep_crypto.py` FIRST — offline, fully unit-testable, no hardware.**~~
+   ✅ **DONE + verified** (commits 06bc85b, 798126c, 5503b09):
+   `icv`, `wep_encrypt`, `forge_arp_request`, AND `chop_last_byte_and_fixup`
+   (the ChopChop linear-ICV fix-up — landed via affine-CRC cancellation +
+   a GF(2) trailing-byte solve, gated by a decrypt→check-residue oracle).
+   11 offline tests in `tests/engine/test_wep_crypto.py`. So the ENTIRE crypto
+   surface of frag + chopchop is built and proven with zero hardware.
+2. **`fragmentation.py` / `chopchop.py` (still skeletons)** — daemon shape like
+   `WepArpReplay` (`start`/`stop`, state, `log_callback`); on success call back
+   into the campaign (`on_forged_arp`) to hand over the forged ARP + resume
+   replay. The **oracle detection** (recognizing the AP's relayed frame on the
+   air) is the part that needs the live AP — the hardware-in-the-loop work.
+   Recommended first hardware step: a small probe that sends one frag round and
+   dumps every received frame (à la the old `wifit3-wep-arp.log`) to
+   characterize how the target relays reassembled frames, then code the oracle
+   to what's observed.
 3. **Campaign + Focus wiring** — Frag/Chop buttons, mutual exclusion via
-   pause/resume, success→resume-replay, failure→stay+hint.
+   pause/resume, success→resume-replay, failure→KEEP-RETRYING + progress tally.
 
 ### Skeleton files
 
-`wep_crypto.py`, `fragmentation.py`, `chopchop.py` exist as stubs with the
-interface + algorithm docstrings + `NotImplementedError` on the hardware bits.
-Start there.
+`fragmentation.py`, `chopchop.py` are skeletons (interface + algorithm
+docstrings + `NotImplementedError` on the oracle bits). `wep_crypto.py` is
+fully implemented + tested — the daemons import its forging core.

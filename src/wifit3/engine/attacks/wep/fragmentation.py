@@ -6,7 +6,8 @@ known-plaintext fragments encrypted with it; the AP reassembles + re-encrypts
 under one fresh IV + relays the result, from which we recover a *longer*
 keystream (~1500 B). Enough keystream → forge a broadcast ARP → hand to replay.
 
-See README.md "M5/M6 — refined design". Build wep_crypto.py + its tests FIRST.
+See README.md "M5/M6 — refined design". wep_crypto.py (forging core) is done +
+tested — this just wires the send loop + oracle around it.
 
 Lifecycle mirrors WepArpReplay (start/stop, state, log_callback). The campaign
 pauses replay before starting this, and on success this calls back with the

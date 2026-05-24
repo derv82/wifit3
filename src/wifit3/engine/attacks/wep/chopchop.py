@@ -7,7 +7,8 @@ was right. Walk backwards → full plaintext + keystream → forge a broadcast A
 → hand to replay. Slower than fragmentation (256 round-trips/byte); the
 fallback when frag gets no response.
 
-See README.md "M5/M6 — refined design". Build wep_crypto.py + its tests FIRST.
+See README.md "M5/M6 — refined design". wep_crypto.chop_last_byte_and_fixup is
+done + tested — this just wires the byte-walk + oracle around it.
 
 Lifecycle mirrors WepArpReplay (start/stop, state, log_callback). Campaign
 pauses replay first; on success this calls back with the forged ARP.
