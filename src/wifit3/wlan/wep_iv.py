@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import time
 from collections import deque
-from typing import Deque, Dict, Optional, Set
+from typing import Deque, Dict, List, Optional, Set
 
 from wifit3.engine.models import WepStats
 
@@ -28,6 +28,22 @@ from wifit3.engine.models import WepStats
 # recoverable with PTW. Drives the Focus "ETA to Nk" line; the actual
 # cracker (future M7) sets its own readiness threshold.
 WEP_CRACK_IV_THRESHOLD = 10_000
+
+# WEP-encrypted ARP REQUEST recognition (passive, no decrypt). ARP requests
+# are broadcast; the on-air 802.11 length is the tell:
+#   24 (MAC hdr) + 4 (IV+KeyID) + 8 (LLC/SNAP) + 28 (ARP) + 4 (ICV) = 68
+#   +2 for a QoS header (26-byte MAC hdr)                            = 70
+# Some stacks pad to 86/88. VERIFY against the hardware debug dump
+# (wifit3-wep-arp.log) before trusting these — driver framing varies.
+ARP_REQUEST_LENGTHS = {68, 70, 86, 88}
+
+# We store EVERY ARP-sized broadcast WEP frame — BOTH directions. The replay
+# engine re-addresses each into a ToDS frame sourced from our associated MAC
+# (the 802.11 header is cleartext; only the IV+body is encrypted), so a FromDS
+# relay is just as replayable as a client's ToDS request. Recognition isn't
+# foolproof either, so breadth + the engine's yield-test pruning beats a clever
+# filter. Ring is per-BSSID, newest-last; cap keeps memory bounded.
+ARP_RING_MAXLEN = 256
 
 
 class RateTracker:
@@ -79,6 +95,11 @@ class WepIvCollector:
         self._unique_ivs: Dict[str, Set[bytes]] = {}
         self._stats: Dict[str, WepStats] = {}
         self._rates: Dict[str, RateTracker] = {}
+        # Per-BSSID ring of replayable (ToDS) ARP-like frames (raw bytes).
+        self._arp_candidates: Dict[str, Deque[bytes]] = {}
+        # Per-BSSID count of ALL broadcast WEP frames seen (both directions,
+        # any size) — for visibility ("N seen / M usable seeds").
+        self._arp_seen: Dict[str, int] = {}
 
     def record(self, bssid: str, iv: bytes, now: Optional[float] = None) -> WepStats:
         """Tally one WEP Data frame's IV for ``bssid``.
@@ -131,3 +152,34 @@ class WepIvCollector:
         if r <= 0:
             return None
         return remaining / r
+
+    # ---- ARP replay candidates ----------------------------------------------
+
+    def record_arp_candidate(
+        self, bssid: str, raw: bytes, source: Optional[str] = None
+    ) -> bool:
+        """Stash a broadcast WEP Data frame as an ARP-replay candidate.
+
+        Counts every broadcast WEP frame seen (for the UI's 'N seen / M usable'
+        visibility) and retains any that match the ARP-request length
+        heuristic, regardless of DS direction — the replay engine re-addresses
+        it into a replayable ToDS frame. Returns True if retained.
+        """
+        self._arp_seen[bssid] = self._arp_seen.get(bssid, 0) + 1
+        if len(raw) not in ARP_REQUEST_LENGTHS:
+            return False
+        ring = self._arp_candidates.setdefault(bssid, deque(maxlen=ARP_RING_MAXLEN))
+        ring.append(bytes(raw))
+        return True
+
+    def arp_candidates(self, bssid: str) -> List[bytes]:
+        """Snapshot of stored ARP-replay candidates (raw captured frames)."""
+        return list(self._arp_candidates.get(bssid, ()))
+
+    def arp_candidate_count(self, bssid: str) -> int:
+        return len(self._arp_candidates.get(bssid, ()))
+
+    def arp_seen_count(self, bssid: str) -> int:
+        """All broadcast WEP frames seen (any size/direction) — for the UI's
+        'N seen / M usable' visibility."""
+        return self._arp_seen.get(bssid, 0)

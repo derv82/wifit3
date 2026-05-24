@@ -25,6 +25,7 @@ scratch/
 debug.log
 usb_transactions.log
 wifit3-decloak.log
+wifit3-wep-arp*.log
 
 # If it starts with a dot, committed it gets not
 .*

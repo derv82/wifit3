@@ -71,6 +71,8 @@ class WlanFrameParser:
             "bssid": bssid,
             "source": source,
             "dest": dest,
+            "to_ds": to_ds,
+            "from_ds": from_ds,
             "rssi": rssi,
             "raw": frame
         }
@@ -357,12 +359,17 @@ class WlanFrameParser:
             addr2 = frame[10:16]
             addr3 = frame[16:22]
             
-            # Source MAC (usually addr2 or addr3) should rarely be broadcast or all zeros
+            # addr2 is always the transmitter (SA) — never legitimately
+            # broadcast or zero, so it's a good noise filter.
             if addr2 == b'\x00\x00\x00\x00\x00\x00' or addr2 == b'\xff\xff\xff\xff\xff\xff':
                 return False
-            if addr3 == b'\x00\x00\x00\x00\x00\x00' or addr3 == b'\xff\xff\xff\xff\xff\xff':
+            # addr3 is the DA on a ToDS frame, and a BROADCAST DA is exactly
+            # what a (WEP) ARP request carries — so only reject all-zeros here,
+            # NOT broadcast. (Rejecting broadcast dropped every replayable ARP
+            # request before it could be parsed.)
+            if addr3 == b'\x00\x00\x00\x00\x00\x00':
                 return False
-                
+
             return True
 
         return False

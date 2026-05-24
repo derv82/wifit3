@@ -72,3 +72,44 @@ def test_eta_none_when_no_rate():
     c = WepIvCollector()
     # No IVs recorded for this BSSID → no rate → can't estimate.
     assert c.eta_seconds(BSSID, target=10, now=5.0) is None
+
+
+# ---- ARP replay candidates -------------------------------------------------
+
+def test_arp_candidate_retained_when_size_matches():
+    c = WepIvCollector()
+    frame = b"\x00" * 68          # canonical WEP ARP-request length
+    assert c.record_arp_candidate(BSSID, frame) is True
+    assert c.arp_candidate_count(BSSID) == 1
+    assert c.arp_candidates(BSSID) == [frame]
+
+
+def test_arp_candidate_rejected_on_wrong_size():
+    c = WepIvCollector()
+    assert c.record_arp_candidate(BSSID, b"\x00" * 100) is False
+    assert c.arp_candidate_count(BSSID) == 0
+
+
+def test_arp_candidates_stored_both_directions():
+    """We keep ALL ARP-sized broadcast frames regardless of direction — the
+    replay engine re-addresses them and prunes non-yielding ones later."""
+    c = WepIvCollector()
+    for i in range(5):
+        c.record_arp_candidate(BSSID, bytes([i]) + b"\x00" * 67)
+    assert c.arp_candidate_count(BSSID) == 5
+
+
+def test_arp_ring_capped():
+    from wifit3.wlan.wep_iv import ARP_RING_MAXLEN
+    c = WepIvCollector()
+    for i in range(ARP_RING_MAXLEN + 50):
+        c.record_arp_candidate(BSSID, i.to_bytes(2, "big") + b"\x00" * 66)
+    assert c.arp_candidate_count(BSSID) == ARP_RING_MAXLEN
+
+
+def test_arp_seen_counts_all_sizes():
+    c = WepIvCollector()
+    c.record_arp_candidate(BSSID, b"\x00" * 68)     # stored
+    c.record_arp_candidate(BSSID, b"\x00" * 368)    # wrong size, still 'seen'
+    assert c.arp_seen_count(BSSID) == 2
+    assert c.arp_candidate_count(BSSID) == 1

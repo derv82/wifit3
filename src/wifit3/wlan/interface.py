@@ -238,6 +238,14 @@ class WlanInterface:
                 stats = self.wep_collector.record(bssid, iv)
                 if ap.wep is None:
                     ap.wep = stats
+                # Broadcast WEP Data frames (either direction) are ARP-replay
+                # candidates — the replay engine re-addresses them into a
+                # ToDS frame the AP will relay, generating fresh IVs.
+                raw = parsed.get("raw")
+                if raw and parsed.get("dest") == "ff:ff:ff:ff:ff:ff":
+                    self.wep_collector.record_arp_candidate(
+                        bssid, raw, source=parsed.get("source")
+                    )
 
         # Client Tracking
         if frame_type in ("probe_req", "assoc_req", "data", "wep_data", "eapol", "deauth", "assoc_resp"):

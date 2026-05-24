@@ -303,6 +303,26 @@ def test_unprotected_data_is_not_wep():
     assert "wep_iv" not in parsed
 
 
+def test_tods_broadcast_arp_is_parsed_not_dropped():
+    """Regression: a ToDS WEP ARP request has a BROADCAST addr3 (the DA).
+    _is_valid_frame used to reject any broadcast addr3, silently dropping the
+    only replayable ARP-replay seed before it could be parsed."""
+    fc0 = 0x08
+    fc1 = 0x01 | 0x40                    # ToDS + Protected
+    bssid = b"\x11\x22\x33\x44\x55\x66"
+    client = b"\xaa\xbb\xcc\xdd\xee\xff"
+    bcast = b"\xff\xff\xff\xff\xff\xff"
+    # ToDS: addr1=BSSID, addr2=client(SA), addr3=broadcast(DA).
+    mac = bytes([fc0, fc1]) + b"\x00\x00" + bssid + client + bcast + b"\x00\x00"
+    frame = mac + b"\x03\xff\x00" + b"\x00" + b"\x00" * 16
+    parsed = WlanFrameParser.parse_80211_frame(frame, -50)
+    assert parsed is not None
+    assert parsed["type"] == "wep_data"
+    assert parsed["to_ds"] is True
+    assert parsed["dest"] == "ff:ff:ff:ff:ff:ff"
+    assert parsed["bssid"] == "11:22:33:44:55:66"
+
+
 def test_wpa3_keys_propagate_through_parse_80211_frame():
     """Regression: pre-fix these keys were set on the tags dict but dropped
     in parse_80211_frame, never reaching _on_frame_parsed."""

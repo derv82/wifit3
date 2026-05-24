@@ -79,6 +79,7 @@ class WepFakeAuth:
         target: AccessPoint,
         source_mac: Optional[bytes] = None,
         interval: float = 30.0,
+        fail_retry_interval: float = 3.0,
         assoc_timeout: float = 2.0,
         log_callback: Optional[Callable[[str], None]] = None,
     ):
@@ -87,8 +88,14 @@ class WepFakeAuth:
         self.bssid_bytes = _str_to_mac(target.bssid)
         self.source_mac = source_mac or _random_client_mac()
         self.interval = interval
+        self.fail_retry_interval = fail_retry_interval
         self.assoc_timeout = assoc_timeout
         self._log = log_callback or (lambda _msg: None)
+        # Last time we did something that keeps the AP's inactivity timer at
+        # bay (auth or injected replay traffic). The keepalive skips its
+        # periodic re-auth while this is fresh, so active replay isn't
+        # interrupted every `interval` seconds.
+        self._last_activity = 0.0
 
         self.stats = FakeAuthStats()
         # State machine surfaced to the UI.
@@ -178,28 +185,51 @@ class WepFakeAuth:
     def is_active(self) -> bool:
         return self._active
 
+    def notify_activity(self) -> None:
+        """Called by the replay engine on each injected burst — our own
+        traffic keeps the association alive, so the keepalive can skip its
+        periodic (disruptive) re-auth while replay is running."""
+        self._last_activity = time.time()
+
+    def request_reauth(self) -> None:
+        """Ask the loop to re-authenticate immediately (e.g. replay detected a
+        stall that looks like a silent de-association)."""
+        self._reauth_event.set()
+
     # ---- Keepalive loop -----------------------------------------------------
 
     async def _keepalive_loop(self) -> None:
         try:
+            await self._authenticate()
             while self._active:
-                await self._authenticate()
-                # Sleep until the interval elapses OR a reactive re-auth is
-                # requested (deauth/disassoc to us). wait_for cancels the
-                # wait the instant the event fires.
+                # Fast retry after a failure; otherwise the normal keepalive.
+                timeout = (
+                    self.fail_retry_interval
+                    if self.state == "failed"
+                    else self.interval
+                )
                 self._reauth_event.clear()
                 try:
-                    await asyncio.wait_for(
-                        self._reauth_event.wait(), timeout=self.interval
-                    )
-                    # Woke early → a kick was observed.
-                    if self._active:
-                        self.stats.reactive_reauths += 1
-                        self._log(
-                            "[yellow]⟳ Fake-Auth: kicked — re-authenticating now[/yellow]"
-                        )
+                    await asyncio.wait_for(self._reauth_event.wait(), timeout=timeout)
+                    woke_early = True
                 except asyncio.TimeoutError:
-                    pass  # normal keepalive tick
+                    woke_early = False
+                if not self._active:
+                    break
+
+                if self.state == "failed":
+                    await self._authenticate()                 # fast retry
+                elif woke_early:
+                    self.stats.reactive_reauths += 1
+                    self._log(
+                        "[yellow]⟳ Fake-Auth: re-authenticating "
+                        "(kicked / requested)[/yellow]"
+                    )
+                    await self._authenticate()
+                elif (time.time() - self._last_activity) > self.interval:
+                    # Idle keepalive tick — only when replay isn't already
+                    # keeping us associated (avoids interrupting active replay).
+                    await self._authenticate()
         except asyncio.CancelledError:
             pass
 
@@ -223,7 +253,8 @@ class WepFakeAuth:
         if self._assoc_ok:
             self.state = "associated"
             self.fail_reason = None
-            self.next_reauth_at = time.time() + self.interval
+            self.next_reauth_at = None
+            self._last_activity = time.time()   # auth counts as keepalive
             self.stats.associations += 1
             self._log(
                 f"[green]✓ Fake-Auth: associated[/green] as "
@@ -231,10 +262,16 @@ class WepFakeAuth:
             )
         else:
             self.state = "failed"
-            self.next_reauth_at = None
+            # Short reason for the SECURITY panel; full hint goes to the log.
             if not self.fail_reason:
-                self.fail_reason = "no Assoc Resp (out of range / not susceptible?)"
-            self._log(f"[red]✗ Fake-Auth failed:[/red] {self.fail_reason}")
+                self.fail_reason = "no Assoc Resp"
+            # Drive the panel's "retry in Ns" countdown off the fast-retry tick.
+            self.next_reauth_at = time.time() + self.fail_retry_interval
+            self._log(
+                f"[red]✗ Fake-Auth failed:[/red] {self.fail_reason} "
+                f"[dim](out of range / not susceptible? retrying in "
+                f"{int(self.fail_retry_interval)}s)[/dim]"
+            )
 
     # ---- RX filter (sync, on the loop) --------------------------------------
 

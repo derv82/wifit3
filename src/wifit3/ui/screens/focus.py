@@ -18,7 +18,7 @@ from wifit3.engine.pcap import write_pcap
 from wifit3.engine.attacks.pmkid_harvest import PmkidHarvestAttack
 from wifit3.engine.attacks.sae_probe import SAEGroupProbeAttack
 from wifit3.engine.attacks.wpa3_downgrade import WPA3DowngradeAttack
-from wifit3.engine.attacks.wep.fake_auth import WepFakeAuth
+from wifit3.engine.attacks.wep.campaign import WepCampaign
 from wifit3.wlan.wep_iv import WEP_CRACK_IV_THRESHOLD
 
 from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector
@@ -73,9 +73,9 @@ class FocusView(Screen):
         # here so the button can toggle Start/Stop and so target/screen
         # transitions can tear it down deterministically.
         self._wpa3_down_attack: Optional[WPA3DowngradeAttack] = None
-        # WEP fake-auth keepalive daemon (M2). Held so the button toggles
-        # Start/Stop and target/screen transitions tear it down deterministically.
-        self._fake_auth_attack: Optional[WepFakeAuth] = None
+        # WEP "Generate IVs" campaign (M3): fake-auth + ARP replay. Held so the
+        # button toggles Start/Stop and transitions tear it down deterministically.
+        self._wep_campaign: Optional[WepCampaign] = None
 
     # ----- Compose / mount ---------------------------------------------------
 
@@ -114,6 +114,7 @@ class FocusView(Screen):
                     # meaningless for WEP) when the target is a WEP AP.
                     Label(id="lbl-ivs"),
                     Label(id="lbl-ivs-eta"),
+                    Label(id="lbl-replay"),
                     classes="info-box",
                 )
 
@@ -135,7 +136,8 @@ class FocusView(Screen):
                         yield Button("Deauth [x]", variant="warning", id="btn-deauth-sel", disabled=True)
                         yield Button("PMKID", variant="primary", id="btn-pmkid")
                         # WEP-only (hidden for WPA targets, shown in their place).
-                        yield Button("Fake Auth", variant="primary", id="btn-fake-auth")
+                        # Starts fake-auth then ARP replay (the IV campaign).
+                        yield Button("Generate IVs", variant="primary", id="btn-gen-ivs")
                     with Horizontal(classes="button-row"):
                         yield Button("SAE Probe", variant="primary", id="btn-sae-probe", disabled=True)
                         yield Button("WPA3 Down", variant="primary", id="btn-wpa3-down", disabled=True)
@@ -158,9 +160,10 @@ class FocusView(Screen):
         # is bound to the PREVIOUS target's BSSID/SSID/channel, so it'd inject
         # the wrong payload for a new target. Safe no-op if nothing's running.
         self._stop_wpa3_down()
-        # Same for the fake-auth daemon — its forged STA is associated to the
-        # previous BSSID; leaving it running would inject auth to the wrong AP.
-        self._stop_fake_auth()
+        # Same for the Generate IVs campaign — its forged STA + replay are
+        # bound to the previous BSSID; leaving it running would inject to the
+        # wrong AP.
+        self._stop_generate_ivs()
 
         self.target_ap = getattr(self.app, "target_ap", None)
         if not self.target_ap:
@@ -265,18 +268,19 @@ class FocusView(Screen):
         btn_sae = self.query_one("#btn-sae-probe", Button)
         btn_down = self.query_one("#btn-wpa3-down", Button)
         btn_pmkid = self.query_one("#btn-pmkid", Button)
-        btn_fake = self.query_one("#btn-fake-auth", Button)
+        btn_gen = self.query_one("#btn-gen-ivs", Button)
 
         btn_sae.display = not is_wep
         btn_down.display = not is_wep
         btn_pmkid.display = not is_wep
-        btn_fake.display = is_wep
+        btn_gen.display = is_wep
 
         if is_wep:
-            btn_fake.label = "Stop Auth" if self._fake_auth_attack else "Fake Auth"
-            self._update_fakeauth_status()
+            btn_gen.label = "Stop IVs" if self._wep_campaign else "Generate IVs"
+            self._update_campaign_status()
         else:
             self.query_one("#lbl-fakeauth", Label).display = False
+            self.query_one("#lbl-replay", Label).display = False
             if ap.wpa3:
                 btn_sae.disabled = False
                 # WPA3 Downgrade only works against transition-mode APs (pure
@@ -387,29 +391,65 @@ class FocusView(Screen):
             Text.from_markup(f"ETA→{target_k}k: {eta_markup}", emoji=False)
         )
 
-    def _update_fakeauth_status(self) -> None:
-        """Render the SECURITY-panel Fake-Auth line from the daemon's state."""
-        label = self.query_one("#lbl-fakeauth", Label)
-        fa = self._fake_auth_attack
-        if fa is None:
-            label.update(Text.from_markup("Fake-Auth: [dim]Off[/dim]", emoji=False))
-            label.display = True
+    def _update_campaign_status(self) -> None:
+        """Render the Fake-Auth (SECURITY) + replay (CAPTURE) status lines from
+        the running Generate IVs campaign."""
+        fa_label = self.query_one("#lbl-fakeauth", Label)
+        replay_label = self.query_one("#lbl-replay", Label)
+        fa_label.display = True
+        replay_label.display = True
+
+        campaign = self._wep_campaign
+        if campaign is None:
+            fa_label.update(Text.from_markup("Fake-Auth: [dim]Off[/dim]", emoji=False))
+            replay_label.update(Text.from_markup("Replay: [dim]Off[/dim]", emoji=False))
             return
 
-        label.display = True
+        # Fake-auth state.
+        fa = campaign.fake_auth
         if fa.state == "associated":
             countdown = ""
             if fa.next_reauth_at:
                 secs = max(0, int(fa.next_reauth_at - time.time()))
                 countdown = f" [dim](re-auth in {secs}s)[/dim]"
-            markup = f"[green]Success[/green]{countdown}"
+            fa_markup = f"[green]Success[/green]{countdown}"
         elif fa.state == "authenticating":
-            markup = "[yellow]Authenticating…[/yellow]"
+            fa_markup = "[yellow]Authenticating…[/yellow]"
         elif fa.state == "failed":
-            markup = f"[red]Failed: {escape(fa.fail_reason or 'unknown')}[/red]"
+            fa_markup = f"[red]Failed: {escape(fa.fail_reason or 'unknown')}[/red]"
         else:
-            markup = "[dim]Idle[/dim]"
-        label.update(Text.from_markup(f"Fake-Auth: {markup}", emoji=False))
+            fa_markup = "[dim]Idle[/dim]"
+        fa_label.update(Text.from_markup(f"Fake-Auth: {fa_markup}", emoji=False))
+
+        # Replay state + ARP visibility (seen / usable / tried / failed).
+        r = campaign.replay
+        iface = getattr(self.app, "active_interface", None)
+        bssid = self.target_ap.bssid
+        seen = iface.wep_collector.arp_seen_count(bssid) if iface else 0
+        usable = iface.wep_collector.arp_candidate_count(bssid) if iface else 0
+        arp_info = f"{seen} seen, {usable} usable"
+        if r.stats.candidates_failed:
+            arp_info += f", {r.stats.candidates_failed} fruitless"
+
+        if r.state == "replaying":
+            rmarkup = (
+                f"[green]Replaying[/green] [dim](~{r.stats.effective_pps:.0f} pps · "
+                f"{r.stats.injected:,} sent)[/dim]"
+            )
+        elif r.state == "testing":
+            rmarkup = f"[cyan]Testing ARP[/cyan] [dim]({arp_info})[/dim]"
+        elif r.state == "waiting-arp":
+            rmarkup = (
+                f"[yellow]Waiting for ARP[/yellow] "
+                f"[dim]({arp_info} — deauth a client)[/dim]"
+            )
+        elif r.state == "waiting-auth":
+            rmarkup = "[dim]Waiting for assoc…[/dim]"
+        elif r.state == "paused":
+            rmarkup = "[dim]Paused[/dim]"
+        else:
+            rmarkup = "[dim]Idle[/dim]"
+        replay_label.update(Text.from_markup(f"Replay: {rmarkup}", emoji=False))
 
     # ----- Client table ------------------------------------------------------
 
@@ -600,8 +640,8 @@ class FocusView(Screen):
             self.run_worker(self._run_sae_probe(), exclusive=True)
         elif bid == "btn-wpa3-down":
             self._toggle_wpa3_down()
-        elif bid == "btn-fake-auth":
-            self._toggle_fake_auth()
+        elif bid == "btn-gen-ivs":
+            self._toggle_generate_ivs()
 
     def action_save_capture(self) -> None:
         self._save_capture()
@@ -821,54 +861,44 @@ class FocusView(Screen):
             f"requests. Natural reconnection may take minutes to hours."
         )
 
-    def _toggle_fake_auth(self) -> None:
-        """Button handler: start the fake-auth keepalive daemon if idle, stop it
-        if running."""
-        if self._fake_auth_attack:
-            self._stop_fake_auth()
+    def _toggle_generate_ivs(self) -> None:
+        """Button handler: start the Generate IVs campaign (fake-auth + ARP
+        replay) if idle, stop it if running."""
+        if self._wep_campaign:
+            self._stop_generate_ivs()
         else:
-            self._start_fake_auth()
+            self._start_generate_ivs()
 
-    def _start_fake_auth(self) -> None:
+    def _start_generate_ivs(self) -> None:
         ap = self.target_ap
         iface = getattr(self.app, "active_interface", None)
         if not ap or not iface:
-            self._log("[red]✗ No target / interface — cannot start Fake Auth.[/red]")
+            self._log("[red]✗ No target / interface — cannot Generate IVs.[/red]")
             return
         try:
-            self._fake_auth_attack = WepFakeAuth(iface, ap, log_callback=self._log)
-            self._fake_auth_attack.start()
+            self._wep_campaign = WepCampaign(iface, ap, log_callback=self._log)
+            self._wep_campaign.start()
         except Exception as exc:
-            logger.exception("Fake Auth start failed")
-            self._log(f"[bold red]✗ Fake Auth failed to start:[/bold red] {escape(str(exc))}")
-            self._fake_auth_attack = None
-            return
-        self._log(
-            f"[bold cyan]→ Fake Auth started[/bold cyan] on "
-            f"[bold]{escape(ap.ssid or '<hidden>')}[/bold] ({ap.bssid}) — "
-            f"keepalive every 30s, re-auth on kick."
-        )
+            logger.exception("Generate IVs start failed")
+            self._log(f"[bold red]✗ Generate IVs failed to start:[/bold red] {escape(str(exc))}")
+            self._wep_campaign = None
 
-    def _stop_fake_auth(self) -> None:
-        if not self._fake_auth_attack:
+    def _stop_generate_ivs(self) -> None:
+        if not self._wep_campaign:
             return
-        you_mac = ":".join(f"{b:02x}" for b in self._fake_auth_attack.source_mac)
-        stats = self._fake_auth_attack.stop()
-        self._fake_auth_attack = None
-        # stop() dropped the YOU client from iface.clients; clear its table
-        # row + any selection so it doesn't linger as a stale/undead target.
+        you_mac = ":".join(
+            f"{b:02x}" for b in self._wep_campaign.fake_auth.source_mac
+        )
+        self._wep_campaign.stop()
+        self._wep_campaign = None
+        # The campaign dropped the YOU client from iface.clients; clear its
+        # table row + any selection so it doesn't linger as a stale target.
         self._known_clients.discard(you_mac)
         self._selected_clients.discard(you_mac)
         try:
             self.query_one("#client-table", DataTable).remove_row(you_mac)
         except Exception:
             pass
-        duration = max(1, int(time.time() - stats.started_at))
-        self._log(
-            f"[bold red]✗ Fake Auth stopped[/bold red] after "
-            f"{_format_duration(duration)} — {stats.associations} assoc(s), "
-            f"{stats.reactive_reauths} reactive re-auth(s)."
-        )
 
     def _stop_wpa3_down(self) -> None:
         if not self._wpa3_down_attack:
@@ -890,8 +920,9 @@ class FocusView(Screen):
         # Tear down the WPA3 Down daemon if running — Scanner view doesn't own
         # the AP's channel and the RX callback would keep firing forever.
         self._stop_wpa3_down()
-        # Same for fake-auth — stop injecting + drop the YOU client on exit.
-        self._stop_fake_auth()
+        # Same for the Generate IVs campaign — stop injecting + drop the YOU
+        # client on exit.
+        self._stop_generate_ivs()
         # Hopper restart happens in ScannerView.on_screen_resume — it owns
         # the channel filter; restarting here would silently widen it.
         self.app.pop_screen()

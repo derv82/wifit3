@@ -168,6 +168,31 @@ def test_wep_ivs_ignored_for_non_wep_ap(mocker):
     assert iface.access_points[bssid].wep is None
 
 
+def _wep_broadcast(bssid, source, *, to_ds, length=68):
+    return {
+        "type": "wep_data",
+        "bssid": bssid,
+        "source": source,
+        "dest": "ff:ff:ff:ff:ff:ff",
+        "to_ds": to_ds,
+        "rssi": -45,
+        "wep_iv": b"\x09\x08\x07",
+        "raw": b"\x00" * length,
+    }
+
+
+def test_broadcast_wep_stored_as_arp_candidate_either_direction(mocker):
+    """Both ToDS and FromDS broadcast WEP frames are kept — the replay engine
+    re-addresses them, so a FromDS relay is as usable as a ToDS request."""
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="T")
+    bssid = "11:22:33:44:55:66"
+    _seed_ap(iface, bssid, "WEP")
+    iface._on_frame_parsed(_wep_broadcast(bssid, "aa:bb:cc:dd:ee:01", to_ds=True))
+    iface._on_frame_parsed(_wep_broadcast(bssid, "aa:bb:cc:dd:ee:02", to_ds=False))
+    assert iface.wep_collector.arp_candidate_count(bssid) == 2
+    assert iface.wep_collector.arp_seen_count(bssid) == 2
+
+
 def test_real_client_still_creates_handshake_with_eapol_frames(mocker):
     """Counterpart to the forged-MAC test: a real client (not in
     iface.forged_macs) gets normal client + handshake registration."""
