@@ -197,6 +197,13 @@ class WepArpReplay:
     def is_active(self) -> bool:
         return self._active
 
+    @property
+    def target_pps(self) -> float:
+        """The P&O-chosen injection rate (the smooth controlled variable). Use
+        this for display, NOT stats.effective_pps — the latter is the per-cycle
+        MEASURED rate and jitters with USB/scheduling latency."""
+        return self._rate
+
     # ---- Candidate selection ------------------------------------------------
 
     def _next_candidate(self, candidates: List[bytes]) -> Optional[bytes]:
@@ -452,13 +459,13 @@ class WepArpReplay:
         # cumulative IV total.
         gained = max(0, unique - self._unique_baseline)
         capture = (100.0 * gained / self.stats.injected) if self.stats.injected else 0.0
-        # "X pps → Y IVs/s" makes the input→output of the (suboptimal) rate
-        # controller visible at a glance — pps is what we SEND (literal:
-        # injected/cycle, not estimated), IVs/s is what we GET (the real
-        # objective). They should track the rate-control rework (see README).
+        # "X pps → Y IVs/s" = the P&O controller's input→output. pps is the
+        # TARGET rate (smooth — what P&O steers), NOT the per-cycle measured
+        # effective_pps (which jitters with USB/scheduling latency). IVs/s is
+        # the objective P&O maximizes.
         ivs_per_s = self.collector.rate(self.bssid)
         self._log(
-            f"[green]ARP Replay:[/green] [dim]{self.stats.effective_pps:.0f} pps → "
+            f"[green]ARP Replay:[/green] [dim]{self.target_pps:.0f} pps → "
             f"{ivs_per_s:.0f} IVs/s · {self.stats.injected:,} injected · "
             f"{unique:,} IVs ({capture:.0f}% capture)[/dim]"
         )

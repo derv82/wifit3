@@ -405,7 +405,9 @@ class FocusView(Screen):
         redundancy, no per-frame totals)."""
         s = r.state
         if s == "replaying":
-            return f"[green]~{r.stats.effective_pps:.0f} pps[/green]"
+            # target_pps = the smooth P&O rate, not the jittery per-cycle
+            # measured effective_pps.
+            return f"[green]~{r.target_pps:.0f} pps[/green]"
         if s == "testing":
             return "[cyan]testing ARP[/cyan]"
         if s == "waiting-arp":
