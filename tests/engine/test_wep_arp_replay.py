@@ -1,4 +1,4 @@
-"""Tests for WEP ARP replay: re-addressing, patient testing, adaptive burst.
+"""Tests for WEP ARP replay: re-addressing, patient testing, rate pacing.
 
 The replay engine re-addresses each captured candidate into a ToDS frame from
 our MAC before injecting, so the stub keys IV "gain" on the candidate's body
@@ -49,7 +49,11 @@ def _replay(mocker, collector, **kw):
         return True
 
     iface.send_raw = _send
-    return WepArpReplay(iface, ap, collector, rx_window=0.0, **kw)
+    r = WepArpReplay(iface, ap, collector, rx_window=0.0, **kw)
+    # Neutralize injection pacing so logic tests get instant cycles (matches the
+    # rx_window=0 intent); the pacing test sets a real _TARGET_PPS back.
+    r._TARGET_PPS = 1e12
+    return r
 
 
 def test_build_replay_frame_readdresses_to_tods(mocker):
@@ -125,21 +129,29 @@ async def test_pause_resume(mocker):
     r.stop()
 
 
-def test_adapt_grows_on_throughput(mocker):
+def test_burst_is_fixed_no_runaway_climb(mocker):
+    """Injection is rate-paced, not throughput-climbed — burst stays fixed so we
+    never run away past the AP's relay ceiling (the over-injection bug)."""
     r = _replay(mocker, FakeCollector({0xAA: 5}, [GOOD]))
-    base = r._burst_size
-    r._adapt(10)
-    assert r._burst_size > base
+    assert r._burst_size == r._BURST
 
 
-def test_adapt_is_sticky_backs_off_only_after_sustained_drop(mocker):
-    r = _replay(mocker, FakeCollector({0xAA: 5}, [GOOD]))
-    r._adapt(10)
-    grown = r._burst_size
-    r._adapt(0)
-    assert r._burst_size == grown
-    r._adapt(0)
-    assert r._burst_size == grown
-    r._adapt(0)
-    assert r._burst_size < grown
-    assert r._burst_size >= r._MIN_BURST
+async def test_injection_is_paced_to_target_rate(mocker):
+    """A cycle should never inject faster than ~_TARGET_PPS: the post-send sleep
+    paces it so we don't overflow the AP's rebroadcast queue / starve RX."""
+    coll = FakeCollector({0xAA: 5}, [GOOD])
+    r = _replay(mocker, coll)
+    r._TARGET_PPS = 150.0          # real rate (helper neutralizes it otherwise)
+    sleeps = []
+    real_sleep = asyncio.sleep
+
+    async def _spy(d):
+        sleeps.append(d)
+        await real_sleep(0)        # don't actually wait in the test
+    mocker.patch("asyncio.sleep", _spy)
+    await r._burst_and_measure(GOOD)
+    # The pacing sleep targets burst/_TARGET_PPS (minus send time, floored at
+    # rx_window) — i.e. effective rate <= _TARGET_PPS.
+    pace = max(s for s in sleeps)
+    assert pace >= r.rx_window
+    assert r._burst_size / (pace + 1e-3) <= r._TARGET_PPS * 1.5
