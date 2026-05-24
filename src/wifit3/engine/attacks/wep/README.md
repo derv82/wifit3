@@ -172,12 +172,27 @@ decides on its own is *success* (→ resume replay), because that's unambiguous;
    candidate relays (fresh-IV FromDS broadcast WEP data from our forged SA). The
    pcap is the ground truth (spec+pcap model). **NEXT: run at the dd-wrt box,
    read the pcap, then code `fragmentation.py`'s oracle to what's observed.**
-4. **`fragmentation.py` / `chopchop.py` daemons (still skeletons)** — daemon shape
-   like `WepArpReplay` (`start`/`stop`, state, `log_callback`); on success call
-   back into the campaign (`on_forged_arp`) to hand over the forged ARP + resume
-   replay. The **oracle detection** (recognizing the AP's relayed frame on the
-   air) is the part that needs the live AP — finalize it from the probe's pcap.
-5. **Campaign + Focus wiring** — Frag/Chop buttons, mutual exclusion via
+4. **Fragmentation VERIFIED END-TO-END ON HARDWARE (2026-05-24).** The
+   `en_hwseq=0` software-sequence fix (rtl8821au `build_tx_desc_data`) let the
+   dd-wrt box reassemble our 9 fragments and rebroadcast the result; decrypting
+   a relay with the test key confirmed it byte-for-byte as our forged ARP. **The
+   live-AP ORACLE SIGNATURE (the thing `fragmentation.py` watches RX for):**
+   a Data frame, **FromDS** + **Protected**, **Addr1 (DA) = broadcast**,
+   **Addr3 (SA) = our forged STA MAC**, **fresh IV** (≠ our seed IV), ~68 B
+   (24 hdr + 4 IV/KeyID + 36 ARP + 4 ICV). It appears post-burst on the target
+   BSSID *and its sibling BSSes* (the box rebroadcasts our broadcast onto each
+   BSS), so match on `Addr3 == our_mac`, not on a specific `Addr2`/BSSID. That
+   relayed frame is also already an ARP-sized broadcast → the capture store logs
+   it as a replay seed automatically. So fragmentation **success = "a relay with
+   our SA appeared"** → tell the campaign, which resumes ARP replay (the new
+   seed is in the store). Tooling: `scripts/wep/frag_probe.py` (inject + dump) +
+   `scripts/wep/analyze_frag_pcap.py` (`--key` decrypt-verify).
+5. **`fragmentation.py` / `chopchop.py` daemons (still skeletons)** — daemon shape
+   like `WepArpReplay` (`start`/`stop`, state, `log_callback`). Frag's oracle is
+   now pinned (item 4); ChopChop still needs its own analogous probe (its crypto
+   `chop_last_byte_and_fixup` is done) — same approach: inject, dump, read the
+   relayed shortened frame, code the accept/reject oracle to it.
+6. **Campaign + Focus wiring** — Frag/Chop buttons, mutual exclusion via
    pause/resume, success→resume-replay, failure→KEEP-RETRYING + progress tally.
 
 ### Skeleton files
