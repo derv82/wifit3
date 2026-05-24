@@ -237,9 +237,17 @@ class FocusView(Screen):
             wps_label.display = True
             wps_label.update(Text.from_markup(f"WPS: {wps_markup}", emoji=False))
 
-        self.query_one("#lbl-pmf", Label).update(
-            Text.from_markup(f"PMF: {format_pmf_markup(ap)}", emoji=False)
-        )
+        # PMF lives in the RSN IE (WPA2/WPA3), so it's only meaningful there —
+        # for WEP / OPEN / legacy-WPA1 there's no RSN and it's always Disabled.
+        # Hide it rather than show a perpetual "Disabled" that can't change.
+        pmf_label = self.query_one("#lbl-pmf", Label)
+        if ap.akms or ap.wpa3:
+            pmf_label.display = True
+            pmf_label.update(
+                Text.from_markup(f"PMF: {format_pmf_markup(ap)}", emoji=False)
+            )
+        else:
+            pmf_label.display = False
 
         wpa3_label = self.query_one("#lbl-wpa3", Label)
         wpa3_markup = format_wpa3_mode_markup(ap)
