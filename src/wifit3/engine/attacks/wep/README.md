@@ -104,10 +104,12 @@ target IP.
 
 **Replaced the adaptive burst climber with perturb-and-observe** (`arp_replay.py`,
 `_maybe_adjust_rate`). Control var = injection pps; objective = IVs/s measured
-over a `_PO_DWELL_S=3.0`s dwell (> the AP's ~1-2s relay delay); step
-`_PO_STEP_PPS=16`, start `_PO_START_PPS=96`, bounds `[24, 500]`, reverse only on
-a >`_PO_IMPROVE_EPS=3%` drop (noise deadband). Runs only while `replaying`. 4
-offline tests cover keep-direction / reverse / hold-when-not-replaying / clamp.
+over a `_PO_DWELL_S=8.0`s dwell (long enough to beat per-dwell IV-count noise —
+at ~30 IVs/s a 3s dwell's ±10% Poisson noise drowned the gradient); step
+`_PO_STEP_PPS=32`, start `_PO_START_PPS=96`, bounds `[24, 500]`, reverse only on
+a >`_PO_IMPROVE_EPS=3%` drop (noise deadband — may still need raising if it
+dithers). Runs only while `replaying`. 4 offline tests cover keep-direction /
+reverse / hold-when-not-replaying / clamp.
 **Needs hardware validation:** confirm it converges to and hovers near the IVs/s
 peak (the ~80-120 pps the box liked), doesn't oscillate wildly, and recovers
 post-frag. Watch the heartbeat `X pps → Y IVs/s`. Tunables if it's twitchy:

@@ -147,14 +147,21 @@ def _po_setup(mocker, rate=100.0, step=16.0, prev=50.0):
     r._rate = rate
     r._rate_step = step
     r._po_prev_ivs_s = prev
-    r._po_window_start = time.time() - 4.0    # dwell (>3s) already elapsed
+    # Put the dwell just past the (configurable) threshold so the step fires.
+    r._test_dwell = r._PO_DWELL_S + 1.0
+    r._po_window_start = time.time() - r._test_dwell
     r._po_window_ivs0 = coll._unique
     return r, coll
 
 
+def _feed_ivs_per_s(r, coll, ivs_per_s):
+    """Add the IV count that yields ``ivs_per_s`` over this dwell."""
+    coll._unique += round(ivs_per_s * r._test_dwell)
+
+
 def test_po_keeps_direction_when_ivs_improve(mocker):
     r, coll = _po_setup(mocker, rate=100.0, step=16.0, prev=50.0)
-    coll._unique += 240            # 240 / 4s = 60 IVs/s > 50 → improved
+    _feed_ivs_per_s(r, coll, 60.0)     # 60 > prev 50 → improved
     r._maybe_adjust_rate()
     assert r._rate_step == 16.0     # same direction
     assert r._rate == 116.0
@@ -162,7 +169,7 @@ def test_po_keeps_direction_when_ivs_improve(mocker):
 
 def test_po_reverses_when_ivs_drop(mocker):
     r, coll = _po_setup(mocker, rate=100.0, step=16.0, prev=50.0)
-    coll._unique += 120            # 120 / 4s = 30 IVs/s < 50 → worse
+    _feed_ivs_per_s(r, coll, 30.0)     # 30 < 50 (beyond deadband) → worse
     r._maybe_adjust_rate()
     assert r._rate_step == -16.0    # reversed
     assert r._rate == 84.0
@@ -178,6 +185,6 @@ def test_po_holds_and_resets_window_when_not_replaying(mocker):
 
 def test_po_clamps_to_max(mocker):
     r, coll = _po_setup(mocker, rate=495.0, step=16.0, prev=50.0)
-    coll._unique += 400            # improving → would step to 511
+    _feed_ivs_per_s(r, coll, 80.0)     # improving → keeps +step → 511, clamped
     r._maybe_adjust_rate()
     assert r._rate == r._PO_MAX_PPS

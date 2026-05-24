@@ -71,8 +71,8 @@ class WepArpReplay:
     # measured over a DWELL that exceeds the AP relay delay (so a step's IVs have
     # landed before we judge it). Start near the observed optimum to converge
     # fast; bounds keep the search sane.
-    _PO_DWELL_S = 3.0
-    _PO_STEP_PPS = 16.0
+    _PO_DWELL_S = 8.0
+    _PO_STEP_PPS = 32.0
     _PO_START_PPS = 96.0
     _PO_MIN_PPS = 24.0
     _PO_MAX_PPS = 500.0
