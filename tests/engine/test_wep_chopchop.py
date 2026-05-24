@@ -9,6 +9,7 @@ attack logic is correct; only the on-air relay-recognition needs the box.
 """
 from __future__ import annotations
 
+import asyncio
 import zlib
 from types import SimpleNamespace
 
@@ -159,6 +160,34 @@ async def test_recovered_keystream_forges_a_valid_arp():
     assert plain[:8] == snap_arp                 # valid LLC/SNAP + ARP
     assert plain[16:22] == OUR                   # sender = our STA
     assert plain[-4:] == icv(plain[:-4])         # valid ICV → AP will relay
+
+
+# ---- stop() halts an in-flight walk (campaign Stop IVs tears chop down) ----
+
+async def test_stop_halts_an_in_flight_byte_walk():
+    """Regression: clicking Stop IVs calls campaign.stop() → chop.stop(); the
+    long byte-walk must actually end (not orphan after the buttons hide)."""
+    captured = (bytes([0x08, 0x42, 0, 0]) + b"\xff" * 6
+                + bytes.fromhex("aa:bb:cc:dd:ee:06") + OUR + b"\x00\x00"
+                + IV + b"\x00" + bytes(40))               # 68B broadcast WEP
+
+    async def slow(_short):           # never relays → keeps the walk sweeping
+        await asyncio.sleep(0.003)
+        return False
+
+    iface = SimpleNamespace(register_rx_callback=lambda c: None,
+                            unregister_rx_callback=lambda c: None)
+    d = WepChopChop(iface, SimpleNamespace(bssid=BSSID),
+                    SimpleNamespace(arp_candidates=lambda b: [captured]),
+                    source_mac=OUR, on_forged_arp=lambda f: None, oracle=slow)
+    d.start()
+    await asyncio.sleep(0.02)         # let the walk get in-flight
+    assert d.is_active
+    task = d._task
+    d.stop()
+    await asyncio.sleep(0.05)         # let the cancellation deliver
+    assert not d.is_active
+    assert task.done()               # the loop actually ended (no orphan)
 
 
 # ---- the live-AP oracle matcher (RX callback) ------------------------------

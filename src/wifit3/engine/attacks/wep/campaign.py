@@ -128,13 +128,16 @@ class WepCampaign:
             self._crack_pool.shutdown(wait=False, cancel_futures=True)
             self._crack_pool = None
         # Tear down a running frag/chop sub-mode before the TX it shares the
-        # radio with.
+        # radio with — and SAY SO (they stop silently otherwise, so "Stop IVs"
+        # mid-Frag/Chop looked like it left them running).
         if self.frag is not None:
             self.frag.stop()
             self.frag = None
+            self._log("[dim]· Frag stopped (Generate IVs ended)[/dim]")
         if self.chop is not None:
             self.chop.stop()
             self.chop = None
+            self._log("[dim]· ChopChop stopped (Generate IVs ended)[/dim]")
         # Stop replay (TX) before fake-auth so we don't briefly inject while
         # de-registering the forged STA.
         self.replay.stop()
