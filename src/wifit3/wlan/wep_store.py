@@ -39,6 +39,12 @@ WEP_CRACK_IV_THRESHOLD = 10_000
 # (wifit3-wep-arp.log) before trusting these — driver framing varies.
 ARP_REQUEST_LENGTHS = {68, 70, 86, 88}
 
+# Fragmentation seeds (iv, leading-ciphertext) from ANY WEP data frame — the
+# LLC/SNAP known-plaintext makes the seed protocol-independent, so frag does
+# NOT need a replayable ARP (that's the whole point of frag vs replay). Deduped
+# by IV; a small ring is plenty (we only need one good seed).
+SEED_SAMPLE_MAXLEN = 64
+
 # We store EVERY ARP-sized broadcast WEP frame — BOTH directions. The replay
 # engine re-addresses each into a ToDS frame sourced from our associated MAC
 # (the 802.11 header is cleartext; only the IV+body is encrypted), so a FromDS
@@ -109,6 +115,10 @@ class WepCaptureStore:
         # needs tens of thousands of distinct IVs.
         self._crack_samples: Dict[str, List[tuple]] = {}
         self._crack_ivs: Dict[str, Set[bytes]] = {}
+        # Per-BSSID ring of (iv, leading-cipher) from ANY WEP data frame, for
+        # the fragmentation seed. Deduped by IV.
+        self._seed_samples: Dict[str, Deque[tuple]] = {}
+        self._seed_ivs: Dict[str, Set[bytes]] = {}
 
     # Frames whose destination is broadcast are ARP-replay / crack candidates.
     _BROADCAST = "ff:ff:ff:ff:ff:ff"
@@ -126,6 +136,12 @@ class WepCaptureStore:
         if not iv:
             return None
         stats = self.record(bssid, iv)
+        cipher = parsed.get("wep_cipher")
+        # ANY data frame is a fragmentation seed (LLC/SNAP known-plaintext) —
+        # not just broadcast ARPs. This is what lets frag work with no client
+        # ARP to replay.
+        if cipher and len(cipher) >= 8:
+            self.record_seed_sample(bssid, iv, cipher)
         raw = parsed.get("raw")
         if raw and parsed.get("dest") == self._BROADCAST:
             # record_arp_candidate returns True iff it was ARP-sized — reuse
@@ -134,7 +150,6 @@ class WepCaptureStore:
             arp_sized = self.record_arp_candidate(
                 bssid, raw, source=parsed.get("source")
             )
-            cipher = parsed.get("wep_cipher")
             if arp_sized and cipher and len(cipher) == 16:
                 self.record_crack_sample(bssid, iv, cipher)
         return stats
@@ -241,3 +256,27 @@ class WepCaptureStore:
 
     def crack_sample_count(self, bssid: str) -> int:
         return len(self._crack_samples.get(bssid, ()))
+
+    # ---- Fragmentation seed samples -----------------------------------------
+
+    def record_seed_sample(self, bssid: str, iv: bytes, cipher: bytes) -> bool:
+        """Store one (IV, leading-cipher) sample from ANY WEP data frame for the
+        fragmentation seed, deduped by IV. Returns True if it was a new IV."""
+        seen = self._seed_ivs.setdefault(bssid, set())
+        if iv in seen:
+            return False
+        seen.add(iv)
+        ring = self._seed_samples.setdefault(
+            bssid, deque(maxlen=SEED_SAMPLE_MAXLEN)
+        )
+        # Evicting the oldest sample also frees its IV from the dedup set so the
+        # ring can't pin memory via _seed_ivs growing unbounded.
+        if len(ring) == ring.maxlen:
+            old_iv, _ = ring[0]
+            seen.discard(old_iv)
+        ring.append((bytes(iv), bytes(cipher)))
+        return True
+
+    def seed_samples(self, bssid: str) -> List[tuple]:
+        """Snapshot of (iv, cipher) fragmentation-seed samples for ``bssid``."""
+        return list(self._seed_samples.get(bssid, ()))

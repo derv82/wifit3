@@ -103,19 +103,20 @@ def test_oracle_matches_sibling_bssid():
 
 # ---- seed selection + handoff ----------------------------------------------
 
-def test_pick_seed_builds_fragments_from_a_broadcast_arp():
+def test_pick_seed_builds_fragments_from_any_data_frame():
+    """Seeds come from generic (iv, cipher) data-frame samples — NOT broadcast
+    ARPs (the whole point: frag works without a replayable ARP)."""
     d, _ = _daemon()
     d._seed_iv = None
-    # A plausible captured broadcast WEP ARP: 24B hdr + IV+KeyID + 40B body.
-    arp = _frame(0x42, b"\xff" * 6, BSSID_B, bytes.fromhex("001122334455"),
-                 bytes([0xAA, 0xBB, 0xCC]))
-    d.store = SimpleNamespace(arp_candidates=lambda b: [arp])
+    iv = bytes([0xAA, 0xBB, 0xCC])
+    cipher = bytes(range(16))           # 16 leading ciphertext bytes
+    d.store = SimpleNamespace(seed_samples=lambda b: [(iv, cipher)])
     assert d._pick_seed() is True
-    assert d._seed_iv == bytes([0xAA, 0xBB, 0xCC])
+    assert d._seed_iv == iv
     assert 1 <= len(d._frags) <= 16
     # Fragments are ToDS+Protected and carry the seed IV.
     assert d._frags[0][1] & 0x41 == 0x41
-    assert d._frags[0][24:27] == bytes([0xAA, 0xBB, 0xCC])
+    assert d._frags[0][24:27] == iv
 
 
 def test_success_hands_relay_to_campaign_and_stops():

