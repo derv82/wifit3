@@ -44,7 +44,7 @@ def _key_markup(key: bytes) -> str:
     ascii_hint = (
         f' = "{key.decode("ascii")}"' if all(0x20 <= b < 0x7F for b in key) else ""
     )
-    return f"[bold black on cyan] ✓ WEP KEY: {key.hex()}{ascii_hint} [/bold black on cyan]"
+    return f"[bold black on cyan] ✓ CRACKED WEP KEY: {key.hex()}{ascii_hint} [/bold black on cyan]"
 
 
 class WepCampaign:
@@ -166,8 +166,8 @@ class WepCampaign:
                 if not self._crack_started:
                     self._crack_started = True
                     self._log(
-                        f"[cyan]→ Cracking[/cyan] — {self.cracker.sample_count:,} "
-                        f"usable IVs (ARP) collected, attempting key recovery…"
+                        "[cyan]→ Cracking[/cyan] 10,000+ usable IVs "
+                        "[dim](some keys require 40k+)[/dim]"
                     )
                 # Ship the (picklable) cracker to the worker; it runs the search
                 # on a snapshot of the votes and returns the key, if any.

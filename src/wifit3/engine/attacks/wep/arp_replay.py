@@ -104,7 +104,6 @@ class WepArpReplay:
         notify_activity: Optional[Callable[[], None]] = None,
         request_reauth: Optional[Callable[[], None]] = None,
         log_callback: Optional[Callable[[str], None]] = None,
-        heartbeat_s: float = 8.0,
     ):
         self.iface = iface
         self.target = target
@@ -118,7 +117,6 @@ class WepArpReplay:
         self._notify_activity = notify_activity or (lambda: None)
         self._request_reauth = request_reauth or (lambda: None)
         self._log = log_callback or (lambda _m: None)
-        self.heartbeat_s = heartbeat_s
 
         self.stats = ArpReplayStats()
         self.state = "idle"        # idle|waiting-auth|waiting-arp|testing|replaying|paused
@@ -145,12 +143,6 @@ class WepArpReplay:
         self._failed_at = 0.0
 
         self._last_state = ""
-        self._last_heartbeat = 0.0
-        # Unique-IV count when THIS replay session started. capture% is measured
-        # against IVs gained since (self.stats.injected also resets per session)
-        # — the store's unique count is cumulative across campaigns, so dividing
-        # the raw total by a fresh injected count gave nonsense like "17034%".
-        self._unique_baseline = 0
 
     # ---- Lifecycle ----------------------------------------------------------
 
@@ -159,7 +151,6 @@ class WepArpReplay:
             return
         self._active = True
         self.stats = ArpReplayStats()
-        self._unique_baseline = self.collector.unique_count(self.bssid)
         # Fresh P&O search each session.
         self._rate = self._PO_START_PPS
         self._rate_step = self._PO_STEP_PPS
@@ -249,7 +240,6 @@ class WepArpReplay:
                     if cand is None:
                         self._set_state("waiting-arp")
                         await asyncio.sleep(0.3)
-                        self._maybe_heartbeat()
                         continue
                     if self._current is not cand:
                         self._begin_trial(cand)
@@ -258,7 +248,6 @@ class WepArpReplay:
                 self._trial_gain += gain
                 self._judge(gain)
                 self._maybe_adjust_rate()
-                self._maybe_heartbeat()
         except asyncio.CancelledError:
             pass
 
@@ -374,8 +363,8 @@ class WepArpReplay:
             self.stats.has_winner = True
             self._failed.discard(self._current)
             self._log(
-                f"[green]✓ ARP replay working[/green] [dim](seed yields IVs — "
-                f"{self._trial_gain} so far)[/dim]"
+                "[green]✓ ARP replay working[/green] "
+                "[dim](see CAPTURE for progress)[/dim]"
             )
         elif (time.time() - self._trial_started) >= self._TRIAL_WINDOW:
             self._failed.add(self._current)
@@ -430,27 +419,3 @@ class WepArpReplay:
         elif state == "waiting-auth":
             self._log("[green]ARP Replay:[/green] [dim]waiting for association…[/dim]")
 
-    def _maybe_heartbeat(self) -> None:
-        """Periodic progress line — only while actively replaying."""
-        if self.state != "replaying":
-            return
-        now = time.time()
-        if now - self._last_heartbeat < self.heartbeat_s:
-            return
-        self._last_heartbeat = now
-        unique = self.collector.unique_count(self.bssid)
-        # capture% = IVs gained THIS session / injected THIS session (both reset
-        # per replay start), so it reflects replay efficiency, not the store's
-        # cumulative IV total.
-        gained = max(0, unique - self._unique_baseline)
-        capture = (100.0 * gained / self.stats.injected) if self.stats.injected else 0.0
-        # "X pps → Y IVs/s" = the P&O controller's input→output. pps is the
-        # TARGET rate (smooth — what P&O steers), NOT the per-cycle measured
-        # effective_pps (which jitters with USB/scheduling latency). IVs/s is
-        # the objective P&O maximizes.
-        ivs_per_s = self.collector.rate(self.bssid)
-        self._log(
-            f"[green]ARP Replay:[/green] [dim]{self.target_pps:.0f} pps → "
-            f"{ivs_per_s:.0f} IVs/s · {self.stats.injected:,} injected · "
-            f"{unique:,} IVs ({capture:.0f}% capture)[/dim]"
-        )
