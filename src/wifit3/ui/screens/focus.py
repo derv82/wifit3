@@ -382,8 +382,11 @@ class FocusView(Screen):
 
         # Save button.
         # Save only appears once there's something to save (a WEP key, or a
-        # WPA handshake/PMKID) — hidden, not shown-disabled.
-        self.query_one("#btn-save", Button).display = ap.has_capture
+        # WPA handshake/PMKID) — hidden, not shown-disabled. It's created
+        # disabled (compose), so clear that when shown or it greys out.
+        btn_save = self.query_one("#btn-save", Button)
+        btn_save.display = ap.has_capture
+        btn_save.disabled = not ap.has_capture
 
         # Clients.
         iface = getattr(self.app, "active_interface", None)
