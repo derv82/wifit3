@@ -115,6 +115,10 @@ class WepCaptureStore:
         # needs tens of thousands of distinct IVs.
         self._crack_samples: Dict[str, List[tuple]] = {}
         self._crack_ivs: Dict[str, Set[bytes]] = {}
+        # Sample acquisition rate (samples/s), for the crack ETA. Separate from
+        # _rates (unique-IV rate) because samples are the subset that gates the
+        # cracker.
+        self._sample_rates: Dict[str, RateTracker] = {}
         # Per-BSSID ring of (iv, leading-cipher) from ANY WEP data frame, for
         # the fragmentation seed. Deduped by IV.
         self._seed_samples: Dict[str, Deque[tuple]] = {}
@@ -239,7 +243,9 @@ class WepCaptureStore:
 
     # ---- PTW crack samples --------------------------------------------------
 
-    def record_crack_sample(self, bssid: str, iv: bytes, cipher: bytes) -> bool:
+    def record_crack_sample(
+        self, bssid: str, iv: bytes, cipher: bytes, now: Optional[float] = None
+    ) -> bool:
         """Store one (IV, cipher) PTW sample, deduped by IV. Caller passes
         these only for ARP-sized broadcast frames, where the plaintext (hence
         keystream) is known. Returns True if it was a new IV."""
@@ -248,6 +254,13 @@ class WepCaptureStore:
             return False
         seen.add(iv)
         self._crack_samples.setdefault(bssid, []).append((bytes(iv), bytes(cipher)))
+        # Track the SAMPLE acquisition rate separately from unique IVs — samples
+        # (ARP-sized broadcast, known-plaintext) are a subset, and they're what
+        # actually gates cracking, so the crack ETA must use this rate, not the
+        # unique-IV rate (which races ahead via the client's organic traffic).
+        self._sample_rates.setdefault(
+            bssid, RateTracker(self._rate_window_s)
+        ).mark(now)
         return True
 
     def crack_samples(self, bssid: str) -> List[tuple]:
@@ -256,6 +269,25 @@ class WepCaptureStore:
 
     def crack_sample_count(self, bssid: str) -> int:
         return len(self._crack_samples.get(bssid, ()))
+
+    def crack_rate(self, bssid: str, now: Optional[float] = None) -> float:
+        """Usable-IV (crack-sample) acquisition rate, samples/second."""
+        rt = self._sample_rates.get(bssid)
+        return rt.rate(now) if rt else 0.0
+
+    def crack_eta_seconds(
+        self, bssid: str, target: int, now: Optional[float] = None
+    ) -> Optional[float]:
+        """Seconds until ``target`` crack samples at the current sample rate.
+        This is the REAL ETA-to-crackable (the cracker gates on samples, not
+        unique IVs). 0.0 if already there; None when there's no usable rate."""
+        remaining = target - self.crack_sample_count(bssid)
+        if remaining <= 0:
+            return 0.0
+        r = self.crack_rate(bssid, now)
+        if r <= 0:
+            return None
+        return remaining / r
 
     # ---- Fragmentation seed samples -----------------------------------------
 

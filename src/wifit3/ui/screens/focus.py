@@ -19,7 +19,7 @@ from wifit3.engine.attacks.pmkid_harvest import PmkidHarvestAttack
 from wifit3.engine.attacks.sae_probe import SAEGroupProbeAttack
 from wifit3.engine.attacks.wpa3_downgrade import WPA3DowngradeAttack
 from wifit3.engine.attacks.wep.campaign import WepCampaign
-from wifit3.wlan.wep_store import WEP_CRACK_IV_THRESHOLD
+from wifit3.engine.attacks.wep.crack import CRACK_READY_THRESHOLD
 
 from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector
 from ..encryption_format import (
@@ -418,10 +418,11 @@ class FocusView(Screen):
 
     def _update_wep_capture(self, ap: AccessPoint) -> None:
         """Render the three WEP CAPTURE rows: IVs (+ inline replay status when
-        a campaign runs), and a 4th row that's ETA→10k while passively
-        collecting / Crack status once a campaign is active or a key is found.
-        The Beacons/POWER/IVs values stay column-aligned for at-a-glance
-        antenna tuning."""
+        a campaign runs), and a 4th row that's usable-IV progress + ETA while
+        collecting / Crack status once the cracker can start or a key is found.
+        The 4th row tracks crack SAMPLES (usable IVs), not raw unique IVs, since
+        samples are what gate cracking. The Beacons/POWER/IVs values stay
+        column-aligned for at-a-glance antenna tuning."""
         iface = getattr(self.app, "active_interface", None)
         n = ap.wep.unique_ivs if ap.wep else 0
         rate = iface.wep_store.rate(ap.bssid) if iface else 0.0
@@ -440,21 +441,34 @@ class FocusView(Screen):
 
         eta_label = self.query_one("#lbl-ivs-eta", Label)
         crack_label = self.query_one("#lbl-crack", Label)
-        target_k = WEP_CRACK_IV_THRESHOLD // 1000
+        target_k = CRACK_READY_THRESHOLD // 1000
+        # Gate on USABLE IVs (crack samples = ARP-sized broadcast, known
+        # plaintext) toward the cracker's threshold — NOT raw unique IVs. The
+        # cracker can't start until it has this many samples, and samples lag
+        # unique IVs (the gap is the client's organic traffic), so gating the
+        # phase/ETA on unique IVs falsely "completed" at 10k IVs while cracking
+        # didn't begin until ~10k SAMPLES (often ~2x the IVs).
+        samples = iface.wep_store.crack_sample_count(ap.bssid) if iface else 0
 
-        # 4th row, one clean phase transition at the threshold: ETA→10k while
-        # still collecting, then the Crack line once we have enough IVs (or a
-        # recovered key). The two never show at once.
-        if ap.wep_key is None and n < WEP_CRACK_IV_THRESHOLD:
+        # 4th row, one clean phase transition: usable-IV progress + ETA while
+        # collecting, then the Crack line once the cracker can start (enough
+        # samples) or a key is found. The two never show at once.
+        if ap.wep_key is None and samples < CRACK_READY_THRESHOLD:
             crack_label.display = False
             eta_label.display = True
-            eta = iface.wep_store.eta_seconds(ap.bssid) if iface else None
+            eta = (
+                iface.wep_store.crack_eta_seconds(ap.bssid, CRACK_READY_THRESHOLD)
+                if iface else None
+            )
             eta_markup = (
-                "[dim]— (waiting for IVs)[/dim]" if eta is None
-                else _format_duration(int(eta))
+                "[dim]waiting for usable IVs[/dim]" if eta is None
+                else f"ETA {_format_duration(int(eta))}"
             )
             eta_label.update(
-                Text.from_markup(f"ETA→{target_k}k: {eta_markup}", emoji=False)
+                Text.from_markup(
+                    f"Crack: [bold]{samples:,}[/bold]/{target_k}k usable IVs "
+                    f"· {eta_markup}", emoji=False
+                )
             )
         else:
             eta_label.display = False

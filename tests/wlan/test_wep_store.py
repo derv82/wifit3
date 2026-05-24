@@ -74,6 +74,29 @@ def test_eta_none_when_no_rate():
     assert c.eta_seconds(BSSID, target=10, now=5.0) is None
 
 
+def test_crack_eta_tracks_samples_not_unique_ivs():
+    """The crack ETA must use the SAMPLE rate, not the unique-IV rate — samples
+    (usable IVs) gate cracking and lag unique IVs (the gap = organic traffic).
+    Regression: the UI used to gate on unique IVs, so cracking "should start"
+    at 10k IVs but didn't begin until ~10k samples (often ~2x the IVs)."""
+    c = WepCaptureStore()
+    # Lots of unique IVs (fast)...
+    for i in range(20):
+        c.record(BSSID, bytes([0, i // 256, i % 256]), now=float(i) * 0.1)
+    # ...but only a few crack samples (slow): 2 samples across a 2.0s span = 1/s.
+    c.record_crack_sample(BSSID, b"\x01\x00\x00", b"\x00" * 16, now=0.0)
+    c.record_crack_sample(BSSID, b"\x01\x00\x01", b"\x00" * 16, now=2.0)
+    assert c.crack_rate(BSSID, now=2.0) == pytest.approx(1.0)
+    # 2 samples at 1/s, 8 remaining to reach 10 → 8s (NOT driven by the 20 IVs).
+    assert c.crack_eta_seconds(BSSID, target=10, now=2.0) == pytest.approx(8.0)
+
+
+def test_crack_eta_none_when_no_samples():
+    c = WepCaptureStore()
+    c.record(BSSID, b"\x00\x00\x01", now=0.0)   # unique IV but no crack sample
+    assert c.crack_eta_seconds(BSSID, target=10, now=1.0) is None
+
+
 # ---- ARP replay candidates -------------------------------------------------
 
 def test_arp_candidate_retained_when_size_matches():
