@@ -97,6 +97,31 @@ async def test_recover_keystream_stalls_returns_none():
     assert await d._recover_keystream(cipher) is None
 
 
+async def test_find_accepted_rejects_unconfirmed_spurious_relay():
+    """A wrong guess that relays ONCE (misattributed sibling-BSS echo / timing
+    slip) must be rejected by the re-confirm step — else it corrupts the walk.
+    The true byte (0xd8 for this input) relays consistently and wins."""
+    from wifit3.engine.attacks.wep.wep_crypto import chop_last_byte_and_fixup
+    cipher, ks_true = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
+    true_last = cipher[-1] ^ ks_true[-1]              # 0xd8
+    s_true = chop_last_byte_and_fixup(cipher, true_last)
+    s_spurious = chop_last_byte_and_fixup(cipher, 0)  # guess 0: wrong, swept 1st
+    fired = {"n": 0}
+
+    async def flaky(short: bytes) -> bool:
+        if short == s_true:
+            return True                              # true byte: always relays
+        if short == s_spurious and fired["n"] == 0:
+            fired["n"] += 1
+            return True                              # wrong byte: one-shot relay
+        return False
+
+    d, _ = _daemon(oracle=flaky)
+    accepted = await d._find_accepted(cipher)
+    assert fired["n"] == 1                            # the spurious WAS offered…
+    assert accepted == true_last                      # …but rejected; true won
+
+
 async def test_recovered_keystream_forges_a_valid_arp():
     """End-to-end offline: recover ks → _succeed forges a broadcast ARP →
     on_forged_arp gets a frame that decrypts to a well-formed ARP from us."""

