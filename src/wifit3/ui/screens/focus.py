@@ -142,6 +142,10 @@ class FocusView(Screen):
                         # WEP-only (hidden for WPA targets, shown in their place).
                         # Starts fake-auth then ARP replay (the IV campaign).
                         yield Button("Generate IVs", variant="primary", id="btn-gen-ivs")
+                        # WEP-only, shown only while a campaign runs: switch the
+                        # radio to fragmentation to manufacture an ARP seed when
+                        # replay has none (no client traffic). Click-to-toggle.
+                        yield Button("Frag", variant="primary", id="btn-frag")
                     with Horizontal(classes="button-row"):
                         yield Button("SAE Probe", variant="primary", id="btn-sae-probe", disabled=True)
                         yield Button("WPA3 Down", variant="primary", id="btn-wpa3-down", disabled=True)
@@ -281,6 +285,7 @@ class FocusView(Screen):
         btn_down = self.query_one("#btn-wpa3-down", Button)
         btn_pmkid = self.query_one("#btn-pmkid", Button)
         btn_gen = self.query_one("#btn-gen-ivs", Button)
+        btn_frag = self.query_one("#btn-frag", Button)
 
         btn_sae.display = not is_wep
         btn_down.display = not is_wep
@@ -288,6 +293,9 @@ class FocusView(Screen):
         # Generate IVs vanishes once the key is cracked — Save takes its place,
         # so it reads as a "Generate IVs → Save" swap.
         btn_gen.display = is_wep and ap.wep_key is None
+        # Frag is shown only inside a running WEP campaign (set below); off
+        # otherwise so it never lingers on a WPA target.
+        btn_frag.display = False
 
         if is_wep:
             # A finished campaign (key recovered) is torn down so the button
@@ -298,6 +306,10 @@ class FocusView(Screen):
                 self._stop_generate_ivs()
                 camp = None
             btn_gen.label = "Stop IVs" if camp is not None else "Generate IVs"
+            # Frag is a sub-mode of a running campaign (it manufactures a seed
+            # for replay), so it only appears once IVs are being generated.
+            btn_frag.display = camp is not None and ap.wep_key is None
+            btn_frag.label = "Stop Frag" if (camp and camp.frag_active) else "Frag"
             self._update_fakeauth_line()
         else:
             self.query_one("#lbl-fakeauth", Label).display = False
@@ -683,6 +695,8 @@ class FocusView(Screen):
             self._toggle_wpa3_down()
         elif bid == "btn-gen-ivs":
             self._toggle_generate_ivs()
+        elif bid == "btn-frag":
+            self._toggle_frag()
 
     def action_save_capture(self) -> None:
         self._save_capture()
@@ -960,6 +974,27 @@ class FocusView(Screen):
             self.query_one("#client-table", DataTable).remove_row(you_mac)
         except Exception:
             pass
+
+    def _toggle_frag(self) -> None:
+        """Frag button. It's a sub-mode of a running campaign — switches the
+        radio from ARP replay to fragmentation (and back). Click-to-toggle."""
+        camp = self._wep_campaign
+        if camp is None:
+            self._log(
+                "[yellow]Start Generate IVs first[/yellow] [dim](Frag "
+                "manufactures an ARP seed for the replay engine)[/dim]"
+            )
+            return
+        if camp.frag_active:
+            camp.stop_frag()
+            self._log("[cyan]→ Frag stopped[/cyan] [dim](back to ARP replay)[/dim]")
+        else:
+            self._log(
+                "[bold cyan]→ Frag[/bold cyan] — pausing replay, fragmenting a "
+                "broadcast ARP to make the AP relay us a fresh seed."
+            )
+            camp.start_frag()
+        self.update_ui()
 
     def _stop_wpa3_down(self) -> None:
         if not self._wpa3_down_attack:
