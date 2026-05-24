@@ -18,6 +18,7 @@ from wifit3.engine.pcap import write_pcap
 from wifit3.engine.attacks.pmkid_harvest import PmkidHarvestAttack
 from wifit3.engine.attacks.sae_probe import SAEGroupProbeAttack
 from wifit3.engine.attacks.wpa3_downgrade import WPA3DowngradeAttack
+from wifit3.engine.attacks.wep.fake_auth import WepFakeAuth
 from wifit3.wlan.wep_iv import WEP_CRACK_IV_THRESHOLD
 
 from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector
@@ -72,6 +73,9 @@ class FocusView(Screen):
         # here so the button can toggle Start/Stop and so target/screen
         # transitions can tear it down deterministically.
         self._wpa3_down_attack: Optional[WPA3DowngradeAttack] = None
+        # WEP fake-auth keepalive daemon (M2). Held so the button toggles
+        # Start/Stop and target/screen transitions tear it down deterministically.
+        self._fake_auth_attack: Optional[WepFakeAuth] = None
 
     # ----- Compose / mount ---------------------------------------------------
 
@@ -96,6 +100,8 @@ class FocusView(Screen):
                     Label(id="lbl-pmf"),
                     Label(id="lbl-wpa3"),
                     Label(id="lbl-sae-groups"),
+                    # WEP-only: fake-auth daemon status + re-auth countdown.
+                    Label(id="lbl-fakeauth"),
                     classes="info-box",
                 )
                 yield Vertical(
@@ -128,6 +134,8 @@ class FocusView(Screen):
                         yield Button("Broadcast", variant="error", id="btn-deauth-bcast")
                         yield Button("Deauth [x]", variant="warning", id="btn-deauth-sel", disabled=True)
                         yield Button("PMKID", variant="primary", id="btn-pmkid")
+                        # WEP-only (hidden for WPA targets, shown in their place).
+                        yield Button("Fake Auth", variant="primary", id="btn-fake-auth")
                     with Horizontal(classes="button-row"):
                         yield Button("SAE Probe", variant="primary", id="btn-sae-probe", disabled=True)
                         yield Button("WPA3 Down", variant="primary", id="btn-wpa3-down", disabled=True)
@@ -150,6 +158,9 @@ class FocusView(Screen):
         # is bound to the PREVIOUS target's BSSID/SSID/channel, so it'd inject
         # the wrong payload for a new target. Safe no-op if nothing's running.
         self._stop_wpa3_down()
+        # Same for the fake-auth daemon — its forged STA is associated to the
+        # previous BSSID; leaving it running would inject auth to the wrong AP.
+        self._stop_fake_auth()
 
         self.target_ap = getattr(self.app, "target_ap", None)
         if not self.target_ap:
@@ -181,6 +192,7 @@ class FocusView(Screen):
             return
 
         ap = self.target_ap
+        is_wep = (ap.encryption or "").upper() == "WEP"
 
         # TARGET INFO panel.
         if ap.ssid:
@@ -247,26 +259,40 @@ class FocusView(Screen):
         else:
             sae_label.display = False
 
-        # Attack-button enable/disable based on AP capability.
+        # Attack buttons. WEP and WPA targets get disjoint button sets — the
+        # WPA buttons (PMKID/SAE/WPA3 Down) are meaningless for WEP, so hide
+        # (not just disable) them and surface Fake Auth in their place.
         btn_sae = self.query_one("#btn-sae-probe", Button)
         btn_down = self.query_one("#btn-wpa3-down", Button)
         btn_pmkid = self.query_one("#btn-pmkid", Button)
-        if ap.wpa3:
-            btn_sae.disabled = False
-            # WPA3 Downgrade only works against transition-mode APs (pure WPA3
-            # clients refuse a WPA2-only ad from a known-SAE network).
-            btn_down.disabled = not ap.transition_mode
-            # PMKID is only useful against WPA2 + WPA3-Transition (the WPA2
-            # portion). Pure SAE PMKID isn't crackable with current attacks.
-            btn_pmkid.disabled = not ap.transition_mode
+        btn_fake = self.query_one("#btn-fake-auth", Button)
+
+        btn_sae.display = not is_wep
+        btn_down.display = not is_wep
+        btn_pmkid.display = not is_wep
+        btn_fake.display = is_wep
+
+        if is_wep:
+            btn_fake.label = "Stop Auth" if self._fake_auth_attack else "Fake Auth"
+            self._update_fakeauth_status()
         else:
-            btn_sae.disabled = True
-            btn_down.disabled = True
-            btn_pmkid.disabled = False
-        # WPA3 Down button label reflects daemon state.
-        btn_down.label = (
-            "Stop WPA3 Down" if self._wpa3_down_attack else "WPA3 Down"
-        )
+            self.query_one("#lbl-fakeauth", Label).display = False
+            if ap.wpa3:
+                btn_sae.disabled = False
+                # WPA3 Downgrade only works against transition-mode APs (pure
+                # WPA3 clients refuse a WPA2-only ad from a known-SAE network).
+                btn_down.disabled = not ap.transition_mode
+                # PMKID is only useful against WPA2 + WPA3-Transition (the WPA2
+                # portion). Pure SAE PMKID isn't crackable with current attacks.
+                btn_pmkid.disabled = not ap.transition_mode
+            else:
+                btn_sae.disabled = True
+                btn_down.disabled = True
+                btn_pmkid.disabled = False
+            # WPA3 Down button label reflects daemon state.
+            btn_down.label = (
+                "Stop WPA3 Down" if self._wpa3_down_attack else "WPA3 Down"
+            )
 
         # CAPTURE panel (dynamic).
         elapsed = max(1.0, time.time() - ap.first_seen)
@@ -278,7 +304,6 @@ class FocusView(Screen):
 
         # WEP and WPA2/3 capture progress are mutually exclusive: WEP has no
         # handshake/PMKID, WPA has no IVs. Show whichever pair fits the target.
-        is_wep = (ap.encryption or "").upper() == "WEP"
         hs_label = self.query_one("#lbl-handshake", Label)
         pmkid_label = self.query_one("#lbl-pmkid", Label)
         ivs_label = self.query_one("#lbl-ivs", Label)
@@ -362,6 +387,30 @@ class FocusView(Screen):
             Text.from_markup(f"ETA→{target_k}k: {eta_markup}", emoji=False)
         )
 
+    def _update_fakeauth_status(self) -> None:
+        """Render the SECURITY-panel Fake-Auth line from the daemon's state."""
+        label = self.query_one("#lbl-fakeauth", Label)
+        fa = self._fake_auth_attack
+        if fa is None:
+            label.update(Text.from_markup("Fake-Auth: [dim]Off[/dim]", emoji=False))
+            label.display = True
+            return
+
+        label.display = True
+        if fa.state == "associated":
+            countdown = ""
+            if fa.next_reauth_at:
+                secs = max(0, int(fa.next_reauth_at - time.time()))
+                countdown = f" [dim](re-auth in {secs}s)[/dim]"
+            markup = f"[green]Success[/green]{countdown}"
+        elif fa.state == "authenticating":
+            markup = "[yellow]Authenticating…[/yellow]"
+        elif fa.state == "failed":
+            markup = f"[red]Failed: {escape(fa.fail_reason or 'unknown')}[/red]"
+        else:
+            markup = "[dim]Idle[/dim]"
+        label.update(Text.from_markup(f"Fake-Auth: {markup}", emoji=False))
+
     # ----- Client table ------------------------------------------------------
 
     def _refresh_clients(self, iface) -> None:
@@ -378,12 +427,19 @@ class FocusView(Screen):
             captures_text = Text.from_markup(
                 self._format_captures_label(hs), emoji=False
             )
+            # Our own forged STA (fake-auth) is shown as "YOU", whole cell
+            # highlighted so it can't be mistaken for a stranger.
+            mac_cell = (
+                Text.from_markup(f"[cyan]{escape(mac)} YOU[/cyan]", emoji=False)
+                if client.is_self
+                else Text(mac)
+            )
 
             if mac not in self._known_clients:
                 self._known_clients.add(mac)
                 client_table.add_row(
                     checkbox,
-                    Text(mac),
+                    mac_cell,
                     Text(f"{client.signal} dBm", justify="right"),
                     Text(str(client.packets), justify="right"),
                     captures_text,
@@ -544,6 +600,8 @@ class FocusView(Screen):
             self.run_worker(self._run_sae_probe(), exclusive=True)
         elif bid == "btn-wpa3-down":
             self._toggle_wpa3_down()
+        elif bid == "btn-fake-auth":
+            self._toggle_fake_auth()
 
     def action_save_capture(self) -> None:
         self._save_capture()
@@ -763,6 +821,55 @@ class FocusView(Screen):
             f"requests. Natural reconnection may take minutes to hours."
         )
 
+    def _toggle_fake_auth(self) -> None:
+        """Button handler: start the fake-auth keepalive daemon if idle, stop it
+        if running."""
+        if self._fake_auth_attack:
+            self._stop_fake_auth()
+        else:
+            self._start_fake_auth()
+
+    def _start_fake_auth(self) -> None:
+        ap = self.target_ap
+        iface = getattr(self.app, "active_interface", None)
+        if not ap or not iface:
+            self._log("[red]✗ No target / interface — cannot start Fake Auth.[/red]")
+            return
+        try:
+            self._fake_auth_attack = WepFakeAuth(iface, ap, log_callback=self._log)
+            self._fake_auth_attack.start()
+        except Exception as exc:
+            logger.exception("Fake Auth start failed")
+            self._log(f"[bold red]✗ Fake Auth failed to start:[/bold red] {escape(str(exc))}")
+            self._fake_auth_attack = None
+            return
+        self._log(
+            f"[bold cyan]→ Fake Auth started[/bold cyan] on "
+            f"[bold]{escape(ap.ssid or '<hidden>')}[/bold] ({ap.bssid}) — "
+            f"keepalive every 30s, re-auth on kick."
+        )
+
+    def _stop_fake_auth(self) -> None:
+        if not self._fake_auth_attack:
+            return
+        you_mac = ":".join(f"{b:02x}" for b in self._fake_auth_attack.source_mac)
+        stats = self._fake_auth_attack.stop()
+        self._fake_auth_attack = None
+        # stop() dropped the YOU client from iface.clients; clear its table
+        # row + any selection so it doesn't linger as a stale/undead target.
+        self._known_clients.discard(you_mac)
+        self._selected_clients.discard(you_mac)
+        try:
+            self.query_one("#client-table", DataTable).remove_row(you_mac)
+        except Exception:
+            pass
+        duration = max(1, int(time.time() - stats.started_at))
+        self._log(
+            f"[bold red]✗ Fake Auth stopped[/bold red] after "
+            f"{_format_duration(duration)} — {stats.associations} assoc(s), "
+            f"{stats.reactive_reauths} reactive re-auth(s)."
+        )
+
     def _stop_wpa3_down(self) -> None:
         if not self._wpa3_down_attack:
             return
@@ -783,6 +890,8 @@ class FocusView(Screen):
         # Tear down the WPA3 Down daemon if running — Scanner view doesn't own
         # the AP's channel and the RX callback would keep firing forever.
         self._stop_wpa3_down()
+        # Same for fake-auth — stop injecting + drop the YOU client on exit.
+        self._stop_fake_auth()
         # Hopper restart happens in ScannerView.on_screen_resume — it owns
         # the channel filter; restarting here would silently widen it.
         self.app.pop_screen()

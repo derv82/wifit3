@@ -93,6 +93,11 @@ class WlanInterface:
         # retries to the handshake. PMKID extraction still runs.
         self.forged_macs: Set[str] = set()
 
+        # The single stable forged STA MAC for a long-lived active attack
+        # (WEP fake-auth). Unlike forged_macs these ARE registered as a
+        # client — tagged is_self so the UI shows "YOU"
+        self.self_macs: Set[str] = set()
+
         self._rx_callbacks: List[Callable[[bytes, int, float], None]] = []
         self._hopping_task: Optional[asyncio.Task] = None
         self._is_hopping = False
@@ -249,7 +254,11 @@ class WlanInterface:
             
             if client_mac and client_mac != "ff:ff:ff:ff:ff:ff" and client_mac not in self.forged_macs:
                 if client_mac not in self.clients:
-                    self.clients[client_mac] = Client(mac=client_mac, signal=rssi)
+                    self.clients[client_mac] = Client(
+                        mac=client_mac,
+                        signal=rssi,
+                        is_self=client_mac in self.self_macs,
+                    )
                 client = self.clients[client_mac]
                 client.signal = (client.signal + rssi) // 2
                 client.packets += 1
@@ -405,6 +414,36 @@ class WlanInterface:
         else:
             mac_str = str(mac).lower()
         self.forged_macs.add(mac_str)
+
+    def register_self_mac(self, mac: Any, bssid: Optional[str] = None) -> str:
+        """Mark ``mac`` as our own forged STA and surface it in the client
+        table tagged ``is_self`` (rendered "YOU"). Accepts bytes or a string;
+        returns the colon-string form. Pre-creates the Client so YOU appears
+        the instant fake-auth starts, before any AP reply arrives."""
+        if isinstance(mac, bytes):
+            mac_str = ":".join(f"{b:02x}" for b in mac)
+        else:
+            mac_str = str(mac).lower()
+        self.self_macs.add(mac_str)
+        client = self.clients.get(mac_str)
+        if client is None:
+            self.clients[mac_str] = Client(
+                mac=mac_str, bssid=bssid, is_self=True
+            )
+        else:
+            client.is_self = True
+            if bssid:
+                client.bssid = bssid
+        return mac_str
+
+    def unregister_self_mac(self, mac: Any) -> None:
+        """Inverse of register_self_mac — drops the YOU client. Idempotent."""
+        if isinstance(mac, bytes):
+            mac_str = ":".join(f"{b:02x}" for b in mac)
+        else:
+            mac_str = str(mac).lower()
+        self.self_macs.discard(mac_str)
+        self.clients.pop(mac_str, None)
 
     def register_rx_callback(self, callback_func: Callable[[bytes, int, float], None]):
         """

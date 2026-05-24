@@ -137,6 +137,26 @@ def test_wep_ivs_tallied_onto_ap(mocker):
     assert iface.clients["aa:bb:cc:dd:ee:01"].bssid == bssid
 
 
+def test_register_self_mac_creates_you_client(mocker):
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="T")
+    mac = iface.register_self_mac(b"\x02\x00\x00\x00\x00\x01", bssid="11:22:33:44:55:66")
+    assert mac == "02:00:00:00:00:01"
+    c = iface.clients[mac]
+    assert c.is_self is True
+    assert c.bssid == "11:22:33:44:55:66"
+    # Forged self MAC is a distinct concept from the hidden PMKID forged_macs.
+    assert mac in iface.self_macs
+    assert mac not in iface.forged_macs
+
+
+def test_unregister_self_mac_drops_you_client(mocker):
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="T")
+    mac = iface.register_self_mac(b"\x02\x00\x00\x00\x00\x01")
+    iface.unregister_self_mac(mac)
+    assert mac not in iface.clients
+    assert mac not in iface.self_macs
+
+
 def test_wep_ivs_ignored_for_non_wep_ap(mocker):
     """Guard: an ExtIV-clear frame on a WPA2 AP must not inflate a WEP count."""
     iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="T")

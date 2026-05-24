@@ -202,3 +202,6 @@ class Client(BaseModel):
     signal: int = Field(default=-100)
     packets: int = Field(default=0)
     probed_ssids: Set[str] = Field(default_factory=set) # List of SSIDs this client is actively searching for
+    # True for the forged STA *we* inject as (e.g. WEP fake-auth). Rendered as
+    # "YOU" in the client table — honest (it's this device, not a stranger)
+    is_self: bool = Field(default=False)
