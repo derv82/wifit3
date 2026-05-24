@@ -100,11 +100,21 @@ doesn't amplify like a real host's ARP. Fine for frag's no-client use case
 (still cracks in ~2 min); optional future lever is a configurable forged-ARP
 target IP.
 
-### ⚠ OPEN: ARP-replay rate control needs a proper rework (next session)
+### ARP-replay rate control: P&O (IMPLEMENTED 2026-05-24, PENDING HW validation)
 
-**The injection-rate algorithm in `arp_replay.py` (the adaptive burst climber)
-is NOT trusted.** We have evidence it's *suboptimal*, only that it beats a
-static 400 pps. Do NOT treat it as settled.
+**Replaced the adaptive burst climber with perturb-and-observe** (`arp_replay.py`,
+`_maybe_adjust_rate`). Control var = injection pps; objective = IVs/s measured
+over a `_PO_DWELL_S=3.0`s dwell (> the AP's ~1-2s relay delay); step
+`_PO_STEP_PPS=16`, start `_PO_START_PPS=96`, bounds `[24, 500]`, reverse only on
+a >`_PO_IMPROVE_EPS=3%` drop (noise deadband). Runs only while `replaying`. 4
+offline tests cover keep-direction / reverse / hold-when-not-replaying / clamp.
+**Needs hardware validation:** confirm it converges to and hovers near the IVs/s
+peak (the ~80-120 pps the box liked), doesn't oscillate wildly, and recovers
+post-frag. Watch the heartbeat `X pps → Y IVs/s`. Tunables if it's twitchy:
+bigger dwell (slower, steadier), smaller step (tighter hover).
+
+**Why we got here — the climber was NOT trusted:** evidence it was
+*suboptimal*, only that it beat a static 400 pps.
 
 - **Hardware evidence (2026-05-24, user):** at ~350-400 pps it got ~30 IVs/s,
   but at ~80-120 pps it got ~80 IVs/s. **More injection → FEWER IVs/s.** So

@@ -1,10 +1,11 @@
-"""Tests for WEP ARP replay: re-addressing, patient testing, adaptive burst.
+"""Tests for WEP ARP replay: re-addressing, patient testing, P&O rate control.
 
 The replay engine re-addresses each captured candidate into a ToDS frame from
 our MAC before injecting, so the stub keys IV "gain" on the candidate's body
 marker byte (which survives re-addressing) rather than the exact bytes.
 """
 import asyncio
+import time
 
 from wifit3.engine.models import AccessPoint
 from wifit3.engine.attacks.wep.arp_replay import WepArpReplay
@@ -52,7 +53,13 @@ def _replay(mocker, collector, **kw):
         return True
 
     iface.send_raw = _send
-    return WepArpReplay(iface, ap, collector, rx_window=0.0, **kw)
+    r = WepArpReplay(iface, ap, collector, rx_window=0.0, **kw)
+    # Logic tests want instant cycles: a huge injection rate makes the P&O pace
+    # ~0 (start() re-reads _PO_START_PPS, so override both). P&O's own logic is
+    # tested directly via _maybe_adjust_rate below.
+    r._PO_START_PPS = 1e9
+    r._rate = 1e9
+    return r
 
 
 def test_build_replay_frame_readdresses_to_tods(mocker):
@@ -128,21 +135,49 @@ async def test_pause_resume(mocker):
     r.stop()
 
 
-def test_adapt_grows_on_throughput(mocker):
-    r = _replay(mocker, FakeCollector({0xAA: 5}, [GOOD]))
-    base = r._burst_size
-    r._adapt(10)
-    assert r._burst_size > base
+# ---- P&O rate controller ---------------------------------------------------
+# Drive _maybe_adjust_rate directly with a controlled IVs/s, by setting an
+# elapsed dwell window and the IV delta on the fake collector.
 
 
-def test_adapt_is_sticky_backs_off_only_after_sustained_drop(mocker):
-    r = _replay(mocker, FakeCollector({0xAA: 5}, [GOOD]))
-    r._adapt(10)
-    grown = r._burst_size
-    r._adapt(0)
-    assert r._burst_size == grown
-    r._adapt(0)
-    assert r._burst_size == grown
-    r._adapt(0)
-    assert r._burst_size < grown
-    assert r._burst_size >= r._MIN_BURST
+def _po_setup(mocker, rate=100.0, step=16.0, prev=50.0):
+    coll = FakeCollector({0xAA: 5}, [GOOD])
+    r = _replay(mocker, coll)
+    r.state = "replaying"
+    r._rate = rate
+    r._rate_step = step
+    r._po_prev_ivs_s = prev
+    r._po_window_start = time.time() - 4.0    # dwell (>3s) already elapsed
+    r._po_window_ivs0 = coll._unique
+    return r, coll
+
+
+def test_po_keeps_direction_when_ivs_improve(mocker):
+    r, coll = _po_setup(mocker, rate=100.0, step=16.0, prev=50.0)
+    coll._unique += 240            # 240 / 4s = 60 IVs/s > 50 → improved
+    r._maybe_adjust_rate()
+    assert r._rate_step == 16.0     # same direction
+    assert r._rate == 116.0
+
+
+def test_po_reverses_when_ivs_drop(mocker):
+    r, coll = _po_setup(mocker, rate=100.0, step=16.0, prev=50.0)
+    coll._unique += 120            # 120 / 4s = 30 IVs/s < 50 → worse
+    r._maybe_adjust_rate()
+    assert r._rate_step == -16.0    # reversed
+    assert r._rate == 84.0
+
+
+def test_po_holds_and_resets_window_when_not_replaying(mocker):
+    r, _ = _po_setup(mocker)
+    r.state = "testing"
+    r._maybe_adjust_rate()
+    assert r._rate == 100.0         # unchanged while not replaying
+    assert r._po_window_start > 0   # window reset to now
+
+
+def test_po_clamps_to_max(mocker):
+    r, coll = _po_setup(mocker, rate=495.0, step=16.0, prev=50.0)
+    coll._unique += 400            # improving → would step to 511
+    r._maybe_adjust_rate()
+    assert r._rate == r._PO_MAX_PPS
