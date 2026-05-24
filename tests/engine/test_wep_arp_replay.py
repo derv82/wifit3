@@ -49,7 +49,11 @@ def _replay(mocker, collector, **kw):
         return True
 
     iface.send_raw = _send
-    return WepArpReplay(iface, ap, collector, rx_window=0.0, **kw)
+    r = WepArpReplay(iface, ap, collector, rx_window=0.0, **kw)
+    # Logic tests exercise the adaptive climber with instant cycles; the forced-
+    # pps experiment knob (a real-rate pace) would reintroduce real sleeps.
+    r._FORCED_PPS = None
+    return r
 
 
 def test_build_replay_frame_readdresses_to_tods(mocker):
