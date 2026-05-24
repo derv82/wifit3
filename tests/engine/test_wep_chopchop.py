@@ -129,6 +129,29 @@ async def test_dfs_backtracks_past_a_decoy_response():
     _assert_valid_forged_arp(forged)
 
 
+async def test_skips_seed_that_is_not_an_arp_request():
+    """A broadcast frame that's ARP-SIZED but not an ARP request decrypts (in
+    the recovered tail) to a non-zero target-MAC — the assumed prefix is wrong,
+    so the forge can't work. We detect it from the chopped keystream and skip,
+    rather than wasting the brute / failing silently (the "23/24 then nada")."""
+    data = bytearray(36)
+    data[26:32] = b"\xde\xad\xbe\xef\x11\x22"     # non-zero target MAC ⇒ not a req
+    plain = bytes(data) + icv(bytes(data))
+    ks = _rc4(IV + KEY, len(plain))
+    cipher = bytes(p ^ k for p, k in zip(plain, ks))
+    logs = []
+    iface = SimpleNamespace(register_rx_callback=lambda c: None,
+                            unregister_rx_callback=lambda c: None)
+    d = WepChopChop(iface, SimpleNamespace(bssid=BSSID), SimpleNamespace(),
+                    source_mac=OUR, on_forged_arp=lambda f: None,
+                    log_callback=logs.append, oracle=_sim_oracle(IV, KEY))
+    d._active = True
+    d._cur_iv, d._cur_keyid, d._cur_cipher = IV, 0, cipher
+    forged = await d._chop_and_forge(cipher)
+    assert forged is None
+    assert any("NOT an ARP request" in m for m in logs)
+
+
 async def test_find_all_accepted_rejects_unconfirmed_spurious_relay():
     """A wrong guess that relays only ONCE (echo / timing slip) is rejected by
     the re-confirm step, so it doesn't even enter the DFS branch set."""
