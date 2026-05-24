@@ -29,6 +29,7 @@ from wifit3.engine.models import AccessPoint
 from wifit3.engine.attacks.wep.fake_auth import WepFakeAuth
 from wifit3.engine.attacks.wep.arp_replay import WepArpReplay
 from wifit3.engine.attacks.wep.fragmentation import WepFragmentation
+from wifit3.engine.attacks.wep.chopchop import WepChopChop
 from wifit3.engine.attacks.wep.crack import (
     PtwCracker,
     keystream_from_arp_cipher,
@@ -74,8 +75,10 @@ class WepCampaign:
 
         # Frag/Chop are alternative "manufacture an ARP seed" sub-modes the
         # user toggles while the campaign runs. The campaign owns the "one TX
-        # activity at a time" invariant by pausing replay around them.
+        # activity at a time" invariant by pausing replay around them, and
+        # treats them as mutually exclusive (click-to-switch).
         self.frag: Optional[WepFragmentation] = None
+        self.chop: Optional[WepChopChop] = None
 
         self.fake_auth = WepFakeAuth(iface, target, log_callback=self._log)
         self.replay = WepArpReplay(
@@ -124,11 +127,14 @@ class WepCampaign:
             # worker process exit on its own.
             self._crack_pool.shutdown(wait=False, cancel_futures=True)
             self._crack_pool = None
-        # Tear down a running frag sub-mode before the TX it shares the radio
-        # with.
+        # Tear down a running frag/chop sub-mode before the TX it shares the
+        # radio with.
         if self.frag is not None:
             self.frag.stop()
             self.frag = None
+        if self.chop is not None:
+            self.chop.stop()
+            self.chop = None
         # Stop replay (TX) before fake-auth so we don't briefly inject while
         # de-registering the forged STA.
         self.replay.stop()
@@ -190,6 +196,10 @@ class WepCampaign:
         user stops or switches — never auto-stops."""
         if not self._active or self.frag is not None:
             return
+        # Mutually exclusive with chop (one TX activity) — click-to-switch.
+        if self.chop is not None:
+            self.chop.stop()
+            self.chop = None
         self._log("[dim]· debug: FRAG START — pausing replay, frag takes the "
                   "radio[/dim]")
         self.replay.pause()
@@ -231,6 +241,56 @@ class WepCampaign:
     @property
     def frag_active(self) -> bool:
         return self.frag is not None and self.frag.is_active
+
+    # ---- ChopChop sub-mode --------------------------------------------------
+
+    def start_chop(self) -> None:
+        """Switch to ChopChop: pause replay + run WepChopChop. On success it
+        forges a broadcast ARP (from recovered keystream) which we register as a
+        replay seed before resuming. Mutually exclusive with frag."""
+        if not self._active or self.chop is not None:
+            return
+        if self.frag is not None:
+            self.frag.stop()
+            self.frag = None
+        self._log("[dim]· debug: CHOP START — pausing replay, chop takes the "
+                  "radio[/dim]")
+        self.replay.pause()
+        self.chop = WepChopChop(
+            self.iface,
+            self.target,
+            self.iface.wep_store,
+            source_mac=self.fake_auth.source_mac,
+            on_forged_arp=self._on_chop_success,
+            can_inject=lambda: self.fake_auth.state == "associated",
+            log_callback=self._log,
+        )
+        self.chop.start()
+
+    def stop_chop(self) -> None:
+        if self.chop is None:
+            return
+        self._log("[dim]· debug: CHOP STOP (user) — handing radio back to "
+                  "replay[/dim]")
+        self.chop.stop()
+        self.chop = None
+        self.replay.resume()
+
+    def _on_chop_success(self, forged_frame: bytes) -> None:
+        """Chop FORGED a broadcast ARP (from recovered keystream) — unlike
+        frag's AP-relay, it isn't in the store yet, so register it as a replay
+        seed, then resume replay to loop it."""
+        self.chop = None
+        self.iface.wep_store.record_arp_candidate(self.target.bssid, forged_frame)
+        self._log(
+            "[green]→ ChopChop seeded replay[/green] [dim](resuming ARP replay "
+            "with the forged ARP)[/dim]"
+        )
+        self.replay.resume()
+
+    @property
+    def chop_active(self) -> bool:
+        return self.chop is not None and self.chop.is_active
 
     @property
     def is_active(self) -> bool:

@@ -146,6 +146,10 @@ class FocusView(Screen):
                         # radio to fragmentation to manufacture an ARP seed when
                         # replay has none (no client traffic). Click-to-toggle.
                         yield Button("Frag", variant="primary", id="btn-frag")
+                        # Sibling of Frag: ChopChop manufactures a seed when frag
+                        # gets no response. Mutually exclusive — clicking one
+                        # stops the other (click-to-switch).
+                        yield Button("Chop", variant="primary", id="btn-chop")
                     with Horizontal(classes="button-row"):
                         yield Button("SAE Probe", variant="primary", id="btn-sae-probe", disabled=True)
                         yield Button("WPA3 Down", variant="primary", id="btn-wpa3-down", disabled=True)
@@ -286,6 +290,7 @@ class FocusView(Screen):
         btn_pmkid = self.query_one("#btn-pmkid", Button)
         btn_gen = self.query_one("#btn-gen-ivs", Button)
         btn_frag = self.query_one("#btn-frag", Button)
+        btn_chop = self.query_one("#btn-chop", Button)
 
         btn_sae.display = not is_wep
         btn_down.display = not is_wep
@@ -293,9 +298,10 @@ class FocusView(Screen):
         # Generate IVs vanishes once the key is cracked — Save takes its place,
         # so it reads as a "Generate IVs → Save" swap.
         btn_gen.display = is_wep and ap.wep_key is None
-        # Frag is shown only inside a running WEP campaign (set below); off
-        # otherwise so it never lingers on a WPA target.
+        # Frag/Chop are shown only inside a running WEP campaign (set below);
+        # off otherwise so they never linger on a WPA target.
         btn_frag.display = False
+        btn_chop.display = False
 
         if is_wep:
             # A finished campaign (key recovered) is torn down so the button
@@ -310,6 +316,8 @@ class FocusView(Screen):
             # for replay), so it only appears once IVs are being generated.
             btn_frag.display = camp is not None and ap.wep_key is None
             btn_frag.label = "Stop Frag" if (camp and camp.frag_active) else "Frag"
+            btn_chop.display = camp is not None and ap.wep_key is None
+            btn_chop.label = "Stop Chop" if (camp and camp.chop_active) else "Chop"
             self._update_fakeauth_line()
         else:
             self.query_one("#lbl-fakeauth", Label).display = False
@@ -716,6 +724,8 @@ class FocusView(Screen):
             self._toggle_generate_ivs()
         elif bid == "btn-frag":
             self._toggle_frag()
+        elif bid == "btn-chop":
+            self._toggle_chop()
 
     def action_save_capture(self) -> None:
         self._save_capture()
@@ -1013,6 +1023,27 @@ class FocusView(Screen):
                 "broadcast ARP to make the AP relay us a fresh seed."
             )
             camp.start_frag()
+        self.update_ui()
+
+    def _toggle_chop(self) -> None:
+        """Chop button — sibling of Frag (mutually exclusive). Byte-by-byte
+        ICV-oracle decryption to forge a seed when frag gets no response."""
+        camp = self._wep_campaign
+        if camp is None:
+            self._log(
+                "[yellow]Start Generate IVs first[/yellow] [dim](ChopChop "
+                "manufactures an ARP seed for the replay engine)[/dim]"
+            )
+            return
+        if camp.chop_active:
+            camp.stop_chop()
+            self._log("[cyan]→ Chop stopped[/cyan] [dim](back to ARP replay)[/dim]")
+        else:
+            self._log(
+                "[bold cyan]→ ChopChop[/bold cyan] — pausing replay, decrypting "
+                "a captured ARP byte-by-byte to forge a seed (slow)."
+            )
+            camp.start_chop()
         self.update_ui()
 
     def _stop_wpa3_down(self) -> None:

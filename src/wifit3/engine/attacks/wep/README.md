@@ -262,16 +262,26 @@ decides on its own is *success* (→ resume replay), because that's unambiguous;
    sibling BSSes, fresh IV each), so **de-dup**. **Per-guess relay latency ≈
    3 ms** → daemon oracle timeout ~20 ms (margin for jitter); send each guess
    2-3× / retry a byte if all 256 miss (single `use_no_ack` sends can be lost).
-7. **`chopchop.py` daemon + "Chop" toggle (TODO — oracle now pinned)** —
-   byte-walk over the oracle → recover plaintext/keystream → forge ARP →
-   on_forged_arp → replay. The byte-walk reconstruction is pure/offline-testable
-   against a simulated oracle; only the live relay-recognition needs the box
-   (and it's now characterized). Then `start_chop`/`stop_chop` in the campaign
-   + a "Chop" toggle next to "Frag".
+7. **`chopchop.py` daemon + "Chop" toggle — ✅ DONE + wired (PENDING HW)**
+   (`WepChopChop`): picks a captured broadcast ARP, chops the variable tail
+   (positions 16..39; ks[0..15] from the known SNAP+ARP-request prefix) via the
+   pinned oracle, recovering ks[i]=body[i]^accepted-guess per step → forges a
+   broadcast ARP from the keystream → on_forged_arp. NO sw_seq (single frames);
+   per-guess oracle timeout 20ms; re-sweeps a byte once on a clean miss; keeps
+   retrying / blacklists a stalled seed (never auto-stops). Campaign owns
+   `start_chop`/`stop_chop`/`_on_chop_success` (records the forged ARP as a
+   replay seed since it's not AP-relayed like frag, then resumes replay);
+   mutually exclusive with frag (click-to-switch). Focus has the "Chop" toggle
+   next to "Frag". 5 offline tests drive the byte-walk against a simulated
+   decrypt-and-check-ICV oracle (recovers the true keystream; forges a valid
+   ARP; oracle matcher). **PENDING HW: run Generate IVs → Chop on the box;
+   expect byte-progress logs then "ChopChop recovered keystream → seeded
+   replay". Slower than frag (~256 guesses/byte).**
 
 ### File status
 
-`wep_crypto.py` and `fragmentation.py` are fully implemented + tested +
-hardware-verified. `chopchop.py` is still a skeleton (interface + algorithm
-docstring + `NotImplementedError`); its crypto (`chop_last_byte_and_fixup`) is
-done in `wep_crypto.py`, so only the live-AP oracle + daemon + UI remain.
+`wep_crypto.py` + `fragmentation.py` are implemented + tested + hardware-verified.
+`chopchop.py` is implemented + tested + wired (campaign + Focus "Chop" toggle);
+its oracle is hardware-verified (probe), the daemon itself is PENDING a live
+end-to-end run. So the whole WEP suite (M1–M7) is built — only ChopChop's
+end-to-end hardware run remains to call M6 done.
