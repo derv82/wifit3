@@ -49,11 +49,6 @@ def _key_markup(key: bytes) -> str:
 class WepCampaign:
     """Owns the fake-auth + ARP-replay lifecycle for one WEP target."""
 
-    # Quiet window (no TX) after a frag success before replay resumes — a
-    # diagnostic to watch the AP's rebroadcast queue drain to zero. See
-    # _on_frag_success.
-    _FRAG_DRAIN_S = 10.0
-
     def __init__(
         self,
         iface,
@@ -81,9 +76,6 @@ class WepCampaign:
         # user toggles while the campaign runs. The campaign owns the "one TX
         # activity at a time" invariant by pausing replay around them.
         self.frag: Optional[WepFragmentation] = None
-        # Pending "resume replay after the quiet drain" task (see
-        # _on_frag_success); cancelled if the campaign stops or frag restarts.
-        self._drain_task: Optional[asyncio.Task] = None
 
         self.fake_auth = WepFakeAuth(iface, target, log_callback=self._log)
         self.replay = WepArpReplay(
@@ -132,10 +124,6 @@ class WepCampaign:
             # worker process exit on its own.
             self._crack_pool.shutdown(wait=False, cancel_futures=True)
             self._crack_pool = None
-        # Cancel a pending post-frag drain → resume task.
-        if self._drain_task:
-            self._drain_task.cancel()
-            self._drain_task = None
         # Tear down a running frag sub-mode before the TX it shares the radio
         # with.
         if self.frag is not None:
@@ -202,10 +190,6 @@ class WepCampaign:
         user stops or switches — never auto-stops."""
         if not self._active or self.frag is not None:
             return
-        # Cancel any pending post-frag drain → resume (we're re-entering frag).
-        if self._drain_task:
-            self._drain_task.cancel()
-            self._drain_task = None
         self._log("[dim]· debug: FRAG START — pausing replay, frag takes the "
                   "radio[/dim]")
         self.replay.pause()
@@ -233,36 +217,16 @@ class WepCampaign:
 
     def _on_frag_success(self, frame: bytes) -> None:
         """Frag produced a relay (already an ARP-sized broadcast → the capture
-        store logged it as a replay seed). The daemon stopped itself.
-
-        DIAGNOSTIC (per user, 2026-05-24): insert a quiet drain window — frag is
-        stopped (not TXing) and replay STAYS paused — for `_FRAG_DRAIN_S`
-        seconds before resuming replay. Watching IVs/sec fall to zero during
-        this window confirms/refutes the "post-frag slowness = backlogged AP
-        rebroadcast queue" theory: if replay then runs FAST off a drained queue,
-        it's the queue; if it's still slow, the AP is degrading our STA (→ fresh
-        MAC needed)."""
+        store logged it as a replay seed). The daemon stopped itself; just drop
+        our handle and resume replay, which will pick the new seed up."""
         self.frag = None
-        self._log("[dim]· debug: FRAG SUCCESS — frag stopped[/dim]")
+        self._log("[dim]· debug: FRAG SUCCESS handoff — frag stopped, resuming "
+                  "replay with the forged seed[/dim]")
         self._log(
-            f"[yellow]→ Draining frame queue: {self._FRAG_DRAIN_S:.0f}s quiet "
-            f"(no TX) before replay — watch IVs/sec fall to 0[/yellow]"
+            "[green]→ Fragmentation seeded replay[/green] [dim](resuming ARP "
+            "replay with the AP's relayed ARP)[/dim]"
         )
-        self._drain_task = asyncio.create_task(self._resume_after_drain())
-
-    async def _resume_after_drain(self) -> None:
-        """Sleep the quiet drain window, then resume replay. Replay was paused
-        by start_frag and stays paused until here — so nothing TXes meanwhile."""
-        try:
-            await asyncio.sleep(self._FRAG_DRAIN_S)
-            if self._active:
-                self._log(
-                    "[green]→ Resuming ARP replay[/green] [dim](queue should be "
-                    "drained; replaying the forged ARP)[/dim]"
-                )
-                self.replay.resume()
-        except asyncio.CancelledError:
-            pass
+        self.replay.resume()
 
     @property
     def frag_active(self) -> bool:
