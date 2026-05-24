@@ -114,9 +114,18 @@ Generate IVs ─► REPLAYING (fake-auth underneath; waits for / replays ARPs)
    │
    FRAGMENTING/CHOPPING ──success(keystream→forged ARP)──► hand to replay,
                                                           resume ─► REPLAYING
-   FRAGMENTING/CHOPPING ──failure/timeout──► STAY (surface a hint, no auto-switch)
+   FRAGMENTING/CHOPPING ──round fails──► KEEP RETRYING the same mode (log
+                                          progress "Frag: 0/N usable ARPs"),
+                                          never auto-stop or auto-switch
    Stop IVs ─► tear everything down
 ```
+
+"Keep retrying" is the point: a chosen attack loops until the *user* stops or
+switches it — we never auto-stop on a failed round. Log a running tally
+("Fragmentation: 0/20 rounds produced a usable ARP", "ChopChop: byte 4/36")
+so the user can judge when it's fruitless and switch. The only thing the code
+decides on its own is *success* (→ resume replay), because that's unambiguous;
+"no response" never is (range vs TX vs immune AP), so the human calls it.
 
 ### Button UX (Focus, WEP target, campaign running)
 
