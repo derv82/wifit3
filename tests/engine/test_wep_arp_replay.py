@@ -150,7 +150,7 @@ def _po_setup(mocker, rate=100.0, step=32.0, prev=50.0):
 
 def test_po_keeps_direction_when_ivs_improve(mocker):
     r = _po_setup(mocker, rate=100.0, step=32.0, prev=50.0)
-    r._last_ivs_s = 60.0            # 60 > prev 50 → improved
+    r._ivs_ewma = 60.0             # smoothed 60 > prev 50 → improved
     r._maybe_adjust_rate()
     assert r._rate_step == 32.0     # same direction
     assert r._rate == 132.0
@@ -158,7 +158,7 @@ def test_po_keeps_direction_when_ivs_improve(mocker):
 
 def test_po_reverses_when_ivs_drop(mocker):
     r = _po_setup(mocker, rate=100.0, step=32.0, prev=50.0)
-    r._last_ivs_s = 30.0           # 30 < 50 (beyond deadband) → worse
+    r._ivs_ewma = 30.0            # smoothed 30 < 50 (beyond deadband) → worse
     r._maybe_adjust_rate()
     assert r._rate_step == -32.0    # reversed
     assert r._rate == 68.0
@@ -170,10 +170,11 @@ def test_po_holds_and_resets_baseline_when_not_replaying(mocker):
     r._maybe_adjust_rate()
     assert r._rate == 100.0          # unchanged while not replaying
     assert r._po_prev_ivs_s == -1.0  # baseline reset for the next replay run
+    assert r._ivs_ewma == -1.0       # smoothing reset too
 
 
 def test_po_clamps_to_max(mocker):
     r = _po_setup(mocker, rate=985.0, step=32.0, prev=50.0)
-    r._last_ivs_s = 80.0           # improving → keeps +step → 1017, clamped
+    r._ivs_ewma = 80.0            # improving → keeps +step → 1017, clamped
     r._maybe_adjust_rate()
     assert r._rate == r._PO_MAX_PPS

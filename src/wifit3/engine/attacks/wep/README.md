@@ -112,7 +112,14 @@ on `rate` (`_maybe_adjust_rate`): if this window's IVs/s beat the last, keep the
 step direction, else reverse — the rate walks toward more IVs/s and dithers at
 the peak, **wherever the AP actually tops out (no low-ceiling assumption).**
 `_PO_STEP_PPS=32`, start `_PO_START_PPS=100`, bounds `[20,1000]`,
-`_PO_IMPROVE_EPS=5%`. 4 offline tests (keep/reverse/hold/clamp).
+`_PO_IMPROVE_EPS=5%`. P&O acts on an **EWMA** of IVs/s (`_IVS_EWMA_ALPHA=0.3`),
+not the raw window: lowering the rate briefly SPIKES captured IVs/s as the AP's
+queue flushes, which raw would misread as "lower = better"; the EWMA damps that
+transient. 4 offline tests (keep/reverse/hold/clamp).
+
+aircrack's `aireplay-ng -3` does NOT do any of this — it fires at a FIXED `-x`
+pps (default ~500). So a dead-simple fixed-rate mode is a proven fallback if P&O
+ever proves more trouble than it's worth.
 
 **HW validation TODO:** does it climb to a real peak and hold? Crucially — does
 IVs/s *scale* with rate (→ the AP wasn't the bottleneck; the old PACING was) or
