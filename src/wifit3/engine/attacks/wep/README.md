@@ -250,20 +250,24 @@ decides on its own is *success* (→ resume replay), because that's unambiguous;
    keeps retrying on a barren round. Campaign owns the Frag sub-mode
    (`start_frag`/`stop_frag`/`_on_frag_success`, replay pause/resume); Focus has
    the "Frag" toggle.
-6. **ChopChop probe — ✅ BUILT, ready for hardware** (`scripts/wep/chopchop_probe.py`):
-   fake-auths, sweeps all 256 guesses for one byte (chop_last_byte_and_fixup,
-   re-headered broadcast-from-us, NO sw_seq — single frames), dumps every RX
-   frame to a `.pcap`, flags candidate relays (FromDS broadcast WEP data, SA=us,
-   ~orig-1 long). With `--key` it decrypts the original → true last byte and
-   confirms exactly that guess relays + MEASURES per-guess latency (the daemon's
-   oracle timeout). Frame extraction + chop rebuild are offline-verified
-   byte-correct. **NEXT: run at the box (`--bssid .. --key abcde`), read the
-   relay shape + latency, then code `chopchop.py`'s oracle to it.**
-7. **`chopchop.py` daemon + "Chop" toggle (still TODO)** — byte-walk over the
-   oracle → recover plaintext/keystream → forge ARP → on_forged_arp → replay.
-   The byte-walk reconstruction is pure/offline-testable against a simulated
-   oracle; only the live relay-recognition needs the box. Then `start_chop`/
-   `stop_chop` in the campaign + a "Chop" toggle next to "Frag".
+6. **ChopChop oracle VERIFIED ON HARDWARE (2026-05-24)** via
+   `scripts/wep/chopchop_probe.py` (sweeps all 256 guesses for one byte, NO
+   sw_seq — single frames, dumps RX). On the dd-wrt box: sweeping a 68-B frame,
+   ONLY the true-last-byte guess (`0xc9`, known via `--key abcde`) elicited a
+   relay — proof the AP checks the ICV and relays just the valid guess (an
+   invalid-ICV-relaying AP would have echoed all 256). **VERIFIED ORACLE
+   SIGNATURE for chopchop.py:** Data + FromDS + Protected + Addr1(DA)=broadcast
+   + **Addr3(SA)=our STA** + **len == orig−1** (one byte shorter). Match on SA,
+   NOT BSSID — one correct guess produced **2 relays** (same frame echoed onto
+   sibling BSSes, fresh IV each), so **de-dup**. **Per-guess relay latency ≈
+   3 ms** → daemon oracle timeout ~20 ms (margin for jitter); send each guess
+   2-3× / retry a byte if all 256 miss (single `use_no_ack` sends can be lost).
+7. **`chopchop.py` daemon + "Chop" toggle (TODO — oracle now pinned)** —
+   byte-walk over the oracle → recover plaintext/keystream → forge ARP →
+   on_forged_arp → replay. The byte-walk reconstruction is pure/offline-testable
+   against a simulated oracle; only the live relay-recognition needs the box
+   (and it's now characterized). Then `start_chop`/`stop_chop` in the campaign
+   + a "Chop" toggle next to "Frag".
 
 ### File status
 
