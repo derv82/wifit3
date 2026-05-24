@@ -81,20 +81,39 @@ def _daemon(oracle=None):
 async def test_recover_keystream_reproduces_true_keystream():
     cipher, ks_true = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
     d, _ = _daemon(oracle=_sim_oracle(IV, KEY))
-    ks = await d._recover_keystream(cipher)
+    ks, gap = await d._recover_keystream(cipher)
     assert ks is not None
+    assert gap == []                             # no size wall → full walk
     # ks[16..39] recovered by chopping, ks[0..15] from the known ARP prefix.
     assert ks[:40] == ks_true[:40]
     assert d._bytes_done == len(cipher) - 16     # chopped the variable tail
 
 
-async def test_recover_keystream_stalls_returns_none():
+async def test_recover_keystream_dead_seed_has_large_gap():
     cipher, _ = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
 
     async def never(_short):           # AP that relays nothing
         return False
     d, _ = _daemon(oracle=never)
-    assert await d._recover_keystream(cipher) is None
+    ks, gap = await d._recover_keystream(cipher)
+    # Stalls on the first byte → gap too big to brute-force → seed is dead.
+    assert gap is not None and len(gap) > d._MAX_BRUTE_BYTES
+
+
+async def test_brute_force_forge_recovers_the_unreachable_byte():
+    """Simulate the chopping wall: ks recovered except position 16. The
+    brute-force varies that one cipher byte over 256 full-length forged ARPs
+    until the AP (oracle) relays the valid one."""
+    cipher, ks_true = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
+    d, _ = _daemon(oracle=_sim_oracle(IV, KEY))
+    ks = bytearray(ks_true)
+    ks[16] ^= 0xFF                               # corrupt the "unreachable" byte
+    forged = await d._brute_force_forge(bytes(ks), [16])
+    assert forged is not None
+    body = forged[_hdr_len(forged[0], forged[1]):]
+    plain = bytes(c ^ k for c, k in zip(body[4:], _rc4(IV + KEY, len(body) - 4)))
+    assert plain[16:22] == OUR                   # sender = our STA
+    assert plain[-4:] == icv(plain[:-4])         # valid ICV → AP relays it
 
 
 async def test_find_accepted_rejects_unconfirmed_spurious_relay():
@@ -127,8 +146,9 @@ async def test_recovered_keystream_forges_a_valid_arp():
     on_forged_arp gets a frame that decrypts to a well-formed ARP from us."""
     cipher, _ = _arp_cipher(bytes([192, 168, 1, 50]), bytes([192, 168, 1, 1]))
     d, calls = _daemon(oracle=_sim_oracle(IV, KEY))
-    ks = await d._recover_keystream(cipher)
-    d._succeed(ks)
+    ks, gap = await d._recover_keystream(cipher)
+    assert gap == []
+    d._succeed(d._forge_full(ks))
     assert d.is_active is False                  # immediate handoff stopped it
     assert len(calls) == 1
     forged = calls[0]
