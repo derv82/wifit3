@@ -85,9 +85,23 @@ def test_ptw_recovers_104bit_key():
     assert c.recover() == key
 
 
+def test_ptw_tolerates_one_odd_packet_in_verify():
+    """A single bad verify sample (e.g. an ARP-sized broadcast that wasn't
+    actually an ARP → wrong 'known plaintext') must not reject the correct
+    key — majority verification shrugs it off."""
+    key = bytes.fromhex("6162636465")
+    c = PtwCracker()
+    for iv, ks in _synth_samples(key, 40_000):
+        c.feed(iv, ks)
+    iv0, ks0 = c._verify[0]
+    c._verify[0] = (iv0, bytes(b ^ 0xFF for b in ks0))   # poison one sample
+    assert c.recover() == key
+
+
 def test_ptw_no_false_key_with_few_samples():
     key = os.urandom(5)
     c = PtwCracker()
+    c._MAX_TRIALS = 2000   # bound the doomed search — proving no false positive
     for iv, ks in _synth_samples(key, 50):
         c.feed(iv, ks)
     # Far too few IVs — must not return a bogus key (verification guards it).

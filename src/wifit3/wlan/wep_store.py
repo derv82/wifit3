@@ -1,20 +1,22 @@
-"""Passive WEP IV collection (always-on, RX-only).
+"""Passive WEP capture store (always-on, RX-only).
 
-This is the passive half of the WEP attack suite: it hooks the existing
-RX/parse path (via ``WlanInterface._on_frame_parsed``) and tallies the
-unique 3-byte Initialization Vectors leaking from WEP-encrypted Data
-frames. No TX, no association — it works equally from the Scanner (channel
-hopping) and Focus (parked on one channel), the only difference being how
-fast IVs arrive.
+The single sink for everything we passively learn from WEP-encrypted Data
+frames on the RX/parse path (via ``WlanInterface._on_frame_parsed``). One
+``observe(bssid, parsed)`` call routes a frame to all the right buckets:
 
-The light, UI-facing counters live on ``AccessPoint.wep`` (a ``WepStats``).
-The heavy state — the per-BSSID set used to dedup IVs, and (later
-milestones) the captured ARP / validation packets — lives here so the
-pydantic model stays cheap to poll and serialize.
+  - unique 3-byte IVs (deduped) → the count that drives "ETA to 10k"
+  - broadcast ARP-sized frames → replay seeds for the ARP-replay attack
+  - those same frames' (IV, ciphertext) → PTW crack samples (known plaintext)
 
-Cracking needs ~10k unique IVs for a 40-bit key, more for 104-bit; PTW
-(native, future M7) consumes the same per-IV stream. For now the threshold
-just drives the Focus "ETA to 10k" readout.
+Keeping the routing here (not in WlanInterface) means callers never need to
+know ARP sizes or cipher offsets. No TX, no association — it works equally
+from the Scanner (channel hopping) and Focus (parked), the only difference
+being how fast frames arrive.
+
+The light, UI-facing counters live on ``AccessPoint.wep`` (a ``WepStats``);
+the heavy buffers live here so the pydantic model stays cheap to poll. Named
+"store" (not "collector") because it could move to disk if memory ever
+matters, without changing its role.
 """
 from __future__ import annotations
 
@@ -82,12 +84,13 @@ class RateTracker:
             self._events.popleft()
 
 
-class WepIvCollector:
-    """Per-interface registry of WEP IV state, keyed by BSSID.
+class WepCaptureStore:
+    """Per-interface registry of WEP capture state, keyed by BSSID.
 
-    One instance lives on each ``WlanInterface``. ``record()`` is called
-    from the RX path for every WEP-encrypted Data frame; everything else is
-    read-only accessors for the UI (counts, rate, ETA).
+    One instance lives on each ``WlanInterface``. ``observe()`` is the single
+    RX entry point; the ``record_*`` methods are the low-level buckets it
+    routes to (and are unit-tested directly). Everything else is read-only
+    accessors for the UI / cracker (counts, rate, ETA, seeds, samples).
     """
 
     def __init__(self, rate_window_s: float = 10.0):
@@ -106,6 +109,35 @@ class WepIvCollector:
         # needs tens of thousands of distinct IVs.
         self._crack_samples: Dict[str, List[tuple]] = {}
         self._crack_ivs: Dict[str, Set[bytes]] = {}
+
+    # Frames whose destination is broadcast are ARP-replay / crack candidates.
+    _BROADCAST = "ff:ff:ff:ff:ff:ff"
+
+    def observe(self, bssid: str, parsed: dict) -> Optional[WepStats]:
+        """Route one parsed WEP Data frame into every relevant bucket.
+
+        The single RX entry point — the caller (WlanInterface) only has to
+        know "this is a confirmed-WEP data frame on a known AP"; all the ARP
+        size / cipher-offset knowledge lives here. Returns the BSSID's
+        ``WepStats`` (so the caller can attach it to the AP on first sight),
+        or None if the frame had no IV.
+        """
+        iv = parsed.get("wep_iv")
+        if not iv:
+            return None
+        stats = self.record(bssid, iv)
+        raw = parsed.get("raw")
+        if raw and parsed.get("dest") == self._BROADCAST:
+            # record_arp_candidate returns True iff it was ARP-sized — reuse
+            # that as the single size gate for the crack sample too (the
+            # ciphertext's plaintext is only known for ARP-sized frames).
+            arp_sized = self.record_arp_candidate(
+                bssid, raw, source=parsed.get("source")
+            )
+            cipher = parsed.get("wep_cipher")
+            if arp_sized and cipher and len(cipher) == 16:
+                self.record_crack_sample(bssid, iv, cipher)
+        return stats
 
     def record(self, bssid: str, iv: bytes, now: Optional[float] = None) -> WepStats:
         """Tally one WEP Data frame's IV for ``bssid``.

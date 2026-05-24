@@ -1,6 +1,6 @@
 """Tests for the WEP Generate IVs campaign orchestrator."""
 from wifit3.engine.models import AccessPoint
-from wifit3.wlan.wep_iv import WepIvCollector
+from wifit3.wlan.wep_store import WepCaptureStore
 from wifit3.engine.attacks.wep.campaign import WepCampaign
 
 
@@ -9,7 +9,7 @@ async def test_campaign_starts_and_stops_both_subattacks(mocker):
     iface.send_raw = mocker.AsyncMock(return_value=True)
     iface.set_channel = mocker.AsyncMock(return_value=True)
     iface.current_channel = 6
-    iface.wep_collector = WepIvCollector()
+    iface.wep_store = WepCaptureStore()
     ap = AccessPoint(bssid="11:22:33:44:55:66", ssid="W", channel=6, encryption="WEP")
 
     campaign = WepCampaign(iface, ap)
@@ -35,7 +35,7 @@ async def test_campaign_recovers_key_from_collected_samples(mocker):
     iface.send_raw = mocker.AsyncMock(return_value=True)
     iface.set_channel = mocker.AsyncMock(return_value=True)
     iface.current_channel = 6
-    iface.wep_collector = WepIvCollector()
+    iface.wep_store = WepCaptureStore()
     ap = AccessPoint(bssid="11:22:33:44:55:66", ssid="W", channel=6, encryption="WEP")
 
     key = bytes.fromhex("6162636465")   # "abcde"
@@ -44,12 +44,12 @@ async def test_campaign_recovers_key_from_collected_samples(mocker):
         iv = bytes(rng.randrange(256) for _ in range(3))
         ks = rc4_keystream(iv + key, 16)
         cipher = bytes(ks[i] ^ ARP_REQUEST_PLAINTEXT[i] for i in range(16))
-        iface.wep_collector.record_crack_sample(ap.bssid, iv, cipher)
+        iface.wep_store.record_crack_sample(ap.bssid, iv, cipher)
 
     campaign = WepCampaign(iface, ap)
     # Drive the crack loop directly (no real fake-auth/replay needed here).
     campaign._active = True
-    samples = iface.wep_collector.crack_samples(ap.bssid)
+    samples = iface.wep_store.crack_samples(ap.bssid)
     for iv, cipher in samples:
         from wifit3.engine.attacks.wep.crack import keystream_from_arp_cipher
         campaign.cracker.feed(iv, keystream_from_arp_cipher(cipher))
@@ -60,7 +60,7 @@ async def test_campaign_recovers_key_from_collected_samples(mocker):
 def test_replay_gated_on_association(mocker):
     """The campaign wires replay's can_inject to fake-auth being associated."""
     iface = mocker.MagicMock()
-    iface.wep_collector = WepIvCollector()
+    iface.wep_store = WepCaptureStore()
     ap = AccessPoint(bssid="11:22:33:44:55:66", ssid="W", channel=6, encryption="WEP")
     campaign = WepCampaign(iface, ap)
 

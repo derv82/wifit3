@@ -19,7 +19,7 @@ from wifit3.engine.attacks.pmkid_harvest import PmkidHarvestAttack
 from wifit3.engine.attacks.sae_probe import SAEGroupProbeAttack
 from wifit3.engine.attacks.wpa3_downgrade import WPA3DowngradeAttack
 from wifit3.engine.attacks.wep.campaign import WepCampaign
-from wifit3.wlan.wep_iv import WEP_CRACK_IV_THRESHOLD
+from wifit3.wlan.wep_store import WEP_CRACK_IV_THRESHOLD
 
 from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector
 from ..encryption_format import (
@@ -58,6 +58,7 @@ class FocusView(Screen):
         Binding("escape", "go_back", "Back to Scanner", show=True),
         Binding("q", "app.quit", "Quit", show=True),
         Binding("s", "save_capture", "Save Capture", show=True),
+        Binding("c", "copy_key", "Copy WEP Key", show=True),
         Binding("space", "toggle_client", "Select Client", show=True),
     ]
 
@@ -366,11 +367,11 @@ class FocusView(Screen):
     def _update_wep_capture(self, ap: AccessPoint) -> None:
         """Render the WEP CAPTURE lines: live unique-IV count + rate, and the
         ETA to the crack threshold. Reads counts from the AP model and the
-        live rate/ETA from the interface's WepIvCollector."""
+        live rate/ETA from the interface's WepCaptureStore."""
         n = ap.wep.unique_ivs if ap.wep else 0
         total = ap.wep.total_frames if ap.wep else 0
         iface = getattr(self.app, "active_interface", None)
-        rate = iface.wep_collector.rate(ap.bssid) if iface else 0.0
+        rate = iface.wep_store.rate(ap.bssid) if iface else 0.0
 
         count_markup = (
             f"[bold green]{n:,}[/bold green]" if n else "[red]0[/red]"
@@ -380,18 +381,23 @@ class FocusView(Screen):
             Text.from_markup(f"IVs: {count_markup} {rate_markup}", emoji=False)
         )
 
+        # ETA is a "collecting toward 10k" readout — once we hit the threshold
+        # the Crack line owns the status, so hide ETA instead of leaving a
+        # stale "✓ reached" sitting there forever.
+        eta_label = self.query_one("#lbl-ivs-eta", Label)
         target_k = WEP_CRACK_IV_THRESHOLD // 1000
         if n >= WEP_CRACK_IV_THRESHOLD:
-            eta_markup = f"[bold green]✓ {target_k}k reached[/bold green]"
+            eta_label.display = False
         else:
-            eta = iface.wep_collector.eta_seconds(ap.bssid) if iface else None
-            if eta is None:
-                eta_markup = "[dim]— (waiting for IVs)[/dim]"
-            else:
-                eta_markup = _format_duration(int(eta))
-        self.query_one("#lbl-ivs-eta", Label).update(
-            Text.from_markup(f"ETA→{target_k}k: {eta_markup}", emoji=False)
-        )
+            eta_label.display = True
+            eta = iface.wep_store.eta_seconds(ap.bssid) if iface else None
+            eta_markup = (
+                "[dim]— (waiting for IVs)[/dim]" if eta is None
+                else _format_duration(int(eta))
+            )
+            eta_label.update(
+                Text.from_markup(f"ETA→{target_k}k: {eta_markup}", emoji=False)
+            )
 
     def _update_campaign_status(self) -> None:
         """Render the Fake-Auth (SECURITY) + replay (CAPTURE) status lines from
@@ -430,8 +436,8 @@ class FocusView(Screen):
         r = campaign.replay
         iface = getattr(self.app, "active_interface", None)
         bssid = self.target_ap.bssid
-        seen = iface.wep_collector.arp_seen_count(bssid) if iface else 0
-        usable = iface.wep_collector.arp_candidate_count(bssid) if iface else 0
+        seen = iface.wep_store.arp_seen_count(bssid) if iface else 0
+        usable = iface.wep_store.arp_candidate_count(bssid) if iface else 0
         arp_info = f"{seen} seen, {usable} usable"
         if r.stats.candidates_failed:
             arp_info += f", {r.stats.candidates_failed} fruitless"
@@ -456,13 +462,23 @@ class FocusView(Screen):
             rmarkup = "[dim]Idle[/dim]"
         replay_label.update(Text.from_markup(f"Replay: {rmarkup}", emoji=False))
 
-        # Crack state.
+        # Crack state. The recovered key is the payoff — make it impossible to
+        # miss (bold cyan on a black background), with the ASCII form if the
+        # key is a printable word, and a reminder to press 'c' to copy.
         cr = campaign.cracker
         if campaign.recovered_key is not None:
-            kh = campaign.recovered_key.hex()
-            cmarkup = f"[bold green]✓ KEY {kh}[/bold green]"
+            key = campaign.recovered_key
+            kh = key.hex()
+            ascii_hint = (
+                f' = "{key.decode("ascii")}"'
+                if all(0x20 <= b < 0x7F for b in key) else ""
+            )
+            cmarkup = (
+                f"[bold black on cyan] ✓ KEY {kh}{ascii_hint} [/bold black on cyan]"
+                f" [dim]('c' to copy)[/dim]"
+            )
         elif cr.ready:
-            cmarkup = f"[cyan]attempting…[/cyan] [dim]({cr.sample_count:,} samples)[/dim]"
+            cmarkup = f"[cyan]cracking…[/cyan] [dim]({cr.sample_count:,} samples)[/dim]"
         else:
             cmarkup = (
                 f"[dim]collecting {cr.sample_count:,}/"
@@ -664,6 +680,23 @@ class FocusView(Screen):
 
     def action_save_capture(self) -> None:
         self._save_capture()
+
+    def action_copy_key(self) -> None:
+        """Copy the recovered WEP key (hex) to the clipboard — saves the user
+        from hand-selecting terminal text. No-op with a hint if not cracked."""
+        campaign = self._wep_campaign
+        key = campaign.recovered_key if campaign else None
+        if not key:
+            self._log("[yellow]No WEP key recovered yet — nothing to copy.[/yellow]")
+            return
+        kh = key.hex()
+        try:
+            self.app.copy_to_clipboard(kh)
+            self._log(f"[green]✓ Copied WEP key to clipboard:[/green] [bold]{kh}[/bold]")
+        except Exception:
+            # Clipboard may be unavailable (no OSC-52 support); the key is
+            # still right there in the log/panel to select manually.
+            self._log(f"[yellow]Clipboard unavailable — key is:[/yellow] [bold]{kh}[/bold]")
 
     async def _run_deauth_broadcast(self) -> None:
         """Worker: broadcast-deauth every station associated with the focused AP."""

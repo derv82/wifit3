@@ -182,8 +182,10 @@ class PtwCracker:
 
     # -- recover --------------------------------------------------------------
 
-    # Bounded "fudge" search: per byte we try its top candidates, exploring
-    # combinations nearest the argmax first. Caps keep a failed crack quick.
+    # Bounded "fudge" search (aircrack's term): per byte we try its top vote-
+    # getters, exploring combinations nearest the most-voted ("argmax") first.
+    # The caps bound the work so a doomed attempt (too few IVs to recover yet)
+    # returns fast instead of grinding.
     _DEPTH_CAP = 16
     _MAX_TRIALS = 100_000
 
@@ -202,8 +204,12 @@ class PtwCracker:
         return None
 
     def _key_from_sigmas(self, sigmas: List[int]) -> bytes:
-        """Difference consecutive root-sums into root-key bytes.
-        σ at index m = Σ of root bytes 0..m (index −1 ≡ 0)."""
+        """Turn the recovered sums back into key bytes.
+
+        Each sigma is a running total of the key bytes so far (sigma[m] = key
+        byte 0 + ... + key byte m). So each key byte is just that running total
+        minus the previous one; the running total before the first byte is 0.
+        """
         key = bytearray(len(sigmas))
         prev = 0
         for m, s in enumerate(sigmas):
@@ -235,16 +241,36 @@ class PtwCracker:
                         heapq.heappush(heap, (sum(nxt), nxt))
         return None
 
+    # Verify against this many held-back samples; accept the key if all but at
+    # most this many reproduce — tolerating the rare odd-packet-out (a frame
+    # that was ARP-sized + broadcast but not actually an ARP request, so its
+    # "known plaintext" was wrong). Without the tolerance one bad sample in the
+    # fixed verify set would reject the *correct* key forever.
+    _VERIFY_SAMPLES = 8
+    _VERIFY_TOLERANCE = 1
+
     def _verify_key(self, key: bytes) -> bool:
-        """A key is correct if it reproduces the keystream of several samples."""
+        """Re-derive each held-back sample's keystream with this key and count
+        matches; a wrong key matches ~none, the right key matches all (bar an
+        odd packet). Drops any confirmed odd-packet-out from the verify set."""
         if not self._verify:
             return False
-        checks = self._verify[:5]
+        checks = self._verify[: self._VERIFY_SAMPLES]
         need = 2 + len(key)
-        for iv, ks in checks:
+        mismatches = []
+        for idx, (iv, ks) in enumerate(checks):
             produced = rc4_keystream(iv + key, need)
             if produced[: len(ks)] != ks[: len(produced)]:
-                return False
+                mismatches.append(idx)
+                # Bail the instant a wrong key exceeds tolerance — this keeps
+                # the per-candidate cost ~2 RC4 across the brute-force search
+                # instead of always paying for all _VERIFY_SAMPLES.
+                if len(mismatches) > self._VERIFY_TOLERANCE:
+                    return False
+        # Correct key (modulo a stray sample): evict the odd ones so they
+        # can't poison a future check.
+        for idx in reversed(mismatches):
+            del self._verify[idx]
         return True
 
     @property

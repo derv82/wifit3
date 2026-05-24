@@ -102,7 +102,7 @@ class WepStats(BaseModel):
 
     Deliberately just monotonic integers — the heavy buffers (the unique-IV
     set, full validation packets, captured ARPs) live in
-    ``wlan.wep_iv.WepIvCollector`` so this model stays cheap to poll and
+    ``wlan.wep_store.WepCaptureStore`` so this model stays cheap to poll and
     serialize. ``WlanInterface`` attaches one of these to an AP the first
     time a WEP-encrypted Data frame for that BSSID is seen; live IV
     rate / ETA are computed on demand from the collector, not stored here.
@@ -182,7 +182,7 @@ class AccessPoint(BaseModel):
     # WEP IV counters, populated only for WEP APs once the first encrypted
     # Data frame arrives (None on every other AP). The Scanner ENCRYPT cell
     # and Focus CAPTURE panel read this; the live IV-acquisition rate / ETA
-    # come from the WepIvCollector keyed by this BSSID.
+    # come from the WepCaptureStore keyed by this BSSID.
     wep: Optional[WepStats] = Field(default=None)
 
     @property

@@ -189,8 +189,8 @@ def test_broadcast_wep_stored_as_arp_candidate_either_direction(mocker):
     _seed_ap(iface, bssid, "WEP")
     iface._on_frame_parsed(_wep_broadcast(bssid, "aa:bb:cc:dd:ee:01", to_ds=True))
     iface._on_frame_parsed(_wep_broadcast(bssid, "aa:bb:cc:dd:ee:02", to_ds=False))
-    assert iface.wep_collector.arp_candidate_count(bssid) == 2
-    assert iface.wep_collector.arp_seen_count(bssid) == 2
+    assert iface.wep_store.arp_candidate_count(bssid) == 2
+    assert iface.wep_store.arp_seen_count(bssid) == 2
 
 
 def test_real_client_still_creates_handshake_with_eapol_frames(mocker):

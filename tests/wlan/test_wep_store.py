@@ -1,13 +1,13 @@
 """Tests for the passive WEP IV collector + rate/ETA estimation."""
 import pytest
 
-from wifit3.wlan.wep_iv import RateTracker, WepIvCollector
+from wifit3.wlan.wep_store import RateTracker, WepCaptureStore
 
 BSSID = "11:22:33:44:55:66"
 
 
 def test_dedup_counts_unique_vs_total():
-    c = WepIvCollector()
+    c = WepCaptureStore()
     c.record(BSSID, b"\x01\x02\x03")
     c.record(BSSID, b"\x01\x02\x03")   # duplicate IV
     c.record(BSSID, b"\x04\x05\x06")
@@ -18,7 +18,7 @@ def test_dedup_counts_unique_vs_total():
 
 
 def test_per_bssid_isolation():
-    c = WepIvCollector()
+    c = WepCaptureStore()
     c.record("aa:aa:aa:aa:aa:aa", b"\x01\x01\x01")
     c.record("bb:bb:bb:bb:bb:bb", b"\x01\x01\x01")
     assert c.unique_count("aa:aa:aa:aa:aa:aa") == 1
@@ -28,7 +28,7 @@ def test_per_bssid_isolation():
 def test_record_returns_same_stats_object():
     """The interface attaches the returned WepStats to the AP once, then
     relies on later records mutating that same instance in place."""
-    c = WepIvCollector()
+    c = WepCaptureStore()
     s1 = c.record(BSSID, b"\x01\x02\x03")
     s2 = c.record(BSSID, b"\x04\x05\x06")
     assert s1 is s2
@@ -36,7 +36,7 @@ def test_record_returns_same_stats_object():
 
 
 def test_rate_over_known_span():
-    c = WepIvCollector()
+    c = WepCaptureStore()
     c.record(BSSID, b"\x00\x00\x01", now=0.0)
     c.record(BSSID, b"\x00\x00\x02", now=1.0)
     c.record(BSSID, b"\x00\x00\x03", now=2.0)
@@ -53,7 +53,7 @@ def test_rate_decays_when_idle():
 
 
 def test_eta_estimates_remaining_time():
-    c = WepIvCollector()
+    c = WepCaptureStore()
     for i, t in enumerate([0.0, 1.0, 2.0]):
         c.record(BSSID, bytes([0, 0, i]), now=t)
     # 3 IVs at 1.5/s; 7 remaining to reach 10 → ~4.67s.
@@ -62,14 +62,14 @@ def test_eta_estimates_remaining_time():
 
 
 def test_eta_zero_when_target_reached():
-    c = WepIvCollector()
+    c = WepCaptureStore()
     c.record(BSSID, b"\x00\x00\x01", now=0.0)
     c.record(BSSID, b"\x00\x00\x02", now=1.0)
     assert c.eta_seconds(BSSID, target=2, now=1.0) == 0.0
 
 
 def test_eta_none_when_no_rate():
-    c = WepIvCollector()
+    c = WepCaptureStore()
     # No IVs recorded for this BSSID → no rate → can't estimate.
     assert c.eta_seconds(BSSID, target=10, now=5.0) is None
 
@@ -77,7 +77,7 @@ def test_eta_none_when_no_rate():
 # ---- ARP replay candidates -------------------------------------------------
 
 def test_arp_candidate_retained_when_size_matches():
-    c = WepIvCollector()
+    c = WepCaptureStore()
     frame = b"\x00" * 68          # canonical WEP ARP-request length
     assert c.record_arp_candidate(BSSID, frame) is True
     assert c.arp_candidate_count(BSSID) == 1
@@ -85,7 +85,7 @@ def test_arp_candidate_retained_when_size_matches():
 
 
 def test_arp_candidate_rejected_on_wrong_size():
-    c = WepIvCollector()
+    c = WepCaptureStore()
     assert c.record_arp_candidate(BSSID, b"\x00" * 100) is False
     assert c.arp_candidate_count(BSSID) == 0
 
@@ -93,22 +93,22 @@ def test_arp_candidate_rejected_on_wrong_size():
 def test_arp_candidates_stored_both_directions():
     """We keep ALL ARP-sized broadcast frames regardless of direction — the
     replay engine re-addresses them and prunes non-yielding ones later."""
-    c = WepIvCollector()
+    c = WepCaptureStore()
     for i in range(5):
         c.record_arp_candidate(BSSID, bytes([i]) + b"\x00" * 67)
     assert c.arp_candidate_count(BSSID) == 5
 
 
 def test_arp_ring_capped():
-    from wifit3.wlan.wep_iv import ARP_RING_MAXLEN
-    c = WepIvCollector()
+    from wifit3.wlan.wep_store import ARP_RING_MAXLEN
+    c = WepCaptureStore()
     for i in range(ARP_RING_MAXLEN + 50):
         c.record_arp_candidate(BSSID, i.to_bytes(2, "big") + b"\x00" * 66)
     assert c.arp_candidate_count(BSSID) == ARP_RING_MAXLEN
 
 
 def test_arp_seen_counts_all_sizes():
-    c = WepIvCollector()
+    c = WepCaptureStore()
     c.record_arp_candidate(BSSID, b"\x00" * 68)     # stored
     c.record_arp_candidate(BSSID, b"\x00" * 368)    # wrong size, still 'seen'
     assert c.arp_seen_count(BSSID) == 2
@@ -116,7 +116,7 @@ def test_arp_seen_counts_all_sizes():
 
 
 def test_crack_samples_dedup_by_iv():
-    c = WepIvCollector()
+    c = WepCaptureStore()
     assert c.record_crack_sample(BSSID, b"\x01\x02\x03", b"\xaa" * 16) is True
     assert c.record_crack_sample(BSSID, b"\x01\x02\x03", b"\xbb" * 16) is False  # dup IV
     assert c.record_crack_sample(BSSID, b"\x04\x05\x06", b"\xcc" * 16) is True

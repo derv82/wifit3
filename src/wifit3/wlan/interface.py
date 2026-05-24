@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List, Optional, Callable, Any, Dict, Set
 
 from wifit3.engine.models import AccessPoint, Client, Handshake, EapolFrame
-from wifit3.wlan.wep_iv import ARP_REQUEST_LENGTHS, WepIvCollector
+from wifit3.wlan.wep_store import WepCaptureStore
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +85,7 @@ class WlanInterface:
 
         # Passive WEP IV tallying (RX-only). Hooked from _on_frame_parsed for
         # every WEP-encrypted Data frame; updates AccessPoint.wep counters.
-        self.wep_collector = WepIvCollector()
+        self.wep_store = WepCaptureStore()
 
         # MACs we forged for our own active attacks (e.g. PMKID harvest).
         # Frames addressed to these MACs come from the AP, but they aren't
@@ -228,29 +228,17 @@ class WlanInterface:
             if rsn_ie:
                 self.access_points[bssid].rsn_ie = rsn_ie
 
-        # WEP IV tallying — passive, RX-only. Only count frames whose AP we've
+        # WEP capture — passive, RX-only. Only observe frames whose AP we've
         # already classified as WEP from a beacon (guards against a stray
-        # ExtIV-clear frame on a non-WEP AP inflating the counter).
+        # ExtIV-clear frame on a non-WEP AP). The store does all the routing
+        # (IV count, ARP-replay seed, PTW crack sample) — the interface stays
+        # out of the ARP-size / cipher-offset business.
         if frame_type == "wep_data" and bssid in self.access_points:
-            iv = parsed.get("wep_iv")
             ap = self.access_points[bssid]
-            if iv and (ap.encryption or "").upper() == "WEP":
-                stats = self.wep_collector.record(bssid, iv)
-                if ap.wep is None:
+            if (ap.encryption or "").upper() == "WEP":
+                stats = self.wep_store.observe(bssid, parsed)
+                if stats is not None and ap.wep is None:
                     ap.wep = stats
-                # Broadcast WEP Data frames (either direction) are ARP-replay
-                # candidates — the replay engine re-addresses them into a
-                # ToDS frame the AP will relay, generating fresh IVs.
-                raw = parsed.get("raw")
-                if raw and parsed.get("dest") == "ff:ff:ff:ff:ff:ff":
-                    self.wep_collector.record_arp_candidate(
-                        bssid, raw, source=parsed.get("source")
-                    )
-                    # ARP-sized broadcast frame → known plaintext → a PTW
-                    # crack sample (IV + first 16 ciphertext bytes).
-                    cipher = parsed.get("wep_cipher")
-                    if cipher and len(cipher) == 16 and len(raw) in ARP_REQUEST_LENGTHS:
-                        self.wep_collector.record_crack_sample(bssid, iv, cipher)
 
         # Client Tracking
         if frame_type in ("probe_req", "assoc_req", "data", "wep_data", "eapol", "deauth", "assoc_resp"):
