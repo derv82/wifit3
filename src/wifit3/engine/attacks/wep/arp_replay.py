@@ -124,6 +124,11 @@ class WepArpReplay:
 
         self._last_state = ""
         self._last_heartbeat = 0.0
+        # Unique-IV count when THIS replay session started. capture% is measured
+        # against IVs gained since (self.stats.injected also resets per session)
+        # — the store's unique count is cumulative across campaigns, so dividing
+        # the raw total by a fresh injected count gave nonsense like "17034%".
+        self._unique_baseline = 0
 
     # ---- Lifecycle ----------------------------------------------------------
 
@@ -132,6 +137,7 @@ class WepArpReplay:
             return
         self._active = True
         self.stats = ArpReplayStats()
+        self._unique_baseline = self.collector.unique_count(self.bssid)
         self._task = asyncio.create_task(self._replay_loop())
         logger.info("[WEP-ARP] Replay started on %s", self.bssid)
 
@@ -384,7 +390,11 @@ class WepArpReplay:
             return
         self._last_heartbeat = now
         unique = self.collector.unique_count(self.bssid)
-        capture = (100.0 * unique / self.stats.injected) if self.stats.injected else 0.0
+        # capture% = IVs gained THIS session / injected THIS session (both reset
+        # per replay start), so it reflects replay efficiency, not the store's
+        # cumulative IV total.
+        gained = max(0, unique - self._unique_baseline)
+        capture = (100.0 * gained / self.stats.injected) if self.stats.injected else 0.0
         # pps first so the lines column-align; raw pps + burst stay on stats
         # (it confirmed we're AP-relay-limited, not card-limited — detail's noise now).
         self._log(
