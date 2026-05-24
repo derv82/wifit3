@@ -89,6 +89,7 @@ class WepFragmentation:
         source_mac: bytes,
         on_forged_arp: Callable[[bytes], None],
         can_inject: Optional[Callable[[], bool]] = None,
+        notify_activity: Optional[Callable[[], None]] = None,
         log_callback: Optional[Callable[[str], None]] = None,
         sender_ip: bytes = bytes([192, 168, 1, 123]),
         target_ip: bytes = bytes([192, 168, 1, 1]),
@@ -102,6 +103,9 @@ class WepFragmentation:
         # replay (the relay is already an ARP-sized broadcast seed in the store).
         self._on_forged_arp = on_forged_arp
         self._can_inject = can_inject or (lambda: True)
+        # Our fragments keep the assoc alive (suppress fake-auth's periodic
+        # keepalive re-auth while we're injecting).
+        self._notify_activity = notify_activity or (lambda: None)
         self._log = log_callback or (lambda _m: None)
         self._sender_ip = sender_ip
         self._target_ip = target_ip
@@ -249,6 +253,7 @@ class WepFragmentation:
             except Exception:
                 logger.exception("[WEP-Frag] send_raw failed")
                 return
+        self._notify_activity()   # keep the assoc alive while injecting
         self._round += 1
         # RX window — the oracle (RX callback) sets _relay_seen if it lands.
         await asyncio.sleep(self._ROUND_GAP)

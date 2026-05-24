@@ -210,6 +210,7 @@ class WepCampaign:
             source_mac=self.fake_auth.source_mac,
             on_forged_arp=self._on_frag_success,
             can_inject=lambda: self.fake_auth.state == "associated",
+            notify_activity=self.fake_auth.notify_activity,
             log_callback=self._log,
         )
         self.frag.start()
@@ -263,6 +264,7 @@ class WepCampaign:
             source_mac=self.fake_auth.source_mac,
             on_forged_arp=self._on_chop_success,
             can_inject=lambda: self.fake_auth.state == "associated",
+            notify_activity=self.fake_auth.notify_activity,
             log_callback=self._log,
         )
         self.chop.start()

