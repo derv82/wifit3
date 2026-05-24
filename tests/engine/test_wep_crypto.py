@@ -5,6 +5,7 @@ import zlib
 import pytest
 
 from wifit3.engine.attacks.wep.wep_crypto import (
+    CRC32_RESIDUE,
     forge_arp_request,
     icv,
     wep_encrypt,
@@ -13,6 +14,13 @@ from wifit3.engine.attacks.wep.wep_crypto import (
 
 def test_icv_is_le_crc32():
     assert icv(b"abc") == struct.pack("<I", zlib.crc32(b"abc") & 0xFFFFFFFF)
+
+
+def test_crc32_residue_constant():
+    # Foundation for the (future) ChopChop fix-up: data ++ icv(data) always
+    # has this CRC32 residue, which is how the attack cancels the unknown ICV.
+    for d in (b"hello", b"test123", bytes(range(36))):
+        assert zlib.crc32(d + icv(d)) & 0xFFFFFFFF == CRC32_RESIDUE
 
 
 def test_wep_encrypt_roundtrips_to_plaintext_plus_icv():

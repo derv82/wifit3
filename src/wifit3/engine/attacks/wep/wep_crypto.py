@@ -67,13 +67,41 @@ def forge_arp_request(
     return wep_encrypt(keystream, plaintext)
 
 
+# The CRC32 residue: crc32(data ++ icv(data)) == this constant for ALL data
+# (verified offline). A WEP frame's plaintext P = data++icv is valid iff
+# crc32(P) == CRC32_RESIDUE. This is what lets ChopChop cancel the unknown ICV.
+CRC32_RESIDUE = 0x2144DF1C
+
+
 def chop_last_byte_and_fixup(body: bytes, plaintext_guess: int) -> bytes:
     """ChopChop core (STUB — M6): given an encrypted body whose ICV is valid,
     return a one-byte-shorter body whose ICV is ALSO valid IFF ``plaintext_guess``
-    equals the true last plaintext byte.
+    equals the true last plaintext byte (P[L-1]).
 
-    Relies on CRC32 being linear/affine: removing a byte + correcting the
-    trailing ICV is a fixed XOR derived from the guessed byte — no key needed.
-    Implement the KoreK fix-up here and unit-test it (decrypt-with-known-
-    keystream → CRC valid iff guess correct) before wiring the oracle."""
-    raise NotImplementedError("M6 — KoreK ICV fix-up; build with heavy tests")
+    WORKED-OUT RECIPE (the hard part — the unknown-ICV cancellation — is done;
+    only the standard reverse-CRC routine remains). With:
+      B    = body (len L),  S = keystream,  P = B^S (valid: crc32(P)==RESIDUE)
+      g    = plaintext_guess (the last plaintext byte P[L-1])
+    The result is ``B[:L-1]`` with its LAST 4 BYTES XORed by a 4-byte ``corr``:
+      B' = bytearray(B[:L-1]);  B'[L-5:L-1] ^= corr
+
+    Why this works (affine CRC + residue cancel the unknown ICV/keystream):
+      P' = P[:L-1] ^ corr_padded   (corr_padded = 0^(L-5) ++ corr)
+      valid(P')  ⟺  crc32(P') == RESIDUE
+      crc32(P') = crc32(P[:L-1]) ^ crc32(corr_padded) ^ crc32(0^(L-1))   [affine]
+      crc32(P[:L-1]) is computable from the KNOWN crc32(P)==RESIDUE and g, by
+        reversing ONE crc32 step over byte g (register form: reg=crc^0xFFFFFFFF;
+        reg(P)=RESIDUE^0xFFFFFFFF; reg(P[:L-1]) = reverse_step(reg(P), g)).
+      ⇒ require:  crc32(corr_padded) = RESIDUE ^ crc32(P[:L-1]) ^ crc32(0^(L-1))
+      Solve for the 4-byte ``corr`` with a standard reverse-CRC "patch" routine
+        (find 4 trailing bytes that drive the CRC to a target) — see Stigge et
+        al, "Reversing CRC". corr depends only on g + known quantities; the
+        unknown ICV and keystream are gone.
+
+    TODO next session: implement reverse_step + the 4-byte CRC patch (from a
+    reference), then this. UNIT-TEST against the oracle: build a body from a
+    known keystream + known plaintext, chop+fixup with the CORRECT last byte →
+    result XOR keystream must have a valid ICV (crc32==RESIDUE); a WRONG guess
+    must NOT. (The reverse-CRC patch is intricate bit-math — do not eyeball it,
+    TDD it.)"""
+    raise NotImplementedError("M6 — see recipe above; TDD the reverse-CRC patch")
