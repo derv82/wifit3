@@ -138,6 +138,24 @@ def test_arp_seen_counts_all_sizes():
     assert c.arp_candidate_count(BSSID) == 1
 
 
+def test_chop_candidates_include_non_arp_broadcast_frames():
+    """ChopChop's seed pool is broader than the ARP-replay one: any broadcast
+    WEP data frame of usable size (incl. IP broadcasts) is kept, even though
+    only the ARP-sized one lands in the (replay) ARP ring."""
+    c = WepCaptureStore()
+    c.record_arp_candidate(BSSID, b"\x00" * 68)     # ARP-sized → both rings
+    c.record_arp_candidate(BSSID, b"\x00" * 90)     # non-ARP IP-ish → chop only
+    assert c.arp_candidate_count(BSSID) == 1        # ARP ring: ARP-sized only
+    assert len(c.chop_candidates(BSSID)) == 2       # chop ring: both
+
+
+def test_chop_candidates_skip_runts():
+    from wifit3.wlan.wep_store import CHOP_MIN_LEN
+    c = WepCaptureStore()
+    c.record_arp_candidate(BSSID, b"\x00" * (CHOP_MIN_LEN - 1))   # too short
+    assert c.chop_candidates(BSSID) == []
+
+
 def test_crack_samples_dedup_by_iv():
     c = WepCaptureStore()
     assert c.record_crack_sample(BSSID, b"\x01\x02\x03", b"\xaa" * 16) is True

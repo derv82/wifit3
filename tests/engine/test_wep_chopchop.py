@@ -49,6 +49,9 @@ def _rc4(key: bytes, n: int) -> bytes:
     return bytes(out)
 
 
+_SNAP = bytes([0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00])
+
+
 def _arp_cipher(sender_ip, target_ip):
     """Build a realistic captured ARP cipher + its true keystream."""
     pt = arp_request_plaintext(sender_mac=OUR, sender_ip=sender_ip,
@@ -56,6 +59,27 @@ def _arp_cipher(sender_ip, target_ip):
     plain = pt + icv(pt)                       # 36 + 4 = 40
     ks = _rc4(IV + KEY, len(plain))
     cipher = bytes(p ^ k for p, k in zip(plain, ks))
+    return cipher, ks
+
+
+def _ip_cipher():
+    """Build a captured broadcast IP datagram cipher: SNAP + ethertype 0x0800 +
+    a well-formed IPv4 header (IHL=5, TOS=0) + payload. The IP total-length
+    field equals (cipher_len - 12) by construction — exactly what header_rec
+    computes — so the offline reconstruction can confirm it via the CRC."""
+    ip_len = 40                                          # 20 hdr + 20 payload
+    ip_hdr = bytes([0x45, 0x00, (ip_len >> 8) & 0xFF, ip_len & 0xFF,
+                    0x12, 0x34,            # identification
+                    0x40, 0x00,            # flags/frag (DF)
+                    0x40, 0x11,            # TTL=64, proto=UDP
+                    0xAB, 0xCD,            # header checksum (don't care here)
+                    10, 0, 0, 5,           # src IP
+                    10, 0, 0, 255])        # dst IP (a broadcast)
+    datagram = ip_hdr + bytes(ip_len - 20)               # 40 bytes total
+    plain = _SNAP + bytes([0x08, 0x00]) + datagram       # 8 + 40 = 48
+    full = plain + icv(plain)                            # 52
+    ks = _rc4(IV + KEY, len(full))
+    cipher = bytes(p ^ k for p, k in zip(full, ks))      # n = 52 → totlen 40
     return cipher, ks
 
 
@@ -138,10 +162,12 @@ async def test_chop_and_forge_aborts_on_relayed_sentinel():
 
 # ---- tag-and-read-back via a SIMULATED relaying AP (the live mechanism) -----
 
-def _relaying_iface(key: bytes, daemon_box):
+def _relaying_iface(key: bytes, daemon_box, min_relay: int = 0):
     """A fake iface whose send_raw plays the AP: decrypt the sent frame's WEP
     body; if the ICV is valid, 'relay' it back as a FromDS frame echoing the DA
-    tag we stamped — exactly how the daemon learns which guess was accepted."""
+    tag we stamped — exactly how the daemon learns which guess was accepted.
+    ``min_relay`` models the drop-short wall: ciphers shorter than it are
+    dropped (never relayed), so the chop stalls there."""
     box = {}
 
     async def send_raw(frame, use_no_ack=False, sw_seq=None):
@@ -149,6 +175,8 @@ def _relaying_iface(key: bytes, daemon_box):
         da = frame[16:22]                       # Addr3 (DA) of our ToDS frame
         body = frame[24:]
         ct = body[4:]                           # skip IV(3)+KeyID(1)
+        if len(ct) < min_relay:                 # too short → the AP drops it
+            return
         plain = bytes(c ^ k for c, k in zip(ct, _rc4(IV + key, len(ct))))
         if (zlib.crc32(plain) & 0xFFFFFFFF) != CRC32_RESIDUE:
             return                              # bad ICV → AP drops it
@@ -183,6 +211,45 @@ async def test_tag_and_read_back_recovers_keystream_end_to_end():
     _assert_valid_forged_arp(forged)
 
 
+def _walled_daemon(cipher_key, min_relay):
+    """A daemon wired to a simulated AP that walls at ``min_relay`` (drop-short)
+    — for the wall paths: AP-brute (ARP) and IP header reconstruction."""
+    holder = {}
+    iface, box = _relaying_iface(cipher_key, None, min_relay=min_relay)
+    d = WepChopChop(iface, SimpleNamespace(bssid=BSSID), SimpleNamespace(),
+                    source_mac=OUR,
+                    on_forged_arp=lambda f: holder.setdefault("f", f))
+    box["d"] = d
+    d._active = True
+    d._cur_iv, d._cur_keyid = IV, 0
+    d._SEND_INTERVAL_S = 0
+    d._DRAIN_S = 0
+    return d
+
+
+async def test_chop_to_wall_then_ap_brute_recovers_boundary_byte():
+    """The AP walls just inside the sender MAC (won't relay a 16-byte cipher):
+    chopping stalls at 17, leaving the ARP header known [0..15] and ONE unknown
+    byte [16] — recovered by the forged-ARP AP-brute, then CRC-confirmed."""
+    cipher, _ = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
+    d = _walled_daemon(KEY, min_relay=17)
+    forged = await d._chop_and_forge(cipher)
+    assert forged is not None
+    _assert_valid_forged_arp(forged)
+
+
+async def test_recovers_ip_seed_via_header_reconstruction():
+    """A broadcast IP datagram (not ARP) where the AP relays down to a 12-byte
+    cipher: chopping recovers bytes 12..end, and the hidden IP header [0..11] is
+    reconstructed offline (brute version/IHL + TOS, computed total-length,
+    confirmed by the frame's own CRC) — then we forge the usual broadcast ARP."""
+    cipher, _ = _ip_cipher()
+    d = _walled_daemon(KEY, min_relay=12)
+    forged = await d._chop_and_forge(cipher)
+    assert forged is not None
+    _assert_valid_forged_arp(forged)
+
+
 async def test_succeed_hands_forged_arp_to_campaign_and_stops():
     cipher, _ = _arp_cipher(bytes([192, 168, 1, 50]), bytes([192, 168, 1, 1]))
     d, calls = _daemon(oracle=_sim_oracle(IV, KEY))
@@ -209,7 +276,7 @@ async def test_stop_halts_an_in_flight_byte_walk():
     iface = SimpleNamespace(register_rx_callback=lambda c: None,
                             unregister_rx_callback=lambda c: None)
     d = WepChopChop(iface, SimpleNamespace(bssid=BSSID),
-                    SimpleNamespace(arp_candidates=lambda b: [captured]),
+                    SimpleNamespace(chop_candidates=lambda b: [captured]),
                     source_mac=OUR, on_forged_arp=lambda f: None, oracle=slow)
     d.start()
     await asyncio.sleep(0.02)         # let the walk get in-flight

