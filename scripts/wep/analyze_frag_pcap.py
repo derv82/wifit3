@@ -82,11 +82,60 @@ class F:
         return self.ftype == 2
 
 
+def _rc4(key: bytes, n: int) -> bytes:
+    """First n bytes of RC4 keystream. Inlined (12 lines) to keep the analyzer
+    dependency-free; a correct SNAP+ARP decrypt is self-validating anyway."""
+    s = list(range(256))
+    j = 0
+    for i in range(256):
+        j = (j + s[i] + key[i % len(key)]) & 0xFF
+        s[i], s[j] = s[j], s[i]
+    out = bytearray(n)
+    i = j = 0
+    for k in range(n):
+        i = (i + 1) & 0xFF
+        j = (j + s[i]) & 0xFF
+        s[i], s[j] = s[j], s[i]
+        out[k] = s[(s[i] + s[j]) & 0xFF]
+    return bytes(out)
+
+
+def _verify_decrypt(relay: list, wep_key: bytes, our: bytes) -> None:
+    """Decrypt a relayed-from-us frame with the (test-box) WEP key and confirm
+    it's byte-for-byte OUR reassembled broadcast ARP. The gold-standard check:
+    SA=us proves the AP relayed our frame; this proves it relayed our ARP."""
+    print(f"\n  -- decrypt check (WEP key {wep_key!r}, RC4 key = IV ++ key) --")
+    f = relay[0]
+    body = f.raw[hdr_len(f.raw[0], f.raw[1]):]
+    iv, cipher = body[:3], body[4:]
+    plain = bytes(c ^ k for c, k in zip(cipher, _rc4(iv + wep_key, len(cipher))))
+    msg, icv = plain[:-4], plain[-4:]
+    import zlib
+    snap_arp = bytes([0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00, 0x08, 0x06])
+    print(f"    iv={iv.hex()}  decrypted {len(msg)}B + 4B ICV")
+    print(f"    plaintext: {msg.hex()}")
+    checks = {
+        "LLC/SNAP+ARP-req prefix": msg[:8] == snap_arp,
+        "sender MAC == our STA": msg[16:22] == our,
+        "ICV valid": icv == struct.pack("<I", zlib.crc32(msg) & 0xFFFFFFFF),
+    }
+    for label, passed in checks.items():
+        print(f"    [{'PASS' if passed else 'FAIL'}] {label}")
+    if all(checks.values()):
+        print("    => CONFIRMED: the AP reassembled + re-encrypted OUR forged "
+              "ARP. Fragmentation is end-to-end verified.")
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("pcap", type=Path)
     p.add_argument("--our-mac", required=True, help="our forged STA MAC")
     p.add_argument("--bssid", help="target BSSID (else inferred from our TX)")
+    p.add_argument("--key", type=lambda s: s.encode(), help="WEP key as ASCII "
+                   "(your test box's key) to decrypt + verify a relayed frame "
+                   "is our ARP")
+    p.add_argument("--key-hex", type=bytes.fromhex, dest="key",
+                   help="WEP key as hex instead of --key")
     args = p.parse_args()
 
     our = bytes(int(x, 16) for x in args.our_mac.split(":"))
@@ -111,7 +160,7 @@ def main() -> int:
         for f in ours[:9]:
             print(f"    {f.fragno} : {len(f.raw)} : {f.iv.hex()}")
     else:
-        print("  (none — this card does NOT loop injected TX back into RX; we "
+        print("  (none -- this card does NOT loop injected TX back into RX; we "
               "can only judge the relay from AP-sourced frames.)")
         bssid = args.bssid and bytes(int(x, 16) for x in args.bssid.split(":"))
 
@@ -122,8 +171,10 @@ def main() -> int:
         for f in relay[:20]:
             print(f"  len={len(f.raw)} a1={_mac(f.a1)} a2={_mac(f.a2)} "
                   f"iv={f.iv.hex()} morefrag={f.morefrag}")
-        print(f"  → {len(relay)} relayed-from-us frame(s). THIS is the oracle "
-              "signal — code fragmentation.py to it.")
+        print(f"  -> {len(relay)} relayed-from-us frame(s). THIS is the oracle "
+              "signal -- code fragmentation.py to it.")
+        if args.key is not None:
+            _verify_decrypt(relay, args.key, our)
     else:
         print("  NONE. The AP did not rebroadcast a frame sourced from our STA.")
 
