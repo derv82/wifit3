@@ -85,6 +85,18 @@ def test_ptw_recovers_104bit_key():
     assert c.recover() == key
 
 
+def test_cracker_picklable_and_recovers_after_roundtrip():
+    """The campaign runs recover() in a ProcessPoolExecutor, which pickles the
+    cracker to the worker. Prove that round-trip preserves recovery."""
+    import pickle
+    key = bytes.fromhex("6162636465")
+    c = PtwCracker()
+    for iv, ks in _synth_samples(key, 40_000):
+        c.feed(iv, ks)
+    c2 = pickle.loads(pickle.dumps(c))    # exactly what the process pool does
+    assert c2.recover() == key
+
+
 def test_ptw_tolerates_one_odd_packet_in_verify():
     """A single bad verify sample (e.g. an ARP-sized broadcast that wasn't
     actually an ARP → wrong 'known plaintext') must not reject the correct
