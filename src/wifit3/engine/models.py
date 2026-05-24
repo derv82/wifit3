@@ -97,9 +97,23 @@ class Handshake(BaseModel):
     def has_frame(self, raw: bytes) -> bool:
         return any(f.raw == raw for f in self.eapol_frames)
 
+class WepStats(BaseModel):
+    """Light, UI-facing WEP IV counters for one AP.
+
+    Deliberately just monotonic integers — the heavy buffers (the unique-IV
+    set, full validation packets, captured ARPs) live in
+    ``wlan.wep_iv.WepIvCollector`` so this model stays cheap to poll and
+    serialize. ``WlanInterface`` attaches one of these to an AP the first
+    time a WEP-encrypted Data frame for that BSSID is seen; live IV
+    rate / ETA are computed on demand from the collector, not stored here.
+    """
+    unique_ivs: int = 0
+    total_frames: int = 0
+
+
 class AccessPoint(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
-    
+
     bssid: str
     ssid: Optional[str] = Field(default=None)
     channel: int = Field(default=1)
@@ -164,6 +178,12 @@ class AccessPoint(BaseModel):
     # simultaneously and we must not overwrite a complete one when a new
     # client's EAPOL arrives.
     handshakes: Dict[str, Handshake] = Field(default_factory=dict)
+
+    # WEP IV counters, populated only for WEP APs once the first encrypted
+    # Data frame arrives (None on every other AP). The Scanner ENCRYPT cell
+    # and Focus CAPTURE panel read this; the live IV-acquisition rate / ETA
+    # come from the WepIvCollector keyed by this BSSID.
+    wep: Optional[WepStats] = Field(default=None)
 
     @property
     def has_capture(self) -> bool:

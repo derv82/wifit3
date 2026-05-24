@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Optional, Callable, Any, Dict, Set
 
 from wifit3.engine.models import AccessPoint, Client, Handshake, EapolFrame
+from wifit3.wlan.wep_iv import WepIvCollector
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,10 @@ class WlanInterface:
         
         self.access_points: Dict[str, AccessPoint] = {}
         self.clients: Dict[str, Client] = {}
+
+        # Passive WEP IV tallying (RX-only). Hooked from _on_frame_parsed for
+        # every WEP-encrypted Data frame; updates AccessPoint.wep counters.
+        self.wep_collector = WepIvCollector()
 
         # MACs we forged for our own active attacks (e.g. PMKID harvest).
         # Frames addressed to these MACs come from the AP, but they aren't
@@ -218,8 +223,19 @@ class WlanInterface:
             if rsn_ie:
                 self.access_points[bssid].rsn_ie = rsn_ie
 
+        # WEP IV tallying — passive, RX-only. Only count frames whose AP we've
+        # already classified as WEP from a beacon (guards against a stray
+        # ExtIV-clear frame on a non-WEP AP inflating the counter).
+        if frame_type == "wep_data" and bssid in self.access_points:
+            iv = parsed.get("wep_iv")
+            ap = self.access_points[bssid]
+            if iv and (ap.encryption or "").upper() == "WEP":
+                stats = self.wep_collector.record(bssid, iv)
+                if ap.wep is None:
+                    ap.wep = stats
+
         # Client Tracking
-        if frame_type in ("probe_req", "assoc_req", "data", "eapol", "deauth", "assoc_resp"):
+        if frame_type in ("probe_req", "assoc_req", "data", "wep_data", "eapol", "deauth", "assoc_resp"):
             client_mac = None
             source = parsed.get("source")
             dest = parsed.get("dest")
@@ -239,7 +255,7 @@ class WlanInterface:
                 client.packets += 1
                 
                 # Track association
-                if frame_type in ("assoc_req", "data", "eapol"):
+                if frame_type in ("assoc_req", "data", "wep_data", "eapol"):
                     if bssid: client.bssid = bssid
                     
                 # Track probed SSIDs

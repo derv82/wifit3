@@ -18,6 +18,7 @@ from wifit3.engine.pcap import write_pcap
 from wifit3.engine.attacks.pmkid_harvest import PmkidHarvestAttack
 from wifit3.engine.attacks.sae_probe import SAEGroupProbeAttack
 from wifit3.engine.attacks.wpa3_downgrade import WPA3DowngradeAttack
+from wifit3.wlan.wep_iv import WEP_CRACK_IV_THRESHOLD
 
 from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector
 from ..encryption_format import (
@@ -103,6 +104,10 @@ class FocusView(Screen):
                     Label(id="lbl-pwr"),
                     Label(id="lbl-handshake"),
                     Label(id="lbl-pmkid"),
+                    # WEP-only: shown in place of Handshake/PMKID (which are
+                    # meaningless for WEP) when the target is a WEP AP.
+                    Label(id="lbl-ivs"),
+                    Label(id="lbl-ivs-eta"),
                     classes="info-box",
                 )
 
@@ -271,33 +276,47 @@ class FocusView(Screen):
         )
         self.query_one("#lbl-pwr", Label).update(f"POWER: {ap.signal} dBm")
 
-        n_complete = sum(1 for hs in ap.handshakes.values() if hs.is_complete)
-        n_partial = sum(
-            1
-            for hs in ap.handshakes.values()
-            if not hs.is_complete and hs.total_eapol_frames > 0
-        )
-        if n_complete:
-            hs_text = f"[bold green]Captured x{n_complete}[/bold green]"
-            if n_partial:
-                hs_text += f" [dim](+{n_partial} partial)[/dim]"
-        elif n_partial:
-            hs_text = f"[yellow]Partial x{n_partial}[/yellow]"
-        else:
-            hs_text = "[dim]Not captured[/dim]"
-        self.query_one("#lbl-handshake", Label).update(
-            Text.from_markup(f"Handshake: {hs_text}", emoji=False)
-        )
+        # WEP and WPA2/3 capture progress are mutually exclusive: WEP has no
+        # handshake/PMKID, WPA has no IVs. Show whichever pair fits the target.
+        is_wep = (ap.encryption or "").upper() == "WEP"
+        hs_label = self.query_one("#lbl-handshake", Label)
+        pmkid_label = self.query_one("#lbl-pmkid", Label)
+        ivs_label = self.query_one("#lbl-ivs", Label)
+        ivs_eta_label = self.query_one("#lbl-ivs-eta", Label)
 
-        n_pmkid = sum(1 for hs in ap.handshakes.values() if hs.pmkid)
-        pmkid_text = (
-            f"[bold green]Captured x{n_pmkid}[/bold green]"
-            if n_pmkid
-            else "[dim]Not captured[/dim]"
-        )
-        self.query_one("#lbl-pmkid", Label).update(
-            Text.from_markup(f"PMKID:     {pmkid_text}", emoji=False)
-        )
+        hs_label.display = not is_wep
+        pmkid_label.display = not is_wep
+        ivs_label.display = is_wep
+        ivs_eta_label.display = is_wep
+
+        if is_wep:
+            self._update_wep_capture(ap)
+        else:
+            n_complete = sum(1 for hs in ap.handshakes.values() if hs.is_complete)
+            n_partial = sum(
+                1
+                for hs in ap.handshakes.values()
+                if not hs.is_complete and hs.total_eapol_frames > 0
+            )
+            if n_complete:
+                hs_text = f"[bold green]Captured x{n_complete}[/bold green]"
+                if n_partial:
+                    hs_text += f" [dim](+{n_partial} partial)[/dim]"
+            elif n_partial:
+                hs_text = f"[yellow]Partial x{n_partial}[/yellow]"
+            else:
+                hs_text = "[dim]Not captured[/dim]"
+            hs_label.update(Text.from_markup(f"Handshake: {hs_text}", emoji=False))
+
+            n_pmkid = sum(1 for hs in ap.handshakes.values() if hs.pmkid)
+            pmkid_text = (
+                f"[bold green]Captured x{n_pmkid}[/bold green]"
+                if n_pmkid
+                else "[dim]Not captured[/dim]"
+            )
+            pmkid_label.update(
+                Text.from_markup(f"PMKID:     {pmkid_text}", emoji=False)
+            )
 
         # Save button.
         self.query_one("#btn-save", Button).disabled = not ap.has_capture
@@ -312,6 +331,36 @@ class FocusView(Screen):
 
         # Deauth-selected button.
         self.query_one("#btn-deauth-sel", Button).disabled = not self._selected_clients
+
+    def _update_wep_capture(self, ap: AccessPoint) -> None:
+        """Render the WEP CAPTURE lines: live unique-IV count + rate, and the
+        ETA to the crack threshold. Reads counts from the AP model and the
+        live rate/ETA from the interface's WepIvCollector."""
+        n = ap.wep.unique_ivs if ap.wep else 0
+        total = ap.wep.total_frames if ap.wep else 0
+        iface = getattr(self.app, "active_interface", None)
+        rate = iface.wep_collector.rate(ap.bssid) if iface else 0.0
+
+        count_markup = (
+            f"[bold green]{n:,}[/bold green]" if n else "[red]0[/red]"
+        )
+        rate_markup = f"[dim]({rate:.0f}/s, {total:,} frames)[/dim]"
+        self.query_one("#lbl-ivs", Label).update(
+            Text.from_markup(f"IVs: {count_markup} {rate_markup}", emoji=False)
+        )
+
+        target_k = WEP_CRACK_IV_THRESHOLD // 1000
+        if n >= WEP_CRACK_IV_THRESHOLD:
+            eta_markup = f"[bold green]✓ {target_k}k reached[/bold green]"
+        else:
+            eta = iface.wep_collector.eta_seconds(ap.bssid) if iface else None
+            if eta is None:
+                eta_markup = "[dim]— (waiting for IVs)[/dim]"
+            else:
+                eta_markup = _format_duration(int(eta))
+        self.query_one("#lbl-ivs-eta", Label).update(
+            Text.from_markup(f"ETA→{target_k}k: {eta_markup}", emoji=False)
+        )
 
     # ----- Client table ------------------------------------------------------
 

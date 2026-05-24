@@ -146,6 +146,21 @@ class WlanFrameParser:
             if fc1 & 0x80:
                 header_len += 4
 
+            # Protected (WEP/TKIP/CCMP) Data frame? The 4 bytes after the
+            # MAC header are the IV header. The Key ID byte's ExtIV bit
+            # (0x20) tells WEP (clear → 4-byte IV) from TKIP/CCMP (set →
+            # 8-byte extended IV) without needing the AP's beacon. WEP gives
+            # us a fresh 3-byte IV per frame — the raw material the IV
+            # collector tallies and the cracker eventually consumes.
+            if (fc1 & 0x40) and len(frame) >= header_len + 4:
+                keyid_byte = frame[header_len + 3]
+                if not (keyid_byte & 0x20):  # ExtIV clear → WEP
+                    result["type"] = "wep_data"
+                    result["wep_iv"] = bytes(frame[header_len : header_len + 3])
+                    result["wep_keyid"] = (keyid_byte >> 6) & 0x03
+                # Encrypted body — no plaintext LLC/SNAP to find below.
+                return result
+
             if len(frame) >= header_len + 8:
                 # The hardware DMA engine pads the 802.11 header so the payload is 4-byte aligned.
                 # If the header is 26 bytes, it adds 2 bytes of padding (e.g. `00 00`), pushing LLC to offset 28.

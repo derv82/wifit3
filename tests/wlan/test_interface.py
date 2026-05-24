@@ -91,6 +91,63 @@ def test_forged_mac_does_not_create_client_or_append_eapol(mocker):
     assert hs.eapol_frames == []
 
 
+def _seed_ap(iface, bssid, encryption):
+    iface._on_frame_parsed({
+        "type": "beacon",
+        "bssid": bssid,
+        "source": bssid,
+        "dest": "ff:ff:ff:ff:ff:ff",
+        "rssi": -40,
+        "ssid": "WepAP",
+        "channel": 6,
+        "encryption": encryption,
+        "raw": b"\x00" * 36,
+    })
+
+
+def _wep_data(bssid, client, iv):
+    # AP→client: source=client, dest=client, bssid carried separately.
+    return {
+        "type": "wep_data",
+        "bssid": bssid,
+        "source": client,
+        "dest": client,
+        "rssi": -45,
+        "wep_iv": iv,
+        "wep_keyid": 0,
+        "raw": b"\x00" * 40,
+    }
+
+
+def test_wep_ivs_tallied_onto_ap(mocker):
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="T")
+    bssid = "11:22:33:44:55:66"
+    _seed_ap(iface, bssid, "WEP")
+
+    iface._on_frame_parsed(_wep_data(bssid, "aa:bb:cc:dd:ee:01", b"\x01\x02\x03"))
+    iface._on_frame_parsed(_wep_data(bssid, "aa:bb:cc:dd:ee:01", b"\x01\x02\x03"))  # dup
+    iface._on_frame_parsed(_wep_data(bssid, "aa:bb:cc:dd:ee:01", b"\x04\x05\x06"))
+
+    ap = iface.access_points[bssid]
+    assert ap.wep is not None
+    assert ap.wep.unique_ivs == 2
+    assert ap.wep.total_frames == 3
+    # The transmitting client should also be registered + associated.
+    assert "aa:bb:cc:dd:ee:01" in iface.clients
+    assert iface.clients["aa:bb:cc:dd:ee:01"].bssid == bssid
+
+
+def test_wep_ivs_ignored_for_non_wep_ap(mocker):
+    """Guard: an ExtIV-clear frame on a WPA2 AP must not inflate a WEP count."""
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="T")
+    bssid = "11:22:33:44:55:66"
+    _seed_ap(iface, bssid, "WPA2")
+
+    iface._on_frame_parsed(_wep_data(bssid, "aa:bb:cc:dd:ee:01", b"\x01\x02\x03"))
+
+    assert iface.access_points[bssid].wep is None
+
+
 def test_real_client_still_creates_handshake_with_eapol_frames(mocker):
     """Counterpart to the forged-MAC test: a real client (not in
     iface.forged_macs) gets normal client + handshake registration."""

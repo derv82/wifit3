@@ -22,6 +22,15 @@ _NO_ATTACK_YET = "yellow"
 _OUT_OF_SCOPE = "red"
 
 
+def _format_iv_count(n: int) -> str:
+    """Compact IV count for the ENCRYPT cell: 1234 → '1.2k', 12345 → '12.3k'."""
+    if n < 1000:
+        return str(n)
+    if n < 1_000_000:
+        return f"{n / 1000:.1f}k".replace(".0k", "k")
+    return f"{n / 1_000_000:.1f}M".replace(".0M", "M")
+
+
 def _simplified_akms(akms: List[str]) -> str:
     """Reduce the raw AKM list to a short PSK/SAE/EAP/OWE token string."""
     has_sae = any(a == "SAE" or a == "FT-SAE" for a in akms)
@@ -114,7 +123,16 @@ def format_encryption_markup(
     if enc == "OPEN" or not enc or enc == "UNKNOWN":
         return f"[{muted}]OPEN[/{muted}]"
     if enc == "WEP":
-        return f"[{_OUT_OF_SCOPE}]WEP[/{_OUT_OF_SCOPE}]"
+        # Attackable now (IV capture → replay → crack). Scanner cell carries a
+        # live unique-IV count so a target with IVs already banked stands out;
+        # the Focus CAPTURE panel owns the count in detailed mode.
+        head = f"[{_ATTACKABLE}]WEP[/{_ATTACKABLE}]"
+        if detailed:
+            return head
+        n = ap.wep.unique_ivs if ap.wep else 0
+        # Dot separator (no parens) — the trailing ')' was getting clipped by
+        # the ENCRYPT column width, and an unmatched '(' reads worse than none.
+        return head + f"[{muted}]·{_format_iv_count(n)} IVs[/{muted}]"
     if enc.startswith("WPA-") or enc == "WPA":
         # Legacy WPA1 vendor IE — TKIP universal. Out of scope for wifit3.
         head = f"[{_OUT_OF_SCOPE}]WPA[/{_OUT_OF_SCOPE}]"

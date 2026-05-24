@@ -240,6 +240,69 @@ def test_wep_via_privacy_bit():
     assert parsed["encryption"] == "WEP"
 
 
+# ---- WEP Data-frame IV extraction ------------------------------------------
+
+def _build_wep_data(
+    *,
+    iv: bytes = b"\x03\xff\x00",
+    keyid: int = 0,
+    ext_iv: bool = False,
+    qos: bool = False,
+    bssid: bytes = b"\x11\x22\x33\x44\x55\x66",
+    client: bytes = b"\xaa\xbb\xcc\xdd\xee\xff",
+    body_len: int = 16,
+) -> bytes:
+    """Build a protected AP→client Data frame. ``ext_iv`` sets the Key ID
+    byte's ExtIV bit (0x20) to emulate TKIP/CCMP; left clear it's WEP."""
+    subtype = 0x08 if qos else 0x00
+    fc0 = 0x08 | (subtype << 4)        # type=data, subtype
+    fc1 = 0x02 | 0x40                  # from_ds + Protected
+    mac = bytes([fc0, fc1]) + b"\x00\x00"
+    # from_ds: addr1=dest(client), addr2=bssid(AP), addr3=source(client)
+    mac += client + bssid + client + b"\x00\x00"   # ...+ seq
+    if qos:
+        mac += b"\x00\x00"            # QoS Control → header is 26 B
+    keyid_byte = (keyid << 6) & 0xC0
+    if ext_iv:
+        keyid_byte |= 0x20
+    return mac + iv + bytes([keyid_byte]) + b"\x00" * body_len
+
+
+def test_wep_data_extracts_iv():
+    frame = _build_wep_data(iv=b"\x03\xff\x00", keyid=1)
+    parsed = WlanFrameParser.parse_80211_frame(frame, -50)
+    assert parsed["type"] == "wep_data"
+    assert parsed["wep_iv"] == b"\x03\xff\x00"
+    assert parsed["wep_keyid"] == 1
+    assert parsed["bssid"] == "11:22:33:44:55:66"
+
+
+def test_wep_qos_data_iv_offset():
+    """QoS Data has a 26-byte header; the IV must be read past the QoS
+    Control field, not at the non-QoS offset 24."""
+    frame = _build_wep_data(iv=b"\xde\xad\xbe", qos=True)
+    parsed = WlanFrameParser.parse_80211_frame(frame, -50)
+    assert parsed["type"] == "wep_data"
+    assert parsed["wep_iv"] == b"\xde\xad\xbe"
+
+
+def test_ext_iv_data_is_not_wep():
+    """TKIP/CCMP set the ExtIV bit — must NOT be tallied as a WEP IV."""
+    frame = _build_wep_data(ext_iv=True)
+    parsed = WlanFrameParser.parse_80211_frame(frame, -50)
+    assert parsed["type"] == "data"
+    assert "wep_iv" not in parsed
+
+
+def test_unprotected_data_is_not_wep():
+    """A cleartext Data frame (Protected bit clear) is never WEP."""
+    frame = bytearray(_build_wep_data())
+    frame[1] &= ~0x40  # clear Protected bit
+    parsed = WlanFrameParser.parse_80211_frame(bytes(frame), -50)
+    assert parsed["type"] == "data"
+    assert "wep_iv" not in parsed
+
+
 def test_wpa3_keys_propagate_through_parse_80211_frame():
     """Regression: pre-fix these keys were set on the tags dict but dropped
     in parse_80211_frame, never reaching _on_frame_parsed."""
