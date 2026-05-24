@@ -249,10 +249,21 @@ decides on its own is *success* (→ resume replay), because that's unambiguous;
    pinned oracle, hands the relay to the campaign on success (immediate handoff),
    keeps retrying on a barren round. Campaign owns the Frag sub-mode
    (`start_frag`/`stop_frag`/`_on_frag_success`, replay pause/resume); Focus has
-   the "Frag" toggle. **`chopchop.py` is still a skeleton** — next: its own probe
-   (inject a chopped guess, dump, read the relayed shortened frame / accept-vs-
-   reject signal, gold-standard-verify vs the key), then the daemon, then a "Chop"
-   toggle. No sw_seq needed for chop (single frames, not a reassembled train).
+   the "Frag" toggle.
+6. **ChopChop probe — ✅ BUILT, ready for hardware** (`scripts/wep/chopchop_probe.py`):
+   fake-auths, sweeps all 256 guesses for one byte (chop_last_byte_and_fixup,
+   re-headered broadcast-from-us, NO sw_seq — single frames), dumps every RX
+   frame to a `.pcap`, flags candidate relays (FromDS broadcast WEP data, SA=us,
+   ~orig-1 long). With `--key` it decrypts the original → true last byte and
+   confirms exactly that guess relays + MEASURES per-guess latency (the daemon's
+   oracle timeout). Frame extraction + chop rebuild are offline-verified
+   byte-correct. **NEXT: run at the box (`--bssid .. --key abcde`), read the
+   relay shape + latency, then code `chopchop.py`'s oracle to it.**
+7. **`chopchop.py` daemon + "Chop" toggle (still TODO)** — byte-walk over the
+   oracle → recover plaintext/keystream → forge ARP → on_forged_arp → replay.
+   The byte-walk reconstruction is pure/offline-testable against a simulated
+   oracle; only the live relay-recognition needs the box. Then `start_chop`/
+   `stop_chop` in the campaign + a "Chop" toggle next to "Frag".
 
 ### File status
 
