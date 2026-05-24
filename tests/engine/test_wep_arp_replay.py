@@ -30,6 +30,9 @@ class FakeCollector:
     def unique_count(self, bssid: str) -> int:
         return self._unique
 
+    def rate(self, bssid: str, now=None) -> float:
+        return 0.0
+
     def arp_candidates(self, bssid: str) -> list[bytes]:
         return list(self._candidates)
 

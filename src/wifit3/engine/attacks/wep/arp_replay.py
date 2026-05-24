@@ -402,10 +402,13 @@ class WepArpReplay:
         # cumulative IV total.
         gained = max(0, unique - self._unique_baseline)
         capture = (100.0 * gained / self.stats.injected) if self.stats.injected else 0.0
-        # pps first so the lines column-align; raw pps + burst stay on stats
-        # (it confirmed we're AP-relay-limited, not card-limited — detail's noise now).
+        # "X pps → Y IVs/s" makes the input→output of the (suboptimal) rate
+        # controller visible at a glance — pps is what we SEND (literal:
+        # injected/cycle, not estimated), IVs/s is what we GET (the real
+        # objective). They should track the rate-control rework (see README).
+        ivs_per_s = self.collector.rate(self.bssid)
         self._log(
-            f"[green]ARP Replay:[/green] [dim]{self.stats.effective_pps:.0f} pps · "
-            f"{self.stats.injected:,} injected · "
+            f"[green]ARP Replay:[/green] [dim]{self.stats.effective_pps:.0f} pps → "
+            f"{ivs_per_s:.0f} IVs/s · {self.stats.injected:,} injected · "
             f"{unique:,} IVs ({capture:.0f}% capture)[/dim]"
         )

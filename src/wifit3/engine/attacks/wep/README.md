@@ -98,9 +98,37 @@ Known minor: post-frag replay IV-rate (~50-80/s) trails replay off a real
 client ARP (~150-200/s) — the forged ARP (default sender/target 192.168.1.x)
 doesn't amplify like a real host's ARP. Fine for frag's no-client use case
 (still cracks in ~2 min); optional future lever is a configurable forged-ARP
-target IP. Injection rate is the ADAPTIVE BURST CLIMBER in `arp_replay.py` —
-maximize raw IVs/s by driving toward the AP's rebroadcast ceiling; do NOT
-"optimize capture%" (a vanity metric — proven worse on hardware).
+target IP.
+
+### ⚠ OPEN: ARP-replay rate control needs a proper rework (next session)
+
+**The injection-rate algorithm in `arp_replay.py` (the adaptive burst climber)
+is NOT trusted.** We have evidence it's *suboptimal*, only that it beats a
+static 400 pps. Do NOT treat it as settled.
+
+- **Hardware evidence (2026-05-24, user):** at ~350-400 pps it got ~30 IVs/s,
+  but at ~80-120 pps it got ~80 IVs/s. **More injection → FEWER IVs/s.** So
+  there's an interior optimum (~100 pps-ish on the dd-wrt box) and the climber
+  overshoots it. Both a too-low fixed cap (the reverted 150) and the climber's
+  runaway (~400) miss it.
+- **Why the climber is wrong:** it hill-climbs **burst size** on **per-cycle IV
+  gain**, but the AP's relay has a **~1-2s delay**, so a burst's IVs land in
+  *later* cycles → the per-cycle signal is misattributed noise. You can't
+  gradient-climb a sub-delay measurement.
+- **The objective is IVs/s** (≈ time-to-crack), NOT pps and NOT capture% (a
+  vanity metric — see [[feedback_optimize_real_metric]]).
+- **The right shape (user's framing, a known standard):** closed-loop
+  extremum-seeking / **perturb-and-observe** (cf. solar MPPT). Control variable =
+  injection rate (pps). Objective = IVs/s measured over a window **longer than
+  the relay delay** (~2-3s). Step the rate, wait > delay, measure IVs/s, follow
+  the gradient, settle/hover at the pleateau. Start slow, climb, hover.
+- **Diagnostics already in place:** the 8s heartbeat now logs `X pps → Y IVs/s`
+  (pps = literal injected/cycle, NOT estimated from capture%). IVs/s is stable;
+  pps bounces — another reason to control on IVs/s.
+- **Frag injection is SEPARATE + low-rate:** `WepFragmentation._inject_round`
+  sends ~9 fragments then sleeps `_ROUND_GAP=0.2s` ≈ **~45 pps**, fixed cadence,
+  NOT the climber. It just needs one successful round (usually round 1), so it's
+  not hammering the AP and isn't part of this rework.
 
 ### State machine — human-driven, NOT auto-escalation
 
