@@ -158,7 +158,7 @@ class WepCampaign:
                     self._crack_started = True
                     self._log(
                         f"[cyan]→ Cracking[/cyan] — {self.cracker.sample_count:,} "
-                        f"IVs collected, attempting key recovery…"
+                        f"usable IVs (ARP) collected, attempting key recovery…"
                     )
                 # Ship the (picklable) cracker to the worker; it runs the search
                 # on a snapshot of the votes and returns the key, if any.
