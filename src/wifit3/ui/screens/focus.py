@@ -57,7 +57,13 @@ class FocusView(Screen):
     BINDINGS = [
         Binding("escape", "go_back", "Back to Scanner", show=True),
         Binding("q", "app.quit", "Quit", show=True),
+        # 's' has two labels for the same key — check_action() reveals exactly
+        # one based on the target's encryption (Save Capture for WPA's
+        # handshake/PMKID, Save Key for a cracked WEP key) and hides both until
+        # there's actually something to save. Likewise 'c' only appears once a
+        # WEP key is recovered.
         Binding("s", "save_capture", "Save Capture", show=True),
+        Binding("s", "save_key", "Save Key", show=True),
         Binding("c", "copy_key", "Copy WEP Key", show=True),
         Binding("space", "toggle_client", "Select Client", show=True),
     ]
@@ -395,6 +401,10 @@ class FocusView(Screen):
         btn_save = self.query_one("#btn-save", Button)
         btn_save.display = ap.has_capture
         btn_save.disabled = not ap.has_capture
+        btn_save.label = "Save Key" if is_wep else "Save Capture"
+        # Re-evaluate the footer's Save/Copy keys (check_action) as the key /
+        # handshake state changes.
+        self.refresh_bindings()
 
         # Clients.
         iface = getattr(self.app, "active_interface", None)
@@ -727,7 +737,29 @@ class FocusView(Screen):
         elif bid == "btn-chop":
             self._toggle_chop()
 
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        """Show/hide the Save + Copy footer keys based on the target's
+        encryption and whether there's anything to save yet. Returning False
+        hides the binding entirely (and blocks the keypress); the rest stay
+        shown. ``update_ui`` calls ``refresh_bindings()`` so this re-evaluates
+        as the campaign progresses."""
+        if action in ("save_capture", "save_key", "copy_key"):
+            ap = self.target_ap
+            if ap is None:
+                return False
+            is_wep = (ap.encryption or "").upper() == "WEP"
+            if action == "save_capture":      # WPA: a handshake/PMKID to write
+                return not is_wep and ap.has_capture
+            # save_key / copy_key: a recovered WEP key
+            return is_wep and ap.wep_key is not None
+        return True
+
     def action_save_capture(self) -> None:
+        self._save_capture()
+
+    def action_save_key(self) -> None:
+        # Same writer as Save Capture — it routes to the WEP-key path when a key
+        # is present; the separate action just gives the footer a WEP label.
         self._save_capture()
 
     def action_copy_key(self) -> None:
