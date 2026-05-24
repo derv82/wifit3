@@ -118,19 +118,22 @@ async def test_recovered_keystream_forges_a_valid_arp():
 
 # ---- the live-AP oracle matcher (RX callback) ------------------------------
 
-def _relay_frame(sa=OUR, fc1=0x42, da=b"\xff" * 6, fc0=0x08):
+def _relay_frame(sa=OUR, fc1=0x42, da=b"\xff" * 6, fc0=0x08, pad=40):
     return (bytes([fc0, fc1]) + b"\x00\x00" + da + bytes.fromhex("aa:bb:cc:dd:ee:06")
-            + sa + b"\x00\x00" + b"\xab\xcd\xef\x00" + b"\x00" * 40)
+            + sa + b"\x00\x00" + b"\xab\xcd\xef\x00" + b"\x00" * pad)
 
 
 def test_rx_oracle_fires_on_pinned_relay():
     d, _ = _daemon()
-    d._rx_cb(_relay_frame(), -40, 0.0)
+    relay = _relay_frame()
+    d._expected_relay_len = len(relay)
+    d._rx_cb(relay, -40, 0.0)
     assert d._relay_seen
 
 
 def test_rx_oracle_ignores_non_matching():
     d, _ = _daemon()
+    d._expected_relay_len = len(_relay_frame())
     d._rx_cb(_relay_frame(sa=bytes.fromhex("020000000099")), -40, 0.0)  # not us
     assert not d._relay_seen
     d._rx_cb(_relay_frame(fc1=0x41), -40, 0.0)        # ToDS (our own inject)
@@ -138,4 +141,13 @@ def test_rx_oracle_ignores_non_matching():
     d._rx_cb(_relay_frame(da=OUR), -40, 0.0)          # unicast DA
     assert not d._relay_seen
     d._rx_cb(_relay_frame(fc0=0x80), -40, 0.0)        # mgmt, not data
+    assert not d._relay_seen
+
+
+def test_rx_oracle_rejects_stale_echo_of_wrong_length():
+    """The sibling-BSS echo of the PREVIOUS byte is 1 longer than this guess's
+    expected relay — it must NOT be accepted (that bug stalled the walk)."""
+    d, _ = _daemon()
+    d._expected_relay_len = len(_relay_frame())        # this byte's expectation
+    d._rx_cb(_relay_frame(pad=41), -40, 0.0)           # previous byte's relay (+1B)
     assert not d._relay_seen

