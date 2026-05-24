@@ -117,6 +117,30 @@ async def test_brute_force_forge_recovers_the_unreachable_byte():
     assert plain[-4:] == icv(plain[:-4])         # valid ICV → AP relays it
 
 
+async def test_find_accepted_warns_when_multiple_bytes_respond():
+    """If >1 byte value relays at a position (uniqueness violated — the user's
+    concern), the WEE WOO alarm fires and we still return a responder."""
+    from wifit3.engine.attacks.wep.wep_crypto import chop_last_byte_and_fixup
+    cipher, _ = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
+    g_a, g_b = 0x10, 0xC8
+    s_a = chop_last_byte_and_fixup(cipher, g_a)
+    s_b = chop_last_byte_and_fixup(cipher, g_b)
+
+    async def two_valid(short: bytes) -> bool:   # both relay + reconfirm
+        return short in (s_a, s_b)
+
+    logs = []
+    iface = SimpleNamespace(register_rx_callback=lambda c: None,
+                            unregister_rx_callback=lambda c: None)
+    d = WepChopChop(iface, SimpleNamespace(bssid=BSSID), SimpleNamespace(),
+                    source_mac=OUR, on_forged_arp=lambda f: None,
+                    log_callback=logs.append, oracle=two_valid)
+    d._active = True
+    accepted = await d._find_accepted(cipher)
+    assert accepted in (g_a, g_b)
+    assert any("WEE WOO" in m for m in logs)
+
+
 async def test_find_accepted_rejects_unconfirmed_spurious_relay():
     """A wrong guess that relays ONCE (misattributed sibling-BSS echo / timing
     slip) must be rejected by the re-confirm step — else it corrupts the walk.
