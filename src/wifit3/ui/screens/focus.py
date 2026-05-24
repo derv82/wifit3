@@ -285,7 +285,9 @@ class FocusView(Screen):
         btn_sae.display = not is_wep
         btn_down.display = not is_wep
         btn_pmkid.display = not is_wep
-        btn_gen.display = is_wep
+        # Generate IVs vanishes once the key is cracked — Save takes its place,
+        # so it reads as a "Generate IVs → Save" swap.
+        btn_gen.display = is_wep and ap.wep_key is None
 
         if is_wep:
             # A finished campaign (key recovered) is torn down so the button
@@ -323,7 +325,7 @@ class FocusView(Screen):
         self.query_one("#lbl-beacons", Label).update(
             f"Beacons: {ap.beacons:,} ({rate:.1f}/s)"
         )
-        self.query_one("#lbl-pwr", Label).update(f"POWER: {ap.signal} dBm")
+        self.query_one("#lbl-pwr", Label).update(f"Power: {ap.signal} dBm")
 
         # WEP and WPA2/3 capture progress are mutually exclusive: WEP has no
         # handshake/PMKID, WPA has no IVs. Show whichever pair fits the target.
@@ -367,7 +369,9 @@ class FocusView(Screen):
             )
 
         # Save button.
-        self.query_one("#btn-save", Button).disabled = not ap.has_capture
+        # Save only appears once there's something to save (a WEP key, or a
+        # WPA handshake/PMKID) — hidden, not shown-disabled.
+        self.query_one("#btn-save", Button).display = ap.has_capture
 
         # Clients.
         iface = getattr(self.app, "active_interface", None)
