@@ -121,7 +121,10 @@ class WepCampaign:
         # de-registering the forged STA.
         self.replay.stop()
         self.fake_auth.stop()
-        self._log("[bold red]✗ Generate IVs stopped.[/bold red]")
+        # Quiet when we stopped because we WON — the key + "press c to copy"
+        # were already logged; "stopped" right after would read as a failure.
+        if self.recovered_key is None:
+            self._log("[bold red]✗ Generate IVs stopped.[/bold red]")
         logger.info("[WEP-Campaign] Stopped on %s", self.target.bssid)
 
     async def _crack_loop(self) -> None:
@@ -156,6 +159,7 @@ class WepCampaign:
                     continue   # retry next tick on a fresh snapshot
                 if key is not None:
                     self.recovered_key = key
+                    self.target.wep_key = key   # persist on the AP (Save / UI)
                     self._log(
                         f"[bold green]✓ WEP KEY RECOVERED:[/bold green] "
                         f"[bold]{key.hex()}[/bold] "

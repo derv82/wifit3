@@ -300,3 +300,13 @@ UI integration: when the scanner sees a "hidden" AP whose BSSID matches a high-c
 
 ## Architectural Guidelines
 *  **Lead's Rule:** Discuss class design (e.g., `GenericDriver` vs `WlanInterface` responsibilities) BEFORE execution. Treat the user as the Senior Lead.
+
+## NEXT STEP: Fix delay when first loading app & listing interfaces
+
+Feels like an arbitrary 0.5-1s delay, like we could easily call it as soon as textual starts up right? just make it non-blocking...
+
+## NEXT STEP: More than 10k beacons get truncated
+
+Prob: "10512" is rewritten as "0512" in the view.
+
+Fix: Can we get auto-size for the BEACONS (:bacon:) column? Or would that screw up the right-alignment?

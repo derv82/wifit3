@@ -113,9 +113,11 @@ class FocusView(Screen):
                     Label(id="lbl-pmkid"),
                     # WEP-only: shown in place of Handshake/PMKID (which are
                     # meaningless for WEP) when the target is a WEP AP.
+                    # WEP rows: IVs (carries the replay status inline), then a
+                    # 4th row that's ETA→10k while collecting / Crack status
+                    # once a campaign is running.
                     Label(id="lbl-ivs"),
                     Label(id="lbl-ivs-eta"),
-                    Label(id="lbl-replay"),
                     Label(id="lbl-crack"),
                     classes="info-box",
                 )
@@ -278,11 +280,17 @@ class FocusView(Screen):
         btn_gen.display = is_wep
 
         if is_wep:
-            btn_gen.label = "Stop IVs" if self._wep_campaign else "Generate IVs"
-            self._update_campaign_status()
+            # A finished campaign (key recovered) is torn down so the button
+            # reverts to "Generate IVs" — the user shouldn't have to click Stop
+            # after a successful crack. The key persists on ap.wep_key.
+            camp = self._wep_campaign
+            if camp is not None and camp.recovered_key is not None:
+                self._stop_generate_ivs()
+                camp = None
+            btn_gen.label = "Stop IVs" if camp is not None else "Generate IVs"
+            self._update_fakeauth_line()
         else:
             self.query_one("#lbl-fakeauth", Label).display = False
-            self.query_one("#lbl-replay", Label).display = False
             self.query_one("#lbl-crack", Label).display = False
             if ap.wpa3:
                 btn_sae.disabled = False
@@ -305,7 +313,7 @@ class FocusView(Screen):
         elapsed = max(1.0, time.time() - ap.first_seen)
         rate = ap.beacons / elapsed
         self.query_one("#lbl-beacons", Label).update(
-            f"Beacons: {ap.beacons} ({rate:.1f}/s)"
+            f"Beacons: {ap.beacons:,} ({rate:.1f}/s)"
         )
         self.query_one("#lbl-pwr", Label).update(f"POWER: {ap.signal} dBm")
 
@@ -314,16 +322,16 @@ class FocusView(Screen):
         hs_label = self.query_one("#lbl-handshake", Label)
         pmkid_label = self.query_one("#lbl-pmkid", Label)
         ivs_label = self.query_one("#lbl-ivs", Label)
-        ivs_eta_label = self.query_one("#lbl-ivs-eta", Label)
 
         hs_label.display = not is_wep
         pmkid_label.display = not is_wep
         ivs_label.display = is_wep
-        ivs_eta_label.display = is_wep
 
         if is_wep:
+            # _update_wep_capture owns lbl-ivs / lbl-ivs-eta / lbl-crack.
             self._update_wep_capture(ap)
         else:
+            self.query_one("#lbl-ivs-eta", Label).display = False
             n_complete = sum(1 for hs in ap.handshakes.values() if hs.is_complete)
             n_partial = sum(
                 1
@@ -364,59 +372,105 @@ class FocusView(Screen):
         # Deauth-selected button.
         self.query_one("#btn-deauth-sel", Button).disabled = not self._selected_clients
 
+    @staticmethod
+    def _replay_status_markup(r) -> str:
+        """Condensed replay status for the inline IVs line (no 'Replaying'
+        redundancy, no per-frame totals)."""
+        s = r.state
+        if s == "replaying":
+            return f"[green]~{r.stats.effective_pps:.0f} pps[/green]"
+        if s == "testing":
+            return "[cyan]testing ARP[/cyan]"
+        if s == "waiting-arp":
+            return "[yellow]waiting ARP[/yellow]"
+        if s == "waiting-auth":
+            return "[dim]waiting assoc[/dim]"
+        if s == "paused":
+            return "[dim]paused[/dim]"
+        return "[dim]idle[/dim]"
+
     def _update_wep_capture(self, ap: AccessPoint) -> None:
-        """Render the WEP CAPTURE lines: live unique-IV count + rate, and the
-        ETA to the crack threshold. Reads counts from the AP model and the
-        live rate/ETA from the interface's WepCaptureStore."""
-        n = ap.wep.unique_ivs if ap.wep else 0
-        total = ap.wep.total_frames if ap.wep else 0
+        """Render the three WEP CAPTURE rows: IVs (+ inline replay status when
+        a campaign runs), and a 4th row that's ETA→10k while passively
+        collecting / Crack status once a campaign is active or a key is found.
+        The Beacons/POWER/IVs values stay column-aligned for at-a-glance
+        antenna tuning."""
         iface = getattr(self.app, "active_interface", None)
+        n = ap.wep.unique_ivs if ap.wep else 0
         rate = iface.wep_store.rate(ap.bssid) if iface else 0.0
+        campaign = self._wep_campaign
 
-        count_markup = (
-            f"[bold green]{n:,}[/bold green]" if n else "[red]0[/red]"
-        )
-        rate_markup = f"[dim]({rate:.0f}/s, {total:,} frames)[/dim]"
+        count = f"[bold green]{n:,}[/bold green]" if n else "[red]0[/red]"
+        ivs_line = f"IVs: {count} [dim]({rate:.0f}/s)[/dim]"
+        # Inline replay status only while a campaign is actively running.
+        if campaign is not None and campaign.recovered_key is None:
+            ivs_line += (
+                f" [dim]·[/dim] Replay: {self._replay_status_markup(campaign.replay)}"
+            )
         self.query_one("#lbl-ivs", Label).update(
-            Text.from_markup(f"IVs: {count_markup} {rate_markup}", emoji=False)
+            Text.from_markup(ivs_line, emoji=False)
         )
 
-        # ETA is a "collecting toward 10k" readout — once we hit the threshold
-        # the Crack line owns the status, so hide ETA instead of leaving a
-        # stale "✓ reached" sitting there forever.
         eta_label = self.query_one("#lbl-ivs-eta", Label)
-        target_k = WEP_CRACK_IV_THRESHOLD // 1000
-        if n >= WEP_CRACK_IV_THRESHOLD:
-            eta_label.display = False
-        else:
-            eta_label.display = True
-            eta = iface.wep_store.eta_seconds(ap.bssid) if iface else None
-            eta_markup = (
-                "[dim]— (waiting for IVs)[/dim]" if eta is None
-                else _format_duration(int(eta))
-            )
-            eta_label.update(
-                Text.from_markup(f"ETA→{target_k}k: {eta_markup}", emoji=False)
-            )
-
-    def _update_campaign_status(self) -> None:
-        """Render the Fake-Auth (SECURITY) + replay (CAPTURE) status lines from
-        the running Generate IVs campaign."""
-        fa_label = self.query_one("#lbl-fakeauth", Label)
-        replay_label = self.query_one("#lbl-replay", Label)
         crack_label = self.query_one("#lbl-crack", Label)
-        fa_label.display = True
-        replay_label.display = True
-        crack_label.display = True
+        active = campaign is not None
+        cracked = ap.wep_key is not None
 
+        # 4th row: Crack line when a campaign is active or we have a key; else
+        # the passive "ETA→10k" countdown (hidden once the threshold's reached).
+        if active or cracked:
+            eta_label.display = False
+            crack_label.display = True
+            crack_label.update(
+                Text.from_markup(
+                    f"Crack: {self._crack_status_markup(ap, campaign)}", emoji=False
+                )
+            )
+        else:
+            crack_label.display = False
+            target_k = WEP_CRACK_IV_THRESHOLD // 1000
+            if n >= WEP_CRACK_IV_THRESHOLD:
+                eta_label.display = False
+            else:
+                eta_label.display = True
+                eta = iface.wep_store.eta_seconds(ap.bssid) if iface else None
+                eta_markup = (
+                    "[dim]— (waiting for IVs)[/dim]" if eta is None
+                    else _format_duration(int(eta))
+                )
+                eta_label.update(
+                    Text.from_markup(f"ETA→{target_k}k: {eta_markup}", emoji=False)
+                )
+
+    @staticmethod
+    def _crack_status_markup(ap: AccessPoint, campaign) -> str:
+        """Crack-line markup. The recovered key (read from ap.wep_key so it
+        survives campaign teardown) is rendered as an unmissable cyan block."""
+        if ap.wep_key is not None:
+            key = ap.wep_key
+            ascii_hint = (
+                f' = "{key.decode("ascii")}"'
+                if all(0x20 <= b < 0x7F for b in key) else ""
+            )
+            return (
+                f"[bold black on cyan] ✓ KEY {key.hex()}{ascii_hint} "
+                f"[/bold black on cyan] [dim]('c' to copy)[/dim]"
+            )
+        if campaign is None:
+            return "[dim]—[/dim]"
+        cr = campaign.cracker
+        if cr.ready:
+            return f"[cyan]cracking…[/cyan] [dim]({cr.sample_count:,} samples)[/dim]"
+        return f"[dim]collecting {cr.sample_count:,}/{cr.ready_threshold:,}[/dim]"
+
+    def _update_fakeauth_line(self) -> None:
+        """Render the SECURITY-panel Fake-Auth status from the running campaign."""
+        fa_label = self.query_one("#lbl-fakeauth", Label)
+        fa_label.display = True
         campaign = self._wep_campaign
         if campaign is None:
             fa_label.update(Text.from_markup("Fake-Auth: [dim]Off[/dim]", emoji=False))
-            replay_label.update(Text.from_markup("Replay: [dim]Off[/dim]", emoji=False))
-            crack_label.update(Text.from_markup("Crack: [dim]Off[/dim]", emoji=False))
             return
-
-        # Fake-auth state.
         fa = campaign.fake_auth
         if fa.state == "associated":
             countdown = ""
@@ -431,60 +485,6 @@ class FocusView(Screen):
         else:
             fa_markup = "[dim]Idle[/dim]"
         fa_label.update(Text.from_markup(f"Fake-Auth: {fa_markup}", emoji=False))
-
-        # Replay state + ARP visibility (seen / usable / tried / failed).
-        r = campaign.replay
-        iface = getattr(self.app, "active_interface", None)
-        bssid = self.target_ap.bssid
-        seen = iface.wep_store.arp_seen_count(bssid) if iface else 0
-        usable = iface.wep_store.arp_candidate_count(bssid) if iface else 0
-        arp_info = f"{seen} seen, {usable} usable"
-        if r.stats.candidates_failed:
-            arp_info += f", {r.stats.candidates_failed} fruitless"
-
-        if r.state == "replaying":
-            rmarkup = (
-                f"[green]Replaying[/green] [dim](~{r.stats.effective_pps:.0f} pps · "
-                f"{r.stats.injected:,} sent)[/dim]"
-            )
-        elif r.state == "testing":
-            rmarkup = f"[cyan]Testing ARP[/cyan] [dim]({arp_info})[/dim]"
-        elif r.state == "waiting-arp":
-            rmarkup = (
-                f"[yellow]Waiting for ARP[/yellow] "
-                f"[dim]({arp_info} — deauth a client)[/dim]"
-            )
-        elif r.state == "waiting-auth":
-            rmarkup = "[dim]Waiting for assoc…[/dim]"
-        elif r.state == "paused":
-            rmarkup = "[dim]Paused[/dim]"
-        else:
-            rmarkup = "[dim]Idle[/dim]"
-        replay_label.update(Text.from_markup(f"Replay: {rmarkup}", emoji=False))
-
-        # Crack state. The recovered key is the payoff — make it impossible to
-        # miss (bold cyan on a black background), with the ASCII form if the
-        # key is a printable word, and a reminder to press 'c' to copy.
-        cr = campaign.cracker
-        if campaign.recovered_key is not None:
-            key = campaign.recovered_key
-            kh = key.hex()
-            ascii_hint = (
-                f' = "{key.decode("ascii")}"'
-                if all(0x20 <= b < 0x7F for b in key) else ""
-            )
-            cmarkup = (
-                f"[bold black on cyan] ✓ KEY {kh}{ascii_hint} [/bold black on cyan]"
-                f" [dim]('c' to copy)[/dim]"
-            )
-        elif cr.ready:
-            cmarkup = f"[cyan]cracking…[/cyan] [dim]({cr.sample_count:,} samples)[/dim]"
-        else:
-            cmarkup = (
-                f"[dim]collecting {cr.sample_count:,}/"
-                f"{cr.ready_threshold:,}[/dim]"
-            )
-        crack_label.update(Text.from_markup(f"Crack: {cmarkup}", emoji=False))
 
     # ----- Client table ------------------------------------------------------
 
@@ -684,8 +684,8 @@ class FocusView(Screen):
     def action_copy_key(self) -> None:
         """Copy the recovered WEP key (hex) to the clipboard — saves the user
         from hand-selecting terminal text. No-op with a hint if not cracked."""
-        campaign = self._wep_campaign
-        key = campaign.recovered_key if campaign else None
+        # Read from the AP (persists after the finished campaign is torn down).
+        key = self.target_ap.wep_key if self.target_ap else None
         if not key:
             self._log("[yellow]No WEP key recovered yet — nothing to copy.[/yellow]")
             return
@@ -914,11 +914,14 @@ class FocusView(Screen):
         )
 
     def _toggle_generate_ivs(self) -> None:
-        """Button handler: start the Generate IVs campaign (fake-auth + ARP
-        replay) if idle, stop it if running."""
-        if self._wep_campaign:
+        """Button handler. Running campaign → stop. No campaign (incl. one that
+        already finished and was torn down) → start fresh."""
+        camp = self._wep_campaign
+        if camp is not None and camp.recovered_key is None:
             self._stop_generate_ivs()
         else:
+            if camp is not None:      # a finished campaign still around — clear it
+                self._stop_generate_ivs()
             self._start_generate_ivs()
 
     def _start_generate_ivs(self) -> None:
@@ -987,6 +990,11 @@ class FocusView(Screen):
             self._log("[yellow]⚠ Nothing to save yet.[/yellow]")
             return
 
+        # WEP: there's no handshake/pcap — just write the recovered key.
+        if ap.wep_key is not None:
+            self._save_wep_key(ap)
+            return
+
         frames: list[bytes] = []
         beacon_added = False
         for hs in ap.handshakes.values():
@@ -1035,3 +1043,31 @@ class FocusView(Screen):
                 "[dim]  (no hc22000 hashline produced — "
                 "hidden SSID or truncated capture)[/dim]"
             )
+
+    def _save_wep_key(self, ap: AccessPoint) -> None:
+        """Write the recovered WEP key to captures/<ssid>_<bssid>_<ts>_wepkey.txt."""
+        key = ap.wep_key
+        captures_dir = Path("captures")
+        safe_ssid = re.sub(r"[^A-Za-z0-9_-]", "_", ap.ssid or "hidden")[:24] or "hidden"
+        safe_bssid = ap.bssid.replace(":", "-")
+        path = captures_dir / f"{safe_ssid}_{safe_bssid}_{int(time.time())}_wepkey.txt"
+        ascii_form = (
+            key.decode("ascii") if all(0x20 <= b < 0x7F for b in key) else ""
+        )
+        try:
+            captures_dir.mkdir(parents=True, exist_ok=True)
+            lines = [
+                f"SSID:  {ap.ssid or '<hidden>'}",
+                f"BSSID: {ap.bssid}",
+                f"WEP key (hex):   {key.hex()}",
+            ]
+            if ascii_form:
+                lines.append(f'WEP key (ASCII): "{ascii_form}"')
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except Exception as exc:
+            logger.exception("Save WEP key failed")
+            self._log(f"[bold red]✗ Save failed:[/bold red] {escape(str(exc))}")
+            return
+        self._log(
+            f"[bold green]✓ Saved WEP key[/bold green] → [bold]{escape(str(path))}[/bold]"
+        )

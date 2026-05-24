@@ -185,9 +185,16 @@ class AccessPoint(BaseModel):
     # come from the WepCaptureStore keyed by this BSSID.
     wep: Optional[WepStats] = Field(default=None)
 
+    # Recovered WEP key (the cracker's payoff). Lives on the AP so it survives
+    # the Generate-IVs campaign being torn down, and so Save can write it out.
+    wep_key: Optional[bytes] = Field(default=None)
+
     @property
     def has_capture(self) -> bool:
-        """True iff at least one client has a complete handshake or a PMKID."""
+        """True iff there's something worth saving — a WPA handshake/PMKID, or
+        a recovered WEP key."""
+        if self.wep_key is not None:
+            return True
         return any(hs.is_complete or hs.pmkid for hs in self.handshakes.values())
 
 class Client(BaseModel):

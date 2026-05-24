@@ -12,6 +12,14 @@ def test_access_point_model_defaults():
     assert ap.pmf_capable is False
 
 
+def test_wep_key_counts_as_capture():
+    ap = AccessPoint(bssid="00:11:22:33:44:55", encryption="WEP")
+    assert ap.wep_key is None
+    assert ap.has_capture is False
+    ap.wep_key = bytes.fromhex("6162636465")
+    assert ap.has_capture is True   # gates the Save button + WEP save path
+
+
 def _eapol(msg_num: int, replay: int) -> EapolFrame:
     return EapolFrame(
         raw=bytes([msg_num, replay & 0xFF]),
