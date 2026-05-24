@@ -362,16 +362,18 @@ class WepArpReplay:
         self._last_state = state
         if state == "waiting-arp":
             seen = self.collector.arp_seen_count(self.bssid)
+            detail = (
+                "deauth a client to provoke one" if seen == 0
+                else f"{seen} seen, deauth to provoke one"
+            )
             self._log(
-                f"[yellow]ARP replay: waiting for a replayable ARP[/yellow] "
-                f"[dim]({seen} broadcast frame(s) seen, "
-                f"{self.collector.arp_candidate_count(self.bssid)} usable — "
-                f"deauth a client to provoke one)[/dim]"
+                "[green]ARP Replay:[/green] [white]waiting for replayable ARP"
+                f"[/white] [dim]({detail})[/dim]"
             )
         elif state == "testing":
-            self._log("[cyan]ARP replay: testing a candidate…[/cyan]")
+            self._log("[green]ARP Replay:[/green] [white]testing a candidate…[/white]")
         elif state == "waiting-auth":
-            self._log("[dim]ARP replay: waiting for association…[/dim]")
+            self._log("[green]ARP Replay:[/green] [dim]waiting for association…[/dim]")
 
     def _maybe_heartbeat(self) -> None:
         """Periodic progress line — only while actively replaying."""
@@ -383,11 +385,10 @@ class WepArpReplay:
         self._last_heartbeat = now
         unique = self.collector.unique_count(self.bssid)
         capture = (100.0 * unique / self.stats.injected) if self.stats.injected else 0.0
-        # raw pps + burst stay on stats (for the UI / future tuning) but are
-        # kept off this line — it confirmed we're AP-relay-limited, not
-        # card-limited, so the detail is just noise now.
+        # pps first so the lines column-align; raw pps + burst stay on stats
+        # (it confirmed we're AP-relay-limited, not card-limited — detail's noise now).
         self._log(
-            f"[dim]ARP replay: {self.stats.injected:,} injected · "
-            f"{self.stats.effective_pps:.0f} pps · "
+            f"[green]ARP Replay:[/green] [dim]{self.stats.effective_pps:.0f} pps · "
+            f"{self.stats.injected:,} injected · "
             f"{unique:,} IVs ({capture:.0f}% capture)[/dim]"
         )

@@ -413,12 +413,23 @@ class FocusView(Screen):
 
         eta_label = self.query_one("#lbl-ivs-eta", Label)
         crack_label = self.query_one("#lbl-crack", Label)
-        active = campaign is not None
-        cracked = ap.wep_key is not None
+        target_k = WEP_CRACK_IV_THRESHOLD // 1000
 
-        # 4th row: Crack line when a campaign is active or we have a key; else
-        # the passive "ETA→10k" countdown (hidden once the threshold's reached).
-        if active or cracked:
+        # 4th row, one clean phase transition at the threshold: ETA→10k while
+        # still collecting, then the Crack line once we have enough IVs (or a
+        # recovered key). The two never show at once.
+        if ap.wep_key is None and n < WEP_CRACK_IV_THRESHOLD:
+            crack_label.display = False
+            eta_label.display = True
+            eta = iface.wep_store.eta_seconds(ap.bssid) if iface else None
+            eta_markup = (
+                "[dim]— (waiting for IVs)[/dim]" if eta is None
+                else _format_duration(int(eta))
+            )
+            eta_label.update(
+                Text.from_markup(f"ETA→{target_k}k: {eta_markup}", emoji=False)
+            )
+        else:
             eta_label.display = False
             crack_label.display = True
             crack_label.update(
@@ -426,21 +437,6 @@ class FocusView(Screen):
                     f"Crack: {self._crack_status_markup(ap, campaign)}", emoji=False
                 )
             )
-        else:
-            crack_label.display = False
-            target_k = WEP_CRACK_IV_THRESHOLD // 1000
-            if n >= WEP_CRACK_IV_THRESHOLD:
-                eta_label.display = False
-            else:
-                eta_label.display = True
-                eta = iface.wep_store.eta_seconds(ap.bssid) if iface else None
-                eta_markup = (
-                    "[dim]— (waiting for IVs)[/dim]" if eta is None
-                    else _format_duration(int(eta))
-                )
-                eta_label.update(
-                    Text.from_markup(f"ETA→{target_k}k: {eta_markup}", emoji=False)
-                )
 
     @staticmethod
     def _crack_status_markup(ap: AccessPoint, campaign) -> str:
@@ -457,11 +453,9 @@ class FocusView(Screen):
                 f"[/bold black on cyan] [dim]('c' to copy)[/dim]"
             )
         if campaign is None:
-            return "[dim]—[/dim]"
+            return "[dim]ready — press Generate IVs[/dim]"
         cr = campaign.cracker
-        if cr.ready:
-            return f"[cyan]cracking…[/cyan] [dim]({cr.sample_count:,} samples)[/dim]"
-        return f"[dim]collecting {cr.sample_count:,}/{cr.ready_threshold:,}[/dim]"
+        return f"[cyan]cracking…[/cyan] [dim]({cr.sample_count:,} samples)[/dim]"
 
     def _update_fakeauth_line(self) -> None:
         """Render the SECURITY-panel Fake-Auth status from the running campaign."""

@@ -36,12 +36,13 @@ from wifit3.engine.attacks.wep.crack import (
 logger = logging.getLogger(__name__)
 
 
-def _ascii_hint(key: bytes) -> str:
-    """Show the ASCII form of a key when it's printable (WEP keys are often a
-    word like 'abcde'); otherwise note it's the hex above."""
-    if all(0x20 <= b < 0x7F for b in key):
-        return f'ASCII "{key.decode("ascii")}"'
-    return "hex"
+def _key_markup(key: bytes) -> str:
+    """The recovered key as an unmissable black-on-cyan block (matching the
+    Focus CAPTURE panel), with the ASCII form when it's a printable word."""
+    ascii_hint = (
+        f' = "{key.decode("ascii")}"' if all(0x20 <= b < 0x7F for b in key) else ""
+    )
+    return f"[bold black on cyan] ✓ WEP KEY: {key.hex()}{ascii_hint} [/bold black on cyan]"
 
 
 class WepCampaign:
@@ -160,17 +161,10 @@ class WepCampaign:
                 if key is not None:
                     self.recovered_key = key
                     self.target.wep_key = key   # persist on the AP (Save / UI)
-                    self._log(
-                        f"[bold green]✓ WEP KEY RECOVERED:[/bold green] "
-                        f"[bold]{key.hex()}[/bold] "
-                        f"[dim]({_ascii_hint(key)})[/dim]"
-                    )
+                    self._log(f"{_key_markup(key)} [dim](press 'c' to copy)[/dim]")
                     # Done — stop transmitting (replay + fake-auth keepalive).
                     self.replay.stop()
                     self.fake_auth.stop()
-                    self._log(
-                        "[dim]Stopped TX — key recovered. Press 'c' to copy.[/dim]"
-                    )
                     return
         except asyncio.CancelledError:
             pass
