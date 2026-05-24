@@ -60,12 +60,26 @@ def _is_multicast_or_broadcast(addr: bytes) -> bool:
     return bool(addr[0] & 0x01)
 
 
-def build_tx_desc_mgmt(mpdu: bytes, *, band_is_2g: bool = True) -> bytes:
-    """Build a 40-byte tx_pkt_desc for an MGMT-queue injection.
+def _build_tx_desc(mpdu: bytes, *, en_hwseq: bool, sw_seq: int,
+                   band_is_2g: bool) -> bytes:
+    """Shared 40-byte tx_pkt_desc builder for MGMT-queue injection.
 
-    Mirrors the fields set by `rtw_tx_rsvd_page_pkt_info_update` + the
-    mgmt rate path in `rtw_tx_pkt_info_update_rate` (2.4 GHz). The
-    returned bytes are ready to prepend to `mpdu`.
+    Mirrors the fields set by `rtw_tx_rsvd_page_pkt_info_update` + the mgmt
+    rate path in `rtw_tx_pkt_info_update_rate` (2.4 GHz). The only sequencing
+    knobs that vary between callers are W8 EN_HWSEQ + W9 SW_SEQ (tx.c:81-83):
+
+      * mgmt / single-frame data: en_hwseq=True (hardware assigns the seq) —
+        the kernel's mgmt path, and fine for anything unfragmented.
+      * fragment trains: en_hwseq=False + a fixed sw_seq, so the hardware
+        patches only the 12-bit sequence number (leaving our 4-bit fragment
+        number in the frame's seq_ctrl untouched) and every fragment of one
+        MSDU shares the SAME sequence number — the prerequisite for the AP to
+        reassemble them. This mirrors the kernel's DATA path
+        (rtw_tx_data_pkt_info_update, tx.c:331), which never sets en_hwseq and
+        carries the software seq in W9.
+
+    W8/W9 sit past the checksummed region (words 0..7), so neither knob
+    affects the W7 XOR checksum.
     """
     if len(mpdu) < 10:
         raise ValueError(f"MPDU too short ({len(mpdu)} bytes) for mgmt injection")
@@ -112,8 +126,8 @@ def build_tx_desc_mgmt(mpdu: bytes, *, band_is_2g: bool = True) -> bytes:
     w5 = 0
     w6 = 0
     w7 = 0                                 # filled by checksum below
-    w8 = (1 << 15)                         # W8[15]     EN_HWSEQ
-    w9 = 0
+    w8 = (1 << 15) if en_hwseq else 0      # W8[15]     EN_HWSEQ
+    w9 = (sw_seq & 0xFFF) << 12            # W9[23:12]  SW_SEQ
 
     desc = bytearray(struct.pack("<10I", w0, w1, w2, w3, w4, w5, w6, w7, w8, w9))
 
@@ -124,6 +138,23 @@ def build_tx_desc_mgmt(mpdu: bytes, *, band_is_2g: bool = True) -> bytes:
     struct.pack_into("<H", desc, 7 * 4, chksum & 0xFFFF)
 
     return bytes(desc)
+
+
+def build_tx_desc_mgmt(mpdu: bytes, *, band_is_2g: bool = True) -> bytes:
+    """tx_pkt_desc for MGMT/single-frame injection — hardware assigns the
+    sequence number (en_hwseq). Used by deauth, fake-auth, and ARP replay
+    (unfragmented, so the seq number is irrelevant). Byte-identical to the
+    pre-refactor builder."""
+    return _build_tx_desc(mpdu, en_hwseq=True, sw_seq=0, band_is_2g=band_is_2g)
+
+
+def build_tx_desc_data(mpdu: bytes, sw_seq: int, *, band_is_2g: bool = True) -> bytes:
+    """tx_pkt_desc for a FRAGMENT-train frame — software-supplied sequence
+    number (en_hwseq off) so all fragments of one MSDU share ``sw_seq`` while
+    keeping their fragment numbers. Required for the AP to reassemble; see
+    `_build_tx_desc`. Roll ``sw_seq`` per MSDU (per fragmentation round) so
+    successive rounds aren't seen as duplicate retransmits of one seq."""
+    return _build_tx_desc(mpdu, en_hwseq=False, sw_seq=sw_seq, band_is_2g=band_is_2g)
 
 
 def pick_bulk_out_ep(out_ep_addrs: List[int], queue: int = TX_DESC_QSEL_MGMT) -> int:
