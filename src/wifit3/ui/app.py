@@ -70,9 +70,15 @@ class WifiteApp(App):
     #panel-target {
         width: 43;
     }
-    #panel-security Label, #panel-capture Label {
-        width: 100%;
-        text-align: center;
+    /* Centre the content BLOCK (left-aligned lines sharing a left edge), not
+       each line independently: the .panel-body fills the width and
+       align-horizontal centres its labels AS A GROUP (the group's box is the
+       widest row; the labels keep their left edge). The full-width title is a
+       sibling OUTSIDE this wrapper, so it still spans the whole panel. */
+    .panel-body {
+        width: 1fr;
+        height: auto;
+        align-horizontal: center;
     }
     #client-panel {
         height: 1fr;

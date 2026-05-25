@@ -102,31 +102,39 @@ class FocusView(Screen):
                 )
                 yield Vertical(
                     Label("SECURITY", classes="panel-title"),
-                    Label(id="lbl-enc"),
-                    Label(id="lbl-wps"),
-                    Label(id="lbl-pmf"),
-                    Label(id="lbl-wpa3"),
-                    Label(id="lbl-sae-groups"),
-                    # WEP-only: fake-auth status, then the Crack progress + a
-                    # detail line. Cracking runs in PARALLEL with capture, so it
-                    # lives here (under SECURITY, where WEP leaves rows free)
-                    # rather than crowding CAPTURE.
-                    Label(id="lbl-fakeauth"),
-                    Label(id="lbl-crack"),
-                    Label(id="lbl-crack-info"),
+                    # Content wrapped in a width:auto body so the left-aligned
+                    # block is centered as a unit (not each line individually).
+                    Vertical(
+                        Label(id="lbl-enc"),
+                        Label(id="lbl-wps"),
+                        Label(id="lbl-pmf"),
+                        Label(id="lbl-wpa3"),
+                        Label(id="lbl-sae-groups"),
+                        # WEP-only: fake-auth status, then the Crack progress +
+                        # a detail line. Cracking runs in PARALLEL with capture,
+                        # so it lives here (under SECURITY, where WEP leaves rows
+                        # free) rather than crowding CAPTURE.
+                        Label(id="lbl-fakeauth"),
+                        Label(id="lbl-crack"),
+                        Label(id="lbl-crack-info"),
+                        classes="panel-body",
+                    ),
                     classes="info-box", id="panel-security",
                 )
                 yield Vertical(
                     Label("CAPTURE", classes="panel-title"),
-                    Label(id="lbl-beacons"),
-                    Label(id="lbl-pwr"),
-                    Label(id="lbl-handshake"),
-                    Label(id="lbl-pmkid"),
-                    # WEP-only (shown in place of Handshake/PMKID): the IV count
-                    # and a dedicated Replay-status row. The Crack line lives
-                    # under SECURITY — capture + cracking are parallel processes.
-                    Label(id="lbl-ivs"),
-                    Label(id="lbl-replay"),
+                    Vertical(
+                        Label(id="lbl-beacons"),
+                        Label(id="lbl-pwr"),
+                        Label(id="lbl-handshake"),
+                        Label(id="lbl-pmkid"),
+                        # WEP-only (shown in place of Handshake/PMKID): the IV
+                        # count and a dedicated Replay-status row. The Crack line
+                        # lives under SECURITY — capture + cracking are parallel.
+                        Label(id="lbl-ivs"),
+                        Label(id="lbl-replay"),
+                        classes="panel-body",
+                    ),
                     classes="info-box", id="panel-capture",
                 )
 
