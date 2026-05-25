@@ -8,9 +8,13 @@ once verified fixed or confirmed N/A, with the commit/evidence.
 - [x] **RX polling loop drops frames** — read+parse on the event loop, starved
   by the TUI → ~30% beacon loss, flaky handshakes. Fix: dedicated reader
   thread + hand-off to loop. HW-confirmed 2026-05-25 (commit 2e3a7a7).
-- [ ] **RX filter drops client→AP (ToDS) traffic** — STA-mode RCR default isn't
-  promiscuous, so only M1/M3 (FromDS) seen, never M2/M4 → no 4-way. Fix:
-  RCR AAP + clear CBSSID (commit 1b7a1a9). **Awaiting HW verification.**
+- [x] **RX filter drops client→AP (ToDS) traffic** — STA-mode RCR default isn't
+  promiscuous, so only M1/M3 (FromDS) seen, never M2/M4 → no 4-way. Fix: write
+  the exact airmon monitor RCR `0xf410400f` (AAP + CBSSID cleared) in
+  `apply_monitor_rx_filter`, called from `_finish_attach` so it runs on BOTH
+  cold + warm attach. HW-confirmed 2026-05-25: full M1–M4 captured (commits
+  24bc17d, b6e7cb9). Note: net-type is NOT the gate — [WIRE] frame 5265 shows
+  the kernel keeps net-type at MGD_LINKED(2) in monitor.
 
 Realtek 802.11ac single-stream USB chipset (rtw88 family). Driver is shared
 with RTL8811AU; both map to `rtw8821a_hw_spec` in the kernel.
