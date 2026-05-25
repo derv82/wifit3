@@ -134,6 +134,50 @@ SAE groups: 19 20 21                 ← only after a probe (often absent)
   [s]ave leaf stays in the LOG (already there; the LOG is wide). Keeps the left
   column compact (~34) and handles 104-bit keys.
 
+## Layout v2 — the morning plan (chunks 1–6 are built; this REORDERS them)
+
+After living with v1, the panel ORDER felt wrong. v2 keeps all the built
+substance (tree logs, single-row select, condensed SECURITY, chip, fixed
+widths) and just repositions. **Recommended: Option A.** Nothing to revert.
+
+**Decision: target 120 cols minimum.** Drop the 80×24 ambition entirely — it
+was a trap. Assume a real terminal; no responsive code.
+
+**Option A (recommended)** — restore the beloved 3-summary top row, and make
+TARGET the head of a unified-width left column:
+
+```
+┌TARGET──┐┌SECURITY┐┌CAPTURE─┐    top row = 3 similar INFO panels
+│ ‹chip› ││        ││        │    ("Target X, secured Y, capturing Z")
+├ATTACKS─┤├────────┴────────┤
+│ wide   ││                 │
+├CLIENTS─┤│   EVENT LOG      │     left col (TARGET/ATTACKS/CLIENTS/DEAUTH)
+│ wide   ││   (tall + wide)  │     all share ONE width (~40); LOG fills rest
+├DEAUTH──┤│                 │
+└────────┘└─────────────────┘
+```
+Why A: (1) restores the summary-top-row theme; (2) smallest change — swap
+ATTACKS↔SECURITY positions; (3) ATTACKS in the wide left col → "Stop Replay"/
+"Stop Frag" fit (no wrap, drop the "■ STOP" hack); (4) TARGET = CLIENTS width
+→ alignment irk gone + ESSID emphasized + CLIENTS wide enough (PKTS stops
+clipping); (5) all-info top row is shorter → more height for CLIENTS/LOG.
+
+Structure: `Horizontal[ Vertical(left-col ~40: TARGET, ATTACKS, CLIENTS(1fr),
+DEAUTH) | Vertical(right 1fr: Horizontal(SECURITY | CAPTURE), EVENT LOG(1fr)) ]`.
+
+Options B and C (considered, not chosen): both put ATTACKS in the top row,
+sacrificing the all-summary theme. C (log-on-left, control-on-right) is a
+bigger structural rework for marginal LOG gain. Revisit only if fresh-eyes
+rejects A.
+
+Bug/nit fixes (apply under A):
+- CLIENTS too narrow — `PKTS` clips. Wider left col (~40) fixes it.
+- "Stop Frag"/"Stop Chop" wrap — wider ATTACKS (left col) fixes; can revert
+  the Replay label from "■ STOP" back to "Stop Replay" too.
+- TARGET width == left-col width (alignment) + wider to emphasize ESSID.
+- "DEAUTH" → "CLIENT DEAUTH" (room now).
+- ESSID chip centered under the TARGET INFO title.
+
 ## Future gold-plating (NOT now)
 
 - 5-line animated `wifit3` ANSI art in the top-right dead space, gated on
