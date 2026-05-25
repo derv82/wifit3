@@ -103,10 +103,10 @@ class WepCampaign:
             return
         self._active = True
         self._log(
-            "[bold cyan]→ Generate IVs[/bold cyan] — fake-auth + ARP replay "
-            "starting. Replay holds until associated; deauth a client if no "
-            "ARP appears."
+            "[cyan]→ ARP replay starting[/cyan] - "
+            "[white]waiting for ARP packets[/white]"
         )
+        self._log("[dim]  (deauth, chop, or frag if no ARPs appear)[/dim]")
         self.fake_auth.start()
         self.replay.start()
         # One reusable worker process for the crack search (spawns lazily on
@@ -166,8 +166,8 @@ class WepCampaign:
                 if not self._crack_started:
                     self._crack_started = True
                     self._log(
-                        "[cyan]→ Cracking[/cyan] 10,000+ usable IVs "
-                        "[dim](some keys require 40k+)[/dim]"
+                        "[bold cyan]→ Cracking Key[/bold cyan] with "
+                        "[white]>10k IVs[/white] [dim](may require >40K)[/dim]"
                     )
                 # Ship the (picklable) cracker to the worker; it runs the search
                 # on a snapshot of the votes and returns the key, if any.
@@ -181,7 +181,13 @@ class WepCampaign:
                 if key is not None:
                     self.recovered_key = key
                     self.target.wep_key = key   # persist on the AP (Save / UI)
-                    self._log(f"{_key_markup(key)} [dim](press 'c' to copy)[/dim]")
+                    self._log(_key_markup(key))
+                    self._log(
+                        "[dim]   (press [cyan]'c'[/cyan] to copy to clipboard)[/dim]"
+                    )
+                    self._log(
+                        "[dim]   (press [cyan]'s'[/cyan] to save to file)[/dim]"
+                    )
                     # Done — stop transmitting (replay + fake-auth keepalive).
                     self.replay.stop()
                     self.fake_auth.stop()

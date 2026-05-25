@@ -363,7 +363,7 @@ class WepArpReplay:
             self.stats.has_winner = True
             self._failed.discard(self._current)
             self._log(
-                "[green]✓ ARP replay working[/green] "
+                "[green]✓ ARP Replaying now[/green] "
                 "[dim](see CAPTURE for progress)[/dim]"
             )
         elif (time.time() - self._trial_started) >= self._TRIAL_WINDOW:
@@ -405,17 +405,10 @@ class WepArpReplay:
             return
         self._last_state = state
         if state == "waiting-arp":
-            seen = self.collector.arp_seen_count(self.bssid)
-            detail = (
-                "deauth a client to provoke one" if seen == 0
-                else f"{seen} seen, deauth to provoke one"
-            )
-            self._log(
-                "[green]ARP Replay:[/green] [white]waiting for replayable ARP"
-                f"[/white] [dim]({detail})[/dim]"
-            )
+            # We already suggested deauth/chop/frag at start — keep this terse.
+            self._log("[green]ARP Replay:[/green] [white]waiting for ARP[/white]")
         elif state == "testing":
             self._log("[green]ARP Replay:[/green] [white]testing a candidate…[/white]")
-        elif state == "waiting-auth":
-            self._log("[green]ARP Replay:[/green] [dim]waiting for association…[/dim]")
+        # waiting-auth is silent: we announced the campaign starting; a separate
+        # "waiting for association" line is just noise.
 
