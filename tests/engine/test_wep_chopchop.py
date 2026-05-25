@@ -265,9 +265,11 @@ async def test_loop_picks_seed_from_store_and_chops_end_to_end():
     iface = SimpleNamespace(register_rx_callback=lambda c: None,
                             unregister_rx_callback=lambda c: None)
     store = SimpleNamespace(chop_candidates=lambda b: [frame])
+    logs: list[str] = []
     d = WepChopChop(iface, SimpleNamespace(bssid=BSSID), store,
                     source_mac=OUR,
                     on_forged_arp=lambda f: holder.setdefault("f", f),
+                    log_callback=logs.append,
                     oracle=_sim_oracle(IV, KEY))
     d.start()
     try:
@@ -276,6 +278,18 @@ async def test_loop_picks_seed_from_store_and_chops_end_to_end():
         d.stop()
     assert "f" in holder
     _assert_valid_forged_arp(holder["f"])
+    # Tree-log shape: a plain "chopping IV" header, then a └─✓ success leaf.
+    assert any("chopping IV" in m and not m.startswith(" ") for m in logs)
+    assert any("└─" in m and "ChopChop worked!" in m for m in logs)
+
+
+def test_treelog_connectors():
+    from wifit3.engine.attacks.wep import treelog
+    assert treelog.branch("x") == " [dim]├─►[/dim] x"
+    ok = treelog.leaf_ok("x")
+    assert ok.startswith(" [dim]└─[/dim]") and "✓" in ok and ok.endswith(" x")
+    bad = treelog.leaf_fail("x")
+    assert bad.startswith(" [dim]└─[/dim]") and "╳" in bad
 
 
 async def test_succeed_hands_forged_arp_to_campaign_and_stops():

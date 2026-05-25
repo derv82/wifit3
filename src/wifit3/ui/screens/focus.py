@@ -1099,9 +1099,8 @@ class FocusView(Screen):
             camp.stop_chop()
             self._log("[cyan]→ Chop stopped[/cyan] [dim](back to ARP replay)[/dim]")
         else:
-            self._log(
-                "[cyan]→ ChopChop[/cyan] — waiting for ARP or IP frame…"
-            )
+            # The daemon logs its own tree (waiting → chopping IV → steps →
+            # worked/gave-up); no separate start line back-to-back with it.
             camp.start_chop()
         self.update_ui()
 
