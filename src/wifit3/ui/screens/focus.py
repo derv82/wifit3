@@ -12,7 +12,7 @@ from textual.binding import Binding
 from rich.text import Text
 from rich.markup import escape
 
-from wifit3.engine.models import AccessPoint, Handshake
+from wifit3.engine.models import AccessPoint
 from wifit3.engine.hc22000 import write_hc22000
 from wifit3.engine.pcap import write_pcap
 from wifit3.engine.attacks.pmkid_harvest import PmkidHarvestAttack
@@ -26,7 +26,6 @@ from ..encryption_format import (
     format_encryption_markup,
     format_pmf_markup,
     format_wps_markup,
-    format_wpa3_mode_markup,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,7 +64,6 @@ class FocusView(Screen):
         Binding("s", "save_capture", "Save Capture", show=True),
         Binding("s", "save_key", "Save Key", show=True),
         Binding("c", "copy_key", "Copy WEP Key", show=True),
-        Binding("space", "toggle_client", "Select Client", show=True),
     ]
 
     def __init__(self):
@@ -73,7 +71,6 @@ class FocusView(Screen):
         self.target_ap: AccessPoint = None
         self._refresh_timer = None
         self._known_clients: Set[str] = set()
-        self._selected_clients: Set[str] = set()
         # Granular: also surfaces every new EAPOL frame, not just completions.
         self._events = CaptureEventDetector(granular_eapol=True)
         # WPA3 Downgrade is a long-running probe-response-spoof daemon. Held
@@ -147,11 +144,9 @@ class FocusView(Screen):
                     with Vertical(classes="info-box", id="client-panel"):
                         yield Label("CLIENTS", classes="panel-title", id="lbl-clients-title")
                         client_table = DataTable(cursor_type="row", id="client-table")
-                        client_table.add_column("[ ]", key="select")
                         client_table.add_column("MAC Address", key="mac")
                         client_table.add_column("POWER", key="signal")
                         client_table.add_column("PKTS", key="packets")
-                        client_table.add_column("CAPTURES", key="captures")
                         yield client_table
                     # DEAUTH — client-targeted, so it lives under CLIENTS. Two
                     # buttons on one row.
@@ -190,7 +185,6 @@ class FocusView(Screen):
 
         # Reset per-target state.
         self._known_clients.clear()
-        self._selected_clients.clear()
         self._events.reset()
         self.query_one("#client-table", DataTable).clear()
         self.query_one("#focus-event-log", RichLog).clear()
@@ -216,13 +210,17 @@ class FocusView(Screen):
         ap = self.target_ap
         is_wep = (ap.encryption or "").upper() == "WEP"
 
-        # TARGET INFO panel.
+        # TARGET INFO panel. SSID as a chip (no "ESSID:" prefix) so short names
+        # like "NETGEAR" are still visible; truncated with … to fit the panel.
         if ap.ssid:
-            ssid_markup = f"[bold cyan]{escape(ap.ssid)}[/bold cyan]"
+            maxname = 24   # TARGET inner (26) minus the chip's 2 padding spaces
+            shown = (ap.ssid if len(ap.ssid) <= maxname
+                     else ap.ssid[:maxname - 1].rstrip() + "…")
+            ssid_markup = f"[black on cyan] {escape(shown)} [/black on cyan]"
         else:
-            ssid_markup = "[italic bold cyan]<Hidden>[/italic bold cyan]"
+            ssid_markup = "[italic cyan]‹hidden›[/italic cyan]"
         self.query_one("#lbl-ssid", Label).update(
-            Text.from_markup(f"ESSID: {ssid_markup}", emoji=False)
+            Text.from_markup(ssid_markup, emoji=False)
         )
         self.query_one("#lbl-bssid", Label).update(Text(f"BSSID: {ap.bssid}"))
         # While in FocusView the hopper is always stopped — channel is locked.
@@ -244,35 +242,24 @@ class FocusView(Screen):
                 emoji=False,
             )
         )
+        # WPS + PMF share one line (both short, static per target). WPS only
+        # shows if present; PMF only in RSN (WPA2/3 — for WEP/OPEN there's no
+        # RSN and it's always Disabled, so we omit it). The standalone lbl-pmf
+        # slot is folded in here.
+        wps_part = (lambda m: f"WPS: {m}" if m is not None else None)(format_wps_markup(ap))
+        pmf_part = f"PMF: {format_pmf_markup(ap)}" if (ap.akms or ap.wpa3) else None
+        parts = [p for p in (wps_part, pmf_part) if p]
         wps_label = self.query_one("#lbl-wps", Label)
-        wps_markup = format_wps_markup(ap)
-        if wps_markup is None:
-            wps_label.display = False
-        else:
+        if parts:
             wps_label.display = True
-            wps_label.update(Text.from_markup(f"WPS: {wps_markup}", emoji=False))
-
-        # PMF lives in the RSN IE (WPA2/WPA3), so it's only meaningful there —
-        # for WEP / OPEN / legacy-WPA1 there's no RSN and it's always Disabled.
-        # Hide it rather than show a perpetual "Disabled" that can't change.
-        pmf_label = self.query_one("#lbl-pmf", Label)
-        if ap.akms or ap.wpa3:
-            pmf_label.display = True
-            pmf_label.update(
-                Text.from_markup(f"PMF: {format_pmf_markup(ap)}", emoji=False)
-            )
+            wps_label.update(Text.from_markup("  ·  ".join(parts), emoji=False))
         else:
-            pmf_label.display = False
+            wps_label.display = False
+        self.query_one("#lbl-pmf", Label).display = False
 
-        wpa3_label = self.query_one("#lbl-wpa3", Label)
-        wpa3_markup = format_wpa3_mode_markup(ap)
-        if wpa3_markup is None:
-            wpa3_label.display = False
-        else:
-            wpa3_label.display = True
-            wpa3_label.update(
-                Text.from_markup(f"WPA3: {wpa3_markup}", emoji=False)
-            )
+        # WPA3-mode line dropped — redundant with the Encryption line, which
+        # already states e.g. "WPA3→2 (transition)".
+        self.query_one("#lbl-wpa3", Label).display = False
 
         # SAE Groups — populated by the SAE probe attack, cached on the AP.
         # Hidden until we have at least one probe result. Supported groups are
@@ -324,7 +311,9 @@ class FocusView(Screen):
             # whole campaign. Frag/Chop are sub-attacks: blue to start, orange
             # ("Stop X") to stop just that one (the campaign keeps running).
             running = camp is not None
-            btn_gen.label = "Stop Replay" if running else "Replay"
+            # Short "■ STOP" while running — "Stop Replay" (11) won't fit the
+            # narrow (width-10) button; the stop glyph keeps it unmistakable.
+            btn_gen.label = "■ STOP" if running else "Replay"
             btn_gen.variant = "error" if running else "success"
             # Frag is a sub-mode of a running campaign (it manufactures a seed
             # for replay), so it only appears once IVs are being generated.
@@ -432,8 +421,10 @@ class FocusView(Screen):
         # Drain new capture events into the log.
         self._drain_capture_events(ap, iface.forged_macs if iface else set())
 
-        # Deauth-selected button.
-        self.query_one("#btn-deauth-sel", Button).disabled = not self._selected_clients
+        # CLIENTS (N) title + DEAUTH 'Selected' enabled only with a highlighted row.
+        n_clients = self.query_one("#client-table", DataTable).row_count
+        self.query_one("#lbl-clients-title", Label).update(f"CLIENTS ({n_clients})")
+        self.query_one("#btn-deauth-sel", Button).disabled = self._cursor_mac() is None
 
     @staticmethod
     def _replay_status_markup(campaign) -> str:
@@ -466,10 +457,10 @@ class FocusView(Screen):
         return "[dim]idle[/dim]"
 
     def _update_wep_capture(self, ap: AccessPoint) -> None:
-        """WEP CAPTURE rows — IVs (with the usable-IV count) and a dedicated
-        Replay-status row — plus the Crack section (which lives under SECURITY).
-        Usable IVs = crack samples (ARP-sized broadcast, known plaintext); they
-        lag raw unique IVs and are what actually gate cracking."""
+        """WEP CAPTURE rows — IVs + a dedicated Replay-status row — plus the
+        Crack section (under SECURITY). The usable-IV (crack-sample) count is no
+        longer shown here; it lives in SECURITY's Crack line (N/10k usable IVs),
+        which is what gates cracking."""
         iface = getattr(self.app, "active_interface", None)
         n = ap.wep.unique_ivs if ap.wep else 0
         rate = iface.wep_store.rate(ap.bssid) if iface else 0.0
@@ -478,8 +469,7 @@ class FocusView(Screen):
 
         count = f"[bold green]{n:,}[/bold green]" if n else "[red]0[/red]"
         self.query_one("#lbl-ivs", Label).update(Text.from_markup(
-            f"IVs: {count} [dim]({rate:.0f}/s)[/dim] "
-            f"[dim]({samples:,} usable)[/dim]", emoji=False
+            f"IVs: {count} [dim]({rate:.0f}/s)[/dim]", emoji=False
         ))
 
         replay_markup = (
@@ -506,18 +496,14 @@ class FocusView(Screen):
         target_k = CRACK_READY_THRESHOLD // 1000
 
         if ap.wep_key is not None:
-            key = ap.wep_key
-            ascii_hint = (
-                f' = "{key.decode("ascii")}"'
-                if all(0x20 <= b < 0x7F for b in key) else ""
-            )
+            # Short status here — the full black-on-cyan KEY banner + copy/save
+            # hint live in the (wide) EVENT LOG (a 104-bit key is too wide for
+            # this column).
             crack.update(Text.from_markup(
-                f"Crack: [bold black on cyan] ✓ KEY {key.hex()}{ascii_hint} "
-                f"[/bold black on cyan]", emoji=False
+                "Crack: [bold green]✓ Key recovered[/bold green]", emoji=False
             ))
             info.update(Text.from_markup(
-                "[white]Press [green]'c'[/green] to copy, "
-                "[green]'s'[/green] to save .txt[/white]", emoji=False
+                "[dim]see EVENT LOG to copy / save[/dim]", emoji=False
             ))
         elif samples < CRACK_READY_THRESHOLD:
             crack.update(Text.from_markup(
@@ -569,40 +555,25 @@ class FocusView(Screen):
         for mac, client in iface.clients.items():
             if client.bssid != ap.bssid:
                 continue
-            if mac in forged:
+            # Skip our own forged STA(s) — fake-auth, replay source, etc. They're
+            # not real clients (no more "YOU" marker; just don't list them).
+            if mac in forged or client.is_self:
                 continue
-            checkbox = "[X]" if mac in self._selected_clients else "[ ]"
-            hs = ap.handshakes.get(mac)
-            captures_text = Text.from_markup(
-                self._format_captures_label(hs), emoji=False
-            )
-            # Our own forged STA (fake-auth) is shown as "YOU", whole cell
-            # highlighted so it can't be mistaken for a stranger.
-            mac_cell = (
-                Text.from_markup(f"[cyan]{escape(mac)} YOU[/cyan]", emoji=False)
-                if client.is_self
-                else Text(mac)
-            )
-
             if mac not in self._known_clients:
                 self._known_clients.add(mac)
                 client_table.add_row(
-                    checkbox,
-                    mac_cell,
+                    Text(mac),
                     Text(f"{client.signal} dBm", justify="right"),
                     Text(str(client.packets), justify="right"),
-                    captures_text,
                     key=mac,
                 )
             else:
-                client_table.update_cell(mac, "select", checkbox)
                 client_table.update_cell(
                     mac, "signal", Text(f"{client.signal} dBm", justify="right")
                 )
                 client_table.update_cell(
                     mac, "packets", Text(str(client.packets), justify="right")
                 )
-                client_table.update_cell(mac, "captures", captures_text)
 
     _DRAGONBLOOD_GROUPS = {22, 23, 24}
 
@@ -625,47 +596,6 @@ class FocusView(Screen):
             elif verdict == "rejected":
                 parts.append(f"[dim]{group}[/dim]")
         return ", ".join(parts) if parts else "[dim]—[/dim]"
-
-    @staticmethod
-    def _format_captures_label(hs: Handshake | None) -> str:
-        """Build the markup label shown in the per-client CAPTURES column.
-
-        Folds in a `+PMK` suffix when a PMKID was harvested for the same
-        client. PMKIDs without any EAPOL frames still display as `PMK`.
-        """
-        if hs is None or (not hs.total_eapol_frames and not hs.pmkid):
-            return "[dim]—[/dim]"
-
-        # PMKID-only (no EAPOL frames captured).
-        if not hs.total_eapol_frames and hs.pmkid:
-            return "[bold green]PMK[/bold green]"
-
-        if hs.is_complete:
-            pair = hs.find_valid_pair()
-            if pair:
-                base = f"[bold green]M{pair[0].msg_num}+M{pair[1].msg_num} ✓[/bold green]"
-            else:
-                base = "[bold green]Complete[/bold green]"
-            if hs.pmkid:
-                base += " [bold green]+PMK[/bold green]"
-            return base
-
-        # Partial — show what we have, with retry counts if any.
-        from collections import Counter
-        counts = Counter(f.msg_num for f in hs.eapol_frames if f.msg_num)
-        parts = []
-        for n in sorted(counts):
-            if counts[n] > 1:
-                parts.append(f"M{n}×{counts[n]}")
-            else:
-                parts.append(f"M{n}")
-        unclassified = sum(1 for f in hs.eapol_frames if not f.msg_num)
-        if unclassified:
-            parts.append(f"?×{unclassified}")
-        label = "[yellow]" + ",".join(parts) + "[/yellow]"
-        if hs.pmkid:
-            label += " [bold green]+PMK[/bold green]"
-        return label
 
     # ----- Capture-event log -------------------------------------------------
 
@@ -710,30 +640,17 @@ class FocusView(Screen):
 
     # ----- Actions / handlers ------------------------------------------------
 
-    async def on_data_table_row_selected(
-        self, event: DataTable.RowSelected
-    ) -> None:
-        """ENTER on a client row toggles selection (Textual emits this for ENTER)."""
-        self._toggle_client_selection(event.row_key.value)
-
-    def action_toggle_client(self) -> None:
-        """SPACE keybinding — toggles the currently-highlighted client."""
-        table = self.query_one("#client-table", DataTable)
+    def _cursor_mac(self) -> Optional[str]:
+        """MAC of the highlighted CLIENTS row (cursor selection — no checkboxes),
+        or None when the table is empty. Read straight from the table so it's
+        never stale."""
+        t = self.query_one("#client-table", DataTable)
+        if t.row_count == 0:
+            return None
         try:
-            mac = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+            return t.coordinate_to_cell_key(t.cursor_coordinate).row_key.value
         except Exception:
-            return
-        if mac:
-            self._toggle_client_selection(mac)
-
-    def _toggle_client_selection(self, mac: str | None) -> None:
-        if not mac:
-            return
-        if mac in self._selected_clients:
-            self._selected_clients.remove(mac)
-        else:
-            self._selected_clients.add(mac)
-        self.update_ui()
+            return None
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
@@ -826,45 +743,33 @@ class FocusView(Screen):
     _DEAUTH_SEL_ROUNDS = 10
 
     async def _run_deauth_selected(self) -> None:
-        """Worker: deauth each selected client, interleaved round-robin so RX
-        gets a slice between every frame pair."""
+        """Worker: deauth the highlighted client (cursor row)."""
         ap = self.target_ap
         iface = getattr(self.app, "active_interface", None)
         if not ap or not iface:
-            self._log("[red]✗ No target / interface — aborting Deauth Selected.[/red]")
+            self._log("[red]✗ No target / interface — aborting Deauth.[/red]")
             return
-
-        # Snapshot — the set can mutate while we're iterating.
-        targets = sorted(self._selected_clients)
-        if not targets:
-            self._log("[yellow]⚠ No clients selected.[/yellow]")
+        mac = self._cursor_mac()
+        if not mac:
+            self._log("[yellow]⚠ No client highlighted — pick a row first.[/yellow]")
             return
 
         self._log(
-            f"[bold cyan]→ Deauth Selected[/bold cyan] "
-            f"({len(targets)} client(s) × {self._DEAUTH_SEL_ROUNDS} rounds, round-robin) on "
-            f"[bold]{escape(ap.ssid or '<hidden>')}[/bold] ({ap.bssid}) CH {ap.channel}"
+            f"[bold cyan]→ Deauth[/bold cyan] [bold]{escape(mac)}[/bold] "
+            f"({self._DEAUTH_SEL_ROUNDS} bursts) on "
+            f"[bold]{escape(ap.ssid or '<hidden>')}[/bold] CH {ap.channel}"
         )
-        failed: set[str] = set()
-        for _ in range(self._DEAUTH_SEL_ROUNDS):
-            for mac in targets:
-                if mac in failed:
-                    continue
-                try:
-                    await iface.deauth(ap.bssid, mac, burst_count=1)
-                except Exception as exc:
-                    logger.exception("Deauth %s crashed", mac)
-                    self._log(
-                        f"[bold red]✗ Deauth {escape(mac)} crashed:[/bold red] "
-                        f"{escape(str(exc))} — dropping target."
-                    )
-                    failed.add(mac)
-        sent = len(targets) - len(failed)
-        self._log(
-            f"[green]✓ Round-robin deauth complete[/green] — "
-            f"{sent}/{len(targets)} client(s) hit "
-            f"({self._DEAUTH_SEL_ROUNDS} pairs each)."
-        )
+        try:
+            for _ in range(self._DEAUTH_SEL_ROUNDS):
+                await iface.deauth(ap.bssid, mac, burst_count=1)
+        except Exception as exc:
+            logger.exception("Deauth %s crashed", mac)
+            self._log(
+                f"[bold red]✗ Deauth {escape(mac)} crashed:[/bold red] "
+                f"{escape(str(exc))}"
+            )
+            return
+        self._log(f"[green]✓ Deauth sent[/green] → {escape(mac)}")
 
     async def _run_pmkid_harvest(self) -> None:
         """Worker: run a PMKID harvest against the focused AP."""
@@ -1046,10 +951,9 @@ class FocusView(Screen):
         )
         self._wep_campaign.stop()
         self._wep_campaign = None
-        # The campaign dropped the YOU client from iface.clients; clear its
-        # table row + any selection so it doesn't linger as a stale target.
+        # The campaign dropped our STA from iface.clients; clear its table row
+        # so it doesn't linger as a stale target.
         self._known_clients.discard(you_mac)
-        self._selected_clients.discard(you_mac)
         try:
             self.query_one("#client-table", DataTable).remove_row(you_mac)
         except Exception:
