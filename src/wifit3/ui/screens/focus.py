@@ -90,8 +90,8 @@ class FocusView(Screen):
         yield Header(show_clock=True)
 
         with Vertical(id="focus-container"):
-            # Top: TARGET INFO | SECURITY | CAPTURE  (3 columns)
-            with Horizontal(id="ap-info-panel"):
+            # ---- Top row: TARGET | ATTACKS (no title) | CAPTURE ----
+            with Horizontal(id="top-row"):
                 yield Vertical(
                     Label("TARGET INFO", classes="panel-title"),
                     Label(id="lbl-ssid"),
@@ -100,86 +100,68 @@ class FocusView(Screen):
                     Label(id="lbl-last-beacon"),
                     classes="info-box", id="panel-target",
                 )
-                yield Vertical(
-                    Label("SECURITY", classes="panel-title"),
-                    # Content wrapped in a width:auto body so the left-aligned
-                    # block is centered as a unit (not each line individually).
-                    Vertical(
-                        Label(id="lbl-enc"),
-                        Label(id="lbl-wps"),
-                        Label(id="lbl-pmf"),
-                        Label(id="lbl-wpa3"),
-                        Label(id="lbl-sae-groups"),
-                        # WEP-only: fake-auth status, then the Crack progress +
-                        # a detail line. Cracking runs in PARALLEL with capture,
-                        # so it lives here (under SECURITY, where WEP leaves rows
-                        # free) rather than crowding CAPTURE.
-                        Label(id="lbl-fakeauth"),
-                        Label(id="lbl-crack"),
-                        Label(id="lbl-crack-info"),
-                        classes="panel-body",
-                    ),
-                    classes="info-box", id="panel-security",
-                )
-                yield Vertical(
-                    Label("CAPTURE", classes="panel-title"),
-                    Vertical(
-                        Label(id="lbl-beacons"),
-                        Label(id="lbl-pwr"),
-                        Label(id="lbl-handshake"),
-                        Label(id="lbl-pmkid"),
-                        # WEP-only (shown in place of Handshake/PMKID): the IV
-                        # count and a dedicated Replay-status row. The Crack line
-                        # lives under SECURITY — capture + cracking are parallel.
-                        Label(id="lbl-ivs"),
-                        Label(id="lbl-replay"),
-                        classes="panel-body",
-                    ),
-                    classes="info-box", id="panel-capture",
-                )
-
-            with Vertical(id="client-panel"):
-                yield Label("CLIENTS", classes="panel-title")
-                client_table = DataTable(cursor_type="row", id="client-table")
-                client_table.add_column("[ ]", key="select")
-                client_table.add_column("MAC Address", key="mac")
-                client_table.add_column("POWER", key="signal")
-                client_table.add_column("PKTS", key="packets")
-                client_table.add_column("CAPTURES", key="captures")
-                yield client_table
-
-            with Horizontal(id="bottom-row"):
-                # Far-left: DEAUTH — always available for both WEP and WPA,
-                # two buttons stacked in a narrow column.
-                with Vertical(id="deauth-panel"):
-                    yield Label("DEAUTH", classes="panel-title")
-                    yield Button("Selected", variant="warning", id="btn-deauth-sel", disabled=True)
-                    yield Button("Broadcast", variant="error", id="btn-deauth-bcast")
-                # Center: the crypto-specific attacks (title swaps WEP/WPA). Each
-                # target only ever shows its own ≤4 buttons, laid out 2-per-row:
-                #   WEP:  Replay  Chop          WPA:  PMKID  SAE
-                #         Save    Frag                WPA ↓  Save
-                # (Chop/Frag appear only while Replay runs.)
-                with Vertical(id="attack-panel"):
-                    yield Label("ATTACKS", classes="panel-title", id="lbl-attack-title")
+                # ATTACKS — NO title bar: the buttons self-label, and the family
+                # is already stated by TARGET's "Encryption:" line. The crypto-
+                # specific set toggles via update_ui (ids unchanged). Laid out
+                # 2-per-row:  WEP: Replay Chop / Save Frag   WPA: PMKID SAE / WPA↓ Save
+                with Vertical(classes="info-box", id="attack-panel"):
                     with Horizontal(classes="button-row"):
-                        # Starts fake-auth + ARP replay + the cracker (WEP).
-                        # Green = start; turns red ("Stop Replay") while running.
                         yield Button("Replay", variant="success", id="btn-gen-ivs")
-                        # Sibling of Frag: ChopChop manufactures a seed when frag
-                        # gets no response. Mutually exclusive (click-to-switch).
                         yield Button("Chop", variant="primary", id="btn-chop")
                         yield Button("PMKID", variant="primary", id="btn-pmkid")
                         yield Button("SAE", variant="primary", id="btn-sae-probe", disabled=True)
                     with Horizontal(classes="button-row"):
                         yield Button("WPA ↓", variant="primary", id="btn-wpa3-down", disabled=True)
                         yield Button("Save", variant="success", id="btn-save", disabled=True)
-                        # WEP-only, only while a campaign runs: switch the radio
-                        # to fragmentation to manufacture an ARP seed when replay
-                        # has none (no client traffic). Click-to-toggle.
                         yield Button("Frag", variant="primary", id="btn-frag")
-                # Far-right: the log — grows to fill the (wide) terminal.
-                with Vertical(id="event-log-panel"):
+                yield Vertical(
+                    Label("CAPTURE", classes="panel-title"),
+                    Label(id="lbl-beacons"),
+                    Label(id="lbl-pwr"),
+                    Label(id="lbl-handshake"),
+                    Label(id="lbl-pmkid"),
+                    # WEP-only (shown in place of Handshake/PMKID): the IV count
+                    # + a dedicated Replay-status row.
+                    Label(id="lbl-ivs"),
+                    Label(id="lbl-replay"),
+                    classes="info-box", id="panel-capture",
+                )
+
+            # ---- Lower row: [SECURITY / CLIENTS / DEAUTH] | EVENT LOG ----
+            with Horizontal(id="lower-row"):
+                with Vertical(id="left-col"):
+                    yield Vertical(
+                        Label("SECURITY", classes="panel-title"),
+                        Label(id="lbl-enc"),
+                        Label(id="lbl-wps"),
+                        Label(id="lbl-pmf"),
+                        Label(id="lbl-wpa3"),
+                        Label(id="lbl-sae-groups"),
+                        # WEP-only: fake-auth status + Crack progress (runs in
+                        # PARALLEL with capture, hence under SECURITY).
+                        Label(id="lbl-fakeauth"),
+                        Label(id="lbl-crack"),
+                        Label(id="lbl-crack-info"),
+                        classes="info-box", id="panel-security",
+                    )
+                    with Vertical(classes="info-box", id="client-panel"):
+                        yield Label("CLIENTS", classes="panel-title", id="lbl-clients-title")
+                        client_table = DataTable(cursor_type="row", id="client-table")
+                        client_table.add_column("[ ]", key="select")
+                        client_table.add_column("MAC Address", key="mac")
+                        client_table.add_column("POWER", key="signal")
+                        client_table.add_column("PKTS", key="packets")
+                        client_table.add_column("CAPTURES", key="captures")
+                        yield client_table
+                    # DEAUTH — client-targeted, so it lives under CLIENTS. Two
+                    # buttons on one row.
+                    with Vertical(classes="info-box", id="deauth-panel"):
+                        yield Label("DEAUTH", classes="panel-title")
+                        with Horizontal(classes="button-row"):
+                            yield Button("Selected", variant="warning", id="btn-deauth-sel", disabled=True)
+                            yield Button("Broadcast", variant="error", id="btn-deauth-bcast")
+                # The stretchy panel — full height of the lower row.
+                with Vertical(classes="info-box", id="event-log-panel"):
                     yield Label("EVENT LOG", classes="panel-title")
                     yield RichLog(id="focus-event-log", markup=True, highlight=False, wrap=True)
 
@@ -317,9 +299,8 @@ class FocusView(Screen):
         btn_frag = self.query_one("#btn-frag", Button)
         btn_chop = self.query_one("#btn-chop", Button)
 
-        self.query_one("#lbl-attack-title", Label).update(
-            "WEP ATTACKS" if is_wep else "WPA ATTACKS"
-        )
+        # (ATTACKS panel has no title now — the buttons + TARGET's Encryption
+        # line convey the family.)
         btn_sae.display = not is_wep
         btn_down.display = not is_wep
         btn_pmkid.display = not is_wep

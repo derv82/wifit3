@@ -54,81 +54,32 @@ class WifiteApp(App):
     }
     .info-box {
         border: solid $primary;
-        width: 1fr;
-        padding: 0 1;            /* no top blank — title flush under the border, like the bottom row */
+        padding: 0 1;            /* title flush under the top border */
     }
-    #ap-info-panel {
-        /* Tight to the content: border(2) + title + up to 5 rows. WEP tops out
-           at 4 (enc/fake-auth/crack/crack-info) but a WPA3-transition SECURITY
-           can hit 5 (enc/WPS/PMF/WPA3/SAE-groups), so 8 (not 7) avoids clipping
-           that 5th row while still dropping a trailing blank. */
-        height: 8;
-    }
-    /* TARGET INFO holds SSID/BSSID/channel — wide enough for a full 32-char
-       ESSID ("ESSID: " + 32 = 39 + border/padding). SECURITY + CAPTURE share
-       the rest (1fr each), and centre their contents under the title. */
-    #panel-target {
-        width: 43;
-    }
-    /* Centre the content BLOCK (left-aligned lines sharing a left edge), not
-       each line independently: the .panel-body fills the width and
-       align-horizontal centres its labels AS A GROUP (the group's box is the
-       widest row; the labels keep their left edge). The full-width title is a
-       sibling OUTSIDE this wrapper, so it still spans the whole panel. */
-    .panel-body {
-        width: 1fr;
-        height: auto;
-        align-horizontal: center;
-    }
-    #client-panel {
-        height: 1fr;
-        min-height: 6;
-    }
-    #bottom-row {
-        height: 12;
-    }
-    /* Bottom-row action panels get a blank line between the title and the
-       first button (breathing room); EVENT LOG keeps its title flush against
-       the log text. */
-    #deauth-panel .panel-title, #attack-panel .panel-title {
-        margin-bottom: 1;
-    }
-    #deauth-panel {
-        width: 16;
-        height: 100%;
-        border: solid $primary;
-        padding: 0 1;
-    }
-    #deauth-panel Button {
-        width: 100%;
-        min-width: 0;
-        margin: 0 0 1 0;
-    }
-    #attack-panel {
-        width: 32;
-        height: 100%;
-        border: solid $primary;
-        padding: 0 1;
-    }
-    #attack-panel Button {
-        width: 13;
-        min-width: 0;
-    }
-    #event-log-panel {
-        width: 1fr;
-        height: 100%;
-        border: solid $primary;
-        padding: 0 1;
-    }
-    #focus-event-log {
-        height: 1fr;
-        border: none;
-    }
-    .button-row {
-        height: auto;
-        align-horizontal: center;   /* symmetric L/R padding in every state */
-        margin: 0 0 1 0;            /* gap below each row; none above (flush under title, like DEAUTH) */
-    }
+
+    /* ---- Top row: TARGET | ATTACKS (no title) | CAPTURE ---------------- */
+    /* Height = 2 fat button rows (3 each) + border. Fixed-width panels so
+       nothing reflows on a wide terminal; content top-aligns. */
+    #top-row { height: 8; }
+    #panel-target  { width: 30; }   /* SSID chip / BSSID(24) / channel / last-beacon */
+    #attack-panel  { width: 26; }   /* 2x2 buttons, no title bar */
+    #panel-capture { width: 30; }
+
+    /* ---- Lower row: [SECURITY / CLIENTS / DEAUTH] | EVENT LOG ---------- */
+    #lower-row { height: 1fr; }
+    #left-col  { width: 34; height: 1fr; }
+    #panel-security { height: auto; }
+    #client-panel   { height: 1fr; min-height: 4; }
+    #deauth-panel   { height: auto; }
+    #event-log-panel { width: 1fr; height: 1fr; }
+    #focus-event-log { height: 1fr; border: none; }
+
+    /* Buttons: fat (height 3) but narrow — Button defaults to min-width:16,
+       which is what ballooned/clipped them. Rows touch vertically (no margin)
+       so 2 rows fit the 8-tall top panel exactly. */
+    .button-row { height: auto; align-horizontal: center; }
+    #attack-panel Button { width: 10; min-width: 0; }
+    #deauth-panel Button { width: 12; min-width: 0; }
     Button {
         margin-right: 1;
         min-width: 12;

@@ -127,13 +127,12 @@ SAE groups: 19 20 21                 ← only after a probe (often absent)
   to ~2 rows (scrollable, acceptable). **No responsive code until the nethunter
   test proves it's needed** (YAGNI) — degrade by clipping, don't crash.
 
-## Open micro-decision
+## Resolved decisions
 
-- **Cracked-key display.** A 104-bit key banner is ~60 chars — too wide for the
-  ~34 left column. Recommendation: SECURITY shows a **short** status
-  (`Crack: ✓ Recovered`), the **full** `✓ CRACKED WEP KEY …` banner + copy/save
-  leaf stays in the LOG (already there, and the LOG is wide). Decide before
-  implementing the SECURITY chunk.
+- **Cracked-key display** → SECURITY shows a **short** status
+  (`Crack: ✓ Recovered`); the **full** `✓ CRACKED WEP KEY …` banner + [c]opy/
+  [s]ave leaf stays in the LOG (already there; the LOG is wide). Keeps the left
+  column compact (~34) and handles 104-bit keys.
 
 ## Future gold-plating (NOT now)
 
