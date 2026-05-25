@@ -42,6 +42,7 @@ from wifit3.chips.rtl8821au.constants import (
 )
 from wifit3.chips.rtl8821au.fifo import set_trx_fifo_info
 from wifit3.chips.rtl8821au.mac import (
+    apply_monitor_rx_filter,
     init_edca,
     init_queue_priority,
     init_queue_reserved_page,
@@ -277,13 +278,13 @@ def test_post_fw_mac_init_sets_mactxen_macrxen():
     assert final_cr_byte0 & BIT_MACRXEN
 
 
-def test_post_fw_mac_init_sets_monitor_rx_filter():
-    """REG_RCR must end promiscuous (AAP set) with the BSSID checks cleared, so
-    the MAC captures client→AP (ToDS) traffic — the M2/M4 EAPOL a 4-way needs.
-    Mirrors airmon-ng's on-wire monitor RCR (low byte of 0xf410400f)."""
+def test_apply_monitor_rx_filter_sets_promiscuous_rcr():
+    """apply_monitor_rx_filter (run on BOTH cold + warm attach) must leave
+    REG_RCR promiscuous (AAP set) with the BSSID checks cleared, so the MAC
+    captures client→AP (ToDS) traffic — the M2/M4 EAPOL a 4-way needs. Mirrors
+    airmon-ng's exact on-wire monitor RCR (0xf410400f)."""
     t = MockTransport()
-    _no_llt_read_pending(t)
-    post_fw_mac_init(t, set_trx_fifo_info())
+    apply_monitor_rx_filter(t)
     rcr = t._load(REG_RCR, 4)
     assert rcr & BIT_AAP, "promiscuous (AAP) not set — ToDS frames dropped"
     assert not (rcr & BIT_CBSSID_DATA), "CBSSID_DATA still set — BSSID-filters data"

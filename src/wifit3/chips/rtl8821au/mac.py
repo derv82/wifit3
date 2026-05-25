@@ -567,27 +567,31 @@ def post_fw_mac_init(transport: RTL8821AUTransport, fifo: FifoConf) -> None:
     # 1175 — MACTXEN | MACRXEN
     transport.write8_set(REG_CR, BIT_MACTXEN | BIT_MACRXEN)
 
-    # --- wifit3 monitor deviation -------------------------------------------
-    # The kernel init configures the RX filter (REG_RCR) for an associated
-    # STA: not promiscuous, and checking BSSID on data frames. That dropped
-    # client→AP (ToDS) traffic — incl. the M2/M4 EAPOL a 4-way needs — so we
-    # only ever saw M1/M3 (AP→client). mac80211 sets monitor's RCR via
-    # ops->configure_filter, which we never get. Match what airmon-ng writes
-    # on the wire: REG_RCR = 0xf410400f — set AAP (promiscuous) + APM/AM/AB,
-    # and CLEAR the CBSSID checks. (Net-type stays MGD_LINKED — [WIRE] frame
-    # 5265 of captures_rtw88_8821au shows the kernel leaves it at 2 in monitor;
-    # net-type is not the gate.) We keep the APP_FCS/ICV/MIC framing bits as-is
-    # so rx.py's validated frame decode is unchanged. [SRC rtw88 reg.h:502-534]
-    # Write the exact monitor RCR airmon-ng uses (promiscuous + CBSSID cleared),
-    # verbatim rather than OR-ing onto an unknown power-on default — deterministic
-    # and independent of any flaky read. [WIRE] frames 6679-6693.
+
+def apply_monitor_rx_filter(transport: RTL8821AUTransport) -> None:
+    """Force the monitor RX filter. Called on BOTH cold init and warm reattach
+    (from driver._finish_attach), because:
+
+    - The kernel init leaves REG_RCR configured for an associated STA: not
+      promiscuous, and checking BSSID on data frames. That dropped client→AP
+      (ToDS) traffic — incl. the M2/M4 EAPOL a 4-way needs — so we only ever
+      saw M1/M3 (AP→client). mac80211 sets monitor's RCR via
+      ops->configure_filter, which wifit3 never gets.
+    - A WARM chip inherited from a previous session (kernel STA driver, or an
+      old wifit3 build) likewise has a non-monitor RCR, and the warm path skips
+      post-FW init — so applying the filter here is what makes it take effect.
+
+    Match what airmon-ng writes on the wire verbatim: REG_RCR = 0xf410400f —
+    AAP (promiscuous) + APM/AM/AB, CBSSID checks cleared, APP_PHYSTS/ICV/MIC/FCS
+    framing bits as the kernel sets them. (Net-type stays MGD_LINKED — [WIRE]
+    frame 5265 shows the kernel leaves it at 2 in monitor; net-type is not the
+    gate.) [SRC rtw88 reg.h:502-534; WIRE captures_rtw88_8821au frames 6679-6693]
+    """
     transport.write32(REG_RCR, RCR_MONITOR)
 
-    # Diagnostic (shows under WIFIT3_LOG): read the RX-filter state back so we
-    # can compare runtime values against the airmon-ng monitor targets and
-    # confirm the writes land. AAP=bit0 of RCR is the promiscuous bit; airmon's
-    # monitor RCR is 0xf410400f. If RCR reads back with AAP set but ToDS frames
-    # still don't arrive, the gate is NOT the RX filter.
+    # Read back so a WIFIT3_LOG run shows the actual runtime RX-filter state vs
+    # the airmon targets — confirms the write landed. If RCR reads back with AAP
+    # set but ToDS frames still don't arrive, the gate is NOT the RX filter.
     rcr = transport.read32(REG_RCR)
     logger.info(
         "RX filter readback: RCR=0x%08x (AAP=%d CBSSID_DATA=%d) "

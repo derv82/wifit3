@@ -45,7 +45,13 @@ from .firmware import (
     en_download_firmware_legacy,
     load_firmware_blob,
 )
-from .mac import is_chip_warm, mac_power_on, post_fw_mac_init, pre_fw_init
+from .mac import (
+    apply_monitor_rx_filter,
+    is_chip_warm,
+    mac_power_on,
+    post_fw_mac_init,
+    pre_fw_init,
+)
 from .phy import (
     EfuseDefaults,
     post_mac_init_phy,
@@ -291,6 +297,11 @@ class RTL8821AUDriver:
                 "session can't be reset in userland on Windows/WinUSB."
             )
             return False
+
+        # Force the monitor RX filter on BOTH paths — the warm path skips
+        # post-FW init, and a chip left by the kernel/an old build has a
+        # non-monitor RCR that drops client→AP (ToDS) frames.
+        await loop.run_in_executor(None, apply_monitor_rx_filter, self.transport)
 
         self._rx_running = True
         self._rx_task = asyncio.create_task(self._rx_loop())
