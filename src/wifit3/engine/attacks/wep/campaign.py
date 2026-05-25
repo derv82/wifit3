@@ -236,10 +236,8 @@ class WepCampaign:
         store logged it as a replay seed). The daemon stopped itself; just drop
         our handle and resume replay, which will pick the new seed up."""
         self.frag = None
-        self._log(
-            "[green]→ Fragmentation seeded replay[/green] [dim](resuming ARP "
-            "replay with the AP's relayed ARP)[/dim]"
-        )
+        # The frag daemon already logged "✓ Fragmentation worked!"; resuming
+        # replay speaks for itself via its own "Testing candidate packet…" line.
         self.replay.resume()
 
     @property
@@ -283,10 +281,8 @@ class WepCampaign:
         seed, then resume replay to loop it."""
         self.chop = None
         self.iface.wep_store.record_arp_candidate(self.target.bssid, forged_frame)
-        self._log(
-            "[green]→ ChopChop seeded replay[/green] [dim](resuming ARP replay "
-            "with the forged ARP)[/dim]"
-        )
+        # The chop daemon already logged "✓ ChopChop worked!"; resuming replay
+        # speaks for itself via its own "Testing candidate packet…" line.
         self.replay.resume()
 
     @property

@@ -455,9 +455,9 @@ class FocusView(Screen):
             return "[dim]not started[/dim]"
         # Frag/Chop take over the radio (replay paused by design) — name them.
         if campaign.frag_active:
-            return "[dim]forging a seed —[/dim] [cyan]Fragmentation[/cyan]…"
+            return "[dim]forging a seed using[/dim] [cyan]Fragmentation[/cyan][dim]…[/dim]"
         if campaign.chop_active:
-            return "[dim]forging a seed —[/dim] [cyan]ChopChop[/cyan]…"
+            return "[dim]forging a seed using[/dim] [cyan]ChopChop[/cyan][dim]…[/dim]"
         s = campaign.replay.state
         if s == "replaying":
             # target_pps = the smooth P&O rate, not the jittery per-cycle
@@ -1080,10 +1080,8 @@ class FocusView(Screen):
             camp.stop_frag()
             self._log("[cyan]→ Frag stopped[/cyan] [dim](back to ARP replay)[/dim]")
         else:
-            self._log(
-                "[bold cyan]→ Frag[/bold cyan] — pausing replay, fragmenting a "
-                "broadcast ARP to make the AP relay us a fresh seed."
-            )
+            # The daemon logs its own one-liner (waiting → seeded → worked); no
+            # need for a separate start line back-to-back with it.
             camp.start_frag()
         self.update_ui()
 

@@ -202,9 +202,8 @@ class WepFragmentation:
                 self._seed_key = key
                 self._rounds_on_seed = 0
                 self._log(
-                    f"[green]Fragmentation:[/green] seeded from data frame IV "
-                    f"{iv.hex()} [dim](ethertype {etype:#06x}, "
-                    f"{len(self._frags)} fragments)[/dim]"
+                    "[cyan]→ Fragmentation:[/cyan] Data seeded, "
+                    "[green]forging packet…[/green]"
                 )
                 return True
         return False
@@ -266,9 +265,8 @@ class WepFragmentation:
     def _succeed(self) -> None:
         self._set_state("success")
         self._log(
-            f"[green]✓ Fragmentation worked[/green] [dim](AP relayed our "
-            f"reassembled ARP after {self._round} rounds — handing to "
-            f"replay)[/dim]"
+            "[green]✓ Fragmentation worked![/green] "
+            "[dim](AP replayed forged ARP)[/dim]"
         )
         frame = self._relay_frame
         # Immediate handoff: stop injecting, hand the relay to the campaign.
@@ -315,13 +313,11 @@ class WepFragmentation:
         self._last_state = state
         if state == "seeding":
             self._log(
-                "[green]Fragmentation:[/green] [white]waiting for any WEP data "
-                "frame to seed from[/white] [dim](need one client packet — "
-                "deauth a client or wait for traffic)[/dim]"
+                "[cyan]→ Fragmentation:[/cyan] waiting for Data packet… "
+                "[dim](ETA: unknown)[/dim]"
             )
-        elif state == "waiting-auth":
-            self._log("[green]Fragmentation:[/green] [dim]waiting for "
-                      "association…[/dim]")
+        # waiting-auth is silent — the SECURITY panel shows fake-auth status,
+        # and a separate "waiting for association" line is just noise.
 
     def _maybe_heartbeat(self) -> None:
         now = time.time()

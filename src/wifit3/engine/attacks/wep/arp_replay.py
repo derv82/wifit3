@@ -418,7 +418,7 @@ class WepArpReplay:
             # We already suggested deauth/chop/frag at start — keep this terse.
             self._log("[green]ARP Replay:[/green] [white]waiting for ARP[/white]")
         elif state == "testing":
-            self._log("[green]ARP Replay:[/green] [white]testing a candidate…[/white]")
+            self._log("[green]ARP Replay:[/green] [white]Testing candidate packet…[/white]")
         # waiting-auth is silent: we announced the campaign starting; a separate
         # "waiting for association" line is just noise.
 

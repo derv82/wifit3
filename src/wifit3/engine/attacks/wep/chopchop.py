@@ -537,8 +537,8 @@ class WepChopChop:
     def _succeed(self, forged: bytes) -> None:
         self._set_state("success")
         self._log(
-            "[green]✓ ChopChop recovered keystream[/green] [dim](forged a "
-            "broadcast ARP — handing to replay)[/dim]"
+            "[green]✓ ChopChop worked![/green] "
+            "[dim](forged a broadcast ARP)[/dim]"
         )
         # Immediate handoff (mirrors frag): stop, hand the forged ARP over.
         self._active = False
