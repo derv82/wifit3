@@ -250,6 +250,34 @@ async def test_recovers_ip_seed_via_header_reconstruction():
     _assert_valid_forged_arp(forged)
 
 
+async def test_loop_picks_seed_from_store_and_chops_end_to_end():
+    """Drive the real _loop (not just _chop_and_forge): it must pull a seed from
+    the store's chop_candidates, associate, chop, and hand off — without
+    referencing anything that no longer exists. Regression for the lazy-auth
+    refactor leaving a stale self._can_inject() in the loop, which crashed the
+    task on its first tick (chop_active stayed True so the UI showed 'forging a
+    seed' while nothing actually chopped)."""
+    cipher, _ = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
+    hdr = (bytes([0x08, 0x42, 0, 0]) + b"\xff" * 6 + BSSID_B + OUR
+           + b"\x00\x00")
+    frame = hdr + IV + b"\x00" + cipher                  # 68B captured broadcast
+    holder = {}
+    iface = SimpleNamespace(register_rx_callback=lambda c: None,
+                            unregister_rx_callback=lambda c: None)
+    store = SimpleNamespace(chop_candidates=lambda b: [frame])
+    d = WepChopChop(iface, SimpleNamespace(bssid=BSSID), store,
+                    source_mac=OUR,
+                    on_forged_arp=lambda f: holder.setdefault("f", f),
+                    oracle=_sim_oracle(IV, KEY))
+    d.start()
+    try:
+        await asyncio.wait_for(d._task, timeout=2.0)     # re-raises a loop crash
+    finally:
+        d.stop()
+    assert "f" in holder
+    _assert_valid_forged_arp(holder["f"])
+
+
 async def test_succeed_hands_forged_arp_to_campaign_and_stops():
     cipher, _ = _arp_cipher(bytes([192, 168, 1, 50]), bytes([192, 168, 1, 1]))
     d, calls = _daemon(oracle=_sim_oracle(IV, KEY))

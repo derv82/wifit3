@@ -393,15 +393,18 @@ class WepChopChop:
     async def _loop(self) -> None:
         try:
             while self._active:
-                if not self._can_inject():
-                    self._set_state("waiting-auth")
-                    await asyncio.sleep(0.2)
-                    continue
+                # Find a seed FIRST — only then is it worth authenticating
+                # (lazy fake-auth; no presence with nothing to chop).
                 cipher = self._pick_target()
                 if not cipher:
                     self._set_state("seeding")
                     await asyncio.sleep(0.3)
                     self._maybe_heartbeat()
+                    continue
+                # We have a seed — (lazily) associate before chopping.
+                if not await self._await_assoc():
+                    self._set_state("waiting-auth")
+                    await asyncio.sleep(0.3)
                     continue
 
                 self._set_state("chopping")
