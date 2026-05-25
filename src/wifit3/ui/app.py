@@ -1,4 +1,5 @@
 import logging
+import os
 from textual.app import App
 from typing import Optional
 
@@ -10,6 +11,36 @@ from .screens.scanner import ScannerView
 from .screens.focus import FocusView
 
 logger = logging.getLogger(__name__)
+
+# Set once so repeated WifiteApp() instances (the test suite makes many) don't
+# stack duplicate handlers or re-truncate the log.
+_FILE_LOGGING_CONFIGURED = False
+
+
+def _configure_file_logging() -> None:
+    """Opt-in file logging for hardware debugging — off by default.
+
+    The TUI owns the terminal, so stderr logging is invisible (and there's no
+    handler anyway): the interface's ``[NEW AP]`` / ``[M1]`` / ``[PMKID]`` frame
+    trace goes nowhere during a normal run. Set ``WIFIT3_LOG=1`` to capture INFO
+    (or ``WIFIT3_LOG=debug`` for DEBUG, incl. frame bytes) to ``wifit3.log`` in
+    the CWD. Truncated per run so each session's trace stands alone.
+    """
+    global _FILE_LOGGING_CONFIGURED
+    level_env = os.environ.get("WIFIT3_LOG", "").strip().lower()
+    if not level_env or _FILE_LOGGING_CONFIGURED:
+        return
+    level = logging.DEBUG if level_env in ("debug", "2") else logging.INFO
+    handler = logging.FileHandler("wifit3.log", mode="w", encoding="utf-8")
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-5s %(name)s: %(message)s", datefmt="%H:%M:%S"
+    ))
+    root = logging.getLogger()
+    root.setLevel(level)
+    root.addHandler(handler)
+    _FILE_LOGGING_CONFIGURED = True
+    logger.info("File logging enabled (level=%s) → wifit3.log",
+                logging.getLevelName(level))
 
 class WifiteApp(App):
     """wifit3 TUI Main App."""
@@ -106,6 +137,7 @@ class WifiteApp(App):
     """
 
     def __init__(self):
+        _configure_file_logging()
         super().__init__()
         self.device_manager = WlanDeviceManager()
         self.active_interface = None
