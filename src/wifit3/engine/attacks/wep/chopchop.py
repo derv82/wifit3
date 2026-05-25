@@ -538,7 +538,7 @@ class WepChopChop:
     def _succeed(self, forged: bytes) -> None:
         self._set_state("success")
         self._log(treelog.leaf_ok(
-            "[green]ChopChop worked![/green] [dim](forged a broadcast ARP)[/dim]"
+            "[green]ChopChop packet forged[/green] [dim](broadcast ARP)[/dim]"
         ))
         # Immediate handoff (mirrors frag): stop, hand the forged ARP over.
         self._active = False
@@ -565,6 +565,6 @@ class WepChopChop:
         self._last_heartbeat = now
         if self.state == "chopping":
             self._log(treelog.branch(
-                f"[dim]byte {self._bytes_done}/{self._bytes_total} "
-                f"recovered…[/dim]"
+                f"[dim]byte[/dim] [white]{self._bytes_done}/{self._bytes_total}"
+                f"[/white] [dim]recovered…[/dim]"
             ))

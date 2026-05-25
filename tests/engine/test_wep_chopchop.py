@@ -280,7 +280,7 @@ async def test_loop_picks_seed_from_store_and_chops_end_to_end():
     _assert_valid_forged_arp(holder["f"])
     # Tree-log shape: a plain "chopping IV" header, then a └─✓ success leaf.
     assert any("chopping IV" in m and not m.startswith(" ") for m in logs)
-    assert any("└─" in m and "ChopChop worked!" in m for m in logs)
+    assert any("└─" in m and "ChopChop packet forged" in m for m in logs)
 
 
 def test_treelog_connectors():

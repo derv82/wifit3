@@ -38,6 +38,7 @@ import time
 from typing import Awaitable, Callable, List, Optional
 
 from wifit3.engine.models import AccessPoint
+from wifit3.engine.attacks.wep import treelog
 from wifit3.engine.attacks.wep.wep_crypto import (
     arp_request_plaintext,
     build_fragments,
@@ -201,9 +202,9 @@ class WepFragmentation:
                 self._seed_iv = iv
                 self._seed_key = key
                 self._rounds_on_seed = 0
+                # Group header (plain) — each seed attempt is its own tree.
                 self._log(
-                    "[cyan]→ Fragmentation:[/cyan] Data seeded, "
-                    "[green]forging packet…[/green]"
+                    "[cyan]Fragmentation:[/cyan] data seeded, forging packet…"
                 )
                 return True
         return False
@@ -241,6 +242,11 @@ class WepFragmentation:
                         self._tried.add(self._seed_key)
                     self._seed_iv = None      # force a re-pick next iteration
                     self._seed_key = None
+                    # Close this seed's group — it wouldn't relay.
+                    self._log(treelog.leaf_fail(
+                        "[yellow]seed wouldn't relay[/yellow] "
+                        "[dim](trying another)[/dim]"
+                    ))
                 self._maybe_heartbeat()
         except asyncio.CancelledError:
             pass
@@ -264,10 +270,10 @@ class WepFragmentation:
 
     def _succeed(self) -> None:
         self._set_state("success")
-        self._log(
-            "[green]✓ Fragmentation worked![/green] "
-            "[dim](AP replayed forged ARP)[/dim]"
-        )
+        self._log(treelog.leaf_ok(
+            "[green]Fragmentation packet relayed[/green] "
+            "[dim](AP echoed our ARP)[/dim]"
+        ))
         frame = self._relay_frame
         # Immediate handoff: stop injecting, hand the relay to the campaign.
         self._active = False
@@ -313,7 +319,7 @@ class WepFragmentation:
         self._last_state = state
         if state == "seeding":
             self._log(
-                "[cyan]→ Fragmentation:[/cyan] waiting for Data packet… "
+                "[cyan]Fragmentation:[/cyan] waiting for Data packet… "
                 "[dim](ETA: unknown)[/dim]"
             )
         # waiting-auth is silent — the SECURITY panel shows fake-auth status,
@@ -325,8 +331,7 @@ class WepFragmentation:
             return
         self._last_heartbeat = now
         if self.state == "injecting":
-            self._log(
-                f"[green]Fragmentation:[/green] [dim]{self._round} rounds, no "
-                f"relay yet — still trying (switch attacks if it stays "
-                f"flat)[/dim]"
-            )
+            self._log(treelog.branch(
+                f"[dim]round[/dim] [white]{self._round}[/white] "
+                f"[dim]— no relay yet…[/dim]"
+            ))
