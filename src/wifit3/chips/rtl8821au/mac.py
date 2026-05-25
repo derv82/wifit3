@@ -28,11 +28,8 @@ import time
 
 from .constants import (
     BIT_AAP,
-    BIT_APM,
-    BIT_AM,
-    BIT_AB,
-    BIT_CBSSID_BCN,
     BIT_CBSSID_DATA,
+    RCR_MONITOR,
     BIT_DIS_TSF_UDT,
     BIT_APP_PHYSTS,
     BIT_EN_BCN_FUNCTION,
@@ -581,5 +578,22 @@ def post_fw_mac_init(transport: RTL8821AUTransport, fifo: FifoConf) -> None:
     # 5265 of captures_rtw88_8821au shows the kernel leaves it at 2 in monitor;
     # net-type is not the gate.) We keep the APP_FCS/ICV/MIC framing bits as-is
     # so rx.py's validated frame decode is unchanged. [SRC rtw88 reg.h:502-534]
-    transport.write32_set(REG_RCR, BIT_AAP | BIT_APM | BIT_AM | BIT_AB)
-    transport.write32_clr(REG_RCR, BIT_CBSSID_BCN | BIT_CBSSID_DATA)
+    # Write the exact monitor RCR airmon-ng uses (promiscuous + CBSSID cleared),
+    # verbatim rather than OR-ing onto an unknown power-on default — deterministic
+    # and independent of any flaky read. [WIRE] frames 6679-6693.
+    transport.write32(REG_RCR, RCR_MONITOR)
+
+    # Diagnostic (shows under WIFIT3_LOG): read the RX-filter state back so we
+    # can compare runtime values against the airmon-ng monitor targets and
+    # confirm the writes land. AAP=bit0 of RCR is the promiscuous bit; airmon's
+    # monitor RCR is 0xf410400f. If RCR reads back with AAP set but ToDS frames
+    # still don't arrive, the gate is NOT the RX filter.
+    rcr = transport.read32(REG_RCR)
+    logger.info(
+        "RX filter readback: RCR=0x%08x (AAP=%d CBSSID_DATA=%d) "
+        "RXFLTMAP0=0x%04x RXFLTMAP1=0x%04x RXFLTMAP2=0x%04x TCR=0x%08x CR=0x%08x",
+        rcr, 1 if rcr & BIT_AAP else 0, 1 if rcr & BIT_CBSSID_DATA else 0,
+        transport.read16(REG_RXFLTMAP0), transport.read16(REG_RXFLTMAP1),
+        transport.read16(REG_RXFLTMAP2), transport.read32(0x0604),
+        transport.read32(REG_CR),
+    )

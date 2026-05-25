@@ -59,6 +59,14 @@ BIT_AM = 1 << 2             # accept multicast
 BIT_APM = 1 << 1            # accept physical match (our MAC)
 BIT_AAP = 1 << 0            # accept ALL physical (promiscuous) — the key monitor bit
 
+# The exact REG_RCR value airmon-ng writes for monitor [WIRE captures_rtw88_
+# 8821au/capture-1 frames 6679-6693, write32 0x0608 = 0x0f4010f4 little-endian].
+# = AAP|APM|AM|AB (0xf, promiscuous) | HTC_LOC_CTRL(14) | PKTCTL_DLEN(20) |
+#   VHT_DACK(26) | APP_PHYSTS(28) | APP_ICV(29) | APP_MIC(30) | APP_FCS(31).
+# CBSSID_BCN/CBSSID_DATA are NOT set. We write it verbatim rather than OR bits
+# onto an unknown power-on default.
+RCR_MONITOR = 0xF410400F
+
 # REG_MCUFW_CTRL bits (reg.h) --------------------------------------------
 BIT_ROM_DLEN = 1 << 19
 BIT_ROM_PGE = 0b111 << 16     # GENMASK(18,16)
