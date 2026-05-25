@@ -274,6 +274,31 @@ def mac_init_for_rx(transport: RTL8822BUTransport) -> None:
                       transport.read16(REG_TXDMA_OFFSET_CHK) | BIT_DROP_DATA_EN)
 
 
+# Exact REG_RCR airmon-ng writes for monitor [WIRE captures_rtw88_8822bu/
+# capture-1 frames 19191-19205] — identical to rtl8821au's monitor value:
+# AAP|APM|AM|AB (promiscuous) with CBSSID_BCN/CBSSID_DATA cleared.
+RCR_MONITOR = 0xF410400F
+
+
+def apply_monitor_rx_filter(transport: RTL8822BUTransport) -> None:
+    """Force the monitor RX filter. Called on BOTH cold + warm attach.
+
+    mac_init_for_rx writes the kernel's STA-mode RCR 0xE400220E (AAP/bit0 CLEAR)
+    — not promiscuous — so client→AP (ToDS) traffic, incl. the M2/M4 EAPOL a
+    4-way needs, is dropped (PMKID still works via M1, which is AP→client).
+    The kernel overwrites RCR to 0xf410400f for monitor; we never did. The warm
+    path also skips mac_init_for_rx, so applying it here covers both. Same fix
+    as rtl8821au. [WIRE 8822bu frames 19191-19205; SRC rtw88 reg.h:502-534]
+    """
+    REG_RCR = 0x0608
+    transport.write32(REG_RCR, RCR_MONITOR)
+    rcr = transport.read32(REG_RCR)
+    logger.info(
+        "RX filter readback: RCR=0x%08x (AAP=%d CBSSID_DATA=%d)",
+        rcr, 1 if rcr & 0x1 else 0, 1 if rcr & (1 << 6) else 0,
+    )
+
+
 def init_priority_queue_8822b(transport: RTL8822BUTransport) -> None:
     """Port of mac.c:1192..1230 `__priority_queue_cfg` for 8822b on USB.
 

@@ -41,6 +41,7 @@ from .firmware import (
     load_firmware_blob,
 )
 from .mac import (
+    apply_monitor_rx_filter,
     cut_mask_from_sys_cfg1,
     init_priority_queue_8822b,
     is_chip_warm,
@@ -240,6 +241,11 @@ class RTL8822BUDriver:
                 "session can't be reset in userland on Windows/WinUSB."
             )
             return False
+
+        # Force the monitor RX filter on BOTH paths — the warm path skips
+        # mac_init_for_rx, and the cold init writes the STA RCR (no AAP) that
+        # drops client→AP (ToDS) frames. Mirrors rtl8821au.
+        await loop.run_in_executor(None, apply_monitor_rx_filter, self.transport)
 
         self._rx_running = True
         self._rx_task = asyncio.create_task(self._rx_loop())
