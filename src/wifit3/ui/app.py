@@ -69,8 +69,9 @@ class WifiteApp(App):
     #left-col { width: 40; }
     #panel-target { height: 8; }          /* aligns with the SECURITY|CAPTURE row */
     /* No box around the attack buttons — they have their own borders, and a
-       title-less bordered panel just adds clutter. */
-    #attack-panel { height: 8; border: none; }
+       title-less bordered panel just adds clutter. Center the 2 button rows
+       vertically so they don't sit top-heavy with a gap underneath. */
+    #attack-panel { height: 8; border: none; align-vertical: middle; }
     #client-panel { height: 1fr; min-height: 4; }
     #deauth-panel { height: auto; }
 
@@ -91,7 +92,10 @@ class WifiteApp(App):
        wide left column; rows touch vertically so 2 fit the 8-tall panel. */
     .button-row { height: auto; align-horizontal: center; }
     #attack-panel Button { width: 13; min-width: 0; }
-    #deauth-panel Button { width: 13; min-width: 0; }
+    /* DEAUTH buttons are flat (1-high, no border) — they're secondary actions,
+       and going flat saves 2 rows in the left column for CLIENTS. Wide (1fr)
+       to keep the click target reasonable despite being 1 row tall. */
+    #deauth-panel Button { width: 1fr; min-width: 0; height: 1; border: none; }
     Button {
         margin-right: 1;
         min-width: 12;

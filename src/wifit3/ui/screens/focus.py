@@ -25,7 +25,6 @@ from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDe
 from ..encryption_format import (
     format_encryption_markup,
     format_pmf_markup,
-    format_wps_markup,
 )
 
 logger = logging.getLogger(__name__)
@@ -256,7 +255,14 @@ class FocusView(Screen):
         # shows if present; PMF only in RSN (WPA2/3 — for WEP/OPEN there's no
         # RSN and it's always Disabled, so we omit it). The standalone lbl-pmf
         # slot is folded in here.
-        wps_part = (lambda m: f"WPS: {m}" if m is not None else None)(format_wps_markup(ap))
+        # Compact WPS: version + a lock glyph (green 🔓 unlocked = attackable,
+        # red 🔒 locked = dead end). The verbose method list doesn't fit here.
+        if ap.wps:
+            lock = "[red]🔒[/red]" if ap.wps_locked else "[green]🔓[/green]"
+            ver = f"{ap.wps_version} " if ap.wps_version else ""
+            wps_part = f"WPS: {ver}{lock}"
+        else:
+            wps_part = None
         pmf_part = f"PMF: {format_pmf_markup(ap)}" if (ap.akms or ap.wpa3) else None
         parts = [p for p in (wps_part, pmf_part) if p]
         wps_label = self.query_one("#lbl-wps", Label)
