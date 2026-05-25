@@ -55,7 +55,6 @@ class WifiteApp(App):
     }
     .info-box {
         border: solid $primary;
-        background: $panel;      /* lift panels off the near-black screen bg */
         padding: 0 1;            /* title flush under the top border */
     }
     /* A left-aligned block centered as a group (TARGET's detail lines). */
