@@ -50,12 +50,16 @@ class WifiteApp(App):
         text-style: bold;
         width: 100%;
         content-align: center middle;
-        background: $boost;
+        background: $primary;    /* a visible "window" title bar */
+        color: auto;             /* auto-contrast text on the bar */
     }
     .info-box {
         border: solid $primary;
+        background: $panel;      /* lift panels off the near-black screen bg */
         padding: 0 1;            /* title flush under the top border */
     }
+    /* A left-aligned block centered as a group (TARGET's detail lines). */
+    .panel-body { width: 1fr; height: auto; align-horizontal: center; }
 
     /* ---- Layout v2 (Option A): left action column | right summary+log --- */
     #main-row { height: 1fr; }
@@ -65,7 +69,9 @@ class WifiteApp(App):
        TARGET lines up with everything below it (and emphasizes the ESSID). */
     #left-col { width: 40; }
     #panel-target { height: 8; }          /* aligns with the SECURITY|CAPTURE row */
-    #attack-panel { height: 8; }          /* 2 fat button rows (3 each) + border */
+    /* No box around the attack buttons — they have their own borders, and a
+       title-less bordered panel just adds clutter. */
+    #attack-panel { height: 8; border: none; }
     #client-panel { height: 1fr; min-height: 4; }
     #deauth-panel { height: auto; }
 

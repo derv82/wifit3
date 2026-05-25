@@ -96,10 +96,15 @@ class FocusView(Screen):
                 with Vertical(id="left-col"):
                     yield Vertical(
                         Label("TARGET INFO", classes="panel-title"),
-                        Label(id="lbl-ssid"),
-                        Label(id="lbl-bssid"),
-                        Label(id="lbl-channel"),
-                        Label(id="lbl-last-beacon"),
+                        Label(id="lbl-ssid"),   # centered chip (see #lbl-ssid)
+                        # Detail lines as a left-aligned block, centered as a
+                        # group under the chip.
+                        Vertical(
+                            Label(id="lbl-bssid"),
+                            Label(id="lbl-channel"),
+                            Label(id="lbl-last-beacon"),
+                            classes="panel-body",
+                        ),
                         classes="info-box", id="panel-target",
                     )
                     # ATTACKS — NO title bar: the buttons self-label, and the
@@ -125,7 +130,7 @@ class FocusView(Screen):
                         yield client_table
                     # CLIENT DEAUTH — client-targeted, so it lives under CLIENTS.
                     with Vertical(classes="info-box", id="deauth-panel"):
-                        yield Label("CLIENT DEAUTH", classes="panel-title")
+                        yield Label("DEAUTHENTICATE CLIENTS", classes="panel-title")
                         with Horizontal(classes="button-row"):
                             yield Button("Selected", variant="warning", id="btn-deauth-sel", disabled=True)
                             yield Button("Broadcast", variant="error", id="btn-deauth-bcast")
