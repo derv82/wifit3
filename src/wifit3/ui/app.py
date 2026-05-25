@@ -58,12 +58,21 @@ class WifiteApp(App):
         padding: 0 1;            /* no top blank — title flush under the border, like the bottom row */
     }
     #ap-info-panel {
-        height: 9;
+        /* Tight to the content: border(2) + title + up to 5 rows. WEP tops out
+           at 4 (enc/fake-auth/crack/crack-info) but a WPA3-transition SECURITY
+           can hit 5 (enc/WPS/PMF/WPA3/SAE-groups), so 8 (not 7) avoids clipping
+           that 5th row while still dropping a trailing blank. */
+        height: 8;
     }
-    /* TARGET INFO is mostly short fields (SSID/BSSID/channel) — give it a fixed
-       narrow width and let SECURITY + CAPTURE share the rest (1fr each). */
+    /* TARGET INFO holds SSID/BSSID/channel — wide enough for a full 32-char
+       ESSID ("ESSID: " + 32 = 39 + border/padding). SECURITY + CAPTURE share
+       the rest (1fr each), and centre their contents under the title. */
     #panel-target {
-        width: 32;
+        width: 43;
+    }
+    #panel-security Label, #panel-capture Label {
+        width: 100%;
+        text-align: center;
     }
     #client-panel {
         height: 1fr;
@@ -71,6 +80,12 @@ class WifiteApp(App):
     }
     #bottom-row {
         height: 12;
+    }
+    /* Bottom-row action panels get a blank line between the title and the
+       first button (breathing room); EVENT LOG keeps its title flush against
+       the log text. */
+    #deauth-panel .panel-title, #attack-panel .panel-title {
+        margin-bottom: 1;
     }
     #deauth-panel {
         width: 16;

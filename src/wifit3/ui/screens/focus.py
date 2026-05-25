@@ -114,7 +114,7 @@ class FocusView(Screen):
                     Label(id="lbl-fakeauth"),
                     Label(id="lbl-crack"),
                     Label(id="lbl-crack-info"),
-                    classes="info-box",
+                    classes="info-box", id="panel-security",
                 )
                 yield Vertical(
                     Label("CAPTURE", classes="panel-title"),
@@ -127,7 +127,7 @@ class FocusView(Screen):
                     # under SECURITY — capture + cracking are parallel processes.
                     Label(id="lbl-ivs"),
                     Label(id="lbl-replay"),
-                    classes="info-box",
+                    classes="info-box", id="panel-capture",
                 )
 
             with Vertical(id="client-panel"):
