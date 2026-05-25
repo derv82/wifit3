@@ -25,8 +25,10 @@ import logging
 from concurrent.futures import ProcessPoolExecutor
 from typing import Callable, Optional
 
+from rich.markup import escape
+
 from wifit3.engine.models import AccessPoint
-from wifit3.engine.attacks.wep import treelog
+from wifit3.engine.attacks import treelog
 from wifit3.engine.attacks.wep.fake_auth import WepFakeAuth
 from wifit3.engine.attacks.wep.arp_replay import WepArpReplay
 from wifit3.engine.attacks.wep.fragmentation import WepFragmentation
@@ -104,10 +106,10 @@ class WepCampaign:
             return
         self._active = True
         self._log(
-            "[cyan]→ ARP replay starting[/cyan] - "
-            "[white]waiting for ARP packets[/white]"
+            f"[bold green]ARP Replay starting[/bold green] on "
+            f"[bold]{escape(self.target.ssid or '<hidden>')}[/bold]"
         )
-        self._log("[dim]  (deauth, chop, or frag if no ARPs appear)[/dim]")
+        self._log(treelog.leaf("[dim](deauth, chop, or frag if no ARPs appear)[/dim]"))
         self.fake_auth.start()
         self.replay.start()
         # One reusable worker process for the crack search (spawns lazily on

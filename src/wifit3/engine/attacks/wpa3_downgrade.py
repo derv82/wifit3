@@ -206,9 +206,10 @@ class WPA3DowngradeAttack:
             self.stats.responses_sent += 1
         else:
             self.stats.responses_failed += 1
-        # Log via callback the UI passed us. Safe to call from the loop.
-        self._log(
-            f"[dim cyan]←[/dim cyan] probe ({probe_kind}) from "
-            f"[bold]{_mac_str(client_mac)}[/bold] "
-            f"[dim]→ forged WPA2-only resp[/dim]"
+        # Per-probe detail goes to the debug logger only — the UI surfaces live
+        # counts via a SECURITY-panel status line, not one event-log line per
+        # probe (that flooded the log and broke neighbouring attack trees).
+        logger.debug(
+            "[WPA3-Down] %s probe from %s → forged WPA2-only resp (ok=%s)",
+            probe_kind, _mac_str(client_mac), ok,
         )

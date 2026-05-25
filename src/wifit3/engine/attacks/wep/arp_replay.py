@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable, List, Optional
 
 from wifit3.engine.models import AccessPoint
-from wifit3.engine.attacks.wep import treelog
+from wifit3.engine.attacks import treelog
 
 logger = logging.getLogger(__name__)
 
@@ -378,6 +378,9 @@ class WepArpReplay:
             self._winner = self._current
             self.stats.has_winner = True
             self._failed.discard(self._current)
+            self._log(treelog.branch_ok(
+                "Candidate packet is [bold green]replayable[/bold green]"
+            ))
             self._log(treelog.leaf_ok(
                 "[green]ARP Replaying now[/green] [dim](see CAPTURE)[/dim]"
             ))

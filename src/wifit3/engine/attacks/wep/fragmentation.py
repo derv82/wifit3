@@ -38,7 +38,7 @@ import time
 from typing import Awaitable, Callable, List, Optional
 
 from wifit3.engine.models import AccessPoint
-from wifit3.engine.attacks.wep import treelog
+from wifit3.engine.attacks import treelog
 from wifit3.engine.attacks.wep.wep_crypto import (
     arp_request_plaintext,
     build_fragments,
