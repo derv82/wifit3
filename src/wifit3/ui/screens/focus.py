@@ -464,7 +464,7 @@ class FocusView(Screen):
             # measured effective_pps.
             return (
                 f"[green]Replaying ARP[/green] "
-                f"[dim]({campaign.replay.target_pps:.0f} packets/sec)[/dim]"
+                f"[dim]({campaign.replay.target_pps:.0f}pps)[/dim]"
             )
         if s == "testing":
             return "[cyan]Trying candidate ARP…[/cyan]"
