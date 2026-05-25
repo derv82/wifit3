@@ -1,6 +1,7 @@
 import logging
 import re
 import time
+from collections import Counter, deque
 from pathlib import Path
 from typing import Optional, Set
 
@@ -71,6 +72,9 @@ class FocusView(Screen):
         self.target_ap: AccessPoint = None
         self._refresh_timer = None
         self._known_clients: Set[str] = set()
+        # Sliding-window samples of (timestamp, ap.beacons) for a recent
+        # beacons/s rate instead of a since-first-seen average (see update_ui).
+        self._beacon_samples: deque = deque()
         # Granular: also surfaces every new EAPOL frame, not just completions.
         self._events = CaptureEventDetector(granular_eapol=True)
         # WPA3 Downgrade is a long-running probe-response-spoof daemon. Held
@@ -199,6 +203,7 @@ class FocusView(Screen):
 
         # Reset per-target state.
         self._known_clients.clear()
+        self._beacon_samples.clear()
         self._events.reset()
         self.query_one("#client-table", DataTable).clear()
         self.query_one("#focus-event-log", RichLog).clear()
@@ -400,11 +405,21 @@ class FocusView(Screen):
             # WPA Downgrade button label reflects daemon state.
             btn_down.label = "Stop ↓" if self._wpa3_down_attack else "WPA ↓"
 
-        # CAPTURE panel (dynamic).
-        elapsed = max(1.0, time.time() - ap.first_seen)
-        rate = ap.beacons / elapsed
+        # CAPTURE panel (dynamic). Beacon RATE is windowed over the last few
+        # seconds, not averaged since first_seen — an average converges to a
+        # flat line and hides how RX is doing *right now* (e.g. you moved, or
+        # the AP got busy). Total count stays cumulative.
+        now = time.time()
+        self._beacon_samples.append((now, ap.beacons))
+        BEACON_WINDOW_S = 5.0
+        while len(self._beacon_samples) > 1 and now - self._beacon_samples[0][0] > BEACON_WINDOW_S:
+            self._beacon_samples.popleft()
+        oldest_t, oldest_n = self._beacon_samples[0]
+        span = now - oldest_t
+        # Need ~a second of window before the rate means anything.
+        rate_str = f"{(ap.beacons - oldest_n) / span:.1f}/s" if span >= 1.0 else "…/s"
         self.query_one("#lbl-beacons", Label).update(
-            f"Beacons: {ap.beacons:,} ({rate:.1f}/s)"
+            f"Beacons: {ap.beacons:,} ({rate_str})"
         )
         self.query_one("#lbl-pwr", Label).update(f"Power: {ap.signal} dBm")
 
@@ -430,12 +445,22 @@ class FocusView(Screen):
                 for hs in ap.handshakes.values()
                 if not hs.is_complete and hs.total_eapol_frames > 0
             )
+            # Per-message tally across this AP's handshakes. The 4-way validity
+            # logic dedups by (msg, replay), so repeated M1/M3 retries collapse
+            # to one — but the user still wants to see those frames landing as
+            # progress, so surface the raw-frame counts here (matches the log).
+            msg_counts: Counter = Counter()
+            for hs in ap.handshakes.values():
+                for f in hs.eapol_frames:
+                    if f.msg_num:
+                        msg_counts[f.msg_num] += 1
+            breakdown = " · ".join(f"M{m}×{msg_counts[m]}" for m in sorted(msg_counts))
             if n_complete:
                 hs_text = f"[bold green]Captured x{n_complete}[/bold green]"
                 if n_partial:
                     hs_text += f" [dim](+{n_partial} partial)[/dim]"
             elif n_partial:
-                hs_text = f"[yellow]Partial x{n_partial}[/yellow]"
+                hs_text = f"[yellow]Partial[/yellow] [dim]{breakdown}[/dim]"
             else:
                 hs_text = "[dim]Not captured[/dim]"
             hs_label.update(Text.from_markup(f"Handshake: {hs_text}", emoji=False))

@@ -90,3 +90,30 @@ async def test_focus_surfaces_passive_handshake_and_pmkid():
         log_text = _log_text(focus.query_one("#focus-event-log", RichLog))
         assert "HANDSHAKE COMPLETE" in log_text, log_text
         assert "PMKID" in log_text, log_text
+
+
+@pytest.mark.asyncio
+async def test_partial_handshake_shows_per_message_counts():
+    """Repeated/partial EAPOL frames the 4-way validity logic can't pair must
+    still register as visible progress — the CAPTURE panel shows M{n}×count."""
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+        app.active_interface = iface
+        bssid, client = "aa:bb:cc:dd:ee:01", "04:2e:c1:51:43:b8"
+        iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
+        app.target_ap = iface.access_points[bssid]
+        app.push_screen("focus")
+        await pilot.pause()
+        focus = app.screen
+
+        # Two distinct M1 frames (different replay → different raw), no M2/M3:
+        # never a valid pair, so it stays Partial — but both should be counted.
+        iface._on_frame_parsed(_eapol(bssid, client, 1, b"\x00" * 8, to_ap=False))
+        iface._on_frame_parsed(_eapol(bssid, client, 1, b"\x00" * 7 + b"\x01", to_ap=False))
+        focus.update_ui()
+        await pilot.pause()
+
+        hs = str(focus.query_one("#lbl-handshake", Label).render())
+        assert "Partial" in hs, hs
+        assert "M1×2" in hs, hs
