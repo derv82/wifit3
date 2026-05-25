@@ -57,29 +57,36 @@ class WifiteApp(App):
         padding: 0 1;            /* title flush under the top border */
     }
 
-    /* ---- Top row: TARGET | ATTACKS (no title) | CAPTURE ---------------- */
-    /* Height = 2 fat button rows (3 each) + border. Fixed-width panels so
-       nothing reflows on a wide terminal; content top-aligns. */
-    #top-row { height: 8; }
-    #panel-target  { width: 30; }   /* SSID chip / BSSID(24) / channel / last-beacon */
-    #attack-panel  { width: 26; }   /* 2x2 buttons, no title bar */
-    #panel-capture { width: 30; }
+    /* ---- Layout v2 (Option A): left action column | right summary+log --- */
+    #main-row { height: 1fr; }
 
-    /* ---- Lower row: [SECURITY / CLIENTS / DEAUTH] | EVENT LOG ---------- */
-    #lower-row { height: 1fr; }
-    #left-col  { width: 34; height: 1fr; }
-    #panel-security { height: auto; }
-    #client-panel   { height: 1fr; min-height: 4; }
-    #deauth-panel   { height: auto; }
-    #event-log-panel { width: 1fr; height: 1fr; }
+    /* LEFT column: TARGET / ATTACKS / CLIENTS / CLIENT DEAUTH, one shared width.
+       40 wide so the attack buttons fit "Stop Replay", CLIENTS fits PKTS, and
+       TARGET lines up with everything below it (and emphasizes the ESSID). */
+    #left-col { width: 40; }
+    #panel-target { height: 8; }          /* aligns with the SECURITY|CAPTURE row */
+    #attack-panel { height: 8; }          /* 2 fat button rows (3 each) + border */
+    #client-panel { height: 1fr; min-height: 4; }
+    #deauth-panel { height: auto; }
+
+    /* RIGHT column: SECURITY | CAPTURE summary row (forms the TARGET | SECURITY |
+       CAPTURE header), then the tall EVENT LOG. */
+    #right-col { width: 1fr; }
+    #top-right { height: 8; }
+    #panel-security { width: 38; }
+    #panel-capture  { width: 38; }
+    #event-log-panel { height: 1fr; }
     #focus-event-log { height: 1fr; border: none; }
+    /* ESSID chip reads like a centered subtitle under the TARGET INFO title
+       (static per target, so no jitter); BSSID/channel stay left-aligned. */
+    #lbl-ssid { width: 100%; text-align: center; }
 
-    /* Buttons: fat (height 3) but narrow — Button defaults to min-width:16,
-       which is what ballooned/clipped them. Rows touch vertically (no margin)
-       so 2 rows fit the 8-tall top panel exactly. */
+    /* Buttons: fat (height 3), narrow — Button defaults to min-width:16, which
+       ballooned/clipped them. Width 13 fits "Stop Replay"/"Stop Frag" in the
+       wide left column; rows touch vertically so 2 fit the 8-tall panel. */
     .button-row { height: auto; align-horizontal: center; }
-    #attack-panel Button { width: 10; min-width: 0; }
-    #deauth-panel Button { width: 12; min-width: 0; }
+    #attack-panel Button { width: 13; min-width: 0; }
+    #deauth-panel Button { width: 13; min-width: 0; }
     Button {
         margin-right: 1;
         min-width: 12;

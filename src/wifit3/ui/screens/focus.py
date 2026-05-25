@@ -87,60 +87,35 @@ class FocusView(Screen):
         yield Header(show_clock=True)
 
         with Vertical(id="focus-container"):
-            # ---- Top row: TARGET | ATTACKS (no title) | CAPTURE ----
-            with Horizontal(id="top-row"):
-                yield Vertical(
-                    Label("TARGET INFO", classes="panel-title"),
-                    Label(id="lbl-ssid"),
-                    Label(id="lbl-bssid"),
-                    Label(id="lbl-channel"),
-                    Label(id="lbl-last-beacon"),
-                    classes="info-box", id="panel-target",
-                )
-                # ATTACKS — NO title bar: the buttons self-label, and the family
-                # is already stated by TARGET's "Encryption:" line. The crypto-
-                # specific set toggles via update_ui (ids unchanged). Laid out
-                # 2-per-row:  WEP: Replay Chop / Save Frag   WPA: PMKID SAE / WPA↓ Save
-                with Vertical(classes="info-box", id="attack-panel"):
-                    with Horizontal(classes="button-row"):
-                        yield Button("Replay", variant="success", id="btn-gen-ivs")
-                        yield Button("Chop", variant="primary", id="btn-chop")
-                        yield Button("PMKID", variant="primary", id="btn-pmkid")
-                        yield Button("SAE", variant="primary", id="btn-sae-probe", disabled=True)
-                    with Horizontal(classes="button-row"):
-                        yield Button("WPA ↓", variant="primary", id="btn-wpa3-down", disabled=True)
-                        yield Button("Save", variant="success", id="btn-save", disabled=True)
-                        yield Button("Frag", variant="primary", id="btn-frag")
-                yield Vertical(
-                    Label("CAPTURE", classes="panel-title"),
-                    Label(id="lbl-beacons"),
-                    Label(id="lbl-pwr"),
-                    Label(id="lbl-handshake"),
-                    Label(id="lbl-pmkid"),
-                    # WEP-only (shown in place of Handshake/PMKID): the IV count
-                    # + a dedicated Replay-status row.
-                    Label(id="lbl-ivs"),
-                    Label(id="lbl-replay"),
-                    classes="info-box", id="panel-capture",
-                )
-
-            # ---- Lower row: [SECURITY / CLIENTS / DEAUTH] | EVENT LOG ----
-            with Horizontal(id="lower-row"):
+            # Two columns. LEFT (fixed width): TARGET heads a stack of actions
+            # (ATTACKS) + the client list + CLIENT DEAUTH — all share one width,
+            # so TARGET lines up with CLIENTS and the attack buttons get room.
+            # RIGHT: the SECURITY | CAPTURE summary row on top (so the visual
+            # top row reads TARGET | SECURITY | CAPTURE), then the tall EVENT LOG.
+            with Horizontal(id="main-row"):
                 with Vertical(id="left-col"):
                     yield Vertical(
-                        Label("SECURITY", classes="panel-title"),
-                        Label(id="lbl-enc"),
-                        Label(id="lbl-wps"),
-                        Label(id="lbl-pmf"),
-                        Label(id="lbl-wpa3"),
-                        Label(id="lbl-sae-groups"),
-                        # WEP-only: fake-auth status + Crack progress (runs in
-                        # PARALLEL with capture, hence under SECURITY).
-                        Label(id="lbl-fakeauth"),
-                        Label(id="lbl-crack"),
-                        Label(id="lbl-crack-info"),
-                        classes="info-box", id="panel-security",
+                        Label("TARGET INFO", classes="panel-title"),
+                        Label(id="lbl-ssid"),
+                        Label(id="lbl-bssid"),
+                        Label(id="lbl-channel"),
+                        Label(id="lbl-last-beacon"),
+                        classes="info-box", id="panel-target",
                     )
+                    # ATTACKS — NO title bar: the buttons self-label, and the
+                    # family is stated by TARGET's "Encryption:" line. Crypto set
+                    # toggles via update_ui (ids unchanged). 2-per-row:
+                    #   WEP: Replay Chop / Save Frag   WPA: PMKID SAE / WPA↓ Save
+                    with Vertical(classes="info-box", id="attack-panel"):
+                        with Horizontal(classes="button-row"):
+                            yield Button("Replay", variant="success", id="btn-gen-ivs")
+                            yield Button("Chop", variant="primary", id="btn-chop")
+                            yield Button("PMKID", variant="primary", id="btn-pmkid")
+                            yield Button("SAE", variant="primary", id="btn-sae-probe", disabled=True)
+                        with Horizontal(classes="button-row"):
+                            yield Button("WPA ↓", variant="primary", id="btn-wpa3-down", disabled=True)
+                            yield Button("Save", variant="success", id="btn-save", disabled=True)
+                            yield Button("Frag", variant="primary", id="btn-frag")
                     with Vertical(classes="info-box", id="client-panel"):
                         yield Label("CLIENTS", classes="panel-title", id="lbl-clients-title")
                         client_table = DataTable(cursor_type="row", id="client-table")
@@ -148,17 +123,47 @@ class FocusView(Screen):
                         client_table.add_column("POWER", key="signal")
                         client_table.add_column("PKTS", key="packets")
                         yield client_table
-                    # DEAUTH — client-targeted, so it lives under CLIENTS. Two
-                    # buttons on one row.
+                    # CLIENT DEAUTH — client-targeted, so it lives under CLIENTS.
                     with Vertical(classes="info-box", id="deauth-panel"):
-                        yield Label("DEAUTH", classes="panel-title")
+                        yield Label("CLIENT DEAUTH", classes="panel-title")
                         with Horizontal(classes="button-row"):
                             yield Button("Selected", variant="warning", id="btn-deauth-sel", disabled=True)
                             yield Button("Broadcast", variant="error", id="btn-deauth-bcast")
-                # The stretchy panel — full height of the lower row.
-                with Vertical(classes="info-box", id="event-log-panel"):
-                    yield Label("EVENT LOG", classes="panel-title")
-                    yield RichLog(id="focus-event-log", markup=True, highlight=False, wrap=True)
+
+                with Vertical(id="right-col"):
+                    # Top-right summary row: SECURITY | CAPTURE (aligns with
+                    # TARGET to form the "TARGET | SECURITY | CAPTURE" header).
+                    with Horizontal(id="top-right"):
+                        yield Vertical(
+                            Label("SECURITY", classes="panel-title"),
+                            Label(id="lbl-enc"),
+                            Label(id="lbl-wps"),
+                            Label(id="lbl-pmf"),
+                            Label(id="lbl-wpa3"),
+                            Label(id="lbl-sae-groups"),
+                            # WEP-only: fake-auth status + Crack progress (runs
+                            # in PARALLEL with capture, hence under SECURITY).
+                            Label(id="lbl-fakeauth"),
+                            Label(id="lbl-crack"),
+                            Label(id="lbl-crack-info"),
+                            classes="info-box", id="panel-security",
+                        )
+                        yield Vertical(
+                            Label("CAPTURE", classes="panel-title"),
+                            Label(id="lbl-beacons"),
+                            Label(id="lbl-pwr"),
+                            Label(id="lbl-handshake"),
+                            Label(id="lbl-pmkid"),
+                            # WEP-only (in place of Handshake/PMKID): IV count +
+                            # a dedicated Replay-status row.
+                            Label(id="lbl-ivs"),
+                            Label(id="lbl-replay"),
+                            classes="info-box", id="panel-capture",
+                        )
+                    # The stretchy panel — fills the rest of the right column.
+                    with Vertical(classes="info-box", id="event-log-panel"):
+                        yield Label("EVENT LOG", classes="panel-title")
+                        yield RichLog(id="focus-event-log", markup=True, highlight=False, wrap=True)
 
         yield Footer()
 
@@ -311,9 +316,7 @@ class FocusView(Screen):
             # whole campaign. Frag/Chop are sub-attacks: blue to start, orange
             # ("Stop X") to stop just that one (the campaign keeps running).
             running = camp is not None
-            # Short "■ STOP" while running — "Stop Replay" (11) won't fit the
-            # narrow (width-10) button; the stop glyph keeps it unmistakable.
-            btn_gen.label = "■ STOP" if running else "Replay"
+            btn_gen.label = "Stop Replay" if running else "Replay"
             btn_gen.variant = "error" if running else "success"
             # Frag is a sub-mode of a running campaign (it manufactures a seed
             # for replay), so it only appears once IVs are being generated.
