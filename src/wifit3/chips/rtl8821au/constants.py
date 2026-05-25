@@ -48,6 +48,12 @@ SPS_SEL = 0x83              # write8 to REG_LDO_SWR_CTRL when BIT_LDO is clear
 # REG_CR power-state magic values (mac.c:291)
 REG_CR_OFF_VALUE = 0xEA     # value read from REG_CR when card is in disabled state
 
+# Network type (MSR) field — REG_CR bits 16-17. [SRC rtw88 mac80211.c:112
+# net_type = {.addr = 0x0100, .mask = 0x30000}; enum values main.h:115]
+MASK_NETYPE = 0x30000
+RTW_NET_NO_LINK = 0         # monitor / unassociated — MAC accepts both ToDS+FromDS
+RTW_NET_MGD_LINKED = 2      # associated STA — MAC RX accepts FromDS (downlink) only
+
 # REG_MCUFW_CTRL bits (reg.h) --------------------------------------------
 BIT_ROM_DLEN = 1 << 19
 BIT_ROM_PGE = 0b111 << 16     # GENMASK(18,16)

@@ -27,6 +27,8 @@ import logging
 import time
 
 from .constants import (
+    MASK_NETYPE,
+    RTW_NET_NO_LINK,
     BIT_DIS_TSF_UDT,
     BIT_APP_PHYSTS,
     BIT_EN_BCN_FUNCTION,
@@ -563,3 +565,13 @@ def post_fw_mac_init(transport: RTL8821AUTransport, fifo: FifoConf) -> None:
 
     # 1175 — MACTXEN | MACRXEN
     transport.write8_set(REG_CR, BIT_MACTXEN | BIT_MACRXEN)
+
+    # --- wifit3 monitor deviation -------------------------------------------
+    # The kernel init at line 1102 set the net type to MGD_LINKED (2) — an
+    # *associated station*, whose MAC RX only accepts downlink (FromDS) frames.
+    # That silently dropped EVERY client→AP (ToDS) frame, including the M2/M4
+    # EAPOL needed to complete a 4-way handshake (we only ever saw M1/M3).
+    # mac80211 normally overrides net_type per-vif; we have no vif, so force
+    # NO_LINK (0) here so the MAC captures both directions, like monitor mode.
+    # [SRC rtw88 mac80211.c:201 (monitor → RTW_NET_NO_LINK), main.c:950]
+    transport.write32_mask(REG_CR, MASK_NETYPE, RTW_NET_NO_LINK)
