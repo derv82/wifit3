@@ -48,11 +48,16 @@ SPS_SEL = 0x83              # write8 to REG_LDO_SWR_CTRL when BIT_LDO is clear
 # REG_CR power-state magic values (mac.c:291)
 REG_CR_OFF_VALUE = 0xEA     # value read from REG_CR when card is in disabled state
 
-# Network type (MSR) field — REG_CR bits 16-17. [SRC rtw88 mac80211.c:112
-# net_type = {.addr = 0x0100, .mask = 0x30000}; enum values main.h:115]
-MASK_NETYPE = 0x30000
-RTW_NET_NO_LINK = 0         # monitor / unassociated — MAC accepts both ToDS+FromDS
-RTW_NET_MGD_LINKED = 2      # associated STA — MAC RX accepts FromDS (downlink) only
+# REG_RCR receive-config accept-policy bits [SRC rtw88 reg.h:527-534]. The
+# WIRE truth: airmon-ng monitor sets REG_RCR = 0xf410400f, whose low byte is
+# AAP|APM|AM|AB (promiscuous) with CBSSID_BCN|CBSSID_DATA *cleared*. The kernel
+# leaves net-type at MGD_LINKED(2) even in monitor — net-type is NOT the gate.
+BIT_CBSSID_BCN = 1 << 7     # check BSSID for beacons   — CLEAR for monitor
+BIT_CBSSID_DATA = 1 << 6    # check BSSID for data      — CLEAR for monitor
+BIT_AB = 1 << 3             # accept broadcast
+BIT_AM = 1 << 2             # accept multicast
+BIT_APM = 1 << 1            # accept physical match (our MAC)
+BIT_AAP = 1 << 0            # accept ALL physical (promiscuous) — the key monitor bit
 
 # REG_MCUFW_CTRL bits (reg.h) --------------------------------------------
 BIT_ROM_DLEN = 1 << 19

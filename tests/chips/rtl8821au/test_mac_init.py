@@ -34,7 +34,10 @@ from wifit3.chips.rtl8821au.constants import (
     REG_TXDMA_PQ_MAP,
     REG_USTIME_EDCA,
     REG_USTIME_TSF,
-    RTW_NET_NO_LINK,
+    REG_RCR,
+    BIT_AAP,
+    BIT_CBSSID_BCN,
+    BIT_CBSSID_DATA,
     WLAN_TBTT_TIME,
 )
 from wifit3.chips.rtl8821au.fifo import set_trx_fifo_info
@@ -274,16 +277,17 @@ def test_post_fw_mac_init_sets_mactxen_macrxen():
     assert final_cr_byte0 & BIT_MACRXEN
 
 
-def test_post_fw_mac_init_sets_monitor_net_type_no_link():
-    """Net type (REG_CR bits 16-17) must end as NO_LINK so the MAC captures
-    BOTH directions. Left at MGD_LINKED (the kernel init default) it accepts
-    only FromDS (AP→client), dropping the M2/M4 client→AP EAPOL needed to
-    complete a 4-way handshake."""
+def test_post_fw_mac_init_sets_monitor_rx_filter():
+    """REG_RCR must end promiscuous (AAP set) with the BSSID checks cleared, so
+    the MAC captures client→AP (ToDS) traffic — the M2/M4 EAPOL a 4-way needs.
+    Mirrors airmon-ng's on-wire monitor RCR (low byte of 0xf410400f)."""
     t = MockTransport()
     _no_llt_read_pending(t)
     post_fw_mac_init(t, set_trx_fifo_info())
-    net_type = t.regs.get(REG_CR + 2, 0) & 0x03  # bits 16-17 of REG_CR
-    assert net_type == RTW_NET_NO_LINK
+    rcr = t._load(REG_RCR, 4)
+    assert rcr & BIT_AAP, "promiscuous (AAP) not set — ToDS frames dropped"
+    assert not (rcr & BIT_CBSSID_DATA), "CBSSID_DATA still set — BSSID-filters data"
+    assert not (rcr & BIT_CBSSID_BCN), "CBSSID_BCN still set"
 
 
 def test_post_fw_mac_init_writes_hmetfr_first():

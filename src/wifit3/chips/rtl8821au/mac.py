@@ -27,8 +27,12 @@ import logging
 import time
 
 from .constants import (
-    MASK_NETYPE,
-    RTW_NET_NO_LINK,
+    BIT_AAP,
+    BIT_APM,
+    BIT_AM,
+    BIT_AB,
+    BIT_CBSSID_BCN,
+    BIT_CBSSID_DATA,
     BIT_DIS_TSF_UDT,
     BIT_APP_PHYSTS,
     BIT_EN_BCN_FUNCTION,
@@ -567,11 +571,15 @@ def post_fw_mac_init(transport: RTL8821AUTransport, fifo: FifoConf) -> None:
     transport.write8_set(REG_CR, BIT_MACTXEN | BIT_MACRXEN)
 
     # --- wifit3 monitor deviation -------------------------------------------
-    # The kernel init at line 1102 set the net type to MGD_LINKED (2) — an
-    # *associated station*, whose MAC RX only accepts downlink (FromDS) frames.
-    # That silently dropped EVERY client→AP (ToDS) frame, including the M2/M4
-    # EAPOL needed to complete a 4-way handshake (we only ever saw M1/M3).
-    # mac80211 normally overrides net_type per-vif; we have no vif, so force
-    # NO_LINK (0) here so the MAC captures both directions, like monitor mode.
-    # [SRC rtw88 mac80211.c:201 (monitor → RTW_NET_NO_LINK), main.c:950]
-    transport.write32_mask(REG_CR, MASK_NETYPE, RTW_NET_NO_LINK)
+    # The kernel init configures the RX filter (REG_RCR) for an associated
+    # STA: not promiscuous, and checking BSSID on data frames. That dropped
+    # client→AP (ToDS) traffic — incl. the M2/M4 EAPOL a 4-way needs — so we
+    # only ever saw M1/M3 (AP→client). mac80211 sets monitor's RCR via
+    # ops->configure_filter, which we never get. Match what airmon-ng writes
+    # on the wire: REG_RCR = 0xf410400f — set AAP (promiscuous) + APM/AM/AB,
+    # and CLEAR the CBSSID checks. (Net-type stays MGD_LINKED — [WIRE] frame
+    # 5265 of captures_rtw88_8821au shows the kernel leaves it at 2 in monitor;
+    # net-type is not the gate.) We keep the APP_FCS/ICV/MIC framing bits as-is
+    # so rx.py's validated frame decode is unchanged. [SRC rtw88 reg.h:502-534]
+    transport.write32_set(REG_RCR, BIT_AAP | BIT_APM | BIT_AM | BIT_AB)
+    transport.write32_clr(REG_RCR, BIT_CBSSID_BCN | BIT_CBSSID_DATA)
