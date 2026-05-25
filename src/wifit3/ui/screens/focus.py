@@ -98,7 +98,7 @@ class FocusView(Screen):
                     Label(id="lbl-bssid"),
                     Label(id="lbl-channel"),
                     Label(id="lbl-last-beacon"),
-                    classes="info-box",
+                    classes="info-box", id="panel-target",
                 )
                 yield Vertical(
                     Label("SECURITY", classes="panel-title"),
@@ -562,7 +562,7 @@ class FocusView(Screen):
             if fa.next_reauth_at:
                 secs = max(0, int(fa.next_reauth_at - time.time()))
                 countdown = f" [dim](re-auth in {secs}s)[/dim]"
-            fa_markup = f"[green]Success[/green]{countdown}"
+            fa_markup = f"[green]✓ Associated[/green]{countdown}"
         elif fa.state == "authenticating":
             fa_markup = "[yellow]Associating…[/yellow]"
         elif fa.state == "failed":

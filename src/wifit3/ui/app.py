@@ -55,10 +55,15 @@ class WifiteApp(App):
     .info-box {
         border: solid $primary;
         width: 1fr;
-        padding: 1;
+        padding: 0 1;            /* no top blank — title flush under the border, like the bottom row */
     }
     #ap-info-panel {
         height: 9;
+    }
+    /* TARGET INFO is mostly short fields (SSID/BSSID/channel) — give it a fixed
+       narrow width and let SECURITY + CAPTURE share the rest (1fr each). */
+    #panel-target {
+        width: 32;
     }
     #client-panel {
         height: 1fr;
@@ -79,7 +84,7 @@ class WifiteApp(App):
         margin: 0 0 1 0;
     }
     #attack-panel {
-        width: 34;
+        width: 32;
         height: 100%;
         border: solid $primary;
         padding: 0 1;
@@ -100,8 +105,8 @@ class WifiteApp(App):
     }
     .button-row {
         height: auto;
-        content-align: center middle;
-        margin-top: 1;
+        align-horizontal: center;   /* symmetric L/R padding in every state */
+        margin: 0 0 1 0;            /* gap below each row; none above (flush under title, like DEAUTH) */
     }
     Button {
         margin-right: 1;

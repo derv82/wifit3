@@ -182,14 +182,14 @@ class WepCampaign:
                 if key is not None:
                     self.recovered_key = key
                     self.target.wep_key = key   # persist on the AP (Save / UI)
-                    # The cyan-banner key is the (root) result; the copy/save
-                    # hints hang off it as tree children.
+                    # The cyan-banner key is the (root) result; the keyboard
+                    # hints hang off it as a single tree child. The [c]/[s]
+                    # brackets are escaped (\[) so Rich renders them literally
+                    # with the shortcut letter highlighted.
                     self._log(_key_markup(key))
-                    self._log(treelog.branch(
-                        "[dim]press [cyan]'c'[/cyan] to copy to clipboard[/dim]"
-                    ))
                     self._log(treelog.leaf(
-                        "[dim]press [cyan]'s'[/cyan] to save to file[/dim]"
+                        r"[white]\[[bold cyan]c[/bold cyan]]opy to clipboard, "
+                        r"or \[[bold cyan]s[/bold cyan]]ave to file[/white]"
                     ))
                     # Done — stop transmitting (replay + fake-auth keepalive).
                     self.replay.stop()
