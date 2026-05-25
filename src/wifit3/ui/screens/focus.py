@@ -408,7 +408,12 @@ class FocusView(Screen):
         # WPA handshake/PMKID) — hidden, not shown-disabled. It's created
         # disabled (compose), so clear that when shown or it greys out.
         btn_save = self.query_one("#btn-save", Button)
-        btn_save.display = ap.has_capture
+        # Keep Save's grid cell reserved (visibility, not display) so its
+        # row-mate Frag stays pinned in the right column even before there's
+        # anything to save — otherwise a display:none Save collapses the row and
+        # Frag slides under Replay.
+        btn_save.display = True
+        btn_save.visible = ap.has_capture
         btn_save.disabled = not ap.has_capture
         # Button stays plain "Save" to fit the narrow panel; the footer 's'
         # carries the crypto-specific label (Save Capture / Save Key).
