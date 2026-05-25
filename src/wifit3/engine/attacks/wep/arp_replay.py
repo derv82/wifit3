@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable, List, Optional
 
 from wifit3.engine.models import AccessPoint
+from wifit3.engine.attacks.wep import treelog
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +219,11 @@ class WepArpReplay:
         self._reauth_requested = False
         if cand is not self._winner:
             self.stats.candidates_tried += 1
+        # Group header (plain) — one per candidate trial; _judge closes it with a
+        # └─✓ (replaying) or └─╳ (couldn't replay) leaf.
+        self._log(
+            "[green]ARP Replay:[/green] [white]Testing candidate packet…[/white]"
+        )
 
     # ---- Replay loop --------------------------------------------------------
 
@@ -372,15 +378,18 @@ class WepArpReplay:
             self._winner = self._current
             self.stats.has_winner = True
             self._failed.discard(self._current)
-            self._log(
-                "[green]✓ ARP Replaying now[/green] "
-                "[dim](see CAPTURE for progress)[/dim]"
-            )
+            self._log(treelog.leaf_ok(
+                "[green]ARP Replaying now[/green] [dim](see CAPTURE)[/dim]"
+            ))
         elif (time.time() - self._trial_started) >= self._TRIAL_WINDOW:
             self._failed.add(self._current)
             self._failed_at = time.time()
             self.stats.candidates_failed = len(self._failed)
             self._current = None
+            self._log(treelog.leaf_fail(
+                "[yellow]failed to replay[/yellow] "
+                "[dim](weak signal or hardened AP)[/dim]"
+            ))
 
     def _maybe_adjust_rate(self) -> None:
         """Perturb-and-observe step, run once per 1s window — ONLY while
@@ -417,8 +426,7 @@ class WepArpReplay:
         if state == "waiting-arp":
             # We already suggested deauth/chop/frag at start — keep this terse.
             self._log("[green]ARP Replay:[/green] [white]waiting for ARP[/white]")
-        elif state == "testing":
-            self._log("[green]ARP Replay:[/green] [white]Testing candidate packet…[/white]")
-        # waiting-auth is silent: we announced the campaign starting; a separate
-        # "waiting for association" line is just noise.
+        # "testing" is logged per-candidate in _begin_trial (the group header) —
+        # _set_state dedups, which would swallow each new candidate's header
+        # after the first. waiting-auth is silent (SECURITY panel covers it).
 

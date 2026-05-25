@@ -26,6 +26,7 @@ from concurrent.futures import ProcessPoolExecutor
 from typing import Callable, Optional
 
 from wifit3.engine.models import AccessPoint
+from wifit3.engine.attacks.wep import treelog
 from wifit3.engine.attacks.wep.fake_auth import WepFakeAuth
 from wifit3.engine.attacks.wep.arp_replay import WepArpReplay
 from wifit3.engine.attacks.wep.fragmentation import WepFragmentation
@@ -181,13 +182,15 @@ class WepCampaign:
                 if key is not None:
                     self.recovered_key = key
                     self.target.wep_key = key   # persist on the AP (Save / UI)
+                    # The cyan-banner key is the (root) result; the copy/save
+                    # hints hang off it as tree children.
                     self._log(_key_markup(key))
-                    self._log(
-                        "[dim]   (press [cyan]'c'[/cyan] to copy to clipboard)[/dim]"
-                    )
-                    self._log(
-                        "[dim]   (press [cyan]'s'[/cyan] to save to file)[/dim]"
-                    )
+                    self._log(treelog.branch(
+                        "[dim]press [cyan]'c'[/cyan] to copy to clipboard[/dim]"
+                    ))
+                    self._log(treelog.leaf(
+                        "[dim]press [cyan]'s'[/cyan] to save to file[/dim]"
+                    ))
                     # Done — stop transmitting (replay + fake-auth keepalive).
                     self.replay.stop()
                     self.fake_auth.stop()

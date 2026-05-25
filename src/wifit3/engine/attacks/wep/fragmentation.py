@@ -204,7 +204,8 @@ class WepFragmentation:
                 self._rounds_on_seed = 0
                 # Group header (plain) — each seed attempt is its own tree.
                 self._log(
-                    "[cyan]Fragmentation:[/cyan] data seeded, forging packet…"
+                    "[cyan]Fragmentation:[/cyan] data seeded, forging "
+                    "[green]ARP[/green] packet…"
                 )
                 return True
         return False
@@ -271,8 +272,7 @@ class WepFragmentation:
     def _succeed(self) -> None:
         self._set_state("success")
         self._log(treelog.leaf_ok(
-            "[green]Fragmentation packet relayed[/green] "
-            "[dim](AP echoed our ARP)[/dim]"
+            "[green]Fragmentation packet relayed[/green] [dim](AP echoed)[/dim]"
         ))
         frame = self._relay_frame
         # Immediate handoff: stop injecting, hand the relay to the campaign.

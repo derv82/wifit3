@@ -28,3 +28,11 @@ def leaf_ok(msg: str) -> str:
 def leaf_fail(msg: str) -> str:
     """The terminal failure / give-up line that closes the current group (└─╳)."""
     return f" [dim]└─[/dim][red]╳[/red] {msg}"
+
+
+def leaf(msg: str) -> str:
+    """A neutral (informational) terminal line that closes the group (└─►).
+
+    For the last of a set of plain sub-items, e.g. the copy/save hints under a
+    recovered key — neither a success nor a failure."""
+    return f" [dim]└─►[/dim] {msg}"
