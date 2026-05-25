@@ -575,9 +575,17 @@ class WlanInterface:
     async def _hop_loop(self, channels: List[int], interval: float):
         import itertools
         channel_cycle = itertools.cycle(channels)
+        last_channel = None
         while self._is_hopping:
             channel = next(channel_cycle)
-            await self.set_channel(channel)
+            # Skip redundant re-tunes: re-issuing set_channel for the channel
+            # we're already parked on is pure RX disruption — each tune briefly
+            # blanks the radio (PLL relock), dropping beacons/frames. Most
+            # visible with a single-channel filter, which otherwise re-tuned
+            # every `interval`. Multi-channel hopping still tunes every hop.
+            if channel != last_channel:
+                await self.set_channel(channel)
+                last_channel = channel
             await asyncio.sleep(interval)
 
     async def stop_hopping(self):
