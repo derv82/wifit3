@@ -107,8 +107,13 @@ class FocusView(Screen):
                     Label(id="lbl-pmf"),
                     Label(id="lbl-wpa3"),
                     Label(id="lbl-sae-groups"),
-                    # WEP-only: fake-auth daemon status + re-auth countdown.
+                    # WEP-only: fake-auth status, then the Crack progress + a
+                    # detail line. Cracking runs in PARALLEL with capture, so it
+                    # lives here (under SECURITY, where WEP leaves rows free)
+                    # rather than crowding CAPTURE.
                     Label(id="lbl-fakeauth"),
+                    Label(id="lbl-crack"),
+                    Label(id="lbl-crack-info"),
                     classes="info-box",
                 )
                 yield Vertical(
@@ -117,14 +122,11 @@ class FocusView(Screen):
                     Label(id="lbl-pwr"),
                     Label(id="lbl-handshake"),
                     Label(id="lbl-pmkid"),
-                    # WEP-only: shown in place of Handshake/PMKID (which are
-                    # meaningless for WEP) when the target is a WEP AP.
-                    # WEP rows: IVs (carries the replay status inline), then a
-                    # 4th row that's ETA→10k while collecting / Crack status
-                    # once a campaign is running.
+                    # WEP-only (shown in place of Handshake/PMKID): the IV count
+                    # and a dedicated Replay-status row. The Crack line lives
+                    # under SECURITY — capture + cracking are parallel processes.
                     Label(id="lbl-ivs"),
-                    Label(id="lbl-ivs-eta"),
-                    Label(id="lbl-crack"),
+                    Label(id="lbl-replay"),
                     classes="info-box",
                 )
 
@@ -349,6 +351,7 @@ class FocusView(Screen):
         else:
             self.query_one("#lbl-fakeauth", Label).display = False
             self.query_one("#lbl-crack", Label).display = False
+            self.query_one("#lbl-crack-info", Label).display = False
             if ap.wpa3:
                 btn_sae.disabled = False
                 # WPA3 Downgrade only works against transition-mode APs (pure
@@ -381,12 +384,13 @@ class FocusView(Screen):
         hs_label.display = not is_wep
         pmkid_label.display = not is_wep
         ivs_label.display = is_wep
+        self.query_one("#lbl-replay", Label).display = is_wep
 
         if is_wep:
-            # _update_wep_capture owns lbl-ivs / lbl-ivs-eta / lbl-crack.
+            # _update_wep_capture owns lbl-ivs / lbl-replay (CAPTURE) and
+            # lbl-crack / lbl-crack-info (SECURITY).
             self._update_wep_capture(ap)
         else:
-            self.query_one("#lbl-ivs-eta", Label).display = False
             n_complete = sum(1 for hs in ap.handshakes.values() if hs.is_complete)
             n_partial = sum(
                 1
@@ -443,105 +447,106 @@ class FocusView(Screen):
         self.query_one("#btn-deauth-sel", Button).disabled = not self._selected_clients
 
     @staticmethod
-    def _replay_status_markup(r) -> str:
-        """Condensed replay status for the inline IVs line (no 'Replaying'
-        redundancy, no per-frame totals)."""
-        s = r.state
+    def _replay_status_markup(campaign) -> str:
+        """The Replay-status row's value. Surfaces frag/chop too — while they
+        run, replay is paused on purpose, so say WHAT'S running (not a bare
+        'paused' that reads like the attack stalled)."""
+        if campaign is None:
+            return "[dim]not started[/dim]"
+        # Frag/Chop take over the radio (replay paused by design) — name them.
+        if campaign.frag_active:
+            return "[dim]forging a seed —[/dim] [cyan]Fragmentation[/cyan]…"
+        if campaign.chop_active:
+            return "[dim]forging a seed —[/dim] [cyan]ChopChop[/cyan]…"
+        s = campaign.replay.state
         if s == "replaying":
             # target_pps = the smooth P&O rate, not the jittery per-cycle
             # measured effective_pps.
-            return f"[green]~{r.target_pps:.0f} pps[/green]"
+            return (
+                f"[green]Replaying ARP[/green] "
+                f"[dim]({campaign.replay.target_pps:.0f} packets/sec)[/dim]"
+            )
         if s == "testing":
-            return "[cyan]testing ARP[/cyan]"
+            return "[cyan]Trying candidate ARP…[/cyan]"
         if s == "waiting-arp":
-            return "[yellow]waiting ARP[/yellow]"
+            return "[yellow]waiting for ARP[/yellow]"
         if s == "waiting-auth":
-            return "[dim]waiting assoc[/dim]"
+            return "[dim]associating…[/dim]"
         if s == "paused":
             return "[dim]paused[/dim]"
         return "[dim]idle[/dim]"
 
     def _update_wep_capture(self, ap: AccessPoint) -> None:
-        """Render the three WEP CAPTURE rows: IVs (+ inline replay status when
-        a campaign runs), and a 4th row that's usable-IV progress + ETA while
-        collecting / Crack status once the cracker can start or a key is found.
-        The 4th row tracks crack SAMPLES (usable IVs), not raw unique IVs, since
-        samples are what gate cracking. The Beacons/POWER/IVs values stay
-        column-aligned for at-a-glance antenna tuning."""
+        """WEP CAPTURE rows — IVs (with the usable-IV count) and a dedicated
+        Replay-status row — plus the Crack section (which lives under SECURITY).
+        Usable IVs = crack samples (ARP-sized broadcast, known plaintext); they
+        lag raw unique IVs and are what actually gate cracking."""
         iface = getattr(self.app, "active_interface", None)
         n = ap.wep.unique_ivs if ap.wep else 0
         rate = iface.wep_store.rate(ap.bssid) if iface else 0.0
+        samples = iface.wep_store.crack_sample_count(ap.bssid) if iface else 0
         campaign = self._wep_campaign
 
         count = f"[bold green]{n:,}[/bold green]" if n else "[red]0[/red]"
-        ivs_line = f"IVs: {count} [dim]({rate:.0f}/s)[/dim]"
-        # Inline replay status only while a campaign is actively running.
-        if campaign is not None and campaign.recovered_key is None:
-            ivs_line += (
-                f" [dim]·[/dim] Replay: {self._replay_status_markup(campaign.replay)}"
-            )
-        self.query_one("#lbl-ivs", Label).update(
-            Text.from_markup(ivs_line, emoji=False)
+        self.query_one("#lbl-ivs", Label).update(Text.from_markup(
+            f"IVs: {count} [dim]({rate:.0f}/s)[/dim] "
+            f"[dim]({samples:,} usable)[/dim]", emoji=False
+        ))
+
+        replay_markup = (
+            "[green]✓ done[/green]" if ap.wep_key is not None
+            else self._replay_status_markup(campaign)
+        )
+        self.query_one("#lbl-replay", Label).update(
+            Text.from_markup(f"Replay: {replay_markup}", emoji=False)
         )
 
-        eta_label = self.query_one("#lbl-ivs-eta", Label)
-        crack_label = self.query_one("#lbl-crack", Label)
+        self._update_crack_section(ap, campaign, samples)
+
+    def _update_crack_section(self, ap: AccessPoint, campaign, samples: int) -> None:
+        """The two-row Crack section under SECURITY: a status line + a detail
+        line. Only shown during a running campaign or once a key is found."""
+        crack = self.query_one("#lbl-crack", Label)
+        info = self.query_one("#lbl-crack-info", Label)
+        if campaign is None and ap.wep_key is None:
+            crack.display = False
+            info.display = False
+            return
+        crack.display = True
+        info.display = True
         target_k = CRACK_READY_THRESHOLD // 1000
-        # Gate on USABLE IVs (crack samples = ARP-sized broadcast, known
-        # plaintext) toward the cracker's threshold — NOT raw unique IVs. The
-        # cracker can't start until it has this many samples, and samples lag
-        # unique IVs (the gap is the client's organic traffic), so gating the
-        # phase/ETA on unique IVs falsely "completed" at 10k IVs while cracking
-        # didn't begin until ~10k SAMPLES (often ~2x the IVs).
-        samples = iface.wep_store.crack_sample_count(ap.bssid) if iface else 0
 
-        # 4th row, one clean phase transition: usable-IV progress + ETA while
-        # collecting, then the Crack line once the cracker can start (enough
-        # samples) or a key is found. The two never show at once.
-        if ap.wep_key is None and samples < CRACK_READY_THRESHOLD:
-            crack_label.display = False
-            eta_label.display = True
-            eta = (
-                iface.wep_store.crack_eta_seconds(ap.bssid, CRACK_READY_THRESHOLD)
-                if iface else None
-            )
-            eta_markup = (
-                "[dim]waiting for usable IVs[/dim]" if eta is None
-                else f"ETA {_format_duration(int(eta))}"
-            )
-            eta_label.update(
-                Text.from_markup(
-                    f"Crack: [bold]{samples:,}[/bold]/{target_k}k usable IVs "
-                    f"· {eta_markup}", emoji=False
-                )
-            )
-        else:
-            eta_label.display = False
-            crack_label.display = True
-            crack_label.update(
-                Text.from_markup(
-                    f"Crack: {self._crack_status_markup(ap, campaign)}", emoji=False
-                )
-            )
-
-    @staticmethod
-    def _crack_status_markup(ap: AccessPoint, campaign) -> str:
-        """Crack-line markup. The recovered key (read from ap.wep_key so it
-        survives campaign teardown) is rendered as an unmissable cyan block."""
         if ap.wep_key is not None:
             key = ap.wep_key
             ascii_hint = (
                 f' = "{key.decode("ascii")}"'
                 if all(0x20 <= b < 0x7F for b in key) else ""
             )
-            return (
-                f"[bold black on cyan] ✓ KEY {key.hex()}{ascii_hint} "
-                f"[/bold black on cyan] [dim]('c' to copy)[/dim]"
-            )
-        if campaign is None:
-            return "[dim]ready — press Generate IVs[/dim]"
-        cr = campaign.cracker
-        return f"[cyan]cracking…[/cyan] [dim]({cr.sample_count:,} samples)[/dim]"
+            crack.update(Text.from_markup(
+                f"Crack: [bold black on cyan] ✓ KEY {key.hex()}{ascii_hint} "
+                f"[/bold black on cyan]", emoji=False
+            ))
+            info.update(Text.from_markup(
+                "[white]Press [green]'c'[/green] to copy, "
+                "[green]'s'[/green] to save .txt[/white]", emoji=False
+            ))
+        elif samples < CRACK_READY_THRESHOLD:
+            crack.update(Text.from_markup(
+                f"Crack: [white]{samples:,}/{target_k}k usable IVs[/white]",
+                emoji=False
+            ))
+            info.update(Text.from_markup(
+                f"[dim]Crack begins at {target_k}k[/dim]", emoji=False
+            ))
+        else:
+            sc = campaign.cracker.sample_count if campaign else samples
+            crack.update(Text.from_markup(
+                f"Crack: [cyan]Cracking…[/cyan] [dim]({sc:,} samples)[/dim]",
+                emoji=False
+            ))
+            info.update(Text.from_markup(
+                "[dim]Some keys require >40K samples[/dim]", emoji=False
+            ))
 
     def _update_fakeauth_line(self) -> None:
         """Render the SECURITY-panel Fake-Auth status from the running campaign."""
