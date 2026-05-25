@@ -127,8 +127,12 @@ class SplashView(Screen):
 
     async def on_mount(self) -> None:
         self.query_one("#init-progress").display = False
-        # Poll USB bus every second
+        # Poll the USB bus every second for hotplug changes.
         self._refresh_timer = self.set_interval(1.0, self.poll_usb)
+        # ...but do the FIRST enumeration as soon as the splash has painted —
+        # set_interval waits a full second before its first tick, which was the
+        # ~1s "nothing's happening" gap before the device list first appeared.
+        self.call_after_refresh(self.poll_usb)
 
     async def poll_usb(self) -> None:
         # Don't poll if we're currently initializing a driver
