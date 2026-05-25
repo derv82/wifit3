@@ -88,7 +88,7 @@ class WepCampaign:
             # Replays are re-addressed to come FROM our associated fake-auth STA.
             source_mac=self.fake_auth.source_mac,
             # Only burst while we're actually associated.
-            can_inject=lambda: self.fake_auth.state == "associated",
+            ensure_associated=self.fake_auth.ensure_associated,
             # Replay traffic keeps the association alive (suppresses the
             # disruptive periodic re-auth) ...
             notify_activity=self.fake_auth.notify_activity,
@@ -216,7 +216,7 @@ class WepCampaign:
             self.iface.wep_store,
             source_mac=self.fake_auth.source_mac,
             on_forged_arp=self._on_frag_success,
-            can_inject=lambda: self.fake_auth.state == "associated",
+            ensure_associated=self.fake_auth.ensure_associated,
             notify_activity=self.fake_auth.notify_activity,
             log_callback=self._log,
         )
@@ -264,7 +264,7 @@ class WepCampaign:
             self.iface.wep_store,
             source_mac=self.fake_auth.source_mac,
             on_forged_arp=self._on_chop_success,
-            can_inject=lambda: self.fake_auth.state == "associated",
+            ensure_associated=self.fake_auth.ensure_associated,
             notify_activity=self.fake_auth.notify_activity,
             log_callback=self._log,
         )

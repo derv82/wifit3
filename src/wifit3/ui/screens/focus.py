@@ -544,7 +544,7 @@ class FocusView(Screen):
                 countdown = f" [dim](re-auth in {secs}s)[/dim]"
             fa_markup = f"[green]Success[/green]{countdown}"
         elif fa.state == "authenticating":
-            fa_markup = "[yellow]Authenticating…[/yellow]"
+            fa_markup = "[yellow]Associating…[/yellow]"
         elif fa.state == "failed":
             fa_markup = f"[red]Failed: {escape(fa.fail_reason or 'unknown')}[/red]"
         else:

@@ -35,7 +35,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Callable, List, Optional
+from typing import Awaitable, Callable, List, Optional
 
 from wifit3.engine.models import AccessPoint
 from wifit3.engine.attacks.wep.wep_crypto import (
@@ -51,6 +51,10 @@ _BROADCAST = b"\xff" * 6
 # first 6 are certain). IP dominates real traffic; ARP is the other common case.
 # A wrong guess just yields no relay → the seed rotates.
 _SEED_ETHERTYPES = (0x0800, 0x0806)
+
+
+async def _always_associated() -> bool:
+    return True
 
 
 def _str_to_mac(s: str) -> bytes:
@@ -88,7 +92,7 @@ class WepFragmentation:
         store,
         source_mac: bytes,
         on_forged_arp: Callable[[bytes], None],
-        can_inject: Optional[Callable[[], bool]] = None,
+        ensure_associated: Optional[Callable[[], Awaitable[bool]]] = None,
         notify_activity: Optional[Callable[[], None]] = None,
         log_callback: Optional[Callable[[str], None]] = None,
         sender_ip: bytes = bytes([192, 168, 1, 123]),
@@ -102,9 +106,9 @@ class WepFragmentation:
         # Called with the AP's relayed frame on success → campaign resumes
         # replay (the relay is already an ARP-sized broadcast seed in the store).
         self._on_forged_arp = on_forged_arp
-        self._can_inject = can_inject or (lambda: True)
-        # Our fragments keep the assoc alive (suppress fake-auth's periodic
-        # keepalive re-auth while we're injecting).
+        # Awaited before injecting — authenticates lazily (True iff associated).
+        self._ensure_associated = ensure_associated or _always_associated
+        # Our fragments keep the assoc alive while we're injecting.
         self._notify_activity = notify_activity or (lambda: None)
         self._log = log_callback or (lambda _m: None)
         self._sender_ip = sender_ip
@@ -210,11 +214,6 @@ class WepFragmentation:
     async def _loop(self) -> None:
         try:
             while self._active:
-                if not self._can_inject():
-                    self._set_state("waiting-auth")
-                    await asyncio.sleep(0.2)
-                    continue
-
                 # Need a (fresh) seed?
                 if self._seed_iv is None:
                     if not self._pick_seed():
@@ -222,6 +221,12 @@ class WepFragmentation:
                         await asyncio.sleep(0.3)
                         self._maybe_heartbeat()
                         continue
+
+                # We have a seed to fragment — now (lazily) associate.
+                if not await self._ensure_associated():
+                    self._set_state("waiting-auth")
+                    await asyncio.sleep(0.3)
+                    continue
 
                 self._set_state("injecting")
                 await self._inject_round()

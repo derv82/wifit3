@@ -57,14 +57,18 @@ async def test_campaign_recovers_key_from_collected_samples(mocker):
     assert key_out == key
 
 
-def test_replay_gated_on_association(mocker):
-    """The campaign wires replay's can_inject to fake-auth being associated."""
+async def test_replay_authenticates_lazily_via_fake_auth(mocker):
+    """The campaign wires replay's ensure_associated to fake-auth: replay only
+    transmits once fake-auth reports associated (fast path), and an inactive
+    fake-auth reports not-associated."""
     iface = mocker.MagicMock()
     iface.wep_store = WepCaptureStore()
     ap = AccessPoint(bssid="11:22:33:44:55:66", ssid="W", channel=6, encryption="WEP")
     campaign = WepCampaign(iface, ap)
 
-    campaign.fake_auth.state = "authenticating"
-    assert campaign.replay._can_inject() is False
+    campaign.fake_auth._active = True
     campaign.fake_auth.state = "associated"
-    assert campaign.replay._can_inject() is True
+    assert await campaign.replay._ensure_associated() is True   # wired + fast path
+
+    campaign.fake_auth._active = False
+    assert await campaign.replay._ensure_associated() is False

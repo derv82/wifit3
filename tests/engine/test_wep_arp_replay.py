@@ -111,9 +111,14 @@ async def test_notify_activity_called_on_inject(mocker):
     assert seen["n"] > 0
 
 
-async def test_can_inject_gate_blocks_tx(mocker):
+async def test_unassociated_blocks_tx(mocker):
+    """We only inject once ensure_associated() succeeds — a failing one (can't
+    fake-auth) holds TX at 'waiting-auth' with nothing sent."""
     coll = FakeCollector({0xAA: 5}, [GOOD])
-    r = _replay(mocker, coll, can_inject=lambda: False)
+
+    async def never():
+        return False
+    r = _replay(mocker, coll, ensure_associated=never)
     r.start()
     for _ in range(5):
         await asyncio.sleep(0)

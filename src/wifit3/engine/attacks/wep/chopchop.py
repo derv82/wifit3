@@ -90,6 +90,10 @@ _IP_MAX_WALL = 12
 _SENTINEL = 256
 
 
+async def _always_associated() -> bool:
+    return True
+
+
 def _str_to_mac(s: str) -> bytes:
     return bytes(int(x, 16) for x in s.split(":"))
 
@@ -132,7 +136,7 @@ class WepChopChop:
         store,
         source_mac: bytes,
         on_forged_arp: Callable[[bytes], None],
-        can_inject: Optional[Callable[[], bool]] = None,
+        ensure_associated: Optional[Callable[[], Awaitable[bool]]] = None,
         notify_activity: Optional[Callable[[], None]] = None,
         log_callback: Optional[Callable[[str], None]] = None,
         sender_ip: bytes = bytes([192, 168, 1, 123]),
@@ -146,7 +150,9 @@ class WepChopChop:
         self.store = store
         self.source_mac = source_mac
         self._on_forged_arp = on_forged_arp
-        self._can_inject = can_inject or (lambda: True)
+        # Awaited before a guess sweep — authenticates lazily (True iff
+        # associated). We spam 256 frames per byte, so re-auth on demand.
+        self._ensure_associated = ensure_associated or _always_associated
         # Our guesses ARE activity — feed this so fake-auth's periodic keepalive
         # re-auth doesn't fire mid-chop (a long byte-walk would otherwise hit
         # the inactivity timer and re-auth in the middle of guessing).
@@ -311,13 +317,9 @@ class WepChopChop:
         self._notify_activity()   # keep the assoc alive — no periodic re-auth
 
     async def _await_assoc(self) -> bool:
-        """Don't burn guesses while de-associated (a reactive re-auth in
-        flight); wait briefly for the association to come back."""
-        waited = 0.0
-        while self._active and not self._can_inject() and waited < 5.0:
-            await asyncio.sleep(0.1)
-            waited += 0.1
-        return self._active and self._can_inject()
+        """Don't burn guesses while de-associated — (lazily) authenticate first;
+        ensure_associated() retries internally before giving up."""
+        return self._active and await self._ensure_associated()
 
     async def _sweep_for_relay(self, candidate) -> Optional[int]:
         """Blast a rolling stream of guess-tagged frames and return the guess

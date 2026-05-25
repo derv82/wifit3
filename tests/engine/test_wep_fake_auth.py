@@ -102,13 +102,87 @@ def test_rx_auth_reject_records_reason(mocker):
     assert "Auth rejected" in fa.fail_reason
 
 
-def test_rx_deauth_triggers_reactive_reauth(mocker):
+def test_rx_deauth_drops_association(mocker):
+    """A Deauth drops our 'associated' belief (→ 'ready') so the NEXT
+    ensure_associated() re-auths — no eager re-auth from the RX handler."""
     fa = _fa(mocker)
     fa._active = True
     fa.state = "associated"
     fa._rx_cb(_deauth(SELF_MAC), -40, 0.0)
-    assert fa._reauth_event.is_set()
-    assert fa.state == "authenticating"
+    assert fa.state == "ready"
+    assert fa._assoc_ok is False
+    assert fa.stats.reactive_reauths == 1
+
+
+# ---- Lazy on-demand association --------------------------------------------
+
+def _fa_live(mocker, **kw):
+    """A fake-auth whose iface mocks let an auth round run (but never returns an
+    Assoc Resp, so _auth_round times out → 'failed') unless we patch it."""
+    fa = _fa(mocker, assoc_timeout=0.01, **kw)
+    fa.iface.send_raw = mocker.AsyncMock(return_value=True)
+    fa.iface.set_channel = mocker.AsyncMock(return_value=True)
+    fa.iface.current_channel = 6
+    fa._active = True
+    fa.state = "ready"
+    return fa
+
+
+async def test_start_arms_without_authenticating(mocker):
+    """The headline of the lazy redesign: start() only arms us (registers MAC +
+    RX); it sends NO auth/assoc frames until ensure_associated() is called."""
+    iface = mocker.MagicMock()
+    iface.send_raw = mocker.AsyncMock(return_value=True)
+    ap = AccessPoint(
+        bssid="11:22:33:44:55:66", ssid="W", channel=6, encryption="WEP"
+    )
+    fa = WepFakeAuth(iface, ap, source_mac=SELF_MAC)
+    fa.start()
+    await asyncio.sleep(0)
+    assert fa.state == "ready"
+    assert fa.stats.auth_attempts == 0
+    iface.send_raw.assert_not_called()
+    fa.stop()
+
+
+async def test_ensure_associated_fast_path_when_already_associated(mocker):
+    fa = _fa_live(mocker)
+    fa.state = "associated"
+    assert await fa.ensure_associated() is True
+    assert fa.stats.auth_attempts == 0          # no auth round needed
+
+
+async def test_ensure_associated_retries_3x_then_fails_once(mocker):
+    fa = _fa_live(mocker)
+    logs: list[str] = []
+    fa._log = logs.append
+    assert await fa.ensure_associated() is False
+    assert fa.state == "failed"
+    assert fa.stats.auth_attempts == 3          # 3 silent attempts
+    assert sum("failed" in m for m in logs) == 1  # logged exactly once
+
+    # Within the post-failure backoff: immediate False, no new attempts/log.
+    assert await fa.ensure_associated() is False
+    assert fa.stats.auth_attempts == 3
+    assert sum("failed" in m for m in logs) == 1
+
+
+async def test_ensure_associated_logs_recovery_after_a_failure(mocker):
+    fa = _fa_live(mocker)
+    fa.state = "failed"
+    fa._announced_failure = True
+    fa.next_reauth_at = 0.0                      # backoff already elapsed
+    logs: list[str] = []
+    fa._log = logs.append
+
+    async def ok_round():                        # the AP answers this time
+        fa._assoc_ok = True
+        return True
+    fa._auth_round = ok_round
+
+    assert await fa.ensure_associated() is True
+    assert fa.state == "associated"
+    assert any("recovered" in m for m in logs)
 
 
 # ---- Lifecycle wiring ------------------------------------------------------

