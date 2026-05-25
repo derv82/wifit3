@@ -139,27 +139,35 @@ class FocusView(Screen):
                 yield client_table
 
             with Horizontal(id="bottom-row"):
+                # Far-left: DEAUTH — always available for both WEP and WPA,
+                # two buttons stacked in a narrow column.
+                with Vertical(id="deauth-panel"):
+                    yield Label("DEAUTH", classes="panel-title")
+                    yield Button("Selected", variant="warning", id="btn-deauth-sel", disabled=True)
+                    yield Button("Broadcast", variant="error", id="btn-deauth-bcast")
+                # Center: the crypto-specific attacks (title swaps WEP/WPA). Each
+                # target only ever shows its own ≤4 buttons, laid out 2-per-row:
+                #   WEP:  Replay  Chop          WPA:  PMKID  SAE
+                #         Save    Frag                WPA ↓  Save
+                # (Chop/Frag appear only while Replay runs.)
                 with Vertical(id="attack-panel"):
-                    yield Label("ATTACKS", classes="panel-title")
+                    yield Label("ATTACKS", classes="panel-title", id="lbl-attack-title")
                     with Horizontal(classes="button-row"):
-                        yield Button("Broadcast", variant="error", id="btn-deauth-bcast")
-                        yield Button("Deauth [x]", variant="warning", id="btn-deauth-sel", disabled=True)
-                        yield Button("PMKID", variant="primary", id="btn-pmkid")
-                        # WEP-only (hidden for WPA targets, shown in their place).
-                        # Starts fake-auth then ARP replay (the IV campaign).
-                        yield Button("Generate IVs", variant="primary", id="btn-gen-ivs")
-                        # WEP-only, shown only while a campaign runs: switch the
-                        # radio to fragmentation to manufacture an ARP seed when
-                        # replay has none (no client traffic). Click-to-toggle.
-                        yield Button("Frag", variant="primary", id="btn-frag")
+                        # Starts fake-auth + ARP replay + the cracker (WEP).
+                        yield Button("Replay", variant="primary", id="btn-gen-ivs")
                         # Sibling of Frag: ChopChop manufactures a seed when frag
-                        # gets no response. Mutually exclusive — clicking one
-                        # stops the other (click-to-switch).
+                        # gets no response. Mutually exclusive (click-to-switch).
                         yield Button("Chop", variant="primary", id="btn-chop")
+                        yield Button("PMKID", variant="primary", id="btn-pmkid")
+                        yield Button("SAE", variant="primary", id="btn-sae-probe", disabled=True)
                     with Horizontal(classes="button-row"):
-                        yield Button("SAE Probe", variant="primary", id="btn-sae-probe", disabled=True)
-                        yield Button("WPA3 Down", variant="primary", id="btn-wpa3-down", disabled=True)
+                        yield Button("WPA ↓", variant="primary", id="btn-wpa3-down", disabled=True)
                         yield Button("Save", variant="success", id="btn-save", disabled=True)
+                        # WEP-only, only while a campaign runs: switch the radio
+                        # to fragmentation to manufacture an ARP seed when replay
+                        # has none (no client traffic). Click-to-toggle.
+                        yield Button("Frag", variant="primary", id="btn-frag")
+                # Far-right: the log — grows to fill the (wide) terminal.
                 with Vertical(id="event-log-panel"):
                     yield Label("EVENT LOG", classes="panel-title")
                     yield RichLog(id="focus-event-log", markup=True, highlight=False, wrap=True)
@@ -298,11 +306,14 @@ class FocusView(Screen):
         btn_frag = self.query_one("#btn-frag", Button)
         btn_chop = self.query_one("#btn-chop", Button)
 
+        self.query_one("#lbl-attack-title", Label).update(
+            "WEP ATTACKS" if is_wep else "WPA ATTACKS"
+        )
         btn_sae.display = not is_wep
         btn_down.display = not is_wep
         btn_pmkid.display = not is_wep
-        # Generate IVs vanishes once the key is cracked — Save takes its place,
-        # so it reads as a "Generate IVs → Save" swap.
+        # Replay vanishes once the key is cracked — Save takes its place, so it
+        # reads as a "Replay → Save" swap.
         btn_gen.display = is_wep and ap.wep_key is None
         # Frag/Chop are shown only inside a running WEP campaign (set below);
         # off otherwise so they never linger on a WPA target.
@@ -317,7 +328,7 @@ class FocusView(Screen):
             if camp is not None and camp.recovered_key is not None:
                 self._stop_generate_ivs()
                 camp = None
-            btn_gen.label = "Stop IVs" if camp is not None else "Generate IVs"
+            btn_gen.label = "Stop Replay" if camp is not None else "Replay"
             # Frag is a sub-mode of a running campaign (it manufactures a seed
             # for replay), so it only appears once IVs are being generated.
             btn_frag.display = camp is not None and ap.wep_key is None
@@ -340,10 +351,8 @@ class FocusView(Screen):
                 btn_sae.disabled = True
                 btn_down.disabled = True
                 btn_pmkid.disabled = False
-            # WPA3 Down button label reflects daemon state.
-            btn_down.label = (
-                "Stop WPA3 Down" if self._wpa3_down_attack else "WPA3 Down"
-            )
+            # WPA Downgrade button label reflects daemon state.
+            btn_down.label = "Stop ↓" if self._wpa3_down_attack else "WPA ↓"
 
         # CAPTURE panel (dynamic).
         elapsed = max(1.0, time.time() - ap.first_seen)
@@ -401,7 +410,8 @@ class FocusView(Screen):
         btn_save = self.query_one("#btn-save", Button)
         btn_save.display = ap.has_capture
         btn_save.disabled = not ap.has_capture
-        btn_save.label = "Save Key" if is_wep else "Save Capture"
+        # Button stays plain "Save" to fit the narrow panel; the footer 's'
+        # carries the crypto-specific label (Save Capture / Save Key).
         # Re-evaluate the footer's Save/Copy keys (check_action) as the key /
         # handshake state changes.
         self.refresh_bindings()

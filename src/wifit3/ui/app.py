@@ -1,7 +1,6 @@
-import asyncio
 import logging
 from textual.app import App
-from typing import Dict, Optional
+from typing import Optional
 
 from wifit3.wlan.manager import WlanDeviceManager
 from wifit3.engine.models import AccessPoint
@@ -66,13 +65,28 @@ class WifiteApp(App):
         min-height: 6;
     }
     #bottom-row {
-        height: 11;
+        height: 12;
     }
-    #attack-panel {
-        width: 1fr;
+    #deauth-panel {
+        width: 16;
         height: 100%;
         border: solid $primary;
         padding: 0 1;
+    }
+    #deauth-panel Button {
+        width: 100%;
+        min-width: 0;
+        margin: 0 0 1 0;
+    }
+    #attack-panel {
+        width: 34;
+        height: 100%;
+        border: solid $primary;
+        padding: 0 1;
+    }
+    #attack-panel Button {
+        width: 13;
+        min-width: 0;
     }
     #event-log-panel {
         width: 1fr;
