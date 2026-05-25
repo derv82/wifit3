@@ -128,12 +128,12 @@ class FocusView(Screen):
                         client_table.add_column("POWER", key="signal")
                         client_table.add_column("PKTS", key="packets")
                         yield client_table
-                    # CLIENT DEAUTH — client-targeted, so it lives under CLIENTS.
-                    with Vertical(classes="info-box", id="deauth-panel"):
-                        yield Label("DEAUTHENTICATE CLIENTS", classes="panel-title")
-                        with Horizontal(classes="button-row"):
-                            yield Button("Selected", variant="warning", id="btn-deauth-sel", disabled=True)
-                            yield Button("Broadcast", variant="error", id="btn-deauth-bcast")
+                        # Client-targeted deauth lives directly under the CLIENTS
+                        # list (no separate titled panel). Flat, 2-line labels,
+                        # edge-to-edge so the pair stays aligned.
+                        with Horizontal(classes="button-row", id="deauth-row"):
+                            yield Button("Deauth\nSelected", variant="warning", id="btn-deauth-sel", disabled=True)
+                            yield Button("Deauth\nBroadcast", variant="error", id="btn-deauth-bcast")
 
                 with Vertical(id="right-col"):
                     # Top-right summary row: SECURITY | CAPTURE (aligns with
@@ -258,9 +258,17 @@ class FocusView(Screen):
                 emoji=False,
             )
         )
+        # Last Beacon: most active targets sit at 0s, so colour by recency —
+        # green "now", orange for a brief gap, red once it's been quiet >10s.
         last_seen_s = max(0, int(time.time() - ap.last_seen))
+        if last_seen_s == 0:
+            beacon = "[green]now[/green]"
+        elif last_seen_s <= 10:
+            beacon = f"[orange1]{last_seen_s}s[/orange1]"
+        else:
+            beacon = f"[red]{_format_duration(last_seen_s)}[/red]"
         self.query_one("#lbl-last-beacon", Label).update(
-            f"Last Beacon: {_format_duration(last_seen_s)} ago"
+            Text.from_markup(f"Last Beacon: {beacon}", emoji=False)
         )
 
         # SECURITY panel.

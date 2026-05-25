@@ -72,8 +72,9 @@ class WifiteApp(App):
        title-less bordered panel just adds clutter. Center the 2 button rows
        vertically so they don't sit top-heavy with a gap underneath. */
     #attack-panel { height: 8; border: none; align-vertical: middle; }
-    #client-panel { height: 1fr; min-height: 4; }
-    #deauth-panel { height: auto; }
+    #client-panel { height: 1fr; min-height: 6; }
+    /* Deauth buttons sit at the bottom of the CLIENTS panel (no own title). */
+    #deauth-row { height: auto; margin-top: 1; }
 
     /* RIGHT column: SECURITY | CAPTURE summary row (forms the TARGET | SECURITY |
        CAPTURE header), then the tall EVENT LOG. */
@@ -92,10 +93,12 @@ class WifiteApp(App):
        wide left column; rows touch vertically so 2 fit the 8-tall panel. */
     .button-row { height: auto; align-horizontal: center; }
     #attack-panel Button { width: 13; min-width: 0; }
-    /* DEAUTH buttons are flat (1-high, no border) — they're secondary actions,
-       and going flat saves 2 rows in the left column for CLIENTS. Wide (1fr)
-       to keep the click target reasonable despite being 1 row tall. */
-    #deauth-panel Button { width: 1fr; min-width: 0; height: 1; border: none; }
+    /* DEAUTH buttons are flat (no border), 2 rows high for the stacked
+       "Deauth / Selected" label. Each is 1fr so the pair fills the row edge
+       to edge; the left one carries the only gap so they stay symmetric
+       (overrides the global Button margin-right). */
+    #deauth-row Button { width: 1fr; min-width: 0; height: 2; border: none; margin: 0; content-align: center middle; text-align: center; }
+    #deauth-row Button#btn-deauth-sel { margin-right: 1; }
     Button {
         margin-right: 1;
         min-width: 12;

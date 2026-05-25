@@ -153,6 +153,12 @@ class SplashView(Screen):
             self.query_one("#status-label", Label).update("[bold green]Select an interface to begin:[/bold green]")
             for iface in interfaces:
                 list_view.append(ListItem(Label(f"[{iface.name}] {iface.description}"), name=iface.name))
+            # Highlight the first card so the user can hit Enter immediately —
+            # no up/down dance. clear() resets index to None, so this re-arms on
+            # every (re)population; we only auto-pick when nothing's highlighted.
+            if list_view.index is None:
+                list_view.index = 0
+                list_view.focus()
         else:
             self.query_one("#status-label", Label).update("Scanning for compatible hardware... (0 found)")
 
