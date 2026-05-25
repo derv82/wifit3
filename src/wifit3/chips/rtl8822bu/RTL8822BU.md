@@ -1,5 +1,25 @@
 # RTL8822BU — verified facts
 
+## Potential Known Gaps
+
+Cross-driver gap classes (project audit 2026-05-25). **Offline analysis only —
+no hardware available; verify before `[x]`.**
+
+- [ ] **RX polling loop drops frames** — LIKELY AFFECTED. `driver.py:_rx_loop`
+  (321) does `await loop.run_in_executor(_read_once)` (338) then parse on the
+  event loop — no read posted while parsing. Same pattern as rtl8821au pre-fix.
+  Fix: dedicated reader thread + queue hand-off (rtl8821au commit 2e3a7a7).
+- [ ] **RX filter / monitor mode (ToDS capture)** — LIKELY AFFECTED, **pcap-
+  CONFIRMED**. `mac.py:257` writes `REG_RCR = 0xE400220E` (+APP_PHYSTS) — byte0
+  `0x0E` has **AAP/ACCEPT_AP (bit0) CLEAR**, so it's NOT promiscuous and drops
+  unicast not addressed to us, incl. client→AP (ToDS) M2/M4. Slicing the airmon
+  capture proves the gap: the kernel writes the same `0xe400220e` first, then
+  **overwrites REG_RCR → `0xf410400f`** for monitor [WIRE captures_rtw88_8822bu/
+  capture-1 frames 19191-19205] — the *exact same* promiscuous value as
+  rtl8821au. Our driver never applies that override. Same fix as rtl8821au:
+  `apply_monitor_rx_filter` writing 0xf410400f, called from `_finish_attach`
+  (224) so it runs on cold AND warm (the warm path skips mac init too).
+
 Family: rtw88, modern (iDDMA) FW path, NOT 8051. 2T2R, 802.11ac, dual-band.
 
 This doc accumulates facts that have been confirmed wire-side against

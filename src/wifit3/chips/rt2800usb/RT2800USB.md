@@ -1,5 +1,21 @@
 # rt2800usb family — Ground-Truth Doc
 
+## Potential Known Gaps
+
+Cross-driver gap classes (project audit 2026-05-25). **Offline analysis only —
+no hardware available; verify before `[x]`.**
+
+- [ ] **RX polling loop drops frames** — LIKELY AFFECTED. `driver.py:_rx_loop`
+  (~470) does `await loop.run_in_executor(read_rx_burst)` then parse on the
+  event loop — no read posted while parsing. Same pattern as rtl8821au pre-fix.
+  Fix: dedicated reader thread + queue hand-off (rtl8821au commit 2e3a7a7).
+- [x] **RX filter / monitor mode (ToDS capture)** — ALREADY HANDLED (offline
+  verdict). `mac.py:302-315` writes `RX_FILTER_CFG (0x1400) = 0x00000011` —
+  only DROP_CRC_ERR | DROP_VER_ERR; **DROP_NOT_TO_ME (bit2) is CLEAR**, so the
+  chip is promiscuous and accepts unicast not addressed to us, incl. client→AP
+  (ToDS). Explicit monitor deviation from the kernel STA filter. [SRC
+  rt2800_config_filter]
+
 Covers Ralink rt2800usb-family chipsets supported by wifit3:
 
 | Silicon | Marketing | Dongle               | USB ID    | Bands       | Chains | Status |

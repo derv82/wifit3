@@ -1,5 +1,24 @@
 # RTL8188EUS Reverse Engineering Context
 
+## Potential Known Gaps
+
+Cross-driver gap classes (project audit 2026-05-25). **Offline analysis only —
+no hardware available; verify before `[x]`.**
+
+- [ ] **RX polling loop drops frames** — LIKELY AFFECTED. `driver.py:_rx_loop`
+  (363) does `await loop.run_in_executor(_read_once)` (381) then parse on the
+  event loop — no read posted while parsing. Same pattern as rtl8821au pre-fix.
+  Fix: dedicated reader thread + queue hand-off (rtl8821au commit 2e3a7a7).
+- [ ] **RX filter / monitor mode (ToDS capture)** — COLD OK, **WARM PATH BROKEN**
+  (the exact trap fixed in rtl8821au b6e7cb9). `RCR_MONITOR` is correct — it
+  includes `RCR_ACCEPT_AP` (all unicast/promiscuous) — and `enable_rx_data_path`
+  (mac.py:327) writes it, BUT that's only called from `_cold_bring_up`
+  (driver.py:222). `_warm_reattach → _finish_attach` (238/250) does NOT reapply
+  it, so a chip left warm by the kernel STA driver / a prior session keeps a
+  non-promiscuous RCR and drops client→AP (ToDS) frames. Fix: move the RCR
+  write into `_finish_attach` so it runs on both paths (mirror rtl8821au's
+  `apply_monitor_rx_filter`). Cold-boot (replug) works today; warm doesn't.
+
 Verified facts only. Anything not in this doc is a hypothesis.
 
 Citations: `[SRC]` = kernel source path, `[WIRE]` = `usb_dumps/captures_rtl8xxxu/capture-N.pcap` frame numbers.

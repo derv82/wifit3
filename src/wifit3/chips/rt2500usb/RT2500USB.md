@@ -1,5 +1,21 @@
 # RT2500USB (Ralink RT2570) — ground truth
 
+## Potential Known Gaps
+
+Cross-driver gap classes (project audit 2026-05-25). **Offline analysis only —
+no hardware available; verify before `[x]`.**
+
+- [ ] **RX polling loop drops frames** — LIKELY AFFECTED. `driver.py:_rx_loop`
+  (~155) does `await loop.run_in_executor(read_rx_burst)` then parse on the
+  event loop — no read posted while parsing. Same pattern as rtl8821au pre-fix.
+  Fix: dedicated reader thread + queue hand-off (rtl8821au commit 2e3a7a7).
+- [x] **RX filter / monitor mode (ToDS capture)** — ALREADY HANDLED (offline
+  verdict). `mac.py:apply_monitor_filter` (264) explicitly CLEARS the
+  `TXRX_CSR2` DROP bits incl. **DROP_TODS (0x20)** and **DROP_NOT_TO_ME (0x10)**
+  (lines 289-290) → client→AP frames accepted. Final 0x0046 keeps only
+  DROP_CRC/PHYSICAL/VERSION_ERROR (error classes the RX loop discards anyway).
+  This is the rt2x00 analog of the rtw88 RCR fix, done right.
+
 Userland PyUSB port of the Linux `rt2500usb` kernel module. This doc
 accumulates **verified** facts. Citations:
 `[SRC]` = kernel source (`data_dumps/rt2x00-source-v6.18/`),

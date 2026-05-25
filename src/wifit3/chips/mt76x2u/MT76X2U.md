@@ -1,5 +1,21 @@
 # MT76x2U / MT7612U — Ground Truth
 
+## Potential Known Gaps
+
+Cross-driver gap classes (project audit 2026-05-25). **Offline analysis only —
+no hardware available; verify before `[x]`.**
+
+- [ ] **RX polling loop drops frames** — LIKELY AFFECTED. `rx.py:_loop` (187)
+  does `await transport.async_read_bulk(...)` (executor read) then decode +
+  parse + callback on the event loop — no read posted while parsing. Same
+  pattern as rtl8821au pre-fix. Fix: dedicated reader thread + queue hand-off
+  (rtl8821au commit 2e3a7a7).
+- [x] **RX filter / monitor mode (ToDS capture)** — ALREADY HANDLED (offline
+  verdict; the "working monitor sibling" per the monitor-deviation memory).
+  `mac.py:mac_start(monitor=True)` (309-328) clears `MT_RX_FILTR_CFG`
+  DROP_UC_NOME(bit2) + DROP_NOT_MYBSSID(bit3); `mac.py:301-304` writes bare MAC
+  to `MT_MAC_ADDR_DW1`/`MT_MAC_BSSID_DW1` (no U2ME/MBSS drop). ToDS should work.
+
 Verified facts only. Hypothesis-level material goes in commit messages,
 not here. `[SRC]` = kernel source (`data_dumps/mt76-source-v6.18/`). `[WIRE]`
 = pcap evidence (`usb_dumps/captures_mt76x2u/capture-1.pcap`).
