@@ -278,8 +278,8 @@ async def test_loop_picks_seed_from_store_and_chops_end_to_end():
         d.stop()
     assert "f" in holder
     _assert_valid_forged_arp(holder["f"])
-    # Tree-log shape: a plain "chopping IV" header, then a └─✓ success leaf.
-    assert any("chopping IV" in m and not m.startswith(" ") for m in logs)
+    # Tree-log shape: a plain "ChopChopping packet" header, then a └─✓ leaf.
+    assert any("ChopChopping packet" in m and not m.startswith(" ") for m in logs)
     assert any("└─" in m and "ChopChop packet forged" in m for m in logs)
 
 

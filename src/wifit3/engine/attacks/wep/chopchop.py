@@ -239,12 +239,13 @@ class WepChopChop:
             self._cur_iv, self._cur_keyid, self._cur_cipher = iv, keyid, cipher
             self._bytes_done = 0
             self._bytes_total = len(cipher) - _CHOP_FLOOR
-            # Group header (plain) — each chop attempt is its own little tree.
-            self._log(
-                f"[cyan]ChopChop:[/cyan] chopping IV {iv.hex()} "
-                f"[dim]({len(cipher)}B cipher, ~{self._bytes_total} to "
-                f"recover)[/dim]"
-            )
+            # Group header (plain) + a detail branch — each chop attempt is its
+            # own little tree.
+            self._log(f"[cyan]ChopChopping packet:[/cyan] {iv.hex()}")
+            self._log(treelog.branch(
+                f"[dim]{len(cipher)}B cipher, ~{self._bytes_total} bytes to "
+                f"recover[/dim]"
+            ))
             return cipher
         return None
 
