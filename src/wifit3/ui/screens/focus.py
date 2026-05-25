@@ -154,7 +154,8 @@ class FocusView(Screen):
                     yield Label("ATTACKS", classes="panel-title", id="lbl-attack-title")
                     with Horizontal(classes="button-row"):
                         # Starts fake-auth + ARP replay + the cracker (WEP).
-                        yield Button("Replay", variant="primary", id="btn-gen-ivs")
+                        # Green = start; turns red ("Stop Replay") while running.
+                        yield Button("Replay", variant="success", id="btn-gen-ivs")
                         # Sibling of Frag: ChopChop manufactures a seed when frag
                         # gets no response. Mutually exclusive (click-to-switch).
                         yield Button("Chop", variant="primary", id="btn-chop")
@@ -328,13 +329,22 @@ class FocusView(Screen):
             if camp is not None and camp.recovered_key is not None:
                 self._stop_generate_ivs()
                 camp = None
-            btn_gen.label = "Stop Replay" if camp is not None else "Replay"
+            # Replay is the campaign switch: green to start, red to STOP the
+            # whole campaign. Frag/Chop are sub-attacks: blue to start, orange
+            # ("Stop X") to stop just that one (the campaign keeps running).
+            running = camp is not None
+            btn_gen.label = "Stop Replay" if running else "Replay"
+            btn_gen.variant = "error" if running else "success"
             # Frag is a sub-mode of a running campaign (it manufactures a seed
             # for replay), so it only appears once IVs are being generated.
-            btn_frag.display = camp is not None and ap.wep_key is None
-            btn_frag.label = "Stop Frag" if (camp and camp.frag_active) else "Frag"
-            btn_chop.display = camp is not None and ap.wep_key is None
-            btn_chop.label = "Stop Chop" if (camp and camp.chop_active) else "Chop"
+            btn_frag.display = running and ap.wep_key is None
+            fragging = bool(camp and camp.frag_active)
+            btn_frag.label = "Stop Frag" if fragging else "Frag"
+            btn_frag.variant = "warning" if fragging else "primary"
+            btn_chop.display = running and ap.wep_key is None
+            chopping = bool(camp and camp.chop_active)
+            btn_chop.label = "Stop Chop" if chopping else "Chop"
+            btn_chop.variant = "warning" if chopping else "primary"
             self._update_fakeauth_line()
         else:
             self.query_one("#lbl-fakeauth", Label).display = False
