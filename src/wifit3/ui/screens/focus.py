@@ -684,11 +684,21 @@ class FocusView(Screen):
     def _log_capture_event(self, ev: CaptureEvent) -> None:
         client = escape(ev.client_mac)
         if ev.kind == "eapol":
-            msg_label = f"M{ev.msg_num}" if ev.msg_num else "EAPOL-?"
-            self._log(
-                f"[green]→[/green] [bold]{msg_label}[/bold] from "
-                f"[bold]{client}[/bold] (replay {ev.replay_hex})"
-            )
+            # pair_label set ⇒ this client now has a crackable pair ⇒ "full".
+            # We log EVERY frame (incl. M1/M3 retries) so the user gets clear
+            # visual feedback each time something lands — handshakes are the
+            # core of WPA2 attacks and infrequent enough to be worth the noise.
+            if ev.pair_label:
+                self._log(
+                    f"[black bold on green] {ev.pair_label} [/black bold on green] "
+                    f"[green]full handshake captured[/green] from [bold]{client}[/bold]"
+                )
+            else:
+                msg_label = f"M{ev.msg_num}" if ev.msg_num else "EAPOL-?"
+                self._log(
+                    f"[black bold on cyan] {msg_label} [/black bold on cyan] "
+                    f"[cyan]partial handshake captured[/cyan] from [bold]{client}[/bold]"
+                )
         elif ev.kind == "handshake_complete":
             self._log(
                 f"[bold green]✓ HANDSHAKE COMPLETE[/bold green] "
@@ -697,7 +707,7 @@ class FocusView(Screen):
             )
         elif ev.kind == "pmkid":
             self._log(
-                f"[bold yellow]✓ PMKID captured[/bold yellow] "
+                f"[bold green]✓ PMKID captured[/bold green] "
                 f"from [bold]{client}[/bold]"
             )
         elif ev.kind == "decloak":

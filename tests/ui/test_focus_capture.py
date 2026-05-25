@@ -72,14 +72,19 @@ async def test_focus_surfaces_passive_handshake_and_pmkid():
         assert "Not captured" in str(hs_label.render())
         assert "Not captured" in str(pmkid_label.render())
 
-        # Phone connects: M1 (carries a PMKID KDE) then M2, same replay → a
-        # hashcat-valid M1+M2 pair. No attack button pressed.
+        # Phone connects. M1 first (carries a PMKID KDE) — partial so far.
         replay = b"\x00" * 8
         iface._on_frame_parsed(_eapol(bssid, client, 1, replay, to_ap=False, pmkid=b"\xaa" * 16))
-        iface._on_frame_parsed(_eapol(bssid, client, 2, replay, to_ap=True))
-
-        # Drive the same per-tick refresh the 10 Hz timer runs — called directly
+        # update_ui drives the same refresh the 10 Hz timer runs; called directly
         # so the test doesn't race the wall-clock timer under a busy event loop.
+        focus.update_ui()
+        await pilot.pause()
+        log_text = _log_text(focus.query_one("#focus-event-log", RichLog))
+        assert "M1" in log_text and "partial handshake captured" in log_text, log_text
+        assert "PMKID captured" in log_text, log_text
+
+        # M2 completes a hashcat-valid M1+M2 pair → "full handshake" line.
+        iface._on_frame_parsed(_eapol(bssid, client, 2, replay, to_ap=True))
         focus.update_ui()
         await pilot.pause()
 
@@ -88,8 +93,8 @@ async def test_focus_surfaces_passive_handshake_and_pmkid():
         assert focus.query_one("#btn-save", Button).disabled is False
 
         log_text = _log_text(focus.query_one("#focus-event-log", RichLog))
-        assert "HANDSHAKE COMPLETE" in log_text, log_text
-        assert "PMKID" in log_text, log_text
+        assert "full handshake captured" in log_text, log_text
+        assert "M1+M2" in log_text, log_text
 
 
 @pytest.mark.asyncio
