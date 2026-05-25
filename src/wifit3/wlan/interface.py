@@ -129,6 +129,18 @@ class WlanInterface:
         if raw is not None and self._rx_callbacks:
             self._fire_rx_callbacks(raw, rssi)
 
+        # Diagnostic (WIFIT3_LOG=debug): trace every data/EAPOL frame's
+        # direction. We see M1/M3 (from_ds, AP→client) but never M2/M4
+        # (to_ds, client→AP) — this reveals whether client→AP frames reach
+        # software at all (→ RX filter / PHY) or arrive but mis-parse (→ here
+        # they'd show as "data" not "eapol"). Guarded so it's free when off.
+        if frame_type in ("data", "eapol", "wep_data") and logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "[RXFRAME] %-9s to_ds=%s from_ds=%s %s -> %s (bssid %s)",
+                frame_type, parsed.get("to_ds"), parsed.get("from_ds"),
+                parsed.get("source"), parsed.get("dest"), bssid,
+            )
+
         if not bssid or bssid == "Unknown" or bssid == "ff:ff:ff:ff:ff:ff":
             return
         
