@@ -1,5 +1,17 @@
 # RTL8821AU — Ground-Truth Doc
 
+## Potential Known Gaps
+
+Cross-driver gap classes found the hard way. Audit each per driver; `[x]`
+once verified fixed or confirmed N/A, with the commit/evidence.
+
+- [x] **RX polling loop drops frames** — read+parse on the event loop, starved
+  by the TUI → ~30% beacon loss, flaky handshakes. Fix: dedicated reader
+  thread + hand-off to loop. HW-confirmed 2026-05-25 (commit 2e3a7a7).
+- [ ] **RX filter drops client→AP (ToDS) traffic** — STA-mode RCR default isn't
+  promiscuous, so only M1/M3 (FromDS) seen, never M2/M4 → no 4-way. Fix:
+  RCR AAP + clear CBSSID (commit 1b7a1a9). **Awaiting HW verification.**
+
 Realtek 802.11ac single-stream USB chipset (rtw88 family). Driver is shared
 with RTL8811AU; both map to `rtw8821a_hw_spec` in the kernel.
 
