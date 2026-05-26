@@ -76,6 +76,7 @@ from .mac import (
 from .reg_init import init_registers
 from .rfcsr import RfFilterCal, init_rfcsr
 from .rx import parse_rx_urb, probe_endpoints, read_rx_burst, rxwi_size_for_silicon
+from ..rx_reader import RxReaderThread
 from .transport import RT2800USBTransport
 from .tx import inject_frame as _inject_frame, txwi_size_for_silicon
 
@@ -128,8 +129,7 @@ class RT2800USBDriver:
         self.dev = dev
         self.transport = RT2800USBTransport(dev)
         self._rx_callback: Optional[Callable[[dict], None]] = None
-        self._rx_task: Optional[asyncio.Task] = None
-        self._rx_running = False
+        self._rx_reader: Optional[RxReaderThread] = None
         self._bulk_in_ep: Optional[int] = None
         self._rxwi_size: int = 16          # set at connect-time from silicon_id
         self._claimed = False
@@ -456,8 +456,10 @@ class RT2800USBDriver:
             self._rxwi_size = rxwi_size_for_silicon(self.chip_id.silicon_id)
             eps = probe_endpoints(self.dev)
             self._bulk_in_ep = eps.primary_bulk_in
-            self._rx_running = True
-            self._rx_task = asyncio.create_task(self._rx_loop())
+            self._rx_reader = RxReaderThread(
+                loop, self._rx_read_once, self._rx_dispatch, name="rt2800usb-rx"
+            )
+            self._rx_reader.start()
 
             self.is_warm = True
             return True
@@ -467,35 +469,24 @@ class RT2800USBDriver:
             return False
 
     # ---- RX loop --------------------------------------------------------
-    async def _rx_loop(self) -> None:
-        loop = asyncio.get_event_loop()
-        ep = self._bulk_in_ep
-        assert ep is not None
-        logger.info("rt2800usb RX loop started on EP 0x%02x (RXWI=%dB)",
-                    ep, self._rxwi_size)
-        while self._rx_running:
+    # ---- RX callables for the shared RxReaderThread ---------------------
+    # read_once runs on the reader thread; dispatch runs on the event loop.
+
+    def _rx_read_once(self) -> Optional[bytes]:
+        """One blocking bulk-IN read; None on a benign timeout."""
+        return read_rx_burst(self.dev, self._bulk_in_ep)
+
+    def _rx_dispatch(self, buf: bytes) -> None:
+        """Decode one RX URB → parse → rx callback (on the loop)."""
+        rx = parse_rx_urb(buf, rxwi_size=self._rxwi_size)
+        if rx is None or rx.has_fcs_error:
+            return
+        parsed = WlanFrameParser.parse_80211_frame(rx.mpdu, rx.rssi_dbm)
+        if parsed is not None and self._rx_callback is not None:
             try:
-                buf = await loop.run_in_executor(None, read_rx_burst, self.dev, ep)
-            except usb.core.USBError as e:
-                logger.error("rt2800usb bulk-IN error: %s", e)
-                await asyncio.sleep(0.05)
-                continue
+                self._rx_callback(parsed)
             except Exception as e:
-                logger.exception("rt2800usb RX loop unexpected error: %s", e)
-                await asyncio.sleep(0.05)
-                continue
-            if buf is None:
-                continue
-            rx = parse_rx_urb(buf, rxwi_size=self._rxwi_size)
-            if rx is None or rx.has_fcs_error:
-                continue
-            parsed = WlanFrameParser.parse_80211_frame(rx.mpdu, rx.rssi_dbm)
-            if parsed is not None and self._rx_callback is not None:
-                try:
-                    self._rx_callback(parsed)
-                except Exception as e:
-                    logger.exception("rx_callback raised: %s", e)
-        logger.info("rt2800usb RX loop stopped")
+                logger.exception("rx_callback raised: %s", e)
 
     # ---- channel tune (M4) ----------------------------------------------
     def _channel_kwargs(self, channel: int = 1) -> dict:
@@ -689,12 +680,8 @@ class RT2800USBDriver:
             logger.debug("[%s] TX counter read failed: %s", tag, e)
 
     async def close(self) -> None:
-        self._rx_running = False
-        if self._rx_task:
-            self._rx_task.cancel()
-            try:
-                await self._rx_task
-            except asyncio.CancelledError:
-                pass
+        if self._rx_reader is not None:
+            await self._rx_reader.stop()
+            self._rx_reader = None
         self._release()
         logger.info("rt2800usb driver closed")
