@@ -65,12 +65,36 @@ def mac_init_for_rx(transport: RTL8814AUTransport) -> None:
     transport.write16(C.REG_TXDMA_OFFSET_CHK,
                       transport.read16(C.REG_TXDMA_OFFSET_CHK) | BIT_DROP_DATA_EN)
 
+    tune_monitor_cck_sensitivity(transport)
+
 
 def apply_monitor_rcr(transport: RTL8814AUTransport) -> None:
     """Force the promiscuous monitor RCR (also re-applied on warm reattach)."""
     transport.write32(C.REG_RCR, C.RCR_MONITOR)
     rcr = transport.read32(C.REG_RCR)
     logger.info("RX filter: RCR=0x%08x (AAP=%d)", rcr, 1 if rcr & 0x1 else 0)
+
+
+def tune_monitor_cck_sensitivity(transport: RTL8814AUTransport) -> None:
+    """Maximise CCK RX sensitivity for monitor (beacons are 1 Mbps CCK).
+
+    Ports rtw8814a_config_cck_rx_antenna_init (2R CCA + MRC + RX diversity) and
+    forces the CCK packet-detect threshold to the most-sensitive level (LV0).
+    The kernel drives REG_CCK_PD_TH from a dynamic watchdog (cck_pd_set) keyed
+    on association/RSSI; in always-monitor we don't run it, so we pin LV0 here.
+    [[feedback_monitor_mode_deviation]]
+    """
+    # config_cck_rx_antenna_init
+    transport.write32_clr(C.REG_RXSB_CCK, C.BIT_RXSB_ANA_DIV)   # disable ant-div
+    transport.write32_clr(C.REG_CCA, C.BIT_CCA_CO)              # concurrent CCA
+    transport.write32_clr(C.REG_ANTSEL, C.BIT_ANT_BYCO)        # RX path diversity
+    transport.write32_clr(C.REG_PRECTRL, C.BIT_DIS_CO_PATHSEL)  # en MRC antsel
+    transport.write32_mask(C.REG_CCA_MF, C.BIT_MBC_WIN, 1)      # MBC weighting
+    transport.write32_set(C.REG_CCKTX, C.BIT_CMB_CCA_2R)        # 2R CCA only
+    # Most-sensitive CCK packet-detect threshold (LV0).
+    transport.write8(C.REG_CCK_PD_TH, C.CCK_PD_TH_MAX_SENS)
+    logger.info("CCK RX sensitivity: 2R-CCA+MRC on, CCK_PD_TH=0x%02x (LV0/max)",
+                C.CCK_PD_TH_MAX_SENS)
 
 
 def iter_bulk_frames(buf: bytes):

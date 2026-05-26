@@ -269,3 +269,22 @@ RCR_MONITOR = 0xF410400F
 RXFLTMAP0_8814A = 0xFFFF
 RXFLTMAP1_8814A = 0x0400
 RXFLTMAP2_8814A = 0xFFFF
+
+# --- Monitor CCK RX sensitivity (config_cck_rx_antenna_init + CCK PD) -------
+# Beacons are 1 Mbps CCK; the kernel tunes the CCK packet-detect threshold via
+# a dynamic watchdog (cck_pd_set) we don't run. For monitor we force the most
+# sensitive level (LV0) and enable 2R-CCA + MRC + RX diversity.
+REG_RXSB_CCK = 0x0A00            # = REG_RXSB
+BIT_RXSB_ANA_DIV = 1 << 15
+REG_CCA = 0x0A70
+BIT_CCA_CO = 1 << 7
+REG_ANTSEL = 0x0A74
+BIT_ANT_BYCO = 1 << 8
+REG_PRECTRL = 0x0A14
+BIT_DIS_CO_PATHSEL = 1 << 7
+REG_CCA_MF = 0x0A20              # aliases REG_CCK0_TX_FILTER1; MBC weighting field
+BIT_MBC_WIN = 0x30               # GENMASK(5, 4)
+REG_CCKTX = 0x0A84
+BIT_CMB_CCA_2R = 1 << 28
+REG_CCK_PD_TH = 0x0A0A
+CCK_PD_TH_MAX_SENS = 0x40        # pd[CCK_PD_LV0] (rtw8814a_phy_cck_pd_set)

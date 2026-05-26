@@ -410,6 +410,7 @@ def phase_rx(dev, transport: RTL8814AUTransport) -> None:
 
     for ch in (1, 6, 11):
         chan.set_channel(transport, ch, rfe_option=1)
+        rx8814.tune_monitor_cck_sensitivity(transport)  # re-pin after tune
         t_end = time.perf_counter() + 3.0
         while time.perf_counter() < t_end:
             buf = rx8814.read_rx_burst(dev, ep_in, max_size=16384, timeout_ms=200)

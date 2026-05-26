@@ -239,11 +239,13 @@ class RTL8814AUDriver:
             return False
         loop = asyncio.get_event_loop()
         try:
-            await loop.run_in_executor(
-                None,
-                lambda: chan.set_channel(self.transport, channel,
-                                         rfe_option=self._rfe_option),
-            )
+            def _tune():
+                chan.set_channel(self.transport, channel,
+                                 rfe_option=self._rfe_option)
+                # cck_tx_dfir touches a shared CCK reg; re-pin monitor CCK
+                # sensitivity after each tune so it survives channel hops.
+                rx.tune_monitor_cck_sensitivity(self.transport)
+            await loop.run_in_executor(None, _tune)
             self.current_channel = channel
             self.current_band_is_2g = is_2g
             return True
