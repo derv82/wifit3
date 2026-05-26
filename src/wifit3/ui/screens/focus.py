@@ -711,9 +711,10 @@ class FocusView(Screen):
                 f"[bold]{essid}[/bold] [dim](press s to save)[/dim]"
             )
         elif ev.kind == "pmkid":
+            # Significant event → same solid highlight as the handshake banner.
             self._log(
-                f"[bold green]✓ PMKID captured[/bold green] "
-                f"from [bold]{client}[/bold]"
+                f"[black bold on green] ✓ PMKID captured [/black bold on green] "
+                f"from [bold]{client}[/bold] [dim](press s to save)[/dim]"
             )
         elif ev.kind == "decloak":
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
