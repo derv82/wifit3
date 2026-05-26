@@ -185,15 +185,18 @@ def test_parser_rejects_truncated_kde():
 
 # ---- Handshake pair-detection tests --------------------------------------------
 
-def _ef(msg_num, replay_int, raw=None):
-    """Quick EapolFrame builder for pair tests."""
+def _ef(msg_num, replay_int, raw=None, *, ts=0.0, nonce=None):
+    """Quick EapolFrame builder for pair tests. ts=0.0 (default) means
+    'unset' → the time-window check is skipped, exercising the replay-only
+    fallback that the legacy tests rely on."""
     return EapolFrame(
         raw=raw if raw is not None else bytes([msg_num, replay_int % 256]),
         msg_num=msg_num,
         replay_hex=(replay_int).to_bytes(8, "big").hex(),
-        nonce=b"\x00" * 32,
+        nonce=nonce if nonce is not None else b"\x00" * 32,
         mic=b"\x00" * 16,
         key_data_len=0,
+        timestamp=ts,
     )
 
 
@@ -259,6 +262,42 @@ def test_replay_counter_wide_int_handles_8_byte_field():
     """Replay counters can be up to 64-bit. Ensure we compare them as
     integers, not as raw hex-string lexicographic ordering."""
     hs = _make_hs(_ef(2, 0xFF), _ef(3, 0x100))
+    assert hs.is_complete
+
+
+# ---- Same-instance binding (timestamp + ANonce) -------------------------------
+
+def test_pair_rejected_when_frames_far_apart_in_time():
+    """The reported bug: M1, then an M2 with a coincidentally-matching replay
+    counter a minute later, are different associations → must NOT pair (the
+    ANonce/SNonce would be from different PTKs → uncrackable)."""
+    hs = _make_hs(_ef(1, 5, ts=1000.0), _ef(2, 5, ts=1060.0))
+    assert not hs.is_complete
+
+
+def test_pair_accepted_when_frames_within_window():
+    hs = _make_hs(_ef(1, 5, ts=1000.0), _ef(2, 5, ts=1000.05))
+    assert hs.is_complete
+    pair = hs.find_valid_pair()
+    assert (pair[0].msg_num, pair[1].msg_num) == (1, 2)
+
+
+def test_m1_anonce_guard_rejects_wrong_instance():
+    """M1+M2 are tight in time, but a captured M3 at replay+1 carries a
+    DIFFERENT ANonce — proof this M1 belongs to another association, so its
+    ANonce can't be trusted. With the M3 far away (no M2+M3 pair), nothing
+    valid remains → incomplete (better than emitting an uncrackable line)."""
+    hs = _make_hs(
+        _ef(1, 5, ts=100.0, nonce=b"\xaa" * 32),
+        _ef(2, 5, ts=100.1),
+        _ef(3, 6, ts=200.0, nonce=b"\xbb" * 32),
+    )
+    assert not hs.is_complete
+
+
+def test_timestampless_frames_still_pair_on_replay():
+    """Fixtures / pre-timestamp captures (ts unset) fall back to replay rules."""
+    hs = _make_hs(_ef(1, 5), _ef(2, 5))
     assert hs.is_complete
 
 

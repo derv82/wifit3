@@ -355,6 +355,7 @@ class WlanInterface:
                         mic=parsed.get("eapol_mic", b""),
                         key_data_len=parsed.get("eapol_key_data_len", 0),
                         eapol_payload=parsed.get("eapol_payload", b""),
+                        timestamp=time.time(),
                     )
                     hs.eapol_frames.append(eapol)
                     msg_label = f"M{eapol.msg_num}" if eapol.msg_num else "EAPOL-?"

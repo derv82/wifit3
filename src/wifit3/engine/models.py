@@ -19,10 +19,23 @@ class EapolFrame(BaseModel):
     # frame hashcat embeds in the mode-22000 hashline. May be empty if the
     # capture was truncated.
     eapol_payload: bytes = b""
+    # Arrival time (epoch seconds), stamped by the interface on capture. Used to
+    # bind frames to a single handshake instance: a real 4-way completes in well
+    # under a second, so frames far apart are different associations even if
+    # their replay counters coincide. 0.0 = unset (e.g. unit-test fixtures).
+    timestamp: float = 0.0
 
 
 def _replay_to_int(replay_hex: str) -> int:
     return int.from_bytes(bytes.fromhex(replay_hex), "big")
+
+
+# A real 4-way completes sub-second; allow a generous window for retransmits and
+# jitter. Two frames whose replay counters happen to match but that arrived
+# farther apart than this are from different association attempts — pairing them
+# mixes ANonce/SNonce from different PTKs, i.e. an uncrackable hashline. The
+# minute-late-M2 bug lived exactly here.
+_EAPOL_PAIR_WINDOW_S = 2.0
 
 
 class Handshake(BaseModel):
@@ -47,37 +60,82 @@ class Handshake(BaseModel):
 
     # -- Crack-validity -------------------------------------------------------
 
-    def find_valid_pair(self) -> Optional[Tuple[EapolFrame, EapolFrame]]:
-        """Return the lowest-numbered hashcat-valid (a, b) pair, else None.
+    def _within_window(self, a: EapolFrame, b: EapolFrame) -> bool:
+        """True if two frames are close enough in time to be one handshake.
+        Skipped when either timestamp is unset (0.0) — keeps fixtures / any
+        pre-timestamp capture working off the replay-counter rules alone."""
+        if a.timestamp <= 0 or b.timestamp <= 0:
+            return True
+        return abs(a.timestamp - b.timestamp) <= _EAPOL_PAIR_WINDOW_S
 
-        Accepted pairs (per `hcxpcapngtool` semantics):
-          M1+M2  (same replay counter)
-          M2+M3  (M3.replay == M2.replay + 1)
-          M3+M4  (same replay counter)
-          M1+M4  (M4.replay == M1.replay + 1)
+    def _anonce_consistent(self, m1: EapolFrame) -> bool:
+        """Guard for M1-sourced ANonce pairs. The AP reuses one ANonce across
+        M1 and M3 of a handshake, so if we captured this instance's M3
+        (replay == M1.replay + 1) with a *different* nonce, this M1 belongs to
+        another association and must not supply the ANonce."""
+        if len(m1.nonce) != 32:
+            return True
+        target_rc = _replay_to_int(m1.replay_hex) + 1
+        for f in self.eapol_frames:
+            if (
+                f.msg_num == 3
+                and _replay_to_int(f.replay_hex) == target_rc
+                and len(f.nonce) == 32
+                and f.nonce != m1.nonce
+            ):
+                return False
+        return True
+
+    def find_valid_pair(self) -> Optional[Tuple[EapolFrame, EapolFrame]]:
+        """Return the highest-confidence hashcat-valid (lower-msg, higher-msg)
+        pair from a *single handshake instance*, else None.
+
+        A pair must belong to one association: the right replay-counter
+        relationship AND arrival within ``_EAPOL_PAIR_WINDOW_S`` AND (when the
+        ANonce comes from M1) a consistent ANonce. Replay counters alone are
+        insufficient — they restart per re-association, so an M1 from one
+        attempt and an M2 from a later one can collide and produce an
+        uncrackable hashline. Preference favours M2+M3 / M3+M4, where M3 carries
+        the ANonce right beside the MIC frame (self-consistent); M1-sourced
+        pairs are the fragile ones and carry the extra guards.
+
+        Accepted pairs (hcxpcapngtool semantics):
+          M2+M3 (M3.replay == M2.replay + 1)
+          M3+M4 (same replay)
+          M1+M2 (same replay)
+          M1+M4 (M4.replay == M1.replay + 1)
         """
         by_msg: Dict[int, List[EapolFrame]] = {}
         for f in self.eapol_frames:
             if f.msg_num:
                 by_msg.setdefault(f.msg_num, []).append(f)
 
-        for a in by_msg.get(1, []):
-            for b in by_msg.get(2, []):
-                if a.replay_hex == b.replay_hex:
+        def rc(f: EapolFrame) -> int:
+            return _replay_to_int(f.replay_hex)
+
+        def first(
+            ma: int, mb: int, rc_ok, *, anonce_from_m1: bool = False
+        ) -> Optional[Tuple[EapolFrame, EapolFrame]]:
+            for a in by_msg.get(ma, []):
+                for b in by_msg.get(mb, []):
+                    if not rc_ok(a, b):
+                        continue
+                    if not self._within_window(a, b):
+                        continue
+                    if anonce_from_m1 and not self._anonce_consistent(a):
+                        continue
                     return (a, b)
-        for a in by_msg.get(2, []):
-            for b in by_msg.get(3, []):
-                if _replay_to_int(b.replay_hex) == _replay_to_int(a.replay_hex) + 1:
-                    return (a, b)
-        for a in by_msg.get(3, []):
-            for b in by_msg.get(4, []):
-                if a.replay_hex == b.replay_hex:
-                    return (a, b)
-        for a in by_msg.get(1, []):
-            for b in by_msg.get(4, []):
-                if _replay_to_int(b.replay_hex) == _replay_to_int(a.replay_hex) + 1:
-                    return (a, b)
-        return None
+            return None
+
+        same = lambda a, b: a.replay_hex == b.replay_hex          # noqa: E731
+        plus1 = lambda a, b: rc(b) == rc(a) + 1                   # noqa: E731
+
+        return (
+            first(2, 3, plus1)
+            or first(3, 4, same)
+            or first(1, 2, same, anonce_from_m1=True)
+            or first(1, 4, plus1, anonce_from_m1=True)
+        )
 
     @property
     def is_complete(self) -> bool:
