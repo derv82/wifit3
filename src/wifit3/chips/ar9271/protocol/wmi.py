@@ -1,8 +1,11 @@
+import logging
 import os
 import struct
 import zlib
 from typing import Tuple, Optional, Dict, Any
 from wifit3.wlan.packet import WlanFrameParser
+
+logger = logging.getLogger(__name__)
 
 
 # Diagnostic: when WIFIT3_AR9271_DUMP_RX=<N> is set, the first N RX payloads
@@ -19,6 +22,38 @@ def _dump_rx_payload(payload: bytes) -> None:
     _RX_DUMP_REMAINING[0] -= 1
     with open(_RX_DUMP_PATH, "a") as f:
         f.write(f"len={len(payload)}: {payload.hex()}\n")
+
+
+# RX-gate diagnostic (DEBUG only). Tallies every frame that clears the firmware
+# magic by 802.11 direction + addr1 type and records which acceptance gate it
+# cleared or died at, highlighting EAPOL. Kept as a lean ar9271 RX debug aid
+# after it pinned the QoS-padding/FCS bug (2026-05-25); not generalised across
+# drivers yet (see project gap-audit). Zero cost unless DEBUG logging is on.
+_GATE = {"counts": {}, "calls": 0}
+
+
+def _gate_dir_category(frame: bytes) -> str:
+    """Classify a (post-magic) 802.11 frame for the RX-gate tally."""
+    if len(frame) < 16:
+        return "short"
+    fc0, fc1 = frame[0], frame[1]
+    if (fc0 & 0x03) != 0:
+        return "badver"
+    ftype = (fc0 & 0x0C) >> 2
+    to_ds = fc1 & 0x01
+    from_ds = (fc1 >> 1) & 0x01
+    mcast = (frame[4] & 0x01) == 1  # addr1 (RA) first octet odd => mcast/bcast
+    if ftype == 0:
+        return "mgmt"
+    if ftype == 1:
+        return "ctrl"
+    if ftype == 2:
+        if from_ds and not to_ds:
+            return "DL-mcast" if mcast else "DL-UNICAST"
+        if to_ds and not from_ds:
+            return "UL"
+        return "data-other"
+    return "unknown"
 
 
 class WMIProtocol:
@@ -99,6 +134,9 @@ class WMIProtocol:
         if len(payload) < cls.HTC_RX_HEADER_LEN + 14:
             return None
         if payload[10:16] != cls._RX_MAGIC:
+            # Non-RX WMI events share the event-ID space with RX in this
+            # firmware; the magic distinguishes them. (Confirmed 2026-05-25:
+            # magic-fail payloads are tiny ACK/CTS control frames, not data.)
             return None
 
         # Firmware-flagged RX error (cleanroom's rs_status byte). Cheap reject
@@ -106,24 +144,82 @@ class WMIProtocol:
         # corrupt. The 0x01 -> always-FCS-fail correlation is 100 % across the
         # 30-frame dump from 2026-05-22.
         if payload[6] != cls._RX_STATUS_OK:
+            cls._gate_diag(payload, "drop:rs_status")
             return None
 
         declared_len = int.from_bytes(payload[4:6], "big")
         if declared_len != len(payload) - cls.HTC_RX_HEADER_LEN:
+            cls._gate_diag(payload, "drop:declared_len")
             return None
 
         frame = payload[cls.HTC_RX_HEADER_LEN:]
+
+        # Remove the hardware's MAC-header alignment padding BEFORE the FCS
+        # check. ath9k pads the header so the payload is 4-byte aligned
+        # (padsize = hdrlen & 3 → 2 bytes for a 26-B QoS header), but the
+        # over-the-air FCS was computed without it. Skipping this dropped
+        # every QoS frame — i.e. most downlink-unicast data AND all of the
+        # 4-way handshake (M1-M4 are QoS) — at the FCS gate below. Mirrors the
+        # kernel's ath9k_rx_skb_postprocess. [HW-confirmed 2026-05-25: all 9
+        # captured EAPOL frames validate FCS only after this strip.]
+        frame = cls._strip_alignment_padding(frame)
 
         # 802.11 FCS — last 4 B of the frame, LE-encoded CRC32 over the rest.
         # Catches the residual ~8 % that the rs_status check misses (real RF
         # noise / partial captures the firmware didn't flag).
         expected_fcs = int.from_bytes(frame[-4:], "little")
         if zlib.crc32(frame[:-4]) & 0xFFFFFFFF != expected_fcs:
+            cls._gate_diag(payload, "drop:fcs")
             return None
 
+        cls._gate_diag(payload, "pass")
         rssi_snr = payload[8]
         rssi = cls.NOISE_FLOOR_DBM + rssi_snr if rssi_snr > 0 else cls.NOISE_FLOOR_DBM
         return WlanFrameParser.parse_80211_frame(frame, rssi)
+
+    @staticmethod
+    def _strip_alignment_padding(frame: bytes) -> bytes:
+        """Strip ath9k's DMA alignment padding inserted *after* the MAC header.
+
+        The hardware pads the header so the 802.11 payload is 4-byte aligned;
+        `padsize = ieee80211_hdrlen(fc) & 3` (0 for a 24-B mgmt/non-QoS header,
+        2 for a 26-B QoS header). The over-the-air FCS excludes the pad, so it
+        must be removed before both the FCS check and the parser. Mirrors
+        ath9k_rx_skb_postprocess (kernel recv.c).
+        """
+        if len(frame) < 24:
+            return frame
+        fc0, fc1 = frame[0], frame[1]
+        hdrlen = 24
+        if (fc1 & 0x03) == 0x03:                            # 4-address (WDS)
+            hdrlen += 6
+        if ((fc0 & 0x0C) >> 2) == 0x02 and (fc0 & 0x80):    # QoS data subtype
+            hdrlen += 2
+        if fc1 & 0x80:                                       # HT Control (Order)
+            hdrlen += 4
+        padsize = hdrlen & 0x03
+        if padsize and len(frame) >= hdrlen + padsize:
+            return frame[:hdrlen] + frame[hdrlen + padsize:]
+        return frame
+
+    @classmethod
+    def _gate_diag(cls, payload: bytes, reason: str) -> None:
+        """DEBUG-only: tally a post-magic frame by direction + acceptance-gate
+        outcome and highlight EAPOL. A frame's 802.11 header is intact whenever
+        we classify it (valid FC + addresses) even if the body/tail failed FCS,
+        so the EAPOL EtherType scan works regardless of `reason` — handy for
+        spotting handshake frames that pass *or* get dropped at any gate."""
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
+        frame = payload[cls.HTC_RX_HEADER_LEN:]
+        cat = _gate_dir_category(frame)
+        _GATE["counts"][(cat, reason)] = _GATE["counts"].get((cat, reason), 0) + 1
+        _GATE["calls"] += 1
+        if cat in ("DL-UNICAST", "DL-mcast", "UL", "data-other") and \
+                b"\xaa\xaa\x03\x00\x00\x00\x88\x8e" in frame:
+            logger.debug("[RXGATE] EAPOL %s %s len=%d", cat, reason, len(frame))
+        if _GATE["calls"] % 300 == 0:
+            logger.debug("[RXGATE] tally: %s", dict(_GATE["counts"]))
 
     # Common Command IDs
     WMI_ECHO_CMDID = 0x0001

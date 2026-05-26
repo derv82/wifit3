@@ -1,3 +1,5 @@
+import zlib
+
 import pytest
 from wifit3.chips.ar9271.protocol.wmi import WMIProtocol
 
@@ -48,6 +50,58 @@ def test_parse_rx_frame_rejects_firmware_rx_error_flag():
     payload = bytearray(bytes.fromhex(_REAL_BEACON_HEX))
     payload[6] = 0x01
     assert WMIProtocol.parse_rx_frame(bytes(payload)) is None
+
+
+# ---- QoS alignment-padding + FCS (HW-confirmed bug, 2026-05-25) ------------
+# ath9k inserts 2 bytes of DMA alignment padding after a 26-B QoS MAC header so
+# the payload is 4-byte aligned, but the over-the-air FCS excludes it. Without
+# stripping it, every QoS frame (all downlink-unicast data AND all 4-way EAPOL)
+# fails the FCS gate. Synthesized below with fake locally-administered MACs so
+# no real network identifiers land in the repo.
+
+def _rx_header(declared_len: int, snr: int = 0x1c) -> bytes:
+    h = bytearray(WMIProtocol.HTC_RX_HEADER_LEN)
+    h[4:6] = declared_len.to_bytes(2, "big")  # frame length (incl. pad + FCS)
+    h[6] = 0x00                               # rs_status OK
+    h[8] = snr                                # RSSI SNR
+    h[10:16] = b"\x80\x16\x80\x80\x01\xff"    # firmware magic
+    return bytes(h)
+
+
+def _qos_eapol_m1_payload(*, insert_pad: bool = True) -> bytes:
+    # 26-byte QoS-data header, from_ds (AP->client), fake addresses.
+    fc, dur = b"\x88\x02", b"\x00\x00"
+    ra = bytes.fromhex("02deadbeef01")   # client (RA)
+    bssid = bytes.fromhex("02deadbeef02")
+    hdr = fc + dur + ra + bssid + bssid + b"\x10\x00" + b"\x00\x00"  # 26 B
+    # LLC/SNAP + a minimal 802.1X EAPOL-Key M1 (ACK set, MIC/INSTALL clear).
+    dot1x = bytearray(99)
+    dot1x[0], dot1x[1] = 0x02, 0x03      # version, type=EAPOL-Key
+    dot1x[4] = 0x02                      # key desc type = RSN
+    dot1x[5:7] = (0x0080).to_bytes(2, "big")  # key info: KEY_ACK only -> M1
+    body = b"\xaa\xaa\x03\x00\x00\x00\x88\x8e" + bytes(dot1x)
+    fcs = (zlib.crc32(hdr + body) & 0xFFFFFFFF).to_bytes(4, "little")
+    frame = hdr + (b"\x00\x00" if insert_pad else b"") + body + fcs
+    return _rx_header(len(frame)) + frame
+
+
+def test_parse_rx_frame_qos_eapol_padding_stripped():
+    parsed = WMIProtocol.parse_rx_frame(_qos_eapol_m1_payload(insert_pad=True))
+    assert parsed is not None, "QoS EAPOL must survive the FCS gate after de-pad"
+    assert parsed["type"] == "eapol"
+    assert parsed["eapol_msg_num"] == 1
+
+
+def test_strip_alignment_padding_qos_removes_two_bytes():
+    hdr = b"\x88\x02" + b"\x00" * 24          # 26-byte QoS header
+    body = b"\xaa\xaa\x03\x00\x00\x00\x88\x8e" + b"\x01" * 20
+    assert WMIProtocol._strip_alignment_padding(hdr + b"\xDE\xAD" + body) == hdr + body
+
+
+def test_strip_alignment_padding_nonqos_is_noop():
+    hdr = b"\x08\x02" + b"\x00" * 22          # 24-byte non-QoS data header
+    frame = hdr + b"\xaa\xaa\x03\x00\x00\x00\x88\x8e" + b"\x01" * 20
+    assert WMIProtocol._strip_alignment_padding(frame) == frame
 
 
 def test_wmi_sequence_ids():
