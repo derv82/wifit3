@@ -1,5 +1,19 @@
 # RTL8812AU — verified facts (M1 scope)
 
+## Potential Known Gaps
+
+Cross-driver gap classes. **Both fixes applied 2026-05-25 but NOT yet
+hardware-verified** — needs an 8812au card.
+
+- [~] **RX polling loop drops frames** — PORTED (reader-thread). Converted from
+  on-loop read+parse to the shared `chips/rx_reader.py` RxReaderThread
+  (`_rx_read_once`/`_rx_dispatch`). Behaviour-preserving; awaiting HW verify.
+- [~] **RX filter / monitor mode (ToDS capture)** — FIX APPLIED (separate
+  commit), pcap-confirmed, awaiting HW verify. rtw88xxa init left REG_RCR byte0
+  `0x0E` (AAP clear) → ToDS dropped (only M1/M3). `apply_monitor_rx_filter`
+  writes the monitor `0xf410400f` from `_finish_attach` (both paths). [WIRE
+  captures_rtw88_8812au frames 6891-6901]. Verify M2/M4 captured; revert if not.
+
 Cleanroom-RE'd from `data_dumps/rtw88-source-v6.18/` + cold-boot pcap
 `usb_dumps/captures_rtw88_8812au/capture-1.pcap`. Every claim here cites
 either `[SRC]` (kernel source) or `[WIRE]` (pcap observation). Anything
