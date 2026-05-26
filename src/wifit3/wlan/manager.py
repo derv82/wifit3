@@ -47,6 +47,7 @@ def _all_drivers() -> List[Type[WlanDriver]]:
         from wifit3.chips.rtl8812au.driver import RTL8812AUDriver
         from wifit3.chips.rtl8821au.driver import RTL8821AUDriver
         from wifit3.chips.rtl8822bu.driver import RTL8822BUDriver
+        from wifit3.chips.rtw88_8814au.driver import RTL8814AUDriver
 
         _ALL_DRIVERS = [
             AR9271Driver,
@@ -57,6 +58,7 @@ def _all_drivers() -> List[Type[WlanDriver]]:
             RTL8812AUDriver,
             RTL8821AUDriver,
             RTL8822BUDriver,
+            RTL8814AUDriver,
             MT76x0UDriver,
             MT76x2UDriver,
             MT7921AUDriver,
