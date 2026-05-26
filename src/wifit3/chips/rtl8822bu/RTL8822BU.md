@@ -5,20 +5,17 @@
 Cross-driver gap classes (project audit 2026-05-25). **Offline analysis only —
 no hardware available; verify before `[x]`.**
 
-- [ ] **RX polling loop drops frames** — LIKELY AFFECTED. `driver.py:_rx_loop`
-  (321) does `await loop.run_in_executor(_read_once)` (338) then parse on the
-  event loop — no read posted while parsing. Same pattern as rtl8821au pre-fix.
-  Fix: dedicated reader thread + queue hand-off (rtl8821au commit 2e3a7a7).
-- [ ] **RX filter / monitor mode (ToDS capture)** — LIKELY AFFECTED, **pcap-
-  CONFIRMED**. `mac.py:257` writes `REG_RCR = 0xE400220E` (+APP_PHYSTS) — byte0
-  `0x0E` has **AAP/ACCEPT_AP (bit0) CLEAR**, so it's NOT promiscuous and drops
-  unicast not addressed to us, incl. client→AP (ToDS) M2/M4. Slicing the airmon
-  capture proves the gap: the kernel writes the same `0xe400220e` first, then
-  **overwrites REG_RCR → `0xf410400f`** for monitor [WIRE captures_rtw88_8822bu/
-  capture-1 frames 19191-19205] — the *exact same* promiscuous value as
-  rtl8821au. Our driver never applies that override. Same fix as rtl8821au:
-  `apply_monitor_rx_filter` writing 0xf410400f, called from `_finish_attach`
-  (224) so it runs on cold AND warm (the warm path skips mac init too).
+- [x] **RX polling loop drops frames** — FIXED (commit 6b5bf1e). Dedicated
+  reader thread + `call_soon_threadsafe` → parse on loop (port of rtl8821au
+  2e3a7a7). HW A/B 2026-05-25: beacon rate 7-9/s → 7.9-9.4/s (floor + ceiling
+  up), handshake completion held 3/3 (one missed M3 *retransmit* — benign, a
+  4-way needs only one valid pair).
+- [x] **RX filter / monitor mode (ToDS capture)** — FIXED (commit 1be3d36),
+  HW-confirmed (full M1-M4 captured). `mac.py:257` writes the kernel STA RCR
+  `0xE400220E` (AAP/bit0 CLEAR — not promiscuous, drops client→AP/ToDS);
+  `apply_monitor_rx_filter` now writes the monitor `0xf410400f` from
+  `_finish_attach` (both cold + warm). Pcap-confirmed: the kernel does the same
+  overwrite [WIRE captures_rtw88_8822bu/capture-1 frames 19191-19205].
 
 Family: rtw88, modern (iDDMA) FW path, NOT 8051. 2T2R, 802.11ac, dual-band.
 
