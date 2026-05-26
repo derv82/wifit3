@@ -2,8 +2,8 @@
 
 Reuses :mod:`wifit3.chips.rtw88_base.rx_common` for endpoint probing, the
 24-byte rx_pkt_desc decode, and the burst frame iterator (the 8814a rx desc is
-24 bytes, same as the 8822b). RSSI extraction (rtw8814a_query_phy_status, 4
-paths) is a follow-up — frames flow with a placeholder RSSI for now.
+24 bytes, same as the 8822b). Per-frame RSSI comes from the jaguar phy_status
+report (`parse_phy_status_rssi_8814a`, port of rtw8814a_query_phy_status).
 
 `mac_init_for_rx` is the RX-relevant subset of rtw8814a_mac_init +
 rtw_drv_info_cfg that was deferred from M2:
@@ -21,9 +21,12 @@ HCI_RXDMA/RXDMA/MACRXEN) back in M2's txdma_queue_mapping.
 from __future__ import annotations
 
 import logging
+import struct
 import time
 
 import usb.core
+
+from wifit3.chips.rtw88_base.registers import DESC_RATE11M
 
 from wifit3.chips.rtw88_base.rx_common import (  # noqa: F401 (re-exports)
     RX_PKT_DESC_SZ,
@@ -163,7 +166,42 @@ def rf_receiving_frames(transport: RTL8814AUTransport,
     return demod_ok > 0
 
 
+# --- RSSI from the jaguar phy_status report (rtw8814a_query_phy_status) -------
+_RSSI_MIN, _RSSI_MAX = -110, 0
+
+
+def _cck_rx_pwr(lna_idx: int, vga_idx: int) -> int:
+    """rtw8814a_cck_rx_pwr — CCK signal power (dBm) from AGC LNA/VGA indices."""
+    return {7: -38, 5: -28, 3: -8, 2: -1}.get(lna_idx, 0) - 2 * vga_idx
+
+
+def parse_phy_status_rssi_8814a(buf: bytes, offset: int, stat) -> int | None:
+    """Signal power (dBm) from the 28-byte jaguar phy_status report.
+
+    Mirrors rtw8814a_query_phy_status (rtw88xxa.h jaguar layout). CCK uses the
+    AGC LNA/VGA lookup; OFDM uses per-path gain-110, taking the 2nd-lowest of
+    the 4 paths (kernel's power-save robustness trick).
+    """
+    if len(buf) - offset < 28:
+        return None
+    w0, w1 = struct.unpack_from("<II", buf, offset)
+    w5, w6 = struct.unpack_from("<II", buf, offset + 20)
+
+    if stat.rate <= DESC_RATE11M:                      # CCK
+        vga = (w1 >> 8) & 0x1F
+        lna = (w1 >> 13) & 0x07
+        sig = _cck_rx_pwr(lna, vga)
+    else:                                              # OFDM/HT/VHT
+        g_a = w0 & 0x7F
+        g_b = (w0 >> 8) & 0x7F
+        g_c = (w5 >> 24) & 0x7F
+        g_d = w6 & 0x7F
+        middle1 = max(min(g_a, g_b), min(g_c, g_d))
+        middle2 = min(max(g_a, g_b), max(g_c, g_d))
+        sig = min(middle1, middle2) - 110
+    return max(_RSSI_MIN, min(_RSSI_MAX, sig))
+
+
 def iter_bulk_frames(buf: bytes):
-    """Yield (stat, mpdu, rssi) per frame. RSSI is a placeholder (None →
-    parser uses -100) until rtw8814a_query_phy_status is ported."""
-    return _shared_iter_bulk_frames(buf, phy_status_rssi=None)
+    """Yield (stat, mpdu, rssi) per frame, with real per-frame RSSI (dBm)."""
+    return _shared_iter_bulk_frames(buf, phy_status_rssi=parse_phy_status_rssi_8814a)

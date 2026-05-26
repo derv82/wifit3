@@ -435,6 +435,7 @@ def phase_rx(dev, transport: RTL8814AUTransport) -> None:
 
     seen_bssids: dict[str, int] = {}
     seen_ssids: dict[str, str] = {}
+    seen_rssi: dict[str, int] = {}        # best (max) RSSI seen per BSSID
     total_frames = bursts = bytes_rx = 0
 
     for ch in (1, 6, 11):
@@ -455,11 +456,14 @@ def phase_rx(dev, transport: RTL8814AUTransport) -> None:
                     bssid = parsed.get("bssid") or "?"
                     seen_bssids[bssid] = seen_bssids.get(bssid, 0) + 1
                     seen_ssids.setdefault(bssid, _extract_ssid(mpdu))
+                    if rssi is not None:
+                        seen_rssi[bssid] = max(seen_rssi.get(bssid, -120), rssi)
 
     print(f"  bursts={bursts} bytes={bytes_rx} parsed_frames={total_frames}")
     print(f"  distinct beacon BSSIDs: {len(seen_bssids)}")
     for bssid, count in sorted(seen_bssids.items(), key=lambda kv: -kv[1])[:15]:
-        print(f"    {bssid}  ({count:3d})  ssid={seen_ssids.get(bssid, '')!r}")
+        print(f"    {bssid}  ({count:3d})  {seen_rssi.get(bssid, -100):4d} dBm  "
+              f"ssid={seen_ssids.get(bssid, '')!r}")
     if not seen_bssids:
         fail("no beacons captured — RX path not delivering 802.11 frames "
              "(or no APs in range). Confirm APs are nearby and retry.")

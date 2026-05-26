@@ -113,7 +113,11 @@ Family: **rtw88** (modern), shares `chips/rtw88_base/`.
        false-alarm/CRC/CCA counters): bad boots showed CCA=0, ruling out
        DMA/IQK. HW: a deaf start auto-recovers in 1 re-init.
     **HW-VERIFIED reliable: 66–70 BSSIDs every run across cold + warm boots.**
-  - **[follow-up] RSSI** still the -100 placeholder (needs rtw8814a_query_phy_status).
+  - **[RESOLVED] RSSI** — ported rtw8814a_query_phy_status (jaguar phy_status
+    report in the 32-B drv_info): OFDM = 2nd-lowest of the 4 per-path gains −110;
+    CCK = AGC LNA/VGA lookup (`rx.parse_phy_status_rssi_8814a`). HW: own AP
+    ~−28 dBm, neighbours −54..−86 dBm (sensible distribution). Wired into
+    `iter_bulk_frames`.
   - **[BUG fixed] test phase-gating** — `--phase rx` had skipped fw/validate/
     mac_init/efuse (missing from the `needs_*` sets), so the MAC was never
     powered → CR read 0xEA. Replaced with an ordered chain (run everything up to
