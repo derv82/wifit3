@@ -119,7 +119,14 @@ Family: **rtw88** (modern), shares `chips/rtw88_base/`.
     powered → CR read 0xEA. Replaced with an ordered chain (run everything up to
     the target phase). NOT a driver bug — driver.connect() always ran M1→M5 in
     order; the EFUSE grant-off "fix" made on the wrong theory was reverted.
-- **M6 (TX inject)** — not started. TX desc + deauth → handshake recapture.
+- **M6 (TX inject)** — ✅ CODE COMPLETE; TX pipe HW-verified. `tx.py`: 40-byte
+  tx_pkt_desc (10 u32; NO DATARATE_FB_LIMIT since old_datarate_fb_limit=false,
+  unlike the 8812a 40-byte builder) + MGMT→HIGH lane (out_ep[0]=0x02) +
+  bulk-OUT writer + deauth builder. Wired into `driver.inject_frame`. HW: 10/10
+  bogus-target deauths accepted by the bulk-OUT pipe (desc decodes correct:
+  pkt_len/OFFSET=40/QSEL=MGMT/RATE_ID=CCK). **Pending: on-air deauth effect**
+  (user's phone test) — TX queues were armed in M2 (priority_queue_cfg + LLT),
+  so the frame should go out; just needs RF-confirmation a real client drops.
 - **M7 (monitor-mode / no-RX-filter verification)** — ✅ **DONE, HW-VERIFIED.**
   `--phase monitor` classifies each frame's addr1; PASS requires frames whose
   receiver is a unicast MAC that is neither broadcast/multicast nor our own

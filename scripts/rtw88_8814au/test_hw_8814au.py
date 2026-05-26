@@ -58,7 +58,7 @@ from wifit3.chips.rtw88_8814au.phy import (
     load_mac_table,
     phy_set_param,
 )
-from wifit3.chips.rtw88_8814au import rx as rx8814
+from wifit3.chips.rtw88_8814au import rx as rx8814, tx as tx8814
 from wifit3.chips.rtw88_8814au.transport import RTL8814AUTransport
 from wifit3.wlan.packet import WlanFrameParser
 import dataclasses
@@ -621,6 +621,45 @@ def phase_rxdump(dev, transport: RTL8814AUTransport) -> None:
     ok(f"dumped {dumped} bursts — paste them; I'll decode the descriptor mismatch")
 
 
+def phase_tx(dev, transport: RTL8814AUTransport) -> None:
+    step("TX inject: bulk-OUT MGMT pipe (bogus deauth targets)  [M6 GATE]")
+    # Bring the chip up (TX queues were armed in M2; needs a tuned channel + RF).
+    if not _bring_up_rf_with_retry(dev, transport):
+        fail("RF deaf — can't validate TX")
+    eps = rx8814.probe_endpoints(dev)
+    if not eps.bulk_out:
+        fail("no bulk-OUT endpoints")
+    ep = tx8814.pick_bulk_out_ep(list(eps.bulk_out))
+    print(f"  MGMT bulk-OUT ep: 0x{ep:02x}")
+
+    # Bogus locally-administered MACs (bit1 set, nonexistent) — exercises the TX
+    # pipe WITHOUT deauthing any real device. Real on-air deauth is the user's
+    # phone test.
+    ap = bytes.fromhex("0200000000aa")
+    cli = bytes.fromhex("0200000000bb")
+    mpdu = tx8814.build_deauth_frame(ap, cli, reason=7)
+    desc = tx8814.build_tx_desc_mgmt(mpdu, band_is_2g=True)
+    payload = desc + mpdu
+    print(f"  frame: {len(mpdu)}B mpdu + {len(desc)}B desc = {len(payload)}B")
+    print(f"  hex(first 24B): {payload[:24].hex()}")
+
+    fails = 0
+    for i in range(10):
+        try:
+            sent = tx8814.write_bulk(dev, ep, payload, timeout_ms=500)
+            if sent != len(payload):
+                fails += 1
+                print(f"  [{i:2d}] short write {sent}/{len(payload)}")
+        except Exception as e:  # noqa: BLE001 - report any TX error
+            fails += 1
+            print(f"  [{i:2d}] error: {e}")
+        time.sleep(0.02)
+    if fails:
+        fail(f"{fails}/10 TX bulk-OUT writes failed")
+    ok("10/10 deauth frames accepted by the bulk-OUT TX pipe. M6 pipe COMPLETE "
+       "(on-air deauth effect = user's phone test).")
+
+
 def phase_monitor(dev, transport: RTL8814AUTransport) -> None:
     step("Monitor verification: capture frames addressed to OTHER stations  [M7 GATE]")
     # Beacons (addr1=broadcast) only prove we accept broadcast — a FILTERING
@@ -680,8 +719,8 @@ def main() -> int:
     p.add_argument(
         "--phase",
         choices=("open", "fw", "validate", "mac_init", "tables", "efuse", "phy",
-                 "channel", "rx", "monitor", "rxdiag", "rfretry", "rxdump",
-                 "all"),
+                 "channel", "rx", "monitor", "tx", "rxdiag", "rfretry",
+                 "rxdump", "all"),
         default="all")
     p.add_argument("--debug", action="store_true", help="verbose USB logging")
     p.add_argument("--quiet", action="store_true", help="suppress INFO logs")
@@ -716,12 +755,12 @@ def main() -> int:
             for ph in ("open", "fw", "validate", "mac_init"):
                 runners[ph]()
             phase_tables(transport)
-        elif target in ("rxdiag", "rfretry", "rxdump"):
+        elif target in ("rxdiag", "rfretry", "rxdump", "tx"):
             for ph in ("open", "fw", "validate", "mac_init", "efuse", "phy",
                        "channel"):
                 runners[ph]()
             {"rxdiag": phase_rxdiag, "rfretry": phase_rfretry,
-             "rxdump": phase_rxdump}[target](dev, transport)
+             "rxdump": phase_rxdump, "tx": phase_tx}[target](dev, transport)
         else:
             for ph in chain[:chain.index(target) + 1]:
                 runners[ph]()

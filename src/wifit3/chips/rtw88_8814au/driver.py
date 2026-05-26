@@ -28,7 +28,7 @@ from .firmware import (
     download_firmware_validate,
     load_firmware_blob,
 )
-from . import chan, rx
+from . import chan, rx, tx
 from .efuse import read_efuse
 from .fifo import count_bulk_out_eps, rtw_init_trx_cfg
 from .mac import cut_mask_from_sys_cfg1, is_chip_warm, mac_power_on
@@ -60,6 +60,7 @@ class RTL8814AUDriver:
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._rx_reader: Optional[RxReaderThread] = None
         self._bulk_in_ep: Optional[int] = None
+        self._bulk_out_eps: list[int] = []
         self._claimed = False
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
@@ -215,6 +216,7 @@ class RTL8814AUDriver:
             logger.error("no bulk-IN endpoint discovered")
             return False
         self._bulk_in_ep = eps.primary_bulk_in
+        self._bulk_out_eps = list(eps.bulk_out)
         await loop.run_in_executor(None, rx.prime_bulk_in, self.dev, self._bulk_in_ep)
         self._rx_reader = RxReaderThread(
             loop, self._rx_read_once, self._rx_dispatch, name="rtl8814au-rx"
@@ -272,8 +274,28 @@ class RTL8814AUDriver:
 
     async def inject_frame(self, frame_bytes: bytes,
                            use_no_ack: bool = True) -> bool:
-        logger.warning("RTL8814AU.inject_frame: TX lands in M6 (no-op)")
-        return False
+        if not self._bulk_out_eps:
+            logger.error("inject_frame: no bulk-OUT endpoints")
+            return False
+        try:
+            desc = tx.build_tx_desc_mgmt(
+                frame_bytes, band_is_2g=self.current_band_is_2g)
+        except ValueError as e:
+            logger.error("inject_frame: bad MPDU: %s", e)
+            return False
+        ep = tx.pick_bulk_out_ep(self._bulk_out_eps, queue=tx.TX_DESC_QSEL_MGMT)
+        payload = desc + frame_bytes
+        loop = asyncio.get_event_loop()
+        try:
+            sent = await loop.run_in_executor(
+                None, lambda: tx.write_bulk(self.dev, ep, payload, timeout_ms=200))
+        except usb.core.USBError as e:
+            logger.error("inject_frame: bulk-OUT to 0x%02x failed: %s", ep, e)
+            return False
+        if sent != len(payload):
+            logger.warning("inject_frame: short write %d/%d", sent, len(payload))
+            return False
+        return True
 
     async def close(self) -> None:
         loop = asyncio.get_event_loop()
