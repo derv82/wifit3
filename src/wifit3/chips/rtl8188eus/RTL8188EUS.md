@@ -5,11 +5,12 @@
 Cross-driver gap classes (project audit 2026-05-25). **Offline analysis only —
 no hardware available; verify before `[x]`.**
 
-- [~] **RX polling loop drops frames** — FIX APPLIED (commit dc621ce), awaiting
-  user A/B. Was on-loop read+parse; now uses the shared `chips/rx_reader.py`
-  RxReaderThread (`_rx_read_once` on the thread, `_rx_dispatch` on the loop).
-  Before-numbers to beat: 3.5-6.5 beacons/s, 1/3 full handshakes. Verify beacon
-  rate up + handshake completion (no regression).
+- [x] **RX polling loop drops frames** — FIXED (commit dc621ce), HW A/B
+  confirmed 2026-05-25. Was on-loop read+parse; now uses the shared
+  `chips/rx_reader.py` RxReaderThread (`_rx_read_once` on the thread,
+  `_rx_dispatch` on the loop). A/B: beacon rate 3.5-6.5/s → 5.5-8.0/s (both
+  bounds up ~2/s); all 3 reconnects yielded a crackable pair (M1-M4, M1+M4,
+  M1+M3+M4). Residual per-packet loss is the card's weak radio.
 - [x] **RX filter / monitor mode (ToDS capture)** — FIXED (commit 442c7aa),
   HW-confirmed 2026-05-25: M2/M4 now captured (was M1/M3-only). `RCR_MONITOR`
   (incl. `RCR_ACCEPT_AP`/promiscuous) was correct but only written by
