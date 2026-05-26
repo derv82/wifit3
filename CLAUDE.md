@@ -6,6 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **Platform**: Dev machine is Windows + PowerShell. Bash tool is available, but `scripts/AGENTS.md` has PowerShell-isms worth respecting (no `&&` chaining, no Unix `grep`/`tail`, never pass `-c` to `tshark` since it limits *input* not output).
 - **Git**: Commit directly to `master`; branch, switch branches, or make worktrees only when asked. The working tree is shared across concurrent sessions — `git status` may show files, and tests may fail, from work that isn't yours; stage only your task's files (`git add <paths>`, never `-A`/`.`).
+- **Comments explain the code, not the editing session.** Write for a fresh reader: state invariants, protocol quirks, and gotchas as present-tense facts, keeping `[SRC]/[WIRE]/[HW]` citations where they earn their place. Do NOT narrate the session that produced the change — no "pre-fix / we used to / no longer", dated "HW-confirmed 2026-…" stamps, commit hashes, percentages from a one-off dump, or cross-refs justifying what the code *doesn't* do (e.g. "handled in engine/pcap"). Dated history + citations live in the per-chip `<CHIP>.md`, not in `.py` comments.
 - **Cross-platform by design**: Wifit3 uses PyUSB + `libusb_package` so drivers run on Windows (with Zadig binding the device to WinUSB) AND Linux (after `rmmod <kernel_driver>`). No Kali boot is needed for normal dev — that's the whole point of going userland.
 - **Hardware testing is the USER's job**, not the agent's. The loop is:
   1. Agent proposes code changes.
