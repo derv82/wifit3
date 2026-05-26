@@ -14,8 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
-import time
 from typing import Callable, Optional
 
 import usb.core
@@ -52,6 +50,7 @@ from .mac import (
 )
 from .phy import EfuseDefaults, phy_set_param
 from .rx import iter_bulk_frames, probe_endpoints
+from ..rx_reader import RxReaderThread
 from .transport import RTL8822BUTransport
 from .tx import (
     TX_DESC_QSEL_MGMT,
@@ -81,12 +80,7 @@ class RTL8822BUDriver:
         self.dev = dev
         self.transport = RTL8822BUTransport(dev)
         self._rx_callback: Optional[Callable[[dict], None]] = None
-        self._rx_task: Optional[asyncio.Task] = None
-        self._rx_thread: Optional[threading.Thread] = None
-        self._rx_running = False
-        # Buffers handed to the loop but not yet parsed; advisory soft cap so a
-        # momentarily-swamped loop drops here rather than ballooning memory.
-        self._rx_pending = 0
+        self._rx_reader: Optional[RxReaderThread] = None
         self._bulk_in_ep: Optional[int] = None
         self._bulk_out_eps: list[int] = []
         self._claimed = False
@@ -253,8 +247,10 @@ class RTL8822BUDriver:
         # drops client→AP (ToDS) frames. Mirrors rtl8821au.
         await loop.run_in_executor(None, apply_monitor_rx_filter, self.transport)
 
-        self._rx_running = True
-        self._rx_task = asyncio.create_task(self._rx_loop())
+        self._rx_reader = RxReaderThread(
+            loop, self._rx_read_once, self._rx_dispatch, name="rtl8822bu-rx"
+        )
+        self._rx_reader.start()
         self.is_warm = True
         _progress(1.00, "RTL8822BU online")
         return True
@@ -330,51 +326,21 @@ class RTL8822BUDriver:
             return False
         return True
 
-    # Soft cap on un-parsed buffers in flight to the loop (see _rx_pending).
-    _RX_PENDING_CAP = 256
+    # ---- RX callables for the shared RxReaderThread ---------------------
+    # read_once runs on the reader thread; dispatch runs on the event loop.
 
-    def _read_burst(self, ep: int) -> bytes | None:
+    def _rx_read_once(self) -> bytes | None:
         """One blocking bulk-IN read; None on a benign timeout."""
         try:
-            return bytes(self.dev.read(ep, 16384, 100))
+            return bytes(self.dev.read(self._bulk_in_ep, 16384, 100))
         except usb.core.USBError as e:
             err = getattr(e, "errno", None)
             if err in (110, 10060) or "timeout" in str(e).lower():
                 return None
             raise
 
-    def _rx_reader_thread(self, loop: asyncio.AbstractEventLoop, ep: int) -> None:
-        """Dedicated thread: tight bulk-read loop that keeps a URB posted at all
-        times, independent of event-loop / UI load. Hands raw buffers to the
-        loop via call_soon_threadsafe; parse + callback stay on the loop thread
-        (_dispatch_buffer) so they don't race the UI's reads of the registry.
-        Port of rtl8821au commit 2e3a7a7 (was: on-loop read+parse → frame loss
-        under TUI load)."""
-        consec_errors = 0
-        while self._rx_running:
-            try:
-                buf = self._read_burst(ep)
-            except usb.core.USBError as e:
-                consec_errors += 1
-                logger.warning("RX read failed (%d/5): %s", consec_errors, e)
-                if consec_errors >= 5:
-                    logger.error("RX giving up after 5 consecutive errors")
-                    break
-                time.sleep(0.01)
-                continue
-            consec_errors = 0
-            if not buf:
-                continue
-            if self._rx_pending >= self._RX_PENDING_CAP:
-                continue  # loop swamped — drop rather than balloon memory
-            self._rx_pending += 1
-            loop.call_soon_threadsafe(self._dispatch_buffer, buf)
-        logger.info("RX reader thread stopped")
-
-    def _dispatch_buffer(self, buf: bytes) -> None:
-        """Runs on the event loop: decode the bulk buffer into MPDUs and fan
-        each parsed frame to the rx callback."""
-        self._rx_pending -= 1
+    def _rx_dispatch(self, buf: bytes) -> None:
+        """Decode a bulk buffer into MPDUs → parse → rx callback (on the loop)."""
         cb = self._rx_callback
         if not cb:
             return
@@ -388,34 +354,11 @@ class RTL8822BUDriver:
                 except Exception:
                     logger.exception("RX callback raised")
 
-    async def _rx_loop(self) -> None:
-        """Owns the RX reader thread; stays alive so close() has a task to
-        await. Thread exits within its 100ms read timeout once _rx_running
-        clears; close() joins it before releasing USB."""
-        loop = asyncio.get_running_loop()
-        ep = self._bulk_in_ep
-        logger.info("RX loop started on endpoint 0x%02x", ep)
-        self._rx_thread = threading.Thread(
-            target=self._rx_reader_thread, args=(loop, ep),
-            name="rtl8822bu-rx", daemon=True,
-        )
-        self._rx_thread.start()
-        while self._rx_running:
-            await asyncio.sleep(0.1)
-        logger.info("RX loop stopped")
-
     async def close(self) -> None:
-        self._rx_running = False
         loop = asyncio.get_event_loop()
-        if self._rx_task:
-            try:
-                await asyncio.wait_for(self._rx_task, timeout=1.0)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                self._rx_task.cancel()
-            self._rx_task = None
-        # Join the reader thread BEFORE releasing USB — it's still calling
-        # dev.read() until it sees _rx_running=False (within its 100ms timeout).
-        if self._rx_thread:
-            await loop.run_in_executor(None, self._rx_thread.join, 1.5)
-            self._rx_thread = None
+        # Stop the reader thread BEFORE releasing USB — it's still calling
+        # dev.read() until stopped, and releasing the handle under it errors.
+        if self._rx_reader is not None:
+            await self._rx_reader.stop()
+            self._rx_reader = None
         await loop.run_in_executor(None, self._release)

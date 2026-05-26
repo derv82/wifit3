@@ -1,0 +1,75 @@
+"""RxReaderThread: the shared bulk-read thread. Covers the thread->loop
+hand-off (read_once on the thread -> dispatch on the loop) and the
+consecutive-error give-up. Driver-specific decode is tested per driver."""
+import asyncio
+
+import pytest
+
+from wifit3.chips.rx_reader import RxReaderThread
+
+
+@pytest.mark.asyncio
+async def test_reader_dispatches_buffers_then_idles_and_stops():
+    loop = asyncio.get_running_loop()
+    bufs = [b"A", b"B"]
+
+    def read_once():
+        return bufs.pop(0) if bufs else None  # None = benign timeout (idle)
+
+    dispatched = []
+    r = RxReaderThread(loop, read_once, dispatched.append, name="test")
+    r.start()
+    try:
+        for _ in range(50):
+            if len(dispatched) >= 2:
+                break
+            await asyncio.sleep(0.02)
+        # Buffers reached the loop in order, dispatched on the loop thread.
+        assert dispatched == [b"A", b"B"]
+    finally:
+        await r.stop()
+    assert r._thread is None and not r.running
+
+
+@pytest.mark.asyncio
+async def test_reader_gives_up_after_consecutive_errors():
+    loop = asyncio.get_running_loop()
+    calls = {"n": 0}
+
+    def read_once():
+        calls["n"] += 1
+        raise RuntimeError("usb boom")
+
+    r = RxReaderThread(loop, read_once, lambda b: None, name="err", max_errors=3)
+    r.start()
+    try:
+        for _ in range(100):
+            if not (r._thread and r._thread.is_alive()):
+                break
+            await asyncio.sleep(0.02)
+        # Bails after exactly max_errors reads, doesn't spin forever.
+        assert calls["n"] == 3
+        assert not r._thread.is_alive()
+    finally:
+        await r.stop()
+
+
+@pytest.mark.asyncio
+async def test_reader_skips_falsy_buffers():
+    loop = asyncio.get_running_loop()
+    seq = [b"", None, b"real"]
+
+    def read_once():
+        return seq.pop(0) if seq else None
+
+    dispatched = []
+    r = RxReaderThread(loop, read_once, dispatched.append, name="skip")
+    r.start()
+    try:
+        for _ in range(50):
+            if dispatched:
+                break
+            await asyncio.sleep(0.02)
+        assert dispatched == [b"real"]  # empty + None skipped, not dispatched
+    finally:
+        await r.stop()

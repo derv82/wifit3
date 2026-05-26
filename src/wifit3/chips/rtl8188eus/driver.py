@@ -68,6 +68,7 @@ from .mac import (
 )
 from .phy import enable_cck_ofdm_block, enable_rf, post_mac_init_phy, set_tx_power
 from .rx import iter_bulk_frames, probe_endpoints
+from ..rx_reader import RxReaderThread
 from .transport import RTL8188EUSTransport
 from .tx import pick_bulk_out_mgmt, send_mgmt_frame
 
@@ -98,8 +99,7 @@ class RTL8188EUSDriver:
         self._mgmt_bulk_out: Optional[int] = None
         self._bulk_in_ep: Optional[int] = None
         self._bulk_out_eps: list[int] = []
-        self._rx_running: bool = False
-        self._rx_task: Optional[asyncio.Task] = None
+        self._rx_reader: Optional[RxReaderThread] = None
         self._claimed: bool = False
         self.current_channel: int = 1
         self._efuse: EfuseDefaults = EfuseDefaults()  # fallback defaults until cold path parses
@@ -178,15 +178,10 @@ class RTL8188EUSDriver:
             return False
 
     async def close(self) -> None:
-        """Stop the RX loop + release USB. Idempotent."""
-        self._rx_running = False
-        if self._rx_task:
-            try:
-                await asyncio.wait_for(self._rx_task, timeout=1.0)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                logger.debug("RX task did not stop within 1s; cancelling")
-                self._rx_task.cancel()
-            self._rx_task = None
+        """Stop the RX reader + release USB. Idempotent."""
+        if self._rx_reader is not None:
+            await self._rx_reader.stop()
+            self._rx_reader = None
         self._release_usb()
 
     # ---- bring-up paths -------------------------------------------------
@@ -284,9 +279,11 @@ class RTL8188EUSDriver:
         # client→AP (ToDS) frames. Mirrors rtl8821au/rtl8822bu.
         await loop.run_in_executor(None, apply_monitor_rx_filter, self.transport)
 
-        _update(0.99, "Starting RX loop...")
-        self._rx_running = True
-        self._rx_task = asyncio.create_task(self._rx_loop())
+        _update(0.99, "Starting RX reader...")
+        self._rx_reader = RxReaderThread(
+            loop, self._rx_read_once, self._rx_dispatch, name="rtl8188eus-rx"
+        )
+        self._rx_reader.start()
         self.is_warm = True
         _update(1.00, "RTL8188EUS online.")
         return True
@@ -370,52 +367,33 @@ class RTL8188EUSDriver:
 
     # ---- RX loop --------------------------------------------------------
 
-    async def _rx_loop(self) -> None:
-        """Background RX pump: bulk-IN reads → iter_bulk_frames → callback."""
-        loop = asyncio.get_running_loop()
-        ep = self._bulk_in_ep
-        consec_errors = 0
+    # ---- RX callables for the shared RxReaderThread ---------------------
+    # read_once runs on the reader thread; dispatch runs on the event loop.
 
-        def _read_once() -> Optional[bytes]:
-            try:
-                return bytes(self.dev.read(ep, 16384, 100))
-            except usb.core.USBError as e:
-                err = getattr(e, "errno", None)
-                if err in (110, 10060) or "timeout" in str(e).lower():
-                    return None
-                raise
+    def _rx_read_once(self) -> Optional[bytes]:
+        """One blocking bulk-IN read; None on a benign timeout."""
+        try:
+            return bytes(self.dev.read(self._bulk_in_ep, 16384, 100))
+        except usb.core.USBError as e:
+            err = getattr(e, "errno", None)
+            if err in (110, 10060) or "timeout" in str(e).lower():
+                return None
+            raise
 
-        logger.info("RX loop started on endpoint 0x%02x", ep)
-        while self._rx_running:
-            try:
-                buf = await loop.run_in_executor(None, _read_once)
-            except usb.core.USBError as e:
-                consec_errors += 1
-                logger.warning("RX read failed (%d/5): %s", consec_errors, e)
-                if consec_errors >= 5:
-                    logger.error("RX loop giving up after 5 consecutive errors")
-                    break
-                await asyncio.sleep(0.01)
-                continue
-
-            if buf is None:
-                consec_errors = 0
-                await asyncio.sleep(0)
-                continue
-            consec_errors = 0
-
-            for _desc, mpdu, rssi in iter_bulk_frames(buf):
-                if not self._rx_callback:
-                    continue
-                parsed = WlanFrameParser.parse_80211_frame(
-                    mpdu, rssi if rssi is not None else -100
-                )
-                if parsed:
-                    try:
-                        self._rx_callback(parsed)
-                    except Exception:
-                        logger.exception("RX callback raised")
-        logger.info("RX loop stopped")
+    def _rx_dispatch(self, buf: bytes) -> None:
+        """Decode a bulk buffer into MPDUs → parse → rx callback (on the loop)."""
+        cb = self._rx_callback
+        if cb is None:
+            return
+        for _desc, mpdu, rssi in iter_bulk_frames(buf):
+            parsed = WlanFrameParser.parse_80211_frame(
+                mpdu, rssi if rssi is not None else -100
+            )
+            if parsed:
+                try:
+                    cb(parsed)
+                except Exception:
+                    logger.exception("RX callback raised")
 
     # ---- power-on internals --------------------------------------------
 
