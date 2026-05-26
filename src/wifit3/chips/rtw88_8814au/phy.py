@@ -30,9 +30,28 @@ from wifit3.chips.rtw88_base.phy_cond import (
     parse_tbl_phy_cond,
 )
 
+from wifit3.chips.rtw88_base.registers import (
+    BIT_FEN_BB_GLB_RST,
+    BIT_FEN_BB_RSTB,
+    BIT_RF_EN,
+    BIT_RF_RSTB,
+    BIT_RF_SDM_RSTB,
+    REG_RF_CTRL,
+    REG_SYS_FUNC_EN,
+)
+
+from . import constants as C
 from . import rf
+from .assets.agc_tbl import TABLE as AGC_TABLE
+from .assets.bb_tbl import TABLE as BB_TABLE
 from .assets.mac_tbl import TABLE as MAC_TABLE
+from .assets.rf_a_tbl import TABLE as RF_A_TABLE
+from .assets.rf_b_tbl import TABLE as RF_B_TABLE
+from .assets.rf_c_tbl import TABLE as RF_C_TABLE
+from .assets.rf_d_tbl import TABLE as RF_D_TABLE
 from .transport import RTL8814AUTransport
+
+_RF_TABLES = (RF_A_TABLE, RF_B_TABLE, RF_C_TABLE, RF_D_TABLE)
 
 logger = logging.getLogger(__name__)
 
@@ -109,3 +128,69 @@ def load_mac_table(transport: RTL8814AUTransport,
     )
     logger.info("loaded MAC table: %d writes", n)
     return n
+
+
+def load_init_tables(transport: RTL8814AUTransport, efuse: EfuseDefaults) -> None:
+    """Load BB, AGC, then all four RF (A..D) tables through the walker.
+
+    The conditional tables (bb/agc/rf) gate on cut + rfe_option. `cut` is the
+    real silicon cut (read into the EfuseDefaults at runtime); `rfe_option` is
+    still a placeholder until M4 — the RF read-back gate validates whether it
+    brought RF up sanely.
+    """
+    dev = device_cond_for(efuse)
+
+    n = parse_tbl_phy_cond(
+        BB_TABLE, dev, lambda a, d: _do_cfg_bb(transport, a, d), chip_id=_CHIP_ID)
+    logger.info("loaded BB  table: %d writes (incl delays)", n)
+
+    n = parse_tbl_phy_cond(
+        AGC_TABLE, dev, lambda a, d: _do_cfg_agc(transport, a, d), chip_id=_CHIP_ID)
+    logger.info("loaded AGC table: %d writes", n)
+
+    for path, table in enumerate(_RF_TABLES):
+        n = parse_tbl_phy_cond(
+            table, dev,
+            lambda a, d, p=path: _do_cfg_rf(transport, a, d, path=p),
+            chip_id=_CHIP_ID)
+        logger.info("loaded RF_%s table: %d writes (incl delays)",
+                    "ABCD"[path], n)
+
+
+def phy_set_param(transport: RTL8814AUTransport,
+                  efuse: EfuseDefaults | None = None) -> None:
+    """Simplified port of rtw8814a_phy_set_param (rtw8814a.c).
+
+    Keeps: BB/RF domain enable (4 paths), MAC + BB + AGC + RF(A..D) table loads,
+    the A->B/C/D RCK copy, and the RX-PSEL reset bracket.
+
+    Skips (EFUSE/tuning, deferred): crystal_cap, config_trx_path CCK antenna,
+    the HWSEQ/BAR/MISC/NAV mac regs, rtw_phy_init (DIG), pwrtrack_init,
+    init_rfe_reg. None are needed to bring RF up + read it back; they affect
+    TX power / DIG / antenna quality and land with RX (M5) / TX (M6).
+    """
+    if efuse is None:
+        efuse = EfuseDefaults()
+
+    rf_on = BIT_RF_EN | BIT_RF_RSTB | BIT_RF_SDM_RSTB
+
+    # power on BB/RF domain (USB) + all 4 RF paths
+    transport.write8_set(REG_SYS_FUNC_EN, C.BIT_FEN_USBA)
+    transport.write8_set(C.REG_SYS_CFG3_8814A + 2,
+                         (BIT_FEN_BB_GLB_RST | BIT_FEN_BB_RSTB) & 0xFF)
+    transport.write8(REG_RF_CTRL, rf_on & 0xFF)
+    transport.write8(C.REG_RF_CTRL1, rf_on & 0xFF)
+    transport.write8(C.REG_RF_CTRL2, rf_on & 0xFF)
+    transport.write8(C.REG_RF_CTRL3, rf_on & 0xFF)
+
+    load_mac_table(transport, efuse)
+    load_init_tables(transport, efuse)
+
+    # RCK: copy path-A RF_RCK1_V1 to B/C/D (rtw8814a.c).
+    rck = rf.read_rf(transport, 0, C.RF_RCK1_V1, rf.RFREG_MASK)
+    for path in (1, 2, 3):
+        rf.write_rf(transport, path, C.RF_RCK1_V1, rf.RFREG_MASK, rck)
+    logger.info("RCK path-A=0x%05x copied to paths B/C/D", rck)
+
+    # RX-PSEL reset (post-table)
+    transport.write32_set(C.REG_RXPSEL, C.BIT_RX_PSEL_RST)

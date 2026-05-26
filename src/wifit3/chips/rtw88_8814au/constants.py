@@ -205,3 +205,15 @@ RSVD_PG_H2CQ_NUM = 8
 RSVD_PG_CPU_INSTRUCTION_NUM = 0
 RSVD_PG_FW_TXBUF_NUM = 4
 TX_PAGE_SIZE_SHIFT = 7           # main.h:34
+
+# ===========================================================================
+# M3.b — phy_set_param (BB/RF domain enable + RF readback)
+# ===========================================================================
+REG_SYS_CFG3_8814A = 0x1000      # BB glb-rst/rstb live at +2
+BIT_FEN_USBA = 1 << 2            # REG_SYS_FUNC_EN: power on BB/RF for USB
+REG_RF_CTRL1 = 0x0020            # RF path B enable
+REG_RF_CTRL2 = 0x0021            # RF path C enable
+REG_RF_CTRL3 = 0x0076            # RF path D enable
+REG_RXPSEL = 0x0808
+BIT_RX_PSEL_RST = (1 << 28) | (1 << 29)
+RF_RCK1_V1 = 0x1C                # RF reg read back after rf-table load

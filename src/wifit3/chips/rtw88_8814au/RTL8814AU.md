@@ -41,8 +41,19 @@ Family: **rtw88** (modern), shares `chips/rtw88_base/`.
   for all 4 paths; 537 tests pass. **Awaiting HW gate** —
   `test_hw_8814au.py --phase tables` (replay MAC table, read back sample regs).
 - **M3.b (phy_set_param: BB/RF enable + conditional table loads + 4-path RF
-  readback)** — not started.
-- **M3.c (channel tune) / M4+** — not started.
+  readback)** — ✅ CODE COMPLETE, offline-verified. `phy_set_param` (phy.py):
+  BB/RF domain enable (4 paths), MAC+BB+AGC+RF(A-D) table loads via the walker,
+  A->B/C/D RCK copy, RX-PSEL bracket. Skips EFUSE/tuning bits (crystal_cap,
+  config_trx_path CCK antenna, DIG, pwrtrack, init_rfe_reg) — not needed for RF
+  bring-up; deferred to M5/M6. **Awaiting HW gate** — `--phase phy`: RF_RCK1_V1
+  must read back consistent + non-garbage on all 4 paths.
+  - **Caveat — rfe_option is a placeholder (=1) until M4.** The AGC/RF tables are
+    rfe-gated (IF/ELIF chains on rfe 0x01..0x0b). Verified the walker selects
+    rfe-specific *data* correctly (rfe=2 vs rfe=3 load different values; the
+    identical dispatch *count* of 265 is because every branch has equal entry
+    count — NOT a walker bug). A wrong rfe loads a valid-but-suboptimal gain
+    variant; M4 pins the real value from EFUSE.
+- **M3.c (channel tune) / M4 (EFUSE) / M5 (RX) / M6 (TX)** — not started.
 
 ## 0. TL;DR for the lead
 

@@ -49,8 +49,15 @@ from wifit3.chips.rtw88_8814au.mac import (
     is_chip_warm,
     mac_power_on,
 )
-from wifit3.chips.rtw88_8814au.phy import EfuseDefaults, load_mac_table
+from wifit3.chips.rtw88_8814au import rf as rf8814
+from wifit3.chips.rtw88_8814au.constants import RF_RCK1_V1
+from wifit3.chips.rtw88_8814au.phy import (
+    EfuseDefaults,
+    load_mac_table,
+    phy_set_param,
+)
 from wifit3.chips.rtw88_8814au.transport import RTL8814AUTransport
+import dataclasses
 
 
 def setup_logging(debug: bool) -> None:
@@ -252,11 +259,42 @@ def phase_tables(transport: RTL8814AUTransport) -> None:
     ok("MAC table replayed and read back correctly. M3.a COMPLETE.")
 
 
+def phase_phy(transport: RTL8814AUTransport) -> None:
+    step("phy_set_param: BB/RF enable + BB/AGC/RF(A-D) tables + RCK  [M3.b GATE]")
+    cut = (transport.read32(REG_SYS_CFG1) >> 12) & 0xF
+    efuse = dataclasses.replace(EfuseDefaults(), cut=cut)
+    print(f"  cut={cut} (CUT_{'ABCDEFG'[cut] if cut < 7 else '?'}), "
+          f"rfe_option={efuse.rfe_option} (M4 placeholder)")
+    t0 = time.perf_counter()
+    try:
+        phy_set_param(transport, efuse)
+    except (IOError, ValueError) as e:
+        fail(f"phy_set_param failed: {e}")
+    dt = (time.perf_counter() - t0) * 1000
+    ok(f"phy_set_param completed in {dt:.0f} ms")
+
+    step("Read back RF_RCK1_V1 on all 4 paths (A=B=C=D after RCK copy, non-garbage)")
+    vals = []
+    for path in range(4):
+        v = rf8814.read_rf(transport, path, RF_RCK1_V1, rf8814.RFREG_MASK)
+        vals.append(v)
+        print(f"    path {'ABCD'[path]}: RF[0x1c] = 0x{v:05x}")
+    if any(v in (0x00000, 0xFFFFF) for v in vals):
+        fail("an RF path read back 0x00000/0xfffff — RF not responding "
+             "(suspect wrong rfe_option or BB/RF not powered)")
+    if len(set(vals)) != 1:
+        fail(f"RF_RCK1_V1 differs across paths {[hex(v) for v in vals]} — "
+             "RCK copy or per-path RF access is wrong")
+    ok(f"all 4 RF paths read back 0x{vals[0]:05x} (consistent, non-garbage). "
+       "M3.b COMPLETE.")
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--phase",
-                   choices=("open", "fw", "validate", "mac_init", "tables", "all"),
-                   default="all")
+    p.add_argument(
+        "--phase",
+        choices=("open", "fw", "validate", "mac_init", "tables", "phy", "all"),
+        default="all")
     p.add_argument("--debug", action="store_true", help="verbose USB logging")
     args = p.parse_args()
     setup_logging(args.debug)
@@ -266,10 +304,11 @@ def main() -> int:
     ok("Interface 0 claimed")
     transport = RTL8814AUTransport(dev)
 
-    needs_fw = ("fw", "validate", "mac_init", "tables", "all")
-    needs_validate = ("validate", "mac_init", "tables", "all")
-    needs_mac_init = ("mac_init", "tables", "all")
-    needs_tables = ("tables", "all")
+    needs_fw = ("fw", "validate", "mac_init", "tables", "phy", "all")
+    needs_validate = ("validate", "mac_init", "tables", "phy", "all")
+    needs_mac_init = ("mac_init", "tables", "phy", "all")
+    needs_tables = ("tables", "all")     # standalone MAC-replay smoke (M3.a)
+    needs_phy = ("phy", "all")
 
     try:
         if args.phase in ("open", "all"):
@@ -282,6 +321,8 @@ def main() -> int:
             phase_mac_init(dev, transport)
         if args.phase in needs_tables:
             phase_tables(transport)
+        if args.phase in needs_phy:
+            phase_phy(transport)
     finally:
         step("Release interface")
         try:

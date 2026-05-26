@@ -27,8 +27,11 @@ from .firmware import (
     download_firmware_validate,
     load_firmware_blob,
 )
+import dataclasses
+
 from .fifo import count_bulk_out_eps, rtw_init_trx_cfg
 from .mac import cut_mask_from_sys_cfg1, is_chip_warm, mac_power_on
+from .phy import EfuseDefaults, phy_set_param
 from .transport import RTL8814AUTransport
 
 logger = logging.getLogger(__name__)
@@ -151,9 +154,17 @@ class RTL8814AUDriver:
         await loop.run_in_executor(
             None, lambda: rtw_init_trx_cfg(self.transport, bulkout)
         )
-        logger.info("RTL8814AU M2: TRX/LLT init done (%d bulk-OUT eps). "
-                    "PHY/RX/TX not yet implemented (M3/M5/M6).", bulkout)
-        _progress(1.00, "RTL8814AU M2: MAC/FIFO ready (scan/inject pending)")
+        logger.info("RTL8814AU M2: TRX/LLT init done (%d bulk-OUT eps)", bulkout)
+
+        _progress(0.95, "PHY init (BB/RF enable + BB/AGC/RF tables, 4 paths)")
+        efuse = dataclasses.replace(
+            EfuseDefaults(), cut=(chip_version >> 12) & 0xF
+        )
+        await loop.run_in_executor(
+            None, lambda: phy_set_param(self.transport, efuse)
+        )
+        logger.info("RTL8814AU M3.b: PHY/RF up. Channel/RX/TX pending (M3.c/M5/M6).")
+        _progress(1.00, "RTL8814AU M3.b: PHY ready (scan/inject pending)")
         return True
 
     async def set_channel(self, channel: int) -> bool:
