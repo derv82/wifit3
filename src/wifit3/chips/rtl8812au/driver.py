@@ -55,6 +55,7 @@ from .firmware import (
 from .fifo import set_trx_fifo_info
 from .mac import (
     ChipState,
+    apply_monitor_rx_filter,
     init_queue_priority,
     init_queue_reserved_page,
     init_tx_buffer_boundary,
@@ -310,6 +311,11 @@ class RTL8812AUDriver:
                 "and try again."
             )
             return False
+
+        # Force the monitor RX filter on BOTH paths — the warm path skips mac
+        # init, and the cold init leaves a non-promiscuous RCR that drops
+        # client→AP (ToDS) frames. Pcap-confirmed; mirrors rtl8821au/rtl8822bu.
+        await loop.run_in_executor(None, apply_monitor_rx_filter, self.transport)
 
         self._rx_reader = RxReaderThread(
             loop, self._rx_read_once, self._rx_dispatch, name="rtl8812au-rx"

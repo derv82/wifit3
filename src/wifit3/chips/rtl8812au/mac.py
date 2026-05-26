@@ -421,6 +421,31 @@ def init_queue_priority(transport: RTL8812AUTransport) -> None:
     transport.write16(REG_TXDMA_PQ_MAP, txdma_pq_map)
 
 
+# Exact REG_RCR airmon-ng writes for monitor [WIRE captures_rtw88_8812au/
+# capture-1 frames 6891-6901] — identical to rtl8821au/rtl8822bu: AAP|APM|AM|AB
+# (promiscuous) with CBSSID_BCN/CBSSID_DATA cleared.
+RCR_MONITOR = 0xF410400F
+
+
+def apply_monitor_rx_filter(transport: RTL8812AUTransport) -> None:
+    """Force the monitor RX filter on BOTH cold + warm attach.
+
+    The mac_tbl load + drv_info_cfg leave REG_RCR with byte0 0x0E (AAP/bit0
+    CLEAR) — not promiscuous — so client→AP (ToDS) traffic incl. M2/M4 EAPOL is
+    dropped (PMKID still works via M1, AP→client). The kernel overwrites RCR →
+    0xf410400f for monitor; we never did, and the warm path skips mac init
+    entirely. Apply it here (from _finish_attach) so it runs on both paths.
+    Net-type stays MGD_LINKED — not the gate. Same fix as rtl8821au/rtl8822bu.
+    [WIRE 8812au frames 6891-6901; SRC rtw88 reg.h:502-534]
+    """
+    transport.write32(REG_RCR, RCR_MONITOR)
+    rcr = transport.read32(REG_RCR)
+    logger.info(
+        "RX filter readback: RCR=0x%08x (AAP=%d CBSSID_DATA=%d)",
+        rcr, 1 if rcr & 0x1 else 0, 1 if rcr & (1 << 6) else 0,
+    )
+
+
 def init_wmac_setting(transport: RTL8812AUTransport) -> None:
     """Mirrors `rtw88xxa_init_wmac_setting` (rtw88xxa.c:512)."""
     transport.write16(REG_RXFLTMAP0, 0xFFFF)
