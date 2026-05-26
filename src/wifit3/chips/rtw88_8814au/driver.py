@@ -1,13 +1,15 @@
 """RTL8814AU driver (Alfa AWUS1900) — WlanDriver Protocol implementation.
 
-**Milestone status: M1 (firmware upload + FW_READY) only.** `connect()` runs the
-cold bring-up through FW validation. PHY/RF init (M3), EFUSE (M4), RX/scan (M5),
-and TX inject (M6) are not yet ported, so `set_channel`/`inject_frame` are
-no-op stubs and no frames are delivered. The authoritative M1 hardware gate is
-`scripts/rtw88_8814au/test_hw_8814au.py`.
+Full bring-up (HW-verified): `connect()` runs M1 power-on + iDDMA FW upload
+(cold only) -> M2 TRX/FIFO/LLT -> M4 EFUSE -> M3 PHY/RF (BB/AGC/RF x4) + channel
+tune, with an RF-deaf retry that re-rolls phy_set_param until the PHY actually
+demodulates -> M5 monitor RX (RX-agg + promiscuous RCR + reader thread).
+`set_channel` retunes (+ re-pins CCK sensitivity); `inject_frame` builds a
+40-byte MGMT tx_desc and writes the HIGH bulk-OUT lane.
 
-Bring-up flow mirrors mac.c:rtw_mac_power_on + mac.c:__rtw_download_firmware,
-sharing the modern iDDMA path with the 8822bu (both RTW_WCPU_3081).
+Warm chips (FW already running) skip M1 and re-run M2-M5. Shares the modern
+RTW_WCPU_3081 iDDMA path with the 8822bu. See RTL8814AU.md + the phased
+`scripts/rtw88_8814au/test_hw_8814au.py` for per-milestone HW gates.
 """
 
 from __future__ import annotations
@@ -112,20 +114,15 @@ class RTL8814AUDriver:
 
             _progress(0.05, "Probing chip state")
             warm = await loop.run_in_executor(None, is_chip_warm, self.transport)
-            if warm:
-                logger.info("RTL8814AU is WARM — FW already loaded (M1 satisfied)")
-                self.is_warm = True
-                _progress(1.00, "RTL8814AU warm (M1: FW present; RX is M5)")
-                return True
-
-            logger.info("RTL8814AU is COLD — running M1 bring-up (FW upload)")
-            return await self._cold_bring_up(_progress)
+            self.is_warm = warm
+            logger.info("RTL8814AU is %s", "WARM (skip FW upload)" if warm else "COLD")
+            return await self._bring_up(_progress, warm=warm)
 
         except (IOError, usb.core.USBError, NotImplementedError) as e:
             logger.error("RTL8814AU connect failed: %s", e)
             return False
 
-    async def _cold_bring_up(self, _progress) -> bool:
+    async def _bring_up(self, _progress, *, warm: bool) -> bool:
         loop = asyncio.get_event_loop()
 
         _progress(0.10, "Reading chip version + cut_mask")
@@ -135,25 +132,26 @@ class RTL8814AUDriver:
         cut_mask = cut_mask_from_sys_cfg1(chip_version)
         logger.info("REG_SYS_CFG1=0x%08x cut_mask=0x%02x", chip_version, cut_mask)
 
-        _progress(0.20, "MAC power-on")
-        await loop.run_in_executor(
-            None, lambda: mac_power_on(self.transport, cut_mask=cut_mask)
-        )
-
-        _progress(0.40, "Uploading firmware (iDDMA)")
-        fw = await loop.run_in_executor(None, load_firmware_blob)
-        await loop.run_in_executor(
-            None, lambda: download_firmware(self.dev, self.transport, fw)
-        )
-
-        _progress(0.80, "Validating FW")
-        ok_run, last = await loop.run_in_executor(
-            None, download_firmware_validate, self.transport
-        )
-        if not ok_run:
-            logger.error("FW_READY not satisfied (REG_MCUFW_CTRL=0x%08x)", last)
-            return False
-        logger.info("RTL8814AU M1: firmware running (MCUFW_CTRL=0x%08x)", last)
+        # M1 — power-on + FW upload. Cold only; a warm chip already has FW
+        # running (is_chip_warm), and re-powering would reset it.
+        if not warm:
+            _progress(0.20, "MAC power-on")
+            await loop.run_in_executor(
+                None, lambda: mac_power_on(self.transport, cut_mask=cut_mask)
+            )
+            _progress(0.40, "Uploading firmware (iDDMA)")
+            fw = await loop.run_in_executor(None, load_firmware_blob)
+            await loop.run_in_executor(
+                None, lambda: download_firmware(self.dev, self.transport, fw)
+            )
+            _progress(0.80, "Validating FW")
+            ok_run, last = await loop.run_in_executor(
+                None, download_firmware_validate, self.transport
+            )
+            if not ok_run:
+                logger.error("FW_READY not satisfied (REG_MCUFW_CTRL=0x%08x)", last)
+                return False
+            logger.info("RTL8814AU M1: firmware running (MCUFW_CTRL=0x%08x)", last)
 
         _progress(0.90, "TRX init (queue mapping + FIFO + LLT)")
         bulkout = await loop.run_in_executor(None, count_bulk_out_eps, self.dev)
