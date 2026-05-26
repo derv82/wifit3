@@ -403,6 +403,7 @@ def phase_rx(dev, transport: RTL8814AUTransport) -> None:
         fail("no bulk-IN endpoint found")
     ep_in = eps.primary_bulk_in
     print(f"  bulk-IN endpoint: 0x{ep_in:02x}")
+    rx8814.prime_bulk_in(dev, ep_in)
 
     seen_bssids: dict[str, int] = {}
     seen_ssids: dict[str, str] = {}
@@ -438,12 +439,66 @@ def phase_rx(dev, transport: RTL8814AUTransport) -> None:
        "M5 COMPLETE (this also confirms M3.c tune on-air).")
 
 
+def phase_monitor(dev, transport: RTL8814AUTransport) -> None:
+    step("Monitor verification: capture frames addressed to OTHER stations  [M7 GATE]")
+    # Beacons (addr1=broadcast) only prove we accept broadcast — a FILTERING
+    # card passes those too. True promiscuous monitor = we also see unicast
+    # frames whose addr1 (receiver) is neither broadcast/multicast NOR our MAC,
+    # i.e. AP<->client data/ACK traffic addressed to someone else.
+    our_mac = read_efuse(transport).mac_addr
+    print(f"  our MAC: {':'.join(f'{b:02x}' for b in our_mac)}")
+    rx8814.apply_monitor_rcr(transport)
+    rx8814.tune_monitor_cck_sensitivity(transport)
+    eps = rx8814.probe_endpoints(dev)
+    ep_in = eps.primary_bulk_in
+    rx8814.prime_bulk_in(dev, ep_in)
+
+    n_total = n_bcast = n_mcast = n_to_us = n_other = 0
+    other_addr1: dict[str, int] = {}
+
+    for ch in (1, 6, 11):
+        chan.set_channel(transport, ch, rfe_option=1)
+        rx8814.tune_monitor_cck_sensitivity(transport)
+        t_end = time.perf_counter() + 3.0
+        while time.perf_counter() < t_end:
+            buf = rx8814.read_rx_burst(dev, ep_in, max_size=16384, timeout_ms=200)
+            if buf is None:
+                continue
+            for _stat, mpdu, _rssi in rx8814.iter_bulk_frames(buf):
+                if len(mpdu) < 10:
+                    continue
+                n_total += 1
+                addr1 = mpdu[4:10]
+                if addr1 == b"\xff" * 6:
+                    n_bcast += 1
+                elif addr1[0] & 0x01:
+                    n_mcast += 1
+                elif addr1 == our_mac:
+                    n_to_us += 1
+                else:
+                    n_other += 1
+                    key = ":".join(f"{b:02x}" for b in addr1)
+                    other_addr1[key] = other_addr1.get(key, 0) + 1
+
+    print(f"  frames={n_total}  broadcast={n_bcast}  multicast={n_mcast}  "
+          f"to-us={n_to_us}  to-OTHER-stations={n_other}")
+    print(f"  distinct other-station addr1 seen: {len(other_addr1)}")
+    for a, c in sorted(other_addr1.items(), key=lambda kv: -kv[1])[:10]:
+        print(f"    addr1={a}  ({c})")
+    if n_other == 0:
+        fail("captured 0 frames addressed to other stations — card may be "
+             "filtering RX to broadcast + own-MAC (NOT true monitor mode). "
+             "Beacons alone don't prove promiscuity.")
+    ok(f"{n_other} frames to {len(other_addr1)} other stations captured — "
+       "card is truly promiscuous, NO RX address filtering. M7 COMPLETE.")
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument(
         "--phase",
         choices=("open", "fw", "validate", "mac_init", "tables", "efuse", "phy",
-                 "channel", "rx", "all"),
+                 "channel", "rx", "monitor", "all"),
         default="all")
     p.add_argument("--debug", action="store_true", help="verbose USB logging")
     args = p.parse_args()
@@ -466,9 +521,11 @@ def main() -> int:
         "phy": lambda: phase_phy(transport),
         "channel": lambda: phase_channel(transport),
         "rx": lambda: phase_rx(dev, transport),
+        "monitor": lambda: phase_monitor(dev, transport),
     }
-    chain = ["open", "fw", "validate", "mac_init", "efuse", "phy", "channel", "rx"]
-    target = "rx" if args.phase == "all" else args.phase
+    chain = ["open", "fw", "validate", "mac_init", "efuse", "phy", "channel",
+             "rx", "monitor"]
+    target = "monitor" if args.phase == "all" else args.phase
 
     try:
         if target == "tables":

@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import logging
 
+import usb.core
+
 from wifit3.chips.rtw88_base.rx_common import (  # noqa: F401 (re-exports)
     RX_PKT_DESC_SZ,
     Endpoints,
@@ -95,6 +97,27 @@ def tune_monitor_cck_sensitivity(transport: RTL8814AUTransport) -> None:
     transport.write8(C.REG_CCK_PD_TH, C.CCK_PD_TH_MAX_SENS)
     logger.info("CCK RX sensitivity: 2R-CCA+MRC on, CCK_PD_TH=0x%02x (LV0/max)",
                 C.CCK_PD_TH_MAX_SENS)
+
+
+def prime_bulk_in(dev: usb.core.Device, ep_in: int) -> None:
+    """Reset + drain the bulk-IN pipe before RX (mirrors 8822bu _reset_bulk_pipes).
+
+    A cold-boot bulk-IN pipe can sit with a stale data-toggle or buffered junk
+    that makes reads return nothing (intermittent 0-frame runs). clear_halt
+    resets the toggle; a short drain clears stale bytes.
+    """
+    try:
+        dev.clear_halt(ep_in)
+    except (usb.core.USBError, NotImplementedError) as e:
+        logger.debug("clear_halt(0x%02x) skipped: %s", ep_in, e)
+    drained = 0
+    for _ in range(8):
+        try:
+            drained += len(dev.read(ep_in, 16384, 20))
+        except usb.core.USBError:
+            break
+    if drained:
+        logger.debug("primed bulk-IN: drained %d stale bytes", drained)
 
 
 def iter_bulk_frames(buf: bytes):

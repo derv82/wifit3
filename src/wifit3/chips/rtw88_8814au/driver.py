@@ -199,6 +199,7 @@ class RTL8814AUDriver:
             logger.error("no bulk-IN endpoint discovered")
             return False
         self._bulk_in_ep = eps.primary_bulk_in
+        await loop.run_in_executor(None, rx.prime_bulk_in, self.dev, self._bulk_in_ep)
         self._rx_reader = RxReaderThread(
             loop, self._rx_read_once, self._rx_dispatch, name="rtl8814au-rx"
         )

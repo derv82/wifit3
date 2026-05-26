@@ -217,6 +217,8 @@ REG_RF_CTRL3 = 0x0076            # RF path D enable
 REG_RXPSEL = 0x0808
 BIT_RX_PSEL_RST = (1 << 28) | (1 << 29)
 RF_RCK1_V1 = 0x1C                # RF reg read back after rf-table load
+REG_AFE_CTRL3 = 0x002C           # crystal_cap (xtal_k) — reference clock trim
+AFE_CTRL3_XCAP_MASK = 0x07FF8000
 
 # ===========================================================================
 # M3.c — channel tune

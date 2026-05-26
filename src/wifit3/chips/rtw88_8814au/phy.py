@@ -155,6 +155,15 @@ def load_init_tables(transport: RTL8814AUTransport, efuse: EfuseDefaults) -> Non
         AGC_TABLE, dev, lambda a, d: _do_cfg_agc(transport, a, d), chip_id=_CHIP_ID)
     logger.info("loaded AGC table: %d writes", n)
 
+    # crystal_cap (rtw8814a.c, between agc + rf loads): two 6-bit xtal_k fields
+    # into REG_AFE_CTRL3. Trims the reference clock — omitting it shifts the
+    # reference and makes RX demod lock intermittently.
+    xcap = efuse.crystal_cap & 0x3F
+    xcap |= xcap << 6
+    transport.write32_mask(C.REG_AFE_CTRL3, C.AFE_CTRL3_XCAP_MASK, xcap)
+    logger.info("crystal_cap: xtal_k=0x%02x -> AFE_CTRL3 field 0x%03x",
+                efuse.crystal_cap & 0x3F, xcap)
+
     for path, table in enumerate(_RF_TABLES):
         n = parse_tbl_phy_cond(
             table, dev,
