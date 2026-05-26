@@ -8,9 +8,8 @@ from wifit3.wlan.packet import WlanFrameParser
 logger = logging.getLogger(__name__)
 
 
-# Diagnostic: when WIFIT3_AR9271_DUMP_RX=<N> is set, the first N RX payloads
-# are appended to ar9271_rx_dump.log in hex so we can decode the cleanroom-FW
-# RX header layout offline. Each line is `len=<L>: <hex>`.
+# WIFIT3_AR9271_DUMP_RX=<N>: append the first N RX payloads (hex) to
+# ar9271_rx_dump.log for offline RX-header analysis.
 _RX_DUMP_COUNT = int(os.environ.get("WIFIT3_AR9271_DUMP_RX", "0"))
 _RX_DUMP_REMAINING = [_RX_DUMP_COUNT]
 _RX_DUMP_PATH = "ar9271_rx_dump.log"
@@ -24,11 +23,9 @@ def _dump_rx_payload(payload: bytes) -> None:
         f.write(f"len={len(payload)}: {payload.hex()}\n")
 
 
-# RX-gate diagnostic (DEBUG only). Tallies every frame that clears the firmware
-# magic by 802.11 direction + addr1 type and records which acceptance gate it
-# cleared or died at, highlighting EAPOL. Kept as a lean ar9271 RX debug aid
-# after it pinned the QoS-padding/FCS bug (2026-05-25); not generalised across
-# drivers yet (see project gap-audit). Zero cost unless DEBUG logging is on.
+# RX-gate diagnostic (DEBUG only, zero cost otherwise): tally each post-magic
+# frame by 802.11 direction + which acceptance gate it cleared or died at,
+# highlighting EAPOL. See _gate_diag.
 _GATE = {"counts": {}, "calls": 0}
 
 
@@ -67,15 +64,12 @@ class WMIProtocol:
     WMI_HDR_FMT = ">HH"
     WMI_HDR_LEN = 4
 
-    # htc_9271_cleanroom.fw RX header — 36 B, decoded 2026-05-22 from live
-    # captures (see WIFIT3_AR9271_DUMP_RX). This is NOT the kernel
-    # ath_htc_rx_status struct (mainline FW uses 40 B; cleanroom diverges).
+    # htc_9271_cleanroom.fw RX header — 36 B (decode via WIFIT3_AR9271_DUMP_RX).
+    # NOT the kernel ath_htc_rx_status struct (mainline FW uses 40 B).
     #   off 0-3    u32       frame counter
     #   off 4-5    be16      802.11 frame length (excluding this 36-B header)
-    #   off 6      u8        rs_status — 0x00 = clean, 0x01 = bad-FCS / RX
-    #                        error (cleanroom equivalent of mainline
-    #                        rs_status & ATH9K_RXERR_*; verified empirically
-    #                        2026-05-22, 100 % of byte6==1 frames fail FCS)
+    #   off 6      u8        rs_status — 0x00 = clean, non-zero = FW-flagged
+    #                        RX error (corrupt / bad FCS)
     #   off 7      u8        zero
     #   off 8      i8        RSSI chain-0 (dB above noise floor)
     #   off 9      i8        RSSI chain-1 (same as chain-0 on 1T1R AR9271)
@@ -135,14 +129,12 @@ class WMIProtocol:
             return None
         if payload[10:16] != cls._RX_MAGIC:
             # Non-RX WMI events share the event-ID space with RX in this
-            # firmware; the magic distinguishes them. (Confirmed 2026-05-25:
-            # magic-fail payloads are tiny ACK/CTS control frames, not data.)
+            # firmware; the magic distinguishes them (magic-fail payloads are
+            # tiny control frames, never data).
             return None
 
-        # Firmware-flagged RX error (cleanroom's rs_status byte). Cheap reject
-        # before the CRC32 — catches every frame the hardware itself marked as
-        # corrupt. The 0x01 -> always-FCS-fail correlation is 100 % across the
-        # 30-frame dump from 2026-05-22.
+        # Firmware-flagged RX error (rs_status byte) — a cheap reject before the
+        # CRC32 for frames the hardware already marked corrupt.
         if payload[6] != cls._RX_STATUS_OK:
             cls._gate_diag(payload, "drop:rs_status")
             return None
@@ -154,19 +146,13 @@ class WMIProtocol:
 
         frame = payload[cls.HTC_RX_HEADER_LEN:]
 
-        # Remove the hardware's MAC-header alignment padding BEFORE the FCS
-        # check. ath9k pads the header so the payload is 4-byte aligned
-        # (padsize = hdrlen & 3 → 2 bytes for a 26-B QoS header), but the
-        # over-the-air FCS was computed without it. Skipping this dropped
-        # every QoS frame — i.e. most downlink-unicast data AND all of the
-        # 4-way handshake (M1-M4 are QoS) — at the FCS gate below. Mirrors the
-        # kernel's ath9k_rx_skb_postprocess. [HW-confirmed 2026-05-25: all 9
-        # captured EAPOL frames validate FCS only after this strip.]
+        # Strip the hardware's MAC-header alignment padding before the FCS check
+        # (see _strip_alignment_padding). Without it every QoS frame — which is
+        # all downlink data and the entire 4-way handshake — fails FCS.
         frame = cls._strip_alignment_padding(frame)
 
-        # 802.11 FCS — last 4 B of the frame, LE-encoded CRC32 over the rest.
-        # Catches the residual ~8 % that the rs_status check misses (real RF
-        # noise / partial captures the firmware didn't flag).
+        # 802.11 FCS: last 4 B = LE CRC32 over the rest. Catches real RF noise /
+        # partial captures the rs_status flag missed.
         expected_fcs = int.from_bytes(frame[-4:], "little")
         if zlib.crc32(frame[:-4]) & 0xFFFFFFFF != expected_fcs:
             cls._gate_diag(payload, "drop:fcs")
@@ -204,11 +190,9 @@ class WMIProtocol:
 
     @classmethod
     def _gate_diag(cls, payload: bytes, reason: str) -> None:
-        """DEBUG-only: tally a post-magic frame by direction + acceptance-gate
-        outcome and highlight EAPOL. A frame's 802.11 header is intact whenever
-        we classify it (valid FC + addresses) even if the body/tail failed FCS,
-        so the EAPOL EtherType scan works regardless of `reason` — handy for
-        spotting handshake frames that pass *or* get dropped at any gate."""
+        """DEBUG-only: tally a post-magic frame by direction + gate outcome and
+        flag EAPOL. The 802.11 header is intact even when the body/tail fails
+        FCS, so the EAPOL scan works for dropped frames too."""
         if not logger.isEnabledFor(logging.DEBUG):
             return
         frame = payload[cls.HTC_RX_HEADER_LEN:]
