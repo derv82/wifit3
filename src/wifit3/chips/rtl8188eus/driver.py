@@ -60,7 +60,12 @@ from .constants import (
 )
 from .efuse import EfuseDefaults, read_and_parse
 from .firmware import download_firmware, load_firmware_blob, start_firmware
-from .mac import enable_rx_data_path, is_chip_warm, post_fw_mac_init
+from .mac import (
+    apply_monitor_rx_filter,
+    enable_rx_data_path,
+    is_chip_warm,
+    post_fw_mac_init,
+)
 from .phy import enable_cck_ofdm_block, enable_rf, post_mac_init_phy, set_tx_power
 from .rx import iter_bulk_frames, probe_endpoints
 from .transport import RTL8188EUSTransport
@@ -273,6 +278,11 @@ class RTL8188EUSDriver:
                     "session can't be reset in userland on Windows/WinUSB."
                 )
                 return False
+
+        # Force the monitor RCR on BOTH paths — the warm path skips
+        # enable_rx_data_path, leaving a non-promiscuous RCR that drops
+        # client→AP (ToDS) frames. Mirrors rtl8821au/rtl8822bu.
+        await loop.run_in_executor(None, apply_monitor_rx_filter, self.transport)
 
         _update(0.99, "Starting RX loop...")
         self._rx_running = True

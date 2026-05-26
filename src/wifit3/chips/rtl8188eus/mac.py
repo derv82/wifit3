@@ -299,6 +299,24 @@ def init_queue_priority_2ep(t: RTL8188EUSTransport) -> None:
     t.write16(REG_TRXDMA_CTRL, val16 & 0xFFFF)
 
 
+def apply_monitor_rx_filter(t: RTL8188EUSTransport) -> None:
+    """Reassert the monitor RCR. Called on BOTH cold + warm attach.
+
+    `enable_rx_data_path` writes RCR_MONITOR (incl. RCR_ACCEPT_AP/promiscuous),
+    but it only runs on the cold path. The warm path skips it, so a chip left
+    by a prior session keeps a non-promiscuous RCR and drops client→AP (ToDS)
+    frames — incl. M2/M4 EAPOL (only M1/M3 seen, HW-confirmed 2026-05-25).
+    Reassert it here — the interrupts/DRVINFO `enable_rx_data_path` also sets
+    persist on a warm chip, so only the RCR (the direction filter) needs
+    re-writing. RCR_MONITOR already includes RCR_APPEND_PHYSTAT, so RSSI is
+    unaffected. Mirrors the rtl8821au/rtl8822bu fix.
+    """
+    t.write32(REG_RCR, RCR_MONITOR)
+    rcr = t.read32(REG_RCR)
+    logger.info("RX filter readback: RCR=0x%08x (ACCEPT_AP=%d)",
+                rcr, 1 if rcr & 0x1 else 0)
+
+
 def enable_rx_data_path(t: RTL8188EUSTransport) -> None:
     """Port of the post-PHY RX-enable writes from `core.c:4100-4154`
     (universal block + the 8188E branch at 4108-4116).
