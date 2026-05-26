@@ -9,14 +9,12 @@ no hardware available; verify before `[x]`.**
   (363) does `await loop.run_in_executor(_read_once)` (381) then parse on the
   event loop — no read posted while parsing. Same pattern as rtl8821au pre-fix.
   Fix: dedicated reader thread + queue hand-off (rtl8821au commit 2e3a7a7).
-- [~] **RX filter / monitor mode (ToDS capture)** — FIX APPLIED (commit
-  442c7aa), awaiting user HW verify. HW-confirmed gap 2026-05-25: only M1/M3
-  (AP→client) captured, never M2/M4 (client→AP). `RCR_MONITOR` (incl.
-  `RCR_ACCEPT_AP`/promiscuous) was correct but only written by
+- [x] **RX filter / monitor mode (ToDS capture)** — FIXED (commit 442c7aa),
+  HW-confirmed 2026-05-25: M2/M4 now captured (was M1/M3-only). `RCR_MONITOR`
+  (incl. `RCR_ACCEPT_AP`/promiscuous) was correct but only written by
   `enable_rx_data_path` on the cold path; `_warm_reattach` skipped it (the trap
-  fixed in rtl8821au b6e7cb9). Fix: `apply_monitor_rx_filter` reasserts it from
-  `_finish_attach` (both paths). Verify M2/M4 now captured + readback shows
-  `ACCEPT_AP=1`.
+  fixed in rtl8821au b6e7cb9). `apply_monitor_rx_filter` now reasserts it from
+  `_finish_attach` (both paths).
 
 Other observations (not yet investigated):
 - Encryption flaps WPA2 → occasionally "WEP" on a known-WPA2 AP — likely a
