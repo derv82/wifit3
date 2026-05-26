@@ -28,6 +28,7 @@ import usb.core
 
 from .constants import EP_IN_PKT_RX
 from .transport import MT76x2UTransport
+from ..rx_reader import RxReaderThread
 
 logger = logging.getLogger(__name__)
 
@@ -160,8 +161,7 @@ class RxDrainer:
         self.frame_callback = frame_callback
         self.raw_callback = raw_callback
         self.max_urb_bytes = max_urb_bytes
-        self._task: Optional[asyncio.Task] = None
-        self._running = False
+        self._reader: Optional[RxReaderThread] = None
         self.rx_count = 0
         self.frames_decoded = 0
         self.frames_dropped = 0
@@ -169,56 +169,55 @@ class RxDrainer:
         self.beacon_count = 0
 
     async def start(self) -> None:
-        if self._running:
+        if self._reader is not None:
             return
-        self._running = True
-        self._task = asyncio.create_task(self._loop())
+        loop = asyncio.get_running_loop()
+        self._reader = RxReaderThread(
+            loop, self._read_once, self._dispatch, name="mt76x2u-rx"
+        )
+        self._reader.start()
 
     async def stop(self) -> None:
-        self._running = False
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
+        if self._reader is not None:
+            await self._reader.stop()
+            self._reader = None
 
-    async def _loop(self) -> None:
-        while self._running:
+    # read_once runs on the reader thread; dispatch runs on the event loop.
+
+    def _read_once(self) -> Optional[bytes]:
+        """One blocking bulk-IN read; None on a benign timeout (read_bulk raises
+        on timeout, which the reader thread must NOT count as an error)."""
+        try:
+            return self.transport.read_bulk(
+                EP_IN_PKT_RX, self.max_urb_bytes, timeout_ms=100,
+            )
+        except usb.core.USBError as e:
+            if (isinstance(e, usb.core.USBTimeoutError)
+                    or getattr(e, "errno", None) in (110, 10060)
+                    or "timeout" in str(e).lower()):
+                return None
+            raise
+
+    def _dispatch(self, buf: bytes) -> None:
+        """Decode one URB → dispatch to raw + frame callbacks (on the loop)."""
+        self.rx_count += 1
+        if self.first_frame is None:
+            self.first_frame = buf
+        if self.raw_callback is not None:
             try:
-                data = await self.transport.async_read_bulk(
-                    EP_IN_PKT_RX, self.max_urb_bytes, timeout_ms=100,
-                )
-            except usb.core.USBTimeoutError:
-                continue
-            except asyncio.CancelledError:
-                break
+                self.raw_callback(buf)
             except Exception as e:
-                logger.debug("RX drain error: %s", e)
-                await asyncio.sleep(0.01)
-                continue
-            if not data:
-                continue
-            buf = bytes(data)
-            self.rx_count += 1
-            if self.first_frame is None:
-                self.first_frame = buf
-            if self.raw_callback is not None:
-                try:
-                    self.raw_callback(buf)
-                except Exception as e:
-                    logger.debug("RX raw_callback error: %s", e)
+                logger.debug("RX raw_callback error: %s", e)
 
-            decoded = decode_urb(buf)
-            if decoded is None:
-                self.frames_dropped += 1
-                continue
-            self.frames_decoded += 1
-            if decoded["is_beacon"]:
-                self.beacon_count += 1
-            if self.frame_callback is not None:
-                try:
-                    self.frame_callback(decoded)
-                except Exception as e:
-                    logger.debug("RX frame_callback error: %s", e)
+        decoded = decode_urb(buf)
+        if decoded is None:
+            self.frames_dropped += 1
+            return
+        self.frames_decoded += 1
+        if decoded["is_beacon"]:
+            self.beacon_count += 1
+        if self.frame_callback is not None:
+            try:
+                self.frame_callback(decoded)
+            except Exception as e:
+                logger.debug("RX frame_callback error: %s", e)
