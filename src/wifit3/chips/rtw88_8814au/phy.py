@@ -70,7 +70,8 @@ class EfuseDefaults:
     cut: int = 15                 # overridden at runtime from REG_SYS_CFG1
     pkg: int = 15
     intf: int = INTF_USB
-    rfe_option: int = 1           # rtw8814a_rfe_defs default entry (placeholder)
+    rfe_option: int = 1           # placeholder until EFUSE read (M4)
+    crystal_cap: int = 0x20       # xtal_k; EFUSE default when unset
     antenna_tx_paths: int = 0b1111  # 4T4R
     antenna_rx_paths: int = 0b1111
 
@@ -104,6 +105,12 @@ def _do_cfg_rf(transport: RTL8814AUTransport, addr: int, data: int,
         time.sleep(delay)
     else:
         rf.write_rf(transport, path, addr, rf.RFREG_MASK, data, udelay_us=1.0)
+
+
+def defaults_from_efuse(er, cut: int) -> EfuseDefaults:
+    """Build PHY EfuseDefaults from a real EFUSE read (efuse.EfuseRead) + cut."""
+    return EfuseDefaults(cut=cut, rfe_option=er.rfe_option,
+                         crystal_cap=er.crystal_cap)
 
 
 def device_cond_for(efuse: EfuseDefaults) -> DeviceCond:

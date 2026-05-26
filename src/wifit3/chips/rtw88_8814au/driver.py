@@ -27,11 +27,10 @@ from .firmware import (
     download_firmware_validate,
     load_firmware_blob,
 )
-import dataclasses
-
+from .efuse import read_efuse
 from .fifo import count_bulk_out_eps, rtw_init_trx_cfg
 from .mac import cut_mask_from_sys_cfg1, is_chip_warm, mac_power_on
-from .phy import EfuseDefaults, phy_set_param
+from .phy import defaults_from_efuse, phy_set_param
 from .transport import RTL8814AUTransport
 
 logger = logging.getLogger(__name__)
@@ -156,10 +155,14 @@ class RTL8814AUDriver:
         )
         logger.info("RTL8814AU M2: TRX/LLT init done (%d bulk-OUT eps)", bulkout)
 
+        _progress(0.85, "Reading EFUSE (rfe_option, MAC, crystal_cap)")
+        er = await loop.run_in_executor(None, read_efuse, self.transport)
+        self.mac_address = ":".join(f"{b:02x}" for b in er.mac_addr)
+        logger.info("RTL8814AU M4: EFUSE rfe_option=%d (raw 0x%02x) MAC=%s xtal=0x%02x",
+                    er.rfe_option, er.rfe_option_raw, self.mac_address, er.crystal_cap)
+        efuse = defaults_from_efuse(er, cut=(chip_version >> 12) & 0xF)
+
         _progress(0.95, "PHY init (BB/RF enable + BB/AGC/RF tables, 4 paths)")
-        efuse = dataclasses.replace(
-            EfuseDefaults(), cut=(chip_version >> 12) & 0xF
-        )
         await loop.run_in_executor(
             None, lambda: phy_set_param(self.transport, efuse)
         )

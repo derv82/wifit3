@@ -53,7 +53,17 @@ Family: **rtw88** (modern), shares `chips/rtw88_base/`.
     identical dispatch *count* of 265 is because every branch has equal entry
     count — NOT a walker bug). A wrong rfe loads a valid-but-suboptimal gain
     variant; M4 pins the real value from EFUSE.
-- **M3.c (channel tune) / M4 (EFUSE) / M5 (RX) / M6 (TX)** — not started.
+- **M4 (EFUSE read)** — ✅ CODE COMPLETE, offline-verified. `efuse.py`: grant +
+  1024-B physical dump + word-enable de-map to the 512-B logical map + parse
+  `struct rtw8814a_efuse` fields (rfe_option 0xCA, rf_board_option 0xC1,
+  xtal_k 0xB9, USB MAC 0xD8). `rfe_option` resolved per `rtw8814a_read_rfe_type`
+  (bit7→USB=1, else raw). Wired into `driver.connect()` (read before
+  phy_set_param) and `phy_set_param` now uses the **real** rfe_option, retiring
+  the M3.b placeholder. De-map verified on synthetic 1-byte + 2-byte-header
+  blocks; rfe resolution verified; 537 tests pass. **Awaiting HW gate** —
+  `--phase efuse`: decode rfe/MAC/xtal, assert MAC non-garbage.
+- **M3.c (full channel tune) / M5 (RX) / M6 (TX)** — not started. M3.c now
+  unblocked with the real rfe_option.
 
 ## 0. TL;DR for the lead
 

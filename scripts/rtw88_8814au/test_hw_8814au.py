@@ -51,8 +51,10 @@ from wifit3.chips.rtw88_8814au.mac import (
 )
 from wifit3.chips.rtw88_8814au import rf as rf8814
 from wifit3.chips.rtw88_8814au.constants import RF_RCK1_V1
+from wifit3.chips.rtw88_8814au.efuse import read_efuse
 from wifit3.chips.rtw88_8814au.phy import (
     EfuseDefaults,
+    defaults_from_efuse,
     load_mac_table,
     phy_set_param,
 )
@@ -259,12 +261,40 @@ def phase_tables(transport: RTL8814AUTransport) -> None:
     ok("MAC table replayed and read back correctly. M3.a COMPLETE.")
 
 
+def phase_efuse(transport: RTL8814AUTransport):
+    step("Read EFUSE (rfe_option, MAC, crystal_cap, board option)  [M4 GATE]")
+    t0 = time.perf_counter()
+    try:
+        er = read_efuse(transport)
+    except IOError as e:
+        fail(f"read_efuse failed: {e}")
+    dt = (time.perf_counter() - t0) * 1000
+    mac = ":".join(f"{b:02x}" for b in er.mac_addr)
+    print(f"  rfe_option   = {er.rfe_option} (raw 0x{er.rfe_option_raw:02x})")
+    print(f"  rf_board_opt = 0x{er.rf_board_option:02x}")
+    print(f"  trx_antenna  = 0x{er.trx_antenna_option:02x}")
+    print(f"  channel_plan = 0x{er.channel_plan:02x}")
+    print(f"  crystal_cap  = 0x{er.crystal_cap:02x}")
+    print(f"  MAC address  = {mac}")
+    print(f"  (read in {dt:.0f} ms)")
+    if er.mac_addr in (b"\x00" * 6, b"\xff" * 6):
+        fail("MAC address is all-zero/all-FF — EFUSE read or de-map is wrong")
+    if er.rfe_option_raw == 0xFF:
+        fail("rfe_option raw is 0xFF — EFUSE likely not read (blank logical map)")
+    ok(f"EFUSE decoded: rfe_option={er.rfe_option}, MAC {mac}. M4 COMPLETE.")
+    return er
+
+
 def phase_phy(transport: RTL8814AUTransport) -> None:
     step("phy_set_param: BB/RF enable + BB/AGC/RF(A-D) tables + RCK  [M3.b GATE]")
     cut = (transport.read32(REG_SYS_CFG1) >> 12) & 0xF
-    efuse = dataclasses.replace(EfuseDefaults(), cut=cut)
+    try:
+        er = read_efuse(transport)
+        efuse = defaults_from_efuse(er, cut=cut)
+    except IOError:
+        efuse = dataclasses.replace(EfuseDefaults(), cut=cut)
     print(f"  cut={cut} (CUT_{'ABCDEFG'[cut] if cut < 7 else '?'}), "
-          f"rfe_option={efuse.rfe_option} (M4 placeholder)")
+          f"rfe_option={efuse.rfe_option} (from EFUSE)")
     t0 = time.perf_counter()
     try:
         phy_set_param(transport, efuse)
@@ -293,7 +323,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument(
         "--phase",
-        choices=("open", "fw", "validate", "mac_init", "tables", "phy", "all"),
+        choices=("open", "fw", "validate", "mac_init", "tables", "efuse", "phy", "all"),
         default="all")
     p.add_argument("--debug", action="store_true", help="verbose USB logging")
     args = p.parse_args()
@@ -304,10 +334,11 @@ def main() -> int:
     ok("Interface 0 claimed")
     transport = RTL8814AUTransport(dev)
 
-    needs_fw = ("fw", "validate", "mac_init", "tables", "phy", "all")
-    needs_validate = ("validate", "mac_init", "tables", "phy", "all")
-    needs_mac_init = ("mac_init", "tables", "phy", "all")
+    needs_fw = ("fw", "validate", "mac_init", "tables", "efuse", "phy", "all")
+    needs_validate = ("validate", "mac_init", "tables", "efuse", "phy", "all")
+    needs_mac_init = ("mac_init", "tables", "efuse", "phy", "all")
     needs_tables = ("tables", "all")     # standalone MAC-replay smoke (M3.a)
+    needs_efuse = ("efuse", "phy", "all")
     needs_phy = ("phy", "all")
 
     try:
@@ -321,6 +352,8 @@ def main() -> int:
             phase_mac_init(dev, transport)
         if args.phase in needs_tables:
             phase_tables(transport)
+        if args.phase in needs_efuse:
+            phase_efuse(transport)
         if args.phase in needs_phy:
             phase_phy(transport)
     finally:
