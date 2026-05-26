@@ -439,6 +439,77 @@ def phase_rx(dev, transport: RTL8814AUTransport) -> None:
        "M5 COMPLETE (this also confirms M3.c tune on-air).")
 
 
+def _reset_phy_counters(transport) -> None:
+    """Reset FA/CCA/CRC counters (tail of rtw8814a_false_alarm_statistics)."""
+    from wifit3.chips.rtw88_8814au.constants import REG_CNTRST, REG_FAS
+    transport.write32_set(REG_FAS, 1 << 17)
+    transport.write32_clr(REG_FAS, 1 << 17)
+    transport.write32_clr(0x0A2C, 1 << 15)   # REG_CCK0_FAREPORT
+    transport.write32_set(0x0A2C, 1 << 15)
+    transport.write32_set(REG_CNTRST, 1 << 0)
+    transport.write32_clr(REG_CNTRST, 1 << 0)
+
+
+def _read_phy_counters(transport) -> dict:
+    from wifit3.chips.rtw88_8814au import constants as C
+    def crc(reg):
+        v = transport.read32(reg)
+        return (v & 0xFFFF, (v >> 16) & 0xFFFF)   # (ok, err)
+    return {
+        "cck": crc(C.REG_CRC_CCK), "ofdm": crc(C.REG_CRC_OFDM),
+        "ht": crc(C.REG_CRC_HT), "vht": crc(C.REG_CRC_VHT),
+        "fa_cck": transport.read16(C.REG_FA_CCK),
+        "fa_ofdm": transport.read16(C.REG_FA_OFDM),
+        "cca_ofdm": (transport.read32(C.REG_CCA_OFDM) >> 16) & 0xFFFF,
+        "cca_cck": transport.read32(C.REG_CCA_CCK) & 0xFFFF,
+    }
+
+
+def phase_rxdiag(dev, transport: RTL8814AUTransport) -> None:
+    step("RX DIAGNOSTIC: PHY counters vs USB delivery (capture good + bad boot)")
+    rx8814.mac_init_for_rx(transport)
+    rx8814.apply_monitor_rcr(transport)
+    eps = rx8814.probe_endpoints(dev)
+    ep_in = eps.primary_bulk_in
+    rx8814.prime_bulk_in(dev, ep_in)
+
+    chan.set_channel(transport, 6, rfe_option=1)   # one busy 2.4G channel
+    rx8814.tune_monitor_cck_sensitivity(transport)
+    _reset_phy_counters(transport)
+
+    usb_frames = usb_bytes = bursts = 0
+    t_end = time.perf_counter() + 5.0
+    while time.perf_counter() < t_end:
+        buf = rx8814.read_rx_burst(dev, ep_in, max_size=16384, timeout_ms=200)
+        if buf is None:
+            continue
+        bursts += 1
+        usb_bytes += len(buf)
+        usb_frames += sum(1 for _ in rx8814.iter_bulk_frames(buf))
+
+    c = _read_phy_counters(transport)
+    print("\n  ch6, 5 s listen:")
+    print(f"    USB delivered : {usb_frames} frames ({usb_bytes} bytes, {bursts} bursts)")
+    print(f"    PHY CRC ok/err: cck={c['cck']} ofdm={c['ofdm']} "
+          f"ht={c['ht']} vht={c['vht']}")
+    print(f"    PHY false-alm : cck={c['fa_cck']} ofdm={c['fa_ofdm']}")
+    print(f"    PHY CCA energy: ofdm={c['cca_ofdm']} cck={c['cca_cck']}")
+    phy_ok = c['cck'][0] + c['ofdm'][0] + c['ht'][0] + c['vht'][0]
+    cca = c['cca_ofdm'] + c['cca_cck']
+    print("\n  READING:")
+    if usb_frames > 0:
+        print("    -> GOOD boot: RX fully working.")
+    elif phy_ok > 0:
+        print(f"    -> PHY demodulated {phy_ok} frames but USB delivered 0 "
+              "==> DMA/USB delivery stuck (not RF).")
+    elif cca > 0:
+        print(f"    -> PHY saw energy (CCA={cca}) but demodulated 0 "
+              "==> demod/lock fails (calibration/IQK territory).")
+    else:
+        print("    -> PHY saw NO energy (CCA=0) ==> RF-deaf: PLL/RF path not up.")
+    ok("diagnostic complete — run once on a GOOD boot, once on a BAD boot, paste both")
+
+
 def phase_monitor(dev, transport: RTL8814AUTransport) -> None:
     step("Monitor verification: capture frames addressed to OTHER stations  [M7 GATE]")
     # Beacons (addr1=broadcast) only prove we accept broadcast — a FILTERING
@@ -498,7 +569,7 @@ def main() -> int:
     p.add_argument(
         "--phase",
         choices=("open", "fw", "validate", "mac_init", "tables", "efuse", "phy",
-                 "channel", "rx", "monitor", "all"),
+                 "channel", "rx", "monitor", "rxdiag", "all"),
         default="all")
     p.add_argument("--debug", action="store_true", help="verbose USB logging")
     args = p.parse_args()
@@ -532,6 +603,11 @@ def main() -> int:
             for ph in ("open", "fw", "validate", "mac_init"):
                 runners[ph]()
             phase_tables(transport)
+        elif target == "rxdiag":
+            for ph in ("open", "fw", "validate", "mac_init", "efuse", "phy",
+                       "channel"):
+                runners[ph]()
+            phase_rxdiag(dev, transport)
         else:
             for ph in chain[:chain.index(target) + 1]:
                 runners[ph]()

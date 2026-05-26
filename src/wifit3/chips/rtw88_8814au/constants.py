@@ -290,3 +290,16 @@ REG_CCKTX = 0x0A84
 BIT_CMB_CCA_2R = 1 << 28
 REG_CCK_PD_TH = 0x0A0A
 CCK_PD_TH_MAX_SENS = 0x40        # pd[CCK_PD_LV0] (rtw8814a_phy_cck_pd_set)
+
+# --- PHY RX counters (rtw8814a_false_alarm_statistics) — for RX diagnostics --
+# CRC regs: low 16 = OK count (demodulated), high 16 = err count.
+REG_FA_CCK = 0x0A5C              # CCK false-alarm (16b)
+REG_FA_OFDM = 0x0F48             # OFDM false-alarm (16b)
+REG_CRC_CCK = 0x0F04
+REG_CRC_OFDM = 0x0F14
+REG_CRC_HT = 0x0F10
+REG_CRC_VHT = 0x0F0C
+REG_CCA_OFDM = 0x0F08            # CCA count in high 16
+REG_CCA_CCK = 0x0FCC             # CCA count in low 16
+REG_CNTRST = 0x0B58              # BIT(0): counter reset
+REG_FAS = 0x09A4                 # BIT(17): FA counter reset
