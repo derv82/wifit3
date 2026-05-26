@@ -22,10 +22,7 @@ captures/
 data_dumps/
 usb_dumps/
 scratch/
-debug.log
-usb_transactions.log
-wifit3-decloak.log
-wifit3-wep-arp*.log
+*.log
 # WEP fragmentation/chopchop probe captures — real on-air frames from the
 # user's environment; never commit (see no-SSIDs/BSSIDs-in-commits rule).
 wifit3-wep-frag*.pcap
