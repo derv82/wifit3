@@ -206,6 +206,17 @@ class AR9271Driver:
         # The replayed init doesn't reliably hold it; set it explicitly here.
         await self._apply_monitor_rx_filter()
 
+        # Seed the DATA endpoint's credits, exactly as the warm path does
+        # (see the is_warm branch above). The HTC READY handshake only grants
+        # initial credits to EP 1 and EP 2 (transport._process_htc_frame), and
+        # the device only *replenishes* an endpoint after the host has consumed
+        # a credit on it — so EP 5 (our bulk-OUT data/inject path) sits at 0
+        # forever on cold boot. The first inject_frame() then blocks in
+        # credit_manager.acquire(5) → cold-boot PMKID/deauth hangs while RX
+        # (which uses no credits) stays fine. Seeding here mirrors the proven
+        # warm path and lets TX proceed immediately.
+        self.transport.credit_manager.set_initial(self.data_endpoint_id, self.total_credits)
+
         _update(1.0, f"AR9271 Driver successfully connected. MAC: {self.mac_address}")
         return True
 
