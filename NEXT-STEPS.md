@@ -15,13 +15,14 @@ Fully-functional userspace Python drivers (cold + warm bring-up, channel hop, in
 | Realtek RTL8821AU (AWUS036ACS) | `chips/rtl8821au/` | 2.4 + 5 GHz | DONE 2026-05-17, 27 BSSIDs/8s on ch1 |
 | Realtek RTL8822BU (TP-Link T3U Plus, AC1300) | `chips/rtl8822bu/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-17, full RX + TX inject + 5G |
 | Realtek RTL8812AU (AWUS036ACH) | `chips/rtl8812au/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-17, RX + deauth confirmed by handshake re-capture |
+| Realtek RTL8814AU (Alfa AWUS1900, AC1900) | `chips/rtw88_8814au/` | 2.4 + 5 GHz, 4T4R | DONE 2026-05-26 — modern iDDMA FW + 4-path PHY/RF; M1-M7 hw-verified (59-70 BSSIDs, promiscuous monitor 33 stations, real jaguar-phy_status RSSI); deauth confirmed by user (kicked phone off, M2/M4 handshake re-captured). See [[RTL8814AU.md]]. |
 | Realtek RTL8188EUS (TP-Link TL-WN722N v2/v3) | `chips/rtl8188eus/` | 2.4 GHz, 1T1R | DONE 2026-05-19, M1-M8 complete; passive 4-way handshake + active PMKID harvest verified live |
 | Mediatek MT7921AU (AWUS036AXML) | `chips/mt7921au/` (scaffold) | — | PAUSED — see [[MT7921AU.md]] + [[KALI-HANDOFF-2026-05-19.md]] (kernel-driver-collision confirmed + fixed via blacklist+rmmod+replug; 2026-05-19 evening Kali re-run got past PATCH_SEM_GET and uploaded all firmware, but **FW_START_REQ wall reproduces on Kali too** — not WinUSB-specific. Leading hypothesis: shallow bulk-IN URB pool — needs libusb async URB queue) |
 
 Family-shared infrastructure under `chips/rtw88_base/` covers transport,
 phy_cond walker, power_seq runtime, RF SIPI, TX checksum, RX-desc parser,
-and the legacy MCUFWDL FW upload — both 88xxA chips (8821a + 8812a) and
-the modern 8822b share through it.
+and the legacy MCUFWDL FW upload — the 88xxA chips (8821a + 8812a), the
+modern 8822b, and the 4T4R 8814a all share through it.
 
 ## Known broken / partial-support cases
 
@@ -126,18 +127,15 @@ Concrete plan for MT7921AU:
 
 ### Other hardware queued (captures landed 2026-05-19, on deck)
 
-User trip to Kali brought back fresh cold-boot pcaps + `airmon-ng`/`iw`/`tshark`
-logs for three of the four queued cards. Each capture lives at
-`usb_dumps/captures_<driver>/` with the standard `capture-N.pcap` +
-`capture-N_logs/main.log` layout the existing tooling already consumes
-(`scripts/pcap_slicer.py`, plus `Grep`/`Read` against `data_dumps/<driver>-source-v6.18/`). Remaining gate
-before driver work starts on any of these is **kernel source extraction
-to `data_dumps/<driver>-source-v6.18/` + firmware-blob byte-verify against
-`linux-firmware/`** (same workflow as the 8821au/8822bu/8812au bring-ups).
-
-| Card | Chip | Kernel module | Captures | Source | FW | Notes |
-|------|------|---------------|----------|--------|----|-------|
-| AC1900       | RTL8814AU | `rtw88_8814au` | ✅ `captures_rtw88_8814au/` (3) | ⏳ | ⏳ | 4T4R, modern iDDMA path. Bigger delta from 8822bu — 4 RF paths instead of 2, larger txbf init. Family-shared `rtw88_base/` should still cover transport / phy_cond / power_seq / SIPI. |
+The AC1900 / RTL8814AU is **DONE** (2026-05-26 — see the supported-chipsets
+table above and [[RTL8814AU.md]]); the queue from the 2026-05-19 Kali trip is
+now cleared. The mechanical workflow below stays here as the reference recipe
+for the next card whose cold-boot captures land in `usb_dumps/captures_<driver>/`
+(standard `capture-N.pcap` + `capture-N_logs/main.log`, consumed by
+`scripts/pcap_slicer.py` and `Grep`/`Read` against `data_dumps/<driver>-source-v6.18/`).
+First gate is always **kernel source extraction to
+`data_dumps/<driver>-source-v6.18/` + firmware-blob byte-verify against
+`linux-firmware/`** (same workflow as the 8821au/8822bu/8812au/8814au bring-ups).
 
 Next mechanical steps when picking one of these up:
 
