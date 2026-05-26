@@ -175,12 +175,7 @@ class WMIProtocol:
         cls._gate_diag(payload, "pass")
         rssi_snr = payload[8]
         rssi = cls.NOISE_FLOOR_DBM + rssi_snr if rssi_snr > 0 else cls.NOISE_FLOOR_DBM
-        # Hand the parser the logical MPDU WITHOUT the 4-byte FCS trailer (we've
-        # already validated it). `raw` flows into saved pcaps, which are
-        # LINKTYPE_IEEE802_11 (105) — readers treat those as FCS-less, so a
-        # retained FCS gets mis-parsed as a trailing IE ("malformed" beacon in
-        # Wireshark). Stripping here keeps `raw` canonical for every consumer.
-        return WlanFrameParser.parse_80211_frame(frame[:-4], rssi)
+        return WlanFrameParser.parse_80211_frame(frame, rssi)
 
     @staticmethod
     def _strip_alignment_padding(frame: bytes) -> bytes:

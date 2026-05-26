@@ -18,10 +18,8 @@ def test_parse_rx_frame_real_beacon():
     assert parsed["type"] == "beacon"
     assert parsed["bssid"] == "aa:da:c4:0d:9c:fe"
     assert parsed["rssi"] == -67   # NOISE_FLOOR (-95) + SNR 28
-    # raw is the logical MPDU with the 4-byte FCS trailer stripped, so saved
-    # pcaps (LINKTYPE_IEEE802_11, read as FCS-less) don't show a malformed
-    # trailing IE.
-    assert parsed["raw"] == payload[WMIProtocol.HTC_RX_HEADER_LEN:-4]
+    # raw is the MPDU as delivered, FCS included (pcap-write strips it).
+    assert parsed["raw"] == payload[WMIProtocol.HTC_RX_HEADER_LEN:]
 
 
 def test_parse_rx_frame_rejects_missing_magic():
