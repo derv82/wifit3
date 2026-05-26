@@ -77,6 +77,10 @@ def step(label: str) -> None:
     print(f"\n--- {label} ---")
 
 
+# --phase tx targets (set from --ap/--client; None → bogus pipe-test MACs).
+_TX_AP: str | None = None
+_TX_CLIENT: str | None = None
+
 _CR_TRAIL: list[tuple[str, int]] = []
 
 
@@ -635,8 +639,12 @@ def phase_tx(dev, transport: RTL8814AUTransport) -> None:
     # Bogus locally-administered MACs (bit1 set, nonexistent) — exercises the TX
     # pipe WITHOUT deauthing any real device. Real on-air deauth is the user's
     # phone test.
-    ap = bytes.fromhex("0200000000aa")
-    cli = bytes.fromhex("0200000000bb")
+    # --ap/--client override the bogus targets for a real on-air deauth test.
+    ap = bytes.fromhex(_TX_AP.replace(":", "")) if _TX_AP else bytes.fromhex("0200000000aa")
+    cli = bytes.fromhex(_TX_CLIENT.replace(":", "")) if _TX_CLIENT else bytes.fromhex("0200000000bb")
+    real = bool(_TX_AP and _TX_CLIENT)
+    print(f"  target: ap={ap.hex()} client={cli.hex()} "
+          f"({'REAL on-air deauth' if real else 'bogus — pipe test only'})")
     mpdu = tx8814.build_deauth_frame(ap, cli, reason=7)
     desc = tx8814.build_tx_desc_mgmt(mpdu, band_is_2g=True)
     payload = desc + mpdu
@@ -724,8 +732,12 @@ def main() -> int:
         default="all")
     p.add_argument("--debug", action="store_true", help="verbose USB logging")
     p.add_argument("--quiet", action="store_true", help="suppress INFO logs")
+    p.add_argument("--ap", help="--phase tx: AP/BSSID MAC for a REAL deauth")
+    p.add_argument("--client", help="--phase tx: client MAC to deauth (e.g. phone)")
     args = p.parse_args()
     setup_logging(args.debug, args.quiet)
+    global _TX_AP, _TX_CLIENT
+    _TX_AP, _TX_CLIENT = args.ap, args.client
 
     step("USB discovery + claim")
     dev = open_device()
