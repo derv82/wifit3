@@ -37,6 +37,44 @@ def test_wlan_interface_caching(mocker):
     assert aps[0].beacons == 2
     assert aps[0].signal == -45  # Averaged (-40 + -50) // 2
 
+def _beacon(enc, *, akms=None, rssi=-40):
+    return {
+        "type": "beacon",
+        "bssid": "aa:bb:cc:dd:ee:ff",
+        "source": "aa:bb:cc:dd:ee:ff",
+        "dest": "ff:ff:ff:ff:ff:ff",
+        "rssi": rssi,
+        "ssid": "Test_SSID",
+        "channel": 6,
+        "encryption": enc,
+        "akms": akms or ([] if enc in ("OPEN", "WEP") else ["PSK"]),
+    }
+
+
+def test_encryption_keeps_strongest_evidence_not_latest(mocker):
+    """A dropped/truncated beacon (no RSN IE -> 'WEP') must not flap a known
+    WPA2 AP to WEP; and a mis-parsed first 'WEP' beacon must be upgradeable to
+    WPA2 by a later beacon that actually carries the IE."""
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="t")
+
+    # WPA2 confirmed, then an RSN-less beacon arrives (the flicker case).
+    iface._on_frame_parsed(_beacon("WPA2-PSK-CCMP"))
+    iface._on_frame_parsed(_beacon("WEP"))
+    assert iface.get_access_points()[0].encryption == "WPA2-PSK-CCMP"
+
+    # Order-independence: first frame mis-reads as WEP, then real WPA2 wins.
+    iface2 = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan1", description="t")
+    iface2._on_frame_parsed(_beacon("WEP"))
+    assert iface2.get_access_points()[0].encryption == "WEP"   # provisional
+    iface2._on_frame_parsed(_beacon("WPA2-PSK-CCMP"))
+    ap = iface2.get_access_points()[0]
+    assert ap.encryption == "WPA2-PSK-CCMP"
+    assert ap.akms == ["PSK"]
+    # And it stays — a later RSN-less beacon can't downgrade it.
+    iface2._on_frame_parsed(_beacon("WEP"))
+    assert iface2.get_access_points()[0].encryption == "WPA2-PSK-CCMP"
+
+
 def test_forged_mac_does_not_create_client_or_append_eapol(mocker):
     """When an attack registers a forged STA MAC, frames addressed to it
     should: (a) not show up in iface.clients, (b) still create a Handshake

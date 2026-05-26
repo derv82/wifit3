@@ -41,6 +41,23 @@ def _log_decloak_frame(
         pass
 
 
+def _enc_rank(label: str) -> int:
+    """Rank an encryption label by *evidence strength*, not recency.
+
+    OPEN(0) < WEP(1) < WPA*(2). A WPA/WPA2/WPA3/OWE label means we actually
+    parsed an RSN/WPA IE — which a truncated/corrupt beacon can't fabricate —
+    whereas WEP/OPEN are inferred from the always-present Privacy bit when no
+    IE was found. Used to keep the strongest evidence ever seen so a dropped
+    IE on a weak radio can't flap a WPA2 AP to "WEP" (and a mis-parsed first
+    beacon can't pin it there either). See _on_frame_parsed.
+    """
+    if label == "OPEN":
+        return 0
+    if label == "WEP":
+        return 1
+    return 2  # any IE-derived label
+
+
 def _bssid_bit_diff(a: str, b: str) -> int:
     """Hamming distance between two ``aa:bb:…``-formatted BSSIDs (count of
     differing bits across all 48). Returns 48 (sentinel — fully different)
@@ -211,15 +228,24 @@ class WlanInterface:
                 ap.channel = channel
                 if old_channel != channel:
                     self._recompute_siblings_for(bssid)
-                ap.encryption = enc
-                ap.akms = list(akms)
-                ap.pairwise_cipher = pairwise_cipher
-                # WPA3 / PMF advertising can change as APs reload config — refresh
-                # on every beacon so the Focus security panel stays in sync.
-                ap.wpa3 = wpa3
-                ap.transition_mode = transition_mode
-                ap.pmf_capable = pmf_capable
-                ap.pmf_required = pmf_required
+                # Keep the strongest encryption evidence ever seen rather than
+                # blindly trusting the latest beacon. A WPA/WPA2/WPA3/OWE label
+                # comes from a parsed RSN/WPA IE (truncation can't fabricate
+                # one); "WEP" is just the Privacy-bit fallback when no IE was
+                # found — which a dropped/truncated beacon yields exactly like a
+                # real WEP AP. Overwriting unconditionally made WPA2 APs flicker
+                # to "WEP" on weak radios (RTL8188EUS). A WPA*-vs-WPA* update
+                # still passes (rank 2 >= 2), so WPA3/PMF config reloads stay in
+                # sync; only a downgrade to WEP/OPEN is suppressed. Mirrors the
+                # "only when the IE is present" rule the WPS block below uses.
+                if _enc_rank(enc) >= _enc_rank(ap.encryption):
+                    ap.encryption = enc
+                    ap.akms = list(akms)
+                    ap.pairwise_cipher = pairwise_cipher
+                    ap.wpa3 = wpa3
+                    ap.transition_mode = transition_mode
+                    ap.pmf_capable = pmf_capable
+                    ap.pmf_required = pmf_required
                 # Only refresh WPS when this frame actually carried the IE —
                 # a probe response without it must not clear a known WPS flag.
                 # (locked/state CAN change, so re-read when present.)

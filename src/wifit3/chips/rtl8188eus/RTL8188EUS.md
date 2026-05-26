@@ -18,10 +18,15 @@ no hardware available; verify before `[x]`.**
   fixed in rtl8821au b6e7cb9). `apply_monitor_rx_filter` now reasserts it from
   `_finish_attach` (both paths).
 
-Other observations (not yet investigated):
-- Encryption flaps WPA2 → occasionally "WEP" on a known-WPA2 AP — likely a
-  beacon mis-parse / RSN-IE intermittent miss (possibly the same packet-loss
-  the reader-loop fix would reduce). Separate from the RCR gap above. TODO.
+Other observations:
+- Encryption flaps WPA2 → occasionally "WEP" on a known-WPA2 AP — root cause:
+  a dropped/truncated beacon loses the RSN IE, so the parser falls back to the
+  Privacy-bit "WEP" label, and the AP registry overwrote encryption on every
+  beacon. FIXED cross-driver 2026-05-25 in `interface._on_frame_parsed`: keep
+  the strongest evidence seen (`_enc_rank`, OPEN<WEP<WPA*) instead of trusting
+  the latest beacon. The reader-loop fix above reduces the underlying beacon
+  loss; this stops it from ever mislabeling. Awaiting HW re-confirm on the 8188e
+  (the weak radio that surfaced it).
 
 Verified facts only. Anything not in this doc is a hypothesis.
 
