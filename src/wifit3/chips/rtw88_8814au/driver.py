@@ -20,6 +20,7 @@ import usb.core
 import usb.util
 
 from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.wlan.packet import WlanFrameParser
 
 from .constants import REG_SYS_CFG1, USB_IDS_8814AU
 from .firmware import (
@@ -27,12 +28,13 @@ from .firmware import (
     download_firmware_validate,
     load_firmware_blob,
 )
-from . import chan
+from . import chan, rx
 from .efuse import read_efuse
 from .fifo import count_bulk_out_eps, rtw_init_trx_cfg
 from .mac import cut_mask_from_sys_cfg1, is_chip_warm, mac_power_on
 from .phy import defaults_from_efuse, phy_set_param
 from .transport import RTL8814AUTransport
+from ..rx_reader import RxReaderThread
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,8 @@ class RTL8814AUDriver:
         self.dev = dev
         self.transport = RTL8814AUTransport(dev)
         self._rx_callback: Optional[Callable[[dict], None]] = None
+        self._rx_reader: Optional[RxReaderThread] = None
+        self._bulk_in_ep: Optional[int] = None
         self._claimed = False
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
@@ -178,9 +182,52 @@ class RTL8814AUDriver:
         )
         self.current_channel = 1
         self.current_band_is_2g = True
-        logger.info("RTL8814AU M3.c: tuned to ch1. RX/TX pending (M5/M6).")
-        _progress(1.00, "RTL8814AU M3.c: PHY tuned to ch1 (scan/inject pending)")
+
+        _progress(0.98, "RX init (monitor filter + reader thread)")
+        await loop.run_in_executor(None, rx.mac_init_for_rx, self.transport)
+        await loop.run_in_executor(None, rx.apply_monitor_rcr, self.transport)
+        if not await self._start_rx():
+            return False
+        logger.info("RTL8814AU M5: RX online (monitor). TX inject pending (M6).")
+        _progress(1.00, "RTL8814AU online (monitor RX; inject pending)")
         return True
+
+    async def _start_rx(self) -> bool:
+        loop = asyncio.get_event_loop()
+        eps = rx.probe_endpoints(self.dev)
+        if not eps.bulk_in:
+            logger.error("no bulk-IN endpoint discovered")
+            return False
+        self._bulk_in_ep = eps.primary_bulk_in
+        self._rx_reader = RxReaderThread(
+            loop, self._rx_read_once, self._rx_dispatch, name="rtl8814au-rx"
+        )
+        self._rx_reader.start()
+        return True
+
+    def _rx_read_once(self) -> bytes | None:
+        """One blocking bulk-IN read; None on a benign timeout."""
+        try:
+            return bytes(self.dev.read(self._bulk_in_ep, 16384, 100))
+        except usb.core.USBError as e:
+            err = getattr(e, "errno", None)
+            if err in (110, 10060) or "timeout" in str(e).lower():
+                return None
+            raise
+
+    def _rx_dispatch(self, buf: bytes) -> None:
+        cb = self._rx_callback
+        if not cb:
+            return
+        for _stat, mpdu, rssi in rx.iter_bulk_frames(buf):
+            parsed = WlanFrameParser.parse_80211_frame(
+                mpdu, rssi if rssi is not None else -100
+            )
+            if parsed:
+                try:
+                    cb(parsed)
+                except Exception:
+                    logger.exception("RX callback raised")
 
     async def set_channel(self, channel: int) -> bool:
         is_2g = channel <= 14
@@ -211,4 +258,9 @@ class RTL8814AUDriver:
 
     async def close(self) -> None:
         loop = asyncio.get_event_loop()
+        # Stop the reader thread BEFORE releasing USB — it's still calling
+        # dev.read() until stopped, and releasing the handle under it errors.
+        if self._rx_reader is not None:
+            await self._rx_reader.stop()
+            self._rx_reader = None
         await loop.run_in_executor(None, self._release)

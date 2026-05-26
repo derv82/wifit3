@@ -84,8 +84,28 @@ Family: **rtw88** (modern), shares `chips/rtw88_base/`.
     So there is NO pcap ground truth for channel tune OR RX — both must be
     validated live, not by pcap-diff. (Relevant for M5: RX desc decode comes from
     kernel rx.c + rx_common.py + the 8822bu sibling, not a pcap.)
-- **M5 (RX/monitor) / M6 (TX)** — not started. After M3.c, the chip can tune;
-  M5 wires the RX reader-thread + monitor RCR filter to see beacons.
+- **M5 (RX / monitor)** — ✅ CODE COMPLETE, offline-verified. `rx.py`:
+  `mac_init_for_rx` (RXFLTMAP + RX_DRVINFO_SZ + rxdesc-len quirk + promiscuous
+  RCR_MONITOR 0xf410400f + USB burst) — the RX-side MAC init deferred from M2;
+  `apply_monitor_rcr`; `iter_bulk_frames` over the shared 24-byte rx_pkt_desc
+  decoder. Driver wires the shared `RxReaderThread` (reader-thread, not
+  event-loop polling, per [[project_rx_loop_ui_starvation]]) + endpoint probe,
+  stops it before USB release.
+  ✅ **DONE 2026-05-26, HW-VERIFIED**: beacon captured + decoded end-to-end
+  (bulk-IN → 24-B rx_desc → MPDU → parser → SSID), CR alive 0x4ff, RCR landed
+  0xf410400f. Also confirms M3.c's tune on-air.
+  - **[follow-up] Low sensitivity + RSSI** — only the closest AP came through in
+    an ~9 s sweep. Expected: the bits deferred from `phy_set_param` (DIG/AGC gain
+    control via `rtw_phy_init`, bb_swing) aren't ported, so RX gain is untuned.
+    RX *works*; making it *sensitive* = port rtw_phy_init DIG + the deferred phy
+    bits. RSSI is still the -100 placeholder (needs rtw8814a_query_phy_status).
+  - **[BUG fixed] test phase-gating** — `--phase rx` had skipped fw/validate/
+    mac_init/efuse (missing from the `needs_*` sets), so the MAC was never
+    powered → CR read 0xEA. Replaced with an ordered chain (run everything up to
+    the target phase). NOT a driver bug — driver.connect() always ran M1→M5 in
+    order; the EFUSE grant-off "fix" made on the wrong theory was reverted.
+- **M6 (TX inject)** — not started. Last milestone: TX desc + deauth →
+  handshake recapture.
 
 ## 0. TL;DR for the lead
 

@@ -257,3 +257,15 @@ RF18_RFSI_MASK = (1 << 18) | (1 << 17)
 RF18_BAND_MASK = (1 << 16) | (1 << 9) | (1 << 8)
 RF18_CHANNEL_MASK = 0xFF
 RF18_BW_MASK = (1 << 11) | (1 << 10)
+
+# ===========================================================================
+# M5 — RX / monitor
+# ===========================================================================
+REG_RXDMA_MODE = 0x0290
+# Promiscuous monitor RCR (AAP|APM|AM|AB + APP_PHYSTS, CBSSID_* cleared) —
+# family-shared rtw88 value, same as rtl8821au/8822bu monitor.
+RCR_MONITOR = 0xF410400F
+# 8814a STA RXFLTMAP defaults (rtw8814a_mac_init) — accept mgmt/ctrl/data.
+RXFLTMAP0_8814A = 0xFFFF
+RXFLTMAP1_8814A = 0x0400
+RXFLTMAP2_8814A = 0xFFFF

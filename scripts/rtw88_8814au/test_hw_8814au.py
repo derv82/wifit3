@@ -58,7 +58,9 @@ from wifit3.chips.rtw88_8814au.phy import (
     load_mac_table,
     phy_set_param,
 )
+from wifit3.chips.rtw88_8814au import rx as rx8814
 from wifit3.chips.rtw88_8814au.transport import RTL8814AUTransport
+from wifit3.wlan.packet import WlanFrameParser
 import dataclasses
 
 
@@ -72,6 +74,25 @@ def setup_logging(debug: bool) -> None:
 
 def step(label: str) -> None:
     print(f"\n--- {label} ---")
+
+
+_CR_TRAIL: list[tuple[str, int]] = []
+
+
+def cr_checkpoint(transport, label: str) -> None:
+    """Bisect helper: read+record REG_CR. 0xEA(EAEAEAEA) = MAC powered off."""
+    cr = transport.read32(REG_CR)
+    _CR_TRAIL.append((label, cr))
+    state = "MAC OFF (0xEA)" if cr == 0xEAEAEAEA or (cr & 0xFF) == 0xEA else "alive"
+    print(f"  [CR-CHECK after {label}] REG_CR=0x{cr:08x}  -> {state}")
+
+
+def print_cr_trail() -> None:
+    """Dump the whole CR bisect trail together (survives scrollback)."""
+    print("\n=== CR bisect trail (first 'MAC OFF' names the culprit) ===")
+    for label, cr in _CR_TRAIL:
+        state = "MAC OFF" if cr == 0xEAEAEAEA or (cr & 0xFF) == 0xEA else "alive"
+        print(f"    after {label:24s}: REG_CR=0x{cr:08x}  {state}")
 
 
 def ok(msg: str) -> None:
@@ -227,6 +248,7 @@ def phase_mac_init(dev, transport: RTL8814AUTransport) -> None:
     print(f"  REG_CR          = 0x{transport.read32(REG_CR):08x} "
           f"(MAC_TRX_ENABLE = low byte 0xff)")
     ok(f"LLT auto-init completed + H2C ring verified in {dt:.0f} ms. M2 COMPLETE.")
+    cr_checkpoint(transport, "M2 mac_init")
 
 
 # MAC-table register read-backs (addr -> expected byte), picked from
@@ -282,6 +304,7 @@ def phase_efuse(transport: RTL8814AUTransport):
     if er.rfe_option_raw == 0xFF:
         fail("rfe_option raw is 0xFF — EFUSE likely not read (blank logical map)")
     ok(f"EFUSE decoded: rfe_option={er.rfe_option}, MAC {mac}. M4 COMPLETE.")
+    cr_checkpoint(transport, "M4 efuse read")
     return er
 
 
@@ -317,6 +340,7 @@ def phase_phy(transport: RTL8814AUTransport) -> None:
              "RCK copy or per-path RF access is wrong")
     ok(f"all 4 RF paths read back 0x{vals[0]:05x} (consistent, non-garbage). "
        "M3.b COMPLETE.")
+    cr_checkpoint(transport, "M3.b phy_set_param")
 
 
 def phase_channel(transport: RTL8814AUTransport) -> None:
@@ -337,6 +361,80 @@ def phase_channel(transport: RTL8814AUTransport) -> None:
         print(f"  ch{ch:3d} ({band}): tune sequence executed OK")
     ok("ch1/36/149 tuned cleanly across 2G/5G/5G-high without error. "
        "M3.c sequence COMPLETE (RF on-air validation in M5).")
+    cr_checkpoint(transport, "M3.c channel tune")
+
+
+def _extract_ssid(mpdu: bytes) -> str:
+    if len(mpdu) < 38 or mpdu[24 + 12] != 0:
+        return ""
+    ies_off = 24 + 12
+    slen = mpdu[ies_off + 1]
+    if ies_off + 2 + slen > len(mpdu):
+        return ""
+    try:
+        return mpdu[ies_off + 2: ies_off + 2 + slen].decode("utf-8")
+    except UnicodeDecodeError:
+        return mpdu[ies_off + 2: ies_off + 2 + slen].hex()
+
+
+def phase_rx(dev, transport: RTL8814AUTransport) -> None:
+    step("MAC power/register sanity before RX")
+    cr = transport.read32(REG_CR)
+    rcr_pre = transport.read32(0x0608)
+    sfe = transport.read16(0x0002)
+    cr_checkpoint(transport, "M5 rx entry")
+    print(f"  REG_CR=0x{cr:08x}  REG_RCR(pre)=0x{rcr_pre:08x}  SYS_FUNC_EN=0x{sfe:04x}")
+    if (cr & 0xFF) == 0xEA or cr == 0xEAEAEAEA:
+        print_cr_trail()
+        fail("REG_CR reads 0xEA — the MAC is powered OFF/reset by the time RX "
+             "starts. The CR trail above names the culprit phase.")
+    if (cr & 0xFF) != 0xFF:
+        print(f"  WARN: REG_CR low byte 0x{cr & 0xFF:02x} != MAC_TRX_ENABLE(0xff) "
+              "— MAC TRX not fully enabled")
+
+    step("RX monitor init + listen for beacons on ch1/ch6  [M5 GATE]")
+    try:
+        rx8814.mac_init_for_rx(transport)
+        rx8814.apply_monitor_rcr(transport)
+    except IOError as e:
+        fail(f"mac_init_for_rx failed: {e}")
+    eps = rx8814.probe_endpoints(dev)
+    if not eps.bulk_in:
+        fail("no bulk-IN endpoint found")
+    ep_in = eps.primary_bulk_in
+    print(f"  bulk-IN endpoint: 0x{ep_in:02x}")
+
+    seen_bssids: dict[str, int] = {}
+    seen_ssids: dict[str, str] = {}
+    total_frames = bursts = bytes_rx = 0
+
+    for ch in (1, 6, 11):
+        chan.set_channel(transport, ch, rfe_option=1)
+        t_end = time.perf_counter() + 3.0
+        while time.perf_counter() < t_end:
+            buf = rx8814.read_rx_burst(dev, ep_in, max_size=16384, timeout_ms=200)
+            if buf is None:
+                continue
+            bursts += 1
+            bytes_rx += len(buf)
+            for _stat, mpdu, rssi in rx8814.iter_bulk_frames(buf):
+                total_frames += 1
+                parsed = WlanFrameParser.parse_80211_frame(
+                    mpdu, rssi if rssi is not None else -100)
+                if parsed and parsed.get("subtype_id") == WlanFrameParser.SUBTYPE_BEACON:
+                    bssid = parsed.get("bssid") or "?"
+                    seen_bssids[bssid] = seen_bssids.get(bssid, 0) + 1
+                    seen_ssids.setdefault(bssid, _extract_ssid(mpdu))
+
+    print(f"  bursts={bursts} bytes={bytes_rx} parsed_frames={total_frames}")
+    print(f"  distinct beacon BSSIDs: {len(seen_bssids)}")
+    for bssid, count in sorted(seen_bssids.items(), key=lambda kv: -kv[1])[:15]:
+        print(f"    {bssid}  ({count:3d})  ssid={seen_ssids.get(bssid, '')!r}")
+    if not seen_bssids:
+        fail("no beacons captured — RX path not delivering 802.11 frames "
+             "(or no APs in range). Confirm APs are nearby and retry.")
+    ok(f"{len(seen_bssids)} BSSIDs visible across ch1/6/11 — RX WORKS. "
+       "M5 COMPLETE (this also confirms M3.c tune on-air).")
 
 
 def main() -> int:
@@ -344,7 +442,7 @@ def main() -> int:
     p.add_argument(
         "--phase",
         choices=("open", "fw", "validate", "mac_init", "tables", "efuse", "phy",
-                 "channel", "all"),
+                 "channel", "rx", "all"),
         default="all")
     p.add_argument("--debug", action="store_true", help="verbose USB logging")
     args = p.parse_args()
@@ -355,31 +453,30 @@ def main() -> int:
     ok("Interface 0 claimed")
     transport = RTL8814AUTransport(dev)
 
-    needs_fw = ("fw", "validate", "mac_init", "tables", "efuse", "phy", "all")
-    needs_validate = ("validate", "mac_init", "tables", "efuse", "phy", "all")
-    needs_mac_init = ("mac_init", "tables", "efuse", "phy", "all")
-    needs_tables = ("tables", "all")     # standalone MAC-replay smoke (M3.a)
-    needs_efuse = ("efuse", "phy", "channel", "all")
-    needs_phy = ("phy", "channel", "all")
-    needs_channel = ("channel", "all")
+    # Ordered bring-up chain: running phase X runs every phase up to and
+    # including X (so prerequisites can never be silently skipped). "tables"
+    # (M3.a) is a standalone smoke that needs M1/M2 but not efuse/phy.
+    runners = {
+        "open": lambda: phase_open(transport),
+        "fw": lambda: phase_fw(dev, transport),
+        "validate": lambda: phase_validate(transport),
+        "mac_init": lambda: phase_mac_init(dev, transport),
+        "efuse": lambda: phase_efuse(transport),
+        "phy": lambda: phase_phy(transport),
+        "channel": lambda: phase_channel(transport),
+        "rx": lambda: phase_rx(dev, transport),
+    }
+    chain = ["open", "fw", "validate", "mac_init", "efuse", "phy", "channel", "rx"]
+    target = "rx" if args.phase == "all" else args.phase
 
     try:
-        if args.phase in ("open", "all"):
-            phase_open(transport)
-        if args.phase in needs_fw:
-            phase_fw(dev, transport)
-        if args.phase in needs_validate:
-            phase_validate(transport)
-        if args.phase in needs_mac_init:
-            phase_mac_init(dev, transport)
-        if args.phase in needs_tables:
+        if target == "tables":
+            for ph in ("open", "fw", "validate", "mac_init"):
+                runners[ph]()
             phase_tables(transport)
-        if args.phase in needs_efuse:
-            phase_efuse(transport)
-        if args.phase in needs_phy:
-            phase_phy(transport)
-        if args.phase in needs_channel:
-            phase_channel(transport)
+        else:
+            for ph in chain[:chain.index(target) + 1]:
+                runners[ph]()
     finally:
         step("Release interface")
         try:
