@@ -5,7 +5,8 @@
 Cross-driver gap classes (project audit 2026-05-25). **Offline analysis only —
 no hardware available; verify before `[x]`.**
 
-- [ ] **RX polling loop drops frames** — LIKELY AFFECTED. `driver.py:_rx_loop`
+- [~] **RX polling loop drops frames** — PORTED to the shared RxReaderThread
+  (awaiting HW verify). Was the gap: `driver.py:_rx_loop`
   (~470) does `await loop.run_in_executor(read_rx_burst)` then parse on the
   event loop — no read posted while parsing. Same pattern as rtl8821au pre-fix.
   Fix: dedicated reader thread + queue hand-off (rtl8821au commit 2e3a7a7).
