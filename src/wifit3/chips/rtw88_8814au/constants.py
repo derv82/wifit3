@@ -110,3 +110,98 @@ EMEM_PRESENT = False             # mem_usage bit 4 clear — no EMEM segment
 
 # FW-upload bulk-OUT endpoint for the AWUS1900 (out_ep[0]) — [WIRE] capture-1.
 EP_FW_BULK_OUT = 0x02
+
+# ===========================================================================
+# M2 — MAC init + FIFO/queue config
+# ===========================================================================
+# Family-shared FIFO/queue register addresses that already live in
+# rtw88_base.registers (re-exported here so fifo.py reads them off `constants`):
+from wifit3.chips.rtw88_base.registers import (  # noqa: E402,F401
+    REG_FIFOPAGE_CTRL_2,
+    REG_FIFOPAGE_INFO_1,
+    REG_FWHW_TXQ_CTRL,
+    REG_RQPN_CTRL_2,
+)
+
+# --- MAC-init register addresses (verbatim from reg.h) ---------------------
+MAC_TRX_ENABLE = 0xFF            # reg.h:219 (all 8 low bits of REG_CR)
+REG_RRSR = 0x0440
+REG_RETRY_LIMIT = 0x042A
+REG_MAX_AGGR_NUM = 0x04CA
+REG_SPEC_SIFS = 0x0428
+REG_MAC_SPEC_SIFS = 0x063A
+REG_SIFS = 0x0514
+REG_EDCA_VO_PARAM = 0x0500
+REG_EDCA_VI_PARAM = 0x0504
+REG_EDCA_BE_PARAM = 0x0508
+REG_EDCA_BK_PARAM = 0x050C
+REG_ACKTO = 0x0640
+REG_TBTT_PROHIBIT = 0x0540
+REG_DRVERLYINT = 0x0558
+REG_BCNDMATIM = 0x0559
+REG_BCNTCFG = 0x0510
+REG_BCN_MAX_ERR = 0x055D
+REG_FAST_EDCA_VOVI_SETTING = 0x1448
+REG_FAST_EDCA_BEBK_SETTING = 0x144C
+REG_USB_MOD = 0xF008
+REG_SW_AMPDU_BURST_MODE_CTRL = 0x04BC
+REG_HIMR0 = 0x00B0
+REG_HIMR1 = 0x00B8
+REG_RXFLTMAP0 = 0x06A0
+REG_RXFLTMAP1 = 0x06A2
+REG_RXFLTMAP2 = 0x06A4
+REG_AUTO_LLT_V1 = 0x0208
+REG_FIFOPAGE_INFO_2 = 0x0234
+REG_FIFOPAGE_INFO_3 = 0x0238
+REG_FIFOPAGE_INFO_4 = 0x023C
+REG_FIFOPAGE_INFO_5 = 0x0240
+REG_BCNQ_BDNY_V1 = 0x0424
+REG_BCNQ1_BDNY_V1 = 0x0456
+REG_RXFF_BNDY = 0x011C
+REG_TXDMA_OFFSET_CHK = 0x020C
+REG_H2C_HEAD = 0x0244
+REG_H2C_TAIL = 0x0248
+REG_H2C_READ_ADDR = 0x024C
+REG_H2C_INFO = 0x0254
+REG_H2C_PKT_READADDR = 0x10D0
+REG_H2C_PKT_WRITEADDR = 0x10D4
+REG_RX_DRVINFO_SZ = 0x060F
+REG_TRXFF_BNDY = 0x0114
+REG_RCR = 0x0608
+REG_WMAC_OPTION_FUNCTION = 0x07D0
+
+# --- MAC-init bit macros (verbatim from reg.h) -----------------------------
+BIT_MAC_SEC_EN = 1 << 9
+BIT_32K_CAL_TMR_EN = 1 << 10
+BIT_APP_PHYSTS = 1 << 28
+BIT_AUTO_INIT_LLT_V1 = 1 << 0
+BIT_LD_RQPN = 1 << 31
+BIT_EN_WR_FREE_TAIL = 1 << 20
+BIT_MASK_BLK_DESC_NUM = 0xF << 4         # GENMASK(7,4)
+BIT_PRE_TX_CMD = 1 << 6
+BIT_RXDMA_ARBBW_EN = 1 << 0
+
+# REG_TXDMA_PQ_MAP field shifts (2-bit fields, mask 0x3) — reg.h
+TXDMA_MAP_SHIFTS = {            # queue → (shift, dma_mapping value source)
+    "vo": 4, "vi": 6, "be": 8, "bk": 10, "mg": 12, "hi": 14,
+}
+TXDMA_MAP_MASK = 0x3
+
+# --- MAC-init scalar constants ---------------------------------------------
+WLAN_BCN_DMA_TIME = 0x02         # rtw88xxa.h:66
+# WLAN_TBTT_TIME = WLAN_TBTT_PROHIBIT(0x04) | (WLAN_TBTT_HOLD_TIME(0x64) << 8)
+WLAN_TBTT_TIME = 0x04 | (0x64 << 8)   # rtw88xxa.h:69 → 0x6404
+C2H_PKT_BUF = 256                # mac.h
+PHY_STATUS_SIZE = 4              # mac.h
+USB_TX_AGG_DESC_NUM = 3          # rtw8814a_hw_spec.usb_tx_agg_desc_num
+
+# --- FIFO partition params (rtw8814a_hw_spec) ------------------------------
+RSVD_DRV_PG_NUM = 8              # .rsvd_drv_pg_num
+CSI_BUF_PG_NUM = 0               # .csi_buf_pg_num
+# Reserved-page counts for the non-8051 path (mac.h:25..29) — chip-generic.
+RSVD_PG_H2C_EXTRAINFO_NUM = 24
+RSVD_PG_H2C_STATICINFO_NUM = 8
+RSVD_PG_H2CQ_NUM = 8
+RSVD_PG_CPU_INSTRUCTION_NUM = 0
+RSVD_PG_FW_TXBUF_NUM = 4
+TX_PAGE_SIZE_SHIFT = 7           # main.h:34

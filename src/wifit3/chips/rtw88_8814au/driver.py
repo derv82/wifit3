@@ -27,6 +27,7 @@ from .firmware import (
     download_firmware_validate,
     load_firmware_blob,
 )
+from .fifo import count_bulk_out_eps, rtw_init_trx_cfg
 from .mac import cut_mask_from_sys_cfg1, is_chip_warm, mac_power_on
 from .transport import RTL8814AUTransport
 
@@ -143,10 +144,16 @@ class RTL8814AUDriver:
         if not ok_run:
             logger.error("FW_READY not satisfied (REG_MCUFW_CTRL=0x%08x)", last)
             return False
+        logger.info("RTL8814AU M1: firmware running (MCUFW_CTRL=0x%08x)", last)
 
-        logger.info("RTL8814AU M1 complete: firmware running (MCUFW_CTRL=0x%08x). "
-                    "PHY/RX/TX not yet implemented (M3/M5/M6).", last)
-        _progress(1.00, "RTL8814AU M1: firmware loaded (scan/inject pending)")
+        _progress(0.90, "TRX init (queue mapping + FIFO + LLT)")
+        bulkout = await loop.run_in_executor(None, count_bulk_out_eps, self.dev)
+        await loop.run_in_executor(
+            None, lambda: rtw_init_trx_cfg(self.transport, bulkout)
+        )
+        logger.info("RTL8814AU M2: TRX/LLT init done (%d bulk-OUT eps). "
+                    "PHY/RX/TX not yet implemented (M3/M5/M6).", bulkout)
+        _progress(1.00, "RTL8814AU M2: MAC/FIFO ready (scan/inject pending)")
         return True
 
     async def set_channel(self, channel: int) -> bool:

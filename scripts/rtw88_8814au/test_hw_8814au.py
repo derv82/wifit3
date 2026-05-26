@@ -40,6 +40,10 @@ from wifit3.chips.rtw88_8814au.firmware import (
     load_firmware_blob,
     parse_fw_header,
 )
+from wifit3.chips.rtw88_8814au.fifo import (
+    count_bulk_out_eps,
+    rtw_init_trx_cfg,
+)
 from wifit3.chips.rtw88_8814au.mac import (
     cut_mask_from_sys_cfg1,
     is_chip_warm,
@@ -195,9 +199,30 @@ def phase_validate(transport: RTL8814AUTransport) -> None:
     ok("FW_READY satisfied — wlan CPU is running the firmware. M1 COMPLETE.")
 
 
+def phase_mac_init(dev, transport: RTL8814AUTransport) -> None:
+    step("TRX init: queue mapping + FIFO/priority queues + LLT  [M2 GATE]")
+    bulkout = count_bulk_out_eps(dev)
+    print(f"  bulk-OUT endpoints detected: {bulkout} "
+          f"(selects rqpn_table_8814a[{bulkout}])")
+    if bulkout not in (2, 3, 4):
+        fail(f"unexpected bulk-OUT count {bulkout} (expected 2/3/4)")
+    t0 = time.perf_counter()
+    try:
+        fifo = rtw_init_trx_cfg(transport, bulkout)
+    except IOError as e:
+        fail(f"rtw_init_trx_cfg failed: {e}")
+    dt = (time.perf_counter() - t0) * 1000
+    print(f"  rsvd_boundary   = {fifo['rsvd_boundary']} pages")
+    print(f"  rsvd_h2cq_addr  = {fifo['rsvd_h2cq_addr']} pages")
+    print(f"  REG_CR          = 0x{transport.read32(REG_CR):08x} "
+          f"(MAC_TRX_ENABLE = low byte 0xff)")
+    ok(f"LLT auto-init completed + H2C ring verified in {dt:.0f} ms. M2 COMPLETE.")
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--phase", choices=("open", "fw", "validate", "all"),
+    p.add_argument("--phase",
+                   choices=("open", "fw", "validate", "mac_init", "all"),
                    default="all")
     p.add_argument("--debug", action="store_true", help="verbose USB logging")
     args = p.parse_args()
@@ -208,8 +233,9 @@ def main() -> int:
     ok("Interface 0 claimed")
     transport = RTL8814AUTransport(dev)
 
-    needs_fw = ("fw", "validate", "all")
-    needs_validate = ("validate", "all")
+    needs_fw = ("fw", "validate", "mac_init", "all")
+    needs_validate = ("validate", "mac_init", "all")
+    needs_mac_init = ("mac_init", "all")
 
     try:
         if args.phase in ("open", "all"):
@@ -218,6 +244,8 @@ def main() -> int:
             phase_fw(dev, transport)
         if args.phase in needs_validate:
             phase_validate(transport)
+        if args.phase in needs_mac_init:
+            phase_mac_init(dev, transport)
     finally:
         step("Release interface")
         try:
@@ -227,7 +255,7 @@ def main() -> int:
         except usb.core.USBError as e:
             print(f"  (release warning: {e})")
 
-    print("\nALL PASS (M1)")
+    print("\nALL PASS")
     return 0
 
 

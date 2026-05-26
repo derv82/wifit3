@@ -23,7 +23,17 @@ Family: **rtw88** (modern), shares `chips/rtw88_base/`.
   - 68256 bytes (DMEM 5792 + IMEM 62464) uploaded in 44 ms; no EALREADY cycle.
   - Enumerated at **bcdUSB 0x0200 (USB 2.0)** — see Known Gaps #7; matters for
     M5 RX throughput, not M1. Host needed Zadig→WinUSB binding for `0bda:8813`.
-- **M2+** — not started.
+- **M2 (TRX init: queue mapping + FIFO + LLT + H2C)** — ✅ CODE COMPLETE,
+  offline-verified (imports; FIFO math reproduces the kernel reserved-page
+  invariant rsvd_boundary == rsvd_drv_addr = 1986; pubq 1858; txdma_pq_map
+  0xf5b0 for 3-bulkout; 537 tests pass). **Awaiting HW gate** —
+  `test_hw_8814au.py --phase mac_init` (LLT auto-init must clear + H2C ring
+  verifies). Scope: `rtw_init_trx_cfg` only (`fifo.py`). The rest of
+  `rtw8814a_mac_init` — the `mac_tbl` load + EDCA/SIFS/beacon timing — and
+  `rtw_drv_info_cfg` are deferred: EDCA/mac_tbl belong with TX (M6), drv_info
+  (RX physts + rxdesc-len quirk) with RX (M5). Bulk-OUT count is detected at
+  runtime (`count_bulk_out_eps`) → selects `rqpn_table_8814a` row.
+- **M3+** — not started.
 
 ## 0. TL;DR for the lead
 
