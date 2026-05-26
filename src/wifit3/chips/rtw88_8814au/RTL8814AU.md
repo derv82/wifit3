@@ -98,16 +98,21 @@ Family: **rtw88** (modern), shares `chips/rtw88_base/`.
     was the CCK packet-detect threshold sitting at the insensitive table default
     (kernel tunes it via a dynamic watchdog we don't run). Pinned REG_CCK_PD_TH
     to LV0 + enabled 2R-CCA/MRC → 64 BSSIDs/9s. See `rx.tune_monitor_cck_sensitivity`.
-  - **[OPEN] Intermittent cold-boot RX (~50%)** — binary per cold boot: either
-    ~60 beacons or exactly 0 (never partial), independent of channel. Reads
-    time out (chip delivers nothing), MAC is alive (CR=0x4ff) and RCR/sensitivity
-    are correct in both cases. **Ruled out:** bulk-IN pipe (clear_halt+drain,
-    `rx.prime_bulk_in`), reference clock (`crystal_cap` → AFE_CTRL3, now written).
-    Binary per-boot ⇒ an init-time RF state that comes up good/bad each cold boot
-    — normally pinned by calibration. The only calibration we skip is IQK
-    (`rtw8814a_phy_calibration` → `do_iqk`, TX-IQ/LO-leakage; large port,
-    uncertain for an RX symptom). Next step: diagnostic register-diff of a good
-    vs bad boot to pinpoint, before committing to the IQK port.
+  - **[RESOLVED] Intermittent RX** — was two compounding ~50% cold-boot issues,
+    both fixed:
+    1. **RX not frame-aligned** → `iter_bulk_frames` parsed ~0 (chip delivered
+       20 KB, parser got ~1 frame). Root cause: **RX aggregation was never
+       enabled.** `rtw_usb_dynamic_rx_agg_v1` (BIT_RXDMA_AGG_EN + REG_RXDMA_AGG_PG_TH
+       size=5/to=0x20) makes the chip flush bulk transfers on frame boundaries
+       (each starts with an rx_pkt_desc), as the kernel's rx_handler requires.
+       See `rx.enable_rx_aggregation`. (Also dropped `prime_bulk_in`'s
+       clear_halt/drain — it desynced the active stream.)
+    2. **RF-deaf** (CCA=0, PHY hears nothing) → re-running `phy_set_param`
+       re-rolls the analog lock; `connect()` retries until CRC-OK>0
+       (`rx.rf_receiving_frames`). Diagnosed via `--phase rxdiag`/`rxdump` (PHY
+       false-alarm/CRC/CCA counters): bad boots showed CCA=0, ruling out
+       DMA/IQK. HW: a deaf start auto-recovers in 1 re-init.
+    **HW-VERIFIED reliable: 66–70 BSSIDs every run across cold + warm boots.**
   - **[follow-up] RSSI** still the -100 placeholder (needs rtw8814a_query_phy_status).
   - **[BUG fixed] test phase-gating** — `--phase rx` had skipped fw/validate/
     mac_init/efuse (missing from the `needs_*` sets), so the MAC was never
@@ -115,13 +120,13 @@ Family: **rtw88** (modern), shares `chips/rtw88_base/`.
     the target phase). NOT a driver bug — driver.connect() always ran M1→M5 in
     order; the EFUSE grant-off "fix" made on the wrong theory was reverted.
 - **M6 (TX inject)** — not started. TX desc + deauth → handshake recapture.
-- **M7 (monitor-mode / no-RX-filter verification)** — proves the card is truly
-  promiscuous, not just passing broadcast + own-MAC. Gate: capture frames whose
-  **addr1 (receiver) is a unicast MAC that is neither broadcast/multicast nor our
-  own** — i.e. traffic addressed to OTHER stations. Beacons (addr1=broadcast)
-  do NOT count. PASS if such frames appear. Cross-cutting concern (several cards
-  silently filter): should generalise into a shared check across all drivers
-  per [[project_driver_gap_audit]].
+- **M7 (monitor-mode / no-RX-filter verification)** — ✅ **DONE, HW-VERIFIED.**
+  `--phase monitor` classifies each frame's addr1; PASS requires frames whose
+  receiver is a unicast MAC that is neither broadcast/multicast nor our own
+  (traffic to OTHER stations). HW: **379 frames to 35 other stations** in a ~9 s
+  sweep → card is truly promiscuous, no RX address filtering. Cross-cutting
+  concern (several cards silently filter): should generalise into a shared check
+  across all drivers per [[project_driver_gap_audit]].
 
 ## 0. TL;DR for the lead
 

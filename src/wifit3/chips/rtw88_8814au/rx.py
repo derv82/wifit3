@@ -21,6 +21,7 @@ HCI_RXDMA/RXDMA/MACRXEN) back in M2's txdma_queue_mapping.
 from __future__ import annotations
 
 import logging
+import time
 
 import usb.core
 
@@ -67,7 +68,21 @@ def mac_init_for_rx(transport: RTL8814AUTransport) -> None:
     transport.write16(C.REG_TXDMA_OFFSET_CHK,
                       transport.read16(C.REG_TXDMA_OFFSET_CHK) | BIT_DROP_DATA_EN)
 
+    enable_rx_aggregation(transport)
     tune_monitor_cck_sensitivity(transport)
+
+
+def enable_rx_aggregation(transport: RTL8814AUTransport) -> None:
+    """rtw_usb_dynamic_rx_agg_v1(enable) — 8814a. Makes the chip frame-align
+    bulk-IN transfers (each starts with an rx_pkt_desc). Without it the RX
+    stream is chopped mid-frame and the per-URB desc parse fails. [HW-critical]
+    """
+    transport.write8_set(C.REG_TXDMA_PQ_MAP, C.BIT_RXDMA_AGG_EN)
+    transport.write8_clr(C.REG_RXDMA_AGG_PG_TH + 3, 1 << 7)
+    val16 = (C.RXDMA_AGG_SIZE & 0xFF) | ((C.RXDMA_AGG_TIMEOUT & 0xFF) << 8)
+    transport.write16(C.REG_RXDMA_AGG_PG_TH, val16)
+    logger.info("RX aggregation enabled (size=0x%02x timeout=0x%02x)",
+                C.RXDMA_AGG_SIZE, C.RXDMA_AGG_TIMEOUT)
 
 
 def apply_monitor_rcr(transport: RTL8814AUTransport) -> None:
@@ -100,24 +115,52 @@ def tune_monitor_cck_sensitivity(transport: RTL8814AUTransport) -> None:
 
 
 def prime_bulk_in(dev: usb.core.Device, ep_in: int) -> None:
-    """Reset + drain the bulk-IN pipe before RX (mirrors 8822bu _reset_bulk_pipes).
+    """No-op (intentionally).
 
-    A cold-boot bulk-IN pipe can sit with a stale data-toggle or buffered junk
-    that makes reads return nothing (intermittent 0-frame runs). clear_halt
-    resets the toggle; a short drain clears stale bytes.
+    DO NOT drain or clear_halt the bulk-IN pipe before RX. The 8814a delivers a
+    CONTINUOUS RX stream chopped into USB transfers that are NOT frame-aligned —
+    a bulk transfer can start mid-frame. Draining transfers (or clear_halt)
+    leaves the read position mid-frame, and since iter_bulk_frames assumes each
+    buffer starts at an rx_pkt_desc, every subsequent parse fails (we read frame
+    bodies with no descriptor at offset 0). Leaving the pipe untouched lets the
+    first listen read land on a fresh frame boundary after init. [HW-confirmed:
+    draining → 0 parsed frames; no-drain → frames parse.]
     """
-    try:
-        dev.clear_halt(ep_in)
-    except (usb.core.USBError, NotImplementedError) as e:
-        logger.debug("clear_halt(0x%02x) skipped: %s", ep_in, e)
-    drained = 0
-    for _ in range(8):
-        try:
-            drained += len(dev.read(ep_in, 16384, 20))
-        except usb.core.USBError:
-            break
-    if drained:
-        logger.debug("primed bulk-IN: drained %d stale bytes", drained)
+    return
+
+
+def reset_phy_counters(transport: RTL8814AUTransport) -> None:
+    """Reset FA/CCA/CRC counters (tail of rtw8814a_false_alarm_statistics)."""
+    transport.write32_set(C.REG_FAS, 1 << 17)
+    transport.write32_clr(C.REG_FAS, 1 << 17)
+    transport.write32_clr(C.REG_CCK0_FAREPORT, 1 << 15)
+    transport.write32_set(C.REG_CCK0_FAREPORT, 1 << 15)
+    transport.write32_set(C.REG_CNTRST, 1 << 0)
+    transport.write32_clr(C.REG_CNTRST, 1 << 0)
+
+
+def rf_receiving_frames(transport: RTL8814AUTransport,
+                        settle_s: float = 2.0) -> bool:
+    """True if the PHY actually DEMODULATES frames within `settle_s`.
+
+    Gates on CRC-OK counts (frames that passed FCS), not just CCA energy —
+    a cold-boot chip has THREE states: RF-deaf (CCA=0), demod-fail (CCA>0 but
+    CRC-OK=0, delivers garbage), and good (CRC-OK>0). Only CRC-OK>0 confirms a
+    usable boot; CCA alone would pass a demod-fail boot. Counters accumulate in
+    BB hardware passively. Used by connect() to re-roll phy_set_param until RX
+    genuinely works. See RTL8814AU.md.
+    """
+    reset_phy_counters(transport)
+    time.sleep(settle_s)
+    cck_ok = transport.read32(C.REG_CRC_CCK) & 0xFFFF
+    ofdm_ok = transport.read32(C.REG_CRC_OFDM) & 0xFFFF
+    ht_ok = transport.read32(C.REG_CRC_HT) & 0xFFFF
+    cca_ofdm = (transport.read32(C.REG_CCA_OFDM) >> 16) & 0xFFFF
+    demod_ok = cck_ok + ofdm_ok + ht_ok
+    logger.info("RF probe: CRC-ok=%d (cck=%d ofdm=%d ht=%d) cca=%d -> %s",
+                demod_ok, cck_ok, ofdm_ok, ht_ok, cca_ofdm,
+                "RECEIVING" if demod_ok else ("demod-fail" if cca_ofdm else "RF-deaf"))
+    return demod_ok > 0
 
 
 def iter_bulk_frames(buf: bytes):

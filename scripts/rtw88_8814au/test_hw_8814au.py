@@ -64,9 +64,10 @@ from wifit3.wlan.packet import WlanFrameParser
 import dataclasses
 
 
-def setup_logging(debug: bool) -> None:
+def setup_logging(debug: bool, quiet: bool = False) -> None:
+    level = logging.DEBUG if debug else (logging.WARNING if quiet else logging.INFO)
     logging.basicConfig(
-        level=logging.DEBUG if debug else logging.INFO,
+        level=level,
         format="%(asctime)s.%(msecs)03d [%(levelname)-5s] %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
@@ -377,6 +378,28 @@ def _extract_ssid(mpdu: bytes) -> str:
         return mpdu[ies_off + 2: ies_off + 2 + slen].hex()
 
 
+def _bring_up_rf_with_retry(dev, transport, attempts: int = 8) -> bool:
+    """RX setup + deaf-retry: re-roll phy_set_param until RF hears energy.
+    Mirrors the driver's connect() retry. Returns True if RF came up alive."""
+    er = read_efuse(transport)
+    cut = (transport.read32(REG_SYS_CFG1) >> 12) & 0xF
+    efuse = defaults_from_efuse(er, cut=cut)
+    chan.set_channel(transport, 1, rfe_option=er.rfe_option, force_band=True)
+    rx8814.mac_init_for_rx(transport)
+    rx8814.apply_monitor_rcr(transport)
+    for attempt in range(attempts):
+        if rx8814.rf_receiving_frames(transport):
+            if attempt:
+                print(f"  RF came up after {attempt} phy re-init(s)")
+            return True
+        print(f"  RF-deaf attempt {attempt + 1}/{attempts} — re-rolling phy")
+        phy_set_param(transport, efuse)
+        chan.set_channel(transport, 1, rfe_option=er.rfe_option, force_band=True)
+        rx8814.mac_init_for_rx(transport)
+        rx8814.apply_monitor_rcr(transport)
+    return False
+
+
 def phase_rx(dev, transport: RTL8814AUTransport) -> None:
     step("MAC power/register sanity before RX")
     cr = transport.read32(REG_CR)
@@ -392,12 +415,13 @@ def phase_rx(dev, transport: RTL8814AUTransport) -> None:
         print(f"  WARN: REG_CR low byte 0x{cr & 0xFF:02x} != MAC_TRX_ENABLE(0xff) "
               "— MAC TRX not fully enabled")
 
-    step("RX monitor init + listen for beacons on ch1/ch6  [M5 GATE]")
+    step("RX monitor init + deaf-retry + listen for beacons  [M5 GATE]")
     try:
-        rx8814.mac_init_for_rx(transport)
-        rx8814.apply_monitor_rcr(transport)
+        if not _bring_up_rf_with_retry(dev, transport):
+            fail("RF stayed deaf after retries — re-init didn't re-roll the "
+                 "lock this run; unplug/replug and retry.")
     except IOError as e:
-        fail(f"mac_init_for_rx failed: {e}")
+        fail(f"RF bring-up failed: {e}")
     eps = rx8814.probe_endpoints(dev)
     if not eps.bulk_in:
         fail("no bulk-IN endpoint found")
@@ -510,6 +534,93 @@ def phase_rxdiag(dev, transport: RTL8814AUTransport) -> None:
     ok("diagnostic complete — run once on a GOOD boot, once on a BAD boot, paste both")
 
 
+def _measure_cca(dev, transport, ep_in, secs: float) -> tuple[int, int]:
+    """Reset counters, listen `secs`, return (usb_frames, cca_energy)."""
+    rx8814.prime_bulk_in(dev, ep_in)
+    _reset_phy_counters(transport)
+    usb_frames = 0
+    t_end = time.perf_counter() + secs
+    while time.perf_counter() < t_end:
+        buf = rx8814.read_rx_burst(dev, ep_in, max_size=16384, timeout_ms=200)
+        if buf is not None:
+            usb_frames += sum(1 for _ in rx8814.iter_bulk_frames(buf))
+    c = _read_phy_counters(transport)
+    return usb_frames, c["cca_ofdm"] + c["cca_cck"]
+
+
+def phase_rfretry(dev, transport: RTL8814AUTransport) -> None:
+    step("RF-RETRY EXPERIMENT: does re-running phy_set_param re-roll the RF lock?")
+    er = read_efuse(transport)
+    cut = (transport.read32(REG_SYS_CFG1) >> 12) & 0xF
+    efuse = defaults_from_efuse(er, cut=cut)
+
+    rx8814.mac_init_for_rx(transport)
+    rx8814.apply_monitor_rcr(transport)
+    ep_in = rx8814.probe_endpoints(dev).primary_bulk_in
+
+    print("  attempt | usb_frames | cca_energy | state")
+    alive_at = None
+    for attempt in range(4):
+        if attempt > 0:  # re-roll: re-run PHY init + re-tune
+            phy_set_param(transport, efuse)
+            chan.set_channel(transport, 6, rfe_option=1, force_band=True)
+            rx8814.mac_init_for_rx(transport)
+            rx8814.apply_monitor_rcr(transport)
+        else:
+            chan.set_channel(transport, 6, rfe_option=1, force_band=True)
+            rx8814.tune_monitor_cck_sensitivity(transport)
+        frames, cca = _measure_cca(dev, transport, ep_in, 2.5)
+        alive = frames > 0 or cca > 0
+        print(f"     {attempt}    |   {frames:5d}    |   {cca:6d}   | "
+              f"{'ALIVE' if alive else 'RF-DEAF'}")
+        if alive:
+            alive_at = attempt
+            break
+
+    print("\n  READING:")
+    if alive_at == 0:
+        print("    -> ALIVE on first try (good boot this run; re-run to catch a deaf start).")
+    elif alive_at is not None:
+        print(f"    -> started RF-DEAF, recovered after {alive_at} phy re-init(s) "
+              "==> RETRY WORKS: bake a re-init loop into connect().")
+    else:
+        print("    -> stayed RF-DEAF across all phy re-inits ==> re-init does NOT "
+              "re-roll; deaf is frozen until a power-cycle. Next: card_disable+enable.")
+    ok("RF-retry experiment complete — paste a run whose attempt 0 is RF-DEAF")
+
+
+def phase_rxdump(dev, transport: RTL8814AUTransport) -> None:
+    step("RAW RX DUMP: PHY demodulates fine but parser gets ~0 — inspect bytes")
+    import struct
+    if not _bring_up_rf_with_retry(dev, transport):
+        fail("RF deaf after retries")
+    ep_in = rx8814.probe_endpoints(dev).primary_bulk_in
+    rx8814.prime_bulk_in(dev, ep_in)
+
+    dumped = 0
+    t_end = time.perf_counter() + 6.0
+    while time.perf_counter() < t_end and dumped < 8:
+        buf = rx8814.read_rx_burst(dev, ep_in, max_size=16384, timeout_ms=200)
+        if buf is None or len(buf) < 24:
+            continue
+        dumped += 1
+        w = struct.unpack_from("<6I", buf, 0)
+        pkt_len = w[0] & 0x3FFF
+        drv = ((w[0] >> 16) & 0xF) * 8
+        shift = (w[0] >> 24) & 0x3
+        physts = (w[0] >> 26) & 1
+        c2h = (w[2] >> 28) & 1
+        nf = sum(1 for _ in rx8814.iter_bulk_frames(buf))
+        print(f"\n  burst#{dumped} len={len(buf)}")
+        print(f"    w0=0x{w[0]:08x} -> pkt_len={pkt_len} drv_info={drv}B "
+              f"shift={shift} physts={physts} c2h={c2h}; iter -> {nf} frames")
+        if dumped <= 2:
+            # full hex in 32-byte rows w/ offsets, to find desc/frame boundaries
+            for off in range(0, len(buf), 32):
+                print(f"    [{off:4d}] {buf[off:off + 32].hex()}")
+    ok(f"dumped {dumped} bursts — paste them; I'll decode the descriptor mismatch")
+
+
 def phase_monitor(dev, transport: RTL8814AUTransport) -> None:
     step("Monitor verification: capture frames addressed to OTHER stations  [M7 GATE]")
     # Beacons (addr1=broadcast) only prove we accept broadcast — a FILTERING
@@ -518,8 +629,8 @@ def phase_monitor(dev, transport: RTL8814AUTransport) -> None:
     # i.e. AP<->client data/ACK traffic addressed to someone else.
     our_mac = read_efuse(transport).mac_addr
     print(f"  our MAC: {':'.join(f'{b:02x}' for b in our_mac)}")
-    rx8814.apply_monitor_rcr(transport)
-    rx8814.tune_monitor_cck_sensitivity(transport)
+    if not _bring_up_rf_with_retry(dev, transport):
+        fail("RF stayed deaf after retries — unplug/replug and retry.")
     eps = rx8814.probe_endpoints(dev)
     ep_in = eps.primary_bulk_in
     rx8814.prime_bulk_in(dev, ep_in)
@@ -569,11 +680,13 @@ def main() -> int:
     p.add_argument(
         "--phase",
         choices=("open", "fw", "validate", "mac_init", "tables", "efuse", "phy",
-                 "channel", "rx", "monitor", "rxdiag", "all"),
+                 "channel", "rx", "monitor", "rxdiag", "rfretry", "rxdump",
+                 "all"),
         default="all")
     p.add_argument("--debug", action="store_true", help="verbose USB logging")
+    p.add_argument("--quiet", action="store_true", help="suppress INFO logs")
     args = p.parse_args()
-    setup_logging(args.debug)
+    setup_logging(args.debug, args.quiet)
 
     step("USB discovery + claim")
     dev = open_device()
@@ -603,11 +716,12 @@ def main() -> int:
             for ph in ("open", "fw", "validate", "mac_init"):
                 runners[ph]()
             phase_tables(transport)
-        elif target == "rxdiag":
+        elif target in ("rxdiag", "rfretry", "rxdump"):
             for ph in ("open", "fw", "validate", "mac_init", "efuse", "phy",
                        "channel"):
                 runners[ph]()
-            phase_rxdiag(dev, transport)
+            {"rxdiag": phase_rxdiag, "rfretry": phase_rfretry,
+             "rxdump": phase_rxdump}[target](dev, transport)
         else:
             for ph in chain[:chain.index(target) + 1]:
                 runners[ph]()

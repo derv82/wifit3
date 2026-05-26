@@ -264,6 +264,13 @@ RF18_BW_MASK = (1 << 11) | (1 << 10)
 # M5 — RX / monitor
 # ===========================================================================
 REG_RXDMA_MODE = 0x0290
+# RX aggregation (rtw_usb_dynamic_rx_agg_v1 — 8814a). WITHOUT this the chip does
+# not frame-align bulk-IN transfers, so reads land mid-frame and the per-URB
+# rx_pkt_desc parse fails. size=0x5 pages, timeout=0x20.
+REG_RXDMA_AGG_PG_TH = 0x0280
+BIT_RXDMA_AGG_EN = 1 << 2        # BIT(2) of REG_TXDMA_PQ_MAP (0x010C)
+RXDMA_AGG_SIZE = 0x05
+RXDMA_AGG_TIMEOUT = 0x20
 # Promiscuous monitor RCR (AAP|APM|AM|AB + APP_PHYSTS, CBSSID_* cleared) —
 # family-shared rtw88 value, same as rtl8821au/8822bu monitor.
 RCR_MONITOR = 0xF410400F
@@ -303,3 +310,4 @@ REG_CCA_OFDM = 0x0F08            # CCA count in high 16
 REG_CCA_CCK = 0x0FCC             # CCA count in low 16
 REG_CNTRST = 0x0B58              # BIT(0): counter reset
 REG_FAS = 0x09A4                 # BIT(17): FA counter reset
+REG_CCK0_FAREPORT = 0x0A2C       # BIT(15): CCK FA counter reset

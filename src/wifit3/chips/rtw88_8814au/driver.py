@@ -169,23 +169,39 @@ class RTL8814AUDriver:
                     er.rfe_option, er.rfe_option_raw, self.mac_address, er.crystal_cap)
         efuse = defaults_from_efuse(er, cut=(chip_version >> 12) & 0xF)
 
-        _progress(0.92, "PHY init (BB/RF enable + BB/AGC/RF tables, 4 paths)")
-        await loop.run_in_executor(
-            None, lambda: phy_set_param(self.transport, efuse)
-        )
+        # PHY/RF bring-up with deaf-retry. ~50% of cold boots the RF path comes
+        # up deaf (CCA=0, hardware-confirmed); re-running phy_set_param re-rolls
+        # the analog lock, so retry until RF is hearing energy. See RTL8814AU.md.
+        _PHY_RF_ATTEMPTS = 8
+        alive = False
+        for attempt in range(_PHY_RF_ATTEMPTS):
+            _progress(0.92, f"PHY/RF bring-up (attempt {attempt + 1})")
+            await loop.run_in_executor(
+                None, lambda: phy_set_param(self.transport, efuse))
+            await loop.run_in_executor(
+                None, lambda: chan.set_channel(self.transport, 1,
+                                               rfe_option=self._rfe_option,
+                                               force_band=True))
+            await loop.run_in_executor(None, rx.mac_init_for_rx, self.transport)
+            await loop.run_in_executor(None, rx.apply_monitor_rcr, self.transport)
+            alive = await loop.run_in_executor(
+                None, rx.rf_receiving_frames, self.transport)
+            if alive:
+                if attempt:
+                    logger.info("RTL8814AU: RF came up after %d re-init(s)", attempt)
+                break
+            logger.warning("RTL8814AU: RF-deaf on attempt %d/%d — re-rolling phy",
+                           attempt + 1, _PHY_RF_ATTEMPTS)
+        if not alive:
+            logger.error("RTL8814AU: RF stayed deaf after %d attempts. Please "
+                         "unplug, wait a few seconds, replug, and retry.",
+                         _PHY_RF_ATTEMPTS)
+            return False
 
-        _progress(0.97, "Tuning to channel 1")
-        await loop.run_in_executor(
-            None,
-            lambda: chan.set_channel(self.transport, 1,
-                                     rfe_option=self._rfe_option, force_band=True),
-        )
         self.current_channel = 1
         self.current_band_is_2g = True
 
-        _progress(0.98, "RX init (monitor filter + reader thread)")
-        await loop.run_in_executor(None, rx.mac_init_for_rx, self.transport)
-        await loop.run_in_executor(None, rx.apply_monitor_rcr, self.transport)
+        _progress(0.98, "Starting RX reader")
         if not await self._start_rx():
             return False
         logger.info("RTL8814AU M5: RX online (monitor). TX inject pending (M6).")
