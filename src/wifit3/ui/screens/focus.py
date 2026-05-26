@@ -439,7 +439,13 @@ class FocusView(Screen):
             # lbl-crack / lbl-crack-info (SECURITY).
             self._update_wep_capture(ap)
         else:
-            n_complete = sum(1 for hs in ap.handshakes.values() if hs.is_complete)
+            # Count distinct captured handshake INSTANCES (by ANonce), so a
+            # client that re-handshakes several times shows x2, x3, … instead of
+            # collapsing to x1 (one Handshake object per client). Matches the
+            # per-instance "Valid 4-Way Handshake" log.
+            n_complete = sum(
+                hs.complete_instances for hs in ap.handshakes.values()
+            )
             n_partial = sum(
                 1
                 for hs in ap.handshakes.values()
@@ -685,21 +691,24 @@ class FocusView(Screen):
         client = escape(ev.client_mac)
         if ev.kind == "eapol":
             # Flat per-frame trace: one line per M1-M4 as it lands (incl. M1/M3
-            # retransmits). Completeness is announced once by the separate
-            # handshake_complete banner — this line never claims "full".
+            # retransmits). Routine, so no solid highlight — the bg block is
+            # reserved for the "Valid 4-Way Handshake" banner below. Completeness
+            # is announced once per instance there, never on this line.
             msg_label = f"M{ev.msg_num}" if ev.msg_num else "EAPOL-?"
             essid = escape(ev.ssid or ev.bssid)
             self._log(
-                f"[black bold on cyan] {msg_label} [/black bold on cyan] "
+                f"[bold cyan]{msg_label}[/bold cyan] "
                 f"[cyan]EAPOL handshake from [bold]{client}[/bold] "
                 f"for [bold]{essid}[/bold][/cyan]"
             )
         elif ev.kind == "handshake_complete":
+            # Significant event → solid highlight. Client MAC is omitted (the
+            # surrounding Mx lines already carry it); re-fires per new 4-way.
             essid = escape(ev.ssid or ev.bssid)
             self._log(
-                f"[bold green]✓ Valid 4-Way Handshake[/bold green] "
-                f"({ev.pair_label}) from [bold]{client}[/bold] "
-                f"for [bold]{essid}[/bold] — press [bold]s[/bold] to save"
+                f"[black bold on green] ✓ Valid 4-Way Handshake "
+                f"({ev.pair_label}) [/black bold on green] for "
+                f"[bold]{essid}[/bold] [dim](press s to save)[/dim]"
             )
         elif ev.kind == "pmkid":
             self._log(

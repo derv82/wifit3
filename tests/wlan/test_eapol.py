@@ -301,6 +301,32 @@ def test_timestampless_frames_still_pair_on_replay():
     assert hs.is_complete
 
 
+def test_complete_instances_counts_distinct_anonces():
+    """A client that completes the 4-way twice (re-association → fresh ANonce,
+    new replay base) counts as two captured handshakes, not one."""
+    hs = _make_hs(
+        _ef(1, 5, ts=100.0, nonce=b"\xaa" * 32),
+        _ef(2, 5, ts=100.1, nonce=b"\x11" * 32),
+        _ef(1, 9, ts=200.0, nonce=b"\xbb" * 32),
+        _ef(2, 9, ts=200.1, nonce=b"\x22" * 32),
+    )
+    assert hs.is_complete
+    assert hs.complete_instances == 2
+
+
+def test_complete_instances_one_4way_is_single_instance():
+    """All four messages of ONE handshake share the AP's ANonce → one instance,
+    even though several M-frame combos validate."""
+    anonce = b"\xaa" * 32
+    hs = _make_hs(
+        _ef(1, 5, ts=100.0, nonce=anonce),
+        _ef(2, 5, ts=100.1, nonce=b"\x11" * 32),
+        _ef(3, 6, ts=100.2, nonce=anonce),
+        _ef(4, 6, ts=100.3, nonce=b"\x11" * 32),
+    )
+    assert hs.complete_instances == 1
+
+
 def test_captured_messages_set():
     hs = _make_hs(_ef(1, 5), _ef(1, 5), _ef(3, 6))
     assert hs.captured_messages == {1, 3}

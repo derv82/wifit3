@@ -55,7 +55,9 @@ class CaptureEventDetector:
         # delivers logs (incl. M1/M3 retries), matching the [Mx] file-log
         # trace. Handshakes are rare + central to WPA2 attacks, so err verbose.
         self._seen_eapol_count: dict[Tuple[str, str], int] = {}
-        self._completed: Set[Tuple[str, str]] = set()
+        # Keyed (bssid, client_mac, anonce) — one entry per captured handshake
+        # instance, so a re-handshake (new ANonce) re-announces.
+        self._completed: Set[Tuple[str, str, bytes]] = set()
         self._pmkid: Set[Tuple[str, str]] = set()
         # BSSIDs we've observed as hidden during this detector's lifetime.
         # Required so we only fire "decloak" on an actual None→SSID transition
@@ -128,21 +130,22 @@ class CaptureEventDetector:
                         )
                     self._seen_eapol_count[key] = len(frames)
 
-            # Completion banner — fires once per client, in BOTH modes. Scanner
-            # shows only this (+ PMKID); Focus shows it after the per-frame
-            # trace. Deduped via _completed so retransmits don't re-announce.
-            if hs.is_complete and key not in self._completed:
-                self._completed.add(key)
-                pair = hs.find_valid_pair()
-                pair_label = (
-                    f"M{pair[0].msg_num}+M{pair[1].msg_num}" if pair else "?"
-                )
+            # Completion banner — once per distinct handshake INSTANCE (keyed by
+            # ANonce), in BOTH modes. This dedupes within a single M1-M4 (M2/M3/
+            # M4 share the instance → one banner) but re-fires on a genuine
+            # re-handshake (new ANonce), which is the feedback we want. Scanner
+            # shows only this (+ PMKID); Focus shows it after the per-frame trace.
+            for anonce, pair in hs.valid_pairs_by_instance().items():
+                ikey = (ap.bssid, client_mac, anonce)
+                if ikey in self._completed:
+                    continue
+                self._completed.add(ikey)
                 yield CaptureEvent(
                     kind="handshake_complete",
                     bssid=ap.bssid,
                     client_mac=client_mac,
                     ssid=ap.ssid,
-                    pair_label=pair_label,
+                    pair_label=f"M{pair[0].msg_num}+M{pair[1].msg_num}",
                 )
 
             if hs.pmkid and key not in self._pmkid:

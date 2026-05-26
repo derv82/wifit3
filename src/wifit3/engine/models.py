@@ -105,6 +105,12 @@ class Handshake(BaseModel):
           M1+M2 (same replay)
           M1+M4 (M4.replay == M1.replay + 1)
         """
+        return next(self._iter_valid_pairs(), None)
+
+    def _iter_valid_pairs(self):
+        """Yield every same-instance hashcat-valid (lower-msg, higher-msg) pair,
+        in confidence order (M2+M3, M3+M4, M1+M2, M1+M4). ``find_valid_pair``
+        takes the first; instance counting walks them all."""
         by_msg: Dict[int, List[EapolFrame]] = {}
         for f in self.eapol_frames:
             if f.msg_num:
@@ -113,9 +119,10 @@ class Handshake(BaseModel):
         def rc(f: EapolFrame) -> int:
             return _replay_to_int(f.replay_hex)
 
-        def first(
-            ma: int, mb: int, rc_ok, *, anonce_from_m1: bool = False
-        ) -> Optional[Tuple[EapolFrame, EapolFrame]]:
+        same = lambda a, b: a.replay_hex == b.replay_hex          # noqa: E731
+        plus1 = lambda a, b: rc(b) == rc(a) + 1                   # noqa: E731
+
+        def gen(ma, mb, rc_ok, *, anonce_from_m1=False):
             for a in by_msg.get(ma, []):
                 for b in by_msg.get(mb, []):
                     if not rc_ok(a, b):
@@ -124,18 +131,32 @@ class Handshake(BaseModel):
                         continue
                     if anonce_from_m1 and not self._anonce_consistent(a):
                         continue
-                    return (a, b)
-            return None
+                    yield (a, b)
 
-        same = lambda a, b: a.replay_hex == b.replay_hex          # noqa: E731
-        plus1 = lambda a, b: rc(b) == rc(a) + 1                   # noqa: E731
+        yield from gen(2, 3, plus1)
+        yield from gen(3, 4, same)
+        yield from gen(1, 2, same, anonce_from_m1=True)
+        yield from gen(1, 4, plus1, anonce_from_m1=True)
 
-        return (
-            first(2, 3, plus1)
-            or first(3, 4, same)
-            or first(1, 2, same, anonce_from_m1=True)
-            or first(1, 4, plus1, anonce_from_m1=True)
-        )
+    def valid_pairs_by_instance(self) -> Dict[bytes, Tuple[EapolFrame, EapolFrame]]:
+        """Map each captured handshake *instance* (keyed by its ANonce — fresh
+        per association) to its best valid pair. A single 4-way collapses to one
+        entry no matter how many M-frame combos validate; a re-handshake (new
+        ANonce) adds another. Requires a beacon (needed to crack)."""
+        out: Dict[bytes, Tuple[EapolFrame, EapolFrame]] = {}
+        if not self.beacon_frame:
+            return out
+        for a, b in self._iter_valid_pairs():
+            # ANonce comes from whichever frame is M1 or M3.
+            anonce_frame = a if a.msg_num in (1, 3) else b
+            if len(anonce_frame.nonce) == 32:
+                out.setdefault(anonce_frame.nonce, (a, b))
+        return out
+
+    @property
+    def complete_instances(self) -> int:
+        """How many distinct 4-way handshakes we've captured for this client."""
+        return len(self.valid_pairs_by_instance())
 
     @property
     def is_complete(self) -> bool:
