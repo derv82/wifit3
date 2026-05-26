@@ -9,15 +9,19 @@ no hardware available; verify before `[x]`.**
   (363) does `await loop.run_in_executor(_read_once)` (381) then parse on the
   event loop — no read posted while parsing. Same pattern as rtl8821au pre-fix.
   Fix: dedicated reader thread + queue hand-off (rtl8821au commit 2e3a7a7).
-- [ ] **RX filter / monitor mode (ToDS capture)** — COLD OK, **WARM PATH BROKEN**
-  (the exact trap fixed in rtl8821au b6e7cb9). `RCR_MONITOR` is correct — it
-  includes `RCR_ACCEPT_AP` (all unicast/promiscuous) — and `enable_rx_data_path`
-  (mac.py:327) writes it, BUT that's only called from `_cold_bring_up`
-  (driver.py:222). `_warm_reattach → _finish_attach` (238/250) does NOT reapply
-  it, so a chip left warm by the kernel STA driver / a prior session keeps a
-  non-promiscuous RCR and drops client→AP (ToDS) frames. Fix: move the RCR
-  write into `_finish_attach` so it runs on both paths (mirror rtl8821au's
-  `apply_monitor_rx_filter`). Cold-boot (replug) works today; warm doesn't.
+- [~] **RX filter / monitor mode (ToDS capture)** — FIX APPLIED (commit
+  442c7aa), awaiting user HW verify. HW-confirmed gap 2026-05-25: only M1/M3
+  (AP→client) captured, never M2/M4 (client→AP). `RCR_MONITOR` (incl.
+  `RCR_ACCEPT_AP`/promiscuous) was correct but only written by
+  `enable_rx_data_path` on the cold path; `_warm_reattach` skipped it (the trap
+  fixed in rtl8821au b6e7cb9). Fix: `apply_monitor_rx_filter` reasserts it from
+  `_finish_attach` (both paths). Verify M2/M4 now captured + readback shows
+  `ACCEPT_AP=1`.
+
+Other observations (not yet investigated):
+- Encryption flaps WPA2 → occasionally "WEP" on a known-WPA2 AP — likely a
+  beacon mis-parse / RSN-IE intermittent miss (possibly the same packet-loss
+  the reader-loop fix would reduce). Separate from the RCR gap above. TODO.
 
 Verified facts only. Anything not in this doc is a hypothesis.
 
