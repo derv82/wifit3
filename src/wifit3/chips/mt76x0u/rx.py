@@ -41,6 +41,7 @@ from typing import Callable, Iterator, NamedTuple, Optional
 import usb.core
 
 from .constants import EP_IN_PKT_RX
+from ..rx_reader import RxReaderThread
 
 logger = logging.getLogger(__name__)
 
@@ -278,8 +279,7 @@ class RxDrainer:
         self.transport = transport
         self.frame_callback = frame_callback
         self.max_urb_bytes = max_urb_bytes
-        self._task: Optional[asyncio.Task] = None
-        self._running = False
+        self._reader: Optional[RxReaderThread] = None
         # Stats (helpful for debugging)
         self.rx_count = 0
         self.decoded = 0
@@ -288,60 +288,53 @@ class RxDrainer:
         self.dispatched = 0
 
     async def start(self) -> None:
-        if self._running:
+        if self._reader is not None:
             return
-        self._running = True
-        self._task = asyncio.create_task(self._loop())
+        loop = asyncio.get_running_loop()
+        self._reader = RxReaderThread(
+            loop, self._read_once, self._dispatch, name="mt76x0u-rx"
+        )
+        self._reader.start()
 
     async def stop(self) -> None:
-        self._running = False
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
+        if self._reader is not None:
+            await self._reader.stop()
+            self._reader = None
 
-    async def _loop(self) -> None:
+    # read_once runs on the reader thread; dispatch runs on the event loop.
+
+    def _read_once(self) -> Optional[bytes]:
+        """One blocking bulk-IN read; None on a benign timeout (bulk_in raises
+        usb.core.USBError on timeout, which the reader thread must NOT count)."""
+        try:
+            return self.transport.bulk_in(
+                EP_IN_PKT_RX, self.max_urb_bytes, timeout_ms=100,
+            )
+        except usb.core.USBError as e:
+            if (getattr(e, "backend_error_code", None) == -7
+                    or getattr(e, "errno", None) in (110, 10060)
+                    or "timeout" in str(e).lower()):
+                return None
+            raise
+
+    def _dispatch(self, buf: bytes) -> None:
+        """Decode one RX packet → parse → frame callback (on the loop)."""
         # Defer the WlanFrameParser import to avoid a circular at module load.
         from wifit3.wlan.packet import WlanFrameParser
 
-        while self._running:
+        self.rx_count += 1
+        rx = decode_rx_packet(bytes(buf))
+        if rx is None:
+            self.decode_failures += 1
+            return
+        self.decoded += 1
+        parsed = WlanFrameParser.parse_80211_frame(rx.frame, rx.rssi_dbm)
+        if parsed is None:
+            self.parse_failures += 1
+            return
+        if self.frame_callback is not None:
             try:
-                data = await self.transport.async_bulk_in(
-                    EP_IN_PKT_RX, self.max_urb_bytes, timeout_ms=100,
-                )
-            except asyncio.CancelledError:
-                break
-            except usb.core.USBError as e:
-                # ETIMEDOUT is normal (no frame in 100 ms); other errors logged.
-                if (getattr(e, "backend_error_code", None) == -7
-                        or getattr(e, "errno", None) == 110):
-                    continue
-                logger.debug("RxDrainer: USBError: %s", e)
-                await asyncio.sleep(0.01)
-                continue
+                self.frame_callback(parsed)
+                self.dispatched += 1
             except Exception as e:
-                logger.debug("RxDrainer: %s", e)
-                await asyncio.sleep(0.01)
-                continue
-
-            if not data:
-                continue
-            self.rx_count += 1
-            rx = decode_rx_packet(bytes(data))
-            if rx is None:
-                self.decode_failures += 1
-                continue
-            self.decoded += 1
-            parsed = WlanFrameParser.parse_80211_frame(rx.frame, rx.rssi_dbm)
-            if parsed is None:
-                self.parse_failures += 1
-                continue
-            if self.frame_callback is not None:
-                try:
-                    self.frame_callback(parsed)
-                    self.dispatched += 1
-                except Exception as e:
-                    logger.debug("RxDrainer callback error: %s", e)
+                logger.debug("RxDrainer callback error: %s", e)
