@@ -202,6 +202,10 @@ class AR9271Driver:
         except asyncio.TimeoutError:
             logger.warning("Timed out waiting for WMI Target Ready event. Proceeding anyway...")
         
+        # Establish the monitor RX filter (PROM) so passive frames are captured.
+        # The replayed init doesn't reliably hold it; set it explicitly here.
+        await self._apply_monitor_rx_filter()
+
         _update(1.0, f"AR9271 Driver successfully connected. MAC: {self.mac_address}")
         return True
 
@@ -359,6 +363,20 @@ class AR9271Driver:
                     
         return True
 
+    async def _apply_monitor_rx_filter(self) -> None:
+        """Write AR_RX_FILTER with the PROM (promiscuous) bit so we capture
+        other stations' frames (passive 4-way handshakes), not just frames
+        directed at us. ath9k_htc does this whenever monitoring AND re-applies
+        it after every reset/channel-change (which re-runs the INI tables and
+        clears PROM) — so we call it after init and after each set_channel.
+        Uses the existing WMI register-write primitive; payload is
+        [addr:u32 BE][val:u32 BE]. [SRC ath9k htc_drv_txrx.c:884]
+        """
+        await self.send_wmi_command(
+            WMI_REG_WRITE_CMDID,
+            struct.pack(">II", AR_RX_FILTER, RX_FILTER_MONITOR),
+        )
+
     async def set_channel(self, channel: int):
         from .sequences.tuning import get_channel_hop_sequence
         logger.info(f"Tuning AR9271 to Channel {channel}...")
@@ -366,6 +384,9 @@ class AR9271Driver:
         for cmd_id, payload in sequence:
             success = await self.send_wmi_command(cmd_id, payload)
             if not success: return False
+        # The channel change re-runs the INI tables (PROM cleared); re-apply the
+        # monitor RX filter, matching ath9k_htc's post-reset behaviour.
+        await self._apply_monitor_rx_filter()
         return True
 
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:

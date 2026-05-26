@@ -23,6 +23,17 @@ WMI_SET_RX_FILTER_CMDID    = 0x0012
 WMI_TARGET_IC_UPDATE_CMDID = 0x0019
 WMI_REG_RMW_CMDID          = 0x0020
 
+# Monitor RX filter. ath9k_htc sets AR_RX_FILTER with the PROM (promiscuous)
+# bit when monitoring [SRC ath9k htc_drv_txrx.c:884 is_monitoring → PROM;
+# reg.h:1675 AR_RX_FILTER=0x803C; mac.h:648 PROM=0x20] and re-applies it after
+# every reset/channel-change. The replayed init doesn't establish/hold it and
+# our set_channel never writes 0x803c, so passive (other-station) frames are
+# dropped while directed frames (PMKID) still come through. 0xC03F is the
+# observed monitor value [WIRE captures_ath9k_htc]: PROM|UCAST|MCAST|BCAST|
+# CONTROL|BEACON + the HT BAR bits.
+AR_RX_FILTER               = 0x803C
+RX_FILTER_MONITOR          = 0xC03F
+
 # --- WMI Event IDs (Target -> Host) ---
 # Note: v1.4 firmware (current hardware) has variance in event IDs:
 # 1. On Interrupt Pipe (EP 0x83), READY arrives as 0x0001.
