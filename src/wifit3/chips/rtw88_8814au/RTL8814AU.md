@@ -33,7 +33,16 @@ Family: **rtw88** (modern), shares `chips/rtw88_base/`.
   `rtw_drv_info_cfg` are deferred: EDCA/mac_tbl belong with TX (M6), drv_info
   (RX physts + rxdesc-len quirk) with RX (M5). Bulk-OUT count is detected at
   runtime (`count_bulk_out_eps`) → selects `rqpn_table_8814a` row.
-- **M3+** — not started.
+- **M3.a (init tables + 4-path RF access)** — ✅ CODE COMPLETE, offline-verified.
+  All 7 tables extracted (`extract_init_tables.py`): mac/agc/bb + rf_a/b/c/d,
+  ~29k u32s, phy_cond markers balanced (IF==ENDIF, IF+ELIF==neg for each).
+  Chip-local `rf.py` (direct read + sipi write, 4 paths) — see Decisions #1.
+  MAC-table replay dispatches 143 writes; RF read/write address math verified
+  for all 4 paths; 537 tests pass. **Awaiting HW gate** —
+  `test_hw_8814au.py --phase tables` (replay MAC table, read back sample regs).
+- **M3.b (phy_set_param: BB/RF enable + conditional table loads + 4-path RF
+  readback)** — not started.
+- **M3.c (channel tune) / M4+** — not started.
 
 ## 0. TL;DR for the lead
 
@@ -286,10 +295,16 @@ with date.
 
 ## 5. Decisions (lead, resolved)
 
-1. **rf_sipi path C/D** → **extend `rtw88_base/rf_sipi.py` in place.** Additive
-   only: path C/D extends the path→address map + adds the new reg constants;
-   paths 'a'/'b' stay byte-identical, so the 8812au/8821au/8822bu/(other) drivers
-   are unaffected. New methods are 8814au-only for now.
+1. ~~**rf_sipi path C/D** → extend `rtw88_base/rf_sipi.py` in place.~~
+   **REVERSED in M3.a → chip-local `rf.py` instead.** The "extend in place" call
+   assumed 8814a reads RF like its 8812au/8821au cousins. It doesn't:
+   `rtw8814a_ops.read_rf = rtw_phy_read_rf` is a **direct MMIO read**
+   (`read32(rf_base_addr[path] + addr*4)`), same as the 8822b — NOT the 3-wire
+   HSSI/PI/SI read that `rf_sipi.py` implements for the 8812a/8821a. So 8814a
+   gets its own `rf.py` (direct read + sipi write, 4 paths); the shared file is
+   untouched (lower risk than the original plan). `.write_rf` is the shared
+   `rtw_phy_write_rf_reg_sipi` semantics, just indexed by `rf_sipi_addr[path]`.
+   [Decision confirmed with lead during M3.a.]
 2. **EMEM** → **none.** Confirmed by parsing the real blob (§3.1). M1 = DMEM+IMEM
    only, near-pure 8822bu reuse.
 3. **M3 granularity** → **split into M3.a/.b/.c** (tables / phy / channel), each

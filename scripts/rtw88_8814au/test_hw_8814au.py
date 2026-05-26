@@ -49,6 +49,7 @@ from wifit3.chips.rtw88_8814au.mac import (
     is_chip_warm,
     mac_power_on,
 )
+from wifit3.chips.rtw88_8814au.phy import EfuseDefaults, load_mac_table
 from wifit3.chips.rtw88_8814au.transport import RTL8814AUTransport
 
 
@@ -219,10 +220,42 @@ def phase_mac_init(dev, transport: RTL8814AUTransport) -> None:
     ok(f"LLT auto-init completed + H2C ring verified in {dt:.0f} ms. M2 COMPLETE.")
 
 
+# MAC-table register read-backs (addr -> expected byte), picked from
+# rtw8814a_mac[] — timing regs not touched by M1/M2, so a clean walker proof.
+_MAC_TBL_CHECKS = [
+    (0x428, 0x0A), (0x429, 0x10), (0x434, 0x04),
+    (0x435, 0x05), (0x436, 0x07), (0x437, 0x08),
+]
+
+
+def phase_tables(transport: RTL8814AUTransport) -> None:
+    step("Replay MAC init table via phy_cond walker  [M3.a GATE]")
+    t0 = time.perf_counter()
+    try:
+        n = load_mac_table(transport, EfuseDefaults())
+    except (IOError, ValueError) as e:
+        fail(f"load_mac_table failed: {e}")
+    dt = (time.perf_counter() - t0) * 1000
+    print(f"  MAC table: {n} register writes in {dt:.0f} ms")
+
+    step("Read back sample MAC registers (must match table values)")
+    bad = 0
+    for addr, expect in _MAC_TBL_CHECKS:
+        got = transport.read8(addr)
+        flag = "ok" if got == expect else "MISMATCH"
+        if got != expect:
+            bad += 1
+        print(f"    0x{addr:03x}: wrote 0x{expect:02x}, read 0x{got:02x}  [{flag}]")
+    if bad:
+        fail(f"{bad}/{len(_MAC_TBL_CHECKS)} MAC reg read-backs mismatched — "
+             "table walker or write path is wrong")
+    ok("MAC table replayed and read back correctly. M3.a COMPLETE.")
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--phase",
-                   choices=("open", "fw", "validate", "mac_init", "all"),
+                   choices=("open", "fw", "validate", "mac_init", "tables", "all"),
                    default="all")
     p.add_argument("--debug", action="store_true", help="verbose USB logging")
     args = p.parse_args()
@@ -233,9 +266,10 @@ def main() -> int:
     ok("Interface 0 claimed")
     transport = RTL8814AUTransport(dev)
 
-    needs_fw = ("fw", "validate", "mac_init", "all")
-    needs_validate = ("validate", "mac_init", "all")
-    needs_mac_init = ("mac_init", "all")
+    needs_fw = ("fw", "validate", "mac_init", "tables", "all")
+    needs_validate = ("validate", "mac_init", "tables", "all")
+    needs_mac_init = ("mac_init", "tables", "all")
+    needs_tables = ("tables", "all")
 
     try:
         if args.phase in ("open", "all"):
@@ -246,6 +280,8 @@ def main() -> int:
             phase_validate(transport)
         if args.phase in needs_mac_init:
             phase_mac_init(dev, transport)
+        if args.phase in needs_tables:
+            phase_tables(transport)
     finally:
         step("Release interface")
         try:
