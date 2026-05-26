@@ -80,7 +80,7 @@ async def test_focus_surfaces_passive_handshake_and_pmkid():
         focus.update_ui()
         await pilot.pause()
         log_text = _log_text(focus.query_one("#focus-event-log", RichLog))
-        assert "M1" in log_text and "partial handshake captured" in log_text, log_text
+        assert "M1" in log_text and "EAPOL handshake" in log_text, log_text
         assert "PMKID captured" in log_text, log_text
 
         # M2 completes a hashcat-valid M1+M2 pair → "full handshake" line.
@@ -93,7 +93,7 @@ async def test_focus_surfaces_passive_handshake_and_pmkid():
         assert focus.query_one("#btn-save", Button).disabled is False
 
         log_text = _log_text(focus.query_one("#focus-event-log", RichLog))
-        assert "full handshake captured" in log_text, log_text
+        assert "Valid 4-Way Handshake" in log_text, log_text
         assert "M1+M2" in log_text, log_text
 
 

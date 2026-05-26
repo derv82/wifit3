@@ -684,26 +684,22 @@ class FocusView(Screen):
     def _log_capture_event(self, ev: CaptureEvent) -> None:
         client = escape(ev.client_mac)
         if ev.kind == "eapol":
-            # pair_label set ⇒ this client now has a crackable pair ⇒ "full".
-            # We log EVERY frame (incl. M1/M3 retries) so the user gets clear
-            # visual feedback each time something lands — handshakes are the
-            # core of WPA2 attacks and infrequent enough to be worth the noise.
-            if ev.pair_label:
-                self._log(
-                    f"[black bold on green] {ev.pair_label} [/black bold on green] "
-                    f"[green]full handshake captured[/green] from [bold]{client}[/bold]"
-                )
-            else:
-                msg_label = f"M{ev.msg_num}" if ev.msg_num else "EAPOL-?"
-                self._log(
-                    f"[black bold on cyan] {msg_label} [/black bold on cyan] "
-                    f"[cyan]partial handshake captured[/cyan] from [bold]{client}[/bold]"
-                )
-        elif ev.kind == "handshake_complete":
+            # Flat per-frame trace: one line per M1-M4 as it lands (incl. M1/M3
+            # retransmits). Completeness is announced once by the separate
+            # handshake_complete banner — this line never claims "full".
+            msg_label = f"M{ev.msg_num}" if ev.msg_num else "EAPOL-?"
+            essid = escape(ev.ssid or ev.bssid)
             self._log(
-                f"[bold green]✓ HANDSHAKE COMPLETE[/bold green] "
-                f"({ev.pair_label}) for client [bold]{client}[/bold] "
-                f"— press [bold]s[/bold] to save"
+                f"[black bold on cyan] {msg_label} [/black bold on cyan] "
+                f"[cyan]EAPOL handshake from [bold]{client}[/bold] "
+                f"for [bold]{essid}[/bold][/cyan]"
+            )
+        elif ev.kind == "handshake_complete":
+            essid = escape(ev.ssid or ev.bssid)
+            self._log(
+                f"[bold green]✓ Valid 4-Way Handshake[/bold green] "
+                f"({ev.pair_label}) from [bold]{client}[/bold] "
+                f"for [bold]{essid}[/bold] — press [bold]s[/bold] to save"
             )
         elif ev.kind == "pmkid":
             self._log(

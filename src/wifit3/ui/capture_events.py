@@ -109,16 +109,14 @@ class CaptureEventDetector:
                 continue
 
             if self._granular_eapol:
+                # One event per newly-seen EAPOL frame — a flat per-Mx trace.
+                # Completeness is reported only by the handshake_complete banner
+                # below (not folded into the per-frame line), so the "valid 4-way"
+                # message fires once instead of repeating on every M1/M3
+                # retransmit that lands after the pair already formed.
                 seen_n = self._seen_eapol_count.get(key, 0)
                 frames = hs.eapol_frames
                 if len(frames) > seen_n:
-                    # Completeness is a property of the whole handshake, not one
-                    # frame — compute it once and tag each new frame so the UI
-                    # can render "full" vs "partial" as each arrives.
-                    pair = hs.find_valid_pair() if hs.beacon_frame else None
-                    pair_label = (
-                        f"M{pair[0].msg_num}+M{pair[1].msg_num}" if pair else None
-                    )
                     for f in frames[seen_n:]:
                         yield CaptureEvent(
                             kind="eapol",
@@ -127,19 +125,13 @@ class CaptureEventDetector:
                             ssid=ap.ssid,
                             msg_num=f.msg_num,
                             replay_hex=f.replay_hex,
-                            pair_label=pair_label,
                         )
                     self._seen_eapol_count[key] = len(frames)
 
-            # Standalone completion event only when we're NOT surfacing every
-            # frame (Scanner). In granular mode (Focus) the eapol line above
-            # carries the "full handshake" label on the completing frame, so a
-            # separate event would double-log.
-            if (
-                not self._granular_eapol
-                and hs.is_complete
-                and key not in self._completed
-            ):
+            # Completion banner — fires once per client, in BOTH modes. Scanner
+            # shows only this (+ PMKID); Focus shows it after the per-frame
+            # trace. Deduped via _completed so retransmits don't re-announce.
+            if hs.is_complete and key not in self._completed:
                 self._completed.add(key)
                 pair = hs.find_valid_pair()
                 pair_label = (
