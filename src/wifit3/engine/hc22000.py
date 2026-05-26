@@ -90,19 +90,11 @@ def _pick_pair(
     return None
 
 
-def eapol_hashline(ssid: str, hs: Handshake) -> Optional[str]:
-    """Return a ``WPA*02*…`` line for the 4-way handshake, or None if not valid.
-
-    None when:
-      - no valid M-pair captured (delegates to ``Handshake.find_valid_pair``)
-      - the MIC-bearing frame is missing its 802.1X payload (truncated capture)
-      - the SSID is unknown (hidden network — hashcat can't compute the PMK)
-    """
-    if not ssid:
-        return None
-    pair = hs.find_valid_pair()
-    if pair is None:
-        return None
+def _eapol_line_from_pair(
+    ssid: str, hs: Handshake, pair: Tuple[EapolFrame, EapolFrame]
+) -> Optional[str]:
+    """Build one ``WPA*02*…`` line from a specific valid pair, or None if the
+    pair can't be emitted (unknown shape / truncated MIC frame / short nonce)."""
     selected = _pick_pair(pair)
     if selected is None:
         return None
@@ -128,6 +120,36 @@ def eapol_hashline(ssid: str, hs: Handshake) -> Optional[str]:
     )
 
 
+def eapol_hashline(ssid: str, hs: Handshake) -> Optional[str]:
+    """Return the single best ``WPA*02*…`` line for this handshake, or None.
+
+    None when the SSID is hidden, no valid M-pair was captured, or the MIC
+    frame's 802.1X payload is truncated. For all captured instances use
+    ``eapol_hashlines``.
+    """
+    if not ssid:
+        return None
+    pair = hs.find_valid_pair()
+    if pair is None:
+        return None
+    return _eapol_line_from_pair(ssid, hs, pair)
+
+
+def eapol_hashlines(ssid: str, hs: Handshake) -> List[str]:
+    """One ``WPA*02*…`` line per distinct captured handshake instance (keyed by
+    ANonce). A client that completes the 4-way several times yields several
+    independently-crackable lines, matching the CAPTURE panel's count and
+    giving hashcat every handshake we heard."""
+    if not ssid:
+        return []
+    out: List[str] = []
+    for pair in hs.valid_pairs_by_instance().values():
+        line = _eapol_line_from_pair(ssid, hs, pair)
+        if line:
+            out.append(line)
+    return out
+
+
 def format_ap_hashlines(ap: AccessPoint) -> List[str]:
     """Collect every hashline we can produce for this AP across all clients."""
     if not ap.ssid:
@@ -137,9 +159,7 @@ def format_ap_hashlines(ap: AccessPoint) -> List[str]:
         line = pmkid_hashline(ap.ssid, hs)
         if line:
             lines.append(line)
-        line = eapol_hashline(ap.ssid, hs)
-        if line:
-            lines.append(line)
+        lines.extend(eapol_hashlines(ap.ssid, hs))
     return lines
 
 

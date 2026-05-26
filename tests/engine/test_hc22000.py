@@ -2,6 +2,7 @@
 
 from wifit3.engine.hc22000 import (
     eapol_hashline,
+    eapol_hashlines,
     format_ap_hashlines,
     pmkid_hashline,
     write_hc22000,
@@ -165,6 +166,27 @@ def test_eapol_hashline_no_valid_pair_returns_none():
     m1b = _ef(1, replay=5)
     hs = _hs("Net", m1a, m1b)
     assert eapol_hashline("Net", hs) is None
+
+
+def test_eapol_hashlines_one_line_per_instance():
+    """A client that completes the 4-way twice (distinct ANonce / replay base)
+    yields two independently-crackable WPA*02 lines, not one."""
+    a1 = b"\xA0" + b"\x00" * 31
+    a2 = b"\xB0" + b"\x00" * 31
+    hs = _hs(
+        "Net",
+        _ef(1, replay=5, nonce=a1),
+        _ef(2, replay=5, nonce=b"\x11" + b"\x00" * 31, key_data_len=22),
+        _ef(1, replay=9, nonce=a2),
+        _ef(2, replay=9, nonce=b"\x22" + b"\x00" * 31, key_data_len=22),
+    )
+    lines = eapol_hashlines("Net", hs)
+    assert len(lines) == 2
+    assert {ln.split("*")[6] for ln in lines} == {a1.hex(), a2.hex()}  # ANonces
+    # Every line is structurally valid: WPA, type 02, 9 *-separated fields.
+    for ln in lines:
+        fields = ln.split("*")
+        assert fields[0] == "WPA" and fields[1] == "02" and len(fields) == 9
 
 
 def test_eapol_hashline_hidden_ssid_returns_none():

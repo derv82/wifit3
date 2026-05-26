@@ -1132,7 +1132,9 @@ class FocusView(Screen):
             for f in hs.eapol_frames:
                 frames.append(f.raw)
 
-        n_complete = sum(1 for hs in ap.handshakes.values() if hs.is_complete)
+        # Count distinct handshake instances (matches the CAPTURE panel and the
+        # one-WPA*02-line-per-instance the hc22000 writer now emits).
+        n_complete = sum(hs.complete_instances for hs in ap.handshakes.values())
         n_pmkid = sum(1 for hs in ap.handshakes.values() if hs.pmkid)
 
         captures_dir = Path("captures")
