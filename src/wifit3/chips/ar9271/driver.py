@@ -202,6 +202,15 @@ class AR9271Driver:
         except asyncio.TimeoutError:
             logger.warning("Timed out waiting for WMI Target Ready event. Proceeding anyway...")
         
+        # Re-sync the USB pipe toggle bits after the calibration marathon, the
+        # same thing the warm path does (and for the same stated reason — "so
+        # Bulk OUT doesn't drop packets"). On a cold boot we skipped this, which
+        # left active attacks (PMKID inject/setup) failing on first boot while a
+        # warm re-attach worked. clear_halt resets the toggle to DATA0 on both
+        # ends, so this re-syncs rather than desyncs the already-running RX.
+        self.transport.reset_pipes()
+        await asyncio.sleep(0.05)
+
         # Establish the monitor RX filter (PROM) so passive frames are captured.
         # The replayed init doesn't reliably hold it; set it explicitly here.
         await self._apply_monitor_rx_filter()
