@@ -56,7 +56,7 @@ Wifit3 uses [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync
-uv run python -m wifit3
+uv run wifit3
 ```
 
 **Linux** — unload the kernel driver so Wifit3 can claim the adapter:

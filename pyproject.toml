@@ -2,7 +2,7 @@
 name = "wifit3"
 version = "0.1.0"
 description = "Wireless Auditor TUI"
-readme = "DESIGN.md"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "libusb-package>=1.0.26.3",
@@ -14,6 +14,9 @@ dependencies = [
     "scapy",
     "textual",
 ]
+
+[project.scripts]
+wifit3 = "wifit3.__main__:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -32,7 +32,7 @@ This repo uses **`uv`** for env management. The system `python` on PATH does NOT
 uv sync --group dev               # preferred; or: pip install -e ".[dev]"
 
 # Run
-uv run python -m wifit3
+uv run wifit3                     # or: uv run python -m wifit3
 
 # Tests
 uv run pytest                          # all tests
