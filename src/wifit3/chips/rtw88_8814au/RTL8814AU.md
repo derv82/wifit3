@@ -62,8 +62,30 @@ Family: **rtw88** (modern), shares `chips/rtw88_base/`.
   the M3.b placeholder. De-map verified on synthetic 1-byte + 2-byte-header
   blocks; rfe resolution verified; 537 tests pass. **Awaiting HW gate** —
   `--phase efuse`: decode rfe/MAC/xtal, assert MAC non-garbage.
-- **M3.c (full channel tune) / M5 (RX) / M6 (TX)** — not started. M3.c now
-  unblocked with the real rfe_option.
+- **M3.c (channel tune, 20 MHz)** — ✅ CODE COMPLETE, offline-verified. `chan.py`
+  ports rtw8814a_set_channel for 20 MHz: switch_band (rfe pinmux 2G/5G + CCK/TX/
+  RX-psel + bw_reg adc/agc), switch_channel (per-path RF_CFGCH + CLKTRK fc_area
+  + AGC sub-band), cck_tx_dfir, set_bw_mode. **Deferred** (not needed for 20 MHz
+  monitor RX): bb_swing/pwrtrack (TX power → M6), adc_clk (A-cut only; no-op on
+  our B-cut), spur_calibration (per-spur-channel NBI/CSI notch), 40/80 MHz.
+  First tune uses `force_band=True` to establish rfe pinmux (we skip the
+  kernel's init_rfe_reg in phy_set_param). Wired into `driver.set_channel` +
+  initial ch1 tune in connect(). HW gate (`--phase channel`) = the tune SEQUENCE
+  executes cleanly across 2G/5G/5G-high. **Functional validation is M5** (RF
+  actually receiving on the tuned channel).
+  - **[HW] These PHY/channel registers are write-and-forget — do NOT validate by
+    readback.** Confirmed against the cold-boot pcap: the kernel NEVER reads back
+    RF_CFGCH / CCK_CHECK / CLKTRK / AGC_TABLE (it writes them blind), and on
+    hardware several don't read back as written (RF_CFGCH→const 0xEA;
+    CCK_CHECK/CLKTRK/AGC→const 0x575/0xa/bit7 regardless of channel). RF *writes*
+    do land (proven by the RF 0x1c RCK readback via the same write path).
+  - **[WIRE] The three captures are init-only** (all end ~frame 5260, right after
+    FW init + airmon start; identical 58 write-addrs, zero channel-reg writes).
+    So there is NO pcap ground truth for channel tune OR RX — both must be
+    validated live, not by pcap-diff. (Relevant for M5: RX desc decode comes from
+    kernel rx.c + rx_common.py + the 8822bu sibling, not a pcap.)
+- **M5 (RX/monitor) / M6 (TX)** — not started. After M3.c, the chip can tune;
+  M5 wires the RX reader-thread + monitor RCR filter to see beacons.
 
 ## 0. TL;DR for the lead
 

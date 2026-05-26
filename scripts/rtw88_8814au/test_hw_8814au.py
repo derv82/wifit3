@@ -49,7 +49,7 @@ from wifit3.chips.rtw88_8814au.mac import (
     is_chip_warm,
     mac_power_on,
 )
-from wifit3.chips.rtw88_8814au import rf as rf8814
+from wifit3.chips.rtw88_8814au import chan, rf as rf8814
 from wifit3.chips.rtw88_8814au.constants import RF_RCK1_V1
 from wifit3.chips.rtw88_8814au.efuse import read_efuse
 from wifit3.chips.rtw88_8814au.phy import (
@@ -319,11 +319,32 @@ def phase_phy(transport: RTL8814AUTransport) -> None:
        "M3.b COMPLETE.")
 
 
+def phase_channel(transport: RTL8814AUTransport) -> None:
+    step("Channel tune: ch1 / ch36 / ch149 execute cleanly across bands  [M3.c GATE]")
+    # NOTE: this chip's channel/PHY config registers are write-and-forget — the
+    # kernel never reads them back (confirmed against the cold-boot pcap), and
+    # several (RF_CFGCH, CCK_CHECK, CLKTRK, AGC_TABLE) don't read back as
+    # written. The captures are also init-only, so there's no on-air ground
+    # truth. So this gate confirms the tune SEQUENCE runs cleanly across 2G ->
+    # 5G -> 5G-high; the functional proof (RF actually receiving) is M5 RX.
+    rfe = 1  # confirmed from EFUSE in M4
+    for idx, ch in enumerate([1, 36, 149]):
+        try:
+            chan.set_channel(transport, ch, rfe_option=rfe, force_band=(idx == 0))
+        except (IOError, ValueError, NotImplementedError) as ex:
+            fail(f"set_channel({ch}) failed: {ex}")
+        band = "5G" if ch > 14 else "2G"
+        print(f"  ch{ch:3d} ({band}): tune sequence executed OK")
+    ok("ch1/36/149 tuned cleanly across 2G/5G/5G-high without error. "
+       "M3.c sequence COMPLETE (RF on-air validation in M5).")
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument(
         "--phase",
-        choices=("open", "fw", "validate", "mac_init", "tables", "efuse", "phy", "all"),
+        choices=("open", "fw", "validate", "mac_init", "tables", "efuse", "phy",
+                 "channel", "all"),
         default="all")
     p.add_argument("--debug", action="store_true", help="verbose USB logging")
     args = p.parse_args()
@@ -338,8 +359,9 @@ def main() -> int:
     needs_validate = ("validate", "mac_init", "tables", "efuse", "phy", "all")
     needs_mac_init = ("mac_init", "tables", "efuse", "phy", "all")
     needs_tables = ("tables", "all")     # standalone MAC-replay smoke (M3.a)
-    needs_efuse = ("efuse", "phy", "all")
-    needs_phy = ("phy", "all")
+    needs_efuse = ("efuse", "phy", "channel", "all")
+    needs_phy = ("phy", "channel", "all")
+    needs_channel = ("channel", "all")
 
     try:
         if args.phase in ("open", "all"):
@@ -356,6 +378,8 @@ def main() -> int:
             phase_efuse(transport)
         if args.phase in needs_phy:
             phase_phy(transport)
+        if args.phase in needs_channel:
+            phase_channel(transport)
     finally:
         step("Release interface")
         try:

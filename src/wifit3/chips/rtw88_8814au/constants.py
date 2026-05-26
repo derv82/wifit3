@@ -217,3 +217,43 @@ REG_RF_CTRL3 = 0x0076            # RF path D enable
 REG_RXPSEL = 0x0808
 BIT_RX_PSEL_RST = (1 << 28) | (1 << 29)
 RF_RCK1_V1 = 0x1C                # RF reg read back after rf-table load
+
+# ===========================================================================
+# M3.c — channel tune
+# ===========================================================================
+RTW_BAND_2G = 1                  # BIT(NL80211_BAND_2GHZ)
+RTW_BAND_5G = 2                  # BIT(NL80211_BAND_5GHZ)
+RTW_CHANNEL_WIDTH_20 = 0
+RTW_CHANNEL_WIDTH_40 = 1
+RTW_CHANNEL_WIDTH_80 = 2
+
+REG_CCK_CHECK = 0x0454
+BIT_CHECK_CCK_EN = 1 << 7
+REG_CLKTRK = 0x0860
+REG_AGC_TABLE = 0x0958
+REG_CCK0_TX_FILTER1 = 0x0A20
+REG_CCK0_TX_FILTER2 = 0x0A24
+REG_CCK0_DEBUG_PORT = 0x0A28
+REG_TXPSEL = 0x080C
+REG_CCK_RX = 0x0A04
+REG_RFE_PINMUX_A = 0x0CB0
+REG_RFE_PINMUX_B = 0x0EB0
+REG_RFE_PINMUX_C = 0x18B4
+REG_RFE_PINMUX_D = 0x1AB4
+REG_RFE_INVSEL_D = 0x1ABC
+BIT_RFE_SELSW0_D = 0x0FF00000    # GENMASK(27, 20)
+REG_WMAC_TRXPTCL_CTL = 0x0668
+BIT_RFMOD = (1 << 7) | (1 << 8)
+BIT_RFMOD_40M = 1 << 7
+BIT_RFMOD_80M = 1 << 8
+REG_ADCCLK = 0x08AC
+REG_CCASEL = 0x082C
+REG_DATA_SC = 0x0483
+REG_CCK_TX_EN = 0x0A80           # literal 0xa80 in switch_band (BIT(18) = CCK TX en)
+
+# RF18 (RF_CFGCH) field masks
+RF_CFGCH = 0x18
+RF18_RFSI_MASK = (1 << 18) | (1 << 17)
+RF18_BAND_MASK = (1 << 16) | (1 << 9) | (1 << 8)
+RF18_CHANNEL_MASK = 0xFF
+RF18_BW_MASK = (1 << 11) | (1 << 10)

@@ -27,6 +27,7 @@ from .firmware import (
     download_firmware_validate,
     load_firmware_blob,
 )
+from . import chan
 from .efuse import read_efuse
 from .fifo import count_bulk_out_eps, rtw_init_trx_cfg
 from .mac import cut_mask_from_sys_cfg1, is_chip_warm, mac_power_on
@@ -60,6 +61,7 @@ class RTL8814AUDriver:
         self.is_warm: bool = False
         self.current_channel: int = 1
         self.current_band_is_2g: bool = True
+        self._rfe_option: int = 1
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_callback = cb
@@ -158,21 +160,49 @@ class RTL8814AUDriver:
         _progress(0.85, "Reading EFUSE (rfe_option, MAC, crystal_cap)")
         er = await loop.run_in_executor(None, read_efuse, self.transport)
         self.mac_address = ":".join(f"{b:02x}" for b in er.mac_addr)
+        self._rfe_option = er.rfe_option
         logger.info("RTL8814AU M4: EFUSE rfe_option=%d (raw 0x%02x) MAC=%s xtal=0x%02x",
                     er.rfe_option, er.rfe_option_raw, self.mac_address, er.crystal_cap)
         efuse = defaults_from_efuse(er, cut=(chip_version >> 12) & 0xF)
 
-        _progress(0.95, "PHY init (BB/RF enable + BB/AGC/RF tables, 4 paths)")
+        _progress(0.92, "PHY init (BB/RF enable + BB/AGC/RF tables, 4 paths)")
         await loop.run_in_executor(
             None, lambda: phy_set_param(self.transport, efuse)
         )
-        logger.info("RTL8814AU M3.b: PHY/RF up. Channel/RX/TX pending (M3.c/M5/M6).")
-        _progress(1.00, "RTL8814AU M3.b: PHY ready (scan/inject pending)")
+
+        _progress(0.97, "Tuning to channel 1")
+        await loop.run_in_executor(
+            None,
+            lambda: chan.set_channel(self.transport, 1,
+                                     rfe_option=self._rfe_option, force_band=True),
+        )
+        self.current_channel = 1
+        self.current_band_is_2g = True
+        logger.info("RTL8814AU M3.c: tuned to ch1. RX/TX pending (M5/M6).")
+        _progress(1.00, "RTL8814AU M3.c: PHY tuned to ch1 (scan/inject pending)")
         return True
 
     async def set_channel(self, channel: int) -> bool:
-        logger.warning("RTL8814AU.set_channel: channel tune lands in M3 (no-op)")
-        return False
+        is_2g = channel <= 14
+        if is_2g and channel not in chan.SUPPORTED_CHANNELS_2G:
+            logger.warning("RTL8814AU: unsupported 2.4 GHz channel %d", channel)
+            return False
+        if not is_2g and channel not in chan.SUPPORTED_CHANNELS_5G:
+            logger.warning("RTL8814AU: unsupported 5 GHz channel %d", channel)
+            return False
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda: chan.set_channel(self.transport, channel,
+                                         rfe_option=self._rfe_option),
+            )
+            self.current_channel = channel
+            self.current_band_is_2g = is_2g
+            return True
+        except (IOError, ValueError, NotImplementedError) as e:
+            logger.error("set_channel(%d) failed: %s", channel, e)
+            return False
 
     async def inject_frame(self, frame_bytes: bytes,
                            use_no_ack: bool = True) -> bool:
