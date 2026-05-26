@@ -50,6 +50,7 @@ from .mac import (
 )
 from .rtl8225 import RfSetup, build_rf_init, probe_rf_setup
 from .rx import parse_rx_urb, probe_endpoints, read_rx_burst
+from ..rx_reader import RxReaderThread
 from .transport import RTL8187Transport
 from .tx import inject_frame as _inject_frame
 
@@ -80,8 +81,7 @@ class RTL8187Driver:
         self.dev = dev
         self.transport = RTL8187Transport(dev)
         self._rx_callback: Optional[Callable[[dict], None]] = None
-        self._rx_task: Optional[asyncio.Task] = None
-        self._rx_running = False
+        self._rx_reader: Optional[RxReaderThread] = None
         self._bulk_in_ep: Optional[int] = None
         self._claimed = False
         self._rf_setup: Optional[RfSetup] = None
@@ -198,8 +198,10 @@ class RTL8187Driver:
             _progress(0.85, "Probing endpoints + starting RX loop")
             eps = probe_endpoints(self.dev)
             self._bulk_in_ep = eps.primary_bulk_in
-            self._rx_running = True
-            self._rx_task = asyncio.create_task(self._rx_loop())
+            self._rx_reader = RxReaderThread(
+                loop, self._rx_read_once, self._rx_dispatch, name="rtl8187-rx"
+            )
+            self._rx_reader.start()
 
             self.is_warm = True  # subsequent connect()s will see us as warm
             _progress(1.00, "RTL8187L online — RX loop polling bulk-IN")
@@ -210,49 +212,25 @@ class RTL8187Driver:
             return False
 
     # ---- RX loop ----------------------------------------------------------
-    async def _rx_loop(self) -> None:
-        """Poll bulk-IN, decode each URB, dispatch parsed frames.
+    # ---- RX callables for the shared RxReaderThread ---------------------
+    # read_once runs on the reader thread; dispatch runs on the event loop.
+    # One URB = one frame on 8187L (no coalescing), so dispatch is one-shot.
 
-        Runs the synchronous PyUSB read in the default executor so the
-        event loop stays responsive. One URB = one frame on 8187L (no
-        coalescing), so parse_rx_urb is one-shot per read.
-        """
-        loop = asyncio.get_event_loop()
-        ep = self._bulk_in_ep
-        assert ep is not None, "_rx_loop called before _bulk_in_ep was set"
-        logger.info("RTL8187L RX loop started on EP 0x%02x", ep)
+    def _rx_read_once(self) -> Optional[bytes]:
+        """One blocking bulk-IN read; None on a benign timeout."""
+        return read_rx_burst(self.dev, self._bulk_in_ep)
 
-        while self._rx_running:
+    def _rx_dispatch(self, buf: bytes) -> None:
+        """Decode one RX URB → parse → rx callback (on the loop)."""
+        rx = parse_rx_urb(buf)
+        if rx is None or rx.has_fcs_error:
+            return
+        parsed = WlanFrameParser.parse_80211_frame(rx.mpdu, rx.rssi_dbm)
+        if parsed is not None and self._rx_callback is not None:
             try:
-                buf = await loop.run_in_executor(
-                    None, read_rx_burst, self.dev, ep
-                )
-            except usb.core.USBError as e:
-                # Non-timeout USBError (e.g. pipe stall) — log and back off.
-                logger.error("RTL8187L bulk-IN error: %s", e)
-                await asyncio.sleep(0.05)
-                continue
+                self._rx_callback(parsed)
             except Exception as e:
-                logger.exception("RTL8187L RX loop unexpected error: %s", e)
-                await asyncio.sleep(0.05)
-                continue
-
-            if buf is None:
-                # Timeout — normal when the radio is on a quiet channel.
-                continue
-
-            rx = parse_rx_urb(buf)
-            if rx is None or rx.has_fcs_error:
-                continue
-
-            parsed = WlanFrameParser.parse_80211_frame(rx.mpdu, rx.rssi_dbm)
-            if parsed is not None and self._rx_callback is not None:
-                try:
-                    self._rx_callback(parsed)
-                except Exception as e:
-                    logger.exception("rx_callback raised: %s", e)
-
-        logger.info("RTL8187L RX loop stopped")
+                logger.exception("rx_callback raised: %s", e)
 
     # ---- channel tune (M4) -----------------------------------------------
     async def set_channel(self, channel: int) -> bool:
@@ -303,12 +281,8 @@ class RTL8187Driver:
             return False
 
     async def close(self) -> None:
-        self._rx_running = False
-        if self._rx_task:
-            self._rx_task.cancel()
-            try:
-                await self._rx_task
-            except asyncio.CancelledError:
-                pass
+        if self._rx_reader is not None:
+            await self._rx_reader.stop()
+            self._rx_reader = None
         self._release()
         logger.info("RTL8187 driver closed")
