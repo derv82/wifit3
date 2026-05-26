@@ -5,10 +5,11 @@
 Cross-driver gap classes (project audit 2026-05-25). **Offline analysis only —
 no hardware available; verify before `[x]`.**
 
-- [ ] **RX polling loop drops frames** — LIKELY AFFECTED. `driver.py:_rx_loop`
-  (363) does `await loop.run_in_executor(_read_once)` (381) then parse on the
-  event loop — no read posted while parsing. Same pattern as rtl8821au pre-fix.
-  Fix: dedicated reader thread + queue hand-off (rtl8821au commit 2e3a7a7).
+- [~] **RX polling loop drops frames** — FIX APPLIED (commit dc621ce), awaiting
+  user A/B. Was on-loop read+parse; now uses the shared `chips/rx_reader.py`
+  RxReaderThread (`_rx_read_once` on the thread, `_rx_dispatch` on the loop).
+  Before-numbers to beat: 3.5-6.5 beacons/s, 1/3 full handshakes. Verify beacon
+  rate up + handshake completion (no regression).
 - [x] **RX filter / monitor mode (ToDS capture)** — FIXED (commit 442c7aa),
   HW-confirmed 2026-05-25: M2/M4 now captured (was M1/M3-only). `RCR_MONITOR`
   (incl. `RCR_ACCEPT_AP`/promiscuous) was correct but only written by
