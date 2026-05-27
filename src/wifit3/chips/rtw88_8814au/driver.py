@@ -185,6 +185,18 @@ class RTL8814AUDriver:
                     er.rfe_option, er.rfe_option_raw, self.mac_address, er.crystal_cap)
         efuse = defaults_from_efuse(er, cut=(chip_version >> 12) & 0xF)
 
+        # Post a bulk-IN read BEFORE RX is enabled, mirroring the kernel: it
+        # submits its RX URB ring at probe — long before MAC RX goes live — so
+        # the pipe is drained from the instant the first frame is accepted. With
+        # the reader started only after mac_init_for_rx opened RCR (and after
+        # dig_init), there was an undrained window in which the device's RX path
+        # backs up — BB keeps decoding into a FIFO nobody reads — and latches a
+        # wedge that survives until replug (the cold-boot "few frames then
+        # silent" lottery). The rx callback is None until connect() returns, so
+        # frames drained during bring-up are simply discarded.
+        if not await self._start_rx():
+            return False
+
         # PHY/RF bring-up. The DIG-max-coverage seed + RX-aggregation-off fixes
         # made cold boots reliable, so the deaf re-roll is on probation: 1 attempt
         # (no re-roll) — a deaf boot now fails connect() loudly instead of being
@@ -207,14 +219,6 @@ class RTL8814AUDriver:
             # AGC-table default that makes deaf boots a coin flip.
             self._dig_state = await loop.run_in_executor(
                 None, dynamic.dig_init, self.transport)
-            # Start the RX reader BEFORE the liveness probe so bulk-IN is drained
-            # all through bring-up. The kernel always keeps reads posted; our 2s
-            # undrained probe (RX on, BB decoding ~1000 frames, nothing reading)
-            # backs up the device RX path and halts the RX-DMA -> the cold-boot
-            # "1 beacon then silent". The rx callback is None until connect()
-            # returns, so frames read during bring-up are simply discarded.
-            if self._rx_reader is None and not await self._start_rx():
-                return False
             alive = await loop.run_in_executor(
                 None, rx.rf_receiving_frames, self.transport)
             if alive:
@@ -241,10 +245,16 @@ class RTL8814AUDriver:
         _progress(1.00, "RTL8814AU online (monitor RX; inject pending)")
         return True
 
-    def _log_rx_dma_state(self, tag: str) -> None:
-        """Dump the RX-DMA path state (gated on WIFIT3_RX_STATS) so a failed
-        cold boot (delivers nothing) can be diffed against a good one — is RXDMA
-        still enabled? is the DMA idle/stuck? Read-only."""
+    def _log_rx_dma_state(self, tag: str, crc_ok: int | None = None) -> None:
+        """Dump the whole RX pipe (gated on WIFIT3_RX_STATS) so a failed cold
+        boot (delivers nothing) can be diffed against a good one. Covers both
+        ends: the MAC RX *filter* (RCR + RXFLTMAP) and the RX-DMA/FIFO. When the
+        caller passes `crc_ok` (the BB demod count for this window, sampled
+        before the watchdog's counter reset), the line answers the key question
+        directly: on a wedged boot, is the BB still decoding (crc_ok climbs)
+        while the RX FIFO stays empty — i.e. frames dropped between demod and
+        DMA — or has the BB itself gone dead? The filter readback flags whether
+        RCR/RXFLTMAP drifted from what mac_init_for_rx wrote. All read-only."""
         if not self._rx_stats:
             return
         try:
@@ -253,15 +263,27 @@ class RTL8814AUDriver:
             pq = self.transport.read32(C.REG_TXDMA_PQ_MAP)
             bndy = self.transport.read16(C.REG_RXFF_BNDY)
             mode = self.transport.read8(C.REG_RXDMA_MODE)
+            rcr = self.transport.read32(C.REG_RCR)
+            flt0 = self.transport.read16(C.REG_RXFLTMAP0)
+            flt1 = self.transport.read16(C.REG_RXFLTMAP1)
+            flt2 = self.transport.read16(C.REG_RXFLTMAP2)
         except (usb.core.USBError, IOError) as e:
             logger.debug("RX-DMA state read failed: %s", e)
             return
+        # Flag drift from the init-time writes.
+        rcr_bad = "" if rcr == C.RCR_MONITOR else f" !=0x{C.RCR_MONITOR:08x}"
+        flt_bad = "" if (flt0, flt1, flt2) == (
+            C.RXFLTMAP0_8814A, C.RXFLTMAP1_8814A, C.RXFLTMAP2_8814A) else " !=init"
+        crc_str = "" if crc_ok is None else f" BB-crc-ok(2s)={crc_ok}"
         logger.info(
             "RX-DMA state [%s]: CR=0x%08x(rxdma_en=%d hci_rxdma=%d macrxen=%d) "
-            "RXPKT_NUM=0x%08x(idle=%d) PQ_MAP=0x%08x(agg_en=%d) BNDY=0x%04x MODE=0x%02x",
+            "RXPKT_NUM=0x%08x(idle=%d) PQ_MAP=0x%08x(agg_en=%d) BNDY=0x%04x MODE=0x%02x%s",
             tag, cr, bool(cr & BIT_RXDMA_EN), bool(cr & BIT_HCI_RXDMA_EN),
             bool(cr & BIT_MACRXEN), pkt, bool(pkt & C.BIT_RXDMA_IDLE),
-            pq, bool(pq & C.BIT_RXDMA_AGG_EN), bndy, mode)
+            pq, bool(pq & C.BIT_RXDMA_AGG_EN), bndy, mode, crc_str)
+        logger.info(
+            "RX filter [%s]: RCR=0x%08x(aap=%d)%s FLTMAP=%04x/%04x/%04x%s",
+            tag, rcr, bool(rcr & 0x1), rcr_bad, flt0, flt1, flt2, flt_bad)
 
     async def _dig_watchdog(self, period_s: float = 2.0) -> None:
         """Periodic DIG tick (mirrors rtw_watch_dog_work @ HZ*2). Reads the FA
@@ -273,6 +295,12 @@ class RTL8814AUDriver:
                 if self._dig_state is None:
                     continue
                 try:
+                    # Sample BB CRC-ok BEFORE read_total_fa_cnt resets the
+                    # counters, so the watchdog dump shows this window's demod
+                    # count alongside the RX-DMA/FIFO state.
+                    crc_ok = (await loop.run_in_executor(
+                        None, rx.read_crc_ok, self.transport)
+                        if self._rx_stats else None)
                     fa = await loop.run_in_executor(
                         None, dynamic.read_total_fa_cnt, self.transport)
                     await loop.run_in_executor(
@@ -280,7 +308,7 @@ class RTL8814AUDriver:
                         self._dig_state, fa)
                     if self._rx_stats:
                         await loop.run_in_executor(
-                            None, self._log_rx_dma_state, "watchdog")
+                            None, self._log_rx_dma_state, "watchdog", crc_ok)
                 except (usb.core.USBError, IOError) as e:
                     logger.debug("DIG watchdog tick skipped: %s", e)
         except asyncio.CancelledError:

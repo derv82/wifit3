@@ -130,6 +130,21 @@ def reset_phy_counters(transport: RTL8814AUTransport) -> None:
     transport.write32_clr(C.REG_CNTRST, 1 << 0)
 
 
+def read_crc_ok(transport: RTL8814AUTransport) -> int:
+    """BB CRC-OK count (cck+ofdm+ht) since the last counter reset — read-only.
+
+    Same baseband counters as rf_receiving_frames, but without the reset, so it
+    can be sampled each watchdog tick BEFORE read_total_fa_cnt clears them: the
+    value is then "frames the BB demodulated in this window". Sampling it next
+    to the RX-DMA state answers whether a wedged boot has stopped decoding (BB
+    dead) or is still decoding but dropping post-filter (CRC-ok climbs, FIFO
+    stays empty)."""
+    cck_ok = transport.read32(C.REG_CRC_CCK) & 0xFFFF
+    ofdm_ok = transport.read32(C.REG_CRC_OFDM) & 0xFFFF
+    ht_ok = transport.read32(C.REG_CRC_HT) & 0xFFFF
+    return cck_ok + ofdm_ok + ht_ok
+
+
 def rf_receiving_frames(transport: RTL8814AUTransport,
                         settle_s: float = 2.0) -> bool:
     """True if the PHY actually DEMODULATES frames within `settle_s`.
