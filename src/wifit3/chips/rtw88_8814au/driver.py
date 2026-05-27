@@ -175,10 +175,12 @@ class RTL8814AUDriver:
                     er.rfe_option, er.rfe_option_raw, self.mac_address, er.crystal_cap)
         efuse = defaults_from_efuse(er, cut=(chip_version >> 12) & 0xF)
 
-        # PHY/RF bring-up with deaf-retry. ~50% of cold boots the RF path comes
-        # up deaf (CCA=0, hardware-confirmed); re-running phy_set_param re-rolls
-        # the analog lock, so retry until RF is hearing energy. See RTL8814AU.md.
-        _PHY_RF_ATTEMPTS = 8
+        # PHY/RF bring-up. The DIG-max-coverage seed + RX-aggregation-off fixes
+        # made cold boots reliable, so the deaf re-roll is on probation: 1 attempt
+        # (no re-roll) — a deaf boot now fails connect() loudly instead of being
+        # silently re-rolled. If 10/10 cold boots stay clean, drop the loop +
+        # liveness probe entirely. See RTL8814AU.md known gaps.
+        _PHY_RF_ATTEMPTS = 1
         alive = False
         for attempt in range(_PHY_RF_ATTEMPTS):
             _progress(0.92, f"PHY/RF bring-up (attempt {attempt + 1})")
