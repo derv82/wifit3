@@ -251,11 +251,12 @@ lag the user saw once is shelved (likely Textual latency, not card-specific).
      that wasn't confirmed against a kernel band-transition capture (the 3 caps
      lacked enough 2G↔5G transitions). Revisit with a band-transition capture.
 - **5 GHz non-DFS only; 20 MHz only** — by design (see correctness audit).
-- **No unit tests** — 8814au is the only chip without a `tests/chips/<chip>/`
-  dir; validated by hardware + pcap only. The bitfield-heavy pure-logic
-  (`efuse._parse_txpwr_path`, `rx.parse_phy_status_rssi_8814a`, `dynamic.dig_step`,
-  `chan.spur_calibration`, `tx.build_tx_desc_mgmt`) is synthetic-buffer-testable;
-  `tests/chips/rtl8812au/{test_efuse,test_rx,test_rx_dispatch}.py` is the template.
+- **Unit tests: pure-logic covered; register-sequencing not.** `tests/chips/
+  rtw88_8814au/` (28 tests) covers the bitfield/parse logic — EFUSE power-by-rate
+  parse + logical-map walker, jaguar RSSI decode, DIG IGI walk, TX-desc/deauth.
+  Still hardware-only (no mock-transport tests): the register *sequencing*
+  (`phy_set_param`, `chan.set_channel`/`spur_calibration`, `mac_init_for_rx`,
+  power-seq) — validated via `test_hw_8814au.py` + the pcap diff.
 
 ### pcap byte-level findings — 2026-05-26 (full captures, usbmon0)
 
