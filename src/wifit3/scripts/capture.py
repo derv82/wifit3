@@ -151,7 +151,7 @@ class Capture:
         self.airodump_proc = None
         self.logger.log_main(f"[{time.time():.3f}] [AIRODUMP] stopped")
 
-    def fast_hop_segment(self, dwell=0.25, duration=30.0, channels=(1, 6, 11)):
+    def fast_hop_segment(self, dwell=0.25, duration=12.0, channels=(1, 6, 11)):
         """Hop at the wifit3 TUI's pathological 0.25 s cadence to test whether
         the KERNEL also goes silent (relock > dwell) or keeps capturing. Uses a
         drift-tolerant loop (NOT run_at) so it can never abort the capture; each
