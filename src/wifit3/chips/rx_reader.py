@@ -117,8 +117,7 @@ class RxReaderThread:
                     self._n_bytes += len(buf)
                     self._loop.call_soon_threadsafe(self._on_buffer, buf)
             if self._stats and time.monotonic() >= next_report:
-                logger.info("[%s] RX 2s: produced=%d bytes=%d (bytes=0 while "
-                            "frames decode => RX-DMA delivery stall)",
+                logger.info("[%s] RX 2s: produced=%d bytes=%d",
                             self._name, self._n_produced, self._n_bytes)
                 self._n_produced = self._n_bytes = 0
                 next_report = time.monotonic() + 2.0

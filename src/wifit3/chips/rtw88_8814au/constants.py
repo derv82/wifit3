@@ -274,6 +274,8 @@ RF18_BW_MASK = (1 << 11) | (1 << 10)
 # M5 — RX / monitor
 # ===========================================================================
 REG_RXDMA_MODE = 0x0290
+REG_RXPKT_NUM = 0x0284           # RX-DMA state: low16=pending pkt count; BIT(17)=idle
+BIT_RXDMA_IDLE = 1 << 17
 # RX aggregation (rtw_usb_dynamic_rx_agg_v1 — 8814a). WITHOUT this the chip does
 # not frame-align bulk-IN transfers, so reads land mid-frame and the per-URB
 # rx_pkt_desc parse fails. size=0x5 pages, timeout=0x20.

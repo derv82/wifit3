@@ -26,6 +26,12 @@ import usb.util
 from wifit3.engine.protocols import DeviceID, ProgressCallback
 from wifit3.wlan.packet import WlanFrameParser
 
+from wifit3.chips.rtw88_base.registers import (
+    BIT_HCI_RXDMA_EN,
+    BIT_MACRXEN,
+    BIT_RXDMA_EN,
+)
+from . import constants as C
 from .constants import REG_CCA_OFDM, REG_SYS_CFG1, USB_IDS_8814AU
 from .firmware import (
     download_firmware,
@@ -67,6 +73,9 @@ class RTL8814AUDriver:
         self.transport = RTL8814AUTransport(dev)
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._rx_reader: Optional[RxReaderThread] = None
+        # Opt-in RX diagnostics (throughput log + RX-DMA register dump) for the
+        # intermittent cold-boot "RX-DMA delivers nothing" hunt.
+        self._rx_stats = bool(os.environ.get("WIFIT3_RX_STATS"))
         self._dig_state: Optional[dynamic.DigState] = None
         self._watchdog_task: Optional[asyncio.Task] = None
         self._bulk_in_ep: Optional[int] = None
@@ -228,8 +237,31 @@ class RTL8814AUDriver:
         # without the static-gain deaf lottery.
         self._watchdog_task = asyncio.create_task(self._dig_watchdog())
         logger.info("RTL8814AU M5: RX online (monitor) + DIG watchdog.")
+        self._log_rx_dma_state("online")
         _progress(1.00, "RTL8814AU online (monitor RX; inject pending)")
         return True
+
+    def _log_rx_dma_state(self, tag: str) -> None:
+        """Dump the RX-DMA path state (gated on WIFIT3_RX_STATS) so a failed
+        cold boot (delivers nothing) can be diffed against a good one — is RXDMA
+        still enabled? is the DMA idle/stuck? Read-only."""
+        if not self._rx_stats:
+            return
+        try:
+            cr = self.transport.read32(C.REG_CR)
+            pkt = self.transport.read32(C.REG_RXPKT_NUM)
+            pq = self.transport.read32(C.REG_TXDMA_PQ_MAP)
+            bndy = self.transport.read16(C.REG_RXFF_BNDY)
+            mode = self.transport.read8(C.REG_RXDMA_MODE)
+        except (usb.core.USBError, IOError) as e:
+            logger.debug("RX-DMA state read failed: %s", e)
+            return
+        logger.info(
+            "RX-DMA state [%s]: CR=0x%08x(rxdma_en=%d hci_rxdma=%d macrxen=%d) "
+            "RXPKT_NUM=0x%08x(idle=%d) PQ_MAP=0x%08x(agg_en=%d) BNDY=0x%04x MODE=0x%02x",
+            tag, cr, bool(cr & BIT_RXDMA_EN), bool(cr & BIT_HCI_RXDMA_EN),
+            bool(cr & BIT_MACRXEN), pkt, bool(pkt & C.BIT_RXDMA_IDLE),
+            pq, bool(pq & C.BIT_RXDMA_AGG_EN), bndy, mode)
 
     async def _dig_watchdog(self, period_s: float = 2.0) -> None:
         """Periodic DIG tick (mirrors rtw_watch_dog_work @ HZ*2). Reads the FA
@@ -246,6 +278,9 @@ class RTL8814AUDriver:
                     await loop.run_in_executor(
                         None, dynamic.dig_step, self.transport,
                         self._dig_state, fa)
+                    if self._rx_stats:
+                        await loop.run_in_executor(
+                            None, self._log_rx_dma_state, "watchdog")
                 except (usb.core.USBError, IOError) as e:
                     logger.debug("DIG watchdog tick skipped: %s", e)
         except asyncio.CancelledError:
@@ -261,7 +296,7 @@ class RTL8814AUDriver:
         self._bulk_out_eps = list(eps.bulk_out)
         self._rx_reader = RxReaderThread(
             loop, self._rx_read_once, self._rx_dispatch, name="rtl8814au-rx",
-            stats=bool(os.environ.get("WIFIT3_RX_STATS")))
+            stats=self._rx_stats)
         self._rx_reader.start()
         return True
 
