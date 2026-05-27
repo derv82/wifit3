@@ -10,6 +10,56 @@ Family: **rtw88** (modern), shares `chips/rtw88_base/`.
 
 ---
 
+## M6 — TX power (calibrated full-power): execution-ready plan (2026-05-26)
+
+**Why:** TX-at-distance is core (secondary only to RX-at-distance). Today we
+inject at the BB/AGC-table baseline power — uncalibrated — which kneecaps us vs
+aireplay. **Scope (user-approved): calibrated FULL power** — port EFUSE
+power-by-rate base + by-rate offset + bb_swing + the `REG_AGC_TBL` write;
+transmit at the chip's full calibrated power. **Deliberately skip** the 8
+regulatory power-limit table variants (they only *cap* power — an auditing tool
+wants max range), `pwrtrack` (thermal drift), and IQK-before-TX. 8814au-local
+first; generalize to `rtw88_base` when the 2nd driver needs it.
+
+**Offline verification (the win):** the cold-boot pcap captured the kernel's
+exact per-channel `REG_AGC_TBL` writes. Diff our `set_tx_power_index` output
+against it to prove the **write encoding** (per-rate/path `txagc_table_wd`, the
+DESC_RATE1M double-write, rate-section order). Power *values* will be ≥ the pcap
+(we skip the regulatory cap) — that's intended. Hardware: user confirms deauth
+range/strength (needs RF, can't self-verify).
+
+**EFUSE power layout — RESOLVED exact** (logical map; `struct rtw8814a_efuse`):
+`txpwr_idx_table[4]` at **0x10**, **42 B/path** = 2G(18) + 5G(24):
+  - 2G (`rtw_2g_txpwr_idx`): `cck_base[6]`, `bw40_base[5]`, `ht_1s_diff`(1B:
+    ofdm:4|bw20:4), `ht_2s/3s/4s_diff` (2B each: bw20:4|bw40:4|cck:4|ofdm:4).
+  - 5G (`rtw_5g_txpwr_idx`): `bw40_base[14]`, `ht_1s_diff`(1B: ofdm:4|bw20:4),
+    `ht_2s/3s/4s_diff`(1B each: bw20:4|bw40:4), `ofdm_diff`(2B:
+    ofdm_3s:4|ofdm_2s:4|ofdm_4s:4|res:4), `vht_1s/2s/3s/4s_diff`(1B each:
+    bw160:4|bw80:4). Diffs are **little-endian, signed 4-bit** (x<8 ? x : x-16).
+  Plus `tx_bb_swing_setting_2g`@0xc6, `_5g`@0xc7, `thermal_meter`@0xba.
+
+**Steps (each independently verifiable; commit per step):**
+1. **EFUSE power parse** — extend `efuse.py`: parse the 42 B/path table + bb_swing
+   bytes into a `TxPowerIdx` dataclass. Verify: dump indices, sanity-range check.
+2. **By-rate offset** — `rtw_phy_get_tx_power_index` adds `tx_pwr_by_rate_offset`
+   (chip default, region-independent) on top of the EFUSE base. Extract the
+   8814a by-rate table from `rtw8814a_table.c` as an asset (reuse
+   `extract_init_tables.py` pattern + phy_cond walker), or confirm base-only is
+   adequate by pcap-diff.
+3. **Computation** — new `tx_power.py`: port `rtw_phy_get_2g/5g_tx_power_index`
+   (channel-group map `rtw_get_channel_group` → base + EFUSE per-rate diffs +
+   by-rate offset), clamp to `max_power_index=0x3f`. Skip limit/SAR/remnant.
+4. **Write** — port `rtw8814a_set_tx_power_index[_by_rate]`: `txagc_table_wd =
+   0x00801000 | (pwr<<24) | (path<<8) | rate`, all rate sections per path,
+   DESC_RATE1M double-write. Pcap-diff the encoding.
+5. **bb_swing** — `get_bb_swing` (`swing2setting[4]={0x200,0x16a,0x101,0x0b6}`
+   indexed by 2 bits/path of the EFUSE bb_swing byte) → `REG_TXSCALE_A/B/C/D`
+   (0xc1c/0xe1c/0x181c/0x1a1c, mask GENMASK(31,21)); fold into `_switch_band`.
+6. **Wire** — call the TX-power level set after `phy_set_param` (connect) and per
+   `set_channel`. HW: deauth still works + range test.
+
+---
+
 ## Correctness audit — what's ported vs deferred (2026-05-26)
 
 **RX path — COMPLETE & validated** (hardware + pcap byte-diff): FW upload, MAC
