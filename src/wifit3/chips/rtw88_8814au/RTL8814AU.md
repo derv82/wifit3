@@ -124,11 +124,25 @@ lag the user saw once is shelved (likely Textual latency, not card-specific).
   every capture stopped dead at ~5260 frames (init burst only). Switched to
   `usbmon0` (all-buses meta-interface) + `lsusb` topology logging. Untested by
   agent (Linux/Kali only) — ready for the next capture run.
-- **OPEN — fast-hop silence:** still ~1 s `frames/s=0` windows at the 0.25 s TUI
-  hop interval (relock-vs-dwell, not gain). Per plan, the next step is a **fresh
-  capture** (now that `usbmon0` will actually record the hop sequence) to diff our
-  per-hop register burst + latency against the kernel's; candidate levers are a
-  longer per-card hop dwell and a post-tune RX-resume verify in `set_channel`.
+- **RESOLVED 2026-05-26 — channel-hop "death" = intermittent RF deaf on band
+  switch.** Root cause: on a 2G↔5G change the RF front-end fails to re-lock
+  ~30-50% of the time and comes up deaf (**CCA=0**, energy detection upstream of
+  gain — so beacons stop entirely on the new band; "going to 5G revives 2G").
+  Proven via `repro_band_death.py` (CH44↔CH1) + PHY-counter layer probe; ruled
+  out per-hop extras (worse without), a missing register (`switch_band` matches
+  the kernel byte-for-byte; bb_swing/pwrtrack are TX-only), and timing (80 ms
+  settle didn't help). Fix (`driver.set_channel`): on a band change, verify
+  CCA>0 over a 40 ms window and force a fresh `switch_band` re-tune if deaf (≤4×)
+  — the same verify+recover `connect()` uses for the cold-boot deaf, justified
+  by it being genuine analog re-lock variance, not a port gap. **HW: repro
+  0/15 + 0/12 (was 3-7/10); general band-crossing `--hop` 0 NO-FRAMES/20 s
+  (was 3-5); one re-lock recovers every deaf case.**
+- **OPEN (minor) — cold-boot "single beacon" oddity:** user still sees ~50% of
+  true (physical-replug) cold boots come up showing exactly ONE beacon/frame —
+  never 0, never 2. DIG made warm re-inits 8/8, but this true-cold case persists
+  and is weird (exactly 1 smells like RX-aggregation flushing one buffer then
+  stalling, distinct from the CCA=0 deaf). Needs a physical-replug repro (can't
+  reproduce via warm software re-init); revisit when the card can be cold-cycled.
 
 ### pcap byte-level findings — 2026-05-26 (full captures, usbmon0)
 
