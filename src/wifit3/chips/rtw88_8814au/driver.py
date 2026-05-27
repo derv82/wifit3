@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from typing import Callable, Optional
 
@@ -197,6 +198,14 @@ class RTL8814AUDriver:
             # AGC-table default that makes deaf boots a coin flip.
             self._dig_state = await loop.run_in_executor(
                 None, dynamic.dig_init, self.transport)
+            # Start the RX reader BEFORE the liveness probe so bulk-IN is drained
+            # all through bring-up. The kernel always keeps reads posted; our 2s
+            # undrained probe (RX on, BB decoding ~1000 frames, nothing reading)
+            # backs up the device RX path and halts the RX-DMA -> the cold-boot
+            # "1 beacon then silent". The rx callback is None until connect()
+            # returns, so frames read during bring-up are simply discarded.
+            if self._rx_reader is None and not await self._start_rx():
+                return False
             alive = await loop.run_in_executor(
                 None, rx.rf_receiving_frames, self.transport)
             if alive:
@@ -214,9 +223,6 @@ class RTL8814AUDriver:
         self.current_channel = 1
         self.current_band_is_2g = True
 
-        _progress(0.98, "Starting RX reader")
-        if not await self._start_rx():
-            return False
         # DIG watchdog: re-converge the OFDM initial gain from the false-alarm
         # count every 2 s (what the kernel does; we didn't). Keeps RX sensitive
         # without the static-gain deaf lottery.
@@ -254,7 +260,8 @@ class RTL8814AUDriver:
         self._bulk_in_ep = eps.primary_bulk_in
         self._bulk_out_eps = list(eps.bulk_out)
         self._rx_reader = RxReaderThread(
-            loop, self._rx_read_once, self._rx_dispatch, name="rtl8814au-rx")
+            loop, self._rx_read_once, self._rx_dispatch, name="rtl8814au-rx",
+            stats=bool(os.environ.get("WIFIT3_RX_STATS")))
         self._rx_reader.start()
         return True
 

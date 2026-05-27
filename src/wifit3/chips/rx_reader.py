@@ -45,6 +45,7 @@ class RxReaderThread:
         name: str = "rx",
         pending_cap: int = 256,
         max_errors: int = 5,
+        stats: bool = False,
     ) -> None:
         self._loop = loop
         self._read_once = read_once
@@ -58,6 +59,12 @@ class RxReaderThread:
         # so a momentarily-swamped loop drops here rather than ballooning
         # memory; the ±1 race between the two threads is harmless for a cap.
         self._pending = 0
+        # Opt-in throughput log (env WIFIT3_RX_STATS) for diagnosing RX-DMA
+        # delivery stalls — the single signal that matters is "are bulk-IN bytes
+        # still arriving?". Off (and free) unless explicitly enabled.
+        self._stats = stats
+        self._n_produced = 0
+        self._n_bytes = 0
 
     def start(self) -> None:
         """Spawn the reader thread. Idempotent."""
@@ -87,6 +94,7 @@ class RxReaderThread:
 
     def _run(self) -> None:
         consec_errors = 0
+        next_report = time.monotonic() + 2.0 if self._stats else float("inf")
         while self._running:
             try:
                 buf = self._read_once()
@@ -101,13 +109,19 @@ class RxReaderThread:
                 time.sleep(0.01)
                 continue
             consec_errors = 0
-            if not buf:
-                continue
-            # Loop swamped and not draining — drop rather than balloon memory.
-            if self._pending >= self._cap:
-                continue
-            self._pending += 1
-            self._loop.call_soon_threadsafe(self._on_buffer, buf)
+            if buf:
+                # Loop swamped and not draining — drop rather than balloon memory.
+                if self._pending < self._cap:
+                    self._pending += 1
+                    self._n_produced += 1
+                    self._n_bytes += len(buf)
+                    self._loop.call_soon_threadsafe(self._on_buffer, buf)
+            if self._stats and time.monotonic() >= next_report:
+                logger.info("[%s] RX 2s: produced=%d bytes=%d (bytes=0 while "
+                            "frames decode => RX-DMA delivery stall)",
+                            self._name, self._n_produced, self._n_bytes)
+                self._n_produced = self._n_bytes = 0
+                next_report = time.monotonic() + 2.0
         logger.info("[%s] RX reader thread stopped", self._name)
 
     # -- loop side -----------------------------------------------------------
