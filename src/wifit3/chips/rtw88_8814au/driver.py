@@ -1,11 +1,11 @@
 """RTL8814AU driver (Alfa AWUS1900) — WlanDriver Protocol implementation.
 
-Full bring-up (HW-verified): `connect()` runs M1 power-on + iDDMA FW upload
-(cold only) -> M2 TRX/FIFO/LLT -> M4 EFUSE -> M3 PHY/RF (BB/AGC/RF x4) + channel
-tune, with an RF-deaf retry that re-rolls phy_set_param until the PHY actually
-demodulates -> M5 monitor RX (RX-agg + promiscuous RCR + reader thread).
-`set_channel` retunes (+ re-pins CCK sensitivity); `inject_frame` builds a
-40-byte MGMT tx_desc and writes the HIGH bulk-OUT lane.
+Bring-up: `connect()` runs M1 power-on + iDDMA FW upload (cold only) -> M2
+TRX/FIFO/LLT -> M4 EFUSE -> M3 PHY/RF (BB/AGC/RF x4) + channel tune, with an
+RF-deaf retry that re-rolls phy_set_param until the PHY demodulates -> M5
+monitor RX (promiscuous RCR + reader thread). `set_channel` retunes (+ re-pins
+CCK sensitivity); `inject_frame` builds a 40-byte MGMT tx_desc and writes the
+HIGH bulk-OUT lane.
 
 Warm chips (FW already running) skip M1 and re-run M2-M5. Shares the modern
 RTW_WCPU_3081 iDDMA path with the 8822bu. See RTL8814AU.md + the phased
@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from typing import Callable, Optional
 
@@ -234,13 +233,8 @@ class RTL8814AUDriver:
                 if self._dig_state is None:
                     continue
                 try:
-                    fa, crc_ok, cca = await loop.run_in_executor(
-                        None, dynamic.read_phy_activity, self.transport)
-                    # Correlate with the RxReaderThread 2s STATS line: if RX
-                    # bytes=0 while crc_ok>0 the BB is decoding but the DMA/host
-                    # path stalled; crc_ok=0 & cca=0 means the RF went deaf.
-                    logger.debug("PHY activity 2s: crc_ok=%d cca=%d fa=%d",
-                                 crc_ok, cca, fa)
+                    fa = await loop.run_in_executor(
+                        None, dynamic.read_total_fa_cnt, self.transport)
                     await loop.run_in_executor(
                         None, dynamic.dig_step, self.transport,
                         self._dig_state, fa)
@@ -257,18 +251,8 @@ class RTL8814AUDriver:
             return False
         self._bulk_in_ep = eps.primary_bulk_in
         self._bulk_out_eps = list(eps.bulk_out)
-        await loop.run_in_executor(None, rx.prime_bulk_in, self.dev, self._bulk_in_ep)
-        # Surface RX throughput (produced buffers + bytes every 2s) when stats
-        # are requested OR debug logging is on — so a cold-boot "death" run shows
-        # whether bulk-IN delivers nothing (DMA stalled) vs bytes that don't
-        # parse (alignment/desync). The RF probe passing while no frames reach
-        # the host points at this RX-DMA layer, not RF.
-        rx_stats = (bool(os.environ.get("WIFIT3_RX_STATS"))
-                    or logger.isEnabledFor(logging.DEBUG))
         self._rx_reader = RxReaderThread(
-            loop, self._rx_read_once, self._rx_dispatch, name="rtl8814au-rx",
-            stats=rx_stats,
-        )
+            loop, self._rx_read_once, self._rx_dispatch, name="rtl8814au-rx")
         self._rx_reader.start()
         return True
 
@@ -307,14 +291,9 @@ class RTL8814AUDriver:
         band_change = is_2g != self.current_band_is_2g
         loop = asyncio.get_event_loop()
         try:
-            # A/B knob: skip the per-hop writes the kernel does NOT do.
-            no_extras = bool(os.environ.get("WIFIT3_NO_HOP_EXTRAS"))
-
             def _apply(force_band: bool) -> None:
                 chan.set_channel(self.transport, channel,
                                  rfe_option=self._rfe_option, force_band=force_band)
-                if no_extras:
-                    return
                 # cck_tx_dfir touches a shared CCK reg; re-pin monitor CCK
                 # sensitivity after each tune so it survives channel hops.
                 rx.tune_monitor_cck_sensitivity(self.transport)
@@ -325,13 +304,10 @@ class RTL8814AUDriver:
 
             def _tune():
                 _apply(False)
-                # On a 2G<->5G band change the RF front-end intermittently fails
-                # to re-lock (CCA=0; ~30-50%). A settle does NOT help — only a
-                # fresh band switch does. Verify CCA and re-lock, mirroring the
-                # cold-boot deaf recovery in connect(). switch_band matches the
-                # kernel byte-for-byte, so this is genuine analog re-lock variance,
-                # not a missing register. [[feedback_no_bandaids_root_cause]]
-                if not band_change or no_extras:
+                # A 2G<->5G band change can leave the RF front-end deaf (CCA=0);
+                # only a fresh switch_band re-locks it. Verify and re-tune if deaf.
+                # (Recovery, not yet root-caused — see RTL8814AU.md known gaps.)
+                if not band_change:
                     return
                 for attempt in range(_BAND_RELOCK_ATTEMPTS):
                     rx.reset_phy_counters(self.transport)

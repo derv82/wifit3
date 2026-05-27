@@ -45,7 +45,6 @@ class RxReaderThread:
         name: str = "rx",
         pending_cap: int = 256,
         max_errors: int = 5,
-        stats: bool = False,
     ) -> None:
         self._loop = loop
         self._read_once = read_once
@@ -59,17 +58,6 @@ class RxReaderThread:
         # so a momentarily-swamped loop drops here rather than ballooning
         # memory; the ±1 race between the two threads is harmless for a cap.
         self._pending = 0
-        # Optional throughput instrumentation (off in production). Plain ints
-        # raced across the two threads — fine for a coarse periodic summary
-        # that reveals loop-can't-keep-up (pending pinned at cap, drops > 0,
-        # high dispatch ms). See RxReaderThread stats.
-        self._stats = stats
-        self._n_produced = 0
-        self._n_dropped = 0
-        self._n_bytes = 0
-        self._pending_hwm = 0
-        self._dispatch_s = 0.0
-        self._n_dispatched = 0
 
     def start(self) -> None:
         """Spawn the reader thread. Idempotent."""
@@ -99,7 +87,6 @@ class RxReaderThread:
 
     def _run(self) -> None:
         consec_errors = 0
-        next_report = time.monotonic() + 2.0 if self._stats else float("inf")
         while self._running:
             try:
                 buf = self._read_once()
@@ -114,45 +101,20 @@ class RxReaderThread:
                 time.sleep(0.01)
                 continue
             consec_errors = 0
-            if buf:
-                # Loop swamped and not draining — drop rather than balloon memory.
-                if self._pending >= self._cap:
-                    self._n_dropped += 1
-                else:
-                    self._pending += 1
-                    if self._pending > self._pending_hwm:
-                        self._pending_hwm = self._pending
-                    self._n_produced += 1
-                    self._n_bytes += len(buf)
-                    self._loop.call_soon_threadsafe(self._on_buffer, buf)
-            if self._stats and time.monotonic() >= next_report:
-                self._report_stats()
-                next_report = time.monotonic() + 2.0
+            if not buf:
+                continue
+            # Loop swamped and not draining — drop rather than balloon memory.
+            if self._pending >= self._cap:
+                continue
+            self._pending += 1
+            self._loop.call_soon_threadsafe(self._on_buffer, buf)
         logger.info("[%s] RX reader thread stopped", self._name)
-
-    def _report_stats(self) -> None:
-        avg_ms = (self._dispatch_s / self._n_dispatched * 1e3
-                  if self._n_dispatched else 0.0)
-        logger.info(
-            "[%s] STATS 2s: produced=%d dropped=%d bytes=%d pending=%d hwm=%d "
-            "dispatched=%d avg_dispatch=%.1fms",
-            self._name, self._n_produced, self._n_dropped, self._n_bytes,
-            self._pending, self._pending_hwm, self._n_dispatched, avg_ms,
-        )
-        self._n_produced = self._n_dropped = self._n_bytes = 0
-        self._n_dispatched = 0
-        self._dispatch_s = 0.0
-        self._pending_hwm = self._pending
 
     # -- loop side -----------------------------------------------------------
 
     def _on_buffer(self, buf: bytes) -> None:
         self._pending -= 1
-        t0 = time.perf_counter() if self._stats else 0.0
         try:
             self._dispatch(buf)
         except Exception:
             logger.exception("[%s] dispatch raised", self._name)
-        if self._stats:
-            self._dispatch_s += time.perf_counter() - t0
-            self._n_dispatched += 1

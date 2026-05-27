@@ -24,8 +24,6 @@ import logging
 import struct
 import time
 
-import usb.core
-
 from wifit3.chips.rtw88_base.registers import DESC_RATE11M
 
 from wifit3.chips.rtw88_base.rx_common import (  # noqa: F401 (re-exports)
@@ -76,16 +74,13 @@ def mac_init_for_rx(transport: RTL8814AUTransport) -> None:
 
 
 def configure_rx_aggregation(transport: RTL8814AUTransport) -> None:
-    """rtw_usb_dynamic_rx_agg_v1 — set to the kernel's monitor/unassociated state:
-    aggregation OFF (size=0, timeout=1), so the RX-DMA flushes each frame to
-    bulk-IN immediately rather than accumulating pages.
-
-    The cold-boot pcap shows the kernel writes REG_RXDMA_AGG_PG_TH=0x0100 (the
-    disable value) throughout monitor — never the 0x2005 enable value. We had it
-    aggregating (size=5), whose page accumulator intermittently failed to re-arm
-    at cold boot and delivered the startup backlog once, then waited forever
-    (~1/7 boots dead while the BB kept decoding). Each transfer still starts on
-    an rx_pkt_desc with aggregation off, so framing is unaffected.
+    """Match the kernel's monitor/unassociated RX-aggregation state: OFF
+    (size=0, timeout=1 — the `rtw_usb_dynamic_rx_agg_v1` disable path), so the
+    RX-DMA flushes each frame to bulk-IN immediately instead of accumulating
+    pages. [WIRE] cold-boot pcap writes REG_RXDMA_AGG_PG_TH=0x0100 throughout
+    monitor. Aggregation (size=5) can leave the RX-DMA page accumulator un-armed
+    so delivery stops; framing is unaffected (each transfer still starts on an
+    rx_pkt_desc). See RTL8814AU.md.
     """
     transport.write8_set(C.REG_TXDMA_PQ_MAP, C.BIT_RXDMA_AGG_EN)
     transport.write8_clr(C.REG_RXDMA_AGG_PG_TH + 3, 1 << 7)
@@ -123,21 +118,6 @@ def tune_monitor_cck_sensitivity(transport: RTL8814AUTransport) -> None:
     transport.write8(C.REG_CCK_PD_TH, C.CCK_PD_TH_MAX_SENS)
     logger.info("CCK RX sensitivity: 2R-CCA+MRC on, CCK_PD_TH=0x%02x (LV0/max)",
                 C.CCK_PD_TH_MAX_SENS)
-
-
-def prime_bulk_in(dev: usb.core.Device, ep_in: int) -> None:
-    """No-op (intentionally).
-
-    DO NOT drain or clear_halt the bulk-IN pipe before RX. The 8814a delivers a
-    CONTINUOUS RX stream chopped into USB transfers that are NOT frame-aligned —
-    a bulk transfer can start mid-frame. Draining transfers (or clear_halt)
-    leaves the read position mid-frame, and since iter_bulk_frames assumes each
-    buffer starts at an rx_pkt_desc, every subsequent parse fails (we read frame
-    bodies with no descriptor at offset 0). Leaving the pipe untouched lets the
-    first listen read land on a fresh frame boundary after init. [HW-confirmed:
-    draining → 0 parsed frames; no-drain → frames parse.]
-    """
-    return
 
 
 def reset_phy_counters(transport: RTL8814AUTransport) -> None:
