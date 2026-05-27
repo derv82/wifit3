@@ -1,7 +1,7 @@
 # Wifit3 — Wireless Auditor
 
-A userland Wi-Fi auditing tool with a terminal UI. Wifit3 talks to USB Wi-Fi
-adapters **directly over USB** (PyUSB) — no `aircrack-ng`/`airmon-ng`
+A cross-platform Wi-Fi auditing tool with a terminal UI. Wifit3 talks to USB
+Wi-Fi adapters **directly over USB** (PyUSB) — no `aircrack-ng`/`airmon-ng`
 subprocesses, no Scapy — so it runs the same on **Linux and Windows**.
 
 <p align="center">
@@ -42,14 +42,29 @@ subprocesses, no Scapy — so it runs the same on **Linux and Windows**.
 | (various) | Ralink RT2800USB (RT5372 / RT5572) | 2.4 / 5 GHz |
 | Buffalo Nintendo Wi-Fi USB Connector | Ralink RT2500USB / RT2570 | 2.4 GHz |
 
-## How it differs from wifite / wifite2
+## Philosophy
 
-- **No external tools.** Wifite drives `airmon-ng`, `aireplay-ng`, `tshark`, etc.
-  as subprocesses. Wifit3 implements the monitor mode, injection, 802.11
-  parsing, and crypto itself, straight over USB.
-- **Runs on Windows**, not just Linux — bind the adapter to WinUSB with Zadig
-  and go (no kernel driver, no VM).
-- **A TUI**, not a scripted CLI — scan, pick a target, attack, save.
+**Zero dependencies.** Wifit3 implements the whole stack itself — the USB device
+drivers (ported from the Linux kernel), 802.11 frame parsing, the crypto, and
+the WEP attacks (ported from aircrack-ng) — instead of shelling out to
+`airmon-ng`, `aireplay-ng`, `tshark`, or `hcxdumptool`. wifite2 ran a binary
+dependency check on every startup; Wifit3 has nothing to check. That's what
+keeps it portable and robust: no PATH probing, no scraping another tool's
+stdout, no breakage when an external tool changes its output.
+
+**Cross-platform.** The bytes sent to the card are OS-agnostic, so one codebase
+runs on **Linux and Windows** — point the adapter at the USB stack Wifit3 talks
+through (WinUSB via Zadig on Windows; unbind the kernel driver on Linux) and go.
+No VM, no Kali boot.
+
+**Native and responsive.** No Scapy (it's heavy and triggers a UAC prompt on
+every import on Windows); no blocking subprocesses. A Textual TUI that updates
+live via async messages — scan, pick a target, attack, save — instead of polling
+another process's output.
+
+**A fresh start, not a fork.** Wifit3 is a clean-slate reimagining, not an
+in-place upgrade. It extracts the domain knowledge from wifite/wifite2 without
+inheriting the baggage of a tool architected as an aircrack-ng wrapper.
 
 ## Installation
 
@@ -67,7 +82,8 @@ sudo rmmod <kernel_driver>   # e.g. ath9k_htc, rtl8xxxu, mt76x2u, rt2800usb
 ```
 
 **Windows** — install the **WinUSB** driver for your adapter with
-[Zadig](https://zadig.akeo.ie/) first; Wifit3 won't see it otherwise.
+[Zadig](https://zadig.akeo.ie/) first; Wifit3 won't see it otherwise. Once
+WinUSB is set up you don't need to run Wifit3 as Administrator.
 
 ## Disclaimer
 

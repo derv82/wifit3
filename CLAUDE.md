@@ -21,7 +21,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Captures are made by `src/wifit3/scripts/capture.py`** on the Kali persistent USB. Each capture comes with a `*_logs/main.log` (absolute-epoch timeline) that `pcap_slicer.py` consumes.
 - **Per-chipset ground-truth docs**: each chip dir has a `<CHIP>.md` (e.g. `chips/mt7921au/MT7921AU.md`) that accumulates *verified* facts decoded from its pcap. Treat anything not in that doc as a hypothesis. Update the doc as facts are confirmed so future sessions don't re-derive them.
 - **Lead's rule** (from `NEXT-STEPS.md`): discuss class design (`GenericDriver` vs `WlanInterface` responsibilities, etc.) BEFORE execution. Treat the user as Senior Lead.
-- **Other top-level docs** (NOT auto-loaded — open as needed): `DESIGN.md`, `NEXT-STEPS.md`, `QUIRKS.md`, `SOFT-MAC.md`, `WPA3-Frames.md`, `WPA3-SAE-Group-Detection.md`, `planning/OSX-SUPPORT.md`.
+- **Other top-level docs** (NOT auto-loaded — open as needed): `NEXT-STEPS.md`, `PRE-RELEASE.md`.
 
 ## Commands
 

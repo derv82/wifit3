@@ -38,6 +38,17 @@ UI, licensing/ethics decisions, and comment polish** — not structural rot.
     ("pcap-extracted, byte-verified vs linux-firmware"), but verify each blob is
     redistributable and document the terms (linux-firmware `WHENCE`/license).
 
+- [ ] **macOS support (research, not committed).** Linux uses
+  `detach_kernel_driver()`/`rmmod`; Windows uses Zadig→WinUSB. macOS has no clean
+  equivalent — `detach_kernel_driver()` is historically unimplemented on the
+  macOS libusb backend, and unloading Apple's driver needs SIP disabled (a
+  non-starter to ask of users). The viable path is a **"codeless kext"**: a
+  dummy `.kext` (Info.plist only, no code) declaring the adapter's VID:PID with
+  a high `IOProbeScore`, so the kernel binds the do-nothing kext and leaves the
+  USB interface unclaimed for libusb. Ship a prebuilt one per supported card.
+  (Legacy ≤10.14 alternative: `sudo kextunload -b <bundle-id>`.) Unverified —
+  no macOS hardware tested. Parked until someone wants it.
+
 - [ ] **`README.md`** — see §4.
 - [ ] **`CONTRIBUTING.md`** — dev setup (`uv`), how hardware testing works (the
   user-runs-the-card loop), the comment-style rule, where ground-truth docs live.
