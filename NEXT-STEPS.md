@@ -17,7 +17,7 @@ Fully-functional userspace Python drivers (cold + warm bring-up, channel hop, in
 | Realtek RTL8812AU (AWUS036ACH) | `chips/rtl8812au/` | 2.4 + 5 GHz, 2T2R | DONE 2026-05-17, RX + deauth confirmed by handshake re-capture |
 | Realtek RTL8814AU (Alfa AWUS1900, AC1900) | `chips/rtw88_8814au/` | 2.4 + 5 GHz, 4T4R | DONE 2026-05-26 — modern iDDMA FW + 4-path PHY/RF; M1-M7 hw-verified (59-70 BSSIDs, promiscuous monitor 33 stations, real jaguar-phy_status RSSI); deauth confirmed by user (kicked phone off, M2/M4 handshake re-captured). See [[RTL8814AU.md]]. |
 | Realtek RTL8188EUS (TP-Link TL-WN722N v2/v3) | `chips/rtl8188eus/` | 2.4 GHz, 1T1R | DONE 2026-05-19, M1-M8 complete; passive 4-way handshake + active PMKID harvest verified live |
-| Mediatek MT7921AU (AWUS036AXML) | `chips/mt7921au/` (scaffold) | — | PAUSED — see [[MT7921AU.md]] + [[KALI-HANDOFF-2026-05-19.md]] (kernel-driver-collision confirmed + fixed via blacklist+rmmod+replug; 2026-05-19 evening Kali re-run got past PATCH_SEM_GET and uploaded all firmware, but **FW_START_REQ wall reproduces on Kali too** — not WinUSB-specific. Leading hypothesis: shallow bulk-IN URB pool — needs libusb async URB queue) |
+| Mediatek MT7921AU (AWUS036AXML) | `chips/mt7921au/` (scaffold) | — | PAUSED, possibly dead-end — **2026-05-26: the AXML did NOT enumerate on Linux at all** (no iwconfig/ifconfig/airmon-ng iface on USB-2/3/hub) so we can't even capture it; enumerates under WinUSB on Windows. See [[MT7921AU.md]] + the 2026-05-26 callout in "NEXT STEP: MT7921AU". Prior blocker: **FW_START_REQ wall** (reproduces on Kali too; leading hypothesis shallow bulk-IN URB pool — libusb async URB queue). |
 
 Family-shared infrastructure under `chips/rtw88_base/` covers transport,
 phy_cond walker, power_seq runtime, RF SIPI, TX checksum, RX-desc parser,
@@ -93,6 +93,24 @@ Two follow-ups are tracked, both deferred but small:
    sensitivity gap from earlier testing.
 
 ## NEXT STEP: MT7921AU
+
+**⚠️ Update 2026-05-26 — the AWUS036AXML may be a dead end on Linux.** During the
+8814au capture run the user tried the AWUS036AXML (MT7921AU) on Kali across a
+USB-3 port, a USB-2 port, and a powered hub: **it never enumerated at all** —
+nothing in `iwconfig`, `ifconfig`, or `airmon-ng` (no interface, no `phy`). A
+peer independently recalled "I didn't think the AXML even worked." Two
+consequences:
+  1. **We cannot capture it.** Our ground-truth method (airmon-ng + usbmon on
+     Kali) is unavailable for a card that doesn't bind a kernel driver / present
+     a netdev. The FW_START_REQ work below is blocked on data we can't gather
+     the usual way.
+  2. **Re-confirm the hardware before sinking more time in.** Check `lsusb` /
+     `dmesg` on plug-in to see if the device even shows on the bus (VID:PID) vs.
+     not powering/enumerating at all; try a known-good cable; confirm it's not a
+     dead unit. On Windows it *does* enumerate under WinUSB (we got partway
+     through FW upload), so the chip isn't bricked — but mainline Linux support
+     for this specific AXML revision is questionable. Consider deprioritizing
+     until the enumeration question is settled.
 
 **Plan revised 2026-05-19 evening** based on the post-blacklist Kali re-run
 (bundles in `usb_dumps/wifit3-kali-bundle/run-2026051*`). The libusb-bump
