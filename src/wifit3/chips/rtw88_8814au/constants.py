@@ -279,8 +279,14 @@ REG_RXDMA_MODE = 0x0290
 # rx_pkt_desc parse fails. size=0x5 pages, timeout=0x20.
 REG_RXDMA_AGG_PG_TH = 0x0280
 BIT_RXDMA_AGG_EN = 1 << 2        # BIT(2) of REG_TXDMA_PQ_MAP (0x010C)
-RXDMA_AGG_SIZE = 0x05
-RXDMA_AGG_TIMEOUT = 0x20
+# RX aggregation OFF — the values rtw_usb_dynamic_rx_agg_v1(enable=false) writes,
+# which is what the kernel runs in monitor/unassociated mode (confirmed in the
+# cold-boot pcap: REG_RXDMA_AGG_PG_TH=0x0100 every time, never the 0x2005 enable
+# value). size=0 => the RX-DMA flushes each frame immediately instead of
+# accumulating pages; accumulation is what intermittently wedged the DMA at cold
+# boot (deliver-once-then-halt). [[feedback_no_bandaids_root_cause]]
+RXDMA_AGG_SIZE = 0x00
+RXDMA_AGG_TIMEOUT = 0x01
 # Promiscuous monitor RCR (AAP|APM|AM|AB + APP_PHYSTS, CBSSID_* cleared) —
 # family-shared rtw88 value, same as rtl8821au/8822bu monitor.
 RCR_MONITOR = 0xF410400F

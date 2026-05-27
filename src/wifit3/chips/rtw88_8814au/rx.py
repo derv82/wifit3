@@ -71,20 +71,28 @@ def mac_init_for_rx(transport: RTL8814AUTransport) -> None:
     transport.write16(C.REG_TXDMA_OFFSET_CHK,
                       transport.read16(C.REG_TXDMA_OFFSET_CHK) | BIT_DROP_DATA_EN)
 
-    enable_rx_aggregation(transport)
+    configure_rx_aggregation(transport)
     tune_monitor_cck_sensitivity(transport)
 
 
-def enable_rx_aggregation(transport: RTL8814AUTransport) -> None:
-    """rtw_usb_dynamic_rx_agg_v1(enable) — 8814a. Makes the chip frame-align
-    bulk-IN transfers (each starts with an rx_pkt_desc). Without it the RX
-    stream is chopped mid-frame and the per-URB desc parse fails. [HW-critical]
+def configure_rx_aggregation(transport: RTL8814AUTransport) -> None:
+    """rtw_usb_dynamic_rx_agg_v1 — set to the kernel's monitor/unassociated state:
+    aggregation OFF (size=0, timeout=1), so the RX-DMA flushes each frame to
+    bulk-IN immediately rather than accumulating pages.
+
+    The cold-boot pcap shows the kernel writes REG_RXDMA_AGG_PG_TH=0x0100 (the
+    disable value) throughout monitor — never the 0x2005 enable value. We had it
+    aggregating (size=5), whose page accumulator intermittently failed to re-arm
+    at cold boot and delivered the startup backlog once, then waited forever
+    (~1/7 boots dead while the BB kept decoding). Each transfer still starts on
+    an rx_pkt_desc with aggregation off, so framing is unaffected.
     """
     transport.write8_set(C.REG_TXDMA_PQ_MAP, C.BIT_RXDMA_AGG_EN)
     transport.write8_clr(C.REG_RXDMA_AGG_PG_TH + 3, 1 << 7)
     val16 = (C.RXDMA_AGG_SIZE & 0xFF) | ((C.RXDMA_AGG_TIMEOUT & 0xFF) << 8)
     transport.write16(C.REG_RXDMA_AGG_PG_TH, val16)
-    logger.info("RX aggregation enabled (size=0x%02x timeout=0x%02x)",
+    logger.info("RX aggregation: kernel monitor config (off, size=0x%02x "
+                "timeout=0x%02x, immediate flush)",
                 C.RXDMA_AGG_SIZE, C.RXDMA_AGG_TIMEOUT)
 
 
