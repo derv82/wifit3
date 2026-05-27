@@ -289,9 +289,15 @@ class RTL8814AUDriver:
             return False
         loop = asyncio.get_event_loop()
         try:
+            # A/B knob: skip the per-hop writes the kernel does NOT do, to test
+            # whether they cause the 5G->2G RX death. See repro_band_death.py.
+            no_extras = bool(os.environ.get("WIFIT3_NO_HOP_EXTRAS"))
+
             def _tune():
                 chan.set_channel(self.transport, channel,
                                  rfe_option=self._rfe_option)
+                if no_extras:
+                    return
                 # cck_tx_dfir touches a shared CCK reg; re-pin monitor CCK
                 # sensitivity after each tune so it survives channel hops.
                 rx.tune_monitor_cck_sensitivity(self.transport)
