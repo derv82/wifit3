@@ -234,8 +234,13 @@ class RTL8814AUDriver:
                 if self._dig_state is None:
                     continue
                 try:
-                    fa = await loop.run_in_executor(
-                        None, dynamic.read_total_fa_cnt, self.transport)
+                    fa, crc_ok, cca = await loop.run_in_executor(
+                        None, dynamic.read_phy_activity, self.transport)
+                    # Correlate with the RxReaderThread 2s STATS line: if RX
+                    # bytes=0 while crc_ok>0 the BB is decoding but the DMA/host
+                    # path stalled; crc_ok=0 & cca=0 means the RF went deaf.
+                    logger.debug("PHY activity 2s: crc_ok=%d cca=%d fa=%d",
+                                 crc_ok, cca, fa)
                     await loop.run_in_executor(
                         None, dynamic.dig_step, self.transport,
                         self._dig_state, fa)

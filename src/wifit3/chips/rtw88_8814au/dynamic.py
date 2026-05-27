@@ -55,6 +55,30 @@ def read_total_fa_cnt(transport: RTL8814AUTransport) -> int:
     return total_fa
 
 
+def read_phy_activity(transport: RTL8814AUTransport) -> tuple[int, int, int]:
+    """Like read_total_fa_cnt but also returns BB-decode activity for this 2 s
+    window: (total_fa, crc_ok, cca_ofdm). Diagnostic for the cold-boot RX death
+    — if bulk-IN delivers 0 bytes while crc_ok keeps climbing, the BB is still
+    decoding and the DMA/host path stalled; if crc_ok=0 + cca=0 the RF went deaf.
+    Resets the counters (so values are per-window)."""
+    cck_enabled = bool(transport.read32(C.REG_RXPSEL) & C.BIT_RXPSEL_CCK_EN)
+    cck_fa = transport.read16(C.REG_FA_CCK)
+    ofdm_fa = transport.read16(C.REG_FA_OFDM)
+    total_fa = ofdm_fa + (cck_fa if cck_enabled else 0)
+    crc_ok = ((transport.read32(C.REG_CRC_CCK) & 0xFFFF)
+              + (transport.read32(C.REG_CRC_OFDM) & 0xFFFF)
+              + (transport.read32(C.REG_CRC_HT) & 0xFFFF))
+    cca = (transport.read32(C.REG_CCA_OFDM) >> 16) & 0xFFFF
+
+    transport.write32_set(C.REG_FAS, 1 << 17)
+    transport.write32_clr(C.REG_FAS, 1 << 17)
+    transport.write32_clr(C.REG_CCK0_FAREPORT, 1 << 15)
+    transport.write32_set(C.REG_CCK0_FAREPORT, 1 << 15)
+    transport.write32_set(C.REG_CNTRST, 1 << 0)
+    transport.write32_clr(C.REG_CNTRST, 1 << 0)
+    return total_fa, crc_ok, cca
+
+
 def dig_write(transport: RTL8814AUTransport, igi: int) -> None:
     """rtw_phy_dig_write — write IGI to all 4 OFDM paths (8814a dig_cck=NULL)."""
     for addr in C.REG_DIG_PATH:
