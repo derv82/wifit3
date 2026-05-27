@@ -55,13 +55,73 @@ EFUSE_LOGICAL_SIZE = 512
 EFUSE_PROTECT_SIZE = 0
 
 # --- logical-map offsets (struct rtw8814a_efuse, rtw8814a.h) ---------------
+OFF_TXPWR_IDX = 0x10              # txpwr_idx_table[4], 42 B/path (2G 18 + 5G 24)
+TXPWR_IDX_PATH_SZ = 42
 OFF_CHANNEL_PLAN = 0xB8
 OFF_XTAL_K = 0xB9
+OFF_THERMAL_METER = 0xBA
 OFF_RF_BOARD_OPTION = 0xC1
+OFF_TX_BB_SWING_2G = 0xC6
+OFF_TX_BB_SWING_5G = 0xC7
 OFF_TRX_ANTENNA_OPTION = 0xC9
 OFF_RFE_OPTION = 0xCA
 OFF_COUNTRY_CODE = 0xCB
 OFF_MAC_ADDR_8814AU = 0xD8        # struct rtw8814au_efuse: mac_addr @ 0xD8
+
+
+def _s4(x: int) -> int:
+    """Sign-extend a 4-bit nibble (the EFUSE power diffs are signed s8:4)."""
+    x &= 0xF
+    return x - 16 if x >= 8 else x
+
+
+@dataclass(frozen=True)
+class TxPowerIdx:
+    """Per-path EFUSE TX-power calibration (`struct rtw_txpwr_idx`, 42 B).
+
+    Field names mirror the kernel structs so the power computation
+    (rtw_phy_get_2g/5g_tx_power_index) ports 1:1. Diffs are signed (s8:4).
+    """
+    # 2G (rtw_2g_txpwr_idx)
+    cck_base: tuple           # [6] channel groups
+    bw40_base_2g: tuple       # [5]
+    ht_1s_diff_2g: tuple      # (ofdm, bw20)
+    # ht_2s/3s/4s_diff: (bw20, bw40, cck, ofdm), indexed [0]=2s [1]=3s [2]=4s
+    ht_ns_diff_2g: tuple
+    # 5G (rtw_5g_txpwr_idx)
+    bw40_base_5g: tuple       # [14]
+    ht_1s_diff_5g: tuple      # (ofdm, bw20)
+    ht_ns_diff_5g: tuple      # [(bw20, bw40)] for 2s,3s,4s
+    ofdm_diff_5g: tuple       # (ofdm_2s, ofdm_3s, ofdm_4s)
+    vht_diff_5g: tuple        # [(bw80, bw160)] for 1s,2s,3s,4s
+
+
+def _parse_txpwr_path(m: bytes, base: int) -> TxPowerIdx:
+    """Decode one 42-byte `rtw_txpwr_idx` block (2G 0..17, 5G 18..41)."""
+    # 2G (rtw_2g_txpwr_idx)
+    cck_base = tuple(m[base:base + 6])
+    bw40_base_2g = tuple(m[base + 6:base + 11])
+    b = m[base + 11]
+    ht_1s_2g = (_s4(b & 0xF), _s4(b >> 4))                       # ofdm, bw20
+    ht_ns_2g = []
+    for k in range(3):                                           # 2s, 3s, 4s
+        b0, b1 = m[base + 12 + k * 2], m[base + 13 + k * 2]
+        ht_ns_2g.append((_s4(b0 & 0xF), _s4(b0 >> 4),            # bw20, bw40
+                         _s4(b1 & 0xF), _s4(b1 >> 4)))           # cck, ofdm
+    # 5G (rtw_5g_txpwr_idx) at +18
+    g5 = base + 18
+    bw40_base_5g = tuple(m[g5:g5 + 14])
+    b = m[g5 + 14]
+    ht_1s_5g = (_s4(b & 0xF), _s4(b >> 4))                       # ofdm, bw20
+    ht_ns_5g = [(_s4(m[g5 + 15 + k] & 0xF), _s4(m[g5 + 15 + k] >> 4))
+                for k in range(3)]                              # bw20, bw40 (2s/3s/4s)
+    b0, b1 = m[g5 + 18], m[g5 + 19]
+    ofdm_5g = (_s4(b0 >> 4), _s4(b0 & 0xF), _s4(b1 & 0xF))       # 2s, 3s, 4s
+    vht_5g = [(_s4(m[g5 + 20 + k] >> 4), _s4(m[g5 + 20 + k] & 0xF))
+              for k in range(4)]                                # bw80, bw160 (1s..4s)
+    return TxPowerIdx(cck_base, bw40_base_2g, ht_1s_2g, tuple(ht_ns_2g),
+                      bw40_base_5g, ht_1s_5g, tuple(ht_ns_5g), ofdm_5g,
+                      tuple(vht_5g))
 
 
 @dataclass(frozen=True)
@@ -73,6 +133,11 @@ class EfuseRead:
     trx_antenna_option: int
     channel_plan: int
     mac_addr: bytes           # 6 bytes
+    # M6 TX power (full layout parsed; computation/write land in tx_power.py)
+    txpwr: tuple = ()         # (TxPowerIdx,)*4 per RF path
+    bb_swing_2g: int = 0      # tx_bb_swing_setting_2g (2 bits/path)
+    bb_swing_5g: int = 0
+    thermal_meter: int = 0xFF
 
 
 def _efuse_grant(transport: RTL8814AUTransport, on: bool) -> None:
@@ -183,6 +248,11 @@ def read_efuse(transport: RTL8814AUTransport) -> EfuseRead:
     crystal_cap = 0x20 if xtal == 0xFF else (xtal & 0x3F)
     rfe_raw = log_map[OFF_RFE_OPTION]
 
+    txpwr = tuple(
+        _parse_txpwr_path(log_map, OFF_TXPWR_IDX + p * TXPWR_IDX_PATH_SZ)
+        for p in range(4)
+    )
+
     return EfuseRead(
         crystal_cap=crystal_cap,
         rfe_option=_resolve_rfe_option(rfe_raw),
@@ -191,4 +261,8 @@ def read_efuse(transport: RTL8814AUTransport) -> EfuseRead:
         trx_antenna_option=log_map[OFF_TRX_ANTENNA_OPTION],
         channel_plan=log_map[OFF_CHANNEL_PLAN],
         mac_addr=bytes(log_map[OFF_MAC_ADDR_8814AU:OFF_MAC_ADDR_8814AU + 6]),
+        txpwr=txpwr,
+        bb_swing_2g=log_map[OFF_TX_BB_SWING_2G],
+        bb_swing_5g=log_map[OFF_TX_BB_SWING_5G],
+        thermal_meter=log_map[OFF_THERMAL_METER],
     )
