@@ -167,6 +167,28 @@ airodump 20407–88479, then 1 s iw hops, aireplay, 0.25 s fast-hops.
    stop/start re-runs a full bring-up. (Architecture note; our single connect()
    does power-on→FW→efuse→mac→phy in one shot, which is fine.)
 
+### 2026-05-26 follow-up: spur ported; IQK BLOCKED on driver mismatch
+
+- **DONE — `spur_calibration` ported** (`chan.py`, per-hop in `set_bw_mode`,
+  rfe-gated): full 1:1 of all branches + 2.4G NBI + reset path. HW: RX still
+  first-try, no regression. Did **not** change the hop death (expected — notch
+  filter, not RX on/off).
+- **IQK — cannot port faithfully from our source.** The pcap IQK (frames
+  ~13939+) writes an NCTL coefficient block (0x1b04/1b10/1b14/1b18/1b1c/
+  1b20-1b3c/1b94) that **does not exist in mainline `rtw8814a.c` v6.18** — it
+  matches **`rtw8822c`'s** halrf IQK table (`rtw8822c_table.c:43647`; pcap
+  `0x1b18=0x00292903` is an exact match). ⇒ **the captures were produced by the
+  Realtek-vendor-derived out-of-tree 8814au driver, NOT mainline rtw88.** Our
+  mainline source has a simpler LOK/TX/RX-one-shot IQK; the vendor driver uses
+  the coefficient-table (halrf) IQK seen on the wire. Porting mainline's IQK
+  blind (no matching pcap to validate, RX-off/restore wedge risk) is unsafe;
+  porting the wire sequence is wrong (IQK must compute fresh coefficients, not
+  replay stale ones). **Blocked until we have the actual Kali driver source**
+  (check `modinfo rtw88_8814au` / `dmesg` on Kali — likely morrownr/aircrack-ng
+  out-of-tree rtl8814au). NOTE: this only affects IQK — the FW/mac/BB-AGC-RF
+  tables/channel-tune all matched the pcap, so mainline is the right reference
+  for everything else. IQK won't fix the death regardless (once at bring-up).
+
 **Net:** the death is in OUR code, and the pcap (kernel) can't show it directly.
 Suspects now (need Windows-HW toggling, not more pcap): (a) our **RX aggregation**
 desyncing on rapid retune; (b) our **extra per-hop writes** the kernel never does
