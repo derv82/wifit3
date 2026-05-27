@@ -124,6 +124,26 @@ class Capture:
         
         return combined_output
         
+    def fast_hop_segment(self, dwell=0.25, duration=12.0, channels=(1, 6, 11)):
+        """Hop at the wifit3 TUI's pathological 0.25 s cadence to test whether
+        the KERNEL also goes silent (relock > dwell) or keeps capturing. Uses a
+        drift-tolerant loop (NOT run_at) so it can never abort the capture; each
+        hop is timestamped into main.log so pcap_slicer can isolate the window.
+        """
+        self.logger.log_main(f"[FAST-HOP] {len(channels)} chans @ {dwell}s for {duration}s")
+        end = time.time() + duration
+        i = 0
+        while time.time() < end:
+            ch = channels[i % len(channels)]
+            i += 1
+            t0 = time.time()
+            self.logger.log_main(f"[{t0:.3f}] FAST-HOP set channel {ch}")
+            subprocess.run(["sudo", "iw", "dev", self.mon_iface, "set", "channel", str(ch)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            remain = dwell - (time.time() - t0)
+            if remain > 0:
+                time.sleep(remain)
+
     def cleanup(self):
         self.logger.log_main("\n[*] Teardown initiated. Cleaning up...")
         if self.tshark_proc and self.tshark_proc.poll() is None:
@@ -288,7 +308,12 @@ class Capture:
                                "-c", self.CLIENT_BSSID,
                                self.mon_iface], timeout=6.0)
         cursor_t += 8.0
-        
+
+        # Fast-hop stress (TUI's 0.25 s cadence) — run LAST so it can't disturb
+        # the clean 1 s per-hop reference above, and so the pcap is preserved
+        # even if it misbehaves. Answers: does the kernel survive 0.25 s hops?
+        self.fast_hop_segment()
+
         # Cleanup
         expected_cleanup = self.start_time + cursor_t
         now = time.time()
