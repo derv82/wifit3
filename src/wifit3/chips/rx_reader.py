@@ -59,9 +59,9 @@ class RxReaderThread:
         # so a momentarily-swamped loop drops here rather than ballooning
         # memory; the ±1 race between the two threads is harmless for a cap.
         self._pending = 0
-        # Opt-in throughput log (env WIFIT3_RX_STATS) for diagnosing RX-DMA
+        # Opt-in throughput log (caller passes stats=True) for diagnosing RX-DMA
         # delivery stalls — the single signal that matters is "are bulk-IN bytes
-        # still arriving?". Off (and free) unless explicitly enabled.
+        # still arriving?". Off (and free) unless the caller enables it.
         self._stats = stats
         self._n_produced = 0
         self._n_bytes = 0
