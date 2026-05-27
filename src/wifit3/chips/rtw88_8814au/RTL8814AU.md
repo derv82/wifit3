@@ -52,18 +52,26 @@ Consequences:
    depends on the boot analog gain state → **50/50**, and re-rolling
    `phy_set_param` "works after a few tries" because each re-roll is a fresh
    lottery on that state. This single gap explains the band-aid's behaviour.
-   *Status: CONFIRMED kernel does it; CONFIRMED we don't. Causation plausible,
-   needs a HW experiment (run a DIG-like IGI sweep on a deaf boot, see if RX wakes).*
-2. **[MED] `rtw_phy_init` skipped** (rtw8814a.c:335). Seeds IGI history,
-   `rtw_phy_cck_pd_init`, `rtw_phy_adaptivity_init` (EDCCA), cfo/tx-path-div init.
-   Missing cck_pd_init + adaptivity can leave FA/CCA gating in an undefined state.
-   Tied to #1. *Status: CONFIRMED skipped (our `phy_set_param` docstring admits it).*
-3. **[MED] `rtw8814a_config_trx_path` skipped** (rtw8814a.c:311): clears
-   `REG_CCK0_FAREPORT` 2RX|MRC, sets CCK RX→path B (`REG_CCK_RX`). Our CCK path
-   setup is scattered/partial (only the path-B bit, inside `chan._switch_band` +
-   `rx.tune_monitor_cck_sensitivity`). A *consistently* wrong path config would be
-   consistently bad, not 50/50 — so this is more "general RX fragility" than the
-   50/50 cause. *Status: CONFIRMED skipped.*
+   *Status: **CONFIRMED + FIXED 2026-05-26.** Ported the DIG watchdog
+   (`dynamic.py`): seed IGI=DIG_CVRG_MIN (0x1c, max coverage) at each bring-up
+   attempt + a 2 s loop that walks IGI from the FA count (no-link/coverage path
+   of `rtw_phy_dig`). HW: **8/8 consecutive bring-ups came up on attempt 1,
+   RECEIVING** (CRC-OK 119–351), zero deaf, zero re-rolls — vs the prior ~50%.
+   Caveat: warm software re-inits (the deaf retry historically fired on those
+   too); the truly-cold physical-replug case still wants user confirmation
+   before the 8× re-roll band-aid is removed.*
+2. **[MED] `rtw_phy_init` skipped** (rtw8814a.c:335). *Status: investigated —
+   `rtw_phy_init` is almost entirely software bookkeeping (zeroing FA/IGI history,
+   `cck_pd_init` sets dm_info state only) with **no hardware writes** except
+   *reading* dig[0] to seed the starting IGI; `adaptivity_init` only writes HW for
+   ETSI/JP regd. So skipping it left no HW gap — its only role (the IGI seed) is
+   now handled by `dynamic.dig_init`.*
+3. **[MED→FIXED] `rtw8814a_config_trx_path` skipped** (rtw8814a.c:311): clears
+   `REG_CCK0_FAREPORT` 2RX|MRC, sets CCK RX→path B. *Status: now ported into
+   `phy.config_trx_path`, called from `phy_set_param`. (Consistently-wrong path
+   config would be consistently bad, not 50/50, so it wasn't the 50/50 cause —
+   but it's a real faithfulness gap, now closed. crystal_cap→AFE_CTRL3 was also
+   added in the same pass.)*
 4. **[LOW] No RF/PLL settle or lock-poll after RF power-on.** Neither kernel nor we
    poll, but the kernel emits ~thousands more writes (full phy_init, init_rfe_reg,
    MAC regs) between RF-enable and RX, giving de-facto settle time we skip.
@@ -78,18 +86,21 @@ Consequences:
 
 ### Q2 — Why does RX go silent 5–10 s after a channel switch?  (ranked)
 
-1. **[PRIMARY] Same missing DIG watchdog, now post-tune.** Optimal IGI differs per
-   channel; after a hop the gain can land wrong and, with no watchdog, never
-   re-converges. Kernel re-converges within a couple of 2 s ticks. (Our static
-   `CCK_PD=LV0` pin only helps CCK/beacons; OFDM/data still rides un-tracked gain.)
-2. **[PRIMARY] PLL relock blanks the radio + no recovery in `set_channel`.** The
-   code already documents "each tune briefly blanks the radio (PLL relock)"
-   (interface.py:621). `set_channel` re-tunes 4 RF paths but, unlike `connect()`,
-   never re-verifies RX resumed or recovers if it didn't.
-3. **[CONTRIBUTING] TUI hops every 0.25 s** (`on_screen_resume`, interval=0.25) —
-   faster than a 4-path relock + AGC re-settle. A UI parameter, not a driver bug,
-   but it amplifies #1/#2. Kernel scans dwell ≥100 ms and still survive *because*
-   the watchdog re-converges.
+1. **[PARTIAL] Missing DIG watchdog, post-tune.** `set_channel` now re-seeds IGI
+   to max coverage on each hop + the 2 s watchdog re-converges. This helps a
+   *manual* channel change (instant max sensitivity on the new channel), but does
+   **not** fix aggressive hopping — DIG runs on a 2 s cadence, irrelevant to a
+   0.25 s dwell. *Status: addressed for slow/manual changes; not the fast-hop cause.*
+2. **[PRIMARY — open] PLL relock blanks the radio; cadence vs dwell.** HW with the
+   DIG fix still shows ~1 s `frames/s=0` windows at the TUI's 0.25 s hop interval.
+   The 4-path relock + AGC re-settle eats most of a 250 ms dwell, so few/no frames
+   land per channel. This is a **dwell-time** problem, not a gain problem — the
+   lever is the hop interval (kernel/airmon dwell ≥1 s in the captures and are
+   fine), or a post-tune RX-resume verify. `set_channel` still never re-verifies RX.
+3. **[CONTRIBUTING] TUI hops every 0.25 s** (`on_screen_resume`, interval=0.25).
+   Per the user's plan, the remaining hop flakiness is the "go fetch fresh captures"
+   branch (now that `capture.py` uses `usbmon0`, a recapture will actually contain
+   the hop sequence — see below).
 4. **[LOW] `rtw8814a_spur_calibration` skipped** (rtw8814a.c:1117) — per-spur-channel
    NBI/CSI notch; only affects specific channels, would not cause general silence.
 
@@ -101,19 +112,23 @@ slip (≤28 ms, 0 drops, 0.1 ms dispatch). So the RX-dispatch/loop path is *not*
 cause; verification of the real silence stays a HW/TUI task for the user. The
 lag the user saw once is shelved (likely Textual latency, not card-specific).
 
-### Suggested confirm/disconfirm experiments (no fixes applied)
+### Outcome + remaining work
 
-- **DIG sweep on a deaf boot:** when `rf_receiving_frames()` reports deaf, sweep the
-  IGI registers and watch CRC-OK counts. 8814a IGI = per-path 7-bit gain index
-  (`rtw8814a_dig`, rtw8814a.c:2139): path A/B/C/D = **0xc50 / 0xe50 / 0x1850 /
-  0x1a50, mask 0x7f**. Write 0x00..0x7f across all four and look for a value where
-  RX wakes. If it does, #1 is confirmed and the fix is a periodic DIG port, not the
-  8× re-roll. (Note: a software `connect()` re-init can land deaf too, so this is
-  triggerable without a physical replug — probe instead of re-rolling on a deaf attempt.)
-- **Port a minimal 2 s watchdog** (statistics → dig → cck_pd) and test whether the
-  50/50 boot and the post-hop silence both vanish.
-- **Recapture** with a longer USB trace covering channel hops to finally diff our
-  per-hop register burst against the kernel's.
+- **DONE — DIG watchdog** (`dynamic.py`, wired into `driver.py`): seed IGI to
+  max coverage at bring-up + 2 s FA-driven IGI walk. 8/8 warm re-inits came up
+  first-try RECEIVING (was ~50% deaf). The 8× re-roll band-aid is left in place
+  as a safety net pending **user confirmation on cold physical replugs**; remove
+  it once cold boots are confirmed reliable.
+- **DONE — capture.py bus fix:** `USBMON` was hardcoded to `usbmon3`; a
+  FW-loading adapter re-enumerates onto a different bus after firmware boot, so
+  every capture stopped dead at ~5260 frames (init burst only). Switched to
+  `usbmon0` (all-buses meta-interface) + `lsusb` topology logging. Untested by
+  agent (Linux/Kali only) — ready for the next capture run.
+- **OPEN — fast-hop silence:** still ~1 s `frames/s=0` windows at the 0.25 s TUI
+  hop interval (relock-vs-dwell, not gain). Per plan, the next step is a **fresh
+  capture** (now that `usbmon0` will actually record the hop sequence) to diff our
+  per-hop register burst + latency against the kernel's; candidate levers are a
+  longer per-card hop dwell and a post-tune RX-resume verify in `set_channel`.
 
 ---
 

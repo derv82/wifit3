@@ -50,7 +50,14 @@ class LogHelper:
 class Capture:
     TARGET_BSSID = "aa:bb:cc:dd:ee:01"
     CLIENT_BSSID = "04:2E:C1:51:43:B8"
-    USBMON = "usbmon3"
+    # usbmon0 = the ALL-BUSES meta-interface. A hardcoded per-bus capture
+    # (e.g. usbmon3) silently loses the device when a FW-loading adapter
+    # USB-resets and re-enumerates onto a different bus after firmware boot —
+    # which is why earlier captures stopped dead right after init (3 caps all
+    # ended at ~5260 frames = the init burst, nothing after). Capturing all
+    # buses is immune to the bus number and to re-enumeration; the extract
+    # tooling filters by the vendor-control signature anyway.
+    USBMON = "usbmon0"
     BASE_IFACE = "wlan1"
     
     def __init__(self):
@@ -69,6 +76,20 @@ class Capture:
         self.logger.log_main(f"\n[ERROR] {msg}")
         self.cleanup()
         sys.exit(1)
+
+    def log_usb_topology(self, tag):
+        """Snapshot where the card sits on the USB tree (bus:device) into
+        main.log. Run at a few points so a post-FW re-enumeration (the device
+        jumping bus/address) is visible when diffing captures."""
+        try:
+            out = subprocess.run(["lsusb"], capture_output=True, text=True).stdout
+        except FileNotFoundError:
+            return
+        for line in out.splitlines():
+            # Realtek RTL8814AU enumerates under VID 0bda (Realtek) — log any
+            # Realtek/8814/AWUS line so we can see Bus NNN Device MMM.
+            if "0bda" in line.lower() or "realtek" in line.lower() or "8814" in line:
+                self.logger.log_main(f"[USB-TOPO {tag}] {line.strip()}")
         
     def run_at(self, target_t, cmd_list, timeout=2.0):
         """
@@ -179,9 +200,17 @@ class Capture:
         # ======================================================================
         cursor_t = 10.0
         
+        # Snapshot the USB tree right before airmon (post-enumeration + FW load)
+        # so a re-enumeration during/after init is visible against the next one.
+        self.log_usb_topology("pre-airmon")
+
         # T=10.0s: Start monitor mode
         self.run_at(cursor_t, ["sudo", "airmon-ng", "start", self.BASE_IFACE], timeout=8.0)
         cursor_t += 8.0
+
+        # Snapshot again — if the bus/device changed here, airmon/mode-switch
+        # re-enumerated the card (the usbmon0 all-buses capture still catches it).
+        self.log_usb_topology("post-airmon")
         
         # --- Interface Parsing Logic ---
         iw_out = subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout

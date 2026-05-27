@@ -175,15 +175,18 @@ def load_init_tables(transport: RTL8814AUTransport, efuse: EfuseDefaults) -> Non
 
 def phy_set_param(transport: RTL8814AUTransport,
                   efuse: EfuseDefaults | None = None) -> None:
-    """Simplified port of rtw8814a_phy_set_param (rtw8814a.c).
+    """Port of rtw8814a_phy_set_param (rtw8814a.c).
 
     Keeps: BB/RF domain enable (4 paths), MAC + BB + AGC + RF(A..D) table loads,
-    the A->B/C/D RCK copy, and the RX-PSEL reset bracket.
+    crystal_cap trim, config_trx_path (CCK RX path B), the A->B/C/D RCK copy, and
+    the RX-PSEL reset.
 
-    Skips (EFUSE/tuning, deferred): crystal_cap, config_trx_path CCK antenna,
-    the HWSEQ/BAR/MISC/NAV mac regs, rtw_phy_init (DIG), pwrtrack_init,
-    init_rfe_reg. None are needed to bring RF up + read it back; they affect
-    TX power / DIG / antenna quality and land with RX (M5) / TX (M6).
+    Still deferred (TX/protocol, land with TX or never needed for monitor):
+    pwrtrack_init, the HWSEQ/BAR/MISC/NAV/QUEUE/FWHW_TXQ mac regs, init_rfe_reg
+    (done via the first `chan.set_channel(force_band=True)`). `rtw_phy_init`'s
+    DIG seed is now handled by the DIG watchdog (`dynamic.dig_init`), started by
+    the driver after RX comes online; the rest of rtw_phy_init is software-only
+    bookkeeping with no hardware writes (verified against phy.c).
     """
     if efuse is None:
         efuse = EfuseDefaults()
@@ -202,6 +205,15 @@ def phy_set_param(transport: RTL8814AUTransport,
     load_mac_table(transport, efuse)
     load_init_tables(transport, efuse)
 
+    # crystal_cap trim -> AFE_CTRL3 (rtw8814a.c:307). 6-bit value duplicated into
+    # both crystal-cap fields ([5:0] | [5:0]<<6), masked into AFE_CTRL3[26:15].
+    crystal_cap = efuse.crystal_cap & 0x3F
+    crystal_cap |= crystal_cap << 6
+    transport.write32_mask(C.REG_AFE_CTRL3, 0x07FF8000, crystal_cap)
+
+    # config_trx_path (rtw8814a.c:311) — CCK RX on path B + disable 2R CCA.
+    config_trx_path(transport)
+
     # RCK: copy path-A RF_RCK1_V1 to B/C/D (rtw8814a.c).
     rck = rf.read_rf(transport, 0, C.RF_RCK1_V1, rf.RFREG_MASK)
     for path in (1, 2, 3):
@@ -210,3 +222,12 @@ def phy_set_param(transport: RTL8814AUTransport,
 
     # RX-PSEL reset (post-table)
     transport.write32_set(C.REG_RXPSEL, C.BIT_RX_PSEL_RST)
+
+
+def config_trx_path(transport: RTL8814AUTransport) -> None:
+    """rtw8814a_config_trx_path (rtw8814a.c:311): CCK RX disable 2R CCA, then
+    path-B TX on / path-B RX. The kernel runs this in phy_set_param before the
+    RF tables; switch_band later re-asserts the path-B RX bit per band."""
+    transport.write32_clr(C.REG_CCK0_FAREPORT, C.BIT_CCK0_2RX | C.BIT_CCK0_MRC)
+    transport.write32_mask(C.REG_CCK_RX, 0xF0000000, 0x4)   # path-B TX on
+    transport.write32_mask(C.REG_CCK_RX, 0x0F000000, 0x5)   # path-B RX

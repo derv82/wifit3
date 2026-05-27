@@ -31,7 +31,7 @@ from .firmware import (
     download_firmware_validate,
     load_firmware_blob,
 )
-from . import chan, rx, tx
+from . import chan, dynamic, rx, tx
 from .efuse import read_efuse
 from .fifo import count_bulk_out_eps, rtw_init_trx_cfg
 from .mac import cut_mask_from_sys_cfg1, is_chip_warm, mac_power_on
@@ -62,6 +62,8 @@ class RTL8814AUDriver:
         self.transport = RTL8814AUTransport(dev)
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._rx_reader: Optional[RxReaderThread] = None
+        self._dig_state: Optional[dynamic.DigState] = None
+        self._watchdog_task: Optional[asyncio.Task] = None
         self._bulk_in_ep: Optional[int] = None
         self._bulk_out_eps: list[int] = []
         self._claimed = False
@@ -184,6 +186,11 @@ class RTL8814AUDriver:
                                                force_band=True))
             await loop.run_in_executor(None, rx.mac_init_for_rx, self.transport)
             await loop.run_in_executor(None, rx.apply_monitor_rcr, self.transport)
+            # Seed DIG to max coverage (IGI=0x1c) BEFORE the liveness check, so
+            # the check reflects the gain the watchdog will hold — not the
+            # AGC-table default that makes deaf boots a coin flip.
+            self._dig_state = await loop.run_in_executor(
+                None, dynamic.dig_init, self.transport)
             alive = await loop.run_in_executor(
                 None, rx.rf_receiving_frames, self.transport)
             if alive:
@@ -204,9 +211,33 @@ class RTL8814AUDriver:
         _progress(0.98, "Starting RX reader")
         if not await self._start_rx():
             return False
-        logger.info("RTL8814AU M5: RX online (monitor). TX inject pending (M6).")
+        # DIG watchdog: re-converge the OFDM initial gain from the false-alarm
+        # count every 2 s (what the kernel does; we didn't). Keeps RX sensitive
+        # without the static-gain deaf lottery.
+        self._watchdog_task = asyncio.create_task(self._dig_watchdog())
+        logger.info("RTL8814AU M5: RX online (monitor) + DIG watchdog.")
         _progress(1.00, "RTL8814AU online (monitor RX; inject pending)")
         return True
+
+    async def _dig_watchdog(self, period_s: float = 2.0) -> None:
+        """Periodic DIG tick (mirrors rtw_watch_dog_work @ HZ*2). Reads the FA
+        count + steps IGI off the event loop so USB I/O never stalls the UI."""
+        loop = asyncio.get_event_loop()
+        try:
+            while True:
+                await asyncio.sleep(period_s)
+                if self._dig_state is None:
+                    continue
+                try:
+                    fa = await loop.run_in_executor(
+                        None, dynamic.read_total_fa_cnt, self.transport)
+                    await loop.run_in_executor(
+                        None, dynamic.dig_step, self.transport,
+                        self._dig_state, fa)
+                except (usb.core.USBError, IOError) as e:
+                    logger.debug("DIG watchdog tick skipped: %s", e)
+        except asyncio.CancelledError:
+            pass
 
     async def _start_rx(self) -> bool:
         loop = asyncio.get_event_loop()
@@ -264,6 +295,11 @@ class RTL8814AUDriver:
                 # cck_tx_dfir touches a shared CCK reg; re-pin monitor CCK
                 # sensitivity after each tune so it survives channel hops.
                 rx.tune_monitor_cck_sensitivity(self.transport)
+                # Reset OFDM IGI to max coverage on the new channel; the DIG
+                # watchdog then re-converges from there. Avoids carrying a
+                # backed-off (insensitive) gain across a hop -> post-hop silence.
+                if self._dig_state is not None:
+                    self._dig_state = dynamic.dig_init(self.transport)
             await loop.run_in_executor(None, _tune)
             self.current_channel = channel
             self.current_band_is_2g = is_2g
@@ -299,6 +335,14 @@ class RTL8814AUDriver:
 
     async def close(self) -> None:
         loop = asyncio.get_event_loop()
+        # Stop the DIG watchdog first (it does USB I/O via the executor).
+        if self._watchdog_task is not None:
+            self._watchdog_task.cancel()
+            try:
+                await self._watchdog_task
+            except asyncio.CancelledError:
+                pass
+            self._watchdog_task = None
         # Stop the reader thread BEFORE releasing USB — it's still calling
         # dev.read() until stopped, and releasing the handle under it errors.
         if self._rx_reader is not None:

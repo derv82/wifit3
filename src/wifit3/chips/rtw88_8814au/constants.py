@@ -311,3 +311,20 @@ REG_CCA_CCK = 0x0FCC             # CCA count in low 16
 REG_CNTRST = 0x0B58              # BIT(0): counter reset
 REG_FAS = 0x09A4                 # BIT(17): FA counter reset
 REG_CCK0_FAREPORT = 0x0A2C       # BIT(15): CCK FA counter reset
+BIT_CCK0_2RX = 1 << 18           # [SRC] reg.h:653 — config_trx_path
+BIT_CCK0_MRC = 1 << 22           # [SRC] reg.h:654
+BIT_RXPSEL_CCK_EN = 1 << 28      # REG_RXPSEL bit: CCK demod enabled (FA accounting)
+
+# --- DIG: Dynamic Initial Gain (rtw_phy_dig, phy.c; rtw8814a_dig table) -------
+# Per-path OFDM initial-gain index registers (7-bit). [SRC] rtw8814a.c:2139
+REG_DIG_PATH = (0x0C50, 0x0E50, 0x1850, 0x1A50)
+DIG_IGI_MASK = 0x7F
+DIG_MIN = 0x1C                   # chip->dig_min / DIG_CVRG_MIN (max coverage)
+# Coverage-mode (no-link / monitor) constants. [SRC] phy.c:365-371
+DIG_CVRG_MIN = 0x1C
+DIG_CVRG_MID = 0x26
+DIG_CVRG_MAX = 0x2A
+DIG_CVRG_FA_TH_LOW = 2000
+DIG_CVRG_FA_TH_HIGH = 4000
+DIG_CVRG_FA_TH_EXTRA_HIGH = 5000
+DIG_RSSI_GAIN_OFFSET = 15
