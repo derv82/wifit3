@@ -104,9 +104,12 @@ lag the user saw once is shelved (likely Textual latency, not card-specific).
 ### Suggested confirm/disconfirm experiments (no fixes applied)
 
 - **DIG sweep on a deaf boot:** when `rf_receiving_frames()` reports deaf, sweep the
-  IGI register (chip `dig[0].addr/mask`) across its range and watch CRC-OK counts.
-  If RX wakes at some IGI, #1 is confirmed and the fix is a periodic DIG port, not
-  the 8× re-roll.
+  IGI registers and watch CRC-OK counts. 8814a IGI = per-path 7-bit gain index
+  (`rtw8814a_dig`, rtw8814a.c:2139): path A/B/C/D = **0xc50 / 0xe50 / 0x1850 /
+  0x1a50, mask 0x7f**. Write 0x00..0x7f across all four and look for a value where
+  RX wakes. If it does, #1 is confirmed and the fix is a periodic DIG port, not the
+  8× re-roll. (Note: a software `connect()` re-init can land deaf too, so this is
+  triggerable without a physical replug — probe instead of re-rolling on a deaf attempt.)
 - **Port a minimal 2 s watchdog** (statistics → dig → cck_pd) and test whether the
   50/50 boot and the post-hop silence both vanish.
 - **Recapture** with a longer USB trace covering channel hops to finally diff our
