@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import Callable, Optional
 
 import usb.core
@@ -25,7 +26,7 @@ import usb.util
 from wifit3.engine.protocols import DeviceID, ProgressCallback
 from wifit3.wlan.packet import WlanFrameParser
 
-from .constants import REG_SYS_CFG1, USB_IDS_8814AU
+from .constants import REG_CCA_OFDM, REG_SYS_CFG1, USB_IDS_8814AU
 from .firmware import (
     download_firmware,
     download_firmware_validate,
@@ -40,6 +41,10 @@ from .transport import RTL8814AUTransport
 from ..rx_reader import RxReaderThread
 
 logger = logging.getLogger(__name__)
+
+# Band-switch RF re-lock retries (set_channel). The 2G/5G front-end occasionally
+# comes up deaf (CCA=0) after a band change; a fresh switch_band re-locks it.
+_BAND_RELOCK_ATTEMPTS = 4
 
 
 class RTL8814AUDriver:
@@ -287,25 +292,47 @@ class RTL8814AUDriver:
         if not is_2g and channel not in chan.SUPPORTED_CHANNELS_5G:
             logger.warning("RTL8814AU: unsupported 5 GHz channel %d", channel)
             return False
+        band_change = is_2g != self.current_band_is_2g
         loop = asyncio.get_event_loop()
         try:
-            # A/B knob: skip the per-hop writes the kernel does NOT do, to test
-            # whether they cause the 5G->2G RX death. See repro_band_death.py.
+            # A/B knob: skip the per-hop writes the kernel does NOT do.
             no_extras = bool(os.environ.get("WIFIT3_NO_HOP_EXTRAS"))
 
-            def _tune():
+            def _apply(force_band: bool) -> None:
                 chan.set_channel(self.transport, channel,
-                                 rfe_option=self._rfe_option)
+                                 rfe_option=self._rfe_option, force_band=force_band)
                 if no_extras:
                     return
                 # cck_tx_dfir touches a shared CCK reg; re-pin monitor CCK
                 # sensitivity after each tune so it survives channel hops.
                 rx.tune_monitor_cck_sensitivity(self.transport)
                 # Reset OFDM IGI to max coverage on the new channel; the DIG
-                # watchdog then re-converges from there. Avoids carrying a
-                # backed-off (insensitive) gain across a hop -> post-hop silence.
+                # watchdog then re-converges from there.
                 if self._dig_state is not None:
                     self._dig_state = dynamic.dig_init(self.transport)
+
+            def _tune():
+                _apply(False)
+                # On a 2G<->5G band change the RF front-end intermittently fails
+                # to re-lock (CCA=0; ~30-50%). A settle does NOT help — only a
+                # fresh band switch does. Verify CCA and re-lock, mirroring the
+                # cold-boot deaf recovery in connect(). switch_band matches the
+                # kernel byte-for-byte, so this is genuine analog re-lock variance,
+                # not a missing register. [[feedback_no_bandaids_root_cause]]
+                if not band_change or no_extras:
+                    return
+                for attempt in range(_BAND_RELOCK_ATTEMPTS):
+                    rx.reset_phy_counters(self.transport)
+                    time.sleep(0.04)
+                    cca = (self.transport.read32(REG_CCA_OFDM) >> 16) & 0xFFFF
+                    if cca > 0:
+                        if attempt:
+                            logger.info("RF re-locked on band switch (%d retr%s)",
+                                        attempt, "y" if attempt == 1 else "ies")
+                        return
+                    logger.warning("band-switch RF deaf (CCA=0) ch%d, re-lock %d/%d",
+                                   channel, attempt + 1, _BAND_RELOCK_ATTEMPTS)
+                    _apply(True)
             await loop.run_in_executor(None, _tune)
             self.current_channel = channel
             self.current_band_is_2g = is_2g
