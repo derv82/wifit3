@@ -109,7 +109,18 @@ _LLC_SNAP_EAPOL = b"\xaa\xaa\x03\x00\x00\x00\x88\x8e"
 WPS_VERSION = 0x10
 REGISTRAR_IDENTITY = b"WFA-SimpleConfig-Registrar-1-0"
 
-# ---- Registrar device descriptor (cosmetic; APs rarely validate) ----------
+# ---- Registrar device descriptor -------------------------------------------
+# These TLVs are cosmetic to the protocol (APs don't validate them) but they
+# ARE visible to the AP and surface in its WPS logs / admin UI as "the device
+# that paired". So they MUST NOT fingerprint the tool — we impersonate a generic
+# Windows registrar (Manufacturer "Microsoft" / Model "Windows", a Computer/PC
+# primary device type), exactly the blend reaver uses, because a Windows machine
+# doing WPS is the most ordinary thing on the air. NEVER advertise "wifit3" here.
+_MANUFACTURER = b"Microsoft"
+_MODEL_NAME = b"Windows"
+_MODEL_NUMBER = b"10.0"
+_SERIAL_NUMBER = b"12345678"
+_DEVICE_NAME = b"DESKTOP-7H2K9P3"   # Windows-default-style hostname
 _AUTH_TYPE_FLAGS = 0x003F          # WPS_AUTH_TYPES (open|wpapsk|shared|wpa|wpa2|wpa2psk)
 _ENCR_TYPE_FLAGS = 0x000F          # WPS_ENCR_TYPES (none|wep|tkip|aes)
 _CONN_TYPE_ESS = 0x01
@@ -150,12 +161,12 @@ def parse_tlvs(data: bytes) -> Dict[int, bytes]:
 
 def _device_attrs() -> bytes:
     return (
-        tlv(ATTR_MANUFACTURER, b"wifit3")
-        + tlv(ATTR_MODEL_NAME, b"wifit3")
-        + tlv(ATTR_MODEL_NUMBER, b"1")
-        + tlv(ATTR_SERIAL_NUMBER, b"1")
+        tlv(ATTR_MANUFACTURER, _MANUFACTURER)
+        + tlv(ATTR_MODEL_NAME, _MODEL_NAME)
+        + tlv(ATTR_MODEL_NUMBER, _MODEL_NUMBER)
+        + tlv(ATTR_SERIAL_NUMBER, _SERIAL_NUMBER)
         + tlv(ATTR_PRIMARY_DEV_TYPE, _PRIMARY_DEV_TYPE)
-        + tlv(ATTR_DEV_NAME, b"wifit3")
+        + tlv(ATTR_DEV_NAME, _DEVICE_NAME)
     )
 
 
