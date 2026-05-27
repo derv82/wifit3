@@ -10,6 +10,42 @@ Family: **rtw88** (modern), shares `chips/rtw88_base/`.
 
 ---
 
+## Correctness audit — what's ported vs deferred (2026-05-26)
+
+**RX path — COMPLETE & validated** (hardware + pcap byte-diff): FW upload, MAC
+init, full BB/AGC/RF×4 init tables, EFUSE, crystal_cap, config_trx_path, channel
+tune (matches kernel byte-for-byte), `spur_calibration` (ported), DIG watchdog
+(ported), band-switch RF re-lock recovery (fixed). Result: 0/100 cold boots
+deaf, no channel-hop death.
+
+**TX path — FUNCTIONAL but NOT power/IQ-calibrated.** Deauth/injection is
+hardware-confirmed (kicks a phone off, EAPOL re-capture), but TX runs at the
+**BB/AGC-table baseline power** — we do not do the kernel's per-channel TX-power
+chain. Deferred, in rough priority if we ever want calibrated/long-range TX:
+  - `rtw_phy_set_tx_power_level` / `set_tx_power_index` — per-channel + regulatory
+    TX power (the 536-entry `REG_AGC_TBL` reload seen per-hop in the pcap). We
+    never set it → TX power is whatever the init tables left (works at close
+    range; not regulatory-calibrated; weaker at distance).
+  - `set_channel_bb_swing` — per-band TX swing scaling (TXSCALE A/D). TX-only,
+    confirmed no RX impact.
+  - `pwrtrack` — thermal TX-power compensation (drifts with temperature).
+  - IQK before TX (`do_iqk` via `mgd_prepare_tx`) — TX/RX I/Q calibration; the
+    kernel runs it once before TX (pcap: 4 LOK before aireplay). We skip it;
+    fine at the robust 1M/6M MGMT rates we inject at, worse EVM at high rates.
+  Impact for a passive auditing tool (scan + deauth + handshake): acceptable —
+  TX works. Matters for max-range deauth, high-rate TX, or regulatory power.
+
+**Other intentional limits (fine for this tool's purpose):**
+  - **20 MHz only** — no 40/80 MHz tune. Beacons/handshakes ride the primary
+    20 MHz so scanning/capture is unaffected; wide-band data payloads partly missed.
+  - **Non-DFS 5 GHz only** (36-48, 149-165) — DFS 52-144 excluded; passive
+    monitor *could* listen there, we just don't tune to them.
+  - **Deferred MAC regs** in `phy_set_param` (HWSEQ/BAR/NAV/QUEUE/FWHW_TXQ =
+    TX/protocol timing; MISC_CTRL `DIS_SECOND_CCA` = minor CCA tweak) — not
+    needed for monitor RX + basic MGMT injection.
+
+---
+
 ## SEVERE AUDIT — 2026-05-26: RF-deaf ~50% at boot + RX silence after channel hop
 
 Analysis only (no fixes yet), grounded in kernel source (`data_dumps/rtw88-source-v6.18/`)
