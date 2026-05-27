@@ -90,13 +90,18 @@ WEP suite scoped in `src/wifit3/engine/attacks/wep/README.md`. Status of the res
     QoL: periodically probe nearby channels (<100 ms each) and re-tune. Ties into
     ESSID-based targeting (one logical AP, multiple BSSIDs across bands).
 - **PMKID** — done, wired into the UI, works well.
-- **WPS** — *detection done, attacks not started.* The parser decodes the WPS IE
-  TLVs (`packet.py:_parse_wps_ie`) into `AccessPoint` fields (locked, version,
-  state, config methods, device password ID); Scanner + Focus surface the state
-  with a 🔒 for locked APs. Not started: actual PIN attempts — Reaver/Bully-style
-  brute force with rate-limit backoff + ETAs, and PixieWPS bad-RNG E-hash
-  cracking (a large Python port; great fit for the vulnerable old Ralink/Realtek
-  silicon).
+- **WPS** — *detection done; online PIN brute-force engine built + offline-proven,
+  hardware-validation pending.* Detection: the parser decodes the WPS IE TLVs
+  (`packet.py:_parse_wps_ie`) into `AccessPoint` fields; Scanner + Focus show 🔒.
+  The Reaver/Bully-style attack lives in `engine/attacks/wps/` (own WSC registrar
+  + crypto in pure Python — see its `README.md`): DH/KDF/AES core, M1–M7 state
+  machine + split-PIN oracle, two-halves keyspace, kept-alive single-association
+  + learned lock backoff, `.run` resume, all offline-tested (31 tests). Hardware
+  probe `scripts/wps/wps_probe.py` confirmed the on-air EAP path and caught the
+  FCS-in-Authenticator bug (now fixed). *Remaining:* re-validate the full
+  exchange on hardware (the AirLink box was likely WPS-locked last run), wire a
+  Focus WPS panel (M8, passive-by-default behind a button), and PixieWPS
+  (deferred — numpy/glibc dependency question to settle first).
 - **WPA3 downgrade** (transition mode) — respond to probe requests.
 - **WPA3 SAE crackable groups** (19, 20, 22-24) — enumeration added; numbers not
   yet verified accurate.

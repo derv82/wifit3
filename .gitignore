@@ -23,10 +23,9 @@ data_dumps/
 usb_dumps/
 scratch/
 *.log
-# WEP fragmentation/chopchop probe captures — real on-air frames from the
+# Probe captures (WEP frag/chopchop, WPS, …) — real on-air frames from the
 # user's environment; never commit (see no-SSIDs/BSSIDs-in-commits rule).
-wifit3-wep-frag*.pcap
-wifit3-wep-*.pcap
+wifit3*.pcap
 
 # If it starts with a dot, committed it gets not
 .*
