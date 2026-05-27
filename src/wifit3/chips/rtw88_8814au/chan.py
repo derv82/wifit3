@@ -12,8 +12,10 @@ Covers the bring-up-relevant path for monitor-mode RX at 20 MHz:
 Deferred (not needed for 20 MHz monitor RX; documented in RTL8814AU.md):
   - set_channel_bb_swing / pwrtrack_init : TX power scaling (M6)
   - rtw8814a_adc_clk                     : A-cut only (no-op on our B-cut)
-  - rtw8814a_spur_calibration            : per-spur-channel NBI/CSI notch
   - 40/80 MHz bandwidth paths            : monitor is 20 MHz
+
+Ported (per-hop, matches kernel):
+  - rtw8814a_spur_calibration            : NBI/CSI notch + 2.4G NBI (see below)
 
 References: rtw8814a.c rtw8814a_set_channel + sub-functions.
 """
@@ -187,9 +189,123 @@ def _cck_tx_dfir(transport: RTL8814AUTransport, channel: int) -> None:
     transport.write32(C.REG_CCK0_DEBUG_PORT, dbg)
 
 
+# --- Spur calibration (rtw8814a_spur_calibration) ----------------------------
+# Eliminates the 5280/5600/5760 MHz 8814A spurs (5 GHz) + 2.4G narrowband
+# interference. Run per-hop at the tail of set_bw_mode, exactly as the kernel
+# does. For our 20 MHz monitor channels it is mostly the NBI/CSI *reset* path +
+# the 2.4G NBI notch (ch 4-8 / 14); the special 5G branches fire only on the
+# specific spur channels (54/118/151/153/155/58/122).
+
+_NBI_128 = (25, 55, 85, 115, 135, 155, 185, 205, 225, 245, 265, 285, 305, 335,
+            355, 375, 395, 415, 435, 455, 485, 505, 525, 555, 585, 615, 635)
+# Persistent CCASEL/PDMFTH backup for the ch140 MP-Rx workaround (hal->ch_param).
+_CH140_PARAM = [0, 0]
+
+
+def _set_nbi_reg(transport: RTL8814AUTransport, tone_idx: int) -> None:
+    reg_idx = 0
+    for i, th in enumerate(_NBI_128):     # tone_idx already x10
+        if tone_idx < th:
+            reg_idx = i + 1
+            break
+    transport.write32_mask(C.REG_NBI_SETTING, 0xFC000, reg_idx)
+
+
+def _nbi_setting(transport: RTL8814AUTransport, ch: int, f_intf: int) -> None:
+    fc = 2412 + (ch - 1) * 5
+    tone_idx = abs(fc - f_intf) << 5      # 10 * (int_distance / 0.3125)
+    _set_nbi_reg(transport, tone_idx)
+    transport.write32_mask(C.REG_NBI_SETTING, C.BIT_NBI_ENABLE, 1)
+
+
+def _spur_nbi_setting(transport: RTL8814AUTransport, primary_channel: int,
+                      rfe_type: int) -> None:
+    if rfe_type not in (0, 1, 6, 7):
+        return
+    if primary_channel == 14:
+        _nbi_setting(transport, primary_channel, 2480)
+    elif 4 <= primary_channel <= 8:
+        _nbi_setting(transport, primary_channel, 2440)
+    else:
+        transport.write32_mask(C.REG_NBI_SETTING, C.BIT_NBI_ENABLE, 0)
+
+
+def _spur_calibration_ch140(transport: RTL8814AUTransport, channel: int) -> None:
+    """8814AE ch140 MP-Rx workaround (saves/restores CCASEL+PDMFTH)."""
+    if channel == 140:
+        if _CH140_PARAM[0] == 0:
+            _CH140_PARAM[0] = transport.read32(C.REG_CCASEL)
+        if _CH140_PARAM[1] == 0:
+            _CH140_PARAM[1] = transport.read32(C.REG_PDMFTH)
+        transport.write32(C.REG_CCASEL, 0x75438170)
+        transport.write32(C.REG_PDMFTH, 0x79A18A0A)
+    else:
+        if transport.read32(C.REG_CCASEL) == 0x75438170 and _CH140_PARAM[0]:
+            transport.write32(C.REG_CCASEL, _CH140_PARAM[0])
+        if transport.read32(C.REG_PDMFTH) == 0x79A18A0A and _CH140_PARAM[1]:
+            transport.write32(C.REG_PDMFTH, _CH140_PARAM[1])
+        _CH140_PARAM[0] = transport.read32(C.REG_CCASEL)
+        _CH140_PARAM[1] = transport.read32(C.REG_PDMFTH)
+
+
+def _csi_notch(transport, nbi_val, csi1, m0, m1, m6, m7):
+    """Apply one NBI(0xfe000) + CSI_MASK_SETTING1(BIT0) + FIX_MASK0/1/6/7 set.
+    Each mN is (mask, value) or None to leave untouched; full writes use 0."""
+    transport.write32_mask(C.REG_NBI_SETTING, 0x000FE000, nbi_val)
+    transport.write32_mask(C.REG_CSI_MASK_SETTING1, 1, csi1)
+    for reg, m in ((C.REG_CSI_FIX_MASK0, m0), (C.REG_CSI_FIX_MASK1, m1),
+                   (C.REG_CSI_FIX_MASK6, m6), (C.REG_CSI_FIX_MASK7, m7)):
+        if m is None:
+            transport.write32(reg, 0)
+        else:
+            transport.write32_mask(reg, m[0], m[1])
+
+
+def spur_calibration(transport: RTL8814AUTransport, channel: int, bw: int,
+                     rfe_type: int) -> None:
+    """Port of rtw8814a_spur_calibration. [SRC] rtw8814a.c:935."""
+    reset = True
+    if rfe_type == 0:
+        if bw == C.RTW_CHANNEL_WIDTH_40:
+            if channel in (54, 118):
+                _csi_notch(transport, 0x3E >> 1, 1, None, (1, 1), None, None)
+                reset = False
+            elif channel == 151:
+                _csi_notch(transport, 0x1E >> 1, 1, (1 << 16, 1), None, None, None)
+                reset = False
+        elif bw == C.RTW_CHANNEL_WIDTH_80:
+            if channel in (58, 122):
+                _csi_notch(transport, 0x3A >> 1, 1, None, None, None, (1, 1))
+                reset = False
+            elif channel == 155:
+                _csi_notch(transport, 0x5A >> 1, 1, None, None, (1 << 16, 1), None)
+                reset = False
+        elif bw == C.RTW_CHANNEL_WIDTH_20:
+            if channel == 153:
+                _csi_notch(transport, 0x1E >> 1, 1, None, None, None, (1 << 16, 1))
+                reset = False
+            _spur_calibration_ch140(transport, channel)
+    elif rfe_type in (1, 2):
+        if bw == C.RTW_CHANNEL_WIDTH_20 and channel == 153:
+            _csi_notch(transport, 0x1E >> 1, 1, None, None, None, (1 << 16, 1))
+            reset = False
+        elif bw == C.RTW_CHANNEL_WIDTH_40 and channel == 151:
+            _csi_notch(transport, 0x1E >> 1, 1, (1 << 16, 1), None, None, None)
+            reset = False
+        elif bw == C.RTW_CHANNEL_WIDTH_80 and channel == 155:
+            _csi_notch(transport, 0x5A >> 1, 1, None, None, (1 << 16, 1), None)
+            reset = False
+
+    if reset:
+        _csi_notch(transport, 0xFC >> 1, 0, None, None, None, None)
+
+    _spur_nbi_setting(transport, channel, rfe_type)
+
+
 def _set_bw_mode(transport: RTL8814AUTransport, new_band: int, channel: int,
-                 bw: int, primary_chan_idx: int, rf_path_num: int) -> None:
-    """rtw8814a_set_bw_mode (20 MHz path; adc_clk + spur_cal deferred)."""
+                 bw: int, primary_chan_idx: int, rf_path_num: int,
+                 rfe_type: int) -> None:
+    """rtw8814a_set_bw_mode (20 MHz path; adc_clk is A-cut only = no-op B-cut)."""
     _set_bw_reg_mac(transport, bw)
 
     if bw != C.RTW_CHANNEL_WIDTH_20:
@@ -200,7 +316,8 @@ def _set_bw_mode(transport: RTL8814AUTransport, new_band: int, channel: int,
     _set_bw_reg_adc(transport, bw)
     _set_bw_reg_agc(transport, new_band, bw)
     _set_bw_rf(transport, bw, rf_path_num)
-    # adc_clk: A-cut only (no-op on B-cut). spur_calibration: deferred.
+    # adc_clk: A-cut only (no-op on B-cut).
+    spur_calibration(transport, channel, bw, rfe_type)
 
 
 def set_channel(transport: RTL8814AUTransport, channel: int, *,
@@ -223,6 +340,7 @@ def set_channel(transport: RTL8814AUTransport, channel: int, *,
 
     _switch_channel(transport, channel, rf_path_num)
     _cck_tx_dfir(transport, channel)
-    _set_bw_mode(transport, new_band, channel, bw, primary_chan_idx, rf_path_num)
+    _set_bw_mode(transport, new_band, channel, bw, primary_chan_idx, rf_path_num,
+                 rfe_option)
     logger.info("tuned to channel %d (band %s, 20 MHz)",
                 channel, "5G" if new_band == C.RTW_BAND_5G else "2G")

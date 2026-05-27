@@ -253,6 +253,16 @@ REG_CCASEL = 0x082C
 REG_DATA_SC = 0x0483
 REG_CCK_TX_EN = 0x0A80           # literal 0xa80 in switch_band (BIT(18) = CCK TX en)
 
+# Spur calibration (rtw8814a_spur_calibration) — NBI/CSI notch. [SRC] reg.h:613-619
+REG_PDMFTH = 0x0830
+REG_CSI_MASK_SETTING1 = 0x0874
+REG_NBI_SETTING = 0x087C
+BIT_NBI_ENABLE = 1 << 13
+REG_CSI_FIX_MASK0 = 0x0880
+REG_CSI_FIX_MASK1 = 0x0884
+REG_CSI_FIX_MASK6 = 0x0898
+REG_CSI_FIX_MASK7 = 0x089C
+
 # RF18 (RF_CFGCH) field masks
 RF_CFGCH = 0x18
 RF18_RFSI_MASK = (1 << 18) | (1 << 17)
