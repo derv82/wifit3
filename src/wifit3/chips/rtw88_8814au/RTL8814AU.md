@@ -10,6 +10,110 @@ Family: **rtw88** (modern), shares `chips/rtw88_base/`.
 
 ---
 
+## SEVERE AUDIT — 2026-05-26: RF-deaf ~50% at boot + RX silence after channel hop
+
+Analysis only (no fixes yet), grounded in kernel source (`data_dumps/rtw88-source-v6.18/`)
+and the 3 cold-boot pcaps. Driving concern: the `connect()` "re-roll
+phy_set_param up to 8×" retry loop is a band-aid — if the kernel/airmon is
+reliable and we're 50/50, we are **skipping a step the kernel does**, not hitting
+unavoidable hardware flakiness. [[feedback_no_bandaids_root_cause]]
+
+### What the pcaps can and cannot tell us (important scoping result)
+
+All 3 captures (`capture-{1,2,3}.pcap`) are **~5260 frames / ~417 KB spanning only
+the first 2–18 s** = the **plug-in cold-boot init** (kernel auto-probes
+`rtw88_8814au` on insert: power-on → iDDMA FW upload → EFUSE dump (1024 reads @
+0x0030) → early MAC regs). The USB capture **stops at ~18 s, before the first
+`iw set channel` (epoch 247)**. Confirmed via `pcap_slicer.py` (every `iw set
+channel` maps to N/A frames) + `extract_pcap_writes.py` (tail = low MAC regs, no
+large BB/AGC/RF table load, no calibration).
+
+Consequences:
+- **`phy_set_param` (BB/AGC/RF tables, RF enable, calibration), monitor setup,
+  and channel hops are NOT in any capture** — they happen at interface-up, after
+  the capture ended. So the flaky part (M3 PHY/RF) is *unvalidated by pcap*; for
+  it the **kernel source is the only authority** until we recapture.
+- **0/3 captures show a card reboot / re-init after a failed start.** The kernel's
+  init succeeds first try, every time. This supports: *the kernel is deterministic
+  and we are missing a stabilizing step* — not "the hardware is 50/50 and the
+  kernel recovers."
+- **TODO recapture:** a longer USB capture that includes `airmon-ng start` +
+  several `iw set channel` + dwell, so we can diff the kernel's per-hop register
+  burst (commands + inter-command latency) — the data this audit could not get.
+
+### Q1 — Why does cold boot come up RF-deaf ~50%?  (ranked)
+
+1. **[PRIMARY] No DIG / dynamic-mechanism watchdog.** Kernel runs
+   `rtw_phy_dynamic_mechanism` every **2 s** (`RTW_WATCH_DOG_DELAY_TIME = HZ*2`,
+   main.h:30) → `rtw_phy_dig` walks the OFDM **initial gain index (IGI)** from the
+   false-alarm count and **writes it** (`rtw_phy_dig_write`, phy.c). It also runs
+   `rtw_phy_cck_pd`, cfo/dpk/pwr track, adaptivity. **We run NONE of it** — IGI is
+   left at the AGC-table default forever. Whether that fixed default lets RX hear
+   depends on the boot analog gain state → **50/50**, and re-rolling
+   `phy_set_param` "works after a few tries" because each re-roll is a fresh
+   lottery on that state. This single gap explains the band-aid's behaviour.
+   *Status: CONFIRMED kernel does it; CONFIRMED we don't. Causation plausible,
+   needs a HW experiment (run a DIG-like IGI sweep on a deaf boot, see if RX wakes).*
+2. **[MED] `rtw_phy_init` skipped** (rtw8814a.c:335). Seeds IGI history,
+   `rtw_phy_cck_pd_init`, `rtw_phy_adaptivity_init` (EDCCA), cfo/tx-path-div init.
+   Missing cck_pd_init + adaptivity can leave FA/CCA gating in an undefined state.
+   Tied to #1. *Status: CONFIRMED skipped (our `phy_set_param` docstring admits it).*
+3. **[MED] `rtw8814a_config_trx_path` skipped** (rtw8814a.c:311): clears
+   `REG_CCK0_FAREPORT` 2RX|MRC, sets CCK RX→path B (`REG_CCK_RX`). Our CCK path
+   setup is scattered/partial (only the path-B bit, inside `chan._switch_band` +
+   `rx.tune_monitor_cck_sensitivity`). A *consistently* wrong path config would be
+   consistently bad, not 50/50 — so this is more "general RX fragility" than the
+   50/50 cause. *Status: CONFIRMED skipped.*
+4. **[LOW] No RF/PLL settle or lock-poll after RF power-on.** Neither kernel nor we
+   poll, but the kernel emits ~thousands more writes (full phy_init, init_rfe_reg,
+   MAC regs) between RF-enable and RX, giving de-facto settle time we skip.
+   *Status: weak; unquantified.*
+5. **[DISCONFIRMED] Missing IQK.** Kernel **defers** IQK for monitor/scan
+   (`need_rfk=true`; `phy_calibration` only fires from `mgd_prepare_tx` / `start_ap`
+   — main.c:907–921, mac80211.c:473). Passive monitor RX runs without per-channel
+   IQK, so missing IQK does not kill RX (hurts TX EVM). Not the deaf cause.
+6. **[DISCONFIRMED] Missing `adc_clk`.** `rtw8814a_adc_clk` returns early for
+   non-A cuts (rtw8814a.c:751). Our sample is **CUT_B** (`SYS_CFG1=0x044411b5`),
+   so correctly skipped.
+
+### Q2 — Why does RX go silent 5–10 s after a channel switch?  (ranked)
+
+1. **[PRIMARY] Same missing DIG watchdog, now post-tune.** Optimal IGI differs per
+   channel; after a hop the gain can land wrong and, with no watchdog, never
+   re-converges. Kernel re-converges within a couple of 2 s ticks. (Our static
+   `CCK_PD=LV0` pin only helps CCK/beacons; OFDM/data still rides un-tracked gain.)
+2. **[PRIMARY] PLL relock blanks the radio + no recovery in `set_channel`.** The
+   code already documents "each tune briefly blanks the radio (PLL relock)"
+   (interface.py:621). `set_channel` re-tunes 4 RF paths but, unlike `connect()`,
+   never re-verifies RX resumed or recovers if it didn't.
+3. **[CONTRIBUTING] TUI hops every 0.25 s** (`on_screen_resume`, interval=0.25) —
+   faster than a 4-path relock + AGC re-settle. A UI parameter, not a driver bug,
+   but it amplifies #1/#2. Kernel scans dwell ≥100 ms and still survive *because*
+   the watchdog re-converges.
+4. **[LOW] `rtw8814a_spur_calibration` skipped** (rtw8814a.c:1117) — per-spur-channel
+   NBI/CSI notch; only affects specific channels, would not cause general silence.
+
+### Cross-cutting note
+
+The headless harness (`scripts/rtw88_8814au/measure_rx_load.py`) **cannot reproduce
+the user-visible 5–10 s silence** — it only ever saw ~1 s gaps and bounded loop
+slip (≤28 ms, 0 drops, 0.1 ms dispatch). So the RX-dispatch/loop path is *not* the
+cause; verification of the real silence stays a HW/TUI task for the user. The
+lag the user saw once is shelved (likely Textual latency, not card-specific).
+
+### Suggested confirm/disconfirm experiments (no fixes applied)
+
+- **DIG sweep on a deaf boot:** when `rf_receiving_frames()` reports deaf, sweep the
+  IGI register (chip `dig[0].addr/mask`) across its range and watch CRC-OK counts.
+  If RX wakes at some IGI, #1 is confirmed and the fix is a periodic DIG port, not
+  the 8× re-roll.
+- **Port a minimal 2 s watchdog** (statistics → dig → cck_pd) and test whether the
+  50/50 boot and the post-hop silence both vanish.
+- **Recapture** with a longer USB trace covering channel hops to finally diff our
+  per-hop register burst against the kernel's.
+
+---
+
 ## Build status
 
 - **M1.a (FW extract + verify)** — ✅ DONE (offline). Pcap-extracted blob is a

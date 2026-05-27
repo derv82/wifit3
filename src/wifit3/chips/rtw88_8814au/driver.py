@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Callable, Optional
 
 import usb.core
@@ -217,7 +218,8 @@ class RTL8814AUDriver:
         self._bulk_out_eps = list(eps.bulk_out)
         await loop.run_in_executor(None, rx.prime_bulk_in, self.dev, self._bulk_in_ep)
         self._rx_reader = RxReaderThread(
-            loop, self._rx_read_once, self._rx_dispatch, name="rtl8814au-rx"
+            loop, self._rx_read_once, self._rx_dispatch, name="rtl8814au-rx",
+            stats=bool(os.environ.get("WIFIT3_RX_STATS")),
         )
         self._rx_reader.start()
         return True
