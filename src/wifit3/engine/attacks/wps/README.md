@@ -313,4 +313,77 @@ Bully's `--noacks` exists for the same reason.
   button ([[feedback_passive_by_default]]). Not yet wired.
 - **PixieWPS (M7)** — deferred; revisit the dependency question (numpy for the
   time-seed/eCos search) before building.
+
+## PBC (push-button) capture — design (2026-05-27)
+
+Opportunistically grab the PSK when someone opens a WPS **Push-Button
+Configuration** walk window (~120 s, `WPS_PBC_WALK_TIME`).
+
+### Role flip: we're the Enrollee; the PSK is in M8
+PBC = the AP is the **Registrar** (button-pressed, holds the creds), we're the
+**Enrollee**. The message polarity inverts vs the PIN attack:
+
 ```
+PIN  (us=Registrar): AP sends M1/M3/M5/M7 (Req) ;  we send M2/M4/M6 (Resp)
+PBC  (us=Enrollee):  AP sends WSC_Start/M2/M4/M6/M8 (Req) ; we send M1/M3/M5/M7/Done (Resp)
+                                                                  PSK is in M8 ↑
+```
+EAP request/response polarity is unchanged (the AP is always the authenticator),
+so our framing is reused as-is — we just build the *other* WSC messages and the
+prize moves M7→M8.
+
+### Why it must be active (no passive eavesdrop)
+M8's credential is encrypted under KeyWrapKey ← AuthKey ← DHKey ← `g^(ab) mod p`.
+A passive listener sees PKe/PKr but neither private key — recovering the secret
+is the Computational DH problem over the **1536-bit MODP group 5**, i.e.
+infeasible (≈ a 1536-bit discrete log, well past the 1024-bit nation-state
+borderline). This is the one cryptographically-sound part of WPS. So reaver/
+bully/pixiewps all work by *being* a live endpoint; a captured third-party
+exchange yields nothing (no private key → no AuthKey, so even pixie can't run on
+it). **Conclusion: the only way to the PSK is to be the enrollee that completes
+the handshake — we must race the legit device, not sniff it.**
+
+### Detection — passive, always-on, zero TX
+The walk window is advertised in beacons/probe-resps: **Device Password ID =
+0x0004 (PBC)** + **Selected Registrar = 1** (both already parsed). Derive
+`AccessPoint.wps_pbc_active` and edge-trigger on OFF→ON. (Confirm
+`wps_selected_registrar` is stored on the model, not just parsed.)
+
+### Reuse vs new
+Reused: `wsc_crypto` (100%), `messages` framing + encrypted-settings decrypt,
+`association` (assoc IE flips `RequestType` Registrar→Enrollee 0x01), the test
+harness (flip it to play Registrar). New, small: enrollee builders M1/M3/M5/M7
+(M1 carries `DevPwId=PBC`), parse WSC_Start + M2/M4/M6/M8, **M8 `ATTR_CRED`
+(nested) → Network Key**, the **PBC device-password constant** (public/fixed —
+verify from hostapd), enrollee identity `WFA-SimpleConfig-Enrollee-1-0`.
+
+### Behaviour / decisions (locked 2026-05-27)
+- **`w` toggle: off → selected → global**, session-only, default **off**.
+  "selected" lights up once a future *AP watchlist* exists (user marks APs → hop
+  only their channels → auto-target for deauth / downgrade / PBC). Global first.
+- **Overlap: ignore `MULTIPLE_PBC_DETECTED` on our side** — never self-abort. We
+  win by **finishing first** (the AP still aborts true simultaneous overlaps),
+  with DoS-and-retry across repeated presses as the fallback. **Speed-bound:** a
+  real phone finishes PBC in ~2–3 s; our no-ACK retransmit flood makes us ~tens
+  of seconds, so the race hinges on the **auto-ACK speed lever** above + starting
+  the instant the beacon flips (before their device associates).
+- **Armed + window detected** → pause channel-hop, tune to the target, capture,
+  resume hop. **Disarmed + window** → loud Scanner banner only (no TX).
+- **Focus**: a focused AP going PBC-active → auto-capture (already on-channel).
+- **Ethics deferred** — global auto-invade grabs bystanders' PSKs the instant
+  they press their own button; revisit before release (PRE-RELEASE).
+
+### Milestones
+```
+P1  WpsEnrollee — enrollee state machine (EAPOL-Start→Identity→M1..M7, extract
+     PSK from M8, WSC_Done). Offline-tested vs a fake Registrar (flip the
+     harness). Verify the PBC device-password constant.            ← pure offline
+P2  PBC detector — AccessPoint.wps_pbc_active + OFF→ON edge event. Parse-only.
+P3  WpsPbcCapture — associate as enrollee, run WpsEnrollee, ignore overlap,
+     return SSID+PSK, save like other captures. scripts/wps/pbc_probe.py (press
+     the AirLink button to test).                                  ← 1 button-press HW test
+P4  Scanner UX — `w` off/selected/global, the banner, the armed hop-takeover.
+P5  Focus integration — auto-capture on a focused AP's PBC window.
+P6  Ethics/safety pass — eligibility, loud logging, PRE-RELEASE note.
+```
+P1–P3 are engine + offline-testable + one button-press. P4–P5 are UI/orchestration.
