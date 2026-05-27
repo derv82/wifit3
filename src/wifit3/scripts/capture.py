@@ -92,6 +92,31 @@ class Capture:
             # Realtek/8814/AWUS line so we can see Bus NNN Device MMM.
             if "0bda" in line.lower() or "realtek" in line.lower() or "8814" in line:
                 self.logger.log_main(f"[USB-TOPO {tag}] {line.strip()}")
+
+    def log_driver_info(self):
+        """Record which kernel driver actually bound (name/version/source) +
+        recent rtw dmesg lines, so we know exactly what produced the pcap (e.g.
+        mainline rtw88 vs out-of-tree morrownr/lwfinger). Saved to driver.log."""
+        drv_log = self.temp_dir / "driver.log"
+        try:
+            with open(drv_log, "w") as f:
+                for mod in ("rtw88_8814au", "8814au", "rtw88_core"):
+                    info = subprocess.run(["modinfo", mod], capture_output=True,
+                                          text=True)
+                    if info.returncode == 0:
+                        f.write(f"===== modinfo {mod} =====\n{info.stdout}\n")
+                        for ln in info.stdout.splitlines():
+                            if ln.startswith(("filename:", "version:",
+                                              "srcversion:", "vermagic:")):
+                                self.logger.log_main(f"[DRIVER {mod}] {ln.strip()}")
+                dm = subprocess.run(["dmesg"], capture_output=True, text=True)
+                f.write("\n===== dmesg (rtw/8814/rtl) =====\n")
+                for ln in dm.stdout.splitlines():
+                    low = ln.lower()
+                    if "rtw" in low or "8814" in low or "rtl" in low:
+                        f.write(ln + "\n")
+        except (FileNotFoundError, OSError) as e:
+            self.logger.log_main(f"[DRIVER] info capture skipped: {e}")
         
     def run_at(self, target_t, cmd_list, timeout=2.0):
         """
@@ -264,6 +289,9 @@ class Capture:
         # Snapshot again — if the bus/device changed here, airmon/mode-switch
         # re-enumerated the card (the usbmon0 all-buses capture still catches it).
         self.log_usb_topology("post-airmon")
+        # Record the bound driver (name/version/source) + rtw dmesg — so we know
+        # exactly which driver produced the pcap (mainline vs out-of-tree).
+        self.log_driver_info()
         
         # --- Interface Parsing Logic ---
         iw_out = subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout

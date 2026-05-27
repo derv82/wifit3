@@ -173,21 +173,21 @@ airodump 20407–88479, then 1 s iw hops, aireplay, 0.25 s fast-hops.
   rfe-gated): full 1:1 of all branches + 2.4G NBI + reset path. HW: RX still
   first-try, no regression. Did **not** change the hop death (expected — notch
   filter, not RX on/off).
-- **IQK — cannot port faithfully from our source.** The pcap IQK (frames
-  ~13939+) writes an NCTL coefficient block (0x1b04/1b10/1b14/1b18/1b1c/
-  1b20-1b3c/1b94) that **does not exist in mainline `rtw8814a.c` v6.18** — it
-  matches **`rtw8822c`'s** halrf IQK table (`rtw8822c_table.c:43647`; pcap
-  `0x1b18=0x00292903` is an exact match). ⇒ **the captures were produced by the
-  Realtek-vendor-derived out-of-tree 8814au driver, NOT mainline rtw88.** Our
-  mainline source has a simpler LOK/TX/RX-one-shot IQK; the vendor driver uses
-  the coefficient-table (halrf) IQK seen on the wire. Porting mainline's IQK
-  blind (no matching pcap to validate, RX-off/restore wedge risk) is unsafe;
-  porting the wire sequence is wrong (IQK must compute fresh coefficients, not
-  replay stale ones). **Blocked until we have the actual Kali driver source**
-  (check `modinfo rtw88_8814au` / `dmesg` on Kali — likely morrownr/aircrack-ng
-  out-of-tree rtl8814au). NOTE: this only affects IQK — the FW/mac/BB-AGC-RF
-  tables/channel-tune all matched the pcap, so mainline is the right reference
-  for everything else. IQK won't fix the death regardless (once at bring-up).
+- **IQK — NO monitor-RX gap (earlier "blocked/vendor-mismatch" claim RETRACTED).**
+  I first mistook the pcap's `0x1b04/1b10/1b18/1b1c/1b20-1b3c` block for a
+  runtime IQK that mainline lacks. It is not: those are entries in the
+  **`rtw8814a_bb` BB init table** (rtw8814a_table.c:~4053; the `0x9000000N`
+  rows are phy_cond conditionals), which `phy_set_param` loads — and **our
+  `bb_tbl.py` already contains them (14/14 vs mainline)**. The extractor
+  collapses table writes, which is what fooled me. The *runtime* `do_iqk`
+  (LOK/TX/RX one-shot; fingerprint `0x1bd4=0x003f0001`) is **absent from the
+  whole monitor portion** (count 0 ≤ frame 20406) and appears only **4× (per
+  path) right before the aireplay TX** — i.e. exactly mainline's "IQK deferred
+  to `mgd_prepare_tx`". So: monitor RX needs no IQK, we already match mainline,
+  and the Kali driver behaves like mainline rtw88 (lwfinger/rtw88's
+  `rtw8814a.c` LOK is byte-identical to mainline; morrownr's halrf LOK too).
+  Only open IQK item: the kernel runs `do_iqk` *before TX*; we don't before
+  `inject_frame` — a TX-quality nicety (deauth already works), not the death.
 
 **Net:** the death is in OUR code, and the pcap (kernel) can't show it directly.
 Suspects now (need Windows-HW toggling, not more pcap): (a) our **RX aggregation**
