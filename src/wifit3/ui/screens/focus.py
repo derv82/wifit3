@@ -2,6 +2,7 @@ import logging
 import re
 import time
 from collections import Counter, deque
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Set
 
@@ -30,6 +31,23 @@ from ..encryption_format import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _wep_key_chip(key_hex: Optional[str]) -> str:
+    """Black-bold-on-cyan WEP key chip: `<hex> = "ascii"` when the key is
+    printable ASCII (e.g. `abcde`), bare hex otherwise (e.g. a 104-bit key)."""
+    if not key_hex:
+        return "[dim]?[/dim]"
+    try:
+        kb = bytes.fromhex(key_hex)
+    except ValueError:
+        inner = key_hex
+    else:
+        if kb and all(0x20 <= b < 0x7F for b in kb):
+            inner = f'{key_hex} = "{kb.decode("ascii")}"'
+        else:
+            inner = key_hex
+    return f"[black bold on cyan] {inner} [/black bold on cyan]"
 
 
 def _format_duration(seconds: int) -> str:
@@ -232,7 +250,28 @@ class FocusView(Screen):
         else:
             self._log(treelog.leaf(bssid_line))
 
+        self._log_persisted_history(self.target_ap)
         self.update_ui()
+
+    def _log_persisted_history(self, ap: AccessPoint) -> None:
+        """On target acquisition, surface saved captures/ artifacts for this AP
+        so the user knows exactly what's already on disk (and how stale) — the
+        same data that lights the Scanner badges."""
+        if not ap.persisted:
+            return
+        self._log("[bold]Found existing capture data:[/bold]")
+        last = len(ap.persisted) - 1
+        for i, cap in enumerate(ap.persisted):
+            line = treelog.leaf if i == last else treelog.branch
+            if cap.kind == "WEP":
+                self._log(line(f"[bold cyan]{'WEP Key:':<9}[/bold cyan] "
+                               f"{_wep_key_chip(cap.value)}"))
+            else:
+                label = "Handshake" if cap.kind == "HS" else "PMKID"
+                dt = datetime.fromtimestamp(cap.timestamp)
+                self._log(line(
+                    f"[bold cyan]{label:<9}[/bold cyan] "
+                    f"[white]{dt:%Y-%m-%d}[/white] [dim]{dt:%H:%M}[/dim]"))
 
     # ----- Per-tick UI refresh -----------------------------------------------
 
@@ -461,22 +500,32 @@ class FocusView(Screen):
                     if f.msg_num:
                         msg_counts[f.msg_num] += 1
             breakdown = " · ".join(f"M{m}×{msg_counts[m]}" for m in sorted(msg_counts))
+            # Persisted (captures/) counts back-fill the live ones: if we have
+            # nothing live but a saved capture exists, show it green + (history)
+            # so the badge on Scanner has a matching explanation here.
+            persisted_hs = sum(1 for p in ap.persisted if p.kind == "HS")
+            persisted_pmkid = sum(1 for p in ap.persisted if p.kind == "PMKID")
             if n_complete:
                 hs_text = f"[bold green]Captured x{n_complete}[/bold green]"
                 if n_partial:
                     hs_text += f" [dim](+{n_partial} partial)[/dim]"
             elif n_partial:
                 hs_text = f"[yellow]Partial[/yellow] [dim]{breakdown}[/dim]"
+            elif persisted_hs:
+                hs_text = (f"[bold green]Captured x{persisted_hs}[/bold green] "
+                           f"[dim](history)[/dim]")
             else:
                 hs_text = "[dim]Not captured[/dim]"
             hs_label.update(Text.from_markup(f"Handshake: {hs_text}", emoji=False))
 
             n_pmkid = sum(1 for hs in ap.handshakes.values() if hs.pmkid)
-            pmkid_text = (
-                f"[bold green]Captured x{n_pmkid}[/bold green]"
-                if n_pmkid
-                else "[dim]Not captured[/dim]"
-            )
+            if n_pmkid:
+                pmkid_text = f"[bold green]Captured x{n_pmkid}[/bold green]"
+            elif persisted_pmkid:
+                pmkid_text = (f"[bold green]Captured x{persisted_pmkid}[/bold green] "
+                              f"[dim](history)[/dim]")
+            else:
+                pmkid_text = "[dim]Not captured[/dim]"
             pmkid_label.update(
                 Text.from_markup(f"PMKID:     {pmkid_text}", emoji=False)
             )
@@ -573,7 +622,8 @@ class FocusView(Screen):
         line. Only shown during a running campaign or once a key is found."""
         crack = self.query_one("#lbl-crack", Label)
         info = self.query_one("#lbl-crack-info", Label)
-        if campaign is None and ap.wep_key is None:
+        persisted_wep = next((p for p in ap.persisted if p.kind == "WEP"), None)
+        if campaign is None and ap.wep_key is None and persisted_wep is None:
             crack.display = False
             info.display = False
             return
@@ -590,6 +640,16 @@ class FocusView(Screen):
             ))
             info.update(Text.from_markup(
                 "[dim]see EVENT LOG to copy / save[/dim]", emoji=False
+            ))
+        elif campaign is None and persisted_wep is not None:
+            # No live key/campaign, but a saved WEP key exists — mirror the
+            # recovered state, tagged (history). Key chip is in the EVENT LOG.
+            crack.update(Text.from_markup(
+                "Crack: [bold green]✓ Key recovered[/bold green] [dim](history)[/dim]",
+                emoji=False
+            ))
+            info.update(Text.from_markup(
+                "[dim]see EVENT LOG[/dim]", emoji=False
             ))
         elif samples < CRACK_READY_THRESHOLD:
             crack.update(Text.from_markup(

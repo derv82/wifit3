@@ -1,7 +1,7 @@
 import time
 
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, List, Set, Dict, Tuple
+from typing import Optional, List, Literal, Set, Dict, Tuple
 
 
 class EapolFrame(BaseModel):
@@ -190,6 +190,21 @@ class WepStats(BaseModel):
     total_frames: int = 0
 
 
+class PersistedCapture(BaseModel):
+    """One previously-saved capture artifact found under captures/ at scan start.
+
+    Read-only history, hydrated onto an AccessPoint by ``engine.capture_history``
+    and matched by BSSID. Kept deliberately separate from the live
+    ``handshakes`` / ``wep_key`` plumbing so it drives only the persisted
+    Scanner badges and the Focus "existing capture data" summary — it never
+    feeds the live CaptureEventDetector banners.
+    """
+    kind: Literal["HS", "PMKID", "WEP"]
+    timestamp: int                  # epoch seconds, parsed from the filename
+    value: Optional[str] = None     # WEP key (hex) for WEP; None for HS/PMKID
+    path: str                       # source file under captures/
+
+
 class AccessPoint(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
@@ -267,6 +282,11 @@ class AccessPoint(BaseModel):
     # Recovered WEP key (the cracker's payoff). Lives on the AP so it survives
     # the Generate-IVs campaign being torn down, and so Save can write it out.
     wep_key: Optional[bytes] = Field(default=None)
+
+    # Read-only capture history loaded from captures/ at scan start, matched to
+    # this AP by BSSID. Drives the persisted Scanner badges + the Focus
+    # "existing capture data" summary; never touches the live capture plumbing.
+    persisted: List[PersistedCapture] = Field(default_factory=list)
 
     @property
     def has_capture(self) -> bool:

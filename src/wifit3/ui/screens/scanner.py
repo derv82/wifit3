@@ -11,7 +11,8 @@ from rich.markup import escape
 from rich.style import Style
 from rich.text import Span, Text
 
-from wifit3.engine.models import AccessPoint
+from wifit3.engine.capture_history import load_capture_index, summarize
+from wifit3.engine.models import AccessPoint, PersistedCapture
 
 from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector
 from ..encryption_format import format_encryption_markup
@@ -125,6 +126,9 @@ class ScannerView(Screen):
         # Fade toggle (default on). When off: rows stay at full brightness
         # regardless of age, and the silent-AP eviction pass is skipped.
         self._fade_enabled: bool = True
+        # captures/ history, loaded once at mount and hydrated onto APs by
+        # BSSID so previously-saved handshakes/PMKIDs/WEP keys re-badge.
+        self._capture_index: Dict[str, List[PersistedCapture]] = {}
 
     # ----- Compose / mount ---------------------------------------------------
 
@@ -149,6 +153,7 @@ class ScannerView(Screen):
             f"then fade out over {int(FADE_DURATION_S - GRACE_DURATION_S)}s of silence "
             f"and disappear. Press [bold]f[/bold] to toggle fading.[/dim]"
         )
+        self._load_capture_history()
         self._update_column_headers()
 
         if self.app.active_interface:
@@ -163,6 +168,28 @@ class ScannerView(Screen):
             self._sort_timer = self.set_interval(
                 SORT_INTERVAL_S, self._apply_sort_and_evict
             )
+
+    def _load_capture_history(self) -> None:
+        """Load captures/ once and log a one-line headline. Silent if empty."""
+        self._capture_index = load_capture_index()
+        summary = self._format_history_summary(*summarize(self._capture_index))
+        if summary:
+            self._write_log(summary)
+
+    @staticmethod
+    def _format_history_summary(hs: int, pmkid: int, wep: int) -> Optional[str]:
+        """`Found in captures/: N handshakes, N PMKIDs, N WEP keys` — counts are
+        per-AP (see summarize); zero categories omitted; None when nothing."""
+        parts = []
+        if hs:
+            parts.append(f"[green bold]{hs} handshake{'s' * (hs != 1)}[/green bold]")
+        if pmkid:
+            parts.append(f"[green bold]{pmkid} PMKID{'s' * (pmkid != 1)}[/green bold]")
+        if wep:
+            parts.append(f"[green bold]{wep} WEP key{'s' * (wep != 1)}[/green bold]")
+        if not parts:
+            return None
+        return "[bold]Found in[/] [cyan bold]captures/[/]: " + ", ".join(parts)
 
     async def on_screen_resume(self) -> None:
         # Owns hopper restart so focus/dialog children don't have to know
@@ -235,6 +262,13 @@ class ScannerView(Screen):
             if fade_enabled and age >= FADE_DURATION_S:
                 # Eviction runs on the 2 s sort tick — don't drop mid-frame.
                 continue
+
+            # Hydrate saved capture history (once) so persisted badges render
+            # from first sight. Cheap dict lookup; only matches add anything.
+            if not ap.persisted:
+                hist = self._capture_index.get(ap.bssid)
+                if hist:
+                    ap.persisted = hist
 
             n_cli = client_counts.get(ap.bssid, 0)
             # Grace window: stay at full brightness as a "this AP is alive"
@@ -350,6 +384,11 @@ class ScannerView(Screen):
             self._ssid_markup(ap),
         ]
 
+    # Cap the SSID+badges cell so the trailing capture badges never spill off
+    # the (last) column's right edge. Only over-long SSIDs that *have* badges
+    # get truncated with '…'; the full name is always in Focus.
+    _SSID_CELL_MAX = 32
+
     def _ssid_markup(self, ap: AccessPoint) -> Text:
         """Three SSID rendering states:
           - Confirmed       → bold     ("RealNetwork")
@@ -361,17 +400,25 @@ class ScannerView(Screen):
         rows, and stacking would corrupt the fade animation.
         """
         if ap.ssid:
-            text = Text(ap.ssid, style=f"{self._theme_fg} bold")
+            ssid_str, style = ap.ssid, f"{self._theme_fg} bold"
         else:
             sib_ssid = self._best_named_sibling_ssid(ap)
             if sib_ssid:
-                text = Text(f"{sib_ssid}?", style=f"{self._theme_fg} italic")
+                ssid_str, style = f"{sib_ssid}?", f"{self._theme_fg} italic"
             else:
-                text = Text("<Hidden>", style=f"{self._theme_fg} italic")
+                ssid_str, style = "<Hidden>", f"{self._theme_fg} italic"
+
         markers_markup = self._capture_marker_markup(ap)
-        if markers_markup:
-            text.append(" ")
-            text.append_text(Text.from_markup(markers_markup, emoji=False))
+        if not markers_markup:
+            return Text(ssid_str, style=style)
+
+        markers_text = Text.from_markup(markers_markup, emoji=False)
+        avail = self._SSID_CELL_MAX - 1 - markers_text.cell_len  # 1 = separator
+        if avail >= 1 and len(ssid_str) > avail:
+            ssid_str = ssid_str[: max(1, avail - 1)] + "…"
+        text = Text(ssid_str, style=style)
+        text.append(" ")
+        text.append_text(markers_text)
         return text
 
     def _best_named_sibling_ssid(self, ap: AccessPoint) -> Optional[str]:
@@ -392,14 +439,22 @@ class ScannerView(Screen):
 
     @staticmethod
     def _capture_marker_markup(ap: AccessPoint) -> str:
-        """Rich-markup '[green]✓HS[/green] [green]✓PMK[/green]' string."""
+        """Rich-markup capture badges. A badge lights from a live capture OR
+        from loaded captures/ history (ap.persisted) — so a previously-saved
+        handshake/PMKID/WEP key re-badges across runs. Same green either way;
+        the Focus summary tells the live-vs-history story."""
+        kinds = {p.kind for p in ap.persisted}
+        has_hs = kinds.__contains__("HS") or any(
+            hs.is_complete for hs in ap.handshakes.values())
+        has_pmk = "PMKID" in kinds or any(hs.pmkid for hs in ap.handshakes.values())
+        has_wep = "WEP" in kinds or ap.wep_key is not None
         parts: List[str] = []
-        has_hs = any(hs.is_complete for hs in ap.handshakes.values())
-        has_pmk = any(hs.pmkid for hs in ap.handshakes.values())
         if has_hs:
             parts.append("[green]✓HS[/green]")
         if has_pmk:
             parts.append("[green]✓PMK[/green]")
+        if has_wep:
+            parts.append("[green]✓WEP[/green]")
         return " ".join(parts)
 
     # ----- Capture-event logging ---------------------------------------------
