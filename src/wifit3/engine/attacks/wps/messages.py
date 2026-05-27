@@ -68,6 +68,9 @@ ATTR_UUID_R = 0x1048
 ATTR_VERSION = 0x104A
 ATTR_PRIMARY_DEV_TYPE = 0x1054
 ATTR_OS_VERSION = 0x102D
+ATTR_UUID_E = 0x1047
+ATTR_WPS_STATE = 0x1044
+ATTR_CRED = 0x100E              # Credential (nested TLV blob, carried in M8)
 
 # ---- WSC message types (ATTR_MSG_TYPE values) -----------------------------
 WPS_M1 = 0x04
@@ -91,6 +94,11 @@ WSC_MSG = 0x04
 WSC_DONE = 0x05
 WSC_FRAG_ACK = 0x06
 
+# Device Password ID
+DEV_PW_DEFAULT = 0x0000
+DEV_PW_PUSHBUTTON = 0x0004     # PBC; the device password is the fixed "00000000"
+PBC_PASSWORD = "00000000"      # hostapd eap_wsc: os_memset(dev_password,'0',8)
+
 # ---- EAP / 802.1X constants -----------------------------------------------
 EAP_REQUEST = 1
 EAP_RESPONSE = 2
@@ -108,6 +116,7 @@ _LLC_SNAP_EAPOL = b"\xaa\xaa\x03\x00\x00\x00\x88\x8e"
 
 WPS_VERSION = 0x10
 REGISTRAR_IDENTITY = b"WFA-SimpleConfig-Registrar-1-0"
+ENROLLEE_IDENTITY = b"WFA-SimpleConfig-Enrollee-1-0"
 
 # ---- Registrar device descriptor -------------------------------------------
 # These TLVs are cosmetic to the protocol (APs don't validate them) but they
@@ -276,6 +285,101 @@ def build_wsc_nack(nonce_e: bytes, nonce_r: bytes, config_error: int = 0) -> byt
 
 
 # ---------------------------------------------------------------------------
+# Enrollee message builders (PBC capture: we're the Enrollee; AP = Registrar).
+# Mirror hostapd wps_build_m1/m3/m5/m7. PSK1/PSK2 come from PBC_PASSWORD.
+# ---------------------------------------------------------------------------
+def build_m1(uuid_e: bytes, mac_e: bytes, nonce_e: bytes, pke: bytes,
+             dev_pw_id: int = DEV_PW_PUSHBUTTON) -> bytes:
+    """M1 (hostapd wps_build_m1 order). No Authenticator — keys don't exist yet."""
+    return (
+        _version_and_type(WPS_M1)
+        + tlv(ATTR_UUID_E, uuid_e)
+        + tlv(ATTR_MAC_ADDR, mac_e)
+        + tlv(ATTR_ENROLLEE_NONCE, nonce_e)
+        + tlv(ATTR_PUBLIC_KEY, pke)
+        + tlv_u16(ATTR_AUTH_TYPE_FLAGS, _AUTH_TYPE_FLAGS)
+        + tlv_u16(ATTR_ENCR_TYPE_FLAGS, _ENCR_TYPE_FLAGS)
+        + tlv_u8(ATTR_CONN_TYPE_FLAGS, _CONN_TYPE_ESS)
+        + tlv_u16(ATTR_CONFIG_METHODS, _CONFIG_METHODS)
+        + tlv_u8(ATTR_WPS_STATE, 1)                # 1 = unconfigured
+        + _device_attrs()
+        + tlv_u8(ATTR_RF_BANDS, _RF_BANDS)
+        + tlv_u16(ATTR_ASSOC_STATE, 0x0000)
+        + tlv_u16(ATTR_DEV_PASSWORD_ID, dev_pw_id)
+        + tlv_u16(ATTR_CONFIG_ERROR, 0x0000)
+        + tlv(ATTR_OS_VERSION, struct.pack(">I", _OS_VERSION))
+    )
+
+
+def build_m3_enrollee(nonce_r: bytes, e_s1: bytes, e_s2: bytes, psk1: bytes,
+                      psk2: bytes, pke: bytes, pkr: bytes, authkey: bytes,
+                      m2_attrs: bytes) -> bytes:
+    """M3: E-Hash1/2 committing to our secret nonces. Authenticator over M2||M3."""
+    body = (
+        _version_and_type(WPS_M3)
+        + tlv(ATTR_REGISTRAR_NONCE, nonce_r)
+        + tlv(ATTR_E_HASH1, wc.e_or_r_hash(authkey, e_s1, psk1, pke, pkr))
+        + tlv(ATTR_E_HASH2, wc.e_or_r_hash(authkey, e_s2, psk2, pke, pkr))
+    )
+    return body + tlv(ATTR_AUTHENTICATOR, wc.authenticator(authkey, m2_attrs, body))
+
+
+def build_m5_enrollee(nonce_r: bytes, e_s1: bytes, authkey: bytes,
+                      keywrapkey: bytes, m4_attrs: bytes) -> bytes:
+    """M5: reveal E-S1 (encrypted). Authenticator over M4||M5."""
+    body = (
+        _version_and_type(WPS_M5)
+        + tlv(ATTR_REGISTRAR_NONCE, nonce_r)
+        + tlv(ATTR_ENCR_SETTINGS, _encr_settings(authkey, keywrapkey, tlv(ATTR_E_SNONCE1, e_s1)))
+    )
+    return body + tlv(ATTR_AUTHENTICATOR, wc.authenticator(authkey, m4_attrs, body))
+
+
+def build_m7_enrollee(nonce_r: bytes, e_s2: bytes, authkey: bytes,
+                      keywrapkey: bytes, m6_attrs: bytes) -> bytes:
+    """M7: reveal E-S2 (encrypted). Authenticator over M6||M7. (Enrollee receiving
+    config sends no AP settings here.)"""
+    body = (
+        _version_and_type(WPS_M7)
+        + tlv(ATTR_REGISTRAR_NONCE, nonce_r)
+        + tlv(ATTR_ENCR_SETTINGS, _encr_settings(authkey, keywrapkey, tlv(ATTR_E_SNONCE2, e_s2)))
+    )
+    return body + tlv(ATTR_AUTHENTICATOR, wc.authenticator(authkey, m6_attrs, body))
+
+
+def build_wsc_done(nonce_e: bytes, nonce_r: bytes) -> bytes:
+    return (
+        _version_and_type(WPS_WSC_DONE)
+        + tlv(ATTR_ENROLLEE_NONCE, nonce_e)
+        + tlv(ATTR_REGISTRAR_NONCE, nonce_r)
+    )
+
+
+def extract_m8_credentials(
+    encr_settings_value: bytes, keywrapkey: bytes
+) -> Optional[Dict[str, bytes]]:
+    """Decrypt M8's Encrypted Settings → the AP's Credential → {ssid, network_key}.
+
+    Unlike M7-to-a-registrar (flat AP settings), M8 wraps the config in a nested
+    ``ATTR_CRED`` TLV blob whose sub-TLVs hold SSID + Network Key (the PSK).
+    """
+    if len(encr_settings_value) < 32 or len(encr_settings_value) % 16:
+        return None
+    iv, ct = encr_settings_value[:16], encr_settings_value[16:]
+    plain = wc.pkcs5_unpad(wc.aes128_cbc_decrypt(keywrapkey, iv, ct))
+    cred = parse_tlvs(plain).get(ATTR_CRED)
+    if cred is None:
+        return None
+    inner = parse_tlvs(cred)
+    out: Dict[str, bytes] = {}
+    if ATTR_SSID in inner:
+        out["ssid"] = inner[ATTR_SSID]
+    if ATTR_NETWORK_KEY in inner:
+        out["network_key"] = inner[ATTR_NETWORK_KEY]
+    return out
+
+
+# ---------------------------------------------------------------------------
 # EAP / 802.1X framing — return the 802.1X payload (after LLC/SNAP)
 # ---------------------------------------------------------------------------
 def eapol_start() -> bytes:
@@ -289,8 +393,8 @@ def _eapol_eap(eap_code: int, eap_id: int, eap_body: bytes) -> bytes:
     return struct.pack(">BBH", DOT1X_VERSION, DOT1X_TYPE_EAP_PACKET, len(eap)) + eap
 
 
-def eap_identity_response(eap_id: int) -> bytes:
-    return _eapol_eap(EAP_RESPONSE, eap_id, bytes([EAP_TYPE_IDENTITY]) + REGISTRAR_IDENTITY)
+def eap_identity_response(eap_id: int, identity: bytes = REGISTRAR_IDENTITY) -> bytes:
+    return _eapol_eap(EAP_RESPONSE, eap_id, bytes([EAP_TYPE_IDENTITY]) + identity)
 
 
 def eap_wsc_response(eap_id: int, opcode: int, wsc_attrs: bytes) -> bytes:
