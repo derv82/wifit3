@@ -223,16 +223,22 @@ lag the user saw once is shelved (likely Textual latency, not card-specific).
   by it being genuine analog re-lock variance, not a port gap. **HW: repro
   0/15 + 0/12 (was 3-7/10); general band-crossing `--hop` 0 NO-FRAMES/20 s
   (was 3-5); one re-lock recovers every deaf case.**
-- **RESOLVED 2026-05-27 — cold-boot RX death (~1/7) = RX aggregation ON.** The
-  "single beacon then nothing" was the RX-aggregation page accumulator failing to
-  re-arm at cold boot: it flushed the startup backlog once then waited forever.
-  Death3 debug log proved it (BB decoding, `crc_ok` 50-200/window, while bulk-IN
-  `bytes=0`), and the full-capture RX-DMA diff showed the kernel runs aggregation
-  **OFF** in monitor (`REG_RXDMA_AGG_PG_TH=0x0100`, size=0/timeout=1) while we ran
-  it ON (`0x2005`). Fix = match the kernel's state (`configure_rx_aggregation`,
-  size=0/timeout=1, immediate flush) — NOT detect/recover. **HW: 10/10 cold
-  boots.** Corrected the earlier "agg is HW-critical for alignment" claim
-  (confounded with the prime/drain desync).
+- **cold-boot RX death ("1 beacon then silent") — two contributing causes:**
+  bulk-IN delivers the startup backlog once then goes silent while the BB keeps
+  decoding (death3 log: `crc_ok` 50-200/window, `bytes=0`) — an RX-DMA delivery
+  halt, not RF.
+  1. **RX aggregation ON** (FIXED): kernel runs aggregation OFF in monitor
+     (`REG_RXDMA_AGG_PG_TH=0x0100`, size=0/timeout=1); we ran it ON (`0x2005`),
+     whose page accumulator could fail to re-arm. Matched the kernel
+     (`configure_rx_aggregation`, immediate flush). Cut the rate (10/10) but
+     **not eliminated** — attempt #11 reproduced it with agg off.
+  2. **Undrained 2s RF probe** (FIXED 2026-05-27): `connect()` ran the
+     `rf_receiving_frames` 2 s probe with the reader **not yet started**, so RX
+     decoded ~1000 frames into a bulk-IN no one was draining → device RX path
+     backs up → RX-DMA halts. Fix: start the reader BEFORE the probe (drain
+     throughout, as the kernel always does). **Needs cold-boot HW verify.**
+  Lesson: don't retire diagnostics on a 10/10 sample for a ~1/11 bug (the
+  opt-in `WIFIT3_RX_STATS` produced/bytes log is back for this reason).
 
 ### Known gaps / tech-debt (parked — see correctness audit above)
 
