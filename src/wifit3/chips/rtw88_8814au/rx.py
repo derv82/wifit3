@@ -146,21 +146,29 @@ def read_crc_ok(transport: RTL8814AUTransport) -> int:
 
 
 def rf_receiving_frames(transport: RTL8814AUTransport,
-                        settle_s: float = 2.0) -> bool:
+                        settle_s: float = 2.0, poll_s: float = 0.1) -> bool:
     """True if the PHY actually DEMODULATES frames within `settle_s`.
 
     Gates on CRC-OK counts (frames that passed FCS), not just CCA energy —
     a cold-boot chip has THREE states: RF-deaf (CCA=0), demod-fail (CCA>0 but
     CRC-OK=0, delivers garbage), and good (CRC-OK>0). Only CRC-OK>0 confirms a
     usable boot; CCA alone would pass a demod-fail boot. Counters accumulate in
-    BB hardware passively. Used by connect() to re-roll phy_set_param until RX
-    genuinely works. See RTL8814AU.md.
+    BB hardware passively. See RTL8814AU.md.
+
+    Polls every `poll_s` and returns the instant a frame demodulates, so a
+    healthy boot clears in ~one beacon interval instead of always blocking the
+    full `settle_s`; only a deaf boot waits the whole window before failing.
     """
     reset_phy_counters(transport)
-    time.sleep(settle_s)
-    cck_ok = transport.read32(C.REG_CRC_CCK) & 0xFFFF
-    ofdm_ok = transport.read32(C.REG_CRC_OFDM) & 0xFFFF
-    ht_ok = transport.read32(C.REG_CRC_HT) & 0xFFFF
+    deadline = time.monotonic() + settle_s
+    cck_ok = ofdm_ok = ht_ok = 0
+    while True:
+        time.sleep(poll_s)
+        cck_ok = transport.read32(C.REG_CRC_CCK) & 0xFFFF
+        ofdm_ok = transport.read32(C.REG_CRC_OFDM) & 0xFFFF
+        ht_ok = transport.read32(C.REG_CRC_HT) & 0xFFFF
+        if (cck_ok + ofdm_ok + ht_ok) > 0 or time.monotonic() >= deadline:
+            break
     cca_ofdm = (transport.read32(C.REG_CCA_OFDM) >> 16) & 0xFFFF
     demod_ok = cck_ok + ofdm_ok + ht_ok
     logger.info("RF probe: CRC-ok=%d (cck=%d ofdm=%d ht=%d) cca=%d -> %s",
