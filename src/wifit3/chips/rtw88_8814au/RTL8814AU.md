@@ -223,12 +223,34 @@ lag the user saw once is shelved (likely Textual latency, not card-specific).
   by it being genuine analog re-lock variance, not a port gap. **HW: repro
   0/15 + 0/12 (was 3-7/10); general band-crossing `--hop` 0 NO-FRAMES/20 s
   (was 3-5); one re-lock recovers every deaf case.**
-- **OPEN (minor) — cold-boot "single beacon" oddity:** user still sees ~50% of
-  true (physical-replug) cold boots come up showing exactly ONE beacon/frame —
-  never 0, never 2. DIG made warm re-inits 8/8, but this true-cold case persists
-  and is weird (exactly 1 smells like RX-aggregation flushing one buffer then
-  stalling, distinct from the CCA=0 deaf). Needs a physical-replug repro (can't
-  reproduce via warm software re-init); revisit when the card can be cold-cycled.
+- **RESOLVED 2026-05-27 — cold-boot RX death (~1/7) = RX aggregation ON.** The
+  "single beacon then nothing" was the RX-aggregation page accumulator failing to
+  re-arm at cold boot: it flushed the startup backlog once then waited forever.
+  Death3 debug log proved it (BB decoding, `crc_ok` 50-200/window, while bulk-IN
+  `bytes=0`), and the full-capture RX-DMA diff showed the kernel runs aggregation
+  **OFF** in monitor (`REG_RXDMA_AGG_PG_TH=0x0100`, size=0/timeout=1) while we ran
+  it ON (`0x2005`). Fix = match the kernel's state (`configure_rx_aggregation`,
+  size=0/timeout=1, immediate flush) — NOT detect/recover. **HW: 10/10 cold
+  boots.** Corrected the earlier "agg is HW-critical for alignment" claim
+  (confounded with the prime/drain desync).
+
+### Known gaps / tech-debt (parked — see correctness audit above)
+
+- **TX power (M6) — NOT calibrated.** Biggest gap: we inject at the BB/AGC-table
+  baseline power, not the EFUSE-calibrated per-channel power, so TX is weaker than
+  aireplay at distance. Scope decided (calibrated full-power) and EFUSE step 1
+  (power-by-rate parse) landed; steps 2-6 (by-rate offset, computation, REG_AGC_TBL
+  write, bb_swing, wiring) parked. See "M6 — TX power" plan above.
+- **Two recovery-style fixes not fully root-caused** (acknowledged band-aids; the
+  cold-boot/agg + DIG fixes ARE faithful state-matches, these two are not):
+  1. **8× phy_set_param re-roll in `connect()`** — now likely unnecessary since
+     cold boots are 10/10 with DIG + agg-off; flagged for removal/verification.
+  2. **Band-switch CCA re-lock in `set_channel`** — detect-deaf-and-re-tune. Fixed
+     the band-hop death (0/15) but is detect/recover; `switch_band` matches the
+     kernel byte-for-byte, so it's *probably* genuine analog re-lock variance, but
+     that wasn't confirmed against a kernel band-transition capture (the 3 caps
+     lacked enough 2G↔5G transitions). Revisit with a band-transition capture.
+- **5 GHz non-DFS only; 20 MHz only** — by design (see correctness audit).
 
 ### pcap byte-level findings — 2026-05-26 (full captures, usbmon0)
 
