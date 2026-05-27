@@ -130,6 +130,50 @@ lag the user saw once is shelved (likely Textual latency, not card-specific).
   per-hop register burst + latency against the kernel's; candidate levers are a
   longer per-card hop dwell and a post-tune RX-resume verify in `set_channel`.
 
+### pcap byte-level findings — 2026-05-26 (full captures, usbmon0)
+
+Fresh captures (`capture-{1,2,3}.pcap`, 25–32 MB each, now complete through
+init+airmon+hops+inject). `pcap_slicer.py` (now phase-aware, with a per-phase
+frame count) + `extract_pcap_writes.py --min-frame/--max-frame` give exact
+per-phase register bytes. Capture-1 frame map: init 1–10948, airmon 10949–20406,
+airodump 20407–88479, then 1 s iw hops, aireplay, 0.25 s fast-hops.
+
+1. **Cadence/hardware cleared, decisively.** Kernel `iw` fast-hops at **0.25 s
+   captured ~1250–1560 USB frames *per hop*** (airodump 20 s = 68 k frames). The
+   kernel is healthy at our exact cadence ⇒ the post-hop death is **purely our
+   userland `set_channel`/RX path**, not cadence or relock-vs-dwell. The earlier
+   "PLL relock blanks the radio" framing is wrong as a *root* cause.
+2. **Per-hop tune sequence MATCHES the kernel.** Kernel `set channel 6` writes
+   CLKTRK(0x0860) fc_area, per-path RF_CFGCH (0x0c90/0e90/1890/1a90), CCK TX
+   filter (0x0a20/24/28), WMAC_TRXPTCL(0x0668)/DATA_SC(0x0483), bw_rf — all of
+   which `chan._switch_channel`/`_set_bw_mode` already emit. **Crucially the
+   kernel tunes RF_CFGCH live with NO RX-DMA pause/reset and RX keeps flowing**,
+   so "tuning without resetting RX" is NOT the wedge.
+3. **The 536× `REG_AGC_TBL`(0x1998) per-hop writes are the TX-power table**
+   (`txagc_table_wd`, rtw8814a.c:1288/1294, via `rtw_phy_set_tx_power_level`),
+   not RX — irrelevant to the death (we don't TX while hopping).
+4. **[CORRECTS PRIOR CLAIM] The kernel runs IQK at monitor bring-up.** Earlier I
+   disconfirmed missing-IQK from source ("deferred to mgd_prepare_tx"). The pcap
+   overrules that: full IQK fires in the airmon/interface-up window (frames
+   ~13939+: trigger writes 0x1b00=0xf8.., 0x1b04, 0x1b1c — the LOK/TX/RX one-shot
+   pattern of `rtw8814a_iqk`). It runs **once at bring-up, NOT per hop** (no
+   0x1b00 in any per-hop window — matches "calibration during scan takes too
+   long"). **We run zero IQK.** Real gap; affects RX/TX I/Q quality, worth porting.
+5. **We skip `spur_calibration` per hop** (NBI 0x087c / CSI 0x0874 + 0x0880-089c
+   block) — confirmed present in every kernel hop, absent from ours. Per-channel
+   notch; quality, not a wedge.
+6. **PHY init + IQK happen at interface-up (airmon), not at probe.** The airmon
+   window even repeats the iDDMA FW-chunk dance (0x0204/0x0101/0x0550) — airmon
+   stop/start re-runs a full bring-up. (Architecture note; our single connect()
+   does power-on→FW→efuse→mac→phy in one shot, which is fine.)
+
+**Net:** the death is in OUR code, and the pcap (kernel) can't show it directly.
+Suspects now (need Windows-HW toggling, not more pcap): (a) our **RX aggregation**
+desyncing on rapid retune; (b) our **extra per-hop writes** the kernel never does
+(`rx.tune_monitor_cck_sensitivity` + `dynamic.dig_init` re-seed); (c) WinUSB
+reader-thread ↔ control-transfer contention. Separate faithfulness win available:
+**port `rtw8814a_do_iqk`** (run once after phy_set_param at connect), per finding #4.
+
 ---
 
 ## Build status

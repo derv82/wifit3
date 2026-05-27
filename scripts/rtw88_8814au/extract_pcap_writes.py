@@ -28,10 +28,12 @@ def _is_table_addr(a: int) -> bool:
     return (0x0800 <= a <= 0x1FFF) or a == 0x0030  # BB/RF/AGC space + EFUSE_CTRL
 
 
-def iter_writes(pcap: Path, max_frame: int | None):
+def iter_writes(pcap: Path, max_frame: int | None, min_frame: int | None = None):
     for fn, data in _iter_urbs(pcap):
         if max_frame is not None and fn > max_frame:
             return
+        if min_frame is not None and fn < min_frame:
+            continue
         if len(data) < 48 or data[9] != 2 or data[8] != ord("S"):
             continue
         if data[40] != 0x40 or data[41] != 0x05:   # vendor write submit
@@ -48,6 +50,7 @@ def main() -> int:
     p.add_argument("pcap", type=Path)
     p.add_argument("--all", action="store_true", help="don't collapse table runs")
     p.add_argument("--max-frame", type=int, default=None)
+    p.add_argument("--min-frame", type=int, default=None)
     args = p.parse_args()
 
     run_count = run_lo = run_hi = 0
@@ -59,7 +62,7 @@ def main() -> int:
             print(f"    [... {run_count} table writes, addr 0x{run_lo:04x}..0x{run_hi:04x}]")
             run_count = 0
 
-    for fn, addr, wlen, val in iter_writes(args.pcap, args.max_frame):
+    for fn, addr, wlen, val in iter_writes(args.pcap, args.max_frame, args.min_frame):
         total += 1
         if not args.all and _is_table_addr(addr):
             if run_count == 0:
