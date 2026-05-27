@@ -12,6 +12,25 @@ def test_access_point_model_defaults():
     assert ap.pmf_capable is False
 
 
+def test_wps_pbc_active_detection():
+    ap = AccessPoint(bssid="00:11:22:33:44:55", wps=True)
+    assert ap.wps_pbc_active is False                       # no registrar window
+
+    # A live Push-Button walk window: PBC dev-pw-id + selected registrar.
+    ap.wps_selected_registrar = True
+    ap.wps_device_password_id = 0x0004
+    assert ap.wps_pbc_active is True
+
+    # A PIN-method registrar window (dev-pw-id default) is NOT PBC.
+    ap.wps_device_password_id = 0x0000
+    assert ap.wps_pbc_active is False
+
+    # Selected registrar cleared (window closed) → not active.
+    ap.wps_device_password_id = 0x0004
+    ap.wps_selected_registrar = False
+    assert ap.wps_pbc_active is False
+
+
 def test_wep_key_counts_as_capture():
     ap = AccessPoint(bssid="00:11:22:33:44:55", encryption="WEP")
     assert ap.wep_key is None

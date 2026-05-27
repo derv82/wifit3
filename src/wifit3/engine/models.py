@@ -236,6 +236,9 @@ class AccessPoint(BaseModel):
     wps_version: Optional[str] = Field(default=None)        # "1.0" / "2.0"
     wps_config_methods: int = Field(default=0)              # 0x1008 bitmask
     wps_device_password_id: Optional[int] = Field(default=None)  # 0x0004 = PBC
+    # Set while the AP is advertising an active Registrar (PIN or, with
+    # DevPwId 0x0004, a Push-Button walk window). Drives wps_pbc_active.
+    wps_selected_registrar: bool = Field(default=False)
 
     # Most recent raw beacon bytes — used so per-client handshakes created
     # AFTER the first beacon still get a beacon stamped onto them.
@@ -295,6 +298,17 @@ class AccessPoint(BaseModel):
         if self.wep_key is not None:
             return True
         return any(hs.is_complete or hs.pmkid for hs in self.handshakes.values())
+
+    @property
+    def wps_pbc_active(self) -> bool:
+        """True during a WPS Push-Button walk window — the AP advertises PBC
+        (Device Password ID 0x0004) with an active Selected Registrar. This is
+        the (passive, beacon-derived) trigger for opportunistic PBC capture."""
+        return (
+            self.wps
+            and self.wps_selected_registrar
+            and self.wps_device_password_id == 0x0004
+        )
 
 class Client(BaseModel):
     """

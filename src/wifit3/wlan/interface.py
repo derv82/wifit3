@@ -177,6 +177,7 @@ class WlanInterface:
             wps_version = parsed.get("wps_version")
             wps_config_methods = parsed.get("wps_config_methods", 0)
             wps_device_password_id = parsed.get("wps_device_password_id")
+            wps_selected_registrar = parsed.get("wps_selected_registrar", False)
 
             if bssid not in self.access_points:
                 self.access_points[bssid] = AccessPoint(
@@ -197,6 +198,7 @@ class WlanInterface:
                     wps_version=wps_version,
                     wps_config_methods=wps_config_methods,
                     wps_device_password_id=wps_device_password_id,
+                    wps_selected_registrar=wps_selected_registrar,
                 )
                 self._recompute_siblings_for(bssid)
                 if ssid and ssid != "<hidden>":
@@ -255,6 +257,7 @@ class WlanInterface:
                     ap.wps_version = wps_version
                     ap.wps_config_methods = wps_config_methods
                     ap.wps_device_password_id = wps_device_password_id
+                    ap.wps_selected_registrar = wps_selected_registrar
 
             # Always bump the recency clock on the AP we just saw — drives
             # stale-row dim-out and "Last Beacon: Ns ago" in FocusView.
