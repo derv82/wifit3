@@ -53,10 +53,13 @@ def random_client_mac() -> bytes:
 class WlanTransport:
     """Registrar transport over a live WlanInterface."""
 
-    def __init__(self, iface, bssid: bytes, our_mac: bytes):
+    def __init__(self, iface, bssid: bytes, our_mac: bytes, tx_observer=None):
         self.iface = iface
         self.bssid = bssid
         self.our_mac = our_mac
+        # Optional callback(frame_bytes) invoked on every TX — lets a probe
+        # record our injected frames alongside RX for a full-conversation pcap.
+        self.tx_observer = tx_observer
         self._q: asyncio.Queue = asyncio.Queue()
         self._loop = asyncio.get_event_loop()
         self._active = False
@@ -84,6 +87,8 @@ class WlanTransport:
         self.iface.unregister_rx_callback(self._rx_cb)
 
     async def send(self, frame: bytes) -> None:
+        if self.tx_observer is not None:
+            self.tx_observer(frame)
         await self.iface.send_raw(frame, use_no_ack=True)
 
     async def recv(self, timeout: float) -> Optional[bytes]:
