@@ -253,9 +253,16 @@ class RTL8814AUDriver:
         self._bulk_in_ep = eps.primary_bulk_in
         self._bulk_out_eps = list(eps.bulk_out)
         await loop.run_in_executor(None, rx.prime_bulk_in, self.dev, self._bulk_in_ep)
+        # Surface RX throughput (produced buffers + bytes every 2s) when stats
+        # are requested OR debug logging is on — so a cold-boot "death" run shows
+        # whether bulk-IN delivers nothing (DMA stalled) vs bytes that don't
+        # parse (alignment/desync). The RF probe passing while no frames reach
+        # the host points at this RX-DMA layer, not RF.
+        rx_stats = (bool(os.environ.get("WIFIT3_RX_STATS"))
+                    or logger.isEnabledFor(logging.DEBUG))
         self._rx_reader = RxReaderThread(
             loop, self._rx_read_once, self._rx_dispatch, name="rtl8814au-rx",
-            stats=bool(os.environ.get("WIFIT3_RX_STATS")),
+            stats=rx_stats,
         )
         self._rx_reader.start()
         return True

@@ -33,7 +33,8 @@ def _configure_file_logging() -> None:
     level = logging.DEBUG if level_env in ("debug", "2") else logging.INFO
     handler = logging.FileHandler("wifit3.log", mode="w", encoding="utf-8")
     handler.setFormatter(logging.Formatter(
-        "%(asctime)s %(levelname)-5s %(name)s: %(message)s", datefmt="%H:%M:%S"
+        "%(asctime)s.%(msecs)03d %(levelname)-5s %(name)s: %(message)s",
+        datefmt="%H:%M:%S"
     ))
     root = logging.getLogger()
     root.setLevel(level)
