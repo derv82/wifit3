@@ -66,6 +66,8 @@ class Capture:
         self.chipset = "unknown"
         self.tshark_proc = None
         self.tshark_log = None
+        self.airodump_proc = None
+        self.airodump_log = None
         self.supports_5g = False
         
         self.temp_dir_obj = tempfile.TemporaryDirectory(prefix="wifit3_cap_")
@@ -124,7 +126,32 @@ class Capture:
         
         return combined_output
         
-    def fast_hop_segment(self, dwell=0.25, duration=12.0, channels=(1, 6, 11)):
+    def airodump_segment(self, duration=20.0):
+        """Let airodump-ng hop on its own (its native DEFAULT_HOPFREQ = 250 ms,
+        via wi_set_channel -> nl80211 -> the kernel's set_channel) for `duration`
+        seconds, so the capture contains the KERNEL's per-hop register burst at
+        the same 250 ms cadence wifit3 uses. `--band abg` = all bands (a=5 GHz,
+        b/g=2.4 GHz). No -w: we only care about the channel-set USB traffic."""
+        self.logger.log_main(f"[{time.time():.3f}] [AIRODUMP] start --band abg ({duration}s @ 250ms native hop)")
+        self.airodump_log = open(self.temp_dir / "airodump-ng.log", "w")
+        self.airodump_proc = subprocess.Popen(
+            ["sudo", "airodump-ng", "--band", "abg", self.mon_iface],
+            stdout=self.airodump_log, stderr=self.airodump_log,
+        )
+        time.sleep(duration)
+        # Stop airodump before the deterministic iw hopping takes over the iface.
+        subprocess.run(["sudo", "pkill", "-P", str(self.airodump_proc.pid)],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["sudo", "kill", str(self.airodump_proc.pid)],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            self.airodump_proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            pass
+        self.airodump_proc = None
+        self.logger.log_main(f"[{time.time():.3f}] [AIRODUMP] stopped")
+
+    def fast_hop_segment(self, dwell=0.25, duration=30.0, channels=(1, 6, 11)):
         """Hop at the wifit3 TUI's pathological 0.25 s cadence to test whether
         the KERNEL also goes silent (relock > dwell) or keeps capturing. Uses a
         drift-tolerant loop (NOT run_at) so it can never abort the capture; each
@@ -146,6 +173,12 @@ class Capture:
 
     def cleanup(self):
         self.logger.log_main("\n[*] Teardown initiated. Cleaning up...")
+        # Kill airodump first if a throw landed mid-segment (it owns the iface).
+        if self.airodump_proc and self.airodump_proc.poll() is None:
+            subprocess.run(["sudo", "pkill", "-P", str(self.airodump_proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "kill", str(self.airodump_proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if self.airodump_log:
+            self.airodump_log.close()
         if self.tshark_proc and self.tshark_proc.poll() is None:
             time.sleep(1) # flush
             subprocess.run(["sudo", "pkill", "-P", str(self.tshark_proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -279,8 +312,15 @@ class Capture:
         self.logger.log_main(f"[*] Detected Monitor Interface: {self.mon_iface}")
         self.logger.log_main(f"[*] Detected Chipset/Driver:  {self.chipset}")
         # -----------------------------------------
-        
-        # 2.4GHz Hopping
+
+        # Airodump segment FIRST: capture the kernel hopping at its native 250 ms
+        # (same cadence as wifit3's TUI). Reference for diffing our set_channel.
+        # Drift-tolerant (own sleep), so advance the cursor by its real duration.
+        airodump_dur = 20.0
+        self.airodump_segment(duration=airodump_dur)
+        cursor_t = (time.time() - self.start_time) + 1.0
+
+        # 2.4GHz Hopping (deterministic iw, 1 s/channel = clean per-hop reference)
         cursor_t = max(cursor_t, 20.0) # Ensure we start hopping at least at T=20
         for ch in range(1, 13):
             self.run_at(cursor_t, ["sudo", "iw", "dev", self.mon_iface, "set", "channel", str(ch)], timeout=0.8)
