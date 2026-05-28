@@ -196,7 +196,12 @@ def iter_bulk_frames(buf: bytes) -> Iterator[tuple[RxPktStat, bytes, int | None]
             rssi = parse_jaguar_phy_status_rssi(buf, pos + RX_PKT_DESC_SZ, stat)
 
         mpdu_start = pos + stat.mpdu_offset
-        mpdu = bytes(buf[mpdu_start: mpdu_start + stat.pkt_len])
+        # rtw88 USB hardware reports pkt_len inclusive of the trailing 4-byte
+        # 802.11 FCS — strip it so consumers see the on-air MPDU body only
+        # (see chips/rtw88_base/rx_common.py for the matching strip + the
+        # FCSDIAG CRC tally that confirmed pkt_len is FCS-inclusive). This
+        # driver doesn't go through rx_common, so the strip lands here too.
+        mpdu = bytes(buf[mpdu_start: mpdu_start + max(stat.pkt_len - 4, 0)])
 
         if not stat.is_c2h:
             yield (stat, mpdu, rssi)

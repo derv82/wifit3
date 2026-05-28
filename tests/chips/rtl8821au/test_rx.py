@@ -53,7 +53,7 @@ def test_parse_c2h_flag():
 
 def test_iter_skips_c2h():
     # Frame 1: C2H, len=10
-    # Frame 2: real, len=20 (a fake beacon-ish blob)
+    # Frame 2: real, len=20 (a fake beacon-ish blob, last 4 bytes are FCS)
     desc1 = _make_rx_desc(pkt_len=10, is_c2h=True)
     body1 = b"\x00" * 10
     pad1 = b"\x00" * (((RX_PKT_DESC_SZ + 10 + 7) & ~7) - (RX_PKT_DESC_SZ + 10))
@@ -64,7 +64,7 @@ def test_iter_skips_c2h():
     assert len(frames) == 1
     stat, mpdu, _ = frames[0]
     assert stat.pkt_len == 20
-    assert mpdu == body2
+    assert mpdu == body2[:-4]   # iterator strips the trailing 4-byte FCS
 
 
 def test_iter_stops_on_empty_desc():
@@ -88,8 +88,9 @@ def test_iter_handles_8byte_alignment():
     buf = desc1 + body1 + pad1 + desc2 + body2
     frames = list(iter_bulk_frames(buf))
     assert len(frames) == 2
-    assert frames[0][1] == body1
-    assert frames[1][1] == body2
+    # Iterator strips the trailing 4-byte FCS from each MPDU.
+    assert frames[0][1] == body1[:-4]
+    assert frames[1][1] == body2[:-4]
 
 
 def test_iter_truncated_returns_what_it_has():
