@@ -143,7 +143,17 @@ def iter_bulk_frames(
             rssi = phy_status_rssi(buf, pos + RX_PKT_DESC_SZ, stat)
 
         mpdu_start = pos + stat.mpdu_offset
-        mpdu = bytes(buf[mpdu_start: mpdu_start + stat.pkt_len])
+        # rtw88 USB hardware reports pkt_len INCLUSIVE of the trailing 4-byte
+        # 802.11 FCS. Strip it here so all consumers see only the on-air MPDU
+        # body — leaving it on breaks length-sensitive code downstream
+        # (e.g. WEP ARP detection at wlan/wep_store.py rejects ARP frames by
+        # length, ChopChop's ICV slice expects body-end == cipher-end, etc.).
+        # Confirmed via FCSDIAG CRC32 trailer tally on RTL8821AU (6000/6000
+        # frames had a valid CRC32 tail). The 8812AU/8822BU/8814AU share this
+        # descriptor format and almost certainly behave the same, but each
+        # needs an independent HW re-test (scan + WEP + WPA + WPS) before
+        # being marked verified.
+        mpdu = bytes(buf[mpdu_start: mpdu_start + max(stat.pkt_len - 4, 0)])
 
         if not stat.is_c2h:
             yield (stat, mpdu, rssi)
