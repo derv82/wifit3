@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import time
-import zlib  # FCS-DIAG (revert: drop with the rest of FCS-DIAG markers)
 from pathlib import Path
 from typing import List, Optional, Callable, Any, Dict, Set
 
@@ -127,20 +126,8 @@ class WlanInterface:
         # _hopping_task. Orphaned tasks ping-pong the chip across channels.
         self._hop_lock = asyncio.Lock()
 
-        # FCS-DIAG: per-session CRC32 self-check counters. Last 4 bytes of each
-        # RX frame are CRC32'd against the preceding payload — if they match,
-        # the driver is delivering frames with the trailing FCS intact. Ratio
-        # is unambiguous across a session even though a single frame can lie
-        # at ~2^-32. Revert: drop with the rest of FCS-DIAG markers.
-        self._fcs_diag_total = 0
-        self._fcs_diag_match = 0
-
         if hasattr(self.driver, 'register_rx_callback'):
             self.driver.register_rx_callback(self._on_frame_parsed)
-            # FCS-DIAG: announce the driver class at session start so saved
-            # wifit3-<chipset>.log files are self-identifying.
-            logger.info("[FCSDIAG-START] driver=%s iface=%s",
-                        self.driver.__class__.__name__, self.name)
 
     def _on_frame_parsed(self, parsed: dict):
         """
@@ -158,24 +145,6 @@ class WlanInterface:
         raw = parsed.get("raw")
         if raw is not None and self._rx_callbacks:
             self._fire_rx_callbacks(raw, rssi)
-
-        # FCS-DIAG: tally CRC32 match-rate on the trailing 4 bytes of every RX
-        # frame; emit a running ratio every 100 frames. A driver that includes
-        # the on-air FCS will pin near 100%, one that strips it near 0%. This
-        # block is purely diagnostic — never used to slice frames. Revert: drop
-        # with the rest of FCS-DIAG markers.
-        if raw is not None and len(raw) >= 8:
-            self._fcs_diag_total += 1
-            if (zlib.crc32(raw[:-4]) & 0xFFFFFFFF) == int.from_bytes(raw[-4:], "little"):
-                self._fcs_diag_match += 1
-            if self._fcs_diag_total % 100 == 0:
-                ratio = self._fcs_diag_match / self._fcs_diag_total
-                logger.info(
-                    "[FCSDIAG-RATE] driver=%s frames=%d has_fcs=%d/%d (%.1f%%)",
-                    self.driver.__class__.__name__,
-                    self._fcs_diag_total, self._fcs_diag_match,
-                    self._fcs_diag_total, ratio * 100,
-                )
 
         # Diagnostic (WIFIT3_LOG=debug): trace every data/EAPOL frame's
         # direction. We see M1/M3 (from_ds, AP→client) but never M2/M4
