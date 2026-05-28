@@ -161,10 +161,9 @@ class WMIProtocol:
         cls._gate_diag(payload, "pass")
         rssi_snr = payload[8]
         rssi = cls.NOISE_FLOOR_DBM + rssi_snr if rssi_snr > 0 else cls.NOISE_FLOOR_DBM
-        # FCS check above validates the trailing CRC; drop it now before the
-        # parser hands frames to length-sensitive consumers (WEP ARP detect,
-        # ChopChop ICV, Fragmentation seed — see chips/rtw88_base/rx_common.py
-        # for the matching strip on the rtw88 family).
+        # FCS check above validates the trailing CRC; drop the 4 FCS bytes
+        # now before the parser hands frames to length-sensitive consumers
+        # (WEP ARP detect, ChopChop ICV, Fragmentation seed).
         return WlanFrameParser.parse_80211_frame(frame[:-4], rssi)
 
     @staticmethod
