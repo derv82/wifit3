@@ -38,6 +38,11 @@ class CampaignState:
     p1_index: int = 0
     first_half: Optional[str] = None
     p2_index: int = 0
+    # The middle-3 of the pin whose first-half success transitioned us into
+    # second_half — it's already been tested (the SECOND_HALF_WRONG that
+    # exposed the first half) so the second-half sweep skips it instead of
+    # wasting the slot re-testing a known-wrong candidate.
+    skip_middle: Optional[str] = None
     attempts: int = 0           # sessions started (incl. rate-limited no-ops)
     tested: int = 0             # attempts that actually reached the M4 oracle
     found_pin: Optional[str] = None
@@ -200,8 +205,14 @@ class WpsCampaign:
             st.phase = "failed"
             return None
         if st.phase == "second_half" and st.first_half is not None:
-            if st.p2_index < 1000:
-                return pinmod.full_pin(st.first_half, f"{st.p2_index:03d}")
+            # Skip the middle-3 already tested in the first-half-confirming attempt
+            # (SECOND_HALF_WRONG ⇒ that middle is provably wrong).
+            while st.p2_index < 1000:
+                middle = f"{st.p2_index:03d}"
+                if middle == st.skip_middle:
+                    st.p2_index += 1
+                    continue
+                return pinmod.full_pin(st.first_half, middle)
             st.phase = "failed"
             return None
         return None
@@ -236,6 +247,11 @@ class WpsCampaign:
             if st.phase != "second_half":
                 st.first_half = pinmod.split_pin(pin)[0]
                 st.phase, st.p2_index = "second_half", 0
+                # The middle-3 of the just-tested pin is provably wrong (we got
+                # SECOND_HALF_WRONG / first_half_ok), so skip it in the sweep.
+                # Avoids the "trying X → ... [M5]" → "trying X → AP refused"
+                # duplicate right after the phase transition.
+                st.skip_middle = pin[4:7]
             else:
                 st.p2_index += 1
         elif out.result is PinResult.FIRST_HALF_WRONG:

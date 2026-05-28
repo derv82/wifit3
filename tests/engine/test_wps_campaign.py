@@ -66,6 +66,19 @@ async def test_campaign_finds_common_pin_fast(tmp_path):
     assert len(c.tried) == 1                 # found on the first common attempt
 
 
+async def test_second_half_sweep_skips_already_tested_dummy(tmp_path):
+    # When first_half is confirmed via the first-half phase's dummy pin
+    # (full_pin(p1, "000")), the second-half sweep must NOT re-emit that exact
+    # pin — its middle ("000") is provably wrong (SECOND_HALF_WRONG) and just
+    # wastes an attempt right after the phase transition.
+    known = pins.full_pin("1357", "246")
+    c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
+                         log=lambda m: None, known_pin=known, psk="pw")
+    await c._run()
+    dummy = pins.full_pin("1357", "000")
+    assert c.tried.count(dummy) == 1   # tried once (the discovery), never again
+
+
 async def test_first_half_confirmed_switches_phase(tmp_path):
     known = pins.full_pin("2468", "135")
     c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),

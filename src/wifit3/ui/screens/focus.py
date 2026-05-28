@@ -1045,7 +1045,10 @@ class FocusView(Screen):
             return f"WPS PIN: [red]{camp.status}[/red] [dim]({tested}/11k)[/dim]"
         eta = self._fmt_eta(camp.eta_seconds)
         if st.phase == "second_half" and st.first_half:
-            return (f"WPS PIN: [cyan]{tested}[/cyan]/11k · "
+            # First half is locked in — the meaningful keyspace is the second
+            # half (1k candidates), so the denominator narrows from 11k to 1k.
+            # p2_index = "how many second-half candidates we've burned through."
+            return (f"WPS PIN: [cyan]{st.p2_index}[/cyan]/1k · "
                     f"[green]p1={escape(st.first_half)}[/green] [dim]{eta}[/dim]")
         return f"WPS PIN: [cyan]{tested}[/cyan]/11k · [dim]ETA {eta}[/dim]"
 
