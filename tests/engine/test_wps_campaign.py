@@ -8,7 +8,7 @@ switch, success/PSK capture, and .run resume — without a radio or fake enrolle
 from types import SimpleNamespace
 
 from wifit3.engine.attacks.wps import pins
-from wifit3.engine.attacks.wps.campaign import CampaignState, WpsCampaign, _state_path
+from wifit3.engine.attacks.wps.campaign import WpsCampaign, _state_path
 from wifit3.engine.attacks.wps.registrar import AttemptOutcome, PinResult
 from wifit3.engine.attacks.wps.wsc_crypto import pin_is_valid
 
@@ -64,6 +64,72 @@ async def test_campaign_finds_common_pin_fast(tmp_path):
     await c._run()
     assert c.state.found_pin == known
     assert len(c.tried) == 1                 # found on the first common attempt
+
+
+def _write_done_state(tmp_path, found_pin, found_psk, bssid="aa:bb:cc:dd:ee:ff"):
+    """Write a .run state file mimicking a previously-successful campaign."""
+    import json
+    p = tmp_path / f"wps_{bssid.replace(':', '-')}.run"
+    p.write_text(json.dumps({
+        "bssid": bssid, "phase": "done",
+        "found_pin": found_pin, "found_psk": found_psk,
+    }))
+
+
+async def test_resume_verifies_pin_psk_unchanged(tmp_path):
+    # Re-running on an AP whose PIN + PSK are unchanged: verify confirms it,
+    # nothing is reset, found_psk stays put.
+    known = pins.full_pin("1357", "246")
+    _write_done_state(tmp_path, known, "originalpsk")
+    c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
+                         log=lambda m: None, known_pin=known, psk="originalpsk")
+    await c._run()
+    assert c.state.phase == "done"
+    assert c.state.found_pin == known
+    assert c.state.found_psk == "originalpsk"
+    assert c.tried == [known]                  # exactly one verify attempt
+
+
+async def test_resume_catches_psk_rotation(tmp_path):
+    # PIN unchanged but the AP's password was rotated — verify picks up the
+    # NEW PSK from the recovered exchange. The high-value scenario.
+    known = pins.full_pin("1357", "246")
+    _write_done_state(tmp_path, known, "oldpassword")
+    c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
+                         log=lambda m: None, known_pin=known, psk="rotatedpassword")
+    await c._run()
+    assert c.state.phase == "done"
+    assert c.state.found_pin == known
+    assert c.state.found_psk == "rotatedpassword"
+
+
+async def test_resume_pin_changed_resets_sweep(tmp_path):
+    # AP admin changed the PIN to one with a different first half — verify
+    # invalidates, full sweep restarts from "common".
+    stored = pins.full_pin("1357", "246")
+    new = pins.full_pin("9876", "543")          # different first half
+    _write_done_state(tmp_path, stored, "oldpassword")
+    c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
+                         log=lambda m: None, known_pin=new, psk="newpassword")
+    # We don't run a full sweep here (it'd take 1k+ attempts); just trip the
+    # first verify attempt by limiting the harness.
+    orig_try = c._try
+    attempts = []
+
+    async def one_then_stop(pin):
+        attempts.append(pin)
+        out = await orig_try(pin)
+        c._stop = True                          # bail before resweeping
+        return out
+    c._try = one_then_stop
+    await c._run()
+    assert attempts == [stored]                 # the verify pin
+    # Verify saw FIRST_HALF_WRONG → full reset.
+    assert c.state.found_pin is None
+    assert c.state.found_psk is None
+    assert c.state.first_half is None
+    assert c.state.phase == "common"
+    assert c.state.common_index == 0
 
 
 async def test_second_half_sweep_skips_already_tested_dummy(tmp_path):
