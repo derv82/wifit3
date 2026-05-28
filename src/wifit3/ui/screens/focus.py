@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 import time
@@ -23,6 +24,8 @@ from wifit3.engine.attacks.sae_probe import SAEGroupProbeAttack
 from wifit3.engine.attacks.wpa3_downgrade import WPA3DowngradeAttack
 from wifit3.engine.attacks.wep.campaign import WepCampaign
 from wifit3.engine.attacks.wep.crack import CRACK_READY_THRESHOLD
+from wifit3.engine.attacks.wps.pbc import WpsPbcCapture, save_pbc_credential
+from wifit3.engine.attacks.wps.registrar import PinResult
 
 from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector
 from ..encryption_format import (
@@ -102,6 +105,11 @@ class FocusView(Screen):
         # WEP "Generate IVs" campaign (M3): fake-auth + ARP replay. Held so the
         # button toggles Start/Stop and transitions tear it down deterministically.
         self._wep_campaign: Optional[WepCampaign] = None
+        # WPS PBC auto-capture: while focused on a target, a detected push-button
+        # window is grabbed automatically (we're already on-channel and this is
+        # clearly a target of interest). One task at a time; once-per-BSSID.
+        self._pbc_task: Optional[asyncio.Task] = None
+        self._pbc_done: Set[str] = set()
 
     # ----- Compose / mount ---------------------------------------------------
 
@@ -214,6 +222,7 @@ class FocusView(Screen):
         # bound to the previous BSSID; leaving it running would inject to the
         # wrong AP.
         self._stop_generate_ivs()
+        self._stop_pbc_capture()
 
         self.target_ap = getattr(self.app, "target_ap", None)
         if not self.target_ap:
@@ -281,6 +290,14 @@ class FocusView(Screen):
 
         ap = self.target_ap
         is_wep = (ap.encryption or "").upper() == "WEP"
+
+        # Opportunistic WPS PBC: if a push-button window opens on this target,
+        # auto-capture the PSK. We're already on-channel; gated to one attempt at
+        # a time, once per BSSID, and only when no other TX activity owns the radio.
+        if (ap.wps_pbc_active and not self._pbc_busy()
+                and ap.bssid not in self._pbc_done
+                and self._wep_campaign is None and self._wpa3_down_attack is None):
+            self._pbc_task = asyncio.create_task(self._auto_capture_pbc(ap))
 
         # TARGET INFO panel. SSID as a chip (no "ESSID:" prefix) so short names
         # like "NETGEAR" are still visible; truncated with … to fit the panel.
@@ -792,6 +809,42 @@ class FocusView(Screen):
             return
         log.write(Text.from_markup(f"[dim]{ts}[/dim]  {markup}", emoji=False))
 
+    # ----- WPS PBC auto-capture ----------------------------------------------
+
+    def _pbc_busy(self) -> bool:
+        return self._pbc_task is not None and not self._pbc_task.done()
+
+    async def _auto_capture_pbc(self, ap: AccessPoint) -> None:
+        iface = getattr(self.app, "active_interface", None)
+        if not iface:
+            return
+        self._log("[bold cyan]WPS PBC window open[/bold cyan] — auto-capturing PSK…")
+        try:
+            outcome = await WpsPbcCapture(iface, ap, log=self._log).capture()
+            if outcome.result is PinResult.SUCCESS:
+                self._pbc_done.add(ap.bssid)
+                ap.wps_pbc_psk = outcome.psk
+                saved = ""
+                try:
+                    path = save_pbc_credential(outcome.ssid or ap.ssid or "", ap.bssid, outcome.psk)
+                    saved = f" [dim](saved {escape(path.name)})[/dim]"
+                except Exception:
+                    pass
+                self._log(f"[black on green][ WPS PBC PSK ][/black on green] "
+                          f"[bold green]{escape(outcome.psk)}[/bold green]{saved}")
+            else:
+                self._log(f"[yellow]WPS PBC:[/yellow] {outcome.result.value} "
+                          f"[dim]({escape(outcome.detail)})[/dim] — will retry while the window's open")
+        except Exception as exc:
+            self._log(f"[red]WPS PBC capture error:[/red] {escape(str(exc))}")
+
+    def _stop_pbc_capture(self) -> None:
+        """Cancel any running PBC capture + reset per-target dedup."""
+        if self._pbc_task is not None:
+            self._pbc_task.cancel()
+            self._pbc_task = None
+        self._pbc_done.clear()
+
     # ----- Actions / handlers ------------------------------------------------
 
     def _cursor_mac(self) -> Optional[str]:
@@ -1167,6 +1220,7 @@ class FocusView(Screen):
         # Same for the Generate IVs campaign — stop injecting + drop the YOU
         # client on exit.
         self._stop_generate_ivs()
+        self._stop_pbc_capture()
         # Hopper restart happens in ScannerView.on_screen_resume — it owns
         # the channel filter; restarting here would silently widen it.
         self.app.pop_screen()

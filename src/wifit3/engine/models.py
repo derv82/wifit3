@@ -286,6 +286,10 @@ class AccessPoint(BaseModel):
     # the Generate-IVs campaign being torn down, and so Save can write it out.
     wep_key: Optional[bytes] = Field(default=None)
 
+    # Recovered WPS PSK from a successful Push-Button (PBC) capture. The payoff
+    # of the opportunistic PBC attack; persisted to captures/ on capture.
+    wps_pbc_psk: Optional[str] = Field(default=None)
+
     # Read-only capture history loaded from captures/ at scan start, matched to
     # this AP by BSSID. Drives the persisted Scanner badges + the Focus
     # "existing capture data" summary; never touches the live capture plumbing.

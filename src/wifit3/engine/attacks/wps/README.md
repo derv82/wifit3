@@ -387,3 +387,24 @@ P5  Focus integration — auto-capture on a focused AP's PBC window.
 P6  Ethics/safety pass — eligibility, loud logging, PRE-RELEASE note.
 ```
 P1–P3 are engine + offline-testable + one button-press. P4–P5 are UI/orchestration.
+
+### Status — 2026-05-27 (hardware-verified through P3)
+
+- **P1–P3 DONE + hardware-verified.** Full PBC capture works on the AirLink:
+  press-and-hold the WPS button → `pbc_probe.py` walks M1..M8 and recovers the
+  PSK. Confirmed both via `--now` (blind, after pressing) and via the detector
+  (press while it watches → "PBC window OPEN" → capture). Field note: this AP
+  only advertises DevPwId=PBC + SelectedRegistrar in beacons while the button is
+  **held long enough to open the window**; a short tap shows nothing (which is
+  why an early run read pbc_active=False — correct, not a bug). Some APs never
+  advertise it at all → use `--now`.
+- **P4 (Scanner) + P5 (Focus) DONE (offline-tested; live-TUI test pending).**
+  Scanner `w` cycles off→selected→global (session-only); a passive 1 Hz watcher
+  banners every opening window and, when armed+eligible, pauses hop → tunes →
+  `WpsPbcCapture` → resumes. Focus auto-captures a window on its target (already
+  on-channel; gated to one attempt, once per BSSID, and only when no other TX
+  activity owns the radio). Recovered PSK stored on the AP + saved to
+  `captures/<ssid>_<bssid>_<ts>.wps`. PbcWatcher/PbcArmMode/save unit-tested;
+  the Textual wiring needs a live run to confirm.
+- **P6 (ethics/eligibility pass) remains** — global auto-invade grabs bystanders'
+  PSKs; revisit before release (PRE-RELEASE).

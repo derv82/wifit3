@@ -1,3 +1,4 @@
+import asyncio
 import time
 from typing import Dict, List, Optional
 
@@ -11,6 +12,13 @@ from rich.markup import escape
 from rich.style import Style
 from rich.text import Span, Text
 
+from wifit3.engine.attacks.wps.pbc import (
+    PbcArmMode,
+    PbcWatcher,
+    WpsPbcCapture,
+    save_pbc_credential,
+)
+from wifit3.engine.attacks.wps.registrar import PinResult
 from wifit3.engine.capture_history import load_capture_index, summarize
 from wifit3.engine.models import AccessPoint, PersistedCapture
 
@@ -76,6 +84,7 @@ class ScannerView(Screen):
         Binding("D", "decloak_test", "Decloak Test", show=True),
         Binding("f", "toggle_fade", "Toggle Fade", show=True),
         Binding("l", "toggle_log", "Toggle Log", show=True),
+        Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
         Binding("home", "scroll_home", "Top", show=False, priority=True),
         Binding("end", "scroll_end", "Bottom", show=False, priority=True),
     ]
@@ -129,6 +138,12 @@ class ScannerView(Screen):
         # captures/ history, loaded once at mount and hydrated onto APs by
         # BSSID so previously-saved handshakes/PMKIDs/WEP keys re-badge.
         self._capture_index: Dict[str, List[PersistedCapture]] = {}
+        # WPS PBC opportunistic capture (press 'w' to cycle off/selected/global).
+        # Detection is always-on + passive; only an armed mode ever transmits.
+        self._pbc_mode: PbcArmMode = PbcArmMode.OFF
+        self._pbc_watcher = PbcWatcher()
+        self._pbc_capturing = False          # serialize: one invade at a time
+        self._pbc_captured: set = set()      # BSSIDs we've already grabbed the PSK from
 
     # ----- Compose / mount ---------------------------------------------------
 
@@ -168,6 +183,8 @@ class ScannerView(Screen):
             self._sort_timer = self.set_interval(
                 SORT_INTERVAL_S, self._apply_sort_and_evict
             )
+            # Passive PBC-window watch (1 Hz is plenty for a ~120s walk window).
+            self._pbc_timer = self.set_interval(1.0, self._poll_pbc)
 
     def _load_capture_history(self) -> None:
         """Load captures/ once and log a one-line headline. Silent if empty."""
@@ -575,6 +592,86 @@ class ScannerView(Screen):
     def action_toggle_log(self) -> None:
         log_widget = self.query_one("#system-log")
         log_widget.display = not log_widget.display
+
+    # ----- WPS PBC opportunistic capture -------------------------------------
+
+    def action_wps_pbc_mode(self) -> None:
+        """Cycle the PBC auto-invade arming: off → selected → global."""
+        self._pbc_mode = self._pbc_mode.cycled()
+        if self._pbc_mode is PbcArmMode.OFF:
+            self._write_log("[bold][WPS PBC][/bold] auto-invade [yellow]OFF[/yellow] "
+                            "[dim]— detect + alert only, never transmits[/dim]")
+        elif self._pbc_mode is PbcArmMode.SELECTED:
+            self._write_log("[bold][WPS PBC][/bold] auto-invade [cyan]SELECTED[/cyan] "
+                            "[dim]— only the highlighted AP[/dim]")
+        else:
+            self._write_log("[bold][WPS PBC][/bold] auto-invade [red]GLOBAL[/red] "
+                            "[dim]— any AP that opens a push-button window[/dim]")
+
+    def _selected_bssid(self) -> Optional[str]:
+        try:
+            table = self.query_one("#ap-table", DataTable)
+            return table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+        except Exception:
+            return None
+
+    def _poll_pbc(self) -> None:
+        iface = self.app.active_interface
+        if not iface:
+            return
+        for ap in self._pbc_watcher.new_windows(iface.get_access_points()):
+            self._on_pbc_window(ap)
+
+    def _on_pbc_window(self, ap: AccessPoint) -> None:
+        label = escape(ap.ssid or ap.bssid)
+        self._write_log(f"[black on yellow][ WPS PBC WINDOW OPEN ][/black on yellow] "
+                        f"[bold]{label}[/bold] [dim](CH {ap.channel})[/dim]")
+        if self._pbc_mode is PbcArmMode.OFF:
+            self._write_log("[dim]      press [bold]w[/bold] to arm auto-capture[/dim]")
+            return
+        if self._pbc_mode is PbcArmMode.SELECTED and ap.bssid != self._selected_bssid():
+            return
+        if self._pbc_capturing or ap.bssid in self._pbc_captured:
+            return
+        asyncio.create_task(self._invade_pbc(ap))
+
+    async def _invade_pbc(self, ap: AccessPoint) -> None:
+        """Pause hop → tune to the target → run the PBC enrollment → resume."""
+        iface = self.app.active_interface
+        if not iface:
+            return
+        self._pbc_capturing = True
+        label = escape(ap.ssid or ap.bssid)
+        self._write_log(f"[bold cyan][WPS PBC][/bold cyan] invading [bold]{label}[/bold] — "
+                        f"pausing hop, tuning CH {ap.channel}…")
+        try:
+            await iface.stop_hopping()
+            await iface.set_channel(ap.channel)
+            outcome = await WpsPbcCapture(iface, ap, log=self._write_log).capture()
+            if outcome.result is PinResult.SUCCESS:
+                self._pbc_captured.add(ap.bssid)
+                ap.wps_pbc_psk = outcome.psk
+                saved = ""
+                try:
+                    path = save_pbc_credential(outcome.ssid or ap.ssid or "", ap.bssid, outcome.psk)
+                    saved = f" [dim](saved {escape(path.name)})[/dim]"
+                except Exception:
+                    pass
+                self._write_log(
+                    f"[black on green][ WPS PBC PSK ][/black on green] "
+                    f"[bold]{escape(outcome.ssid or ap.ssid or ap.bssid)}[/bold]: "
+                    f"[bold green]{escape(outcome.psk)}[/bold green]{saved}")
+            else:
+                self._write_log(f"[yellow][WPS PBC][/yellow] {label}: "
+                                f"{outcome.result.value} [dim]({escape(outcome.detail)})[/dim]")
+        except Exception as exc:                       # never let an invade kill the scanner
+            self._write_log(f"[red][WPS PBC] capture error:[/red] {escape(str(exc))}")
+        finally:
+            self._pbc_capturing = False
+            # Only resume hopping if we're still the live screen — returning from
+            # Focus restarts the hopper via on_screen_resume otherwise.
+            if self.is_current:
+                await iface.start_hopping(channels=self._channel_filter, interval=0.25)
 
     def action_toggle_fade(self) -> None:
         self._fade_enabled = not self._fade_enabled
