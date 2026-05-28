@@ -34,11 +34,14 @@ _NAME_RE = re.compile(
     r"(?P<bssid>[0-9a-fA-F]{2}(?:-[0-9a-fA-F]{2}){5})_"
     r"(?P<epoch>\d+)"
     r"(?P<wep>_wepkey)?"
-    r"\.(?P<ext>pcap|hc22000|txt)$"
+    r"\.(?P<ext>pcap|hc22000|txt|wps)$"
 )
 
 # "WEP key (hex):   <hex>" line written by FocusView._save_wep_key.
 _WEPKEY_RE = re.compile(r"WEP key \(hex\):\s*([0-9a-fA-F]+)")
+
+# "PSK: <psk>" line written by wps.pbc.save_pbc_credential.
+_WPSPSK_RE = re.compile(r"^PSK:\s*(.+)$", re.MULTILINE)
 
 
 def _bssid_to_colon(dashed: str) -> str:
@@ -82,6 +85,17 @@ def _read_wep_key(path: Path) -> str | None:
     return m.group(1).lower() if m else None
 
 
+def _read_wps_psk(path: Path) -> str | None:
+    """Extract the PSK from a ``.wps`` file (WPS-PBC capture), or None."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        logger.debug("capture_history: unreadable %s: %s", path.name, e)
+        return None
+    m = _WPSPSK_RE.search(text)
+    return m.group(1).strip() if m else None
+
+
 def _parse_file(path: Path) -> List[PersistedCapture]:
     """Parse one captures/ file into zero or more PersistedCapture entries."""
     m = _NAME_RE.match(path.name)
@@ -97,6 +111,9 @@ def _parse_file(path: Path) -> List[PersistedCapture]:
             return []
         return [PersistedCapture(kind="WEP", timestamp=epoch,
                                  value=key, path=str(path))]
+    if ext == "wps":
+        return [PersistedCapture(kind="WPS", timestamp=epoch,
+                                 value=_read_wps_psk(path), path=str(path))]
     if ext == "hc22000":
         return [PersistedCapture(kind=kind, timestamp=epoch, path=str(path))
                 for kind in _classify_hc22000(path)]
@@ -129,17 +146,19 @@ def load_capture_index(captures_dir: Path | str = "captures") -> Dict[str, List[
     return {b: c for b, c in index.items() if c}
 
 
-def summarize(index: Dict[str, List[PersistedCapture]]) -> tuple[int, int, int]:
-    """(handshakes, pmkids, wep_keys) as a count of *APs* that have each kind.
+def summarize(index: Dict[str, List[PersistedCapture]]) -> tuple[int, int, int, int]:
+    """(handshakes, pmkids, wep_keys, wps_psks) as a count of *APs* that have
+    each kind.
 
     De-duped per AP for the Scanner summary line: an AP with 11 saved
     handshakes counts as one handshake, not eleven. (The Focus view lists every
     individual artifact — this is only the headline tally.)
     """
-    hs = pmkid = wep = 0
+    hs = pmkid = wep = wps = 0
     for caps in index.values():
         kinds = {c.kind for c in caps}
         hs += "HS" in kinds
         pmkid += "PMKID" in kinds
         wep += "WEP" in kinds
-    return hs, pmkid, wep
+        wps += "WPS" in kinds
+    return hs, pmkid, wep, wps

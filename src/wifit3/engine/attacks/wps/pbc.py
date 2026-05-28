@@ -21,7 +21,7 @@ from typing import Optional
 
 from .association import WPS_REQ_ENROLLEE, WlanTransport, WpsAssociation, random_client_mac, str_to_mac
 from .enrollee import WpsEnrollee
-from .registrar import AttemptOutcome, PinResult
+from .registrar import AttemptOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -86,17 +86,11 @@ class WpsPbcCapture:
                                   tx_observer=self.tx_observer)
         transport.start()
         try:
-            if await assoc.associate():
-                self.log(f"[WPS-PBC] associated as {self.our_mac.hex()}")
-            else:
-                self.log(f"[WPS-PBC] assoc failed ({assoc.fail_reason}); "
-                         "running EAPOL anyway in case the AP engages")
+            if not await assoc.associate():
+                self.log(f"assoc failed ({assoc.fail_reason}); running EAPOL anyway")
             outcome = await WpsEnrollee(transport, str_to_mac(self.bssid),
                                         self.our_mac, log=self.log).run()
         finally:
             transport.stop()
             assoc.stop()
-
-        if outcome.result is PinResult.SUCCESS:
-            self.log(f"[WPS-PBC] captured PSK for {outcome.ssid!r}: {outcome.psk}")
         return outcome

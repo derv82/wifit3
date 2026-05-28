@@ -199,9 +199,9 @@ class PersistedCapture(BaseModel):
     Scanner badges and the Focus "existing capture data" summary — it never
     feeds the live CaptureEventDetector banners.
     """
-    kind: Literal["HS", "PMKID", "WEP"]
+    kind: Literal["HS", "PMKID", "WEP", "WPS"]
     timestamp: int                  # epoch seconds, parsed from the filename
-    value: Optional[str] = None     # WEP key (hex) for WEP; None for HS/PMKID
+    value: Optional[str] = None     # WEP key (hex) / WPS PSK; None for HS/PMKID
     path: str                       # source file under captures/
 
 

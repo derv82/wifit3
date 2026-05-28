@@ -12,6 +12,7 @@ from rich.markup import escape
 from rich.style import Style
 from rich.text import Span, Text
 
+from wifit3.engine.attacks import treelog
 from wifit3.engine.attacks.wps.pbc import (
     PbcArmMode,
     PbcWatcher,
@@ -194,9 +195,10 @@ class ScannerView(Screen):
             self._write_log(summary)
 
     @staticmethod
-    def _format_history_summary(hs: int, pmkid: int, wep: int) -> Optional[str]:
-        """`Found in captures/: N handshakes, N PMKIDs, N WEP keys` — counts are
-        per-AP (see summarize); zero categories omitted; None when nothing."""
+    def _format_history_summary(hs: int, pmkid: int, wep: int, wps: int) -> Optional[str]:
+        """`Found in captures/: N handshakes, N PMKIDs, N WEP keys, N WPS PSKs` —
+        counts are per-AP (see summarize); zero categories omitted; None when
+        nothing."""
         parts = []
         if hs:
             parts.append(f"[green bold]{hs} handshake{'s' * (hs != 1)}[/green bold]")
@@ -204,6 +206,8 @@ class ScannerView(Screen):
             parts.append(f"[green bold]{pmkid} PMKID{'s' * (pmkid != 1)}[/green bold]")
         if wep:
             parts.append(f"[green bold]{wep} WEP key{'s' * (wep != 1)}[/green bold]")
+        if wps:
+            parts.append(f"[green bold]{wps} WPS PSK{'s' * (wps != 1)}[/green bold]")
         if not parts:
             return None
         return "[bold]Found in[/] [cyan bold]captures/[/]: " + ", ".join(parts)
@@ -465,6 +469,7 @@ class ScannerView(Screen):
             hs.is_complete for hs in ap.handshakes.values())
         has_pmk = "PMKID" in kinds or any(hs.pmkid for hs in ap.handshakes.values())
         has_wep = "WEP" in kinds or ap.wep_key is not None
+        has_wps = "WPS" in kinds or ap.wps_pbc_psk is not None
         parts: List[str] = []
         if has_hs:
             parts.append("[green]✓HS[/green]")
@@ -472,6 +477,8 @@ class ScannerView(Screen):
             parts.append("[green]✓PMK[/green]")
         if has_wep:
             parts.append("[green]✓WEP[/green]")
+        if has_wps:
+            parts.append("[green]✓WPS[/green]")
         return " ".join(parts)
 
     # ----- Capture-event logging ---------------------------------------------
@@ -624,48 +631,55 @@ class ScannerView(Screen):
 
     def _on_pbc_window(self, ap: AccessPoint) -> None:
         label = escape(ap.ssid or ap.bssid)
-        self._write_log(f"[black on yellow][ WPS PBC WINDOW OPEN ][/black on yellow] "
-                        f"[bold]{label}[/bold] [dim](CH {ap.channel})[/dim]")
+        # Header (tree root) for this window.
+        self._write_log(f"[bold cyan]WPS PushButton:[/bold cyan] [bold green]Window Open[/bold green] "
+                        f"on [bold]{label}[/bold] [dim](CH {ap.channel})[/dim]")
         if self._pbc_mode is PbcArmMode.OFF:
-            self._write_log("[dim]      press [bold]w[/bold] to arm auto-capture[/dim]")
+            self._write_log(treelog.leaf("[dim]press [bold]w[/bold] to arm auto-capture[/dim]"))
             return
         if self._pbc_mode is PbcArmMode.SELECTED and ap.bssid != self._selected_bssid():
+            self._write_log(treelog.leaf("[dim](not the selected AP — skipping)[/dim]"))
             return
         if self._pbc_capturing or ap.bssid in self._pbc_captured:
             return
         asyncio.create_task(self._invade_pbc(ap))
 
     async def _invade_pbc(self, ap: AccessPoint) -> None:
-        """Pause hop → tune to the target → run the PBC enrollment → resume."""
+        """Pause hop → tune to the target → run the PBC enrollment → resume.
+
+        Engine sub-steps render as ├─► tree branches under the window header;
+        the recovered PSK / failure closes the group with a └─ leaf.
+        """
         iface = self.app.active_interface
         if not iface:
             return
         self._pbc_capturing = True
         label = escape(ap.ssid or ap.bssid)
-        self._write_log(f"[bold cyan][WPS PBC][/bold cyan] invading [bold]{label}[/bold] — "
-                        f"pausing hop, tuning CH {ap.channel}…")
+        self._write_log(treelog.branch(
+            f"[cyan]invading[/cyan] [bold]{label}[/bold] — pausing hop, "
+            f"tuning [cyan]CH {ap.channel}[/cyan]…"))
         try:
             await iface.stop_hopping()
             await iface.set_channel(ap.channel)
-            outcome = await WpsPbcCapture(iface, ap, log=self._write_log).capture()
+            outcome = await WpsPbcCapture(
+                iface, ap, log=lambda m: self._write_log(treelog.branch(m))
+            ).capture()
             if outcome.result is PinResult.SUCCESS:
                 self._pbc_captured.add(ap.bssid)
                 ap.wps_pbc_psk = outcome.psk
-                saved = ""
+                name = escape(outcome.ssid or ap.ssid or ap.bssid)
+                self._write_log(treelog.branch_ok(
+                    f"[black bold on cyan] PSK for {name}: \"{escape(outcome.psk)}\" [/black bold on cyan]"))
                 try:
                     path = save_pbc_credential(outcome.ssid or ap.ssid or "", ap.bssid, outcome.psk)
-                    saved = f" [dim](saved {escape(path.name)})[/dim]"
+                    self._write_log(treelog.leaf(f"[cyan]saved[/cyan] [dim]to {escape(path.name)}[/dim]"))
                 except Exception:
-                    pass
-                self._write_log(
-                    f"[black on green][ WPS PBC PSK ][/black on green] "
-                    f"[bold]{escape(outcome.ssid or ap.ssid or ap.bssid)}[/bold]: "
-                    f"[bold green]{escape(outcome.psk)}[/bold green]{saved}")
+                    self._write_log(treelog.leaf("[dim](PSK not saved to disk)[/dim]"))
             else:
-                self._write_log(f"[yellow][WPS PBC][/yellow] {label}: "
-                                f"{outcome.result.value} [dim]({escape(outcome.detail)})[/dim]")
+                self._write_log(treelog.leaf_fail(
+                    f"{outcome.result.value} [dim]({escape(outcome.detail)})[/dim]"))
         except Exception as exc:                       # never let an invade kill the scanner
-            self._write_log(f"[red][WPS PBC] capture error:[/red] {escape(str(exc))}")
+            self._write_log(treelog.leaf_fail(f"capture error: {escape(str(exc))}"))
         finally:
             self._pbc_capturing = False
             # Only resume hopping if we're still the live screen — returning from

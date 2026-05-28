@@ -47,6 +47,13 @@ class TestLoadCaptureIndex:
         assert len(caps) == 1
         assert caps[0].kind == "WEP" and caps[0].value == "6162636465"
 
+    def test_wps_psk_file(self, tmp_path):
+        _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000006.wps",
+               "SSID: TestNet\nBSSID: aa:bb:cc:dd:ee:ff\nPSK: yxws3tik\nmethod: WPS-PBC\n")
+        caps = load_capture_index(tmp_path)[_BSSID_COLON]
+        assert len(caps) == 1
+        assert caps[0].kind == "WPS" and caps[0].value == "yxws3tik"
+
     def test_pcap_alone_is_ignored(self, tmp_path):
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000004.pcap", "binary-ish")
         assert load_capture_index(tmp_path) == {}
@@ -74,11 +81,12 @@ class TestSummarize:
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000000.hc22000",
                _HS_LINE + _PMKID_LINE)
         _write(tmp_path, f"Other_11-22-33-44-55-66_1700000001_wepkey.txt", _WEPKEY_TXT)
-        hs, pmkid, wep = summarize(load_capture_index(tmp_path))
-        assert (hs, pmkid, wep) == (1, 1, 1)
+        _write(tmp_path, f"Pbc_22-33-44-55-66-77_1700000002.wps", "PSK: hunter2\n")
+        hs, pmkid, wep, wps = summarize(load_capture_index(tmp_path))
+        assert (hs, pmkid, wep, wps) == (1, 1, 1, 1)
 
     def test_deduped_per_ap(self, tmp_path):
         # Two handshakes for ONE ap -> counts as one handshake, not two.
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000000.hc22000", _HS_LINE)
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700009999.hc22000", _HS_LINE)
-        assert summarize(load_capture_index(tmp_path)) == (1, 0, 0)
+        assert summarize(load_capture_index(tmp_path)) == (1, 0, 0, 0)

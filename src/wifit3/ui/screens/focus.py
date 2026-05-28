@@ -275,6 +275,9 @@ class FocusView(Screen):
             if cap.kind == "WEP":
                 self._log(line(f"[bold cyan]{'WEP Key:':<9}[/bold cyan] "
                                f"{_wep_key_chip(cap.value)}"))
+            elif cap.kind == "WPS":
+                self._log(line(f"[bold cyan]{'WPS PSK:':<9}[/bold cyan] "
+                               f"[black bold on cyan] {escape(cap.value or '?')} [/black bold on cyan]"))
             else:
                 label = "Handshake" if cap.kind == "HS" else "PMKID"
                 dt = datetime.fromtimestamp(cap.timestamp)
@@ -818,25 +821,29 @@ class FocusView(Screen):
         iface = getattr(self.app, "active_interface", None)
         if not iface:
             return
-        self._log("[bold cyan]WPS PBC window open[/bold cyan] — auto-capturing PSK…")
+        self._log("[bold cyan]WPS PushButton:[/bold cyan] [bold green]Window Open[/bold green] "
+                  "— auto-capturing PSK")
         try:
-            outcome = await WpsPbcCapture(iface, ap, log=self._log).capture()
+            outcome = await WpsPbcCapture(
+                iface, ap, log=lambda m: self._log(treelog.branch(m))
+            ).capture()
             if outcome.result is PinResult.SUCCESS:
                 self._pbc_done.add(ap.bssid)
                 ap.wps_pbc_psk = outcome.psk
-                saved = ""
+                name = escape(outcome.ssid or ap.ssid or ap.bssid)
+                self._log(treelog.branch_ok(
+                    f"[black bold on cyan] PSK for {name}: \"{escape(outcome.psk)}\" [/black bold on cyan]"))
                 try:
                     path = save_pbc_credential(outcome.ssid or ap.ssid or "", ap.bssid, outcome.psk)
-                    saved = f" [dim](saved {escape(path.name)})[/dim]"
+                    self._log(treelog.leaf(f"[cyan]saved[/cyan] [dim]to {escape(path.name)}[/dim]"))
                 except Exception:
-                    pass
-                self._log(f"[black on green][ WPS PBC PSK ][/black on green] "
-                          f"[bold green]{escape(outcome.psk)}[/bold green]{saved}")
+                    self._log(treelog.leaf("[dim](PSK not saved to disk)[/dim]"))
             else:
-                self._log(f"[yellow]WPS PBC:[/yellow] {outcome.result.value} "
-                          f"[dim]({escape(outcome.detail)})[/dim] — will retry while the window's open")
+                self._log(treelog.leaf_warn(
+                    f"{outcome.result.value} [dim]({escape(outcome.detail)})[/dim] — "
+                    "retrying while the window's open"))
         except Exception as exc:
-            self._log(f"[red]WPS PBC capture error:[/red] {escape(str(exc))}")
+            self._log(treelog.leaf_fail(f"capture error: {escape(str(exc))}"))
 
     def _stop_pbc_capture(self) -> None:
         """Cancel any running PBC capture + reset per-target dedup."""

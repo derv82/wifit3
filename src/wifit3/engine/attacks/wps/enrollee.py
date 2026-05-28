@@ -63,8 +63,16 @@ class WpsEnrollee:
         highest_mt = 0          # stale-retransmit guard (WSC never runs backward)
         sent_m1 = False
 
+        # Log each protocol stage once — the AP retransmits each message, so
+        # without this the event log floods with duplicate M2/M4/M6 lines.
+        logged: set = set()
+
+        def once(stage: str, msg: str) -> None:
+            if stage not in logged:
+                logged.add(stage)
+                self.log(msg)
+
         await self._send_1x(M.eapol_start())
-        self.log("[WPS-PBC] -> EAPOL-Start (enrollee)")
 
         deadline = time.monotonic() + self.overall_timeout
         timeout = self.eapol_start_timeout
@@ -80,7 +88,6 @@ class WpsEnrollee:
 
             if p.is_identity_request:
                 if not sent_m1:
-                    self.log("[WPS-PBC] <- Identity req; -> Enrollee identity")
                     await self._send_1x(M.eap_identity_response(p.eap_id, M.ENROLLEE_IDENTITY))
                 continue
 
@@ -94,7 +101,7 @@ class WpsEnrollee:
                     m1 = M.build_m1(uuid_e, mac_e, nonce_e, pke)
                     await self._send_1x(M.eap_wsc_response(p.eap_id, M.WSC_MSG, m1))
                     sent_m1 = True
-                    self.log("[WPS-PBC] <- WSC_Start; -> M1")
+                    once("m1", "M1: sending enrollee identity + public key")
                 continue
 
             mt = p.wsc_msg_type
@@ -114,19 +121,19 @@ class WpsEnrollee:
                 m3 = M.build_m3_enrollee(nonce_r, e_s1, e_s2, psk1, psk2, pke, pkr,
                                          authkey, p.raw_wsc_attrs)
                 await self._send_1x(M.eap_wsc_response(p.eap_id, M.WSC_MSG, m3))
-                self.log("[WPS-PBC] <- M2; -> M3 (E-Hash committed)")
+                once("m3", "M2 → M3: E-hash committed")
 
             elif mt == M.WPS_M4:
                 if authkey is None:
                     return AttemptOutcome(PinResult.PROTO_ERROR, "<PBC>", detail="M4 before keys")
                 m5 = M.build_m5_enrollee(nonce_r, e_s1, authkey, keywrapkey, p.raw_wsc_attrs)
                 await self._send_1x(M.eap_wsc_response(p.eap_id, M.WSC_MSG, m5))
-                self.log("[WPS-PBC] <- M4; -> M5 (revealing E-S1)")
+                once("m5", "M4 → M5: revealing E-S1")
 
             elif mt == M.WPS_M6:
                 m7 = M.build_m7_enrollee(nonce_r, e_s2, authkey, keywrapkey, p.raw_wsc_attrs)
                 await self._send_1x(M.eap_wsc_response(p.eap_id, M.WSC_MSG, m7))
-                self.log("[WPS-PBC] <- M6; -> M7 (revealing E-S2)")
+                once("m7", "M6 → M7: revealing E-S2")
 
             elif mt == M.WPS_M8:
                 creds = M.extract_m8_credentials(p.attrs.get(M.ATTR_ENCR_SETTINGS, b""), keywrapkey)
@@ -136,7 +143,7 @@ class WpsEnrollee:
                     return AttemptOutcome(PinResult.PROTO_ERROR, "<PBC>", detail="M8 had no Network Key")
                 ssid = creds.get("ssid")
                 psk = creds["network_key"]
-                self.log(f"[WPS-PBC] <- M8 -> SUCCESS; PSK={psk!r}")
+                once("m8", "M8 → SUCCESS: credential decrypted")
                 return AttemptOutcome(
                     PinResult.SUCCESS, "<PBC>",
                     psk=psk.decode("utf-8", "replace"),
