@@ -394,9 +394,9 @@ class WpsCampaign:
         self.transport = None
         old = self.our_mac
         self.our_mac = random_client_mac()
+        # The "rotating MAC" log line is already emitted by _handle_lock; this
+        # rotation just executes it. Detail stays in debug for diagnostics.
         logger.debug("WPS rotated MAC %s -> %s", old.hex(), self.our_mac.hex())
-        self.log("[dim]rotated source MAC + re-associating to dodge "
-                 "per-MAC rate-limit[/dim]")
         # A fresh MAC means a different (pin, result) signature meaning is moot
         # — reset so the first attempt under the new MAC always logs.
         self._last_attempt_sig = None

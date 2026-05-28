@@ -912,19 +912,18 @@ class FocusView(Screen):
                 self._pbc_done.add(ap.bssid)
                 ap.wps_pbc_psk = outcome.psk
                 name = escape(outcome.ssid or ap.ssid or ap.bssid)
-                # Match the WPS-PIN success styling: green "Password for …" line.
-                # (No cyan "PIN for …" line above it because PBC genuinely doesn't
-                # disclose the router's PIN — its "device password" is a fixed
-                # public constant '00000000' that's not the AP's real PIN.)
-                saved = ""
+                # Match the WPS-PIN success: green "Password for …" branch +
+                # separate "(saved …)" leaf. (No cyan "PIN for …" line above —
+                # PBC genuinely doesn't disclose the router's PIN; its "device
+                # password" is the fixed public constant '00000000'.)
+                self._log(treelog.branch(
+                    f"[black bold on green] Password for {name}: "
+                    f"\"{escape(outcome.psk)}\" [/black bold on green]"))
                 try:
                     path = save_pbc_credential(outcome.ssid or ap.ssid or "", ap.bssid, outcome.psk)
-                    saved = f" [dim](saved {escape(path.name)})[/dim]"
+                    self._log(treelog.leaf(f"[dim](saved {escape(path.name)})[/dim]"))
                 except Exception:
-                    pass
-                self._log(treelog.leaf(
-                    f"[black bold on green] Password for {name}: "
-                    f"\"{escape(outcome.psk)}\" [/black bold on green]{saved}"))
+                    self._log(treelog.leaf("[dim](save failed)[/dim]"))
             else:
                 self._log(treelog.leaf_warn(
                     f"{outcome.result.value} [dim]({escape(outcome.detail)})[/dim] — "
@@ -978,24 +977,23 @@ class FocusView(Screen):
         self._wps_campaign = None
         ssid = escape(camp.target.ssid or camp.bssid)
         if camp.state.found_pin:
+            self._log(treelog.branch_ok(
+                f"[black bold on cyan]  WPS PIN for {ssid}: "
+                f"{escape(camp.state.found_pin)}  [/black bold on cyan]"))
+            self._log(treelog.branch(
+                f"[black bold on green] Password for {ssid}: "
+                f"\"{escape(camp.state.found_psk or '')}\" [/black bold on green]"))
             # Persist the recovered creds so they survive exit + light the
             # Scanner badge on next start (same .wps file as PBC, method tag
-            # discriminates).
-            saved = ""
+            # discriminates). The saved path is its own └─► leaf below the
+            # Password branch so the tree closes cleanly.
             try:
                 path = save_pbc_credential(
                     camp.target.ssid or "", camp.bssid, camp.state.found_psk or "",
                     method="WPS-PIN", pin=camp.state.found_pin)
-                saved = f" [dim](saved {escape(path.name)})[/dim]"
+                self._log(treelog.leaf(f"[dim](saved {escape(path.name)})[/dim]"))
             except Exception:
-                pass
-            self._log(treelog.branch_ok(
-                f"[black bold on cyan]  WPS PIN for {ssid}: "
-                f"{escape(camp.state.found_pin)}  [/black bold on cyan]"))
-            self._log(treelog.leaf(
-                f"[black bold on green] Password for {ssid}: "
-                f"\"{escape(camp.state.found_psk or '')}\" [/black bold on green]"
-                f"{saved}"))
+                self._log(treelog.leaf("[dim](save failed)[/dim]"))
         else:
             self._log(treelog.leaf(
                 f"[yellow]WPS PIN stopped[/yellow] "
