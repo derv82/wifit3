@@ -24,6 +24,7 @@ from wifit3.engine.attacks.sae_probe import SAEGroupProbeAttack
 from wifit3.engine.attacks.wpa3_downgrade import WPA3DowngradeAttack
 from wifit3.engine.attacks.wep.campaign import WepCampaign
 from wifit3.engine.attacks.wep.crack import CRACK_READY_THRESHOLD
+from wifit3.engine.attacks.wps.campaign import WpsCampaign
 from wifit3.engine.attacks.wps.pbc import WpsPbcCapture, save_pbc_credential
 from wifit3.engine.attacks.wps.registrar import PinResult
 
@@ -105,6 +106,10 @@ class FocusView(Screen):
         # WEP "Generate IVs" campaign (M3): fake-auth + ARP replay. Held so the
         # button toggles Start/Stop and transitions tear it down deterministically.
         self._wep_campaign: Optional[WepCampaign] = None
+        # WPS PIN brute-force campaign (Reaver/Bully-style two-halves sweep).
+        # Held so the button toggles Start/Stop and target/screen transitions
+        # tear it down deterministically.
+        self._wps_campaign: Optional[WpsCampaign] = None
         # WPS PBC auto-capture: while focused on a target, a detected push-button
         # window is grabbed automatically (we're already on-channel and this is
         # clearly a target of interest). One task at a time; once-per-BSSID.
@@ -146,7 +151,7 @@ class FocusView(Screen):
                             yield Button("Replay", variant="success", id="btn-gen-ivs")
                             yield Button("Chop", variant="primary", id="btn-chop")
                             yield Button("PMKID", variant="primary", id="btn-pmkid")
-                            yield Button("SAE", variant="primary", id="btn-sae-probe", disabled=True)
+                            yield Button("WPS PIN", variant="primary", id="btn-wps-pin", disabled=True)
                         with Horizontal(classes="button-row"):
                             yield Button("WPA ↓", variant="primary", id="btn-wpa3-down", disabled=True)
                             yield Button("Save", variant="success", id="btn-save", disabled=True)
@@ -223,6 +228,7 @@ class FocusView(Screen):
         # wrong AP.
         self._stop_generate_ivs()
         self._stop_pbc_capture()
+        self._stop_wps_pin()
 
         self.target_ap = getattr(self.app, "target_ap", None)
         if not self.target_ap:
@@ -299,7 +305,8 @@ class FocusView(Screen):
         # a time, once per BSSID, and only when no other TX activity owns the radio.
         if (ap.wps_pbc_active and not self._pbc_busy()
                 and ap.bssid not in self._pbc_done
-                and self._wep_campaign is None and self._wpa3_down_attack is None):
+                and self._wep_campaign is None and self._wpa3_down_attack is None
+                and self._wps_campaign is None):
             self._pbc_task = asyncio.create_task(self._auto_capture_pbc(ap))
 
         # TARGET INFO panel. SSID as a chip (no "ESSID:" prefix) so short names
@@ -348,20 +355,27 @@ class FocusView(Screen):
         # slot is folded in here.
         # Compact WPS: version + a lock glyph (green 🔓 unlocked = attackable,
         # red 🔒 locked = dead end). The verbose method list doesn't fit here.
-        if ap.wps:
-            lock = "[red]🔒[/red]" if ap.wps_locked else "[green]🔓[/green]"
-            ver = f"{ap.wps_version} " if ap.wps_version else ""
-            wps_part = f"WPS: {ver}{lock}"
-        else:
-            wps_part = None
-        pmf_part = f"PMF: {format_pmf_markup(ap)}" if (ap.akms or ap.wpa3) else None
-        parts = [p for p in (wps_part, pmf_part) if p]
+        # While the WPS PIN brute is running, the row reformats to its live status
+        # (full row — PMF temporarily yields the space). Reverts on Stop.
         wps_label = self.query_one("#lbl-wps", Label)
-        if parts:
+        if self._wps_campaign is not None:
             wps_label.display = True
-            wps_label.update(Text.from_markup("  ·  ".join(parts), emoji=False))
+            wps_label.update(Text.from_markup(self._wps_status_markup(self._wps_campaign),
+                                              emoji=False))
         else:
-            wps_label.display = False
+            if ap.wps:
+                lock = "[red]🔒[/red]" if ap.wps_locked else "[green]🔓[/green]"
+                ver = f"{ap.wps_version} " if ap.wps_version else ""
+                wps_part = f"WPS: {ver}{lock}"
+            else:
+                wps_part = None
+            pmf_part = f"PMF: {format_pmf_markup(ap)}" if (ap.akms or ap.wpa3) else None
+            parts = [p for p in (wps_part, pmf_part) if p]
+            if parts:
+                wps_label.display = True
+                wps_label.update(Text.from_markup("  ·  ".join(parts), emoji=False))
+            else:
+                wps_label.display = False
         self.query_one("#lbl-pmf", Label).display = False
 
         # WPA3-mode line dropped — redundant with the Encryption line, which
@@ -400,7 +414,7 @@ class FocusView(Screen):
         # Attack buttons. WEP and WPA targets get disjoint button sets — the
         # WPA buttons (PMKID/SAE/WPA3 Down) are meaningless for WEP, so hide
         # (not just disable) them and surface Fake Auth in their place.
-        btn_sae = self.query_one("#btn-sae-probe", Button)
+        btn_wps = self.query_one("#btn-wps-pin", Button)
         btn_down = self.query_one("#btn-wpa3-down", Button)
         btn_pmkid = self.query_one("#btn-pmkid", Button)
         btn_gen = self.query_one("#btn-gen-ivs", Button)
@@ -409,7 +423,10 @@ class FocusView(Screen):
 
         # (ATTACKS panel has no title now — the buttons + TARGET's Encryption
         # line convey the family.)
-        btn_sae.display = not is_wep
+        # WPS PIN is a WPA-only thing in practice (WEP+WPS exists but is a narrow
+        # historical slice with better dedicated attacks), so hide it on WEP and
+        # hide it on WPA targets that simply aren't WPS-capable.
+        btn_wps.display = not is_wep and bool(ap.wps)
         btn_down.display = not is_wep
         btn_pmkid.display = not is_wep
         # Replay vanishes once the key is cracked — Save takes its place, so it
@@ -450,7 +467,6 @@ class FocusView(Screen):
             self.query_one("#lbl-crack", Label).display = False
             self.query_one("#lbl-crack-info", Label).display = False
             if ap.wpa3:
-                btn_sae.disabled = False
                 # WPA3 Downgrade only works against transition-mode APs (pure
                 # WPA3 clients refuse a WPA2-only ad from a known-SAE network).
                 btn_down.disabled = not ap.transition_mode
@@ -458,11 +474,23 @@ class FocusView(Screen):
                 # portion). Pure SAE PMKID isn't crackable with current attacks.
                 btn_pmkid.disabled = not ap.transition_mode
             else:
-                btn_sae.disabled = True
                 btn_down.disabled = True
                 btn_pmkid.disabled = False
             # WPA Downgrade button label reflects daemon state.
             btn_down.label = "Stop ↓" if self._wpa3_down_attack else "WPA ↓"
+            # WPS PIN — Start/Stop toggle. Enabled iff the AP is WPS-capable +
+            # unlocked + no other TX activity owns the half-duplex radio.
+            if self._wps_campaign is not None:
+                btn_wps.label = "Stop PIN"
+                btn_wps.variant = "error"
+                btn_wps.disabled = False
+            else:
+                btn_wps.label = "WPS PIN"
+                btn_wps.variant = "primary"
+                other_tx = (self._wep_campaign is not None
+                            or self._wpa3_down_attack is not None
+                            or self._pbc_busy())
+                btn_wps.disabled = bool(ap.wps_locked or other_tx) if ap.wps else True
 
         # CAPTURE panel (dynamic). Beacon RATE is windowed over the last few
         # seconds, not averaged since first_seen — an average converges to a
@@ -852,6 +880,76 @@ class FocusView(Screen):
             self._pbc_task = None
         self._pbc_done.clear()
 
+    # ----- WPS PIN brute-force campaign --------------------------------------
+
+    def _toggle_wps_pin(self) -> None:
+        if self._wps_campaign is None:
+            self._start_wps_pin()
+        else:
+            self._stop_wps_pin()
+        self.update_ui()
+
+    def _start_wps_pin(self) -> None:
+        ap = self.target_ap
+        iface = getattr(self.app, "active_interface", None)
+        if not ap or not iface:
+            self._log("[red]✗ No target / interface — cannot start WPS PIN.[/red]")
+            return
+        try:
+            self._wps_campaign = WpsCampaign(iface, ap, log=self._log)
+            self._wps_campaign.start()
+            self._log(treelog.branch("[bold cyan]WPS PIN brute started[/bold cyan] — "
+                                     "common pins, then first/second-half sweep"))
+        except Exception as exc:
+            logger.exception("WPS PIN start failed")
+            self._log(f"[bold red]✗ WPS PIN failed to start:[/bold red] {escape(str(exc))}")
+            self._wps_campaign = None
+
+    def _stop_wps_pin(self) -> None:
+        if self._wps_campaign is None:
+            return
+        camp = self._wps_campaign
+        # stop() is async; fire-and-forget (the campaign tears down its own
+        # transport/association in _teardown so this is safe).
+        asyncio.create_task(camp.stop())
+        self._wps_campaign = None
+        msg = (f"[bold green]✓ WPS PIN: {camp.state.found_pin} → "
+               f"\"{escape(camp.state.found_psk or '')}\"[/bold green]"
+               if camp.state.found_pin
+               else f"[yellow]WPS PIN stopped[/yellow] "
+                    f"[dim]({camp.state.tested} tested, phase {camp.state.phase})[/dim]")
+        self._log(treelog.leaf(msg))
+
+    @staticmethod
+    def _fmt_eta(secs: Optional[float]) -> str:
+        if secs is None:
+            return "?"
+        if secs < 60:
+            return f"{int(secs)}s"
+        if secs < 3600:
+            return f"{int(secs / 60)}m"
+        return f"{secs / 3600:.1f}h"
+
+    def _wps_status_markup(self, camp: WpsCampaign) -> str:
+        """Single-row campaign status that lives in the WPS slot while running."""
+        st = camp.state
+        if st.found_pin:
+            return (f"WPS: [bold green]✓ PIN={escape(st.found_pin)} → "
+                    f"\"{escape(st.found_psk or '')}\"[/bold green]")
+        if camp.status == "locked":
+            return (f"WPS: [dim]{st.tested}/11k tested · "
+                    f"[/dim][yellow]locked, backing off[/yellow]")
+        if camp.status in ("failed", "error"):
+            return (f"WPS: [red]{camp.status}[/red] "
+                    f"[dim]({st.tested}/11k tested)[/dim]")
+        eta = self._fmt_eta(camp.eta_seconds)
+        if st.phase == "second_half" and st.first_half:
+            return (f"WPS: {st.tested}/11k · [green]p1={escape(st.first_half)} ✓[/green] · "
+                    f"{st.p2_index}/1k second-half · ETA ~{eta}")
+        if st.phase == "first_half":
+            return f"WPS: {st.tested}/11k · first-half {st.p1_index}/10k · ETA ~{eta}"
+        return f"WPS: {st.tested}/11k · common pins · ETA ~{eta}"
+
     # ----- Actions / handlers ------------------------------------------------
 
     def _cursor_mac(self) -> Optional[str]:
@@ -876,8 +974,8 @@ class FocusView(Screen):
             self.run_worker(self._run_deauth_selected(), exclusive=True)
         elif bid == "btn-pmkid":
             self.run_worker(self._run_pmkid_harvest(), exclusive=True)
-        elif bid == "btn-sae-probe":
-            self.run_worker(self._run_sae_probe(), exclusive=True)
+        elif bid == "btn-wps-pin":
+            self._toggle_wps_pin()
         elif bid == "btn-wpa3-down":
             self._toggle_wpa3_down()
         elif bid == "btn-gen-ivs":
@@ -1228,6 +1326,7 @@ class FocusView(Screen):
         # client on exit.
         self._stop_generate_ivs()
         self._stop_pbc_capture()
+        self._stop_wps_pin()
         # Hopper restart happens in ScannerView.on_screen_resume — it owns
         # the channel filter; restarting here would silently widen it.
         self.app.pop_screen()
