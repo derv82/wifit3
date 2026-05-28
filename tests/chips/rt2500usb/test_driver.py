@@ -165,15 +165,18 @@ def test_eeprom_bbp_overrides():
 # ----------------------------------------------------------------------
 def test_parse_rx_urb_beacon():
     frame = _synthetic_beacon()
-    size = len(frame)
-    word0 = (size << 16)                  # DATABYTE_COUNT, no error bits
+    fcs_pad = b"\x00\x00\x00\x00"         # hardware appends a 4-byte FCS;
+                                          # parser strips it before yielding.
+    on_air = frame + fcs_pad
+    size = len(on_air)                    # DATABYTE_COUNT is the on-air len
+    word0 = (size << 16)
     word1 = 0x50                          # RSSI raw 0x50 = 80
     rxd = struct.pack("<4I", word0, word1, 0, 0)
-    urb = frame + b"\x00" + rxd           # 1 alignment-pad byte before RXD
+    urb = on_air + b"\x00" + rxd          # 1 alignment-pad byte before RXD
 
     rx = parse_rx_urb(urb, rssi_offset=120)
     assert rx is not None
-    assert len(rx.mpdu) == size
+    assert rx.mpdu == frame               # FCS stripped, MPDU body intact
     assert rx.rssi_dbm == 80 - 120        # -40 dBm
     assert rx.has_fcs_error is False
     assert rx.ofdm is False

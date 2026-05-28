@@ -103,8 +103,13 @@ def parse_rx_urb(buf: bytes, *, rssi_offset: int = DEFAULT_RSSI_OFFSET) -> Optio
     rssi_raw = word1 & RXD_W1_RSSI
     signal = (word1 & RXD_W1_SIGNAL) >> 8
 
+    # rt2500usb hardware reports DATABYTE_COUNT inclusive of the on-air
+    # 4-byte 802.11 FCS — strip it so consumers see only the MPDU body.
+    # Confirmed via FCSDIAG CRC tally on hardware (100% has_fcs ratio); the
+    # has_fcs_error flag above is set separately by the chip and survives
+    # this strip.
     return RxFrame(
-        mpdu=bytes(buf[:size]),
+        mpdu=bytes(buf[:max(size - 4, 0)]),
         rssi_dbm=rssi_raw - rssi_offset,
         signal=signal,
         ofdm=bool(word0 & RXD_W0_OFDM),
