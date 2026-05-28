@@ -3,7 +3,6 @@ import logging
 import time
 from collections import Counter, deque
 from datetime import datetime
-from pathlib import Path
 from typing import Optional, Set
 
 from textual.app import ComposeResult
@@ -465,13 +464,14 @@ class FocusView(Screen):
             # after a successful crack. The key persists on ap.wep_key.
             camp = self._wep_campaign
             if camp is not None and camp.recovered_key is not None:
-                # Persist the key. Dedupe across the polling window: this branch
-                # may fire on several update_ui ticks before _stop_generate_ivs
-                # nulls the campaign — save_wep_key returns None on the second+
-                # pass and produces no extra log line.
-                saved = save_wep_key(ap, camp.recovered_key)
-                if saved is not None:
-                    self._log(f"[dim](saved {escape(saved.name)})[/dim]")
+                # Persist the key. The branch may fire on several update_ui
+                # ticks before _stop_generate_ivs nulls the campaign; save_wep_key
+                # reports was_new=False on the second+ pass and we surface the
+                # existing path either way so the user always sees where it is.
+                result = save_wep_key(ap, camp.recovered_key)
+                if result is not None:
+                    verb = "saved" if result.was_new else "already saved as"
+                    self._log(f"[dim]({verb} {escape(result.path.name)})[/dim]")
                 self._stop_generate_ivs()
                 camp = None
             # Replay is the campaign switch: green to start, red to STOP the
@@ -844,18 +844,20 @@ class FocusView(Screen):
                 f"({ev.pair_label}) [/black bold on green] for "
                 f"[bold]{essid}[/bold]"
             )
-            saved = save_handshake(ap, ev.client_mac)
-            if saved is not None:
-                self._log(f"[dim](saved {escape(saved.name)})[/dim]")
+            result = save_handshake(ap, ev.client_mac)
+            if result is not None:
+                verb = "saved" if result.was_new else "already saved as"
+                self._log(f"[dim]({verb} {escape(result.path.name)})[/dim]")
         elif ev.kind == "pmkid":
             # Significant event → same solid highlight as the handshake banner.
             self._log(
                 f"[black bold on green] ✓ PMKID captured [/black bold on green] "
                 f"from [bold]{client}[/bold]"
             )
-            saved = save_pmkid(ap, ev.client_mac)
-            if saved is not None:
-                self._log(f"[dim](saved {escape(saved.name)})[/dim]")
+            result = save_pmkid(ap, ev.client_mac)
+            if result is not None:
+                verb = "saved" if result.was_new else "already saved as"
+                self._log(f"[dim]({verb} {escape(result.path.name)})[/dim]")
         elif ev.kind == "decloak":
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
             self._log(
@@ -914,11 +916,12 @@ class FocusView(Screen):
                     f"[black bold on green] Password for {name}: "
                     f"\"{escape(outcome.psk)}\" [/black bold on green]"))
                 try:
-                    path = save_wps_pbc(ap, outcome.psk)
-                    if path is not None:
-                        self._log(treelog.leaf(f"[dim](saved {escape(path.name)})[/dim]"))
+                    result = save_wps_pbc(ap, outcome.psk)
+                    if result is None:
+                        self._log(treelog.leaf("[dim](save failed)[/dim]"))
                     else:
-                        self._log(treelog.leaf("[dim](already saved)[/dim]"))
+                        verb = "saved" if result.was_new else "already saved as"
+                        self._log(treelog.leaf(f"[dim]({verb} {escape(result.path.name)})[/dim]"))
                 except Exception:
                     self._log(treelog.leaf("[dim](save failed)[/dim]"))
             else:
@@ -984,12 +987,13 @@ class FocusView(Screen):
             # Scanner badge on next start. The saved path is its own └─► leaf
             # below the Password branch so the tree closes cleanly.
             try:
-                path = save_wps_pin(
+                result = save_wps_pin(
                     camp.target, camp.state.found_pin, camp.state.found_psk or "")
-                if path is not None:
-                    self._log(treelog.leaf(f"[dim](saved {escape(path.name)})[/dim]"))
+                if result is None:
+                    self._log(treelog.leaf("[dim](save failed)[/dim]"))
                 else:
-                    self._log(treelog.leaf("[dim](already saved)[/dim]"))
+                    verb = "saved" if result.was_new else "already saved as"
+                    self._log(treelog.leaf(f"[dim]({verb} {escape(result.path.name)})[/dim]"))
             except Exception:
                 self._log(treelog.leaf("[dim](save failed)[/dim]"))
         else:
@@ -1196,15 +1200,16 @@ class FocusView(Screen):
             ))
             # The harvest attack populates ap.handshakes[<our client>].pmkid;
             # save the artifact and close the tree with the resulting filename.
-            saved: Optional[Path] = None
+            result = None
             for client_mac, hs in ap.handshakes.items():
                 if hs.pmkid == pmkid:
-                    saved = save_pmkid(ap, client_mac)
+                    result = save_pmkid(ap, client_mac)
                     break
-            if saved is not None:
-                self._log(treelog.leaf(f"[dim](saved {escape(saved.name)})[/dim]"))
+            if result is None:
+                self._log(treelog.leaf("[dim](save failed)[/dim]"))
             else:
-                self._log(treelog.leaf("[dim](already saved)[/dim]"))
+                verb = "saved" if result.was_new else "already saved as"
+                self._log(treelog.leaf(f"[dim]({verb} {escape(result.path.name)})[/dim]"))
         else:
             self._log(treelog.branch_fail("[bold red]No PMKID harvested[/bold red] — possible reasons:"))
             self._log(treelog.branch("[dim]AP may not advertise a PMKID KDE[/dim]"))
