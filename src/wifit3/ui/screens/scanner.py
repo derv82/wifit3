@@ -653,6 +653,11 @@ class ScannerView(Screen):
         iface = self.app.active_interface
         if not iface:
             return
+        if self._decloak_in_progress:
+            self._write_log(treelog.leaf(
+                "[yellow](decloak in progress — skipping this PBC window; "
+                "press the AP's WPS button again after decloak finishes)[/yellow]"))
+            return
         self._pbc_capturing = True
         label = escape(ap.ssid or ap.bssid)
         self._write_log(treelog.branch(
@@ -729,6 +734,12 @@ class ScannerView(Screen):
         if self._decloak_in_progress:
             self._write_log(
                 "[yellow]Decloak already running. Wait for it to finish.[/yellow]"
+            )
+            return
+        if self._pbc_capturing:
+            self._write_log(
+                "[yellow]PBC capture in progress — Decloak will conflict on the "
+                "half-duplex radio. Try again when it finishes.[/yellow]"
             )
             return
         iface = self.app.active_interface
@@ -827,6 +838,12 @@ class ScannerView(Screen):
         if self._decloak_in_progress:
             self._write_log(
                 "[yellow]Decloak already running. Wait for it to finish.[/yellow]"
+            )
+            return
+        if self._pbc_capturing:
+            self._write_log(
+                "[yellow]PBC capture in progress — Decloak will conflict on the "
+                "half-duplex radio. Try again when it finishes.[/yellow]"
             )
             return
         iface = self.app.active_interface

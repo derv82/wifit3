@@ -466,20 +466,24 @@ class FocusView(Screen):
             self.query_one("#lbl-fakeauth", Label).display = False
             self.query_one("#lbl-crack", Label).display = False
             self.query_one("#lbl-crack-info", Label).display = False
-            if ap.wpa3:
-                # WPA3 Downgrade only works against transition-mode APs (pure
-                # WPA3 clients refuse a WPA2-only ad from a known-SAE network).
-                btn_down.disabled = not ap.transition_mode
-                # PMKID is only useful against WPA2 + WPA3-Transition (the WPA2
-                # portion). Pure SAE PMKID isn't crackable with current attacks.
-                btn_pmkid.disabled = not ap.transition_mode
+            # Per-attack eligibility, gated by the cross-attack TX mutex.
+            # WPA3 Down: only against transition-mode APs (pure WPA3 clients
+            # refuse a WPA2-only ad from a known-SAE network). When running,
+            # always enabled so Stop works.
+            wpa3down_eligible = bool(ap.wpa3 and ap.transition_mode)
+            if self._wpa3_down_attack is not None:
+                btn_down.disabled = False
             else:
-                btn_down.disabled = True
-                btn_pmkid.disabled = False
-            # WPA Downgrade button label reflects daemon state.
+                btn_down.disabled = (not wpa3down_eligible
+                                     or self._other_long_running_tx(exclude="wpa3down"))
             btn_down.label = "Stop ↓" if self._wpa3_down_attack else "WPA ↓"
-            # WPS PIN — Start/Stop toggle. Enabled iff the AP is WPS-capable +
-            # unlocked + no other TX activity owns the half-duplex radio.
+
+            # PMKID: pure SAE PMKID isn't crackable, so only WPA2 + WPA3-Transition.
+            # One-shot, so no self-exclusion — any other long-running TX blocks it.
+            pmkid_eligible = (not ap.wpa3) or ap.transition_mode
+            btn_pmkid.disabled = not pmkid_eligible or self._other_long_running_tx()
+
+            # WPS PIN: Start/Stop toggle, AP must be WPS-capable + unlocked.
             if self._wps_campaign is not None:
                 btn_wps.label = "Stop PIN"
                 btn_wps.variant = "error"
@@ -487,10 +491,9 @@ class FocusView(Screen):
             else:
                 btn_wps.label = "WPS PIN"
                 btn_wps.variant = "primary"
-                other_tx = (self._wep_campaign is not None
-                            or self._wpa3_down_attack is not None
-                            or self._pbc_busy())
-                btn_wps.disabled = bool(ap.wps_locked or other_tx) if ap.wps else True
+                wps_eligible = bool(ap.wps and not ap.wps_locked)
+                btn_wps.disabled = (not wps_eligible
+                                    or self._other_long_running_tx(exclude="wps"))
 
         # CAPTURE panel (dynamic). Beacon RATE is windowed over the last few
         # seconds, not averaged since first_seen — an average converges to a
@@ -607,7 +610,11 @@ class FocusView(Screen):
         # CLIENTS (N) title + DEAUTH 'Selected' enabled only with a highlighted row.
         n_clients = self.query_one("#client-table", DataTable).row_count
         self.query_one("#lbl-clients-title", Label).update(f"CLIENTS ({n_clients})")
-        self.query_one("#btn-deauth-sel", Button).disabled = self._cursor_mac() is None
+        # Deauth bursts (one-shot) — gated by the cursor + cross-attack TX mutex.
+        other_tx = self._other_long_running_tx()
+        self.query_one("#btn-deauth-sel", Button).disabled = (
+            self._cursor_mac() is None or other_tx)
+        self.query_one("#btn-deauth-bcast", Button).disabled = other_tx
 
     @staticmethod
     def _replay_status_markup(campaign) -> str:
@@ -844,6 +851,21 @@ class FocusView(Screen):
 
     def _pbc_busy(self) -> bool:
         return self._pbc_task is not None and not self._pbc_task.done()
+
+    def _other_long_running_tx(self, exclude: str = "") -> bool:
+        """True if any long-running TX activity is running, EXCLUDING the named
+        one (one of ``"wep"`` / ``"wpa3down"`` / ``"wps"`` / ``"pbc"``). Used to
+        disable buttons for OTHER attacks so the half-duplex radio is never
+        shared. Pass the running attack's name to keep its own Stop button live."""
+        if exclude != "wep" and self._wep_campaign is not None:
+            return True
+        if exclude != "wpa3down" and self._wpa3_down_attack is not None:
+            return True
+        if exclude != "wps" and self._wps_campaign is not None:
+            return True
+        if exclude != "pbc" and self._pbc_busy():
+            return True
+        return False
 
     async def _auto_capture_pbc(self, ap: AccessPoint) -> None:
         iface = getattr(self.app, "active_interface", None)
