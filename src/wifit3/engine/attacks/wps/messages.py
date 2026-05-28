@@ -479,10 +479,12 @@ def parse_rx_frame(frame: bytes) -> Optional[ParsedEap]:
     if vendor_id != WFA_VENDOR_ID or vendor_type != WFA_VENDOR_TYPE_SIMPLECONFIG:
         return None
     attrs_start = exp + 9                              # skip opcode + flags
-    # Bound the WSC message by the EAP length field, NOT the end of the frame:
-    # cards append a 4-byte FCS (and sometimes padding), and that trailing junk
-    # would otherwise poison the next Authenticator HMAC, which covers the raw
-    # WSC bytes (M_prev ‖ M_curr). The EAP packet spans [e, e+eap_len).
+    # Bound the WSC message by the EAP length field, NOT the end of the frame.
+    # The EAP length is authoritative for what the AP signed into the next
+    # Authenticator HMAC (HMAC(authkey, M_prev ‖ M_curr) covers the raw WSC
+    # bytes). Trusting frame end instead would let any trailing junk
+    # (chip-side padding, future hardware metadata) poison the HMAC; the EAP
+    # packet spans [e, e+eap_len), so we slice there.
     attrs_end = e + eap_len
     if not (attrs_start <= attrs_end <= len(frame)):
         attrs_end = len(frame)

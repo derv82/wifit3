@@ -37,7 +37,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from wifit3.engine.attacks.wps.association import WlanTransport, WpsAssociation, mac_str, str_to_mac
 from wifit3.engine.attacks.wps.registrar import PinResult, WpsRegistrar
-from wifit3.engine.pcap import _strip_fcs
 from wifit3.wlan.manager import WlanDeviceManager
 
 
@@ -66,7 +65,6 @@ def write_pcap(path: Path, frames: list) -> int:
     with path.open("wb") as f:
         f.write(struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, _LINKTYPE_IEEE802_11))
         for ts, frame in frames:
-            frame = _strip_fcs(frame)          # self-verifying; drops a real FCS, leaves TX frames alone
             sec = int(ts)
             usec = int((ts - sec) * 1_000_000)
             f.write(struct.pack("<IIII", sec, usec, len(frame), len(frame)))

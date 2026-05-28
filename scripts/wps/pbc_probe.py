@@ -29,7 +29,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from wifit3.engine.attacks.wps.pbc import WpsPbcCapture
 from wifit3.engine.attacks.wps.registrar import PinResult
-from wifit3.engine.pcap import _strip_fcs
 from wifit3.wlan.manager import WlanDeviceManager
 
 
@@ -55,7 +54,6 @@ def write_pcap(path: Path, frames: list) -> int:
     with path.open("wb") as f:
         f.write(struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 105))
         for ts, frame in frames:
-            frame = _strip_fcs(frame)
             sec = int(ts)
             usec = int((ts - sec) * 1_000_000)
             f.write(struct.pack("<IIII", sec, usec, len(frame), len(frame)))

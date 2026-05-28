@@ -1,7 +1,6 @@
-"""libpcap writer — frames are saved with a clean (FCS-less) tail so readers
-that treat LINKTYPE_IEEE802_11 as FCS-less don't flag a malformed trailing IE."""
-
-import zlib
+"""libpcap writer — saves LINKTYPE_IEEE802_11 frames verbatim. Callers deliver
+FCS-less MPDU bodies (every chip driver strips at RX ingress), so the writer
+no longer second-guesses the frame tail."""
 
 from wifit3.engine.pcap import write_pcap
 
@@ -23,27 +22,8 @@ def _beacon_body() -> bytes:
     )
 
 
-def test_write_pcap_strips_valid_fcs(tmp_path):
+def test_write_pcap_writes_frame_verbatim(tmp_path):
     body = _beacon_body()
-    fcs = (zlib.crc32(body) & 0xFFFFFFFF).to_bytes(4, "little")
     path = tmp_path / "a.pcap"
-    assert write_pcap(path, [body + fcs]) == 1
-    # The saved packet is the body WITHOUT the FCS.
-    assert _first_packet(path) == body
-
-
-def test_write_pcap_leaves_frame_without_fcs(tmp_path):
-    body = _beacon_body() + b"\xde\xad\xbe\xef"   # tail is NOT a valid CRC32
-    path = tmp_path / "b.pcap"
-    write_pcap(path, [body])
-    assert _first_packet(path) == body            # untouched
-
-
-def test_write_pcap_strips_only_real_fcs_not_double(tmp_path):
-    """A frame already FCS-less (its tail isn't a CRC) keeps all its bytes —
-    no spurious second strip."""
-    body = _beacon_body()
-    # body's own last 4 bytes ("test") are not a CRC of the rest → no strip.
-    path = tmp_path / "c.pcap"
-    write_pcap(path, [body])
+    assert write_pcap(path, [body]) == 1
     assert _first_packet(path) == body

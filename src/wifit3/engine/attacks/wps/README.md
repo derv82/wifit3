@@ -271,9 +271,9 @@ resume under `captures/`, ETA). Decisions honoured: **single-association v1**
 - The full EAP path works on-air: assoc → AP sends **EAP-Req/Identity** (body
   `"hello"`) → our Identity response → AP sends **M1** (~426–436 B, opcode
   WSC_MSG, msg_type 0x04) as an EAP-Request.
-- **Cards append a 4-byte FCS** to RX frames (rtl8821au RX path). The WSC
-  message MUST be bounded by the **EAP length field**, not the end of the
-  frame — otherwise the trailing FCS leaks into the next Authenticator HMAC
+- The WSC message MUST be bounded by the **EAP length field**, not the end of
+  the frame — anything trailing the EAP packet (chip-side padding, future
+  hardware metadata) would otherwise leak into the next Authenticator HMAC
   (`HMAC(authkey, M_prev ‖ M_curr)`), which covers the raw WSC bytes. Symptom
   before the fix: identity passed (no authenticator), but **every M2 was
   rejected** — AP retransmitted M1 ~9× then sent **WSC_NACK with
