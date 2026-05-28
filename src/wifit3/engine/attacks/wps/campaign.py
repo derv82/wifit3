@@ -84,6 +84,13 @@ class WpsCampaign:
         # "soft" = our internal backoff after N consecutive pre-oracle rejects.
         self._lock_kind: Optional[str] = None
         self._lock_end_at: Optional[float] = None
+        # Adaptive backoff: the FIRST soft-lock since a tested++ skips the wait
+        # entirely and just rotates MAC (turns out many APs don't actually need
+        # the wait — they only rate-limit per source MAC, and a fresh client
+        # sails past). If rotation alone doesn't unstick us (next attempt also
+        # locks without progress), we wait, and waits grow on each repeat. Reset
+        # to 0 on every tested++ — the strategy is working, no need to wait.
+        self._consecutive_locks_no_progress = 0
 
     # ---- persistence --------------------------------------------------------
     def _load_state(self) -> CampaignState:
@@ -216,6 +223,10 @@ class WpsCampaign:
 
         st.tested += 1
         self.lock.note_progress()
+        # A real M4 oracle result means the AP IS letting our (rotated) client
+        # through — the no-wait + rotate strategy is working. Reset the lock
+        # ramp so the NEXT soft-lock also skips its wait.
+        self._consecutive_locks_no_progress = 0
         if out.result is PinResult.SUCCESS:
             st.found_pin, st.found_psk, st.phase = pin, out.psk, "done"
         elif out.first_half_ok:
@@ -247,14 +258,15 @@ class WpsCampaign:
 
                 beacon_locked = self._beacon_locked()
                 if self.lock.is_locked(beacon_locked):
-                    await self._handle_lock(beacon_locked)
-                    # Per-MAC rate-limiting is common: the AP grants one attempt
-                    # per source MAC then NACKs everything from that MAC, AND
-                    # times out our association during the wait. Rotating MAC +
-                    # re-associating before the next attempt sidesteps both —
-                    # free on permissive APs, the difference between "stuck
-                    # forever" and "one PIN per lock cycle" on locked-down ones.
+                    # Skip the wait the first soft-lock after every tested++:
+                    # most "soft locks" are just per-MAC rate-limiting, which a
+                    # rotation alone fixes in zero time. A hard lock (beacon
+                    # AP-Setup-Locked) ALWAYS waits — the AP itself said no.
+                    skip_wait = (not beacon_locked
+                                 and self._consecutive_locks_no_progress == 0)
+                    await self._handle_lock(beacon_locked, wait=not skip_wait)
                     self._rotate_mac()
+                    self._consecutive_locks_no_progress += 1
                     continue
 
                 pin = self._next_pin()
@@ -295,29 +307,44 @@ class WpsCampaign:
         ap = self.iface.access_points.get(self.bssid) if hasattr(self.iface, "access_points") else None
         return bool(getattr(ap, "wps_locked", False)) if ap else False
 
-    async def _handle_lock(self, beacon_locked: bool) -> None:
+    async def _handle_lock(self, beacon_locked: bool, wait: bool = True) -> None:
+        """Mark the lock state, optionally wait it out, then release.
+
+        ``wait=False`` is the adaptive fast path for the first soft-lock since
+        last progress: we just log + rotate, skipping the (often-unnecessary)
+        backoff entirely. Hard locks (beacon WPS-Locked) ALWAYS wait — the AP
+        is saying it won't do WPS at all, no point retrying immediately.
+        """
         self.lock.begin_lock()
-        wait = self.lock.backoff()
-        self.status = "locked"
         # "hard" = AP itself advertises WPS locked in its beacons (matches the 🔒
         # in the SECURITY row). "soft" = our backoff after N pre-oracle rejects;
         # AP isn't beaconing locked, it's just refusing rapid retries.
         self._lock_kind = "hard" if beacon_locked else "soft"
-        self._lock_end_at = time.monotonic() + wait
         trigger = "beacon" if beacon_locked else f"{self.lock.strikes} strikes"
-        self.log(f"[red]AP locked[/red] [dim]({self._lock_kind}, {trigger}) "
-                 f"backing off {wait:.0f}s[/dim]")
-        self._save_state()
-        end = time.monotonic() + wait
-        while time.monotonic() < end and not self._stop:
-            await asyncio.sleep(0.5)
-            if not self._beacon_locked() and self.lock.strikes < self.lock.strike_threshold:
-                break
+        if wait:
+            backoff = self.lock.backoff()
+            self._lock_end_at = time.monotonic() + backoff
+            self.status = "locked"
+            self.log(f"[red]AP locked[/red] [dim]({self._lock_kind}, {trigger}) "
+                     f"backing off {backoff:.0f}s[/dim]")
+            self._save_state()
+            end = time.monotonic() + backoff
+            while time.monotonic() < end and not self._stop:
+                await asyncio.sleep(0.5)
+                if not self._beacon_locked() and self.lock.strikes < self.lock.strike_threshold:
+                    break
+        else:
+            # Fast path — many APs only rate-limit per source MAC; let rotation
+            # do the work and skip the timer entirely. If we end up back here
+            # without a tested++ in between, the caller will pass wait=True next
+            # time and we'll actually back off.
+            self.log(f"[yellow]soft-lock[/yellow] [dim]({trigger}) — "
+                     f"rotating MAC, no wait[/dim]")
         self.lock.end_lock()
         self._lock_kind = None
         self._lock_end_at = None
-        # After backing off, the very next attempt might still be refused — but
-        # that's a new conversation. Reset the dedup so it logs once again.
+        # Either way, the very next attempt is a new conversation. Reset the
+        # dedup so it logs once again.
         self._last_attempt_sig = None
 
     @property
