@@ -1005,24 +1005,43 @@ class FocusView(Screen):
             return f"{int(secs / 60)}m"
         return f"{secs / 3600:.1f}h"
 
+    @staticmethod
+    def _compact_count(n: int) -> str:
+        """Width-bounded counter — keeps `tested` to ≤4 chars so the narrow
+        SECURITY row never truncates: 0..999 verbatim, then 1.5k / 15k."""
+        if n < 1000:
+            return str(n)
+        if n < 10000:
+            return f"{n / 1000:.1f}k"        # 1500 → "1.5k"
+        return f"{n // 1000}k"               # 15000 → "15k"
+
     def _wps_status_markup(self, camp: WpsCampaign) -> str:
-        """Compact campaign status for the dedicated lbl-wps-status row (the
-        SECURITY panel is narrow — ~29 chars before truncation). The static WPS/
-        PMF row carries the 🔒 icon; this row is just the live progress."""
+        """Compact campaign status for the dedicated lbl-wps-status row (~29
+        chars before the SECURITY panel truncates). The static WPS/PMF row
+        carries the beacon-level 🔒 (the "hard lock"); this row carries the
+        live PIN-campaign progress and our internal soft/hard backoff state."""
         st = camp.state
         if st.found_pin:
             return (f"[black bold on cyan] PIN CRACKED: ✓ "
                     f"{escape(st.found_pin)} [/black bold on cyan]")
+        tested = self._compact_count(st.tested)
         if camp.status == "locked":
-            return f"WPS PIN: [cyan]{st.tested}[/cyan]/11k · [red]LOCKED[/red]"
+            # Countdown updates each tick (10 Hz); kind disambiguates the 🔒
+            # in the row above (hard = AP says no; soft = our own backoff).
+            remaining = int(camp.lock_remaining_seconds)
+            m, s = divmod(remaining, 60)
+            countdown = f"{m}:{s:02d}"
+            kind = camp.lock_kind or "soft"
+            color = "red" if kind == "hard" else "dark_orange"
+            return (f"WPS PIN: [cyan]{tested}[/cyan]/11k · "
+                    f"[{color}]{kind} {countdown}[/{color}]")
         if camp.status in ("failed", "error"):
-            return f"WPS PIN: [red]{camp.status}[/red] [dim]({st.tested}/11k)[/dim]"
+            return f"WPS PIN: [red]{camp.status}[/red] [dim]({tested}/11k)[/dim]"
         eta = self._fmt_eta(camp.eta_seconds)
         if st.phase == "second_half" and st.first_half:
-            return (f"WPS PIN: [cyan]{st.tested}[/cyan]/11k · "
-                    f"[green]p1={escape(st.first_half)}[/green] "
-                    f"[dim]ETA ~{eta}[/dim]")
-        return f"WPS PIN: [cyan]{st.tested}[/cyan]/11k · [dim]ETA ~{eta}[/dim]"
+            return (f"WPS PIN: [cyan]{tested}[/cyan]/11k · "
+                    f"[green]p1={escape(st.first_half)}[/green] [dim]{eta}[/dim]")
+        return f"WPS PIN: [cyan]{tested}[/cyan]/11k · [dim]ETA {eta}[/dim]"
 
     # ----- Actions / handlers ------------------------------------------------
 

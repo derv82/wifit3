@@ -73,6 +73,17 @@ class WpsCampaign:
         self._stop = False
         self.status = "idle"         # idle | running | paused | locked | found | failed | error
         self._attempt_ewma = 0.5     # seconds/attempt, for ETA
+        # Suppress consecutive duplicate per-attempt log lines (same pin + same
+        # result) — happens during a rate-limit burst where we get 3 PROTO_ERROR
+        # in a row for the SAME pin before the lock heuristic kicks in. The
+        # subsequent "AP locked" line tells the story; the 3 identical "trying X
+        # → AP refused" lines are noise.
+        self._last_attempt_sig: Optional[tuple] = None
+        # Live lock state for the SECURITY status row's countdown / kind display.
+        # "hard" = beacon AP-Setup-Locked (the AP itself says it's not doing WPS);
+        # "soft" = our internal backoff after N consecutive pre-oracle rejects.
+        self._lock_kind: Optional[str] = None
+        self._lock_end_at: Optional[float] = None
 
     # ---- persistence --------------------------------------------------------
     def _load_state(self) -> CampaignState:
@@ -82,8 +93,14 @@ class WpsCampaign:
                 data = json.loads(path.read_text())
                 data.setdefault("bssid", self.bssid)
                 st = CampaignState(**{k: data[k] for k in data if k in CampaignState.__annotations__})
-                self.log(f"[dim]resumed: phase={st.phase}, p1={st.p1_index}, "
-                         f"p2={st.p2_index}, tested={st.tested}[/dim]")
+                pin_hint = ""
+                if st.first_half:
+                    # We already learned the first 4 digits last run — surface them
+                    # in the resumed log so the user sees the progress.
+                    pin_hint = (f", [cyan bold]{st.first_half}[/cyan bold]"
+                                f"[white bold]????[/white bold]")
+                self.log(f"resumed campaign: [cyan]{st.tested:,}[/cyan]"
+                         f"/11,000 pins{pin_hint}")
                 return st
             except Exception as e:
                 logger.warning("WPS state load failed (%s); starting fresh", e)
@@ -275,8 +292,14 @@ class WpsCampaign:
         self.lock.begin_lock()
         wait = self.lock.backoff()
         self.status = "locked"
+        # "hard" = AP itself advertises WPS locked in its beacons (matches the 🔒
+        # in the SECURITY row). "soft" = our backoff after N pre-oracle rejects;
+        # AP isn't beaconing locked, it's just refusing rapid retries.
+        self._lock_kind = "hard" if beacon_locked else "soft"
+        self._lock_end_at = time.monotonic() + wait
         trigger = "beacon" if beacon_locked else f"{self.lock.strikes} strikes"
-        self.log(f"[red]AP locked[/red] [dim]({trigger}) backing off {wait:.0f}s[/dim]")
+        self.log(f"[red]AP locked[/red] [dim]({self._lock_kind}, {trigger}) "
+                 f"backing off {wait:.0f}s[/dim]")
         self._save_state()
         end = time.monotonic() + wait
         while time.monotonic() < end and not self._stop:
@@ -284,15 +307,45 @@ class WpsCampaign:
             if not self._beacon_locked() and self.lock.strikes < self.lock.strike_threshold:
                 break
         self.lock.end_lock()
+        self._lock_kind = None
+        self._lock_end_at = None
+        # After backing off, the very next attempt might still be refused — but
+        # that's a new conversation. Reset the dedup so it logs once again.
+        self._last_attempt_sig = None
+
+    @property
+    def lock_kind(self) -> Optional[str]:
+        """'hard' / 'soft' / None — see _handle_lock."""
+        return self._lock_kind
+
+    @property
+    def lock_remaining_seconds(self) -> float:
+        """Seconds remaining on the current backoff (0 if not locked)."""
+        if self._lock_end_at is None:
+            return 0.0
+        return max(0.0, self._lock_end_at - time.monotonic())
 
     def _log_attempt(self, pin: str, out: AttemptOutcome,
                      prev_first_half: Optional[str]) -> None:
         """One concise line per PIN attempt — what was tested, what came back,
         and how deep the exchange got ([Mx] marker). SUCCESS is intentionally
         silent here; the UI closes the campaign tree with bold cyan PIN + green
-        PSK leaves via _stop_wps_pin."""
+        PSK leaves via _stop_wps_pin.
+
+        Consecutive duplicates of the same (pin, result) are suppressed — a
+        rate-limited AP gives us 3 PROTO_ERROR in a row for the same pin before
+        the lock kicks in; the subsequent "AP locked" log carries the story.
+        """
         if out.result is PinResult.SUCCESS:
             return
+        # First-half just confirmed gets a forced log even if sig duplicates —
+        # it's a real state change, the next attempt will have a new pin anyway.
+        first_half_just_confirmed = (
+            self.state.first_half is not None and prev_first_half is None)
+        sig = (pin, out.result)
+        if sig == self._last_attempt_sig and not first_half_just_confirmed:
+            return
+        self._last_attempt_sig = sig
         label = f"trying [cyan]{pin}[/cyan]"
         # First-half just confirmed this attempt — green announcement.
         if self.state.first_half is not None and prev_first_half is None:
