@@ -214,7 +214,11 @@ class WpsCampaign:
 
     async def _run(self) -> None:
         self.status = "running"
-        self.log(f"[WPS] campaign start on {self.bssid} (mac {self.our_mac.hex()})")
+        # Prefer the SSID — the BSSID is for log forensics, our forged MAC is
+        # internal and not useful to surface.
+        name = self.target.ssid or self.bssid
+        logger.debug("WPS campaign start on %s (mac %s)", name, self.our_mac.hex())
+        self.log(f"[WPS] campaign start on {name}")
         try:
             while not self._stop:
                 if self._paused:

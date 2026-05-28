@@ -144,15 +144,14 @@ def format_encryption_markup(
 
 
 def format_pmf_markup(ap: AccessPoint) -> str:
-    """Color-coded PMF status for the SECURITY panel.
-
-    Required = red, Optional = yellow, Disabled = dim.
-    """
+    """Color-coded PMF status for the SECURITY panel, read from the attacker's
+    POV: green = no protection (deauth-based attacks work), orange = mixed,
+    red = locked down (deauth-based attacks fail)."""
     if ap.pmf_required:
         return "[red]Required[/red]"
     if ap.pmf_capable:
-        return "[yellow]Optional[/yellow]"
-    return "[dim]Disabled[/dim]"
+        return "[dark_orange]Optional[/dark_orange]"
+    return "[green]Disabled[/green]"
 
 
 # WPS Config Methods bitmask bits (WSC spec, attr 0x1008).

@@ -265,6 +265,14 @@ class FocusView(Screen):
         else:
             self._log(treelog.leaf(bssid_line))
 
+        # One-time warning: PMF Required → deauth-based attacks (handshake
+        # capture via client deauth, PBC race via deauth, broadcast deauth)
+        # will silently fail because the AP rejects unauthenticated mgmt frames.
+        if self.target_ap.pmf_required:
+            self._log("[yellow][!] PMF Required[/yellow] — deauth-based attacks "
+                      "won't work on this AP (handshake/PBC race via deauth, "
+                      "broadcast deauth). PMKID / WPS / passive capture still fine.")
+
         self._log_persisted_history(self.target_ap)
         self.update_ui()
 
@@ -274,19 +282,21 @@ class FocusView(Screen):
         same data that lights the Scanner badges."""
         if not ap.persisted:
             return
-        self._log("[bold]Found existing capture data:[/bold]")
+        self._log("[bold]Previous captures found in[/bold] [cyan]./captures/*[/cyan]:")
         last = len(ap.persisted) - 1
         for i, cap in enumerate(ap.persisted):
             line = treelog.leaf if i == last else treelog.branch
+            dt = datetime.fromtimestamp(cap.timestamp)
+            ts = f"[dim]{dt:%Y-%m-%d %H:%M}[/dim]"
             if cap.kind == "WEP":
                 self._log(line(f"[bold cyan]{'WEP Key:':<9}[/bold cyan] "
-                               f"{_wep_key_chip(cap.value)}"))
+                               f"{_wep_key_chip(cap.value)}  {ts}"))
             elif cap.kind == "WPS":
                 self._log(line(f"[bold cyan]{'WPS PSK:':<9}[/bold cyan] "
-                               f"[black bold on cyan] {escape(cap.value or '?')} [/black bold on cyan]"))
+                               f"[black bold on cyan] {escape(cap.value or '?')} "
+                               f"[/black bold on cyan]  {ts}"))
             else:
                 label = "Handshake" if cap.kind == "HS" else "PMKID"
-                dt = datetime.fromtimestamp(cap.timestamp)
                 self._log(line(
                     f"[bold cyan]{label:<9}[/bold cyan] "
                     f"[white]{dt:%Y-%m-%d}[/white] [dim]{dt:%H:%M}[/dim]"))
@@ -422,20 +432,25 @@ class FocusView(Screen):
         btn_chop = self.query_one("#btn-chop", Button)
 
         # (ATTACKS panel has no title now — the buttons + TARGET's Encryption
-        # line convey the family.)
-        # WPS PIN is a WPA-only thing in practice (WEP+WPS exists but is a narrow
-        # historical slice with better dedicated attacks), so hide it on WEP and
-        # hide it on WPA targets that simply aren't WPS-capable.
+        # line convey the family.) Each button is shown only when the attack can
+        # plausibly work against this AP — "useless disabled buttons" just clutter
+        # the panel (the security row + tooltip-via-log convey what's missing).
+        # WPS PIN: WPA-only with WPS (WEP+WPS is a narrow historical slice).
         btn_wps.display = not is_wep and bool(ap.wps)
-        btn_down.display = not is_wep
-        btn_pmkid.display = not is_wep
+        # WPA Downgrade only works against WPA3-transition APs.
+        btn_down.display = bool(ap.wpa3 and ap.transition_mode)
+        # PMKID is dead on pure SAE (uncrackable). Show for WPA/WPA2 and for
+        # WPA3-transition (the WPA2 portion is the attack surface).
+        btn_pmkid.display = not is_wep and ((not ap.wpa3) or ap.transition_mode)
         # Replay vanishes once the key is cracked — Save takes its place, so it
         # reads as a "Replay → Save" swap.
         btn_gen.display = is_wep and ap.wep_key is None
-        # Frag/Chop are shown only inside a running WEP campaign (set below);
-        # off otherwise so they never linger on a WPA target.
-        btn_frag.display = False
-        btn_chop.display = False
+        # Frag/Chop are visible for any WEP target (before crack), but disabled
+        # until Replay starts the campaign — they're sub-modes of it, and the
+        # campaign owns the fake-auth they need. Visible-but-grey reads cleaner
+        # than vanish-on-Replay-click ("where did they come from?").
+        btn_frag.display = is_wep and ap.wep_key is None
+        btn_chop.display = is_wep and ap.wep_key is None
 
         if is_wep:
             # A finished campaign (key recovered) is torn down so the button
@@ -451,16 +466,16 @@ class FocusView(Screen):
             running = camp is not None
             btn_gen.label = "Stop Replay" if running else "Replay"
             btn_gen.variant = "error" if running else "success"
-            # Frag is a sub-mode of a running campaign (it manufactures a seed
-            # for replay), so it only appears once IVs are being generated.
-            btn_frag.display = running and ap.wep_key is None
+            # Frag/Chop visibility set above (any WEP target before crack); here
+            # we just gate the disabled state on whether the campaign is running.
             fragging = bool(camp and camp.frag_active)
             btn_frag.label = "Stop Frag" if fragging else "Frag"
             btn_frag.variant = "warning" if fragging else "primary"
-            btn_chop.display = running and ap.wep_key is None
+            btn_frag.disabled = not running
             chopping = bool(camp and camp.chop_active)
             btn_chop.label = "Stop Chop" if chopping else "Chop"
             btn_chop.variant = "warning" if chopping else "primary"
+            btn_chop.disabled = not running
             self._update_fakeauth_line()
         else:
             self.query_one("#lbl-fakeauth", Label).display = False
@@ -610,11 +625,15 @@ class FocusView(Screen):
         # CLIENTS (N) title + DEAUTH 'Selected' enabled only with a highlighted row.
         n_clients = self.query_one("#client-table", DataTable).row_count
         self.query_one("#lbl-clients-title", Label).update(f"CLIENTS ({n_clients})")
-        # Deauth bursts (one-shot) — gated by the cursor + cross-attack TX mutex.
+        # Deauth bursts (one-shot) — gated by the cursor, the cross-attack TX
+        # mutex, AND PMF: a PMF-Required AP rejects unauthenticated deauth, so
+        # the attack does nothing. The "PMF Required → attacks won't work"
+        # warning is also logged once on target acquisition (_init_target).
         other_tx = self._other_long_running_tx()
+        deauth_blocked = other_tx or ap.pmf_required
         self.query_one("#btn-deauth-sel", Button).disabled = (
-            self._cursor_mac() is None or other_tx)
-        self.query_one("#btn-deauth-bcast", Button).disabled = other_tx
+            self._cursor_mac() is None or deauth_blocked)
+        self.query_one("#btn-deauth-bcast", Button).disabled = deauth_blocked
 
     @staticmethod
     def _replay_status_markup(campaign) -> str:
