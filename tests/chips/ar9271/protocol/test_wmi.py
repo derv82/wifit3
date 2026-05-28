@@ -18,8 +18,10 @@ def test_parse_rx_frame_real_beacon():
     assert parsed["type"] == "beacon"
     assert parsed["bssid"] == "aa:da:c4:0d:9c:fe"
     assert parsed["rssi"] == -67   # NOISE_FLOOR (-95) + SNR 28
-    # raw is the MPDU as delivered, FCS included (pcap-write strips it).
-    assert parsed["raw"] == payload[WMIProtocol.HTC_RX_HEADER_LEN:]
+    # raw is the on-air MPDU body — FCS stripped by parse_rx_frame after the
+    # CRC check at protocol/wmi.py validates it (this beacon is non-QoS, so
+    # no alignment-padding is stripped between the HTC header and the FCS).
+    assert parsed["raw"] == payload[WMIProtocol.HTC_RX_HEADER_LEN:-4]
 
 
 def test_parse_rx_frame_rejects_missing_magic():
