@@ -265,6 +265,11 @@ class WpsCampaign:
                     skip_wait = (not beacon_locked
                                  and self._consecutive_locks_no_progress == 0)
                     await self._handle_lock(beacon_locked, wait=not skip_wait)
+                    # The wait can be interrupted by user Stop — bail before
+                    # rotating so the rotation log line doesn't print AFTER the
+                    # _stop_wps_pin leaf closed the tree.
+                    if self._stop:
+                        break
                     self._rotate_mac()
                     self._consecutive_locks_no_progress += 1
                     continue

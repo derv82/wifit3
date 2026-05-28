@@ -912,13 +912,19 @@ class FocusView(Screen):
                 self._pbc_done.add(ap.bssid)
                 ap.wps_pbc_psk = outcome.psk
                 name = escape(outcome.ssid or ap.ssid or ap.bssid)
-                self._log(treelog.branch_ok(
-                    f"[black bold on cyan] PSK for {name}: \"{escape(outcome.psk)}\" [/black bold on cyan]"))
+                # Match the WPS-PIN success styling: green "Password for …" line.
+                # (No cyan "PIN for …" line above it because PBC genuinely doesn't
+                # disclose the router's PIN — its "device password" is a fixed
+                # public constant '00000000' that's not the AP's real PIN.)
+                saved = ""
                 try:
                     path = save_pbc_credential(outcome.ssid or ap.ssid or "", ap.bssid, outcome.psk)
-                    self._log(treelog.leaf(f"[cyan]saved[/cyan] [dim]to {escape(path.name)}[/dim]"))
+                    saved = f" [dim](saved {escape(path.name)})[/dim]"
                 except Exception:
-                    self._log(treelog.leaf("[dim](PSK not saved to disk)[/dim]"))
+                    pass
+                self._log(treelog.leaf(
+                    f"[black bold on green] Password for {name}: "
+                    f"\"{escape(outcome.psk)}\" [/black bold on green]{saved}"))
             else:
                 self._log(treelog.leaf_warn(
                     f"{outcome.result.value} [dim]({escape(outcome.detail)})[/dim] — "
