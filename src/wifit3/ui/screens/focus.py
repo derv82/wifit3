@@ -178,6 +178,7 @@ class FocusView(Screen):
                             Label("SECURITY", classes="panel-title"),
                             Label(id="lbl-enc"),
                             Label(id="lbl-wps"),
+                            Label(id="lbl-wps-status"),     # live WPS PIN campaign progress
                             Label(id="lbl-pmf"),
                             Label(id="lbl-wpa3"),
                             Label(id="lbl-sae-groups"),
@@ -365,27 +366,38 @@ class FocusView(Screen):
         # slot is folded in here.
         # Compact WPS: version + a lock glyph (green 🔓 unlocked = attackable,
         # red 🔒 locked = dead end). The verbose method list doesn't fit here.
-        # While the WPS PIN brute is running, the row reformats to its live status
-        # (full row — PMF temporarily yields the space). Reverts on Stop.
+        # The static WPS/PMF row stays put (so the 🔒/🔓 lock icon is always
+        # visible). A second dedicated row (lbl-wps-status) carries the live PIN
+        # campaign status when it's running — hidden otherwise.
         wps_label = self.query_one("#lbl-wps", Label)
-        if self._wps_campaign is not None:
-            wps_label.display = True
-            wps_label.update(Text.from_markup(self._wps_status_markup(self._wps_campaign),
-                                              emoji=False))
+        if ap.wps:
+            lock = "[red]🔒[/red]" if ap.wps_locked else "[green]🔓[/green]"
+            ver = f"{ap.wps_version} " if ap.wps_version else ""
+            wps_part = f"WPS: {ver}{lock}"
         else:
-            if ap.wps:
-                lock = "[red]🔒[/red]" if ap.wps_locked else "[green]🔓[/green]"
-                ver = f"{ap.wps_version} " if ap.wps_version else ""
-                wps_part = f"WPS: {ver}{lock}"
-            else:
-                wps_part = None
-            pmf_part = f"PMF: {format_pmf_markup(ap)}" if (ap.akms or ap.wpa3) else None
-            parts = [p for p in (wps_part, pmf_part) if p]
-            if parts:
-                wps_label.display = True
-                wps_label.update(Text.from_markup("  ·  ".join(parts), emoji=False))
-            else:
-                wps_label.display = False
+            wps_part = None
+        pmf_part = f"PMF: {format_pmf_markup(ap)}" if (ap.akms or ap.wpa3) else None
+        parts = [p for p in (wps_part, pmf_part) if p]
+        if parts:
+            wps_label.display = True
+            wps_label.update(Text.from_markup("  ·  ".join(parts), emoji=False))
+        else:
+            wps_label.display = False
+
+        # Auto-close a finished campaign so its tree closes with the success
+        # leaves (cyan PIN + green PSK), the button reverts to "WPS PIN", and the
+        # status row hides. The recovered PSK lives on in captures/ + persisted
+        # history; the in-memory campaign object isn't needed past success.
+        if self._wps_campaign is not None and self._wps_campaign.state.phase == "done":
+            self._stop_wps_pin()
+
+        wps_status_label = self.query_one("#lbl-wps-status", Label)
+        if self._wps_campaign is not None:
+            wps_status_label.display = True
+            wps_status_label.update(Text.from_markup(
+                self._wps_status_markup(self._wps_campaign), emoji=False))
+        else:
+            wps_status_label.display = False
         self.query_one("#lbl-pmf", Label).display = False
 
         # WPA3-mode line dropped — redundant with the Encryption line, which
@@ -937,10 +949,14 @@ class FocusView(Screen):
             self._log("[red]✗ No target / interface — cannot start WPS PIN.[/red]")
             return
         try:
-            self._wps_campaign = WpsCampaign(iface, ap, log=self._log)
+            name = escape(ap.ssid or ap.bssid)
+            # Header (tree root) for the campaign's group. The campaign's per-line
+            # logs land as ├─► branches below; _stop_wps_pin closes with a ├─✓ +
+            # └─✓ on success or └─► on manual stop.
+            self._log(f"[bold cyan]WPS PIN brute[/bold cyan] started on [bold]{name}[/bold]")
+            self._wps_campaign = WpsCampaign(
+                iface, ap, log=lambda m: self._log(treelog.branch(m)))
             self._wps_campaign.start()
-            self._log(treelog.branch("[bold cyan]WPS PIN brute started[/bold cyan] — "
-                                     "common pins, then first/second-half sweep"))
         except Exception as exc:
             logger.exception("WPS PIN start failed")
             self._log(f"[bold red]✗ WPS PIN failed to start:[/bold red] {escape(str(exc))}")
@@ -954,12 +970,30 @@ class FocusView(Screen):
         # transport/association in _teardown so this is safe).
         asyncio.create_task(camp.stop())
         self._wps_campaign = None
-        msg = (f"[bold green]✓ WPS PIN: {camp.state.found_pin} → "
-               f"\"{escape(camp.state.found_psk or '')}\"[/bold green]"
-               if camp.state.found_pin
-               else f"[yellow]WPS PIN stopped[/yellow] "
-                    f"[dim]({camp.state.tested} tested, phase {camp.state.phase})[/dim]")
-        self._log(treelog.leaf(msg))
+        ssid = escape(camp.target.ssid or camp.bssid)
+        if camp.state.found_pin:
+            # Persist the recovered creds so they survive exit + light the
+            # Scanner badge on next start (same .wps file as PBC, method tag
+            # discriminates).
+            saved = ""
+            try:
+                path = save_pbc_credential(
+                    camp.target.ssid or "", camp.bssid, camp.state.found_psk or "",
+                    method="WPS-PIN", pin=camp.state.found_pin)
+                saved = f" [dim](saved {escape(path.name)})[/dim]"
+            except Exception:
+                pass
+            self._log(treelog.branch_ok(
+                f"[black bold on cyan]  WPS PIN for {ssid}: "
+                f"{escape(camp.state.found_pin)}  [/black bold on cyan]"))
+            self._log(treelog.leaf(
+                f"[black bold on green] Password for {ssid}: "
+                f"\"{escape(camp.state.found_psk or '')}\" [/black bold on green]"
+                f"{saved}"))
+        else:
+            self._log(treelog.leaf(
+                f"[yellow]WPS PIN stopped[/yellow] "
+                f"[dim]({camp.state.tested} tested, phase {camp.state.phase})[/dim]"))
 
     @staticmethod
     def _fmt_eta(secs: Optional[float]) -> str:
@@ -972,24 +1006,23 @@ class FocusView(Screen):
         return f"{secs / 3600:.1f}h"
 
     def _wps_status_markup(self, camp: WpsCampaign) -> str:
-        """Single-row campaign status that lives in the WPS slot while running."""
+        """Compact campaign status for the dedicated lbl-wps-status row (the
+        SECURITY panel is narrow — ~29 chars before truncation). The static WPS/
+        PMF row carries the 🔒 icon; this row is just the live progress."""
         st = camp.state
         if st.found_pin:
-            return (f"WPS: [bold green]✓ PIN={escape(st.found_pin)} → "
-                    f"\"{escape(st.found_psk or '')}\"[/bold green]")
+            return (f"[black bold on cyan] PIN CRACKED: ✓ "
+                    f"{escape(st.found_pin)} [/black bold on cyan]")
         if camp.status == "locked":
-            return (f"WPS: [dim]{st.tested}/11k tested · "
-                    f"[/dim][yellow]locked, backing off[/yellow]")
+            return f"WPS PIN: [cyan]{st.tested}[/cyan]/11k · [red]LOCKED[/red]"
         if camp.status in ("failed", "error"):
-            return (f"WPS: [red]{camp.status}[/red] "
-                    f"[dim]({st.tested}/11k tested)[/dim]")
+            return f"WPS PIN: [red]{camp.status}[/red] [dim]({st.tested}/11k)[/dim]"
         eta = self._fmt_eta(camp.eta_seconds)
         if st.phase == "second_half" and st.first_half:
-            return (f"WPS: {st.tested}/11k · [green]p1={escape(st.first_half)} ✓[/green] · "
-                    f"{st.p2_index}/1k second-half · ETA ~{eta}")
-        if st.phase == "first_half":
-            return f"WPS: {st.tested}/11k · first-half {st.p1_index}/10k · ETA ~{eta}"
-        return f"WPS: {st.tested}/11k · common pins · ETA ~{eta}"
+            return (f"WPS PIN: [cyan]{st.tested}[/cyan]/11k · "
+                    f"[green]p1={escape(st.first_half)}[/green] "
+                    f"[dim]ETA ~{eta}[/dim]")
+        return f"WPS PIN: [cyan]{st.tested}[/cyan]/11k · [dim]ETA ~{eta}[/dim]"
 
     # ----- Actions / handlers ------------------------------------------------
 
