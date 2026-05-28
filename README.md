@@ -13,11 +13,10 @@ subprocesses, no Scapy — so it runs the same on **Linux and Windows**.
 - **Live scan** — APs and clients with channel hopping, signal, encryption,
   WPS state, and WPA3/SAE detection.
 - **WPA/WPA2 handshakes** — passive 4-way capture and deauth-triggered capture,
-  paired per-association so you don't save uncrackable junk.
-- **PMKID** — passive capture and active harvest.
+  proper handshake validation, minimalist PCAP saves.
+- **PMKID** — passive capture and active harvest, saves as HashCat .hc22000 files.
+- **WPS vectors**: Passive/active PushButton invasion, resumable brute-force sessions.
 - **WEP suite** — ARP replay, ChopChop, fragmentation, fake auth, PTW key recovery.
-- **WPA3/SAE probing** — including the Dragonblood-relevant groups.
-- **Export** — `hashcat -m 22000` hashlines and `.pcap`, ready to crack.
 - **Cross-platform** — one codebase on Linux and Windows.
 
 ## Screenshots
