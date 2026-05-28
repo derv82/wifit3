@@ -138,6 +138,32 @@ A shared storage layer for three concerns (likely a full session of work):
    *Open:* config in TOML (human-editable) + decloak in SQLite? Auto-prune old
    decloak entries vs grow forever? (DB is per-machine, doesn't roam.)
 
+### Live packet dashboard (Focus top-right)
+
+Cosmetic-but-cool. The Focus screen has an unused panel above the EVENT LOG /
+right of CAPTURE that stands out on ultra-wide terminals. Idea: turn it into a
+colour-coded packet-class meter for the focused AP — htop / Windows Task
+Manager-style columnar bars. Every ~3 s, plot what we saw in the previous
+window across a row of category bars, height-scaled by volume:
+
+  beacons (blue) · data (green) · injected (orange) · deauths (red) ·
+  WPS / EAPOL (pink) · …
+
+Cells are additive within a window (8 beacons + 4 data + 1 inject in a 3-s
+slice → 2 full blue cells + 1 full green + 1 quarter orange). Constraints to
+fit a ~50×8 area without a border:
+
+  - granularity is coarse (no per-frame ticks; one column per window).
+  - aggregate by class, not by frame — overflow saturates to "full cell".
+  - empty windows compress to a single line of dim dots so the rest of the
+    panel doesn't shift.
+
+Textual can do this with `RichLog`-style append + a per-class colour palette,
+or a small custom widget that paints unicode block characters. Most of the
+data is already passing through the parser + injector — wire a counter into
+each path and sample it on a 3 s timer. Low risk (read-only on the wire), high
+"feels alive" value when the radio is actually doing something.
+
 ### Configurable TX-power override — SHELVED 2026-05-19
 
 Not building it. The silicon supports power indices above the EFUSE regulatory
