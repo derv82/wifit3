@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from wifit3.engine.attacks.wps.pbc import PbcArmMode, PbcWatcher, save_pbc_credential
+from wifit3.engine.attacks.wps.pbc import PbcArmMode, PbcWatcher
 
 
 def _ap(bssid, active):
@@ -42,14 +42,3 @@ def test_watcher_reopen_retriggers():
     assert [x.bssid for x in w.new_windows([a])] == ["aa"]   # re-opened → fires again
 
 
-def test_save_pbc_credential(tmp_path):
-    path = save_pbc_credential("HomeNet", "aa:bb:cc:dd:ee:05", "yxws3tik", captures_dir=str(tmp_path))
-    assert path.exists() and path.suffix == ".wps"
-    body = path.read_text()
-    assert "SSID: HomeNet" in body and "PSK: yxws3tik" in body and "WPS-PBC" in body
-
-
-def test_save_pbc_credential_sanitizes_ssid(tmp_path):
-    path = save_pbc_credential("../evil name/", "aa:bb:cc:dd:ee:ff", "pw", captures_dir=str(tmp_path))
-    assert path.parent == tmp_path                # no path escape
-    assert "/" not in path.name and "\\" not in path.name

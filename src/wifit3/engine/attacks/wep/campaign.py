@@ -190,8 +190,7 @@ class WepCampaign:
                     # with the shortcut letter highlighted.
                     self._log(_key_markup(key))
                     self._log(treelog.leaf(
-                        r"[white]\[[bold cyan]c[/bold cyan]]opy to clipboard, "
-                        r"or \[[bold cyan]s[/bold cyan]]ave to file[/white]"
+                        r"[white]\[[bold cyan]c[/bold cyan]]opy to clipboard[/white]"
                     ))
                     # Done — stop transmitting (replay + fake-auth keepalive).
                     self.replay.stop()

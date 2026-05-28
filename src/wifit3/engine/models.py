@@ -296,14 +296,6 @@ class AccessPoint(BaseModel):
     persisted: List[PersistedCapture] = Field(default_factory=list)
 
     @property
-    def has_capture(self) -> bool:
-        """True iff there's something worth saving — a WPA handshake/PMKID, or
-        a recovered WEP key."""
-        if self.wep_key is not None:
-            return True
-        return any(hs.is_complete or hs.pmkid for hs in self.handshakes.values())
-
-    @property
     def wps_pbc_active(self) -> bool:
         """True during a WPS Push-Button walk window — the AP advertises PBC
         (Device Password ID 0x0004) with an active Selected Registrar. This is

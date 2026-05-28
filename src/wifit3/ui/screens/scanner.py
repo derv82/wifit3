@@ -17,11 +17,11 @@ from wifit3.engine.attacks.wps.pbc import (
     PbcArmMode,
     PbcWatcher,
     WpsPbcCapture,
-    save_pbc_credential,
 )
 from wifit3.engine.attacks.wps.registrar import PinResult
 from wifit3.engine.capture_history import load_capture_index, summarize
 from wifit3.engine.models import AccessPoint, PersistedCapture
+from wifit3.engine.save import save_handshake, save_pmkid, save_wps_pbc
 
 from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector
 from ..encryption_format import format_encryption_markup
@@ -485,22 +485,25 @@ class ScannerView(Screen):
 
     def _drain_capture_events(self, ap: AccessPoint, forged_macs) -> None:
         for ev in self._events.poll(ap, forged_macs=forged_macs):
-            self._log_capture_event(ev)
+            self._log_capture_event(ev, ap)
 
-    def _log_capture_event(self, ev: CaptureEvent) -> None:
+    def _log_capture_event(self, ev: CaptureEvent, ap: AccessPoint) -> None:
         ap_label = escape(ev.ssid or ev.bssid)
         client = escape(ev.client_mac)
+        saved_path = None
         if ev.kind == "handshake_complete":
             pair = ev.pair_label or "?"
             msg = (
                 f"[bold green]✓ HANDSHAKE[/bold green] ({pair}) on "
                 f"[bold]{ap_label}[/bold] from [bold]{client}[/bold]"
             )
+            saved_path = save_handshake(ap, ev.client_mac)
         elif ev.kind == "pmkid":
             msg = (
                 f"[bold green]✓ PMKID[/bold green] on "
                 f"[bold]{ap_label}[/bold] from [bold]{client}[/bold]"
             )
+            saved_path = save_pmkid(ap, ev.client_mac)
         elif ev.kind == "decloak":
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
             msg = (
@@ -511,6 +514,9 @@ class ScannerView(Screen):
         else:
             return  # eapol events suppressed in scanner
         self._write_log(Text.from_markup(msg, emoji=False))
+        if saved_path is not None:
+            self._write_log(Text.from_markup(
+                f"[dim](saved {escape(saved_path.name)})[/dim]", emoji=False))
 
     def _write_log(self, text) -> None:
         try:
@@ -676,8 +682,11 @@ class ScannerView(Screen):
                 self._write_log(treelog.branch_ok(
                     f"[black bold on cyan] PSK for {name}: \"{escape(outcome.psk)}\" [/black bold on cyan]"))
                 try:
-                    path = save_pbc_credential(outcome.ssid or ap.ssid or "", ap.bssid, outcome.psk)
-                    self._write_log(treelog.leaf(f"[cyan]saved[/cyan] [dim]to {escape(path.name)}[/dim]"))
+                    path = save_wps_pbc(ap, outcome.psk)
+                    if path is not None:
+                        self._write_log(treelog.leaf(f"[cyan]saved[/cyan] [dim]to {escape(path.name)}[/dim]"))
+                    else:
+                        self._write_log(treelog.leaf("[dim](already saved)[/dim]"))
                 except Exception:
                     self._write_log(treelog.leaf("[dim](PSK not saved to disk)[/dim]"))
             else:

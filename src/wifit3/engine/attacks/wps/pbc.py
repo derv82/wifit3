@@ -14,9 +14,6 @@ from __future__ import annotations
 
 import enum
 import logging
-import re
-import time
-from pathlib import Path
 from typing import Optional
 
 from .association import WPS_REQ_ENROLLEE, WlanTransport, WpsAssociation, random_client_mac, str_to_mac
@@ -53,26 +50,6 @@ class PbcWatcher:
         opened = current - self._active
         self._active = current
         return [ap for ap in aps if ap.bssid in opened]
-
-
-def save_pbc_credential(
-    ssid: str, bssid: str, psk: str,
-    *, captures_dir="captures", method: str = "WPS-PBC", pin: Optional[str] = None,
-) -> Path:
-    """Persist a recovered WPS PSK to captures/ (gitignored) so it survives exit.
-
-    Same .wps format whether PSK came from PBC or PIN brute — both routes are
-    just "WPS gave us the PSK." The ``method`` field discriminates; the optional
-    ``pin`` is recorded too when known (PIN attack discloses it).
-    """
-    safe = re.sub(r"[^A-Za-z0-9_-]", "_", ssid or "hidden")[:32]
-    path = Path(captures_dir) / f"{safe}_{bssid.replace(':', '-')}_{int(time.time())}.wps"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    body = f"SSID: {ssid}\nBSSID: {bssid}\nPSK: {psk}\nmethod: {method}\n"
-    if pin:
-        body += f"PIN: {pin}\n"
-    path.write_text(body)
-    return path
 
 
 class WpsPbcCapture:

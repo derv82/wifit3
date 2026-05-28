@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import re
 import time
 from collections import Counter, deque
 from datetime import datetime
@@ -17,15 +16,16 @@ from rich.markup import escape
 
 from wifit3.engine.models import AccessPoint
 from wifit3.engine.attacks import treelog
-from wifit3.engine.hc22000 import write_hc22000
-from wifit3.engine.pcap import write_pcap
+from wifit3.engine.save import (
+    save_handshake, save_pmkid, save_wep_key, save_wps_pbc, save_wps_pin,
+)
 from wifit3.engine.attacks.pmkid_harvest import PmkidHarvestAttack
 from wifit3.engine.attacks.sae_probe import SAEGroupProbeAttack
 from wifit3.engine.attacks.wpa3_downgrade import WPA3DowngradeAttack
 from wifit3.engine.attacks.wep.campaign import WepCampaign
 from wifit3.engine.attacks.wep.crack import CRACK_READY_THRESHOLD
 from wifit3.engine.attacks.wps.campaign import WpsCampaign
-from wifit3.engine.attacks.wps.pbc import WpsPbcCapture, save_pbc_credential
+from wifit3.engine.attacks.wps.pbc import WpsPbcCapture
 from wifit3.engine.attacks.wps.registrar import PinResult
 
 from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector
@@ -79,13 +79,9 @@ class FocusView(Screen):
     BINDINGS = [
         Binding("escape", "go_back", "Back to Scanner", show=True),
         Binding("q", "app.quit", "Quit", show=True),
-        # 's' has two labels for the same key — check_action() reveals exactly
-        # one based on the target's encryption (Save Capture for WPA's
-        # handshake/PMKID, Save Key for a cracked WEP key) and hides both until
-        # there's actually something to save. Likewise 'c' only appears once a
-        # WEP key is recovered.
-        Binding("s", "save_capture", "Save Capture", show=True),
-        Binding("s", "save_key", "Save Key", show=True),
+        # 'c' is only revealed once a WEP key is recovered (check_action gates
+        # it). Save no longer has a hotkey — engine.save persists artifacts
+        # automatically at the moment of capture.
         Binding("c", "copy_key", "Copy WEP Key", show=True),
     ]
 
@@ -154,7 +150,6 @@ class FocusView(Screen):
                             yield Button("WPS PIN", variant="primary", id="btn-wps-pin", disabled=True)
                         with Horizontal(classes="button-row"):
                             yield Button("WPA ↓", variant="primary", id="btn-wpa3-down", disabled=True)
-                            yield Button("Save", variant="success", id="btn-save", disabled=True)
                             yield Button("Frag", variant="primary", id="btn-frag")
                     with Vertical(classes="info-box", id="client-panel"):
                         yield Label("CLIENTS", classes="panel-title", id="lbl-clients-title")
@@ -470,6 +465,13 @@ class FocusView(Screen):
             # after a successful crack. The key persists on ap.wep_key.
             camp = self._wep_campaign
             if camp is not None and camp.recovered_key is not None:
+                # Persist the key. Dedupe across the polling window: this branch
+                # may fire on several update_ui ticks before _stop_generate_ivs
+                # nulls the campaign — save_wep_key returns None on the second+
+                # pass and produces no extra log line.
+                saved = save_wep_key(ap, camp.recovered_key)
+                if saved is not None:
+                    self._log(f"[dim](saved {escape(saved.name)})[/dim]")
                 self._stop_generate_ivs()
                 camp = None
             # Replay is the campaign switch: green to start, red to STOP the
@@ -608,22 +610,8 @@ class FocusView(Screen):
                 Text.from_markup(f"PMKID:     {pmkid_text}", emoji=False)
             )
 
-        # Save button.
-        # Save only appears once there's something to save (a WEP key, or a
-        # WPA handshake/PMKID) — hidden, not shown-disabled. It's created
-        # disabled (compose), so clear that when shown or it greys out.
-        btn_save = self.query_one("#btn-save", Button)
-        # Keep Save's grid cell reserved (visibility, not display) so its
-        # row-mate Frag stays pinned in the right column even before there's
-        # anything to save — otherwise a display:none Save collapses the row and
-        # Frag slides under Replay.
-        btn_save.display = True
-        btn_save.visible = ap.has_capture
-        btn_save.disabled = not ap.has_capture
-        # Button stays plain "Save" to fit the narrow panel; the footer 's'
-        # carries the crypto-specific label (Save Capture / Save Key).
-        # Re-evaluate the footer's Save/Copy keys (check_action) as the key /
-        # handshake state changes.
+        # Re-evaluate the footer's Copy key (check_action) as WEP recovery
+        # toggles 'c' on/off.
         self.refresh_bindings()
 
         # Clients.
@@ -831,9 +819,9 @@ class FocusView(Screen):
 
     def _drain_capture_events(self, ap: AccessPoint, forged_macs: Set[str]) -> None:
         for ev in self._events.poll(ap, forged_macs=forged_macs):
-            self._log_capture_event(ev)
+            self._log_capture_event(ev, ap)
 
-    def _log_capture_event(self, ev: CaptureEvent) -> None:
+    def _log_capture_event(self, ev: CaptureEvent, ap: AccessPoint) -> None:
         client = escape(ev.client_mac)
         if ev.kind == "eapol":
             # Flat per-frame trace: one line per M1-M4 as it lands (incl. M1/M3
@@ -854,14 +842,20 @@ class FocusView(Screen):
             self._log(
                 f"[black bold on green] ✓ Valid 4-Way Handshake "
                 f"({ev.pair_label}) [/black bold on green] for "
-                f"[bold]{essid}[/bold] [dim](press s to save)[/dim]"
+                f"[bold]{essid}[/bold]"
             )
+            saved = save_handshake(ap, ev.client_mac)
+            if saved is not None:
+                self._log(f"[dim](saved {escape(saved.name)})[/dim]")
         elif ev.kind == "pmkid":
             # Significant event → same solid highlight as the handshake banner.
             self._log(
                 f"[black bold on green] ✓ PMKID captured [/black bold on green] "
-                f"from [bold]{client}[/bold] [dim](press s to save)[/dim]"
+                f"from [bold]{client}[/bold]"
             )
+            saved = save_pmkid(ap, ev.client_mac)
+            if saved is not None:
+                self._log(f"[dim](saved {escape(saved.name)})[/dim]")
         elif ev.kind == "decloak":
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
             self._log(
@@ -920,8 +914,11 @@ class FocusView(Screen):
                     f"[black bold on green] Password for {name}: "
                     f"\"{escape(outcome.psk)}\" [/black bold on green]"))
                 try:
-                    path = save_pbc_credential(outcome.ssid or ap.ssid or "", ap.bssid, outcome.psk)
-                    self._log(treelog.leaf(f"[dim](saved {escape(path.name)})[/dim]"))
+                    path = save_wps_pbc(ap, outcome.psk)
+                    if path is not None:
+                        self._log(treelog.leaf(f"[dim](saved {escape(path.name)})[/dim]"))
+                    else:
+                        self._log(treelog.leaf("[dim](already saved)[/dim]"))
                 except Exception:
                     self._log(treelog.leaf("[dim](save failed)[/dim]"))
             else:
@@ -984,14 +981,15 @@ class FocusView(Screen):
                 f"[black bold on green] Password for {ssid}: "
                 f"\"{escape(camp.state.found_psk or '')}\" [/black bold on green]"))
             # Persist the recovered creds so they survive exit + light the
-            # Scanner badge on next start (same .wps file as PBC, method tag
-            # discriminates). The saved path is its own └─► leaf below the
-            # Password branch so the tree closes cleanly.
+            # Scanner badge on next start. The saved path is its own └─► leaf
+            # below the Password branch so the tree closes cleanly.
             try:
-                path = save_pbc_credential(
-                    camp.target.ssid or "", camp.bssid, camp.state.found_psk or "",
-                    method="WPS-PIN", pin=camp.state.found_pin)
-                self._log(treelog.leaf(f"[dim](saved {escape(path.name)})[/dim]"))
+                path = save_wps_pin(
+                    camp.target, camp.state.found_pin, camp.state.found_psk or "")
+                if path is not None:
+                    self._log(treelog.leaf(f"[dim](saved {escape(path.name)})[/dim]"))
+                else:
+                    self._log(treelog.leaf("[dim](already saved)[/dim]"))
             except Exception:
                 self._log(treelog.leaf("[dim](save failed)[/dim]"))
         else:
@@ -1066,9 +1064,7 @@ class FocusView(Screen):
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
-        if bid == "btn-save":
-            self._save_capture()
-        elif bid == "btn-deauth-bcast":
+        if bid == "btn-deauth-bcast":
             self.run_worker(self._run_deauth_broadcast(), exclusive=True)
         elif bid == "btn-deauth-sel":
             self.run_worker(self._run_deauth_selected(), exclusive=True)
@@ -1086,29 +1082,16 @@ class FocusView(Screen):
             self._toggle_chop()
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
-        """Show/hide the Save + Copy footer keys based on the target's
-        encryption and whether there's anything to save yet. Returning False
-        hides the binding entirely (and blocks the keypress); the rest stay
-        shown. ``update_ui`` calls ``refresh_bindings()`` so this re-evaluates
+        """Show/hide the Copy footer key — only meaningful once a WEP key is
+        cracked. ``update_ui`` calls ``refresh_bindings()`` so this re-evaluates
         as the campaign progresses."""
-        if action in ("save_capture", "save_key", "copy_key"):
+        if action == "copy_key":
             ap = self.target_ap
             if ap is None:
                 return False
             is_wep = (ap.encryption or "").upper() == "WEP"
-            if action == "save_capture":      # WPA: a handshake/PMKID to write
-                return not is_wep and ap.has_capture
-            # save_key / copy_key: a recovered WEP key
             return is_wep and ap.wep_key is not None
         return True
-
-    def action_save_capture(self) -> None:
-        self._save_capture()
-
-    def action_save_key(self) -> None:
-        # Same writer as Save Capture — it routes to the WEP-key path when a key
-        # is present; the separate action just gives the footer a WEP label.
-        self._save_capture()
 
     def action_copy_key(self) -> None:
         """Copy the recovered WEP key (hex) to the clipboard — saves the user
@@ -1211,9 +1194,17 @@ class FocusView(Screen):
                 f"[bold green]PMKID harvested:[/bold green] "
                 f"[black bold on cyan] {pmkid.hex()} [/black bold on cyan]"
             ))
-            self._log(treelog.leaf(
-                "[dim]press[/] [cyan bold]s[/] [dim]to[/] [cyan bold]save[/] [dim]the hashline[/]"
-            ))
+            # The harvest attack populates ap.handshakes[<our client>].pmkid;
+            # save the artifact and close the tree with the resulting filename.
+            saved: Optional[Path] = None
+            for client_mac, hs in ap.handshakes.items():
+                if hs.pmkid == pmkid:
+                    saved = save_pmkid(ap, client_mac)
+                    break
+            if saved is not None:
+                self._log(treelog.leaf(f"[dim](saved {escape(saved.name)})[/dim]"))
+            else:
+                self._log(treelog.leaf("[dim](already saved)[/dim]"))
         else:
             self._log(treelog.branch_fail("[bold red]No PMKID harvested[/bold red] — possible reasons:"))
             self._log(treelog.branch("[dim]AP may not advertise a PMKID KDE[/dim]"))
@@ -1431,94 +1422,3 @@ class FocusView(Screen):
         # the channel filter; restarting here would silently widen it.
         self.app.pop_screen()
 
-    # ----- Save --------------------------------------------------------------
-
-    def _save_capture(self) -> None:
-        ap = self.target_ap
-        if not ap or not ap.has_capture:
-            self._log("[yellow]⚠ Nothing to save yet.[/yellow]")
-            return
-
-        # WEP: there's no handshake/pcap — just write the recovered key.
-        if ap.wep_key is not None:
-            self._save_wep_key(ap)
-            return
-
-        frames: list[bytes] = []
-        beacon_added = False
-        for hs in ap.handshakes.values():
-            if hs.beacon_frame and not beacon_added:
-                frames.append(hs.beacon_frame)
-                beacon_added = True
-            for f in hs.eapol_frames:
-                frames.append(f.raw)
-
-        # Count distinct handshake instances (matches the CAPTURE panel and the
-        # one-WPA*02-line-per-instance the hc22000 writer now emits).
-        n_complete = sum(hs.complete_instances for hs in ap.handshakes.values())
-        n_pmkid = sum(1 for hs in ap.handshakes.values() if hs.pmkid)
-
-        captures_dir = Path("captures")
-        safe_ssid = re.sub(r"[^A-Za-z0-9_-]", "_", ap.ssid or "hidden")[:24] or "hidden"
-        safe_bssid = ap.bssid.replace(":", "-")
-        stem = f"{safe_ssid}_{safe_bssid}_{int(time.time())}"
-        pcap_path = captures_dir / f"{stem}.pcap"
-        hc_path = captures_dir / f"{stem}.hc22000"
-
-        try:
-            n_written = write_pcap(pcap_path, frames)
-            n_hashlines = write_hc22000(hc_path, ap)
-        except Exception as exc:
-            logger.exception("Save capture failed")
-            self._log(f"[bold red]✗ Save failed:[/bold red] {escape(str(exc))}")
-            return
-
-        parts: list[str] = []
-        if n_complete:
-            parts.append(f"{n_complete} handshake(s)")
-        if n_pmkid:
-            parts.append(f"{n_pmkid} PMKID(s)")
-        summary = " + ".join(parts) if parts else f"{n_written} frame(s)"
-        self._log(
-            f"[bold green]✓ Saved {summary}[/bold green] "
-            f"({n_written} frames) → [bold]{escape(str(pcap_path))}[/bold]"
-        )
-        if n_hashlines:
-            self._log(
-                f"[bold green]✓ {n_hashlines} hashline(s)[/bold green] "
-                f"→ [bold]{escape(str(hc_path))}[/bold] "
-                f"[dim](hashcat -m 22000)[/dim]"
-            )
-        else:
-            self._log(
-                "[dim]  (no hc22000 hashline produced — "
-                "hidden SSID or truncated capture)[/dim]"
-            )
-
-    def _save_wep_key(self, ap: AccessPoint) -> None:
-        """Write the recovered WEP key to captures/<ssid>_<bssid>_<ts>_wepkey.txt."""
-        key = ap.wep_key
-        captures_dir = Path("captures")
-        safe_ssid = re.sub(r"[^A-Za-z0-9_-]", "_", ap.ssid or "hidden")[:24] or "hidden"
-        safe_bssid = ap.bssid.replace(":", "-")
-        path = captures_dir / f"{safe_ssid}_{safe_bssid}_{int(time.time())}_wepkey.txt"
-        ascii_form = (
-            key.decode("ascii") if all(0x20 <= b < 0x7F for b in key) else ""
-        )
-        try:
-            captures_dir.mkdir(parents=True, exist_ok=True)
-            lines = [
-                f"SSID:  {ap.ssid or '<hidden>'}",
-                f"BSSID: {ap.bssid}",
-                f"WEP key (hex):   {key.hex()}",
-            ]
-            if ascii_form:
-                lines.append(f'WEP key (ASCII): "{ascii_form}"')
-            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        except Exception as exc:
-            logger.exception("Save WEP key failed")
-            self._log(f"[bold red]✗ Save failed:[/bold red] {escape(str(exc))}")
-            return
-        self._log(
-            f"[bold green]✓ Saved WEP key[/bold green] → [bold]{escape(str(path))}[/bold]"
-        )

@@ -3,11 +3,18 @@ attack running — just parking on the target should reflect frames the radio
 hears. Drives a real WlanInterface (mock driver) end to end: beacon → target →
 Focus → feed M1(+PMKID)/M2 → assert the CAPTURE panel + event log update."""
 import pytest
-from textual.widgets import Label, Button, RichLog
+from textual.widgets import Label, RichLog
 
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.focus import FocusView
 from wifit3.wlan.interface import WlanInterface
+
+
+@pytest.fixture(autouse=True)
+def _isolate_captures_dir(monkeypatch, tmp_path):
+    """Auto-save writes to ``Path("captures")`` (cwd-relative). Tests park in
+    tmp_path so we don't litter the real captures/ directory."""
+    monkeypatch.chdir(tmp_path)
 
 
 class MockDriver:
@@ -90,11 +97,15 @@ async def test_focus_surfaces_passive_handshake_and_pmkid():
 
         assert "Captured" in str(hs_label.render()), str(hs_label.render())
         assert "Captured" in str(pmkid_label.render()), str(pmkid_label.render())
-        assert focus.query_one("#btn-save", Button).disabled is False
 
         log_text = _log_text(focus.query_one("#focus-event-log", RichLog))
         assert "Valid 4-Way Handshake" in log_text, log_text
         assert "M1+M2" in log_text, log_text
+        # Auto-save fires inline with the capture-event log: the PMKID lands on
+        # disk without any user keystroke. (The handshake save is gated by a
+        # full hashcat-emittable EAPOL payload, which the synthetic frames here
+        # lack; that path is covered in tests/engine/test_save.py.)
+        assert "(saved" in log_text and "_pmkid.hc22000" in log_text, log_text
 
 
 @pytest.mark.asyncio
