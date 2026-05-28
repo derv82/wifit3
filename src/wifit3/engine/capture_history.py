@@ -1,18 +1,16 @@
 """Load previously-saved captures from ``captures/`` into per-AP history.
 
 Wifit3 writes one artifact per capture, named
-``<ssid>_<bssid-dashes>_<epoch>[.pcap|.hc22000|_wepkey.txt]`` (see
-``hc22000.write_hc22000`` and ``FocusView._save_wep_key``). On scan start we
-read that directory back so a previously-cracked WEP key or captured
-handshake/PMKID re-surfaces as a badge + a Focus summary, instead of looking
-like we have nothing.
+``<ssid>_<bssid-dashes>_<epoch>_<kind>.<ext>`` where ``<kind>`` ∈
+``{handshake, pmkid, wep_key, wps_pin, wps_pbc}`` and the extension follows
+from the kind (``hc22000`` for hashlines, ``txt`` for text creds, ``pcap`` for
+the raw companion). See ``engine.save`` for the producer. On scan start we
+read this directory back so a previously-recovered key or captured
+handshake/PMKID re-surfaces as a badge + a Focus summary.
 
-The parser is intentionally dumb and read-only: it classifies by *filename*
-plus a cheap peek into the ``.hc22000`` text (``WPA*01*`` = PMKID, ``WPA*02*``
-= EAPOL handshake). It never parses 802.11 from the ``.pcap`` — the ``.pcap``
-is the raw companion to its ``.hc22000`` and is skipped for classification.
-Anything that doesn't match the naming scheme (e.g. a bare ``cracks.txt``) is
-ignored rather than guessed at.
+The parser classifies entirely by filename: ``_handshake`` files contain WPA*02
+hashlines, ``_pmkid`` files contain WPA*01. The ``.pcap`` companion is skipped
+for classification; its hashline sibling carries the verdict.
 """
 from __future__ import annotations
 
@@ -26,21 +24,18 @@ from wifit3.engine.models import PersistedCapture
 
 logger = logging.getLogger(__name__)
 
-# <ssid>_<bssid>_<epoch>[_wepkey].<ext>. SSID may itself contain underscores
+# <ssid>_<bssid>_<epoch>_<kind>.<ext>. SSID may itself contain underscores
 # ("Beachball_2_4"), so anchor on the dash-separated 6-octet BSSID + epoch +
-# extension from the right; the SSID is whatever's left.
+# kind + extension from the right; the SSID is whatever's left.
 _NAME_RE = re.compile(
     r"^(?P<ssid>.+)_"
     r"(?P<bssid>[0-9a-fA-F]{2}(?:-[0-9a-fA-F]{2}){5})_"
-    r"(?P<epoch>\d+)"
-    r"(?P<wep>_wepkey)?"
-    r"\.(?P<ext>pcap|hc22000|txt|wps)$"
+    r"(?P<epoch>\d+)_"
+    r"(?P<kind>handshake|pmkid|wep_key|wps_pin|wps_pbc)"
+    r"\.(?P<ext>pcap|hc22000|txt)$"
 )
 
-# "WEP key (hex):   <hex>" line written by FocusView._save_wep_key.
 _WEPKEY_RE = re.compile(r"WEP key \(hex\):\s*([0-9a-fA-F]+)")
-
-# "PSK: <psk>" line written by wps.pbc.save_pbc_credential.
 _WPSPSK_RE = re.compile(r"^PSK:\s*(.+)$", re.MULTILINE)
 
 
@@ -49,48 +44,27 @@ def _bssid_to_colon(dashed: str) -> str:
     return dashed.replace("-", ":").lower()
 
 
-def _classify_hc22000(path: Path) -> List[str]:
-    """Return the capture kinds present in a .hc22000 file (HS and/or PMKID).
-
-    One file can hold both (a PMKID line and an EAPOL line for the same AP), so
-    this returns every distinct kind found rather than a single verdict.
-    """
-    kinds: List[str] = []
+def _read_text(path: Path) -> str | None:
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        return path.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
         logger.debug("capture_history: unreadable %s: %s", path.name, e)
-        return kinds
-    has_pmkid = has_hs = False
-    for line in text.splitlines():
-        if line.startswith("WPA*01*"):
-            has_pmkid = True
-        elif line.startswith("WPA*02*"):
-            has_hs = True
-    if has_hs:
-        kinds.append("HS")
-    if has_pmkid:
-        kinds.append("PMKID")
-    return kinds
+        return None
 
 
 def _read_wep_key(path: Path) -> str | None:
-    """Extract the hex WEP key from a ``_wepkey.txt`` file, or None."""
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError as e:
-        logger.debug("capture_history: unreadable %s: %s", path.name, e)
+    """Extract the hex WEP key from a ``_wep_key.txt`` file, or None."""
+    text = _read_text(path)
+    if text is None:
         return None
     m = _WEPKEY_RE.search(text)
     return m.group(1).lower() if m else None
 
 
 def _read_wps_psk(path: Path) -> str | None:
-    """Extract the PSK from a ``.wps`` file (WPS-PBC capture), or None."""
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError as e:
-        logger.debug("capture_history: unreadable %s: %s", path.name, e)
+    """Extract the PSK from a ``_wps_pin.txt`` or ``_wps_pbc.txt`` file, or None."""
+    text = _read_text(path)
+    if text is None:
         return None
     m = _WPSPSK_RE.search(text)
     return m.group(1).strip() if m else None
@@ -102,23 +76,23 @@ def _parse_file(path: Path) -> List[PersistedCapture]:
     if not m:
         return []
     epoch = int(m.group("epoch"))
+    kind = m.group("kind")
     ext = m.group("ext")
-    is_wep = m.group("wep") is not None
 
-    if is_wep and ext == "txt":
+    if kind == "wep_key" and ext == "txt":
         key = _read_wep_key(path)
         if key is None:
             return []
         return [PersistedCapture(kind="WEP", timestamp=epoch,
                                  value=key, path=str(path))]
-    if ext == "wps":
+    if kind in ("wps_pin", "wps_pbc") and ext == "txt":
         return [PersistedCapture(kind="WPS", timestamp=epoch,
                                  value=_read_wps_psk(path), path=str(path))]
-    if ext == "hc22000":
-        return [PersistedCapture(kind=kind, timestamp=epoch, path=str(path))
-                for kind in _classify_hc22000(path)]
-    # .pcap (raw companion to the .hc22000) and any other non-wepkey .txt: the
-    # hc22000/wepkey siblings carry the verdict, so nothing to add here.
+    if kind == "handshake" and ext == "hc22000":
+        return [PersistedCapture(kind="HS", timestamp=epoch, path=str(path))]
+    if kind == "pmkid" and ext == "hc22000":
+        return [PersistedCapture(kind="PMKID", timestamp=epoch, path=str(path))]
+    # .pcap companion + any other shape: the hashline/text sibling has the verdict.
     return []
 
 
