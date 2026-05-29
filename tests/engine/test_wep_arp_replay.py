@@ -62,6 +62,48 @@ def _replay(mocker, collector, **kw):
     return r
 
 
+def _capture_logs(mocker, collector, **kw):
+    """Build a replay engine whose `_log` calls go into a list. Lets tests
+    assert on what the event-log sees."""
+    captured: list[str] = []
+    r = _replay(mocker, collector, log_callback=captured.append, **kw)
+    return r, captured
+
+
+def test_begin_trial_log_includes_candidate_byte_count(mocker):
+    """User-visible event log should show the trial candidate's byte
+    length — helps spot FCS-padded or mis-classified candidates."""
+    r, logs = _capture_logs(mocker, FakeCollector({}, []))
+    cand = bytes([0x08, 0x42]) + b"\x00" * 22 + b"\xAA" * 44   # 68 B
+    r._begin_trial(cand)
+    assert any("(68 B)" in m for m in logs), logs
+
+
+def test_replayable_leaf_includes_byte_count(mocker):
+    """The 'replayable' branch on _judge() also names the byte count so
+    user can confirm which length succeeded."""
+    coll = FakeCollector({}, [])
+    r, logs = _capture_logs(mocker, coll)
+    cand = bytes([0x08, 0x42]) + b"\x00" * 22 + b"\xCC" * 44   # 68 B
+    r._current = cand
+    r._trial_gain = r._MIN_TRIAL_GAIN   # immediate winner
+    r._judge(gain=r._MIN_TRIAL_GAIN)
+    assert any("(68 B)" in m and "replayable" in m for m in logs), logs
+
+
+def test_failed_to_replay_leaf_includes_byte_count(mocker):
+    """The blacklist branch on _judge() also names the byte count."""
+    import time as _time
+    coll = FakeCollector({}, [])
+    r, logs = _capture_logs(mocker, coll)
+    cand = bytes([0x08, 0x42]) + b"\x00" * 22 + b"\xDD" * 60   # 84 B
+    r._current = cand
+    r._trial_gain = 0
+    r._trial_started = _time.time() - r._TRIAL_WINDOW - 1     # past window
+    r._judge(gain=0)
+    assert any("(84 B)" in m and "failed to replay" in m for m in logs), logs
+
+
 def test_build_replay_frame_readdresses_to_tods(mocker):
     r = _replay(mocker, FakeCollector({}, []), source_mac=b"\x02\x00\x00\x00\x00\x09")
     captured = bytes([0x08, 0x42]) + b"\x00" * 22 + b"\x03\xff\x00\x00" + b"\xde" * 40

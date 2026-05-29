@@ -220,9 +220,12 @@ class WepArpReplay:
         if cand is not self._winner:
             self.stats.candidates_tried += 1
         # Group header (plain) — one per candidate trial; _judge closes it with a
-        # └─✓ (replaying) or └─╳ (couldn't replay) leaf.
+        # └─✓ (replaying) or └─╳ (couldn't replay) leaf. The byte-count lets
+        # the user see which captured lengths get tried vs. which actually
+        # replay — surfaces FCS-padded / mis-classified candidates.
         self._log(
-            "[green]ARP Replay:[/green] [white]Testing candidate packet…[/white]"
+            f"[green]ARP Replay:[/green] [white]Testing candidate packet "
+            f"({len(cand)} B)…[/white]"
         )
 
     # ---- Replay loop --------------------------------------------------------
@@ -379,18 +382,20 @@ class WepArpReplay:
             self.stats.has_winner = True
             self._failed.discard(self._current)
             self._log(treelog.branch_ok(
-                "Candidate packet is [bold green]replayable[/bold green]"
+                f"Candidate packet ({len(self._current)} B) is "
+                "[bold green]replayable[/bold green]"
             ))
             self._log(treelog.leaf_ok(
                 "[green]ARP Replaying now[/green] [dim](see CAPTURE)[/dim]"
             ))
         elif (time.time() - self._trial_started) >= self._TRIAL_WINDOW:
+            failed_len = len(self._current)
             self._failed.add(self._current)
             self._failed_at = time.time()
             self.stats.candidates_failed = len(self._failed)
             self._current = None
             self._log(treelog.leaf_fail(
-                "[yellow]failed to replay[/yellow] "
+                f"[yellow]failed to replay ({failed_len} B)[/yellow] "
                 "[dim](weak signal or hardened AP)[/dim]"
             ))
 
