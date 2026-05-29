@@ -28,6 +28,7 @@ from wifit3.engine.attacks.wps.pbc import WpsPbcCapture
 from wifit3.engine.attacks.wps.registrar import PinResult
 
 from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind
+from ..capture_log import eapol_message_markup
 from ..encryption_format import (
     format_encryption_markup,
     format_pmf_markup,
@@ -853,20 +854,14 @@ class FocusView(Screen):
     def _log_capture_event(self, ev: CaptureEvent, ap: AccessPoint) -> None:
         client = escape(ev.client_mac)
         if ev.kind == CaptureKind.EAPOL:
-            # Flat per-frame trace: one line per M1-M4 as it lands (incl. M1/M3
-            # retransmits). Routine, so no solid highlight — the bg block is
-            # reserved for the "Valid 4-Way Handshake" banner below. Completeness
-            # is announced once per instance there, never on this line.
-            msg_label = f"M{ev.msg_num}" if ev.msg_num else "EAPOL-?"
-            essid = escape(ev.ssid or ev.bssid)
-            self._log(
-                f"[bold cyan]{msg_label}[/bold cyan] "
-                f"[cyan]EAPOL handshake from [bold]{client}[/bold] "
-                f"for [bold]{essid}[/bold][/cyan]"
-            )
+            # Per-frame trace: one line per M1-M4 as it lands (incl. M1/M3
+            # retransmits), ticking each hashcat-relevant field so the contents
+            # are legible as they fly by. Routine, so no solid highlight — the bg
+            # chip is reserved for the "Valid 4-Way Handshake" banner below.
+            # Completeness is announced once per instance there, never here.
+            self._log(eapol_message_markup(ev))
         elif ev.kind == CaptureKind.HANDSHAKE:
-            # Significant event → solid highlight. Client MAC is omitted (the
-            # surrounding Mx lines already carry it); re-fires per new 4-way.
+            # Significant event → solid highlight. Re-fires per new 4-way.
             essid = escape(ev.ssid or ev.bssid)
             self._log(
                 f"[black bold on green] ✓ Valid 4-Way Handshake "

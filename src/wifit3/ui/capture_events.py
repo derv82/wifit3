@@ -14,6 +14,7 @@ from enum import Enum
 from typing import Iterator, Optional, Set, Tuple
 
 from wifit3.engine.models import AccessPoint
+from wifit3.engine.wpa import handshake as wpa
 
 
 # Human-readable labels for AccessPoint.decloak_method / CaptureEvent.method.
@@ -49,6 +50,14 @@ class CaptureEvent:
     # eapol-only
     msg_num: Optional[int] = None
     replay_hex: Optional[str] = None
+    # eapol-only content descriptor (from engine.wpa.describe) — the hashcat-
+    # relevant fields, so the UI can tick each (ANonce/SNonce/MIC/EAPOL) and dim
+    # a frame that arrived degraded. ``useful`` = "contributes to a crackable
+    # pair"; a useful frame is NOT a capture on its own (that's HANDSHAKE).
+    has_nonce: Optional[bool] = None
+    has_mic: Optional[bool] = None
+    eapol_complete: Optional[bool] = None
+    useful: Optional[bool] = None
     # handshake_complete-only
     pair_label: Optional[str] = None
     # decloak-only: "probe_resp" | "assoc_req" (future: "mbssid_ie", "beacon_leak")
@@ -142,6 +151,7 @@ class CaptureEventDetector:
                 frames = hs.eapol_frames
                 if len(frames) > seen_n:
                     for f in frames[seen_n:]:
+                        info = wpa.describe(f)
                         yield CaptureEvent(
                             kind=CaptureKind.EAPOL,
                             bssid=ap.bssid,
@@ -149,6 +159,10 @@ class CaptureEventDetector:
                             ssid=ap.ssid,
                             msg_num=f.msg_num,
                             replay_hex=f.replay_hex,
+                            has_nonce=info.has_nonce,
+                            has_mic=info.has_mic,
+                            eapol_complete=info.eapol_complete,
+                            useful=info.useful,
                         )
                     self._seen_eapol_count[key] = len(frames)
 

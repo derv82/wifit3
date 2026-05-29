@@ -90,7 +90,8 @@ async def test_focus_surfaces_passive_handshake_and_pmkid(tmp_path):
         focus.update_ui()
         await pilot.pause()
         log_text = _log_text(focus.query_one("#focus-event-log", RichLog))
-        assert "M1" in log_text and "EAPOL handshake" in log_text, log_text
+        # Per-frame trace ticks the fields: M1 is the ANonce donor.
+        assert "M1" in log_text and "ANonce" in log_text, log_text
         assert "PMKID captured" in log_text, log_text
 
         # M2 completes a hashcat-valid M1+M2 pair → "full handshake" line.
