@@ -203,10 +203,7 @@ class WepFragmentation:
                 self._seed_key = key
                 self._rounds_on_seed = 0
                 # Group header (plain) — each seed attempt is its own tree.
-                self._log(
-                    "[cyan]Fragmentation:[/cyan] data seeded, forging "
-                    "[green]ARP[/green] packet…"
-                )
+                self._log("[cyan]Fragmentation:[/cyan] forging ARP packet…")
                 return True
         return False
 

@@ -81,8 +81,6 @@ class ScannerView(Screen):
         Binding("c", "change_channel", "Channel Filter", show=True),
         Binding("s", "cycle_sort", "Sort Col", show=True),
         Binding("o", "toggle_sort_dir", "Sort Asc/Desc", show=True),
-        Binding("d", "decloak", "Decloak Sel", show=True),
-        Binding("D", "decloak_test", "Decloak Test", show=True),
         Binding("f", "toggle_fade", "Toggle Fade", show=True),
         Binding("l", "toggle_log", "Toggle Log", show=True),
         Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
@@ -164,11 +162,6 @@ class ScannerView(Screen):
     async def on_mount(self) -> None:
         log = self.query_one("#system-log", RichLog)
         log.write("[bold green]Scanner Initialized.[/bold green]")
-        log.write(
-            f"[dim]Rows stay bright for {int(GRACE_DURATION_S)}s after a beacon, "
-            f"then fade out over {int(FADE_DURATION_S - GRACE_DURATION_S)}s of silence "
-            f"and disappear. Press [bold]f[/bold] to toggle fading.[/dim]"
-        )
         self._load_capture_history()
         self._update_column_headers()
 

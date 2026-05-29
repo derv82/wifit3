@@ -99,16 +99,18 @@ class SplashView(Screen):
                 yield Static(LOGO, id="ascii-art")
             
             with Center():
-                yield Static(self._get_os_warning(), id="os-warning")
-            
-            with Center():
                 yield Label("Scanning for compatible hardware...", id="status-label")
-            
+
             with Center():
                 yield ProgressBar(total=100, show_eta=False, id="init-progress")
-            
+
             with Center():
                 yield ListView(id="device-list")
+
+            # OS notice (Zadig / rmmod help) sits BELOW the device list — it's
+            # supplementary, and the interface picker is what the user came for.
+            with Center():
+                yield Static(self._get_os_warning(), id="os-warning")
                 
         yield Footer()
 
@@ -150,7 +152,7 @@ class SplashView(Screen):
         list_view.clear()
         
         if interfaces:
-            self.query_one("#status-label", Label).update("[bold green]Select an interface to begin:[/bold green]")
+            self.query_one("#status-label", Label).update("[bold bright_green]Select an interface to begin:[/bold bright_green]")
             for iface in interfaces:
                 list_view.append(ListItem(Label(f"[{iface.name}] {iface.description}"), name=iface.name))
             # Highlight the first card so the user can hit Enter immediately —

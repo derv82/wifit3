@@ -72,6 +72,16 @@ def _format_duration(seconds: int) -> str:
     return f"{d}d {h}h" if h else f"{d}d"
 
 
+def _beacon_rate_color(rate: Optional[float]) -> Optional[str]:
+    """Flag only a near-dead beacon rate, nothing else. <3/s → red (we've
+    effectively stopped hearing this AP); any healthier rate is left uncoloured
+    so a normal AP doesn't strobe through colours as its rate wobbles around a
+    threshold. None = still warming up (no rate yet) — also uncoloured."""
+    if rate is not None and rate < 3:
+        return "red"
+    return None
+
+
 class FocusView(Screen):
     """The Attack/Focus mode for a specific AP."""
 
@@ -137,19 +147,21 @@ class FocusView(Screen):
                         ),
                         classes="info-box", id="panel-target",
                     )
-                    # ATTACKS — NO title bar: the buttons self-label, and the
-                    # family is stated by TARGET's "Encryption:" line. Crypto set
-                    # toggles via update_ui (ids unchanged). 2-per-row:
-                    #   WEP: Replay Chop / Save Frag   WPA: PMKID SAE / WPA↓ Save
+                    # ATTACKS — no title bar: buttons self-label, family stated
+                    # by TARGET's "Encryption:" line. WEP and WPA buttons share
+                    # the two rows; update_ui shows only the set that fits the
+                    # target. Replay gates Chop/Frag, so it sits alone on top:
+                    #   WEP:  Replay              WPA:  PMKID  WPS PIN
+                    #         Chop  Frag                WPA ↓
                     with Vertical(classes="info-box", id="attack-panel"):
                         with Horizontal(classes="button-row"):
                             yield Button("Replay", variant="success", id="btn-gen-ivs")
-                            yield Button("Chop", variant="primary", id="btn-chop")
                             yield Button("PMKID", variant="primary", id="btn-pmkid")
                             yield Button("WPS PIN", variant="primary", id="btn-wps-pin", disabled=True)
                         with Horizontal(classes="button-row"):
-                            yield Button("WPA ↓", variant="primary", id="btn-wpa3-down", disabled=True)
+                            yield Button("Chop", variant="primary", id="btn-chop")
                             yield Button("Frag", variant="primary", id="btn-frag")
+                            yield Button("WPA ↓", variant="primary", id="btn-wpa3-down", disabled=True)
                     with Vertical(classes="info-box", id="client-panel"):
                         yield Label("CLIENTS", classes="panel-title", id="lbl-clients-title")
                         client_table = DataTable(cursor_type="row", id="client-table")
@@ -326,23 +338,24 @@ class FocusView(Screen):
         self.query_one("#lbl-ssid", Label).update(
             Text.from_markup(ssid_markup, emoji=False)
         )
-        self.query_one("#lbl-bssid", Label).update(Text(f"BSSID: {ap.bssid}"))
-        # While in FocusView the hopper is always stopped — channel is locked.
-        self.query_one("#lbl-channel", Label).update(
-            Text.from_markup(
-                f"Channel: {ap.channel} [green](Locked)[/green]",
-                emoji=False,
-            )
+        self.query_one("#lbl-bssid", Label).update(
+            Text.from_markup(f"BSSID: [bold]{ap.bssid}[/bold]", emoji=False)
         )
-        # Last Beacon: most active targets sit at 0s, so colour by recency —
-        # green "now", orange for a brief gap, red once it's been quiet >10s.
+        # In FocusView the hopper is stopped and the channel is pinned to this
+        # target — that's implicit, so we don't label it (a "(Locked)" tag just
+        # reads as something being wrong).
+        self.query_one("#lbl-channel", Label).update(Text(f"Channel: {ap.channel}"))
+        # Last Beacon doubles as a "is the card actually on-channel?" health
+        # readout: an active AP sits at "now", so any drift is the tell that we've
+        # stopped hearing it (mistune / wedged RX). Escalate hard — a coloured
+        # chip by 1s, red by 3s — so a deaf card can't be missed.
         last_seen_s = max(0, int(time.time() - ap.last_seen))
         if last_seen_s == 0:
             beacon = "[green]now[/green]"
-        elif last_seen_s <= 10:
-            beacon = f"[orange1]{last_seen_s}s[/orange1]"
+        elif last_seen_s < 3:
+            beacon = f"[black bold on orange1] {last_seen_s}s [/black bold on orange1]"
         else:
-            beacon = f"[red]{_format_duration(last_seen_s)}[/red]"
+            beacon = f"[black bold on red] {_format_duration(last_seen_s)} [/black bold on red]"
         self.query_one("#lbl-last-beacon", Label).update(
             Text.from_markup(f"Last Beacon: {beacon}", emoji=False)
         )
@@ -536,11 +549,27 @@ class FocusView(Screen):
         oldest_t, oldest_n = self._beacon_samples[0]
         span = now - oldest_t
         # Need ~a second of window before the rate means anything.
-        rate_str = f"{(ap.beacons - oldest_n) / span:.1f}/s" if span >= 1.0 else "…/s"
-        self.query_one("#lbl-beacons", Label).update(
-            f"Beacons: {ap.beacons:,} ({rate_str})"
+        if span >= 1.0:
+            rate = (ap.beacons - oldest_n) / span
+            rate_str = f"{rate:.1f}/s"
+        else:
+            rate = None
+            rate_str = "…/s"
+        # Bold count always; colour the rate ONLY when it's near-dead (red) — a
+        # healthy rate stays plain so it doesn't strobe as it wobbles around a
+        # threshold (an AP sitting near a band edge would otherwise flicker).
+        rate_color = _beacon_rate_color(rate)
+        rate_markup = (f"[{rate_color}]({rate_str})[/{rate_color}]"
+                       if rate_color else f"({rate_str})")
+        self.query_one("#lbl-beacons", Label).update(Text.from_markup(
+            f"Beacons: [bold]{ap.beacons:,}[/bold] {rate_markup}",
+            emoji=False,
+        ))
+        # Power stays uncoloured — RSSI is too inconsistent across cards/ports to
+        # map to a meaningful health gradient without it flickering noise.
+        self.query_one("#lbl-pwr", Label).update(
+            Text.from_markup(f"Power: [bold]{ap.signal} dBm[/bold]", emoji=False)
         )
-        self.query_one("#lbl-pwr", Label).update(f"Power: {ap.signal} dBm")
 
         # WEP and WPA2/3 capture progress are mutually exclusive: WEP has no
         # handshake/PMKID, WPA has no IVs. Show whichever pair fits the target.

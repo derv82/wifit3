@@ -57,6 +57,7 @@ class WifiteApp(App):
     }
     #os-warning {
         content-align: center middle;
+        margin-top: 1;        /* gap between the device list above and this notice */
         margin-bottom: 1;
     }
     #status-label {
