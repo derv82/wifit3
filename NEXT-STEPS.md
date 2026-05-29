@@ -72,6 +72,13 @@ Recipe when fresh cold-boot captures land in `usb_dumps/captures_<driver>/`
    `linux-firmware/`, ship it in `chips/<driver>/assets/`.
 4. M1 = FW upload + FW_READY ACK only. Demoable, no PHY init.
 
+**Scope: 20 MHz primary channel only.** Don't port the kernel's 40/80 MHz
+channel-width path (`bw=1/2`, the `ch_group_index` offset math, the
+secondary-channel + per-width `EXT_CCA`-group setup). wifit3 only ever tunes the
+20 MHz primary — every frame it captures (beacons, EAPOL, WEP IVs) and transmits
+(deauth/replay) rides the primary at legacy rates, so 40/80 buys nothing and is
+pure port surface. (See `chips/mt76x2u/MT76X2U.md` → "Channel width — 20 MHz only".)
+
 ### Distant-future hardware ($$$)
 
 - TP-Link Archer T2U Plus (RTL8821AU / RTL8811AU).
@@ -177,27 +184,3 @@ Ties into the PRE-RELEASE ethics/guardrails item.
 
 - **Beacon count truncates past 10k** — `10512` renders as `0512`. Auto-size the
   BEACONS column (without breaking right-alignment).
-- **Cross-screen event log mirroring** — Focus and Scanner each maintain their
-  own RichLog + CaptureEventDetector; important events surfaced on Focus (WPS-PIN
-  success, WEP key crack + save) don't appear in Scanner's log, so the Scanner
-  view loses the rolling history when you focus an AP. Handshake/PMKID arrivals
-  happen to mirror today only because both screens' detectors fire on the same
-  underlying frames — which is also a small inefficiency.
-
-  Design space (when this gets picked up):
-  - **(a) Shared `WifiteApp.event_log` model** — single source of truth, both
-    screens subscribe. Cleanest long-term; biggest refactor (every `_log` /
-    `_write_log` call site becomes a publish; screens handle catch-up on resume).
-  - **(b) Cross-poke from `_log`** — each screen's logger writes a copy to
-    the other screen's RichLog if present. Surgical, no restructuring, but
-    drift-prone: a new log site silently breaks mirroring.
-  - **(c) Explicit `_log_shared(...)` helper** — callers opt in per-line for
-    cross-screen mirroring. Same drift risk as (b) but the call sites are
-    grep-able. Open question: tree-shape preservation when mirroring to
-    Scanner (Scanner's log style is flat banners — do we copy whole trees,
-    or flatten to a one-liner?).
-
-  Today only WPS-PIN success + WEP key save need mirroring; not worth (a) yet.
-  Start with (c) + flatten-on-mirror if/when this becomes a priority; upgrade
-  to (a) when a third cross-screen surface lands (e.g. a Status screen, or
-  a `--log-to-file` flag).

@@ -31,6 +31,22 @@ not here. `[SRC]` = kernel source (`data_dumps/mt76-source-v6.18/`). `[WIRE]`
 - **USB 3.0 capable**. `bcdUSB=0x0300`, PyUSB speed=4 (SUPER).
   `[WIRE]` live pyusb dump on `0e8d:7612`.
 
+## Channel width — 20 MHz only (intentional)
+
+wifit3 tunes this card to the **20 MHz primary channel only**: `set_channel_20mhz`
+hardcodes `bw = 0` / `ch_group_index = 0`, and `phy_channel_calibrate` follows.
+The kernel's `mt76x2u_phy_set_channel` handles 40/80 MHz — the `chandef.width`
+switch → `bw=1/2`, the primary-channel offset math, the per-width `EXT_CCA` group,
+the secondary-channel setup. **We deliberately skip all of that.**
+
+This is **not** a capture gap. Everything wifit3 acts on rides the 20 MHz primary
+at legacy rates: beacons, probe/auth/assoc, EAPOL (handshake/PMKID), WEP data +
+IVs. 40/80 MHz only carries high-throughput *data payloads*, which wifit3 neither
+needs nor transmits (deauth / fake-auth / ARP-replay are legacy-rate on the
+primary too). So 20 MHz primary capture covers 100% of the attack surface; the
+only thing it misses is data MPDUs sent *solely* on a 40/80 extension — irrelevant
+to every wifit3 attack. This is the project-wide posture for all drivers.
+
 ## Endpoint layout
 
 After the boot-ROM/mass-storage→wireless mode switch (which Windows + WinUSB
