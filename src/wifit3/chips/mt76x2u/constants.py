@@ -138,6 +138,23 @@ MT_XIFS_TIME_CFG_OFDM_SIFS_MASK  = 0xFF << 8
 MT_BKOFF_SLOT_CFG_CC_DELAY_SHIFT = 8   # GENMASK(11, 8)
 MT_BKOFF_SLOT_CFG_CC_DELAY_MASK  = 0xF << 8
 
+# XTAL trim CFG-bus registers + EEPROM offsets — used by
+# `mt76x2u_mac_fixup_xtal` ([SRC] mt76x2/usb_mac.c:9-60).
+# Without these the chip's reference oscillator runs at the silicon
+# default, not the per-board calibrated frequency → TX/RX clock drift
+# that may show up as spurious retries or framing at the AP.
+MT_XO_CTRL5                     = 0x0114    # CFG-bus address
+MT_XO_CTRL5_C2_VAL_MASK         = 0x7F << 8 # GENMASK(14, 8)
+MT_XO_CTRL5_C2_VAL_SHIFT        = 8
+MT_XO_CTRL6                     = 0x0118    # CFG-bus address
+MT_XO_CTRL6_C2_CTRL_MASK        = 0x7F << 8 # GENMASK(14, 8)
+MT_XO_CTRL7                     = 0x011C    # CFG-bus address
+MT_EE_XTAL_TRIM_1               = 0x03A
+MT_EE_XTAL_TRIM_2               = 0x09E
+MT_EE_NIC_CONF_2                = 0x042
+MT_EE_NIC_CONF_2_XTAL_OPTION_MASK  = 0x3 << 9   # GENMASK(10, 9)
+MT_EE_NIC_CONF_2_XTAL_OPTION_SHIFT = 9
+
 MT_COEXCFG0                    = 0x0040
 MT_COEXCFG0_COEX_EN            = 1 << 0
 MT_EFUSE_CTRL                  = 0x0024
@@ -153,6 +170,22 @@ MT_MAC_ADDR_DW0                = 0x1008
 MT_MAC_ADDR_DW1                = 0x100C
 MT_MAC_BSSID_DW0               = 0x1010
 MT_MAC_BSSID_DW1               = 0x1014
+
+# MAC_ADDR_DW1 / MAC_BSSID_DW1 sub-fields.
+# [SRC] mt76x02_regs.h:277-285.
+MT_MAC_ADDR_DW1_U2ME_MASK      = 0xFF << 16    # GENMASK(23, 16)
+MT_MAC_BSSID_DW1_MBSS_MODE_MASK  = 0x3 << 16   # GENMASK(17, 16)
+MT_MAC_BSSID_DW1_MBSS_MODE_SHIFT = 16
+MT_MAC_BSSID_DW1_MBEACON_N_MASK  = 0x7 << 18   # GENMASK(20, 18)
+MT_MAC_BSSID_DW1_MBEACON_N_SHIFT = 18
+MT_MAC_BSSID_DW1_MBSS_LOCAL_BIT  = 1 << 21     # BIT(21)
+
+# Per-vif BSSID slots — chip's hardware address-match table. Kernel
+# clears 8 slots (loop runs 16× but `idx &= 7` masks down) at the end
+# of `mt76x02_mac_setaddr`. [SRC] mt76x02_regs.h:306-309.
+MT_MAC_APC_BSSID_BASE          = 0x1090
+MT_MAC_APC_BSSID_H_ADDR_MASK   = 0xFFFF        # GENMASK(15, 0)
+MT76_N_BSSID_SLOTS             = 8
 MT_MAX_LEN_CFG                 = 0x1018
 MT_AMPDU_MAX_LEN_20M1S         = 0x1030
 MT_AMPDU_MAX_LEN_20M2S         = 0x1034
@@ -160,6 +193,30 @@ MT_AMPDU_MAX_LEN_20M2S         = 0x1034
 MT_XIFS_TIME_CFG               = 0x1100
 MT_BKOFF_SLOT_CFG              = 0x1104
 MT_TBTT_SYNC_CFG               = 0x1118
+# Channel-time + beacon-time engine — [SRC] mt76x02_regs.h:323-360.
+MT_CH_TIME_CFG                 = 0x110C
+MT_CH_TIME_CFG_TIMER_EN        = 1 << 0
+MT_CH_TIME_CFG_TX_AS_BUSY      = 1 << 1
+MT_CH_TIME_CFG_RX_AS_BUSY      = 1 << 2
+MT_CH_TIME_CFG_NAV_AS_BUSY     = 1 << 3
+MT_CH_TIME_CFG_EIFS_AS_BUSY    = 1 << 4
+MT_CH_CCA_RC_EN                = 1 << 6
+MT_CH_TIME_CFG_CH_TIMER_CLR_MASK  = 0x3 << 8   # GENMASK(9, 8)
+MT_CH_TIME_CFG_CH_TIMER_CLR_SHIFT = 8
+MT_CH_IDLE                     = 0x1130
+MT_CH_BUSY                     = 0x1134
+MT_BEACON_TIME_CFG             = 0x1114
+MT_BEACON_TIME_CFG_TIMER_EN    = 1 << 16
+MT_BEACON_TIME_CFG_SYNC_MODE_MASK  = 0x3 << 17  # GENMASK(18, 17)
+MT_BEACON_TIME_CFG_TBTT_EN     = 1 << 19
+MT_BEACON_TIME_CFG_BEACON_TX   = 1 << 20
+# Per-slot beacon offset table + bypass mask — kernel clears at init via
+# `mt76x02_init_beacon_config` (`mt76x02_beacon.c:205`). We don't TX
+# beacons, but kernel-faithful init still does this for hardware state
+# hygiene. [SRC] mt76x02_regs.h:194, 304.
+MT_BCN_OFFSET_BASE             = 0x041C
+MT_BCN_BYPASS_MASK             = 0x108C
+N_BCN_SLOTS                    = 5
 MT_MAC_STATUS                  = 0x1200
 MT_MAC_STATUS_TX               = 1 << 0
 MT_MAC_STATUS_RX               = 1 << 1
@@ -167,10 +224,80 @@ MT_PWR_PIN_CFG                 = 0x1204
 MT_AUX_CLK_CFG                 = 0x120C
 MT_DACCLK_EN_DLY_CFG           = 0x1264
 
+# WCID (Wireless Client ID) tables — [SRC] mt76x02_regs.h:643-688.
+# Per-station state: 256 entries × 4 bytes (ATTR) + 128 entries × 8 bytes (ADDR).
+# Kernel clears all entries at init (usb_init.c:165-167) via
+# mt76x02_mac_wcid_setup(idx, 0, NULL). Stale entries in wcid=0xFF (the
+# slot the chip looks up for inject TX with wcid=0xff in TXWI) can
+# corrupt the chip's rate / key-index / cipher-mode lookup → silent TX
+# misbehavior even though MGMT frames go out fine.
+MT_WCID_ADDR_BASE              = 0x1800
+MT_WCID_ATTR_BASE              = 0xA800
+MT_WCID_ATTR_BSS_IDX_MASK      = 0x7 << 4    # GENMASK(6, 4)
+MT_WCID_ATTR_BSS_IDX_SHIFT     = 4
+MT_WCID_ATTR_BSS_IDX_EXT       = 1 << 11     # BIT(11)
+MT76_N_WCIDS                   = 256
+MT76_WCID_ADDR_SLOTS           = 128    # Only entries 0-127 have ADDR storage
+
+# Shared key tables — [SRC] mt76x02_regs.h:666-679. 16 vifs × 4 keys = 64
+# slots total. Each MT_SKEY entry is 32 bytes (key + tx_mic + rx_mic).
+# Cipher mode for all 4 keys of one vif packs into 16 bits of a shared
+# MT_SKEY_MODE register (one register per pair of vifs).
+MT_SKEY_BASE_0                 = 0xAC00     # vifs 0-7
+MT_SKEY_BASE_1                 = 0xB400     # vifs 8-15
+MT_SKEY_MODE_BASE_0            = 0xB000     # 4 regs, vifs 0-7 paired
+MT_SKEY_MODE_BASE_1            = 0xB3F0     # 4 regs, vifs 8-15 paired
+MT_SKEY_MODE_MASK              = 0xF        # 4 bits per cipher
+MT76_N_VIFS                    = 16
+MT76_N_KEYS_PER_VIF            = 4
+MT76_SKEY_ENTRY_BYTES          = 32
+
+# Cipher type enum — [SRC] mt76x02_regs.h:697.
+MT76X02_CIPHER_NONE            = 0
+MT76X02_CIPHER_WEP40           = 1
+MT76X02_CIPHER_WEP104          = 2
+MT76X02_CIPHER_TKIP            = 3
+MT76X02_CIPHER_AES_CCMP        = 4
+
 MT_TX_BAND_CFG                 = 0x132C
 MT_TX_BAND_CFG_UPPER_40M       = 1 << 0
 MT_TX_BAND_CFG_5G              = 1 << 1
 MT_TX_BAND_CFG_2G              = 1 << 2
+
+# TX antenna pin enable. [SRC] mt76x02_regs.h:392-396. Set by
+# mt76x02_edcca_tx_enable(true) at the end of every channel-tune. Without
+# the host writing it, MT_TX_PIN_CFG stays at boot defaults and no antenna
+# pins are driven → catastrophic TX attenuation.
+MT_TX_PIN_CFG                  = 0x1328
+MT_TX_PIN_CFG_TXANT            = 0xF       # GENMASK(3, 0)
+MT_TX_PIN_CFG_RXANT            = 0xF << 8  # GENMASK(11, 8)
+MT_TX_PIN_RFTR_EN              = 1 << 16
+MT_TX_PIN_TRSW_EN              = 1 << 18
+
+# EDCCA / TX-link config bits. [SRC] mt76x02_regs.h:429, 417, 555.
+MT_TX_CFACK_EN                 = 1 << 12   # in MT_TX_LINK_CFG
+MT_TXOP_ED_CCA_EN              = 1 << 20   # in MT_TXOP_CTRL_CFG
+MT_TXOP_HLDR_TX40M_BLK_EN      = 1 << 1    # in MT_TXOP_HLDR_ET
+MT_ED_CCA_TIMER                = 0x1140    # read-to-clear CCA timer
+
+MT_AUTO_RSP_EN                 = 1 << 0    # in MT_AUTO_RSP_CFG
+
+# Per-band PA / RF gain config — programmed every set_channel by the kernel
+# in mt76x2_phy_set_txpower_regs. [SRC] mt76x2/phy.c:45. Skipping these
+# (as the original port did) leaves the chip TX'ing at whatever PA default
+# it powered up with — enough for occasional Auth/Assoc round-trip but
+# sustained data injection (ARP replay / ChopChop / Fragmentation) gets
+# dropped at the AP, and the AP eventually deauths the STA as "dead."
+MT_BB_PA_MODE_CFG0             = 0x1214
+MT_BB_PA_MODE_CFG1             = 0x1218
+MT_RF_PA_MODE_CFG0             = 0x121C
+MT_RF_PA_MODE_CFG1             = 0x1220
+MT_RF_PA_MODE_ADJ0             = 0x1228
+MT_RF_PA_MODE_ADJ1             = 0x122C
+MT_TX0_RF_GAIN_CORR            = 0x13A0
+MT_TX1_RF_GAIN_CORR            = 0x13A4
+MT_TX_ALC_CFG_2                = 0x13A8
+MT_TX_ALC_CFG_3                = 0x13AC
 
 MT_TX_PWR_CFG_0                = 0x1314
 MT_TX_PWR_CFG_1                = 0x1318
@@ -248,6 +375,106 @@ MT_BBP_TXO_R4_ADDR             = 0x2600 + 4 * 4             # 0x2610 (MT_BBP_TXO
 MT_BBP_AGC_R0                  = MT_BBP_AGC_BASE + 0 * 4    # 0x2300
 MT_BBP_TXBE_R5                 = MT_BBP_TXBE_BASE + 5 * 4   # 0x2714
 MT_BBP_CORE_R1                 = MT_BBP_CORE_BASE + 1 * 4   # 0x2004
+
+# BBP AGC regs used by mt76x2_apply_gain_adj. [SRC] mt76x2/phy.c:33-42.
+# Regs 4/5 hold high-LNA gain (chain 0/1); regs 8/9 hold AGC gain (chain 0/1).
+MT_BBP_AGC_R4                  = MT_BBP_AGC_BASE + 4 * 4    # 0x2310
+MT_BBP_AGC_R5                  = MT_BBP_AGC_BASE + 5 * 4    # 0x2314
+MT_BBP_AGC_R8                  = MT_BBP_AGC_BASE + 8 * 4    # 0x2320
+MT_BBP_AGC_R9                  = MT_BBP_AGC_BASE + 9 * 4    # 0x2324
+# Field positions inside the AGC registers. [SRC] mt76x02_regs.h:627,636.
+MT_BBP_AGC_LNA_HIGH_GAIN_SHIFT = 16
+MT_BBP_AGC_LNA_HIGH_GAIN_MASK  = 0x3F << 16   # GENMASK(21, 16)
+MT_BBP_AGC_GAIN_SHIFT          = 8
+MT_BBP_AGC_GAIN_MASK           = 0x7F << 8    # GENMASK(14, 8)
+
+# EEPROM offsets for the RX gain machinery. [SRC] mt76x02_eeprom.h.
+MT_EE_LNA_GAIN                 = 0x044
+MT_EE_RSSI_OFFSET_2G_0         = 0x046
+MT_EE_RSSI_OFFSET_2G_1         = 0x048
+MT_EE_LNA_GAIN_5GHZ_1          = 0x049
+MT_EE_RSSI_OFFSET_5G_0         = 0x04A
+MT_EE_RSSI_OFFSET_5G_1         = 0x04C
+MT_EE_LNA_GAIN_5GHZ_2          = 0x04D
+MT_EE_RF_2G_RX_HIGH_GAIN       = 0x0F8
+MT_EE_RF_5G_GRP0_1_RX_HIGH_GAIN = 0x0FA
+MT_EE_RF_5G_GRP2_3_RX_HIGH_GAIN = 0x0FC
+MT_EE_RF_5G_GRP4_5_RX_HIGH_GAIN = 0x0FE
+
+# EEPROM offsets for the per-rate TX power machinery. [SRC] mt76x02_eeprom.h.
+MT_EE_TX_POWER_DELTA_BW40      = 0x050
+MT_EE_TX_POWER_DELTA_BW80      = 0x052
+MT_EE_TX_POWER_EXT_PA_5G       = 0x054
+MT_EE_TX_POWER_0_START_2G      = 0x056
+MT_EE_TX_POWER_1_START_2G      = 0x05C
+MT_EE_TX_POWER_0_START_5G      = 0x062
+MT_EE_TX_POWER_1_START_5G      = 0x080
+MT_EE_TX_POWER_CCK             = 0x0A0
+MT_EE_TX_POWER_OFDM_2G_6M      = 0x0A2
+MT_EE_TX_POWER_OFDM_2G_24M     = 0x0A4
+MT_EE_TX_POWER_HT_MCS0         = 0x0A6
+MT_EE_TX_POWER_HT_MCS4         = 0x0A8
+MT_EE_TX_POWER_HT_MCS8         = 0x0AA
+MT_EE_TX_POWER_HT_MCS12        = 0x0AC
+MT_EE_TX_POWER_OFDM_5G_6M      = 0x0B2
+MT_EE_TX_POWER_OFDM_5G_24M     = 0x0B4
+MT_EE_TX_POWER_VHT_MCS8        = 0x0BE
+MT_EE_RF_2G_TSSI_OFF_TXPOWER   = 0x0F6
+MT_EE_RF_TEMP_COMP_SLOPE_5G    = 0x0F2
+MT_EE_RF_TEMP_COMP_SLOPE_2G    = 0x0F4
+
+# 5G TX-power table is split into 6 channel-group records, 5 bytes each.
+# [SRC] mt76x02_eeprom.h:46.
+MT_TX_POWER_GROUP_SIZE_5G      = 5
+
+# MT_EE_NIC_CONF_1 flag bits. [SRC] mt76x02_eeprom.h:108-112.
+MT_EE_NIC_CONF_1_TEMP_TX_ALC   = 1 << 1
+MT_EE_NIC_CONF_1_LNA_EXT_2G    = 1 << 2
+MT_EE_NIC_CONF_1_LNA_EXT_5G    = 1 << 3
+MT_EE_NIC_CONF_1_TX_ALC_EN     = 1 << 13
+
+# TX_ALC_CFG_0/1/2 sub-fields. [SRC] mt76x02_regs.h:488-497.
+MT_TX_ALC_CFG_0                = 0x13B0
+MT_TX_ALC_CFG_0_CH_INIT_0_MASK = 0x3F        # GENMASK(5, 0)
+MT_TX_ALC_CFG_0_CH_INIT_1_MASK = 0x3F << 8   # GENMASK(13, 8)
+MT_TX_ALC_CFG_0_CH_INIT_1_SHIFT = 8
+MT_TX_ALC_CFG_1                = 0x13B4
+MT_TX_ALC_CFG_1_TEMP_COMP_MASK = 0x3F        # GENMASK(5, 0)
+MT_TX_ALC_CFG_2_TEMP_COMP_MASK = 0x3F        # GENMASK(5, 0)
+
+# RX_STAT_1 CCA error counter. [SRC] mt76x02_regs.h:566.
+MT_RX_STAT_1                   = 0x1704
+MT_RX_STAT_1_CCA_ERRORS_MASK   = 0xFFFF      # GENMASK(15, 0)
+
+# BBP CORE register 34 — TSSI status bit checked by tssi_compensate.
+MT_BBP_CORE_R34                = MT_BBP_CORE_BASE + 34 * 4   # 0x2088
+
+# BBP AGC reg 26 — written by update_channel_gain on 80MHz width (we don't
+# do 80MHz, but the constant is here for completeness).
+MT_BBP_AGC_R26                 = MT_BBP_AGC_BASE + 26 * 4    # 0x2368
+# BBP AGC reg 35 / 37 — written by update_channel_gain (already used by
+# the same fn). [SRC] mt76x2/phy.c:329, 330, 339, 340.
+MT_BBP_AGC_R35                 = MT_BBP_AGC_BASE + 35 * 4    # 0x238C
+MT_BBP_AGC_R37                 = MT_BBP_AGC_BASE + 37 * 4    # 0x2394
+# BBP RXO reg 14 / 18 — written by update_channel_gain.
+MT_BBP_RXO_R14                 = MT_BBP_RXO_BASE + 14 * 4    # 0x2938
+MT_BBP_RXO_R18                 = MT_BBP_RXO_BASE + 18 * 4    # 0x2948
+
+# MCU TSSI compensation command id (subcommand within CMD_CALIBRATION_OP).
+# We already have MCU_CAL_TSSI_COMP = 10 in mcu.py.
+
+# kernel: MT_CALIBRATE_INTERVAL = HZ (= 1 second). [SRC] mt76x02.h:21.
+MT_CALIBRATE_INTERVAL_S        = 1.0
+
+# RSSI gain threshold sentinels used by update_channel_gain's low_gain calc.
+# Kernel reads them from constant tables (mt76x02_get_rssi_gain_thresh /
+# _low_rssi_gain_thresh — chip + band specific). For 2.4 GHz mt76x2 the
+# kernel returns -68 / -55; for 5 GHz -64 / -51. We expose them here so the
+# driver can supply them per-channel.
+MT76X2_RSSI_GAIN_THRESH_2G     = -68
+MT76X2_LOW_RSSI_GAIN_THRESH_2G = -55
+MT76X2_RSSI_GAIN_THRESH_5G     = -64
+MT76X2_LOW_RSSI_GAIN_THRESH_5G = -51
 
 # CFG-bus power-on raw addresses (used as MT_VEND_TYPE_CFG | <addr>).
 # [SRC] mt76x2/usb_init.c:28-104
