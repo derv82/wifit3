@@ -1,5 +1,4 @@
-import pytest
-from wifit3.engine.models import AccessPoint, Client, EapolFrame, Handshake
+from wifit3.engine.models import AccessPoint, EapolFrame, Handshake
 
 
 def test_access_point_model_defaults():
