@@ -55,12 +55,20 @@ _NONCE_LEN = 32
 _ZERO_NONCE = b"\x00" * _NONCE_LEN
 _ZERO_MIC = b"\x00" * _MIC_LEN
 
-# Coarse wall-clock backstop: two frames whose replay counters line up but that
-# arrived farther apart than this are treated as different associations. Matches
-# hcxpcapngtool's EAPOLTIMEOUT (5 s default); the precise same-association
-# binding is done by arrival order in _same_association. Skipped when timestamps
-# are unset (fixtures / round-tripped pcaps).
+# Coarse wall-clock backstop matching hcxpcapngtool's EAPOLTIMEOUT (5 s): two
+# frames whose replay counters line up but that arrived farther apart than this
+# aren't paired. The precise binding is arrival order in crackable_pairs; this is
+# skipped when timestamps are unset (fixtures / round-tripped pcaps).
 _EAPOL_PAIR_WINDOW_S = 5.0
+
+# Nonce-error-correction tolerance (hcxpcapngtool --nonce-error-corrections, 8 by
+# default): pair a keystone with a donor whose replay counter is within this many
+# of the expected value, then set the NC bit so hashcat brute-forces the small
+# nonce drift. Exact (gap 0) is the norm; the tolerance only bridges lossy
+# captures / AP retransmits that bumped the counter or the ANonce.
+_NC_MAX = 8
+# message_pair bit 7 — tells hashcat nonce-error-correction is needed/allowed.
+_NC_BIT = 0x80
 
 
 @dataclass(frozen=True)
@@ -134,113 +142,69 @@ def _mic_frame_usable(f: EapolFrame) -> bool:
     return i.has_mic and i.eapol_complete and i.has_nonce
 
 
-def _mic_assoc_anonce(hs: Handshake, mic_f: EapolFrame, pos: dict):
-    """The ANonce of the association the MIC frame actually belongs to, inferred
-    from the AP-side frame it answered: an M2 answers the M1 with the same replay
-    counter, an M4 answers the M3 with the same replay counter, and that frame
-    carries this association's ANonce.
-
-    Reconnect spam makes replay counters collide across associations (the AP
-    resets its counter), so several candidates match on replay alone — pick the
-    most recent one that PRECEDED the MIC frame in arrival order (``pos``), since
-    a response answers the request just before it. Arrival order is used rather
-    than timestamps because it survives a saved/round-tripped pcap (which drops
-    per-frame timing) and is always present. Returns None when no partner was
-    captured, so the caller falls back to the looser replay/window rules."""
-    partner_msg = 1 if mic_f.msg_num == 2 else 3
-    rc = _replay(mic_f)
-    mic_pos = pos[id(mic_f)]
-    cands = [f for f in hs.eapol_frames
-             if f.msg_num == partner_msg and _replay(f) == rc
-             and len(f.nonce) == _NONCE_LEN and f.nonce != _ZERO_NONCE]
-    if not cands:
-        return None
-    before = [f for f in cands if pos[id(f)] < mic_pos]
-    chosen = (max(before, key=lambda f: pos[id(f)]) if before
-              else min(cands, key=lambda f: abs(pos[id(f)] - mic_pos)))
-    return chosen.nonce
-
-
-def _same_association(hs: Handshake, anonce_f: EapolFrame, mic_f: EapolFrame,
-                      pos: dict) -> bool:
-    """Reject a pair whose two frames are from different associations even though
-    their replay counters line up (the reconnect-spam collision, where the AP
-    resets its key-replay counter each attempt):
-
-    1. Arrival order — the 4-way progresses M1→M2→M3→M4, so the lower-numbered
-       message is captured first. A higher-numbered frame that arrived BEFORE the
-       lower one is a stale leftover from a prior attempt (e.g. an old M3 ahead
-       of a fresh M2).
-    2. ANonce binding — the MIC frame's own association ANonce (the AP-side frame
-       it answered, ``_mic_assoc_anonce``) must equal the ANonce this pair emits.
-
-    Keyed on arrival order (``pos``: index within ``hs.eapol_frames``, which is
-    append-in-arrival-order) rather than wall-clock time, so it holds even on a
-    round-tripped pcap whose per-frame timestamps aren't preserved."""
-    lo, hi = ((anonce_f, mic_f) if anonce_f.msg_num < mic_f.msg_num
-              else (mic_f, anonce_f))
-    if pos[id(hi)] < pos[id(lo)]:
-        return False
-    assoc = _mic_assoc_anonce(hs, mic_f, pos)
-    if assoc is not None and anonce_f.nonce != assoc:
-        return False
-    return True
-
-
 def crackable_pairs(hs: Handshake) -> List[CrackablePair]:
-    """Every distinct, hashcat-crackable handshake instance for this client.
+    """Every distinct, hashcat-crackable handshake instance for this client,
+    extracted the way hcxpcapngtool does.
 
-    One entry per association (deduped by ANonce); a re-handshake (fresh ANonce)
-    adds another. A pair qualifies only when it belongs to one association
-    (replay relationship + arrival window + arrival order + the MIC frame's own
-    association ANonce — see ``_same_association``) AND its MIC frame is a usable
-    keystone (complete M2, or a non-zeroed M4) — i.e. exactly what
-    ``hc22000_line`` can serialise. Confidence order favours the M2 keystone.
+    Each usable keystone (a complete M2, or a non-zeroed M4) is paired with every
+    ANonce donor (M1/M3) whose replay counter is within ``_NC_MAX`` of the
+    expected value (the nonce-error-correction tolerance) AND that sits on the
+    correct side of it in arrival order — the 4-way runs M1→M2→M3→M4, so the
+    lower-numbered message is captured first. Candidates are then taken best-first:
+    smallest replay gap, then AP-confirmed ("authorized": M2+M3 / M3+M4) over
+    "challenge" (M1+M2 / M1+M4), then the temporally nearest donor. Each keystone
+    AND each ANonce is emitted once, so spurious cross-association donors collapse
+    to the single best pair while a genuine re-handshake (fresh ANonce) adds
+    another. ``hc22000_line`` sets the NC bit, so hashcat fixes whatever small
+    nonce drift the tolerance let through.
 
-    Mirrors hcxpcapngtool's extraction: pair on replay counter + a timeout window
-    (matched to its 5 s EAPOLTIMEOUT), binding the MIC frame to the request it
-    answered by arrival order. The same-association binding matters under
-    reconnect spam: the AP resets its key-replay counter per association, so a
-    stale M3 from a prior attempt and a fresh M2 collide on replay; pairing them
-    would mix nonces from different PTKs into an uncrackable line."""
-    by_msg: dict[int, List[EapolFrame]] = {}
-    for f in hs.eapol_frames:
-        if f.msg_num in (1, 2, 3, 4):
-            by_msg.setdefault(f.msg_num, []).append(f)
-
-    out: List[CrackablePair] = []
-    seen: set[bytes] = set()
-    # Arrival-order index for each frame — the ordering signal _same_association
-    # uses (object identity keys, stable within this call).
+    Ordering keys on arrival order, not wall-clock time, so the verdict is
+    identical live and from a round-tripped pcap; the time window is only a coarse
+    backstop when timestamps are present (``_within_window``)."""
     pos = {id(f): i for i, f in enumerate(hs.eapol_frames)}
+    by_msg: dict[int, List[EapolFrame]] = {1: [], 2: [], 3: [], 4: []}
+    for f in hs.eapol_frames:
+        if f.msg_num in by_msg:
+            by_msg[f.msg_num].append(f)
 
-    def consider(anonce_f: EapolFrame, mic_f: EapolFrame,
-                 pair_byte: int, rc_ok: bool) -> None:
-        if not rc_ok or not _within_window(anonce_f, mic_f):
-            return
+    # (replay-gap, confidence, arrival-distance, donor, keystone, pair_byte).
+    # confidence: 0/2 = AP-confirmed pairs, 1/3 = challenge — lower sorts first.
+    cands: list = []
+    for mic_f in by_msg[2] + by_msg[4]:
         if not _mic_frame_usable(mic_f):
-            return
-        if len(anonce_f.nonce) != _NONCE_LEN or anonce_f.nonce == _ZERO_NONCE:
-            return
-        if not _same_association(hs, anonce_f, mic_f, pos):
-            return
-        key = anonce_f.nonce
-        if key in seen:
-            return
-        seen.add(key)
-        out.append(CrackablePair(anonce_f, mic_f, pair_byte))
+            continue
+        rc = _replay(mic_f)
+        if mic_f.msg_num == 2:        # keystone M2: M3 (authorized) or M1 (challenge)
+            options = ((by_msg[3], rc + 1, _PAIR_M2M3_E2, 0),
+                       (by_msg[1], rc,     _PAIR_M1M2_E2, 1))
+        else:                         # keystone M4: M3 (authorized) or M1 (challenge)
+            options = ((by_msg[3], rc,     _PAIR_M3M4_E4, 2),
+                       (by_msg[1], rc - 1, _PAIR_M1M4_E4, 3))
+        for donors, exp_rc, pair_byte, confidence in options:
+            for d in donors:
+                if len(d.nonce) != _NONCE_LEN or d.nonce == _ZERO_NONCE:
+                    continue
+                lo, hi = (d, mic_f) if d.msg_num < mic_f.msg_num else (mic_f, d)
+                if pos[id(lo)] > pos[id(hi)]:
+                    continue          # lower-numbered message must arrive first
+                if not _within_window(d, mic_f):
+                    continue
+                rcgap = abs(_replay(d) - exp_rc)
+                if rcgap > _NC_MAX:
+                    continue
+                dist = abs(pos[id(d)] - pos[id(mic_f)])
+                cands.append((rcgap, confidence, dist, d, mic_f, pair_byte))
 
-    # M2 keystone first (most reliable), then the conditional M4 keystone.
-    for m2 in by_msg.get(2, []):
-        for m3 in by_msg.get(3, []):
-            consider(m3, m2, _PAIR_M2M3_E2, _replay(m3) == _replay(m2) + 1)
-        for m1 in by_msg.get(1, []):
-            consider(m1, m2, _PAIR_M1M2_E2, _replay(m1) == _replay(m2))
-    for m4 in by_msg.get(4, []):
-        for m3 in by_msg.get(3, []):
-            consider(m3, m4, _PAIR_M3M4_E4, _replay(m4) == _replay(m3))
-        for m1 in by_msg.get(1, []):
-            consider(m1, m4, _PAIR_M1M4_E4, _replay(m4) == _replay(m1) + 1)
+    cands.sort(key=lambda c: c[:3])
+    out: List[CrackablePair] = []
+    used_keystones: set[int] = set()
+    seen_anonce: set[bytes] = set()
+    for _rcgap, _conf, _dist, donor, mic_f, pair_byte in cands:
+        if id(mic_f) in used_keystones or donor.nonce in seen_anonce:
+            continue
+        used_keystones.add(id(mic_f))
+        seen_anonce.add(donor.nonce)
+        out.append(CrackablePair(donor, mic_f, pair_byte))
     return out
 
 
@@ -257,7 +221,12 @@ def ssid_hex(ssid: str) -> str:
 
 
 def hc22000_line(ssid: str, hs: Handshake, pair: CrackablePair) -> str:
-    """The ``WPA*02*…`` hashline for a crackable pair, MIC field zeroed."""
+    """The ``WPA*02*…`` hashline for a crackable pair, MIC field zeroed.
+
+    The message-pair byte carries the NC bit (0x80), so hashcat applies
+    nonce-error-correction by default (it's off unless this bit is set) and
+    fixes the small ANonce/replay drift the pairing tolerated — matching how
+    hcxpcapngtool flags its output."""
     payload = bytearray(pair.mic_frame.eapol_payload)
     payload[_MIC_OFFSET: _MIC_OFFSET + _MIC_LEN] = _ZERO_MIC
     return (
@@ -268,5 +237,5 @@ def hc22000_line(ssid: str, hs: Handshake, pair: CrackablePair) -> str:
         f"*{ssid_hex(ssid)}"
         f"*{pair.anonce_frame.nonce.hex()}"
         f"*{bytes(payload).hex()}"
-        f"*{pair.pair_byte:02x}"
+        f"*{pair.pair_byte | _NC_BIT:02x}"
     )

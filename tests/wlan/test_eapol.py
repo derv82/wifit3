@@ -248,9 +248,17 @@ def test_m2_plus_m3_pair_replay_plus_one_is_complete():
     assert (hs.find_valid_pair()[0].msg_num, hs.find_valid_pair()[1].msg_num) == (2, 3)
 
 
-def test_m2_plus_m3_with_wrong_replay_NOT_complete():
-    """M3 must be M2.replay + 1, not any random other value."""
+def test_m2_plus_m3_within_nc_tolerance_is_complete():
+    """M3 should be M2.replay+1, but hcxpcapngtool (and now we) tolerate a gap up
+    to the NC value (8) and let hashcat fix the small drift — so replay 9 vs the
+    expected 6 (gap 3) still pairs."""
     hs = _make_hs(_ef(2, 5), _ef(3, 9))
+    assert hs.is_complete
+
+
+def test_m2_plus_m3_replay_gap_beyond_nc_NOT_complete():
+    """Past the NC tolerance (8), the replay mismatch is treated as unrelated."""
+    hs = _make_hs(_ef(2, 5), _ef(3, 20))   # expected 6, got 20 → gap 14 > 8
     assert not hs.is_complete
 
 

@@ -115,7 +115,7 @@ def test_eapol_hashline_m1_m2():
     assert fields[4] == "112233445566"                  # MACSTA
     assert fields[5] == b"Net".hex()                    # ESSID
     assert fields[6] == anonce.hex()                    # ANonce from M1
-    assert fields[8] == "00"                            # pair byte = M1+M2 → 0
+    assert fields[8] == "80"                            # M1+M2 (0x00) | NC bit (0x80)
 
 
 def test_eapol_hashline_zeros_mic_in_payload():
@@ -141,7 +141,7 @@ def test_eapol_hashline_m2_m3_pair_byte():
     hs = _hs("Net", m2, m3)
     line = eapol_hashline("Net", hs)
     assert line is not None
-    assert line.split("*")[8] == "02"  # _PAIR_M2M3_FROM_M2
+    assert line.split("*")[8] == "82"  # M2+M3 (0x02) | NC bit (0x80)
 
 
 def test_eapol_hashline_m3_m4_pair_byte():
@@ -149,7 +149,7 @@ def test_eapol_hashline_m3_m4_pair_byte():
     m4 = _ef(4, replay=7, key_data_len=0)
     hs = _hs("Net", m3, m4)
     line = eapol_hashline("Net", hs)
-    assert line.split("*")[8] == "05"  # _PAIR_M3M4_FROM_M4
+    assert line.split("*")[8] == "85"  # M3+M4 (0x05) | NC bit (0x80)
 
 
 def test_eapol_hashline_m1_m4_pair_byte():
@@ -157,7 +157,7 @@ def test_eapol_hashline_m1_m4_pair_byte():
     m4 = _ef(4, replay=9, key_data_len=0)
     hs = _hs("Net", m1, m4)
     line = eapol_hashline("Net", hs)
-    assert line.split("*")[8] == "01"  # _PAIR_M1M4_FROM_M4
+    assert line.split("*")[8] == "81"  # M1+M4 (0x01) | NC bit (0x80)
 
 
 def test_eapol_hashline_no_valid_pair_returns_none():

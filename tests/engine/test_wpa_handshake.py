@@ -65,10 +65,38 @@ def test_m3_m4_only_with_echoed_snonce():
     assert len(pairs) == 1 and pairs[0].pair_byte == 0x05
 
 
-def test_cross_session_not_paired():
-    # M2 + an M3 from a different association (replay not +1) must not pair.
-    hs = _hs(_frame(2, 5, nonce=SNONCE), _frame(3, 9, nonce=ANONCE))
+def test_replay_gap_within_nc_pairs():
+    """hcxpcapngtool tolerates a replay-counter gap up to the NC value (8) and
+    sets the NC bit so hashcat fixes the small nonce drift. An M3 a few counts off
+    from M2.replay+1 still pairs (it's the only candidate)."""
+    hs = _hs(_frame(2, 5, nonce=SNONCE), _frame(3, 9, nonce=ANONCE))  # want 6, got 9 → gap 3
+    pairs = wpa.crackable_pairs(hs)
+    assert len(pairs) == 1
+    assert pairs[0].anonce_frame.nonce == ANONCE
+
+
+def test_replay_gap_beyond_nc_not_paired():
+    """Past the NC tolerance (8) a replay mismatch is treated as unrelated."""
+    hs = _hs(_frame(2, 5, nonce=SNONCE), _frame(3, 20, nonce=ANONCE))  # gap 14 > 8
     assert wpa.crackable_pairs(hs) == []
+
+
+def test_lone_m2_binds_to_nearest_preceding_m1():
+    """NETGEAR2G shape: the AP spams several M1s (all replay 0, a fresh ANonce each)
+    with stale M3s ahead, then the client sends ONE M2 answering the last M1. The
+    M2 binds to that nearest preceding M1 (its real association) — never a stale
+    earlier M3 — so exactly one pair, carrying the newest ANonce."""
+    a1, a2, a3, snonce = b"\x11" * 32, b"\x22" * 32, b"\x33" * 32, b"\x02" * 32
+    hs = _hs(
+        _frame(1, 0, nonce=a1, mic=False), _frame(3, 1, nonce=a1),
+        _frame(1, 0, nonce=a2, mic=False), _frame(3, 1, nonce=a2),
+        _frame(1, 0, nonce=a3, mic=False),     # newest M1, just before the M2
+        _frame(2, 0, nonce=snonce),            # M2 answers a3
+    )
+    pairs = wpa.crackable_pairs(hs)
+    assert len(pairs) == 1
+    assert pairs[0].anonce_frame.nonce == a3
+    assert (pairs[0].anonce_frame.msg_num, pairs[0].mic_frame.msg_num) == (1, 2)
 
 
 def test_reconnect_spam_does_not_cross_pair():
@@ -134,4 +162,4 @@ def test_hc22000_line_shape():
     assert parts[2] == "11" * 16                 # MIC (from M2)
     assert parts[3] == "aabbccddeeff"            # AP MAC
     assert parts[6] == ANONCE.hex()              # ANonce
-    assert parts[8] == "00"                      # MESSAGEPAIR (M1+M2, EAPOL from M2)
+    assert parts[8] == "80"                      # M1+M2 (0x00) | NC bit (0x80)
