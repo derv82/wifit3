@@ -284,7 +284,7 @@ async def mac_reset(transport: MT76x2UTransport) -> bool:
     transport.rmw32(MT_EXT_CCA_CFG, 0xf000, 0xf000)
     transport.rmw32(MT_TX_ALC_CFG_4, 1 << 31, 0)
 
-    _xtal_fixup_minimal(transport)
+    _mac_fixup_xtal(transport)
 
     # Stir US_CYC_CFG.CNT to 0x1e (the kernel does this after init_hardware).
     transport.rmw32(MT_US_CYC_CFG, MT_US_CYC_CNT_MASK, 0x1e)
@@ -382,22 +382,18 @@ def _mac_fixup_xtal(transport: MT76x2UTransport) -> None:
     transport.rmw32(MT_FCE_L2_STUFF, MT_FCE_L2_STUFF_WR_MPDU_LEN_EN, 0)
 
     # Conditional XO_CTRL7 write — kernel switch on NIC_CONF_2.XTAL_OPTION.
-    # [SRC] mt76x2/usb_mac.c:49-59. The default branch (option >= 2) does
-    # nothing; on the AWUS036ACM in capture-1 the kernel skipped this
-    # write, but other boards may take case 0 or 1.
+    # [SRC] mt76x2/usb_mac.c:49-59. Options 0/1 program a fixed value;
+    # option >= 2 leaves XO_CTRL7 alone. Unlike XO_CTRL5/6 above, the kernel
+    # writes XO_CTRL7 on the DEFAULT bus (`mt76_wr`), not the CFG bus.
     nic_conf_2 = read_u16(transport, MT_EE_NIC_CONF_2)
     xtal_option = (
         (nic_conf_2 & MT_EE_NIC_CONF_2_XTAL_OPTION_MASK)
         >> MT_EE_NIC_CONF_2_XTAL_OPTION_SHIFT
     )
     if xtal_option == 0:
-        transport.write32(MT_VEND_TYPE_CFG | MT_XO_CTRL7, 0x5C1FEE80)
+        transport.write32(MT_XO_CTRL7, 0x5C1FEE80)
     elif xtal_option == 1:
-        transport.write32(MT_VEND_TYPE_CFG | MT_XO_CTRL7, 0x5C1FEED0)
-
-
-# Backwards-compatible alias (was: skipped EEPROM-derived writes).
-_xtal_fixup_minimal = _mac_fixup_xtal
+        transport.write32(MT_XO_CTRL7, 0x5C1FEED0)
 
 
 def mac_set_bssid(transport: MT76x2UTransport, idx: int, addr: bytes) -> None:
@@ -524,7 +520,7 @@ def init_beacon_config(transport: MT76x2UTransport) -> None:
       - CLEAR BEACON_TIME_CFG.{TIMER_EN | TBTT_EN | BEACON_TX}
       - SET   BEACON_TIME_CFG.SYNC_MODE
       - WRITE BCN_BYPASS_MASK = 0xFFFF
-      - WRITE the 4 BCN_OFFSET regs with the per-slot offsets (Task 6).
+      - WRITE the 4 BCN_OFFSET regs with the per-slot offsets.
     """
     transport.rmw32(
         MT_BEACON_TIME_CFG,

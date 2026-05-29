@@ -137,22 +137,22 @@ def test_mac_fixup_xtal_sets_xo_ctrl6_c2_ctrl():
 
 
 def test_mac_fixup_xtal_writes_xo_ctrl7_when_xtal_option_0():
-    """NIC_CONF_2 with XTAL_OPTION=0 → XO_CTRL7 = 0x5C1FEE80."""
+    """NIC_CONF_2 with XTAL_OPTION=0 → XO_CTRL7 = 0x5C1FEE80 (default bus)."""
     t = _setup_eeprom(trim_2=0x1405, trim_1_low=0x00, nic_conf_2=0)
     mac._mac_fixup_xtal(t)
     assert any(
-        addr == (C.MT_VEND_TYPE_CFG | C.MT_XO_CTRL7) and val == 0x5C1FEE80
+        addr == C.MT_XO_CTRL7 and val == 0x5C1FEE80
         for addr, val in t.writes
     )
 
 
 def test_mac_fixup_xtal_writes_xo_ctrl7_when_xtal_option_1():
-    """XTAL_OPTION=1 → XO_CTRL7 = 0x5C1FEED0."""
+    """XTAL_OPTION=1 → XO_CTRL7 = 0x5C1FEED0 (default bus)."""
     nic_conf_2 = 1 << C.MT_EE_NIC_CONF_2_XTAL_OPTION_SHIFT
     t = _setup_eeprom(trim_2=0x1405, trim_1_low=0x00, nic_conf_2=nic_conf_2)
     mac._mac_fixup_xtal(t)
     assert any(
-        addr == (C.MT_VEND_TYPE_CFG | C.MT_XO_CTRL7) and val == 0x5C1FEED0
+        addr == C.MT_XO_CTRL7 and val == 0x5C1FEED0
         for addr, val in t.writes
     )
 
@@ -163,7 +163,7 @@ def test_mac_fixup_xtal_skips_xo_ctrl7_when_xtal_option_2():
     t = _setup_eeprom(trim_2=0x1405, trim_1_low=0x00, nic_conf_2=nic_conf_2)
     mac._mac_fixup_xtal(t)
     assert not any(
-        addr == (C.MT_VEND_TYPE_CFG | C.MT_XO_CTRL7)
+        addr == C.MT_XO_CTRL7
         for addr, _ in t.writes
     )
 
@@ -177,8 +177,3 @@ def test_mac_fixup_xtal_does_the_504_50c_housekeeping():
     assert 0x50c in addrs
     # 0x504 gets written twice (set + clear)
     assert sum(1 for a, _ in t.writes if a == 0x504) == 2
-
-
-def test_xtal_fixup_minimal_is_alias_for_mac_fixup_xtal():
-    """Backwards-compat alias preserved."""
-    assert mac._xtal_fixup_minimal is mac._mac_fixup_xtal
