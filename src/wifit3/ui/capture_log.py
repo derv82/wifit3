@@ -42,10 +42,17 @@ def _eapol_fields(ev: CaptureEvent) -> List[str]:
     return []                  # unclassified (group rekey etc.) — label only
 
 
+# Dim context prefix so a lone "M2 …" line is self-explanatory and the trace
+# reads as the same story as the "✓ Valid 4-Way Handshake" banner. Dim keeps
+# the colored M# label + field ticks leading the eye.
+_HS_PREFIX = "[dim]4-Way Handshake:[/dim] "
+
+
 def eapol_message_markup(ev: CaptureEvent) -> str:
     """One per-frame EAPOL trace line as Rich markup. Label dim-cyan unless the
     frame contributes to a crackable pair (``ev.useful``), then bold-cyan."""
     style = "bold cyan" if ev.useful else "dim cyan"
     label = f"[{style}]M{ev.msg_num}[/{style}]" if ev.msg_num else f"[{style}]EAPOL-?[/{style}]"
     fields = _eapol_fields(ev)
-    return f"{label} " + " · ".join(fields) if fields else label
+    body = f"{label} " + " · ".join(fields) if fields else label
+    return _HS_PREFIX + body

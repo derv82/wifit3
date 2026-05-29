@@ -1,6 +1,6 @@
 """Unit tests for ui/capture_log.py — the per-frame EAPOL trace markup."""
 from wifit3.ui.capture_events import CaptureEvent, CaptureKind
-from wifit3.ui.capture_log import eapol_message_markup
+from wifit3.ui.capture_log import _HS_PREFIX, eapol_message_markup
 
 
 def _eapol(msg_num, *, has_nonce, has_mic, eapol_complete, useful):
@@ -17,10 +17,18 @@ def _eapol(msg_num, *, has_nonce, has_mic, eapol_complete, useful):
     )
 
 
+def test_line_carries_handshake_context_prefix():
+    # A lone "M2 …" line is cryptic; the dim prefix makes it self-explanatory.
+    m = eapol_message_markup(_eapol(2, has_nonce=True, has_mic=True,
+                                    eapol_complete=True, useful=True))
+    assert m.startswith(_HS_PREFIX)
+    assert "4-Way Handshake:" in m
+
+
 def test_m1_is_anonce_donor_bold():
     m = eapol_message_markup(_eapol(1, has_nonce=True, has_mic=False,
                                     eapol_complete=False, useful=True))
-    assert m.startswith("[bold cyan]M1[/bold cyan]")     # useful → bold
+    assert m.startswith(_HS_PREFIX + "[bold cyan]M1[/bold cyan]")   # useful → bold
     assert "ANonce [green]✓[/green]" in m
     assert "MIC" not in m                                # M1 carries no MIC
 
@@ -28,7 +36,7 @@ def test_m1_is_anonce_donor_bold():
 def test_m2_complete_keystone_all_green_bold():
     m = eapol_message_markup(_eapol(2, has_nonce=True, has_mic=True,
                                     eapol_complete=True, useful=True))
-    assert m.startswith("[bold cyan]M2[/bold cyan]")
+    assert m.startswith(_HS_PREFIX + "[bold cyan]M2[/bold cyan]")
     assert "SNonce [green]✓[/green]" in m
     assert "MIC [green]✓[/green]" in m
     assert "EAPOL complete [green]✓[/green]" in m
@@ -39,7 +47,7 @@ def test_m2_clipped_is_dim_with_red_eapol():
     # clipped 802.1X payload → not a usable keystone → dim label, red EAPOL tick.
     m = eapol_message_markup(_eapol(2, has_nonce=True, has_mic=True,
                                     eapol_complete=False, useful=False))
-    assert m.startswith("[dim cyan]M2[/dim cyan]")       # degraded → dim
+    assert m.startswith(_HS_PREFIX + "[dim cyan]M2[/dim cyan]")     # degraded → dim
     assert "EAPOL clipped [red]✗[/red]" in m
     assert "[black bold on" not in m                     # never a win chip
 
@@ -55,11 +63,11 @@ def test_m3_shows_anonce_and_mic_no_eapol():
 def test_m4_zeroed_nonce_is_dim_with_red_snonce():
     m = eapol_message_markup(_eapol(4, has_nonce=False, has_mic=True,
                                     eapol_complete=True, useful=False))
-    assert m.startswith("[dim cyan]M4[/dim cyan]")
+    assert m.startswith(_HS_PREFIX + "[dim cyan]M4[/dim cyan]")
     assert "SNonce [red]✗[/red]" in m                    # no echoed SNonce
 
 
 def test_unclassified_frame_label_only():
     m = eapol_message_markup(_eapol(0, has_nonce=False, has_mic=False,
                                     eapol_complete=False, useful=False))
-    assert m == "[dim cyan]EAPOL-?[/dim cyan]"
+    assert m == _HS_PREFIX + "[dim cyan]EAPOL-?[/dim cyan]"
