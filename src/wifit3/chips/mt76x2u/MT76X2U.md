@@ -148,6 +148,17 @@ header-stripped bodies and `firmware.py` skips the header-read step.
 
 ## Verified wire facts (capture-1)
 
+- **L2 alignment pad — remove BEFORE trimming to MPDU_LEN.** mt76x02 sets
+  `MT_RXINFO_L2PAD` and inserts 2 bytes between the 802.11 header and the body
+  whenever the header isn't 4-byte aligned — i.e. every QoS-Data frame (26-byte
+  header), which is what EAPOL and WEP-ARP ride on. The kernel de-pads, *then*
+  trims (`mt76x02_remove_hdr_pad` → `pskb_trim(skb, len)`); MPDU_LEN counts the
+  de-padded MPDU. `rx.py::decode_urb` must match that order — windowing to
+  MPDU_LEN first drops the last 2 body bytes, which clipped EAPOL M2 `key_data`
+  (→ uncrackable handshake) and shrank WEP ARP from 70→68 B (→ flaky replay).
+  Beacons/mgmt are unaffected (24-byte aligned header → no L2PAD), which is why
+  scanning always looked healthy. `[SRC]` mt76x02_mac.c:831,854. `[HW]` confirmed
+  2026-05-29: ARP replay works first try, handshake auto-saves.
 - **ASIC version = `0x76120044`** → rev **E4** (low byte 0x44). `[WIRE]`
   control READ bReq=0x07 of reg 0x0000, frame 137/138. Confirms the
   rev-≥E3 inference from the DLM offset, and pins it precisely at E4.
