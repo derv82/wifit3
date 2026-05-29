@@ -32,18 +32,58 @@ from .constants import (
     MT_BKOFF_SLOT_CFG,
     MT_BKOFF_SLOT_CFG_CC_DELAY_MASK,
     MT_BKOFF_SLOT_CFG_CC_DELAY_SHIFT,
+    MT_BCN_BYPASS_MASK,
+    MT_BCN_OFFSET_BASE,
+    MT_BEACON_TIME_CFG,
+    MT_BEACON_TIME_CFG_BEACON_TX,
+    MT_BEACON_TIME_CFG_SYNC_MODE_MASK,
+    MT_BEACON_TIME_CFG_TBTT_EN,
+    MT_BEACON_TIME_CFG_TIMER_EN,
     MT_CCK_PROT_CFG,
+    MT_CH_BUSY,
+    MT_CH_CCA_RC_EN,
+    MT_CH_IDLE,
+    MT_CH_TIME_CFG,
+    MT_CH_TIME_CFG_CH_TIMER_CLR_MASK,
+    MT_CH_TIME_CFG_CH_TIMER_CLR_SHIFT,
+    MT_CH_TIME_CFG_EIFS_AS_BUSY,
+    MT_CH_TIME_CFG_NAV_AS_BUSY,
+    MT_CH_TIME_CFG_RX_AS_BUSY,
+    MT_CH_TIME_CFG_TIMER_EN,
+    MT_CH_TIME_CFG_TX_AS_BUSY,
     MT_COEXCFG0,
     MT_COEXCFG0_COEX_EN,
+    MT_EE_NIC_CONF_2,
+    MT_EE_NIC_CONF_2_XTAL_OPTION_MASK,
+    MT_EE_NIC_CONF_2_XTAL_OPTION_SHIFT,
+    MT_EE_XTAL_TRIM_1,
+    MT_EE_XTAL_TRIM_2,
+    MT_MAC_ADDR_DW1_U2ME_MASK,
+    MT_MAC_APC_BSSID_BASE,
+    MT_MAC_APC_BSSID_H_ADDR_MASK,
+    MT_MAC_BSSID_DW1_MBEACON_N_MASK,
+    MT_MAC_BSSID_DW1_MBEACON_N_SHIFT,
+    MT_MAC_BSSID_DW1_MBSS_LOCAL_BIT,
+    MT_MAC_BSSID_DW1_MBSS_MODE_MASK,
+    MT_MAC_BSSID_DW1_MBSS_MODE_SHIFT,
+    MT_MAC_STATUS,
+    MT_MAC_STATUS_RX,
+    MT_MAC_STATUS_TX,
+    MT_VEND_TYPE_CFG,
+    N_BCN_SLOTS,
+    MT_XO_CTRL5,
+    MT_XO_CTRL5_C2_VAL_MASK,
+    MT_XO_CTRL5_C2_VAL_SHIFT,
+    MT_XO_CTRL6,
+    MT_XO_CTRL6_C2_CTRL_MASK,
+    MT_XO_CTRL7,
     MT_DACCLK_EN_DLY_CFG,
     MT_EFUSE_CTRL,
     MT_EXT_CCA_CFG,
     MT_EXP_ACK_TIME,
     MT_FCE_L2_STUFF,
     MT_FCE_L2_STUFF_WR_MPDU_LEN_EN,
-    MT_FCE_PDMA_GLOBAL_CONF,
     MT_FCE_PSE_CTRL,
-    MT_FCE_SKIP_FS,
     MT_FCE_WLAN_FLOW_CONTROL1,
     MT_GF20_PROT_CFG,
     MT_GF40_PROT_CFG,
@@ -56,9 +96,6 @@ from .constants import (
     MT_MAC_ADDR_DW1,
     MT_MAC_BSSID_DW0,
     MT_MAC_BSSID_DW1,
-    MT_MAC_STATUS,
-    MT_MAC_STATUS_RX,
-    MT_MAC_STATUS_TX,
     MT_MAC_SYS_CTRL,
     MT_MAC_SYS_CTRL_ENABLE_RX,
     MT_MAC_SYS_CTRL_ENABLE_TX,
@@ -115,6 +152,7 @@ from .constants import (
     MT_XIFS_TIME_CFG_OFDM_SIFS_MASK,
     MT_XIFS_TIME_CFG_OFDM_SIFS_SHIFT,
 )
+from .eeprom import read_u16
 from .transport import MT76x2UTransport
 
 logger = logging.getLogger(__name__)
@@ -254,54 +292,281 @@ async def mac_reset(transport: MT76x2UTransport) -> bool:
     return True
 
 
-def _xtal_fixup_minimal(transport: MT76x2UTransport) -> None:
-    """Non-EEPROM pieces of mt76x2u_mac_fixup_xtal.
+def _compute_xtal_trim(trim_2: int, trim_1_byte: int) -> tuple[int, int]:
+    """`mt76x2u_mac_fixup_xtal` EEPROM math — [SRC] mt76x2/usb_mac.c:11-29.
 
-    [SRC] mt76x2/usb_mac.c:36 — the writes that DO NOT depend on EEPROM
-    XTAL_TRIM_1/2 values. We skip the XO_CTRL5/6 trim itself and the
-    NIC_CONF_2-keyed XO_CTRL7 write. The remaining writes still matter for
-    RX (SIFS, slot-time, FCE L2 stuffing).
+    Returns ``(c2_val, offset)`` with c2_val pre-clamped to 7 bits. The
+    kernel then writes ``c2_val + offset`` into the XO_CTRL5.C2_VAL field.
+
+      offset:
+        - low byte == 0xff → 0 (uninitialized)
+        - else: bits 0-6 of low byte, negated if bit 7 set (sign bit)
+      c2_val:
+        - high byte of TRIM_2
+        - if high byte is 0x00 or 0xff: fall back to TRIM_1 low byte
+        - if THAT is also 0x00 or 0xff: use 0x14 (kernel default)
+        - finally clamp to low 7 bits
     """
-    # 0x504 / 0x50c: kernel writes these without comment. From context
-    # (between XTAL trim and SIFS adjust) they look like MAC-engine
-    # housekeeping. Magic values verbatim from kernel.
+    low = trim_2 & 0xFF
+    if low == 0xFF:
+        offset = 0
+    else:
+        magnitude = low & 0x7F
+        offset = -magnitude if (low & 0x80) else magnitude
+
+    high = (trim_2 >> 8) & 0xFF
+    if high == 0x00 or high == 0xFF:
+        high = trim_1_byte & 0xFF
+        if high == 0x00 or high == 0xFF:
+            high = 0x14
+    c2_val = high & 0x7F
+    return (c2_val, offset)
+
+
+def _mac_fixup_xtal(transport: MT76x2UTransport) -> None:
+    """`mt76x2u_mac_fixup_xtal` — [SRC] mt76x2/usb_mac.c:9-60.
+
+    Kernel-faithful port. Reads two EEPROM bytes for the per-board XTAL
+    trim, programs CFG-bus MT_XO_CTRL5.C2_VAL + MT_XO_CTRL6.C2_CTRL, runs
+    the four MAC-engine housekeeping writes around 0x504/0x50c, sets the
+    OFDM SIFS / slot CC_DELAY / FCE L2 stuff bits, and conditionally
+    writes MT_XO_CTRL7 based on EEPROM `NIC_CONF_2.XTAL_OPTION`.
+
+    Without the XTAL trim writes, the chip's reference oscillator runs at
+    the silicon default rather than the per-board calibrated frequency —
+    small frequency offsets accumulate into clock drift that the AP sees
+    as frame-mistime / FCS errors.
+    """
+    # Read EEPROM trim bytes (kernel mt76x2u/usb_mac.c:14, 24).
+    trim_2 = read_u16(transport, MT_EE_XTAL_TRIM_2)
+    trim_1 = read_u16(transport, MT_EE_XTAL_TRIM_1) & 0xFF
+    c2_val, offset = _compute_xtal_trim(trim_2, trim_1)
+
+    # CFG-bus XO_CTRL5: RMW C2_VAL = (c2_val + offset).
+    transport.rmw32(
+        MT_VEND_TYPE_CFG | MT_XO_CTRL5,
+        MT_XO_CTRL5_C2_VAL_MASK,
+        (((c2_val + offset) & 0x7F) << MT_XO_CTRL5_C2_VAL_SHIFT)
+        & MT_XO_CTRL5_C2_VAL_MASK,
+    )
+
+    # CFG-bus XO_CTRL6: SET all bits of C2_CTRL (kernel `mt76_set`).
+    transport.rmw32(
+        MT_VEND_TYPE_CFG | MT_XO_CTRL6,
+        MT_XO_CTRL6_C2_CTRL_MASK,
+        MT_XO_CTRL6_C2_CTRL_MASK,
+    )
+
+    # MAC-engine housekeeping around 0x504/0x50c (default bus).
+    # [SRC] mt76x2/usb_mac.c:36-39.
     transport.write32(0x504, 0x06000000)
     transport.write32(0x50c, 0x08800000)
     time.sleep(0.005)   # mdelay(5)
     transport.write32(0x504, 0x00000000)
 
-    # Decrease OFDM SIFS 16us -> 13us.
+    # Decrease OFDM SIFS 16us -> 13us. [SRC] mt76x2/usb_mac.c:42-43.
     transport.rmw32(
         MT_XIFS_TIME_CFG,
         MT_XIFS_TIME_CFG_OFDM_SIFS_MASK,
         (0xD << MT_XIFS_TIME_CFG_OFDM_SIFS_SHIFT) & MT_XIFS_TIME_CFG_OFDM_SIFS_MASK,
     )
 
-    # BKOFF slot CC_DELAY = 1.
+    # BKOFF slot CC_DELAY = 1. [SRC] mt76x2/usb_mac.c:44.
     transport.rmw32(
         MT_BKOFF_SLOT_CFG,
         MT_BKOFF_SLOT_CFG_CC_DELAY_MASK,
         (0x1 << MT_BKOFF_SLOT_CFG_CC_DELAY_SHIFT) & MT_BKOFF_SLOT_CFG_CC_DELAY_MASK,
     )
 
-    # Clear FCE_L2_STUFF.WR_MPDU_LEN_EN (BIT 4).
+    # Clear FCE_L2_STUFF.WR_MPDU_LEN_EN (BIT 4). [SRC] mt76x2/usb_mac.c:47.
     transport.rmw32(MT_FCE_L2_STUFF, MT_FCE_L2_STUFF_WR_MPDU_LEN_EN, 0)
+
+    # Conditional XO_CTRL7 write — kernel switch on NIC_CONF_2.XTAL_OPTION.
+    # [SRC] mt76x2/usb_mac.c:49-59. The default branch (option >= 2) does
+    # nothing; on the AWUS036ACM in capture-1 the kernel skipped this
+    # write, but other boards may take case 0 or 1.
+    nic_conf_2 = read_u16(transport, MT_EE_NIC_CONF_2)
+    xtal_option = (
+        (nic_conf_2 & MT_EE_NIC_CONF_2_XTAL_OPTION_MASK)
+        >> MT_EE_NIC_CONF_2_XTAL_OPTION_SHIFT
+    )
+    if xtal_option == 0:
+        transport.write32(MT_VEND_TYPE_CFG | MT_XO_CTRL7, 0x5C1FEE80)
+    elif xtal_option == 1:
+        transport.write32(MT_VEND_TYPE_CFG | MT_XO_CTRL7, 0x5C1FEED0)
+
+
+# Backwards-compatible alias (was: skipped EEPROM-derived writes).
+_xtal_fixup_minimal = _mac_fixup_xtal
+
+
+def mac_set_bssid(transport: MT76x2UTransport, idx: int, addr: bytes) -> None:
+    """`mt76x02_mac_set_bssid` — [SRC] mt76x02_mac.c:1232-1238.
+
+    Programs one per-vif BSSID slot (8 slots total; `idx &= 7` masks the
+    caller's value down to 0-7). Writes the low 4 bytes to APC_BSSID_L
+    and RMW's the high 2 bytes into the ADDR field of APC_BSSID_H,
+    preserving the EN/control bits in the upper half of the H register.
+    """
+    if len(addr) != 6:
+        raise ValueError(f"mac_set_bssid: addr must be 6 bytes, got {len(addr)}")
+    slot = idx & 0x7
+    base = MT_MAC_APC_BSSID_BASE + slot * 8
+    lo = struct.unpack("<I", addr[:4])[0]
+    hi = struct.unpack("<H", addr[4:6])[0]
+    transport.write32(base, lo)
+    transport.rmw32(base + 4, MT_MAC_APC_BSSID_H_ADDR_MASK, hi)
 
 
 def mac_setaddr(transport: MT76x2UTransport, mac_bytes: bytes) -> None:
-    """Write MAC into hardware registers.
+    """`mt76x02_mac_setaddr` — [SRC] mt76x02_mac.c:727-758.
 
-    [SRC] mt76x02_mac.c::mt76x02_mac_setaddr (loops over 6 bytes -> ADDR_DW0/1).
+    Kernel-faithful port. Writes ADDR_DW0/DW1 (with U2ME_MASK=0xff in
+    DW1's high byte), BSSID_DW0/DW1 (with MBSS_MODE=3 + MBSS_LOCAL_BIT
+    in DW1's upper bits), then RMW's MBEACON_N=7 onto BSSID_DW1, then
+    clears all 8 per-vif APC_BSSID slots via 16 iterations of
+    `mac_set_bssid(i, null)` (kernel loops 0..15 but each call masks
+    `idx &= 7`, so slots get cleared twice — kernel-verbatim).
     """
     if len(mac_bytes) != 6:
         raise ValueError(f"MAC must be 6 bytes, got {len(mac_bytes)}")
     dw0 = struct.unpack("<I", mac_bytes[:4])[0]
-    dw1 = struct.unpack("<H", mac_bytes[4:6])[0]  # upper 16 bits = 0
+    dw1_mac = struct.unpack("<H", mac_bytes[4:6])[0]
+
+    # MAC_ADDR: low DW + high DW with U2ME_MASK=0xff in bits 23:16.
     transport.write32(MT_MAC_ADDR_DW0, dw0)
-    transport.write32(MT_MAC_ADDR_DW1, dw1)
-    # BSSID identical to MAC for STA/monitor (kernel does this too).
+    transport.write32(
+        MT_MAC_ADDR_DW1,
+        dw1_mac | MT_MAC_ADDR_DW1_U2ME_MASK,
+    )
+
+    # BSSID DW: low DW = MAC low. High DW = mac high 2 bytes |
+    # (MBSS_MODE=3 << 16) | MBSS_LOCAL_BIT. The MBEACON_N field is then
+    # RMW'd to 7 in a second write (matches kernel two-step exactly).
     transport.write32(MT_MAC_BSSID_DW0, dw0)
-    transport.write32(MT_MAC_BSSID_DW1, dw1)
+    bssid_dw1 = (
+        dw1_mac
+        | ((3 << MT_MAC_BSSID_DW1_MBSS_MODE_SHIFT)
+           & MT_MAC_BSSID_DW1_MBSS_MODE_MASK)
+        | MT_MAC_BSSID_DW1_MBSS_LOCAL_BIT
+    )
+    transport.write32(MT_MAC_BSSID_DW1, bssid_dw1)
+    transport.rmw32(
+        MT_MAC_BSSID_DW1,
+        MT_MAC_BSSID_DW1_MBEACON_N_MASK,
+        (7 << MT_MAC_BSSID_DW1_MBEACON_N_SHIFT)
+        & MT_MAC_BSSID_DW1_MBEACON_N_MASK,
+    )
+
+    # Clear all per-vif BSSID slots — kernel runs 16 iterations even
+    # though only 8 slots exist (idx &= 7 inside set_bssid), so each
+    # slot gets cleared twice. Kernel-verbatim.
+    null_addr = b"\x00" * 6
+    for i in range(16):
+        mac_set_bssid(transport, i, null_addr)
+
+
+async def wait_for_txrx_idle(transport: MT76x2UTransport,
+                             timeout_ms: int = 100) -> bool:
+    """`mt76x02_wait_for_txrx_idle` — [SRC] mt76x02.h:252-258.
+
+    Polls MT_MAC_STATUS waiting for both TX and RX activity bits to clear,
+    100 ms timeout. Kernel calls this between `mac_setaddr` and the 256-
+    iter WCID reset loop ([SRC] usb_init.c:162) — without it, our WCID +
+    SKEY clears may race with the chip's in-flight TX/RX state, leaving
+    stale data in wcid 0xff (the slot we use for inject TX) and producing
+    the "first fake-auth fails, retry succeeds" symptom.
+
+    Returns True if idle reached within ``timeout_ms``, False on timeout.
+    Kernel uses 1 ms poll interval; we match.
+    """
+    mask = MT_MAC_STATUS_TX | MT_MAC_STATUS_RX
+    deadline = time.monotonic() + (timeout_ms / 1000.0)
+    while True:
+        val = transport.read32(MT_MAC_STATUS)
+        if (val & mask) == 0:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(0.001)
+
+
+def mac_cc_reset(transport: MT76x2UTransport) -> None:
+    """`mt76x02_mac_cc_reset` — [SRC] mt76x02_mac.c:1213-1229.
+
+    Programs the channel-time counters and clears the busy/idle accumulators.
+    Kernel calls this on every channel change (from mt76x2u_set_channel).
+
+    The full value is:
+      TIMER_EN | TX_AS_BUSY | RX_AS_BUSY | NAV_AS_BUSY | EIFS_AS_BUSY |
+      CCA_RC_EN | (CH_TIMER_CLR=1)
+    """
+    val = (
+        MT_CH_TIME_CFG_TIMER_EN
+        | MT_CH_TIME_CFG_TX_AS_BUSY
+        | MT_CH_TIME_CFG_RX_AS_BUSY
+        | MT_CH_TIME_CFG_NAV_AS_BUSY
+        | MT_CH_TIME_CFG_EIFS_AS_BUSY
+        | MT_CH_CCA_RC_EN
+        | ((1 << MT_CH_TIME_CFG_CH_TIMER_CLR_SHIFT)
+           & MT_CH_TIME_CFG_CH_TIMER_CLR_MASK)
+    )
+    transport.write32(MT_CH_TIME_CFG, val)
+    # Read-and-clear channel busy/idle counters.
+    transport.read32(MT_CH_BUSY)
+    transport.read32(MT_CH_IDLE)
+
+
+def init_beacon_config(transport: MT76x2UTransport) -> None:
+    """`mt76x02_init_beacon_config` — [SRC] mt76x02_beacon.c:205-213.
+
+    Kernel-faithful init even though wifit3 never TX's beacons:
+      - CLEAR BEACON_TIME_CFG.{TIMER_EN | TBTT_EN | BEACON_TX}
+      - SET   BEACON_TIME_CFG.SYNC_MODE
+      - WRITE BCN_BYPASS_MASK = 0xFFFF
+      - WRITE the 4 BCN_OFFSET regs with the per-slot offsets (Task 6).
+    """
+    transport.rmw32(
+        MT_BEACON_TIME_CFG,
+        (MT_BEACON_TIME_CFG_TIMER_EN
+         | MT_BEACON_TIME_CFG_TBTT_EN
+         | MT_BEACON_TIME_CFG_BEACON_TX),
+        0,
+    )
+    transport.rmw32(
+        MT_BEACON_TIME_CFG,
+        MT_BEACON_TIME_CFG_SYNC_MODE_MASK,
+        MT_BEACON_TIME_CFG_SYNC_MODE_MASK,
+    )
+    transport.write32(MT_BCN_BYPASS_MASK, 0xFFFF)
+    _set_beacon_offsets(transport)
+
+
+def _set_beacon_offsets(transport: MT76x2UTransport) -> None:
+    """`mt76x02_set_beacon_offsets` — [SRC] mt76x02_beacon.c:10-22.
+
+    With ``nslots = N_BCN_SLOTS = 5`` and
+    ``slot_size = (8192 / 5) & ~63 = 1600``, the 5 slot offsets pack into 4
+    u32 registers (one byte per slot, value = offset/64):
+
+      slot 0: 0      / 64 =   0
+      slot 1: 1600   / 64 =  25 (0x19)
+      slot 2: 3200   / 64 =  50 (0x32)
+      slot 3: 4800   / 64 =  75 (0x4B)
+      slot 4: 6400   / 64 = 100 (0x64)
+
+      regs[0] = 0x00 | (0x19 << 8) | (0x32 << 16) | (0x4B << 24) = 0x4B321900
+      regs[1] = 0x64
+      regs[2] = 0
+      regs[3] = 0
+    """
+    slot_size = (8192 // N_BCN_SLOTS) & ~63
+    regs = [0, 0, 0, 0]
+    for i in range(N_BCN_SLOTS):
+        val = (i * slot_size) // 64
+        regs[i // 4] |= (val & 0xFF) << (8 * (i % 4))
+    for i in range(4):
+        transport.write32(MT_BCN_OFFSET_BASE + i * 4, regs[i])
 
 
 async def mac_start(transport: MT76x2UTransport,
