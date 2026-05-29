@@ -45,7 +45,10 @@ def _eapol(bssid, client, msg_num, replay, *, to_ap, pmkid=None):
         "eapol_nonce": b"\x01" * 32,
         "eapol_mic": b"\x02" * 16,
         "eapol_key_data_len": 0,
-        "eapol_payload": b"",
+        # A complete 802.1X payload (>= the MIC offset) so an M2 is a usable
+        # hashcat keystone — the capture banner and auto-save share this gate,
+        # so a frame that lights the UI is by construction one we can write.
+        "eapol_payload": bytes(120),
         "eapol_pmkid": pmkid,
     }
 
@@ -55,7 +58,7 @@ def _log_text(log: RichLog) -> str:
 
 
 @pytest.mark.asyncio
-async def test_focus_surfaces_passive_handshake_and_pmkid():
+async def test_focus_surfaces_passive_handshake_and_pmkid(tmp_path):
     app = WifiteApp()
     async with app.run_test() as pilot:
         iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
@@ -101,11 +104,15 @@ async def test_focus_surfaces_passive_handshake_and_pmkid():
         log_text = _log_text(focus.query_one("#focus-event-log", RichLog))
         assert "Valid 4-Way Handshake" in log_text, log_text
         assert "M1+M2" in log_text, log_text
-        # Auto-save fires inline with the capture-event log: the PMKID lands on
-        # disk without any user keystroke. (The handshake save is gated by a
-        # full hashcat-emittable EAPOL payload, which the synthetic frames here
-        # lack; that path is covered in tests/engine/test_save.py.)
-        assert "(saved" in log_text and "_pmkid.hc22000" in log_text, log_text
+        # Auto-save fires inline with the capture-event log — no user keystroke.
+        # The banner and the save share one crackability gate (engine.wpa), so a
+        # frame complete enough to announce is by construction one we can write:
+        # BOTH the handshake and the PMKID hit disk.
+        assert "_pmkid.hc22000" in log_text, log_text
+        assert "_handshake.hc22000" in log_text, log_text
+        saved = {p.name for p in (tmp_path / "captures").iterdir()}
+        assert any(n.endswith("_handshake.hc22000") for n in saved), saved
+        assert any(n.endswith("_pmkid.hc22000") for n in saved), saved
 
 
 @pytest.mark.asyncio

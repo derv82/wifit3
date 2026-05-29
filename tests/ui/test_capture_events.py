@@ -11,13 +11,16 @@ from wifit3.ui.capture_events import CaptureEventDetector, CaptureKind
 
 
 def _ef(msg, rc, nonce, ts):
+    """A *usable* EAPOL frame (real MIC + complete 802.1X payload), so an M2 is a
+    valid MIC keystone and the detector can fire a real completion banner."""
     return EapolFrame(
         raw=bytes([msg]) + rc.to_bytes(8, "big") + nonce[:1],
         msg_num=msg,
         replay_hex=rc.to_bytes(8, "big").hex(),
         nonce=nonce,
-        mic=b"\x00" * 16,
+        mic=b"\x11" * 16,
         key_data_len=0,
+        eapol_payload=bytes(120),
         timestamp=ts,
     )
 

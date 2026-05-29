@@ -32,13 +32,16 @@ def test_wps_pbc_active_detection():
 
 
 def _eapol(msg_num: int, replay: int) -> EapolFrame:
+    """A *usable* EAPOL frame: non-zero nonce, real MIC, complete 802.1X payload
+    — so M2/M4 qualify as MIC keystones and M1/M3 as ANonce donors."""
     return EapolFrame(
         raw=bytes([msg_num, replay & 0xFF]),
         msg_num=msg_num,
         replay_hex=replay.to_bytes(8, "big").hex(),
-        nonce=b"\x00" * 32,
-        mic=b"\x00" * 16,
+        nonce=bytes([msg_num]) * 32,
+        mic=b"\x11" * 16,
         key_data_len=0,
+        eapol_payload=bytes(120),
     )
 
 

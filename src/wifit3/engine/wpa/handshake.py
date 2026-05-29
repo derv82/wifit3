@@ -1,0 +1,223 @@
+"""Single source of truth for WPA/WPA2 4-way handshake crackability + hc22000.
+
+Both decisions that used to disagree now route through ``crackable_pairs()``:
+the "did we capture a handshake?" verdict (events, CAPTURE-panel counts) AND the
+hc22000 hashline build. A banner can therefore never claim a capture that
+``save`` then silently refuses — they are literally the same code path.
+
+Ground truth — what each 4-way message carries and what hashcat needs
+---------------------------------------------------------------------
+hashcat (mode 22000) cracks by guessing the PMK, deriving the PTK from
+``ANonce + SNonce + AP_MAC + STA_MAC``, recomputing the MIC over a captured
+EAPOL frame, and comparing. So it needs ANonce, SNonce, a MIC, and the exact
+802.1X bytes that MIC covered.
+
+    Msg  Dir      Nonce field      MIC   Gives hashcat
+    M1   AP->STA  ANonce           no    ANonce (donor only)
+    M2   STA->AP  SNonce           yes   SNonce + MIC + EAPOL  (the keystone)
+    M3   AP->STA  ANonce (repeat)  yes   ANonce (its own MIC/EAPOL are unused)
+    M4   STA->AP  usually ZERO     yes   MIC + EAPOL; SNonce only if not zeroed
+
+hashcat reads the SNonce out of the *MIC frame's* embedded nonce, so the MIC
+frame must actually contain the SNonce. That means the MIC frame is always M2
+(SNonce present) or M4 (only when the client didn't zero its nonce) — never M3
+(its nonce is the ANonce) and never M1 (no MIC). hashcat's MESSAGEPAIR table:
+
+    0x00  M1+M2, EAPOL from M2   always crackable (M2 complete)
+    0x02  M2+M3, EAPOL from M2   always crackable (M2 complete; M3 = ANonce)
+    0x05  M3+M4, EAPOL from M4   only if M4's nonce != 0 (echoed SNonce)
+    0x01  M1+M4, EAPOL from M4   only if M4's nonce != 0
+    0x03/0x04 (EAPOL from M3)    marked "unused" by hashcat — never emitted here
+
+So a "captured handshake" requires a usable *keystone*: a complete M2 (or, rarely,
+a complete M4 with a non-zero nonce) plus an ANonce donor (M1 or M3) from the
+same association.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import List
+
+from wifit3.engine.models import EapolFrame, Handshake
+
+# hashcat module_22000 MESSAGEPAIR bytes (EAPOL-source encoded in the low bits).
+_PAIR_M1M2_E2 = 0x00
+_PAIR_M1M4_E4 = 0x01
+_PAIR_M2M3_E2 = 0x02
+_PAIR_M3M4_E4 = 0x05
+
+# MIC sits at offset 81 within the 802.1X payload; a usable MIC frame's payload
+# must reach at least through it (81 + 16).
+_MIC_OFFSET = 81
+_MIC_LEN = 16
+_FULL_EAPOL = _MIC_OFFSET + _MIC_LEN
+_NONCE_LEN = 32
+_ZERO_NONCE = b"\x00" * _NONCE_LEN
+_ZERO_MIC = b"\x00" * _MIC_LEN
+
+# A real 4-way completes sub-second; allow a generous window for retransmits and
+# jitter. Two frames whose replay counters happen to match but that arrived
+# farther apart than this are from different associations even if their replay
+# counters coincide — pairing them mixes nonces from different PTKs.
+_EAPOL_PAIR_WINDOW_S = 2.0
+
+
+@dataclass(frozen=True)
+class MessageInfo:
+    """Per-frame content descriptor — the hashcat-relevant fields, for logging.
+
+    ``useful`` answers "does this frame contribute what a crackable pair needs?"
+    so the UI can dim frames that arrived degraded (e.g. a clipped M2)."""
+    msg_num: int
+    has_nonce: bool       # a real 32-byte, non-zero nonce
+    has_mic: bool         # a real 16-byte, non-zero MIC (M1 legitimately has none)
+    eapol_complete: bool  # 802.1X payload reaches through the MIC (>= 97 bytes)
+
+    @property
+    def useful(self) -> bool:
+        if self.msg_num == 1:   # ANonce donor
+            return self.has_nonce
+        if self.msg_num == 2:   # keystone — SNonce + MIC + complete EAPOL
+            return self.has_nonce and self.has_mic and self.eapol_complete
+        if self.msg_num == 3:   # ANonce donor (own MIC/EAPOL unused by hashcat)
+            return self.has_nonce
+        if self.msg_num == 4:   # conditional keystone — needs an echoed SNonce too
+            return self.has_mic and self.eapol_complete and self.has_nonce
+        return False
+
+
+def describe(f: EapolFrame) -> MessageInfo:
+    """Content descriptor for one EAPOL frame."""
+    return MessageInfo(
+        msg_num=f.msg_num,
+        has_nonce=len(f.nonce) == _NONCE_LEN and f.nonce != _ZERO_NONCE,
+        has_mic=len(f.mic) == _MIC_LEN and f.mic != _ZERO_MIC,
+        eapol_complete=len(f.eapol_payload) >= _FULL_EAPOL,
+    )
+
+
+@dataclass(frozen=True)
+class CrackablePair:
+    """A pair that yields a hashcat-crackable WPA*02 line.
+
+    ``anonce_frame`` donates the ANonce; ``mic_frame`` (always M2 or a non-zeroed
+    M4) donates the MIC, the SNonce, and the EAPOL bytes."""
+    anonce_frame: EapolFrame
+    mic_frame: EapolFrame
+    pair_byte: int
+
+    @property
+    def instance_key(self) -> bytes:
+        """ANonce — fresh per association, so it identifies one 4-way instance."""
+        return self.anonce_frame.nonce
+
+
+def _replay(f: EapolFrame) -> int:
+    return int.from_bytes(bytes.fromhex(f.replay_hex), "big")
+
+
+def _within_window(a: EapolFrame, b: EapolFrame) -> bool:
+    """True if two frames are close enough in time to be one handshake. Skipped
+    when either timestamp is unset (0.0) — keeps fixtures / pre-timestamp
+    captures working off the replay-counter rules alone."""
+    if a.timestamp <= 0 or b.timestamp <= 0:
+        return True
+    return abs(a.timestamp - b.timestamp) <= _EAPOL_PAIR_WINDOW_S
+
+
+def _mic_frame_usable(f: EapolFrame) -> bool:
+    """Can this frame be the hashline's MIC/EAPOL source? It must carry a real
+    MIC, a complete 802.1X payload, AND its embedded nonce (the SNonce hashcat
+    reads back) — which is why a zero-nonce M4 is rejected here."""
+    i = describe(f)
+    return i.has_mic and i.eapol_complete and i.has_nonce
+
+
+def _anonce_consistent(hs: Handshake, m1: EapolFrame) -> bool:
+    """Guard for M1-sourced ANonce pairs. The AP reuses one ANonce across M1 and
+    M3 of a handshake; if we also captured this instance's M3 (replay+1) with a
+    *different* nonce, this M1 belongs to another association and must not supply
+    the ANonce."""
+    if len(m1.nonce) != _NONCE_LEN:
+        return True
+    target_rc = _replay(m1) + 1
+    for f in hs.eapol_frames:
+        if (f.msg_num == 3 and _replay(f) == target_rc
+                and len(f.nonce) == _NONCE_LEN and f.nonce != m1.nonce):
+            return False
+    return True
+
+
+def crackable_pairs(hs: Handshake) -> List[CrackablePair]:
+    """Every distinct, hashcat-crackable handshake instance for this client.
+
+    One entry per association (deduped by ANonce); a re-handshake (fresh ANonce)
+    adds another. A pair qualifies only when it belongs to one association
+    (replay relationship + arrival window + ANonce consistency for M1-sourced
+    pairs) AND its MIC frame is a usable keystone (complete M2, or a non-zeroed
+    M4) — i.e. exactly what ``hc22000_line`` can serialise. Confidence order
+    favours the M2 keystone."""
+    by_msg: dict[int, List[EapolFrame]] = {}
+    for f in hs.eapol_frames:
+        if f.msg_num in (1, 2, 3, 4):
+            by_msg.setdefault(f.msg_num, []).append(f)
+
+    out: List[CrackablePair] = []
+    seen: set[bytes] = set()
+
+    def consider(anonce_f: EapolFrame, mic_f: EapolFrame,
+                 pair_byte: int, rc_ok: bool, *, from_m1: bool) -> None:
+        if not rc_ok or not _within_window(anonce_f, mic_f):
+            return
+        if not _mic_frame_usable(mic_f):
+            return
+        if len(anonce_f.nonce) != _NONCE_LEN or anonce_f.nonce == _ZERO_NONCE:
+            return
+        if from_m1 and not _anonce_consistent(hs, anonce_f):
+            return
+        key = anonce_f.nonce
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(CrackablePair(anonce_f, mic_f, pair_byte))
+
+    # M2 keystone first (most reliable), then the conditional M4 keystone.
+    for m2 in by_msg.get(2, []):
+        for m3 in by_msg.get(3, []):
+            consider(m3, m2, _PAIR_M2M3_E2, _replay(m3) == _replay(m2) + 1, from_m1=False)
+        for m1 in by_msg.get(1, []):
+            consider(m1, m2, _PAIR_M1M2_E2, _replay(m1) == _replay(m2), from_m1=True)
+    for m4 in by_msg.get(4, []):
+        for m3 in by_msg.get(3, []):
+            consider(m3, m4, _PAIR_M3M4_E4, _replay(m4) == _replay(m3), from_m1=False)
+        for m1 in by_msg.get(1, []):
+            consider(m1, m4, _PAIR_M1M4_E4, _replay(m4) == _replay(m1) + 1, from_m1=True)
+    return out
+
+
+# ----- hc22000 emission ------------------------------------------------------
+
+def mac_compact(mac: str) -> str:
+    """``aa:bb:cc:dd:ee:ff`` -> ``aabbccddeeff`` (hashcat MAC encoding)."""
+    return mac.replace(":", "").replace("-", "").lower()
+
+
+def ssid_hex(ssid: str) -> str:
+    """SSID -> UTF-8 hex (hashcat consumes the raw advertised bytes)."""
+    return ssid.encode("utf-8", errors="replace").hex()
+
+
+def hc22000_line(ssid: str, hs: Handshake, pair: CrackablePair) -> str:
+    """The ``WPA*02*…`` hashline for a crackable pair, MIC field zeroed."""
+    payload = bytearray(pair.mic_frame.eapol_payload)
+    payload[_MIC_OFFSET: _MIC_OFFSET + _MIC_LEN] = _ZERO_MIC
+    return (
+        "WPA*02"
+        f"*{pair.mic_frame.mic.hex()}"
+        f"*{mac_compact(hs.bssid)}"
+        f"*{mac_compact(hs.client_mac)}"
+        f"*{ssid_hex(ssid)}"
+        f"*{pair.anonce_frame.nonce.hex()}"
+        f"*{bytes(payload).hex()}"
+        f"*{pair.pair_byte:02x}"
+    )

@@ -185,17 +185,23 @@ def test_parser_rejects_truncated_kde():
 
 # ---- Handshake pair-detection tests --------------------------------------------
 
-def _ef(msg_num, replay_int, raw=None, *, ts=0.0, nonce=None):
-    """Quick EapolFrame builder for pair tests. ts=0.0 (default) means
-    'unset' → the time-window check is skipped, exercising the replay-only
-    fallback that the legacy tests rely on."""
+def _ef(msg_num, replay_int, raw=None, *, ts=0.0, nonce=None, mic=True, complete=True):
+    """EapolFrame builder for the model-delegation tests. By default produces a
+    *usable* frame — a real (non-zero) nonce, a real MIC, and a complete 802.1X
+    payload — so M2/M4 qualify as MIC keystones and M1/M3 as ANonce donors, the
+    way a clean capture looks. Pass mic=False for an M1-style no-MIC frame or
+    complete=False to simulate a clipped payload.
+
+    ts=0.0 (default) means 'unset' → the time-window check is skipped, so these
+    tests pin the replay-counter + content rules without depending on timing."""
     return EapolFrame(
         raw=raw if raw is not None else bytes([msg_num, replay_int % 256]),
         msg_num=msg_num,
         replay_hex=(replay_int).to_bytes(8, "big").hex(),
-        nonce=nonce if nonce is not None else b"\x00" * 32,
-        mic=b"\x00" * 16,
+        nonce=nonce if nonce is not None else bytes([msg_num]) * 32,
+        mic=(b"\x11" * 16 if mic else b"\x00" * 16),
         key_data_len=0,
+        eapol_payload=(bytes(120) if complete else b""),
         timestamp=ts,
     )
 

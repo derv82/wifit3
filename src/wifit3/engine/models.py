@@ -26,18 +26,6 @@ class EapolFrame(BaseModel):
     timestamp: float = 0.0
 
 
-def _replay_to_int(replay_hex: str) -> int:
-    return int.from_bytes(bytes.fromhex(replay_hex), "big")
-
-
-# A real 4-way completes sub-second; allow a generous window for retransmits and
-# jitter. Two frames whose replay counters happen to match but that arrived
-# farther apart than this are from different association attempts — pairing them
-# mixes ANonce/SNonce from different PTKs, i.e. an uncrackable hashline. The
-# minute-late-M2 bug lived exactly here.
-_EAPOL_PAIR_WINDOW_S = 2.0
-
-
 class Handshake(BaseModel):
     """
     Captured WPA/WPA2 4-way handshake (or PMKID) for one (BSSID, client_mac)
@@ -58,111 +46,42 @@ class Handshake(BaseModel):
     # populated by the PMKID attack path when it lands.
     pmkid: Optional[bytes] = None
 
-    # -- Crack-validity -------------------------------------------------------
+    # -- Crack-validity --------------------------------------------------------
+    # Delegated to engine.wpa.handshake — the single source of truth shared with
+    # the hc22000 / auto-save path, so "captured" and "saveable" can't diverge.
+    # Deferred import: that module imports this one.
 
-    def _within_window(self, a: EapolFrame, b: EapolFrame) -> bool:
-        """True if two frames are close enough in time to be one handshake.
-        Skipped when either timestamp is unset (0.0) — keeps fixtures / any
-        pre-timestamp capture working off the replay-counter rules alone."""
-        if a.timestamp <= 0 or b.timestamp <= 0:
-            return True
-        return abs(a.timestamp - b.timestamp) <= _EAPOL_PAIR_WINDOW_S
+    def _crackable_pairs(self):
+        from wifit3.engine.wpa import handshake as _wpa
+        return _wpa.crackable_pairs(self)
 
-    def _anonce_consistent(self, m1: EapolFrame) -> bool:
-        """Guard for M1-sourced ANonce pairs. The AP reuses one ANonce across
-        M1 and M3 of a handshake, so if we captured this instance's M3
-        (replay == M1.replay + 1) with a *different* nonce, this M1 belongs to
-        another association and must not supply the ANonce."""
-        if len(m1.nonce) != 32:
-            return True
-        target_rc = _replay_to_int(m1.replay_hex) + 1
-        for f in self.eapol_frames:
-            if (
-                f.msg_num == 3
-                and _replay_to_int(f.replay_hex) == target_rc
-                and len(f.nonce) == 32
-                and f.nonce != m1.nonce
-            ):
-                return False
-        return True
+    @staticmethod
+    def _ordered(pair) -> Tuple[EapolFrame, EapolFrame]:
+        """A CrackablePair rendered as a (lower-msg, higher-msg) frame tuple."""
+        return tuple(sorted((pair.anonce_frame, pair.mic_frame),
+                            key=lambda f: f.msg_num))
 
     def find_valid_pair(self) -> Optional[Tuple[EapolFrame, EapolFrame]]:
-        """Return the highest-confidence hashcat-valid (lower-msg, higher-msg)
-        pair from a *single handshake instance*, else None.
-
-        A pair must belong to one association: the right replay-counter
-        relationship AND arrival within ``_EAPOL_PAIR_WINDOW_S`` AND (when the
-        ANonce comes from M1) a consistent ANonce. Replay counters alone are
-        insufficient — they restart per re-association, so an M1 from one
-        attempt and an M2 from a later one can collide and produce an
-        uncrackable hashline. Preference favours M2+M3 / M3+M4, where M3 carries
-        the ANonce right beside the MIC frame (self-consistent); M1-sourced
-        pairs are the fragile ones and carry the extra guards.
-
-        Accepted pairs (hcxpcapngtool semantics):
-          M2+M3 (M3.replay == M2.replay + 1)
-          M3+M4 (same replay)
-          M1+M2 (same replay)
-          M1+M4 (M4.replay == M1.replay + 1)
-        """
-        return next(self._iter_valid_pairs(), None)
-
-    def _iter_valid_pairs(self):
-        """Yield every same-instance hashcat-valid (lower-msg, higher-msg) pair,
-        in confidence order (M2+M3, M3+M4, M1+M2, M1+M4). ``find_valid_pair``
-        takes the first; instance counting walks them all."""
-        by_msg: Dict[int, List[EapolFrame]] = {}
-        for f in self.eapol_frames:
-            if f.msg_num:
-                by_msg.setdefault(f.msg_num, []).append(f)
-
-        def rc(f: EapolFrame) -> int:
-            return _replay_to_int(f.replay_hex)
-
-        same = lambda a, b: a.replay_hex == b.replay_hex          # noqa: E731
-        plus1 = lambda a, b: rc(b) == rc(a) + 1                   # noqa: E731
-
-        def gen(ma, mb, rc_ok, *, anonce_from_m1=False):
-            for a in by_msg.get(ma, []):
-                for b in by_msg.get(mb, []):
-                    if not rc_ok(a, b):
-                        continue
-                    if not self._within_window(a, b):
-                        continue
-                    if anonce_from_m1 and not self._anonce_consistent(a):
-                        continue
-                    yield (a, b)
-
-        yield from gen(2, 3, plus1)
-        yield from gen(3, 4, same)
-        yield from gen(1, 2, same, anonce_from_m1=True)
-        yield from gen(1, 4, plus1, anonce_from_m1=True)
+        """Highest-confidence crackable (lower-msg, higher-msg) pair, or None."""
+        pairs = self._crackable_pairs()
+        return self._ordered(pairs[0]) if pairs else None
 
     def valid_pairs_by_instance(self) -> Dict[bytes, Tuple[EapolFrame, EapolFrame]]:
-        """Map each captured handshake *instance* (keyed by its ANonce — fresh
-        per association) to its best valid pair. A single 4-way collapses to one
-        entry no matter how many M-frame combos validate; a re-handshake (new
-        ANonce) adds another. Requires a beacon (needed to crack)."""
-        out: Dict[bytes, Tuple[EapolFrame, EapolFrame]] = {}
+        """Each crackable handshake instance (keyed by its ANonce — fresh per
+        association) mapped to its (lower-msg, higher-msg) pair. Gated on a
+        beacon: we don't announce a capture for an AP we've never heard beacon."""
         if not self.beacon_frame:
-            return out
-        for a, b in self._iter_valid_pairs():
-            # ANonce comes from whichever frame is M1 or M3.
-            anonce_frame = a if a.msg_num in (1, 3) else b
-            if len(anonce_frame.nonce) == 32:
-                out.setdefault(anonce_frame.nonce, (a, b))
-        return out
+            return {}
+        return {p.instance_key: self._ordered(p) for p in self._crackable_pairs()}
 
     @property
     def complete_instances(self) -> int:
-        """How many distinct 4-way handshakes we've captured for this client."""
+        """Distinct crackable 4-way handshakes captured for this client."""
         return len(self.valid_pairs_by_instance())
 
     @property
     def is_complete(self) -> bool:
-        if not self.beacon_frame:
-            return False
-        return self.find_valid_pair() is not None
+        return bool(self.beacon_frame) and bool(self._crackable_pairs())
 
     @property
     def captured_messages(self) -> Set[int]:
