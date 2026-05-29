@@ -22,8 +22,32 @@ def _beacon_body() -> bytes:
     )
 
 
+def _record_header(path, index: int) -> tuple[int, int, int]:
+    """(ts_sec, ts_usec, caplen) of the Nth packet record (little-endian).
+    24-byte global header, then 16-byte record headers + payloads."""
+    raw = path.read_bytes()
+    off = 24
+    for _ in range(index):
+        caplen = int.from_bytes(raw[off + 8: off + 12], "little")
+        off += 16 + caplen
+    sec = int.from_bytes(raw[off: off + 4], "little")
+    usec = int.from_bytes(raw[off + 4: off + 8], "little")
+    caplen = int.from_bytes(raw[off + 8: off + 12], "little")
+    return sec, usec, caplen
+
+
 def test_write_pcap_writes_frame_verbatim(tmp_path):
     body = _beacon_body()
     path = tmp_path / "a.pcap"
-    assert write_pcap(path, [body]) == 1
+    assert write_pcap(path, [(body, 0.0)]) == 1
     assert _first_packet(path) == body
+
+
+def test_write_pcap_preserves_per_frame_timestamps(tmp_path):
+    # Each frame keeps its own capture time (epoch seconds, µs resolution) —
+    # required so a round-tripped pcap re-extracts correctly in hcxpcapngtool.
+    path = tmp_path / "b.pcap"
+    recs = [(_beacon_body(), 1000.5), (_beacon_body(), 1002.25)]
+    assert write_pcap(path, recs) == 2
+    assert _record_header(path, 0)[:2] == (1000, 500000)
+    assert _record_header(path, 1)[:2] == (1002, 250000)

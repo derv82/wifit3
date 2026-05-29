@@ -80,17 +80,21 @@ def _existing(captures_dir: Path, bssid: str, suffix: str) -> list[Path]:
 
 # ----- Handshake / PMKID ----------------------------------------------------
 
-def _eapol_frames_for(ap: AccessPoint, client_mac: str) -> list[bytes]:
-    """Beacon (once, if available) + every EAPOL frame for the given client."""
+def _pcap_records_for(ap: AccessPoint, client_mac: str) -> list[tuple[bytes, float]]:
+    """Beacon (once, if available) + every EAPOL frame for the client, each
+    paired with its capture timestamp for the pcap. The beacon — for which we
+    keep no per-frame time — is stamped just before the earliest EAPOL frame so
+    it sorts first, falling back to the AP's last-seen beacon time."""
     hs = ap.handshakes.get(client_mac)
     if hs is None:
         return []
-    frames: list[bytes] = []
+    eapol = [(f.raw, f.timestamp) for f in hs.eapol_frames]
+    records: list[tuple[bytes, float]] = []
     if hs.beacon_frame:
-        frames.append(hs.beacon_frame)
-    for f in hs.eapol_frames:
-        frames.append(f.raw)
-    return frames
+        beacon_ts = min((ts for _, ts in eapol if ts > 0), default=ap.last_seen)
+        records.append((hs.beacon_frame, beacon_ts))
+    records.extend(eapol)
+    return records
 
 
 def _read_hashline_field(path: Path, line_prefix: str, field_index: int) -> set[str]:
@@ -142,7 +146,7 @@ def save_handshake(
     hc_path = _fresh_path(captures_dir, ap, "_handshake.hc22000")
     pcap_path = hc_path.with_name(hc_path.name[:-len(".hc22000")] + ".pcap")
     hc_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    write_pcap(pcap_path, _eapol_frames_for(ap, client_mac))
+    write_pcap(pcap_path, _pcap_records_for(ap, client_mac))
     return SaveResult(path=hc_path, was_new=True)
 
 
