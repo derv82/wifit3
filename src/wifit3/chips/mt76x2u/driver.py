@@ -442,6 +442,21 @@ class MT76x2UDriver:
         if not await mac_start(self.transport, monitor=True):
             return False
 
+        # connect() is idempotent: tear down any prior cal task / RX drainer
+        # before (re)starting, so two cal threads or two drainers can never run
+        # on this instance. The manager builds a fresh driver per connect today,
+        # but this keeps a future reconnect path from reintroducing the bug.
+        if self._cal_task is not None:
+            self._cal_task.cancel()
+            try:
+                await self._cal_task
+            except asyncio.CancelledError:
+                pass
+            self._cal_task = None
+        if self._rx_drainer is not None:
+            await self._rx_drainer.stop()
+            self._rx_drainer = None
+
         self._rx_drainer = RxDrainer(
             self.transport,
             frame_callback=self._on_decoded_rx,
