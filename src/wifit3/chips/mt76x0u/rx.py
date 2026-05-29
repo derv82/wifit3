@@ -23,8 +23,8 @@ Each bulk-IN packet on EP 0x84 looks like:
   20      16    rxwi.bbp_rxinfo[4] (le32 ×4) — BBP-derived metadata
   36      ...   802.11 frame (MPDU_LEN bytes; if MT_RXINFO_L2PAD bit is set
                   there are 2 padding bytes BETWEEN the 802.11 header and
-                  body — mt76x02_remove_hdr_pad memmoves them out. For M4c
-                  we just drop L2PAD-flagged frames.)
+                  body — removed before trimming to MPDU_LEN, mirroring
+                  mt76x02_remove_hdr_pad → pskb_trim.)
   ...     4     FCE info trailer (le32) — at the end, NOT the beginning
   END     ...   alignment padding to 4-byte boundary
 
@@ -97,8 +97,7 @@ def decode_rx_packet(data: bytes) -> Optional[RxFrame]:
       - too short (< HEADER_SIZE + 24 bytes)
       - FCE info TYPE field nonzero (non-data packet — e.g., MCU event echo)
       - CRC/ICV/MIC error bits set in rxinfo
-      - L2PAD bit set (would need 802.11 header length to strip — skipped)
-      - MPDU_LEN larger than remaining buffer (truncated frame)
+      - MPDU_LEN larger than the (de-padded) remaining buffer (truncated frame)
 
     [SRC] mt76x02_mac.c:771-873 (mt76x02_mac_process_rx).
     """
@@ -126,41 +125,32 @@ def decode_rx_packet(data: bytes) -> Optional[RxFrame]:
         return None
 
     frame_start = HEADER_SIZE
-    frame_end = frame_start + mpdu_len
-    if frame_end > len(data):
-        # Truncated bulk-IN packet — shouldn't happen but defensive.
-        return None
 
     # rssi[0] within rxwi is at byte offset 12 (after rxinfo 4 + ctl 4 +
     # tid_sn 2 + rate 2). Global offset = MT_DMA_HDR_LEN + 12 = 16.
     # Kernel treats raw value as s8.
     rssi_raw = struct.unpack_from("<b", data, MT_DMA_HDR_LEN + 12)[0]
 
-    frame = bytes(data[frame_start:frame_end])
+    # Everything after the RXWI prefix: [802.11 hdr][L2 pad?][body][FCS?].
+    body = bytes(data[frame_start:])
 
-    # L2PAD handling — kernel `mt76x02_remove_hdr_pad` inserts 2 bytes
-    # between the 802.11 header and the body when the MAC header isn't
-    # 4-byte aligned. Most relevant for QoS DATA frames (26-byte hdr →
-    # not 4-aligned → L2PAD set). EAPOL handshake frames usually ride
-    # over QoS DATA, so dropping L2PAD = missing every EAPOL frame.
-    # Fix: strip the 2 pad bytes from offset hdrlen.
-    # [SRC] mt76x02_mac.c:792-831 (RX path); mt76x2u rx.py:96-101.
-    if rxinfo & MT_RXINFO_L2PAD and len(frame) >= 2:
-        hdrlen = _ieee80211_hdrlen(frame[0], frame[1])
-        if 0 < hdrlen < len(frame) - 2:
-            frame = frame[:hdrlen] + frame[hdrlen + 2:]
+    # L2 alignment pad: mt76x02 inserts 2 bytes between the 802.11 header and the
+    # body when the header isn't 4-byte aligned — every QoS-Data frame (26-byte
+    # header), which is what EAPOL rides on. Remove the pad BEFORE trimming to
+    # MPDU_LEN: MPDU_LEN counts the de-padded MPDU, so trimming first would drop
+    # the last 2 body bytes (for EAPOL, the tail of key_data → no M2 hashline).
+    # [SRC] mt76x02_mac.c:831,854 — remove_hdr_pad precedes pskb_trim.
+    if rxinfo & MT_RXINFO_L2PAD and len(body) >= 2:
+        hdrlen = _ieee80211_hdrlen(body[0], body[1])
+        if 0 < hdrlen <= len(body) - 2:
+            body = body[:hdrlen] + body[hdrlen + 2:]
 
-    # FCS strip — DISABLED EXPERIMENTALLY 2026-05-22 while diagnosing
-    # PMKID-on-ACHM failure. The kernel comment said "mt76 leaves the
-    # trailing 4-byte FCS in mpdu_len" but live wire-diagnostics on
-    # forged-MAC EAPOL M1 show that stripping 4 bytes here clips the
-    # last 4 bytes of a 16-byte PMKID. Hypothesis: this chip may strip
-    # FCS itself for some frame types and the additional strip removes
-    # useful payload. Restore if IE parsing breaks elsewhere — beacon
-    # IE walkers should be self-bounded by tag lengths so this should
-    # be safe.
-    # if len(frame) >= 4:
-    #     frame = frame[:-4]
+    if mpdu_len > len(body):
+        # Truncated bulk-IN packet — shouldn't happen but defensive.
+        return None
+
+    # Trim to MPDU_LEN; excludes the trailing FCS (and any AMPDU tail padding).
+    frame = body[:mpdu_len]
 
     return RxFrame(
         frame=frame,
