@@ -23,8 +23,8 @@ from wifit3.engine.capture_history import load_capture_index, summarize
 from wifit3.engine.models import AccessPoint, PersistedCapture
 from wifit3.engine.save import save_handshake, save_pmkid, save_wps_pbc
 
-from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector
-from ..encryption_format import format_encryption_markup
+from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind
+from ..encryption_format import format_encryption_markup, wep_key_ascii
 from .channel_filter import ChannelFilterDialog
 from .decloak_test_dialog import DecloakSsidDialog
 
@@ -484,26 +484,38 @@ class ScannerView(Screen):
         ap_label = escape(ev.ssid or ev.bssid)
         client = escape(ev.client_mac)
         save_result = None
-        if ev.kind == "handshake_complete":
+        if ev.kind == CaptureKind.HANDSHAKE:
             pair = ev.pair_label or "?"
             msg = (
                 f"[bold green]✓ HANDSHAKE[/bold green] ({pair}) on "
                 f"[bold]{ap_label}[/bold] from [bold]{client}[/bold]"
             )
             save_result = save_handshake(ap, ev.client_mac)
-        elif ev.kind == "pmkid":
+        elif ev.kind == CaptureKind.PMKID:
             msg = (
                 f"[bold green]✓ PMKID[/bold green] on "
                 f"[bold]{ap_label}[/bold] from [bold]{client}[/bold]"
             )
             save_result = save_pmkid(ap, ev.client_mac)
-        elif ev.kind == "decloak":
+        elif ev.kind == CaptureKind.DECLOAK:
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
             msg = (
                 f"[bold]Decloaked[/bold] [cyan]{escape(ev.bssid)}[/cyan] → "
                 f"[green]{escape(ev.ssid or '')}[/green] "
                 f"[dim]via {method_label}[/dim]"
             )
+        elif ev.kind == CaptureKind.WEP_KEY:
+            msg = (f"[bold green]✓ WEP KEY[/bold green] on "
+                   f"[bold]{ap_label}[/bold] = {escape(wep_key_ascii(ev.value or ''))}")
+        elif ev.kind == CaptureKind.WPS_PIN:
+            msg = (f"[bold green]✓ WPS PIN[/bold green] on "
+                   f"[bold]{ap_label}[/bold] = {escape(ev.value or '')}")
+        elif ev.kind == CaptureKind.WPS_PSK:
+            msg = (f'[bold green]✓ WPS PSK[/bold green] on '
+                   f'[bold]{ap_label}[/bold] = "{escape(ev.value or "")}"')
+        elif ev.kind == CaptureKind.WPS_PBC:
+            msg = (f'[bold green]✓ WPS PSK[/bold green] [dim](via PushButton)[/dim] on '
+                   f'[bold]{ap_label}[/bold] = "{escape(ev.value or "")}"')
         else:
             return  # eapol events suppressed in scanner
         self._write_log(Text.from_markup(msg, emoji=False))

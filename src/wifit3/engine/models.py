@@ -290,6 +290,12 @@ class AccessPoint(BaseModel):
     # of the opportunistic PBC attack; persisted to captures/ on capture.
     wps_pbc_psk: Optional[str] = Field(default=None)
 
+    # Recovered WPS PIN + the passphrase it yielded, from a successful PIN
+    # brute-force. Kept distinct from wps_pbc_psk so the win-event log can say
+    # which attack found the passphrase (PIN vs Push-Button).
+    wps_pin: Optional[str] = Field(default=None)
+    wps_pin_psk: Optional[str] = Field(default=None)
+
     # Read-only capture history loaded from captures/ at scan start, matched to
     # this AP by BSSID. Drives the persisted Scanner badges + the Focus
     # "existing capture data" summary; never touches the live capture plumbing.

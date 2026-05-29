@@ -7,7 +7,7 @@ detector synthesises from the None→SSID transition it witnesses.
 from __future__ import annotations
 
 from wifit3.engine.models import AccessPoint, EapolFrame, Handshake
-from wifit3.ui.capture_events import CaptureEvent, CaptureEventDetector
+from wifit3.ui.capture_events import CaptureEventDetector, CaptureKind
 
 
 def _ef(msg, rc, nonce, ts):
@@ -131,3 +131,60 @@ def test_reset_clears_decloak_state():
     # longer hidden, so it won't be marked seen_hidden again, and we won't
     # re-emit. This is correct: reset is a fresh start, not a replay.
     assert list(det.poll(ap)) == []
+
+
+# ----- Recovered-credential events (WEP key, WPS PIN/PSK/PBC) ----------------
+
+def _ap_named(bssid: str = "aa:bb:cc:dd:ee:ff", ssid: str = "Net") -> AccessPoint:
+    """A non-hidden AP, so cred-event polls aren't entangled with decloak."""
+    return AccessPoint(bssid=bssid, ssid=ssid)
+
+
+def test_wep_key_event_fires_once():
+    det = CaptureEventDetector(granular_eapol=False)
+    ap = _ap_named()
+    assert list(det.poll(ap)) == []                  # nothing recovered yet
+
+    ap.wep_key = bytes.fromhex("6162636465")         # b"abcde"
+    events = [e for e in det.poll(ap) if e.kind == CaptureKind.WEP_KEY]
+    assert len(events) == 1
+    assert events[0].value == "6162636465"           # rendered from .hex()
+    assert events[0].bssid == ap.bssid
+    # Subsequent polls don't re-announce.
+    assert [e for e in det.poll(ap) if e.kind == CaptureKind.WEP_KEY] == []
+
+
+def test_wps_pin_emits_pin_and_psk():
+    """A PIN win is two atomic facts → two events (PIN + PSK), one log line each."""
+    det = CaptureEventDetector(granular_eapol=False)
+    ap = _ap_named()
+    ap.wps_pin = "12345670"
+    ap.wps_pin_psk = "hunter2"
+    got = {(e.kind, e.value) for e in det.poll(ap)}
+    assert (CaptureKind.WPS_PIN, "12345670") in got
+    assert (CaptureKind.WPS_PSK, "hunter2") in got
+    # PBC field untouched → no PBC event ever.
+    assert not any(e.kind == CaptureKind.WPS_PBC for e in det.poll(ap))
+
+
+def test_wps_pbc_emits_only_psk_distinct_kind():
+    """PBC recovers a passphrase but no PIN → a single, distinctly-kinded event
+    so the log can label it 'via PushButton'."""
+    det = CaptureEventDetector(granular_eapol=False)
+    ap = _ap_named()
+    ap.wps_pbc_psk = "latte123"
+    assert [(e.kind, e.value) for e in det.poll(ap)] == [
+        (CaptureKind.WPS_PBC, "latte123")
+    ]
+    assert list(det.poll(ap)) == []                  # fire-once
+
+
+def test_credential_event_re_emits_after_reset():
+    """reset() forgets announce-state; a still-set credential re-announces — a
+    fresh start, consistent with the decloak reset semantics."""
+    det = CaptureEventDetector(granular_eapol=False)
+    ap = _ap_named()
+    ap.wep_key = b"\x01\x02\x03\x04\x05"
+    assert len([e for e in det.poll(ap) if e.kind == CaptureKind.WEP_KEY]) == 1
+    det.reset()
+    assert len([e for e in det.poll(ap) if e.kind == CaptureKind.WEP_KEY]) == 1

@@ -226,3 +226,16 @@ def format_wpa3_mode_markup(ap: AccessPoint) -> Optional[str]:
             f"[{_ATTACKABLE}]2[/{_ATTACKABLE}] [dim](Transition)[/dim]"
         )
     return f"[{_NO_ATTACK_YET}]Pure WPA3-SAE[/{_NO_ATTACK_YET}]"
+
+
+def wep_key_ascii(key_hex: str) -> str:
+    """A recovered WEP key as ``<hex> = "<ascii>"`` when it's printable ASCII
+    (e.g. ``abcde``), bare hex otherwise (e.g. a 104-bit binary key). The
+    display form shared by Focus's key chip and the Scanner win-line."""
+    try:
+        kb = bytes.fromhex(key_hex)
+    except ValueError:
+        return key_hex
+    if kb and all(0x20 <= b < 0x7F for b in kb):
+        return f'{key_hex} = "{kb.decode("ascii")}"'
+    return key_hex

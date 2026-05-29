@@ -27,30 +27,22 @@ from wifit3.engine.attacks.wps.campaign import WpsCampaign
 from wifit3.engine.attacks.wps.pbc import WpsPbcCapture
 from wifit3.engine.attacks.wps.registrar import PinResult
 
-from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector
+from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind
 from ..encryption_format import (
     format_encryption_markup,
     format_pmf_markup,
+    wep_key_ascii,
 )
 
 logger = logging.getLogger(__name__)
 
 
 def _wep_key_chip(key_hex: Optional[str]) -> str:
-    """Black-bold-on-cyan WEP key chip: `<hex> = "ascii"` when the key is
-    printable ASCII (e.g. `abcde`), bare hex otherwise (e.g. a 104-bit key)."""
+    """Black-bold-on-cyan WEP key chip wrapping the shared `<hex> = "ascii"`
+    display form (bare hex for non-printable / binary keys)."""
     if not key_hex:
         return "[dim]?[/dim]"
-    try:
-        kb = bytes.fromhex(key_hex)
-    except ValueError:
-        inner = key_hex
-    else:
-        if kb and all(0x20 <= b < 0x7F for b in kb):
-            inner = f'{key_hex} = "{kb.decode("ascii")}"'
-        else:
-            inner = key_hex
-    return f"[black bold on cyan] {inner} [/black bold on cyan]"
+    return f"[black bold on cyan] {wep_key_ascii(key_hex)} [/black bold on cyan]"
 
 
 def _format_duration(seconds: int) -> str:
@@ -852,7 +844,7 @@ class FocusView(Screen):
 
     def _log_capture_event(self, ev: CaptureEvent, ap: AccessPoint) -> None:
         client = escape(ev.client_mac)
-        if ev.kind == "eapol":
+        if ev.kind == CaptureKind.EAPOL:
             # Flat per-frame trace: one line per M1-M4 as it lands (incl. M1/M3
             # retransmits). Routine, so no solid highlight — the bg block is
             # reserved for the "Valid 4-Way Handshake" banner below. Completeness
@@ -864,7 +856,7 @@ class FocusView(Screen):
                 f"[cyan]EAPOL handshake from [bold]{client}[/bold] "
                 f"for [bold]{essid}[/bold][/cyan]"
             )
-        elif ev.kind == "handshake_complete":
+        elif ev.kind == CaptureKind.HANDSHAKE:
             # Significant event → solid highlight. Client MAC is omitted (the
             # surrounding Mx lines already carry it); re-fires per new 4-way.
             essid = escape(ev.ssid or ev.bssid)
@@ -877,7 +869,7 @@ class FocusView(Screen):
             if result is not None:
                 verb = "saved" if result.was_new else "already saved as"
                 self._log(f"[dim]({verb} {escape(result.path.name)})[/dim]")
-        elif ev.kind == "pmkid":
+        elif ev.kind == CaptureKind.PMKID:
             # Significant event → same solid highlight as the handshake banner.
             self._log(
                 f"[black bold on green] ✓ PMKID captured [/black bold on green] "
@@ -887,7 +879,7 @@ class FocusView(Screen):
             if result is not None:
                 verb = "saved" if result.was_new else "already saved as"
                 self._log(f"[dim]({verb} {escape(result.path.name)})[/dim]")
-        elif ev.kind == "decloak":
+        elif ev.kind == CaptureKind.DECLOAK:
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
             self._log(
                 f"[bold]Decloaked[/bold] [cyan]{escape(ev.bssid)}[/cyan] → "
@@ -1006,6 +998,10 @@ class FocusView(Screen):
         self._wps_campaign = None
         ssid = escape(camp.target.ssid or camp.bssid)
         if camp.state.found_pin:
+            # Record on the AP so the win-event detector surfaces it in the
+            # Scanner log too (PIN + PSK → two lines).
+            camp.target.wps_pin = camp.state.found_pin
+            camp.target.wps_pin_psk = camp.state.found_psk
             self._log(treelog.branch_ok(
                 f"[black bold on cyan]  WPS PIN for {ssid}: "
                 f"{escape(camp.state.found_pin)}  [/black bold on cyan]"))

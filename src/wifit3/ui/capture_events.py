@@ -10,6 +10,7 @@ differently while sharing dedup state.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Iterator, Optional, Set, Tuple
 
 from wifit3.engine.models import AccessPoint
@@ -25,9 +26,23 @@ DECLOAK_METHOD_LABELS = {
 }
 
 
+class CaptureKind(str, Enum):
+    """Kinds the detector emits. The ``str`` mixin keeps a member a plain string
+    (drop-in for comparisons / dict keys / JSON); we just never rely on
+    ``str(member)``, which on <3.11 renders the member name, not the value."""
+    EAPOL     = "eapol"
+    HANDSHAKE = "handshake_complete"
+    PMKID     = "pmkid"
+    DECLOAK   = "decloak"
+    WEP_KEY   = "wep_key"      # recovered WEP key (hex)
+    WPS_PIN   = "wps_pin"      # router's WPS PIN
+    WPS_PSK   = "wps_psk"      # passphrase via WPS PIN attack
+    WPS_PBC   = "wps_pbc"      # passphrase via WPS Push-Button
+
+
 @dataclass(frozen=True)
 class CaptureEvent:
-    kind: str  # "eapol" | "handshake_complete" | "pmkid" | "decloak"
+    kind: CaptureKind
     bssid: str
     client_mac: str = ""  # empty for AP-scoped events like decloak
     ssid: Optional[str] = None
@@ -38,6 +53,9 @@ class CaptureEvent:
     pair_label: Optional[str] = None
     # decloak-only: "probe_resp" | "assoc_req" (future: "mbssid_ie", "beacon_leak")
     method: Optional[str] = None
+    # recovered credential for WEP_KEY / WPS_* kinds (key hex / PSK / PIN); the
+    # kind says which it is. None for the others.
+    value: Optional[str] = None
 
 
 class CaptureEventDetector:
@@ -64,6 +82,9 @@ class CaptureEventDetector:
         # we witnessed — not for APs that already had an SSID on first poll.
         self._seen_hidden: Set[str] = set()
         self._decloak_announced: Set[str] = set()
+        # (bssid, kind) for one-shot recovered-credential events (WEP key, WPS
+        # PIN/PSK/PBC) — each announces exactly once per AP.
+        self._creds_announced: Set[Tuple[str, CaptureKind]] = set()
 
     def reset(self) -> None:
         """Drop all state. Useful when refocusing on a new target."""
@@ -72,6 +93,7 @@ class CaptureEventDetector:
         self._pmkid.clear()
         self._seen_hidden.clear()
         self._decloak_announced.clear()
+        self._creds_announced.clear()
 
     def poll(
         self,
@@ -93,7 +115,7 @@ class CaptureEventDetector:
             ):
                 self._decloak_announced.add(ap.bssid)
                 yield CaptureEvent(
-                    kind="decloak",
+                    kind=CaptureKind.DECLOAK,
                     bssid=ap.bssid,
                     ssid=ap.ssid,
                     method=ap.decloak_method,
@@ -121,7 +143,7 @@ class CaptureEventDetector:
                 if len(frames) > seen_n:
                     for f in frames[seen_n:]:
                         yield CaptureEvent(
-                            kind="eapol",
+                            kind=CaptureKind.EAPOL,
                             bssid=ap.bssid,
                             client_mac=client_mac,
                             ssid=ap.ssid,
@@ -141,7 +163,7 @@ class CaptureEventDetector:
                     continue
                 self._completed.add(ikey)
                 yield CaptureEvent(
-                    kind="handshake_complete",
+                    kind=CaptureKind.HANDSHAKE,
                     bssid=ap.bssid,
                     client_mac=client_mac,
                     ssid=ap.ssid,
@@ -151,8 +173,24 @@ class CaptureEventDetector:
             if hs.pmkid and key not in self._pmkid:
                 self._pmkid.add(key)
                 yield CaptureEvent(
-                    kind="pmkid",
+                    kind=CaptureKind.PMKID,
                     bssid=ap.bssid,
                     client_mac=client_mac,
                     ssid=ap.ssid,
+                )
+
+        # AP-scoped recovered-credential wins. Atomic: one value per event, its
+        # meaning fixed by the kind — so a WPS PIN attack emits WPS_PIN *and*
+        # WPS_PSK (two log lines), while PBC emits only WPS_PBC. Fire-once per
+        # (bssid, kind) so each credential announces exactly once.
+        for kind, value in (
+            (CaptureKind.WEP_KEY, ap.wep_key.hex() if ap.wep_key else None),
+            (CaptureKind.WPS_PIN, ap.wps_pin),
+            (CaptureKind.WPS_PSK, ap.wps_pin_psk),
+            (CaptureKind.WPS_PBC, ap.wps_pbc_psk),
+        ):
+            if value and (ap.bssid, kind) not in self._creds_announced:
+                self._creds_announced.add((ap.bssid, kind))
+                yield CaptureEvent(
+                    kind=kind, bssid=ap.bssid, ssid=ap.ssid, value=value,
                 )
