@@ -39,17 +39,26 @@ _WLAN_PORT = 0                 # enum dma_msg_port = 0
 
 _TXWI_LEN = 20
 
-# Rate field for OFDM 6 Mbps, 20 MHz, no LDPC/SGI/STBC.
-# PHY = OFDM = 1 in MT_RXWI_RATE_PHY (bits 15:13).
-# idx = 0 (lowest OFDM rate, robust + present on both 2.4 and 5 GHz).
-_TXWI_RATE_OFDM_6MBPS = (1 << 13) | 0
+# Rate field. Kernel mt76x2u sends every injected mgmt frame with
+# `rate=0x0000` (PHY=CCK, idx=0 = 1 Mbps) — verified on the wire in
+# usb_dumps/captures_mt76x2u/capture-1.pcap (frame 32207, aireplay-ng's
+# first deauth bulk-OUT). 1 Mbps CCK is universally a basic rate so the
+# AP accepts it; OFDM 6 Mbps works for mgmt round-trips but the AP can
+# reject ToDS DATA at that rate, silently killing ARP-replay / ChopChop.
+_TXWI_RATE_CCK_1MBPS = 0x0000
+
+# txstream: kernel sets 0x13 for 2x2 MIMO chips at rev >= E4 (the
+# AWUS036ACM is E4 — capture-1 frame 32207 shows txstream=0x13 on the
+# wire). [SRC] mt76x02_mac.c:397. Without this the chip drops Protected
+# DATA frames even though mgmt still goes out.
+_TXWI_TXSTREAM_2X2_E4 = 0x13
 
 # TXWI flags / ack_ctl. [SRC] mt76x02_mac.h:118
 _TXWI_ACK_CTL_REQ = 1 << 0
 
 
 def build_txwi(frame_len: int, ack: bool = False,
-               rate: int = _TXWI_RATE_OFDM_6MBPS) -> bytes:
+               rate: int = _TXWI_RATE_CCK_1MBPS) -> bytes:
     """Build a minimal 20-byte mt76x02_txwi for an unencrypted MGMT frame.
 
     `frame_len` = length of the 802.11 frame body in bytes (no FCS).
@@ -60,9 +69,12 @@ def build_txwi(frame_len: int, ack: bool = False,
     ack_ctl = _TXWI_ACK_CTL_REQ if ack else 0
     wcid = 0xFF        # no-station (broadcast / monitor)
     aid = 0
-    txstream = 0
+    txstream = _TXWI_TXSTREAM_2X2_E4
     ctl2 = 0
-    pktid = 0
+    # pktid: 0 = MT_PACKET_ID_NO_ACK (chip skips MT_TX_STAT_FIFO push).
+    # When we request ACK we want per-frame status, so tag pktid >=
+    # MT_PACKET_ID_FIRST (3). [SRC] mt76.h:481-486.
+    pktid = 3 if ack else 0
     iv = 0
     eiv = 0
     return struct.pack(
