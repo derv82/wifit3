@@ -61,6 +61,13 @@ _ZERO_MIC = b"\x00" * _MIC_LEN
 # counters coincide — pairing them mixes nonces from different PTKs.
 _EAPOL_PAIR_WINDOW_S = 2.0
 
+# The handshake progresses M1→M2→M3→M4, so the lower-numbered frame of a pair is
+# sent first. If the higher-numbered frame was captured more than this before the
+# lower one, they're from different attempts (e.g. a stale M3 from a prior
+# association preceding a fresh M2). Small, since the only legitimate "out of
+# order" is sub-tick capture jitter — a real gap means different associations.
+_PAIR_ORDER_TOLERANCE_S = 0.25
+
 
 @dataclass(frozen=True)
 class MessageInfo:
@@ -148,15 +155,66 @@ def _anonce_consistent(hs: Handshake, m1: EapolFrame) -> bool:
     return True
 
 
+def _mic_assoc_anonce(hs: Handshake, mic_f: EapolFrame):
+    """The ANonce of the association the MIC frame actually belongs to, inferred
+    from the AP-side frame it answered: an M2 answers the M1 with the same replay
+    counter, an M4 answers the M3 with the same replay counter, and that frame
+    carries this association's ANonce.
+
+    Reconnect spam makes replay counters collide across associations (the AP
+    resets its counter), so several candidates can match on replay alone — pick
+    the one NEAREST IN TIME, since the request it answered is adjacent. Returns
+    None when no partner was captured or timestamps are unset, so the caller
+    falls back to the looser replay/window/ordering rules."""
+    if mic_f.timestamp <= 0:
+        return None
+    partner_msg = 1 if mic_f.msg_num == 2 else 3
+    rc = _replay(mic_f)
+    cands = [f for f in hs.eapol_frames
+             if f.msg_num == partner_msg and _replay(f) == rc
+             and len(f.nonce) == _NONCE_LEN and f.nonce != _ZERO_NONCE
+             and f.timestamp > 0]
+    if not cands:
+        return None
+    return min(cands, key=lambda f: abs(f.timestamp - mic_f.timestamp)).nonce
+
+
+def _same_association(hs: Handshake, anonce_f: EapolFrame, mic_f: EapolFrame) -> bool:
+    """Reject a pair whose two frames are from different associations even though
+    their replay counters line up (the reconnect-spam collision):
+
+    1. Temporal order — the lower-numbered message is sent first, so a higher-
+       numbered frame captured well before the lower one is a stale leftover.
+    2. ANonce binding — the MIC frame's own association ANonce (from the AP-side
+       frame it answered) must equal the ANonce this pair would emit.
+
+    Both checks are skipped when the relevant timestamps are unset (fixtures /
+    pre-timestamp captures), so they only tighten real, timestamped captures."""
+    lo, hi = ((anonce_f, mic_f) if anonce_f.msg_num < mic_f.msg_num
+              else (mic_f, anonce_f))
+    if lo.timestamp > 0 and hi.timestamp > 0 and hi.timestamp < lo.timestamp - _PAIR_ORDER_TOLERANCE_S:
+        return False
+    assoc = _mic_assoc_anonce(hs, mic_f)
+    if assoc is not None and anonce_f.nonce != assoc:
+        return False
+    return True
+
+
 def crackable_pairs(hs: Handshake) -> List[CrackablePair]:
     """Every distinct, hashcat-crackable handshake instance for this client.
 
     One entry per association (deduped by ANonce); a re-handshake (fresh ANonce)
     adds another. A pair qualifies only when it belongs to one association
-    (replay relationship + arrival window + ANonce consistency for M1-sourced
-    pairs) AND its MIC frame is a usable keystone (complete M2, or a non-zeroed
-    M4) — i.e. exactly what ``hc22000_line`` can serialise. Confidence order
-    favours the M2 keystone."""
+    (replay relationship + arrival window + temporal order + the MIC frame's own
+    association ANonce — see ``_same_association`` — + ANonce consistency for
+    M1-sourced pairs) AND its MIC frame is a usable keystone (complete M2, or a
+    non-zeroed M4) — i.e. exactly what ``hc22000_line`` can serialise. Confidence
+    order favours the M2 keystone.
+
+    The same-association checks matter under reconnect spam: the AP resets its
+    key-replay counter per association, so a stale M3 from a prior attempt and a
+    fresh M2 can collide on replay and be wrongly paired into an uncrackable
+    line (different ANonce/SNonce → different PTKs)."""
     by_msg: dict[int, List[EapolFrame]] = {}
     for f in hs.eapol_frames:
         if f.msg_num in (1, 2, 3, 4):
@@ -174,6 +232,8 @@ def crackable_pairs(hs: Handshake) -> List[CrackablePair]:
         if len(anonce_f.nonce) != _NONCE_LEN or anonce_f.nonce == _ZERO_NONCE:
             return
         if from_m1 and not _anonce_consistent(hs, anonce_f):
+            return
+        if not _same_association(hs, anonce_f, mic_f):
             return
         key = anonce_f.nonce
         if key in seen:
