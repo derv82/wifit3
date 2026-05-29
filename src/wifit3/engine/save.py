@@ -152,10 +152,13 @@ def save_pmkid(
 ) -> Optional[SaveResult]:
     """Persist the PMKID on ``ap.handshakes[client_mac]``.
 
-    Dedupes by (BSSID, PMKID-value). Writes ``_pmkid.hc22000`` + companion
-    ``_pmkid.pcap`` (the M1 frame carries the PMKID KDE; we keep the same
-    frame set the handshake save would, since one capture often produces
-    both). Returns None on hidden SSID / missing PMKID.
+    Dedupes by (BSSID, PMKID-value). Writes ``_pmkid.hc22000`` only — that's
+    the sole artifact with a consumer (hashcat mode 22000). No pcap companion:
+    nothing reads a PMKID out of a pcap (hcxpcapngtool *produces* hc22000, it
+    doesn't consume one), and on the active-harvest path the M1 that carries
+    the PMKID KDE arrives under a forged client MAC and is never kept in
+    ``eapol_frames``, so the pcap would be a beacon-only file anyway.
+    Returns None on hidden SSID / missing PMKID.
     """
     if not ap.ssid:
         return None
@@ -174,9 +177,7 @@ def save_pmkid(
     captures_dir = Path(captures_dir)
     captures_dir.mkdir(parents=True, exist_ok=True)
     hc_path = _fresh_path(captures_dir, ap, "_pmkid.hc22000")
-    pcap_path = hc_path.with_name(hc_path.name[:-len(".hc22000")] + ".pcap")
     hc_path.write_text(line + "\n", encoding="utf-8")
-    write_pcap(pcap_path, _eapol_frames_for(ap, client_mac))
     return SaveResult(path=hc_path, was_new=True)
 
 

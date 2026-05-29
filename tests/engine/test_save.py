@@ -134,12 +134,14 @@ class TestSaveHandshake:
 # ---- save_pmkid ------------------------------------------------------------
 
 class TestSavePmkid:
-    def test_writes_hc22000_and_pcap(self, tmp_path):
+    def test_writes_hc22000_only_no_pcap(self, tmp_path):
         ap = _ap_with_hs(pmkid=b"\x11" * 16, with_pair=False)
         result = save_pmkid(ap, "11:22:33:44:55:66", captures_dir=tmp_path)
         assert result is not None and result.was_new is True
         assert result.path.name.endswith("_pmkid.hc22000")
-        assert result.path.with_suffix(".pcap").exists()
+        # No pcap companion — nothing consumes a PMKID-in-pcap, and the
+        # harvest M1 isn't kept anyway, so the file would be beacon-only.
+        assert not result.path.with_suffix(".pcap").exists()
 
     def test_body_is_wpa01_only(self, tmp_path):
         ap = _ap_with_hs(pmkid=b"\x22" * 16)  # also has m1/m2
