@@ -71,10 +71,13 @@ def build_txwi(frame_len: int, ack: bool = False,
     aid = 0
     txstream = _TXWI_TXSTREAM_2X2_E4
     ctl2 = 0
-    # pktid: 0 = MT_PACKET_ID_NO_ACK (chip skips MT_TX_STAT_FIFO push).
-    # When we request ACK we want per-frame status, so tag pktid >=
-    # MT_PACKET_ID_FIRST (3). [SRC] mt76.h:481-486.
-    pktid = 3 if ack else 0
+    # pktid stays 0 (MT_PACKET_ID_NO_ACK) for every inject frame: we always
+    # send with wcid=0xff, and the kernel returns MT_PACKET_ID_NO_ACK for a
+    # wcid-less frame regardless of the ACK request, so the chip never
+    # pushes a per-frame MT_TX_STAT_FIFO report that nothing here drains.
+    # Confirmed on the wire (capture-1 frame 32207, pktid=0x00).
+    # [SRC] tx.c:132-133.
+    pktid = 0
     iv = 0
     eiv = 0
     return struct.pack(
