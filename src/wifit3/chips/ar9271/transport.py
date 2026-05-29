@@ -2,9 +2,12 @@ import asyncio
 import logging
 import struct
 import usb.core
-from typing import Dict, List, Callable, Tuple, Optional
+from typing import Dict, List, Callable
 
 from .protocol.htc import HTCProtocol
+# Star-imports the chip's register/PHY constants; the names resolve at runtime
+# but ruff can't see them statically, so suppress the import-* lints file-wide.
+# ruff: noqa: F403, F405
 from .constants import *
 
 logger = logging.getLogger(__name__)

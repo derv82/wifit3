@@ -1,6 +1,5 @@
 import logging
 import usb.core
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 

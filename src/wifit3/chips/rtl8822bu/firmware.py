@@ -48,7 +48,6 @@ from wifit3.chips.rtw88_base.registers import (
     BIT_MASK_BCN_HEAD_1_V1,
     BIT_MASK_DDMACH0_DLEN,
     BIT_MCUFWDL_EN,
-    BIT_RPWM_TOGGLE,
     BIT_TXDMA_EN,
     BIT_WLMCU_IOIF,
     BTI_PAGE_OVF,
@@ -65,7 +64,6 @@ from wifit3.chips.rtw88_base.registers import (
     REG_DDMA_CH0SA,
     REG_FIFOPAGE_CTRL_2,
     REG_FW_DBG7,
-    REG_FWHW_TXQ_CTRL,
     REG_H2CQ_CSR,
     REG_MCUFW_CTRL,
     REG_RQPN_CTRL_2,
@@ -81,7 +79,6 @@ from wifit3.chips.rtw88_base.registers import BIT_WL_PLATFORM_RST
 
 from .constants import (
     DLFW_MAX_CHUNK_SIZE,
-    FW_HDR_CHKSUM_SIZE,
     TX_DESC_QSEL_BEACON,
     TX_PKT_DESC_SZ,
 )

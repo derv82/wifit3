@@ -24,7 +24,6 @@ import logging
 from contextlib import contextmanager
 
 from wifit3.chips.rtw88_base.rf_sipi import (
-    RFREG_MASK,
     write_rf_masked as _shared_write_rf_masked,
 )
 

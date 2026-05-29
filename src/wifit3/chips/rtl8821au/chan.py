@@ -43,7 +43,6 @@ from .constants import (
     RF18_CHANNEL_MASK,
     RF18_RFSI_MASK,
     RF_CFGCH,
-    RTW_CHANNEL_WIDTH_20,
 )
 from .transport import RTL8821AUTransport
 

@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, List, Tuple, Dict, Any
+from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,8 @@ class WlanFrameParser:
             # Parse Tags for Beacons and Probe Responses
             if subtype in (WlanFrameParser.SUBTYPE_BEACON, WlanFrameParser.SUBTYPE_PROBE_RESP):
                 tags = WlanFrameParser._parse_tags(frame, subtype)
-                if tags is None: return None
+                if tags is None:
+                    return None
                 result["ssid"] = tags.get("ssid")
                 # Don't synthesise channel=1 when _parse_tags found nothing
                 # — caller (interface._on_frame_parsed) falls back to the
@@ -127,7 +128,8 @@ class WlanFrameParser:
                         result[wps_key] = tags[wps_key]
             elif subtype in (WlanFrameParser.SUBTYPE_PROBE_REQ, WlanFrameParser.SUBTYPE_ASSOC_REQ):
                 tags = WlanFrameParser._parse_tags(frame, subtype)
-                if tags is None: return None
+                if tags is None:
+                    return None
                 result["ssid"] = tags.get("ssid")
                 
         elif ftype == WlanFrameParser.TYPE_DATA:
@@ -316,11 +318,13 @@ class WlanFrameParser:
 
     @staticmethod
     def _is_valid_frame(frame: bytes) -> bool:
-        if len(frame) < 24: return False
-        fc0, fc1 = frame[0], frame[1]
+        if len(frame) < 24:
+            return False
+        fc0 = frame[0]
         
         # Protocol version must be 0
-        if (fc0 & 0x03) != 0: return False 
+        if (fc0 & 0x03) != 0:
+            return False
         
         ftype = (fc0 & 0x0C) >> 2
         subtype = (fc0 & 0xF0) >> 4
@@ -362,7 +366,6 @@ class WlanFrameParser:
             if len(frame) < 24:
                 return False
                 
-            addr1 = frame[4:10]
             addr2 = frame[10:16]
             addr3 = frame[16:22]
             
@@ -383,7 +386,8 @@ class WlanFrameParser:
 
     @staticmethod
     def _mac_to_str(mac_bytes: bytes) -> str:
-        if len(mac_bytes) != 6: return "00:00:00:00:00:00"
+        if len(mac_bytes) != 6:
+            return "00:00:00:00:00:00"
         return ":".join(f"{b:02x}" for b in mac_bytes)
 
     # WPS attribute IDs (big-endian) we care about. WSC spec §12.
@@ -471,7 +475,8 @@ class WlanFrameParser:
         else:
             return parsed
 
-        if len(frame) < ptr + 2: return None
+        if len(frame) < ptr + 2:
+            return None
         
         # Strict validation: The first tag MUST be Tag 0 (SSID)
         if frame[ptr] != 0:
@@ -526,7 +531,7 @@ class WlanFrameParser:
                         return None # Corrupt frame masquerading as valid
                     try:
                         parsed["ssid"] = tag_data.decode('utf-8', errors='ignore')
-                    except:
+                    except Exception:
                         pass
             elif tag_id == 3: # DS Parameter Set (Channel)
                 if tag_len == 1:

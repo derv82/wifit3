@@ -4,6 +4,9 @@ import asyncio
 import struct
 from typing import Optional
 
+# Star-imports the chip's register/PHY constants; the names resolve at runtime
+# but ruff can't see them statically, so suppress the import-* lints file-wide.
+# ruff: noqa: F403, F405
 from .constants import *
 
 logger = logging.getLogger(__name__)
@@ -35,7 +38,8 @@ class MT7921AUTransport:
         self._callback = callback
 
     async def start(self):
-        if self._is_running: return
+        if self._is_running:
+            return
         self._is_running = True
         self._rx_task = asyncio.create_task(self._poll_loop())
         logger.info("MT7921AU Transport started.")

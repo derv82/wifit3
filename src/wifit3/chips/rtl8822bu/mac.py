@@ -16,13 +16,12 @@ from __future__ import annotations
 
 import logging
 
-from wifit3.chips.rtw88_base.power_seq import CUT_ALL, INTF_USB
+from wifit3.chips.rtw88_base.power_seq import CUT_ALL
 from wifit3.chips.rtw88_base.registers import (
     BIT_BOOT_FSPI_EN,
     BIT_DDMA_EN,
     BIT_FEN_BB_GLB_RST,
     BIT_FEN_BB_RSTB,
-    BIT_FEN_CPUEN,
     BIT_FSPI_EN,
     BIT_FW_DW_RDY,
     BIT_FW_INIT_RDY,

@@ -2,19 +2,20 @@ import asyncio
 import logging
 import struct
 import json
-import os
 import time
 import usb.core
 import usb.util
-from typing import Optional, Dict, List, Tuple
+from typing import Dict
 from pathlib import Path
 
 from .transport import AR9271USBTransport
 from .protocol.wmi import WMIProtocol
 from .protocol.metadata import AthMetadataLayer
+# Star-imports the chip's register/PHY constants; the names resolve at runtime
+# but ruff can't see them statically, so suppress the import-* lints file-wide.
+# ruff: noqa: F403, F405
 from .constants import *
 from wifit3.engine.protocols import DeviceID
-from wifit3.wlan.packet import WlanFrameParser
 
 logger = logging.getLogger(__name__)
 
@@ -302,7 +303,8 @@ class AR9271Driver:
 
     def _on_htc_control(self, payload: bytes):
         """Callback for EP 0 packets arriving on Interrupt pipe (0x83)."""
-        if len(payload) < 2: return
+        if len(payload) < 2:
+            return
         msg_id = struct.unpack(">H", payload[:2])[0]
         if msg_id == 0x0001: # READY
             credits = struct.unpack(">H", payload[2:4])[0]
@@ -394,7 +396,8 @@ class AR9271Driver:
         sequence = get_channel_hop_sequence(channel)
         for cmd_id, payload in sequence:
             success = await self.send_wmi_command(cmd_id, payload)
-            if not success: return False
+            if not success:
+                return False
         # The channel change re-runs the INI tables (PROM cleared); re-apply the
         # monitor RX filter, matching ath9k_htc's post-reset behaviour.
         await self._apply_monitor_rx_filter()

@@ -122,7 +122,6 @@ from .constants import (
     REG_TRXFF_BNDY,
     REG_TXDMA_OFFSET_CHK,
     REG_TXDMA_PQ_MAP,
-    REG_USB_MOD,
     REG_USB3_RXITV,
     REG_USTIME_EDCA,
     REG_USTIME_TSF,

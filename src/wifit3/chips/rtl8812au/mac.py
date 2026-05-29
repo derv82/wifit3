@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import time
+from enum import Enum
 
 from .constants import (
     BIT_DIS_TSF_UDT,
@@ -57,7 +58,6 @@ from .constants import (
     PG_TBL_3BO_HQ_NUM,
     PG_TBL_3BO_LQ_NUM,
     PG_TBL_3BO_NQ_NUM,
-    PHY_STATUS_SIZE,
     REG_ACKTO,
     REG_AMPDU_MAX_LENGTH,
     REG_AMPDU_MAX_TIME,
@@ -88,12 +88,6 @@ from .constants import (
     REG_HMETFR,
     REG_HWSEQ_CTRL,
     REG_RCR,
-    REG_WMAC_OPTION_FUNCTION,
-    BIT_AAP,
-    BIT_AB,
-    BIT_AM,
-    BIT_APM,
-    BIT_APP_PHYSTS,
     REG_LDO_SWR_CTRL,
     REG_LLT_INIT,
     REG_MAC_SPEC_SIFS,
@@ -110,7 +104,6 @@ from .constants import (
     REG_RQPN_NPQ,
     REG_RRSR,
     REG_RSV_CTRL,
-    REG_RX_DRVINFO_SZ,
     REG_RX_PKT_LIMIT,
     REG_RXDMA_MODE,
     REG_RXDMA_STATUS,
@@ -238,9 +231,6 @@ def mac_init_system_cfg_legacy(transport: RTL8812AUTransport) -> None:
 
 
 # --- warm-state probe (M5 + M2-c) ------------------------------------------
-from enum import Enum
-
-
 class ChipState(Enum):
     """How much of the bring-up the chip has already completed."""
     COLD = "cold"              # nothing — full bring-up needed

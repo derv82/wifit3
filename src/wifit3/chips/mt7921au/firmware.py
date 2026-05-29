@@ -15,6 +15,9 @@ import usb.util
 from pathlib import Path
 
 from .transport import MT7921AUTransport
+# Star-imports the chip's register/PHY constants; the names resolve at runtime
+# but ruff can't see them statically, so suppress the import-* lints file-wide.
+# ruff: noqa: F403, F405
 from .constants import *
 
 logger = logging.getLogger(__name__)
@@ -385,7 +388,7 @@ class MT7921AUFirmwareLoader:
             logger.info(f"WM region {i}: addr=0x{addr:08x} len={length} feature_set=0x{feature_set:02x}")
 
             if feature_set & FW_FEATURE_NON_DL:
-                logger.info(f"  → NON_DL, skipping upload")
+                logger.info("  → NON_DL, skipping upload")
                 offset += length
                 continue
 

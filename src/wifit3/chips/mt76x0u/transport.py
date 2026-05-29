@@ -39,7 +39,7 @@ from .constants import (
     MT_VEND_MULTI_WRITE,
     MT_VEND_WRITE_FCE,
 )
-from .wire_format import fmt_fw_chunk, fmt_mcu_in, fmt_mcu_out, fmt_vendor
+from .wire_format import fmt_mcu_in, fmt_mcu_out, fmt_vendor
 from .wire_log import WIRE_LOG
 
 logger = logging.getLogger(__name__)

@@ -16,7 +16,6 @@ from __future__ import annotations
 import logging
 
 from wifit3.chips.rtw88_base.registers import (
-    REG_BCN_CTRL,
     REG_USTIME_EDCA,
     REG_USTIME_TSF,
     RTW_CHANNEL_WIDTH_20,

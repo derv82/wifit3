@@ -291,8 +291,10 @@ class WlanInterface:
                 client_mac = source
             else:
                 # Deduce client MAC (the one that isn't the BSSID)
-                if source and source != bssid: client_mac = source
-                elif dest and dest != bssid: client_mac = dest
+                if source and source != bssid:
+                    client_mac = source
+                elif dest and dest != bssid:
+                    client_mac = dest
             
             if client_mac and client_mac != "ff:ff:ff:ff:ff:ff" and client_mac not in self.forged_macs:
                 if client_mac not in self.clients:
@@ -307,7 +309,8 @@ class WlanInterface:
                 
                 # Track association
                 if frame_type in ("assoc_req", "data", "wep_data", "eapol"):
-                    if bssid: client.bssid = bssid
+                    if bssid:
+                        client.bssid = bssid
                     
                 # Track probed SSIDs
                 if frame_type == "probe_req":

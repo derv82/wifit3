@@ -272,7 +272,7 @@ def init_registers(t: RT2800USBTransport, silicon_id: int) -> None:
     # values for ALL silicons, which is wrong for RT3572 (TX_SW_CFG0
     # bit 2 differs) — broke deauth/PMKID injection on AWUS051NH v2.
     # [SRC] rt2800lib.c:5965-5994
-    from .constants import RT_RT3572, RT_RT5390, RT_RT5392, RT_RT5592
+    from .constants import RT_RT3572, RT_RT5390, RT_RT5392
     if silicon_id == RT_RT3572:
         t.write32(TX_SW_CFG0, 0x00000400)   # bit 2 = 0, NOT 0x404
         t.write32(TX_SW_CFG1, 0x00080606)

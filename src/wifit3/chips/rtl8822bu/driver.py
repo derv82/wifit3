@@ -30,8 +30,6 @@ from .chan import (
     set_channel_5g_20mhz,
 )
 from .constants import (
-    REG_CR,
-    REG_MCUFW_CTRL,
     REG_SYS_CFG1,
     USB_IDS_8822BU,
 )

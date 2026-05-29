@@ -1,4 +1,3 @@
-from rich.style import Style
 
 class WifitTheme:
     PRIMARY = "#00FF00"  # Matrix Green

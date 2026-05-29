@@ -22,7 +22,6 @@ Reference:
 from __future__ import annotations
 
 import struct
-import usb.core
 from typing import Iterator
 
 from wifit3.chips.rtw88_base.rx_common import (

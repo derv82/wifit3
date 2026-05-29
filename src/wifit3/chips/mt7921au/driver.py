@@ -10,6 +10,9 @@ import usb.core
 
 from .transport import MT7921AUTransport
 from .firmware import MT7921AUFirmwareLoader
+# Star-imports the chip's register/PHY constants; the names resolve at runtime
+# but ruff can't see them statically, so suppress the import-* lints file-wide.
+# ruff: noqa: F403, F405
 from .constants import *
 from wifit3.engine.protocols import DeviceID
 from wifit3.wlan.packet import WlanFrameParser
@@ -89,7 +92,8 @@ class MT7921AUDriver:
     def _get_next_seq(self) -> int:
         seq = self._mcu_seq
         self._mcu_seq = (self._mcu_seq + 1) & 0xFF
-        if self._mcu_seq == 0: self._mcu_seq = 1
+        if self._mcu_seq == 0:
+            self._mcu_seq = 1
         return seq
 
     def _build_mcu_uni_header(self, cid: int, payload_len: int, option: int = 0x05) -> bytes:

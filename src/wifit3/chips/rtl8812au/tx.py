@@ -37,9 +37,7 @@ from wifit3.chips.rtw88_base.tx_common import (
 
 from .constants import (
     DESC_RATE1M,
-    RTW_DMA_MAPPING_EXTRA,
     RTW_DMA_MAPPING_HIGH,
-    RTW_DMA_MAPPING_LOW,
     RTW_DMA_MAPPING_NORMAL,
 )
 

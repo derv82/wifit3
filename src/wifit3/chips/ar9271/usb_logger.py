@@ -1,7 +1,6 @@
 import logging
 import time
 import struct
-from dataclasses import dataclass
 
 logger = logging.getLogger("usb_traffic")
 logger.setLevel(logging.DEBUG)
@@ -105,9 +104,7 @@ class USBInterceptor:
         # HTC Header is 8 bytes
         htc_raw = data[off:]
         htc_ep = htc_raw[0]
-        htc_flags = htc_raw[1]
         htc_len = struct.unpack_from(">H", htc_raw, 2)[0]
-        trailer_len = htc_raw[4]
         
         parsed = f"HTC_EP={htc_ep} LEN={htc_len}"
         
