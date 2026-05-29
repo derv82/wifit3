@@ -283,11 +283,10 @@ MT_ED_CCA_TIMER                = 0x1140    # read-to-clear CCA timer
 MT_AUTO_RSP_EN                 = 1 << 0    # in MT_AUTO_RSP_CFG
 
 # Per-band PA / RF gain config — programmed every set_channel by the kernel
-# in mt76x2_phy_set_txpower_regs. [SRC] mt76x2/phy.c:45. Skipping these
-# (as the original port did) leaves the chip TX'ing at whatever PA default
-# it powered up with — enough for occasional Auth/Assoc round-trip but
-# sustained data injection (ARP replay / ChopChop / Fragmentation) gets
-# dropped at the AP, and the AP eventually deauths the STA as "dead."
+# in mt76x2_phy_set_txpower_regs. [SRC] mt76x2/phy.c:45. These must be
+# written: without them the chip TX's at its power-on PA default, which is
+# enough for an occasional Auth/Assoc round-trip but drops sustained data
+# injection (ARP replay / ChopChop / Fragmentation) at the AP.
 MT_BB_PA_MODE_CFG0             = 0x1214
 MT_BB_PA_MODE_CFG1             = 0x1218
 MT_RF_PA_MODE_CFG0             = 0x121C
@@ -449,19 +448,16 @@ MT_RX_STAT_1_CCA_ERRORS_MASK   = 0xFFFF      # GENMASK(15, 0)
 # BBP CORE register 34 — TSSI status bit checked by tssi_compensate.
 MT_BBP_CORE_R34                = MT_BBP_CORE_BASE + 34 * 4   # 0x2088
 
-# BBP AGC reg 26 — written by update_channel_gain on 80MHz width (we don't
-# do 80MHz, but the constant is here for completeness).
+# BBP AGC reg 26 — written by update_channel_gain only on the 80 MHz-width
+# path (unused at 20 MHz, but kept so the port mirrors the kernel function).
 MT_BBP_AGC_R26                 = MT_BBP_AGC_BASE + 26 * 4    # 0x2368
-# BBP AGC reg 35 / 37 — written by update_channel_gain (already used by
-# the same fn). [SRC] mt76x2/phy.c:329, 330, 339, 340.
+# BBP AGC reg 35 / 37 — written by update_channel_gain.
+# [SRC] mt76x2/phy.c:329, 330, 339, 340.
 MT_BBP_AGC_R35                 = MT_BBP_AGC_BASE + 35 * 4    # 0x238C
 MT_BBP_AGC_R37                 = MT_BBP_AGC_BASE + 37 * 4    # 0x2394
 # BBP RXO reg 14 / 18 — written by update_channel_gain.
 MT_BBP_RXO_R14                 = MT_BBP_RXO_BASE + 14 * 4    # 0x2938
 MT_BBP_RXO_R18                 = MT_BBP_RXO_BASE + 18 * 4    # 0x2948
-
-# MCU TSSI compensation command id (subcommand within CMD_CALIBRATION_OP).
-# We already have MCU_CAL_TSSI_COMP = 10 in mcu.py.
 
 # kernel: MT_CALIBRATE_INTERVAL = HZ (= 1 second). [SRC] mt76x02.h:21.
 MT_CALIBRATE_INTERVAL_S        = 1.0

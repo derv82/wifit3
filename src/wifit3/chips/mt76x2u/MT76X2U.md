@@ -130,11 +130,32 @@ Headers from linux-firmware (`mt76x02_patch_header` for ROM patch, 32-byte
 header-stripped bodies and `firmware.py` skips the header-read step.
 `[[firmware-extraction]]` precedent.
 
+## Verified wire facts (capture-1)
+
+- **ASIC version = `0x76120044`** → rev **E4** (low byte 0x44). `[WIRE]`
+  control READ bReq=0x07 of reg 0x0000, frame 137/138. Confirms the
+  rev-≥E3 inference from the DLM offset, and pins it precisely at E4.
+- **Inject TXWI** (aireplay-ng directed deauth, frame 32207): `rate=0x0000`
+  (CCK 1 Mbps), `wcid=0xff`, `txstream=0x13` (2x2 MIMO, rev≥E4 branch),
+  `pktid=0x00` (MT_PACKET_ID_NO_ACK — wcid-less frames never get a status
+  push). `[WIRE]` `[SRC]` mt76x02_mac.c:397, tx.c:132.
+- **MCU LOAD_CR** (frame 2457): `cmd=2`, `len=8`, payload
+  `02 00 00 00 | ff 00 00 80` → cr_mode=`MT_RF_BBP_CR`(2), cfg=`0x800000FF`
+  (BIT(31) | NIC_CONF nibbles). One LOAD_CR per init.
+- **MCU SWITCH_CHANNEL_OP is sent twice** per channel switch (~13 ms apart):
+  first with `ext_chan=0x00`, then `ext_chan=0xe0 + bw_index`. e.g. ch1
+  frames 3005/3009.
+
 ## Open / unknown
 
-- ASIC version readback value pattern on this specific silicon — to be
-  confirmed by `--phase probe`. Expected: `(0x76xx << 16) | 0xZZ` where ZZ
-  is rev (≥ 0x33 for E3+, consistent with the DLM offset evidence).
+- **TSSI is gated OFF by default** (`driver.py`: `_tssi_enabled` requires
+  both the EEPROM flag and `WIFIT3_MT76X2U_TSSI=1`). This deviates from the
+  kernel, which trusts the EEPROM. The periodic `tssi_compensate` path is
+  suspected of zeroing TX power on this silicon (observed `tssi_slope=127`,
+  near max). The `phy.py` port of `mt76x2_phy_tssi_compensate` audited as
+  faithful, so the root cause is more likely in the EEPROM read feeding it
+  or the monitor-mode `avg_rssi_all=-75` placeholder. Needs hardware
+  diagnosis before flipping the default back to kernel behavior.
 - Whether the wireless-mode endpoints we see are stable across power
   cycles, or whether some interactions stall mid-mode-switch (the
   `assert_expected_endpoints` guard is the early-detection mechanism).

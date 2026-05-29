@@ -5,10 +5,9 @@ Ported from Linux mt76 (kernel v6.18) by wifit3, 2026.
 
 Faithful port of `mt76x2u_phy_set_channel` (mt76x2/usb_phy.c:60) and its
 called helpers. Every kernel write to a chip register in the channel-tune
-+ calibrate path is mirrored here (see [[skip-rationale-lies]] memory —
-earlier versions skipped TX-side work labelled "monitor-mode RX
-simplification" and silently broke every WEP/handshake attack until we
-debugged it the long way).
++ calibrate path is mirrored here — the TX-side programming (per-rate TX
+power, PA mode, antenna-pin enable) is load-bearing for injection, not a
+monitor-mode-RX nicety that can be skipped.
 
 Order matches kernel `mt76x2u_phy_set_channel`:
 
@@ -161,9 +160,9 @@ async def set_channel_20mhz(transport: MT76x2UTransport, mcu: McuChannel,
     bw = 0          # 20MHz
     bw_index = 0
     ext_chan = 0
-    # ch_group_index = 0  — kernel uses this for 40/80MHz channel-group
-    # selection in the EXT_CCA_CFG rmw + phy_set_band primary_upper. We
-    # only tune 20 MHz so it stays 0; left elided to silence the lint.
+    # The kernel's ch_group_index (40/80 MHz channel-group selection for the
+    # EXT_CCA_CFG rmw + phy_set_band primary_upper) is always 0 at 20 MHz, so
+    # it is not represented here.
     scan = False
 
     # Pre-MCU writes. The PA / TX-delay programming MUST land before the
