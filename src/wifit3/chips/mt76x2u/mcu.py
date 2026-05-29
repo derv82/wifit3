@@ -94,6 +94,47 @@ class McuChannel:
         self.transport = transport
         self._seq = 0  # rolled by _next_seq when wait_resp=True
 
+    async def drain_response_queue(self, max_drain: int = 16,
+                                    per_read_timeout_ms: int = 20) -> int:
+        """Discard any stale responses sitting in EP_IN_CMD_RESP from a
+        previous session.
+
+        On warm reattach, the chip's MCU firmware is still running and may
+        have a response left over from the prior session's last command.
+        Without draining, our next wait_resp command sees the stale seq
+        first, retries the read, and times out (the chip processed our new
+        command but already-emitted its response to the cleared queue
+        position). Symptom: ~1-in-10 warm boots fails on `mcu_load_cr`
+        with "MCU resp seq mismatch: got=N want=1".
+
+        Cold boot has nothing to drain — the first read times out
+        immediately (~20 ms) and we return drained=0.
+
+        Returns the count of stale responses discarded.
+        """
+        drained = 0
+        for _ in range(max_drain):
+            try:
+                data = await self.transport.async_read_bulk(
+                    EP_IN_CMD_RESP, _MCU_RESP_URB_SIZE,
+                    timeout_ms=per_read_timeout_ms,
+                )
+            except Exception:
+                # Timeout → queue empty.
+                break
+            if not data:
+                break
+            drained += 1
+            if len(data) >= 4:
+                rxfce = struct.unpack("<I", bytes(data[:4]))[0]
+                got_seq = (rxfce >> _RX_FCE_INFO_CMD_SEQ_SHIFT) & _RX_FCE_INFO_CMD_SEQ_MASK
+                got_evt = (rxfce >> _RX_FCE_INFO_EVT_TYPE_SHIFT) & _RX_FCE_INFO_EVT_TYPE_MASK
+                logger.info(
+                    "MCU drained stale response: seq=%d evt=%d (%d bytes)",
+                    got_seq, got_evt, len(data),
+                )
+        return drained
+
     def _next_seq(self) -> int:
         self._seq = (self._seq + 1) & 0xF
         if self._seq == 0:
@@ -205,5 +246,31 @@ async def mcu_calibrate(mcu: McuChannel, cal_id: int, value: int = 0,
     waits for response (wait_resp=true in the kernel).
     """
     payload = struct.pack("<II", cal_id & 0xFFFFFFFF, value & 0xFFFFFFFF)
+    return await mcu.send(CMD_CALIBRATION_OP, payload, wait_resp=True,
+                          resp_timeout_ms=timeout_ms)
+
+
+async def mcu_tssi_comp(mcu: McuChannel, pa_mode: int, cal_mode: int,
+                        slope0: int, slope1: int,
+                        offset0: int, offset1: int,
+                        timeout_ms: int = 1000) -> bool:
+    """`mt76x2_mcu_tssi_comp` — [SRC] mt76x2/mcu.c:94-108.
+
+    Payload: `{ __le32 id; struct mt76x2_tssi_comp data; }` — id is the
+    MCU_CAL_TSSI_COMP subcommand (10); data is 8 bytes packed:
+      pa_mode(u8), cal_mode(u8), pad(u16=0), slope0(u8), slope1(u8),
+      offset0(u8), offset1(u8). Sent on CMD_CALIBRATION_OP with wait_resp=True.
+    """
+    payload = struct.pack(
+        "<I BBHBBBB",
+        MCU_CAL_TSSI_COMP & 0xFFFFFFFF,
+        pa_mode & 0xFF,
+        cal_mode & 0xFF,
+        0,
+        slope0 & 0xFF,
+        slope1 & 0xFF,
+        offset0 & 0xFF,
+        offset1 & 0xFF,
+    )
     return await mcu.send(CMD_CALIBRATION_OP, payload, wait_resp=True,
                           resp_timeout_ms=timeout_ms)

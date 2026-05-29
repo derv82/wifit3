@@ -32,7 +32,6 @@ from .constants import (
     MT_MAC_STATUS_RX,
     MT_MAC_STATUS_TX,
     MT_USB_DMA_CFG_RX_BULK_AGG_EN,
-    MT_USB_DMA_CFG_RX_BULK_AGG_TOUT,
     MT_USB_DMA_CFG_RX_BULK_EN,
     MT_USB_DMA_CFG_RX_DROP_OR_PAD,
     MT_USB_DMA_CFG_TX_BULK_EN,
@@ -119,6 +118,27 @@ def _set_wlan_state(transport: MT76x2UTransport, enable: bool) -> None:
         val &= ~bits
     transport.write32(MT_WLAN_FUN_CTRL, val)
     time.sleep(0.000020)  # udelay(20)
+
+
+async def force_power_cycle(transport: MT76x2UTransport) -> None:
+    """Hard power-cycle the WLAN block — clears WLAN_EN + WLAN_CLK_EN, waits,
+    re-enables.
+
+    Required when recovering from a wedged warm-reattach state where the
+    chip's MCU registers (ROM-patch-applied bit, FCE config, etc.) are
+    retained from a previous session. A plain `reset_wlan` + `power_on`
+    keeps those registers; a true off-then-on cycle clears them so the
+    subsequent firmware upload runs as if cold-booting.
+
+    Not present in the kernel because kernel module load always starts
+    from a fresh chip; this is a wifit3-specific recovery path for
+    wedged warm reattach.
+    """
+    logger.info("MT7612U: forcing WLAN power cycle (recovery from wedged warm state)")
+    _set_wlan_state(transport, False)
+    await asyncio.sleep(0.020)
+    _set_wlan_state(transport, True)
+    await asyncio.sleep(0.020)
 
 
 def reset_wlan(transport: MT76x2UTransport) -> None:
