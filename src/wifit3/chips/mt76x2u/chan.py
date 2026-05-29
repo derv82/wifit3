@@ -142,7 +142,8 @@ async def set_channel_20mhz(transport: MT76x2UTransport, mcu: McuChannel,
                             high_gain: tuple[int, int] = (0, 0),
                             tssi_enabled_flag: bool = False,
                             txpower_conf: int = 60,
-                            set_txpower_enabled: bool = True) -> bool:
+                            set_txpower_enabled: bool = True,
+                            scan: bool = False) -> bool:
     """Tune to a 20MHz-bw channel. Caller is responsible for stopping +
     restarting MAC if calling from a running state — for the cold-bring-up
     sequence, this is called BEFORE mac_start.
@@ -163,7 +164,6 @@ async def set_channel_20mhz(transport: MT76x2UTransport, mcu: McuChannel,
     # The kernel's ch_group_index (40/80 MHz channel-group selection for the
     # EXT_CCA_CFG rmw + phy_set_band primary_upper) is always 0 at 20 MHz, so
     # it is not represented here.
-    scan = False
 
     # Pre-MCU writes. The PA / TX-delay programming MUST land before the
     # MCU channel-switch command so the chip's TX engine has the right RF
@@ -227,14 +227,29 @@ async def set_channel_20mhz(transport: MT76x2UTransport, mcu: McuChannel,
     transport.rmw32(MT_BBP_TXO_R4_ADDR, 1 << 25, 1 << 25)
     transport.rmw32(MT_BBP_RXO_R13, 1 << 8, 1 << 8)
 
-    # ---- mt76x2u_phy_channel_calibrate — [SRC] mt76x2/usb_phy.c:10-40 ----
-    # Full kernel order: LC (5G only) → TX_LOFT → TXIQ → RXIQC_FI →
-    # TEMP_SENSOR → TX_SHAPING → apply_gain_adj → edcca_init. Skipping any
-    # of TX_LOFT/TXIQ/TX_SHAPING degrades TX modulation accuracy; skipping
-    # apply_gain_adj leaves the BBP AGC at MCU defaults (poor RX in the
-    # short range, the "can't capture handshake from 2 inches" failure
-    # mode); skipping edcca_init leaves MT_TX_PIN_CFG with no antenna
-    # pins driven (catastrophic TX attenuation).
+    return True
+
+
+async def phy_channel_calibrate(
+    transport: MT76x2UTransport, mcu: McuChannel, channel: int, *,
+    cal: Mt76x2CalState, high_gain: tuple[int, int],
+    ext_pa: bool, tssi_enabled_flag: bool,
+) -> None:
+    """Heavy per-channel RF calibration — kernel `mt76x2u_phy_channel_calibrate`
+    ([SRC] mt76x2/usb_phy.c:10-40) plus the inline `init_agc_gain` + TSSI seed
+    that follow it in `mt76x2u_phy_set_channel`.
+
+    The kernel runs this inline on a settle (and `if (scan) return 0` skips it
+    on every hop, [SRC] usb_phy.c:170). It can block there — it's a workqueue.
+    We can't block the UI loop, so the periodic cal task ([SRC] cal_work /
+    `mt76x2u_phy_calibrate`, usb_phy.c:42) runs it in the background once we've
+    settled, self-gated on `cal.channel_cal_done`.
+
+    Skipping TX_LOFT/TXIQ/TX_SHAPING degrades TX modulation accuracy; skipping
+    apply_gain_adj leaves the BBP AGC at MCU defaults (poor near-field RX);
+    skipping edcca_init leaves MT_TX_PIN_CFG undriven (catastrophic TX atten).
+    """
+    band_5g = _is_5ghz(channel)
     band_arg = 1 if band_5g else 0
     if band_5g:
         if not await mcu_calibrate(mcu, MCU_CAL_LC, 0):
@@ -286,5 +301,3 @@ async def set_channel_20mhz(transport: MT76x2UTransport, mcu: McuChannel,
             logger.warning("MCU_CAL_TSSI failed (continuing)")
         else:
             cal.tssi_cal_done = True
-
-    return True

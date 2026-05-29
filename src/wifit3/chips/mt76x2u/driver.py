@@ -20,7 +20,7 @@ import usb.util
 from wifit3.engine.protocols import DeviceID, ProgressCallback
 from wifit3.wlan.packet import WlanFrameParser
 
-from .chan import set_channel_20mhz
+from .chan import set_channel_20mhz, phy_channel_calibrate
 from .constants import (
     MT_ASIC_VERSION,
     MT76X2_LOW_RSSI_GAIN_THRESH_2G,
@@ -131,6 +131,13 @@ class MT76x2UDriver:
         self._cal: Mt76x2CalState = Mt76x2CalState()
         # Periodic recalibration task (kernel's `mt76x2u_phy_calibrate` work).
         self._cal_task: Optional[asyncio.Task] = None
+        # True while channel-hopping (scan=True tunes). The periodic cal task
+        # defers the heavy per-channel cal until we settle (scan=False).
+        self._scanning: bool = False
+        # Serialises a channel switch against the background heavy cal — the
+        # kernel's mt76.mutex. Stops a re-tune interleaving MCU commands with
+        # an in-flight calibration.
+        self._cal_lock: asyncio.Lock = asyncio.Lock()
         # Regulatory TX power cap. Kernel reads from cfg80211; wifit3 has no
         # regulatory framework yet — clamp to 60 (= 30 dBm * 2, kernel's
         # post-init default before any country code applies).
@@ -419,6 +426,14 @@ class MT76x2UDriver:
         ):
             logger.error("MT7612U: set_channel(%d) failed", ch)
             return False
+        # Heavy RF cal inline at bring-up — the kernel runs it on a non-scan
+        # settle. Safe to block here: connect() runs in a worker thread, not
+        # the UI loop. (Runtime tunes defer this to _periodic_calibrate.)
+        await phy_channel_calibrate(
+            self.transport, self.mcu, ch,
+            cal=self._cal, high_gain=self._high_gain_for(ch),
+            ext_pa=self._ext_pa_for(ch), tssi_enabled_flag=self._tssi_enabled,
+        )
         mac_cc_reset(self.transport)
         self._init_cal_done = True
 
@@ -463,32 +478,43 @@ class MT76x2UDriver:
         if channel not in self.SUPPORTED_CHANNELS:
             logger.error("MT7612U: channel %d not in SUPPORTED_CHANNELS", channel)
             return False
-        # `mac_cc_reset` is called from kernel mt76x2u_set_channel after
-        # mt76x2u_phy_set_channel. [SRC] mt76x2/usb_main.c:44.
         rate_power = read_rate_power(self.transport, band_2g=channel < 36)
         power_info = read_power_info(
             self.transport, channel, band_2g=channel < 36,
             tssi_enabled=self._tssi_enabled,
         )
-        if not await set_channel_20mhz(
-            self.transport, self.mcu, channel,
-            self.asic_rev, self.chainmask,
-            cal=self._cal,
-            rate_power=rate_power,
-            power_info=power_info,
-            init_cal_done=self._init_cal_done,
-            bt_rcal_valid=self._bt_rcal_valid,
-            ext_pa=self._ext_pa_for(channel),
-            high_gain=self._high_gain_for(channel),
-            tssi_enabled_flag=self._tssi_enabled,
-            txpower_conf=self._txpower_conf,
-            set_txpower_enabled=self._set_txpower_enabled,
-        ):
-            logger.error("MT7612U: set_channel(%d) failed", channel)
-            return False
-        mac_cc_reset(self.transport)
-        self._init_cal_done = True
-        self.current_channel = channel
+        # Only the channel switch + light cals here — fast. The heavy per-channel
+        # RF cal is NOT run inline: on a hop (scan=True) the kernel skips it
+        # outright ([SRC] usb_phy.c:170); on a settle the periodic cal task runs
+        # it in the background, so Focus entry isn't blocked for ~2 s. The lock
+        # is the kernel's mt76.mutex — a switch never interleaves with a cal.
+        async with self._cal_lock:
+            if not await set_channel_20mhz(
+                self.transport, self.mcu, channel,
+                self.asic_rev, self.chainmask,
+                cal=self._cal,
+                rate_power=rate_power,
+                power_info=power_info,
+                init_cal_done=self._init_cal_done,
+                bt_rcal_valid=self._bt_rcal_valid,
+                ext_pa=self._ext_pa_for(channel),
+                high_gain=self._high_gain_for(channel),
+                tssi_enabled_flag=self._tssi_enabled,
+                txpower_conf=self._txpower_conf,
+                set_txpower_enabled=self._set_txpower_enabled,
+                scan=scan,
+            ):
+                logger.error("MT7612U: set_channel(%d) failed", channel)
+                return False
+            # `mac_cc_reset` follows phy_set_channel in the kernel.
+            # [SRC] mt76x2/usb_main.c:44.
+            mac_cc_reset(self.transport)
+            self._init_cal_done = True
+            self.current_channel = channel
+            self._scanning = scan
+            # A fresh tune invalidates the heavy per-channel cal; the periodic
+            # task re-runs it once we've settled (scan=False). [SRC] usb_phy.c:90.
+            self._cal.channel_cal_done = False
         return True
 
     def _ext_pa_for(self, channel: int) -> bool:
@@ -528,6 +554,24 @@ class MT76x2UDriver:
                 await asyncio.sleep(MT_CALIBRATE_INTERVAL_S)
                 ch = self.current_channel
                 band_2g = ch < 36
+                # Deferred heavy per-channel cal — kernel's cal_work runs
+                # channel_calibrate, self-gated on channel_cal_done ([SRC]
+                # usb_phy.c:16,50). Only once settled (not hopping): a hop would
+                # discard it on the next tune. Lock = mt76.mutex, so the cal
+                # never interleaves with a concurrent re-tune.
+                if not self._scanning and not self._cal.channel_cal_done:
+                    async with self._cal_lock:
+                        try:
+                            await phy_channel_calibrate(
+                                self.transport, self.mcu, ch,
+                                cal=self._cal,
+                                high_gain=self._high_gain_for(ch),
+                                ext_pa=self._ext_pa_for(ch),
+                                tssi_enabled_flag=self._tssi_enabled,
+                            )
+                        except Exception as e:
+                            logger.debug(
+                                "MT7612U: channel_calibrate tick: %s", e)
                 try:
                     update_channel_gain(
                         self.transport, self._cal,
