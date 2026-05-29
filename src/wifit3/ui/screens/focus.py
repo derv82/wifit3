@@ -112,6 +112,10 @@ class FocusView(Screen):
         # clearly a target of interest). One task at a time; once-per-BSSID.
         self._pbc_task: Optional[asyncio.Task] = None
         self._pbc_done: Set[str] = set()
+        # Footer 'c' (Copy WEP Key) eligibility. refresh_bindings() fires only
+        # when this flips — calling it every tick rebuilds the Footer ~10x/s,
+        # which strobes it and swallows mouse clicks on the key row.
+        self._last_can_copy: bool = False
 
     # ----- Compose / mount ---------------------------------------------------
 
@@ -631,9 +635,13 @@ class FocusView(Screen):
                 Text.from_markup(f"PMKID:     {pmkid_text}", emoji=False)
             )
 
-        # Re-evaluate the footer's Copy key (check_action) as WEP recovery
-        # toggles 'c' on/off.
-        self.refresh_bindings()
+        # Re-evaluate the footer's Copy key (check_action) ONLY when its
+        # eligibility flips — once, at WEP crack. Calling refresh_bindings()
+        # every tick rebuilds the Footer 10x/s (strobe + dropped clicks).
+        can_copy = is_wep and ap.wep_key is not None
+        if can_copy != self._last_can_copy:
+            self._last_can_copy = can_copy
+            self.refresh_bindings()
 
         # Clients.
         iface = getattr(self.app, "active_interface", None)
