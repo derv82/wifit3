@@ -26,7 +26,6 @@ from wifit3.engine.save import save_handshake, save_pmkid, save_wps_pbc
 from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind
 from ..encryption_format import format_encryption_markup, wep_key_ascii
 from .channel_filter import ChannelFilterDialog
-from .decloak_test_dialog import DecloakSsidDialog
 
 
 # Rows fade their foreground toward the DataTable's row background ($surface)
@@ -122,9 +121,6 @@ class ScannerView(Screen):
         self._sort_reverse = True
         # None = hop on every channel the driver supports.
         self._channel_filter: Optional[List[int]] = None
-        # Guards re-entry into action_decloak. Set/cleared in the background
-        # task so the action handler can return immediately.
-        self._decloak_in_progress = False
         # Capture-event detector — coarse (no per-EAPOL spam in the scanner).
         self._events = CaptureEventDetector(granular_eapol=False)
         # Per-BSSID prev-beacon-count + flash-deadline for "beacon arrived"
@@ -665,11 +661,6 @@ class ScannerView(Screen):
         iface = self.app.active_interface
         if not iface:
             return
-        if self._decloak_in_progress:
-            self._write_log(treelog.leaf(
-                "[yellow](decloak in progress — skipping this PBC window; "
-                "press the AP's WPS button again after decloak finishes)[/yellow]"))
-            return
         self._pbc_capturing = True
         label = escape(ap.ssid or ap.bssid)
         self._write_log(treelog.branch(
@@ -743,209 +734,6 @@ class ScannerView(Screen):
         table = self.query_one("#ap-table", DataTable)
         if table.row_count > 0:
             table.move_cursor(row=table.row_count - 1, animate=True)
-
-    def action_decloak(self) -> None:
-        """Validate selection + spawn the actual attack as a background task,
-        returning immediately so the TUI stays responsive (sort / scroll /
-        other actions don't queue behind the 5-second sweep)."""
-        if self._decloak_in_progress:
-            self._write_log(
-                "[yellow]Decloak already running. Wait for it to finish.[/yellow]"
-            )
-            return
-        if self._pbc_capturing:
-            self._write_log(
-                "[yellow]PBC capture in progress — Decloak will conflict on the "
-                "half-duplex radio. Try again when it finishes.[/yellow]"
-            )
-            return
-        iface = self.app.active_interface
-        if not iface:
-            self._write_log("[bold red][!] No active interface.[/bold red]")
-            return
-        table = self.query_one("#ap-table", DataTable)
-        try:
-            bssid = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
-        except Exception:
-            return
-        if not bssid:
-            return
-        ap = iface.access_points.get(bssid)
-        if not ap:
-            return
-        if ap.ssid:
-            self._write_log(
-                f"[yellow]'d' targets hidden APs — '{escape(ap.ssid)}' is already known.[/yellow]"
-            )
-            return
-        base = self._best_named_sibling_ssid(ap)
-        if not base:
-            self._write_log(
-                f"[yellow]No named sibling for {escape(bssid)} — nothing to guess from.[/yellow]"
-            )
-            return
-
-        self._decloak_in_progress = True
-        # Defer all the awaitable work into a background task — action_decloak
-        # itself returns synchronously here so subsequent keypresses (sort,
-        # scroll, even another 'd' which gets the busy message) don't queue
-        # behind a ~5-second `await attack.run()`.
-        import asyncio
-        asyncio.create_task(self._run_decloak(iface, ap, base))
-
-    async def _run_decloak(self, iface, ap, base: str) -> None:
-        from wifit3.engine.attacks.decloak import DecloakAttack, build_candidates
-
-        bssid = ap.bssid
-        candidates = build_candidates(base)
-        self._write_log(
-            f"[cyan]Decloaking[/cyan] [bold]{escape(bssid)}[/bold] — "
-            f"base [bold]{escape(base)}[/bold], {len(candidates)} candidates on CH {ap.channel}"
-        )
-
-        try:
-            # Stop hopping so the channel stays locked while we wait for echoes.
-            # Restore in the inner `finally` so a crashed attack still resumes
-            # scanning — and preserves the current channel filter instead of
-            # dumping the user back into the default all-channels sweep.
-            await iface.stop_hopping()
-            # Snapshot beacon count from the target so we can report at the
-            # end whether RX was even hearing the AP during the sweep. If 0,
-            # something's wrong with the channel/radio, not the candidate list.
-            beacons_before = (
-                iface.access_points[bssid].beacons
-                if bssid in iface.access_points
-                else 0
-            )
-            try:
-                attack = DecloakAttack(iface, ap, base_ssid=base)
-                result = await attack.run()
-                ap_state = iface.access_points.get(bssid)
-                beacons_heard = (ap_state.beacons - beacons_before) if ap_state else 0
-                if result is None:
-                    if beacons_heard == 0:
-                        # Hard signal: RX wasn't even seeing the AP. Channel
-                        # mistuned, radio busy, or the AP went silent.
-                        self._write_log(
-                            f"[bold red]Decloak failed[/bold red] for {escape(bssid)} — "
-                            f"[bold]no beacons heard from target during sweep[/bold] "
-                            f"(channel/radio issue, not a candidate-list issue)."
-                        )
-                    else:
-                        self._write_log(
-                            f"[yellow]Decloak exhausted[/yellow] for {escape(bssid)} — "
-                            f"no candidate elicited a response "
-                            f"([italic]{beacons_heard} beacons heard from target, "
-                            f"RX is working — candidate list just didn't match[/italic])."
-                        )
-                # Success log is fired by the existing CaptureEventDetector
-                # pipeline (it observes the SSID flip on the next poll).
-            finally:
-                await iface.start_hopping(
-                    channels=self._channel_filter, interval=0.25
-                )
-        finally:
-            self._decloak_in_progress = False
-
-    def action_decloak_test(self) -> None:
-        """Pipeline-verification mode: pops a dialog asking for SSID(s) and
-        probes the selected AP with those exact strings (no sibling lookup,
-        no suffix generation). Intended for testing against a router
-        deliberately configured with a known hidden SSID."""
-        if self._decloak_in_progress:
-            self._write_log(
-                "[yellow]Decloak already running. Wait for it to finish.[/yellow]"
-            )
-            return
-        if self._pbc_capturing:
-            self._write_log(
-                "[yellow]PBC capture in progress — Decloak will conflict on the "
-                "half-duplex radio. Try again when it finishes.[/yellow]"
-            )
-            return
-        iface = self.app.active_interface
-        if not iface:
-            self._write_log("[bold red][!] No active interface.[/bold red]")
-            return
-        table = self.query_one("#ap-table", DataTable)
-        try:
-            bssid = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
-        except Exception:
-            return
-        if not bssid:
-            return
-        ap = iface.access_points.get(bssid)
-        if not ap:
-            return
-
-        # Pre-fill: sibling SSID first (if any), then AP's own SSID (visible
-        # APs being tested for TX), else empty.
-        prefill = self._best_named_sibling_ssid(ap) or (ap.ssid or "")
-
-        def _on_submit(ssids: Optional[List[str]]) -> None:
-            if not ssids:
-                self._write_log("[dim]Decloak test cancelled.[/dim]")
-                return
-            self._decloak_in_progress = True
-            import asyncio
-            asyncio.create_task(self._run_decloak_test(iface, ap, ssids))
-
-        self.app.push_screen(DecloakSsidDialog(bssid, prefill), _on_submit)
-
-    async def _run_decloak_test(
-        self, iface, ap, ssids: List[str]
-    ) -> None:
-        from wifit3.engine.attacks.decloak import DecloakAttack
-
-        bssid = ap.bssid
-        self._write_log(
-            f"[cyan]Decloak test[/cyan] [bold]{escape(bssid)}[/bold] — "
-            f"{len(ssids)} explicit SSID(s) on CH {ap.channel}"
-        )
-
-        try:
-            await iface.stop_hopping()
-            beacons_before = (
-                iface.access_points[bssid].beacons
-                if bssid in iface.access_points
-                else 0
-            )
-            try:
-                attack = DecloakAttack(
-                    iface, ap, base_ssid="", candidates_override=ssids
-                )
-                result = await attack.run()
-                ap_state = iface.access_points.get(bssid)
-                beacons_heard = (
-                    (ap_state.beacons - beacons_before) if ap_state else 0
-                )
-                if result is None:
-                    if beacons_heard == 0:
-                        self._write_log(
-                            f"[bold red]Test failed[/bold red] for {escape(bssid)} — "
-                            f"[bold]no beacons heard from target during sweep[/bold] "
-                            f"(channel/radio issue, not an SSID-list issue)."
-                        )
-                    else:
-                        # For a HIDDEN target this means "no SSID matched". For
-                        # an already-VISIBLE target the existing decloak path
-                        # can't surface a "success" anyway (ap.ssid is already
-                        # set, no transition to detect) — same message reads
-                        # correctly either way.
-                        self._write_log(
-                            f"[yellow]Test exhausted[/yellow] for {escape(bssid)} — "
-                            f"no SSID matched "
-                            f"([italic]{beacons_heard} beacons heard, "
-                            f"RX is working[/italic])."
-                        )
-                # Success: CaptureEventDetector fires the "Decloaked …" event
-                # via the normal SSID-transition path. Nothing extra needed.
-            finally:
-                await iface.start_hopping(
-                    channels=self._channel_filter, interval=0.25
-                )
-        finally:
-            self._decloak_in_progress = False
 
     def action_change_channel(self) -> None:
         log = self.query_one("#system-log", RichLog)
