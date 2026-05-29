@@ -125,7 +125,7 @@ class MT7921AUDriver:
     async def stop(self):
         await self.transport.stop()
 
-    async def set_channel(self, channel: int):
+    async def set_channel(self, channel: int, scan: bool = False):
         """Tunes the hardware to the specified channel."""
         logger.debug(f"MT7921AU: Tuning to channel {channel}")
         

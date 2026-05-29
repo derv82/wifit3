@@ -579,7 +579,7 @@ class MT76x0UDriver:
             WIRE_LOG.marker(f"end set_channel({channel}) FAIL: {e!r}")
             return False
 
-    async def set_channel(self, channel: int) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> bool:
         """Runs the full `mt76x0_phy_set_channel` chain for 20 MHz monitor mode.
 
         The body is synchronous (~150 MCU commands via PyUSB), so we offload

@@ -80,8 +80,14 @@ class WlanDriver(Protocol):
         start RX loops, etc. Should yield (0..1, message) progress."""
         ...
 
-    async def set_channel(self, channel: int) -> bool:
-        """Tune to `channel` (1..14 on 2.4 GHz, 36..165 on 5 GHz)."""
+    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+        """Tune to `channel` (1..14 on 2.4 GHz, 36..165 on 5 GHz).
+
+        ``scan=True`` hints this is a transient scan/hop tune, not a settle —
+        drivers MAY take a lighter path (e.g. skip the per-hop calibration the
+        kernel also skips while scanning). Most drivers ignore it; mt76x2u uses
+        it to avoid a ~2 s recalibration on every hop.
+        """
         ...
 
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:

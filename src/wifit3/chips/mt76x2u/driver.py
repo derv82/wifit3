@@ -459,7 +459,7 @@ class MT76x2UDriver:
             return
         cb(parsed)
 
-    async def set_channel(self, channel: int) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> bool:
         if channel not in self.SUPPORTED_CHANNELS:
             logger.error("MT7612U: channel %d not in SUPPORTED_CHANNELS", channel)
             return False

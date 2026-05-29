@@ -249,7 +249,7 @@ class RT2500USBDriver:
                 logger.exception("rx_callback raised: %s", e)
 
     # ---- channel tune ---------------------------------------------------
-    async def set_channel(self, channel: int) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> bool:
         if channel not in self.SUPPORTED_CHANNELS:
             logger.warning("rt2500usb: channel %d not supported", channel)
             return False

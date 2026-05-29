@@ -233,7 +233,7 @@ class RTL8187Driver:
                 logger.exception("rx_callback raised: %s", e)
 
     # ---- channel tune (M4) -----------------------------------------------
-    async def set_channel(self, channel: int) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> bool:
         if self._rf_setup is None:
             logger.error("RTL8187 set_channel(%d): connect() must run first", channel)
             return False

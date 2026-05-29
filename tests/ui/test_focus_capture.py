@@ -18,7 +18,7 @@ def _isolate_captures_dir(monkeypatch, tmp_path):
 
 
 class MockDriver:
-    async def set_channel(self, ch):
+    async def set_channel(self, ch, scan=False):
         return True
 
     def register_rx_callback(self, cb):

@@ -258,7 +258,7 @@ class FocusView(Screen):
         bssid_line = f"[dim]BSSID:[/dim] [white]{self.target_ap.bssid}[/white]"
         if iface:
             self._log(treelog.branch(bssid_line))
-            ok = await iface.set_channel(self.target_ap.channel)
+            ok = await iface.set_channel(self.target_ap.channel, scan=False)
             if ok:
                 self._log(treelog.leaf(f"Tuned to [cyan]channel {self.target_ap.channel}[/cyan]"))
             else:

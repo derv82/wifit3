@@ -442,9 +442,14 @@ class WlanInterface:
         """Initializes the underlying hardware handshake."""
         return await self.driver.connect(progress_cb=progress_cb)
 
-    async def set_channel(self, channel: int) -> bool:
-        """Translates a channel number into the driver's register sequences."""
-        success = await self.driver.set_channel(channel)
+    async def set_channel(self, channel: int, scan: bool = False) -> bool:
+        """Translates a channel number into the driver's register sequences.
+
+        ``scan=True`` (passed by the channel hopper) hints a transient hop, so
+        a driver may skip per-hop calibration; the Focus settle path passes the
+        default False to request a full tune. See ``WlanDriver.set_channel``.
+        """
+        success = await self.driver.set_channel(channel, scan=scan)
         if success:
             self.current_channel = channel
         return success
@@ -626,7 +631,7 @@ class WlanInterface:
             # visible with a single-channel filter, which otherwise re-tuned
             # every `interval`. Multi-channel hopping still tunes every hop.
             if channel != last_channel:
-                await self.set_channel(channel)
+                await self.set_channel(channel, scan=True)
                 last_channel = channel
             await asyncio.sleep(interval)
 

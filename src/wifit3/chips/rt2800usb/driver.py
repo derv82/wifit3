@@ -549,7 +549,7 @@ class RT2800USBDriver:
             )
         return kwargs
 
-    async def set_channel(self, channel: int) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> bool:
         if self.chip_id is None:
             logger.error("set_channel(%d): connect() must run first", channel)
             return False

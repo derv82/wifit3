@@ -134,7 +134,7 @@ class RTL8188EUSDriver:
             logger.exception("RTL8188EUS connect failed")
             return False
 
-    async def set_channel(self, channel: int) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> bool:
         loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(None, set_channel_2g_20mhz, self.transport, channel)

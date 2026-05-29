@@ -324,7 +324,7 @@ class RTL8821AUDriver:
         return False
 
     # ---- set_channel ------------------------------------------------------
-    async def set_channel(self, channel: int) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> bool:
         is_2g = channel_band_is_2g(channel)
         if is_2g and not (1 <= channel <= 14):
             logger.warning("RTL8821AU: invalid 2.4 GHz channel %d", channel)

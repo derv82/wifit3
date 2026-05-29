@@ -388,7 +388,7 @@ class AR9271Driver:
             struct.pack(">II", AR_RX_FILTER, RX_FILTER_MONITOR),
         )
 
-    async def set_channel(self, channel: int):
+    async def set_channel(self, channel: int, scan: bool = False):
         from .sequences.tuning import get_channel_hop_sequence
         logger.info(f"Tuning AR9271 to Channel {channel}...")
         sequence = get_channel_hop_sequence(channel)

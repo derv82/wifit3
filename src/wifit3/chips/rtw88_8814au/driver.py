@@ -352,7 +352,7 @@ class RTL8814AUDriver:
                 except Exception:
                     logger.exception("RX callback raised")
 
-    async def set_channel(self, channel: int) -> bool:
+    async def set_channel(self, channel: int, scan: bool = False) -> bool:
         is_2g = channel <= 14
         if is_2g and channel not in chan.SUPPORTED_CHANNELS_2G:
             logger.warning("RTL8814AU: unsupported 2.4 GHz channel %d", channel)
