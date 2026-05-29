@@ -135,13 +135,11 @@ class MT76x2UDriver:
         # regulatory framework yet — clamp to 60 (= 30 dBm * 2, kernel's
         # post-init default before any country code applies).
         self._txpower_conf: int = 60
-        # KILL-SWITCH: ``WIFIT3_MT76X2U_SET_TXPOWER=0`` skips the kernel's
+        # ``WIFIT3_MT76X2U_SET_TXPOWER=0`` skips the kernel's
         # `mt76x2_phy_set_txpower` per-rate TX_PWR_CFG_0..9 + TX_ALC_CFG_0
-        # writes on each channel-tune, falling back to the static
-        # 0x3a3a3a3a initvals (the "post-PA-fix" state where ARP replay was
-        # known to yield IVs after a fake-auth retry cycle). Default ON
-        # (kernel-faithful). Off to isolate whether per-rate power is the
-        # remaining regression.
+        # writes on each channel-tune, leaving the static 0x3a3a3a3a
+        # initvals in place. Default ON (kernel-faithful); the switch exists
+        # to isolate per-rate TX power when debugging injection on hardware.
         env_setpwr = os.environ.get(
             "WIFIT3_MT76X2U_SET_TXPOWER", "1"
         ).strip()
@@ -315,10 +313,11 @@ class MT76x2UDriver:
             self._rx_high_gain_2g = (0, 0)
         # TSSI enable flag from EEPROM. Drives the TSSI init block in
         # set_channel_20mhz + the periodic tssi_compensate loop.
-        # KILL-SWITCH: ``WIFIT3_MT76X2U_TSSI=0`` forces TSSI off regardless
-        # of EEPROM. Defaults OFF — pending diagnosis of a regression where
-        # the periodic tssi_compensate path appears to zero TX power on
-        # this AWUS036ACM (chain.tssi_slope=127 = max-ish, suspicious).
+        # TSSI is gated OFF by default and only enabled when both the EEPROM
+        # advertises it AND ``WIFIT3_MT76X2U_TSSI=1`` is set — a deliberate
+        # deviation from the kernel (which trusts the EEPROM) because the
+        # tssi_compensate path is suspected of zeroing TX power on this
+        # silicon. See MT76X2U.md "Open / unknown". Needs hardware diagnosis.
         try:
             eeprom_tssi = eeprom_tssi_enabled(self.transport)
         except Exception as e:
@@ -355,7 +354,7 @@ class MT76x2UDriver:
         # to a full cold reset so we always succeed.
         if progress_cb:
             progress_cb(0.82, "MCU LOAD_CR (BBP coefficient table)")
-        if not await mcu_load_cr(self.mcu, cr_type=0, temp_level=0, channel=0):
+        if not await mcu_load_cr(self.mcu, temp_level=0, channel=0):
             if not warm:
                 logger.error("MT7612U: mcu_load_cr failed (cold path)")
                 return False
@@ -383,7 +382,7 @@ class MT76x2UDriver:
                 return False
             if not await self._init_mac_tables(mac_bytes, progress_cb):
                 return False
-            if not await mcu_load_cr(self.mcu, cr_type=0, temp_level=0, channel=0):
+            if not await mcu_load_cr(self.mcu, temp_level=0, channel=0):
                 logger.error(
                     "MT7612U: mcu_load_cr failed after force_power_cycle + "
                     "cold reset. Please unplug and replug the USB device."

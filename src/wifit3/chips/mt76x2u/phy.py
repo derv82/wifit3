@@ -92,6 +92,7 @@ from .constants import (
     MT_XIFS_TIME_CFG_OFDM_SIFS_MASK,
     MT_XIFS_TIME_CFG_OFDM_SIFS_SHIFT,
 )
+from .eeprom import EE_NIC_CONF_0, EE_NIC_CONF_1, read_u16
 from .mcu import (
     CMD_INIT_GAIN_OP,
     CMD_LOAD_CR,
@@ -194,9 +195,9 @@ def phy_configure_tx_delay(transport: MT76x2UTransport, ext_pa: bool,
                            bw: int) -> None:
     """`mt76x2_configure_tx_delay` — [SRC] mt76x2/phy.c:184.
 
-    Per-band TX timing (TX_SW_CFG0/1 + OFDM SIFS). The default OFDM SIFS
-    from our `_xtal_fixup_minimal` is 13 — kernel uses 15 here, so this
-    overrides. ``bw`` matches kernel (0 = 20 MHz, 1 = 40 MHz).
+    Per-band TX timing (TX_SW_CFG0/1 + OFDM SIFS). `_mac_fixup_xtal` sets
+    OFDM SIFS to 13; the kernel raises it to 15 here, so this overrides.
+    ``bw`` matches kernel (0 = 20 MHz, 1 = 40 MHz).
     """
     if ext_pa:
         cfg0 = 0x000B0C01 if bw else 0x00101101
@@ -219,15 +220,16 @@ def _adjust_high_lna_gain(transport: MT76x2UTransport, reg: int,
     """`mt76x2_adjust_high_lna_gain` — [SRC] mt76x2/phy.c:12-21.
 
     Reads the LNA_HIGH_GAIN field (bits 21:16) of one of the BBP AGC
-    registers, subtracts ``offset / 2``, writes back. The ``/ 2`` is
-    integer-truncated towards zero.
+    registers, subtracts ``offset / 2``, writes back. The kernel uses C
+    integer division (truncation towards zero), so a negative odd offset
+    rounds towards zero, not towards -inf.
     """
     cur = transport.read32(reg)
     gain = (cur & MT_BBP_AGC_LNA_HIGH_GAIN_MASK) >> MT_BBP_AGC_LNA_HIGH_GAIN_SHIFT
     # Sign-extend the 6-bit field for signed arithmetic.
     if gain & 0x20:
         gain -= 0x40
-    gain -= offset // 2
+    gain -= int(offset / 2)   # C-style truncation towards zero
     gain &= 0x3F
     new = (cur & ~MT_BBP_AGC_LNA_HIGH_GAIN_MASK) | (gain << MT_BBP_AGC_LNA_HIGH_GAIN_SHIFT)
     transport.write32(reg, new)
@@ -761,21 +763,34 @@ def phy_set_bw_20mhz(transport: MT76x2UTransport, ctrl: int = 0) -> None:
 # ---------------------------------------------------------------------------
 # MCU-side commands.
 # ---------------------------------------------------------------------------
-async def mcu_load_cr(mcu: McuChannel, cr_type: int = 0,
+async def mcu_load_cr(mcu: McuChannel, cr_type: int = 2,
                       temp_level: int = 0, channel: int = 0) -> bool:
-    """[SRC] mt76x2/usb_init.c:180 — `mt76x2_mcu_load_cr(MT_RF_BBP_CR, 0, 0)`.
+    """`mt76x2_mcu_load_cr` — [SRC] mt76x2/mcu.c:47. Called at init as
+    `mt76x2_mcu_load_cr(MT_RF_BBP_CR, 0, 0)` ([SRC] usb_init.c:180), where
+    the `mcu_cr_mode` enum gives MT_RF_CR=0, MT_BBP_CR=1, MT_RF_BBP_CR=2.
 
-    Payload struct: { u8 type; u8 temp_level; u8 channel; u8 _pad; }
-    (Total 4 bytes.) Sent with wait_resp=true.
+    Payload struct (8 bytes): { u8 cr_mode; u8 temp; u8 ch; u8 _pad;
+    __le32 cfg }, where the chip selects the CR table from
+    `cfg = BIT(31) | ((NIC_CONF_0 >> 8) & 0xff) | ((NIC_CONF_1 << 8) & 0xff00)`
+    read live from EEPROM. Sent with wait_resp=true.
     """
-    payload = struct.pack("<BBBB", cr_type, temp_level, channel, 0)
+    nic_conf_0 = read_u16(mcu.transport, EE_NIC_CONF_0)
+    nic_conf_1 = read_u16(mcu.transport, EE_NIC_CONF_1)
+    cfg = (1 << 31) | ((nic_conf_0 >> 8) & 0x00FF) | ((nic_conf_1 << 8) & 0xFF00)
+    payload = struct.pack("<BBBBI", cr_type, temp_level, channel, 0,
+                          cfg & 0xFFFFFFFF)
     return await mcu.send(CMD_LOAD_CR, payload, wait_resp=True,
                           resp_timeout_ms=1000)
 
 
 async def mcu_set_channel(mcu: McuChannel, channel: int, bw: int,
                           bw_index: int, scan: bool, chainmask: int) -> bool:
-    """[SRC] mt76x2/mcu.c:15. CMD_SWITCH_CHANNEL_OP, wait_resp=true.
+    """[SRC] mt76x2/mcu.c:15. CMD_SWITCH_CHANNEL_OP, sent TWICE per switch.
+
+    The chip needs two SWITCH_CHANNEL_OP commands: first the channel
+    without the extension-channel info (`ext_chan=0`), then after a
+    5-10 ms settle the same struct with `ext_chan = 0xe0 + bw_index`.
+    Both wait_resp=true.
 
     Payload struct (8 bytes, 4-byte aligned):
        u8  idx           — channel number
@@ -783,21 +798,27 @@ async def mcu_set_channel(mcu: McuChannel, channel: int, bw: int,
        u8  bw            — 0=20, 1=40, 2=80
        u8  _pad0
        __le16 chainmask
-       u8  ext_chan      — upper/lower for HT40 (0 for 20 MHz)
+       u8  ext_chan      — 0 on the first send, 0xe0 + bw_index on the second
        u8  _pad1
     """
-    payload = struct.pack(
-        "<BBBBHBB",
-        channel & 0xFF,
-        1 if scan else 0,
-        bw & 0xFF,
-        0,
-        chainmask & 0xFFFF,
-        bw_index & 0xFF,
-        0,
-    )
-    return await mcu.send(CMD_SWITCH_CHANNEL_OP, payload, wait_resp=True,
-                          resp_timeout_ms=1000)
+    def _pack(ext_chan: int) -> bytes:
+        return struct.pack(
+            "<BBBBHBB",
+            channel & 0xFF,
+            1 if scan else 0,
+            bw & 0xFF,
+            0,
+            chainmask & 0xFFFF,
+            ext_chan & 0xFF,
+            0,
+        )
+
+    if not await mcu.send(CMD_SWITCH_CHANNEL_OP, _pack(0), wait_resp=True,
+                          resp_timeout_ms=1000):
+        return False
+    await asyncio.sleep(0.005)   # kernel usleep_range(5000, 10000)
+    return await mcu.send(CMD_SWITCH_CHANNEL_OP, _pack(0xE0 + bw_index),
+                          wait_resp=True, resp_timeout_ms=1000)
 
 
 async def mcu_init_gain(mcu: McuChannel, channel: int,

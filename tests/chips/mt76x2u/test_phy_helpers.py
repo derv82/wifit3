@@ -239,3 +239,62 @@ def test_update_channel_gain_second_call_with_stable_gain_takes_adjust_branch():
     # Adjust branch with no CCA change → no BBP writes at all.
     assert C.MT_BBP_RXO_R14 not in addrs
     assert C.MT_BBP_RXO_R18 not in addrs
+
+
+# ---------------------------------------------------------------------------
+# MCU commands — payload bytes must match the kernel / wire exactly.
+# ---------------------------------------------------------------------------
+
+class FakeMcu:
+    """Records send() calls; transport serves EEPROM reads."""
+
+    def __init__(self, reads: dict[int, int] | None = None):
+        self.transport = FakeTransport(reads)
+        self.sends: list[tuple[int, bytes]] = []
+
+    async def send(self, cmd, payload, wait_resp=False, resp_timeout_ms=0):
+        self.sends.append((cmd, bytes(payload)))
+        return True
+
+
+async def test_mcu_load_cr_sends_8_bytes_with_cfg_dword():
+    """`mcu_load_cr` matches the wire (capture-1 frame 2457): cr_mode=2,
+    8-byte payload ending in cfg = BIT(31) | NIC_CONF nibbles."""
+    # NIC_CONF_0=0xFF00, NIC_CONF_1=0x0000 → cfg low byte 0xFF, high 0x00.
+    word = 0x0000FF00   # low16 = NIC_CONF_0, high16 = NIC_CONF_1
+    mcu = FakeMcu({C.MT_VEND_TYPE_EEPROM | 0x034: word})
+    ok = await phy.mcu_load_cr(mcu)
+    assert ok
+    assert len(mcu.sends) == 1
+    cmd, payload = mcu.sends[0]
+    assert cmd == phy.CMD_LOAD_CR
+    assert len(payload) == 8, payload.hex()
+    assert payload[0] == 2          # MT_RF_BBP_CR
+    assert payload[1:4] == b"\x00\x00\x00"
+    cfg = int.from_bytes(payload[4:8], "little")
+    assert cfg == 0x800000FF, hex(cfg)
+
+
+async def test_mcu_set_channel_double_sends_with_ext_chan_0_then_e0():
+    """`mcu_set_channel` sends SWITCH_CHANNEL_OP twice: ext_chan 0x00 then
+    0xe0 + bw_index (capture-1 frames 3005/3009)."""
+    mcu = FakeMcu()
+    ok = await phy.mcu_set_channel(mcu, channel=1, bw=0, bw_index=0,
+                                   scan=False, chainmask=0x0202)
+    assert ok
+    assert len(mcu.sends) == 2
+    for cmd, _ in mcu.sends:
+        assert cmd == phy.CMD_SWITCH_CHANNEL_OP
+    # ext_chan is byte index 6 in the 8-byte struct.
+    assert mcu.sends[0][1][6] == 0x00
+    assert mcu.sends[1][1][6] == 0xE0
+    # idx/chainmask identical across both sends.
+    assert mcu.sends[0][1][0] == 1 and mcu.sends[1][1][0] == 1
+
+
+async def test_mcu_set_channel_ext_chan_includes_bw_index():
+    """Second send's ext_chan = 0xe0 + bw_index."""
+    mcu = FakeMcu()
+    await phy.mcu_set_channel(mcu, channel=36, bw=1, bw_index=2,
+                              scan=False, chainmask=0x0202)
+    assert mcu.sends[1][1][6] == 0xE0 + 2
