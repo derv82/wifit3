@@ -83,35 +83,27 @@ def decode_urb(urb: bytes) -> Optional[dict]:
     mpdu_len = (ctl >> _CTL_MPDU_LEN_SHIFT) & _CTL_MPDU_LEN_MASK
     if mpdu_len < 10:   # smaller than any 802.11 header → bogus
         return None
-    if _HEADER_LEN + mpdu_len > len(urb):
-        # Truncated URB; trim to what's there.
-        mpdu_len = len(urb) - _HEADER_LEN
 
-    frame = urb[_HEADER_LEN:_HEADER_LEN + mpdu_len]
+    # Everything after the RXWI prefix: [802.11 hdr][L2 pad?][body][FCS?].
+    body = urb[_HEADER_LEN:]
 
-    # mt76x02 inserts a 2-byte L2 alignment pad between 802.11 header
-    # and body when the MAC header isn't 4-byte aligned. Kernel does
-    # `mt76x02_remove_hdr_pad` to slide the header forward; for our
-    # parser the easier route is to drop those 2 bytes from offset
-    # hdrlen onward.
-    if rxinfo & RXINFO_L2PAD:
-        # 802.11 frame_control bits give us hdrlen.
-        if len(frame) >= 2:
-            hdrlen = _ieee80211_hdrlen(frame[0], frame[1])
-            if 0 < hdrlen < len(frame) - 2:
-                frame = frame[:hdrlen] + frame[hdrlen + 2:]
+    # L2 alignment pad: mt76x02 inserts 2 bytes between the 802.11 header and the
+    # body when the header isn't 4-byte aligned — which is every QoS-Data frame
+    # (26-byte header), exactly what EAPOL rides on. Remove the pad BEFORE
+    # trimming to MPDU_LEN, because MPDU_LEN counts the *de-padded* MPDU: trimming
+    # first would drop the last 2 body bytes (for EAPOL: the tail of key_data,
+    # which loses the M2 hashline). [SRC] mt76x02_mac.c:831,854 — remove_hdr_pad
+    # precedes pskb_trim.
+    if rxinfo & RXINFO_L2PAD and len(body) >= 2:
+        hdrlen = _ieee80211_hdrlen(body[0], body[1])
+        if 0 < hdrlen <= len(body) - 2:
+            body = body[:hdrlen] + body[hdrlen + 2:]
 
-    # FCS strip — DISABLED 2026-05-22 (commit b887282 — see
-    # chips/mt76x0u/rx.py + chips/rt2800usb/rx.py for the same fix).
-    # The kernel comment ("mt76 leaves trailing 4-byte FCS in mpdu_len")
-    # turned out to be wrong for forged-MAC EAPOL M1 frames on this chip
-    # family: the chip already excludes FCS from mpdu_len, and the
-    # additional strip here clipped the last 4 bytes of payload —
-    # specifically the tail 4 bytes of a 16-byte PMKID inside the M1's
-    # key_data. IE walkers are self-bounded by tag lengths so any FCS
-    # bytes that DO survive for other frame types are inert.
-    # if len(frame) >= 4:
-    #     frame = frame[:-4]
+    # Trim to MPDU_LEN. MPDU_LEN excludes the trailing FCS, so this slice drops it
+    # (and any AMPDU tail padding); it also covers a short / truncated URB.
+    frame = body[:mpdu_len]
+    if len(frame) < 10:
+        return None
 
     # RSSI: prefer chain 0. The kernel applies a gain offset
     # (mt76x02_mac_get_rssi); for M4 we use the raw byte (signed int8).
