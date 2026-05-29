@@ -71,36 +71,31 @@ def test_cross_session_not_paired():
     assert wpa.crackable_pairs(hs) == []
 
 
-def test_reconnect_spam_replay_collision_not_cross_paired():
-    """Reconnect spam (the real HW report): the AP resets its key-replay counter
-    each association, so a STALE M3 from a prior attempt (replay 6) and a FRESH
-    M2 from the next attempt (replay 5) collide on the M2+M3 replay+1 rule. They
-    must NOT pair — their ANonce (old) and SNonce (new) are different PTKs, so
-    the hashline would be uncrackable. The correct pair forms only when this
-    M2's OWN M3 arrives.
+def test_reconnect_spam_does_not_cross_pair():
+    """Reconnect spam (the real NETGEAR2G HW capture): the AP resets its key-replay
+    counter each association, so a STALE M3 from a prior attempt (a_old, replay 6)
+    and a FRESH M2 from the next attempt (replay 5) collide on the M2+M3 replay+1
+    rule. The fresh M2 must bind only within its OWN association — to the M1 it
+    answered (a_new) — never to the stale a_old M3 ahead of it.
 
-    No timestamps are set: the same-association check runs off ARRIVAL ORDER, so
-    this also covers a round-tripped pcap (whose per-frame timestamps are lost)."""
+    No timestamps are set, so the binding runs purely off ARRIVAL ORDER: this is
+    exactly the round-tripped-pcap condition (per-frame timestamps not preserved),
+    where the earlier timestamp-based guard was fooled into 5 cross-session pairs."""
     a_old, a_new, s_new = b"\xa1" * 32, b"\xb2" * 32, b"\x02" * 32
     hs = _hs(
         _frame(1, 5, nonce=a_old, mic=False),   # old assoc M1
-        _frame(3, 6, nonce=a_old),              # old assoc M3 (stale)
+        _frame(3, 6, nonce=a_old),              # old assoc M3 (stale, ahead of M2)
         _frame(4, 6, nonce=b"\x00" * 32),       # old assoc M4 (zeroed)
         _frame(1, 5, nonce=a_new, mic=False),   # NEW assoc M1 (replay collides)
-        _frame(2, 5, nonce=s_new),              # NEW assoc M2 (replay 5)
+        _frame(2, 5, nonce=s_new),              # NEW assoc M2 answering the NEW M1
     )
-    # Only the stale M3 (a_old) is present; pairing it with the fresh M2 (a_new's
-    # association) is the cross-session join → nothing crackable yet.
-    assert wpa.crackable_pairs(hs) == []
-
-    # The AP's real response for the new association arrives (M3, replay 6,
-    # a_new) → M2+M3 forms correctly with the NEW ANonce.
-    hs.eapol_frames.append(_frame(3, 6, nonce=a_new))
     pairs = wpa.crackable_pairs(hs)
+    # Exactly one crackable association, and it's the NEW one: the fresh M2 binds
+    # to the M1 it answered (a_new), never to the stale a_old M3 sitting ahead.
     assert len(pairs) == 1
-    assert pairs[0].pair_byte == 0x02
     assert pairs[0].anonce_frame.nonce == a_new
-    assert pairs[0].mic_frame.nonce == s_new       # SNonce from the fresh M2
+    assert pairs[0].mic_frame.nonce == s_new
+    assert a_old not in {p.anonce_frame.nonce for p in pairs}
 
 
 def test_one_instance_per_anonce():

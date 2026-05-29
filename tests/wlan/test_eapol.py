@@ -288,17 +288,21 @@ def test_pair_accepted_when_frames_within_window():
     assert (pair[0].msg_num, pair[1].msg_num) == (1, 2)
 
 
-def test_m1_anonce_guard_rejects_wrong_instance():
-    """M1+M2 are tight in time, but a captured M3 at replay+1 carries a
-    DIFFERENT ANonce — proof this M1 belongs to another association, so its
-    ANonce can't be trusted. With the M3 far away (no M2+M3 pair), nothing
-    valid remains → incomplete (better than emitting an uncrackable line)."""
+def test_m1_m2_valid_despite_unrelated_later_m3():
+    """M1+M2 of one association is a valid pair (hashcat MESSAGEPAIR 0x00). An M3
+    from a *different*, later association (different ANonce, outside the pairing
+    window) does NOT invalidate it — only the M1 the M2 actually answered supplies
+    the ANonce. Matches hcxpcapngtool, which has no global 'a conflicting M3
+    anywhere vetoes this M1' rule."""
     hs = _make_hs(
-        _ef(1, 5, ts=100.0, nonce=b"\xaa" * 32),
-        _ef(2, 5, ts=100.1),
-        _ef(3, 6, ts=200.0, nonce=b"\xbb" * 32),
+        _ef(1, 5, ts=100.0, nonce=b"\xaa" * 32),   # M1 of association A
+        _ef(2, 5, ts=100.1),                        # M2 answering it (same window)
+        _ef(3, 6, ts=200.0, nonce=b"\xbb" * 32),   # unrelated later M3 (assoc B)
     )
-    assert not hs.is_complete
+    assert hs.is_complete
+    pair = hs.find_valid_pair()
+    assert (pair[0].msg_num, pair[1].msg_num) == (1, 2)
+    assert pair[0].nonce == b"\xaa" * 32           # ANonce from assoc A's M1
 
 
 def test_timestampless_frames_still_pair_on_replay():
