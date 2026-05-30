@@ -430,7 +430,15 @@ def _ldo_cfg0_dance(t: RT2800USBTransport) -> None:
     reg = (reg & ~LDO_CFG0_LDO_CORE_VLEVEL) | ((3 << 26) & LDO_CFG0_LDO_CORE_VLEVEL)
     reg = (reg & ~LDO_CFG0_BGSEL) | ((1 << 24) & LDO_CFG0_BGSEL)
     t.write32(LDO_CFG0, reg & 0xFFFFFFFF)
-    time.sleep(0.001)
+    # Real settle for the RF-core LDO. The kernel's msleep(1) lets VLEVEL=3 take
+    # effect before VLEVEL=0; a Windows time.sleep quantizes to the ~15.6 ms
+    # scheduler tick (returns ~0), leaving the regulator mid-transient when the
+    # rx-filter cal runs next — which rails the loopback passband near 0x80 and
+    # breaks the tune at its 0x07 start. Busy-wait the high-res clock for a real
+    # >= 1 ms delay. [SRC] rt2800lib.c:7947.
+    _end = time.perf_counter() + 0.002
+    while time.perf_counter() < _end:
+        pass
     reg = t.read32(LDO_CFG0)
     reg = (reg & ~LDO_CFG0_LDO_CORE_VLEVEL) | ((0 << 26) & LDO_CFG0_LDO_CORE_VLEVEL)
     reg = (reg & ~LDO_CFG0_BGSEL) | ((1 << 24) & LDO_CFG0_BGSEL)
