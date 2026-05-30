@@ -339,7 +339,13 @@ Also threaded `RxPktStat` through `rx_common.iter_bulk_frames`'s
 8821au's own `iter_bulk_frames` is unaffected (kept its OFDM-only
 parser; rarely shows noisy RSSI in practice on the slower card).
 
-### MX-c: EFUSE read ✓ (awaiting hw verification)
+### MX-c: EFUSE read ✓ (hw-verified 2026-05-30)
+
+Verified on the AWUS036ACH cold boot: read took 131 ms, rfe_option resolved
+to 3 (IFEM-ext, the card's real routing), ext_lna/pa_2g+5g all 1, crystal_cap
+0x0e, real MAC — and the values feed phy/RF config so the beacon sweep now
+surfaces multiple BSSIDs incl. weaker ones (the earlier "only the nearest AP"
+sensitivity gap is closed).
 
 New `efuse.py` ports `rtw88xxa_read_efuse` + `rtw8812a_read_amplifier_type`
 + `rtw8812a_read_rfe_type`. Pipeline:
@@ -365,9 +371,9 @@ Harness: `--phase efuse` runs the read in isolation + prints all raw +
 derived values. `--phase all` uses EFUSE values for phy init unless
 `--rfe / --ext-lna / --ext-pa` CLI overrides are given.
 
-Hypothesis: this fixes the "only-NETGEAR2G" sensitivity gap once we get
-the actual rfe_option (likely `rfe_option=3` for high-power
-AWUS036ACH) feeding into phy_bb_config + switch_band.
+Confirmed on hardware (see the header note): rfe_option reads back 3 on the
+AWUS036ACH and feeds phy_bb_config + switch_band. EfuseDefaults() stays as the
+cold-boot fallback if the read ever times out.
 
 ### MX-d: 5 GHz support ✓ (awaiting hw test on ch36+)
 

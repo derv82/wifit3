@@ -51,18 +51,6 @@ legacy MCUFWDL FW upload — shared by the 88xxA (8821a/8812a), 8822b, and 8814a
   re-confirm the hardware enumerates at all before sinking more time in. See
   `chips/mt7921au/MT7921AU.md` + `chips/mt7921au/KALI-HANDOFF-2026-05-19.md`.
 
-## Open follow-ups (RTL8812AU)
-
-1. ~~**Queue-clear bisect**~~ — RESOLVED (2026-05-30). `REG_RQPN / REG_RQPN_NPQ
-   / REG_TXDMA_PQ_MAP` are **write-only load registers** on 8812au (readback
-   always 0; the bisect confirmed every checkpoint reads 0, so there was no
-   "clearing step" to find). `_arm_tx_queues` now runs ONCE at `_finish_attach`
-   (was: before every `inject_frame`) — hw-confirmed the commit survives to
-   TX-time, 10/10 deauths on a cold boot. See `RTL8812AU.md` § MX-a.
-2. **EFUSE-read verification** — read landed (`71699d7`); awaiting hw test to
-   confirm values are readable on the AWUS036ACH and that feeding them into
-   bring-up fixes the earlier "only sees the nearest/strongest AP" sensitivity gap.
-
 ## Bringing up the next card
 
 Recipe when fresh cold-boot captures land in `usb_dumps/captures_<driver>/`
