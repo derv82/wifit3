@@ -562,18 +562,24 @@ def _set_channel_3572(
     time.sleep(0.001)
 
     # ---- (11) Per-rate TX power (kernel rt2800_config_txpower_rt28xx) ----
-    # The firmware reads TX_PWR_CFG_0..4 to pick TX power for each modulation
-    # rate. Without this, the chip's TX engine reports TX_SUCCESS but emits
-    # near-zero RF power (we verified this on the user's AWUS051NH v2:
-    # FIFO showed VALID+TX_SUCCESS but phone/AP never saw the frames).
-    # Kernel sources these from EEPROM TXPOWER_BYRATE per-channel; we don't
-    # parse those tables yet, and this card has unburned EFUSE anyway. Write
-    # a moderate same-value-across-rates default so all rates emit at usable
-    # power. 0x0A per 4-bit field ≈ ~10/15 = ~67% of max power index.
-    # TODO: parse EEPROM TXPOWER_BYRATE + apply rt2800_compensate_txpower.
-    _RT3572_TX_PWR_CFG_DEFAULT = 0x0A0A0A0A
-    for reg in (TX_PWR_CFG_0, TX_PWR_CFG_1, TX_PWR_CFG_2, TX_PWR_CFG_3, TX_PWR_CFG_4):
-        t.write32(reg, _RT3572_TX_PWR_CFG_DEFAULT)
+    # The PHY reads TX_PWR_CFG_0..4 to pick TX power per modulation rate; with
+    # placeholder values the TX engine still reports TX_SUCCESS but emits
+    # near-zero RF. This card's EFUSE TXPOWER region is erased (0xFF), so there's
+    # nothing to derive from — write the exact values the in-tree rt2800usb
+    # driver programs for it, landing the radio in the airmon-ng state.
+    # [WIRE] captures_rt3572_tx_diff/aireplay.pcap (ch1). Note: 0x0A0A0A0A would
+    # zero power on half the rates (its high nibbles are 0), incl. the 1 Mbps CCK
+    # that mgmt/auth frames ride — so it must not be used as the default.
+    # TODO: derive per-channel from EEPROM TXPOWER_BYRATE once a burned card exists.
+    _RT3572_TX_PWR_CFG_DEFAULTS = (
+        (TX_PWR_CFG_0, 0xCCCCAAAA),
+        (TX_PWR_CFG_1, 0xCCCCAACC),
+        (TX_PWR_CFG_2, 0xCCCCAACC),
+        (TX_PWR_CFG_3, 0xCCCCAACC),
+        (TX_PWR_CFG_4, 0xCCCCAACC),
+    )
+    for reg, val in _RT3572_TX_PWR_CFG_DEFAULTS:
+        t.write32(reg, val)
 
     # BBP1.TX_POWER_CTRL = 0 — global TX power offset of 0 dBm (no
     # -6/-12/+6 adjustment). Kernel rt2800_config_txpower_rt28xx sets this
