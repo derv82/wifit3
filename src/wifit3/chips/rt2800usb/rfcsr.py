@@ -380,6 +380,22 @@ def _rx_filter_calibration_3572(t: RT2800USBTransport) -> RfFilterCal:
     bbp = bbp & ~BBP4_BANDWIDTH    # BW20
     bbp_write(t, 4, bbp & 0xFF)
 
+    # Degenerate-cal override (RT3572 on erased EFUSE). With no factory RF
+    # cal the loopback has no real filter response, so the tune loop rails —
+    # it breaks on step 0 (low, 0x07) or runs to the iteration cap (high,
+    # 0x6b). The in-tree driver rails HIGH on this hardware: [WIRE]
+    # aireplay.pcap marches RFCSR24 0x07->0x6b and ships calibration_bw20=0x6b
+    # (config_channel writes both RFCSR24 and RFCSR31 from it). When our 20 MHz
+    # tune rails, ship the kernel's wire value rather than our own meaningless
+    # rail. bw40 is left as the loop result -- unused at 20 MHz and we have no
+    # wire value to match it against.
+    if bw20 in (0x07, 0x6b):
+        logger.info(
+            "RT3572 rx-filter bw20 degenerate (rail 0x%02x) — shipping "
+            "kernel wire value 0x6b", bw20,
+        )
+        bw20 = 0x6b
+
     return RfFilterCal(
         calibration_bw20=bw20,
         calibration_bw40=bw40,
