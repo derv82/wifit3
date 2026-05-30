@@ -519,16 +519,11 @@ class RT2800USBDriver:
             # TODO: parse EEPROM_TXPOWER_BG1/BG2/A1/A2 per-channel tables
             # when EFUSE is burned.
             is_2g = channel <= 14
-            # tx_chain_num override: AWUS051NH v2 is documented 2T2R hw,
-            # but its EFUSE reads NIC_CONF0=0x0000 (unburned) so the kernel-
-            # default fallback in eeprom.py returns txpath=1. With txpath=1,
-            # _set_channel_3572 powers down TX1/TX2 chains via RFCSR1 and
-            # only enables PA_PE_G0 — if this dongle is wired with the
-            # primary RF route through chain 1 (path B), TX is silent
-            # regardless of power. Force 2T2R since silicon supports it.
+            # Chain count from the EEPROM default (the unburned fallback returns
+            # txpath=1). The in-tree driver transmits on this card with a single
+            # TX chain: [WIRE] aireplay.pcap configures RFCSR1/13 + TX_PIN_CFG for
+            # one chain (RFCSR13 TX_POWER=0). Match it — 2T2R is not used here.
             txpath = self._eeprom.txpath
-            if self._eeprom.nic_conf0 in (0x0000, 0xFFFF):
-                txpath = 2
             kwargs.update(
                 cal_result=self._rf_cal,
                 tx_chain_num=txpath,
