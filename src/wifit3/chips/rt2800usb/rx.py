@@ -23,11 +23,13 @@ which is a slight over-estimate of signal strength but in the right
 ballpark.  EEPROM-aware RSSI lands in M4 alongside the per-channel TX
 power tables (both come from the same EEPROM bytes).
 
-L2 padding: kernel inserts 2 padding bytes between the MAC header and
-the payload if the header length isn't a multiple of 4.  We strip
-trailing FCS but don't (yet) un-pad — most beacons have a 24-byte
-header which is already 4-aligned, so monitor parsing usually works
-without the un-pad.  Will revisit if QoS data frames show up garbled.
+L2 padding: the chip inserts 2 padding bytes between the MAC header and
+the payload when the header length isn't a multiple of 4 -- every
+QoS-Data frame (the carrier for EAPOL; beacons have a 4-aligned 24-byte
+header and aren't padded).  RXD_W0_L2PAD flags it, and parse_rx_urb
+removes the pad before trimming to MPDU_TOTAL_BYTE_COUNT -- otherwise the
+last 2 body bytes (an EAPOL M2's key_data tail) fall outside the window
+and the handshake is clipped.
 """
 from __future__ import annotations
 
@@ -42,6 +44,7 @@ from .constants import (
     RT_RT5592,
     RXD_DESC_SIZE,
     RXD_W0_CRC_ERROR,
+    RXD_W0_L2PAD,
     RXINFO_DESC_SIZE,
     RXINFO_W0_USB_DMA_RX_PKT_LEN,
     RXWI_DESC_SIZE_4WORDS,
@@ -127,6 +130,22 @@ def _agc_to_rssi_simple(rxwi_w2: int) -> int:
     return max(rssi0, rssi1, rssi2)
 
 
+def _ieee80211_hdrlen(fc0: int, fc1: int) -> int:
+    """802.11 header length from the first two frame-control bytes:
+    24 base, +6 for WDS (to_ds & from_ds), +2 for QoS-Data; control
+    frames are header-only. Mirrors ieee80211_hdrlen."""
+    ftype = (fc0 & 0x0C) >> 2
+    subtype = (fc0 & 0xF0) >> 4
+    if ftype == 1:  # CTRL
+        return 10
+    base = 24
+    if (fc1 & 0x03) == 0x03:  # to_ds & from_ds -> 4-address (WDS)
+        base = 30
+    if ftype == 2 and (subtype & 0x08):  # QoS-Data
+        base += 2
+    return base
+
+
 def parse_rx_urb(buf: bytes, *, rxwi_size: int = RXWI_DESC_SIZE_4WORDS) -> Optional[RxFrame]:
     """Decode one bulk-IN URB → RxFrame, or None if malformed.
 
@@ -163,22 +182,29 @@ def parse_rx_urb(buf: bytes, *, rxwi_size: int = RXWI_DESC_SIZE_4WORDS) -> Optio
         return None
     rxd_w0 = struct.unpack_from("<I", buf, rxd_off)[0]
     crc_error = bool(rxd_w0 & RXD_W0_CRC_ERROR)
+    l2pad = bool(rxd_w0 & RXD_W0_L2PAD)
 
-    # 802.11 frame: starts right after RXWI, mpdu_len bytes long.
-    # NOTE 2026-05-22: previously this stripped the trailing 4 bytes
-    # assuming "mpdu_len includes FCS". Live wire-diagnostics on EAPOL
-    # M1 frames (PMKID harvest path on RT5572 / PAU09) showed the strip
-    # was clipping the last 4 bytes of payload — same symptom and same
-    # fix as chips/mt76x0u/rx.py. The chip apparently already strips
-    # FCS for these frames, so our extra strip removed actual data.
-    # IE walkers in the parser are self-bounded by tag lengths so the
-    # extra 4 trailing bytes (if FCS *is* present for some frame types)
-    # are harmless garbage that downstream parsing ignores.
+    # 802.11 frame starts right after RXWI. Two layout quirks:
+    #
+    #  * L2 pad: the hw inserts 2 alignment bytes between the MAC header
+    #    and the body when the header length isn't 4-aligned -- every
+    #    QoS-Data frame (26-byte header), which is what EAPOL rides on.
+    #    RXD_W0_L2PAD flags it. MPDU_TOTAL_BYTE_COUNT counts the de-padded
+    #    MPDU, so the pad must come out BEFORE trimming to mpdu_len:
+    #    trimming first pushes the last 2 body bytes (an EAPOL M2's
+    #    key_data tail) out of the window and clips the handshake.
+    #    [SRC] rt2800usb.c:565, rt2x00queue.c rt2x00queue_remove_l2pad.
+    #  * FCS: the chip already strips it for these frames, so mpdu_len is
+    #    the full header+body with no trailing CRC to remove.
     frame_start = RXINFO_DESC_SIZE + rxwi_size
-    frame_end = frame_start + mpdu_len
-    if frame_end > len(buf):
+    body = buf[frame_start:]
+    if l2pad and len(body) >= 2:
+        hdrlen = _ieee80211_hdrlen(body[0], body[1])
+        if 0 < hdrlen <= len(body) - 2:
+            body = body[:hdrlen] + body[hdrlen + 2:]
+    if len(body) < mpdu_len:
         return None
-    mpdu = bytes(buf[frame_start: frame_end])
+    mpdu = bytes(body[:mpdu_len])
 
     rssi = _agc_to_rssi_simple(rxwi_w2)
 

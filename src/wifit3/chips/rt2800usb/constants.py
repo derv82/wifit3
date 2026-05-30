@@ -474,6 +474,7 @@ RXWI_W2_RSSI2 = 0x00FF0000
 
 # RXD_W0 trailing flags
 RXD_W0_CRC_ERROR = 0x00000100
+RXD_W0_L2PAD = 0x00004000      # [SRC] rt2800usb.h:91 — 2B hdr/body align pad
 
 # ----------------------------------------------------------------------
 # USB endpoint addresses (re-stated here for the rx/tx modules).

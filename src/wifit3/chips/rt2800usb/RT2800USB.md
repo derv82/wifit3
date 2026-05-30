@@ -186,13 +186,18 @@ We currently use `eeprom_offset = lna_gain = 0` and pick the max
 across the three paths. EEPROM-aware RSSI lands when EEPROM bring-up
 ports (will share work with the per-channel TX power tables).
 
-**L2 padding** is inserted between MAC header and payload when
-header length isn't 4-aligned. We don't yet un-pad — most beacons
-(24-byte header) are already 4-aligned, so monitor capture mostly
-works. Revisit if QoS data frames look garbled.
+**L2 padding**: the hw inserts 2 bytes between the MAC header and the
+payload when the header length isn't 4-aligned — every QoS-Data frame
+(the EAPOL carrier; beacons have a 4-aligned 24-byte header and aren't
+padded). `RXD_W0_L2PAD` flags it, and `parse_rx_urb` removes the pad
+*before* trimming to `MPDU_TOTAL_BYTE_COUNT`. Trimming first clips the
+last 2 body bytes (an EAPOL M2's key_data tail) — surfacing as "EAPOL
+clipped" + an uncrackable handshake. [SRC] rt2800usb.c:565,
+rt2x00queue.c rt2x00queue_remove_l2pad.
 
-FCS is included in `MPDU_TOTAL_BYTE_COUNT`; we strip the trailing 4
-bytes before handing to `WlanFrameParser`.
+`MPDU_TOTAL_BYTE_COUNT` excludes the FCS for these frames (the chip
+strips it), so `parse_rx_urb` trims to it directly and removes no
+trailing bytes.
 
 ---
 
@@ -454,20 +459,18 @@ here.
 
 1. **Real warm reattach** — skip FW + init when the chip's already
    post-init, just resume bulk-IN polling.
-2. **L2 padding strip** in `parse_rx_urb` — needed for QoS data frames
-   with non-4-aligned MAC headers.
-3. **EEPROM-aware RSSI** — `base_val - eeprom_offset - lna_gain - raw`.
+2. **EEPROM-aware RSSI** — `base_val - eeprom_offset - lna_gain - raw`.
    We now have `lna_gain` and `rssi_bg_offset0/1` but rx.py still
    uses simplified `base_val - max(raw)`. Wire EFUSE values in.
-4. **TX power per channel** — `RFCSR49/50.TX` writes (only on RT5392).
+3. **TX power per channel** — `RFCSR49/50.TX` writes (only on RT5392).
    Currently skipped (RX works fine without; RT3572/RT5572 already
    write these from `default_power1/2` defaults).
-5. **WCID + IVEIV table clears** — kernel does 256-entry loops; we
+4. **WCID + IVEIV table clears** — kernel does 256-entry loops; we
    skip since monitor mode never associates.
-6. **93C66 EEPROM fallback** — older RT2870 dongles don't have
+5. **93C66 EEPROM fallback** — older RT2870 dongles don't have
    EFUSE; `efuse_detect` would return False. Would need to port the
    USB_EEPROM_READ one-shot 512-byte streaming path.
-7. **AWUS036NH (RT3070)** — fresh chip not yet supported. Captures
+6. **AWUS036NH (RT3070)** — fresh chip not yet supported. Captures
    not yet collected; pcap drop-in extension once captures land.
    See `NEXT-STEPS.md` "Other hardware queued" section.
 
