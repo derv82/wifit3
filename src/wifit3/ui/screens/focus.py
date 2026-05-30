@@ -19,7 +19,6 @@ from wifit3.engine.save import (
     save_handshake, save_pmkid, save_wep_key, save_wps_pbc, save_wps_pin,
 )
 from wifit3.engine.attacks.pmkid_harvest import PmkidHarvestAttack
-from wifit3.engine.attacks.sae_probe import SAEGroupProbeAttack
 from wifit3.engine.attacks.wpa3_downgrade import WPA3DowngradeAttack
 from wifit3.engine.attacks.wep.campaign import WepCampaign
 from wifit3.engine.attacks.wep.crack import CRACK_READY_THRESHOLD
@@ -184,7 +183,6 @@ class FocusView(Screen):
                             Label(id="lbl-wps-status"),     # live WPS PIN campaign progress
                             Label(id="lbl-pmf"),
                             Label(id="lbl-wpa3"),
-                            Label(id="lbl-sae-groups"),
                             # WPA3-Down live status (hidden unless the daemon is
                             # running) — live probe counts live here, not as one
                             # event-log line per probe.
@@ -408,21 +406,6 @@ class FocusView(Screen):
         # already states e.g. "WPA3→2 (transition)".
         self.query_one("#lbl-wpa3", Label).display = False
 
-        # SAE Groups — populated by the SAE probe attack, cached on the AP.
-        # Hidden until we have at least one probe result. Shows only the
-        # Dragonblood groups (22/23/24): green supported, dim rejected.
-        sae_label = self.query_one("#lbl-sae-groups", Label)
-        if ap.sae_groups:
-            sae_label.display = True
-            sae_label.update(
-                Text.from_markup(
-                    f"SAE Groups: {self._format_sae_groups_markup(ap)}",
-                    emoji=False,
-                )
-            )
-        else:
-            sae_label.display = False
-
         # WPA3-Down live status — shown only while the daemon is running. This
         # is where the per-probe counts surface (instead of flooding the log).
         down_label = self.query_one("#lbl-wpa3-down", Label)
@@ -438,7 +421,7 @@ class FocusView(Screen):
             down_label.display = False
 
         # Attack buttons. WEP and WPA targets get disjoint button sets — the
-        # WPA buttons (PMKID/SAE/WPA3 Down) are meaningless for WEP, so hide
+        # WPA buttons (PMKID/WPA3 Down) are meaningless for WEP, so hide
         # (not just disable) them and surface Fake Auth in their place.
         btn_wps = self.query_one("#btn-wps-pin", Button)
         btn_down = self.query_one("#btn-wpa3-down", Button)
@@ -824,26 +807,6 @@ class FocusView(Screen):
                 client_table.update_cell(
                     mac, "packets", Text(str(client.packets), justify="right")
                 )
-
-    _DRAGONBLOOD_GROUPS = {22, 23, 24}
-
-    @classmethod
-    def _format_sae_groups_markup(cls, ap: AccessPoint) -> str:
-        """Render the Dragonblood-relevant SAE groups (22/23/24) as a compact,
-        colour-coded inline list. Modern groups (19–21) are omitted — they add
-        no signal to this attack and only crowd the line.
-
-        Supported → green (the AP accepts it). Rejected → dim. No red: supporting
-        one is the *finding*, not a fault, so colour mirrors the event-log tree.
-        """
-        parts = []
-        for group in sorted(g for g in ap.sae_groups if g in cls._DRAGONBLOOD_GROUPS):
-            verdict = ap.sae_groups[group]
-            if verdict == "supported":
-                parts.append(f"[green]{group}[/green]")
-            elif verdict == "rejected":
-                parts.append(f"[dim]{group}[/dim]")
-        return ", ".join(parts) if parts else "[dim]—[/dim]"
 
     # ----- Capture-event log -------------------------------------------------
 
@@ -1242,64 +1205,6 @@ class FocusView(Screen):
             self._log(treelog.branch_fail("[bold red]No PMKID harvested[/bold red] — possible reasons:"))
             self._log(treelog.branch("[dim]AP may not advertise a PMKID KDE[/dim]"))
             self._log(treelog.leaf("[dim]PMF / status rejected the request[/dim]"))
-
-    async def _run_sae_probe(self) -> None:
-        """Worker: enumerate which SAE groups the focused AP accepts."""
-        ap = self.target_ap
-        iface = getattr(self.app, "active_interface", None)
-        if not ap or not iface:
-            self._log("[red]✗ No target / interface — aborting SAE probe.[/red]")
-            return
-
-        self._log(
-            f"[bold cyan]Probing SAE groups[/bold cyan] on "
-            f"[bold]{escape(ap.ssid or '<hidden>')}[/bold]…"
-        )
-        attack = SAEGroupProbeAttack(iface, ap)
-        try:
-            results = await attack.run()
-        except Exception as exc:
-            logger.exception("SAE probe crashed")
-            self._log(treelog.leaf_fail(f"SAE probe crashed: {escape(str(exc))}"))
-            return
-
-        # Only the Dragonblood-relevant legacy FFC groups matter here (22/23/24);
-        # the modern groups feed the panel's SAE-Groups line but add no signal to
-        # this verdict. List = green when the AP supports the group, dim when it
-        # doesn't — no red (supporting one is the *finding*, not a fault).
-        DRAGONBLOOD = (22, 23, 24)
-        supported_groups = [g for g, (lbl, _) in results.items() if lbl == "Supported"]
-        dragonblood_hits = [g for g in DRAGONBLOOD if g in supported_groups]
-        for group in DRAGONBLOOD:
-            entry = results.get(group)
-            if entry and entry[0] == "Supported":
-                self._log(treelog.branch_ok(
-                    f"[green]Group {group}: supported[/green] [dim]— {escape(entry[1])}[/dim]"
-                ))
-            elif entry and entry[0] == "Rejected":
-                self._log(treelog.branch_dim(f"Group {group}: not supported"))
-            else:
-                self._log(treelog.branch_dim(f"Group {group}: no definitive answer"))
-
-        # Verdict polarity is the auditor's: Dragonblood-vulnerable is the win
-        # (green), not-vulnerable closes with a red ╳, indeterminate with ⚠.
-        if dragonblood_hits:
-            hits = ", ".join(str(g) for g in dragonblood_hits)
-            self._log(treelog.branch_ok(
-                f"[green]Vulnerable to Dragonblood[/green] "
-                f"[dim](group{'s' if len(dragonblood_hits) > 1 else ''} {hits} "
-                f"— CVE-2019-9494/9495)[/dim]"
-            ))
-            self._log(treelog.leaf(
-                "[dim]Next: capture a handshake, then run "
-                "[bold]dragonblood-tools[/bold] to recover the passphrase[/dim]"
-            ))
-        elif supported_groups:
-            self._log(treelog.leaf_fail("[bold red]Not vulnerable to Dragonblood[/bold red]"))
-        else:
-            self._log(treelog.leaf_warn(
-                "Couldn't determine SAE groups — rate-limited, PMF, or off-channel"
-            ))
 
     def _toggle_wpa3_down(self) -> None:
         """Button handler: Start the spoof daemon if idle, Stop it if running."""

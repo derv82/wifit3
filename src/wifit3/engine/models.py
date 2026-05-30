@@ -182,13 +182,6 @@ class AccessPoint(BaseModel):
     # WlanInterface._recompute_siblings_for. Maintained bidirectionally.
     siblings: List[str] = Field(default_factory=list)
 
-    # Cached SAE-Commit probe results, keyed by finite-cyclic group ID.
-    # Values are "supported" or "rejected"; timeouts / unknowns are NOT stored
-    # so the next probe re-tries them. Used to skip already-determined groups
-    # on subsequent SAE probes and to drive the SECURITY panel's "SAE Groups"
-    # row. Dragonblood-relevant groups (22/23/24) flagged in the UI.
-    sae_groups: Dict[int, str] = Field(default_factory=dict)
-
     # Per-client handshake captures, keyed by client MAC. Replaces the old
     # single-handshake-per-AP field — multiple clients can be capturing
     # simultaneously and we must not overwrite a complete one when a new

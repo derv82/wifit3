@@ -139,7 +139,7 @@ class WlanInterface:
         rssi = parsed.get("rssi", -100)
 
         # Fan out the raw frame to any (rx_callback,) subscribers (used by
-        # attacks like SAEGroupProbeAttack that watch for specific reply
+        # attacks like WPA3DowngradeAttack that watch for specific reply
         # frames). Done early so subscribers see frames even when our own
         # state-update path bails on bssid filtering below.
         raw = parsed.get("raw")

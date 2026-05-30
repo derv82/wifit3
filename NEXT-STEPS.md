@@ -110,8 +110,6 @@ WEP suite scoped in `src/wifit3/engine/attacks/wep/README.md`. Status of the res
   Focus WPS panel (M8, passive-by-default behind a button), and PixieWPS
   (deferred — numpy/glibc dependency question to settle first).
 - **WPA3 downgrade** (transition mode) — respond to probe requests.
-- **WPA3 SAE crackable groups** (19, 20, 22-24) — enumeration added; numbers not
-  yet verified accurate.
 - **Evil Twin** (2nd interface) — unproven value, low priority.
 
 ## Planned features
