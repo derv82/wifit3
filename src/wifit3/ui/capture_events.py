@@ -58,6 +58,10 @@ class CaptureEvent:
     has_mic: Optional[bool] = None
     eapol_complete: Optional[bool] = None
     useful: Optional[bool] = None
+    # M1-only: whether the handshake carries a PMKID (the KDE rides M1's key
+    # data). True/False for an M1 frame, None for every other message — so the
+    # renderer ticks PMKID on M1 and omits the field elsewhere.
+    has_pmkid: Optional[bool] = None
     # handshake_complete-only
     pair_label: Optional[str] = None
     # decloak-only: "probe_resp" | "assoc_req" (future: "mbssid_ie", "beacon_leak")
@@ -163,6 +167,10 @@ class CaptureEventDetector:
                             has_mic=info.has_mic,
                             eapol_complete=info.eapol_complete,
                             useful=info.useful,
+                            # PMKID is parsed onto hs.pmkid in the same frame-
+                            # ingest call that appended this frame, so it's known
+                            # by the time we surface an M1. Tie it to M1 only.
+                            has_pmkid=bool(hs.pmkid) if f.msg_num == 1 else None,
                         )
                     self._seen_eapol_count[key] = len(frames)
 

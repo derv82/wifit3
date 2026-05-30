@@ -22,37 +22,60 @@ def _tick(ok: bool) -> str:
     return "[green]✓[/green]" if ok else "[red]✗[/red]"
 
 
+def short_sta(mac: str) -> str:
+    """A STA MAC trimmed to its last 3 octets, e.g. ``11:22:33:44:55:66`` ->
+    ``…44:55:66``. Enough to tell two clients apart in the log without spending
+    a full 17-char MAC on every line. Shared with the Focus banners."""
+    return ("…" + mac[-8:]) if mac else "…"
+
+
+def _sta_dir(ev: CaptureEvent) -> str:
+    """The client (last 3 octets) with a direction arrow for this message: the
+    4-way runs M1→M2→M3→M4 with M1/M3 travelling AP→STA and M2/M4 STA→AP. Shows
+    *which* client a frame belongs to (two can handshake at once) and answers
+    'is this to or from the AP?' without the reader memorising the message map."""
+    sta = short_sta(ev.client_mac)
+    if ev.msg_num in (2, 4):
+        return f"{sta}→AP"
+    if ev.msg_num in (1, 3):
+        return f"AP→{sta}"
+    return sta                 # unclassified — direction unknown
+
+
 def _eapol_fields(ev: CaptureEvent) -> List[str]:
-    """The per-field ``label ✓/✗`` fragments for one EAPOL frame, ordered as a
+    """The per-field ``label✓/✗`` fragments for one EAPOL frame, ordered as a
     reader expects. Which fields show is message-specific — hashcat only cares
     about an ANonce from M1/M3, and an SNonce + MIC + complete EAPOL from the
-    M2 (or M4) keystone — so we tick exactly those and omit the rest."""
+    M2 (or M4) keystone — so we tick exactly those and omit the rest. The tick
+    hugs its label (no space) to keep the line within a narrow terminal."""
     has_nonce = bool(ev.has_nonce)
     has_mic = bool(ev.has_mic)
     complete = bool(ev.eapol_complete)
-    eapol_field = f"{'EAPOL complete' if complete else 'EAPOL clipped'} {_tick(complete)}"
+    eapol_field = f"EAPOL{_tick(complete)}"
     if ev.msg_num == 1:        # ANonce donor, no MIC by design
-        return [f"ANonce {_tick(has_nonce)}"]
+        # PMKID rides M1's key data; ev.has_pmkid is set (True/False) only for
+        # M1, so a ✓ here pre-explains the "PMKID captured" banner that follows.
+        fields = [f"ANonce{_tick(has_nonce)}"]
+        if ev.has_pmkid is not None:
+            fields.append(f"PMKID{_tick(bool(ev.has_pmkid))}")
+        return fields
     if ev.msg_num == 2:        # keystone: SNonce + MIC + complete EAPOL
-        return [f"SNonce {_tick(has_nonce)}", f"MIC {_tick(has_mic)}", eapol_field]
+        return [f"SNonce{_tick(has_nonce)}", f"MIC{_tick(has_mic)}", eapol_field]
     if ev.msg_num == 3:        # ANonce donor (its own MIC/EAPOL unused by hashcat)
-        return [f"ANonce {_tick(has_nonce)}", f"MIC {_tick(has_mic)}"]
+        return [f"ANonce{_tick(has_nonce)}", f"MIC{_tick(has_mic)}"]
     if ev.msg_num == 4:        # conditional keystone: needs an echoed (non-zero) SNonce
-        return [f"SNonce {_tick(has_nonce)}", f"MIC {_tick(has_mic)}", eapol_field]
+        return [f"SNonce{_tick(has_nonce)}", f"MIC{_tick(has_mic)}", eapol_field]
     return []                  # unclassified (group rekey etc.) — label only
-
-
-# Dim context prefix so a lone "M2 …" line is self-explanatory and the trace
-# reads as the same story as the "✓ Valid 4-Way Handshake" banner. Dim keeps
-# the colored M# label + field ticks leading the eye.
-_HS_PREFIX = "[dim]4-Way Handshake:[/dim] "
 
 
 def eapol_message_markup(ev: CaptureEvent) -> str:
     """One per-frame EAPOL trace line as Rich markup. Label dim-cyan unless the
-    frame contributes to a crackable pair (``ev.useful``), then bold-cyan."""
+    frame contributes to a crackable pair (``ev.useful``), then bold-cyan. The
+    dim prefix names the client + direction so a lone line is self-explanatory
+    and the trace reads as the same story as the '✓ Valid 4-Way Handshake'
+    banner."""
     style = "bold cyan" if ev.useful else "dim cyan"
     label = f"[{style}]M{ev.msg_num}[/{style}]" if ev.msg_num else f"[{style}]EAPOL-?[/{style}]"
     fields = _eapol_fields(ev)
-    body = f"{label} " + " · ".join(fields) if fields else label
-    return _HS_PREFIX + body
+    body = f"{label} " + " ".join(fields) if fields else label
+    return f"[dim]4-Way Handshake ({_sta_dir(ev)}):[/dim] " + body

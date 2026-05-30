@@ -27,7 +27,7 @@ from wifit3.engine.attacks.wps.pbc import WpsPbcCapture
 from wifit3.engine.attacks.wps.registrar import PinResult
 
 from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind
-from ..capture_log import eapol_message_markup
+from ..capture_log import eapol_message_markup, short_sta
 from ..encryption_format import (
     format_encryption_markup,
     format_pmf_markup,
@@ -798,7 +798,6 @@ class FocusView(Screen):
             self._log_capture_event(ev, ap)
 
     def _log_capture_event(self, ev: CaptureEvent, ap: AccessPoint) -> None:
-        client = escape(ev.client_mac)
         if ev.kind == CaptureKind.EAPOL:
             # Per-frame trace: one line per M1-M4 as it lands (incl. M1/M3
             # retransmits), ticking each hashcat-relevant field so the contents
@@ -807,12 +806,14 @@ class FocusView(Screen):
             # Completeness is announced once per instance there, never here.
             self._log(eapol_message_markup(ev))
         elif ev.kind == CaptureKind.HANDSHAKE:
-            # Significant event → solid highlight. Re-fires per new 4-way.
+            # Significant event → solid highlight. Re-fires per new 4-way. Names
+            # the client (last 3 octets) so the user knows which STA completed —
+            # and, on a Partial, which one to deauth for another shot.
             essid = escape(ev.ssid or ev.bssid)
             self._log(
                 f"[black bold on green] ✓ Valid 4-Way Handshake "
-                f"({ev.pair_label}) [/black bold on green] for "
-                f"[bold]{essid}[/bold]"
+                f"({ev.pair_label}) [/black bold on green] "
+                f"[bold]{short_sta(ev.client_mac)}[/bold] for [bold]{essid}[/bold]"
             )
             result = save_handshake(ap, ev.client_mac)
             if result is not None:
@@ -822,7 +823,7 @@ class FocusView(Screen):
             # Significant event → same solid highlight as the handshake banner.
             self._log(
                 f"[black bold on green] ✓ PMKID captured [/black bold on green] "
-                f"from [bold]{client}[/bold]"
+                f"from [bold]{short_sta(ev.client_mac)}[/bold]"
             )
             result = save_pmkid(ap, ev.client_mac)
             if result is not None:
