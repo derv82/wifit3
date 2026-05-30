@@ -1,8 +1,10 @@
 """Tests for WEP ARP replay: re-addressing, patient testing, P&O rate control.
 
 The replay engine re-addresses each captured candidate into a ToDS frame from
-our MAC before injecting, so the stub keys IV "gain" on the candidate's body
-marker byte (which survives re-addressing) rather than the exact bytes.
+our MAC before injecting. The verdict ("replayable") keys on the AP echoing OUR
+frame back — so the stub, keyed on the candidate's body marker byte (which
+survives re-addressing), drives BOTH the collector's IV gain AND whether a
+synthetic AP echo is delivered to the engine's _rx_cb.
 """
 import asyncio
 
@@ -15,17 +17,48 @@ GOOD = bytes([0x08, 0x42]) + b"\x00" * 22 + b"\xAA" * 44
 BAD = bytes([0x08, 0x42]) + b"\x00" * 22 + b"\xBB" * 44
 
 
-class FakeCollector:
-    """Yields IVs based on the re-addressed frame's body marker (frame[24])."""
+def _echo_frame(r) -> bytes:
+    """An AP rebroadcast of our replay: Data/FromDS/Protected, DA=broadcast,
+    Addr3(SA)=our MAC, fresh IV — the signature WepArpReplay._rx_cb matches."""
+    return (
+        bytes([0x08, 0x42])          # Data, FromDS, Protected
+        + b"\x00\x00"                # Duration
+        + b"\xff" * 6                # Addr1 (DA) = broadcast
+        + r.bssid_bytes              # Addr2 = BSSID/TA
+        + r.source_mac               # Addr3 (SA) = us
+        + b"\x00\x00"                # Seq
+        + b"\x11\x22\x33\x04"        # IV(3) + KeyID(1)
+    )
 
-    def __init__(self, marker_yields: dict[int, int], candidates: list[bytes]):
+
+class FakeCollector:
+    """Yields IVs based on the re-addressed frame's body marker (frame[24]).
+
+    ``echo`` controls whether a good-marker candidate also elicits a synthetic
+    AP echo (the _rx_cb signal). echo=False models IV churn from ANOTHER station
+    (e.g. a phone): the global count rises but the AP never echoes OURS.
+    """
+
+    def __init__(
+        self, marker_yields: dict[int, int], candidates: list[bytes],
+        echo: bool = True,
+    ):
         self._marker_yields = marker_yields
         self._candidates = candidates
+        self._echo = echo
         self._unique = 0
 
     def on_send(self, frame: bytes) -> None:
         if len(frame) > 24:
             self._unique += self._marker_yields.get(frame[24], 0)
+
+    def echoes(self, frame: bytes) -> bool:
+        """Whether the AP would echo this replay (keyed on the same body marker
+        as IV yield) — the _rx_cb oracle for tests."""
+        return (
+            self._echo and len(frame) > 24
+            and self._marker_yields.get(frame[24], 0) > 0
+        )
 
     def unique_count(self, bssid: str) -> int:
         return self._unique
@@ -49,6 +82,10 @@ def _replay(mocker, collector, **kw):
 
     async def _send(frame, use_no_ack=True):
         collector.on_send(frame)
+        # Simulate the AP echoing our replay back when this candidate is
+        # genuinely replayable — exactly the frame _rx_cb correlates.
+        if collector.echoes(frame):
+            r._rx_cb(_echo_frame(r), -40, 0.0)
         return True
 
     iface.send_raw = _send
@@ -140,6 +177,42 @@ async def test_patient_does_not_blacklist_before_trial_window(mocker):
     failed = set(r._failed)
     r.stop()
     assert GOOD not in failed
+
+
+async def test_iv_churn_without_echo_is_not_replayable(mocker):
+    """The regression: another client's IVs (a phone) bump the global count,
+    but the AP never echoes OUR frame. The candidate must NOT be promoted — it
+    gets blacklisted once the trial window elapses."""
+    coll = FakeCollector({0xAA: 5}, [GOOD], echo=False)   # IVs rise, no echo
+    r = _replay(mocker, coll)
+    r._TRIAL_WINDOW = 0.0
+    r.start()
+    for _ in range(40):
+        await asyncio.sleep(0)
+        if GOOD in r._failed:
+            break
+    has_winner, failed = r.stats.has_winner, set(r._failed)
+    r.stop()
+    assert not has_winner
+    assert GOOD in failed
+
+
+async def test_paused_echo_does_not_count(mocker):
+    """A frag/chopchop relay shares our source_mac and matches the echo
+    signature; arriving while replay is paused it must NOT count (the pause
+    gate), but the SAME frame counts once resumed — proving it's the gate, not
+    a signature mismatch, that dropped it."""
+    coll = FakeCollector({0xAA: 5}, [GOOD])
+    r = _replay(mocker, coll)
+    r.start()
+    r.pause()
+    before = r._echoes
+    r._rx_cb(_echo_frame(r), -40, 0.0)
+    assert r._echoes == before          # dropped while paused
+    r.resume()
+    r._rx_cb(_echo_frame(r), -40, 0.0)
+    assert r._echoes == before + 1      # counted once unpaused
+    r.stop()
 
 
 async def test_notify_activity_called_on_inject(mocker):
