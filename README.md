@@ -38,7 +38,7 @@ subprocesses, no Scapy — so it runs the same on **Linux and Windows**.
 | ALFA AWUS036ACM | MediaTek MT7612U | 2.4 / 5 GHz |
 | ALFA AWUS036ACHM | MediaTek MT7610U | 2.4 / 5 GHz |
 | (various) | Realtek RTL8187 | 2.4 GHz |
-| (various) | Ralink RT2800USB (RT5372 / RT5572) | 2.4 / 5 GHz |
+| Panda PAU05 / PAU09 N600 | Ralink RT2800USB (RT5372 / RT5572) | 2.4 / 5 GHz |
 | Buffalo Nintendo Wi-Fi USB Connector | Ralink RT2500USB / RT2570 | 2.4 GHz |
 
 ## Philosophy
