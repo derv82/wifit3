@@ -34,6 +34,10 @@ Family-shared infrastructure (`chips/rtw88_base/`) covers transport, the
 phy_cond walker, power_seq runtime, RF SIPI, TX checksum, RX-desc parser, and
 legacy MCUFWDL FW upload — shared by the 88xxA (8821a/8812a), 8822b, and 8814a.
 
+## Hardware: En-Route (check doorstep)
+- Panda PAU06 - RT5372
+- Alfa AWUS036NH - RT3070
+
 ## Broken / paused
 
 - **Mediatek MT7921AU (AWUS036AXML) — paused, possibly a Linux dead-end.** The
@@ -49,10 +53,12 @@ legacy MCUFWDL FW upload — shared by the 88xxA (8821a/8812a), 8822b, and 8814a
 
 ## Open follow-ups (RTL8812AU)
 
-1. **Queue-clear bisect** — `REG_RQPN / REG_RQPN_NPQ / REG_TXDMA_PQ_MAP` get
-   silently cleared in `post_mac_init_phy`; worked around via `_arm_tx_queues`
-   before each `inject_frame`. Bisect diagnostic landed (`2c7a465`) — one
-   `--debug` run shows which step clears them. Find root cause, drop the workaround.
+1. ~~**Queue-clear bisect**~~ — RESOLVED (2026-05-30). `REG_RQPN / REG_RQPN_NPQ
+   / REG_TXDMA_PQ_MAP` are **write-only load registers** on 8812au (readback
+   always 0; the bisect confirmed every checkpoint reads 0, so there was no
+   "clearing step" to find). `_arm_tx_queues` now runs ONCE at `_finish_attach`
+   (was: before every `inject_frame`) — hw-confirmed the commit survives to
+   TX-time, 10/10 deauths on a cold boot. See `RTL8812AU.md` § MX-a.
 2. **EFUSE-read verification** — read landed (`71699d7`); awaiting hw test to
    confirm values are readable on the AWUS036ACH and that feeding them into
    bring-up fixes the earlier "only sees the nearest/strongest AP" sensitivity gap.
@@ -112,13 +118,6 @@ WEP suite scoped in `src/wifit3/engine/attacks/wep/README.md`. Status of the res
 
 ## Planned features
 
-### MAC vendor identification
-
-OUI (first 3 bytes) → vendor name. wifite2 has a fetcher
-(`tools/fetch_oui.py`). Show a "Manufacturer" column in Scanner (ASUS, Apple,
-…) and optionally per-client in Focus with icons. Storage: see below — but a
-flat lookup table may be lighter than SQLite for this one.
-
 ### User persistence + decloak DB
 
 A shared storage layer for three concerns (likely a full session of work):
@@ -167,6 +166,43 @@ data is already passing through the parser + injector — wire a counter into
 each path and sample it on a 3 s timer. Low risk (read-only on the wire), high
 "feels alive" value when the radio is actually doing something.
 
+## Small bugs / QoL
+
+- **Beacon count truncates past 10k** — `10512` renders as `0512`. Auto-size the
+  BEACONS column (without breaking right-alignment).
+
+## Idea graveyard
+
+Considered, designed far enough to judge, and deliberately NOT built. Recorded
+so we don't re-pitch them from scratch.
+
+### MAC / OUI vendor identification — SHELVED 2026-05-30
+
+Goal was to show a client's device class (phone / laptop / TV / PS5) and the
+AP's manufacturer. Designed it end to end — a SQLite OUI→vendor DB built from
+the three IEEE registries (MA-L/M/S) with longest-prefix match, atomic rebuild
+on refresh, and a curated vendor→category overlay for device hints — then killed
+it on the UX, not the plumbing:
+
+- **No room to show it.** The Scanner AP/Client tables are already horizontally
+  cramped; vendor strings don't fit in a cell *at all* ("Sony Interactive
+  Entertainment", or even "Espressif"). A tree/sub-row under each MAC, or a
+  second muted line, eats vertical space the slim clients list can't spare.
+- **No icons.** Textual (rightly) has no image support, and only a handful of
+  vendors have an emoji (🍎), so an icon column can't generalize. On a web /
+  large-format UI this would be a muted small-font subtitle under the BSSID —
+  that affordance just doesn't exist in a terminal table.
+- **Vendor ≠ device type anyway.** The OUI usually identifies the Wi-Fi *module*
+  maker (Intel / Murata / AzureWave / Foxconn), not the device brand; true
+  phone-vs-laptop disambiguation needs 802.11 IE fingerprinting — a much larger,
+  separate project.
+
+If revived: solve the *display* first (a Focus-screen detail panel, gated behind
+opt-in, is the realistic home — not the Scanner table). The build/resolver design
+is sound and can be lifted wholesale. (Aside: SQLite read concurrency is fine —
+the only friction was Python's per-connection thread-affinity guard, solvable
+with a connection per thread; loading the whole table into a dict was overkill.)
+
 ### Configurable TX-power override — SHELVED 2026-05-19
 
 Not building it. The silicon supports power indices above the EFUSE regulatory
@@ -175,8 +211,3 @@ caps, and userland bypasses the kernel's clamping, so a knob is technically easy
 per chip, and a blanket `--tx-power N` invites real-world harm. A researcher who
 genuinely needs it in an RF cage should fork; owning that choice is the point.
 Ties into the PRE-RELEASE ethics/guardrails item.
-
-## Small bugs / QoL
-
-- **Beacon count truncates past 10k** — `10512` renders as `0512`. Auto-size the
-  BEACONS column (without breaking right-alignment).

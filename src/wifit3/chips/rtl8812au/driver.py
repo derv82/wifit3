@@ -304,6 +304,10 @@ class RTL8812AUDriver:
 
         await loop.run_in_executor(None, self._reset_bulk_pipes)
 
+        # Commit the (write-only) queue load registers once, here — both cold +
+        # warm paths reach TX through this tail. See _arm_tx_queues.
+        await loop.run_in_executor(None, self._arm_tx_queues)
+
         if from_warm and not await self._rx_smoke_test():
             logger.error(
                 "RTL8812AU: warm reattach succeeded but bulk-IN is wedged "
@@ -377,17 +381,15 @@ class RTL8812AUDriver:
     def _arm_tx_queues(self) -> None:
         """Re-program REG_RQPN / REG_RQPN_NPQ / REG_TXDMA_PQ_MAP.
 
-        These appear to be **write-only "load" registers** on 8812au:
-        writing them latches the queue config into internal hardware
-        state, but readback always returns 0 (bisect on 2026-05-17
-        confirmed every checkpoint inside post_mac_init_phy reads back 0,
-        starting from pre-post_mac_init_phy itself). The chip needs the
-        BIT_LD_RQPN "commit" gesture close to TX time — without a fresh
-        commit before bulk-OUT, the MGMT queue NAKs every frame
-        indefinitely (USB ETIMEDOUT).
+        These are **write-only "load" registers** on 8812au: writing them
+        latches the queue config into internal hardware state, but readback
+        always returns 0 (so the queue state can't be verified by reading —
+        only by whether TX works). The BIT_LD_RQPN bit in REG_RQPN is the
+        "commit" gesture; without a commit the MGMT queue NAKs every frame
+        (USB ETIMEDOUT). Re-issued once at attach (post_fw_mac_init's own
+        commit during bring-up doesn't survive to TX-time on this chip).
 
-        Cheap (~3 control writes), idempotent. Calling before each
-        inject_frame is robust and the cost is negligible.
+        Cheap (~3 control writes), idempotent.
         """
         fifo = set_trx_fifo_info()
         init_queue_reserved_page(self.transport, fifo)
@@ -406,8 +408,6 @@ class RTL8812AUDriver:
         ep = pick_bulk_out_ep(self._bulk_out_eps, queue=TX_DESC_QSEL_MGMT)
         payload = desc + frame_bytes
         loop = asyncio.get_event_loop()
-        # 8812au quirk: re-arm queue mapping right before TX (see _arm_tx_queues).
-        await loop.run_in_executor(None, self._arm_tx_queues)
         try:
             sent = await loop.run_in_executor(
                 None, lambda: write_bulk(self.dev, ep, payload, timeout_ms=200)

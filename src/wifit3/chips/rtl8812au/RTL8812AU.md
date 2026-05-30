@@ -316,9 +316,12 @@ hardware state; readback always returns 0. The chip needs the
 `BIT_LD_RQPN` "commit" gesture **close to TX time** — without a fresh
 commit before bulk-OUT, MGMT queue NAKs every frame.
 
-`_arm_tx_queues` in `driver.py` re-issues the three writes before each
-`inject_frame`. Cheap (~3 control transfers), idempotent, robust.
-Workaround retained; this is hardware behavior, not a code bug.
+`_arm_tx_queues` in `driver.py` re-issues the three writes. **2026-05-30:**
+moved from before-every-`inject_frame` to ONCE at `_finish_attach` (the shared
+cold+warm tail). Hw-confirmed on a cold boot — one commit at attach survives to
+TX-time, 10/10 deauths went out, so the per-frame re-arm was redundant. This is
+hardware behavior (write-only load regs), not a code bug — nothing to "fix at
+source"; the bisect is closed.
 
 ### MX-b: rate-aware CCK RSSI parser ✓
 
