@@ -146,14 +146,6 @@ class WepFragmentation:
         self._task = asyncio.create_task(self._loop())
         logger.info("[WEP-Frag] Started on %s as %s",
                     self.bssid, self.source_mac.hex())
-        if not getattr(self.iface, "supports_sw_seq", False):
-            # Without software seq the chip stamps each fragment with its own
-            # sequence number and the AP can't reassemble — say so plainly
-            # rather than spinning uselessly.
-            self._log(
-                "[yellow]Fragmentation: this card can't set a software sequence "
-                "number — fragments won't reassemble. (rtl8821au can.)[/yellow]"
-            )
 
     def stop(self):
         if not self._active:

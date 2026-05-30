@@ -145,8 +145,8 @@ class WepCampaign:
         # de-registering the forged STA.
         self.replay.stop()
         self.fake_auth.stop()
-        # Quiet when we stopped because we WON — the key + "press c to copy"
-        # were already logged; "stopped" right after would read as a failure.
+        # Quiet when we stopped because we WON — the key banner was already
+        # logged; "stopped" right after would read as a failure.
         if self.recovered_key is None:
             self._log("[bold red]✗ Generate IVs stopped.[/bold red]")
         logger.info("[WEP-Campaign] Stopped on %s", self.target.bssid)
@@ -169,7 +169,7 @@ class WepCampaign:
                 if not self._crack_started:
                     self._crack_started = True
                     self._log(
-                        "[bold cyan]→ Cracking Key[/bold cyan] with "
+                        "[bold cyan]Cracking Key[/bold cyan] with "
                         "[white]>10k IVs[/white] [dim](may require >40K)[/dim]"
                     )
                 # Ship the (picklable) cracker to the worker; it runs the search
@@ -184,14 +184,8 @@ class WepCampaign:
                 if key is not None:
                     self.recovered_key = key
                     self.target.wep_key = key   # persist on the AP (Save / UI)
-                    # The cyan-banner key is the (root) result; the keyboard
-                    # hints hang off it as a single tree child. The [c]/[s]
-                    # brackets are escaped (\[) so Rich renders them literally
-                    # with the shortcut letter highlighted.
+                    # The recovered key, as an unmissable cyan banner.
                     self._log(_key_markup(key))
-                    self._log(treelog.leaf(
-                        r"[white]\[[bold cyan]c[/bold cyan]]opy to clipboard[/white]"
-                    ))
                     # Done — stop transmitting (replay + fake-auth keepalive).
                     self.replay.stop()
                     self.fake_auth.stop()

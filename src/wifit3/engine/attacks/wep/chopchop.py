@@ -241,7 +241,7 @@ class WepChopChop:
             self._bytes_total = len(cipher) - _CHOP_FLOOR
             # Group header (plain) + a detail branch — each chop attempt is its
             # own little tree.
-            self._log(f"[cyan]ChopChopping packet:[/cyan] {iv.hex()}")
+            self._log("[cyan]ChopChop:[/cyan] forging packet…")
             self._log(treelog.branch(
                 f"[dim]{len(cipher)}B cipher, ~{self._bytes_total} bytes to "
                 f"recover[/dim]"

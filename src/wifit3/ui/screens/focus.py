@@ -80,10 +80,6 @@ class FocusView(Screen):
     BINDINGS = [
         Binding("escape", "go_back", "Back to Scanner", show=True),
         Binding("q", "app.quit", "Quit", show=True),
-        # 'c' is only revealed once a WEP key is recovered (check_action gates
-        # it). Save no longer has a hotkey — engine.save persists artifacts
-        # automatically at the moment of capture.
-        Binding("c", "copy_key", "Copy WEP Key", show=True),
     ]
 
     def __init__(self):
@@ -112,10 +108,6 @@ class FocusView(Screen):
         # clearly a target of interest). One task at a time; once-per-BSSID.
         self._pbc_task: Optional[asyncio.Task] = None
         self._pbc_done: Set[str] = set()
-        # Footer 'c' (Copy WEP Key) eligibility. refresh_bindings() fires only
-        # when this flips — calling it every tick rebuilds the Footer ~10x/s,
-        # which strobes it and swallows mouse clicks on the key row.
-        self._last_can_copy: bool = False
 
     # ----- Compose / mount ---------------------------------------------------
 
@@ -619,14 +611,6 @@ class FocusView(Screen):
                 Text.from_markup(f"PMKID:     {pmkid_text}", emoji=False)
             )
 
-        # Re-evaluate the footer's Copy key (check_action) ONLY when its
-        # eligibility flips — once, at WEP crack. Calling refresh_bindings()
-        # every tick rebuilds the Footer 10x/s (strobe + dropped clicks).
-        can_copy = is_wep and ap.wep_key is not None
-        if can_copy != self._last_can_copy:
-            self._last_can_copy = can_copy
-            self.refresh_bindings()
-
         # Clients.
         iface = getattr(self.app, "active_interface", None)
         if iface:
@@ -719,14 +703,13 @@ class FocusView(Screen):
         target_k = CRACK_READY_THRESHOLD // 1000
 
         if ap.wep_key is not None:
-            # Short status here — the full black-on-cyan KEY banner + copy/save
-            # hint live in the (wide) EVENT LOG (a 104-bit key is too wide for
-            # this column).
+            # Short status here — the full black-on-cyan KEY banner lives in the
+            # (wide) EVENT LOG (a 104-bit key is too wide for this column).
             crack.update(Text.from_markup(
                 "Crack: [bold green]✓ Key recovered[/bold green]", emoji=False
             ))
             info.update(Text.from_markup(
-                "[dim]see EVENT LOG to copy / save[/dim]", emoji=False
+                "[dim]see EVENT LOG[/dim]", emoji=False
             ))
         elif campaign is None and persisted_wep is not None:
             # No live key/campaign, but a saved WEP key exists — mirror the
@@ -1075,35 +1058,6 @@ class FocusView(Screen):
             self._toggle_frag()
         elif bid == "btn-chop":
             self._toggle_chop()
-
-    def check_action(self, action: str, parameters: tuple) -> bool | None:
-        """Show/hide the Copy footer key — only meaningful once a WEP key is
-        cracked. ``update_ui`` calls ``refresh_bindings()`` so this re-evaluates
-        as the campaign progresses."""
-        if action == "copy_key":
-            ap = self.target_ap
-            if ap is None:
-                return False
-            is_wep = (ap.encryption or "").upper() == "WEP"
-            return is_wep and ap.wep_key is not None
-        return True
-
-    def action_copy_key(self) -> None:
-        """Copy the recovered WEP key (hex) to the clipboard — saves the user
-        from hand-selecting terminal text. No-op with a hint if not cracked."""
-        # Read from the AP (persists after the finished campaign is torn down).
-        key = self.target_ap.wep_key if self.target_ap else None
-        if not key:
-            self._log("[yellow]No WEP key recovered yet — nothing to copy.[/yellow]")
-            return
-        kh = key.hex()
-        try:
-            self.app.copy_to_clipboard(kh)
-            self._log(f"[green]✓ Copied WEP key to clipboard:[/green] [bold]{kh}[/bold]")
-        except Exception:
-            # Clipboard may be unavailable (no OSC-52 support); the key is
-            # still right there in the log/panel to select manually.
-            self._log(f"[yellow]Clipboard unavailable — key is:[/yellow] [bold]{kh}[/bold]")
 
     async def _run_deauth_broadcast(self) -> None:
         """Worker: broadcast-deauth every station associated with the focused AP."""
