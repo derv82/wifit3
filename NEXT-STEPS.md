@@ -89,18 +89,32 @@ WEP suite scoped in `src/wifit3/engine/attacks/wep/README.md`. Status of the res
     QoL: periodically probe nearby channels (<100 ms each) and re-tune. Ties into
     ESSID-based targeting (one logical AP, multiple BSSIDs across bands).
 - **PMKID** — done, wired into the UI, works well.
-- **WPS** — *detection done; online PIN brute-force engine built + offline-proven,
-  hardware-validation pending.* Detection: the parser decodes the WPS IE TLVs
+- **WPS** — *detection done; online PIN brute-force engine built, offline-proven,
+  and hw-validated against the AirLink router (full PIN crack).* Detection: the parser decodes the WPS IE TLVs
   (`packet.py:_parse_wps_ie`) into `AccessPoint` fields; Scanner + Focus show 🔒.
   The Reaver/Bully-style attack lives in `engine/attacks/wps/` (own WSC registrar
   + crypto in pure Python — see its `README.md`): DH/KDF/AES core, M1–M7 state
   machine + split-PIN oracle, two-halves keyspace, kept-alive single-association
   + learned lock backoff, `.run` resume, all offline-tested (31 tests). Hardware
   probe `scripts/wps/wps_probe.py` confirmed the on-air EAP path and caught the
-  FCS-in-Authenticator bug (now fixed). *Remaining:* re-validate the full
-  exchange on hardware (the AirLink box was likely WPS-locked last run), wire a
-  Focus WPS panel (M8, passive-by-default behind a button), and PixieWPS
-  (deferred — numpy/glibc dependency question to settle first).
+  FCS-in-Authenticator bug (now fixed). Full exchange hw-validated on the
+  AirLink router (soft-lock: 30 reqs → 3–5 min cooldown → resume; split-PIN
+  oracle correctly called first-half/second-half wrong, flipped scan direction,
+  updated keys-remaining; full crack ~30 min). *Remaining:*
+  - **Multi-router lock-cycle matrix.** Only the AirLink soft-lock is exercised.
+    Test other behaviours: no-lock, longer cooldowns, and a hard-lock AP that
+    never reopens — to drive the escape hatch below.
+  - **Terminal hard-lock escape hatch.** `lock.py` already beats reaver here in
+    most respects: it reads the out-of-band beacon `wps_locked` IE
+    (`interface.py:254` re-reads it every beacon that carries the WPS IE),
+    splits hard (beacon-advertised) vs soft (N pre-oracle strikes), and learns a
+    *measured* backoff biased to the AP's real observed lock duration (vs
+    reaver's flat 60s). The gap: a permanently-locked AP still loops
+    lock→wait→retry forever. Add "locked across N learned-backoff cycles with
+    zero progress → stop and tell the user to reboot/toggle WPS" (the
+    warm-reattach "please replug" honesty pattern) instead of spinning silently.
+  - **Focus WPS panel** (M8, passive-by-default behind a button).
+  - **PixieWPS** (deferred — numpy/glibc dependency question to settle first).
 - **WPA3 downgrade** (transition mode) — respond to probe requests.
 - **Evil Twin** (2nd interface) — unproven value, low priority.
 
