@@ -509,15 +509,17 @@ class RT2800USBDriver:
         }
         if self.chip_id is not None and self.chip_id.silicon_id == 0x3572:
             # TX power: RT3572's _set_channel writes RFCSR12/13.TX_POWER on
-            # every tune. Kernel sources this per-channel from EEPROM
-            # TXPOWER_BG/A tables; we don't parse those yet, and the user's
-            # AWUS051NH v2 is unburned anyway. Without a fallback default_power
-            # = 0, AP can't hear our injected frames. Picking high values
-            # near the 5-bit max (31) for 2.4 GHz so on-air RSSI is sufficient
-            # for AP to respond to forged frames. For 5G the field is
-            # encoded as a 4-bit split (see _tx_power_5g), so cap at 15.
-            # TODO: parse EEPROM_TXPOWER_BG1/BG2/A1/A2 per-channel tables
-            # when EFUSE is burned.
+            # every tune. The kernel sources these per-channel from the EEPROM
+            # TXPOWER_BG/A tables, which we don't parse yet, so we pass a
+            # fallback. RFCSR12.TX_POWER is a 5-bit *backoff* code: a higher
+            # value attenuates more, so the correct fallback is the LOW code the
+            # in-tree driver programs, not a high one. [WIRE] aireplay.pcap on
+            # this card writes RFCSR12=0x6b (chain-0 TX_POWER=11) for 2.4 GHz;
+            # chain-1 (RFCSR13) TX_POWER=0 (single TX chain). 5G uses a 4-bit
+            # split encoding (see _tx_power_5g) and is left at 12 pending a 5G
+            # capture.
+            # TODO: parse EEPROM_TXPOWER_BG1/BG2/A1/A2 per-channel tables when
+            # EFUSE is burned.
             is_2g = channel <= 14
             # Chain count from the EEPROM default (the unburned fallback returns
             # txpath=1). The in-tree driver transmits on this card with a single
@@ -530,8 +532,8 @@ class RT2800USBDriver:
                 rx_chain_num=self._eeprom.rxpath,
                 has_cap_bt_coexist=self._eeprom.has_cap_bt_coexist,
                 has_cap_external_lna_a=self._eeprom.has_cap_external_lna_a,
-                default_power1=24 if is_2g else 12,
-                default_power2=24 if is_2g else 12,
+                default_power1=11 if is_2g else 12,
+                default_power2=0 if is_2g else 12,
             )
         elif self.chip_id is not None and self.chip_id.silicon_id == RT_RT5592:
             kwargs.update(
