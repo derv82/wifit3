@@ -317,32 +317,25 @@ class RT2800USBDriver:
                 logger.error("prepare_bbp failed: %s", e)
                 return False
 
-            # Path counts from EEPROM (RT5392 hw is always 1T1R so it
-            # ignores these; RT3572 hw is typically 2T2R, EFUSE-derived).
-            # EepromValues.{tx,rx}path handles the unburned-EFUSE case
-            # (0x0000 or 0xFFFF NIC_CONF0) by returning kernel defaults
-            # (2 RX / 1 TX) so we don't power down the wrong chains.
+            # init_bbp consumes txpath/rxpath only to gate
+            # disable_unused_dac_adc (and, on RT5592, to pick BBP antenna
+            # paths); the validated chain counts are right for those.
             txpath = self._eeprom.txpath if self._eeprom else 1
             rxpath = self._eeprom.rxpath if self._eeprom else 1
-            # RT3572 on AWUS051NH v2 ships 2T2R hw with unburned EFUSE.
-            # init_bbp_3572 → disable_unused_dac_adc(txpath=1) sets
-            # BBP138.TX_DAC1=1 (powers DAC1 down). With DAC1 off, the
-            # TX1 chain has no data path — if the dongle wires its
-            # primary antenna to chain 1 (path B), the chip happily
-            # flags TX_SUCCESS in TX_STA_FIFO but emits ~nothing.
-            # Override to 2T2R here so DAC1 stays on. Matches the
-            # tx_chain_num=2 override applied in _channel_kwargs.
+            # RT3572 is the exception: its disable_unused_dac_adc powers down
+            # DAC1 only when the NIC_CONF0 TXPATH field == 1 (ADC1 when RXPATH
+            # == 1) — gated on the RAW EEPROM field, not a chain count.
+            # [SRC] rt2800lib.c:6434-6446. On an unburned EFUSE both fields read
+            # 0, so the kernel powers down neither: DAC1/ADC1 stay in their reset
+            # state for the single live chain, no chain-forcing needed. Pass the
+            # raw fields so we match that exactly. The TX/RX chain counts that
+            # drive RFCSR1 + the PAs are separate and validated — see
+            # _channel_kwargs.
             if (self.chip_id is not None
-                and self.chip_id.silicon_id == 0x3572
-                and self._eeprom is not None
-                and self._eeprom.nic_conf0 in (0x0000, 0xFFFF)):
-                logger.info(
-                    "RT3572 unburned EFUSE (NIC_CONF0=0x%04x) — forcing 2T2R "
-                    "init so DAC1 stays powered + both chains feed PAs",
-                    self._eeprom.nic_conf0,
-                )
-                txpath = 2
-                rxpath = 2
+                    and self.chip_id.silicon_id == 0x3572
+                    and self._eeprom is not None):
+                txpath = (self._eeprom.nic_conf0 & 0x00F0) >> 4
+                rxpath = self._eeprom.nic_conf0 & 0x000F
             # RT5592 needs ANT_DIVERSITY from NIC_CONF1 to pick BBP152
             # (main vs aux antenna). Kernel default-path: ant=0 (main)
             # when NIC_CONF1.ANT_DIVERSITY != 3.

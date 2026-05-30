@@ -115,9 +115,10 @@ def init_freq_calibration(t: RT2800USBTransport) -> None:
 # ----------------------------------------------------------------------
 # rt2800_disable_unused_dac_adc — power-saving tweak that's also a hard
 # gate for RX on 1T1R silicon (without it, ADC1 is held in powerdown and
-# bulk-IN goes silent). Kernel reads EEPROM_NIC_CONF0 for the TX/RX
-# path counts; we take them as args so the caller can pass either real
-# EEPROM values or the hw-pinned defaults for chips with a fixed config.
+# bulk-IN goes silent). The kernel reads EEPROM_NIC_CONF0 and gates each
+# power-down on the RAW path field == 1, so txpath/rxpath here are those
+# raw fields (0 on an unburned EFUSE → neither powered down), NOT validated
+# chain counts.
 #
 # [SRC] rt2800lib.c:6434-6446
 # ----------------------------------------------------------------------

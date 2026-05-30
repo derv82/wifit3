@@ -295,12 +295,13 @@ class EepromValues:
             and rxpath=15 (impossible, max is 3T3R).
 
         Robust check: if either field is outside [1, 3], the entire word
-        is unburned. Without this override, _set_channel_5592_2g (and
-        likewise the RT3572 path) would power down legitimate chains
-        and bulk-IN goes silent. [SRC] rt2800.h:2681
+        is unburned. The kernel runs an unburned RT3572 as a single RX
+        chain — [WIRE] aireplay.pcap on this card writes RFCSR1=0xf1
+        (RX1 + RX2 powered down) — so the validated default is 1 RX.
+        [SRC] rt2800.h:2681
         """
         if self._nic_conf0_looks_unburned():
-            return 2
+            return 1
         return self.nic_conf0 & 0x000F
 
     @property

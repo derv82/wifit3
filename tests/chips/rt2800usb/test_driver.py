@@ -1041,7 +1041,7 @@ def test_eeprom_unburned_default_is_60():
 def test_eeprom_nic_conf0_0x0f0f_treated_as_unburned():
     """PAU09 N600 EFUSE returns NIC_CONF0=0x0F0F (txpath=0, rxpath=15 —
     both physically impossible). Must apply the kernel default of
-    1 TX / 2 RX so set_channel doesn't power down legitimate chains."""
+    1 TX / 1 RX so set_channel matches the wire (RFCSR1=0xf1)."""
     from wifit3.chips.rt2800usb.eeprom import parse_eeprom
     buf = bytearray(0x200)
     # NIC_CONF0 at word 0x1A → byte 0x34.
@@ -1049,7 +1049,7 @@ def test_eeprom_nic_conf0_0x0f0f_treated_as_unburned():
     buf[0x35] = 0x0F
     ee = parse_eeprom(bytes(buf))
     assert ee.txpath == 1, "0x0F0F should default txpath to 1, not 0"
-    assert ee.rxpath == 2, "0x0F0F should default rxpath to 2, not 15"
+    assert ee.rxpath == 1, "0x0F0F should default rxpath to 1, not 15"
 
 
 def test_eeprom_nic_conf0_impossible_values_treated_as_unburned():
@@ -1066,12 +1066,12 @@ def test_eeprom_nic_conf0_impossible_values_treated_as_unburned():
     # txpath=0 (impossible)
     ee = _ee(0x0005)   # rxpath=5, txpath=0 — both invalid
     assert ee.txpath == 1
-    assert ee.rxpath == 2
+    assert ee.rxpath == 1
 
     # rxpath > 3 (impossible)
     ee = _ee(0x0204)   # txpath=2, rxpath=4
     assert ee.txpath == 1
-    assert ee.rxpath == 2
+    assert ee.rxpath == 1
 
     # Legit 2T2R passes through unchanged.
     ee = _ee(0x0022)   # txpath=2, rxpath=2
