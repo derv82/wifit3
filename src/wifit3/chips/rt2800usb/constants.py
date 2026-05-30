@@ -223,10 +223,13 @@ TX_STA_CNT1 = 0x1710
 TX_STA_CNT2 = 0x1714
 TX_STA_FIFO = 0x1718    # per-frame TX status FIFO (read-to-pop, VALID bit = entry present)
 MAC_STATUS_CFG = 0x1200 # bit 0 = BBP/RF busy on TX, bit 1 = busy on RX
-HT_FBK_CFG0 = 0x1500
-HT_FBK_CFG1 = 0x1504
-LG_FBK_CFG0 = 0x1508
-LG_FBK_CFG1 = 0x150C
+# HT/LG rate-fallback config. [SRC] rt2800.h:1397-1436. NOTE: 0x1500-0x150C are
+# TX_SEC_CNT0 / RX_SEC_CNT0 / CCMP_FC_MUTE (security regs), NOT the FBK block —
+# the rate-fallback table belongs at 0x1354-0x1360.
+HT_FBK_CFG0 = 0x1354
+HT_FBK_CFG1 = 0x1358
+LG_FBK_CFG0 = 0x135c
+LG_FBK_CFG1 = 0x1360
 
 # MAC table bases (used for the 256-entry WCID/IVEIV clears).
 MAC_IVEIV_TABLE_BASE = 0x6000           # 256 × 8B  = 2048 bytes
