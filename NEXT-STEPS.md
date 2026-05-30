@@ -20,23 +20,21 @@ inject + sniff, wired into the TUI. See each chip's `<CHIP>.md` for detail.
 | Realtek RTL8814AU | `chips/rtw88_8814au/` | 2.4 / 5 (4T4R) |
 | Mediatek MT7610U | `chips/mt76x0u/` | 2.4 / 5 (1T1R) |
 | Mediatek MT7612U | `chips/mt76x2u/` | 2.4 / 5 (2T2R) |
-| Ralink RT2800USB (RT5372 / RT5572) | `chips/rt2800usb/` | 2.4 / (5 on RT5572) |
+| Ralink RT2800USB (RT5372 / RT3572 / RT5572) | `chips/rt2800usb/` | 2.4 / (5 on RT3572, RT5572) |
 | Ralink RT2500USB / RT2570 | `chips/rt2500usb/` | 2.4 |
+
+The RT3572 test unit (AWUS051NH v2) has an **erased EFUSE**: TX is
+hardware-limited (~20/40 deauths on-air, no factory RF cal) and the
+driver is faithful — a properly-burned RT3572 is unaffected. End-to-end
+handshake/PMKID capture on this unit isn't validated yet (under
+investigation, likely a frame-parser issue). See
+`chips/rt2800usb/RT2800USB.md` § "RT3572 unburned-EFUSE behaviour".
 
 Family-shared infrastructure (`chips/rtw88_base/`) covers transport, the
 phy_cond walker, power_seq runtime, RF SIPI, TX checksum, RX-desc parser, and
 legacy MCUFWDL FW upload — shared by the 88xxA (8821a/8812a), 8822b, and 8814a.
 
 ## Broken / paused
-
-- **Ralink RT3572 (AWUS051NH v2) — TX RF-silent, paused.** All digital
-  indicators say it's transmitting (TX_STA_FIFO success, counters increment,
-  bulk-OUT accepted) but a known-good sniffer 5cm away sees zero deauths on-air.
-  Confirmed **driver-side, not a WinUSB artifact** — reproduces on Kali with the
-  kernel modules unloaded. Next step is purely offline: diff the Phase-A (kernel
-  `rt2800usb`, working) vs Phase-B (wifit3, failing) usbmon pcaps in
-  `usb_dumps/captures_rt3572_tx_diff/` for the missing/wrong register write that
-  keeps the analog stage silent. No further hardware needed.
 
 - **Mediatek MT7921AU (AWUS036AXML) — paused, possibly a Linux dead-end.** The
   unit **never enumerated on Kali** (USB-2, USB-3, powered hub — no iface, no

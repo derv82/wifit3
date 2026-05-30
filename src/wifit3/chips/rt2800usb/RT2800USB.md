@@ -43,11 +43,15 @@ verified — do not let speculation accumulate here.
 - **PAU05** (silicon 0x5392 rev 0x0223): N150 single-band 2.4 GHz,
   1T1R. USB 2.0 high-speed. Reference chip for the family-wide MAC /
   FW / RX/TX desc / EFUSE bring-up.
-- **AWUS051NH v2** (silicon 0x3572): RT3572 + RF3052. 2T2R 2.4 +
-  5 GHz. USB 2.0. EFUSE NIC_CONF0=0x0000 (unburned → defaults to
-  2T2R per [[feedback_unburned_efuse_freq_offset]]). Filter calibration
-  loop (`init_rfcsr_3572` → `_rx_filter_calibration_3572`) produces
-  per-bw RFCSR24/31 values replayed on every channel tune.
+- **AWUS051NH v2** (silicon 0x3572): RT3572 + RF3052. 2T2R-capable
+  2.4 + 5 GHz silicon, USB 2.0. **This unit's EFUSE is erased** —
+  identity is programmed (chip ID, MAC 00:c0:ca:88:10:2d) but the
+  RF/cal region reads 0xFF and NIC_CONF0=0x0000. On an unburned EFUSE
+  the kernel runs it as **1T1R** (RFCSR1=0xf1) and its rx-filter
+  calibration is **degenerate** — see "RT3572 unburned-EFUSE behaviour"
+  below. The cal loop (`init_rfcsr_3572` → `_rx_filter_calibration_3572`)
+  still produces the per-bw RFCSR24/31 values replayed on every channel
+  tune; we run it faithfully and accept the rail it returns.
 - **PAU09 N600** (silicon 0x5592 rev 0x0222 = REV_RT5592C+): RT5572 +
   RF5592. 2T2R 2.4 + 5 GHz. USB 2.0. EFUSE NIC_CONF0=NIC_CONF1=0x0F0F
   (unburned, factory-test pattern — handled by
@@ -362,6 +366,87 @@ all EFUSE reads (32 iterations × 7 ctrl xfers each, hitting
 | 0x1D | 0x3A | FREQ (freq_offset in low byte) |
 | 0x22 | 0x44 | LNA (lna_gain_bg in low byte) |
 | 0x23 | 0x46 | RSSI_BG (per-path RSSI offsets) |
+
+---
+
+## RT3572 unburned-EFUSE behaviour
+
+The AWUS051NH v2 test unit shipped with an **erased EFUSE**: identity is
+programmed (chip ID, MAC), but the RF/calibration region reads 0xFF and
+`NIC_CONF0 = 0x0000`. The kernel still runs its normal init + cal paths
+over the uncalibrated silicon, which produces several non-obvious
+behaviours we match. (An unburned EFUSE on a retail card is itself
+suspect — a QC miss or counterfeit; "unburned RT3572" may be a whole
+class of units.)
+
+### Chains: 1T1R, not 2T2R
+
+The silicon is 2T2R-capable, but on the erased EFUSE the kernel runs a
+single chain. [WIRE] `aireplay.pcap` writes `RFCSR1 = 0xf1`
+(`RX1_PD|TX1_PD|RX2_PD|TX2_PD` set — chains 1+2 powered down, only
+chain 0 live). So `EepromValues.{tx,rx}path` default the unburned case
+to **1 TX / 1 RX**, and `config_channel` lights a single PA
+(`PA_PE_G0`). An earlier "force 2T2R" override was a workaround for our
+own DAC-gate bug (next) — not faithful, removed.
+
+### DAC1/ADC1 gate reads the RAW NIC_CONF0 field
+
+`rt2800_disable_unused_dac_adc` ([SRC] rt2800lib.c:6434-6446) powers
+DAC1 down only when the NIC_CONF0 **TXPATH field == 1** (ADC1 when
+**RXPATH == 1**) — gated on the raw EEPROM field, not a validated chain
+count. On the erased EFUSE both fields read 0, so the kernel powers down
+**neither**. `driver.py` passes the raw fields (`(nic_conf0&0xF0)>>4`,
+`nic_conf0&0xF`) into `init_bbp`, so DAC1 stays up without forcing a
+phantom second chain.
+
+### RFCSR12/13.TX_POWER is a backoff code
+
+Higher = more attenuation = **weaker** output. [WIRE] `aireplay.pcap`
+writes `RFCSR12 = 0x6b` (chain-0 TX_POWER = 11) and `RFCSR13 = 0x60`
+(chain-1 = 0) for 2.4 GHz, so the unburned fallback is the LOW value the
+kernel uses (`default_power1=11`, `default_power2=0`). An earlier guess
+of 24 ("near the 5-bit max for RSSI") was backwards and made us quieter.
+[SRC] rt2800lib.c:2660-2683.
+
+### The rx-filter calibration is degenerate (hardware ceiling)
+
+`rt2800_init_rx_filter` ([SRC] rt2800lib.c:7320-7383) tunes RFCSR24 with
+a loopback sweep — fire a passband then stopband tone, read BBP55, walk
+RFCSR24 while `(passband − stopband) ≤ filter_target`. It runs on
+**every** RT3572: there is no EFUSE-provides-the-value path (only
+RT5390/5392-class chips hardcode `calibration_bw20 = 0x1f`, [SRC]
+rt2800lib.c:8073). On a **burned** card the front-end is calibrated, the
+loopback has a real response, and the loop converges mid-range. On this
+**erased** card there's no real response, so it **rails**:
+
+- Kernel rails **high**: [WIRE] `aireplay.pcap` marches RFCSR24 one step
+  per iteration `0x07 → 0x6b` to the 100-step cap, never breaks, and
+  ships `calibration_bw20 = 0x6b` (config_channel writes both RFCSR24
+  and RFCSR31 from it).
+- Our driver rails **low**: the loop breaks on step 0 → `0x07`.
+
+Both rails are non-physical; neither is a calibration. The ~7-count
+reading offset between the drivers is noise-level on a degenerate filter
+and is **not** a portable bug — the RFCSR + BBP init tables, init order,
+chain/DAC state, and the cal code were all verified byte-for-byte
+faithful. We run the loop unmodified and accept its result. **The TX
+ceiling on this unit (~20/40 deauths on-air, high run-to-run variance)
+is the missing factory calibration, not the driver**; a properly-burned
+RT3572 converges to a real value and sees none of this. (We briefly
+tested forcing the kernel's `0x6b` and sweeping mid-range values; the
+on-air metric is dominated by RF environment, so nothing beat the
+faithful loop reliably — reverted.)
+
+### Settle timing is a non-issue on userland USB
+
+Kernel `msleep(1)` delays (the LDO_CFG0 dance in `init_rfcsr_3572`, the
+per-tone settle in `init_rx_filter`) port to `time.sleep(0.001)`, a
+Windows no-op (~15.6 ms scheduler tick). It doesn't matter: every
+register access is a USB control transfer (~1 ms+ round-trip), so
+inter-op latency already covers the kernel's millisecond settles.
+Confirmed empirically — real busy-wait settles changed the cal readings
+by exactly zero. Don't chase settle timing as a cause of RF misbehaviour
+here.
 
 ---
 
