@@ -290,25 +290,25 @@ def _init_rx_filter(
     # BBP55 until non-zero (kernel: "Set power & frequency of passband
     # test tone").
     #
-    # NB: kernel uses msleep(1) here. We use 5 ms because Python's
-    # time.sleep(0.001) on Windows has terrible granularity (system
-    # tick = 15.6 ms by default → sleep(1ms) returns either ~0 ms or
-    # ~16 ms). 5 ms is large enough that even a coarse Windows tick
-    # gives the BBP enough settle time; on Linux it's just slightly
-    # over-cautious. Without enough settle, BBP[55] reads 0 and the
-    # calibration loop falsely concludes (passband-stopband=0) <= tgt
-    # → never exits → RFCSR24/31 max out at meaningless values →
-    # downstream RX path detects energy but every decoded frame
-    # CRC-errors out, so DROP_CRC_ERR in RX_FILTER_CFG drops them all
-    # before any URB reaches the host (observed on AWUS051NH v2).
-    _SETTLE = 0.005
+    # Each BBP55 read needs the test tone settled first. The kernel does
+    # msleep(1) then a single read ([SRC] rt2800lib.c:7352). On Windows
+    # time.sleep() quantizes to the ~15.6 ms scheduler tick (a sub-tick sleep
+    # returns ~0 or a full tick), so a fixed sleep samples the tone mid-settle
+    # and skews BBP55 a few counts — enough to tip the (passband - stopband)
+    # vs filter_target comparison and break the tune one iteration in. Busy-wait
+    # the high-res clock for a real, reliable delay (>= the kernel's 1 ms), then
+    # read once, exactly as the kernel does.
+    def settle() -> None:
+        end = time.perf_counter() + 0.002
+        while time.perf_counter() < end:
+            pass
 
     bbp_write(t, 24, 0)
     passband = 0
     passband_samples: list[int] = []
     for i in range(100):
         bbp_write(t, 25, 0x90)
-        time.sleep(_SETTLE)
+        settle()
         passband = bbp_read(t, 55)
         if i < 5 or i % 20 == 0:
             passband_samples.append(passband)
@@ -326,7 +326,7 @@ def _init_rx_filter(
     stopband_samples: list[tuple[int, int]] = []  # (iter, stopband)
     for i in range(100):
         bbp_write(t, 25, 0x90)
-        time.sleep(_SETTLE)
+        settle()
         stopband = bbp_read(t, 55)
         if i < 5 or i % 20 == 0:
             stopband_samples.append((i, stopband))
