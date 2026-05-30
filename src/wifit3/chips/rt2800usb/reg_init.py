@@ -7,9 +7,6 @@ Skipped for now (deferred to later milestones):
   * EEPROM-dependent branches (TX_SW_CFG2 DAC_TEST, antenna diversity,
     Bluetooth coex) — need EFUSE bring-up first (see
     [[feedback_defer_efuse_on_bring_up]]).
-  * WCID + IVEIV table clears (256 × 2 = 512 writes) — only matter
-    for per-station crypto association. We're monitor-only at M-now,
-    and M2b-1's USB_MODE_RESET should have cleared MAC RAM anyway.
   * Beacon-slot clears — beaconing not needed for capture.
   * BBP21 reset (RT6352 only, not our chip).
 
@@ -40,6 +37,7 @@ from .constants import (
     LEGACY_BASIC_RATE,
     LG_FBK_CFG0,
     LG_FBK_CFG1,
+    MAC_IVEIV_TABLE_BASE,
     MAC_SYS_CTRL,
     MAX_LEN_CFG,
     MM20_PROT_CFG,
@@ -52,6 +50,7 @@ from .constants import (
     RX_STA_CNT0,
     RX_STA_CNT1,
     RX_STA_CNT2,
+    SHARED_KEY_MODE_BASE,
     TX_LINK_CFG,
     TX_RTS_CFG,
     TX_RTY_CFG,
@@ -422,35 +421,39 @@ def init_registers(t: RT2800USBTransport, silicon_id: int) -> None:
     # 22) PWR_PIN_CFG
     t.write32(PWR_PIN_CFG, 0x00000003)
 
-    # 23) WCID + WCID_ATTR table clear. Kernel rt2800_init_registers
-    # (rt2800lib.c:6245-6248) zeros all 256 WCID attr entries via
-    # rt2800_delete_wcid_attr. Each attr entry contains CIPHER bits
-    # (bits[3:1]) — if non-zero, the TX engine tries to encrypt frames
-    # using a key it doesn't have. Result: chip reports TX_SUCCESS=1 in
-    # TX_STA_FIFO but emits garbage on-air with a broken FCS, which
-    # phones/APs silently drop. We hit exactly that on RT3572 with our
-    # WCID=0xFF inject. Diagnosed 2026-05-22 by following the trail:
-    # bulk-OUT OK → TX_STA_FIFO TX_SUCCESS=1 → still no on-air response.
-    # Each write is a ~1 ms USB control transfer, so 256 entries × 2
-    # tables ≈ 0.5 s — acceptable one-time startup cost.
+    # 23) Crypto-table reset. Kernel rt2800_init_registers zeros THREE
+    # tables before any key is programmed (rt2800lib.c:6241-6257); each
+    # gates the TX crypto engine, so leaving any one set leaves the
+    # engine armed for a key we never install. On a Protected (WEP)
+    # inject the chip then runs its crypto path and overwrites the
+    # frame's IV with a zeroed descriptor IV, so the AP's ICV check
+    # drops every frame even though TX_STA_FIFO still flags TX_SUCCESS.
+    # [HW] without the SHARED_KEY_MODE clear the RT5572 puts WEP
+    # ARP-replay frames on air with IV=00:00:00 and the AP never relays.
+    #
+    #   (a) SHARED_KEY_MODE[0..3] = 0 — cipher type per BSS index; THE
+    #       table that gates WEP (shared-key) replay. [SRC] :6242-6243
+    #   (b) WCID (8B = 0xFF "no station" sentinel) + WCID_ATTR (4B = 0,
+    #       cipher NONE) per entry. [SRC] :6245-6253, rt2800_config_wcid
+    #   (c) IVEIV[0..255] = 0 — the per-WCID IV the engine inserts.
+    #       [SRC] :6256-6257
+    # ~520 one-shot ~1ms control writes; acceptable startup cost.
+    for i in range(4):
+        t.write32(SHARED_KEY_MODE_BASE + i * 4, 0)
     _MAC_WCID_BASE = 0x1800
     _MAC_WCID_ATTRIBUTE_BASE = 0x6800
     for i in range(256):
-        # WCID entry = 8 bytes. Kernel `rt2800_config_wcid(NULL, i)` does
-        # `memset(&wcid_entry, 0xff, sizeof(wcid_entry))` — fills the
-        # whole 8-byte struct (6-byte MAC + 2-byte pad) with 0xFF, NOT
-        # 0x00. The MAC field 0xFFFFFFFFFFFF means "broadcast / no real
-        # station here" — the TX engine treats this as a safe sentinel.
-        # Writing zeros instead makes WCID entries claim MAC 00:00:00:
-        # 00:00:00 which may confuse rate-adaptation / PA-gain lookups
-        # even though TX_STA_FIFO still flags TX_SUCCESS. Fixed
-        # 2026-05-22 after diagnosing the regression in RT3572 inject.
+        # 0xFF, not zeros: 0xFF is the "no real station" sentinel; zeros
+        # claim MAC 00:00:00:00:00:00 and can skew rate/PA-gain lookups
+        # even though TX_STA_FIFO still flags TX_SUCCESS. The 4-byte attr
+        # = 0 clears the CIPHER bits (no per-station crypto on this WCID).
         # [SRC] rt2800lib.c:1671-1686
         t.write32(_MAC_WCID_BASE + i * 8, 0xFFFFFFFF)
         t.write32(_MAC_WCID_BASE + i * 8 + 4, 0xFFFFFFFF)
-        # WCID attr entry = 4 bytes (u32). Kernel writes 0 here —
-        # CIPHER bits cleared = no encryption attempted on this WCID.
         t.write32(_MAC_WCID_ATTRIBUTE_BASE + i * 4, 0)
+    for i in range(256):
+        # IVEIV entry is 8 bytes; kernel zeros the first word of each.
+        t.write32(MAC_IVEIV_TABLE_BASE + i * 8, 0)
 
     # 24) USB clock-cycle config.
     reg = t.read32(US_CYC_CNT)

@@ -212,14 +212,24 @@ URB: [TXINFO (4B)] [TXWI (16B for RT539x, 20B for RT5592)]
 ```
 
 - **TXINFO_W0[15:0]** = `USB_DMA_TX_PKT_LEN`
-- **TXINFO_W0[24]** = `WIV` (we set to 1 — no HW crypto, use descriptor IV)
-- **TXINFO_W0[26:25]** = `QSEL` (0 = MGMT, 2 = EDCA)
+- **TXINFO_W0[24]** = `WIV` (set to 1)
+- **TXINFO_W0[26:25]** = `QSEL` (we use 2 = EDCA)
 - **TXWI_W0[22:16]** = MCS, **W0[31:30]** = PHYMODE
-- **TXWI_W1[0]** = ACK bit (cleared for spoofed deauth pattern)
-- **TXWI_W1[1]** = NSEQ (we set to 1 — let HW generate seqnum)
-- **TXWI_W1[15:8]** = WIRELESS_CLI_ID (we use 0xFF for broadcast inject)
+- **TXWI_W1[0]** = ACK bit (cleared for no-ack inject)
+- **TXWI_W1[1]** = NSEQ (we set to 0 — use the frame's seqctl)
+- **TXWI_W1[15:8]** = WIRELESS_CLI_ID (we use 0)
 - **TXWI_W1[27:16]** = `MPDU_TOTAL_BYTE_COUNT`
-- **TXWI_W2/W3** = zero (IV/EIV — no HW crypto)
+- **TXWI_W2/W3** = zero (IV/EIV)
+
+Zeroing W2/W3 is only safe because the TX crypto engine is disarmed at
+init — `reg_init` step 23 clears SHARED_KEY_MODE, WCID/WCID_ATTR and
+IVEIV. If any cipher table is left set, the engine encrypts a Protected
+(WEP) inject and inserts a zeroed IV from W2/W3 over the frame's real
+IV, so the AP's ICV check silently drops every replay (TX_STA_FIFO
+still flags TX_SUCCESS). [HW] WEP ARP replay was dead on the RT5572 —
+dual-NIC sniff showed on-air IV=00:00:00 and zero AP rebroadcasts —
+until the SHARED_KEY_MODE clear landed; with it, ~4000 AP rebroadcasts
+per 30 s and chop/frag work too. [SRC] `rt2800lib.c:6241-6257`
 
 **Bulk-OUT EPs** by kernel queue mapping (rt2800usb.c):
 
@@ -465,12 +475,10 @@ here.
 3. **TX power per channel** — `RFCSR49/50.TX` writes (only on RT5392).
    Currently skipped (RX works fine without; RT3572/RT5572 already
    write these from `default_power1/2` defaults).
-4. **WCID + IVEIV table clears** — kernel does 256-entry loops; we
-   skip since monitor mode never associates.
-5. **93C66 EEPROM fallback** — older RT2870 dongles don't have
+4. **93C66 EEPROM fallback** — older RT2870 dongles don't have
    EFUSE; `efuse_detect` would return False. Would need to port the
    USB_EEPROM_READ one-shot 512-byte streaming path.
-6. **AWUS036NH (RT3070)** — fresh chip not yet supported. Captures
+5. **AWUS036NH (RT3070)** — fresh chip not yet supported. Captures
    not yet collected; pcap drop-in extension once captures land.
    See `NEXT-STEPS.md` "Other hardware queued" section.
 
