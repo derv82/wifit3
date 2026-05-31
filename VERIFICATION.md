@@ -50,7 +50,7 @@ claim frag works — check the per-card detail / the WEP README for frag status.
 | RT5372 (PAU05) | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 | RT5572 (PAU09) | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | RT3572 † | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
-| RT2500USB | ✅ | ✅ | ⚠️ | ✅ | ⬜ | ⬜ | ⬜ |
+| RT2500USB | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ❌ |
 
 † **RT3572** here = the ALFA AWUS051NH v2 test unit with an **erased EFUSE** (no
 factory RF calibration). That single fault explains every ⚠️ in its row — weak
@@ -247,10 +247,10 @@ on a miscalibrated unit," not a clean verification.
 |---|:--:|---|---|
 | Scan | ⚠️ | 2026-05-31 | Channel/RX inconsistency: a CH1 AP (NETGEAR2G) gave ~10 beacons/s, but another CH1 AP (TestAP1) gave **0 beacons/s consistently** at the same time. Same channel, so not a pure tune bug — points at weak RX for that AP or an RX address-filter issue. |
 | Deauth | ✅ | 2026-05-31 | Deauthed clients. |
-| Handshake | ❌ | 2026-05-31 | **Only M1+M3 (FromDS) captured — no M2/M4 (ToDS), so no crackable pair.** Confirms the long-suspected **monitor-mode RX gap**: client→AP (ToDS) frames aren't being delivered. See `chips/rt2500usb/RT2500USB.md` + [[feedback_monitor_mode_deviation]]. |
+| Handshake | ❌ | 2026-05-31 | **Only M1+M3 (FromDS) captured — no M2/M4 (ToDS), so no crackable pair.** NOTE: *not* a ToDS filter gap — the session log shows `to_ds=True` data frames arriving (client→AP IS delivered), so the monitor filter is open. More likely the weak/unstable RX (see Scan) + the RF dying ~1 min in (see Stress) meant the client's M2/M4 weren't heard before the pipe wedged. Re-test once the RF-death/weak-RX is sorted. |
 | PMKID | ✅ | 2026-05-31 | Captured passively + active extract. |
 | WEP | ⚠️ | 2026-05-31 | ARP replay works but **very slowly (~1–3 IVs/s)**; **ChopChop ✗** — stuck at the 40 B cipher (~32 bytes still to recover). Both consistent with the weak/unstable RX this session. |
-| WPS | ❌ | 2026-05-31 | **PBC timed out** (plausibly the weak CH1 RX — see Scan). **PIN** exchanged and got valid first-half-wrong NACKs ×3 (the engine works), but no crack. Marked ❌ per the user's read — neither path obtained a PSK. |
+| WPS | ⚠️ | 2026-05-31 | **PIN ✅** — engine works: sent guesses, got valid first-half-wrong NACKs ×3 (no full crack this session, but the on-air exchange is sound). **PBC ✗** — timed out, plausibly the weak CH1 RX (see Scan). Mixed → ⚠️ (same pattern as RT3572). |
 | Stress | ❌ | 2026-05-31 | **RF died after ~1 minute** — no beacons from *any* AP, with bulk-IN `[Errno 32] Pipe error` and `set_channel(N) failed: Pipe error` in the log. The USB pipe wedged under sustained load. Far short of the 1-hour soak bar; needs investigation (see chip doc). |
 
 → `chips/rt2500usb/RT2500USB.md`
