@@ -220,6 +220,11 @@ Run on the Archer T3U Plus v1 (`VERIFICATION.md` holds the matrix cell):
   software-sequence (`en_hwseq`) handling or the relay-oracle signature differing
   on this chip. Next: run `scripts/wep/frag_probe.py` against the dd-wrt box on
   this card and diff the relay frames vs the 8821au capture.
+  **Update 2026-05-31:** frag forging also fails on the RTL8812AU (works on the
+  8821au) — so it's a pattern across the cards that build their own TX descriptor,
+  not 8822b-only. Shared code is the `engine/attacks/wep/fragmentation.py` daemon
+  + each chip's sw-seq in `build_tx_desc`; the 8821au's `en_hwseq=0` fix likely
+  isn't mirrored. See `chips/rtl8812au/RTL8812AU.md` for the lead.
 
 ## Warm reattach
 

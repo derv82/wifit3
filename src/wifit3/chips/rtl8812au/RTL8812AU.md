@@ -45,6 +45,30 @@ it too.
   fail to revive the pipe. The driver logs one warning and the user replugs.
   Sustained 0.25 s dual-band hopping is at this chip's hardware envelope.
 
+### Attack-stack hardware results (2026-05-31)
+
+Full attack pass on the AWUS036ACH (matrix cells in `VERIFICATION.md`):
+
+- **Deauth** ✅ multiple clients. **Handshake** ✅ — M1+M2 and M2+M3 captured.
+  **PMKID** ✅ — passive + active extract. **WPS** ✅ — PIN and PBC.
+- **WEP** — Replay ✅; ChopChop ✅ (<2 min); **Fragmentation ✗** — could not forge
+  a valid ARP after ~2 min of rounds.
+
+**Fragmentation lead (cross-card pattern).** Frag forging also fails on the
+RTL8822BU but **works on the RTL8821AU**. The 8821au frag fix was `en_hwseq=0`
+(software sequence) in its `build_tx_desc_data`, so the AP reassembles the
+fragment burst under one shared seq (`engine/attacks/wep/README.md`). The frag
+daemon (`engine/attacks/wep/fragmentation.py`) is shared, but each chip builds
+its own TX descriptor — so check whether this chip's data-frame TX desc applies
+the same shared sw-seq across the fragment burst, or whether a 2T2R/queue
+difference breaks reassembly. Replay + ChopChop work (single frames, no shared
+seq needed), which is consistent with a fragment-sequence-specific gap.
+
+**Scan/UI note.** When channel-hop wedges the RX (the hop-death above), the
+Scanner gives no feedback — targets fade to dark then the list empties, no
+banner. The driver logs the warning; surfacing it in the UI is tracked in
+`NEXT-STEPS.md` § Small bugs / QoL.
+
 Cleanroom-RE'd from `data_dumps/rtw88-source-v6.18/` + cold-boot pcap
 `usb_dumps/captures_rtw88_8812au/capture-1.pcap`. Every claim here cites
 either `[SRC]` (kernel source) or `[WIRE]` (pcap observation). Anything

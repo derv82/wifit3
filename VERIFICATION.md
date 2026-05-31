@@ -34,7 +34,7 @@ tracked pass/fail).
 | RTL8187L | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | RTL8188EUS | ✅ | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
 | RTL8821AU | ✅ | ✅ | ✅ | ⬜ | ⚠️ | ⚠️ | ⬜ |
-| RTL8812AU | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⚠️ |
+| RTL8812AU | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
 | RTL8822BU | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
 | RTL8814AU | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 | MT7612U | ✅ | ✅ | ✅ | ⬜ | ⚠️ | ⬜ | ⬜ |
@@ -125,11 +125,13 @@ notes below cover the attack columns and any caveats.
 
 | Capability | Status | Date | Details |
 |---|:--:|---|---|
-| Handshake | ✅ | 2026-05-31 | M2/M4 captured live after the ToDS-filter fix (with M1/M3 → full 4-way). RX-DMA aggregation arm fixed the ~5 s bulk-IN cliff. |
-| PMKID | ⬜ | — | Not separately recorded. |
-| WEP | ⬜ | — | Not run on this card. |
-| WPS | ⬜ | — | Not run on this card. |
-| Stress | ⚠️ | 2026-05-31 | **RF-synth hop-death** (rtw88-inherited HW limit, in-tree driver has it too): single channel survives 30 min+, but sustained dual-band 0.25 s hopping wedges RX after seconds-to-minutes. Mitigation (`dynamic.py`: DIG + pwr-track + decoupled LCK) delays it ~2–4× but doesn't eliminate it; no userland recovery — the user replugs. |
+| Scan | ⚠️ | 2026-05-31 | Single-channel scan (via Channel Filter) is fine, but **channel hopping wedges RX** — the RF hop-death (see Stress). When it wedges there's **no UI feedback**: targets fade to dark, then the list empties, no message (the driver does log one warning). |
+| Deauth | ✅ | 2026-05-31 | Deauthed multiple clients. |
+| Handshake | ✅ | 2026-05-31 | Captured M1+M2 and M2+M3 (crackable pairs) after the ToDS-filter + RX-DMA-agg fixes. |
+| PMKID | ✅ | 2026-05-31 | Both paths: passive capture and active extract. |
+| WEP | ⚠️ | 2026-05-31 | Replay ✅; ChopChop ✅ (<2 min); **Fragmentation ✗** — couldn't forge a valid ARP after ~2 min of rounds. Frag also fails on RTL8822BU but works on RTL8821AU → likely a shared frag-TX sw-seq gap; see `chips/rtl8812au/RTL8812AU.md`. |
+| WPS | ✅ | 2026-05-31 | PIN brute ✅ and PBC ✅. |
+| Stress | ⚠️ | 2026-05-31 | **RF-synth hop-death** (rtw88-inherited HW limit, in-tree driver has it too): single channel survives 30 min+, but sustained dual-band 0.25 s hopping wedges RX after seconds-to-minutes. Mitigation (`dynamic.py`: DIG + pwr-track + decoupled LCK) delays it ~2–4× but doesn't eliminate it; no userland recovery — replug (and no UI feedback when it happens — see Scan). |
 
 → `chips/rtl8812au/RTL8812AU.md`
 
