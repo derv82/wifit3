@@ -45,7 +45,11 @@ lowish 2.4 GHz beacon rates (~6–7/s on one AP, ~1–3/s on a farther one) — 
 evidence (different APs/channels), but if the pattern holds across families it's
 less a shared `rtw88_base` bug and more a general userland-RX sensitivity question
 (or just environment). The Linux A/B is the decider; ideally compare the *same*
-AP.
+AP. **Counter-example 2026-05-31: the RT5572 (rt2800usb) reads 2.4 GHz and 5 GHz
+at the *same* power with excellent beacon rates across the band** — so weak 2.4 GHz
+RX is NOT universal across userland drivers. That points back at the rtw88 family
+(and possibly rtl8xxxu) specifically, not a general userland-RX limitation —
+i.e. more likely our port on those families than the PyUSB approach itself.
 
 Family-shared infrastructure (`chips/rtw88_base/`) covers transport, the
 phy_cond walker, power_seq runtime, RF SIPI, TX checksum, RX-desc parser, and

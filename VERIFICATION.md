@@ -48,7 +48,7 @@ claim frag works — check the per-card detail / the WEP README for frag status.
 | MT7612U | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | MT7610U | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | RT5372 (PAU05) | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
-| RT5572 (PAU09) | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| RT5572 (PAU09) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | RT3572 † | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 | RT2500USB | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ❌ |
 
@@ -215,13 +215,19 @@ M1–M4 (RX / scan) are WIRE-verified on all three silicons. M5 (TX inject, deau
 | Handshake | ✅ | — | M5 TX verification: deauth → EAPOL re-capture. |
 | PMKID / WEP / WPS / Stress | ⬜ | — | Not run on this card. |
 
-**RT5572 — Panda PAU09 N600 (2.4 / 5 GHz, 2T2R)**
+**RT5572 — Panda PAU09 N600 (2.4 / 5 GHz, 2T2R)** — full-green, and the best-behaved
+Ralink: snappy, excellent beacon rate across the whole spectrum, and **2.4 GHz and
+5 GHz read the same power** (a clean counter-example to the rtw88 cards' weak 2.4 GHz RX).
 
 | Capability | Status | Date | Details |
 |---|:--:|---|---|
-| Deauth / Handshake | ⬜ | — | TX inject not separately verified on this silicon. |
-| WEP | ⬜ | — | ARP replay was once dead here (zeroed-IV injection); fix status unconfirmed. |
-| PMKID / WPS / Stress | ⬜ | — | Not run. |
+| Scan | ✅ | 2026-05-31 | Snappy; excellent beacons/s across the band; NETGEAR2G (2.4) and NETGEAR (5) at the same power → balanced RX. |
+| Deauth | ✅ | 2026-05-31 | Deauthed clients. |
+| Handshake | ✅ | 2026-05-31 | Full M1+M2+M3+M4 captured. |
+| PMKID | ✅ | 2026-05-31 | Captured passively + harvested. |
+| WEP | ✅ | 2026-05-31 | ARP replay ✅ and ChopChop ✅. **Resolves the old "ARP replay was once dead here (zeroed-IV injection)" concern — ARP replay works.** (Fragmentation = the separately-tracked sw-seq gap.) |
+| WPS | ✅ | 2026-05-31 | PIN brute ✅ and PBC ✅. |
+| Stress | ⬜ | — | Nothing adverse in brief use; no dedicated 1-hour soak yet. |
 
 **RT3572 — ALFA AWUS051NH v2 — ERASED EFUSE (no RF cal; runs 1T1R)**
 
