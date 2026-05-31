@@ -26,19 +26,27 @@ deauth. **PMKID** = PMKID harvest. **WEP** / **WPS** collapse their sub-attacks
 below. **Stress** = endurance / thermal (no standard soak protocol defined yet;
 tracked pass/fail).
 
+**WEP-cell convention:** the WEP cell is ✅ when **ARP-replay + ChopChop** both
+pass. **Fragmentation is tracked separately** as a cross-card known issue: cleanly
+verified on the RTL8821AU (the card with the `en_hwseq=0` software-sequence TX
+path), failing on the rtw88 cards + AR9271, and *reported working but slow* on the
+RT3572 — a tension with the sw-seq theory that's still open (see
+`engine/attacks/wep/README.md` § "Known issue"). So a ✅ WEP cell here does *not*
+claim frag works — check the per-card detail / the WEP README for frag status.
+
 ## Matrix
 
 | Chipset | Scan | Deauth | Handshake | PMKID | WEP | WPS | Stress |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| AR9271 | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ |
+| AR9271 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | RTL8187L | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | RTL8188EUS | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ |
 | RTL8821AU | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
-| RTL8812AU | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| RTL8822BU | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ |
-| RTL8814AU | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ |
+| RTL8812AU | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ |
+| RTL8822BU | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
+| RTL8814AU | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | MT7612U | ✅ | ✅ | ✅ | ⬜ | ⚠️ | ⬜ | ⬜ |
-| MT7610U | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ |
+| MT7610U | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | RT5372 (PAU05) | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 | RT5572 (PAU09) | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | RT3572 † | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
@@ -186,7 +194,7 @@ notes below cover the attack columns and any caveats.
 | Scan | ⚠️ | 2026-05-31 | **Focus-entry tune glitch**: entering Focus on a CH1 AP showed 0 beacons/s; Focus→Scanner→Focus on the same target then gave 8–9/s. Same symptom seen on RT3572 — so it's the **shared Focus→set_channel path**, not chip-specific (confirmed cross-family now). See NEXT-STEPS. |
 | Handshake | ✅ | 2026-05-31 | Captured M1+M2 (crackable pair). |
 | PMKID | ✅ | 2026-05-31 | Captured passively + active extract. |
-| WEP | ⚠️ | 2026-05-31 | ARP replay ✅ and ChopChop ✅. **Fragmentation** = the known sw-seq gap (skipped); can't work here without `SUPPORTS_SW_SEQ`. (User marked WEP green on the ARP+Chop subset — kept ⚠️ for suite-completeness; see the WEP-cell semantics note.) |
+| WEP | ✅ | 2026-05-31 | ARP replay ✅ and ChopChop ✅. (Fragmentation tracked separately — fails here, the known sw-seq gap; see WEP README § "Known issue".) |
 | WPS | ✅ | 2026-05-31 | PIN brute ✅ and PBC ✅. |
 | Stress | ⬜ | — | Not run. |
 
@@ -237,11 +245,13 @@ on a miscalibrated unit," not a clean verification.
 
 | Capability | Status | Date | Details |
 |---|:--:|---|---|
-| Handshake | ⚠️ | — | Deauth burst kicked the client and recaptured EAPOL **M1+M3 (FromDS only)** live; the ToDS half (M2/M4) — i.e. a guaranteed crackable pair — isn't confirmed. |
-| PMKID | ✅ | — | A PMKID was recaptured live on the same radio alongside M1+M3. |
-| WEP | ⬜ | — | Not run. |
-| WPS | ⬜ | — | Not run. |
-| Stress | ⬜ | — | Not run. |
+| Scan | ⚠️ | 2026-05-31 | Channel/RX inconsistency: a CH1 AP (NETGEAR2G) gave ~10 beacons/s, but another CH1 AP (TestAP1) gave **0 beacons/s consistently** at the same time. Same channel, so not a pure tune bug — points at weak RX for that AP or an RX address-filter issue. |
+| Deauth | ✅ | 2026-05-31 | Deauthed clients. |
+| Handshake | ❌ | 2026-05-31 | **Only M1+M3 (FromDS) captured — no M2/M4 (ToDS), so no crackable pair.** Confirms the long-suspected **monitor-mode RX gap**: client→AP (ToDS) frames aren't being delivered. See `chips/rt2500usb/RT2500USB.md` + [[feedback_monitor_mode_deviation]]. |
+| PMKID | ✅ | 2026-05-31 | Captured passively + active extract. |
+| WEP | ⚠️ | 2026-05-31 | ARP replay works but **very slowly (~1–3 IVs/s)**; **ChopChop ✗** — stuck at the 40 B cipher (~32 bytes still to recover). Both consistent with the weak/unstable RX this session. |
+| WPS | ❌ | 2026-05-31 | **PBC timed out** (plausibly the weak CH1 RX — see Scan). **PIN** exchanged and got valid first-half-wrong NACKs ×3 (the engine works), but no crack. Marked ❌ per the user's read — neither path obtained a PSK. |
+| Stress | ❌ | 2026-05-31 | **RF died after ~1 minute** — no beacons from *any* AP, with bulk-IN `[Errno 32] Pipe error` and `set_channel(N) failed: Pipe error` in the log. The USB pipe wedged under sustained load. Far short of the 1-hour soak bar; needs investigation (see chip doc). |
 
 → `chips/rt2500usb/RT2500USB.md`
 
