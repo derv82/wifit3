@@ -205,6 +205,22 @@ Verified on hardware:
 
 Verified: 20/20 broadcast deauth frames bulk-OUT to EP 0x05 in 217 ms.
 
+## Attack-stack hardware results (2026-05-31)
+
+Run on the Archer T3U Plus v1 (`VERIFICATION.md` holds the matrix cell):
+
+- **Handshake** ✅ — 4-way captured via deauth.
+- **PMKID** ✅ — both paths: active extract (the "PMKID" button) and passive
+  capture alongside the deauth handshake.
+- **WPS** ✅ — PIN brute and PBC auto-invade both recovered against a WPS test AP.
+- **WEP** — ARP replay ✅ and ChopChop ✅ work end-to-end; **Fragmentation ✗ —
+  does NOT successfully forge/seed the ARP.** Suspected chip-specific bug: frag
+  was verified end-to-end on the RTL8821AU (`engine/attacks/wep/README.md`), so
+  the divergence is likely in the 8822b TX path the frag rounds ride — the shared
+  software-sequence (`en_hwseq`) handling or the relay-oracle signature differing
+  on this chip. Next: run `scripts/wep/frag_probe.py` against the dd-wrt box on
+  this card and diff the relay frames vs the 8821au capture.
+
 ## Warm reattach
 
 `mac.is_chip_warm`: chip is warm if `(REG_MCUFW_CTRL & FW_READY_MASK)` has
@@ -213,6 +229,14 @@ The driver skips bring-up on warm and just resumes USB polling, with a
 1.5 s bulk-IN smoke test that surfaces "please replug" if the pipe is
 wedged (same lesson as 8821a — `pwr_off_seq` cycle doesn't recover bulk-IN
 on Windows/WinUSB).
+
+**Observed 2026-05-31:** quitting and relaunching wifit3 hit exactly this —
+warm reattach succeeded, the 1.5 s bulk-IN smoke test found the pipe wedged
+(drained 282 stale bytes, then 0 frames in 1500 ms), and the driver logged the
+"please unplug + replug" guidance. Working as designed. The remaining gap is
+UI-side: the splash shows a generic "Hardware failed to initialize" instead of
+surfacing the driver's replug message — tracked in `NEXT-STEPS.md` § Small bugs
+/ QoL.
 
 ## What's NOT yet implemented
 

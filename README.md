@@ -33,7 +33,7 @@ subprocesses, no Scapy — so it runs the same on **Linux and Windows**.
 | ALFA AWUS036ACS | Realtek RTL8821AU | 2.4 / 5 GHz |
 | ALFA AWUS036ACH | Realtek RTL8812AU * | 2.4 / 5 GHz |
 | ALFA AWUS1900 | Realtek RTL8814AU | 2.4 / 5 GHz |
-| TP-Link T3U Plus | Realtek RTL8822BU | 2.4 / 5 GHz |
+| TP-Link T3U Plus | Realtek RTL8822BU * | 2.4 / 5 GHz |
 | TP-Link TL-WN722N v2/v3 | Realtek RTL8188EUS | 2.4 GHz |
 | ALFA AWUS036ACM | MediaTek MT7612U | 2.4 / 5 GHz |
 | ALFA AWUS036ACHM | MediaTek MT7610U | 2.4 / 5 GHz |

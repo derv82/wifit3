@@ -208,6 +208,14 @@ each path and sample it on a 3 s timer. Low risk (read-only on the wire), high
 
 ## Small bugs / QoL
 
+- **Warm-reattach replug guidance lost in the UI** — when a warm reattach detects
+  a wedged bulk-IN pipe, the driver logs an actionable "please unplug + replug"
+  ERROR, but `ui/screens/splash.py` raises a generic
+  `RuntimeError("Hardware failed to initialize.")` and the UI shows "Failed to
+  connect to wlanN". Propagate the driver's message up to the splash so a user
+  who isn't watching logs knows to just replug. The wedge itself is an accepted
+  Windows/WinUSB warm-reattach limit (the pipe can't be reset in userland) — only
+  the messaging is the bug. Observed on RTL8822BU 2026-05-31.
 - **Beacon count truncates past 10k** — `10512` renders as `0512`. Auto-size the
   BEACONS column (without breaking right-alignment).
 

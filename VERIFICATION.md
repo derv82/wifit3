@@ -35,7 +35,7 @@ tracked pass/fail).
 | RTL8188EUS | ✅ | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
 | RTL8821AU | ✅ | ✅ | ✅ | ⬜ | ⚠️ | ⚠️ | ⬜ |
 | RTL8812AU | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⚠️ |
-| RTL8822BU | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
+| RTL8822BU | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
 | RTL8814AU | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 | MT7612U | ✅ | ✅ | ✅ | ⬜ | ⚠️ | ⬜ | ⬜ |
 | MT7610U | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -51,7 +51,7 @@ only reflects **incomplete attack-suite coverage** (the attack works where it
 was run, just not fully exercised on that card) does **not** asterisk — the card
 is fine, the testing is simply unfinished.
 
-Asterisked today: **RTL8812AU, RT2800USB, RT2500USB**.
+Asterisked today: **RTL8812AU, RTL8822BU, RT2800USB, RT2500USB**.
 
 Note for README readers: the *absence* of an asterisk means "no known problem,"
 **not** "every attack verified" — check this matrix for the full per-attack
@@ -129,11 +129,11 @@ notes below cover the attack columns and any caveats.
 
 | Capability | Status | Date | Details |
 |---|:--:|---|---|
-| Handshake | ✅ | 2026-05-25 | Full M1–M4 captured (HW-confirmed); completion held 3/3 (one benign missed M3 *retransmit*). |
-| PMKID | ⬜ | — | Not separately recorded. |
-| WEP | ⬜ | — | Not run. |
-| WPS | ⬜ | — | Not run. |
-| Stress | ⬜ | — | Not run. |
+| Handshake | ✅ | 2026-05-31 | Captured via deauth (full M1–M4; earlier 3/3-completion run 2026-05-25). |
+| PMKID | ✅ | 2026-05-31 | Both paths: active extract (the "PMKID" button) **and** passive capture (alongside the deauth handshake). |
+| WEP | ⚠️ | 2026-05-31 | ARP replay ✅ and ChopChop ✅ tested working. **Fragmentation ❌ — does not successfully forge/seed the ARP** (suspected bug). Notable: frag was verified on RTL8821AU, so this is likely a chip-specific sw-seq/oracle divergence on the 8822bu. |
+| WPS | ✅ | 2026-05-31 | PIN brute ✅ and PBC auto-invade ✅, against a WPS test AP. |
+| Stress | ⚠️ | 2026-05-31 | Attacks worked in-session, but **warm reattach on restart fails**: bulk-IN wedges (no frames in 1500 ms), unrecoverable in userland on Windows/WinUSB → user must unplug/replug. This is the *designed* warm-reattach fallback firing (it detects the wedge and asks for a replug), and is likely not 8822bu-specific. Not a clean 1-hour soak result. |
 
 → `chips/rtl8822bu/RTL8822BU.md`
 
@@ -201,13 +201,19 @@ Three silicons share this driver; status differs per unit.
 
 ---
 
-## Stress / endurance — protocol TBD
+## Stress / endurance
 
-No standard soak test exists yet, so Stress is ⬜ almost everywhere. Before this
-column means anything, define what "passes": e.g. N minutes of continuous
-channel-hop + capture while watching for thermal shutdown, RX going deaf, USB
-pipe wedge, and host-side memory growth. The one populated cell (RTL8812AU ⚠️) is
-a documented RF hop-death limit, not the output of a soak harness.
+**Protocol:** every attack still works as expected after channel-hopping all
+channels for 1 hour (driven on hardware by the longrun test script). A cell is
+✅ when the post-soak attacks pass, ⚠️/❌ when a problem surfaces during or after
+the hour.
+
+Observed so far — both are robustness limits a soak run would expose, not clean
+passes:
+- **RTL8812AU ⚠️** — RF hop-death under sustained dual-band hopping (RF synth
+  loses lock; mitigated ~2–4×, no userland recovery).
+- **RTL8822BU ⚠️** — warm reattach on restart wedges the bulk-IN pipe → replug
+  required (likely a general WinUSB warm-reattach limit, not 8822bu-specific).
 
 ## What "Fully supported" will mean
 
