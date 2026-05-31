@@ -306,29 +306,50 @@ Symptom: the fragment burst goes out but the AP's reassembled relay never appear
 ("seed wouldn't relay"); replay + ChopChop (both single-frame, no shared
 sequence) work on the same cards and APs.
 
-Because the failure spans **three chip families** and only the dev card succeeds,
-the earlier "per-chip TX sw-seq" guess is weakened — suspicion shifts to the
-**shared frag daemon** (`fragmentation.py`) or an assumption that only holds on
-the 8821au. Candidates:
+### Root cause (confirmed 2026-05-31 by code read)
 
-- **Seed selection by packet length / type** (lead's hypothesis). The daemon
-  seeds keystream from a captured WEP data frame chosen by length + ethertype
-  (0x0800 then 0x0806). If that selection is too narrow — or assumes a length
-  that only matched the 8821au's test environment — the wrong/short seed yields a
-  burst the AP won't reassemble.
-- **Shared software sequence across the burst.** Fragments must carry one shared
-  seq so the AP reassembles them. AR9271 has no rtw88 `en_hwseq` concept at all,
-  so if the daemon leans on a Realtek-specific sw-seq path, AR9271 can't satisfy
-  it — but that alone wouldn't explain 8812au/8822bu. Confirm each driver's
-  data-frame TX path actually applies one shared seq across the burst.
-- **Oracle matching.** The relay may occur but not match the pinned oracle
-  signature (FromDS+Protected, DA=broadcast, Addr3=our SA, fresh IV) on these
-  cards' RX descriptors.
+It's the **software-sequence TX path**, and it was only ever wired on the
+RTL8821AU. The crypto and seed selection are fine.
 
-Note: the existing "sequence not supported" warning is meant to flag *other
-rt2800usb cards* — a different path; don't conflate it with this.
+- For the AP to reassemble a fragment train, every fragment must keep the **one
+  shared 802.11 sequence number** that `build_fragments` stamps (with incrementing
+  fragment numbers + the More-Fragments bit). That requires injecting with
+  `en_hwseq=0` so the chip does **not** auto-assign/increment the sequence number.
+- The daemon asks for that via `iface.send_raw(..., sw_seq=N)`. But
+  `interface.send_raw` **silently drops `sw_seq` unless the driver sets
+  `SUPPORTS_SW_SEQ`** (`interface.py:539`), and **only `rtl8821au` does**
+  (`driver.py:89`; its `tx.build_tx_desc_data` sets `en_hwseq=False` + writes
+  `SW_SEQ`). On every other card the hint is dropped → frames inject with
+  `en_hwseq=1` → each fragment gets a **different, hardware-incremented** sequence
+  number → the AP sees N unrelated frames, never reassembles → no relay → "seed
+  wouldn't relay." Replay + ChopChop are single frames, so they don't care about
+  the seq — which is why they work everywhere.
 
-**Disambiguating probe:** run `scripts/wep/frag_probe.py` on a failing card (e.g.
-8812au) against the dd-wrt box and dump every RX frame. Either no relay appears
-(reassembly/seq/seed problem) or a relay appears but the oracle misses it
-(matching problem) — that one run splits the top candidates.
+This explains the table exactly: 8821au (has the path) ✅; everyone else ✗,
+regardless of family.
+
+**Secondary correctness bug:** `fragmentation.py` does **not** gate on
+`iface.supports_sw_seq` before running — contrary to `interface.py`'s own
+docstring and unlike `scripts/wep/frag_probe.py:350` (which correctly warns). So
+on an unsupported card the daemon spins forever with the misleading "seed
+wouldn't relay" (implies a *seed* problem, not "this card can't fragment").
+
+(The unrelated "sequence not supported" warning that flags *other rt2800usb
+cards* is a different path — don't conflate.)
+
+### Fix plan
+
+1. **Honesty gate (small, safe, no hardware):** have `fragmentation.py` /
+   `campaign.py` check `iface.supports_sw_seq` up front and refuse to start with a
+   clear message ("Fragmentation needs software-sequence TX, only RTL8821AU has it
+   so far") instead of spinning on "seed wouldn't relay."
+2. **Port the sw-seq path to the rtw88 family (the real fix):** lift the 8821au's
+   `build_tx_desc_data` (`en_hwseq=0` + `SW_SEQ`) into `rtw88_base/tx_common.py`
+   and add `inject_frame(..., sw_seq=...)` + `SUPPORTS_SW_SEQ=True` to 8812au /
+   8814au / 8822bu. They already carry the W8 EN_HWSEQ / W9 SW_SEQ fields in their
+   tx_pkt_desc (8822bu mgmt desc sets W8[15]), so this is mechanical with the
+   8821au as the template — likely fixes all three rtw88 cards at once. Verify per
+   the per-driver hardware loop.
+3. **AR9271 separately:** different TX path (HTC firmware) with no rtw88
+   `en_hwseq` concept — check whether the cleanroom FW / HTC TX descriptor exposes
+   a "don't auto-assign sequence" option before promising frag there.
