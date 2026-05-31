@@ -32,7 +32,7 @@ tracked pass/fail).
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | AR9271 | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ |
 | RTL8187L | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| RTL8188EUS | ✅ | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
+| RTL8188EUS | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ |
 | RTL8821AU | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | RTL8812AU | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
 | RTL8822BU | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ |
@@ -104,10 +104,11 @@ notes below cover the attack columns and any caveats.
 
 | Capability | Status | Date | Details |
 |---|:--:|---|---|
+| Scan | ✅ | 2026-05-31 | Works. Beacon rate looked low — ~6–7/s on a CH1 AP, ~1–3/s on the CH6 dd-wrt box (healthy ~10/s). Different APs/channels, so weaker evidence than the rtw88 cards, but adds to the weak-2.4 GHz-RX question. NB: this is rtl8xxxu, **not** rtw88 — see NEXT-STEPS. |
 | Handshake | ✅ | 2026-05-19 | Passive 4-way captured end-to-end (M1 + M3 + M4 + PMKID-in-M1) from a real client reconnect. |
 | PMKID | ✅ | 2026-05-19 | Active harvest via AUTH+ASSOC injection — instant. |
-| WEP | ⬜ | — | Not run. |
-| WPS | ⬜ | — | Not run. |
+| WEP | ⚠️ | 2026-05-31 | ARP replay ✅. **ChopChop ✗** — stalled at 9/32 bytes; almost certainly the weak RX on the CH6 dd-wrt box (~2–3 beacons/s), since ChopChop works on 4 other cards (not a logic bug). Frag skipped (known sw-seq gap). |
+| WPS | ✅ | 2026-05-31 | PIN brute ✅ and PBC ✅. |
 | Stress | ⬜ | — | Not run. |
 
 → `chips/rtl8188eus/RTL8188EUS.md`

@@ -40,7 +40,12 @@ path (band-switch RX / AGC gain) or an RSSI-calc offset rather than three
 independent bugs. **Disambiguate with a Linux A/B:** run the same card on the
 in-kernel driver at the same spot — normal 2.4 GHz beacon rate / RSSI there means
 it's our port; also-low means hardware/environment. (5 GHz RX is healthy on all
-three.)
+three.) Update 2026-05-31: the RTL8188EUS (rtl8xxxu, **not** rtw88) also showed
+lowish 2.4 GHz beacon rates (~6–7/s on one AP, ~1–3/s on a farther one) — weaker
+evidence (different APs/channels), but if the pattern holds across families it's
+less a shared `rtw88_base` bug and more a general userland-RX sensitivity question
+(or just environment). The Linux A/B is the decider; ideally compare the *same*
+AP.
 
 Family-shared infrastructure (`chips/rtw88_base/`) covers transport, the
 phy_cond walker, power_seq runtime, RF SIPI, TX checksum, RX-desc parser, and
