@@ -1,4 +1,4 @@
-from wifit3.engine.models import AccessPoint, EapolFrame, Handshake
+from wifit3.engine.models import AccessPoint, EapolFrame, Handshake, PersistedCapture
 
 
 def test_access_point_model_defaults():
@@ -28,6 +28,47 @@ def test_wps_pbc_active_detection():
     ap.wps_device_password_id = 0x0004
     ap.wps_selected_registrar = False
     assert ap.wps_pbc_active is False
+
+
+def test_has_psk():
+    """has_psk gates the opportunistic PBC re-invade: true once we hold the
+    passphrase from any source (live PBC/PIN this session, or a prior session's
+    WPS capture on disk) — but a PIN with no PSK does not count."""
+    ap = AccessPoint(bssid="00:11:22:33:44:55")
+    assert ap.has_psk is False                              # nothing yet
+    assert ap.known_psk is None
+
+    # Live PBC win this session.
+    ap.wps_pbc_psk = "hunter2pbc"
+    assert ap.has_psk is True
+    assert ap.known_psk == "hunter2pbc"
+
+    # Live PIN-cracked PSK this session.
+    ap2 = AccessPoint(bssid="00:11:22:33:44:66")
+    ap2.wps_pin_psk = "hunter2pin"
+    assert ap2.has_psk is True
+    assert ap2.known_psk == "hunter2pin"
+
+    # A bare PIN with no recovered PSK does NOT block — PBC still worth running.
+    ap3 = AccessPoint(bssid="00:11:22:33:44:77")
+    ap3.wps_pin = "12345670"
+    assert ap3.has_psk is False
+    assert ap3.known_psk is None
+
+    # A prior session's WPS capture loaded from disk (PBC or PIN file → kind WPS).
+    ap4 = AccessPoint(bssid="00:11:22:33:44:88")
+    ap4.persisted = [PersistedCapture(kind="WPS", timestamp=0, value="diskpsk", path="x_wps_pbc.txt")]
+    assert ap4.has_psk is True
+    assert ap4.known_psk == "diskpsk"
+
+    # Other persisted kinds (HS/PMKID/WEP) are not a PSK → no block.
+    ap5 = AccessPoint(bssid="00:11:22:33:44:99")
+    ap5.persisted = [
+        PersistedCapture(kind="HS", timestamp=0, path="x_handshake.hc22000"),
+        PersistedCapture(kind="WEP", timestamp=0, value="abcde", path="x_wep_key.txt"),
+    ]
+    assert ap5.has_psk is False
+    assert ap5.known_psk is None
 
 
 def _eapol(msg_num: int, replay: int) -> EapolFrame:

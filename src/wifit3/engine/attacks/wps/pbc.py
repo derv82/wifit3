@@ -12,7 +12,6 @@ PROTO_ERROR, and the caller simply retries on the next window.
 
 from __future__ import annotations
 
-import enum
 import logging
 from typing import Optional
 
@@ -21,17 +20,6 @@ from .enrollee import WpsEnrollee
 from .registrar import AttemptOutcome
 
 logger = logging.getLogger(__name__)
-
-
-class PbcArmMode(enum.Enum):
-    """How aggressively the UI auto-invades detected PBC windows."""
-    OFF = "off"            # detect + alert only; never TX
-    SELECTED = "selected"  # auto-invade only the highlighted AP
-    GLOBAL = "global"      # auto-invade any AP that opens a window
-
-    def cycled(self) -> "PbcArmMode":
-        order = (PbcArmMode.OFF, PbcArmMode.SELECTED, PbcArmMode.GLOBAL)
-        return order[(order.index(self) + 1) % len(order)]
 
 
 class PbcWatcher:

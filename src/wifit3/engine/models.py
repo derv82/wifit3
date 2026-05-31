@@ -224,6 +224,25 @@ class AccessPoint(BaseModel):
             and self.wps_device_password_id == 0x0004
         )
 
+    @property
+    def known_psk(self) -> Optional[str]:
+        """The passphrase we hold for this AP from any source — recovered live
+        this session (PBC or PIN) or loaded from a prior session's captures/ WPS
+        file — else None. A WPS PIN on its own (no PSK) does not count; PBC would
+        still be worth running to recover the passphrase."""
+        return (
+            self.wps_pbc_psk
+            or self.wps_pin_psk
+            or next((p.value for p in self.persisted if p.kind == "WPS" and p.value), None)
+        )
+
+    @property
+    def has_psk(self) -> bool:
+        """True once we hold this AP's passphrase (see known_psk). Gates the
+        opportunistic PBC auto-invade so a cracked AP is never re-attacked,
+        across views, restarts, and target switches."""
+        return self.known_psk is not None
+
 class Client(BaseModel):
     """
     Represents a wireless client (e.g., a phone or laptop).

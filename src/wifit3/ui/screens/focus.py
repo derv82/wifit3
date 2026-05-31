@@ -105,9 +105,9 @@ class FocusView(Screen):
         self._wps_campaign: Optional[WpsCampaign] = None
         # WPS PBC auto-capture: while focused on a target, a detected push-button
         # window is grabbed automatically (we're already on-channel and this is
-        # clearly a target of interest). One task at a time; once-per-BSSID.
+        # clearly a target of interest). One task at a time (_pbc_task); re-invade
+        # is gated by ap.has_psk, which persists across target switches + restarts.
         self._pbc_task: Optional[asyncio.Task] = None
-        self._pbc_done: Set[str] = set()
 
     # ----- Compose / mount ---------------------------------------------------
 
@@ -308,7 +308,7 @@ class FocusView(Screen):
         # auto-capture the PSK. We're already on-channel; gated to one attempt at
         # a time, once per BSSID, and only when no other TX activity owns the radio.
         if (ap.wps_pbc_active and not self._pbc_busy()
-                and ap.bssid not in self._pbc_done
+                and not ap.has_psk
                 and self._wep_campaign is None and self._wpa3_down_attack is None
                 and self._wps_campaign is None):
             self._pbc_task = asyncio.create_task(self._auto_capture_pbc(ap))
@@ -876,7 +876,6 @@ class FocusView(Screen):
                 iface, ap, log=lambda m: self._log(treelog.branch(m))
             ).capture()
             if outcome.result is PinResult.SUCCESS:
-                self._pbc_done.add(ap.bssid)
                 ap.wps_pbc_psk = outcome.psk
                 name = escape(outcome.ssid or ap.ssid or ap.bssid)
                 # Match the WPS-PIN success: green "Password for …" branch +
@@ -903,11 +902,12 @@ class FocusView(Screen):
             self._log(treelog.leaf_fail(f"capture error: {escape(str(exc))}"))
 
     def _stop_pbc_capture(self) -> None:
-        """Cancel any running PBC capture + reset per-target dedup."""
+        """Cancel any running PBC capture. Re-invade on a later target is gated
+        by ap.has_psk (which persists across target switches), so there is no
+        per-target dedup state to reset here."""
         if self._pbc_task is not None:
             self._pbc_task.cancel()
             self._pbc_task = None
-        self._pbc_done.clear()
 
     # ----- WPS PIN brute-force campaign --------------------------------------
 

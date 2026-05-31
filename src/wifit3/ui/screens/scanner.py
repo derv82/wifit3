@@ -1,5 +1,6 @@
 import asyncio
 import time
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from textual.app import ComposeResult
@@ -13,11 +14,7 @@ from rich.style import Style
 from rich.text import Span, Text
 
 from wifit3.engine.attacks import treelog
-from wifit3.engine.attacks.wps.pbc import (
-    PbcArmMode,
-    PbcWatcher,
-    WpsPbcCapture,
-)
+from wifit3.engine.attacks.wps.pbc import PbcWatcher, WpsPbcCapture
 from wifit3.engine.attacks.wps.registrar import PinResult
 from wifit3.engine.capture_history import load_capture_index, summarize
 from wifit3.engine.models import AccessPoint, PersistedCapture
@@ -133,12 +130,12 @@ class ScannerView(Screen):
         # captures/ history, loaded once at mount and hydrated onto APs by
         # BSSID so previously-saved handshakes/PMKIDs/WEP keys re-badge.
         self._capture_index: Dict[str, List[PersistedCapture]] = {}
-        # WPS PBC opportunistic capture (press 'w' to cycle off/selected/global).
-        # Detection is always-on + passive; only an armed mode ever transmits.
-        self._pbc_mode: PbcArmMode = PbcArmMode.OFF
+        # WPS PBC auto-invade. ON by default: any AP that opens a push-button
+        # window is auto-captured (unless we already hold its PSK). Press 'w' to
+        # opt out. Detection is always-on + passive; only the invade transmits.
+        self._pbc_enabled: bool = True
         self._pbc_watcher = PbcWatcher()
         self._pbc_capturing = False          # serialize: one invade at a time
-        self._pbc_captured: set = set()      # BSSIDs we've already grabbed the PSK from
 
     # ----- Compose / mount ---------------------------------------------------
 
@@ -175,6 +172,9 @@ class ScannerView(Screen):
             )
             # Passive PBC-window watch (1 Hz is plenty for a ~120s walk window).
             self._pbc_timer = self.set_interval(1.0, self._poll_pbc)
+            # Auto-invade is ON by default — announce it so the active TX is
+            # never a surprise; 'w' opts out (see action_wps_pbc_mode).
+            self._log_pbc_status()
 
     def _load_capture_history(self) -> None:
         """Load captures/ once and log a one-line headline. Silent if empty."""
@@ -611,24 +611,45 @@ class ScannerView(Screen):
     # ----- WPS PBC opportunistic capture -------------------------------------
 
     def action_wps_pbc_mode(self) -> None:
-        """Cycle the PBC auto-invade arming: off → selected → global."""
-        self._pbc_mode = self._pbc_mode.cycled()
-        if self._pbc_mode is PbcArmMode.OFF:
-            self._write_log("[bold][WPS PBC][/bold] auto-invade [yellow]OFF[/yellow] "
-                            "[dim]— detect + alert only, never transmits[/dim]")
-        elif self._pbc_mode is PbcArmMode.SELECTED:
-            self._write_log("[bold][WPS PBC][/bold] auto-invade [cyan]SELECTED[/cyan] "
-                            "[dim]— only the highlighted AP[/dim]")
-        else:
-            self._write_log("[bold][WPS PBC][/bold] auto-invade [red]GLOBAL[/red] "
-                            "[dim]— any AP that opens a push-button window[/dim]")
+        """Toggle WPS PBC auto-invade on/off (ON by default)."""
+        self._pbc_enabled = not self._pbc_enabled
+        self._log_pbc_status()
+        if self._pbc_enabled:
+            self._arm_open_windows()
 
-    def _selected_bssid(self) -> Optional[str]:
-        try:
-            table = self.query_one("#ap-table", DataTable)
-            return table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
-        except Exception:
-            return None
+    def _arm_open_windows(self) -> None:
+        """React to PBC windows that are *already* open at the instant we arm.
+        PbcWatcher consumed their False->True edge while we were OFF, so
+        _poll_pbc won't re-fire them — without this, pressing 'w' mid-window does
+        nothing (and says nothing) until the window closes and re-opens. For each
+        open window: announce the ones we already own (so the press isn't a
+        silent no-op), and invade the first one we don't (one-at-a-time; the poll
+        loop catches any later edges)."""
+        iface = self.app.active_interface
+        if not iface:
+            return
+        launched = self._pbc_capturing
+        for ap in iface.get_access_points():
+            if not ap.wps_pbc_active:
+                continue
+            if ap.has_psk:
+                ssid = escape(ap.ssid or ap.bssid)
+                self._write_log(f"  [dim]({ssid} already captured, PSK: [bold]{escape(ap.known_psk or '?')}[/bold])[/dim]")
+            elif not launched:
+                launched = True
+                self._on_pbc_window(ap)
+
+    def _log_pbc_status(self) -> None:
+        """One-line WPS PBC auto-invade state, shared by startup + the 'w' toggle."""
+        if self._pbc_enabled:
+            self._write_log(
+                "[bold cyan]WPS PushButton [italic]auto-invade:[/italic][/bold cyan] "
+                "[bold green]enabled[/bold green] [dim](retrieves PSK when "
+                "[italic]any[/italic] WPS button is pressed)[/dim]")
+        else:
+            self._write_log(
+                "[bold cyan]WPS PushButton [italic]auto-invade:[/italic][/bold cyan] "
+                "[yellow]disabled[/yellow] [dim](detect + alert only, never transmits)[/dim]")
 
     def _poll_pbc(self) -> None:
         iface = self.app.active_interface
@@ -640,15 +661,19 @@ class ScannerView(Screen):
     def _on_pbc_window(self, ap: AccessPoint) -> None:
         label = escape(ap.ssid or ap.bssid)
         # Header (tree root) for this window.
-        self._write_log(f"[bold cyan]WPS PushButton:[/bold cyan] [bold green]Window Open[/bold green] "
-                        f"on [bold]{label}[/bold] [dim](CH {ap.channel})[/dim]")
-        if self._pbc_mode is PbcArmMode.OFF:
-            self._write_log(treelog.leaf("[dim]press [bold]w[/bold] to arm auto-capture[/dim]"))
+        self._write_log(
+            f"[bold cyan]WPS PushButton [italic]auto-invade:[/italic][/bold cyan] "
+            f"[bold green]Open Window[/bold green] on [bold]{label}[/bold] "
+            f"[dim](CH {ap.channel})[/dim]")
+        if not self._pbc_enabled:
+            self._write_log(treelog.leaf("[dim]auto-invade off — press [bold]w[/bold] to enable[/dim]"))
             return
-        if self._pbc_mode is PbcArmMode.SELECTED and ap.bssid != self._selected_bssid():
-            self._write_log(treelog.leaf("[dim](not the selected AP — skipping)[/dim]"))
+        if ap.has_psk:
+            wps = next((p for p in ap.persisted if p.kind == "WPS" and p.value), None)
+            where = f" [dim]({escape(Path(wps.path).name)})[/dim]" if wps else ""
+            self._write_log(treelog.leaf(f"[italic]already captured[/italic]{where}"))
             return
-        if self._pbc_capturing or ap.bssid in self._pbc_captured:
+        if self._pbc_capturing:
             return
         asyncio.create_task(self._invade_pbc(ap))
 
@@ -673,7 +698,6 @@ class ScannerView(Screen):
                 iface, ap, log=lambda m: self._write_log(treelog.branch(m))
             ).capture()
             if outcome.result is PinResult.SUCCESS:
-                self._pbc_captured.add(ap.bssid)
                 ap.wps_pbc_psk = outcome.psk
                 name = escape(outcome.ssid or ap.ssid or ap.bssid)
                 self._write_log(treelog.branch_ok(

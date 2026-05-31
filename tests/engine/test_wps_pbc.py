@@ -1,19 +1,12 @@
-"""Tests for the PBC arming mode + window-edge watcher + credential save."""
+"""Tests for the PBC window-edge watcher + credential save."""
 
 from types import SimpleNamespace
 
-from wifit3.engine.attacks.wps.pbc import PbcArmMode, PbcWatcher
+from wifit3.engine.attacks.wps.pbc import PbcWatcher
 
 
 def _ap(bssid, active):
     return SimpleNamespace(bssid=bssid, wps_pbc_active=active)
-
-
-def test_arm_mode_cycles():
-    m = PbcArmMode.OFF
-    m = m.cycled(); assert m is PbcArmMode.SELECTED
-    m = m.cycled(); assert m is PbcArmMode.GLOBAL
-    m = m.cycled(); assert m is PbcArmMode.OFF
 
 
 def test_watcher_edge_triggers_once_per_window():

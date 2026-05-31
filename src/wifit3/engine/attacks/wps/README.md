@@ -404,7 +404,7 @@ P1–P3 are engine + offline-testable + one button-press. P4–P5 are UI/orchest
   `WpsPbcCapture` → resumes. Focus auto-captures a window on its target (already
   on-channel; gated to one attempt, once per BSSID, and only when no other TX
   activity owns the radio). Recovered PSK stored on the AP + saved to
-  `captures/<ssid>_<bssid>_<ts>.wps`. PbcWatcher/PbcArmMode/save unit-tested;
+  `captures/<ssid>_<bssid>_<ts>.wps`. PbcWatcher/save unit-tested;
   the Textual wiring needs a live run to confirm.
 - **P6 (ethics/eligibility pass) remains** — global auto-invade grabs bystanders'
   PSKs; revisit before release (PRE-RELEASE).
