@@ -20,14 +20,15 @@ inject + sniff, wired into the TUI. See each chip's `<CHIP>.md` for detail.
 | Realtek RTL8814AU | `chips/rtw88_8814au/` | 2.4 / 5 (4T4R) |
 | Mediatek MT7610U | `chips/mt76x0u/` | 2.4 / 5 (1T1R) |
 | Mediatek MT7612U | `chips/mt76x2u/` | 2.4 / 5 (2T2R) |
-| Ralink RT2800USB (RT5372 / RT3572 / RT5572) | `chips/rt2800usb/` | 2.4 / (5 on RT3572, RT5572) |
+| Ralink RT2800USB (RT5372 / RT5572) | `chips/rt2800usb/` | 2.4 / (5 on RT5572) |
 | Ralink RT2500USB / RT2570 | `chips/rt2500usb/` | 2.4 |
 
-The RT3572 test unit (AWUS051NH v2) has an **erased EFUSE**: TX is
-hardware-limited (~20/40 deauths on-air, no factory RF cal) and the
-driver is faithful — a properly-burned RT3572 is unaffected. End-to-end
-handshake/PMKID capture on this unit isn't validated yet (under
-investigation, likely a frame-parser issue). See
+**RT3572 demoted to unsupported (2026-05-31).** The only test unit
+(ALFA AWUS051NH v2, bought 2015) turned out to be **counterfeit with a blank
+EFUSE** — so it can't validate the chipset, and TX/RX are crippled by the missing
+factory RF cal. The `chips/rt2800usb/` driver itself stays supported (verified
+faithful on its RT5372 + RT5572 siblings); this is the *unit*, not the port. See
+"Broken / paused" below + the blank-EEPROM-override idea, and
 `chips/rt2800usb/RT2800USB.md` § "RT3572 unburned-EFUSE behaviour".
 
 **Possible cross-rtw88 2.4 GHz RX weakness (investigate).** Hardware testing
@@ -61,6 +62,19 @@ legacy MCUFWDL FW upload — shared by the 88xxA (8821a/8812a), 8822b, and 8814a
 
 ## Broken / paused
 
+- **Ralink RT3572 (ALFA AWUS051NH v2) — counterfeit test unit, demoted from
+  supported (2026-05-31).** The only unit on hand is a counterfeit with a **blank
+  EFUSE** (no factory RF calibration): the driver runs its normal init over
+  uncalibrated silicon → forced 1T1R, rx-filter cal loop rails to a non-physical
+  value, TX power stuck at the low fallback → weak, unstable TX/RX. There may not
+  even be a genuine RT3572 die inside. The `chips/rt2800usb/` driver is verified
+  faithful (green/partial on RT5372 + RT5572), so this is the unit, not the port.
+  **To re-promote: acquire a genuine RT3572 and re-run the matrix**, OR land the
+  blank-EEPROM override below (which may partially rescue *this* unit and is the
+  real fix for genuine cards that ship blank). Findings kept in
+  `VERIFICATION.md` § "Unsupported — pending genuine hardware" +
+  `chips/rt2800usb/RT2800USB.md` § "RT3572 unburned-EFUSE behaviour".
+
 - **Mediatek MT7921AU (AWUS036AXML) — paused, possibly a Linux dead-end.** The
   unit **never enumerated on Kali** (USB-2, USB-3, powered hub — no iface, no
   `phy`), so our airmon+usbmon ground-truth method is unavailable. It *does*
@@ -71,6 +85,49 @@ legacy MCUFWDL FW upload — shared by the 88xxA (8821a/8812a), 8822b, and 8814a
   libusb async URB port (`libusb_submit_transfer`, pre-submit ~32 URBs/EP). First
   re-confirm the hardware enumerates at all before sinking more time in. See
   `chips/mt7921au/MT7921AU.md` + `chips/mt7921au/KALI-HANDOFF-2026-05-19.md`.
+
+## Blank-EEPROM override (rt2800usb — RT3572 rescue + no-EFUSE cards)
+
+**Idea:** when a card's EFUSE/EEPROM reads blank, substitute a known-good
+512-byte image into the *in-RAM* parsed struct so the chip is configured from
+sane values instead of all-`0xFF`. Subsumes the deferred "93C66 EEPROM fallback"
+item in `RT2800USB.md` — same need (no usable on-chip config), one mechanism.
+
+**Soft override only — never burn fuses.** EFUSE is one-time-programmable (bits
+blow `0→1`, permanently, vendor tooling); a wrong burn bricks the card or sets an
+illegal RF/regulatory state with no undo. We do **not** write hardware. We only
+replace the values the driver reads into RAM at init (`efuse.py` already parses
+the EFUSE into a struct — feed it our image instead when blank). Fully reversible,
+zero risk.
+
+**Design (discuss class shape with lead before coding):** an `EepromOverride`
+source in `efuse.py` — detect blank (identity programmed but RF/cal region `0xFF`,
+`NIC_CONF0 == 0`), load a 512-byte image, and produce the *same* `EepromValues`
+the normal parser yields. Gate behind an **explicit flag/CLI opt-in** so it never
+silently fakes calibration on a healthy card — surfacing fake cal as real is worse
+than a known-weak card. Image provenance: kernel `rt2800` defaults, or a dump from
+a genuine RT3572 if one is ever acquired.
+
+**Honest expectations (it's a gamble, but the feature is worth it regardless):**
+- **TX should improve** — power is stuck at the low fallback (`RFCSR12=0x6b`, max
+  attenuation) *because* the EFUSE reads blank; a good image with real
+  `default_power` lifts it. Clear potential win.
+- **Per-unit RF cal can't be faked** — crystal/freq trim + power cal are measured
+  per individual card at the factory. A generic image is *better than blank* but
+  has the wrong trim for this die; on counterfeit silicon those values were never
+  measured and don't exist to copy.
+- **RX is the open question** — the rx-filter cal is a *runtime* loopback sweep
+  (RFCSR24/BBP55), not an EFUSE value, and it **rails** on this unit. Either (A)
+  the blank EFUSE mis-configures the front-end earlier in init → loopback dies →
+  rail (a good image might revive RX), or (B) the counterfeit front-end is just
+  bad and no image helps. Unknown until tested.
+- **Worst case:** counterfeit silicon doesn't respond and nothing changes. No
+  software fixes fake hardware.
+
+**Experiment:** inject a plausible image into the RAM struct on the RT3572, A/B
+the beacon rate + deauth strength vs blank. Low cost, real learning; builds the
+genuine-no-EFUSE-card feature either way. If it meaningfully rescues the unit,
+re-run the matrix and reconsider the demotion.
 
 ## Bringing up the next card
 
