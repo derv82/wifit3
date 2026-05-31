@@ -30,6 +30,18 @@ handshake/PMKID capture on this unit isn't validated yet (under
 investigation, likely a frame-parser issue). See
 `chips/rt2800usb/RT2800USB.md` § "RT3572 unburned-EFUSE behaviour".
 
+**Possible cross-rtw88 2.4 GHz RX weakness (investigate).** Hardware testing
+shows weaker-than-expected 2.4 GHz reception on multiple rtw88-family cards:
+RTL8814AU (severe — 0.5–2 beacons/s vs ~10/s on 5 GHz), RTL8821AU (~7/s for a
+close router), and RTL8822BU (a 5 GHz AP at −50 dBm but a 2.4 GHz AP at −81 dBm
+at the same spot — ~31 dB, backwards from physics since 2.4 GHz should carry
+*better*). All three share `chips/rtw88_base/`, so suspect a shared 2.4 GHz RX
+path (band-switch RX / AGC gain) or an RSSI-calc offset rather than three
+independent bugs. **Disambiguate with a Linux A/B:** run the same card on the
+in-kernel driver at the same spot — normal 2.4 GHz beacon rate / RSSI there means
+it's our port; also-low means hardware/environment. (5 GHz RX is healthy on all
+three.)
+
 Family-shared infrastructure (`chips/rtw88_base/`) covers transport, the
 phy_cond walker, power_seq runtime, RF SIPI, TX checksum, RX-desc parser, and
 legacy MCUFWDL FW upload — shared by the 88xxA (8821a/8812a), 8822b, and 8814a.

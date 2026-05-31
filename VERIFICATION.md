@@ -35,7 +35,7 @@ tracked pass/fail).
 | RTL8188EUS | ✅ | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
 | RTL8821AU | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | RTL8812AU | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| RTL8822BU | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| RTL8822BU | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ |
 | RTL8814AU | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ |
 | MT7612U | ✅ | ✅ | ✅ | ⬜ | ⚠️ | ⬜ | ⬜ |
 | MT7610U | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -57,9 +57,12 @@ A chipset carries a `*` in the README's supported-hardware table when it has a
 hop-death, an unburned-EFUSE test unit, partial-direction capture). A ⚠️ that
 only reflects **incomplete attack-suite coverage** (the attack works where it
 was run, just not fully exercised on that card) does **not** asterisk — the card
-is fine, the testing is simply unfinished.
+is fine, the testing is simply unfinished. Neither do known **shared / cross-card
+issues tracked centrally** (the fragmentation sw-seq gap, the 2.4 GHz-RX
+investigation, the WinUSB warm-reattach replug) — those affect the family, not
+one card, so they don't single a card out.
 
-Asterisked today: **RTL8812AU, RTL8822BU, RT2800USB, RT2500USB**.
+Asterisked today: **RTL8812AU, RT2800USB, RT2500USB**.
 
 Note for README readers: the *absence* of an asterisk means "no known problem,"
 **not** "every attack verified" — check this matrix for the full per-attack
@@ -140,11 +143,12 @@ notes below cover the attack columns and any caveats.
 
 | Capability | Status | Date | Details |
 |---|:--:|---|---|
-| Handshake | ✅ | 2026-05-31 | Captured via deauth (full M1–M4; earlier 3/3-completion run 2026-05-25). |
-| PMKID | ✅ | 2026-05-31 | Both paths: active extract (the "PMKID" button) **and** passive capture (alongside the deauth handshake). |
-| WEP | ⚠️ | 2026-05-31 | ARP replay ✅ and ChopChop ✅ tested working. **Fragmentation ❌ — does not successfully forge/seed the ARP** (suspected bug). Notable: frag was verified on RTL8821AU, so this is likely a chip-specific sw-seq/oracle divergence on the 8822bu. |
+| Scan | ⚠️ | 2026-05-31 | 2.4 GHz RX looks weak: a 5 GHz AP read −50 dBm but a 2.4 GHz AP read −81 dBm at the same spot (~31 dB gap — backwards from physics; 2.4 GHz should carry *better*). Third rtw88 card to show this (with 8814au, 8821au) → cross-rtw88 2.4 GHz RX item in NEXT-STEPS. Could be real 2G sensitivity or a 2G RSSI-calc offset; the Linux A/B test disambiguates. Scanning still works. |
+| Handshake | ✅ | 2026-05-31 | Captured via deauth (M2+M3 / full M1–M4; earlier 3/3-completion run 2026-05-25). |
+| PMKID | ✅ | 2026-05-31 | Both paths: active extract (the "PMKID" button) and passive capture. |
+| WEP | ⚠️ | 2026-05-31 | Replay ✅ and ChopChop ✅ (re-confirmed). **Fragmentation ✗** — the cross-card sw-seq gap (this card lacks `SUPPORTS_SW_SEQ`; see WEP README § "Known issue"), not a seed/oracle bug. Frag skipped from here on by decision. |
 | WPS | ✅ | 2026-05-31 | PIN brute ✅ and PBC auto-invade ✅, against a WPS test AP. |
-| Stress | ⚠️ | 2026-05-31 | Attacks worked in-session, but **warm reattach on restart fails**: bulk-IN wedges (no frames in 1500 ms), unrecoverable in userland on Windows/WinUSB → user must unplug/replug. This is the *designed* warm-reattach fallback firing (it detects the wedge and asks for a replug), and is likely not 8822bu-specific. Not a clean 1-hour soak result. |
+| Stress | ⬜ | 2026-05-31 | No dedicated 1-hour soak yet (re-test: "nothing to report"). *Separately*, an earlier session hit a **warm-reattach wedge on restart** (bulk-IN wedged → replug) — a general Windows/WinUSB restart limit, not a soak result, tracked in the chip doc + NEXT-STEPS § Small bugs/QoL. That's why this cell was orange before; moved here since it isn't a stress result. |
 
 → `chips/rtl8822bu/RTL8822BU.md`
 
