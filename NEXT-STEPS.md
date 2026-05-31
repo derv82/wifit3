@@ -123,6 +123,44 @@ WEP suite scoped in `src/wifit3/engine/attacks/wep/README.md`. Status of the res
 
 ## Planned features
 
+### Multi-card support (big swing — the "we COULD do this" idea)
+
+Run 2+ USB cards concurrently in one wifit3 session, pooling their RX (and
+splitting their TX). The point isn't that it's easy — it's that it's *possible*,
+because the drivers were built generic from day one (`WlanDriver` Protocol, no
+global state assumed). The substrate is already there; what's missing is making
+the layer ABOVE the driver multi-instance-safe.
+
+The vision:
+- **Pooled RX.** Two cards → ~2× the beacons/EAPOL/IVs; handshake capture can
+  land on whichever card hears the client. The Scanner shows the *union* of APs
+  from all cards.
+- **Hot-plug.** Plug in a second (even shitty) card *while wifit3 is running* and
+  watch its APs merge into the live list. Unplug → its contribution drains out,
+  session keeps going.
+- **Coordinated channel strategy.** Split the channel set across cards (card A
+  does 1–6, card B does 7–13) so each hops less and dwells longer — fewer missed
+  frames. Or pin one card to a target's channel while another keeps scanning.
+- **TX/RX split.** Dedicate one card to injection (deauth/replay) and another to
+  pure RX, so we never miss the handshake our own deauth provoked (today the
+  half-duplex radio can't TX and RX the same instant).
+- **Multi-target attacks.** One card per target, attacking several APs at once.
+
+Why it's a huge undertaking: nearly everything stateful today implicitly assumes
+*one* card — channel hopping, the AP/Client registry, the per-attack campaigns,
+the RX reader thread, the UI's "the interface." Multi-card means lifting all of
+that into runtime-safe, multi-instance components with a coordinator above them
+that merges their AP/Client views, arbitrates channel plans, and routes TX to
+the right card. `WlanInterface` becomes one-per-card; a new orchestrator owns the
+fleet + the merged model the UI renders. Hot-plug adds dynamic add/remove of a
+card mid-session (USB enumeration watcher → spin up/tear down an interface +
+its hopper without disturbing the others).
+
+Not scoped, not soon — recorded because the architecture genuinely permits it and
+it would be a standout feature. Prereq-ish: the `WlanDeviceManager` already does
+generic VID:PID discovery, so multi-device *enumeration* is mostly there; the
+work is everything downstream of "I have N interfaces" being singular today.
+
 ### User persistence + decloak DB
 
 A shared storage layer for three concerns (likely a full session of work):
