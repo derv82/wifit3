@@ -28,6 +28,7 @@ from wifit3.engine.attacks.wps.registrar import PinResult
 
 from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind
 from ..capture_log import eapol_message_markup, short_sta
+from ..widgets.packet_dashboard import PacketDashboard
 from ..encryption_format import (
     format_encryption_markup,
     format_pmf_markup,
@@ -198,6 +199,12 @@ class FocusView(Screen):
                             Label(id="lbl-replay"),
                             classes="info-box", id="panel-capture",
                         )
+                        # Live packet dashboard — fills the dead space right of
+                        # CAPTURE on a wide terminal (collapses on a narrow one).
+                        # Wrapped like SECURITY/CAPTURE so its title bar matches.
+                        with Vertical(classes="info-box", id="panel-activity-box"):
+                            yield Label("PACKET ACTIVITY", classes="panel-title")
+                            yield PacketDashboard(id="panel-activity")
                     # The stretchy panel — fills the rest of the right column.
                     with Vertical(classes="info-box", id="event-log-panel"):
                         yield Label("EVENT LOG", classes="panel-title")
@@ -246,6 +253,17 @@ class FocusView(Screen):
         # it's a ├─► branch and the tune line closes the group. Keeps the tree
         # leaf-terminated on both paths (RichLog is append-only — no rewrites).
         iface = getattr(self.app, "active_interface", None)
+        # Point the packet dashboard at this target (clears its per-class
+        # windows so they never bleed across targets). Idle/dim if no iface.
+        # WEP-IV row is for WEP targets, EAPOL row for WPA/WPA2/WPA3 (anything
+        # that isn't WEP or OPEN); update_ui re-evaluates this live in case the
+        # encryption label upgrades after focus.
+        enc = (self.target_ap.encryption or "").upper()
+        self.query_one("#panel-activity", PacketDashboard).focus_on(
+            iface, self.target_ap.bssid,
+            show_wep=enc == "WEP",
+            show_eapol=enc not in ("WEP", "OPEN", ""),
+        )
         bssid_line = f"[dim]BSSID:[/dim] [white]{self.target_ap.bssid}[/white]"
         if iface:
             self._log(treelog.branch(bssid_line))
@@ -302,7 +320,15 @@ class FocusView(Screen):
             return
 
         ap = self.target_ap
-        is_wep = (ap.encryption or "").upper() == "WEP"
+        enc = (ap.encryption or "").upper()
+        is_wep = enc == "WEP"
+
+        # Keep the packet-dashboard's encryption-gated rows in sync — the label
+        # can upgrade after focus (provisional WEP → WPA2 on a weak radio).
+        # Cheap: a no-op unless the gates actually changed.
+        self.query_one("#panel-activity", PacketDashboard).set_gates(
+            show_wep=is_wep, show_eapol=enc not in ("WEP", "OPEN", ""),
+        )
 
         # Opportunistic WPS PBC: if a push-button window opens on this target,
         # auto-capture the PSK. We're already on-channel; gated to one attempt at

@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import List, Optional, Callable, Any, Dict, Set
 
 from wifit3.engine.models import AccessPoint, Client, Handshake, EapolFrame
+from wifit3.wlan.packet import WlanFrameParser
+from wifit3.wlan.packet_stats import PacketStats
 from wifit3.wlan.wep_store import WepCaptureStore
 
 logger = logging.getLogger(__name__)
@@ -104,6 +106,10 @@ class WlanInterface:
         # every WEP-encrypted Data frame; updates AccessPoint.wep counters.
         self.wep_store = WepCaptureStore()
 
+        # Per-(bssid, class) frame counters for the Focus live packet dashboard.
+        # RX bumped in _on_frame_parsed, TX bumped in send_raw; read-only meter.
+        self.packet_stats = PacketStats()
+
         # MACs we forged for our own active attacks (e.g. PMKID harvest).
         # Frames addressed to these MACs come from the AP, but they aren't
         # "real clients" — skip client registration and don't append EAPOL
@@ -160,7 +166,11 @@ class WlanInterface:
 
         if not bssid or bssid == "Unknown" or bssid == "ff:ff:ff:ff:ff:ff":
             return
-        
+
+        # Live packet dashboard — count every received frame against its AP by
+        # class (no-op for untracked types). Cosmetic + best-effort.
+        self.packet_stats.record_rx(bssid, frame_type)
+
         # We primarily build APs from beacons and probe responses
         if frame_type in ("beacon", "probe_resp"):
             ssid = parsed.get("ssid")
@@ -533,6 +543,8 @@ class WlanInterface:
         fragmentation attack checks ``supports_sw_seq`` before relying on it.
         """
         if hasattr(self.driver, 'inject_frame'):
+            # Live packet dashboard — tally this inject (deauth vs other) by AP.
+            self._record_tx(frame_bytes)
             # Only pass sw_seq to drivers that advertise support — others'
             # inject_frame has no such parameter and would raise. Callers that
             # NEED software seq must gate on supports_sw_seq first.
@@ -543,6 +555,21 @@ class WlanInterface:
             return await self.driver.inject_frame(frame_bytes, use_no_ack)
         logger.warning(f"Driver for {self.name} does not support injection.")
         return False
+
+    def _record_tx(self, frame_bytes: bytes) -> None:
+        """Classify an outgoing frame for the packet dashboard. Reuses the RX
+        parser so the BSSID is derived the same way the meter's RX side does
+        (deauth → red DEAUTH line, everything else → orange INJECT). Wrapped —
+        a malformed inject must never break TX over a cosmetic counter."""
+        try:
+            parsed = WlanFrameParser.parse_80211_frame(frame_bytes, 0)
+            if not parsed:
+                return
+            bssid = parsed.get("bssid")
+            if bssid and bssid not in ("Unknown", "ff:ff:ff:ff:ff:ff"):
+                self.packet_stats.record_tx(bssid, parsed.get("type") == "deauth")
+        except Exception:
+            pass
 
     @property
     def supports_sw_seq(self) -> bool:

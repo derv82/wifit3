@@ -17,6 +17,8 @@ subprocesses, no Scapy — so it runs the same on **Linux and Windows**.
 - **PMKID** — passive capture and active harvest, saves as HashCat .hc22000 files.
 - **WPS vectors**: Passive/active PushButton invasion, resumable brute-force sessions.
 - **WEP suite** — ARP replay, ChopChop, fragmentation, fake auth, PTW key recovery.
+- **Live packet dashboard** — real-time per-class sparklines (beacons, data, injects,
+  deauths) for the focused target.
 - **Cross-platform** — one codebase on Linux and Windows.
 
 ## Screenshots

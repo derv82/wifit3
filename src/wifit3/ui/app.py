@@ -115,6 +115,14 @@ class WifiteApp(App):
     #top-right { height: 8; }
     #panel-security { width: 38; }
     #panel-capture  { width: 38; }
+    /* Live packet dashboard fills the dead space right of CAPTURE. Bordered +
+       titled like SECURITY/CAPTURE; 1fr + min-width:0 lets it claim leftover
+       width on a wide terminal and collapse toward nothing on a narrow one.
+       Now fits the 8-tall row: border(2) + title(1) + ≤5 class rows (beacon,
+       data, one of wep-iv/eapol, inject, deauth — the two are encryption-
+       gated so never both show). */
+    #panel-activity-box { width: 1fr; min-width: 0; }
+    #panel-activity { height: 1fr; }
     #event-log-panel { height: 1fr; }
     #focus-event-log { height: 1fr; border: none; }
     /* ESSID chip reads like a centered subtitle under the TARGET INFO title
