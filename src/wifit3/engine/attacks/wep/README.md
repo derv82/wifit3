@@ -280,8 +280,54 @@ decides on its own is *success* (→ resume replay), because that's unambiguous;
 
 ### File status
 
-`wep_crypto.py` + `fragmentation.py` are implemented + tested + hardware-verified.
-`chopchop.py` is implemented + tested + wired (campaign + Focus "Chop" toggle);
-its oracle is hardware-verified (probe), the daemon itself is PENDING a live
-end-to-end run. So the whole WEP suite (M1–M7) is built — only ChopChop's
-end-to-end hardware run remains to call M6 done.
+`wep_crypto.py` + `fragmentation.py` + `chopchop.py` are all implemented + tested
++ wired (campaign + Focus toggles). Hardware status (2026-05-31, see the known
+issue below):
+- **ARP replay** — works on every card tried.
+- **ChopChop** — daemon now confirmed end-to-end on RTL8812AU, RTL8822BU, and
+  AR9271 (the earlier "PENDING a live run" note is resolved — M6 done).
+- **Fragmentation** — works on the RTL8821AU (its dev card) but **fails on
+  RTL8812AU / RTL8822BU / AR9271** ("seed wouldn't relay"). Open — see below.
+
+## Known issue — Fragmentation works only on the RTL8821AU (2026-05-31)
+
+ARP replay and ChopChop work on every card tested, but **Fragmentation forging
+fails on every card except the RTL8821AU** (the card it was developed on):
+
+| Card | Family | Replay | ChopChop | Fragmentation |
+|---|---|:--:|:--:|:--:|
+| RTL8821AU | Realtek rtw88xxa | ✅ | ✅ | ✅ |
+| RTL8812AU | Realtek rtw88xxa | ✅ | ✅ | ✗ |
+| RTL8822BU | Realtek rtw88 (8822b) | ✅ | ✅ | ✗ |
+| AR9271 | Atheros ath9k_htc | ✅ | ✅ | ✗ |
+
+Symptom: the fragment burst goes out but the AP's reassembled relay never appears
+("seed wouldn't relay"); replay + ChopChop (both single-frame, no shared
+sequence) work on the same cards and APs.
+
+Because the failure spans **three chip families** and only the dev card succeeds,
+the earlier "per-chip TX sw-seq" guess is weakened — suspicion shifts to the
+**shared frag daemon** (`fragmentation.py`) or an assumption that only holds on
+the 8821au. Candidates:
+
+- **Seed selection by packet length / type** (lead's hypothesis). The daemon
+  seeds keystream from a captured WEP data frame chosen by length + ethertype
+  (0x0800 then 0x0806). If that selection is too narrow — or assumes a length
+  that only matched the 8821au's test environment — the wrong/short seed yields a
+  burst the AP won't reassemble.
+- **Shared software sequence across the burst.** Fragments must carry one shared
+  seq so the AP reassembles them. AR9271 has no rtw88 `en_hwseq` concept at all,
+  so if the daemon leans on a Realtek-specific sw-seq path, AR9271 can't satisfy
+  it — but that alone wouldn't explain 8812au/8822bu. Confirm each driver's
+  data-frame TX path actually applies one shared seq across the burst.
+- **Oracle matching.** The relay may occur but not match the pinned oracle
+  signature (FromDS+Protected, DA=broadcast, Addr3=our SA, fresh IV) on these
+  cards' RX descriptors.
+
+Note: the existing "sequence not supported" warning is meant to flag *other
+rt2800usb cards* — a different path; don't conflate it with this.
+
+**Disambiguating probe:** run `scripts/wep/frag_probe.py` on a failing card (e.g.
+8812au) against the dd-wrt box and dump every RX frame. Either no relay appears
+(reassembly/seq/seed problem) or a relay appears but the oracle misses it
+(matching problem) — that one run splits the top candidates.

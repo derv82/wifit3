@@ -54,15 +54,14 @@ Full attack pass on the AWUS036ACH (matrix cells in `VERIFICATION.md`):
 - **WEP** — Replay ✅; ChopChop ✅ (<2 min); **Fragmentation ✗** — could not forge
   a valid ARP after ~2 min of rounds.
 
-**Fragmentation lead (cross-card pattern).** Frag forging also fails on the
-RTL8822BU but **works on the RTL8821AU**. The 8821au frag fix was `en_hwseq=0`
-(software sequence) in its `build_tx_desc_data`, so the AP reassembles the
-fragment burst under one shared seq (`engine/attacks/wep/README.md`). The frag
-daemon (`engine/attacks/wep/fragmentation.py`) is shared, but each chip builds
-its own TX descriptor — so check whether this chip's data-frame TX desc applies
-the same shared sw-seq across the fragment burst, or whether a 2T2R/queue
-difference breaks reassembly. Replay + ChopChop work (single frames, no shared
-seq needed), which is consistent with a fragment-sequence-specific gap.
+**Fragmentation lead (cross-family pattern).** Frag forging fails here, on the
+RTL8822BU, and on the AR9271 — three different chip families — and works only on
+the RTL8821AU (its dev card). Because it spans families, the leading suspect is
+now the **shared frag daemon** (seed-selection-by-length / oracle matching / the
+sw-seq it assumes), not this chip's TX desc alone. Full analysis + the
+disambiguating probe live in `engine/attacks/wep/README.md` § "Known issue —
+Fragmentation works only on the RTL8821AU." Replay + ChopChop (single-frame) work
+here, consistent with a fragment-sequence-or-seed-specific gap.
 
 **Scan/UI note.** When channel-hop wedges the RX (the hop-death above), the
 Scanner gives no feedback — targets fade to dark then the list empties, no

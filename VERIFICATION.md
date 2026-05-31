@@ -30,7 +30,7 @@ tracked pass/fail).
 
 | Chipset | Scan | Deauth | Handshake | PMKID | WEP | WPS | Stress |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| AR9271 | ✅ | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
+| AR9271 | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ |
 | RTL8187L | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | RTL8188EUS | ✅ | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
 | RTL8821AU | ✅ | ✅ | ✅ | ⬜ | ⚠️ | ⚠️ | ⬜ |
@@ -79,9 +79,9 @@ notes below cover the attack columns and any caveats.
 |---|:--:|---|---|
 | Handshake | ✅ | 2026-05-25 | Full M1–M4, warm + cold. The QoS DMA-pad FCS bug (all M1–M4 are QoS) is fixed. |
 | PMKID | ✅ | 2026-05-25 | First-try on cold boot after the DATA-EP credit-seed fix; verified vs real APs. |
-| WEP | ⬜ | — | Not run on this card. |
-| WPS | ⬜ | — | Not run on this card. |
-| Stress | ⬜ | — | A 1,094-pkt calibration marathon ran clean, but no attack-soak endurance test. |
+| WEP | ⚠️ | 2026-05-31 | Replay ✅; ChopChop ✅; **Fragmentation ✗** — "seed wouldn't relay", cancelled after 60 s. Same failure as 8812au/8822bu (a different family from this Atheros card) — see the cross-family frag issue in `engine/attacks/wep/README.md`. |
+| WPS | ✅ | 2026-05-31 | PIN brute ✅ and PBC ✅. |
+| Stress | ⬜ | — | Untested (nothing notable in brief use). A 1,094-pkt calibration marathon ran clean, but no attack-soak endurance test. |
 
 → `chips/ar9271/AR9271.md`
 
