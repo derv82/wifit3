@@ -463,6 +463,32 @@ Confirmed empirically — real busy-wait settles changed the cal readings
 by exactly zero. Don't chase settle timing as a cause of RF misbehaviour
 here.
 
+### Attack-stack hardware results (2026-05-31) — match the EFUSE prediction
+
+A full attack pass produced exactly the weak-TX/RX signature the erased EFUSE
+predicts (matrix cells in `VERIFICATION.md`):
+
+- **Scan** ✅ but weak — ~8 beacons/s from an AP a few feet away (~10/s healthy).
+- **Deauth** — knocked *something* off, too weak to deauth a phone beside the radio.
+- **Handshake** — partial (M1+M4) capture, weak.
+- **PMKID** — passive capture works; the active "PMKID" button does not (can't
+  elicit M1 — weak TX).
+- **WEP** — ARP replay ✅; Fragmentation ✅ (slow, many failed rounds); ChopChop
+  ✗ (stalled at 22/32 bytes). FakeAuth bounced Associated↔Idle with errors.
+- **WPS** — PBC timed out; PIN got 2 NACKs + 1 no-response (talking, unreliable).
+
+All consistent with the missing factory RF cal — not new bugs. The
+railing-low-vs-high rx-filter cal is already investigated and is not the lever
+(above). These attacks can't be cleanly verified on this unit; that needs a
+properly-burned RT3572.
+
+**One observation NOT explained by the EFUSE — a possible Focus-entry tune bug:**
+entering Focus on a CH1 AP once showed 0 beacons; exiting to Scanner and
+re-entering Focus on the same AP then showed ~8 beacons/s. Looks like the channel
+set on Focus entry didn't take the first time (a re-tune fixed it) — a real bug
+independent of RF calibration, if it reproduces. Single observation on a flaky
+unit; confirm on a healthy card before chasing.
+
 ---
 
 ## Deferred (post-feature-complete polish)

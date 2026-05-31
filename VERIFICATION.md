@@ -39,8 +39,16 @@ tracked pass/fail).
 | RTL8814AU | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 | MT7612U | ✅ | ✅ | ✅ | ⬜ | ⚠️ | ⬜ | ⬜ |
 | MT7610U | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| RT2800USB | ✅ | ✅ | ⚠️ | ⬜ | ⬜ | ⬜ | ⬜ |
+| RT5372 (PAU05) | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
+| RT5572 (PAU09) | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| RT3572 † | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 | RT2500USB | ✅ | ✅ | ⚠️ | ✅ | ⬜ | ⬜ | ⬜ |
+
+† **RT3572** here = the ALFA AWUS051NH v2 test unit with an **erased EFUSE** (no
+factory RF calibration). That single fault explains every ⚠️ in its row — weak
+TX/RX, runs 1T1R. The driver is verified byte-for-byte faithful; a properly-burned
+RT3572 should be unaffected, but we have no burned unit to confirm. RT5372 /
+RT5572 / RT3572 all share the `chips/rt2800usb/` driver.
 
 ### README asterisk rule
 
@@ -173,19 +181,46 @@ notes below cover the attack columns and any caveats.
 
 → `chips/mt76x0u/MT76X0U.md`
 
-### RT2800USB — Panda PAU05 (RT5372) / PAU09 N600 (RT5572) / ALFA AWUS051NH v2 (RT3572) (2.4 / 5 GHz)
+### RT2800USB family — driver `chips/rt2800usb/` (three silicons)
 
-Three silicons share this driver; status differs per unit.
+M1–M4 (RX / scan) are WIRE-verified on all three silicons. M5 (TX inject, deauth
+→ EAPOL re-capture) was verified on the RT5372/PAU05.
+
+**RT5372 — Panda PAU05 (2.4 GHz, 1T1R)** — family reference chip.
 
 | Capability | Status | Date | Details |
 |---|:--:|---|---|
-| Handshake | ⚠️ | — | Full attack chain verified live on a burned silicon (deauth → EAPOL M2+M3). **The AWUS051NH v2 (RT3572) test unit has an erased EFUSE** → TX hardware-limited and end-to-end capture *on that unit* isn't validated (a properly-burned RT3572 is unaffected). |
-| PMKID | ⬜ | — | RT3572 unit's PMKID is **not validated** (under investigation, likely a frame-parser issue); burned-silicon PMKID not separately recorded. |
-| WEP | ⬜ | — | WEP ARP-replay was noted dead on the RT5572 (zeroed-IV injection); whether fully fixed is unconfirmed → untested. |
-| WPS | ⬜ | — | Not run. |
-| Stress | ⬜ | — | Not run. |
+| Handshake | ✅ | — | M5 TX verification: deauth → EAPOL re-capture. |
+| PMKID / WEP / WPS / Stress | ⬜ | — | Not run on this card. |
 
-→ `chips/rt2800usb/RT2800USB.md`
+**RT5572 — Panda PAU09 N600 (2.4 / 5 GHz, 2T2R)**
+
+| Capability | Status | Date | Details |
+|---|:--:|---|---|
+| Deauth / Handshake | ⬜ | — | TX inject not separately verified on this silicon. |
+| WEP | ⬜ | — | ARP replay was once dead here (zeroed-IV injection); fix status unconfirmed. |
+| PMKID / WPS / Stress | ⬜ | — | Not run. |
+
+**RT3572 — ALFA AWUS051NH v2 — ERASED EFUSE (no RF cal; runs 1T1R)**
+
+The unit's EFUSE is erased, so it runs one chain with no factory RF calibration:
+the rx-filter cal loop rails to a non-physical value and TX power sits at the low
+fallback → weak TX/RX, high run-to-run variance. **The driver is verified
+faithful; this is the unit, not the port** — a burned RT3572 should be
+unaffected (no burned unit on hand to confirm). So the row below is "works even
+on a miscalibrated unit," not a clean verification.
+
+| Capability | Status | Date | Details |
+|---|:--:|---|---|
+| Scan | ✅ | 2026-05-31 | Works but weak — ~8 beacons/s from an AP a few feet away (~10/s on healthy cards). |
+| Deauth | ⚠️ | 2026-05-31 | Deauthed *something*, but too weak to knock a phone right next to the radio off. |
+| Handshake | ⚠️ | 2026-05-31 | Partial (M1+M4) capture, weak; low beacon count points at uncalibrated RX. |
+| PMKID | ⚠️ | 2026-05-31 | Passive capture works (with the handshake); the active "PMKID" button does not (too weak to elicit M1). |
+| WEP | ⚠️ | 2026-05-31 | ARP replay ✅; Fragmentation ✅ (slow, many failed rounds); ChopChop ✗ (stalled at 22/32 bytes). FakeAuth bounced Associated↔Idle with errors — weak-TX/spotty-RX. |
+| WPS | ⚠️ | 2026-05-31 | PBC timed out; PIN got 2 NACKs + 1 no-response (it *is* talking, just unreliable). |
+| Stress | ⚠️ | 2026-05-31 | Warm boot fine. Once a channel "detuned": Focus on a CH1 AP showed 0 beacons, exit→re-enter Focus → 8 beacons/s. Looks like a Focus-entry tune that didn't take first time (separate from the EFUSE RF weakness). |
+
+→ `chips/rt2800usb/RT2800USB.md` § "RT3572 unburned-EFUSE behaviour"
 
 ### RT2500USB — Buffalo Nintendo Wi-Fi USB Connector / RT2570 (2.4 GHz)
 
