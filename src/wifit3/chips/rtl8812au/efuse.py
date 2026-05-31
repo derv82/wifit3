@@ -111,6 +111,7 @@ class EfuseRead:
     ext_lna_5g: int        # 0/1
     rfe_option: int        # resolved 0..6 (after rtw8812a_read_rfe_type)
     btcoex: bool
+    thermal_meter: int = 0xFF   # raw byte (0xFF = uncalibrated); pwr-track reference
 
 
 # --- low-level: EFUSE access grant ----------------------------------------
@@ -322,6 +323,7 @@ def read_efuse_8812a(transport: RTL8812AUTransport) -> EfuseRead:
     lna_type_5g = log_map[OFF_LNA_TYPE_5G]
     rfe_option_raw = log_map[OFF_RFE_OPTION]
     rf_board_option = log_map[OFF_RF_BOARD_OPTION]
+    thermal_meter = log_map[OFF_THERMAL_METER]
     mac_addr = bytes(log_map[OFF_8812AU_MAC_ADDR:OFF_8812AU_MAC_ADDR + 6])
 
     ext = _classify_amplifier(pa_type, lna_type_2g, lna_type_5g)
@@ -337,6 +339,7 @@ def read_efuse_8812a(transport: RTL8812AUTransport) -> EfuseRead:
         lna_type_5g=lna_type_5g,
         rfe_option_raw=rfe_option_raw,
         rf_board_option=rf_board_option,
+        thermal_meter=thermal_meter,
         mac_addr=mac_addr,
         ext_pa_2g=ext["ext_pa_2g"],
         ext_lna_2g=ext["ext_lna_2g"],

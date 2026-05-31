@@ -105,6 +105,7 @@ from .constants import (
     REG_RRSR,
     REG_RSV_CTRL,
     REG_RX_PKT_LIMIT,
+    REG_RXDMA_AGG_PG_TH,
     REG_RXDMA_MODE,
     REG_RXDMA_STATUS,
     REG_RXFLTMAP0,
@@ -132,11 +133,14 @@ from .constants import (
     RQPN_3BO_MG,
     RQPN_3BO_VI,
     RQPN_3BO_VO,
+    RXDMA_AGG_SIZE,
+    RXDMA_AGG_TIMEOUT,
     RXFF_SIZE,
     SPS_SEL,
     USB_TX_AGG_DESC_NUM,
     WLAN_TBTT_TIME,
     BIT_LD_RQPN,
+    BIT_RXDMA_AGG_EN,
 )
 from wifit3.chips.rtw88_base.firmware_legacy import FW_READY_LEGACY
 from wifit3.chips.rtw88_base.registers import REG_MCUFW_CTRL
@@ -434,6 +438,30 @@ def apply_monitor_rx_filter(transport: RTL8812AUTransport) -> None:
         "RX filter readback: RCR=0x%08x (AAP=%d CBSSID_DATA=%d)",
         rcr, 1 if rcr & 0x1 else 0, 1 if rcr & (1 << 6) else 0,
     )
+
+
+def configure_rx_aggregation(transport: RTL8812AUTransport, *, log: bool = True) -> None:
+    """Arm the USB RX-DMA aggregation accumulator into the kernel's monitor state.
+
+    Mirrors `rtw_usb_dynamic_rx_agg_v2(enable=false)` (usb.c:893) — the 8812a/
+    8821a RX-agg path. Left at the FW power-on default the RX-DMA page accumulator
+    is never armed; once enough RX accumulates it wedges and bulk-IN goes
+    permanently silent while register writes still land — a clean RX cliff with no
+    USB error. We are always monitor/unassociated, so we write the disable values
+    (size=0, timeout=1) → REG_RXDMA_AGG_PG_TH=0x0100, then set BIT_RXDMA_AGG_EN in
+    REG_TXDMA_PQ_MAP (BIT(2), distinct from the queue-map lanes at bits 4+). The
+    kernel re-writes this every ~2 s from rtw_watch_dog_work; `_rx_agg_watchdog`
+    mirrors that cadence (this is the per-tick body, called with ``log=False``).
+    [WIRE captures_rtw88_8812au/capture-1 frame 7649: payload 00 01 = 0x0100]
+    """
+    val16 = (RXDMA_AGG_SIZE & 0xFF) | ((RXDMA_AGG_TIMEOUT & 0xFF) << 8)
+    transport.write16(REG_RXDMA_AGG_PG_TH, val16)
+    transport.write8_set(REG_TXDMA_PQ_MAP, BIT_RXDMA_AGG_EN)
+    if log:
+        logger.info(
+            "RX-DMA aggregation armed (monitor): REG_RXDMA_AGG_PG_TH=0x%04x, "
+            "BIT_RXDMA_AGG_EN set in REG_TXDMA_PQ_MAP", val16,
+        )
 
 
 def init_wmac_setting(transport: RTL8812AUTransport) -> None:

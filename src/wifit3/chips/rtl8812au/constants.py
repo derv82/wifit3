@@ -194,6 +194,17 @@ REG_BCN_MAX_ERR = 0x055D
 REG_USB3_RXITV = 0xF050
 REG_RXDMA_STATUS = 0x0288
 REG_RXDMA_MODE = 0x0290
+# USB RX-DMA aggregation arming (rtw_usb_dynamic_rx_agg_v2, usb.c:893). 8812a/
+# 8821a take the v2 path. Monitor/unassociated uses the disable values (size=0,
+# timeout=1) → REG_RXDMA_AGG_PG_TH=0x0100, plus BIT_RXDMA_AGG_EN set in
+# REG_TXDMA_PQ_MAP. Left un-armed at the FW default, the RX-DMA page accumulator
+# wedges after a few seconds of RX and bulk-IN goes permanently silent while the
+# control plane stays alive. [WIRE captures_rtw88_8812au/capture-1 frame 7649:
+# payload 00 01 = 0x0100, re-written ~every 2 s by rtw_watch_dog_work.]
+REG_RXDMA_AGG_PG_TH = 0x0280
+BIT_RXDMA_AGG_EN = 1 << 2          # BIT(2) of REG_TXDMA_PQ_MAP (reg.h:242)
+RXDMA_AGG_SIZE = 0x00              # page-count threshold, bits 7:0
+RXDMA_AGG_TIMEOUT = 0x01           # DMA agg timeout, bits 15:8
 REG_AMPDU_MAX_TIME = 0x0456
 REG_AMPDU_MAX_LENGTH = 0x0458
 REG_SINGLE_AMPDU_CTRL = 0x04C7
@@ -315,6 +326,47 @@ REG_DATA_SC = 0x0483
 REG_WMAC_TRXPTCL_CTL = 0x0668
 REG_RXSB = 0x0A00
 REG_CCA2ND = 0x0838
+# BB false-alarm counters (reg.h:655,782) — summed by the DIG false-alarm tally.
+REG_FA_CCK = 0x0A5C
+REG_FA_OFDM = 0x0F48
+# OFDM Initial Gain Index (IGI), the DIG variable — bits[6:0] (reg.h:697,754).
+REG_RXIGI_A = 0x0C50
+REG_RXIGI_B = 0x0E50
+DIG_IGI_MASK = 0x7F
+# DIG coverage-path (no-link / monitor) algorithm constants — the unlinked
+# branch of rtw_phy_dig (phy.c). Family-shared with the 8814au.
+DIG_CVRG_MIN = 0x1C
+DIG_CVRG_MAX = 0x2A
+DIG_CVRG_FA_TH_LOW = 2000
+DIG_CVRG_FA_TH_HIGH = 4000
+DIG_CVRG_FA_TH_EXTRA_HIGH = 5000
+DIG_RSSI_GAIN_OFFSET = 15
+# False-alarm counter reset (tail of rtw88xxa_false_alarm_statistics,
+# rtw88xxa.c:1706-1711; addrs reg.h:639,652,678).
+REG_FAS = 0x09A4                 # BIT(17): FA counter reset
+REG_CCK0_FAREPORT = 0x0A2C       # BIT(15): CCK FA counter reset
+REG_CNTRST = 0x0B58              # BIT(0): counter reset
+BIT_RXPSEL_CCK_EN = 1 << 28      # REG_RXPSEL: CCK demod enabled (FA accounting)
+# Thermal power-track LCK (LC calibration) — rtw88xxa_phy_pwrtrack (rtw88xxa.c:
+# 1884) + rtw8812a_do_lck (rtw8812a.c:81). Re-locks the RF synth VCO tank as the
+# die heats; un-run, the VCO drifts off its cold calibration under hopping and
+# the PLL eventually fails to re-lock. RF regs reg.h:976,986; MAC regs reg.h:466,630.
+RF_T_METER = 0x42                # RF reg: thermal meter, value in bits[15:10]
+RF_T_METER_MASK = 0xFC00
+RF_LCK = 0xB4                    # RF reg: LCK control, BIT(14) = enable
+RF_LCK_EN = 1 << 14
+RF_CFGCH_LCK_TRIG = 0x08000      # RF_CFGCH bit15: LCK trigger / busy flag
+REG_TXPAUSE = 0x0522
+REG_SINGLE_TONE_CONT_TX = 0x0914
+SINGLE_TONE_CONT_TX_MASK = 0x70000
+PWRTRACK_IQK_THRESHOLD = 8       # chip->iqk_threshold (rtw8812a.c:1085)
+LCK_SETTLE_MS = 150              # mdelay(150) in rtw8812a_do_lck
+# DELIBERATE DEVIATION FROM rtw88: the kernel gates do_lck behind need_iqk (drift
+# >= IQK threshold=8), which never trips during fast hopping while the VCO capture
+# range still drifts out of lock — rtw88's STA-oriented hop-death. We re-center
+# the VCO on a fixed cadence instead (as the out-of-tree hopping forks do).
+# 10 ticks @ the 2 s watchdog = ~20 s.
+LCK_PERIOD_TICKS = 10
 REG_CLKTRK = 0x0860
 REG_ADCCLK = 0x08AC
 REG_ADC160 = 0x08C4

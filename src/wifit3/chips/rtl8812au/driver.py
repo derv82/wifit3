@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from typing import Callable, Optional
 
 import usb.core
@@ -45,6 +46,16 @@ from .chan import (
     set_channel_5g_20mhz,
 )
 from .constants import USB_PID_AWUS036ACH, USB_VID_REALTEK
+from .dynamic import (
+    DigState,
+    PwrTrackState,
+    dig_init,
+    dig_step,
+    do_lck,
+    pwrtrack_init,
+    pwrtrack_step,
+    read_total_fa_cnt,
+)
 from .efuse import efuse_defaults_from_read, read_efuse_8812a
 from .firmware import (
     download_firmware_legacy,
@@ -56,6 +67,7 @@ from .fifo import set_trx_fifo_info
 from .mac import (
     ChipState,
     apply_monitor_rx_filter,
+    configure_rx_aggregation,
     init_queue_priority,
     init_queue_reserved_page,
     init_tx_buffer_boundary,
@@ -82,6 +94,15 @@ from .tx import (
 
 logger = logging.getLogger(__name__)
 
+# Bulk-IN read timeout (ms). Short so the per-read hold on _dev_lock stays brief
+# and set_channel never waits long for the device — the reader releases the lock
+# between reads.
+_RX_READ_TIMEOUT_MS = 30
+# Consecutive empty reads (~9 s of no frames) before the reader logs the
+# RX-wedge warning once. A busy channel delivers beacons every ~100 ms, so this
+# only trips on a real wedge.
+_RX_SILENCE_WARN_AFTER = 300
+
 
 class RTL8812AUDriver:
     """Driver for the Realtek RTL8812AU (e.g. ALFA AWUS036ACH).
@@ -106,9 +127,20 @@ class RTL8812AUDriver:
     def __init__(self, dev: usb.core.Device):
         self.dev = dev
         self.transport = RTL8812AUTransport(dev)
+        # Serializes device access (the RX reader's bulk reads vs. set_channel /
+        # inject control transfers) so an RF/BB tune sequence never interleaves
+        # with bulk-IN traffic — mirrors the kernel's single per-device mutex.
+        self._dev_lock = threading.Lock()
         self._claimed = False
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._rx_reader: Optional[RxReaderThread] = None
+        self._dig_state: Optional[DigState] = None
+        self._pwrtrack_state: Optional[PwrTrackState] = None
+        self._thermal_meter_efuse: int = 0xFF   # efuse cold cal temp (pwr-track ref)
+        self._dig_watchdog_task: Optional[asyncio.Task] = None
+        # RX-silence tracking for the one-shot wedge warning.
+        self._rx_silent_reads = 0
+        self._rx_wedge_warned = False
         self._bulk_in_ep: Optional[int] = None
         self._bulk_out_eps: list[int] = []
         self._efuse = EfuseDefaults()
@@ -195,6 +227,7 @@ class RTL8812AUDriver:
                     None, read_efuse_8812a, self.transport
                 )
                 self._efuse = efuse_defaults_from_read(read, rf_path_num=2)
+                self._thermal_meter_efuse = read.thermal_meter
                 if read.mac_addr and read.mac_addr != b"\xff" * 6:
                     self.mac_address = ":".join(f"{b:02x}" for b in read.mac_addr)
                 logger.info(
@@ -321,10 +354,29 @@ class RTL8812AUDriver:
         # client→AP (ToDS) frames. Pcap-confirmed; mirrors rtl8821au/rtl8822bu.
         await loop.run_in_executor(None, apply_monitor_rx_filter, self.transport)
 
+        # Arm the USB RX-DMA aggregation accumulator into the kernel's monitor
+        # state. Without this the 8812a RX path wedges permanently after a few
+        # seconds of traffic — bulk-IN goes silent while set_channel still works.
+        # Both paths: a warm chip may have been left un-armed by a prior session.
+        await loop.run_in_executor(None, configure_rx_aggregation, self.transport)
+
+        # Seed DIG from the live IGI before RX starts (mirrors rtw_phy_init's read
+        # of chip->dig[0]); the watchdog walks it from here.
+        self._dig_state = await loop.run_in_executor(None, dig_init, self.transport)
+        # Seed thermal tracking for the LCK (VCO re-lock) — the pwr_track half of
+        # the dynamic mechanism; the watchdog re-locks the synth as the die heats
+        # under hopping, which is what keeps the PLL from drifting out of lock.
+        self._pwrtrack_state = await loop.run_in_executor(
+            None, pwrtrack_init, self.transport, self._thermal_meter_efuse)
+
         self._rx_reader = RxReaderThread(
             loop, self._rx_read_once, self._rx_dispatch, name="rtl8812au-rx"
         )
         self._rx_reader.start()
+        # DIG watchdog: walk OFDM IGI from the false-alarm count every 2 s — the
+        # kernel's rtw_phy_dig (rtw_watch_dog_work @ HZ*2), which we otherwise
+        # skip. Each tick holds _dev_lock so its register I/O serialises with RX.
+        self._dig_watchdog_task = asyncio.create_task(self._dig_watchdog())
         self.is_warm = True
         _progress(1.00, "RTL8812AU online (RX live on ch1)")
         return True
@@ -356,27 +408,38 @@ class RTL8812AUDriver:
             return False
 
         loop = asyncio.get_event_loop()
-        try:
-            # Band-switch only when crossing 2G↔5G. switch_band_*_20mhz does
-            # the RFE pinmux + BB cleanup needed for the new band.
-            if is_2g != self.current_band_is_2g:
-                if is_2g:
-                    await loop.run_in_executor(
-                        None, switch_band_2g_20mhz, self.transport, self._efuse
-                    )
-                else:
-                    await loop.run_in_executor(
-                        None, switch_band_5g_20mhz, self.transport, self._efuse
-                    )
-                self.current_band_is_2g = is_2g
+        need_band_switch = is_2g != self.current_band_is_2g
 
-            tune = set_channel_2g_20mhz if is_2g else set_channel_5g_20mhz
-            await loop.run_in_executor(None, tune, self.transport, channel)
-            self.current_channel = channel
-            return True
+        def _do_tune() -> None:
+            # Hold _dev_lock for the whole band-switch + tune so the RF/BB
+            # control-transfer sequence is atomic against the RX reader's
+            # bulk-IN reads. switch_band_*_20mhz does the RFE pinmux + BB cleanup
+            # needed when crossing 2G↔5G.
+            with self._dev_lock:
+                if need_band_switch:
+                    if is_2g:
+                        switch_band_2g_20mhz(self.transport, self._efuse)
+                    else:
+                        switch_band_5g_20mhz(self.transport, self._efuse)
+                tune = set_channel_2g_20mhz if is_2g else set_channel_5g_20mhz
+                tune(self.transport, channel)
+                if need_band_switch:
+                    # Re-center the VCO for the band we just entered. The synth's
+                    # 2G and 5G configs drift independently, and a wedge is
+                    # unrecoverable in userland — so each band gets an LCK at
+                    # entry (the periodic watchdog LCK only catches whichever band
+                    # it lands on, leaving the other to drift out of range).
+                    do_lck(self.transport)
+
+        try:
+            await loop.run_in_executor(None, _do_tune)
         except (IOError, usb.core.USBError, ValueError) as e:
             logger.error("set_channel(%d) failed: %s", channel, e)
             return False
+        if need_band_switch:
+            self.current_band_is_2g = is_2g
+        self.current_channel = channel
+        return True
 
     def _arm_tx_queues(self) -> None:
         """Re-program REG_RQPN / REG_RQPN_NPQ / REG_TXDMA_PQ_MAP.
@@ -408,10 +471,15 @@ class RTL8812AUDriver:
         ep = pick_bulk_out_ep(self._bulk_out_eps, queue=TX_DESC_QSEL_MGMT)
         payload = desc + frame_bytes
         loop = asyncio.get_event_loop()
+
+        def _do_inject() -> int:
+            # Same _dev_lock as RX/tune — a bulk-OUT must not overlap the
+            # reader's bulk-IN or a tune sequence.
+            with self._dev_lock:
+                return write_bulk(self.dev, ep, payload, timeout_ms=200)
+
         try:
-            sent = await loop.run_in_executor(
-                None, lambda: write_bulk(self.dev, ep, payload, timeout_ms=200)
-            )
+            sent = await loop.run_in_executor(None, _do_inject)
         except usb.core.USBError as e:
             logger.error("inject_frame: bulk-OUT to 0x%02x failed: %s", ep, e)
             return False
@@ -425,14 +493,36 @@ class RTL8812AUDriver:
     # read_once runs on the reader thread; dispatch runs on the event loop.
 
     def _rx_read_once(self) -> bytes | None:
-        """One blocking bulk-IN read; None on a benign timeout."""
+        """One blocking bulk-IN read; None on a benign timeout.
+
+        Holds _dev_lock for the read so it never overlaps a set_channel / inject
+        control-transfer sequence. A sustained run of empty reads means RX wedged
+        (the RF synth lost lock during hopping — the control plane stays alive, so
+        it isn't a USB error caught here); we log one warning so it isn't silent.
+        """
         try:
-            return bytes(self.dev.read(self._bulk_in_ep, 16384, 100))
+            with self._dev_lock:
+                buf = bytes(self.dev.read(self._bulk_in_ep, 16384, _RX_READ_TIMEOUT_MS))
         except usb.core.USBError as e:
             err = getattr(e, "errno", None)
             if err in (110, 10060) or "timeout" in str(e).lower():
-                return None
-            raise
+                buf = b""
+            else:
+                raise
+        if buf:
+            self._rx_silent_reads = 0
+            self._rx_wedge_warned = False
+            return buf
+        self._rx_silent_reads += 1
+        if (self._rx_silent_reads >= _RX_SILENCE_WARN_AFTER
+                and not self._rx_wedge_warned):
+            self._rx_wedge_warned = True
+            secs = _RX_SILENCE_WARN_AFTER * _RX_READ_TIMEOUT_MS // 1000
+            logger.warning(
+                "RX wedged: no frames for ~%ds — the RF synth has likely lost "
+                "lock during hopping (a known rtw88 limitation on this chip, "
+                "worst on 5 GHz). Replug to recover.", secs)
+        return None
 
     def _rx_dispatch(self, buf: bytes) -> None:
         """Decode a bulk buffer into MPDUs → parse → rx callback (on the loop)."""
@@ -449,7 +539,47 @@ class RTL8812AUDriver:
                 except Exception:
                     logger.exception("RX callback raised")
 
+    async def _dig_watchdog(self, period_s: float = 2.0) -> None:
+        """Periodic DIG tick — mirrors rtw_watch_dog_work (@ HZ*2) → rtw_phy_dig.
+
+        Reads the false-alarm count and walks OFDM IGI to reject noise (the PHY
+        maintenance the kernel runs and we otherwise skip). Register I/O runs off
+        the event loop and under _dev_lock so it never races RX or a tune.
+        """
+        loop = asyncio.get_event_loop()
+        try:
+            while True:
+                await asyncio.sleep(period_s)
+                if self._dig_state is None:
+                    continue
+                try:
+                    await loop.run_in_executor(None, self._dig_tick)
+                except (usb.core.USBError, IOError) as e:
+                    logger.debug("DIG watchdog tick skipped: %s", e)
+        except asyncio.CancelledError:
+            pass
+
+    def _dig_tick(self) -> None:
+        """One tick of the dynamic mechanism on the executor thread: DIG (read FA
+        + step IGI) plus thermal pwr-track (re-LCK on drift). Serialised against
+        RX/tune by _dev_lock — note an LCK holds it ~150 ms while it re-locks the
+        synth, which is fine (occasional, and RX is paused during a tune anyway).
+        """
+        with self._dev_lock:
+            fa = read_total_fa_cnt(self.transport)
+            dig_step(self.transport, self._dig_state, fa)
+            if self._pwrtrack_state is not None:
+                pwrtrack_step(self.transport, self._pwrtrack_state)
+
     async def close(self) -> None:
+        # Stop the DIG watchdog first — it does USB I/O via the executor.
+        if self._dig_watchdog_task is not None:
+            self._dig_watchdog_task.cancel()
+            try:
+                await self._dig_watchdog_task
+            except asyncio.CancelledError:
+                pass
+            self._dig_watchdog_task = None
         if self._rx_reader is not None:
             await self._rx_reader.stop()
             self._rx_reader = None

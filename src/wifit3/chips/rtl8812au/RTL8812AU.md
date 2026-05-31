@@ -1,18 +1,49 @@
 # RTL8812AU — verified facts (M1 scope)
 
-## Potential Known Gaps
+## Known limits & resolved gaps
 
-Cross-driver gap classes. **Both fixes applied 2026-05-25 but NOT yet
-hardware-verified** — needs an 8812au card.
+### Resolved — HW-verified on the AWUS036ACH (2026-05-31)
 
-- [~] **RX polling loop drops frames** — PORTED (reader-thread). Converted from
-  on-loop read+parse to the shared `chips/rx_reader.py` RxReaderThread
-  (`_rx_read_once`/`_rx_dispatch`). Behaviour-preserving; awaiting HW verify.
-- [~] **RX filter / monitor mode (ToDS capture)** — FIX APPLIED (separate
-  commit), pcap-confirmed, awaiting HW verify. rtw88xxa init left REG_RCR byte0
-  `0x0E` (AAP clear) → ToDS dropped (only M1/M3). `apply_monitor_rx_filter`
+- [x] **RX polling loop** — reader-thread. On-loop read+parse moved to the
+  shared `chips/rx_reader.py` RxReaderThread (`_rx_read_once`/`_rx_dispatch`).
+  Confirmed: scan + capture run for minutes under TUI load.
+- [x] **RX filter / monitor mode (ToDS capture)** — rtw88xxa init left REG_RCR
+  byte0 `0x0E` (AAP clear) → ToDS dropped (only M1/M3). `apply_monitor_rx_filter`
   writes the monitor `0xf410400f` from `_finish_attach` (both paths). [WIRE
-  captures_rtw88_8812au frames 6891-6901]. Verify M2/M4 captured; revert if not.
+  captures_rtw88_8812au frames 6891-6901]. Confirmed: M2/M4 captured live.
+- [x] **RX-DMA aggregation left un-armed** — the FW default page accumulator
+  wedged bulk-IN after ~5 s of traffic (clean cliff, control plane alive).
+  `configure_rx_aggregation` ports `rtw_usb_dynamic_rx_agg_v2` (monitor/disable
+  values) and arms it once at attach. [WIRE captures_rtw88_8812au capture-1
+  frame 7649]. Confirmed: the consistent 5 s cliff is gone.
+- [x] **SIPI PI-mode bit read from wrong reg on path B** — `rf_sipi.read_rf`
+  took the PI/SI mode-select bit from `REG_3WIRE_SWA` for both paths; the kernel
+  reads it from `REG_3WIRE_SWB` for path B (`rtw88xxa.c:1248`), which picks the
+  correct read-back register. Wrong-reg reads corrupted masked RF
+  read-modify-writes on path B (2T2R only; 8821a is path-A-only). `[SRC]`
+
+### Known hardware limit — RF-synth hop-death
+
+Sustained dual-band channel hopping eventually wedges the RX path. This is an
+**rtw88-inherited hardware limit, not a userland bug** — the in-tree driver has
+it too.
+
+- **Reproduction**: single channel survives 30 min+; dual-band 0.25 s hopping
+  dies after seconds-to-minutes (non-deterministic). `[HW]`
+- **Signature**: bulk-IN goes silent while the control plane stays alive — RF18
+  reads back the correct channel, false-alarm/CRC counters read 0. Points at the
+  RF synthesizer (VCO/PLL) losing lock under thermal drift, not the MAC/DMA.
+- **Why the kernel doesn't hit it as hard**: `rtw8812a_do_lck` (VCO LC
+  re-calibration) is gated behind `rtw_phy_pwrtrack_need_iqk` — a thermal drift
+  of ≥8 from the efuse cal baseline (≈37). Hopping keeps the chip ~32–42, so the
+  drift gate never trips and the VCO is never re-centered.
+- **Mitigation shipped** (`dynamic.py`): DIG watchdog + thermal pwr-track + LCK,
+  with `do_lck` **decoupled from `need_iqk`** — run on a fixed cadence and at
+  each band entry. Re-centering the VCO delays the wedge (~2–4×) but does not
+  eliminate it.
+- **No userland recovery**: BB reset and full PHY re-init were both tested and
+  fail to revive the pipe. The driver logs one warning and the user replugs.
+  Sustained 0.25 s dual-band hopping is at this chip's hardware envelope.
 
 Cleanroom-RE'd from `data_dumps/rtw88-source-v6.18/` + cold-boot pcap
 `usb_dumps/captures_rtw88_8812au/capture-1.pcap`. Every claim here cites
