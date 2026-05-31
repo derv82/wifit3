@@ -191,6 +191,25 @@ the error classes the RX loop discards anyway**: DROP_CRC=1 +
 DROP_PHYSICAL=1 + DROP_VERSION_ERROR=1. Final value **TXRX_CSR2 = 0x0046**.
 `[HW]`
 
+**[HW] 2026-05-31 — ToDS RX confirmed working; instability is the real problem.**
+A full attack pass showed the monitor filter is correct: the session log carried
+`[RXFRAME] data to_ds=True from_ds=False <client> -> <bssid>` lines, so client→AP
+(ToDS) frames ARE delivered — *not* the filter gap one might suspect from the
+symptom. But the run was unstable and ended badly:
+- **Handshake captured only M1+M3 (FromDS), never M2+M4 (ToDS)** → no crackable
+  pair. Since ToDS reception works, the likely cause is weak/unstable RX + the RF
+  death below cutting the window short, not a filter problem.
+- **RF died after ~1 min** under sustained load: no beacons from any AP, with
+  `rt2500usb-rx read failed: [Errno 32] Pipe error` and
+  `rt2500usb set_channel(N) failed: [Errno 32] Pipe error` repeating. The bulk-IN
+  pipe wedges. This is the headline RT2500USB bug to chase (USB pipe stall /
+  channel-set against a wedged pipe). Stress soak can't pass until it's fixed.
+- **Weak/odd RX**: one CH1 AP gave ~10 beacons/s while another CH1 AP gave 0/s
+  consistently; ARP replay only ~1–3 IVs/s; ChopChop stalled (~32 B left). All
+  point at RX sensitivity/stability on this older hard-MAC part, not the filter.
+- WPS PIN exchange works (valid first-half-wrong NACKs); PBC timed out (weak RX).
+  PMKID + deauth fine.
+
 Two hardware findings (via `--phase rx` drains) drove this:
 - Clearing DROP_PHYSICAL flooded the full-speed bus with PLCP-failure
   garbage — 93% of URBs (6584/7068 in 10s) were multi-KB noise.
