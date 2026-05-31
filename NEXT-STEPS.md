@@ -117,6 +117,9 @@ WEP suite scoped in `src/wifit3/engine/attacks/wep/README.md`. Status of the res
   - **PixieWPS** (deferred — numpy/glibc dependency question to settle first).
 - **WPA3 downgrade** (transition mode) — respond to probe requests.
 - **Evil Twin** (2nd interface) — unproven value, low priority.
+- **PBC recapture guard** — auto-invade can re-grab a PSK we already hold
+  (across views + restarts). Fix designed in `CAPTURE-MANAGER.md` (app-owned
+  PSK cache; `has_psk` gates only the automatic PBC invade). Not started.
 
 ## Planned features
 
