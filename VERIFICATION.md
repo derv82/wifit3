@@ -39,7 +39,7 @@ claim frag works — check the per-card detail / the WEP README for frag status.
 | Chipset | Scan | Deauth | Handshake | PMKID | WEP | WPS | Stress |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | AR9271 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
-| RTL8187L | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| RTL8187L | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ⬜ |
 | RTL8188EUS | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ |
 | RTL8821AU | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | RTL8812AU | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ |
@@ -70,7 +70,7 @@ issues tracked centrally** (the fragmentation sw-seq gap, the 2.4 GHz-RX
 investigation, the WinUSB warm-reattach replug) — those affect the family, not
 one card, so they don't single a card out.
 
-Asterisked today: **RTL8812AU, RT2800USB, RT2500USB**.
+Asterisked today: **RTL8187L, RTL8812AU, RT2800USB, RT2500USB**.
 
 Note for README readers: the *absence* of an asterisk means "no known problem,"
 **not** "every attack verified" — check this matrix for the full per-attack
@@ -100,11 +100,12 @@ notes below cover the attack columns and any caveats.
 
 | Capability | Status | Date | Details |
 |---|:--:|---|---|
-| Handshake | ⬜ | — | A `--phase handshake` test exists; no end-to-end capture recorded. RX-poll reader-thread port is "awaiting HW verify." |
-| PMKID | ⬜ | — | Not run. |
-| WEP | ⬜ | — | Not run. |
-| WPS | ⬜ | — | Not run. |
-| Stress | ⬜ | — | Not run. |
+| Scan | ✅ | 2026-05-31 | Works (classic AWUS036H). |
+| Handshake | ✅ | 2026-05-31 | Full M1–M4 captured. |
+| PMKID | ✅ | 2026-05-31 | Captured passively + active extract. |
+| WEP | ✅ | 2026-05-31 | ARP replay ✅ and ChopChop ✅. (Fragmentation tracked separately — no `SUPPORTS_SW_SEQ`, the known sw-seq gap.) |
+| WPS | ❌ | 2026-05-31 | **PBC timed out; PIN got NACKs, no crack.** WPS passes on all 7 firmware-based cards but fails/struggles on the two old **hard-MAC / no-firmware** parts (this ❌ + RT2500USB ⚠️) — likely a TX-timing / no-hardware-ACK sensitivity in the longer WPS EAP exchange. See WPS README § "Hard-MAC WPS gap". |
+| Stress | ⬜ | — | Nothing adverse in brief use; no dedicated 1-hour soak yet. |
 
 → `chips/rtl8187/RTL8187L.md`
 

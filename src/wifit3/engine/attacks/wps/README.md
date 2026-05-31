@@ -408,3 +408,23 @@ P1–P3 are engine + offline-testable + one button-press. P4–P5 are UI/orchest
   the Textual wiring needs a live run to confirm.
 - **P6 (ethics/eligibility pass) remains** — global auto-invade grabs bystanders'
   PSKs; revisit before release (PRE-RELEASE).
+
+## Hard-MAC WPS gap (2026-05-31)
+
+The baseline hardware sweep surfaced a pattern: **WPS (PIN + PBC) works on every
+firmware-based card** (AR9271, RTL8188EUS, RTL8821AU, RTL8812AU, RTL8822BU,
+RTL8814AU, MT7610U) but **fails/struggles on the two oldest hard-MAC,
+no-firmware, register-only parts**:
+
+- **RTL8187L** — PBC timed out; PIN sent guesses but only got NACKs, no crack (❌).
+- **RT2500USB** — PBC timed out; PIN got valid first-half-wrong NACKs (engine works)
+  but unreliable (⚠️).
+
+Both cards pass deauth, handshake, PMKID, and WEP ARP/ChopChop — so association +
+injection work; only the *longer, more stateful* WPS EAP exchange fails. Leading
+hypothesis: these parts have no hardware auto-ACK / different TX timing, and the
+WPS state machine's no-ACK retransmit flood (see "Top speed lever" above) is more
+fragile over the dozens of frames per PIN than the short handshake/PMKID
+exchanges. Not yet root-caused — investigate the per-message timing + retransmit
+behaviour on a hard-MAC card before promising WPS there. (RT2500USB's RX also
+died ~1 min into the session, which may have compounded its result.)
