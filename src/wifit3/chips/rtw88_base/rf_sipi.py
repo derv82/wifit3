@@ -5,9 +5,13 @@ Ports `rtw_phy_write_rf_reg_sipi` (phy.c:1029) for writes and
 same on every rtw88 USB chip; only the per-chip RF register address space
 and timing varies.
 
-These helpers are PATH-PARAMETERISED: pass `lssi_write` / `hssi_read` /
-`pi_read` / `si_read` for the path you want (A or B). The 3-wire status
-bit lives in REG_3WIRE_SWA for both paths on USB-RF chips.
+These helpers are PATH-PARAMETERISED via `path='a'|'b'`. Each path has its OWN
+3-wire SW register for the PI-mode select bit: REG_3WIRE_SWA for path A,
+REG_3WIRE_SWB for path B — mirrors `pi_addr[rf_path]` in
+`rtw88xxa_phy_read_rf` (rtw88xxa.c:1248). Reading path B's PI-mode from SWA
+picks the wrong read register (PI vs SI) → garbage → a corrupt RF read-modify-
+write. This bites 2T2R parts (8812a) on every hop; 1T1R parts (8821a) never use
+path B so they never saw it.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from .transport import Rtw88Transport
 
 # Register addresses (phy.c & rtw88xxa.c) — shared across chips.
 REG_3WIRE_SWA = 0x0C00
+REG_3WIRE_SWB = 0x0E00
 REG_HSSI_READ = 0x08B0
 REG_LSSI_WRITE_A = 0x0C90
 REG_LSSI_WRITE_B = 0x0E90
@@ -47,14 +52,15 @@ def read_rf(
     Path 'a' → PI/SI_READ_A; path 'b' → PI/SI_READ_B.
     """
     if path == "a":
-        pi_read, si_read = REG_PI_READ_A, REG_SI_READ_A
+        sw_3wire, pi_read, si_read = REG_3WIRE_SWA, REG_PI_READ_A, REG_SI_READ_A
     elif path == "b":
-        pi_read, si_read = REG_PI_READ_B, REG_SI_READ_B
+        sw_3wire, pi_read, si_read = REG_3WIRE_SWB, REG_PI_READ_B, REG_SI_READ_B
     else:
         raise ValueError(f"path must be 'a' or 'b', got {path!r}")
 
     addr &= 0xFF
-    pi_mode = (transport.read32(REG_3WIRE_SWA) >> 2) & 1   # BIT(2)
+    # PI-mode select is per-path: SWA for A, SWB for B (rtw88xxa.c:1248,1274).
+    pi_mode = (transport.read32(sw_3wire) >> 2) & 1   # BIT(2)
     transport.write32_mask(REG_HSSI_READ, 0xFF, addr)
     if udelay_us:
         time.sleep(udelay_us / 1_000_000)
