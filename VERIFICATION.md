@@ -45,7 +45,7 @@ claim frag works — check the per-card detail / the WEP README for frag status.
 | RTL8812AU | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ |
 | RTL8822BU | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | RTL8814AU | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
-| MT7612U | ✅ | ✅ | ✅ | ⬜ | ⚠️ | ⬜ | ⬜ |
+| MT7612U | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | MT7610U | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | RT5372 (PAU05) | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 | RT5572 (PAU09) | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -180,11 +180,13 @@ notes below cover the attack columns and any caveats.
 
 | Capability | Status | Date | Details |
 |---|:--:|---|---|
-| Handshake | ✅ | 2026-05-29 | Handshake auto-saves; the de-pad fix restored a crackable handshake. |
-| PMKID | ⬜ | — | Rides the same EAPOL path; not separately recorded. |
-| WEP | ⚠️ | 2026-05-29 | ARP replay works first-try; the rest of the suite (frag / chopchop / crack) not exercised on this card. |
-| WPS | ⬜ | — | Not run. |
-| Stress | ⬜ | — | Not run. |
+| Scan | ✅ | 2026-05-31 | Works. |
+| Deauth | ✅ | 2026-05-31 | Deauthed clients. |
+| Handshake | ✅ | 2026-05-31 | Full M1+M2+M3+M4 captured (handshake auto-saves; the de-pad fix restored a crackable handshake). |
+| PMKID | ✅ | 2026-05-31 | Captured passively + harvested (active extract). |
+| WEP | ✅ | 2026-05-31 | ARP replay ✅ and ChopChop ✅. (Fragmentation tracked separately — the known sw-seq gap.) |
+| WPS | ✅ | 2026-05-31 | PIN brute ✅ (to M4) and PBC ✅. |
+| Stress | ⬜ | — | Nothing adverse in brief use; no dedicated 1-hour soak yet. |
 
 → `chips/mt76x2u/MT76X2U.md`
 
