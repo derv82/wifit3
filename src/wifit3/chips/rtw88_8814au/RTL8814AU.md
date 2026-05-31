@@ -68,6 +68,17 @@ tune (matches kernel byte-for-byte), `spur_calibration` (ported), DIG watchdog
 (ported), band-switch RF re-lock recovery (fixed). Result: 0/100 cold boots
 deaf, no channel-hop death.
 
+**RX caveat found 2026-05-31 (HW):** 2.4 GHz RX is weak/miscalibrated. At one
+spot a 5 GHz AP read −54 dBm while a 2.4 GHz AP read −82 dBm, and the 2.4 GHz
+beacon rate was 0.5–2/s vs ~10/s on 5 GHz; 5 GHz RX is healthy. So the
+"validated" RX above held for 5 GHz / the cold-boot capture, but a **2G-specific
+RX gap** slipped through — suspect the 2G RX path / AGC / gain or LNA setup in
+`switch_band`, the 2G `crystal_cap`/spur path, or a 2.4-GHz RSSI miscalc (though
+the low beacon *rate*, not just RSSI, points at real sensitivity loss, not just a
+display bug). ARP replay + ChopChop worked on 2.4 GHz the same session (RX could
+hear ChopChop's relays), so the Fragmentation failure there is still a valid data
+point, not merely the weak RX.
+
 **TX path — FUNCTIONAL but NOT power/IQ-calibrated.** Deauth/injection is
 hardware-confirmed (kicks a phone off, EAPOL re-capture), but TX runs at the
 **BB/AGC-table baseline power** — we do not do the kernel's per-channel TX-power

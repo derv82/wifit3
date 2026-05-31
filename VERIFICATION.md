@@ -36,7 +36,7 @@ tracked pass/fail).
 | RTL8821AU | ✅ | ✅ | ✅ | ⬜ | ⚠️ | ⚠️ | ⬜ |
 | RTL8812AU | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
 | RTL8822BU | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| RTL8814AU | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
+| RTL8814AU | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ |
 | MT7612U | ✅ | ✅ | ✅ | ⬜ | ⚠️ | ⬜ | ⬜ |
 | MT7610U | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | RT5372 (PAU05) | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -151,10 +151,12 @@ notes below cover the attack columns and any caveats.
 
 | Capability | Status | Date | Details |
 |---|:--:|---|---|
-| Handshake | ✅ | 2026-05-26 | Deauth kicks a phone off and EAPOL re-capture is HW-confirmed. RX path complete + pcap-byte-validated; 0/100 cold boots deaf. |
-| PMKID | ⬜ | — | Not separately recorded. |
-| WEP | ⬜ | — | Not run. |
-| WPS | ⬜ | — | Not run. |
+| Scan | ⚠️ | 2026-05-31 | **2.4 GHz RX is weak/miscalibrated**: at one spot a 5 GHz AP read −54 dBm but a 2.4 GHz AP read −82 dBm, and 2.4 GHz beacon rate was 0.5–2/s vs ~10/s on 5 GHz. 5 GHz scanning is healthy → a 2G-specific RX path / AGC / gain-cal gap (see chip doc). |
+| Deauth | ✅ | 2026-05-31 | Deauthed clients. |
+| Handshake | ✅ | 2026-05-31 | M2+M3 captured on 2.4 GHz (earlier deauth→EAPOL re-capture confirmed 2026-05-26). |
+| PMKID | ✅ | 2026-05-31 | Passive capture + active extract — but flaky on 2.4 GHz (~20 attempts to land an M1; lots of M2/M3/M4), consistent with the weak 2.4 GHz RX. |
+| WEP | ⚠️ | 2026-05-31 | Replay ✅; ChopChop ✅; **Fragmentation ✗** (same cross-family frag bug — see `engine/attacks/wep/README.md`). All WEP tested on 2.4 GHz only (no 5 GHz WEP AP available), where this card's RX is weak — but ChopChop heard its relays, so frag's failure is still a valid data point. |
+| WPS | ✅ | 2026-05-31 | PIN brute ✅ and PBC ✅. |
 | Stress | ⬜ | — | Not run. Note: TX runs at BB/AGC baseline power (not power/IQ-calibrated) → weaker at distance; fine close-range. |
 
 → `chips/rtw88_8814au/RTL8814AU.md`

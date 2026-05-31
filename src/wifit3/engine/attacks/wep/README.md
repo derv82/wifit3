@@ -300,6 +300,7 @@ fails on every card except the RTL8821AU** (the card it was developed on):
 | RTL8812AU | Realtek rtw88xxa | ✅ | ✅ | ✗ |
 | RTL8822BU | Realtek rtw88 (8822b) | ✅ | ✅ | ✗ |
 | AR9271 | Atheros ath9k_htc | ✅ | ✅ | ✗ |
+| RTL8814AU | Realtek rtw88 (8814a) | ✅ | ✅ | ✗ |
 
 Symptom: the fragment burst goes out but the AP's reassembled relay never appears
 ("seed wouldn't relay"); replay + ChopChop (both single-frame, no shared
