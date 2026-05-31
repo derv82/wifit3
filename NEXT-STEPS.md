@@ -80,7 +80,19 @@ pure port surface. (See `chips/mt76x2u/MT76X2U.md` → "Channel width — 20 MHz
 
 ## Attack stack
 
-WEP suite scoped in `src/wifit3/engine/attacks/wep/README.md`. Status of the rest:
+WEP suite scoped in `src/wifit3/engine/attacks/wep/README.md`. **Open WEP TODO —
+fragmentation software-sequence support:** fragments must share one 802.11
+sequence number (inject with `en_hwseq=0`), exposed via `send_raw(sw_seq=)` + a
+driver's `SUPPORTS_SW_SEQ`. Only `rtl8821au` implements it, so `aireplay -5` works
+there and nowhere else (HW-confirmed fail on 8812au / 8814au / 8822bu / ar9271 —
+see the WEP README § "Known issue"). (1) *Now, no hardware:* gate
+`fragmentation.py` / `campaign.py` on `iface.supports_sw_seq` and disable/grey the
+Frag button (or refuse with a clear message) instead of spinning on "seed
+wouldn't relay." (2) *Real fix, per-driver + HW:* lift the 8821au
+`build_tx_desc_data` (`en_hwseq=0` + `SW_SEQ`) into `rtw88_base/tx_common.py` and
+set `SUPPORTS_SW_SEQ` on 8812au / 8814au / 8822bu (they already carry the W8/W9
+fields) — likely fixes all three at once. (3) *AR9271:* separate HTC-firmware
+investigation (no `en_hwseq` concept). Status of the rest:
 
 - **4-way handshake capture** (via client deauth) — done; detected in Focus +
   Scanner, with Save.

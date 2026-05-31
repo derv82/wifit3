@@ -33,7 +33,7 @@ tracked pass/fail).
 | AR9271 | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ |
 | RTL8187L | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | RTL8188EUS | ✅ | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ |
-| RTL8821AU | ✅ | ✅ | ✅ | ⬜ | ⚠️ | ⚠️ | ⬜ |
+| RTL8821AU | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | RTL8812AU | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
 | RTL8822BU | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
 | RTL8814AU | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ |
@@ -113,11 +113,12 @@ notes below cover the attack columns and any caveats.
 
 | Capability | Status | Date | Details |
 |---|:--:|---|---|
-| Handshake | ✅ | 2026-05-25 | Full M1–M4 after the RX-poll reader-thread + ToDS-filter (`0xf410400f`) fixes. |
-| PMKID | ⬜ | — | Engine is production-complete (NEXT-STEPS) and this is the main dev card, but no PMKID-specific HW run is *dated* here — left untested pending a citation. |
-| WEP | ⚠️ | 2026-05-24 | ARP-replay + native PTW + Fragmentation live-cracked the dd-wrt WEP box (`en_hwseq=0` sw-seq fix). ChopChop oracle HW-verified; the ChopChop daemon's end-to-end run is still pending. |
-| WPS | ⚠️ | 2026-05-27 | Single-PIN crack walked M1→M7 + recovered the PSK on a WPS test AP; PBC capture verified through P3. Pending: full multi-attempt `--campaign` sweep, multi-router lock matrix, and PixieWPS (not built). |
-| Stress | ⬜ | — | Not run. |
+| Scan | ✅ | 2026-05-31 | Works; 2.4 GHz beacon rate ~7/s for a router ~2 ft away — a touch low (healthy ~10/s). Second card to show low-ish 2.4 GHz RX (8814au was worse), but this one scans fine. |
+| Handshake | ✅ | 2026-05-31 | Full M1–M4 (all four captured) after the RX-poll reader-thread + ToDS-filter (`0xf410400f`) fixes. |
+| PMKID | ✅ | 2026-05-31 | Passive capture + active extract. |
+| WEP | ✅ | 2026-05-31 | Full suite: Replay ✅, ChopChop ✅, **Fragmentation ✅**. This is the one card with the `en_hwseq=0` sw-seq TX path — which is exactly why frag works here and nowhere else (WEP README § "Known issue"). |
+| WPS | ✅ | 2026-05-31 | PIN brute ✅ and PBC ✅. (PixieWPS is still a deferred project-wide feature, not a per-card gap; the multi-router lock matrix is still thin.) |
+| Stress | ⬜ | — | Nothing adverse in normal use, but no dedicated 1-hour soak run yet. |
 
 → `chips/rtl8821au/RTL8821AU.md`, `engine/attacks/wep/README.md`, `engine/attacks/wps/README.md`
 
