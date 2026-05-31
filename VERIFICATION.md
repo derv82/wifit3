@@ -49,20 +49,19 @@ claim frag works — check the per-card detail / the WEP README for frag status.
 | MT7610U | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | RT5372 (PAU05) | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 | RT5572 (PAU09) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
-| RT3572 † | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 | RT2500USB | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ❌ |
 
-† **RT3572** here = the ALFA AWUS051NH v2 test unit with an **erased EFUSE** (no
-factory RF calibration). That single fault explains every ⚠️ in its row — weak
-TX/RX, runs 1T1R. The driver is verified byte-for-byte faithful; a properly-burned
-RT3572 should be unaffected, but we have no burned unit to confirm. RT5372 /
-RT5572 / RT3572 all share the `chips/rt2800usb/` driver.
+**RT3572 is not in this matrix** — the only test unit (ALFA AWUS051NH v2) turned
+out to be **counterfeit with a blank EFUSE** (no factory RF calibration), so it
+can't validate the chipset. Moved to "Unsupported — pending genuine hardware"
+below; its driver is shared with RT5372/RT5572 (both green/partial here), so the
+`chips/rt2800usb/` driver itself stays supported.
 
 ### README asterisk rule
 
 A chipset carries a `*` in the README's supported-hardware table when it has a
 **❌, or a ⚠️ that is a genuine hardware/driver limitation of that card** (RF
-hop-death, an unburned-EFUSE test unit, partial-direction capture). A ⚠️ that
+hop-death, a hard-MAC WPS failure, partial-direction capture / RF-death). A ⚠️ that
 only reflects **incomplete attack-suite coverage** (the attack works where it
 was run, just not fully exercised on that card) does **not** asterisk — the card
 is fine, the testing is simply unfinished. Neither do known **shared / cross-card
@@ -70,7 +69,9 @@ issues tracked centrally** (the fragmentation sw-seq gap, the 2.4 GHz-RX
 investigation, the WinUSB warm-reattach replug) — those affect the family, not
 one card, so they don't single a card out.
 
-Asterisked today: **RTL8187L, RTL8812AU, RT2800USB, RT2500USB**.
+Asterisked today: **RTL8187L, RTL8812AU, RT2500USB**. (RT2800USB no longer
+asterisked — RT3572, its only flagged unit, was a counterfeit and is demoted; the
+RT5372/RT5572 cards carry no known limitation.)
 
 Note for README readers: the *absence* of an asterisk means "no known problem,"
 **not** "every attack verified" — check this matrix for the full per-attack
@@ -229,26 +230,7 @@ Ralink: snappy, excellent beacon rate across the whole spectrum, and **2.4 GHz a
 | WPS | ✅ | 2026-05-31 | PIN brute ✅ and PBC ✅. |
 | Stress | ⬜ | — | Nothing adverse in brief use; no dedicated 1-hour soak yet. |
 
-**RT3572 — ALFA AWUS051NH v2 — ERASED EFUSE (no RF cal; runs 1T1R)**
-
-The unit's EFUSE is erased, so it runs one chain with no factory RF calibration:
-the rx-filter cal loop rails to a non-physical value and TX power sits at the low
-fallback → weak TX/RX, high run-to-run variance. **The driver is verified
-faithful; this is the unit, not the port** — a burned RT3572 should be
-unaffected (no burned unit on hand to confirm). So the row below is "works even
-on a miscalibrated unit," not a clean verification.
-
-| Capability | Status | Date | Details |
-|---|:--:|---|---|
-| Scan | ✅ | 2026-05-31 | Works but weak — ~8 beacons/s from an AP a few feet away (~10/s on healthy cards). |
-| Deauth | ⚠️ | 2026-05-31 | Deauthed *something*, but too weak to knock a phone right next to the radio off. |
-| Handshake | ⚠️ | 2026-05-31 | Partial (M1+M4) capture, weak; low beacon count points at uncalibrated RX. |
-| PMKID | ⚠️ | 2026-05-31 | Passive capture works (with the handshake); the active "PMKID" button does not (too weak to elicit M1). |
-| WEP | ⚠️ | 2026-05-31 | ARP replay ✅; Fragmentation ✅ (slow, many failed rounds); ChopChop ✗ (stalled at 22/32 bytes). FakeAuth bounced Associated↔Idle with errors — weak-TX/spotty-RX. |
-| WPS | ⚠️ | 2026-05-31 | PBC timed out; PIN got 2 NACKs + 1 no-response (it *is* talking, just unreliable). |
-| Stress | ⚠️ | 2026-05-31 | Warm boot fine. Once a channel "detuned": Focus on a CH1 AP showed 0 beacons, exit→re-enter Focus → 8 beacons/s. Looks like a Focus-entry tune that didn't take first time (separate from the EFUSE RF weakness). |
-
-→ `chips/rt2800usb/RT2800USB.md` § "RT3572 unburned-EFUSE behaviour"
+RT3572 (AWUS051NH v2) is covered in "Unsupported — pending genuine hardware" below.
 
 ### RT2500USB — Buffalo Nintendo Wi-Fi USB Connector / RT2570 (2.4 GHz)
 
@@ -263,6 +245,37 @@ on a miscalibrated unit," not a clean verification.
 | Stress | ❌ | 2026-05-31 | **RF died after ~1 minute** — no beacons from *any* AP, with bulk-IN `[Errno 32] Pipe error` and `set_channel(N) failed: Pipe error` in the log. The USB pipe wedged under sustained load. Far short of the 1-hour soak bar; needs investigation (see chip doc). |
 
 → `chips/rt2500usb/RT2500USB.md`
+
+---
+
+## Unsupported — pending genuine hardware
+
+### RT3572 — ALFA AWUS051NH v2 (COUNTERFEIT unit, blank EFUSE)
+
+**Demoted from supported 2026-05-31.** The only test unit (bought 2015) is a
+**counterfeit with a blank EFUSE** — no factory RF calibration. The kernel/our
+driver run their normal init over uncalibrated silicon, which forces 1T1R, rails
+the rx-filter cal loop to a non-physical value, and leaves TX power at the low
+fallback → weak, unstable TX/RX. **The `chips/rt2800usb/` driver is verified
+byte-for-byte faithful** (and is green/partial on its RT5372 + RT5572 siblings) —
+this is the *unit*, not the port. We have no genuine burned RT3572 to validate
+against, so the chipset can't be marked supported. Re-test and re-promote if a
+real one is acquired.
+
+Last results on the counterfeit unit (kept for reference — all ⚠️ trace to the
+blank EFUSE, not driver bugs):
+
+| Capability | Status | Date | Details |
+|---|:--:|---|---|
+| Scan | ✅ | 2026-05-31 | Works but weak — ~8 beacons/s from an AP a few feet away (~10/s healthy). |
+| Deauth | ⚠️ | 2026-05-31 | Deauthed *something*, but too weak to knock a phone right next to the radio off. |
+| Handshake | ⚠️ | 2026-05-31 | Partial (M1+M4) capture, weak; low beacon count points at uncalibrated RX. |
+| PMKID | ⚠️ | 2026-05-31 | Passive capture works; the active "PMKID" button does not (too weak to elicit M1). |
+| WEP | ⚠️ | 2026-05-31 | ARP replay ✅; Fragmentation ✅ (slow, many failed rounds); ChopChop ✗ (stalled at 22/32 bytes). FakeAuth bounced Associated↔Idle. |
+| WPS | ⚠️ | 2026-05-31 | PBC timed out; PIN got 2 NACKs + 1 no-response (talking, unreliable). |
+| Stress | ⚠️ | 2026-05-31 | Warm boot fine. Focus-entry tune glitch observed (0 beacons until re-enter) — that one's a real shared bug, NOT the EFUSE (see NEXT-STEPS). |
+
+→ `chips/rt2800usb/RT2800USB.md` § "RT3572 unburned-EFUSE behaviour"
 
 ---
 
