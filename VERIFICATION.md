@@ -38,7 +38,7 @@ tracked pass/fail).
 | RTL8822BU | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ |
 | RTL8814AU | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ |
 | MT7612U | ✅ | ✅ | ✅ | ⬜ | ⚠️ | ⬜ | ⬜ |
-| MT7610U | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| MT7610U | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ |
 | RT5372 (PAU05) | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
 | RT5572 (PAU09) | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | RT3572 † | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
@@ -183,10 +183,11 @@ notes below cover the attack columns and any caveats.
 
 | Capability | Status | Date | Details |
 |---|:--:|---|---|
-| Handshake | ⬜ | — | ToDS (client→AP, M2/M4) capture is designed-for but documented as "should work" — unverified. |
-| PMKID | ⬜ | — | Not run. |
-| WEP | ⬜ | — | Not run. |
-| WPS | ⬜ | — | Not run. |
+| Scan | ⚠️ | 2026-05-31 | **Focus-entry tune glitch**: entering Focus on a CH1 AP showed 0 beacons/s; Focus→Scanner→Focus on the same target then gave 8–9/s. Same symptom seen on RT3572 — so it's the **shared Focus→set_channel path**, not chip-specific (confirmed cross-family now). See NEXT-STEPS. |
+| Handshake | ✅ | 2026-05-31 | Captured M1+M2 (crackable pair). |
+| PMKID | ✅ | 2026-05-31 | Captured passively + active extract. |
+| WEP | ⚠️ | 2026-05-31 | ARP replay ✅ and ChopChop ✅. **Fragmentation** = the known sw-seq gap (skipped); can't work here without `SUPPORTS_SW_SEQ`. (User marked WEP green on the ARP+Chop subset — kept ⚠️ for suite-completeness; see the WEP-cell semantics note.) |
+| WPS | ✅ | 2026-05-31 | PIN brute ✅ and PBC ✅. |
 | Stress | ⬜ | — | Not run. |
 
 → `chips/mt76x0u/MT76X0U.md`

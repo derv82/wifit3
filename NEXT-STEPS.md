@@ -248,6 +248,14 @@ each path and sample it on a 3 s timer. Low risk (read-only on the wire), high
     warning. Surface it as a banner. (RTL8812AU, 2026-05-31.)
   The wedge itself is an accepted Windows/WinUSB limit (the pipe can't be reset in
   userland) — only the missing UI messaging is the bug.
+- **Focus-entry channel tune sometimes doesn't take (0 beacons until re-enter).**
+  Entering Focus on an AP occasionally shows 0 beacons/s; exiting to Scanner and
+  re-entering Focus on the same target then works (8–9/s). Confirmed cross-family
+  — RT3572 (Ralink) and MT7610U (MediaTek) — so the bug is in the **shared
+  Focus→stop-hop→`set_channel` path** (`wlan/interface.py` / `ui/screens/focus.py`),
+  not a driver. Likely a race/ordering issue: the channel set on Focus entry is
+  lost or overridden by the channel-hopper teardown, so the first tune doesn't
+  stick. Repro: Focus a known AP, watch for 0 beacons, then Focus→Scanner→Focus.
 - **Beacon count truncates past 10k** — `10512` renders as `0512`. Auto-size the
   BEACONS column (without breaking right-alignment).
 

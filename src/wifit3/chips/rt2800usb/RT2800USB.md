@@ -482,12 +482,14 @@ railing-low-vs-high rx-filter cal is already investigated and is not the lever
 (above). These attacks can't be cleanly verified on this unit; that needs a
 properly-burned RT3572.
 
-**One observation NOT explained by the EFUSE — a possible Focus-entry tune bug:**
+**One observation NOT explained by the EFUSE — the Focus-entry tune bug:**
 entering Focus on a CH1 AP once showed 0 beacons; exiting to Scanner and
-re-entering Focus on the same AP then showed ~8 beacons/s. Looks like the channel
-set on Focus entry didn't take the first time (a re-tune fixed it) — a real bug
-independent of RF calibration, if it reproduces. Single observation on a flaky
-unit; confirm on a healthy card before chasing.
+re-entering Focus on the same AP then showed ~8 beacons/s. The channel set on
+Focus entry didn't take the first time (a re-tune fixed it) — independent of RF
+calibration. **Confirmed 2026-05-31 on the MT7610U (a healthy card, different
+family)** with the identical symptom, so it's a real bug in the **shared
+Focus→set_channel path**, not RT3572-specific. Tracked in NEXT-STEPS § Small
+bugs/QoL.
 
 ---
 
