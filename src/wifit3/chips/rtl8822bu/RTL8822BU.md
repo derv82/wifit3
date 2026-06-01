@@ -16,6 +16,12 @@ no hardware available; verify before `[x]`.**
   `apply_monitor_rx_filter` now writes the monitor `0xf410400f` from
   `_finish_attach` (both cold + warm). Pcap-confirmed: the kernel does the same
   overwrite [WIRE captures_rtw88_8822bu/capture-1 frames 19191-19205].
+- [~] **No adaptive RX gain (DIG watchdog)** — PORTED (`dynamic.py`), pending
+  HW A/B. IGI was frozen at the AGC-table default for the whole session →
+  RX either deaf to weak APs or saturating on a strong one (`pwdb` pinned high,
+  the +143 dBm clamp warning). Now a 2 s FA-driven IGI walk on 0xc50/0xe50 with
+  a kernel-faithful seed — details + wire evidence in § DIG watchdog.
+  [SRC phy.c rtw_phy_dig; WIRE capture-1 frames 19870-21021]
 
 Family: rtw88, modern (iDDMA) FW path, NOT 8051. 2T2R, 802.11ac, dual-band.
 
@@ -119,8 +125,10 @@ refuses bulk-OUT to the TX path, manifesting as `USBTimeoutError`.
 6. `REG_RXPSEL |= BIT_RX_PSEL_RST`
 
 **Skipped intentionally** (not needed for monitor-mode RX): crystal_cap
-(needs EFUSE), `config_trx_mode` (rfe-dependent), `rtw_phy_init` (DIG),
-`phy_rfe_init`, `pwrtrack_init`, `phy_bf_init`.
+(needs EFUSE), `config_trx_mode` (rfe-dependent), `phy_rfe_init`,
+`pwrtrack_init`, `phy_bf_init`. `rtw_phy_init`'s DIG is **not** skipped — it
+runs at the proper time as a 2 s watchdog (see § DIG watchdog), since IGI must
+adapt or RX saturates/goes deaf.
 
 `EfuseDefaults` uses `rfe_option=3` (= IFEM with ext, the most common
 choice for retail dongles per rtw8822bu.c's id_table). The agc/rf_a/rf_b
@@ -243,12 +251,54 @@ UI-side: the splash shows a generic "Hardware failed to initialize" instead of
 surfacing the driver's replug message — tracked in `NEXT-STEPS.md` § Small bugs
 / QoL.
 
+## DIG watchdog — adaptive RX gain (`dynamic.py`)
+
+The kernel runs `rtw_watch_dog_work` every `RTW_WATCH_DOG_DELAY_TIME` (HZ*2 =
+2 s) → `rtw_phy_dynamic_mechanism` → `rtw_phy_dig`, which walks the OFDM initial
+gain index (IGI) from the per-window false-alarm (FA) count. Frozen at the
+AGC-table default, RX is left either deaf to weak APs or **saturating** on a
+strong one (`phy_status pwdb` pinned near 255 → the +143 dBm clamp warning in
+`rx.py`). `dynamic.py` ports the no-link / coverage path (`sta_cnt == 0`):
+
+- **IGI paths** (`rtw8822b_dig[]`, rtw8822b.c:2097): `0xc50` (A) / `0xe50` (B),
+  mask `0x7f`. `dig_cck == NULL` (rtw8822b.c:2559) → no CCK-IGI sub-write.
+- **FA counters** (`rtw8822b_false_alarm_statistics`, rtw8822b.c:1023):
+  cck-enabled = `0x808 & BIT(28)`, cck_fa = `read16(0xa5c)`, ofdm_fa =
+  `read16(0xf48)`, total = ofdm + (cck if enabled). Reset toggles (verbatim
+  per-register order) `0x9a4 BIT17` set/clr, `0xa2c BIT15` clr/set,
+  `0xb58 BIT0` set/clr.
+- **Bounds / steps** (phy.c:365-371; `.dig_min=0x1c`, rtw8822b.c:2542): IGI ∈
+  [`0x1c`, `0x2a`]; FA thresholds 2000/4000/5000 → step +2/+3/+4, then −2.
+- **Seed = kernel-faithful** (`rtw_phy_init`, phy.c:251-253): `dig_init` reads
+  the current `0xc50` (AGC default) as the start IGI and does **not** write —
+  the watchdog converges from there. Deliberately unlike the 8814au (which
+  seeds `DIG_CVRG_MIN` to fight a deaf boot); the 8822b symptom is the opposite
+  (gain too high → saturation), so the faithful seed + FA-driven raise toward
+  `0x2a` is the correct medicine.
+- **Omitted**: `rtw_phy_dig_check_damping` (linked-mode oscillation guard — a
+  no-op in the constant-min_rssi coverage path) and the CRC/CCA stats reads
+  (feed rate-adaptation / CCK-PD, not DIG; the reset above still clears them).
+
+Wired in `driver.py`: seeded + started in `_finish_attach` (cold AND warm),
+ticked every 2 s off the event loop via `run_in_executor`, cancelled first in
+`close()`.
+
+[WIRE] capture-1 (airmon-ng monitor): the stock driver reads FA at 0xa5c/0xf48
+and rewrites IGI at 0xc50/0xe50 on a ~2 s cadence (frames 19870→21021,
+t=12.95→19.86 s); the first steady-state write set IGI=`0x22` (frame 19915).
+
+**Status: ported, NOT yet HW-confirmed.** Next: A/B on the Archer T3U Plus —
+beacon/IV rate and the `pwdb` saturation-warning rate, watchdog ON vs OFF.
+
 ## What's NOT yet implemented
 
 - EFUSE read (for accurate TX power, BT coex, real `rfe_option`,
   `crystal_cap` fine-tuning).
-- `phy_init` DIG / `pwrtrack_init` / `phy_bf_init` / `phy_rfe_init` —
-  affect TX quality + adaptive RX gain, not basic RX.
+- `pwrtrack_init` / `phy_bf_init` / `phy_rfe_init` — affect TX quality, not
+  basic RX. (DIG adaptive RX gain IS now implemented — see § DIG watchdog.)
+- IQK / RF calibration (`rtw8822b_phy_calibration`) — the kernel defers it
+  during scanning and runs it lazily before TX (`mgd_prepare_tx`), so it's a
+  TX-quality gap (a suspect for the WEP-frag forge failure), not a passive-RX one.
 - `set_antenna` API.
 - Per-rate TX power tuning from `phy_pg_type{2,3,5}` tables.
 - USB 3.0 path (`rtw_usb_switch_mode`) — driver works at USB 2.0 HS.

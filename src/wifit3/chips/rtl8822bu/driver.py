@@ -33,6 +33,7 @@ from .constants import (
     REG_SYS_CFG1,
     USB_IDS_8822BU,
 )
+from .dynamic import DigState, dig_init, dig_step, read_total_fa_cnt
 from .firmware import (
     download_firmware,
     download_firmware_validate,
@@ -79,6 +80,8 @@ class RTL8822BUDriver:
         self.transport = RTL8822BUTransport(dev)
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._rx_reader: Optional[RxReaderThread] = None
+        self._dig_state: Optional[DigState] = None
+        self._watchdog_task: Optional[asyncio.Task] = None
         self._bulk_in_ep: Optional[int] = None
         self._bulk_out_eps: list[int] = []
         self._claimed = False
@@ -250,8 +253,39 @@ class RTL8822BUDriver:
         )
         self._rx_reader.start()
         self.is_warm = True
+
+        # DIG watchdog: re-converge the OFDM initial gain from the false-alarm
+        # count every 2 s (the kernel's rtw_watch_dog_work @ HZ*2). Without it
+        # IGI stays at the AGC-table default for the whole session, so RX is
+        # left either deaf to weak APs or saturating on a strong one. Seed from
+        # the AGC default (kernel rtw_phy_init reads dig[0]); on the warm path
+        # this resumes from whatever IGI the running chip already holds.
+        self._dig_state = await loop.run_in_executor(None, dig_init, self.transport)
+        self._watchdog_task = asyncio.create_task(self._dig_watchdog())
+
         _progress(1.00, "RTL8822BU online")
         return True
+
+    async def _dig_watchdog(self, period_s: float = 2.0) -> None:
+        """Periodic DIG tick (mirrors rtw_watch_dog_work @ HZ*2). Reads the FA
+        count + steps IGI off the event loop so USB I/O never stalls the UI."""
+        loop = asyncio.get_event_loop()
+        try:
+            while True:
+                await asyncio.sleep(period_s)
+                if self._dig_state is None:
+                    continue
+                try:
+                    fa = await loop.run_in_executor(
+                        None, read_total_fa_cnt, self.transport
+                    )
+                    await loop.run_in_executor(
+                        None, dig_step, self.transport, self._dig_state, fa
+                    )
+                except (usb.core.USBError, IOError) as e:
+                    logger.debug("DIG watchdog tick skipped: %s", e)
+        except asyncio.CancelledError:
+            pass
 
     async def _rx_smoke_test(self, attempts: int = 15,
                              timeout_ms: int = 100) -> bool:
@@ -354,6 +388,14 @@ class RTL8822BUDriver:
 
     async def close(self) -> None:
         loop = asyncio.get_event_loop()
+        # Stop the DIG watchdog first — it does USB I/O via the executor.
+        if self._watchdog_task is not None:
+            self._watchdog_task.cancel()
+            try:
+                await self._watchdog_task
+            except asyncio.CancelledError:
+                pass
+            self._watchdog_task = None
         # Stop the reader thread BEFORE releasing USB — it's still calling
         # dev.read() until stopped, and releasing the handle under it errors.
         if self._rx_reader is not None:
