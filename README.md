@@ -25,7 +25,7 @@ subprocesses, no Scapy — so it runs the same on **Linux and Windows**.
 
 | Scanner | Focus (single target) |
 |---|---|
-| ![Scanner](screenshots/wifit3-2-scanner.png) | ![Focus](screenshots/wifit3-3-focus.png) |
+| ![Scanner](screenshots/wifit3-2-scanner.png) | ![Focus](screenshots/wifit3-3-focus-handshake.png) |
 
 ## Supported hardware
 
