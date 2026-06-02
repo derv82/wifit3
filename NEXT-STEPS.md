@@ -51,6 +51,16 @@ at the *same* power with excellent beacon rates across the band** — so weak 2.
 RX is NOT universal across userland drivers. That points back at the rtw88 family
 (and possibly rtl8xxxu) specifically, not a general userland-RX limitation —
 i.e. more likely our port on those families than the PyUSB approach itself.
+**A/B answered (2026-06-01).** The Kali sweep (`usb_dumps_new/`) ran the same
+cards on their *in-kernel* drivers: mainline `rtw88` is itself weak on a fixed
+channel (RTL8822BU **8 APs**; RTL8814AU **0** in airodump — and its usbmon shows
+only 1 AP above the noise floor, i.e. genuinely deaf, not a logging fluke), while
+the vendor DKMS driver on the same card/spot/minute hears **29** / **21–24**. So the
+deficit lives in mainline's 2.4 GHz monitor RX path (AGC/DIG), which our
+mainline-derived port faithfully inherits — not the hardware, not PyUSB. The
+fix is to port the vendor driver instead → see "## Cleanroom DKMS re-ports".
+(RT5572/rt2800usb and the in-tree MediaTek/Atheros/RTL8187 cards are unaffected —
+no vendor fork exists, mainline is canonical, our source already matches.)
 
 Family-shared infrastructure (`chips/rtw88_base/`) covers transport, the
 phy_cond walker, power_seq runtime, RF SIPI, TX checksum, RX-desc parser, and
@@ -155,6 +165,84 @@ pure port surface. (See `chips/mt76x2u/MT76X2U.md` → "Channel width — 20 MHz
 - AWUS036NH (RT3070) — should slot into `chips/rt2800usb/` as a `DeviceID` +
   chip-id extras entry + minor RXWI/TXWI tweaks, not a from-scratch port.
 - Generic MT7601U — cheapest dongle, weird packet injection.
+
+## Cleanroom DKMS re-ports (aircrack / morrownr drivers)
+
+The 2026-06-01 Kali sweep (`usb_dumps_new/`) ran every card on its **vendor
+out-of-tree driver** (DKMS) and, for the Realtek 11ac family, on mainline as an
+A/B. For the same physical card the vendor driver hears far more APs on a fixed
+channel — RTL8822BU **8 (mainline) → 29 (DKMS)**, RTL8814AU **0 → 21–24 (DKMS)**
+(mainline registered just 1 AP above noise) — confirming the cross-rtw88 2.4 GHz RX weakness above is
+the *mainline driver's* monitor RX/AGC, which our mainline-derived ports inherit.
+The vendor drivers also carry the long-session stability (sustained AGC/DIG,
+thermal) a 15 s snapshot can't even measure. Plan: **re-port the four cards from
+their vendor source, cleanroom** — the mainline driver *and* our mainline-derived
+Python kept entirely out of the porting session's context, so the new port is
+faithful to the vendor code, not a mainline/vendor hybrid. (Confirmed 2026-06-01:
+vendor and mainline are **completely different codebases** — mainline
+`rtw_phy_dig()` in `phy.c` vs the Realtek PHYDM/ODM stack `hal/phydm/phydm_dig.c`;
+same silicon + registers, every layer above them different.)
+
+**Shared workflow (per card):**
+1. Branch `dkms/<module>` (e.g. `dkms/88x2bu`).
+2. In a dedicated commit, **delete the mainline-derived `chips/<driver>/`** — NOT
+   `chips/rtw88_base/`, which four other family drivers still import. That commit
+   message is the durable record of the retired port: how faithful it was to
+   mainline, its measured performance (run `beacon_watch.py` *live* first for max
+   beacons/s + nAPs), our confidence, and why it's being replaced. Git history
+   keeps the old driver; nothing else needs to.
+3. Port in a **fresh session** with only the vendor source (`driver-source/`) and
+   the new cold-boot pcap (`captures_<chipset>/capture-N.pcap` + `_logs/main.log`)
+   in view. Treat as a new bring-up: mirror vendor source, frame-by-frame from
+   pcap, tiny M1, pcap-diff each milestone.
+4. **Master keeps the working mainline port until the vendor port is HW-proven**
+   to beat it on breadth/stability, then swap. Once *all* rtw88-family cards are
+   off mainline, `rtw88_base/` can finally be retired.
+
+All four vendor sources are in `usb_dumps_new/driver-sources/` (tarballs) +
+extracted `usb_dumps_new/captures_*/driver-source/`. Priority by measured payoff:
+
+### RTL8822BU — highest payoff
+- Current `chips/rtl8822bu/` (mainline rtw88, uses `rtw88_base`).
+- Vendor: morrownr `88x2bu-20210702` 5.13.1 (PR #264 6.18-compat), module `88x2bu`
+  — `captures_rtl88x2bu/driver-source/` + `driver-sources/rtl88x2bu-5.13.1.tar.xz`.
+- Gain **8 → 29 APs** (3.6×) fixed ch1; prime suspect of the RX weakness. Mainline
+  A/B: `captures_rtw88_8822bu/`. Branch `dkms/88x2bu`.
+
+### RTL8814AU — reliability win
+- Current `chips/rtw88_8814au/` (mainline rtw88, uses `rtw88_base`).
+- Vendor: morrownr `8814au` 5.8.5.1, module `8814au` —
+  `captures_rtl8814au/driver-source/` + `driver-sources/rtl8814au-5.8.5.1.tar.xz`.
+- Gain: mainline registered **0 APs** (usbmon scan finds only ~1 AP above the
+  noise floor — genuinely deaf, not a logging fluke) vs DKMS **21–24** (matches
+  the "severe" 2.4 RX weakness flagged for this card). Mainline A/B:
+  `captures_rtw88_8814au/`. Branch `dkms/8814au`.
+
+### RTL8821AU — stability, not breadth
+- Current `chips/rtl8821au/` (uses `rtw88_base`; **only** driver with working
+  SW-seq fragmentation — preserve `SUPPORTS_SW_SEQ` / `en_hwseq=0` in the re-port).
+- Vendor: Lucid-Duck `8821au-20210708` 5.12.5.2 (branch `kernel-6.18-compat`),
+  module `8821au` — `captures_rtl8821au/driver-source/` +
+  `driver-sources/rtl8821au-5.12.5.2.tar.xz` + `kernel-6.18-compat-rtl8821au.patch`.
+- Gain: breadth **tied** (mainline 26 ≈ DKMS 20–26) — justification is long-session
+  stability + family consistency, so lower priority. A/B: `captures_rtw88_8821au/`.
+  Branch `dkms/8821au`.
+
+### RTL8188EUS — smallest, independent
+- Current `chips/rtl8188eus/` (rtl8xxxu-family, **not** rtw88 — self-contained,
+  doesn't gate on `rtw88_base` retirement).
+- Vendor: aircrack-ng/gglluukk `rtl8188eus` (Kali `realtek-rtl8188eus` 5.3.9),
+  module `8188eu` — `captures_8188eu/driver-source/`; upstream
+  github.com/aircrack-ng/rtl8188eus.
+- Gain: breadth **tied** (DKMS 19–26 ≈ mainline `rtl8xxxu` 20); win is
+  monitor/injection robustness on the canonical driver for this 2.4-only N150
+  card. A/B: `captures_rtl8xxxu/`. Branch `dkms/8188eus`.
+
+**Not in scope — RTL8812AU.** No vendor DKMS builds on kernel 6.18 yet
+(`hmac_sha256` symbol clash + cfg80211 MLO signature drift; aircrack-ng/rtl8812au
+caps at 6.15). Stays on mainline `chips/rtl8812au/` until a buildable 6.18 fork
+exists (watch aircrack-ng/rtl8812au `paralin/fix-6.19`). See
+`usb_dumps_new/DRIVER-STATUS.md`.
 
 ## Attack stack
 
@@ -269,6 +357,20 @@ A shared storage layer for three concerns (likely a full session of work):
 
    *Open:* config in TOML (human-editable) + decloak in SQLite? Auto-prune old
    decloak entries vs grow forever? (DB is per-machine, doesn't roam.)
+
+### Signal-strength bar (replace raw beacons/sec)
+
+Raw "beacons/sec" is a poor display: it ceilings at ~9.77/s (one beacon per
+102.4 ms beacon interval), and "3/s → red" conveys nothing but "weak." Replace it
+with a **reception-quality bar** normalized to that ceiling — 100 % = every beacon
+the AP sent was received (0 % loss). Two framings considered; the bar wins on
+glanceability:
+- *(rejected)* a bare "XX % loss" number — accurate but not glanceable.
+- **10-glyph colored bar** (Textual): each glyph ≈ 1 beacon/s of the ~10/s max,
+  colorized **red 1–3 / orange 4–7 / green 8–10**. The running beacons/sec already
+  collected by `beacon_history` feeds it directly and renders as a smooth signal
+  meter — the same RX-health metric the `beacon_watch` tools report, now live in
+  the Scanner/Focus UI.
 
 ## Small bugs / QoL
 
