@@ -47,7 +47,7 @@ claim frag works — check the per-card detail / the WEP README for frag status.
 | RTL8814AU | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | MT7612U | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | MT7610U | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
-| RT5372 (PAU05) | ✅ | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
+| RT5372 (PAU05) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⬜ |
 | RT5572 (PAU09) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | RT2500USB | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ❌ |
 
@@ -213,8 +213,13 @@ M1–M4 (RX / scan) are WIRE-verified on all three silicons. M5 (TX inject, deau
 
 | Capability | Status | Date | Details |
 |---|:--:|---|---|
+| Scan | ⚠️ | 2026-06-01 | **Weak/unstable RX — range is poor.** Beacons/s wander wildly: ~1–3/s for the first few seconds, drifting up toward 7–8/s, then sagging back to 4–5/s, with periodic ~zero gaps every ~10–15 s. Cross-AP pattern is the tell: a neighbour's AP holds a steady 6–7/s while the user's own router 15 ft away (strong signal) only manages ~3/s, and the WEP/WPS test routers ~2–3/s. That a *distant* AP comes in stronger than a *near* one points at a tuning/AGC offset (detuned toward one edge of CH1?), not pure distance. Adds to the cross-card weak-2.4 GHz-RX question. Next step: a Kali beacons/s A/B per channel for this card (see Scan-health idea in NEXT-STEPS). |
+| Deauth | ✅ | — | M5 TX verification: deauth → EAPOL re-capture (family reference). |
 | Handshake | ✅ | — | M5 TX verification: deauth → EAPOL re-capture. |
-| PMKID / WEP / WPS / Stress | ⬜ | — | Not run on this card. |
+| PMKID | ✅ | 2026-06-01 | Captured passively + extracted manually. |
+| WEP | ✅ | 2026-06-01 | ARP replay ✅ and ChopChop ✅. (Fragmentation ignored for now — the separately-tracked sw-seq gap.) |
+| WPS | ⚠️ | 2026-06-01 | PIN brute ✅. **PBC ✗** — `assoc failed (Assoc rejected (status 12)); running EAPOL anyway`, then timed out. Mixed → ⚠️ (same PIN-ok / PBC-timeout shape as RT2500USB + RT3572). This card is firmware-based, so it's *not* the hard-MAC WPS gap; the PBC timeout plausibly traces to the weak RX above (status-12 = assoc denied, and a starved RX can miss the PBC walk-window), so it isn't asterisked separately — re-test once RX tuning is sorted. |
+| Stress | ⬜ | — | Not run. |
 
 **RT5572 — Panda PAU09 N600 (2.4 / 5 GHz, 2T2R)** — full-green, and the best-behaved
 Ralink: snappy, excellent beacon rate across the whole spectrum, and **2.4 GHz and
