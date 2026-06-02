@@ -245,6 +245,56 @@ def test_lsusb_diff_empty_when_unchanged():
 
 # --- cleanup save decision: no more captures_unknown/ ------------------------
 
+# --- DKMS source resolution (ties source to the BOUND module) ----------------
+
+DKMS_CONF_8188EUS = """\
+PACKAGE_NAME="rtl8188eus"
+PACKAGE_VERSION="5.3.9"
+BUILT_MODULE_NAME[0]="8188eu"
+DEST_MODULE_LOCATION[0]="/updates/dkms"
+AUTOINSTALL="yes"
+"""
+
+
+def test_dkms_conf_ids_collects_package_and_module(tmp_path):
+    conf = tmp_path / "dkms.conf"
+    conf.write_text(DKMS_CONF_8188EUS)
+    # package name != built .ko name — we need both to match the bound module.
+    assert Capture._dkms_conf_ids(conf) == {"rtl8188eus", "8188eu"}
+
+
+def test_dkms_conf_ids_skips_variable_refs(tmp_path):
+    conf = tmp_path / "dkms.conf"
+    conf.write_text('PACKAGE_NAME="88x2bu"\nBUILT_MODULE_NAME[0]="$PACKAGE_NAME"\n')
+    assert Capture._dkms_conf_ids(conf) == {"88x2bu"}
+
+
+def test_best_dkms_match_exact_built_module_over_other_packages():
+    # Bound module 8188eu must select rtl8188eus, NOT the first-listed 8812au —
+    # the multi-DKMS-installed case the old code got wrong.
+    from pathlib import Path
+    cands = [
+        (Path("/usr/src/rtl8812au-5.6.4.2"), {"rtl8812au", "88xxau"}),
+        (Path("/usr/src/rtl8188eus-5.3.9"), {"rtl8188eus", "8188eu"}),
+    ]
+    assert Capture._best_dkms_match("8188eu", cands) == Path("/usr/src/rtl8188eus-5.3.9")
+
+
+def test_best_dkms_match_substring_when_driver_name_differs():
+    # Bound driver name `rtl8812au` matches package `8812au` (built `88XXau`).
+    from pathlib import Path
+    cands = [
+        (Path("/usr/src/8812au-5.6.4.2"), {"8812au", "88xxau"}),
+        (Path("/usr/src/rtl8188eus-5.3.9"), {"rtl8188eus", "8188eu"}),
+    ]
+    assert Capture._best_dkms_match("rtl8812au", cands) == Path("/usr/src/8812au-5.6.4.2")
+
+
+def test_best_dkms_match_none_when_unrelated():
+    from pathlib import Path
+    assert Capture._best_dkms_match("8188eu", [(Path("/usr/src/nvidia-535"), {"nvidia"})]) is None
+
+
 def test_cleanup_skips_save_when_unknown_and_no_pcap(tmp_path):
     cap = _capture(tmp_path)
     cap.chipset = "unknown"  # airmon never bound the card

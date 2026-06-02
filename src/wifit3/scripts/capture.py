@@ -2,20 +2,23 @@
 
 Run on the (Linux) capture box as root, with the card UNPLUGGED:
 
-    sudo python capture.py [--target <BSSID>] [--client <BSSID>] [--debug-segments]
+    sudo python capture.py [--target <BSSID>] [--client <BSSID>] [--no-air]
 
 It starts a full usbmon0 (all-buses) tshark capture, walks the card through
-monitor-mode bring-up, a channel sweep, and an optional injection test, then
-saves the pcap + per-tool logs + the bound driver's firmware (and source, if
-on disk) under `captures_<chipset>/`. `main.log` records when each step ran
-(epoch timestamps); `pcap_slicer.py` maps those to pcap frame ranges.
+monitor-mode bring-up, two airodump reference segments (native hopping + a
+fixed-channel over-air pcap), a deterministic channel sweep, and an optional
+injection test. It saves the usbmon pcap + per-tool logs + a sysinfo snapshot
++ the fixed-channel pcap + the bound driver's firmware and DKMS source under
+`captures_<chipset>/`. `main.log` records when each step ran (epoch
+timestamps); `pcap_slicer.py` maps those to pcap frame ranges.
 
 Options:
   --target BSSID    AP for the aireplay injection test + deauth. Omit and both
                     are skipped (the scan/monitor capture still happens).
   --client BSSID    client for the deauth (needs --target too).
-  --debug-segments  also run the airodump + 0.25 s fast-hop investigation
-                    segments (they add ~20 MB to the pcap).
+  --no-air          skip the airodump segments (native-hop reference + the
+                    fixed-channel over-air pcap that feeds beacon_watch.py).
+  --fast-hop        also run the pathological 0.25 s fast-hop stress segment.
 """
 
 import argparse
@@ -76,12 +79,14 @@ class Capture:
     # device to enumerate, before bringing up monitor mode.
     PLUG_IN_WAIT = 10
 
-    def __init__(self, target=None, client=None, debug_segments=False):
+    def __init__(self, target=None, client=None, run_air=True, fast_hop=False):
         self.target_bssid = target
         self.client_bssid = client
-        # airodump + fast-hop are per-chip investigation segments; they add
-        # ~20 MB to the pcap and aren't needed for a normal bring-up capture.
-        self.debug_segments = debug_segments
+        # The two airodump segments (native-hop reference + fixed-channel
+        # over-air pcap) run by default — they're the runtime data a bring-up
+        # needs. fast_hop is the pathological 0.25 s stress probe, opt-in.
+        self.run_air = run_air
+        self.fast_hop = fast_hop
 
         self.start_time = 0.0
         self.mon_iface = None
@@ -254,31 +259,98 @@ class Capture:
                 else:
                     self.logger.log_main("[DRIVER] could not determine the bound module")
                 dm = subprocess.run(["dmesg"], capture_output=True, text=True)
-                f.write("\n===== dmesg (last 120 lines) =====\n")
-                f.write("\n".join(dm.stdout.splitlines()[-120:]))
+                f.write("\n===== dmesg (full) =====\n")
+                f.write(dm.stdout)
         except (FileNotFoundError, OSError) as e:
             self.logger.log_main(f"[DRIVER] info capture skipped: {e}")
 
+    def write_sysinfo(self, iface):
+        """Snapshot the system facts driver.log / usb-topology.log don't already
+        hold, so a future session can pin in-tree-vs-DKMS and the kernel/driver
+        identity from the saved capture alone: kernel build, the driver +
+        firmware versions ethtool reports, the iw vif list, loaded modules, the
+        DKMS inventory, and the USB device tree."""
+        cmds = [
+            ["uname", "-a"],
+            ["ethtool", "-i", iface or self.BASE_IFACE],
+            ["iw", "dev"],
+            ["lsmod"],
+            ["dkms", "status"],
+            ["lsusb", "-t"],
+        ]
+        with open(self.temp_dir / "sysinfo.log", "w") as f:
+            for cmd in cmds:
+                f.write(f"===== {' '.join(cmd)} =====\n")
+                try:
+                    res = subprocess.run(cmd, capture_output=True, text=True)
+                    f.write(res.stdout or "")
+                    if res.stderr:
+                        f.write(res.stderr)
+                except (FileNotFoundError, OSError) as e:
+                    f.write(f"(skipped: {e})\n")
+                f.write("\n")
+
+    @staticmethod
+    def _dkms_conf_ids(conf_path):
+        """Lowercased identifiers a dkms.conf declares: PACKAGE_NAME plus every
+        BUILT_MODULE_NAME[*]. We match the bound module against both because the
+        package name and the built .ko name routinely differ — package
+        `rtl8188eus` builds module `8188eu`, package `rtl8812au` builds `88XXau`."""
+        ids = set()
+        try:
+            text = conf_path.read_text(errors="ignore")
+        except OSError:
+            return ids
+        for raw in text.splitlines():
+            line = raw.strip()
+            for key in ("PACKAGE_NAME", "BUILT_MODULE_NAME"):
+                if line.startswith(key):
+                    val = line.partition("=")[2].strip().strip('"').strip("'")
+                    if val and "$" not in val:   # skip variable references
+                        ids.add(val.lower())
+        return ids
+
+    @staticmethod
+    def _best_dkms_match(module, candidates):
+        """The (dir, ids) entry whose ids best match the bound `module` name —
+        exact first, then a >=4-char substring either direction; None if nothing
+        matches. `candidates`: list of (Path, set-of-lowercased-ids).
+
+        This ties the source to *this* card's driver. The old code returned the
+        first /usr/src dkms dir it found, which grabs the wrong source whenever
+        several wifi DKMS packages are installed at once — the normal Kali
+        realtek setup (8188eus + 8812au + 88x2bu side by side)."""
+        mod = module.lower()
+        for d, ids in candidates:
+            if mod in ids:
+                return d
+        for d, ids in candidates:
+            if any((mod in i or i in mod) and min(len(mod), len(i)) >= 4
+                   for i in ids):
+                return d
+        return None
+
     def _dkms_source_dir(self):
-        """On-disk source tree for the bound module if it's an out-of-tree /
-        DKMS driver (mainline drivers ship no buildable source on the box).
-        Resolves via `dkms status` first, then a /usr/src glob."""
+        """On-disk source tree (out-of-tree / DKMS) that builds the BOUND module,
+        or None for a mainline driver (ships no buildable source on the box).
+
+        Scans every /usr/src/*/dkms.conf and matches its declared PACKAGE_NAME /
+        BUILT_MODULE_NAME against the bound module — the canonical, unambiguous
+        mapping even with many DKMS packages present. A bare name glob is the
+        last resort."""
         if not self.driver_module:
             return None
-        try:
-            out = subprocess.run(["dkms", "status"], capture_output=True, text=True).stdout
-        except FileNotFoundError:
-            out = ""
-        for line in out.splitlines():
-            name_ver = line.split(",")[0].strip()
-            if "/" in name_ver:
-                name, ver = name_ver.split("/", 1)
-                cand = Path("/usr/src") / f"{name.strip()}-{ver.strip()}"
-                if cand.is_dir():
-                    return cand
-        # Fallback: a /usr/src dir whose name echoes the module (e.g. 8814au-*).
+        usr_src = Path("/usr/src")
+        if not usr_src.is_dir():
+            return None
+        candidates = [(c.parent, self._dkms_conf_ids(c))
+                      for c in sorted(usr_src.glob("*/dkms.conf"))]
+        match = self._best_dkms_match(self.driver_module, candidates)
+        if match:
+            return match
+        # Last resort: a /usr/src dir whose name echoes the module (e.g. 8814au-*).
         stem = self.driver_module.split("_")[-1]
-        for cand in sorted(Path("/usr/src").glob(f"*{stem}*")):
+        for cand in sorted(usr_src.glob(f"*{stem}*")):
             if cand.is_dir():
                 return cand
         return None
@@ -355,7 +427,7 @@ class Capture:
         the same 250 ms cadence wifit3 uses. `--band abg` = all bands (a=5 GHz,
         b/g=2.4 GHz). No -w: we only care about the channel-set USB traffic."""
         self.logger.log_main(f"[{time.time():.3f}] [AIRODUMP] start --band abg ({duration}s @ 250ms native hop)")
-        self.airodump_log = open(self.temp_dir / "airodump-ng.log", "w")
+        self.airodump_log = open(self.temp_dir / "airodump-hop.log", "w")
         self.airodump_proc = subprocess.Popen(
             ["sudo", "airodump-ng", "--band", "abg", self.mon_iface],
             stdout=self.airodump_log, stderr=self.airodump_log,
@@ -371,7 +443,40 @@ class Capture:
         except subprocess.TimeoutExpired:
             pass
         self.airodump_proc = None
+        self.airodump_log.close()
+        self.airodump_log = None
         self.logger.log_main(f"[{time.time():.3f}] [AIRODUMP] stopped")
+
+    def fixed_channel_segment(self, channel=1, duration=15.0):
+        """Sit on one channel and write an over-the-air pcap of everything heard.
+
+        No `--bssid` filter: airodump's filter restricts the `-w` capture to one
+        AP, but we want every AP on the channel so beacon_watch.py can pick the
+        best-heard one. The usbmon capture simultaneously records the
+        'sitting on one channel' control traffic. airodump appends '-01.cap' to
+        the prefix; `--output-format pcap` suppresses the csv/netxml clutter."""
+        prefix = self.temp_dir / "airodump-fixed-ch1"
+        self.logger.log_main(
+            f"[{time.time():.3f}] [FIXED-CH{channel}] start -w ({duration}s)")
+        self.airodump_log = open(self.temp_dir / "airodump-fixed.log", "w")
+        self.airodump_proc = subprocess.Popen(
+            ["sudo", "airodump-ng", "--channel", str(channel),
+             "--output-format", "pcap", "-w", str(prefix), self.mon_iface],
+            stdout=self.airodump_log, stderr=self.airodump_log,
+        )
+        time.sleep(duration)
+        subprocess.run(["sudo", "pkill", "-P", str(self.airodump_proc.pid)],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["sudo", "kill", str(self.airodump_proc.pid)],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            self.airodump_proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            pass
+        self.airodump_proc = None
+        self.airodump_log.close()
+        self.airodump_log = None
+        self.logger.log_main(f"[{time.time():.3f}] [FIXED-CH{channel}] stopped")
 
     def fast_hop_segment(self, dwell=0.25, duration=12.0, channels=(1, 6, 11)):
         """Hop at the wifit3 TUI's pathological 0.25 s cadence to test whether
@@ -405,6 +510,11 @@ class Capture:
         final_logs.mkdir(exist_ok=True)
         for log_file in self.temp_dir.glob("*.log"):
             shutil.copy(log_file, final_logs)
+        # The fixed-channel over-air pcap rides inside the per-run logs dir so
+        # it's scoped to this capture (airodump wrote it as <prefix>-01.cap) —
+        # no top-level airodump-fixed-2.pcap / -3.pcap sprawl across runs.
+        for cap_file in self.temp_dir.glob("airodump-fixed-ch1*.cap"):
+            shutil.copy(cap_file, final_logs / "airodump-fixed-ch1.cap")
         return dest_dir
 
     def cleanup(self):
@@ -518,14 +628,27 @@ class Capture:
         self.logger.log_main(f"[*] Detected Monitor Interface: {self.mon_iface}")
         self.logger.log_main(f"[*] Detected Chipset/Driver:  {self.chipset}")
 
-        # Record the bound driver (modinfo version fields + firmware) and dmesg,
-        # now that the interface name is known.
+        # Record the bound driver (modinfo version fields + firmware) + dmesg,
+        # then the wider system snapshot, now that the interface name is known.
         self.log_driver_info(self.mon_iface)
+        self.write_sysinfo(self.mon_iface)
 
-        # Opt-in: the kernel's native 250 ms airodump hop, a reference for diffing
-        # our set_channel cadence.
-        if self.debug_segments:
-            self.airodump_segment()
+        # Grab the driver's firmware + DKMS source NOW (not only at teardown), so
+        # a later hang or abort can't cost us the exact code that produced the
+        # capture. Idempotent — cleanup re-runs it as a safety net.
+        if self.chipset != "unknown":
+            early_dest = Path(__file__).parent / f"captures_{self.chipset}"
+            early_dest.mkdir(parents=True, exist_ok=True)
+            self.collect_driver_artifacts(early_dest)
+
+        # Kernel-driver reference segments (on by default; --no-air skips), both
+        # before the deterministic iw hops so they get a clean interface:
+        #   * native 250 ms airodump hop — diff vs our set_channel cadence
+        #   * fixed-channel over-air pcap — feeds beacon_watch.py --pcap, while
+        #     the usbmon side records the 'sitting on one channel' traffic
+        if self.run_air:
+            self.airodump_segment(duration=10)
+            self.fixed_channel_segment(channel=1, duration=15)
 
         # 2.4 GHz hops, one per channel.
         for ch in range(1, 13):
@@ -554,9 +677,10 @@ class Capture:
         else:
             self.logger.log_main("[*] No --target given; skipping injection test + deauth.")
 
-        # Opt-in: 0.25 s fast-hop stress (does the kernel survive the TUI's hop
-        # cadence?). Last, so it can't disturb the clean per-hop reference above.
-        if self.debug_segments:
+        # Opt-in (--fast-hop): 0.25 s fast-hop stress (does the kernel survive
+        # the TUI's hop cadence?). Last, so it can't disturb the clean per-hop
+        # reference above.
+        if self.fast_hop:
             self.fast_hop_segment()
 
         self.cleanup()
@@ -567,8 +691,10 @@ def main():
         description="Wifit3 automated USB capture tool (run as root).")
     parser.add_argument("--target", help="AP BSSID for the aireplay injection test + deauth")
     parser.add_argument("--client", help="client BSSID for the deauth (needs --target too)")
-    parser.add_argument("--debug-segments", action="store_true",
-                        help="also run the airodump + fast-hop investigation segments (~20 MB)")
+    parser.add_argument("--no-air", action="store_true",
+                        help="skip the airodump segments (native-hop + fixed-channel pcap)")
+    parser.add_argument("--fast-hop", action="store_true",
+                        help="also run the pathological 0.25 s fast-hop stress segment")
     args = parser.parse_args()
 
     if hasattr(os, "geteuid") and os.geteuid() != 0:
@@ -579,7 +705,7 @@ def main():
     app = None
     try:
         app = Capture(target=args.target, client=args.client,
-                      debug_segments=args.debug_segments)
+                      run_air=not args.no_air, fast_hop=args.fast_hop)
         app.run()
     except KeyboardInterrupt:
         # Use stdout.write to ensure clean newline even in raw mode
