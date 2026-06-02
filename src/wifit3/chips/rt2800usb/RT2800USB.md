@@ -16,6 +16,27 @@ no hardware available; verify before `[x]`.**
   chip is promiscuous and accepts unicast not addressed to us, incl. client→AP
   (ToDS). Explicit monitor deviation from the kernel STA filter. [SRC
   rt2800_config_filter]
+- [~] **RX-AGC link tuner missing → weak/unstable RX** (added 2026-06-01;
+  PORTED, awaiting HW verify). Symptom on PAU05: beacon rate wanders
+  (1–3/s → 7–8/s → 4–5/s) with periodic ~zero gaps every ~10–15 s, and a
+  *strong near* AP (~15 ft) comes in worse (~3/s) than a *weak far* one
+  (neighbour, steady 6–7/s) — the signature of front-end overload, not a
+  detune. Root cause: BBP66 (the RX VGC / AGC gain) is seeded once per
+  channel tune (`chan.py:1009`, 2.4 GHz = `0x1c + 2*lna_gain`) and never
+  adapted, so we sit permanently at the most-sensitive seed. The kernel runs
+  a ~1 Hz link tuner that *raises* VGC when the averaged RSSI is strong
+  (default case: `rssi > -80 → vgc += 0x10`), preventing the overload.
+  Fix: ported as `link_tuner.py` + a 1 s background task in `driver.py`
+  (`_link_tuner_loop`/`_link_tuner_tick`), fed from received-frame RSSI.
+  **Monitor-mode deviation** (the kernel disables the tuner for a pure-monitor
+  interface and feeds it only from associated-BSS beacons): we keep the
+  algorithm verbatim but source RSSI from every good frame, and it can only
+  de-sensitise on strong signals — weak-signal sensitivity is never reduced.
+  Resets on every channel change. [SRC] rt2800lib.c:5723 (get_default_vgc),
+  :5759 (set_vgc), :5787 (link_tuner); rt2x00link.c:341 (1 Hz work),
+  :228 (monitor skip), :314 (DEFAULT_RSSI fallback); rt2800lib.c:12085
+  (CAPABILITY_LINK_TUNING always set). Ties to VERIFICATION.md PAU05 Scan ⚠️
+  and the cross-card weak-2.4 GHz-RX investigation in NEXT-STEPS.
 
 Covers Ralink rt2800usb-family chipsets supported by wifit3:
 

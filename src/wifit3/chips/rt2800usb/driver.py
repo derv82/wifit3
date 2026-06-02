@@ -69,6 +69,7 @@ from .bbp import init_bbp, prepare_bbp
 from .chan import CHANNELS_5G_NON_DFS, is_xtal_40mhz, set_channel as _set_channel
 from .eeprom import parse_eeprom, read_eeprom_efuse
 from .firmware import load_firmware, load_firmware_blob
+from .link_tuner import LINK_TUNE_SECONDS, LinkTuner, compute_link_vgc, set_vgc
 from .mac import (
     ChipId, enable_radio, is_chip_warm, read_chip_id, read_perm_mac,
     usb_init_registers, write_mac_address,
@@ -131,6 +132,13 @@ class RT2800USBDriver:
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._rx_reader: Optional[RxReaderThread] = None
         self._bulk_in_ep: Optional[int] = None
+        # Periodic RX-AGC adaptation (rt2x00 link tuner). The accumulator is
+        # fed from RX dispatch; a background task re-seeds BBP66 once a second.
+        # _conf_lock serialises the tuner's register I/O against set_channel,
+        # the way the kernel's conf_mutex guards the tuner vs rt2x00mac_config.
+        self._link_tuner = LinkTuner()
+        self._link_tuner_task: Optional[asyncio.Task] = None
+        self._conf_lock = asyncio.Lock()
         self._rxwi_size: int = 16          # set at connect-time from silicon_id
         self._claimed = False
         self._eeprom = None                 # EepromValues post-EFUSE-read
@@ -454,6 +462,11 @@ class RT2800USBDriver:
             )
             self._rx_reader.start()
 
+            # Start the RX-AGC link tuner now that the channel is tuned and
+            # frames are flowing (it adapts off received-frame RSSI).
+            self._link_tuner.reset()
+            self._link_tuner_task = loop.create_task(self._link_tuner_loop())
+
             self.is_warm = True
             return True
 
@@ -474,12 +487,60 @@ class RT2800USBDriver:
         rx = parse_rx_urb(buf, rxwi_size=self._rxwi_size)
         if rx is None or rx.has_fcs_error:
             return
+        # Feed the link tuner's RSSI average (good frames only — the kernel
+        # likewise only counts successfully-received frames).
+        self._link_tuner.feed(rx.rssi_dbm)
         parsed = WlanFrameParser.parse_80211_frame(rx.mpdu, rx.rssi_dbm)
         if parsed is not None and self._rx_callback is not None:
             try:
                 self._rx_callback(parsed)
             except Exception as e:
                 logger.exception("rx_callback raised: %s", e)
+
+    # ---- RX-AGC link tuner ----------------------------------------------
+    async def _link_tuner_loop(self) -> None:
+        """Re-seed BBP66 (RX VGC) once a second from averaged RSSI.
+
+        Ports the rt2x00 link-tuner work (see ``link_tuner.py`` for the
+        algorithm + the monitor-mode deviation). A USB hiccup on one tick is
+        non-fatal — we log and try again next second.
+        """
+        try:
+            while True:
+                await asyncio.sleep(LINK_TUNE_SECONDS)
+                try:
+                    await self._link_tuner_tick()
+                except (IOError, usb.core.USBError) as e:
+                    logger.debug("link tuner tick skipped: %s", e)
+        except asyncio.CancelledError:
+            pass
+
+    async def _link_tuner_tick(self) -> None:
+        if self._eeprom is None or self.chip_id is None:
+            return
+        rssi = self._link_tuner.avg_rssi()
+        self._link_tuner.end_interval()
+        channel = self.current_channel
+        silicon = self.chip_id.silicon_id
+        lna_gain = (
+            self._eeprom.lna_gain_bg if channel <= 14 else self._eeprom.lna_gain_a
+        )
+        vgc = compute_link_vgc(silicon, channel, lna_gain, rssi)
+        if vgc == self._link_tuner.vgc_level:
+            return
+        async with self._conf_lock:
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: set_vgc(
+                    self.transport, silicon, vgc,
+                    rx_chain_num=self._eeprom.rxpath, rssi=rssi,
+                ),
+            )
+        self._link_tuner.vgc_level = vgc
+        logger.debug(
+            "link tuner: ch=%d avg_rssi=%ddBm → BBP66 vgc=0x%02x",
+            channel, rssi, vgc,
+        )
 
     # ---- channel tune (M4) ----------------------------------------------
     def _channel_kwargs(self, channel: int = 1) -> dict:
@@ -545,13 +606,14 @@ class RT2800USBDriver:
             return False
         kwargs = self._channel_kwargs(channel)
         try:
-            await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: _set_channel(
-                    self.transport, self.chip_id.silicon_id, channel,
-                    **kwargs,
-                ),
-            )
+            async with self._conf_lock:
+                await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: _set_channel(
+                        self.transport, self.chip_id.silicon_id, channel,
+                        **kwargs,
+                    ),
+                )
         except ValueError as e:
             logger.warning("rt2800usb set_channel: %s", e)
             return False
@@ -559,6 +621,10 @@ class RT2800USBDriver:
             logger.error("rt2800usb set_channel(%d): %s", channel, e)
             return False
         self.current_channel = channel
+        # _set_channel just rewrote BBP66 to the per-channel AGC seed, so the
+        # tuner must re-establish from scratch on the new channel (and not
+        # carry the old channel's averaged RSSI across the hop).
+        self._link_tuner.reset()
         return True
 
     # ---- TX inject (M5) -------------------------------------------------
@@ -670,6 +736,13 @@ class RT2800USBDriver:
             logger.debug("[%s] TX counter read failed: %s", tag, e)
 
     async def close(self) -> None:
+        if self._link_tuner_task is not None:
+            self._link_tuner_task.cancel()
+            try:
+                await self._link_tuner_task
+            except asyncio.CancelledError:
+                pass
+            self._link_tuner_task = None
         if self._rx_reader is not None:
             await self._rx_reader.stop()
             self._rx_reader = None
