@@ -170,7 +170,7 @@ def _relaying_iface(key: bytes, daemon_box, min_relay: int = 0):
     dropped (never relayed), so the chop stalls there."""
     box = {}
 
-    async def send_raw(frame, use_no_ack=False, sw_seq=None):
+    async def send_raw(frame, use_no_ack=False):
         d = box["d"]
         da = frame[16:22]                       # Addr3 (DA) of our ToDS frame
         body = frame[24:]

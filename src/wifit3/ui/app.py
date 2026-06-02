@@ -130,8 +130,9 @@ class WifiteApp(App):
     #lbl-ssid { width: 100%; text-align: center; }
 
     /* Buttons: fat (height 3), narrow — Button defaults to min-width:16, which
-       ballooned/clipped them. Width 13 fits "Stop Replay"/"Stop Frag" in the
-       wide left column; rows touch vertically so 2 fit the 8-tall panel. */
+       ballooned/clipped them. Width 13 fits "Stop Replay"/"Stop Chop" in the
+       wide left column; rows touch vertically so the WPA set's 2 fit the
+       8-tall panel (WEP uses a single Replay/Chop row, vertically centered). */
     .button-row { height: auto; align-horizontal: center; }
     #attack-panel Button { width: 13; min-width: 0; }
     /* DEAUTH buttons are flat (no border), 2 rows high for the stacked

@@ -198,7 +198,7 @@ async def test_iv_churn_without_echo_is_not_replayable(mocker):
 
 
 async def test_paused_echo_does_not_count(mocker):
-    """A frag/chopchop relay shares our source_mac and matches the echo
+    """A ChopChop relay shares our source_mac and matches the echo
     signature; arriving while replay is paused it must NOT count (the pause
     gate), but the SAME frame counts once resumed — proving it's the gate, not
     a signature mismatch, that dropped it."""

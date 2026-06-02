@@ -6,9 +6,8 @@ near-term rungs of the escalation ladder:
     1. fake-auth  — associate so the AP accepts our injections
     2. ARP replay — capture an ARP passively, replay it for fresh IVs
 
-Future milestones extend this: when no ARP turns up, M5/M6 will run
-fragmentation / chopchop to *forge* one (pausing replay so only one TX
-activity uses the radio at a time), then hand the forged ARP back to replay.
+When no ARP turns up, ChopChop *forges* one (pausing replay so only one TX
+activity uses the radio at a time), then hands the forged ARP back to replay.
 That's why replay lives behind ``pause()``/``resume()`` and the campaign — not
 the button — owns the "only one TX activity at once" rule.
 
@@ -31,7 +30,6 @@ from wifit3.engine.models import AccessPoint
 from wifit3.engine.attacks import treelog
 from wifit3.engine.attacks.wep.fake_auth import WepFakeAuth
 from wifit3.engine.attacks.wep.arp_replay import WepArpReplay
-from wifit3.engine.attacks.wep.fragmentation import WepFragmentation
 from wifit3.engine.attacks.wep.chopchop import WepChopChop
 from wifit3.engine.attacks.wep.crack import (
     PtwCracker,
@@ -76,11 +74,9 @@ class WepCampaign:
         # the main process's event loop + GIL-releasing USB I/O).
         self._crack_pool: Optional[ProcessPoolExecutor] = None
 
-        # Frag/Chop are alternative "manufacture an ARP seed" sub-modes the
-        # user toggles while the campaign runs. The campaign owns the "one TX
-        # activity at a time" invariant by pausing replay around them, and
-        # treats them as mutually exclusive (click-to-switch).
-        self.frag: Optional[WepFragmentation] = None
+        # ChopChop is a "manufacture an ARP seed" sub-mode the user toggles
+        # while the campaign runs. The campaign owns the "one TX activity at a
+        # time" invariant by pausing replay around it.
         self.chop: Optional[WepChopChop] = None
 
         self.fake_auth = WepFakeAuth(iface, target, log_callback=self._log)
@@ -109,7 +105,7 @@ class WepCampaign:
             f"[bold green]ARP Replay starting[/bold green] on "
             f"[bold]{escape(self.target.ssid or '<hidden>')}[/bold]"
         )
-        self._log(treelog.leaf("[dim](deauth, chop, or frag if no ARPs appear)[/dim]"))
+        self._log(treelog.leaf("[dim](deauth or chop if no ARPs appear)[/dim]"))
         self.fake_auth.start()
         self.replay.start()
         # One reusable worker process for the crack search (spawns lazily on
@@ -130,13 +126,9 @@ class WepCampaign:
             # worker process exit on its own.
             self._crack_pool.shutdown(wait=False, cancel_futures=True)
             self._crack_pool = None
-        # Tear down a running frag/chop sub-mode before the TX it shares the
-        # radio with — and SAY SO (they stop silently otherwise, so "Stop IVs"
-        # mid-Frag/Chop looked like it left them running).
-        if self.frag is not None:
-            self.frag.stop()
-            self.frag = None
-            self._log("[dim]· Frag stopped (Generate IVs ended)[/dim]")
+        # Tear down a running ChopChop sub-mode before the TX it shares the
+        # radio with — and SAY SO (it stops silently otherwise, so "Stop IVs"
+        # mid-Chop looked like it left it running).
         if self.chop is not None:
             self.chop.stop()
             self.chop = None
@@ -193,66 +185,14 @@ class WepCampaign:
         except asyncio.CancelledError:
             pass
 
-    # ---- Fragmentation sub-mode --------------------------------------------
-
-    def start_frag(self) -> None:
-        """Switch to fragmentation: pause ARP replay (one TX activity at a time
-        on the half-duplex radio) and run WepFragmentation. On success it hands
-        back the AP's relayed ARP and we resume replay with the fresh seed; a
-        barren round just keeps retrying (the daemon logs a tally) until the
-        user stops or switches — never auto-stops."""
-        if not self._active or self.frag is not None:
-            return
-        # Mutually exclusive with chop (one TX activity) — click-to-switch.
-        if self.chop is not None:
-            self.chop.stop()
-            self.chop = None
-        self.replay.pause()
-        self.frag = WepFragmentation(
-            self.iface,
-            self.target,
-            self.iface.wep_store,
-            source_mac=self.fake_auth.source_mac,
-            on_forged_arp=self._on_frag_success,
-            ensure_associated=self.fake_auth.ensure_associated,
-            notify_activity=self.fake_auth.notify_activity,
-            log_callback=self._log,
-        )
-        self.frag.start()
-
-    def stop_frag(self) -> None:
-        """User-driven stop of the frag sub-mode → hand the radio back to ARP
-        replay (its locked-on seed, if any, survives)."""
-        if self.frag is None:
-            return
-        self.frag.stop()
-        self.frag = None
-        self.replay.resume()
-
-    def _on_frag_success(self, frame: bytes) -> None:
-        """Frag produced a relay (already an ARP-sized broadcast → the capture
-        store logged it as a replay seed). The daemon stopped itself; just drop
-        our handle and resume replay, which will pick the new seed up."""
-        self.frag = None
-        # The frag daemon already logged "✓ Fragmentation worked!"; resuming
-        # replay speaks for itself via its own "Testing candidate packet…" line.
-        self.replay.resume()
-
-    @property
-    def frag_active(self) -> bool:
-        return self.frag is not None and self.frag.is_active
-
     # ---- ChopChop sub-mode --------------------------------------------------
 
     def start_chop(self) -> None:
         """Switch to ChopChop: pause replay + run WepChopChop. On success it
         forges a broadcast ARP (from recovered keystream) which we register as a
-        replay seed before resuming. Mutually exclusive with frag."""
+        replay seed before resuming."""
         if not self._active or self.chop is not None:
             return
-        if self.frag is not None:
-            self.frag.stop()
-            self.frag = None
         self.replay.pause()
         self.chop = WepChopChop(
             self.iface,
@@ -274,9 +214,9 @@ class WepCampaign:
         self.replay.resume()
 
     def _on_chop_success(self, forged_frame: bytes) -> None:
-        """Chop FORGED a broadcast ARP (from recovered keystream) — unlike
-        frag's AP-relay, it isn't in the store yet, so register it as a replay
-        seed, then resume replay to loop it."""
+        """Chop FORGED a broadcast ARP (from recovered keystream) — it isn't in
+        the store yet, so register it as a replay seed, then resume replay to
+        loop it."""
         self.chop = None
         self.iface.wep_store.record_arp_candidate(self.target.bssid, forged_frame)
         # The chop daemon already logged "✓ ChopChop worked!"; resuming replay

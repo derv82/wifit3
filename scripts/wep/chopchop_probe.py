@@ -11,7 +11,7 @@ What it does (one byte, all 256 guesses):
   2. Capture a broadcast WEP data frame (the frame to chop).
   3. Fake-auth (associate) so the AP accepts/relays our frames.
   4. For guess 0..255: chop the last cipher byte + fix the ICV for that guess,
-     re-header to broadcast-from-us, inject. (No sw_seq — single frames.)
+     re-header to broadcast-from-us, inject. (Single frames.)
   5. Dump EVERY RX frame timestamped to a .pcap + console log, flagging
      candidate relays: FromDS broadcast WEP data sourced from our STA, ~1 byte
      shorter than the original.

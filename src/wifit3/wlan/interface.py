@@ -529,29 +529,15 @@ class WlanInterface:
 
     async def send_raw(
         self, frame_bytes: bytes, use_no_ack: bool = True,
-        sw_seq: Optional[int] = None,
     ) -> bool:
         """
         Injects a raw 802.11 frame.
         The underlying driver is responsible for wrapping it in the correct
         hardware descriptors (e.g., ath_tx_status) before sending.
-
-        ``sw_seq`` requests a software-supplied 802.11 sequence number for this
-        frame instead of the hardware-assigned one — needed so a fragment train
-        (WEP fragmentation) shares one sequence number across its fragments.
-        Drivers that don't support it ignore the hint (hardware seq); the
-        fragmentation attack checks ``supports_sw_seq`` before relying on it.
         """
         if hasattr(self.driver, 'inject_frame'):
             # Live packet dashboard — tally this inject (deauth vs other) by AP.
             self._record_tx(frame_bytes)
-            # Only pass sw_seq to drivers that advertise support — others'
-            # inject_frame has no such parameter and would raise. Callers that
-            # NEED software seq must gate on supports_sw_seq first.
-            if sw_seq is not None and getattr(self.driver, "SUPPORTS_SW_SEQ", False):
-                return await self.driver.inject_frame(
-                    frame_bytes, use_no_ack, sw_seq=sw_seq
-                )
             return await self.driver.inject_frame(frame_bytes, use_no_ack)
         logger.warning(f"Driver for {self.name} does not support injection.")
         return False
@@ -571,12 +557,6 @@ class WlanInterface:
         except Exception:
             pass
 
-    @property
-    def supports_sw_seq(self) -> bool:
-        """Whether the driver can inject a frame with a software-supplied 802.11
-        sequence number (needed for WEP fragmentation's fragment trains)."""
-        return bool(getattr(self.driver, "SUPPORTS_SW_SEQ", False))
-    
     async def deauth(self, ap_bssid: str, client_bssid: str, burst_count: int = 10):
         """
         Sends a burst of Deauthentication frames to the AP and the Client.

@@ -51,17 +51,10 @@ Full attack pass on the AWUS036ACH (matrix cells in `VERIFICATION.md`):
 
 - **Deauth** ✅ multiple clients. **Handshake** ✅ — M1+M2 and M2+M3 captured.
   **PMKID** ✅ — passive + active extract. **WPS** ✅ — PIN and PBC.
-- **WEP** — Replay ✅; ChopChop ✅ (<2 min); **Fragmentation ✗** — could not forge
-  a valid ARP after ~2 min of rounds.
-
-**Fragmentation lead (cross-family pattern).** Frag forging fails here, on the
-RTL8822BU, and on the AR9271 — three different chip families — and works only on
-the RTL8821AU (its dev card). Because it spans families, the leading suspect is
-now the **shared frag daemon** (seed-selection-by-length / oracle matching / the
-sw-seq it assumes), not this chip's TX desc alone. Full analysis + the
-disambiguating probe live in `engine/attacks/wep/README.md` § "Known issue —
-Fragmentation works only on the RTL8821AU." Replay + ChopChop (single-frame) work
-here, consistent with a fragment-sequence-or-seed-specific gap.
+- **WEP** — Replay ✅; ChopChop ✅ (<2 min). (WEP fragmentation was removed
+  project-wide — it only ever worked on the RTL8821AU via a one-card
+  software-sequence TX hack; see `engine/attacks/wep/README.md` § "Fragmentation
+  — removed".)
 
 **Scan/UI note.** When channel-hop wedges the RX (the hop-death above), the
 Scanner gives no feedback — targets fade to dark then the list empties, no

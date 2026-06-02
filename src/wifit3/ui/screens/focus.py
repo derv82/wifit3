@@ -138,18 +138,17 @@ class FocusView(Screen):
                     )
                     # ATTACKS — no title bar: buttons self-label, family stated
                     # by TARGET's "Encryption:" line. WEP and WPA buttons share
-                    # the two rows; update_ui shows only the set that fits the
-                    # target. Replay gates Chop/Frag, so it sits alone on top:
-                    #   WEP:  Replay              WPA:  PMKID  WPS PIN
-                    #         Chop  Frag                WPA ↓
+                    # the rows; update_ui shows only the set that fits the
+                    # target:
+                    #   WEP:  Replay  Chop        WPA:  PMKID  WPS PIN
+                    #                                   WPA ↓
                     with Vertical(classes="info-box", id="attack-panel"):
                         with Horizontal(classes="button-row"):
                             yield Button("Replay", variant="success", id="btn-gen-ivs")
+                            yield Button("Chop", variant="primary", id="btn-chop")
                             yield Button("PMKID", variant="primary", id="btn-pmkid")
                             yield Button("WPS PIN", variant="primary", id="btn-wps-pin", disabled=True)
                         with Horizontal(classes="button-row"):
-                            yield Button("Chop", variant="primary", id="btn-chop")
-                            yield Button("Frag", variant="primary", id="btn-frag")
                             yield Button("WPA ↓", variant="primary", id="btn-wpa3-down", disabled=True)
                     with Vertical(classes="info-box", id="client-panel"):
                         yield Label("CLIENTS", classes="panel-title", id="lbl-clients-title")
@@ -445,7 +444,6 @@ class FocusView(Screen):
         btn_down = self.query_one("#btn-wpa3-down", Button)
         btn_pmkid = self.query_one("#btn-pmkid", Button)
         btn_gen = self.query_one("#btn-gen-ivs", Button)
-        btn_frag = self.query_one("#btn-frag", Button)
         btn_chop = self.query_one("#btn-chop", Button)
 
         # (ATTACKS panel has no title now — the buttons + TARGET's Encryption
@@ -462,11 +460,10 @@ class FocusView(Screen):
         # Replay vanishes once the key is cracked — Save takes its place, so it
         # reads as a "Replay → Save" swap.
         btn_gen.display = is_wep and ap.wep_key is None
-        # Frag/Chop are visible for any WEP target (before crack), but disabled
-        # until Replay starts the campaign — they're sub-modes of it, and the
-        # campaign owns the fake-auth they need. Visible-but-grey reads cleaner
-        # than vanish-on-Replay-click ("where did they come from?").
-        btn_frag.display = is_wep and ap.wep_key is None
+        # Chop is visible for any WEP target (before crack), but disabled until
+        # Replay starts the campaign — it's a sub-mode of it, and the campaign
+        # owns the fake-auth it needs. Visible-but-grey reads cleaner than
+        # vanish-on-Replay-click ("where did it come from?").
         btn_chop.display = is_wep and ap.wep_key is None
 
         if is_wep:
@@ -486,17 +483,13 @@ class FocusView(Screen):
                 self._stop_generate_ivs()
                 camp = None
             # Replay is the campaign switch: green to start, red to STOP the
-            # whole campaign. Frag/Chop are sub-attacks: blue to start, orange
-            # ("Stop X") to stop just that one (the campaign keeps running).
+            # whole campaign. Chop is a sub-attack: blue to start, orange
+            # ("Stop Chop") to stop just it (the campaign keeps running).
             running = camp is not None
             btn_gen.label = "Stop Replay" if running else "Replay"
             btn_gen.variant = "error" if running else "success"
-            # Frag/Chop visibility set above (any WEP target before crack); here
-            # we just gate the disabled state on whether the campaign is running.
-            fragging = bool(camp and camp.frag_active)
-            btn_frag.label = "Stop Frag" if fragging else "Frag"
-            btn_frag.variant = "warning" if fragging else "primary"
-            btn_frag.disabled = not running
+            # Chop visibility set above (any WEP target before crack); here we
+            # just gate the disabled state on whether the campaign is running.
             chopping = bool(camp and camp.chop_active)
             btn_chop.label = "Stop Chop" if chopping else "Chop"
             btn_chop.variant = "warning" if chopping else "primary"
@@ -660,14 +653,12 @@ class FocusView(Screen):
 
     @staticmethod
     def _replay_status_markup(campaign) -> str:
-        """The Replay-status row's value. Surfaces frag/chop too — while they
-        run, replay is paused on purpose, so say WHAT'S running (not a bare
+        """The Replay-status row's value. Surfaces ChopChop too — while it
+        runs, replay is paused on purpose, so say WHAT'S running (not a bare
         'paused' that reads like the attack stalled)."""
         if campaign is None:
             return "[dim]not started[/dim]"
-        # Frag/Chop take over the radio (replay paused by design) — name them.
-        if campaign.frag_active:
-            return "[dim]forging a seed using[/dim] [cyan]Fragmentation[/cyan][dim]…[/dim]"
+        # ChopChop takes over the radio (replay paused by design) — name it.
         if campaign.chop_active:
             return "[dim]forging a seed using[/dim] [cyan]ChopChop[/cyan][dim]…[/dim]"
         s = campaign.replay.state
@@ -1081,8 +1072,6 @@ class FocusView(Screen):
             self._toggle_wpa3_down()
         elif bid == "btn-gen-ivs":
             self._toggle_generate_ivs()
-        elif bid == "btn-frag":
-            self._toggle_frag()
         elif bid == "btn-chop":
             self._toggle_chop()
 
@@ -1273,28 +1262,9 @@ class FocusView(Screen):
         except Exception:
             pass
 
-    def _toggle_frag(self) -> None:
-        """Frag button. It's a sub-mode of a running campaign — switches the
-        radio from ARP replay to fragmentation (and back). Click-to-toggle."""
-        camp = self._wep_campaign
-        if camp is None:
-            self._log(
-                "[yellow]Start Generate IVs first[/yellow] [dim](Frag "
-                "manufactures an ARP seed for the replay engine)[/dim]"
-            )
-            return
-        if camp.frag_active:
-            camp.stop_frag()
-            self._log("[cyan]→ Frag stopped[/cyan] [dim](back to ARP replay)[/dim]")
-        else:
-            # The daemon logs its own one-liner (waiting → seeded → worked); no
-            # need for a separate start line back-to-back with it.
-            camp.start_frag()
-        self.update_ui()
-
     def _toggle_chop(self) -> None:
-        """Chop button — sibling of Frag (mutually exclusive). Byte-by-byte
-        ICV-oracle decryption to forge a seed when frag gets no response."""
+        """Chop button. A sub-mode of a running campaign — byte-by-byte
+        ICV-oracle decryption to forge an ARP seed when none can be captured."""
         camp = self._wep_campaign
         if camp is None:
             self._log(

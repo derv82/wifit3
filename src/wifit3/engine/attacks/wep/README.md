@@ -2,6 +2,13 @@
 
 Scope doc for porting `aireplay-ng -1/-3/-4/-5` + an `aircrack-ng`-equivalent PTW key recovery into wifit3. Native Python on top of `WlanInterface`, same shape as the existing PMKID / SAE / decloak attacks.
 
+> **Status (2026-06-02): WEP fragmentation (`-5`) was removed.** Only the
+> RTL8821AU ever supported it (via a one-card software-sequence TX hack) — a
+> maintenance smell — and ARP-replay + ChopChop carry WEP without it.
+> `fragmentation.py` is kept as a dormant reference. Sections below that present
+> Fragmentation as shipped/wired are **historical**; see "Fragmentation —
+> removed" at the end.
+
 ## Why
 
 Early plans said "skip WEP — outdated". Flipped 2026-05-22: WEP networks still occasionally surface (legacy IoT setups, ancient routers left running) and seeing one in Scanner with no attack available is the wrong end of the wifit3 promise. Modern isn't the only target.
@@ -286,70 +293,28 @@ issue below):
 - **ARP replay** — works on every card tried.
 - **ChopChop** — daemon now confirmed end-to-end on RTL8812AU, RTL8822BU, and
   AR9271 (the earlier "PENDING a live run" note is resolved — M6 done).
-- **Fragmentation** — works on the RTL8821AU (its dev card) but **fails on
-  RTL8812AU / RTL8822BU / AR9271** ("seed wouldn't relay"). Open — see below.
+- **Fragmentation** — **removed** (see "Fragmentation — removed" below);
+  `fragmentation.py` kept as a dormant reference.
 
-## Known issue — Fragmentation works only on the RTL8821AU (2026-05-31)
+## Fragmentation — removed (2026-06-02)
 
-ARP replay and ChopChop work on every card tested, but **Fragmentation forging
-fails on every card except the RTL8821AU** (the card it was developed on):
+Fragmentation (`-5`) was the one WEP attack that needed every fragment of an
+MSDU to keep **one shared 802.11 sequence number** (`build_fragments` stamps it
+with incrementing fragment numbers + the More-Fragments bit). That required
+injecting with `en_hwseq=0` so the chip doesn't auto-assign the sequence — a
+**software-sequence TX path that was only ever wired on the RTL8821AU**
+(`SUPPORTS_SW_SEQ` + `tx.build_tx_desc_data`). On every other card the hint was
+dropped, each fragment got a different hardware-incremented sequence, the AP
+never reassembled, and the daemon span on "seed wouldn't relay."
 
-| Card | Family | Replay | ChopChop | Fragmentation |
-|---|---|:--:|:--:|:--:|
-| RTL8821AU | Realtek rtw88xxa | ✅ | ✅ | ✅ |
-| RTL8812AU | Realtek rtw88xxa | ✅ | ✅ | ✗ |
-| RTL8822BU | Realtek rtw88 (8822b) | ✅ | ✅ | ✗ |
-| AR9271 | Atheros ath9k_htc | ✅ | ✅ | ✗ |
-| RTL8814AU | Realtek rtw88 (8814a) | ✅ | ✅ | ✗ |
+One card arbitrarily owning one attack was a maintenance smell, and WEP barely
+surfaces in 2026 — **ARP-replay + ChopChop carry the suite**. So the sw-seq
+plumbing was removed: `SUPPORTS_SW_SEQ`, `en_hwseq=0`, `build_tx_desc_data`,
+`interface.send_raw(sw_seq=)`, and `supports_sw_seq` are gone, and the Frag
+button / campaign sub-mode were unhooked. `fragmentation.py` is kept as a
+**dormant reference implementation** — it won't run as-is (its send loop calls
+the removed `send_raw(sw_seq=)`).
 
-Symptom: the fragment burst goes out but the AP's reassembled relay never appears
-("seed wouldn't relay"); replay + ChopChop (both single-frame, no shared
-sequence) work on the same cards and APs.
-
-### Root cause (confirmed 2026-05-31 by code read)
-
-It's the **software-sequence TX path**, and it was only ever wired on the
-RTL8821AU. The crypto and seed selection are fine.
-
-- For the AP to reassemble a fragment train, every fragment must keep the **one
-  shared 802.11 sequence number** that `build_fragments` stamps (with incrementing
-  fragment numbers + the More-Fragments bit). That requires injecting with
-  `en_hwseq=0` so the chip does **not** auto-assign/increment the sequence number.
-- The daemon asks for that via `iface.send_raw(..., sw_seq=N)`. But
-  `interface.send_raw` **silently drops `sw_seq` unless the driver sets
-  `SUPPORTS_SW_SEQ`** (`interface.py:539`), and **only `rtl8821au` does**
-  (`driver.py:89`; its `tx.build_tx_desc_data` sets `en_hwseq=False` + writes
-  `SW_SEQ`). On every other card the hint is dropped → frames inject with
-  `en_hwseq=1` → each fragment gets a **different, hardware-incremented** sequence
-  number → the AP sees N unrelated frames, never reassembles → no relay → "seed
-  wouldn't relay." Replay + ChopChop are single frames, so they don't care about
-  the seq — which is why they work everywhere.
-
-This explains the table exactly: 8821au (has the path) ✅; everyone else ✗,
-regardless of family.
-
-**Secondary correctness bug:** `fragmentation.py` does **not** gate on
-`iface.supports_sw_seq` before running — contrary to `interface.py`'s own
-docstring and unlike `scripts/wep/frag_probe.py:350` (which correctly warns). So
-on an unsupported card the daemon spins forever with the misleading "seed
-wouldn't relay" (implies a *seed* problem, not "this card can't fragment").
-
-(The unrelated "sequence not supported" warning that flags *other rt2800usb
-cards* is a different path — don't conflate.)
-
-### Fix plan
-
-1. **Honesty gate (small, safe, no hardware):** have `fragmentation.py` /
-   `campaign.py` check `iface.supports_sw_seq` up front and refuse to start with a
-   clear message ("Fragmentation needs software-sequence TX, only RTL8821AU has it
-   so far") instead of spinning on "seed wouldn't relay."
-2. **Port the sw-seq path to the rtw88 family (the real fix):** lift the 8821au's
-   `build_tx_desc_data` (`en_hwseq=0` + `SW_SEQ`) into `rtw88_base/tx_common.py`
-   and add `inject_frame(..., sw_seq=...)` + `SUPPORTS_SW_SEQ=True` to 8812au /
-   8814au / 8822bu. They already carry the W8 EN_HWSEQ / W9 SW_SEQ fields in their
-   tx_pkt_desc (8822bu mgmt desc sets W8[15]), so this is mechanical with the
-   8821au as the template — likely fixes all three rtw88 cards at once. Verify per
-   the per-driver hardware loop.
-3. **AR9271 separately:** different TX path (HTC firmware) with no rtw88
-   `en_hwseq` concept — check whether the cleanroom FW / HTC TX descriptor exposes
-   a "don't auto-assign sequence" option before promising frag there.
+Re-introducing it should NOT recreate a per-driver special case. The honest path
+is *shared* sequence-ID support in the TX framework (e.g. `rtw88_base`) first —
+deferred; tracked in `planning/PORTING.md`.

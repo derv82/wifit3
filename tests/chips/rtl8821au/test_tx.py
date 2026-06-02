@@ -7,7 +7,6 @@ from wifit3.chips.rtl8821au.tx import (
     TX_DESC_QSEL_MGMT,
     TX_PKT_DESC_SZ,
     build_deauth_frame,
-    build_tx_desc_data,
     build_tx_desc_mgmt,
     pick_bulk_out_ep,
 )
@@ -84,31 +83,6 @@ def test_desc_checksum_xors_first_32_bytes():
         chk ^= struct.unpack_from("<H", desc_z, i * 2)[0]
     stored = struct.unpack_from("<H", desc, 7 * 4)[0]
     assert stored == chk
-
-
-def test_data_desc_disables_hwseq_and_sets_sw_seq():
-    """The fragment-train descriptor: en_hwseq off (W8[15]=0), software seq in
-    W9[23:12]. Without this all fragments get per-frame HW seq and the AP can't
-    reassemble them."""
-    desc = build_tx_desc_data(b"\x00" * 26, 0x123)
-    assert len(desc) == TX_PKT_DESC_SZ
-    w8 = _word(desc, 8)
-    w9 = _word(desc, 9)
-    assert (w8 >> 15) & 1 == 0            # EN_HWSEQ off
-    assert (w9 >> 12) & 0xFFF == 0x123    # SW_SEQ
-
-
-def test_data_desc_differs_from_mgmt_only_in_seq_words():
-    """W8/W9 sit past the checksummed region (words 0..7), so the data and
-    mgmt descriptors for the same MPDU must be byte-identical everywhere EXCEPT
-    W8 (en_hwseq) and W9 (sw_seq) — including the W7 checksum."""
-    frame = b"\xC0\x00\x00\x00" + b"\xff" * 6 + b"\x00" * 16
-    mgmt = build_tx_desc_mgmt(frame)
-    data = build_tx_desc_data(frame, 0x055)
-    for i in range(10):
-        if i in (8, 9):
-            continue
-        assert _word(mgmt, i) == _word(data, i), f"word {i} differs"
 
 
 def test_pick_bulk_out_ep_mgmt_to_index_1():

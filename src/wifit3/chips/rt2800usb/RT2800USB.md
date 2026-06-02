@@ -494,8 +494,8 @@ predicts (matrix cells in `VERIFICATION.md`):
 - **Handshake** — partial (M1+M4) capture, weak.
 - **PMKID** — passive capture works; the active "PMKID" button does not (can't
   elicit M1 — weak TX).
-- **WEP** — ARP replay ✅; Fragmentation ✅ (slow, many failed rounds); ChopChop
-  ✗ (stalled at 22/32 bytes). FakeAuth bounced Associated↔Idle with errors.
+- **WEP** — ARP replay ✅; ChopChop ✗ (stalled at 22/32 bytes). FakeAuth bounced
+  Associated↔Idle with errors.
 - **WPS** — PBC timed out; PIN got 2 NACKs + 1 no-response (talking, unreliable).
 
 All consistent with the missing factory RF cal — not new bugs. The

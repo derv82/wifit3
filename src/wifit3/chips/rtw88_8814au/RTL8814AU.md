@@ -75,9 +75,9 @@ beacon rate was 0.5–2/s vs ~10/s on 5 GHz; 5 GHz RX is healthy. So the
 RX gap** slipped through — suspect the 2G RX path / AGC / gain or LNA setup in
 `switch_band`, the 2G `crystal_cap`/spur path, or a 2.4-GHz RSSI miscalc (though
 the low beacon *rate*, not just RSSI, points at real sensitivity loss, not just a
-display bug). ARP replay + ChopChop worked on 2.4 GHz the same session (RX could
-hear ChopChop's relays), so the Fragmentation failure there is still a valid data
-point, not merely the weak RX.
+display bug). ARP replay + ChopChop nonetheless worked on 2.4 GHz the same
+session (RX could hear ChopChop's relays), so attack TX/RX functioned despite the
+weak 2.4 GHz reception.
 
 **TX path — FUNCTIONAL but NOT power/IQ-calibrated.** Deauth/injection is
 hardware-confirmed (kicks a phone off, EAPOL re-capture), but TX runs at the

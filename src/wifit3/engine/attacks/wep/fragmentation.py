@@ -1,5 +1,18 @@
 """WEP fragmentation attack (`aireplay-ng -5`) — M5.
 
+.. warning::
+    **NOT CURRENTLY WIRED INTO THE PRODUCT — kept as a reference implementation.**
+    Fragmentation is the one WEP attack that needs every fragment of an MSDU to
+    share a single 802.11 sequence number, which required a per-driver
+    software-sequence TX path (``en_hwseq=0`` + a ``SUPPORTS_SW_SEQ`` flag). Only
+    the RTL8821AU ever implemented it; one card arbitrarily owning one attack was
+    a maintenance smell, so that sw-seq plumbing was removed and this module was
+    unhooked from the campaign + UI. ARP-replay + ChopChop carry WEP without it.
+    As-is this WILL NOT RUN: ``_inject_round`` calls
+    ``iface.send_raw(..., sw_seq=...)``, a parameter that no longer exists.
+    Re-wiring it means first restoring shared sequence-ID support in the TX
+    framework (see ``planning/PORTING.md``).
+
 Manufactures a replayable ARP when there's none to capture — the whole reason
 `-5` exists. Seed 8 bytes of keystream from ANY captured WEP *data* frame via
 its fixed LLC/SNAP prefix (NOT a broadcast ARP — depending on one would be

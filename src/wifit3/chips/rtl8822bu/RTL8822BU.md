@@ -221,18 +221,10 @@ Run on the Archer T3U Plus v1 (`VERIFICATION.md` holds the matrix cell):
 - **PMKID** ✅ — both paths: active extract (the "PMKID" button) and passive
   capture alongside the deauth handshake.
 - **WPS** ✅ — PIN brute and PBC auto-invade both recovered against a WPS test AP.
-- **WEP** — ARP replay ✅ and ChopChop ✅ work end-to-end; **Fragmentation ✗ —
-  does NOT successfully forge/seed the ARP.** Suspected chip-specific bug: frag
-  was verified end-to-end on the RTL8821AU (`engine/attacks/wep/README.md`), so
-  the divergence is likely in the 8822b TX path the frag rounds ride — the shared
-  software-sequence (`en_hwseq`) handling or the relay-oracle signature differing
-  on this chip. Next: run `scripts/wep/frag_probe.py` against the dd-wrt box on
-  this card and diff the relay frames vs the 8821au capture.
-  **Update 2026-05-31:** frag forging also fails on the RTL8812AU (works on the
-  8821au) — so it's a pattern across the cards that build their own TX descriptor,
-  not 8822b-only. Shared code is the `engine/attacks/wep/fragmentation.py` daemon
-  + each chip's sw-seq in `build_tx_desc`; the 8821au's `en_hwseq=0` fix likely
-  isn't mirrored. See `chips/rtl8812au/RTL8812AU.md` for the lead.
+- **WEP** — ARP replay ✅ and ChopChop ✅ work end-to-end. (WEP fragmentation was
+  removed project-wide — it only ever worked on the RTL8821AU via a one-card
+  software-sequence TX hack; see `engine/attacks/wep/README.md` § "Fragmentation
+  — removed".)
 
 ## Warm reattach
 
