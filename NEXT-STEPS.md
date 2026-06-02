@@ -53,9 +53,11 @@ RX is NOT universal across userland drivers. That points back at the rtw88 famil
 i.e. more likely our port on those families than the PyUSB approach itself.
 **A/B answered (2026-06-01).** The Kali sweep (`usb_dumps_new/`) ran the same
 cards on their *in-kernel* drivers: mainline `rtw88` is itself weak on a fixed
-channel (RTL8822BU **8 APs**; RTL8814AU **0** in airodump — and its usbmon shows
-only 1 AP above the noise floor, i.e. genuinely deaf, not a logging fluke), while
-the vendor DKMS driver on the same card/spot/minute hears **29** / **21–24**. So the
+channel (RTL8822BU **8 APs**). For RTL8814AU the mainline figure is *noisy* — one
+run collapsed to 1 AP (a bad run: even its strongest AP caught 21 beacons vs a
+healthy ~140), an older mainline capture heard 11 — while the vendor DKMS driver
+robustly hears **29** / **21–24**. So 8822bu is the clean A/B; don't cite 8814au
+mainline as "deaf". So the
 deficit lives in mainline's 2.4 GHz monitor RX path (AGC/DIG), which our
 mainline-derived port faithfully inherits — not the hardware, not PyUSB. The
 fix is to port the vendor driver instead → see "## Cleanroom DKMS re-ports".
@@ -171,8 +173,9 @@ pure port surface. (See `chips/mt76x2u/MT76X2U.md` → "Channel width — 20 MHz
 The 2026-06-01 Kali sweep (`usb_dumps_new/`) ran every card on its **vendor
 out-of-tree driver** (DKMS) and, for the Realtek 11ac family, on mainline as an
 A/B. For the same physical card the vendor driver hears far more APs on a fixed
-channel — RTL8822BU **8 (mainline) → 29 (DKMS)**, RTL8814AU **0 → 21–24 (DKMS)**
-(mainline registered just 1 AP above noise) — confirming the cross-rtw88 2.4 GHz RX weakness above is
+channel — RTL8822BU **8 (mainline) → 29 (DKMS)**; RTL8814AU mainline is noisy
+(1 AP on a bad run, 11 on a healthier one) but DKMS robustly hears **21–24** —
+confirming the cross-rtw88 2.4 GHz RX weakness above is
 the *mainline driver's* monitor RX/AGC, which our mainline-derived ports inherit.
 The vendor drivers also carry the long-session stability (sustained AGC/DIG,
 thermal) a 15 s snapshot can't even measure. Plan: **re-port the four cards from
@@ -209,14 +212,15 @@ extracted `usb_dumps_new/captures_*/driver-source/`. Priority by measured payoff
 - Gain **8 → 29 APs** (3.6×) fixed ch1; prime suspect of the RX weakness. Mainline
   A/B: `captures_rtw88_8822bu/`. Branch `dkms/88x2bu`.
 
-### RTL8814AU — reliability win
+### RTL8814AU — breadth + throughput win (#2 priority)
 - Current `chips/rtw88_8814au/` (mainline rtw88, uses `rtw88_base`).
 - Vendor: morrownr `8814au` 5.8.5.1, module `8814au` —
   `captures_rtl8814au/driver-source/` + `driver-sources/rtl8814au-5.8.5.1.tar.xz`.
-- Gain: mainline registered **0 APs** (usbmon scan finds only ~1 AP above the
-  noise floor — genuinely deaf, not a logging fluke) vs DKMS **21–24** (matches
-  the "severe" 2.4 RX weakness flagged for this card). Mainline A/B:
-  `captures_rtw88_8814au/`. Branch `dkms/8814au`.
+- Gain: DKMS robustly hears **21–24 APs** (30 by usbmon, best AP 168 beacons) vs
+  mainline's *noisy* breadth — one run collapsed to 1 AP (bad run: best AP only
+  21 beacons), an older capture heard 11 (best AP 139). A real breadth +
+  throughput win, second only to 8822bu. Mainline A/B: `captures_rtw88_8814au/`.
+  Branch `dkms/8814au`.
 
 ### RTL8821AU — stability, not breadth
 - Current `chips/rtl8821au/` (uses `rtw88_base`; **only** driver with working
