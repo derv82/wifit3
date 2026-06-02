@@ -20,7 +20,7 @@ htmlcov/
 # Project specifics
 captures/
 data_dumps/
-usb_dumps/
+usb_dumps*/
 scratch/
 *.log
 # Probe captures (WEP frag/chopchop, WPS, …) — real on-air frames from the
