@@ -87,10 +87,15 @@ legacy MCUFWDL FW upload — shared by the 88xxA (8821a/8812a), 8822b, and 8814a
   `VERIFICATION.md` § "Unsupported — pending genuine hardware" +
   `chips/rt2800usb/RT2800USB.md` § "RT3572 unburned-EFUSE behaviour".
 
-- **Mediatek MT7921AU (AWUS036AXML) — paused, possibly a Linux dead-end.** The
-  unit **never enumerated on Kali** (USB-2, USB-3, powered hub — no iface, no
-  `phy`), so our airmon+usbmon ground-truth method is unavailable. It *does*
-  enumerate under WinUSB on Windows (FW upload gets partway). Driver blocker is
+- **Mediatek MT7921AU (AWUS036AXML) — paused, low ROI.** On mainline `mt7921u` it
+  *does* enumerate on Kali (2026-06-01 trip — `captures_mt7921u/`), and the airodump
+  data makes it the **weakest 2.4 GHz card in the fleet: 6–8 ch1 APs vs 20+** on the
+  good cards. Its usbmon shows **~1 bulk-IN frame, no RX payload**, so the usbcap
+  extractor can't measure it — *same root cause* as the bring-up blocker below: the
+  connac/mt7921 RX uses a deep pre-submitted large-URB pool that neither usbmon nor
+  our sync transport captures. One architectural trait → weak mainline monitor RX +
+  unmeasurable-via-usbmon + hard bring-up. It also enumerates under WinUSB on Windows
+  (FW upload gets partway). Driver blocker is
   the **FW_START_REQ wall** (reproduces on Kali too). Leading hypothesis:
   shallow bulk-IN URB pool — the kernel pre-submits 128 URBs/endpoint before any
   FW traffic; our transport does one-at-a-time sync reads. Fix would mean a
@@ -222,31 +227,45 @@ extracted `usb_dumps_new/captures_*/driver-source/`. Priority by measured payoff
   throughput win, second only to 8822bu. Mainline A/B: `captures_rtw88_8814au/`.
   Branch `dkms/8814au`.
 
-### RTL8821AU — stability, not breadth
+### RTL8821AU — stability + carries 8812au (88xxA, 2-for-1)
 - Current `chips/rtl8821au/` (uses `rtw88_base`; **only** driver with working
   SW-seq fragmentation — preserve `SUPPORTS_SW_SEQ` / `en_hwseq=0` in the re-port).
 - Vendor: Lucid-Duck `8821au-20210708` 5.12.5.2 (branch `kernel-6.18-compat`),
   module `8821au` — `captures_rtl8821au/driver-source/` +
   `driver-sources/rtl8821au-5.12.5.2.tar.xz` + `kernel-6.18-compat-rtl8821au.patch`.
-- Gain: breadth **tied** (mainline 26 ≈ DKMS 20–26) — justification is long-session
-  stability + family consistency, so lower priority. A/B: `captures_rtw88_8821au/`.
-  Branch `dkms/8821au`.
+  **This is the multi-chip rtl88xxau driver — it implements 8812au too** (see below).
+- Gain: 8821au's own breadth is **tied** (mainline 26 ≈ DKMS 20–26, so a stability
+  play), but the same port **also delivers 8812au**, which IS bottom-tier (8–10 APs)
+  and should be lifted by the shared phydm RX/AGC. That 2-for-1 raises its value
+  above its own tied breadth. A/B: `captures_rtw88_8821au/`. Branch `dkms/8821au`.
 
-### RTL8188EUS — smallest, independent
-- Current `chips/rtl8188eus/` (rtl8xxxu-family, **not** rtw88 — self-contained,
-  doesn't gate on `rtw88_base` retirement).
-- Vendor: aircrack-ng/gglluukk `rtl8188eus` (Kali `realtek-rtl8188eus` 5.3.9),
-  module `8188eu` — `captures_8188eu/driver-source/`; upstream
-  github.com/aircrack-ng/rtl8188eus.
-- Gain: breadth **tied** (DKMS 19–26 ≈ mainline `rtl8xxxu` 20); win is
-  monitor/injection robustness on the canonical driver for this 2.4-only N150
-  card. A/B: `captures_rtl8xxxu/`. Branch `dkms/8188eus`.
+### RTL8188EUS — deferred (likely skip)
+- Current `chips/rtl8188eus/` — a **working** mainline-derived port; rtl8xxxu
+  family, **not** rtw88, so it doesn't even gate `rtw88_base` retirement.
+- Vendor source on hand (`captures_8188eu/driver-source/`, aircrack-ng/gglluukk
+  `rtl8188eus` 5.3.9, module `8188eu`; upstream github.com/aircrack-ng/rtl8188eus).
+- **But breadth is tied** (DKMS 19–26 ≈ mainline `rtl8xxxu` 20) — no measured win,
+  and the only claimed upside (monitor/injection "robustness") is unquantified. A
+  significant from-scratch port that risks **regressing a working driver for no
+  proven gain** isn't worth it. **Port only if a concrete, measurable win appears**
+  (e.g. an injection-reliability A/B we can show); otherwise keep the mainline port.
+  A/B baseline: `captures_rtl8xxxu/`.
 
-**Not in scope — RTL8812AU.** No vendor DKMS builds on kernel 6.18 yet
-(`hmac_sha256` symbol clash + cfg80211 MLO signature drift; aircrack-ng/rtl8812au
-caps at 6.15). Stays on mainline `chips/rtl8812au/` until a buildable 6.18 fork
-exists (watch aircrack-ng/rtl8812au `paralin/fix-6.19`). See
-`usb_dumps_new/DRIVER-STATUS.md`.
+### RTL8812AU — rides the 8821au vendor port (88xxA sibling)
+- Current `chips/rtl8812au/` (88xxA family with 8821au; shares `rtw88_base`).
+- **No separate effort, and no kernel-C work.** The 8821au vendor source above is
+  the multi-chip rtl88xxau driver — it implements **8812au in the same tree**
+  (`hal/rtl8812a/`, `halrf_8812a_*`, `Hal8812PhyCfg`, `phydm_rtl8812a.c`,
+  `rtl8812au_recv/xmit.c`). So 8812au folds into the 8821au port as its sibling,
+  reusing the shared phydm RX/AGC path with the 8812a-specific RF/power tables
+  ported 1:1. Expected to lift its bottom-tier breadth (8–10 APs) the way the
+  vendor RX lifts 8822bu — *unverified for 8812au specifically*.
+- Caveat: no *vendor* bring-up capture for 8812au (DKMS never built standalone on
+  6.18 — `captures_rtw88_8812au/` is the mainline run), so it leans on the 8821au
+  vendor capture for the shared 88xxA init flow + its own mainline capture to
+  cross-check chip params. (Dropped: the old "wait for a buildable 6.18 fork /
+  kernel patch" idea — we port the vendor *source*; it needn't build on Kali.
+  Background in `usb_dumps_new/DRIVER-STATUS.md`.)
 
 ## Attack stack
 
