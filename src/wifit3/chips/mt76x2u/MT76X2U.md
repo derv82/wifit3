@@ -186,6 +186,6 @@ header-stripped bodies and `firmware.py` skips the header-read step.
 - Whether the wireless-mode endpoints we see are stable across power
   cycles, or whether some interactions stall mid-mode-switch (the
   `assert_expected_endpoints` guard is the early-detection mechanism).
-- Channel-switch quirk noted in NEXT-STEPS: "channel switches need ~2 s
+- Channel-switch quirk (observed): "channel switches need ~2 s
   of breathing room". Not yet replicated against the wifit3 driver — M5
   will baseline + bake in the delay if it's a real firmware constraint.

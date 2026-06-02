@@ -4,7 +4,7 @@ Scope doc for porting `aireplay-ng -1/-3/-4/-5` + an `aircrack-ng`-equivalent PT
 
 ## Why
 
-`NEXT-STEPS.md` used to say "skip WEP — outdated". Flipped 2026-05-22: WEP networks still occasionally surface (legacy IoT setups, ancient routers left running) and seeing one in Scanner with no attack available is the wrong end of the wifit3 promise. Modern isn't the only target.
+Early plans said "skip WEP — outdated". Flipped 2026-05-22: WEP networks still occasionally surface (legacy IoT setups, ancient routers left running) and seeing one in Scanner with no attack available is the wrong end of the wifit3 promise. Modern isn't the only target.
 
 ## Tool taxonomy (refresher)
 

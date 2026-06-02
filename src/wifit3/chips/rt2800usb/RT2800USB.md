@@ -36,7 +36,7 @@ no hardware available; verify before `[x]`.**
   :5759 (set_vgc), :5787 (link_tuner); rt2x00link.c:341 (1 Hz work),
   :228 (monitor skip), :314 (DEFAULT_RSSI fallback); rt2800lib.c:12085
   (CAPABILITY_LINK_TUNING always set). Ties to VERIFICATION.md PAU05 Scan ⚠️
-  and the cross-card weak-2.4 GHz-RX investigation in NEXT-STEPS.
+  and the cross-card weak-2.4 GHz-RX item in `planning/PORTING.md`.
 
 Covers Ralink rt2800usb-family chipsets supported by wifit3:
 
@@ -509,8 +509,8 @@ re-entering Focus on the same AP then showed ~8 beacons/s. The channel set on
 Focus entry didn't take the first time (a re-tune fixed it) — independent of RF
 calibration. **Confirmed 2026-05-31 on the MT7610U (a healthy card, different
 family)** with the identical symptom, so it's a real bug in the **shared
-Focus→set_channel path**, not RT3572-specific. Tracked in NEXT-STEPS § Small
-bugs/QoL.
+Focus→set_channel path**, not RT3572-specific. Tracked in
+`planning/FEATURES.md` § Bugs/QoL.
 
 ---
 
@@ -529,7 +529,7 @@ bugs/QoL.
    USB_EEPROM_READ one-shot 512-byte streaming path.
 5. **AWUS036NH (RT3070)** — fresh chip not yet supported. Captures
    not yet collected; pcap drop-in extension once captures land.
-   See `NEXT-STEPS.md` "Other hardware queued" section.
+   See `planning/PORTING.md` § Hardware queue.
 
 ---
 

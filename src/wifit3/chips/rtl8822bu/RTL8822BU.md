@@ -248,8 +248,8 @@ warm reattach succeeded, the 1.5 s bulk-IN smoke test found the pipe wedged
 (drained 282 stale bytes, then 0 frames in 1500 ms), and the driver logged the
 "please unplug + replug" guidance. Working as designed. The remaining gap is
 UI-side: the splash shows a generic "Hardware failed to initialize" instead of
-surfacing the driver's replug message — tracked in `NEXT-STEPS.md` § Small bugs
-/ QoL.
+surfacing the driver's replug message — tracked in `planning/RELEASE-PLAN.md`
+§ 2c (hardware-failure UX).
 
 ## DIG watchdog — adaptive RX gain (`dynamic.py`)
 

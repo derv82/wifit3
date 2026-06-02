@@ -716,8 +716,8 @@ verify often to avoid churn on the largest milestone).
 - **M6.c** Inject deauth on EP for mgmt; confirm on-air with a 2nd known-good card.
 - **🔌 HW gate:** deauth a test client, recapture EAPOL M1+M3 / PMKID live.
 
-After M6: drop the row into `NEXT-STEPS.md` supported-hardware table, mark DONE
-with date.
+After M6: mark the card DONE (with date) in `VERIFICATION.md` and add it to the
+README supported-cards table.
 
 ---
 

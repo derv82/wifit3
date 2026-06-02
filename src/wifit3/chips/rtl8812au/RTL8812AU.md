@@ -66,7 +66,7 @@ here, consistent with a fragment-sequence-or-seed-specific gap.
 **Scan/UI note.** When channel-hop wedges the RX (the hop-death above), the
 Scanner gives no feedback — targets fade to dark then the list empties, no
 banner. The driver logs the warning; surfacing it in the UI is tracked in
-`NEXT-STEPS.md` § Small bugs / QoL.
+`planning/RELEASE-PLAN.md` § 2c (hardware-failure UX).
 
 Cleanroom-RE'd from `data_dumps/rtw88-source-v6.18/` + cold-boot pcap
 `usb_dumps/captures_rtw88_8812au/capture-1.pcap`. Every claim here cites

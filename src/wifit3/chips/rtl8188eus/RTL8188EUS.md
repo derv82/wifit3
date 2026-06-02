@@ -431,7 +431,7 @@ If `read_efuse_map` raises (rare — usually means we didn't claim USB cleanly o
 - Path-B power tables (8188e is 1T1R — no path B)
 - TX power tracking via thermal meter (kernel `pwrtrack_init` + thermal-throttle ISR — adaptive but not required for first-fire injection)
 - BT coex power adjustment (no Bluetooth on 8188EUS)
-- Custom TX power override flag — see NEXT-STEPS.md "Distant Future: Configurable TX power override"
+- Custom TX power override flag — declined; see `planning/RELEASE-PLAN.md` § Ethics & scope boundaries
 
 ### Success criterion
 

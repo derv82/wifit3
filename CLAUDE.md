@@ -14,15 +14,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   3. Agent reads output, iterates.
   Do not try to flash/test hardware yourself.
 - **Device gets borked? User replugs.** That resets cold-boot state. You can suggest "please unplug, wait a few seconds, replug, then rerun" if a previous attempt left it stuck.
-- **Reverse-engineering workflow**: when porting a kernel driver, the kernel C is the spec but `usb_dumps/captures_*/capture-N.pcap` is the ground truth. Use the deterministic helpers in `scripts/` instead of ad-hoc tshark queries:
-  - `python scripts/pcap_slicer.py <main.log> <pcap>` — maps `capture.py` log timestamps to pcap frame ranges (e.g. "firmware upload happens in frames 14182–14400").
-  - For register/macro lookups in kernel sources, use `Grep` / `Read` directly against `data_dumps/<chip-source>/` (e.g. `Grep #define\s+REG_FOO data_dumps/rtw88-source-v6.18/ --glob "*.h"`).
-  - See `scripts/AGENTS.md` for the full tooling brief.
-- **Captures are made by `src/wifit3/scripts/capture.py`** on the Kali persistent USB. Each capture comes with a `*_logs/main.log` (absolute-epoch timeline) that `pcap_slicer.py` consumes.
+- **Porting / bringing up a chip?** The full porting playbook — pcap-as-ground-truth, the RE tooling (`pcap_slicer.py`, kernel-source greps against `data_dumps/`), the hardware-test loop, hardware-verifiable milestones, and the 20 MHz-only scope rule — lives in `planning/PORTING.md`. Tooling brief: `scripts/AGENTS.md`.
 - **Per-chipset ground-truth docs**: each chip dir has a `<CHIP>.md` (e.g. `chips/mt7921au/MT7921AU.md`) that accumulates *verified* facts decoded from its pcap. Treat anything not in that doc as a hypothesis. Update the doc as facts are confirmed so future sessions don't re-derive them.
-- **Lead's rule** (from `NEXT-STEPS.md`): discuss class design (`GenericDriver` vs `WlanInterface` responsibilities, etc.) BEFORE execution. Treat the user as Senior Lead.
+- **Lead's rule**: discuss class design (`GenericDriver` vs `WlanInterface` responsibilities, etc.) BEFORE execution. Treat the user as Senior Lead.
 - **Never write to auto-memory without asking.** Before saving or updating any file under the auto-memory dir (`MEMORY.md` + its entries), show the user the proposed entry and wait for explicit approval. This overrides the default proactive-save behavior — the user owns what goes into always-loaded context.
-- **Other top-level docs** (NOT auto-loaded — open as needed): `NEXT-STEPS.md`, `PRE-RELEASE.md`.
+- **Planning docs** (NOT auto-loaded — open as needed): `planning/RELEASE-PLAN.md` (road to release + logistics), `planning/PORTING.md` (driver/hardware porting playbook + queue), `planning/FEATURES.md` (features + QoL bugs). Current per-card state: `VERIFICATION.md`.
 
 ## Commands
 
@@ -102,7 +98,7 @@ Not every chip uses every module — `mac.py`/`phy.py`/`chan.py`/`tx.py` etc. ar
 
 ### Supported Hardware
 
-See `NEXT-STEPS.md` for the current supported-hardware table (chip → VID:PID → status → notes).
+See `README.md` for the user-facing supported-cards table, and `VERIFICATION.md` for the full per-attack verification matrix.
 
 ### Adding a New Chipset
 

@@ -8,7 +8,7 @@ the reaver-1.4, kimocoder/bully, and wiire/pixiewps source dumps in
 
 ## Why now
 
-`NEXT-STEPS.md`: WPS is *"detection done, attacks not started."* We already
+WPS started as *"detection done, attacks not started."* We already
 decode the WPS IE (`packet.py:_parse_wps_ie` → `AccessPoint.wps*`) and surface
 `wps_locked` with a 🔒 in Scanner/Focus. The missing half is the attack: PIN
 brute-force with rate-limit backoff + ETAs, and PixieWPS bad-RNG cracking —
@@ -242,8 +242,8 @@ truth). The fleet drives the M6 timing work.
   dd-wrt WEP box [[project_wep_test_router]])? Pixie-vulnerable one ideal for
   M7, but M4/M5 want a plain WPS-PIN AP.
 - **Resume state**: adopt bully's per-BSSID `.pins` (shuffled order) + `.run`
-  (checkpoint) files, or fold WPS PIN progress into the planned SQLite layer
-  from `NEXT-STEPS.md` ("User persistence + decloak DB")?
+  (checkpoint) files, or fold WPS PIN progress into the planned persistence
+  layer (config persistence — see `planning/FEATURES.md`)?
 - **numpy**: confirm adding numpy as a dep is acceptable (needed for the
   vectorized time-seed/eCos pixie search at interactive speed).
 - **Fake-enrollee test harness**: build a minimal in-process WSC enrollee for
@@ -371,7 +371,7 @@ verify from hostapd), enrollee identity `WFA-SimpleConfig-Enrollee-1-0`.
   resume hop. **Disarmed + window** → loud Scanner banner only (no TX).
 - **Focus**: a focused AP going PBC-active → auto-capture (already on-channel).
 - **Ethics deferred** — global auto-invade grabs bystanders' PSKs the instant
-  they press their own button; revisit before release (PRE-RELEASE).
+  they press their own button; revisit before release (see `planning/RELEASE-PLAN.md` § Ethics & scope).
 
 ### Milestones
 ```
@@ -384,7 +384,7 @@ P3  WpsPbcCapture — associate as enrollee, run WpsEnrollee, ignore overlap,
      the AirLink button to test).                                  ← 1 button-press HW test
 P4  Scanner UX — `w` off/selected/global, the banner, the armed hop-takeover.
 P5  Focus integration — auto-capture on a focused AP's PBC window.
-P6  Ethics/safety pass — eligibility, loud logging, PRE-RELEASE note.
+P6  Ethics/safety pass — eligibility, loud logging, RELEASE-PLAN note.
 ```
 P1–P3 are engine + offline-testable + one button-press. P4–P5 are UI/orchestration.
 
@@ -407,7 +407,7 @@ P1–P3 are engine + offline-testable + one button-press. P4–P5 are UI/orchest
   `captures/<ssid>_<bssid>_<ts>.wps`. PbcWatcher/save unit-tested;
   the Textual wiring needs a live run to confirm.
 - **P6 (ethics/eligibility pass) remains** — global auto-invade grabs bystanders'
-  PSKs; revisit before release (PRE-RELEASE).
+  PSKs; revisit before release (see `planning/RELEASE-PLAN.md` § Ethics & scope).
 
 ## Hard-MAC WPS gap (2026-05-31)
 
