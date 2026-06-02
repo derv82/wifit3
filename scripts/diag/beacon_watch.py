@@ -96,7 +96,7 @@ def extract_events_from_pcap(pcap_path: str) -> list[tuple[float, str]]:
     return events
 
 
-def summarize(events, n_secs, target_bssid, *, source_label) -> None:
+def summarize(events, n_secs, target_bssid, *, source_label, expected_per_sec=None) -> None:
     """Render one BSSID's per-second histogram + stats + a per-BSSID ranking.
 
     ``events`` are (t_seconds_from_start, bssid). The reported BSSID is
@@ -134,6 +134,12 @@ def summarize(events, n_secs, target_bssid, *, source_label) -> None:
     print(f"  total={total}  mean={mean:.1f}  median={median:g}  "
           f"min={min(buckets)}  max={max(buckets)}  stdev={stdev:.1f}  "
           f"zero-seconds={zero_secs}")
+    if expected_per_sec:
+        # A beacon every 102.4 ms (~9.77/s) is the wire ceiling for one AP;
+        # mean/ceiling is how much of the AP's beacon stream this card caught.
+        recv = 100.0 * mean / expected_per_sec
+        print(f"  reception: {recv:.0f}% of {expected_per_sec:g}/s "
+              f"({max(0.0, 100 - recv):.0f}% beacon loss)")
 
     print("\nBeacons by BSSID this window (top 10):")
     for bssid, n in counts.most_common(10):
