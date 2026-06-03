@@ -158,6 +158,10 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   captures show this exact 6-write group repeating each FA-stats cycle (108/70/88
   0xb58 writes across cap-1/2/3). [HW] no regression (24 APs fixed / 67 hop; fa_cnt
   still bounded/self-resetting; ESSID canary clean).
+- **M4a (TX descriptor builder): done.** `tx.build_mgmt_txdesc` ports
+  `rtl8814a_fill_fake_txdesc` (minimal self-contained mgmt descriptor) + reuses the
+  M1-verified XOR checksum; SET_TX_DESC field positions + QSLT_MGNT/RATEID/DESC_RATE
+  constants grepped verbatim. Unit-tested; not yet wired into `connect()` (that is M4b).
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
   boots; the port reproduces the USB conversation **byte-for-byte** through M3b-1
   (**4451/4451/4457 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
@@ -468,8 +472,8 @@ only) and greps every constant verbatim before coding.
   minimal field set = `rtl8814a_fill_fake_txdesc` [SRC rtl8814a_xmit.c:267]; checksum =
   `rtl8814a_cal_txdesc_chksum` [SRC rtl8814a_xmit.c:238] (XOR of the first 16 LE u16
   with the checksum word zeroed — identical to the M1 path).
-- **A mgmt/deauth frame**: qsel = QSLT_MGNT (**CONFIRM the value** — grep hal_com.h;
-  the two source reads disagreed, 0x12 vs 0x1f), mac_id = RTW_DEFAULT_MGMT_MACID, raid
+- **A mgmt/deauth frame**: qsel = QSLT_MGNT (= **0x12**, confirmed in hal_com.h),
+  mac_id = RTW_DEFAULT_MGMT_MACID, raid
   by wireless mode, rate 1M (CCK) / 6M (OFDM), no encryption, no aggregation. [SRC]
   update_mgntframe_attrib, core/rtw_mlme_ext.c.
 - **USB endpoint**: the MGMT queue maps to `RtOutPipe[0]` — the FIRST bulk-OUT endpoint,
@@ -479,11 +483,16 @@ only) and greps every constant verbatim before coding.
   live in M4b. [SRC] hal_com.c dma_mapping + os_dep/.../usb_ops_linux.c ffaddr2pipehdl.
 
 **Milestones (tiny; each tagged HW-FREE/DELEGATABLE or HW-LOOP):**
-- **M4a — `tx.py` descriptor builder + unit tests. [HW-FREE, DELEGATABLE.]** Port the
-  `fill_fake_txdesc` field set + `cal_txdesc_chksum` into `build_txdesc(...)`; grep all
-  constants (QSEL / RATE_ID / hw-rate codes / masks) verbatim into constants.py.
-  Unit-test the byte layout + checksum, and **reproduce the M1 FW-download descriptor**
-  from beacon-queue params as the cross-check anchor.
+- **M4a — `tx.py` descriptor builder + unit tests. DONE.** `tx.build_mgmt_txdesc`
+  ports `rtl8814a_fill_fake_txdesc` (the minimal self-contained mgmt descriptor) with
+  the SET_TX_DESC bit positions grepped verbatim and the M1-verified
+  `firmware.txdesc_checksum` reused. **Finding:** the M1 FW-download descriptor is the
+  QSLT_BEACON `update_txdesc` path (it carries DISQSELSEQ word0[31], MACID=1, retry-limit
+  word4, sw_define word6), *distinct* from `fill_fake_txdesc` — so the cross-check anchor
+  is the shared checksum + the shared word0 sub-fields (PKT_SIZE/OFFSET/LAST_SEG), not a
+  full byte reproduction. `QSLT_MGNT=0x12`, `RATEID_IDX_B=8`, `DESC_RATE1M=0` confirmed
+  from source. Unit-tested (62 tests); not wired into `connect()` yet (M4b), so RX is
+  unchanged (beacon scan: 73 APs, ESSID canary clean).
 - **M4b — `inject_frame` send path. [code DELEGATABLE; HW smoke test.]** Wire
   `driver.inject_frame`: build desc (M4a) + prepend + `transport.bulk_out`, under the
   `_io_lock` (don't race set_channel/DIG). Live smoke test: inject one frame, no pipe
