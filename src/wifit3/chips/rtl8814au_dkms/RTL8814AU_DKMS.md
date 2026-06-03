@@ -23,10 +23,11 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
       built so far (see below). Data-frame TX (rates/aggregation/sec) is unported.
 
 ## Status
-- **M1 (firmware upload + FW-ready ACK): code complete, pcap-verified, HW pending.**
+- **M1 (firmware upload + FW-ready ACK): complete — pcap-verified AND hardware-proven.**
   `scripts/rtl8814au_dkms/verify_m1_pcap.py` replays all three cold boots and the
   port reproduces the USB conversation **byte-for-byte** (502/502/508 ops, all 46
-  FW packets) through `CPU_DL_READY`. Hardware run: `scripts/rtl8814au_dkms/test_hw_m1.py`.
+  FW packets) through `CPU_DL_READY`. [HW] 2026-06-02: a live ALFA AWUS1900
+  reached `CPU_DL_READY` via `scripts/rtl8814au_dkms/test_hw_m1.py`.
 - Not registered in `wlan/manager.py` — master keeps the working mainline
   `rtw88_8814au` until this port is HW-proven to beat it on breadth/stability.
 
