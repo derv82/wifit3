@@ -22,6 +22,7 @@ from wifit3.engine.protocols import DeviceID, ProgressCallback
 from .bb import phy_bb_config
 from .chan import init_tune, set_channel_bw
 from .constants import PID_RTL8814AU, VID_REALTEK
+from .dm import init_hal_dm
 from .efuse import read_chip_params
 from .firmware import bring_up
 from .mac import mac_init_misc, phy_mac_config
@@ -99,6 +100,7 @@ class Rtl8814auDkmsDriver:
             phy_bb_config(t, params.rfe_type, params.crystal_cap)  # M2b: PHY_BBConfig8814
             phy_rf_config(t, params.rfe_type)                      # M2c: PHY_RFConfig8814A
             init_tune(t, _DEFAULT_CHANNEL, params.tx_power)        # M2d/M2e: ch tune + TX power
+            init_hal_dm(t)                                         # M3a: InitHalDm DIG/AGC seed
 
         await loop.run_in_executor(None, _phy_config, self.transport)
         self._channel = _DEFAULT_CHANNEL

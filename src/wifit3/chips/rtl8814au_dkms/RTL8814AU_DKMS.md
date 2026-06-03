@@ -66,13 +66,18 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   collapses to `clamp(efuse_base + nTX_diff + 2, 0, 63)`. See **TX power** below.
   (IQK, which follows in the vendor flow, is **skipped at init** — `bNeedIQK` is
   false — so the contiguous wire goes straight from TX power to `rtl8814_InitHalDm`.)
+- **M3a (InitHalDm phydm seed): complete — pcap-verified AND hardware-proven.**
+  `dm.init_hal_dm` runs the hal_init MISC11 block (CAM clear, HWSEQ/BAR/CCA) then
+  `rtl8814_InitHalDm` = `dm_InitGPIOSetting` + `rtw_phydm_init` (the DIG/AGC/
+  false-alarm/CCK-PD/adaptivity **seed**). This is the initial state the runtime
+  DIG/AGC watchdog (M3c) adapts. See **DM seed** below.
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
-  boots; the port reproduces the USB conversation **byte-for-byte** through M2e
-  (**4334/4334/4340 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
-  and the 268-write TX-power table). It first replays the probe-phase efuse read to
-  recover the real chip params (rfe_type / crystal_cap / tx_power) and feeds those
-  into M2b+, so nothing is hardcoded. [HW] a live ALFA AWUS1900 reached
-  `CPU_DL_READY` and applied the full MAC+BB+RF+channel+TX-power init.
+  boots; the port reproduces the USB conversation **byte-for-byte** through M3a
+  (**4431/4431/4437 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
+  TX-power table, and the InitHalDm phydm seed). It first replays the probe-phase
+  efuse read to recover the real chip params (rfe_type / crystal_cap / tx_power) and
+  feeds those into M2b+, so nothing is hardcoded. [HW] a live ALFA AWUS1900 reached
+  `CPU_DL_READY` and applied the full init through the InitHalDm DIG/AGC seed.
 - Not registered in `wlan/manager.py` — master keeps the working mainline
   `rtw88_8814au` until this port is HW-proven to beat it on breadth/stability.
 
@@ -187,6 +192,24 @@ power index into the txagc table at BB reg 0x1998 [SRC PHY_SetTxPowerIndex_8814A
 - **Deferred (M4 TX):** the full `update_txdesc` data-frame TX path. The per-board
   TxBBSwing efuse decode (BB swing in M2d, currently the 0 dB default) also stays here.
 
+## DM seed — InitHalDm (M3a)
+`dm.py` ports the hal_init tail after the channel tune: the MISC11 block
+(`invalidate_cam_all` 0x670, HWSEQ 0x423, BAR 0x4cc, SECONDARY_CCA 0x577, 0x652)
+then `rtl8814_InitHalDm` [SRC rtl8814a_dm.c:203] = `dm_InitGPIOSetting` (USB) +
+`rtw_phydm_init` -> `odm_dm_init`. 91-op seed; [WIRE] cap1 frames 14379-14563.
+- **Clean phydm sub-inits** (resolved masks, ported as RMW): CCK 2R-antenna
+  (`phydm_config_cck_rx_antenna_init` — 0xa00/0xa70/0xa74/0xa14/0xa20/0xa84), DIG
+  (reads IGI at 0xc50), CCK-PD level 0 (0xa0a=0x40), env-monitor (CCX hw-restart +
+  **NHM thresholds** 0x998/0x99c/0x9a0/0x994 + CLM 0x990), adaptivity (EDCCA
+  0x944/0x8a4/0x520/0x524).
+- **NHM thresholds are IGI-derived**: `th[i] = ((IGI − 14) << 1) + 4i`, computed from
+  the 0xc50 read (not hardcoded) so they track the seed IGI (0x20 → 0x24,0x28,...).
+- **RF AGC gain-table commit**: per-path RF 0xEF page open → RF 0x30/0x31/0x32 rows
+  → close (path A gets one extra row), plus a BB rx-gain commit (0x910) and enable
+  (0x1994[3]). These values are computed in the RF/AGC path and absent from the
+  static tables, so they are reproduced from the wire (deterministic across all
+  three boots). The differ confirms the whole seed byte-for-byte.
+
 ## Firmware download — the load-bearing M1 fact
 The 8814AU does **not** block-write firmware over EP0. `FirmwareDownload8814A`
 [SRC rtl8814a_hal_init.c:669] uses the **3081 IDDMA reserved-page** path
@@ -239,11 +262,11 @@ first `0x10C2` access (the `_InitPowerOn` entry).
 rfe/xtal/mac decode) · `mac.py` (M2a MAC table + M2b MISC stage) · `phy_cond.py`
 (shared phydm conditional-table walker) · `bb.py` (M2b PHY_BBConfig8814) · `rf.py`
 (M2c PHY_RFConfig8814A) · `chan.py` (M2d channel tune, 2.4G/20MHz) · `txpower.py`
-(M2e per-rate txagc table) · `bb_phy_reg_tbl.py` / `bb_agc_tab_tbl.py` /
-`rf_radio_{a,b,c,d}_tbl.py` (generated flat-u32 BB/AGC/RF tables) · `driver.py`
-(WlanDriver Protocol; connect() chains EFUSE→M1→M2a..M2e, set_channel hops 2.4G;
-RX/TX raise until their milestone). Standalone — does **not** import
-`chips/rtw88_base/`.
+(M2e per-rate txagc table) · `dm.py` (M3a InitHalDm DIG/AGC seed) ·
+`bb_phy_reg_tbl.py` / `bb_agc_tab_tbl.py` / `rf_radio_{a,b,c,d}_tbl.py` (generated
+flat-u32 BB/AGC/RF tables) · `driver.py` (WlanDriver Protocol; connect() chains
+EFUSE→M1→M2a..M2e→M3a, set_channel hops 2.4G; RX/TX raise until their milestone).
+Standalone — does **not** import `chips/rtw88_base/`.
 
 ## Roadmap (each milestone pcap-diffed before "done"; post-FW init = frames 6668+)
 - EFUSE: probe-phase chip-param read (rfe_type / crystal_cap / mac_address). **DONE.**
@@ -257,12 +280,13 @@ RX/TX raise until their milestone). Standalone — does **not** import
 - M2d: `PHY_ConfigBB_8814A` + 2.4G band switch + `rtw_hal_set_chnl_bw(...,
        CHANNEL_WIDTH_20, ...)` channel tune (channel 1). **DONE.** 5G band tune deferred.
 - M2e: per-rate TX-power txagc table (0x1998). **DONE.** IQK is skipped at init.
-- M3: RX path + `rtl8814_InitHalDm` (DIG/AGC watchdog — confirmed in source and on
-      the wire as 103 IGI=0xc50 writes adapting 0x1c..0x2a). The 2.4 GHz breadth
-      payoff; finish with a live A/B vs mainline. Monitor-mode RX is just the
-      captured RCR (0x608) values — port what's on the wire. The contiguous wire now
-      reaches InitHalDm directly: after M2e (TX power) comes a tiny hal_init MISC11
-      block (invalidate_cam, HWSEQ_CTRL=0xff @0x423, BAR_MODE @0x4cc, SECONDARY_CCA
-      @0x577, 0x652=0) then InitHalDm at frame ~14389 (CCK/AGC regs 0xa00/0xa70/0xa14).
+- M3a: hal_init MISC11 + `rtl8814_InitHalDm` (phydm DIG/AGC/false-alarm seed). **DONE.**
+- M3b: hal_init continuation (RFE-true @0x42, QUEUE_CTRL @0x4c6, **MAC address** set
+       @0x610-0x615 from efuse, monitor RXFLTMAP1 @0x6a2 0x420→0x520) + the RX path
+       (bulk-IN endpoint, rx_pkt_desc decode, RSSI) + monitor-mode RCR/filter. This
+       is where **live RX** becomes testable — the differ carries the static setup,
+       but actual breadth needs a live beacon count.
+- M3c: the runtime DIG/AGC watchdog (`rtw_phydm_watchdog` → `odm_dig` — the 0xc50 IGI
+       writes adapting 0x1c..0x2a). The 2.4 GHz breadth payoff; **live A/B vs mainline**.
 - M4: TX (full `update_txdesc`) for deauth/replay; includes the per-board TxBBSwing
       efuse decode (BB swing currently the 0 dB default).

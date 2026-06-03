@@ -23,7 +23,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
 
-from wifit3.chips.rtl8814au_dkms import bb, chan, efuse, firmware, mac, rf  # noqa: E402
+from wifit3.chips.rtl8814au_dkms import bb, chan, dm, efuse, firmware, mac, rf  # noqa: E402
 
 CAP_DIR = REPO / "usb_dumps_new" / "captures_rtl8814au"
 FW_BIN = REPO / "src" / "wifit3" / "chips" / "rtl8814au_dkms" / "assets" / "rtl8814au_fw.bin"
@@ -219,6 +219,7 @@ def main() -> int:
             bb.phy_bb_config(t, p.rfe_type, p.crystal_cap)  # M2b: PHY_BBConfig8814
             rf.phy_rf_config(t, p.rfe_type)                 # M2c: PHY_RFConfig8814A
             chan.init_tune(t, 1, p.tx_power)                # M2d ch tune + M2e TX power
+            dm.init_hal_dm(t)                               # M3a: MISC11 + InitHalDm seed
     except Divergence as e:
         print(f"\nFAIL (divergence): {e}")
         return 1
@@ -226,9 +227,9 @@ def main() -> int:
     if not ready:
         print("\nFAIL: bring_up did not reach CPU_DL_READY against the capture")
         return 1
-    print(f"\nPASS: port reproduced {t.i} USB ops byte-for-byte through M2e "
+    print(f"\nPASS: port reproduced {t.i} USB ops byte-for-byte through M3a "
           f"({n_bulk} FW packets / {len(fw)} B blob; MAC + MISC + BB + RF + channel "
-          f"tune + TX-power table, ch1 @ 20 MHz).")
+          f"tune + TX power + InitHalDm phydm seed, ch1 @ 20 MHz).")
     print(f"      {len(ops) - t.i} later-milestone ops remain in the capture.")
     return 0
 
