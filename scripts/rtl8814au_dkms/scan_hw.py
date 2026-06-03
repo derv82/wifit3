@@ -33,10 +33,12 @@ from wifit3.chips.rtl8814au_dkms.driver import Rtl8814auDkmsDriver
 
 
 class BeaconTally:
-    """Driver-level rx callback: receives parsed frame dicts, counts beacons."""
+    """Driver-level rx callback: receives parsed frame dicts, counts beacons and
+    tracks the strongest RSSI seen per BSSID (to sanity-check the M3b-3b decode)."""
 
     def __init__(self) -> None:
         self.by_bssid: Counter = Counter()
+        self.rssi: dict = {}        # bssid -> strongest (max) dBm seen
         self.total_frames = 0
 
     def __call__(self, parsed: dict) -> None:
@@ -45,6 +47,9 @@ class BeaconTally:
             bssid = (parsed.get("bssid") or "").lower()
             if bssid and bssid != "ff:ff:ff:ff:ff:ff":
                 self.by_bssid[bssid] += 1
+                r = parsed.get("rssi")
+                if r is not None and (bssid not in self.rssi or r > self.rssi[bssid]):
+                    self.rssi[bssid] = r
 
 
 async def run(args) -> int:
@@ -92,9 +97,9 @@ async def run(args) -> int:
     print(f"\n[RESULT] {n_aps} unique AP(s), {sum(tally.by_bssid.values())} beacons, "
           f"{tally.total_frames} total frames over {args.duration:g}s")
     if tally.by_bssid:
-        print("  top BSSIDs by beacon count:")
+        print("  top BSSIDs by beacon count (strongest RSSI seen):")
         for bssid, n in tally.by_bssid.most_common(15):
-            print(f"    {bssid}  {n}")
+            print(f"    {bssid}  {n:>4}  {tally.rssi.get(bssid, '?')} dBm")
     else:
         print("  (no beacons — check antenna/channel; this is the live RX gate)")
     return 0

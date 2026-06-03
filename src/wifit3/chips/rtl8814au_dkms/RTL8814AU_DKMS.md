@@ -94,7 +94,13 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   `RxReaderThread`. Not pcap-diffable; decode unit-tested, end-to-end RX validated
   by a live beacon count (`scan_hw.py`). [HW] a 30 s hop across channels 1-13 heard
   **69 unique APs / 735 beacons / 1315 frames** — strong 2.4 GHz breadth, the payoff
-  this re-port exists for. RSSI is M3b-3b. See **M3b** below.
+  this re-port exists for. See **M3b** below.
+- **M3b-3b (RSSI / PHY-status decode): ported AND hardware-proven.**
+  `rx.decode_rssi` derives the per-frame dBm (`recv_signal_power`) from the PHY-status
+  struct — CCK via `phydm_cck_rssi_8814a`, OFDM via `((pwdb_all>>1)&0x7f)-110`. [HW] a
+  live scan showed a realistic dBm spread — a nearby router at −44 dBm down to distant
+  APs near −80 dBm — confirming the byte offsets and the `>>1` (is_mp_chip) branch.
+  See **M3b** below.
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
   boots; the port reproduces the USB conversation **byte-for-byte** through M3b-1
   (**4451/4451/4457 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
@@ -307,8 +313,20 @@ across channels 1-13 heard 69 unique APs / 735 beacons / 1315 frames — strong
   (`test_rx.py`), end-to-end RX is validated by a live beacon count via
   `scripts/rtl8814au_dkms/scan_hw.py` (the A/B headline vs mainline).
 
-**M3b-3b (RSSI): not yet ported.** the PHY-status decode (`odm_phy_status_query_8814a`,
-the `drvinfo` bytes when `physt=1`) — needed for the UI signal column, not the A/B.
+**M3b-3b (RSSI): ported, unit-tested — live value sanity-check pending.** `rx.py`
+`decode_rssi` reads the PHY-status struct (the `drvinfo` region after the desc, when
+`physt=1`) for the per-frame `recv_signal_power` (dBm), and `iter_frames` now yields
+`(frame, rssi)`. [SRC phydm_phy_sts_jaguar_series_parsing + phydm_cck_rssi_8814a]:
+- **OFDM/HT/VHT** (DESC rate > 3): `((pwdb_all >> 1) & 0x7f) - 110`, where `pwdb_all`
+  is PHY-status byte 4. 8814AU is a production part (`is_mp_chip`) so it takes the
+  `>> 1` branch — not the 8812/8821 raw-pwdb branch. *(The `>> 1` is the one live-
+  tunable assumption: if a known AP reads ~2× off, drop it.)*
+- **CCK** (DESC rate ≤ 3): the CCK AGC report (byte 5, `cfosho[0]`) splits into
+  `lna_idx`/`vga_idx` → `phydm_cck_rssi_8814a` (the `-38/-28/-8/-1 − 2·vga` table).
+- Only the combined `recv_signal_power` is computed — per-path gain / EVM / SNR /
+  CFO are not needed for the single signal level the UI shows. Decode unit-tested
+  (`test_rx.py`); [HW] live values via `scan_hw.py` were realistic — a nearby router
+  at −44 dBm down to distant APs near −80 dBm — confirming the offsets + the `>>1`.
 
 ## Firmware download — the load-bearing M1 fact
 The 8814AU does **not** block-write firmware over EP0. `FirmwareDownload8814A`
@@ -393,7 +411,9 @@ Standalone — does **not** import `chips/rtw88_base/`.
        **M3b-3a DONE (hardware-proven):** bulk-IN RX path — `rx.py` (24-byte desc
        decode + recvbuf2recvframe aggregation walk, FCS stripped) + `transport.bulk_in`
        + shared `RxReaderThread`. Live: 69 APs / 735 beacons / 1315 frames in a 30 s
-       1-13 hop. *Pending:* M3b-3b (RSSI / PHY-status decode).
+       1-13 hop. **M3b-3b DONE (hardware-proven):** per-frame RSSI from the PHY-status
+       struct (`decode_rssi`; CCK lookup + OFDM pwdb_all); live spread −44 dBm (near)
+       to −80 dBm (far). **M3b complete.**
 - M3c: the runtime DIG/AGC watchdog (`rtw_phydm_watchdog` → `odm_dig` — the 0xc50 IGI
        writes adapting 0x1c..0x2a). The 2.4 GHz breadth payoff; **live A/B vs mainline**.
 - M4: TX (full `update_txdesc`) for deauth/replay; includes the per-board TxBBSwing

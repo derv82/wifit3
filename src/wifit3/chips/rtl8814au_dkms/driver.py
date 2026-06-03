@@ -3,8 +3,8 @@
 Status: bring-up complete through M3b-3a. ``connect()`` runs the full deterministic
 init (EFUSE -> firmware -> MAC/BB/RF -> channel tune -> TX power -> InitHalDm seed ->
 hal_init turn-on tail -> monitor opmode entry), all pcap-verified, then starts the
-bulk-IN RX reader so monitor frames flow to the rx callback. Still pending: RSSI
-decode (M3b-3b), the runtime DIG/AGC watchdog (M3c), and TX (M4 — ``inject_frame``
+bulk-IN RX reader so monitor frames (with per-frame RSSI) flow to the rx callback.
+Still pending: the runtime DIG/AGC watchdog (M3c) and TX (M4 — ``inject_frame``
 raises until then).
 
 This driver is intentionally NOT registered in ``wlan/manager.py`` yet — master
@@ -40,9 +40,6 @@ logger = logging.getLogger(__name__)
 
 _FW_ASSET = "rtl8814au_fw.bin"
 _DEFAULT_CHANNEL = 1  # connect-time tune target (matches the cold-boot capture)
-# RX frames carry no signal level until the PHY-status decode lands (M3b-3b); the
-# parser needs an int, so report a sentinel that is clearly "unknown" not "strong".
-_RSSI_PLACEHOLDER = 0
 
 
 def _load_firmware() -> bytes:
@@ -136,13 +133,13 @@ class Rtl8814auDkmsDriver:
         return self.transport.bulk_in()
 
     def _dispatch(self, buf: bytes) -> None:
-        """Loop side: split the aggregated bulk-IN buffer into 802.11 frames and
-        fan each to the rx callback (parsed dicts). Per-frame, FCS already stripped."""
+        """Loop side: split the aggregated bulk-IN buffer into (frame, rssi) pairs
+        and fan each parsed dict to the rx callback. FCS already stripped."""
         cb = self._rx_cb
         if cb is None:
             return
-        for frame in iter_frames(buf):
-            parsed = WlanFrameParser.parse_80211_frame(frame, _RSSI_PLACEHOLDER)
+        for frame, rssi in iter_frames(buf):
+            parsed = WlanFrameParser.parse_80211_frame(frame, rssi)
             if parsed is not None:
                 cb(parsed)
 
