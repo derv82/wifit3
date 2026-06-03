@@ -35,13 +35,15 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
         level, so it does not deafen RX. The earlier "collapse" was an uncontrolled
         hop-vs-fixed comparison at a different time. The `--no-dig` toggle + DigTick
         `fa_cnt` log stay in as the standing A/B harness.
-- [ ] **RX CRC-walk coherence (secondary, deprioritised).** `rx.iter_frames` stops the
-      whole bulk buffer on a crc/icv-error frame (vendor STA `goto _exit`), yet the
-      monitor RCR sets `ACRC32|AICV` so such frames *do* arrive — so good frames
-      aggregated after a crc-error are dropped. Incoherent (we accept them then bail);
-      fix is skip-and-continue. Not the (now-cleared) DIG suspicion's cause — the strong
-      on-ch1 AP was best-heard at M3b-3a *with this same walk* — but still a cheap
-      skip-and-continue pass worth doing before/with M4.
+- [x] **RX CRC-walk coherence — DONE (M3d).** `rx.iter_frames` now SKIPS a crc/icv-error
+      frame and continues the buffer walk (it used to `break` on the first one — the
+      vendor STA `goto _exit` for `mp_mode==0`), so good frames aggregated after a
+      crc-error frame are delivered instead of dropped. The monitor RCR sets
+      `ACRC32|AICV` so such frames legitimately arrive; only a malformed descriptor
+      length (no recoverable next-frame boundary) still ends the walk. [HW] no
+      regression (26 APs fixed / 67-74 hop, frames within run-to-run variance); the fix
+      can only recover dropped frames, never drop good ones, so the benefit is
+      environment-dependent (how often a crc-error frame lands mid-aggregate).
 - [x] **2.4 GHz RX/AGC (the whole point):** the phydm DIG/AGC path is the reason for
       this re-port. AGC *table* (M2b) + DIG/AGC *seed* (M3a) + bulk-IN RX path (M3b-3a,
       **69 APs in a 30 s 1-13 hop** [HW]) + per-frame RSSI (M3b-3b) + the runtime
@@ -140,6 +142,10 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   self-resetting `fa_cnt` — the suspected regression is refuted (see **DIG regression —
   RESOLVED** in Potential Known Gaps). The `--no-dig` toggle + DigTick `fa_cnt` debug
   log are the A/B harness.
+- **M3d (RX CRC-walk skip-and-continue): done.** `rx.iter_frames` skips crc/icv-error
+  frames instead of ending the buffer walk, so good frames aggregated after a bad one
+  are delivered (monitor RCR accepts crc/icv-error frames; only a malformed length ends
+  the walk). [HW] beacon scans show no regression (26 APs fixed / 67-74 hop).
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
   boots; the port reproduces the USB conversation **byte-for-byte** through M3b-1
   (**4451/4451/4457 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
@@ -341,10 +347,12 @@ across channels 1-13 heard 69 unique APs / 735 beacons / 1315 frames — strong
   `pkt_len`, `crc_err`, `icv_err`, `drvinfo_sz`, `shift_sz`, `physt`, `rpt_sel`.
 - `rx.iter_frames` is `recvbuf2recvframe` [SRC usb_ops_linux.c:105]: walks the
   USB-aggregated buffer (`pkt_offset = _RND8(24 + drvinfo_sz + shift_sz + pkt_len)`),
-  yields each NORMAL_RX MPDU, skips C2H reports, stops on crc/icv error. **Two
-  intentional deviations** (documented in `rx.py`): a crc/icv-error packet stops the
-  buffer (vendor `mp_mode==0`), and the 4-byte FCS is stripped (the vendor keeps it
-  in monitor; wifit3 delivers FCS-stripped frames — [project_rx_frames_include_fcs]).
+  yields each NORMAL_RX MPDU, skips C2H reports and crc/icv-error frames. **Two
+  intentional deviations** (documented in `rx.py`): a crc/icv-error packet is skipped
+  but the walk continues (M3d — the vendor STA bails for `mp_mode==0`; monitor must
+  keep the good frames aggregated after a bad one), and the 4-byte FCS is stripped (the
+  vendor keeps it in monitor; wifit3 delivers FCS-stripped frames —
+  [project_rx_frames_include_fcs]).
 - `driver._dispatch` parses each frame via `WlanFrameParser` and fans the dict to the
   rx callback (RSSI = placeholder `0`). The reader is started at the end of
   `connect()`; per [project_rx_reader_start_ordering] this start-vs-RX-enable ordering
@@ -522,6 +530,9 @@ live deauth/replay (M4b smoke, M4c, M4d) on the hardware loop.
        no strong-AP or breadth regression, `fa_cnt` bounded/self-resetting, IGI rides to
        0x2a on busy windows and steps back down on quiet ones. **Next (optional):** a
        formal A/B vs mainline for the breadth headline.
+- M3d: RX CRC-walk skip-and-continue (`rx.iter_frames`) — skip crc/icv-error frames and
+       keep walking; only a malformed descriptor length ends the walk. **DONE**
+       (unit-tested; [HW] beacon scans show no regression, 26 APs fixed / 67-74 hop).
 - M4: TX — implement `inject_frame` for deauth/replay, broken into tiny milestones
       (M4a builder + M4b send path + M4c/M4d live deauth/replay + M4e TxBBSwing decode).
       See **M4 — TX (plan)** above for the vendor TX-path map, per-milestone scope, and

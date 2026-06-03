@@ -3,7 +3,7 @@
 The bulk-IN RX path is not covered by the byte-for-byte pcap differ (RX is
 environment-dependent), so these synthetic-buffer tests pin the rx_pkt_desc field
 extraction, the recvbuf2recvframe aggregation walk (FCS strip, C2H skip, crc/icv
-stop), and the PHY-status RSSI decode.
+skip-and-continue), and the PHY-status RSSI decode.
 """
 from wifit3.chips.rtl8814au_dkms import rx
 
@@ -58,12 +58,19 @@ def test_c2h_report_skipped_but_walk_continues():
     assert _frames(c2h + normal) == [b"DATA"]
 
 
-def test_crc_error_stops_walk():
+def test_crc_error_skipped_walk_continues():
     good = _pkt(b"GOOD" + b"\x00\x00\x00\x00")
     bad = _pkt(b"BAD!" + b"\x00\x00\x00\x00", crc=1)
-    after = _pkt(b"LOST" + b"\x00\x00\x00\x00")
-    # good is yielded; the crc-error packet ends the walk, dropping `after` too.
-    assert _frames(good + bad + after) == [b"GOOD"]
+    after = _pkt(b"KEEP" + b"\x00\x00\x00\x00")
+    # the crc-error packet is skipped, but the walk continues -> `after` survives.
+    assert _frames(good + bad + after) == [b"GOOD", b"KEEP"]
+
+
+def test_icv_error_skipped_walk_continues():
+    good = _pkt(b"GOOD" + b"\x00\x00\x00\x00")
+    bad = _pkt(b"BAD!" + b"\x00\x00\x00\x00", icv=1)
+    after = _pkt(b"KEEP" + b"\x00\x00\x00\x00")
+    assert _frames(good + bad + after) == [b"GOOD", b"KEEP"]
 
 
 def test_truncated_pkt_offset_stops():

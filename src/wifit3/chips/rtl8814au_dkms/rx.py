@@ -10,9 +10,11 @@ rounded up to an 8-byte boundary. The MPDU's trailing 4-byte FCS is appended by 
 HW (the monitor RCR sets RCR_APPFCS).
 
 Two DEVIATIONS from the vendor recv loop, both intentional for wifit3:
-  * A crc/icv-error packet stops the rest of the buffer — the vendor's `mp_mode==0`
-    behaviour (`goto _exit_recvbuf2recvframe`) — even though the monitor RCR accepts
-    such frames into the FIFO (RCR_ACRC32|RCR_AICV).
+  * A crc/icv-error packet is skipped but the walk CONTINUES — the vendor STA bails
+    here (`goto _exit_recvbuf2recvframe` for `mp_mode==0`). The monitor RCR accepts
+    crc/icv-error frames into the FIFO (RCR_ACRC32|RCR_AICV), so good frames
+    aggregated after a bad one must still be delivered; only a malformed descriptor
+    length (no recoverable next-frame boundary) ends the walk.
   * The 4-byte FCS is stripped before the frame is yielded. The vendor *keeps* it in
     monitor mode (for radiotap), but every wifit3 driver delivers FCS-stripped frames
     so the parser/attacks can trust `frame_end == MPDU_end`.
@@ -96,21 +98,22 @@ def _rnd8(x: int) -> int:
 def iter_frames(buf: bytes) -> Iterator[Tuple[bytes, int]]:
     """[SRC] recvbuf2recvframe — walk the aggregated bulk-IN buffer.
 
-    Yields ``(frame, rssi_dbm)`` for each NORMAL_RX MPDU, FCS stripped. RSSI comes
+    Yields ``(frame, rssi_dbm)`` for each good NORMAL_RX MPDU, FCS stripped. RSSI comes
     from the PHY status (the drvinfo region right after the desc) when ``physt``;
-    otherwise it is ``_RSSI_UNKNOWN``. C2H firmware reports are skipped (but still
-    advance the walk); a crc/icv error or a malformed length ends the walk.
+    otherwise it is ``_RSSI_UNKNOWN``. C2H firmware reports and crc/icv-error frames
+    are skipped but still advance the walk; only a malformed length ends it.
     """
     transfer_len = len(buf)
     off = 0
     while transfer_len >= RXDESC_SIZE:
         d = query_rx_desc(buf[off:off + RXDESC_SIZE])
-        if d.crc_err or d.icv_err:
-            break
         pkt_offset = RXDESC_SIZE + d.drvinfo_sz + d.shift_sz + d.pkt_len
         if d.pkt_len <= 0 or pkt_offset > transfer_len:
-            break
-        if not d.rpt_sel:                       # NORMAL_RX (not a C2H report)
+            break                               # malformed length: next boundary unknown
+        # Deliver only good NORMAL_RX MPDUs, but always advance the walk: crc/icv-error
+        # frames and C2H reports are skipped in place so good frames aggregated after
+        # them still come through (the monitor RCR lets crc/icv-error frames into the FIFO).
+        if not (d.crc_err or d.icv_err or d.rpt_sel):
             start = off + RXDESC_SIZE + d.drvinfo_sz + d.shift_sz
             frame = buf[start:start + d.pkt_len]
             if len(frame) > FCS_LEN:            # strip the HW-appended FCS
