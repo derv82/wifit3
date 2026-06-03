@@ -19,8 +19,9 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
       - **FA reset works (not the bug).** The raw per-tick `fa_cnt` (DigTick debug line)
         stays bounded and bounces (~2.8k–11k per 2 s window) — it does *not* climb
         monotonically, so the OFDM (0x9a4[17]) + CCK (0xa2c[15]) pulses do clear the
-        counters. The only omitted vendor reset op is the page-F *CCA* reset
-        (`phydm_reset_bb_hw_cnt`, 0xb58[0]), which does not touch the FA counters.
+        counters. (M3e adds the third vendor reset pulse — the page-F CCA reset
+        `phydm_reset_bb_hw_cnt` 0xb58[0] — for byte-faithfulness with the chip's
+        runtime reset, since the cold-boot wire emits all three every FA-stats cycle.)
       - **No strong-AP collapse.** Fixed-ch1 30 s, the strongest on-ch1 AP (~−44 dBm)
         held **150–197 beacons** with DIG ON (vs the earlier uncontrolled "~19"),
         matching DIG OFF (150–185). Across 4 fixed + 2 hop runs the unique-AP and beacon
@@ -151,6 +152,12 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   frames instead of ending the buffer walk, so good frames aggregated after a bad one
   are delivered (monitor RCR accepts crc/icv-error frames; only a malformed length ends
   the walk). [HW] beacon scans show no regression (26 APs fixed / 67-74 hop).
+- **M3e (DIG CCA-reset faithfulness): done.** `dig._reset_fa_cnt` now emits all three
+  vendor FA/CCA reset pulses (OFDM 0x9a4[17] 1->0, CCK 0xa2c[15] 0->1, page-F CCA
+  0xb58[0] 1->0), matching the chip's runtime reset. [WIRE] confirmed: the cold-boot
+  captures show this exact 6-write group repeating each FA-stats cycle (108/70/88
+  0xb58 writes across cap-1/2/3). [HW] no regression (24 APs fixed / 67 hop; fa_cnt
+  still bounded/self-resetting; ESSID canary clean).
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
   boots; the port reproduces the USB conversation **byte-for-byte** through M3b-1
   (**4451/4451/4457 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
@@ -538,6 +545,10 @@ live deauth/replay (M4b smoke, M4c, M4d) on the hardware loop.
 - M3d: RX CRC-walk skip-and-continue (`rx.iter_frames`) — skip crc/icv-error frames and
        keep walking; only a malformed descriptor length ends the walk. **DONE**
        (unit-tested; [HW] beacon scans show no regression, 26 APs fixed / 67-74 hop).
+- M3e: DIG CCA-reset faithfulness (`dig._reset_fa_cnt`) — add the third vendor reset
+       pulse (page-F CCA 0xb58[0]) so all three FA/CCA pulses match the chip's runtime
+       reset. **DONE** ([WIRE] the 6-write reset group repeats each FA-stats cycle in
+       all three captures; [HW] no regression, fa_cnt still bounded, ESSID canary clean).
 - M4: TX — implement `inject_frame` for deauth/replay, broken into tiny milestones
       (M4a builder + M4b send path + M4c/M4d live deauth/replay + M4e TxBBSwing decode).
       See **M4 — TX (plan)** above for the vendor TX-path map, per-milestone scope, and

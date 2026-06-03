@@ -70,18 +70,21 @@ def _read_fa_cnt(t):
 
 
 def _reset_fa_cnt(t) -> None:
-    """[SRC] phydm_false_alarm_counter_reg_reset (11AC) — pulse OFDM + CCK FA reset.
+    """[SRC] phydm_false_alarm_counter_reg_reset (11AC) — the 3-pulse FA/CCA reset.
 
-    The OFDM FA counter (0xf48, page F) clears on the 0x9a4[17] pulse and the CCK FA
-    counter (0xa5c) on the 0xa2c[15] pulse, so the next read covers one watchdog
-    window. The vendor also pulses phydm_reset_bb_hw_cnt (0xb58[0]) to clear the
-    page-F *CCA* counters; the no-link IGI decision consumes only the two FA counters,
-    so that pulse is intentionally out of scope here.
+    OFDM FA counter (0xf48, page F) clears on the 0x9a4[17] pulse, CCK FA (0xa5c) on
+    the 0xa2c[15] pulse, and phydm_reset_bb_hw_cnt clears the page-F CCA counters on the
+    0xb58[0] pulse. The no-link IGI decision consumes only the two FA counters, but all
+    three pulses are emitted to match the chip's runtime reset: the cold-boot wire shows
+    this exact 6-write group (0x9a4 1->0, 0xa2c 0->1, 0xb58 1->0) repeating each
+    FA-stats cycle [WIRE cap1 e.g. frames 84992-85012].
     """
     _bb32(t, 0x09A4, 1 << 17, 1)   # OFDM FA reset
     _bb32(t, 0x09A4, 1 << 17, 0)
     _bb32(t, 0x0A2C, 1 << 15, 0)   # CCK FA reset
     _bb32(t, 0x0A2C, 1 << 15, 1)
+    _bb32(t, 0x0B58, 1 << 0, 1)    # page-F CCA-counter reset (phydm_reset_bb_hw_cnt)
+    _bb32(t, 0x0B58, 1 << 0, 0)
 
 
 def _new_igi_by_fa(igi: int, fa_cnt: int) -> int:

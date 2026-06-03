@@ -77,6 +77,6 @@ def test_watchdog_clamps_to_lower_bound():
 def test_watchdog_resets_fa_counters():
     rec = Rec(reads={0x0C50: 0x20, 0x0F48: 3000, 0x0A5C: 0, 0x0808: 1 << 28})
     dig.watchdog_tick(rec)
-    # OFDM (0x9a4) + CCK (0xa2c) FA-reset pulses were emitted.
+    # The 3-pulse FA/CCA reset: OFDM (0x9a4) + CCK (0xa2c) + page-F CCA (0xb58).
     written = {o[1] for o in rec.ops if o[0] == "W"}
-    assert 0x09A4 in written and 0x0A2C in written
+    assert {0x09A4, 0x0A2C, 0x0B58} <= written
