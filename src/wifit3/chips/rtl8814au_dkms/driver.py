@@ -1,11 +1,13 @@
 """RTL8814AU driver — vendor (morrownr DKMS) cleanroom port.
 
-Status: bring-up complete through M3b-3a. ``connect()`` runs the full deterministic
-init (EFUSE -> firmware -> MAC/BB/RF -> channel tune -> TX power -> InitHalDm seed ->
-hal_init turn-on tail -> monitor opmode entry), all pcap-verified, then starts the
-bulk-IN RX reader (monitor frames with per-frame RSSI flow to the rx callback) and
-the runtime phydm DIG/AGC watchdog (adapts RX gain to the live false-alarm rate every
-~2 s). Still pending: TX (M4 — ``inject_frame`` raises until then).
+Status: 2.4 GHz RX + TX complete and hardware-verified. ``connect()`` runs the full
+deterministic init (EFUSE -> firmware -> MAC/BB/RF -> channel tune -> TX power ->
+InitHalDm seed -> hal_init turn-on tail -> monitor opmode entry), all pcap-verified,
+then starts the bulk-IN RX reader (promiscuous monitor frames + per-frame RSSI) and
+the runtime phydm DIG/AGC watchdog. ``inject_frame`` builds the mgmt TX descriptor and
+transmits — deauth (M4c) and WEP ARP replay (M4d) are live-verified, and monitor RX is
+confirmed promiscuous in both directions (captures client->AP, incl. WPA M2/M4).
+Pending: 5 GHz (M5 — ``set_channel`` accepts 2.4 GHz channels 1-13 only).
 
 This driver is intentionally NOT registered in ``wlan/manager.py`` yet — master
 keeps the working mainline-derived ``rtw88_8814au`` port until this vendor port is

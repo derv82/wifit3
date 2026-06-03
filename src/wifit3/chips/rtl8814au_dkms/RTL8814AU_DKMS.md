@@ -212,7 +212,8 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   crystal_cap / tx_power) and feeds those into M2b+, so nothing is hardcoded. [HW] a
   live ALFA AWUS1900 reached `CPU_DL_READY` and applied the full init through the
   monitor opmode entry, then received on 2.4 GHz with realistic RSSI (M3b HW-proven;
-  M3c watchdog live A/B pending).
+  M3c watchdog A/B done — no regression; the per-channel tunes are byte-diffed by
+  `verify_channels.py`).
 - Not registered in `wlan/manager.py` — master keeps the working mainline
   `rtw88_8814au` until this port is HW-proven to beat it on breadth/stability.
 
@@ -429,7 +430,7 @@ across channels 1-13 heard 69 unique APs / 735 beacons / 1315 frames — strong
   (`test_rx.py`), end-to-end RX is validated by a live beacon count via
   `scripts/rtl8814au_dkms/scan_hw.py` (the A/B headline vs mainline).
 
-**M3b-3b (RSSI): ported, unit-tested — live value sanity-check pending.** `rx.py`
+**M3b-3b (RSSI): ported, unit-tested — live values sane (-44..-80 dBm).** `rx.py`
 `decode_rssi` reads the PHY-status struct (the `drvinfo` region after the desc, when
 `physt=1`) for the per-frame `recv_signal_power` (dBm), and `iter_frames` now yields
 `(frame, rssi)`. [SRC phydm_phy_sts_jaguar_series_parsing + phydm_cck_rssi_8814a]:
@@ -501,9 +502,10 @@ tune, 2.4G/20MHz + M3b-1 set_rfe_reg_init) · `txpower.py` (M2e per-rate txagc t
 · `rx.py` (M3b-3a RX desc decode + walk, M3b-3b RSSI) · `dig.py` (M3c runtime DIG
 watchdog) · `bb_phy_reg_tbl.py` /
 `bb_agc_tab_tbl.py` / `rf_radio_{a,b,c,d}_tbl.py` (generated flat-u32 BB/AGC/RF
-tables) · `transport.py` (+ M3b-3a bulk-IN read) · `driver.py` (WlanDriver Protocol;
-connect() chains EFUSE→M1→M2a..M2e→M3a→M3b-1→M3b-2 then starts the RX reader,
-set_channel hops 2.4G; TX raises until M4).
+tables) · `tx.py` (M4a mgmt TX descriptor builder) · `transport.py` (+ M3b-3a bulk-IN
+read) · `driver.py` (WlanDriver Protocol; connect() chains EFUSE→M1→M2a..M2e→M3a→
+M3b-1→M3b-2 then starts the RX reader + DIG watchdog; set_channel hops 2.4G;
+inject_frame builds + sends the mgmt descriptor (M4); 5 GHz is M5).
 Standalone — does **not** import `chips/rtw88_base/`.
 
 ## M4 — TX (plan; not yet built)
