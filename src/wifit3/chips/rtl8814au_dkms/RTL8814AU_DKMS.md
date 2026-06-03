@@ -270,6 +270,12 @@ one conditional radio table per RF path through the same walker (`rf.py`):
 ## Channel tune — 2.4 GHz / 20 MHz (M2d)
 `chan.py` mirrors the hal_init tail [SRC usb_halinit.c:1229-1237]. 20 MHz primary
 only — the 40/80 MHz width math is omitted by scope. [WIRE] cap1 frames 13695-13855.
+Every captured per-channel tune is now byte-diffed by `verify_channels.py` (not just
+ch1). **[WIRE] scan-mode parity:** the airodump native 250 ms hop issues the SAME full
+tune as an explicit `iw set channel` — identical per-channel txpower (0x1998 ~250×),
+NBI (0x87c), RF (0xc90), fc-area (0x860) footprint — so this chip has no reduced
+"scan-mode" channel-set path, and `set_channel(scan=True)` running the full tune is
+faithful (no scan-mode command-skip to mirror).
 - **PHY_ConfigBB_8814A** — one masked write: rOFDMCCKEN (0x808)[29:28] = 3 (enable
   OFDM + CCK).
 - **PHY_SwitchWirelessBand8814A(2.4G)** — gate the CCK/OFDM clock off (0x1002[0]=0),
@@ -619,7 +625,11 @@ values, the RF 0x18 MOD_AG bit decode, and the 5G PG offsets):
   [code DELEGATABLE; LIVE validation key.]** Detect a 2.4G↔5G crossing and run the band
   switch (not just the channel tune); extend `SUPPORTED_CHANNELS` to the 5 GHz 20 MHz set
   (36…165). The one genuinely new runtime behavior — the 2.4G-only port never
-  band-switched mid-run.
+  band-switched mid-run. **[WIRE] confirmed the vendor band-switches ONLY at 2G↔5G
+  crossings** (band-switch signature 0x1002 clk-gate + 0x808 OFDM-only + 0xcb0 RFE pinmux
+  is present at ch12→36 and ch165→1, absent on every same-band hop) — so M5c gates the
+  band switch on a band *change*, not on every tune (same-band hops stay the pure tune
+  that already byte-matches the wire).
 - **M5d — 5G TX power (`efuse._parse_tx_power_5g` + `txpower` 5G loop). [HW-FREE code,
   DELEGATABLE.]** Needed for 5G inject/deauth at correct power (RX does not need it).
 - **M5e — 5G TxBBSwing (`efuse._parse_bb_swing_5g`, 0xC7). [HW-FREE, DELEGATABLE, trivial.]**
