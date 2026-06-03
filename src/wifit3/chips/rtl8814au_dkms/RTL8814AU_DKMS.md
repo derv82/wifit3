@@ -74,16 +74,18 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   `rtl8814_InitHalDm` = `dm_InitGPIOSetting` + `rtw_phydm_init` (the DIG/AGC/
   false-alarm/CCK-PD/adaptivity **seed**). This is the initial state the runtime
   DIG/AGC watchdog (M3c) adapts. See **DM seed** below.
-- **M3b-1 (hal_init turn-on tail): pcap-verified (HW test pending).**
+- **M3b-1 (hal_init turn-on tail): pcap-verified AND hardware-proven.**
   `chan.set_rfe_reg_init` = `PHY_SetRFEReg8814A(bInit=TRUE)` (RFE control enable
   `0x1994[3:0]=0xf` + GPIO antenna pinmux `0x42`), then `mac.hal_init_turn_on` =
   the turn-on writes (REG_QUEUE_CTRL, NAV upper, Tx-report, USB mode-switch reset)
   + the efuse MAC programmed to REG_MACID (`0x610`) and read back. See **M3b** below.
-- **M3b-2 (monitor opmode entry): pcap-verified (HW test pending).**
+- **M3b-2 (monitor opmode entry): pcap-verified AND hardware-proven.**
   `monitor.enter_monitor` = the vendor `hw_var_set_opmode(MONITOR)` = Set_MSR(NOLINK)
   + `hw_var_set_monitor` (RCR `0x90003b2f` accept-all + RXFLTMAP0/1/2 `0xffff`). This
   is the always-monitor deviation; it deliberately skips airmon's STA→monitor dance
   and is verified out-of-line as a targeted 10-op block. See **M3b** below.
+  [HW] a live ALFA AWUS1900 ran `connect()` through M3b-2 cleanly (no pipe wedge);
+  live RX breadth still depends on M3b-3 (RX path) + M3c (DIG watchdog).
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
   boots; the port reproduces the USB conversation **byte-for-byte** through M3b-1
   (**4451/4451/4457 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,

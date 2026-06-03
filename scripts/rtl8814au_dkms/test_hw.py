@@ -6,9 +6,12 @@ firmware download -> FW-ready), M2a (MAC register table), M2b (hal_init MISC sta
 + PHY_BBConfig8814: BB PHY_REG + AGC_TAB tables, crystal-cap, TRX path), M2c
 (PHY_RFConfig8814A: radio_a..d RF tables + RCK1 copy), M2d (PHY_ConfigBB + 2.4G
 band switch + channel tune to ch1 @ 20 MHz), M2e (per-rate TX-power txagc table),
-and M3a (InitHalDm DIG/AGC/false-alarm phydm seed), and checks the chip reached
+M3a (InitHalDm DIG/AGC/false-alarm phydm seed), M3b-1 (hal_init turn-on tail:
+PHY_SetRFEReg8814A(TRUE) + NAV/Tx-report + MAC address), and M3b-2 (monitor opmode
+entry: Set_MSR(NOLINK) + RCR/RXFLTMAP accept-all), and checks the chip reached
 CPU_DL_READY. Standalone vendor port on branch ``dkms/8814au``; does NOT touch the
-registered mainline driver.
+registered mainline driver. (This proves connect() applies cleanly; live RX breadth
+is the M3b-3 / M3c milestone, validated by a beacon count rather than this script.)
 
 Usage (run from a checkout with the card plugged in):
     .venv\\Scripts\\python.exe scripts\\rtl8814au_dkms\\test_hw.py
@@ -66,7 +69,8 @@ def main() -> int:
 
     if ready:
         print("[PASS] bring-up reached FW-ready (CPU_DL_READY) and applied MAC + MISC "
-              "+ BB/AGC + RF + channel tune + TX power + InitHalDm seed (ch1 @ 20 MHz).")
+              "+ BB/AGC + RF + channel tune + TX power + InitHalDm seed + hal_init "
+              "turn-on tail + monitor opmode entry (ch1 @ 20 MHz).")
         return 0
     print("[FAIL] firmware download did not reach FW-ready.")
     return 1
