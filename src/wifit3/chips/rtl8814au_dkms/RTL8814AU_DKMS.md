@@ -86,8 +86,11 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
       decode independently yields `rfe_type=1` and `crystal_cap=0x23`, confirming
       the M2b values. cut/package come from `REG_SYS_CFG1` (read, not decoded —
       they don't gate this card's walker; A-cut assumed). See **EFUSE** below.
-- [ ] **TX descriptor (full):** only the beacon-queue FW-download descriptor is
-      built so far (see below). Data-frame TX (rates/aggregation/sec) is unported.
+- [x] **TX descriptor — mgmt path DONE (M4a-d), full data path deferred.** `tx.py`
+      builds the minimal mgmt descriptor (`fill_fake_txdesc` port); `inject_frame` sends
+      it, and deauth + WEP ARP replay are live-verified. The richer `update_txdesc`
+      (per-rate adaptation / aggregation / HW security) is not ported — not needed for
+      monitor inject/deauth/replay, which transmit final frames at a fixed rate.
 
 ## Status
 - **M1 (firmware upload + FW-ready ACK): complete — pcap-verified AND hardware-proven.**
