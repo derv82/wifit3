@@ -67,6 +67,7 @@ async def run(args) -> int:
         logging.debug("set_configuration: %s", e)
 
     driver = Rtl8814auDkmsDriver.from_usb_device(dev, entry)
+    driver.enable_dig = not args.no_dig   # A/B: isolate the M3c watchdog's effect
     tally = BeaconTally()
     driver.register_rx_callback(tally)
 
@@ -79,7 +80,7 @@ async def run(args) -> int:
 
     channels = [args.channel] if args.channel else list(range(1, 14))
     print(f"\n[*] scanning {'ch ' + str(args.channel) if args.channel else 'channels 1-13'} "
-          f"for {args.duration:g}s ...")
+          f"for {args.duration:g}s ...  DIG watchdog: {'OFF' if args.no_dig else 'ON'}")
     start = time.monotonic()
     i = 0
     try:
@@ -113,6 +114,8 @@ def main() -> int:
     ap.add_argument("--channel", type=int, default=None,
                     help="fix on this 2.4G channel (default: hop 1-13)")
     ap.add_argument("--dwell", type=float, default=2.0, help="per-channel dwell (s)")
+    ap.add_argument("--no-dig", action="store_true",
+                    help="disable the M3c DIG watchdog (A/B baseline)")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(

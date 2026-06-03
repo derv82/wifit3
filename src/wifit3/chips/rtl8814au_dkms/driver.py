@@ -62,6 +62,9 @@ class Rtl8814auDkmsDriver:
         self._channel: Optional[int] = None
         self._tx_power: tuple = ()  # per-path efuse TX-power info (M2e)
         self.is_warm: bool = False
+        # Runtime DIG/AGC watchdog (M3c). Toggleable so a fixed-channel A/B can
+        # isolate the watchdog's effect on RX breadth (scan_hw.py --no-dig).
+        self.enable_dig: bool = True
         self._rx_cb: Optional[Callable[[dict], None]] = None
         self._reader: Optional[RxReaderThread] = None
         self._dig_task: Optional[asyncio.Task] = None
@@ -130,7 +133,10 @@ class Rtl8814auDkmsDriver:
 
         # M3c: the runtime phydm DIG/AGC watchdog — adapt the M3a IGI seed to the
         # live false-alarm rate every ~2 s (the kernel cadence). RX-side only.
-        self._dig_task = loop.create_task(self._dig_watchdog())
+        if self.enable_dig:
+            self._dig_task = loop.create_task(self._dig_watchdog())
+        else:
+            logger.info("RTL8814AU DIG watchdog disabled (IGI stays at the M3a seed)")
 
         if progress_cb:
             progress_cb(1.0, f"Tuned to channel {_DEFAULT_CHANNEL} @ 20 MHz")
@@ -143,8 +149,9 @@ class Rtl8814auDkmsDriver:
             while True:
                 await asyncio.sleep(WATCHDOG_PERIOD_S)
                 async with self._io_lock:
-                    igi = await loop.run_in_executor(None, watchdog_tick, self.transport)
-                logger.debug("RTL8814AU DIG: IGI=0x%02x", igi)
+                    tick = await loop.run_in_executor(None, watchdog_tick, self.transport)
+                logger.debug("RTL8814AU DIG: IGI=0x%02x fa=%d (ofdm=%d cck=%d)",
+                             tick.igi, tick.fa_cnt, tick.ofdm_fa, tick.cck_fa)
         except asyncio.CancelledError:
             pass
         except Exception:  # noqa: BLE001 — a watchdog fault must not kill RX

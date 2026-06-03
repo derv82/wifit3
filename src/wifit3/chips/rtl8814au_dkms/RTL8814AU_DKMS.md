@@ -13,39 +13,41 @@ Sources of truth: the vendor tree at
 file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
 
 ## Potential Known Gaps (audit before trusting any milestone)
-- [ ] **DIG regression — OPEN (top priority).** The M3c DIG watchdog is the prime
-      suspect for a strong-AP RX regression. [HW] findings:
-      - **NETGEAR2G beacon count:** a close, strong AP (−44 dBm) **on channel 1** was the
-        *highest* beacon count at the end of M3b-3a (30 s channel-hop, no DIG thread);
-        under M3c it collapsed to **19 beacons in 30 s on a fixed ch1 scan** — ranked
-        *below* distant −65..−84 dBm APs. Backwards from physics, and a fixed-ch1 scan
-        should favour an on-ch1 AP *more* than hopping did, so the regression is stark.
-      - **DIG pins to 0x2a:** the IGI climbs 0x20→**0x2a (the max bound)** in ~6 ticks
-        (~12 s) and stays pinned there for the rest of the scan — i.e. FA is *always*
-        over threshold, so DIG keeps raising gain index to the ceiling.
-      The two together implicate the watchdog (NETGEAR2G was fine *before* DIG existed),
-      not the CRC-walk theory below (which would have hurt M3b-3a too). **Mechanism to
-      pin down first:** is the FA *reset* (`dig._reset_fa_cnt`) actually clearing the
-      counters? If not, FA accumulates monotonically → always over threshold → IGI
-      pins at max (a port bug), vs a genuinely busy band (vendor-intended). **Plan
-      tomorrow:** (1) a controlled **A/B on a fixed channel: DIG thread OFF vs ON**
-      (needs a disable toggle, e.g. `scan_hw --no-dig`) — does NETGEAR2G recover with DIG
-      off? (2) log the *raw* `fa_cnt` each tick — monotonic growth ⇒ reset broken;
-      (3) fix per the finding (repair the FA reset, or rethink whether always-monitor
-      should run DIG / clamp differently). Note the M3b-3a-vs-M3c comparison is
-      suggestive but uncontrolled (different runs, hop vs fixed) — the A/B is the
-      decider.
+- [x] **DIG regression — RESOLVED (the controlled A/B clears the watchdog).** The M3c
+      watchdog was the prime suspect for a strong-AP RX regression; a fixed-channel
+      *and* hopping A/B (DIG ON vs OFF via `scan_hw --no-dig`) refutes it. [HW]:
+      - **FA reset works (not the bug).** The raw per-tick `fa_cnt` (DigTick debug line)
+        stays bounded and bounces (~2.8k–11k per 2 s window) — it does *not* climb
+        monotonically, so the OFDM (0x9a4[17]) + CCK (0xa2c[15]) pulses do clear the
+        counters. The only omitted vendor reset op is the page-F *CCA* reset
+        (`phydm_reset_bb_hw_cnt`, 0xb58[0]), which does not touch the FA counters.
+      - **No strong-AP collapse.** Fixed-ch1 30 s, the strongest on-ch1 AP (~−44 dBm)
+        held **150–197 beacons** with DIG ON (vs the earlier uncontrolled "~19"),
+        matching DIG OFF (150–185). Across 4 fixed + 2 hop runs the unique-AP and beacon
+        breadth track each other within run-to-run variance; a single DIG-OFF outlier
+        (5599 frames) drove the original "halved frames" worry and did not repeat.
+        Beacon *count* follows beacon interval / multi-BSSID radios, not RSSI, so a
+        strong AP ranking below a chatty distant one is expected, not a regression.
+      - **IGI 0x2a is faithful + harmless.** In a busy band the no-link FA is genuinely
+        > fa_th, so DIG steps IGI to the [0x1c, 0x2a] ceiling (= DIG_MAX_OF_MIN_BALANCE_
+        MODE); on a hop scan it also steps *down* (0x2a→0x28→0x26→0x24) on quiet
+        channels. 0x2a is the least-sensitive bound but sits well below the strong AP's
+        level, so it does not deafen RX. The earlier "collapse" was an uncontrolled
+        hop-vs-fixed comparison at a different time. The `--no-dig` toggle + DigTick
+        `fa_cnt` log stay in as the standing A/B harness.
 - [ ] **RX CRC-walk coherence (secondary, deprioritised).** `rx.iter_frames` stops the
       whole bulk buffer on a crc/icv-error frame (vendor STA `goto _exit`), yet the
       monitor RCR sets `ACRC32|AICV` so such frames *do* arrive — so good frames
       aggregated after a crc-error are dropped. Incoherent (we accept them then bail);
-      fix is skip-and-continue. Demoted below the DIG regression because NETGEAR2G was
-      best-heard at M3b-3a (no DIG) *with this same walk*, so it is not the NETGEAR2G cause.
-- [~] **2.4 GHz RX/AGC (the whole point):** the phydm DIG/AGC path is the reason for
+      fix is skip-and-continue. Not the (now-cleared) DIG suspicion's cause — the strong
+      on-ch1 AP was best-heard at M3b-3a *with this same walk* — but still a cheap
+      skip-and-continue pass worth doing before/with M4.
+- [x] **2.4 GHz RX/AGC (the whole point):** the phydm DIG/AGC path is the reason for
       this re-port. AGC *table* (M2b) + DIG/AGC *seed* (M3a) + bulk-IN RX path (M3b-3a,
-      **69 APs in a 30 s 1-13 hop** [HW]) + per-frame RSSI (M3b-3b) are done. The
-      runtime DIG/AGC watchdog (M3c) is **ported but under suspicion** — it pins IGI
-      to 0x2a and appears to regress strong-AP RX (see **DIG regression — OPEN** above).
+      **69 APs in a 30 s 1-13 hop** [HW]) + per-frame RSSI (M3b-3b) + the runtime
+      DIG/AGC watchdog (M3c) are done. The watchdog adapts IGI within [0x1c, 0x2a]; a
+      controlled A/B shows no strong-AP or breadth regression (see **DIG regression —
+      RESOLVED** above).
 - [x] **Monitor-mode deviation — RCR/RX-filter done (M3b-2).** vendor inits for
       STA/AP (M2b applies the STA-init `RCR = 0xf40060ce` + beacon-filtered RXFLTMAP);
       wifit3 is always-monitor, so `monitor.enter_monitor` overwrites RCR with the
@@ -129,14 +131,15 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   live scan showed a realistic dBm spread — a nearby router at −44 dBm down to distant
   APs near −80 dBm — confirming the byte offsets and the `>>1` (is_mp_chip) branch.
   See **M3b** below.
-- **M3c (runtime DIG/AGC watchdog): ported and runs, but a SUSPECTED RX REGRESSION
-  is open — do not trust until the A/B clears it.** `dig.watchdog_tick` ports
-  `phydm_dig` for the no-link path — read FA counters → step IGI by FA → clamp
-  [0x1c, 0x2a] → write all 4 paths — driven every 2 s by a periodic `connect()` task,
-  serialized with `set_channel`. [HW] the IGI climbs 0x20→**0x2a (max)** in ~6 ticks
-  and **pins there** for the rest of the scan, and a strong on-channel AP that was the
-  *best-heard* at M3b-3a collapsed to a low beacon count under M3c (see **DIG
-  regression — open** in Potential Known Gaps). Mechanism + A/B plan there.
+- **M3c (runtime DIG/AGC watchdog): complete — ported AND validated by a controlled
+  A/B.** `dig.watchdog_tick` ports `phydm_dig` for the no-link path — read FA counters
+  → step IGI by FA → clamp [0x1c, 0x2a] → write all 4 paths — driven every 2 s by a
+  periodic `connect()` task, serialized with `set_channel`. [HW] on a busy band the IGI
+  rides up to the 0x2a ceiling and steps back down on quiet channels; a fixed-channel +
+  hopping A/B (DIG ON vs OFF) shows no strong-AP or breadth regression and a bounded,
+  self-resetting `fa_cnt` — the suspected regression is refuted (see **DIG regression —
+  RESOLVED** in Potential Known Gaps). The `--no-dig` toggle + DigTick `fa_cnt` debug
+  log are the A/B harness.
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
   boots; the port reproduces the USB conversation **byte-for-byte** through M3b-1
   (**4451/4451/4457 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
@@ -453,13 +456,14 @@ Standalone — does **not** import `chips/rtw88_base/`.
        struct (`decode_rssi`; CCK lookup + OFDM pwdb_all); live spread −44 dBm (near)
        to −80 dBm (far). **M3b complete.**
 - M3c: the runtime DIG/AGC watchdog (`phydm_dig` → `odm_write_dig` — the 0xc50/E50/
-       1850/1A50 IGI writes adapting 0x1c..0x2a). **PORTED, runs — but a SUSPECTED RX
-       REGRESSION is open (see Potential Known Gaps "DIG regression — OPEN").** `dig.py`
+       1850/1A50 IGI writes adapting 0x1c..0x2a). **DONE — ported AND validated by a
+       controlled A/B (see Potential Known Gaps "DIG regression — RESOLVED").** `dig.py`
        `watchdog_tick` runs every 2 s — read FA counters (OFDM 0xf48 + CCK 0xa5c) →
        `new_igi_by_fa` (no-link step {+2,+1,−2}, fa_th {2000,4000,5000}) → clamp
        [0x1c,0x2a] → write all 4 paths, via a periodic `connect()` task serialized with
-       `set_channel`. [HW] IGI pins to 0x2a and a strong on-ch1 AP (best-heard pre-DIG)
-       collapsed under M3c. **Next:** A/B with DIG OFF on a fixed channel + check the FA
-       reset (monotonic fa_cnt ⇒ reset broken ⇒ IGI pins). Then a formal A/B vs mainline.
+       `set_channel`. [HW] fixed-channel + hopping A/B (DIG ON vs OFF via `--no-dig`):
+       no strong-AP or breadth regression, `fa_cnt` bounded/self-resetting, IGI rides to
+       0x2a on busy windows and steps back down on quiet ones. **Next (optional):** a
+       formal A/B vs mainline for the breadth headline.
 - M4: TX (full `update_txdesc`) for deauth/replay; includes the per-board TxBBSwing
       efuse decode (BB swing currently the 0 dB default).

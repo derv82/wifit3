@@ -18,6 +18,8 @@ adaptive breadth A/B), not via the byte-for-byte differ.
 """
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from .bb import _set_reg_masked as _bb32
 
 # FA counters [SRC phydm_fa_cnt_statistics_ac + phydm_regdefine11ac.h].
@@ -41,16 +43,41 @@ _IGI_MAX = 0x2A
 WATCHDOG_PERIOD_S = 2.0        # kernel DIG-watchdog cadence
 
 
-def _read_fa_cnt(t) -> int:
-    """[SRC] phydm_fa_cnt_statistics_ac — cnt_all = OFDM-FA (+ CCK-FA on 2.4G)."""
+class DigTick(NamedTuple):
+    """One watchdog iteration's outcome (for the driver's debug log).
+
+    The raw FA components are surfaced so a stuck (never-reset) counter is visible
+    at a glance: a working 2 s window reads hundreds-to-low-thousands of FA, a
+    counter that is not being cleared climbs monotonically toward the 16-bit ceiling.
+    """
+    igi: int        # IGI now in force after clamp (and write, if it changed)
+    fa_cnt: int     # cnt_all consumed this window = OFDM-FA (+ CCK-FA on 2.4G)
+    ofdm_fa: int    # raw OFDM false-alarm count (0xf48)
+    cck_fa: int     # raw CCK false-alarm count (0xa5c)
+
+
+def _read_fa_cnt(t):
+    """[SRC] phydm_fa_cnt_statistics_ac — cnt_all = OFDM-FA (+ CCK-FA on 2.4G).
+
+    Returns ``(cnt_all, ofdm_fa, cck_fa)``; cnt_all is all the IGI decision needs,
+    the raw components are for the watchdog log.
+    """
     ofdm_fa = t.read16(_REG_OFDM_FA)
     cck_fa = t.read16(_REG_CCK_FA)
     cck_enabled = bool(t.read32(_REG_BB_RX_PATH) & _CCK_ENABLE_BIT)
-    return ofdm_fa + cck_fa if cck_enabled else ofdm_fa
+    cnt_all = ofdm_fa + cck_fa if cck_enabled else ofdm_fa
+    return cnt_all, ofdm_fa, cck_fa
 
 
 def _reset_fa_cnt(t) -> None:
-    """[SRC] phydm_false_alarm_counter_reg_reset (11AC) — pulse OFDM + CCK FA reset."""
+    """[SRC] phydm_false_alarm_counter_reg_reset (11AC) — pulse OFDM + CCK FA reset.
+
+    The OFDM FA counter (0xf48, page F) clears on the 0x9a4[17] pulse and the CCK FA
+    counter (0xa5c) on the 0xa2c[15] pulse, so the next read covers one watchdog
+    window. The vendor also pulses phydm_reset_bb_hw_cnt (0xb58[0]) to clear the
+    page-F *CCA* counters; the no-link IGI decision consumes only the two FA counters,
+    so that pulse is intentionally out of scope here.
+    """
     _bb32(t, 0x09A4, 1 << 17, 1)   # OFDM FA reset
     _bb32(t, 0x09A4, 1 << 17, 0)
     _bb32(t, 0x0A2C, 1 << 15, 0)   # CCK FA reset
@@ -68,19 +95,19 @@ def _new_igi_by_fa(igi: int, fa_cnt: int) -> int:
     return igi
 
 
-def watchdog_tick(t) -> int:
-    """One DIG watchdog iteration; returns the IGI now in force (for logging).
+def watchdog_tick(t) -> DigTick:
+    """One DIG watchdog iteration; returns the resulting :class:`DigTick`.
 
     [SRC] phydm_dig: read the current IGI, read+reset the FA counters, pick a new IGI
     by FA, clamp to the no-link range, and (only if changed) write it to all paths
     via odm_write_dig -> phydm_write_dig_reg_c50.
     """
     igi = t.read32(_REG_IGI[0]) & _IGI_MASK
-    fa_cnt = _read_fa_cnt(t)
+    fa_cnt, ofdm_fa, cck_fa = _read_fa_cnt(t)
     _reset_fa_cnt(t)
     new_igi = _new_igi_by_fa(igi, fa_cnt)
     new_igi = max(_IGI_MIN, min(_IGI_MAX, new_igi))
     if new_igi != igi:
         for reg in _REG_IGI:
             _bb32(t, reg, _IGI_MASK, new_igi)
-    return new_igi
+    return DigTick(new_igi, fa_cnt, ofdm_fa, cck_fa)

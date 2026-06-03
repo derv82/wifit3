@@ -36,14 +36,14 @@ def test_new_igi_by_fa_steps():
 
 
 def test_read_fa_cnt_sums_cck_on_2g():
-    # cck enabled (0x808 bit28) -> cnt_all = ofdm + cck.
+    # cck enabled (0x808 bit28) -> cnt_all = ofdm + cck; raw components surfaced.
     rec = Rec(reads={0x0F48: 100, 0x0A5C: 50, 0x0808: 1 << 28})
-    assert dig._read_fa_cnt(rec) == 150
+    assert dig._read_fa_cnt(rec) == (150, 100, 50)
 
 
 def test_read_fa_cnt_ofdm_only_when_cck_disabled():
     rec = Rec(reads={0x0F48: 100, 0x0A5C: 50, 0x0808: 0})
-    assert dig._read_fa_cnt(rec) == 100
+    assert dig._read_fa_cnt(rec) == (100, 100, 50)
 
 
 def _writes(rec):
@@ -53,7 +53,8 @@ def _writes(rec):
 def test_watchdog_raises_igi_on_high_fa_and_writes_all_paths():
     # IGI 0x20, huge FA -> +2 -> 0x22, written to all four IGI regs.
     rec = Rec(reads={0x0C50: 0x20, 0x0F48: 9000, 0x0A5C: 0, 0x0808: 1 << 28})
-    assert dig.watchdog_tick(rec) == 0x22
+    tick = dig.watchdog_tick(rec)
+    assert tick.igi == 0x22 and tick.fa_cnt == 9000 and tick.ofdm_fa == 9000
     writes = _writes(rec)
     for reg in (0x0C50, 0x0E50, 0x1850, 0x1A50):
         assert writes[reg] & dig._IGI_MASK == 0x22
@@ -62,13 +63,13 @@ def test_watchdog_raises_igi_on_high_fa_and_writes_all_paths():
 def test_watchdog_clamps_to_upper_bound():
     # Already at max; high FA must not push IGI past 0x2a.
     rec = Rec(reads={0x0C50: 0x2A, 0x0F48: 9000, 0x0A5C: 0, 0x0808: 1 << 28})
-    assert dig.watchdog_tick(rec) == 0x2A
+    assert dig.watchdog_tick(rec).igi == 0x2A
 
 
 def test_watchdog_clamps_to_lower_bound():
     # At min with low FA; -2 must clamp at 0x1c, and (unchanged) skip the IGI write.
     rec = Rec(reads={0x0C50: 0x1C, 0x0F48: 0, 0x0A5C: 0, 0x0808: 1 << 28})
-    assert dig.watchdog_tick(rec) == 0x1C
+    assert dig.watchdog_tick(rec).igi == 0x1C
     assert not any(o[0] == "W" and o[1] in (0x0C50, 0x0E50, 0x1850, 0x1A50)
                    for o in rec.ops)
 
