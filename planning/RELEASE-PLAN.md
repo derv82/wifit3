@@ -223,6 +223,16 @@ card. Unverified — no macOS hardware tested. Parked until someone wants it.
   offender: **`wlan/packet.py`** (the 802.11 frame parser) is dense with bare
   magic numbers — header offsets, FC type/subtype masks, IE tag IDs — that read
   as guesswork; replace with named constants + brief `[WIRE]`-cited rationale.
+  - **Comment-voice exemplar:** commit `d0d94ac` (`docs(wps/campaign): Comment
+    cleanup`) is the worked example of the target voice for **our own Python /
+    orchestration** code — lean, human, one line where the code is, cruft cut
+    (−63 net). Run it as a dedicated session: tell Claude to *forget the house
+    comment guidance and write like a human*, with that commit's diff as the only
+    reference. **Code-type split (do not collapse):** this lean voice is for app
+    code only — **ported / RE'd driver code (`chips/`) stays comment-rich**, where
+    the comments ARE the reverse-engineering knowledge (`ar9271/protocol/wmi.py`
+    is the gold standard, ~33% comment-to-code). (If the § 2a history rewrite
+    lands first, re-point this hash — `filter-repo` rewrites it.)
 
 ---
 
