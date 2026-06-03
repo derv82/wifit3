@@ -352,6 +352,19 @@ EEPROM_RFE_OPTION = 0xCA       # EEPROM_RFE_OPTION_8814 (rfe_type, bit7 + [6:0])
 EEPROM_DEFAULT_CRYSTAL_CAP = 0x20  # EEPROM_Default_CrystalCap_8814
 RFE_TYPE_8814AU_FALLBACK = 1   # hal_ReadRFEType_8814A 8814AU branch
 
+# --- M3b: hal_init turn-on tail (after rtl8814_InitHalDm) --------------------
+# [SRC] usb/usb_halinit.c rtl8814au_hal_init lines 1285..1305. [WIRE] cap1 14573+.
+REG_GPIO_IO_SEL_8814A = 0x0042  # PHY_SetRFEReg8814A(TRUE): byte [23:20] |= 0xf
+RFE_8814_REG = 0x1994           # PHY_SetRFEReg8814A(TRUE): [3:0] = 0xf (bare literal in vendor src)
+REG_QUEUE_CTRL = 0x04C6         # RTS-BW: clear BIT3 (& 0xF7)
+REG_NAV_UPPER = 0x0652          # HW_VAR_NAV_UPPER (also Nav-limit byte, set 0 in MISC11)
+WIFI_NAV_UPPER_US = 30000       # WiFiNavUpperUs [SRC] include/wifi.h
+HAL_NAV_UPPER_UNIT = 128        # [SRC] include/hal_com_reg.h (micro-second unit)
+REG_SDIO_CTRL_8814A = 0x0070    # "Reset USB mode switch setting" = 0
+REG_ACLK_MON = 0x003E           # = 0
+REG_MACID = 0x0610              # MAC address, 6 B (HW_VAR_MAC_ADDR -> set_macaddr_port)
+ETH_ALEN = 6
+
 # --- USB device identity ----------------------------------------------------
 VID_REALTEK = 0x0BDA
 PID_RTL8814AU = 0x8813  # ALFA AWUS1900 (4T4R) [WIRE] lsusb 0bda:8813

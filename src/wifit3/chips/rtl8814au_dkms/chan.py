@@ -40,6 +40,19 @@ def _set_rfe_reg_2g(t) -> None:
     _bb32(t, C.REG_RFE_INV, 0x0FF00000, 0x77)
 
 
+def set_rfe_reg_init(t, rfe_type: int) -> None:
+    """[SRC] PHY_SetRFEReg8814A(bInit=TRUE) — RFE control enable + GPIO pinmux.
+
+    Run once from the hal_init turn-on block. Enables the RFE control field
+    (0x1994[3:0]=0xf) and drives the GPIO antenna-select pins: rfe 1/2 set
+    0x42[23:20]=0xf (|0xf0), rfe 0 sets 0x42[23:22]=2b'11 (|0xc0).
+    """
+    _bb32(t, C.RFE_8814_REG, 0xF, 0xF)
+    gpio_bits = 0xF0 if rfe_type in (1, 2) else 0xC0
+    v = t.read8(C.REG_GPIO_IO_SEL_8814A)
+    t.write8(C.REG_GPIO_IO_SEL_8814A, v | gpio_bits)
+
+
 def _set_bb_swing_2g(t) -> None:
     """[SRC] phy_SetBBSwingByBand_8814A(2.4G) — per-path TxScale[31:21].
 

@@ -111,10 +111,11 @@ def _rf_gain_table(t) -> None:
     _rf_write(t, "a", *_RF_GAIN_A_EXTRA)                # path-A extra row
     for p in _RF_PATHS:
         set_rf_masked(t, p, 0xEF, _RF_GAIN_OPEN, 0)     # close gain page
-    # BB rx-gain index commit (0x910) + enable bit (0x1994[3]).
+    # BB rx-gain index commit (0x910). The 0x1994[3:0]=0xf that follows on the
+    # wire belongs to PHY_SetRFEReg8814A(TRUE) (M3b, chan.set_rfe_reg_init), not
+    # to this gain commit — it is the next hal_init step, not part of InitHalDm.
     for val in (0xFC00, 0xEC00, 0x2C00, 0x2C00, 0x2C00):
         _bb32(t, 0x0910, 0xFC00, (val >> 10) & 0x3F)
-    _bb32(t, 0x1994, 0x8, 1)
 
 
 def init_hal_dm(t) -> None:

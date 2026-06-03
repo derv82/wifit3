@@ -20,12 +20,12 @@ import usb.core
 from wifit3.engine.protocols import DeviceID, ProgressCallback
 
 from .bb import phy_bb_config
-from .chan import init_tune, set_channel_bw
+from .chan import init_tune, set_channel_bw, set_rfe_reg_init
 from .constants import PID_RTL8814AU, VID_REALTEK
 from .dm import init_hal_dm
 from .efuse import read_chip_params
 from .firmware import bring_up
-from .mac import mac_init_misc, phy_mac_config
+from .mac import hal_init_turn_on, mac_init_misc, phy_mac_config
 from .rf import phy_rf_config
 from .transport import Rtl8814auTransport
 
@@ -101,6 +101,8 @@ class Rtl8814auDkmsDriver:
             phy_rf_config(t, params.rfe_type)                      # M2c: PHY_RFConfig8814A
             init_tune(t, _DEFAULT_CHANNEL, params.tx_power)        # M2d/M2e: ch tune + TX power
             init_hal_dm(t)                                         # M3a: InitHalDm DIG/AGC seed
+            set_rfe_reg_init(t, params.rfe_type)                   # M3b: PHY_SetRFEReg8814A(TRUE)
+            hal_init_turn_on(t, self.mac_address)                  # M3b: turn-on tail + MAC addr
 
         await loop.run_in_executor(None, _phy_config, self.transport)
         self._channel = _DEFAULT_CHANNEL

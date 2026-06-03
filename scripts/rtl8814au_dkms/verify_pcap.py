@@ -220,6 +220,8 @@ def main() -> int:
             rf.phy_rf_config(t, p.rfe_type)                 # M2c: PHY_RFConfig8814A
             chan.init_tune(t, 1, p.tx_power)                # M2d ch tune + M2e TX power
             dm.init_hal_dm(t)                               # M3a: MISC11 + InitHalDm seed
+            chan.set_rfe_reg_init(t, p.rfe_type)            # M3b: PHY_SetRFEReg8814A(TRUE)
+            mac.hal_init_turn_on(t, p.mac_address)          # M3b: turn-on tail + MAC addr
     except Divergence as e:
         print(f"\nFAIL (divergence): {e}")
         return 1
@@ -227,9 +229,10 @@ def main() -> int:
     if not ready:
         print("\nFAIL: bring_up did not reach CPU_DL_READY against the capture")
         return 1
-    print(f"\nPASS: port reproduced {t.i} USB ops byte-for-byte through M3a "
+    print(f"\nPASS: port reproduced {t.i} USB ops byte-for-byte through M3b-1 "
           f"({n_bulk} FW packets / {len(fw)} B blob; MAC + MISC + BB + RF + channel "
-          f"tune + TX power + InitHalDm phydm seed, ch1 @ 20 MHz).")
+          f"tune + TX power + InitHalDm phydm seed + hal_init turn-on tail "
+          f"(RFE-true, NAV, MAC addr), ch1 @ 20 MHz).")
     print(f"      {len(ops) - t.i} later-milestone ops remain in the capture.")
     return 0
 

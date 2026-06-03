@@ -188,6 +188,36 @@ def _init_burst_pkt_len(t) -> None:
     t.write16(C.REG_RXDMA_AGG_PG_TH, C.RXDMA_AGG_TH_USB2)
 
 
+# ---------------------------------------------------------------------------
+# Turn-on tail — rtl8814au_hal_init lines 1290..1305 (after rtl8814_InitHalDm),
+# then the open-path MAC-address program. PHY_SetRFEReg8814A(TRUE), which the
+# vendor calls just before this block (line 1285), lives in chan.set_rfe_reg_init.
+# ---------------------------------------------------------------------------
+
+def hal_init_turn_on(t, mac_address: str) -> None:
+    """[SRC] usb_halinit.c:1290-1305 turn-on writes + HW_VAR_MAC_ADDR.
+
+    REG_QUEUE_CTRL[3]=0 (RTS BW follows CCA), NAV upper limit, Tx-report enable,
+    USB mode-switch reset, then the 6-byte MAC address from efuse written to
+    REG_MACID and read back (set_macaddr_port + get_macaddr_port log).
+    """
+    t.write8(C.REG_QUEUE_CTRL, t.read8(C.REG_QUEUE_CTRL) & 0xF7)
+    # HW_VAR_NAV_UPPER: REG_NAV_UPPER = roundup(WiFiNavUpperUs / unit).
+    nav = (C.WIFI_NAV_UPPER_US + C.HAL_NAV_UPPER_UNIT - 1) // C.HAL_NAV_UPPER_UNIT
+    t.write8(C.REG_NAV_UPPER, nav)
+    t.write8(C.REG_FWHW_TXQ_CTRL + 1, 0x0F)   # enable Tx report
+    t.write8(C.REG_SDIO_CTRL_8814A, 0x00)     # reset USB mode-switch setting
+    t.write8(C.REG_ACLK_MON, 0x00)
+
+    if not mac_address:
+        raise ValueError("hal_init_turn_on: no MAC address (efuse read failed?)")
+    mac = bytes.fromhex(mac_address.replace(":", ""))
+    for i in range(C.ETH_ALEN):
+        t.write8(C.REG_MACID + i, mac[i])
+    for i in range(C.ETH_ALEN):
+        t.read8(C.REG_MACID + i)              # get_macaddr_port readback (logged)
+
+
 def mac_init_misc(t) -> None:
     """hal_init MISC stage between PHY_MACConfig8814 and PHY_BBConfig8814."""
     _init_queue_priority(t)
