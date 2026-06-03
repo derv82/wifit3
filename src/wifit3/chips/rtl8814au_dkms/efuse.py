@@ -27,12 +27,22 @@ from typing import NamedTuple, Optional
 from . import constants as C
 
 
+class PathTxPwr(NamedTuple):
+    """Per-RF-path 2.4 GHz TX-power base + nTX diffs (efuse PG data)."""
+    cck_base: tuple    # 6 channel groups
+    bw40_base: tuple   # 5 channel groups (also the OFDM/HT/VHT base)
+    cck_diff: tuple    # [1TX, 2TX, 3TX]  (1TX has no efuse byte -> 0)
+    ofdm_diff: tuple
+    bw20_diff: tuple
+
+
 class ChipParams(NamedTuple):
     rfe_type: int
     crystal_cap: int
     mac_address: Optional[str]
     chip_version: int
     autoload_fail: bool
+    tx_power: tuple    # 4x PathTxPwr (paths A..D)
 
 
 def _efuse_one_byte_read(t, addr: int) -> int:
@@ -133,6 +143,38 @@ def _parse_crystal_cap(m: bytes) -> int:
     return C.EEPROM_DEFAULT_CRYSTAL_CAP if v == 0xFF else v
 
 
+# 2.4G PG TX-power block per path (18 B: 6 CCK base, 5 BW40 base, 7 diff bytes);
+# per-path stride 0x2A (2G block + 5G block). [SRC] hal_load_pg_txpwr_info_path_2g,
+# pg_txpwr_saddr=0x10. [WIRE] reproduces the cold-boot txagc (0x1998) writes.
+_TXPWR_PATH_OFF = (0x10, 0x3A, 0x64, 0x8E)
+
+
+def _s4(n: int) -> int:
+    """Signed 4-bit nibble -> int (PG_TXPWR_*_DIFF_TO_S8BIT)."""
+    return n - 16 if (n & 0x8) else n
+
+
+def _parse_tx_power(m: bytes) -> tuple:
+    """[SRC] hal_load_pg_txpwr_info_path_2g — per-path base + nTX diff nibbles.
+
+    Diff bytes (offsets 11..17 of the path block) pack signed nibbles:
+      11: MSB=BW20[1TX] LSB=OFDM[1TX]   12: MSB=BW40[2TX] LSB=BW20[2TX]
+      13: MSB=OFDM[2TX] LSB=CCK[2TX]    14: MSB=BW40[3TX] LSB=BW20[3TX]
+      15: MSB=OFDM[3TX] LSB=CCK[3TX]    16,17: 4TX (skipped, max_tx_cnt=3)
+    CCK[1TX] has no byte (CCK base is the 1TX reference) -> 0.
+    """
+    paths = []
+    for base in _TXPWR_PATH_OFF:
+        cck_base = tuple(m[base + i] for i in range(6))
+        bw40_base = tuple(m[base + 6 + i] for i in range(5))
+        d = [m[base + 11 + i] for i in range(7)]
+        bw20_diff = (_s4(d[0] >> 4), _s4(d[1] & 0xF), _s4(d[3] & 0xF))
+        ofdm_diff = (_s4(d[0] & 0xF), _s4(d[2] >> 4), _s4(d[4] >> 4))
+        cck_diff = (0, _s4(d[2] & 0xF), _s4(d[4] & 0xF))
+        paths.append(PathTxPwr(cck_base, bw40_base, cck_diff, ofdm_diff, bw20_diff))
+    return tuple(paths)
+
+
 def _parse_mac_address(m: bytes) -> Optional[str]:
     """[SRC] hal_config_macaddr — efuse 0xD8..0xDD; None if blank/invalid."""
     mac = m[C.EEPROM_MAC_ADDR:C.EEPROM_MAC_ADDR + 6]
@@ -164,4 +206,5 @@ def read_chip_params(t) -> ChipParams:
         mac_address=_parse_mac_address(m),
         chip_version=chip_version,
         autoload_fail=autoload_fail,
+        tx_power=_parse_tx_power(m),
     )

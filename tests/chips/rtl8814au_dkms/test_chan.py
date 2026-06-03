@@ -71,7 +71,7 @@ def test_set_channel_bw_cck_dfir_arms():
 
 def test_set_channel_bw_rejects_5g():
     with pytest.raises(NotImplementedError):
-        chan.set_channel_bw(Rec(), 36)
+        chan.set_channel_bw(Rec(), 36, ())
 
 
 def test_spur_cal_resets_nbi_csi():

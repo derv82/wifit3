@@ -23,7 +23,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
 
-from wifit3.chips.rtl8814au_dkms import bb, chan, firmware, mac, rf  # noqa: E402
+from wifit3.chips.rtl8814au_dkms import bb, chan, efuse, firmware, mac, rf  # noqa: E402
 
 CAP_DIR = REPO / "usb_dumps_new" / "captures_rtl8814au"
 FW_BIN = REPO / "src" / "wifit3" / "chips" / "rtl8814au_dkms" / "assets" / "rtl8814au_fw.bin"
@@ -178,30 +178,47 @@ class ReplayTransport:
                 f"byte {diff} (len port={len(data)} cap={len(op['data'])})")
 
 
+def _read_efuse_params(pcap, dev):
+    """Replay the probe-phase efuse read to recover the real chip params.
+
+    The init (M1+) window starts at _InitPowerOn, so the efuse read precedes it.
+    Replaying it here means M2b+ consumes the actual efuse-decoded rfe_type /
+    crystal_cap / tx_power instead of hardcoded values (the read itself is checked
+    byte-for-byte by verify_efuse_pcap.py)."""
+    global WINDOW, START_ADDR
+    save = (WINDOW, START_ADDR)
+    WINDOW, START_ADDR = (1, 7000), 0x00F0
+    try:
+        t = ReplayTransport(extract_ops(pcap, dev))
+        return efuse.read_chip_params(t)
+    finally:
+        WINDOW, START_ADDR = save
+
+
 def main() -> int:
     name = sys.argv[1] if len(sys.argv) > 1 else "capture-1"
     name = Path(name).stem
     pcap = CAP_DIR / f"{name}.pcap"
     fw = FW_BIN.read_bytes()
+    time.sleep = lambda *a, **k: None  # replay needs no real delays
+
+    p = _read_efuse_params(pcap, DEV_ADDR[name])
+    print(f"Efuse params: rfe_type={p.rfe_type} crystal_cap=0x{p.crystal_cap:02x}")
 
     print(f"Extracting USB op stream from {pcap.name} (dev {DEV_ADDR[name]})...")
     ops = extract_ops(pcap, DEV_ADDR[name])
     n_bulk = sum(1 for o in ops if o["kind"] == "B")
     print(f"  {len(ops)} ops in M1 window ({n_bulk} firmware packets)")
 
-    time.sleep = lambda *a, **k: None  # replay needs no real delays
     t = ReplayTransport(ops)
     try:
         ready = firmware.bring_up(t, fw)   # M1: power-on -> FW download -> ready
         if ready:
             mac.phy_mac_config(t)          # M2a: MAC register table
             mac.mac_init_misc(t)           # M2b: hal_init MISC stage
-            # rfe_type/crystal_cap come from efuse on hardware; the probe-phase
-            # efuse read is outside this window, so feed the values it decodes
-            # (verified independently by verify_efuse_pcap.py).
-            bb.phy_bb_config(t, rfe_type=1, crystal_cap=0x23)  # M2b: PHY_BBConfig8814
-            rf.phy_rf_config(t, rfe_type=1)                    # M2c: PHY_RFConfig8814A
-            chan.init_tune(t, channel=1)                       # M2d: channel tune (ch1, 20 MHz)
+            bb.phy_bb_config(t, p.rfe_type, p.crystal_cap)  # M2b: PHY_BBConfig8814
+            rf.phy_rf_config(t, p.rfe_type)                 # M2c: PHY_RFConfig8814A
+            chan.init_tune(t, 1, p.tx_power)                # M2d ch tune + M2e TX power
     except Divergence as e:
         print(f"\nFAIL (divergence): {e}")
         return 1
@@ -209,9 +226,9 @@ def main() -> int:
     if not ready:
         print("\nFAIL: bring_up did not reach CPU_DL_READY against the capture")
         return 1
-    print(f"\nPASS: port reproduced {t.i} USB ops byte-for-byte through M2d "
+    print(f"\nPASS: port reproduced {t.i} USB ops byte-for-byte through M2e "
           f"({n_bulk} FW packets / {len(fw)} B blob; MAC + MISC + BB + RF + channel "
-          f"tune to ch1 @ 20 MHz). Stops at the TX-power loop (deferred).")
+          f"tune + TX-power table, ch1 @ 20 MHz).")
     print(f"      {len(ops) - t.i} later-milestone ops remain in the capture.")
     return 0
 

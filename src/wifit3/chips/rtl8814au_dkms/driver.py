@@ -51,6 +51,7 @@ class Rtl8814auDkmsDriver:
         self.transport = transport
         self.mac_address: Optional[str] = None  # M2: efuse read
         self._channel: Optional[int] = None
+        self._tx_power: tuple = ()  # per-path efuse TX-power info (M2e)
         self.is_warm: bool = False
         self._rx_cb: Optional[Callable[[dict], None]] = None
 
@@ -71,6 +72,7 @@ class Rtl8814auDkmsDriver:
             progress_cb(0.0, "Reading EFUSE / chip parameters")
         params = await loop.run_in_executor(None, read_chip_params, self.transport)
         self.mac_address = params.mac_address
+        self._tx_power = params.tx_power
         logger.info("RTL8814AU efuse: rfe_type=%d crystal_cap=0x%02x mac=%s",
                     params.rfe_type, params.crystal_cap,
                     params.mac_address or "<none>")
@@ -96,7 +98,7 @@ class Rtl8814auDkmsDriver:
             mac_init_misc(t)      # M2b: hal_init MISC stage
             phy_bb_config(t, params.rfe_type, params.crystal_cap)  # M2b: PHY_BBConfig8814
             phy_rf_config(t, params.rfe_type)                      # M2c: PHY_RFConfig8814A
-            init_tune(t, _DEFAULT_CHANNEL)                         # M2d: 2.4G ch tune
+            init_tune(t, _DEFAULT_CHANNEL, params.tx_power)        # M2d/M2e: ch tune + TX power
 
         await loop.run_in_executor(None, _phy_config, self.transport)
         self._channel = _DEFAULT_CHANNEL
@@ -107,7 +109,8 @@ class Rtl8814auDkmsDriver:
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         """Tune to a 2.4 GHz channel at 20 MHz. (5G tune is a later milestone.)"""
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, set_channel_bw, self.transport, channel)
+        await loop.run_in_executor(
+            None, set_channel_bw, self.transport, channel, self._tx_power)
         self._channel = channel
         return True
 

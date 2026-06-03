@@ -60,12 +60,19 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   PHY_SwitchWirelessBand8814A(2.4G), then phy_SwChnl8814A + phy_SetBwMode8814A +
   spur-cal reset to land on channel 1 @ 20 MHz. `set_channel` hops 2.4G channels.
   See **Channel tune** below.
+- **M2e (TX-power table): complete — pcap-verified AND hardware-proven.**
+  `txpower.set_tx_power` writes the per-(path,rate) txagc table (0x1998). This build
+  compiles with power-by-rate and regulatory-limit **disabled**, so the index
+  collapses to `clamp(efuse_base + nTX_diff + 2, 0, 63)`. See **TX power** below.
+  (IQK, which follows in the vendor flow, is **skipped at init** — `bNeedIQK` is
+  false — so the contiguous wire goes straight from TX power to `rtl8814_InitHalDm`.)
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
-  boots; the port reproduces the USB conversation **byte-for-byte** through M2d
-  (**4066/4066/4072 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, and the
-  channel tune to ch1 @ 20 MHz — stopping exactly at the deferred TX-power loop).
-  [HW] a live ALFA AWUS1900 reached `CPU_DL_READY`, applied the full MAC+BB+RF
-  config, and tuned to channel 1 via `scripts/rtl8814au_dkms/test_hw.py`.
+  boots; the port reproduces the USB conversation **byte-for-byte** through M2e
+  (**4334/4334/4340 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
+  and the 268-write TX-power table). It first replays the probe-phase efuse read to
+  recover the real chip params (rfe_type / crystal_cap / tx_power) and feeds those
+  into M2b+, so nothing is hardcoded. [HW] a live ALFA AWUS1900 reached
+  `CPU_DL_READY` and applied the full MAC+BB+RF+channel+TX-power init.
 - Not registered in `wlan/manager.py` — master keeps the working mainline
   `rtw88_8814au` until this port is HW-proven to beat it on breadth/stability.
 
@@ -157,6 +164,29 @@ only — the 40/80 MHz width math is omitted by scope. [WIRE] cap1 frames 13695-
   TxBBSwing efuse decode is likewise deferred (this card uses the 0 dB default).
 - **5G** band tune is not ported (`set_channel` accepts 2.4G channels 1-13 only).
 
+## TX power — the txagc table (M2e)
+`rtw_hal_set_tx_power_level` -> `PHY_SetTxPowerLevel8814` writes a per-(path,rate)
+power index into the txagc table at BB reg 0x1998 [SRC PHY_SetTxPowerIndex_8814A]:
+`0x00801000 | (path<<8) | hw_rate | (PowerIndex<<24)`. 268 writes = 67/path × 4
+(66 rates + MGN_1M written twice). [WIRE] cap1 frames 13843-14377.
+- **The decisive build fact:** this morrownr build compiles with
+  `CONFIG_TXPWR_BY_RATE_EN=0` and `CONFIG_TXPWR_LIMIT_EN=0` [SRC Makefile/drv_conf.h],
+  so `PHY_GetTxPowerByRate` returns 0 and `PHY_GetTxPowerLimit` returns the
+  non-binding ceiling. The whole power-by-rate (`phy_reg_pg`) and regulatory-limit
+  (`txpwr_lmt`) table machinery is **dead code** — none of it is ported. The index
+  collapses to `clamp(pg + (CurrentTxPwrIdx−18=2), 0, 63)`.
+- **`pg`** = efuse base for the rate's group + cumulative nTX diff
+  [SRC phy_get_pg_txpwr_idx]: CCK rates use the CCK base, everything else the BW40
+  base; the channel→group map (`txpower._ch_group_2g`) selects the group. The
+  per-path base + signed-nibble nTX diffs are parsed from the efuse PG block
+  (`efuse._parse_tx_power`, offsets 0x10/0x3A/0x64/0x8E). For this card every diff
+  nets to zero across the txagc rate set, so PowerIndex = base + 2 — but the diff
+  accumulation is ported faithfully (channel/efuse general).
+- **Empirically confirmed** the EN=0 model against the wire: path A base 0x20 → 0x22,
+  path B CCK 0x27 → 0x29 / BW40 0x28 → 0x2a, etc., all matching the captured PP bytes.
+- **Deferred (M4 TX):** the full `update_txdesc` data-frame TX path. The per-board
+  TxBBSwing efuse decode (BB swing in M2d, currently the 0 dB default) also stays here.
+
 ## Firmware download — the load-bearing M1 fact
 The 8814AU does **not** block-write firmware over EP0. `FirmwareDownload8814A`
 [SRC rtl8814a_hal_init.c:669] uses the **3081 IDDMA reserved-page** path
@@ -208,11 +238,12 @@ first `0x10C2` access (the `_InitPowerOn` entry).
 (power-on → LLT → FW download → ready) · `efuse.py` (probe-phase EFUSE read +
 rfe/xtal/mac decode) · `mac.py` (M2a MAC table + M2b MISC stage) · `phy_cond.py`
 (shared phydm conditional-table walker) · `bb.py` (M2b PHY_BBConfig8814) · `rf.py`
-(M2c PHY_RFConfig8814A) · `chan.py` (M2d channel tune, 2.4G/20MHz) ·
-`bb_phy_reg_tbl.py` / `bb_agc_tab_tbl.py` / `rf_radio_{a,b,c,d}_tbl.py` (generated
-flat-u32 BB/AGC/RF tables) · `driver.py` (WlanDriver Protocol; connect() chains
-EFUSE→M1→M2a→M2b→M2c→M2d, set_channel hops 2.4G; RX/TX raise until their milestone).
-Standalone — does **not** import `chips/rtw88_base/`.
+(M2c PHY_RFConfig8814A) · `chan.py` (M2d channel tune, 2.4G/20MHz) · `txpower.py`
+(M2e per-rate txagc table) · `bb_phy_reg_tbl.py` / `bb_agc_tab_tbl.py` /
+`rf_radio_{a,b,c,d}_tbl.py` (generated flat-u32 BB/AGC/RF tables) · `driver.py`
+(WlanDriver Protocol; connect() chains EFUSE→M1→M2a..M2e, set_channel hops 2.4G;
+RX/TX raise until their milestone). Standalone — does **not** import
+`chips/rtw88_base/`.
 
 ## Roadmap (each milestone pcap-diffed before "done"; post-FW init = frames 6668+)
 - EFUSE: probe-phase chip-param read (rfe_type / crystal_cap / mac_address). **DONE.**
@@ -224,12 +255,14 @@ Standalone — does **not** import `chips/rtw88_base/`.
 - M2c: `PHY_RFConfig8814A` — radio_a..d RF tables (1176 writes for rfe=1) + RCK1
        copy, via the shared phy_cond walker. **DONE.**
 - M2d: `PHY_ConfigBB_8814A` + 2.4G band switch + `rtw_hal_set_chnl_bw(...,
-       CHANNEL_WIDTH_20, ...)` channel tune (channel 1). **DONE.** TX power (0x1998
-       loop) + IQK + 5G band tune deferred.
+       CHANNEL_WIDTH_20, ...)` channel tune (channel 1). **DONE.** 5G band tune deferred.
+- M2e: per-rate TX-power txagc table (0x1998). **DONE.** IQK is skipped at init.
 - M3: RX path + `rtl8814_InitHalDm` (DIG/AGC watchdog — confirmed in source and on
       the wire as 103 IGI=0xc50 writes adapting 0x1c..0x2a). The 2.4 GHz breadth
       payoff; finish with a live A/B vs mainline. Monitor-mode RX is just the
-      captured RCR (0x608) values — port what's on the wire. The differ currently
-      stops at the TX-power loop (frame ~13843); InitHalDm follows TX power + IQK.
-- M4: TX (full `update_txdesc`) for deauth/replay; includes the deferred TX-power
-      table (0x1998) and per-board TxBBSwing efuse decode.
+      captured RCR (0x608) values — port what's on the wire. The contiguous wire now
+      reaches InitHalDm directly: after M2e (TX power) comes a tiny hal_init MISC11
+      block (invalidate_cam, HWSEQ_CTRL=0xff @0x423, BAR_MODE @0x4cc, SECONDARY_CCA
+      @0x577, 0x652=0) then InitHalDm at frame ~14389 (CCK/AGC regs 0xa00/0xa70/0xa14).
+- M4: TX (full `update_txdesc`) for deauth/replay; includes the per-board TxBBSwing
+      efuse decode (BB swing currently the 0 dB default).

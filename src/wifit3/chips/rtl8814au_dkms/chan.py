@@ -18,6 +18,7 @@ from __future__ import annotations
 from . import constants as C
 from .bb import _set_reg_masked as _bb32
 from .rf import set_rf_masked
+from .txpower import set_tx_power
 
 _RF_PATHS = ("a", "b", "c", "d")
 
@@ -111,16 +112,21 @@ def _phy_set_bw_mode_20(t) -> None:
     _spur_cal_reset(t)
 
 
-def set_channel_bw(t, channel: int) -> None:
-    """Tune to a 2.4 GHz channel at 20 MHz (phy_SwChnl + phy_SetBwMode)."""
+def set_channel_bw(t, channel: int, tx_power: tuple) -> None:
+    """Tune to a 2.4 GHz channel at 20 MHz, then set the per-rate TX power.
+
+    [SRC] phy_SwChnlAndSetBwMode8814A: phy_SwChnl -> phy_SetBwMode ->
+    rtw_hal_set_tx_power_level. (IQK, which follows, is a later milestone.)
+    """
     if not 1 <= channel <= 14:
         raise NotImplementedError(f"RTL8814AU DKMS port: 5G channel {channel} is M2d+")
     _phy_sw_chnl(t, channel)
     _phy_set_bw_mode_20(t)
+    set_tx_power(t, channel, tx_power)   # M2e
 
 
-def init_tune(t, channel: int) -> None:
-    """Connect-time tune: PHY_ConfigBB + 2.4G band switch + set channel/bw."""
+def init_tune(t, channel: int, tx_power: tuple) -> None:
+    """Connect-time tune: PHY_ConfigBB + 2.4G band switch + set channel/bw + TX power."""
     phy_config_bb(t)
     switch_wireless_band_2g(t)
-    set_channel_bw(t, channel)
+    set_channel_bw(t, channel, tx_power)
