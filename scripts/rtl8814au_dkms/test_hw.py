@@ -3,8 +3,9 @@
 Finds the card and runs `driver.connect()`, which currently does the EFUSE read
 (chip params: rfe_type, crystal_cap, MAC), M1 (power-on -> LLT -> 3081/IDDMA
 firmware download -> FW-ready), M2a (MAC register table), M2b (hal_init MISC stage
-+ PHY_BBConfig8814: BB PHY_REG + AGC_TAB tables, crystal-cap, TRX path), and M2c
-(PHY_RFConfig8814A: radio_a..d RF tables + RCK1 copy), and checks the chip reached
++ PHY_BBConfig8814: BB PHY_REG + AGC_TAB tables, crystal-cap, TRX path), M2c
+(PHY_RFConfig8814A: radio_a..d RF tables + RCK1 copy), and M2d (PHY_ConfigBB + 2.4G
+band switch + channel tune to ch1 @ 20 MHz), and checks the chip reached
 CPU_DL_READY. Standalone vendor port on branch ``dkms/8814au``; does NOT touch the
 registered mainline driver.
 
@@ -63,8 +64,8 @@ def main() -> int:
     ready = asyncio.run(driver.connect(progress))
 
     if ready:
-        print("[PASS] bring-up reached FW-ready (CPU_DL_READY) and applied the "
-              "MAC table + MISC stage + PHY_BBConfig8814 (BB/AGC) + PHY_RFConfig8814A (RF).")
+        print("[PASS] bring-up reached FW-ready (CPU_DL_READY) and applied MAC + MISC "
+              "+ BB/AGC + RF + channel tune (ch1 @ 20 MHz).")
         return 0
     print("[FAIL] firmware download did not reach FW-ready.")
     return 1

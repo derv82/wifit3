@@ -289,6 +289,41 @@ RF_RCK1 = 0x1C                 # RF_RCK1_Jaguar — read on path A, copied to B/
 # phy_RFRead_8814A: RF regs are memory-mapped at base + addr*4 (per path).
 RF_READ_BASE = {"a": 0x2800, "b": 0x2C00, "c": 0x3800, "d": 0x3C00}
 
+# --- M2d: channel tune (PHY_ConfigBB + band switch + set_chnl_bw, 20 MHz) ----
+# [SRC] rtl8814a_phycfg.c PHY_ConfigBB_8814A:555, PHY_SwitchWirelessBand8814A:1139,
+# phy_SwChnl8814A / phy_SetBwMode8814A. 20 MHz primary only. [WIRE] cap1 11335+.
+rOFDMCCKEN = 0x0808            # PHY_ConfigBB: bOFDMEN|bCCKEN = 0x3
+bOFDMEN = BIT(29)
+bCCKEN = BIT(28)
+REG_SYS_CFG3_2 = 0x1002       # REG_SYS_CFG3_8814A+2; bit0 gates CCK/OFDM clock
+rAGC_table_Jaguar2 = 0x0958   # 2.4G AGC-table select [4:0] = 0
+RFE_PINMUX = (0x0CB0, 0x0EB0, 0x18B4, 0x1AB4)  # rA..D_RFE_Pinmux (2.4G = 0x77777777)
+RFE_PINMUX_VAL = 0x77777777
+REG_RFE_INV = 0x1ABC          # RFE inv: [27:20] = 0x77 (WiFi)
+rTxPath = 0x080C              # 2.4G: [7:4] = 0x2
+rCCK_RX = 0x0A04              # 2.4G: [27:24] = 0x5  (== rCCK_RX_Jaguar)
+REG_CCK_CHECK = 0x0454        # 2.4G = 0 (bit7 selects 5G CCK)
+REG_A80 = 0x0A80              # clear BIT18 on 5G->2.4G
+TXSCALE = (0x0C1C, 0x0E1C, 0x181C, 0x1A1C)     # rA..D_TxScale; BB swing [31:21]
+BBSWING_MASK = 0xFFE00000
+BBSWING_DEFAULT = 0x200       # 0 dB; efuse TxBBSwing decode deferred (TX concern)
+rRFMOD = 0x08AC               # ADC bw: [1:0] = 0 for 20 MHz
+rAGC_table_Jaguar = 0x082C    # AGC bw: [15:12] = 6 for 20 MHz
+rFc_area = 0x0860             # 2.4G center-freq area: [28:17] = 0x96A
+RF_CHNLBW = 0x18              # RF reg: channel [mask 0x703ff], bw [11:10]=3 (20 MHz)
+RF_CHNLBW_CH_MASK = 0x703FF
+RF_CHNLBW_BW_MASK = 0xC00
+rCCK0_TxFilter1 = 0x0A20
+rCCK0_TxFilter2 = 0x0A24
+rCCK0_DebugPort = 0x0A28
+REG_TRXPTCL_CTL = 0x0668      # MAC bw: clear BIT7|BIT8 for 20 MHz
+REG_DATA_SC = 0x0483          # secondary-channel = 0 for 20 MHz
+# phy_SpurCalibration NBI/CSI reset (2.4G has no spur -> reset)
+rNBI_Setting = 0x087C
+rCSI_Mask_Setting1 = 0x0874
+rCSI_FIX_MASK = (0x0880, 0x0884, 0x0898, 0x089C)  # rCSI_Fix_Mask0,1,6,7
+NBI_EN_BIT = BIT(13)          # phydm_nbi_enable: 0x87c[13] = 0 (disable)
+
 # --- EFUSE (probe-phase chip-param read) ------------------------------------
 # Physical efuse read via EFUSE_CTRL, then header-unpacked into a 512 B logical
 # map. [SRC] hal_EfuseReadEFuse8814A + halmac per-byte protocol; [WIRE] cap1

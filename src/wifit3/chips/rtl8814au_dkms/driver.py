@@ -20,6 +20,7 @@ import usb.core
 from wifit3.engine.protocols import DeviceID, ProgressCallback
 
 from .bb import phy_bb_config
+from .chan import init_tune, set_channel_bw
 from .constants import PID_RTL8814AU, VID_REALTEK
 from .efuse import read_chip_params
 from .firmware import bring_up
@@ -30,6 +31,7 @@ from .transport import Rtl8814auTransport
 logger = logging.getLogger(__name__)
 
 _FW_ASSET = "rtl8814au_fw.bin"
+_DEFAULT_CHANNEL = 1  # connect-time tune target (matches the cold-boot capture)
 
 
 def _load_firmware() -> bytes:
@@ -41,17 +43,14 @@ class Rtl8814auDkmsDriver:
         DeviceID(VID_REALTEK, PID_RTL8814AU,
                  "Realtek RTL8814AU 4T4R (ALFA AWUS1900) — vendor/DKMS port"),
     ]
-    # 20 MHz primary on every band the card supports. [WIRE] capture hop list.
-    SUPPORTED_CHANNELS: ClassVar[List[int]] = (
-        list(range(1, 14))
-        + [36, 40, 44, 48, 52, 56, 60, 64]
-        + [100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144]
-        + [149, 153, 157, 161, 165]
-    )
+    # 2.4 GHz, 20 MHz primary. 5G channel tune is a later milestone (M2d ports the
+    # 2.4G band switch + set_chnl_bw only), so 5G channels are not advertised yet.
+    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 14))
 
     def __init__(self, transport: Rtl8814auTransport):
         self.transport = transport
         self.mac_address: Optional[str] = None  # M2: efuse read
+        self._channel: Optional[int] = None
         self.is_warm: bool = False
         self._rx_cb: Optional[Callable[[dict], None]] = None
 
@@ -86,7 +85,7 @@ class Rtl8814auDkmsDriver:
                 progress_cb(1.0, "Firmware NOT ready")
             return False
 
-        # M2a/M2b/M2c: MAC table -> MISC stage -> PHY_BBConfig8814 -> PHY_RFConfig8814A.
+        # M2a..M2d: MAC table -> MISC -> PHY_BBConfig -> PHY_RFConfig -> channel tune.
         # (Extend this chain as later milestones land; keep it in sync with
         # scripts/rtl8814au_dkms/verify_pcap.py.)
         if progress_cb:
@@ -97,14 +96,20 @@ class Rtl8814auDkmsDriver:
             mac_init_misc(t)      # M2b: hal_init MISC stage
             phy_bb_config(t, params.rfe_type, params.crystal_cap)  # M2b: PHY_BBConfig8814
             phy_rf_config(t, params.rfe_type)                      # M2c: PHY_RFConfig8814A
+            init_tune(t, _DEFAULT_CHANNEL)                         # M2d: 2.4G ch tune
 
         await loop.run_in_executor(None, _phy_config, self.transport)
+        self._channel = _DEFAULT_CHANNEL
         if progress_cb:
-            progress_cb(1.0, "MAC + baseband + RF configured")
+            progress_cb(1.0, f"Tuned to channel {_DEFAULT_CHANNEL} @ 20 MHz")
         return True
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
-        raise NotImplementedError("RTL8814AU DKMS port: channel tune is M2+")
+        """Tune to a 2.4 GHz channel at 20 MHz. (5G tune is a later milestone.)"""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, set_channel_bw, self.transport, channel)
+        self._channel = channel
+        return True
 
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
         raise NotImplementedError("RTL8814AU DKMS port: TX is a later milestone")

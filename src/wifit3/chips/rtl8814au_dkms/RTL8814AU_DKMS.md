@@ -55,11 +55,17 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   `rf.phy_rf_config` walks the four per-path radio tables (radio_a..d) through the
   shared phydm walker, then copies the path-A RCK1 calibration to paths B/C/D. See
   **RF config** below.
+- **M2d (channel tune, 2.4 GHz / 20 MHz): complete — pcap-verified AND
+  hardware-proven.** `chan.init_tune` runs PHY_ConfigBB_8814A (OFDM+CCK enable),
+  PHY_SwitchWirelessBand8814A(2.4G), then phy_SwChnl8814A + phy_SetBwMode8814A +
+  spur-cal reset to land on channel 1 @ 20 MHz. `set_channel` hops 2.4G channels.
+  See **Channel tune** below.
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
-  boots; the port reproduces the USB conversation **byte-for-byte** through M2c
-  (**3992/3992/3998 ops**, all 46 FW packets, 2102 BB-table + 1176 RF-table writes
-  + the RCK1 copy). [HW] a live ALFA AWUS1900 reached `CPU_DL_READY` and applied the
-  full MAC+BB+RF config via `scripts/rtl8814au_dkms/test_hw.py` (~4000 transfers).
+  boots; the port reproduces the USB conversation **byte-for-byte** through M2d
+  (**4066/4066/4072 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, and the
+  channel tune to ch1 @ 20 MHz — stopping exactly at the deferred TX-power loop).
+  [HW] a live ALFA AWUS1900 reached `CPU_DL_READY`, applied the full MAC+BB+RF
+  config, and tuned to channel 1 via `scripts/rtl8814au_dkms/test_hw.py`.
 - Not registered in `wlan/manager.py` — master keeps the working mainline
   `rtw88_8814au` until this port is HW-proven to beat it on breadth/stability.
 
@@ -128,6 +134,29 @@ one conditional radio table per RF path through the same walker (`rf.py`):
   software dm arrays (no register I/O), so it is absent from the wire — confirmed by
   the differ landing on PHY_ConfigBB right after the RCK1 copy.
 
+## Channel tune — 2.4 GHz / 20 MHz (M2d)
+`chan.py` mirrors the hal_init tail [SRC usb_halinit.c:1229-1237]. 20 MHz primary
+only — the 40/80 MHz width math is omitted by scope. [WIRE] cap1 frames 13695-13855.
+- **PHY_ConfigBB_8814A** — one masked write: rOFDMCCKEN (0x808)[29:28] = 3 (enable
+  OFDM + CCK).
+- **PHY_SwitchWirelessBand8814A(2.4G)** — gate the CCK/OFDM clock off (0x1002[0]=0),
+  AGC-table select 0x958[4:0]=0, **PHY_SetRFEReg8814A** (rfe=1: the four RFE pinmux
+  regs 0xcb0/0xeb0/0x18b4/0x1ab4 = 0x77777777, 0x1abc[27:20]=0x77), rTxPath 0x80c
+  [7:4]=2, rCCK_RX 0xa04[27:24]=5, CCK_CHECK 0x454=0, 0xa80[18]=0, BB-swing per path
+  (0xc1c/.../0x1a1c[31:21] = 0x200, the 0 dB efuse default), ADC/AGC bw regs, clock on.
+- **phy_SwChnl8814A** — band detect (read 0x454, already 2.4G), fc-area 0x860[28:17]
+  = 0x96A, per-path RF channel write (RF 0x18, mask 0x703ff, value = channel for
+  2.4G), CCK TX-DFIR (0xa20/0xa24/0xa28; ch 1-11 vs 12-13 arms).
+- **phy_SetBwMode8814A (20 MHz)** — MAC bw 0x668 clear BIT7|BIT8, secondary-channel
+  0x483=0, ADC/AGC bw regs, per-path RF bw (RF 0x18[11:10]=3). phy_ADC_CLK is A-cut
+  only (skipped). **Spur cal**: 2.4G has no spur, so reset NBI/CSI (0x87c/0x874/
+  0x880/0x884/0x898/0x89c) then disable NBI (0x87c[13]=0).
+- **Deferred:** the TX-power table (rtw_hal_set_tx_power_level — 764 writes to 0x1998,
+  needs the per-rate power computation) and IQK follow in the vendor flow; both are
+  TX/cal concerns. The differ stops exactly at the first 0x1998 write. The per-board
+  TxBBSwing efuse decode is likewise deferred (this card uses the 0 dB default).
+- **5G** band tune is not ported (`set_channel` accepts 2.4G channels 1-13 only).
+
 ## Firmware download — the load-bearing M1 fact
 The 8814AU does **not** block-write firmware over EP0. `FirmwareDownload8814A`
 [SRC rtl8814a_hal_init.c:669] uses the **3081 IDDMA reserved-page** path
@@ -179,10 +208,11 @@ first `0x10C2` access (the `_InitPowerOn` entry).
 (power-on → LLT → FW download → ready) · `efuse.py` (probe-phase EFUSE read +
 rfe/xtal/mac decode) · `mac.py` (M2a MAC table + M2b MISC stage) · `phy_cond.py`
 (shared phydm conditional-table walker) · `bb.py` (M2b PHY_BBConfig8814) · `rf.py`
-(M2c PHY_RFConfig8814A) · `bb_phy_reg_tbl.py` / `bb_agc_tab_tbl.py` /
-`rf_radio_{a,b,c,d}_tbl.py` (generated flat-u32 BB/AGC/RF tables) · `driver.py`
-(WlanDriver Protocol; connect() chains EFUSE→M1→M2a→M2b→M2c; channel/RX/TX raise
-until their milestone). Standalone — does **not** import `chips/rtw88_base/`.
+(M2c PHY_RFConfig8814A) · `chan.py` (M2d channel tune, 2.4G/20MHz) ·
+`bb_phy_reg_tbl.py` / `bb_agc_tab_tbl.py` / `rf_radio_{a,b,c,d}_tbl.py` (generated
+flat-u32 BB/AGC/RF tables) · `driver.py` (WlanDriver Protocol; connect() chains
+EFUSE→M1→M2a→M2b→M2c→M2d, set_channel hops 2.4G; RX/TX raise until their milestone).
+Standalone — does **not** import `chips/rtw88_base/`.
 
 ## Roadmap (each milestone pcap-diffed before "done"; post-FW init = frames 6668+)
 - EFUSE: probe-phase chip-param read (rfe_type / crystal_cap / mac_address). **DONE.**
@@ -193,11 +223,13 @@ until their milestone). Standalone — does **not** import `chips/rtw88_base/`.
        not the 2595/3254 originally scoped.)
 - M2c: `PHY_RFConfig8814A` — radio_a..d RF tables (1176 writes for rfe=1) + RCK1
        copy, via the shared phy_cond walker. **DONE.**
-- M2d: `PHY_ConfigBB_8814A` + band switch + `rtw_hal_set_chnl_bw(...,
-       CHANNEL_WIDTH_20, ...)` channel tune. (PHY_ConfigBB is the next wire op:
-       `0x808` read-modify-write right after M2c's RCK1 copy.)
+- M2d: `PHY_ConfigBB_8814A` + 2.4G band switch + `rtw_hal_set_chnl_bw(...,
+       CHANNEL_WIDTH_20, ...)` channel tune (channel 1). **DONE.** TX power (0x1998
+       loop) + IQK + 5G band tune deferred.
 - M3: RX path + `rtl8814_InitHalDm` (DIG/AGC watchdog — confirmed in source and on
       the wire as 103 IGI=0xc50 writes adapting 0x1c..0x2a). The 2.4 GHz breadth
       payoff; finish with a live A/B vs mainline. Monitor-mode RX is just the
-      captured RCR (0x608) values — port what's on the wire.
-- M4: TX (full `update_txdesc`) for deauth/replay.
+      captured RCR (0x608) values — port what's on the wire. The differ currently
+      stops at the TX-power loop (frame ~13843); InitHalDm follows TX power + IQK.
+- M4: TX (full `update_txdesc`) for deauth/replay; includes the deferred TX-power
+      table (0x1998) and per-board TxBBSwing efuse decode.

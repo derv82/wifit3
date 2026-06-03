@@ -35,6 +35,17 @@ def _rf_read(t, path: str, addr: int) -> int:
     return t.read32(C.RF_READ_BASE[path] + (addr & 0xFF) * 4) & C.RFREG_MASK
 
 
+def set_rf_masked(t, path: str, addr: int, mask: int, value: int) -> None:
+    """[SRC] phy_set_rf_reg — RF read-modify-write (mask != RFREGOFFSETMASK)."""
+    if mask == C.RFREG_MASK:
+        data = value
+    else:
+        shift = (mask & -mask).bit_length() - 1
+        old = _rf_read(t, path, addr)
+        data = (old & ~mask) | ((value << shift) & mask)
+    _rf_write(t, path, addr, data)
+
+
 def _rf_emit(t, path: str):
     """Build the walker's data-row callback for one RF path.
 
