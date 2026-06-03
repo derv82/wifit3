@@ -175,6 +175,10 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   byte 0xC6 (2 bits/path, 0xFF->0 dB guard); `chan._set_bb_swing_2g` writes the per-path
   TxScale. Faithful no-op on this card (verify_pcap byte-for-byte all 3 captures; live
   `bb_swing=0x200/0x200/0x200/0x200`); handles a burned fuse on any board.
+- **M4d (WEP ARP-replay harness): built + dry-run validated; live test pending (user + router).**
+  `scripts/rtl8814au_dkms/wep_replay_hw.py` runs the stock `WepCampaign` over the dkms
+  driver via a `WlanInterface` — no new injection/attack code (replay shares the M4c
+  `inject_frame` path). [HW] dry-run clean (bring-up + campaign construct + tune + RX, no TX).
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
   boots; the port reproduces the USB conversation **byte-for-byte** through M3b-1
   (**4451/4451/4457 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
@@ -523,8 +527,15 @@ only) and greps every constant verbatim before coding.
   brings up + tunes but transmits nothing. Frame construction mirrors `WlanInterface.deauth`
   (FC=0xc0, reason 7). [HW] dry-run validated end-to-end (clean bring-up + tune + correct
   26-byte frames, zero TX). The live "a real client drops" check is the user's on return.
-- **M4d — replay TX (ARP/EAPOL). [HW-LOOP.]** Same path with data-frame qsel/rate;
-  validate against the WEP test router.
+- **M4d — replay TX (ARP/EAPOL). Harness built + dry-run validated; LIVE test pending (user + router).**
+  `scripts/rtl8814au_dkms/wep_replay_hw.py` wraps the dkms driver in a real `WlanInterface`
+  and runs the stock `WepCampaign` (fake-auth -> ARP replay -> ChopChop -> PTW crack) — NO
+  port-specific injection or attack code; replay injects via the same `inject_frame` path
+  as M4c. `--dry-run` validated end-to-end (bring-up + WlanInterface + campaign construct +
+  tune + RX->registry, zero TX). The dkms driver is `WlanInterface`-compatible because its
+  parsed-dict rx callback carries `"raw"` (the echo oracle's signal). A data-queue/rate
+  descriptor variant may be a later replay-*speed* tuning, but is not a correctness blocker
+  (replay rides the shared mgmt descriptor at 1M). Live IV/crack run is the user's on return.
 - **M4e — per-board TxBBSwing efuse decode. DONE.** `efuse._parse_bb_swing_2g` reads
   byte 0xC6 (2.4G), 2 bits per path -> {0:0x200 (0 dB), 1:0x16A (-3), 2:0x101 (-6),
   3:0x0B6 (-9)}, with the unburned-fuse (0xFF) -> 0 dB guard; `chan._set_bb_swing_2g`
