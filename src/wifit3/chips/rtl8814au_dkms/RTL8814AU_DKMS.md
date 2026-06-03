@@ -13,17 +13,18 @@ Sources of truth: the vendor tree at
 file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
 
 ## Potential Known Gaps (audit before trusting any milestone)
-- [ ] **2.4 GHz per-channel spur/NBI not ported — RX-affecting on ch 4-8 (OPEN).**
-      `verify_channels.py` (byte-diff of *every* captured tune, not just ch1) shows the
-      vendor writes a per-channel NBI notch at `0x87c[19:13]` on 2.4 GHz channels **4-8**
-      (and ch14): `phydm_spur_nbi_setting_8814a` [SRC phydm_rtl8814a.c:47] enables
-      `phydm_nbi_setting(ENABLE, ch, bw40, spur=2440)` (ch14 → 2480), all others disable.
-      Our `chan._spur_cal_reset` hardcodes the *disable* value (0x7E) on every channel, so
-      ch 4-8 never notch their 2440 MHz spur → degraded RX there. Ch 1-3, 9-12 byte-match
-      (they disable NBI = our default). **Fix:** port `phydm_nbi_setting` (the notch-tap
-      math) + the ch4-8/14 spur table, invoke it in the tune; `verify_channels.py` is the
-      byte-exact gate. Same class as the 5 GHz miss — a skip-rationale ("2.4G has no spur")
-      that mispredicted, hidden because `verify_pcap` only diffed ch1 (a no-spur channel).
+- [x] **2.4 GHz per-channel spur/NBI — DONE.** `chan._spur_nbi_2g` ports
+      `phydm_spur_nbi_setting_8814a` [SRC phydm_rtl8814a.c:47] + `phydm_nbi_setting`: on
+      2.4 GHz ch 4-8 (spur 2440 MHz) and ch14 (2480) it computes the per-channel NBI notch
+      tap (`_nbi_reg_idx`: fc=2412+(ch-1)*5, tone=(|fc-f_intf|<<5), FFT-128 bin), writes
+      0x87c[19:14]=reg_idx and enables NBI 0x87c[13]; every other channel resets + disables
+      NBI (the prior behaviour). [WIRE] `verify_channels.py` confirms ALL 2.4 GHz hops
+      byte-for-byte across all three captures (ch 4-8 now PASS; reg_idx 19/4/9 for ch4/6/8
+      match the wire). This was the same class as the 5 GHz miss — a skip-rationale ("2.4G
+      has no spur") that mispredicted, hidden because `verify_pcap` only diffed ch1 (a
+      no-spur channel); the per-channel differ is the standing gate that caught + verified
+      it. (The two ch1 lines `verify_channels` still flags are non-tune artifacts: init-tail
+      windowing on the first ch1, and the 5G→2G band switch on the 165→1 wrap = M5c.)
 - [x] **DIG regression — RESOLVED (the controlled A/B clears the watchdog).** The M3c
       watchdog was the prime suspect for a strong-AP RX regression; a fixed-channel
       *and* hopping A/B (DIG ON vs OFF via `scan_hw --no-dig`) refutes it. [HW]:
@@ -289,11 +290,10 @@ faithful (no scan-mode command-skip to mirror).
   2.4G), CCK TX-DFIR (0xa20/0xa24/0xa28; ch 1-11 vs 12-13 arms).
 - **phy_SetBwMode8814A (20 MHz)** — MAC bw 0x668 clear BIT7|BIT8, secondary-channel
   0x483=0, ADC/AGC bw regs, per-path RF bw (RF 0x18[11:10]=3). phy_ADC_CLK is A-cut
-  only (skipped). **Spur cal — INCOMPLETE (see Known Gaps):** `_spur_cal_reset` resets
-  NBI/CSI (0x87c/0x874/0x880/0x884/0x898/0x89c) + disables NBI (0x87c[13]=0). That is
-  the *disable* path only — `verify_channels.py` shows the vendor enables a per-channel
-  NBI notch on 2.4 GHz ch 4-8 (+14) via `phydm_spur_nbi_setting_8814a`. The "2.4G has no
-  spur" assumption was wrong; ch 4-8 are mis-tuned until that port lands.
+  only (skipped). **Spur/NBI (`_spur_nbi_2g`):** reset the NBI tap + CSI
+  (0x87c/0x874/0x880/0x884/0x898/0x89c), then per `phydm_spur_nbi_setting_8814a` either
+  set the per-channel notch tap + enable NBI (2.4 GHz ch 4-8 spur 2440, ch14 spur 2480)
+  or disable NBI (all other channels). Byte-diffed per channel by `verify_channels.py`.
 - **Deferred:** the TX-power table (rtw_hal_set_tx_power_level — 764 writes to 0x1998,
   needs the per-rate power computation) and IQK follow in the vendor flow; both are
   TX/cal concerns. The differ stops exactly at the first 0x1998 write. (The per-board

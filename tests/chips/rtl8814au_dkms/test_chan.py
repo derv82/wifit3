@@ -74,12 +74,33 @@ def test_set_channel_bw_rejects_5g():
         chan.set_channel_bw(Rec(), 36, ())
 
 
-def test_spur_cal_resets_nbi_csi():
+def test_nbi_reg_idx_matches_wire():
+    # The 2.4G spur notch tap (f_intf=2440), verified byte-for-byte vs the cold-boot wire.
+    assert chan._nbi_reg_idx(4, 2440) == 19
+    assert chan._nbi_reg_idx(6, 2440) == 4
+    assert chan._nbi_reg_idx(8, 2440) == 9
+
+
+def test_spur_nbi_2g_off_spur_resets_csi_and_disables():
+    # A non-spur channel (ch1): reset NBI tap + CSI fix masks, NBI disabled (bit13=0),
+    # and NO notch-tap write to 0x87c[19:14].
     rec = Rec(reads={0x87C: 0x000FC000})
-    chan._spur_cal_reset(rec)
+    chan._spur_nbi_2g(rec, 1)
     addrs = [o[1] for o in rec.ops if o[0] == "W32"]
     for csi in (0x880, 0x884, 0x898, 0x89C):
         assert csi in addrs
+    # disable writes bit13=0 last; the read returned 0xfc000 so the value stays 0xfc000.
+    assert ("W32", 0x87C, 0x000FC000) in rec.ops
+
+
+def test_spur_nbi_2g_on_spur_notches_and_enables():
+    # ch6 (spur 2440): set the notch tap (reg_idx 4 -> 0x87c[19:14]) then enable NBI.
+    rec = Rec(reads={0x87C: 0x000FC000})
+    chan._spur_nbi_2g(rec, 6)
+    nbi_writes = [o for o in rec.ops if o[0] == "W32" and o[1] == 0x87C]
+    # last two 0x87c writes: notch tap (reg_idx 4 << 14 = 0x10000) then enable (bit13).
+    assert nbi_writes[-2][2] == 0x00010000           # [19:14] = 4, bit13 still 0
+    assert nbi_writes[-1][2] & (1 << 13)             # NBI enabled
     # NBI disabled: 0x87c[13] cleared (already 0 here -> unchanged).
     assert ("W32", 0x87C, 0x000FC000) in rec.ops
 

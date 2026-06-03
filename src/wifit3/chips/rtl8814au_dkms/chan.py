@@ -101,20 +101,53 @@ def _phy_sw_chnl(t, channel: int) -> None:
     t.write32(C.rCCK0_DebugPort, dbg)
 
 
-def _spur_cal_reset(t) -> None:
-    """[SRC] phy_SpurCalibration_8814A — 2.4 GHz has no spur, so reset NBI/CSI.
+# [SRC] phydm_set_nbi_reg nbi_128[] (tone_idx x10) — 8814A 20/40 MHz uses the FFT-128
+# table. reg_idx = (first index whose entry exceeds tone_idx) + 1, written to 0x87c[19:14].
+_NBI_128 = (25, 55, 85, 115, 135, 155, 185, 205, 225, 245, 265, 285, 305, 335, 355,
+            375, 395, 415, 435, 455, 485, 505, 525, 555, 585, 615, 635)
+# [SRC] phydm_spur_nbi_setting_8814a (rfe 0/1/6/7): the 2.4 GHz spur interferers — a
+# per-channel NBI notch on ch 4-8 (2440 MHz) and ch 14 (2480 MHz); all others disable NBI.
+_SPUR_INTF_2G = {4: 2440, 5: 2440, 6: 2440, 7: 2440, 8: 2440, 14: 2480}
 
-    Then phydm_spur_nbi_setting_8814a disables NBI for non-spur channels
-    (phydm_nbi_enable -> clear 0x87c[13]).
+
+def _nbi_reg_idx(channel: int, f_intf: int) -> int:
+    """[SRC] phydm_find_fc + phydm_find_intf_distance + phydm_set_nbi_reg.
+
+    fc = 2412 + (ch-1)*5; the interferer's tone index is (|fc - f_intf| << 5); reg_idx is
+    its bin in the FFT-128 table. Verified vs the cold-boot wire (ch4->19, ch6->4, ch8->9).
     """
+    fc = 2412 + (channel - 1) * 5
+    tone_idx = abs(fc - f_intf) << 5
+    for i, tone in enumerate(_NBI_128):
+        if tone_idx < tone:
+            return i + 1
+    return 0
+
+
+def _spur_nbi_2g(t, channel: int) -> None:
+    """[SRC] phy_SpurCalibration_8814A (CSI reset) + phydm_spur_nbi_setting_8814a (NBI).
+
+    2.4 GHz channels 4-8 (and 14) carry a spur the vendor notches with a per-channel NBI
+    tap at 0x87c[19:14] + NBI-enable 0x87c[13]; every other channel disables NBI (the
+    [19:13]=0x7E reset). The CSI mask/fix-mask reset is common to all channels. Byte-diffed
+    per channel by scripts/rtl8814au_dkms/verify_channels.py.
+    """
+    # phy_SpurCalibration_8814A: reset the NBI tap + CSI mask/fix-mask. Every channel.
     _bb32(t, C.rNBI_Setting, 0x000FE000, 0xFC >> 1)
     _bb32(t, C.rCSI_Mask_Setting1, 0x1, 0x0)
     for reg in C.rCSI_FIX_MASK:
         t.write32(reg, 0x0)
-    _bb32(t, C.rNBI_Setting, C.NBI_EN_BIT, 0x0)
+    # phydm_spur_nbi_setting_8814a: a spur channel sets the per-channel notch tap then
+    # enables NBI; every other channel just disables NBI.
+    f_intf = _SPUR_INTF_2G.get(channel)
+    if f_intf is None:
+        _bb32(t, C.rNBI_Setting, C.NBI_EN_BIT, 0x0)
+    else:
+        _bb32(t, C.rNBI_Setting, 0x000FC000, _nbi_reg_idx(channel, f_intf))
+        _bb32(t, C.rNBI_Setting, C.NBI_EN_BIT, 0x1)
 
 
-def _phy_set_bw_mode_20(t) -> None:
+def _phy_set_bw_mode_20(t, channel: int) -> None:
     """[SRC] phy_SetBwMode8814A — CHANNEL_WIDTH_20."""
     v = t.read16(C.REG_TRXPTCL_CTL)           # MAC bw: clear BIT7|BIT8
     t.write16(C.REG_TRXPTCL_CTL, v & ~((1 << 7) | (1 << 8)))
@@ -123,7 +156,7 @@ def _phy_set_bw_mode_20(t) -> None:
     for path in _RF_PATHS:                    # RF bw: 0x18[11:10] = 3
         set_rf_masked(t, path, C.RF_CHNLBW, C.RF_CHNLBW_BW_MASK, 0x3)
     # phy_ADC_CLK_8814A runs only on A-cut silicon (this card is not A-cut).
-    _spur_cal_reset(t)
+    _spur_nbi_2g(t, channel)
 
 
 def set_channel_bw(t, channel: int, tx_power: tuple) -> None:
@@ -135,7 +168,7 @@ def set_channel_bw(t, channel: int, tx_power: tuple) -> None:
     if not 1 <= channel <= 14:
         raise NotImplementedError(f"RTL8814AU DKMS port: 5G channel {channel} is M2d+")
     _phy_sw_chnl(t, channel)
-    _phy_set_bw_mode_20(t)
+    _phy_set_bw_mode_20(t, channel)
     set_tx_power(t, channel, tx_power)   # M2e
 
 
