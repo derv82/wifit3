@@ -112,7 +112,18 @@ on the AirLink router). Remaining gaps:
   reboot/toggle WPS" (the warm-reattach "please replug" honesty pattern) instead
   of spinning silently.
 - **Focus WPS panel** (passive-by-default behind a button).
-- **PixieWPS** — deferred; numpy/glibc dependency question to settle first.
+- **PixieWPS** — already designed in detail in `engine/attacks/wps/README.md`
+  (native, all 5 modes, no external `pixiewps` binary). Deferred on
+  **effort/priority + one real dependency call: numpy.** The *glibc* half of the
+  old "numpy/glibc dependency" worry is a misconception — glibc `random()` is a
+  published ~30-line algorithm you reimplement (`r[i] = r[i-3] + r[i-31]`, output
+  `>>1`); pixiewps ships its own C version, so there's no OS/ctypes/platform tie.
+  The *numpy* half is real: most vulnerable APs are instant (Ralink/MediaTek
+  `E-S1 = E-S2 = 0`), but the Realtek RTL819x time-seed + eCos modes sweep a
+  2³¹–2³² seed space, which wants the `glibc_fast_seed` 1-word pre-filter + numpy
+  vectorization to stay interactive (a worker process parallelizes it further,
+  like the WEP PTW cracker). Tractable, not a runtime wall — the cost is
+  implementation correctness + deciding to take numpy as a dep.
 
 ### WPA3 downgrade (transition mode) — post-Defcon
 
@@ -170,6 +181,14 @@ stick. Repro: Focus a known AP, watch for 0 beacons, then Focus→Scanner→Focu
 
 `10512` renders as `0512`. Auto-size the BEACONS column without breaking
 right-alignment.
+
+### WPS PBC auto-invade can monopolize the radio on timeout (Focus)
+
+PBC auto-invade is ON by default and works well, but in Focus a PBC attempt that
+times out keeps retrying for the rest of the AP's PBC window, and other attacks
+are blocked for that span. Give it manual control — a **Stop PBC** button (and a
+**Start PBC** when a window is open) — and/or bound the retry loop so a single
+timeout can't hold the radio. Minor; deferred.
 
 > Driver wedge / replug warnings not reaching the UI is tracked as a **release
 > blocker** (hardware-failure UX), not a QoL bug — see `RELEASE-PLAN.md` § 2c.
