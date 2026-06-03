@@ -219,7 +219,10 @@ card. Unverified — no macOS hardware tested. Parked until someone wants it.
   commits; `chips/ar9271/protocol/wmi.py` is the calibrated reference for the
   right aggressiveness.
 - **De-vibe audit** — full review for agent-authored shortcuts, over-complicated
-  edge-case handling, anything that wouldn't survive community scrutiny.
+  edge-case handling, anything that wouldn't survive community scrutiny. Known
+  offender: **`wlan/packet.py`** (the 802.11 frame parser) is dense with bare
+  magic numbers — header offsets, FC type/subtype masks, IE tag IDs — that read
+  as guesswork; replace with named constants + brief `[WIRE]`-cited rationale.
 
 ---
 
