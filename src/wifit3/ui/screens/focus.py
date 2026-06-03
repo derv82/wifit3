@@ -661,7 +661,7 @@ class FocusView(Screen):
             return "[dim]not started[/dim]"
         # ChopChop takes over the radio (replay paused by design) — name it.
         if campaign.chop_active:
-            return "[dim]forging a seed using[/dim] [cyan]ChopChop[/cyan][dim]…[/dim]"
+            return "forging packet [dim]via[/dim] [bold cyan]ChopChop[/bold cyan]"
         s = campaign.replay.state
         if s == "replaying":
             # target_pps = the smooth P&O rate, not the jittery per-cycle
@@ -748,9 +748,18 @@ class FocusView(Screen):
                 f"[dim]Crack begins at {target_k}k[/dim]", emoji=False
             ))
         else:
+            # The store crossed the 10k threshold, but the cracker ingests in
+            # batches — until ITS own sample_count reaches the threshold it's
+            # still spinning up, not yet crunching. Say "Starting…" (the truth)
+            # and flip to "Cracking…" only once it's actually working ≥10k.
             sc = campaign.cracker.sample_count if campaign else samples
+            status = (
+                "[cyan italic]Starting…[/cyan italic]"
+                if sc < CRACK_READY_THRESHOLD
+                else "[cyan]Cracking…[/cyan]"
+            )
             crack.update(Text.from_markup(
-                f"Crack: [cyan]Cracking…[/cyan] [dim]({sc:,} samples)[/dim]",
+                f"Crack: {status} [dim]({sc:,} samples)[/dim]",
                 emoji=False
             ))
             info.update(Text.from_markup(
