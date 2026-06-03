@@ -75,8 +75,27 @@ async def run(args) -> int:
     await iface.set_channel(args.channel)
     print(f"[*] tuned to channel {args.channel}")
 
-    target = AccessPoint(bssid=args.bssid.lower(), ssid=args.ssid,
-                         channel=args.channel, encryption="WEP")
+    # The Assoc Req must name the AP's SSID or the AP rejects it (status 12). The real
+    # app gets the SSID from the scan; here we learn it from the target's beacon (the
+    # WlanInterface registry) unless --ssid was given. Live path only — dry-run skips it.
+    bssid = args.bssid.lower()
+    ssid = args.ssid
+    if not ssid and not args.dry_run:
+        print("[*] listening for the target's beacon to learn its SSID ...")
+        for _ in range(16):                       # ~8 s
+            await asyncio.sleep(0.5)
+            ap = iface.access_points.get(bssid)
+            if ap and ap.ssid and ap.ssid != "<hidden>":
+                ssid = ap.ssid
+                break
+        if not ssid:
+            print(f"[FAIL] couldn't learn the SSID for {bssid} on ch {args.channel} "
+                  f"(AP not heard / hidden). Pass --ssid explicitly.")
+            await driver.close()
+            return 1
+        print("[*] resolved the target's SSID — the Assoc Req will name it.")
+
+    target = AccessPoint(bssid=bssid, ssid=ssid, channel=args.channel, encryption="WEP")
     campaign = WepCampaign(iface, target, log_callback=_plain)
 
     if args.dry_run:

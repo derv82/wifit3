@@ -189,10 +189,14 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   byte 0xC6 (2 bits/path, 0xFF->0 dB guard); `chan._set_bb_swing_2g` writes the per-path
   TxScale. Faithful no-op on this card (verify_pcap byte-for-byte all 3 captures; live
   `bb_swing=0x200/0x200/0x200/0x200`); handles a burned fuse on any board.
-- **M4d (WEP ARP-replay harness): built + dry-run validated; live test pending (user + router).**
-  `scripts/rtl8814au_dkms/wep_replay_hw.py` runs the stock `WepCampaign` over the dkms
-  driver via a `WlanInterface` — no new injection/attack code (replay shares the M4c
-  `inject_frame` path). [HW] dry-run clean (bring-up + campaign construct + tune + RX, no TX).
+- **M4d (WEP ARP replay): VERIFIED [HW].** `scripts/rtl8814au_dkms/wep_replay_hw.py` runs
+  the stock `WepCampaign` over the dkms driver via a `WlanInterface` — no port-specific
+  injection/attack code (replay shares the verified M4c `inject_frame` path). [HW] against
+  the WEP test router (ch6): fake-auth associated, the captured ARP was injected and the
+  AP **echoed our replay** (`winner=True`, ~3.5k frames injected), generating fresh IVs at
+  ~55/s — confirms data-frame injection + replay on this port. (The harness auto-learns
+  the target SSID from its beacon; without it the assoc-req carried an empty SSID and the
+  AP rejected with status 12 — a harness input gap, not a port bug.)
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
   boots; the port reproduces the USB conversation **byte-for-byte** through M3b-1
   (**4451/4451/4457 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
@@ -550,7 +554,7 @@ only) and greps every constant verbatim before coding.
   brings up + tunes but transmits nothing. Frame construction mirrors `WlanInterface.deauth`
   (FC=0xc0, reason 7). [HW] dry-run validated end-to-end (clean bring-up + tune + correct
   26-byte frames, zero TX). The live "a real client drops" check is the user's on return.
-- **M4d — replay TX (ARP/EAPOL). Harness built + dry-run validated; LIVE test pending (user + router).**
+- **M4d — replay TX (ARP/EAPOL). VERIFIED [HW].**
   `scripts/rtl8814au_dkms/wep_replay_hw.py` wraps the dkms driver in a real `WlanInterface`
   and runs the stock `WepCampaign` (fake-auth -> ARP replay -> ChopChop -> PTW crack) — NO
   port-specific injection or attack code; replay injects via the same `inject_frame` path
