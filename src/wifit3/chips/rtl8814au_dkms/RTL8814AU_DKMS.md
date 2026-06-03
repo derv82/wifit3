@@ -17,8 +17,10 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
       for this re-port. Not yet ported (RX is a later milestone).
 - [ ] **Monitor-mode deviation:** vendor inits for STA/AP; wifite3 is always-monitor
       and will need explicit RCR / RX-filter / address-match rewrites once RX lands.
-- [ ] **efuse / MAC address:** probe-phase efuse read is intentionally skipped for
-      M1 (not a FW-download prerequisite); `mac_address` is `None` until ported.
+- [ ] **efuse / MAC address:** probe-phase efuse read is skipped through M2a (not a
+      FW-download or MAC-table prerequisite); `mac_address` is `None`. **Becomes
+      required at M2b** — the BB phy_cond walker needs `rfe_type` (efuse
+      `EEPROM_RFE_OPTION_8814`) + cut_version/package_type.
 - [ ] **TX descriptor (full):** only the beacon-queue FW-download descriptor is
       built so far (see below). Data-frame TX (rates/aggregation/sec) is unported.
 
@@ -90,9 +92,14 @@ channel/RX/TX raise until their milestone). Standalone — does **not** import
 
 ## Roadmap (each milestone pcap-diffed before "done"; post-FW init = frames 6668+)
 - M2a: `PHY_MACConfig8814` MAC register table. **DONE.**
-- M2b: `PHY_BBConfig8814` (BB tables — these DO use phy_cond conditional rows, so
-       the BIT31/30 walker is needed here, unlike the flat MAC table).
-- M2c: `PHY_RFConfig8814A` (RF tables, per-path).
+- M2b: `PHY_BBConfig8814` — PHY_REG (2595 u32, 561 conditional rows) + AGC_TAB
+       (3254 u32, 1781 conditional rows) from `halhwimg8814a_bb.c`. Needs (1) the
+       phy_cond walker (addr bit31/30 = IF/ELSE/ENDIF, matching
+       `driver1 = cut<<24 | ... | rfe_type`; band 2.4G/5G splits dominate AGC) and
+       (2) the chip-param discriminators cut_version / rfe_type / package_type.
+       `rfe_type` = efuse `EEPROM_RFE_OPTION_8814 & 0x7F` (GetRegRFEType register
+       fallback) — so M2b also pulls in the efuse/chip-info reads M1 skipped.
+- M2c: `PHY_RFConfig8814A` (RF tables, per-path; same phy_cond walker).
 - M2d: band switch + `rtw_hal_set_chnl_bw(..., CHANNEL_WIDTH_20, ...)` channel tune.
 - M3: RX path + `rtl8814_InitHalDm` (DIG/AGC watchdog — confirmed in source and on
       the wire as 103 IGI=0xc50 writes adapting 0x1c..0x2a). The 2.4 GHz breadth
