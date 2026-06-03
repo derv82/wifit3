@@ -178,11 +178,13 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   `driver.inject_frame` builds the M4a descriptor (BMC from addr1), prepends it, and
   sends `[desc | frame]` via `transport.bulk_out` under `_io_lock`. Unit-tested with a
   fake transport; no real frame is transmitted until the M4c live test. RX unchanged.
-- **M4c (deauth harness): built + dry-run validated; live test pending (user).**
-  `scripts/rtl8814au_dkms/deauth_hw.py` — targeted-only (broadcast/multicast refused),
-  `--dry-run` preview. Drives the driver directly: bring up -> tune -> bidirectional
-  deauth burst via `inject_frame`. [HW] dry-run clean (bring-up + tune + correct 26-byte
-  frames, zero TX); awaiting the user's live "client drops" verification.
+- **M4c (deauth): VERIFIED [HW] — TX works.** `scripts/rtl8814au_dkms/deauth_hw.py`
+  (targeted-only, `--dry-run` preview) deauth-and-listens: bursts the bidirectional deauth
+  via `inject_frame` over a window while the RX reader runs, and tallies the reconnect's
+  4-way handshake. [HW] against a live AP+client on ch1: the deauthed client reconnected
+  and **7/7 captured EAPOL frames were to/from the target client** (MAC-confirmed, not
+  another station's). The control run with an idle client showed 0/0 — no false positive.
+  Confirms the M4a/M4b inject path emits real, effective frames on the air.
 - **M4e (per-board TxBBSwing efuse decode): done.** `efuse._parse_bb_swing_2g` decodes
   byte 0xC6 (2 bits/path, 0xFF->0 dB guard); `chan._set_bb_swing_2g` writes the per-path
   TxScale. Faithful no-op on this card (verify_pcap byte-for-byte all 3 captures; live
@@ -540,7 +542,7 @@ only) and greps every constant verbatim before coding.
   transport (broadcast/unicast BMC, too-short reject). No frame is transmitted until the
   M4c live test (passive-by-default + user at the machine). RX unchanged (beacon scan
   68 APs, ESSID canary clean).
-- **M4c — deauth end-to-end. Harness built + dry-run validated; LIVE test pending (user).**
+- **M4c — deauth end-to-end. VERIFIED [HW].**
   `scripts/rtl8814au_dkms/deauth_hw.py` drives the dkms driver directly (like scan/test_hw):
   bring up -> tune to the AP channel -> inject a bidirectional targeted deauth burst via
   `inject_frame`. **Targeted-only** (`--client` must be unicast; broadcast/multicast is
