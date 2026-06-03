@@ -73,8 +73,11 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
       wifit3 is always-monitor, so `monitor.enter_monitor` overwrites RCR with the
       accept-all `0x90003b2f` and opens RXFLTMAP0/1/2 to `0xffff` (+ Set_MSR NOLINK).
       This **diverges from the cold-boot pcap on purpose** — it runs only the vendor
-      monitor opmode entry, not airmon's STA→monitor transition. See **M3b**. (The
-      live RX-breadth payoff still depends on M3b-3 RX path + M3c DIG watchdog.)
+      monitor opmode entry, not airmon's STA→monitor transition. See **M3b**. [HW] the
+      filter is **fully promiscuous in both directions** — a live deauth-reconnect test
+      captured client→AP (ToDS) frames not addressed to us, incl. WPA handshake M2/M4
+      (9 ToDS + 7 FromDS EAPOL, 2064 ToDS data frames). No ToDS-filter gap (the failure
+      mode that would break WPA handshake capture).
 - [x] **efuse / chip params — ported & verified.** The probe-phase efuse read
       (frames 51–5677, device 51, *outside* the M1+ window) is now ported in
       `efuse.py` and verified byte-for-byte by `verify_efuse_pcap.py`. It decodes
@@ -184,7 +187,11 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   4-way handshake. [HW] against a live AP+client on ch1: the deauthed client reconnected
   and **7/7 captured EAPOL frames were to/from the target client** (MAC-confirmed, not
   another station's). The control run with an idle client showed 0/0 — no false positive.
-  Confirms the M4a/M4b inject path emits real, effective frames on the air.
+  Confirms the M4a/M4b inject path emits real, effective frames on the air. **Also proves
+  full promiscuous monitor RX:** a follow-up run captured the reconnect's **M2/M4
+  (client→AP, ToDS) = 9** alongside M1/M3 (AP→client) = 7, plus **2064 ToDS data frames**
+  from the air — so RX sees frames not addressed to us in BOTH directions (no ToDS-filter
+  gap; the crackable WPA M2 is reachable).
 - **M4e (per-board TxBBSwing efuse decode): done.** `efuse._parse_bb_swing_2g` decodes
   byte 0xC6 (2 bits/path, 0xFF->0 dB guard); `chan._set_bb_swing_2g` writes the per-path
   TxScale. Faithful no-op on this card (verify_pcap byte-for-byte all 3 captures; live

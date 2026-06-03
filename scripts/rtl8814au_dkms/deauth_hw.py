@@ -75,6 +75,12 @@ class _HandshakeTally:
         self.client_frames = 0
         self.eapol = 0           # all EAPOL frames seen (any station)
         self.client_eapol = 0    # EAPOL frames involving the target client — the signal
+        # Monitor-mode direction proof: ToDS (client->AP) = handshake M2/M4; FromDS
+        # (AP->client) = M1/M3. Capturing ToDS frames not addressed to us is the test
+        # that always-monitor RX is fully promiscuous (and that WPA M2 is reachable).
+        self.eapol_to_ap = 0
+        self.eapol_from_ap = 0
+        self.tods_data = 0       # any ToDS data frame, any station (broad promiscuity)
 
     def __call__(self, parsed: dict) -> None:
         self.frames += 1
@@ -82,15 +88,23 @@ class _HandshakeTally:
         bssid = (parsed.get("bssid") or "").lower()
         src = (parsed.get("source") or "").lower()
         dst = (parsed.get("dest") or "").lower()
+        to_ds = bool(parsed.get("to_ds"))
+        from_ds = bool(parsed.get("from_ds"))
         involves_client = self.client in (src, dst)
         if ftype == "beacon" and bssid == self.ap:
             self.ap_beacons += 1
+        if ftype in ("data", "wep_data", "eapol") and to_ds and not from_ds:
+            self.tods_data += 1
         if ftype == "eapol":
             self.eapol += 1
             # A 4-way handshake has the client as src (M2/M4) or dst (M1/M3); only those
             # prove OUR deauthed client reconnected — another station's handshake doesn't.
             if involves_client:
                 self.client_eapol += 1
+                if to_ds and not from_ds:        # client -> AP : M2 / M4
+                    self.eapol_to_ap += 1
+                elif from_ds and not to_ds:      # AP -> client : M1 / M3
+                    self.eapol_from_ap += 1
         if involves_client:
             self.client_frames += 1
 
@@ -160,7 +174,9 @@ async def run(args) -> int:
             await asyncio.sleep(args.interval)
             print(f"\r  {time.monotonic() - start:4.0f}s  sent={sent}  "
                   f"ap_beacons={tally.ap_beacons}  client_frames={tally.client_frames}  "
-                  f"eapol={tally.client_eapol}/{tally.eapol} (client/total)", end="")
+                  f"eapol={tally.client_eapol}/{tally.eapol}  "
+                  f"M2M4={tally.eapol_to_ap} M1M3={tally.eapol_from_ap}  "
+                  f"toDS={tally.tods_data}", end="")
     except KeyboardInterrupt:
         pass
     except usb.core.USBError as e:
@@ -190,6 +206,22 @@ async def run(args) -> int:
     else:
         print("  [~] Heard the AP but no client traffic/handshake — client idle/absent, or "
               "the deauth isn't being transmitted. Inconclusive.")
+
+    # Monitor-mode direction proof: did we capture client->AP (ToDS) frames not addressed
+    # to us? That's the test that always-monitor is fully promiscuous, and that the
+    # crackable WPA messages (M2 ToDS) are reachable.
+    print(f"  [MONITOR] handshake msgs to/from client — M2/M4 (client->AP, ToDS)="
+          f"{tally.eapol_to_ap}, M1/M3 (AP->client, FromDS)={tally.eapol_from_ap}; "
+          f"ToDS data frames seen (any STA)={tally.tods_data}.")
+    if tally.eapol_to_ap > 0:
+        print("    [OK] captured client->AP handshake frames (M2/M4) — full promiscuous "
+              "monitor, and a crackable WPA handshake is reachable.")
+    elif tally.tods_data > 0:
+        print("    [OK] captured client->AP (ToDS) data frames not addressed to us — "
+              "promiscuous monitor works; this run just didn't catch an M2/M4 specifically.")
+    else:
+        print("    [!] saw NO client->AP (ToDS) frames at all — possible ToDS-filter gap "
+              "(only hearing AP->client). WPA M2 would be unreachable; investigate the RX filter.")
     return 0
 
 
