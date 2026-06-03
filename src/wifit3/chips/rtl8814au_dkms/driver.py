@@ -26,6 +26,7 @@ from .dm import init_hal_dm
 from .efuse import read_chip_params
 from .firmware import bring_up
 from .mac import hal_init_turn_on, mac_init_misc, phy_mac_config
+from .monitor import enter_monitor
 from .rf import phy_rf_config
 from .transport import Rtl8814auTransport
 
@@ -101,8 +102,9 @@ class Rtl8814auDkmsDriver:
             phy_rf_config(t, params.rfe_type)                      # M2c: PHY_RFConfig8814A
             init_tune(t, _DEFAULT_CHANNEL, params.tx_power)        # M2d/M2e: ch tune + TX power
             init_hal_dm(t)                                         # M3a: InitHalDm DIG/AGC seed
-            set_rfe_reg_init(t, params.rfe_type)                   # M3b: PHY_SetRFEReg8814A(TRUE)
-            hal_init_turn_on(t, self.mac_address)                  # M3b: turn-on tail + MAC addr
+            set_rfe_reg_init(t, params.rfe_type)                   # M3b-1: PHY_SetRFEReg8814A(TRUE)
+            hal_init_turn_on(t, self.mac_address)                  # M3b-1: turn-on tail + MAC addr
+            enter_monitor(t)                                       # M3b-2: monitor opmode (RCR/RXFLTMAP)
 
         await loop.run_in_executor(None, _phy_config, self.transport)
         self._channel = _DEFAULT_CHANNEL

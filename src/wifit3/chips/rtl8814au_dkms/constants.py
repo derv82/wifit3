@@ -365,6 +365,30 @@ REG_ACLK_MON = 0x003E           # = 0
 REG_MACID = 0x0610              # MAC address, 6 B (HW_VAR_MAC_ADDR -> set_macaddr_port)
 ETH_ALEN = 6
 
+# --- M3b-2: monitor-mode entry (always-monitor deviation) -------------------
+# wifit3 is always-monitor, so connect() runs the vendor's monitor opmode entry
+# `hw_var_set_opmode(_HW_STATE_MONITOR_)` [SRC rtl8814a_hal_init.c:3222] directly
+# after hal_init: Set_MSR(NOLINK) then hw_var_set_monitor [SRC :3155].
+MSR = REG_CR + 2               # 0x0102 Media Status reg; [1:0] = port0 net-type
+MSR_NETTYPE_MASK = 0x0C        # Set_MSR keeps [3:2] (port1), rewrites [1:0]
+MSR_NOLINK = 0x00              # _HW_STATE_NOLINK_ net-type
+REG_RXFLTMAP0 = 0x06A0         # RX filter map: data subtypes
+REG_RXFLTMAP2 = 0x06A4         # RX filter map: control subtypes
+RXFLTMAP_ACCEPT_ALL = 0xFFFF   # monitor: accept all mgmt/ctrl/data subtypes
+# Monitor RCR [SRC rtl8814a_hal_init.c:3168] — "receive all type" + append-FCS +
+# accept CRC/ICV-error frames (visibility over validation in monitor).
+RCR_AAP = BIT(0)               # accept all unicast (no addr match)
+RCR_APWRMGT = BIT(5)           # accept power-management frames
+RCR_ACRC32 = BIT(8)            # accept CRC32-error frames
+RCR_AICV = BIT(9)              # accept ICV-error frames
+RCR_ADF = BIT(11)              # accept data frames
+RCR_ACF = BIT(12)              # accept control frames
+RCR_MONITOR_VALUE = (
+    RCR_AAP | RCR_APM | RCR_AM | RCR_AB | RCR_APWRMGT
+    | RCR_ACRC32 | RCR_AICV | RCR_ADF | RCR_ACF | RCR_AMF
+    | RCR_APP_PHYST_RXFF | RCR_APPFCS
+)  # = 0x90003b2f
+
 # --- USB device identity ----------------------------------------------------
 VID_REALTEK = 0x0BDA
 PID_RTL8814AU = 0x8813  # ALFA AWUS1900 (4T4R) [WIRE] lsusb 0bda:8813

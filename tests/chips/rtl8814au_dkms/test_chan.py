@@ -82,3 +82,18 @@ def test_spur_cal_resets_nbi_csi():
         assert csi in addrs
     # NBI disabled: 0x87c[13] cleared (already 0 here -> unchanged).
     assert ("W32", 0x87C, 0x000FC000) in rec.ops
+
+
+def test_set_rfe_reg_init_rfe1():
+    # PHY_SetRFEReg8814A(TRUE): 0x1994[3:0]=0xf (0x77->0x7f), GPIO 0x42 |= 0xf0.
+    rec = Rec(reads={0x1994: 0x77, 0x42: 0x00})
+    chan.set_rfe_reg_init(rec, 1)
+    assert ("W32", 0x1994, 0x7F) in rec.ops
+    assert ("W8", 0x42, 0xF0) in rec.ops
+
+
+def test_set_rfe_reg_init_rfe0_uses_c0():
+    # rfe 0 drives the GPIO antenna pins [23:22]=0b11 -> |= 0xc0, not 0xf0.
+    rec = Rec(reads={0x1994: 0x77, 0x42: 0x00})
+    chan.set_rfe_reg_init(rec, 0)
+    assert ("W8", 0x42, 0xC0) in rec.ops

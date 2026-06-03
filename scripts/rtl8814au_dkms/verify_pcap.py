@@ -23,7 +23,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
 
-from wifit3.chips.rtl8814au_dkms import bb, chan, dm, efuse, firmware, mac, rf  # noqa: E402
+from wifit3.chips.rtl8814au_dkms import bb, chan, dm, efuse, firmware, mac, monitor, rf  # noqa: E402
 
 CAP_DIR = REPO / "usb_dumps_new" / "captures_rtl8814au"
 FW_BIN = REPO / "src" / "wifit3" / "chips" / "rtl8814au_dkms" / "assets" / "rtl8814au_fw.bin"
@@ -195,6 +195,33 @@ def _read_efuse_params(pcap, dev):
         WINDOW, START_ADDR = save
 
 
+def verify_monitor_block(ops) -> tuple:
+    """Targeted diff of the monitor opmode entry (M3b-2).
+
+    wifit3 enters monitor directly, so it does NOT replay airmon's STA->monitor
+    dance that the cold-boot pcap shows between the hal_init turn-on tail (M3b-1)
+    and the actual monitor opmode entry. The contiguous differ therefore stops at
+    M3b-1; the monitor entry is verified here as a standalone 10-op block.
+
+    Anchor on the single monitor RCR write (W REG_RCR=RCR_MONITOR_VALUE); the block
+    is the 6 reads (Set_MSR read + RCR/RXFLTMAP0/1/2 backups) before it, that write,
+    and the 3 RXFLTMAP writes after it. Replaying monitor.enter_monitor against just
+    those ops proves the port emits them byte-for-byte.
+    """
+    from wifit3.chips.rtl8814au_dkms import constants as C
+    k = next((i for i, o in enumerate(ops)
+              if o["kind"] == "W" and o["addr"] == C.REG_RCR
+              and o["value"] == C.RCR_MONITOR_VALUE), None)
+    if k is None:
+        raise Divergence("monitor RCR write (0x608=0x90003b2f) not found in capture")
+    block = ops[k - 6:k + 4]            # Set_MSR(2) + 4 backups + RCR + 3 RXFLTMAP
+    t = ReplayTransport(block)
+    monitor.enter_monitor(t)
+    if t.i != len(block):
+        raise Divergence(f"monitor block: port emitted {t.i} of {len(block)} ops")
+    return block[0]["frame"], block[-1]["frame"], len(block)
+
+
 def main() -> int:
     name = sys.argv[1] if len(sys.argv) > 1 else "capture-1"
     name = Path(name).stem
@@ -220,8 +247,13 @@ def main() -> int:
             rf.phy_rf_config(t, p.rfe_type)                 # M2c: PHY_RFConfig8814A
             chan.init_tune(t, 1, p.tx_power)                # M2d ch tune + M2e TX power
             dm.init_hal_dm(t)                               # M3a: MISC11 + InitHalDm seed
-            chan.set_rfe_reg_init(t, p.rfe_type)            # M3b: PHY_SetRFEReg8814A(TRUE)
-            mac.hal_init_turn_on(t, p.mac_address)          # M3b: turn-on tail + MAC addr
+            chan.set_rfe_reg_init(t, p.rfe_type)            # M3b-1: PHY_SetRFEReg8814A(TRUE)
+            mac.hal_init_turn_on(t, p.mac_address)          # M3b-1: turn-on tail + MAC addr
+        contiguous = t.i
+        # M3b-2 (monitor opmode entry) is verified out-of-line: wifit3 enters
+        # monitor directly and skips airmon's STA->monitor dance, so it is not
+        # contiguous with M3b-1 on the wire. See verify_monitor_block.
+        mon = verify_monitor_block(ops) if ready else None
     except Divergence as e:
         print(f"\nFAIL (divergence): {e}")
         return 1
@@ -229,11 +261,15 @@ def main() -> int:
     if not ready:
         print("\nFAIL: bring_up did not reach CPU_DL_READY against the capture")
         return 1
-    print(f"\nPASS: port reproduced {t.i} USB ops byte-for-byte through M3b-1 "
+    print(f"\nPASS: port reproduced {contiguous} USB ops byte-for-byte through M3b-1 "
           f"({n_bulk} FW packets / {len(fw)} B blob; MAC + MISC + BB + RF + channel "
           f"tune + TX power + InitHalDm phydm seed + hal_init turn-on tail "
           f"(RFE-true, NAV, MAC addr), ch1 @ 20 MHz).")
-    print(f"      {len(ops) - t.i} later-milestone ops remain in the capture.")
+    print(f"      M3b-2 monitor opmode entry verified byte-for-byte as a {mon[2]}-op "
+          f"block (Set_MSR(NOLINK) + RCR/RXFLTMAP accept-all) at frames "
+          f"{mon[0]}-{mon[1]}; airmon's STA->monitor ops in between are intentionally "
+          f"not replayed (wifit3 is always-monitor).")
+    print(f"      {len(ops) - contiguous} later-milestone ops remain in the capture.")
     return 0
 
 

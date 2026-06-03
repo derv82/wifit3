@@ -16,10 +16,13 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
 - [ ] **2.4 GHz RX/AGC (the whole point):** the phydm DIG/AGC path is the reason
       for this re-port. Not yet ported (RX is a later milestone). The AGC *table*
       lands at M2b, but the runtime DIG/AGC watchdog is M3.
-- [ ] **Monitor-mode deviation:** vendor inits for STA/AP; wifite3 is always-monitor
-      and will need explicit RCR / RX-filter / address-match rewrites once RX lands.
-      M2b applies the vendor's STA-init `RCR = 0xf40060ce` verbatim (CBSSID match,
-      etc.) — monitor mode must overwrite it at the RX milestone.
+- [x] **Monitor-mode deviation — RCR/RX-filter done (M3b-2).** vendor inits for
+      STA/AP (M2b applies the STA-init `RCR = 0xf40060ce` + beacon-filtered RXFLTMAP);
+      wifit3 is always-monitor, so `monitor.enter_monitor` overwrites RCR with the
+      accept-all `0x90003b2f` and opens RXFLTMAP0/1/2 to `0xffff` (+ Set_MSR NOLINK).
+      This **diverges from the cold-boot pcap on purpose** — it runs only the vendor
+      monitor opmode entry, not airmon's STA→monitor transition. See **M3b**. (The
+      live RX-breadth payoff still depends on M3b-3 RX path + M3c DIG watchdog.)
 - [x] **efuse / chip params — ported & verified.** The probe-phase efuse read
       (frames 51–5677, device 51, *outside* the M1+ window) is now ported in
       `efuse.py` and verified byte-for-byte by `verify_efuse_pcap.py`. It decodes
@@ -76,6 +79,11 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   `0x1994[3:0]=0xf` + GPIO antenna pinmux `0x42`), then `mac.hal_init_turn_on` =
   the turn-on writes (REG_QUEUE_CTRL, NAV upper, Tx-report, USB mode-switch reset)
   + the efuse MAC programmed to REG_MACID (`0x610`) and read back. See **M3b** below.
+- **M3b-2 (monitor opmode entry): pcap-verified (HW test pending).**
+  `monitor.enter_monitor` = the vendor `hw_var_set_opmode(MONITOR)` = Set_MSR(NOLINK)
+  + `hw_var_set_monitor` (RCR `0x90003b2f` accept-all + RXFLTMAP0/1/2 `0xffff`). This
+  is the always-monitor deviation; it deliberately skips airmon's STA→monitor dance
+  and is verified out-of-line as a targeted 10-op block. See **M3b** below.
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
   boots; the port reproduces the USB conversation **byte-for-byte** through M3b-1
   (**4451/4451/4457 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
@@ -239,12 +247,32 @@ open-path MAC config and the airmon monitor-mode transition. [WIRE] cap1 14573+.
   MAC equals the efuse MAC on all three cards — the differ recovers each card's real
   MAC from its probe efuse read and confirms it byte-for-byte.
 
-**M3b-2 (monitor setup): not yet ported.** [WIRE] op 4451-4763. The wire continues:
-RXFLTMAP1(0x6a2) 0x420→0x520, a second channel set + TX power (airmon re-tune —
-reuses `set_channel_bw`), the MAC re-program, then the **monitor-mode RCR**
-`REG_RCR`(0x608)=0x90003b2f (accept-all, overwrites the STA `0xf40060ce` from M2b) +
-RXFLTMAP1(0x6a2)=0xffff. This is the "always-monitor deviation" — the monitor values
-are already on the wire because the capture was taken under airmon.
+**M3b-2 (monitor opmode entry): ported, pcap-verified — with a deliberate
+DIVERGENCE from the pcap (documented here and in `monitor.py`).**
+`monitor.enter_monitor` = the vendor's `hw_var_set_opmode(_HW_STATE_MONITOR_)`
+[SRC rtl8814a_hal_init.c:3222]:
+- `Set_MSR(_HW_STATE_NOLINK_)` [SRC rtw_hal_set_msr] — `MSR`(0x102)[1:0]=0
+  (hal_init left it at `NT_LINK_AP`; monitor needs NOLINK).
+- `hw_var_set_monitor` [SRC rtl8814a_hal_init.c:3155] — back up RCR + RXFLTMAP0/1/2,
+  then `REG_RCR`(0x608) = **0x90003b2f** (`RCR_AAP|APM|AM|AB|APWRMGT|ACRC32|AICV|ADF|
+  ACF|AMF|APP_PHYST_RXFF|APPFCS` — "receive all type", accept CRC/ICV-error frames,
+  append FCS; overwrites the STA `0xf40060ce` from M2b) and `REG_RXFLTMAP0/1/2`
+  (0x6a0/0x6a2/0x6a4) = **0xffff** (accept all data/mgmt/ctrl subtypes).
+
+**DIVERGENCE — why this is NOT a contiguous extension of the M3b-1 differ:** the
+cold-boot capture was taken under airmon-ng, which drives the *STA-initialised*
+driver into monitor through a chain of cfg80211 ioctls. On the wire [WIRE] cap1 ops
+4451-4764 that is: enable beacon RX (RXFLTMAP1 0x420→0x520), re-tune the channel
+hal_init already tuned, re-program the MAC already written, tear down the STA/AP
+beacon function (StopTxBeacon + BCN_CTRL + 0x541/0x542), set opmode NOLINK, and
+*then* enter monitor. wifit3 is **always monitor** — it never enters STA mode — so it
+runs only the vendor monitor opmode entry (the last 10 ops, 4755-4764) and skips
+airmon's STA-mode dance (the ~300 ops 4451-4754). The skipped ops are airmon
+artifacts, not vendor monitor init. The monitor RCR/RXFLTMAP **values** are taken
+straight from that wire (they are what airmon's working monitor session programmed).
+The byte-for-byte differ therefore stops at M3b-1; M3b-2 is verified out-of-line by
+`verify_pcap.verify_monitor_block`, a targeted 10-op diff against wire 4755-4764
+(anchored on the unique monitor RCR write). Confirmed on all three cold boots.
 
 **M3b-3 (RX path): not yet ported.** bulk-IN endpoint + `rtl8814a_rxdesc.c`
 rx_pkt_desc decode + RSSI + frame iterator. Validated **live** (beacon count on
@@ -303,10 +331,11 @@ rfe/xtal/mac decode) · `mac.py` (M2a MAC table + M2b MISC stage + M3b-1 turn-on
 tail / MAC addr) · `phy_cond.py` (shared phydm conditional-table walker) · `bb.py`
 (M2b PHY_BBConfig8814) · `rf.py` (M2c PHY_RFConfig8814A) · `chan.py` (M2d channel
 tune, 2.4G/20MHz + M3b-1 set_rfe_reg_init) · `txpower.py` (M2e per-rate txagc table)
-· `dm.py` (M3a InitHalDm DIG/AGC seed) · `bb_phy_reg_tbl.py` / `bb_agc_tab_tbl.py` /
-`rf_radio_{a,b,c,d}_tbl.py` (generated flat-u32 BB/AGC/RF tables) · `driver.py`
-(WlanDriver Protocol; connect() chains EFUSE→M1→M2a..M2e→M3a→M3b-1, set_channel hops
-2.4G; RX/TX raise until their milestone).
+· `dm.py` (M3a InitHalDm DIG/AGC seed) · `monitor.py` (M3b-2 monitor opmode entry)
+· `bb_phy_reg_tbl.py` / `bb_agc_tab_tbl.py` / `rf_radio_{a,b,c,d}_tbl.py` (generated
+flat-u32 BB/AGC/RF tables) · `driver.py` (WlanDriver Protocol; connect() chains
+EFUSE→M1→M2a..M2e→M3a→M3b-1→M3b-2, set_channel hops 2.4G; RX/TX raise until their
+milestone).
 Standalone — does **not** import `chips/rtw88_base/`.
 
 ## Roadmap (each milestone pcap-diffed before "done"; post-FW init = frames 6668+)
@@ -325,10 +354,11 @@ Standalone — does **not** import `chips/rtw88_base/`.
 - M3b: hal_init continuation + monitor RX. **M3b-1 DONE (pcap-verified):** turn-on
        tail — `PHY_SetRFEReg8814A(TRUE)` (RFE-true @0x42), QUEUE_CTRL @0x4c6, NAV
        upper @0x652, Tx-report @0x421, **MAC address** @0x610-0x615 from efuse.
-       *Pending:* M3b-2 (monitor RXFLTMAP1 @0x6a2 0x420→0x520→0xffff + RCR @0x608
-       accept-all) and M3b-3 (bulk-IN RX path: rx_pkt_desc decode, RSSI). **Live RX**
-       becomes testable at M3b-3 — the differ carries the static setup, but actual
-       breadth needs a live beacon count.
+       **M3b-2 DONE (pcap-verified):** monitor opmode entry `hw_var_set_opmode(MONITOR)`
+       = Set_MSR(NOLINK) + RCR @0x608 = 0x90003b2f accept-all + RXFLTMAP0/1/2 @0x6a0-4
+       = 0xffff (deliberately skips airmon's STA→monitor dance; see M3b above).
+       *Pending:* M3b-3 (bulk-IN RX path: rx_pkt_desc decode, RSSI). **Live RX**
+       becomes testable at M3b-3 — actual breadth needs a live beacon count.
 - M3c: the runtime DIG/AGC watchdog (`rtw_phydm_watchdog` → `odm_dig` — the 0xc50 IGI
        writes adapting 0x1c..0x2a). The 2.4 GHz breadth payoff; **live A/B vs mainline**.
 - M4: TX (full `update_txdesc`) for deauth/replay; includes the per-board TxBBSwing
