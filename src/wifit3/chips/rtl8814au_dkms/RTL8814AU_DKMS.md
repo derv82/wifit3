@@ -166,6 +166,11 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   `driver.inject_frame` builds the M4a descriptor (BMC from addr1), prepends it, and
   sends `[desc | frame]` via `transport.bulk_out` under `_io_lock`. Unit-tested with a
   fake transport; no real frame is transmitted until the M4c live test. RX unchanged.
+- **M4c (deauth harness): built + dry-run validated; live test pending (user).**
+  `scripts/rtl8814au_dkms/deauth_hw.py` — targeted-only (broadcast/multicast refused),
+  `--dry-run` preview. Drives the driver directly: bring up -> tune -> bidirectional
+  deauth burst via `inject_frame`. [HW] dry-run clean (bring-up + tune + correct 26-byte
+  frames, zero TX); awaiting the user's live "client drops" verification.
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
   boots; the port reproduces the USB conversation **byte-for-byte** through M3b-1
   (**4451/4451/4457 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
@@ -505,9 +510,14 @@ only) and greps every constant verbatim before coding.
   transport (broadcast/unicast BMC, too-short reject). No frame is transmitted until the
   M4c live test (passive-by-default + user at the machine). RX unchanged (beacon scan
   68 APs, ESSID canary clean).
-- **M4c — deauth end-to-end. [HW-LOOP.]** The deauth frame bytes come from the engine
-  attack layer; confirm the driver transmits them and a controlled target sees the
-  deauth. Explicit-action only.
+- **M4c — deauth end-to-end. Harness built + dry-run validated; LIVE test pending (user).**
+  `scripts/rtl8814au_dkms/deauth_hw.py` drives the dkms driver directly (like scan/test_hw):
+  bring up -> tune to the AP channel -> inject a bidirectional targeted deauth burst via
+  `inject_frame`. **Targeted-only** (`--client` must be unicast; broadcast/multicast is
+  refused so it can't deauth the dev machine) and a `--dry-run` that builds frames +
+  brings up + tunes but transmits nothing. Frame construction mirrors `WlanInterface.deauth`
+  (FC=0xc0, reason 7). [HW] dry-run validated end-to-end (clean bring-up + tune + correct
+  26-byte frames, zero TX). The live "a real client drops" check is the user's on return.
 - **M4d — replay TX (ARP/EAPOL). [HW-LOOP.]** Same path with data-frame qsel/rate;
   validate against the WEP test router.
 - **M4e — per-board TxBBSwing efuse decode. [HW-FREE, DELEGATABLE, LOW priority.]**
