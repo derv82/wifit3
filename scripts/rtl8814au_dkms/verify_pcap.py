@@ -40,7 +40,7 @@ def _hex(s: str) -> bytes:
     return bytes.fromhex(s) if s else b""
 
 
-def extract_ops(pcap: Path, dev: int):
+def extract_ops(pcap: Path, dev: int, trim_to_start: bool = True):
     """Ordered list of {'kind','addr','width','value'|'data','frame'} ops.
 
     The synchronous driver issues one transfer at a time, so submit ('S') and its
@@ -96,6 +96,8 @@ def extract_ops(pcap: Path, dev: int):
                         "value": int.from_bytes(r["resp"], "little"), "frame": pending["frame"]})
             pending = None
 
+    if not trim_to_start:
+        return ops          # caller wants the window verbatim (e.g. per-channel tune)
     # Trim to the _InitPowerOn entry point (skip any open-time preamble).
     for i, o in enumerate(ops):
         if o.get("addr") == START_ADDR:
