@@ -13,9 +13,11 @@ Sources of truth: the vendor tree at
 file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
 
 ## Potential Known Gaps (audit before trusting any milestone)
-- [ ] **2.4 GHz RX/AGC (the whole point):** the phydm DIG/AGC path is the reason
-      for this re-port. Not yet ported (RX is a later milestone). The AGC *table*
-      lands at M2b, but the runtime DIG/AGC watchdog is M3.
+- [~] **2.4 GHz RX/AGC (the whole point):** the phydm DIG/AGC path is the reason for
+      this re-port. AGC *table* (M2b) + DIG/AGC *seed* (M3a) + bulk-IN RX path (M3b-3a)
+      are done; M3b-3a already heard **69 APs in a 30 s 1-13 hop** [HW]. The runtime
+      DIG/AGC watchdog (M3c) — the adaptive breadth payoff over a long session — is
+      still unported.
 - [x] **Monitor-mode deviation — RCR/RX-filter done (M3b-2).** vendor inits for
       STA/AP (M2b applies the STA-init `RCR = 0xf40060ce` + beacon-filtered RXFLTMAP);
       wifit3 is always-monitor, so `monitor.enter_monitor` overwrites RCR with the
@@ -86,6 +88,13 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   and is verified out-of-line as a targeted 10-op block. See **M3b** below.
   [HW] a live ALFA AWUS1900 ran `connect()` through M3b-2 cleanly (no pipe wedge);
   live RX breadth still depends on M3b-3 (RX path) + M3c (DIG watchdog).
+- **M3b-3a (RX path, frames only): ported AND hardware-proven.**
+  `rx.py` (24-byte rx desc decode + `recvbuf2recvframe` aggregation walk, FCS
+  stripped) + `transport.bulk_in` (bulk-IN probe + read) + the shared
+  `RxReaderThread`. Not pcap-diffable; decode unit-tested, end-to-end RX validated
+  by a live beacon count (`scan_hw.py`). [HW] a 30 s hop across channels 1-13 heard
+  **69 unique APs / 735 beacons / 1315 frames** — strong 2.4 GHz breadth, the payoff
+  this re-port exists for. RSSI is M3b-3b. See **M3b** below.
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
   boots; the port reproduces the USB conversation **byte-for-byte** through M3b-1
   (**4451/4451/4457 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
@@ -276,9 +285,30 @@ The byte-for-byte differ therefore stops at M3b-1; M3b-2 is verified out-of-line
 `verify_pcap.verify_monitor_block`, a targeted 10-op diff against wire 4755-4764
 (anchored on the unique monitor RCR write). Confirmed on all three cold boots.
 
-**M3b-3 (RX path): not yet ported.** bulk-IN endpoint + `rtl8814a_rxdesc.c`
-rx_pkt_desc decode + RSSI + frame iterator. Validated **live** (beacon count on
-2.4 GHz), not via the byte-for-byte differ.
+**M3b-3a (RX path, frames only): ported AND hardware-proven.** [HW] a 30 s hop
+across channels 1-13 heard 69 unique APs / 735 beacons / 1315 frames — strong
+2.4 GHz breadth. `rx.py` + `transport.bulk_in` + the shared `RxReaderThread`:
+- `transport.bulk_in()` probes the interface's bulk-IN endpoint and does one
+  blocking read (32 KB buffer ≥ the RX-DMA aggregation ceiling; benign timeouts
+  return None). `driver._read_once` calls it on the reader thread.
+- `rx.query_rx_desc` decodes the 24-byte RX status desc [SRC rtl8814a_rxdesc.c]:
+  `pkt_len`, `crc_err`, `icv_err`, `drvinfo_sz`, `shift_sz`, `physt`, `rpt_sel`.
+- `rx.iter_frames` is `recvbuf2recvframe` [SRC usb_ops_linux.c:105]: walks the
+  USB-aggregated buffer (`pkt_offset = _RND8(24 + drvinfo_sz + shift_sz + pkt_len)`),
+  yields each NORMAL_RX MPDU, skips C2H reports, stops on crc/icv error. **Two
+  intentional deviations** (documented in `rx.py`): a crc/icv-error packet stops the
+  buffer (vendor `mp_mode==0`), and the 4-byte FCS is stripped (the vendor keeps it
+  in monitor; wifit3 delivers FCS-stripped frames — [project_rx_frames_include_fcs]).
+- `driver._dispatch` parses each frame via `WlanFrameParser` and fans the dict to the
+  rx callback (RSSI = placeholder `0`). The reader is started at the end of
+  `connect()`; per [project_rx_reader_start_ordering] this start-vs-RX-enable ordering
+  is the prime suspect if a cold boot shows no RX.
+- **Not pcap-diffable** (RX is environment-dependent); the decode is unit-tested
+  (`test_rx.py`), end-to-end RX is validated by a live beacon count via
+  `scripts/rtl8814au_dkms/scan_hw.py` (the A/B headline vs mainline).
+
+**M3b-3b (RSSI): not yet ported.** the PHY-status decode (`odm_phy_status_query_8814a`,
+the `drvinfo` bytes when `physt=1`) — needed for the UI signal column, not the A/B.
 
 ## Firmware download — the load-bearing M1 fact
 The 8814AU does **not** block-write firmware over EP0. `FirmwareDownload8814A`
@@ -334,10 +364,11 @@ tail / MAC addr) · `phy_cond.py` (shared phydm conditional-table walker) · `bb
 (M2b PHY_BBConfig8814) · `rf.py` (M2c PHY_RFConfig8814A) · `chan.py` (M2d channel
 tune, 2.4G/20MHz + M3b-1 set_rfe_reg_init) · `txpower.py` (M2e per-rate txagc table)
 · `dm.py` (M3a InitHalDm DIG/AGC seed) · `monitor.py` (M3b-2 monitor opmode entry)
-· `bb_phy_reg_tbl.py` / `bb_agc_tab_tbl.py` / `rf_radio_{a,b,c,d}_tbl.py` (generated
-flat-u32 BB/AGC/RF tables) · `driver.py` (WlanDriver Protocol; connect() chains
-EFUSE→M1→M2a..M2e→M3a→M3b-1→M3b-2, set_channel hops 2.4G; RX/TX raise until their
-milestone).
+· `rx.py` (M3b-3a RX desc decode + aggregation walk) · `bb_phy_reg_tbl.py` /
+`bb_agc_tab_tbl.py` / `rf_radio_{a,b,c,d}_tbl.py` (generated flat-u32 BB/AGC/RF
+tables) · `transport.py` (+ M3b-3a bulk-IN read) · `driver.py` (WlanDriver Protocol;
+connect() chains EFUSE→M1→M2a..M2e→M3a→M3b-1→M3b-2 then starts the RX reader,
+set_channel hops 2.4G; TX raises until M4).
 Standalone — does **not** import `chips/rtw88_base/`.
 
 ## Roadmap (each milestone pcap-diffed before "done"; post-FW init = frames 6668+)
@@ -359,8 +390,10 @@ Standalone — does **not** import `chips/rtw88_base/`.
        **M3b-2 DONE (pcap-verified):** monitor opmode entry `hw_var_set_opmode(MONITOR)`
        = Set_MSR(NOLINK) + RCR @0x608 = 0x90003b2f accept-all + RXFLTMAP0/1/2 @0x6a0-4
        = 0xffff (deliberately skips airmon's STA→monitor dance; see M3b above).
-       *Pending:* M3b-3 (bulk-IN RX path: rx_pkt_desc decode, RSSI). **Live RX**
-       becomes testable at M3b-3 — actual breadth needs a live beacon count.
+       **M3b-3a DONE (hardware-proven):** bulk-IN RX path — `rx.py` (24-byte desc
+       decode + recvbuf2recvframe aggregation walk, FCS stripped) + `transport.bulk_in`
+       + shared `RxReaderThread`. Live: 69 APs / 735 beacons / 1315 frames in a 30 s
+       1-13 hop. *Pending:* M3b-3b (RSSI / PHY-status decode).
 - M3c: the runtime DIG/AGC watchdog (`rtw_phydm_watchdog` → `odm_dig` — the 0xc50 IGI
        writes adapting 0x1c..0x2a). The 2.4 GHz breadth payoff; **live A/B vs mainline**.
 - M4: TX (full `update_txdesc`) for deauth/replay; includes the per-board TxBBSwing

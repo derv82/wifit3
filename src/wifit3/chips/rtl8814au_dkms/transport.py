@@ -24,11 +24,17 @@ from .constants import (
 
 _CTRL_TIMEOUT_MS = 1000
 _BULK_TIMEOUT_MS = 1000
+# RX bulk-IN read: the buffer must hold a whole USB-aggregated transfer (the 8814A
+# RX-DMA buffer is ~24 KB), so read generously; a short timeout keeps the reader
+# thread responsive to stop() and returns None between bursts of traffic.
+RX_BUF_SIZE = 0x8000        # 32 KB >= the RX-DMA aggregation ceiling
+RX_TIMEOUT_MS = 200
 
 
 class Rtl8814auTransport:
     def __init__(self, dev: usb.core.Device):
         self.dev = dev
+        self._in_ep = None  # bulk-IN endpoint address, probed lazily
 
     # --- register access ---------------------------------------------------
     def _read(self, addr: int, length: int) -> bytes:
@@ -62,6 +68,34 @@ class Rtl8814auTransport:
     # --- bulk OUT (firmware packets) --------------------------------------
     def bulk_out(self, data: bytes) -> None:
         self.dev.write(EP_BULK_OUT_FW, data, _BULK_TIMEOUT_MS)
+
+    # --- bulk IN (RX) ------------------------------------------------------
+    def _bulk_in_ep(self) -> int:
+        """Probe the active interface for the bulk-IN (RX) endpoint, cached."""
+        if self._in_ep is not None:
+            return self._in_ep
+        cfg = self.dev.get_active_configuration()
+        for intf in cfg:
+            for ep in intf:
+                if (usb.util.endpoint_direction(ep.bEndpointAddress)
+                        == usb.util.ENDPOINT_IN
+                        and usb.util.endpoint_type(ep.bmAttributes)
+                        == usb.util.ENDPOINT_TYPE_BULK):
+                    self._in_ep = ep.bEndpointAddress
+                    return self._in_ep
+        raise RuntimeError("RTL8814AU: no bulk-IN endpoint on the active interface")
+
+    def bulk_in(self, size: int = RX_BUF_SIZE, timeout: int = RX_TIMEOUT_MS):
+        """One blocking bulk-IN read. Returns the raw buffer, or None on a benign
+        timeout (no traffic). Raises usb.core.USBError on a real pipe fault."""
+        try:
+            return bytes(self.dev.read(self._bulk_in_ep(), size, timeout))
+        except usb.core.USBError as e:
+            # libusb timeout (errno 110 / LIBUSB_ERROR_TIMEOUT) is benign — no
+            # traffic this interval; anything else is a real fault, propagate it.
+            if getattr(e, "errno", None) == 110 or "timeout" in str(e).lower():
+                return None
+            raise
 
     def close(self) -> None:
         usb.util.dispose_resources(self.dev)
