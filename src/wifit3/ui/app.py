@@ -102,9 +102,10 @@ class WifiteApp(App):
     #left-col { width: 40; }
     #panel-target { height: 8; }          /* aligns with the SECURITY|CAPTURE row */
     /* No box around the attack buttons — they have their own borders, and a
-       title-less bordered panel just adds clutter. Center the 2 button rows
-       vertically so they don't sit top-heavy with a gap underneath. */
-    #attack-panel { height: 8; border: none; align-vertical: middle; }
+       title-less bordered panel just adds clutter. Height auto so the panel
+       takes only its button row(s) — 1 for WEP (Replay/Chop), 2 for WPA — and
+       the CLIENTS list below claims all the freed space. */
+    #attack-panel { height: auto; border: none; margin-top: 1; }
     #client-panel { height: 1fr; min-height: 6; }
     /* Deauth buttons sit at the bottom of the CLIENTS panel (no own title). */
     #deauth-row { height: auto; margin-top: 1; }
