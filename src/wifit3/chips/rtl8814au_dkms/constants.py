@@ -278,6 +278,17 @@ CRYSTAL_CAP_MASK = 0x07FF8000  # 0x2C[26:21] = 0x2C[20:15] = crystal_cap
 rCCK0_FalseAlarmReport = 0x0A2C
 rCCK_RX_Jaguar = 0x0A04        # CCK RX path selection
 
+# --- M2c: PHY_RFConfig8814A (RF radio tables) -------------------------------
+# Each RF register write rides the per-path LSSI write register as
+# (addr << 20) | (data & RFREG_MASK). [SRC] rf_reg.h r{A,B,C,D}_LSSIWrite_Jaguar*.
+RF_LSSI_WRITE = {"a": 0x0C90, "b": 0x0E90, "c": 0x1890, "d": 0x1A90}
+RFREG_MASK = 0xFFFFF            # RFREGOFFSETMASK (20-bit RF data)
+RF_WRITE_MASK = 0x0FFFFFFF      # phy_RFWrite_8814A: (offset<<20 | data) & 0x0FFFFFFF
+RF_DELAY_ADDRS = (0xFE, 0xFFE)  # odm_config_rf_reg_8814a: 50 ms delay, not a write
+RF_RCK1 = 0x1C                 # RF_RCK1_Jaguar — read on path A, copied to B/C/D
+# phy_RFRead_8814A: RF regs are memory-mapped at base + addr*4 (per path).
+RF_READ_BASE = {"a": 0x2800, "b": 0x2C00, "c": 0x3800, "d": 0x3C00}
+
 # --- EFUSE (probe-phase chip-param read) ------------------------------------
 # Physical efuse read via EFUSE_CTRL, then header-unpacked into a 512 B logical
 # map. [SRC] hal_EfuseReadEFuse8814A + halmac per-byte protocol; [WIRE] cap1

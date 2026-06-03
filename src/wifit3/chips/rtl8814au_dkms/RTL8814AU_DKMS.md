@@ -51,11 +51,15 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   - **PHY_BBConfig8814** (`bb.phy_bb_config`) — prefix (SYS_FUNC_EN|FEN_USBA, 0x1002
     BB reset, RF_CTRL0/1/3 power-on), then the two conditional tables applied via
     the phydm walker, then crystal-cap + TRX-path. See **BB config** below.
+- **M2c (PHY_RFConfig8814A): complete — pcap-verified AND hardware-proven.**
+  `rf.phy_rf_config` walks the four per-path radio tables (radio_a..d) through the
+  shared phydm walker, then copies the path-A RCK1 calibration to paths B/C/D. See
+  **RF config** below.
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
-  boots; the port reproduces the USB conversation **byte-for-byte** through M2b
-  (**2812/2812/2818 ops**, all 46 FW packets, all 2102 BB-table writes). [HW] a live
-  ALFA AWUS1900 reached `CPU_DL_READY` and applied the full MAC+BB config via
-  `scripts/rtl8814au_dkms/test_hw.py` (~2100 control transfers, no error).
+  boots; the port reproduces the USB conversation **byte-for-byte** through M2c
+  (**3992/3992/3998 ops**, all 46 FW packets, 2102 BB-table + 1176 RF-table writes
+  + the RCK1 copy). [HW] a live ALFA AWUS1900 reached `CPU_DL_READY` and applied the
+  full MAC+BB+RF config via `scripts/rtl8814au_dkms/test_hw.py` (~4000 transfers).
 - Not registered in `wlan/manager.py` — master keeps the working mainline
   `rtw88_8814au` until this port is HW-proven to beat it on breadth/stability.
 
@@ -102,6 +106,27 @@ card's taken path — every cut/package combination reproduces the wire identica
 
 Suffix: `crystal_cap` packed into 0x2C[26:15] (`cap | cap<<6`, cap=0x23) +
 `_rtw_config_trx_path_8814a` CCK path selection (0xa2c, 0xa04).
+
+The walker lives in `phy_cond.py` (shared by BB and RF); it takes an
+`emit(addr, value)` callback so each table family supplies its own write action.
+
+## RF config — per-path radio tables (M2c)
+`PHY_RFConfig8814A` [SRC rtl8814a_phycfg.c:570] -> `PHY_RF6052_Config_8814A` loads
+one conditional radio table per RF path through the same walker (`rf.py`):
+- **radio_a..d** `array_mp_8814a_radio{a,b,c,d}` — 4634/4396/4524/4600 u32
+  (`rf_radio_{a,b,c,d}_tbl.py`), extracted by `extract_rf_tables.py`. For rfe=1
+  the walker takes **1176** writes total. [WIRE] cap1 frames 11335+.
+- **RF register access is memory-mapped, not at the RF address.** A write rides the
+  per-path LSSI write register (A 0xc90 / B 0xe90 / C 0x1890 / D 0x1A90) as
+  `(addr<<20 | data) & 0x0FFFFFFF` [SRC phy_RFWrite_8814A]; a read is a direct
+  `read32(base + addr*4)` where base = A 0x2800 / B 0x2c00 / C 0x3800 / D 0x3c00
+  [SRC phy_RFRead_8814A] — so the radioa[0] pair `(0x018, 0x13124)` becomes
+  `0xc90 <- 0x01813124` on the wire. Pseudo addresses 0xfe/0xffe are 50 ms settling
+  delays, not writes (radioa has 3).
+- **RCK1 copy**: `read32(0x2870)` (= path-A RF reg 0x1c) then write that value to
+  paths B/C/D RF reg 0x1c. The TX-power-tracking table that follows only fills
+  software dm arrays (no register I/O), so it is absent from the wire — confirmed by
+  the differ landing on PHY_ConfigBB right after the RCK1 copy.
 
 ## Firmware download — the load-bearing M1 fact
 The 8814AU does **not** block-write firmware over EP0. `FirmwareDownload8814A`
@@ -152,11 +177,12 @@ first `0x10C2` access (the `_InitPowerOn` entry).
 `constants.py` (regs/bits/sizes, all grepped verbatim) · `pwrseq.py` (power tables
 + parser) · `transport.py` (PyUSB vendor ctrl 0x05 + bulk OUT) · `firmware.py`
 (power-on → LLT → FW download → ready) · `efuse.py` (probe-phase EFUSE read +
-rfe/xtal/mac decode) · `mac.py` (M2a MAC table + M2b MISC stage) · `bb.py` (M2b
-PHY_BBConfig8814: prefix + phydm walker + suffix) · `bb_phy_reg_tbl.py` /
-`bb_agc_tab_tbl.py` (generated flat-u32 BB/AGC tables) · `driver.py` (WlanDriver
-Protocol; connect() chains EFUSE→M1→M2a→M2b; channel/RX/TX raise until their
-milestone). Standalone — does **not** import `chips/rtw88_base/` (mainline-derived).
+rfe/xtal/mac decode) · `mac.py` (M2a MAC table + M2b MISC stage) · `phy_cond.py`
+(shared phydm conditional-table walker) · `bb.py` (M2b PHY_BBConfig8814) · `rf.py`
+(M2c PHY_RFConfig8814A) · `bb_phy_reg_tbl.py` / `bb_agc_tab_tbl.py` /
+`rf_radio_{a,b,c,d}_tbl.py` (generated flat-u32 BB/AGC/RF tables) · `driver.py`
+(WlanDriver Protocol; connect() chains EFUSE→M1→M2a→M2b→M2c; channel/RX/TX raise
+until their milestone). Standalone — does **not** import `chips/rtw88_base/`.
 
 ## Roadmap (each milestone pcap-diffed before "done"; post-FW init = frames 6668+)
 - EFUSE: probe-phase chip-param read (rfe_type / crystal_cap / mac_address). **DONE.**
@@ -165,10 +191,11 @@ milestone). Standalone — does **not** import `chips/rtw88_base/` (mainline-der
        (6280 u32) via the phydm walker, prefix/crystal-cap/TRX-path. **DONE.**
        (Chip params now read from efuse. The actual table sizes are 4622/6280 u32,
        not the 2595/3254 originally scoped.)
-- M2c: `PHY_RFConfig8814A` (RF tables, per-path; same phy_cond walker). The BB
-       prefix already powered on RF paths A–D (RF_CTRL0/1/3); next is the radio_a..d
-       tables written through 0xc90 (the wire op right after M2b's TRX-path suffix).
-- M2d: band switch + `rtw_hal_set_chnl_bw(..., CHANNEL_WIDTH_20, ...)` channel tune.
+- M2c: `PHY_RFConfig8814A` — radio_a..d RF tables (1176 writes for rfe=1) + RCK1
+       copy, via the shared phy_cond walker. **DONE.**
+- M2d: `PHY_ConfigBB_8814A` + band switch + `rtw_hal_set_chnl_bw(...,
+       CHANNEL_WIDTH_20, ...)` channel tune. (PHY_ConfigBB is the next wire op:
+       `0x808` read-modify-write right after M2c's RCK1 copy.)
 - M3: RX path + `rtl8814_InitHalDm` (DIG/AGC watchdog — confirmed in source and on
       the wire as 103 IGI=0xc50 writes adapting 0x1c..0x2a). The 2.4 GHz breadth
       payoff; finish with a live A/B vs mainline. Monitor-mode RX is just the

@@ -24,6 +24,7 @@ from .constants import PID_RTL8814AU, VID_REALTEK
 from .efuse import read_chip_params
 from .firmware import bring_up
 from .mac import mac_init_misc, phy_mac_config
+from .rf import phy_rf_config
 from .transport import Rtl8814auTransport
 
 logger = logging.getLogger(__name__)
@@ -85,20 +86,21 @@ class Rtl8814auDkmsDriver:
                 progress_cb(1.0, "Firmware NOT ready")
             return False
 
-        # M2a/M2b: MAC table -> hal_init MISC stage -> PHY_BBConfig8814.
+        # M2a/M2b/M2c: MAC table -> MISC stage -> PHY_BBConfig8814 -> PHY_RFConfig8814A.
         # (Extend this chain as later milestones land; keep it in sync with
         # scripts/rtl8814au_dkms/verify_pcap.py.)
         if progress_cb:
-            progress_cb(0.7, "Configuring MAC registers")
+            progress_cb(0.7, "Configuring MAC / BB / RF registers")
 
-        def _mac_bb_config(t):
+        def _phy_config(t):
             phy_mac_config(t)     # M2a: MAC register table
             mac_init_misc(t)      # M2b: hal_init MISC stage
             phy_bb_config(t, params.rfe_type, params.crystal_cap)  # M2b: PHY_BBConfig8814
+            phy_rf_config(t, params.rfe_type)                      # M2c: PHY_RFConfig8814A
 
-        await loop.run_in_executor(None, _mac_bb_config, self.transport)
+        await loop.run_in_executor(None, _phy_config, self.transport)
         if progress_cb:
-            progress_cb(1.0, "MAC + baseband configured")
+            progress_cb(1.0, "MAC + baseband + RF configured")
         return True
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
