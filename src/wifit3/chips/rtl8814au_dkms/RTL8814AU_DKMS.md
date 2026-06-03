@@ -430,6 +430,63 @@ connect() chains EFUSE→M1→M2a..M2e→M3a→M3b-1→M3b-2 then starts the RX 
 set_channel hops 2.4G; TX raises until M4).
 Standalone — does **not** import `chips/rtw88_base/`.
 
+## M4 — TX (plan; not yet built)
+
+Goal: implement `Rtl8814auDkmsDriver.inject_frame()` so deauth + replay attacks work.
+TX is **passive-by-default sensitive** — it runs only on an explicit higher-layer call,
+never at connect/scan time. The executor stays cleanroom (vendor source + this tree
+only) and greps every constant verbatim before coding.
+
+**Vendor TX-path map** (confirm each fact against the cited source before coding):
+- **TX descriptor = 40 B (0x28)**, same size + XOR checksum as the M1 FW-download
+  descriptor — so the known-good FW descriptor (pcap-verified 46/46) is a unit anchor
+  for the builder. Word layout: word0 PKT_SIZE[15:0] / OFFSET[23:16]=40 / BMC[24] /
+  LAST_SEG[26]; word1 MACID[6:0] / QSEL[12:8] / RATE_ID[20:16] / SEC_TYPE[23:22]=0;
+  word3 WHEADER_LEN[4:0] / USE_RATE[8]=1 / DISABLE_FB[10]=1 / NAV_USE_HDR[15]=1; word4
+  TX_RATE[6:0]; word5 DATA_BW[6:5] / DATA_SC / DATA_SHORT; word6 SW_DEFINE[11:0]; word7
+  CHECKSUM[15:0] + USB_TXAGG_NUM[31:24]. [SRC] include/rtl8814a_xmit.h SET_TX_DESC_*;
+  minimal field set = `rtl8814a_fill_fake_txdesc` [SRC rtl8814a_xmit.c:267]; checksum =
+  `rtl8814a_cal_txdesc_chksum` [SRC rtl8814a_xmit.c:238] (XOR of the first 16 LE u16
+  with the checksum word zeroed — identical to the M1 path).
+- **A mgmt/deauth frame**: qsel = QSLT_MGNT (**CONFIRM the value** — grep hal_com.h;
+  the two source reads disagreed, 0x12 vs 0x1f), mac_id = RTW_DEFAULT_MGMT_MACID, raid
+  by wireless mode, rate 1M (CCK) / 6M (OFDM), no encryption, no aggregation. [SRC]
+  update_mgntframe_attrib, core/rtw_mlme_ext.c.
+- **USB endpoint**: the MGMT queue maps to `RtOutPipe[0]` — the FIRST bulk-OUT endpoint,
+  the SAME pipe M1 streams firmware on (`transport.bulk_out`, EP 0x02). No new endpoint;
+  send = build the 40 B desc -> prepend to the frame -> bulk_out. No TX-FIFO enable
+  beyond the M2b MISC stage (MACTXEN + queue/page setup already applied) — but verify
+  live in M4b. [SRC] hal_com.c dma_mapping + os_dep/.../usb_ops_linux.c ffaddr2pipehdl.
+
+**Milestones (tiny; each tagged HW-FREE/DELEGATABLE or HW-LOOP):**
+- **M4a — `tx.py` descriptor builder + unit tests. [HW-FREE, DELEGATABLE.]** Port the
+  `fill_fake_txdesc` field set + `cal_txdesc_chksum` into `build_txdesc(...)`; grep all
+  constants (QSEL / RATE_ID / hw-rate codes / masks) verbatim into constants.py.
+  Unit-test the byte layout + checksum, and **reproduce the M1 FW-download descriptor**
+  from beacon-queue params as the cross-check anchor.
+- **M4b — `inject_frame` send path. [code DELEGATABLE; HW smoke test.]** Wire
+  `driver.inject_frame`: build desc (M4a) + prepend + `transport.bulk_out`, under the
+  `_io_lock` (don't race set_channel/DIG). Live smoke test: inject one frame, no pipe
+  fault.
+- **M4c — deauth end-to-end. [HW-LOOP.]** The deauth frame bytes come from the engine
+  attack layer; confirm the driver transmits them and a controlled target sees the
+  deauth. Explicit-action only.
+- **M4d — replay TX (ARP/EAPOL). [HW-LOOP.]** Same path with data-frame qsel/rate;
+  validate against the WEP test router.
+- **M4e — per-board TxBBSwing efuse decode. [HW-FREE, DELEGATABLE, LOW priority.]**
+  Replace the M2d 0 dB default (0x200) with the efuse decode: byte 0xC6 (2.4G), 2 bits
+  per path -> {0:0x200 (0 dB), 1:0x16A (-3), 2:0x101 (-6), 3:0x0B6 (-9)} into [31:21]
+  of 0xC1C/0xE1C/0x181C/0x1A1C, **with the unburned-fuse (0xFF) -> default guard** (else
+  0xFF wrongly decodes to -9 dB). [SRC] EEPROM_TX_BBSWING_2G_8814=0xC6 (hal_pg.h),
+  PHY_GetTxBBSwing_8814A (rtl8814a_phycfg.c:762). **Cheap first check:** read this card's
+  efuse map[0xC6] + the cold-boot wire at 0xc1c[31:21] — if both are 0x200 the fuse is
+  default and this is a no-op faithfulness port (verify_pcap already covers the BB-swing
+  writes, so M4e is pcap-checkable, not new hardware).
+
+Sequencing: M4a -> M4b -> (M4c, M4d via the HW loop); M4e is independent. The HW-free
+delegatable units are **M4a**, the **M4b code**, and **M4e** (+ its pcap check); gate the
+live deauth/replay (M4b smoke, M4c, M4d) on the hardware loop.
+
 ## Roadmap (each milestone pcap-diffed before "done"; post-FW init = frames 6668+)
 - EFUSE: probe-phase chip-param read (rfe_type / crystal_cap / mac_address). **DONE.**
 - M2a: `PHY_MACConfig8814` MAC register table. **DONE.**
@@ -465,5 +522,7 @@ Standalone — does **not** import `chips/rtw88_base/`.
        no strong-AP or breadth regression, `fa_cnt` bounded/self-resetting, IGI rides to
        0x2a on busy windows and steps back down on quiet ones. **Next (optional):** a
        formal A/B vs mainline for the breadth headline.
-- M4: TX (full `update_txdesc`) for deauth/replay; includes the per-board TxBBSwing
-      efuse decode (BB swing currently the 0 dB default).
+- M4: TX — implement `inject_frame` for deauth/replay, broken into tiny milestones
+      (M4a builder + M4b send path + M4c/M4d live deauth/replay + M4e TxBBSwing decode).
+      See **M4 — TX (plan)** above for the vendor TX-path map, per-milestone scope, and
+      which milestones are hardware-free / subagent-delegatable.
