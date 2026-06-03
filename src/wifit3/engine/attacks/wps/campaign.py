@@ -384,7 +384,12 @@ class WpsCampaign:
                 # while we wait for the AP to engage.
                 verify_terminal = (prev_phase == "verify" and out.result not in
                                    (PinResult.PROTO_ERROR, PinResult.TIMEOUT))
-                if not verify_terminal:
+                # The attempt's round-trip can finish just after the user hits
+                # Stop; skip its log line then, so a "trying X → …" branch doesn't
+                # print AFTER _stop_wps_pin already closed the tree with "stopped".
+                # (`_apply_outcome` above is silent, so the keyspace still advances
+                # — we just don't spam the closed tree.)
+                if not verify_terminal and not self._stop:
                     self._log_attempt(pin, out, prev_first_half)
 
                 if self.state.phase == "done":
