@@ -47,8 +47,10 @@ class BeaconTally:
             bssid = (parsed.get("bssid") or "").lower()
             if bssid and bssid != "ff:ff:ff:ff:ff:ff":
                 self.by_bssid[bssid] += 1
+                # Track the strongest (max) real dBm; skip the 0 "unknown" sentinel
+                # (frames with no PHY status) so it can't mask a real negative value.
                 r = parsed.get("rssi")
-                if r is not None and (bssid not in self.rssi or r > self.rssi[bssid]):
+                if r and (bssid not in self.rssi or r > self.rssi[bssid]):
                     self.rssi[bssid] = r
 
 

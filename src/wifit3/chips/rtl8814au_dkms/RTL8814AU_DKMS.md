@@ -14,10 +14,10 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
 
 ## Potential Known Gaps (audit before trusting any milestone)
 - [~] **2.4 GHz RX/AGC (the whole point):** the phydm DIG/AGC path is the reason for
-      this re-port. AGC *table* (M2b) + DIG/AGC *seed* (M3a) + bulk-IN RX path (M3b-3a)
-      are done; M3b-3a already heard **69 APs in a 30 s 1-13 hop** [HW]. The runtime
-      DIG/AGC watchdog (M3c) — the adaptive breadth payoff over a long session — is
-      still unported.
+      this re-port. AGC *table* (M2b) + DIG/AGC *seed* (M3a) + bulk-IN RX path (M3b-3a,
+      **69 APs in a 30 s 1-13 hop** [HW]) + per-frame RSSI (M3b-3b) are done. The
+      runtime DIG/AGC watchdog (M3c) is **ported (live A/B pending)** — `dig.py`
+      adapts the IGI to the live false-alarm rate every 2 s within [0x1c, 0x2a].
 - [x] **Monitor-mode deviation — RCR/RX-filter done (M3b-2).** vendor inits for
       STA/AP (M2b applies the STA-init `RCR = 0xf40060ce` + beacon-filtered RXFLTMAP);
       wifit3 is always-monitor, so `monitor.enter_monitor` overwrites RCR with the
@@ -101,6 +101,14 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   live scan showed a realistic dBm spread — a nearby router at −44 dBm down to distant
   APs near −80 dBm — confirming the byte offsets and the `>>1` (is_mp_chip) branch.
   See **M3b** below.
+- **M3c (runtime DIG/AGC watchdog): ported AND hardware-proven (function); formal
+  A/B vs mainline is follow-up.** `dig.watchdog_tick` ports `phydm_dig` for the no-link
+  path — read FA counters → step IGI by FA → clamp [0x1c, 0x2a] → write all 4 paths —
+  driven every 2 s by a periodic `connect()` task, serialized with `set_channel`. [HW]
+  on a busy ch1 the IGI adapted **0x22→0x29** (rising to suppress a high false-alarm
+  rate, then micro-adjusting, always in-range) while RX stayed healthy (27 APs on ch1
+  alone, distant APs to −84 dBm) — the watchdog works and does not regress RX. See
+  **Roadmap**.
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
   boots; the port reproduces the USB conversation **byte-for-byte** through M3b-1
   (**4451/4451/4457 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
@@ -108,7 +116,8 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   replays the probe-phase efuse read to recover the real chip params (rfe_type /
   crystal_cap / tx_power) and feeds those into M2b+, so nothing is hardcoded. [HW] a
   live ALFA AWUS1900 reached `CPU_DL_READY` and applied the full init through the
-  InitHalDm DIG/AGC seed (HW through M3a; M3b-1 HW test pending).
+  monitor opmode entry, then received on 2.4 GHz with realistic RSSI (M3b HW-proven;
+  M3c watchdog live A/B pending).
 - Not registered in `wlan/manager.py` — master keeps the working mainline
   `rtw88_8814au` until this port is HW-proven to beat it on breadth/stability.
 
@@ -382,7 +391,8 @@ tail / MAC addr) · `phy_cond.py` (shared phydm conditional-table walker) · `bb
 (M2b PHY_BBConfig8814) · `rf.py` (M2c PHY_RFConfig8814A) · `chan.py` (M2d channel
 tune, 2.4G/20MHz + M3b-1 set_rfe_reg_init) · `txpower.py` (M2e per-rate txagc table)
 · `dm.py` (M3a InitHalDm DIG/AGC seed) · `monitor.py` (M3b-2 monitor opmode entry)
-· `rx.py` (M3b-3a RX desc decode + aggregation walk) · `bb_phy_reg_tbl.py` /
+· `rx.py` (M3b-3a RX desc decode + walk, M3b-3b RSSI) · `dig.py` (M3c runtime DIG
+watchdog) · `bb_phy_reg_tbl.py` /
 `bb_agc_tab_tbl.py` / `rf_radio_{a,b,c,d}_tbl.py` (generated flat-u32 BB/AGC/RF
 tables) · `transport.py` (+ M3b-3a bulk-IN read) · `driver.py` (WlanDriver Protocol;
 connect() chains EFUSE→M1→M2a..M2e→M3a→M3b-1→M3b-2 then starts the RX reader,
@@ -414,7 +424,13 @@ Standalone — does **not** import `chips/rtw88_base/`.
        1-13 hop. **M3b-3b DONE (hardware-proven):** per-frame RSSI from the PHY-status
        struct (`decode_rssi`; CCK lookup + OFDM pwdb_all); live spread −44 dBm (near)
        to −80 dBm (far). **M3b complete.**
-- M3c: the runtime DIG/AGC watchdog (`rtw_phydm_watchdog` → `odm_dig` — the 0xc50 IGI
-       writes adapting 0x1c..0x2a). The 2.4 GHz breadth payoff; **live A/B vs mainline**.
+- M3c: the runtime DIG/AGC watchdog (`phydm_dig` → `odm_write_dig` — the 0xc50/E50/
+       1850/1A50 IGI writes adapting 0x1c..0x2a). **DONE (hardware-proven; formal A/B
+       = follow-up):** `dig.py` `watchdog_tick` runs every 2 s — read FA counters (OFDM 0xf48 + CCK
+       0xa5c) → `new_igi_by_fa` (no-link step {+2,+1,−2}, fa_th {2000,4000,5000}) →
+       clamp [0x1c,0x2a] → write all 4 paths. Driven by a periodic task in `connect()`,
+       serialized with `set_channel` via an io-lock. [HW] IGI adapted 0x22->0x29 on a
+       busy ch1, RX healthy (27 APs ch1). Remaining payoff check: a formal **A/B vs
+       mainline** (does adaptive DIG beat the static seed over a long session).
 - M4: TX (full `update_txdesc`) for deauth/replay; includes the per-board TxBBSwing
       efuse decode (BB swing currently the 0 dB default).

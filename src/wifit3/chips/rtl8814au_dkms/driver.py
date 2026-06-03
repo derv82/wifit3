@@ -3,9 +3,9 @@
 Status: bring-up complete through M3b-3a. ``connect()`` runs the full deterministic
 init (EFUSE -> firmware -> MAC/BB/RF -> channel tune -> TX power -> InitHalDm seed ->
 hal_init turn-on tail -> monitor opmode entry), all pcap-verified, then starts the
-bulk-IN RX reader so monitor frames (with per-frame RSSI) flow to the rx callback.
-Still pending: the runtime DIG/AGC watchdog (M3c) and TX (M4 — ``inject_frame``
-raises until then).
+bulk-IN RX reader (monitor frames with per-frame RSSI flow to the rx callback) and
+the runtime phydm DIG/AGC watchdog (adapts RX gain to the live false-alarm rate every
+~2 s). Still pending: TX (M4 — ``inject_frame`` raises until then).
 
 This driver is intentionally NOT registered in ``wlan/manager.py`` yet — master
 keeps the working mainline-derived ``rtw88_8814au`` port until this vendor port is
@@ -27,6 +27,7 @@ from ..rx_reader import RxReaderThread
 from .bb import phy_bb_config
 from .chan import init_tune, set_channel_bw, set_rfe_reg_init
 from .constants import PID_RTL8814AU, VID_REALTEK
+from .dig import WATCHDOG_PERIOD_S, watchdog_tick
 from .dm import init_hal_dm
 from .efuse import read_chip_params
 from .firmware import bring_up
@@ -63,6 +64,10 @@ class Rtl8814auDkmsDriver:
         self.is_warm: bool = False
         self._rx_cb: Optional[Callable[[dict], None]] = None
         self._reader: Optional[RxReaderThread] = None
+        self._dig_task: Optional[asyncio.Task] = None
+        # Serializes control-transfer batches (DIG watchdog vs set_channel) so two
+        # executor threads never drive EP0 at once; the RX reader uses bulk-IN.
+        self._io_lock = asyncio.Lock()
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "Rtl8814auDkmsDriver":
@@ -123,9 +128,27 @@ class Rtl8814auDkmsDriver:
             loop, self._read_once, self._dispatch, name="8814au-dkms-rx")
         self._reader.start()
 
+        # M3c: the runtime phydm DIG/AGC watchdog — adapt the M3a IGI seed to the
+        # live false-alarm rate every ~2 s (the kernel cadence). RX-side only.
+        self._dig_task = loop.create_task(self._dig_watchdog())
+
         if progress_cb:
             progress_cb(1.0, f"Tuned to channel {_DEFAULT_CHANNEL} @ 20 MHz")
         return True
+
+    async def _dig_watchdog(self) -> None:
+        """Periodic DIG watchdog (M3c). Serialized with set_channel via _io_lock."""
+        loop = asyncio.get_running_loop()
+        try:
+            while True:
+                await asyncio.sleep(WATCHDOG_PERIOD_S)
+                async with self._io_lock:
+                    igi = await loop.run_in_executor(None, watchdog_tick, self.transport)
+                logger.debug("RTL8814AU DIG: IGI=0x%02x", igi)
+        except asyncio.CancelledError:
+            pass
+        except Exception:  # noqa: BLE001 — a watchdog fault must not kill RX
+            logger.exception("RTL8814AU DIG watchdog stopped on error")
 
     # --- RX path (M3b-3a) --------------------------------------------------
     def _read_once(self) -> Optional[bytes]:
@@ -146,8 +169,9 @@ class Rtl8814auDkmsDriver:
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         """Tune to a 2.4 GHz channel at 20 MHz. (5G tune is a later milestone.)"""
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            None, set_channel_bw, self.transport, channel, self._tx_power)
+        async with self._io_lock:   # don't race the DIG watchdog's control I/O
+            await loop.run_in_executor(
+                None, set_channel_bw, self.transport, channel, self._tx_power)
         self._channel = channel
         return True
 
@@ -155,7 +179,14 @@ class Rtl8814auDkmsDriver:
         raise NotImplementedError("RTL8814AU DKMS port: TX is a later milestone")
 
     async def close(self) -> None:
-        # Stop the reader before releasing the USB handle it reads from.
+        # Stop the DIG watchdog and the reader before releasing the USB handle.
+        if self._dig_task is not None:
+            self._dig_task.cancel()
+            try:
+                await self._dig_task
+            except asyncio.CancelledError:
+                pass
+            self._dig_task = None
         if self._reader is not None:
             await self._reader.stop()
             self._reader = None
