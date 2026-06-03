@@ -457,14 +457,15 @@ class FocusView(Screen):
         # PMKID is dead on pure SAE (uncrackable). Show for WPA/WPA2 and for
         # WPA3-transition (the WPA2 portion is the attack surface).
         btn_pmkid.display = not is_wep and ((not ap.wpa3) or ap.transition_mode)
-        # Replay vanishes once the key is cracked — Save takes its place, so it
-        # reads as a "Replay → Save" swap.
-        btn_gen.display = is_wep and ap.wep_key is None
-        # Chop is visible for any WEP target (before crack), but disabled until
-        # Replay starts the campaign — it's a sub-mode of it, and the campaign
-        # owns the fake-auth it needs. Visible-but-grey reads cleaner than
+        # Replay/Chop stay visible for ANY WEP target, including after a crack —
+        # re-running the attack (e.g. while testing) shouldn't require leaving and
+        # re-entering Focus. The recovered key persists on ap.wep_key and shows in
+        # SECURITY; clicking Replay just starts a fresh campaign.
+        btn_gen.display = is_wep
+        # Chop is a sub-mode of the campaign (needs its fake-auth), so it's
+        # disabled until Replay starts it — visible-but-grey reads cleaner than
         # vanish-on-Replay-click ("where did it come from?").
-        btn_chop.display = is_wep and ap.wep_key is None
+        btn_chop.display = is_wep
 
         if is_wep:
             # A finished campaign (key recovered) is torn down so the button
