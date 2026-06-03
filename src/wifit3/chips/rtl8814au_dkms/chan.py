@@ -53,14 +53,15 @@ def set_rfe_reg_init(t, rfe_type: int) -> None:
     t.write8(C.REG_GPIO_IO_SEL_8814A, v | gpio_bits)
 
 
-def _set_bb_swing_2g(t) -> None:
+def _set_bb_swing_2g(t, bb_swing: tuple) -> None:
     """[SRC] phy_SetBBSwingByBand_8814A(2.4G) — per-path TxScale[31:21].
 
-    The swing index comes from efuse TxBBSwing; this card uses the 0 dB default
-    (0x200). The per-board TxBBSwing decode is deferred with the TX-power port.
+    ``bb_swing`` is the per-path 11-bit TxScale value decoded from efuse 0xC6
+    (``efuse._parse_bb_swing_2g``); on an unburned fuse every path is the 0 dB
+    default (0x200), which is what this card reads.
     """
-    for reg in C.TXSCALE:
-        _bb32(t, reg, C.BBSWING_MASK, C.BBSWING_DEFAULT)
+    for reg, val in zip(C.TXSCALE, bb_swing):
+        _bb32(t, reg, C.BBSWING_MASK, val)
 
 
 def _set_bw_reg_adc_agc_20(t) -> None:
@@ -69,7 +70,7 @@ def _set_bw_reg_adc_agc_20(t) -> None:
     _bb32(t, C.rAGC_table_Jaguar, 0xF000, 0x6)  # AGC: 0x82c[15:12] = 6
 
 
-def switch_wireless_band_2g(t) -> None:
+def switch_wireless_band_2g(t, bb_swing: tuple) -> None:
     """[SRC] PHY_SwitchWirelessBand8814A(BAND_ON_2_4G), 20 MHz, mp_mode=0."""
     _bb8_clear_set(t, C.REG_SYS_CFG3_2, 0x01, False)   # gate CCK/OFDM clock off
     _bb32(t, C.rAGC_table_Jaguar2, 0x1F, 0x0)          # 2.4G AGC table select
@@ -79,7 +80,7 @@ def switch_wireless_band_2g(t) -> None:
     _bb32(t, C.rOFDMCCKEN, C.bOFDMEN | C.bCCKEN, 0x3)
     t.write8(C.REG_CCK_CHECK, 0x0)
     _bb32(t, C.REG_A80, 1 << 18, 0x0)
-    _set_bb_swing_2g(t)
+    _set_bb_swing_2g(t, bb_swing)
     _set_bw_reg_adc_agc_20(t)
     _bb8_clear_set(t, C.REG_SYS_CFG3_2, 0x01, True)     # gate CCK/OFDM clock on
 
@@ -138,8 +139,8 @@ def set_channel_bw(t, channel: int, tx_power: tuple) -> None:
     set_tx_power(t, channel, tx_power)   # M2e
 
 
-def init_tune(t, channel: int, tx_power: tuple) -> None:
+def init_tune(t, channel: int, tx_power: tuple, bb_swing: tuple) -> None:
     """Connect-time tune: PHY_ConfigBB + 2.4G band switch + set channel/bw + TX power."""
     phy_config_bb(t)
-    switch_wireless_band_2g(t)
+    switch_wireless_band_2g(t, bb_swing)
     set_channel_bw(t, channel, tx_power)

@@ -171,6 +171,10 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   `--dry-run` preview. Drives the driver directly: bring up -> tune -> bidirectional
   deauth burst via `inject_frame`. [HW] dry-run clean (bring-up + tune + correct 26-byte
   frames, zero TX); awaiting the user's live "client drops" verification.
+- **M4e (per-board TxBBSwing efuse decode): done.** `efuse._parse_bb_swing_2g` decodes
+  byte 0xC6 (2 bits/path, 0xFF->0 dB guard); `chan._set_bb_swing_2g` writes the per-path
+  TxScale. Faithful no-op on this card (verify_pcap byte-for-byte all 3 captures; live
+  `bb_swing=0x200/0x200/0x200/0x200`); handles a burned fuse on any board.
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
   boots; the port reproduces the USB conversation **byte-for-byte** through M3b-1
   (**4451/4451/4457 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
@@ -257,7 +261,8 @@ only — the 40/80 MHz width math is omitted by scope. [WIRE] cap1 frames 13695-
   AGC-table select 0x958[4:0]=0, **PHY_SetRFEReg8814A** (rfe=1: the four RFE pinmux
   regs 0xcb0/0xeb0/0x18b4/0x1ab4 = 0x77777777, 0x1abc[27:20]=0x77), rTxPath 0x80c
   [7:4]=2, rCCK_RX 0xa04[27:24]=5, CCK_CHECK 0x454=0, 0xa80[18]=0, BB-swing per path
-  (0xc1c/.../0x1a1c[31:21] = 0x200, the 0 dB efuse default), ADC/AGC bw regs, clock on.
+  (0xc1c/.../0x1a1c[31:21], efuse-decoded per path — M4e; 0x200/0 dB on this card),
+  ADC/AGC bw regs, clock on.
 - **phy_SwChnl8814A** — band detect (read 0x454, already 2.4G), fc-area 0x860[28:17]
   = 0x96A, per-path RF channel write (RF 0x18, mask 0x703ff, value = channel for
   2.4G), CCK TX-DFIR (0xa20/0xa24/0xa28; ch 1-11 vs 12-13 arms).
@@ -267,8 +272,8 @@ only — the 40/80 MHz width math is omitted by scope. [WIRE] cap1 frames 13695-
   0x880/0x884/0x898/0x89c) then disable NBI (0x87c[13]=0).
 - **Deferred:** the TX-power table (rtw_hal_set_tx_power_level — 764 writes to 0x1998,
   needs the per-rate power computation) and IQK follow in the vendor flow; both are
-  TX/cal concerns. The differ stops exactly at the first 0x1998 write. The per-board
-  TxBBSwing efuse decode is likewise deferred (this card uses the 0 dB default).
+  TX/cal concerns. The differ stops exactly at the first 0x1998 write. (The per-board
+  TxBBSwing efuse decode is now done in M4e — this card reads the 0 dB default.)
 - **5G** band tune is not ported (`set_channel` accepts 2.4G channels 1-13 only).
 
 ## TX power — the txagc table (M2e)
@@ -291,8 +296,8 @@ power index into the txagc table at BB reg 0x1998 [SRC PHY_SetTxPowerIndex_8814A
   accumulation is ported faithfully (channel/efuse general).
 - **Empirically confirmed** the EN=0 model against the wire: path A base 0x20 → 0x22,
   path B CCK 0x27 → 0x29 / BW40 0x28 → 0x2a, etc., all matching the captured PP bytes.
-- **Deferred (M4 TX):** the full `update_txdesc` data-frame TX path. The per-board
-  TxBBSwing efuse decode (BB swing in M2d, currently the 0 dB default) also stays here.
+- **Deferred (M4 TX):** the full `update_txdesc` data-frame TX path (M4a ports the
+  minimal mgmt descriptor). The per-board TxBBSwing efuse decode is done in M4e.
 
 ## DM seed — InitHalDm (M3a)
 `dm.py` ports the hal_init tail after the channel tune: the MISC11 block
@@ -520,15 +525,15 @@ only) and greps every constant verbatim before coding.
   26-byte frames, zero TX). The live "a real client drops" check is the user's on return.
 - **M4d — replay TX (ARP/EAPOL). [HW-LOOP.]** Same path with data-frame qsel/rate;
   validate against the WEP test router.
-- **M4e — per-board TxBBSwing efuse decode. [HW-FREE, DELEGATABLE, LOW priority.]**
-  Replace the M2d 0 dB default (0x200) with the efuse decode: byte 0xC6 (2.4G), 2 bits
-  per path -> {0:0x200 (0 dB), 1:0x16A (-3), 2:0x101 (-6), 3:0x0B6 (-9)} into [31:21]
-  of 0xC1C/0xE1C/0x181C/0x1A1C, **with the unburned-fuse (0xFF) -> default guard** (else
-  0xFF wrongly decodes to -9 dB). [SRC] EEPROM_TX_BBSWING_2G_8814=0xC6 (hal_pg.h),
-  PHY_GetTxBBSwing_8814A (rtl8814a_phycfg.c:762). **Cheap first check:** read this card's
-  efuse map[0xC6] + the cold-boot wire at 0xc1c[31:21] — if both are 0x200 the fuse is
-  default and this is a no-op faithfulness port (verify_pcap already covers the BB-swing
-  writes, so M4e is pcap-checkable, not new hardware).
+- **M4e — per-board TxBBSwing efuse decode. DONE.** `efuse._parse_bb_swing_2g` reads
+  byte 0xC6 (2.4G), 2 bits per path -> {0:0x200 (0 dB), 1:0x16A (-3), 2:0x101 (-6),
+  3:0x0B6 (-9)}, with the unburned-fuse (0xFF) -> 0 dB guard; `chan._set_bb_swing_2g`
+  writes the per-path value into [31:21] of 0xC1C/0xE1C/0x181C/0x1A1C. [SRC]
+  EEPROM_TX_BBSWING_2G_8814=0xC6 (hal_pg.h), PHY_GetTxBBSwing_8814A
+  (rtl8814a_phycfg.c:762; only the registry-AUTO efuse path, the one the wire takes).
+  **Confirmed a no-op on this card** (as predicted): verify_pcap stays byte-for-byte on
+  all three captures (decode -> 0x200 = wire) and the live card logs
+  `bb_swing=0x200/0x200/0x200/0x200`. The decode now handles a burned fuse on any board.
 
 Sequencing: M4a -> M4b -> (M4c, M4d via the HW loop); M4e is independent. The HW-free
 delegatable units are **M4a**, the **M4b code**, and **M4e** (+ its pcap check); gate the

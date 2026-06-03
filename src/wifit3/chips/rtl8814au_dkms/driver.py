@@ -91,9 +91,10 @@ class Rtl8814auDkmsDriver:
         params = await loop.run_in_executor(None, read_chip_params, self.transport)
         self.mac_address = params.mac_address
         self._tx_power = params.tx_power
-        logger.info("RTL8814AU efuse: rfe_type=%d crystal_cap=0x%02x mac=%s",
+        logger.info("RTL8814AU efuse: rfe_type=%d crystal_cap=0x%02x mac=%s bb_swing=%s",
                     params.rfe_type, params.crystal_cap,
-                    params.mac_address or "<none>")
+                    params.mac_address or "<none>",
+                    "/".join(f"0x{v:03x}" for v in params.bb_swing))
 
         if progress_cb:
             progress_cb(0.2, "Uploading firmware (3081 IDDMA)")
@@ -115,7 +116,7 @@ class Rtl8814auDkmsDriver:
             mac_init_misc(t)      # M2b: hal_init MISC stage
             phy_bb_config(t, params.rfe_type, params.crystal_cap)  # M2b: PHY_BBConfig8814
             phy_rf_config(t, params.rfe_type)                      # M2c: PHY_RFConfig8814A
-            init_tune(t, _DEFAULT_CHANNEL, params.tx_power)        # M2d/M2e: ch tune + TX power
+            init_tune(t, _DEFAULT_CHANNEL, params.tx_power, params.bb_swing)  # M2d/M2e: ch tune + TX power
             init_hal_dm(t)                                         # M3a: InitHalDm DIG/AGC seed
             set_rfe_reg_init(t, params.rfe_type)                   # M3b-1: PHY_SetRFEReg8814A(TRUE)
             hal_init_turn_on(t, self.mac_address)                  # M3b-1: turn-on tail + MAC addr

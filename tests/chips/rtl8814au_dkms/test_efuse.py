@@ -75,6 +75,18 @@ def test_parse_crystal_cap():
     assert efuse._parse_crystal_cap(bytes(m)) == C.EEPROM_DEFAULT_CRYSTAL_CAP
 
 
+def test_parse_bb_swing_2g():
+    m = bytearray(b"\xFF" * C.EFUSE_MAP_LEN)
+    # Unburned byte (0xFF) -> 0 dB (0x200) on every path.
+    assert efuse._parse_bb_swing_2g(bytes(m)) == (0x200, 0x200, 0x200, 0x200)
+    # Burned 0xE4 = 11_10_01_00 -> D=3(-9), C=2(-6), B=1(-3), A=0(0dB).
+    m[C.EEPROM_TX_BBSWING_2G] = 0xE4
+    assert efuse._parse_bb_swing_2g(bytes(m)) == (0x200, 0x16A, 0x101, 0x0B6)
+    # 0x00 -> all 0 dB (the value this card's cold-boot wire writes).
+    m[C.EEPROM_TX_BBSWING_2G] = 0x00
+    assert efuse._parse_bb_swing_2g(bytes(m)) == (0x200, 0x200, 0x200, 0x200)
+
+
 def test_parse_mac_address():
     m = bytearray(b"\xFF" * C.EFUSE_MAP_LEN)
     assert efuse._parse_mac_address(bytes(m)) is None   # all-FF blank

@@ -306,7 +306,8 @@ REG_CCK_CHECK = 0x0454        # 2.4G = 0 (bit7 selects 5G CCK)
 REG_A80 = 0x0A80              # clear BIT18 on 5G->2.4G
 TXSCALE = (0x0C1C, 0x0E1C, 0x181C, 0x1A1C)     # rA..D_TxScale; BB swing [31:21]
 BBSWING_MASK = 0xFFE00000
-BBSWING_DEFAULT = 0x200       # 0 dB; efuse TxBBSwing decode deferred (TX concern)
+BBSWING_DEFAULT = 0x200       # 0 dB; the per-path value is decoded from efuse 0xC6
+                              # (efuse._parse_bb_swing_2g) — this is the index-0 default
 rRFMOD = 0x08AC               # ADC bw: [1:0] = 0 for 20 MHz
 rAGC_table_Jaguar = 0x082C    # AGC bw: [15:12] = 6 for 20 MHz
 rFc_area = 0x0860             # 2.4G center-freq area: [28:17] = 0x96A
@@ -349,6 +350,7 @@ EFUSE_REAL_CONTENT_LEN = 1024  # EFUSE_REAL_CONTENT_LEN_8814A (addr ceiling)
 EEPROM_MAC_ADDR = 0xD8         # EEPROM_MAC_ADDR_8814AU, 6 B
 EEPROM_XTAL = 0xB9             # EEPROM_XTAL_8814 (crystal_cap)
 EEPROM_RFE_OPTION = 0xCA       # EEPROM_RFE_OPTION_8814 (rfe_type, bit7 + [6:0])
+EEPROM_TX_BBSWING_2G = 0xC6    # EEPROM_TX_BBSWING_2G_8814 (2-bit BB-swing index per path)
 EEPROM_DEFAULT_CRYSTAL_CAP = 0x20  # EEPROM_Default_CrystalCap_8814
 RFE_TYPE_8814AU_FALLBACK = 1   # hal_ReadRFEType_8814A 8814AU branch
 

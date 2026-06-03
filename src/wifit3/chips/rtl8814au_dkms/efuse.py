@@ -43,6 +43,7 @@ class ChipParams(NamedTuple):
     chip_version: int
     autoload_fail: bool
     tx_power: tuple    # 4x PathTxPwr (paths A..D)
+    bb_swing: tuple    # 4x 11-bit TxScale value (paths A..D), 2.4 GHz
 
 
 def _efuse_one_byte_read(t, addr: int) -> int:
@@ -175,6 +176,26 @@ def _parse_tx_power(m: bytes) -> tuple:
     return tuple(paths)
 
 
+# 2.4G per-path BB-swing: a 2-bit index per path maps to an 11-bit TxScale value.
+# [SRC] PHY_GetTxBBSwing_8814A: 0->0 dB, 1->-3 dB, 2->-6 dB, 3->-9 dB.
+_BB_SWING_2G = {0: C.BBSWING_DEFAULT, 1: 0x16A, 2: 0x101, 3: 0x0B6}
+
+
+def _parse_bb_swing_2g(m: bytes) -> tuple:
+    """[SRC] PHY_GetTxBBSwing_8814A (2.4 GHz, registry AUTO) — per-path TxScale value.
+
+    The efuse byte 0xC6 packs a 2-bit swing index per path (A[1:0], B[3:2], C[5:4],
+    D[7:6]); an unburned byte (0xFF) means 0 dB on every path. Each index maps to the
+    11-bit TxScale value written into TXSCALE[31:21]. Only the efuse path is ported: the
+    registry-override / autoload-fail / external-PA branches are config paths the
+    cold-boot wire does not take (it writes the 0 dB default on all four paths).
+    """
+    swing = m[C.EEPROM_TX_BBSWING_2G]
+    if swing == 0xFF:                      # unburned -> 0 dB all paths
+        swing = 0x00
+    return tuple(_BB_SWING_2G[(swing >> (2 * p)) & 0x3] for p in range(4))
+
+
 def _parse_mac_address(m: bytes) -> Optional[str]:
     """[SRC] hal_config_macaddr — efuse 0xD8..0xDD; None if blank/invalid."""
     mac = m[C.EEPROM_MAC_ADDR:C.EEPROM_MAC_ADDR + 6]
@@ -207,4 +228,5 @@ def read_chip_params(t) -> ChipParams:
         chip_version=chip_version,
         autoload_fail=autoload_fail,
         tx_power=_parse_tx_power(m),
+        bb_swing=_parse_bb_swing_2g(m),
     )
