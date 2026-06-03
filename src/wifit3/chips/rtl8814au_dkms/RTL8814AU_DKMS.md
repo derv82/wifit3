@@ -24,10 +24,15 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
 
 ## Status
 - **M1 (firmware upload + FW-ready ACK): complete — pcap-verified AND hardware-proven.**
-  `scripts/rtl8814au_dkms/verify_m1_pcap.py` replays all three cold boots and the
-  port reproduces the USB conversation **byte-for-byte** (502/502/508 ops, all 46
-  FW packets) through `CPU_DL_READY`. [HW] 2026-06-02: a live ALFA AWUS1900
-  reached `CPU_DL_READY` via `scripts/rtl8814au_dkms/test_hw_m1.py`.
+- **M2a (MAC register table): complete — pcap-verified AND hardware-proven.**
+  `PHY_MACConfig8814`'s 143-entry `array_mp_8814a_mac_reg` applied as a flat
+  `write8` loop (`mac.py`); also folds in `FirmwareDownload8814A`'s
+  `InitializeFirmwareVars8814` tail (REG_HMETFR 0x1cc <- 0x0f).
+- Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
+  boots; the port reproduces the USB conversation **byte-for-byte** through the
+  latest milestone (646/646/652 ops, all 46 FW packets). [HW] a live ALFA AWUS1900
+  reached `CPU_DL_READY` and applied the MAC table via
+  `scripts/rtl8814au_dkms/test_hw.py`.
 - Not registered in `wlan/manager.py` — master keeps the working mainline
   `rtw88_8814au` until this port is HW-proven to beat it on breadth/stability.
 
@@ -83,8 +88,14 @@ first `0x10C2` access (the `_InitPowerOn` entry).
 channel/RX/TX raise until their milestone). Standalone — does **not** import
 `chips/rtw88_base/` (mainline-derived).
 
-## Roadmap (each milestone pcap-diffed before "done")
-- M2: PHY/MAC/RF init (`PHY_MACConfig8814` onward) + channel tune.
-- M3: RX path (rx desc decode, monitor-mode RCR/filter rewrites) — the 2.4 GHz
-      breadth payoff; A/B vs mainline on hardware.
+## Roadmap (each milestone pcap-diffed before "done"; post-FW init = frames 6668+)
+- M2a: `PHY_MACConfig8814` MAC register table. **DONE.**
+- M2b: `PHY_BBConfig8814` (BB tables — these DO use phy_cond conditional rows, so
+       the BIT31/30 walker is needed here, unlike the flat MAC table).
+- M2c: `PHY_RFConfig8814A` (RF tables, per-path).
+- M2d: band switch + `rtw_hal_set_chnl_bw(..., CHANNEL_WIDTH_20, ...)` channel tune.
+- M3: RX path + `rtl8814_InitHalDm` (DIG/AGC watchdog — confirmed in source and on
+      the wire as 103 IGI=0xc50 writes adapting 0x1c..0x2a). The 2.4 GHz breadth
+      payoff; finish with a live A/B vs mainline. Monitor-mode RX is just the
+      captured RCR (0x608) values — port what's on the wire.
 - M4: TX (full `update_txdesc`) for deauth/replay.

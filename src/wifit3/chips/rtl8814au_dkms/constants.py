@@ -89,6 +89,7 @@ FWDL_ROM_DL = BIT(12)
 MCU_CORE_EN = BIT(2)         # REG_SYS_FUNC_EN+1 (0x03) — 3081 enable/disable
 DDMA_RESET = BIT(16)         # REG_CPU_DMEM_CON
 CPU_DL_READY = BIT(15)       # REG_8051FW_CTRL — set when FW boot completes
+REG_HMETFR = 0x01CC          # H2C command trigger; InitializeFirmwareVars8814 seeds 0x0f
 
 # 8051FW_CTRL checksum-ok flags written after a successful download
 IMEM_DL_RDY = BIT(3)

@@ -21,6 +21,7 @@ from wifit3.engine.protocols import DeviceID, ProgressCallback
 
 from .constants import PID_RTL8814AU, VID_REALTEK
 from .firmware import bring_up
+from .mac import phy_mac_config
 from .transport import Rtl8814auTransport
 
 logger = logging.getLogger(__name__)
@@ -64,15 +65,22 @@ class Rtl8814auDkmsDriver:
         fw = _load_firmware()
         if progress_cb:
             progress_cb(0.2, "Uploading firmware (3081 IDDMA)")
+        loop = asyncio.get_running_loop()
         # Bring-up does blocking synchronous USB I/O; keep it off the event loop.
-        ready = await asyncio.get_running_loop().run_in_executor(
-            None, bring_up, self.transport, fw
-        )
-        if progress_cb:
-            progress_cb(1.0, "Firmware ready" if ready else "Firmware NOT ready")
+        ready = await loop.run_in_executor(None, bring_up, self.transport, fw)
         if not ready:
             logger.error("RTL8814AU firmware download did not reach CPU_DL_READY")
-        return ready
+            if progress_cb:
+                progress_cb(1.0, "Firmware NOT ready")
+            return False
+        # M2a: MAC register table. (Extend this chain as later milestones land;
+        # keep it in sync with scripts/rtl8814au_dkms/verify_pcap.py.)
+        if progress_cb:
+            progress_cb(0.7, "Configuring MAC registers")
+        await loop.run_in_executor(None, phy_mac_config, self.transport)
+        if progress_cb:
+            progress_cb(1.0, "MAC configured")
+        return True
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         raise NotImplementedError("RTL8814AU DKMS port: channel tune is M2+")

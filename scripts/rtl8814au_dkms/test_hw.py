@@ -1,12 +1,13 @@
-"""RTL8814AU (vendor/DKMS port) — M1 hardware test: firmware upload + FW-ready.
+"""RTL8814AU (vendor/DKMS port) — hardware test of the implemented bring-up.
 
-Finds the card, runs the full M1 bring-up (power-on -> LLT -> 3081/IDDMA firmware
-download), and checks the chip reached CPU_DL_READY. This is the standalone vendor
-port on branch ``dkms/8814au``; it does NOT touch the registered mainline driver.
+Finds the card and runs `driver.connect()`, which currently does M1 (power-on ->
+LLT -> 3081/IDDMA firmware download -> FW-ready) plus M2a (MAC register table), and
+checks the chip reached CPU_DL_READY. Standalone vendor port on branch
+``dkms/8814au``; does NOT touch the registered mainline driver.
 
 Usage (run from a checkout with the card plugged in):
-    .venv\\Scripts\\python.exe scripts\\rtl8814au_dkms\\test_hw_m1.py
-    .venv\\Scripts\\python.exe scripts\\rtl8814au_dkms\\test_hw_m1.py --debug
+    .venv\\Scripts\\python.exe scripts\\rtl8814au_dkms\\test_hw.py
+    .venv\\Scripts\\python.exe scripts\\rtl8814au_dkms\\test_hw.py --debug
 
 On Linux, unbind the in-kernel driver first (e.g. ``rmmod 8814au``); on Windows the
 device must be WinUSB-bound (Zadig). If the bulk pipe wedges, unplug/replug and rerun.
@@ -59,9 +60,9 @@ def main() -> int:
     ready = asyncio.run(driver.connect(progress))
 
     if ready:
-        print("[PASS] M1: firmware uploaded and CPU_DL_READY is set.")
+        print("[PASS] bring-up reached FW-ready (CPU_DL_READY) and applied the MAC table.")
         return 0
-    print("[FAIL] M1: firmware download did not reach FW-ready.")
+    print("[FAIL] firmware download did not reach FW-ready.")
     return 1
 
 

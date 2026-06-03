@@ -72,6 +72,7 @@ from .constants import (
     REG_FIFOPAGE_INFO_4,
     REG_FIFOPAGE_INFO_5,
     REG_FWHW_TXQ_CTRL,
+    REG_HMETFR,
     REG_MGQ_PGBNDY,
     REG_RQPN_CTRL_2,
     REG_TXDMA_DROP_DATA_EN,
@@ -372,7 +373,11 @@ def download_firmware(t, fw: bytes) -> bool:
     _hal_rom_download_rsvd_page(t, fw, dmem_pkt, iram_pkt)
     _mcu_core(t, True)                        # enable 3081 MCU core
     _fwdl_enable(t, False)
-    return _fw_free_to_go(t)
+    ready = _fw_free_to_go(t)
+    # InitializeFirmwareVars8814 runs in FirmwareDownload8814A's exit path: seed
+    # the H2C command trigger so the first host->FW message latches correctly.
+    t.write8(REG_HMETFR, 0x0F)
+    return ready
 
 
 def bring_up(t, fw: bytes) -> bool:

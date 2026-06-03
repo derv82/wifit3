@@ -1,16 +1,17 @@
-"""M1 acceptance gate: replay-diff the port against the cold-boot capture.
+"""Acceptance gate: replay-diff the port against the cold-boot capture.
 
 Reconstructs the exact ordered USB conversation the vendor driver had with the
-chip during firmware download (control reads/writes + bulk-OUT FW packets), then
-drives :func:`wifit3.chips.rtl8814au_dkms.firmware.bring_up` against a transport
-that *replays the chip's recorded read responses*. Because read-modify-writes see
-the real chip values, the port must emit byte-identical writes and bulk packets.
+chip (control reads/writes + bulk-OUT FW packets), then drives the port's
+implemented bring-up against a transport that *replays the chip's recorded read
+responses*. Because read-modify-writes see the real chip values, the port must
+emit byte-identical writes and bulk packets.
 
-PASS = the port reproduces the capture's USB traffic from _InitPowerOn through the
-FW-ready poll, with every register write and all 46 firmware packets matching.
-This simultaneously verifies the firmware blob (the bulk payloads are the blob).
+Coverage grows with the port — currently M1 (power-on -> firmware -> FW-ready,
+incl. all 46 FW packets, which verifies the blob) plus M2a (the MAC register
+table). PASS = the port reproduces the capture's USB traffic from _InitPowerOn
+through the latest implemented milestone, byte-for-byte.
 
-Run: ``uv run python scripts/rtl8814au_dkms/verify_m1_pcap.py [capture-N.pcap]``
+Run: ``uv run python scripts/rtl8814au_dkms/verify_pcap.py [capture-N.pcap]``
 """
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
 
-from wifit3.chips.rtl8814au_dkms import firmware  # noqa: E402
+from wifit3.chips.rtl8814au_dkms import firmware, mac  # noqa: E402
 
 CAP_DIR = REPO / "usb_dumps_new" / "captures_rtl8814au"
 FW_BIN = REPO / "src" / "wifit3" / "chips" / "rtl8814au_dkms" / "assets" / "rtl8814au_fw.bin"
@@ -30,7 +31,7 @@ FW_BIN = REPO / "src" / "wifit3" / "chips" / "rtl8814au_dkms" / "assets" / "rtl8
 # Card device address per capture (lsusb devnum); FW download lives in the
 # airmon/open phase, which starts at frame 5707 in every capture.
 DEV_ADDR = {"capture-1": 51, "capture-2": 53, "capture-3": 54}
-WINDOW = (5707, 6950)
+WINDOW = (5707, 7300)  # covers M1 + M2a (MAC table ends ~frame 7003)
 START_ADDR = 0x10C2  # first register _InitPowerOn_8814AU touches
 
 
@@ -191,7 +192,9 @@ def main() -> int:
     time.sleep = lambda *a, **k: None  # replay needs no real delays
     t = ReplayTransport(ops)
     try:
-        ready = firmware.bring_up(t, fw)
+        ready = firmware.bring_up(t, fw)   # M1: power-on -> FW download -> ready
+        if ready:
+            mac.phy_mac_config(t)          # M2a: MAC register table
     except Divergence as e:
         print(f"\nFAIL (divergence): {e}")
         return 1
@@ -199,8 +202,8 @@ def main() -> int:
     if not ready:
         print("\nFAIL: bring_up did not reach CPU_DL_READY against the capture")
         return 1
-    print(f"\nPASS: port reproduced {t.i} USB ops byte-for-byte "
-          f"({n_bulk} FW packets / {len(fw)} B blob) and reached FW-ready.")
+    print(f"\nPASS: port reproduced {t.i} USB ops byte-for-byte through M2a "
+          f"({n_bulk} FW packets / {len(fw)} B blob, MAC table applied).")
     print(f"      {len(ops) - t.i} later-milestone ops remain in the capture.")
     return 0
 
