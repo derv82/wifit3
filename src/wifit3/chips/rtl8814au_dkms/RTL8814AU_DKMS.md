@@ -278,7 +278,8 @@ only — the 40/80 MHz width math is omitted by scope. [WIRE] cap1 frames 13695-
   needs the per-rate power computation) and IQK follow in the vendor flow; both are
   TX/cal concerns. The differ stops exactly at the first 0x1998 write. (The per-board
   TxBBSwing efuse decode is now done in M4e — this card reads the 0 dB default.)
-- **5G** band tune is not ported (`set_channel` accepts 2.4G channels 1-13 only).
+- **5G** band tune is M5 (not yet built): `set_channel` accepts 2.4G channels 1-13 only
+  for now. 5 GHz @ 20 MHz parity is scoped in the **M5 — 5 GHz @ 20 MHz** plan.
 
 ## TX power — the txagc table (M2e)
 `rtw_hal_set_tx_power_level` -> `PHY_SetTxPowerLevel8814` writes a per-(path,rate)
@@ -550,6 +551,74 @@ Sequencing: M4a -> M4b -> (M4c, M4d via the HW loop); M4e is independent. The HW
 delegatable units are **M4a**, the **M4b code**, and **M4e** (+ its pcap check); gate the
 live deauth/replay (M4b smoke, M4c, M4d) on the hardware loop.
 
+## M5 — 5 GHz @ 20 MHz (plan; not yet built)
+
+**Scope correction.** "20 MHz only" was meant to skip the bonded 40/80 MHz channels —
+NOT the 5 GHz band. The 8814AU is a dual-band 4T4R card; 5 GHz @ 20 MHz (beacons,
+inject, deauth, EAPOL) must reach full parity with 2.4 GHz. M1–M4 are 2.4 GHz-only; M5
+adds the missing band. 40/80 MHz stay out of scope. (This is the milestone loosely
+called "M6" in passing — it is the next port milestone, M5; driver *registration* in
+wlan/manager.py is a separate productization gate, not a numbered milestone.)
+
+**Verification anchor — decide first.** The 2.4 GHz init is byte-diffed against the
+cold-boot pcap. The 5 GHz band-switch + channel-tune + TX-power are likewise
+DETERMINISTIC, so the faithful anchor is a **5 GHz cold-boot capture** (airmon-ng
+bringing the card up / hopping onto a 5 GHz channel) — strongly recommended so
+`verify_pcap` can byte-diff M5. Without it we port from the vendor source and validate
+live (a 5 GHz beacon count); the 5 GHz channel→RF / fc-area / PG-parse math is intricate
+enough that a capture is worth it.
+
+**What we already have (de-risks M5):**
+- The init BB/AGC tables are **already 5 GHz-inclusive** — `array_mp_8814a_agc_tab` (M2b)
+  carries the 5 GHz rows; the switch just selects them via `0x958[4:0]` (1 = 5GL 36-64,
+  2 = 5GM 100-144, 3 = 5GH ≥149). **No new table load.** [SRC halhwimg8814a_bb.c]
+- The txagc write (`0x1998` formula) and the `inject_frame`/descriptor path are
+  **band-independent** — only the per-rate PowerIndex source + the channel tune change.
+- `phy_SetBwMode(20 MHz)` is essentially band-independent (reuse M2d's ADC/AGC bw regs).
+
+**Vendor 5 GHz deltas** (executor confirms every value verbatim — esp. the rfe=1 RFE
+values, the RF 0x18 MOD_AG bit decode, and the 5G PG offsets):
+- **Band switch 5G** [SRC PHY_SwitchWirelessBand8814A 5G]: rTxPath 0x80c[7:4]=0 (vs 2),
+  rCCK_RX 0xa04[27:24]=0xF (vs 5), CCK_CHECK 0x454=0x80 (vs 0), 0xa80[18]=1 (vs 0),
+  OFDM-only enable 0x808=0x2 (vs 0x3), the rfe-specific 5G RFE pinmux (PHY_SetRFEReg 5G),
+  BB-swing-5G; the 0x958 AGC select is DEFERRED to the channel switch.
+- **Channel tune 5G** [SRC phy_SwChnl8814A 5G]: fc-area 0x860[28:17] per sub-band
+  (36-48→0x494, 50-64→0x453, 100-116→0x452, 118+→0x412), per-path RF 0x18 = channel[7:0]
+  + RF_MOD_AG[18:16] per sub-band, 0x958[4:0] AGC select per sub-band (1/2/3),
+  band-detect 0x454; the 2.4G CCK TX-DFIR block (0xa20/24/28) is skipped.
+- **5G TX power** [SRC hal_com_phycfg.c 5G PG loader + phy_get_pg_txpwr_idx]: the 5G PG
+  block is 24 B/path (14 BW40 group bases + 10 diff bytes, no CCK), following the 2.4G
+  block in the per-path stride; a 5G channel→group map (14 UNII groups); an OFDM/HT/VHT
+  rate set (no CCK) → ~220 txagc writes/channel.
+- **5G TxBBSwing** [SRC PHY_GetTxBBSwing 5G]: efuse byte 0xC7, same 2-bit-per-path decode
+  + value table as M4e's 2.4G (0xC6).
+- **5G spur (20 MHz)** [SRC phy_SpurCalibration_8814A 5G]: most channels reset NBI/CSI
+  (reuse M2d); only ch153 (NBI notch) and ch140 (RFE0-specific 0x82c/0x830) need a real
+  notch at 20 MHz — fine-tuning, not a blocker for basic RX.
+
+**Milestones (tiny; each tagged):**
+- **M5a — 5G band switch (`chan.switch_wireless_band_5g`). [HW-FREE code, DELEGATABLE.]**
+  Port the 5G branch (rfe=1 values verbatim); unit-test the register sequence.
+- **M5b — 5G channel tune (`chan` 5G channel select: fc-area + RF 0x18 + 0x958 select,
+  skip CCK-DFIR). [HW-FREE code, DELEGATABLE.]** Reuse phy_SetBwMode(20 MHz).
+- **M5c — runtime band switching (`driver.set_channel` / `chan.set_channel_bw`).
+  [code DELEGATABLE; LIVE validation key.]** Detect a 2.4G↔5G crossing and run the band
+  switch (not just the channel tune); extend `SUPPORTED_CHANNELS` to the 5 GHz 20 MHz set
+  (36…165). The one genuinely new runtime behavior — the 2.4G-only port never
+  band-switched mid-run.
+- **M5d — 5G TX power (`efuse._parse_tx_power_5g` + `txpower` 5G loop). [HW-FREE code,
+  DELEGATABLE.]** Needed for 5G inject/deauth at correct power (RX does not need it).
+- **M5e — 5G TxBBSwing (`efuse._parse_bb_swing_5g`, 0xC7). [HW-FREE, DELEGATABLE, trivial.]**
+  Mirror M4e.
+- **M5f — 5G spur cal 20 MHz (ch153 / ch140 cases). [HW-FREE code, DELEGATABLE, LOW pri.]**
+
+**Sequencing:** M5e anytime (trivial). M5a→M5b→M5c gets **5 GHz RX** (validate: do we see
+5 GHz beacons / how many APs on a 5G `scan_hw`). Then M5d gets **5 GHz TX** (deauth/replay
+reuse the existing `inject_frame` at 5G power). M5f is polish. Live-validate 5 GHz RX
+before trusting 5 GHz TX. HW-free delegatable units: M5a/M5b/M5d/M5e/M5f code + unit
+tests; M5c's runtime logic + all on-air validation need the hardware loop (and ideally
+the 5 GHz capture).
+
 ## Roadmap (each milestone pcap-diffed before "done"; post-FW init = frames 6668+)
 - EFUSE: probe-phase chip-param read (rfe_type / crystal_cap / mac_address). **DONE.**
 - M2a: `PHY_MACConfig8814` MAC register table. **DONE.**
@@ -560,7 +629,8 @@ live deauth/replay (M4b smoke, M4c, M4d) on the hardware loop.
 - M2c: `PHY_RFConfig8814A` — radio_a..d RF tables (1176 writes for rfe=1) + RCK1
        copy, via the shared phy_cond walker. **DONE.**
 - M2d: `PHY_ConfigBB_8814A` + 2.4G band switch + `rtw_hal_set_chnl_bw(...,
-       CHANNEL_WIDTH_20, ...)` channel tune (channel 1). **DONE.** 5G band tune deferred.
+       CHANNEL_WIDTH_20, ...)` channel tune (channel 1). **DONE.** 5G band tune is M5
+       (5 GHz @ 20 MHz — the band M1–M4 left out; see the M5 plan).
 - M2e: per-rate TX-power txagc table (0x1998). **DONE.** IQK is skipped at init.
 - M3a: hal_init MISC11 + `rtl8814_InitHalDm` (phydm DIG/AGC/false-alarm seed). **DONE.**
 - M3b: hal_init continuation + monitor RX. **M3b-1 DONE (pcap-verified):** turn-on
@@ -596,3 +666,9 @@ live deauth/replay (M4b smoke, M4c, M4d) on the hardware loop.
       (M4a builder + M4b send path + M4c/M4d live deauth/replay + M4e TxBBSwing decode).
       See **M4 — TX (plan)** above for the vendor TX-path map, per-milestone scope, and
       which milestones are hardware-free / subagent-delegatable.
+- M5: 5 GHz @ 20 MHz parity (beacons/inject/deauth/EAPOL) — the band M1–M4 left out
+      ("20 MHz only" meant skip 40/80 MHz, not skip 5 GHz). 5G band switch (M5a) +
+      channel tune (M5b) + runtime band-switching (M5c) + 5G TX power (M5d) + 5G
+      TxBBSwing (M5e) + 5G spur (M5f). The init AGC/BB tables are already 5G-inclusive
+      (selected via 0x958), so no new table load. See **M5 — 5 GHz @ 20 MHz (plan)**
+      above; ideally byte-diffed against a fresh 5 GHz cold-boot capture.
