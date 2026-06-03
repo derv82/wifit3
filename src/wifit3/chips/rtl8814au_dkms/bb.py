@@ -30,18 +30,19 @@ from .bb_phy_reg_tbl import PHY_REG
 _BIT31, _BIT30, _BIT29, _BIT28 = 1 << 31, 1 << 30, 1 << 29, 1 << 28
 _COND_ELSE, _COND_ENDIF = 2, 3  # [SRC] phydm_types.h:301 (IF=0, ELSE_IF=1)
 
-# This card: cut=A_CUT, package_type=0, interface=USB, rfe_type=1. check_positive
-# folds cut==ODM_CUT_A -> 15 and package_type==0 -> 15 before building driver1.
-# [SRC] hal_ReadRFEType_8814A:1541 (8814AU fallback rfe_type=1); ODM_ITRF_USB=0x2,
-# ODM_CE platform=0x8. [WIRE] this driver1 reproduces all 2102 cold-boot BB writes.
+# This card: cut=A_CUT, package_type=0, interface=USB. check_positive folds
+# cut==ODM_CUT_A -> 15 and package_type==0 -> 15 before building driver1; both are
+# fixed for the 8814AU and (brute-forced) don't gate this card's taken path, so
+# only rfe_type varies and it comes from efuse (efuse.read_chip_params). ODM_ITRF_USB
+# =0x2, ODM_CE platform=0x8. [WIRE] driver1 0x0F08F201 (rfe=1) reproduces all 2102
+# cold-boot BB writes; efuse independently decodes rfe_type=1 (verify_efuse_pcap.py).
 _CUT_FOR_PARA = 0xF       # A_CUT -> 15
 _PKG_FOR_PARA = 0xF       # package_type 0 -> 15
 _SUPPORT_INTERFACE = 0x2  # ODM_ITRF_USB
 _SUPPORT_PLATFORM = 0x8   # ODM_CE
-_RFE_TYPE = 0x1
 
 
-def _build_driver1() -> int:
+def _build_driver1(rfe_type: int) -> int:
     """[SRC] check_positive preamble — assemble the match word from chip params."""
     return (
         (_CUT_FOR_PARA & 0xFF) << 24
@@ -49,7 +50,7 @@ def _build_driver1() -> int:
         | _SUPPORT_PLATFORM << 16
         | (_PKG_FOR_PARA & 0xF) << 12
         | (_SUPPORT_INTERFACE & 0x0F) << 8
-        | (_RFE_TYPE & 0xFF)
+        | (rfe_type & 0xFF)
     )
 
 
@@ -132,23 +133,23 @@ def _bb_config_prefix(t) -> None:
     t.write8(C.REG_RF_CTRL3, C.RF_POWER_ON)        # PathD
 
 
-def _bb_config_parafile(t) -> None:
+def _bb_config_parafile(t, rfe_type: int) -> None:
     """[SRC] phy_BB8814A_Config_ParaFile — PHY_REG then AGC_TAB via the walker.
 
     (PHY_REG_MP is skipped: mp_mode is off in the captured run.)
     """
-    driver1 = _build_driver1()
+    driver1 = _build_driver1(rfe_type)
     _walk_table(t, PHY_REG, driver1)
     _walk_table(t, AGC_TAB, driver1)
 
 
-def _set_crystal_cap(t) -> None:
+def _set_crystal_cap(t, crystal_cap: int) -> None:
     """[SRC] phydm_set_crystal_cap_reg (8814A branch) — 0x2C[26:15] = crystal_cap.
 
     8814A packs the 6-bit cap twice: reg_val = cap | (cap << 6), into mask
     0x07FF8000. crystal_cap comes from efuse EEPROM_XTAL_8814A.
     """
-    cap = C.CRYSTAL_CAP & 0x3F
+    cap = crystal_cap & 0x3F
     reg_val = cap | (cap << 6)
     _set_reg_masked(t, C.REG_XTAL_CTRL, C.CRYSTAL_CAP_MASK, reg_val)
 
@@ -163,9 +164,13 @@ def _config_trx_path(t) -> None:
     _set_reg_masked(t, C.rCCK_RX_Jaguar, 0x0F000000, 0x5)   # pathB rx
 
 
-def phy_bb_config(t) -> None:
-    """[SRC] PHY_BBConfig8814 — baseband bring-up: prefix, BB/AGC tables, suffix."""
+def phy_bb_config(t, rfe_type: int, crystal_cap: int) -> None:
+    """[SRC] PHY_BBConfig8814 — baseband bring-up: prefix, BB/AGC tables, suffix.
+
+    ``rfe_type`` (phy_cond walker discriminator) and ``crystal_cap`` come from the
+    efuse read (``efuse.read_chip_params``).
+    """
     _bb_config_prefix(t)
-    _bb_config_parafile(t)
-    _set_crystal_cap(t)
+    _bb_config_parafile(t, rfe_type)
+    _set_crystal_cap(t, crystal_cap)
     _config_trx_path(t)

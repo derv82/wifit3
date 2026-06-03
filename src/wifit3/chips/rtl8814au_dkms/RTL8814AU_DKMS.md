@@ -20,18 +20,14 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
       and will need explicit RCR / RX-filter / address-match rewrites once RX lands.
       M2b applies the vendor's STA-init `RCR = 0xf40060ce` verbatim (CBSSID match,
       etc.) — monitor mode must overwrite it at the RX milestone.
-- [ ] **efuse autoload (deferred — M2b uses wire-confirmed constants instead):** the
-      probe-phase efuse read (frames ~55–5706, before `_InitPowerOn`, *outside* the
-      replay window) is still unported, so `mac_address` is `None`. M2b's chip
-      params are taken as confirmed constants rather than read from efuse:
-      - `rfe_type = 1` — the vendor's 8814AU fallback [SRC rtl8814a_hal_init.c:1541];
-        also **wire-proven** (it reproduces every BB write, see below).
-      - `crystal_cap = 0x23` — **per-unit** factory cal (efuse `EEPROM_XTAL_8814A`),
-        wire-confirmed for *this* AWUS1900. A different unit's cap would differ by a
-        few LSBs (small CFO, corrected by runtime CFO-tracking). Porting the efuse
-        autoload (also unblocks `mac_address`) is the recommended next sub-task.
-      - cut/package: don't affect the walker output for this card (brute-forced —
-        no taken condition gates the cut[27:24]/pkg[15:12] nibbles); A-cut assumed.
+- [x] **efuse / chip params — ported & verified.** The probe-phase efuse read
+      (frames 51–5677, device 51, *outside* the M1+ window) is now ported in
+      `efuse.py` and verified byte-for-byte by `verify_efuse_pcap.py`. It decodes
+      `rfe_type` (BB walker discriminator), `crystal_cap` (AFE trim), and the
+      `mac_address` — all read live from the card, replacing the M2b constants. The
+      decode independently yields `rfe_type=1` and `crystal_cap=0x23`, confirming
+      the M2b values. cut/package come from `REG_SYS_CFG1` (read, not decoded —
+      they don't gate this card's walker; A-cut assumed). See **EFUSE** below.
 - [ ] **TX descriptor (full):** only the beacon-queue FW-download descriptor is
       built so far (see below). Data-frame TX (rates/aggregation/sec) is unported.
 
@@ -41,6 +37,11 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   `PHY_MACConfig8814`'s 143-entry `array_mp_8814a_mac_reg` applied as a flat
   `write8` loop (`mac.py`); also folds in `FirmwareDownload8814A`'s
   `InitializeFirmwareVars8814` tail (REG_HMETFR 0x1cc <- 0x0f).
+- **EFUSE (probe-phase chip-param read): complete — pcap-verified AND
+  hardware-proven.** `efuse.read_chip_params` (`efuse.py`) reproduces the probe
+  efuse read and decodes `rfe_type`, `crystal_cap`, `mac_address`. Wired into
+  `connect()` ahead of bring-up (vendor probe order), feeding M2b's BB config. See
+  **EFUSE** below.
 - **M2b (hal_init MISC stage + PHY_BBConfig8814): complete — pcap-verified AND
   hardware-proven.** Two parts:
   - **MISC stage** (`mac.mac_init_misc`) — the `rtl8814au_hal_init` block between
@@ -57,6 +58,25 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   `scripts/rtl8814au_dkms/test_hw.py` (~2100 control transfers, no error).
 - Not registered in `wlan/manager.py` — master keeps the working mainline
   `rtw88_8814au` until this port is HW-proven to beat it on breadth/stability.
+
+## EFUSE — probe-phase chip-param read
+`ReadAdapterInfo8814AU` -> `hal_InitPGData_8814A` -> `EFUSE_ShadowMapUpdate` ->
+`hal_EfuseReadEFuse8814A` reads the burned-in fuses. Ported in `efuse.py`,
+verified byte-for-byte by `verify_efuse_pcap.py` (all three boots, 2814 ops).
+- **Per-byte protocol** [WIRE] cap1 frames 51–5677, device 51 (before
+  `_InitPowerOn`): each physical byte is a 9-transfer EFUSE_CTRL cycle —
+  bank-select (`REG_EFUSE_TEST` 0x34, clear `EFUSE_SEL` for WIFI bank 0), address
+  (`REG_EFUSE_CTRL`+1 = addr[7:0], +2[1:0] = addr[9:8]), trigger (+3 bit7→0), poll
+  (+3 bit7), data (`REG_EFUSE_CTRL`). Gated by `REG_EFUSE_ACCESS` (0x69 on / 0x00
+  off). 312 physical bytes on this card.
+- **Header unpacking** [SRC hal_EfuseReadEFuse8814A:1646]: PG blocks (header =
+  section offset + 4-bit word-enable; `EXT_HEADER` for offsets ≥ 16) fill
+  `eFuseWord[64][4]`, flattened into a 512 B logical map (`section*8 + word*2`).
+- **Decoded params**: `rfe_type` = map[0xCA]&0x7F (else 8814AU fallback 1);
+  `crystal_cap` = map[0xB9] (else 0x20); `mac_address` = map[0xD8:0xDE]. For this
+  card the read yields `rfe_type=1`, `crystal_cap=0x23`, and a valid ALFA MAC,
+  independently confirming the values M2b's BB writes implied. `cut`/`package`
+  come from `REG_SYS_CFG1` (0xF0, read but not decoded — they don't gate the walker).
 
 ## BB config — the phydm conditional walker (M2b)
 `phy_BB8814A_Config_ParaFile` [SRC rtl8814a_phycfg.c:381] loads two flat-u32 tables
@@ -75,9 +95,10 @@ interface[11:8] nibbles (when non-zero) and the rfe byte[7:0]. driver2/3/4 are
 computed in the vendor source but never read, so the port carries only `driver1`.
 
 `driver1 = 0x0F08F201` (cut A→0xF, package 0→0xF, interface USB=0x2, platform CE=0x8,
-**rfe_type=1**). Empirically, only `rfe_type` selects branches in this card's taken
-path — every cut/package combination reproduces the wire identically. [WIRE] this
-`driver1` reproduces **all 2102** cold-boot BB writes byte-for-byte.
+**rfe_type=1**). `rfe_type` is read from efuse (see above); cut/package are fixed
+8814AU/A-cut constants. Empirically, only `rfe_type` selects branches in this
+card's taken path — every cut/package combination reproduces the wire identically.
+[WIRE] this `driver1` reproduces **all 2102** cold-boot BB writes byte-for-byte.
 
 Suffix: `crystal_cap` packed into 0x2C[26:15] (`cap | cap<<6`, cap=0x23) +
 `_rtw_config_trx_path_8814a` CCK path selection (0xa2c, 0xa04).
@@ -130,19 +151,20 @@ first `0x10C2` access (the `_InitPowerOn` entry).
 ## Module layout
 `constants.py` (regs/bits/sizes, all grepped verbatim) · `pwrseq.py` (power tables
 + parser) · `transport.py` (PyUSB vendor ctrl 0x05 + bulk OUT) · `firmware.py`
-(power-on → LLT → FW download → ready) · `mac.py` (M2a MAC table + M2b MISC stage) ·
-`bb.py` (M2b PHY_BBConfig8814: prefix + phydm walker + suffix) · `bb_phy_reg_tbl.py`
-/ `bb_agc_tab_tbl.py` (generated flat-u32 BB/AGC tables) · `driver.py` (WlanDriver
-Protocol; connect() chains M1→M2a→M2b; channel/RX/TX raise until their milestone).
-Standalone — does **not** import `chips/rtw88_base/` (mainline-derived).
+(power-on → LLT → FW download → ready) · `efuse.py` (probe-phase EFUSE read +
+rfe/xtal/mac decode) · `mac.py` (M2a MAC table + M2b MISC stage) · `bb.py` (M2b
+PHY_BBConfig8814: prefix + phydm walker + suffix) · `bb_phy_reg_tbl.py` /
+`bb_agc_tab_tbl.py` (generated flat-u32 BB/AGC tables) · `driver.py` (WlanDriver
+Protocol; connect() chains EFUSE→M1→M2a→M2b; channel/RX/TX raise until their
+milestone). Standalone — does **not** import `chips/rtw88_base/` (mainline-derived).
 
 ## Roadmap (each milestone pcap-diffed before "done"; post-FW init = frames 6668+)
+- EFUSE: probe-phase chip-param read (rfe_type / crystal_cap / mac_address). **DONE.**
 - M2a: `PHY_MACConfig8814` MAC register table. **DONE.**
 - M2b: hal_init MISC stage + `PHY_BBConfig8814` — PHY_REG (4622 u32) + AGC_TAB
        (6280 u32) via the phydm walker, prefix/crystal-cap/TRX-path. **DONE.**
-       (Chip params taken as wire-confirmed constants; efuse autoload deferred —
-       see Potential Known Gaps. The actual table sizes are 4622/6280 u32, not the
-       2595/3254 originally scoped.)
+       (Chip params now read from efuse. The actual table sizes are 4622/6280 u32,
+       not the 2595/3254 originally scoped.)
 - M2c: `PHY_RFConfig8814A` (RF tables, per-path; same phy_cond walker). The BB
        prefix already powered on RF paths A–D (RF_CTRL0/1/3); next is the radio_a..d
        tables written through 0xc90 (the wire op right after M2b's TRX-path suffix).

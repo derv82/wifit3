@@ -21,6 +21,7 @@ from wifit3.engine.protocols import DeviceID, ProgressCallback
 
 from .bb import phy_bb_config
 from .constants import PID_RTL8814AU, VID_REALTEK
+from .efuse import read_chip_params
 from .firmware import bring_up
 from .mac import mac_init_misc, phy_mac_config
 from .transport import Rtl8814auTransport
@@ -61,19 +62,29 @@ class Rtl8814auDkmsDriver:
         self._rx_cb = cb
 
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
+        loop = asyncio.get_running_loop()
+        # All bring-up does blocking synchronous USB I/O; keep it off the event loop.
+
+        # EFUSE read (vendor probe order: before _InitPowerOn). Yields rfe_type
+        # (BB phy_cond discriminator), crystal_cap, and the MAC address.
         if progress_cb:
-            progress_cb(0.0, "Loading RTL8814AU firmware")
-        fw = _load_firmware()
+            progress_cb(0.0, "Reading EFUSE / chip parameters")
+        params = await loop.run_in_executor(None, read_chip_params, self.transport)
+        self.mac_address = params.mac_address
+        logger.info("RTL8814AU efuse: rfe_type=%d crystal_cap=0x%02x mac=%s",
+                    params.rfe_type, params.crystal_cap,
+                    params.mac_address or "<none>")
+
         if progress_cb:
             progress_cb(0.2, "Uploading firmware (3081 IDDMA)")
-        loop = asyncio.get_running_loop()
-        # Bring-up does blocking synchronous USB I/O; keep it off the event loop.
+        fw = _load_firmware()
         ready = await loop.run_in_executor(None, bring_up, self.transport, fw)
         if not ready:
             logger.error("RTL8814AU firmware download did not reach CPU_DL_READY")
             if progress_cb:
                 progress_cb(1.0, "Firmware NOT ready")
             return False
+
         # M2a/M2b: MAC table -> hal_init MISC stage -> PHY_BBConfig8814.
         # (Extend this chain as later milestones land; keep it in sync with
         # scripts/rtl8814au_dkms/verify_pcap.py.)
@@ -83,7 +94,7 @@ class Rtl8814auDkmsDriver:
         def _mac_bb_config(t):
             phy_mac_config(t)     # M2a: MAC register table
             mac_init_misc(t)      # M2b: hal_init MISC stage
-            phy_bb_config(t)      # M2b: PHY_BBConfig8814 (BB + AGC)
+            phy_bb_config(t, params.rfe_type, params.crystal_cap)  # M2b: PHY_BBConfig8814
 
         await loop.run_in_executor(None, _mac_bb_config, self.transport)
         if progress_cb:

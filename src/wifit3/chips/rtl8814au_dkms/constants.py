@@ -273,10 +273,38 @@ RF_POWER_ON = 0x07
 # PHY_BBConfig8814 suffix: crystal-cap + TRX-path [SRC] rtl8814a_phycfg.c:370,305.
 REG_XTAL_CTRL = 0x002C         # crystal-cap field [26:15] (8814A) [SRC] R_0x2c
 CRYSTAL_CAP_MASK = 0x07FF8000  # 0x2C[26:21] = 0x2C[20:15] = crystal_cap
-# crystal_cap (6-bit) from efuse EEPROM_XTAL_8814A; [WIRE] cap1 0x2c <- 0x4471d820.
-CRYSTAL_CAP = 0x23
+# crystal_cap (6-bit) is read from efuse (efuse.read_chip_params); for this card
+# it is 0x23 — [WIRE] cap1 0x2c <- 0x4471d820, confirmed by verify_efuse_pcap.py.
 rCCK0_FalseAlarmReport = 0x0A2C
 rCCK_RX_Jaguar = 0x0A04        # CCK RX path selection
+
+# --- EFUSE (probe-phase chip-param read) ------------------------------------
+# Physical efuse read via EFUSE_CTRL, then header-unpacked into a 512 B logical
+# map. [SRC] hal_EfuseReadEFuse8814A + halmac per-byte protocol; [WIRE] cap1
+# frames 51..5677 (device 51), 312 physical bytes.
+REG_SYS_CFG1 = 0x00F0          # ReadChipVersion: chip-id / cut / package (4 B)
+REG_9346CR = 0x000A            # boot/autoload status (BOOT_FROM_EEPROM | EEPROM_EN)
+BOOT_FROM_EEPROM = BIT(4)
+EEPROM_EN = BIT(5)             # autoload OK when set
+REG_EFUSE_CTRL = 0x0030        # [7:0]=data, +1=addr[7:0], +2[1:0]=addr[9:8], +3 b7=flag
+REG_EFUSE_TEST = 0x0034        # [9:8] = EFUSE_SEL bank (WIFI bank 0)
+EFUSE_SEL_MASK = 0x0300
+REG_EFUSE_ACCESS = 0x00CF      # access gate
+EFUSE_ACCESS_ON = 0x69
+EFUSE_ACCESS_OFF = 0x00
+EFUSE_CTRL_VALID = BIT(7)      # REG_EFUSE_CTRL+3 bit7 — read-done flag
+
+EFUSE_MAP_LEN = 512            # EFUSE_MAP_LEN_8814A
+EFUSE_MAX_SECTION = 64         # EFUSE_MAX_SECTION_8814A
+EFUSE_MAX_WORD_UNIT = 4        # EFUSE_MAX_WORD_UNIT_8814A
+EFUSE_REAL_CONTENT_LEN = 1024  # EFUSE_REAL_CONTENT_LEN_8814A (addr ceiling)
+
+# Logical-map offsets [SRC] include/hal_pg.h
+EEPROM_MAC_ADDR = 0xD8         # EEPROM_MAC_ADDR_8814AU, 6 B
+EEPROM_XTAL = 0xB9             # EEPROM_XTAL_8814 (crystal_cap)
+EEPROM_RFE_OPTION = 0xCA       # EEPROM_RFE_OPTION_8814 (rfe_type, bit7 + [6:0])
+EEPROM_DEFAULT_CRYSTAL_CAP = 0x20  # EEPROM_Default_CrystalCap_8814
+RFE_TYPE_8814AU_FALLBACK = 1   # hal_ReadRFEType_8814A 8814AU branch
 
 # --- USB device identity ----------------------------------------------------
 VID_REALTEK = 0x0BDA

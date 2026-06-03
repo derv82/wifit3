@@ -196,7 +196,10 @@ def main() -> int:
         if ready:
             mac.phy_mac_config(t)          # M2a: MAC register table
             mac.mac_init_misc(t)           # M2b: hal_init MISC stage
-            bb.phy_bb_config(t)            # M2b: PHY_BBConfig8814 (prefix so far)
+            # rfe_type/crystal_cap come from efuse on hardware; the probe-phase
+            # efuse read is outside this window, so feed the values it decodes
+            # (verified independently by verify_efuse_pcap.py).
+            bb.phy_bb_config(t, rfe_type=1, crystal_cap=0x23)  # M2b: PHY_BBConfig8814
     except Divergence as e:
         print(f"\nFAIL (divergence): {e}")
         return 1

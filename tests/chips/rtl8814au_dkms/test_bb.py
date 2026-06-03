@@ -21,11 +21,11 @@ class Rec:
 
 def test_driver1_is_wire_confirmed_value():
     # cut A->0xF, package 0->0xF, interface USB=0x2, platform CE=0x8, rfe_type=1.
-    assert bb._build_driver1() == 0x0F08F201
+    assert bb._build_driver1(1) == 0x0F08F201
 
 
 def test_check_positive_matches_only_rfe_for_bare_condition():
-    d1 = bb._build_driver1()
+    d1 = bb._build_driver1(1)
     # A bare condition (only the rfe byte set) matches iff rfe_type == 1.
     assert bb._check_positive(d1, 0x80000001)       # BIT31 marker masked off
     assert not bb._check_positive(d1, 0x80000002)
@@ -35,7 +35,7 @@ def test_check_positive_matches_only_rfe_for_bare_condition():
 
 
 def test_walker_if_else_endif():
-    d1 = bb._build_driver1()
+    d1 = bb._build_driver1(1)
     BIT31, BIT30 = 1 << 31, 1 << 30
     # The condition (rfe byte) lives in the IF word; the BIT30 word is the pair.
     # IF rfe==1 -> write A; ELSE -> write B; ENDIF -> write C (always).
@@ -69,7 +69,7 @@ def test_walker_if_else_endif():
 
 def test_bb_tables_apply_2102_writes():
     """driver1 selects exactly the 2102 BB writes seen on the cold-boot wire."""
-    d1 = bb._build_driver1()
+    d1 = bb._build_driver1(1)
     rec = Rec()
     bb._walk_table(rec, PHY_REG, d1)
     n_phy = len(rec.writes)
