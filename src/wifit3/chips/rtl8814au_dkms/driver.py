@@ -19,9 +19,10 @@ import usb.core
 
 from wifit3.engine.protocols import DeviceID, ProgressCallback
 
+from .bb import phy_bb_config
 from .constants import PID_RTL8814AU, VID_REALTEK
 from .firmware import bring_up
-from .mac import phy_mac_config
+from .mac import mac_init_misc, phy_mac_config
 from .transport import Rtl8814auTransport
 
 logger = logging.getLogger(__name__)
@@ -73,13 +74,20 @@ class Rtl8814auDkmsDriver:
             if progress_cb:
                 progress_cb(1.0, "Firmware NOT ready")
             return False
-        # M2a: MAC register table. (Extend this chain as later milestones land;
-        # keep it in sync with scripts/rtl8814au_dkms/verify_pcap.py.)
+        # M2a/M2b: MAC table -> hal_init MISC stage -> PHY_BBConfig8814.
+        # (Extend this chain as later milestones land; keep it in sync with
+        # scripts/rtl8814au_dkms/verify_pcap.py.)
         if progress_cb:
             progress_cb(0.7, "Configuring MAC registers")
-        await loop.run_in_executor(None, phy_mac_config, self.transport)
+
+        def _mac_bb_config(t):
+            phy_mac_config(t)     # M2a: MAC register table
+            mac_init_misc(t)      # M2b: hal_init MISC stage
+            phy_bb_config(t)      # M2b: PHY_BBConfig8814 (BB + AGC)
+
+        await loop.run_in_executor(None, _mac_bb_config, self.transport)
         if progress_cb:
-            progress_cb(1.0, "MAC configured")
+            progress_cb(1.0, "MAC + baseband configured")
         return True
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:

@@ -138,6 +138,146 @@ MAX_XMIT_EXTBUF_SZ = 1536
 # [WIRE] full chunk = 1488 B across all 46 packets in all 3 cold boots.
 MAX_RSVD_PAGE_BUF = MAX_XMIT_EXTBUF_SZ - TXDESC_OFFSET  # = 1488
 
+# --- M2b: post-MAC-table hal_init MISC stage --------------------------------
+# The hal_init block between PHY_MACConfig8814 and PHY_BBConfig8814
+# [SRC] usb/usb_halinit.c rtl8814au_hal_init lines 1168..1198. [WIRE] cap1 7003..7101.
+REG_TRXDMA_CTRL = 0x010C       # TX/RX DMA queue-priority + agg-enable word
+
+# Out-EP queue priority [SRC] include/hal_com_reg.h _TXDMA_*Q_MAP + QUEUE_*
+QUEUE_LOW = 1
+QUEUE_NORMAL = 2
+QUEUE_HIGH = 3
+
+
+def _txdma_map(q: int, shift: int) -> int:
+    return (q & 0x3) << shift
+
+
+# _InitPageBoundary: REG_RXFF_PTR <- RX_DMA_BOUNDARY_8814A
+# = MAX_RX_DMA_BUFFER_SIZE_8814A(0x5C00) - RX_DMA_RESERVED_SIZE_8814A(0) - 1.
+# [SRC] rtl8814a_spec.h:164; reserved-size 0 in this build (wire = 0x5BFF, not 0x5AFF).
+RX_DMA_BOUNDARY = 0x5BFF
+
+REG_RX_DRVINFO_SZ = 0x060F     # _InitDriverInfoSize; DRVINFO_SZ = 4 (unit 8 B)
+DRVINFO_SZ = 4
+REG_HIMR0 = 0x00B0             # _InitInterrupt; IntrMask[0] = 0 on USB
+REG_HIMR1 = 0x00B8             # IntrMask[1] = 0
+
+# _InitNetworkType: REG_CR[17:16] = NT_LINK_AP [SRC] hal_com_reg.h
+MASK_NETTYPE = 0x30000
+NT_LINK_AP = 0x2
+
+
+def NETTYPE(x: int) -> int:    # _NETTYPE(x)
+    return (x & 0x3) << 16
+
+
+# _InitMacConfigure_8814A
+REG_RRSR = 0x0440
+RRSR_RATE_MASK = 0xFFFFF       # phydm_rrsr_set_register: odm_set_mac_reg(0x440, 0xfffff)
+RATE_ALL_CCK = 0x0000000F      # RATR_1M|2M|55M|11M
+RATE_ALL_OFDM_AG = 0x00000FF0  # RATR_6M..54M
+REG_RETRY_LIMIT = 0x042A
+RL_VAL_STA = 0x30              # BIT_LRL(RL_VAL_STA)|BIT_SRL(RL_VAL_STA) = 0x3030
+REG_RCR = 0x0608
+REG_RXFLTMAP1 = 0x06A2
+RXFLTMAP1_VAL = BIT(10) | BIT(5)  # mask ps-poll (BIT10); NDPA for beamforming (BIT5)
+REG_MAX_AGGR_NUM = 0x04CA
+REG_RTS_MAX_AGGR_NUM = 0x04CB
+MAX_AGGR_NUM = 0x36
+
+# RCR (STA-mode init value); monitor-mode rewrite is a later (RX) milestone.
+# [SRC] hal_com_reg.h RCR_*; [WIRE] cap1 REG_RCR <- 0xf40060ce.
+RCR_APM = BIT(1)
+RCR_AM = BIT(2)
+RCR_AB = BIT(3)
+RCR_CBSSID_DATA = BIT(6)
+RCR_CBSSID_BCN = BIT(7)
+RCR_AMF = BIT(13)
+RCR_HTC_LOC_CTRL = BIT(14)
+RCR_APP_PHYST_RXFF = BIT(28)
+RCR_APP_ICV = BIT(29)
+RCR_APP_MIC = BIT(30)
+RCR_APPFCS = BIT(31)           # CONFIG_RX_PACKET_APPEND_FCS (defined in this build)
+FORCEACK = BIT(26)
+RCR_INIT_VALUE = (
+    RCR_APM | RCR_AM | RCR_AB | RCR_CBSSID_DATA | RCR_CBSSID_BCN
+    | RCR_APP_ICV | RCR_AMF | RCR_HTC_LOC_CTRL | RCR_APP_MIC
+    | RCR_APP_PHYST_RXFF | FORCEACK | RCR_APPFCS
+)  # = 0xf40060ce
+
+# _InitEDCA_8814AUsb
+REG_SPEC_SIFS = 0x0428
+REG_MAC_SPEC_SIFS = 0x063A
+REG_SIFS_CTX = 0x0514
+REG_SIFS_TRX = 0x0516
+SIFS_VAL = 0x100A
+REG_EDCA_VO_PARAM = 0x0500
+REG_EDCA_VI_PARAM = 0x0504
+REG_EDCA_BE_PARAM = 0x0508
+REG_EDCA_BK_PARAM = 0x050C
+EDCA_BE_VAL = 0x005EA42B
+EDCA_BK_VAL = 0x0000A44F
+EDCA_VI_VAL = 0x005EA324
+EDCA_VO_VAL = 0x002FA226
+
+# _InitRetryFunction_8814A
+EN_AMPDU_RTY_NEW = BIT(7)       # REG_FWHW_TXQ_CTRL(0x420)
+REG_ACKTO = 0x0640
+ACKTO_VAL = 0x80
+
+# init_UsbAggregationSetting_8814A
+REG_TDECTRL = 0x0208           # aliases REG_FIFOPAGE_CTRL_2; here the TX-agg desc-num word
+BLK_DESC_NUM_SHIFT = 4
+BLK_DESC_NUM_MASK = 0xF
+USB_TX_AGG_DESC_NUM = 3
+REG_RXDMA_AGG_PG_TH = 0x0280
+RXDMA_AGG_EN = BIT(2)          # REG_TRXDMA_CTRL; already set on cold boot
+USB_AGG_EN = BIT(7)            # REG_RXDMA_AGG_PG_TH+3 (0x283)
+
+# _InitBeaconParameters_8814A / _InitBeaconMaxError_8814A
+REG_TBTT_PROHIBIT = 0x0540
+TBTT_PROHIBIT_SETUP_TIME = 0x04
+TBTT_PROHIBIT_HOLD_TIME_STOP_BCN = 0x64
+REG_DRVERLYINT = 0x0558
+DRIVER_EARLY_INT_TIME = 0x05
+REG_BCNDMATIM = 0x0559
+BCN_DMA_ATIME_INT_TIME = 0x02
+REG_BCNTCFG = 0x0510
+BCNTCFG_VAL = 0x4413
+REG_BCN_MAX_ERR = 0x055D       # CONFIG_ADHOC_WORKAROUND_SETTING -> 0xFF
+
+# _InitBurstPktLen
+REG_FAST_EDCA_VOVI_SETTING = 0x1448
+REG_FAST_EDCA_BEBK_SETTING = 0x144C
+FAST_EDCA_VAL = 0x08070807
+REG_USB_SPEED = 0x00FF         # bit7 set => USB2/1.1 mode
+REG_RXDMA_MODE = 0x0290
+RXDMA_MODE_BURST_512 = 0x1E    # USB2 + 512-B bulk-out
+RXDMA_AGG_TH_USB2 = 0x2005     # REG_RXDMA_AGG_PG_TH, 20K agg threshold
+
+# Init CR MACTXEN/MACRXEN after RxFF boundary [SRC] usb_halinit.c:1197.
+MACTXEN = BIT(6)
+MACRXEN = BIT(7)
+
+# --- M2b: PHY_BBConfig8814 prefix [SRC] rtl8814a_phycfg.c:334 ----------------
+FEN_USBA = BIT(2)              # REG_SYS_FUNC_EN(0x02): USB analog enable
+REG_BB_GLB_RST = 0x1002        # 8814A BB global reset (literal in vendor src)
+FEN_BB_GLB_RSTn = BIT(1)
+FEN_BBRSTB = BIT(0)
+REG_RF_CTRL0 = 0x001F          # PathA RF power-on  (0x07)
+REG_RF_CTRL1 = 0x0020          # PathB+C RF power-on (0x0707, 2 B)
+REG_RF_CTRL3 = 0x0076          # PathD RF power-on  (0x07)
+RF_POWER_ON = 0x07
+
+# PHY_BBConfig8814 suffix: crystal-cap + TRX-path [SRC] rtl8814a_phycfg.c:370,305.
+REG_XTAL_CTRL = 0x002C         # crystal-cap field [26:15] (8814A) [SRC] R_0x2c
+CRYSTAL_CAP_MASK = 0x07FF8000  # 0x2C[26:21] = 0x2C[20:15] = crystal_cap
+# crystal_cap (6-bit) from efuse EEPROM_XTAL_8814A; [WIRE] cap1 0x2c <- 0x4471d820.
+CRYSTAL_CAP = 0x23
+rCCK0_FalseAlarmReport = 0x0A2C
+rCCK_RX_Jaguar = 0x0A04        # CCK RX path selection
+
 # --- USB device identity ----------------------------------------------------
 VID_REALTEK = 0x0BDA
 PID_RTL8814AU = 0x8813  # ALFA AWUS1900 (4T4R) [WIRE] lsusb 0bda:8813

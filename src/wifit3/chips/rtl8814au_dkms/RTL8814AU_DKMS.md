@@ -14,13 +14,24 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
 
 ## Potential Known Gaps (audit before trusting any milestone)
 - [ ] **2.4 GHz RX/AGC (the whole point):** the phydm DIG/AGC path is the reason
-      for this re-port. Not yet ported (RX is a later milestone).
+      for this re-port. Not yet ported (RX is a later milestone). The AGC *table*
+      lands at M2b, but the runtime DIG/AGC watchdog is M3.
 - [ ] **Monitor-mode deviation:** vendor inits for STA/AP; wifite3 is always-monitor
       and will need explicit RCR / RX-filter / address-match rewrites once RX lands.
-- [ ] **efuse / MAC address:** probe-phase efuse read is skipped through M2a (not a
-      FW-download or MAC-table prerequisite); `mac_address` is `None`. **Becomes
-      required at M2b** — the BB phy_cond walker needs `rfe_type` (efuse
-      `EEPROM_RFE_OPTION_8814`) + cut_version/package_type.
+      M2b applies the vendor's STA-init `RCR = 0xf40060ce` verbatim (CBSSID match,
+      etc.) — monitor mode must overwrite it at the RX milestone.
+- [ ] **efuse autoload (deferred — M2b uses wire-confirmed constants instead):** the
+      probe-phase efuse read (frames ~55–5706, before `_InitPowerOn`, *outside* the
+      replay window) is still unported, so `mac_address` is `None`. M2b's chip
+      params are taken as confirmed constants rather than read from efuse:
+      - `rfe_type = 1` — the vendor's 8814AU fallback [SRC rtl8814a_hal_init.c:1541];
+        also **wire-proven** (it reproduces every BB write, see below).
+      - `crystal_cap = 0x23` — **per-unit** factory cal (efuse `EEPROM_XTAL_8814A`),
+        wire-confirmed for *this* AWUS1900. A different unit's cap would differ by a
+        few LSBs (small CFO, corrected by runtime CFO-tracking). Porting the efuse
+        autoload (also unblocks `mac_address`) is the recommended next sub-task.
+      - cut/package: don't affect the walker output for this card (brute-forced —
+        no taken condition gates the cut[27:24]/pkg[15:12] nibbles); A-cut assumed.
 - [ ] **TX descriptor (full):** only the beacon-queue FW-download descriptor is
       built so far (see below). Data-frame TX (rates/aggregation/sec) is unported.
 
@@ -30,13 +41,46 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   `PHY_MACConfig8814`'s 143-entry `array_mp_8814a_mac_reg` applied as a flat
   `write8` loop (`mac.py`); also folds in `FirmwareDownload8814A`'s
   `InitializeFirmwareVars8814` tail (REG_HMETFR 0x1cc <- 0x0f).
+- **M2b (hal_init MISC stage + PHY_BBConfig8814): complete — pcap-verified AND
+  hardware-proven.** Two parts:
+  - **MISC stage** (`mac.mac_init_misc`) — the `rtl8814au_hal_init` block between
+    PHY_MACConfig and PHY_BBConfig [SRC usb_halinit.c:1168–1198]: queue priority,
+    page/driver-info sizes, interrupt mask, network type, WMAC/RCR/EDCA, retry,
+    USB aggregation, beacon params, burst length, MACTXEN/MACRXEN.
+  - **PHY_BBConfig8814** (`bb.phy_bb_config`) — prefix (SYS_FUNC_EN|FEN_USBA, 0x1002
+    BB reset, RF_CTRL0/1/3 power-on), then the two conditional tables applied via
+    the phydm walker, then crystal-cap + TRX-path. See **BB config** below.
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
-  boots; the port reproduces the USB conversation **byte-for-byte** through the
-  latest milestone (646/646/652 ops, all 46 FW packets). [HW] a live ALFA AWUS1900
-  reached `CPU_DL_READY` and applied the MAC table via
-  `scripts/rtl8814au_dkms/test_hw.py`.
+  boots; the port reproduces the USB conversation **byte-for-byte** through M2b
+  (**2812/2812/2818 ops**, all 46 FW packets, all 2102 BB-table writes). [HW] a live
+  ALFA AWUS1900 reached `CPU_DL_READY` and applied the full MAC+BB config via
+  `scripts/rtl8814au_dkms/test_hw.py` (~2100 control transfers, no error).
 - Not registered in `wlan/manager.py` — master keeps the working mainline
   `rtw88_8814au` until this port is HW-proven to beat it on breadth/stability.
+
+## BB config — the phydm conditional walker (M2b)
+`phy_BB8814A_Config_ParaFile` [SRC rtl8814a_phycfg.c:381] loads two flat-u32 tables
+through the phydm walker [SRC halhwimg8814a_bb.c odm_read_and_config_mp_8814a_*]:
+- **PHY_REG** `array_mp_8814a_phy_reg` — 4622 u32 (`bb_phy_reg_tbl.py`).
+- **AGC_TAB** `array_mp_8814a_agc_tab` — 6280 u32 (`bb_agc_tab_tbl.py`).
+Both extracted 1:1 by `scripts/rtl8814au_dkms/extract_bb_tables.py`. Every data row
+is a plain `write32` (`odm_set_bb_reg` with MASKDWORD); neither table contains the
+`0xf9..0xfe` delay pseudo-addresses, so there is no delay handling on the wire.
+
+The walker (`bb._walk_table`) pairs the array two u32 at a time. A control word with
+BIT31 set is a positive condition (IF/ELSE-IF/ELSE/ENDIF in bits[29:28]); BIT30 is
+its negative pair. `check_positive` matches the IF word's low 28 bits against
+`driver1` — and for 8814A it compares **only** the cut[27:24], package[15:12],
+interface[11:8] nibbles (when non-zero) and the rfe byte[7:0]. driver2/3/4 are
+computed in the vendor source but never read, so the port carries only `driver1`.
+
+`driver1 = 0x0F08F201` (cut A→0xF, package 0→0xF, interface USB=0x2, platform CE=0x8,
+**rfe_type=1**). Empirically, only `rfe_type` selects branches in this card's taken
+path — every cut/package combination reproduces the wire identically. [WIRE] this
+`driver1` reproduces **all 2102** cold-boot BB writes byte-for-byte.
+
+Suffix: `crystal_cap` packed into 0x2C[26:15] (`cap | cap<<6`, cap=0x23) +
+`_rtw_config_trx_path_8814a` CCK path selection (0xa2c, 0xa04).
 
 ## Firmware download — the load-bearing M1 fact
 The 8814AU does **not** block-write firmware over EP0. `FirmwareDownload8814A`
@@ -86,20 +130,22 @@ first `0x10C2` access (the `_InitPowerOn` entry).
 ## Module layout
 `constants.py` (regs/bits/sizes, all grepped verbatim) · `pwrseq.py` (power tables
 + parser) · `transport.py` (PyUSB vendor ctrl 0x05 + bulk OUT) · `firmware.py`
-(power-on → LLT → FW download → ready) · `driver.py` (WlanDriver Protocol;
-channel/RX/TX raise until their milestone). Standalone — does **not** import
-`chips/rtw88_base/` (mainline-derived).
+(power-on → LLT → FW download → ready) · `mac.py` (M2a MAC table + M2b MISC stage) ·
+`bb.py` (M2b PHY_BBConfig8814: prefix + phydm walker + suffix) · `bb_phy_reg_tbl.py`
+/ `bb_agc_tab_tbl.py` (generated flat-u32 BB/AGC tables) · `driver.py` (WlanDriver
+Protocol; connect() chains M1→M2a→M2b; channel/RX/TX raise until their milestone).
+Standalone — does **not** import `chips/rtw88_base/` (mainline-derived).
 
 ## Roadmap (each milestone pcap-diffed before "done"; post-FW init = frames 6668+)
 - M2a: `PHY_MACConfig8814` MAC register table. **DONE.**
-- M2b: `PHY_BBConfig8814` — PHY_REG (2595 u32, 561 conditional rows) + AGC_TAB
-       (3254 u32, 1781 conditional rows) from `halhwimg8814a_bb.c`. Needs (1) the
-       phy_cond walker (addr bit31/30 = IF/ELSE/ENDIF, matching
-       `driver1 = cut<<24 | ... | rfe_type`; band 2.4G/5G splits dominate AGC) and
-       (2) the chip-param discriminators cut_version / rfe_type / package_type.
-       `rfe_type` = efuse `EEPROM_RFE_OPTION_8814 & 0x7F` (GetRegRFEType register
-       fallback) — so M2b also pulls in the efuse/chip-info reads M1 skipped.
-- M2c: `PHY_RFConfig8814A` (RF tables, per-path; same phy_cond walker).
+- M2b: hal_init MISC stage + `PHY_BBConfig8814` — PHY_REG (4622 u32) + AGC_TAB
+       (6280 u32) via the phydm walker, prefix/crystal-cap/TRX-path. **DONE.**
+       (Chip params taken as wire-confirmed constants; efuse autoload deferred —
+       see Potential Known Gaps. The actual table sizes are 4622/6280 u32, not the
+       2595/3254 originally scoped.)
+- M2c: `PHY_RFConfig8814A` (RF tables, per-path; same phy_cond walker). The BB
+       prefix already powered on RF paths A–D (RF_CTRL0/1/3); next is the radio_a..d
+       tables written through 0xc90 (the wire op right after M2b's TRX-path suffix).
 - M2d: band switch + `rtw_hal_set_chnl_bw(..., CHANNEL_WIDTH_20, ...)` channel tune.
 - M3: RX path + `rtl8814_InitHalDm` (DIG/AGC watchdog — confirmed in source and on
       the wire as 103 IGI=0xc50 writes adapting 0x1c..0x2a). The 2.4 GHz breadth

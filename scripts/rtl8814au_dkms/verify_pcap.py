@@ -23,7 +23,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
 
-from wifit3.chips.rtl8814au_dkms import firmware, mac  # noqa: E402
+from wifit3.chips.rtl8814au_dkms import bb, firmware, mac  # noqa: E402
 
 CAP_DIR = REPO / "usb_dumps_new" / "captures_rtl8814au"
 FW_BIN = REPO / "src" / "wifit3" / "chips" / "rtl8814au_dkms" / "assets" / "rtl8814au_fw.bin"
@@ -31,7 +31,7 @@ FW_BIN = REPO / "src" / "wifit3" / "chips" / "rtl8814au_dkms" / "assets" / "rtl8
 # Card device address per capture (lsusb devnum); FW download lives in the
 # airmon/open phase, which starts at frame 5707 in every capture.
 DEV_ADDR = {"capture-1": 51, "capture-2": 53, "capture-3": 54}
-WINDOW = (5707, 7300)  # covers M1 + M2a (MAC table ends ~frame 7003)
+WINDOW = (5707, 14000)  # M1 + M2a + M2b MISC/BB (PHY_REG+AGC_TAB end ~frame 11318)
 START_ADDR = 0x10C2  # first register _InitPowerOn_8814AU touches
 
 
@@ -195,6 +195,8 @@ def main() -> int:
         ready = firmware.bring_up(t, fw)   # M1: power-on -> FW download -> ready
         if ready:
             mac.phy_mac_config(t)          # M2a: MAC register table
+            mac.mac_init_misc(t)           # M2b: hal_init MISC stage
+            bb.phy_bb_config(t)            # M2b: PHY_BBConfig8814 (prefix so far)
     except Divergence as e:
         print(f"\nFAIL (divergence): {e}")
         return 1
@@ -202,8 +204,9 @@ def main() -> int:
     if not ready:
         print("\nFAIL: bring_up did not reach CPU_DL_READY against the capture")
         return 1
-    print(f"\nPASS: port reproduced {t.i} USB ops byte-for-byte through M2a "
-          f"({n_bulk} FW packets / {len(fw)} B blob, MAC table applied).")
+    print(f"\nPASS: port reproduced {t.i} USB ops byte-for-byte through M2b "
+          f"({n_bulk} FW packets / {len(fw)} B blob; MAC table + MISC stage + "
+          f"PHY_BBConfig8814: prefix, PHY_REG + AGC_TAB tables, crystal-cap, TRX path).")
     print(f"      {len(ops) - t.i} later-milestone ops remain in the capture.")
     return 0
 
