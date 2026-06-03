@@ -43,7 +43,12 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
       length (no recoverable next-frame boundary) still ends the walk. [HW] no
       regression (26 APs fixed / 67-74 hop, frames within run-to-run variance); the fix
       can only recover dropped frames, never drop good ones, so the benefit is
-      environment-dependent (how often a crc-error frame lands mid-aggregate).
+      environment-dependent (how often a crc-error frame lands mid-aggregate). An
+      ESSID-variance canary (`scan_hw.py`: distinct ESSIDs per BSSID — random frame
+      corruption would show a dominant correct ESSID plus rare one-off variants) came
+      back **clean: 0 variant BSSIDs of 33 (fixed-ch1) / 72 (hop) over ~5750 beacons**,
+      confirming the recovered frames are intact and the walk does NOT desync after a
+      crc-error frame.
 - [x] **2.4 GHz RX/AGC (the whole point):** the phydm DIG/AGC path is the reason for
       this re-port. AGC *table* (M2b) + DIG/AGC *seed* (M3a) + bulk-IN RX path (M3b-3a,
       **69 APs in a 30 s 1-13 hop** [HW]) + per-frame RSSI (M3b-3b) + the runtime

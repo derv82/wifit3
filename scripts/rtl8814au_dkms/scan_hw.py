@@ -39,6 +39,7 @@ class BeaconTally:
     def __init__(self) -> None:
         self.by_bssid: Counter = Counter()
         self.rssi: dict = {}        # bssid -> strongest (max) dBm seen
+        self.essids: dict = {}      # bssid -> Counter of distinct ESSID strings seen
         self.total_frames = 0
 
     def __call__(self, parsed: dict) -> None:
@@ -52,6 +53,10 @@ class BeaconTally:
                 r = parsed.get("rssi")
                 if r and (bssid not in self.rssi or r > self.rssi[bssid]):
                     self.rssi[bssid] = r
+                # ESSID-variance canary: record every distinct ESSID seen per BSSID.
+                ssid = parsed.get("ssid")
+                if ssid is not None:
+                    self.essids.setdefault(bssid, Counter())[ssid] += 1
 
 
 async def run(args) -> int:
@@ -105,6 +110,24 @@ async def run(args) -> int:
             print(f"    {bssid}  {n:>4}  {tally.rssi.get(bssid, '?')} dBm")
     else:
         print("  (no beacons — check antenna/channel; this is the live RX gate)")
+
+    # ESSID-variance canary. A real AP beacons exactly ONE ESSID per BSSID, so a BSSID
+    # showing several distinct ESSIDs is the tell of corrupted-but-printable frames
+    # slipping past the parser (e.g. "Shipwreck-5G" vs "Ship%*eck-5G") — the failure
+    # mode where random per-frame corruption yields a dominant correct ESSID plus rare
+    # one-off variants. Reports counts + lengths only, never the ESSID text, so the
+    # output stays safe to paste. (Heuristic: a hidden AP that also broadcasts, or a
+    # mid-scan SSID change, can show 2 variants benignly — the count distribution tells
+    # them apart: corruption = one dominant + tiny tails.)
+    variant = {b: c for b, c in tally.essids.items() if len(c) > 1}
+    print(f"\n  ESSID-variance canary: {len(variant)} of {len(tally.essids)} beaconing "
+          f"BSSID(s) showed >1 distinct ESSID"
+          + ("" if not variant else "   <-- INVESTIGATE (possible frame corruption)"))
+    for bssid, counts in sorted(variant.items(),
+                                key=lambda kv: -sum(kv[1].values()))[:10]:
+        dist = sorted(counts.values(), reverse=True)
+        lens = sorted({len(s) for s in counts})
+        print(f"    {bssid}  {len(counts)} variants  beacons={dist}  essid_lens={lens}")
     return 0
 
 
