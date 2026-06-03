@@ -162,6 +162,10 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   `rtl8814a_fill_fake_txdesc` (minimal self-contained mgmt descriptor) + reuses the
   M1-verified XOR checksum; SET_TX_DESC field positions + QSLT_MGNT/RATEID/DESC_RATE
   constants grepped verbatim. Unit-tested; not yet wired into `connect()` (that is M4b).
+- **M4b (inject_frame send path): code + unit tests done; live smoke deferred to M4c.**
+  `driver.inject_frame` builds the M4a descriptor (BMC from addr1), prepends it, and
+  sends `[desc | frame]` via `transport.bulk_out` under `_io_lock`. Unit-tested with a
+  fake transport; no real frame is transmitted until the M4c live test. RX unchanged.
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
   boots; the port reproduces the USB conversation **byte-for-byte** through M3b-1
   (**4451/4451/4457 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
@@ -493,10 +497,14 @@ only) and greps every constant verbatim before coding.
   full byte reproduction. `QSLT_MGNT=0x12`, `RATEID_IDX_B=8`, `DESC_RATE1M=0` confirmed
   from source. Unit-tested (62 tests); not wired into `connect()` yet (M4b), so RX is
   unchanged (beacon scan: 73 APs, ESSID canary clean).
-- **M4b — `inject_frame` send path. [code DELEGATABLE; HW smoke test.]** Wire
-  `driver.inject_frame`: build desc (M4a) + prepend + `transport.bulk_out`, under the
-  `_io_lock` (don't race set_channel/DIG). Live smoke test: inject one frame, no pipe
-  fault.
+- **M4b — `inject_frame` send path. Code + unit tests DONE; live smoke deferred to M4c.**
+  `driver.inject_frame` builds the M4a descriptor (BMC derived from addr1's group bit),
+  prepends it, and sends `[desc | frame]` via `transport.bulk_out` (RtOutPipe[0], the
+  same pipe as the FW download) under the `_io_lock` (so it never TXes mid-retune).
+  `frame_bytes` is the MPDU without FCS (HW appends it). Unit-tested with a fake
+  transport (broadcast/unicast BMC, too-short reject). No frame is transmitted until the
+  M4c live test (passive-by-default + user at the machine). RX unchanged (beacon scan
+  68 APs, ESSID canary clean).
 - **M4c — deauth end-to-end. [HW-LOOP.]** The deauth frame bytes come from the engine
   attack layer; confirm the driver transmits them and a controlled target sees the
   deauth. Explicit-action only.

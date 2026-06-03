@@ -36,6 +36,7 @@ from .monitor import enter_monitor
 from .rf import phy_rf_config
 from .rx import iter_frames
 from .transport import Rtl8814auTransport
+from .tx import build_mgmt_txdesc
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +184,29 @@ class Rtl8814auDkmsDriver:
         return True
 
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
-        raise NotImplementedError("RTL8814AU DKMS port: TX is a later milestone")
+        """Transmit one 802.11 management frame (e.g. a deauth).
+
+        Builds the management TX descriptor (M4a) and sends ``[desc | frame]`` on the
+        bulk-OUT pipe — the same RtOutPipe[0] the firmware download uses, which is where
+        the MGMT queue maps. ``frame_bytes`` is the MPDU *without* FCS (the HW appends
+        it). Serialized with ``set_channel`` / the DIG watchdog via ``_io_lock`` so the
+        frame is never emitted mid-retune. TX is explicit-action only (passive-by-
+        default): nothing on the scan/connect path calls this.
+
+        ``use_no_ack`` is accepted for API compatibility; the minimal mgmt descriptor
+        uses the HW-default ACK/retry policy for now (revisit when deauth is exercised
+        live in M4c). TX-FIFO/queue prerequisites are covered by the M2b MISC stage
+        (MACTXEN + queue/page) — to confirm on the live smoke test.
+        """
+        if len(frame_bytes) < 10:           # need addr1 (bytes [4:10]) to read BMC
+            return False
+        loop = asyncio.get_running_loop()
+        bmc = bool(frame_bytes[4] & 0x01)   # addr1 group-address (multicast) bit
+        desc = build_mgmt_txdesc(len(frame_bytes), bmc=bmc)
+        async with self._io_lock:           # don't TX mid-retune (set_channel/DIG)
+            await loop.run_in_executor(
+                None, self.transport.bulk_out, desc + frame_bytes)
+        return True
 
     async def close(self) -> None:
         # Stop the DIG watchdog and the reader before releasing the USB handle.
