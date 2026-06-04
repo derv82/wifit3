@@ -87,13 +87,24 @@ class Rtl8814auTransport:
 
     def bulk_in(self, size: int = RX_BUF_SIZE, timeout: int = RX_TIMEOUT_MS):
         """One blocking bulk-IN read. Returns the raw buffer, or None on a benign
-        timeout (no traffic). Raises usb.core.USBError on a real pipe fault."""
+        timeout (no traffic this interval). Raises usb.core.USBError on a real pipe fault.
+
+        A read timeout is benign and common — every quiet channel (especially the many
+        empty 5 GHz DFS channels) yields one. pyusb raises USBTimeoutError for it; catch
+        that type rather than sniffing the message, because the Windows/WinUSB backend
+        reports "[Errno 10060] Operation timed out" (errno 10060, "timed out" — which does
+        NOT contain the substring "timeout"), so a message check silently misses it and the
+        reader counts benign timeouts as fatal errors.
+        """
         try:
             return bytes(self.dev.read(self._bulk_in_ep(), size, timeout))
+        except usb.core.USBTimeoutError:
+            return None
         except usb.core.USBError as e:
-            # libusb timeout (errno 110 / LIBUSB_ERROR_TIMEOUT) is benign — no
-            # traffic this interval; anything else is a real fault, propagate it.
-            if getattr(e, "errno", None) == 110 or "timeout" in str(e).lower():
+            # Belt-and-suspenders: a backend that raises a plain USBError for a timeout —
+            # libusb LIBUSB_ERROR_TIMEOUT (errno 110) or Windows WSAETIMEDOUT (errno 10060).
+            if (getattr(e, "errno", None) in (110, 10060)
+                    or "timed out" in str(e).lower() or "timeout" in str(e).lower()):
                 return None
             raise
 
