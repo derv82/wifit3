@@ -167,7 +167,11 @@ class PacketDashboard(Static):
                     for v in window
                 )
             else:
-                spark = _SPARK[0] * max(0, spark_w)
+                # Match the data-row width: those cap at len(hist) (HISTORY)
+                # because window slices the ring tail, so an empty row must too —
+                # otherwise on a panel wider than HISTORY the baseline runs to the
+                # edge while data rows stop short, and the numbers misalign.
+                spark = _SPARK[0] * max(0, min(spark_w, len(hist)))
 
             # Number reads the recent (~3 s) window so a deauth burst's count
             # decays a few seconds after it stops rather than lingering for the
