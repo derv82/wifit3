@@ -239,7 +239,7 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   first 5G TX-power write (0x1998 — the differ stops there because 5G per-rate TX power is
   M5d): **35 PASS / 0 FAIL** on all three captures (ch36 crossing = 69 ops incl. the band
   switch, same-band hops = 38 ops; ch140 PASSes — confirming only ch153 notches for rfe=1).
-  The 3 skips are the two airodump-poll slicing artifacts + ch153 (M5f).
+  (ch153's notch is M5f; the remaining skips are airodump-poll slicing artifacts.)
 - **M5c (runtime 5 GHz tuning): done — byte-diffed AND 5 GHz RX HW-proven.**
   `set_channel_bw` accepts the 2.4 GHz + 5 GHz 20 MHz channel set (`constants.CHANNELS_2G` +
   `CHANNELS_5G`) and `driver.SUPPORTED_CHANNELS` advertises both, so `WlanInterface` hopping
@@ -278,6 +278,13 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   to/from the target** (18 M2/M4 client→AP ToDS + 16 M1/M3 AP→client), 200 deauths sent,
   181 ToDS data frames. The 5 GHz analog of the M4c 2.4G proof: 5 GHz inject + deauth +
   EAPOL capture all work, reusing the verified `inject_frame` path at the M5d 5 GHz power.
+- **M5f (5 GHz spur notch, ch153): done — byte-diffed.** `chan._spur_nbi` ports the
+  `phy_SpurCalibration_8814A` rfe-1/2 @ 20 MHz ch153 case (NBI tap 0x87c[19:13]=0x1E>>1 +
+  CSI mask1 bit0 + fix-mask7 bit16, instead of the reset); ch140's 0x82c/0x830 case is
+  rfe-0-only, so this card needs no ch140 notch. [WIRE] ch153 now byte-diffs in full (287
+  ops) — **the per-channel gate is 36 PASS / 0 FAIL** on all three captures, the only 2 skips
+  being airodump-poll slicing artifacts (the first ch1 + ch144, where a 0x60 poll lands at
+  the window boundary), not port issues. The 5 GHz tune is byte-clean end to end.
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
   boots; the port reproduces the USB conversation **byte-for-byte** through M3b-1
   (**4451/4451/4457 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
@@ -763,7 +770,9 @@ values, the RF 0x18 MOD_AG bit decode, and the 5G PG offsets):
   0 dB 2.4G fuse), so the value is real and the 0 dB default would have been wrong on 5 GHz.
   The wire-verification rides M5a's ch36 band-switch replay (the switch writes the 5G swing
   via `phy_SetBBSwingByBand`).
-- **M5f — 5G spur cal 20 MHz (ch153 / ch140 cases). [HW-FREE code, DELEGATABLE, LOW pri.]**
+- **M5f — 5G spur cal 20 MHz (ch153 notch). DONE — byte-diffed.** ch153 now reproduces in
+  full (287 ops); the per-channel gate is 36 PASS / 0 FAIL (only airodump slicing artifacts
+  skip). ch140's case is rfe-0-only, so this rfe-1 card needs no ch140 notch.
 
 **Sequencing:** M5e anytime (trivial). M5a→M5b→M5c gets **5 GHz RX** (validate: do we see
 5 GHz beacons / how many APs on a 5G `scan_hw`). Then M5d gets **5 GHz TX** (deauth/replay
@@ -826,8 +835,9 @@ the 5 GHz capture).
       **M5b channel select + M5c runtime + M5d TX power DONE** (the full 5 GHz window
       byte-diffs via `set_channel_bw`; `SUPPORTED_CHANNELS` + `scan_hw --band 5g` cover
       5 GHz). **5 GHz RX + TX both HW-proven** — a live hop heard 16 APs, and a live ch36
-      deauth captured the reconnect 4-way handshake (34/34 EAPOL on target). Pending only
-      5G spur ch153 (M5f, minor RX polish). The init AGC/BB tables are already 5G-inclusive
+      deauth captured the reconnect 4-way handshake (34/34 EAPOL on target). **M5f (ch153
+      spur notch) DONE** — the per-channel gate is now 36 PASS / 0 FAIL, byte-clean. M5 is
+      complete. The init AGC/BB tables are already 5G-inclusive
       (selected via 0x958), so no new table load. See **M5 — 5 GHz @ 20 MHz (plan)**
       above; the existing cold-boot captures already contain the 5G tunes (airodump hopped
       36..165), so M5 is byte-diffable without a new capture.

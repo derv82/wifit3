@@ -203,6 +203,22 @@ def test_spur_nbi_on_spur_notches_and_enables():
     assert ("W32", 0x87C, 0x000FC000) in rec.ops
 
 
+def test_spur_nbi_ch153_notch():
+    # ch153 (rfe 1/2 @ 20 MHz): the SpurCalibration notch (NBI tap 0x1e>>1, CSI mask1 bit0,
+    # fix-mask7 bit16) instead of the reset; phydm then still disables NBI (clears bit13).
+    rec = Rec(reads={0x87C: 0x0, 0x874: 0x0, 0x89C: 0x0})
+    chan._spur_nbi(rec, 153)
+    w = rec.ops
+    assert ("W32", 0x087C, (0x1E >> 1) << 13) in w   # 0x87c[19:13] = 0xF
+    assert ("W32", 0x0874, 0x1) in w                 # rCSI_Mask_Setting1[0] = 1
+    assert ("W32", 0x0880, 0x0) in w and ("W32", 0x0884, 0x0) in w
+    assert ("W32", 0x0898, 0x0) in w                 # fix-mask0/1/6 = 0
+    assert ("W32", 0x089C, 1 << 16) in w             # fix-mask7[16] = 1
+    # phydm disables NBI last (ch153 is not a 2.4G spur channel) -> 0x87c[13] cleared.
+    last_87c = [o for o in w if o[0] == "W32" and o[1] == 0x087C][-1]
+    assert not (last_87c[2] & (1 << 13))
+
+
 def test_spur_nbi_5g_disables_like_non_spur():
     # Every 5 GHz channel (the notch cases are #if 0 in the vendor; ch153 is M5f) takes the
     # same disable-NBI path as a non-spur 2.4 GHz channel — no per-channel notch tap.

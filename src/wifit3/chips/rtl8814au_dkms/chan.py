@@ -229,22 +229,29 @@ def _nbi_reg_idx(channel: int, f_intf: int) -> int:
 
 
 def _spur_nbi(t, channel: int) -> None:
-    """[SRC] phy_SpurCalibration_8814A (CSI reset) + phydm_spur_nbi_setting_8814a (NBI).
+    """[SRC] phy_SpurCalibration_8814A (CSI) + phydm_spur_nbi_setting_8814a (NBI).
 
-    Band-neutral. A spur channel (2.4 GHz ch 4-8 / ch 14) sets a per-channel NBI tap at
-    0x87c[19:14] + NBI-enable 0x87c[13]; every other channel — including all 5 GHz channels
-    — disables NBI (the [19:13]=0x7E reset). The CSI mask/fix-mask reset is common to all
-    channels. The one 5 GHz channel that needs a real notch here is ch153 (M5f) — its
-    phy_SpurCalibration case is not yet ported, so ch153 still takes the disable path.
-    Byte-diffed per channel by scripts/rtl8814au_dkms/verify_channels.py.
+    Band-neutral. phy_SpurCalibration_8814A keeps a per-channel CSI notch for one 5 GHz
+    channel (rfe 1/2 @ 20 MHz: ch153 — M5f); every other channel resets the NBI tap + CSI
+    masks. Then phydm_spur_nbi_setting_8814a sets a per-channel NBI tap + enable on a
+    2.4 GHz spur channel (ch 4-8 / ch 14) and disables NBI everywhere else (including all
+    5 GHz channels, ch153 included). Byte-diffed per channel by verify_channels.py.
     """
-    # phy_SpurCalibration_8814A: reset the NBI tap + CSI mask/fix-mask. Every channel.
-    _bb32(t, C.rNBI_Setting, 0x000FE000, 0xFC >> 1)
-    _bb32(t, C.rCSI_Mask_Setting1, 0x1, 0x0)
-    for reg in C.rCSI_FIX_MASK:
-        t.write32(reg, 0x0)
-    # phydm_spur_nbi_setting_8814a: a spur channel sets the per-channel notch tap then
-    # enables NBI; every other channel just disables NBI.
+    # phy_SpurCalibration_8814A
+    if channel == 153:                       # rfe 1/2 @ 20 MHz — the only active 5 GHz notch
+        _bb32(t, C.rNBI_Setting, 0x000FE000, 0x1E >> 1)
+        _bb32(t, C.rCSI_Mask_Setting1, 0x1, 0x1)
+        t.write32(C.rCSI_FIX_MASK[0], 0x0)            # rCSI_Fix_Mask0
+        t.write32(C.rCSI_FIX_MASK[1], 0x0)            # rCSI_Fix_Mask1
+        t.write32(C.rCSI_FIX_MASK[2], 0x0)            # rCSI_Fix_Mask6
+        _bb32(t, C.rCSI_FIX_MASK[3], 1 << 16, 0x1)    # rCSI_Fix_Mask7[16] = 1
+    else:                                    # reset the NBI tap + CSI mask/fix-mask
+        _bb32(t, C.rNBI_Setting, 0x000FE000, 0xFC >> 1)
+        _bb32(t, C.rCSI_Mask_Setting1, 0x1, 0x0)
+        for reg in C.rCSI_FIX_MASK:
+            t.write32(reg, 0x0)
+    # phydm_spur_nbi_setting_8814a: a 2.4 GHz spur channel sets the per-channel notch tap
+    # then enables NBI; every other channel (incl. 5 GHz / ch153) just disables NBI.
     f_intf = _SPUR_INTF.get(channel)
     if f_intf is None:
         _bb32(t, C.rNBI_Setting, C.NBI_EN_BIT, 0x0)

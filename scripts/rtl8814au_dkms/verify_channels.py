@@ -16,8 +16,8 @@ the per-band txagc table) and byte-diff the whole window — a too-short txagc l
 by a completeness check (no 0x1998 write may remain unconsumed). No previous-band tracking —
 `phy_sw_band` (inside `_phy_sw_chnl`) reads the chip's band marker (0x454 bit7) straight from
 the recorded window, exactly as the driver does, so a 2.4G<->5G crossing window (incl. the
-ch165->ch1 wrap) byte-diffs its band switch in line. ch153 (the rfe=1 @20 MHz spur notch) is
-M5f, so it is reported as an expected divergence, not a FAIL.
+ch165->ch1 wrap) byte-diffs its band switch in line. The only skips are windows airodump's
+periodic poll left starting off-tune (slicing artifacts).
 
 Run: uv run python scripts/rtl8814au_dkms/verify_channels.py [capture-1|2|3]
 """
@@ -111,12 +111,8 @@ def verify(cap_name: str) -> int:
             chan.set_channel_bw(t, ch, params.tx_power, params.tx_power_5g,
                                 params.bb_swing, params.bb_swing_5g)
         except vp.Divergence as d:
-            if ch == 153:                             # rfe=1 @20 MHz spur notch — M5f
-                print(f"  ch {ch:>3}: SKIP — ch153 spur notch is M5f (expected divergence)")
-                nskip += 1
-            else:
-                print(f"  ch {ch:>3}: FAIL — {d}")
-                nfail += 1
+            print(f"  ch {ch:>3}: FAIL — {d}")
+            nfail += 1
             continue
         # Completeness: every txagc (0x1998) write must be consumed — a too-short TX-power
         # loop would otherwise "pass" by matching a prefix and leaving wire writes unchecked.
@@ -130,7 +126,7 @@ def verify(cap_name: str) -> int:
             npass += 1
 
     print(f"\n{cap_name}: {npass} PASS, {nfail} FAIL, {nskip} skipped "
-          f"(slicing artifacts + ch153 M5f spur notch).")
+          f"(airodump-poll slicing artifacts).")
     return 1 if nfail else 0
 
 
