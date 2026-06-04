@@ -330,9 +330,16 @@ class ScannerView(Screen):
             self._drain_capture_events(ap, iface.forged_macs)
 
     def _apply_sort_and_evict(self) -> None:
-        """Re-sort the table and drop fully-faded APs. Runs every 2 s."""
+        """Re-sort the table and drop fully-faded APs. Runs every 2 s.
+
+        Pins the cursor to its AP across the reorder but does NOT scroll to it:
+        if the user has wheel-scrolled away to read another part of the list,
+        yanking the viewport back every 2 s makes the list unusable (you scroll
+        up, the tick fires, it snaps back down). Explicit user sorts still
+        recenter — see _apply_sort's scroll_to_cursor.
+        """
         self._evict_expired_aps()
-        self._apply_sort()
+        self._apply_sort(scroll_to_cursor=False)
 
     def _evict_expired_aps(self) -> None:
         if not self.app.active_interface:
@@ -539,7 +546,12 @@ class ScannerView(Screen):
 
     # ----- Sort --------------------------------------------------------------
 
-    def _apply_sort(self) -> None:
+    def _apply_sort(self, *, scroll_to_cursor: bool = True) -> None:
+        """Re-sort the table, keeping the cursor on the same AP across the
+        reorder. ``scroll_to_cursor`` controls whether the viewport follows the
+        cursor: True for explicit user-triggered sorts (you acted, you expect to
+        see the result), False for the periodic auto-sort (don't yank a viewport
+        the user has scrolled away from)."""
         table = self.query_one("#ap-table", DataTable)
         if table.row_count == 0:
             return
@@ -601,7 +613,9 @@ class ScannerView(Screen):
         if current_key:
             try:
                 new_idx = table.get_row_index(current_key)
-                table.move_cursor(row=new_idx, animate=False)
+                table.move_cursor(
+                    row=new_idx, animate=False, scroll=scroll_to_cursor
+                )
             except Exception:
                 pass
 
