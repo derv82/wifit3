@@ -66,7 +66,7 @@ healthy rate, consistent with the mainline DIG softness this port targets.
 | M1 | Power-on → FW download → FW-ready (+ warm reset) | **PASS** (1627 ops byte-exact, incl. 30848 B FW page-write) | **PASS** cold (SYS_CFG=0x04412135) + warm re-entry, WINTINI_RDY | **done** |
 | M2 | MAC init (REG_CR → MACTXEN\|MACRXEN) | **PASS** (182 ops byte-exact, 98-entry MAC table) | **PASS** (REG_CR=0xFF) | **done** |
 | M3 | BB/PHY + RF init (PHY_REG/AGC_TAB/RadioA, 1×1) | **PASS** (586 ops byte-exact, JaguarSeries phy_cond walker) | **PASS** (xtal=0x9e7) | **done** |
-| M4 | 2 GHz channel tune, 20 MHz | `verify_channels` (2.4) | `--phase channel` | — |
+| M4 | 2 GHz channel tune, 20 MHz (RF-SIPI) | **PASS** (74 ops byte-exact, incl. 8811au ant-prologue) | **PASS** (`--phase chan`, RF[0x18] ch1@20M) | **done** (TX-power deferred) |
 | M5 | 2 GHz RX + PHYDM RSSI/DIG (value milestone) | replay-diff | `--phase beacon`, A/B canary | — |
 | M6 | 2 GHz TX (deauth + WEP replay) | replay-diff | **user** (TX) | — |
 | M7 | 5 GHz: RX + tune + TX | `verify_channels` (5 GHz 36..165) | `--phase beacon` 5G + **user** deauth | — |

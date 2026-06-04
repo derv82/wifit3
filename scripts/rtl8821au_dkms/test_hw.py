@@ -25,7 +25,7 @@ import usb.core
 import usb.util
 
 from wifit3.chips.rtl8821au_dkms import constants as C
-from wifit3.chips.rtl8821au_dkms import bb, firmware, mac, rf
+from wifit3.chips.rtl8821au_dkms import bb, chan, firmware, mac, rf
 from wifit3.chips.rtl8821au_dkms.transport import RTL8821AUDkmsTransport
 
 
@@ -36,7 +36,7 @@ def _fail(msg: str) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--phase", choices=("open", "fw", "mac", "phy"), default="phy")
+    ap.add_argument("--phase", choices=("open", "fw", "mac", "phy", "chan"), default="chan")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(
@@ -90,7 +90,7 @@ def main() -> int:
             return _fail("bring_up did not reach FW-ready (WINTINI_RDY).")
         print("[PASS] FW-ready (WINTINI_RDY) — wlan CPU is running the firmware.")
 
-        if args.phase in ("mac", "phy"):
+        if args.phase in ("mac", "phy", "chan"):
             print("[*] running MAC init (M2)...")
             mac.phy_mac_config(t)
             mac.mac_init_misc(t)
@@ -101,7 +101,7 @@ def main() -> int:
                 return _fail("REG_CR missing MACTXEN|MACRXEN after MAC init.")
             print("[PASS] MAC enabled (REG_CR MACTXEN|MACRXEN).")
 
-        if args.phase == "phy":
+        if args.phase in ("phy", "chan"):
             print("[*] running PHY init (M3: BB PHY_REG/AGC + crystal_cap + RadioA)...")
             bb.phy_bb_config(t, crystal_cap=0x27)   # TODO(efuse): read crystal_cap from EFUSE
             rf.phy_rf_config(t)
@@ -109,6 +109,13 @@ def main() -> int:
             print(f"  REG 0x2C = 0x{xtal:08x}  (xtal field [23:12] = 0x{(xtal >> 12) & 0xFFF:03x}, "
                   f"expect 0x9e7 for crystal_cap 0x27)")
             print("[PASS] PHY (BB + RF) init complete — no bus errors.")
+
+        if args.phase == "chan":
+            print("[*] running channel tune (M4: 2.4 GHz band + ch1 + 20 MHz BW)...")
+            chan.set_chnl_bw(t, ch=1)
+            rf18 = rf._rf_serial_read(t, rf.RF_PATH_A, rf.RF_CHNLBW)
+            print(f"  RF[0x18] = 0x{rf18:05x}  (channel/BW reg — ch1 @ 20 MHz)")
+            print("[PASS] channel tune complete — no bus errors.")
     finally:
         try:
             usb.util.release_interface(dev, 0)

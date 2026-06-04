@@ -54,6 +54,11 @@ hope. The canonical first milestone:
 Then layer PHY/MAC/RF init, channel tune, RX, TX as subsequent M's, diffing the
 generated USB sequence against the cold-boot capture at each step.
 
+**Commit each milestone as its own commit** once it's both replay-diffed and
+(where possible) HW-smoke-verified. Small per-milestone commits keep the bring-up
+bisectable and the retired-vs-vendor history honest — don't batch several
+milestones into one commit.
+
 ### Scope: 20 MHz primary channel only
 
 Do **not** port the kernel's 40/80 MHz channel-width path (`bw=1/2`, the

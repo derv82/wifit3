@@ -18,7 +18,7 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8821au_dkms import bb, firmware, mac, rf  # noqa: E402
+from wifit3.chips.rtl8821au_dkms import bb, chan, firmware, mac, rf  # noqa: E402
 
 CRYSTAL_CAP = 0x27   # AWUS036ACS efuse value (wire-verified)  TODO(efuse): read from EFUSE
 
@@ -56,12 +56,14 @@ def main() -> int:
         m2_ops = t.i
         bb.phy_bb_config(t, crystal_cap=CRYSTAL_CAP)    # M3: BB PHY_REG + AGC + xtal
         rf.phy_rf_config(t)                             # M3: RadioA
+        m3_ops = t.i
+        chan.set_chnl_bw(t, ch=1)                       # M4: band + channel + 20 MHz BW
     except rp.Divergence as e:
         print(f"\nFAIL (divergence): {e}")
         return 1
 
-    print(f"\nPASS: reproduced {t.i} USB ops byte-for-byte through M3.")
-    print(f"      M1={m1_ops}  M2={m2_ops - m1_ops}  M3={t.i - m2_ops} ops.")
+    print(f"\nPASS: reproduced {t.i} USB ops byte-for-byte through M4.")
+    print(f"      M1={m1_ops}  M2={m2_ops - m1_ops}  M3={m3_ops - m2_ops}  M4={t.i - m3_ops} ops.")
     print(f"      {len(ops) - t.i} later-milestone ops remain in the window.")
     return 0
 
