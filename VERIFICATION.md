@@ -175,14 +175,33 @@ columns and any caveats.
 
 → `chips/rtw88_8814au/RTL8814AU.md` (the **mainline** driver — the table above)
 
-**Driver selection.** 0bda:8813 is now served by the **vendor/DKMS port by default**
+**Driver selection.** 0bda:8813 is served by the **vendor/DKMS port by default**
 (`chips/rtl8814au_dkms/`, a cleanroom re-port from the Realtek vendor source for stronger
-2.4 GHz monitor RX); `WIFIT3_RTL8814=mainline` falls back to the mainline driver above.
+monitor RX); set **`WIFIT3_RTL8814=mainline`** to fall back to the mainline driver above.
 The DKMS port is byte-verified against the vendor cold-boot captures (init + every channel
-tune, 2.4 GHz + 5 GHz @ 20 MHz) and HW-proven for 2.4 GHz + 5 GHz RX (16 APs on a live 5 GHz
-hop) and TX (live 5 GHz deauth → 4-way handshake). **A/B vs mainline** (breadth/stability,
-both bands) via `scripts/rtl8814au_dkms/ab_scan.py` — stagger + replug between runs — is the
-remaining gate before retiring the mainline fallback. Port detail: `chips/rtl8814au_dkms/RTL8814AU_DKMS.md`.
+tune, 2.4 GHz + 5 GHz @ 20 MHz) and HW-proven for RX + TX on both bands (live 5 GHz deauth →
+4-way handshake).
+
+**A/B vs mainline — DKMS wins (why it's the default).** `scripts/rtl8814au_dkms/ab_scan.py`,
+staggered with a replug between every run (a slowly drifting noise floor would otherwise
+penalize whichever ran last; replug = cold chip, zero warm-state confound), same channel set
+per band:
+- **2.4 GHz:** the *same* close AP reads **−45 dBm on DKMS vs −81 on mainline** — i.e. DKMS
+  fixes the documented mainline "weak/miscalibrated 2.4 GHz RX" defect — plus ~25% more
+  beacons (~766 vs ~607).
+- **5 GHz** (fair, both hopping the 9 non-DFS channels): DKMS **1238 beacons / 46 APs** vs
+  mainline **1138 / 57**, and DKMS reads the strong AP stronger (−58 vs −70). (Mainline's
+  raw `SUPPORTED_CHANNELS` lists only the 9 non-DFS 5 GHz channels; the DKMS port lists all
+  25 incl. DFS 52–144 — the first, unfair, run hopped 25 vs 9, which alone explained the
+  apparent mainline beacon lead.)
+- **Net:** DKMS = more beacons + accurate RSSI on both bands; mainline ~10 more *uniques*
+  (weak/distant APs its higher gain hears but mis-reports the signal of) — the DIG/AGC
+  sensitivity-vs-accuracy trade. Accurate power + reliable capture on reachable APs is worth
+  more than +10 weak uniques, so DKMS is the default; the env var keeps mainline one export
+  away for anyone who prefers it.
+
+**Remaining gate:** a **1-hour stress soak** (sustained hop + attacks) on the DKMS port —
+not yet run (⬜) — before retiring the mainline fallback. Port detail: `chips/rtl8814au_dkms/RTL8814AU_DKMS.md`.
 
 ### MT7612U — ALFA AWUS036ACM (2.4 / 5 GHz)
 

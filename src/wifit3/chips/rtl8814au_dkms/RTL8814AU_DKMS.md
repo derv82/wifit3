@@ -295,8 +295,13 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   monitor opmode entry, then received on 2.4 GHz with realistic RSSI (M3b HW-proven;
   M3c watchdog A/B done — no regression; the per-channel tunes are byte-diffed by
   `verify_channels.py`).
-- Not registered in `wlan/manager.py` — master keeps the working mainline
-  `rtw88_8814au` until this port is HW-proven to beat it on breadth/stability.
+- **Registered in `wlan/manager.py` as the DEFAULT for 0bda:8813** (`WIFIT3_RTL8814=mainline`
+  falls back to the mainline `rtw88_8814au`). A staggered, replug-between-runs A/B vs mainline
+  (`scripts/rtl8814au_dkms/ab_scan.py`) showed DKMS wins: 2.4 GHz reads a close AP at −45 dBm
+  vs mainline's −81 (the documented mainline RX-miscalibration, fixed) + ~25% more beacons;
+  5 GHz (fair, same 9 non-DFS channels) 1238 beacons/46 APs vs 1138/57 with stronger RSSI.
+  Mainline shows ~10 more weak/distant uniques (the DIG/AGC sensitivity-vs-accuracy trade).
+  See `VERIFICATION.md`. **Remaining gate:** a 1-hour stress soak before retiring the fallback.
 
 ## EFUSE — probe-phase chip-param read
 `ReadAdapterInfo8814AU` -> `hal_InitPGData_8814A` -> `EFUSE_ShadowMapUpdate` ->
