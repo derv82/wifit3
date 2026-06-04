@@ -272,7 +272,12 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   loads the 3rd-stream diff. The 2.4G gate never caught it (its 3rd-stream diffs are 0 or
   nss=1-only); path C's 5 GHz fuse (a nonzero 3rd-stream BW20 diff that the wire does NOT
   apply) exposed it. `efuse.MAX_TX_CNT = 2` caps per-stream diffs; nss=1 (our inject rate)
-  is unaffected, so 5 GHz inject/deauth now uses correct power. See **TX power** below.
+  is unaffected, so 5 GHz inject/deauth uses correct power. See **TX power** below.
+  [HW] **5 GHz TX proven on air:** a live `deauth_hw.py --channel 36` knocked the target
+  client off and captured its full reconnect 4-way handshake — **34/34 captured EAPOL were
+  to/from the target** (18 M2/M4 client→AP ToDS + 16 M1/M3 AP→client), 200 deauths sent,
+  181 ToDS data frames. The 5 GHz analog of the M4c 2.4G proof: 5 GHz inject + deauth +
+  EAPOL capture all work, reusing the verified `inject_frame` path at the M5d 5 GHz power.
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
   boots; the port reproduces the USB conversation **byte-for-byte** through M3b-1
   (**4451/4451/4457 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
@@ -820,9 +825,9 @@ the 5 GHz capture).
       crossings). **M5e 5G TxBBSwing DONE** (efuse 0xC7; burned to −3 dB on this card).
       **M5b channel select + M5c runtime + M5d TX power DONE** (the full 5 GHz window
       byte-diffs via `set_channel_bw`; `SUPPORTED_CHANNELS` + `scan_hw --band 5g` cover
-      5 GHz; 5 GHz RX HW-proven — 16 APs on a live hop). 5 GHz RX + TX are code-complete;
-      pending only 5G spur ch153 (M5f, minor) + a live 5 GHz deauth/replay check. The init
-      AGC/BB tables are already 5G-inclusive
+      5 GHz). **5 GHz RX + TX both HW-proven** — a live hop heard 16 APs, and a live ch36
+      deauth captured the reconnect 4-way handshake (34/34 EAPOL on target). Pending only
+      5G spur ch153 (M5f, minor RX polish). The init AGC/BB tables are already 5G-inclusive
       (selected via 0x958), so no new table load. See **M5 — 5 GHz @ 20 MHz (plan)**
       above; the existing cold-boot captures already contain the 5G tunes (airodump hopped
       36..165), so M5 is byte-diffable without a new capture.
