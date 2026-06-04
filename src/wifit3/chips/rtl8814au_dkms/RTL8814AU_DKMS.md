@@ -240,7 +240,7 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   M5d): **35 PASS / 0 FAIL** on all three captures (ch36 crossing = 69 ops incl. the band
   switch, same-band hops = 38 ops; ch140 PASSes — confirming only ch153 notches for rfe=1).
   The 3 skips are the two airodump-poll slicing artifacts + ch153 (M5f).
-- **M5c (runtime 5 GHz tuning): code done — byte-diffed; 5 GHz RX HW-proven (partial).**
+- **M5c (runtime 5 GHz tuning): done — byte-diffed AND 5 GHz RX HW-proven.**
   `set_channel_bw` accepts the 2.4 GHz + 5 GHz 20 MHz channel set (`constants.CHANNELS_2G` +
   `CHANNELS_5G`) and `driver.SUPPORTED_CHANNELS` advertises both, so `WlanInterface` hopping
   + `set_channel` now cover 5 GHz. A 5 GHz tune runs the RX tune but **skips the per-rate TX
@@ -256,8 +256,10 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   substring) was re-raised, and 5 consecutive timeouts on quiet DFS channels tripped the
   shared `RxReaderThread`'s fatal-error limit and killed RX. Fixed by catching pyusb's
   `USBTimeoutError` type (+ errno 110/10060 fallback) → return None; 5 GHz has many empty
-  channels so it hit the limit where busy 2.4 GHz never did. A full-hop re-run is pending to
-  confirm RX survives the quiet channels. `scan_hw.py` gains `--band 2g|5g|all`.
+  channels so it hit the limit where busy 2.4 GHz never did. With the fix, a full 30 s
+  `--band 5g` hop (36..165) **survived the quiet channels and heard 16 unique 5 GHz APs /
+  276 beacons**, RSSI −54 dBm (near) to −90 dBm (far), ESSID-variance canary clean (0/16) —
+  5 GHz monitor RX confirmed end-to-end. `scan_hw.py` gains `--band 2g|5g|all`.
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
   boots; the port reproduces the USB conversation **byte-for-byte** through M3b-1
   (**4451/4451/4457 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
