@@ -125,20 +125,29 @@ exists, mainline is canonical, our source already matches. Background:
 ### Shared workflow (per card)
 
 1. Branch `dkms/<module>` (e.g. `dkms/88x2bu`).
-2. In a dedicated commit, **delete the mainline-derived `chips/<driver>/`** — NOT
-   `chips/rtw88_base/`, which the other family drivers still import. That commit
-   message is the durable record of the retired port: how faithful it was to
-   mainline, its measured performance (run `beacon_watch.py` *live* first for max
-   beacons/s + nAPs), our confidence, and why it's being replaced. Git history
-   keeps the old driver; nothing else needs to.
+2. **Keep BOTH drivers — do NOT delete the mainline-derived `chips/<driver>/`.**
+   The vendor port lands in a *sibling* package (`chips/rtl<chip>_dkms/`, e.g.
+   `chips/rtl8814au_dkms/`); the mainline-derived port stays put. Both register in
+   `wlan/manager.py` for the same VID:PID, ordered by a per-family env var
+   (`WIFIT3_RTL<chip>`, read fresh each call so it flips between runs without a
+   restart): the DKMS port is the default, `=mainline` opts back to the mainline
+   driver. This keeps a one-env-var A/B at users' fingertips and unblocks anyone
+   whose card setup the mainline/legacy path happens to fix — it gives users
+   OPTIONS. Only retire a driver once it's *confirmed* to add no value
+   (significantly worse on every axis than its sibling); even then, git history is
+   the record, so a delete is rarely worth it. (A future splash-screen driver
+   picker is far off — don't design for it now.)
 3. Port in a **fresh session** with only the vendor source (`driver-source/`) and
    the new cold-boot pcap in view — mainline driver *and* the mainline-derived
    Python kept entirely out of context, so the new port is faithful to the
    vendor code, not a mainline/vendor hybrid. Treat as a new bring-up (recipe
-   above).
-4. **Master keeps the working mainline port until the vendor port is HW-proven**
-   to beat it on breadth/stability, then swap. Once *all* rtw88-family cards are
-   off mainline, `rtw88_base/` can finally be retired.
+   above). Capture the live mainline baseline (max beacons/s + nAPs) first — it's
+   the A/B target the vendor port must tie-or-beat.
+4. **The default flips to the vendor port only once it's HW-proven** to tie/beat
+   the mainline on breadth + stability (set the `WIFIT3_RTL<chip>` default ordering
+   in the manager). The mainline port remains the env-var fallback indefinitely.
+   `rtw88_base/` stays as long as any mainline-derived family driver still imports
+   it.
 
 All four vendor sources are in `usb_dumps_new/driver-sources/` (tarballs) +
 extracted `usb_dumps_new/captures_*/driver-source/`.
@@ -174,16 +183,33 @@ extracted `usb_dumps_new/captures_*/driver-source/`.
   (8–10 APs) and should be lifted by the shared phydm RX/AGC. That 2-for-1 raises
   its value above its own tied breadth. A/B: `captures_rtw88_8821au/`. Branch
   `dkms/8821au`.
+- **Scope decision (2026-06-04):** port 8821au **standalone** into
+  `chips/rtl8821au_dkms/` (sibling to the untouched mainline `chips/rtl8821au/`;
+  env var `WIFIT3_RTL8821`). **No shared `rtl88xxau_base/` yet** — a base with one
+  consumer is planning too far ahead, and an 8821au-bad / 8812au-good split would
+  strand it. Leave `# TODO(8812au)` breadcrumbs where the vendor source branches on
+  chip (RF path count 1×1 vs 2×2, RFE options, pwr-seq table, FW blob, per-rate
+  txpower tables) — one driver referencing the next is mildly smelly but justified,
+  since the whole reason to port 8821au is the 8812au. Whether 8812au later shares a
+  base, rides this port as a sibling, or gets its own `chips/rtl8812au_dkms/` is
+  decided **after** the 8821au A/B. Live mainline baseline (2026-06-04, ch1/30s):
+  22 APs, 2727 beacons. **A/B canary = `NETGEAR2G` (`aa:bb:cc:dd:ee:01`)** — a strong
+  nearby AP; track its RSSI + beacons/s as the DIG-health indicator (baseline
+  ~7.7/s, below its ~9–10/s healthy rate). Full methodology +
+  deliberately-committed-PII note in `chips/rtl8821au_dkms/RTL8821AU_DKMS.md`.
 
 **4. RTL8812AU — rides the 8821au vendor port (88xxA sibling).**
 - Current `chips/rtl8812au/` (88xxA family with 8821au; shares `rtw88_base`).
 - **No separate effort, no kernel-C work.** The 8821au vendor source above is the
   multi-chip rtl88xxau driver — it implements **8812au in the same tree**
   (`hal/rtl8812a/`, `halrf_8812a_*`, `Hal8812PhyCfg`, `phydm_rtl8812a.c`,
-  `rtl8812au_recv/xmit.c`). 8812au folds into the 8821au port as its sibling,
-  reusing the shared phydm RX/AGC path with the 8812a-specific RF/power tables
-  ported 1:1. Expected to lift its bottom-tier breadth (8–10 APs) the way the
-  vendor RX lifts 8822bu — *unverified for 8812au specifically*.
+  `rtl8812au_recv/xmit.c`). How 8812au reuses that work — shared base,
+  sibling-in-the-same-port, or its own `chips/rtl8812au_dkms/` — is **deferred to
+  the post-8821au-A/B decision** (see item 3); the standalone 8821au port leaves
+  `# TODO(8812au)` breadcrumbs to make whichever path cheap. Either way the
+  8812a-specific RF/power tables port 1:1 from the same tree. Expected to lift its
+  bottom-tier breadth (8–10 APs) the way the vendor RX lifts 8822bu — *unverified
+  for 8812au specifically*.
 - Caveat: no *vendor* bring-up capture for 8812au (DKMS never built standalone on
   6.18 — `captures_rtw88_8812au/` is the mainline run), so it leans on the 8821au
   vendor capture for the shared 88xxA init flow + its own mainline capture to
