@@ -94,26 +94,13 @@ the decision + reason.)
 
 ### 2c. Hardware-failure UX
 
-Currently a driver wedge, init failure, and pipe errors log a warning but the UI
-stays silent — users see targets fade to dark, or a generic error, with no
-action. The wedge itself is an accepted Windows/WinUSB limit (the pipe can't be
-reset in userland); only the missing UI messaging is the bug.
-
-Design:
-- **Callback pattern** on `BaseDriver`: `on_warning(msg)` / `on_fatal(msg)` wired
-  driver→UI at instantiation. `call_from_thread` required (watchdog runs in a
-  background thread).
-- **Toast** (`app.notify()`) for non-fatal warnings: low beacon rate, weak RX,
-  known card limitations surfaced on bring-up.
-- **Modal** for hard failures requiring user action (wedge, pipe error, replug) —
-  after the exception catch + failed recovery attempt, not before.
-- Each driver declares `known_issues = [...]` at class level — shown as a toast on
-  successful bring-up.
-
-Two confirmed failure modes to fix:
-- Warm-reattach init wedge (RTL8822BU): splash shows a generic `RuntimeError`
-  instead of the driver's replug message.
-- Runtime RX wedge (RTL8812AU): Scanner fades to empty, no message.
+**Release blocker — gates the alpha.** Design + detail moved to `FEATURES.md`
+§ "Hardware-failure UX" (it's a real feature with real design weight, not an
+afterthought slot). The short of it: drivers `raise` on failure (we prefer that
+over callbacks), one UI catch → red error modal with an expandable **Details**
+box, and — the headline — logs/details reachable from *inside* the UI, not via a
+`WIFIT3_LOG` env var. The runtime-wedge (off-thread) half is still an open design
+problem; do it design-doc-first, not zero-shot.
 
 ### 2d. Zadig / udev automation
 

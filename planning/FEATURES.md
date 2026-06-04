@@ -11,6 +11,96 @@ Ordering within each section is rough priority: pre-alpha → soon → post-Defc
 
 ## Features
 
+### Hardware-failure UX — pre-alpha (release blocker)
+
+> Moved here from `RELEASE-PLAN.md` § 2c. It gates the alpha, but it carries real
+> design weight — it's a feature, not a logistics afterthought. This section is
+> *what we think we want*; the wedge half is still an open design problem.
+
+**Problem.** When a card fails, the UI is unhelpful: an init failure shows a
+generic message, a runtime wedge just lets the Scanner fade to empty, and the only
+real detail lives in `wifit3.log` — which a user gets *only* by knowing to set
+`WIFIT3_LOG=1` before launch. That's a developer affordance, not a user one (and
+it gets worse under PyInstaller/launchers, where there's no obvious shell to set an
+env var in). A user who hits a failure should get a clear, actionable message
+**and** be able to see the gory details — without a terminal, without an env var.
+
+**Headline requirement: logs/details reachable from *inside* the UI.**
+`wifit3.log` (behind `WIFIT3_LOG`) stays exactly what it is — a developer trace of
+the code path, intentionally hidden from users. Separately, the UI must surface
+what a *user* needs when something breaks: a plain reason up front, the technical
+detail one expand away. The user never learns an env var exists.
+
+**The error modal (the shape we want).**
+- Main line, red, plain + actionable: *"Driver is borked — please unplug and
+  replug the adapter."*
+- A collapsed **Details** disclosure holding the full technical dump: the exception
+  + stack trace, plus whatever state the driver knew (e.g. "RF went dead",
+  register/hex values, addresses). Copy-able. *This* is the in-UI "logs" the
+  requirement above asks for.
+- Dismiss returns to the splash, where device re-discovery already runs on its 1 s
+  poll — so a replug recovers without relaunching.
+
+**Mechanism — two cases, and we strongly prefer `raise()` over callbacks.**
+The ideal: a driver `raise`s at the point of failure, from anywhere in its code,
+and that plops the user out to the modal with the message + stack trace. Callbacks
+for this are explicitly *disliked* — they scatter the failure path. How achievable
+that is splits by case:
+
+1. **Init failure — the easy half, low-invasive.** `connect()` runs inside an
+   awaited Textual worker, so a raised exception already has a call stack to ride
+   up to one UI-level `except`. The reason it doesn't work today is *self-inflicted*:
+   every driver wraps bring-up in `except Exception: return False` and swallows the
+   cause, and `connect()` piles broad catches on top. The fix is mostly **deleting**
+   those swallows so the exception propagates — less code, no new subsystem. One
+   catch in the splash worker → modal → splash.
+
+2. **Runtime wedge — the hard half, no plan yet.** A driver detects mid-session
+   that it's borked and needs a replug. Several drivers *can* already self-detect
+   this (warm-reattach bulk-IN smoke tests, RX-dead watchdogs). The trouble: it's
+   often detected on a **detached background thread** (the RX reader) or a
+   fire-and-forget hop task — there's no `await` for a `raise` to bubble to, so a
+   raise there just dies on that thread. Whether raising works "depends on the
+   stack trace": clean when the wedge is noticed during an awaited call (e.g.
+   `set_channel`), useless when it's noticed off-thread.
+   - **Open question — how does an off-thread wedge become a UI `raise` without
+     callbacks?** One candidate to explore (undecided): the driver stashes the
+     failure as state and a UI-side poll (the Scanner already ticks) notices it and
+     raises at a UI-reachable point — turning it back into the clean "raise →
+     modal" flow, no callback wiring. This is the core thing to design *before* any
+     code.
+
+**Hard constraints.**
+- **Non-blocking + instant clean shutdown.** The app closes cleanly and instantly
+  on `q` today, *including* after an init failure — that must stay true. The
+  failure path can't join a dead thread, trap a modal, or otherwise make quit hang.
+  (The earlier abandoned callback attempt's "won't close" was a *test-harness*
+  hang, not the app — but it's the warning shot for this constraint.)
+
+**Out of scope here (separate, later).** Non-fatal **toast** notifications — low
+beacon rate, weak RX, per-driver `known_issues` surfaced on bring-up. Useful, but a
+different mechanism and a lower urgency than "the card died, tell the user."
+
+**Complexity.** Init half: low (delete the swallowing + one catch). Wedge half:
+genuinely hard, design-doc-first — *not* a zero-shot. Confirmed failure modes to
+cover when built: warm-reattach init wedge (RTL8822BU — replug message currently
+lost behind a generic error) and runtime RX wedge (RTL8812AU — Scanner fades
+silently).
+
+> **Related consideration — a `BaseDriver` class (its own design, not a v1
+> dependency).** Worth *considering*: an abstract `BaseDriver` that all drivers
+> inherit, holding the logic genuinely common to every driver — and, since not all
+> drivers run an RX reader thread (ar9271 / mt7921au don't), perhaps a
+> `ReaderThreadDriver(BaseDriver)` tier for the ones that do. This is
+> **significant** work: it touches all ~13 drivers and warrants a design of its own
+> — the families differ enough (HTC/WMI vs direct-register vs MCU-firmware) that a
+> premature base would be the wrong one (see `RELEASE-PLAN.md` Phase 5, "abstract
+> after proven duplicated"). It's flagged *here* because it would pay off for the
+> hard half above: if `BaseDriver` / `ReaderThreadDriver` already existed, surfacing
+> a wedge from inside `RxReaderThread` (the off-thread `raise` problem) could live
+> in one shared place instead of being re-implemented per driver — the DRY win. So:
+> not required for v1, but a real reason `BaseDriver` is worth designing.
+
 ### Signal-quality bar (replace raw beacons/sec) — pre-alpha
 
 **Problem.** Raw "beacons/sec" is a poor display: it ceilings at ~9.77/s (one
