@@ -6,7 +6,6 @@ from typing import Dict, List, Optional
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.coordinate import Coordinate
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, RichLog
 from rich.color import Color
@@ -70,6 +69,45 @@ def _fade_text(text: Text, factor: float, bg: tuple[int, int, int]) -> Text:
     out.style = _fade(out.style)
     out.spans = [Span(sp.start, sp.end, _fade(sp.style)) for sp in out.spans]
     return out
+
+
+class _APScanTable(DataTable):
+    """AP list table that can re-pin its row cursor without moving the viewport.
+
+    The scanner re-sorts on a timer while the user is scrolling and navigating
+    the list. Textual's DataTable scrolls the cursor back into view on *every*
+    cursor-coordinate change — both ``move_cursor``'s own call and the
+    ``cursor_coordinate`` watcher's (which also fires on ``move_cursor(scroll=
+    False)``), and the watcher may *defer* that scroll to after the next refresh
+    when the table's dimensions are mid-update. So a re-sort that shifts the
+    selected row yanks the viewport, and a transient flag around ``move_cursor``
+    can't catch the deferred case.
+
+    ``_scroll_cursor_into_view`` is the single method all of those funnel
+    through, so gating it here closes the deferred race too. ``pin_cursor_row``
+    moves the cursor the normal way — so the highlight still tracks the AP via
+    the framework — with only the scroll suppressed.
+    """
+
+    _suppress_scroll: bool = False
+
+    def _scroll_cursor_into_view(self, animate: bool = False) -> None:
+        if self._suppress_scroll:
+            return
+        super()._scroll_cursor_into_view(animate=animate)
+
+    def pin_cursor_row(self, row: int) -> None:
+        """Move the row cursor to ``row`` without scrolling the viewport."""
+        self._suppress_scroll = True
+        self.move_cursor(row=row, animate=False)
+        # Reset only after the next refresh: the watcher's scroll-into-view can
+        # be deferred via call_after_refresh, so a synchronous reset would fire
+        # before it and the snap would leak back. Our reset is queued after the
+        # deferred scroll, so that scroll still sees the flag set.
+        self.call_after_refresh(self._release_scroll)
+
+    def _release_scroll(self) -> None:
+        self._suppress_scroll = False
 
 
 class ScannerView(Screen):
@@ -145,7 +183,7 @@ class ScannerView(Screen):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Vertical():
-            table = DataTable(cursor_type="row", id="ap-table")
+            table = _APScanTable(cursor_type="row", id="ap-table")
             # Reserve 2 chars in every header so DataTable's auto-width
             # accounts for the sort indicator from creation — otherwise
             # narrow columns (e.g. "🥓s") get clipped when sorted.
@@ -553,7 +591,7 @@ class ScannerView(Screen):
         cursor: True for explicit user-triggered sorts (you acted, you expect to
         see the result), False for the periodic auto-sort (don't yank a viewport
         the user has scrolled away from)."""
-        table = self.query_one("#ap-table", DataTable)
+        table = self.query_one("#ap-table", _APScanTable)
         if table.row_count == 0:
             return
 
@@ -617,21 +655,11 @@ class ScannerView(Screen):
                 if scroll_to_cursor:
                     table.move_cursor(row=new_idx, animate=False)
                 else:
-                    # Pin the cursor to the same AP across the reorder WITHOUT
-                    # moving the viewport. move_cursor(scroll=False) is not
-                    # enough: assigning cursor_coordinate fires
-                    # watch_cursor_coordinate, which _scroll_cursor_into_view()s
-                    # on ANY coordinate change — so the snap came back on every
-                    # sort that shifted the selected row to a new index.
-                    # set_reactive updates the coordinate without firing the
-                    # watcher, leaving the user's scroll position untouched;
-                    # refresh the old/new rows so the highlight still follows.
-                    old = table.cursor_coordinate
-                    new = Coordinate(new_idx, old.column)
-                    if new != old:
-                        table.set_reactive(DataTable.cursor_coordinate, new)
-                        table.refresh_row(old.row)
-                        table.refresh_row(new_idx)
+                    # Keep the highlight on the same AP across the reorder
+                    # without yanking the viewport the user scrolled to — the
+                    # framework still moves the highlight, only the scroll is
+                    # suppressed (see _APScanTable.pin_cursor_row).
+                    table.pin_cursor_row(new_idx)
             except Exception:
                 pass
 
