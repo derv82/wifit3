@@ -73,6 +73,56 @@ healthy rate, consistent with the mainline DIG softness this port targets.
 | M8 | Driver Protocol wiring + warm reattach + manager `WIFIT3_RTL8821` | — | `--phase open` warm + beacon | — |
 | M9 | A/B matrix + flip default to DKMS | — | RX (Claude) + TX (user) | — |
 
+## M5 (RX) implementation spec — wire-verified, for the next porting session
+
+Distilled from the M5 cold-boot mapping (capture-1, dev 39). `rx.py` + `monitor.py`
+are **drafted**; `dig.py` (InitHalDm), the post-tune tail, `driver.py` `connect()`
++ reader, and the DIG watchdog remain. All register values below are wire-confirmed
+unless flagged. Lean on the `rtl8814au_dkms` sibling — most of this is the same shape.
+
+**Wire boundaries:** M5 post-tune tail begins **frame 7609**; InitHalDm runs
+7617–8643, **except the EDCCA PSD-search loop 7693–8563 which reads live PSD and is
+NOT byte-replayable**; airmon's STA→monitor dance 8647–8883 is **skipped** (always
+monitor); the monitor opmode block is **8893–8911** (verify out-of-line).
+
+**§1 Post-tune hal_init tail** [SRC] usb_halinit.c after :1595, in order:
+
+| Reg | Addr | W | Val | note |
+|---|---|---|---|---|
+| invalidate_cam_all (CAMCMD) | 0x0670 | 4 | 0xC0000000 | poll+clear loop — read source for exact seq |
+| REG_HWSEQ_CTRL | 0x0423 | 1 | 0xFF | |
+| REG_BAR_MODE_CTRL | 0x04CC | 4 | 0x0201FFFF | |
+| Nav-limit | 0x0652 | 1 | 0x00 | |
+| *(InitHalDm — §2)* | | | | |
+| REG_QUEUE_CTRL | 0x04C6 | 1 | RMW `& 0xF7` (→0x04) | |
+| REG_FWHW_TXQ_CTRL+1 | 0x0421 | 1 | 0x0F | Tx-report en |
+| REG_EARLY_MODE_CONTROL+3 | 0x02BF | 1 | 0x01 | |
+| REG_TX_RPT_TIME | 0x04F0 | 2 | 0x3DF0 | |
+| REG_SDIO_CTRL_8812 | 0x0070 | 1 | 0x00 | |
+| REG_ACLK_MON | 0x003E | 1 | 0x00 | |
+| REG_USB_HRPWM | 0xFE58 | 1 | 0x00 | |
+
+No-ops (gated, do not emit): 0x460 FAST_EDCA (wifi_spec), IQK/PWtrack/LCK (commented), FWHW_TXQ BIT12 (CONFIG_XMIT_ACK).
+
+**§2 InitHalDm** [SRC] rtl8812a_dm.c:213 → phydm.c:1786 odm_dm_init, wire order:
+- `dm_InitGPIOSetting`: RMW 0x0040 clear GPIOSEL_ENBT → 0x40=0x00.
+- `phydm_dig_init`: read 0xC50 mask 0x7F (AGC default IGI=0x20); **no write**; seeds NHM + watchdog.
+- `phydm_cck_pd_init`: write 0xA0A=0x83 (8821a value — reproduce from wire).
+- `phydm_env_monitor_init` (NHM): toggle 0x994 BIT8; 0x998=0x302C2824, 0x99C=0x403C3834, 0x9A0 byte0=0x44, 0x994[31:16]=0x484C, 0x990=0xFFFF1027. th[i]=((IGI−14)<<1)+4·i. **Identical to `rtl8814au_dkms/dig.py:_env_monitor_init`.**
+- AGC gain commit (path A via BB): 0x8B0=0xEF000000; 0xC90 rows 0x0000F80E/0x00800103/0x2F001003/0x9BB02F03; close 0x8B0/0xC90=0x0000F00E.
+- **`phydm_adaptivity_init` + EDCCA PSD search — 8821a-ONLY, LIVE-ONLY (not replayable):** 0x8A4 bytes0/1 = E97F7F7F/E9E27F7F; loop {write 0x8FC=0x09020000, read 0xFA0 (PSD), read+write 0x8F8=0xC0020040, step 0x8A4 thresholds up}; ends 0x520 BIT15, 0x524 BIT11. Port the `phydm_search_pwdb_lower_bound` **algorithm** (adaptivity.c:237,666; th_edcca_hl_diff=7); DO NOT hardcode wire values.
+- RX-gain commit: 0x910 ×5 = 00FC0000,00EC0000,002C0000,002C0000,002C0000 (8814 dig.py:_rf_gain_table tail shape).
+
+**§3 Monitor block** [SRC] rtl8812a_hal_init.c:3663,3710 — **DONE in monitor.py.** RCR=0x9000382F (clears ACRC32|AICV vs 8814's 3B2F). 10 ops: Set_MSR(0x102 RMW→NOLINK), read+write RCR 0x608, read 0x6A0/6A2/6A4, write =0xFFFF. Verify out-of-line anchored on 0x608=0x9000382F.
+
+**§4 RX desc + RSSI** — **DONE in rx.py.** 24-B desc bit-layout = 8814's. 8821a RSSI: CCK table {5:−38,4:−30,2:−17,1:−1,0:15}−2·vga; OFDM raw (pwdb&0x7F)−110 (no >>1). FCS stripped.
+
+**§5 Bulk-IN + reader:** bulk-IN ep **0x84**, bulk-OUT 0x09. RX DMA already on from M2 (REG_CR=0x063F); the monitor RCR opens the gate. **Start `RxReaderThread` (chips/rx_reader.py; read_once=bulk-IN 0x84, dispatch=rx.iter_frames) BEFORE `enter_monitor`** — kernel posts URBs (8885) before the RCR write (8899), and this chip has RX-starvation history (see rx_reader.py docstring).
+
+**§6 DIG watchdog (runtime, ~2 s)** [SRC] phydm_dig.c:1336 — same algo as 8814 dig.py:watchdog_tick, **single-path**: read IGI 0xC50[6:0]; FA = OFDM 0xF48[15:0] + (CCK 0xA5C[15:0] if 0x808 BIT28); reset 3-pulse 0x9A4 BIT17(1→0)/0xA2C BIT15(0→1)/0xB58 BIT0(1→0); new IGI no-link step {+2,+1,−2} @ FA {2000,4000,5000}; clamp [0x1C,0x2A]; write **only 0xC50**[6:0].
+
+**Verification:** replay-diff §1 + §2(minus EDCCA) contiguous from frame 7609; §3 out-of-line; EDCCA + RX-decode are **live-only → beacon count ch1/6/11 vs the 22-AP / NETGEAR2G baseline**. Commit M5 once the beacon count works.
+
 ## Live HW access
 
 Milestones are developed + verified **offline** against the cold-boot pcap via the
