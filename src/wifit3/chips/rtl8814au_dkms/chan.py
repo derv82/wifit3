@@ -144,34 +144,74 @@ def phy_sw_band(t, channel: int, bb_swing_2g: tuple, bb_swing_5g: tuple) -> None
         switch_wireless_band_2g(t, bb_swing_2g)
 
 
-def _phy_sw_chnl(t, channel: int, bb_swing_2g: tuple, bb_swing_5g: tuple) -> None:
-    """[SRC] phy_SwChnl8814A — band switch (on a crossing) then 2.4 GHz channel select.
+def _fc_area(channel: int) -> int:
+    """[SRC] phy_SwChnl8814A fc_area table — 0x860[28:17] center-freq area by sub-band."""
+    if 36 <= channel <= 48:
+        return 0x494
+    if 50 <= channel <= 64:
+        return 0x453
+    if 100 <= channel <= 116:
+        return 0x452
+    if channel >= 118:
+        return 0x412
+    return 0x96A                              # 2.4 GHz (channel <= 35)
 
-    The 5 GHz channel *select* (fc-area / RF sub-band / AGC-table) is M5b; this body is
-    the 2.4 GHz select, reached only for 2.4 GHz channels (``set_channel_bw`` rejects 5 GHz)
-    or the 5G->2.4G wrap, where ``phy_sw_band`` switches the band back to 2.4 GHz first.
+
+def _rf_mod_ag(channel: int) -> int:
+    """[SRC] phy_SwChnl8814A RF_MOD_AG table — merged into RF 0x18 [18:16]/[9:8] per sub-band."""
+    if 36 <= channel <= 64:
+        return 0x101
+    if 100 <= channel <= 140:
+        return 0x301
+    if channel > 140:
+        return 0x501
+    return 0x000                             # 2.4 GHz
+
+
+def _phy_sw_chnl(t, channel: int, bb_swing_2g: tuple, bb_swing_5g: tuple) -> None:
+    """[SRC] phy_SwChnl8814A — band switch (on a crossing) then channel select (2.4G / 5G).
+
+    The fc-area / RF_MOD_AG / AGC-table-select block is one channel-range table spanning
+    both bands (2.4 GHz falls out: fc_area 0x96A, RF_MOD_AG 0, no 0x958 write — the band
+    switch already selected the 2.4G AGC table). The CCK TX-DFIR is 2.4 GHz only; 5 GHz
+    matches no DFIR arm. The mp-mode-only spur/initial-gain block (phy_SpurCalibration +
+    phy_ModifyInitialGain here) is skipped — this build is mp_mode=0; the runtime spur cal
+    rides phy_SetBwMode (_spur_nbi).
     """
     phy_sw_band(t, channel, bb_swing_2g, bb_swing_5g)   # [SRC] phy_SwBand8814A (first op)
-    _bb32(t, C.rFc_area, 0x1FFE0000, 0x96A)   # center-freq area (ch <= 36)
-    for path in _RF_PATHS:                    # RF_MOD_AG = 0 for 2.4G -> value = channel
-        set_rf_masked(t, path, C.RF_CHNLBW, C.RF_CHNLBW_CH_MASK, channel)
-    # 2.4G CCK TX DFIR
-    if 1 <= channel <= 11:
-        f2, dbg = 0x090E1317, 0x00000204
-    else:                                     # channels 12-13
-        f2, dbg = 0x090E1217, 0x00000305
-    t.write32(C.rCCK0_TxFilter1, 0x1A1B0030)
-    t.write32(C.rCCK0_TxFilter2, f2)
-    t.write32(C.rCCK0_DebugPort, dbg)
+    _bb32(t, C.rFc_area, 0x1FFE0000, _fc_area(channel))
+    mod_ag = _rf_mod_ag(channel)
+    for path in _RF_PATHS:                    # RF 0x18 = channel | (RF_MOD_AG << 8)
+        set_rf_masked(t, path, C.RF_CHNLBW, C.RF_CHNLBW_CH_MASK, channel | (mod_ag << 8))
+    # AGC-table select 0x958[4:0] — 5 GHz sub-bands only (1=36-64, 2=100-144, 3=>=149);
+    # 2.4 GHz selected it (=0) in the band switch, so no write here.
+    if 36 <= channel <= 64:
+        _bb32(t, C.rAGC_table_Jaguar2, 0x1F, 1)
+    elif 100 <= channel <= 144:
+        _bb32(t, C.rAGC_table_Jaguar2, 0x1F, 2)
+    elif channel >= 149:
+        _bb32(t, C.rAGC_table_Jaguar2, 0x1F, 3)
+    # 2.4G CCK TX DFIR (5 GHz matches no arm -> skipped)
+    if channel <= 14:
+        if 1 <= channel <= 11:
+            f2, dbg = 0x090E1317, 0x00000204
+        else:                                 # channels 12-13
+            f2, dbg = 0x090E1217, 0x00000305
+        t.write32(C.rCCK0_TxFilter1, 0x1A1B0030)
+        t.write32(C.rCCK0_TxFilter2, f2)
+        t.write32(C.rCCK0_DebugPort, dbg)
 
 
 # [SRC] phydm_set_nbi_reg nbi_128[] (tone_idx x10) — 8814A 20/40 MHz uses the FFT-128
 # table. reg_idx = (first index whose entry exceeds tone_idx) + 1, written to 0x87c[19:14].
 _NBI_128 = (25, 55, 85, 115, 135, 155, 185, 205, 225, 245, 265, 285, 305, 335, 355,
             375, 395, 415, 435, 455, 485, 505, 525, 555, 585, 615, 635)
-# [SRC] phydm_spur_nbi_setting_8814a (rfe 0/1/6/7): the 2.4 GHz spur interferers — a
-# per-channel NBI notch on ch 4-8 (2440 MHz) and ch 14 (2480 MHz); all others disable NBI.
-_SPUR_INTF_2G = {4: 2440, 5: 2440, 6: 2440, 7: 2440, 8: 2440, 14: 2480}
+# [SRC] phydm_spur_nbi_setting_8814a (rfe 0/1/6/7): the only ACTIVE NBI notches are the
+# 2.4 GHz spurs — ch 4-8 (2440 MHz) and ch 14 (2480 MHz). The 5 GHz notch cases in that
+# function are all #if 0, so every 5 GHz channel falls through to FUNC_DISABLE (disable
+# NBI) — the same wire as a non-spur 2.4 GHz channel. (The one 5 GHz exception is the
+# ch153 notch in phy_SpurCalibration_8814A itself, which is M5f.)
+_SPUR_INTF = {4: 2440, 5: 2440, 6: 2440, 7: 2440, 8: 2440, 14: 2480}
 
 
 def _nbi_reg_idx(channel: int, f_intf: int) -> int:
@@ -188,13 +228,15 @@ def _nbi_reg_idx(channel: int, f_intf: int) -> int:
     return 0
 
 
-def _spur_nbi_2g(t, channel: int) -> None:
+def _spur_nbi(t, channel: int) -> None:
     """[SRC] phy_SpurCalibration_8814A (CSI reset) + phydm_spur_nbi_setting_8814a (NBI).
 
-    2.4 GHz channels 4-8 (and 14) carry a spur the vendor notches with a per-channel NBI
-    tap at 0x87c[19:14] + NBI-enable 0x87c[13]; every other channel disables NBI (the
-    [19:13]=0x7E reset). The CSI mask/fix-mask reset is common to all channels. Byte-diffed
-    per channel by scripts/rtl8814au_dkms/verify_channels.py.
+    Band-neutral. A spur channel (2.4 GHz ch 4-8 / ch 14) sets a per-channel NBI tap at
+    0x87c[19:14] + NBI-enable 0x87c[13]; every other channel — including all 5 GHz channels
+    — disables NBI (the [19:13]=0x7E reset). The CSI mask/fix-mask reset is common to all
+    channels. The one 5 GHz channel that needs a real notch here is ch153 (M5f) — its
+    phy_SpurCalibration case is not yet ported, so ch153 still takes the disable path.
+    Byte-diffed per channel by scripts/rtl8814au_dkms/verify_channels.py.
     """
     # phy_SpurCalibration_8814A: reset the NBI tap + CSI mask/fix-mask. Every channel.
     _bb32(t, C.rNBI_Setting, 0x000FE000, 0xFC >> 1)
@@ -203,7 +245,7 @@ def _spur_nbi_2g(t, channel: int) -> None:
         t.write32(reg, 0x0)
     # phydm_spur_nbi_setting_8814a: a spur channel sets the per-channel notch tap then
     # enables NBI; every other channel just disables NBI.
-    f_intf = _SPUR_INTF_2G.get(channel)
+    f_intf = _SPUR_INTF.get(channel)
     if f_intf is None:
         _bb32(t, C.rNBI_Setting, C.NBI_EN_BIT, 0x0)
     else:
@@ -220,7 +262,7 @@ def _phy_set_bw_mode_20(t, channel: int) -> None:
     for path in _RF_PATHS:                    # RF bw: 0x18[11:10] = 3
         set_rf_masked(t, path, C.RF_CHNLBW, C.RF_CHNLBW_BW_MASK, 0x3)
     # phy_ADC_CLK_8814A runs only on A-cut silicon (this card is not A-cut).
-    _spur_nbi_2g(t, channel)
+    _spur_nbi(t, channel)
 
 
 def set_channel_bw(t, channel: int, tx_power: tuple,
@@ -229,11 +271,12 @@ def set_channel_bw(t, channel: int, tx_power: tuple,
 
     [SRC] phy_SwChnlAndSetBwMode8814A: phy_SwChnl -> phy_SetBwMode ->
     rtw_hal_set_tx_power_level. (IQK, which follows, is a later milestone.) The band
-    switch happens inside phy_SwChnl on a 2.4G<->5G crossing; 5 GHz channel *select*
-    (fc-area / RF sub-band / AGC-table) is M5b, so 5 GHz channels are still rejected here.
+    switch + channel select handle 5 GHz (`_phy_sw_chnl`, M5a/M5b), but the per-rate TX
+    power for 5 GHz is M5d, so 5 GHz channels are still rejected here — runtime 5 GHz
+    tuning (lifting this guard, skipping TX power until M5d) + SUPPORTED_CHANNELS is M5c.
     """
     if not 1 <= channel <= 14:
-        raise NotImplementedError(f"RTL8814AU DKMS port: 5G channel {channel} is M5b+")
+        raise NotImplementedError(f"RTL8814AU DKMS port: 5G channel {channel} is M5c+")
     _phy_sw_chnl(t, channel, bb_swing_2g, bb_swing_5g)
     _phy_set_bw_mode_20(t, channel)
     set_tx_power(t, channel, tx_power)   # M2e

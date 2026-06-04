@@ -73,9 +73,32 @@ def test_set_channel_bw_cck_dfir_arms():
 
 
 def test_set_channel_bw_rejects_5g():
-    # 5 GHz channel *select* (fc-area / RF sub-band) is M5b; set_channel_bw still rejects.
+    # 5 GHz channel select is ported (M5b), but per-rate 5G TX power is M5d, so
+    # set_channel_bw still rejects 5 GHz until M5c lifts the guard.
     with pytest.raises(NotImplementedError):
         chan.set_channel_bw(Rec(), 36, (), _SW, _SW)
+
+
+def test_phy_sw_chnl_5g_low_subband():
+    # Already on 5 GHz (0x454 bit7=1) so phy_sw_band does not switch — isolates the select.
+    rec = Rec(reads={0x454: 0x80})
+    chan._phy_sw_chnl(rec, 36, _SW, _SW)
+    w = rec.ops
+    assert ("W32", 0x0860, 0x494 << 17) in w            # fc-area 0x494 (36-48) -> 0x860[28:17]
+    # RF 0x18 = channel | (RF_MOD_AG<<8): ch36 | (0x101<<8) -> LSSI 0xc90 = (0x18<<20)|0x10124.
+    assert ("W32", 0x0C90, 0x01810124) in w
+    assert ("W32", 0x0958, 0x1) in w                    # AGC-table select = 1 (sub-band 36-64)
+    assert not any(o[0] == "W32" and o[1] == 0x0A24 for o in w)   # no CCK TX-DFIR on 5 GHz
+
+
+def test_phy_sw_chnl_5g_high_subband():
+    # ch149: fc-area 0x412 (>=118), RF_MOD_AG 0x501 (>140), AGC-table select 3 (>=149).
+    rec = Rec(reads={0x454: 0x80})
+    chan._phy_sw_chnl(rec, 149, _SW, _SW)
+    w = rec.ops
+    assert ("W32", 0x0860, 0x412 << 17) in w
+    assert ("W32", 0x0C90, 0x01850195) in w             # 149 | (0x501<<8) = 0x50195
+    assert ("W32", 0x0958, 0x3) in w
 
 
 def test_switch_wireless_band_5g_sequence():
@@ -134,11 +157,11 @@ def test_nbi_reg_idx_matches_wire():
     assert chan._nbi_reg_idx(8, 2440) == 9
 
 
-def test_spur_nbi_2g_off_spur_resets_csi_and_disables():
+def test_spur_nbi_off_spur_resets_csi_and_disables():
     # A non-spur channel (ch1): reset NBI tap + CSI fix masks, NBI disabled (bit13=0),
     # and NO notch-tap write to 0x87c[19:14].
     rec = Rec(reads={0x87C: 0x000FC000})
-    chan._spur_nbi_2g(rec, 1)
+    chan._spur_nbi(rec, 1)
     addrs = [o[1] for o in rec.ops if o[0] == "W32"]
     for csi in (0x880, 0x884, 0x898, 0x89C):
         assert csi in addrs
@@ -146,16 +169,27 @@ def test_spur_nbi_2g_off_spur_resets_csi_and_disables():
     assert ("W32", 0x87C, 0x000FC000) in rec.ops
 
 
-def test_spur_nbi_2g_on_spur_notches_and_enables():
+def test_spur_nbi_on_spur_notches_and_enables():
     # ch6 (spur 2440): set the notch tap (reg_idx 4 -> 0x87c[19:14]) then enable NBI.
     rec = Rec(reads={0x87C: 0x000FC000})
-    chan._spur_nbi_2g(rec, 6)
+    chan._spur_nbi(rec, 6)
     nbi_writes = [o for o in rec.ops if o[0] == "W32" and o[1] == 0x87C]
     # last two 0x87c writes: notch tap (reg_idx 4 << 14 = 0x10000) then enable (bit13).
     assert nbi_writes[-2][2] == 0x00010000           # [19:14] = 4, bit13 still 0
     assert nbi_writes[-1][2] & (1 << 13)             # NBI enabled
     # NBI disabled: 0x87c[13] cleared (already 0 here -> unchanged).
     assert ("W32", 0x87C, 0x000FC000) in rec.ops
+
+
+def test_spur_nbi_5g_disables_like_non_spur():
+    # Every 5 GHz channel (the notch cases are #if 0 in the vendor; ch153 is M5f) takes the
+    # same disable-NBI path as a non-spur 2.4 GHz channel — no per-channel notch tap.
+    rec = Rec(reads={0x87C: 0x000FC000})
+    chan._spur_nbi(rec, 40)
+    nbi_writes = [o for o in rec.ops if o[0] == "W32" and o[1] == 0x87C]
+    # reset tap (0xfc>>1 -> [19:13]=0x7e) then disable; no notch tap written.
+    assert all(w[2] == 0x000FC000 for w in nbi_writes)
+    assert not any(w[2] & (1 << 13) for w in nbi_writes)   # NBI never enabled on 5 GHz
 
 
 def test_set_rfe_reg_init_rfe1():

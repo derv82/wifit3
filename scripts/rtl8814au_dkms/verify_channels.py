@@ -11,13 +11,15 @@ This slices each `iw set channel N` window (by the iw.log epoch -> pcap frame, l
 NO anchoring/trim, so a vendor step before/after our sequence shows up as the first
 divergence rather than being silently skipped.
 
-2.4 GHz channels (<=14) replay the full `chan.set_channel_bw`. 5 GHz channels (M5a) replay
-`chan.phy_sw_band` alone: a 2.4G->5G crossing window emits `switch_wireless_band_5g` and the
-prefix must byte-match the wire (the 5G channel *select* that follows is M5b); a same-band
-5G hop just reads the band marker and returns. No previous-band tracking — `phy_sw_band`
-reads the chip's band marker (0x454 bit7) straight from the recorded window, exactly as the
-driver does. The 5G->2.4G wrap (e.g. ch165->ch1) is a 2.4 GHz window whose band switch back
-to 2.4 GHz is now part of `set_channel_bw`, so it byte-diffs in full.
+2.4 GHz channels (<=14) replay the full `chan.set_channel_bw` (tune + TX power). 5 GHz
+channels (M5b) replay the RX tune `chan._phy_sw_chnl` + `chan._phy_set_bw_mode_20` (which
+includes the M5a band switch on a 2.4G->5G crossing) and must byte-match up to the first 5G
+TX-power write (0x1998) — 5 GHz per-rate TX power is M5d, so the differ stops exactly at that
+boundary, like the init differ does. No previous-band tracking — `phy_sw_band` (inside
+`_phy_sw_chnl`) reads the chip's band marker (0x454 bit7) straight from the recorded window,
+exactly as the driver does. The 5G->2.4G wrap (e.g. ch165->ch1) is a 2.4 GHz window whose
+band switch back to 2.4 GHz is part of `set_channel_bw`, so it byte-diffs in full. ch153 (the
+rfe=1 @20 MHz spur notch) is M5f, so it is reported as an expected divergence, not a FAIL.
 
 Run: uv run python scripts/rtl8814au_dkms/verify_channels.py [capture-1|2|3]
 """
@@ -37,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).parent))   # verify_pcap (op extractor + r
 import verify_pcap as vp  # noqa: E402
 from wifit3.chips.rtl8814au_dkms import chan  # noqa: E402
 from wifit3.chips.rtl8814au_dkms import constants as C  # noqa: E402
+from wifit3.chips.rtl8814au_dkms.txpower import REG_TXAGC  # noqa: E402  (the M5d boundary)
 
 _IW_LINE = re.compile(r"^\[(\d+\.\d+)\] Executing:.*set channel (\d+)")
 
@@ -103,19 +106,27 @@ def verify(cap_name: str) -> int:
             nskip += 1
             continue
 
-        if ch > 14:                                   # 5 GHz: band switch only (M5a)
+        if ch > 14:                                   # 5 GHz: RX tune (M5a band switch + M5b select)
             try:
-                chan.phy_sw_band(t, ch, params.bb_swing, params.bb_swing_5g)
+                chan._phy_sw_chnl(t, ch, params.bb_swing, params.bb_swing_5g)
+                chan._phy_set_bw_mode_20(t, ch)
             except vp.Divergence as d:
-                print(f"  ch {ch:>3}: FAIL — 5G band switch: {d}")
-                nfail += 1
+                if ch == 153:                         # rfe=1 @20 MHz spur notch — M5f
+                    print(f"  ch {ch:>3}: SKIP — ch153 spur notch is M5f (expected divergence)")
+                    nskip += 1
+                else:
+                    print(f"  ch {ch:>3}: FAIL — 5G RX tune: {d}")
+                    nfail += 1
                 continue
-            if t.i > 1:                               # a band switch fired (read + switch ops)
-                print(f"  ch {ch:>3}: PASS — 2.4G->5G band switch ({t.i} ops); 5G tune = M5b")
+            # The RX tune must land exactly at the 5G TX-power table (0x1998, M5d).
+            nxt = ops[t.i] if t.i < len(ops) else None
+            if nxt and nxt["kind"] == "W" and nxt["addr"] == REG_TXAGC:
+                print(f"  ch {ch:>3}: PASS — 5G RX tune {t.i} ops byte-for-byte; TX power = M5d")
                 npass += 1
-            else:                                     # same-band 5G hop: nothing to switch
-                print(f"  ch {ch:>3}: SKIP — same-band 5G hop (tune = M5b)")
-                nskip += 1
+            else:
+                print(f"  ch {ch:>3}: FAIL — 5G RX tune {t.i} ops matched but next op "
+                      f"{nxt} != TX power (0x1998)")
+                nfail += 1
             continue
 
         try:
@@ -127,7 +138,7 @@ def verify(cap_name: str) -> int:
             nfail += 1
 
     print(f"\n{cap_name}: {npass} PASS, {nfail} FAIL, {nskip} skipped "
-          f"(same-band 5G hops — channel select is M5b).")
+          f"(slicing artifacts + ch153 M5f spur notch).")
     return 1 if nfail else 0
 
 
