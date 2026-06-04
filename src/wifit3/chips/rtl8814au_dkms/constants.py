@@ -319,6 +319,14 @@ RF_CHNLBW_BW_MASK = 0xC00
 rCCK0_TxFilter1 = 0x0A20
 rCCK0_TxFilter2 = 0x0A24
 rCCK0_DebugPort = 0x0A28
+
+# Tunable channels @ 20 MHz (the channel-tune logic handles these sub-bands). 2.4 GHz
+# is 1-13 (ch14's CCK-DFIR arm is unported + absent from the captures); 5 GHz is the
+# standard UNII-1/2/2e/3 20 MHz set (the channels airodump hopped in the captures).
+CHANNELS_2G = tuple(range(1, 14))
+CHANNELS_5G = (36, 40, 44, 48, 52, 56, 60, 64,
+               100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144,
+               149, 153, 157, 161, 165)
 REG_TRXPTCL_CTL = 0x0668      # MAC bw: clear BIT7|BIT8 for 20 MHz
 REG_DATA_SC = 0x0483          # secondary-channel = 0 for 20 MHz
 # phy_SpurCalibration NBI/CSI reset (2.4G has no spur -> reset)

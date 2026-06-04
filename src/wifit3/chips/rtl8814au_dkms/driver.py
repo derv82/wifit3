@@ -7,7 +7,9 @@ then starts the bulk-IN RX reader (promiscuous monitor frames + per-frame RSSI) 
 the runtime phydm DIG/AGC watchdog. ``inject_frame`` builds the mgmt TX descriptor and
 transmits — deauth (M4c) and WEP ARP replay (M4d) are live-verified, and monitor RX is
 confirmed promiscuous in both directions (captures client->AP, incl. WPA M2/M4).
-Pending: 5 GHz (M5 — ``set_channel`` accepts 2.4 GHz channels 1-13 only).
+5 GHz monitor RX is ported (M5a band switch / M5b channel select / M5c runtime —
+``set_channel`` tunes 2.4 GHz + 5 GHz @ 20 MHz). Pending: 5 GHz TX power (M5d, so 5 GHz
+inject uses stale power) + the ch153 spur notch (M5f).
 
 This driver is intentionally NOT registered in ``wlan/manager.py`` yet — master
 keeps the working mainline-derived ``rtw88_8814au`` port until this vendor port is
@@ -28,7 +30,7 @@ from wifit3.wlan.packet import WlanFrameParser
 from ..rx_reader import RxReaderThread
 from .bb import phy_bb_config
 from .chan import init_tune, set_channel_bw, set_rfe_reg_init
-from .constants import BBSWING_DEFAULT, PID_RTL8814AU, VID_REALTEK
+from .constants import BBSWING_DEFAULT, CHANNELS_2G, CHANNELS_5G, PID_RTL8814AU, VID_REALTEK
 from .dig import WATCHDOG_PERIOD_S, watchdog_tick
 from .dm import init_hal_dm
 from .efuse import read_chip_params
@@ -55,10 +57,9 @@ class Rtl8814auDkmsDriver:
         DeviceID(VID_REALTEK, PID_RTL8814AU,
                  "Realtek RTL8814AU 4T4R (ALFA AWUS1900) — vendor/DKMS port"),
     ]
-    # 2.4 GHz, 20 MHz primary. The 5 GHz band switch is ported (M5a), but the 5 GHz
-    # channel tune (M5b) + runtime band-switching (M5c) are not, so set_channel still
-    # rejects 5 GHz and those channels are not advertised yet.
-    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 14))
+    # 2.4 GHz + 5 GHz, 20 MHz primary (M5a band switch / M5b channel select / M5c runtime).
+    # 5 GHz monitor RX is tune-faithful; 5 GHz inject uses stale TX power until M5d.
+    SUPPORTED_CHANNELS: ClassVar[List[int]] = list(CHANNELS_2G + CHANNELS_5G)
 
     def __init__(self, transport: Rtl8814auTransport):
         self.transport = transport
@@ -186,7 +187,12 @@ class Rtl8814auDkmsDriver:
                 cb(parsed)
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
-        """Tune to a 2.4 GHz channel at 20 MHz. (5G tune is a later milestone.)"""
+        """Tune to a 2.4 GHz or 5 GHz channel at 20 MHz (band-switches on a crossing).
+
+        5 GHz monitor RX is tune-faithful; the per-rate 5 GHz TX power is M5d, so a 5 GHz
+        tune leaves the txagc table at its last 2.4 GHz values (fine for RX/scan, wrong for
+        5 GHz inject/deauth until M5d).
+        """
         loop = asyncio.get_running_loop()
         async with self._io_lock:   # don't race the DIG watchdog's control I/O
             await loop.run_in_executor(

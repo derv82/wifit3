@@ -106,10 +106,11 @@ def verify(cap_name: str) -> int:
             nskip += 1
             continue
 
-        if ch > 14:                                   # 5 GHz: RX tune (M5a band switch + M5b select)
+        if ch > 14:                                   # 5 GHz: the runtime set_channel_bw RX tune
+            # set_channel_bw band-switches (M5a) + selects the channel (M5b) and skips 5G TX
+            # power (M5d), so it must land exactly on the first 5G TX-power write (0x1998).
             try:
-                chan._phy_sw_chnl(t, ch, params.bb_swing, params.bb_swing_5g)
-                chan._phy_set_bw_mode_20(t, ch)
+                chan.set_channel_bw(t, ch, params.tx_power, params.bb_swing, params.bb_swing_5g)
             except vp.Divergence as d:
                 if ch == 153:                         # rfe=1 @20 MHz spur notch — M5f
                     print(f"  ch {ch:>3}: SKIP — ch153 spur notch is M5f (expected divergence)")
@@ -118,7 +119,6 @@ def verify(cap_name: str) -> int:
                     print(f"  ch {ch:>3}: FAIL — 5G RX tune: {d}")
                     nfail += 1
                 continue
-            # The RX tune must land exactly at the 5G TX-power table (0x1998, M5d).
             nxt = ops[t.i] if t.i < len(ops) else None
             if nxt and nxt["kind"] == "W" and nxt["addr"] == REG_TXAGC:
                 print(f"  ch {ch:>3}: PASS — 5G RX tune {t.i} ops byte-for-byte; TX power = M5d")

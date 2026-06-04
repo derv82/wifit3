@@ -267,19 +267,21 @@ def _phy_set_bw_mode_20(t, channel: int) -> None:
 
 def set_channel_bw(t, channel: int, tx_power: tuple,
                    bb_swing_2g: tuple, bb_swing_5g: tuple) -> None:
-    """Tune to a 2.4 GHz channel at 20 MHz, then set the per-rate TX power.
+    """Tune to a 2.4 GHz / 5 GHz channel at 20 MHz, then (2.4 GHz) set the per-rate TX power.
 
     [SRC] phy_SwChnlAndSetBwMode8814A: phy_SwChnl -> phy_SetBwMode ->
-    rtw_hal_set_tx_power_level. (IQK, which follows, is a later milestone.) The band
-    switch + channel select handle 5 GHz (`_phy_sw_chnl`, M5a/M5b), but the per-rate TX
-    power for 5 GHz is M5d, so 5 GHz channels are still rejected here — runtime 5 GHz
-    tuning (lifting this guard, skipping TX power until M5d) + SUPPORTED_CHANNELS is M5c.
+    rtw_hal_set_tx_power_level. (IQK, which follows, is a later milestone.) `_phy_sw_chnl`
+    band-switches on a 2.4G<->5G crossing (M5a) and selects the channel for either band
+    (M5b). **5 GHz per-rate TX power is M5d**, so TX power is set for 2.4 GHz only — a 5 GHz
+    tune is RX-faithful (monitor RX does not need TX power) but leaves the txagc table at
+    its last 2.4 GHz values, so 5 GHz inject/deauth uses wrong power until M5d.
     """
-    if not 1 <= channel <= 14:
-        raise NotImplementedError(f"RTL8814AU DKMS port: 5G channel {channel} is M5c+")
+    if channel not in C.CHANNELS_2G and channel not in C.CHANNELS_5G:
+        raise NotImplementedError(f"RTL8814AU DKMS port: channel {channel} not supported")
     _phy_sw_chnl(t, channel, bb_swing_2g, bb_swing_5g)
     _phy_set_bw_mode_20(t, channel)
-    set_tx_power(t, channel, tx_power)   # M2e
+    if channel in C.CHANNELS_2G:
+        set_tx_power(t, channel, tx_power)   # M2e; 5 GHz TX power is M5d
 
 
 def init_tune(t, channel: int, tx_power: tuple,

@@ -72,11 +72,32 @@ def test_set_channel_bw_cck_dfir_arms():
     assert ("W32", 0x0A24, 0x090E1217) in rec.ops   # ch 12-13 arm
 
 
-def test_set_channel_bw_rejects_5g():
-    # 5 GHz channel select is ported (M5b), but per-rate 5G TX power is M5d, so
-    # set_channel_bw still rejects 5 GHz until M5c lifts the guard.
-    with pytest.raises(NotImplementedError):
-        chan.set_channel_bw(Rec(), 36, (), _SW, _SW)
+def test_set_channel_bw_rejects_unsupported_channel():
+    # M5c accepts 2.4 GHz + 5 GHz 20 MHz channels; a non-center / out-of-set channel
+    # (e.g. 38, or 2.4G ch14 whose CCK-DFIR arm is unported) is rejected.
+    for bad in (38, 14, 200, 0):
+        with pytest.raises(NotImplementedError):
+            chan.set_channel_bw(Rec(reads={0x454: 0x80}), bad, (), _SW, _SW)
+
+
+def test_set_channel_bw_5g_skips_tx_power(monkeypatch):
+    # A 5 GHz tune runs the RX tune (the select fires) but does NOT set TX power — 5 GHz
+    # per-rate TX power is M5d. (Already on 5 GHz so no band switch.)
+    called = []
+    monkeypatch.setattr(chan, "set_tx_power", lambda *a: called.append(a))
+    rec = Rec(reads={0x454: 0x80})
+    chan.set_channel_bw(rec, 36, ("tx",), _SW, _SW)
+    assert called == []                             # set_tx_power NOT called on 5 GHz
+    assert ("W32", 0x0958, 0x1) in rec.ops          # but the 5 GHz select did run
+
+
+def test_set_channel_bw_2g_sets_tx_power(monkeypatch):
+    # A 2.4 GHz tune still sets the per-rate TX power (M2e).
+    called = []
+    monkeypatch.setattr(chan, "set_tx_power", lambda t, ch, tp: called.append((ch, tp)))
+    rec = Rec(reads={0x454: 0x00})
+    chan.set_channel_bw(rec, 6, ("tx",), _SW, _SW)
+    assert called == [(6, ("tx",))]
 
 
 def test_phy_sw_chnl_5g_low_subband():

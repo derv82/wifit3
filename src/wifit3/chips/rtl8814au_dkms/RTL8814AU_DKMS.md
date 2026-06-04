@@ -239,8 +239,18 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   first 5G TX-power write (0x1998 — the differ stops there because 5G per-rate TX power is
   M5d): **35 PASS / 0 FAIL** on all three captures (ch36 crossing = 69 ops incl. the band
   switch, same-band hops = 38 ops; ch140 PASSes — confirming only ch153 notches for rfe=1).
-  The 3 skips are the two airodump-poll slicing artifacts + ch153 (M5f). `set_channel_bw`
-  still rejects 5 GHz pending M5c (it needs M5d's 5G TX power to be a full tune).
+  The 3 skips are the two airodump-poll slicing artifacts + ch153 (M5f).
+- **M5c (runtime 5 GHz tuning): code done — byte-diffed; live 5 GHz scan pending hardware.**
+  `set_channel_bw` accepts the 2.4 GHz + 5 GHz 20 MHz channel set (`constants.CHANNELS_2G` +
+  `CHANNELS_5G`) and `driver.SUPPORTED_CHANNELS` advertises both, so `WlanInterface` hopping
+  + `set_channel` now cover 5 GHz. A 5 GHz tune runs the RX tune but **skips the per-rate TX
+  power** (M5d) — RX-faithful, but the txagc table keeps its last 2.4 GHz values, so 5 GHz
+  inject/deauth uses wrong power until M5d. The guard now rejects out-of-set channels (incl.
+  2.4G ch14, whose CCK-DFIR arm is unported). [WIRE] `verify_channels.py` now drives the 5 GHz
+  windows through `set_channel_bw` itself (the runtime entry point): still 35 PASS / 0 FAIL,
+  landing exactly on the 0x1998 boundary (proving the 5 GHz TX-power skip is correct). `scan_hw.py`
+  gains `--band 2g|5g|all` (and `--channel` accepts 5 GHz) for the live 5 GHz beacon scan — the
+  one piece that needs the card, the user's to run.
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
   boots; the port reproduces the USB conversation **byte-for-byte** through M3b-1
   (**4451/4451/4457 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
@@ -696,14 +706,17 @@ values, the RF 0x18 MOD_AG bit decode, and the 5G PG offsets):
   `verify_channels.py` byte-matches the RX tune (`_phy_sw_chnl` + `_phy_set_bw_mode_20`) for
   every 5 GHz window up to the 0x1998 TX-power boundary: 35 PASS / 0 FAIL on all three
   captures (ch36 crossing 69 ops, same-band hops 38 ops; ch153 = M5f, ch140 PASS).
-- **M5c — runtime band switching (`driver.set_channel` / `SUPPORTED_CHANNELS`). [code
-  DELEGATABLE; LIVE validation key.]** Thinner than first scoped: the band *detection* is
-  already in the tune path (`phy_sw_band`, M5a), so M5c is mostly lifting the `channel > 14`
-  guard in `set_channel_bw` once M5b lands and extending `SUPPORTED_CHANNELS` to the 5 GHz
-  20 MHz set (36…165), then the live 5G beacon scan. **[WIRE] confirmed the vendor
-  band-switches ONLY at 2G↔5G crossings** (signature 0x1002 clk-gate + 0x808 OFDM-only +
-  0xcb0 RFE pinmux present at ch12→36 and ch165→1, absent on every same-band hop) —
-  matching `phy_sw_band`'s switch-on-change behaviour.
+- **M5c — runtime 5 GHz tuning (`driver.set_channel` / `SUPPORTED_CHANNELS`). CODE DONE —
+  byte-diffed; live 5 GHz scan pending hardware.** Thinner than first scoped: the band
+  *detection* is already in the tune path (`phy_sw_band`, M5a), so M5c just lifts the
+  `set_channel_bw` guard to the `CHANNELS_2G + CHANNELS_5G` set, advertises both in
+  `SUPPORTED_CHANNELS`, skips 5 GHz TX power (M5d), and adds `scan_hw.py --band 5g`.
+  `verify_channels.py` drives the 5 GHz windows through `set_channel_bw` itself: 35 PASS /
+  0 FAIL, landing on the 0x1998 boundary. **[WIRE] confirmed the vendor band-switches ONLY at
+  2G↔5G crossings** (signature 0x1002 clk-gate + 0x808 OFDM-only + 0xcb0 RFE pinmux present at
+  ch12→36 and ch165→1, absent on every same-band hop) — matching `phy_sw_band`'s
+  switch-on-change behaviour. **Next:** the live 5 GHz beacon scan (the first on-air
+  validation of M5a-c) — `scan_hw.py --band 5g`.
 - **M5d — 5G TX power (`efuse._parse_tx_power_5g` + `txpower` 5G loop). [HW-FREE code,
   DELEGATABLE.]** Needed for 5G inject/deauth at correct power (RX does not need it).
 - **M5e — 5G TxBBSwing (`efuse._parse_bb_swing_5g`, 0xC7). DONE — pcap-verified.** Mirrors
@@ -772,10 +785,10 @@ the 5 GHz capture).
       ("20 MHz only" meant skip 40/80 MHz, not skip 5 GHz). **M5a band switch DONE** (5G
       `PHY_SwitchWirelessBand` + `phy_SwBand` readback dispatcher; byte-diffed at the
       crossings). **M5e 5G TxBBSwing DONE** (efuse 0xC7; burned to −3 dB on this card).
-      **M5b 5G channel select DONE** (fc-area / RF sub-band / 0x958 AGC select; byte-diffed
-      across all 5 GHz windows — 5 GHz RX tune complete). Pending: runtime
-      band-switching/`SUPPORTED_CHANNELS` (M5c) + 5G TX power (M5d) + 5G spur ch153 (M5f).
-      The init AGC/BB tables are already 5G-inclusive
+      **M5b 5G channel select + M5c runtime tuning DONE** (byte-diffed across all 5 GHz
+      windows via `set_channel_bw`; `SUPPORTED_CHANNELS` + `scan_hw --band 5g` cover 5 GHz —
+      5 GHz RX is code-complete, live 5 GHz scan pending hardware). Pending: 5G TX power
+      (M5d) + 5G spur ch153 (M5f). The init AGC/BB tables are already 5G-inclusive
       (selected via 0x958), so no new table load. See **M5 — 5 GHz @ 20 MHz (plan)**
       above; the existing cold-boot captures already contain the 5G tunes (airodump hopped
       36..165), so M5 is byte-diffable without a new capture.

@@ -3,13 +3,14 @@
 Drives the DKMS driver DIRECTLY (like ``test_hw.py``), bypassing the device
 manager, because this port is intentionally not registered in ``wlan/manager.py``
 yet (master keeps the mainline ``rtw88_8814au``). Brings the card up through
-M3b-3a, registers a beacon-tallying rx callback, hops 2.4 GHz channels (or sits on
-one), and reports the breadth headline — unique BSSIDs (nAPs) and per-BSSID beacon
-counts — that the re-port is judged on (DKMS ~21-24 APs vs mainline's noisy 1-11).
+M3b-3a, registers a beacon-tallying rx callback, hops a band's channels (2.4 GHz, 5 GHz,
+or all — M5c) or sits on one, and reports the breadth headline — unique BSSIDs (nAPs) and
+per-BSSID beacon counts — that the re-port is judged on (DKMS ~21-24 APs vs mainline 1-11).
 
 Usage (card plugged in; on Linux unbind the kernel driver, on Windows Zadig/WinUSB):
-    .venv\\Scripts\\python.exe scripts\\rtl8814au_dkms\\scan_hw.py                 # hop 1-13, 30s
-    .venv\\Scripts\\python.exe scripts\\rtl8814au_dkms\\scan_hw.py --channel 1      # fixed ch1
+    .venv\\Scripts\\python.exe scripts\\rtl8814au_dkms\\scan_hw.py                 # hop 2.4 GHz, 30s
+    .venv\\Scripts\\python.exe scripts\\rtl8814au_dkms\\scan_hw.py --band 5g       # hop 5 GHz 36-165
+    .venv\\Scripts\\python.exe scripts\\rtl8814au_dkms\\scan_hw.py --channel 36    # fixed 5 GHz ch36
     .venv\\Scripts\\python.exe scripts\\rtl8814au_dkms\\scan_hw.py --duration 60 --debug
 
 Never prints SSIDs; BSSIDs are this environment's and stay on your terminal only.
@@ -83,9 +84,21 @@ async def run(args) -> int:
         print("[FAIL] bring-up did not reach FW-ready")
         return 1
 
-    channels = [args.channel] if args.channel else list(range(1, 14))
-    print(f"\n[*] scanning {'ch ' + str(args.channel) if args.channel else 'channels 1-13'} "
-          f"for {args.duration:g}s ...  DIG watchdog: {'OFF' if args.no_dig else 'ON'}")
+    supported = driver.SUPPORTED_CHANNELS
+    if args.channel:
+        channels = [args.channel]
+        what = f"ch {args.channel}"
+    elif args.band == "5g":
+        channels = [c for c in supported if c > 14]
+        what = "5 GHz channels 36-165"
+    elif args.band == "all":
+        channels = list(supported)
+        what = "all channels (2.4 + 5 GHz)"
+    else:
+        channels = [c for c in supported if c <= 14]
+        what = "2.4 GHz channels 1-13"
+    print(f"\n[*] scanning {what} for {args.duration:g}s ...  "
+          f"DIG watchdog: {'OFF' if args.no_dig else 'ON'}")
     start = time.monotonic()
     i = 0
     try:
@@ -135,7 +148,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--duration", type=float, default=30.0, help="scan window (s)")
     ap.add_argument("--channel", type=int, default=None,
-                    help="fix on this 2.4G channel (default: hop 1-13)")
+                    help="fix on this channel (2.4 GHz or 5 GHz; default: hop the band)")
+    ap.add_argument("--band", choices=["2g", "5g", "all"], default="2g",
+                    help="band to hop when --channel is unset (default: 2g)")
     ap.add_argument("--dwell", type=float, default=2.0, help="per-channel dwell (s)")
     ap.add_argument("--no-dig", action="store_true",
                     help="disable the M3c DIG watchdog (A/B baseline)")
