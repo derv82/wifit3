@@ -7,6 +7,8 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Label, SelectionList
 from textual.widgets.selection_list import Selection
 
+from wifit3.wlan.channels import is_dfs
+
 
 class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
     """Modal dialog that lets the user pick which channels the hopper visits.
@@ -21,6 +23,7 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
         Binding("a", "select_all", "All", show=True),
         Binding("2", "select_24ghz", "2.4 GHz", show=True),
         Binding("5", "select_5ghz", "5 GHz", show=True),
+        Binding("d", "select_dfs", "DFS", show=True),
         Binding("n", "select_none", "None", show=True),
         Binding("enter", "confirm", "OK", show=True, priority=True),
     ]
@@ -85,11 +88,12 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
         with Vertical(id="dialog"):
             yield Label("Channel Filter", id="title")
             yield Label(
-                r"[b]\[a][/b]ll   [b]\[2][/b]ghz   [b]\[5][/b]ghz   [b]\[n][/b]one",
+                r"\[[bold green]a[/]]ll  \[[bold cyan]2[/]]G  \[[bold cyan]5[/]]G  "
+                r"\[[bold orange1]d[/]]fs  \[[bold red]n[/]]one",
                 id="hotkeys",
             )
             yield Label(
-                "Space toggles · Enter confirms · Esc cancels",
+                "[cyan]Space:[/cyan]toggle · [cyan]Enter:[/cyan]confirm · [cyan]Esc:[/cyan]cancel",
                 id="hint",
             )
             yield SelectionList[int](*selections, id="channel-list")
@@ -128,6 +132,14 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
         sl.deselect_all()
         for ch in self._supported:
             if ch > 14:
+                sl.select(ch)
+
+    def action_select_dfs(self) -> None:
+        """Select only the DFS channels (the band [5] includes but the default hop omits)."""
+        sl = self._selection_list()
+        sl.deselect_all()
+        for ch in self._supported:
+            if is_dfs(ch):
                 sl.select(ch)
 
     # --- Confirm / cancel -----------------------------------------------------

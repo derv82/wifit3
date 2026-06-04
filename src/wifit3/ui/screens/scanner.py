@@ -22,6 +22,8 @@ from wifit3.engine.save import save_handshake, save_pmkid, save_wps_pbc
 
 from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind
 from ..encryption_format import format_encryption_markup, wep_key_ascii
+from wifit3.wlan.channels import is_dfs
+
 from .channel_filter import ChannelFilterDialog
 
 
@@ -159,6 +161,7 @@ class ScannerView(Screen):
         self._update_column_headers()
 
         if self.app.active_interface:
+            self._seed_default_channel_filter(self.app.active_interface, log)
             log.write(
                 f"[cyan]Starting channel hopper on "
                 f"{self.app.active_interface.name}...[/cyan]"
@@ -758,6 +761,24 @@ class ScannerView(Screen):
         table = self.query_one("#ap-table", DataTable)
         if table.row_count > 0:
             table.move_cursor(row=table.row_count - 1, animate=True)
+
+    def _seed_default_channel_filter(self, iface, log) -> None:
+        """Exclude DFS channels (52-144) from the default hop when the driver exposes them.
+
+        They are radar-shared and usually empty, so scanning them by default dilutes a fixed
+        scan budget; they stay tunable (and listed in the [c] Channel Filter) — this just sets
+        the *initial* hop set to the non-DFS channels. Drivers with no DFS channels are
+        untouched (filter stays None = all supported)."""
+        supported = list(getattr(iface.driver, "SUPPORTED_CHANNELS", None) or [])
+        dfs = sorted(c for c in supported if is_dfs(c))
+        if not dfs:
+            return
+        self._channel_filter = [c for c in supported if not is_dfs(c)]
+        log.write(
+            f"[dim]Note:[/dim] DFS channels ({dfs[0]}–{dfs[-1]}) are "
+            f"[italic orange1]excluded[/italic orange1] by default — "
+            f"press [bold cyan]c[/bold cyan] to enable them."
+        )
 
     def action_change_channel(self) -> None:
         log = self.query_one("#system-log", RichLog)
