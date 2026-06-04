@@ -35,6 +35,8 @@ import libusb_package
 import usb.core
 import usb.util
 
+from _hwstop import install_stop, sleep_or_stop
+
 from wifit3.chips.rtl8821au_dkms import constants as C
 from wifit3.chips.rtl8821au_dkms import bb, chan, firmware, mac, rf
 from wifit3.chips.rtl8821au_dkms.driver import Rtl8821auDkmsDriver
@@ -117,18 +119,16 @@ async def _run_beacon(args) -> int:
         await driver.close()
         return _fail("bring-up did not reach FW-ready")
 
+    stop = install_stop(asyncio.get_running_loop())   # Ctrl+C -> stop early
     if args.channel != 1:
         await driver.set_channel(args.channel)
     print(f"\n[*] monitor RX on ch{args.channel} for {args.duration:g}s ...  "
           f"DIG watchdog: {'OFF' if args.no_dig else 'ON'}")
     start = time.monotonic()
-    try:
-        while time.monotonic() - start < args.duration:
-            await asyncio.sleep(1.0)
-            print(f"\r  {time.monotonic() - start:4.0f}s  nAPs={len(tally.by_bssid)}  "
-                  f"beacons={sum(tally.by_bssid.values())}  frames={tally.total_frames}", end="")
-    except KeyboardInterrupt:
-        pass
+    while not stop.is_set() and time.monotonic() - start < args.duration:
+        await sleep_or_stop(stop, 1.0)
+        print(f"\r  {time.monotonic() - start:4.0f}s  nAPs={len(tally.by_bssid)}  "
+              f"beacons={sum(tally.by_bssid.values())}  frames={tally.total_frames}", end="")
     print()
     elapsed = max(time.monotonic() - start, 1e-3)
     await driver.close()

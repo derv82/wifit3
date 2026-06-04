@@ -68,7 +68,7 @@ healthy rate, consistent with the mainline DIG softness this port targets.
 | M3 | BB/PHY + RF init (PHY_REG/AGC_TAB/RadioA, 1×1) | **PASS** (586 ops byte-exact, JaguarSeries phy_cond walker) | **PASS** (xtal=0x9e7) | **done** |
 | M4 | 2 GHz channel tune, 20 MHz (RF-SIPI) | **PASS** (74 ops byte-exact, incl. 8811au ant-prologue) | **PASS** (`--phase chan`, RF[0x18] ch1@20M) | **done** (TX-power deferred) |
 | M5 | 2 GHz RX + PHYDM RSSI/DIG (value milestone) | **PASS** (44 ops byte-exact §1+§2; 474 live EDCCA ops skipped; §3 monitor 10-op block) | **PASS** (`--phase beacon` ch1/30s: 18 APs, 1754 beacons; canary NETGEAR2G 7.3/s @ −48 dBm; DIG watchdog ticks, FA resets) | **done** |
-| M6 | 2 GHz TX (deauth + WEP replay) | **PASS** (unit test — no TX in the cold-boot pcap; fake-txdesc fields + XOR-16 checksum + golden bytes) | **user** (TX) — `deauth_hw.py` / `wep_replay_hw.py`; pending | ported, live pending |
+| M6 | 2 GHz TX (deauth + WEP replay) | **PASS** (unit test — no TX in the cold-boot pcap; fake-txdesc fields + XOR-16 checksum + golden bytes) | **PASS** (user-run: deauth → 37 EAPOL handshakes from the reconnecting client, no pipe fault; WEP replay → 5518 IVs, replay winner locked) | **done** |
 | M7 | 5 GHz: RX + tune + TX | `verify_channels` (5 GHz 36..165) | `--phase beacon` 5G + **user** deauth | — |
 | M8 | Driver Protocol wiring + warm reattach + manager `WIFIT3_RTL8821` | — | `--phase open` warm + beacon | — |
 | M9 | A/B matrix + flip default to DKMS | — | RX (Claude) + TX (user) | — |

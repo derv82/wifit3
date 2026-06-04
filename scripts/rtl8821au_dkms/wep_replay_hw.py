@@ -40,6 +40,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 import libusb_package
 import usb.core
 
+from _hwstop import install_stop, sleep_or_stop
+
 from wifit3.chips.rtl8821au_dkms.driver import Rtl8821auDkmsDriver
 from wifit3.engine.attacks.wep.campaign import WepCampaign
 from wifit3.engine.models import AccessPoint
@@ -64,6 +66,7 @@ async def run(args) -> int:
     except usb.core.USBError as e:
         logging.debug("set_configuration: %s", e)
 
+    stop = install_stop(asyncio.get_running_loop())   # Ctrl+C -> graceful stop
     driver = Rtl8821auDkmsDriver.from_usb_device(dev, entry)
     # A real WlanInterface registers the driver's rx callback and owns wep_store, so the
     # stock WEP campaign drives the dkms driver exactly as it would a registered one.
@@ -110,16 +113,14 @@ async def run(args) -> int:
           f"fake-auth + ARP replay; this TRANSMITS. Ctrl-C to stop.")
     campaign.start()
     start = time.monotonic()
-    try:
-        while time.monotonic() - start < args.duration and campaign.recovered_key is None:
-            await asyncio.sleep(2.0)
-            ivs = iface.wep_store.unique_count(target.bssid)
-            s = campaign.replay.stats
-            print(f"\r  {time.monotonic() - start:4.0f}s  IVs={ivs}  "
-                  f"state={campaign.replay.state}  injected={s.injected}  "
-                  f"pps={campaign.replay.target_pps:.0f}  winner={s.has_winner}", end="")
-    except KeyboardInterrupt:
-        pass
+    while (not stop.is_set() and time.monotonic() - start < args.duration
+           and campaign.recovered_key is None):
+        await sleep_or_stop(stop, 2.0)
+        ivs = iface.wep_store.unique_count(target.bssid)
+        s = campaign.replay.stats
+        print(f"\r  {time.monotonic() - start:4.0f}s  IVs={ivs}  "
+              f"state={campaign.replay.state}  injected={s.injected}  "
+              f"pps={campaign.replay.target_pps:.0f}  winner={s.has_winner}", end="")
     print()
     key = campaign.recovered_key
     campaign.stop()
