@@ -70,12 +70,29 @@ async def run(args) -> int:
     def progress(pct, msg):
         print(f"  [{pct * 100:5.1f}%] {msg}")
 
+    # --no-dig: disable the DKMS DIG/AGC watchdog (no-op on drivers without one) BEFORE
+    # connect, to test whether it trades weak-AP sensitivity on a busy band.
+    if args.no_dig:
+        if hasattr(iface.driver, "enable_dig"):
+            iface.driver.enable_dig = False
+            print("  DIG watchdog DISABLED for this run")
+        else:
+            print(f"  (--no-dig ignored: {driver_name} has no DIG watchdog)")
+
     if not await iface.connect(progress):
         print("[FAIL] bring-up failed")
         await mgr.close_all()
         return 1
 
-    channels = _band_channels(iface, args.band)
+    if args.channels:
+        requested = [int(x) for x in args.channels.split(",") if x.strip()]
+        supported = set(getattr(iface.driver, "SUPPORTED_CHANNELS", []))
+        channels = [c for c in requested if c in supported]
+        dropped = [c for c in requested if c not in supported]
+        if dropped:
+            print(f"  (driver {driver_name} can't tune {dropped} — dropped for fairness)")
+    else:
+        channels = _band_channels(iface, args.band)
     if not channels:
         print(f"[FAIL] driver {driver_name} advertises no {args.band} channels")
         await mgr.close_all()
@@ -113,8 +130,13 @@ async def run(args) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--band", choices=["2g", "5g", "all"], default="2g")
+    ap.add_argument("--channels", default=None,
+                    help="explicit comma list (e.g. 36,40,44,48,149,153,157,161,165) hopped "
+                         "by BOTH drivers — for a fair fixed-set A/B; overrides --band")
     ap.add_argument("--duration", type=float, default=30.0, help="scan window (s)")
     ap.add_argument("--interval", type=float, default=0.5, help="per-hop dwell (s)")
+    ap.add_argument("--no-dig", action="store_true",
+                    help="disable the DKMS DIG/AGC watchdog (no-op on other drivers)")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(
