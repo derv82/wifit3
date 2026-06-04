@@ -87,6 +87,17 @@ def test_parse_bb_swing_2g():
     assert efuse._parse_bb_swing_2g(bytes(m)) == (0x200, 0x200, 0x200, 0x200)
 
 
+def test_parse_bb_swing_5g():
+    # Same 2-bit-per-path decode as 2.4 GHz, but from efuse byte 0xC7 (M5e).
+    m = bytearray(b"\xFF" * C.EFUSE_MAP_LEN)
+    assert efuse._parse_bb_swing_5g(bytes(m)) == (0x200, 0x200, 0x200, 0x200)
+    m[C.EEPROM_TX_BBSWING_5G] = 0xE4           # 11_10_01_00 -> D=3,C=2,B=1,A=0
+    assert efuse._parse_bb_swing_5g(bytes(m)) == (0x200, 0x16A, 0x101, 0x0B6)
+    # This card's 5G fuse: index 1 on every path -> -3 dB (0x16A), per the cold-boot wire.
+    m[C.EEPROM_TX_BBSWING_5G] = 0x55           # 01_01_01_01
+    assert efuse._parse_bb_swing_5g(bytes(m)) == (0x16A, 0x16A, 0x16A, 0x16A)
+
+
 def test_parse_mac_address():
     m = bytearray(b"\xFF" * C.EFUSE_MAP_LEN)
     assert efuse._parse_mac_address(bytes(m)) is None   # all-FF blank

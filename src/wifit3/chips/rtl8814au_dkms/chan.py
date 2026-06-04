@@ -1,14 +1,18 @@
-"""RTL8814AU channel tune (M2d) — vendor faithful port, 20 MHz primary only.
+"""RTL8814AU channel tune (M2d/M5a) — vendor faithful port, 20 MHz primary only.
 
 Mirrors the hal_init tail [SRC usb_halinit.c:1229-1237]:
     PHY_ConfigBB_8814A           enable OFDM + CCK
-    PHY_SwitchWirelessBand8814A  switch to the 2.4 GHz band
+    PHY_SwitchWirelessBand8814A  switch to the 2.4 GHz band (5G branch = M5a)
     rtw_hal_set_chnl_bw(.., CHANNEL_WIDTH_20, ..) -> phy_SwChnl8814A (channel) +
                                  phy_SetBwMode8814A (20 MHz) + spur-cal reset
 
 Per the 20-MHz-only scope, the 40/80 MHz width math is omitted. TX power
 (rtw_hal_set_tx_power_level, the 0x1998 loop) and IQK follow in the vendor flow but
-are TX/cal concerns deferred to a later milestone. 5G band tune is also deferred.
+are TX/cal concerns deferred to a later milestone.
+
+The 5 GHz band switch is ported (M5a: ``switch_wireless_band_5g`` +
+``phy_sw_band``, the band-crossing dispatcher); the 5 GHz channel *select* (fc-area /
+RF sub-band / AGC-table select) is M5b, so ``set_channel_bw`` still tunes 2.4 GHz only.
 
 RF register writes/reads go through the memory-mapped interface in ``rf.py``.
 Verified byte-for-byte; [WIRE] cap1 frames 13695-13855 (channel 1).
@@ -53,12 +57,14 @@ def set_rfe_reg_init(t, rfe_type: int) -> None:
     t.write8(C.REG_GPIO_IO_SEL_8814A, v | gpio_bits)
 
 
-def _set_bb_swing_2g(t, bb_swing: tuple) -> None:
-    """[SRC] phy_SetBBSwingByBand_8814A(2.4G) — per-path TxScale[31:21].
+def _set_bb_swing(t, bb_swing: tuple) -> None:
+    """[SRC] phy_SetBBSwingByBand_8814A — per-path TxScale[31:21] (band-neutral writer).
 
-    ``bb_swing`` is the per-path 11-bit TxScale value decoded from efuse 0xC6
-    (``efuse._parse_bb_swing_2g``); on an unburned fuse every path is the 0 dB
-    default (0x200), which is what this card reads.
+    The four TxScale registers are identical across bands; only the per-path 11-bit
+    value differs (decoded from efuse 0xC6 for 2.4 GHz, 0xC7 for 5 GHz). The caller
+    passes its band's tuple; on an unburned fuse every path is the 0 dB default (0x200),
+    which is what this card reads. The vendor's ``BBDiffBetweenBand`` / OFDM-index update
+    and ``odm_clear_txpowertracking_state`` are software DM state (no register I/O).
     """
     for reg, val in zip(C.TXSCALE, bb_swing):
         _bb32(t, reg, C.BBSWING_MASK, val)
@@ -80,14 +86,72 @@ def switch_wireless_band_2g(t, bb_swing: tuple) -> None:
     _bb32(t, C.rOFDMCCKEN, C.bOFDMEN | C.bCCKEN, 0x3)
     t.write8(C.REG_CCK_CHECK, 0x0)
     _bb32(t, C.REG_A80, 1 << 18, 0x0)
-    _set_bb_swing_2g(t, bb_swing)
+    _set_bb_swing(t, bb_swing)
     _set_bw_reg_adc_agc_20(t)
     _bb8_clear_set(t, C.REG_SYS_CFG3_2, 0x01, True)     # gate CCK/OFDM clock on
 
 
-def _phy_sw_chnl(t, channel: int) -> None:
-    """[SRC] phy_SwChnl8814A — 2.4 GHz channel select (per-path RF + CCK DFIR)."""
-    t.read8(C.REG_CCK_CHECK)                  # phy_SwBand: band detect (2.4G, no switch)
+def _set_rfe_reg_5g(t) -> None:
+    """[SRC] PHY_SetRFEReg8814A(FALSE, 5G), rfe_type=1 — RFE pinmux + inv.
+
+    Paths A/B/C share 0x33173317; path D differs (0x77177717). The inv nibble is 0x33
+    (vs 0x77 on 2.4 GHz).
+    """
+    for reg in C.RFE_PINMUX[:3]:
+        t.write32(reg, C.RFE_PINMUX_VAL_5G)
+    t.write32(C.RFE_PINMUX[3], C.RFE_PINMUX_D_VAL_5G)
+    _bb32(t, C.REG_RFE_INV, 0x0FF00000, 0x33)
+
+
+def switch_wireless_band_5g(t, bb_swing: tuple) -> None:
+    """[SRC] PHY_SwitchWirelessBand8814A(BAND_ON_5G), 20 MHz, mp_mode=0.
+
+    Differs from the 2.4 GHz branch in both values and order: the CCK_CHECK bit7 band
+    marker (0x80) and the CCK-Tx-enable 0xa80[18] are written FIRST (before RFE), CCK is
+    left OFF (rOFDMCCKEN = OFDM-only 0x2), and the 0x958 AGC-table select is DEFERRED to
+    the channel switch (M5b). The shared BB-swing / ADC-AGC / clock-gate suffix reuses the
+    2.4 GHz helpers — the ADC/AGC 20 MHz values are band-independent.
+    """
+    _bb8_clear_set(t, C.REG_SYS_CFG3_2, 0x01, False)   # gate CCK/OFDM clock off
+    t.write8(C.REG_CCK_CHECK, 0x80)                    # CCK_CHECK bit7 = 5G band marker
+    _bb32(t, C.REG_A80, 1 << 18, 0x1)                  # enable CCK Tx even when CCK is off
+    # 0x958 AGC-table select is postponed to the channel switch (M5b).
+    _set_rfe_reg_5g(t)
+    _bb32(t, C.rTxPath, 0xF0, 0x0)
+    _bb32(t, C.rCCK_RX, 0x0F000000, 0xF)
+    _bb32(t, C.rOFDMCCKEN, C.bOFDMEN | C.bCCKEN, 0x2)   # OFDM only (CCK off)
+    _set_bb_swing(t, bb_swing)
+    _set_bw_reg_adc_agc_20(t)
+    _bb8_clear_set(t, C.REG_SYS_CFG3_2, 0x01, True)     # gate CCK/OFDM clock on
+
+
+def phy_sw_band(t, channel: int, bb_swing_2g: tuple, bb_swing_5g: tuple) -> None:
+    """[SRC] phy_SwBand8814A — switch the RF band only on a 2.4G<->5G crossing.
+
+    The chip records the current band in REG_CCK_CHECK bit7 (the band switch sets it:
+    5G writes 0x80, 2.4G writes 0x00), so no software band state is tracked here. The
+    current band is read back from the chip and compared to the target band, which the
+    vendor selects purely by ``channel > 14``; a switch fires only when they differ. A
+    same-band hop reads the marker and returns. This is the first op of phy_SwChnl8814A.
+    """
+    cur_5g = bool(t.read8(C.REG_CCK_CHECK) & 0x80)     # bit7 = current band (5G if set)
+    tgt_5g = channel > 14
+    if tgt_5g == cur_5g:
+        return
+    if tgt_5g:
+        switch_wireless_band_5g(t, bb_swing_5g)
+    else:
+        switch_wireless_band_2g(t, bb_swing_2g)
+
+
+def _phy_sw_chnl(t, channel: int, bb_swing_2g: tuple, bb_swing_5g: tuple) -> None:
+    """[SRC] phy_SwChnl8814A — band switch (on a crossing) then 2.4 GHz channel select.
+
+    The 5 GHz channel *select* (fc-area / RF sub-band / AGC-table) is M5b; this body is
+    the 2.4 GHz select, reached only for 2.4 GHz channels (``set_channel_bw`` rejects 5 GHz)
+    or the 5G->2.4G wrap, where ``phy_sw_band`` switches the band back to 2.4 GHz first.
+    """
+    phy_sw_band(t, channel, bb_swing_2g, bb_swing_5g)   # [SRC] phy_SwBand8814A (first op)
     _bb32(t, C.rFc_area, 0x1FFE0000, 0x96A)   # center-freq area (ch <= 36)
     for path in _RF_PATHS:                    # RF_MOD_AG = 0 for 2.4G -> value = channel
         set_rf_masked(t, path, C.RF_CHNLBW, C.RF_CHNLBW_CH_MASK, channel)
@@ -159,21 +223,25 @@ def _phy_set_bw_mode_20(t, channel: int) -> None:
     _spur_nbi_2g(t, channel)
 
 
-def set_channel_bw(t, channel: int, tx_power: tuple) -> None:
+def set_channel_bw(t, channel: int, tx_power: tuple,
+                   bb_swing_2g: tuple, bb_swing_5g: tuple) -> None:
     """Tune to a 2.4 GHz channel at 20 MHz, then set the per-rate TX power.
 
     [SRC] phy_SwChnlAndSetBwMode8814A: phy_SwChnl -> phy_SetBwMode ->
-    rtw_hal_set_tx_power_level. (IQK, which follows, is a later milestone.)
+    rtw_hal_set_tx_power_level. (IQK, which follows, is a later milestone.) The band
+    switch happens inside phy_SwChnl on a 2.4G<->5G crossing; 5 GHz channel *select*
+    (fc-area / RF sub-band / AGC-table) is M5b, so 5 GHz channels are still rejected here.
     """
     if not 1 <= channel <= 14:
-        raise NotImplementedError(f"RTL8814AU DKMS port: 5G channel {channel} is M2d+")
-    _phy_sw_chnl(t, channel)
+        raise NotImplementedError(f"RTL8814AU DKMS port: 5G channel {channel} is M5b+")
+    _phy_sw_chnl(t, channel, bb_swing_2g, bb_swing_5g)
     _phy_set_bw_mode_20(t, channel)
     set_tx_power(t, channel, tx_power)   # M2e
 
 
-def init_tune(t, channel: int, tx_power: tuple, bb_swing: tuple) -> None:
+def init_tune(t, channel: int, tx_power: tuple,
+              bb_swing_2g: tuple, bb_swing_5g: tuple) -> None:
     """Connect-time tune: PHY_ConfigBB + 2.4G band switch + set channel/bw + TX power."""
     phy_config_bb(t)
-    switch_wireless_band_2g(t, bb_swing)
-    set_channel_bw(t, channel, tx_power)
+    switch_wireless_band_2g(t, bb_swing_2g)
+    set_channel_bw(t, channel, tx_power, bb_swing_2g, bb_swing_5g)

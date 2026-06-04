@@ -59,19 +59,72 @@ def test_bw20_rf_write_sets_bits_11_10():
     assert ("W32", 0x0C90, 0x01803C01) in rec.ops
 
 
+_SW = (0x200, 0x200, 0x200, 0x200)   # 0 dB per-path BB-swing, both bands
+
+
 def test_set_channel_bw_cck_dfir_arms():
     # channels 1-11 vs 12-13 use different CCK TX-filter values.
     rec = Rec()
-    chan._phy_sw_chnl(rec, 6)
+    chan._phy_sw_chnl(rec, 6, _SW, _SW)
     assert ("W32", 0x0A24, 0x090E1317) in rec.ops   # ch<=11 arm
     rec = Rec()
-    chan._phy_sw_chnl(rec, 12)
+    chan._phy_sw_chnl(rec, 12, _SW, _SW)
     assert ("W32", 0x0A24, 0x090E1217) in rec.ops   # ch 12-13 arm
 
 
 def test_set_channel_bw_rejects_5g():
+    # 5 GHz channel *select* (fc-area / RF sub-band) is M5b; set_channel_bw still rejects.
     with pytest.raises(NotImplementedError):
-        chan.set_channel_bw(Rec(), 36, ())
+        chan.set_channel_bw(Rec(), 36, (), _SW, _SW)
+
+
+def test_switch_wireless_band_5g_sequence():
+    # 5G branch: CCK_CHECK bit7 marker + 0xa80[18] come FIRST (before RFE), CCK left off
+    # (rOFDMCCKEN=2 OFDM-only), 0x958 AGC select deferred to the channel switch (M5b).
+    rec = Rec(reads={0x1002: 0x01})
+    chan.switch_wireless_band_5g(rec, _SW)
+    w = rec.ops
+    assert ("W8", 0x0454, 0x80) in w                 # CCK_CHECK bit7 = 5G marker
+    assert ("W32", 0x0A80, 1 << 18) in w             # 0xa80[18]=1 (CCK Tx enable)
+    # RFE pinmux: A/B/C = 0x33173317, D differs (0x77177717); inv 0x1abc[27:20]=0x33.
+    assert ("W32", 0x0CB0, 0x33173317) in w
+    assert ("W32", 0x0EB0, 0x33173317) in w
+    assert ("W32", 0x18B4, 0x33173317) in w
+    assert ("W32", 0x1AB4, 0x77177717) in w
+    assert ("W32", 0x1ABC, 0x03300000) in w          # [27:20]=0x33 over read 0
+    # 5G scalars: rTxPath[7:4]=0, rCCK_RX[27:24]=0xF, rOFDMCCKEN[29:28]=2 (OFDM only).
+    assert ("W32", 0x080C, 0x0) in w
+    assert ("W32", 0x0A04, 0x0F000000) in w
+    assert ("W32", 0x0808, 0x20000000) in w
+    # the 0x958 AGC-table select is NOT written here (postponed to the M5b channel switch).
+    assert not any(o[0] == "W32" and o[1] == 0x0958 for o in w)
+    # clock gated off (0x1002 read 0x01 -> &~1 = 0) then back on (-> |1 = 1).
+    assert ("W8", 0x1002, 0x00) in w
+    assert ("W8", 0x1002, 0x01) in w
+
+
+def test_phy_sw_band_no_switch_same_band():
+    # current 2.4G (0x454 bit7=0) + target 2.4G (ch6) -> only the band-marker read.
+    rec = Rec(reads={0x454: 0x00})
+    chan.phy_sw_band(rec, 6, _SW, _SW)
+    assert rec.ops == [("R8", 0x0454)]
+    # current 5G (bit7=1) + target 5G (ch36) -> only the read, no switch.
+    rec = Rec(reads={0x454: 0x80})
+    chan.phy_sw_band(rec, 36, _SW, _SW)
+    assert rec.ops == [("R8", 0x0454)]
+
+
+def test_phy_sw_band_switches_on_crossing():
+    # 2.4G -> 5G (ch36): writes the 5G marker + 5G RFE pinmux.
+    rec = Rec(reads={0x454: 0x00})
+    chan.phy_sw_band(rec, 36, _SW, _SW)
+    assert ("W8", 0x0454, 0x80) in rec.ops
+    assert ("W32", 0x0CB0, 0x33173317) in rec.ops
+    # 5G -> 2.4G (ch1, the 165->1 wrap): clears the marker + 2.4G RFE pinmux.
+    rec = Rec(reads={0x454: 0x80})
+    chan.phy_sw_band(rec, 1, _SW, _SW)
+    assert ("W8", 0x0454, 0x00) in rec.ops
+    assert ("W32", 0x0CB0, 0x77777777) in rec.ops
 
 
 def test_nbi_reg_idx_matches_wire():

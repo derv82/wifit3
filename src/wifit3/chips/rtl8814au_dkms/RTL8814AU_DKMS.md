@@ -196,9 +196,10 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   from the air — so RX sees frames not addressed to us in BOTH directions (no ToDS-filter
   gap; the crackable WPA M2 is reachable).
 - **M4e (per-board TxBBSwing efuse decode): done.** `efuse._parse_bb_swing_2g` decodes
-  byte 0xC6 (2 bits/path, 0xFF->0 dB guard); `chan._set_bb_swing_2g` writes the per-path
-  TxScale. Faithful no-op on this card (verify_pcap byte-for-byte all 3 captures; live
-  `bb_swing=0x200/0x200/0x200/0x200`); handles a burned fuse on any board.
+  byte 0xC6 (2 bits/path, 0xFF->0 dB guard); `chan._set_bb_swing` writes the per-path
+  TxScale. Faithful no-op on this card for 2.4 GHz (verify_pcap byte-for-byte all 3
+  captures; live `bb_swing=0x200/0x200/0x200/0x200`); handles a burned fuse on any board.
+  (The 5 GHz fuse 0xC7 on this card is **not** 0 dB — see M5e.)
 - **M4d (WEP ARP replay): VERIFIED [HW].** `scripts/rtl8814au_dkms/wep_replay_hw.py` runs
   the stock `WepCampaign` over the dkms driver via a `WlanInterface` — no port-specific
   injection/attack code (replay shares the verified M4c `inject_frame` path). [HW] against
@@ -207,6 +208,27 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   ~55/s — confirms data-frame injection + replay on this port. (The harness auto-learns
   the target SSID from its beacon; without it the assoc-req carried an empty SSID and the
   AP rejected with status 12 — a harness input gap, not a port bug.)
+- **M5e (5 GHz per-board TxBBSwing efuse decode): done — pcap-verified.**
+  `efuse._parse_bb_swing_5g` reads byte 0xC7 (same 2-bit-per-path decode + value table as
+  M4e's 2.4G 0xC6); `chan._set_bb_swing` (band-neutral) writes the per-path TxScale. **Not
+  a no-op on this card:** unlike the unburned 2.4G fuse, 0xC7 is **burned to index 1 (-3 dB,
+  0x16A) on all four paths** in all three captures — so the 0 dB default would have been
+  wrong on 5 GHz. The value is byte-diffed against the wire by the M5a ch36 band-switch
+  replay (the band switch writes the 5G swing via `phy_SetBBSwingByBand`). [SRC]
+  EEPROM_TX_BBSWING_5G_8814=0xC7, PHY_GetTxBBSwing_8814A(BAND_ON_5G).
+- **M5a (5 GHz band switch): done — byte-diffed.** `chan.switch_wireless_band_5g` ports the
+  5G branch of `PHY_SwitchWirelessBand8814A` (rfe=1 values verbatim) and `chan.phy_sw_band`
+  ports `phy_SwBand8814A` — the band-crossing dispatcher. **Band detection is stateless and
+  vendor-faithful:** the chip records the current band in REG_CCK_CHECK (0x454) bit7 (the
+  switch sets it: 5G->0x80, 2.4G->0x00), so `phy_sw_band` reads it back and compares to the
+  target band (`channel > 14`), switching only on a real crossing — no software band state
+  is tracked (handles any crossing, e.g. 165->2). It is the first op of `phy_SwChnl8814A`,
+  so it lives in the channel-tune path; `set_channel_bw` still rejects 5G channel *select*
+  (M5b). [WIRE] `verify_channels.py` (extended to cover 5G): the 2.4G->5G crossing
+  (ch12->36) band switch reproduces **32 ops byte-for-byte** and the 5G->2G wrap (ch165->1)
+  now byte-diffs in full (340 ops) — both were FAIL/SKIP before. 13 PASS / 0 FAIL on all
+  three captures. The verifier skips two windows airodump's periodic 0x60 poll left starting
+  off-tune (a slicing artifact, not a port error); same-band 5G hops are SKIP pending M5b.
 - Verification: `scripts/rtl8814au_dkms/verify_pcap.py` replays all three cold
   boots; the port reproduces the USB conversation **byte-for-byte** through M3b-1
   (**4451/4451/4457 ops**, all 46 FW packets, BB+RF tables, RCK1 copy, channel tune,
@@ -302,9 +324,11 @@ faithful (no scan-mode command-skip to mirror).
   [7:4]=2, rCCK_RX 0xa04[27:24]=5, CCK_CHECK 0x454=0, 0xa80[18]=0, BB-swing per path
   (0xc1c/.../0x1a1c[31:21], efuse-decoded per path — M4e; 0x200/0 dB on this card),
   ADC/AGC bw regs, clock on.
-- **phy_SwChnl8814A** — band detect (read 0x454, already 2.4G), fc-area 0x860[28:17]
-  = 0x96A, per-path RF channel write (RF 0x18, mask 0x703ff, value = channel for
-  2.4G), CCK TX-DFIR (0xa20/0xa24/0xa28; ch 1-11 vs 12-13 arms).
+- **phy_SwChnl8814A** — `phy_sw_band` (read 0x454 bit7, band switch on a 2.4G<->5G
+  crossing — M5a), fc-area 0x860[28:17] = 0x96A, per-path RF channel write (RF 0x18,
+  mask 0x703ff, value = channel for 2.4G), CCK TX-DFIR (0xa20/0xa24/0xa28; ch 1-11 vs
+  12-13 arms). The fc-area / RF / CCK-DFIR block here is the 2.4G channel select; the 5G
+  channel select is M5b.
 - **phy_SetBwMode8814A (20 MHz)** — MAC bw 0x668 clear BIT7|BIT8, secondary-channel
   0x483=0, ADC/AGC bw regs, per-path RF bw (RF 0x18[11:10]=3). phy_ADC_CLK is A-cut
   only (skipped). **Spur/NBI (`_spur_nbi_2g`):** reset the NBI tap + CSI
@@ -315,8 +339,12 @@ faithful (no scan-mode command-skip to mirror).
   needs the per-rate power computation) and IQK follow in the vendor flow; both are
   TX/cal concerns. The differ stops exactly at the first 0x1998 write. (The per-board
   TxBBSwing efuse decode is now done in M4e — this card reads the 0 dB default.)
-- **5G** band tune is M5 (not yet built): `set_channel` accepts 2.4G channels 1-13 only
-  for now. 5 GHz @ 20 MHz parity is scoped in the **M5 — 5 GHz @ 20 MHz** plan.
+- **5G band switch (M5a) DONE:** `switch_wireless_band_5g` + the `phy_sw_band` dispatcher
+  (read 0x454 bit7 vs `channel > 14`) port the 5G branch of `PHY_SwitchWirelessBand8814A`
+  and `phy_SwBand8814A` — byte-diffed at the 2.4G<->5G crossings (see the M5a Status entry).
+  The 5G channel *select* (fc-area / RF sub-band / 0x958 AGC select — M5b) and runtime band
+  switching in `set_channel` / `SUPPORTED_CHANNELS` (M5c) are still pending, so `set_channel`
+  accepts 2.4G channels only for now. Full scope: the **M5 — 5 GHz @ 20 MHz** plan.
 
 ## TX power — the txagc table (M2e)
 `rtw_hal_set_tx_power_level` -> `PHY_SetTxPowerLevel8814` writes a per-(path,rate)
@@ -577,13 +605,14 @@ only) and greps every constant verbatim before coding.
   (replay rides the shared mgmt descriptor at 1M). Live IV/crack run is the user's on return.
 - **M4e — per-board TxBBSwing efuse decode. DONE.** `efuse._parse_bb_swing_2g` reads
   byte 0xC6 (2.4G), 2 bits per path -> {0:0x200 (0 dB), 1:0x16A (-3), 2:0x101 (-6),
-  3:0x0B6 (-9)}, with the unburned-fuse (0xFF) -> 0 dB guard; `chan._set_bb_swing_2g`
+  3:0x0B6 (-9)}, with the unburned-fuse (0xFF) -> 0 dB guard; `chan._set_bb_swing`
   writes the per-path value into [31:21] of 0xC1C/0xE1C/0x181C/0x1A1C. [SRC]
   EEPROM_TX_BBSWING_2G_8814=0xC6 (hal_pg.h), PHY_GetTxBBSwing_8814A
   (rtl8814a_phycfg.c:762; only the registry-AUTO efuse path, the one the wire takes).
-  **Confirmed a no-op on this card** (as predicted): verify_pcap stays byte-for-byte on
-  all three captures (decode -> 0x200 = wire) and the live card logs
+  **Confirmed a no-op on this card** (as predicted) for **2.4 GHz**: verify_pcap stays
+  byte-for-byte on all three captures (decode -> 0x200 = wire) and the live card logs
   `bb_swing=0x200/0x200/0x200/0x200`. The decode now handles a burned fuse on any board.
+  (5 GHz is a different story — its 0xC7 fuse IS burned on this card; see M5e.)
 
 Sequencing: M4a -> M4b -> (M4c, M4d via the HW loop); M4e is independent. The HW-free
 delegatable units are **M4a**, the **M4b code**, and **M4e** (+ its pcap check); gate the
@@ -635,23 +664,35 @@ values, the RF 0x18 MOD_AG bit decode, and the 5G PG offsets):
   notch at 20 MHz — fine-tuning, not a blocker for basic RX.
 
 **Milestones (tiny; each tagged):**
-- **M5a — 5G band switch (`chan.switch_wireless_band_5g`). [HW-FREE code, DELEGATABLE.]**
-  Port the 5G branch (rfe=1 values verbatim); unit-test the register sequence.
+- **M5a — 5G band switch (`chan.switch_wireless_band_5g` + `chan.phy_sw_band`). DONE —
+  byte-diffed.** Ports the 5G branch of `PHY_SwitchWirelessBand8814A` (rfe=1 values
+  verbatim) and `phy_SwBand8814A`, the crossing dispatcher. **Band detection is the
+  vendor's stateless readback** — REG_CCK_CHECK (0x454) bit7 holds the current band (the
+  switch sets it 5G->0x80 / 2.4G->0x00) and the target is `channel > 14`; a switch fires
+  only on a real crossing (handles any crossing, e.g. 165->2 — no software prev-band
+  tracking). It is the first op of `phy_SwChnl8814A`, so it sits in the channel-tune path.
+  [WIRE] `verify_channels.py` extended to 5G: the 2.4G->5G crossing band switch (ch12->36)
+  reproduces 32 ops byte-for-byte, the 5G->2G wrap (ch165->1) byte-diffs in full — 13 PASS /
+  0 FAIL on all three captures (the 5G channel select that follows a crossing is M5b).
 - **M5b — 5G channel tune (`chan` 5G channel select: fc-area + RF 0x18 + 0x958 select,
-  skip CCK-DFIR). [HW-FREE code, DELEGATABLE.]** Reuse phy_SetBwMode(20 MHz).
-- **M5c — runtime band switching (`driver.set_channel` / `chan.set_channel_bw`).
-  [code DELEGATABLE; LIVE validation key.]** Detect a 2.4G↔5G crossing and run the band
-  switch (not just the channel tune); extend `SUPPORTED_CHANNELS` to the 5 GHz 20 MHz set
-  (36…165). The one genuinely new runtime behavior — the 2.4G-only port never
-  band-switched mid-run. **[WIRE] confirmed the vendor band-switches ONLY at 2G↔5G
-  crossings** (band-switch signature 0x1002 clk-gate + 0x808 OFDM-only + 0xcb0 RFE pinmux
-  is present at ch12→36 and ch165→1, absent on every same-band hop) — so M5c gates the
-  band switch on a band *change*, not on every tune (same-band hops stay the pure tune
-  that already byte-matches the wire).
+  skip CCK-DFIR). [HW-FREE code, DELEGATABLE.]** Reuse phy_SetBwMode(20 MHz). When done,
+  `verify_channels.py` replays the full 5G windows (drop the same-band-hop SKIP).
+- **M5c — runtime band switching (`driver.set_channel` / `SUPPORTED_CHANNELS`). [code
+  DELEGATABLE; LIVE validation key.]** Thinner than first scoped: the band *detection* is
+  already in the tune path (`phy_sw_band`, M5a), so M5c is mostly lifting the `channel > 14`
+  guard in `set_channel_bw` once M5b lands and extending `SUPPORTED_CHANNELS` to the 5 GHz
+  20 MHz set (36…165), then the live 5G beacon scan. **[WIRE] confirmed the vendor
+  band-switches ONLY at 2G↔5G crossings** (signature 0x1002 clk-gate + 0x808 OFDM-only +
+  0xcb0 RFE pinmux present at ch12→36 and ch165→1, absent on every same-band hop) —
+  matching `phy_sw_band`'s switch-on-change behaviour.
 - **M5d — 5G TX power (`efuse._parse_tx_power_5g` + `txpower` 5G loop). [HW-FREE code,
   DELEGATABLE.]** Needed for 5G inject/deauth at correct power (RX does not need it).
-- **M5e — 5G TxBBSwing (`efuse._parse_bb_swing_5g`, 0xC7). [HW-FREE, DELEGATABLE, trivial.]**
-  Mirror M4e.
+- **M5e — 5G TxBBSwing (`efuse._parse_bb_swing_5g`, 0xC7). DONE — pcap-verified.** Mirrors
+  M4e (same 2-bit-per-path decode + value table). **Not a no-op on this card:** 0xC7 is
+  burned to index 1 (-3 dB, 0x16A) on all four paths in all three captures (vs the unburned
+  0 dB 2.4G fuse), so the value is real and the 0 dB default would have been wrong on 5 GHz.
+  The wire-verification rides M5a's ch36 band-switch replay (the switch writes the 5G swing
+  via `phy_SetBBSwingByBand`).
 - **M5f — 5G spur cal 20 MHz (ch153 / ch140 cases). [HW-FREE code, DELEGATABLE, LOW pri.]**
 
 **Sequencing:** M5e anytime (trivial). M5a→M5b→M5c gets **5 GHz RX** (validate: do we see
@@ -709,8 +750,11 @@ the 5 GHz capture).
       See **M4 — TX (plan)** above for the vendor TX-path map, per-milestone scope, and
       which milestones are hardware-free / subagent-delegatable.
 - M5: 5 GHz @ 20 MHz parity (beacons/inject/deauth/EAPOL) — the band M1–M4 left out
-      ("20 MHz only" meant skip 40/80 MHz, not skip 5 GHz). 5G band switch (M5a) +
-      channel tune (M5b) + runtime band-switching (M5c) + 5G TX power (M5d) + 5G
-      TxBBSwing (M5e) + 5G spur (M5f). The init AGC/BB tables are already 5G-inclusive
+      ("20 MHz only" meant skip 40/80 MHz, not skip 5 GHz). **M5a band switch DONE** (5G
+      `PHY_SwitchWirelessBand` + `phy_SwBand` readback dispatcher; byte-diffed at the
+      crossings). **M5e 5G TxBBSwing DONE** (efuse 0xC7; burned to −3 dB on this card).
+      Pending: channel tune (M5b) + runtime band-switching/`SUPPORTED_CHANNELS` (M5c) +
+      5G TX power (M5d) + 5G spur (M5f). The init AGC/BB tables are already 5G-inclusive
       (selected via 0x958), so no new table load. See **M5 — 5 GHz @ 20 MHz (plan)**
-      above; ideally byte-diffed against a fresh 5 GHz cold-boot capture.
+      above; the existing cold-boot captures already contain the 5G tunes (airodump hopped
+      36..165), so M5 is byte-diffable without a new capture.

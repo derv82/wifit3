@@ -28,7 +28,7 @@ from wifit3.wlan.packet import WlanFrameParser
 from ..rx_reader import RxReaderThread
 from .bb import phy_bb_config
 from .chan import init_tune, set_channel_bw, set_rfe_reg_init
-from .constants import PID_RTL8814AU, VID_REALTEK
+from .constants import BBSWING_DEFAULT, PID_RTL8814AU, VID_REALTEK
 from .dig import WATCHDOG_PERIOD_S, watchdog_tick
 from .dm import init_hal_dm
 from .efuse import read_chip_params
@@ -55,8 +55,9 @@ class Rtl8814auDkmsDriver:
         DeviceID(VID_REALTEK, PID_RTL8814AU,
                  "Realtek RTL8814AU 4T4R (ALFA AWUS1900) — vendor/DKMS port"),
     ]
-    # 2.4 GHz, 20 MHz primary. 5G channel tune is a later milestone (M2d ports the
-    # 2.4G band switch + set_chnl_bw only), so 5G channels are not advertised yet.
+    # 2.4 GHz, 20 MHz primary. The 5 GHz band switch is ported (M5a), but the 5 GHz
+    # channel tune (M5b) + runtime band-switching (M5c) are not, so set_channel still
+    # rejects 5 GHz and those channels are not advertised yet.
     SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 14))
 
     def __init__(self, transport: Rtl8814auTransport):
@@ -64,6 +65,10 @@ class Rtl8814auDkmsDriver:
         self.mac_address: Optional[str] = None  # M2: efuse read
         self._channel: Optional[int] = None
         self._tx_power: tuple = ()  # per-path efuse TX-power info (M2e)
+        # Per-path BB-swing (TxScale) per band — phy_SetBBSwingByBand on a band switch.
+        # Both bands are efuse-decoded (2.4 GHz M4e / efuse 0xC6, 5 GHz M5e / efuse 0xC7).
+        self._bb_swing_2g: tuple = (BBSWING_DEFAULT,) * 4
+        self._bb_swing_5g: tuple = (BBSWING_DEFAULT,) * 4
         self.is_warm: bool = False
         # Runtime DIG/AGC watchdog (M3c). Toggleable so a fixed-channel A/B can
         # isolate the watchdog's effect on RX breadth (scan_hw.py --no-dig).
@@ -93,6 +98,8 @@ class Rtl8814auDkmsDriver:
         params = await loop.run_in_executor(None, read_chip_params, self.transport)
         self.mac_address = params.mac_address
         self._tx_power = params.tx_power
+        self._bb_swing_2g = params.bb_swing
+        self._bb_swing_5g = params.bb_swing_5g
         logger.info("RTL8814AU efuse: rfe_type=%d crystal_cap=0x%02x mac=%s bb_swing=%s",
                     params.rfe_type, params.crystal_cap,
                     params.mac_address or "<none>",
@@ -118,7 +125,8 @@ class Rtl8814auDkmsDriver:
             mac_init_misc(t)      # M2b: hal_init MISC stage
             phy_bb_config(t, params.rfe_type, params.crystal_cap)  # M2b: PHY_BBConfig8814
             phy_rf_config(t, params.rfe_type)                      # M2c: PHY_RFConfig8814A
-            init_tune(t, _DEFAULT_CHANNEL, params.tx_power, params.bb_swing)  # M2d/M2e: ch tune + TX power
+            init_tune(t, _DEFAULT_CHANNEL, params.tx_power,
+                      self._bb_swing_2g, self._bb_swing_5g)  # M2d/M2e: ch tune + TX power
             init_hal_dm(t)                                         # M3a: InitHalDm DIG/AGC seed
             set_rfe_reg_init(t, params.rfe_type)                   # M3b-1: PHY_SetRFEReg8814A(TRUE)
             hal_init_turn_on(t, self.mac_address)                  # M3b-1: turn-on tail + MAC addr
@@ -182,7 +190,8 @@ class Rtl8814auDkmsDriver:
         loop = asyncio.get_running_loop()
         async with self._io_lock:   # don't race the DIG watchdog's control I/O
             await loop.run_in_executor(
-                None, set_channel_bw, self.transport, channel, self._tx_power)
+                None, set_channel_bw, self.transport, channel, self._tx_power,
+                self._bb_swing_2g, self._bb_swing_5g)
         self._channel = channel
         return True
 

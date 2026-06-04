@@ -247,7 +247,9 @@ def main() -> int:
             mac.mac_init_misc(t)           # M2b: hal_init MISC stage
             bb.phy_bb_config(t, p.rfe_type, p.crystal_cap)  # M2b: PHY_BBConfig8814
             rf.phy_rf_config(t, p.rfe_type)                 # M2c: PHY_RFConfig8814A
-            chan.init_tune(t, 1, p.tx_power, p.bb_swing)    # M2d ch tune + M2e TX power
+            # The 5G BB-swing is unused on the 2.4 GHz init tune (the band switch to 5G
+            # only happens on a runtime 5G hop, M5c); passed for the signature.
+            chan.init_tune(t, 1, p.tx_power, p.bb_swing, p.bb_swing_5g)  # M2d ch tune + M2e TX power
             dm.init_hal_dm(t)                               # M3a: MISC11 + InitHalDm seed
             chan.set_rfe_reg_init(t, p.rfe_type)            # M3b-1: PHY_SetRFEReg8814A(TRUE)
             mac.hal_init_turn_on(t, p.mac_address)          # M3b-1: turn-on tail + MAC addr
