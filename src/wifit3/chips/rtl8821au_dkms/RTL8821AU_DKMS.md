@@ -67,18 +67,27 @@ healthy rate, consistent with the mainline DIG softness this port targets.
 | M2 | MAC init (REG_CR → MACTXEN\|MACRXEN) | **PASS** (182 ops byte-exact, 98-entry MAC table) | **PASS** (REG_CR=0xFF) | **done** |
 | M3 | BB/PHY + RF init (PHY_REG/AGC_TAB/RadioA, 1×1) | **PASS** (586 ops byte-exact, JaguarSeries phy_cond walker) | **PASS** (xtal=0x9e7) | **done** |
 | M4 | 2 GHz channel tune, 20 MHz (RF-SIPI) | **PASS** (74 ops byte-exact, incl. 8811au ant-prologue) | **PASS** (`--phase chan`, RF[0x18] ch1@20M) | **done** (TX-power deferred) |
-| M5 | 2 GHz RX + PHYDM RSSI/DIG (value milestone) | replay-diff | `--phase beacon`, A/B canary | — |
+| M5 | 2 GHz RX + PHYDM RSSI/DIG (value milestone) | **PASS** (44 ops byte-exact §1+§2; 474 live EDCCA ops skipped; §3 monitor 10-op block) | **PASS** (`--phase beacon` ch1/30s: 18 APs, 1754 beacons; canary NETGEAR2G 7.3/s @ −48 dBm; DIG watchdog ticks, FA resets) | **done** |
 | M6 | 2 GHz TX (deauth + WEP replay) | replay-diff | **user** (TX) | — |
 | M7 | 5 GHz: RX + tune + TX | `verify_channels` (5 GHz 36..165) | `--phase beacon` 5G + **user** deauth | — |
 | M8 | Driver Protocol wiring + warm reattach + manager `WIFIT3_RTL8821` | — | `--phase open` warm + beacon | — |
 | M9 | A/B matrix + flip default to DKMS | — | RX (Claude) + TX (user) | — |
 
-## M5 (RX) implementation spec — wire-verified, for the next porting session
+## M5 (RX) implementation spec — wire-verified, IMPLEMENTED
 
-Distilled from the M5 cold-boot mapping (capture-1, dev 39). `rx.py` + `monitor.py`
-are **drafted**; `dig.py` (InitHalDm), the post-tune tail, `driver.py` `connect()`
-+ reader, and the DIG watchdog remain. All register values below are wire-confirmed
-unless flagged. Lean on the `rtl8814au_dkms` sibling — most of this is the same shape.
+Distilled from the M5 cold-boot mapping (capture-1, dev 39). **All of M5 is now
+implemented and verified** (replay-diff byte-exact + live beacon count): `rx.py`
+(RX-desc + 8821a RSSI), `monitor.py` (RCR 0x9000382F), `dig.py` (InitHalDm §2 +
+the live EDCCA PSD search + the DIG watchdog), `mac.hal_init_misc_pre/post` (§1
+post-tune tail), `driver.py` (`connect()` M1→M5 + RX reader started before monitor
++ DIG watchdog). The spec below records the wire mapping the port was built from;
+all register values are wire-confirmed unless flagged. Mirrors the `rtl8814au_dkms`
+sibling.
+
+**Live A/B result (2026-06-04, ch1/30s, DIG on):** 18 APs, 1754 beacons (58/s);
+canary NETGEAR2G 220 beacons (**7.3/s**, −48 dBm) — ties the mainline baseline (22 APs,
+NETGEAR2G 7.7/s), as predicted for the 8821au (own breadth tied; the headline payoff is
+the deferred 8812au sibling). The full A/B matrix is M9.
 
 **Wire boundaries:** M5 post-tune tail begins **frame 7609**; InitHalDm runs
 7617–8643, **except the EDCCA PSD-search loop 7693–8563 which reads live PSD and is

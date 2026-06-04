@@ -1,21 +1,32 @@
 """RTL8821AU (DKMS port) — live hardware smoke test of the implemented bring-up.
 
-Passive: control transfers + the firmware page-writes only. No 802.11 TX/inject.
+Passive: control transfers, firmware page-writes, and monitor RX only. No 802.11
+TX/inject.
 
 Phases (cumulative):
-  open : USB claim + REG_SYS_CFG sanity read (cold-boot ground truth 0x04412135).
-  fw   : open, then firmware.bring_up (power-on -> LLT -> FW download -> FW-ready),
-         checking REG_MCUFWDL ends with WINTINI_RDY set.
+  open   : USB claim + REG_SYS_CFG sanity read (cold-boot ground truth 0x04412135).
+  fw     : open, then firmware.bring_up (power-on -> LLT -> FW download -> FW-ready),
+           checking REG_MCUFWDL ends with WINTINI_RDY set.
+  mac    : fw, then M2 MAC init (REG_CR -> MACTXEN|MACRXEN).
+  phy    : mac, then M3 BB/RF init (xtal 0x9e7).
+  chan   : phy, then M4 2.4 GHz band + ch1 + 20 MHz BW.
+  beacon : full driver bring-up (M1-M5) + a fixed-channel monitor-RX beacon count
+           (the A/B headline) — nAPs, total + peak beacons/s, and the NETGEAR2G canary.
 
 Usage (card plugged in, WinUSB-bound via Zadig on Windows):
-    uv run python scripts/rtl8821au_dkms/test_hw.py            # = fw
+    uv run python scripts/rtl8821au_dkms/test_hw.py                       # = chan
+    uv run python scripts/rtl8821au_dkms/test_hw.py --phase beacon        # ch1, 30s
+    uv run python scripts/rtl8821au_dkms/test_hw.py --phase beacon --channel 6 --duration 60
     uv run python scripts/rtl8821au_dkms/test_hw.py --phase open --debug
 """
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import sys
+import time
+from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
@@ -26,7 +37,13 @@ import usb.util
 
 from wifit3.chips.rtl8821au_dkms import constants as C
 from wifit3.chips.rtl8821au_dkms import bb, chan, firmware, mac, rf
+from wifit3.chips.rtl8821au_dkms.driver import Rtl8821auDkmsDriver
 from wifit3.chips.rtl8821au_dkms.transport import RTL8821AUDkmsTransport
+
+# A/B canary — strong nearby AP whose beacon rate is the DIG-health indicator. This
+# BSSID is the deliberately-committed fixed canary (on the git-history PII-scrub list);
+# see chips/rtl8821au_dkms/RTL8821AU_DKMS.md. Baseline (mainline, ch1/30s): ~7.7/s.
+DEFAULT_CANARY = "aa:bb:cc:dd:ee:01"
 
 
 def _fail(msg: str) -> int:
@@ -34,23 +51,15 @@ def _fail(msg: str) -> int:
     return 1
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--phase", choices=("open", "fw", "mac", "phy", "chan"), default="chan")
-    ap.add_argument("--debug", action="store_true")
-    args = ap.parse_args()
-    logging.basicConfig(
-        level=logging.DEBUG if args.debug else logging.INFO,
-        format="%(asctime)s.%(msecs)03d [%(levelname)-5s] %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
-
+def _open_device():
+    """Find, detach, configure, and claim the AWUS036ACS. Returns the usb.core.Device."""
     backend = libusb_package.get_libusb1_backend()
     dev = usb.core.find(idVendor=C.USB_VID_REALTEK, idProduct=C.USB_PID_AWUS036ACS,
                         backend=backend)
     if dev is None:
-        return _fail(f"AWUS036ACS not found ({C.USB_VID_REALTEK:04x}:{C.USB_PID_AWUS036ACS:04x}). "
-                     "Plug it in, confirm Zadig bound it to WinUSB.")
+        print(f"[FAIL] AWUS036ACS not found ({C.USB_VID_REALTEK:04x}:{C.USB_PID_AWUS036ACS:04x}). "
+              "Plug it in, confirm Zadig bound it to WinUSB.")
+        return None
     print(f"[*] Found AWUS036ACS at bus {dev.bus}, address {dev.address}")
     try:
         if dev.is_kernel_driver_active(0):
@@ -61,6 +70,113 @@ def main() -> int:
         dev.set_configuration()
     except usb.core.USBError as e:
         logging.debug("set_configuration: %s", e)
+    return dev
+
+
+class BeaconTally:
+    """Driver rx callback: counts beacons + tracks strongest RSSI per BSSID."""
+
+    def __init__(self) -> None:
+        self.by_bssid: Counter = Counter()
+        self.rssi: dict = {}        # bssid -> strongest (max) dBm seen
+        self.total_frames = 0
+
+    def __call__(self, parsed: dict) -> None:
+        self.total_frames += 1
+        if parsed.get("type") != "beacon":
+            return
+        bssid = (parsed.get("bssid") or "").lower()
+        if not bssid or bssid == "ff:ff:ff:ff:ff:ff":
+            return
+        self.by_bssid[bssid] += 1
+        # Track the strongest (max) real dBm; skip the 0 "unknown" sentinel (frames with
+        # no PHY status) so it can't mask a real negative value.
+        r = parsed.get("rssi")
+        if r and (bssid not in self.rssi or r > self.rssi[bssid]):
+            self.rssi[bssid] = r
+
+
+async def _run_beacon(args) -> int:
+    dev = _open_device()
+    if dev is None:
+        return 1
+    try:
+        usb.util.claim_interface(dev, 0)
+    except usb.core.USBError as e:
+        return _fail(f"claim_interface(0): {e}  (a running wifit3 may hold the card)")
+
+    driver = Rtl8821auDkmsDriver.from_usb_device(dev, Rtl8821auDkmsDriver.SUPPORTED_IDS[0])
+    driver.enable_dig = not args.no_dig     # A/B: isolate the DIG watchdog's effect
+    tally = BeaconTally()
+    driver.register_rx_callback(tally)
+
+    def progress(pct, msg):
+        print(f"  [{pct * 100:5.1f}%] {msg}")
+
+    if not await driver.connect(progress):
+        await driver.close()
+        return _fail("bring-up did not reach FW-ready")
+
+    if args.channel != 1:
+        await driver.set_channel(args.channel)
+    print(f"\n[*] monitor RX on ch{args.channel} for {args.duration:g}s ...  "
+          f"DIG watchdog: {'OFF' if args.no_dig else 'ON'}")
+    start = time.monotonic()
+    try:
+        while time.monotonic() - start < args.duration:
+            await asyncio.sleep(1.0)
+            print(f"\r  {time.monotonic() - start:4.0f}s  nAPs={len(tally.by_bssid)}  "
+                  f"beacons={sum(tally.by_bssid.values())}  frames={tally.total_frames}", end="")
+    except KeyboardInterrupt:
+        pass
+    print()
+    elapsed = max(time.monotonic() - start, 1e-3)
+    await driver.close()
+
+    n_aps = len(tally.by_bssid)
+    total = sum(tally.by_bssid.values())
+    print(f"\n[RESULT] ch{args.channel}, {elapsed:.0f}s: {n_aps} unique AP(s), {total} beacons "
+          f"({total / elapsed:.1f}/s total), {tally.total_frames} frames")
+    if tally.by_bssid:
+        top_bssid, top_n = tally.by_bssid.most_common(1)[0]
+        print(f"  peak AP: {top_n} beacons ({top_n / elapsed:.1f}/s), "
+              f"{tally.rssi.get(top_bssid, '?')} dBm")
+        print("  top BSSIDs by beacon count (strongest RSSI seen):")
+        for bssid, n in tally.by_bssid.most_common(15):
+            print(f"    {bssid}  {n:>4}  {n / elapsed:4.1f}/s  {tally.rssi.get(bssid, '?')} dBm")
+    else:
+        print("  (no beacons — check antenna/channel; this is the live RX gate)")
+
+    canary = args.canary.lower()
+    c_n = tally.by_bssid.get(canary, 0)
+    print(f"\n  canary {canary}: {c_n} beacons ({c_n / elapsed:.1f}/s), "
+          f"{tally.rssi.get(canary, '?')} dBm  "
+          f"[mainline baseline ~7.7/s; healthy ~9-10/s — DIG-health indicator]")
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--phase", choices=("open", "fw", "mac", "phy", "chan", "beacon"),
+                    default="chan")
+    ap.add_argument("--channel", type=int, default=1, help="beacon-phase channel (2.4 GHz)")
+    ap.add_argument("--duration", type=float, default=30.0, help="beacon-phase dwell (s)")
+    ap.add_argument("--no-dig", action="store_true", help="disable the DIG watchdog (A/B)")
+    ap.add_argument("--canary", default=DEFAULT_CANARY, help="A/B canary BSSID")
+    ap.add_argument("--debug", action="store_true")
+    args = ap.parse_args()
+    logging.basicConfig(
+        level=logging.DEBUG if args.debug else logging.INFO,
+        format="%(asctime)s.%(msecs)03d [%(levelname)-5s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    if args.phase == "beacon":
+        return asyncio.run(_run_beacon(args))
+
+    dev = _open_device()
+    if dev is None:
+        return 1
     try:
         usb.util.claim_interface(dev, 0)
     except usb.core.USBError as e:

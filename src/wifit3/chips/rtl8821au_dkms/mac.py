@@ -66,6 +66,18 @@ REG_PIFS = 0x0512
 REG_MAX_AGGR_NUM = 0x04CA
 REG_FAST_EDCA_CTRL = 0x0460
 
+# --- M5 §1 post-tune hal_init tail [SRC] usb_halinit.c (around :1601, :1650-1710) ---
+REG_CAMCMD = 0x0670            # invalidate_cam_all: POLLING(BIT31)|CLR(BIT30)
+REG_HWSEQ_CTRL = 0x0423
+REG_BAR_MODE_CTRL = 0x04CC
+REG_QUEUE_CTRL = 0x04C6        # BIT3: 0 = RTS BW follows CCA/secondary-CCA
+REG_EARLY_MODE_CONTROL_8812 = 0x02BC  # +3 = Pretx_en for WEP/TKIP
+REG_TX_RPT_TIME = 0x04F0       # 2 byte
+REG_SDIO_CTRL_8812 = 0x0070
+REG_ACLK_MON_M5 = 0x003E
+REG_USB_HRPWM = 0xFE58
+CAM_INVALIDATE_ALL = 0xC0000000
+
 # REG_CR enable bits [SRC] hal_com_reg.h:1351-1352, 1358-1362
 MACTXEN = 0x40
 MACRXEN = 0x80
@@ -199,3 +211,31 @@ def mac_init_misc(t) -> None:
 
     # Init CR MACTXEN|MACRXEN after RxFF boundary (last write of M2).
     t.write8(C.REG_CR, t.read8(C.REG_CR) | MACTXEN | MACRXEN)
+
+
+# ---------------------------------------------------------------------------
+# M5 §1: post-tune hal_init "turn-on" tail (rtl8812au_hal_init after the channel
+# tune, [SRC] usb_halinit.c). The vendor order is: §1a (security + MISC11) ->
+# rtl8812_InitHalDm (§2, dig.init_hal_dm) -> §1b (the turn-on writes). The two
+# halves bracket InitHalDm, so the driver / verify_pcap call them in that order.
+# wifi_spec-gated (FAST_EDCA=0) and commented (IQK/PWtrack/LCK) steps are no-ops
+# here, as are the CONFIG_XMIT_ACK FWHW_TXQ BIT12 set — none reach the wire.
+# ---------------------------------------------------------------------------
+
+def hal_init_misc_pre(t) -> None:
+    """§1a: invalidate_cam_all + MISC11 (HW-seq, BAR-disable, NAV limit)."""
+    t.write32(REG_CAMCMD, CAM_INVALIDATE_ALL)   # invalidate_cam_all (poll+clear, 1 write)
+    t.write8(REG_HWSEQ_CTRL, 0xFF)              # default-enable HW sequence number
+    t.write32(REG_BAR_MODE_CTRL, 0x0201FFFF)    # disable BAR
+    t.write8(0x0652, 0x00)                       # NAV limit
+
+
+def hal_init_misc_post(t) -> None:
+    """§1b: turn-on writes after InitHalDm (RTS-BW, Tx-report, pre-Tx, USB reset)."""
+    t.write8(REG_QUEUE_CTRL, t.read8(REG_QUEUE_CTRL) & 0xF7)  # RTS BW follows CCA
+    t.write8(REG_FWHW_TXQ_CTRL + 1, 0x0F)        # enable Tx report
+    t.write8(REG_EARLY_MODE_CONTROL_8812 + 3, 0x01)  # Pretx_en (WEP/TKIP SEC)
+    t.write16(REG_TX_RPT_TIME, 0x3DF0)
+    t.write8(REG_SDIO_CTRL_8812, 0x00)           # reset USB mode-switch setting
+    t.write8(REG_ACLK_MON_M5, 0x00)
+    t.write8(REG_USB_HRPWM, 0x00)
