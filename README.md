@@ -47,6 +47,10 @@ subprocesses, no Scapy — so it runs the same on **Linux and Windows**.
 asterisk means *no known issue*, not that every attack has been verified on that
 card — see the matrix for the full per-attack status.
 
+The **RTL8814AU (AWUS1900)** ships with a fresh vendor/DKMS driver tuned for stronger
+2.4 / 5 GHz monitor RX. To fall back to the older mainline-derived driver, set
+`WIFIT3_RTL8814=mainline` in the environment.
+
 ## Philosophy
 
 **Zero dependencies.** Wifit3 implements the whole stack itself — the USB device

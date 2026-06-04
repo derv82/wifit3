@@ -173,7 +173,16 @@ columns and any caveats.
 | WPS | ✅ | 2026-05-31 | PIN brute ✅ and PBC ✅. |
 | Stress | ⬜ | — | Not run. Note: TX runs at BB/AGC baseline power (not power/IQ-calibrated) → weaker at distance; fine close-range. |
 
-→ `chips/rtw88_8814au/RTL8814AU.md`
+→ `chips/rtw88_8814au/RTL8814AU.md` (the **mainline** driver — the table above)
+
+**Driver selection.** 0bda:8813 is now served by the **vendor/DKMS port by default**
+(`chips/rtl8814au_dkms/`, a cleanroom re-port from the Realtek vendor source for stronger
+2.4 GHz monitor RX); `WIFIT3_RTL8814=mainline` falls back to the mainline driver above.
+The DKMS port is byte-verified against the vendor cold-boot captures (init + every channel
+tune, 2.4 GHz + 5 GHz @ 20 MHz) and HW-proven for 2.4 GHz + 5 GHz RX (16 APs on a live 5 GHz
+hop) and TX (live 5 GHz deauth → 4-way handshake). **A/B vs mainline** (breadth/stability,
+both bands) via `scripts/rtl8814au_dkms/ab_scan.py` — stagger + replug between runs — is the
+remaining gate before retiring the mainline fallback. Port detail: `chips/rtl8814au_dkms/RTL8814AU_DKMS.md`.
 
 ### MT7612U — ALFA AWUS036ACM (2.4 / 5 GHz)
 

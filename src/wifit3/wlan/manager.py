@@ -12,7 +12,8 @@ form on first import.
 from __future__ import annotations
 
 import logging
-from typing import List, Optional, Type
+import os
+from typing import Dict, List, Optional, Type
 
 import libusb_package
 import usb.core
@@ -24,18 +25,17 @@ from .interface import WlanInterface
 
 logger = logging.getLogger(__name__)
 
+# RTL8814AU (0bda:8813) is claimed by BOTH the vendor/DKMS port (default) and the
+# mainline-derived driver. Set this to "mainline" to fall back to the mainline driver.
+ENV_RTL8814_DRIVER = "WIFIT3_RTL8814"
 
-_ALL_DRIVERS: List[Type[WlanDriver]] | None = None
+_DRIVER_CLASSES: Dict[str, Type[WlanDriver]] | None = None
 
 
-def _all_drivers() -> List[Type[WlanDriver]]:
-    """The driver registry, built once on first call.
-
-    Order is the priority order for VID:PID disambiguation (only matters
-    if two drivers ever claim the same pair).
-    """
-    global _ALL_DRIVERS
-    if _ALL_DRIVERS is None:
+def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
+    """Import every driver class once (deferred to sidestep the import cycle)."""
+    global _DRIVER_CLASSES
+    if _DRIVER_CLASSES is None:
         from wifit3.chips.ar9271.driver import AR9271Driver
         from wifit3.chips.mt76x0u.driver import MT76x0UDriver
         from wifit3.chips.mt76x2u.driver import MT76x2UDriver
@@ -45,25 +45,46 @@ def _all_drivers() -> List[Type[WlanDriver]]:
         from wifit3.chips.rtl8187.driver import RTL8187Driver
         from wifit3.chips.rtl8188eus.driver import RTL8188EUSDriver
         from wifit3.chips.rtl8812au.driver import RTL8812AUDriver
+        from wifit3.chips.rtl8814au_dkms.driver import Rtl8814auDkmsDriver
         from wifit3.chips.rtl8821au.driver import RTL8821AUDriver
         from wifit3.chips.rtl8822bu.driver import RTL8822BUDriver
         from wifit3.chips.rtw88_8814au.driver import RTL8814AUDriver
 
-        _ALL_DRIVERS = [
-            AR9271Driver,
-            RTL8187Driver,
-            RT2500USBDriver,
-            RT2800USBDriver,
-            RTL8188EUSDriver,
-            RTL8812AUDriver,
-            RTL8821AUDriver,
-            RTL8822BUDriver,
-            RTL8814AUDriver,
-            MT76x0UDriver,
-            MT76x2UDriver,
-            MT7921AUDriver,
-        ]
-    return _ALL_DRIVERS
+        _DRIVER_CLASSES = {
+            "ar9271": AR9271Driver,
+            "rtl8187": RTL8187Driver,
+            "rt2500usb": RT2500USBDriver,
+            "rt2800usb": RT2800USBDriver,
+            "rtl8188eus": RTL8188EUSDriver,
+            "rtl8812au": RTL8812AUDriver,
+            "rtl8821au": RTL8821AUDriver,
+            "rtl8822bu": RTL8822BUDriver,
+            "rtl8814au_dkms": Rtl8814auDkmsDriver,
+            "rtl8814au_mainline": RTL8814AUDriver,
+            "mt76x0u": MT76x0UDriver,
+            "mt76x2u": MT76x2UDriver,
+            "mt7921au": MT7921AUDriver,
+        }
+    return _DRIVER_CLASSES
+
+
+def _all_drivers() -> List[Type[WlanDriver]]:
+    """The driver registry, in priority order (first match wins in `_match_driver`).
+
+    The RTL8814AU pair is ordered by ``$WIFIT3_RTL8814`` (read fresh each call so it can be
+    flipped between runs without restarting): the DKMS port wins by default; "mainline"
+    falls back to the mainline-derived driver.
+    """
+    c = _import_driver_classes()
+    if os.environ.get(ENV_RTL8814_DRIVER, "").strip().lower() == "mainline":
+        rtl8814 = [c["rtl8814au_mainline"], c["rtl8814au_dkms"]]
+    else:
+        rtl8814 = [c["rtl8814au_dkms"], c["rtl8814au_mainline"]]
+    return [
+        c["ar9271"], c["rtl8187"], c["rt2500usb"], c["rt2800usb"], c["rtl8188eus"],
+        c["rtl8812au"], c["rtl8821au"], c["rtl8822bu"], *rtl8814,
+        c["mt76x0u"], c["mt76x2u"], c["mt7921au"],
+    ]
 
 
 def _match_driver(
