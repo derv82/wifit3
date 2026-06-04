@@ -53,6 +53,30 @@ errno 110/10060 fallback). **Audit the other userland drivers'
 pattern and apply the same fix (Windows users + quiet channels hit it on any of
 them). Greppable: `errno.*110|"timeout" in`.
 
+## 5 GHz drivers under-list DFS channels the cards support (deferred — DFS ≈ empty air)
+
+Every 5 GHz driver **except** `rtl8814au_dkms` advertises the byte-identical 9
+non-DFS channels (`36,40,44,48,149,153,157,161,165`, DFS=0) — RTL8812AU / 8821AU /
+8822BU / mainline-8814 / MT76x0U / MT76x2U / RT2800USB. That identical list across 7
+unrelated chipsets is a copy-paste porting decision, **not** derived per-card: their
+capture `iw.log`s show `iw set channel 52/100/144` returning **0** (mt76x2u, mt7921u,
+rt5572 confirmed), i.e. the cards + regdomain *do* tune DFS. So those drivers refuse
+channels the hardware supports. (`rtl8814au_dkms` lists all 25 incl. DFS 52–144,
+byte-verified + live-hopped; it just excludes them from the *default* hop — see below.)
+
+**Deliberately deferred, not urgent.** DFS (UNII-2, 52–144) is radar-shared so most APs
+avoid it → usually empty; omitting it means faster hop cycles and few-to-no missed APs.
+This is also why only `rtl8814au_dkms` hit the `bulk_in` Windows-timeout bug above — it
+is the only driver that hops the empty DFS channels that produce long timeout runs.
+
+**To add DFS later (per driver — NOT a blind list edit):** the porters who truncated the
+list likely never exercised the DFS *tune paths*, so a driver with non-DFS-sized sub-band
+tables would mis-tune (garbage / crash) if you just appended the channels. Do the 8814
+treatment: (1) confirm `iw` accepted it in the capture (`return 0`), (2) byte-verify the
+driver's `set_channel` reproduces the capture's DFS tunes, (3) then extend
+`SUPPORTED_CHANNELS`. The DFS infra is already in place and stays: `wlan/channels.is_dfs`
+(52–144), the scanner's non-DFS default hop, and the Channel-Filter `[d]fs` opt-in.
+
 ---
 
 > Not here: **driver wedge / replug warnings not reaching the UI** is a **release
