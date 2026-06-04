@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Optional, Callable, Any, Dict, Set
 
 from wifit3.engine.models import AccessPoint, Client, Handshake, EapolFrame
+from wifit3.wlan.channels import scan_hop_order
 from wifit3.wlan.packet import WlanFrameParser
 from wifit3.wlan.packet_stats import PacketStats
 from wifit3.wlan.wep_store import WepCaptureStore
@@ -621,6 +622,12 @@ class WlanInterface:
                 channels = getattr(self.driver, "SUPPORTED_CHANNELS", None)
                 if not channels:
                     channels = [1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 5, 10]
+
+            # Hop the busy channels (1/6/11) first so the AP list fills before
+            # the scanner's first sort tick, instead of crawling 1→2→3→… and
+            # reshuffling on every later sort as each channel's burst arrives.
+            # SUPPORTED_CHANNELS stays canonical (sequential) for the filter UI.
+            channels = scan_hop_order(channels)
 
             self._is_hopping = True
             self._hopping_task = asyncio.create_task(self._hop_loop(channels, interval))
