@@ -7,9 +7,9 @@ then starts the bulk-IN RX reader (promiscuous monitor frames + per-frame RSSI) 
 the runtime phydm DIG/AGC watchdog. ``inject_frame`` builds the mgmt TX descriptor and
 transmits — deauth (M4c) and WEP ARP replay (M4d) are live-verified, and monitor RX is
 confirmed promiscuous in both directions (captures client->AP, incl. WPA M2/M4).
-5 GHz monitor RX is ported (M5a band switch / M5b channel select / M5c runtime —
-``set_channel`` tunes 2.4 GHz + 5 GHz @ 20 MHz). Pending: 5 GHz TX power (M5d, so 5 GHz
-inject uses stale power) + the ch153 spur notch (M5f).
+5 GHz @ 20 MHz is ported (M5a band switch / M5b channel select / M5c runtime / M5d TX
+power — ``set_channel`` tunes 2.4 GHz + 5 GHz with correct per-rate TX power). Pending:
+the ch153 spur notch (M5f, minor RX polish).
 
 This driver is intentionally NOT registered in ``wlan/manager.py`` yet — master
 keeps the working mainline-derived ``rtw88_8814au`` port until this vendor port is
@@ -57,15 +57,16 @@ class Rtl8814auDkmsDriver:
         DeviceID(VID_REALTEK, PID_RTL8814AU,
                  "Realtek RTL8814AU 4T4R (ALFA AWUS1900) — vendor/DKMS port"),
     ]
-    # 2.4 GHz + 5 GHz, 20 MHz primary (M5a band switch / M5b channel select / M5c runtime).
-    # 5 GHz monitor RX is tune-faithful; 5 GHz inject uses stale TX power until M5d.
+    # 2.4 GHz + 5 GHz, 20 MHz primary (M5a band switch / M5b select / M5c runtime / M5d TX
+    # power) — both bands tune with correct per-rate TX power for RX and inject.
     SUPPORTED_CHANNELS: ClassVar[List[int]] = list(CHANNELS_2G + CHANNELS_5G)
 
     def __init__(self, transport: Rtl8814auTransport):
         self.transport = transport
         self.mac_address: Optional[str] = None  # M2: efuse read
         self._channel: Optional[int] = None
-        self._tx_power: tuple = ()  # per-path efuse TX-power info (M2e)
+        self._tx_power: tuple = ()  # per-path efuse TX-power info, 2.4 GHz (M2e)
+        self._tx_power_5g: tuple = ()  # per-path efuse TX-power info, 5 GHz (M5d)
         # Per-path BB-swing (TxScale) per band — phy_SetBBSwingByBand on a band switch.
         # Both bands are efuse-decoded (2.4 GHz M4e / efuse 0xC6, 5 GHz M5e / efuse 0xC7).
         self._bb_swing_2g: tuple = (BBSWING_DEFAULT,) * 4
@@ -99,6 +100,7 @@ class Rtl8814auDkmsDriver:
         params = await loop.run_in_executor(None, read_chip_params, self.transport)
         self.mac_address = params.mac_address
         self._tx_power = params.tx_power
+        self._tx_power_5g = params.tx_power_5g
         self._bb_swing_2g = params.bb_swing
         self._bb_swing_5g = params.bb_swing_5g
         logger.info("RTL8814AU efuse: rfe_type=%d crystal_cap=0x%02x mac=%s bb_swing=%s",
@@ -126,7 +128,7 @@ class Rtl8814auDkmsDriver:
             mac_init_misc(t)      # M2b: hal_init MISC stage
             phy_bb_config(t, params.rfe_type, params.crystal_cap)  # M2b: PHY_BBConfig8814
             phy_rf_config(t, params.rfe_type)                      # M2c: PHY_RFConfig8814A
-            init_tune(t, _DEFAULT_CHANNEL, params.tx_power,
+            init_tune(t, _DEFAULT_CHANNEL, params.tx_power, params.tx_power_5g,
                       self._bb_swing_2g, self._bb_swing_5g)  # M2d/M2e: ch tune + TX power
             init_hal_dm(t)                                         # M3a: InitHalDm DIG/AGC seed
             set_rfe_reg_init(t, params.rfe_type)                   # M3b-1: PHY_SetRFEReg8814A(TRUE)
@@ -189,15 +191,14 @@ class Rtl8814auDkmsDriver:
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         """Tune to a 2.4 GHz or 5 GHz channel at 20 MHz (band-switches on a crossing).
 
-        5 GHz monitor RX is tune-faithful; the per-rate 5 GHz TX power is M5d, so a 5 GHz
-        tune leaves the txagc table at its last 2.4 GHz values (fine for RX/scan, wrong for
-        5 GHz inject/deauth until M5d).
+        Sets the per-rate TX power for the channel's band (M2e / M5d), so both RX and
+        inject/deauth use correct power on either band.
         """
         loop = asyncio.get_running_loop()
         async with self._io_lock:   # don't race the DIG watchdog's control I/O
             await loop.run_in_executor(
                 None, set_channel_bw, self.transport, channel, self._tx_power,
-                self._bb_swing_2g, self._bb_swing_5g)
+                self._tx_power_5g, self._bb_swing_2g, self._bb_swing_5g)
         self._channel = channel
         return True
 

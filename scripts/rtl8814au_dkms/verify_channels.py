@@ -11,15 +11,13 @@ This slices each `iw set channel N` window (by the iw.log epoch -> pcap frame, l
 NO anchoring/trim, so a vendor step before/after our sequence shows up as the first
 divergence rather than being silently skipped.
 
-2.4 GHz channels (<=14) replay the full `chan.set_channel_bw` (tune + TX power). 5 GHz
-channels (M5b) replay the RX tune `chan._phy_sw_chnl` + `chan._phy_set_bw_mode_20` (which
-includes the M5a band switch on a 2.4G->5G crossing) and must byte-match up to the first 5G
-TX-power write (0x1998) — 5 GHz per-rate TX power is M5d, so the differ stops exactly at that
-boundary, like the init differ does. No previous-band tracking — `phy_sw_band` (inside
-`_phy_sw_chnl`) reads the chip's band marker (0x454 bit7) straight from the recorded window,
-exactly as the driver does. The 5G->2.4G wrap (e.g. ch165->ch1) is a 2.4 GHz window whose
-band switch back to 2.4 GHz is part of `set_channel_bw`, so it byte-diffs in full. ch153 (the
-rfe=1 @20 MHz spur notch) is M5f, so it is reported as an expected divergence, not a FAIL.
+Both bands replay the full `chan.set_channel_bw` (band switch + channel select + bw mode +
+the per-band txagc table) and byte-diff the whole window — a too-short txagc loop is caught
+by a completeness check (no 0x1998 write may remain unconsumed). No previous-band tracking —
+`phy_sw_band` (inside `_phy_sw_chnl`) reads the chip's band marker (0x454 bit7) straight from
+the recorded window, exactly as the driver does, so a 2.4G<->5G crossing window (incl. the
+ch165->ch1 wrap) byte-diffs its band switch in line. ch153 (the rfe=1 @20 MHz spur notch) is
+M5f, so it is reported as an expected divergence, not a FAIL.
 
 Run: uv run python scripts/rtl8814au_dkms/verify_channels.py [capture-1|2|3]
 """
@@ -106,36 +104,30 @@ def verify(cap_name: str) -> int:
             nskip += 1
             continue
 
-        if ch > 14:                                   # 5 GHz: the runtime set_channel_bw RX tune
-            # set_channel_bw band-switches (M5a) + selects the channel (M5b) and skips 5G TX
-            # power (M5d), so it must land exactly on the first 5G TX-power write (0x1998).
-            try:
-                chan.set_channel_bw(t, ch, params.tx_power, params.bb_swing, params.bb_swing_5g)
-            except vp.Divergence as d:
-                if ch == 153:                         # rfe=1 @20 MHz spur notch — M5f
-                    print(f"  ch {ch:>3}: SKIP — ch153 spur notch is M5f (expected divergence)")
-                    nskip += 1
-                else:
-                    print(f"  ch {ch:>3}: FAIL — 5G RX tune: {d}")
-                    nfail += 1
-                continue
-            nxt = ops[t.i] if t.i < len(ops) else None
-            if nxt and nxt["kind"] == "W" and nxt["addr"] == REG_TXAGC:
-                print(f"  ch {ch:>3}: PASS — 5G RX tune {t.i} ops byte-for-byte; TX power = M5d")
-                npass += 1
+        # The runtime entry point for both bands: band switch (M5a) + channel select (M5b) +
+        # bw mode + the per-band txagc table (M2e / M5d). A 5 GHz window now byte-diffs in
+        # full, exactly like 2.4 GHz; ch153's spur notch is M5f (expected divergence).
+        try:
+            chan.set_channel_bw(t, ch, params.tx_power, params.tx_power_5g,
+                                params.bb_swing, params.bb_swing_5g)
+        except vp.Divergence as d:
+            if ch == 153:                             # rfe=1 @20 MHz spur notch — M5f
+                print(f"  ch {ch:>3}: SKIP — ch153 spur notch is M5f (expected divergence)")
+                nskip += 1
             else:
-                print(f"  ch {ch:>3}: FAIL — 5G RX tune {t.i} ops matched but next op "
-                      f"{nxt} != TX power (0x1998)")
+                print(f"  ch {ch:>3}: FAIL — {d}")
                 nfail += 1
             continue
-
-        try:
-            chan.set_channel_bw(t, ch, params.tx_power, params.bb_swing, params.bb_swing_5g)
+        # Completeness: every txagc (0x1998) write must be consumed — a too-short TX-power
+        # loop would otherwise "pass" by matching a prefix and leaving wire writes unchecked.
+        nxt = ops[t.i] if t.i < len(ops) else None
+        if nxt and nxt["kind"] == "W" and nxt["addr"] == REG_TXAGC:
+            print(f"  ch {ch:>3}: FAIL — {t.i} ops matched but TX-power writes remain "
+                  f"(incomplete txagc loop)")
+            nfail += 1
+        else:
             print(f"  ch {ch:>3}: PASS — {t.i} ops byte-for-byte")
             npass += 1
-        except vp.Divergence as d:
-            print(f"  ch {ch:>3}: FAIL — {d}")
-            nfail += 1
 
     print(f"\n{cap_name}: {npass} PASS, {nfail} FAIL, {nskip} skipped "
           f"(slicing artifacts + ch153 M5f spur notch).")

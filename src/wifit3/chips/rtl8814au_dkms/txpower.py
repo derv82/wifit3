@@ -60,10 +60,32 @@ def _ch_group_2g(channel: int) -> tuple:
     return g, (5 if channel == 14 else g)
 
 
-def power_index(pp, base_kind: str, diff_kind: str, nss: int, channel: int) -> int:
-    """[SRC] phy_get_pg_txpwr_idx + PHY_GetTxPowerIndex8814A (by-rate/limit = no-op)."""
-    g, cck_g = _ch_group_2g(channel)
-    base = pp.cck_base[cck_g] if base_kind == "cck" else pp.bw40_base[g]
+# [SRC] rtw_get_ch_group (5G branch) — channel -> one of 14 UNII groups. The per-channel
+# BW40 base is just the group base (hal_load_pg_txpwr_info expands group -> per channel).
+_CH_GROUP_5G = (
+    (36, 42, 0), (44, 48, 1), (50, 58, 2), (60, 64, 3), (100, 106, 4), (108, 114, 5),
+    (116, 122, 6), (124, 130, 7), (132, 138, 8), (140, 144, 9), (149, 155, 10),
+    (157, 161, 11), (165, 171, 12), (173, 177, 13),
+)
+
+
+def _ch_group_5g(channel: int) -> int:
+    """[SRC] rtw_get_ch_group — 5G channel -> group index (0..13)."""
+    for lo, hi, g in _CH_GROUP_5G:
+        if lo <= channel <= hi:
+            return g
+    raise ValueError(f"RTL8814AU: 5G channel {channel} has no PG group")
+
+
+def power_index(pp, base_kind: str, diff_kind: str, nss: int,
+                group: int, cck_group: int = 0) -> int:
+    """[SRC] phy_get_pg_txpwr_idx + PHY_GetTxPowerIndex8814A (by-rate/limit = no-op).
+
+    ``group`` is the channel's PG group (``_ch_group_2g`` / ``_ch_group_5g``); ``cck_group``
+    only matters when ``base_kind == "cck"`` (2.4 GHz). 5 GHz uses ``bw40_base`` + OFDM/BW20
+    diffs only — identical to the 2.4G non-CCK path, just a different group + bases.
+    """
+    base = pp.cck_base[cck_group] if base_kind == "cck" else pp.bw40_base[group]
     diff = {"cck": pp.cck_diff, "ofdm": pp.ofdm_diff, "bw20": pp.bw20_diff}[diff_kind]
     pg = base + sum(diff[k] for k in range(nss))   # cumulative diff over stream count
     idx = pg + (_CURRENT_TX_PWR_IDX - 18)
@@ -71,12 +93,33 @@ def power_index(pp, base_kind: str, diff_kind: str, nss: int, channel: int) -> i
 
 
 def set_tx_power(t, channel: int, tx_power: tuple) -> None:
-    """[SRC] PHY_SetTxPowerLevel8814 — write the txagc table for all 4 paths."""
+    """[SRC] PHY_SetTxPowerLevel8814 — write the 2.4 GHz txagc table for all 4 paths."""
+    g, cck_g = _ch_group_2g(channel)
     for path in range(4):
         pp = tx_power[path]
         for hw, base_kind, diff_kind, nss in RATE_TABLE:
-            pidx = power_index(pp, base_kind, diff_kind, nss, channel)
+            pidx = power_index(pp, base_kind, diff_kind, nss, g, cck_g)
             wd = (_TXAGC_BASE | (path << 8) | hw | (pidx << 24)) & 0xFFFFFFFF
             t.write32(REG_TXAGC, wd)
             if hw == 0x00:                 # MGN_1M: written twice to turn on the table
                 t.write32(REG_TXAGC, wd)
+
+
+# 5 GHz rate set = the 2.4G rate sections minus CCK (no CCK on 5 GHz). [SRC] the
+# rates_by_sections order in phy_set_tx_power_level_by_path.
+RATE_TABLE_5G = tuple(r for r in RATE_TABLE if r[1] != "cck")   # 62 rates
+
+
+def set_tx_power_5g(t, channel: int, tx_power_5g: tuple) -> None:
+    """[SRC] PHY_SetTxPowerLevel8814 (5 GHz) — write the txagc table for all 4 paths.
+
+    Same per-(path,rate) 0x1998 write as 2.4 GHz, but the 5 GHz group base + OFDM/BW20
+    diffs and no CCK (so no MGN_1M double-write — the table is already on from the 2.4G
+    init tune)."""
+    g = _ch_group_5g(channel)
+    for path in range(4):
+        pp = tx_power_5g[path]
+        for hw, base_kind, diff_kind, nss in RATE_TABLE_5G:
+            pidx = power_index(pp, base_kind, diff_kind, nss, g)
+            wd = (_TXAGC_BASE | (path << 8) | hw | (pidx << 24)) & 0xFFFFFFFF
+            t.write32(REG_TXAGC, wd)
