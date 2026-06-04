@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.coordinate import Coordinate
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, RichLog
 from rich.color import Color
@@ -613,9 +614,24 @@ class ScannerView(Screen):
         if current_key:
             try:
                 new_idx = table.get_row_index(current_key)
-                table.move_cursor(
-                    row=new_idx, animate=False, scroll=scroll_to_cursor
-                )
+                if scroll_to_cursor:
+                    table.move_cursor(row=new_idx, animate=False)
+                else:
+                    # Pin the cursor to the same AP across the reorder WITHOUT
+                    # moving the viewport. move_cursor(scroll=False) is not
+                    # enough: assigning cursor_coordinate fires
+                    # watch_cursor_coordinate, which _scroll_cursor_into_view()s
+                    # on ANY coordinate change — so the snap came back on every
+                    # sort that shifted the selected row to a new index.
+                    # set_reactive updates the coordinate without firing the
+                    # watcher, leaving the user's scroll position untouched;
+                    # refresh the old/new rows so the highlight still follows.
+                    old = table.cursor_coordinate
+                    new = Coordinate(new_idx, old.column)
+                    if new != old:
+                        table.set_reactive(DataTable.cursor_coordinate, new)
+                        table.refresh_row(old.row)
+                        table.refresh_row(new_idx)
             except Exception:
                 pass
 
