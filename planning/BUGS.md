@@ -36,6 +36,23 @@ are blocked for that span. Give it manual control — a **Stop PBC** button (and
 **Start PBC** when a window is open) — and/or bound the retry loop so a single
 timeout can't hold the radio. Minor; deferred.
 
+## Bulk-IN read timeout treated as fatal on Windows (fleet audit)
+
+A benign bulk-IN read timeout (no traffic this interval — every quiet channel
+yields one) must return `None` so the shared `RxReaderThread` keeps going. Several
+userland drivers' `transport.bulk_in` only map a **libusb** timeout to `None`
+(`errno == 110` or the substring `"timeout"`), but the **Windows/WinUSB** backend
+raises `[Errno 10060] Operation timed out` — errno `10060`, and `"timed out"` does
+**not** contain `"timeout"` — so the timeout is re-raised and counted as a hard
+error. After `max_errors` (5) consecutive, the reader **gives up and RX dies**. It
+hides on busy 2.4 GHz (a successful read resets the counter before 5-in-a-row) and
+bites on 5 GHz, whose many empty DFS channels produce long timeout runs. Fixed in
+`rtl8814au_dkms` (commit on `dkms/8814au`: catch pyusb's `USBTimeoutError` type +
+errno 110/10060 fallback). **Audit the other userland drivers'
+`chips/<chip>/transport.py` `bulk_in`** for the same `errno==110`/`"timeout"`
+pattern and apply the same fix (Windows users + quiet channels hit it on any of
+them). Greppable: `errno.*110|"timeout" in`.
+
 ---
 
 > Not here: **driver wedge / replug warnings not reaching the UI** is a **release
