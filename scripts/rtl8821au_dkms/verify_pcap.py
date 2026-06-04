@@ -26,14 +26,14 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8821au_dkms import bb, chan, dig, firmware, mac, monitor, rf  # noqa: E402
-
-CRYSTAL_CAP = 0x27   # AWUS036ACS efuse value (wire-verified)  TODO(efuse): read from EFUSE
+from wifit3.chips.rtl8821au_dkms import bb, chan, dig, efuse, firmware, mac, monitor, rf, txpower  # noqa: E402
 
 CAP_DIR = REPO / "usb_dumps_new" / "captures_rtl8821au"
 DEV_ADDR = {"capture-1": 39}      # lsusb devnum; capture-2/3 TBD
 WINDOW = (2523, 9302)             # airmon-ng start phase (power-on + FW upload)
 START_ADDR = 0x0005               # first card_enable_flow access (CARDDIS_TO_CARDEMU)
+EFUSE_WINDOW = (60, 2520)         # probe phase (chip-version read -> efuse byte loop)
+EFUSE_START_ADDR = 0x00F0
 
 # M5 lives after the (deferred) TX-power sweep; replay it as its own op stream trimmed
 # to the first invalidate_cam_all (REG_CAMCMD 0x0670, frame 7609).
@@ -48,6 +48,14 @@ M5_TAIL_END = 8643                # last §1b write (REG_USB_HRPWM); airmon's ST
                                   # dance + the monitor block follow and are out-of-line
 
 _NOOP = lambda *a, **k: None      # replay needs no real settle delays  # noqa: E731
+
+
+def _read_efuse_params(pcap: Path, dev: int):
+    """Replay the probe-phase efuse read to recover the real chip params (crystal_cap
+    + the path-A TX-power base/diffs the M-TXPWR sweep consumes). The read itself is
+    checked byte-for-byte by verify_efuse_pcap.py."""
+    ops = rp.extract_ops(pcap, dev, EFUSE_WINDOW, start_addr=EFUSE_START_ADDR)
+    return efuse.read_chip_params(rp.ReplayTransport(ops))
 
 
 def _verify_m5_tail(pcap: Path, dev: int) -> tuple:
@@ -98,6 +106,10 @@ def main() -> int:
     fw = firmware.load_firmware_blob()
     print(f"FW blob: {len(fw)} bytes (body {len(fw) - 32})")
 
+    p = _read_efuse_params(pcap, dev)
+    print(f"Efuse: crystal_cap=0x{p.crystal_cap:02x} (TX-power base cck[0]=0x{p.tx_power.cck_base[0]:02x} "
+          f"bw40[0]=0x{p.tx_power.bw40_base[0]:02x})")
+
     ops = rp.extract_ops(pcap, dev, WINDOW, start_addr=START_ADDR)
     n_w = sum(1 for o in ops if o["kind"] == "W")
     n_r = sum(1 for o in ops if o["kind"] == "R")
@@ -113,30 +125,33 @@ def main() -> int:
         mac.phy_mac_config(t)                           # M2: MAC_REG table
         mac.mac_init_misc(t)                            # M2: queue/MISC + REG_CR
         m2_ops = t.i
-        bb.phy_bb_config(t, crystal_cap=CRYSTAL_CAP)    # M3: BB PHY_REG + AGC + xtal
+        bb.phy_bb_config(t, crystal_cap=p.crystal_cap)  # M3: BB PHY_REG + AGC + xtal
         rf.phy_rf_config(t)                             # M3: RadioA
         m3_ops = t.i
         chan.set_chnl_bw(t, ch=1)                       # M4: band + channel + 20 MHz BW
         m4_ops = t.i
+        txpower.set_tx_power(t, 1, p.tx_power)          # M-TXPWR: per-rate txagc (7485-7607)
+        mtxpwr_ops = t.i
 
-        # M5: separate op stream (the deferred TX-power sweep sits between M4 and M5).
+        # M5: separate op stream (now contiguous with M4 via the TX-power block above).
         m5_det, m5_skipped, m5_full = _verify_m5_tail(pcap, dev)
         mon = _verify_monitor_block(m5_full)
     except rp.Divergence as e:
         print(f"\nFAIL (divergence): {e}")
         return 1
 
-    print(f"\nPASS: reproduced {m4_ops} USB ops byte-for-byte through M4, then {m5_det} more "
-          f"through M5 S1+S2.")
+    print(f"\nPASS: reproduced {mtxpwr_ops} USB ops byte-for-byte through M4 + TX-power, then "
+          f"{m5_det} more through M5 S1+S2.")
     print(f"      M1={m1_ops}  M2={m2_ops - m1_ops}  M3={m3_ops - m2_ops}  M4={m4_ops - m3_ops}  "
-          f"M5(tail)={m5_det} ops.")
+          f"TXpwr={mtxpwr_ops - m4_ops}  M5(tail)={m5_det} ops.")
     print(f"      M5 S1 post-tune tail (invalidate_cam_all + MISC11 + InitHalDm DIG/CCK-PD/NHM "
           f"+ RX-gain + turn-on) byte-exact; {m5_skipped} live EDCCA-search ops "
           f"(PSD 0xFA0, frames 7659-8605) skipped -- verified live by the beacon count.")
     print(f"      M5 S3 monitor opmode entry verified byte-for-byte as a {mon[2]}-op block "
           f"(Set_MSR(NOLINK) + RCR=0x9000382F accept-all + RXFLTMAP) at frames {mon[0]}-{mon[1]}; "
           f"airmon's STA->monitor ops in between are intentionally not replayed.")
-    print(f"      {len(ops) - m4_ops} later ops remain in the M1-M4 window (TX-power + M5 + hops).")
+    print(f"      {len(ops) - mtxpwr_ops} later ops remain in the window (the skipped EDCCA "
+          f"search, airmon's STA dance, and runtime channel hops).")
     return 0
 
 

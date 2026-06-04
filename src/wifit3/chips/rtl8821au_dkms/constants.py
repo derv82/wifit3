@@ -105,5 +105,22 @@ TX_PAGE_BOUNDARY_8821 = TX_TOTAL_PAGE_NUMBER_8821 + 1
 # 8812a/8821a (the 8822b/8821c use 48). TXDESC_OFFSET == TXDESC_SIZE here.
 TXDESC_SIZE = 40
 
+# --- EFUSE read [SRC] hal_com_reg.h + rtl8812a_hal.h (JAGUAR) + core/efuse ---
+REG_9346CR = 0x000A             # autoload status (bit5 = EEPROM present)
+REG_EFUSE_CTRL = 0x0030         # +1 addr[7:0], +2 addr[9:8], +3 bit7 = ready/trigger
+REG_EFUSE_ACCESS = 0x00CF       # efuse access protection
+EFUSE_ACCESS_ON = 0x69
+EFUSE_ACCESS_OFF = 0x00
+EFUSE_MAP_LEN_JAGUAR = 512      # logical map length
+EFUSE_MAX_SECTION_JAGUAR = 64   # EFUSE_MAP_LEN / 8
+EFUSE_MAX_WORD_UNIT = 4         # words per PG section (JAGUAR)
+EFUSE_REAL_CONTENT_LEN_JAGUAR = 512   # physical efuse size (non-8814 jaguar)
+
+# --- EEPROM logical-map offsets [SRC] include/hal_pg.h (8821AU) ---
+EEPROM_XTAL = 0xB9              # crystal_cap (AFE trim)
+EEPROM_DEFAULT_CRYSTAL_CAP = 0x20
+EEPROM_MAC_ADDR_8821AU = 0x107
+PG_TXPWR_SADDR = 0x10          # hal_spec->pg_txpwr_saddr — TX-power PG block start
+
 # Bit shorthands used by inline pokes.
 BIT0, BIT1, BIT2, BIT6, BIT7 = BIT(0), BIT(1), BIT(2), BIT(6), BIT(7)

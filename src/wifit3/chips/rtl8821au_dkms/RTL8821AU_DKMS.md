@@ -66,7 +66,8 @@ healthy rate, consistent with the mainline DIG softness this port targets.
 | M1 | Power-on → FW download → FW-ready (+ warm reset) | **PASS** (1627 ops byte-exact, incl. 30848 B FW page-write) | **PASS** cold (SYS_CFG=0x04412135) + warm re-entry, WINTINI_RDY | **done** |
 | M2 | MAC init (REG_CR → MACTXEN\|MACRXEN) | **PASS** (182 ops byte-exact, 98-entry MAC table) | **PASS** (REG_CR=0xFF) | **done** |
 | M3 | BB/PHY + RF init (PHY_REG/AGC_TAB/RadioA, 1×1) | **PASS** (586 ops byte-exact, JaguarSeries phy_cond walker) | **PASS** (xtal=0x9e7) | **done** |
-| M4 | 2 GHz channel tune, 20 MHz (RF-SIPI) | **PASS** (74 ops byte-exact, incl. 8811au ant-prologue) | **PASS** (`--phase chan`, RF[0x18] ch1@20M) | **done** (TX-power deferred) |
+| M4 | 2 GHz channel tune, 20 MHz (RF-SIPI) | **PASS** (74 ops byte-exact, incl. 8811au ant-prologue) | **PASS** (`--phase chan`, RF[0x18] ch1@20M) | **done** |
+| M-TXPWR | EFUSE read + 2 GHz per-rate TX power | **PASS** (efuse 1191 ops + txagc 62 ops byte-exact, contiguous M4→M5) | **PASS** (live EFUSE decode matches pcap: crystal_cap=0x27, cck_base[0]=0x31; RX healthy) | **done** |
 | M5 | 2 GHz RX + PHYDM RSSI/DIG (value milestone) | **PASS** (44 ops byte-exact §1+§2; 474 live EDCCA ops skipped; §3 monitor 10-op block) | **PASS** (`--phase beacon` ch1/30s: 18 APs, 1754 beacons; canary NETGEAR2G 7.3/s @ −48 dBm; DIG watchdog ticks, FA resets) | **done** |
 | M6 | 2 GHz TX (deauth + WEP replay) | **PASS** (unit test — no TX in the cold-boot pcap; fake-txdesc fields + XOR-16 checksum + golden bytes) | **PASS** (user-run: deauth → 37 EAPOL handshakes from the reconnecting client, no pipe fault; WEP replay → 5518 IVs, replay winner locked) | **done** |
 | M7 | 5 GHz: RX + tune + TX | `verify_channels` (5 GHz 36..165) | `--phase beacon` 5G + **user** deauth | — |
@@ -151,9 +152,27 @@ bulk-OUT ep 0x09, serialized via `_io_lock`.
   frames to diff. Verified instead by `tests/chips/rtl8821au_dkms/test_tx.py` (field
   positions + checksum + golden bytes); live TX is the user's job
   (`scripts/rtl8821au_dkms/{deauth_hw,wep_replay_hw}.py`).
-- **TX power is the BB-default** (PHY_REG TXAGC ~0x31, non-zero). The per-rate
-  EFUSE TX-power level (`CONFIG_TXPWR_*_EN`) is the deferred milestone after this —
-  adequate for a nearby target; a distant one may be weak until it lands.
+- **TX power** is now the EFUSE-calibrated per-rate level (see M-TXPWR), applied at
+  connect and re-applied per channel in `set_channel`.
+
+## M-TXPWR (EFUSE + per-rate TX power) — 2.4 GHz
+
+`efuse.read_chip_params` runs the probe-phase EFUSE read (ReadEFuseByte byte loop ->
+PG-block -> 512 B logical map) and decodes crystal_cap (0xB9 → replaces the M3
+hardcode), the MAC (0x107), and the path-A PG TX-power block (pg_txpwr_saddr=0x10:
+6 CCK + 5 BW40 group bases + nTX diff nibbles). `txpower.set_tx_power` then writes the
+direct 8812a TXAGC registers (0xC20..0xC44, path A / 1SS) + the 0xC54 training word.
+
+- **Power formula collapses to the PG base.** The Lucid-Duck Makefile sets
+  `CONFIG_TXPWR_BY_RATE_EN=0` / `CONFIG_TXPWR_LIMIT_EN=0`, so `hal_com_get_txpwr_idx`
+  reduces to `idx = base[rate-section][ch-group] + diff[1TX]`, clamped to [0, 63] (no
+  by-rate, no limit, no amends at init; the AWUS036ACS is a normal chip, so the JAGUAR
+  odd-index workaround does not fire). For ch1 this reproduces the wire exactly:
+  CCK 0x31, OFDM 0x2d, HT/VHT 0x2b, training 0x131921 (MCS7 −10/−8/−6).
+- **Replay-diffable, contiguous.** The EFUSE read (frames 65–2475) is verified by
+  `verify_efuse_pcap.py`; the txagc sweep (frames 7485–7607) now replays contiguously
+  between M4 (ends 7483) and M5 (starts 7609), closing the gap the M5 differ skipped.
+- **5 GHz TX power is M7** (the PG block's 5 GHz half + UNII groups are not yet decoded).
 
 ## Live HW access
 

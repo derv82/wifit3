@@ -30,7 +30,7 @@ from wifit3.engine.protocols import DeviceID, ProgressCallback
 from wifit3.wlan.packet import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
-from . import bb, chan, dig, firmware, mac, monitor, rf
+from . import bb, chan, dig, efuse, firmware, mac, monitor, rf, txpower
 from .constants import USB_PID_AWUS036ACS, USB_VID_REALTEK
 from .rx import iter_frames
 from .transport import RTL8821AUDkmsTransport
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 _FW_ASSET = "rtl8821au_fw.bin"
 _DEFAULT_CHANNEL = 1          # connect-time tune target (matches the cold-boot capture)
-_CRYSTAL_CAP = 0x27          # AWUS036ACS efuse value (wire-verified)  TODO(efuse): read EFUSE
+_FALLBACK_CRYSTAL_CAP = 0x20  # EEPROM default if the efuse xtal byte reads blank
 # 2.4 GHz, 20 MHz primary. 5 GHz tune + TX is M7. # TODO(8812au): 5 GHz band.
 CHANNELS_2G = list(range(1, 14))
 
@@ -58,7 +58,9 @@ class Rtl8821auDkmsDriver:
 
     def __init__(self, transport: RTL8821AUDkmsTransport):
         self.transport = transport
-        self.mac_address: Optional[str] = None   # TODO(efuse): read from EFUSE
+        self.mac_address: Optional[str] = None   # efuse 0x107 (M-TXPWR)
+        self._crystal_cap: int = _FALLBACK_CRYSTAL_CAP
+        self._tx_power = None                    # efuse PathTxPwr (path A, 2.4 GHz)
         self._channel: Optional[int] = None
         self.is_warm: bool = False
         # Runtime DIG/AGC watchdog. Toggleable so a fixed-channel A/B can isolate the
@@ -82,8 +84,20 @@ class Rtl8821auDkmsDriver:
         loop = asyncio.get_running_loop()
         # All bring-up is blocking synchronous USB I/O; keep it off the event loop.
 
+        # EFUSE read (probe phase, before power-on, like the vendor): crystal_cap (AFE
+        # trim) + the per-rate TX-power base/diffs + the MAC address.
         if progress_cb:
-            progress_cb(0.0, "Uploading firmware")
+            progress_cb(0.0, "Reading EFUSE / chip parameters")
+        params = await loop.run_in_executor(None, efuse.read_chip_params, self.transport)
+        self.mac_address = params.mac_address
+        self._crystal_cap = params.crystal_cap
+        self._tx_power = params.tx_power
+        logger.info("RTL8821AU efuse: crystal_cap=0x%02x mac=%s cck_base[0]=0x%02x",
+                    params.crystal_cap, params.mac_address or "<blank>",
+                    params.tx_power.cck_base[0])
+
+        if progress_cb:
+            progress_cb(0.2, "Uploading firmware")
         fw = _load_firmware()
         ready = await loop.run_in_executor(None, firmware.bring_up, self.transport, fw)
         if not ready:
@@ -93,16 +107,17 @@ class Rtl8821auDkmsDriver:
             return False
 
         if progress_cb:
-            progress_cb(0.6, "Configuring MAC / BB / RF + channel tune + phydm seed")
+            progress_cb(0.6, "Configuring MAC / BB / RF + channel tune + TX power + phydm seed")
 
         # Deterministic init chain M2 -> M5 §2 (all pcap-verified except the live
         # EDCCA search). Keep in sync with scripts/rtl8821au_dkms/verify_pcap.py.
         def _init(t):
             mac.phy_mac_config(t)                     # M2: MAC register table
             mac.mac_init_misc(t)                      # M2: queue/MISC + REG_CR
-            bb.phy_bb_config(t, crystal_cap=_CRYSTAL_CAP)  # M3: BB PHY_REG + AGC + xtal
+            bb.phy_bb_config(t, crystal_cap=self._crystal_cap)  # M3: BB PHY_REG + AGC + xtal
             rf.phy_rf_config(t)                       # M3: RadioA
             chan.set_chnl_bw(t, _DEFAULT_CHANNEL)     # M4: 2.4 GHz band + ch + 20 MHz
+            txpower.set_tx_power(t, _DEFAULT_CHANNEL, self._tx_power)  # M-TXPWR: per-rate txagc
             mac.hal_init_misc_pre(t)                  # M5 §1a: security + MISC11
             dig.init_hal_dm(t, search_edcca=True)     # M5 §2: phydm DIG/AGC/EDCCA seed
             mac.hal_init_misc_post(t)                 # M5 §1b: turn-on tail
@@ -165,14 +180,21 @@ class Rtl8821auDkmsDriver:
                 cb(parsed)
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
-        """Tune to a 2.4 GHz channel at 20 MHz primary.
+        """Tune to a 2.4 GHz channel at 20 MHz primary, with that channel's TX power.
 
-        Re-runs the band + channel + BW tune (M4); the 2.4 GHz band switch is
-        idempotent, so a runtime hop just re-selects the channel. # TODO(M7): 5 GHz.
+        Re-runs the band + channel + BW tune (M4) then re-applies the per-rate txagc for
+        the channel's power group (M-TXPWR), so a deauth/WEP run on any 2.4 GHz channel
+        transmits at the correct EFUSE-calibrated power. The band switch is idempotent.
+        # TODO(M7): 5 GHz.
         """
         loop = asyncio.get_running_loop()
+
+        def _tune(t):
+            chan.set_chnl_bw(t, channel)
+            txpower.set_tx_power(t, channel, self._tx_power)
+
         async with self._io_lock:   # don't race the DIG watchdog's control I/O
-            await loop.run_in_executor(None, chan.set_chnl_bw, self.transport, channel)
+            await loop.run_in_executor(None, _tune, self.transport)
         self._channel = channel
         return True
 
