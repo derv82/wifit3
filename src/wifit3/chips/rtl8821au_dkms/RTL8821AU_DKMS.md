@@ -68,7 +68,7 @@ healthy rate, consistent with the mainline DIG softness this port targets.
 | M3 | BB/PHY + RF init (PHY_REG/AGC_TAB/RadioA, 1×1) | **PASS** (586 ops byte-exact, JaguarSeries phy_cond walker) | **PASS** (xtal=0x9e7) | **done** |
 | M4 | 2 GHz channel tune, 20 MHz (RF-SIPI) | **PASS** (74 ops byte-exact, incl. 8811au ant-prologue) | **PASS** (`--phase chan`, RF[0x18] ch1@20M) | **done** (TX-power deferred) |
 | M5 | 2 GHz RX + PHYDM RSSI/DIG (value milestone) | **PASS** (44 ops byte-exact §1+§2; 474 live EDCCA ops skipped; §3 monitor 10-op block) | **PASS** (`--phase beacon` ch1/30s: 18 APs, 1754 beacons; canary NETGEAR2G 7.3/s @ −48 dBm; DIG watchdog ticks, FA resets) | **done** |
-| M6 | 2 GHz TX (deauth + WEP replay) | replay-diff | **user** (TX) | — |
+| M6 | 2 GHz TX (deauth + WEP replay) | **PASS** (unit test — no TX in the cold-boot pcap; fake-txdesc fields + XOR-16 checksum + golden bytes) | **user** (TX) — `deauth_hw.py` / `wep_replay_hw.py`; pending | ported, live pending |
 | M7 | 5 GHz: RX + tune + TX | `verify_channels` (5 GHz 36..165) | `--phase beacon` 5G + **user** deauth | — |
 | M8 | Driver Protocol wiring + warm reattach + manager `WIFIT3_RTL8821` | — | `--phase open` warm + beacon | — |
 | M9 | A/B matrix + flip default to DKMS | — | RX (Claude) + TX (user) | — |
@@ -131,6 +131,29 @@ No-ops (gated, do not emit): 0x460 FAST_EDCA (wifi_spec), IQK/PWtrack/LCK (comme
 **§6 DIG watchdog (runtime, ~2 s)** [SRC] phydm_dig.c:1336 — same algo as 8814 dig.py:watchdog_tick, **single-path**: read IGI 0xC50[6:0]; FA = OFDM 0xF48[15:0] + (CCK 0xA5C[15:0] if 0x808 BIT28); reset 3-pulse 0x9A4 BIT17(1→0)/0xA2C BIT15(0→1)/0xB58 BIT0(1→0); new IGI no-link step {+2,+1,−2} @ FA {2000,4000,5000}; clamp [0x1C,0x2A]; write **only 0xC50**[6:0].
 
 **Verification:** replay-diff §1 + §2(minus EDCCA) contiguous from frame 7609; §3 out-of-line; EDCCA + RX-decode are **live-only → beacon count ch1/6/11 vs the 22-AP / NETGEAR2G baseline**. Commit M5 once the beacon count works.
+
+## M6 (TX) — deauth + WEP replay
+
+One descriptor builder serves all injection. `tx.build_mgmt_txdesc` ports
+`rtl8812a_fill_fake_txdesc` [SRC] rtl8812a_xmit.c:265 — the 40-byte fake TX
+descriptor (FIRST/LAST_SEG, OFFSET, PKT_SIZE, QUEUE_SEL=QSLT_MGNT, RATE_ID, OWN,
+HWSEQ_EN, USE_RATE, BMC, SEC_TYPE=0, TX_RATE) + the XOR-16 checksum
+(`rtl8812a_cal_txdesc_chksum`, over the first 32 B). Field bit positions are
+**identical to the 8814au_dkms sibling**; the 8812a additionally sets FIRST_SEG and
+OWN (ported). `driver.inject_frame` prepends it and sends `[desc | frame]` on
+bulk-OUT ep 0x09, serialized via `_io_lock`.
+
+- **Deauth, fake-auth, WEP ARP replay all ride this one path.** The replayed ARP is
+  already WEP-encrypted, so SEC_TYPE=0 (inject raw, no HW re-encryption); the vendor's
+  `bDataFrame` SEC_TYPE branch never applies. WEP runs through the stock
+  device-agnostic `WepCampaign`/`WlanInterface` — no port-specific attack code.
+- **No replay-diff:** the cold-boot pcap is passive monitor RX, so there are no TX
+  frames to diff. Verified instead by `tests/chips/rtl8821au_dkms/test_tx.py` (field
+  positions + checksum + golden bytes); live TX is the user's job
+  (`scripts/rtl8821au_dkms/{deauth_hw,wep_replay_hw}.py`).
+- **TX power is the BB-default** (PHY_REG TXAGC ~0x31, non-zero). The per-rate
+  EFUSE TX-power level (`CONFIG_TXPWR_*_EN`) is the deferred milestone after this —
+  adequate for a nearby target; a distant one may be weak until it lands.
 
 ## Live HW access
 

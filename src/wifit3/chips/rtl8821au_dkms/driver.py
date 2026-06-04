@@ -10,10 +10,12 @@ watchdog. All steps except the live EDCCA PSD search are pcap-verified byte-for-
 The RX reader is started **before** the monitor RCR write: the kernel posts RX URBs
 before opening the gate, and this chip has RX-starvation history (see rx_reader.py).
 
-TX (M6), TX power / EFUSE, 5 GHz (M7), and manager registration behind ``WIFIT3_RTL8821``
-(M8) are later milestones; ``inject_frame`` is a passive-by-default no-op until M6.
-This driver is intentionally NOT registered in ``wlan/manager.py`` yet — exercise it
-via ``scripts/rtl8821au_dkms/``. Sibling to the untouched mainline ``chips/rtl8821au/``.
+``inject_frame`` (M6) transmits one fake-descriptor frame on bulk-OUT — deauth,
+fake-auth, and WEP ARP replay all ride this one path; it is explicit-action only
+(passive-by-default). TX power / EFUSE, 5 GHz (M7), and manager registration behind
+``WIFIT3_RTL8821`` (M8) are later milestones. This driver is intentionally NOT
+registered in ``wlan/manager.py`` yet — exercise it via ``scripts/rtl8821au_dkms/``.
+Sibling to the untouched mainline ``chips/rtl8821au/``.
 """
 from __future__ import annotations
 
@@ -32,6 +34,7 @@ from . import bb, chan, dig, firmware, mac, monitor, rf
 from .constants import USB_PID_AWUS036ACS, USB_VID_REALTEK
 from .rx import iter_frames
 from .transport import RTL8821AUDkmsTransport
+from .tx import build_mgmt_txdesc
 
 logger = logging.getLogger(__name__)
 
@@ -174,10 +177,29 @@ class Rtl8821auDkmsDriver:
         return True
 
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
-        """No-op until M6 (2.4 GHz TX). wifit3 is passive-by-default; nothing on the
-        scan/connect path transmits, and TX is not yet ported for this chip."""
-        logger.warning("RTL8821AU (DKMS) inject_frame: TX not implemented until M6")
-        return False
+        """Transmit one 802.11 frame (M6) — deauth, fake-auth, or WEP ARP replay.
+
+        Builds the fake TX descriptor (M6) and sends ``[desc | frame]`` on the bulk-OUT
+        pipe (ep 0x09, the MGMT queue). ``frame_bytes`` is the MPDU *without* FCS (the
+        HW appends it). For WEP ARP replay the frame is already WEP-encrypted and is
+        injected raw (the descriptor's SEC_TYPE = 0). Serialized with set_channel / the
+        DIG watchdog via ``_io_lock`` so the frame is never emitted mid-retune. TX is
+        explicit-action only (passive-by-default): nothing on the scan/connect path
+        calls this.
+
+        ``use_no_ack`` is accepted for API compatibility; the minimal fake descriptor
+        uses the HW-default ACK/retry policy. TX power is the BB-default (the per-rate
+        EFUSE TX-power level is a separate deferred milestone), adequate for a nearby
+        target. # TODO(txpower): per-rate EFUSE TX-power level for distant targets.
+        """
+        if len(frame_bytes) < 10:           # need addr1 (bytes [4:10]) to read BMC
+            return False
+        loop = asyncio.get_running_loop()
+        bmc = bool(frame_bytes[4] & 0x01)   # addr1 group-address (multicast) bit
+        desc = build_mgmt_txdesc(len(frame_bytes), bmc=bmc)
+        async with self._io_lock:           # don't TX mid-retune (set_channel/DIG)
+            await loop.run_in_executor(None, self.transport.bulk_out, desc + frame_bytes)
+        return True
 
     async def close(self) -> None:
         # Stop the DIG watchdog and the reader before releasing the USB handle.

@@ -101,5 +101,9 @@ WOWLAN_PAGE_NUM_8821 = 0x00
 TX_TOTAL_PAGE_NUMBER_8821 = 0xFF - BCNQ_PAGE_NUM_8821 - WOWLAN_PAGE_NUM_8821
 TX_PAGE_BOUNDARY_8821 = TX_TOTAL_PAGE_NUMBER_8821 + 1
 
+# TX descriptor [SRC] include/rtw_xmit.h:215 (default IC branch) — 40 bytes for the
+# 8812a/8821a (the 8822b/8821c use 48). TXDESC_OFFSET == TXDESC_SIZE here.
+TXDESC_SIZE = 40
+
 # Bit shorthands used by inline pokes.
 BIT0, BIT1, BIT2, BIT6, BIT7 = BIT(0), BIT(1), BIT(2), BIT(6), BIT(7)
