@@ -107,6 +107,48 @@ def extract_ops(pcap: Path, dev: int) -> list[dict]:
     return ops
 
 
+_TT = {"0x00": "iso", "0x01": "interrupt", "0x02": "control", "0x03": "bulk"}
+
+
+def audit_coverage(pcap: Path, dev: int) -> bool:
+    """Confront the COMPLETE card traffic so the replay can never be silently blind to an
+    endpoint or transfer-type.
+
+    Driver-CONSTRUCTED bytes (vendor control + bulk-OUT) are what we reproduce and verify;
+    chip->host data (bulk-IN RX, interrupt-IN events) is input we consume/ignore, not output
+    we reproduce. If the card uses any *other* channel -- an interrupt the driver reads and
+    acts on, an unexpected bulk-OUT -- the replay would be blind to it and a 100% PASS would
+    be a lie. This prints the full breakdown and returns False on any such blind spot.
+    """
+    rows = _tshark(pcap, f"usb.device_address=={dev}",
+                   ["usb.transfer_type", "usb.endpoint_address"])
+    seen: Counter = Counter()
+    for r in rows:
+        ttype = r[0] if r else ""
+        ep = r[1] if len(r) > 1 else ""
+        if ttype:
+            seen[(ttype, ep)] += 1
+    print(f"  coverage audit (dev{dev}), packets incl. completions:")
+    ok = True
+    for (ttype, ep), n in sorted(seen.items()):
+        name = _TT.get(ttype, f"type{ttype}")
+        is_in = bool(ep) and (int(ep, 16) & 0x80)
+        if ttype == "0x02":
+            tag = "REPRODUCE  (control: vendor regs/FW; std enumeration is OS-level)"
+        elif ttype == "0x03" and not is_in:
+            tag = "REPRODUCE  (bulk-OUT: FW/TX)"
+        elif ttype == "0x03" and is_in:
+            tag = "input only (bulk-IN RX, chip->host -- the thing we're fixing)"
+        else:
+            tag = f"** BLIND SPOT: {name} {'IN' if is_in else 'OUT'} -- driver may use this **"
+            ok = False
+        print(f"     {name:9} ep {ep or '--':>4}  {n:>7}  {tag}")
+    if not ok:
+        print("  !! the card uses a channel the replay does NOT reproduce -- investigate "
+              "before trusting any PASS")
+    return ok
+
+
 class Divergence(AssertionError):
     pass
 
@@ -192,6 +234,7 @@ def main() -> int:
         print(f"FAIL: no such capture {pcap}")
         return 1
     dev = find_card_device(pcap)
+    audit_coverage(pcap, dev)
     ops = extract_ops(pcap, dev)
     n_w = sum(o["kind"] == "W" for o in ops)
     n_r = sum(o["kind"] == "R" for o in ops)
