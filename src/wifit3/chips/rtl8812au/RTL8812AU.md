@@ -1,5 +1,11 @@
 # RTL8812AU — verified facts (M1 scope)
 
+> ⚠️ **NOT the default driver, and unstable when channel-hopping.** The vendor/DKMS port
+> (`chips/rtl8812au_dkms/`) is the default for 0bda:8812. This mainline-derived driver
+> **RX-wedges under sustained 2.4+5 GHz hopping** — the RF synth loses lock, RX goes dark
+> after seconds-to-minutes, with no userland recovery (replug). **DO NOT USE for multi-band
+> scanning.** Reach it only via `WIFIT3_RTL8812=mainline`, and only for fixed-channel work.
+
 ## Known limits & resolved gaps
 
 ### Resolved — HW-verified on the AWUS036ACH (2026-05-31)

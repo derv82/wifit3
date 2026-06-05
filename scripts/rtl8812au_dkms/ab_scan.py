@@ -41,6 +41,10 @@ from _hwstop import interruptible_sleep  # noqa: E402
 from wifit3.wlan.manager import ENV_RTL8812_DRIVER, WlanDeviceManager  # noqa: E402
 
 RTL8812_VID, RTL8812_PID = 0x0BDA, 0x8812
+# DFS 5 GHz channels (UNII-2A/2C) — radar-avoidance, usually empty for consumer APs.
+# --no-dfs drops them so an all-band hop matches mainline's 22-channel coverage, for a fair
+# beacons/s comparison with no dwell on dead air.
+_DFS_5G = frozenset({52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144})
 # A 2.4+5 GHz sweep has legitimately-quiet arcs (DFS / sparse 5 GHz), so only a LONG
 # flatline (~24 s, longer than one sweep's quiet arc) signals a real wedge — a 6 s gap
 # does not. The per-tick beacon totals below are the raw signal; this is just the alarm.
@@ -55,12 +59,18 @@ def _is_8812(iface) -> bool:
 def _channels(iface, args) -> tuple:
     chans = list(getattr(iface.driver, "SUPPORTED_CHANNELS", []))
     if args.band == "2g":
-        return [c for c in chans if c <= 14], "2g hop"
-    if args.band == "5g":
-        return [c for c in chans if c > 14], "5g hop"
-    if args.band == "all":
-        return chans, "all-band hop"
-    return [args.channel], f"ch{args.channel} fixed"
+        sel, what = [c for c in chans if c <= 14], "2g hop"
+    elif args.band == "5g":
+        sel, what = [c for c in chans if c > 14], "5g hop"
+    elif args.band == "all":
+        sel, what = list(chans), "all-band hop"
+    else:
+        sel, what = [args.channel], f"ch{args.channel} fixed"
+    if args.no_dfs:
+        before = len(sel)
+        sel = [c for c in sel if c not in _DFS_5G]
+        what += f" no-DFS({before}->{len(sel)}ch)"
+    return sel, what
 
 
 async def run(args) -> int:
@@ -162,6 +172,8 @@ def main() -> int:
                     help="hop this band instead of the fixed --channel ('all' = the death-loop A/B)")
     ap.add_argument("--duration", type=float, default=30.0, help="scan window (s)")
     ap.add_argument("--interval", type=float, default=0.5, help="per-hop dwell when hopping (s)")
+    ap.add_argument("--no-dfs", action="store_true",
+                    help="drop DFS 5 GHz channels (match mainline's 22-channel coverage)")
     ap.add_argument("--no-dig", action="store_true", help="disable the DKMS DIG/AGC watchdog")
     ap.add_argument("--canary", default=None, help="A/B canary BSSID (pass on your terminal)")
     ap.add_argument("--debug", action="store_true")

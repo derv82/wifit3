@@ -34,9 +34,10 @@ ENV_RTL8814_DRIVER = "WIFIT3_RTL8814"
 # fresh each call so it flips between runs.
 ENV_RTL8821_DRIVER = "WIFIT3_RTL8821"
 
-# RTL8812AU (0bda:8812) is claimed by BOTH the mainline driver and the vendor/DKMS port.
-# UNLIKE the 8821/8814 pairs above, the mainline driver stays the DEFAULT until an A/B
-# proves the DKMS port matches or beats it; set this to "dkms" to select the DKMS port.
+# RTL8812AU (0bda:8812) is claimed by BOTH the vendor/DKMS port (default) and the mainline
+# driver. The DKMS port wins by default: mainline RX-wedges on the 2.4+5 GHz channel hop
+# (RF-synth lock loss — its own driver logs it), which the DKMS port survives. Set this to
+# "mainline" to fall back to the mainline driver (e.g. a fixed-channel, non-hopping use).
 ENV_RTL8812_DRIVER = "WIFIT3_RTL8812"
 
 _DRIVER_CLASSES: Dict[str, Type[WlanDriver]] | None = None
@@ -98,11 +99,10 @@ def _all_drivers() -> List[Type[WlanDriver]]:
         rtl8821 = [c["rtl8821au"], c["rtl8821au_dkms"]]
     else:
         rtl8821 = [c["rtl8821au_dkms"], c["rtl8821au"]]
-    # 8812 polarity is inverted vs 8821/8814: mainline is the default, "dkms" opts in.
-    if os.environ.get(ENV_RTL8812_DRIVER, "").strip().lower() == "dkms":
-        rtl8812 = [c["rtl8812au_dkms"], c["rtl8812au"]]
-    else:
+    if os.environ.get(ENV_RTL8812_DRIVER, "").strip().lower() == "mainline":
         rtl8812 = [c["rtl8812au"], c["rtl8812au_dkms"]]
+    else:
+        rtl8812 = [c["rtl8812au_dkms"], c["rtl8812au"]]
     return [
         c["ar9271"], c["rtl8187"], c["rt2500usb"], c["rt2800usb"], c["rtl8188eus"],
         *rtl8812, *rtl8821, c["rtl8822bu"], *rtl8814,

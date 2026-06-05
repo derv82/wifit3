@@ -1,5 +1,14 @@
 """RTL8812AU driver — full bring-up through RX (M3-b end-state).
 
+.. WARNING::
+   NOT the default for 0bda:8812 — the vendor/DKMS port (``chips/rtl8812au_dkms/``) is,
+   because this mainline-derived driver RX-WEDGES under sustained 2.4+5 GHz channel
+   hopping: the RF synth loses lock and RX goes silent after seconds-to-minutes, with no
+   userland recovery (replug required). It is a known rtw88 HW limitation that the in-tree
+   driver shares; ``post_mac_init_phy``/``dynamic.py`` only delay it ~2-4x. Reach this
+   driver only via ``WIFIT3_RTL8812=mainline``, and only for FIXED-CHANNEL, non-hopping
+   work — never a multi-band scan. See VERIFICATION.md.
+
 Bring-up flow:
 
     connect()

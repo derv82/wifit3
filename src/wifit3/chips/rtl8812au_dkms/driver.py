@@ -14,9 +14,10 @@ kernel posts RX URBs before the gate, and an undrained bulk-IN pipe wedges the c
 FIFO (see ``rx_reader.py``).
 
 Registered in ``wlan/manager.py`` for 0bda:8812 alongside the mainline
-``chips/rtl8812au/``. The mainline driver is the DEFAULT; ``WIFIT3_RTL8812=dkms`` selects
-this port (the inverse of the 8821/8814 envs, where the DKMS port is the default) until
-an A/B proves this port matches or beats mainline. ``inject_frame`` (2.4 GHz TX: deauth /
+``chips/rtl8812au/``. **This DKMS port is the default** — it survives the 2.4+5 GHz channel
+hop that RF-synth-wedges the mainline driver (A/B-proven on hardware); set
+``WIFIT3_RTL8812=mainline`` to fall back to the mainline driver. ``inject_frame`` (2.4 GHz
+TX: deauth /
 fake-auth / WEP ARP replay) rides bulk-OUT 0x02 — a source port of the vendor fake-txdesc,
 live-verified (no TX pcap exists), not byte-for-byte. ``set_channel`` tunes 2.4 GHz + 5 GHz
 @ 20 MHz (the band switch is byte-verified against the capture's 5 GHz hops).
