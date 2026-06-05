@@ -167,6 +167,38 @@ that config is excluded: (1) **RF PLL/LO not locked** despite RF[0x18]=ch1 — n
 than rtw88) that puts the RF into RX. The decisive next experiment: compare the RF[0x18]
 PLL-lock status bits and try porting `phy_LCCalibrate_8812A` / the RX-path calibration.
 
+## M5 update — LCK ruled out; blocker is the RF-value combination (session 4)
+
+**Correction to session 3: RF 0x18 bit16 (PLL-unlock) is NOT the blocker.** The
+confirmed-working config (board_type=0 + forcing RF 0x00/0x30-32/0x42/0x65/0xb0/0xb1 to
+the mainline values → 22 APs) **still reads RF[A,0x18]=0x17c01 (bit16=1)**. So a working
+receiver runs with path-A bit16 set. The LC-calibration lead was followed to ground:
+- Ported `phy_LCCalibrate_8812A` (RF_LCK=0xB4 BIT14 enter/leave; RF 0x18 BIT15 cal-begin;
+  REG_TXPAUSE=0x522; cont-TX 0x914), with and without the standby-mode preamble.
+- The cal-begin bit (RF 0x18 BIT15) **does not latch** (reads back 0 immediately), and
+  bit16 never clears. The vendor's LCK call is itself commented out in hal_init, and the
+  channel-tune auto-cal already locks path B (bit16=0) without it. So LCK is a dead end.
+
+**The real, narrow blocker:** my RADIO-table + init produces an RF radio state that does
+not receive. Forcing RF 0x00/0x30-32/0x65 (+ the "dynamic" 0x42/0xb0/0xb1) to mainline's
+values is the ONLY thing that restores RX — and only when board_type=0 (internal-gain
+RADIO branch). Confirmed dead ends:
+- board_type=0xD8 (the EFUSE-correct external-LNA branch) makes RX *worse* — deaf even
+  with all RF regs forced. The external branch lowers internal gain expecting an external
+  LNA boost that isn't materialising.
+- No subset works: {zero 0x30-32}+{0x00} and +{0x65} both fail; only the full forced set
+  works. So it's a multi-register RF-state combination, not one register.
+- The forced config is weak (−56 dBm vs mainline's −31 dBm) and uses hardcoded mainline
+  values (not portable) — a diagnostic, not a shippable fix.
+
+**Honest read:** the vendor RADIO_A/RADIO_B application (board=0 phy_cond branch) leaves
+the RF in a degraded-but-functional state on path A; the EFUSE-correct external branch is
+deaf. The clean fix needs either (a) the external-LNA operating-gain path engaged (no
+register/function found that does it — `rfe_type=3` only drives the 0xCB0 pinmux), or
+(b) a faithful full `rtw_phydm_init` (the many sub-inits skipped) that may set the RF
+operating state correctly. This is the open problem; M1–M-TXPWR are solid and RX is
+*proven achievable*, just not yet cleanly.
+
 ## Provenance
 
 - Vendor source: `usb_dumps_new/captures_rtl8821au/driver-source/` (8812a in
