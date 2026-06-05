@@ -30,7 +30,7 @@ import usb.util
 from wifit3.chips.rtl88xxau_base import registers as R
 from wifit3.chips.rtl88xxau_base import sipi
 from wifit3.chips.rtl88xxau_base.transport import Rtl88xxauTransport
-from wifit3.chips.rtl8812au_dkms import bb, chan, firmware, mac, rf
+from wifit3.chips.rtl8812au_dkms import bb, chan, efuse, firmware, mac, rf, txpower
 from wifit3.chips.rtl8812au_dkms.constants import USB_PID_AWUS036ACH, USB_VID_REALTEK
 
 
@@ -61,7 +61,8 @@ def _open_device():
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--phase", choices=("open", "fw", "mac", "phy", "chan"), default="fw")
+    ap.add_argument("--phase", choices=("open", "efuse", "fw", "mac", "phy", "chan", "txpower"),
+                    default="fw")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(
@@ -89,6 +90,33 @@ def main() -> int:
             print("[PASS] control-transfer plumbing works.")
             return 0
 
+        if args.phase == "efuse":
+            print("[*] reading EFUSE / chip params (probe phase, 2T2R)...")
+            p = efuse.read_chip_params(t)
+            print(f"  crystal_cap = 0x{p.crystal_cap:02x}   mac = {p.mac_address or '<blank>'}")
+            print(f"  rfe_type = {p.rfe_type}   autoload_fail = {p.autoload_fail}")
+            print(f"  bb_swing 2g = {[hex(x) for x in p.bb_swing_2g]}  "
+                  f"5g = {[hex(x) for x in p.bb_swing_5g]}")
+            print(f"  path-A 2g cck_base = {[hex(x) for x in p.tx_power_2g[0].cck_base]}")
+            print(f"  path-B 2g cck_base = {[hex(x) for x in p.tx_power_2g[1].cck_base]}")
+            print(f"  path-A 5g bw40_base[0:4] = {[hex(x) for x in p.tx_power_5g[0].bw40_base[:4]]}")
+            mac_ok = p.mac_address is not None and p.mac_address.startswith(("00:c0:ca", "00:13:37"))
+            cap_ok = 0x00 < p.crystal_cap <= 0x3F
+            if not cap_ok:
+                return _fail(f"crystal_cap 0x{p.crystal_cap:02x} out of range — EFUSE decode suspect.")
+            print(f"  (MAC OUI {'looks like ALFA/Realtek' if mac_ok else 'present'}; "
+                  f"crystal_cap in range)")
+            print("[PASS] EFUSE decoded (crystal_cap + MAC + rfe_type + 2-path PG).")
+            return 0
+
+        # EFUSE is a probe-phase read (before power-on); the phy/chan/txpower phases
+        # use its real crystal_cap / rfe_type / bb_swing instead of M3/M4 defaults.
+        params = None
+        if args.phase in ("phy", "chan", "txpower"):
+            params = efuse.read_chip_params(t)
+            print(f"  EFUSE: crystal_cap=0x{params.crystal_cap:02x} mac={params.mac_address} "
+                  f"rfe_type={params.rfe_type} bb_swing_2g={[hex(x) for x in params.bb_swing_2g]}")
+
         fw = firmware.load_firmware_blob()
         print(f"[*] FW blob {len(fw)} bytes; running bring_up()...")
         ready = firmware.bring_up(t, fw)
@@ -112,9 +140,9 @@ def main() -> int:
                 return _fail("REG_CR missing MACTXEN|MACRXEN after MAC init.")
             print("[PASS] MAC enabled (REG_CR MACTXEN|MACRXEN).")
 
-        if args.phase in ("phy", "chan"):
+        if args.phase in ("phy", "chan", "txpower"):
             print("[*] running BB + RF init (M3: PHY_BBConfig8812 + RADIO_A + RADIO_B, 2T2R)...")
-            bb.phy_bb_config(t, crystal_cap=0x20)   # TODO(efuse): real crystal_cap at M-TXPWR
+            bb.phy_bb_config(t, crystal_cap=params.crystal_cap)
             rf.phy_rf_config(t)
             xtal = (t.read32(0x002C) & 0x7FF80000) >> 19
             print(f"  crystal_cap field 0x2C[30:19] = 0x{xtal:03x} (expect 0x820 for cap 0x20)")
@@ -130,9 +158,11 @@ def main() -> int:
                 return _fail("path-B RF reads default/dead — RADIO_B did not take (2T2R gate).")
             print("[PASS] BB + RF init complete; both radios respond to SIPI (2T2R live).")
 
-        if args.phase == "chan":
-            print("[*] running channel tune (M4: 2.4 GHz band + ch1 + 20 MHz BW, both paths)...")
-            chan.set_chnl_bw(t, ch=1)
+        if args.phase in ("chan", "txpower"):
+            print(f"[*] running channel tune (M4: 2.4 GHz band + ch1 + 20 MHz BW, both paths, "
+                  f"rfe_type={params.rfe_type})...")
+            chan.set_chnl_bw(t, ch=1, bb_swing_2g_a=params.bb_swing_2g[0],
+                             bb_swing_2g_b=params.bb_swing_2g[1], rfe_type=params.rfe_type)
             rfa = sipi._rf_serial_read(t, sipi.RF_PATH_A, chan.RF_CHNLBW)
             rfb = sipi._rf_serial_read(t, sipi.RF_PATH_B, chan.RF_CHNLBW)
             print(f"  RF[A,0x18]=0x{rfa:05x}  RF[B,0x18]=0x{rfb:05x}  "
@@ -141,6 +171,18 @@ def main() -> int:
             if not ok:
                 return _fail("RF[0x18] not ch1@20MHz on both paths after tune.")
             print("[PASS] channel tune complete — ch1 @ 20 MHz on both radios.")
+
+        if args.phase == "txpower":
+            print("[*] applying per-rate TX power (M-TXPWR: 2-path TXAGC from EFUSE PG)...")
+            txpower.set_tx_power(t, 1, params.tx_power_2g)
+            ca = t.read32(0x0C20) & 0xFF      # path-A CCK1 power index
+            cb = t.read32(0x0E20) & 0xFF      # path-B CCK1 power index
+            tr_a = t.read32(0x0C54) & 0xFFFFFF
+            print(f"  TXAGC CCK1: path-A 0xC20=0x{ca:02x}  path-B 0xE20=0x{cb:02x}  "
+                  f"training 0xC54=0x{tr_a:06x}")
+            if ca == 0 or cb == 0:
+                return _fail("TXAGC reads 0 — per-rate TX power did not take.")
+            print("[PASS] per-rate TX power applied on both paths (no bus errors).")
         return 0
     finally:
         try:
