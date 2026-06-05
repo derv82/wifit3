@@ -36,10 +36,33 @@ def _init_gpio(t) -> None:
     t.write8(0x0040, v & ~(1 << 5))
 
 
+def _config_cck_rx_antenna_init(t) -> None:
+    """[SRC] phydm_config_cck_rx_antenna_init (phydm_api.c) — 2SS (>1SS) CCK 2R-CCA params.
+
+    Runs because the 8812a is 2T2R (the 1SS early-return is not taken). All five are masked
+    RMWs; on this card only 0xA20[5:4] actually changes (MBC weighting -> 1).
+    """
+    set_bb(t, 0x0A00, 1 << 15, 0x0)               # disable ant diversity
+    set_bb(t, 0x0A70, 1 << 7, 0)                  # concurrent CCA at LSB & USB
+    set_bb(t, 0x0A74, 1 << 8, 0)                  # RX path diversity enable
+    set_bb(t, 0x0A14, 1 << 7, 0)                  # r_en_mrc_antsel
+    set_bb(t, 0x0A20, (1 << 5) | (1 << 4), 1)     # MBC weighting
+
+
 def _common_info_self_init(t) -> None:
-    """[SRC] phydm_common_info_self_init — cached BB reads (CCK report fmt, rf_path_rx)."""
-    t.read32(0x0804)
+    """[SRC] phydm_common_info_self_init -> phydm_init_cck_setting + the rf_path_rx read.
+
+    phydm_init_cck_setting reads CCK_RPT_FORMAT (0x804), runs the 2R CCK antenna init, then
+    common_info reads BB_RX_PATH (0x808). cck_new_agc_chk / cck_lna_bit_num_chk /
+    get_cck_rssi_table_from_reg are SW-only on the 8812a; config_cck_rx_path is skipped
+    (valid_path_set is A+B, neither single-path branch).
+    """
+    t.read32(0x0804)                  # phydm_init_cck_setting: is_cck_high_power
+    _config_cck_rx_antenna_init(t)
+    t.read32(0x0808)                  # common_info: rf_path_rx_enable (BB_RX_PATH)
+    # phydm_trx_antenna_setting_init: cached rf-path reads (BB_RX_PATH again + 0x80c).
     t.read32(0x0808)
+    t.read32(0x080C)
 
 
 def _dig_init(t) -> int:
@@ -71,8 +94,10 @@ def _env_monitor_init(t) -> None:
 
 
 def _lna_setting(t, *, enable: bool) -> None:
-    """[SRC] halrf_rf_lna_setting_8812a — RX-gain (LNA) page commit via RF-SIPI, both
-    radios (rf_type > 1T1R). RF 0x32 = 0xc26bf enable / 0xc22bf disable."""
+    """[SRC] halrf_rf_lna_setting_8812a (halrf_8812a_ce.c:28) — RX-gain (LNA) page commit
+    via RF-SIPI, both radios (rf_type > 1T1R). HALRF_LNA_ENABLE writes RF 0x32 = 0xc26bf,
+    HALRF_LNA_DISABLE writes 0xc22bf. morrownr's deterministic init runs the DISABLE form
+    (it is the adaptivity/EDCCA default; the watchdog manages gain at runtime)."""
     val32 = 0xC26BF if enable else 0xC22BF
     for path in (RF_PATH_A, RF_PATH_B):
         set_rf_reg(t, path, 0xEF, 0x80000, 0x1)                  # open gain page
@@ -98,7 +123,7 @@ def init_hal_dm(t, search_edcca: bool = False) -> None:
     _dig_init(t)
     _cck_pd_init(t)
     _env_monitor_init(t)
-    _lna_setting(t, enable=True)     # ensure the LNA is on (the search would also end here)
+    _lna_setting(t, enable=False)    # phydm_adaptivity_init LNA-page commit (DISABLE form)
     _rx_gain_commit(t)
 
 
