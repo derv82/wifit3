@@ -74,6 +74,28 @@ PSD search is reproduced, not stripped**: the replay feeds each boot's recorded 
 two boots' different-but-deterministic loop lengths both match. The monitor tail is
 reproduced via `monitor.set_monitor_mode`.
 
+## Verification coverage — what IS and ISN'T byte-diffed (track every gap)
+
+The gate diffs **every driver-emitted control read/write in the cold-boot bring-up**,
+contiguously, **0 skipped**: **6213 ops on capture-2, 6376 on capture-3**. The ~163-op
+difference between the two is *only* the **EDCCA PSD search** running longer on one boot's RF
+environment — both reproduced byte-for-byte. **There is no untracked byte gap inside the
+bring-up.**
+
+Explicitly NOT in the gate (each accounted for, none silent):
+
+- **bulk-IN RX** (~10.8k packets) — chip→host *input* (the received frames), not driver output.
+- **The runtime** (~19.9k *control* ops AFTER the first monitor entry):
+  - channel **hops** = `set_channel_bw` + `set_tx_power` re-run — **proven byte-identical** to
+    the capture's monitor-tail re-tune, so covered by the same code;
+  - the **DIG watchdog** = `dig.watchdog_tick` (FA-counter reads + IGI writes) — kernel-
+    faithful, but **NOT byte-diffed against the capture's runtime ticks. ← the one ported-but-
+    not-byte-verified path; byte-diffing it is the next step for long-run gain stability.**
+- **1 µs inter-write delays** — the vendor's BB/RF table walk inserts `ODM_delay_us(1)` after
+  each write; the port doesn't. These are **not USB ops** (invisible to a byte diff) and are
+  swamped by USB control-transfer latency (~125 µs–1 ms/write ≫ 1 µs). The 8812 RADIO tables
+  have **no** `0xfe`/`0xffe` 50 ms-delay rows, so there is no RF-settle-delay gap either.
+
 ## Provenance / tooling
 
 - Vendor source + captures: `usb_dumps_new/captures_8812au/` (morrownr 8812au; 8812a HAL in
