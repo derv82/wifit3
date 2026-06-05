@@ -226,21 +226,6 @@ class ReplayTransport:
                              f"{len(op['data'])}B) @f{op['frame']}")
 
 
-class _SmokeTransport:
-    """No-op transport: lets a function (e.g. monitor.enter_monitor) run for Python errors
-    without diffing against a capture. Reads return 0; writes are dropped."""
-
-    def read8(self, a):
-        return 0
-
-    read16 = read32 = read8
-
-    def write8(self, a, v):
-        pass
-
-    write16 = write32 = writeN = write8
-
-
 def main() -> int:
     time.sleep = lambda *a, **k: None        # replay needs no real settle delays
 
@@ -291,13 +276,10 @@ def main() -> int:
         dig.init_hal_dm(t, search_edcca=True)   # the live PWDB-EDCCA search reproduces against
         mac.hal_init_misc_post(t)               # the capture's own recorded PSD reads -- not stripped
         miles.append(("M5 init-dm", t.i))
-        # The deterministic RX-configuring bring-up ends here. What follows in the capture is
-        # airmon's monitor opmode set (RCR=0x90000001 + MAC-addr + a redundant channel/TX-power
-        # re-tune) -- a STA-driver path wifit3 does not walk: it enters monitor directly with
-        # its own accept-all RCR (0x9000382F). monitor.enter_monitor is therefore NOT byte-
-        # diffable against this capture; it is exercised here for errors and verified live by
-        # the beacon count.
-        monitor.enter_monitor(_SmokeTransport())
+        # morrownr/airmon's RX-START tail: monitor opmode + nl80211 set-channel (the channel
+        # re-tune + TX-power are wifit3's own functions re-run). Reproduced byte-for-byte.
+        monitor.set_monitor_mode(t, CHANNEL, p)
+        miles.append(("M5 monitor", t.i))
     except Divergence as e:
         print(f"\nFAIL @ first divergence:\n  {e}")
         print(f"  reproduced {t.i} of {len(ops)} ops; "
@@ -307,9 +289,9 @@ def main() -> int:
         print(f"\nERROR (harness/port bug, not a divergence): {type(e).__name__}: {e} @ op {t.i}")
         return 2
 
-    print(f"\nPASS: reproduced {t.i}/{len(ops)} ops byte-for-byte through the deterministic "
-          f"RX bring-up (M5 init-dm). The monitor opmode entry is wifit3's always-monitor "
-          f"deviation -- verified live by the beacon count, not this byte diff.")
+    print(f"\nPASS: reproduced {t.i}/{len(ops)} ops byte-for-byte -- the full cold-boot "
+          f"bring-up through morrownr's monitor opmode + set-channel (monitor RCR "
+          f"0x90000001). Remaining ops are the runtime RX session (bulk-IN + channel hops).")
     prev = 0
     for label, end in miles:
         print(f"      {label:12} {end - prev:5} ops")
