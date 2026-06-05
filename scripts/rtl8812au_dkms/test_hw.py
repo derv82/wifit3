@@ -29,7 +29,7 @@ import usb.util
 
 from wifit3.chips.rtl88xxau_base import registers as R
 from wifit3.chips.rtl88xxau_base.transport import Rtl88xxauTransport
-from wifit3.chips.rtl8812au_dkms import firmware
+from wifit3.chips.rtl8812au_dkms import firmware, mac
 from wifit3.chips.rtl8812au_dkms.constants import USB_PID_AWUS036ACH, USB_VID_REALTEK
 
 
@@ -60,7 +60,7 @@ def _open_device():
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--phase", choices=("open", "fw"), default="fw")
+    ap.add_argument("--phase", choices=("open", "fw", "mac"), default="fw")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(
@@ -99,6 +99,17 @@ def main() -> int:
         if not ready:
             return _fail("bring_up did not reach FW-ready (WINTINI_RDY).")
         print("[PASS] FW-ready (WINTINI_RDY) — wlan CPU is running the firmware.")
+
+        if args.phase == "mac":
+            print("[*] running MAC init (M2: PHY_MACConfig8812 + MISC -> REG_CR)...")
+            mac.phy_mac_config(t)
+            mac.mac_init_misc(t)
+            cr = t.read8(R.REG_CR)
+            print(f"  REG_CR (0x100) = 0x{cr:02x}  "
+                  f"MACTXEN={bool(cr & mac.MACTXEN)} MACRXEN={bool(cr & mac.MACRXEN)}")
+            if not (cr & mac.MACTXEN and cr & mac.MACRXEN):
+                return _fail("REG_CR missing MACTXEN|MACRXEN after MAC init.")
+            print("[PASS] MAC enabled (REG_CR MACTXEN|MACRXEN).")
         return 0
     finally:
         try:
