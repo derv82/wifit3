@@ -41,7 +41,7 @@ pass.
 | RTL8187L | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ⬜ |
 | RTL8188EUS | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ |
 | RTL8821AU | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
-| RTL8812AU | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ |
+| RTL8812AU | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⬜ | ⬜ |
 | RTL8822BU | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | RTL8814AU | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | MT7612U | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
@@ -67,7 +67,7 @@ is fine, the testing is simply unfinished. Neither do known **shared / cross-car
 issues tracked centrally** (the 2.4 GHz-RX weakness, the WinUSB warm-reattach
 replug) — those affect the family, not one card, so they don't single a card out.
 
-Asterisked today: **RTL8187L, RTL8812AU, RT2500USB**. (RT2800USB no longer
+Asterisked today: **RTL8187L, RT2500USB**. (RT2800USB no longer
 asterisked — RT3572, its only flagged unit, was a counterfeit and is demoted; the
 RT5372/RT5572 cards carry no known limitation.)
 
@@ -157,24 +157,23 @@ not yet run (⬜). Port detail: `chips/rtl8821au_dkms/RTL8821AU_DKMS.md`.
 
 ### RTL8812AU — ALFA AWUS036ACH (2.4 / 5 GHz)
 
-> **The default driver is now the vendor/DKMS port** (`chips/rtl8812au_dkms/`), which
-> survives dual-band channel hopping — byte-for-byte band switch, A/B-proven on hardware
-> (mainline RX-wedges at ~110 s on the same hop; the DKMS port runs indefinitely). The ⚠️
-> **Scan** and **Stress** rows below describe the **mainline** driver
-> (`WIFIT3_RTL8812=mainline`), kept only as a fixed-channel fallback; they do not affect
-> the default experience.
+> **Default driver is the vendor/DKMS port** (`chips/rtl8812au_dkms/`); the table below is
+> that DKMS port. It survives dual-band channel hopping — byte-for-byte band switch,
+> A/B-proven on hardware (mainline RX-wedges at ~110 s on the same hop; the DKMS port runs
+> indefinitely). The mainline driver (`WIFIT3_RTL8812=mainline`, a fixed-channel fallback)
+> still carries the RF-synth hop-death — see `chips/rtl8812au/RTL8812AU.md`.
 
 | Capability | Status | Date | Details |
 |---|:--:|---|---|
-| Scan | ⚠️ | 2026-05-31 | Single-channel scan (via Channel Filter) is fine, but **channel hopping wedges RX** — the RF hop-death (see Stress). When it wedges there's **no UI feedback**: targets fade to dark, then the list empties, no message (the driver does log one warning). |
-| Deauth | ✅ | 2026-05-31 | Deauthed multiple clients. |
-| Handshake | ✅ | 2026-05-31 | Captured M1+M2 and M2+M3 (crackable pairs) after the ToDS-filter + RX-DMA-agg fixes. |
-| PMKID | ✅ | 2026-05-31 | Both paths: passive capture and active extract. |
-| WEP | ✅ | 2026-05-31 | Replay ✅; ChopChop ✅ (<2 min). |
-| WPS | ✅ | 2026-05-31 | PIN brute ✅ and PBC ✅. |
-| Stress | ⚠️ | 2026-05-31 | **RF-synth hop-death** (rtw88-inherited HW limit, in-tree driver has it too): single channel survives 30 min+, but sustained dual-band 0.25 s hopping wedges RX after seconds-to-minutes. Mitigation (`dynamic.py`: DIG + pwr-track + decoupled LCK) delays it ~2–4× but doesn't eliminate it; no userland recovery — replug (and no UI feedback when it happens — see Scan). |
+| Scan | ✅ | 2026-06-05 | 2.4 + 5 GHz monitor RX; **survives the dual-band hop** that wedges mainline. Band switch byte-for-byte on every channel incl. DFS (`verify_channels` 37/37). |
+| Deauth | ✅ | 2026-06-05 | Targeted deauth on 2.4 + 5 GHz; client dropped + reconnect captured. |
+| Handshake | ✅ | 2026-06-05 | M2/M4 (ToDS) captured — crackable WPA handshake reachable. |
+| PMKID | ✅ | 2026-06-05 | Capture + active extract confirmed. |
+| WEP | ⚠️ | 2026-06-05 | ARP replay ✅ (fake-auth → replay, IVs at hundreds/s). ChopChop ⬜ — pending re-verify on the DKMS driver. |
+| WPS | ⬜ | — | Pending re-verify on the DKMS driver. |
+| Stress | ⬜ | — | 30-min soak pending. (A/B: survived 240 s + 7 min of dual-band hopping with no wedge.) |
 
-→ `chips/rtl8812au/RTL8812AU.md`
+→ `chips/rtl8812au_dkms/RTL8812AU_DKMS.md` (default) · `chips/rtl8812au/RTL8812AU.md` (mainline fallback)
 
 ### RTL8822BU — TP-Link Archer T3U Plus v1 (2.4 / 5 GHz)
 
