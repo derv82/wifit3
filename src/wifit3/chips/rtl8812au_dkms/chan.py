@@ -18,7 +18,11 @@ _sw_chnl), and the B-cut rCCAonSec RF-read CCA toggle is correspondingly off (rf
 clears t._rf_read_cca_off; the toggle itself lives in sipi._rf_serial_read).
 
 bb_swing/rfe_type default to 0 dB / type-0 here; the EFUSE values are threaded in at
-M-TXPWR. # TODO(M7): 5 GHz band switch + per-band L1PeakTH/FixSpur. # TODO: 40/80 MHz.
+M-TXPWR. 5 GHz (M7) shares fc_area / RF_MOD_AG / FixSpur (C-cut, band-agnostic) and the
+20 MHz L1PeakTH with 2.4 GHz; only the band switch (_switch_band_5g) + RFE + 11A basic
+rate differ. wifit3 stays 20 MHz primary BY DESIGN — beacons / data / EAPOL all live in
+the 20 MHz primary, so 40/80 MHz width is deliberately unported (a far-future capture-
+bandwidth option, not a gap).
 """
 from __future__ import annotations
 
@@ -61,6 +65,49 @@ def _set_rfe_2g(t, rfe_type: int) -> None:
         set_bb(t, _RFE_INV[RF_PATH_B], _MASK_RFEINV, inv)
 
 
+def _set_rfe_5g(t, rfe_type: int) -> None:
+    """[SRC] phy_SetRFEReg8812(BAND_ON_5G) — RFE pinmux/inv for both paths.
+
+    The 5 GHz pinmux differs from 2.4 GHz per rfe_type (the AWUS036ACH is type 3 ->
+    pinmux 0x54337717, inv 0x010, ANTSEL). Every vendor case is ported: unlike 2.4 GHz
+    (where 0/1/2/4 share 0x77777777 and the sibling collapses them), the 5 GHz pinmux
+    genuinely differs per type, so they can't be merged.
+    """
+    a, b = _RFE_PINMUX[RF_PATH_A], _RFE_PINMUX[RF_PATH_B]
+    ia, ib = _RFE_INV[RF_PATH_A], _RFE_INV[RF_PATH_B]
+    if rfe_type == 0:
+        set_bb(t, a, 0xFFFFFFFF, 0x77337717)
+        set_bb(t, b, 0xFFFFFFFF, 0x77337717)
+        set_bb(t, ia, _MASK_RFEINV, 0x010)
+        set_bb(t, ib, _MASK_RFEINV, 0x010)
+    elif rfe_type == 1:
+        set_bb(t, a, 0xFFFFFFFF, 0x77337717)
+        set_bb(t, b, 0xFFFFFFFF, 0x77337717)
+        set_bb(t, ia, _MASK_RFEINV, 0x000)
+        set_bb(t, ib, _MASK_RFEINV, 0x000)
+    elif rfe_type in (2, 4):
+        set_bb(t, a, 0xFFFFFFFF, 0x77337777)
+        set_bb(t, b, 0xFFFFFFFF, 0x77337777)
+        set_bb(t, ia, _MASK_RFEINV, 0x010)
+        set_bb(t, ib, _MASK_RFEINV, 0x010)
+    elif rfe_type == 3:
+        set_bb(t, a, 0xFFFFFFFF, 0x54337717)
+        set_bb(t, b, 0xFFFFFFFF, 0x54337717)
+        set_bb(t, ia, _MASK_RFEINV, 0x010)
+        set_bb(t, ib, _MASK_RFEINV, 0x010)
+        set_bb(t, 0x0900, 0x00000303, 0x1)              # r_ANTSEL_SW
+    elif rfe_type == 5:
+        t.write8(a + 2, 0x33)                           # partial pinmux byte (path A)
+        set_bb(t, b, 0xFFFFFFFF, 0x77337777)
+        t.write8(ia + 3, t.read8(ia + 3) | 0x01)        # inv byte3 BIT0
+        set_bb(t, ib, _MASK_RFEINV, 0x010)
+    elif rfe_type == 6:
+        set_bb(t, a, 0xFFFFFFFF, 0x07737717)
+        set_bb(t, b, 0xFFFFFFFF, 0x07737717)
+        set_bb(t, ia, 0xFFFFFFFF, 0x00000077)
+        set_bb(t, ib, 0xFFFFFFFF, 0x00000077)
+
+
 def _set_bb_swing(t, bb_swing_a: int, bb_swing_b: int) -> None:
     """[SRC] phy_SetBBSwingByBand_8812A (rtl8812a_phycfg.c:1130), NORMAL_CHIP path — the
     per-band TxScale, written at the very end of PHY_SwitchWirelessBand8812 (both paths).
@@ -85,8 +132,27 @@ def _switch_band_2g(t, bb_swing_a: int, bb_swing_b: int, rfe_type: int = 0) -> N
 
 
 def _switch_band_5g(t, bb_swing_a: int, bb_swing_b: int, rfe_type: int = 0) -> None:
-    """[SRC] PHY_SwitchWirelessBand8812(BAND_ON_5G), 8812 path — ported at M7."""
-    raise NotImplementedError("8812 5 GHz band switch is M7")
+    """[SRC] PHY_SwitchWirelessBand8812(BAND_ON_5G), 8812 path (mp_mode==0). Unlike the
+    2.4 GHz branch, the 5 GHz marker + a TX-FIFO-idle wait come FIRST, then the band regs,
+    phy_SetRFEReg8812(5G), and the 11A basic-rate table (no CCK on 5 GHz).
+    """
+    t.write8(REG_CCK_CHECK, t.read8(REG_CCK_CHECK) | 0x80)   # set BIT7 (5 GHz marker)
+    # Wait for the TX FIFO to drain (REG_TXPKT_EMPTY[5:4]==0b11) before the band swap,
+    # bounded to 50 polls like the vendor. Dynamic-but-deterministic: under the replay
+    # differ the capture's own recorded reads feed it, so the poll count matches the wire.
+    count = 0
+    while (t.read16(REG_TXPKT_EMPTY) & 0x30) != 0x30 and count < 50:
+        count += 1
+    set_bb(t, 0x0808, 0x30000000, 0x3)       # rOFDMCCKEN: OFDM + CCK on
+    set_bb(t, 0x0834, 0x00000003, 0x2)       # rBWIndication[1:0]=2 (8812, 5 GHz)
+    set_bb(t, 0x0830, 0x0003E000, 0x15)      # rPwed_TH[17:13]=0x15 (8812, 5 GHz)
+    set_bb(t, 0x0830, 0x0000000E, 0x04)      # rPwed_TH[3:1]=4
+    set_bb(t, 0x082C, 0x00000003, 0x1)       # rAGC_table[1:0]=1 (5 GHz, normal chip)
+    _set_rfe_5g(t, rfe_type)                  # phy_SetRFEReg8812 (5 GHz, both paths)
+    set_bb(t, 0x080C, 0x000000F0, 0x0)       # rTxPath (mp_mode==0)
+    set_bb(t, 0x0A04, 0x0F000000, 0xF)       # rCCK_RX (mp_mode==0)
+    _update_tx_basic_rate(t, 0x0150)         # WIRELESS_11A basic rates (OFDM only, no CCK)
+    _set_bb_swing(t, bb_swing_a, bb_swing_b)  # phy_SetBBSwingByBand_8812A (band tail)
 
 
 def _update_tx_basic_rate(t, brate_cfg: int) -> None:

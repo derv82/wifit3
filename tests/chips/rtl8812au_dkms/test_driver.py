@@ -3,9 +3,21 @@ the RX dispatch fan-out, the 2.4 GHz-only ``set_channel`` guard (5 GHz is M7),
 and the M6 ``inject_frame`` stub. (The bring-up sequence is verified in
 ``scripts/rtl8812au_dkms/verify_pcap.py``; the thread/loop hand-off in
 ``tests/chips/test_rx_reader.py``.)"""
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import wifit3.chips.rtl8812au_dkms.driver as drv
+
+
+def _fake_params():
+    return SimpleNamespace(bb_swing_2g=[0x200, 0x200], bb_swing_5g=[0x200, 0x200],
+                           rfe_type=3, tx_power_2g="2g", tx_power_5g="5g")
+
+
+def _patch_tune(monkeypatch, calls):
+    monkeypatch.setattr(drv.chan, "set_channel_bw", lambda t, ch, **kw: calls.__setitem__("ch", ch))
+    monkeypatch.setattr(drv.txpower, "set_tx_power", lambda t, ch, p: calls.__setitem__("2g", (ch, p)))
+    monkeypatch.setattr(drv.txpower, "set_tx_power_5g", lambda t, ch, p: calls.__setitem__("5g", (ch, p)))
 
 
 def test_dispatch_decodes_parses_and_fires_callback(monkeypatch):
@@ -47,11 +59,34 @@ def test_dispatch_drops_unparseable(monkeypatch):
     assert got == []
 
 
-async def test_set_channel_rejects_5ghz():
+async def test_set_channel_2ghz_routes_to_2g_txpower(monkeypatch):
+    calls = {}
+    _patch_tune(monkeypatch, calls)
     d = drv.Rtl8812auDkmsDriver(MagicMock())
-    # 5 GHz is M7 (chan._switch_band_5g raises) -> guarded out before any USB I/O.
-    assert await d.set_channel(36) is False
-    assert d._channel is None
+    d._params = _fake_params()
+    assert await d.set_channel(6) is True
+    assert d._channel == 6
+    assert calls["ch"] == 6 and calls["2g"] == (6, "2g") and "5g" not in calls
+
+
+async def test_set_channel_5ghz_routes_to_5g_txpower(monkeypatch):
+    calls = {}
+    _patch_tune(monkeypatch, calls)
+    d = drv.Rtl8812auDkmsDriver(MagicMock())
+    d._params = _fake_params()
+    assert await d.set_channel(36) is True
+    assert d._channel == 36
+    assert calls["ch"] == 36 and calls["5g"] == (36, "5g") and "2g" not in calls
+
+
+async def test_set_channel_scan_skips_txpower(monkeypatch):
+    calls = {}
+    _patch_tune(monkeypatch, calls)
+    d = drv.Rtl8812auDkmsDriver(MagicMock())
+    d._params = _fake_params()
+    assert await d.set_channel(36, scan=True) is True
+    # A scan hop tunes only — no per-rate txagc re-apply (TX-only, skipped to save dwell).
+    assert calls == {"ch": 36}
 
 
 async def test_set_channel_without_params_is_false():

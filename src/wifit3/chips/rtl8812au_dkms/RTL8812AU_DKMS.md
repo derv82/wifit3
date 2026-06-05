@@ -66,7 +66,7 @@ Disproven theories from earlier sessions (kept only in git history — ignore th
 |---|-------|--------|
 | M0–M5 | efuse → FW → MAC → BB/RF → chan → TX-pwr → phydm-init → monitor | **DONE — byte-for-byte on both captures; RX confirmed on hardware** |
 | M6 | 2.4 GHz TX (deauth + WEP) | **deauth HW-CONFIRMED: `inject_frame` rides bulk-OUT 0x02 via the shared base fake-txdesc (`rtl8812a_fill_fake_txdesc`). A targeted burst deauthed the client; its reconnect 4-way handshake — incl. M2/M4 (ToDS) — was captured, so a crackable WPA handshake is reachable. No TX pcap exists (the capture's DKMS build injected nothing — 0 bulk-OUT), so the live gate is `scripts/rtl8812au_dkms/deauth_hw.py`, NOT byte-for-byte. The TX engine is enabled by the standard bring-up (no TXPAUSE/REG_CR surgery — proven by frames landing). WEP injection ALSO HW-CONFIRMED via `scripts/rtl8812au_dkms/wep_replay_hw.py` (stock `WepCampaign` over `inject_frame`): fake-auth → ARP replay locked a winner and generated IVs at hundreds/s on the test router.** |
-| M7 | 5 GHz RX/tune/TX | not started (`chan._switch_band_5g` raises) |
+| M7 | 5 GHz RX/tune/TX | **5 GHz TUNE BYTE-FOR-BYTE VERIFIED: `chan._switch_band_5g` + `_set_rfe_5g` ported (phy_SwitchWirelessBand8812 5G branch, all rfe_types). `verify_channels.py` byte-diffs every `iw set channel` hop on BOTH captures — 37/37 PASS, incl. BOTH 2.4<->5 band crossings (the scan death-loop) and all DFS channels (52-64 / 100-144, all `return code: 0` in iw.log). `set_tx_power_5g` + the −3 dB (0x16a) 5 GHz bb_swing wired. RX off the antenna: pending user `rx_diag.py --channel 36`. 5 GHz TX (deauth/WEP) rides the same `inject_frame`, pending live test.** |
 | M8 | `driver.py` + manager wiring | **DONE (code): `Rtl8812auDkmsDriver` satisfies the WlanDriver protocol — claim → bring-up → RX reader (started before the monitor RX gate) → 2-path DIG watchdog → monitor. Gate-faithful (adds only OS-level USB claim + RX, no vendor ops) + unit-tested. Wired in `manager.py` behind `WIFIT3_RTL8812=dkms`; mainline stays the default. **HW-confirmed: clean 2.4 GHz RX via the app (`WIFIT3_RTL8812=dkms uv run wifit3`) — beacons instantly, stable 10+ min on ch1.** Needs the post-tail RCR re-open to 0x9000382F (morrownr's 0x90000001 does not deliver beacons into the pipeline — see Monitor RCR). `inject_frame` is an M6 no-op stub; `set_channel` is 2.4 GHz only (M7).** |
 | M9 | A/B vs mainline `chips/rtl8812au/` + flip default behind `$WIFIT3_RTL8812` | not started |
 
@@ -80,6 +80,14 @@ stream that matches one boot but not the other is flattened dynamic behaviour. T
 PSD search is reproduced, not stripped**: the replay feeds each boot's recorded PSD, so the
 two boots' different-but-deterministic loop lengths both match. The monitor tail is
 reproduced via `monitor.set_monitor_mode`.
+
+`verify_channels.py` is the **runtime-tune** gate (the multi-band-scan path): it slices
+every `iw set channel` window from `<cap>_logs/iw.log` and byte-diffs the port's
+`set_channel_bw` + per-band txagc against it, with no anchoring (a stray vendor step is the
+first divergence). **37/37 hops PASS on both capture-2 and capture-3**, including both
+**2.4<->5 GHz band crossings** (the death-loop that radio-silence-kills mainline) and all
+**DFS channels** (52-64, 100-144 — every one `return code: 0` in iw.log). This is the proof
+the 5 GHz band switch is byte-for-byte faithful, not just "5 GHz networks appear".
 
 ## Verification coverage — what IS and ISN'T byte-diffed (track every gap)
 

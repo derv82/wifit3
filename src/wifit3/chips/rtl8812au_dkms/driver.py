@@ -18,8 +18,8 @@ Registered in ``wlan/manager.py`` for 0bda:8812 alongside the mainline
 this port (the inverse of the 8821/8814 envs, where the DKMS port is the default) until
 an A/B proves this port matches or beats mainline. ``inject_frame`` (2.4 GHz TX: deauth /
 fake-auth / WEP ARP replay) rides bulk-OUT 0x02 — a source port of the vendor fake-txdesc,
-live-verified (no TX pcap exists), not byte-for-byte. ``set_channel`` is 2.4 GHz only (M7
-adds 5 GHz).
+live-verified (no TX pcap exists), not byte-for-byte. ``set_channel`` tunes 2.4 GHz + 5 GHz
+@ 20 MHz (the band switch is byte-verified against the capture's 5 GHz hops).
 """
 from __future__ import annotations
 
@@ -44,9 +44,11 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_CHANNEL = 1     # connect-time tune target (matches morrownr's cold-boot capture)
 _BULK_OUT_EP_TX = 0x02   # the 8812's 3-out-EP map (0x02/0x03/0x04); TX (M6) sends on 0x02
-# 2.4 GHz only, 20 MHz primary. 5 GHz is M7 (chan._switch_band_5g raises), so it is NOT
-# listed here — the channel hopper must never hand a 5 GHz channel to set_channel yet.
+# 20 MHz primary, both bands. The 5 GHz set matches the UNII channels the cold-boot
+# capture hopped (and verify_channels byte-diffs the band switch + each hop).
 CHANNELS_2G = list(range(1, 14))
+CHANNELS_5G = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124,
+               128, 132, 136, 140, 144, 149, 153, 157, 161, 165]
 
 
 class Rtl8812auDkmsDriver:
@@ -54,7 +56,7 @@ class Rtl8812auDkmsDriver:
         DeviceID(USB_VID_REALTEK, USB_PID_AWUS036ACH,
                  "Realtek RTL8812AU 2T2R (ALFA AWUS036ACH) — vendor/DKMS port"),
     ]
-    SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G   # TODO(M7): + 5 GHz
+    SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G + CHANNELS_5G
 
     def __init__(self, transport: Rtl88xxauTransport):
         self.transport = transport
@@ -219,18 +221,14 @@ class Rtl8812auDkmsDriver:
                 cb(parsed)
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
-        """Tune to a 2.4 GHz channel at 20 MHz primary (M7 adds 5 GHz).
+        """Tune to a 2.4 GHz or 5 GHz channel at 20 MHz primary.
 
-        Runs the runtime tune (``set_channel_bw``) — the same re-tune morrownr's monitor
-        tail runs, proven byte-identical to the capture. On a settle (``scan=False``) it
-        also re-applies the per-rate txagc so a later deauth/WEP run transmits at the
-        EFUSE-calibrated power; ``scan=True`` (the hopper) skips that TX-only re-apply to
-        buy back dwell time for RX.
+        Runs the runtime tune (``set_channel_bw``: phy_SwChnl switches band only on a
+        2.4<->5 crossing, then channel select + 20 MHz BW). On a settle (``scan=False``)
+        it re-applies the per-rate txagc for the channel's band so a later deauth/WEP run
+        transmits at the EFUSE-calibrated power; ``scan=True`` (the hopper) skips that
+        TX-only re-apply to buy back dwell time for RX.
         """
-        if channel > 14:
-            logger.warning("RTL8812AU: channel %d is 5 GHz (M7, not yet ported); ignoring",
-                           channel)
-            return False
         params = self._params
         if params is None:
             return False
@@ -238,9 +236,14 @@ class Rtl8812auDkmsDriver:
 
         def _tune(t):
             chan.set_channel_bw(t, channel, bb_swing_2g_a=params.bb_swing_2g[0],
-                                bb_swing_2g_b=params.bb_swing_2g[1], rfe_type=params.rfe_type)
+                                bb_swing_2g_b=params.bb_swing_2g[1],
+                                bb_swing_5g_a=params.bb_swing_5g[0],
+                                bb_swing_5g_b=params.bb_swing_5g[1], rfe_type=params.rfe_type)
             if not scan:
-                txpower.set_tx_power(t, channel, params.tx_power_2g)
+                if channel <= 14:
+                    txpower.set_tx_power(t, channel, params.tx_power_2g)
+                else:
+                    txpower.set_tx_power_5g(t, channel, params.tx_power_5g)
 
         async with self._io_lock:   # don't race the DIG watchdog's control I/O
             await loop.run_in_executor(None, _tune, self.transport)
