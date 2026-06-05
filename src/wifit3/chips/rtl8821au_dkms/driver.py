@@ -12,10 +12,11 @@ before opening the gate, and this chip has RX-starvation history (see rx_reader.
 
 ``inject_frame`` (M6) transmits one fake-descriptor frame on bulk-OUT — deauth,
 fake-auth, and WEP ARP replay all ride this one path; it is explicit-action only
-(passive-by-default). TX power / EFUSE, 5 GHz (M7), and manager registration behind
-``WIFIT3_RTL8821`` (M8) are later milestones. This driver is intentionally NOT
-registered in ``wlan/manager.py`` yet — exercise it via ``scripts/rtl8821au_dkms/``.
-Sibling to the untouched mainline ``chips/rtl8821au/``.
+(passive-by-default). 2.4 GHz + 5 GHz (M7) RX/TX with EFUSE-calibrated per-rate power
+are complete. Registered in ``wlan/manager.py`` for 0bda:0811 alongside the mainline
+``chips/rtl8821au/``, ordered by ``$WIFIT3_RTL8821`` — mainline by default, ``=dkms``
+selects this port (the default flips to DKMS in M9 after the A/B matrix). Sibling to
+the untouched mainline driver.
 """
 from __future__ import annotations
 

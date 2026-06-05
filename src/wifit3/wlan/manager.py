@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 # mainline-derived driver. Set this to "mainline" to fall back to the mainline driver.
 ENV_RTL8814_DRIVER = "WIFIT3_RTL8814"
 
+# RTL8821AU/RTL8811AU (0bda:0811) is claimed by BOTH the mainline driver (default) and
+# the vendor/DKMS port. Set this to "dkms" to select the DKMS port (the default flips to
+# DKMS in M9, after the A/B matrix). Read fresh each call so it flips between runs.
+ENV_RTL8821_DRIVER = "WIFIT3_RTL8821"
+
 _DRIVER_CLASSES: Dict[str, Type[WlanDriver]] | None = None
 
 
@@ -47,6 +52,7 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
         from wifit3.chips.rtl8812au.driver import RTL8812AUDriver
         from wifit3.chips.rtl8814au_dkms.driver import Rtl8814auDkmsDriver
         from wifit3.chips.rtl8821au.driver import RTL8821AUDriver
+        from wifit3.chips.rtl8821au_dkms.driver import Rtl8821auDkmsDriver
         from wifit3.chips.rtl8822bu.driver import RTL8822BUDriver
         from wifit3.chips.rtw88_8814au.driver import RTL8814AUDriver
 
@@ -58,6 +64,7 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
             "rtl8188eus": RTL8188EUSDriver,
             "rtl8812au": RTL8812AUDriver,
             "rtl8821au": RTL8821AUDriver,
+            "rtl8821au_dkms": Rtl8821auDkmsDriver,
             "rtl8822bu": RTL8822BUDriver,
             "rtl8814au_dkms": Rtl8814auDkmsDriver,
             "rtl8814au_mainline": RTL8814AUDriver,
@@ -71,18 +78,23 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
 def _all_drivers() -> List[Type[WlanDriver]]:
     """The driver registry, in priority order (first match wins in `_match_driver`).
 
-    The RTL8814AU pair is ordered by ``$WIFIT3_RTL8814`` (read fresh each call so it can be
-    flipped between runs without restarting): the DKMS port wins by default; "mainline"
-    falls back to the mainline-derived driver.
+    Both Realtek 11ac pairs are ordered by their env var (read fresh each call so they can
+    be flipped between runs without restarting). RTL8814AU: the DKMS port wins by default,
+    "mainline" falls back. RTL8821AU: the mainline driver wins by default, "dkms" selects
+    the vendor port (the default flips to DKMS in M9 after the A/B matrix).
     """
     c = _import_driver_classes()
     if os.environ.get(ENV_RTL8814_DRIVER, "").strip().lower() == "mainline":
         rtl8814 = [c["rtl8814au_mainline"], c["rtl8814au_dkms"]]
     else:
         rtl8814 = [c["rtl8814au_dkms"], c["rtl8814au_mainline"]]
+    if os.environ.get(ENV_RTL8821_DRIVER, "").strip().lower() == "dkms":
+        rtl8821 = [c["rtl8821au_dkms"], c["rtl8821au"]]
+    else:
+        rtl8821 = [c["rtl8821au"], c["rtl8821au_dkms"]]
     return [
         c["ar9271"], c["rtl8187"], c["rt2500usb"], c["rt2800usb"], c["rtl8188eus"],
-        c["rtl8812au"], c["rtl8821au"], c["rtl8822bu"], *rtl8814,
+        c["rtl8812au"], *rtl8821, c["rtl8822bu"], *rtl8814,
         c["mt76x0u"], c["mt76x2u"], c["mt7921au"],
     ]
 

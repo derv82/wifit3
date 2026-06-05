@@ -8,9 +8,10 @@ the vendor tree (`usb_dumps_new/captures_rtl8821au/driver-source/`) cross-checke
 against the cold-boot pcap, never from the mainline-derived `chips/rtl8821au/`.
 
 - **Sibling, not a replacement.** `chips/rtl8821au/` (mainline) stays. Both
-  register for `0bda:0811`, ordered by **`$WIFIT3_RTL8821`** (blank/`dkms` →
-  this port, the default once HW-proven; `mainline` → fallback). Read fresh per
-  run, so it flips between runs without a restart.
+  register for `0bda:0811`, ordered by **`$WIFIT3_RTL8821`**, read fresh per run
+  (flips between runs without a restart). As of M8 the **mainline driver is the
+  blank default**; `=dkms` selects this port. M9 flips the blank default to DKMS
+  once the A/B matrix proves it out.
 - **Why this port:** the mainline-derived port inherits `rtw88`'s weaker 2.4 GHz
   monitor RX (AGC/DIG). The vendor PHYDM DIG path is the suspected fix (proven
   3.6× on 8822bu; 8821au's own breadth is a tie/stability play — the headline
@@ -71,7 +72,7 @@ healthy rate, consistent with the mainline DIG softness this port targets.
 | M5 | 2 GHz RX + PHYDM RSSI/DIG (value milestone) | **PASS** (44 ops byte-exact §1+§2; 474 live EDCCA ops skipped; §3 monitor 10-op block) | **PASS** (`--phase beacon` ch1/30s: 18 APs, 1754 beacons; canary NETGEAR2G 7.3/s @ −48 dBm; DIG watchdog ticks, FA resets) | **done** |
 | M6 | 2 GHz TX (deauth + WEP replay) | **PASS** (unit test — no TX in the cold-boot pcap; fake-txdesc fields + XOR-16 checksum + golden bytes) | **PASS** (user-run: deauth → 37 EAPOL handshakes from the reconnecting client, no pipe fault; WEP replay → 5518 IVs, replay winner locked) | **done** |
 | M7 | 5 GHz: RX + tune + TX | **PASS** (`verify_channels`: all 36 hops byte-exact — 2.4 GHz 2-12 + 5 GHz 36-165, band switch + channel + per-band txagc) | **PASS RX** (`--phase beacon --channel 36`: 5 APs, 388 beacons; bb_swing 5g=0x16a); **user** for 5 GHz deauth | **done** (RX); TX user-verify |
-| M8 | Driver Protocol wiring + warm reattach + manager `WIFIT3_RTL8821` | — | `--phase open` warm + beacon | — |
+| M8 | Driver Protocol wiring + warm reattach + manager `WIFIT3_RTL8821` | **PASS** (5 manager tests: env-var ordering + 0bda:0811 claim; Protocol conformant) | **PASS** (live discovery picks the driver per env var; warm re-entry re-inits cleanly — ch1 18 APs, canary 8.3/s) | **done** (default flips to DKMS in M9) |
 | M9 | A/B matrix + flip default to DKMS | — | RX (Claude) + TX (user) | — |
 
 ## M5 (RX) implementation spec — wire-verified, IMPLEMENTED
