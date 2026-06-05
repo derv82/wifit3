@@ -66,6 +66,7 @@ def main() -> int:
                     help="override EFUSE board_type (e.g. 0 = internal-gain branch)")
     ap.add_argument("--dump", type=int, default=8, help="raw MPDUs to dump")
     ap.add_argument("--no-iqk", action="store_true", help="skip IQK (A/B test)")
+    ap.add_argument("--no-edcca", action="store_true", help="skip the live PWDB-EDCCA search (A/B test)")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO,
@@ -112,7 +113,7 @@ def main() -> int:
             print(f"  IQK RX-IQC: 0xC10=0x{rxa:08x} 0xE10=0x{rxb:08x} "
                   f"(0x100 low-byte default => cal did not take)")
         mac.hal_init_misc_pre(t)
-        dig.init_hal_dm(t, search_edcca=False)
+        dig.init_hal_dm(t, search_edcca=not args.no_edcca)   # live PWDB-EDCCA search (morrownr runs it)
         mac.hal_init_misc_post(t)
         monitor.enter_monitor(t)
 
