@@ -25,6 +25,11 @@ def _radio_write(t, path: int, addr: int, data: int) -> None:
 
 def phy_rf_config(t, params: JaguarParams | None = None) -> None:
     """M3 part 2: RADIO_A (path A) then RADIO_B (path B), both via SIPI."""
+    # B-cut 8812a brackets every RF SIPI read with a CCA-off/on toggle so masked RF writes
+    # (read-modify-write) don't latch a stale value. Enable it on this transport for all
+    # subsequent RF reads (channel tune etc.). [SRC] phy_RFSerialRead (rtl8812a_phycfg.c:
+    # 105-133); the frozen 8821au never sets this flag.
+    t._rf_read_cca_off = True
     p = params or JaguarParams()
     apply_table(RF_RADIOA, lambda a, d: _radio_write(t, RF_PATH_A, a, d), p)
     apply_table(RF_RADIOB, lambda a, d: _radio_write(t, RF_PATH_B, a, d), p)

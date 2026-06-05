@@ -117,11 +117,18 @@ def main() -> int:
         beacons: Counter = Counter()
         fc0 = Counter()
         dumped = 0
+        raw_calls = raw_nonempty = raw_bytes = raw_dumped = 0
         start = time.monotonic()
         while time.monotonic() - start < args.secs:
             buf = t.bulk_in()
+            raw_calls += 1
             if not buf:
                 continue
+            raw_nonempty += 1
+            raw_bytes += len(buf)
+            if raw_dumped < 4:
+                raw_dumped += 1
+                print(f"  rawbuf[{raw_nonempty}] len={len(buf)} {bytes(buf[:64]).hex()}")
             for frame, r in rx.iter_frames(buf):
                 total += 1
                 if frame:
@@ -139,7 +146,8 @@ def main() -> int:
                     if b and b != "ff:ff:ff:ff:ff:ff":
                         beacons[b] += 1
         elapsed = max(time.monotonic() - start, 1e-3)
-        print(f"\n[RESULT] {total} frames ({total / elapsed:.0f}/s), {valid} parsed-valid, "
+        print(f"\n[BULK-IN] {raw_calls} reads, {raw_nonempty} non-empty, {raw_bytes} bytes total")
+        print(f"[RESULT] {total} frames ({total / elapsed:.0f}/s), {valid} parsed-valid, "
               f"{len(beacons)} beacon-BSSIDs ({sum(beacons.values())} beacons)")
         print(f"  frame-control byte0 histogram (top 12): "
               f"{', '.join(f'0x{k:02x}:{v}' for k, v in fc0.most_common(12))}")

@@ -9,8 +9,8 @@ readback reg), then writes.
 
 [SRC] rtl8812a_phycfg.c:96-220 (PHY_SetRFReg8812 — the shared 88xxA function),
 Hal8812PhyReg.h:57-67,280. The path argument selects A or B unchanged, so the same
-primitive drives the 8812's second radio. The C-cut-only rCCAonSec toggle inside
-PHY_SetRFReg8812 is gated on IS_TEST_CHIP and never fires on a normal 8821au/8812au.
+primitive drives the 8812's second radio. phy_RFSerialRead brackets the readback with a
+CCA-on-secondary OFF/ON toggle on B-cut 8812a (see ``_rf_serial_read``); the 8821au skips it.
 """
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ RF_PATH_A, RF_PATH_B = 0, 1
 RF_CHNLBW = 0x18                   # RF_CHNLBW_Jaguar
 RFREG_WRITE_MASK = 0x000FFFFF      # bLSSIWrite_data_Jaguar (full -> direct write, no read)
 REG_HSSI_READ = 0x08B0             # rHSSIRead_Jaguar
+RCCA_ON_SEC = 0x0838               # rCCAonSec_Jaguar — B-cut 8812a RF-read CCA toggle (BIT3)
 _RF3WIRE = {RF_PATH_A: 0x0C90, RF_PATH_B: 0x0E90}
 _PI_MODE_REG = {RF_PATH_A: 0x0C00, RF_PATH_B: 0x0E00}
 _SI_READBACK = {RF_PATH_A: 0x0D08, RF_PATH_B: 0x0D48}
@@ -43,11 +44,22 @@ def set_bb(t, reg: int, mask: int, val: int) -> None:
 
 
 def _rf_serial_read(t, path: int, offset: int) -> int:
+    # [SRC] phy_RFSerialRead (rtl8812a_phycfg.c:105-133): on B-cut 8812a (NOT C-cut, NOT
+    # 8821) the readback is bracketed by CCA-on-secondary OFF/ON for offset != 0 — "CCA OFF
+    # to avoid reading the wrong value" (Kordan/James). Skipped for offset 0 (toggling would
+    # corrupt RF 0x00) and on C-cut/8821 (which use a 20us udelay instead). Without it the
+    # SIPI readback can latch stale, corrupting every masked RF write's read-modify-write.
+    # Gated per-transport (rf.phy_rf_config sets it) so the frozen 8821au port is unaffected.
+    cca = offset != 0 and getattr(t, "_rf_read_cca_off", False)
+    if cca:
+        set_bb(t, RCCA_ON_SEC, 0x8, 1)                      # CCA off (enter)
     is_pi = query_bb(t, _PI_MODE_REG[path], 0x4)            # bit2 = PI vs SI mode
     set_bb(t, REG_HSSI_READ, 0xFF, offset & 0xFF)           # latch read addr
-    # udelay(20) — no-op under replay
     rb = _PI_READBACK[path] if is_pi else _SI_READBACK[path]
-    return query_bb(t, rb, 0x000FFFFF)
+    val = query_bb(t, rb, 0x000FFFFF)
+    if cca:
+        set_bb(t, RCCA_ON_SEC, 0x8, 0)                      # CCA on (exit)
+    return val
 
 
 def set_rf_reg(t, path: int, addr: int, mask: int, val: int) -> None:

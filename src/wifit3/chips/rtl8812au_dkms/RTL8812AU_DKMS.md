@@ -199,6 +199,80 @@ register/function found that does it — `rfe_type=3` only drives the 0xCB0 pinm
 operating state correctly. This is the open problem; M1–M-TXPWR are solid and RX is
 *proven achievable*, just not yet cleanly.
 
+## M5 update — vendor pcap arrives; RX *receives garbage*, not deaf (session 5)
+
+A real vendor cold-boot pcap now exists (`usb_dumps_new/captures_8812au/`, **morrownr
+8812au**, monitor-enabled). Built reproducible RE tooling around it and ran a full
+pcap-vs-port register diff on live HW. Two confirmed fixes landed; the core blocker is
+**re-diagnosed** and several prior leads are killed.
+
+**RE tooling (durable, in `scripts/rtl8812au_dkms/`):**
+- `pcap_regtrace.py` — decode a capture's ordered vendor register writes (RF via BB
+  0xC90/0xE90 SIPI) → `ref/morrownr_capture2_bringup.txt` (the oracle). capture-2/3 are
+  COMPLETE; capture-1 is truncated, ignore it.
+- `trace_bringup.py` — record our port's REAL emitted writes from one live bring-up,
+  same format → `ref/ourport_bringup.txt`.
+- `diff_trace.py` — final-value-per-register diff (RF decoded per path,addr).
+- `rx_diag.py` — permissive-RCR (CRC/ICV-accept) RX classifier + raw bulk-IN byte stats.
+
+**Oracle is trustworthy:** morrownr's `hal/rtl8812a/` ≈ Lucid-Duck's (the source this port
+mirrors) — ~19-line diff, ZERO in the RF/PHY path; `phydm.c` differs by 6 lines. So the
+pcap validates exactly our code path (A3/A4 resolved).
+
+**FIX 1 (landed, verified): EFUSE board params were never threaded into the phy_cond walks.**
+`rf.phy_rf_config`/`bb.phy_bb_config` defaulted to `JaguarParams()` (board_type=0, cut=0),
+so the walker took the INTERNAL-gain branch. `efuse.read_chip_params` now decodes the
+external-LNA/PA flags (0xBC/0xBD/0xBF → board_type **0xD8**) + cut (REG_SYS_CFG[15:12], A→15
+remap → **1**); `build_jaguar_params` feeds them through. The RADIO/AGC gain rows
+(RF 0x34/35/36/3C/61-65/86/8B both paths) now match the oracle byte-for-byte — **RF diff
+23→1**. (`board_type=0xD8` "made it worse" in session-4 only because the walker bug left
+the OTHER rows wrong; with correct threading it's right.)
+
+**FIX 2 (landed, faithful): `_rf_serial_read` omitted the rCCAonSec CCA-off/on bracket.**
+`phy_RFSerialRead` (rtl8812a_phycfg.c:105-133) toggles rCCAonSec_Jaguar (0x838 BIT3) OFF
+before / ON after every RF read with `offset != 0`, gated `!(C_CUT || 8821)` — so it RUNS
+on this B-cut 8812a. Our comment misattributed it to an `IS_TEST_CHIP` toggle in
+`PHY_SetRFReg8812` (which has none). Added, gated per-transport (`t._rf_read_cca_off`, set
+in `rf.phy_rf_config`) so the frozen 8821au is untouched. **Did NOT change RX** (and did not
+clear RF[A]0x18 bit16 — that's PLL-relock status, see below), but it's a real port gap.
+
+**THE BIG REFRAME — RX is not deaf; the demod produces garbage:** `rx_diag` with a
+permissive RCR shows the HW **delivers ~13.8 KB across 10 bulk-IN reads in 12 s** — but
+every sub-packet has `crc_err=1` and, past the 24B desc + 32B drvinfo, an **invalid
+frame-control** (0xe9/0x92… bad protocol-version). So:
+- NOT an RX-DMA / delivery / "OFDM-not-routed" problem (bytes flow).
+- NOT a parser bug (`iter_frames` correctly skips crc_err garbage).
+- The demod **triggers on energy but never locks onto real 802.11** → noise-garbage.
+This matches session-1's "garbage demod," now proven to be delivered (prior sessions saw 0
+frames because the monitor RCR drops crc_err).
+
+**Ruled out this session:** RX-DMA/aggregation/RCR/inirp (bytes flow); host parser; board
+gains (now match oracle); RF[A]0x18 bit16 as a cause (it's PLL-relock status — cosmetic in
+the written value, and session-4 received with it set); the CCA-stale-read theory for bit16
+(CCA fix applied, bit16 unchanged → it's real status, not a latch).
+
+**Remaining oracle diff after both fixes (23 vals, 1 RF):** RF[A]0x18 bit16 (cosmetic);
+TX-side 3-EP queue/page map (0x10C/0x114/0x200/0x209/0x280/0x420-45D — the known M2 fix-up);
+path-B TXAGC left at table default 0x12121212 vs 0x1A1A1A1A (txpower only fully writes
+path A — **M-TXPWR path-B gap**); monitor RCR (intentional accept-all); MAC-addr 0x610-615
+(we omit, fine for promiscuous monitor).
+
+**The open problem (unchanged core):** the demod produces garbage even though gains+RF match
+the *receiving* vendor driver. Leading suspects, none yet tested:
+1. **External-LNA operating power / TR-switch RX state** — the external-gain branch lowers
+   internal gain expecting an LNA boost; if the LNA isn't powered in RX, the demod is
+   under-driven and locks onto noise. The RFE *pinmux* (0xCB0) matches the oracle, but the
+   RX-state GPIO/TR-switch drive may not — and the airmon **RX-START** segment (capture-2
+   frames >12500) is **not yet decoded**; that's where a working driver actually begins RX.
+2. **RX IQ calibration / clock** — uncalibrated I/Q → rotated constellation → garbage bits.
+   (Vendor IQK is reportedly commented out, but verify against the pcap's start segment.)
+3. **A demod path-enable that only shows at RX-start**, not in cold-boot init.
+
+**Start next session here:** (a) `pcap_regtrace.py --max-frame 18000` and diff the
+RX-START segment (12500-18000) against cold-boot to find what the vendor writes to *begin
+receiving* (GPIO/RFE/TR-switch/IQK/RX-path); (b) classify whether the garbage MPDUs are
+corrupted-real or pure-noise by dumping full MPDUs; (c) test forcing the external-LNA GPIO.
+
 ## Provenance
 
 - Vendor source: `usb_dumps_new/captures_rtl8821au/driver-source/` (8812a in
