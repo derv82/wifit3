@@ -30,7 +30,7 @@ import usb.util
 
 from wifit3.chips.rtl88xxau_base import registers as R
 from wifit3.chips.rtl88xxau_base.transport import Rtl88xxauTransport
-from wifit3.chips.rtl8812au_dkms import bb, chan, dig, efuse, firmware, mac, monitor, rf, rx, txpower
+from wifit3.chips.rtl8812au_dkms import bb, chan, dig, efuse, firmware, iqk, mac, monitor, rf, rx, txpower
 from wifit3.chips.rtl8812au_dkms.constants import USB_PID_AWUS036ACH, USB_VID_REALTEK
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -65,6 +65,7 @@ def main() -> int:
     ap.add_argument("--board-type", type=lambda s: int(s, 0), default=None,
                     help="override EFUSE board_type (e.g. 0 = internal-gain branch)")
     ap.add_argument("--dump", type=int, default=8, help="raw MPDUs to dump")
+    ap.add_argument("--no-iqk", action="store_true", help="skip IQK (A/B test)")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO,
@@ -101,6 +102,15 @@ def main() -> int:
         chan.set_chnl_bw(t, ch=args.channel, bb_swing_2g_a=params.bb_swing_2g[0],
                          bb_swing_2g_b=params.bb_swing_2g[1], rfe_type=params.rfe_type)
         txpower.set_tx_power(t, args.channel, params.tx_power_2g)
+        if not args.no_iqk:
+            print("[*] running IQK (PHY_IQCalibrate_8812A)...")
+            try:
+                iqk.iq_calibrate(t, is_2g=True)
+            except Exception as e:  # noqa: BLE001 - diagnostic; surface and continue
+                print(f"  [IQK ERROR] {type(e).__name__}: {e}")
+            rxa, rxb = t.read32(0x0C10), t.read32(0x0E10)
+            print(f"  IQK RX-IQC: 0xC10=0x{rxa:08x} 0xE10=0x{rxb:08x} "
+                  f"(0x100 low-byte default => cal did not take)")
         mac.hal_init_misc_pre(t)
         dig.init_hal_dm(t, search_edcca=False)
         mac.hal_init_misc_post(t)

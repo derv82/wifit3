@@ -290,10 +290,31 @@ Both next-step checks ran and settle it:
 - This also re-explains the "path-B TXAGC 0xE34-4C = 0x1A vs 0x12" oracle diff: those
   0xE20-0xE4C values are **IQK coefficient outputs**, not TX power.
 
-**Fix = port `PHY_IQCalibrate_8812A` (phydm, referenced from rtl8812a_hal_init.c:3975) and
-invoke it after `chan.set_chnl_bw`.** This supersedes the prior "IQK ruled out" note
-(sessions 1/3). Verify the port by trace-diffing its 0xC20-0x4C/0xE20-0x4C write structure
-against the pcap IQK passes, then `rx_diag.py` for real beacons.
+Ported `PHY_IQCalibrate_8812A` (the live `halrf_8812a_ce.c` CE IQK) into `iqk.py` and ran it
+after `chan.set_chnl_bw`.
+
+**CORRECTION (HW-tested — IQK is NOT the core blocker):** with IQK enabled, RX is STILL
+crc_err garbage (path-A IQC took a value, path-B fell to the 0x100 default). And the pcap is
+decisive: the IQK one-shot (0x980=0xFA / 0xC60=0x77777777 ADDA-on) is **absent from all three
+captures** — morrownr RECEIVES real beacons **without** running IQK. So the "capture-proven
+IQK" claim above was WRONG: the Part-2 agent misread channel-tune frames (RF 0x18 channel
+byte, 0x8AC `PostSetBwMode`, 0xC20-0x4C TXAGC sweep) as an IQK signature. `iqk.py` is a
+faithful port and is kept (the chip may need it once base RX works), but it does not resolve
+M5 alone. Verified rx-desc decode is byte-correct (the vendor's OWN capture-2 RX buffers,
+frames 13035-13075, decode to valid beacons through our `rx.py`).
+
+**The open problem (sharpened):** the demod produces garbage even though (a) gains match the
+oracle, (b) RF matches except the cosmetic RF[A]0x18 bit16, AND (c) morrownr receives with
+the SAME gains and NO IQK. So the RX difference is in the **~23 remaining cold-boot diffs**
+(mostly TX-FIFO/3-EP: 0x10C/0x114/0x200/0x209/0x280/0x420-45D; a few BB: 0xA20 CCK / 0xC54 /
+0xC68; path-B TXAGC 0xE34-4C; plus the omitted 0x0080/0x001D/0x0003/0x01CC/0x0520/0x0524/
+0x0610-15) OR a **timing/sequencing gap my final-value diff can't see** — notably the
+**RADIO-table udelay pseudo-addrs (0xfe..0xf9) we skip entirely** (`sipi.is_rf_delay_addr` ->
+no write AND no delay), which could leave the RF un-settled. **Next decisive experiment:**
+force our cold-boot register state to the oracle's values and re-test RX (does the static
+config diff explain the garbage? if yes, bisect; if no, it's timing) — and add the RADIO
+delays. RX delivery works (20 KB/12 s on bulk-IN); the descriptors are well-formed; only the
+demodulated MPDU content is noise.
 
 ## Provenance
 
