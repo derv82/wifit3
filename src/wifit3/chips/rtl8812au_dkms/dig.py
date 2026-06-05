@@ -114,16 +114,98 @@ def _rx_gain_commit(t) -> None:
         set_bb(t, 0x0910, 0xFC00, (val >> 10) & 0x3F)
 
 
-def init_hal_dm(t, search_edcca: bool = False) -> None:
-    """rtl8812_InitHalDm: GPIO + the phydm DIG/AGC/LNA seed. ``search_edcca`` runs the
-    live PWDB-EDCCA lower-bound search (live PSD, not offline-replayable). Wrap between
-    mac.hal_init_misc_pre and mac.hal_init_misc_post."""
+# --- EDCCA lower-bound search — 8812a (ODM_IC_PWDB_EDCCA), LIVE-ONLY (reads PSD 0xFA0) --
+# Identical params/logic to the 8821au sibling (TH_L2H_INI=-17 covers ODM_RTL8821|RTL8812),
+# confirmed by the capture's first 0x8A4 write 0xe9/0xe2. The only 8812 delta is the 2-path
+# _lna_setting. The loop reads the live PSD debug port and its length is RF-environment-
+# dependent (capture-2: 160 PSD reads, capture-3: 207), so it is gated behind search_edcca:
+# ON for live hardware, OFF for the replay-diff (verified live by the beacon count).
+_TH_L2H_INI = -17          # phydm_set_l2h_th_ini (ODM_RTL8821 | ODM_RTL8812)
+_TH_EDCCA_HL_DIFF = 7      # phydm_adaptivity_init default
+_IGI_BASE = 0x32
+_IGI_TARGET_DC = 0x32
+_RESEARCH_IGI_UB = 0x26    # phydm_re_search_condition bound
+_ADAPTIVITY_DBG_PORT = 0x209   # adaptivity_dbg_port, ODM_IC_11AC_SERIES
+
+
+def _set_edcca_threshold(t, h2l: int, l2h: int) -> None:
+    """[SRC] phydm_set_edcca_threshold (11AC) — 0x8A4 byte0 = L2H, byte1 = H2L."""
+    set_bb(t, 0x08A4, 0x000000FF, l2h & 0xFF)
+    set_bb(t, 0x08A4, 0x0000FF00, h2l & 0xFF)
+
+
+def _dbg_port_read(t, port: int) -> int:
+    """[SRC] phydm_set/get/release_bb_dbg_port (11AC) — one PSD debug-port sample:
+    latch the index (0x8FC), read the live value (0xFA0), release the header (0x8F8[25:22])."""
+    set_bb(t, 0x08FC, 0xFFFFFFFF, port)
+    val = t.read32(0x0FA0)
+    set_bb(t, 0x08F8, 0x03C00000, 0)
+    return val
+
+
+def _search_pwdb_lower_bound(t) -> int:
+    """[SRC] phydm_search_pwdb_lower_bound — drop the LNA (both radios), walk the L2H
+    threshold up until the EDCCA signal stops firing, then restore the LNA + no-link
+    threshold. Reads the live PSD, so it never runs under the replay differ."""
+    _lna_setting(t, enable=False)
+    igi = _IGI_BASE + 30 + _TH_L2H_INI - _TH_EDCCA_HL_DIFF
+    th_l2h = min(_TH_L2H_INI + (_IGI_TARGET_DC - igi), 10)
+    th_h2l = th_l2h - _TH_EDCCA_HL_DIFF
+    _set_edcca_threshold(t, th_h2l, th_l2h)
+    time.sleep(0.030)
+
+    is_adjust = True
+    while is_adjust:
+        reg = _dbg_port_read(t, 0x0)
+        tries = 0
+        while (reg & (1 << 3)) and tries < 3:
+            time.sleep(0.003)
+            tries += 1
+            reg = _dbg_port_read(t, 0x0)
+        tx_edcca1 = sum(1 for _ in range(20)
+                        if _dbg_port_read(t, _ADAPTIVITY_DBG_PORT) & (1 << 29))
+        if tx_edcca1 > 1:
+            igi -= 1
+            th_l2h = min(th_l2h + 1, 10)
+            th_h2l = th_l2h - _TH_EDCCA_HL_DIFF
+            _set_edcca_threshold(t, th_h2l, th_l2h)
+            if th_l2h == 10:
+                is_adjust = False
+        else:
+            is_adjust = False
+
+    _lna_setting(t, enable=True)
+    _set_edcca_threshold(t, 0x7F, 0x7F)        # resume to the no-link state
+    return igi
+
+
+def _mac_edcca_state(t) -> None:
+    """[SRC] phydm_mac_edcca_state(DONT_IGNORE) — don't ignore EDCCA, enable countdown."""
+    set_bb(t, 0x0520, 1 << 15, 0)
+    set_bb(t, 0x0524, 1 << 11, 1)
+
+
+def _adaptivity_init(t) -> None:
+    """[SRC] phydm_adaptivity_init (8812a PWDB-EDCCA path) — live PSD lower-bound search
+    (re-run once if the result lands below the IGI bound), then DONT_IGNORE."""
+    igi = _search_pwdb_lower_bound(t)
+    if igi <= _RESEARCH_IGI_UB:                # phydm_re_search_condition
+        _search_pwdb_lower_bound(t)
+    _mac_edcca_state(t)
+
+
+def init_hal_dm(t, search_edcca: bool = True) -> None:
+    """rtl8812_InitHalDm: GPIO + the phydm DIG/AGC/EDCCA seed. ``search_edcca`` runs the
+    live PWDB-EDCCA lower-bound search (live PSD 0xFA0, not offline-replayable) — ON for
+    live hardware, OFF for the replay-diff gate (which strips the matching capture ops).
+    Wrap between mac.hal_init_misc_pre and mac.hal_init_misc_post."""
     _init_gpio(t)
     _common_info_self_init(t)
     _dig_init(t)
     _cck_pd_init(t)
     _env_monitor_init(t)
-    _lna_setting(t, enable=False)    # phydm_adaptivity_init LNA-page commit (DISABLE form)
+    if search_edcca:
+        _adaptivity_init(t)          # LNA-disable -> live PSD search -> LNA-enable -> mac_edcca
     _rx_gain_commit(t)
 
 

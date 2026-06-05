@@ -107,6 +107,33 @@ def extract_ops(pcap: Path, dev: int) -> list[dict]:
     return ops
 
 
+def strip_edcca_search(ops: list) -> tuple:
+    """Remove the phydm EDCCA PSD lower-bound search from the op stream.
+
+    phydm_adaptivity_init drops the LNA, walks the EDCCA L2H threshold while sampling the
+    LIVE PSD debug port (0xFA0), then restores the LNA -- the loop length is RF-environment
+    dependent (capture-2: 160 PSD reads, capture-3: 207), so it is NOT byte-replayable on
+    both boots. dig.init_hal_dm(search_edcca=False) skips it on the port side; this removes
+    the matching capture ops so the deterministic env_monitor -> rx_gain_commit replay lines
+    up. Bounded by env_monitor's final 0x990[15:0]=0xFFFF write and rx_gain_commit's first
+    0x440 read, and only stripped when that span actually contains the 0xFA0 PSD reads (the
+    search signature) -- otherwise the ops are returned untouched. Returns (ops, n_stripped).
+    """
+    i0 = next((i for i, o in enumerate(ops)
+               if o["kind"] == "W" and o["addr"] == 0x0990 and (o["value"] & 0xFFFF) == 0xFFFF),
+              None)
+    if i0 is None:
+        return ops, 0
+    i1 = next((i for i in range(i0 + 1, len(ops))
+               if ops[i]["kind"] == "R" and ops[i]["addr"] == 0x0440), None)
+    if i1 is None:
+        return ops, 0
+    region = ops[i0 + 1:i1]
+    if not any(o["kind"] == "R" and o["addr"] == 0x0FA0 for o in region):
+        return ops, 0          # no live search in this span -- leave it for the strict diff
+    return ops[:i0 + 1] + ops[i1:], len(region)
+
+
 _TT = {"0x00": "iso", "0x01": "interrupt", "0x02": "control", "0x03": "bulk"}
 
 
@@ -236,10 +263,14 @@ def main() -> int:
     dev = find_card_device(pcap)
     audit_coverage(pcap, dev)
     ops = extract_ops(pcap, dev)
+    ops, n_edcca = strip_edcca_search(ops)
     n_w = sum(o["kind"] == "W" for o in ops)
     n_r = sum(o["kind"] == "R" for o in ops)
     n_b = sum(o["kind"] == "B" for o in ops)
     print(f"{pcap.name}: card=dev{dev}, {len(ops)} vendor ops ({n_r} R, {n_w} W, {n_b} bulk)")
+    if n_edcca:
+        print(f"  (stripped {n_edcca} live EDCCA-search ops [PSD 0xFA0] -- dynamic, "
+              f"verified live by the beacon count, not the byte diff)")
     if not ops:
         return 1
     print(f"  first op: {ReplayTransport._fmt(ops[0])}")
