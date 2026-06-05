@@ -124,6 +124,49 @@ This card is **3 bulk-OUT (0x02/0x03/0x04) + 1 bulk-IN (0x81)**, not the 8821's 
   4-EP `0xC5A0` the code writes now.
 - M6 TX must send on bulk-OUT **0x02** (the base transport default 0x09 is the 8821's).
 
+## M5 update — RF register diff + the "RF won't enter receive mode" wall (session 3)
+
+**RX is PROVEN achievable: forcing the RF (radio) registers to the working mainline
+driver's values yields 22 APs (canary −56 dBm).** So the port can RX; the blocker is
+isolated to the RF state. Findings, in order:
+
+- **RF-register SIPI diff (DKMS vs working mainline):** RF[A/B] 0x00, 0x30, 0x31, 0x32,
+  0x42, 0x65, 0xb0, 0xb1 differ; all BB/MAC/RFE registers match (incl. 0xCB0/0xCB4/0xCB8
+  RFE pinmux, 0x40/0x4C GPIO, 0x808/0x860/0x874).
+- **`_lna_setting` (in `dig.init_hal_dm`) is a bug:** it writes RF 0x30/0x31/0x32 =
+  0x18000/0x3f7ff/0xc26bf. The vendor only calls `halrf_rf_lna_setting_8812a` INSIDE the
+  EDCCA search, not unconditionally. Remove it from the deterministic init path.
+- **cut logic (confirmed against vendor `check_positive`, halhwimg8812a_bb.c):** the cut
+  check is raw **equality** (not a bitmask), with `cut_version_for_para = (cut==ODM_CUT_A)
+  ? 15 : cut`. So A-cut→15, **B-cut→1**, C-cut→2. Our walker is missing the A-cut→15
+  remap and the NGFF(bit1→5)/TRSWT(bit5→6) board_type bits — port both. This chip is
+  B-cut → `cut_version=1`.
+- **EFUSE external-LNA/PA:** 0xBC=0x33, 0xBD=0x88, 0xBF=0x88 → ExternalLNA/PA on both
+  bands, all Type fields = 0 → ODM board_type = 0xD8 (GLNA bit4|GPA bit3|ALNA bit7|APA
+  bit6). Setting board_type=0xD8 makes the RADIO walker resolve the **external** gain
+  branch and fixes RF 0x65 to mainline's 0x931d1.
+- **BUT board_type=0xD8 makes RX WORSE, not better** — it fails even with the RF regs
+  forced, while board_type=0 (internal gain branch) + forcing works (weakly). Read: the
+  external branch lowers internal gain expecting the external LNA's boost; if the external
+  LNA isn't at its operating gain, the path is under-driven. board_type=0 (full internal
+  gain) partially compensates → weak RX.
+- **There is NO `halrf_config_rfe_8812a` / external-LNA-power function in this source.**
+  `rfe_type=3` drives only `phy_SetRFEReg8812` (the 0xCB0 pinmux — present, matches
+  mainline) and `phy_InitRssiTRSW` (software vars). So there's no missing GPIO-enable step.
+- **RF 0x42/0xb0/0xb1 are dynamic** (TX-power-tracking / IQK-intermediate state, per the
+  external agent) — symptoms, not config. The RADIO table doesn't even write 0x42/0xb0.
+- **RF 0x00 is a mode/status register:** the RADIO table writes 0x00=0x00010000 but the
+  read-back operating value is 0x33e69 (mine) vs 0x33da9 (mainline, receiving). It reflects
+  the RF state machine, which on the DKMS port never enters "receive" — the core symptom.
+
+**Conclusion / where to start next:** the BB+MAC+RFE config is byte-correct; the RF radio
+**operating state** never enters receive mode (RF 0x00 status differs; forcing the RF regs
+works only weakly). No register write I've found flips it cleanly. Open hypotheses, now
+that config is excluded: (1) **RF PLL/LO not locked** despite RF[0x18]=ch1 — needs an LCK
+(LC-tank) calibration the port skips; (2) a phydm/firmware RX-path commit (different FW
+than rtw88) that puts the RF into RX. The decisive next experiment: compare the RF[0x18]
+PLL-lock status bits and try porting `phy_LCCalibrate_8812A` / the RX-path calibration.
+
 ## Provenance
 
 - Vendor source: `usb_dumps_new/captures_rtl8821au/driver-source/` (8812a in
