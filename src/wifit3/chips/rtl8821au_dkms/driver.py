@@ -191,21 +191,27 @@ class Rtl8821auDkmsDriver:
                 cb(parsed)
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
-        """Tune to a 2.4 GHz or 5 GHz channel at 20 MHz primary, with its TX power.
+        """Tune to a 2.4 GHz or 5 GHz channel at 20 MHz primary.
 
         Runs the runtime tune (M7 ``set_channel_bw``: phy_SwBand switches band only on a
-        2.4<->5 crossing, then channel select + BW) and re-applies the per-rate txagc for
-        the channel's band/power group, so a deauth/WEP run on any channel transmits at
-        the correct EFUSE-calibrated power.
+        2.4<->5 crossing, then channel select + BW). On a settle (``scan=False``) it also
+        re-applies the per-rate txagc for the channel's band/power group, so a deauth/WEP
+        run transmits at the correct EFUSE-calibrated power.
+
+        ``scan=True`` (the channel hopper) takes the fast path: it SKIPS the ~27-write
+        per-rate txagc re-apply. The vendor re-applies it every hop, but txagc is TX-only
+        and wifit3 always calls ``set_channel(scan=False)`` before injecting, so skipping
+        it on transient passive hops is safe and buys back dwell time for RX.
         """
         loop = asyncio.get_running_loop()
 
         def _tune(t):
             chan.set_channel_bw(t, channel, self._bb_swing_2g, self._bb_swing_5g)
-            if channel <= 14:
-                txpower.set_tx_power(t, channel, self._tx_power)
-            else:
-                txpower.set_tx_power_5g(t, channel, self._tx_power_5g)
+            if not scan:
+                if channel <= 14:
+                    txpower.set_tx_power(t, channel, self._tx_power)
+                else:
+                    txpower.set_tx_power_5g(t, channel, self._tx_power_5g)
 
         async with self._io_lock:   # don't race the DIG watchdog's control I/O
             await loop.run_in_executor(None, _tune, self.transport)
