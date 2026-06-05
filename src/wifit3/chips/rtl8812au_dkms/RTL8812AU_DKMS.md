@@ -89,6 +89,41 @@ fault to the DKMS RX init) and is the M5/M9 A/B target. This could not be captur
 session — the card wedged after repeated bring-up cycles and needs a physical replug;
 the mainline driver's warm-reattach reported the bulk-IN stalled.
 
+## M5 update — register diff vs the working mainline (session 2)
+
+The decisive diagnostic: a **raw register diff (DKMS vs the working mainline driver**, both
+read by `ctrl_transfer(0xC0,0x05,addr,…)`). Result: **my config is byte-identical to mainline
+across ~50 BB/MAC RX registers.** The HW is fine — mainline reads **28 APs / 2918 beacons**
+ch1/25 s on the same cold card (canary `NETGEAR2G` −31 dBm ~9.8/s; this is the M5/M9 A/B target,
+and notably NOT bottom-tier). The only register differences:
+- `0xC50/0xE50` IGI: mainline 0x1c, mine 0x20 (dynamic — the watchdog reaches 0x1c).
+- `0x10C` TRXDMA_CTRL: mainline **0xe5f4**, mine **0xc5a4** — the queue→DMA map; my M2 wrote
+  the **4-EP** mapping but this card is **3-EP** (see fix-ups below).
+- `0x114` TX page boundary: mainline 0xf7, mine 0xf9 (likely just rtw88's own choice).
+- RFE/RX-path/AGC (`0xCB0/0xCB4/0xCB8/0x900/0x808/0x824/0x82C/0x8AC/…`): **all identical.**
+
+**Forcing IGI=0x1c AND TRXDMA_CTRL=0xe5f4 to mainline's values — still 0 frames.** So the
+BB/MAC config is not the cause. Newly **ruled out** this session: path-B interference (forced
+1T1R via `PHY_BB8812_Config_1T` — still deaf, so path A itself is broken); `board_type` (0xD8);
+IGI; the TRXDMA queue map; IQK (commented out in the vendor init, usb_halinit.c:1404/1674/1814);
+`rRxPath` (already 0x33 = both paths).
+
+**Start the next session here:** the one thing NOT yet compared is the **RF (radio) register
+state** (LNA/mixer/PLL) — BB regs matching does not prove the RF regs do. The RF-reg SIPI diff
+(raw read via the 0x8B0 latch + 0xD04/0xD08 readback works on both drivers) was set up but the
+card wedged before it ran. Leading hypotheses now that BB is excluded: (1) **RF receiver chain /
+PLL lock** — RF[0x18] reads ch1 but the synth may not be locked / an LCK or RX-RF enable is
+missing ("noise demod" = wrong LO); (2) **RX DMA/FIFO vs the vendor firmware** (mainline rtw88
+and the DKMS run different firmware).
+
+## M2 fix-ups needed (TX-side; surfaced during M5 debug)
+
+This card is **3 bulk-OUT (0x02/0x03/0x04) + 1 bulk-IN (0x81)**, not the 8821's 4+1:
+- M2 `_InitQueueReservedPage` / `_InitQueuePriority` must use the **3-out-EP** path
+  (`OutEpQueueSel=HQ|LQ|NQ`, `OutEpNumber=3`) → TRXDMA_CTRL should land on 0xe5f4, not the
+  4-EP `0xC5A0` the code writes now.
+- M6 TX must send on bulk-OUT **0x02** (the base transport default 0x09 is the 8821's).
+
 ## Provenance
 
 - Vendor source: `usb_dumps_new/captures_rtl8821au/driver-source/` (8812a in
