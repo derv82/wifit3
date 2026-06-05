@@ -50,3 +50,34 @@ def test_rtl8814_default_unchanged(monkeypatch):
     monkeypatch.delenv("WIFIT3_RTL8814", raising=False)
     n = _names()
     assert n.index("Rtl8814auDkmsDriver") < n.index("RTL8814AUDriver")
+
+
+def test_rtl8812_default_is_mainline(monkeypatch):
+    # Inverse polarity vs 8821/8814: mainline is the default, "dkms" opts in (the DKMS
+    # port is not yet A/B-proven against mainline).
+    monkeypatch.delenv("WIFIT3_RTL8812", raising=False)
+    n = _names()
+    assert n.index("RTL8812AUDriver") < n.index("Rtl8812auDkmsDriver")
+    cls, _ = manager._match_driver(_FakeDev(0x0BDA, 0x8812))
+    assert cls.__name__ == "RTL8812AUDriver"
+
+
+def test_rtl8812_dkms_opt_in(monkeypatch):
+    monkeypatch.setenv("WIFIT3_RTL8812", "DKMS")   # case-insensitive
+    n = _names()
+    assert n.index("Rtl8812auDkmsDriver") < n.index("RTL8812AUDriver")
+    cls, _ = manager._match_driver(_FakeDev(0x0BDA, 0x8812))
+    assert cls.__name__ == "Rtl8812auDkmsDriver"
+
+
+def test_rtl8812_unknown_value_stays_mainline(monkeypatch):
+    monkeypatch.setenv("WIFIT3_RTL8812", "mainline")   # any non-"dkms" -> default mainline
+    cls, _ = manager._match_driver(_FakeDev(0x0BDA, 0x8812))
+    assert cls.__name__ == "RTL8812AUDriver"
+
+
+def test_both_8812_drivers_claim_8812():
+    from wifit3.chips.rtl8812au_dkms.driver import Rtl8812auDkmsDriver
+
+    ids = {(e.vid, e.pid) for e in Rtl8812auDkmsDriver.SUPPORTED_IDS}
+    assert (0x0BDA, 0x8812) in ids

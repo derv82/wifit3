@@ -34,6 +34,11 @@ ENV_RTL8814_DRIVER = "WIFIT3_RTL8814"
 # fresh each call so it flips between runs.
 ENV_RTL8821_DRIVER = "WIFIT3_RTL8821"
 
+# RTL8812AU (0bda:8812) is claimed by BOTH the mainline driver and the vendor/DKMS port.
+# UNLIKE the 8821/8814 pairs above, the mainline driver stays the DEFAULT until an A/B
+# proves the DKMS port matches or beats it; set this to "dkms" to select the DKMS port.
+ENV_RTL8812_DRIVER = "WIFIT3_RTL8812"
+
 _DRIVER_CLASSES: Dict[str, Type[WlanDriver]] | None = None
 
 
@@ -50,6 +55,7 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
         from wifit3.chips.rtl8187.driver import RTL8187Driver
         from wifit3.chips.rtl8188eus.driver import RTL8188EUSDriver
         from wifit3.chips.rtl8812au.driver import RTL8812AUDriver
+        from wifit3.chips.rtl8812au_dkms.driver import Rtl8812auDkmsDriver
         from wifit3.chips.rtl8814au_dkms.driver import Rtl8814auDkmsDriver
         from wifit3.chips.rtl8821au.driver import RTL8821AUDriver
         from wifit3.chips.rtl8821au_dkms.driver import Rtl8821auDkmsDriver
@@ -63,6 +69,7 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
             "rt2800usb": RT2800USBDriver,
             "rtl8188eus": RTL8188EUSDriver,
             "rtl8812au": RTL8812AUDriver,
+            "rtl8812au_dkms": Rtl8812auDkmsDriver,
             "rtl8821au": RTL8821AUDriver,
             "rtl8821au_dkms": Rtl8821auDkmsDriver,
             "rtl8822bu": RTL8822BUDriver,
@@ -91,9 +98,14 @@ def _all_drivers() -> List[Type[WlanDriver]]:
         rtl8821 = [c["rtl8821au"], c["rtl8821au_dkms"]]
     else:
         rtl8821 = [c["rtl8821au_dkms"], c["rtl8821au"]]
+    # 8812 polarity is inverted vs 8821/8814: mainline is the default, "dkms" opts in.
+    if os.environ.get(ENV_RTL8812_DRIVER, "").strip().lower() == "dkms":
+        rtl8812 = [c["rtl8812au_dkms"], c["rtl8812au"]]
+    else:
+        rtl8812 = [c["rtl8812au"], c["rtl8812au_dkms"]]
     return [
         c["ar9271"], c["rtl8187"], c["rt2500usb"], c["rt2800usb"], c["rtl8188eus"],
-        c["rtl8812au"], *rtl8821, c["rtl8822bu"], *rtl8814,
+        *rtl8812, *rtl8821, c["rtl8822bu"], *rtl8814,
         c["mt76x0u"], c["mt76x2u"], c["mt7921au"],
     ]
 

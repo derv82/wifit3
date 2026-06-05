@@ -12,8 +12,10 @@ switches band only on a 2.4<->5 crossing.
 (normal chip, not the MP-chip 0xC1C[11:8]); phy_SetRFEReg8812 (both paths, RFE-type 0)
 + TxScale on 0xC1C AND 0xE1C; channel/RF_MOD/BW programmed on BOTH RF paths; L1PeakTH
 0x848[25:22]=7 (2T2R, vs 1R's 8); and phy_FixSpur_8812A (2.4 GHz ADC-spur 0x8AC[9:8]).
-The chip is B-cut (REG_SYS_CFG cut nibble = 1), so the C-cut-only spur path is off. (The
-B-cut rCCAonSec RF-read CCA toggle is separate — handled in sipi._rf_serial_read.)
+The chip is C-cut (REG_SYS_CFG cut nibble = 1, +1 for the 8812 -> CUTVersion 2):
+phy_FixSpur_8812A takes the C-cut branch (the 3-write spur path, run per-path in
+_sw_chnl), and the B-cut rCCAonSec RF-read CCA toggle is correspondingly off (rf.py
+clears t._rf_read_cca_off; the toggle itself lives in sipi._rf_serial_read).
 
 bb_swing/rfe_type default to 0 dB / type-0 here; the EFUSE values are threaded in at
 M-TXPWR. # TODO(M7): 5 GHz band switch + per-band L1PeakTH/FixSpur. # TODO: 40/80 MHz.

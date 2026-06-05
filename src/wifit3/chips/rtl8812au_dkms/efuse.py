@@ -61,6 +61,7 @@ class ChipParams(NamedTuple):
     mac_address: Optional[str]
     rfe_type: int
     autoload_fail: bool
+    sys_cfg: int                   # raw REG_SYS_CFG (0xF0); seeds build_jaguar_params' cut_version
     tx_power_2g: List[PathTxPwr]   # [path A, path B]
     tx_power_5g: List[PathTxPwr]   # [path A, path B]
     bb_swing_2g: List[int]         # [path A, path B] TxScale
@@ -230,7 +231,7 @@ def read_chip_params(t) -> ChipParams:
     """Probe-phase chip-info + EFUSE read (2T2R), byte-faithful to the vendor
     ReadAdapterInfo8812AU -> Hal_ReadPROMContent_8812A -> InitAdapterVariablesByPROM_8812AU.
     """
-    t.read32(R.REG_SYS_CFG)                         # 0xF0 read_chip_version
+    sys_cfg = t.read32(R.REG_SYS_CFG)               # 0xF0 read_chip_version (also seeds cut_version)
     t.read32(R.REG_MULTI_FUNC_CTRL)                 # 0x68 read_chip_version companion
     ee = t.read8(R.REG_9346CR)                       # 0x0A Hal_ReadPROMContent autoload check
     autoload_fail = not (ee & (1 << 5))             # bit5 = EEPROM present
@@ -263,6 +264,7 @@ def read_chip_params(t) -> ChipParams:
         mac_address=_parse_mac_address(m),
         rfe_type=_parse_rfe_type(m),
         autoload_fail=autoload_fail,
+        sys_cfg=sys_cfg,
         tx_power_2g=tx2g,
         tx_power_5g=tx5g,
         bb_swing_2g=[_parse_bb_swing(m, EEPROM_TX_BBSWING_2G, p) for p in range(2)],

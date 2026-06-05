@@ -60,7 +60,7 @@ Disproven theories from earlier sessions (kept only in git history — ignore th
 | M0–M5 | efuse → FW → MAC → BB/RF → chan → TX-pwr → phydm-init → monitor | **DONE — byte-for-byte on both captures; RX confirmed on hardware** |
 | M6 | 2.4 GHz TX (deauth + WEP) | not started — use bulk-OUT 0x02 + the 3-EP map |
 | M7 | 5 GHz RX/tune/TX | not started (`chan._switch_band_5g` raises) |
-| M8 | `driver.py` + manager wiring | **not started — there is NO driver.py yet; the chip only runs via `rx_diag.py`.** Needs the WlanDriver protocol, RX loop, the 2-path DIG watchdog (`dig.watchdog_tick`), and monitor. |
+| M8 | `driver.py` + manager wiring | **DONE (code): `Rtl8812auDkmsDriver` satisfies the WlanDriver protocol — claim → bring-up → RX reader (started before the monitor RX gate) → 2-path DIG watchdog → monitor. Gate-faithful (adds only OS-level USB claim + RX, no vendor ops) + unit-tested. Wired in `manager.py` behind `WIFIT3_RTL8812=dkms`; mainline stays the default. Pending: live RX through the app path (`WIFIT3_RTL8812=dkms uv run wifit3`) — user HW test. `inject_frame` is an M6 no-op stub; `set_channel` is 2.4 GHz only (M7).** |
 | M9 | A/B vs mainline `chips/rtl8812au/` + flip default behind `$WIFIT3_RTL8812` | not started |
 
 ## The byte-for-byte gate
