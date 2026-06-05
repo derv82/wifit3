@@ -35,7 +35,7 @@ import libusb_package
 import usb.core
 import usb.util
 
-from _hwstop import install_stop, sleep_or_stop
+from _hwstop import interruptible_sleep
 
 from wifit3.chips.rtl8821au_dkms import constants as C
 from wifit3.chips.rtl8821au_dkms import bb, chan, firmware, mac, rf
@@ -123,7 +123,6 @@ async def _run_beacon(args) -> int:
         await driver.close()
         return _fail("bring-up did not reach FW-ready")
 
-    stop = install_stop(asyncio.get_running_loop())   # Ctrl+C -> stop early
     # Channel plan: hop a band (--band) to discover where APs live, else a fixed channel.
     supported = Rtl8821auDkmsDriver.SUPPORTED_CHANNELS
     if args.band == "5g":
@@ -138,13 +137,16 @@ async def _run_beacon(args) -> int:
           f"DIG watchdog: {'OFF' if args.no_dig else 'ON'}")
     start = time.monotonic()
     i = 0
-    while not stop.is_set() and time.monotonic() - start < args.duration:
-        cur = channels[i % len(channels)]
-        await driver.set_channel(cur)
-        i += 1
-        await sleep_or_stop(stop, args.dwell)
-        print(f"\r  {time.monotonic() - start:4.0f}s ch{cur:>3}  nAPs={len(tally.by_bssid)}  "
-              f"beacons={sum(tally.by_bssid.values())}  frames={tally.total_frames}", end="")
+    try:
+        while time.monotonic() - start < args.duration:
+            cur = channels[i % len(channels)]
+            await driver.set_channel(cur)
+            i += 1
+            await interruptible_sleep(args.dwell)
+            print(f"\r  {time.monotonic() - start:4.0f}s ch{cur:>3}  nAPs={len(tally.by_bssid)}  "
+                  f"beacons={sum(tally.by_bssid.values())}  frames={tally.total_frames}", end="")
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        print("\n[stopping — Ctrl+C]")
     print()
     elapsed = max(time.monotonic() - start, 1e-3)
     await driver.close()
@@ -189,7 +191,10 @@ def main() -> int:
     )
 
     if args.phase == "beacon":
-        return asyncio.run(_run_beacon(args))
+        try:
+            return asyncio.run(_run_beacon(args))
+        except KeyboardInterrupt:
+            return 130
 
     dev = _open_device()
     if dev is None:

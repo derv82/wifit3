@@ -1,49 +1,29 @@
-"""Shared Ctrl+C handling for the rtl8821au_dkms live-HW scripts.
+"""Ctrl+C handling for the rtl8821au_dkms live-HW scripts.
 
-On Windows the default asyncio proactor loop does NOT reliably raise KeyboardInterrupt
-while the loop is awaiting (the IOCP wait isn't interrupted by SIGINT), so a plain
-``try: while ...: await asyncio.sleep(N) except KeyboardInterrupt`` can ignore Ctrl+C
-entirely until the sleep happens to end. This routes SIGINT to an ``asyncio.Event`` and
-the loops poll it with short, interruptible sleeps so Ctrl+C is honoured within a
-fraction of a second on every platform.
+``asyncio.run()`` (Python 3.11+) already installs a SIGINT handler that cancels the
+running task on Ctrl+C — the correct mechanism, and it works on Windows. The trap is
+that on the Windows proactor loop a long ``await asyncio.sleep(N)`` blocks the IOCP wait
+for the whole N seconds, so the pending SIGINT isn't processed until the sleep ends (a
+2 s listen window = Ctrl+C ignored for up to 2 s). ``interruptible_sleep`` sleeps in
+short steps so the loop returns to Python often enough for the cancel to land within a
+fraction of a second; when the task is cancelled, the inner sleep raises CancelledError,
+which the caller catches to shut down gracefully.
+
+Do NOT install a custom signal.signal/add_signal_handler here: an earlier version did,
+which OVERRODE asyncio.run's own SIGINT handler — that is exactly what stopped Ctrl+C
+from working.
 """
 from __future__ import annotations
 
 import asyncio
-import signal
 
 
-def install_stop(loop: asyncio.AbstractEventLoop) -> asyncio.Event:
-    """Return an Event that gets set on the first Ctrl+C (SIGINT / SIGTERM)."""
-    stop = asyncio.Event()
+async def interruptible_sleep(total: float, step: float = 0.1) -> None:
+    """Sleep ``total`` seconds in <= ``step`` increments (Ctrl+C-responsive on Windows).
 
-    def _set() -> None:
-        if not stop.is_set():
-            print("\n[stopping — Ctrl+C, finishing the current step ...]")
-        stop.set()
-
-    try:
-        loop.add_signal_handler(signal.SIGINT, _set)        # POSIX
-        loop.add_signal_handler(signal.SIGTERM, _set)
-    except (NotImplementedError, AttributeError):
-        # Windows proactor loop: add_signal_handler is unsupported. The C-level SIGINT
-        # handler runs on the main thread; bounce it onto the loop thread-safely (which
-        # also wakes the loop) instead of raising KeyboardInterrupt.
-        signal.signal(signal.SIGINT, lambda *_: loop.call_soon_threadsafe(_set))
-    return stop
-
-
-async def sleep_or_stop(stop: asyncio.Event, total: float, step: float = 0.15) -> bool:
-    """Sleep up to ``total`` s, returning early (True) as soon as ``stop`` is set.
-
-    Sleeps in <= ``step`` increments so the proactor loop returns to Python frequently
-    and a pending Ctrl+C is processed within ``step`` s even on Windows, where it can't
-    interrupt the wait directly. Returns whether ``stop`` is set on exit.
+    Raises CancelledError immediately if the task is cancelled (Ctrl+C) mid-sleep.
     """
-    remaining = total
-    while remaining > 0:
-        if stop.is_set():
-            return True
-        await asyncio.sleep(min(step, remaining))
-        remaining -= step
-    return stop.is_set()
+    slept = 0.0
+    while slept < total:
+        await asyncio.sleep(min(step, total - slept))
+        slept += step
