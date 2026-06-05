@@ -157,6 +157,13 @@ not yet run (⬜). Port detail: `chips/rtl8821au_dkms/RTL8821AU_DKMS.md`.
 
 ### RTL8812AU — ALFA AWUS036ACH (2.4 / 5 GHz)
 
+> **The default driver is now the vendor/DKMS port** (`chips/rtl8812au_dkms/`), which
+> survives dual-band channel hopping — byte-for-byte band switch, A/B-proven on hardware
+> (mainline RX-wedges at ~110 s on the same hop; the DKMS port runs indefinitely). The ⚠️
+> **Scan** and **Stress** rows below describe the **mainline** driver
+> (`WIFIT3_RTL8812=mainline`), kept only as a fixed-channel fallback; they do not affect
+> the default experience.
+
 | Capability | Status | Date | Details |
 |---|:--:|---|---|
 | Scan | ⚠️ | 2026-05-31 | Single-channel scan (via Channel Filter) is fine, but **channel hopping wedges RX** — the RF hop-death (see Stress). When it wedges there's **no UI feedback**: targets fade to dark, then the list empties, no message (the driver does log one warning). |
@@ -342,7 +349,9 @@ the hour.
 Observed so far — both are robustness limits a soak run would expose, not clean
 passes:
 - **RTL8812AU ⚠️** — RF hop-death under sustained dual-band hopping (RF synth
-  loses lock; mitigated ~2–4×, no userland recovery).
+  loses lock; mitigated ~2–4×, no userland recovery). **Resolved by the vendor/DKMS
+  port, now the default** — it survives the dual-band hop; this ⚠️ is the opt-in
+  `WIFIT3_RTL8812=mainline` driver only.
 - **RTL8822BU ⚠️** — warm reattach on restart wedges the bulk-IN pipe → replug
   required (likely a general WinUSB warm-reattach limit, not 8822bu-specific).
 

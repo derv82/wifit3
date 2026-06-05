@@ -33,7 +33,7 @@ subprocesses, no Scapy — so it runs the same on **Linux and Windows**.
 |---|---|---|
 | ALFA AWUS036NHA | Atheros AR9271 | 2.4 GHz |
 | ALFA AWUS036ACS | Realtek RTL8821AU | 2.4 / 5 GHz |
-| ALFA AWUS036ACH | Realtek RTL8812AU * | 2.4 / 5 GHz |
+| ALFA AWUS036ACH | Realtek RTL8812AU | 2.4 / 5 GHz |
 | ALFA AWUS1900 | Realtek RTL8814AU | 2.4 / 5 GHz |
 | TP-Link T3U Plus | Realtek RTL8822BU | 2.4 / 5 GHz |
 | TP-Link TL-WN722N v2/v3 | Realtek RTL8188EUS | 2.4 GHz |
@@ -47,10 +47,11 @@ subprocesses, no Scapy — so it runs the same on **Linux and Windows**.
 asterisk means *no known issue*, not that every attack has been verified on that
 card — see the matrix for the full per-attack status.
 
-The **RTL8814AU (AWUS1900)** and **RTL8821AU / RTL8811AU (AWUS036ACS)** each ship with a
-fresh vendor/DKMS driver tuned for stronger 2.4 / 5 GHz monitor RX. To fall back to the
-older mainline-derived driver, set `WIFIT3_RTL8814=mainline` (or `WIFIT3_RTL8821=mainline`)
-in the environment.
+The **RTL8814AU (AWUS1900)**, **RTL8821AU / RTL8811AU (AWUS036ACS)**, and **RTL8812AU
+(AWUS036ACH)** each ship with a fresh vendor/DKMS driver tuned for stronger 2.4 / 5 GHz
+monitor RX — and on the 8812AU, immunity to the dual-band-hop RF-synth wedge that afflicts
+the mainline driver. To fall back to the older mainline-derived driver, set
+`WIFIT3_RTL8814=mainline`, `WIFIT3_RTL8821=mainline`, or `WIFIT3_RTL8812=mainline`.
 
 ## Philosophy
 
