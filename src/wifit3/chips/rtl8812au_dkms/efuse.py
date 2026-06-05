@@ -186,20 +186,66 @@ def _parse_tx_power_5g(m: bytes, base: int) -> PathTxPwr:
     return PathTxPwr((), bw40_base, (), ofdm_diff, bw20_diff)
 
 
+def _efuse_power_switch(t, on: bool) -> None:
+    """[SRC] Hal_EfusePowerSwitch8812A (rtl8812a_hal_init.c:1525) — gate efuse access.
+
+    ON asserts REG_EFUSE_BURN_GNT (0xCF=0x69), then makes the 1.2V power / ELDR reset /
+    8M loader clock valid, writing a SYS reg only when its bit is clear (so a warm chip
+    that already has them set emits read-only). The 1.2V (0x00) write is commented out in
+    the vendor, so 0x00 is always read-only; the LDO-2.5V EFUSE_TEST poke is bWrite-only
+    (skipped on the read path). OFF deasserts the gate.
+    """
+    if not on:
+        t.write8(R.REG_EFUSE_ACCESS, R.EFUSE_ACCESS_OFF)
+        return
+    t.write8(R.REG_EFUSE_ACCESS, R.EFUSE_ACCESS_ON)
+    t.read16(R.REG_SYS_ISO_CTRL)                     # PWC_EV12V check (vendor write commented)
+    v = t.read16(R.REG_SYS_FUNC_EN)
+    if not (v & R.FEN_ELDR):
+        t.write16(R.REG_SYS_FUNC_EN, v | R.FEN_ELDR)
+    v = t.read16(R.REG_SYS_CLKR)
+    if (not (v & R.LOADER_CLK_EN)) or (not (v & R.ANA8M)):
+        t.write16(R.REG_SYS_CLKR, v | R.LOADER_CLK_EN | R.ANA8M)
+
+
+def _read_usb_type(t) -> None:
+    """[SRC] hal_ReadUsbType_8812AU (rtl8812a_hal_init.c:1437) — antenna/wmode side-probe.
+
+    Reads efuse 1019 then 1018 for the antenna code (stop once bits[7:5] or bits[3:1] are
+    non-zero), then 1021/1020 for the wmode (stop once bits[3:2] non-zero). The AWUS036ACH
+    reports 2T2R / 11ac, so each loop stops on its first read. The decoded values steer
+    nothing wifit3 configures, but the live reads are part of the vendor bring-up stream.
+    """
+    for i in range(2):
+        reg = base_efuse.efuse_one_byte_read_poll33(t, 1019 - i)
+        if ((reg >> 5) & 0x7) != 0 or ((reg >> 1) & 0x7) != 0:
+            break
+    for i in range(2):
+        reg = base_efuse.efuse_one_byte_read_poll33(t, 1021 - i)
+        if ((reg >> 2) & 0x3) != 0:
+            break
+
+
 def read_chip_params(t) -> ChipParams:
-    """Probe-phase chip-info + EFUSE read (2T2R). Mirrors the vendor pre-power-on reads
-    (chip-version, autoload, access on/off + power-switch reads) around the byte loop."""
-    t.read32(R.REG_SYS_CFG)                         # ReadChipVersion (0xF0)
-    t.read32(0x0068)                                # version-id companion read
-    ee = t.read8(R.REG_9346CR)
+    """Probe-phase chip-info + EFUSE read (2T2R), byte-faithful to the vendor
+    ReadAdapterInfo8812AU -> Hal_ReadPROMContent_8812A -> InitAdapterVariablesByPROM_8812AU.
+    """
+    t.read32(R.REG_SYS_CFG)                         # 0xF0 read_chip_version
+    t.read32(R.REG_MULTI_FUNC_CTRL)                 # 0x68 read_chip_version companion
+    ee = t.read8(R.REG_9346CR)                       # 0x0A Hal_ReadPROMContent autoload check
     autoload_fail = not (ee & (1 << 5))             # bit5 = EEPROM present
 
-    t.write8(R.REG_EFUSE_ACCESS, R.EFUSE_ACCESS_ON)
-    t.read16(0x0000)                                # EFUSE power-switch status reads
-    t.read16(0x0002)
-    t.read16(0x0008)
-    m = base_efuse.read_logical_map(t)
-    t.write8(R.REG_EFUSE_ACCESS, R.EFUSE_ACCESS_OFF)
+    # phase-1: hal_InitPGData_8812A FW-offload probe [SRC usb_halinit.c:2009-2022] — the
+    # 8812AU reads efuse 0x200/0x202/0x204/0x210 (legacy poll-0x33 reads) BEFORE powering
+    # efuse access on; the result only toggles a compiled-out FW-offload flag.
+    for a in (0x200, 0x202, 0x204, 0x210):
+        base_efuse.efuse_one_byte_read_poll33(t, a)
+
+    _efuse_power_switch(t, on=True)
+    m = base_efuse.read_logical_map(t)              # phase-2: ReadEFuseByte PG-block walk
+    _efuse_power_switch(t, on=False)
+
+    _read_usb_type(t)                                # phase-3: hal_ReadUsbType_8812AU
 
     # PG TX-power: interleaved per path [A-2G, A-5G, B-2G, B-5G] from saddr.
     off = PG_TXPWR_SADDR

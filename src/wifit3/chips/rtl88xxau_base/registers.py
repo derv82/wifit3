@@ -31,7 +31,16 @@ REG_SYS_ISO_CTRL = 0x0000       # :39
 REG_SYS_FUNC_EN = 0x0002        # :40  (+1 = 0x0003, bit2 = 8051 core gate)
 REG_APS_FSMCO = 0x0004          # :41  (pwr-seq touches 0x04/0x05/0x06 byte-wise)
 REG_SYS_CLKR = 0x0008           # :42
+REG_MULTI_FUNC_CTRL = 0x0068    # :84  (WIFI/BT/GPS multi-func; read in read_chip_version)
+REG_RF_CTRL = 0x001F            # :53  (path-A RF enable/reset: RF_EN|RF_RSTB|RF_SDMRSTB)
 REG_RSV_CTRL = 0x001C           # :52  (8051 reset wrapper)
+
+# --- SYS power-switch bits used by Hal_EfusePowerSwitch (efuse access ON gating) ---
+# [SRC] hal_com_reg.h:1165/1181/1216/1218
+PWC_EV12V = BIT(15)             # REG_SYS_ISO_CTRL (0x00) 1.2V power (vendor write commented)
+FEN_ELDR = BIT(12)              # REG_SYS_FUNC_EN (0x02) eldr reset valid
+ANA8M = BIT(1)                  # REG_SYS_CLKR (0x08) 8M ANA clock
+LOADER_CLK_EN = BIT(5)          # REG_SYS_CLKR (0x08) loader clock gate
 REG_MCUFWDL = 0x0080            # :88  (FW download ctrl; +2 = page idx / 8051 rst hold)
 REG_SYS_CFG = 0x00F0            # :102 (no REG_SYS_CFG1/CFG2 in this tree)
 REG_CR = 0x0100                 # :117 (MAC DMA / WMAC / SCHEDULE / SEC enable)

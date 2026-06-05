@@ -7,21 +7,22 @@ applied with write8 by odm_config_mac_8812a), then the MISC01/MISC02 inits run a
 last write of M2 is REG_CR MACTXEN|MACRXEN.
 
 The 8812 deltas vs the 8821 (all from the ``_8812AUsb`` / 8812 ``else`` branches):
-  * reserved page: HPQ=LPQ=0x10, NPQ=0, PUBQ=0xD8 (no EPQ; NPQ is a byte write);
-  * TX buffer boundary 0xF9 (TX_PAGE_BOUNDARY_8812);
+  * reserved page: HPQ=LPQ=0x10, NPQ=0, PUBQ=0xD6 (no EPQ; NPQ is a byte write);
+  * TX buffer boundary 0xF7 (TX_PAGE_BOUNDARY_8812);
   * NEW _InitTransferPageSize: REG_PBP = _PSTX(PBP_512) = 0x30;
   * USB agg: TX BLK_DESC_NUM=1 (no DWBCN1 write), RX threshold 0x0608;
   * burst-pkt-len: AMPDU_MAX_TIME=0x70, MAX_AGGR tail clears FWHW_TXQ BIT7 (no FAST_EDCA).
 Everything else is the shared ``_8812A`` functions — identical wire to the 8821 port.
 The STA-mode RCR written here is replaced by the always-monitor filter at M5.
 
-Endpoint topology of the AWUS036ACH: 4 bulk-OUT + 1 bulk-IN, HS USB 2.0 -> the 4-out-EP
-+ USB2 branches throughout.
+Endpoint topology of the AWUS036ACH: 3 bulk-OUT (0x02/0x03/0x04) + 1 bulk-IN (0x81),
+HS USB 2.0 -> OutEpNumber==3, so the queue/priority init takes the 3-out-EP branch.
 """
 from __future__ import annotations
 
 from ..rtl88xxau_base import registers as R
 from ..rtl88xxau_base.phy_cond import JaguarParams, apply_table
+from .constants import TX_PAGE_BOUNDARY_8812, TX_TOTAL_PAGE_NUMBER_8812
 from .mac_reg_tbl import MAC_REG
 
 # --- M2 register addresses [SRC] include/hal_com_reg.h, rtl8812a_spec.h ---
@@ -84,13 +85,13 @@ RXDMA_AGG_EN = 0x04           # BIT2 of REG_TRXDMA_CTRL
 EN_AMPDU_RTY_NEW = 0x80       # BIT7 of REG_FWHW_TXQ_CTRL
 LD_RQPN = 1 << 31
 
-# Reserved-page math (4 out-EP, normal) [SRC] rtl8812a_hal.h + _InitQueueReservedPage_8812AUsb
+# Reserved-page math [SRC] rtl8812a_hal.h + _InitQueueReservedPage_8812AUsb. The selected
+# out-EP queues (HQ|LQ|NQ here) take their NORMAL_PAGE_NUM_* and PubQ gets the remainder.
 _NORMAL_HPQ = 0x10            # NORMAL_PAGE_NUM_HPQ_8812
 _NORMAL_LPQ = 0x10            # NORMAL_PAGE_NUM_LPQ_8812
 _NORMAL_NPQ = 0x00           # NORMAL_PAGE_NUM_NPQ_8812
-_TX_TOTAL_PAGE = 0xF8        # TX_TOTAL_PAGE_NUMBER_8812 (0xFF - BCNQ 0x07)
-_PUBQ = _TX_TOTAL_PAGE - _NORMAL_HPQ - _NORMAL_LPQ - _NORMAL_NPQ   # 0xD8
-_TX_BNDY = 0xF9              # TX_PAGE_BOUNDARY_8812
+_PUBQ = TX_TOTAL_PAGE_NUMBER_8812 - _NORMAL_HPQ - _NORMAL_LPQ - _NORMAL_NPQ   # 0xD6
+_TX_BNDY = TX_PAGE_BOUNDARY_8812   # 0xF7
 RX_DMA_BOUNDARY_8812 = 0x3E7F  # MAX_RX_DMA_BUFFER(0x3E80) - RSVD(0) - 1
 
 
@@ -117,11 +118,12 @@ def mac_init_misc(t) -> None:
     t.write8(REG_TRXFF_BNDY, _TX_BNDY)
     t.write8(REG_TDECTRL + 1, _TX_BNDY)
 
-    # _InitQueuePriority_8812AUsb (4 out-EP): queue->DMA map + HIQ no-limit. The 4-EP
-    # (be=lo,bk=lo,vi=nq,vo=nq,mgt=ex,hi=hi) mapping yields TRXDMA_CTRL low bits 0xC5A0
-    # (same function/args the 8821 4-EP USB port byte-verified).
-    t.write16(REG_TRXDMA_CTRL, (t.read16(REG_TRXDMA_CTRL) & 0x7) | 0xC5A0)
-    t.write8(REG_HIQ_NO_LMT_EN, 0xFF)
+    # _InitQueuePriority_8812AUsb (OutEpNumber==3 -> _InitNormalChipThreeOutEpPriority):
+    # be=LOW, bk=LOW, vi=NORMAL, vo=HIGH, mgt=HIGH, hi=HIGH ->
+    #   _HIQ(3)<<14 | _MGQ(3)<<12 | _BKQ(1)<<10 | _BEQ(1)<<8 | _VIQ(2)<<6 | _VOQ(3)<<4 = 0xF5B0
+    # The 3-EP path does NOT run init_hi_queue_config, so there is no REG_HIQ_NO_LMT_EN write
+    # (that belongs to the 4-EP path only).
+    t.write16(REG_TRXDMA_CTRL, (t.read16(REG_TRXDMA_CTRL) & 0x7) | 0xF5B0)
 
     # _InitPageBoundary_8812AUsb: RX DMA boundary
     t.write16(REG_TRXFF_BNDY + 2, RX_DMA_BOUNDARY_8812)
@@ -144,7 +146,7 @@ def mac_init_misc(t) -> None:
     t.write32(REG_RCR, 0xF40060CE)
     t.write32(REG_MAR, 0xFFFFFFFF)
     t.write32(REG_MAR + 4, 0xFFFFFFFF)
-    t.write16(REG_RXFLTMAP1, 0x0400)         # BIT10: mask ps-poll (AP-mode rx)
+    t.write16(REG_RXFLTMAP1, 0x0420)         # BIT10 ps-poll | BIT5 NDPA (CONFIG_BEAMFORMING)
 
     # _InitAdaptiveCtrl_8812AUsb: RRSR (read to mask the rate bitmap, then RMW under
     # 0xFFFFF), SIFS, retry limit.
@@ -170,11 +172,13 @@ def mac_init_misc(t) -> None:
     t.write8(REG_ACKTO, 0x80)
 
     # init_UsbAggregationSetting_8812A: TX agg (BLK_DESC_NUM = UsbTxAggDescNum = 1 for
-    # 8812AU; no DWBCN1 write), then RX agg (RX_AGG_USB: threshold 0x0608).
+    # 8812AU; no DWBCN1 write), then RX agg (RX_AGG_USB). On USB-2.0 HS (not super-speed)
+    # without CONFIG_PREALLOC_RX_SKB_BUFFER the size/timeout are 0x5 / 0x20 (the FIFO-overflow
+    # reduction tuning, usb_halinit.c:191-192) -> REG_RXDMA_AGG_PG_TH = 0x2005.
     v = (t.read32(REG_TDECTRL) & ~(0xF << 4)) | ((0x01 & 0xF) << 4)
     t.write32(REG_TDECTRL, v)
     value_dma = t.read8(REG_TRXDMA_CTRL) | RXDMA_AGG_EN
-    t.write16(REG_RXDMA_AGG_PG_TH, 0x08 | (0x06 << 8))               # rxagg_usb_size | timeout<<8
+    t.write16(REG_RXDMA_AGG_PG_TH, 0x05 | (0x20 << 8))               # rxagg_usb_size | timeout<<8
     t.write8(REG_TRXDMA_CTRL, value_dma)
 
     # _InitBeaconParameters_8812A

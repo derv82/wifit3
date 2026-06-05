@@ -61,13 +61,16 @@ def init_drop_incorrect_bulkout(t) -> None:
 
 
 # --- 8051 reset [SRC] _8051Reset8812 rtl8812a_hal_init.c:374-410 ---
-def _8051_reset(t) -> None:
+# The MCU-IO-wrapper gate bit in REG_RSV_CTRL+1 is chip-specific: the 8821 toggles BIT0,
+# the 8812 toggles BIT3 (the two HARDWARE_TYPE branches at :379/:384). rsv_bit defaults to
+# the 8821's BIT0 so the frozen 8821au path is unchanged.
+def _8051_reset(t, rsv_bit: int = R.BIT0) -> None:
     t.write8(R.REG_RSV_CTRL, t.read8(R.REG_RSV_CTRL) & ~R.BIT1)
-    t.write8(R.REG_RSV_CTRL + 1, t.read8(R.REG_RSV_CTRL + 1) & ~R.BIT0)
+    t.write8(R.REG_RSV_CTRL + 1, t.read8(R.REG_RSV_CTRL + 1) & ~rsv_bit)
     sysfn = t.read8(R.REG_SYS_FUNC_EN + 1)
     t.write8(R.REG_SYS_FUNC_EN + 1, sysfn & ~R.BIT2)
     t.write8(R.REG_RSV_CTRL, t.read8(R.REG_RSV_CTRL) & ~R.BIT1)
-    t.write8(R.REG_RSV_CTRL + 1, t.read8(R.REG_RSV_CTRL + 1) | R.BIT0)
+    t.write8(R.REG_RSV_CTRL + 1, t.read8(R.REG_RSV_CTRL + 1) | rsv_bit)
     t.write8(R.REG_SYS_FUNC_EN + 1, sysfn | R.BIT2)
 
 
@@ -126,11 +129,12 @@ def _polling_fwdl_chksum(t, min_cnt: int, timeout_ms: int, delay=time.sleep) -> 
             return False
 
 
-def _fw_free_to_go(t, min_cnt: int, timeout_ms: int, delay=time.sleep) -> bool:
+def _fw_free_to_go(t, min_cnt: int, timeout_ms: int, delay=time.sleep,
+                   rsv_bit: int = R.BIT0) -> bool:
     v = t.read32(R.REG_MCUFWDL)
     v = ((v | R.MCUFWDL_RDY) & ~R.WINTINI_RDY) & 0xFFFFFFFF
     t.write32(R.REG_MCUFWDL, v)
-    _8051_reset(t)
+    _8051_reset(t, rsv_bit)
     start = time.perf_counter()
     cnt = 0
     while True:
@@ -142,13 +146,13 @@ def _fw_free_to_go(t, min_cnt: int, timeout_ms: int, delay=time.sleep) -> bool:
             return False
 
 
-def download_firmware(t, fw_blob: bytes, delay=time.sleep) -> bool:
+def download_firmware(t, fw_blob: bytes, delay=time.sleep, rsv_bit: int = R.BIT0) -> bool:
     """FW-source-header path: strip 32-byte header, page-write the body, ack."""
     body = fw_blob[R.FW_HEADER_SIZE:]   # IS_FW_HEADER_EXIST -> shift 32
     # If 8051 is already running RAM code, tell it to reset first.
     if t.read8(R.REG_MCUFWDL) & R.RAM_DL_SEL:
         t.write8(R.REG_MCUFWDL, 0x00)
-        _8051_reset(t)
+        _8051_reset(t, rsv_bit)
     _fw_download_enable(t, True)
     ok = False
     for _ in range(3):
@@ -158,7 +162,7 @@ def download_firmware(t, fw_blob: bytes, delay=time.sleep) -> bool:
             ok = True
             break
     _fw_download_enable(t, False)
-    ready = _fw_free_to_go(t, 10, 200, delay) if ok else False
+    ready = _fw_free_to_go(t, 10, 200, delay, rsv_bit) if ok else False
     # InitializeFirmwareVars8812 runs at FirmwareDownload8812 exit; its only chip
     # write is the H2C-mailbox trigger. [SRC] rtl8812a_hal_init.c:680
     t.write8(R.REG_HMETFR, 0x0F)
@@ -167,10 +171,10 @@ def download_firmware(t, fw_blob: bytes, delay=time.sleep) -> bool:
 
 def bring_up(t, fw_blob: bytes, pwrseq_flow, txpktbuf_bndy: int,
              cut=PWR_CUT_A_MSK, fab=PWR_FAB_ALL_MSK, intf=PWR_INTF_USB_MSK,
-             ldo_quirk=False, delay=time.sleep) -> bool:
+             ldo_quirk=False, delay=time.sleep, reset_8051_bit: int = R.BIT0) -> bool:
     """Full M1: power-on -> LLT -> drop-bulkout -> FW download -> FW-ready.
     Returns True once WINTINI_RDY is set (wlan CPU running the firmware)."""
     power_on(t, pwrseq_flow, cut, fab, intf, ldo_quirk, delay)
     init_llt(t, txpktbuf_bndy)
     init_drop_incorrect_bulkout(t)
-    return download_firmware(t, fw_blob, delay)
+    return download_firmware(t, fw_blob, delay, reset_8051_bit)

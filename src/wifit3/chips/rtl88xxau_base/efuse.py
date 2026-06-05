@@ -33,6 +33,26 @@ def efuse_one_byte_read(t, addr: int) -> int:
     return value32 & 0xFF
 
 
+def efuse_one_byte_read_poll33(t, addr: int) -> int:
+    """[SRC] efuse_OneByteRead (rtw_efuse.c:2343) — the *legacy* one-byte read.
+
+    Distinct from ``efuse_one_byte_read`` (= the vendor's ``ReadEFuseByte``, which polls
+    EFUSE_CTRL[31] via a 32-bit read): this variant polls EFUSE_CTRL+3 bit7 with 8-bit
+    reads and takes the data as a single EFUSE_CTRL byte. The 8812a calls it directly for
+    the FW-offload probe (``hal_InitPGData_8812A``) and the USB-type antenna/wmode reads
+    (``hal_ReadUsbType_8812AU``); the PG-block map walk uses ``ReadEFuseByte`` instead.
+    """
+    t.write8(R.REG_EFUSE_CTRL + 1, addr & 0xFF)
+    v = t.read8(R.REG_EFUSE_CTRL + 2)
+    t.write8(R.REG_EFUSE_CTRL + 2, ((addr >> 8) & 0x03) | (v & 0xFC))
+    v = t.read8(R.REG_EFUSE_CTRL + 3)
+    t.write8(R.REG_EFUSE_CTRL + 3, v & 0x7F)        # clear bit7 -> trigger read
+    tmpidx = 0
+    while not (0x80 & t.read8(R.REG_EFUSE_CTRL + 3)) and tmpidx < 1000:
+        tmpidx += 1
+    return t.read8(R.REG_EFUSE_CTRL)
+
+
 def read_logical_map(t) -> bytes:
     """[SRC] efuse_ReadEFuse — physical efuse PG stream -> 512 B logical map.
 

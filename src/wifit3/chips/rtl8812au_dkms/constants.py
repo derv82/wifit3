@@ -13,14 +13,20 @@ from ..rtl88xxau_base.registers import USB_VID_REALTEK  # noqa: F401  (re-export
 # --- USB IDs [SRC] os_dep/linux/usb_intf.c:157 ({0x0bda, 0x8812} = RTL8812 default) ---
 USB_PID_AWUS036ACH = 0x8812
 
-# --- TX page boundary [SRC] include/rtl8812a_hal.h:142-168 (NIC build: !WOWLAN,
-#     !BEAMFORMER_FW_NDPA, !DBG_FW_DEBUG_MSG_PKT — all off in the Lucid-Duck Makefile).
+# --- Path-B RF control [SRC] rtl8812a_spec.h:42. The 2T2R 8812a resets BOTH RF paths at
+# hal_init start (REG_RF_CTRL=0x1F path A + this for path B); the 1T1R 8821a skips it. ---
+REG_RF_B_CTRL_8812 = 0x0076
+
+# --- TX page boundary [SRC] include/rtl8812a_hal.h:142-168.
 #   BCNQ_PAGE_NUM_8812 = MAX_BEACON_LEN/PAGE_SIZE_TX_8812A + 6 = 512/512 + 6 = 0x07
-#   WOWLAN/NDPA/DBG page nums = 0
-#   TX_TOTAL_PAGE_NUMBER_8812 = 0xFF - 0x07 = 0xF8
-#   TX_PAGE_BOUNDARY_8812 = 0xF8 + 1 = 0xF9   (vs the 8821au's 0xF8)
+#   The morrownr cold-boot capture's LLT proves the build also reserves FW_NDPA_PAGE_NUM
+#   (0x02) — i.e. CONFIG_BEAMFORMER_FW_NDPA is ON — while WOWLAN/DBG stay 0:
+#     TX_TOTAL_PAGE_NUMBER_8812 = 0xFF - 0x07 - 0x02 = 0xF6
+#     TX_PAGE_BOUNDARY_8812 = 0xF6 + 1 = 0xF7  (LLT: 0x00..0xF6 chain, 0xF6->0xFF end,
+#                                               0xF7..0xFF public-queue ring 0xFF->0xF7)
 BCNQ_PAGE_NUM_8812 = 0x07
-TX_TOTAL_PAGE_NUMBER_8812 = 0xFF - BCNQ_PAGE_NUM_8812
+FW_NDPA_PAGE_NUM_8812 = 0x02
+TX_TOTAL_PAGE_NUMBER_8812 = 0xFF - BCNQ_PAGE_NUM_8812 - FW_NDPA_PAGE_NUM_8812
 TX_PAGE_BOUNDARY_8812 = TX_TOTAL_PAGE_NUMBER_8812 + 1
 
 # --- EEPROM logical-map offsets [SRC] include/hal_pg.h (8812AU). The MAC address sits
