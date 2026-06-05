@@ -48,9 +48,16 @@ Disproven theories from earlier sessions (kept only in git history — ignore th
   (BW20-2S = base + diff[1TX] + diff[2TX]); the TX-power training word compares as **u32**.
 - **8051 reset:** REG_RSV_CTRL+1 toggles **BIT3** on the 8812 (BIT0 on the 8821) — threaded
   as `reset_8051_bit` through `base/firmware.bring_up`.
-- **Monitor RCR:** morrownr/airmon uses **0x90000001** (`AAP|APP_PHYST|APPFCS`, leaning on
-  RXFLTMAP); wifit3's own `enter_monitor` uses 0x9000382F. RCR is **not** the RX blocker
-  (proven: a fully permissive RCR still delivered garbage before the monitor-tail fix).
+- **Monitor RCR:** morrownr/airmon's tail leaves **0x90000001** (`AAP|APP_PHYST|APPFCS`,
+  leaning on RXFLTMAP). That value reproduces airmon's exact chip state but does **NOT**
+  deliver management/broadcast frames (beacons) into wifit3's RX pipeline — it lacks the
+  accept-mgmt/broadcast class bits and RXFLTMAP alone does not substitute. So the driver
+  (M8) re-opens the filter to wifit3's own monitor RCR **0x9000382F** (accept all *good*
+  frame classes; CRC/ICV-error frames still dropped) right after the monitor tail —
+  **HW-confirmed: clean 2.4 GHz beacons instantly, stable 10+ min on ch1.** The tail's RF
+  re-tune is the demod fix; the RCR is a separate *delivery* gate. (The old "RCR is not
+  the RX blocker" note was only ever tested via rx_diag's permissive 0x90003B2F override,
+  never 0x90000001 alone — which is why the gap surfaced only when the driver ran for real.)
 - **Firmware:** `array_mp_8812a_fw_nic`, 27030 B.
 
 ## Milestones
@@ -60,7 +67,7 @@ Disproven theories from earlier sessions (kept only in git history — ignore th
 | M0–M5 | efuse → FW → MAC → BB/RF → chan → TX-pwr → phydm-init → monitor | **DONE — byte-for-byte on both captures; RX confirmed on hardware** |
 | M6 | 2.4 GHz TX (deauth + WEP) | not started — use bulk-OUT 0x02 + the 3-EP map |
 | M7 | 5 GHz RX/tune/TX | not started (`chan._switch_band_5g` raises) |
-| M8 | `driver.py` + manager wiring | **DONE (code): `Rtl8812auDkmsDriver` satisfies the WlanDriver protocol — claim → bring-up → RX reader (started before the monitor RX gate) → 2-path DIG watchdog → monitor. Gate-faithful (adds only OS-level USB claim + RX, no vendor ops) + unit-tested. Wired in `manager.py` behind `WIFIT3_RTL8812=dkms`; mainline stays the default. Pending: live RX through the app path (`WIFIT3_RTL8812=dkms uv run wifit3`) — user HW test. `inject_frame` is an M6 no-op stub; `set_channel` is 2.4 GHz only (M7).** |
+| M8 | `driver.py` + manager wiring | **DONE (code): `Rtl8812auDkmsDriver` satisfies the WlanDriver protocol — claim → bring-up → RX reader (started before the monitor RX gate) → 2-path DIG watchdog → monitor. Gate-faithful (adds only OS-level USB claim + RX, no vendor ops) + unit-tested. Wired in `manager.py` behind `WIFIT3_RTL8812=dkms`; mainline stays the default. **HW-confirmed: clean 2.4 GHz RX via the app (`WIFIT3_RTL8812=dkms uv run wifit3`) — beacons instantly, stable 10+ min on ch1.** Needs the post-tail RCR re-open to 0x9000382F (morrownr's 0x90000001 does not deliver beacons into the pipeline — see Monitor RCR). `inject_frame` is an M6 no-op stub; `set_channel` is 2.4 GHz only (M7).** |
 | M9 | A/B vs mainline `chips/rtl8812au/` + flip default behind `$WIFIT3_RTL8812` | not started |
 
 ## The byte-for-byte gate

@@ -165,6 +165,15 @@ class Rtl8812auDkmsDriver:
         await loop.run_in_executor(None, monitor.set_monitor_mode, self.transport,
                                    _DEFAULT_CHANNEL, params)
 
+        # morrownr's tail leaves RCR = 0x90000001 (AAP|APP_PHYST|APPFCS — airmon's exact
+        # state, leaning on RXFLTMAP). That value does NOT deliver management/broadcast
+        # frames (beacons) into wifit3's RX pipeline, so re-open the filter to wifit3's
+        # monitor RCR (0x9000382F: accept all good frame classes; CRC/ICV-error frames
+        # still dropped). The RF re-tune inside the tail above is the actual RX fix, not
+        # this RCR value. (Outside the byte-for-byte gate, which stops at the tail.)
+        await loop.run_in_executor(None, self.transport.write32,
+                                   monitor.REG_RCR, monitor.RCR_MONITOR_VALUE)
+
         # Runtime 2-path DIG/AGC watchdog: adapt the InitHalDm IGI seed to the live false-
         # alarm rate every ~2 s (kernel cadence), writing both path IGI regs. RX-side only.
         if self.enable_dig:
