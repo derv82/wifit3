@@ -17,7 +17,8 @@ Registered in ``wlan/manager.py`` for 0bda:8812 alongside the mainline
 ``chips/rtl8812au/``. The mainline driver is the DEFAULT; ``WIFIT3_RTL8812=dkms`` selects
 this port (the inverse of the 8821/8814 envs, where the DKMS port is the default) until
 an A/B proves this port matches or beats mainline. ``inject_frame`` (2.4 GHz TX: deauth /
-WEP) is M6 and not yet ported — it is a no-op stub; ``set_channel`` is 2.4 GHz only (M7
+fake-auth / WEP ARP replay) rides bulk-OUT 0x02 — a source port of the vendor fake-txdesc,
+live-verified (no TX pcap exists), not byte-for-byte. ``set_channel`` is 2.4 GHz only (M7
 adds 5 GHz).
 """
 from __future__ import annotations
@@ -33,6 +34,7 @@ from wifit3.engine.protocols import DeviceID, ProgressCallback
 from wifit3.wlan.packet import WlanFrameParser
 
 from ..rtl88xxau_base.transport import Rtl88xxauTransport
+from ..rtl88xxau_base.tx import build_mgmt_txdesc
 from ..rx_reader import RxReaderThread
 from . import bb, chan, dig, efuse, firmware, mac, monitor, rf, txpower
 from .constants import USB_PID_AWUS036ACH, USB_VID_REALTEK
@@ -246,14 +248,32 @@ class Rtl8812auDkmsDriver:
         return True
 
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
-        """2.4 GHz TX (deauth / WEP) — M6, not yet ported. No-op stub.
+        """Transmit one 802.11 frame (M6) — deauth, fake-auth, or WEP ARP replay.
 
-        TX rides bulk-OUT 0x02 (the 3-out-EP map) once the M6 TX-descriptor builder lands;
-        until then this returns False so an attack path degrades cleanly instead of
-        crashing. Nothing on the scan/connect path calls this (passive-by-default).
+        Builds the vendor fake TX descriptor (``rtl8812a_fill_fake_txdesc``, the shared
+        base builder — it IS the 8812a function) and sends ``[desc | frame]`` on bulk-OUT
+        0x02 (the 8812's MGMT queue). ``frame_bytes`` is the MPDU *without* FCS (the HW
+        appends it). A WEP ARP-replay frame is already encrypted and injected raw (the
+        descriptor's SEC_TYPE = 0). Serialized with set_channel / the DIG watchdog via
+        ``_io_lock`` so a frame is never emitted mid-retune. Explicit-action only
+        (passive-by-default): nothing on the scan/connect path calls this.
+
+        No byte-for-byte gate backs this path — morrownr's cold-boot captures contain no
+        successful card TX (the DKMS build used to record them never injected — aireplay
+        sent 0 frames to the bus). It is a source port of the vendor fake-txdesc; the live
+        gate is ``scripts/rtl8812au_dkms/deauth_hw.py`` (watch for the client's reconnect
+        EAPOL). ``use_no_ack`` is accepted for API compatibility; the minimal descriptor
+        uses the HW-default ACK/retry policy. TX power is the BB default (per-rate EFUSE TX
+        power is a separate deferred milestone), adequate for a nearby target.
         """
-        logger.warning("RTL8812AU inject_frame: 2.4 GHz TX is M6, not yet ported (no-op)")
-        return False
+        if len(frame_bytes) < 10:           # need addr1 (bytes [4:10]) to read the BMC bit
+            return False
+        loop = asyncio.get_running_loop()
+        bmc = bool(frame_bytes[4] & 0x01)   # addr1 group-address (multicast/broadcast) bit
+        desc = build_mgmt_txdesc(len(frame_bytes), bmc=bmc)
+        async with self._io_lock:           # don't TX mid-retune (set_channel / DIG)
+            await loop.run_in_executor(None, self.transport.bulk_out, desc + frame_bytes)
+        return True
 
     async def close(self) -> None:
         # Stop the DIG watchdog and the reader before releasing the USB handle.

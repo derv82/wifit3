@@ -60,6 +60,21 @@ async def test_set_channel_without_params_is_false():
     assert await d.set_channel(6) is False
 
 
-async def test_inject_frame_is_noop_stub():
-    d = drv.Rtl8812auDkmsDriver(MagicMock())
-    assert await d.inject_frame(b"\x00" * 30) is False
+async def test_inject_frame_builds_desc_and_sends_on_bulk_out():
+    transport = MagicMock()
+    d = drv.Rtl8812auDkmsDriver(transport)
+    # deauth-shaped MPDU: fc/dur(4) + addr1(6) + addr2(6) + addr3(6) + seq(2) + reason(2).
+    frame = bytes.fromhex("c0000000") + b"\x11" * 6 + b"\x22" * 6 + b"\x33" * 6 + b"\x00\x00\x07\x00"
+    assert await d.inject_frame(frame) is True
+    transport.bulk_out.assert_called_once()
+    sent = transport.bulk_out.call_args.args[0]
+    # [40-byte fake TXDESC | frame]; the frame is appended verbatim (HW appends the FCS).
+    assert len(sent) == 40 + len(frame)
+    assert sent.endswith(frame)
+
+
+async def test_inject_frame_rejects_runt():
+    transport = MagicMock()
+    d = drv.Rtl8812auDkmsDriver(transport)
+    assert await d.inject_frame(b"\x00" * 6) is False     # < 10 B: no addr1 to read BMC
+    transport.bulk_out.assert_not_called()
