@@ -81,6 +81,7 @@ class BeaconTally:
     def __init__(self) -> None:
         self.by_bssid: Counter = Counter()
         self.rssi: dict = {}        # bssid -> strongest (max) dBm seen
+        self.channel: dict = {}     # bssid -> advertised channel (DS/HT/VHT IE)
         self.total_frames = 0
 
     def __call__(self, parsed: dict) -> None:
@@ -96,6 +97,9 @@ class BeaconTally:
         r = parsed.get("rssi")
         if r and (bssid not in self.rssi or r > self.rssi[bssid]):
             self.rssi[bssid] = r
+        ch = parsed.get("channel")   # the AP's own advertised channel
+        if ch:
+            self.channel[bssid] = ch
 
 
 async def _run_beacon(args) -> int:
@@ -120,14 +124,26 @@ async def _run_beacon(args) -> int:
         return _fail("bring-up did not reach FW-ready")
 
     stop = install_stop(asyncio.get_running_loop())   # Ctrl+C -> stop early
-    if args.channel != 1:
-        await driver.set_channel(args.channel)
-    print(f"\n[*] monitor RX on ch{args.channel} for {args.duration:g}s ...  "
+    # Channel plan: hop a band (--band) to discover where APs live, else a fixed channel.
+    supported = Rtl8821auDkmsDriver.SUPPORTED_CHANNELS
+    if args.band == "5g":
+        channels, what = [c for c in supported if c > 14], "5 GHz hop"
+    elif args.band == "2g":
+        channels, what = [c for c in supported if c <= 14], "2.4 GHz hop"
+    elif args.band == "all":
+        channels, what = list(supported), "all-band hop"
+    else:
+        channels, what = [args.channel], f"ch{args.channel} fixed"
+    print(f"\n[*] {what} for {args.duration:g}s (dwell {args.dwell:g}s) ...  "
           f"DIG watchdog: {'OFF' if args.no_dig else 'ON'}")
     start = time.monotonic()
+    i = 0
     while not stop.is_set() and time.monotonic() - start < args.duration:
-        await sleep_or_stop(stop, 1.0)
-        print(f"\r  {time.monotonic() - start:4.0f}s  nAPs={len(tally.by_bssid)}  "
+        cur = channels[i % len(channels)]
+        await driver.set_channel(cur)
+        i += 1
+        await sleep_or_stop(stop, args.dwell)
+        print(f"\r  {time.monotonic() - start:4.0f}s ch{cur:>3}  nAPs={len(tally.by_bssid)}  "
               f"beacons={sum(tally.by_bssid.values())}  frames={tally.total_frames}", end="")
     print()
     elapsed = max(time.monotonic() - start, 1e-3)
@@ -135,15 +151,13 @@ async def _run_beacon(args) -> int:
 
     n_aps = len(tally.by_bssid)
     total = sum(tally.by_bssid.values())
-    print(f"\n[RESULT] ch{args.channel}, {elapsed:.0f}s: {n_aps} unique AP(s), {total} beacons "
+    print(f"\n[RESULT] {what}, {elapsed:.0f}s: {n_aps} unique AP(s), {total} beacons "
           f"({total / elapsed:.1f}/s total), {tally.total_frames} frames")
     if tally.by_bssid:
-        top_bssid, top_n = tally.by_bssid.most_common(1)[0]
-        print(f"  peak AP: {top_n} beacons ({top_n / elapsed:.1f}/s), "
-              f"{tally.rssi.get(top_bssid, '?')} dBm")
-        print("  top BSSIDs by beacon count (strongest RSSI seen):")
-        for bssid, n in tally.by_bssid.most_common(15):
-            print(f"    {bssid}  {n:>4}  {n / elapsed:4.1f}/s  {tally.rssi.get(bssid, '?')} dBm")
+        print("  top BSSIDs (bssid / advertised ch / beacons / strongest RSSI):")
+        for bssid, n in tally.by_bssid.most_common(20):
+            print(f"    {bssid}  ch{str(tally.channel.get(bssid, '?')):>3}  {n:>4}  "
+                  f"{tally.rssi.get(bssid, '?')} dBm")
     else:
         print("  (no beacons — check antenna/channel; this is the live RX gate)")
 
@@ -159,8 +173,11 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--phase", choices=("open", "fw", "mac", "phy", "chan", "beacon"),
                     default="chan")
-    ap.add_argument("--channel", type=int, default=1, help="beacon-phase channel (2.4 GHz)")
-    ap.add_argument("--duration", type=float, default=30.0, help="beacon-phase dwell (s)")
+    ap.add_argument("--channel", type=int, default=1, help="fixed beacon-phase channel")
+    ap.add_argument("--band", choices=("2g", "5g", "all"), default=None,
+                    help="hop this band's channels instead of a fixed --channel")
+    ap.add_argument("--dwell", type=float, default=2.0, help="per-channel dwell when hopping (s)")
+    ap.add_argument("--duration", type=float, default=30.0, help="beacon-phase total time (s)")
     ap.add_argument("--no-dig", action="store_true", help="disable the DIG watchdog (A/B)")
     ap.add_argument("--canary", default=DEFAULT_CANARY, help="A/B canary BSSID")
     ap.add_argument("--debug", action="store_true")
