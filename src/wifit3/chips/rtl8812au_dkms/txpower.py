@@ -1,20 +1,22 @@
 """RTL8812AU per-rate TX-power level — 2-path (2T2R), vendor faithful, 2.4 GHz.
 
-``PHY_SetTxPowerLevel8812`` loops each (path, rate-section) and writes the rate's power
-index into the direct TXAGC registers via ``PHY_SetTxPowerIndex_8812A`` [SRC]
-rtl8812a_phycfg.c:538 — masked byte writes to 0xC20..0xC44 (path A) and 0xE20..0xE44
-(path B, = path A + 0x200). ``PHY_TxPowerTrainingByPath_8812`` then packs the MCS7 index
-into 0xC54 (A) / 0xE54 (B).
+``PHY_SetTxPowerLevel8812`` loops each path; ``phy_set_tx_power_level_by_path`` emits the
+rate sections in this order (CCK only on 2.4 GHz; the 2SS sections only because the 8812
+is 2T2R): **CCK, OFDM, HT MCS0-7, VHT1SS MCS0-9, HT MCS8-15, VHT2SS MCS0-9** [SRC]
+hal_com_phycfg.c:2761. Each rate is one masked *byte* RMW into a TXAGC register via
+``PHY_SetTxPowerIndex_8812A`` [SRC] rtl8812a_phycfg.c:538 (path B = path A + 0x200), then
+``PHY_TxPowerTrainingByPath_8812`` packs the MCS7 index into 0xC54 (A) / 0xE54 (B).
 
-The Lucid-Duck Makefile builds CONFIG_TXPWR_BY_RATE_EN=0 / CONFIG_TXPWR_LIMIT_EN=0, so
-``hal_com_get_txpwr_idx`` collapses to the PG base:
+The Lucid-Duck/morrownr Makefile builds CONFIG_TXPWR_BY_RATE_EN=0 / CONFIG_TXPWR_LIMIT_EN
+=0, so ``hal_com_get_txpwr_idx`` collapses to the PG base:
 
-    PowerIndex = base[rate-section][ch-group] + diff[1TX]   (clamped [0, 63])
+    PowerIndex = base[rate-section][ch-group] + diff[ntx_idx]   (clamped [0, 63])
 
-base/diff come from the EFUSE per-path PG block (efuse.PathTxPwr). The AWUS036ACH is a
-normal chip, so the JAGUAR test-chip odd-index workaround does not fire. The 8812 is
-2T2R, so BOTH paths' 1SS rate sections are written from their own PG data (HT MCS8-15 /
-VHT 2-3SS are skipped — 20 MHz 1SS only).
+ntx_idx is the rate's spatial-stream count - 1: 1SS rates use diff[0] (1TX), the 2SS
+sections use diff[1] (2TX). base/diff come from the EFUSE per-path PG block
+(efuse.PathTxPwr). The AWUS036ACH is a normal chip, so the JAGUAR test-chip odd-index
+workaround does not fire. The 2SS sections land on the AGC-table default here, but the
+vendor still RMWs them, so they are part of the byte stream and must be reproduced.
 """
 from __future__ import annotations
 
@@ -25,22 +27,18 @@ from .efuse import PathTxPwr
 
 _TXGI_MAX = 63
 _BYTE_MASK = (0x000000FF, 0x0000FF00, 0x00FF0000, 0xFF000000)
-
-# Path-A TXAGC registers (path B = +0x200), in wire emit order: (reg, rate-section,
-# n_bytes). 0xC44 holds VHT1SS-MCS8/9 then VHT2SS, so only its low 2 bytes are 1SS.
-_RATE_REGS_A = (
-    (0x0C20, "cck", 4),    # CCK 1/2/5.5/11M
-    (0x0C24, "ofdm", 4),   # OFDM 6/9/12/18M
-    (0x0C28, "ofdm", 4),   # OFDM 24/36/48/54M
-    (0x0C2C, "bw20", 4),   # HT MCS0-3
-    (0x0C30, "bw20", 4),   # HT MCS4-7
-    (0x0C3C, "bw20", 4),   # VHT1SS MCS0-3
-    (0x0C40, "bw20", 4),   # VHT1SS MCS4-7
-    (0x0C44, "bw20", 2),   # VHT1SS MCS8-9
-)
 _PATH_B_OFFSET = 0x200
-_REG_A_TXPWR_TRAINING = 0x0C54
-_RATE_REGS_A_5G = tuple(r for r in _RATE_REGS_A if r[1] != "cck")   # 5 GHz has no CCK
+_REG_TXPWR_TRAINING = 0x0C54
+
+# Rate-section -> (reg, first_byte, last_byte) spans, path A, in phy_set_tx_power_level_by_path
+# emit order. PHY_SetTxPowerIndex_8812A maps each MGN rate to one (reg, byte). 0xC44 is split:
+# bytes [0,1] = VHT1SS MCS8/9, bytes [2,3] = VHT2SS MCS0/1.
+_SEC_CCK = ((0x0C20, 0, 3),)
+_SEC_OFDM = ((0x0C24, 0, 3), (0x0C28, 0, 3))
+_SEC_HT_1SS = ((0x0C2C, 0, 3), (0x0C30, 0, 3))                    # HT MCS0-7
+_SEC_VHT_1SS = ((0x0C3C, 0, 3), (0x0C40, 0, 3), (0x0C44, 0, 1))   # VHT1SS MCS0-9
+_SEC_HT_2SS = ((0x0C34, 0, 3), (0x0C38, 0, 3))                    # HT MCS8-15
+_SEC_VHT_2SS = ((0x0C44, 2, 3), (0x0C48, 0, 3), (0x0C4C, 0, 3))   # VHT2SS MCS0-9
 
 
 def _ch_group_2g(channel: int) -> tuple:
@@ -72,44 +70,65 @@ def _ch_group_5g(channel: int) -> int:
     raise ValueError(f"RTL8812AU: 5G channel {channel} has no PG group")
 
 
-def _pg_idx(pp: PathTxPwr, section: str, group: int, cck_group: int) -> int:
-    """[SRC] phy_get_pg_txpwr_idx (ntx_idx=1) — base[section][group] + 1TX diff."""
-    if section == "cck":
-        v = pp.cck_base[cck_group] + pp.cck_diff[0]
-    elif section == "ofdm":
-        v = pp.bw40_base[group] + pp.ofdm_diff[0]
-    else:                  # bw20: HT / VHT at 20 MHz share the BW20 diff
-        v = pp.bw40_base[group] + pp.bw20_diff[0]
+def _clamp(v: int) -> int:
     return max(0, min(_TXGI_MAX, v))
 
 
 def _training_word(bw20_idx: int) -> int:
-    """[SRC] PHY_TxPowerTrainingByPath_8812: MCS7 (bw20) idx -10/-8/-6 cumulative, floored 2."""
+    """[SRC] PHY_TxPowerTrainingByPath_8812: HT-1SS MCS7 idx, -10/-8/-6 cumulative.
+
+    The vendor's PowerLevel is u32, so the `(PowerLevel > 2) ? PowerLevel : 2` floor only
+    catches 0..2 -- a level that goes negative wraps to a huge unsigned value, passes the
+    `> 2` test, and lands as its two's-complement low byte (e.g. -4 -> 0xFC). Mirror that
+    with an unsigned comparison rather than a signed max().
+    """
     pl, wd = bw20_idx, 0
     for i, step in enumerate((10, 8, 6)):
         pl -= step
-        wd |= (max(pl, 2) & 0xFF) << (i * 8)
+        v = pl if (pl & 0xFFFFFFFF) > 2 else 2
+        wd |= (v & 0xFF) << (i * 8)
     return wd
 
 
-def _write_path(t, rate_regs, idx: dict, off: int) -> None:
-    for reg, section, n_bytes in rate_regs:
-        for b in range(n_bytes):
-            set_bb(t, reg + off, _BYTE_MASK[b], idx[section])
-    set_bb(t, _REG_A_TXPWR_TRAINING + off, 0x00FFFFFF, _training_word(idx["bw20"]))
+def _write_section(t, spans, value: int, off: int) -> None:
+    """One rate section: a masked byte RMW per rate (all rates share the same PG index
+    since power-by-rate is disabled)."""
+    for reg, b0, b1 in spans:
+        for b in range(b0, b1 + 1):
+            set_bb(t, reg + off, _BYTE_MASK[b], value)
 
 
 def set_tx_power(t, channel: int, tx_power_2g: List[PathTxPwr]) -> None:
     """[SRC] PHY_SetTxPowerLevel8812 (2.4 GHz) — per-rate txagc + training, both paths."""
     g, cck_g = _ch_group_2g(channel)
     for path, pp in enumerate(tx_power_2g):
-        idx = {s: _pg_idx(pp, s, g, cck_g) for s in ("cck", "ofdm", "bw20")}
-        _write_path(t, _RATE_REGS_A, idx, path * _PATH_B_OFFSET)
+        off = path * _PATH_B_OFFSET
+        cck = _clamp(pp.cck_base[cck_g] + pp.cck_diff[0])
+        ofdm = _clamp(pp.bw40_base[g] + pp.ofdm_diff[0])
+        # The per-nTX diffs are CUMULATIVE [SRC] phy_get_pg_txpwr_idx (hal_com_phycfg.c:2370):
+        # BW20-2S = base + BW20_Diff[1TX] + BW20_Diff[2TX].
+        ss1 = _clamp(pp.bw40_base[g] + pp.bw20_diff[0])                    # HT/VHT 1SS @ 20 MHz
+        ss2 = _clamp(pp.bw40_base[g] + pp.bw20_diff[0] + pp.bw20_diff[1])  # HT/VHT 2SS @ 20 MHz
+        _write_section(t, _SEC_CCK, cck, off)
+        _write_section(t, _SEC_OFDM, ofdm, off)
+        _write_section(t, _SEC_HT_1SS, ss1, off)
+        _write_section(t, _SEC_VHT_1SS, ss1, off)
+        _write_section(t, _SEC_HT_2SS, ss2, off)
+        _write_section(t, _SEC_VHT_2SS, ss2, off)
+        set_bb(t, _REG_TXPWR_TRAINING + off, 0x00FFFFFF, _training_word(ss1))
 
 
 def set_tx_power_5g(t, channel: int, tx_power_5g: List[PathTxPwr]) -> None:
     """[SRC] PHY_SetTxPowerLevel8812 (5 GHz) — per-rate txagc + training, both paths, no CCK."""
     g = _ch_group_5g(channel)
     for path, pp in enumerate(tx_power_5g):
-        idx = {"ofdm": _pg_idx(pp, "ofdm", g, 0), "bw20": _pg_idx(pp, "bw20", g, 0)}
-        _write_path(t, _RATE_REGS_A_5G, idx, path * _PATH_B_OFFSET)
+        off = path * _PATH_B_OFFSET
+        ofdm = _clamp(pp.bw40_base[g] + pp.ofdm_diff[0])
+        ss1 = _clamp(pp.bw40_base[g] + pp.bw20_diff[0])
+        ss2 = _clamp(pp.bw40_base[g] + pp.bw20_diff[0] + pp.bw20_diff[1])
+        _write_section(t, _SEC_OFDM, ofdm, off)
+        _write_section(t, _SEC_HT_1SS, ss1, off)
+        _write_section(t, _SEC_VHT_1SS, ss1, off)
+        _write_section(t, _SEC_HT_2SS, ss2, off)
+        _write_section(t, _SEC_VHT_2SS, ss2, off)
+        set_bb(t, _REG_TXPWR_TRAINING + off, 0x00FFFFFF, _training_word(ss1))
