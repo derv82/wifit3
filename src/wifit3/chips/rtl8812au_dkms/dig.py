@@ -114,12 +114,13 @@ def _rx_gain_commit(t) -> None:
         set_bb(t, 0x0910, 0xFC00, (val >> 10) & 0x3F)
 
 
-# --- EDCCA lower-bound search — 8812a (ODM_IC_PWDB_EDCCA), LIVE-ONLY (reads PSD 0xFA0) --
+# --- EDCCA lower-bound search — 8812a (ODM_IC_PWDB_EDCCA), reads the PSD debug port 0xFA0 ---
 # Identical params/logic to the 8821au sibling (TH_L2H_INI=-17 covers ODM_RTL8821|RTL8812),
-# confirmed by the capture's first 0x8A4 write 0xe9/0xe2. The only 8812 delta is the 2-path
-# _lna_setting. The loop reads the live PSD debug port and its length is RF-environment-
-# dependent (capture-2: 160 PSD reads, capture-3: 207), so it is gated behind search_edcca:
-# ON for live hardware, OFF for the replay-diff (verified live by the beacon count).
+# confirmed by the capture's first 0x8A4 write 0xe9/0xe2; the only 8812 delta is the 2-path
+# _lna_setting. The loop length is the deterministic response to that boot's RF environment
+# (it adds ~160 PSD reads on capture-2, ~210 on capture-3) -- and because the replay feeds
+# back each capture's own recorded PSD reads, it reproduces byte-for-byte on BOTH boots, so
+# the replay-diff RUNS it (it is NOT stripped). search_edcca gates it only for A/B testing.
 _TH_L2H_INI = -17          # phydm_set_l2h_th_ini (ODM_RTL8821 | ODM_RTL8812)
 _TH_EDCCA_HL_DIFF = 7      # phydm_adaptivity_init default
 _IGI_BASE = 0x32
@@ -134,19 +135,28 @@ def _set_edcca_threshold(t, h2l: int, l2h: int) -> None:
     set_bb(t, 0x08A4, 0x0000FF00, h2l & 0xFF)
 
 
-def _dbg_port_read(t, port: int) -> int:
-    """[SRC] phydm_set/get/release_bb_dbg_port (11AC) — one PSD debug-port sample:
-    latch the index (0x8FC), read the live value (0xFA0), release the header (0x8F8[25:22])."""
-    set_bb(t, 0x08FC, 0xFFFFFFFF, port)
-    val = t.read32(0x0FA0)
-    set_bb(t, 0x08F8, 0x03C00000, 0)
-    return val
+# [SRC] phydm_set/get/release_bb_dbg_port (11AC, phydm_debug.c:132). Kept as three separate
+# primitives -- NOT bundled -- because phydm_search_pwdb_lower_bound interleaves them
+# differently in its two loops (see below). The priority gate (curr > pre_dbg_priority)
+# always permits here since every set is release-paired, so it is elided.
+def _set_dbg_port(t, port: int) -> None:
+    set_bb(t, 0x08FC, 0xFFFFFFFF, port)        # latch the debug-port index
+
+
+def _get_dbg_port(t) -> int:
+    return t.read32(0x0FA0)                     # read the live PSD value
+
+
+def _release_dbg_port(t) -> None:
+    set_bb(t, 0x08F8, 0x03C00000, 0)           # clear the header select (0x8F8[25:22])
 
 
 def _search_pwdb_lower_bound(t) -> int:
-    """[SRC] phydm_search_pwdb_lower_bound — drop the LNA (both radios), walk the L2H
-    threshold up until the EDCCA signal stops firing, then restore the LNA + no-link
-    threshold. Reads the live PSD, so it never runs under the replay differ."""
+    """[SRC] phydm_search_pwdb_lower_bound (phydm_adaptivity.c:237) — drop the LNA (both
+    radios), walk the L2H threshold up until the EDCCA signal stops firing, then restore the
+    LNA + no-link threshold. Reads the live PSD; under the replay differ it reproduces the
+    capture's writes from the capture's own recorded PSD reads (loop length is the
+    deterministic response to that boot's RF environment)."""
     _lna_setting(t, enable=False)
     igi = _IGI_BASE + 30 + _TH_L2H_INI - _TH_EDCCA_HL_DIFF
     th_l2h = min(_TH_L2H_INI + (_IGI_TARGET_DC - igi), 10)
@@ -156,14 +166,24 @@ def _search_pwdb_lower_bound(t) -> int:
 
     is_adjust = True
     while is_adjust:
-        reg = _dbg_port_read(t, 0x0)
+        # CCA-wait: set the port ONCE, then re-read the value in the retry loop (no per-read
+        # set/release), release ONCE -- bounded to 3 retries on an in-progress CCA (BIT3).
+        _set_dbg_port(t, 0x0)
+        reg = _get_dbg_port(t)
         tries = 0
         while (reg & (1 << 3)) and tries < 3:
             time.sleep(0.003)
             tries += 1
-            reg = _dbg_port_read(t, 0x0)
-        tx_edcca1 = sum(1 for _ in range(20)
-                        if _dbg_port_read(t, _ADAPTIVITY_DBG_PORT) & (1 << 29))
+            reg = _get_dbg_port(t)
+        _release_dbg_port(t)
+        # Count EDCCA-signal=1 (BIT29) over 20 samples -- set+get+release each iteration.
+        tx_edcca1 = 0
+        for _ in range(20):
+            _set_dbg_port(t, _ADAPTIVITY_DBG_PORT)
+            val = _get_dbg_port(t)
+            _release_dbg_port(t)
+            if val & (1 << 29):
+                tx_edcca1 += 1
         if tx_edcca1 > 1:
             igi -= 1
             th_l2h = min(th_l2h + 1, 10)
@@ -196,9 +216,10 @@ def _adaptivity_init(t) -> None:
 
 def init_hal_dm(t, search_edcca: bool = True) -> None:
     """rtl8812_InitHalDm: GPIO + the phydm DIG/AGC/EDCCA seed. ``search_edcca`` runs the
-    live PWDB-EDCCA lower-bound search (live PSD 0xFA0, not offline-replayable) — ON for
-    live hardware, OFF for the replay-diff gate (which strips the matching capture ops).
-    Wrap between mac.hal_init_misc_pre and mac.hal_init_misc_post."""
+    PWDB-EDCCA lower-bound search (reads the PSD debug port 0xFA0); it reproduces byte-for-
+    byte under the replay-diff against the capture's own recorded PSD reads, and runs live
+    on hardware -- the flag exists only to A/B it out (rx_diag --no-edcca). Wrap between
+    mac.hal_init_misc_pre and mac.hal_init_misc_post."""
     _init_gpio(t)
     _common_info_self_init(t)
     _dig_init(t)
