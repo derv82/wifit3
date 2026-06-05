@@ -65,17 +65,19 @@ def _cck_rssi_8821a(lna_idx: int, vga_idx: int) -> int:
 def decode_rssi(phy_status: bytes, data_rate: int) -> int:
     """Per-frame RSSI in dBm from the PHY-status struct.
 
-    [SRC] phydm_phy_sts_jaguar_series_parsing: CCK (rate<=3) reads the CCK AGC report
-    (phy_status_rpt_8812.cfosho[0], byte 5) -> lna/vga -> phydm_cck_rssi_8821a. OFDM
-    reads pwdb_all (byte 4): the 8821a is NOT an mp-chip, so it takes the raw branch
-    ``(pwdb_all & 0x7f) - 110`` (no ``>> 1`` — that is the 8814au path).
+    [SRC] phydm_rx_phy_status_jaguar_series_parsing (phydm_phystatus.c:835/932): CCK
+    (rate<=3) reads the CCK AGC report (cck_agc_rpt_ofdm_cfosho_a, byte 5) -> lna/vga ->
+    phydm_cck_rssi_8821a. OFDM reads pwdb_all (cck_sig_qual_ofdm_pwdb_all, byte 4) as
+    ``((pwdb_all >> 1) & 0x7f) - 110`` — the byte is the AGC sum of both DC paths, so it
+    is halved before the dBm conversion. (Beacons are CCK on 2.4 GHz but OFDM on 5 GHz,
+    so a missing >>1 reads ~2x too strong and saturates 5 GHz to ~0 dBm.)
     """
     if len(phy_status) < 6:
         return _RSSI_UNKNOWN
     if data_rate <= 3:                              # CCK (1/2/5.5/11 Mbps)
         cck_agc_rpt = phy_status[5]
         return _cck_rssi_8821a((cck_agc_rpt & 0xE0) >> 5, cck_agc_rpt & 0x1F)
-    return (phy_status[4] & 0x7F) - 110             # OFDM/HT/VHT pwdb_all (raw, 8821a)
+    return ((phy_status[4] >> 1) & 0x7F) - 110      # OFDM/HT/VHT pwdb_all (>>1 per phydm)
 
 
 def _rnd8(x: int) -> int:

@@ -126,7 +126,12 @@ No-ops (gated, do not emit): 0x460 FAST_EDCA (wifi_spec), IQK/PWtrack/LCK (comme
 
 **§3 Monitor block** [SRC] rtl8812a_hal_init.c:3663,3710 — **DONE in monitor.py.** RCR=0x9000382F (clears ACRC32|AICV vs 8814's 3B2F). 10 ops: Set_MSR(0x102 RMW→NOLINK), read+write RCR 0x608, read 0x6A0/6A2/6A4, write =0xFFFF. Verify out-of-line anchored on 0x608=0x9000382F.
 
-**§4 RX desc + RSSI** — **DONE in rx.py.** 24-B desc bit-layout = 8814's. 8821a RSSI: CCK table {5:−38,4:−30,2:−17,1:−1,0:15}−2·vga; OFDM raw (pwdb&0x7F)−110 (no >>1). FCS stripped.
+**§4 RX desc + RSSI** — **DONE in rx.py.** 24-B desc bit-layout = 8814's. 8821a RSSI: CCK
+table {5:−38,4:−30,2:−17,1:−1,0:15}−2·vga (byte 5); OFDM ((pwdb_all>>1)&0x7F)−110 (byte 4).
+FCS stripped. **The OFDM `>>1` is mandatory** [SRC phydm_phystatus.c:933] — pwdb_all is the
+sum of both DC paths, halved before the dBm conversion. (An earlier version dropped it,
+claiming "no >>1, that's the 8814 path" — a wrong skip-rationale: it read ~2x too strong and
+saturated 5 GHz OFDM beacons to ~0 dBm. 2.4 GHz hid it because beacons there are CCK.)
 
 **§5 Bulk-IN + reader:** bulk-IN ep **0x84**, bulk-OUT 0x09. RX DMA already on from M2 (REG_CR=0x063F); the monitor RCR opens the gate. **Start `RxReaderThread` (chips/rx_reader.py; read_once=bulk-IN 0x84, dispatch=rx.iter_frames) BEFORE `enter_monitor`** — kernel posts URBs (8885) before the RCR write (8899), and this chip has RX-starvation history (see rx_reader.py docstring).
 
