@@ -130,7 +130,7 @@ async def run(args) -> int:
     print(f"\n[RESULT] driver={driver_name}  {what}  {len(aps)} unique APs "
           f"({n2} on 2.4 GHz, {n5} on 5 GHz), {total} beacons ({total / elapsed:.1f}/s) "
           f"over {elapsed:.0f}s")
-    print(f"  survival: longest no-beacon stall {max_stall * 2}s — "
+    print(f"  survival: longest no-beacon stall {max_stall * 2}s -- "
           f"{'CLEAN (radio stayed alive)' if max_stall < _WEDGE_TICKS else 'POSSIBLE WEDGE (flatlined)'}")
     if aps:
         peak = aps[0]
