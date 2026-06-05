@@ -273,6 +273,28 @@ RX-START segment (12500-18000) against cold-boot to find what the vendor writes 
 receiving* (GPIO/RFE/TR-switch/IQK/RX-path); (b) classify whether the garbage MPDUs are
 corrupted-real or pure-noise by dumping full MPDUs; (c) test forcing the external-LNA GPIO.
 
+### RESOLVED — root cause is missing runtime IQK (capture-proven)
+
+Both next-step checks ran and settle it:
+- **RX-desc decode is byte-correct** — the vendor's OWN real RX buffers (capture-2 frames
+  13035-13075) decode cleanly through our `rx.py` (valid beacons, real BSSIDs, crc_err=0),
+  while our HW's buffers are genuine crc_err noise at the same offsets. It is a demod
+  problem, full stop — NOT parser, NOT delivery, NOT gains (those match the oracle).
+- **The vendor runs IQK; we don't.** `PHY_IQCalibrate_8812A` fires **4×** in the RX-START
+  window (capture-2 frames **12535/13237/13311/13793**), NEVER in cold-boot (≤12499).
+  Signature: RF 0x18 tone setup (0x07C01→0x07C0A) + IQK ctrl 0x08AC/0x08B0/0x08C4 + the FIR
+  coefficient arrays **0x0C20-0x0C4C (path A) / 0x0E20-0x0E4C (path B)** rewritten 36-40×
+  each in the IQK gradient. Init-time IQK is `/* */`-commented (usb_halinit.c:1668-1681) —
+  the basis of the earlier "IQK not needed" note — but **runtime** IQK fires from phydm
+  (`bNeedIQK`, after channel-set), which a cold-boot-faithful port never reaches.
+- This also re-explains the "path-B TXAGC 0xE34-4C = 0x1A vs 0x12" oracle diff: those
+  0xE20-0xE4C values are **IQK coefficient outputs**, not TX power.
+
+**Fix = port `PHY_IQCalibrate_8812A` (phydm, referenced from rtl8812a_hal_init.c:3975) and
+invoke it after `chan.set_chnl_bw`.** This supersedes the prior "IQK ruled out" note
+(sessions 1/3). Verify the port by trace-diffing its 0xC20-0x4C/0xE20-0x4C write structure
+against the pcap IQK passes, then `rx_diag.py` for real beacons.
+
 ## Provenance
 
 - Vendor source: `usb_dumps_new/captures_rtl8821au/driver-source/` (8812a in
