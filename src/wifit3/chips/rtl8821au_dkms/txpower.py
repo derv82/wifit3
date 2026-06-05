@@ -69,19 +69,48 @@ def _pg_idx(pp: PathTxPwr, section: str, group: int, cck_group: int) -> int:
     return max(0, min(_TXGI_MAX, v))
 
 
+# [SRC] rtw_get_ch_group (5G) — channel -> one of 14 UNII groups (the per-channel BW40
+# base is just the group base; hal_load_pg_txpwr_info expands group -> per channel).
+_CH_GROUP_5G = (
+    (36, 42, 0), (44, 48, 1), (50, 58, 2), (60, 64, 3), (100, 106, 4), (108, 114, 5),
+    (116, 122, 6), (124, 130, 7), (132, 138, 8), (140, 144, 9), (149, 155, 10),
+    (157, 161, 11), (165, 171, 12), (173, 177, 13),
+)
+_RATE_REGS_5G = tuple(r for r in _RATE_REGS if r[1] != "cck")   # 5 GHz has no CCK
+
+
+def _ch_group_5g(channel: int) -> int:
+    for lo, hi, g in _CH_GROUP_5G:
+        if lo <= channel <= hi:
+            return g
+    raise ValueError(f"RTL8821AU: 5G channel {channel} has no PG group")
+
+
+def _training_word(bw20_idx: int) -> int:
+    """[SRC] PHY_TxPowerTrainingByPath_8812: MCS7 (bw20) idx -10/-8/-6 cumulative, floored at 2."""
+    pl = bw20_idx
+    wd = 0
+    for i, step in enumerate((10, 8, 6)):
+        pl -= step
+        wd |= (max(pl, 2) & 0xFF) << (i * 8)
+    return wd
+
+
 def set_tx_power(t, channel: int, pp: PathTxPwr) -> None:
     """[SRC] PHY_SetTxPowerLevel8812 (path A) — write the 2.4 GHz per-rate txagc + training."""
     g, cck_g = _ch_group_2g(channel)
     idx = {s: _pg_idx(pp, s, g, cck_g) for s in ("cck", "ofdm", "bw20")}
     for reg, section, n_bytes in _RATE_REGS:
-        v = idx[section]
         for b in range(n_bytes):
-            set_bb(t, reg, _BYTE_MASK[b], v)
-    # PHY_TxPowerTrainingByPath_8812: MCS7 (bw20) index stepped down -10/-8/-6
-    # cumulatively, each floored at 2, packed into bytes 0..2 of the training reg.
-    pl = idx["bw20"]
-    wd = 0
-    for i, step in enumerate((10, 8, 6)):
-        pl -= step
-        wd |= (max(pl, 2) & 0xFF) << (i * 8)
-    set_bb(t, _REG_A_TXPWR_TRAINING, 0x00FFFFFF, wd)
+            set_bb(t, reg, _BYTE_MASK[b], idx[section])
+    set_bb(t, _REG_A_TXPWR_TRAINING, 0x00FFFFFF, _training_word(idx["bw20"]))
+
+
+def set_tx_power_5g(t, channel: int, pp: PathTxPwr) -> None:
+    """[SRC] PHY_SetTxPowerLevel8812 (path A, 5 GHz) — per-rate txagc + training, no CCK."""
+    g = _ch_group_5g(channel)
+    idx = {"ofdm": _pg_idx(pp, "ofdm", g, 0), "bw20": _pg_idx(pp, "bw20", g, 0)}
+    for reg, section, n_bytes in _RATE_REGS_5G:
+        for b in range(n_bytes):
+            set_bb(t, reg, _BYTE_MASK[b], idx[section])
+    set_bb(t, _REG_A_TXPWR_TRAINING, 0x00FFFFFF, _training_word(idx["bw20"]))

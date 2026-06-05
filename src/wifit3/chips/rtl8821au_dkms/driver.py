@@ -41,8 +41,11 @@ logger = logging.getLogger(__name__)
 _FW_ASSET = "rtl8821au_fw.bin"
 _DEFAULT_CHANNEL = 1          # connect-time tune target (matches the cold-boot capture)
 _FALLBACK_CRYSTAL_CAP = 0x20  # EEPROM default if the efuse xtal byte reads blank
-# 2.4 GHz, 20 MHz primary. 5 GHz tune + TX is M7. # TODO(8812au): 5 GHz band.
+# 20 MHz primary, both bands (M4 = 2.4 GHz, M7 = 5 GHz). The 5 GHz set matches the
+# channels the cold-boot capture tuned (UNII-1/2/2e/3). # TODO(8812au): path-B radio.
 CHANNELS_2G = list(range(1, 14))
+CHANNELS_5G = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124,
+               128, 132, 136, 140, 144, 149, 153, 157, 161, 165]
 
 
 def _load_firmware() -> bytes:
@@ -54,13 +57,16 @@ class Rtl8821auDkmsDriver:
         DeviceID(USB_VID_REALTEK, USB_PID_AWUS036ACS,
                  "Realtek RTL8821AU/RTL8811AU 1T1R (ALFA AWUS036ACS) — vendor/DKMS port"),
     ]
-    SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G
+    SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G + CHANNELS_5G
 
     def __init__(self, transport: RTL8821AUDkmsTransport):
         self.transport = transport
         self.mac_address: Optional[str] = None   # efuse 0x107 (M-TXPWR)
         self._crystal_cap: int = _FALLBACK_CRYSTAL_CAP
         self._tx_power = None                    # efuse PathTxPwr (path A, 2.4 GHz)
+        self._tx_power_5g = None                 # efuse PathTxPwr (path A, 5 GHz)
+        self._bb_swing_2g: int = chan.BB_SWING_DEFAULT
+        self._bb_swing_5g: int = chan.BB_SWING_DEFAULT
         self._channel: Optional[int] = None
         self.is_warm: bool = False
         # Runtime DIG/AGC watchdog. Toggleable so a fixed-channel A/B can isolate the
@@ -92,9 +98,13 @@ class Rtl8821auDkmsDriver:
         self.mac_address = params.mac_address
         self._crystal_cap = params.crystal_cap
         self._tx_power = params.tx_power
-        logger.info("RTL8821AU efuse: crystal_cap=0x%02x mac=%s cck_base[0]=0x%02x",
-                    params.crystal_cap, params.mac_address or "<blank>",
-                    params.tx_power.cck_base[0])
+        self._tx_power_5g = params.tx_power_5g
+        self._bb_swing_2g = params.bb_swing_2g
+        self._bb_swing_5g = params.bb_swing_5g
+        logger.info("RTL8821AU efuse: crystal_cap=0x%02x mac=%s cck_base[0]=0x%02x "
+                    "bb_swing 2g=0x%03x 5g=0x%03x", params.crystal_cap,
+                    params.mac_address or "<blank>", params.tx_power.cck_base[0],
+                    params.bb_swing_2g, params.bb_swing_5g)
 
         if progress_cb:
             progress_cb(0.2, "Uploading firmware")
@@ -116,7 +126,7 @@ class Rtl8821auDkmsDriver:
             mac.mac_init_misc(t)                      # M2: queue/MISC + REG_CR
             bb.phy_bb_config(t, crystal_cap=self._crystal_cap)  # M3: BB PHY_REG + AGC + xtal
             rf.phy_rf_config(t)                       # M3: RadioA
-            chan.set_chnl_bw(t, _DEFAULT_CHANNEL)     # M4: 2.4 GHz band + ch + 20 MHz
+            chan.set_chnl_bw(t, _DEFAULT_CHANNEL, self._bb_swing_2g)  # M4: 2.4 GHz tune
             txpower.set_tx_power(t, _DEFAULT_CHANNEL, self._tx_power)  # M-TXPWR: per-rate txagc
             mac.hal_init_misc_pre(t)                  # M5 §1a: security + MISC11
             dig.init_hal_dm(t, search_edcca=True)     # M5 §2: phydm DIG/AGC/EDCCA seed
@@ -180,18 +190,21 @@ class Rtl8821auDkmsDriver:
                 cb(parsed)
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
-        """Tune to a 2.4 GHz channel at 20 MHz primary, with that channel's TX power.
+        """Tune to a 2.4 GHz or 5 GHz channel at 20 MHz primary, with its TX power.
 
-        Re-runs the band + channel + BW tune (M4) then re-applies the per-rate txagc for
-        the channel's power group (M-TXPWR), so a deauth/WEP run on any 2.4 GHz channel
-        transmits at the correct EFUSE-calibrated power. The band switch is idempotent.
-        # TODO(M7): 5 GHz.
+        Runs the runtime tune (M7 ``set_channel_bw``: phy_SwBand switches band only on a
+        2.4<->5 crossing, then channel select + BW) and re-applies the per-rate txagc for
+        the channel's band/power group, so a deauth/WEP run on any channel transmits at
+        the correct EFUSE-calibrated power.
         """
         loop = asyncio.get_running_loop()
 
         def _tune(t):
-            chan.set_chnl_bw(t, channel)
-            txpower.set_tx_power(t, channel, self._tx_power)
+            chan.set_channel_bw(t, channel, self._bb_swing_2g, self._bb_swing_5g)
+            if channel <= 14:
+                txpower.set_tx_power(t, channel, self._tx_power)
+            else:
+                txpower.set_tx_power_5g(t, channel, self._tx_power_5g)
 
         async with self._io_lock:   # don't race the DIG watchdog's control I/O
             await loop.run_in_executor(None, _tune, self.transport)

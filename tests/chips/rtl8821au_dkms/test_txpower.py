@@ -58,3 +58,22 @@ def test_set_tx_power_writes_wire_values():
     assert t.regs[0x0C40] == 0x2B2B2B2B            # VHT1SS MCS4-7
     assert t.regs[0x0C44] & 0xFFFF == 0x2B2B       # only VHT1SS MCS8-9 (low 2 bytes)
     assert t.regs[0x0C54] == 0x00131921            # MCS7(0x2b) -10/-8/-6 training word
+
+
+def test_ch_group_5g():
+    assert txpower._ch_group_5g(36) == 0
+    assert txpower._ch_group_5g(64) == 3
+    assert txpower._ch_group_5g(149) == 10
+    assert txpower._ch_group_5g(165) == 12
+
+
+def test_set_tx_power_5g_no_cck():
+    # 5 GHz: BW40 base per UNII group + OFDM/BW20 diffs, no CCK register, no double-write.
+    pp5 = PathTxPwr(cck_base=(), bw40_base=(0x2C,) * 14, cck_diff=(),
+                    ofdm_diff=(1, 0, 0), bw20_diff=(0, 0, 0))
+    t = FakeT()
+    txpower.set_tx_power_5g(t, 36, pp5)             # group 0
+    assert 0x0C20 not in t.regs                    # no CCK on 5 GHz
+    assert t.regs[0x0C24] == 0x2D2D2D2D            # OFDM = 0x2c + 1
+    assert t.regs[0x0C2C] == 0x2C2C2C2C            # HT/VHT (bw20) = 0x2c + 0
+    assert t.regs[0x0C54] == txpower._training_word(0x2C)

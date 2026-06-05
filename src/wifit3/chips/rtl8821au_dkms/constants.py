@@ -121,6 +121,8 @@ EEPROM_XTAL = 0xB9              # crystal_cap (AFE trim)
 EEPROM_DEFAULT_CRYSTAL_CAP = 0x20
 EEPROM_MAC_ADDR_8821AU = 0x107
 PG_TXPWR_SADDR = 0x10          # hal_spec->pg_txpwr_saddr — TX-power PG block start
+EEPROM_TX_BBSWING_2G = 0xC6    # per-path TxScale index (2.4 GHz)
+EEPROM_TX_BBSWING_5G = 0xC7    # per-path TxScale index (5 GHz)
 
 # Bit shorthands used by inline pokes.
 BIT0, BIT1, BIT2, BIT6, BIT7 = BIT(0), BIT(1), BIT(2), BIT(6), BIT(7)

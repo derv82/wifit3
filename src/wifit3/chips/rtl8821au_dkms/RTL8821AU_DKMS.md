@@ -70,7 +70,7 @@ healthy rate, consistent with the mainline DIG softness this port targets.
 | M-TXPWR | EFUSE read + 2 GHz per-rate TX power | **PASS** (efuse 1191 ops + txagc 62 ops byte-exact, contiguous M4→M5) | **PASS** (live EFUSE decode matches pcap: crystal_cap=0x27, cck_base[0]=0x31; RX healthy) | **done** |
 | M5 | 2 GHz RX + PHYDM RSSI/DIG (value milestone) | **PASS** (44 ops byte-exact §1+§2; 474 live EDCCA ops skipped; §3 monitor 10-op block) | **PASS** (`--phase beacon` ch1/30s: 18 APs, 1754 beacons; canary NETGEAR2G 7.3/s @ −48 dBm; DIG watchdog ticks, FA resets) | **done** |
 | M6 | 2 GHz TX (deauth + WEP replay) | **PASS** (unit test — no TX in the cold-boot pcap; fake-txdesc fields + XOR-16 checksum + golden bytes) | **PASS** (user-run: deauth → 37 EAPOL handshakes from the reconnecting client, no pipe fault; WEP replay → 5518 IVs, replay winner locked) | **done** |
-| M7 | 5 GHz: RX + tune + TX | `verify_channels` (5 GHz 36..165) | `--phase beacon` 5G + **user** deauth | — |
+| M7 | 5 GHz: RX + tune + TX | **PASS** (`verify_channels`: all 36 hops byte-exact — 2.4 GHz 2-12 + 5 GHz 36-165, band switch + channel + per-band txagc) | **PASS RX** (`--phase beacon --channel 36`: 5 APs, 388 beacons; bb_swing 5g=0x16a); **user** for 5 GHz deauth | **done** (RX); TX user-verify |
 | M8 | Driver Protocol wiring + warm reattach + manager `WIFIT3_RTL8821` | — | `--phase open` warm + beacon | — |
 | M9 | A/B matrix + flip default to DKMS | — | RX (Claude) + TX (user) | — |
 
@@ -173,6 +173,29 @@ direct 8812a TXAGC registers (0xC20..0xC44, path A / 1SS) + the 0xC54 training w
   `verify_efuse_pcap.py`; the txagc sweep (frames 7485–7607) now replays contiguously
   between M4 (ends 7483) and M5 (starts 7609), closing the gap the M5 differ skipped.
 - **5 GHz TX power is M7** (the PG block's 5 GHz half + UNII groups are not yet decoded).
+
+## M7 (5 GHz) — RX + tune + TX power
+
+`chan.set_channel_bw` is the runtime hop: `phy_SwBand` reads the band marker
+(REG_CCK_CHECK 0x454 BIT7) and switches band (`PHY_SwitchWirelessBand8812`) only on a
+2.4<->5 crossing, then selects the channel (fc_area 0x860 + RF_MOD_AG RF-0x18 band bits
++ channel byte) at 20 MHz. `set_chnl_bw` (connect/M4) keeps the unconditional 2.4 GHz
+band switch (mirroring usb_halinit). The 5 GHz band switch ports the 8821a `BAND_ON_5G`
+path: ext-band-switch (DPDT band=2b'10), RFE PA/LNA on (0xCB0[15:12]=5,[7:4]=4), CCK_CHECK
+BIT7 set, TX-FIFO-idle wait, OFDMCCKEN, AGC-table 0xC1C[11:8]=1, rTxPath/rCCK_RX, 11A
+basic rates, bb_swing.
+
+- **bb_swing is per-band from EFUSE** (0xC6 2G / 0xC7 5G): this card reads 0 dB (0x200)
+  on 2.4 GHz but **−3 dB (0x16A)** on 5 GHz — the one value that has to come from the
+  fuse, not a constant (it was the only ch36 divergence before being threaded through).
+- **TX power**: `txpower.set_tx_power_5g` writes the same direct TXAGC registers minus
+  CCK, using the EFUSE 5 GHz PG block (14 UNII group bases + OFDM/BW20 diffs) and the
+  `_ch_group_5g` UNII mapping.
+- **Replay-diffed exhaustively**: `verify_channels.py` slices every `iw set channel`
+  window from the cold-boot hop log and byte-diffs the runtime tune — all 36 hops PASS
+  (2.4 GHz 2-12, 5 GHz 36-165), including the 2.4->5 crossing's band switch.
+- **Live**: 5 GHz RX confirmed (ch36, 5 APs); 5 GHz deauth/TX is the user's verify.
+  # TODO: ch153 spur notch (minor RX polish), 40/80 MHz width.
 
 ## Live HW access
 
