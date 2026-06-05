@@ -30,7 +30,7 @@ import usb.util
 from wifit3.chips.rtl88xxau_base import registers as R
 from wifit3.chips.rtl88xxau_base import sipi
 from wifit3.chips.rtl88xxau_base.transport import Rtl88xxauTransport
-from wifit3.chips.rtl8812au_dkms import bb, firmware, mac, rf
+from wifit3.chips.rtl8812au_dkms import bb, chan, firmware, mac, rf
 from wifit3.chips.rtl8812au_dkms.constants import USB_PID_AWUS036ACH, USB_VID_REALTEK
 
 
@@ -61,7 +61,7 @@ def _open_device():
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--phase", choices=("open", "fw", "mac", "phy"), default="fw")
+    ap.add_argument("--phase", choices=("open", "fw", "mac", "phy", "chan"), default="fw")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(
@@ -112,7 +112,7 @@ def main() -> int:
                 return _fail("REG_CR missing MACTXEN|MACRXEN after MAC init.")
             print("[PASS] MAC enabled (REG_CR MACTXEN|MACRXEN).")
 
-        if args.phase == "phy":
+        if args.phase in ("phy", "chan"):
             print("[*] running BB + RF init (M3: PHY_BBConfig8812 + RADIO_A + RADIO_B, 2T2R)...")
             bb.phy_bb_config(t, crystal_cap=0x20)   # TODO(efuse): real crystal_cap at M-TXPWR
             rf.phy_rf_config(t)
@@ -129,6 +129,18 @@ def main() -> int:
             if rfb0 in (0x00000, 0xFFFFF) or rfb18 in (0x00000, 0xFFFFF):
                 return _fail("path-B RF reads default/dead — RADIO_B did not take (2T2R gate).")
             print("[PASS] BB + RF init complete; both radios respond to SIPI (2T2R live).")
+
+        if args.phase == "chan":
+            print("[*] running channel tune (M4: 2.4 GHz band + ch1 + 20 MHz BW, both paths)...")
+            chan.set_chnl_bw(t, ch=1)
+            rfa = sipi._rf_serial_read(t, sipi.RF_PATH_A, chan.RF_CHNLBW)
+            rfb = sipi._rf_serial_read(t, sipi.RF_PATH_B, chan.RF_CHNLBW)
+            print(f"  RF[A,0x18]=0x{rfa:05x}  RF[B,0x18]=0x{rfb:05x}  "
+                  f"(ch={rfa & 0xFF}/{rfb & 0xFF}, BW[11:10]={(rfa >> 10) & 3}/{(rfb >> 10) & 3})")
+            ok = all((v & 0xFF) == 1 and ((v >> 10) & 3) == 3 for v in (rfa, rfb))
+            if not ok:
+                return _fail("RF[0x18] not ch1@20MHz on both paths after tune.")
+            print("[PASS] channel tune complete — ch1 @ 20 MHz on both radios.")
         return 0
     finally:
         try:
