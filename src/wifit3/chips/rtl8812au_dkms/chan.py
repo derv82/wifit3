@@ -33,12 +33,12 @@ _RFE_INV = {RF_PATH_A: 0x0CB4, RF_PATH_B: 0x0EB4}
 _TXSCALE = {RF_PATH_A: 0x0C1C, RF_PATH_B: 0x0E1C}
 
 
-def _set_rfe_2g(t, rfe_type: int, bb_swing_a: int, bb_swing_b: int) -> None:
-    """[SRC] phy_SetRFEReg8812(BAND_ON_2_4G) — RFE pinmux/inv for both paths + TxScale.
+def _set_rfe_2g(t, rfe_type: int) -> None:
+    """[SRC] phy_SetRFEReg8812(BAND_ON_2_4G) — RFE pinmux/inv for both paths.
 
     rfe_type 0/1/2 all resolve to pinmux 0x77777777 / inv 0x000 on this non-BT board;
-    types 3-6 (external-PA/LNA / antenna-select boards) differ. The TxScale (0xC1C/0xE1C
-    [31:21]) is the function's common tail.
+    types 3-6 (external-PA/LNA / antenna-select boards) differ. (TxScale is NOT part of
+    this function — it is phy_SetBBSwingByBand_8812A, the band-switch tail; see below.)
     """
     if rfe_type == 3:
         set_bb(t, _RFE_PINMUX[RF_PATH_A], 0xFFFFFFFF, 0x54337770)
@@ -57,6 +57,12 @@ def _set_rfe_2g(t, rfe_type: int, bb_swing_a: int, bb_swing_b: int) -> None:
         set_bb(t, _RFE_PINMUX[RF_PATH_B], 0xFFFFFFFF, 0x77777777)
         set_bb(t, _RFE_INV[RF_PATH_A], _MASK_RFEINV, inv)
         set_bb(t, _RFE_INV[RF_PATH_B], _MASK_RFEINV, inv)
+
+
+def _set_bb_swing(t, bb_swing_a: int, bb_swing_b: int) -> None:
+    """[SRC] phy_SetBBSwingByBand_8812A (rtl8812a_phycfg.c:1130), NORMAL_CHIP path — the
+    per-band TxScale, written at the very end of PHY_SwitchWirelessBand8812 (both paths).
+    """
     set_bb(t, _TXSCALE[RF_PATH_A], 0xFFE00000, bb_swing_a)   # 0xC1C[31:21]
     set_bb(t, _TXSCALE[RF_PATH_B], 0xFFE00000, bb_swing_b)   # 0xE1C[31:21]
 
@@ -68,11 +74,12 @@ def _switch_band_2g(t, bb_swing_a: int, bb_swing_b: int, rfe_type: int = 0) -> N
     set_bb(t, 0x0830, 0x0003E000, 0x17)      # rPwed_TH[17:13]=0x17 (8812)
     set_bb(t, 0x0830, 0x0000000E, 0x04)      # rPwed_TH[3:1]=4 (2T2R / not 1T1R-noLNA)
     set_bb(t, 0x082C, 0x00000003, 0x0)       # rAGC_table[1:0]=0 (normal chip)
-    _set_rfe_2g(t, rfe_type, bb_swing_a, bb_swing_b)   # phy_SetRFEReg8812 + TxScale
+    _set_rfe_2g(t, rfe_type)                  # phy_SetRFEReg8812 (no TxScale)
     set_bb(t, 0x080C, 0x000000F0, 0x1)       # rTxPath (mp_mode==0)
     set_bb(t, 0x0A04, 0x0F000000, 0x1)       # rCCK_RX (mp_mode==0)
     _update_tx_basic_rate(t, 0x015F)         # WIRELESS_11BG basic rates
     t.write8(REG_CCK_CHECK, t.read8(REG_CCK_CHECK) & ~0x80)  # clear BIT7 (2.4 GHz)
+    _set_bb_swing(t, bb_swing_a, bb_swing_b)  # phy_SetBBSwingByBand_8812A (band tail)
 
 
 def _switch_band_5g(t, bb_swing_a: int, bb_swing_b: int, rfe_type: int = 0) -> None:
@@ -117,13 +124,18 @@ def _rf_mod_ag(t, path: int, ch: int) -> None:
 
 
 def _fix_spur(t, ch: int) -> None:
-    """[SRC] phy_FixSpur_8812A (non-C-cut 8812): 2.4 GHz ADC-spur on 0x8AC[9:8].
-
-    ch 13/14 -> 0b11 (160M ADC), other 2.4 GHz -> 0b10; 5 GHz is a no-op. Idempotent
-    with the CH20 0x8AC write below for ch<=12, but ch13/14 need the 0b11.
+    """[SRC] phy_FixSpur_8812A (rtl8812a_phycfg.c:1474) — C-cut 8812a branch (this card is
+    C-cut), 20 MHz. Three BB writes: 0x8AC[11:10]=2 (the 0x3 case is 40 MHz ch11 only, never
+    at 20 MHz), then the 2480 MHz ADC-clock workaround — ch 13/14 set 0x8AC[9:8]=3 + 0x8C4[30]
+    =1 (160M ADC), every other 2.4 GHz channel sets 0x8AC[9:8]=2 + 0x8C4[30]=0.
     """
-    if ch <= 14:
-        set_bb(t, 0x08AC, 0x00000300, 0x3 if ch in (13, 14) else 0x2)
+    set_bb(t, 0x08AC, 0x00000C00, 0x2)              # 0x8AC[11:10]
+    if ch in (13, 14):
+        set_bb(t, 0x08AC, 0x00000300, 0x3)          # 0x8AC[9:8]
+        set_bb(t, 0x08C4, 0x40000000, 0x1)          # 0x8C4[30]
+    else:
+        set_bb(t, 0x08AC, 0x00000300, 0x2)
+        set_bb(t, 0x08C4, 0x40000000, 0x0)
 
 
 def _sw_chnl(t, ch: int, bb_swing_2g_a: int, bb_swing_2g_b: int,
@@ -138,6 +150,7 @@ def _sw_chnl(t, ch: int, bb_swing_2g_a: int, bb_swing_2g_b: int,
     _fc_area(t, ch)
     for path in (RF_PATH_A, RF_PATH_B):            # 2T2R: both radios
         _rf_mod_ag(t, path, ch)
+        _fix_spur(t, ch)                           # phy_FixSpur_8812A (per-path, before chnl)
         set_rf_reg(t, path, RF_CHNLBW, 0xFF, ch)   # channel byte0
 
 
