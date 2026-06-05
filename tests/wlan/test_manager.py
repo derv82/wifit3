@@ -16,26 +16,26 @@ class _FakeDev:
         self.idProduct = pid
 
 
-def test_rtl8821_default_is_mainline(monkeypatch):
+def test_rtl8821_default_is_dkms(monkeypatch):
     monkeypatch.delenv("WIFIT3_RTL8821", raising=False)
-    n = _names()
-    assert n.index("RTL8821AUDriver") < n.index("Rtl8821auDkmsDriver")
-    cls, entry = manager._match_driver(_FakeDev(0x0BDA, 0x0811))
-    assert cls.__name__ == "RTL8821AUDriver"
-
-
-def test_rtl8821_dkms_opt_in(monkeypatch):
-    monkeypatch.setenv("WIFIT3_RTL8821", "dkms")
     n = _names()
     assert n.index("Rtl8821auDkmsDriver") < n.index("RTL8821AUDriver")
     cls, entry = manager._match_driver(_FakeDev(0x0BDA, 0x0811))
     assert cls.__name__ == "Rtl8821auDkmsDriver"
 
 
-def test_rtl8821_explicit_mainline(monkeypatch):
-    monkeypatch.setenv("WIFIT3_RTL8821", "mainline")
-    cls, _ = manager._match_driver(_FakeDev(0x0BDA, 0x0811))
+def test_rtl8821_mainline_opt_in(monkeypatch):
+    monkeypatch.setenv("WIFIT3_RTL8821", "MainLine")   # case-insensitive
+    n = _names()
+    assert n.index("RTL8821AUDriver") < n.index("Rtl8821auDkmsDriver")
+    cls, entry = manager._match_driver(_FakeDev(0x0BDA, 0x0811))
     assert cls.__name__ == "RTL8821AUDriver"
+
+
+def test_rtl8821_unknown_value_stays_dkms(monkeypatch):
+    monkeypatch.setenv("WIFIT3_RTL8821", "dkms")   # any non-"mainline" -> default DKMS
+    cls, _ = manager._match_driver(_FakeDev(0x0BDA, 0x0811))
+    assert cls.__name__ == "Rtl8821auDkmsDriver"
 
 
 def test_both_8821_drivers_claim_0811():

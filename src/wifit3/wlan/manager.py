@@ -29,9 +29,9 @@ logger = logging.getLogger(__name__)
 # mainline-derived driver. Set this to "mainline" to fall back to the mainline driver.
 ENV_RTL8814_DRIVER = "WIFIT3_RTL8814"
 
-# RTL8821AU/RTL8811AU (0bda:0811) is claimed by BOTH the mainline driver (default) and
-# the vendor/DKMS port. Set this to "dkms" to select the DKMS port (the default flips to
-# DKMS in M9, after the A/B matrix). Read fresh each call so it flips between runs.
+# RTL8821AU/RTL8811AU (0bda:0811) is claimed by BOTH the vendor/DKMS port (default) and
+# the mainline driver. Set this to "mainline" to fall back to the mainline driver. Read
+# fresh each call so it flips between runs.
 ENV_RTL8821_DRIVER = "WIFIT3_RTL8821"
 
 _DRIVER_CLASSES: Dict[str, Type[WlanDriver]] | None = None
@@ -79,19 +79,18 @@ def _all_drivers() -> List[Type[WlanDriver]]:
     """The driver registry, in priority order (first match wins in `_match_driver`).
 
     Both Realtek 11ac pairs are ordered by their env var (read fresh each call so they can
-    be flipped between runs without restarting). RTL8814AU: the DKMS port wins by default,
-    "mainline" falls back. RTL8821AU: the mainline driver wins by default, "dkms" selects
-    the vendor port (the default flips to DKMS in M9 after the A/B matrix).
+    be flipped between runs without restarting): the DKMS port wins by default, "mainline"
+    falls back to the mainline-derived driver.
     """
     c = _import_driver_classes()
     if os.environ.get(ENV_RTL8814_DRIVER, "").strip().lower() == "mainline":
         rtl8814 = [c["rtl8814au_mainline"], c["rtl8814au_dkms"]]
     else:
         rtl8814 = [c["rtl8814au_dkms"], c["rtl8814au_mainline"]]
-    if os.environ.get(ENV_RTL8821_DRIVER, "").strip().lower() == "dkms":
-        rtl8821 = [c["rtl8821au_dkms"], c["rtl8821au"]]
-    else:
+    if os.environ.get(ENV_RTL8821_DRIVER, "").strip().lower() == "mainline":
         rtl8821 = [c["rtl8821au"], c["rtl8821au_dkms"]]
+    else:
+        rtl8821 = [c["rtl8821au_dkms"], c["rtl8821au"]]
     return [
         c["ar9271"], c["rtl8187"], c["rt2500usb"], c["rt2800usb"], c["rtl8188eus"],
         c["rtl8812au"], *rtl8821, c["rtl8822bu"], *rtl8814,

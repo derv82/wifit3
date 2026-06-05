@@ -132,7 +132,28 @@ columns and any caveats.
 | WPS | ✅ | 2026-05-31 | PIN brute ✅ and PBC ✅. |
 | Stress | ⬜ | — | Nothing adverse in normal use, but no dedicated 1-hour soak run yet. |
 
-→ `chips/rtl8821au/RTL8821AU.md`, `engine/attacks/wep/README.md`, `engine/attacks/wps/README.md`
+→ `chips/rtl8821au/RTL8821AU.md` (the **mainline** driver — the table above),
+`engine/attacks/wep/README.md`, `engine/attacks/wps/README.md`
+
+**Driver selection.** 0bda:0811 is served by the **vendor/DKMS port by default**
+(`chips/rtl8821au_dkms/`, a cleanroom re-port from the Lucid-Duck vendor source — the
+multi-chip rtl88xxau driver that also carries 8812au); set **`WIFIT3_RTL8821=mainline`**
+(case-insensitive) to fall back to the mainline driver above. The DKMS port is byte-verified
+against the vendor cold-boot captures (init + every channel tune, 2.4 GHz + 5 GHz @ 20 MHz,
++ EFUSE read) and HW-proven for RX + TX on both bands (live 5 GHz deauth → 4-way handshake).
+
+**A/B vs mainline — DKMS ≥ mainline (why it's the default).** `scripts/rtl8821au_dkms/ab_scan.py`,
+fixed-channel, replug between runs:
+- **2.4 GHz ch1:** DKMS hears the canary ~11 dB stronger (≈ −49/−54 vs mainline −58) with
+  equal-or-more breadth — the AGC/DIG sensitivity gain the phydm re-port targets.
+- **5 GHz ch149:** a dead heat — DKMS **9.5/s @ −53 dBm** vs mainline **9.7/s @ −53 dBm**.
+  The earlier "5 GHz hops 3× slower" was a fixed (now-fixed) OFDM-RSSI `>>1` bug reading 2× too
+  strong (saturating 5 GHz to ~0 dBm) plus channel-hop measurement noise — not an RX deficit.
+- **Net:** accurate RSSI on both bands, ≥ mainline breadth + beacon rate, so DKMS is the
+  default; the env var keeps mainline one export away.
+
+**Remaining gate:** a **1-hour stress soak** (sustained hop + attacks) on the DKMS port —
+not yet run (⬜). Port detail: `chips/rtl8821au_dkms/RTL8821AU_DKMS.md`.
 
 ### RTL8812AU — ALFA AWUS036ACH (2.4 / 5 GHz)
 

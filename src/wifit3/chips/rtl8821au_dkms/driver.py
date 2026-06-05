@@ -14,9 +14,8 @@ before opening the gate, and this chip has RX-starvation history (see rx_reader.
 fake-auth, and WEP ARP replay all ride this one path; it is explicit-action only
 (passive-by-default). 2.4 GHz + 5 GHz (M7) RX/TX with EFUSE-calibrated per-rate power
 are complete. Registered in ``wlan/manager.py`` for 0bda:0811 alongside the mainline
-``chips/rtl8821au/``, ordered by ``$WIFIT3_RTL8821`` — mainline by default, ``=dkms``
-selects this port (the default flips to DKMS in M9 after the A/B matrix). Sibling to
-the untouched mainline driver.
+``chips/rtl8821au/``, ordered by ``$WIFIT3_RTL8821`` — **this DKMS port is the default**;
+``=mainline`` falls back to the mainline driver. Sibling to the untouched mainline driver.
 """
 from __future__ import annotations
 
