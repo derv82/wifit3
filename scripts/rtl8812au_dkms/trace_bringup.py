@@ -123,8 +123,10 @@ def main() -> int:
 
         t.mark("efuse")
         params = efuse.read_chip_params(t)
+        jp = efuse.build_jaguar_params(params, sys_cfg)
         print(f"  EFUSE rfe_type={params.rfe_type} mac={params.mac_address} "
               f"crystal_cap=0x{params.crystal_cap:02x}")
+        print(f"  phy_cond params: board_type=0x{jp.board_type:02x} cut_version={jp.cut_version}")
 
         t.mark("fw_download")
         fw = firmware.load_firmware_blob()
@@ -137,8 +139,8 @@ def main() -> int:
         mac.mac_init_misc(t)
 
         t.mark("bb_rf_init")
-        bb.phy_bb_config(t, crystal_cap=params.crystal_cap)
-        rf.phy_rf_config(t)
+        bb.phy_bb_config(t, crystal_cap=params.crystal_cap, params=jp)
+        rf.phy_rf_config(t, params=jp)
 
         t.mark("chan_tune")
         chan.set_chnl_bw(t, ch=args.channel, bb_swing_2g_a=params.bb_swing_2g[0],

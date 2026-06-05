@@ -16,6 +16,7 @@ from typing import List, NamedTuple, Optional
 
 from ..rtl88xxau_base import efuse as base_efuse
 from ..rtl88xxau_base import registers as R
+from ..rtl88xxau_base.phy_cond import JaguarParams
 from . import constants as C
 
 # Logical-map offsets [SRC] hal_pg.h (8812AU)
@@ -27,6 +28,20 @@ EEPROM_MAC_ADDR = C.EEPROM_MAC_ADDR_8812AU      # 0xD7
 PG_TXPWR_SADDR = 0x10
 _PG_2G_LEN = 18                                  # per-path 2.4 GHz PG block
 _PG_5G_LEN = 24                                  # per-path 5 GHz PG block
+
+# Amplifier-type EFUSE offsets [SRC] hal_pg.h:144-146. PAType (2G+5G) at 0xBC; LNAType_2G
+# at 0xBD; LNAType_5G at 0xBF. The per-path "ext type" sub-fields are packed in 0xBD/0xBF.
+EEPROM_PA_TYPE = 0xBC
+EEPROM_LNA_TYPE_2G = 0xBD
+EEPROM_LNA_TYPE_5G = 0xBF
+
+# ODM board_type bitfield [SRC] phydm_pre_define.h:862-870 — the GLNA/GPA/ALNA/APA/BT bits
+# the JaguarSeries phy_cond walker matches against. Assembled in hal_dm.c:382-405.
+ODM_BOARD_BT = 1 << 2
+ODM_BOARD_EXT_PA_2G = 1 << 3      # ODM_BOARD_EXT_PA  (2G PA)
+ODM_BOARD_EXT_LNA_2G = 1 << 4     # ODM_BOARD_EXT_LNA (2G LNA)
+ODM_BOARD_EXT_PA_5G = 1 << 6
+ODM_BOARD_EXT_LNA_5G = 1 << 7
 
 # Per-path TxBBSwing: 2-bit index -> 11-bit TxScale. [SRC] PHY_GetTxBBSwing_8812A.
 _BB_SWING = {0: 0x200, 1: 0x16A, 2: 0x101, 3: 0x0B6}
@@ -50,6 +65,11 @@ class ChipParams(NamedTuple):
     tx_power_5g: List[PathTxPwr]   # [path A, path B]
     bb_swing_2g: List[int]         # [path A, path B] TxScale
     bb_swing_5g: List[int]
+    board_type: int                # ODM GLNA/GPA/ALNA/APA/BT bitfield (phy_cond walker input)
+    type_glna: int                 # per-path ext-LNA/PA type sub-codes (BB/AGC table selector)
+    type_gpa: int
+    type_alna: int
+    type_apa: int
 
 
 def _s4(n: int) -> int:
@@ -78,6 +98,57 @@ def _parse_rfe_type(m: bytes) -> int:
     if rfe & 0x80:
         return 0                       # external-PA/LNA encoded; 8812AU falls back to 0
     return rfe & 0x3F
+
+
+def _parse_board_type(m: bytes) -> tuple:
+    """[SRC] hal_ReadPAType_8812A (rtl8812a_hal_init.c:1126) + Hal_ReadAmplifierType_8812A
+    (:1192) + hal_dm.c:382-405 board_type assembly.
+
+    The 8812AU reads PAType from 0xBC (shared 2G/5G) and LNAType from 0xBD (2G) / 0xBF (5G),
+    treating 0xFF as 0. A band is "external PA/LNA" only when BOTH of its two flag bits are
+    set [SRC :1143-1144,1158-1159]:
+      ExternalPA_2G  = PAType_2G[5] & PAType_2G[4]      ExternalLNA_2G = LNAType_2G[7] & LNAType_2G[3]
+      external_pa_5g = PAType_5G[1] & PAType_5G[0]      external_lna_5g = LNAType_5G[7] & LNAType_5G[3]
+    Each set flag lights its ODM_BOARD bit (GPA bit3 / GLNA bit4 / APA bit6 / ALNA bit7).
+    BT (bit2) needs the chip-version-gated EEPROMBluetoothCoexist read (:821-890); the
+    AWUS036ACH is a non-BT board, so BT stays 0 and the BT decode is not ported.
+
+    The four type_* sub-codes [SRC :1200-1221] pack the per-path ext type, but only when a
+    band has BOTH paths external; extType bits live in 0xBD/0xBF [6,2] (PA B/A) and [5:4,1:0]
+    (LNA B/A). On this card all sub-fields read 0.
+    """
+    pa = 0 if m[EEPROM_PA_TYPE] == 0xFF else m[EEPROM_PA_TYPE]
+    lna_2g = 0 if m[EEPROM_LNA_TYPE_2G] == 0xFF else m[EEPROM_LNA_TYPE_2G]
+    lna_5g = 0 if m[EEPROM_LNA_TYPE_5G] == 0xFF else m[EEPROM_LNA_TYPE_5G]
+
+    ext_pa_2g = (pa & (1 << 5)) and (pa & (1 << 4))
+    ext_lna_2g = (lna_2g & (1 << 7)) and (lna_2g & (1 << 3))
+    ext_pa_5g = (pa & (1 << 1)) and (pa & (1 << 0))
+    ext_lna_5g = (lna_5g & (1 << 7)) and (lna_5g & (1 << 3))
+
+    board_type = 0
+    if ext_lna_2g:
+        board_type |= ODM_BOARD_EXT_LNA_2G
+    if ext_lna_5g:
+        board_type |= ODM_BOARD_EXT_LNA_5G
+    if ext_pa_2g:
+        board_type |= ODM_BOARD_EXT_PA_2G
+    if ext_pa_5g:
+        board_type |= ODM_BOARD_EXT_PA_5G
+
+    # type_*: per-path ext-type sub-codes, decoded only when BOTH paths of a band are ext.
+    # [SRC] Hal_ReadAmplifierType_8812A:1211-1221.
+    type_gpa = type_apa = type_glna = type_alna = 0
+    if (pa & (1 << 5)) and (pa & (1 << 4)):            # 2G PA both paths ext
+        type_gpa = (((m[EEPROM_LNA_TYPE_2G] >> 6) & 1) << 2) | ((m[EEPROM_LNA_TYPE_2G] >> 2) & 1)
+    if (pa & (1 << 1)) and (pa & (1 << 0)):            # 5G PA both paths ext
+        type_apa = (((m[EEPROM_LNA_TYPE_5G] >> 6) & 1) << 2) | ((m[EEPROM_LNA_TYPE_5G] >> 2) & 1)
+    if (lna_2g & (1 << 7)) and (lna_2g & (1 << 3)):    # 2G LNA both paths ext
+        type_glna = (((m[EEPROM_LNA_TYPE_2G] >> 4) & 3) << 2) | (m[EEPROM_LNA_TYPE_2G] & 3)
+    if (lna_5g & (1 << 7)) and (lna_5g & (1 << 3)):    # 5G LNA both paths ext
+        type_alna = (((m[EEPROM_LNA_TYPE_5G] >> 4) & 3) << 2) | (m[EEPROM_LNA_TYPE_5G] & 3)
+
+    return board_type, type_glna, type_gpa, type_alna, type_apa
 
 
 def _parse_bb_swing(m: bytes, byte_off: int, path: int) -> int:
@@ -139,6 +210,8 @@ def read_chip_params(t) -> ChipParams:
         tx5g.append(_parse_tx_power_5g(m, off))
         off += _PG_5G_LEN
 
+    board_type, type_glna, type_gpa, type_alna, type_apa = _parse_board_type(m)
+
     return ChipParams(
         crystal_cap=_parse_crystal_cap(m),
         mac_address=_parse_mac_address(m),
@@ -148,4 +221,29 @@ def read_chip_params(t) -> ChipParams:
         tx_power_5g=tx5g,
         bb_swing_2g=[_parse_bb_swing(m, EEPROM_TX_BBSWING_2G, p) for p in range(2)],
         bb_swing_5g=[_parse_bb_swing(m, EEPROM_TX_BBSWING_5G, p) for p in range(2)],
+        board_type=board_type,
+        type_glna=type_glna,
+        type_gpa=type_gpa,
+        type_alna=type_alna,
+        type_apa=type_apa,
+    )
+
+
+def build_jaguar_params(params: ChipParams, sys_cfg: int) -> JaguarParams:
+    """Thread the EFUSE-decoded board params into the phy_cond walker inputs.
+
+    The JaguarSeries BB/AGC/RADIO tables branch on board_type (ext-LNA/PA) and cut version.
+    cut_version is REG_SYS_CFG[15:12] [SRC] ReadChipVersion (rtl8812a_hal_init.c); ODM remaps
+    cut A (raw 0) to 15 so the value-defined cut check matches the A-cut rows [SRC]
+    phydm walker check_positive cut field. support_interface/platform keep the USB/CE defaults.
+    """
+    raw_cut = (sys_cfg >> 12) & 0xF
+    cut_version = 15 if raw_cut == 0 else raw_cut
+    return JaguarParams(
+        cut_version=cut_version,
+        board_type=params.board_type,
+        type_glna=params.type_glna,
+        type_gpa=params.type_gpa,
+        type_alna=params.type_alna,
+        type_apa=params.type_apa,
     )

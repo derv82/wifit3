@@ -120,10 +120,13 @@ def main() -> int:
         # EFUSE is a probe-phase read (before power-on); the phy/chan/txpower phases
         # use its real crystal_cap / rfe_type / bb_swing instead of M3/M4 defaults.
         params = None
+        jp = None
         if args.phase in ("phy", "chan", "txpower", "beacon"):
             params = efuse.read_chip_params(t)
+            jp = efuse.build_jaguar_params(params, sys_cfg)
             print(f"  EFUSE: crystal_cap=0x{params.crystal_cap:02x} mac={params.mac_address} "
                   f"rfe_type={params.rfe_type} bb_swing_2g={[hex(x) for x in params.bb_swing_2g]}")
+            print(f"  phy_cond params: board_type=0x{jp.board_type:02x} cut_version={jp.cut_version}")
 
         fw = firmware.load_firmware_blob()
         print(f"[*] FW blob {len(fw)} bytes; running bring_up()...")
@@ -150,8 +153,8 @@ def main() -> int:
 
         if args.phase in ("phy", "chan", "txpower", "beacon"):
             print("[*] running BB + RF init (M3: PHY_BBConfig8812 + RADIO_A + RADIO_B, 2T2R)...")
-            bb.phy_bb_config(t, crystal_cap=params.crystal_cap)
-            rf.phy_rf_config(t)
+            bb.phy_bb_config(t, crystal_cap=params.crystal_cap, params=jp)
+            rf.phy_rf_config(t, params=jp)
             xtal = (t.read32(0x002C) & 0x7FF80000) >> 19
             print(f"  crystal_cap field 0x2C[30:19] = 0x{xtal:03x} (expect 0x820 for cap 0x20)")
             # Path-A vs Path-B RF readback — the 2T2R gate. RF 0x00 (mode/AC) must read a
