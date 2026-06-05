@@ -115,7 +115,7 @@ def main() -> int:
         mac.hal_init_misc_pre(t)
         dig.init_hal_dm(t, search_edcca=not args.no_edcca)   # live PWDB-EDCCA search (morrownr runs it)
         mac.hal_init_misc_post(t)
-        monitor.enter_monitor(t)
+        monitor.set_monitor_mode(t, args.channel, params)   # morrownr's monitor opmode + set-channel tail
 
         t.write32(REG_RCR, args.rcr)
         rcr = t.read32(REG_RCR)
