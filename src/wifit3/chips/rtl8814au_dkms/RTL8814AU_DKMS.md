@@ -213,9 +213,15 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   over the dkms driver via the stock engine — same `inject_frame` / `WlanInterface`
   path as M4c/M4d. With this the full attack column (deauth, handshake, PMKID, WEP
   replay + chopchop, WPS PIN + PBC) is confirmed on the **default** driver, not just
-  mainline. 2.4 GHz RX is healthy on this port too — a CH1 beacon-watch read a mean
-  ~7 beacons/s with **no zero-second gaps**, so the documented mainline weak-2.4-RX
-  defect is gone here. Remaining gate: the 30-min stress soak.
+  mainline. **2.4 GHz RX caveat:** a 15 s fixed-channel beacon-watch looked clean
+  (~7/s, no gaps), but the 30-min dual-band soak (2026-06-05,
+  `scripts/diag/reports/rtl8814audkms_20260605-231039.md`) exposed **intermittent
+  2.4 GHz dropouts under sustained hopping** — one full 60 s bucket with zero 2.4 GHz
+  APs (5 GHz unaffected), periodic dips, and the lowest/jitteriest frame rate of any
+  soaked card. No progressive degradation (98→98) and 5 GHz rock-steady, so it
+  survives — but the signal-strength fix (−45 vs −81 dBm) did **not** make the 2.4 GHz
+  RX path solid. Prime byte-diff target: the 2.4 GHz AGC/DIG/band-recovery path.
+  Scan + Stress are ⚠️ in VERIFICATION.md.
 - **M5e (5 GHz per-board TxBBSwing efuse decode): done — pcap-verified.**
   `efuse._parse_bb_swing_5g` reads byte 0xC7 (same 2-bit-per-path decode + value table as
   M4e's 2.4G 0xC6); `chan._set_bb_swing` (band-neutral) writes the per-path TxScale. **Not
@@ -309,7 +315,9 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   vs mainline's −81 (the documented mainline RX-miscalibration, fixed) + ~25% more beacons;
   5 GHz (fair, same 9 non-DFS channels) 1238 beacons/46 APs vs 1138/57 with stronger RSSI.
   Mainline shows ~10 more weak/distant uniques (the DIG/AGC sensitivity-vs-accuracy trade).
-  See `VERIFICATION.md`. **Remaining gate:** a 30-min stress soak before retiring the fallback.
+  See `VERIFICATION.md`. **30-min soak ran 2026-06-05 — ⚠️:** survives (98→98, 5 GHz
+  flat) but 2.4 GHz RX intermittently drops out under sustained hop (detail in the
+  attack-suite bullet above). Mainline fallback stays until the 2.4 GHz path is byte-diffed.
 
 ## EFUSE — probe-phase chip-param read
 `ReadAdapterInfo8814AU` -> `hal_InitPGData_8814A` -> `EFUSE_ShadowMapUpdate` ->

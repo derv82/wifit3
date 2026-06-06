@@ -17,7 +17,7 @@ caveats; the deep, nerdy *why* lives in each chip's doc (linked under every card
 | RTL8821AU | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | RTL8812AU | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | RTL8822BU | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
-| RTL8814AU | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
+| RTL8814AU | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ |
 | MT7612U | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | MT7610U | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | RT5372 (PAU05) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⬜ |
@@ -122,17 +122,18 @@ tables below lead with the attack columns and any caveats.
 ### RTL8814AU — ALFA AWUS1900 (2.4 / 5 GHz, 4T4R)
 
 > **Default = vendor/DKMS port** ([RTL8814AU_DKMS.md](src/wifit3/chips/rtl8814au_dkms/RTL8814AU_DKMS.md);
-> `WIFIT3_RTL8814=mainline` falls back). DKMS fixes the mainline weak-2.4-GHz RX —
-> reads a close AP at −45 dBm vs mainline's −81. The table below is that port.
+> `WIFIT3_RTL8814=mainline` falls back). DKMS fixes the mainline 2.4 GHz signal
+> miscalibration (−45 dBm vs mainline's −81), but 2.4 GHz RX still drops out
+> intermittently under sustained hopping (see Scan/Stress). The table below is that port.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-06-05 | 2.4 GHz RX healthy on the DKMS port — beacon-watch ~7/s, no zero-second gaps (the mainline weak-2.4 defect is gone). 5 GHz healthy. |
+| Scan | ⚠️ | 2026-06-05 | 5 GHz solid. 2.4 GHz RX intermittent under sustained hopping — a 30-min soak hit a full 60s with zero 2.4 GHz APs (5 GHz fine); OK in short / fixed-channel use. |
 | Handshake | ✅ | 2026-06-05 | Deauth → 4-way. |
 | PMKID | ✅ | 2026-06-05 | Passive + active extract. |
 | WEP | ✅ | 2026-06-05 | Replay + ChopChop. |
 | WPS | ✅ | 2026-06-05 | PIN + PBC. |
-| Stress | ⬜ | — | 30-min soak pending. |
+| Stress | ⚠️ | 2026-06-05 | Survives 30 min (no progressive degradation, 98→98; 5 GHz flat), but 2.4 GHz RX intermittently drops out under sustained hop — one full 60s bucket of zero 2.4 GHz APs, periodic dips, lowest/jitteriest frame rate of the soaked cards. |
 
 → [RTL8814AU.md](src/wifit3/chips/rtw88_8814au/RTL8814AU.md) (mainline) · [RTL8814AU_DKMS.md](src/wifit3/chips/rtl8814au_dkms/RTL8814AU_DKMS.md) (default)
 
@@ -228,4 +229,4 @@ stay flat the whole time, and the failures (RT2500USB) show within the first min
 ## Fully supported
 
 Every column ✅ *plus* a clean Stress soak. **RTL8812AU (DKMS), AR9271, RTL8821AU
-(DKMS), and MT7612U are there** — with RTL8814AU (DKMS) one soak away.
+(DKMS), and MT7612U are there** — RT5572 is one soak away.
