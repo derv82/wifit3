@@ -74,6 +74,7 @@ healthy rate, consistent with the mainline DIG softness this port targets.
 | M7 | 5 GHz: RX + tune + TX | **PASS** (`verify_channels`: all 36 hops byte-exact — 2.4 GHz 2-12 + 5 GHz 36-165, band switch + channel + per-band txagc) | **PASS RX** (`--phase beacon --channel 36`: 5 APs, 388 beacons; bb_swing 5g=0x16a); **user** for 5 GHz deauth | **done** (RX); TX user-verify |
 | M8 | Driver Protocol wiring + warm reattach + manager `WIFIT3_RTL8821` | **PASS** (manager tests: env-var ordering + 0bda:0811 claim; Protocol conformant) | **PASS** (live discovery picks the driver per env var; warm re-entry re-inits cleanly — ch1 18 APs, canary 8.3/s) | **done** |
 | M9 | A/B matrix + flip default to DKMS | — | **PASS** (fixed-channel A/B: 5 GHz ch149 DKMS 9.5/s ≈ mainline 9.7/s @ −53 dBm; 2.4 GHz ch1 canary ~11 dB stronger; breadth ≥ mainline both bands) | **done** (DKMS is the default; `=mainline` opt-in) |
+| M10 | Endurance / stress soak | — | **PASS** (30-min dual-band 38-ch hop @ 0.25 s, no degradation: active BSSIDs 105→100, ratio 0.95; 2.4 GHz ~62–80 and 5 GHz ~29–37 both flat the whole run; frames steady ~1.4–1.8 k/60 s. Benign diag WARNs: 6.96% OUI "garbage" = broadcast/wildcard BSSIDs (all `ff:ff:ff:ff:ff:ff`); 36.1% beacon-ch mismatch = fast-hop adjacent-channel bleed. Report `scripts/diag/reports/rtl8821audkms_20260605-191552.md`) | **done** |
 
 ## M5 (RX) implementation spec — wire-verified, IMPLEMENTED
 
