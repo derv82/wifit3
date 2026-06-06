@@ -23,6 +23,7 @@ engine instead of re-deriving the tshark extraction.
 from __future__ import annotations
 
 import subprocess
+from collections import Counter
 from pathlib import Path
 
 RTW_VENDOR_REQ = "5"  # bRequest 0x05 — rtw88-family vendor register access
@@ -31,6 +32,21 @@ RTW_VENDOR_REQ = "5"  # bRequest 0x05 — rtw88-family vendor register access
 def _hex(s: str) -> bytes:
     s = s.replace(":", "").strip()
     return bytes.fromhex(s) if s else b""
+
+
+def find_card_device(pcap: Path) -> int:
+    """Device issuing the most Realtek vendor (bRequest 0x05) register transfers == the
+    card. Auto-detected so a recipe never pins to a per-capture device number. Filters to
+    vendor reads/writes (0x40/0xC0) so standard control traffic can't be mistaken for it."""
+    out = subprocess.run(
+        ["tshark", "-r", str(pcap), "-Y",
+         "(usb.bmRequestType==0x40 || usb.bmRequestType==0xc0) && usb.setup.bRequest==5",
+         "-T", "fields", "-e", "usb.device_address"],
+        capture_output=True, text=True, check=True).stdout
+    counts = Counter(line.strip() for line in out.splitlines() if line.strip())
+    if not counts:
+        raise SystemExit(f"no Realtek vendor (bRequest 0x05) traffic in {pcap.name}")
+    return int(counts.most_common(1)[0][0])
 
 
 def frame_epochs(pcap: Path):
@@ -203,6 +219,12 @@ class ReplayTransport:
             raise Divergence(
                 f"op#{self.i - 1} frame {op['frame']}: writeN payload differs at "
                 f"byte {diff} (0x{addr:04x}, {len(data)}B)")
+
+    def write_block(self, addr, data):
+        """Alias for writeN: the rtl8xxxu transports (8188eus / 8187) name the wide
+        control write ``write_block`` where rtw88 names it ``writeN`` -- same op on the
+        wire. Lets those ports' FW-page uploads replay against this transport unchanged."""
+        self.writeN(addr, data)
 
     def bulk_out(self, data):
         op = self._next(f"bulk[{len(data)}B]")
