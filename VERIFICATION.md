@@ -17,7 +17,7 @@ caveats; the deep, nerdy *why* lives in each chip's doc (linked under every card
 | RTL8821AU | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | RTL8812AU | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | RTL8822BU | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
-| RTL8814AU | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
+| RTL8814AU | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | MT7612U | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | MT7610U | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | RT5372 (PAU05) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⬜ |
@@ -74,16 +74,16 @@ tables below lead with the attack columns and any caveats.
 > **Default = vendor/DKMS port** for `0bda:0811` (hotter 2.4 GHz RX, ties 5 GHz;
 > set `WIFIT3_RTL8821=mainline` to fall back). A/B + why-it-wins:
 > [RTL8821AU_DKMS.md](src/wifit3/chips/rtl8821au_dkms/RTL8821AU_DKMS.md). The table
-> below was verified on the mainline driver.
+> below is that port.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-05-31 | 2.4 + 5 GHz. |
-| Handshake | ✅ | 2026-05-31 | Full M1–M4. |
-| PMKID | ✅ | 2026-05-31 | Passive + active. |
-| WEP | ✅ | 2026-05-31 | Replay + ChopChop. |
-| WPS | ✅ | 2026-05-31 | PIN + PBC. |
-| Stress | ✅ | 2026-06-05 | 30-min dual-band soak (DKMS port), no degradation. |
+| Scan | ✅ | 2026-06-05 | 2.4 + 5 GHz; beacon-watch steady ~9/s, no gaps. |
+| Handshake | ✅ | 2026-06-05 | Deauth → 4-way. |
+| PMKID | ✅ | 2026-06-05 | Passive + active extract. |
+| WEP | ✅ | 2026-06-05 | Replay + ChopChop. |
+| WPS | ✅ | 2026-06-05 | PIN + PBC. |
+| Stress | ✅ | 2026-06-05 | 30-min dual-band soak, no degradation. |
 
 → [RTL8821AU.md](src/wifit3/chips/rtl8821au/RTL8821AU.md) (mainline) · [RTL8821AU_DKMS.md](src/wifit3/chips/rtl8821au_dkms/RTL8821AU_DKMS.md) (default)
 
@@ -123,16 +123,16 @@ tables below lead with the attack columns and any caveats.
 
 > **Default = vendor/DKMS port** ([RTL8814AU_DKMS.md](src/wifit3/chips/rtl8814au_dkms/RTL8814AU_DKMS.md);
 > `WIFIT3_RTL8814=mainline` falls back). DKMS fixes the mainline weak-2.4-GHz RX —
-> reads a close AP at −45 dBm vs mainline's −81. The table below is the mainline driver.
+> reads a close AP at −45 dBm vs mainline's −81. The table below is that port.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ⚠️ | 2026-05-31 | Mainline 2.4 GHz RX weak/miscalibrated (2.4 GHz AP −82 dBm vs 5 GHz −54); 5 GHz healthy. The DKMS default fixes it. |
-| Handshake | ✅ | 2026-05-31 | M2+M3 on 2.4 GHz. |
-| PMKID | ✅ | 2026-05-31 | Passive + active (flaky on 2.4 GHz — weak RX). |
-| WEP | ✅ | 2026-05-31 | Replay + ChopChop (2.4 GHz). |
-| WPS | ✅ | 2026-05-31 | PIN + PBC. |
-| Stress | ⬜ | — | Not run (DKMS port). |
+| Scan | ✅ | 2026-06-05 | 2.4 GHz RX healthy on the DKMS port — beacon-watch ~7/s, no zero-second gaps (the mainline weak-2.4 defect is gone). 5 GHz healthy. |
+| Handshake | ✅ | 2026-06-05 | Deauth → 4-way. |
+| PMKID | ✅ | 2026-06-05 | Passive + active extract. |
+| WEP | ✅ | 2026-06-05 | Replay + ChopChop. |
+| WPS | ✅ | 2026-06-05 | PIN + PBC. |
+| Stress | ⬜ | — | 30-min soak pending. |
 
 → [RTL8814AU.md](src/wifit3/chips/rtw88_8814au/RTL8814AU.md) (mainline) · [RTL8814AU_DKMS.md](src/wifit3/chips/rtl8814au_dkms/RTL8814AU_DKMS.md) (default)
 
@@ -227,5 +227,5 @@ stay flat the whole time, and the failures (RT2500USB) show within the first min
 
 ## Fully supported
 
-Every column ✅ *plus* a clean Stress soak. **RTL8812AU (DKMS) got there first;
-AR9271 has now joined it.**
+Every column ✅ *plus* a clean Stress soak. **RTL8812AU (DKMS), AR9271, and
+RTL8821AU (DKMS) are there** — with RTL8814AU (DKMS) one soak away.
