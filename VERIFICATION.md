@@ -18,7 +18,7 @@ caveats; the deep, nerdy *why* lives in each chip's doc (linked under every card
 | RTL8812AU | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | RTL8822BU | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | RTL8814AU | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
-| MT7612U | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
+| MT7612U | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | MT7610U | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
 | RT5372 (PAU05) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⬜ |
 | RT5572 (PAU09) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
@@ -144,7 +144,7 @@ tables below lead with the attack columns and any caveats.
 | PMKID | ✅ | 2026-05-31 | Passive + active. |
 | WEP | ✅ | 2026-05-31 | Replay + ChopChop. |
 | WPS | ✅ | 2026-05-31 | PIN + PBC. |
-| Stress | ⬜ | — | Not run. |
+| Stress | ✅ | 2026-06-05 | 30-min dual-band soak, no degradation. |
 
 → [MT76X2U.md](src/wifit3/chips/mt76x2u/MT76X2U.md)
 
@@ -227,5 +227,5 @@ stay flat the whole time, and the failures (RT2500USB) show within the first min
 
 ## Fully supported
 
-Every column ✅ *plus* a clean Stress soak. **RTL8812AU (DKMS), AR9271, and
-RTL8821AU (DKMS) are there** — with RTL8814AU (DKMS) one soak away.
+Every column ✅ *plus* a clean Stress soak. **RTL8812AU (DKMS), AR9271, RTL8821AU
+(DKMS), and MT7612U are there** — with RTL8814AU (DKMS) one soak away.

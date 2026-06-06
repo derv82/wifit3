@@ -21,6 +21,14 @@ Verified facts only. Hypothesis-level material goes in commit messages,
 not here. `[SRC]` = kernel source (`data_dumps/mt76-source-v6.18/`). `[WIRE]`
 = pcap evidence (`usb_dumps/captures_mt76x2u/capture-1.pcap`).
 
+**Stress: 30-min dual-band soak PASS (2026-06-05).** `scripts/diag/sweep.py
+--longrun-min 30 --hop-interval 0.25` over 22 channels — no degradation: active
+BSSIDs 147→155 (ratio 1.05), 2.4 GHz ~100+ and 5 GHz ~52 both steady, frames
+~2.2–3.0 k/60 s. 30 min of sustained RX with no frame-rate sag is consistent with
+the RxReaderThread port (the `[~]` item above) holding under load — corroborating,
+not the targeted `test_pollgap_load.py` proof. Report
+`scripts/diag/reports/mt76x2u_20260605-212516.md`.
+
 ## Identity
 
 - **Family**: mt76, generation `mt76x02` (older sibling of mt76_connac).
