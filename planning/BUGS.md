@@ -36,17 +36,37 @@ are blocked for that span. Give it manual control — a **Stop PBC** button (and
 **Start PBC** when a window is open) — and/or bound the retry loop so a single
 timeout can't hold the radio. Minor; deferred.
 
-## WPA Downgrade reads as "dead" — it's a slow, niche wait-attack
+## WPA3 downgrade is weak today — two paths to a real one
 
-The Focus **WPA Downgrade** button looks broken because nothing happens fast — but
-it isn't. It's a probe-response spoof (forge the AP's BSSID/SSID/channel with a
-WPA2-only RSN IE) that **waits** for a client to naturally reconnect and take the
-WPA2 ad: it can't deauth-trigger (PMF blocks that on WPA3 clients), works only on
-WPA3-*transition* APs, and pays off in minutes-to-hours. Two fixes: (1) set
-expectations — disable/annotate the button unless the target is WPA3-transition,
-and log "passive — waiting for a natural reconnect (minutes-to-hours)" on start;
-(2) verify it actually injects on hardware (only the docstring's *intent* is
-confirmed, never a live capture). `engine/attacks/wpa3_downgrade.py`.
+The Focus **WPA Downgrade** button reads as dead because the current approach
+genuinely is weak. Both viable approaches end at the same prize — the client's
+**EAPOL M1 + M2** for a *WPA2* association (M2's MIC is all an offline PSK crack
+needs; M3/M4 are gravy, and you can't forge M3 without the PSK anyway) — and both
+work **only on WPA3-*transition*** APs (a pure-SAE client refuses WPA2). If the AP
+sets **Transition-Disable**, both die.
+
+**Path 1 — passive downgrade (what's implemented).** Forge WPA2-only beacons /
+probe responses for the target's BSSID and let a client downgrade and run its WPA2
+4-way *with the real transition AP*, sniffing it passively. Cheap — no AP to run —
+but at the client's mercy: the real AP is advertising SAE on the same channel the
+whole time, so a sane client just picks SAE and there's nothing to capture. (Also
+never confirmed to actually inject on hardware — only docstring intent.)
+`engine/attacks/wpa3_downgrade.py`.
+
+**Path 2 — evil twin / rogue AP (the reliable build).** Isolate the client onto a
+rogue AP — same SSID (+ BSSID, to impersonate), ideally a *different* channel so it
+isn't fighting the real SAE beacon — advertising WPA2-only; accept the client's
+auth + assoc, **send EAPOL M1 yourself** (a random ANonce, no secret), capture M2.
+Deterministic: WPA2 is the only option offered. Can't finish (no PSK for M3),
+doesn't need to. The RSNE-confirmation check at M3 may make the client abort the
+connection — fine, M1+M2 are already in hand. In wifit3 this is a **minimal AP
+responder in the inject path** (beacon + probe-resp + auth + assoc + M1 → catch
+M2), *not* a shell-out to hostapd like Wifite2 (hostapd is Linux-only — it would
+kill the Windows/cross-platform model). Feature-scale, not a tweak.
+
+**Near-term QoL** on the current button regardless: disable/annotate it unless the
+target is WPA3-transition, and log "passive — waiting for a natural reconnect
+(minutes–hours)" on start so it stops looking broken.
 
 ## Bulk-IN read timeout treated as fatal on Windows (fleet audit)
 
