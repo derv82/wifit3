@@ -1,28 +1,30 @@
 # Wifit3 — Hardware Verification
 
-wifit3 drives these USB radios directly in userland — no aircrack-ng, no Scapy.
-This page is the receipts: what each card *actually* does on real hardware, not
-what the datasheet promises. The matrix is the glance; the per-card notes carry the
-caveats; the deep, nerdy *why* lives in each chip's doc (linked under every card).
+Wifit3 drives these USB radios directly and (mostly) correctly by imitating Linux drivers.
+
+- Some drivers are a complete byte-perfect port of a known-good driver.
+- Other drivers are merely imitating a driver, performing only the bare minimum hardware operations to achieve a functioning wireless device.
+
+The matrix below captures *how well wifit3 drives these wireless cards* -- Every blemish is either a documented bug in Wifit3 or a severe hardware limitation.
 
 **✅** works · **⚠️** works, with a caveat · **❌** tried, broken · **⬜** not run yet — *not* a failure, just unconfirmed
 
 ## Matrix
 
-| Chipset | Scan | Deauth | Handshake | PMKID | WEP | WPS | Stress |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| AR9271 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| RTL8187L | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ⬜ |
-| RTL8188EUS | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ |
-| RTL8821AU | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| RTL8812AU | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| RTL8822BU | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
-| RTL8814AU | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ |
-| MT7612U | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| MT7610U | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
-| RT5372 (PAU05) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⬜ |
-| RT5572 (PAU09) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
-| RT2500USB | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ❌ |
+| Chipset | Scan | Deauth | Hand-<br>shake | PMKID | WEP | WPS | Stress | Grade |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| [AR9271](#ar9271) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ⬜ | B |
+| [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ | C |
+| [RTL8821AU](#rtl8821au) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RTL8812AU](#rtl8812au) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RTL8822BU](#rtl8822bu) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
+| [RTL8814AU](#rtl8814au) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | C |
+| [MT7612U](#mt7612u) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [MT7610U](#mt7610u) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
+| [RT5372](#rt5372) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⬜ | C |
+| [RT5572](#rt5572) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
+| [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ❌ | D |
 
 *WEP* and *WPS* each fold two sub-attacks (replay + chopchop; PIN + PBC) into one
 column — the per-card notes break them out.
@@ -32,7 +34,8 @@ column — the per-card notes break them out.
 Scan + Deauth work on every supported card unless a note says otherwise, so the
 tables below lead with the attack columns and any caveats.
 
-### AR9271 — ALFA AWUS036NHA (2.4 GHz)
+### AR9271
+*ALFA AWUS036NHA · 2.4 GHz*
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
@@ -44,7 +47,8 @@ tables below lead with the attack columns and any caveats.
 
 → [AR9271.md](src/wifit3/chips/ar9271/AR9271.md)
 
-### RTL8187L — ALFA AWUS036H (2.4 GHz)
+### RTL8187L
+*ALFA AWUS036H · 2.4 GHz*
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
@@ -56,7 +60,8 @@ tables below lead with the attack columns and any caveats.
 
 → [RTL8187L.md](src/wifit3/chips/rtl8187/RTL8187L.md)
 
-### RTL8188EUS — TP-Link TL-WN722N v2/v3 (2.4 GHz)
+### RTL8188EUS
+*TP-Link TL-WN722N v2/v3 · 2.4 GHz*
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
@@ -69,7 +74,8 @@ tables below lead with the attack columns and any caveats.
 
 → [RTL8188EUS.md](src/wifit3/chips/rtl8188eus/RTL8188EUS.md)
 
-### RTL8821AU — ALFA AWUS036ACS (2.4 / 5 GHz)
+### RTL8821AU
+*ALFA AWUS036ACS · 2.4 / 5 GHz*
 
 > **Default = vendor/DKMS port** for `0bda:0811` (hotter 2.4 GHz RX, ties 5 GHz;
 > set `WIFIT3_RTL8821=mainline` to fall back). A/B + why-it-wins:
@@ -87,7 +93,8 @@ tables below lead with the attack columns and any caveats.
 
 → [RTL8821AU.md](src/wifit3/chips/rtl8821au/RTL8821AU.md) (mainline) · [RTL8821AU_DKMS.md](src/wifit3/chips/rtl8821au_dkms/RTL8821AU_DKMS.md) (default)
 
-### RTL8812AU — ALFA AWUS036ACH (2.4 / 5 GHz)
+### RTL8812AU
+*ALFA AWUS036ACH · 2.4 / 5 GHz*
 
 > **Default = vendor/DKMS port** ([RTL8812AU_DKMS.md](src/wifit3/chips/rtl8812au_dkms/RTL8812AU_DKMS.md));
 > the table below is that port. It survives dual-band channel hopping; the mainline
@@ -106,7 +113,8 @@ tables below lead with the attack columns and any caveats.
 
 → [RTL8812AU_DKMS.md](src/wifit3/chips/rtl8812au_dkms/RTL8812AU_DKMS.md) (default) · [RTL8812AU.md](src/wifit3/chips/rtl8812au/RTL8812AU.md) (mainline)
 
-### RTL8822BU — TP-Link Archer T3U Plus v1 (2.4 / 5 GHz)
+### RTL8822BU
+*TP-Link Archer T3U Plus v1 · 2.4 / 5 GHz*
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
@@ -119,7 +127,8 @@ tables below lead with the attack columns and any caveats.
 
 → [RTL8822BU.md](src/wifit3/chips/rtl8822bu/RTL8822BU.md)
 
-### RTL8814AU — ALFA AWUS1900 (2.4 / 5 GHz, 4T4R)
+### RTL8814AU
+*ALFA AWUS1900 · 2.4 / 5 GHz · 4T4R*
 
 > **Default = vendor/DKMS port** ([RTL8814AU_DKMS.md](src/wifit3/chips/rtl8814au_dkms/RTL8814AU_DKMS.md);
 > `WIFIT3_RTL8814=mainline` falls back). DKMS fixes the mainline 2.4 GHz signal
@@ -137,7 +146,8 @@ tables below lead with the attack columns and any caveats.
 
 → [RTL8814AU.md](src/wifit3/chips/rtw88_8814au/RTL8814AU.md) (mainline) · [RTL8814AU_DKMS.md](src/wifit3/chips/rtl8814au_dkms/RTL8814AU_DKMS.md) (default)
 
-### MT7612U — ALFA AWUS036ACM (2.4 / 5 GHz)
+### MT7612U
+*ALFA AWUS036ACM · 2.4 / 5 GHz*
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
@@ -149,7 +159,8 @@ tables below lead with the attack columns and any caveats.
 
 → [MT76X2U.md](src/wifit3/chips/mt76x2u/MT76X2U.md)
 
-### MT7610U — ALFA AWUS036ACHM (2.4 / 5 GHz)
+### MT7610U
+*ALFA AWUS036ACHM · 2.4 / 5 GHz*
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
@@ -162,7 +173,8 @@ tables below lead with the attack columns and any caveats.
 
 → [MT76X0U.md](src/wifit3/chips/mt76x0u/MT76X0U.md)
 
-### RT5372 — Panda PAU05 (2.4 GHz, 1T1R)
+### RT5372
+*Panda PAU05 · 2.4 GHz · 1T1R*
 
 Shared `rt2800usb` driver with the RT5572. TX inject (deauth → EAPOL recapture) was
 proven on this card.
@@ -178,7 +190,8 @@ proven on this card.
 
 → [RT2800USB.md](src/wifit3/chips/rt2800usb/RT2800USB.md)
 
-### RT5572 — Panda PAU09 N600 (2.4 / 5 GHz, 2T2R)
+### RT5572
+*Panda PAU09 N600 · 2.4 / 5 GHz · 2T2R*
 
 The best-behaved Ralink — snappy, great beacon rate, and balanced 2.4/5 GHz RX (both
 bands read the same power).
@@ -194,7 +207,8 @@ bands read the same power).
 
 → [RT2800USB.md](src/wifit3/chips/rt2800usb/RT2800USB.md)
 
-### RT2500USB — Buffalo Nintendo Wi-Fi USB Connector / RT2570 (2.4 GHz)
+### RT2500USB
+*Buffalo Nintendo Wi-Fi USB Connector / RT2570 · 2.4 GHz*
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
