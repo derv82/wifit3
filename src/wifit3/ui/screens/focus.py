@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import time
 from collections import Counter, deque
 from datetime import datetime
@@ -29,6 +30,7 @@ from wifit3.engine.attacks.wps.registrar import PinResult
 from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind
 from ..capture_log import eapol_message_markup, short_sta
 from ..widgets.packet_dashboard import PacketDashboard
+from ..signal_bar import render_signal_bar
 from ..encryption_format import (
     format_encryption_markup,
     format_pmf_markup,
@@ -36,6 +38,12 @@ from ..encryption_format import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Signal bar: 16 cells, right-pinned in the CAPTURE panel. The panel is
+# `width: 38` (app.py CSS); minus its border (2) + padding (2) leaves a 34-cell
+# content area to pin the bar's right edge against.
+SIGNAL_BAR_WIDTH = 16
+_CAPTURE_CONTENT_W = 34
 
 
 def _wep_key_chip(key_hex: Optional[str]) -> str:
@@ -65,16 +73,6 @@ def _format_duration(seconds: int) -> str:
     return f"{d}d {h}h" if h else f"{d}d"
 
 
-def _beacon_rate_color(rate: Optional[float]) -> Optional[str]:
-    """Flag only a near-dead beacon rate, nothing else. <3/s → red (we've
-    effectively stopped hearing this AP); any healthier rate is left uncoloured
-    so a normal AP doesn't strobe through colours as its rate wobbles around a
-    threshold. None = still warming up (no rate yet) — also uncoloured."""
-    if rate is not None and rate < 3:
-        return "red"
-    return None
-
-
 class FocusView(Screen):
     """The Attack/Focus mode for a specific AP."""
 
@@ -91,6 +89,13 @@ class FocusView(Screen):
         # Sliding-window samples of (timestamp, ap.beacons) for a recent
         # beacons/s rate instead of a since-first-seen average (see update_ui).
         self._beacon_samples: deque = deque()
+        # Signal bar: update_ui (10 Hz) sets the target rate + count; a 30 FPS
+        # timer (_animate_signal) eases _sig_display toward it and owns the render.
+        self._sig_target: Optional[float] = None
+        self._sig_display: float = 0.0
+        self._sig_count: int = 0
+        self._sig_timer = None
+        self._lbl_beacons: Optional[Label] = None
         # Granular: also surfaces every new EAPOL frame, not just completions.
         self._events = CaptureEventDetector(granular_eapol=True)
         # WPA3 Downgrade is a long-running probe-response-spoof daemon. Held
@@ -213,7 +218,36 @@ class FocusView(Screen):
 
     async def on_mount(self) -> None:
         self._refresh_timer = self.set_interval(1 / 10, self.update_ui)
+        self._lbl_beacons = self.query_one("#lbl-beacons", Label)
+        self._sig_timer = self.set_interval(1 / 30, self._animate_signal)
         await self._init_target()
+
+    def _animate_signal(self) -> None:
+        """30 FPS: ease the signal bar toward the windowed beacons/s and drive
+        the dead-AP heartbeat — independent of the 10 Hz whole-view refresh, so
+        the bar glides between data updates instead of stepping."""
+        if self._lbl_beacons is None:
+            return
+        target = self._sig_target
+        if target is None:
+            bar = render_signal_bar(None, width=SIGNAL_BAR_WIDTH)
+        elif target <= 0.05:
+            # Dead: a smooth 1 s sine heartbeat (pulse 0..1).
+            pulse = 0.5 + 0.5 * math.sin(time.time() * math.tau)
+            bar = render_signal_bar(0.0, width=SIGNAL_BAR_WIDTH, pulse=pulse)
+            self._sig_display = 0.0
+        else:
+            # Ease ~0.2 s toward the target so rate jumps glide.
+            self._sig_display += (target - self._sig_display) * 0.25
+            bar = render_signal_bar(self._sig_display, width=SIGNAL_BAR_WIDTH)
+        left = Text("Beacons: ", no_wrap=True)
+        left.append(f"{self._sig_count:,}", style="bold")
+        pad = max(1, _CAPTURE_CONTENT_W - left.cell_len - bar.cell_len)
+        line = Text(no_wrap=True)
+        line.append_text(left)
+        line.append(" " * pad)
+        line.append_text(bar)
+        self._lbl_beacons.update(line)
 
     async def on_screen_resume(self) -> None:
         await self._init_target()
@@ -237,6 +271,9 @@ class FocusView(Screen):
         # Reset per-target state.
         self._known_clients.clear()
         self._beacon_samples.clear()
+        self._sig_target = None
+        self._sig_display = 0.0
+        self._sig_count = 0
         self._events.reset()
         self.query_one("#client-table", DataTable).clear()
         self.query_one("#focus-event-log", RichLog).clear()
@@ -540,23 +577,11 @@ class FocusView(Screen):
             self._beacon_samples.popleft()
         oldest_t, oldest_n = self._beacon_samples[0]
         span = now - oldest_t
-        # Need ~a second of window before the rate means anything.
-        if span >= 1.0:
-            rate = (ap.beacons - oldest_n) / span
-            rate_str = f"{rate:.1f}/s"
-        else:
-            rate = None
-            rate_str = "…/s"
-        # Bold count always; colour the rate ONLY when it's near-dead (red) — a
-        # healthy rate stays plain so it doesn't strobe as it wobbles around a
-        # threshold (an AP sitting near a band edge would otherwise flicker).
-        rate_color = _beacon_rate_color(rate)
-        rate_markup = (f"[{rate_color}]({rate_str})[/{rate_color}]"
-                       if rate_color else f"({rate_str})")
-        self.query_one("#lbl-beacons", Label).update(Text.from_markup(
-            f"Beacons: [bold]{ap.beacons:,}[/bold] {rate_markup}",
-            emoji=False,
-        ))
+        # Hand the windowed rate + count to the 30 FPS signal-bar animator;
+        # _animate_signal owns the lbl-beacons render so the bar can ease and
+        # pulse between these 10 Hz updates. None (span < 1 s) = warming up.
+        self._sig_target = (ap.beacons - oldest_n) / span if span >= 1.0 else None
+        self._sig_count = ap.beacons
         # Power stays uncoloured — RSSI is too inconsistent across cards/ports to
         # map to a meaningful health gradient without it flickering noise.
         self.query_one("#lbl-pwr", Label).update(

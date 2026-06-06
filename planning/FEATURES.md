@@ -101,20 +101,6 @@ silently).
 > in one shared place instead of being re-implemented per driver — the DRY win. So:
 > not required for v1, but a real reason `BaseDriver` is worth designing.
 
-### Signal-quality bar (replace raw beacons/sec) — pre-alpha
-
-**Problem.** Raw "beacons/sec" is a poor display: it ceilings at ~9.77/s (one
-beacon per 102.4 ms beacon interval), and "3/s → red" conveys nothing but "weak."
-
-**Approach.** A **reception-quality bar** normalized to that ceiling — 100 % =
-every beacon the AP sent was received (0 % loss). 10-glyph colored bar (Textual):
-each glyph ≈ 1 beacon/s of the ~10/s max, colorized **red 1–3 / orange 4–7 /
-green 8–10**. The running beacons/sec already collected by `beacon_history` feeds
-it directly — no new data collection.
-
-**Complexity.** Low — display-only, data already exists. (Rejected alternative: a
-bare "XX % loss" number — accurate but not glanceable.)
-
 ### Config persistence — pre-alpha
 
 **Problem.** No stored config today — theme resets every launch (hardcoded
