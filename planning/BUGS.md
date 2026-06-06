@@ -109,6 +109,30 @@ driver's `set_channel` reproduces the capture's DFS tunes, (3) then extend
 `SUPPORTED_CHANNELS`. The DFS infra is already in place and stays: `wlan/channels.is_dfs`
 (52–144), the scanner's non-DFS default hop, and the Channel-Filter `[d]fs` opt-in.
 
+## Ralink bring-up divergences from the vendor wire (pcap replay-diff findings)
+
+Surfaced by the per-driver pcap byte-diff verifier (`scripts/verify_pcap.py <chip>`, which
+replays a port's bring-up against the vendor cold-boot capture). Both are faithfulness gaps
+— the port emits a USB sequence the in-tree driver does not — found while bringing the
+Ralink family onto the verifier. Neither is known to break RX/TX, but each is an un-audited
+deviation worth closing.
+
+* **rt2800usb: `load_firmware` writes `AUTOWAKEUP_CFG` on USB; the kernel doesn't.** Our
+  `chips/rt2800usb/firmware.py` `load_firmware` opens with `write32(AUTOWAKEUP_CFG, 0)`, but
+  the RT5592 USB cold-boot capture never issues it. In `rt2800lib.c` that write sits inside
+  an `is_pci || is_soc` guard — PCI/SoC only — so the USB path should skip it. The 4096-byte
+  rt2870.bin upload itself is byte-perfect (verified); only this preamble write diverges.
+  Fix: gate the `AUTOWAKEUP_CFG` write out of the USB loader. Greppable: `AUTOWAKEUP_CFG`.
+
+* **rt2500usb: `config_ant` ordering — kernel touches `MAC_CSR20` first (un-audited gap).**
+  The verifier reproduces `init_registers` + `init_bbp` byte-for-byte (123 ops), then
+  diverges: our `connect()` runs `config_ant` next (first op = read `PHY_CSR8` 0x04d0), but
+  the capture's next op is `MAC_CSR20` (0x0428) — the kernel does a MAC-side step between
+  baseband and antenna config that our port skips or reorders. Could be a missing register
+  write (partial port) or a benign ordering difference; needs the `MAC_CSR20` step decoded
+  against `rt2500usb.c`. Until then `config_ant`/`config_channel` aren't pcap-gated (they
+  need their own anchored blocks in `scripts/rt2500usb/verify_pcap.py`).
+
 ---
 
 > Not here: **driver wedge / replug warnings not reaching the UI** is a **release
