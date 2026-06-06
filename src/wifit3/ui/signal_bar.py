@@ -64,10 +64,13 @@ def render_signal_bar(
 
     if rate <= 0.05:
         beat = _EMPTY * (0.5 + 0.5 * pulse)
+        # Red ╳ on the left — where the fading bar's last (red) cell sits before
+        # it dies. The box-drawing cross fills the cell, so it's level with the
+        # blocks (a centred ✕ glyph floats high).
+        bar.append("╳", style=f"bold rgb({int(110 + 145 * pulse)},0,0)")
+        bar.append(" ")
         for i in range(width):
             bar.append("█", style=_dim(_hue(i / span), beat))
-        bar.append(" ")
-        bar.append("✕", style=f"bold rgb({int(110 + 145 * pulse)},0,0)")
         return bar
 
     filled = min(1.0, rate / full_scale) * width

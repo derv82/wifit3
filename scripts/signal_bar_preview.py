@@ -42,7 +42,7 @@ def main() -> None:
             console.print(_row(f"{rate:.1f}/s", render_signal_bar(rate, width=width)))
         console.print()
 
-    console.rule("dead-AP heartbeat (1s dim-pulse + red ✕)")
+    console.rule("dead-AP heartbeat (1s dim-pulse + red ╳)")
     for pulse in (1.0, 0.66, 0.33, 0.0, 0.33, 0.66, 1.0):
         console.print(_row("dead", render_signal_bar(0.0, width=10, pulse=pulse)))
     console.print()

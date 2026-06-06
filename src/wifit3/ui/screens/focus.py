@@ -278,12 +278,12 @@ class FocusView(Screen):
         self.query_one("#client-table", DataTable).clear()
         self.query_one("#focus-event-log", RichLog).clear()
 
-        ssid_chip = (
-            f"[black bold on cyan] {escape(self.target_ap.ssid)} [/black bold on cyan]"
-            if self.target_ap.ssid
-            else "[dim italic]<hidden>[/dim italic]"
-        )
-        self._log(f"[bold]Target acquired:[/bold] {ssid_chip}")
+        if self.target_ap.ssid:
+            chip = f"[black bold on cyan] {escape(self.target_ap.ssid)} [/black bold on cyan]"
+            self._log(f"[bold]Target acquired:[/bold] {chip}")
+        else:
+            self._log("[bold]Target acquired:[/bold] "
+                      "[dim italic]cloaked network — hidden SSID[/dim italic]")
 
         # BSSID is the └─► terminal when there's no interface to tune; otherwise
         # it's a ├─► branch and the tune line closes the group. Keeps the tree
@@ -322,6 +322,11 @@ class FocusView(Screen):
                       "broadcast deauth). PMKID / WPS / passive capture still fine.")
 
         self._log_persisted_history(self.target_ap)
+        # Make it obvious the view is now primed and passively capturing.
+        if enc == "WEP":
+            self._log("[green]●[/green] Listening for [bold]WEP IVs[/bold]…")
+        elif enc not in ("OPEN", ""):
+            self._log("[green]●[/green] Listening for [bold]handshake[/bold] + PMKID…")
         self.update_ui()
 
     def _log_persisted_history(self, ap: AccessPoint) -> None:
@@ -330,10 +335,28 @@ class FocusView(Screen):
         same data that lights the Scanner badges."""
         if not ap.persisted:
             return
-        self._log("[bold]Previous captures found in[/bold] [cyan]./captures/*[/cyan]:")
-        last = len(ap.persisted) - 1
-        for i, cap in enumerate(ap.persisted):
-            line = treelog.leaf if i == last else treelog.branch
+        newest_first = sorted(ap.persisted, key=lambda c: c.timestamp, reverse=True)
+        by_kind: dict[str, list] = {}
+        for cap in newest_first:
+            by_kind.setdefault(cap.kind, []).append(cap)
+
+        # Summary line, e.g. "Existing captures in captures/ — 1 handshake, 6 PMKIDs:"
+        nouns = {"HS": "handshake", "PMKID": "PMKID", "WEP": "WEP key", "WPS": "WPS PSK"}
+        parts = [
+            f"[bold]{len(by_kind[k])}[/bold] {nouns[k]}{'s' if len(by_kind[k]) != 1 else ''}"
+            for k in ("HS", "PMKID", "WEP", "WPS") if k in by_kind
+        ]
+        self._log(f"[bold]Existing captures[/bold] in [cyan]captures/[/cyan] — "
+                  f"{', '.join(parts)}:")
+
+        # Newest of each kind, then a single "(+N older)" leaf — so an AP with 20
+        # PMKIDs lists one row, not twenty.
+        shown = sorted((caps[0] for caps in by_kind.values()),
+                       key=lambda c: c.timestamp, reverse=True)
+        older = len(ap.persisted) - len(shown)
+        for i, cap in enumerate(shown):
+            is_last = i == len(shown) - 1 and older == 0
+            line = treelog.leaf if is_last else treelog.branch
             dt = datetime.fromtimestamp(cap.timestamp)
             ts = f"[dim]{dt:%Y-%m-%d %H:%M}[/dim]"
             if cap.kind == "WEP":
@@ -348,6 +371,9 @@ class FocusView(Screen):
                 self._log(line(
                     f"[bold cyan]{label:<9}[/bold cyan] "
                     f"[white]{dt:%Y-%m-%d}[/white] [dim]{dt:%H:%M}[/dim]"))
+        if older:
+            self._log(treelog.leaf(
+                f"[dim](+{older} older capture{'s' if older != 1 else ''})[/dim]"))
 
     # ----- Per-tick UI refresh -----------------------------------------------
 

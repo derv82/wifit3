@@ -36,6 +36,18 @@ are blocked for that span. Give it manual control — a **Stop PBC** button (and
 **Start PBC** when a window is open) — and/or bound the retry loop so a single
 timeout can't hold the radio. Minor; deferred.
 
+## WPA Downgrade reads as "dead" — it's a slow, niche wait-attack
+
+The Focus **WPA Downgrade** button looks broken because nothing happens fast — but
+it isn't. It's a probe-response spoof (forge the AP's BSSID/SSID/channel with a
+WPA2-only RSN IE) that **waits** for a client to naturally reconnect and take the
+WPA2 ad: it can't deauth-trigger (PMF blocks that on WPA3 clients), works only on
+WPA3-*transition* APs, and pays off in minutes-to-hours. Two fixes: (1) set
+expectations — disable/annotate the button unless the target is WPA3-transition,
+and log "passive — waiting for a natural reconnect (minutes-to-hours)" on start;
+(2) verify it actually injects on hardware (only the docstring's *intent* is
+confirmed, never a live capture). `engine/attacks/wpa3_downgrade.py`.
+
 ## Bulk-IN read timeout treated as fatal on Windows (fleet audit)
 
 A benign bulk-IN read timeout (no traffic this interval — every quiet channel
