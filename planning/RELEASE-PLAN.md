@@ -139,6 +139,49 @@ scratch. Still to add:
   already live in `CLAUDE.md`); add the `WlanDriver` Protocol contract. Feeds off
   the Phase 5 driver-comparison matrix.
 
+### 2g. Port-fidelity grades (`VERIFICATION.md`)
+
+A **Port** column on the verification matrix: a one-letter grade for how faithfully
+wifit3's userland port reproduces the reference Linux driver's register
+conversation. The matrix carries the letter (one char, like the ✅ cells); the
+per-card detail carries the precise figure + the gap (`Port: 82% · Functional —
+4-path AGC not ported`).
+
+Grades are **evidence gates**, not opinions:
+
+- **S — Byte Perfect.** Cold-boot register conversation reproduced byte-for-byte
+  against the vendor pcap (a `verify_pcap.py`-style gate passes). Today: RTL8812AU
+  DKMS, RTL8821AU DKMS — that's the whole list.
+- **A — Faithful.** Init byte-diffed with only minor/known deltas (≈90–99%), or
+  init diffed but a runtime path (DIG, periodic re-cal) not yet diffed.
+- **B — Functional.** Not byte-diffed; works on hardware and ties/beats the
+  reference driver in A/B. **Where most cards honestly sit — a legitimate,
+  shippable grade, not a failure.**
+- **C — Partial.** Not byte-diffed; a named unported subsystem (or a capability gap
+  traceable to one).
+
+A precise **%** exists only for the diffed tiers (S/A); B and C are qualitative —
+the tier plus the named gap, no invented number.
+
+**The grade rates the port, not the silicon — and that orthogonality is the point.**
+It answers "does wifit3 drive this chip the way Linux does," not "is this card
+good." A byte-perfect port of a weak card is **S** *and* still shows ⚠️/❌ in its
+attack columns (an S-tier card that still can't WPS is fine). That pins a card's
+limits on the hardware, not on our port, and stops "the card just sucks" from
+reading as "the port is sloppy."
+
+**Scope — the anti-churn rule:** ship the column with the grades assignable from
+evidence we already have (two **S**, most cards **B**, any with a named gap **C**).
+Wiring a byte-diff verifier onto the older, loosely-ported drivers to earn **A/S**
+is **optional, incremental, and post-release — never a gate.** No card needs to be
+diffed to ship; an honest **B** is the baseline, not a debt.
+
+- [ ] Add the **Port** column + S/A/B/C legend to `VERIFICATION.md`, graded from
+  current evidence.
+- [ ] Per-card detail line: `Port: <% or —> · <tier> — <gap, if any>`.
+- [ ] (Optional, post-release) extend the byte-diff verifier to one older port at a
+  time to lift B→A/S — driven by curiosity, not the release.
+
 ---
 
 ## Phase 3 — Pre-alpha polish (time permitting)
