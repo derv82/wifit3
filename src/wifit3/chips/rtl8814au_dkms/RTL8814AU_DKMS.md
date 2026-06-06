@@ -208,6 +208,14 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   ~55/s — confirms data-frame injection + replay on this port. (The harness auto-learns
   the target SSID from its beacon; without it the assoc-req carried an empty SSID and the
   AP rejected with status 12 — a harness input gap, not a port bug.)
+- **Attack suite on the DKMS default: VERIFIED [HW] 2026-06-05.** PMKID (passive
+  capture + active extract), WEP ChopChop, and WPS (PIN to M4 + PBC) all run clean
+  over the dkms driver via the stock engine — same `inject_frame` / `WlanInterface`
+  path as M4c/M4d. With this the full attack column (deauth, handshake, PMKID, WEP
+  replay + chopchop, WPS PIN + PBC) is confirmed on the **default** driver, not just
+  mainline. 2.4 GHz RX is healthy on this port too — a CH1 beacon-watch read a mean
+  ~7 beacons/s with **no zero-second gaps**, so the documented mainline weak-2.4-RX
+  defect is gone here. Remaining gate: the 30-min stress soak.
 - **M5e (5 GHz per-board TxBBSwing efuse decode): done — pcap-verified.**
   `efuse._parse_bb_swing_5g` reads byte 0xC7 (same 2-bit-per-path decode + value table as
   M4e's 2.4G 0xC6); `chan._set_bb_swing` (band-neutral) writes the per-path TxScale. **Not
