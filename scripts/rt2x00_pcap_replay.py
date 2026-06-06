@@ -55,7 +55,9 @@ def _tshark(pcap: Path, display_filter: str, fields: list[str]) -> list[list[str
 def find_card_device(pcap: Path) -> int:
     """Device issuing the most rt2x00 register transfers (bRequest 6/7) == the card.
     Auto-detected so the harness never pins to a per-capture device number."""
-    rows = _tshark(pcap, "usb.setup.bRequest==6 || usb.setup.bRequest==7",
+    rows = _tshark(pcap,
+                   "(usb.bmRequestType==0x40 || usb.bmRequestType==0xc0) && "
+                   "(usb.setup.bRequest==6 || usb.setup.bRequest==7)",
                    ["usb.device_address"])
     counts = Counter(r[0] for r in rows if r and r[0])
     if not counts:
@@ -112,6 +114,10 @@ def extract_ops(pcap: Path, dev: int, window=None, start=None) -> list[dict]:
     fields = ["frame.number", "usb.urb_type", "usb.transfer_type", "usb.bmRequestType",
               "usb.setup.bRequest", "usb.setup.wValue", "usb.setup.wIndex",
               "usb.setup.wLength", "usb.data_fragment", "usb.control.Response"]
+    # Keep the query unfiltered on bmRequestType: a read's COMPLETION row carries no
+    # bmRequestType, so filtering it in the query would drop read values and break
+    # submit/completion pairing. Standard requests (GET_DESCRIPTOR is bRequest 6, same
+    # number as USB_MULTI_WRITE, but bmRequestType 0x80) are rejected in the loop instead.
     flt = f"usb.device_address=={dev} && usb.transfer_type==0x02"
     if window:
         flt += f" && frame.number>={window[0]} && frame.number<={window[1]}"
@@ -122,12 +128,15 @@ def extract_ops(pcap: Path, dev: int, window=None, start=None) -> list[dict]:
         frame, utype, _ttype, brt, breq, wval, widx, wlen, dfrag, resp = c[:10]
         utype = utype.strip("'")
         if utype == "S":
+            brt_i = int(brt, 0) if brt else -1
+            if brt_i not in (0x40, 0xC0):         # not a vendor request -- skip standard
+                continue                          # (GET_DESCRIPTOR is bRequest 6 too)
             op = {"breq": int(breq, 0) if breq else -1,
                   "wval": int(wval, 0) if wval else 0,
                   "addr": int(widx, 0) if widx else 0,
                   "width": int(wlen, 0) if wlen else 0,
                   "frame": int(frame)}
-            if int(brt, 0) & 0x80:               # IN / read -- value on the completion
+            if brt_i == 0xC0:                     # IN / read -- value on the completion
                 op["dir"] = "IN"
                 pending = op
             else:                                # OUT / write -- data on the submit
