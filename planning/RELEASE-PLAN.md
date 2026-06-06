@@ -104,17 +104,18 @@ problem; do it design-doc-first, not zero-shot.
 
 ### 2d. Zadig / udev automation
 
-Goal: the app handles WinUSB/permission setup, no manual Zadig, no terminal sudo.
+Goal: the app handles WinUSB/permission setup — no manual Zadig, no terminal sudo.
 
-- **Windows:** detect known VID:PID via `usb.core`, show a per-device prompt
-  ("RTL8812AU detected but not configured — [Setup WinUSB (requires Admin)]"),
-  shell to a bundled `wdi-simple.exe` with the right VID:PID args, UAC handles
-  elevation, device re-enumerates. Triggered by need (hot-plug), not a first-run
-  wizard.
-- **Linux:** install udev rules for known VID:PIDs via `pkexec` (polkit GUI auth).
-  One rule per supported card, `MODE="0666"`. Permanent — subsequent plugs need no
-  elevation. Same prompt pattern.
-- **Unknown VID:PID:** "Unknown USB device (0bda:1234) — not supported by wifit3."
+**Design + detail in `DEVICE-SETUP.md`.** The short of it: the privileged step
+(WinUSB bind on Windows, kernel-driver release on Linux) can't be deleted, only made
+into one clean, reversible prompt. Ship **Tier 0 — detect & guide** as the only alpha
+gate (classify each card ready / unbound / unknown, show the exact next step, no
+elevation by us); layer assisted one-prompt bind on top afterward (Windows: bundled
+libwdi/`wdi-simple.exe` + UAC; Linux: `pkexec` a udev rules file generated from the
+drivers' `SUPPORTED_IDS`, then PyUSB auto-detach). Two feasibility forks to settle on
+hardware *before* building Tier 1: whether libusb enumerates an **unbound** device on
+Windows (W1), and whether a permissive udev rule lets a non-root user **detach** on
+Linux (L1).
 
 ### 2e. Versioning
 
