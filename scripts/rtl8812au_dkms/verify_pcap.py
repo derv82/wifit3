@@ -226,10 +226,10 @@ class ReplayTransport:
                              f"{len(op['data'])}B) @f{op['frame']}")
 
 
-def main() -> int:
+def run(cap: str | None = None) -> int:
     time.sleep = lambda *a, **k: None        # replay needs no real settle delays
 
-    pcap = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_CAP
+    pcap = Path(cap) if cap else DEFAULT_CAP
     if not pcap.exists():
         print(f"FAIL: no such capture {pcap}")
         return 1
@@ -297,6 +297,10 @@ def main() -> int:
         print(f"      {label:12} {end - prev:5} ops")
         prev = end
     return 0
+
+
+def main() -> int:
+    return run(sys.argv[1] if len(sys.argv) > 1 else None)
 
 
 if __name__ == "__main__":

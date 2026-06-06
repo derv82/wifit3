@@ -96,8 +96,8 @@ def _verify_monitor_block(ops) -> tuple:
     return block[0]["frame"], block[-1]["frame"], len(block)
 
 
-def main() -> int:
-    name = Path(sys.argv[1] if len(sys.argv) > 1 else "capture-1").stem
+def run(cap: str | None = None) -> int:
+    name = Path(cap or "capture-1").stem
     pcap = CAP_DIR / f"{name}.pcap"
     if name not in DEV_ADDR:
         print(f"FAIL: unknown device address for {name}")
@@ -153,6 +153,10 @@ def main() -> int:
     print(f"      {len(ops) - mtxpwr_ops} later ops remain in the window (the skipped EDCCA "
           f"search, airmon's STA dance, and runtime channel hops).")
     return 0
+
+
+def main() -> int:
+    return run(sys.argv[1] if len(sys.argv) > 1 else None)
 
 
 if __name__ == "__main__":

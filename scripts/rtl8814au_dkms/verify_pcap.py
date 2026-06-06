@@ -224,9 +224,8 @@ def verify_monitor_block(ops) -> tuple:
     return block[0]["frame"], block[-1]["frame"], len(block)
 
 
-def main() -> int:
-    name = sys.argv[1] if len(sys.argv) > 1 else "capture-1"
-    name = Path(name).stem
+def run(cap: str | None = None) -> int:
+    name = Path(cap or "capture-1").stem
     pcap = CAP_DIR / f"{name}.pcap"
     fw = FW_BIN.read_bytes()
     time.sleep = lambda *a, **k: None  # replay needs no real delays
@@ -275,6 +274,10 @@ def main() -> int:
           f"not replayed (wifit3 is always-monitor).")
     print(f"      {len(ops) - contiguous} later-milestone ops remain in the capture.")
     return 0
+
+
+def main() -> int:
+    return run(sys.argv[1] if len(sys.argv) > 1 else None)
 
 
 if __name__ == "__main__":
