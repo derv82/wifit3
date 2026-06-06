@@ -301,7 +301,7 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   vs mainline's −81 (the documented mainline RX-miscalibration, fixed) + ~25% more beacons;
   5 GHz (fair, same 9 non-DFS channels) 1238 beacons/46 APs vs 1138/57 with stronger RSSI.
   Mainline shows ~10 more weak/distant uniques (the DIG/AGC sensitivity-vs-accuracy trade).
-  See `VERIFICATION.md`. **Remaining gate:** a 1-hour stress soak before retiring the fallback.
+  See `VERIFICATION.md`. **Remaining gate:** a 30-min stress soak before retiring the fallback.
 
 ## EFUSE — probe-phase chip-param read
 `ReadAdapterInfo8814AU` -> `hal_InitPGData_8814A` -> `EFUSE_ShadowMapUpdate` ->

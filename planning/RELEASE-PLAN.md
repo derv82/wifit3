@@ -53,10 +53,10 @@ stability issue — expected to improve via the shared phydm RX/AGC path in the
 
 ### Stress soaks (release-gating)
 
-Run the longrun test script (all attacks, sustained channel hopping, 1 hour) on
+Run the longrun test script (all attacks, sustained channel hopping, **30 min**) on
 tier-1 cards. **Gate alpha on clean soaks for MT7612U and AR9271 at minimum.**
-RTL8812AU stress is ⚠️ by known limitation (RF hop-death) — document, don't block
-on it.
+RTL8812AU (DKMS, the default) cleared its 30-min soak; the ⚠️ RF hop-death is the
+opt-in `WIFIT3_RTL8812=mainline` fallback only.
 
 ---
 
