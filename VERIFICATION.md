@@ -14,20 +14,17 @@ The matrix below captures *how well wifit3 drives these wireless cards* -- Every
 | Chipset | Scan | Deauth | Hand-<br>shake | PMKID | WEP | WPS | Stress | Grade |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | [AR9271](#ar9271) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ⬜ | B |
-| [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ | C |
+| [MT7612U](#mt7612u) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8821AU](#rtl8821au) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8812AU](#rtl8812au) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RT5572](#rt5572) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
+| [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ⬜ | B |
 | [RTL8822BU](#rtl8822bu) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
-| [RTL8814AU](#rtl8814au) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | C |
-| [MT7612U](#mt7612u) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [MT7610U](#mt7610u) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [RT5372](#rt5372) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⬜ | C |
-| [RT5572](#rt5572) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
+| [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ | C |
+| [RTL8814AU](#rtl8814au) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | C |
 | [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ❌ | D |
-
-*WEP* and *WPS* each fold two sub-attacks (replay + chopchop; PIN + PBC) into one
-column — the per-card notes break them out.
 
 ## Per-card notes
 
