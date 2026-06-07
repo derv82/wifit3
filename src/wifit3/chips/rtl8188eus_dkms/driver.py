@@ -29,7 +29,7 @@ from wifit3.engine.protocols import DeviceID, ProgressCallback
 from wifit3.wlan.packet import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
-from . import bb, chan, dm, efuse, firmware, mac, monitor, pwrseq, rf, tx, txpower
+from . import bb, chan, dig, dm, efuse, firmware, mac, monitor, pwrseq, rf, tx, txpower
 from .constants import DEFAULT_INIT_CHANNEL, PID, VID
 from .rx import iter_frames
 from .transport import Rtl8188eusTransport
@@ -59,7 +59,11 @@ class Rtl8188eusDkmsDriver:
         self._rf_chnl: int = 0            # RfRegChnlVal[A], stateful across set_channel
         self._rx_cb: Optional[Callable[[dict], None]] = None
         self._reader: Optional[RxReaderThread] = None
-        # Serializes EP0 control batches (future DIG watchdog vs set_channel); RX uses bulk-IN.
+        # Runtime DIG/AGC watchdog (M12). Toggleable so a fixed-channel A/B can isolate its
+        # effect on per-AP reception (scan_hw.py --no-dig).
+        self.enable_dig: bool = True
+        self._dig_task: Optional["asyncio.Task"] = None
+        # Serializes EP0 control batches (DIG watchdog vs set_channel); RX uses bulk-IN.
         self._io_lock = asyncio.Lock()
 
     @classmethod
@@ -106,9 +110,31 @@ class Rtl8188eusDkmsDriver:
             loop, self._read_once, self._dispatch, name="8188eus-dkms-rx")
         self._reader.start()
 
+        # M12: the runtime phydm DIG/AGC watchdog — adapt the M7 IGI seed to the live
+        # false-alarm rate every ~2 s. RX-side only (reads FA counters, writes RX gain).
+        if self.enable_dig:
+            self._dig_task = loop.create_task(self._dig_watchdog())
+        else:
+            logger.info("RTL8188EUS DIG watchdog disabled (IGI stays at the M7 seed)")
+
         if progress_cb:
             progress_cb(1.0, f"Tuned to channel {_SCAN_START_CHANNEL} @ 20 MHz")
         return True
+
+    async def _dig_watchdog(self) -> None:
+        """Periodic DIG watchdog (M12). Serialized with set_channel via _io_lock."""
+        loop = asyncio.get_running_loop()
+        try:
+            while True:
+                await asyncio.sleep(dig.WATCHDOG_PERIOD_S)
+                async with self._io_lock:
+                    tick = await loop.run_in_executor(None, dig.watchdog_tick, self.transport)
+                logger.debug("RTL8188EUS DIG: IGI=0x%02x fa=%d (ofdm=%d cck=%d)",
+                             tick.igi, tick.fa_cnt, tick.ofdm_fa, tick.cck_fa)
+        except asyncio.CancelledError:
+            pass
+        except Exception:  # noqa: BLE001 — a watchdog fault must not kill RX
+            logger.exception("RTL8188EUS DIG watchdog stopped on error")
 
     # --- bring-up (blocking; run in an executor) ---------------------------
     def _power_on_and_read_efuse(self):
@@ -182,6 +208,13 @@ class Rtl8188eusDkmsDriver:
         return True
 
     async def close(self) -> None:
+        if self._dig_task is not None:
+            self._dig_task.cancel()
+            try:
+                await self._dig_task
+            except asyncio.CancelledError:
+                pass
+            self._dig_task = None
         if self._reader is not None:
             await self._reader.stop()
             self._reader = None

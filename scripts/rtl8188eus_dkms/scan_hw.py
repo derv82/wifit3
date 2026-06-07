@@ -69,6 +69,7 @@ async def run(args) -> int:
         logging.debug("set_configuration: %s", e)
 
     driver = Rtl8188eusDkmsDriver.from_usb_device(dev, entry)
+    driver.enable_dig = not args.no_dig   # A/B: isolate the M12 watchdog's effect
     tally = BeaconTally()
     driver.register_rx_callback(tally)
 
@@ -119,6 +120,8 @@ def main() -> int:
     ap.add_argument("--duration", type=float, default=30.0, help="scan window (s)")
     ap.add_argument("--channel", type=int, default=None, help="fix on this channel")
     ap.add_argument("--dwell", type=float, default=2.0, help="per-channel dwell (s)")
+    ap.add_argument("--no-dig", action="store_true",
+                    help="disable the M12 DIG watchdog (A/B baseline)")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(
