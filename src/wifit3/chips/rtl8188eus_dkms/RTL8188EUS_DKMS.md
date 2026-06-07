@@ -31,11 +31,43 @@ bimodal collapse, not just the mean.
 | Env var (A/B) | `WIFIT3_RTL8188` — DKMS default, `=mainline` opts back |
 | Branch | `dkms/8188eu` |
 
+## Chip facts (decoded from source + wire)
+
+- **RTL8188EUS = 1T1R, 2.4 GHz only.** The capture log records "5GHz Support NOT detected";
+  the port is 2.4 GHz / 20 MHz throughout (no 5 GHz milestones, unlike the Jaguar siblings).
+- **Vendor request 0x05** [SRC include/usb_ops.h:21] — the same Realtek convention as the
+  rest of the family, so the shared `scripts/rtw88_pcap_replay` engine verifies this port too.
+- **Config style = phydm `odm_read_and_config`** (`hal/phydm/rtl8188e/halhwimg8188e_{mac,bb,rf}.c`)
+  — flat-u32 tables walked by a conditional parser, same extraction shape as `rtl8814au_dkms`.
+- **hal_init spine** [SRC usb/usb_halinit.c:1215 `rtl8188eu_hal_init`]: power-on
+  (`Rtl8188E_NIC_PWR_ON_FLOW`) → MISC01 queue/page → **FW download** → MAC → BB → RF → LLT →
+  MISC02 → turn-on block → security → MISC11 (txpower + RFE) → InitHalDm → IQK/PWtrack/LCK.
+- **Cold-boot op stream** (capture-1, dev34): chip-version read (op 0) → power-on (ops 6–40) →
+  efuse probe read via packet-buffer indirect (ops 41–551) → **FW download** (ops 552–795) →
+  MAC config (op 796+). The efuse read uses REG_PKTBUF_DBG (0x140/0x143/0x144/0x148) after a
+  REG_FDHM0 (0x88) autoload poll — **not** REG_EFUSE_CTRL (0x30, never touched).
+
 ## Status
 
-**Scaffold only — port not started.** Pick up at `planning/PORTING.md` → "Shared workflow
-(per card)" **step 3**: cleanroom-port from the vendor source + the DKMS capture (keep the
-mainline port out of context), build `scripts/rtl8188eus_dkms/verify_pcap.py` as you go,
-M1 = FW upload first. Read a sibling `chips/rtl88*_dkms/<CHIP>_DKMS.md` first — same family.
+- **M1 (power-on + firmware upload + FW-ready ACK): complete — pcap-verified on all 3 boots.**
+  - `pwrseq.power_on` ports `_InitPowerOn_8188EU` = `Rtl8188E_NIC_PWR_ON_FLOW`
+    (CARDEMU_TO_ACT: poll 0x06[1] power-ready, RMW 0x02/0x26/0x05×4 + poll 0x05[0], 0x23) then
+    REG_CR enable (`0x063F`). [SRC] include/Hal8188EPwrSeq.h, usb/usb_halinit.c:124.
+  - `firmware.download_firmware` ports `rtl8188e_FirmwareDownload`: strip the 32-byte header,
+    `_FWDownloadEnable`, per-page (4 KB) `_BlockWrite` over EP0 control writes (75×196 B + 66×8 B
+    + 2×1 B = 143 writes to the FW SRAM window 0x1000), chksum poll, `_FWFreeToGo` (writes
+    MCUFWDL_RDY, runs `_8051Reset88E`, polls WINTINI_RDY). [SRC] rtl8188e_hal_init.c:859.
+  - FW blob `assets/rtl8188eufw.bin` = vendor `array_mp_8188e_t_fw_nic[]` (15262 B, sig 0x88E1),
+    **byte-identical to linux-firmware `rtl8188eufw.bin`** (SHA256 match). Extracted by
+    `scripts/rtl8188eus_dkms/extract_fw.py`.
+  - Verify: `scripts/rtl8188eus_dkms/verify_pcap.py` reproduces power-on (35/39/40 ops — the
+    power-ready polls iterate per-boot) + the FW download (244 ops, deterministic) byte-for-byte
+    on capture-{1,2,3}. The efuse probe read between them is a later milestone.
+
+## Potential Known Gaps (audit before trusting any milestone)
+- [ ] **EFUSE probe read** (ops 41–551): the packet-buffer indirect read + the 401× REG_FDHM0
+      autoload-timeout poll are not yet ported. Needed to recover crystal_cap / tx-power / MAC
+      before BB config. The timeout poll is capture-specific (value never changes) — port its
+      real exit bound, not a fixed count.
 
 Verified `[SRC]`/`[WIRE]` facts accumulate here as the port progresses.
