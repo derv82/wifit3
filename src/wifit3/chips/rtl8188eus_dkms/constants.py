@@ -216,6 +216,16 @@ rFPGA0_RFMOD = 0x0800        # RF mode & CCK TxSC
 bCCKEn = BIT(24)
 bOFDMEn = BIT(25)
 
+# channel tune (PHY_SwChnl8188E / PHY_SetBWMode8188E) [SRC] hal_com_reg.h, Hal8188EPhyReg.h
+REG_BWOPMODE = 0x0603
+BW_OPMODE_20MHZ = BIT(2)
+REG_RRSR_RSC = 0x0442        # REG_RRSR + 2 (read for the 40 MHz RSC; untouched at 20 MHz)
+rFPGA1_RFMOD = 0x0900        # RF mode & OFDM TxSC
+bRFMOD = 0x1                 # rFPGA0/1_RFMOD[0]
+RF_CHNL_MASK = 0xFFFFFC00    # RfRegChnlVal channel field [9:0] (keep upper bits)
+RF_BW_MASK = 0xFFFFF3FF      # RfRegChnlVal bandwidth field [11:10]
+RF_BW_20M = BIT(10) | BIT(11)  # 20 MHz
+
 # --- RF config [SRC] Hal8188EPhyReg.h, rtl8188e_rf6052.c, phy_RFWrite -----
 # Path-A BB register-definition offsets (phy_InitBBRFRegisterDefinition).
 RF_INTFS_A = 0x0870          # rFPGA0_XAB_RFInterfaceSW (RFENV control)
