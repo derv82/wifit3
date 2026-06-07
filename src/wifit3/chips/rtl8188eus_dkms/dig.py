@@ -76,6 +76,17 @@ _IGI_TARGET = 0x32            # adaptivity->igi_base
 _TH_L2H_INI = 20             # th_l2h_ini_mode2 (no ADAPTIVITY support_ability)
 _TH_EDCCA_HL_DIFF = 8         # th_edcca_hl_diff_mode2
 
+# --- NHM/CLM env-monitor (CCX, 11N) [SRC] phydm_ccx.c ---------------------
+_REG_CCX = 0x0890            # NHM enable/method[11:8], th[9:10] in [31:16], NHM(bit1)/CLM(bit0) start
+_REG_CCX_PERIOD = 0x0894     # NHM period [31:16], CLM period [15:0]
+_REG_NHM_TH0_3 = 0x0898
+_REG_NHM_TH4_7 = 0x089C
+_REG_NHM_TH8 = 0x0E28
+_REG_NHM_RDY = 0x08B4        # NHM result-ready (BIT17) / CLM ready (BIT16)
+_CCA_CAP = 14                # IGI_2_NHM_TH(igi - CCA_CAP) [SRC] phydm_ccx.h
+_NHM_PERIOD_MAX = 65534
+_CLM_PERIOD_MAX = 65535
+
 
 @dataclass
 class WatchdogState:
@@ -84,6 +95,11 @@ class WatchdogState:
     cur_ig_value: int                     # dig_t->cur_ig_value (IGI)
     cck_fa_ma: int = CCK_FA_MA_RESET       # cckpd_t->cck_fa_ma (moving average)
     cur_cck_cca_thres: int = 0            # cckpd_t->cur_cck_cca_thres (0xa0a)
+    # NHM/CLM env-monitor caches (change-gated writes); seeded to the post-InitHalDm state.
+    nhm_configured: bool = False           # 0x890[11:8] enable written once
+    nhm_period: int = 0                    # ccx->nhm_period (init 0 -> first tick writes)
+    clm_period: int = _CLM_PERIOD_MAX      # ccx->clm_period (init already 65535 -> skip)
+    nhm_igi: int = _IGI_SEED              # IGI the NHM thresholds were last computed for
 
 
 def init_state(t) -> WatchdogState:
@@ -238,14 +254,50 @@ def _adaptivity(t, state: WatchdogState) -> None:
     _set_edcca_threshold(t, th_h2l, th_l2h)
 
 
+def _nhm(t, state: WatchdogState) -> None:
+    """``phydm_env_mntr_watchdog`` (NHM + CLM, no-link) [SRC] phydm_ccx.c:1969. The NHM noise
+    thresholds track the IGI the DIG set this tick: th[0] = (igi - CCA_CAP) << 1, th[i] =
+    th[0] + 4*i. The enable/period writes are change-gated against the carried cache; the CLM
+    period is unchanged from init (65535) so it is not rewritten."""
+    igi = state.cur_ig_value
+    # phydm_nhm_get_result: stop the NHM counter (bit1=0), read result-ready.
+    bb.set_bb_reg(t, _REG_CCX, 1 << 1, 0)
+    t.read32(_REG_NHM_RDY)
+    # phydm_nhm_set: enable (once), period (once), thresholds (when IGI changed).
+    if not state.nhm_configured:
+        bb.set_bb_reg(t, _REG_CCX, 0xF00, 0x1)        # NHM enable, no include-tx/cca/divider
+        state.nhm_configured = True
+    if state.nhm_period != _NHM_PERIOD_MAX:
+        bb.set_bb_reg(t, _REG_CCX_PERIOD, 0xFFFF0000, _NHM_PERIOD_MAX)
+        state.nhm_period = _NHM_PERIOD_MAX
+    if state.nhm_igi != igi:
+        th = [((((igi - _CCA_CAP) << 1) + 4 * i) & 0xFF) for i in range(11)]
+        t.write32(_REG_NHM_TH0_3, th[0] | th[1] << 8 | th[2] << 16 | th[3] << 24)
+        t.write32(_REG_NHM_TH4_7, th[4] | th[5] << 8 | th[6] << 16 | th[7] << 24)
+        bb.set_bb_reg(t, _REG_NHM_TH8, 0xFF, th[8])
+        bb.set_bb_reg(t, _REG_CCX, 0xFFFF0000, th[9] | th[10] << 8)
+        state.nhm_igi = igi
+    # phydm_clm_get_result: stop the CLM counter (bit0=0). CLM period unchanged -> not rewritten.
+    bb.set_bb_reg(t, _REG_CCX, 1 << 0, 0)
+    if state.clm_period != _CLM_PERIOD_MAX:
+        bb.set_bb_reg(t, _REG_CCX_PERIOD, 0xFFFF, _CLM_PERIOD_MAX)
+        state.clm_period = _CLM_PERIOD_MAX
+    # phydm_nhm_trigger / phydm_clm_trigger: restart each counter (clear then set its bit).
+    bb.set_bb_reg(t, _REG_CCX, 1 << 1, 0)
+    bb.set_bb_reg(t, _REG_CCX, 1 << 1, 1)
+    bb.set_bb_reg(t, _REG_CCX, 1 << 0, 0)
+    bb.set_bb_reg(t, _REG_CCX, 1 << 0, 1)
+
+
 def watchdog_tick(t, state: WatchdogState, pt_state) -> DigTick:
-    """One no-link ``phydm_watchdog`` tick (wire order [SRC] phydm.c:1846-1878): FA
-    statistics -> DIG -> CCK-PD -> adaptivity -> halrf thermal power-track. Both ``state``
-    (DIG/CCK-PD/adaptivity) and ``pt_state`` (thermal) are carried across ticks (the driver
-    owns them; the chip stays in sync)."""
+    """One no-link ``phydm_watchdog`` tick (wire order [SRC] phydm.c:1846-1878): FA statistics
+    -> DIG -> CCK-PD -> adaptivity -> halrf thermal power-track -> NHM/CLM env-monitor. Both
+    ``state`` (DIG/CCK-PD/adaptivity/NHM) and ``pt_state`` (thermal) are carried across ticks
+    (the driver owns them; the chip stays in sync)."""
     fa = _fa_statistics(t)
     _dig(t, state, fa.cnt_all)
     _cck_pd(t, state, fa.cck_fa)
     _adaptivity(t, state)
     powertrack.thermal_tick(t, pt_state)
+    _nhm(t, state)
     return DigTick(state.cur_ig_value, fa.cnt_all, fa.ofdm_fa, fa.cck_fa)

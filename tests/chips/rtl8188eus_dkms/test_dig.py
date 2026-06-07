@@ -107,3 +107,25 @@ def test_adaptivity_drives_edcca_from_igi():
     t = RegTx({0x0C4C: 0x007F037F})               # no-link seed (0x7f/0x7f)
     dig._adaptivity(t, st)
     assert (0x0C4C, 0x001C0324) in t.w            # L2H=0x24 (byte0), H2L=0x1c (byte2)
+
+
+def test_nhm_thresholds_track_igi():
+    # NHM noise thresholds: th[0]=(igi-14)<<1, th[i]=th[0]+4i; packed little-end into
+    # 0x898 (th0-3) / 0x89c (th4-7) / 0xe28 (th8). igi=0x22 -> 0x34302c28 / 0x44403c38 / 0x48.
+    st = dig.WatchdogState(cur_ig_value=0x22, cur_cck_cca_thres=0x40, nhm_igi=0x20)
+    t = RegTx({0x0890: 0x4C480900, 0x0894: 0xFFFFFFFF, 0x0E28: 0x44})
+    dig._nhm(t, st)
+    assert (0x0898, 0x34302C28) in t.w
+    assert (0x089C, 0x44403C38) in t.w
+    assert (0x0E28, 0x48) in t.w
+    assert st.nhm_igi == 0x22                      # threshold cache tracks the new IGI
+
+
+def test_nhm_skips_unchanged_writes():
+    # IGI unchanged + period already set -> thresholds and the period write are skipped.
+    st = dig.WatchdogState(cur_ig_value=0x20, cur_cck_cca_thres=0x40, nhm_igi=0x20,
+                           nhm_configured=True, nhm_period=65534)
+    t = RegTx({0x0890: 0x504C0100, 0x0894: 0xFFFEFFFF})
+    dig._nhm(t, st)
+    assert not any(a == 0x0898 for a, _ in t.w)    # IGI unchanged -> no threshold write
+    assert not any(a == 0x0894 for a, _ in t.w)    # period already max -> no rewrite

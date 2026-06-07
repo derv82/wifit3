@@ -274,13 +274,13 @@ def run(cap: str | None = None) -> int:
     except rp.Divergence as e:
         print(f"\nFAIL DM tick:\n  {e}")
         return 1
-    if nxt is None:
-        print(f"  PASS DM tick @op{start}: {consumed} ops byte-faithful (whole tick)")
-    else:
-        nxt_s = (f"{nxt['kind']} 0x{nxt['addr']:04x}/{nxt['width']}=0x{nxt['value']:x}"
-                 if nxt["kind"] != "B" else "bulk")
-        print(f"  ~~~~ DM tick @op{start}: {consumed} ops byte-faithful; "
-              f"next un-ported op = {nxt_s}")
+    nxt_s = ("end of capture" if nxt is None
+             else f"{nxt['kind']} 0x{nxt['addr']:04x}/{nxt['width']}=0x{nxt['value']:x}"
+             if nxt["kind"] != "B" else "bulk")
+    print(f"  PASS DM callback tick @op{start}: {consumed} ops byte-faithful "
+          f"(full no-link phydm_watchdog: FA/DIG/CCK-PD/adaptivity/thermal/NHM)")
+    print(f"       post-tick wire resumes at {nxt_s} "
+          f"(channel hop / thermal-arm tick — not yet replay-verified)")
 
     print("\nPASS: power-on + efuse + firmware + MAC/BB/RF/efuse-patch/LLT + "
           "InitHalDm + tail + monitor byte-for-byte.")
