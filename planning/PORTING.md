@@ -52,6 +52,15 @@ gets dropped most — it has bitten this project more than once. It's on the wir
 the gate forced you. Same for every helper write, every switch case, both `init` **and**
 `start`.
 
+### Porting never needs hardware when you have the capture + the source
+
+The capture has every read **and** write; the source has the algorithm — so `verify_pcap.py`
+**always** asserts a driver's correctness **offline**, read-feedback calibration (IQK/LCK)
+included (the replay serves the recorded reads → a faithful algorithm reproduces the recorded
+writes; branches and loops follow the captured path like the EFUSE walker). Hardware only
+measures *benefit* (did beacons/s rise), never *correctness*. "I can't test X without hardware"
+is always wrong — wire X into the mocked transport.
+
 ### Develop in the hardware loop — agent-driven
 
 Pcap verification gates faithfulness offline, so bring-up is the **agent's** loop now, not a
