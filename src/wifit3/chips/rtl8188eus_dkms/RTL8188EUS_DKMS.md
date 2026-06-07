@@ -49,24 +49,28 @@ bimodal collapse, not just the mean.
 
 ## Status
 
-**Init ported contiguously from power-on through the InitHalDm phydm seed (M7), byte-for-byte
-on all 3 captures** (`verify_pcap.py`: power-on → efuse → MISC01 → FW → MAC → BB → RF →
-EFUSE_PATCH → LLT → MISC02 → M4a RF-chnl read → M4b BB-turn-on → M4c CAM → M5 TX-power →
-M6 MISC11-tail → M7 InitHalDm). No hardcodes (crystal_cap + tx-power from efuse). Async 2 s
-watchdog sreset filtered. 43 hardware-free tests.
+**The entire hal_init is ported and byte-for-byte on all 3 captures** (`verify_pcap.py`:
+power-on → efuse → MISC01 → FW → MAC → BB → RF → EFUSE_PATCH → LLT → MISC02 → M4a RF-chnl read
+→ M4b BB-turn-on → M4c CAM → M5 TX-power → M6 MISC11-tail → M7 InitHalDm seed → M8 hal_init
+tail (power-track arm + LCK)). No hardcodes (crystal_cap + tx-power from efuse). Async 2 s
+watchdog sreset filtered. 46 hardware-free tests. After M8 the wire hands off to airmon-ng's
+monitor + channel setup (cap1 op ~1894), which our always-monitor flow does NOT replay verbatim.
 
-**NEXT (resume here), in wire order after the InitHalDm seed (cap1 op ~1866):**
-1. **post-InitHalDm MAC tail** — REG_FWHW_TXQ_CTRL+1(0x421)=0x0F, REG_TX_RPT_TIME(0x4f0)=0x3DF0,
-   REG_EARLY_MODE_CONTROL+3(0x4d3)=0x01, REG_TXDMA_OFFSET_CHK(0x20c)|=DROP_DATA_EN, then the
-   IQK/PWtrack/LCK stage + REG_USB_HRPWM(0xfe58)=0. [WIRE cap1 1866+]
-2. **Channel tune** — `PHY_SwChnl8188E` + `PHY_SetBWMode8188E` (20 MHz). Build
-   `verify_channels.py`; the per-channel diff must handle the async DIG-burst interleave.
-3. **Monitor-mode entry** — RCR override accept-all + open RXFLTMAP0/1/2 (overwrites the STA
-   RCR 0x700060CE from MISC02). cf. `rtl8814au_dkms/monitor.py`.
-4. **RX path** — `rx.py` (RX-desc decode + `recvbuf2recvframe`, strip FCS) + `transport.bulk_in`
-   + shared `RxReaderThread`. NOT pcap-verifiable — unit-test + live beacon count.
-5. **`driver.py`** + `wlan/manager.py` registration (env `WIFIT3_RTL8188`), then the **DIG/AGC
-   2 s watchdog** (`dig.py`, the runtime adaptation the M7 seed feeds), then TX wiring.
+**NEXT (resume here) — the runtime path, after hal_init (cap1 op ~1894 = airmon takeover):**
+1. **Channel tune** — `PHY_SwChnl8188E` + `PHY_SetBWMode8188E` (20 MHz). RfRegChnlVal[0] (from
+   M4a) is the RMW base. Build `verify_channels.py` (model `rtl8814au_dkms/verify_channels.py`)
+   against the airodump hop windows; the per-channel diff must handle the async DIG-burst
+   interleave (FA counters 0xC00/0xD00, NHM, EDCCA — see the ⚠️ section).
+2. **Monitor-mode entry** — RCR override accept-all + open RXFLTMAP0/1/2 (overwrites the STA
+   RCR 0x700060CE from MISC02). Always-monitor deviation; verify out-of-line like
+   `rtl8814au_dkms/monitor.py` + `verify_pcap.verify_monitor_block`. The wire's airmon MAC-addr
+   program (0x610-0x615) + RXFLTMAP1 (0x6a2) at cap1 1894-1907 are the reference values.
+3. **RX path** — `rx.py` (RX-desc decode + `recvbuf2recvframe`, strip FCS per
+   [[project_rx_frames_include_fcs]]) + `transport.bulk_in` + shared `RxReaderThread`. NOT
+   pcap-verifiable — unit-test the decode + live beacon count.
+4. **`driver.py`** + `wlan/manager.py` registration (env `WIFIT3_RTL8188`, mainline default until
+   HW-proven). Then **HW RX scan** (`scan_hw.py`), then the **DIG/AGC 2 s watchdog** (`dig.py`,
+   the runtime adaptation the M7 seed feeds — central to the RX goal), then TX wiring.
 
 **Done since the MISC02 milestone (all pcap-verified ×3, unit-tested, committed):**
 - **M4a (RfRegChnlVal reads): complete.** `rf.read_rf_chnl_val` ports `phy_RFSerialRead` /
@@ -99,6 +103,16 @@ watchdog sreset filtered. 43 hardware-free tests.
   loop is data-dependent** (the replay serves the dbg-port reads); ported as the real algorithm
   so it reproduces all 3 boots — incl. capture-2's noisier 279-op run vs 235 on cap1/cap3. Adds
   `rf.phy_rf_serial_write` + `rf.set_rf_reg` (PHY_SetRFReg). 235/279/235 ops. [WIRE 1631–1865]
+- **M8 (hal_init tail): complete — closes hal_init.** `dm.init_hal_tail` ports the post-InitHalDm
+  block [SRC] usb_halinit.c:1597-1633: fw_ractrl-off MAC defaults (Tx-report 0x421/0x4f0,
+  early-mode 0x4d3, DROP_DATA_EN 0x20c), the IQK-stage `odm_txpowertracking_check` init pass
+  (arm RF_T_METER_NEW 0x42[17:16]=3, defers the thermal read), `_phy_lc_calibrate_8188e` (VCO
+  LCK: TXPAUSE-bracketed RF reg18 begin-bit), REG_USB_HRPWM(0xfe58)=0, xmit-ack BIT12. **IQK is
+  deferred** (only `neediqk_24g` flagged — runtime fires on first link), matching 8814au_dkms.
+  28 fixed ops; the LCK/power-track write values are **read-derived** (replay serves the RF
+  reads). `rf.set_rf_reg` merges `(orig & ~mask) | (data << shift)` with **no re-mask** of the
+  shifted data (PHY_SetRFReg8188E quirk LCK relies on to set bit15 via a 0xfff call). [WIRE
+  1866–1893]
 
 Per-milestone detail (early init):
 
