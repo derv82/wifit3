@@ -172,3 +172,16 @@ def invalidate_cam_all(t) -> None:
     """``invalidate_cam_all`` -> HW_VAR_CAM_INVALID_ALL [SRC] rtl8188e_hal_init.c:4064
     — clear every hardware security-cam entry: REG_CAMCMD = CAM_POLLING | CAM_CLR."""
     t.write32(C.REG_CAMCMD, C.CAMCMD_CLEAR_ALL)
+
+
+def init_misc11_tail(t) -> None:
+    """The hal_init MISC11 tail after TX power [SRC] usb_halinit.c:1556-1568: disable
+    BAR (REG_BAR_MODE_CTRL) and enable HW sequence numbering (REG_HWSEQ_CTRL=0xFF).
+
+    The two MISC11 helpers around these writes emit nothing on this card:
+    ``_InitAntenna_Selection`` is compiled out (CONFIG_ANTENNA_DIVERSITY off), and
+    ``PHY_SetRFEReg_8188E`` returns early because this card has no external PA/LNA
+    (efuse RFE option 0xCA[3:2] = iPA+iLNA -> ExternalPA_2G == ExternalLNA_2G == 0).
+    A board with an external PA/LNA would need PHY_SetRFEReg_8188E ported here."""
+    t.write32(C.REG_BAR_MODE_CTRL, C.BAR_MODE_CTRL_DISABLE)
+    t.write8(C.REG_HWSEQ_CTRL, 0xFF)

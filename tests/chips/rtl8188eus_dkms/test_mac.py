@@ -94,6 +94,15 @@ def test_invalidate_cam_all():
     assert t.w32 == [(0x0670, 0xC0000000)]
 
 
+def test_init_misc11_tail():
+    # cap1 op 1629-1630: disable BAR (0x4cc) then enable HW seq num (0x423=0xFF).
+    # Antenna-selection + RFE writes are no-ops on this card (no external PA/LNA).
+    t = RecTx()
+    mac.init_misc11_tail(t)
+    assert t.w32 == [(0x04CC, 0x0201FFFF)]
+    assert t.w8 == [(0x0423, 0xFF)]
+
+
 def test_tx_buffer_boundary():
     t = RecTx()
     mac.init_tx_buffer_boundary(t, bndy=0xA8)

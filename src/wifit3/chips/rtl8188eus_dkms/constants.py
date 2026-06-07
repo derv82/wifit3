@@ -70,6 +70,11 @@ REG_MAX_AGGR_NUM = 0x04CA
 REG_CAMCMD = 0x0670          # RWCAM
 CAMCMD_CLEAR_ALL = BIT(31) | BIT(30)   # CAM_POLLING | CAM_CLR = 0xC0000000
 
+# --- MISC11 tail [SRC] hal_com_reg.h, usb_halinit.c -----------------------
+REG_BAR_MODE_CTRL = 0x04CC
+BAR_MODE_CTRL_DISABLE = 0x0201FFFF   # disable BAR (suggested by Scott)
+REG_HWSEQ_CTRL = 0x0423              # HW SEQ CTRL: 0xFF = enable HW seq num for all queues
+
 # --- BB byte masks (phy_set_bb_reg) [SRC] Hal8188EPhyReg.h ----------------
 bMaskByte0 = 0x000000FF
 bMaskByte1 = 0x0000FF00

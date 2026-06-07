@@ -104,6 +104,8 @@ def _verify_main_chain(pcap, dev, params):
     miles.append(("M4c cam", t.i))
     txpower.set_tx_power(t, params.tx_power, DEFAULT_INIT_CHANNEL)
     miles.append(("M5 txpwr", t.i))
+    mac.init_misc11_tail(t)
+    miles.append(("M6 misc11", t.i))
     return miles
 
 
