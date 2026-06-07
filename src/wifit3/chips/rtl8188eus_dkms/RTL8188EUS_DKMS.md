@@ -49,24 +49,58 @@ bimodal collapse, not just the mean.
 
 ## Status
 
-**Init ported contiguously from power-on through MISC02, byte-for-byte on all 3 captures**
-(`verify_pcap.py`: power-on → efuse → MISC01 → FW → MAC → BB → RF → EFUSE_PATCH → LLT → MISC02).
-No hardcodes (crystal_cap from efuse). Async 2 s watchdog filtered. 21 hardware-free tests.
+**Init ported contiguously from power-on through the InitHalDm phydm seed (M7), byte-for-byte
+on all 3 captures** (`verify_pcap.py`: power-on → efuse → MISC01 → FW → MAC → BB → RF →
+EFUSE_PATCH → LLT → MISC02 → M4a RF-chnl read → M4b BB-turn-on → M4c CAM → M5 TX-power →
+M6 MISC11-tail → M7 InitHalDm). No hardcodes (crystal_cap + tx-power from efuse). Async 2 s
+watchdog sreset filtered. 43 hardware-free tests.
 
-**NEXT (resume here), in wire order after MISC02 (op ~2124):**
-1. **RfRegChnlVal reads** — `phy_query_rf_reg(path, RF_CHNLBW)` ×2 (RF serial *read* via HSSI
-   param 0x824/0x82c + LSSI readback). New mechanism to port (`phy_RFSerialRead`). [WIRE 2124–2134]
-2. **`_BBTurnOnBlock`** — rFPGA0_RFMOD(0x800) bCCKEn(BIT24)+bOFDMEn(BIT25). [WIRE 2135–2138]
-3. **`invalidate_cam_all`** — REG_CAMCMD(0x670)=0xC0000000. [WIRE 2139]
-4. **`PHY_SetTxPowerLevel8188E`** (MISC11) — TX-AGC writes 0xe00/0xe04/0xe08/0xe10/0x86c…; needs
-   the **efuse tx-power PG decode** (the logical map is already in `ChipParams.efuse_map`). [WIRE 2140+]
-5. MISC11 tail: `_InitAntenna_Selection`, REG_BAR_MODE_CTRL(0x4cc)=0x0201ffff, REG_HWSEQ_CTRL
-   (0x423)=0xFF, `PHY_SetRFEReg_8188E`.
-6. **`rtl8188e_InitHalDm`** — the phydm DIG/AGC **seed** (RX-critical; the DIG-watchdog seed).
-7. Channel tune (`PHY_SwChnl8188E`/`PHY_SetBWMode`), monitor-mode entry (RCR override), RX path
-   (`rx.py` + bulk-IN — not pcap-verifiable, needs HW), then DIG watchdog + TX.
+**NEXT (resume here), in wire order after the InitHalDm seed (cap1 op ~1866):**
+1. **post-InitHalDm MAC tail** — REG_FWHW_TXQ_CTRL+1(0x421)=0x0F, REG_TX_RPT_TIME(0x4f0)=0x3DF0,
+   REG_EARLY_MODE_CONTROL+3(0x4d3)=0x01, REG_TXDMA_OFFSET_CHK(0x20c)|=DROP_DATA_EN, then the
+   IQK/PWtrack/LCK stage + REG_USB_HRPWM(0xfe58)=0. [WIRE cap1 1866+]
+2. **Channel tune** — `PHY_SwChnl8188E` + `PHY_SetBWMode8188E` (20 MHz). Build
+   `verify_channels.py`; the per-channel diff must handle the async DIG-burst interleave.
+3. **Monitor-mode entry** — RCR override accept-all + open RXFLTMAP0/1/2 (overwrites the STA
+   RCR 0x700060CE from MISC02). cf. `rtl8814au_dkms/monitor.py`.
+4. **RX path** — `rx.py` (RX-desc decode + `recvbuf2recvframe`, strip FCS) + `transport.bulk_in`
+   + shared `RxReaderThread`. NOT pcap-verifiable — unit-test + live beacon count.
+5. **`driver.py`** + `wlan/manager.py` registration (env `WIFIT3_RTL8188`), then the **DIG/AGC
+   2 s watchdog** (`dig.py`, the runtime adaptation the M7 seed feeds), then TX wiring.
 
-Per-milestone detail:
+**Done since the MISC02 milestone (all pcap-verified ×3, unit-tested, committed):**
+- **M4a (RfRegChnlVal reads): complete.** `rf.read_rf_chnl_val` ports `phy_RFSerialRead` /
+  `PHY_QueryRFReg8188E` — the 3-wire LSSI *read* (stage offset into HSSI param2 0x824/0x82c,
+  read back from PI 0x8b8 / serial 0x8a0 per HSSI param1[8]). RfRegChnlVal[0] is the base the
+  channel tune RMWs. 11 ops. [WIRE cap1 1573–1583]
+- **M4b (_BBTurnOnBlock): complete.** `bb.bb_turn_on_block` — enable CCK(BIT24)+OFDM(BIT25) in
+  rFPGA0_RFMOD(0x800), 2 masked RMW. 4 ops. [WIRE 1584–1587]
+- **M4c (invalidate_cam_all): complete.** `mac.invalidate_cam_all` — REG_CAMCMD(0x670) =
+  CAM_POLLING|CAM_CLR (0xC0000000). 1 op. [WIRE 1588]
+- **M5 (PHY_SetTxPowerLevel8188E + efuse PG decode): complete.** `txpower.set_tx_power` ports
+  `phy_set_tx_power_level_by_path(RF_PATH_A)` over the CCK/OFDM/HT-MCS0-7 sections (1T1R/2.4G),
+  each rate a masked byte RMW of the packed txagc regs. Index = clamp(base + extra_bias, 0,
+  0x3F): this build is TXPWR_BY_RATE_EN=0 + TXPWR_LIMIT_EN=0 so by_rate/limit are dead code and
+  tpt=0; only the −9 MGN_2M bias survives. base from the efuse PG block (`efuse._parse_tx_power`
+  → `TxPwr2G` in `ChipParams`: 6 CCK + 5 BW40 base groups + signed-nibble 1TX diffs). Init
+  channel = 6 (`current_channel` default). 40 ops. [WIRE 1589–1628]
+- **M6 (MISC11 tail): complete.** `mac.init_misc11_tail` — REG_BAR_MODE_CTRL(0x4cc)=0x0201ffff +
+  REG_HWSEQ_CTRL(0x423)=0xFF. `_InitAntenna_Selection` (CONFIG_ANTENNA_DIVERSITY off) and
+  `PHY_SetRFEReg_8188E` (efuse RFE option 0xCA[3:2]=iPA+iLNA on all 3 boots → no external
+  PA/LNA) are no-ops on this card. 2 ops. [WIRE 1629–1630]
+- **M7 (rtl8188e_InitHalDm phydm seed): complete — the RX-critical seed.** `dm.init_hal_dm` ports
+  `dm_InitGPIOSetting` + `rtw_phydm_init`→`odm_dm_init`'s register-touching sub-inits: GPIO, the
+  DIG IGI read (0xc50→0x20), the IGI-derived NHM env-monitor thresholds (th[0]=(IGI−14)<<1,
+  th[i]=th[0]+4i on 0x898/0x89c/0xe28/0x890, CLM period 0x894), adaptivity MAC-EDCCA (0x520),
+  and **`phydm_search_pwdb_lower_bound`** — the EDCCA pwdb search: `phydm_set_lna(disable)` (RF
+  gain commit) → step the EDCCA L2H/H2L threshold (0xc4c) while counting EDCCA assertions on the
+  BB debug port (0x908 select=0x208 / 0xdf4 value, BIT30) 20×/step, `while(is_adjust)` until the
+  band reads clear or L2H hits 10 → `phydm_set_lna(enable)` + reset threshold to 0x7f/0x7f. **The
+  loop is data-dependent** (the replay serves the dbg-port reads); ported as the real algorithm
+  so it reproduces all 3 boots — incl. capture-2's noisier 279-op run vs 235 on cap1/cap3. Adds
+  `rf.phy_rf_serial_write` + `rf.set_rf_reg` (PHY_SetRFReg). 235/279/235 ops. [WIRE 1631–1865]
+
+Per-milestone detail (early init):
 
 - **M1 (power-on + firmware upload + FW-ready ACK): complete — pcap-verified on all 3 boots.**
   - `pwrseq.power_on` ports `_InitPowerOn_8188EU` = `Rtl8188E_NIC_PWR_ON_FLOW`
@@ -184,9 +218,10 @@ cut=ODM_CUT_A(0), platform=ODM_CE(0x04), interface=ODM_ITRF_USB(0x02), package=0
       freezes at the seed → deaf/saturating, the exact 2.4 GHz weakness we re-port to fix).
       Status: `verify_pcap` strips only the per-tick sreset read (`R REG_SYS_CFG/4`); the full
       DIG burst (FA counters 0xC00/0xD00, CCK reset 0xA2C, NHM 0xF84–0xF94, EDCCA 0x8C4) is
-      NOT yet reproduced. Plan: (a) port the seed via **InitHalDm** (`rtw_phydm_init`, on the
-      wire — upcoming milestone); (b) port the periodic tick as `dig.py` (`phydm_dig` no-link
-      path: read FA → step IGI → clamp → reset), driven by a 2 s task like the 8814_dkms.
+      NOT yet reproduced. Plan: (a) port the seed via **InitHalDm** — **DONE (M7)**:
+      `dm.init_hal_dm` seeds DIG/NHM/EDCCA incl. the EDCCA pwdb search; (b) port the periodic
+      tick as `dig.py` (`phydm_dig` no-link path: read FA → step IGI → clamp → reset), driven
+      by a 2 s task like the 8814_dkms — still TODO.
       **Note:** the watchdog *startup* emits no USB ops (it's a kernel `_set_timer` arming) —
       nothing was skipped on the wire; the wire only shows it firing. Porting it precisely also
       lets the per-channel-tune differ filter the DIG burst cleanly (see the ⚠️ section below).
