@@ -29,9 +29,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
-sys.path.insert(0, str(Path(__file__).parent))   # verify_pcap (op extractor + replay)
+sys.path.insert(0, str(REPO / "scripts"))   # rtw88_pcap_replay (op extractor + replay)
 
-import verify_pcap as vp  # noqa: E402
+import rtw88_pcap_replay as rp  # noqa: E402
 from wifit3.chips.rtl8812au_dkms import chan, efuse, txpower  # noqa: E402
 
 REG_CCK_CHECK = 0x0454
@@ -81,10 +81,10 @@ def verify(cap_name: str) -> int:
     time.sleep = lambda *a, **k: None        # replay needs no real settle delays
     pcap = CAP_DIR / f"{cap_name}.pcap"
     iw_log = CAP_DIR / f"{cap_name}_logs" / "iw.log"
-    dev = vp.find_card_device(pcap)
-    all_ops = vp.extract_ops(pcap, dev)
+    dev = rp.find_card_device(pcap)
+    all_ops = rp.extract_ops(pcap, dev)
     # EFUSE params from the bring-up prefix: per-band bb_swing + rfe_type + per-rate TX power.
-    p = efuse.read_chip_params(vp.ReplayTransport(all_ops))
+    p = efuse.read_chip_params(rp.ReplayTransport(all_ops))
     nums, eps = _frame_epochs(pcap)
     cmds = _parse_iw_channels(iw_log)
     print(f"{cap_name}: card=dev{dev}, {len(cmds)} channel-set commands; rfe_type={p.rfe_type} "
@@ -115,7 +115,7 @@ def verify(cap_name: str) -> int:
         if tag:
             crossings_seen += 1
 
-        t = vp.ReplayTransport(win)
+        t = rp.ReplayTransport(win)
         try:
             chan.set_channel_bw(t, ch, bb_swing_2g_a=p.bb_swing_2g[0],
                                 bb_swing_2g_b=p.bb_swing_2g[1], bb_swing_5g_a=p.bb_swing_5g[0],
@@ -124,7 +124,7 @@ def verify(cap_name: str) -> int:
                 txpower.set_tx_power(t, ch, p.tx_power_2g)
             else:
                 txpower.set_tx_power_5g(t, ch, p.tx_power_5g)
-        except vp.Divergence as d:
+        except rp.Divergence as d:
             print(f"  ch {ch:>3}: FAIL -- {d}{tag}")
             nfail += 1
             continue

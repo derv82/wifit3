@@ -49,6 +49,47 @@ def find_card_device(pcap: Path) -> int:
     return int(counts.most_common(1)[0][0])
 
 
+_TT = {"0x00": "iso", "0x01": "interrupt", "0x02": "control", "0x03": "bulk"}
+
+
+def audit_coverage(pcap: Path, dev: int) -> bool:
+    """Confront the COMPLETE card traffic so the replay can never be silently blind to an
+    endpoint or transfer-type. Driver-constructed bytes (vendor control + bulk-OUT) are what
+    we reproduce and verify; chip->host data (bulk-IN RX, interrupt-IN) is input we ignore.
+    Any *other* channel the card uses would make a 100% PASS a lie -- this prints the full
+    breakdown and returns False on any such blind spot."""
+    out = subprocess.run(
+        ["tshark", "-r", str(pcap), "-Y", f"usb.device_address=={dev}",
+         "-T", "fields", "-e", "usb.transfer_type", "-e", "usb.endpoint_address"],
+        capture_output=True, text=True, check=True).stdout
+    seen: Counter = Counter()
+    for line in out.splitlines():
+        c = line.split("\t")
+        ttype = c[0] if c else ""
+        ep = c[1] if len(c) > 1 else ""
+        if ttype:
+            seen[(ttype, ep)] += 1
+    print(f"  coverage audit (dev{dev}), packets incl. completions:")
+    ok = True
+    for (ttype, ep), n in sorted(seen.items()):
+        name = _TT.get(ttype, f"type{ttype}")
+        is_in = bool(ep) and (int(ep, 16) & 0x80)
+        if ttype == "0x02":
+            tag = "REPRODUCE  (control: vendor regs/FW; std enumeration is OS-level)"
+        elif ttype == "0x03" and not is_in:
+            tag = "REPRODUCE  (bulk-OUT: FW/TX)"
+        elif ttype == "0x03" and is_in:
+            tag = "input only (bulk-IN RX, chip->host)"
+        else:
+            tag = f"** BLIND SPOT: {name} {'IN' if is_in else 'OUT'} -- driver may use this **"
+            ok = False
+        print(f"     {name:9} ep {ep or '--':>4}  {n:>7}  {tag}")
+    if not ok:
+        print("  !! the card uses a channel the replay does NOT reproduce -- investigate "
+              "before trusting any PASS")
+    return ok
+
+
 def frame_epochs(pcap: Path):
     """(frame_numbers, epochs) across the whole pcap, monotonic — for the
     epoch->frame bisect that per-channel slicing keys off iw.log timestamps."""
@@ -68,9 +109,9 @@ def frame_epochs(pcap: Path):
     return nums, eps
 
 
-def extract_ops(pcap: Path, dev: int, window, start_addr=None):
+def extract_ops(pcap: Path, dev: int, window=None, start_addr=None):
     """Ordered list of {'kind','addr','width','value'|'data','frame'} ops within
-    ``window`` (an inclusive (first_frame, last_frame) range).
+    ``window`` (an inclusive (first_frame, last_frame) range; None = the whole capture).
 
     The synchronous driver issues one transfer at a time, so submit ('S') and its
     completion ('C') are adjacent rows (the urb_id is reused, so it can't pair
@@ -90,12 +131,13 @@ def extract_ops(pcap: Path, dev: int, window, start_addr=None):
         "usb.bmRequestType", "usb.setup.wValue", "usb.setup.wLength",
         "usb.data_fragment", "usb.capdata", "usb.control.Response",
     ]
-    cmd = ["tshark", "-r", str(pcap),
-           "-Y", (f"usb.device_address=={dev} && frame.number>={window[0]} "
-                  f"&& frame.number<={window[1]} && "
-                  "(usb.transfer_type==0x02 || "
-                  "(usb.transfer_type==0x03 && usb.endpoint_address.direction==0))"),
-           "-T", "fields"]
+    base = ("(usb.transfer_type==0x02 || "
+            "(usb.transfer_type==0x03 && usb.endpoint_address.direction==0))")
+    flt = f"usb.device_address=={dev} && {base}"
+    if window is not None:
+        flt = (f"usb.device_address=={dev} && frame.number>={window[0]} "
+               f"&& frame.number<={window[1]} && {base}")
+    cmd = ["tshark", "-r", str(pcap), "-Y", flt, "-T", "fields"]
     for f in fields:
         cmd += ["-e", f]
     out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout

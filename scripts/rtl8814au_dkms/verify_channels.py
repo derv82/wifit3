@@ -32,8 +32,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
-sys.path.insert(0, str(Path(__file__).parent))   # verify_pcap (op extractor + replay)
+sys.path.insert(0, str(REPO / "scripts"))          # rtw88_pcap_replay (op extractor + replay)
+sys.path.insert(0, str(Path(__file__).parent))     # verify_pcap (per-chip config + helpers)
 
+import rtw88_pcap_replay as rp  # noqa: E402
 import verify_pcap as vp  # noqa: E402
 from wifit3.chips.rtl8814au_dkms import chan  # noqa: E402
 from wifit3.chips.rtl8814au_dkms import constants as C  # noqa: E402
@@ -92,9 +94,8 @@ def verify(cap_name: str) -> int:
             continue
         e = min(e, len(nums) - 1)
 
-        vp.WINDOW = (nums[s], nums[e])
-        ops = vp.extract_ops(pcap, dev, trim_to_start=False)
-        t = vp.ReplayTransport(ops)
+        ops = rp.extract_ops(pcap, dev, (nums[s], nums[e]))
+        t = rp.ReplayTransport(ops)
 
         # Each tune begins at phy_SwBand's band-detect read of REG_CCK_CHECK (0x454). When
         # airodump's periodic register polls land at the epoch->frame boundary, the window
@@ -110,7 +111,7 @@ def verify(cap_name: str) -> int:
         try:
             chan.set_channel_bw(t, ch, params.tx_power, params.tx_power_5g,
                                 params.bb_swing, params.bb_swing_5g)
-        except vp.Divergence as d:
+        except rp.Divergence as d:
             print(f"  ch {ch:>3}: FAIL — {d}")
             nfail += 1
             continue

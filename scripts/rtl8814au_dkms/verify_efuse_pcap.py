@@ -17,8 +17,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
-sys.path.insert(0, str(REPO / "scripts" / "rtl8814au_dkms"))
+sys.path.insert(0, str(REPO / "scripts"))                       # rtw88_pcap_replay (codec)
+sys.path.insert(0, str(REPO / "scripts" / "rtl8814au_dkms"))    # verify_pcap (DEV_ADDR)
 
+import rtw88_pcap_replay as rp  # noqa: E402
 import verify_pcap as vp  # noqa: E402
 
 from wifit3.chips.rtl8814au_dkms import efuse  # noqa: E402
@@ -33,21 +35,18 @@ def main() -> int:
     name = Path(sys.argv[1] if len(sys.argv) > 1 else "capture-1").stem
     pcap = CAP_DIR / f"{name}.pcap"
 
-    # The efuse read is the first vendor-register traffic in the capture; trim to
-    # the chip-version read (REG_SYS_CFG1). The window end is generous — the port
-    # stops at EFUSE access-off, so later ops are simply left unconsumed.
-    vp.WINDOW = (1, 7000)
-    vp.START_ADDR = 0x00F0
-
+    # The efuse read is the first vendor-register traffic in the capture; trim to the
+    # chip-version read (REG_SYS_CFG1, 0xF0). The window end is generous — the port stops at
+    # EFUSE access-off, so later ops are simply left unconsumed.
     print(f"Extracting EFUSE op stream from {pcap.name} (dev {vp.DEV_ADDR[name]})...")
-    ops = vp.extract_ops(pcap, vp.DEV_ADDR[name])
+    ops = rp.extract_ops(pcap, vp.DEV_ADDR[name], (1, 7000), start_addr=0x00F0)
     print(f"  {len(ops)} ops in the probe/efuse window")
 
     time.sleep = lambda *a, **k: None
-    t = vp.ReplayTransport(ops)
+    t = rp.ReplayTransport(ops)
     try:
         params = efuse.read_chip_params(t)
-    except vp.Divergence as e:
+    except rp.Divergence as e:
         print(f"\nFAIL (divergence): {e}")
         return 1
 
