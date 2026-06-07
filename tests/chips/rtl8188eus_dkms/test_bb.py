@@ -46,3 +46,25 @@ def test_bb_prologue_and_tables():
     assert t.w32[0] == (0x0800, 0x80040000)
     assert len(t.w32) == 323        # PHY_REG + AGC_TAB taken rows + crystal cap
     assert t.w32[-1][0] == REG_AFE_XTAL_CTRL   # crystal cap is the last BB write
+
+
+class RegTx:
+    """Stateful fake: write32 updates the register so a later RMW reads it back."""
+    def __init__(self, init):
+        self.regs = dict(init)
+        self.w32 = []
+
+    def read32(self, a):
+        return self.regs.get(a, 0)
+
+    def write32(self, a, v):
+        v &= 0xFFFFFFFF
+        self.regs[a] = v
+        self.w32.append((a, v))
+
+
+def test_bb_turn_on_block():
+    # cap1 op 1584-1587: enable CCK (BIT24) then OFDM (BIT25) in 0x800, each a RMW.
+    t = RegTx({0x0800: 0x80040000})
+    bb.bb_turn_on_block(t)
+    assert t.w32 == [(0x0800, 0x81040000), (0x0800, 0x83040000)]

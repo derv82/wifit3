@@ -15,12 +15,15 @@ from . import phy_cond
 from .bb_agc_tab_tbl import AGC_TAB
 from .bb_phy_reg_tbl import PHY_REG
 from .constants import (
+    bCCKEn,
+    bOFDMEn,
     BB_DELAY_ADDRS,
     DEFAULT_CRYSTAL_CAP,
     FEN_BB_USB,
     REG_AFE_XTAL_CTRL,
     REG_RF_CTRL,
     REG_SYS_FUNC_EN,
+    rFPGA0_RFMOD,
     RF_CTRL_INIT,
     SYS_FUNC_BB_ENABLE,
     XTAL_CAP_MASK,
@@ -71,3 +74,10 @@ def set_crystal_cap(t, crystal_cap: int) -> None:
     """``hal_set_crystal_cap`` (8188E): 0x24[22:11] = cap | (cap<<6). [SRC] hal_com.c."""
     cap = crystal_cap & 0x3F
     set_bb_reg(t, REG_AFE_XTAL_CTRL, XTAL_CAP_MASK, cap | (cap << 6))
+
+
+def bb_turn_on_block(t) -> None:
+    """``_BBTurnOnBlock`` [SRC] usb_halinit.c:1039 — enable the CCK and OFDM blocks
+    in rFPGA0_RFMOD (0x800), each a separate masked RMW."""
+    set_bb_reg(t, rFPGA0_RFMOD, bCCKEn, 0x1)
+    set_bb_reg(t, rFPGA0_RFMOD, bOFDMEn, 0x1)

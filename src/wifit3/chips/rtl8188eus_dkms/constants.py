@@ -182,6 +182,10 @@ XTAL_CAP_MASK = 0x007FF800   # REG_AFE_XTAL_CTRL[22:11] = cap | cap<<6
 DEFAULT_CRYSTAL_CAP = 0x20   # EEPROM_Default_CrystalCap (efuse 0xB9 on this card)
 # PHY_REG delay pseudo-addresses (settling, no register write)
 BB_DELAY_ADDRS = range(0xF9, 0xFF)
+# BB turn-on block (_BBTurnOnBlock) [SRC] Hal8188EPhyReg.h
+rFPGA0_RFMOD = 0x0800        # RF mode & CCK TxSC
+bCCKEn = BIT(24)
+bOFDMEn = BIT(25)
 
 # --- RF config [SRC] Hal8188EPhyReg.h, rtl8188e_rf6052.c, phy_RFWrite -----
 # Path-A BB register-definition offsets (phy_InitBBRFRegisterDefinition).

@@ -95,6 +95,8 @@ def _verify_main_chain(pcap, dev, params):
     miles.append(("M3 misc02", t.i))
     rf.read_rf_chnl_val(t)
     miles.append(("M4a rfchnl", t.i))
+    bb.bb_turn_on_block(t)
+    miles.append(("M4b bbturn", t.i))
     return miles
 
 
