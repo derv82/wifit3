@@ -123,9 +123,11 @@ def phy_rf_serial_write(t, path: int, addr: int, data: int) -> None:
 
 def set_rf_reg(t, path: int, addr: int, mask: int, data: int) -> None:
     """``PHY_SetRFReg8188E`` [SRC] rtl8188e_phycfg.c:688 — masked RF write. A partial
-    mask first serial-reads the register and merges; a full-width mask writes directly."""
+    mask first serial-reads the register and merges. The merge is ``(orig & ~mask) |
+    (data << shift)`` with **no re-mask of the shifted data** (vendor quirk) — callers
+    rely on it to set bits outside the mask (e.g. LCK drives bit15 via a 0xfff call)."""
     if mask != RFREGOFFSETMASK:
         orig = _phy_rf_serial_read(t, path, addr)
         shift = (mask & -mask).bit_length() - 1
-        data = (orig & ~mask) | ((data << shift) & mask)
+        data = (orig & ~mask) | (data << shift)
     phy_rf_serial_write(t, path, addr, data)

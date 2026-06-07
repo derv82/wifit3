@@ -82,6 +82,66 @@ def test_search_terminates_on_clear_band():
     assert (0x0840, (0x32 << 20) | 0x77F82) in t.w32
 
 
+class RfTx:
+    """Fake serving the RF serial-read path: 0x820[8]=1 (PI), 0x8b8 from a per-addr
+    readback map keyed by the offset last staged into 0x824."""
+    def __init__(self, rf_regs):
+        self.rf = dict(rf_regs)      # RF offset -> 20-bit value
+        self._staged = None
+        self.w32, self.w8, self.w16 = [], [], []
+
+    def read8(self, a):
+        return 0x00                  # 0xd03 cont-TX bits clear
+
+    def read16(self, a):
+        return 0x0000
+
+    def read32(self, a):
+        if a == 0x0820:
+            return 0x01000100        # RfPiEnable
+        if a == 0x08B8:              # PI readback of the staged RF offset
+            return self.rf.get(self._staged, 0) & 0xFFFFF
+        return 0x00000000
+
+    def write8(self, a, v):
+        self.w8.append((a, v & 0xFF))
+
+    def write16(self, a, v):
+        self.w16.append((a, v & 0xFFFF))
+
+    def write32(self, a, v):
+        v &= 0xFFFFFFFF
+        if a == 0x0824:              # offset staged for the LSSI read = bits[30:23]
+            self._staged = (v >> 23) & 0xFF
+        if a == 0x0840:              # LSSI write: addr bits[27:20], data bits[19:0]
+            self.rf[(v >> 20) & 0xFF] = v & 0xFFFFF
+        self.w32.append((a, v))
+
+
+def test_txpwrtrack_arm_rf_t_meter():
+    # arm thermal meter: RF 0x42[17:16]=3. RF 0x42 starts 0x064c8 -> 0x364c8.
+    t = RfTx({0x42: 0x064C8})
+    dm._txpwrtrack_arm(t)
+    assert (0x0840, (0x42 << 20) | 0x364C8) in t.w32
+
+
+def test_lc_calibrate_sets_begin_bit():
+    # LCK: block queues, read RF 0x18=0x07407, set bit15 -> 0x0f407 (via 0xfff no-remask).
+    t = RfTx({0x18: 0x07407})
+    dm._lc_calibrate(t)
+    assert t.w8[0] == (0x0522, 0xFF) and t.w8[-1] == (0x0522, 0x00)   # TXPAUSE bracket
+    assert (0x0840, (0x18 << 20) | 0x0F407) in t.w32
+
+
+def test_init_hal_tail_mac_writes():
+    t = RfTx({0x18: 0x07407, 0x42: 0x064C8})
+    dm.init_hal_tail(t)
+    assert (0x0421, 0x0F) in t.w8 and (0x04D3, 0x01) in t.w8 and (0xFE58, 0x00) in t.w8
+    assert (0x04F0, 0x3DF0) in t.w16
+    assert (0x020C, 0x200) in t.w16                 # DROP_DATA_EN (read 0 -> BIT9)
+    assert (0x0420, 0x1000) in t.w32                # xmit-ack BIT12 (read 0)
+
+
 def test_search_steps_threshold_while_edcca_busy():
     # Return BIT30 (EDCCA asserted) for the first 2 outer iterations, then clear.
     state = {"outer": -1}

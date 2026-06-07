@@ -169,3 +169,44 @@ def _post_seed_reads(t) -> None:
     t.read8(0x0A22)
     t.read32(0x0C24)
     t.read32(0x0C84)
+
+
+def init_hal_tail(t) -> None:
+    """The hal_init tail after ``rtl8188e_InitHalDm`` [SRC] usb_halinit.c:1597-1633:
+    the fw_ractrl-off MAC defaults, the IQK-stage power-tracking arm + LC calibration,
+    then the USB HRPWM clear and the xmit-ack enable. This card runs fw_ractrl=False
+    (the wire emits the Tx-report writes) and **defers IQK** — only neediqk_24g is
+    flagged; the runtime IQK fires on the first link. 28 ops; the LCK/power-track write
+    values are read-derived (the replay serves the RF reads). [WIRE] cap1 1866-1893."""
+    # if (!fw_ractrl): enable Tx report + the tynli test Tx-report time.
+    t.write8(0x0421, 0x0F)             # REG_FWHW_TXQ_CTRL+1
+    t.write16(0x04F0, 0x3DF0)          # REG_TX_RPT_TIME
+    t.write8(0x04D3, 0x01)             # REG_EARLY_MODE_CONTROL+3 (Pretx_en, WEP/TKIP)
+    v = t.read16(0x020C)
+    t.write16(0x020C, v | (1 << 9))    # REG_TXDMA_OFFSET_CHK |= DROP_DATA_EN
+    _txpwrtrack_arm(t)
+    _lc_calibrate(t)
+    t.write8(0xFE58, 0x00)             # REG_USB_HRPWM
+    v = t.read32(0x0420)
+    t.write32(0x0420, v | (1 << 12))   # REG_FWHW_TXQ_CTRL |= BIT12 (xmit-ack)
+
+
+def _txpwrtrack_arm(t) -> None:
+    """``odm_txpowertracking_check_ce`` init pass [SRC] halrf_powertracking_ce.c:694 —
+    arm the thermal meter (RF_T_METER_NEW 0x42[17:16] = 0x3) and return; the thermal
+    read-back happens on a later watchdog pass, not at init."""
+    rf.set_rf_reg(t, 0, 0x42, (1 << 17) | (1 << 16), 0x03)
+
+
+def _lc_calibrate(t) -> None:
+    """``_phy_lc_calibrate_8188e(is2T=False)`` [SRC] halrf_8188e_ce.c:1308 — LC-tank
+    (VCO) calibration, packet-TX path (the only path at init: cont-TX bits 0xd03[6:4]
+    are 0). Block all queues, read RF reg18, set the LCK-begin bit (bit15, driven
+    through the 0xfff mask via PHY_SetRFReg's no-remask), restore the queues."""
+    cont = t.read8(0x0D03)
+    if cont & 0x70:                    # continuous-TX path — not reached at init
+        raise RuntimeError("RTL8188EUS LCK: unexpected continuous TX at init")
+    t.write8(0x0522, 0xFF)             # REG_TXPAUSE: block all queues
+    lc_cal = rf.phy_query_rf_reg(t, 0, 0x18, 0xFFF)    # RF_CHNLBW, MASK12BITS
+    rf.set_rf_reg(t, 0, 0x18, 0xFFF, lc_cal | 0x08000)  # LCK begin (bit15)
+    t.write8(0x0522, 0x00)             # resume queues

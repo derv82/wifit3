@@ -108,6 +108,8 @@ def _verify_main_chain(pcap, dev, params):
     miles.append(("M6 misc11", t.i))
     dm.init_hal_dm(t)
     miles.append(("M7 inithaldm", t.i))
+    dm.init_hal_tail(t)
+    miles.append(("M8 haltail", t.i))
     return miles
 
 
