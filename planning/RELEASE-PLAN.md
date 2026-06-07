@@ -183,6 +183,36 @@ diffed to ship; an honest **B** is the baseline, not a debt.
 - [ ] (Optional, post-release) extend the byte-diff verifier to one older port at a
   time to lift B→A/S — driven by curiosity, not the release.
 
+### 2h. Brick-risk disclaimer ⚠️ (userland USB can damage hardware)
+
+**Release blocker — must be visible before the repo goes public.** Userland USB (PyUSB/libusb)
+writes a card's registers + firmware-download path with **no kernel driver between us and the
+silicon**. A wrong register write, a malformed firmware page, or a power-sequence misstep can
+leave a device unresponsive (a "brick") or in an illegal RF/regulatory state. Two amplifiers
+make this a **hard, prominent** disclaimer, not a soft one:
+
+- **AI-assisted self-porting.** The porting playbook leans on AI agents, which are
+  **non-deterministic** — an agent can emit a register sequence that bricks a card. The pcap
+  verifier catches *unfaithful* sequences, not every *dangerous* one (a faithful-looking port
+  can still misbehave on a colder boot).
+- **Community PRs.** A well-meaning but wrong PR can ship a bricking sequence; review can't
+  catch every hardware-specific footgun.
+
+Required before public:
+- [ ] **Top-level hardware-risk disclaimer** in `README.md` (reinforced by the LICENSE): plain
+  language — "This software talks to USB Wi-Fi hardware at the register level. It can damage or
+  permanently disable ('brick') a device. Use entirely at your own risk; the authors and
+  contributors accept no liability for hardware damage." GPLv2 §15–16 (NO WARRANTY) is the legal
+  backstop (see 2b); this is the human-readable, hardware-specific layer on top.
+- [ ] **Porting-safety warning** in `PORTING.md` / `CONTRIBUTING.md`: porting your own card
+  (especially with an AI agent) is at your own risk; test on hardware you can afford to lose;
+  the brick risk peaks during firmware-download, EFUSE/EEPROM, and power-sequence work.
+- [ ] **No-fuse-burn invariant, stated + reviewed:** wifit3 only ever writes RAM/registers and
+  replays the vendor's *download* path — it does **not** program EFUSE/EEPROM fuses (one-time,
+  irreversible). Make it a documented invariant so a PR adding a fuse-write is an obvious red
+  flag. (Ties to the Blank-EEPROM override below — soft RAM override only, never burn.)
+- [ ] (Optional, post-alpha) a first-run acknowledgment for the dev/porting tools.
+
 ---
 
 ## Phase 3 — Pre-alpha polish (time permitting)
