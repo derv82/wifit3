@@ -25,6 +25,7 @@ from .constants import (
     DISABLE_TRXPKT_BUF_ACCESS,
     EEPROM_MAC_ADDR_88EU,
     EEPROM_XTAL_88E,
+    EFUSE_ACCESS_OFF,
     EFUSE_MAP_LEN_88E,
     EFUSE_MAX_SECTION_88E,
     EFUSE_MAX_WORD_UNIT,
@@ -34,6 +35,7 @@ from .constants import (
     REG_PKTBUF_DBG_ADDR,
     REG_PKTBUF_DBG_DATA_H,
     REG_PKTBUF_DBG_DATA_L,
+    REG_EFUSE_ACCESS,
     REG_SYS_CFG,
     REG_TDECTRL,
     REG_TXPKTBUF_DBG,
@@ -207,6 +209,8 @@ def read_chip_params(t, bcnhead: int = 0) -> ChipParams:
     iol_execute(t, CMD_READ_EFUSE_MAP)
     phymap = _read_phymap_from_txpktbuf(t, bcnhead)
     iol_mode_enable(t, False)
+    # hal_EfusePowerSwitch(OFF) tail: disable efuse access (bWrite=FALSE -> just 0xCF).
+    t.write8(REG_EFUSE_ACCESS, EFUSE_ACCESS_OFF)
 
     logical = _phymap_to_logical(phymap)
     cap = logical[EEPROM_XTAL_88E]

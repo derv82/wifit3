@@ -66,6 +66,20 @@ REG_HMETFR = 0x01CC          # H2C trigger, written by InitializeFirmwareVars
 # --- MAC config [SRC] hal_com_reg.h, Hal8188EPhyCfg.h --------------------
 REG_MAX_AGGR_NUM = 0x04CA
 
+# --- MISC01 queue/page setup [SRC] hal_com_reg.h, usb_halinit.c -----------
+REG_RQPN = 0x0200
+REG_RQPN_NPQ = 0x0214
+REG_TRXDMA_CTRL = 0x010C
+REG_PBP = 0x0104
+REG_EFUSE_ACCESS = 0x00CF
+EFUSE_ACCESS_OFF = 0x00
+# This card has ONE bulk-OUT endpoint (the coverage audit shows only EP 0x02 OUT),
+# so OutEpNumber=1: all TX pages are public and every queue maps to the single EP.
+RQPN_VALUE = 0x80A70000          # _PUBQ(0xA7=TX_TOTAL_PAGE) | LD_RQPN; NPQ/HPQ/LPQ=0
+TRXDMA_QUEUE_MAP_1EP = 0xFAF0    # all six queue maps -> the single (high) EP
+RXFF_BOUNDARY = 0x25FF           # MAX_RX_DMA_BUFFER_SIZE_88E - 1
+PBP_PAGE_SIZE = 0x11             # _PSRX(PBP_128) | _PSTX(PBP_128) (Tx/Rx 128 B)
+
 # --- TX-buffer boundary + LLT init [SRC] hal_com_reg.h, rtl8188e_hal.h ----
 REG_BCNQ_BDNY = 0x0424
 REG_MGQ_BDNY = 0x0425

@@ -11,13 +11,21 @@ from .constants import (
     _LLT_NO_ACTIVE,
     _LLT_WRITE_ACCESS,
     LAST_ENTRY_OF_TX_PKT_BUFFER,
+    PBP_PAGE_SIZE,
     REG_BCNQ_BDNY,
     REG_LLT_INIT,
     REG_MAX_AGGR_NUM,
     REG_MGQ_BDNY,
+    REG_PBP,
+    REG_RQPN,
+    REG_RQPN_NPQ,
     REG_TDECTRL,
+    REG_TRXDMA_CTRL,
     REG_TRXFF_BNDY,
     REG_WMAC_LBK_BF_HD,
+    RQPN_VALUE,
+    RXFF_BOUNDARY,
+    TRXDMA_QUEUE_MAP_1EP,
     TX_PAGE_BOUNDARY,
 )
 from .mac_reg_tbl import MAC_REG
@@ -32,6 +40,22 @@ def phy_mac_config(t) -> None:
     phy_cond.walk_table(MAC_REG, lambda addr, val: t.write8(addr, val & 0xFF))
     val = (MAX_AGGR_NUM << 8) | MAX_AGGR_NUM
     t.write16(REG_MAX_AGGR_NUM, val)
+
+
+def init_misc01(t) -> None:
+    """MISC01 queue/page setup [SRC] usb_halinit.c (the hal_init block before FW):
+    _InitQueueReservedPage + _InitQueuePriority + _InitPageBoundary +
+    _InitTransferPageSize. Resolved for this card's single bulk-OUT EP."""
+    # _InitQueueReservedPage: NPQ first, then RQPN (all pages public, 1-EP).
+    t.write8(REG_RQPN_NPQ, 0x00)
+    t.write32(REG_RQPN, RQPN_VALUE)
+    # _InitQueuePriority: read low 3 bits, OR the 1-EP queue map.
+    v = t.read16(REG_TRXDMA_CTRL)
+    t.write16(REG_TRXDMA_CTRL, (v & 0x7) | TRXDMA_QUEUE_MAP_1EP)
+    # _InitPageBoundary: RX FF boundary.
+    t.write16(REG_TRXFF_BNDY + 2, RXFF_BOUNDARY)
+    # _InitTransferPageSize: Tx/Rx page size = 128.
+    t.write8(REG_PBP, PBP_PAGE_SIZE)
 
 
 def init_tx_buffer_boundary(t, bndy: int = TX_PAGE_BOUNDARY) -> None:

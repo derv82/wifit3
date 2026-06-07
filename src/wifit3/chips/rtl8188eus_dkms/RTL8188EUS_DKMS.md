@@ -140,11 +140,16 @@ cut=ODM_CUT_A(0), platform=ODM_CE(0x04), interface=ODM_ITRF_USB(0x02), package=0
       Decodes **crystal_cap=0x20** (offset 0xB9 — now fed to M2b, **no more hardcode**) and the
       6-byte MAC (offset 0xD7). 504 ops/boot. Verified byte-for-byte on all 3 boots; tx-power
       (PG block) decode lands with the TX-power milestone.
-- [ ] **[0..5] chip-version prologue** (read_chip_version 0xf0/4 + 0x0a/0xcf/0x02/0x08 setup):
-      ahead of the 0x06 power-seq start; not yet ported (the pre-FW window starts at 0x06).
-- [ ] **MISC01 queue/page setup** (ops 545–551, `_InitRFType` + RQPN/boundary): between the
-      efuse read and FW download; not yet ported (small gap between the pre-FW window's end and
-      the main chain's 0x80 start).
+- [x] **MISC01 queue/page setup — DONE.** `mac.init_misc01` ports the hal_init pre-FW block
+      (`_InitQueueReservedPage` RQPN_NPQ=0 / RQPN=0x80A70000, `_InitQueuePriority` TRXDMA map
+      0xFAF0, `_InitPageBoundary` RXFF=0x25FF, `_InitTransferPageSize` PBP=0x11). Resolved for
+      this card's **single bulk-OUT EP** (coverage audit: only EP 0x02 OUT → all pages public,
+      every queue → the one EP). The efuse read tail now also emits `hal_EfusePowerSwitch(OFF)`
+      (REG_EFUSE_ACCESS=0). The pre-FW window (power-on→efuse→MISC01) is now contiguous and
+      adjacent to the main chain (FW at 0x80) — no gap.
+- [ ] **[0..5] chip-version prologue** (read_chip_version 0xf0/4 + `hal_EfusePowerSwitch(ON)`
+      0xcf=0x69 + FEN_ELDR/CLK checks): ahead of the 0x06 power-seq start; not yet ported (the
+      pre-FW window starts at 0x06). Small, self-contained — port for full op-0 contiguity.
 - [ ] **DIG/AGC runtime watchdog — NOT YET PORTED (only filtered).** The 2 s phydm watchdog
       is **central to this port's RX goal** (without periodic IGI/gain adaptation the gain
       freezes at the seed → deaf/saturating, the exact 2.4 GHz weakness we re-port to fix).

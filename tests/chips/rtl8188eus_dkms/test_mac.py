@@ -22,6 +22,9 @@ class RecTx:
     def write32(self, a, v):
         self.w32.append((a, v & 0xFFFFFFFF))
 
+    def read16(self, a):
+        return 0x0000
+
     def read32(self, a):
         return 0x00000000   # LLT poll: NO_ACTIVE immediately
 
@@ -55,6 +58,16 @@ def test_check_positive_rejects_extlna_branch():
     assert phy_cond.check_positive(0x90000001, 0x00000000, 0x00000000) is False
     # A pure don't-care condition (low nibble 0) that bit-matches passes.
     assert phy_cond.check_positive(0x00000000, 0, 0) is True
+
+
+def test_init_misc01():
+    t = RecTx()
+    mac.init_misc01(t)
+    assert (0x0214, 0x00) in t.w8                  # RQPN_NPQ
+    assert (0x0200, 0x80A70000) in t.w32           # RQPN (all-public, 1-EP)
+    assert (0x010C, 0xFAF0) in t.w16               # TRXDMA queue map (read low3=0)
+    assert (0x0116, 0x25FF) in t.w16               # RX FF boundary
+    assert (0x0104, 0x11) in t.w8                  # PBP page size
 
 
 def test_tx_buffer_boundary():

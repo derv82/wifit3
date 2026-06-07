@@ -62,6 +62,8 @@ def _verify_pre_fw(pcap, dev):
     miles.append(("power-on", t.i))
     params = efuse.read_chip_params(t)
     miles.append(("efuse", t.i))
+    mac.init_misc01(t)
+    miles.append(("misc01", t.i))
     return miles, params
 
 
