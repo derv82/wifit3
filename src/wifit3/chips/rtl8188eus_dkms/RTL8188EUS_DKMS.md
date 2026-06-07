@@ -49,6 +49,25 @@ bimodal collapse, not just the mean.
 
 ## Status
 
+**Init ported contiguously from power-on through MISC02, byte-for-byte on all 3 captures**
+(`verify_pcap.py`: power-on → efuse → MISC01 → FW → MAC → BB → RF → EFUSE_PATCH → LLT → MISC02).
+No hardcodes (crystal_cap from efuse). Async 2 s watchdog filtered. 21 hardware-free tests.
+
+**NEXT (resume here), in wire order after MISC02 (op ~2124):**
+1. **RfRegChnlVal reads** — `phy_query_rf_reg(path, RF_CHNLBW)` ×2 (RF serial *read* via HSSI
+   param 0x824/0x82c + LSSI readback). New mechanism to port (`phy_RFSerialRead`). [WIRE 2124–2134]
+2. **`_BBTurnOnBlock`** — rFPGA0_RFMOD(0x800) bCCKEn(BIT24)+bOFDMEn(BIT25). [WIRE 2135–2138]
+3. **`invalidate_cam_all`** — REG_CAMCMD(0x670)=0xC0000000. [WIRE 2139]
+4. **`PHY_SetTxPowerLevel8188E`** (MISC11) — TX-AGC writes 0xe00/0xe04/0xe08/0xe10/0x86c…; needs
+   the **efuse tx-power PG decode** (the logical map is already in `ChipParams.efuse_map`). [WIRE 2140+]
+5. MISC11 tail: `_InitAntenna_Selection`, REG_BAR_MODE_CTRL(0x4cc)=0x0201ffff, REG_HWSEQ_CTRL
+   (0x423)=0xFF, `PHY_SetRFEReg_8188E`.
+6. **`rtl8188e_InitHalDm`** — the phydm DIG/AGC **seed** (RX-critical; the DIG-watchdog seed).
+7. Channel tune (`PHY_SwChnl8188E`/`PHY_SetBWMode`), monitor-mode entry (RCR override), RX path
+   (`rx.py` + bulk-IN — not pcap-verifiable, needs HW), then DIG watchdog + TX.
+
+Per-milestone detail:
+
 - **M1 (power-on + firmware upload + FW-ready ACK): complete — pcap-verified on all 3 boots.**
   - `pwrseq.power_on` ports `_InitPowerOn_8188EU` = `Rtl8188E_NIC_PWR_ON_FLOW`
     (CARDEMU_TO_ACT: poll 0x06[1] power-ready, RMW 0x02/0x26/0x05×4 + poll 0x05[0], 0x23) then
