@@ -272,7 +272,22 @@ cut=ODM_CUT_A(0), platform=ODM_CE(0x04), interface=ODM_ITRF_USB(0x02), package=0
     milestone (the FW/MAC chain is verified from REG_MCUFWDL via `start_addr`).
 
 ## Potential Known Gaps (audit before trusting any milestone)
-- [ ] **Weak-AP RX sensitivity trails mainline — OPEN, the headline issue.** [HW 2026-06-07] A
+- [ ] **Weak-AP RX sensitivity trails mainline — OPEN, the headline issue.**
+      **UPDATE: the airmon monitor-tail fix did NOT close it.** The airmon STA->monitor dance
+      WAS partly skipped (MAC write missing; monitor entered BEFORE the re-tune, reversed) and
+      is now fixed (connect: hal_init -> set_macid -> set_channel re-tune -> enter_monitor,
+      matching the wire) — but post-fix DKMS still reads ~24 APs vs mainline ~70. Confirmed
+      empirically (1009 beacons/15 s, 24 nAPs) + structurally (the differing regs 0xa50/0xa54/
+      0x8c4 are written NOWHERE in the capture — 0 writes across all 5194 ops). So this is NOT
+      the airmon dance and NOT the 8812au garbage-demod symptom (our RX is clean beacons).
+      **THE REAL OPEN QUESTION:** those weak-AP-sensitivity regs are set by the *runtime DM*,
+      absent from this short cold-boot capture. Either (a) the VENDOR phydm DM writes them
+      (CCK-PD / the full DIG beyond our IGI-only `dig.py`) given a longer run — port it from
+      SOURCE (`phydm_cck_pd`, the rest of `phydm_dig`) and/or capture a longer operational
+      trace to byte-verify; OR (b) the vendor stack genuinely never writes them and mainline
+      simply tunes RX more aggressively than the vendor — in which case the re-port's "vendor is
+      hotter" premise does NOT hold for this card and faithfulness alone can't beat mainline.
+      Settle (a) vs (b) from the phydm source first; do not assume either. [HW 2026-06-07] A
       fair total-reception A/B (fixed ch1, 15 s, alternating, busy ~70-AP band) reads DKMS
       ~22 APs / ~61 beacons/s vs the mainline-derived port ~70 APs / ~71 beacons/s — DKMS hears
       *zero* beacons from ~48 weak/distant APs mainline catches. This is the OPPOSITE of the
