@@ -87,3 +87,23 @@ def test_read_rf_chnl_val_returns_both_paths():
     t = Tx(reads={0x0824: 0x00390204, 0x0820: 0x01000100, 0x08B8: 0x00107407,
                   0x082C: 0x00000000, 0x0828: 0x00000000, 0x08A4: 0x00000000})
     assert rf.read_rf_chnl_val(t) == (0x07407, 0x00000)
+
+
+def test_serial_write_encoding():
+    t = Tx()
+    rf.phy_rf_serial_write(t, 0, 0x30, 0x18000)
+    assert t.w32 == [(0x0840, (0x30 << 20) | 0x18000)]
+
+
+def test_set_rf_reg_full_mask_is_direct_write():
+    # mask == RFREGOFFSETMASK -> no read, direct LSSI write.
+    t = Tx()
+    rf.set_rf_reg(t, 0, 0x31, 0xFFFFF, 0x0000F)
+    assert t.ops == [("W", 0x0840, (0x31 << 20) | 0x0000F)]
+
+
+def test_set_rf_reg_masked_does_serial_rmw():
+    # mask != full -> serial-read RF 0xef (0x800a0... readback 0xa0), set bit19, write.
+    t = Tx(reads={0x0824: 0x00390204, 0x0820: 0x01000100, 0x08B8: 0x000000A0})
+    rf.set_rf_reg(t, 0, 0xEF, 0x80000, 0x1)
+    assert t.w32[-1] == (0x0840, (0xEF << 20) | 0x800A0)

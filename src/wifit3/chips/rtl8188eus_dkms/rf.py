@@ -110,3 +110,22 @@ def read_rf_chnl_val(t) -> tuple[int, int]:
     path RMWs to switch channel later, so the bring-up must read it now."""
     return (phy_query_rf_reg(t, 0, RF_CHNLBW, RFREGOFFSETMASK),
             phy_query_rf_reg(t, 1, RF_CHNLBW, RFREGOFFSETMASK))
+
+
+# --- RF register write (the 3-wire LSSI write path) -----------------------
+def phy_rf_serial_write(t, path: int, addr: int, data: int) -> None:
+    """``phy_RFSerialWrite`` [SRC] rtl8188e_phycfg.c:556 — write one RF register over
+    the 3-wire LSSI bus: DataAndAddr = (addr<<20 | data) & 0x0FFFFFFF -> the path's
+    LSSI-write register (path A 0x840; this card is 1T1R so only path A is used)."""
+    data_and_addr = (((addr & 0xFF) << 20) | (data & RFREGOFFSETMASK)) & 0x0FFFFFFF
+    t.write32(RF_LSSI_WRITE_A, data_and_addr)
+
+
+def set_rf_reg(t, path: int, addr: int, mask: int, data: int) -> None:
+    """``PHY_SetRFReg8188E`` [SRC] rtl8188e_phycfg.c:688 — masked RF write. A partial
+    mask first serial-reads the register and merges; a full-width mask writes directly."""
+    if mask != RFREGOFFSETMASK:
+        orig = _phy_rf_serial_read(t, path, addr)
+        shift = (mask & -mask).bit_length() - 1
+        data = (orig & ~mask) | ((data << shift) & mask)
+    phy_rf_serial_write(t, path, addr, data)

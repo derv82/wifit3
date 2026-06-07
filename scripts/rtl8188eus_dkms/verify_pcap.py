@@ -29,7 +29,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
 from wifit3.chips.rtl8188eus_dkms import (  # noqa: E402
-    bb, efuse, firmware, mac, pwrseq, rf, txpower,
+    bb, dm, efuse, firmware, mac, pwrseq, rf, txpower,
 )
 from wifit3.chips.rtl8188eus_dkms.constants import DEFAULT_INIT_CHANNEL  # noqa: E402
 
@@ -106,6 +106,8 @@ def _verify_main_chain(pcap, dev, params):
     miles.append(("M5 txpwr", t.i))
     mac.init_misc11_tail(t)
     miles.append(("M6 misc11", t.i))
+    dm.init_hal_dm(t)
+    miles.append(("M7 inithaldm", t.i))
     return miles
 
 
