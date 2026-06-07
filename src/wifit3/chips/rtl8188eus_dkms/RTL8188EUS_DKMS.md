@@ -49,15 +49,19 @@ bimodal collapse, not just the mean.
 
 ## Status
 
-**2.4 GHz monitor RX is HW-PROVEN.** [HW 2026-06-07] A live TL-WN722N v2 (2357:010c) brought
-up clean through the full chain and a 28 s 2.4 GHz hop (`scan_hw.py`) heard **78 unique APs /
-940 beacons / 1527 frames**, RSSI −43 dBm (near) to −83 (far), ESSID-variance canary clean
-(0/78). The PHY-status RSSI decode works; the RX walk is coherent. This is without the runtime
-DIG watchdog (the InitHalDm M7 seed IGI suffices in this environment). The driver is registered
-behind `WIFIT3_RTL8188=dkms` (mainline stays default until a controlled A/B clearly wins).
-TX is wired (`tx.py` + `inject_frame`, mgmt descriptor build unit-tested) — live deauth/WEP
-replay is the user's to fire. **The port is functionally COMPLETE** (all init + RX + TX +
-DIG watchdog); 71 hardware-free tests.
+**The port is COMPLETE and HW-PROVEN — RX, TX, and full promiscuous monitor.** [HW 2026-06-07]
+A live TL-WN722N v2 (2357:010c) brought up clean through the full chain; 71 hardware-free tests.
+- **RX:** a 28 s 2.4 GHz hop (`scan_hw.py`) heard **78 unique APs / 940 beacons / 1527 frames**,
+  RSSI −43 dBm (near) to −83 (far), ESSID-variance canary clean (0/78); fixed-channel per-AP
+  reception ~7.0 beacons/s with the DIG watchdog (tied with the mainline port — see the A/B note).
+- **TX:** `deauth_hw.py` injected 300 deauth frames (no pipe fault); the target client
+  reconnected and **20/20 captured EAPOL were to/from it** — the deauth landed, TX confirmed.
+- **Promiscuous monitor (both directions):** 9 M2/M4 (client->AP, ToDS) + 11 M1/M3 + 262 ToDS
+  data frames — no ToDS-filter gap, the crackable WPA M2 is reachable; the whole attack column
+  (deauth/handshake/PMKID/WEP/WPS via the shared `inject_frame`/`WlanInterface` path) is reachable.
+
+Registered behind `WIFIT3_RTL8188=dkms` (mainline-derived port stays the default for 2357:010c
+until a controlled canary-AP A/B confirms a clear RX win on the floor — see the A/B note below).
 
 **DIG/AGC watchdog (`dig.py`) — DONE + HW-validated (M12).** Ports the 8188e (11N) `phydm_dig`
 no-link path: hold+read+reset the FA counters (`cnt_all` = 6 OFDM sub-counters 0xCF0/0xDA0/
@@ -153,11 +157,16 @@ the top of this Status). Only the DIG watchdog (`dig.py`, detailed above) is lef
   RfRegChnlVal; registered behind `WIFIT3_RTL8188` (mainline default, =dkms opts in). Also fixed
   `firmware.download_firmware` to return a bool (it returned None on success, which connect()
   misread as failure — the bug that initially blocked HW bring-up).
-- **M13 (TX wiring): complete — descriptor build unit-tested; live TX is the user's.** `tx.py`
-  ports `rtl8188e_fill_fake_txdesc` (32-byte mgmt desc: OWN|FSG|LSG, OFFSET=32, PKT_SIZE, MGMT
-  queue, HW-seq, driver-uses-rate=1M, BMC from addr1) + `rtl8188e_cal_txdesc_chksum`.
-  `driver.inject_frame` sends [desc | frame] on bulk-OUT under _io_lock. On-air TX (deauth/replay)
-  is the user's to fire (passive-by-default).
+- **M13 (TX wiring): complete — VERIFIED [HW] TX works on the air.** `tx.py` ports
+  `rtl8188e_fill_fake_txdesc` (32-byte mgmt desc: OWN|FSG|LSG, OFFSET=32, PKT_SIZE, MGMT queue,
+  HW-seq, driver-uses-rate=1M, BMC from addr1) + `rtl8188e_cal_txdesc_chksum`. `driver.inject_frame`
+  sends [desc | frame] on bulk-OUT under _io_lock. **[HW] `deauth_hw.py` against a live AP+client
+  on ch1: 300 deauth frames injected (no pipe fault), the target client reconnected and 20/20
+  captured EAPOL were to/from it — the deauth landed, TX confirmed.** Also proves **full
+  promiscuous monitor RX in both directions:** 9 M2/M4 (client->AP, ToDS) + 11 M1/M3 (AP->client,
+  FromDS) + 262 ToDS data frames — so client->AP frames not addressed to us are captured (no
+  ToDS-filter gap; the crackable WPA M2 is reachable). The whole attack column (deauth, handshake,
+  and by the shared `inject_frame`/`WlanInterface` path PMKID/WEP/WPS) is reachable on this port.
 - **M12 (DIG/AGC watchdog): complete — HW-validated.** `dig.watchdog_tick` ports the 8188e 11N
   `phydm_dig` no-link path (hold→read→reset FA, step IGI by fa_th, clamp [0x1c,0x2a], write 0xC50),
   driven every 2 s by a `connect()` task (toggle `driver.enable_dig` / `scan_hw --no-dig`). The
