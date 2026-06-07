@@ -70,6 +70,12 @@ _REG_CCK_CCA = 0x0A0A         # ODM_REG(CCK_CCA) — 1-byte CCK CCA/PD threshold
 _REG_CCK_CCA_DEFAULT = 0x0A08  # cck_pd_init reads a0a_default from [23:16]
 CCK_FA_MA_RESET = 0xFFFF       # [SRC] phydm_cck_pd.h
 
+# --- adaptivity / EDCCA [SRC] phydm_adaptivity.c --------------------------
+_REG_ECCA_TH = 0x0C4C         # rOFDM0_ECCAThreshold (L2H byte0, H2L byte2)
+_IGI_TARGET = 0x32            # adaptivity->igi_base
+_TH_L2H_INI = 20             # th_l2h_ini_mode2 (no ADAPTIVITY support_ability)
+_TH_EDCCA_HL_DIFF = 8         # th_edcca_hl_diff_mode2
+
 
 @dataclass
 class WatchdogState:
@@ -215,10 +221,29 @@ def _cck_pd(t, state: WatchdogState, cck_fa: int) -> None:
     state.cur_cck_cca_thres = th
 
 
+def _set_edcca_threshold(t, h2l: int, l2h: int) -> None:
+    """``phydm_set_edcca_threshold`` (11N): rOFDM0_ECCA byte0 = L2H, byte2 = H2L."""
+    bb.set_bb_reg(t, _REG_ECCA_TH, 0x00FF00FF, (l2h & 0xFF) | ((h2l & 0xFF) << 16))
+
+
+def _adaptivity(t, state: WatchdogState) -> None:
+    """``phydm_adaptivity`` no-link path (8188e: no ADAPTIVITY support_ability -> mode2
+    config, adaptivity_enable=False, dynamic_link_adaptivity=False, edcca_enable=True):
+    drive the EDCCA L2H/H2L threshold (0xc4c) from the carried IGI.
+    th_l2h = th_l2h_ini + (igi_target - igi); th_h2l = th_l2h - hl_diff (lower bounds
+    h2l_lb/l2h_lb = 0). Replaces the no-link 0x7f/0x7f seed with an active threshold."""
+    igi = state.cur_ig_value
+    th_l2h = _TH_L2H_INI + (_IGI_TARGET - igi)
+    th_h2l = th_l2h - _TH_EDCCA_HL_DIFF
+    _set_edcca_threshold(t, th_h2l, th_l2h)
+
+
 def watchdog_tick(t, state: WatchdogState) -> DigTick:
-    """One no-link ``phydm_watchdog`` tick: FA statistics -> DIG -> CCK-PD. ``state`` is
-    carried across ticks (the driver owns it; the chip stays in sync)."""
+    """One no-link ``phydm_watchdog`` tick (wire order [SRC] phydm.c:1846-1855):
+    FA statistics -> DIG -> CCK-PD -> adaptivity. ``state`` is carried across ticks (the
+    driver owns it; the chip stays in sync)."""
     fa = _fa_statistics(t)
     _dig(t, state, fa.cnt_all)
     _cck_pd(t, state, fa.cck_fa)
+    _adaptivity(t, state)
     return DigTick(state.cur_ig_value, fa.cnt_all, fa.ofdm_fa, fa.cck_fa)

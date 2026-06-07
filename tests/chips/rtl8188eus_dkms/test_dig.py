@@ -96,3 +96,12 @@ def test_cck_pd_high_fa_picks_conservative_threshold():
     dig._cck_pd(t, st, cck_fa=2000)                # MA stays > 1000 -> 0x83
     assert (0x0A0A, 0x83) in t.w
     assert st.cur_cck_cca_thres == 0x83
+
+
+def test_adaptivity_drives_edcca_from_igi():
+    # mode2 (no ADAPTIVITY support): th_l2h = 20 + (0x32 - igi); th_h2l = th_l2h - 8.
+    # igi=0x22 -> th_l2h=0x24, th_h2l=0x1c; written into 0xc4c byte0/byte2 over the seed.
+    st = dig.WatchdogState(cur_ig_value=0x22, cur_cck_cca_thres=0x40)
+    t = RegTx({0x0C4C: 0x007F037F})               # no-link seed (0x7f/0x7f)
+    dig._adaptivity(t, st)
+    assert (0x0C4C, 0x001C0324) in t.w            # L2H=0x24 (byte0), H2L=0x1c (byte2)
