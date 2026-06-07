@@ -222,6 +222,12 @@ persistence** (both low-cost, high-visibility), then the **update check**. The
 Focus channel-tune race and the beacon-count truncation (Bugs/QoL in
 `FEATURES.md`) are good cheap fixes for the same window.
 
+- **Blank-EFUSE / counterfeit heads-up** (a kind, cheap feature). On bring-up, if a card's
+  EFUSE reads blank (likely counterfeit — RF cal never burned), surface a clear boot-time
+  warning: "this card's EFUSE is blank, likely counterfeit, RX/TX may be weak — continue?".
+  No tool tells users their card is fake; this one should. OK to show every boot. Design + the
+  in-RAM override that pairs with it: `BLANK-EFUSE-SUPPORT.md`.
+
 ---
 
 ## Phase 4 — Distribution + CI

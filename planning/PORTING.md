@@ -166,130 +166,27 @@ in `usb_dumps_new/DRIVER-STATUS.md` + each `chips/<chip>/<CHIP>.md`.
 All four vendor sources are in `usb_dumps_new/driver-sources/` (tarballs) +
 extracted `usb_dumps_new/captures_*/driver-source/`.
 
-### Priority queue (by measured payoff)
+### Remaining work
 
-**1. RTL8822BU — highest payoff.**
-- Current `chips/rtl8822bu/` (mainline rtw88, uses `rtw88_base`).
-- Vendor: morrownr `88x2bu-20210702` 5.13.1 (PR #264 6.18-compat), module
-  `88x2bu` — `captures_rtl88x2bu/driver-source/` +
-  `driver-sources/rtl88x2bu-5.13.1.tar.xz`.
-- Gain **8 → 29 APs** (3.6×) fixed ch1; prime suspect of the RX weakness.
-  Mainline A/B: `captures_rtw88_8822bu/`. Branch `dkms/88x2bu`.
+The **8812au / 8814au / 8821au** vendor re-ports are **done** — `chips/rtl<chip>_dkms/` exist
+and pass `verify_pcap.py`; HW A/B + default-flip status lives in `VERIFICATION.md` and each
+`<CHIP>_DKMS.md`. Two left:
 
-**2. RTL8814AU — breadth + throughput win.**
-- Current `chips/rtw88_8814au/` (mainline rtw88, uses `rtw88_base`).
-- Vendor: morrownr `8814au` 5.8.5.1, module `8814au` —
-  `captures_rtl8814au/driver-source/` + `driver-sources/rtl8814au-5.8.5.1.tar.xz`.
-- Gain: DKMS robustly hears **21–24 APs** (30 by usbmon, best AP 168 beacons) vs
-  mainline's noisy breadth (1 AP on a bad run, 11 on a healthier one). Mainline
-  A/B: `captures_rtw88_8814au/`. Branch `dkms/8814au`.
-
-**3. RTL8821AU — stability + carries 8812au (2-for-1).**
-- Current `chips/rtl8821au/` (uses `rtw88_base`; **only** driver with working
-  SW-seq fragmentation — see the note on this below).
-- Vendor: Lucid-Duck `8821au-20210708` 5.12.5.2 (branch `kernel-6.18-compat`),
-  module `8821au` — `captures_rtl8821au/driver-source/` +
-  `driver-sources/rtl8821au-5.12.5.2.tar.xz` +
-  `kernel-6.18-compat-rtl8821au.patch`. **This is the multi-chip rtl88xxau driver
-  — it implements 8812au too.**
-- Gain: 8821au's own breadth is **tied** (mainline 26 ≈ DKMS 20–26, a stability
-  play), but the same port **also delivers 8812au**, which IS bottom-tier
-  (8–10 APs) and should be lifted by the shared phydm RX/AGC. That 2-for-1 raises
-  its value above its own tied breadth. A/B: `captures_rtw88_8821au/`. Branch
-  `dkms/8821au`.
-- **Scope decision (2026-06-04):** port 8821au **standalone** into
-  `chips/rtl8821au_dkms/` (sibling to the untouched mainline `chips/rtl8821au/`;
-  env var `WIFIT3_RTL8821`). **No shared `rtl88xxau_base/` yet** — a base with one
-  consumer is planning too far ahead, and an 8821au-bad / 8812au-good split would
-  strand it. Leave `# TODO(8812au)` breadcrumbs where the vendor source branches on
-  chip (RF path count 1×1 vs 2×2, RFE options, pwr-seq table, FW blob, per-rate
-  txpower tables) — one driver referencing the next is mildly smelly but justified,
-  since the whole reason to port 8821au is the 8812au. Whether 8812au later shares a
-  base, rides this port as a sibling, or gets its own `chips/rtl8812au_dkms/` is
-  decided **after** the 8821au A/B. Live mainline baseline (2026-06-04, ch1/30s):
-  22 APs, 2727 beacons. **A/B canary = `NETGEAR2G` (`aa:bb:cc:dd:ee:01`)** — a strong
-  nearby AP; track its RSSI + beacons/s as the DIG-health indicator (baseline
-  ~7.7/s, below its ~9–10/s healthy rate). Full methodology +
-  deliberately-committed-PII note in `chips/rtl8821au_dkms/RTL8821AU_DKMS.md`.
-
-**4. RTL8812AU — rides the 8821au vendor port (88xxA sibling).**
-- Current `chips/rtl8812au/` (88xxA family with 8821au; shares `rtw88_base`).
-- **No separate effort, no kernel-C work.** The 8821au vendor source above is the
-  multi-chip rtl88xxau driver — it implements **8812au in the same tree**
-  (`hal/rtl8812a/`, `halrf_8812a_*`, `Hal8812PhyCfg`, `phydm_rtl8812a.c`,
-  `rtl8812au_recv/xmit.c`). How 8812au reuses that work — shared base,
-  sibling-in-the-same-port, or its own `chips/rtl8812au_dkms/` — is **deferred to
-  the post-8821au-A/B decision** (see item 3); the standalone 8821au port leaves
-  `# TODO(8812au)` breadcrumbs to make whichever path cheap. Either way the
-  8812a-specific RF/power tables port 1:1 from the same tree. Expected to lift its
-  bottom-tier breadth (8–10 APs) the way the vendor RX lifts 8822bu — *unverified
-  for 8812au specifically*.
-- Caveat: no *vendor* bring-up capture for 8812au (DKMS never built standalone on
-  6.18 — `captures_rtw88_8812au/` is the mainline run), so it leans on the 8821au
-  vendor capture for the shared 88xxA init flow + its own mainline capture to
-  cross-check chip params. We port the vendor *source*; it needn't build on Kali.
-
-**5. RTL8188EUS — deferred (likely skip).**
-- Current `chips/rtl8188eus/` — a **working** mainline-derived port; rtl8xxxu
-  family, **not** rtw88, so it doesn't even gate `rtw88_base` retirement.
-- Vendor source on hand (`captures_8188eu/driver-source/`, aircrack-ng/gglluukk
-  `rtl8188eus` 5.3.9, module `8188eu`).
-- **Breadth is tied** (DKMS 19–26 ≈ mainline `rtl8xxxu` 20) — no measured win,
-  and the only claimed upside (monitor/injection "robustness") is unquantified.
-  A from-scratch port that risks **regressing a working driver for no proven
-  gain** isn't worth it. **Port only if a concrete, measurable win appears** (e.g.
-  an injection-reliability A/B we can show). A/B baseline: `captures_rtl8xxxu/`.
-
-> **8821au SW-seq fragmentation:** historically the 8821au was the one card with
-> a working `en_hwseq=0` software-sequence TX path (used by WEP fragmentation).
-> That one-card special-case is being **removed** (one card arbitrarily owning
-> one feature is a smell; WEP fragmentation is dropped — ARP-replay + ChopChop
-> carry WEP). The re-port should **not** reintroduce a `SUPPORTS_SW_SEQ`
-> mechanism.
+- **RTL8822BU** — highest-payoff re-port, **pending**. Mainline `chips/rtl8822bu/`; vendor =
+  morrownr `88x2bu-20210702` 5.13.1 (`captures_rtl88x2bu/driver-source/` +
+  `usb_dumps_new/driver-sources/rtl88x2bu-5.13.1.tar.xz`); branch `dkms/88x2bu`; mainline A/B
+  `captures_rtw88_8822bu/`.
+- **RTL8188EUS** — **deferred (likely skip).** A working rtl8xxxu-family port whose breadth is
+  tied to mainline; re-port only if a concrete measurable win appears (e.g. an
+  injection-reliability A/B). Vendor source: `captures_8188eu/driver-source/`.
 
 ---
 
-## Blank-EEPROM override (rt2800usb — RT3572 rescue + no-EFUSE cards)
+## Blank-EFUSE / no-EFUSE cards → `planning/BLANK-EFUSE-SUPPORT.md`
 
-**Idea:** when a card's EFUSE/EEPROM reads blank, substitute a known-good
-512-byte image into the *in-RAM* parsed struct so the chip is configured from
-sane values instead of all-`0xFF`. Subsumes the deferred "93C66 EEPROM fallback"
-item in `RT2800USB.md` — same need (no usable on-chip config), one mechanism.
-
-**Soft override only — never burn fuses.** EFUSE is one-time-programmable (bits
-blow `0→1` permanently); a wrong burn bricks the card or sets an illegal
-RF/regulatory state with no undo. We do **not** write hardware — only replace the
-values the driver reads into RAM at init (`efuse.py` already parses the EFUSE into
-a struct; feed it our image instead when blank). Fully reversible, zero risk.
-
-**Design (discuss class shape with lead before coding):** an `EepromOverride`
-source in `efuse.py` — detect blank (identity programmed but RF/cal region
-`0xFF`, `NIC_CONF0 == 0`), load a 512-byte image, produce the *same*
-`EepromValues` the normal parser yields. Gate behind an **explicit flag/CLI
-opt-in** so it never silently fakes calibration on a healthy card — surfacing fake
-cal as real is worse than a known-weak card. Image provenance: kernel `rt2800`
-defaults, or a dump from a genuine RT3572 if one is ever acquired.
-
-**Honest expectations (a gamble, but worth building regardless):**
-- **TX should improve** — power is stuck at the low fallback (`RFCSR12=0x6b`, max
-  attenuation) *because* the EFUSE reads blank; a good image with real
-  `default_power` lifts it. Clear potential win.
-- **Per-unit RF cal can't be faked** — crystal/freq trim + power cal are measured
-  per individual card at the factory. A generic image is *better than blank* but
-  has the wrong trim for this die; on counterfeit silicon those values were never
-  measured.
-- **RX is the open question** — the rx-filter cal is a *runtime* loopback sweep
-  (RFCSR24/BBP55), not an EFUSE value, and it **rails** on the counterfeit unit.
-  Either (A) the blank EFUSE mis-configures the front-end earlier → loopback dies
-  → rail (a good image might revive RX), or (B) the counterfeit front-end is just
-  bad and no image helps. Unknown until tested.
-- **Worst case:** counterfeit silicon doesn't respond and nothing changes.
-
-**Experiment:** inject a plausible image into the RAM struct on the RT3572, A/B
-the beacon rate + deauth strength vs blank. Low cost, real learning; builds the
-genuine-no-EFUSE-card feature either way. If it meaningfully rescues the unit,
-re-run the matrix and reconsider the demotion. (RT3572 demotion status lives in
-`../VERIFICATION.md` § "Unsupported — pending genuine hardware".)
+Detecting a blank/counterfeit EFUSE, warning the user, and the in-RAM override (a generic
+image substituted into the parsed struct — **never** burning fuses) are a card-support + UX
+feature, not a porting step. Moved to `planning/BLANK-EFUSE-SUPPORT.md`.
 
 ---
 
