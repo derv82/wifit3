@@ -29,7 +29,9 @@ from wifit3.engine.protocols import DeviceID, ProgressCallback
 from wifit3.wlan.packet import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
-from . import bb, chan, dig, dm, efuse, firmware, mac, monitor, pwrseq, rf, tx, txpower
+from . import (
+    bb, chan, dig, dm, efuse, firmware, mac, monitor, powertrack, pwrseq, rf, tx, txpower,
+)
 from .constants import DEFAULT_INIT_CHANNEL, PID, VID
 from .rx import iter_frames
 from .transport import Rtl8188eusTransport
@@ -56,6 +58,7 @@ class Rtl8188eusDkmsDriver:
         self.mac_address: Optional[bytes] = None
         self._channel: Optional[int] = None
         self._tx_power = None              # path-A efuse TX-power info (TxPwr2G)
+        self._eeprom_thermal = 0x18        # efuse thermal base (set from efuse in connect)
         self._rf_chnl: int = 0            # RfRegChnlVal[A], stateful across set_channel
         self._rx_cb: Optional[Callable[[dict], None]] = None
         self._reader: Optional[RxReaderThread] = None
@@ -81,6 +84,10 @@ class Rtl8188eusDkmsDriver:
         params = await loop.run_in_executor(None, self._power_on_and_read_efuse)
         self.mac_address = params.mac_address
         self._tx_power = params.tx_power
+        # Thermal base for the power-track watchdog (efuse EEPROM_THERMAL_METER_88E 0xBA;
+        # the 0xff/autoload-fail default is EEPROM_Default_ThermalMeter_88E 0x18).
+        raw_thermal = params.efuse_map[0xBA]
+        self._eeprom_thermal = 0x18 if raw_thermal == 0xFF else raw_thermal
         logger.info("RTL8188EUS efuse: crystal_cap=0x%02x mac=%s",
                     params.crystal_cap,
                     params.mac_address.hex(":") if params.mac_address else "<none>")
@@ -135,11 +142,13 @@ class Rtl8188eusDkmsDriver:
         try:
             async with self._io_lock:
                 state = await loop.run_in_executor(None, dig.init_state, self.transport)
+                pt_state = await loop.run_in_executor(
+                    None, powertrack.init_state, self.transport, self._eeprom_thermal)
             while True:
                 await asyncio.sleep(dig.WATCHDOG_PERIOD_S)
                 async with self._io_lock:
                     tick = await loop.run_in_executor(
-                        None, dig.watchdog_tick, self.transport, state)
+                        None, dig.watchdog_tick, self.transport, state, pt_state)
                 logger.debug("RTL8188EUS DIG: IGI=0x%02x fa=%d (ofdm=%d cck=%d)",
                              tick.igi, tick.fa_cnt, tick.ofdm_fa, tick.cck_fa)
         except asyncio.CancelledError:

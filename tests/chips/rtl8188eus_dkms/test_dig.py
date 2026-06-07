@@ -58,24 +58,26 @@ def test_init_state_seeds_from_chip():
     assert st.cck_fa_ma == dig.CCK_FA_MA_RESET
 
 
-def test_watchdog_tick_clamps_and_writes_igi():
+def test_watchdog_tick_clamps_and_writes_igi(mocker):
+    mocker.patch("wifit3.chips.rtl8188eus_dkms.powertrack.thermal_tick")  # DIG test, not TX
     # Low FA -> IGI steps down from the carried value; clamps at 0x1c (sensitive floor).
     st = dig.WatchdogState(cur_ig_value=0x1D, cur_cck_cca_thres=0x40)
     t = RegTx({0x0C50: 0x1D})                      # all FA regs 0 -> cnt_all=0 < fa_th[0]
-    tick = dig.watchdog_tick(t, st)
+    tick = dig.watchdog_tick(t, st, None)
     assert tick.igi == 0x1C                         # 0x1d - 2 = 0x1b -> clamped to 0x1c
     assert (0x0C50, 0x1C) in t.w
     assert st.cur_ig_value == 0x1C                  # state carried forward
     # High FA -> IGI steps up; clamps at 0x2a (least sensitive).
     st = dig.WatchdogState(cur_ig_value=0x29, cur_cck_cca_thres=0x40)
-    tick = dig.watchdog_tick(RegTx({0x0CF0: 6000}), st)  # cnt_all 6000 > fa_th[2]
+    tick = dig.watchdog_tick(RegTx({0x0CF0: 6000}), st, None)  # cnt_all 6000 > fa_th[2]
     assert tick.igi == 0x2A                         # 0x29 + 2 = 0x2b -> clamped to 0x2a
 
 
-def test_watchdog_tick_no_igi_write_when_unchanged():
+def test_watchdog_tick_no_igi_write_when_unchanged(mocker):
+    mocker.patch("wifit3.chips.rtl8188eus_dkms.powertrack.thermal_tick")
     st = dig.WatchdogState(cur_ig_value=0x20, cur_cck_cca_thres=0x40)
     t = RegTx({0x0C50: 0x20, 0x0CF0: 3000})        # in-band FA -> IGI unchanged
-    dig.watchdog_tick(t, st)
+    dig.watchdog_tick(t, st, None)
     assert not any(a == 0x0C50 for a, _ in t.w)    # no IGI write
 
 

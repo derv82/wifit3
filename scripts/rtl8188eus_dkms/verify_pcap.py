@@ -49,8 +49,12 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
 from wifit3.chips.rtl8188eus_dkms import (  # noqa: E402
-    bb, dig, dm, efuse, firmware, mac, monitor, pwrseq, rf, txpower,
+    bb, dig, dm, efuse, firmware, mac, monitor, powertrack, pwrseq, rf, txpower,
 )
+from wifit3.chips.rtl8188eus_dkms import powertrack_tbl as PT  # noqa: E402
+
+EEPROM_THERMAL_METER_88E = 0xBA
+EEPROM_DEFAULT_THERMAL_88E = 0x18
 from wifit3.chips.rtl8188eus_dkms import constants as C  # noqa: E402
 from wifit3.chips.rtl8188eus_dkms.constants import DEFAULT_INIT_CHANNEL  # noqa: E402
 
@@ -158,7 +162,26 @@ def verify_monitor_block(ops) -> tuple:
     return len(wire), len(additions)
 
 
-def verify_dm_tick(dm_ops) -> tuple:
+def _seed_powertrack(dm_ops, params):
+    """Seed the thermal-tracking state from the capture: the default swing indices from
+    the InitHalDm 0xc80/0xa22 reads, the thermal base from the efuse (the driver re-reads
+    these live at watchdog start; the replay covers only the tick, so they're seeded)."""
+    c80 = next((o["value"] for o in dm_ops
+                if o["kind"] == "R" and o.get("addr") == 0x0C80 and o["width"] == 4), 0)
+    a22 = next((o["value"] for o in dm_ops
+                if o["kind"] == "R" and o.get("addr") == 0x0A22 and o["width"] == 1), 0)
+    raw = params.efuse_map[EEPROM_THERMAL_METER_88E]
+    eeprom_thermal = EEPROM_DEFAULT_THERMAL_88E if raw == 0xFF else raw
+    ofdm_i = powertrack.get_swing_index(c80)
+    cck_i = powertrack.get_cck_swing_index(a22)
+    return powertrack.PowerTrackState(
+        eeprom_thermal=eeprom_thermal,
+        default_ofdm_index=ofdm_i if ofdm_i < len(PT.OFDM_SWING_TABLE) else 30,
+        default_cck_index=cck_i if cck_i < len(PT.CCK_SWING_TABLE_CH1_CH13) else 20,
+    )
+
+
+def verify_dm_tick(dm_ops, params) -> tuple:
     """Targeted byte-diff of one no-link phydm DM watchdog tick — the operational-phase
     async stream the synchronous init diff strips (the paired ``verify_`` for the stripped
     watchdog, per PORTING.md "strip, but never forget").
@@ -183,8 +206,9 @@ def verify_dm_tick(dm_ops) -> tuple:
     a0a = next(((o["value"] >> 16) & 0xFF for o in dm_ops
                 if o["kind"] == "R" and o.get("addr") == 0x0A08), 0)
     state = dig.WatchdogState(cur_ig_value=0x20, cur_cck_cca_thres=a0a)
+    pt_state = _seed_powertrack(dm_ops, params)
     t = rp.ReplayTransport(dm_ops[start:])
-    dig.watchdog_tick(t, state)
+    dig.watchdog_tick(t, state, pt_state)
     nxt = dm_ops[start + t.i] if start + t.i < len(dm_ops) else None
     return start, t.i, nxt
 
@@ -246,7 +270,7 @@ def run(cap: str | None = None) -> int:
     # verify_ for the stripped watchdog). Coverage of the tick grows as mechanisms land.
     try:
         dm_ops = rp.extract_ops(pcap, dev)               # full stream (the tick IS async)
-        start, consumed, nxt = verify_dm_tick(dm_ops)
+        start, consumed, nxt = verify_dm_tick(dm_ops, params)
     except rp.Divergence as e:
         print(f"\nFAIL DM tick:\n  {e}")
         return 1

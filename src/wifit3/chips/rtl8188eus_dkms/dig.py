@@ -26,7 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import NamedTuple
 
-from . import bb
+from . import bb, powertrack
 
 WATCHDOG_PERIOD_S = 2.0        # kernel DIG-watchdog cadence
 
@@ -238,12 +238,14 @@ def _adaptivity(t, state: WatchdogState) -> None:
     _set_edcca_threshold(t, th_h2l, th_l2h)
 
 
-def watchdog_tick(t, state: WatchdogState) -> DigTick:
-    """One no-link ``phydm_watchdog`` tick (wire order [SRC] phydm.c:1846-1855):
-    FA statistics -> DIG -> CCK-PD -> adaptivity. ``state`` is carried across ticks (the
-    driver owns it; the chip stays in sync)."""
+def watchdog_tick(t, state: WatchdogState, pt_state) -> DigTick:
+    """One no-link ``phydm_watchdog`` tick (wire order [SRC] phydm.c:1846-1878): FA
+    statistics -> DIG -> CCK-PD -> adaptivity -> halrf thermal power-track. Both ``state``
+    (DIG/CCK-PD/adaptivity) and ``pt_state`` (thermal) are carried across ticks (the driver
+    owns them; the chip stays in sync)."""
     fa = _fa_statistics(t)
     _dig(t, state, fa.cnt_all)
     _cck_pd(t, state, fa.cck_fa)
     _adaptivity(t, state)
+    powertrack.thermal_tick(t, pt_state)
     return DigTick(state.cur_ig_value, fa.cnt_all, fa.ofdm_fa, fa.cck_fa)
