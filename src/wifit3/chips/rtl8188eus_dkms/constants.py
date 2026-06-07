@@ -123,6 +123,18 @@ MASK_NETTYPE = 0x30000
 NT_LINK_AP = 0x2
 REG_RCR = 0x0608
 RCR_STA_INIT = 0x700060CE   # _InitWMACSetting STA RCR (monitor mode overrides this)
+
+# --- monitor-mode entry [SRC] rtl8188e_hal_init.c hw_var_set_opmode/_monitor, hal_com.c ---
+MSR = REG_CR + 2            # 0x0102 Media Status (net type per port)
+MSR_NETTYPE_MASK = 0x0C     # HW_PORT0 keeps port1 net-type [3:2]; rewrites [1:0]
+MSR_NOLINK = 0x00
+REG_RXFLTMAP0 = 0x06A0      # mgmt-frame subtype filter
+REG_RXFLTMAP1 = 0x06A2      # ctrl-frame subtype filter
+REG_RXFLTMAP2 = 0x06A4      # data-frame subtype filter
+RXFLTMAP_ACCEPT_ALL = 0xFFFF
+# hw_var_set_monitor RCR: RCR_AAP|APM|AM|AB|APWRMGT|ADF|ACF|AMF|APP_PHYST_RXFF|APPFCS.
+# No ACRC32/AICV (the 8188e #if 0 — CRC/ICV frames drop in recvbuf2recvframe).
+RCR_MONITOR_VALUE = 0x9000382F
 REG_MAR = 0x0620
 REG_RRSR = 0x0440
 RATE_BITMAP_ALL = 0xFFFFF

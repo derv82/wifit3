@@ -29,8 +29,9 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
 from wifit3.chips.rtl8188eus_dkms import (  # noqa: E402
-    bb, dm, efuse, firmware, mac, pwrseq, rf, txpower,
+    bb, dm, efuse, firmware, mac, monitor, pwrseq, rf, txpower,
 )
+from wifit3.chips.rtl8188eus_dkms import constants as C  # noqa: E402
 from wifit3.chips.rtl8188eus_dkms.constants import DEFAULT_INIT_CHANNEL  # noqa: E402
 
 REG_MCUFWDL = 0x0080
@@ -113,6 +114,30 @@ def _verify_main_chain(pcap, dev, params):
     return miles
 
 
+def verify_monitor_block(ops) -> tuple:
+    """Targeted diff of the monitor opmode entry (M10).
+
+    wifit3 enters monitor directly, so it does NOT replay airmon's STA->monitor dance the
+    cold-boot pcap shows. The monitor entry is verified as a standalone block, anchored on the
+    monitor RCR write (W REG_RCR=RCR_MONITOR_VALUE): the 5 vendor ops (MSR read/write, RCR
+    backup-read/write, RXFLTMAP2 write) byte-diff against the wire; the 2 RXFLTMAP0/1 opens are
+    wifit3's monitor-breadth additions (not on the wire) so they are appended as expected ops.
+    """
+    k = next((i for i, o in enumerate(ops)
+              if o["kind"] == "W" and o.get("addr") == C.REG_RCR
+              and o.get("value") == C.RCR_MONITOR_VALUE), None)
+    if k is None:
+        raise rp.Divergence(f"monitor RCR write (0x608={C.RCR_MONITOR_VALUE:#x}) not in capture")
+    wire = ops[k - 3:k + 2]                  # MSR r/w, RCR r/w, RXFLTMAP2 w (5 vendor ops)
+    additions = [{"kind": "W", "addr": C.REG_RXFLTMAP0, "value": 0xFFFF, "width": 2},
+                 {"kind": "W", "addr": C.REG_RXFLTMAP1, "value": 0xFFFF, "width": 2}]
+    t = rp.ReplayTransport(wire + additions)
+    monitor.enter_monitor(t)
+    if t.i != len(wire) + len(additions):
+        raise rp.Divergence(f"monitor block: port emitted {t.i} of {len(wire) + 2} ops")
+    return len(wire), len(additions)
+
+
 def run(cap: str | None = None) -> int:
     time.sleep = lambda *a, **k: None        # replay needs no real settle delays
 
@@ -156,7 +181,18 @@ def run(cap: str | None = None) -> int:
     for label, end in miles:
         print(f"  PASS {label:10} {end - prev:5} ops")
         prev = end
-    print("\nPASS: power-on + efuse + firmware + MAC/BB/RF/efuse-patch/LLT byte-for-byte.")
+
+    # M10 monitor entry — a targeted out-of-line block (airmon-divergent; see the function).
+    try:
+        ops = _strip_async_watchdog(rp.extract_ops(pcap, dev, start_addr=REG_MCUFWDL))
+        nvendor, nadd = verify_monitor_block(ops)
+    except rp.Divergence as e:
+        print(f"\nFAIL monitor block:\n  {e}")
+        return 1
+    print(f"  PASS M10 monitor   {nvendor} vendor ops + {nadd} wifit3 RXFLTMAP opens")
+
+    print("\nPASS: power-on + efuse + firmware + MAC/BB/RF/efuse-patch/LLT + "
+          "InitHalDm + tail + monitor byte-for-byte.")
     return 0
 
 
