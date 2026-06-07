@@ -128,13 +128,18 @@ class Rtl8188eusDkmsDriver:
         return True
 
     async def _dig_watchdog(self) -> None:
-        """Periodic DIG watchdog (M12). Serialized with set_channel via _io_lock."""
+        """Periodic no-link phydm DM watchdog. Serialized with set_channel via _io_lock.
+        The DM carries software state (IGI + CCK-PD) across ticks, seeded once from the
+        chip's post-InitHalDm values."""
         loop = asyncio.get_running_loop()
         try:
+            async with self._io_lock:
+                state = await loop.run_in_executor(None, dig.init_state, self.transport)
             while True:
                 await asyncio.sleep(dig.WATCHDOG_PERIOD_S)
                 async with self._io_lock:
-                    tick = await loop.run_in_executor(None, dig.watchdog_tick, self.transport)
+                    tick = await loop.run_in_executor(
+                        None, dig.watchdog_tick, self.transport, state)
                 logger.debug("RTL8188EUS DIG: IGI=0x%02x fa=%d (ofdm=%d cck=%d)",
                              tick.igi, tick.fa_cnt, tick.ofdm_fa, tick.cck_fa)
         except asyncio.CancelledError:

@@ -49,7 +49,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
 from wifit3.chips.rtl8188eus_dkms import (  # noqa: E402
-    bb, dm, efuse, firmware, mac, monitor, pwrseq, rf, txpower,
+    bb, dig, dm, efuse, firmware, mac, monitor, pwrseq, rf, txpower,
 )
 from wifit3.chips.rtl8188eus_dkms import constants as C  # noqa: E402
 from wifit3.chips.rtl8188eus_dkms.constants import DEFAULT_INIT_CHANNEL  # noqa: E402
@@ -158,6 +158,37 @@ def verify_monitor_block(ops) -> tuple:
     return len(wire), len(additions)
 
 
+def verify_dm_tick(dm_ops) -> tuple:
+    """Targeted byte-diff of one no-link phydm DM watchdog tick — the operational-phase
+    async stream the synchronous init diff strips (the paired ``verify_`` for the stripped
+    watchdog, per PORTING.md "strip, but never forget").
+
+    Anchored on the FA-counter hold (the first 0xC00 touch after the monitor entry), it
+    seeds the carried DM state from the chip's post-InitHalDm values (IGI 0x20; the CCK CCA
+    default ``phydm_cck_pd_init`` reads from 0xa08[23:16], recovered from the capture's own
+    InitHalDm read) and replays ``dig.watchdog_tick`` against the wire. Because the DM
+    carries state, this verifies the **first** operational tick, where those seeds still
+    hold. Returns ``(start_op, consumed, next_unported)`` — ``next_unported`` is the first
+    tick op the port does not yet emit (the TDD pointer to the next mechanism), None once
+    the whole tick is ported."""
+    mon = next((i for i, o in enumerate(dm_ops)
+                if o["kind"] == "W" and o.get("addr") == C.REG_RCR
+                and o.get("value") == C.RCR_MONITOR_VALUE), None)
+    if mon is None:
+        raise rp.Divergence("monitor entry not found — no DM-tick anchor")
+    start = next((i for i in range(mon, len(dm_ops))
+                  if dm_ops[i].get("addr") == 0x0C00), None)
+    if start is None:
+        raise rp.Divergence("no FA-counter hold (0xC00) after monitor entry")
+    a0a = next(((o["value"] >> 16) & 0xFF for o in dm_ops
+                if o["kind"] == "R" and o.get("addr") == 0x0A08), 0)
+    state = dig.WatchdogState(cur_ig_value=0x20, cur_cck_cca_thres=a0a)
+    t = rp.ReplayTransport(dm_ops[start:])
+    dig.watchdog_tick(t, state)
+    nxt = dm_ops[start + t.i] if start + t.i < len(dm_ops) else None
+    return start, t.i, nxt
+
+
 def run(cap: str | None = None) -> int:
     time.sleep = lambda *a, **k: None        # replay needs no real settle delays
 
@@ -210,6 +241,22 @@ def run(cap: str | None = None) -> int:
         print(f"\nFAIL monitor block:\n  {e}")
         return 1
     print(f"  PASS M10 monitor   {nvendor} vendor ops + {nadd} wifit3 RXFLTMAP opens")
+
+    # Operational-phase async stream: one no-link phydm DM watchdog tick (the paired
+    # verify_ for the stripped watchdog). Coverage of the tick grows as mechanisms land.
+    try:
+        dm_ops = rp.extract_ops(pcap, dev)               # full stream (the tick IS async)
+        start, consumed, nxt = verify_dm_tick(dm_ops)
+    except rp.Divergence as e:
+        print(f"\nFAIL DM tick:\n  {e}")
+        return 1
+    if nxt is None:
+        print(f"  PASS DM tick @op{start}: {consumed} ops byte-faithful (whole tick)")
+    else:
+        nxt_s = (f"{nxt['kind']} 0x{nxt['addr']:04x}/{nxt['width']}=0x{nxt['value']:x}"
+                 if nxt["kind"] != "B" else "bulk")
+        print(f"  ~~~~ DM tick @op{start}: {consumed} ops byte-faithful; "
+              f"next un-ported op = {nxt_s}")
 
     print("\nPASS: power-on + efuse + firmware + MAC/BB/RF/efuse-patch/LLT + "
           "InitHalDm + tail + monitor byte-for-byte.")
