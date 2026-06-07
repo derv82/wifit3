@@ -40,6 +40,11 @@ ENV_RTL8821_DRIVER = "WIFIT3_RTL8821"
 # "mainline" to fall back to the mainline driver (e.g. a fixed-channel, non-hopping use).
 ENV_RTL8812_DRIVER = "WIFIT3_RTL8812"
 
+# RTL8188EUS (2357:010c) is claimed by BOTH the mainline-derived driver (default) and the
+# vendor/DKMS port. Unlike the 11ac pairs, the mainline driver stays the default until the
+# DKMS port is hardware-proven to tie/beat it on 2.4 GHz breadth; "dkms" opts in.
+ENV_RTL8188_DRIVER = "WIFIT3_RTL8188"
+
 _DRIVER_CLASSES: Dict[str, Type[WlanDriver]] | None = None
 
 
@@ -55,6 +60,7 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
         from wifit3.chips.rt2800usb.driver import RT2800USBDriver
         from wifit3.chips.rtl8187.driver import RTL8187Driver
         from wifit3.chips.rtl8188eus.driver import RTL8188EUSDriver
+        from wifit3.chips.rtl8188eus_dkms.driver import Rtl8188eusDkmsDriver
         from wifit3.chips.rtl8812au.driver import RTL8812AUDriver
         from wifit3.chips.rtl8812au_dkms.driver import Rtl8812auDkmsDriver
         from wifit3.chips.rtl8814au_dkms.driver import Rtl8814auDkmsDriver
@@ -69,6 +75,7 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
             "rt2500usb": RT2500USBDriver,
             "rt2800usb": RT2800USBDriver,
             "rtl8188eus": RTL8188EUSDriver,
+            "rtl8188eus_dkms": Rtl8188eusDkmsDriver,
             "rtl8812au": RTL8812AUDriver,
             "rtl8812au_dkms": Rtl8812auDkmsDriver,
             "rtl8821au": RTL8821AUDriver,
@@ -103,8 +110,13 @@ def _all_drivers() -> List[Type[WlanDriver]]:
         rtl8812 = [c["rtl8812au"], c["rtl8812au_dkms"]]
     else:
         rtl8812 = [c["rtl8812au_dkms"], c["rtl8812au"]]
+    # RTL8188EUS: mainline-derived port is the default; "dkms" opts into the vendor port.
+    if os.environ.get(ENV_RTL8188_DRIVER, "").strip().lower() == "dkms":
+        rtl8188 = [c["rtl8188eus_dkms"], c["rtl8188eus"]]
+    else:
+        rtl8188 = [c["rtl8188eus"], c["rtl8188eus_dkms"]]
     return [
-        c["ar9271"], c["rtl8187"], c["rt2500usb"], c["rt2800usb"], c["rtl8188eus"],
+        c["ar9271"], c["rtl8187"], c["rt2500usb"], c["rt2800usb"], *rtl8188,
         *rtl8812, *rtl8821, c["rtl8822bu"], *rtl8814,
         c["mt76x0u"], c["mt76x2u"], c["mt7921au"],
     ]
