@@ -130,9 +130,9 @@ def _fw_free_to_go(t) -> bool:
     return False
 
 
-def download_firmware(t, blob: bytes) -> None:
+def download_firmware(t, blob: bytes) -> bool:
     """``rtl8188e_FirmwareDownload`` — strip the 32-byte header, then enable DL,
-    write the image, and wait for FW-ready."""
+    write the image, and wait for FW-ready. Returns True once WINTINI_RDY is set."""
     sig = int.from_bytes(blob[0:2], "little")
     buf = blob[FW_HEADER_SIZE:] if (sig & FW_SIGNATURE_MASK) == FW_SIGNATURE_88E else blob
 
@@ -148,8 +148,9 @@ def download_firmware(t, blob: bytes) -> None:
             break
     _fw_download_enable(t, False)
     if not _fw_free_to_go(t):
-        raise RuntimeError("RTL8188EUS: firmware not ready (WINTINI_RDY timeout)")
+        return False
     _initialize_firmware_vars(t)
+    return True
 
 
 def _initialize_firmware_vars(t) -> None:
@@ -158,7 +159,7 @@ def _initialize_firmware_vars(t) -> None:
     t.write8(REG_HMETFR, 0x0F)
 
 
-def bring_up(t, blob: bytes | None = None) -> None:
+def bring_up(t, blob: bytes | None = None) -> bool:
     """M1 runtime entry: power on the MAC, then download firmware to FW-ready.
 
     (On hardware the probe-phase efuse read runs between power_on and the FW
@@ -167,4 +168,4 @@ def bring_up(t, blob: bytes | None = None) -> None:
     if blob is None:
         blob = load_firmware_blob()
     power_on(t)
-    download_firmware(t, blob)
+    return download_firmware(t, blob)

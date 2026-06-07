@@ -65,7 +65,7 @@ def test_download_firmware_completes_and_uploads_full_payload():
     blob = firmware.load_firmware_blob()
     # Serve chksum-rpt (BIT2) and WINTINI_RDY (BIT6) so the polls exit immediately.
     t = FakeTx(reads={(0x0080, 4): (1 << 2) | (1 << 6)})
-    firmware.download_firmware(t, blob)
+    assert firmware.download_firmware(t, blob) is True   # WINTINI_RDY reached
 
     # Every byte after the 32-byte header reaches the FW SRAM, in order.
     payload = b"".join(d for _, d in t.blocks)
