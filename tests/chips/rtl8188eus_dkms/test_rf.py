@@ -10,13 +10,17 @@ from wifit3.chips.rtl8188eus_dkms.constants import RF_LSSI_WRITE_A
 class Tx:
     def __init__(self, reads=None):
         self.w32 = []
+        self.ops = []                 # ordered ("R"/"W", addr, value)
         self._reads = dict(reads or {})
 
     def read32(self, a):
-        return self._reads.get(a, 0x00000000)
+        v = self._reads.get(a, 0x00000000)
+        self.ops.append(("R", a, v))
+        return v
 
     def write32(self, a, v):
         self.w32.append((a, v & 0xFFFFFFFF))
+        self.ops.append(("W", a, v & 0xFFFFFFFF))
 
 
 def test_lssi_write_encoding():
@@ -47,3 +51,39 @@ def test_rf_config_rfenv_then_table_then_restore():
     assert addrs.count(RF_LSSI_WRITE_A) == 91
     # ...and the final write restores RFENV on 0x870.
     assert addrs[-1] == 0x0870
+
+
+def test_serial_read_path_a_pi_readback():
+    # cap1 op 1573-1577: path-A read of RF_CHNLBW (0x18). 0x820[8]=1 -> PI readback.
+    t = Tx(reads={0x0824: 0x00390204, 0x0820: 0x01000100, 0x08B8: 0x00107407})
+    val = rf._phy_rf_serial_read(t, 0, rf.RF_CHNLBW)
+    assert t.ops == [
+        ("R", 0x0824, 0x00390204),       # tmplong = HSSI param2 (path A)
+        ("W", 0x0824, 0x00390204),       # tmplong & ~read-edge (edge already clear)
+        ("W", 0x0824, 0x8C390204),       # (offset 0x18 << 23) | read-edge
+        ("R", 0x0820, 0x01000100),       # RfPiEnable = HSSI param1[8] = 1
+        ("R", 0x08B8, 0x00107407),       # PI read-back (TransceiverA_HSPI_Readback)
+    ]
+    assert val == 0x07407                 # masked to bLSSIReadBackData (20 bits)
+
+
+def test_serial_read_path_b_serial_readback():
+    # cap1 op 1578-1583: path-B read. 0x828[8]=0 -> non-PI (serial) read-back at 0x8a4.
+    t = Tx(reads={0x0824: 0x8C390204, 0x082C: 0x00000000,
+                  0x0828: 0x00000000, 0x08A4: 0x00033333})
+    val = rf._phy_rf_serial_read(t, 1, rf.RF_CHNLBW)
+    assert t.ops == [
+        ("R", 0x0824, 0x8C390204),       # tmplong still read from path-A param2
+        ("R", 0x082C, 0x00000000),       # tmplong2 = path-B param2
+        ("W", 0x0824, 0x0C390204),       # path-A param2 with read-edge cleared
+        ("W", 0x082C, 0x8C000000),       # path-B param2 staged with offset + edge
+        ("R", 0x0828, 0x00000000),       # RfPiEnable = path-B param1[8] = 0
+        ("R", 0x08A4, 0x00033333),       # serial read-back (rFPGA0_XB_LSSIReadBack)
+    ]
+    assert val == 0x33333
+
+
+def test_read_rf_chnl_val_returns_both_paths():
+    t = Tx(reads={0x0824: 0x00390204, 0x0820: 0x01000100, 0x08B8: 0x00107407,
+                  0x082C: 0x00000000, 0x0828: 0x00000000, 0x08A4: 0x00000000})
+    assert rf.read_rf_chnl_val(t) == (0x07407, 0x00000)

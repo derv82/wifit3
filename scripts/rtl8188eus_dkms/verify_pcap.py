@@ -93,6 +93,8 @@ def _verify_main_chain(pcap, dev, params):
     miles.append(("M2e llt", t.i))
     mac.init_misc02(t)
     miles.append(("M3 misc02", t.i))
+    rf.read_rf_chnl_val(t)
+    miles.append(("M4a rfchnl", t.i))
     return miles
 
 

@@ -197,6 +197,21 @@ RFREGOFFSETMASK = 0xFFFFF
 # RF data-row delay pseudo-addresses [SRC] odm_config_rf_reg_8188e
 RF_DELAY_ADDRS = (0xFFE, 0xFD, 0xFC, 0xFB, 0xFA, 0xF9)
 
+# --- RF serial read (phy_RFSerialRead) [SRC] Hal8188EPhyReg.h, hal_phy_reg.h ---
+bMaskDWord = 0xFFFFFFFF
+RF_CHNLBW = 0x18                 # RF channel & BW switch register (RF reg 0x18)
+RF_HSSI_PARA1_A = 0x0820         # rFPGA0_XA_HSSIParameter1 (RfPiEnable BIT8)
+RF_HSSI_PARA1_B = 0x0828         # rFPGA0_XB_HSSIParameter1
+RF_HSSI_PARA2_B = 0x082C         # rFPGA0_XB_HSSIParameter2
+RF_LSSI_READBACK_A = 0x08A0      # rFPGA0_XA_LSSIReadBack (serial-interface readback)
+RF_LSSI_READBACK_B = 0x08A4      # rFPGA0_XB_LSSIReadBack
+RF_LSSI_READBACK_PI_A = 0x08B8   # TransceiverA_HSPI_Readback (parallel-interface readback)
+RF_LSSI_READBACK_PI_B = 0x08BC   # TransceiverB_HSPI_Readback
+bLSSIReadAddress = 0x7F800000    # read-offset field in HSSI parameter2 [23:30]
+bLSSIReadEdge = 0x80000000       # LSSI "read" edge signal
+bLSSIReadBackData = 0x000FFFFF   # 20-bit RF read-back value
+RF_PI_ENABLE = BIT(8)            # rFPGA0_X?_HSSIParameter1[8]
+
 # --- IOL (initial offload) engine [SRC] rtl8188e_hal_init.c, rtl8188e_spec.h ---
 SW_OFFLOAD_EN = BIT(7)        # REG_SYS_CFG (0xF0[7])
 REG_HMEBOX_E0 = 0x0088        # IOL command/status mailbox
