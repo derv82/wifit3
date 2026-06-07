@@ -54,34 +54,35 @@ up clean through the full chain and a 28 s 2.4 GHz hop (`scan_hw.py`) heard **78
 940 beacons / 1527 frames**, RSSI −43 dBm (near) to −83 (far), ESSID-variance canary clean
 (0/78). The PHY-status RSSI decode works; the RX walk is coherent. This is without the runtime
 DIG watchdog (the InitHalDm M7 seed IGI suffices in this environment). The driver is registered
-behind `WIFIT3_RTL8188=dkms` (mainline stays default until a controlled A/B vs mainline). Still
-to port: the DIG/AGC 2 s watchdog (`dig.py`, long-session/busy-band adaptation) and TX
-(`tx.py` + `inject_frame`).
+behind `WIFIT3_RTL8188=dkms` (mainline stays default until a controlled A/B vs mainline).
+TX is wired (`tx.py` + `inject_frame`, mgmt descriptor build unit-tested) — live deauth/WEP
+replay is the user's to fire. **One milestone left: the DIG/AGC 2 s watchdog (`dig.py`,
+long-session/busy-band adaptation of the M7 seed).**
+
+**DIG watchdog (`dig.py`) — the only remaining port.** RX already works great without it (the
+M7 InitHalDm IGI seed), so this is for long-session/busy-band stability, NOT a correctness
+gap. It is the 8188e (11N) `phydm_dig` no-link path — materially different from the 8814 (11AC)
+sibling: FA counters are `cnt_all` = sum of 6 OFDM sub-counters (0xCF0 fast_fsync/sb_search,
+0xDA0 parity, 0xDA4 rate_illegal/crc8, 0xDA8 mcs) + CCK (0xA5C LSB / 0xA58 MSB byte), read
+under a hold (0xC00/0xD00 BIT31, 0xA2C BIT12/14) and reset by `phydm_false_alarm_counter_
+reg_reset` (0xC0C BIT31, 0xD00 BIT27, 0xA2C BIT12-15, 0xF14 BIT16). IGI lives at 0xC50 (path A
+only, 1T1R). Read the no-link thresholds/step/bounds from `phydm_dig.c` carefully (the 11N
+`DM_DIG_FA_TH0/1=500/750` differ from the 8814's 2000/4000/5000), then **validate with a
+controlled fixed-channel A/B (DIG on vs off) so a wrong watchdog can't silently regress the
+proven 78-AP RX** — model the toggle on `rtl8814au_dkms/scan_hw.py --no-dig` + `dig.py`.
 
 **The entire hal_init is ported and byte-for-byte on all 3 captures** (`verify_pcap.py`:
 power-on → efuse → MISC01 → FW → MAC → BB → RF → EFUSE_PATCH → LLT → MISC02 → M4a RF-chnl read
 → M4b BB-turn-on → M4c CAM → M5 TX-power → M6 MISC11-tail → M7 InitHalDm seed → M8 hal_init
 tail (power-track arm + LCK)). No hardcodes (crystal_cap + tx-power from efuse). Async 2 s
-watchdog sreset filtered. 46 hardware-free tests. After M8 the wire hands off to airmon-ng's
+watchdog sreset filtered. 67 hardware-free tests. After M8 the wire hands off to airmon-ng's
 monitor + channel setup (cap1 op ~1894), which our always-monitor flow does NOT replay verbatim.
 
-**NEXT (resume here) — the runtime path, after hal_init (cap1 op ~1894 = airmon takeover):**
-1. **Channel tune** — `PHY_SwChnl8188E` + `PHY_SetBWMode8188E` (20 MHz). RfRegChnlVal[0] (from
-   M4a) is the RMW base. Build `verify_channels.py` (model `rtl8814au_dkms/verify_channels.py`)
-   against the airodump hop windows; the per-channel diff must handle the async DIG-burst
-   interleave (FA counters 0xC00/0xD00, NHM, EDCCA — see the ⚠️ section).
-2. **Monitor-mode entry** — RCR override accept-all + open RXFLTMAP0/1/2 (overwrites the STA
-   RCR 0x700060CE from MISC02). Always-monitor deviation; verify out-of-line like
-   `rtl8814au_dkms/monitor.py` + `verify_pcap.verify_monitor_block`. The wire's airmon MAC-addr
-   program (0x610-0x615) + RXFLTMAP1 (0x6a2) at cap1 1894-1907 are the reference values.
-3. **RX path** — `rx.py` (RX-desc decode + `recvbuf2recvframe`, strip FCS per
-   [[project_rx_frames_include_fcs]]) + `transport.bulk_in` + shared `RxReaderThread`. NOT
-   pcap-verifiable — unit-test the decode + live beacon count.
-4. **`driver.py`** + `wlan/manager.py` registration (env `WIFIT3_RTL8188`, mainline default until
-   HW-proven). Then **HW RX scan** (`scan_hw.py`), then the **DIG/AGC 2 s watchdog** (`dig.py`,
-   the runtime adaptation the M7 seed feeds — central to the RX goal), then TX wiring.
+**The runtime path is DONE** (M9 channel tune `verify_channels.py` ×3 + M10 monitor block ×3 +
+M11 RX path + driver/manager registration + M13 TX wiring), and 2.4 GHz RX is HW-proven (see
+the top of this Status). Only the DIG watchdog (`dig.py`, detailed above) is left.
 
-**Done since the MISC02 milestone (all pcap-verified ×3, unit-tested, committed):**
+**Done since the MISC02 milestone (all pcap-verified ×3 where applicable, unit-tested, committed):**
 - **M4a (RfRegChnlVal reads): complete.** `rf.read_rf_chnl_val` ports `phy_RFSerialRead` /
   `PHY_QueryRFReg8188E` — the 3-wire LSSI *read* (stage offset into HSSI param2 0x824/0x82c,
   read back from PI 0x8b8 / serial 0x8a0 per HSSI param1[8]). RfRegChnlVal[0] is the base the
@@ -122,6 +123,33 @@ monitor + channel setup (cap1 op ~1894), which our always-monitor flow does NOT 
   reads). `rf.set_rf_reg` merges `(orig & ~mask) | (data << shift)` with **no re-mask** of the
   shifted data (PHY_SetRFReg8188E quirk LCK relies on to set bit15 via a 0xfff call). [WIRE
   1866–1893]
+- **M9 (channel tune): complete — byte-diffed.** `chan.set_channel` ports `PHY_SwChnl8188E`
+  (TX-power re-tune + RF_CHNLBW channel write) + `PHY_SetBWMode8188E`(20 MHz) (BWOPMODE +
+  rFPGA0/1_RFMOD + RF_CHNLBW BW bits). RfRegChnlVal[A] is stateful (channel [9:0], BW [11:10]),
+  seeded from M4a; spur cal is I-cut-only (skipped, cut A). `verify_channels.py` byte-diffs the
+  initial ch1 set (49 ops) on all 3 captures (RfRegChnlVal 0x07407→0x07c01). The per-hop airodump
+  differ (DIG-burst interleave) is deferred to the DIG-watchdog milestone.
+- **M10 (monitor-mode entry): complete — pcap-verified vendor block.** `monitor.enter_monitor`
+  ports `hw_var_set_opmode(MONITOR)`: Set_MSR(NOLINK) + RCR=0x9000382f (accept-all + append-FCS,
+  no ACRC32/AICV — the 8188e #if 0) + RXFLTMAP2=0xffff. The always-monitor deviation additionally
+  opens RXFLTMAP0/1 (mgmt/beacons + control) since hal_init leaves RXFLTMAP0 unwritten and the
+  vendor monitor only opens data. `verify_pcap.verify_monitor_block` byte-diffs the 5 vendor ops
+  ×3; the 2 RXFLTMAP0/1 opens are the documented additions.
+- **M11 (RX path): complete — HW-proven.** `rx.py` ports `rtl8188e_query_rx_desc_status` (24-byte
+  desc) + the `recvbuf2recvframe` walk (_RND4 / RX_AGG_USB) + `decode_rssi` (CCK byte5 →
+  lna_gain_table_1[LNA]−2·VGA for cut A; OFDM byte4 → ((pwdb>>1)&0x7f)−110). Deviations: crc/icv
+  skip-and-continue, FCS stripped. `transport.bulk_in/out` already had WinUSB-timeout handling.
+  Decode unit-tested; [HW] 78 APs / 940 beacons / 1527 frames in a 28 s hop, canary clean.
+- **driver + manager: complete.** `Rtl8188eusDkmsDriver` (WlanDriver Protocol): connect()
+  orchestrates the full bring-up + monitor + channel tune + RxReaderThread; set_channel threads
+  RfRegChnlVal; registered behind `WIFIT3_RTL8188` (mainline default, =dkms opts in). Also fixed
+  `firmware.download_firmware` to return a bool (it returned None on success, which connect()
+  misread as failure — the bug that initially blocked HW bring-up).
+- **M13 (TX wiring): complete — descriptor build unit-tested; live TX is the user's.** `tx.py`
+  ports `rtl8188e_fill_fake_txdesc` (32-byte mgmt desc: OWN|FSG|LSG, OFFSET=32, PKT_SIZE, MGMT
+  queue, HW-seq, driver-uses-rate=1M, BMC from addr1) + `rtl8188e_cal_txdesc_chksum`.
+  `driver.inject_frame` sends [desc | frame] on bulk-OUT under _io_lock. On-air TX (deauth/replay)
+  is the user's to fire (passive-by-default).
 
 Per-milestone detail (early init):
 
