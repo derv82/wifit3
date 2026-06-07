@@ -54,22 +54,30 @@ up clean through the full chain and a 28 s 2.4 GHz hop (`scan_hw.py`) heard **78
 940 beacons / 1527 frames**, RSSI −43 dBm (near) to −83 (far), ESSID-variance canary clean
 (0/78). The PHY-status RSSI decode works; the RX walk is coherent. This is without the runtime
 DIG watchdog (the InitHalDm M7 seed IGI suffices in this environment). The driver is registered
-behind `WIFIT3_RTL8188=dkms` (mainline stays default until a controlled A/B vs mainline).
+behind `WIFIT3_RTL8188=dkms` (mainline stays default until a controlled A/B clearly wins).
 TX is wired (`tx.py` + `inject_frame`, mgmt descriptor build unit-tested) — live deauth/WEP
-replay is the user's to fire. **One milestone left: the DIG/AGC 2 s watchdog (`dig.py`,
-long-session/busy-band adaptation of the M7 seed).**
+replay is the user's to fire. **The port is functionally COMPLETE** (all init + RX + TX +
+DIG watchdog); 71 hardware-free tests.
 
-**DIG watchdog (`dig.py`) — the only remaining port.** RX already works great without it (the
-M7 InitHalDm IGI seed), so this is for long-session/busy-band stability, NOT a correctness
-gap. It is the 8188e (11N) `phydm_dig` no-link path — materially different from the 8814 (11AC)
-sibling: FA counters are `cnt_all` = sum of 6 OFDM sub-counters (0xCF0 fast_fsync/sb_search,
-0xDA0 parity, 0xDA4 rate_illegal/crc8, 0xDA8 mcs) + CCK (0xA5C LSB / 0xA58 MSB byte), read
-under a hold (0xC00/0xD00 BIT31, 0xA2C BIT12/14) and reset by `phydm_false_alarm_counter_
-reg_reset` (0xC0C BIT31, 0xD00 BIT27, 0xA2C BIT12-15, 0xF14 BIT16). IGI lives at 0xC50 (path A
-only, 1T1R). Read the no-link thresholds/step/bounds from `phydm_dig.c` carefully (the 11N
-`DM_DIG_FA_TH0/1=500/750` differ from the 8814's 2000/4000/5000), then **validate with a
-controlled fixed-channel A/B (DIG on vs off) so a wrong watchdog can't silently regress the
-proven 78-AP RX** — model the toggle on `rtl8814au_dkms/scan_hw.py --no-dig` + `dig.py`.
+**DIG/AGC watchdog (`dig.py`) — DONE + HW-validated (M12).** Ports the 8188e (11N) `phydm_dig`
+no-link path: hold+read+reset the FA counters (`cnt_all` = 6 OFDM sub-counters 0xCF0/0xDA0/
+0xDA4/0xDA8 + CCK 0xA5C/0xA58), step IGI by `fa_th {2000,4000,5000}` (+2/+1/−2), clamp
+[0x1c, 0x2a] (DIG_MIN_COVERAGE..DIG_MAX_OF_MIN_BALANCE_MODE), write 0xC50; 2 s task,
+toggle `driver.enable_dig` / `scan_hw --no-dig`. **[HW] the watchdog is the missing piece a
+pinned-AP beacon-watch A/B revealed:** the seed-only port read ~6.1 beacons/s on a strong AP
+vs the mainline port's 7.3 — *below* mainline. With the watchdog DKMS reads ~7.0 (max ceiling
+8→10), **tied with mainline within the busy-channel noise, no floor collapse**. The DIG debug
+log confirms it is healthy — FA bounded + bouncing (~3000/2 s, the reset works, not climbing),
+IGI holds at the 0x20 seed because FA sits *in-band* in this very busy 78-AP environment (it
+would step the gain down to 0x1c in a low-FA env or up in a saturating one; the clamp makes
+either safe).
+
+**A/B status / default-flip gate.** The hop-scan breadth (78 APs) was misleading — the real
+metric is fixed-channel per-AP reception, where DKSM and mainline currently *tie* (~7.0 vs 7.3)
+in this hyper-busy environment (both airtime-limited). The re-port's claimed edge (86–89% vs
+83%) came from the cold-boot captures in a cleaner setting. **To flip the default to DKMS, run
+a controlled canary-AP A/B** (quieter channel, same AP, replug between runs) and confirm DKMS
+ties-or-beats on the floor (min) — the doc's original gate. Until then mainline stays default.
 
 **The entire hal_init is ported and byte-for-byte on all 3 captures** (`verify_pcap.py`:
 power-on → efuse → MISC01 → FW → MAC → BB → RF → EFUSE_PATCH → LLT → MISC02 → M4a RF-chnl read
@@ -150,6 +158,12 @@ the top of this Status). Only the DIG watchdog (`dig.py`, detailed above) is lef
   queue, HW-seq, driver-uses-rate=1M, BMC from addr1) + `rtl8188e_cal_txdesc_chksum`.
   `driver.inject_frame` sends [desc | frame] on bulk-OUT under _io_lock. On-air TX (deauth/replay)
   is the user's to fire (passive-by-default).
+- **M12 (DIG/AGC watchdog): complete — HW-validated.** `dig.watchdog_tick` ports the 8188e 11N
+  `phydm_dig` no-link path (hold→read→reset FA, step IGI by fa_th, clamp [0x1c,0x2a], write 0xC50),
+  driven every 2 s by a `connect()` task (toggle `driver.enable_dig` / `scan_hw --no-dig`). The
+  pinned-AP beacon-watch A/B established it is the missing per-AP-reception piece (seed-only ~6.1
+  vs mainline 7.3 → with watchdog ~7.0, tied) and that it is healthy (FA bounded/reset works).
+  See **Potential Known Gaps → DIG/AGC runtime watchdog**.
 
 Per-milestone detail (early init):
 
@@ -264,17 +278,13 @@ cut=ODM_CUT_A(0), platform=ODM_CE(0x04), interface=ODM_ITRF_USB(0x02), package=0
 - [ ] **[0..5] chip-version prologue** (read_chip_version 0xf0/4 + `hal_EfusePowerSwitch(ON)`
       0xcf=0x69 + FEN_ELDR/CLK checks): ahead of the 0x06 power-seq start; not yet ported (the
       pre-FW window starts at 0x06). Small, self-contained — port for full op-0 contiguity.
-- [ ] **DIG/AGC runtime watchdog — NOT YET PORTED (only filtered).** The 2 s phydm watchdog
-      is **central to this port's RX goal** (without periodic IGI/gain adaptation the gain
-      freezes at the seed → deaf/saturating, the exact 2.4 GHz weakness we re-port to fix).
-      Status: `verify_pcap` strips only the per-tick sreset read (`R REG_SYS_CFG/4`); the full
-      DIG burst (FA counters 0xC00/0xD00, CCK reset 0xA2C, NHM 0xF84–0xF94, EDCCA 0x8C4) is
-      NOT yet reproduced. Plan: (a) port the seed via **InitHalDm** — **DONE (M7)**:
-      `dm.init_hal_dm` seeds DIG/NHM/EDCCA incl. the EDCCA pwdb search; (b) port the periodic
-      tick as `dig.py` (`phydm_dig` no-link path: read FA → step IGI → clamp → reset), driven
-      by a 2 s task like the 8814_dkms — still TODO.
-      **Note:** the watchdog *startup* emits no USB ops (it's a kernel `_set_timer` arming) —
-      nothing was skipped on the wire; the wire only shows it firing. Porting it precisely also
-      lets the per-channel-tune differ filter the DIG burst cleanly (see the ⚠️ section below).
+- [x] **DIG/AGC runtime watchdog — DONE (M7 seed + M12 watchdog), HW-validated.** (a) the seed
+      via **InitHalDm** (M7): `dm.init_hal_dm` seeds DIG/NHM/EDCCA incl. the EDCCA pwdb search;
+      (b) the periodic tick as `dig.py` (M12): the 8188e 11N `phydm_dig` no-link path
+      (hold→read→reset FA, step IGI by `fa_th {2000,4000,5000}`, clamp [0x1c,0x2a], write 0xC50),
+      a 2 s `connect()` task. The pinned-AP beacon-watch A/B showed it lifts per-AP reception
+      ~6.1→7.0 (tied with mainline) and is healthy (FA bounded + bouncing → reset works; IGI
+      in-band-holds at the 0x20 seed in the busy test env). `verify_pcap` still strips the async
+      sreset read; the runtime DIG burst is the driver's own watchdog now, not a replay concern.
 
 Verified `[SRC]`/`[WIRE]` facts accumulate here as the port progresses.
