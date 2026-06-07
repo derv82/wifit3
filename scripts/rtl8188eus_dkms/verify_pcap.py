@@ -4,6 +4,26 @@ PASS means ONLY: for this captured boot, the port emits the same USB bytes the v
 driver did. It is a faithfulness gate, not a correctness proof (the only real proof is
 beacons off the antenna). Fully offline -- no hardware.
 
+============================ COVERAGE & BLIND SPOTS (read me) ============================
+A green run here proves the INIT is byte-faithful. It does NOT prove runtime RX parity --
+and the gap that fact hides is real (see RTL8188EUS_DKMS.md "Weak-AP RX sensitivity").
+What this gate SLICES OUT / never demands:
+  1. ``_strip_async_watchdog`` removes the phydm watchdog's per-tick ``R REG_SYS_CFG(0xF0)/4``
+     sreset read so the synchronous diff lines up. That read is benign, BUT it is the visible
+     tip of the runtime DM: the watchdog also runs the DIG burst (FA counters 0xC00/0xD00/
+     0xCF0/0xDA*, CCK-PD 0xA5x, AGC 0x8Cx, NHM 0xF8x, EDCCA) which this diff never checks.
+  2. Verification STOPS at the monitor opmode entry (M10). The capture continues into the
+     airodump operational phase where the vendor DM actually ADAPTS the CCK/AGC registers
+     (0xA50/0xA54/0x8C4...). ``verify_channels.py`` replays only the *initial* ch1 tune, so
+     that whole operational phase -- where weak-AP RX sensitivity is set -- is unverified.
+  3. Not replayed by design: airmon's STA->monitor dance (we are always-monitor); the
+     per-hop airodump channel tunes (only ch1 is diffed); the [0..5] chip-version prologue.
+LESSON: byte-perfect init can still under-perform on RX because the continuous phydm DM
+(CCK-PD + AGC adaptation, beyond the IGI-only ``dig.py``) is the part that wins weak APs,
+and it lives in the sliced-out/under-verified region. The live beacon-watch A/B is the only
+RX gate; do not read "byte-for-byte PASS" as "RX as good as mainline".
+=========================================================================================
+
 Rides the shared rtw88-family replay engine (``scripts/rtw88_pcap_replay``): the 8188e uses
 the same Realtek vendor request (bRequest 0x05), and its FW-page control writes map onto the
 engine's ``write_block`` alias.
