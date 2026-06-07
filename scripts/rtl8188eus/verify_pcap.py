@@ -34,10 +34,11 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8188eus import firmware, mac, phy  # noqa: E402
+from wifit3.chips.rtl8188eus import firmware, iqk, mac, phy  # noqa: E402
 from wifit3.chips.rtl8188eus.constants import (  # noqa: E402
     FW_HEADER_SIZE,
     REG_AFE_XTAL_CTRL,
+    REG_FPGA0_XCD_SWITCH_CTRL,
     REG_FW_START_ADDRESS,
     XTAL0_SHIFT,
 )
@@ -120,6 +121,35 @@ def _bringup_gate(ops) -> bool:
     return True
 
 
+def _iqk_gate(ops) -> bool:
+    """Replay ``phy_iq_calibrate`` against the capture's IQK block, anchored at the first
+    *read* of REG_FPGA0_XCD_SWITCH_CTRL (0x085c) after the FW upload -- the ADDA backup that
+    opens IQK (and the only read of that reg in the boot). The full 3-iteration calibration,
+    the similarity-compare candidate pick, ``fill_iqk_matrix_a``, and the recovery snapshot
+    must replay byte-for-byte: every correction write is computed from the recorded
+    measurement-reads the replay serves, so a PASS proves the algorithm is kernel-faithful."""
+    fw_writes = [i for i, o in enumerate(ops)
+                 if o["kind"] == "W" and o.get("addr") == REG_FW_START_ADDRESS]
+    if not fw_writes:
+        print("  IQK: no FW region -- skipped")
+        return True
+    anchor = next((i for i in range(fw_writes[-1], len(ops))
+                   if ops[i]["kind"] == "R" and ops[i].get("addr") == REG_FPGA0_XCD_SWITCH_CTRL),
+                  None)
+    if anchor is None:
+        print("  IQK: ADDA-save anchor (read 0x085c) not in this capture -- skipped")
+        return True
+    rt = rp.ReplayTransport(ops[anchor:])
+    try:
+        iqk.phy_iq_calibrate(rt)
+    except rp.Divergence as e:
+        print(f"  FAIL (IQK divergence):\n    {e}")
+        return False
+    print(f"  PASS: {rt.i} ops byte-for-byte -- phy_iq_calibrate "
+          f"(3-iter path-A IQK + similarity + fill_matrix + recovery snapshot)")
+    return True
+
+
 def run(cap: str | None = None) -> int:
     time.sleep = lambda *a, **k: None        # replay needs no real settle delays
     name = Path(cap or "capture-1").stem
@@ -134,6 +164,7 @@ def run(cap: str | None = None) -> int:
 
     ok = _blob_gate(ops)
     ok = _bringup_gate(ops) and ok
+    ok = _iqk_gate(ops) and ok
 
     print("\nPASS" if ok else "\nFAIL")
     return 0 if ok else 1

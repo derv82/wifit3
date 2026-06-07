@@ -364,3 +364,77 @@ REG_TX_AGC_A_MCS03_MCS00 = 0x0E10        # regs.h:1137
 REG_TX_AGC_A_MCS07_MCS04 = 0x0E14        # regs.h:1138
 REG_TX_AGC_A_MCS11_MCS08 = 0x0E18        # regs.h:1139
 REG_TX_AGC_A_MCS15_MCS12 = 0x0E1C        # regs.h:1140
+
+# ---- IQK / LCK calibration (regs.h) --------------------------------
+# IQK tone / PI / AGC trigger + power-result registers
+REG_FPGA0_IQK = 0x0E28                   # regs.h:1146
+REG_TX_IQK_TONE_A = 0x0E30               # regs.h:1148
+REG_RX_IQK_TONE_A = 0x0E34               # regs.h:1149
+REG_TX_IQK_PI_A = 0x0E38                 # regs.h:1150
+REG_RX_IQK_PI_A = 0x0E3C                 # regs.h:1151
+REG_TX_IQK = 0x0E40                      # regs.h:1153
+REG_RX_IQK = 0x0E44                      # regs.h:1154
+REG_IQK_AGC_PTS = 0x0E48                 # regs.h:1155
+REG_IQK_AGC_RSP = 0x0E4C                 # regs.h:1156
+REG_TX_POWER_BEFORE_IQK_A = 0x0E94       # regs.h:1173
+REG_TX_POWER_AFTER_IQK_A = 0x0E9C        # regs.h:1175
+REG_RX_POWER_BEFORE_IQK_A_2 = 0x0EA4     # regs.h:1178
+REG_RX_POWER_AFTER_IQK_A_2 = 0x0EAC      # regs.h:1181
+
+# ADDA backup set (16 regs; rtl8xxxu.h:904 RTL8XXXU_ADDA_REGS)
+REG_FPGA0_XCD_SWITCH_CTRL = 0x085C       # regs.h:929
+REG_BLUETOOTH = 0x0E6C                   # regs.h:1163
+REG_RX_WAIT_CCA = 0x0E70                 # regs.h:1164
+REG_TX_CCK_RFON = 0x0E74                 # regs.h:1165
+REG_TX_CCK_BBON = 0x0E78                 # regs.h:1166
+REG_TX_OFDM_RFON = 0x0E7C                # regs.h:1167
+REG_TX_OFDM_BBON = 0x0E80                # regs.h:1168
+REG_TX_TO_RX = 0x0E84                    # regs.h:1169
+REG_TX_TO_TX = 0x0E88                    # regs.h:1170
+REG_RX_CCK = 0x0E8C                      # regs.h:1171
+REG_RX_OFDM = 0x0ED0                     # regs.h:1193
+REG_RX_WAIT_RIFS = 0x0ED4                # regs.h:1194
+REG_RX_TO_RX = 0x0ED8                    # regs.h:1195
+REG_STANDBY = 0x0EDC                     # regs.h:1196
+REG_SLEEP = 0x0EE0                       # regs.h:1197
+REG_PMPD_ANAEN = 0x0EEC                  # regs.h:1198
+
+# IQK MAC backup set (4 regs; rtl8xxxu.h:905) -- REG_TXPAUSE + REG_GPIO_MUXCFG already defined
+REG_BEACON_CTRL = 0x0550                 # regs.h:678
+REG_BEACON_CTRL_1 = 0x0551               # regs.h:679
+
+# IQK BB backup set (9 regs; rtl8xxxu.h:906) -- REG_OFDM0_TRX_PATH_ENABLE / RF_INT_OE already defined
+REG_OFDM0_TR_MUX_PAR = 0x0C08            # regs.h:1069
+REG_CONFIG_ANT_A = 0x0B68                # regs.h:1054
+REG_CONFIG_ANT_B = 0x0B6C                # regs.h:1055
+REG_FPGA0_XAB_RF_SW_CTRL = 0x0870        # regs.h:942 (32-bit XA+XB view of 0x0870)
+REG_FPGA0_XCD_RF_SW_CTRL = 0x0874        # regs.h:945
+REG_CCK0_AFE_SETTING = 0x0A04            # regs.h:1018
+
+# BB PI-mode / HSSI + RF switch fields
+REG_FPGA0_XB_HSSI_PARM1 = 0x0828         # regs.h:906
+FPGA0_HSSI_PARM1_PI = 1 << 8             # regs.h:904 BIT(8)
+FPGA0_RF_PAPE = 1 << 10                  # regs.h:958 BIT(10)
+FPGA0_RF_BD_CTRL_SHIFT = 16              # regs.h:960
+
+# RF6052 PA-control registers for RX IQK (regs.h:1362-1381)
+RF6052_REG_RCK_OS = 0x30                 # regs.h:1362
+RF6052_REG_TXPA_G1 = 0x31                # regs.h:1364
+RF6052_REG_TXPA_G2 = 0x32                # regs.h:1365
+RF6052_REG_WE_LUT = 0xEF                 # regs.h:1381
+
+# OFDM correction registers written by fill_iqk_matrix_a (regs.h)
+REG_OFDM0_XA_AGC_CORE1 = 0x0C50          # regs.h:1084
+REG_OFDM0_XA_TX_IQ_IMBALANCE = 0x0C80    # regs.h:1098
+REG_OFDM0_XC_TX_AFE = 0x0C94             # regs.h:1103
+REG_OFDM0_RX_IQ_EXT_ANTA = 0x0CA0        # regs.h:1106
+REG_OFDM0_XA_RX_IQ_IMBALANCE = 0x0C14    # regs.h:1076
+REG_OFDM0_XB_RX_IQ_IMBALANCE = 0x0C1C    # regs.h:1077
+REG_OFDM0_ENERGY_CCA_THRES = 0x0C4C      # regs.h:1079
+REG_OFDM0_AGC_RSSI_TABLE = 0x0C78        # regs.h:1096
+REG_OFDM0_XB_TX_IQ_IMBALANCE = 0x0C88    # regs.h:1099
+REG_OFDM0_XD_TX_AFE = 0x0C9C             # regs.h:1104
+
+# ADDA 1T path values (8188e fops, 8188e.c:1870-1871)
+ADDA_1T_INIT = 0x0B1B25A0
+ADDA_1T_PATH_ON = 0x0BDB25A0

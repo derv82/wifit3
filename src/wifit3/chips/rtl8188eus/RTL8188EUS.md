@@ -73,7 +73,8 @@ FW blob): `download_firmware` · `init_mac` (MAC table + MAX_AGGR) · `init_phy_
 | adaptive controls (RESPONSE_RATE_SET, SIFS, retry, EDCA×4, DARFRC, RARFRC, FWHW_TXQ_CTRL, ACKTO) | missing |
 | beacon params, CAM invalidate, LEDCFG2 DPDT, HWSEQ_CTRL, BAR_MODE_CTRL, NAV_UPPER, USB_HRPWM | missing |
 | `init_aggregation`, `init_reg_pkt_life_time`, thermal-meter RF write | missing (all in the 8188e fops vector) |
-| `phy_lc_calibrate` + `phy_iq_calibrate` | missing — **the RX headline**; runtime-computed (can't replay-match), port the algorithm + HW-validate |
+| `phy_iq_calibrate` (path-A IQK) | **ported 2026-06-06** ✓ → `iqk.py`; gated in `verify_pcap` — 270 ops (cap-1/3) / 413 ops (cap-2, more iterations) byte-exact, which proves the retry + similarity-compare logic follows the recorded path. Wired into `_cold_bring_up` before `enable_rf`. (Disproves the earlier "runtime-computed, can't replay-match" note: the replay serves the recorded measurement-reads, so a faithful algorithm reproduces the recorded writes.) |
+| `phy_lc_calibrate` (LCK, `rtl8723a_phy_lc_calibrate`) | missing — small, runs just before IQK; next up |
 
 Next step: restructure `_cold_bring_up` to mirror `init_device`'s order (un-hoist the queue
 init, move TX-buffer/LLT after PHY) so the gate can replay past PHY into the post-PHY block.
@@ -243,8 +244,8 @@ Total wire writes: 192 + 130 + 91 = 413, plus 4 × `time.sleep(0.05)` for the RF
 
 ### Skipped in M3 (calibration; chip will RX without these but with degraded sensitivity)
 
-- `rtl8188eu_phy_iq_calibrate` (`8188e.c:906-991`) — IQ calibration
-- `rtl8723a_phy_lc_calibrate` — LC calibration (path-A only on 8188e)
+- `rtl8188eu_phy_iq_calibrate` (`8188e.c:906-991`) — IQ calibration — **ported 2026-06-06** → `iqk.py` (gated, all 3 captures); see the faithfulness-walk section up top
+- `rtl8723a_phy_lc_calibrate` — LC calibration (path-A only on 8188e) — still pending
 - `usb_quirks` rest of body (`8188e.c:1302-1306`)
 
 ### Watch-outs
