@@ -5,23 +5,23 @@ driver did. It is a faithfulness gate, not a correctness proof (the only real pr
 beacons off the antenna). Fully offline -- no hardware.
 
 ============================ COVERAGE & BLIND SPOTS (read me) ============================
-A green run here proves the INIT is byte-faithful. It does NOT prove runtime RX parity --
-and the gap that fact hides is real (see RTL8188EUS_DKMS.md "Weak-AP RX sensitivity").
-What this gate SLICES OUT / never demands:
-  1. ``_strip_async_watchdog`` removes the phydm watchdog's per-tick ``R REG_SYS_CFG(0xF0)/4``
-     sreset read so the synchronous diff lines up. That read is benign, BUT it is the visible
-     tip of the runtime DM: the watchdog also runs the DIG burst (FA counters 0xC00/0xD00/
-     0xCF0/0xDA*, CCK-PD 0xA5x, AGC 0x8Cx, NHM 0xF8x, EDCCA) which this diff never checks.
-  2. Verification STOPS at the monitor opmode entry (M10). The capture continues into the
-     airodump operational phase where the vendor DM actually ADAPTS the CCK/AGC registers
-     (0xA50/0xA54/0x8C4...). ``verify_channels.py`` replays only the *initial* ch1 tune, so
-     that whole operational phase -- where weak-AP RX sensitivity is set -- is unverified.
-  3. Not replayed by design: airmon's STA->monitor dance (we are always-monitor); the
-     per-hop airodump channel tunes (only ch1 is diffed); the [0..5] chip-version prologue.
-LESSON: byte-perfect init can still under-perform on RX because the continuous phydm DM
-(CCK-PD + AGC adaptation, beyond the IGI-only ``dig.py``) is the part that wins weak APs,
-and it lives in the sliced-out/under-verified region. The live beacon-watch A/B is the only
-RX gate; do not read "byte-for-byte PASS" as "RX as good as mainline".
+A green INIT run proves the init is byte-faithful. The operational phydm DM (the ~57% of the
+capture after the monitor entry) is verified SEPARATELY by ``verify_dm_tick`` below -- the
+paired ``verify_`` for the stripped async watchdog (PORTING.md "strip, but never forget").
+  1. ``_strip_async_watchdog`` removes the watchdog's per-tick ``R REG_SYS_CFG(0xF0)/4`` sreset
+     read so the synchronous *init* diff lines up -- but the DM tick itself is NOT lost: it is
+     byte-diffed by ``verify_dm_tick`` (FA-stats + DIG + CCK-PD + adaptivity + thermal power-
+     track; NHM pending -> 71/94 ops). The vendor adapts 0xa0a (CCK-PD), 0xc4c (EDCCA), 0xc50
+     (IGI), the NHM thresholds, and the BB swing -- NOT 0xa50/0xa54/0x8c4 (an earlier red
+     herring: 0x8c4 is a read-only FA counter; 0xa50/0xa54 are never written by the vendor).
+  2. Still NOT replayed by design: airmon's STA->monitor dance (we are always-monitor); the
+     per-hop airodump channel tunes (``verify_channels.py`` diffs only the initial ch1 tune);
+     the [0..5] chip-version prologue; and the thermal-meter ARM tick (every other tick) --
+     ``verify_dm_tick`` covers the callback tick, not yet the arm tick.
+LESSON: byte-perfect init alone does NOT prove RX parity -- the continuous phydm DM (CCK-PD +
+EDCCA + thermal, beyond IGI) is what wins weak APs. ``verify_dm_tick`` now forces that DM to be
+faithful; the live beacon-watch A/B is still the only *benefit* gate (faithful != as-good-as-
+mainline -- that is the open (a)/(b) question).
 =========================================================================================
 
 Rides the shared rtw88-family replay engine (``scripts/rtw88_pcap_replay``): the 8188e uses

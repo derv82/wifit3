@@ -49,14 +49,16 @@ bimodal collapse, not just the mean.
 
 ## Status
 
-**The port is COMPLETE and HW-PROVEN — RX, TX, and full promiscuous monitor.** [HW 2026-06-07]
-A live TL-WN722N v2 (2357:010c) brought up clean through the full chain; 71 hardware-free tests.
-- **RX:** functional + the pipeline is clean, BUT **weak-AP sensitivity currently trails the
-  mainline port — OPEN ISSUE (see Potential Known Gaps).** A 28 s hop heard 78 APs across 1-13;
-  the RX walk is provably loss-free (instrumented: 0 skips / 0 bails, ~72 beacons/s). But a fair
-  *total-reception* A/B on a fixed channel (ch1, 15 s, alternating) shows DKMS hears **~22 APs /
-  ~61 beacons/s vs mainline ~70 APs / ~71 beacons/s** — DKMS misses ~48 weak/distant APs mainline
-  catches. NOT the pipeline, NOT the IGI (a 0x20→0x10 sweep barely moved it).
+**Init + the RX/TX/monitor pipeline are COMPLETE and HW-PROVEN. The operational phydm DM is being
+faithfully reconstructed — that, not a mystery register, is the weak-AP gap's root cause.**
+[HW 2026-06-07] A live TL-WN722N v2 (2357:010c) brought up clean through the full chain.
+- **RX:** the pipeline is clean (instrumented loss-free), but an earlier A/B showed DKMS hearing
+  far fewer weak APs than mainline (~22 vs ~70 APs on a busy ch1). **Root cause found:** the
+  operational phydm DM (the ~57% of the capture after the monitor entry) was stripped from
+  `verify_pcap` and never re-verified, so the runtime port ran only IGI-DIG. Being fixed via
+  `verify_dm_tick` — see **Potential Known Gaps → Weak-AP RX sensitivity**. The RX-relevant DM
+  fixes (CCK-PD + the adaptivity EDCCA drive) are now ported + live; the HW A/B is the remaining
+  gate.
 - **TX:** `deauth_hw.py` injected 300 deauth frames (no pipe fault); the target client
   reconnected and **20/20 captured EAPOL were to/from it** — the deauth landed, TX confirmed.
 - **Promiscuous monitor (both directions):** 9 M2/M4 (client->AP, ToDS) + 11 M1/M3 + 262 ToDS
@@ -66,25 +68,25 @@ A live TL-WN722N v2 (2357:010c) brought up clean through the full chain; 71 hard
 Registered behind `WIFIT3_RTL8188=dkms` (mainline-derived port stays the default for 2357:010c
 until a controlled canary-AP A/B confirms a clear RX win on the floor — see the A/B note below).
 
-**DIG/AGC watchdog (`dig.py`) — DONE + HW-validated (M12).** Ports the 8188e (11N) `phydm_dig`
-no-link path: hold+read+reset the FA counters (`cnt_all` = 6 OFDM sub-counters 0xCF0/0xDA0/
-0xDA4/0xDA8 + CCK 0xA5C/0xA58), step IGI by `fa_th {2000,4000,5000}` (+2/+1/−2), clamp
-[0x1c, 0x2a] (DIG_MIN_COVERAGE..DIG_MAX_OF_MIN_BALANCE_MODE), write 0xC50; 2 s task,
-toggle `driver.enable_dig` / `scan_hw --no-dig`. **[HW] the watchdog is the missing piece a
-pinned-AP beacon-watch A/B revealed:** the seed-only port read ~6.1 beacons/s on a strong AP
-vs the mainline port's 7.3 — *below* mainline. With the watchdog DKMS reads ~7.0 (max ceiling
-8→10), **tied with mainline within the busy-channel noise, no floor collapse**. The DIG debug
-log confirms it is healthy — FA bounded + bouncing (~3000/2 s, the reset works, not climbing),
-IGI holds at the 0x20 seed because FA sits *in-band* in this very busy 78-AP environment (it
-would step the gain down to 0x1c in a low-FA env or up in a saturating one; the clamp makes
-either safe).
+**Runtime DM watchdog — the FULL no-link `phydm_watchdog` tick (NOT the earlier IGI-only
+`dig.py`).** The previous "DIG watchdog DONE, IGI-only, tied with mainline" status was a
+**partial port**: it ran only the DIG step and read the FA counters via a non-wire-faithful
+shortcut. The runtime DM is now reconstructed faithfully and byte-diffed by
+`scripts/.../verify_pcap.py:verify_dm_tick` against one operational `phydm_watchdog` tick (cap1
+op 2617+), wire order [SRC] phydm.c:1846-1878: faithful FA-statistics (incl. the CRC/SC/CCA
+reads + the EDCCA-flag dbg port) → DIG (carried-state IGI, clamp [0x1c,0x2a], 0xC50) → **CCK-PD**
+(0xa0a) → **adaptivity EDCCA** (0xc4c) → **halrf thermal power-track** (`powertrack.py`) → NHM
+(pending). Driven by a 2 s `connect()` task (`dig.watchdog_tick`, toggle `driver.enable_dig`).
+Each mechanism byte-faithful ×3; **71/94 tick ops verified** → NHM closes it to Z=0.
 
-**A/B status / default-flip gate.** The hop-scan breadth (78 APs) was misleading — the real
-metric is fixed-channel per-AP reception, where DKSM and mainline currently *tie* (~7.0 vs 7.3)
-in this hyper-busy environment (both airtime-limited). The re-port's claimed edge (86–89% vs
-83%) came from the cold-boot captures in a cleaner setting. **To flip the default to DKMS, run
-a controlled canary-AP A/B** (quieter channel, same AP, replug between runs) and confirm DKMS
-ties-or-beats on the floor (min) — the doc's original gate. Until then mainline stays default.
+**A/B status / default-flip gate.** The earlier "tie (~7.0 vs 7.3)" A/B was run against the
+IGI-only partial port, so it is **superseded** — re-run once the full DM tick is complete. The
+re-port's claimed edge (86–89% vs 83%) came from the cold-boot captures in a cleaner setting.
+**To flip the default to DKMS, run a controlled canary-AP A/B** (quieter channel, same AP,
+replug between runs) and confirm DKMS ties-or-beats on the floor (min). Until then mainline
+stays default. The open (a)-vs-(b) question stands — does a byte-faithful full DM beat mainline,
+or is "vendor is hotter" false for this card (→ fall back to mainline) — but the port is now
+faithful enough to settle it honestly.
 
 **The entire hal_init is ported and byte-for-byte on all 3 captures** (`verify_pcap.py`:
 power-on → efuse → MISC01 → FW → MAC → BB → RF → EFUSE_PATCH → LLT → MISC02 → M4a RF-chnl read
@@ -272,47 +274,28 @@ cut=ODM_CUT_A(0), platform=ODM_CE(0x04), interface=ODM_ITRF_USB(0x02), package=0
     milestone (the FW/MAC chain is verified from REG_MCUFWDL via `start_addr`).
 
 ## Potential Known Gaps (audit before trusting any milestone)
-- [ ] **Weak-AP RX sensitivity trails mainline — OPEN, the headline issue.**
-      **UPDATE: the airmon monitor-tail fix did NOT close it.** The airmon STA->monitor dance
-      WAS partly skipped (MAC write missing; monitor entered BEFORE the re-tune, reversed) and
-      is now fixed (connect: hal_init -> set_macid -> set_channel re-tune -> enter_monitor,
-      matching the wire) — but post-fix DKMS still reads ~24 APs vs mainline ~70. Confirmed
-      empirically (1009 beacons/15 s, 24 nAPs) + structurally (the differing regs 0xa50/0xa54/
-      0x8c4 are written NOWHERE in the capture — 0 writes across all 5194 ops). So this is NOT
-      the airmon dance and NOT the 8812au garbage-demod symptom (our RX is clean beacons).
-      **THE REAL OPEN QUESTION:** those weak-AP-sensitivity regs are set by the *runtime DM*,
-      absent from this short cold-boot capture. Either (a) the VENDOR phydm DM writes them
-      (CCK-PD / the full DIG beyond our IGI-only `dig.py`) given a longer run — port it from
-      SOURCE (`phydm_cck_pd`, the rest of `phydm_dig`) and/or capture a longer operational
-      trace to byte-verify; OR (b) the vendor stack genuinely never writes them and mainline
-      simply tunes RX more aggressively than the vendor — in which case the re-port's "vendor is
-      hotter" premise does NOT hold for this card and faithfulness alone can't beat mainline.
-      Settle (a) vs (b) from the phydm source first; do not assume either. [HW 2026-06-07] A
-      fair total-reception A/B (fixed ch1, 15 s, alternating, busy ~70-AP band) reads DKMS
-      ~22 APs / ~61 beacons/s vs the mainline-derived port ~70 APs / ~71 beacons/s — DKMS hears
-      *zero* beacons from ~48 weak/distant APs mainline catches. This is the OPPOSITE of the
-      re-port's premise, so it must be root-caused before flipping the default. **Ruled out:**
-      the RX pipeline (instrumented loss-free — 0 skips / 0 bails, frames/buffer 2.0) and the IGI
-      (a 0x20→0x10 sweep barely changed reception or nAPs). **Lead:** a live BB-register diff
-      (`read32` of pages 0x800/0xa00/0xc00/0xe00 after bring-up, both drivers) shows the RX-path
-      registers that differ are **CCK 0x0a50=000df800 / 0x0a54=10000000 (mainline 4811f500 /
-      0b001303) and OFDM-AGC 0x08c4 / 0x08ac / 0x08f8** (the 0xe00-0xe1c / 0x86c diffs are just
-      TX-power: DKMS's efuse values vs mainline's 0x22 default — ignore). These look like
-      **runtime DM output mainline produces but the DKMS port does not**: our `dig.py` only adapts
-      IGI (0xc50), whereas the vendor phydm watchdog also runs **CCK-PD** (`phydm_cck_pd` — the
-      M7 seed did `cck_pd_init` but not the periodic adjustment) and fuller AGC adaptation. NEXT
-      SESSION: confirm whether those regs differ at *init* or only after the DM runs (dump right
-      after bring-up vs after a few seconds, both drivers), then port the missing phydm runtime
-      piece (likely CCK-PD + the rest of `phydm_dig`'s AGC writes beyond IGI). The register diff
-      is the map. **Methodology correction:** the right gate is NOT hand-chasing registers — it
-      is to BYTE-DIFF THE OPERATIONAL PHASE of the capture (the per-hop tunes AND the periodic
-      DIG burst), the way `rtl8814au_dkms/verify_channels.py` diffs all 35 hops. This was
-      deferred for the 8188e (only the initial ch1 tune is diffed) when the DIG-burst interleave
-      made it awkward — but extending the diff is exactly what FORCES the runtime-DM port to be
-      faithful (the diff stays red until the CCK-PD/AGC writes match the wire). Finish that
-      verification first; the RX parity follows from it. The init being byte-perfect is only
-      half the port — the operational phase is the other half, and it is where this card's RX
-      goal actually lives.
+- [~] **Weak-AP RX sensitivity vs mainline — root cause FOUND, faithful fix in progress.**
+      The root cause is NOT a mystery runtime register and NOT the airmon dance: it is that the
+      **operational phydm DM — the ~3,256-op / ~57% phase after the monitor entry — was stripped
+      from `verify_pcap` and never re-verified**, so the runtime port ran only IGI-DIG (and even
+      that sampled the FA counters via a non-wire-faithful shortcut). The previous session's
+      register-diff lead (**CCK 0x0a50/0x0a54, OFDM-AGC 0x08c4**) was a **red herring**: 0x8c4 is
+      a read-only FA counter the DM *samples* (it reads different because RF state differs), and
+      0x0a50/0x0a54 are **never written by the vendor at all** — the vendor adapts a *different*
+      set (0xa0a CCK-PD, 0xc4c EDCCA, the NHM thresholds 0x890/0x898/0x89c/0xe28).
+      **Fix (byte-faithful, no hardcodes):** `verify_pcap.py:verify_dm_tick` byte-diffs one
+      operational `phydm_watchdog` tick (cap1 op 2617+) against `dig.watchdog_tick`. Ported +
+      byte-faithful ×3 so far (**71/94 ops**): faithful FA-statistics, carried-state DIG,
+      **CCK-PD** (0xa0a — the CCK CCA threshold that gates 1 Mbps weak-AP beacons; never ran
+      before), **adaptivity EDCCA drive** (0xc4c 0x7f→0x1c/0x24 — the "frozen at the no-link
+      seed" bug), and the halrf thermal power-track. **NHM remains** → then the tick is Z=0.
+      The two RX-relevant fixes (CCK-PD + EDCCA drive) are already live in the driver.
+      This is the methodology PORTING.md now codifies (**"Start from the source … strip, but
+      never forget"** — every stripped async stream needs a paired `verify_`). **Remaining gate:**
+      the controlled HW A/B (canary floor + busy breadth) to confirm the now-faithful vendor DM
+      ties-or-beats mainline. The (a)-vs-(b) question still stands — does a byte-faithful full DM
+      beat mainline, or is "vendor is hotter" false for this card (→ fall back to mainline) — but
+      the port is finally faithful enough to settle it honestly rather than guess.
 - [x] **EFUSE probe read — DONE.** `efuse.read_chip_params` ports the probe-phase IOL efuse
       read (ops 41–544): `iol_mode_enable(1, fw_ready=False)` (incl. the 8051 reset since FW
       isn't up yet) → `iol_execute(READ_EFUSE_MAP)` → `efuse_read_phymap_from_txpktbuf` (read
@@ -331,13 +314,14 @@ cut=ODM_CUT_A(0), platform=ODM_CE(0x04), interface=ODM_ITRF_USB(0x02), package=0
 - [ ] **[0..5] chip-version prologue** (read_chip_version 0xf0/4 + `hal_EfusePowerSwitch(ON)`
       0xcf=0x69 + FEN_ELDR/CLK checks): ahead of the 0x06 power-seq start; not yet ported (the
       pre-FW window starts at 0x06). Small, self-contained — port for full op-0 contiguity.
-- [x] **DIG/AGC runtime watchdog — DONE (M7 seed + M12 watchdog), HW-validated.** (a) the seed
-      via **InitHalDm** (M7): `dm.init_hal_dm` seeds DIG/NHM/EDCCA incl. the EDCCA pwdb search;
-      (b) the periodic tick as `dig.py` (M12): the 8188e 11N `phydm_dig` no-link path
-      (hold→read→reset FA, step IGI by `fa_th {2000,4000,5000}`, clamp [0x1c,0x2a], write 0xC50),
-      a 2 s `connect()` task. The pinned-AP beacon-watch A/B showed it lifts per-AP reception
-      ~6.1→7.0 (tied with mainline) and is healthy (FA bounded + bouncing → reset works; IGI
-      in-band-holds at the 0x20 seed in the busy test env). `verify_pcap` still strips the async
-      sreset read; the runtime DIG burst is the driver's own watchdog now, not a replay concern.
+- [~] **Runtime DM watchdog — full no-link `phydm_watchdog` tick (was IGI-only; now byte-diffed).**
+      (a) the seed via **InitHalDm** (M7): `dm.init_hal_dm` seeds DIG/NHM/EDCCA incl. the EDCCA
+      pwdb search; (b) the periodic tick (`dig.watchdog_tick` + `powertrack.py`): FA-statistics →
+      DIG (IGI 0xC50) → CCK-PD (0xa0a) → adaptivity EDCCA (0xc4c) → thermal power-track → NHM
+      (pending), a 2 s `connect()` task. **Now byte-diffed** by `verify_dm_tick` (71/94 ops ×3) —
+      the earlier IGI-only watchdog was a partial port that `verify_pcap` simply stripped. The
+      runtime tick is the driver's own watchdog AND now a replay-verified stream (the paired
+      `verify_` for the stripped async DM, per PORTING.md "strip, but never forget"). thermal
+      power-track defers IQK/LCK + the over-swing-limit TX-AGC reset behind explicit guards.
 
 Verified `[SRC]`/`[WIRE]` facts accumulate here as the port progresses.
