@@ -49,11 +49,25 @@ def _emit_phy(t):
     return emit
 
 
+# --- BB register helpers (phy_set_bb_reg / phy_query_bb_reg) ---------------
+def set_bb_reg(t, addr: int, mask: int, data: int) -> None:
+    """Masked BB write [SRC] phy_set_bb_reg — full-mask is a direct write32,
+    else read-modify-write at the mask's lowest set bit."""
+    if mask == 0xFFFFFFFF:
+        t.write32(addr, data & 0xFFFFFFFF)
+        return
+    shift = (mask & -mask).bit_length() - 1
+    cur = t.read32(addr)
+    t.write32(addr, (cur & ~mask) | ((data << shift) & mask))
+
+
+def query_bb_reg(t, addr: int, mask: int) -> int:
+    """Masked BB read [SRC] phy_query_bb_reg."""
+    shift = (mask & -mask).bit_length() - 1
+    return (t.read32(addr) & mask) >> shift
+
+
 def set_crystal_cap(t, crystal_cap: int) -> None:
     """``hal_set_crystal_cap`` (8188E): 0x24[22:11] = cap | (cap<<6). [SRC] hal_com.c."""
     cap = crystal_cap & 0x3F
-    val = cap | (cap << 6)
-    shift = (XTAL_CAP_MASK & -XTAL_CAP_MASK).bit_length() - 1   # 11
-    cur = t.read32(REG_AFE_XTAL_CTRL)
-    cur = (cur & ~XTAL_CAP_MASK) | ((val << shift) & XTAL_CAP_MASK)
-    t.write32(REG_AFE_XTAL_CTRL, cur)
+    set_bb_reg(t, REG_AFE_XTAL_CTRL, XTAL_CAP_MASK, cap | (cap << 6))

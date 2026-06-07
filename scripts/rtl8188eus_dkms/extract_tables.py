@@ -27,7 +27,7 @@ TABLES = [
     ("halhwimg8188e_bb.c", "array_mp_8188e_phy_reg", "bb_phy_reg_tbl.py", "PHY_REG"),
     ("halhwimg8188e_bb.c", "array_mp_8188e_agc_tab", "bb_agc_tab_tbl.py", "AGC_TAB"),
     ("halhwimg8188e_bb.c", "array_mp_8188e_phy_reg_pg", "bb_phy_reg_pg_tbl.py", "PHY_REG_PG"),
-    ("halhwimg8188e_rf.c", "array_mp_8188e_radioa_1t", "rf_radio_a_tbl.py", "RADIO_A"),
+    ("halhwimg8188e_rf.c", "array_mp_8188e_radioa", "rf_radio_a_tbl.py", "RADIO_A"),
 ]
 
 

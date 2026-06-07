@@ -84,3 +84,17 @@ XTAL_CAP_MASK = 0x007FF800   # REG_AFE_XTAL_CTRL[22:11] = cap | cap<<6
 DEFAULT_CRYSTAL_CAP = 0x20   # EEPROM_Default_CrystalCap (efuse 0xB9 on this card)
 # PHY_REG delay pseudo-addresses (settling, no register write)
 BB_DELAY_ADDRS = range(0xF9, 0xFF)
+
+# --- RF config [SRC] Hal8188EPhyReg.h, rtl8188e_rf6052.c, phy_RFWrite -----
+# Path-A BB register-definition offsets (phy_InitBBRFRegisterDefinition).
+RF_INTFS_A = 0x0870          # rFPGA0_XAB_RFInterfaceSW (RFENV control)
+RF_INTFO_A = 0x0860          # rFPGA0_XA_RFInterfaceOE  (RFENV output)
+RF_INTFE_A = 0x0860          # rFPGA0_XA_RFInterfaceOE  (RFENV enable)
+RF_HSSI_PARA2_A = 0x0824     # rFPGA0_XA_HSSIParameter2 (3-wire addr/data len)
+RF_LSSI_WRITE_A = 0x0840     # rFPGA0_XA_LSSIParameter  (3-wire RF write)
+bRFSI_RFENV = 0x10
+b3WireAddressLength = 0x400
+b3WireDataLength = 0x800
+RFREGOFFSETMASK = 0xFFFFF
+# RF data-row delay pseudo-addresses [SRC] odm_config_rf_reg_8188e
+RF_DELAY_ADDRS = (0xFFE, 0xFD, 0xFC, 0xFB, 0xFA, 0xF9)

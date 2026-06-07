@@ -77,6 +77,14 @@ bimodal collapse, not just the mean.
   read from the wire (the masked 0x24 write decodes to field 0x820 = 0x20|0x20<<6); to be
   replaced by the efuse decode. 328 ops/boot (deterministic).
 
+- **M2c (RF radio config): complete — pcap-verified on all 3 boots.**
+  `rf.phy_rf_config` ports `PHY_RFConfig8188E` -> `PHY_RF6052_Config8188E` (1T1R, path A only):
+  store RFENV (query 0x870[bRFSI_RFENV]), set RF_ENV enable/output (0x860), zero the 3-wire
+  addr/data bit-length selectors (0x824), walk `array_mp_8188e_radioa` (1228 u32) as LSSI writes
+  (`((addr<<20)|(data&0xFFFFF))&0x0FFFFFFF` -> 0x840; 0xFFE/0xF9..0xFD are settling delays),
+  then restore RFENV (0x870). 102 ops/boot (6 reads, 96 writes incl. 91 radio-A rows).
+  `bb.set_bb_reg`/`query_bb_reg` are the shared masked-BB-register helpers.
+
 ### The phydm conditional walker (`phy_cond.py`)
 `odm_read_and_config_mp_8188e_*` pairs the flat-u32 table two words at a time: a BIT31 word is a
 positive condition (IF/ELSE-IF/ELSE/ENDIF in bits[29:28]); a BIT30 word is its negative pair that
