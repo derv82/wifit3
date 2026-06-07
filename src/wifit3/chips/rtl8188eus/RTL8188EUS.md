@@ -76,8 +76,16 @@ FW blob): `download_firmware` · `init_mac` (MAC table + MAX_AGGR) · `init_phy_
 | `phy_iq_calibrate` (path-A IQK) | **ported 2026-06-06** ✓ → `iqk.py`; gated in `verify_pcap` — 270 ops (cap-1/3) / 413 ops (cap-2, more iterations) byte-exact, which proves the retry + similarity-compare logic follows the recorded path. Wired into `_cold_bring_up` before `enable_rf`. (Disproves the earlier "runtime-computed, can't replay-match" note: the replay serves the recorded measurement-reads, so a faithful algorithm reproduces the recorded writes.) |
 | `phy_lc_calibrate` (LCK) | **ported 2026-06-07** ✓ → `iqk.py`; gated (10 ops, exact-fills the gap to IQK on all 3 captures). Wired into `_cold_bring_up` before IQK. |
 
-Next step: restructure `_cold_bring_up` to mirror `init_device`'s order (un-hoist the queue
-init, move TX-buffer/LLT after PHY) so the gate can replay past PHY into the post-PHY block.
+**Stopping point (2026-06-07): mainline maxed → DKMS warranted.** Clean fixed-ch1 *passive*
+reception A/B (canary AP, same card): DKMS vendor **86–89%** (min 7) · mainline kernel 83%
+(min 5) · our mainline port **~77%** (min 3). We match the mainline kernel; mainline's RX
+ceiling on the 8188e is ~80% with bad-window collapses (the min-3 dips). All RF-relevant
+bring-up is ported + byte-verified (FW · MAC · BB/AGC/RF tables · crystal cap · IQK · LCK),
+gated across the mainline captures. **No more mainline RX to win** — the remaining
+`init_device` tail (post-PHY block, runtime DIG) is TX/housekeeping + environment-dependent.
+The RX win is the DKMS re-port → branch `dkms/8188eu`, sibling `chips/rtl8188eus_dkms/`
+(doc `RTL8188EUS_DKMS.md`). The post-PHY/un-hoist restructure stays available if a faithful
+mainline ever matters, but it won't move beacons.
 
 ## 1. Project Objective
 

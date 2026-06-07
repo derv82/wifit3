@@ -185,14 +185,12 @@ and pass `verify_pcap.py`; HW A/B + default-flip status lives in `VERIFICATION.m
   morrownr `88x2bu-20210702` 5.13.1 (`captures_rtl88x2bu/driver-source/` +
   `usb_dumps_new/driver-sources/rtl88x2bu-5.13.1.tar.xz`); branch `dkms/88x2bu`; mainline A/B
   `captures_rtw88_8822bu/`.
-- **RTL8188EUS** — **fidelity fix, NOT skip (next up).** Measured RX deficit on the canary AP:
-  ~6.4 beacons/s vs 8–10/s on other cards (`beacon_watch.py`, ch1) — a good card our port
-  under-drives. pcap-verify already found the lead: our `download_firmware` register preamble
-  diverges from the wire (re-enables the 8051 via `SYS_FUNC` where the capture doesn't; misses
-  the `0x0214/0x0200/0x010c/0x0116/0x0104` writes; single vs the capture's doubled `MCU_FW_DL`
-  enable — see `BUGS.md`). Fix the **existing** port's faithfulness first (cheap, no re-port),
-  re-measure beacons; the aircrack-ng vendor source (`captures_8188eu/driver-source/`) is the
-  fallback only if that's not enough.
+- **RTL8188EUS** — mainline fidelity fix **DONE**: IQK + LCK + crystal-cap ported, byte-verified,
+  the port now matches the mainline kernel (~77% vs 83% reception). Mainline's RX ceiling on this
+  card is ~80% with bad-window collapses. **DKMS re-port now active** — branch `dkms/8188eu`,
+  sibling `chips/rtl8188eus_dkms/`; vendor `realtek-rtl8188eus 5.3.9` in
+  `usb_dumps_new/captures_8188eu/driver-source/` (DKMS A/B 86–89%, min 7, no collapse). See
+  `chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md`.
 
 ---
 
