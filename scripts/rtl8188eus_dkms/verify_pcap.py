@@ -28,11 +28,23 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8188eus_dkms import bb, firmware, mac, pwrseq, rf  # noqa: E402
+from wifit3.chips.rtl8188eus_dkms import bb, efuse, firmware, mac, pwrseq, rf  # noqa: E402
 
 REG_MCUFWDL = 0x0080
+REG_SYS_CFG = 0x00F0
 REG_APS_FSMCO_B2 = 0x0006   # first power-seq op (CARDEMU_TO_ACT step 1 poll)
 DEFAULT_CAP = REPO / "usb_dumps_new" / "captures_8188eu" / "capture-1.pcap"
+
+
+def _strip_async_watchdog(ops):
+    """Remove the async 2 s-watchdog's per-tick sreset read (R REG_SYS_CFG/4),
+    which a background kernel thread interleaves into the single EP0 stream every
+    ~2.016 s (first fire ~frame 2731). The synchronous init/tune path never issues
+    a 32-bit REG_SYS_CFG read (read_chip_version runs once at probe, before this
+    window), so this is unambiguous. The watchdog's *DIG* burst (FA counters, NHM,
+    EDCCA) is a separate runtime concern verified by the DIG-watchdog milestone."""
+    return [o for o in ops
+            if not (o["kind"] == "R" and o.get("addr") == REG_SYS_CFG and o["width"] == 4)]
 
 
 def _verify_power_on(pcap, dev) -> int:
@@ -53,7 +65,7 @@ def _verify_main_chain(pcap, dev):
         M2b  PHY_BBConfig8188E (BB enable + PHY_REG + AGC_TAB + crystal cap)
         M2c  PHY_RFConfig8188E (RFENV setup + radio_a table + restore)
     (efuse probe read between power-on and FW is a separate milestone.)"""
-    ops = rp.extract_ops(pcap, dev, start_addr=REG_MCUFWDL)
+    ops = _strip_async_watchdog(rp.extract_ops(pcap, dev, start_addr=REG_MCUFWDL))
     t = rp.ReplayTransport(ops)
     miles = []
     firmware.download_firmware(t, firmware.load_firmware_blob())
@@ -64,6 +76,8 @@ def _verify_main_chain(pcap, dev):
     miles.append(("M2b bb", t.i))
     rf.phy_rf_config(t)
     miles.append(("M2c rf", t.i))
+    efuse.iol_efuse_patch(t)
+    miles.append(("M2d efpatch", t.i))
     return miles
 
 

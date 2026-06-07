@@ -85,6 +85,28 @@ bimodal collapse, not just the mean.
   then restore RFENV (0x870). 102 ops/boot (6 reads, 96 writes incl. 91 radio-A rows).
   `bb.set_bb_reg`/`query_bb_reg` are the shared masked-BB-register helpers.
 
+- **M2d (EFUSE_PATCH / IOL engine): complete — pcap-verified on all 3 boots.**
+  `efuse.iol_efuse_patch` ports `rtl8188e_iol_efuse_patch` (HAL_INIT_STAGES_EFUSE_PATCH) =
+  `iol_mode_enable(1)` + `iol_execute(CMD_READ_EFUSE_MAP)` + `iol_execute(CMD_EFUSE_PATCH)` +
+  `iol_mode_enable(0)`. The IOL engine (`iol_mode_enable` toggles SW_OFFLOAD_EN 0xF0[7];
+  `iol_execute` writes the command to REG_HMEBOX_E0 0x88, polls until it clears, checks the
+  <<4 error bit) is the shared MCU-offload primitive (also LLT init, the probe efuse read).
+  This build runs `rtw_fw_iol=1` (IOL always on). 393/395/379 ops/boot (the READ_EFUSE_MAP
+  poll iterates ~390× per boot).
+
+### ⚠️ Async 2 s watchdog interleaves the EP0 stream (load-bearing for replay)
+A background kernel thread (`rtw_dynamic_check_timer` / phydm watchdog) fires **every
+2.016 s** (first fire ≈ frame 2731 ≈ op 1320, right at the RF→efuse-patch boundary) and
+interleaves its transfers into the single serialized EP0 control stream. Per tick it issues
+a **sreset read `R REG_SYS_CFG(0xF0)/4`**; once the chip is up it also runs the full **DIG
+burst** (FA counters 0xC00/0xD00, CCK reset 0xA2C, NHM 0xF84–0xF94, EDCCA 0x8C4, …). The
+synchronous port never emits these, so `verify_pcap._strip_async_watchdog` removes the
+`R 0xF0/4` sreset reads before diffing (the init thread never does a 32-bit REG_SYS_CFG read —
+read_chip_version runs once at probe). M1–M2c passed only because they finish before the first
+fire. **The per-channel-tune verification (later) must handle the heavier DIG-burst
+interleaving**; the DIG burst itself is the runtime DIG-watchdog milestone (cf. `dig.py` in the
+siblings).
+
 ### The phydm conditional walker (`phy_cond.py`)
 `odm_read_and_config_mp_8188e_*` pairs the flat-u32 table two words at a time: a BIT31 word is a
 positive condition (IF/ELSE-IF/ELSE/ENDIF in bits[29:28]); a BIT30 word is its negative pair that

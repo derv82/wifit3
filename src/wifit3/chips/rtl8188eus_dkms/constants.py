@@ -98,3 +98,11 @@ b3WireDataLength = 0x800
 RFREGOFFSETMASK = 0xFFFFF
 # RF data-row delay pseudo-addresses [SRC] odm_config_rf_reg_8188e
 RF_DELAY_ADDRS = (0xFFE, 0xFD, 0xFC, 0xFB, 0xFA, 0xF9)
+
+# --- IOL (initial offload) engine [SRC] rtl8188e_hal_init.c, rtl8188e_spec.h ---
+SW_OFFLOAD_EN = BIT(7)        # REG_SYS_CFG (0xF0[7])
+REG_HMEBOX_E0 = 0x0088        # IOL command/status mailbox
+CMD_INIT_LLT = BIT(0)
+CMD_READ_EFUSE_MAP = BIT(1)
+CMD_EFUSE_PATCH = BIT(2)
+CMD_IOCONFIG = BIT(3)
