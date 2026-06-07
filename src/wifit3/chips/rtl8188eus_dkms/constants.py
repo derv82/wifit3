@@ -66,6 +66,10 @@ REG_HMETFR = 0x01CC          # H2C trigger, written by InitializeFirmwareVars
 # --- MAC config [SRC] hal_com_reg.h, Hal8188EPhyCfg.h --------------------
 REG_MAX_AGGR_NUM = 0x04CA
 
+# --- security (invalidate_cam_all) [SRC] hal_com_reg.h, rtl8188e_hal_init.c ---
+REG_CAMCMD = 0x0670          # RWCAM
+CAMCMD_CLEAR_ALL = BIT(31) | BIT(30)   # CAM_POLLING | CAM_CLR = 0xC0000000
+
 # --- MISC01 queue/page setup [SRC] hal_com_reg.h, usb_halinit.c -----------
 REG_RQPN = 0x0200
 REG_RQPN_NPQ = 0x0214

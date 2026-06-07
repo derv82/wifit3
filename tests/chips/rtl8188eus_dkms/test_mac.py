@@ -87,6 +87,13 @@ def test_init_misc02_key_writes():
     assert d32[0x0484] == 0xFFFFFFFF                # MACID no-link
 
 
+def test_invalidate_cam_all():
+    # cap1 op 1588: clear all security-cam entries (CAM_POLLING|CAM_CLR).
+    t = RecTx()
+    mac.invalidate_cam_all(t)
+    assert t.w32 == [(0x0670, 0xC0000000)]
+
+
 def test_tx_buffer_boundary():
     t = RecTx()
     mac.init_tx_buffer_boundary(t, bndy=0xA8)

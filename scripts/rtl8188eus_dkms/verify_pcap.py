@@ -97,6 +97,8 @@ def _verify_main_chain(pcap, dev, params):
     miles.append(("M4a rfchnl", t.i))
     bb.bb_turn_on_block(t)
     miles.append(("M4b bbturn", t.i))
+    mac.invalidate_cam_all(t)
+    miles.append(("M4c cam", t.i))
     return miles
 
 

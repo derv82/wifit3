@@ -166,3 +166,9 @@ def init_llt(t, bndy: int = TX_PAGE_BOUNDARY,
     for i in range(bndy, last):
         _llt_write(t, i, i + 1)
     _llt_write(t, last, bndy)                  # ring buffer: last -> boundary
+
+
+def invalidate_cam_all(t) -> None:
+    """``invalidate_cam_all`` -> HW_VAR_CAM_INVALID_ALL [SRC] rtl8188e_hal_init.c:4064
+    — clear every hardware security-cam entry: REG_CAMCMD = CAM_POLLING | CAM_CLR."""
+    t.write32(C.REG_CAMCMD, C.CAMCMD_CLEAR_ALL)
