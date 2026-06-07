@@ -47,6 +47,37 @@ remove. One-AP wire ceiling ≈ 9.77 beacons/s.
 | 30 s, cold | 8.3 | 8 | 6 | 10 | 1.0 |
 | 60 s, warm | 7.8 | 8 | 5 | 10 | 1.2 |
 
+## Bring-up faithfulness walk (2026-06-06, in progress)
+
+**Goal:** behave identically to mainline `rtl8xxxu` — port the *source* control flow
+(branches, loops, EFUSE-driven values), not byte-match one capture. The original port was a
+best-effort minimum-to-RX and silently skipped much of `init_device`; this walk closes it
+against `rtl8xxxu_init_device` (`core.c:3918`) function-by-function. `verify_pcap.py
+rtl8188eus` is the byte-perfect unit test that corroborates each fix against the mainline
+capture and pinpoints the next divergence (its value is bounded by being one card — it proves
+determinism here + locates drift, but the kernel C is the spec).
+
+**Verified byte-faithful** (gated in `verify_pcap.py`, all 3 captures — 523 post-FW ops + the
+FW blob): `download_firmware` · `init_mac` (MAC table + MAX_AGGR) · `init_phy_bb` (BB+AGC) ·
+`set_crystal_cap` · `init_phy_rf` (RADIO_A).
+
+**Gap-map** — `init_device` steps the port still skips or misorders (walk order top-down):
+
+| init_device step | status |
+|---|---|
+| `init_queue_reserved_page` / `_priority` / `TRXFF_BNDY+2` | present but **hoisted post-FW**; kernel runs them PRE-FW (3952-3962) |
+| `set_crystal_cap` (EFUSE `xtal_k` → `REG_AFE_XTAL_CTRL`) | **ported 2026-06-06** ✓ (no-op on this card, real on others) |
+| `REG_FPGA0_XAB_RF_SW_CTRL` antenna SW (4007-4014) | missing |
+| TX-buffer-boundary / PBP / LLT / `usb_quirks` / `has_tx_report` block | present-but-misordered / missing — bundled into `post_fw_mac_init`, kernel runs post-PHY (4021-4094) |
+| `REG_MAR` ×2 (multicast, the no-`init_reg_rxfltmap` else-branch, 4152) | missing |
+| adaptive controls (RESPONSE_RATE_SET, SIFS, retry, EDCA×4, DARFRC, RARFRC, FWHW_TXQ_CTRL, ACKTO) | missing |
+| beacon params, CAM invalidate, LEDCFG2 DPDT, HWSEQ_CTRL, BAR_MODE_CTRL, NAV_UPPER, USB_HRPWM | missing |
+| `init_aggregation`, `init_reg_pkt_life_time`, thermal-meter RF write | missing (all in the 8188e fops vector) |
+| `phy_lc_calibrate` + `phy_iq_calibrate` | missing — **the RX headline**; runtime-computed (can't replay-match), port the algorithm + HW-validate |
+
+Next step: restructure `_cold_bring_up` to mirror `init_device`'s order (un-hoist the queue
+init, move TX-buffer/LLT after PHY) so the gate can replay past PHY into the post-PHY block.
+
 ## 1. Project Objective
 
 Userspace Python driver for Realtek RTL8188EUS (e.g. TP-Link TL-WN722N v2/v3, several other low-cost dongles) — monitor mode + injection via PyUSB. Cleanroom port of the kernel `rtl8xxxu` driver's 8188e fileops vector.
@@ -198,7 +229,7 @@ Implemented in `phy.py` + `phy_tables.py`. The init tables are mechanically extr
 | `init_phy_rf` | `core.c:2433-2495` | SW_CTRL/INT_OE/HSSI_PARM2 pre-writes for SIPI mode → `init_rf_regs` → RFENV restore |
 | `init_phy_bb` | `8188e.c:582-603` | SYS_FUNC + RF_CTRL prep pokes → load `phy_init_table` + `agc_table` |
 | `init_phy_rf_8188e` | `8188e.c:605-608` | 1-line wrapper: `init_phy_rf(RADIO_A_INIT_TABLE, RF_A)` |
-| `post_mac_init_phy` | (driver glue) | `init_phy_bb` → `init_phy_rf_8188e` |
+| `post_mac_init_phy` | `core.c:2310-2382` (generic BB wrapper) | `init_phy_bb` (BB+AGC) → `set_crystal_cap` → `init_phy_rf_8188e` |
 
 ### Table sizes (extracted; assert-checked in the extractor)
 

@@ -65,7 +65,7 @@ from wifit3.chips.rtl8188eus.firmware import (
     start_firmware,
 )
 from wifit3.chips.rtl8188eus.chan import read_rfreg, set_channel_2g_20mhz
-from wifit3.chips.rtl8188eus.efuse import read_and_parse, read_efuse_map
+from wifit3.chips.rtl8188eus.efuse import EfuseDefaults, read_and_parse, read_efuse_map
 from wifit3.chips.rtl8188eus.constants import (
     MODE_AG_BW_20MHZ_8723B,
     MODE_AG_BW_MASK,
@@ -274,7 +274,7 @@ def phase_phy(transport: RTL8188EUSTransport) -> None:
     cr_before = transport.read16(REG_CR)
     t0 = time.perf_counter()
     try:
-        post_mac_init_phy(transport)
+        post_mac_init_phy(transport, EfuseDefaults())
     except (IOError, OSError) as e:
         cr = transport.read16(REG_CR)
         print(f"  REG_CR = 0x{cr:04x}  (was 0x{cr_before:04x} before PHY init)")

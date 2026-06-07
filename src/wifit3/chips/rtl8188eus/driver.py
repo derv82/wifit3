@@ -217,7 +217,7 @@ class RTL8188EUSDriver:
         await loop.run_in_executor(None, post_fw_mac_init, self.transport)
 
         _update(0.75, "PHY init (BB + AGC + RF path A tables)...")
-        await loop.run_in_executor(None, post_mac_init_phy, self.transport)
+        await loop.run_in_executor(None, post_mac_init_phy, self.transport, self._efuse)
 
         _update(0.85, "Enable RX data path (RCR + DRVINFO_SZ + interrupts)...")
         await loop.run_in_executor(None, enable_rx_data_path, self.transport)

@@ -24,6 +24,12 @@ REG_LDOA15_CTRL = 0x0020            # regs.h:81
 REG_LDOV12D_CTRL = 0x0021           # regs.h:88
 REG_LPLDO_CTRL = 0x0023             # regs.h:95
 REG_AFE_XTAL_CTRL = 0x0024          # regs.h:99
+# Crystal-cap trim fields in REG_AFE_XTAL_CTRL (8188f.c:1647-1648). set_crystal_cap
+# writes the 6-bit EFUSE xtal_k into both XTAL0 and XTAL1.
+XTAL0_MASK = 0x0001F800             # GENMASK(16, 11)
+XTAL1_MASK = 0x007E0000             # GENMASK(22, 17)
+XTAL0_SHIFT = 11
+XTAL1_SHIFT = 17
 REG_MCU_FW_DL = 0x0080              # regs.h:219
 REG_SYS_CFG = 0x00F0                # regs.h:312
 REG_CR = 0x0100                     # regs.h:370

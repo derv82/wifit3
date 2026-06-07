@@ -182,6 +182,7 @@ _EFUSE_OFFSET_HT20_PWR_DIFF = 0x1C          # ht20_tx_power_diff[3] (3 path×dif
 _EFUSE_OFFSET_OFDM_PWR_DIFF = 0x1B          # ofdm_tx_power_diff[3]
 _EFUSE_OFFSET_HT40_PWR_DIFF = 0x1D          # ht40_tx_power_diff[3]
 _EFUSE_OFFSET_MAC = 0xD7                    # mac_addr[6]
+_EFUSE_OFFSET_XTAL_K = 0xB9                 # xtal_k (6-bit crystal-cap trim)
 
 
 # Sane fallback values when the EFUSE map shows 0xFF (unprogrammed) for
@@ -210,6 +211,7 @@ class EfuseDefaults:
     ht20_tx_power_diff_a: int = _FALLBACK_DIFF
     ht40_tx_power_diff_a: int = _FALLBACK_DIFF
     mac_address: Optional[bytes] = None
+    default_crystal_cap: int = 0       # EFUSE xtal_k & 0x3f; 0 = leave HW default
     raw: Optional[bytes] = None
 
 
@@ -259,6 +261,11 @@ def parse_efuse_8188eu(raw: bytes) -> EfuseDefaults:
     if mac == b"\xFF" * 6 or mac == b"\x00" * 6:
         mac = None  # caller falls back to "no MAC override"
 
+    # Crystal-cap trim (8188e.c:553: default_crystal_cap = xtal_k & 0x3f). No 0xFF
+    # sanitising -- the kernel masks the raw byte and uses it as-is (a blank EFUSE
+    # yields 0x3f); set_crystal_cap treats 0 as "leave the hardware default".
+    crystal_cap = raw[_EFUSE_OFFSET_XTAL_K] & 0x3F
+
     return EfuseDefaults(
         cck_tx_power_index_A=cck,
         ht40_1s_tx_power_index_A=ht40_1s,
@@ -266,6 +273,7 @@ def parse_efuse_8188eu(raw: bytes) -> EfuseDefaults:
         ht20_tx_power_diff_a=ht20_diff_a,
         ht40_tx_power_diff_a=ht40_diff_a,
         mac_address=bytes(mac) if mac else None,
+        default_crystal_cap=crystal_cap,
         raw=raw,
     )
 

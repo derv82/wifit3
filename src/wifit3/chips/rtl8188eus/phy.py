@@ -31,6 +31,7 @@ from .constants import (
     OFDM_RF_PATH_RX_MASK,
     OFDM_RF_PATH_TX_A,
     OFDM_RF_PATH_TX_MASK,
+    REG_AFE_XTAL_CTRL,
     REG_FPGA0_RF_MODE,
     REG_FPGA0_XA_HSSI_PARM2,
     REG_FPGA0_XA_LSSI_PARM,
@@ -56,6 +57,10 @@ from .constants import (
     SYS_FUNC_DIO_RF,
     SYS_FUNC_USBA,
     SYS_FUNC_USBD,
+    XTAL0_MASK,
+    XTAL0_SHIFT,
+    XTAL1_MASK,
+    XTAL1_SHIFT,
 )
 from .efuse import EfuseDefaults
 from .phy_tables import (
@@ -209,9 +214,33 @@ def init_phy_rf_8188e(t: RTL8188EUSTransport) -> None:
     init_phy_rf(t, RADIO_A_INIT_TABLE_8188E, RF_A)
 
 
-def post_mac_init_phy(t: RTL8188EUSTransport) -> None:
-    """Run the full M3 PHY init sequence (BB + AGC + RF path A)."""
+def set_crystal_cap(t: RTL8188EUSTransport, crystal_cap: int, prev_cap: int = 0) -> None:
+    """Port of `rtl8188f_set_crystal_cap` (8188f.c:1650-1674).
+
+    Writes the 6-bit EFUSE crystal-cap trim into both XTAL0 and XTAL1 of
+    `REG_AFE_XTAL_CTRL`. The kernel skips the write when the cap already equals
+    the cached value (`cfo->crystal_cap`); at cold bring-up that cache is 0, so a
+    non-zero EFUSE cap always writes. `crystal_cap == 0` (no EFUSE / unparsed) is
+    treated as "leave the hardware default" — the same skip the kernel takes.
+    """
+    if crystal_cap == prev_cap:
+        return
+    val32 = t.read32(REG_AFE_XTAL_CTRL)
+    val32 &= ~(XTAL1_MASK | XTAL0_MASK) & 0xFFFFFFFF
+    val32 |= (crystal_cap << XTAL1_SHIFT) | (crystal_cap << XTAL0_SHIFT)
+    t.write32(REG_AFE_XTAL_CTRL, val32 & 0xFFFFFFFF)
+
+
+def post_mac_init_phy(t: RTL8188EUSTransport, efuse: EfuseDefaults) -> None:
+    """Run the full M3 PHY init sequence (BB + AGC + crystal cap + RF path A).
+
+    Mirrors the kernel's generic `rtl8xxxu_init_phy_bb` wrapper (core.c:2310-2382):
+    `fops->init_phy_bb` (BB + AGC tables) then `set_crystal_cap`, followed by the
+    separate `fops->init_phy_rf`. The 1T2R patch + 8192E branch in that wrapper do
+    not apply to the 1T1R 8188e.
+    """
     init_phy_bb(t)
+    set_crystal_cap(t, efuse.default_crystal_cap)
     init_phy_rf_8188e(t)
 
 
