@@ -66,6 +66,20 @@ REG_HMETFR = 0x01CC          # H2C trigger, written by InitializeFirmwareVars
 # --- MAC config [SRC] hal_com_reg.h, Hal8188EPhyCfg.h --------------------
 REG_MAX_AGGR_NUM = 0x04CA
 
+# --- TX-buffer boundary + LLT init [SRC] hal_com_reg.h, rtl8188e_hal.h ----
+REG_BCNQ_BDNY = 0x0424
+REG_MGQ_BDNY = 0x0425
+REG_WMAC_LBK_BF_HD = 0x045D
+REG_TRXFF_BNDY = 0x0114
+REG_TDECTRL = 0x0208
+REG_LLT_INIT = 0x01E0
+# TX_PAGE_BOUNDARY_88E = (0xAF - BCNQ 8 - WOWLAN 0) + 1; last entry = 175 (non-I-cut).
+TX_PAGE_BOUNDARY = 0xA8
+LAST_ENTRY_OF_TX_PKT_BUFFER = 175
+# REG_LLT_INIT fields
+_LLT_WRITE_ACCESS = 0x1
+_LLT_NO_ACTIVE = 0x0
+
 # --- BB config [SRC] hal_com_reg.h, rtl8188e_phycfg.c, hal_com.c ----------
 REG_RF_CTRL = 0x001F
 RF_EN = BIT(0)

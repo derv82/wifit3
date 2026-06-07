@@ -94,6 +94,12 @@ bimodal collapse, not just the mean.
   This build runs `rtw_fw_iol=1` (IOL always on). 393/395/379 ops/boot (the READ_EFUSE_MAP
   poll iterates ~390× per boot).
 
+- **M2e (TX-buffer boundary + LLT table): complete — pcap-verified on all 3 boots.**
+  `mac.init_tx_buffer_boundary` (`_InitTxBufferBoundary`: page boundary 0xA8 → BCNQ/MGQ/
+  WMAC_LBK/TRXFF/TDECTRL+1) + `mac.init_llt` (`InitLLTTable`, direct non-IOL path — this build
+  doesn't define CONFIG_IOL_LLT): chain TX pages 0→1…167→0xFF, ring 168→…→175→0xA8, each entry
+  a `_LLTWrite` (REG_LLT_INIT 0x1E0 write + poll-to-idle). 357 ops/boot (176 LLT entries × 2 + 5).
+
 ### ⚠️ Async 2 s watchdog interleaves the EP0 stream (load-bearing for replay)
 A background kernel thread (`rtw_dynamic_check_timer` / phydm watchdog) fires **every
 2.016 s** (first fire ≈ frame 2731 ≈ op 1320, right at the RF→efuse-patch boundary) and

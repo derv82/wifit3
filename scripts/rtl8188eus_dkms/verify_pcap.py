@@ -78,6 +78,9 @@ def _verify_main_chain(pcap, dev):
     miles.append(("M2c rf", t.i))
     efuse.iol_efuse_patch(t)
     miles.append(("M2d efpatch", t.i))
+    mac.init_tx_buffer_boundary(t)
+    mac.init_llt(t)
+    miles.append(("M2e llt", t.i))
     return miles
 
 
