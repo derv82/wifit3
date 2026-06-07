@@ -60,9 +60,27 @@ bimodal collapse, not just the mean.
   - FW blob `assets/rtl8188eufw.bin` = vendor `array_mp_8188e_t_fw_nic[]` (15262 B, sig 0x88E1),
     **byte-identical to linux-firmware `rtl8188eufw.bin`** (SHA256 match). Extracted by
     `scripts/rtl8188eus_dkms/extract_fw.py`.
+  - The FW download tail folds in `rtl8188e_InitializeFirmwareVars` (REG_HMETFR 0x1cc <- 0x0f).
+- **M2a (MAC register config): complete — pcap-verified on all 3 boots.**
+  `mac.phy_mac_config` ports `PHY_MACConfig8188E` [SRC] rtl8188e_phycfg.c:758 — walk
+  `array_mp_8188e_mac_reg` (212 u32) through the phydm conditional walker (`phy_cond.walk_table`,
+  each taken row an 8-bit write), then REG_MAX_AGGR_NUM (0x4CA) = 0x0707 (USB build's
+  MAX_AGGR_NUM=0x07). The conditional 0x040 block is board-type gated; this plain board
+  (driver1 = `0x00040200`) takes the ELSE default 0x040=0x00.
+
+### The phydm conditional walker (`phy_cond.py`)
+`odm_read_and_config_mp_8188e_*` pairs the flat-u32 table two words at a time: a BIT31 word is a
+positive condition (IF/ELSE-IF/ELSE/ENDIF in bits[29:28]); a BIT30 word is its negative pair that
+triggers `check_positive`. The 8188e `check_positive` matches four condition words against four
+driver words: `driver1` = cut<<24 | (intf&0xF0)<<16 | platform<<16 | package<<12 | (intf&0x0F)<<8
+| board_type; `driver2/4` carry the per-path GLNA/GPA/ALNA/APA types (all 0 here). For this card
+cut=ODM_CUT_A(0), platform=ODM_CE(0x04), interface=ODM_ITRF_USB(0x02), package=0, board_type=0 →
+**driver1 = 0x00040200**. Shared by the MAC/BB/AGC/RF tables (each supplies its own `emit`).
+
   - Verify: `scripts/rtl8188eus_dkms/verify_pcap.py` reproduces power-on (35/39/40 ops — the
-    power-ready polls iterate per-boot) + the FW download (244 ops, deterministic) byte-for-byte
-    on capture-{1,2,3}. The efuse probe read between them is a later milestone.
+    power-ready polls iterate per-boot) + a contiguous FW download (245 ops) + MAC config (93 ops),
+    byte-for-byte on capture-{1,2,3}. The efuse probe read between power-on and FW is a later
+    milestone (the FW/MAC chain is verified from REG_MCUFWDL via `start_addr`).
 
 ## Potential Known Gaps (audit before trusting any milestone)
 - [ ] **EFUSE probe read** (ops 41–551): the packet-buffer indirect read + the 401× REG_FDHM0

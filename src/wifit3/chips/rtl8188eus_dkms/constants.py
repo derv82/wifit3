@@ -60,3 +60,8 @@ MCUFWDL_RDY = BIT(1)
 FWDL_ChkSum_rpt = BIT(2)
 WINTINI_RDY = BIT(6)
 RAM_DL_SEL = BIT(7)
+
+REG_HMETFR = 0x01CC          # H2C trigger, written by InitializeFirmwareVars
+
+# --- MAC config [SRC] hal_com_reg.h, Hal8188EPhyCfg.h --------------------
+REG_MAX_AGGR_NUM = 0x04CA

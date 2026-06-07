@@ -28,6 +28,7 @@ from .constants import (
     MAX_REG_BLOCK_SIZE,
     MCUFWDL_RDY,
     RAM_DL_SEL,
+    REG_HMETFR,
     REG_MCUFWDL,
     REG_RSV_CTRL,
     REG_SYS_FUNC_EN,
@@ -148,6 +149,13 @@ def download_firmware(t, blob: bytes) -> None:
     _fw_download_enable(t, False)
     if not _fw_free_to_go(t):
         raise RuntimeError("RTL8188EUS: firmware not ready (WINTINI_RDY timeout)")
+    _initialize_firmware_vars(t)
+
+
+def _initialize_firmware_vars(t) -> None:
+    """``rtl8188e_InitializeFirmwareVars`` tail of FirmwareDownload — init the H2C
+    trigger register. [SRC] rtl8188e_hal_init.c:1034."""
+    t.write8(REG_HMETFR, 0x0F)
 
 
 def bring_up(t, blob: bytes | None = None) -> None:

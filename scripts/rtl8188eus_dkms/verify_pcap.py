@@ -28,7 +28,7 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8188eus_dkms import firmware, pwrseq  # noqa: E402
+from wifit3.chips.rtl8188eus_dkms import firmware, mac, pwrseq  # noqa: E402
 
 REG_MCUFWDL = 0x0080
 REG_APS_FSMCO_B2 = 0x0006   # first power-seq op (CARDEMU_TO_ACT step 1 poll)
@@ -45,13 +45,20 @@ def _verify_power_on(pcap, dev) -> int:
     return t.i
 
 
-def _verify_fw(pcap, dev) -> int:
-    """FW download verified from the first REG_MCUFWDL op to FW-ready, byte-for-byte."""
+def _verify_main_chain(pcap, dev):
+    """The contiguous post-power-on bring-up, verified from the first REG_MCUFWDL op.
+    Each milestone consumes the next span of the same transport byte-for-byte:
+        M1   firmware download + FW-ready + InitializeFirmwareVars
+        M2a  PHY_MACConfig8188E (MAC reg table + MAX_AGGR_NUM)
+    (efuse probe read between power-on and FW is a separate milestone.)"""
     ops = rp.extract_ops(pcap, dev, start_addr=REG_MCUFWDL)
     t = rp.ReplayTransport(ops)
-    fw = firmware.load_firmware_blob()
-    firmware.download_firmware(t, fw)
-    return t.i
+    miles = []
+    firmware.download_firmware(t, firmware.load_firmware_blob())
+    miles.append(("M1 fw", t.i))
+    mac.phy_mac_config(t)
+    miles.append(("M2a mac", t.i))
+    return miles
 
 
 def run(cap: str | None = None) -> int:
@@ -77,16 +84,19 @@ def run(cap: str | None = None) -> int:
         return 2
 
     try:
-        n_fw = _verify_fw(pcap, dev)
-        print(f"  PASS firmware: {n_fw} ops (download + FW-ready, WINTINI_RDY)")
+        miles = _verify_main_chain(pcap, dev)
     except rp.Divergence as e:
-        print(f"\nFAIL firmware @ first divergence:\n  {e}")
+        print(f"\nFAIL @ first divergence:\n  {e}")
         return 1
     except Exception as e:  # noqa: BLE001
         print(f"\nERROR (harness/port bug): {type(e).__name__}: {e}")
         return 2
 
-    print("\nPASS: M1 power-on + firmware upload + FW-ready reproduced byte-for-byte.")
+    prev = 0
+    for label, end in miles:
+        print(f"  PASS {label:10} {end - prev:5} ops")
+        prev = end
+    print("\nPASS: power-on + firmware + MAC config reproduced byte-for-byte.")
     return 0
 
 
