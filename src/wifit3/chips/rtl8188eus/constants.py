@@ -438,3 +438,8 @@ REG_OFDM0_XD_TX_AFE = 0x0C9C             # regs.h:1104
 # ADDA 1T path values (8188e fops, 8188e.c:1870-1871)
 ADDA_1T_INIT = 0x0B1B25A0
 ADDA_1T_PATH_ON = 0x0BDB25A0
+
+# ---- LCK (LC calibration) registers --------------------------------
+REG_OFDM1_LSTF = 0x0D00                  # regs.h:1116
+OFDM_LSTF_MASK = 0x70000000              # regs.h:1124
+RF6052_REG_AC = 0x00                     # regs.h:1309

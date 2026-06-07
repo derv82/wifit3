@@ -40,6 +40,7 @@ from wifit3.chips.rtl8188eus.constants import (  # noqa: E402
     REG_AFE_XTAL_CTRL,
     REG_FPGA0_XCD_SWITCH_CTRL,
     REG_FW_START_ADDRESS,
+    REG_OFDM1_LSTF,
     XTAL0_SHIFT,
 )
 from wifit3.chips.rtl8188eus.efuse import EfuseDefaults  # noqa: E402
@@ -121,6 +122,35 @@ def _bringup_gate(ops) -> bool:
     return True
 
 
+def _lck_gate(ops) -> bool:
+    """Replay ``phy_lc_calibrate`` against the LC-cal block, anchored at the last read of
+    REG_OFDM1_LSTF (0x0d00) before the IQK block — the kernel runs LCK immediately before
+    IQK (init_device:4290). Bounded to end at the IQK anchor, so a full replay confirms LCK
+    fills the gap byte-for-byte."""
+    fw_writes = [i for i, o in enumerate(ops)
+                 if o["kind"] == "W" and o.get("addr") == REG_FW_START_ADDRESS]
+    if not fw_writes:
+        print("  LCK: no FW region -- skipped")
+        return True
+    iqk_anchor = next((i for i in range(fw_writes[-1], len(ops))
+                       if ops[i]["kind"] == "R" and ops[i].get("addr") == REG_FPGA0_XCD_SWITCH_CTRL),
+                      None)
+    lck_anchor = (max((i for i in range(fw_writes[-1], iqk_anchor)
+                       if ops[i]["kind"] == "R" and ops[i].get("addr") == REG_OFDM1_LSTF), default=None)
+                  if iqk_anchor is not None else None)
+    if lck_anchor is None:
+        print("  LCK: REG_OFDM1_LSTF anchor not in this capture -- skipped")
+        return True
+    rt = rp.ReplayTransport(ops[lck_anchor:iqk_anchor])
+    try:
+        iqk.phy_lc_calibrate(rt)
+    except rp.Divergence as e:
+        print(f"  FAIL (LCK divergence):\n    {e}")
+        return False
+    print(f"  PASS: {rt.i} ops byte-for-byte -- phy_lc_calibrate (LC tank cal, path A)")
+    return True
+
+
 def _iqk_gate(ops) -> bool:
     """Replay ``phy_iq_calibrate`` against the capture's IQK block, anchored at the first
     *read* of REG_FPGA0_XCD_SWITCH_CTRL (0x085c) after the FW upload -- the ADDA backup that
@@ -164,6 +194,7 @@ def run(cap: str | None = None) -> int:
 
     ok = _blob_gate(ops)
     ok = _bringup_gate(ops) and ok
+    ok = _lck_gate(ops) and ok
     ok = _iqk_gate(ops) and ok
 
     print("\nPASS" if ok else "\nFAIL")

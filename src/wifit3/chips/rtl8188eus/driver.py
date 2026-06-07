@@ -60,7 +60,7 @@ from .constants import (
 )
 from .efuse import EfuseDefaults, read_and_parse
 from .firmware import download_firmware, load_firmware_blob, start_firmware
-from .iqk import phy_iq_calibrate
+from .iqk import phy_iq_calibrate, phy_lc_calibrate
 from .mac import (
     apply_monitor_rx_filter,
     enable_rx_data_path,
@@ -230,6 +230,9 @@ class RTL8188EUSDriver:
         await loop.run_in_executor(None, set_channel_2g_20mhz, self.transport, 1)
         await loop.run_in_executor(None, set_tx_power, self.transport, 1, self._efuse)
         self.current_channel = 1
+
+        _update(0.92, "LC calibration (VCO tank)...")
+        await loop.run_in_executor(None, phy_lc_calibrate, self.transport)
 
         _update(0.93, "IQ calibration (path A LOK + TX/RX IQK)...")
         await loop.run_in_executor(None, phy_iq_calibrate, self.transport)

@@ -1,4 +1,4 @@
-"""RTL8188EUS IQ calibration (path A).
+"""RTL8188EUS IQ + LC calibration (path A).
 
 Cleanroom port of the 8188e IQK + the shared gen1 ``rtl8xxxu`` IQK helpers:
 
@@ -30,6 +30,7 @@ from .constants import (
     FPGA0_HSSI_PARM1_PI,
     FPGA0_RF_BD_CTRL_SHIFT,
     FPGA0_RF_PAPE,
+    OFDM_LSTF_MASK,
     REG_BEACON_CTRL,
     REG_BEACON_CTRL_1,
     REG_BLUETOOTH,
@@ -59,6 +60,7 @@ from .constants import (
     REG_OFDM0_XB_TX_IQ_IMBALANCE,
     REG_OFDM0_XC_TX_AFE,
     REG_OFDM0_XD_TX_AFE,
+    REG_OFDM1_LSTF,
     REG_PMPD_ANAEN,
     REG_RX_CCK,
     REG_RX_IQK,
@@ -84,11 +86,14 @@ from .constants import (
     REG_TX_TO_RX,
     REG_TX_TO_TX,
     REG_TXPAUSE,
+    RF6052_REG_AC,
+    RF6052_REG_MODE_AG,
     RF6052_REG_RCK_OS,
     RF6052_REG_TXPA_G1,
     RF6052_REG_TXPA_G2,
     RF6052_REG_WE_LUT,
 )
+from .chan import read_rfreg
 from .phy import RF_A, write_rfreg
 from .transport import RTL8188EUSTransport
 
@@ -517,3 +522,34 @@ def phy_iq_calibrate(t: RTL8188EUSTransport) -> None:
 
     bb_recovery = [0] * len(IQK_PHY_IQ_BB_REG)
     save_regs(t, IQK_PHY_IQ_BB_REG, bb_recovery)
+
+
+def phy_lc_calibrate(t: RTL8188EUSTransport) -> None:
+    """Port of `rtl8723a_phy_lc_calibrate` (core.c:3498) — LC (VCO) calibration, path A.
+
+    8188e is 1T1R with no s0s1, so this reduces to: guard against in-flight TX
+    (`REG_OFDM1_LSTF`), park path A in standby, pulse RF `MODE_AG` bit 15 to start the
+    LC-tank cal, wait 100 ms, then restore. Runs just before IQK (init_device:4290).
+    """
+    lstf = t.read32(REG_OFDM1_LSTF)
+    rf_amode = 0
+    if lstf & OFDM_LSTF_MASK:
+        # Disable continuous TX, park path A in standby.
+        t.write32(REG_OFDM1_LSTF, lstf & ~OFDM_LSTF_MASK & 0xFFFFFFFF)
+        rf_amode = read_rfreg(t, RF_A, RF6052_REG_AC)
+        write_rfreg(t, RF_A, RF6052_REG_AC, (rf_amode & 0x8FFFF) | 0x10000)
+    else:
+        # Packet-TX case: block all queues.
+        t.write8(REG_TXPAUSE, 0xFF)
+
+    # Start LC calibration (RF MODE_AG bit 15).
+    val32 = read_rfreg(t, RF_A, RF6052_REG_MODE_AG) | 0x08000
+    write_rfreg(t, RF_A, RF6052_REG_MODE_AG, val32)
+    time.sleep(0.100)
+
+    # Restore original parameters.
+    if lstf & OFDM_LSTF_MASK:
+        t.write32(REG_OFDM1_LSTF, lstf)
+        write_rfreg(t, RF_A, RF6052_REG_AC, rf_amode)
+    else:
+        t.write8(REG_TXPAUSE, 0x00)
