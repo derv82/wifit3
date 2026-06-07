@@ -47,24 +47,32 @@ def _strip_async_watchdog(ops):
             if not (o["kind"] == "R" and o.get("addr") == REG_SYS_CFG and o["width"] == 4)]
 
 
-def _verify_power_on(pcap, dev) -> int:
-    """Power-on flow from the first power-seq op (the 0x06 power-ready poll). The
-    chip-version read + efuse prologue ahead of it are verified in the efuse
-    milestone; power_on stops cleanly when it reaches the efuse prologue."""
+def _verify_pre_fw(pcap, dev):
+    """The probe-phase chain from the first power-seq op (the 0x06 power-ready poll),
+    contiguous on one transport (this region is before the watchdog's first fire):
+        power-on    (CARDEMU_TO_ACT + REG_CR)
+        efuse read  (IOL READ_EFUSE_MAP + packet-buffer readback + PG decode)
+    Returns (milestones, ChipParams) -- the decoded crystal_cap feeds the main chain,
+    closing the M2b hardcode. (The [0..5] chip-version prologue ahead of 0x06 and the
+    MISC01 queue/page setup after the efuse read are not yet ported -- small gaps.)"""
     ops = rp.extract_ops(pcap, dev, start_addr=REG_APS_FSMCO_B2)
     t = rp.ReplayTransport(ops)
+    miles = []
     pwrseq.power_on(t)
-    return t.i
+    miles.append(("power-on", t.i))
+    params = efuse.read_chip_params(t)
+    miles.append(("efuse", t.i))
+    return miles, params
 
 
-def _verify_main_chain(pcap, dev):
+def _verify_main_chain(pcap, dev, params):
     """The contiguous post-power-on bring-up, verified from the first REG_MCUFWDL op.
     Each milestone consumes the next span of the same transport byte-for-byte:
         M1   firmware download + FW-ready + InitializeFirmwareVars
         M2a  PHY_MACConfig8188E (MAC reg table + MAX_AGGR_NUM)
         M2b  PHY_BBConfig8188E (BB enable + PHY_REG + AGC_TAB + crystal cap)
         M2c  PHY_RFConfig8188E (RFENV setup + radio_a table + restore)
-    (efuse probe read between power-on and FW is a separate milestone.)"""
+    The decoded crystal_cap from the probe efuse read feeds M2b (no hardcode)."""
     ops = _strip_async_watchdog(rp.extract_ops(pcap, dev, start_addr=REG_MCUFWDL))
     t = rp.ReplayTransport(ops)
     miles = []
@@ -72,7 +80,7 @@ def _verify_main_chain(pcap, dev):
     miles.append(("M1 fw", t.i))
     mac.phy_mac_config(t)
     miles.append(("M2a mac", t.i))
-    bb.phy_bb_config(t)
+    bb.phy_bb_config(t, crystal_cap=params.crystal_cap)
     miles.append(("M2b bb", t.i))
     rf.phy_rf_config(t)
     miles.append(("M2c rf", t.i))
@@ -97,17 +105,25 @@ def run(cap: str | None = None) -> int:
     print(f"{pcap.name}: card=dev{dev}, {len(ops)} vendor ops")
 
     try:
-        n_pwr = _verify_power_on(pcap, dev)
-        print(f"  PASS power-on: {n_pwr} ops (CARDEMU_TO_ACT + REG_CR)")
+        pre_miles, params = _verify_pre_fw(pcap, dev)
     except rp.Divergence as e:
-        print(f"\nFAIL power-on @ first divergence:\n  {e}")
+        print(f"\nFAIL pre-FW @ first divergence:\n  {e}")
         return 1
     except Exception as e:  # noqa: BLE001
         print(f"\nERROR (harness/port bug): {type(e).__name__}: {e}")
         return 2
 
+    prev = 0
+    for label, end in pre_miles:
+        print(f"  PASS {label:10} {end - prev:5} ops")
+        prev = end
+    mac = params.mac_address
+    mac_show = (f"{mac[0]:02x}:{mac[1]:02x}:{mac[2]:02x}:xx:xx:xx (OUI)"
+                if len(mac) == 6 else "invalid")
+    print(f"       efuse: crystal_cap=0x{params.crystal_cap:02x}, mac={mac_show}")
+
     try:
-        miles = _verify_main_chain(pcap, dev)
+        miles = _verify_main_chain(pcap, dev, params)
     except rp.Divergence as e:
         print(f"\nFAIL @ first divergence:\n  {e}")
         return 1
@@ -119,7 +135,7 @@ def run(cap: str | None = None) -> int:
     for label, end in miles:
         print(f"  PASS {label:10} {end - prev:5} ops")
         prev = end
-    print("\nPASS: power-on + firmware + MAC config reproduced byte-for-byte.")
+    print("\nPASS: power-on + efuse + firmware + MAC/BB/RF/efuse-patch/LLT byte-for-byte.")
     return 0
 
 

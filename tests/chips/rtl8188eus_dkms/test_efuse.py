@@ -54,6 +54,22 @@ def test_iol_execute_reports_error_bit():
     assert efuse.iol_execute(t, CMD_READ_EFUSE_MAP) is False
 
 
+def test_phymap_to_logical_non_extended():
+    # Section 0, word-enable 0 (all 4 words) + 8 data bytes -> logical[0:8].
+    phymap = bytes([0x00, 0, 1, 2, 3, 4, 5, 6, 7, 0xFF])
+    logical = efuse._phymap_to_logical(phymap)
+    assert logical[0:8] == bytes([0, 1, 2, 3, 4, 5, 6, 7])
+    assert logical[8] == 0xFF                     # untouched section stays 0xFF
+
+
+def test_phymap_to_logical_extended_header_crystal_cap():
+    # Extended header [0xEF, 0x20] -> offset 23 (section for logical 0xB8..0xBF),
+    # all words; data byte 1 (high of word0) lands at logical[0xB9] = crystal_cap.
+    phymap = bytes([0xEF, 0x20, 0x00, 0x20, 0, 0, 0, 0, 0, 0, 0xFF])
+    logical = efuse._phymap_to_logical(phymap)
+    assert logical[0xB8] == 0x00 and logical[0xB9] == 0x20
+
+
 def test_iol_efuse_patch_sequence():
     t = Tx(queues={REG_SYS_CFG: [0x37, 0xB7],
                    REG_HMEBOX_E0: [0x00, 0x00, 0x00,   # READ_EFUSE_MAP: init, poll-clear, status

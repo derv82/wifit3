@@ -73,9 +73,13 @@ bimodal collapse, not just the mean.
   (REG_SYS_FUNC_EN |= 0x2003, REG_RF_CTRL=0x07, REG_SYS_FUNC_EN=0x17 for USB), walk
   `array_mp_8188e_phy_reg` (1338 u32) + `array_mp_8188e_agc_tab` (1950 u32) as full-32-bit
   writes (PHY_REG addresses 0xF9–0xFE are settling delays, not writes), then
-  `hal_set_crystal_cap` → REG_AFE_XTAL_CTRL(0x24)[22:11] = cap|(cap<<6). **crystal_cap=0x20**
-  read from the wire (the masked 0x24 write decodes to field 0x820 = 0x20|0x20<<6); to be
-  replaced by the efuse decode. 328 ops/boot (deterministic).
+  `hal_set_crystal_cap` → REG_AFE_XTAL_CTRL(0x24)[22:11] = cap|(cap<<6). **crystal_cap=0x20
+  now comes from the decoded efuse** (`efuse.read_chip_params`, see EFUSE milestone) — no
+  hardcode. 328 ops/boot (deterministic).
+- **EFUSE (probe-phase chip-param read): complete — pcap-verified on all 3 boots.**
+  `efuse.read_chip_params` reproduces the probe IOL efuse read (ops 41–544) and decodes
+  crystal_cap (0xB9) + MAC (0xD7) from the 512 B logical map; feeds M2b's crystal_cap.
+  See **Potential Known Gaps → EFUSE probe read** for the mechanism. 504 ops/boot.
 
 - **M2c (RF radio config): complete — pcap-verified on all 3 boots.**
   `rf.phy_rf_config` ports `PHY_RFConfig8188E` -> `PHY_RF6052_Config8188E` (1T1R, path A only):
@@ -128,12 +132,19 @@ cut=ODM_CUT_A(0), platform=ODM_CE(0x04), interface=ODM_ITRF_USB(0x02), package=0
     milestone (the FW/MAC chain is verified from REG_MCUFWDL via `start_addr`).
 
 ## Potential Known Gaps (audit before trusting any milestone)
-- [ ] **EFUSE probe read** (ops 41–545): the packet-buffer indirect read + the REG_FDHM0
-      autoload poll are not yet ported. Needed to recover crystal_cap / tx-power / MAC. M2b
-      currently hardcodes crystal_cap=0x20 (wire-confirmed); the efuse decode must reproduce it.
-      The FDHM0 poll exits on a value-change (0x02→0x00 at the last read), so it IS replayable.
-- [ ] **MISC01 queue/page setup** (ops 546–551): between the efuse read and FW download; not
-      yet ported (folded into the efuse milestone, since both precede FW on the wire).
+- [x] **EFUSE probe read — DONE.** `efuse.read_chip_params` ports the probe-phase IOL efuse
+      read (ops 41–544): `iol_mode_enable(1, fw_ready=False)` (incl. the 8051 reset since FW
+      isn't up yet) → `iol_execute(READ_EFUSE_MAP)` → `efuse_read_phymap_from_txpktbuf` (read
+      the physical map out of the TX packet buffer via PKTBUF debug 0x140/0x143/0x144/0x148) →
+      `iol_mode_enable(0)`, then `efuse_phymap_to_logical` (PG-header walk → 512 B logical map).
+      Decodes **crystal_cap=0x20** (offset 0xB9 — now fed to M2b, **no more hardcode**) and the
+      6-byte MAC (offset 0xD7). 504 ops/boot. Verified byte-for-byte on all 3 boots; tx-power
+      (PG block) decode lands with the TX-power milestone.
+- [ ] **[0..5] chip-version prologue** (read_chip_version 0xf0/4 + 0x0a/0xcf/0x02/0x08 setup):
+      ahead of the 0x06 power-seq start; not yet ported (the pre-FW window starts at 0x06).
+- [ ] **MISC01 queue/page setup** (ops 545–551, `_InitRFType` + RQPN/boundary): between the
+      efuse read and FW download; not yet ported (small gap between the pre-FW window's end and
+      the main chain's 0x80 start).
 - [ ] **DIG/AGC runtime watchdog — NOT YET PORTED (only filtered).** The 2 s phydm watchdog
       is **central to this port's RX goal** (without periodic IGI/gain adaptation the gain
       freezes at the seed → deaf/saturating, the exact 2.4 GHz weakness we re-port to fix).
