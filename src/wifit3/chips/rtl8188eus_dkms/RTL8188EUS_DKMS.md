@@ -49,6 +49,15 @@ bimodal collapse, not just the mean.
 
 ## Status
 
+**2.4 GHz monitor RX is HW-PROVEN.** [HW 2026-06-07] A live TL-WN722N v2 (2357:010c) brought
+up clean through the full chain and a 28 s 2.4 GHz hop (`scan_hw.py`) heard **78 unique APs /
+940 beacons / 1527 frames**, RSSI −43 dBm (near) to −83 (far), ESSID-variance canary clean
+(0/78). The PHY-status RSSI decode works; the RX walk is coherent. This is without the runtime
+DIG watchdog (the InitHalDm M7 seed IGI suffices in this environment). The driver is registered
+behind `WIFIT3_RTL8188=dkms` (mainline stays default until a controlled A/B vs mainline). Still
+to port: the DIG/AGC 2 s watchdog (`dig.py`, long-session/busy-band adaptation) and TX
+(`tx.py` + `inject_frame`).
+
 **The entire hal_init is ported and byte-for-byte on all 3 captures** (`verify_pcap.py`:
 power-on → efuse → MISC01 → FW → MAC → BB → RF → EFUSE_PATCH → LLT → MISC02 → M4a RF-chnl read
 → M4b BB-turn-on → M4c CAM → M5 TX-power → M6 MISC11-tail → M7 InitHalDm seed → M8 hal_init
