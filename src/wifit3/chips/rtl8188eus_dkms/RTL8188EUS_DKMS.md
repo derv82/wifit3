@@ -75,9 +75,10 @@ shortcut. The runtime DM is now reconstructed faithfully and byte-diffed by
 `scripts/.../verify_pcap.py:verify_dm_tick` against one operational `phydm_watchdog` tick (cap1
 op 2617+), wire order [SRC] phydm.c:1846-1878: faithful FA-statistics (incl. the CRC/SC/CCA
 reads + the EDCCA-flag dbg port) → DIG (carried-state IGI, clamp [0x1c,0x2a], 0xC50) → **CCK-PD**
-(0xa0a) → **adaptivity EDCCA** (0xc4c) → **halrf thermal power-track** (`powertrack.py`) → NHM
-(pending). Driven by a 2 s `connect()` task (`dig.watchdog_tick`, toggle `driver.enable_dig`).
-Each mechanism byte-faithful ×3; **71/94 tick ops verified** → NHM closes it to Z=0.
+(0xa0a) → **adaptivity EDCCA** (0xc4c) → **halrf thermal power-track** (`powertrack.py`) →
+**NHM/CLM env-monitor**. Driven by a 2 s `connect()` task (`dig.watchdog_tick`, toggle
+`driver.enable_dig`). **The full 94-op callback tick is byte-faithful ×3 (Z=0).** Remaining for
+full operational Z=0: the thermal-arm tick (every-other fire) + the per-hop channel tunes.
 
 **A/B status / default-flip gate.** The earlier "tie (~7.0 vs 7.3)" A/B was run against the
 IGI-only partial port, so it is **superseded** — re-run once the full DM tick is complete. The
@@ -285,10 +286,10 @@ cut=ODM_CUT_A(0), platform=ODM_CE(0x04), interface=ODM_ITRF_USB(0x02), package=0
       set (0xa0a CCK-PD, 0xc4c EDCCA, the NHM thresholds 0x890/0x898/0x89c/0xe28).
       **Fix (byte-faithful, no hardcodes):** `verify_pcap.py:verify_dm_tick` byte-diffs one
       operational `phydm_watchdog` tick (cap1 op 2617+) against `dig.watchdog_tick`. Ported +
-      byte-faithful ×3 so far (**71/94 ops**): faithful FA-statistics, carried-state DIG,
-      **CCK-PD** (0xa0a — the CCK CCA threshold that gates 1 Mbps weak-AP beacons; never ran
+      byte-faithful ×3 — the **full 94-op callback tick**: faithful FA-statistics, carried-state
+      DIG, **CCK-PD** (0xa0a — the CCK CCA threshold that gates 1 Mbps weak-AP beacons; never ran
       before), **adaptivity EDCCA drive** (0xc4c 0x7f→0x1c/0x24 — the "frozen at the no-link
-      seed" bug), and the halrf thermal power-track. **NHM remains** → then the tick is Z=0.
+      seed" bug), the halrf thermal power-track, and **NHM/CLM** (IGI-tracked noise thresholds).
       The two RX-relevant fixes (CCK-PD + EDCCA drive) are already live in the driver.
       This is the methodology PORTING.md now codifies (**"Start from the source … strip, but
       never forget"** — every stripped async stream needs a paired `verify_`). **Remaining gate:**
@@ -317,8 +318,9 @@ cut=ODM_CUT_A(0), platform=ODM_CE(0x04), interface=ODM_ITRF_USB(0x02), package=0
 - [~] **Runtime DM watchdog — full no-link `phydm_watchdog` tick (was IGI-only; now byte-diffed).**
       (a) the seed via **InitHalDm** (M7): `dm.init_hal_dm` seeds DIG/NHM/EDCCA incl. the EDCCA
       pwdb search; (b) the periodic tick (`dig.watchdog_tick` + `powertrack.py`): FA-statistics →
-      DIG (IGI 0xC50) → CCK-PD (0xa0a) → adaptivity EDCCA (0xc4c) → thermal power-track → NHM
-      (pending), a 2 s `connect()` task. **Now byte-diffed** by `verify_dm_tick` (71/94 ops ×3) —
+      DIG (IGI 0xC50) → CCK-PD (0xa0a) → adaptivity EDCCA (0xc4c) → thermal power-track → NHM,
+      a 2 s `connect()` task. **Now byte-diffed** by `verify_dm_tick` (94/94, the full callback
+      tick, ×3) —
       the earlier IGI-only watchdog was a partial port that `verify_pcap` simply stripped. The
       runtime tick is the driver's own watchdog AND now a replay-verified stream (the paired
       `verify_` for the stripped async DM, per PORTING.md "strip, but never forget"). thermal
