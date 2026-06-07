@@ -51,9 +51,12 @@ bimodal collapse, not just the mean.
 
 **The port is COMPLETE and HW-PROVEN — RX, TX, and full promiscuous monitor.** [HW 2026-06-07]
 A live TL-WN722N v2 (2357:010c) brought up clean through the full chain; 71 hardware-free tests.
-- **RX:** a 28 s 2.4 GHz hop (`scan_hw.py`) heard **78 unique APs / 940 beacons / 1527 frames**,
-  RSSI −43 dBm (near) to −83 (far), ESSID-variance canary clean (0/78); fixed-channel per-AP
-  reception ~7.0 beacons/s with the DIG watchdog (tied with the mainline port — see the A/B note).
+- **RX:** functional + the pipeline is clean, BUT **weak-AP sensitivity currently trails the
+  mainline port — OPEN ISSUE (see Potential Known Gaps).** A 28 s hop heard 78 APs across 1-13;
+  the RX walk is provably loss-free (instrumented: 0 skips / 0 bails, ~72 beacons/s). But a fair
+  *total-reception* A/B on a fixed channel (ch1, 15 s, alternating) shows DKMS hears **~22 APs /
+  ~61 beacons/s vs mainline ~70 APs / ~71 beacons/s** — DKMS misses ~48 weak/distant APs mainline
+  catches. NOT the pipeline, NOT the IGI (a 0x20→0x10 sweep barely moved it).
 - **TX:** `deauth_hw.py` injected 300 deauth frames (no pipe fault); the target client
   reconnected and **20/20 captured EAPOL were to/from it** — the deauth landed, TX confirmed.
 - **Promiscuous monitor (both directions):** 9 M2/M4 (client->AP, ToDS) + 11 M1/M3 + 262 ToDS
@@ -269,6 +272,24 @@ cut=ODM_CUT_A(0), platform=ODM_CE(0x04), interface=ODM_ITRF_USB(0x02), package=0
     milestone (the FW/MAC chain is verified from REG_MCUFWDL via `start_addr`).
 
 ## Potential Known Gaps (audit before trusting any milestone)
+- [ ] **Weak-AP RX sensitivity trails mainline — OPEN, the headline issue.** [HW 2026-06-07] A
+      fair total-reception A/B (fixed ch1, 15 s, alternating, busy ~70-AP band) reads DKMS
+      ~22 APs / ~61 beacons/s vs the mainline-derived port ~70 APs / ~71 beacons/s — DKMS hears
+      *zero* beacons from ~48 weak/distant APs mainline catches. This is the OPPOSITE of the
+      re-port's premise, so it must be root-caused before flipping the default. **Ruled out:**
+      the RX pipeline (instrumented loss-free — 0 skips / 0 bails, frames/buffer 2.0) and the IGI
+      (a 0x20→0x10 sweep barely changed reception or nAPs). **Lead:** a live BB-register diff
+      (`read32` of pages 0x800/0xa00/0xc00/0xe00 after bring-up, both drivers) shows the RX-path
+      registers that differ are **CCK 0x0a50=000df800 / 0x0a54=10000000 (mainline 4811f500 /
+      0b001303) and OFDM-AGC 0x08c4 / 0x08ac / 0x08f8** (the 0xe00-0xe1c / 0x86c diffs are just
+      TX-power: DKMS's efuse values vs mainline's 0x22 default — ignore). These look like
+      **runtime DM output mainline produces but the DKMS port does not**: our `dig.py` only adapts
+      IGI (0xc50), whereas the vendor phydm watchdog also runs **CCK-PD** (`phydm_cck_pd` — the
+      M7 seed did `cck_pd_init` but not the periodic adjustment) and fuller AGC adaptation. NEXT
+      SESSION: confirm whether those regs differ at *init* or only after the DM runs (dump right
+      after bring-up vs after a few seconds, both drivers), then port the missing phydm runtime
+      piece (likely CCK-PD + the rest of `phydm_dig`'s AGC writes beyond IGI). The register diff
+      is the map.
 - [x] **EFUSE probe read — DONE.** `efuse.read_chip_params` ports the probe-phase IOL efuse
       read (ops 41–544): `iol_mode_enable(1, fw_ready=False)` (incl. the 8051 reset since FW
       isn't up yet) → `iol_execute(READ_EFUSE_MAP)` → `efuse_read_phymap_from_txpktbuf` (read
