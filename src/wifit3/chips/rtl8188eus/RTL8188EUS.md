@@ -32,6 +32,21 @@ Verified facts only. Anything not in this doc is a hypothesis.
 
 Citations: `[SRC]` = kernel source path, `[WIRE]` = `usb_dumps/captures_rtl8xxxu/capture-N.pcap` frame numbers.
 
+## RX baseline — pre-faithfulness-pass (2026-06-06)
+
+Recorded before the IQK/LCK + runtime-gain port, so that work has a before/after.
+`beacon_watch.py` on the canary AP (CH1, ~1 m, strong signal) driving wifit3's own
+userland driver. RX is **bimodal**: typical windows are a healthy ~8/s, but it
+intermittently collapses into bad windows where the canary is heard *worse* than
+further-away neighbours — the variance itself is the defect a faithful port should
+remove. One-AP wire ceiling ≈ 9.77 beacons/s.
+
+| Window | mean | median | min | max | stdev |
+|---|--:|--:|--:|--:|--:|
+| 15 s, engaged (bad tail) | 6.4 | 6 | 2 | 9 | 1.8 |
+| 30 s, cold | 8.3 | 8 | 6 | 10 | 1.0 |
+| 60 s, warm | 7.8 | 8 | 5 | 10 | 1.2 |
+
 ## 1. Project Objective
 
 Userspace Python driver for Realtek RTL8188EUS (e.g. TP-Link TL-WN722N v2/v3, several other low-cost dongles) — monitor mode + injection via PyUSB. Cleanroom port of the kernel `rtl8xxxu` driver's 8188e fileops vector.

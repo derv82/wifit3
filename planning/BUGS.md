@@ -133,18 +133,6 @@ is an un-audited deviation worth closing.
   against `rt2500usb.c`. Until then `config_ant`/`config_channel` aren't pcap-gated (they
   need their own anchored blocks in `scripts/rt2500usb/verify_pcap.py`).
 
-* **rtl8188eus: `download_firmware` register preamble isn't wire-faithful.** The bundled
-  `rtl8188eufw.bin` payload uploads byte-for-byte (15230 B verified). But our
-  `chips/rtl8188eus/firmware.py` `download_firmware` *opens* by re-enabling the 8051 —
-  `read8(SYS_FUNC+1); write8(SYS_FUNC+1, |4)` then `SYS_FUNC |= CPU_ENABLE` — which the
-  cold-boot capture performs back at power-on (frames 157–169), not at the download. The
-  capture's download region instead writes `0x0214 / 0x0200 / 0x010c / 0x0116 / 0x0104`
-  before the `MCU_FW_DL` enable, and its MCU_FW_DL enable runs two `0x0080=0x05` rounds
-  where our port runs one. So a whole-function replay diverges at op 1. Needs the
-  `rtl8xxxu_download_firmware` register sequence decoded against `core.c` to decide what to
-  drop/move; the blob upload itself is correct. Until then only the payload is pcap-gated in
-  `scripts/rtl8188eus/verify_pcap.py`, not the register sequence.
-
 ---
 
 > Not here: **driver wedge / replug warnings not reaching the UI** is a **release

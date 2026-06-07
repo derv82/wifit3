@@ -10,12 +10,10 @@ wire. The loader streams the payload to REG_FW_START_ADDRESS (0x1000) in 196-byt
 concatenated in order IS the uploaded firmware. This byte-verifies the bundled blob against
 what the vendor driver actually pushed to the chip.
 
-Not yet gated (flagged for a separate session): ``download_firmware``'s register *preamble*
-is not wire-faithful -- it opens by re-enabling the 8051 (``SYS_FUNC+1 |= 4`` then
-``SYS_FUNC |= CPU_ENABLE``), but the capture performs that enable at power-on, not at the
-download, and its download region instead writes 0x0214/0x0200/0x010c/0x0116/0x0104 before
-the MCU_FW_DL enable. So a whole-function replay diverges at op 1; the blob check below is
-independent of that.
+This capture set is the **mainline rtl8xxxu** cold boot (``airmon-ng.log``: driver rtl8xxxu) --
+the driver this port mirrors -- so the register *sequence* replays byte-for-byte, not just the
+blob. (The DKMS/vendor ``realtek-rtl8188eus`` boot in ``usb_dumps_new/captures_8188eu/`` is the
+target of a separate vendor port.) Coverage grows milestone-by-milestone from M1 (blob) outward.
 
 Run: uv run python scripts/rtl8188eus/verify_pcap.py [capture-1|capture-2|capture-3]
 """
@@ -32,7 +30,7 @@ import rtw88_pcap_replay as rp  # noqa: E402
 from wifit3.chips.rtl8188eus import firmware  # noqa: E402
 from wifit3.chips.rtl8188eus.constants import FW_HEADER_SIZE, REG_FW_START_ADDRESS  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps_new" / "captures_8188eu"
+CAP_DIR = REPO / "usb_dumps" / "captures_rtl8xxxu"
 _WHOLE = (1, 10 ** 9)
 _FW_REGION_END = REG_FW_START_ADDRESS + 0x1000   # chunks restart at 0x1000 each page
 
@@ -62,9 +60,6 @@ def run(cap: str | None = None) -> int:
 
     print(f"\nPASS: rtl8188eufw.bin upload verified byte-for-byte -- {len(payload)}B payload "
           f"streamed to REG_FW_START_ADDRESS matches the bundled blob.")
-    print("  NOTE: download_firmware's register preamble re-enables the 8051 via SYS_FUNC, "
-          "which this capture does at power-on (not at the download) -- a wire-faithfulness "
-          "divergence flagged for a separate session.")
     return 0
 
 
