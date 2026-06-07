@@ -70,7 +70,8 @@ REGISTRY: dict[str, Chip] = {
                       "Ralink RT3572/RT5372/RT5572 rt2x00 (vendor 0x06/0x07)"),
     "rtl8188eus": Chip("rtl8188eus", "rtl8188eus/verify_pcap.py",
                        "Realtek RTL8188EUS / rtl8xxxu (vendor 0x05)"),
-    # Legacy Realtek recipe still to come (reuses the 0x05 codec): rtl8187.
+    "rtl8187": Chip("rtl8187", "rtl8187/verify_pcap.py",
+                    "Realtek RTL8187L / rtl818x (vendor 0x05)"),
     "ar9271": Chip("ar9271", None, "Atheros AR9271 (HTC/WMI)",
                    pointer="event-driven HTC/WMI + firmware re-enumeration -- not a "
                            "register byte-diff; use scripts/ar9271/build_template.py"),
