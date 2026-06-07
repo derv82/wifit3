@@ -65,3 +65,22 @@ REG_HMETFR = 0x01CC          # H2C trigger, written by InitializeFirmwareVars
 
 # --- MAC config [SRC] hal_com_reg.h, Hal8188EPhyCfg.h --------------------
 REG_MAX_AGGR_NUM = 0x04CA
+
+# --- BB config [SRC] hal_com_reg.h, rtl8188e_phycfg.c, hal_com.c ----------
+REG_RF_CTRL = 0x001F
+RF_EN = BIT(0)
+RF_RSTB = BIT(1)
+RF_SDMRSTB = BIT(2)
+RF_CTRL_INIT = RF_EN | RF_RSTB | RF_SDMRSTB           # 0x07
+# REG_SYS_FUNC_EN BB-enable: BIT13 (FEN_DIO_RF) | BIT0 | BIT1
+SYS_FUNC_BB_ENABLE = BIT(13) | BIT(0) | BIT(1)        # 0x2003
+FEN_BBRSTB = BIT(0)
+FEN_BB_GLB_RSTn = BIT(1)
+FEN_USBA = BIT(2)
+FEN_USBD = BIT(4)
+FEN_BB_USB = FEN_USBA | FEN_USBD | FEN_BB_GLB_RSTn | FEN_BBRSTB  # 0x17
+REG_AFE_XTAL_CTRL = 0x0024
+XTAL_CAP_MASK = 0x007FF800   # REG_AFE_XTAL_CTRL[22:11] = cap | cap<<6
+DEFAULT_CRYSTAL_CAP = 0x20   # EEPROM_Default_CrystalCap (efuse 0xB9 on this card)
+# PHY_REG delay pseudo-addresses (settling, no register write)
+BB_DELAY_ADDRS = range(0xF9, 0xFF)

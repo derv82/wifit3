@@ -68,6 +68,15 @@ bimodal collapse, not just the mean.
   MAX_AGGR_NUM=0x07). The conditional 0x040 block is board-type gated; this plain board
   (driver1 = `0x00040200`) takes the ELSE default 0x040=0x00.
 
+- **M2b (BB + AGC config): complete — pcap-verified on all 3 boots.**
+  `bb.phy_bb_config` ports `PHY_BBConfig8188E` [SRC] rtl8188e_phycfg.c:964 — enable BB/RF
+  (REG_SYS_FUNC_EN |= 0x2003, REG_RF_CTRL=0x07, REG_SYS_FUNC_EN=0x17 for USB), walk
+  `array_mp_8188e_phy_reg` (1338 u32) + `array_mp_8188e_agc_tab` (1950 u32) as full-32-bit
+  writes (PHY_REG addresses 0xF9–0xFE are settling delays, not writes), then
+  `hal_set_crystal_cap` → REG_AFE_XTAL_CTRL(0x24)[22:11] = cap|(cap<<6). **crystal_cap=0x20**
+  read from the wire (the masked 0x24 write decodes to field 0x820 = 0x20|0x20<<6); to be
+  replaced by the efuse decode. 328 ops/boot (deterministic).
+
 ### The phydm conditional walker (`phy_cond.py`)
 `odm_read_and_config_mp_8188e_*` pairs the flat-u32 table two words at a time: a BIT31 word is a
 positive condition (IF/ELSE-IF/ELSE/ENDIF in bits[29:28]); a BIT30 word is its negative pair that
@@ -83,9 +92,11 @@ cut=ODM_CUT_A(0), platform=ODM_CE(0x04), interface=ODM_ITRF_USB(0x02), package=0
     milestone (the FW/MAC chain is verified from REG_MCUFWDL via `start_addr`).
 
 ## Potential Known Gaps (audit before trusting any milestone)
-- [ ] **EFUSE probe read** (ops 41–551): the packet-buffer indirect read + the 401× REG_FDHM0
-      autoload-timeout poll are not yet ported. Needed to recover crystal_cap / tx-power / MAC
-      before BB config. The timeout poll is capture-specific (value never changes) — port its
-      real exit bound, not a fixed count.
+- [ ] **EFUSE probe read** (ops 41–545): the packet-buffer indirect read + the REG_FDHM0
+      autoload poll are not yet ported. Needed to recover crystal_cap / tx-power / MAC. M2b
+      currently hardcodes crystal_cap=0x20 (wire-confirmed); the efuse decode must reproduce it.
+      The FDHM0 poll exits on a value-change (0x02→0x00 at the last read), so it IS replayable.
+- [ ] **MISC01 queue/page setup** (ops 546–551): between the efuse read and FW download; not
+      yet ported (folded into the efuse milestone, since both precede FW on the wire).
 
 Verified `[SRC]`/`[WIRE]` facts accumulate here as the port progresses.

@@ -28,7 +28,7 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8188eus_dkms import firmware, mac, pwrseq  # noqa: E402
+from wifit3.chips.rtl8188eus_dkms import bb, firmware, mac, pwrseq  # noqa: E402
 
 REG_MCUFWDL = 0x0080
 REG_APS_FSMCO_B2 = 0x0006   # first power-seq op (CARDEMU_TO_ACT step 1 poll)
@@ -50,6 +50,7 @@ def _verify_main_chain(pcap, dev):
     Each milestone consumes the next span of the same transport byte-for-byte:
         M1   firmware download + FW-ready + InitializeFirmwareVars
         M2a  PHY_MACConfig8188E (MAC reg table + MAX_AGGR_NUM)
+        M2b  PHY_BBConfig8188E (BB enable + PHY_REG + AGC_TAB + crystal cap)
     (efuse probe read between power-on and FW is a separate milestone.)"""
     ops = rp.extract_ops(pcap, dev, start_addr=REG_MCUFWDL)
     t = rp.ReplayTransport(ops)
@@ -58,6 +59,8 @@ def _verify_main_chain(pcap, dev):
     miles.append(("M1 fw", t.i))
     mac.phy_mac_config(t)
     miles.append(("M2a mac", t.i))
+    bb.phy_bb_config(t)
+    miles.append(("M2b bb", t.i))
     return miles
 
 
