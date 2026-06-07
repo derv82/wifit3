@@ -104,6 +104,16 @@ bimodal collapse, not just the mean.
   doesn't define CONFIG_IOL_LLT): chain TX pages 0→1…167→0xFF, ring 168→…→175→0xA8, each entry
   a `_LLTWrite` (REG_LLT_INIT 0x1E0 write + poll-to-idle). 357 ops/boot (176 LLT entries × 2 + 5).
 
+- **M3 (MISC02 'open the MAC'): complete — pcap-verified on all 3 boots.**
+  `mac.init_misc02` ports the ~14 hal_init helpers between InitLLTTable and the turn-on block:
+  `_InitDriverInfoSize`, `_InitInterrupt` (HISR/HIMR/HIMRE + USB bulk-int sel), `_InitNetworkType`
+  (MSR=NT_LINK_AP), `_InitWMACSetting` (STA RCR 0x700060CE + accept-all MAR), `_InitAdaptiveCtrl`
+  (RRSR/SIFS/RL), `_InitEDCA`, `_InitRetryFunction`, `InitUsbAggregationSetting` (Tx BLK_DESC +
+  **RX_AGG_USB** mode), `InitBeaconParameters_8188e`, MACTXEN/MACRXEN, drop-incorrect-bulkout,
+  Tx-report, early-mode-off, MACID-no-link, per-AC lifetime. Chip-state values (RCR, USB-agg)
+  resolved to this card's wire-confirmed values. 55 ops/boot. The STA RCR is overwritten by the
+  monitor-mode entry (upcoming).
+
 ### ⚠️ Async 2 s watchdog interleaves the EP0 stream (load-bearing for replay)
 A background kernel thread (`rtw_dynamic_check_timer` / phydm watchdog) fires **every
 2.016 s** (first fire ≈ frame 2731 ≈ op 1320, right at the RF→efuse-patch boundary) and

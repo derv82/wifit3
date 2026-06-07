@@ -6,7 +6,9 @@ AMPDU aggregation number. [WIRE] cap1 ops 797..end-of-table.
 """
 from __future__ import annotations
 
+from . import constants as C
 from . import phy_cond
+from .constants import BIT, MACRXEN, MACTXEN
 from .constants import (
     _LLT_NO_ACTIVE,
     _LLT_WRITE_ACCESS,
@@ -56,6 +58,82 @@ def init_misc01(t) -> None:
     t.write16(REG_TRXFF_BNDY + 2, RXFF_BOUNDARY)
     # _InitTransferPageSize: Tx/Rx page size = 128.
     t.write8(REG_PBP, PBP_PAGE_SIZE)
+
+
+def init_misc02(t) -> None:
+    """MISC02 'open the MAC' block [SRC] rtl8188eu_hal_init MISC02 stage — the ~14
+    init helpers between InitLLTTable and the turn-on block. Chip-state-dependent
+    values (RCR flags, USB-agg config) are resolved to this card's wire-confirmed
+    values, like driver1/crystal_cap."""
+    # _InitDriverInfoSize
+    t.write8(C.REG_RX_DRVINFO_SZ, C.DRVINFO_SZ)
+    # _InitInterrupt (HISR clear, HIMR/HIMRE, USB bulk-int select — not full-speed)
+    t.write32(C.REG_HISR_88E, 0xFFFFFFFF)
+    t.write32(C.REG_HIMR_88E, C.IMR_88E)
+    t.write32(C.REG_HIMRE_88E, C.IMR_EX_88E)
+    t.write8(C.REG_USB_SPECIAL_OPTION,
+             t.read8(C.REG_USB_SPECIAL_OPTION) | C.INT_BULK_SEL)
+    # _InitNetworkType (MSR = NT_LINK_AP in REG_CR[17:16])
+    v = t.read32(C.REG_CR)
+    t.write32(C.REG_CR, (v & ~C.MASK_NETTYPE) | (C.NT_LINK_AP << 16))
+    # _InitWMACSetting (STA RCR + accept-all multicast)
+    t.write32(C.REG_RCR, C.RCR_STA_INIT)
+    t.write32(C.REG_MAR, 0xFFFFFFFF)
+    t.write32(C.REG_MAR + 4, 0xFFFFFFFF)
+    # _InitAdaptiveCtrl (RRSR, spec SIFS, retry limit)
+    v = t.read32(C.REG_RRSR)
+    t.write32(C.REG_RRSR, (v & ~C.RATE_BITMAP_ALL) | C.RATE_RRSR_CCK_ONLY_1M)
+    t.write16(C.REG_SPEC_SIFS, C.SPEC_SIFS_ADAPTIVE)
+    t.write16(C.REG_RL, C.RL_STA)
+    # _InitEDCA (SIFS + EDCA AC params)
+    t.write16(C.REG_SPEC_SIFS, C.SIFS_VAL)
+    t.write16(C.REG_MAC_SPEC_SIFS, C.SIFS_VAL)
+    t.write16(C.REG_SIFS_CTX, C.SIFS_VAL)
+    t.write16(C.REG_SIFS_TRX, C.SIFS_VAL)
+    t.write32(C.REG_EDCA_BE_PARAM, C.EDCA_BE)
+    t.write32(C.REG_EDCA_BK_PARAM, C.EDCA_BK)
+    t.write32(C.REG_EDCA_VI_PARAM, C.EDCA_VI)
+    t.write32(C.REG_EDCA_VO_PARAM, C.EDCA_VO)
+    # _InitRetryFunction
+    t.write8(C.REG_FWHW_TXQ_CTRL,
+             t.read8(C.REG_FWHW_TXQ_CTRL) | C.EN_AMPDU_RTY_NEW)
+    t.write8(C.REG_ACKTO, C.ACKTO_VAL)
+    # InitUsbAggregationSetting — Tx (TDECTRL BLK_DESC_NUM)
+    t.read32(C.REG_TDECTRL)
+    t.write32(C.REG_TDECTRL, C.TDECTRL_TXAGG)
+    # InitUsbAggregationSetting — Rx, RX_AGG_USB mode: clear DMA-agg, set USB-agg.
+    dma = t.read8(C.REG_TRXDMA_CTRL)
+    usbv = t.read8(C.REG_USB_SPECIAL_OPTION)
+    t.write8(C.REG_TRXDMA_CTRL, dma & ~C.RXDMA_AGG_EN)
+    t.write8(C.REG_USB_SPECIAL_OPTION, usbv | C.USB_AGG_EN)
+    t.write8(C.REG_RXDMA_AGG_PG_TH + 1, C.RXAGG_USB_TIMEOUT)
+    t.write8(C.REG_RXDMA_AGG_PG_TH, C.RXAGG_USB_SIZE)
+    # InitBeaconParameters_8188e
+    t.write16(C.REG_BCN_CTRL, C.BCN_CTRL_INIT)
+    t.write8(C.REG_TBTT_PROHIBIT, C.TBTT_PROHIBIT_SETUP_TIME)
+    t.write8(C.REG_TBTT_PROHIBIT + 1, C.TBTT_PROHIBIT_HOLD & 0xFF)
+    v = t.read8(C.REG_TBTT_PROHIBIT + 2)
+    t.write8(C.REG_TBTT_PROHIBIT + 2, (v & 0xF0) | (C.TBTT_PROHIBIT_HOLD >> 8))
+    t.write8(C.REG_DRVERLYINT, C.DRIVER_EARLY_INT_TIME_8188E)
+    t.write8(C.REG_BCNDMATIM, C.BCN_DMA_ATIME_INT_TIME_8188E)
+    t.write16(C.REG_BCNTCFG, C.BCNTCFG_VAL)
+    # _InitBeaconMaxError is empty on 8188e.
+    # Enable MACTXEN/MACRXEN (read16 REG_CR, write8 the low byte).
+    v = t.read16(C.REG_CR)
+    t.write8(C.REG_CR, (v | MACTXEN | MACRXEN) & 0xFF)
+    # _InitHardwareDropIncorrectBulkOut
+    t.write32(C.REG_TXDMA_OFFSET_CHK,
+              t.read32(C.REG_TXDMA_OFFSET_CHK) | C.DROP_DATA_EN)
+    # Tx report enable + timer (RATE_ADAPTIVE, !fw_ractrl)
+    t.write8(C.REG_TX_RPT_CTRL, t.read8(C.REG_TX_RPT_CTRL) | BIT(1) | BIT(0))
+    t.write8(C.REG_TX_RPT_CTRL + 1, 0x02)
+    t.write16(C.REG_TX_RPT_TIME, C.TX_RPT_TIME_VAL)
+    # Early mode off; no-link MACID; per-AC packet lifetime (TX_MCAST2UNI).
+    t.write8(C.REG_EARLY_MODE_CONTROL, 0x00)
+    t.write32(C.REG_MACID_NO_LINK_0, 0xFFFFFFFF)
+    t.write32(C.REG_MACID_NO_LINK_1, 0xFFFFFFFF)
+    t.write16(C.REG_PKT_VO_VI_LIFE_TIME, C.PKT_LIFE_TIME)
+    t.write16(C.REG_PKT_BE_BK_LIFE_TIME, C.PKT_LIFE_TIME)
 
 
 def init_tx_buffer_boundary(t, bndy: int = TX_PAGE_BOUNDARY) -> None:

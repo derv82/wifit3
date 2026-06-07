@@ -91,6 +91,8 @@ def _verify_main_chain(pcap, dev, params):
     mac.init_tx_buffer_boundary(t)
     mac.init_llt(t)
     miles.append(("M2e llt", t.i))
+    mac.init_misc02(t)
+    miles.append(("M3 misc02", t.i))
     return miles
 
 

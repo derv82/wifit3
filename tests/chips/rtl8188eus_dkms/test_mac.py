@@ -22,6 +22,9 @@ class RecTx:
     def write32(self, a, v):
         self.w32.append((a, v & 0xFFFFFFFF))
 
+    def read8(self, a):
+        return 0x00
+
     def read16(self, a):
         return 0x0000
 
@@ -68,6 +71,20 @@ def test_init_misc01():
     assert (0x010C, 0xFAF0) in t.w16               # TRXDMA queue map (read low3=0)
     assert (0x0116, 0x25FF) in t.w16               # RX FF boundary
     assert (0x0104, 0x11) in t.w8                  # PBP page size
+
+
+def test_init_misc02_key_writes():
+    t = RecTx()
+    mac.init_misc02(t)
+    d8 = dict(t.w8)
+    d32 = dict(t.w32)
+    assert d32[0x0608] == 0x700060CE                # STA RCR
+    assert d32[0x0620] == 0xFFFFFFFF                # accept-all multicast
+    assert d32[0x0440] == 0x000FFFF1                # RRSR (read 0 -> mask|val)
+    assert d8[0x0640] == 0x40                       # ACKTO
+    # RX_AGG_USB: TRXDMA clears RXDMA_AGG_EN (read 0 -> stays 0), USB sets USB_AGG_EN.
+    assert d8[0x010C] == 0x00 and d8[0xFE55] == 0x08
+    assert d32[0x0484] == 0xFFFFFFFF                # MACID no-link
 
 
 def test_tx_buffer_boundary():
