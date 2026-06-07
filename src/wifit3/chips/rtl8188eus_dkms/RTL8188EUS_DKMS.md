@@ -289,7 +289,15 @@ cut=ODM_CUT_A(0), platform=ODM_CE(0x04), interface=ODM_ITRF_USB(0x02), package=0
       SESSION: confirm whether those regs differ at *init* or only after the DM runs (dump right
       after bring-up vs after a few seconds, both drivers), then port the missing phydm runtime
       piece (likely CCK-PD + the rest of `phydm_dig`'s AGC writes beyond IGI). The register diff
-      is the map.
+      is the map. **Methodology correction:** the right gate is NOT hand-chasing registers — it
+      is to BYTE-DIFF THE OPERATIONAL PHASE of the capture (the per-hop tunes AND the periodic
+      DIG burst), the way `rtl8814au_dkms/verify_channels.py` diffs all 35 hops. This was
+      deferred for the 8188e (only the initial ch1 tune is diffed) when the DIG-burst interleave
+      made it awkward — but extending the diff is exactly what FORCES the runtime-DM port to be
+      faithful (the diff stays red until the CCK-PD/AGC writes match the wire). Finish that
+      verification first; the RX parity follows from it. The init being byte-perfect is only
+      half the port — the operational phase is the other half, and it is where this card's RX
+      goal actually lives.
 - [x] **EFUSE probe read — DONE.** `efuse.read_chip_params` ports the probe-phase IOL efuse
       read (ops 41–544): `iol_mode_enable(1, fw_ready=False)` (incl. the 8051 reset since FW
       isn't up yet) → `iol_execute(READ_EFUSE_MAP)` → `efuse_read_phymap_from_txpktbuf` (read
