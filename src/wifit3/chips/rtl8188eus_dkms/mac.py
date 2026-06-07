@@ -168,6 +168,17 @@ def init_llt(t, bndy: int = TX_PAGE_BOUNDARY,
     _llt_write(t, last, bndy)                  # ring buffer: last -> boundary
 
 
+def set_macid(t, mac: bytes) -> None:
+    """``HW_VAR_MAC_ADDR`` [SRC] rtl8188e_hal_init.c — program the own-address into
+    REG_MACID (0x610-0x615), then read it back (matches airmon's monitor setup). The
+    MAC is the efuse value; in monitor (RCR_AAP) address-match is bypassed, but airmon
+    programs it and we mirror that so the chip state matches the wire."""
+    for i, b in enumerate(mac[:6]):
+        t.write8(C.REG_MACID + i, b)
+    for i in range(6):
+        t.read8(C.REG_MACID + i)
+
+
 def invalidate_cam_all(t) -> None:
     """``invalidate_cam_all`` -> HW_VAR_CAM_INVALID_ALL [SRC] rtl8188e_hal_init.c:4064
     — clear every hardware security-cam entry: REG_CAMCMD = CAM_POLLING | CAM_CLR."""

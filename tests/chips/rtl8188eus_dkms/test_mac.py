@@ -87,6 +87,14 @@ def test_init_misc02_key_writes():
     assert d32[0x0484] == 0xFFFFFFFF                # MACID no-link
 
 
+def test_set_macid():
+    # cap1 op 1894-1899: program the efuse MAC into REG_MACID (0x610-0x615) byte-wise.
+    t = RecTx()
+    mac.set_macid(t, bytes.fromhex("d46e0e0dadbf"))
+    assert t.w8 == [(0x0610, 0xD4), (0x0611, 0x6E), (0x0612, 0x0E),
+                    (0x0613, 0x0D), (0x0614, 0xAD), (0x0615, 0xBF)]
+
+
 def test_invalidate_cam_all():
     # cap1 op 1588: clear all security-cam entries (CAM_POLLING|CAM_CLR).
     t = RecTx()

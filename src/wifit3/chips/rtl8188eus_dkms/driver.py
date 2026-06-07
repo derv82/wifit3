@@ -96,12 +96,18 @@ class Rtl8188eusDkmsDriver:
             return False
 
         if progress_cb:
-            progress_cb(0.7, "Configuring MAC / BB / RF + monitor")
+            progress_cb(0.7, "Configuring MAC / BB / RF")
         await loop.run_in_executor(None, self._phy_config, params)
 
+        # Match airmon's order (the 8812au lesson — the monitor/airmon tail is the RX
+        # fix, NOT skippable): program the MAC, re-tune the channel (restores the RF/BB
+        # into a clean RX state after the InitHalDm EDCCA search toggled the LNA), THEN
+        # enter monitor opmode (RCR/RXFLTMAP). [WIRE] cap1 1894 (MAC) -> 1908 (re-tune)
+        # -> 1957 (monitor).
         if progress_cb:
-            progress_cb(0.9, f"Tuning to channel {_SCAN_START_CHANNEL}")
+            progress_cb(0.9, f"MAC + tuning to channel {_SCAN_START_CHANNEL} + monitor")
         await self.set_channel(_SCAN_START_CHANNEL)
+        await loop.run_in_executor(None, monitor.enter_monitor, self.transport)
 
         # Start the bulk-IN RX reader: a blocking bulk read posted on a dedicated thread
         # (off the event loop, so the TUI can't starve RX); each aggregated buffer is
@@ -165,7 +171,8 @@ class Rtl8188eusDkmsDriver:
         mac.init_misc11_tail(t)                                 # M6
         dm.init_hal_dm(t)                                       # M7 (DIG/AGC/EDCCA seed)
         dm.init_hal_tail(t)                                     # M8 (power-track + LCK)
-        monitor.enter_monitor(t)                                # M10 (RCR/RXFLTMAP)
+        mac.set_macid(t, self.mac_address or b"\x00" * 6)      # HW_VAR_MAC_ADDR (airmon)
+        # monitor opmode is entered in connect() AFTER the channel re-tune (wire order).
 
     def _read_once(self) -> Optional[bytes]:
         return self.transport.bulk_in()

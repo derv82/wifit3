@@ -135,6 +135,9 @@ NT_LINK_AP = 0x2
 REG_RCR = 0x0608
 RCR_STA_INIT = 0x700060CE   # _InitWMACSetting STA RCR (monitor mode overrides this)
 
+# --- MAC address program (HW_VAR_MAC_ADDR) [SRC] hal_com_reg.h ------------
+REG_MACID = 0x0610         # MACID/own-address, 6 bytes 0x610..0x615
+
 # --- monitor-mode entry [SRC] rtl8188e_hal_init.c hw_var_set_opmode/_monitor, hal_com.c ---
 MSR = REG_CR + 2            # 0x0102 Media Status (net type per port)
 MSR_NETTYPE_MASK = 0x0C     # HW_PORT0 keeps port1 net-type [3:2]; rewrites [1:0]
