@@ -70,6 +70,26 @@ REG_MAX_AGGR_NUM = 0x04CA
 REG_CAMCMD = 0x0670          # RWCAM
 CAMCMD_CLEAR_ALL = BIT(31) | BIT(30)   # CAM_POLLING | CAM_CLR = 0xC0000000
 
+# --- BB byte masks (phy_set_bb_reg) [SRC] Hal8188EPhyReg.h ----------------
+bMaskByte0 = 0x000000FF
+bMaskByte1 = 0x0000FF00
+bMaskByte2 = 0x00FF0000
+bMaskByte3 = 0xFF000000
+
+# --- TX power (PHY_SetTxPowerLevel8188E / MISC11) [SRC] Hal8188EPhyReg.h ---
+# Path-A txagc registers (4 rates packed per 32-bit reg, one byte each).
+rTxAGC_A_Rate18_06 = 0x0E00        # OFDM 6/9/12/18 M
+rTxAGC_A_Rate54_24 = 0x0E04        # OFDM 24/36/48/54 M
+rTxAGC_A_CCK1_Mcs32 = 0x0E08       # CCK 1M (byte1)
+rTxAGC_B_CCK11_A_CCK2_11 = 0x086C  # CCK 2/5.5/11 M (path-A, bytes 1/2/3)
+rTxAGC_A_Mcs03_Mcs00 = 0x0E10      # HT MCS0-3
+rTxAGC_A_Mcs07_Mcs04 = 0x0E14      # HT MCS4-7
+MAX_POWER_INDEX = 0x3F             # [SRC] hal_com_phycfg.h
+TXPWR_2M_EXTRA_BIAS = -9           # tx_power_extra_bias(MGN_2M) [SRC] rtl8188e_phycfg.c:1393
+DEFAULT_INIT_CHANNEL = 6           # pHalData->current_channel default [SRC] usb_halinit.c:1344
+# efuse PG TX-power block start (pg_txpwr_saddr) [SRC] rtl8188e_hal_init.c:2547
+EEPROM_TX_PWR_INX_88E = 0x10
+
 # --- MISC01 queue/page setup [SRC] hal_com_reg.h, usb_halinit.c -----------
 REG_RQPN = 0x0200
 REG_RQPN_NPQ = 0x0214

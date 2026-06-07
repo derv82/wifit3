@@ -24,6 +24,7 @@ from .constants import (
     DEFAULT_CRYSTAL_CAP,
     DISABLE_TRXPKT_BUF_ACCESS,
     EEPROM_MAC_ADDR_88EU,
+    EEPROM_TX_PWR_INX_88E,
     EEPROM_XTAL_88E,
     EFUSE_ACCESS_OFF,
     EFUSE_MAP_LEN_88E,
@@ -47,10 +48,20 @@ from .firmware import _8051_reset
 _IOL_POLL_CAP = 100000   # generous bound; the captured poll always converges
 
 
+class TxPwr2G(NamedTuple):
+    """Path-A 2.4 GHz PG TX-power info (1T1R). [SRC] hal_load_pg_txpwr_info_path_2g."""
+    cck_base: tuple    # 6 CCK channel groups (cck_group index)
+    bw40_base: tuple   # 5 BW40 channel groups (also the OFDM/HT base)
+    cck_diff: int      # CCK 1TX diff (no efuse byte -> 0)
+    ofdm_diff: int     # OFDM 1TX diff
+    bw20_diff: int     # BW20 (HT) 1TX diff
+
+
 class ChipParams(NamedTuple):
     crystal_cap: int
     mac_address: bytes
-    efuse_map: bytes   # the 512-byte logical map (for later tx-power decode)
+    efuse_map: bytes   # the 512-byte logical map
+    tx_power: TxPwr2G  # path-A 2.4G TX-power PG decode
 
 
 def iol_mode_enable(t, enable: bool, fw_ready: bool = True) -> None:
@@ -199,6 +210,23 @@ def _phymap_to_logical(phymap: bytes) -> bytes:
     return bytes(table)
 
 
+def _s4(n: int) -> int:
+    """Signed 4-bit nibble -> int (PG_TXPWR_*_DIFF_TO_S8BIT)."""
+    return n - 16 if (n & 0x8) else n
+
+
+def _parse_tx_power(m: bytes) -> TxPwr2G:
+    """``hal_load_pg_txpwr_info_path_2g`` (path A, 1T1R) [SRC] hal_com_phycfg.c:576 —
+    the 18-byte 2.4G PG block at pg_txpwr_saddr: 6 CCK base groups, 5 BW40 base groups,
+    then the diff bytes. The 1TX diff byte packs MSB=BW20, LSB=OFDM; the CCK 1TX diff
+    has no efuse byte (CCK base is the 1TX reference) so it stays 0."""
+    base = EEPROM_TX_PWR_INX_88E
+    cck_base = tuple(m[base + i] for i in range(6))
+    bw40_base = tuple(m[base + 6 + i] for i in range(5))
+    diff = m[base + 11]                              # tx_idx 0 diff byte
+    return TxPwr2G(cck_base, bw40_base, 0, _s4(diff & 0x0F), _s4(diff >> 4))
+
+
 def read_chip_params(t, bcnhead: int = 0) -> ChipParams:
     """Probe-phase efuse read [SRC] ReadEFuseByIC -> iol_read_efuse: power-on (done
     by the caller) then IOL READ_EFUSE_MAP, read the physical map out of the packet
@@ -217,4 +245,5 @@ def read_chip_params(t, bcnhead: int = 0) -> ChipParams:
     if cap == 0xFF:
         cap = DEFAULT_CRYSTAL_CAP
     mac = logical[EEPROM_MAC_ADDR_88EU:EEPROM_MAC_ADDR_88EU + 6]
-    return ChipParams(crystal_cap=cap, mac_address=mac, efuse_map=logical)
+    return ChipParams(crystal_cap=cap, mac_address=mac, efuse_map=logical,
+                      tx_power=_parse_tx_power(logical))

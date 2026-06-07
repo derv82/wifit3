@@ -70,6 +70,26 @@ def test_phymap_to_logical_extended_header_crystal_cap():
     assert logical[0xB8] == 0x00 and logical[0xB9] == 0x20
 
 
+def test_parse_tx_power_2g():
+    # Path-A PG block at 0x10 from capture-1: 6 CCK base, 5 BW40 base, diff byte 0x01.
+    m = bytearray(b"\xFF" * 512)
+    m[0x10:0x10 + 12] = bytes([0x30, 0x30, 0x2F, 0x2E, 0x2E, 0x2E,     # CCK base
+                               0x33, 0x33, 0x33, 0x32, 0x31,            # BW40 base
+                               0x01])                                    # diff: BW20=0 OFDM=1
+    p = efuse._parse_tx_power(bytes(m))
+    assert p.cck_base == (0x30, 0x30, 0x2F, 0x2E, 0x2E, 0x2E)
+    assert p.bw40_base == (0x33, 0x33, 0x33, 0x32, 0x31)
+    assert (p.cck_diff, p.ofdm_diff, p.bw20_diff) == (0, 1, 0)
+
+
+def test_parse_tx_power_signed_diff_nibbles():
+    # diff byte 0xF8 -> MSB nibble 0xF = -1 (BW20), LSB nibble 0x8 = -8 (OFDM).
+    m = bytearray(b"\x20" * 512)
+    m[0x10 + 11] = 0xF8
+    p = efuse._parse_tx_power(bytes(m))
+    assert (p.bw20_diff, p.ofdm_diff) == (-1, -8)
+
+
 def test_iol_efuse_patch_sequence():
     t = Tx(queues={REG_SYS_CFG: [0x37, 0xB7],
                    REG_HMEBOX_E0: [0x00, 0x00, 0x00,   # READ_EFUSE_MAP: init, poll-clear, status

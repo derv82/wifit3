@@ -28,7 +28,10 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8188eus_dkms import bb, efuse, firmware, mac, pwrseq, rf  # noqa: E402
+from wifit3.chips.rtl8188eus_dkms import (  # noqa: E402
+    bb, efuse, firmware, mac, pwrseq, rf, txpower,
+)
+from wifit3.chips.rtl8188eus_dkms.constants import DEFAULT_INIT_CHANNEL  # noqa: E402
 
 REG_MCUFWDL = 0x0080
 REG_SYS_CFG = 0x00F0
@@ -99,6 +102,8 @@ def _verify_main_chain(pcap, dev, params):
     miles.append(("M4b bbturn", t.i))
     mac.invalidate_cam_all(t)
     miles.append(("M4c cam", t.i))
+    txpower.set_tx_power(t, params.tx_power, DEFAULT_INIT_CHANNEL)
+    miles.append(("M5 txpwr", t.i))
     return miles
 
 
