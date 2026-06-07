@@ -134,5 +134,16 @@ cut=ODM_CUT_A(0), platform=ODM_CE(0x04), interface=ODM_ITRF_USB(0x02), package=0
       The FDHM0 poll exits on a value-change (0x02→0x00 at the last read), so it IS replayable.
 - [ ] **MISC01 queue/page setup** (ops 546–551): between the efuse read and FW download; not
       yet ported (folded into the efuse milestone, since both precede FW on the wire).
+- [ ] **DIG/AGC runtime watchdog — NOT YET PORTED (only filtered).** The 2 s phydm watchdog
+      is **central to this port's RX goal** (without periodic IGI/gain adaptation the gain
+      freezes at the seed → deaf/saturating, the exact 2.4 GHz weakness we re-port to fix).
+      Status: `verify_pcap` strips only the per-tick sreset read (`R REG_SYS_CFG/4`); the full
+      DIG burst (FA counters 0xC00/0xD00, CCK reset 0xA2C, NHM 0xF84–0xF94, EDCCA 0x8C4) is
+      NOT yet reproduced. Plan: (a) port the seed via **InitHalDm** (`rtw_phydm_init`, on the
+      wire — upcoming milestone); (b) port the periodic tick as `dig.py` (`phydm_dig` no-link
+      path: read FA → step IGI → clamp → reset), driven by a 2 s task like the 8814_dkms.
+      **Note:** the watchdog *startup* emits no USB ops (it's a kernel `_set_timer` arming) —
+      nothing was skipped on the wire; the wire only shows it firing. Porting it precisely also
+      lets the per-channel-tune differ filter the DIG burst cleanly (see the ⚠️ section below).
 
 Verified `[SRC]`/`[WIRE]` facts accumulate here as the port progresses.
