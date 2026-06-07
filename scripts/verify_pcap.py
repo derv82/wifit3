@@ -70,6 +70,8 @@ REGISTRY: dict[str, Chip] = {
                       "Ralink RT3572/RT5372/RT5572 rt2x00 (vendor 0x06/0x07)"),
     "rtl8188eus": Chip("rtl8188eus", "rtl8188eus/verify_pcap.py",
                        "Realtek RTL8188EUS / rtl8xxxu (vendor 0x05)"),
+    "rtl8188eus_dkms": Chip("rtl8188eus_dkms", "rtl8188eus_dkms/verify_pcap.py",
+                            "Realtek RTL8188EUS 1T1R DKMS (vendor 0x05)"),
     "rtl8187": Chip("rtl8187", "rtl8187/verify_pcap.py",
                     "Realtek RTL8187L / rtl818x (vendor 0x05)"),
     "ar9271": Chip("ar9271", None, "Atheros AR9271 (HTC/WMI)",

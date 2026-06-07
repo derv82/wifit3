@@ -43,6 +43,37 @@ Captures are produced by `src/wifit3/scripts/capture.py` on the Kali persistent
 USB; each capture ships a `*_logs/main.log` (absolute-epoch timeline) that
 `pcap_slicer.py` consumes.
 
+### Start from the source; the pcap is your test — and it has more than one writer
+
+**Port from the source, not from the pcap.** Open the kernel/vendor function you're porting
+and translate it into the driver line by line; run `verify_pcap.py` after each chunk as the
+offline unit test. Don't read the wire and reverse-engineer what code produced each byte —
+read the code, let the wire confirm. Sessions that walked source↔driver this way produced
+faithful ports; the session that went pcap-first stalled the moment the bytes stopped looking
+linear.
+
+**The capture has more than one writer.** A cold-boot capture is one serialized stream of the
+card's traffic, but the bring-up isn't the only producer on it. Timer threads the source
+registers run concurrently and interleave their transfers — common ones to watch for: a
+phydm/ODM watchdog every ~2 s (DIG + CCK-PD + adaptivity + NHM), an sreset poll, and under
+airmon airodump's channel-hop timer. Their bytes recur at a fixed cadence and won't match the
+function you're porting. **They are not noise — they are in the source, and they still must be
+ported.** If you catch yourself wanting to *delete* recurring bytes to make the diff line up,
+you've found an async producer, not a glitch.
+
+**Strip, but never forget.** The synchronous diff *must* slice async streams out — they land
+nondeterministically against the linear bring-up. But a stripped stream is unverified, and a
+byte-for-byte PASS over a stripped DM is green over a hole — usually the exact hole where
+runtime RX lives. So every op the card emitted must be *claimed*:
+- **For every `_strip_<X>` you add, add a paired `verify_<X>`** that byte-diffs that stream's
+  per-fire burst by replay. Enabling fact: the driver serializes register access across each
+  timer callback, so every async producer's *per-fire* op run is **contiguous** — slice it by
+  anchor and replay it (reads served, RMW writes checked), like any sync milestone.
+- A stream genuinely not reproduced by design (airmon's STA→monitor dance, the chip-version
+  prologue) is an **explicit waiver with a reason**, never a silent drop.
+- The gate reports coverage: async patterns verified / waived (with reasons) / **unaccounted**.
+  Unaccounted ⇒ NOT verified, regardless of sync PASS.
+
 ### Port every operation — the EFUSE read especially
 
 Don't skip a read because it "only feeds a value." Skipped reads are the #1 partial-port bug,
