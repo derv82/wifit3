@@ -29,7 +29,7 @@ from wifit3.engine.protocols import DeviceID, ProgressCallback
 from wifit3.wlan.packet import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
-from . import bb, chan, dm, efuse, firmware, mac, monitor, pwrseq, rf, txpower
+from . import bb, chan, dm, efuse, firmware, mac, monitor, pwrseq, rf, tx, txpower
 from .constants import DEFAULT_INIT_CHANNEL, PID, VID
 from .rx import iter_frames
 from .transport import Rtl8188eusTransport
@@ -163,9 +163,23 @@ class Rtl8188eusDkmsDriver:
         return True
 
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
-        """TX is not yet wired (tx.py is the next milestone); injection is unavailable."""
-        logger.warning("RTL8188EUS DKMS: inject_frame called but TX is not yet ported")
-        return False
+        """Transmit one 802.11 management frame (e.g. a deauth / WEP replay).
+
+        Builds the management TX descriptor (tx.build_mgmt_txdesc) and sends
+        ``[desc | frame]`` on the bulk-OUT pipe (the single EP 0x02, where the MGMT queue
+        maps). ``frame_bytes`` is the MPDU without FCS (the HW appends it). BMC is derived
+        from addr1's group bit. Serialized via ``_io_lock`` so the frame is never emitted
+        mid-retune. TX is explicit-action only (passive-by-default): nothing on the
+        scan/connect path calls this. ``use_no_ack`` is accepted for API compatibility
+        (the minimal mgmt descriptor uses the HW-default ACK policy)."""
+        if len(frame_bytes) < 10:           # need addr1 (bytes [4:10]) to read BMC
+            return False
+        loop = asyncio.get_running_loop()
+        bmc = bool(frame_bytes[4] & 0x01)   # addr1 group-address (multicast) bit
+        desc = tx.build_mgmt_txdesc(len(frame_bytes), bmc=bmc)
+        async with self._io_lock:           # don't TX mid-retune (set_channel)
+            await loop.run_in_executor(None, self.transport.bulk_out, desc + frame_bytes)
+        return True
 
     async def close(self) -> None:
         if self._reader is not None:

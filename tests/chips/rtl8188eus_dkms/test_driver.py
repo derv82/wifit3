@@ -13,6 +13,10 @@ from wifit3.chips.rtl8188eus_dkms.driver import Rtl8188eusDkmsDriver
 class _FakeTransport:
     def __init__(self):
         self.closed = False
+        self.sent = []
+
+    def bulk_out(self, data):
+        self.sent.append(bytes(data))
 
     def close(self):
         self.closed = True
@@ -59,9 +63,20 @@ def test_dispatch_without_callback_is_noop():
     drv._dispatch(b"\x00" * 32)                  # no callback registered -> no crash
 
 
-async def test_inject_frame_not_yet_wired():
+async def test_inject_frame_prepends_descriptor():
     drv = Rtl8188eusDkmsDriver(_FakeTransport())
-    assert await drv.inject_frame(b"\xc0\x00" + b"\x00" * 30) is False
+    # broadcast deauth: addr1 = ff:ff:ff:ff:ff:ff (bytes [4:10]).
+    frame = b"\xc0\x00\x00\x00" + b"\xff" * 6 + b"\x00" * 16
+    assert await drv.inject_frame(frame) is True
+    sent = drv.transport.sent[0]
+    assert sent[32:] == frame                        # frame rides behind the 32 B desc
+    assert int.from_bytes(sent[0:4], "little") >> 24 & 1 == 1   # BMC (broadcast addr1)
+
+
+async def test_inject_frame_rejects_too_short():
+    drv = Rtl8188eusDkmsDriver(_FakeTransport())
+    assert await drv.inject_frame(b"\xc0\x00\x00\x00") is False
+    assert drv.transport.sent == []
 
 
 def test_manager_registration_and_env_order(monkeypatch):

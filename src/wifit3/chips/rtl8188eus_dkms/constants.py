@@ -75,6 +75,17 @@ REG_BAR_MODE_CTRL = 0x04CC
 BAR_MODE_CTRL_DISABLE = 0x0201FFFF   # disable BAR (suggested by Scott)
 REG_HWSEQ_CTRL = 0x0423              # HW SEQ CTRL: 0xFF = enable HW seq num for all queues
 
+# --- TX descriptor (rtl8188e_fill_fake_txdesc) [SRC] rtl8188e_xmit.h, hal_com.h ---
+TXDESC_SIZE = 32              # old IC (8188E)
+OFFSET_SZ = 0
+OFFSET_SHT = 16
+LSG = BIT(26)                # last segment
+FSG = BIT(27)                # first segment
+OWN = BIT(31)               # descriptor owned by HW (ready to transmit)
+BMC = BIT(24)               # broadcast/multicast (group-addressed addr1)
+QSEL_SHT = 8
+QSLT_MGNT = 0x12            # management queue
+
 # --- BB byte masks (phy_set_bb_reg) [SRC] Hal8188EPhyReg.h ----------------
 bMaskByte0 = 0x000000FF
 bMaskByte1 = 0x0000FF00
