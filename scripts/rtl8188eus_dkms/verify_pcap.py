@@ -7,9 +7,9 @@ phydm chips need. Every op the card emitted has exactly one honest fate:
 
   * **matched**   — the port's real handler reproduces it byte-for-byte at the cursor.
   * **waived**    — an explicit, *named*, *counted* boundary for a producer that is not the
-                    vendor driver: the chip-version probe before power-on, the async SYS_CFG
-                    poll, and aireplay-ng's injected TX (a different userland program). A
-                    waiver is reported, never a silent strip.
+                    vendor driver: aireplay-ng's injected TX (a different userland program;
+                    bulk-OUT frames + its RA TX-report-timing writes). A waiver is reported,
+                    never a silent strip.
   * **unaccounted** — anything else STOPS the walk and names the op. That is the porting
                     frontier: the next thing to make faithful. PASS ⇔ zero unaccounted.
 
@@ -46,7 +46,7 @@ from wifit3.chips.rtl8188eus_dkms.constants import DEFAULT_INIT_CHANNEL  # noqa:
 DEFAULT_CAP = REPO / "usb_dumps_new" / "captures_8188eu" / "capture-1.pcap"
 
 REG_APS_FSMCO_B2 = 0x0006   # first power-seq op (CARDEMU_TO_ACT step-1 poll) — the init anchor
-REG_SYS_CFG = 0x00F0        # the async SYS_CFG poll reads this 32-bit (see _is_syscfg_poll)
+REG_SYS_CFG = 0x00F0        # 32-bit SYS_CFG read; used to anchor the walk (see _is_syscfg_read)
 REG_FA_HOLD = 0x0C00        # phydm FA-counter hold — opens the watchdog slot of a tick
 EEPROM_THERMAL_METER_88E = 0xBA   # efuse offset of the thermal-meter base
 EEPROM_DEFAULT_THERMAL_88E = 0x18  # fallback when the efuse byte is 0xff (autoload fail)
@@ -60,12 +60,11 @@ _RF_CHNL_LOW10 = 0x3FF                  # RfRegChnlVal channel field [9:0]
 _REG_TX_RPT_TIME = 0x04F0               # RA TX-report timing — written only on TX (aireplay)
 
 
-def _is_syscfg_poll(o: dict) -> bool:
-    """A 32-bit ``R REG_SYS_CFG`` interleaves the EP0 stream every ~2 s from frame ~2731. It
-    is a separate async producer from the bring-up (which only ever reads SYS_CFG as bytes,
-    in read_chip_version at probe) and from the dynamic-check timer; our port does not run it,
-    so every such poll is a counted waiver. (Distinct from the silent-reset xmit/linked status
-    poll — TXDMA/RXDMA/FMETHR — which IS the vendor 2 s timer and is reproduced per tick.)"""
+def _is_syscfg_read(o: dict) -> bool:
+    """A 32-bit ``R REG_SYS_CFG``. Used only to anchor the walk at the first such read —
+    ``read_chip_version`` at probe. (All 24 in the capture are identified + reproduced now:
+    chip-version, the TX-power-track foundry read at the RF-config tail, and the per-tick
+    phydm_receiver_blocking read; none are waived.)"""
     return o["kind"] == "R" and o.get("addr") == REG_SYS_CFG and o["width"] == 4
 
 
@@ -258,33 +257,17 @@ def run(cap: str | None = None) -> int:
     # ONE op list, anchored at the very first vendor op: read_chip_version's REG_SYS_CFG read
     # (the head of the probe prologue, now reproduced by efuse.read_adapter_info).
     full = rp.extract_ops(pcap, dev)
-    anchor = next((i for i, o in enumerate(full) if _is_syscfg_poll(o)), None)
+    anchor = next((i for i, o in enumerate(full) if _is_syscfg_read(o)), None)
     if anchor is None:
         print("FAIL: no REG_SYS_CFG/4 read (read_chip_version) in capture")
         return 1
 
-    # Every R 0xF0/4 is now a real, identified op — read_chip_version at probe
-    # (read_adapter_info), or phydm_receiver_blocking at the head of a watchdog tick
-    # (preceded by the sreset FMETHR read 0x1c8). KEEP both. The ONLY exception is the
-    # dynamic-check timer firing once mid-init (hw_init not complete -> no FA stats), an async
-    # fire whose position varies per boot and so can't be positionally dispatched: waived.
-    from_anchor = full[anchor:]
-    ops, syscfg, kept_chipver = [], 0, False
-    for i, o in enumerate(from_anchor):
-        if _is_syscfg_poll(o):
-            prev = from_anchor[i - 1] if i > 0 else None
-            if not kept_chipver:
-                kept_chipver = True
-                ops.append(o)                       # read_chip_version (probe)
-            elif prev and prev["kind"] == "R" and prev.get("addr") == 0x01C8:
-                ops.append(o)                       # phydm_receiver_blocking (in a tick)
-            else:
-                syscfg += 1                         # async dynamic-check fire, mid-init
-        else:
-            ops.append(o)
+    # NO filtering: every R 0xF0/4 is now an identified, reproduced op — read_chip_version at
+    # probe (read_adapter_info), the TX-power-track foundry read at the RF-config tail
+    # (rf.phy_rf_config), and phydm_receiver_blocking at the head of each watchdog tick.
+    ops = full[anchor:]
     total = len(ops)
-    print(f"{pcap.name}: card=dev{dev}, {len(full)} vendor ops "
-          f"({syscfg} async mid-init SYS_CFG read waived) -> walk {total} ops")
+    print(f"{pcap.name}: card=dev{dev}, {len(full)} vendor ops -> walk {total} ops")
 
     w = Walk(ops)
     out: dict = {}
@@ -313,8 +296,6 @@ def run(cap: str | None = None) -> int:
           f"(sreset poll + phydm watchdog, {sum(ticks)} ops byte-faithful, carried state)")
     for reason, n in w.waived.most_common():
         print(f"  waived {n:5} ops  — {reason}")
-    print(f"  syscfg   {syscfg:4} ops  — dynamic-check timer firing once mid-init "
-          f"(phydm_receiver_blocking SYS_CFG read; hw_init incomplete, no FA stats)")
 
     if frontier is not None:
         fa = frontier
