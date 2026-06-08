@@ -199,7 +199,11 @@ def iter_bulk_frames(
                 buf, pos + RX_PKT_DESC_SZ_8188E, desc.rxmcs,
             )
 
-        if desc.rpt_sel == 0:
+        # Drop HW-flagged corrupt frames (belt-and-suspenders). The monitor RCR
+        # already HW-filters CRC/ICV-failed frames, so this rarely fires — it guards
+        # against an RCR that accepts them leaking corrupt frames that parse as
+        # beacons with garbage BSSID/ESSID and inflate the AP count.
+        if desc.rpt_sel == 0 and not (desc.crc_err or desc.icv_err):
             mpdu_start = pos + desc.mpdu_offset
             mpdu = bytes(buf[mpdu_start : mpdu_start + desc.pkt_len])
             yield (desc, mpdu, rssi)

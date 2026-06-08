@@ -228,13 +228,16 @@ RCR_APPEND_MIC = 1 << 30                 # regs.h:782
 # mac80211 `configure_filter` callback toggles in ACCEPT_AP / DATA_FRAME
 # / CTRL_FRAME / CRC32 / ICV; we go directly to the monitor superset
 # here so EAPOL, ACKs, and frames-for-other-stations all reach our parser.
+#
+# CRC32/ICV-failed frames are NOT accepted: the hardware drops them. Nothing
+# downstream consumes bad frames; accepting them only ships corrupt frames
+# over USB (wasted bandwidth, more so in noisy RF) where a corrupt frame
+# parses as a beacon with a random BSSID and inflates the AP count.
 RCR_MONITOR = (
     RCR_ACCEPT_AP                     # all unicast (not just to us)
     | RCR_ACCEPT_PHYS_MATCH
     | RCR_ACCEPT_MCAST
     | RCR_ACCEPT_BCAST
-    | RCR_ACCEPT_CRC32                # accept CRC-failed frames (analysis)
-    | RCR_ACCEPT_ICV                  # accept ICV-failed frames
     | RCR_ACCEPT_DATA_FRAME           # **critical** — EAPOL lives here
     | RCR_ACCEPT_CTRL_FRAME           # ACKs, RTS, CTS, etc.
     | RCR_ACCEPT_MGMT_FRAME
