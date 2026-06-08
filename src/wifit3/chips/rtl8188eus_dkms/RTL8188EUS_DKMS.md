@@ -49,34 +49,28 @@ bimodal collapse, not just the mean.
 
 ## Status
 
-**NEXT (resume here). HW A/B done — the re-port's premise is in doubt; the clean canary A/B is
-the decider.** The full no-link `phydm_watchdog` DM tick is byte-faithful ×3 (94/94,
-`verify_dm_tick`) and HW-healthy. But a controlled busy-band A/B (pinned strong AP, 20 s
-alternating, `beacon_watch.py`) shows everything **TIED at ~3.4 beacons/s**:
-DKMS-full-DM ≈ mainline ≈ DKMS-seed-only. Specifically:
-- The "6.5 baseline → ~3/s now" drop is **RF environment, not the code** — `--no-dig` (bypasses
-  every DM line) is also ~3/s, as is mainline.
-- **The full DM does not beat the bare seed** (DM-on ≈ DM-off; DM-off had the best AP *breadth*,
-  26–28 vs 24). The faithful vendor DM is built for STA mode; in always-monitor + a busy band it
-  reads the high false-alarm rate and pulls gain/CCK/EDCCA *down* — mildly counterproductive.
-- So the "vendor is hotter (86–89% vs 83%)" premise is **not reproduced**; it came from the
-  cold-boot captures (cleaner setting), and the "70 APs" baseline may have been mis-extracted
-  (airodump channel-hop vs the fixed-ch1 segment).
-
-Decisions for next session:
-1. **THE DECIDER — clean canary-AP A/B** (one known AP, *quiet* channel, replug between runs,
-   measure the floor/min). A busy band saturates and ties everything; only a clean env can show
-   a DKMS edge. **If DKMS only ties mainline even there → keep mainline default; the re-port's
-   premise is dead for this card.**
-2. **Product insight to test:** for always-monitor RX, `--no-dig` (freeze gain at the seed) was
-   the best breadth in every pairing — a "monitor → don't run the gain-reducing DM" deviation
-   may beat both DKMS-DM and mainline. Worth an A/B.
-3. **Lower priority** (only if DKMS is kept): full operational Z=0 (thermal-arm tick + per-hop
-   tunes); the guarded thermal IQK/LCK deferral (fires at |Δthermal| ≥ 8 °C — needed before long
-   TX runs).
-
-The byte-faithful DM port itself is **correct** (first time this card's runtime DM was verified)
-and stands regardless of the default-flip outcome.
+**NEXT (resume here). The card does 94% with the full vendor DM (capture-proven); the live
+busy-band A/B was RF-capped and INCONCLUSIVE; the clean canary A/B is the real test.**
+The full no-link `phydm_watchdog` DM tick is byte-faithful ×3 (94/94, `verify_dm_tick`).
+- **The card CAN do it:** `beacon_watch_usbcap.py` on capture-{1,3} (vendor driver, full DM,
+  fixed-ch1, 15 s) reads **94% / 88% reception** (~9 beacons/s; cap-2 a noisier 71%). So the
+  full DM is **correct** for monitor — the airmon capture runs all of it (DIG/CCK-PD/adaptivity/
+  thermal/NHM) and performs great. An earlier "monitor doesn't need the DM / DM is
+  counterproductive" note was a misread of busy-band noise and is **RETRACTED**.
+- **The live busy-band A/B was inconclusive:** DKMS-full-DM ≈ mainline ≈ DKMS-seed-only, all
+  RF-capped at ~3.4/s (35%). A busy band caps *every* driver (mainline included), so it can't
+  differentiate anything. The "6.5→3" drop was RF, not the code (`--no-dig` is also ~3/s).
+- **THE REAL TEST:** the clean canary-AP A/B — one known AP, *quiet* channel, replug between
+  runs: `WIFIT3_RTL8188=dkms|mainline … beacon_watch.py --bssid <AP> --channel <quiet>`. Compare
+  DKMS to mainline AND to the ~94% capture bar.
+    - DKMS reaches ~90% → it reproduces the vendor → flip the default.
+    - DKMS < 90% in a *clean* env → a **runtime faithfulness gap** (verify_dm_tick checks one
+      tick from documented seeds; the multi-tick DM evolution, the thermal-arm tick, the per-hop
+      tunes, and our always-monitor deviation from airmon's STA→monitor dance are all unverified)
+      — root-cause it. **Do NOT conclude fall-back from busy-band data.**
+- **Remaining verify (full operational Z=0):** the thermal-arm tick (every-other fire) + the
+  per-hop channel tunes (model on `rtl8814au_dkms/verify_channels.py`); the guarded thermal
+  IQK/LCK deferral (fires at |Δthermal| ≥ 8 °C — port before long TX runs).
 
 **Init + the RX/TX/monitor pipeline are COMPLETE and HW-PROVEN. The operational phydm DM is being
 faithfully reconstructed — that, not a mystery register, is the weak-AP gap's root cause.**
