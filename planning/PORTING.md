@@ -29,10 +29,12 @@ and paste verbatim). Where the two disagree, the wire wins.
   capture; a mainline-only card has none, and `driver.log`'s vermagic is the fetch recipe.
 
 Deterministic helpers (see `scripts/AGENTS.md` for the full brief):
-- `uv run python scripts/verify_pcap.py <chip>` — **the faithfulness gate.** Replays the
-  port's bring-up against the cold-boot capture and raises at the first byte that diverges
-  from the wire. Per-family codecs (Realtek 0x05, Ralink 0x06/0x07; see
-  `scripts/rtw88_pcap_replay.py` / `rt2x00_pcap_replay.py`). Run it after every milestone.
+- `uv run python scripts/verify_pcap.py <chip>` — **the faithfulness gate.** One cursor walks
+  the *whole* capture; the port's real bring-up/handlers must reproduce every op. It PASSes only
+  when every op is matched or explicitly waived, and stops at the first **unaccounted** op —
+  which *is* the next thing to port. The replay primitive is shared per family (Realtek 0x05,
+  Ralink 0x06/0x07; `scripts/rtw88_pcap_replay.py` / `rt2x00_pcap_replay.py`); each chip owns
+  its `scripts/<chip>/verify_pcap.py` recipe. Run it after every change.
 - `python scripts/pcap_slicer.py <main.log> <pcap>` — maps `capture.py` log timestamps to
   pcap frame ranges (e.g. "firmware upload happens in frames 14182–14400"). Pick the
   cold-boot capture.
@@ -43,36 +45,40 @@ Captures are produced by `src/wifit3/scripts/capture.py` on the Kali persistent
 USB; each capture ships a `*_logs/main.log` (absolute-epoch timeline) that
 `pcap_slicer.py` consumes.
 
-### Start from the source; the pcap is your test — and it has more than one writer
+### The verify is one monotonic walk — fail-closed, never short-circuited
 
-**Port from the source, not from the pcap.** Open the kernel/vendor function you're porting
-and translate it into the driver line by line; run `verify_pcap.py` after each chunk as the
-offline unit test. Don't read the wire and reverse-engineer what code produced each byte —
-read the code, let the wire confirm. Sessions that walked source↔driver this way produced
-faithful ports; the session that went pcap-first stalled the moment the bytes stopped looking
-linear.
+`verify_pcap.py` is not a milestone checklist; it is **one walk down the whole captured
+conversation with a single cursor** — a unit test that stays red until the port is 100 %
+faithful, where the op it fails on *is* the next driver code to port.
 
-**The capture has more than one writer.** A cold-boot capture is one serialized stream of the
-card's traffic, but the bring-up isn't the only producer on it. Timer threads the source
-registers run concurrently and interleave their transfers — common ones to watch for: a
-phydm/ODM watchdog every ~2 s (DIG + CCK-PD + adaptivity + NHM), an sreset poll, and under
-airmon airodump's channel-hop timer. Their bytes recur at a fixed cadence and won't match the
-function you're porting. **They are not noise — they are in the source, and they still must be
-ported.** If you catch yourself wanting to *delete* recurring bytes to make the diff line up,
-you've found an async producer, not a glitch.
+**Port from the source; the wire is your test.** Translate the kernel/vendor function line by
+line and run `verify_pcap.py` after each chunk. Don't reverse-engineer what produced each byte
+— read the code, let the wire confirm. Pcap-first sessions stall the moment the bytes stop
+looking linear.
 
-**Strip, but never forget.** The synchronous diff *must* slice async streams out — they land
-nondeterministically against the linear bring-up. But a stripped stream is unverified, and a
-byte-for-byte PASS over a stripped DM is green over a hole — usually the exact hole where
-runtime RX lives. So every op the card emitted must be *claimed*:
-- **For every `_strip_<X>` you add, add a paired `verify_<X>`** that byte-diffs that stream's
-  per-fire burst by replay. Enabling fact: the driver serializes register access across each
-  timer callback, so every async producer's *per-fire* op run is **contiguous** — slice it by
-  anchor and replay it (reads served, RMW writes checked), like any sync milestone.
-- A stream genuinely not reproduced by design (airmon's STA→monitor dance, the chip-version
-  prologue) is an **explicit waiver with a reason**, never a silent drop.
-- The gate reports coverage: async patterns verified / waived (with reasons) / **unaccounted**.
-  Unaccounted ⇒ NOT verified, regardless of sync PASS.
+**Every op has exactly one honest fate** as the cursor advances:
+- **matched** — the port's real handler reproduces it byte-for-byte; or
+- **waived** — an *explicit, named, counted* boundary for a producer the port doesn't
+  reproduce (a separate timer like the sreset poll; the chip-version probe before power-on;
+  airmon-the-tool's own mac80211 setup — we port the *vendor driver*, not airmon). Printed in
+  the report, never a silent drop; or
+- **unaccounted** — anything else **stops the walk and names the op**: the frontier, the next
+  thing to make faithful. PASS ⇔ zero unaccounted.
+
+**Dispatch async producers; never strip them.** The capture is one serialized stream, but the
+bring-up isn't the only writer — timer threads interleave (a ~2 s phydm watchdog, an sreset
+poll, airodump's channel hop). Within one capture every op has a fixed position, so you don't
+delete them — you **dispatch**: when the cursor hits a producer's opening op, run *that*
+handler (carrying its state across fires), then continue. An un-ported mechanism then can't
+hide — it writes a register no handler claims and surfaces as the next unaccounted op.
+
+**Never "improve" on the wire.** The capture is ground truth for the chip's end state.
+Reproduce what the driver wrote; never *add* a write "for breadth" or substitute a value you
+assume is better. A write nobody made is as much a divergence as one you missed — that is
+exactly how an ungrounded, possibly-harmful deviation gets bolted onto a faithful port.
+
+Reference shapes: `scripts/rtl8187/verify_pcap.py` (clean single-cursor init walk) and
+`scripts/rtl8188eus_dkms/verify_pcap.py` (same, plus operational-phase dispatch).
 
 ### Port every operation — the EFUSE read especially
 
@@ -155,7 +161,7 @@ When new cold-boot captures land in `usb_dumps_new/captures_<driver>/`
    in `chips/<driver>/assets/`.
 4. M1 = FW upload + FW_READY ACK only. Demoable, no PHY init — **and pcap-verified.**
 5. Layer each subsequent milestone, **`verify_pcap.py <chip>` after every one** (build the
-   per-chip recipe as you go — see an existing `scripts/<chip>/verify_pcap.py` for the shape).
+   per-chip recipe as you go — `scripts/rtl8187/verify_pcap.py` is the reference shape).
 6. Drop a `<CHIP>.md` ground-truth doc next to the driver with `[SRC]`/`[WIRE]` citations;
    accumulate verified facts there. **Read the sibling `chips/<other>/<OTHER>.md` docs first**
    — same-family setup + the scars from porting them save re-learning.
