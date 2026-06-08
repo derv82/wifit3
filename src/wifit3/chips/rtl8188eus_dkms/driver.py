@@ -154,12 +154,23 @@ class Rtl8188eusDkmsDriver:
                 seed.ofdm_swing_raw, seed.cck_swing_raw, self._eeprom_thermal)
             while True:
                 await asyncio.sleep(dig.WATCHDOG_PERIOD_S)
-                async with self._io_lock:
-                    # rtw_dynamic_chk_wk_hdl runs the silent-reset poll then the phydm
-                    # watchdog in one 2 s tick (rtw_cmd.c:2737).
-                    await loop.run_in_executor(None, sreset.status_check, self.transport)
-                    tick = await loop.run_in_executor(
-                        None, dig.watchdog_tick, self.transport, state, pt_state)
+                try:
+                    async with self._io_lock:
+                        # rtw_dynamic_chk_wk_hdl runs the silent-reset poll then the phydm
+                        # watchdog in one 2 s tick (rtw_cmd.c:2737).
+                        await loop.run_in_executor(None, sreset.status_check, self.transport)
+                        tick = await loop.run_in_executor(
+                            None, dig.watchdog_tick, self.transport, state, pt_state)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001
+                    # A per-tick fault must skip this tick, NOT end the watchdog. The
+                    # deferred IQK/LCK recalibration raises NotImplementedError once the
+                    # chip heats past |Δthermal| >= 8 C; ending the loop there freezes the
+                    # gain while the RF keeps drifting, collapsing RX sensitivity over a
+                    # long run. Keep DIG/CCK-PD adapting; only the deferred work is skipped.
+                    logger.debug("RTL8188EUS DIG: tick skipped on fault", exc_info=True)
+                    continue
                 logger.debug("RTL8188EUS DIG: IGI=0x%02x fa=%d (ofdm=%d cck=%d)",
                              tick.igi, tick.fa_cnt, tick.ofdm_fa, tick.cck_fa)
         except asyncio.CancelledError:
