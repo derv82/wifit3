@@ -21,9 +21,9 @@ from .constants import REALTEK_VENDOR_REQUEST, REQ_TYPE_READ, REQ_TYPE_WRITE
 
 _CTRL_TIMEOUT_MS = 1000
 _BULK_TIMEOUT_MS = 1000
-# RX bulk-IN read: the buffer must hold a whole USB-aggregated transfer; read
-# generously and treat a timeout (quiet channel) as benign.
-RX_BUF_SIZE = 0x8000
+# RX bulk-IN read: 16 KB holds a whole USB-aggregated transfer for this chip; treat a
+# timeout (quiet channel) as benign.
+RX_BUF_SIZE = 0x4000
 RX_TIMEOUT_MS = 200
 
 
