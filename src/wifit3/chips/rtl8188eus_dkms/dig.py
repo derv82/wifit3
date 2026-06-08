@@ -23,10 +23,13 @@ phydm_cck_pd.c (phydm_cck_pd_th / phydm_cckpd / phydm_write_cck_cca_th).
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import NamedTuple
 
 from . import bb, powertrack
+
+logger = logging.getLogger(__name__)
 
 WATCHDOG_PERIOD_S = 2.0        # kernel DIG-watchdog cadence
 
@@ -207,6 +210,7 @@ def _fa_statistics(t) -> _FaResult:
     ofdm_fa, cck_fa = _read_fa_counters(t)
     _read_edcca_flag(t)
     _reset_fa(t)
+    logger.debug("DIG/FA: total=%d (ofdm=%d cck=%d)", ofdm_fa + cck_fa, ofdm_fa, cck_fa)
     return _FaResult(ofdm_fa + cck_fa, ofdm_fa, cck_fa)
 
 
@@ -229,8 +233,12 @@ def _dig(t, state: WatchdogState, cnt_all: int) -> None:
     ``odm_write_dig`` (0xC50). The IGI is carried, not re-read from the chip."""
     new_igi = max(_IGI_MIN, min(_IGI_MAX, _new_igi_by_fa(state.cur_ig_value, cnt_all)))
     if new_igi != state.cur_ig_value:
+        logger.debug("DIG/IGI: 0x%02x -> 0x%02x (FA=%d, clamp[0x%02x..0x%02x])",
+                     state.cur_ig_value, new_igi, cnt_all, _IGI_MIN, _IGI_MAX)
         bb.set_bb_reg(t, _REG_IGI, _IGI_MASK, new_igi)
         state.cur_ig_value = new_igi
+    else:
+        logger.debug("DIG/IGI: 0x%02x hold (FA=%d)", state.cur_ig_value, cnt_all)
 
 
 # --- phydm_cck_pd_th (no-link, 8188e old path) ----------------------------
@@ -251,6 +259,8 @@ def _cck_pd(t, state: WatchdogState, cck_fa: int) -> None:
         th = 0x40
 
     if state.cur_cck_cca_thres != th:           # phydm_write_cck_cca_th
+        logger.debug("DIG/CCK-PD: 0x%02x -> 0x%02x (cck_fa_ma=%d)",
+                     state.cur_cck_cca_thres, th, state.cck_fa_ma)
         t.write8(_REG_CCK_CCA, th)
         state.cck_fa_ma = CCK_FA_MA_RESET
     state.cur_cck_cca_thres = th

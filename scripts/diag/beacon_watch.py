@@ -238,6 +238,10 @@ if __name__ == "__main__":
             format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
             datefmt="%H:%M:%S",
         )
+        # The per-frame [RXFRAME] trace floods at DEBUG (hundreds/s). Pin it to INFO so
+        # the DIG/DM watchdog + power-track trace stays readable; everything else stays
+        # at DEBUG.
+        logging.getLogger("wifit3.wlan.interface").setLevel(logging.INFO)
     try:
         if _args.pcap:
             _rc = run_pcap(_args)

@@ -26,10 +26,13 @@ over/under-swing-limit branches that reset per-rate TX-AGC (need
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 from . import bb, rf
 from . import powertrack_tbl as T
+
+logger = logging.getLogger(__name__)
 
 # RF thermal meter [SRC] include/Hal8188EPhyReg.h:418 RF_T_METER_88E.
 _RF_T_METER = 0x42
@@ -139,13 +142,19 @@ def _apply_mix_mode(t, state: PowerTrackState, absolute: int) -> None:
     if final_ofdm > _PWR_LIMIT_OFDM or final_ofdm <= 0:
         # Clamps to the limit and resets per-rate TX-AGC (phy_set_tx_power_index_by_rate
         # _section) — not yet ported; not reached at normal temperatures.
+        logger.debug("pwrtrack: OFDM swing %d hit limit (0..%d) DEFERRED -> tick skips",
+                     final_ofdm, _PWR_LIMIT_OFDM)
         raise NotImplementedError(
             f"8188e power-track OFDM swing {final_ofdm} hit a limit "
             f"(0..{_PWR_LIMIT_OFDM}); per-rate TX-AGC reset path is deferred")
+    logger.debug("pwrtrack: apply MIX swing ofdm=%d cck=%d (abs=%d)",
+                 final_ofdm, final_cck, absolute)
     _set_iqk_matrix(t, final_ofdm)
     # if modify_tx_agc_flag_path_a: reset TX-AGC — flag is False until a limit is hit.
 
     if final_cck > _PWR_LIMIT_CCK or final_cck <= 0:
+        logger.debug("pwrtrack: CCK swing %d hit limit (0..%d) DEFERRED -> tick skips",
+                     final_cck, _PWR_LIMIT_CCK)
         raise NotImplementedError(
             f"8188e power-track CCK swing {final_cck} hit a limit "
             f"(0..{_PWR_LIMIT_CCK}); per-rate TX-AGC reset path is deferred")
@@ -172,8 +181,12 @@ def _callback(t, state: PowerTrackState) -> None:
     delta = abs(thermal - state.thermal_value)
     delta_lck = abs(thermal - state.thermal_value_lck)
     delta_iqk = abs(thermal - state.thermal_value_iqk)
+    logger.debug("pwrtrack: thermal=0x%02x base=0x%02x delta=%d (lck=%d iqk=%d)",
+                 thermal, state.eeprom_thermal, delta, delta_lck, delta_iqk)
 
     if delta_lck >= _IQK_THRESHOLD:
+        logger.debug("pwrtrack: LCK VCO re-cal DEFERRED (delta_lck=%d >= %d) -> tick skips",
+                     delta_lck, _IQK_THRESHOLD)
         raise NotImplementedError(
             "8188e power-track LCK (VCO re-cal) deferred (delta_LCK >= 8 C)")
 
@@ -195,6 +208,8 @@ def _callback(t, state: PowerTrackState) -> None:
         state.thermal_value = thermal
 
     if delta_iqk >= _IQK_THRESHOLD:
+        logger.debug("pwrtrack: IQK DEFERRED (delta_iqk=%d >= %d) -> tick skips",
+                     delta_iqk, _IQK_THRESHOLD)
         raise NotImplementedError(
             "8188e power-track IQK deferred (delta_IQK >= 8 C; same subsystem InitHalDm "
             "defers)")
