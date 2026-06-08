@@ -3,13 +3,15 @@
 ``connect()`` runs the full pcap-verified bring-up — power-on -> EFUSE -> firmware ->
 MAC/BB/RF -> efuse-patch -> LLT -> MISC02 -> RfRegChnlVal read -> BB turn-on -> CAM clear
 -> TX power -> MISC11 tail -> InitHalDm phydm seed -> hal_init tail (power-track + LCK) ->
-monitor opmode entry -> channel tune — then starts the bulk-IN RX reader (promiscuous
-monitor frames + per-frame RSSI).
+enable RX-BAR -> channel tune -> monitor opmode entry — then starts the bulk-IN RX reader
+(promiscuous monitor frames + per-frame RSSI) and the 2 s dynamic-check task.
 
-Pending milestones (see RTL8188EUS_DKMS.md): the runtime phydm DIG/AGC 2 s watchdog
-(``dig.py`` — the runtime adaptation of the M7 seed, central to the RX goal) and the TX
-path (``tx.py`` + a real ``inject_frame``). Until the DIG watchdog lands the gain stays at
-the InitHalDm seed.
+The dynamic-check task mirrors the vendor ``rtw_dynamic_chk_wk_hdl`` (rtw_cmd.c): each fire
+runs the silent-reset status poll (``sreset.py``) then the no-link phydm DIG/AGC watchdog
+(``dig.py`` — the runtime adaptation of the M7 IGI/CCK/thermal/NHM seed, central to the RX
+goal). The whole operational stream (monitor entry, per-hop channel tunes, every tick) is
+byte-diffed against the cold-boot capture by ``scripts/rtl8188eus_dkms/verify_pcap.py``. The
+TX path (``tx.py`` + ``inject_frame``) is wired and HW-confirmed (deauth/EAPOL on the air).
 
 Registered in ``wlan/manager.py`` behind ``WIFIT3_RTL8188`` — the mainline-derived
 ``rtl8188eus`` stays the default for 2357:010c until this vendor port is hardware-proven to
@@ -31,7 +33,8 @@ from wifit3.wlan.packet import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
 from . import (
-    bb, chan, dig, dm, efuse, firmware, mac, monitor, powertrack, pwrseq, rf, tx, txpower,
+    bb, chan, dig, dm, efuse, firmware, mac, monitor, powertrack, pwrseq, rf, sreset, tx,
+    txpower,
 )
 from .constants import DEFAULT_INIT_CHANNEL, PID, VID
 from .rx import iter_frames
@@ -107,13 +110,14 @@ class Rtl8188eusDkmsDriver:
             progress_cb(0.7, "Configuring MAC / BB / RF")
         await loop.run_in_executor(None, self._phy_config, params)
 
-        # Match airmon's order (the 8812au lesson — the monitor/airmon tail is the RX
-        # fix, NOT skippable): program the MAC, re-tune the channel (restores the RF/BB
-        # into a clean RX state after the InitHalDm EDCCA search toggled the LNA), THEN
-        # enter monitor opmode (RCR/RXFLTMAP). [WIRE] cap1 1894 (MAC) -> 1908 (re-tune)
-        # -> 1957 (monitor).
+        # The monitor bring-up the vendor driver runs when an interface goes monitor, in
+        # wire order: init_hw_mlme_ext (enable RX-BAR, then the channel tune — which also
+        # restores the RF/BB to clean RX after InitHalDm's EDCCA LNA search), then
+        # hw_var_set_opmode(MONITOR) (RCR/RXFLTMAP2). [WIRE] cap1 ops 2452 (RX-BAR) ->
+        # 2454 (channel) -> 2503 (opmode).
         if progress_cb:
-            progress_cb(0.9, f"MAC + tuning to channel {_SCAN_START_CHANNEL} + monitor")
+            progress_cb(0.9, f"Monitor: RX-BAR + tuning to channel {_SCAN_START_CHANNEL}")
+        await loop.run_in_executor(None, monitor.enable_rx_bar, self.transport)
         await self.set_channel(_SCAN_START_CHANNEL)
         await loop.run_in_executor(None, monitor.enter_monitor, self.transport)
 
@@ -149,6 +153,9 @@ class Rtl8188eusDkmsDriver:
             while True:
                 await asyncio.sleep(dig.WATCHDOG_PERIOD_S)
                 async with self._io_lock:
+                    # rtw_dynamic_chk_wk_hdl runs the silent-reset poll then the phydm
+                    # watchdog in one 2 s tick (rtw_cmd.c:2737).
+                    await loop.run_in_executor(None, sreset.status_check, self.transport)
                     tick = await loop.run_in_executor(
                         None, dig.watchdog_tick, self.transport, state, pt_state)
                 logger.debug("RTL8188EUS DIG: IGI=0x%02x fa=%d (ofdm=%d cck=%d)",

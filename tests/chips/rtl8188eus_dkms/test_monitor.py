@@ -1,7 +1,7 @@
 """Hardware-free regression for the RTL8188EUS (DKMS) monitor-mode entry.
 
-Locks the MSR NOLINK RMW, the monitor RCR value, and the always-monitor RXFLTMAP opens.
-The 5 vendor ops are byte-diffed against the wire in ``verify_pcap.verify_monitor_block``.
+Locks the RX-BAR enable (init_hw_mlme_ext), the MSR NOLINK RMW, the monitor RCR value, and
+the single RXFLTMAP2 open. These vendor ops are byte-diffed against the wire by verify_pcap.
 """
 from wifit3.chips.rtl8188eus_dkms import monitor
 
@@ -13,6 +13,9 @@ class Tx:
 
     def read8(self, a):
         return self._reads.get(a, 0) & 0xFF
+
+    def read16(self, a):
+        return self._reads.get(a, 0) & 0xFFFF
 
     def read32(self, a):
         return self._reads.get(a, 0)
@@ -27,14 +30,22 @@ class Tx:
         self.w32.append((a, v & 0xFFFFFFFF))
 
 
+def test_enable_rx_bar():
+    # HW_VAR_ENABLE_RX_BAR: RXFLTMAP1 |= BIT(8). Wire pre-state RXFLTMAP1=0x0000.
+    t = Tx({0x06A2: 0x0000})
+    monitor.enable_rx_bar(t)
+    assert t.w16 == [(0x06A2, 0x0100)]               # BIT(8) set, nothing else
+    assert t.w8 == [] and t.w32 == []
+
+
 def test_enter_monitor_writes():
     # Wire pre-state: MSR=0x02 (NT_LINK_AP), RCR=0x700060ce (STA init).
     t = Tx({0x0102: 0x02, 0x0608: 0x700060CE})
     monitor.enter_monitor(t)
     assert t.w8 == [(0x0102, 0x00)]                  # MSR NOLINK (0x02 & 0x0C = 0)
     assert t.w32 == [(0x0608, 0x9000382F)]           # monitor RCR
-    # RXFLTMAP2 (vendor) then RXFLTMAP0/1 (wifit3 breadth), all accept-all.
-    assert t.w16 == [(0x06A4, 0xFFFF), (0x06A0, 0xFFFF), (0x06A2, 0xFFFF)]
+    # Only RXFLTMAP2 (data subtypes) — RXFLTMAP0 stays at reset, RXFLTMAP1 set by RX-BAR.
+    assert t.w16 == [(0x06A4, 0xFFFF)]
 
 
 def test_msr_keeps_port1_nettype():

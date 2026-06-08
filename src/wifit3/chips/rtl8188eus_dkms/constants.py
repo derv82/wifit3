@@ -146,9 +146,21 @@ REG_RXFLTMAP0 = 0x06A0      # mgmt-frame subtype filter
 REG_RXFLTMAP1 = 0x06A2      # ctrl-frame subtype filter
 REG_RXFLTMAP2 = 0x06A4      # data-frame subtype filter
 RXFLTMAP_ACCEPT_ALL = 0xFFFF
+# HW_VAR_ENABLE_RX_BAR (init_hw_mlme_ext) opens only the BlockAckReq ctrl subtype
+# [SRC] hal_com.c:10257 — RXFLTMAP1 |= BIT(8). NOT accept-all.
+RXFLTMAP1_RX_BAR = BIT(8)
 # hw_var_set_monitor RCR: RCR_AAP|APM|AM|AB|APWRMGT|ADF|ACF|AMF|APP_PHYST_RXFF|APPFCS.
 # No ACRC32/AICV (the 8188e #if 0 — CRC/ICV frames drop in recvbuf2recvframe).
 RCR_MONITOR_VALUE = 0x9000382F
+
+# --- silent-reset status regs (DBG_CONFIG_ERROR_DETECT) [SRC] hal_com_reg.h ---
+# Read each 2 s by rtw_dynamic_chk_wk_hdl -> rtl8188e_sreset_{xmit,linked}_status_check
+# (rtw_cmd.c:2737, rtl8188e_sreset.c), in the same handler that runs the phydm watchdog.
+REG_TXDMA_STATUS = 0x0210
+REG_RXDMA_STATUS = 0x0288
+REG_FMETHR = 0x01C8           # FW status (efuse-fail / cond-no-match), read-only here
+TXDMA_STATUS_IF_GONE = 0xEAEAEAEA  # USB read returns this when the card vanished
+
 REG_MAR = 0x0620
 REG_RRSR = 0x0440
 RATE_BITMAP_ALL = 0xFFFFF

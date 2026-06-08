@@ -83,6 +83,12 @@ _REG_NHM_TH0_3 = 0x0898
 _REG_NHM_TH4_7 = 0x089C
 _REG_NHM_TH8 = 0x0E28
 _REG_NHM_RDY = 0x08B4        # NHM result-ready (BIT17) / CLM ready (BIT16)
+_NHM_RDY_BIT = 1 << 17       # phydm_nhm_check_rdy (11N): 0x8b4 BIT17 [SRC] phydm_ccx.c:442
+# NHM 12-bin histogram result regs (11N) [SRC] phydm_ccx.c:506-518.
+_REG_NHM_RESULT_0_3 = 0x08D8
+_REG_NHM_RESULT_4_7 = 0x08DC
+_REG_NHM_RESULT_8_9 = 0x08D0    # bins 8..9 live in [31:16]
+_REG_NHM_RESULT_10_11 = 0x08D4  # bins 10..11 + nhm_duration
 _CCA_CAP = 14                # IGI_2_NHM_TH(igi - CCA_CAP) [SRC] phydm_ccx.h
 _NHM_PERIOD_MAX = 65534
 _CLM_PERIOD_MAX = 65535
@@ -260,9 +266,16 @@ def _nhm(t, state: WatchdogState) -> None:
     th[0] + 4*i. The enable/period writes are change-gated against the carried cache; the CLM
     period is unchanged from init (65535) so it is not rewritten."""
     igi = state.cur_ig_value
-    # phydm_nhm_get_result: stop the NHM counter (bit1=0), read result-ready.
+    # phydm_nhm_get_result: stop the NHM counter (bit1=0); if the report is ready, read the
+    # 12-bin histogram. The tick right after a (re)trigger is not yet ready, so the result
+    # reads are skipped — exactly as the wire alternates [SRC] phydm_ccx.c:472,506. racing
+    # release/get_utility touch no registers for the no-link BACKGROUND app.
     bb.set_bb_reg(t, _REG_CCX, 1 << 1, 0)
-    t.read32(_REG_NHM_RDY)
+    if t.read32(_REG_NHM_RDY) & _NHM_RDY_BIT:               # phydm_nhm_check_rdy (11N)
+        t.read32(_REG_NHM_RESULT_0_3)
+        t.read32(_REG_NHM_RESULT_4_7)
+        bb.query_bb_reg(t, _REG_NHM_RESULT_8_9, 0xFFFF0000)
+        t.read32(_REG_NHM_RESULT_10_11)
     # phydm_nhm_set: enable (once), period (once), thresholds (when IGI changed).
     if not state.nhm_configured:
         bb.set_bb_reg(t, _REG_CCX, 0xF00, 0x1)        # NHM enable, no include-tx/cca/divider

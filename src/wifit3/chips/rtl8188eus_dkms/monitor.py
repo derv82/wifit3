@@ -1,26 +1,38 @@
-"""RTL8188EUS monitor-mode entry — vendor opmode entry + the always-monitor deviation.
+"""RTL8188EUS monitor-mode entry — the vendor register writes that put the chip in
+always-monitor RX.
 
-The cold-boot capture was taken under airmon-ng, which drives the STA-initialised vendor
-driver into monitor through a chain of cfg80211 ioctls. wifit3 is *always* monitor, so it
-runs only the vendor monitor opmode entry [SRC] rtl8188e_hal_init.c:3516
-``hw_var_set_opmode(_HW_STATE_MONITOR_)``:
+We don't run airmon-ng; the chip only ever sees register writes, so this reproduces the
+vendor-driver writes airmon *triggers* when it sets the interface to monitor. Two vendor
+functions, in wire order [WIRE] cap1 ops 2452-2507:
 
-    Set_MSR(_HW_STATE_NOLINK_)          net-type -> NOLINK
-    hw_var_set_monitor()                [SRC] rtl8188e_hal_init.c:3476
+  init_hw_mlme_ext()                  [SRC] rtw_mlme_ext.c:1554
+    HW_VAR_ENABLE_RX_BAR            -> RXFLTMAP1 |= BIT(8)  (enable_rx_bar, below)
+    set_channel_bwmode()           -> the channel tune (driver owns this separately)
+  hw_var_set_opmode(_HW_STATE_MONITOR_)   [SRC] rtl8188e_hal_init.c:3516
+    Set_MSR(_HW_STATE_NOLINK_)       net-type -> NOLINK
+    hw_var_set_monitor()           [SRC] rtl8188e_hal_init.c:3476
 
-On the wire [WIRE] cap1 ops 1957-1961 that is exactly: MSR read/write, RCR read(backup)/write
-(0x9000382f), RXFLTMAP2 write (0xffff).
+On the wire that is: RXFLTMAP1 read/|=BIT8, [channel tune], MSR read/write, RCR
+read(backup)/write(0x9000382f), RXFLTMAP2 write(0xffff).
 
-DEVIATION (RX breadth): the vendor's ``hw_var_set_monitor`` opens only RXFLTMAP2 (data
-frames) and leaves the mgmt/ctrl filters at their state from airmon's STA-mode dance — which
-wifit3 never runs (hal_init even leaves RXFLTMAP0 unwritten, [SRC] usb_halinit.c:628). So
-beacons (mgmt) and control frames would be filtered out. To capture them, wifit3 additionally
-opens RXFLTMAP0 and RXFLTMAP1 to accept-all. Those two writes are NOT on the cold-boot wire;
-the byte-for-byte monitor diff covers only the 5 vendor ops. [[monitor_mode_deviation]]
+The vendor opens exactly three RX-filter words: RXFLTMAP1 only for BlockAckReq (BIT8, via
+HW_VAR_ENABLE_RX_BAR), RXFLTMAP2 accept-all (data) in hw_var_set_monitor, and RXFLTMAP0 is
+left at its reset state (hal_init leaves it unwritten [SRC] usb_halinit.c:624). Beacons
+(mgmt) still reach RX because RCR is accept-all-physical (0x9000382f); the per-subtype
+RXFLTMAP gate is only consulted for the subtypes the chip defaults to filtering. We write
+neither RXFLTMAP0 nor an accept-all RXFLTMAP1 — a write the vendor never made is as much a
+divergence as one missed.
 """
 from __future__ import annotations
 
 from . import constants as C
+
+
+def enable_rx_bar(t) -> None:
+    """``init_hw_mlme_ext`` -> ``HW_VAR_ENABLE_RX_BAR`` (enable) [SRC] hal_com.c:10257 —
+    RXFLTMAP1 |= BIT(8): accept BlockAckReq control frames. Runs before the channel tune."""
+    val16 = t.read16(C.REG_RXFLTMAP1)
+    t.write16(C.REG_RXFLTMAP1, val16 | C.RXFLTMAP1_RX_BAR)
 
 
 def _set_msr(t, net_type: int) -> None:
@@ -32,16 +44,14 @@ def _set_msr(t, net_type: int) -> None:
 
 def _hw_var_set_monitor(t) -> None:
     """``hw_var_set_monitor`` [SRC] rtl8188e_hal_init.c:3476 — back up + set the monitor
-    RCR (accept-all, append FCS) and open RXFLTMAP2; then (wifit3 deviation) open
-    RXFLTMAP0/1 so monitor RX also gets mgmt (beacons) + control frames."""
+    RCR (accept-all-physical, append FCS) and open RXFLTMAP2 (data subtypes). RXFLTMAP0/1
+    are not touched here (RX-BAR already set RXFLTMAP1's one bit; RXFLTMAP0 stays at reset)."""
     t.read32(C.REG_RCR)                                       # rcr_backup
     t.write32(C.REG_RCR, C.RCR_MONITOR_VALUE)
-    t.write16(C.REG_RXFLTMAP2, C.RXFLTMAP_ACCEPT_ALL)        # vendor (data)
-    t.write16(C.REG_RXFLTMAP0, C.RXFLTMAP_ACCEPT_ALL)        # wifit3 (mgmt/beacons)
-    t.write16(C.REG_RXFLTMAP1, C.RXFLTMAP_ACCEPT_ALL)        # wifit3 (control)
+    t.write16(C.REG_RXFLTMAP2, C.RXFLTMAP_ACCEPT_ALL)        # data subtypes
 
 
 def enter_monitor(t) -> None:
-    """``hw_var_set_opmode(_HW_STATE_MONITOR_)`` — the always-monitor entry."""
+    """``hw_var_set_opmode(_HW_STATE_MONITOR_)`` — net-type NOLINK + the monitor RCR/RXFLTMAP2."""
     _set_msr(t, C.MSR_NOLINK)
     _hw_var_set_monitor(t)
