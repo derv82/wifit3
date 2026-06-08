@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from importlib import resources
 from typing import Callable, ClassVar, List, Optional
 
@@ -125,10 +126,11 @@ class Rtl8188eusDkmsDriver:
 
         # M12: the runtime phydm DIG/AGC watchdog — adapt the M7 IGI seed to the live
         # false-alarm rate every ~2 s. RX-side only (reads FA counters, writes RX gain).
-        if self.enable_dig:
+        dig_enabled = self.enable_dig and os.environ.get("WIFIT3_RTL8188_DIG") != "off"
+        if dig_enabled:
             self._dig_task = loop.create_task(self._dig_watchdog())
         else:
-            logger.info("RTL8188EUS DIG watchdog disabled (IGI stays at the M7 seed)")
+            logger.info("RTL8188EUS DM watchdog disabled (gain frozen at the InitHalDm seed)")
 
         if progress_cb:
             progress_cb(1.0, f"Tuned to channel {_SCAN_START_CHANNEL} @ 20 MHz")

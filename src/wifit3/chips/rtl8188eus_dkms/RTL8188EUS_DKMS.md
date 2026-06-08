@@ -49,9 +49,26 @@ bimodal collapse, not just the mean.
 
 ## Status
 
-**NEXT (resume here). The card does 94% with the full vendor DM (capture-proven); the live
-busy-band A/B was RF-capped and INCONCLUSIVE; the clean canary A/B is the real test.**
-The full no-link `phydm_watchdog` DM tick is byte-faithful ×3 (94/94, `verify_dm_tick`).
+**NEXT (resume here). CONFIRMED BUG: our DM watchdog introduces periodic reception dips —
+root-cause the multi-tick DM trajectory.** Same-env A/B (`WIFIT3_RTL8188_DIG=off` toggle in
+`driver.py`, pinned nearby −41 dBm AP, 20 s, `beacon_watch.py`): **DM-OFF = stable mean 6.5/s**
+(min 3 — matches a known-good RTL8821AU at 6.5); **DM-ON = ~6.0/s with 2–3 s drops to 2/s** (the
+dip period ≈ the 2 s watchdog tick). It is NOT RF (a different card is stable in the same noise;
+the capture is the same noise) and NOT the pipeline (DM-OFF is clean). The DM is byte-faithful
+for ONE tick but **diverges from the vendor over many ticks** — `verify_dm_tick` replays a single
+tick from documented seeds and never checks the live carried-state trajectory. Leads: the IGI
+oscillates 0x21↔0x23, and our now-faithful FA read includes CCK FA (high in this band) which may
+over-drive DIG; suspect the multi-tick IGI/cck_fa_ma trajectory or a carried-state bug. The
+vendor capture runs the full DM and gets 94%, so the DM *concept* is right — our multi-tick port
+is not faithful. **FIX: extend `verify_dm_tick` to a multi-tick / operational-phase diff** (the
+per-2 s DIG bursts in the capture; model on `rtl8814au_dkms/verify_channels.py`) and find where
+our trajectory leaves the wire. Until fixed, DM-OFF (`WIFIT3_RTL8188_DIG=off`, ≈ seed) is the
+better RX config.
+
+(Secondary: DM-OFF 6.5/s is still below the capture's 9.2/s — reconcile the measurement
+(`beacon_watch_usbcap` signature-count vs live `WlanFrameParser`) or the residual RX gap.)
+
+The full one-tick DM is byte-faithful ×3 (94/94, `verify_dm_tick`).
 - **The card CAN do it:** `beacon_watch_usbcap.py` on capture-{1,3} (vendor driver, full DM,
   fixed-ch1, 15 s) reads **94% / 88% reception** (~9 beacons/s; cap-2 a noisier 71%). So the
   full DM is **correct** for monitor — the airmon capture runs all of it (DIG/CCK-PD/adaptivity/
