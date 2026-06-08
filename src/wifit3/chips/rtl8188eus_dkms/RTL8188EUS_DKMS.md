@@ -49,19 +49,30 @@ bimodal collapse, not just the mean.
 
 ## Current state
 
-Init bring-up is byte-faithful: `verify_pcap.py` walks one cursor from power-on through set-macid
-(op 2452 of cap1, no gaps — per-milestone record below). RX/TX are HW-proven on a live TL-WN722N
-v2 (2357:010c) [HW 2026-06-07]: 78 APs / 940 beacons in a 28 s hop (canary clean); `deauth_hw.py`
-landed (target reconnected, 20/20 EAPOL to/from it); promiscuous monitor both directions (9 M2/M4
-ToDS + 11 M1/M3 + 262 ToDS data — no ToDS gap).
+**The whole capture is byte-faithful — `verify_pcap.py` PASSes end-to-end on cap1/2/3** (5740 /
+5800 / 5723 ops, every op matched or named-and-counted waived). One cursor walks power-on →
+set-macid (init), then dispatches the operational stream to the real handlers, carrying channel +
+DM state: RX-BAR enable → per-hop channel tunes → monitor opmode → 22 dynamic-check ticks (the
+2 s `rtw_dynamic_chk_wk_hdl`: silent-reset poll + no-link phydm watchdog). RX/TX are HW-proven on a
+live TL-WN722N v2 (2357:010c) [HW 2026-06-07]: 78 APs / 940 beacons in a 28 s hop (canary clean);
+`deauth_hw.py` landed (target reconnected, 20/20 EAPOL to/from it); promiscuous monitor both
+directions (9 M2/M4 ToDS + 11 M1/M3 + 262 ToDS data — no ToDS gap).
 
-**Operational frontier** (where the gate now stops): the airmon monitor entry at op 2452
-(`RXFLTMAP1`). Beyond it — the interleaved monitor setup, per-hop channel tunes, and the 2 s phydm
-watchdog — is dispatched by the rewritten `verify_pcap` but not yet gated end-to-end.
+We never run airmon/airodump/iw/aireplay against this port; the chip only sees register writes, so
+the *vendor-driver* writes those tools trigger are what we reproduce (wifit3's `connect()` /
+channel hopper / dig task are the triggers). **Waivers** (separate producers, not the vendor
+bring-up; each named + counted in the report): the read-only chip-version probe prologue; the async
+`R SYS_CFG/4` 2 s poll; and aireplay-ng's injected TX — its bulk-OUT frames plus the TX-report-timing
+write (`REG_TX_RPT_TIME`) its injection triggers. Everything else — including the silent-reset
+status poll — is ported and reproduced.
 
-**Top RX-gap lead:** `monitor.enter_monitor`'s `RXFLTMAP0/1 = 0xffff` over-add (see M10) — accepts
-all control subtypes incl. ACK; suspected bulk-IN flood starving beacons. Needs the HW A/B. Default
-stays `WIFIT3_RTL8188=mainline` until a clean A/B settles the re-port.
+**Top RX-gap lead — now also the faithfulness fix (DONE in code, needs HW A/B):** `monitor.py` used
+to write an *ungrounded* `RXFLTMAP0/1 = 0xffff` (accept every control subtype incl. ACK — suspected
+bulk-IN flood starving beacons; a write the vendor never made). The wire's real RXFLTMAP1 is
+`init_hw_mlme_ext` → `HW_VAR_ENABLE_RX_BAR` = `|= BIT(8)` (BlockAckReq only), and RXFLTMAP0 stays at
+reset. The port now does exactly that (`monitor.enable_rx_bar` + `enter_monitor`). The HW A/B
+(plug in, `beacon_watch.py`, confirm RX held/improved) is the remaining human gate before flipping
+the default. Default stays `WIFIT3_RTL8188=mainline` until that A/B settles the re-port.
 
 **Done since the MISC02 milestone (all pcap-verified ×3 where applicable, unit-tested, committed):**
 - **M4a (RfRegChnlVal reads): complete.** `rf.read_rf_chnl_val` ports `phy_RFSerialRead` /
@@ -110,13 +121,17 @@ stays `WIFIT3_RTL8188=mainline` until a clean A/B settles the re-port.
   seeded from M4a; spur cal is I-cut-only (skipped, cut A). `verify_channels.py` byte-diffs the
   initial ch1 set (49 ops) on all 3 captures (RfRegChnlVal 0x07407→0x07c01). The per-hop airodump
   differ (DIG-burst interleave) is deferred to the DIG-watchdog milestone.
-- **M10 (monitor-mode entry): vendor block reproduced; RXFLTMAP0/1 over-add is a known divergence.**
-  `monitor.enter_monitor` ports `hw_var_set_opmode(MONITOR)`: Set_MSR(NOLINK) + RCR=0x9000382f
-  (accept-all + append-FCS, no ACRC32/AICV — the 8188e #if 0) + RXFLTMAP2=0xffff — all on the wire.
-  It ALSO writes RXFLTMAP0=0xffff and RXFLTMAP1=0xffff, which neither the kernel `hw_var_set_monitor`
-  (writes only RXFLTMAP2) nor the wire does (wire: RXFLTMAP0 never written; RXFLTMAP1=0x100).
-  Ungrounded — and RXFLTMAP1=0xffff accepts all control subtypes incl. ACK, which may flood the
-  bulk-IN pipe and starve beacons. **Top RX-gap lead; needs the HW A/B (0xffff → 0x100, re-measure).**
+- **M10 (monitor-mode entry): complete — byte-faithful, ungrounded over-add removed.** The chip
+  enters monitor through two vendor functions (in wire order): `init_hw_mlme_ext` →
+  `HW_VAR_ENABLE_RX_BAR` = `RXFLTMAP1 |= BIT(8)` (`monitor.enable_rx_bar`, accept BlockAckReq) then
+  the channel tune, and `hw_var_set_opmode(MONITOR)` (`monitor.enter_monitor`): Set_MSR(NOLINK) +
+  RCR=0x9000382f (accept-all-physical + append-FCS, no ACRC32/AICV — the 8188e #if 0) +
+  RXFLTMAP2=0xffff (data subtypes). RXFLTMAP0 stays at reset (`hal_init` leaves it unwritten). The
+  port previously wrote an **ungrounded** `RXFLTMAP0/1 = 0xffff` (accept every control subtype incl.
+  ACK) — a write neither the kernel nor the wire makes; removed (faithfulness + the top RX-gap lead,
+  since the ACK flood was the suspected beacon-starve). `RXFLTMAP1=0x100` on the wire is decoded as
+  `HW_VAR_ENABLE_RX_BAR` [SRC] rtw_mlme_ext.c:1560 / hal_com.c:10257, **not** airmon — so we port it.
+  The before/after RX A/B (`beacon_watch.py`) is the remaining human gate.
 - **M11 (RX path): complete — HW-proven.** `rx.py` ports `rtl8188e_query_rx_desc_status` (24-byte
   desc) + the `recvbuf2recvframe` walk (_RND4 / RX_AGG_USB) + `decode_rssi` (CCK byte5 →
   lna_gain_table_1[LNA]−2·VGA for cut A; OFDM byte4 → ((pwdb>>1)&0x7f)−110). Deviations: crc/icv
@@ -137,12 +152,16 @@ stays `WIFIT3_RTL8188=mainline` until a clean A/B settles the re-port.
   FromDS) + 262 ToDS data frames — so client->AP frames not addressed to us are captured (no
   ToDS-filter gap; the crackable WPA M2 is reachable). The whole attack column (deauth, handshake,
   and by the shared `inject_frame`/`WlanInterface` path PMKID/WEP/WPS) is reachable on this port.
-- **M12 (phydm watchdog `dig.py`): no-link `phydm_watchdog` tick ported.** FA-stats → DIG (IGI
-  clamp [0x1c,0x2a], 0xC50) → CCK-PD 0xa0a → adaptivity EDCCA 0xc4c → thermal power-track → NHM,
-  driven every 2 s by a `connect()` task (`WIFIT3_RTL8188_DIG=off` disables it). The DIG step/clamp
-  matches the vendor wire (its IGI also walks to 0x2a by the {+2,+1,−2} FA steps). The live
-  *multi-tick* trajectory and the per-hop channel tunes are NOT yet gated — that is what the new
-  `verify_pcap` operational dispatch is for.
+- **M12 (phydm watchdog `dig.py` + sreset `sreset.py`): complete — multi-tick gated end-to-end.**
+  Each 2 s `rtw_dynamic_chk_wk_hdl` fire (rtw_cmd.c:2737) is reproduced as: the silent-reset status
+  poll (`sreset.status_check` — R TXDMA_STATUS/RXDMA_STATUS/FMETHR, recovery branch guarded, never
+  fires healthy [SRC] rtl8188e_sreset.c) then the no-link `phydm_watchdog` tick (`dig.watchdog_tick`):
+  FA-stats → DIG (IGI clamp [0x1c,0x2a], 0xC50) → CCK-PD 0xa0a → adaptivity EDCCA 0xc4c → thermal
+  power-track → NHM/CLM env-monitor. `verify_pcap` carries DM state across **all 22 ticks** of each
+  capture byte-faithfully (`WIFIT3_RTL8188_DIG=off` disables the live task). **NHM fix found by the
+  gate:** `phydm_nhm_get_result` reads the 12-bin histogram (`0x8d8/0x8dc/0x8d0/0x8d4`) only when the
+  report is ready (`0x8b4 BIT17`); the original tick skipped the result reads and diverged on the
+  second tick (results ready) — now gated on the ready bit [SRC] phydm_ccx.c:472,506.
 
 Per-milestone detail (early init):
 
@@ -212,17 +231,23 @@ Per-milestone detail (early init):
   resolved to this card's wire-confirmed values. 55 ops/boot. The STA RCR is overwritten by the
   monitor-mode entry (upcoming).
 
-### ⚠️ Async 2 s watchdog interleaves the EP0 stream (load-bearing for replay)
-A background kernel thread (`rtw_dynamic_check_timer` / phydm watchdog) fires **every
-2.016 s** (first fire ≈ frame 2731 ≈ op 1320, right at the RF→efuse-patch boundary) and
-interleaves its transfers into the single serialized EP0 control stream. Per tick it issues
-a **sreset read `R REG_SYS_CFG(0xF0)/4`**; once the chip is up it also runs the full **DIG
-burst** (FA counters 0xC00/0xD00, CCK reset 0xA2C, NHM 0xF84–0xF94, EDCCA 0x8C4, …). The
-synchronous port never emits these, so the verify waives the sreset read as a named producer
-(`R 0xF0/4`, 23 polls in cap1; the init thread never does a 32-bit REG_SYS_CFG read —
-read_chip_version runs once at probe). M1–M2c passed only because they finish before the first
-fire. The watchdog's DIG burst is a separate producer the operational-phase dispatch handles
-(run `dig.watchdog_tick` at each FA-hold).
+### ⚠️ Two async 2 s producers interleave the EP0 stream (load-bearing for replay)
+Background kernel timers fire **every ~2 s** and interleave their transfers into the single
+serialized EP0 control stream. Two distinct producers, often confused:
+
+1. **An `R REG_SYS_CFG(0xF0)/4` poll** — first fire ≈ frame 2731 ≈ op 1320 (RF→efuse-patch
+   boundary). It interleaves at *arbitrary* points (not lock-serialized with the bring-up), so it
+   cannot be positionally dispatched; the verify **filters it out globally** as a named, counted
+   waiver (`R 0xF0/4`, 23 polls in cap1). The init thread never does a 32-bit REG_SYS_CFG read —
+   `read_chip_version` runs once at probe. M1–M2c passed only because they finish before the first
+   fire. (This is **not** the silent-reset timer — that reads TXDMA/RXDMA/FMETHR, see below.)
+
+2. **The `rtw_dynamic_chk_wk_hdl` tick** [SRC] rtw_cmd.c:2737 — one IO-locked burst per ~2 s,
+   so it never splits a channel tune. It runs the **silent-reset status poll** (`sreset.status_check`
+   — R TXDMA_STATUS 0x210 / RXDMA_STATUS 0x288 / FMETHR 0x1c8) then the **no-link phydm watchdog**
+   (`dig.watchdog_tick` — FA 0xC00/0xD00, CCK 0xA2C, NHM 0xF84–0xF94, EDCCA 0x8C4, …). Both are
+   vendor code, **reproduced** (not waived): the operational dispatch runs both real handlers at the
+   tick opener and carries DM state across all ticks.
 
 ### The phydm conditional walker (`phy_cond.py`)
 `odm_read_and_config_mp_8188e_*` pairs the flat-u32 table two words at a time: a BIT31 word is a
