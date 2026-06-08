@@ -66,6 +66,20 @@ that sees all USB regardless of driver — SetupAPI, WMI `Get-PnpDevice`, or
 what libusb can open. **Test:** plug an un-bound card, run `usb.core.find`, see if the
 VID:PID shows. This is the single biggest unknown in the Windows path.
 
+> **RESOLVED — the easy direction.** Verified on a fresh RT3070 (AWUS036NH,
+> `148f:3070`) still on its native Wi-Fi driver (`Class=Net`, `Service=netr28ux`,
+> never Zadig'd). `usb.core.find(find_all=True, backend=libusb_package…)` **does
+> enumerate it** unbound — so Tier-0 detection needs **no** parallel SetupAPI/WMI
+> path; plain `find()` sees every card regardless of driver. The
+> *present-but-unbound* signal is the **open** step: `find()` succeeds, but any
+> operation that opens the device (`get_active_configuration`, `ctrl_transfer`,
+> `get_string`) raises `NotImplementedError` *"Operation not supported or
+> unimplemented on this platform"* (errno=None) — libusb `LIBUSB_ERROR_NOT_SUPPORTED`,
+> i.e. enumerable but no WinUSB driver to open it. Classifier: match `SUPPORTED_IDS`
+> from `find()`, then try-open → success = `ready`, `NotImplementedError` =
+> `present-but-unbound`, else `unknown`. Catch on the exception type + the
+> found-but-can't-open *pattern*, not the message string.
+
 ### [VERIFY-W2] libwdi signing on current Win10/11
 
 WinUSB is inbox + WHQL-signed, and Zadig works for everyone without the user signing
@@ -125,8 +139,10 @@ per-module whether lever 1 works or it needs lever 3.
 
 ## Open questions / must-verify (the honest list)
 
-- [ ] **W1** — does `libusb_package` enumerate unbound devices on Windows? (Tier-0
-  detection design hinges on this.)
+- [x] **W1** — does `libusb_package` enumerate unbound devices on Windows? **YES**
+  (verified RT3070/`netr28ux`, never-Zadig'd): `find()` enumerates it; the *open*
+  step raises `NotImplementedError` (libusb `NOT_SUPPORTED`). No parallel
+  enumeration needed — classify on found-but-can't-open. See [VERIFY-W1] above.
 - [ ] **L1** — `USBDEVFS_DISCONNECT` as non-root with a permissive udev rule? (decides
   whether per-run sudo ever goes away.)
 - [ ] **W2** — libwdi catalog signing / SmartScreen friction on current Win10/11.
