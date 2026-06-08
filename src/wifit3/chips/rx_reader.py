@@ -34,6 +34,10 @@ from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
+# Rate-limit for the "pending cap hit -> RX dropped" ERROR: log the first drop
+# immediately, then at most one summary line per this many seconds.
+_DROP_LOG_PERIOD = 2.0
+
 
 class RxReaderThread:
     def __init__(
@@ -65,6 +69,12 @@ class RxReaderThread:
         self._stats = stats
         self._n_produced = 0
         self._n_bytes = 0
+        # Dropped-RX visibility: a buffer read off USB but discarded because the loop
+        # hadn't drained the pending queue (cap hit) == lost RX. Counted always; logged
+        # at ERROR, rate-limited. Touched only on the reader thread, so no lock needed.
+        self._dropped = 0
+        self._dropped_logged = 0
+        self._next_drop_log = 0.0
 
     def start(self) -> None:
         """Spawn the reader thread. Idempotent."""
@@ -116,12 +126,33 @@ class RxReaderThread:
                     self._n_produced += 1
                     self._n_bytes += len(buf)
                     self._loop.call_soon_threadsafe(self._on_buffer, buf)
+                else:
+                    self._note_drop()
             if self._stats and time.monotonic() >= next_report:
                 logger.info("[%s] RX 2s: produced=%d bytes=%d",
                             self._name, self._n_produced, self._n_bytes)
                 self._n_produced = self._n_bytes = 0
                 next_report = time.monotonic() + 2.0
+        if self._dropped:
+            logger.error("[%s] RX reader stopped: %d bulk-IN buffers dropped total "
+                         "(loop never drained; RX frames lost)", self._name, self._dropped)
         logger.info("[%s] RX reader thread stopped", self._name)
+
+    def _note_drop(self) -> None:
+        """A read buffer was discarded because the pending queue is at cap — the loop
+        isn't draining dispatch fast enough, so we just lost received RX. Almost always
+        host-load / event-loop starvation. Logged at ERROR, first drop immediately then
+        one summary line per _DROP_LOG_PERIOD so a sustained stall can't flood the log."""
+        self._dropped += 1
+        now = time.monotonic()
+        if now >= self._next_drop_log:
+            since = self._dropped - self._dropped_logged
+            logger.error(
+                "[%s] RX DROPPED: pending cap (%d) hit, loop not draining; "
+                "%d lost total (+%d since last report)",
+                self._name, self._cap, self._dropped, since)
+            self._dropped_logged = self._dropped
+            self._next_drop_log = now + _DROP_LOG_PERIOD
 
     # -- loop side -----------------------------------------------------------
 
