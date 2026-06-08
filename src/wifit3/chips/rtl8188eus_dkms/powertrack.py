@@ -98,12 +98,14 @@ def get_cck_swing_index(a22: int) -> int:
     return _CCK_TABLE_SIZE
 
 
-def init_state(t, eeprom_thermal: int) -> PowerTrackState:
-    """``odm_txpowertracking_thermal_meter_init`` [SRC] halrf_powertracking_ce.c:566 — read
-    the chip's current BB swing (0xc80/0xa22) for the default indices and seed from the
-    efuse thermal base. ``eeprom_thermal`` is ``efuse[EEPROM_THERMAL_METER_88E=0xBA]``."""
-    ofdm = get_swing_index(t.read32(_REG_OFDM_XA_TX_IQ))
-    cck = get_cck_swing_index(t.read8(_REG_CCK_FIR))
+def seed_state(ofdm_swing_raw: int, cck_swing_raw: int, eeprom_thermal: int) -> PowerTrackState:
+    """``odm_txpowertracking_thermal_meter_init`` [SRC] halrf_powertracking_ce.c:566 — the
+    default swing indices come from the BB swing the chip held at InitHalDm (0xc80 OFDM /
+    0xa22 CCK), seeded with the efuse thermal base. The vendor reads those during InitHalDm and
+    *carries* them (``dm.DmSeed``); we do the same instead of re-reading at tick-start.
+    ``eeprom_thermal`` is ``efuse[EEPROM_THERMAL_METER_88E=0xBA]``."""
+    ofdm = get_swing_index(ofdm_swing_raw)
+    cck = get_cck_swing_index(cck_swing_raw)
     return PowerTrackState(
         eeprom_thermal=eeprom_thermal,
         default_ofdm_index=_DEFAULT_OFDM_INDEX if ofdm >= _OFDM_TABLE_SIZE else ofdm,

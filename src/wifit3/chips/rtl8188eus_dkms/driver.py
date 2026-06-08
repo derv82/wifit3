@@ -63,6 +63,7 @@ class Rtl8188eusDkmsDriver:
         self._channel: Optional[int] = None
         self._tx_power = None              # path-A efuse TX-power info (TxPwr2G)
         self._eeprom_thermal = 0x18        # efuse thermal base (set from efuse in connect)
+        self._dm_seed = None               # dm.DmSeed carried from InitHalDm to the watchdog
         self._rf_chnl: int = 0            # RfRegChnlVal[A], stateful across set_channel
         self._rx_cb: Optional[Callable[[dict], None]] = None
         self._reader: Optional[RxReaderThread] = None
@@ -141,15 +142,16 @@ class Rtl8188eusDkmsDriver:
         return True
 
     async def _dig_watchdog(self) -> None:
-        """Periodic no-link phydm DM watchdog. Serialized with set_channel via _io_lock.
-        The DM carries software state (IGI + CCK-PD) across ticks, seeded once from the
-        chip's post-InitHalDm values."""
+        """Periodic no-link phydm DM watchdog. Serialized with set_channel via _io_lock. The DM
+        carries software state (IGI + CCK-PD + thermal) across ticks, seeded from the values
+        InitHalDm read — carried in self._dm_seed, NOT re-read (the vendor does not re-read at
+        tick-start, so neither do we: no extra wire ops)."""
         loop = asyncio.get_running_loop()
         try:
-            async with self._io_lock:
-                state = await loop.run_in_executor(None, dig.init_state, self.transport)
-                pt_state = await loop.run_in_executor(
-                    None, powertrack.init_state, self.transport, self._eeprom_thermal)
+            seed = self._dm_seed
+            state = dig.seed_state(seed.igi, seed.cck_cca)
+            pt_state = powertrack.seed_state(
+                seed.ofdm_swing_raw, seed.cck_swing_raw, self._eeprom_thermal)
             while True:
                 await asyncio.sleep(dig.WATCHDOG_PERIOD_S)
                 async with self._io_lock:
@@ -193,7 +195,7 @@ class Rtl8188eusDkmsDriver:
         mac.invalidate_cam_all(t)                               # M4c
         txpower.set_tx_power(t, params.tx_power, DEFAULT_INIT_CHANNEL)  # M5
         mac.init_misc11_tail(t)                                 # M6
-        dm.init_hal_dm(t)                                       # M7 (DIG/AGC/EDCCA seed)
+        self._dm_seed = dm.init_hal_dm(t)                       # M7 — and carry the DM seed
         dm.init_hal_tail(t)                                     # M8 (power-track + LCK)
         mac.set_macid(t, self.mac_address or b"\x00" * 6)      # HW_VAR_MAC_ADDR (airmon)
         # monitor opmode is entered in connect() AFTER the channel re-tune (wire order).

@@ -21,7 +21,19 @@ no chip state; they are reproduced in wire order so the replay stays aligned.
 """
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from . import bb, rf
+
+
+class DmSeed(NamedTuple):
+    """The DM-watchdog seed InitHalDm reads and the vendor *carries* into the watchdog (kept
+    in the DM struct, never re-read at tick-start): cur_ig_value (0xc50), CCK CCA default
+    (0xa08[23:16]), OFDM swing base (0xc80), CCK swing base (0xa22)."""
+    igi: int
+    cck_cca: int
+    ofdm_swing_raw: int
+    cck_swing_raw: int
 
 # --- phydm register addresses ---------------------------------------------
 _REG_GPIO_MUXCFG = 0x0040     # dm_InitGPIOSetting
@@ -45,13 +57,15 @@ _IGI_TARGET = 0x32            # igi_target
 _TH_EDCCA_HL_DIFF = 7         # default th_edcca_hl_diff
 
 
-def init_hal_dm(t) -> None:
-    """``rtl8188e_InitHalDm`` — GPIO + the register-touching phydm sub-inits."""
+def init_hal_dm(t) -> DmSeed:
+    """``rtl8188e_InitHalDm`` — GPIO + the register-touching phydm sub-inits. Returns the
+    ``DmSeed`` the vendor carries into the watchdog (so the tick never re-reads it)."""
     _init_gpio(t)
-    igi = _dig_init(t)
+    igi, cck_cca = _dig_init(t)
     _env_monitor_init(t, igi)
     _adaptivity_init(t)
-    _post_seed_reads(t)
+    c80, a22 = _post_seed_reads(t)
+    return DmSeed(igi=igi, cck_cca=cck_cca, ofdm_swing_raw=c80, cck_swing_raw=a22)
 
 
 def _init_gpio(t) -> None:
@@ -60,16 +74,16 @@ def _init_gpio(t) -> None:
     t.write8(_REG_GPIO_MUXCFG, v & ~_GPIOSEL_ENBT)
 
 
-def _dig_init(t) -> int:
-    """Up to ``phydm_dig_init`` [SRC] phydm_dig.c. The RF-interface (0x824) and
-    RX-path (0xc04) reads feed phydm common-info; ``phydm_dig_init`` reads the AGC
-    cur_ig_value (IGI) from 0xc50; the CCK AFE read (0xa08) feeds the CCK setup.
-    Only the IGI read is consumed (it drives the NHM thresholds)."""
+def _dig_init(t) -> tuple[int, int]:
+    """Up to ``phydm_dig_init`` [SRC] phydm_dig.c. The RF-interface (0x824) and RX-path (0xc04)
+    reads feed phydm common-info; ``phydm_dig_init`` reads the AGC cur_ig_value (IGI) from 0xc50;
+    ``phydm_cck_pd_init`` reads the CCK CCA default from 0xa08[23:16]. Both are carried into the
+    watchdog seed. Returns ``(igi, cck_cca_default)``."""
     t.read32(0x0824)
     t.read32(0x0C04)
     igi = t.read32(_REG_IGI) & 0x7F
-    t.read32(0x0A08)
-    return igi
+    cck_cca = (t.read32(0x0A08) >> 16) & 0xFF
+    return igi, cck_cca
 
 
 def _env_monitor_init(t, igi: int) -> None:
@@ -161,14 +175,17 @@ def _set_edcca_threshold(t, h2l: int, l2h: int) -> None:
     bb.set_bb_reg(t, _REG_ECCA_TH, 0x00FF00FF, (l2h & 0xFF) | ((h2l & 0xFF) << 16))
 
 
-def _post_seed_reads(t) -> None:
-    """The remaining odm_dm_init sub-inits (rf_init / primary_cca / ra_info) read BB
-    state into phydm structs; these reads change no chip state."""
+def _post_seed_reads(t) -> tuple[int, int]:
+    """The remaining odm_dm_init sub-inits (rf_init / primary_cca / ra_info) read BB state into
+    phydm structs; these reads change no chip state. The thermal swing bases — OFDM 0xc80 and
+    CCK 0xa22 — are the ``dm_rf_calibration`` seed carried into the power-track tick. Returns
+    ``(ofdm_swing_raw, cck_swing_raw)``."""
     t.read32(0x0D2C)
-    t.read32(0x0C80)
-    t.read8(0x0A22)
+    c80 = t.read32(0x0C80)
+    a22 = t.read8(0x0A22)
     t.read32(0x0C24)
     t.read32(0x0C84)
+    return c80, a22
 
 
 def init_hal_tail(t) -> None:

@@ -121,11 +121,11 @@ class WatchdogState:
     nhm_igi: int = _IGI_SEED              # IGI the NHM thresholds were last computed for
 
 
-def init_state(t) -> WatchdogState:
-    """Seed the DM state from the chip's post-InitHalDm values: the CCK CCA default
-    ``phydm_cck_pd_init`` reads from 0xa08[23:16], and the InitHalDm IGI seed 0x20."""
-    a0a_default = (t.read32(_REG_CCK_CCA_DEFAULT) >> 16) & 0xFF
-    return WatchdogState(cur_ig_value=_IGI_SEED, cur_cck_cca_thres=a0a_default)
+def seed_state(igi: int, cck_cca: int) -> WatchdogState:
+    """Build the carried DIG/CCK-PD state from the InitHalDm seed (``dm.DmSeed`` — the IGI from
+    0xc50 and the CCK CCA default from 0xa08[23:16]). The vendor *carries* these from InitHalDm
+    into the watchdog; it does NOT re-read them at tick-start, so neither do we."""
+    return WatchdogState(cur_ig_value=igi, cur_cck_cca_thres=cck_cca)
 
 
 class DigTick(NamedTuple):

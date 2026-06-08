@@ -50,9 +50,10 @@ def test_new_igi_by_fa_steps():
     assert dig._new_igi_by_fa(0x20, 3000) == 0x20   # in band -> hold
 
 
-def test_init_state_seeds_from_chip():
-    # phydm_cck_pd_init reads the CCK CCA default from 0xa08[23:16]; IGI seed is 0x20.
-    st = dig.init_state(RegTx({0x0A08: 0x00CD0000}))
+def test_seed_state_from_carried_values():
+    # The DM seed is carried from InitHalDm (dm.DmSeed): IGI (0xc50) + CCK CCA default
+    # (0xa08[23:16]). seed_state builds the WatchdogState from those values — no chip read.
+    st = dig.seed_state(0x20, 0xCD)
     assert st.cur_ig_value == 0x20
     assert st.cur_cck_cca_thres == 0xCD
     assert st.cck_fa_ma == dig.CCK_FA_MA_RESET

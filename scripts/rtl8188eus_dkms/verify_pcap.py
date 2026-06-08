@@ -40,7 +40,6 @@ from wifit3.chips.rtl8188eus_dkms import (  # noqa: E402
     txpower,
 )
 from wifit3.chips.rtl8188eus_dkms import constants as C  # noqa: E402
-from wifit3.chips.rtl8188eus_dkms import powertrack_tbl as PT  # noqa: E402
 from wifit3.chips.rtl8188eus_dkms.constants import DEFAULT_INIT_CHANNEL  # noqa: E402
 
 DEFAULT_CAP = REPO / "usb_dumps_new" / "captures_8188eu" / "capture-1.pcap"
@@ -93,28 +92,15 @@ class Walk:
         self.i += 1
 
 
-def _seed_dm_state(init_ops: list[dict], params):
-    """Seed the carried DM state from the values InitHalDm left on the chip — the same seeds
-    the vendor DM carries from odm_dm_init (IGI 0x20; CCK CCA default from 0xa08[23:16]; the
-    thermal swing bases from 0xc80/0xa22; the efuse thermal base). Read from the init wire so
-    the operational ticks start where the chip really was."""
-    a0a = next(((o["value"] >> 16) & 0xFF for o in init_ops
-                if o["kind"] == "R" and o.get("addr") == 0x0A08), 0)
-    state = dig.WatchdogState(cur_ig_value=0x20, cur_cck_cca_thres=a0a)
-
-    c80 = next((o["value"] for o in init_ops
-                if o["kind"] == "R" and o.get("addr") == 0x0C80 and o["width"] == 4), 0)
-    a22 = next((o["value"] for o in init_ops
-                if o["kind"] == "R" and o.get("addr") == 0x0A22 and o["width"] == 1), 0)
+def _seed_dm_state(dm_seed, params):
+    """Build the carried DM state from the seed InitHalDm returned — running the *real*
+    seeding handlers (dig.seed_state / powertrack.seed_state), the same ones the driver's
+    _dig_watchdog uses. No modeling: the gate exercises the actual code path, and because the
+    seed is carried (not re-read), the watchdog start emits no extra wire ops."""
     raw = params.efuse_map[EEPROM_THERMAL_METER_88E]
     eeprom_thermal = EEPROM_DEFAULT_THERMAL_88E if raw == 0xFF else raw
-    ofdm_i = powertrack.get_swing_index(c80)
-    cck_i = powertrack.get_cck_swing_index(a22)
-    pt = powertrack.PowerTrackState(
-        eeprom_thermal=eeprom_thermal,
-        default_ofdm_index=ofdm_i if ofdm_i < len(PT.OFDM_SWING_TABLE) else 30,
-        default_cck_index=cck_i if cck_i < len(PT.CCK_SWING_TABLE_CH1_CH13) else 20,
-    )
+    state = dig.seed_state(dm_seed.igi, dm_seed.cck_cca)
+    pt = powertrack.seed_state(dm_seed.ofdm_swing_raw, dm_seed.cck_swing_raw, eeprom_thermal)
     return state, pt
 
 
@@ -141,7 +127,8 @@ def _walk_init(w: Walk, out: dict) -> None:
     w.run(lambda t: mac.invalidate_cam_all(t), "cam-clear")
     w.run(lambda t: txpower.set_tx_power(t, params.tx_power, DEFAULT_INIT_CHANNEL), "tx-power")
     w.run(lambda t: mac.init_misc11_tail(t), "misc11")
-    w.run(lambda t: dm.init_hal_dm(t), "init-hal-dm")
+    (dm_seed, _) = w.run(lambda t: dm.init_hal_dm(t), "init-hal-dm")
+    out["dm_seed"] = dm_seed                                  # carried into the watchdog
     w.run(lambda t: dm.init_hal_tail(t), "hal-tail")
     w.run(lambda t: mac.set_macid(t, params.mac_address or b"\x00" * 6), "set-macid")
 
@@ -288,7 +275,7 @@ def run(cap: str | None = None) -> int:
     # 2) OPERATIONAL — dispatch each burst to a real handler, carrying state. NOTHING beyond
     #    the named waivers is pre-allowed: the first op that is neither a wired handler nor a
     #    waiver STOPS the walk and is reported as the frontier.
-    state, pt = _seed_dm_state(ops[:init_end], params)
+    state, pt = _seed_dm_state(out["dm_seed"], params)
     ticks, frontier = _walk_operational(w, params, out["rf_chnl"], state, pt)
 
     # 3) Report — fail-closed. PASS only if the whole stream is matched-or-waived.
