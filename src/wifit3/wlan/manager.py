@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Type
 
 import libusb_package
@@ -24,6 +25,21 @@ from wifit3.engine.protocols import DeviceID, WlanDriver
 from .interface import WlanInterface
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class UnboundDevice:
+    """A supported card that's plugged in but can't be opened — present on the bus
+    (``find()`` sees it) yet has no libusb-class driver: on Windows it needs WinUSB
+    (Zadig today), on Linux the kernel driver still holds it. The UX surfaces this as
+    'present but needs setup' instead of failing silently. [DEVICE-SETUP.md Tier 0]"""
+    vid: int
+    pid: int
+    description: str
+
+    @property
+    def vidpid(self) -> str:
+        return f"{self.vid:04x}:{self.pid:04x}"
 
 # RTL8814AU (0bda:8813) is claimed by BOTH the vendor/DKMS port (default) and the
 # mainline-derived driver. Set this to "mainline" to fall back to the mainline driver.
@@ -58,6 +74,7 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
         from wifit3.chips.mt7921au.driver import MT7921AUDriver
         from wifit3.chips.rt2500usb.driver import RT2500USBDriver
         from wifit3.chips.rt2800usb.driver import RT2800USBDriver
+        from wifit3.chips.rt3070.driver import RT3070PlaceholderDriver  # TEMP: Tier-0 UI only
         from wifit3.chips.rtl8187.driver import RTL8187Driver
         from wifit3.chips.rtl8188eus.driver import RTL8188EUSDriver
         from wifit3.chips.rtl8188eus_dkms.driver import Rtl8188eusDkmsDriver
@@ -74,6 +91,8 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
             "rtl8187": RTL8187Driver,
             "rt2500usb": RT2500USBDriver,
             "rt2800usb": RT2800USBDriver,
+            "rt3070": RT3070PlaceholderDriver,  # TEMP: Tier-0 device-setup UI placeholder
+
             "rtl8188eus": RTL8188EUSDriver,
             "rtl8188eus_dkms": Rtl8188eusDkmsDriver,
             "rtl8812au": RTL8812AUDriver,
@@ -116,7 +135,7 @@ def _all_drivers() -> List[Type[WlanDriver]]:
     else:
         rtl8188 = [c["rtl8188eus"], c["rtl8188eus_dkms"]]
     return [
-        c["ar9271"], c["rtl8187"], c["rt2500usb"], c["rt2800usb"], *rtl8188,
+        c["ar9271"], c["rtl8187"], c["rt2500usb"], c["rt2800usb"], c["rt3070"], *rtl8188,
         *rtl8812, *rtl8821, c["rtl8822bu"], *rtl8814,
         c["mt76x0u"], c["mt76x2u"], c["mt7921au"],
     ]
@@ -133,11 +152,36 @@ def _match_driver(
     return None
 
 
+def _is_openable(dev: usb.core.Device) -> bool:
+    """Tier-0 probe: can libusb actually OPEN this device, or is it present-but-unbound?
+
+    ``find()`` enumerates every device regardless of driver, but opening one needs a
+    libusb-class driver. On Windows an un-bound card (native Wi-Fi driver, no WinUSB)
+    raises ``NotImplementedError`` (libusb ``LIBUSB_ERROR_NOT_SUPPORTED``) on the first
+    open — verified on a fresh RT3070/netr28ux [DEVICE-SETUP.md VERIFY-W1]. Reading the
+    active configuration is the least-invasive op that forces that open.
+
+    Linux note: a kernel-claimed card can still read descriptors here (the claim is what
+    fails, later, in the driver), so this returns True for it and the existing
+    ``from_usb_device`` guard handles that case — Linux 'needs-detach' classification is a
+    separate refinement (DEVICE-SETUP.md Linux / VERIFY-L2)."""
+    try:
+        dev.get_active_configuration()
+        return True
+    except NotImplementedError:
+        return False          # Windows: enumerable but no WinUSB driver to open it
+    except usb.core.USBError:
+        return False          # busy / access-denied — not ready to drive either way
+
+
 class WlanDeviceManager:
     """Scans PyUSB, dispatches to driver factories, returns WlanInterfaces."""
 
     def __init__(self) -> None:
         self.interfaces: List[WlanInterface] = []
+        # Supported cards that are plugged in but not openable (need WinUSB / kernel
+        # detach). Populated by refresh(); the splash surfaces them. [DEVICE-SETUP.md Tier 0]
+        self.unbound: List[UnboundDevice] = []
 
     async def refresh(self) -> List[WlanInterface]:
         backend = libusb_package.get_libusb1_backend()
@@ -146,12 +190,24 @@ class WlanDeviceManager:
         for iface in self.interfaces:
             await iface.close()
         self.interfaces = []
+        self.unbound = []
 
         for dev in usb.core.find(find_all=True, backend=backend):
             match = _match_driver(dev)
             if match is None:
                 continue
             driver_cls, id_entry = match
+            # Tier-0 classify: a known card that find() lists but libusb can't open is
+            # present-but-unbound (needs WinUSB / detach) — surface it, don't try to drive
+            # it (that would just raise deep in from_usb_device/connect).
+            if not _is_openable(dev):
+                logger.info(
+                    "Present-but-unbound (needs WinUSB/detach): %s (vid=%04x pid=%04x)",
+                    id_entry.description, id_entry.vid, id_entry.pid,
+                )
+                self.unbound.append(
+                    UnboundDevice(id_entry.vid, id_entry.pid, id_entry.description))
+                continue
             logger.info(
                 "Found supported hardware: %s (vid=%04x pid=%04x)",
                 id_entry.description, id_entry.vid, id_entry.pid,
@@ -171,7 +227,8 @@ class WlanDeviceManager:
             )
             self.interfaces.append(iface)
 
-        logger.info("Discovered %d native WlanInterfaces.", len(self.interfaces))
+        logger.info("Discovered %d native WlanInterfaces, %d present-but-unbound.",
+                    len(self.interfaces), len(self.unbound))
         return self.interfaces
 
     def get_interface(self, name: str) -> Optional[WlanInterface]:

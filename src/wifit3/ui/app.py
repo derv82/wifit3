@@ -55,10 +55,26 @@ class WifiteApp(App):
         content-align: center middle;
         margin-bottom: 2;
     }
+    #setup-row {
+        width: 1fr;
+        height: auto;
+        margin-top: 1;              /* gap between the device list above and this notice */
+        margin-bottom: 1;
+    }
+    /* Notice and button each get their own full-width Center wrapper so each is
+       centered independently (a full-width sibling otherwise left-anchors the narrower). */
+    #notice-row { width: 1fr; height: auto; }
     #os-warning {
         content-align: center middle;
-        margin-top: 1;        /* gap between the device list above and this notice */
-        margin-bottom: 1;
+        width: auto;
+    }
+    #install-row {
+        width: 1fr;
+        height: auto;
+        margin-top: 1;              /* gap below the notice; button sits BELOW it (fits narrow terminals) */
+    }
+    #install-winusb {
+        width: auto;
     }
     #status-label {
         content-align: center middle;

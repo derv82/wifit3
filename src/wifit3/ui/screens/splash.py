@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from textual.app import ComposeResult
 from textual.screen import Screen
-from textual.widgets import Static, ListView, ListItem, Label, Header, Footer, ProgressBar
+from textual.widgets import Static, ListView, ListItem, Label, Header, Footer, ProgressBar, Button
 from textual.message import Message
 from textual.containers import Vertical, Center
 from textual import work
@@ -89,8 +89,10 @@ class SplashView(Screen):
         super().__init__()
         self.device_manager = device_manager
         self._refresh_timer = None
-        self._last_interfaces = []
+        self._last_signature = None
         self._is_initializing = False
+        # ListItem name -> UnboundDevice, for the present-but-unbound rows in the picker.
+        self._unbound_by_name = {}
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -108,9 +110,14 @@ class SplashView(Screen):
                 yield ListView(id="device-list")
 
             # OS notice (Zadig / rmmod help) sits BELOW the device list — it's
-            # supplementary, and the interface picker is what the user came for.
-            with Center():
-                yield Static(self._get_os_warning(), id="os-warning")
+            # supplementary, and the interface picker is what the user came for. The
+            # Install-WinUSB button to its right shows only while a present-but-unbound
+            # card is highlighted (see on_list_view_highlighted).
+            with Vertical(id="setup-row"):
+                with Center(id="notice-row"):
+                    yield Static(self._get_os_warning(), id="os-warning")
+                with Center(id="install-row"):
+                    yield Button("Install WinUSB", id="install-winusb", variant="warning")
                 
         yield Footer()
 
@@ -127,8 +134,28 @@ class SplashView(Screen):
         else:
             return f"[{warn}]OS Notice:[/{warn}] Experimental platform. Your mileage may vary."
 
+    def _selected_unbound_notice(self, u) -> str:
+        """Card-specific 'needs driver setup' notice for the highlighted unbound device —
+        replaces the generic OS hint while that row is selected. The chipset/card sits on
+        its own line so a long name (e.g. 'TP-Link [dkms]') doesn't widen the box past the
+        fixed first line. [DEVICE-SETUP.md Tier 0]"""
+        warn = self.app.theme_variables.get("text-warning", "orange3")
+        card = f"Chipset/Card: [bold]{u.description}[/bold] ({u.vidpid})"
+        if sys.platform == "win32":
+            return (f"[bold {warn}]Note:[/bold {warn}] This card needs a [bold]WinUSB driver[/bold] "
+                    "installed for Wifit3 to use it.\n"
+                    f"{card}\n"
+                    f"[black bold on {warn}]Install WinUSB[/] overwrites the existing driver "
+                    "(reversible).")
+        elif sys.platform == "linux":
+            return (f"[bold {warn}]Note:[/bold {warn}] This card is held by the kernel driver.\n"
+                    f"{card}\n"
+                    "Release it with [bold]sudo rmmod <chipset>[/bold] (reversible on replug).")
+        return (f"[bold {warn}]Note:[/bold {warn}] This card needs a libusb-class driver.\n{card}")
+
     async def on_mount(self) -> None:
         self.query_one("#init-progress").display = False
+        self.query_one("#install-winusb").display = False  # shown only on an unbound row
         # Poll the USB bus every second for hotplug changes.
         self._refresh_timer = self.set_interval(1.0, self.poll_usb)
         # ...but do the FIRST enumeration as soon as the splash has painted —
@@ -142,27 +169,45 @@ class SplashView(Screen):
             return
             
         interfaces = await self.device_manager.refresh()
-        current_names = [iface.name for iface in interfaces]
-        
-        if current_names == self._last_interfaces:
+        unbound = self.device_manager.unbound
+        # Re-render only when the set of ready cards OR present-but-unbound cards changes.
+        signature = (tuple(i.name for i in interfaces),
+                     tuple(u.vidpid for u in unbound))
+        if signature == self._last_signature:
             return
-            
-        self._last_interfaces = current_names
+        self._last_signature = signature
+
         list_view = self.query_one("#device-list", ListView)
         list_view.clear()
-        
+        self._unbound_by_name = {}
+
+        # Ready cards (selecting one -> connect), then present-but-unbound cards
+        # (selecting one -> its card-specific WinUSB notice + Install button, driven by
+        # on_list_view_highlighted). [DEVICE-SETUP.md Tier 0]
+        for iface in interfaces:
+            list_view.append(ListItem(Label(f"[{iface.name}] {iface.description}"), name=iface.name))
+        for u in unbound:
+            key = f"unbound:{u.vidpid}"
+            self._unbound_by_name[key] = u
+            list_view.append(
+                ListItem(Label(f"[yellow]⚠[/yellow]  {u.description}"), name=key))
+
+        if not interfaces and not unbound:
+            self.query_one("#status-label", Label).update("Scanning for compatible hardware... (0 found)")
+            self.query_one("#os-warning", Static).update(self._get_os_warning())
+            self.query_one("#install-winusb", Button).display = False
+            return
+
         if interfaces:
             self.query_one("#status-label", Label).update("[bold bright_green]Select an interface to begin:[/bold bright_green]")
-            for iface in interfaces:
-                list_view.append(ListItem(Label(f"[{iface.name}] {iface.description}"), name=iface.name))
-            # Highlight the first card so the user can hit Enter immediately —
-            # no up/down dance. clear() resets index to None, so this re-arms on
-            # every (re)population; we only auto-pick when nothing's highlighted.
-            if list_view.index is None:
-                list_view.index = 0
-                list_view.focus()
         else:
-            self.query_one("#status-label", Label).update("Scanning for compatible hardware... (0 found)")
+            self.query_one("#status-label", Label).update("[bold yellow]Card needs driver setup — select it for instructions[/bold yellow]")
+        # Highlight the first row so the user can act immediately; the Highlighted handler
+        # sets the warning box + Install button from whatever ends up selected. clear()
+        # reset index to None, so this re-arms on every (re)population.
+        if list_view.index is None:
+            list_view.index = 0
+            list_view.focus()
 
     def on_driver_progress(self, event: DriverProgress) -> None:
         """Handle progress updates sent via message from background threads."""
@@ -171,8 +216,32 @@ class SplashView(Screen):
         self.query_one("#status-label", Label).update(f"[bold {warn}]{event.message}[/bold {warn}]")
 
 
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        """Drive the warning box + Install button off the highlighted row: a present-but-
+        unbound card shows its card-specific notice + the button; a ready card (or no
+        selection) shows the generic OS notice with the button hidden. [DEVICE-SETUP.md]"""
+        name = event.item.name if event.item is not None else None
+        u = self._unbound_by_name.get(name) if name else None
+        warning = self.query_one("#os-warning", Static)
+        button = self.query_one("#install-winusb", Button)
+        if u is not None:
+            warning.update(self._selected_unbound_notice(u))
+            button.display = (sys.platform == "win32")  # WinUSB install is Windows-only
+        else:
+            warning.update(self._get_os_warning())
+            button.display = False
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "install-winusb":
+            # Tier 1 (libwdi / wdi-simple.exe + UAC elevation + the revert action) lands in
+            # a later session; for now the button is a UI placeholder.
+            self.query_one("#status-label", Label).update(
+                "[dim]WinUSB install isn't wired up yet (Tier 1) — use Zadig for now.[/dim]")
+
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
         iface_name = event.item.name
+        # Unbound rows aren't real interfaces — get_interface() returns None and the guard
+        # below skips. (The Install button is their action; Enter is a no-op for now.)
         iface = self.device_manager.get_interface(iface_name)
         if iface and not self._is_initializing:
             self._is_initializing = True
