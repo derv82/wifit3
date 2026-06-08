@@ -3,6 +3,86 @@
 Sibling vendor port of `chips/rtl8188eus/` (mainline). Goal: hotter, **stable** 2.4 GHz
 monitor RX than mainline drives the 8188e at — the vendor phydm/ODM RX stack.
 
+## ⚠ Port-completeness audit (OPEN — this port is NOT trustworthy beyond the captured path)
+
+`verify_pcap` green and `beacon_watch` healthy do **not** mean this port is faithful. Both gates
+have structural blind spots, and we were flying blind to a whole gap class until a question about
+the `misc` names accidentally surfaced it. Do not trust this driver on any card / efuse variant /
+chip cut / band / mode / code path outside the single 20 MHz-2.4-monitor capture until this is done.
+
+### Why the gates are blind
+- **`verify_pcap` is green by construction.** The hardcoded constants (`phy_cond` driver words,
+  board / PA-LNA / antenna / channel-plan assumptions) were *tuned to reproduce the recorded wire*.
+  You cannot validate a constant against the wire you derived it from. It only catches a wrong value
+  that changes a **captured register write**.
+- **`beacon_watch` only catches catastrophic RX loss**, on the one channel/scenario tested.
+
+### The poisoned-comment problem (why a naive code-reading audit fails)
+Our comments are the porter's assumptions written as fact — e.g. `0xCA[3:2]=iPA+iLNA on all 3 boots`
+reads like a measurement but is a *wrong inference* (the byte is blank `0xFF`). An agent that audits
+by **reading our code** anchors on these and rubber-stamps them. **The audit must be comment-blind:**
+derive expected behaviour from the **kernel source + real chip state** (extract the real efuse /
+chip-version from the pcap — never trust the byte a comment claims), then diff our code's *emitted
+bytes / computed values* against it. Every `always X / never runs / no-op here / we skip` comment is
+a **hypothesis to falsify**, default-assume-wrong until silicon or source proves it.
+
+### Method (tractable + verifiable — not "ask an agent if each function looks right")
+1. Walk the kernel **call graph** (`rtl8188eu_hal_init` → stages → helpers → leaves). Straight-line
+   table writes are already wire-verified — *not* the risk surface.
+2. Risk surface = **leaves that branch on per-card state, or are omitted / `#ifdef`'d / deferred.**
+   Classify each: `faithful` / `hardcoded-assumption` / `omitted` / `N/A-this-config`.
+3. **Every verdict cites a ground-truth anchor** — real efuse map (pcap), pcap wire, chip-version
+   read, or kernel source line. No "looks fine."
+4. Prioritise conditional / per-card / runtime (watchdog, channel-set, IQK) over init tables.
+
+### Audit axes
+1. **Hardcoded per-card-variable values** the kernel reads/derives (efuse fields, chip cut, board
+   type, RFE/PA-LNA, antenna, channel plan, gain offset). Read dynamically, or guard fail-loud.
+2. **Collapsed conditionals** — kernel `if/switch` on per-card state where we took only our branch.
+3. **Omitted / deferred helpers**, esp. ones with skip-rationale comments. Re-derive from kernel.
+4. **Uncaptured code paths** — TX-desc variants, 40 MHz, power-save, sreset/recovery, the runtime
+   IQK/LCK/power-track triggers. **No wire ground-truth exists** — source-faithfulness only.
+5. **Constants from memory vs source** — verbatim re-grep of every reg addr / `BIT(n)` / magic.
+6. **Decomposition boundaries** — intra-stage op misattribution (the single cursor can't see it).
+
+### Confirmed findings
+**efuse — CONFIRMED** (real bytes, capture-1, decoded by our own `read_chip_params`): we decode the
+full 512-byte logical map but use only 4 fields (MAC, TX power, crystal, thermal) and **hardcode the
+rest from this card's values** —
+
+| efuse byte | real | our hardcode | status |
+|---|---|---|---|
+| `0xCA` PA/LNA (RFE option) | `0xFF` **blank** | internal (iPA+iLNA) | "matches" only via blank→internal default |
+| `0xC1` board option | `0x00` | board_type 0 | genuinely matches |
+| `0xC9` antenna option | `0x03` **programmed** | single antenna | **ignored, non-default** |
+| `0xB8` channel plan | `0xA2` **programmed** | 1–13 | **ignored, non-default** |
+
+Fix = wire from the map we already hold: **decode** the programmed-here fields (channel plan,
+antenna) faithfully to the kernel; **fail-loud** (`NotImplementedError` naming the byte) on fields
+default/blank here that need un-ported code if non-default (external PA → `PHY_SetRFEReg_8188E`;
+board_type≠0 → `phy_cond` driver words; antdiv → `_InitAntenna_Selection`). verify_pcap stays green
+for this card by construction; the value is for *other* 8188eus.
+
+**IQK — RESOLVED, faithful (proven on the wire).** Init-time IQK is faithful (kernel's
+`HAL_INIT_STAGES_IQK` only flags `neediqk_24g`, no calibration — `usb_halinit.c:1611` — same as us).
+The deferred IQK fires in `rtl8188e_PHY_SetSwChnlBWMode` (`phycfg.c:1870`) only when `bNeedIQK &&
+neediqk_24g`; `bNeedIQK` is armed by `HW_VAR_DO_IQK` (`hal_com.c:10069`) from **link / AP-start / join
+/ sreset** (`rtw_mlme_ext.c`, `rtw_ap.c`, `rtw_sreset.c`) — **never a monitor-mode channel hop.**
+Confirmed empirically: the IQK one-shot value (`0xf9000000`/`0xf8000000`, the literal "fire the
+calibration" write) appears as a write **zero** times anywhere in the capture — IQK is never
+triggered. And the `0xe30–0xe8c` writes that *look* IQK-adjacent are the **BB-config table**, verbatim:
+each (addr,value) matches `halhwimg8188e_bb.c` rows (`0xE30,0x1000DC1F`@1581; `0xE40,0x01007C00`@1585;
+`0xE68,0x001B25A4`@1594), inside a monotonic `0x0d38→0x0f14→0x0c78` sweep — config our `phy_bb_config`
+already reproduces, not a calibration. So the kernel never IQKs in monitor mode and `chan.set_channel`
+skipping it is faithful. The dm.py "fires on first link" comment is correct, but verified by the wire,
+not trusted. (NB: the full `hal_init` BB/RF config executes *within* the airmon-window timestamps —
+it runs at iface bring-up — so register writes there are bring-up config, not airmon-specific.)
+
+**Status:** efuse axis confirmed (fix pending); IQK resolved-faithful; the **runtime DIG/AGC long-run**
+(only the first watchdog ticks are wire-verified) is the next RX-perf suspect; axes 2–6 not walked.
+Fleet-wide — every driver brought up against one dev card likely shares this pattern; see
+`planning/PORTING.md`.
+
 ## Why — the A/B that justifies the re-port
 
 Clean fixed-ch1 **passive** reception, canary AP, same physical card
@@ -92,8 +172,10 @@ the default. Default stays `WIFIT3_RTL8188=mainline` until that A/B settles the 
   channel = 6 (`current_channel` default). 40 ops. [WIRE 1589–1628]
 - **M6 (MISC11 tail): complete.** `mac.init_misc11_tail` — REG_BAR_MODE_CTRL(0x4cc)=0x0201ffff +
   REG_HWSEQ_CTRL(0x423)=0xFF. `_InitAntenna_Selection` (CONFIG_ANTENNA_DIVERSITY off) and
-  `PHY_SetRFEReg_8188E` (efuse RFE option 0xCA[3:2]=iPA+iLNA on all 3 boots → no external
-  PA/LNA) are no-ops on this card. 2 ops. [WIRE 1629–1630]
+  `PHY_SetRFEReg_8188E` (efuse RFE option 0xCA is **blank `0xFF`** on all 3 boots → kernel defaults
+  to iPA+iLNA → no external-PA writes) are no-ops on this card. 2 ops. [WIRE 1629–1630] ⚠ blank
+  DEFAULT, not a confirmed board value — a card with `0xCA` programmed external needs this ported;
+  see the port-completeness audit at the top of this doc.
 - **M7 (rtl8188e_InitHalDm phydm seed): complete — the RX-critical seed.** `dm.init_hal_dm` ports
   `dm_InitGPIOSetting` + `rtw_phydm_init`→`odm_dm_init`'s register-touching sub-inits: GPIO, the
   DIG IGI read (0xc50→0x20), the IGI-derived NHM env-monitor thresholds (th[0]=(IGI−14)<<1,

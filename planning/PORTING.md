@@ -89,6 +89,31 @@ gets dropped most — it has bitten this project more than once. It's on the wir
 the gate forced you. Same for every helper write, every switch case, both `init` **and**
 `start`.
 
+### Green ≠ faithful — the gates' blind spots, and the comment-blind audit
+
+`verify_pcap` green + `beacon_watch` healthy is **necessary, not sufficient.** Both gates are blind
+to a whole bug class, and we shipped `rtl8188eus_dkms` green while hardcoding per-card efuse values
+it should read — found only by accident. Internalise the limits:
+- **`verify_pcap` is green by construction for hardcoded values.** Constants tuned to reproduce the
+  recorded wire cannot be validated *by* that wire. It only catches a wrong value that changes a
+  **captured write**. Per-card-variable values (efuse fields, chip cut, board / PA-LNA / antenna /
+  channel-plan), uncaptured paths (TX-desc variants, 40 MHz, power-save, sreset, runtime IQK/LCK),
+  and internal-state correctness are all outside its reach.
+- **`beacon_watch` only catches catastrophic RX loss** on one scenario.
+
+**The trap when hunting these gaps is our own comments.** A port's comments are the porter's
+assumptions written as fact (`this value is always X so we hardcode it`, `this fn never runs on
+$chip so we skip it`). An agent auditing *by reading our code* anchors on them and rubber-stamps.
+**Audit comment-blind:** derive expected behaviour from **kernel source + real chip state** — extract
+the real efuse / chip-version from the pcap, never trust the byte a comment claims — then diff our
+*emitted bytes / computed values* against it. Treat every `always / never / skip / no-op` comment as
+a **hypothesis to falsify**, default-assume-wrong until silicon or source proves it. Walk the kernel
+**call graph**, classify each leaf `faithful / hardcoded / omitted / N-A`, make every "faithful"
+cite its anchor, and prioritise conditional / per-card / runtime leaves over straight-line tables.
+Worked example + per-axis plan: each chip's `<CHIP>.md` port-completeness audit section (start with
+`chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md`). This is fleet-wide — every driver brought up against one
+dev card likely shares the pattern.
+
 ### Porting never needs hardware when you have the capture + the source
 
 The capture has every read **and** write; the source has the algorithm — so `verify_pcap.py`
