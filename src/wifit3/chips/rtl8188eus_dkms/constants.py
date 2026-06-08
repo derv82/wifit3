@@ -28,6 +28,16 @@ RTL_ID = BIT(23)            # 1: Test chip, 0: MP chip
 CHIP_VER_RTL_MASK = 0xF000  # cut version, bits 12..15
 CHIP_VER_RTL_SHIFT = 12
 
+# --- probe-time adapter-info read (before power-on) [SRC] read_adapter_info_8188eu ---
+REG_9346CR = 0x000A          # EEPROM/efuse ctrl: boot-from + autoload status
+REG_SYS_CLKR = 0x0008        # system clock enable (efuse loader clock)
+BOOT_FROM_EEPROM = BIT(4)    # REG_9346CR: 1=93C46 EEPROM, 0=E-Fuse
+EEPROM_EN = BIT(5)           # REG_9346CR: autoload OK
+EFUSE_ACCESS_ON = 0x69       # REG_EFUSE_ACCESS enable [SRC] rtl8188e_spec.h
+FEN_ELDR = BIT(12)           # REG_SYS_FUNC_EN: efuse loader reset (EfusePowerSwitch)
+LOADER_CLK_EN = BIT(5)       # REG_SYS_CLKR: efuse loader clock
+ANA8M = BIT(1)               # REG_SYS_CLKR: 8M ANA clock
+
 # --- power-on / MAC enable [SRC] hal_com_reg.h ----------------------------
 REG_SYS_FUNC_EN = 0x0002
 REG_RSV_CTRL = 0x001C

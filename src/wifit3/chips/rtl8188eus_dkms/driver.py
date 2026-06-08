@@ -170,6 +170,7 @@ class Rtl8188eusDkmsDriver:
         """Vendor probe order: power-on, then the IOL efuse read (crystal_cap / MAC /
         TX-power), then the MISC01 queue/page setup."""
         t = self.transport
+        efuse.read_adapter_info(t)          # probe: chip-version + autoload + efuse-access ON
         pwrseq.power_on(t)
         params = efuse.read_chip_params(t)
         mac.init_misc01(t)

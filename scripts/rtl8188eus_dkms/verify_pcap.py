@@ -123,6 +123,7 @@ def _walk_init(w: Walk, out: dict) -> None:
     """The deterministic bring-up, in driver source order, threaded through one cursor.
     No re-anchoring: each call consumes the next span of the same wire. Mirrors
     driver.py connect() + _phy_config()."""
+    w.run(lambda t: efuse.read_adapter_info(t), "adapter-info")   # probe (pre power-on)
     w.run(lambda t: pwrseq.power_on(t), "power-on")
     params, _ = w.run(lambda t: efuse.read_chip_params(t), "efuse")
     out["params"] = params
@@ -254,24 +255,36 @@ def run(cap: str | None = None) -> int:
     dev = rp.find_card_device(pcap)
     rp.audit_coverage(pcap, dev)
 
-    # ONE op list, anchored at the first power-seq op (the [0..5] chip-version probe ahead of
-    # it is a read-only prologue we don't reproduce — a named, counted waiver).
+    # ONE op list, anchored at the very first vendor op: read_chip_version's REG_SYS_CFG read
+    # (the head of the probe prologue, now reproduced by efuse.read_adapter_info).
     full = rp.extract_ops(pcap, dev)
-    anchor = next((i for i, o in enumerate(full)
-                   if o.get("addr") == REG_APS_FSMCO_B2), None)
+    anchor = next((i for i, o in enumerate(full) if _is_syscfg_poll(o)), None)
     if anchor is None:
-        print(f"FAIL: power-on anchor (0x{REG_APS_FSMCO_B2:04x}) not in capture")
+        print("FAIL: no REG_SYS_CFG/4 read (read_chip_version) in capture")
         return 1
-    waived_prologue = anchor
 
-    # Filter the async SYS_CFG poll out of the cursor stream (counted, named — not a strip):
-    # it interleaves at arbitrary points, so it cannot be positionally dispatched.
+    # Every R 0xF0/4 is now a real, identified op — read_chip_version at probe
+    # (read_adapter_info), or phydm_receiver_blocking at the head of a watchdog tick
+    # (preceded by the sreset FMETHR read 0x1c8). KEEP both. The ONLY exception is the
+    # dynamic-check timer firing once mid-init (hw_init not complete -> no FA stats), an async
+    # fire whose position varies per boot and so can't be positionally dispatched: waived.
     from_anchor = full[anchor:]
-    syscfg = sum(1 for o in from_anchor if _is_syscfg_poll(o))
-    ops = [o for o in from_anchor if not _is_syscfg_poll(o)]
+    ops, syscfg, kept_chipver = [], 0, False
+    for i, o in enumerate(from_anchor):
+        if _is_syscfg_poll(o):
+            prev = from_anchor[i - 1] if i > 0 else None
+            if not kept_chipver:
+                kept_chipver = True
+                ops.append(o)                       # read_chip_version (probe)
+            elif prev and prev["kind"] == "R" and prev.get("addr") == 0x01C8:
+                ops.append(o)                       # phydm_receiver_blocking (in a tick)
+            else:
+                syscfg += 1                         # async dynamic-check fire, mid-init
+        else:
+            ops.append(o)
     total = len(ops)
     print(f"{pcap.name}: card=dev{dev}, {len(full)} vendor ops "
-          f"({waived_prologue} prologue + {syscfg} syscfg-poll waived) -> walk {total} ops")
+          f"({syscfg} async mid-init SYS_CFG read waived) -> walk {total} ops")
 
     w = Walk(ops)
     out: dict = {}
@@ -300,8 +313,8 @@ def run(cap: str | None = None) -> int:
           f"(sreset poll + phydm watchdog, {sum(ticks)} ops byte-faithful, carried state)")
     for reason, n in w.waived.most_common():
         print(f"  waived {n:5} ops  — {reason}")
-    print(f"  prologue {waived_prologue:4} ops  — [0..5] chip-version probe (read-only)")
-    print(f"  syscfg   {syscfg:4} ops  — async SYS_CFG poll (R 0xF0/4), separate timer")
+    print(f"  syscfg   {syscfg:4} ops  — dynamic-check timer firing once mid-init "
+          f"(phydm_receiver_blocking SYS_CFG read; hw_init incomplete, no FA stats)")
 
     if frontier is not None:
         fa = frontier

@@ -30,6 +30,19 @@ from . import bb, powertrack
 
 WATCHDOG_PERIOD_S = 2.0        # kernel DIG-watchdog cadence
 
+_REG_SYS_CFG = 0x00F0          # phydm_receiver_blocking reads the 8188E cut from SYS_CFG[15:12]
+
+
+def _receiver_blocking(t) -> None:
+    """``phydm_receiver_blocking`` [SRC] phydm.c:3041 — the first op of ``phydm_watchdog``
+    (before the FA stats). Reads SYS_CFG (``odm_get_bb_reg(dm, 0xf0, MASKDWORD)``) for the
+    8188E cut, which gates a narrowband-interference notch (``receiver_blocking``) on ch1/ch13.
+    The notch only arms when ``consecutive_idle_time > 10 && !mp_mode && adaptivity_enable`` —
+    never true in the cold-boot capture (the card never idles long enough on ch1/13), so the
+    wire shows a lone SYS_CFG read each tick. Ported as the read; the conditional notch is a
+    separate (live-relevant) milestone."""
+    t.read32(_REG_SYS_CFG)
+
 # --- IGI / DIG (11N) [SRC] phydm_dig.c ------------------------------------
 _REG_IGI = 0x0C50              # ODM_REG(IGI_A_11N), mask 0x7f
 _IGI_MASK = 0x7F
@@ -307,6 +320,7 @@ def watchdog_tick(t, state: WatchdogState, pt_state) -> DigTick:
     -> DIG -> CCK-PD -> adaptivity -> halrf thermal power-track -> NHM/CLM env-monitor. Both
     ``state`` (DIG/CCK-PD/adaptivity/NHM) and ``pt_state`` (thermal) are carried across ticks
     (the driver owns them; the chip stays in sync)."""
+    _receiver_blocking(t)                # phydm_watchdog's first op: SYS_CFG cut read
     fa = _fa_statistics(t)
     _dig(t, state, fa.cnt_all)
     _cck_pd(t, state, fa.cck_fa)

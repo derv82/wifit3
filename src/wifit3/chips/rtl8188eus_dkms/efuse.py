@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from .constants import (
+    ANA8M,
     CMD_EFUSE_PATCH,
     CMD_READ_EFUSE_MAP,
     DEFAULT_CRYSTAL_CAP,
@@ -27,10 +28,14 @@ from .constants import (
     EEPROM_TX_PWR_INX_88E,
     EEPROM_XTAL_88E,
     EFUSE_ACCESS_OFF,
+    EFUSE_ACCESS_ON,
     EFUSE_MAP_LEN_88E,
     EFUSE_MAX_SECTION_88E,
     EFUSE_MAX_WORD_UNIT,
     EFUSE_REAL_CONTENT_LEN_88E,
+    FEN_ELDR,
+    LOADER_CLK_EN,
+    REG_9346CR,
     REG_HMEBOX_E0,
     REG_PKT_BUFF_ACCESS_CTRL,
     REG_PKTBUF_DBG_ADDR,
@@ -38,12 +43,40 @@ from .constants import (
     REG_PKTBUF_DBG_DATA_L,
     REG_EFUSE_ACCESS,
     REG_SYS_CFG,
+    REG_SYS_CLKR,
+    REG_SYS_FUNC_EN,
     REG_TDECTRL,
     REG_TXPKTBUF_DBG,
     SW_OFFLOAD_EN,
     TXPKT_BUF_SELECT,
 )
 from .firmware import _8051_reset
+
+
+def read_adapter_info(t) -> None:
+    """Probe-time chip-info read, before power-on [SRC] read_adapter_info_8188eu (USB).
+
+    Three steps the kernel runs at USB probe, ahead of ``_InitPowerOn``:
+      * ``read_chip_version_8188e`` — read REG_SYS_CFG (cut/vendor/IC type) [rtl8188e_hal_init.c:2451]
+      * ``GetEEPROMSize8188E`` + ``_ReadPROMContent`` — read REG_9346CR (boot-from-EEPROM vs
+        E-Fuse, autoload OK) [rtl8188e_hal_init.c:2800, usb_halinit.c:2089]
+      * ``hal_EfusePowerSwitch_RTL8188E(bWrite=_FALSE, PwrState=_TRUE)`` — REG_EFUSE_ACCESS=ON,
+        then make the e-fuse loader reset + clock valid [rtl8188e_hal_init.c:1080]
+
+    The SYS_FUNC_EN / SYS_CLKR steps are read-modify-write that only write when a required bit
+    is clear; on this card those bits are already set, so the wire shows reads only. All reads
+    feed software state (version/autoload); nothing here gates on hardware we don't have."""
+    t.read32(REG_SYS_CFG)                       # read_chip_version_8188e
+    t.read16(REG_9346CR)                        # GetEEPROMSize8188E: BOOT_FROM_EEPROM?
+    t.read8(REG_9346CR)                         # _ReadPROMContent: boot-select + autoload flag
+    # hal_EfusePowerSwitch_RTL8188E(_FALSE, _TRUE)
+    t.write8(REG_EFUSE_ACCESS, EFUSE_ACCESS_ON)
+    fn = t.read16(REG_SYS_FUNC_EN)
+    if not (fn & FEN_ELDR):
+        t.write16(REG_SYS_FUNC_EN, fn | FEN_ELDR)
+    clk = t.read16(REG_SYS_CLKR)
+    if (not (clk & LOADER_CLK_EN)) or (not (clk & ANA8M)):
+        t.write16(REG_SYS_CLKR, clk | LOADER_CLK_EN | ANA8M)
 
 _IOL_POLL_CAP = 100000   # generous bound; the captured poll always converges
 
