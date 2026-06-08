@@ -233,7 +233,11 @@ class Rtl8188eusDkmsDriver:
             return False
         loop = asyncio.get_running_loop()
         bmc = bool(frame_bytes[4] & 0x01)   # addr1 group-address (multicast) bit
-        desc = tx.build_mgmt_txdesc(len(frame_bytes), bmc=bmc)
+        # The driver copies the frame's 802.11 sequence number into the TX descriptor (the
+        # wire shows desc-seq == frame-seqctrl>>4); seqctrl is bytes [22:24] of the MPDU.
+        seqnum = ((int.from_bytes(frame_bytes[22:24], "little") >> 4) & 0xFFF
+                  if len(frame_bytes) >= 24 else 0)
+        desc = tx.build_mgmt_txdesc(len(frame_bytes), bmc=bmc, seqnum=seqnum)
         async with self._io_lock:           # don't TX mid-retune (set_channel)
             await loop.run_in_executor(None, self.transport.bulk_out, desc + frame_bytes)
         return True

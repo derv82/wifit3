@@ -1,10 +1,20 @@
 """RTL8188EUS TX descriptor builder + checksum (management inject).
 
-Ports ``rtl8188e_fill_fake_txdesc`` [SRC] usb/rtl8188eu_xmit.c:72 — the vendor's minimal,
-self-contained management TX descriptor (what it hands the HW to transmit a frame
-directly), for the not-PsPoll / not-data-frame case. That field set is exactly what a
-monitor-mode deauth / WEP replay needs: one management frame at the HW-default rate
-(DESC_RATE1M, no rate adaptation), HW-assigned sequence number, no HW encryption.
+Ports the **management-frame branch** of ``update_txdesc`` [SRC] usb/rtl8188eu_xmit.c:445
+(``MGNT_FRAMETAG``) — the descriptor the vendor driver actually builds for an injected
+mgmt frame (what aireplay-ng's monitor inject rides), byte-diffed against the cold-boot
+capture's deauth + probe-request descriptors. It is NOT ``fill_fake_txdesc`` (that builds
+the null/reserved-page frame); the two share txdw0/3/4 but the injected-mgmt one also stamps
+MACID + RAID (txdw1) and the retry-limit (txdw5), which the fake one leaves zero.
+
+Field set for a monitor-injected mgmt frame at the HW-default rate (DESC_RATE1M, no rate
+adaptation), HW-assigned sequence number, no HW encryption:
+  txdw0  OWN|FSG|LSG, OFFSET=TXDESC_SIZE, PKT_SIZE  (+ BMC if addr1 is group-addressed)
+  txdw1  MACID(1) | QSEL=QSLT_MGNT | RAID(6)        [WIRE: mac_id 1, raid 6 — see constants]
+  txdw3  EN_HWSEQ (8<<28)                           (Hw assigns the sequence number)
+  txdw4  USERATE (driver picks rate -> 1M) | HW_SSN
+  txdw5  RTY_LMT_EN | retry-limit 12 | MRateToHwRate(1M)=0
+  txdw7  checksum (computed last)
 
 The 32-byte descriptor and the XOR checksum (``rtl8188e_cal_txdesc_chksum``: XOR of the
 16 little-endian u16 with the checksum field txdw7[15:0] zeroed first) are 8188e-specific.
@@ -17,13 +27,18 @@ from __future__ import annotations
 
 from .constants import (
     BMC,
+    DATA_RETRY_LIMIT_12,
     FSG,
     LSG,
+    MGMT_INJECT_MACID,
+    MGMT_INJECT_RAID,
     OFFSET_SHT,
     OFFSET_SZ,
     OWN,
     QSEL_SHT,
     QSLT_MGNT,
+    RATE_ID_SHT,
+    RTY_LMT_EN,
     TXDESC_SIZE,
 )
 
@@ -43,15 +58,13 @@ def txdesc_checksum(desc: bytes) -> int:
     return cs & 0xFFFF
 
 
-def build_mgmt_txdesc(pkt_len: int, *, bmc: bool = False) -> bytes:
-    """Build the 32-byte management TX descriptor for one frame.
-
-    [SRC] rtl8188e_fill_fake_txdesc (not-PsPoll / not-data): txdw0 OWN|FSG|LSG, OFFSET =
-    TXDESC_SIZE, PKT_SIZE; txdw1 QUEUE_SEL=QSLT_MGNT; txdw3 bit3 (8<<28, per TimChen);
-    txdw4 BIT7 (HW assigns the sequence number) + BIT8 (driver uses rate -> the default
-    DESC_RATE1M); then the descriptor checksum. ``bmc`` sets the broadcast/multicast bit
-    when addr1 is a group address (e.g. a broadcast deauth). No SEC_TYPE — the injected
-    frame is already final (no HW encryption)."""
+def build_mgmt_txdesc(pkt_len: int, *, bmc: bool = False, seqnum: int = 0) -> bytes:
+    """Build the 32-byte management TX descriptor for one injected frame [SRC] update_txdesc
+    MGNT_FRAMETAG branch (rtl8188eu_xmit.c:445). ``bmc`` sets the broadcast/multicast bit when
+    addr1 is a group address (e.g. a broadcast deauth). ``seqnum`` is the frame's 802.11
+    sequence number, which the driver copies into txdw3 (the wire confirms desc-seq ==
+    frame-seqctrl>>4 across every injected frame). No SEC_TYPE — the frame is already final
+    (no HW encryption). Rate is the driver default DESC_RATE1M (MRateToHwRate=0)."""
     d = bytearray(TXDESC_SIZE)
     dw0 = (OWN | FSG | LSG
            | (((TXDESC_SIZE + OFFSET_SZ) << OFFSET_SHT) & 0x00FF0000)
@@ -59,8 +72,11 @@ def build_mgmt_txdesc(pkt_len: int, *, bmc: bool = False) -> bytes:
     if bmc:
         dw0 |= BMC
     _put32(d, 0, dw0)
-    _put32(d, 4, (QSLT_MGNT << QSEL_SHT) & 0x00001F00)   # txdw1: MGMT queue
-    _put32(d, 12, 8 << 28)                               # txdw3: bit3 (TimChen)
-    _put32(d, 16, (1 << 7) | (1 << 8))                   # txdw4: HW seq + driver-uses-rate
-    _put32(d, 28, txdesc_checksum(d))                    # txdw7: checksum (computed last)
+    _put32(d, 4, (MGMT_INJECT_MACID & 0x3F)                  # txdw1: MACID
+           | ((QSLT_MGNT << QSEL_SHT) & 0x00001F00)          #        QSEL = MGMT queue
+           | ((MGMT_INJECT_RAID << RATE_ID_SHT) & 0x000F0000))  #      RAID
+    _put32(d, 12, (8 << 28) | ((seqnum << 16) & 0x0FFF0000))  # txdw3: EN_HWSEQ | seq number
+    _put32(d, 16, (1 << 7) | (1 << 8))                       # txdw4: HW_SSN | USERATE
+    _put32(d, 20, RTY_LMT_EN | DATA_RETRY_LIMIT_12)          # txdw5: retry-limit en + 12, rate 0
+    _put32(d, 28, txdesc_checksum(d))                        # txdw7: checksum (computed last)
     return bytes(d)

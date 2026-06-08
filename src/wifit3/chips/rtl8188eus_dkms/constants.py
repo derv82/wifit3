@@ -85,7 +85,7 @@ REG_BAR_MODE_CTRL = 0x04CC
 BAR_MODE_CTRL_DISABLE = 0x0201FFFF   # disable BAR (suggested by Scott)
 REG_HWSEQ_CTRL = 0x0423              # HW SEQ CTRL: 0xFF = enable HW seq num for all queues
 
-# --- TX descriptor (rtl8188e_fill_fake_txdesc) [SRC] rtl8188e_xmit.h, hal_com.h ---
+# --- TX descriptor (update_txdesc MGNT path) [SRC] rtl8188e_xmit.h, rtl8188eu_xmit.c:445 ---
 TXDESC_SIZE = 32              # old IC (8188E)
 OFFSET_SZ = 0
 OFFSET_SHT = 16
@@ -95,6 +95,13 @@ OWN = BIT(31)               # descriptor owned by HW (ready to transmit)
 BMC = BIT(24)               # broadcast/multicast (group-addressed addr1)
 QSEL_SHT = 8
 QSLT_MGNT = 0x12            # management queue
+RATE_ID_SHT = 16            # txdw1 RAID (rate-adaptive id) shift
+RTY_LMT_EN = BIT(17)        # txdw5 retry-limit enable
+DATA_RETRY_LIMIT_12 = 0x00300000  # txdw5 retry limit = 12 (no retry_ctrl) [SRC] :482
+# Monitor-injected mgmt frames carry these pattrib defaults on the wire (mac_id 1, raid 6),
+# constant across the captured probe-req + deauth [WIRE] cap1 aireplay TX.
+MGMT_INJECT_MACID = 1
+MGMT_INJECT_RAID = 6
 
 # --- BB byte masks (phy_set_bb_reg) [SRC] Hal8188EPhyReg.h ----------------
 bMaskByte0 = 0x000000FF
