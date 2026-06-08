@@ -49,6 +49,19 @@ bimodal collapse, not just the mean.
 
 ## Status
 
+**NEXT (resume here).** The full no-link `phydm_watchdog` DM tick is byte-faithful ×3 (94/94,
+`verify_dm_tick`) and HW-healthy: DIG adapts (IGI bounces 0x21↔0x23 with FA), the CCK FA is now
+read (the old IGI-only didn't), the canary is clean, and the DM caught **+16–33% more beacons**
+than seed-only on a quiet ~25-AP ch1. To settle the default-flip:
+1. **The decisive A/B vs mainline** — `scan_hw.py` drives the DKMS driver only; write a mainline
+   scan and run DKMS-full-DM vs mainline *alternating* in a **busy (~70-AP)** environment with a
+   real weak-AP pool (the quiet test env can't differentiate them). Canary-floor A/B too.
+2. **Full operational Z=0** — verify the thermal-arm tick (every-other watchdog fire) + the
+   per-hop channel tunes (model on `rtl8814au_dkms/verify_channels.py`).
+3. **Deferred (guarded, not silent):** the thermal IQK/LCK re-cal fires at |Δthermal| ≥ 8 °C —
+   it didn't trigger in a 30 s scan, but a long session will; port it (IQK is the
+   InitHalDm-deferred subsystem) before relying on long-running TX.
+
 **Init + the RX/TX/monitor pipeline are COMPLETE and HW-PROVEN. The operational phydm DM is being
 faithfully reconstructed — that, not a mystery register, is the weak-AP gap's root cause.**
 [HW 2026-06-07] A live TL-WN722N v2 (2357:010c) brought up clean through the full chain.
