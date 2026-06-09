@@ -172,6 +172,17 @@ def _is_openable(dev: usb.core.Device) -> bool:
         return False          # Windows: enumerable but no WinUSB driver to open it
     except usb.core.USBError:
         return False          # busy / access-denied — not ready to drive either way
+    finally:
+        # get_active_configuration() opens a libusb handle to read the descriptor. On
+        # Windows WinUSB that handle is *exclusive*, so leaking it makes the NEXT probe
+        # (1 s later, and other processes) fail with ACCESS_DENIED — a ready card then
+        # flips to present-but-unbound on the next refresh. Always release what we opened
+        # here; drivers re-open lazily in connect(). dispose on a never-opened dev is a
+        # harmless no-op.
+        try:
+            usb.util.dispose_resources(dev)
+        except Exception:
+            pass
 
 
 class WlanDeviceManager:
