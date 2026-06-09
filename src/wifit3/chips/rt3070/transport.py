@@ -24,6 +24,7 @@ as ``rt2x00usb_vendor_request_buff`` does.
 """
 from __future__ import annotations
 
+import errno
 import logging
 import time
 
@@ -34,20 +35,22 @@ from .constants import get_field, set_field
 
 logger = logging.getLogger(__name__)
 
-# The pyusb/libusb analog of the kernel's "device disappeared" set [SRC rt2x00usb.c:25-26
-# rt2x00usb_check_usb_error -ENODEV/-ENOENT]. POSIX errno (Linux libusb) OR the libusb
-# backend code (Windows/WinUSB, where errno is often unset).
-_ERRNO_DEVICE_GONE = frozenset({19, 2})        # ENODEV, ENOENT
-_LIBUSB_DEVICE_GONE = frozenset({-4, -5})      # LIBUSB_ERROR_NO_DEVICE, _NOT_FOUND
+_LIBUSB_NO_DEVICE = -4        # LIBUSB_ERROR_NO_DEVICE
 
 
 def _is_device_gone(err: usb.core.USBError) -> bool:
-    """True only when the error means the device is truly gone (don't retry). Every
-    other USB error (NAK/stall/timeout/proto) is transient and retried — unknown codes
-    default to transient, since the wall-clock deadline bounds the loop either way."""
-    if getattr(err, "errno", None) in _ERRNO_DEVICE_GONE:
+    """True only when the device is *truly* gone — retry everything else.
+
+    Faithful to the kernel's intent (rt2x00usb_check_usb_error stops on a removed device)
+    but mapped to libusb reality: only ``LIBUSB_ERROR_NO_DEVICE (-4)`` / ``ENODEV`` mean
+    physically-gone. NOT ``LIBUSB_ERROR_NOT_FOUND (-5)`` / ``ENOENT`` — on Windows/WinUSB
+    that's a *transient* stale-handle / mid-enumeration hiccup, not a removed device, so
+    retrying it through the deadline is what recovers a warm bring-up (the kernel's literal
+    ``-ENOENT`` is a URB-unlink, a different beast). Matches chips/mt76x0u's
+    ``_is_fatal_usb_error``; unknown codes default to transient (the deadline bounds it)."""
+    if getattr(err, "errno", None) == errno.ENODEV:
         return True
-    return getattr(err, "backend_error_code", None) in _LIBUSB_DEVICE_GONE
+    return getattr(err, "backend_error_code", None) == _LIBUSB_NO_DEVICE
 
 
 class RT3070Transport:
