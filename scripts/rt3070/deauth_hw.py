@@ -141,6 +141,7 @@ async def run(args) -> int:
           f"{args.interval:g}s), watching for the reconnect handshake. Ctrl-C to stop.")
     start = time.monotonic()
     sent = 0
+    tx_error = None
     try:
         while time.monotonic() - start < args.listen:
             for _ in range(args.count):
@@ -157,12 +158,17 @@ async def run(args) -> int:
     except KeyboardInterrupt:
         pass
     except usb.core.USBError as e:
-        print(f"\n[FAIL] bulk-OUT error after {sent} frames: {e} "
-              f"(if the pipe wedged, unplug/replug and rerun)")
+        tx_error = e
+    finally:
+        # Always stop the RX reader before the loop tears down, else its
+        # call_soon_threadsafe hits a closed loop ("Event loop is closed").
+        print()
         await driver.close()
+
+    if tx_error is not None:
+        print(f"[FAIL] bulk-OUT error after {sent} frames: {tx_error} "
+              f"(if the pipe wedged, unplug/replug and rerun)")
         return 1
-    print()
-    await driver.close()
 
     print(f"[RESULT] injected {sent} deauth frames, no pipe fault. "
           f"Heard {tally.ap_beacons} target-AP beacons, {tally.frames} frames total, "

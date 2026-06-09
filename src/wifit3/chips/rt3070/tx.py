@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 
 BROADCAST_MAC = b"\xff" * 6
 DEAUTH_REASON_CLASS3 = 7
+# 802.11 duration/ID (NAV) aireplay-ng stamps into its deauth template — matched against
+# capture-1's bulk-OUT (every wire deauth carried dur=0x013a). The sequence number is
+# stamped per-frame by the injector (driver.inject_frame), not here.
+DEAUTH_DURATION = 0x013A
 
 
 def build_mgmt_txdesc(frame_len: int, *, use_no_ack: bool = True, mcs: int = 0,
@@ -88,11 +92,13 @@ def send_frame(dev: usb.core.Device, ep: int, frame: bytes, *, use_no_ack: bool 
 
 def build_deauth(target_mac: bytes, bssid: bytes, *, src_mac: bytes | None = None,
                  reason: int = DEAUTH_REASON_CLASS3) -> bytes:
-    """A 26-byte 802.11 deauth MPDU (no FCS)."""
+    """A 26-byte 802.11 deauth MPDU (no FCS), byte-matching aireplay-ng's template:
+    FC=0xC000, duration=0x013a, addr1=target / addr2=src / addr3=bssid, seqctl=0 (the
+    injector stamps the running sequence number), reason. Verified against capture-1."""
     if len(target_mac) != 6 or len(bssid) != 6:
         raise ValueError("MAC addresses must be 6 bytes")
     src_mac = bssid if src_mac is None else src_mac
     if len(src_mac) != 6:
         raise ValueError("src_mac must be 6 bytes")
-    return (bytes([0xC0, 0x00, 0x00, 0x00]) + target_mac + src_mac + bssid
-            + bytes([0x00, 0x00]) + struct.pack("<H", reason))
+    return (bytes([0xC0, 0x00]) + struct.pack("<H", DEAUTH_DURATION)
+            + target_mac + src_mac + bssid + bytes([0x00, 0x00]) + struct.pack("<H", reason))

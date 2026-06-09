@@ -15,6 +15,7 @@ confirmed EFUSE addressing bug); see ``chips/rt3070/RT3070.md`` for the ground-t
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 from typing import Callable, ClassVar, List, Optional
 
@@ -53,6 +54,7 @@ class RT3070Driver:
         self._lna_gain: int = 0          # current-channel LNA gain (RSSI conversion)
         self._bulk_in_ep: Optional[int] = None
         self._bulk_out_ep: Optional[int] = None
+        self._tx_seq: int = 0            # running 802.11 seq stamped into injected frames
         self._rx_cb: Optional[Callable[[dict], None]] = None
         self._reader: Optional[RxReaderThread] = None
         self._io_lock = asyncio.Lock()   # serialize EP0 batches (set_channel vs inject)
@@ -162,12 +164,27 @@ class RT3070Driver:
         if self._bulk_out_ep is None:
             logger.error("RT3070 inject: no bulk-OUT endpoint")
             return False
+        frame = self._stamp_seq(frame_bytes)
         loop = asyncio.get_running_loop()
         async with self._io_lock:
-            await loop.run_in_executor(
-                None, tx.send_frame, self.transport.dev, self._bulk_out_ep,
-                frame_bytes, use_no_ack)
+            await loop.run_in_executor(None, functools.partial(
+                tx.send_frame, self.transport.dev, self._bulk_out_ep, frame,
+                use_no_ack=use_no_ack))
         return True
+
+    def _stamp_seq(self, frame: bytes) -> bytes:
+        """Stamp the next running sequence number into the frame's seqctl (bytes 22-23,
+        ``seqnum << 4`` little-endian) — TXWI NSEQ=0 means the chip transmits the frame's
+        own seqctl, so without this every inject shares seq=0 and a receiver's duplicate
+        filter drops all but the first (the deauth then 'works' once and never again).
+        aireplay-ng increments identically. Returns a copy; caller's bytes untouched."""
+        if len(frame) < 24:
+            return frame
+        seq = self._tx_seq & 0xFFF
+        self._tx_seq = (self._tx_seq + 1) & 0xFFF
+        buf = bytearray(frame)
+        buf[22:24] = ((seq << 4) & 0xFFFF).to_bytes(2, "little")
+        return bytes(buf)
 
     async def close(self) -> None:
         if self._reader is not None:
