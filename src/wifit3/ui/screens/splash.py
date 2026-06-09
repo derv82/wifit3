@@ -294,8 +294,8 @@ class SplashView(Screen):
         list_view.disabled = True
         button.disabled = True
         status.update(
-            f"[bold yellow]Installing WinUSB for {u.description} — accept the Windows "
-            f"elevation prompt…[/bold yellow]")
+            f"[bold yellow]Installing WinUSB for {u.description} — accept the prompt; the "
+            f"driver install can take a minute or two…[/bold yellow]")
 
         result = None
         try:
@@ -321,9 +321,13 @@ class SplashView(Screen):
             status.update("[yellow]Elevation cancelled — WinUSB was not installed.[/yellow]")
         else:
             status.update("[bold red]WinUSB install failed.[/bold red]")
-            details = f"libwdi code {result.wdi_code}" if result.wdi_code is not None else None
+            bits = []
+            if result.wdi_code is not None:
+                bits.append(f"libwdi code {result.wdi_code}")
+            if result.detail:
+                bits.append(result.detail)
             self.app.push_screen(
-                SetupErrorDialog("WinUSB install failed", result.message, details))
+                SetupErrorDialog("WinUSB install failed", result.message, " · ".join(bits) or None))
 
     @work(exclusive=True)
     async def perform_restore(self, iface) -> None:

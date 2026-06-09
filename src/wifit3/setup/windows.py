@@ -128,6 +128,7 @@ class InstallResult:
     message: str
     cancelled: bool = False
     wdi_code: int | None = None
+    detail: str | None = None   # wdi-simple's own last output line, for the error modal
 
 
 @dataclass(frozen=True)
@@ -166,26 +167,37 @@ def wdi_simple_path() -> Path:
     return exe
 
 
-def _build_args(vid: int, pid: int, iid: int = 0, name: str | None = None,
-                dest: str | None = None) -> list[str]:
+def _build_args(vid: int, pid: int, iid: int | None = None, name: str | None = None,
+                dest: str | None = None, log_level: int | None = None) -> list[str]:
     """wdi-simple.exe argv to bind ``vid:pid`` to WinUSB.
 
     VID/PID are passed as ``0x``-hex (wdi-simple strtol-parses either base, and hex matches
-    how the rest of the codebase refers to them). ``iid`` is the interface MI — 0 for the
-    single-interface cards we target. ``dest`` is the driver-extraction dir: wdi-simple
-    defaults it to the *relative* ``usb_driver``, which fails when the elevated process runs
-    from ``C:\\Windows\\System32`` (WDI_ERROR_ACCESS), so we always pass an absolute one."""
+    how the rest of the codebase refers to them).
+
+    ``iid`` (interface MI) is **omitted by default**. wdi-simple's ``-i`` flag *also* sets
+    is_composite=TRUE, so passing it for a simple single-interface card makes the install
+    target ``USB\\VID&PID&MI_00`` — which never matches the real ``USB\\VID&PID`` node, so the
+    INF installs "successfully" but binds nothing and the card is left driverless. Pass
+    ``iid`` only for genuinely composite devices (libwdi issue #206).
+
+    ``dest`` is the driver-extraction dir: wdi-simple defaults it to the *relative*
+    ``usb_driver``, which fails when the elevated process runs from ``C:\\Windows\\System32``
+    (WDI_ERROR_ACCESS), so we always pass an absolute one. ``log_level`` (0=debug..4=none)
+    cranks wdi-simple's own logging into the captured output."""
     args = [
         "--vid", f"0x{vid:04x}",
         "--pid", f"0x{pid:04x}",
         "--type", str(_WDI_TYPE_WINUSB),
-        "--iid", str(iid),
         "--timeout", str(_WDI_PENDING_TIMEOUT_MS),
     ]
+    if iid is not None:
+        args += ["--iid", str(iid)]
     if name:
         args += ["--name", name]
     if dest:
         args += ["--dest", dest]
+    if log_level is not None:
+        args += ["--log", str(log_level)]
     return args
 
 
@@ -196,6 +208,20 @@ def _wdi_message(code: int) -> str:
 def _signed32(dword: int) -> int:
     """Reinterpret an unsigned process exit code as a signed int32 (WDI codes are negative)."""
     return dword - 0x1_0000_0000 if dword >= 0x8000_0000 else dword
+
+
+def _read_text(path: Path) -> str:
+    """Read a captured log file (tolerant of console-codepage bytes); "" if absent."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def _last_line(text: str) -> str:
+    """The last non-blank line of wdi-simple's output — the most telling bit for the modal."""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    return lines[-1] if lines else ""
 
 
 def _restore_command(inf: str) -> str:
@@ -245,13 +271,16 @@ def _run_elevated(file: str, params: str) -> _ElevatedRun:
         kernel32.CloseHandle(hproc)
 
 
-def install_winusb(vid: int, pid: int, iid: int = 0, name: str | None = None) -> InstallResult:
+def install_winusb(vid: int, pid: int, iid: int | None = None,
+                   name: str | None = None) -> InstallResult:
     """Bind ``vid:pid`` to WinUSB by running the bundled wdi-simple.exe **elevated**.
 
     Driver install is inherently privileged, so this raises one UAC prompt and blocks until
-    the elevated process exits — call it OFF the Textual event loop. Returns an
-    :class:`InstallResult`; it does not raise for an install *failure* (reported via the
-    result) — only for a broken environment (non-Windows, or a missing bundled exe)."""
+    the elevated process exits — call it OFF the Textual event loop. wdi-simple runs from a
+    redirected batch so its console output (which can't pipe back across the UAC boundary) is
+    captured to a log and echoed to ``wifit3.log``. Returns an :class:`InstallResult`; it does
+    not raise for an install *failure* (reported via the result) — only for a broken
+    environment (non-Windows, or a missing bundled exe)."""
     if sys.platform != "win32":
         raise RuntimeError("install_winusb is Windows-only")
 
@@ -262,10 +291,26 @@ def install_winusb(vid: int, pid: int, iid: int = 0, name: str | None = None) ->
         dest.mkdir(parents=True, exist_ok=True)
     except OSError as e:
         logger.warning("WinUSB install: couldn't create extraction dir %s: %s", dest, e)
-    params = subprocess.list2cmdline(_build_args(vid, pid, iid, name, str(dest)))
-    logger.info("WinUSB install (elevated): %s %s", exe.name, params)
+    logpath = dest / "wdi-simple.log"
+    batpath = dest / "run-wdi.bat"
 
-    run = _run_elevated(str(exe), params)
+    args_str = subprocess.list2cmdline(
+        _build_args(vid, pid, iid=iid, name=name, dest=str(dest), log_level=0))
+    # Run wdi-simple from a one-shot batch that redirects its output to a log we read back. A
+    # .bat sidesteps cmd /c's quoting traps (the command both starts with a quoted path and
+    # redirects); the batch's exit code is wdi-simple's WDI return code.
+    bat = f'@echo off\r\n"{exe}" {args_str} > "{logpath}" 2>&1\r\n'
+    try:
+        batpath.write_text(bat, encoding="mbcs")
+    except OSError as e:
+        return InstallResult(ok=False, message=f"Couldn't stage the installer: {e}")
+    logger.info("WinUSB install (elevated): %s %s", exe.name, args_str)
+
+    run = _run_elevated(str(batpath), "")
+    output = _read_text(logpath)
+    if output:
+        logger.info("wdi-simple output:\n%s", output)
+
     if not run.launched:
         if run.win_error == _ERROR_CANCELLED:
             logger.info("WinUSB install: user declined the UAC prompt")
@@ -276,11 +321,13 @@ def install_winusb(vid: int, pid: int, iid: int = 0, name: str | None = None) ->
         return InstallResult(
             ok=False, message=f"Could not launch the installer (WinError {run.win_error}).")
     if run.exit_code is None:
-        return InstallResult(ok=False, message="The driver installer didn't finish in time.")
+        return InstallResult(ok=False, detail=_last_line(output),
+                             message="The driver installer didn't finish within 3 minutes.")
 
     wdi = run.exit_code
     logger.info("WinUSB install: wdi-simple exit=%d (%s)", wdi, _wdi_message(wdi))
-    return InstallResult(ok=(wdi == 0), wdi_code=wdi, message=_wdi_message(wdi))
+    return InstallResult(ok=(wdi == 0), wdi_code=wdi, message=_wdi_message(wdi),
+                         detail=_last_line(output) if wdi != 0 else None)
 
 
 def _reg_prop(setupapi, hdev, data: _SP_DEVINFO_DATA, prop: int) -> str | None:

@@ -24,17 +24,24 @@ from wifit3.setup.windows import (
 _X64 = platform.machine().lower() in ("amd64", "x86_64")
 
 
-def test_build_args_defaults():
+def test_build_args_defaults_omit_iid():
+    # No --iid for a simple device: wdi-simple's -i also sets is_composite=TRUE, so passing it
+    # targets USB\VID&PID&MI_00 and never binds the real single-interface node (libwdi #206).
     assert _build_args(0x148F, 0x3070) == [
-        "--vid", "0x148f", "--pid", "0x3070",
-        "--type", "0", "--iid", "0", "--timeout", "120000",
+        "--vid", "0x148f", "--pid", "0x3070", "--type", "0", "--timeout", "120000",
     ]
+    assert "--iid" not in _build_args(0x148F, 0x3070)
 
 
-def test_build_args_name_and_iid():
-    args = _build_args(0x0BDA, 0x8812, iid=2, name="Ralink RT3070 / ALFA AWUS036NH")
+def test_build_args_iid_only_when_composite():
+    args = _build_args(0x0BDA, 0x8812, iid=2, name="Composite card")
     assert args[args.index("--iid") + 1] == "2"
-    assert args[args.index("--name") + 1] == "Ralink RT3070 / ALFA AWUS036NH"
+    assert args[args.index("--name") + 1] == "Composite card"
+
+
+def test_build_args_log_level():
+    assert _build_args(0x0BDA, 0x8187, log_level=0)[-2:] == ["--log", "0"]
+    assert "--log" not in _build_args(0x0BDA, 0x8187)
 
 
 def test_build_args_omits_name_when_none():
