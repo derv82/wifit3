@@ -24,10 +24,30 @@ as ``rt2x00usb_vendor_request_buff`` does.
 """
 from __future__ import annotations
 
+import logging
+import time
+
 import usb.core
 
 from . import constants as C
 from .constants import get_field, set_field
+
+logger = logging.getLogger(__name__)
+
+# The pyusb/libusb analog of the kernel's "device disappeared" set [SRC rt2x00usb.c:25-26
+# rt2x00usb_check_usb_error -ENODEV/-ENOENT]. POSIX errno (Linux libusb) OR the libusb
+# backend code (Windows/WinUSB, where errno is often unset).
+_ERRNO_DEVICE_GONE = frozenset({19, 2})        # ENODEV, ENOENT
+_LIBUSB_DEVICE_GONE = frozenset({-4, -5})      # LIBUSB_ERROR_NO_DEVICE, _NOT_FOUND
+
+
+def _is_device_gone(err: usb.core.USBError) -> bool:
+    """True only when the error means the device is truly gone (don't retry). Every
+    other USB error (NAK/stall/timeout/proto) is transient and retried — unknown codes
+    default to transient, since the wall-clock deadline bounds the loop either way."""
+    if getattr(err, "errno", None) in _ERRNO_DEVICE_GONE:
+        return True
+    return getattr(err, "backend_error_code", None) in _LIBUSB_DEVICE_GONE
 
 
 class RT3070Transport:
@@ -39,10 +59,33 @@ class RT3070Transport:
     # rt2x00usb USB layer  [SRC rt2x00usb.c, rt2x00usb.h]
     # =====================================================================
     def _vendor_request(self, requesttype, request, value, index, data_or_length):
-        """One ``usb_control_msg``: value->wValue, index->wIndex [SRC
-        rt2x00usb.c:45-80 rt2x00usb_vendor_request]."""
-        return self.dev.ctrl_transfer(requesttype, request, value, index,
-                                      data_or_length, self.timeout_ms)
+        """One vendor control transfer, with the kernel's transient-error retry
+        [SRC rt2x00usb.c:45-80 rt2x00usb_vendor_request]: ``do { usb_control_msg }
+        while (time_before(jiffies, expire))`` — retry on ANY USB error except
+        'device gone', each attempt at half the timeout, until the wall-clock
+        deadline. This is what recovers a warm/replug bring-up where the chip's
+        control endpoint briefly NAKs/stalls mid-firmware-boot (the extra boot-signal
+        write seen in capture-2/3). Under the pcap gate the replay never errors, so
+        the loop runs exactly once and the gate is unaffected."""
+        per_attempt = max(1, self.timeout_ms // 2)        # kernel uses timeout/2 per try
+        deadline = time.monotonic() + self.timeout_ms / 1000.0
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                result = self.dev.ctrl_transfer(requesttype, request, value, index,
+                                                data_or_length, per_attempt)
+                if attempt > 1:
+                    logger.info("rt3070: vendor req 0x%02x off 0x%04x recovered on "
+                                "attempt %d", request, index, attempt)
+                return result
+            except usb.core.USBError as e:
+                if _is_device_gone(e) or time.monotonic() >= deadline:
+                    if attempt > 1:
+                        logger.warning("rt3070: vendor req 0x%02x off 0x%04x failed after "
+                                       "%d attempts: %s", request, index, attempt, e)
+                    raise
+                time.sleep(0.001)                          # avoid a busy-spin on fast-fail
 
     def register_multiread(self, offset: int, length: int) -> bytes:
         """MULTI_READ chunked to CSR_CACHE_SIZE [SRC rt2x00usb.c:114-143
