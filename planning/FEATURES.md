@@ -290,6 +290,47 @@ UI renders, arbitrates channel plans, routes TX, and handles dynamic add/remove
 discovery, so multi-device *enumeration* is mostly there; the work is everything
 downstream of "I have N interfaces" being singular today. The demo writes itself.
 
+### WinUSB-install mascot — "WiFFy" — post-alpha, Windows-only delight
+
+**Problem.** The WinUSB install (`wdi-simple` swapping the card's PnP driver) takes **1–3+
+minutes** — measured north of three on fast hardware — and there is *nothing* we can do to
+speed it up: it's a Windows driver install, not our code. During it the splash just reads
+"installing… this can take a minute" while the user stares at a seemingly-frozen screen,
+partway through a privileged operation they were already anxious enough to consent to. We
+can't make it faster; we can make it not *feel* like three minutes of dead air. This is a
+real UX hole, not just camp — there is genuinely no other lever for those minutes.
+
+**Approach.** **WiFFy** — the logo's own upside-down-triangle Wi-Fi bars with two googly eyes
+slapped on the green, an *original* character (Clippy in spirit, not in copyright — no
+Microsoft lawyers). It peels off the logo and floats down into the install screen when the
+bind starts, then chatters: one random
+intro line, then a loop of random one-liners on a timer (`random(intro)` → `loop:
+random(lines)`), slow-typed, until the install resolves — on success it waves off as the
+scanner takes over; on failure it **bolts off-screen the instant the error modal appears**,
+abandoning the user without a word (peak Clippy — he does not do consequences). It's *cheap*
+to build
+because the install already runs off-thread (`asyncio.to_thread`), so the event loop is wide
+open: the same Textual timer machinery that drives the REQUIRED-badge pulse drives the
+float-down, the type-on text, and the line rotation with zero contention. (The "bright letter
+flowing through a word" shimmer — a highlight index walked through the string per tick — is
+the natural speech-text flourish if we want it.)
+
+**Tone — keep it on-brand for an *authorized* tool.** Self-aware Clippy parody: lean into
+CTF / "your own AP" / engagement-scoping humor, dumb references and shoutouts — *not* literal
+how-to-trespass copy (this is an authorized-auditing tool; the documented lines stay parody,
+not instruction). e.g. *"It looks like you're auditing your own network — want a hand?"* /
+*"Reticulating splines…"* / *"WinUSB: because Microsoft said so."* A corpus of ~30–50 lines;
+the comedy is in the rotation. Scope it to the install screen — not an app-wide gremlin.
+
+**Windows-only by nature — and that's the joke.** Linux's "install" is a one-line
+`pkexec`/`sudo` prompt that returns in a second; there's no void to fill, so the mascot
+simply never appears there. It exists *only* where the platform inflicts the wait.
+
+**Complexity.** Low–moderate, pure presentation — no new subsystem, no driver touch, lives
+entirely behind the existing install worker. The proven pieces are already here (timer
+animation from the pulse; off-thread install keeping the UI live); the work is the ANSI
+mascot frames + float-down keyframes, the type-on effect, and writing the lines. 📎
+
 ### Triangulation map — post-1.0
 
 Three cards + RSSI trilateration + a drag-to-place UI. Fun, novel, not soon. 😄
