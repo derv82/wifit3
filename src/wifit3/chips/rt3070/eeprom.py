@@ -71,6 +71,72 @@ def read_eeprom_efuse(t: RT3070Transport) -> bytes:
     return bytes(eeprom)
 
 
+def _write_word(buf: bytearray, index: int, value: int) -> None:
+    buf[index * 2] = value & 0xFF
+    buf[index * 2 + 1] = (value >> 8) & 0xFF
+
+
+def validate_eeprom(buf: bytes) -> bytearray:
+    """Fill defaults for blank/invalid EEPROM fields [SRC rt2800lib.c:11026-11169
+    rt2800_validate_eeprom], the kernel's pre-``init_eeprom`` fix-up. Operates on the
+    in-RAM image only (no chip write); ``parse_eeprom`` then decodes the result.
+
+    #TODO untestable on this card: its EFUSE is factory-burned, so every guard below is
+    false (no 0xffff fields, offsets in range) and the buffer is returned unchanged. The
+    branch is exercised only by a blank/counterfeit EEPROM (e.g. the RT3572 we've seen).
+    """
+    out = bytearray(buf)
+
+    def word(i: int) -> int:
+        return out[i * 2] | (out[i * 2 + 1] << 8)
+
+    nic0 = word(C.EEPROM_NIC_CONF0)
+    if nic0 == 0xFFFF:
+        nic0 = C.set_field(0, C.EEPROM_NIC_CONF0_RXPATH, 2)
+        nic0 = C.set_field(nic0, C.EEPROM_NIC_CONF0_TXPATH, 1)
+        nic0 = C.set_field(nic0, C.EEPROM_NIC_CONF0_RF_TYPE, C.RF2820)
+        _write_word(out, C.EEPROM_NIC_CONF0, nic0)
+    # The RT2860/RT2872 RXPATH>2 clamp is a different (non-RF30xx) silicon — N/A here.
+
+    if word(C.EEPROM_NIC_CONF1) == 0xFFFF:
+        _write_word(out, C.EEPROM_NIC_CONF1, 0)   # zeroing every field == word 0
+
+    freq = word(C.EEPROM_FREQ)
+    if (freq & 0x00FF) == 0x00FF:
+        freq = C.set_field(freq, C.EEPROM_FREQ_OFFSET, 0)
+        _write_word(out, C.EEPROM_FREQ, freq)
+    if (freq & 0xFF00) == 0xFF00:
+        freq = C.set_field(freq, C.EEPROM_FREQ_LED_MODE, C.LED_MODE_TXRX_ACTIVITY)
+        freq = C.set_field(freq, C.EEPROM_FREQ_LED_POLARITY, 0)
+        _write_word(out, C.EEPROM_FREQ, freq)
+        _write_word(out, C.EEPROM_LED_AG_CONF, 0x5555)
+        _write_word(out, C.EEPROM_LED_ACT_CONF, 0x2221)
+        _write_word(out, C.EEPROM_LED_POLARITY, 0xA9F8)
+
+    # lna0 is the fallback gain for the other (zero/0xff) per-chain LNA fields.
+    default_lna_gain = C.get_field(word(C.EEPROM_LNA), C.EEPROM_LNA_A0)
+
+    def _clamp_offsets(word_idx: int, fields: tuple[int, ...],
+                       lna_field: int = 0, lna_default: int = 0) -> None:
+        w = word(word_idx)
+        for f in fields:
+            if C.get_field(w, f) > 10:            # kernel abs() on the u8 field (quirk-faithful)
+                w = C.set_field(w, f, 0)
+        if lna_field and C.get_field(w, lna_field) in (0x00, 0xFF):
+            w = C.set_field(w, lna_field, lna_default)
+        _write_word(out, word_idx, w)
+
+    _clamp_offsets(C.EEPROM_RSSI_BG, (C.EEPROM_RSSI_BG_OFFSET0, C.EEPROM_RSSI_BG_OFFSET1))
+    _clamp_offsets(C.EEPROM_RSSI_BG2, (C.EEPROM_RSSI_BG2_OFFSET2,),
+                   C.EEPROM_RSSI_BG2_LNA_A1, default_lna_gain)
+    # 5 GHz RSSI_A/A2: validated too (cached-buffer only; this card never tunes 5 GHz).
+    _clamp_offsets(C.EEPROM_RSSI_A, (C.EEPROM_RSSI_A_OFFSET0, C.EEPROM_RSSI_A_OFFSET1))
+    _clamp_offsets(C.EEPROM_RSSI_A2, (C.EEPROM_RSSI_A2_OFFSET2,),
+                   C.EEPROM_RSSI_A2_LNA_A2, default_lna_gain)
+    # EXT_LNA2 fix-up is RT3593/RT3883-only (out of scope).
+    return out
+
+
 @dataclass
 class EepromValues:
     """Decoded EEPROM image. ``raw`` keeps the full 512 bytes so later bring-up
@@ -90,6 +156,7 @@ class EepromValues:
     external_tx_alc: bool    # NIC_CONF1 EXTERNAL_TX_ALC [rt2800lib.c:4578 gain cal gate]
     power_limit: bool        # EIRP_MAX_2GHZ < limit ⇒ CAPABILITY_POWER_LIMIT [rt2800lib.c:11320]
     ant_diversity: int       # NIC_CONF1 ANT_DIVERSITY [rt2800lib.c:2365 config_ant]
+    rssi_offset_bg: tuple[int, int, int]   # RX RSSI per-path offsets [rt2800lib.c:867-878]
 
     def word(self, index: int) -> int:
         """u16 at EEPROM word ``index`` [SRC rt2800lib.c rt2800_eeprom_read]."""
@@ -137,4 +204,9 @@ def parse_eeprom(buf: bytes) -> EepromValues:
         external_tx_alc=bool(C.get_field(nic_conf1, C.EEPROM_NIC_CONF1_EXTERNAL_TX_ALC)),
         power_limit=eirp_2g < C.EIRP_MAX_TX_POWER_LIMIT,
         ant_diversity=C.get_field(nic_conf1, C.EEPROM_NIC_CONF1_ANT_DIVERSITY),
+        rssi_offset_bg=(
+            C.get_field(word(C.EEPROM_RSSI_BG), C.EEPROM_RSSI_BG_OFFSET0),
+            C.get_field(word(C.EEPROM_RSSI_BG), C.EEPROM_RSSI_BG_OFFSET1),
+            C.get_field(word(C.EEPROM_RSSI_BG2), C.EEPROM_RSSI_BG2_OFFSET2),
+        ),
     )

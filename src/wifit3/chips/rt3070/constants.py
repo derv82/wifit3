@@ -61,7 +61,19 @@ RF2020 = 0x0006
 RF3021 = 0x0007
 RF3022 = 0x0008
 RF3320 = 0x000B
+RF2820 = 0x0001                          # blank-EEPROM NIC_CONF0 default [SRC rt2800lib.c:11053]
 RF3070 = 0x3070
+
+# LED mode (blank-EEPROM FREQ default) [SRC rt2x00reg.h:41]
+LED_MODE_TXRX_ACTIVITY = 1
+
+# RSSI / LNA EEPROM fields used by rt2800_validate_eeprom [SRC rt2800.h:2768-2797]
+EEPROM_LNA_A0 = 0xFF00
+EEPROM_RSSI_BG2_LNA_A1 = 0xFF00
+EEPROM_RSSI_A_OFFSET0 = 0x00FF
+EEPROM_RSSI_A_OFFSET1 = 0xFF00
+EEPROM_RSSI_A2_OFFSET2 = 0x00FF
+EEPROM_RSSI_A2_LNA_A2 = 0xFF00
 
 # --- MAC system control [SRC rt2800.h:729-734] -----------------------------
 MAC_SYS_CTRL = 0x1004
@@ -557,6 +569,57 @@ EEPROM_TSSI_BOUND_BG4_PLUS2 = 0x00FF
 EEPROM_TSSI_BOUND_BG4_PLUS3 = 0xFF00
 EEPROM_TSSI_BOUND_BG5_PLUS4 = 0x00FF
 EEPROM_TSSI_BOUND_BG5_AGC_STEP = 0xFF00
+
+# =====================================================================
+# RX / TX descriptors (USB wire format) [SRC rt2800usb.h, rt2800.h §3052-3160]
+# =====================================================================
+RXINFO_DESC_SIZE = 4                     # [SRC rt2800usb.h:31] 1 * __le32
+TXINFO_DESC_SIZE = 4                     # [SRC rt2800usb.h:30]
+RXD_DESC_SIZE = 4                        # RXD trailer is one __le32 [SRC rt2800usb.c:520-525]
+RXWI_DESC_SIZE_4WORDS = 16              # [SRC rt2800.h:3055] RF30xx/53xx (RT5592 is 6 words)
+TXWI_DESC_SIZE_4WORDS = 16              # [SRC rt2800.h:3052] (already used for beacon clears)
+
+# RXINFO / RXWI / RXD fields [SRC rt2800usb.h:61-97, rt2800.h:3139-3159]
+RXINFO_W0_USB_DMA_RX_PKT_LEN = 0x0000FFFF
+RXWI_W0_MPDU_TOTAL_BYTE_COUNT = 0x0FFF0000
+RXWI_W1_MCS = 0x007F0000
+RXWI_W1_PHYMODE = 0xC0000000
+RXWI_W2_RSSI0 = 0x000000FF
+RXWI_W2_RSSI1 = 0x0000FF00
+RXWI_W2_RSSI2 = 0x00FF0000
+RXD_W0_MY_BSS = 0x00000080
+RXD_W0_CRC_ERROR = 0x00000100
+RXD_W0_L2PAD = 0x00004000
+
+# TXINFO / TXWI fields [SRC rt2800usb.h:46-51, rt2800.h:3087-3117]
+TXINFO_W0_USB_DMA_TX_PKT_LEN = 0x0000FFFF
+TXINFO_W0_WIV = 0x01000000
+TXINFO_W0_QSEL = 0x06000000
+TXINFO_W0_SW_USE_LAST_ROUND = 0x08000000
+TXINFO_W0_USB_DMA_NEXT_VALID = 0x40000000
+TXINFO_W0_USB_DMA_TX_BURST = 0x80000000
+TXWI_W0_TX_OP = 0x00000300
+TXWI_W0_MCS = 0x007F0000
+TXWI_W0_PHYMODE = 0xC0000000
+TXWI_W1_ACK = 0x00000001
+TXWI_W1_NSEQ = 0x00000002
+TXWI_W1_WIRELESS_CLI_ID = 0x0000FF00
+TXWI_W1_MPDU_TOTAL_BYTE_COUNT = 0x0FFF0000
+TXWI_W1_PACKETID_QUEUE = 0x30000000
+TXWI_W1_PACKETID_ENTRY = 0xC0000000
+TXWI_TX_OP_HT_NONE = 3                   # HT_TXOP_NONE: skip RTS/CTS for mgmt inject
+RATE_MODE_CCK = 0                        # [SRC rt2800.h] TXWI/RXWI PHYMODE = CCK
+QSEL_EDCA = 2                            # rt2800usb_write_tx_desc hardcodes QSEL=2 [SRC :422]
+
+# RSSI conversion (rt2800_agc_to_rssi) — EEPROM offset fields + base [SRC rt2800lib.c:856-898,
+# rt2800.h:2773-2780]. base_val is -12 on everything but RT6352.
+RSSI_BASE_VAL = -12
+EEPROM_RSSI_BG_OFFSET0 = 0x00FF
+EEPROM_RSSI_BG_OFFSET1 = 0xFF00
+EEPROM_RSSI_BG2_OFFSET2 = 0x00FF
+
+# TX queue id (QID_MGMT) for the management-frame inject path [SRC rt2x00queue.h].
+QID_MGMT = 5
 
 # RF3020 2.4 GHz channel table {rf1, rf2, rf3} [SRC rt2800lib.c:11435 rf_vals_3x].
 # This card is 2.4 GHz only (RF3020); chs 1-14. rf2 is 2 for every 2.4 GHz channel.

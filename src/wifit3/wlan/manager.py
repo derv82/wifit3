@@ -60,7 +60,7 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
         from wifit3.chips.mt7921au.driver import MT7921AUDriver
         from wifit3.chips.rt2500usb.driver import RT2500USBDriver
         from wifit3.chips.rt2800usb.driver import RT2800USBDriver
-        from wifit3.chips.rt3070.driver import RT3070PlaceholderDriver  # TEMP: Tier-0 UI only
+        from wifit3.chips.rt3070.driver import RT3070Driver
         from wifit3.chips.rtl8187.driver import RTL8187Driver
         from wifit3.chips.rtl8188eus.driver import RTL8188EUSDriver
         from wifit3.chips.rtl8188eus_dkms.driver import Rtl8188eusDkmsDriver
@@ -77,7 +77,7 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
             "rtl8187": RTL8187Driver,
             "rt2500usb": RT2500USBDriver,
             "rt2800usb": RT2800USBDriver,
-            "rt3070": RT3070PlaceholderDriver,  # TEMP: Tier-0 device-setup UI placeholder
+            "rt3070": RT3070Driver,
 
             "rtl8188eus": RTL8188EUSDriver,
             "rtl8188eus_dkms": Rtl8188eusDkmsDriver,

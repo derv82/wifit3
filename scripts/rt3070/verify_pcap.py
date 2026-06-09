@@ -108,6 +108,7 @@ def _walk_init(w: Walk, out: dict) -> None:
     chip = w.run(lambda t: mac.probe_rt(t), "probe-rt")              # MAC_CSR0
     out["chip"] = chip
     buf = w.run(lambda t: eeprom.read_eeprom_efuse(t), "efuse")      # autorun + EFUSE
+    buf = eeprom.validate_eeprom(buf)              # blank/invalid-field fix-up (no-op here)
     out["eeprom"] = eeprom.parse_eeprom(buf)
     ev = out["eeprom"]
     w.run(lambda t: mac.probe_hw_gpio(t), "gpio-rfkill")             # GPIO_CTRL dir
