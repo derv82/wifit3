@@ -83,6 +83,7 @@ class EepromValues:
     rx_chain_num: int
     freq_offset: int
     nic_conf1: int
+    led_mcu_reg: int        # EEPROM_FREQ word; LED mode/polarity for MCU_LED [rt2800lib.c:11312]
 
     def word(self, index: int) -> int:
         """u16 at EEPROM word ``index`` [SRC rt2800lib.c rt2800_eeprom_read]."""
@@ -109,4 +110,5 @@ def parse_eeprom(buf: bytes) -> EepromValues:
         rx_chain_num=C.get_field(nic_conf0, C.EEPROM_NIC_CONF0_RXPATH),
         freq_offset=C.get_field(word(C.EEPROM_FREQ), C.EEPROM_FREQ_OFFSET),
         nic_conf1=nic_conf1,
+        led_mcu_reg=word(C.EEPROM_FREQ),
     )

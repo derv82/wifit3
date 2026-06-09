@@ -104,12 +104,21 @@ def _walk_init(w: Walk, out: dict) -> None:
                                                       rt2800usb_write_firmware (210)
     --- frontier: enable_radio / init_registers / BBP / RFCSR / channel (M2d+) ---
     """
-    w.run(lambda t: mac.probe_rt(t), "probe-rt")                     # MAC_CSR0
+    chip = w.run(lambda t: mac.probe_rt(t), "probe-rt")              # MAC_CSR0
+    out["chip"] = chip
     buf = w.run(lambda t: eeprom.read_eeprom_efuse(t), "efuse")      # autorun + EFUSE
     out["eeprom"] = eeprom.parse_eeprom(buf)
+    ev = out["eeprom"]
     w.run(lambda t: mac.probe_hw_gpio(t), "gpio-rfkill")             # GPIO_CTRL dir
     fw = firmware.load_firmware_blob()
     w.run(lambda t: firmware.upload(t, fw), "firmware")              # FW load + boot
+
+    # rt2x00lib_enable_radio -> set_device_state(RADIO_ON) -> rt2800usb_enable_radio
+    w.run(lambda t: mac.set_radio_led(t, ev), "radio-led")           # leds-class radio on
+    w.run(lambda t: mac.wakeup(t), "wakeup")                         # MCU_WAKEUP (AWAKE)
+    w.run(lambda t: mac.usb_enable_radio_dma(t), "usb-dma")          # wait_wpdma + USB_DMA_CFG
+    w.run(lambda t: t.wait_wpdma_ready(), "enable-radio-wpdma")      # rt2800_enable_radio prologue
+    w.run(lambda t: mac.init_registers(t, chip, ev), "init-registers")  # MAC config block
 
 
 # Operational-phase openers (airmon monitor entry, airodump/iw channel hops, the ~1 Hz link
