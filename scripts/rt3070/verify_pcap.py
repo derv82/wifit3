@@ -119,6 +119,8 @@ def _walk_init(w: Walk, out: dict) -> None:
     w.run(lambda t: mac.usb_enable_radio_dma(t), "usb-dma")          # wait_wpdma + USB_DMA_CFG
     w.run(lambda t: t.wait_wpdma_ready(), "enable-radio-wpdma")      # rt2800_enable_radio prologue
     w.run(lambda t: mac.init_registers(t, chip, ev), "init-registers")  # MAC config block
+    w.run(lambda t: mac.enable_radio_boot(t), "enable-radio-boot")   # BBP/RF ready + boot signal
+    w.run(lambda t: bbp.init_bbp(t, chip, ev), "init-bbp")           # BBP regs (30xx + EEPROM)
 
 
 # Operational-phase openers (airmon monitor entry, airodump/iw channel hops, the ~1 Hz link

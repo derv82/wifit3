@@ -112,6 +112,18 @@ def config_filter(t: RT3070Transport, monitoring: bool, *, allmulti: bool = True
     t.register_write(C.RX_FILTER_CFG, reg)
 
 
+def enable_radio_boot(t: RT3070Transport) -> None:
+    """rt2800_enable_radio after init_registers: wait for BBP/RF, fire the boot
+    signal, wait for the BBP to come up [SRC rt2800lib.c:10802-10821]."""
+    t.wait_bbp_rf_ready()
+    t.register_write(C.H2M_BBP_AGENT, 0)
+    t.register_write(C.H2M_MAILBOX_CSR, 0)
+    t.register_write(C.H2M_INT_SRC, 0)
+    t.mcu_request(C.MCU_BOOT_SIGNAL, 0, 0, 0)
+    # kernel msleep(1)
+    t.wait_bbp_ready()
+
+
 def _config_wcid_null(t: RT3070Transport, wcid: int) -> None:
     """Write a broadcast (all-0xff) WCID MAC entry [SRC rt2800lib.c:1671-1686
     rt2800_config_wcid with address=NULL]. struct mac_wcid_entry is 8 bytes."""

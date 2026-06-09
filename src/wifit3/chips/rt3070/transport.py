@@ -215,6 +215,26 @@ class RT3070Transport:
                 return True
         return False
 
+    def wait_bbp_rf_ready(self) -> bool:
+        """Wait for BBP/RF not-busy in MAC_STATUS_CFG [SRC rt2800lib.c:2225-2241
+        rt2800_wait_bbp_rf_ready]. Returns True on ready."""
+        for _ in range(C.REGISTER_BUSY_COUNT):
+            reg = self.register_read(C.MAC_STATUS_CFG)
+            if not get_field(reg, C.MAC_STATUS_CFG_BBP_RF_BUSY):
+                return True
+        return False
+
+    def wait_bbp_ready(self) -> bool:
+        """Reactivate + wait for the BBP after FW load [SRC rt2800lib.c:2243-2265
+        rt2800_wait_bbp_ready]. Returns True once BBP0 reads a sane value."""
+        self.register_write(C.H2M_BBP_AGENT, 0)
+        self.register_write(C.H2M_MAILBOX_CSR, 0)
+        for _ in range(C.REGISTER_BUSY_COUNT):
+            value = self.bbp_read(0)
+            if value != 0xFF and value != 0x00:
+                return True
+        return False
+
     def disable_wpdma(self) -> None:
         """[SRC rt2800lib.c:589-600 rt2800_disable_wpdma]"""
         reg = self.register_read(C.WPDMA_GLO_CFG)
