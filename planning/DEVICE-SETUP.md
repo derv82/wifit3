@@ -164,10 +164,13 @@ Tier-0 as first shipped classified every card at **poll time** (`refresh()` → 
   VID:PID shows — including not-yet-ported placeholders, so the RT3070-placeholder gap (a card
   that can't construct used to vanish) dissolves.
 - **A green START** button to the right of the (narrower) list; Enter also starts.
-- **On START**, and only then, check openability for that *one* card. Not WinUSB-bound → a
-  Yes/No modal ("this card needs the WinUSB driver — reversible, overwrites the current driver
-  — install now?") → Yes runs `install_winusb()` then connects; No returns to the list.
-  Already openable → straight to connect.
+- **On START** (or Enter), **connect-first**: a WinUSB-bound card (the common case) just
+  connects — no probe, no extra open, no lag. *Only if connect fails* do we run the
+  (blocking, Windows-specific) openability probe; if the card isn't WinUSB-bound, a plain
+  Yes/No modal offers a one-time install → Yes runs `install_winusb()`, re-finds the
+  re-enumerated card, and connects; No returns to the list. The lazy probe-on-failure is what
+  keeps the happy path open-free (the splash's original `is_openable`-at-select idea would
+  have opened every started card twice).
 - **Restore** ("Restore Wi-Fi driver") is **dropped from the splash** — there's no longer a
   poll-time "unbound" state to hang it off, and a lone orange button cluttered the screen.
   `restore_driver()` + the SetupAPI lookup stay in the backend, to resurface later behind a
