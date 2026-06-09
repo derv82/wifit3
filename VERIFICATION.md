@@ -24,6 +24,7 @@ The matrix below captures *how well wifit3 drives these wireless cards* -- Every
 | [RT5372](#rt5372) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⬜ | C |
 | [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ | C |
 | [RTL8814AU](#rtl8814au) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | C |
+| [RT3070](#rt3070) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ❌ | ⬜ | C |
 | [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ❌ | D |
 
 ## Per-card notes
@@ -203,6 +204,28 @@ bands read the same power).
 | Stress | ⬜ | — | Not run. |
 
 → [RT2800USB.md](src/wifit3/chips/rt2800usb/RT2800USB.md)
+
+### RT3070
+*ALFA AWUS036NH · 2.4 GHz · 1T1R*
+
+The first **byte-perfect** member of the rt2x00 family: a standalone clean-room
+`chips/rt3070/` port whose `verify_pcap rt3070` gate reproduces the whole cold-boot
+capture single-cursor — init → airmon monitor entry → every airodump/iw channel hop,
+**8879/8879 ops**, waiving only aireplay's TX-status polls. *Verification was driven off
+that gate (byte-exact replay, no hardware) plus live hardware runs for RX/TX.* Genuinely
+excellent 2.4 GHz front-end (external LNA) — **when fresh**.
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| Scan | ⚠️ | 2026-06-09 | Kernel-parity *cold*: 8.4 beacons/s live vs the kernel's 8.9 from the same usbmon capture (~86–91% of the 9.77/s single-AP ceiling), zero gaps. **But RX degrades over sustained attack use** — a solid 8–10/s AP fell to ~2/s mean with zero-seconds, and a retune (hop away + back) does NOT recover it; only a fresh bring-up does. Smells like an AGC/sensitivity drift: the kernel's periodic link tuner that re-arms the gain is STA-only (`intf_sta_count`), so monitor mode never runs it. Under investigation. |
+| Deauth | ✅ | 2026-06-09 | Live targeted deauth dropped a real client. TX frame **byte-matches aireplay-ng's wire deauth** (duration `0x013a` + per-frame incrementing seqctl; the constant-seq bug would otherwise let a receiver's dup-filter drop every deauth after the first). |
+| Handshake | ✅ | 2026-06-09 | Deauth → reconnect → **39 EAPOL frames** captured in 30s, M2/M4 (ToDS) + M1/M3 (FromDS). |
+| PMKID | ✅ | 2026-06-09 | Passive capture + active extract. |
+| WEP | ✅ | 2026-06-09 | Replay + ChopChop at **~300 injections/s** — ChopChop → cracked with 20k IVs in **<90s**. Best WEP throughput of any card to date. |
+| WPS | ❌ | 2026-06-09 | PBC timed out ("no EAP response"); PIN was AP-refused (NACK). No crack. Under investigation — candidates: a TX-template gap like the deauth seqctl fix (all inject paths may need it), an inbound-EAPOL detection miss in the dashboard, or the mocked source MAC the WPS attacks use. |
+| Stress | ⬜ | — | Not run — the RX degradation above wants chasing first. |
+
+→ [RT3070.md](src/wifit3/chips/rt3070/RT3070.md)
 
 ### RT2500USB
 *Buffalo Nintendo Wi-Fi USB Connector / RT2570 · 2.4 GHz*

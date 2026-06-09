@@ -270,17 +270,20 @@ feature, not a porting step. Moved to `planning/BLANK-EFUSE-SUPPORT.md`.
 
 - **Panda PAU06** — RT5372. Slots into existing `chips/rt2800usb/` as a
   `DeviceID` entry, minimal delta — no new port expected.
-- **ALFA AWUS036NH** — RT3070 (`148f:3070`, silicon 0x3070 rev `REV_RT3070F`, RF3020,
-  1T1R, burned EFUSE). **Arrived 2026-06-09; clean-room port queued.** Decision: a
-  **standalone `chips/rt3070/`** (NOT a `chips/rt2800usb/` DeviceID delta) — the shared
-  rt2800usb base is proven non-byte-perfect (a confirmed EFUSE word/byte addressing bug,
-  hidden by the old firmware-only gate), so we byte-perfect RT3070 on its own first, then
-  converge the family onto it later. Full handoff brief + verified facts + the
-  `verify_pcap rt3070` gate are staged: `chips/rt3070/RT3070.md`. Captures:
-  `usb_dumps_new/captures_rt3070/`. New code path vs the existing family (RF3020 →
-  `config_channel_rf3xxx`, `init_rfcsr_30xx`, `init_bbp_30xx`) — not a minor tweak.
 
-Bring-up + matrix verification once hardware arrives.
+### Shipped
+
+- **ALFA AWUS036NH** — RT3070 (`148f:3070`, REV_RT3070F, RF3020, 1T1R, burned EFUSE).
+  **DONE 2026-06-09 — the first byte-perfect rt2x00-family member.** A standalone clean-room
+  `chips/rt3070/` (NOT a `chips/rt2800usb/` DeviceID delta — that shared base has a confirmed
+  EFUSE word/byte addressing bug the old firmware-only gate hid). `verify_pcap rt3070`
+  reproduces capture-1 end to end — init → airmon monitor entry → every airodump/iw channel
+  hop, **8879/8879 ops single-cursor**, waiving only aireplay's TX-status polls. RX is
+  kernel-parity (8.4 beacons/s vs the kernel's 8.9), TX (deauth → reconnect handshake) is
+  human-confirmed. New code path vs the family (RF3020 → `config_channel_rf3xxx`,
+  `init_rfcsr_30xx`, `init_bbp_30xx`) — the candidate base the family converges onto later.
+  Facts + gate: `chips/rt3070/RT3070.md`; per-attack status: [VERIFICATION.md](../VERIFICATION.md#rt3070).
+  Open follow-ups: RX degrades over sustained use (AGC/no-DIG), WPS fails — tracked separately.
 
 ### Distant-future hardware ($$$)
 
