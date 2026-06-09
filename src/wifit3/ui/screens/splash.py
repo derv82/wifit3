@@ -11,6 +11,8 @@ from textual import work
 from rich.text import Text
 from rich.style import Style
 
+from wifit3.setup.windows import install_winusb
+from wifit3.ui.screens.setup_error import SetupErrorDialog
 from wifit3.wlan.manager import WlanDeviceManager
 
 logger = logging.getLogger(__name__)
@@ -93,6 +95,8 @@ class SplashView(Screen):
         self._is_initializing = False
         # ListItem name -> UnboundDevice, for the present-but-unbound rows in the picker.
         self._unbound_by_name = {}
+        # The present-but-unbound card currently highlighted (drives the Install button).
+        self._selected_unbound = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -225,18 +229,71 @@ class SplashView(Screen):
         warning = self.query_one("#os-warning", Static)
         button = self.query_one("#install-winusb", Button)
         if u is not None:
+            self._selected_unbound = u
             warning.update(self._selected_unbound_notice(u))
             button.display = (sys.platform == "win32")  # WinUSB install is Windows-only
         else:
+            self._selected_unbound = None
             warning.update(self._get_os_warning())
             button.display = False
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "install-winusb":
-            # Tier 1 (libwdi / wdi-simple.exe + UAC elevation + the revert action) lands in
-            # a later session; for now the button is a UI placeholder.
-            self.query_one("#status-label", Label).update(
-                "[dim]WinUSB install isn't wired up yet (Tier 1) — use Zadig for now.[/dim]")
+            u = self._selected_unbound
+            # The button only shows while an unbound row is highlighted (win32), so u is set;
+            # guard anyway, and don't stack a second install over an in-flight one.
+            if u is None or self._is_initializing:
+                return
+            self.perform_install(u)
+
+    @work(exclusive=True)
+    async def perform_install(self, u) -> None:
+        """Run the elevated WinUSB install for a present-but-unbound card, then re-scan.
+
+        The blocking ShellExecuteExW + wait is offloaded to a thread so the UAC round-trip
+        doesn't freeze the TUI; on success we re-poll the bus and the card flips ⚠ → ready
+        on its own. A declined UAC prompt is a soft notice; any other failure opens a modal.
+        """
+        status = self.query_one("#status-label", Label)
+        list_view = self.query_one("#device-list", ListView)
+        button = self.query_one("#install-winusb", Button)
+
+        self._is_initializing = True
+        if self._refresh_timer:
+            self._refresh_timer.pause()
+        list_view.disabled = True
+        button.disabled = True
+        status.update(
+            f"[bold yellow]Installing WinUSB for {u.description} — accept the Windows "
+            f"elevation prompt…[/bold yellow]")
+
+        result = None
+        try:
+            result = await asyncio.to_thread(install_winusb, u.vid, u.pid, name=u.description)
+        except Exception as e:
+            logger.exception("WinUSB install crashed for %s", u.vidpid)
+            self.app.push_screen(SetupErrorDialog("WinUSB install failed", str(e)))
+        finally:
+            list_view.disabled = False
+            button.disabled = False
+            self._is_initializing = False
+            if self._refresh_timer:
+                self._refresh_timer.resume()
+
+        if result is None:
+            status.update("[bold red]WinUSB install failed.[/bold red]")
+        elif result.ok:
+            status.update(
+                f"[bold green]WinUSB installed for {u.description}. Re-scanning…[/bold green]")
+            self._last_signature = None   # force the picker to re-render the now-ready card
+            await self.poll_usb()
+        elif result.cancelled:
+            status.update("[yellow]Elevation cancelled — WinUSB was not installed.[/yellow]")
+        else:
+            status.update("[bold red]WinUSB install failed.[/bold red]")
+            details = f"libwdi code {result.wdi_code}" if result.wdi_code is not None else None
+            self.app.push_screen(
+                SetupErrorDialog("WinUSB install failed", result.message, details))
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
         iface_name = event.item.name
