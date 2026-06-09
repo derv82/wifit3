@@ -197,16 +197,15 @@ class WlanDeviceManager:
 
     def __init__(self) -> None:
         self.interfaces: List[WlanInterface] = []
+        # Bus signature of the last build — lets refresh() skip the close+rebuild churn when
+        # the same cards are still present (see refresh()).
+        self._dev_sig: Optional[list] = None
 
     async def refresh(self) -> List[WlanInterface]:
         """Discover supported cards by VID:PID. The blocking bus scan runs in a thread (it
         stalls ~1s+ on a non-WinUSB device on Windows), so the poll never freezes the TUI; the
         openability/WinUSB check is deferred to connect time too. Driver construction is
         instant and stays on the loop. [DEVICE-SETUP.md]"""
-        for iface in self.interfaces:
-            await iface.close()
-        self.interfaces = []
-
         t = time.perf_counter()
         backend = libusb_package.get_libusb1_backend()
         logger.debug("refresh: get_libusb1_backend took %.0f ms", (time.perf_counter() - t) * 1000)
@@ -215,6 +214,18 @@ class WlanDeviceManager:
         logger.debug("refresh: bus scan (off-thread) returned %d match(es) in %.0f ms",
                      len(matches), (time.perf_counter() - t) * 1000)
 
+        # If the same supported cards are still present, keep the live interfaces rather than
+        # tearing them down and rebuilding every poll (that churns USB handles + the channel
+        # hopper for nothing — the `RTL8187 driver closed` spam). A replug (new bus address) or
+        # a different set forces a rebuild.
+        sig = sorted((ent.vid, ent.pid, getattr(dev, "address", 0)) for dev, _, ent in matches)
+        if self.interfaces and sig == self._dev_sig:
+            return self.interfaces
+        self._dev_sig = sig
+
+        for iface in self.interfaces:
+            await iface.close()
+        self.interfaces = []
         for dev, driver_cls, id_entry in matches:
             try:
                 driver = driver_cls.from_usb_device(dev, id_entry)
