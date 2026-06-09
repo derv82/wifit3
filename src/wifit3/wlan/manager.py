@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import Dict, List, Optional, Type
 
 import libusb_package
@@ -179,8 +180,12 @@ def _scan_bus(backend) -> List[tuple]:
     pure CPU/IO with no event-loop interaction, so callers run it via ``asyncio.to_thread`` to
     keep the TUI responsive. Driver construction stays on the loop — it's instant and may
     touch asyncio objects."""
+    t = time.perf_counter()
+    devs = list(usb.core.find(find_all=True, backend=backend))
+    logger.debug("scan_bus: usb.core.find enumerated %d device(s) in %.0f ms",
+                 len(devs), (time.perf_counter() - t) * 1000)
     out: List[tuple] = []
-    for dev in usb.core.find(find_all=True, backend=backend):
+    for dev in devs:
         match = _match_driver(dev)
         if match is not None:
             out.append((dev, match[0], match[1]))
@@ -202,8 +207,13 @@ class WlanDeviceManager:
             await iface.close()
         self.interfaces = []
 
+        t = time.perf_counter()
         backend = libusb_package.get_libusb1_backend()
+        logger.debug("refresh: get_libusb1_backend took %.0f ms", (time.perf_counter() - t) * 1000)
+        t = time.perf_counter()
         matches = await asyncio.to_thread(_scan_bus, backend)
+        logger.debug("refresh: bus scan (off-thread) returned %d match(es) in %.0f ms",
+                     len(matches), (time.perf_counter() - t) * 1000)
 
         for dev, driver_cls, id_entry in matches:
             try:
