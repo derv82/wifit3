@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
 from typing import Dict, List, Optional, Type
 
 import libusb_package
@@ -26,20 +25,6 @@ from .interface import WlanInterface
 
 logger = logging.getLogger(__name__)
 
-
-@dataclass(frozen=True)
-class UnboundDevice:
-    """A supported card that's plugged in but can't be opened — present on the bus
-    (``find()`` sees it) yet has no libusb-class driver: on Windows it needs WinUSB
-    (Zadig today), on Linux the kernel driver still holds it. The UX surfaces this as
-    'present but needs setup' instead of failing silently. [DEVICE-SETUP.md Tier 0]"""
-    vid: int
-    pid: int
-    description: str
-
-    @property
-    def vidpid(self) -> str:
-        return f"{self.vid:04x}:{self.pid:04x}"
 
 # RTL8814AU (0bda:8813) is claimed by BOTH the vendor/DKMS port (default) and the
 # mainline-derived driver. Set this to "mainline" to fall back to the mainline driver.
@@ -190,58 +175,37 @@ class WlanDeviceManager:
 
     def __init__(self) -> None:
         self.interfaces: List[WlanInterface] = []
-        # Supported cards that are plugged in but not openable (need WinUSB / kernel
-        # detach). Populated by refresh(); the splash surfaces them. [DEVICE-SETUP.md Tier 0]
-        self.unbound: List[UnboundDevice] = []
 
     async def refresh(self) -> List[WlanInterface]:
+        """Descriptor-only discovery: list every supported card by VID:PID, opening no
+        device. The blocking openability/WinUSB check is deferred to connect time — the splash
+        tries ``connect()`` first and only probes on failure — so this poll stays off the event
+        loop's critical path and the UI never stalls. [DEVICE-SETUP.md]"""
         backend = libusb_package.get_libusb1_backend()
 
-        # Clean state.
         for iface in self.interfaces:
             await iface.close()
         self.interfaces = []
-        self.unbound = []
 
         for dev in usb.core.find(find_all=True, backend=backend):
             match = _match_driver(dev)
             if match is None:
                 continue
             driver_cls, id_entry = match
-            # Tier-0 classify: a known card that find() lists but libusb can't open is
-            # present-but-unbound (needs WinUSB / detach) — surface it, don't try to drive
-            # it (that would just raise deep in from_usb_device/connect).
-            if not _is_openable(dev):
-                logger.info(
-                    "Present-but-unbound (needs WinUSB/detach): %s (vid=%04x pid=%04x)",
-                    id_entry.description, id_entry.vid, id_entry.pid,
-                )
-                self.unbound.append(
-                    UnboundDevice(id_entry.vid, id_entry.pid, id_entry.description))
-                continue
-            logger.info(
-                "Found supported hardware: %s (vid=%04x pid=%04x)",
-                id_entry.description, id_entry.vid, id_entry.pid,
-            )
             try:
                 driver = driver_cls.from_usb_device(dev, id_entry)
             except Exception as e:
-                logger.exception(
-                    "Failed to construct %s for %04x:%04x: %s",
-                    driver_cls.__name__, id_entry.vid, id_entry.pid, e,
-                )
+                # A not-yet-ported placeholder (or a driver that opens the device just to
+                # construct) — skip it; it simply isn't listed. Keeps discovery cheap and
+                # non-blocking. Debug-level so a placeholder doesn't spam the fast poll.
+                logger.debug("Skipping %04x:%04x (%s): %s",
+                             id_entry.vid, id_entry.pid, driver_cls.__name__, e)
                 continue
-            iface = WlanInterface(
-                driver,
-                f"wlan{len(self.interfaces)}",
-                id_entry.description,
-                vid=id_entry.vid,
-                pid=id_entry.pid,
-            )
-            self.interfaces.append(iface)
+            self.interfaces.append(WlanInterface(
+                driver, f"wlan{len(self.interfaces)}", id_entry.description,
+                vid=id_entry.vid, pid=id_entry.pid, dev=dev))
 
-        logger.info("Discovered %d native WlanInterfaces, %d present-but-unbound.",
-                    len(self.interfaces), len(self.unbound))
+        logger.debug("Discovered %d supported card(s).", len(self.interfaces))
         return self.interfaces
 
     def get_interface(self, name: str) -> Optional[WlanInterface]:
@@ -249,6 +213,19 @@ class WlanDeviceManager:
             if iface.name == name:
                 return iface
         return None
+
+    def get_interface_by_vidpid(self, vid: int, pid: int) -> Optional[WlanInterface]:
+        """Re-find a card by VID:PID after it re-enumerated (e.g. post-WinUSB-install)."""
+        for iface in self.interfaces:
+            if iface.vid == vid and iface.pid == pid:
+                return iface
+        return None
+
+    def is_openable(self, iface: WlanInterface) -> bool:
+        """Can libusb open the card backing ``iface``? Opens + disposes the handle, so this
+        BLOCKS — call it off the event loop. Used only when ``connect()`` fails, to tell
+        "not WinUSB-bound" (→ offer an install) from a genuine init fault. [DEVICE-SETUP.md]"""
+        return iface.dev is None or _is_openable(iface.dev)
 
     async def close_all(self) -> None:
         for iface in self.interfaces:

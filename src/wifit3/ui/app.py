@@ -55,34 +55,26 @@ class WifiteApp(App):
         content-align: center middle;
         margin-bottom: 2;
     }
-    #setup-row {
-        width: 1fr;
-        height: auto;
-        margin-top: 1;              /* gap between the device list above and this notice */
-        margin-bottom: 1;
-    }
-    /* Notice and button each get their own full-width Center wrapper so each is
-       centered independently (a full-width sibling otherwise left-anchors the narrower). */
-    #notice-row { width: 1fr; height: auto; }
-    #os-warning {
-        content-align: center middle;
+    /* Splash device picker: the card list and the START button sit side by side,
+       centered as a group. */
+    #device-row {
         width: auto;
-    }
-    #install-row {
-        width: 1fr;
         height: auto;
-        margin-top: 1;              /* gap below the notice; button sits BELOW it (fits narrow terminals) */
+        align: center middle;
+        margin-top: 1;
     }
-    #install-winusb, #restore-driver {
-        width: auto;
+    #start-btn {
+        height: 3;
+        margin-left: 2;             /* gap between the card list and START */
     }
     #status-label {
         content-align: center middle;
         margin-bottom: 1;
     }
     ListView {
-        width: 60%;
+        width: 52;                  /* fits the longest card name; keeps the picker compact */
         height: auto;
+        max-height: 12;
     }
     DataTable {
         width: 100%;
