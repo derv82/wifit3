@@ -28,7 +28,8 @@ On discovery, classify each known VID:PID into `ready` / `present-but-unbound` /
 command on Linux, one-line "needs WinUSB" on Windows). We elevate nothing. This is
 cheap, cross-platform, and kills most of the "it doesn't work" support load on its
 own, because the failure stops being silent. **Everything below is an upgrade, not
-a gate.**
+a gate.** *(Revised — the openability classification moved off the poll loop to
+device-select time; see "Splash flow — revised to a select-time WinUSB check" below.)*
 
 **Tier 1 — One-prompt assisted bind.**
 Windows: bundled libwdi, relaunch the bind step elevated (UAC), install WinUSB for
@@ -141,6 +142,52 @@ vendored exe + `PROVENANCE.md`; (2) `install_winusb` wired to the button + re-re
 modal; (3) runtime revert + in-TUI Restore button + the round-trip. The first *live* bind on
 the RT3070 waits until (3) lands and is **user-greenlit** (it rebinds the card off `netr28ux`).
 
+## Splash flow — revised to a select-time WinUSB check (2026-06)
+
+Tier-0 as first shipped classified every card at **poll time** (`refresh()` → `_is_openable()`
+→ open the device). Two problems surfaced on hardware (RTL8187L), and they reshape the flow:
+
+- **The openability probe is a blocking libusb open**, run for *every* device on the Textual
+  event loop *every ~1 s*. It froze the whole UI for ~1 s per poll — plus the startup paint
+  and the quit. And on Windows WinUSB the probe's handle is **exclusive**: leaking it (we did
+  — `get_active_configuration()` with no dispose) wedged the device and flipped a *ready* card
+  to "unbound" on the next poll. The leak is fixed (dispose after probing), but the blocking
+  open on the hot path is the deeper issue.
+- It's also **worse UX**: a wall of "needs WinUSB / install Zadig" notices on a screen whose
+  whole job is "pick a card."
+
+**Revised flow — the WinUSB check moves off the poll and onto device *selection*:**
+
+- **Poll = descriptor-only.** `find()` → match `SUPPORTED_IDS` by VID:PID → list. No open, no
+  openability class, no "present-but-unbound" rows, no OS notice. Cheap enough to poll more
+  often (near-instant hotplug). Driver construction is deferred too, so *every* supported
+  VID:PID shows — including not-yet-ported placeholders, so the RT3070-placeholder gap (a card
+  that can't construct used to vanish) dissolves.
+- **A green START** button to the right of the (narrower) list; Enter also starts.
+- **On START**, and only then, check openability for that *one* card. Not WinUSB-bound → a
+  Yes/No modal ("this card needs the WinUSB driver — reversible, overwrites the current driver
+  — install now?") → Yes runs `install_winusb()` then connects; No returns to the list.
+  Already openable → straight to connect.
+- **Restore** ("Restore Wi-Fi driver") is **dropped from the splash** — there's no longer a
+  poll-time "unbound" state to hang it off, and a lone orange button cluttered the screen.
+  `restore_driver()` + the SetupAPI lookup stay in the backend, to resurface later behind a
+  keybind or a post-install toggle.
+
+Net: the splash is logo + list + START; the privileged WinUSB install becomes a deliberate,
+explained, one-card action *at the moment the user commits to a card*. The install/revert
+**mechanics** (wdi-simple, pnputil, SetupAPI) are unchanged — only *when* they fire. This
+pivots the Tier-0 "classify at discovery" framing above to "list at discovery, check at
+select"; the alpha gate (no silent failure) still holds — it just happens one beat later.
+
+**Bugs fixed en route (on hardware):**
+- **Handle leak** in `_is_openable()` — dispose after probing; a ready card no longer flips to
+  unbound and the device no longer wedges until replug. (Tier-0 regression, commit 09cefd7.)
+- **`install_winusb()` `--dest`** — wdi-simple's default extraction dir is the *relative*
+  `usb_driver`, which an elevated (System32-CWD) process can't write → `WDI_ERROR_ACCESS (-3)`,
+  the "Access denied" install error. Now pinned to an absolute `%TEMP%` dir.
+- **Caveat observed:** removing WinUSB from a card that never had a native Windows driver
+  leaves it driverless ("Other Devices") — correct behaviour, not a revert failure.
+
 ## Linux (kernel detach / udev)
 
 Three levers, increasing bluntness:
@@ -184,12 +231,12 @@ per-module whether lever 1 works or it needs lever 3.
   hand-maintain a parallel list. A `wifit3 --setup` / `--emit-udev` entry point reads
   it and does the right thing per-OS.
 - **Integration points.** Discovery is `WlanDeviceManager.refresh()`
-  (`src/wifit3/wlan/manager.py`); the Tier-0 classifier slots between `usb.core.find`
-  and `from_usb_device` (catch the open/claim failure → classify). The UX surface is
-  `src/wifit3/ui/screens/splash.py`.
-- **Reuse the §2c error path.** The "present-but-unbound" state should render through
-  the Hardware-failure UX modal + Details box (FEATURES.md § Hardware-failure UX),
-  not a bespoke widget.
+  (`src/wifit3/wlan/manager.py`) — now descriptor-only (VID:PID match, no open). The
+  openability check (`_is_openable`, which *does* open) moved off the poll and onto device
+  selection — see "Splash flow" above. The UX surface is `src/wifit3/ui/screens/splash.py`.
+- **Reuse the §2c error path.** A failed WinUSB install renders through the Hardware-failure
+  UX modal + Details box (FEATURES.md § Hardware-failure UX) — `SetupErrorDialog`, already
+  built.
 
 ## Open questions / must-verify (the honest list)
 
