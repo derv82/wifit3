@@ -21,6 +21,7 @@ import os
 import platform
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -165,12 +166,15 @@ def wdi_simple_path() -> Path:
     return exe
 
 
-def _build_args(vid: int, pid: int, iid: int = 0, name: str | None = None) -> list[str]:
+def _build_args(vid: int, pid: int, iid: int = 0, name: str | None = None,
+                dest: str | None = None) -> list[str]:
     """wdi-simple.exe argv to bind ``vid:pid`` to WinUSB.
 
     VID/PID are passed as ``0x``-hex (wdi-simple strtol-parses either base, and hex matches
     how the rest of the codebase refers to them). ``iid`` is the interface MI — 0 for the
-    single-interface cards we target."""
+    single-interface cards we target. ``dest`` is the driver-extraction dir: wdi-simple
+    defaults it to the *relative* ``usb_driver``, which fails when the elevated process runs
+    from ``C:\\Windows\\System32`` (WDI_ERROR_ACCESS), so we always pass an absolute one."""
     args = [
         "--vid", f"0x{vid:04x}",
         "--pid", f"0x{pid:04x}",
@@ -180,6 +184,8 @@ def _build_args(vid: int, pid: int, iid: int = 0, name: str | None = None) -> li
     ]
     if name:
         args += ["--name", name]
+    if dest:
+        args += ["--dest", dest]
     return args
 
 
@@ -250,7 +256,13 @@ def install_winusb(vid: int, pid: int, iid: int = 0, name: str | None = None) ->
         raise RuntimeError("install_winusb is Windows-only")
 
     exe = wdi_simple_path()
-    params = subprocess.list2cmdline(_build_args(vid, pid, iid, name))
+    # Absolute, user-writable extraction dir — see _build_args() for why the default fails.
+    dest = Path(tempfile.gettempdir()) / "wifit3_winusb"
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.warning("WinUSB install: couldn't create extraction dir %s: %s", dest, e)
+    params = subprocess.list2cmdline(_build_args(vid, pid, iid, name, str(dest)))
     logger.info("WinUSB install (elevated): %s %s", exe.name, params)
 
     run = _run_elevated(str(exe), params)

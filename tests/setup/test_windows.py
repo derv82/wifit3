@@ -41,6 +41,17 @@ def test_build_args_omits_name_when_none():
     assert "--name" not in _build_args(0x0BDA, 0x8812)
 
 
+def test_build_args_dest_appends_absolute_extraction_dir():
+    # wdi-simple's default extraction dir is relative ("usb_driver") -> fails from System32
+    # when elevated; we always pass an absolute --dest.
+    args = _build_args(0x0BDA, 0x8187, dest=r"C:\Temp\wifit3_winusb")
+    assert args[args.index("--dest") + 1] == r"C:\Temp\wifit3_winusb"
+
+
+def test_build_args_omits_dest_when_none():
+    assert "--dest" not in _build_args(0x0BDA, 0x8187)
+
+
 def test_signed32_roundtrips_negative_wdi_codes():
     # wdi-simple returns the negative WDI enum; Windows surfaces it as an unsigned DWORD.
     assert _signed32(0) == 0
