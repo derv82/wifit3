@@ -84,6 +84,8 @@ class EepromValues:
     freq_offset: int
     nic_conf1: int
     led_mcu_reg: int        # EEPROM_FREQ word; LED mode/polarity for MCU_LED [rt2800lib.c:11312]
+    txmixer_gain_24g: int   # [rt2800lib.c:10996-11008 rt2800_get_txmixer_gain_24g]
+    external_lna_bg: bool   # NIC_CONF1 EXTERNAL_LNA_2G [rt2800lib.c:11282]
 
     def word(self, index: int) -> int:
         """u16 at EEPROM word ``index`` [SRC rt2800lib.c rt2800_eeprom_read]."""
@@ -102,6 +104,11 @@ def parse_eeprom(buf: bytes) -> EepromValues:
     nic_conf0 = word(C.EEPROM_NIC_CONF0)
     nic_conf1 = word(C.EEPROM_NIC_CONF1)
     mac = bytes(buf[C.EEPROM_MAC_ADDR_0 * 2:C.EEPROM_MAC_ADDR_0 * 2 + 6])
+
+    # rt2800_get_txmixer_gain_24g: VAL field if low byte != 0xff, else 0 [rt2800lib.c:10996].
+    txmixer_bg = word(C.EEPROM_TXMIXER_GAIN_BG)
+    txmixer_gain_24g = (C.get_field(txmixer_bg, C.EEPROM_TXMIXER_GAIN_BG_VAL)
+                        if (txmixer_bg & 0x00FF) != 0x00FF else 0)
     return EepromValues(
         raw=buf,
         mac=mac,
@@ -111,4 +118,6 @@ def parse_eeprom(buf: bytes) -> EepromValues:
         freq_offset=C.get_field(word(C.EEPROM_FREQ), C.EEPROM_FREQ_OFFSET),
         nic_conf1=nic_conf1,
         led_mcu_reg=word(C.EEPROM_FREQ),
+        txmixer_gain_24g=txmixer_gain_24g,
+        external_lna_bg=bool(C.get_field(nic_conf1, C.EEPROM_NIC_CONF1_EXTERNAL_LNA_2G)),
     )
