@@ -122,6 +122,9 @@ def _walk_init(w: Walk, out: dict) -> None:
     w.run(lambda t: mac.enable_radio_boot(t), "enable-radio-boot")   # BBP/RF ready + boot signal
     w.run(lambda t: bbp.init_bbp(t, chip, ev), "init-bbp")           # BBP regs (30xx + EEPROM)
     w.run(lambda t: rfcsr.init_rfcsr_30xx(t, chip, ev), "init-rfcsr")  # RFCSR + rx-filter cal
+    w.run(lambda t: mac.enable_radio_finish(t, chip, ev), "enable-radio-finish")  # MCU_CURRENT/RX/LED
+    w.run(lambda t: mac.set_radio_led(t, ev), "radio-led-on")        # rt2x00leds_led_radio(true)
+    w.run(lambda t: mac.start_queue_rx(t), "start-queue-rx")         # rt2x00queue_start_queues
 
 
 # Operational-phase openers (airmon monitor entry, airodump/iw channel hops, the ~1 Hz link

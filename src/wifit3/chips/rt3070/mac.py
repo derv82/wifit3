@@ -124,6 +124,44 @@ def enable_radio_boot(t: RT3070Transport) -> None:
     t.wait_bbp_ready()
 
 
+def enable_radio_finish(t: RT3070Transport, chip: ChipInfo, ev: EepromValues) -> None:
+    """rt2800_enable_radio tail [SRC rt2800lib.c:10829-10874]: MCU current cal
+    (USB RT3070/3071/3572), enable TX then TX+RX DMA + MAC, and push the EEPROM
+    LED config to the MCU."""
+    if chip.is_rt(C.RT3070) or chip.is_rt(C.RT3071) or chip.is_rt(C.RT3572):
+        # kernel udelay(200) / udelay(10) around this
+        t.mcu_request(C.MCU_CURRENT, 0, 0, 0)
+
+    reg = t.register_read(C.MAC_SYS_CTRL)
+    reg = set_field(reg, C.MAC_SYS_CTRL_ENABLE_TX, 1)
+    reg = set_field(reg, C.MAC_SYS_CTRL_ENABLE_RX, 0)
+    t.register_write(C.MAC_SYS_CTRL, reg)
+    # kernel udelay(50)
+    reg = t.register_read(C.WPDMA_GLO_CFG)
+    reg = set_field(reg, C.WPDMA_GLO_CFG_ENABLE_TX_DMA, 1)
+    reg = set_field(reg, C.WPDMA_GLO_CFG_ENABLE_RX_DMA, 1)
+    reg = set_field(reg, C.WPDMA_GLO_CFG_TX_WRITEBACK_DONE, 1)
+    t.register_write(C.WPDMA_GLO_CFG, reg)
+    reg = t.register_read(C.MAC_SYS_CTRL)
+    reg = set_field(reg, C.MAC_SYS_CTRL_ENABLE_TX, 1)
+    reg = set_field(reg, C.MAC_SYS_CTRL_ENABLE_RX, 1)
+    t.register_write(C.MAC_SYS_CTRL, reg)
+
+    for cmd, word_idx in ((C.MCU_LED_AG_CONF, C.EEPROM_LED_AG_CONF),
+                          (C.MCU_LED_ACT_CONF, C.EEPROM_LED_ACT_CONF),
+                          (C.MCU_LED_LED_POLARITY, C.EEPROM_LED_POLARITY)):
+        word = ev.word(word_idx)
+        t.mcu_request(cmd, 0xFF, word & 0xFF, (word >> 8) & 0xFF)
+
+
+def start_queue_rx(t: RT3070Transport) -> None:
+    """Enable the RX queue [SRC rt2800usb.c:46-67 rt2800usb_start_queue QID_RX].
+    Called from rt2x00queue_start_queues after the radio is up."""
+    reg = t.register_read(C.MAC_SYS_CTRL)
+    reg = set_field(reg, C.MAC_SYS_CTRL_ENABLE_RX, 1)
+    t.register_write(C.MAC_SYS_CTRL, reg)
+
+
 def _config_wcid_null(t: RT3070Transport, wcid: int) -> None:
     """Write a broadcast (all-0xff) WCID MAC entry [SRC rt2800lib.c:1671-1686
     rt2800_config_wcid with address=NULL]. struct mac_wcid_entry is 8 bytes."""
