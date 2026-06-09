@@ -35,12 +35,12 @@ class ConfirmInstallDialog(ModalScreen[bool]):
         border: thick $primary; background: $surface; padding: 1 2;
     }
     ConfirmInstallDialog #title {
-        content-align: center middle; margin-bottom: 1; text-style: bold;
+        width: 1fr; text-align: center; margin-bottom: 1; text-style: bold;
     }
     ConfirmInstallDialog #diagram { content-align: center middle; margin-bottom: 1; }
-    ConfirmInstallDialog #warn { margin-bottom: 1; }
+    ConfirmInstallDialog #warn { width: 1fr; text-align: center; margin-bottom: 1; }
     ConfirmInstallDialog #question {
-        content-align: center middle; margin-bottom: 1; text-style: bold;
+        width: 1fr; text-align: center; margin-bottom: 1; text-style: bold;
     }
     ConfirmInstallDialog #button-row { height: auto; align: center middle; }
     ConfirmInstallDialog #button-row Button { margin: 0 2; }
@@ -82,8 +82,8 @@ class ConfirmInstallDialog(ModalScreen[bool]):
             yield Label("Wifit3 needs the WinUSB driver to talk to this card", id="title")
             yield Static(self._diagram(_PULSE[0]), id="diagram")
             yield Label(
-                "[bold orange3]Warning:[/] this [italic orange3]replaces the card's current "
-                "driver[/] — Windows will stop seeing it as a wireless device.\n"
+                "[bold darkorange]Warning:[/] this [italic darkorange]replaces the card's "
+                "current driver[/] — Windows will stop seeing it as a wireless device.\n"
                 "[dim]Reversible: uninstall the WinUSB driver in Device Manager to restore "
                 "it.[/dim]",
                 id="warn")
