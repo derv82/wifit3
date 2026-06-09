@@ -19,6 +19,7 @@ from __future__ import annotations
 from . import constants as C
 from .constants import ChipInfo, get_field, set_field
 from .eeprom import EepromValues
+from .state import DrvData
 from .transport import RT3070Transport
 
 
@@ -80,17 +81,18 @@ def init_rx_filter(t: RT3070Transport, bw40: bool, filter_target: int) -> int:
     return rfcsr24
 
 
-def rx_filter_calibration(t: RT3070Transport, chip: ChipInfo) -> tuple[int, int]:
+def rx_filter_calibration(t: RT3070Transport, chip: ChipInfo) -> DrvData:
     """Calibrate both the 20 MHz and 40 MHz RX filters [SRC rt2800lib.c:7398-7442
     rt2800_rx_filter_calibration]. Both run at init regardless of operating width
-    (we only ever *tune* 20 MHz channels). Returns (bbp25, bbp26) for channel switch."""
+    (we only ever *tune* 20 MHz channels). The two ``init_rx_filter`` results become
+    ``calibration_bw20``/``calibration_bw40``, consumed by ``config_channel_rf3xxx``."""
     if chip.is_rt(C.RT3070):
         filter_tgt_bw20, filter_tgt_bw40 = 0x16, 0x19
     else:
         filter_tgt_bw20, filter_tgt_bw40 = 0x13, 0x15
 
-    init_rx_filter(t, False, filter_tgt_bw20)
-    init_rx_filter(t, True, filter_tgt_bw40)
+    calibration_bw20 = init_rx_filter(t, False, filter_tgt_bw20)
+    calibration_bw40 = init_rx_filter(t, True, filter_tgt_bw40)
 
     # Saved for RF3052 channel switching (unused on RF3020, but the reads are on
     # the wire so we issue them).
@@ -106,7 +108,8 @@ def rx_filter_calibration(t: RT3070Transport, chip: ChipInfo) -> tuple[int, int]
     bbp = t.bbp_read(4)
     bbp = set_field(bbp, C.BBP4_BANDWIDTH, 0)
     t.bbp_write(4, bbp)
-    return bbp25, bbp26
+    return DrvData(calibration_bw20=calibration_bw20, calibration_bw40=calibration_bw40,
+                   bbp25=bbp25, bbp26=bbp26)
 
 
 def led_open_drain_enable(t: RT3070Transport) -> None:
@@ -173,8 +176,9 @@ def normal_mode_setup_3xxx(t: RT3070Transport, chip: ChipInfo, ev: EepromValues)
         t.rfcsr_write(21, rfcsr)
 
 
-def init_rfcsr_30xx(t: RT3070Transport, chip: ChipInfo, ev: EepromValues) -> None:
-    """[SRC rt2800lib.c:7618-7686 rt2800_init_rfcsr_30xx]"""
+def init_rfcsr_30xx(t: RT3070Transport, chip: ChipInfo, ev: EepromValues) -> DrvData:
+    """[SRC rt2800lib.c:7618-7686 rt2800_init_rfcsr_30xx]. Returns the RX-filter
+    calibration (``DrvData``) threaded into operational channel tuning."""
     rf_init_calibration(t, 30)
 
     for reg, val in ((4, 0x40), (5, 0x03), (6, 0x02), (7, 0x60), (9, 0x0F),
@@ -208,7 +212,7 @@ def init_rfcsr_30xx(t: RT3070Transport, chip: ChipInfo, ev: EepromValues) -> Non
         reg = set_field(reg, C.GPIO_SWITCH_5, 0)
         t.register_write(C.GPIO_SWITCH, reg)
 
-    rx_filter_calibration(t, chip)
+    drv = rx_filter_calibration(t, chip)
 
     if (chip.rt_rev_lt(C.RT3070, C.REV_RT3070F)
             or chip.rt_rev_lt(C.RT3071, C.REV_RT3071E)
@@ -218,3 +222,4 @@ def init_rfcsr_30xx(t: RT3070Transport, chip: ChipInfo, ev: EepromValues) -> Non
 
     led_open_drain_enable(t)
     normal_mode_setup_3xxx(t, chip, ev)
+    return drv

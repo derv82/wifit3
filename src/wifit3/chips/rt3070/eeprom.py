@@ -86,11 +86,22 @@ class EepromValues:
     led_mcu_reg: int        # EEPROM_FREQ word; LED mode/polarity for MCU_LED [rt2800lib.c:11312]
     txmixer_gain_24g: int   # [rt2800lib.c:10996-11008 rt2800_get_txmixer_gain_24g]
     external_lna_bg: bool   # NIC_CONF1 EXTERNAL_LNA_2G [rt2800lib.c:11282]
+    lna_gain_bg: int        # EEPROM_LNA BG byte [rt2800lib.c:2408 config_lna_gain]
+    external_tx_alc: bool    # NIC_CONF1 EXTERNAL_TX_ALC [rt2800lib.c:4578 gain cal gate]
+    power_limit: bool        # EIRP_MAX_2GHZ < limit ⇒ CAPABILITY_POWER_LIMIT [rt2800lib.c:11320]
+    ant_diversity: int       # NIC_CONF1 ANT_DIVERSITY [rt2800lib.c:2365 config_ant]
 
     def word(self, index: int) -> int:
         """u16 at EEPROM word ``index`` [SRC rt2800lib.c rt2800_eeprom_read]."""
         off = index * 2
         return self.raw[off] | (self.raw[off + 1] << 8)
+
+    def power_byte(self, word_index: int, i: int) -> int:
+        """Signed per-channel TX-power byte ``i`` of the array based at ``word_index``
+        [SRC rt2800lib.c:11923-11936 ``default_power1[i] = eeprom_addr(...)[i]``].
+        The EEPROM stores these as ``s8``."""
+        b = self.raw[word_index * 2 + i]
+        return b - 0x100 if b >= 0x80 else b
 
 
 def parse_eeprom(buf: bytes) -> EepromValues:
@@ -109,6 +120,8 @@ def parse_eeprom(buf: bytes) -> EepromValues:
     txmixer_bg = word(C.EEPROM_TXMIXER_GAIN_BG)
     txmixer_gain_24g = (C.get_field(txmixer_bg, C.EEPROM_TXMIXER_GAIN_BG_VAL)
                         if (txmixer_bg & 0x00FF) != 0x00FF else 0)
+    # CAPABILITY_POWER_LIMIT: EIRP 2.4 GHz max below the limit ⇒ honor it [rt2800lib.c:11320].
+    eirp_2g = C.get_field(word(C.EEPROM_EIRP_MAX_TX_POWER), C.EEPROM_EIRP_MAX_TX_POWER_2GHZ)
     return EepromValues(
         raw=buf,
         mac=mac,
@@ -120,4 +133,8 @@ def parse_eeprom(buf: bytes) -> EepromValues:
         led_mcu_reg=word(C.EEPROM_FREQ),
         txmixer_gain_24g=txmixer_gain_24g,
         external_lna_bg=bool(C.get_field(nic_conf1, C.EEPROM_NIC_CONF1_EXTERNAL_LNA_2G)),
+        lna_gain_bg=C.get_field(word(C.EEPROM_LNA), C.EEPROM_LNA_BG),
+        external_tx_alc=bool(C.get_field(nic_conf1, C.EEPROM_NIC_CONF1_EXTERNAL_TX_ALC)),
+        power_limit=eirp_2g < C.EIRP_MAX_TX_POWER_LIMIT,
+        ant_diversity=C.get_field(nic_conf1, C.EEPROM_NIC_CONF1_ANT_DIVERSITY),
     )

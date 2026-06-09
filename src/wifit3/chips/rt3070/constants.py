@@ -57,8 +57,10 @@ REV_RT3071E = 0x0211
 
 # RF chip ids [SRC rt2800.h:53-63] (EEPROM NIC_CONF0 RF_TYPE field)
 RF3020 = 0x0005
+RF2020 = 0x0006
 RF3021 = 0x0007
 RF3022 = 0x0008
+RF3320 = 0x000B
 RF3070 = 0x3070
 
 # --- MAC system control [SRC rt2800.h:729-734] -----------------------------
@@ -392,6 +394,7 @@ AUTO_RSP_CFG_ACK_CTS_PSM_BIT = 0x00000080
 LEGACY_BASIC_RATE = 0x1408               # [SRC rt2800.h:1797-1802]
 HT_BASIC_RATE = 0x140C
 
+TX_STA_FIFO = 0x1718                     # [SRC rt2800.h:1931] TX status FIFO (aireplay polls)
 RX_STA_CNT0 = 0x1700                     # [SRC rt2800.h:1868-1903] cleared-on-read
 RX_STA_CNT1 = 0x1704
 RX_STA_CNT2 = 0x1708
@@ -430,6 +433,139 @@ TXWI_DESC_SIZE_4WORDS = 16               # [SRC rt2800.h:3052] beacon TXWI clear
 
 def hw_beacon_base(index: int) -> int:
     return _HW_BEACON_BASE[index]
+
+
+# =====================================================================
+# Operational phase — channel tune / txpower / filter / antenna / link tuner
+# [SRC rt2800lib.c {config_channel,config_txpower,config_ant,config_filter},
+#  rt2x00link.c, rt2x00mac.c; rt2800.h field masks]
+# =====================================================================
+
+# RX-filter flags — the subset of mac80211 FIF_* the driver honors [SRC
+# rt2x00mac.c:366-372]. The bit values are ours; only membership in the
+# filter_flags set matters (config_filter maps each to a DROP_* field).
+FIF_ALLMULTI = 0x01
+FIF_FCSFAIL = 0x02
+FIF_PLCPFAIL = 0x04
+FIF_CONTROL = 0x08
+FIF_PSPOLL = 0x10
+
+# Channel-survey counters (cleared-on-read) [SRC rt2800.h:1012-1022]
+CH_IDLE_STA = 0x1130
+CH_BUSY_STA = 0x1134
+CH_BUSY_STA_SEC = 0x1138
+
+# Per-rate TX power registers + nibble fields [SRC rt2800.h:1103-1110,1115-1224]
+TX_PWR_CFG_0 = 0x1314
+TX_PWR_CFG_1 = 0x1318
+TX_PWR_CFG_2 = 0x131C
+TX_PWR_CFG_3 = 0x1320
+TX_PWR_CFG_4 = 0x1324
+_TX_PWR_CFG_RATE = tuple(0x0000000F << (4 * n) for n in range(8))  # RATE0..RATE7
+
+# TX band + pin (PA/LNA path enables) config [SRC rt2800.h:1241-1280]
+TX_BAND_CFG = 0x132C
+TX_BAND_CFG_HT40_MINUS = 0x00000001
+TX_BAND_CFG_A = 0x00000002
+TX_BAND_CFG_BG = 0x00000004
+TX_PIN_CFG = 0x1328
+TX_PIN_CFG_PA_PE_A0_EN = 0x00000001
+TX_PIN_CFG_PA_PE_G0_EN = 0x00000002
+TX_PIN_CFG_PA_PE_A1_EN = 0x00000004
+TX_PIN_CFG_PA_PE_G1_EN = 0x00000008
+TX_PIN_CFG_LNA_PE_A0_EN = 0x00000100
+TX_PIN_CFG_LNA_PE_G0_EN = 0x00000200
+TX_PIN_CFG_LNA_PE_A1_EN = 0x00000400
+TX_PIN_CFG_LNA_PE_G1_EN = 0x00000800
+TX_PIN_CFG_RFTR_EN = 0x00010000
+TX_PIN_CFG_TRSW_EN = 0x00040000
+TX_PIN_CFG_RFRX_EN = 0x00100000
+TX_PIN_CFG_PA_PE_A2_EN = 0x01000000
+TX_PIN_CFG_PA_PE_G2_EN = 0x02000000
+TX_PIN_CFG_LNA_PE_A2_EN = 0x10000000
+TX_PIN_CFG_LNA_PE_G2_EN = 0x20000000
+TX_PIN_CFG_PA_PE_DISABLE = 0xFCFFFFF0   # VCO-cal PA mask [SRC rt2800.h:1242]
+
+# Power-save autowake [SRC rt2800.h:1044-1047]
+AUTOWAKEUP_CFG_AUTO_LEAD_TIME = 0x000000FF
+AUTOWAKEUP_CFG_TBCN_BEFORE_WAKE = 0x00007F00
+AUTOWAKEUP_CFG_AUTOWAKE = 0x00008000
+
+# RFCSR channel-tune fields [SRC rt2800.h:2311-2502]
+RFCSR1_RX2_PD = 0x40
+RFCSR1_TX2_PD = 0x80
+RFCSR3_K = 0x0F
+RFCSR3_VCOCAL_EN = 0x80
+RFCSR6_R1 = 0x03
+RFCSR7_RF_TUNING = 0x01
+RFCSR12_TX_POWER = 0x1F
+RFCSR13_TX_POWER = 0x1F
+RFCSR23_FREQ_OFFSET = 0x7F
+RFCSR24_TX_CALIB = 0x7F
+RFCSR30_RF_CALIBRATION = 0x80
+RFCSR30_TX_H20M = 0x02
+RFCSR30_RX_H20M = 0x04
+RFCSR31_RX_CALIB = 0x7F
+
+# BBP antenna / chain-select / TX-power-control fields [SRC rt2800.h:2226-2246]
+BBP1_TX_POWER_CTRL = 0x03
+BBP1_TX_ANTENNA = 0x18
+BBP3_RX_ANTENNA = 0x18
+BBP3_HT40_MINUS = 0x20
+BBP27_RX_CHAIN_SEL = 0x60
+
+# TX-power clamp bounds [SRC rt2800.h:3171-3174]
+MIN_G_TXPOWER = 0
+MAX_G_TXPOWER = 31
+MIN_A_TXPOWER = -7
+MAX_A_TXPOWER = 15
+
+# RX FCS-error counter field (link stats) [SRC rt2800.h:1869]
+RX_STA_CNT0_CRC_ERR = 0x0000FFFF
+
+# EEPROM words / fields for the txpower + gain decode [SRC rt2800lib.c:308-347 map,
+# rt2800.h:2807-2877]. Word numbers are the mapped offsets (non-ext map / RT3070).
+EEPROM_EIRP_MAX_TX_POWER = 0x0027
+EEPROM_EIRP_MAX_TX_POWER_2GHZ = 0x00FF
+EIRP_MAX_TX_POWER_LIMIT = 0x50
+EEPROM_TXPOWER_DELTA = 0x0028
+EEPROM_TXPOWER_DELTA_VALUE_2G = 0x003F
+EEPROM_TXPOWER_DELTA_TYPE_2G = 0x0040
+EEPROM_TXPOWER_DELTA_ENABLE_2G = 0x0080
+EEPROM_TXPOWER_BG1 = 0x0029
+EEPROM_TXPOWER_BG2 = 0x0030
+EEPROM_TXPOWER_BYRATE = 0x006F
+EEPROM_TXPOWER_BYRATE_SIZE = 9
+_EEPROM_TXPOWER_BYRATE_RATE = (0x000F, 0x00F0, 0x0F00, 0xF000)
+EEPROM_LNA_BG = 0x00FF
+EEPROM_NIC_CONF1_EXTERNAL_TX_ALC = 0x0002
+EEPROM_NIC_CONF1_ANT_DIVERSITY = 0x1800
+
+# TSSI temperature-comp bounds, 2.4 GHz [SRC rt2800lib.c map + rt2800.h:2838-2877]
+EEPROM_TSSI_BOUND_BG1 = 0x0037
+EEPROM_TSSI_BOUND_BG2 = 0x0038
+EEPROM_TSSI_BOUND_BG3 = 0x0039
+EEPROM_TSSI_BOUND_BG4 = 0x003A
+EEPROM_TSSI_BOUND_BG5 = 0x003B
+EEPROM_TSSI_BOUND_BG1_MINUS4 = 0x00FF
+EEPROM_TSSI_BOUND_BG1_MINUS3 = 0xFF00
+EEPROM_TSSI_BOUND_BG2_MINUS2 = 0x00FF
+EEPROM_TSSI_BOUND_BG2_MINUS1 = 0xFF00
+EEPROM_TSSI_BOUND_BG3_REF = 0x00FF
+EEPROM_TSSI_BOUND_BG3_PLUS1 = 0xFF00
+EEPROM_TSSI_BOUND_BG4_PLUS2 = 0x00FF
+EEPROM_TSSI_BOUND_BG4_PLUS3 = 0xFF00
+EEPROM_TSSI_BOUND_BG5_PLUS4 = 0x00FF
+EEPROM_TSSI_BOUND_BG5_AGC_STEP = 0xFF00
+
+# RF3020 2.4 GHz channel table {rf1, rf2, rf3} [SRC rt2800lib.c:11435 rf_vals_3x].
+# This card is 2.4 GHz only (RF3020); chs 1-14. rf2 is 2 for every 2.4 GHz channel.
+RF_VALS_3X_2G = {
+    1: (241, 2, 2), 2: (241, 2, 7), 3: (242, 2, 2), 4: (242, 2, 7),
+    5: (243, 2, 2), 6: (243, 2, 7), 7: (244, 2, 2), 8: (244, 2, 7),
+    9: (245, 2, 2), 10: (245, 2, 7), 11: (246, 2, 2), 12: (246, 2, 7),
+    13: (247, 2, 2), 14: (248, 2, 4),
+}
 
 
 from dataclasses import dataclass  # noqa: E402  (kept with the ChipInfo it serves)

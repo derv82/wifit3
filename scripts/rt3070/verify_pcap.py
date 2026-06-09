@@ -54,7 +54,8 @@ MAC_CSR0 = 0x1000          # silicon id + revision; the first vendor op of the p
 _IMPORT_ERR = None
 try:
     from wifit3.chips.rt3070.transport import RT3070Transport  # noqa: E402
-    from wifit3.chips.rt3070 import bbp, chan, eeprom, firmware, mac, rfcsr  # noqa: E402
+    from wifit3.chips.rt3070 import (  # noqa: E402
+        bbp, chan, constants as C, eeprom, firmware, mac, monitor, rfcsr)
 except ImportError as e:  # driver not scaffolded yet
     _IMPORT_ERR = e
 
@@ -121,24 +122,71 @@ def _walk_init(w: Walk, out: dict) -> None:
     w.run(lambda t: mac.init_registers(t, chip, ev), "init-registers")  # MAC config block
     w.run(lambda t: mac.enable_radio_boot(t), "enable-radio-boot")   # BBP/RF ready + boot signal
     w.run(lambda t: bbp.init_bbp(t, chip, ev), "init-bbp")           # BBP regs (30xx + EEPROM)
-    w.run(lambda t: rfcsr.init_rfcsr_30xx(t, chip, ev), "init-rfcsr")  # RFCSR + rx-filter cal
+    out["drv"] = w.run(lambda t: rfcsr.init_rfcsr_30xx(t, chip, ev), "init-rfcsr")  # RFCSR + cal
     w.run(lambda t: mac.enable_radio_finish(t, chip, ev), "enable-radio-finish")  # MCU_CURRENT/RX/LED
     w.run(lambda t: mac.set_radio_led(t, ev), "radio-led-on")        # rt2x00leds_led_radio(true)
     w.run(lambda t: mac.start_queue_rx(t), "start-queue-rx")         # rt2x00queue_start_queues
 
 
-# Operational-phase openers (airmon monitor entry, airodump/iw channel hops, the ~1 Hz link
-# tuner). Identify each opener's first register op from the wire and dispatch it to the real
-# handler, carrying channel/AGC state across fires — the rtl8188eus_dkms pattern. TODO(agent):
-# fill these in as you reach the operational frontier (frames 1943+; see RT3070.md timeline).
-def _walk_operational(w: Walk, ev, out: dict) -> dict | None:
+def _peek_channel(ops: list[dict], i: int) -> int | None:
+    """Reverse-map the next config_channel_rf3xxx tune to a channel by peeking its
+    RFCSR2 (rf1) + RFCSR3 (rf3 = K nibble) writes [SRC RF_VALS_3X_2G]. Returns None
+    if no RFCSR channel tune (rfcsr2 write) appears in the look-ahead window — i.e.
+    the upcoming block is not a channel hop."""
+    rf1 = rf3 = None
+    for o in ops[i:i + 40]:
+        if o["dir"] != "OUT" or o["addr"] != C.RF_CSR_CFG or not o.get("data"):
+            continue
+        v = int.from_bytes(o["data"], "little")
+        if not (v & C.RF_CSR_CFG_WRITE):          # skip read-initiating writes
+            continue
+        regnum, data = (v >> 8) & 0x3F, v & 0xFF
+        if regnum == 2 and rf1 is None:
+            rf1 = data
+        elif regnum == 3 and rf3 is None:
+            rf3 = data & C.RFCSR3_K
+        if rf1 is not None and rf3 is not None:
+            break
+    if rf1 is None:
+        return None
+    for ch, (a, _b, c) in C.RF_VALS_3X_2G.items():
+        if a == rf1 and c == rf3:
+            return ch
+    raise rp.Divergence(f"unknown RF3020 tune rf1={rf1} rf3={rf3} at op{i}")
+
+
+# Operational phase: airmon monitor entry, then airodump/iw channel hops with interleaved
+# mac80211 monitor-filter re-applies (each socket open re-runs configure_filter → 0x93).
+# Every one is a real driver handler dispatched at its wire opener (the rtl8188eus_dkms
+# pattern), peeking the channel from the wire. The ONLY waived ops are aireplay's TX_STA_FIFO
+# polling — bona-fide TX-status reads from the human-fired injection (bulk-OUT TX itself is
+# already out of the control stream).
+_AIREPLAY_TAIL = ("aireplay --test + -0 deauth: TX_STA_FIFO polling "
+                  "(human-fired TX; bulk-OUT out of the control gate)")
+
+
+def _walk_operational(w: Walk, chip, ev, drv, out: dict) -> dict | None:
+    # airmon-ng start: interface-up filter (0x97) → initial config → monitor filter (0x93).
+    w.run(lambda t: monitor.enable_monitor(t, chip, ev, drv), "enable-monitor")
+
     while w.i < len(w.ops):
         o = w.peek()
-        # TODO(agent): dispatch monitor-entry / set_channel / link-tuner bursts here.
-        #   e.g.  if o["dir"] == "IN" and o["addr"] == <CHAN_OPENER>:
-        #             ch = _peek_channel(w.ops, w.i); w.run(lambda t: chan.set_channel(t, ev, ch), f"chan{ch}")
-        #             continue
-        break  # frontier: first op no handler claims
+        # airodump / iw channel hop: a full rt2x00mac_config(CHANGE_CHANNEL).
+        if o["dir"] == "IN" and o["addr"] == C.MAC_SYS_CTRL:
+            ch = _peek_channel(w.ops, w.i)
+            if ch is not None:
+                w.run(lambda t, ch=ch: chan.set_channel(t, chip, ev, drv, ch), f"chan{ch}")
+                continue
+        # mac80211 re-applies the monitor filter when a tool opens its socket (0x93).
+        if o["dir"] == "IN" and o["addr"] == C.RX_FILTER_CFG:
+            w.run(lambda t: mac.config_filter(t, monitor.MONITOR_FILTER, monitoring=True),
+                  "filter-reapply")
+            continue
+        # aireplay TX-status polling — the one named, counted waiver.
+        if o["addr"] == C.TX_STA_FIFO:
+            w.waive(_AIREPLAY_TAIL)
+            continue
+        break
     return w.peek()
 
 
@@ -188,7 +236,7 @@ def run(cap: str | None = None) -> int:
     init_end = w.i
     print(f"  init: reproduced {init_end} ops single-cursor (firmware -> chan1, no gaps)")
 
-    frontier = _walk_operational(w, out.get("eeprom"), out)
+    frontier = _walk_operational(w, out.get("chip"), out.get("eeprom"), out.get("drv"), out)
     for reason, n in w.waived.most_common():
         print(f"  waived {n:5} ops  — {reason}")
     if frontier is not None:

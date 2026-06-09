@@ -83,32 +83,32 @@ def usb_init_registers(t: RT3070Transport) -> None:
     t.register_write(C.MAC_SYS_CTRL, 0x00000000)
 
 
-def config_filter(t: RT3070Transport, monitoring: bool, *, allmulti: bool = True,
-                  control: bool = False, fcsfail: bool = False,
-                  plcpfail: bool = False, pspoll: bool = False) -> None:
+def config_filter(t: RT3070Transport, filter_flags: int, monitoring: bool) -> None:
     """RX frame filter [SRC rt2800lib.c:1967-2009 rt2800_config_filter].
 
-    Booleans map to the mac80211 FIF_* flags the kernel reads; the init call uses
-    FIF_ALLMULTI with monitoring not yet set (DROP_NOT_TO_ME=1). Monitor entry
-    re-runs this with ``monitoring=True`` to clear DROP_NOT_TO_ME [[passive_by_default]]."""
+    ``filter_flags`` is the mac80211 FIF_* set (``rt2x00mac_configure_filter``
+    masks/forces it [SRC rt2x00mac.c:355-401]); ``monitoring`` is the driver's
+    CONFIG_MONITORING bit, which alone governs DROP_NOT_TO_ME [[passive_by_default]].
+    Init: ``FIF_ALLMULTI`` + ``monitoring=False`` ⇒ 0x1bf97. Interface-up:
+    ``ALLMULTI|CONTROL|PSPOLL`` + False ⇒ 0x97. Monitor: same flags + True ⇒ 0x93."""
     reg = t.register_read(C.RX_FILTER_CFG)
-    reg = set_field(reg, C.RX_FILTER_CFG_DROP_CRC_ERROR, not fcsfail)
-    reg = set_field(reg, C.RX_FILTER_CFG_DROP_PHY_ERROR, not plcpfail)
+    reg = set_field(reg, C.RX_FILTER_CFG_DROP_CRC_ERROR, not (filter_flags & C.FIF_FCSFAIL))
+    reg = set_field(reg, C.RX_FILTER_CFG_DROP_PHY_ERROR, not (filter_flags & C.FIF_PLCPFAIL))
     reg = set_field(reg, C.RX_FILTER_CFG_DROP_NOT_TO_ME, not monitoring)
     reg = set_field(reg, C.RX_FILTER_CFG_DROP_NOT_MY_BSSD, 0)
     reg = set_field(reg, C.RX_FILTER_CFG_DROP_VER_ERROR, 1)
-    reg = set_field(reg, C.RX_FILTER_CFG_DROP_MULTICAST, not allmulti)
+    reg = set_field(reg, C.RX_FILTER_CFG_DROP_MULTICAST, not (filter_flags & C.FIF_ALLMULTI))
     reg = set_field(reg, C.RX_FILTER_CFG_DROP_BROADCAST, 0)
     reg = set_field(reg, C.RX_FILTER_CFG_DROP_DUPLICATE, 1)
-    reg = set_field(reg, C.RX_FILTER_CFG_DROP_CF_END_ACK, not control)
-    reg = set_field(reg, C.RX_FILTER_CFG_DROP_CF_END, not control)
-    reg = set_field(reg, C.RX_FILTER_CFG_DROP_ACK, not control)
-    reg = set_field(reg, C.RX_FILTER_CFG_DROP_CTS, not control)
-    reg = set_field(reg, C.RX_FILTER_CFG_DROP_RTS, not control)
-    reg = set_field(reg, C.RX_FILTER_CFG_DROP_PSPOLL, not pspoll)
+    reg = set_field(reg, C.RX_FILTER_CFG_DROP_CF_END_ACK, not (filter_flags & C.FIF_CONTROL))
+    reg = set_field(reg, C.RX_FILTER_CFG_DROP_CF_END, not (filter_flags & C.FIF_CONTROL))
+    reg = set_field(reg, C.RX_FILTER_CFG_DROP_ACK, not (filter_flags & C.FIF_CONTROL))
+    reg = set_field(reg, C.RX_FILTER_CFG_DROP_CTS, not (filter_flags & C.FIF_CONTROL))
+    reg = set_field(reg, C.RX_FILTER_CFG_DROP_RTS, not (filter_flags & C.FIF_CONTROL))
+    reg = set_field(reg, C.RX_FILTER_CFG_DROP_PSPOLL, not (filter_flags & C.FIF_PSPOLL))
     reg = set_field(reg, C.RX_FILTER_CFG_DROP_BA, 0)
-    reg = set_field(reg, C.RX_FILTER_CFG_DROP_BAR, not control)
-    reg = set_field(reg, C.RX_FILTER_CFG_DROP_CNTL, not control)
+    reg = set_field(reg, C.RX_FILTER_CFG_DROP_BAR, not (filter_flags & C.FIF_CONTROL))
+    reg = set_field(reg, C.RX_FILTER_CFG_DROP_CNTL, not (filter_flags & C.FIF_CONTROL))
     t.register_write(C.RX_FILTER_CFG, reg)
 
 
@@ -162,6 +162,15 @@ def start_queue_rx(t: RT3070Transport) -> None:
     t.register_write(C.MAC_SYS_CTRL, reg)
 
 
+def stop_queue_rx(t: RT3070Transport) -> None:
+    """Disable the RX queue [SRC rt2800usb.c:69-90 rt2800usb_stop_queue QID_RX].
+    Channel/antenna changes require RX off, else the device ignores them
+    [SRC rt2x00config.c:143-148]."""
+    reg = t.register_read(C.MAC_SYS_CTRL)
+    reg = set_field(reg, C.MAC_SYS_CTRL_ENABLE_RX, 0)
+    t.register_write(C.MAC_SYS_CTRL, reg)
+
+
 def _config_wcid_null(t: RT3070Transport, wcid: int) -> None:
     """Write a broadcast (all-0xff) WCID MAC entry [SRC rt2800lib.c:1671-1686
     rt2800_config_wcid with address=NULL]. struct mac_wcid_entry is 8 bytes."""
@@ -200,7 +209,7 @@ def init_registers(t: RT3070Transport, chip: ChipInfo, ev: EepromValues) -> None
     reg = set_field(reg, C.BCN_TIME_CFG_TX_TIME_COMPENSATE, 0)
     t.register_write(C.BCN_TIME_CFG, reg)
 
-    config_filter(t, monitoring=False)        # rt2800_config_filter(FIF_ALLMULTI)
+    config_filter(t, C.FIF_ALLMULTI, monitoring=False)   # rt2800_config_filter(FIF_ALLMULTI)
 
     reg = t.register_read(C.BKOFF_SLOT_CFG)
     reg = set_field(reg, C.BKOFF_SLOT_CFG_SLOT_TIME, 9)
