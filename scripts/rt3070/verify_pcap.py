@@ -85,33 +85,31 @@ class Walk:
 
 
 def _walk_init(w: Walk, out: dict) -> None:
-    """Deterministic cold bring-up, in kernel source order (rt2800_probe_hw flattened), one
-    cursor, no re-anchoring. Mirror driver.py connect(). Implement these in order; run the
-    gate after each — the first unimplemented call is your frontier.
+    """Deterministic cold bring-up, one cursor, no re-anchoring. Mirrors driver.py
+    connect(). Implement each handler in order; run the gate after each — the first
+    unimplemented call is the frontier.
 
-    Source: data_dumps/rt2x00-source-v6.18/{rt2800usb.c,rt2800lib.c}. Line cites in RT3070.md.
+    WIRE ORDER (confirmed by this gate, capture-1): probe → EFUSE → firmware →
+    enable_radio. The chip's EEPROM is read via EFUSE at *probe* time (frames 482-960),
+    long before the firmware load (frames 2031+) — so this is NOT the FW-first sketch the
+    template shipped with. ``rt2800_probe_hw`` flattened, then ``rt2x00lib_start``.
 
-    M2a  firmware upload + MCU boot          rt2800usb.c rt2800usb_write_firmware
-    M2b  usb bootstrap (USB_DEVICE_MODE)     rt2800usb.c rt2800usb_init_registers
-    M2c  EFUSE dump (WORD offset!) + parse   rt2800lib.c rt2800_read_eeprom_efuse (10955)
-    M2d  MAC config block                    rt2800lib.c rt2800_init_registers
-    M2e  BBP init (30xx)                     rt2800lib.c rt2800_init_bbp_30xx (6521)
-    M2f  RFCSR init (30xx) + rx-filter cal   rt2800lib.c rt2800_init_rfcsr_30xx (7618)
-    M3   enable radio (TX/RX/WPDMA + filter) rt2800lib.c rt2800_enable_radio / config_filter
-    M4   tune to default channel (RF3020)    rt2800lib.c rt2800_config_channel_rf3xxx (2547)
+    Source: data_dumps/rt2x00-source-v6.18/{rt2800usb.c,rt2800lib.c,rt2x00dev.c}.
+
+    probe_rt     read MAC_CSR0 (chip id/rev)         rt2800_probe_rt (11987)
+    efuse        autorun + EFUSE 32 word-blocks       rt2800usb_read_eeprom (594) ->
+                 (WORD offset!)                       rt2800_read_eeprom_efuse (10955)
+    gpio-rfkill  GPIO_CTRL dir (last probe-hw op)     rt2800_probe_hw (12057)
+    firmware     FW upload + MCU boot signal          rt2800_load_firmware (714) ->
+                                                      rt2800usb_write_firmware (210)
+    --- frontier: enable_radio / init_registers / BBP / RFCSR / channel (M2d+) ---
     """
-    fw = firmware.load_firmware_blob()
-    w.run(lambda t: firmware.upload(t, fw), "firmware")              # M2a
-    w.run(lambda t: mac.usb_init_registers(t), "usb-init")           # M2b
-    buf = w.run(lambda t: eeprom.read_eeprom_efuse(t), "efuse")      # M2c
+    w.run(lambda t: mac.probe_rt(t), "probe-rt")                     # MAC_CSR0
+    buf = w.run(lambda t: eeprom.read_eeprom_efuse(t), "efuse")      # autorun + EFUSE
     out["eeprom"] = eeprom.parse_eeprom(buf)
-    ev = out["eeprom"]
-    w.run(lambda t: mac.init_registers(t, ev), "mac-cfg")            # M2d
-    w.run(lambda t: bbp.prepare_bbp(t), "bbp-prep")
-    w.run(lambda t: bbp.init_bbp_30xx(t, ev), "bbp-init")            # M2e
-    w.run(lambda t: rfcsr.init_rfcsr_30xx(t, ev), "rfcsr-init")      # M2f (incl. rx-filter cal)
-    w.run(lambda t: mac.enable_radio(t, ev), "enable-radio")         # M3
-    w.run(lambda t: chan.set_channel(t, ev, 1), "chan1")             # M4
+    w.run(lambda t: mac.probe_hw_gpio(t), "gpio-rfkill")             # GPIO_CTRL dir
+    fw = firmware.load_firmware_blob()
+    w.run(lambda t: firmware.upload(t, fw), "firmware")              # FW load + boot
 
 
 # Operational-phase openers (airmon monitor entry, airodump/iw channel hops, the ~1 Hz link
