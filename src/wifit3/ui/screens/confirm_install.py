@@ -82,10 +82,10 @@ class ConfirmInstallDialog(ModalScreen[bool]):
             yield Label("Wifit3 needs the WinUSB driver to talk to this card", id="title")
             yield Static(self._diagram(_PULSE[0]), id="diagram")
             yield Label(
-                "[bold darkorange]Warning:[/] this [italic darkorange]replaces the card's "
-                "current driver[/] — Windows will stop seeing it as a wireless device.\n"
-                "[dim]Reversible: uninstall the WinUSB driver in Device Manager to restore "
-                "it.[/dim]",
+                "[bold $text-warning]Warning:[/] this [italic $text-warning]replaces the "
+                "card's current driver[/] — Windows will stop seeing it as a wireless "
+                "device.\n[dim]Reversible: uninstall the WinUSB driver in Device Manager to "
+                "restore it.[/dim]",
                 id="warn")
             yield Label(f"Install WinUSB for [bold]{self._full}[/]?", id="question")
             with Horizontal(id="button-row"):
