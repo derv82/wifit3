@@ -1,7 +1,6 @@
 import sys
 import asyncio
 import logging
-import time
 from pathlib import Path
 from textual.app import ComposeResult
 from textual.screen import Screen
@@ -121,7 +120,6 @@ class SplashView(Screen):
         yield Footer()
 
     async def on_mount(self) -> None:
-        logger.debug("splash on_mount — scheduling first poll")
         self.query_one("#init-progress").display = False
         self.query_one("#start-btn", Button).disabled = True   # enabled once a card appears
         # Poll frequently — discovery opens no devices now, so a tight interval makes plugging
@@ -136,11 +134,8 @@ class SplashView(Screen):
         if self._is_initializing or self._poll_in_flight:
             return
         self._poll_in_flight = True
-        t = time.perf_counter()
         try:
             interfaces = await self.device_manager.refresh()
-            logger.debug("poll_usb: refresh took %.0f ms (%d card(s))",
-                         (time.perf_counter() - t) * 1000, len(interfaces))
             signature = tuple((i.name, i.description) for i in interfaces)
             if signature == self._last_signature:
                 return
