@@ -37,6 +37,18 @@ no hardware available; verify before `[x]`.**
   :228 (monitor skip), :314 (DEFAULT_RSSI fallback); rt2800lib.c:12085
   (CAPABILITY_LINK_TUNING always set). Ties to VERIFICATION.md PAU05 Scan ⚠️
   and the cross-card weak-2.4 GHz-RX item in `planning/PORTING.md`.
+- [ ] **EFUSE reader uses BYTE offset where the chip wants a u16-WORD offset** — CONFIRMED
+  bug (2026-06-09), found while staging the RT3070 clean-room port. `eeprom.py
+  read_eeprom_efuse` loops `range(0, 512, 16)` and writes `EFUSE_CTRL_ADDRESS_IN = byte
+  offset`; the kernel (`rt2800lib.c:10955` `for i ... i += 8` u16 words) writes the **word**
+  offset. Block 0 (MAC) reads correctly — masking the bug — but block ≥1 fetches from *double*
+  the address, so **`NIC_CONF0` (chain counts!), `freq_offset`, `LNA`, `RSSI`, IQ-cal are read
+  from the wrong place** on RT5372/RT5572/RT3572. Never caught because the old `verify_pcap`
+  only replayed the firmware-upload block, not the EFUSE walk. Fix: `ADDRESS_IN = offset // 2`
+  (or loop in word units). **Left unpatched here on purpose** — fixing it shifts every
+  EFUSE-derived value family-wide and needs a full-walk gate + an RX A/B re-check, so it's
+  scoped to the future family-perfection pass (the RT3070 clean-room port carries its own
+  correct reader; see `chips/rt3070/RT3070.md`).
 
 Covers Ralink rt2800usb-family chipsets supported by wifit3:
 
