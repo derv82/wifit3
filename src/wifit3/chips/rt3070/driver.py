@@ -52,6 +52,7 @@ class RT3070Driver:
         self._channel: Optional[int] = None
         self._lna_gain: int = 0          # current-channel LNA gain (RSSI conversion)
         self._bulk_in_ep: Optional[int] = None
+        self._bulk_out_ep: Optional[int] = None
         self._rx_cb: Optional[Callable[[dict], None]] = None
         self._reader: Optional[RxReaderThread] = None
         self._io_lock = asyncio.Lock()   # serialize EP0 batches (set_channel vs inject)
@@ -109,7 +110,12 @@ class RT3070Driver:
                 progress_cb(1.0, "RT3070 bring-up failed")
             return False
 
-        self._bulk_in_ep = probe_endpoints(self.transport.dev).primary_bulk_in
+        eps = probe_endpoints(self.transport.dev)
+        self._bulk_in_ep = eps.primary_bulk_in
+        # MGMT/inject frames go on the first TX queue's endpoint = the lowest-numbered
+        # bulk-OUT (rt2x00usb assigns endpoints to queues in descriptor order). Confirmed
+        # on capture-1: every aireplay deauth (FC=0xc0) rode bulk-OUT EP 0x01.
+        self._bulk_out_ep = min(eps.bulk_out) if eps.bulk_out else None
         logger.info("RT3070 EFUSE: mac=%s rf=0x%04x %dT%dR ext_lna_2g=%s freq_off=%d",
                     self.mac_address, self._eeprom.rf_type, self._eeprom.tx_chain_num,
                     self._eeprom.rx_chain_num, self._eeprom.external_lna_bg,
@@ -153,14 +159,14 @@ class RT3070Driver:
         [[passive_by_default]]. Serialized via ``_io_lock`` so it never races a retune."""
         if not frame_bytes:
             return False
-        out_eps = probe_endpoints(self.transport.dev).bulk_out
-        if not out_eps:
+        if self._bulk_out_ep is None:
             logger.error("RT3070 inject: no bulk-OUT endpoint")
             return False
         loop = asyncio.get_running_loop()
         async with self._io_lock:
             await loop.run_in_executor(
-                None, tx.send_frame, self.transport.dev, out_eps[0], frame_bytes, use_no_ack)
+                None, tx.send_frame, self.transport.dev, self._bulk_out_ep,
+                frame_bytes, use_no_ack)
         return True
 
     async def close(self) -> None:
