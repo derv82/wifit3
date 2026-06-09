@@ -4,6 +4,52 @@ How a Linux user goes from "plugged the card in" to "wifit3 sees it," without a 
 incantation. The **Windows half of device-setup is shipped** (detect → install WinUSB →
 revert, all in-TUI); this is the remaining **Linux** half. Design for RELEASE-PLAN § 2d.
 
+## Verified results — 2026-06-09 (Kali 6.18.12, normal user uid 1000)
+
+Ran `scripts/linux_setup/probe_l1_l2.py` across the full card fleet (17 plugs,
+13 distinct VID:PIDs) with the permissive udev rule installed. **Both gating
+questions resolved — the best-case outcome holds.** Transcript + TSV:
+`usb_dumps_new/linux-setup-results/`.
+
+### L1 — RESOLVED: holds. Per-run sudo disappears after one rule install.
+
+With the udev rule giving the usbfs node `crw-rw---- root:plugdev` (writable
+by uid 1000), a **non-root** `detach_kernel_driver` succeeded on *every* Wi-Fi
+module. The control case proves the mechanism: an earlier run *before* the rule
+applied (node `root:root`) failed every card with `errno 13 (Access denied)` on
+**open** — the same permission that gates detach. So `USBDEVFS_DISCONNECT` keys
+off **node write-access, not `CAP_SYS_ADMIN`** ([VERIFY-L1] confirmed): the one
+rule install grants open *and* detach, and per-run sudo is gone for good.
+
+### L2 — RESOLVED: every module detaches via lever 1. Lever 3 not needed.
+
+Runtime detach (lever 1) cleanly released all of:
+
+  ath9k_htc · rtl8187 · rtl88x2bu · mt76x2u · rtl8814au · mt76x0u ·
+  rtw88_8812au · 8188eu · mt7921u (composite) · rt2800usb
+  (RT5572/RT3070/RT5372) · rt2500usb · rtl8821au
+
+**No module required lever 3 (unbind-on-plug).** The finicky, distro-variable
+`RUN+=` rule drops out of the plan — reach for it only if some future module
+resists, which none here did.
+
+### New finding — composite BT+Wi-Fi combos (MT7921AU, 0e8d:7961)
+
+The AXML enumerates **4 interfaces**; the kernel binds `btusb` (if0/if1) +
+`mt7921u` (if3). Two consequences for the Linux connect path:
+
+1. **Detach must loop every interface**, not just intf 0. The probe did
+   `if0 DETACHED · if1 none · if2 none · if3 DETACHED`. Our drivers' `_claim`
+   detaches interface 0 only (e.g. `rt2800usb/driver.py:_claim`) — fine for
+   single-interface cards, but the combo needs an all-interface loop.
+2. **udev-vs-firmware-reenum perms race.** On some plugs the node came up
+   `crw------- root:root` (rule lost the race → INCONCLUSIVE); on others
+   `crw-rw---- root:plugdev` → success. MT7921 loads firmware and
+   re-enumerates, so the rule sometimes doesn't re-apply to the post-FW node.
+   A **replug** (clean cold-plug) resolved it every time. The connect-failure
+   path should surface "replug" guidance when the node is root-owned, the same
+   spirit as [[feedback_warm_reattach]]'s wedged-pipe message.
+
 ## The constraint
 
 wifit3 talks to cards through libusb, so the card must be reachable by libusb — on Linux the
@@ -41,7 +87,7 @@ the udev rule so it's automatic next time), then retry connect.
    GROUP="plugdev"`. Grants the user the device node.
 3. **udev unbind-on-plug** — a `RUN+=` rule that unbinds the device from its kernel driver as
    it appears, so wifit3 finds it already free. Finicky and distro-variable (the part to be
-   most cautious about).
+   most cautious about). **Verified unnecessary (2026-06-09): every module detached via lever 1.**
 
 - **Recommended path.** Ship one udev rules file covering all supported VID:PIDs (perms via
   `uaccess`), install it once via `pkexec`, and use PyUSB auto-detach at runtime. Fallback for
@@ -49,7 +95,7 @@ the udev rule so it's automatic next time), then retry connect.
 - **Don't** blanket-blacklist the kernel modules — that kills the card as normal Wi-Fi
   system-wide. Only on explicit opt-in.
 
-### [VERIFY-L1] Does DISCONNECT need root, or just node write-access? ⚠ decides whether sudo ever disappears
+### [VERIFY-L1] Does DISCONNECT need root, or just node write-access? — ✅ RESOLVED: node write-access (see Verified results)
 
 If `USBDEVFS_DISCONNECT` keys off **write permission on the usbfs node** (my read) rather than
 `CAP_SYS_ADMIN`, then lever 2 (a `uaccess`/`0660` udev rule) is enough for *both* opening
@@ -58,7 +104,7 @@ requires root, fall back to lever 3 (unbind-on-plug) or per-run sudo. **Test:** 
 permissive udev rule installed and as a normal user, call `detach_kernel_driver` on a
 kernel-claimed card.
 
-### [VERIFY-L2] Which of our kernel modules resist clean detach
+### [VERIFY-L2] Which of our kernel modules resist clean detach — ✅ RESOLVED: none (all detach via lever 1)
 
 mac80211 Wi-Fi drivers sometimes hold the netdev and won't detach cleanly. Walk the README's
 module list — `ath9k_htc`, `rtl8xxxu`, `mt76x2u`, `rt2800usb`, … — and note per-module whether
@@ -76,9 +122,10 @@ lever 1 (runtime detach) works or it needs lever 3 (unbind-on-plug).
 
 ## Open questions / must-verify
 
-- [ ] **L1** — `USBDEVFS_DISCONNECT` as non-root with a permissive udev rule? (Decides whether
-  per-run sudo ever goes away — the whole ballgame.)
-- [ ] **L2** — per-module detach-vs-unbind for our kernel drivers.
+- [x] **L1** — `USBDEVFS_DISCONNECT` as non-root with a permissive udev rule? **Yes** — keys off
+  node write-access, not root. Per-run sudo gone after one rule install (2026-06-09).
+- [x] **L2** — per-module detach-vs-unbind for our kernel drivers. **All detach via lever 1**;
+  none need unbind-on-plug (2026-06-09).
 - [ ] `pkexec` availability across target distros (Kali / Ubuntu desktop: yes; minimal /
   headless: → `sudo` fallback + printed one-liner).
 - [ ] arm Linux (Raspberry Pi, Kali-arm): confirm PyUSB detach + the udev install behave the
@@ -88,10 +135,12 @@ lever 1 (runtime detach) works or it needs lever 3 (unbind-on-plug).
 
 Linux setup is the **lower-risk** half — "ship a udev file (generated from `SUPPORTED_IDS`) +
 a one-time `pkexec` installer + PyUSB auto-detach at runtime" — and it slots into the
-already-built splash flow on the connect-failure path. Gate the design on **L1**: if a
-permissive udev rule alone lets a non-root user *detach* (not just open), then sudo disappears
-entirely after the single rule install — the best outcome. Best built from a real Linux box
-(Kali) where L1/L2 can be measured directly rather than guessed.
+already-built splash flow on the connect-failure path. **L1 is confirmed** (2026-06-09): a
+permissive udev rule alone lets a non-root user *detach*, not just open, so sudo disappears
+entirely after the single rule install — the best outcome, now measured rather than guessed.
+Lever 3 (unbind-on-plug) is **not needed** — every module detached via lever 1. The one
+implementation caveat is composite BT+Wi-Fi combos (MT7921AU): detach **all** interfaces, and
+fall back to a "replug" prompt when the post-firmware node re-enumerates root-owned.
 
-Target: a card on Linux works with **at most one** `pkexec` prompt ever, and ideally zero
-per-run sudo.
+Target — now achievable: a card on Linux works with **at most one** `pkexec` prompt ever (the
+rule install) and **zero** per-run sudo.
