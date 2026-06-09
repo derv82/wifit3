@@ -2,12 +2,14 @@
 
 Exists ONLY so the manager recognizes ``148f:3070`` and the splash can surface the card
 as *present-but-unbound* for Tier-0 device-setup UI testing [DEVICE-SETUP.md]. The RT3070
-is rt2x00-family (the real home is ``rt2800usb``), but its RF/BBP bring-up isn't ported
-yet — so ``from_usb_device`` deliberately refuses construction. While the card is unbound
-the manager classifies it before ever calling that, so this never fires in the UI test.
+bring-up isn't ported yet — so ``from_usb_device`` deliberately refuses construction. While
+the card is unbound the manager classifies it before ever calling that, so this never fires
+in the UI test.
 
-Delete this dir (and its registration in ``wlan/manager.py``) once the RT3070 is either
-brought up properly under ``rt2800usb`` or dropped.
+**This file gets REPLACED by the real clean-room ``RT3070Driver``** — the lead-approved plan
+is a standalone ``chips/rt3070/`` port (NOT a ``chips/rt2800usb/`` DeviceID delta; that
+shared base is proven non-byte-perfect). Full handoff brief, verified card facts, and the
+``verify_pcap rt3070`` gate: ``chips/rt3070/RT3070.md``.
 """
 from __future__ import annotations
 
