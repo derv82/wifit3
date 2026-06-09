@@ -99,6 +99,8 @@ class SplashView(Screen):
         self._refresh_timer = None
         self._last_signature = None
         self._is_initializing = False
+        # Guard so overlapping polls don't stack (a bus scan can outlast the poll interval).
+        self._poll_in_flight = False
         # ListItem name of the highlighted row — what START acts on.
         self._selected_name = None
 
@@ -127,32 +129,38 @@ class SplashView(Screen):
         self.call_after_refresh(self.poll_usb)
 
     async def poll_usb(self) -> None:
-        if self._is_initializing:
+        # Skip if a connect/install is running, or a prior scan is still in flight — the bus
+        # scan can take ~1s on Windows, longer than the poll interval, so don't stack them.
+        if self._is_initializing or self._poll_in_flight:
             return
-        interfaces = await self.device_manager.refresh()
-        signature = tuple((i.name, i.description) for i in interfaces)
-        if signature == self._last_signature:
-            return
-        self._last_signature = signature
+        self._poll_in_flight = True
+        try:
+            interfaces = await self.device_manager.refresh()
+            signature = tuple((i.name, i.description) for i in interfaces)
+            if signature == self._last_signature:
+                return
+            self._last_signature = signature
 
-        list_view = self.query_one("#device-list", ListView)
-        list_view.clear()
-        for iface in interfaces:
-            list_view.append(ListItem(Label(iface.description), name=iface.name))
+            list_view = self.query_one("#device-list", ListView)
+            list_view.clear()
+            for iface in interfaces:
+                list_view.append(ListItem(Label(iface.description), name=iface.name))
 
-        status = self.query_one("#status-label", Label)
-        start_btn = self.query_one("#start-btn", Button)
-        if interfaces:
-            status.update("[bold bright_green]Select a card and press START[/bold bright_green]")
-            start_btn.disabled = False
-            # clear() reset index to None; re-arm the highlight so START has a target.
-            if list_view.index is None:
-                list_view.index = 0
-                list_view.focus()
-        else:
-            status.update("Scanning for compatible hardware…")
-            start_btn.disabled = True
-            self._selected_name = None
+            status = self.query_one("#status-label", Label)
+            start_btn = self.query_one("#start-btn", Button)
+            if interfaces:
+                status.update("[bold bright_green]Select a card and press START[/bold bright_green]")
+                start_btn.disabled = False
+                # clear() reset index to None; re-arm the highlight so START has a target.
+                if list_view.index is None:
+                    list_view.index = 0
+                    list_view.focus()
+            else:
+                status.update("Scanning for compatible hardware…")
+                start_btn.disabled = True
+                self._selected_name = None
+        finally:
+            self._poll_in_flight = False
 
     def on_driver_progress(self, event: DriverProgress) -> None:
         """Connect-time progress, posted from the worker thread."""

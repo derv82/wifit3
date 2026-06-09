@@ -11,6 +11,7 @@ form on first import.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Dict, List, Optional, Type
@@ -170,6 +171,22 @@ def _is_openable(dev: usb.core.Device) -> bool:
             pass
 
 
+def _scan_bus(backend) -> List[tuple]:
+    """Blocking bus scan: ``(dev, driver_cls, id_entry)`` for every supported VID:PID match.
+
+    ``usb.core.find`` reads each device's descriptors, which stalls ~1s+ when a non-WinUSB
+    device is present on Windows (libusb is slow to read a card it can't cleanly open). It's
+    pure CPU/IO with no event-loop interaction, so callers run it via ``asyncio.to_thread`` to
+    keep the TUI responsive. Driver construction stays on the loop — it's instant and may
+    touch asyncio objects."""
+    out: List[tuple] = []
+    for dev in usb.core.find(find_all=True, backend=backend):
+        match = _match_driver(dev)
+        if match is not None:
+            out.append((dev, match[0], match[1]))
+    return out
+
+
 class WlanDeviceManager:
     """Scans PyUSB, dispatches to driver factories, returns WlanInterfaces."""
 
@@ -177,27 +194,24 @@ class WlanDeviceManager:
         self.interfaces: List[WlanInterface] = []
 
     async def refresh(self) -> List[WlanInterface]:
-        """Descriptor-only discovery: list every supported card by VID:PID, opening no
-        device. The blocking openability/WinUSB check is deferred to connect time — the splash
-        tries ``connect()`` first and only probes on failure — so this poll stays off the event
-        loop's critical path and the UI never stalls. [DEVICE-SETUP.md]"""
-        backend = libusb_package.get_libusb1_backend()
-
+        """Discover supported cards by VID:PID. The blocking bus scan runs in a thread (it
+        stalls ~1s+ on a non-WinUSB device on Windows), so the poll never freezes the TUI; the
+        openability/WinUSB check is deferred to connect time too. Driver construction is
+        instant and stays on the loop. [DEVICE-SETUP.md]"""
         for iface in self.interfaces:
             await iface.close()
         self.interfaces = []
 
-        for dev in usb.core.find(find_all=True, backend=backend):
-            match = _match_driver(dev)
-            if match is None:
-                continue
-            driver_cls, id_entry = match
+        backend = libusb_package.get_libusb1_backend()
+        matches = await asyncio.to_thread(_scan_bus, backend)
+
+        for dev, driver_cls, id_entry in matches:
             try:
                 driver = driver_cls.from_usb_device(dev, id_entry)
             except Exception as e:
                 # A not-yet-ported placeholder (or a driver that opens the device just to
-                # construct) — skip it; it simply isn't listed. Keeps discovery cheap and
-                # non-blocking. Debug-level so a placeholder doesn't spam the fast poll.
+                # construct) — skip it; it simply isn't listed. Debug-level so a placeholder
+                # doesn't spam the fast poll.
                 logger.debug("Skipping %04x:%04x (%s): %s",
                              id_entry.vid, id_entry.pid, driver_cls.__name__, e)
                 continue
