@@ -87,6 +87,60 @@ anything, so libwdi handles the INF/catalog. Confirm there's no SmartScreen / dr
 signature friction when *we* invoke `wdi-simple.exe` from a bundled (possibly
 unsigned) app.
 
+## Tier 1 — Windows implementation (decided plan, 2026-06)
+
+Tier 0 shipped (commit 09cefd7): the classifier, the splash surfacing, and a stub Install
+button. Tier 1 makes that button *bind* the card and adds an in-app revert.
+
+**Sourcing `wdi-simple.exe` — we build it ourselves.** There is no official prebuilt
+binary, and the libwdi maintainer [won't publish one](https://github.com/pbatard/libwdi/issues/309)
+— explicitly because distributing an *unsigned, elevation-requiring* exe is, in his words,
+"VERY BAD PRACTICE." The build lever is libwdi's `vs2022.yml` GitHub Action: it compiles
+`wdi-simple.exe` (x64 + Win32, with the WinUSB redist embedded → effectively standalone, no
+loose DLLs) and uploads it as the `VS2022` artifact on every push. Upstream artifacts expire
+(90-day retention — the most recent is already gone), so we build on a **disposable private
+mirror** pinned to a release. Pinned: **v1.5.1 (`9b23b82`)**. That workflow builds x64/Win32
+only — **arm64 Windows stays unsolved** (open question below). (A *fork* of a public repo
+can't be made private; we use a private *mirror* and delete it after extracting — provenance
+doesn't depend on the build repo surviving.)
+
+**Provenance, since we can't sign it.** The honest answer to the maintainer's warning:
+record, in `setup/bin/PROVENANCE.md`, the upstream tag + commit SHA + the exe's SHA-256 (the
+workflow already prints `sha256sum`). Anyone can rebuild from that commit and compare — the
+binary is auditable even though unsigned. Signing our *own* artifact (posture B: libwdi-as-a-
+library inside a signed wifit3 helper) is the post-alpha upgrade. WCID — the maintainer's
+other suggestion — is **out**: it needs MS-OS descriptors baked into the *device* firmware,
+which we don't manufacture.
+
+**Invocation.** `setup/windows.py: install_winusb(vid, pid, iid=0, name=...)` →
+`ShellExecuteW(.., "runas", ..)` (one UAC prompt — driver install is inherently privileged)
+→ `WaitForSingleObject` + `GetExitCodeProcess`. Exit code is the WDI enum (UAC-cancel is its
+own code → "you cancelled," not "it failed"); stdout can't cross the elevation boundary, so
+we don't parse it. Runs in a Textual `@work` thread (mirrors `perform_connect`) so UAC
+doesn't block the loop; on success re-run `WlanDeviceManager.refresh()` and the card flips
+`unbound → ready` on its own. `--iid 0` is correct for single-interface cards (RT3070); the
+composite-device interface-id gotcha is [issue #206](https://github.com/pbatard/libwdi/issues/206),
+deferred. Errors render through a `ModalScreen` (reuse the `ChannelFilterDialog` pattern =
+the §2c hardware-failure UX).
+
+**Revert ("Restore normal Wi-Fi") — no stored state required.** Binding to WinUSB does *not*
+delete the stock driver: it stays in the Windows driver store and WinUSB just overrides the
+active selection. Revert = `pnputil /delete-driver <oemNN.inf> /uninstall /force` +
+`pnputil /scan-devices`, which re-points the device to the next-best match (the stock driver,
+still in the store) and PnP rebinds it. The `oemNN.inf` is read **at runtime** off the bound
+device (`DEVPKEY_Device_DriverInfPath`) — no pre-bind snapshot. After a clean revert the card
+is back on its native driver, so libusb can't open it and it **correctly reappears as
+present-but-unbound** in our own splash: a self-verifying round-trip (Install → ready →
+Restore → ⚠). Zadig itself has no revert button ([libwdi #8](https://github.com/pbatard/libwdi/issues/8)),
+so this is a genuine wifit3-over-Zadig win. Sole caveat: revert leaves a dead adapter only if
+*no* fallback driver remains in the store (rare — inbox / Windows-Update drivers persist);
+detect that post-rescan and surface it via the modal rather than silently bricking the card.
+
+**Commit sequence.** (1) `setup/` scaffolding + VID:PID single-source from `_all_drivers()` +
+vendored exe + `PROVENANCE.md`; (2) `install_winusb` wired to the button + re-refresh + error
+modal; (3) runtime revert + in-TUI Restore button + the round-trip. The first *live* bind on
+the RT3070 waits until (3) lands and is **user-greenlit** (it rebinds the card off `netr28ux`).
+
 ## Linux (kernel detach / udev)
 
 Three levers, increasing bluntness:
@@ -145,11 +199,15 @@ per-module whether lever 1 works or it needs lever 3.
   enumeration needed — classify on found-but-can't-open. See [VERIFY-W1] above.
 - [ ] **L1** — `USBDEVFS_DISCONNECT` as non-root with a permissive udev rule? (decides
   whether per-run sudo ever goes away.)
-- [ ] **W2** — libwdi catalog signing / SmartScreen friction on current Win10/11.
+- [ ] **W2** — SmartScreen / AV-EDR friction invoking our *unsigned* `wdi-simple.exe`
+  elevated. Maintainer confirms the unsigned-elevated risk is ours to own; libwdi self-signs
+  the driver *cat* at install (FAQ) so the driver itself lands clean. To be settled
+  empirically on the RT3070 once commit (2) lands.
 - [ ] **L2** — per-module detach-vs-unbind for our kernel drivers.
 - [ ] `pkexec` availability across target distros (Kali/Ubuntu yes; minimal/headless
   → sudo fallback).
-- [ ] arm64 Windows / arm Linux libwdi binary availability.
+- [ ] arm64 Windows: libwdi's VS2022 workflow builds x64/Win32 only — no arm64 `wdi-simple.exe`
+  yet. (arm Linux libwdi availability also open.)
 
 ## Recommendation
 
