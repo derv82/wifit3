@@ -213,6 +213,9 @@ class SplashView(Screen):
             self._is_initializing = False
             if self._refresh_timer:
                 self._refresh_timer.resume()
+            # Hand focus back to the picker — dismissing the install modal (or a failure)
+            # otherwise leaves nothing focused.
+            list_view.focus()
 
         try:
             # Happy path: just connect. Opening + init is inherent to using the card, so we
