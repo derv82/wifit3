@@ -69,35 +69,79 @@ fi
 log ""
 log "(captured an lsusb snapshot into the transcript)"
 
-# One-time permissive udev rule. Installing it is the single pkexec prompt; afterwards a
+# Elevation method for the one-time rule install. Two ways to get root:
+#   sudo    asks for your password right here in the terminal — works from ANY terminal,
+#           including a text console (tty), since it needs no desktop.
+#   pkexec  pops a graphical polkit dialog, but ONLY if a polkit authentication agent is
+#           registered to THIS login session. Run from a tty (or any session whose desktop
+#           agent isn't reachable) it blocks forever with no dialog — the classic silent
+#           freeze. The graphical dialog can also open unfocused behind the terminal.
+# This script is always interactive (it reads from the terminal), so a controlling tty is
+# present and sudo's in-terminal prompt is the reliable default. Force a method with
+# WIFIT3_ELEVATE=sudo|pkexec.
+case "${WIFIT3_ELEVATE:-auto}" in
+  sudo)   ELEVATE_FLAG="--use-sudo" ;;
+  pkexec) ELEVATE_FLAG="" ;;                       # empty -> probe_l1_l2.py defaults to pkexec
+  *)      if [ -t 0 ] && command -v sudo >/dev/null 2>&1; then
+            ELEVATE_FLAG="--use-sudo"
+          else
+            ELEVATE_FLAG=""
+          fi ;;
+esac
+
+# One-time permissive udev rule. Installing it is the single password prompt; afterwards a
 # non-root probe can open + detach. Skip if you already installed it this boot.
-printf '\nInstall/refresh the udev access rule now (one pkexec prompt)? [Y/n] '
+printf '\nInstall/refresh the udev access rule now (one password prompt)? [Y/n] '
 read -r ans || ans="n"
 case "${ans:-Y}" in
   [Nn]*)
     log "[*] Skipped rule install — assuming it's already in place."
     ;;
   *)
-    log "[*] Installing udev rule (perms: uaccess+plugdev)..."
-    "$PY" "$PROBE" --install-rule --perms all 2>&1 | tee -a "$LOG"
+    if [ "$ELEVATE_FLAG" = "--use-sudo" ]; then
+      log "[*] Installing udev rule via sudo (enter your password below if prompted)..."
+    else
+      log "[*] Installing udev rule via pkexec (a graphical password dialog should pop)..."
+    fi
+    "$PY" "$PROBE" --install-rule --perms all $ELEVATE_FLAG 2>&1 | tee -a "$LOG"
     log "[*] If it installed OK: UNPLUG the card now — you'll replug it as card #1 below."
     ;;
 esac
 
 CARDS=0
-DONE=0
-trap 'DONE=1' INT
+
+# End-of-run summary. Called from BOTH the Ctrl+C trap and a Ctrl+D (EOF) on the prompt, so
+# either way of finishing prints the table and exits. It must live in a function because a
+# bash `read` with a trap installed RESTARTS after the handler returns instead of returning —
+# so a "set a DONE flag and break" loop never breaks on Ctrl+C. Exiting from inside the trap
+# is the only thing that reliably stops it. `trap - INT` first so a second Ctrl+C (mash) falls
+# through to the default and hard-kills, rather than re-entering this.
+finish() {
+  trap - INT
+  log ""
+  log "$SEP"
+  log "Done — probed $CARDS card(s)."
+  log "Transcript : $LOG"
+  log "TSV summary: $TSV"
+  log "$SEP"
+  log ""
+  log "-- accumulated L2 table --"
+  "$PY" "$PROBE" --show --out "$TSV" 2>&1 | tee -a "$LOG"
+  log ""
+  log "Send back $LOG (the .tsv is a bonus) — that's everything I need for the L1/L2 picture."
+  exit 0
+}
+trap 'echo; finish' INT
 
 log ""
 log "$SEP"
 log "LOOP: unplug the previous card, plug in the NEXT one, then press Enter."
-log "      You may type a label first (e.g. PAU06) to tag it. Ctrl+C when finished."
+log "      You may type a label first (e.g. PAU06) to tag it. Ctrl+C (or Ctrl+D) when finished."
 log "$SEP"
 
-while [ "$DONE" -eq 0 ]; do
-  printf '\n>>> Next card — plug in, optional label then Enter (Ctrl+C to finish): '
-  if ! read -r LABEL; then DONE=1; fi
-  [ "$DONE" -eq 1 ] && break
+while true; do
+  printf '\n>>> Next card — plug in, optional label then Enter (Ctrl+C/Ctrl+D to finish): '
+  read -r LABEL || finish   # EOF (Ctrl+D) finishes; Ctrl+C finishes via the trap above
   CARDS=$((CARDS + 1))
 
   log ""
@@ -116,17 +160,3 @@ while [ "$DONE" -eq 0 ]; do
   log ""
   log "[ok] card #$CARDS recorded."
 done
-
-trap - INT
-
-log ""
-log "$SEP"
-log "Done — probed $CARDS card(s)."
-log "Transcript : $LOG"
-log "TSV summary: $TSV"
-log "$SEP"
-log ""
-log "-- accumulated L2 table --"
-"$PY" "$PROBE" --show --out "$TSV" 2>&1 | tee -a "$LOG"
-log ""
-log "Send back $LOG (the .tsv is a bonus) — that's everything I need for the L1/L2 picture."

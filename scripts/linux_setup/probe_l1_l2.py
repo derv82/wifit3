@@ -74,7 +74,13 @@ except ImportError:
         "    .venv/bin/python3 scripts/linux_setup/probe_l1_l2.py ...\n")
     raise SystemExit(2)
 
-RULE_PATH = "/etc/udev/rules.d/70-wifit3-probe.rules"
+# Numbered 60- (NOT 70-) so it sorts before systemd's 70-uaccess.rules: the uaccess builtin
+# only grants the ACL for devices already TAG-ed "uaccess" when it runs, so our TAG+="uaccess"
+# has to be set in an earlier-sorting file or the seat ACL is never applied.
+RULE_PATH = "/etc/udev/rules.d/60-wifit3-probe.rules"
+# Earlier releases shipped the rule at 70-; remove that too so a stale, mis-ordered copy can't
+# linger and mask the 60- one.
+LEGACY_RULE_PATHS = ("/etc/udev/rules.d/70-wifit3-probe.rules",)
 DEFAULT_RESULTS = Path.cwd() / "wifit3-l1l2-results.tsv"
 
 # Fallback VID:PID snapshot, captured from `ids_from_registry()` so it is faithful to the
@@ -213,6 +219,10 @@ def build_rule_text(ids: list[tuple[int, int, str]], perms: str, source: str) ->
 
     Matches the usb_device itself (ATTR{idVendor}/idProduct, lowercase hex, no 0x) — the
     canonical "let libusb open this device" shape. One deduped line per VID:PID.
+
+    The per-card description goes on its OWN comment line above each rule, never as a trailing
+    `# ...` on the rule line: modern udev only accepts `#` at the start of a line and rejects
+    the WHOLE rule ("a comma between tokens is expected") if a comment trails it.
     """
     clause = _PERMS_CLAUSE[perms]
     lines = [
@@ -228,9 +238,10 @@ def build_rule_text(ids: list[tuple[int, int, str]], perms: str, source: str) ->
         if (vid, pid) in seen:
             continue
         seen.add((vid, pid))
+        lines.append(f"# {desc}")
         lines.append(
             f'SUBSYSTEM=="usb", ATTR{{idVendor}}=="{vid:04x}", '
-            f'ATTR{{idProduct}}=="{pid:04x}", {clause}  # {desc}')
+            f'ATTR{{idProduct}}=="{pid:04x}", {clause}')
     return "\n".join(lines) + "\n"
 
 
@@ -263,13 +274,15 @@ def run_privileged(shell_cmd: str, method: str) -> int:
 
 
 def _install_shell(tmp: str) -> str:
-    return (f"install -m 0644 {tmp} {RULE_PATH} && "
+    legacy_rm = "".join(f"rm -f {p} && " for p in LEGACY_RULE_PATHS)
+    return (f"{legacy_rm}install -m 0644 {tmp} {RULE_PATH} && "
             "udevadm control --reload-rules && "
             "udevadm trigger --action=add --subsystem-match=usb")
 
 
 def _remove_shell() -> str:
-    return f"rm -f {RULE_PATH} && udevadm control --reload-rules"
+    paths = " ".join((RULE_PATH, *LEGACY_RULE_PATHS))
+    return f"rm -f {paths} && udevadm control --reload-rules"
 
 
 def cmd_emit_udev(args) -> int:
@@ -300,6 +313,8 @@ def cmd_install_rule(args) -> int:
         return 2
 
     if _is_root():  # whole script under sudo — write directly, no second prompt.
+        for legacy in LEGACY_RULE_PATHS:  # drop any stale, mis-ordered copy so it can't mask us
+            Path(legacy).unlink(missing_ok=True)
         Path(RULE_PATH).write_text(text)
         os.chmod(RULE_PATH, 0o644)
         subprocess.call(["udevadm", "control", "--reload-rules"])
