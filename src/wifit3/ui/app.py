@@ -73,7 +73,7 @@ class WifiteApp(App):
         height: auto;
         margin-top: 1;              /* gap below the notice; button sits BELOW it (fits narrow terminals) */
     }
-    #install-winusb {
+    #install-winusb, #restore-driver {
         width: auto;
     }
     #status-label {

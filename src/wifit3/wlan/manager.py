@@ -224,6 +224,8 @@ class WlanDeviceManager:
                 driver,
                 f"wlan{len(self.interfaces)}",
                 id_entry.description,
+                vid=id_entry.vid,
+                pid=id_entry.pid,
             )
             self.interfaces.append(iface)
 

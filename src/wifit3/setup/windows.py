@@ -1,19 +1,23 @@
 """Windows WinUSB binding via the bundled wdi-simple.exe (libwdi). [DEVICE-SETUP.md Tier 1]
 
 :func:`install_winusb` shells out to a vendored, *unsigned* ``wdi-simple.exe`` under UAC
-elevation (``ShellExecuteExW`` ``"runas"``) to bind a card to WinUSB so libusb can open it;
-:func:`restore_driver` (Tier-1 commit 3) removes that binding so the card's native Wi-Fi
-driver reclaims it.
+elevation (``ShellExecuteExW`` ``"runas"``) to bind a card to WinUSB so libusb can open it.
+:func:`restore_driver` reverses that: it finds the WinUSB/libusb driver bound to the card
+(SetupAPI, the same enumeration libwdi uses) and ``pnputil /delete-driver … /uninstall``s
+it, so Windows re-points the card to its native Wi-Fi driver (still in the driver store —
+no pre-bind snapshot needed). The lookup keys off the *service* (WinUSB/libusbK/libusb0),
+so it also rolls back Zadig's bindings, not just ours.
 
-Both are privileged and block until the elevated process exits, so they MUST run off the
-Textual event loop (the splash offloads them to a thread). The exe is built from pinned
-upstream libwdi (see ``bin/PROVENANCE.md``); because it is unsigned, this path is gated
-behind explicit user action in the splash.
+Both actions are privileged and block until the elevated process exits, so they MUST run
+off the Textual event loop (the splash offloads them to a thread). The exe is built from
+pinned upstream libwdi (see ``bin/PROVENANCE.md``); because it is unsigned, this path is
+gated behind explicit user action in the splash.
 """
 from __future__ import annotations
 
 import ctypes
 import logging
+import os
 import platform
 import subprocess
 import sys
@@ -37,6 +41,23 @@ _SEE_MASK_NOCLOSEPROCESS = 0x00000040  # keep hProcess open so we can wait + rea
 _SW_HIDE = 0
 _WAIT_TIMEOUT = 0x00000102
 _ERROR_CANCELLED = 1223            # user declined the UAC elevation prompt
+
+# SetupAPI / registry constants for the restore-time driver lookup (mirrors libwdi.c).
+_DIGCF_PRESENT = 0x00000002
+_DIGCF_ALLCLASSES = 0x00000004
+_SPDRP_HARDWAREID = 0x00000001
+_SPDRP_SERVICE = 0x00000004
+_DICS_FLAG_GLOBAL = 0x00000001
+_DIREG_DRV = 0x00000002
+_KEY_READ = 0x00020019
+_INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+_ERROR_SUCCESS = 0
+
+# Driver services that mean "this card is on a libusb-class driver we can roll back" —
+# covers our WinUSB installs and Zadig's WinUSB / libusbK / libusb-win32 bindings.
+_LIBUSB_SERVICES = frozenset({"winusb", "libusbk", "libusb0"})
+# pnputil exit codes we treat as success (3010 = ERROR_SUCCESS_REBOOT_REQUIRED).
+_PNPUTIL_OK = frozenset({0, 3010})
 
 # libwdi wdi_error codes (libwdi.h) -> human message. wdi-simple's process exit code IS the
 # WDI return code; the enum values are negative, so the DWORD is sign-corrected first.
@@ -65,6 +86,35 @@ _WDI_MESSAGES = {
 }
 
 
+class _SHELLEXECUTEINFOW(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", ctypes.c_ulong),
+        ("fMask", ctypes.c_ulong),
+        ("hwnd", ctypes.c_void_p),
+        ("lpVerb", ctypes.c_wchar_p),
+        ("lpFile", ctypes.c_wchar_p),
+        ("lpParameters", ctypes.c_wchar_p),
+        ("lpDirectory", ctypes.c_wchar_p),
+        ("nShow", ctypes.c_int),
+        ("hInstApp", ctypes.c_void_p),
+        ("lpIDList", ctypes.c_void_p),
+        ("lpClass", ctypes.c_wchar_p),
+        ("hkeyClass", ctypes.c_void_p),
+        ("dwHotKey", ctypes.c_ulong),
+        ("hIcon", ctypes.c_void_p),
+        ("hProcess", ctypes.c_void_p),
+    ]
+
+
+class _SP_DEVINFO_DATA(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", ctypes.c_ulong),
+        ("ClassGuid", ctypes.c_byte * 16),
+        ("DevInst", ctypes.c_ulong),
+        ("Reserved", ctypes.c_void_p),
+    ]
+
+
 @dataclass(frozen=True)
 class InstallResult:
     """Outcome of an elevated wdi-simple.exe run.
@@ -77,6 +127,27 @@ class InstallResult:
     message: str
     cancelled: bool = False
     wdi_code: int | None = None
+
+
+@dataclass(frozen=True)
+class RestoreResult:
+    """Outcome of removing a WinUSB/libusb binding so the native driver reclaims the card.
+
+    ``cancelled`` is the declined-UAC case; ``detail`` carries the oemNN.inf that was
+    removed (or the one we tried to) for the logs / Details box.
+    """
+    ok: bool
+    message: str
+    cancelled: bool = False
+    detail: str | None = None
+
+
+@dataclass(frozen=True)
+class _ElevatedRun:
+    """Low-level result of a single elevated launch (see :func:`_run_elevated`)."""
+    launched: bool        # did ShellExecuteExW start the process at all?
+    win_error: int        # GetLastError when not launched (e.g. 1223 = UAC declined)
+    exit_code: int | None  # signed process exit code, or None if launched-but-timed-out
 
 
 def wdi_simple_path() -> Path:
@@ -121,6 +192,53 @@ def _signed32(dword: int) -> int:
     return dword - 0x1_0000_0000 if dword >= 0x8000_0000 else dword
 
 
+def _restore_command(inf: str) -> str:
+    """The ``cmd /c`` parameter string that removes ``inf`` then re-scans the bus.
+
+    ``/delete-driver … /uninstall`` re-points every device on that package to a different
+    driver (the native one, still in the store) before deleting it; ``/scan-devices`` then
+    forces the rebind. ``&&`` chains so cmd's exit code reflects the delete on failure."""
+    return f'/c pnputil /delete-driver "{inf}" /uninstall /force && pnputil /scan-devices'
+
+
+def _run_elevated(file: str, params: str) -> _ElevatedRun:
+    """Launch ``file params`` elevated (UAC), wait for it, and read its exit code.
+
+    Windows-only and blocking — call OFF the event loop. A declined UAC prompt surfaces as
+    ``launched=False`` with ``win_error == ERROR_CANCELLED``."""
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    shell32.ShellExecuteExW.restype = ctypes.c_bool
+    shell32.ShellExecuteExW.argtypes = [ctypes.c_void_p]
+    kernel32.WaitForSingleObject.restype = ctypes.c_ulong
+    kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    kernel32.GetExitCodeProcess.restype = ctypes.c_bool
+    kernel32.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+
+    info = _SHELLEXECUTEINFOW()
+    info.cbSize = ctypes.sizeof(info)
+    info.fMask = _SEE_MASK_NOCLOSEPROCESS
+    info.lpVerb = "runas"          # the elevation verb -> UAC
+    info.lpFile = file
+    info.lpParameters = params
+    info.nShow = _SW_HIDE          # hide the child's console; the UAC dialog still shows
+
+    if not shell32.ShellExecuteExW(ctypes.byref(info)):
+        return _ElevatedRun(launched=False, win_error=ctypes.get_last_error(), exit_code=None)
+
+    hproc = info.hProcess
+    try:
+        if kernel32.WaitForSingleObject(hproc, _PROCESS_WAIT_MS) == _WAIT_TIMEOUT:
+            logger.warning("Elevated %s didn't exit within %d ms", file, _PROCESS_WAIT_MS)
+            return _ElevatedRun(launched=True, win_error=0, exit_code=None)
+        code = ctypes.c_ulong(0)
+        kernel32.GetExitCodeProcess(hproc, ctypes.byref(code))
+        return _ElevatedRun(launched=True, win_error=0, exit_code=_signed32(code.value))
+    finally:
+        kernel32.CloseHandle(hproc)
+
+
 def install_winusb(vid: int, pid: int, iid: int = 0, name: str | None = None) -> InstallResult:
     """Bind ``vid:pid`` to WinUSB by running the bundled wdi-simple.exe **elevated**.
 
@@ -135,71 +253,146 @@ def install_winusb(vid: int, pid: int, iid: int = 0, name: str | None = None) ->
     params = subprocess.list2cmdline(_build_args(vid, pid, iid, name))
     logger.info("WinUSB install (elevated): %s %s", exe.name, params)
 
-    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-
-    class SHELLEXECUTEINFOW(ctypes.Structure):
-        _fields_ = [
-            ("cbSize", ctypes.c_ulong),
-            ("fMask", ctypes.c_ulong),
-            ("hwnd", ctypes.c_void_p),
-            ("lpVerb", ctypes.c_wchar_p),
-            ("lpFile", ctypes.c_wchar_p),
-            ("lpParameters", ctypes.c_wchar_p),
-            ("lpDirectory", ctypes.c_wchar_p),
-            ("nShow", ctypes.c_int),
-            ("hInstApp", ctypes.c_void_p),
-            ("lpIDList", ctypes.c_void_p),
-            ("lpClass", ctypes.c_wchar_p),
-            ("hkeyClass", ctypes.c_void_p),
-            ("dwHotKey", ctypes.c_ulong),
-            ("hIcon", ctypes.c_void_p),
-            ("hProcess", ctypes.c_void_p),
-        ]
-
-    shell32.ShellExecuteExW.restype = ctypes.c_bool
-    shell32.ShellExecuteExW.argtypes = [ctypes.c_void_p]
-    kernel32.WaitForSingleObject.restype = ctypes.c_ulong
-    kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
-    kernel32.GetExitCodeProcess.restype = ctypes.c_bool
-    kernel32.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
-    kernel32.CloseHandle.restype = ctypes.c_bool
-    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
-
-    info = SHELLEXECUTEINFOW()
-    info.cbSize = ctypes.sizeof(info)
-    info.fMask = _SEE_MASK_NOCLOSEPROCESS
-    info.lpVerb = "runas"          # the elevation verb -> UAC
-    info.lpFile = str(exe)
-    info.lpParameters = params
-    info.nShow = _SW_HIDE          # hide wdi-simple's console; the UAC dialog still shows
-
-    if not shell32.ShellExecuteExW(ctypes.byref(info)):
-        err = ctypes.get_last_error()
-        if err == _ERROR_CANCELLED:
+    run = _run_elevated(str(exe), params)
+    if not run.launched:
+        if run.win_error == _ERROR_CANCELLED:
             logger.info("WinUSB install: user declined the UAC prompt")
             return InstallResult(
                 ok=False, cancelled=True,
                 message="Elevation cancelled — WinUSB was not installed.")
-        logger.warning("WinUSB install: ShellExecuteExW failed (WinError %d)", err)
+        logger.warning("WinUSB install: ShellExecuteExW failed (WinError %d)", run.win_error)
         return InstallResult(
-            ok=False, message=f"Could not launch the installer (WinError {err}).")
+            ok=False, message=f"Could not launch the installer (WinError {run.win_error}).")
+    if run.exit_code is None:
+        return InstallResult(ok=False, message="The driver installer didn't finish in time.")
 
-    hproc = info.hProcess
-    try:
-        if kernel32.WaitForSingleObject(hproc, _PROCESS_WAIT_MS) == _WAIT_TIMEOUT:
-            logger.warning("WinUSB install: wdi-simple didn't exit within %d ms", _PROCESS_WAIT_MS)
-            return InstallResult(ok=False, message="The driver installer didn't finish in time.")
-        code = ctypes.c_ulong(0)
-        kernel32.GetExitCodeProcess(hproc, ctypes.byref(code))
-        wdi = _signed32(code.value)
-    finally:
-        kernel32.CloseHandle(hproc)
-
+    wdi = run.exit_code
     logger.info("WinUSB install: wdi-simple exit=%d (%s)", wdi, _wdi_message(wdi))
     return InstallResult(ok=(wdi == 0), wdi_code=wdi, message=_wdi_message(wdi))
 
 
-def restore_driver(vid: int, pid: int):
-    """Drop the WinUSB binding so the native driver reclaims the card. Tier-1 commit 3."""
-    raise NotImplementedError("restore_driver lands in DEVICE-SETUP Tier-1 commit 3")
+def _reg_prop(setupapi, hdev, data: _SP_DEVINFO_DATA, prop: int) -> str | None:
+    """One device-registry string property (the first string for REG_MULTI_SZ ids)."""
+    buf = ctypes.create_unicode_buffer(1024)
+    size = ctypes.c_ulong(0)
+    ok = setupapi.SetupDiGetDeviceRegistryPropertyW(
+        hdev, ctypes.byref(data), prop, None,
+        ctypes.cast(buf, ctypes.c_void_p), ctypes.sizeof(buf), ctypes.byref(size))
+    return buf.value if ok else None
+
+
+def _read_inf_path(setupapi, advapi32, hdev, data: _SP_DEVINFO_DATA) -> str | None:
+    """The oemNN.inf bound to the device, from its driver key (DIREG_DRV -> "InfPath")."""
+    hkey = setupapi.SetupDiOpenDevRegKey(
+        hdev, ctypes.byref(data), _DICS_FLAG_GLOBAL, 0, _DIREG_DRV, _KEY_READ)
+    if not hkey or hkey == _INVALID_HANDLE_VALUE:
+        return None
+    try:
+        buf = ctypes.create_unicode_buffer(512)
+        size = ctypes.c_ulong(ctypes.sizeof(buf))
+        rc = advapi32.RegQueryValueExW(
+            hkey, "InfPath", None, None, ctypes.cast(buf, ctypes.c_void_p), ctypes.byref(size))
+        return buf.value if rc == _ERROR_SUCCESS else None
+    finally:
+        advapi32.RegCloseKey(hkey)
+
+
+def _find_winusb_inf(vid: int, pid: int) -> str | None:
+    """The oemNN.inf of the WinUSB/libusb driver bound to ``vid:pid``, or ``None``.
+
+    Mirrors libwdi's own enumeration: list present USB devices, match SPDRP_HARDWAREID on
+    ``VID_xxxx&PID_xxxx``, confirm SPDRP_SERVICE is a libusb-class driver (so we never touch
+    a card that's on its native Wi-Fi driver), then read the bound INF. Returns ``None`` if
+    the card isn't present or isn't on a libusb-class driver. Windows-only."""
+    setupapi = ctypes.WinDLL("setupapi", use_last_error=True)
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    setupapi.SetupDiGetClassDevsW.restype = ctypes.c_void_p
+    setupapi.SetupDiGetClassDevsW.argtypes = [
+        ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_void_p, ctypes.c_ulong]
+    setupapi.SetupDiEnumDeviceInfo.restype = ctypes.c_bool
+    setupapi.SetupDiEnumDeviceInfo.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p]
+    setupapi.SetupDiGetDeviceRegistryPropertyW.restype = ctypes.c_bool
+    setupapi.SetupDiGetDeviceRegistryPropertyW.argtypes = [
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong),
+        ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong)]
+    setupapi.SetupDiOpenDevRegKey.restype = ctypes.c_void_p
+    setupapi.SetupDiOpenDevRegKey.argtypes = [
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong,
+        ctypes.c_ulong, ctypes.c_ulong]
+    setupapi.SetupDiDestroyDeviceInfoList.argtypes = [ctypes.c_void_p]
+    advapi32.RegQueryValueExW.restype = ctypes.c_long
+    advapi32.RegQueryValueExW.argtypes = [
+        ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong),
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+    advapi32.RegCloseKey.argtypes = [ctypes.c_void_p]
+
+    hdev = setupapi.SetupDiGetClassDevsW(None, "USB", None, _DIGCF_PRESENT | _DIGCF_ALLCLASSES)
+    if not hdev or hdev == _INVALID_HANDLE_VALUE:
+        return None
+    needle = f"VID_{vid:04X}&PID_{pid:04X}"
+    try:
+        data = _SP_DEVINFO_DATA()
+        data.cbSize = ctypes.sizeof(_SP_DEVINFO_DATA)
+        i = 0
+        while setupapi.SetupDiEnumDeviceInfo(hdev, i, ctypes.byref(data)):
+            i += 1
+            hwid = _reg_prop(setupapi, hdev, data, _SPDRP_HARDWAREID)
+            if not hwid or needle not in hwid.upper():
+                continue
+            service = (_reg_prop(setupapi, hdev, data, _SPDRP_SERVICE) or "").lower()
+            if service not in _LIBUSB_SERVICES:
+                logger.info("Restore: %s is on service %r, not a libusb driver - skipping",
+                            needle, service)
+                return None
+            inf = _read_inf_path(setupapi, advapi32, hdev, data)
+            logger.info("Restore: %s bound to %s via service %s", needle, inf, service)
+            return inf
+        logger.info("Restore: no present device matched %s", needle)
+        return None
+    finally:
+        setupapi.SetupDiDestroyDeviceInfoList(hdev)
+
+
+def restore_driver(vid: int, pid: int) -> RestoreResult:
+    """Remove the WinUSB/libusb binding on ``vid:pid`` so the native driver reclaims it.
+
+    Finds the bound oemNN.inf (SetupAPI) and elevates ``pnputil /delete-driver … /uninstall
+    /force`` + ``/scan-devices``. Blocks on one UAC prompt — call OFF the event loop. Returns
+    a :class:`RestoreResult`; raises only for a broken environment (non-Windows)."""
+    if sys.platform != "win32":
+        raise RuntimeError("restore_driver is Windows-only")
+
+    inf = _find_winusb_inf(vid, pid)
+    if inf is None:
+        return RestoreResult(
+            ok=False,
+            message="Couldn't find a WinUSB/libusb driver bound to this card to remove.")
+
+    comspec = os.environ.get("ComSpec", r"C:\Windows\System32\cmd.exe")
+    params = _restore_command(inf)
+    logger.info("Restore driver (elevated): %s %s", comspec, params)
+
+    run = _run_elevated(comspec, params)
+    if not run.launched:
+        if run.win_error == _ERROR_CANCELLED:
+            logger.info("Restore: user declined the UAC prompt")
+            return RestoreResult(
+                ok=False, cancelled=True,
+                message="Elevation cancelled — the WinUSB driver was not removed.")
+        logger.warning("Restore: ShellExecuteExW failed (WinError %d)", run.win_error)
+        return RestoreResult(
+            ok=False, message=f"Could not launch the uninstaller (WinError {run.win_error}).")
+    if run.exit_code is None:
+        return RestoreResult(ok=False, detail=inf,
+                             message="The driver uninstall didn't finish in time.")
+
+    code = run.exit_code
+    if code in _PNPUTIL_OK:
+        msg = "Removed the WinUSB driver — the card should return to normal Wi-Fi."
+        if code == 3010:
+            msg += " (A reboot may be needed to finish.)"
+        logger.info("Restore: removed %s (pnputil exit=%d)", inf, code)
+        return RestoreResult(ok=True, message=msg, detail=inf)
+    logger.warning("Restore: pnputil failed for %s (exit=%d)", inf, code)
+    return RestoreResult(
+        ok=False, detail=inf, message=f"pnputil couldn't remove the driver (exit {code}).")

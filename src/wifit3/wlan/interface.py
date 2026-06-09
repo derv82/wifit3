@@ -94,10 +94,16 @@ class WlanInterface:
     High-level 802.11 abstraction for a hardware driver.
     The UI interacts exclusively with this class.
     """
-    def __init__(self, driver_instance: Any, name: str, description: str):
+    def __init__(self, driver_instance: Any, name: str, description: str,
+                 vid: Optional[int] = None, pid: Optional[int] = None):
         self.driver = driver_instance
         self.name = name
         self.description = description
+        # The USB VID:PID this interface was matched on — used by the splash's "Restore
+        # Wi-Fi driver" action (Windows) to find the WinUSB binding to remove. Optional so
+        # test-constructed interfaces don't have to supply it.
+        self.vid = vid
+        self.pid = pid
         self.current_channel = 1
         
         self.access_points: Dict[str, AccessPoint] = {}

@@ -11,7 +11,7 @@ from textual import work
 from rich.text import Text
 from rich.style import Style
 
-from wifit3.setup.windows import install_winusb
+from wifit3.setup.windows import install_winusb, restore_driver
 from wifit3.ui.screens.setup_error import SetupErrorDialog
 from wifit3.wlan.manager import WlanDeviceManager
 
@@ -97,6 +97,8 @@ class SplashView(Screen):
         self._unbound_by_name = {}
         # The present-but-unbound card currently highlighted (drives the Install button).
         self._selected_unbound = None
+        # The ready interface currently highlighted (drives the Restore button, Windows).
+        self._selected_ready = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -122,6 +124,7 @@ class SplashView(Screen):
                     yield Static(self._get_os_warning(), id="os-warning")
                 with Center(id="install-row"):
                     yield Button("Install WinUSB", id="install-winusb", variant="warning")
+                    yield Button("Restore Wi-Fi driver", id="restore-driver", variant="warning")
                 
         yield Footer()
 
@@ -157,9 +160,20 @@ class SplashView(Screen):
                     "Release it with [bold]sudo rmmod <chipset>[/bold] (reversible on replug).")
         return (f"[bold {warn}]Note:[/bold {warn}] This card needs a libusb-class driver.\n{card}")
 
+    def _selected_ready_notice(self, iface) -> str:
+        """Notice for a highlighted ready (WinUSB-bound) card — explains the Restore button,
+        which removes WinUSB so the card works as a normal Wi-Fi adapter again. Windows-only
+        (Linux ready cards don't have a WinUSB binding to undo). [DEVICE-SETUP.md Tier 1]"""
+        warn = self.app.theme_variables.get("text-warning", "orange3")
+        return (f"[bold {warn}]Ready.[/bold {warn}] [bold]{iface.description}[/bold] is "
+                "WinUSB-bound and usable now.\n"
+                "[bold]Restore Wi-Fi driver[/bold] removes WinUSB so it works as a normal "
+                "adapter again (reversible).")
+
     async def on_mount(self) -> None:
         self.query_one("#init-progress").display = False
         self.query_one("#install-winusb").display = False  # shown only on an unbound row
+        self.query_one("#restore-driver").display = False  # shown only on a ready (WinUSB) row
         # Poll the USB bus every second for hotplug changes.
         self._refresh_timer = self.set_interval(1.0, self.poll_usb)
         # ...but do the FIRST enumeration as soon as the splash has painted —
@@ -221,30 +235,46 @@ class SplashView(Screen):
 
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
-        """Drive the warning box + Install button off the highlighted row: a present-but-
-        unbound card shows its card-specific notice + the button; a ready card (or no
-        selection) shows the generic OS notice with the button hidden. [DEVICE-SETUP.md]"""
+        """Drive the notice box + the Install/Restore buttons off the highlighted row.
+
+        A present-but-unbound card shows its card-specific notice + Install WinUSB; a ready
+        card (openable, so already WinUSB-bound) shows the Restore notice + Restore Wi-Fi
+        driver; anything else hides both. Both buttons are Windows-only. [DEVICE-SETUP.md]"""
         name = event.item.name if event.item is not None else None
         u = self._unbound_by_name.get(name) if name else None
+        iface = self.device_manager.get_interface(name) if name else None
+        is_win = sys.platform == "win32"
         warning = self.query_one("#os-warning", Static)
-        button = self.query_one("#install-winusb", Button)
+        install_btn = self.query_one("#install-winusb", Button)
+        restore_btn = self.query_one("#restore-driver", Button)
+
+        self._selected_unbound = u
+        self._selected_ready = iface
         if u is not None:
-            self._selected_unbound = u
             warning.update(self._selected_unbound_notice(u))
-            button.display = (sys.platform == "win32")  # WinUSB install is Windows-only
+            install_btn.display = is_win
+            restore_btn.display = False
+        elif iface is not None:
+            warning.update(self._selected_ready_notice(iface) if is_win else self._get_os_warning())
+            install_btn.display = False
+            restore_btn.display = is_win and iface.vid is not None
         else:
-            self._selected_unbound = None
             warning.update(self._get_os_warning())
-            button.display = False
+            install_btn.display = False
+            restore_btn.display = False
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        # Each button only shows while its kind of row is highlighted (win32), so the
+        # selection is set; guard anyway, and don't stack an action over an in-flight one.
+        if self._is_initializing:
+            return
         if event.button.id == "install-winusb":
-            u = self._selected_unbound
-            # The button only shows while an unbound row is highlighted (win32), so u is set;
-            # guard anyway, and don't stack a second install over an in-flight one.
-            if u is None or self._is_initializing:
-                return
-            self.perform_install(u)
+            if self._selected_unbound is not None:
+                self.perform_install(self._selected_unbound)
+        elif event.button.id == "restore-driver":
+            iface = self._selected_ready
+            if iface is not None and iface.vid is not None:
+                self.perform_restore(iface)
 
     @work(exclusive=True)
     async def perform_install(self, u) -> None:
@@ -294,6 +324,61 @@ class SplashView(Screen):
             details = f"libwdi code {result.wdi_code}" if result.wdi_code is not None else None
             self.app.push_screen(
                 SetupErrorDialog("WinUSB install failed", result.message, details))
+
+    @work(exclusive=True)
+    async def perform_restore(self, iface) -> None:
+        """Remove a ready card's WinUSB binding so its native Wi-Fi driver reclaims it.
+
+        Releases our libusb handles first (close_all) so pnputil can tear the binding down,
+        runs the elevated uninstall off-thread, then re-polls — on success the card drops
+        back to ⚠ present-but-unbound (now on its native driver, no longer openable): the
+        self-verifying round-trip. A declined UAC prompt is a soft notice; other failures
+        open a modal.
+        """
+        status = self.query_one("#status-label", Label)
+        list_view = self.query_one("#device-list", ListView)
+        install_btn = self.query_one("#install-winusb", Button)
+        restore_btn = self.query_one("#restore-driver", Button)
+
+        # Capture before close_all() can invalidate the interface object.
+        vid, pid, desc = iface.vid, iface.pid, iface.description
+        self._is_initializing = True
+        if self._refresh_timer:
+            self._refresh_timer.pause()
+        list_view.disabled = True
+        install_btn.disabled = True
+        restore_btn.disabled = True
+        status.update(
+            f"[bold yellow]Restoring the Wi-Fi driver for {desc} — accept the Windows "
+            f"elevation prompt…[/bold yellow]")
+
+        result = None
+        try:
+            await self.device_manager.close_all()
+            result = await asyncio.to_thread(restore_driver, vid, pid)
+        except Exception as e:
+            logger.exception("Driver restore crashed for %04x:%04x", vid or 0, pid or 0)
+            self.app.push_screen(SetupErrorDialog("Restore failed", str(e)))
+        finally:
+            list_view.disabled = False
+            install_btn.disabled = False
+            restore_btn.disabled = False
+            self._is_initializing = False
+            if self._refresh_timer:
+                self._refresh_timer.resume()
+
+        if result is None:
+            status.update("[bold red]Restore failed.[/bold red]")
+        elif result.ok:
+            status.update(f"[bold green]{result.message} Re-scanning…[/bold green]")
+            self._last_signature = None   # force the picker to re-render the now-unbound card
+            await self.poll_usb()
+        elif result.cancelled:
+            status.update("[yellow]Elevation cancelled — the driver was not changed.[/yellow]")
+        else:
+            status.update("[bold red]Restore failed.[/bold red]")
+            self.app.push_screen(
+                SetupErrorDialog("Restore failed", result.message, result.detail))
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
         iface_name = event.item.name

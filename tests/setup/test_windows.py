@@ -10,8 +10,12 @@ import platform
 import pytest
 
 from wifit3.setup.windows import (
+    _LIBUSB_SERVICES,
+    _PNPUTIL_OK,
     InstallResult,
+    RestoreResult,
     _build_args,
+    _restore_command,
     _signed32,
     _wdi_message,
     wdi_simple_path,
@@ -67,3 +71,28 @@ def test_wdi_simple_path_resolves_to_bundled_exe():
     assert p.name == "wdi-simple.exe"
     assert p.is_file()
     assert p.parent.name == "win-x64"
+
+
+# --- restore_driver helpers ------------------------------------------------------------
+
+def test_restore_command_deletes_then_rescans():
+    cmd = _restore_command("oem42.inf")
+    assert cmd.startswith("/c ")
+    assert '/delete-driver "oem42.inf" /uninstall /force' in cmd
+    assert cmd.rstrip().endswith("pnputil /scan-devices")
+    assert "&&" in cmd  # scan only after a successful delete, so cmd's exit reflects delete
+
+
+def test_libusb_services_cover_zadig_bindings():
+    # WinUSB (ours + Zadig), plus Zadig's libusbK / libusb-win32 — so restore rolls those back.
+    assert _LIBUSB_SERVICES == {"winusb", "libusbk", "libusb0"}
+
+
+def test_pnputil_reboot_required_counts_as_success():
+    assert 0 in _PNPUTIL_OK
+    assert 3010 in _PNPUTIL_OK  # ERROR_SUCCESS_REBOOT_REQUIRED
+
+
+def test_restore_result_defaults():
+    r = RestoreResult(ok=True, message="done")
+    assert r.ok and not r.cancelled and r.detail is None
