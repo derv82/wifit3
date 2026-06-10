@@ -33,7 +33,7 @@ async def test_hw(debug: bool = False):
     print("[*] Connecting (HTC/WMI Handshake)...")
     await iface.connect()
     
-    # The reader loop is now running, and usb_transactions.log should be filling up.
+    # The reader loop is now running.
     
     print("[*] Attempting to set Channel 1...")
     success = await iface.set_channel(1)

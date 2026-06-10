@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import time
-from pathlib import Path
 from typing import List, Optional, Callable, Any, Dict, Set
 
 from wifit3.engine.models import AccessPoint, Client, Handshake, EapolFrame
@@ -11,37 +10,6 @@ from wifit3.wlan.packet_stats import PacketStats
 from wifit3.wlan.wep_store import WepCaptureStore
 
 logger = logging.getLogger(__name__)
-
-
-# Append a hex+ASCII dump of every frame that triggers a decloak. Lives in
-# CWD so a `dir` lands it; cheap (decloaks are rare). Investigates whether
-# short-SSID decloaks ("F", "7", etc.) are legit, parser bugs, or spoofed
-# probe responses on the channel.
-DECLOAK_LOG_PATH = Path("wifit3-decloak.log")
-
-
-def _log_decloak_frame(
-    bssid: str, ssid: str, method: str, frame_type: str, raw: Optional[bytes]
-) -> None:
-    """Append a forensic dump of the frame that triggered a decloak. Silent
-    on failure — must never break the RX loop."""
-    if not raw:
-        return
-    try:
-        with DECLOAK_LOG_PATH.open("a", encoding="utf-8") as f:
-            ts = time.strftime("%Y-%m-%d %H:%M:%S")
-            f.write(f"=== {ts}  {method}  type={frame_type}  len={len(raw)} ===\n")
-            f.write(f"  bssid={bssid}  ssid={ssid!r}\n")
-            for i in range(0, len(raw), 16):
-                chunk = raw[i : i + 16]
-                hex_part = " ".join(f"{b:02x}" for b in chunk)
-                ascii_part = "".join(
-                    chr(b) if 0x20 <= b < 0x7F else "." for b in chunk
-                )
-                f.write(f"  {i:04x}  {hex_part:<48}  {ascii_part}\n")
-            f.write("\n")
-    except Exception:
-        pass
 
 
 def _enc_rank(label: str) -> int:
@@ -237,9 +205,6 @@ class WlanInterface:
                 if ssid and ssid != "<hidden>":
                     if not ap.ssid or ap.ssid == "<hidden>":
                         ap.decloak_method = frame_type  # "beacon" or "probe_resp"
-                        _log_decloak_frame(
-                            bssid, ssid, frame_type, frame_type, parsed.get("raw")
-                        )
                     ap.ssid = ssid
 
                 # Smooth RSSI (simple average for now, could use EMA)
@@ -345,9 +310,6 @@ class WlanInterface:
                         ap = self.access_points[bssid]
                         if not ap.ssid or ap.ssid == "<hidden>":
                             ap.decloak_method = "assoc_req"
-                            _log_decloak_frame(
-                                bssid, ssid, "assoc_req", frame_type, parsed.get("raw")
-                            )
                             ap.ssid = ssid
 
         # Handshake tracking — per-client, never wiped.

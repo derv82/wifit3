@@ -116,7 +116,6 @@ class AR9271USBTransport:
         else:
             packet = self.htc.pack_control(htc_ep_id, payload)
             
-        from .usb_logger import USBInterceptor
         loop = asyncio.get_running_loop()
 
         # 3. Route to the correct USB Endpoint
@@ -126,11 +125,9 @@ class AR9271USBTransport:
             hif_header = struct.pack("<HH", len(packet), 0x697e)
             bulk_packet = hif_header + packet
             
-            USBInterceptor.log_tx(USB_EP_WLAN_TX, bulk_packet)
             await loop.run_in_executor(None, self.dev.write, USB_EP_WLAN_TX, bulk_packet)
         else:
             # WMI Commands and HTC Management go to the Interrupt OUT endpoint (0x04)
-            USBInterceptor.log_tx(USB_EP_WMI_CMD_OUT, packet)
             await loop.run_in_executor(None, self.dev.write, USB_EP_WMI_CMD_OUT, packet)
 
     async def _read_loop(self, ep_addr: int, name: str):
@@ -145,8 +142,6 @@ class AR9271USBTransport:
                     continue
                 
                 data = bytes(raw)
-                from .usb_logger import USBInterceptor
-                USBInterceptor.log_rx(ep_addr, data)
                 
                 # Handle the raw packet
                 await self._handle_incoming(data, ep_addr)
