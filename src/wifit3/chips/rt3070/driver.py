@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+import threading
 from typing import Callable, ClassVar, List, Optional
 
 import usb.core
@@ -57,7 +58,14 @@ class RT3070Driver:
         self._tx_seq: int = 0            # running 802.11 seq stamped into injected frames
         self._rx_cb: Optional[Callable[[dict], None]] = None
         self._reader: Optional[RxReaderThread] = None
-        self._io_lock = asyncio.Lock()   # serialize EP0 batches (set_channel vs inject)
+        self._io_lock = asyncio.Lock()   # serialize the COROUTINES (set_channel vs inject)
+        # The REAL hardware serializer. asyncio.Lock guards the coroutine, but a coroutine
+        # cancelled mid-`run_in_executor` (UI view switch → hop task cancel) releases it
+        # while its executor THREAD keeps running config_channel — and a new set_channel's
+        # thread then collides on the USB control endpoint and wedges the chip's RX-DMA.
+        # A threading.Lock held by the executor work blocks that second thread until the
+        # first (even a cancelled one) finishes. Verified against wifit3.log @ 20:34:22.
+        self._hw_lock = threading.Lock()
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RT3070Driver":
@@ -96,8 +104,11 @@ class RT3070Driver:
         monitor.enable_monitor(t, chip, ev, self._drv)         # airmon monitor entry
 
     def _tune(self, channel: int) -> None:
-        chan.set_channel(self.transport, self._chip, self._eeprom, self._drv, channel)
-        self._lna_gain = chan.config_lna_gain(self._eeprom, channel)
+        # Runs on an executor thread; _hw_lock guarantees only one hardware op touches
+        # the device at a time even when a cancelled tune's thread is still draining.
+        with self._hw_lock:
+            chan.set_channel(self.transport, self._chip, self._eeprom, self._drv, channel)
+            self._lna_gain = chan.config_lna_gain(self._eeprom, channel)
 
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         loop = asyncio.get_running_loop()
@@ -167,10 +178,14 @@ class RT3070Driver:
         frame = self._stamp_seq(frame_bytes)
         loop = asyncio.get_running_loop()
         async with self._io_lock:
-            await loop.run_in_executor(None, functools.partial(
-                tx.send_frame, self.transport.dev, self._bulk_out_ep, frame,
-                use_no_ack=use_no_ack))
+            await loop.run_in_executor(None, self._do_inject, frame, use_no_ack)
         return True
+
+    def _do_inject(self, frame: bytes, use_no_ack: bool) -> None:
+        # Executor thread; share _hw_lock with _tune so an inject can never collide with
+        # an in-flight (or cancelled-but-draining) channel tune on the USB device.
+        with self._hw_lock:
+            tx.send_frame(self.transport.dev, self._bulk_out_ep, frame, use_no_ack=use_no_ack)
 
     def _stamp_seq(self, frame: bytes) -> bytes:
         """Stamp the next running sequence number into the frame's seqctl (bytes 22-23,
