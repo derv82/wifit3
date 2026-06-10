@@ -76,14 +76,25 @@ class RT5372Driver:
 
     # ---- bring-up (blocking; run in an executor) --------------------------
     def _bringup(self) -> None:
-        """Deterministic cold bring-up, in wire order — keep in lockstep with
-        ``scripts/verify_pcap.py rt5372`` ``_walk_init`` (the gate replays this sequence)."""
+        """Cold bring-up in wire order — the cold path stays in lockstep with
+        ``scripts/verify_pcap.py rt5372`` ``_walk_init`` (the gate replays it). The leading
+        warm check is **runtime-only** (the cold capture has no such read, so the gate does
+        not model it): on a re-run without a replug the chip is still inited + in monitor with
+        RX live (``close()`` disposes the USB handle but never resets the radio), so we skip FW
+        upload + the whole MAC/BBP/RFCSR init + ``enable_monitor`` and let ``connect()`` resume
+        — faster, and it avoids re-initialising a running radio (which reads worse than cold)."""
         t = self.transport
         self._chip = mac.probe_rt(t)                              # MAC_CSR0 id/rev
         buf = eeprom.read_eeprom_efuse(t)                        # autorun + EFUSE (word offset)
         buf = eeprom.validate_eeprom(buf)                        # blank-field fix-up (no-op here)
         self._eeprom = eeprom.parse_eeprom(buf)
         self.mac_address = ":".join(f"{b:02x}" for b in self._eeprom.mac)
+
+        if mac.is_chip_warm(t):
+            self.is_warm = True                                 # resume — see docstring
+            return
+        self.is_warm = False
+
         mac.probe_hw_gpio(t)                                     # rfkill GPIO dir
 
         firmware.upload(t, firmware.load_firmware_blob())        # FW load + MCU boot
@@ -128,12 +139,14 @@ class RT5372Driver:
         # MGMT/inject frames go on the first TX queue's endpoint = the lowest-numbered
         # bulk-OUT (rt2x00usb assigns endpoints to queues in descriptor order).
         self._bulk_out_ep = min(eps.bulk_out) if eps.bulk_out else None
-        logger.info("RT5372 EFUSE: mac=%s rf=0x%04x %dT%dR ext_lna_2g=%s freq_off=%d",
-                    self.mac_address, self._eeprom.rf_type, self._eeprom.tx_chain_num,
+        mode = "WARM reattach (skipped FW + init)" if self.is_warm else "cold bring-up"
+        logger.info("RT5372 %s: mac=%s rf=0x%04x %dT%dR ext_lna_2g=%s freq_off=%d",
+                    mode, self.mac_address, self._eeprom.rf_type, self._eeprom.tx_chain_num,
                     self._eeprom.rx_chain_num, self._eeprom.external_lna_bg,
                     self._eeprom.freq_offset)
 
         if progress_cb:
+            progress_cb(0.5, f"RT5372: {mode}")
             progress_cb(0.9, f"Tuning to channel {_SCAN_START_CHANNEL}")
         await self.set_channel(_SCAN_START_CHANNEL)
 

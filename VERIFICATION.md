@@ -188,7 +188,7 @@ on **PAU05** — the very unit whose weak RX motivated the port.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-06-10 | Healthy — cold-replug beacon-watch mean 6.7→8.2/s (median 8, max 10) on the nearby AP, top-ranked, no gaps; ~2× the rt2800usb imitation's breadth on the same card. (Warm re-runs without a replug read lower until warm-reattach lands.) |
+| Scan | ✅ | 2026-06-10 | Healthy — beacon-watch mean ~8.5/s (median 9, max 10) on the nearby AP, top-ranked, no gaps; ~2× the rt2800usb imitation's breadth on the same card. Warm reattach implemented: a re-run without a replug skips FW + init and resumes RX, staying healthy (8.7/s, steadier than cold) instead of the old re-init-on-warm dip. |
 | Deauth | ✅ | 2026-06-10 | Live targeted deauth dropped a real client → reconnect EAPOL. TX frame **byte-matches the kernel's wire deauth** from the capture (TXINFO/TXWI/MPDU/+4-pad; only the per-frame seqctl differs, stamped at inject). |
 | Handshake | ✅ | 2026-06-10 | Deauth → 4-way; ~27 EAPOL in 30 s, M2/M4 (ToDS) + M1/M3 (FromDS). |
 | PMKID | ✅ | 2026-06-10 | Capture + active extract. |
