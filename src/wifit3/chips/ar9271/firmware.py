@@ -21,7 +21,7 @@ class FirmwareLoader:
     def load(dev: usb.core.Device, firmware_data: bytes) -> bool:
         """
         Uploads firmware in chunks and triggers execution.
-        [Driver Source Reference](/data_dumps/ath9k-source-v6.8/hif_usb.c#1070).
+        [Driver Source Reference](/data_dumps/ath9k-source-v6.18/hif_usb.c#1070).
         """
         logger.info(f"Starting firmware upload ({len(firmware_data)} bytes)...")
         
@@ -58,7 +58,7 @@ class FirmwareLoader:
     def trigger_boot(dev: usb.core.Device) -> bool:
         """
         Sends the specific commands to jump to the firmware entry point.
-        [Driver Source Reference](/data_dumps/ath9k-source-v6.8/hif_usb.c#1102).
+        [Driver Source Reference](/data_dumps/ath9k-source-v6.18/hif_usb.c#1102).
         """
         import usb.util
         try:

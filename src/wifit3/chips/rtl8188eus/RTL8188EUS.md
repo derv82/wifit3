@@ -103,7 +103,7 @@ Userspace Python driver for Realtek RTL8188EUS (e.g. TP-Link TL-WN722N v2/v3, se
 - Chip-specific: `data_dumps/rtl8xxxu-source-v6.18/8188e.c`
 - Family-shared: `core.c`, `rtl8xxxu.h`, `regs.h`
 - **NOT** `rtw88-source-v6.18/` (different family — rtw88 / iDDMA path does NOT apply to 8188e).
-- **NOT** `data_dumps/rtl818x-source-v6.8/` (that's rtl8180/rtl8187 — pre-N hardware, unrelated despite the similar name).
+- **NOT** `data_dumps/rtl818x-source-v6.18/` (that's rtl8180/rtl8187 — pre-N hardware, unrelated despite the similar name).
 
 The 8188e fileops vector `[SRC] 8188e.c:1835-1885` is the single source of truth for which kernel functions we port.
 
