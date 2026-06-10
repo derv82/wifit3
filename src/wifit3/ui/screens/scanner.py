@@ -22,7 +22,7 @@ from wifit3.engine.save import save_handshake, save_pmkid, save_wps_pbc
 
 from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind
 from ..encryption_format import format_encryption_markup, wep_key_ascii
-from wifit3.wlan.channels import is_dfs
+from wifit3.wlan.channels import band_label, band_ranges, is_dfs
 
 from .channel_filter import ChannelFilterDialog
 
@@ -195,16 +195,33 @@ class ScannerView(Screen):
 
     async def on_mount(self) -> None:
         log = self.query_one("#system-log", RichLog)
-        log.write("[bold green]Scanner Initialized.[/bold green]")
-        self._load_capture_history()
         self._update_column_headers()
+        iface = self.app.active_interface
 
-        if self.app.active_interface:
-            self._seed_default_channel_filter(self.app.active_interface, log)
-            log.write(
-                f"[cyan]Starting channel hopper on "
-                f"{self.app.active_interface.name}...[/cyan]"
+        # "Scanner initialized" group: a ● header, then ├─/└─ children. The last
+        # child is the └ leaf, so collect them first and connect by position.
+        log.write(treelog.header("Scanner initialized"))
+        rows: List[str] = []
+        summary = self._load_capture_history()
+        if summary:
+            rows.append(summary)
+        if iface:
+            dfs_note = self._seed_default_channel_filter(iface)
+            if dfs_note:
+                rows.append(dfs_note)
+            hopped = self._channel_filter or list(
+                getattr(iface.driver, "SUPPORTED_CHANNELS", None) or []
             )
+            rows.append(
+                "Hopping [italic]all available channels[/italic] "
+                f"[bold cyan]{band_label(hopped)}[/bold cyan]"
+            )
+        else:
+            rows.append("[yellow]No active interface[/yellow]")
+        for i, row in enumerate(rows):
+            log.write(treelog.leaf(row) if i == len(rows) - 1 else treelog.branch(row))
+
+        if iface:
             # 15 FPS in-place value updates — no resort. Beacons arrive ~10 Hz
             # per AP at best, so 15 Hz is plenty and 4x cheaper than 60.
             self._refresh_timer = self.set_interval(1 / 15, self.refresh_table)
@@ -218,30 +235,28 @@ class ScannerView(Screen):
             # never a surprise; 'w' opts out (see action_wps_pbc_mode).
             self._log_pbc_status()
 
-    def _load_capture_history(self) -> None:
-        """Load captures/ once and log a one-line headline. Silent if empty."""
+    def _load_capture_history(self) -> Optional[str]:
+        """Load captures/ once; return the one-line summary (None if empty)."""
         self._capture_index = load_capture_index()
-        summary = self._format_history_summary(*summarize(self._capture_index))
-        if summary:
-            self._write_log(summary)
+        return self._format_history_summary(*summarize(self._capture_index))
 
     @staticmethod
     def _format_history_summary(hs: int, pmkid: int, wep: int, wps: int) -> Optional[str]:
-        """`Found in captures/: N handshakes, N PMKIDs, N WEP keys, N WPS PSKs` —
+        """`Existing captures/: N handshakes, N PMKIDs, N WEP keys, N WPS PSKs` —
         counts are per-AP (see summarize); zero categories omitted; None when
         nothing."""
         parts = []
         if hs:
-            parts.append(f"[green bold]{hs} handshake{'s' * (hs != 1)}[/green bold]")
+            parts.append(f"{hs} handshake{'s' * (hs != 1)}")
         if pmkid:
-            parts.append(f"[green bold]{pmkid} PMKID{'s' * (pmkid != 1)}[/green bold]")
+            parts.append(f"{pmkid} PMKID{'s' * (pmkid != 1)}")
         if wep:
-            parts.append(f"[green bold]{wep} WEP key{'s' * (wep != 1)}[/green bold]")
+            parts.append(f"{wep} WEP key{'s' * (wep != 1)}")
         if wps:
-            parts.append(f"[green bold]{wps} WPS PSK{'s' * (wps != 1)}[/green bold]")
+            parts.append(f"{wps} WPS PSK{'s' * (wps != 1)}")
         if not parts:
             return None
-        return "[bold]Found in[/] [cyan bold]captures/[/]: " + ", ".join(parts)
+        return "[dim]Existing [bold]captures/[/bold]: " + ", ".join(parts) + "[/dim]"
 
     async def on_screen_resume(self) -> None:
         # Owns hopper restart so focus/dialog children don't have to know
@@ -701,16 +716,21 @@ class ScannerView(Screen):
                 self._on_pbc_window(ap)
 
     def _log_pbc_status(self) -> None:
-        """One-line WPS PBC auto-invade state, shared by startup + the 'w' toggle."""
+        """WPS PBC auto-invade state as a ● header + detail leaf. Shared by
+        startup + the 'w' toggle."""
         if self._pbc_enabled:
-            self._write_log(
-                "[bold cyan]WPS PushButton [italic]auto-invade:[/italic][/bold cyan] "
-                "[bold green]enabled[/bold green] [dim](retrieves PSK when "
-                "[italic]any[/italic] WPS button is pressed)[/dim]")
+            self._write_log(treelog.header(
+                "[bold]WPS PushButton auto-invade[/bold] is "
+                "[bold green]enabled[/bold green] [dim](press [bold]w[/bold] to toggle)[/dim]"))
+            self._write_log(treelog.leaf(
+                "[dim](automatically retrieves PSK when [bold italic]any[/bold italic] "
+                "WPS button is pressed)[/dim]"))
         else:
-            self._write_log(
-                "[bold cyan]WPS PushButton [italic]auto-invade:[/italic][/bold cyan] "
-                "[yellow]disabled[/yellow] [dim](detect + alert only, never transmits)[/dim]")
+            self._write_log(treelog.header(
+                "[bold]WPS PushButton auto-invade[/bold] is "
+                "[yellow]disabled[/yellow] [dim](press [bold]w[/bold] to toggle)[/dim]"))
+            self._write_log(treelog.leaf(
+                "[dim](detect + alert only — never transmits)[/dim]"))
 
     def _poll_pbc(self) -> None:
         iface = self.app.active_interface
@@ -820,22 +840,21 @@ class ScannerView(Screen):
         if table.row_count > 0:
             table.move_cursor(row=table.row_count - 1, animate=True)
 
-    def _seed_default_channel_filter(self, iface, log) -> None:
+    def _seed_default_channel_filter(self, iface) -> Optional[str]:
         """Exclude DFS channels (52-144) from the default hop when the driver exposes them.
 
         They are radar-shared and usually empty, so scanning them by default dilutes a fixed
         scan budget; they stay tunable (and listed in the [c] Channel Filter) — this just sets
-        the *initial* hop set to the non-DFS channels. Drivers with no DFS channels are
-        untouched (filter stays None = all supported)."""
+        the *initial* hop set to the non-DFS channels. Returns a one-line note for the init
+        tree (None when the driver has no DFS channels, leaving the filter at None = all)."""
         supported = list(getattr(iface.driver, "SUPPORTED_CHANNELS", None) or [])
         dfs = sorted(c for c in supported if is_dfs(c))
         if not dfs:
-            return
+            return None
         self._channel_filter = [c for c in supported if not is_dfs(c)]
-        log.write(
-            f"[dim]Note:[/dim] DFS channels ({dfs[0]}–{dfs[-1]}) are "
-            f"[italic orange1]excluded[/italic orange1] by default — "
-            f"press [bold cyan]c[/bold cyan] to enable them."
+        return (
+            f"[dim]DFS channels ({dfs[0]}–{dfs[-1]}) excluded by default — "
+            f"press [bold cyan]c[/bold cyan] to enable[/dim]"
         )
 
     def action_change_channel(self) -> None:
@@ -875,20 +894,15 @@ class ScannerView(Screen):
         dropped = self._prune_aps_outside(result)
         await iface.start_hopping(channels=result, interval=0.25)
 
-        ch_24 = [c for c in result if c <= 14]
-        ch_5 = [c for c in result if c > 14]
-        parts = []
-        if ch_24:
-            parts.append(f"{len(ch_24)} on 2.4 GHz")
-        if ch_5:
-            parts.append(f"{len(ch_5)} on 5 GHz")
-        summary = " + ".join(parts) if parts else f"{len(result)} channels"
-        log.write(
-            f"[bold green][+] Hopping {summary}:[/bold green] {result}"
-        )
+        pieces = [
+            f"[bold cyan]{name}[/bold cyan] [dim]({rngs})[/dim]"
+            for name, rngs in band_ranges(result)
+        ]
+        summary = " and ".join(pieces) if pieces else "[dim]no channels[/dim]"
+        log.write(f"[bold]Channel hopping[/bold] across {summary}")
         if dropped:
             log.write(
-                f"[dim]  Cleared {dropped} AP(s) outside the filter.[/dim]"
+                treelog.leaf(f"[dim]Cleared {dropped} AP(s) outside the filter[/dim]")
             )
 
     def _prune_aps_outside(self, channels: List[int]) -> int:

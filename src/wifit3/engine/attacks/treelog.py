@@ -17,6 +17,12 @@ glyph carries the status (green ✓ / red ╳).
 """
 
 
+def header(msg: str) -> str:
+    """A group header ( ● ) — the root line above ├─/└─ children. The leading
+    space aligns the bullet with the branch connectors below it."""
+    return f" [green]●[/green] {msg}"
+
+
 def branch(msg: str) -> str:
     """A non-terminal step under the current header (├─►)."""
     return f" [dim]├─►[/dim] {msg}"
