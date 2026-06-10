@@ -31,6 +31,8 @@ from typing import Iterator
 
 import usb.core
 
+from wifit3.log_trace import TRACE
+
 from . import constants as C
 from .constants import get_field
 from .eeprom import EepromValues
@@ -133,11 +135,17 @@ def iter_frames(buf: bytes, ev: EepromValues, lna_gain: int) -> Iterator[tuple[b
 
 def read_rx_burst(dev: usb.core.Device, ep: int, *, max_size: int = 16384,
                   timeout_ms: int = 100) -> bytes | None:
-    """One bulk-IN read; ``None`` on timeout."""
+    """One bulk-IN read; ``None`` on timeout. At TRACE, logs each read so the exact
+    moment RX goes silent (data → timeouts) is visible in the wedge preamble."""
     try:
-        return bytes(dev.read(ep, max_size, timeout_ms))
+        data = bytes(dev.read(ep, max_size, timeout_ms))
+        if logger.isEnabledFor(TRACE):
+            logger.trace("RX bulk-IN <%dB>", len(data))
+        return data
     except usb.core.USBError as e:
         err = getattr(e, "errno", None)
         if err in (110, 10060) or "timeout" in str(e).lower():
+            if logger.isEnabledFor(TRACE):
+                logger.trace("RX bulk-IN timeout")
             return None
         raise

@@ -26,9 +26,13 @@ from __future__ import annotations
 
 import errno
 import logging
+import os
+import sys
 import time
 
 import usb.core
+
+from wifit3.log_trace import TRACE
 
 from . import constants as C
 from .constants import get_field, set_field
@@ -36,6 +40,37 @@ from .constants import get_field, set_field
 logger = logging.getLogger(__name__)
 
 _LIBUSB_NO_DEVICE = -4        # LIBUSB_ERROR_NO_DEVICE
+_TRANSPORT_FILE = os.path.normcase(__file__)
+
+
+def _trace_caller() -> str:
+    """First stack frame outside this transport module — the meaningful caller
+    (``enable_radio_finish`` / ``config_channel`` / …) instead of an internal helper."""
+    f = sys._getframe(1)
+    while f is not None and os.path.normcase(f.f_code.co_filename) == _TRANSPORT_FILE:
+        f = f.f_back
+    return f.f_code.co_name if f is not None else "?"
+
+
+def _trace_xfer(request, requesttype, value, index, data, result) -> None:
+    """One TRACE line per USB control transfer: caller, op (R/W/DEV/EE), address, value.
+    ``WIFIT3_LOG=trace`` only — the per-transfer preamble for diagnosing a wedge."""
+    def _u32(b: bytes) -> str:
+        b = bytes(b)
+        return (f"=0x{int.from_bytes(b, 'little'):0{max(len(b) * 2, 2)}x}"
+                if 0 < len(b) <= 4 else f"<{len(b)}B>")
+
+    caller = _trace_caller()
+    if request in (C.USB_MULTI_READ, C.USB_SINGLE_READ):
+        logger.trace("[%-20s] R   0x%04x %s", caller, index, _u32(result))
+    elif request in (C.USB_MULTI_WRITE, C.USB_SINGLE_WRITE):
+        logger.trace("[%-20s] W   0x%04x %s", caller, index,
+                     _u32(data) if not isinstance(data, int) else "")
+    elif request == C.USB_DEVICE_MODE:
+        logger.trace("[%-20s] DEV val=0x%04x idx=0x%04x %s", caller, value, index,
+                     "(in)" if requesttype & 0x80 else "(out)")
+    elif request == C.USB_EEPROM_READ:
+        logger.trace("[%-20s] EEPROM <%dB>", caller, len(bytes(result)))
 
 
 def _is_device_gone(err: usb.core.USBError) -> bool:
@@ -81,6 +116,8 @@ class RT3070Transport:
                 if attempt > 1:
                     logger.info("rt3070: vendor req 0x%02x off 0x%04x recovered on "
                                 "attempt %d", request, index, attempt)
+                if logger.isEnabledFor(TRACE):
+                    _trace_xfer(request, requesttype, value, index, data_or_length, result)
                 return result
             except usb.core.USBError as e:
                 if _is_device_gone(e) or time.monotonic() >= deadline:

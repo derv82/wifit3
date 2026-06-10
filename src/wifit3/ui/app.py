@@ -3,6 +3,7 @@ import os
 from textual.app import App
 from typing import Optional
 
+from wifit3 import log_trace
 from wifit3.wlan.manager import WlanDeviceManager
 from wifit3.engine.models import AccessPoint
 
@@ -23,14 +24,15 @@ def _configure_file_logging() -> None:
     The TUI owns the terminal, so stderr logging is invisible (and there's no
     handler anyway): the interface's ``[NEW AP]`` / ``[M1]`` / ``[PMKID]`` frame
     trace goes nowhere during a normal run. Set ``WIFIT3_LOG=1`` to capture INFO
-    (or ``WIFIT3_LOG=debug`` for DEBUG, incl. frame bytes) to ``wifit3.log`` in
-    the CWD. Truncated per run so each session's trace stands alone.
+    (``WIFIT3_LOG=debug`` for DEBUG incl. frame bytes; ``WIFIT3_LOG=trace`` for the
+    per-USB-transfer firehose) to ``wifit3.log`` in the CWD. Truncated per run so
+    each session's trace stands alone.
     """
     global _FILE_LOGGING_CONFIGURED
     level_env = os.environ.get("WIFIT3_LOG", "").strip().lower()
     if not level_env or _FILE_LOGGING_CONFIGURED:
         return
-    level = logging.DEBUG if level_env in ("debug", "2") else logging.INFO
+    level = log_trace.level_from_env(level_env)
     handler = logging.FileHandler("wifit3.log", mode="w", encoding="utf-8")
     handler.setFormatter(logging.Formatter(
         "%(asctime)s.%(msecs)03d %(levelname)-5s %(name)s: %(message)s",
