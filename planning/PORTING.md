@@ -30,7 +30,7 @@ and paste verbatim). Where the two disagree, the wire wins.
   `usb_dumps_new/driver-sources/`). `capture.py` auto-pulls the bound DKMS source into each
   capture; a mainline-only card has none, and `driver.log`'s vermagic is the fetch recipe.
 
-Deterministic helpers (see `scripts/AGENTS.md` for the full brief):
+Deterministic helpers:
 - `uv run python scripts/verify_pcap.py <chip>` — **the faithfulness gate.** One cursor walks
   the *whole* capture; the port's real bring-up/handlers must reproduce every op. It PASSes only
   when every op is matched or explicitly waived, and stops at the first **unaccounted** op —
