@@ -3,7 +3,7 @@ import os
 from textual.app import App
 from typing import Optional
 
-from wifit3 import log_trace
+from wifit3.chips import log_trace
 from wifit3.wlan.manager import WlanDeviceManager
 from wifit3.engine.models import AccessPoint
 

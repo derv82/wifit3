@@ -31,8 +31,7 @@ from typing import Iterator
 
 import usb.core
 
-from wifit3.log_trace import TRACE
-
+from ..log_trace import TRACE
 from . import constants as C
 from .constants import get_field
 from .eeprom import EepromValues

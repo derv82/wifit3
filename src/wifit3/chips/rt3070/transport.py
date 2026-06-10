@@ -32,8 +32,7 @@ import time
 
 import usb.core
 
-from wifit3.log_trace import TRACE
-
+from ..log_trace import TRACE
 from . import constants as C
 from .constants import get_field, set_field
 
