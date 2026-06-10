@@ -20,6 +20,13 @@ with ``write32(AUTOWAKEUP_CFG, 0)``, which this USB capture never issues -- that
 PCI/SoC-only in rt2800lib.c, so the USB port should skip it. The blob upload below is
 verified independently of that preamble.
 
+Counter (2026-06-10): the "PCI/SoC-only" reading above is falsified -- ``rt2800lib.c:731``
+writes ``AUTOWAKEUP_CFG`` *unconditionally*, above the ``is_pci`` guard (which holds only
+``AUX_CTRL``/``PWR_PIN_CFG``). So the write is kernel-faithful and gating it out would be a
+regression. The remaining open question is the wire-absence claim itself -- which this
+*anchored-block* verifier can't settle, since it never replays the preamble. A single-cursor
+full-walk would.
+
 Run: uv run python scripts/rt2800usb/verify_pcap.py [capture-1|capture-2]
 """
 from __future__ import annotations
@@ -105,8 +112,10 @@ def verify_fw(pcap: Path, dev: int, fw: bytes) -> bool:
         return False
     print(f"  PASS: rt2870.bin upload verified byte-for-byte -- {len(fw)} bytes over {rd.i} "
           f"chunked control writes from 0x{FIRMWARE_IMAGE_BASE:04x}.")
-    print("  NOTE: load_firmware's preamble write32(AUTOWAKEUP_CFG, 0) is absent from this "
-          "USB capture (PCI/SoC-only in rt2800lib.c) -- a real divergence flagged separately.")
+    print("  NOTE: load_firmware's preamble write32(AUTOWAKEUP_CFG, 0) is reportedly absent "
+          "from this USB capture -- but the 'PCI/SoC-only' reading is falsified (rt2800lib.c:731 "
+          "writes it unconditionally, above the is_pci guard). Disputed; this anchored verifier "
+          "never walks the preamble, so a single-cursor full-walk is what would adjudicate it.")
     return True
 
 

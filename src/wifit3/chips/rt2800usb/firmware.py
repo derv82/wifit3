@@ -251,6 +251,8 @@ def load_firmware(
     if progress_cb:
         progress_cb(0.10, "Resetting chip pre-FW")
 
+    # Unconditional in the kernel — issued above the is_pci block (which guards only
+    # AUX_CTRL/PWR_PIN_CFG), so it is NOT PCI-only. [SRC] rt2800lib.c:731
     t.write32(AUTOWAKEUP_CFG, 0)
     if not wait_csr_ready(t):
         raise IOError("wait_csr_ready timeout — chip never returned a valid MAC_CSR0")

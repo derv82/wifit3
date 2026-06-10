@@ -127,6 +127,13 @@ is an un-audited deviation worth closing.
   an `is_pci || is_soc` guard — PCI/SoC only — so the USB path should skip it. The 4096-byte
   rt2870.bin upload itself is byte-perfect (verified); only this preamble write diverges.
   Fix: gate the `AUTOWAKEUP_CFG` write out of the USB loader. Greppable: `AUTOWAKEUP_CFG`.
+  **Counter-claim (2026-06-10, kernel re-read):** the "PCI/SoC-only guard" half is falsified —
+  `rt2800lib.c:731` writes `AUTOWAKEUP_CFG` **unconditionally**, *above* the `is_pci` block
+  (which guards only `AUX_CTRL`/`PWR_PIN_CFG`, :739-750), so our write looks kernel-faithful and
+  the proposed gate would be a *regression*. The wire-omission half is still unreconciled —
+  but it's unverified too: this driver's verifier is anchored-block and never walks the
+  `load_firmware` preamble, so nothing has actually checked whether the op is on this wire.
+  **Do not apply the gate**; a single-cursor full-walk (rt3070-style) is what adjudicates it.
 
 * **rt2500usb: `config_ant` ordering — kernel touches `MAC_CSR20` first (un-audited gap).**
   The verifier reproduces `init_registers` + `init_bbp` byte-for-byte (123 ops), then
