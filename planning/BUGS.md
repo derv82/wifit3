@@ -49,11 +49,6 @@ not a driver. Likely a race/ordering issue: the channel set on Focus entry is
 lost or overridden by the channel-hopper teardown, so the first tune doesn't
 stick. Repro: Focus a known AP, watch for 0 beacons, then Focus→Scanner→Focus.
 
-## Beacon count truncates past 10k
-
-`10512` renders as `0512`. Auto-size the BEACONS column without breaking
-right-alignment.
-
 ## WPS PBC auto-invade can monopolize the radio on timeout (Focus)
 
 PBC auto-invade is ON by default and works well, but in Focus a PBC attempt that
@@ -93,23 +88,6 @@ kill the Windows/cross-platform model). Feature-scale, not a tweak.
 **Near-term QoL** on the current button regardless: disable/annotate it unless the
 target is WPA3-transition, and log "passive — waiting for a natural reconnect
 (minutes–hours)" on start so it stops looking broken.
-
-## Bulk-IN read timeout treated as fatal on Windows (fleet audit)
-
-A benign bulk-IN read timeout (no traffic this interval — every quiet channel
-yields one) must return `None` so the shared `RxReaderThread` keeps going. Several
-userland drivers' `transport.bulk_in` only map a **libusb** timeout to `None`
-(`errno == 110` or the substring `"timeout"`), but the **Windows/WinUSB** backend
-raises `[Errno 10060] Operation timed out` — errno `10060`, and `"timed out"` does
-**not** contain `"timeout"` — so the timeout is re-raised and counted as a hard
-error. After `max_errors` (5) consecutive, the reader **gives up and RX dies**. It
-hides on busy 2.4 GHz (a successful read resets the counter before 5-in-a-row) and
-bites on 5 GHz, whose many empty DFS channels produce long timeout runs. Fixed in
-`rtl8814au_dkms` (commit on `dkms/8814au`: catch pyusb's `USBTimeoutError` type +
-errno 110/10060 fallback). **Audit the other userland drivers'
-`chips/<chip>/transport.py` `bulk_in`** for the same `errno==110`/`"timeout"`
-pattern and apply the same fix (Windows users + quiet channels hit it on any of
-them). Greppable: `errno.*110|"timeout" in`.
 
 ## 5 GHz drivers under-list DFS channels the cards support (deferred — DFS ≈ empty air)
 

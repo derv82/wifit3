@@ -331,18 +331,6 @@ entirely behind the existing install worker. The proven pieces are already here 
 animation from the pulse; off-thread install keeping the UI live); the work is the ANSI
 mascot frames + float-down keyframes, the type-on effect, and writing the lines. 📎
 
-### Global crash handler — never show a raw stack trace — soon
-
-**Problem.** Any unhandled exception (a USB error mid-`set_channel`, a driver wedge,
-etc.) dumps a giant Textual stack trace to the terminal. It's noise, it's scary, and it
-buries the actual log. Related to the Hardware-failure UX above but broader: it's about
-*never* letting a traceback reach the user.
-
-**Approach.** A top-level guard around the `WifiteApp` run loop: catch everything, write
-the full traceback to `wifit3.log` (not the terminal), and either clean-exit or show a
-minimal modal whose only action is **Abort**. Keep the log intact (don't crash the
-process before flushing) so post-mortem diagnostics survive. Low complexity; high relief.
-
 ### Triangulation map — post-1.0
 
 Three cards + RSSI trilateration + a drag-to-place UI. Fun, novel, not soon. 😄
