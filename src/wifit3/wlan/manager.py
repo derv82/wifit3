@@ -47,6 +47,13 @@ ENV_RTL8812_DRIVER = "WIFIT3_RTL8812"
 # DKMS port is hardware-proven to tie/beat it on 2.4 GHz breadth; "dkms" opts in.
 ENV_RTL8188_DRIVER = "WIFIT3_RTL8188"
 
+# RT5372 (148f:5372) is claimed by BOTH the standalone clean-room port (default) and the
+# shared rt2800usb imitation base. The clean-room port wins by default (the rt2800usb base
+# mis-reads the EFUSE as 1T1R + under-drives RX); set this to "rt2800usb" to A/B the old
+# base on the same card. Read fresh each call so it flips between runs. rt2800usb keeps
+# RT3572/RT5572 either way.
+ENV_RT5372_DRIVER = "WIFIT3_RT5372"
+
 _DRIVER_CLASSES: Dict[str, Type[WlanDriver]] | None = None
 
 
@@ -61,6 +68,7 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
         from wifit3.chips.rt2500usb.driver import RT2500USBDriver
         from wifit3.chips.rt2800usb.driver import RT2800USBDriver
         from wifit3.chips.rt3070.driver import RT3070Driver
+        from wifit3.chips.rt5372.driver import RT5372Driver
         from wifit3.chips.rtl8187.driver import RTL8187Driver
         from wifit3.chips.rtl8188eus.driver import RTL8188EUSDriver
         from wifit3.chips.rtl8188eus_dkms.driver import Rtl8188eusDkmsDriver
@@ -78,6 +86,7 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
             "rt2500usb": RT2500USBDriver,
             "rt2800usb": RT2800USBDriver,
             "rt3070": RT3070Driver,
+            "rt5372": RT5372Driver,
 
             "rtl8188eus": RTL8188EUSDriver,
             "rtl8188eus_dkms": Rtl8188eusDkmsDriver,
@@ -120,8 +129,15 @@ def _all_drivers() -> List[Type[WlanDriver]]:
         rtl8188 = [c["rtl8188eus_dkms"], c["rtl8188eus"]]
     else:
         rtl8188 = [c["rtl8188eus"], c["rtl8188eus_dkms"]]
+    # RT5372: the standalone clean-room port wins 148f:5372 by default (the rt2800usb base
+    # mis-reads its EFUSE as 1T1R and under-drives RX); "rt2800usb" opts back for an A/B.
+    # It MUST precede rt2800usb here so it claims the PID first; rt2800usb keeps RT3572/RT5572.
+    if os.environ.get(ENV_RT5372_DRIVER, "").strip().lower() == "rt2800usb":
+        rt5372 = [c["rt2800usb"], c["rt5372"]]
+    else:
+        rt5372 = [c["rt5372"], c["rt2800usb"]]
     return [
-        c["ar9271"], c["rtl8187"], c["rt2500usb"], c["rt2800usb"], c["rt3070"], *rtl8188,
+        c["ar9271"], c["rtl8187"], c["rt2500usb"], *rt5372, c["rt3070"], *rtl8188,
         *rtl8812, *rtl8821, c["rtl8822bu"], *rtl8814,
         c["mt76x0u"], c["mt76x2u"], c["mt7921au"],
     ]
