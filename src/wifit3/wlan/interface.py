@@ -101,6 +101,11 @@ class WlanInterface:
 
         self._rx_callbacks: List[Callable[[bytes, int, float], None]] = []
         self._hopping_task: Optional[asyncio.Task] = None
+        # The in-flight per-hop set_channel, tracked so stop_hopping() can wait
+        # for it to drain. A tune offloads to a run_in_executor thread that
+        # cancellation can't stop; without this, an orphan tune finishes after
+        # stop_hopping returns and moves the chip off the channel Focus pinned.
+        self._tune_task: Optional[asyncio.Task] = None
         self._is_hopping = False
         # Serializes start_hopping / stop_hopping so they can't interleave.
         # Without this, stop_hopping's `await task.cancel()` yields control
@@ -619,12 +624,29 @@ class WlanInterface:
             # visible with a single-channel filter, which otherwise re-tuned
             # every `interval`. Multi-channel hopping still tunes every hop.
             if channel != last_channel:
-                await self.set_channel(channel, scan=True)
+                # Run the tune as a shielded task. A tune offloads to a
+                # run_in_executor thread that cancellation can't stop, so if a
+                # mid-tune stop_hopping() cancelled us here the tune would still
+                # finish and move the chip — landing on a stale hop channel just
+                # as Focus pins its target. The shield keeps the tune alive past
+                # our cancellation; stop_hopping awaits self._tune_task to drain
+                # it before the Focus set_channel runs.
+                self._tune_task = asyncio.ensure_future(
+                    self.set_channel(channel, scan=True)
+                )
+                await asyncio.shield(self._tune_task)
                 last_channel = channel
             await asyncio.sleep(interval)
 
     async def stop_hopping(self):
-        """Cancels the hopping task."""
+        """Cancels the hopping task, then drains any in-flight tune.
+
+        Cancelling the loop interrupts the coroutine but NOT the executor thread
+        running a mid-flight set_channel — that orphan would finish later and move
+        the chip off the channel the caller (Focus) is about to pin. So after the
+        loop is down we await self._tune_task: the tune completes and updates
+        current_channel, and the next set_channel() tunes from a truthful state.
+        """
         async with self._hop_lock:
             task = self._hopping_task
             # Clear state FIRST so a concurrent start_hopping (which would
@@ -637,6 +659,15 @@ class WlanInterface:
                 try:
                     await task
                 except asyncio.CancelledError:
+                    pass
+            # Drain the tune the cancel above interrupted (its executor thread is
+            # still running). Shielded in _hop_loop, so it survived our cancel.
+            tune = self._tune_task
+            self._tune_task = None
+            if tune is not None and not tune.done():
+                try:
+                    await tune
+                except Exception:
                     pass
             logger.info(f"Stopped channel hopping on {self.name}")
 
