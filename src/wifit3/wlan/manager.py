@@ -64,7 +64,6 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
         from wifit3.chips.ar9271.driver import AR9271Driver
         from wifit3.chips.mt76x0u.driver import MT76x0UDriver
         from wifit3.chips.mt76x2u.driver import MT76x2UDriver
-        from wifit3.chips.mt7921au.driver import MT7921AUDriver
         from wifit3.chips.rt2500usb.driver import RT2500USBDriver
         from wifit3.chips.rt2800usb.driver import RT2800USBDriver
         from wifit3.chips.rt3070.driver import RT3070Driver
@@ -99,7 +98,6 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
             "rtl8814au_mainline": RTL8814AUDriver,
             "mt76x0u": MT76x0UDriver,
             "mt76x2u": MT76x2UDriver,
-            "mt7921au": MT7921AUDriver,
         }
     return _DRIVER_CLASSES
 
@@ -139,7 +137,7 @@ def _all_drivers() -> List[Type[WlanDriver]]:
     return [
         c["ar9271"], c["rtl8187"], c["rt2500usb"], *rt5372, c["rt3070"], *rtl8188,
         *rtl8812, *rtl8821, c["rtl8822bu"], *rtl8814,
-        c["mt76x0u"], c["mt76x2u"], c["mt7921au"],
+        c["mt76x0u"], c["mt76x2u"],
     ]
 
 
