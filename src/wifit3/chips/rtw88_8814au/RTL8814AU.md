@@ -1,8 +1,10 @@
-# RTL8814AU (Alfa AWUS1900) — Recon & Bring-up Plan
+# RTL8814AU (Alfa AWUS1900) — Protocol Notes
 
-**Status:** RECON ONLY — no code yet. This doc is the plan; nothing below is
-hardware-verified. Treat every fact as a hypothesis until it carries a `[HW]`
-stamp.
+**Status:** Ported, RX HW-validated — graded **C** in `VERIFICATION.md` (full attack
+matrix passes; RX path complete, 0/100 cold boots deaf). The DKMS sibling
+`rtl8814au_dkms` is the manager default (it fixes the weak mainline 2.4 GHz signal).
+Still open: calibrated full-power TX (the M6 plan below) and the known 2.4 GHz RX
+weakness.
 
 Card: Alfa **AWUS1900**, AC1900, **4T4R** (4 RF paths), 2.4 + 5 GHz.
 Chip: Realtek **RTL8814AU**, kernel module `rtw88_8814au`, `RTW_CHIP_TYPE_8814A`.
