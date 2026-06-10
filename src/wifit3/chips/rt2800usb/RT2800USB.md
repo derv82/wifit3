@@ -48,7 +48,8 @@ no hardware available; verify before `[x]`.**
   (or loop in word units). **Left unpatched here on purpose** — fixing it shifts every
   EFUSE-derived value family-wide and needs a full-walk gate + an RX A/B re-check, so it's
   scoped to the future family-perfection pass (the RT3070 clean-room port carries its own
-  correct reader; see `chips/rt3070/RT3070.md`).
+  correct reader; see `chips/rt3070/RT3070.md`). **Measured PAU05 delta + RX baseline (freq_offset
+  30→59, the RX gate): see "EFUSE byte/word bug — measured PAU05 delta" below.**
 
 Covers Ralink rt2800usb-family chipsets supported by wifit3:
 
@@ -416,6 +417,45 @@ all EFUSE reads (32 iterations × 7 ctrl xfers each, hitting
 | 0x23 | 0x46 | RSSI_BG (per-path RSSI offsets) |
 
 ---
+
+## EFUSE byte/word bug — measured PAU05 delta + RX baseline (2026-06-10)
+
+Pre-fix record, captured before touching the reader, with
+`scripts/rt2800usb/efuse_delta.py` (read-only — reads the fuse both the
+shipping byte-`ADDRESS_IN` way and the kernel-faithful word-`ADDRESS_IN`
+way and diffs). Device: PAU05, silicon 0x5392 rev 0x0223.
+
+**RX baseline — the gap we want to close:**
+- `beacon_watch` on a nearby CH1 AP: mean **5.5/s** fresh-replug vs **5.7/s**
+  post-soak (min 2, max 8, stdev ~1.5, zero-seconds 0). Fresh ≈ post-soak, so
+  this is a **steady-state weak RX, not degradation** — consistent with a
+  static-calibration handicap (below), not an AGC/thermal drift.
+- 6-min hop sweep (`sweep.py`): 27→22 active BSSIDs. Treat as environmental
+  AP churn, not RX decay — the single-AP beacon_watch above is flat.
+
+**EFUSE delta — driver today vs corrected (`ADDRESS_IN = offset // 2`):**
+
+| field | driver today | corrected | note |
+|---|---|---|---|
+| `freq_offset` | 30 (0x1e) | **59 (0x3b)** | the RX gate — off by 29 crystal-trim units |
+| `lna_gain_bg` | 0xff | 0x00 | 0xff → BBP62 `0x37-0xff` underflows to 0x38 vs default 0x37 |
+| `rssi_bg0/1` | 0xff / 0xff | 0x00 / 0x00 | RSSI offsets that feed the link-tuner averaging |
+| `NIC_CONF0` | 0x1a19 (rxpath=9 → unburned heuristic → 1T1R) | 0xff22 (rxpath/txpath=2, rf_type=15) | corrected value reads *partly unburned* — see caveat |
+
+Raw fuse blocks make the shift obvious: the buggy read returns the per-channel
+**TX-power ramp** (block 0x30 = `16 17 18 18 19 1a 1b 1c …`), the corrected read
+the real config region (`00 00 00 00 22 ff a0 00 ff ff 3b 01 55 55 99 bb`). So
+the recorded `freq_offset=30` is a coincidental TX-power byte, not the crystal
+trim; the real trim is **59**. This is the **leading hypothesis for PAU05's weak
+RX** (and it also poisons the BBP66 VGC seed + link-tuner RSSI inputs).
+
+**Still a hypothesis until grounded.** Per Potential Known Gaps the fix is not
+applied here: it shifts every EFUSE-derived value, so it needs a full-walk
+`verify_pcap` of the EFUSE loop (confirm the corrected addressing **and** what
+the kernel's `validate_eeprom` does with `NIC_CONF0=0xff22` — `rf_type=15` is
+bogus, so a naive 2T2R config on this 1T1R module would be wrong) plus an RX A/B
+on PAU05 before/after. The raw bytes above are measured fact; the causal claim
+is not yet proven on the wire.
 
 ## RT3572 unburned-EFUSE behaviour
 
