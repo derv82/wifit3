@@ -196,6 +196,66 @@ The structural requirements a driver must satisfy (the `WlanDriver` Protocol,
 
 ---
 
+## Post-Port Checklist — run before declaring a port "done"
+
+`verify_pcap` green + a healthy `beacon_watch` is **necessary, not sufficient** (see
+"Green ≠ faithful"). A clean-room port is not done when the gate passes — it is done when
+this list passes. The agent runs **1–6 itself and reports**; **7 is the human's** hands-on
+pass. Worked example: the RT5372 port (`chips/rt5372/RT5372.md`).
+
+1. **Waiver review — init + airmon must have ZERO waived ops.** Re-read every op the gate
+   waived. The cold bring-up *and* the airmon monitor entry must reproduce single-cursor
+   with **no** waivers; the only legitimate waiver is a *different program's* traffic
+   (aireplay-ng's `TX_STA_FIFO` TX-status polls — bulk-OUT TX is out of the control gate).
+   A waiver *inside* init/airmon is an un-ported op hiding behind a waiver — port it.
+
+2. **Skip audit — what does the kernel do that we don't?** Grep the port for every
+   `# TODO untestable` and confirm each is a *genuine no-hardware* skip (5 GHz on a 2.4-only
+   card; 3T3R arms on a 2T2R card; BT-coex on a non-combo card; the PCI path on a USB card),
+   each called out **in the driver code** as `# TODO untestable: <why>`. Then walk the kernel
+   call graph for branches dropped *without* a marker — the gate catches skipped *wire* ops,
+   but non-wire logic (cap-flags, channel list, MAC program) can be silently missing.
+   Classify every leaf faithful / hardcoded / omitted / N-A. (A sibling port often *closes*
+   another's gaps — RT5392's 2T2R exercised arms rt3070 had to mark untestable.)
+
+3. **Capture coverage — verify EVERY available capture, not just one.** Run the gate against
+   all cold-boot captures for the chip, including the "extra" ones in other `usb_dumps*/`
+   dirs (confirm same silicon first — the gate prints it). Each must PASS full single-cursor.
+   One capture passing can hide a per-session quirk; N passing is the evidence.
+
+4. **TX byte-diff vs the captured injector.** Extract the kernel's bulk-OUT TX frames from
+   the capture (`tshark -Y "usb.endpoint_address == 0x01 && usb.capdata" -T fields -e
+   usb.capdata`), filter to the frame type you build (deauth FC=0xc0, …), and diff our
+   `build_*`/descriptor output byte-for-byte. TXINFO / TXWI / MPDU / trailing pad must MATCH;
+   only the per-frame seqctl (and the IV, for WEP) legitimately differs — both the kernel and
+   our injector stamp those at send time. Bulk-OUT is the gate's blind spot, so this is the
+   *only* check on TX faithfulness.
+
+5. **Async producers — enumerate the kernel's periodic threads.** Grep the family's link code
+   for `INIT_DELAYED_WORK` / watchdog / link-tuner / DIG / IGI, and decide for EACH whether it
+   fires in *our* scenario (monitor mode). rt2x00: the 1 Hz `link_tuner` AGC is STA-only
+   (skipped at `intf_sta_count==0`); `rt2800_watchdog`'s 100 ms poll is an opt-in module param,
+   off by default — both correctly *not* run in monitor, and the green gate (only the injector's
+   TX-status waived) proves no periodic register-writer is missing. A port that misses an
+   *always-on* watchdog (a phydm/DIG-style loop on other families) gate-fails on its first
+   un-dispatched periodic write — **dispatch it, don't strip it.**
+
+6. **Recalibration cadence — does it recal RX/power as often as the kernel?** Confirm the
+   per-channel-tune recal (freq cal, VCO cal, RF synth, TX power, AGC re-seed) matches the
+   kernel's `config_channel`, and that any *periodic* recal the kernel runs (the link tuner)
+   either applies to our mode or is correctly skipped. The risk is the kernel recalibrating
+   more often than the port (gain/thermal drift over a long session). The per-hop hardware
+   lock must also hold, so a cancelled tune can't leave the chip on a stale channel.
+
+7. **Hands-on break-it pass (human).** Open wifit3 and hammer it: rapidly alternate focused
+   targets, hop hard, replug mid-run, run a long soak, fire the live attacks (deauth →
+   handshake, PMKID, WEP replay, WPS PIN — the "complex TX" that exercises seqctl/IV variance).
+   Hunt the "bad channel hop" (device left on a stale channel) and any wedge. Stress reveals
+   what a 15 s snapshot and a single capture cannot — there are **always** gaps here, and only
+   rigorous use confirms the port is truly faithful to the kernel driver.
+
+---
+
 ## Cleanroom DKMS re-ports (the 2.4 GHz RX fix)
 
 The four Realtek 11ac-family cards (8822bu, 8814au, 8821au, 8812au) are currently
