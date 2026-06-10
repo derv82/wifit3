@@ -61,6 +61,10 @@ tables below lead with the attack columns and any caveats.
 ### RTL8188EUS
 *TP-Link TL-WN722N v2/v3 · 2.4 GHz*
 
+> Default = the mainline-derived port; `WIFIT3_RTL8188=dkms` switches to the vendor
+> DKMS port (stronger 2.4 GHz RX in A/B — 86–89% vs ~77%), worth trying given the
+> weak Scan below.
+
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | Scan | ⚠️ | 2026-05-31 | Weak 2.4 GHz RX — ~1–3 beacons/s from a router *inches* away (healthy ~10/s). Smells like a gain/DIG bug; worth chasing. |
@@ -238,7 +242,7 @@ excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate
 → [RT3070.md](src/wifit3/chips/rt3070/RT3070.md)
 
 ### RT2500USB
-*Buffalo Nintendo Wi-Fi USB Connector / RT2570 · 2.4 GHz*
+*Buffalo Nintendo Wi-Fi / RT2570 · 2.4 GHz*
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|

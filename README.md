@@ -39,20 +39,15 @@ subprocesses, no Scapy — so it runs the same on **Linux and Windows**.
 | TP-Link TL-WN722N v2/v3 | Realtek RTL8188EUS | 2.4 GHz |
 | ALFA AWUS036ACM | MediaTek MT7612U | 2.4 / 5 GHz |
 | ALFA AWUS036ACHM | MediaTek MT7610U | 2.4 / 5 GHz |
-| (various) | Realtek RTL8187 * | 2.4 GHz |
-| Panda PAU05 / PAU09 N600 | Ralink RT2800USB (RT5372 / RT5572) | 2.4 / 5 GHz |
+| ALFA AWUS036H | Realtek RTL8187L * | 2.4 GHz |
+| Panda PAU05 / PAU06 | Ralink RT5372 | 2.4 GHz |
+| Panda PAU09 N600 | Ralink RT5572 | 2.4 / 5 GHz |
 | ALFA AWUS036NH | Ralink RT3070 | 2.4 GHz |
-| Buffalo Nintendo Wi-Fi USB Connector | Ralink RT2500USB / RT2570 * | 2.4 GHz |
+| Buffalo Nintendo Wi-Fi | Ralink RT2500USB / RT2570 * | 2.4 GHz |
 
 \* Known limitation — see [VERIFICATION.md](VERIFICATION.md). The absence of an
 asterisk means *no known issue*, not that every attack has been verified on that
 card — see the matrix for the full per-attack status.
-
-The **RTL8814AU (AWUS1900)**, **RTL8821AU / RTL8811AU (AWUS036ACS)**, and **RTL8812AU
-(AWUS036ACH)** each ship with a fresh vendor/DKMS driver tuned for stronger 2.4 / 5 GHz
-monitor RX — and on the 8812AU, immunity to the dual-band-hop RF-synth wedge that afflicts
-the mainline driver. To fall back to the older mainline-derived driver, set
-`WIFIT3_RTL8814=mainline`, `WIFIT3_RTL8821=mainline`, or `WIFIT3_RTL8812=mainline`.
 
 ## Philosophy
 
@@ -80,22 +75,29 @@ inheriting the baggage of a tool architected as an aircrack-ng wrapper.
 
 ## Installation
 
-Wifit3 uses [`uv`](https://docs.astral.sh/uv/).
+Wifit3 uses [`uv`](https://docs.astral.sh/uv/):
 
 ```bash
 uv sync
+```
+
+**Windows** — Wifit3 installs the **WinUSB** driver for your adapter itself: pick the
+card on the splash screen and confirm. The bundled installer self-elevates for that one
+step (a single UAC prompt) — no manual Zadig, and you don't run Wifit3 as Administrator.
+Then:
+
+```bash
 uv run wifit3
 ```
 
-**Linux** — unload the kernel driver so Wifit3 can claim the adapter:
+**Linux** — unload the conflicting kernel driver, then launch with `sudo` (running
+userland *without* `sudo` is designed and verified but hasn't shipped for Linux yet —
+see [DEVICE-SETUP.md](planning/DEVICE-SETUP.md)):
 
 ```bash
 sudo rmmod <kernel_driver>   # e.g. ath9k_htc, rtl8xxxu, mt76x2u, rt2800usb
+sudo .venv/bin/python3 -m wifit3
 ```
-
-**Windows** — install the **WinUSB** driver for your adapter with
-[Zadig](https://zadig.akeo.ie/) first; Wifit3 won't see it otherwise. Once
-WinUSB is set up you don't need to run Wifit3 as Administrator.
 
 ## Disclaimer
 
