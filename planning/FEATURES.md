@@ -256,10 +256,6 @@ on the AirLink router). Remaining gaps:
   like the WEP PTW cracker). Tractable, not a runtime wall — the cost is
   implementation correctness + deciding to take numpy as a dep.
 
-### WPA3 downgrade (transition mode) — post-Defcon
-
-Respond to probe requests to elicit a downgrade in WPA3 transition-mode networks.
-
 ### Multi-card support (Minnie Drivers v2) — post-Defcon, big swing
 
 **Problem / opportunity.** Run 2+ USB cards concurrently in one session, pooling
