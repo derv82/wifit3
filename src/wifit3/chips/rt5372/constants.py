@@ -54,6 +54,7 @@ RT5392 = 0x5392
 # RFCSR55/59 table arm in config_channel_rf53xx.
 REV_RT5390F = 0x0502
 REV_RT5390R = 0x1502
+REV_RT5370G = 0x0503
 
 # RF chip ids [SRC rt2800.h:69-72] (EEPROM NIC_CONF0 RF_TYPE field). PAU05/PAU06
 # report RF5372; RF5390/RF5392 are the integrated-RF siblings.
@@ -113,9 +114,13 @@ EFUSE_DATA1 = 0x0594
 EFUSE_DATA2 = 0x0598
 EFUSE_DATA3 = 0x059C
 
-# --- GPIO control (rfkill direction) [SRC rt2800.h:442,453] ----------------
+# --- GPIO control (rfkill direction + BT-coex antenna) [SRC rt2800.h:442-457] --
 GPIO_CTRL = 0x0228
 GPIO_CTRL_DIR2 = 0x00000400
+GPIO_CTRL_VAL3 = 0x00000008               # BT-coex antenna select (init_bbp_53xx)
+GPIO_CTRL_VAL6 = 0x00000040
+GPIO_CTRL_DIR3 = 0x00000800
+GPIO_CTRL_DIR6 = 0x00004000
 
 # --- firmware / MCU mailbox [SRC rt2800usb.h:25, rt2800.h:2112-2143,575] ----
 FIRMWARE_IMAGE_BASE = 0x3000
@@ -159,37 +164,23 @@ RF_CSR_CFG_REGNUM = 0x00003F00
 RF_CSR_CFG_WRITE = 0x00010000
 RF_CSR_CFG_BUSY = 0x00020000
 
-# --- RFCSR / BBP init (M2f) fields [SRC rt2800.h] --------------------------
-OPT_14_CSR = 0x0114                      # [SRC rt2800.h:292-293]
+# --- BBP / RFCSR init fields (M3: init_bbp_53xx, init_rfcsr_5392) [SRC rt2800.h] ---
+OPT_14_CSR = 0x0114                      # [SRC rt2800.h:292-293] led_open_drain_enable
 OPT_14_CSR_BIT0 = 0x00000001
-BBP4_BANDWIDTH = 0x18                    # FIELD8 [SRC rt2800.h:2242]
-RFCSR17_TXMIXER_GAIN = 0x07             # FIELD8 [SRC rt2800.h:2423-2425]
-RFCSR17_TX_LO1_EN = 0x08
-RFCSR17_R = 0x20
-RFCSR22_BASEBAND_LOOPBACK = 0x01        # FIELD8 [SRC rt2800.h:2449]
-RFCSR27_R1 = 0x03                        # FIELD8 [SRC rt2800.h:2467-2470]
-RFCSR27_R2 = 0x04
-RFCSR27_R3 = 0x30
-RFCSR27_R4 = 0x40
-RFCSR31_RX_H20M = 0x20                   # FIELD8 [SRC rt2800.h:2501]
+BBP4_MAC_IF_CTRL = 0x40                  # FIELD8 [SRC rt2800.h:2243] bbp4_mac_if_ctrl
+BBP138_RX_ADC1 = 0x02                    # FIELD8 [SRC rt2800.h:2288] disable_unused_dac_adc
+BBP138_TX_DAC1 = 0x20                    # FIELD8 [SRC rt2800.h:2290]
+BBP152_RX_DEFAULT_ANT = 0x80             # FIELD8 [SRC rt2800.h:2296] init_bbp_53xx antenna
+RFCSR30_RX_VCM = 0x18                    # FIELD8 [SRC rt2800.h:2492] normal_mode_setup_5xxx
+RFCSR38_RX_LO1_EN = 0x20                 # FIELD8 [SRC rt2800.h:2519]
+RFCSR39_RX_LO2_EN = 0x80                 # FIELD8 [SRC rt2800.h:2525]
 
-# RT3071/RT3090 sibling-branch fields (ported #TODO untestable on this RT3070)
-LDO_CFG0 = 0x05D4                        # [SRC rt2800.h:684-689]
-LDO_CFG0_BGSEL = 0x03000000
-LDO_CFG0_LDO_CORE_VLEVEL = 0x1C000000
-GPIO_SWITCH = 0x05DC                     # [SRC rt2800.h:696-702]
-GPIO_SWITCH_5 = 0x00000020
-RFCSR6_R2 = 0x40                         # FIELD8 [SRC rt2800.h:2360]
-RFCSR1_RF_BLOCK_EN = 0x01                # FIELD8 [SRC rt2800.h:2311-2316]
+# RFCSR1 chain power-down (config_channel_rf53xx) [SRC rt2800.h:2311-2316]
+RFCSR1_RF_BLOCK_EN = 0x01                # FIELD8
 RFCSR1_RX0_PD = 0x04
 RFCSR1_TX0_PD = 0x08
 RFCSR1_RX1_PD = 0x10
 RFCSR1_TX1_PD = 0x20
-RFCSR15_TX_LO2_EN = 0x08                 # FIELD8 [SRC rt2800.h:2411]
-RFCSR20_RX_LO1_EN = 0x08                 # FIELD8 [SRC rt2800.h:2437]
-RFCSR21_RX_LO2_EN = 0x08                 # FIELD8 [SRC rt2800.h:2442]
-BBP138_RX_ADC1 = 0x02                    # FIELD8 [SRC rt2800.h:2288]
-BBP138_TX_DAC1 = 0x20                    # FIELD8 [SRC rt2800.h:2290]
 
 # --- EEPROM word map [SRC rt2800lib.c:308-347 rt2800_eeprom_map] -----------
 EEPROM_CHIP_ID = 0x0000
@@ -219,6 +210,7 @@ EEPROM_NIC_CONF0_RXPATH = 0x000F
 EEPROM_NIC_CONF0_TXPATH = 0x00F0
 EEPROM_NIC_CONF0_RF_TYPE = 0x0F00
 EEPROM_NIC_CONF1_EXTERNAL_LNA_2G = 0x0004   # [SRC rt2800.h:2708]
+EEPROM_NIC_CONF1_BT_COEXIST = 0x4000        # [SRC rt2800.h:2719] CAPABILITY_BT_COEXIST
 EEPROM_NIC_CONF1_DAC_TEST = 0x8000          # [SRC rt2800.h:2720]
 EEPROM_FREQ_OFFSET = 0x00FF
 EEPROM_FREQ_LED_MODE = 0x7F00

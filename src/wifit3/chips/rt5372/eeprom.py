@@ -157,6 +157,7 @@ class EepromValues:
     external_tx_alc: bool    # NIC_CONF1 EXTERNAL_TX_ALC [rt2800lib.c:4578 gain cal gate]
     power_limit: bool        # EIRP_MAX_2GHZ < limit ⇒ CAPABILITY_POWER_LIMIT [rt2800lib.c:11320]
     ant_diversity: int       # NIC_CONF1 ANT_DIVERSITY [rt2800lib.c:2365 config_ant]
+    bt_coexist: bool         # NIC_CONF1 BT_COEXIST → CAPABILITY_BT_COEXIST [rt2800lib.c:11295]
     rssi_offset_bg: tuple[int, int, int]   # RX RSSI per-path offsets [rt2800lib.c:867-878]
 
     def word(self, index: int) -> int:
@@ -208,6 +209,7 @@ def parse_eeprom(buf: bytes) -> EepromValues:
         external_tx_alc=bool(C.get_field(nic_conf1, C.EEPROM_NIC_CONF1_EXTERNAL_TX_ALC)),
         power_limit=eirp_2g < C.EIRP_MAX_TX_POWER_LIMIT,
         ant_diversity=C.get_field(nic_conf1, C.EEPROM_NIC_CONF1_ANT_DIVERSITY),
+        bt_coexist=bool(C.get_field(nic_conf1, C.EEPROM_NIC_CONF1_BT_COEXIST)),
         rssi_offset_bg=(
             C.get_field(word(C.EEPROM_RSSI_BG), C.EEPROM_RSSI_BG_OFFSET0),
             C.get_field(word(C.EEPROM_RSSI_BG), C.EEPROM_RSSI_BG_OFFSET1),

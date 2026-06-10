@@ -232,7 +232,17 @@ def run(cap: str | None = None) -> int:
     init_end = w.i
     print(f"  init: reproduced {init_end} ops single-cursor (probe -> chan-ready, no gaps)")
 
-    frontier = _walk_operational(w, out.get("chip"), out.get("eeprom"), out.get("drv"), out)
+    try:
+        frontier = _walk_operational(w, out.get("chip"), out.get("eeprom"), out.get("drv"), out)
+    except rp.Divergence as e:
+        print(f"\nFAIL (operational divergence) at op {w.i}:\n  {e}")
+        return 1
+    except (AttributeError, NotImplementedError) as e:
+        fr = w.peek()
+        print(f"\nFRONTIER at op {w.i}: handler not ported yet ({type(e).__name__}: {e})")
+        if fr:
+            print(f"  next wire op = {rp.ReplayDevice._fmt(fr)}")
+        return 1
     for reason, n in w.waived.most_common():
         print(f"  waived {n:5} ops  — {reason}")
     if frontier is not None:

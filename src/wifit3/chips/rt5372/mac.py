@@ -121,6 +121,33 @@ def enable_radio_boot(t: RT5372Transport) -> None:
     t.wait_bbp_ready()
 
 
+def enable_radio_finish(t: RT5372Transport, chip: ChipInfo, ev: EepromValues) -> None:
+    """rt2800_enable_radio tail [SRC rt2800lib.c:10838-10872]: enable TX, then TX+RX DMA,
+    then RX, and push the EEPROM LED config to the MCU. The ``MCU_CURRENT`` current-cal is
+    RT3070/3071/3572-only [SRC rt2800lib.c:10829-10836] — NOT RT5392 — so it is not
+    emitted. ``chip`` is kept for signature parity with the family (the MCU_CURRENT gate)."""
+    reg = t.register_read(C.MAC_SYS_CTRL)
+    reg = set_field(reg, C.MAC_SYS_CTRL_ENABLE_TX, 1)
+    reg = set_field(reg, C.MAC_SYS_CTRL_ENABLE_RX, 0)
+    t.register_write(C.MAC_SYS_CTRL, reg)
+    # kernel udelay(50)
+    reg = t.register_read(C.WPDMA_GLO_CFG)
+    reg = set_field(reg, C.WPDMA_GLO_CFG_ENABLE_TX_DMA, 1)
+    reg = set_field(reg, C.WPDMA_GLO_CFG_ENABLE_RX_DMA, 1)
+    reg = set_field(reg, C.WPDMA_GLO_CFG_TX_WRITEBACK_DONE, 1)
+    t.register_write(C.WPDMA_GLO_CFG, reg)
+    reg = t.register_read(C.MAC_SYS_CTRL)
+    reg = set_field(reg, C.MAC_SYS_CTRL_ENABLE_TX, 1)
+    reg = set_field(reg, C.MAC_SYS_CTRL_ENABLE_RX, 1)
+    t.register_write(C.MAC_SYS_CTRL, reg)
+
+    for cmd, word_idx in ((C.MCU_LED_AG_CONF, C.EEPROM_LED_AG_CONF),
+                          (C.MCU_LED_ACT_CONF, C.EEPROM_LED_ACT_CONF),
+                          (C.MCU_LED_LED_POLARITY, C.EEPROM_LED_POLARITY)):
+        word = ev.word(word_idx)
+        t.mcu_request(cmd, 0xFF, word & 0xFF, (word >> 8) & 0xFF)
+
+
 def start_queue_rx(t: RT5372Transport) -> None:
     """Enable the RX queue [SRC rt2800usb.c:46-67 rt2800usb_start_queue QID_RX].
     Called from rt2x00queue_start_queues after the radio is up."""
