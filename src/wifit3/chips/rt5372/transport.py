@@ -177,9 +177,9 @@ class RT5372Transport:
     def eeprom_read(self, length: int) -> bytes:
         """One-shot EEPROM read (wValue=wIndex=0) [SRC rt2x00usb.h:170-176].
 
-        #TODO untestable: this AWUS036NH is an EFUSE card, so the chip never
-        takes the USB_EEPROM_READ path (see eeprom.read_eeprom_efuse). Ported
-        faithfully for a future 93C66-EEPROM rt2x00 member; no wire exercises it.
+        #TODO untestable: PAU05/PAU06 are EFUSE cards, so the chip never takes
+        the USB_EEPROM_READ path (see eeprom.read_eeprom_efuse). Ported faithfully
+        for a future 93C66-EEPROM rt2x00 member; no wire exercises it.
         """
         return bytes(self._vendor_request(C.USB_VENDOR_REQUEST_IN, C.USB_EEPROM_READ,
                                           0, 0, length))
