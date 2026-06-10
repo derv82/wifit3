@@ -19,7 +19,7 @@ The matrix below captures *how well wifit3 drives these wireless cards* -- Every
 | [RTL8812AU](#rtl8812au) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT3070](#rt3070) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RT5572](#rt5572) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
+| [RT5572](#rt5572) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ⬜ | B |
 | [RTL8822BU](#rtl8822bu) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [MT7610U](#mt7610u) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
@@ -211,7 +211,7 @@ bands read the same power).
 | PMKID | ✅ | 2026-05-31 | Passive + active. |
 | WEP | ✅ | 2026-05-31 | Replay + ChopChop. |
 | WPS | ✅ | 2026-05-31 | PIN + PBC. |
-| Stress | ⬜ | — | Not run. |
+| Stress | ✅ | 2026-06-10 | 30-min 22-ch dual-band soak (0.25s hops): no wedge, breadth flat (82→78, ratio 0.95), **both bands held the whole run** (5 GHz ~30 APs/bucket, no dropout). Deauth → handshake still works post-soak. |
 
 → [RT2800USB.md](src/wifit3/chips/rt2800usb/RT2800USB.md)
 
@@ -272,5 +272,6 @@ stay flat the whole time, and the failures (RT2500USB) show within the first min
 
 ## Fully supported
 
-Every column ✅ *plus* a clean Stress soak. **RTL8812AU (DKMS), AR9271, RTL8821AU
-(DKMS), MT7612U, RT3070, and RT5372 are there** — RT5572 is one soak away.
+Every column ✅ *plus* a clean Stress soak. **Seven cards are there: RTL8812AU (DKMS),
+AR9271, RTL8821AU (DKMS), MT7612U, RT3070, RT5372, and RT5572** — every Ralink we have
+(RT3070 / RT5372 / RT5572) now at full marks.
