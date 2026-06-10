@@ -21,10 +21,10 @@ The matrix below captures *how well wifit3 drives these wireless cards* -- Every
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ⬜ | B |
 | [RTL8822BU](#rtl8822bu) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [MT7610U](#mt7610u) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
+| [RT3070](#rt3070) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [RT5372](#rt5372) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⬜ | C |
 | [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ | C |
 | [RTL8814AU](#rtl8814au) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | C |
-| [RT3070](#rt3070) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ❌ | ⬜ | C |
 | [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ❌ | D |
 
 ## Per-card notes
@@ -222,7 +222,7 @@ excellent 2.4 GHz front-end (external LNA) — **when fresh**.
 | Handshake | ✅ | 2026-06-09 | Deauth → reconnect → **39 EAPOL frames** captured in 30s, M2/M4 (ToDS) + M1/M3 (FromDS). |
 | PMKID | ✅ | 2026-06-09 | Passive capture + active extract. |
 | WEP | ✅ | 2026-06-09 | Replay + ChopChop at **~300 injections/s** — ChopChop → cracked with 20k IVs in **<90s**. Best WEP throughput of any card to date. |
-| WPS | ❌ | 2026-06-09 | PBC timed out ("no EAP response"); PIN was AP-refused (NACK). No crack. Under investigation — candidates: a TX-template gap like the deauth seqctl fix (all inject paths may need it), an inbound-EAPOL detection miss in the dashboard, or the mocked source MAC the WPS attacks use. |
+| WPS | ✅ | 2026-06-09 | PIN → M4; PBC → PSK extracted. The protocol path is byte-clean — forged-MAC auto-ACK works (AP unicasts EAPOL back to our `02:..` supplicant MAC) and the EAPOL TX is correct (LLC/SNAP + 0x888E, incrementing seqctl). An earlier run failed purely on the medium — a degraded/contended RX starves the real-time M1–M4 exchange (WPS is the most RX-fragile attack); that's the Scan ⚠️ above, not a WPS bug. |
 | Stress | ⬜ | — | Not run — the RX degradation above wants chasing first. |
 
 → [RT3070.md](src/wifit3/chips/rt3070/RT3070.md)
