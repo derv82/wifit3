@@ -2,8 +2,7 @@
 
 ## Potential Known Gaps
 
-Cross-driver gap classes (project audit 2026-05-25). **Offline analysis only —
-no hardware available; verify before `[x]`.**
+Cross-driver gap classes (project audit 2026-05-25).
 
 - [x] **RX polling loop drops frames** — FIXED (commit dc621ce), HW A/B
   confirmed 2026-05-25. Was on-loop read+parse; now uses the shared

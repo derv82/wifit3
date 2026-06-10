@@ -2,8 +2,7 @@
 
 ## Potential Known Gaps
 
-Cross-driver gap classes (project audit 2026-05-25). **Offline analysis only —
-no hardware available; verify before `[x]`.**
+Cross-driver gap classes (project audit 2026-05-25).
 
 - [~] **RX polling loop drops frames** — PORTED to the shared RxReaderThread
   (RxDrainer now drives it; awaiting HW verify). Was the gap: `rx.py:_loop` (306)

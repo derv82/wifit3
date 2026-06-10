@@ -23,13 +23,14 @@ against the cold-boot pcap, never from the mainline-derived `chips/rtl8821au/`.
 
 ## Potential known gaps (audit as the port lands)
 
-- [ ] RX poll on the event loop vs a dedicated reader thread (start reader
-  **before** RX-enable — kernel posts URBs at probe).
-- [ ] FCS strip before the RX callback (family invariant: `frame_end == MPDU_end`).
-- [ ] Always-monitor RCR / RX_FILTR_CFG / address-match rewrites (vendor inits for
+- [x] RX poll → shared `RxReaderThread` (`driver.py`), started **before** RX-enable
+  (the kernel posts URBs at probe).
+- [x] FCS strip before the RX callback — `rx.py` strips the HW-appended FCS
+  (`frame_end == MPDU_end`).
+- [x] Always-monitor RCR / RX_FILTR_CFG — `mac.py` + `monitor.py` (vendor inits are
   STA; wifit3 is always-monitor).
-- [ ] DIG/IGI watchdog tick (gain freezes at the AGC default without it).
-- [ ] 5 GHz: RX + tune + TX must all be ported (do not declare "done" on 2 GHz).
+- [x] DIG/IGI watchdog tick — `dig.py` (without it, gain freezes at the AGC default).
+- [x] 5 GHz: RX + tune + TX ported — `chan.py` (`_switch_band_5g`) + `txpower.py`.
 
 ## A/B methodology (vs mainline `chips/rtl8821au/`)
 
