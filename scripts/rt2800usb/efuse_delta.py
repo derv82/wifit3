@@ -90,7 +90,10 @@ def read_eeprom_corrected(t: RT2800USBTransport) -> bytes:
         raise IOError("EFUSE_CTRL.PRESENT not set")
     buf = bytearray(EEPROM_SIZE)
     for offset in range(0, EEPROM_SIZE, EFUSE_READ_CHUNK):
-        buf[offset: offset + EFUSE_READ_CHUNK] = _efuse_read_chunk(t, offset // 2)
+        # _efuse_read_chunk now does the byte->word (// 2) conversion itself,
+        # so pass the byte offset like the shipping reader. Post-fix this
+        # matches read_eeprom_efuse exactly (the diff was the pre-fix bug).
+        buf[offset: offset + EFUSE_READ_CHUNK] = _efuse_read_chunk(t, offset)
     return bytes(buf)
 
 

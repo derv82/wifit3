@@ -274,8 +274,42 @@ If anyone knows a good wireless card for Kali Linux, it's morrownr!
 
 ### Cards in the mail (check doorstep)
 
-- **Panda PAU06** — RT5372. Slots into existing `chips/rt2800usb/` as a
-  `DeviceID` entry, minimal delta — no new port expected.
+- **Panda PAU06** — RT5372, **arrived 2026-06-10**. A *healthy* unit (~7.8 beacons/s on
+  the shipping driver, vs the weak PAU05's ~3.6). It triggered the RT5372 clean-room port —
+  see **Planned** below.
+
+### Planned: RT5372 clean-room port (`chips/rt5372/`)
+
+**Decision 2026-06-10:** port RT5372 as a standalone byte-perfect clean-room driver,
+mirroring `chips/rt3070/` — NOT a `chips/rt2800usb/` DeviceID delta. The shared rt2800usb
+base is an "imitation" port (bare-minimum HW ops + a confirmed EFUSE byte/word bug) and it
+materially under-drives the hardware.
+
+**Why patch-from-inside is dead (the evidence):**
+- PAU05 userland RX is weak (~3.6 beacons/s fixed-CH1) but **PAU06 — same RT5372 silicon
+  `0x5392`, same `148f:5372`, same shipping reader — reads ~7.8/s.** Same code, 2× beacons.
+- The **same physical PAU05 on the Linux kernel** (`usb_dumps/captures_rt2800usb_rt5372/`)
+  hits ~6–8/s steady (10/s = ceiling peaks) vs our userland 3.6/s — our port leaves ~2× on
+  the table. The hardware receives fine.
+- The EFUSE byte/word fix was tried + reverted: `verify_pcap` proved the word-offset reader
+  byte-faithful (225 EFUSE ops, both rt5372+rt5572 captures), but the RX A/B **regressed**
+  PAU05 (5.5→3.8/s). So the EFUSE bug is a *faithfulness* gap, NOT the RX cause — the weak RX
+  is gated elsewhere in the imitation port. See `chips/rt2800usb/RT2800USB.md` § EFUSE.
+
+**Inputs (offline-verifiable — everything present):**
+- Capture: `usb_dumps/captures_rt2800usb_rt5372/capture-1.pcap` (+ -2, -3). Silicon 0x5392;
+  EEPROM decodes freq_offset=59 (= the live PAU05 unit).
+- Source: `data_dumps/rt2x00-source-v6.18/` (mainline rt2800lib / rt2800usb).
+- Replay seed: `scripts/rt2x00_pcap_replay.py`; `scripts/rt2800usb/verify_pcap.py` already
+  has anchored EFUSE-walk + firmware blocks to crib from. The port gets its own single-cursor
+  `scripts/rt5372/verify_pcap.py` (rt3070 shape).
+
+**Milestones** (each `verify_pcap`-gated, then HW on PAU06 *and* PAU05):
+M1 FW upload+boot · M2 MAC/BBP/RF init (`init_rfcsr_5392`, `init_bbp_53xx`) · M3 EEPROM
+(**correct word-offset reader from the start**) · M4 channel tune (RF5372) · M5 RX decode ·
+M6 TX wire (no live fire). Register `rt5372` BEFORE `rt2800usb` for `148f:5372` in
+`_all_drivers()`; rt2800usb keeps RT5572 / RT3572. Label the driver chip-accurately
+(`RT5372 (RT5392)`), not "Panda PAU05" — PAU05/PAU06 are indistinguishable by USB ID.
 
 ### Shipped
 

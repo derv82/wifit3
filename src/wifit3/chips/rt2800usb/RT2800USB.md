@@ -432,6 +432,11 @@ way and diffs). Device: PAU05, silicon 0x5392 rev 0x0223.
   static-calibration handicap (below), not an AGC/thermal drift.
 - 6-min hop sweep (`sweep.py`): 27→22 active BSSIDs. Treat as environmental
   AP churn, not RX decay — the single-AP beacon_watch above is flat.
+- Cross-card reference (rough — different session, not a controlled A/B):
+  RT3070 (AWUS036NH, same rt2x00 family + 1T1R but the **correct** word-offset
+  reader) reads **7.9/s** on a nearby AP (min 6, stdev 0.9) and **65** active
+  BSSIDs on the soak — ~3× PAU05's count. A correctly-calibrated same-family
+  1T1R is far healthier; the gap is too large to pin on antenna form-factor.
 
 **EFUSE delta — driver today vs corrected (`ADDRESS_IN = offset // 2`):**
 
@@ -446,16 +451,26 @@ Raw fuse blocks make the shift obvious: the buggy read returns the per-channel
 **TX-power ramp** (block 0x30 = `16 17 18 18 19 1a 1b 1c …`), the corrected read
 the real config region (`00 00 00 00 22 ff a0 00 ff ff 3b 01 55 55 99 bb`). So
 the recorded `freq_offset=30` is a coincidental TX-power byte, not the crystal
-trim; the real trim is **59**. This is the **leading hypothesis for PAU05's weak
-RX** (and it also poisons the BBP66 VGC seed + link-tuner RSSI inputs).
+trim; the real trim is **59**. This *looked like* the leading explanation for PAU05's
+weak RX — **falsified; see Outcome below.**
 
-**Still a hypothesis until grounded.** Per Potential Known Gaps the fix is not
-applied here: it shifts every EFUSE-derived value, so it needs a full-walk
-`verify_pcap` of the EFUSE loop (confirm the corrected addressing **and** what
-the kernel's `validate_eeprom` does with `NIC_CONF0=0xff22` — `rf_type=15` is
-bogus, so a naive 2T2R config on this 1T1R module would be wrong) plus an RX A/B
-on PAU05 before/after. The raw bytes above are measured fact; the causal claim
-is not yet proven on the wire.
+**Outcome (2026-06-10): hypothesis falsified, reverted.** The fix was applied and
+`verify_pcap`'d: the word-offset reader reproduces the kernel's EFUSE loop byte-for-byte
+(225 ops, both the rt5372 *and* rt5572 captures), so the addressing fix is genuinely
+kernel-faithful — and the capture decode confirms the real values (PAU05 freq_offset=59,
+`NIC_CONF0=0xff22` → the kernel reads rxpath/txpath=2 too). **But the RX A/B regressed
+PAU05: 5.5 → 3.8/s.** Reverted.
+
+Two facts then killed the whole "EFUSE bug = weak RX" premise:
+- **PAU06** (same RT5372 `0x5392`, same `148f:5372`, same *buggy* reader) reads **~7.8/s** —
+  2× PAU05 on identical code. So the bug does not gate RX; it is a *faithfulness* gap only.
+- The **same physical PAU05 on Linux** (this capture) does ~6–8/s steady (10/s ceiling
+  peaks) vs our userland 3.6/s. The hardware receives fine — **our port under-drives it.**
+
+So PAU05's weak RX is the unfaithful rt2800usb imitation port (RX power / AGC / something
+un-ported), not the EFUSE addressing. Fix path: a clean-room **`chips/rt5372/`** port (see
+`planning/PORTING.md` § Planned), not an inside-patch of this driver. The EFUSE byte/word
+bug stays a documented faithfulness gap here.
 
 ## RT3572 unburned-EFUSE behaviour
 

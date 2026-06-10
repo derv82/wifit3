@@ -1,13 +1,19 @@
-"""Acceptance gate: replay-diff the rt2800usb (Ralink RT3572 / RT5372 / RT5572) firmware
-upload against its cold-boot capture.
+"""Acceptance gate: replay-diff rt2800usb (Ralink RT3572 / RT5372 / RT5572) bring-up blocks
+against its cold-boot capture.
 
 Drives the port's real ``RT2800USBTransport`` around a ``rt2x00_pcap_replay.ReplayDevice``
-(a fake usb dev that replays the chip's recorded ctrl_transfers), so the chunked
-``write_multi`` runs unchanged and the bundled rt2870.bin blob is byte-verified against the
-wire.
+(a fake usb dev that replays the chip's recorded ctrl_transfers), so the port's real helpers
+run unchanged and must emit byte-identical writes or a Divergence is raised at the first
+mismatch.
 
-Coverage grows with the port -- currently M2a: the rt2870.bin USB half (4096 bytes streamed
-to FIRMWARE_IMAGE_BASE over 64-byte chunked control writes), anchored at the first chunk.
+This is an *anchored-block* verifier (not the single-cursor whole-capture walk the clean-room
+ports use): each block is extracted from the capture by an anchor predicate and replayed in
+isolation, so coverage grows block by block without re-porting the whole driver. Blocks:
+
+  * [EFUSE walk]      the 32-iteration EFUSE read loop (``read_eeprom_efuse``), anchored on
+                      the first EFUSE_CTRL touch. Catches the ADDRESS_IN byte-vs-word bug.
+  * [firmware upload] the rt2870.bin USB half (4096 bytes streamed to FIRMWARE_IMAGE_BASE
+                      over 64-byte chunked control writes), anchored at the first chunk.
 
 Known divergence flagged for a separate session: the full ``load_firmware`` preamble opens
 with ``write32(AUTOWAKEUP_CFG, 0)``, which this USB capture never issues -- that write is
@@ -32,10 +38,25 @@ from wifit3.chips.rt2800usb.constants import (  # noqa: E402
     MAC_CSR0,
     USB_MULTI_WRITE,
 )
+from wifit3.chips.rt2800usb.eeprom import (  # noqa: E402
+    EFUSE_CTRL,
+    parse_eeprom,
+    read_eeprom_efuse,
+)
 from wifit3.chips.rt2800usb.firmware import load_firmware_blob  # noqa: E402
 from wifit3.chips.rt2800usb.transport import RT2800USBTransport  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps_new" / "captures_rt2800usb"
+# Search the RT5372 (PAU05) capture first, then the RT5572 (PAU09) one.
+CAP_DIRS = [
+    REPO / "usb_dumps" / "captures_rt2800usb_rt5372",   # RT5372 / PAU05-class
+    REPO / "usb_dumps_new" / "captures_rt2800usb",       # RT5572 / PAU09-class
+]
+
+
+def _is_efuse_ctrl(o: dict) -> bool:
+    """First touch of EFUSE_CTRL == rt2800_efuse_detect's PRESENT read, which opens the
+    EFUSE read loop; anchor the block there so read_eeprom_efuse replays op-for-op."""
+    return o["addr"] == EFUSE_CTRL
 
 
 def _is_fw_chunk_start(o: dict) -> bool:
@@ -45,13 +66,62 @@ def _is_fw_chunk_start(o: dict) -> bool:
             and o["addr"] == FIRMWARE_IMAGE_BASE)
 
 
+def verify_efuse(pcap: Path, dev: int) -> bool:
+    """Anchored block: replay the port's real ``read_eeprom_efuse`` against the capture's
+    EFUSE read loop. The shipping reader writes ``EFUSE_CTRL.ADDRESS_IN`` as a BYTE offset,
+    but the chip (and the kernel, ``rt2800lib.c`` ``i += 8`` words) treat it as a u16-WORD
+    index -- so the buggy reader diverges on the 2nd iteration's KICK write. A word-offset
+    reader (``ADDRESS_IN = offset // 2``) reproduces the whole loop byte-for-byte."""
+    print("\n[EFUSE walk]")
+    block = rp.extract_ops(pcap, dev, start=_is_efuse_ctrl)
+    rd = rp.ReplayDevice(block)
+    t = RT2800USBTransport(rd)
+    try:
+        eeprom = read_eeprom_efuse(t)
+    except rp.Divergence as e:
+        print(f"  FAIL (divergence): {e}")
+        print(f"  reproduced {rd.i} EFUSE ops before diverging "
+              f"-- the ADDRESS_IN byte-vs-word bug (see RT2800USB.md).")
+        return False
+    ev = parse_eeprom(eeprom)
+    print(f"  PASS: EFUSE read loop reproduced byte-for-byte over {rd.i} ctrl ops.")
+    print(f"  capture-unit decode: NIC_CONF0=0x{ev.nic_conf0:04x} "
+          f"(rxpath={ev.rxpath} txpath={ev.txpath}), freq_offset={ev.freq_offset}, "
+          f"lna_gain_bg=0x{ev.lna_gain_bg:02x}, rssi_bg0=0x{ev.rssi_bg_offset0:02x}")
+    return True
+
+
+def verify_fw(pcap: Path, dev: int, fw: bytes) -> bool:
+    """Anchored block: stream the bundled rt2870.bin and byte-verify it against the wire."""
+    print("\n[firmware upload]")
+    block = rp.extract_ops(pcap, dev, start=_is_fw_chunk_start)
+    rd = rp.ReplayDevice(block)
+    t = RT2800USBTransport(rd)
+    try:
+        t.write_multi(FIRMWARE_IMAGE_BASE, fw)   # 64-byte chunks, incrementing address
+    except rp.Divergence as e:
+        print(f"  FAIL (divergence): {e}")
+        print(f"  reproduced {rd.i} firmware chunks before diverging")
+        return False
+    print(f"  PASS: rt2870.bin upload verified byte-for-byte -- {len(fw)} bytes over {rd.i} "
+          f"chunked control writes from 0x{FIRMWARE_IMAGE_BASE:04x}.")
+    print("  NOTE: load_firmware's preamble write32(AUTOWAKEUP_CFG, 0) is absent from this "
+          "USB capture (PCI/SoC-only in rt2800lib.c) -- a real divergence flagged separately.")
+    return True
+
+
 def run(cap: str | None = None) -> int:
     time.sleep = lambda *a, **k: None        # replay needs no real settle delays
-    name = Path(cap or "capture-1").stem
-    pcap = CAP_DIR / f"{name}.pcap"
-    if not pcap.exists():
-        print(f"FAIL: no such capture {pcap}")
+    arg = cap or "capture-1"
+    if arg.endswith(".pcap") or "/" in arg or "\\" in arg:   # explicit path (rel to REPO ok)
+        pcap = Path(arg) if Path(arg).is_absolute() else REPO / arg
+    else:                                                    # bare name: search known dirs
+        pcap = next((d / f"{arg}.pcap" for d in CAP_DIRS if (d / f"{arg}.pcap").exists()), None)
+    if pcap is None or not pcap.exists():
+        print(f"FAIL: cannot find capture for '{arg}'")
         return 1
+    name = pcap.stem
+    print(f"using {pcap}")
 
     dev = rp.find_card_device(pcap)
     rp.audit_coverage(pcap, dev)
@@ -62,23 +132,9 @@ def run(cap: str | None = None) -> int:
     print(f"{name}: card=dev{dev}, {len(allops)} vendor ops, silicon=0x{silicon:04x}, "
           f"fw={len(fw)}B")
 
-    block = rp.extract_ops(pcap, dev, start=_is_fw_chunk_start)
-    rd = rp.ReplayDevice(block)
-    t = RT2800USBTransport(rd)
-    try:
-        t.write_multi(FIRMWARE_IMAGE_BASE, fw)   # 64-byte chunks, incrementing address
-    except rp.Divergence as e:
-        print(f"\nFAIL (divergence):\n  {e}")
-        print(f"  reproduced {rd.i} firmware chunks before diverging")
-        return 1
-
-    print(f"\nPASS: rt2870.bin upload verified byte-for-byte -- {len(fw)} bytes over {rd.i} "
-          f"chunked control writes from 0x{FIRMWARE_IMAGE_BASE:04x}. The bundled blob equals "
-          f"the firmware the vendor driver streamed to the chip.")
-    print("  NOTE: load_firmware's preamble write32(AUTOWAKEUP_CFG, 0) is absent from this "
-          "USB capture (PCI/SoC-only in rt2800lib.c) -- a real divergence flagged for a "
-          "separate session.")
-    return 0
+    efuse_ok = verify_efuse(pcap, dev)
+    fw_ok = verify_fw(pcap, dev, fw)
+    return 0 if (efuse_ok and fw_ok) else 1
 
 
 def main() -> int:
