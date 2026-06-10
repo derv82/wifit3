@@ -17,12 +17,12 @@ The matrix below captures *how well wifit3 drives these wireless cards* -- Every
 | [MT7612U](#mt7612u) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8821AU](#rtl8821au) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8812AU](#rtl8812au) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RT3070](#rt3070) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5572](#rt5572) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ⬜ | B |
 | [RTL8822BU](#rtl8822bu) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [MT7610U](#mt7610u) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
-| [RT3070](#rt3070) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ | C |
 | [RTL8814AU](#rtl8814au) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | C |
 | [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ❌ | D |
@@ -194,7 +194,7 @@ on **PAU05** — the very unit whose weak RX motivated the port.
 | PMKID | ✅ | 2026-06-10 | Capture + active extract. |
 | WEP | ✅ | 2026-06-10 | ARP replay + ChopChop. |
 | WPS | ✅ | 2026-06-10 | PIN + PBC — PBC now works (the imitation's weak RX that failed it is gone). |
-| Stress | ⬜ | — | 30-min soak not run; a 5-min hop soak stayed flat (57–62 active BSSIDs, no decay). PAU06 full attack matrix pending (RX confirmed, same silicon). |
+| Stress | ✅ | 2026-06-10 | 30-min 14-ch soak (0.25s hops) on **both PAU05 + PAU06**: no wedge, breadth flat within the ±15 bucket swing (no decay trend), ~1% beacon channel-mismatch = hop-boundary only (hopping never stuck). Deauth → handshake still works post-soak with no replug (TX survives the hop marathon + warm state). |
 
 → [RT5372.md](src/wifit3/chips/rt5372/RT5372.md) (default) · [RT2800USB.md](src/wifit3/chips/rt2800usb/RT2800USB.md) (rt2800usb fallback)
 
@@ -273,4 +273,4 @@ stay flat the whole time, and the failures (RT2500USB) show within the first min
 ## Fully supported
 
 Every column ✅ *plus* a clean Stress soak. **RTL8812AU (DKMS), AR9271, RTL8821AU
-(DKMS), MT7612U, and RT3070 are there** — RT5572 and RT5372 are one soak away.
+(DKMS), MT7612U, RT3070, and RT5372 are there** — RT5572 is one soak away.
