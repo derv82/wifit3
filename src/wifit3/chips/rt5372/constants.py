@@ -142,6 +142,7 @@ MCU_SLEEP = 0x30
 MCU_WAKEUP = 0x31
 MCU_RADIO_OFF = 0x35
 MCU_CURRENT = 0x36
+MCU_FREQ_OFFSET = 0x74                     # [SRC rt2800.h:3035] freq_cal_mode1 (USB)
 MCU_LED = 0x50
 MCU_LED_STRENGTH = 0x51
 MCU_LED_AG_CONF = 0x52
@@ -494,27 +495,31 @@ AUTOWAKEUP_CFG_AUTO_LEAD_TIME = 0x000000FF
 AUTOWAKEUP_CFG_TBCN_BEFORE_WAKE = 0x00007F00
 AUTOWAKEUP_CFG_AUTOWAKE = 0x00008000
 
-# RFCSR channel-tune fields [SRC rt2800.h:2311-2502]
-RFCSR1_RX2_PD = 0x40
-RFCSR1_TX2_PD = 0x80
-RFCSR3_K = 0x0F
-RFCSR3_VCOCAL_EN = 0x80
-RFCSR6_R1 = 0x03
-RFCSR7_RF_TUNING = 0x01
-RFCSR12_TX_POWER = 0x1F
-RFCSR13_TX_POWER = 0x1F
-RFCSR23_FREQ_OFFSET = 0x7F
-RFCSR24_TX_CALIB = 0x7F
-RFCSR30_RF_CALIBRATION = 0x80
-RFCSR30_TX_H20M = 0x02
+# RFCSR channel-tune fields (config_channel_rf53xx) [SRC rt2800.h:2311-2552]
+RFCSR1_PLL_PD = 0x02                      # FIELD8 [SRC rt2800.h:2312]
+RFCSR3_VCOCAL_EN = 0x80                   # FIELD8 [SRC rt2800.h] per-tune VCO cal
+RFCSR8 = 8                                # rf1 destination (RF53xx synth)
+RFCSR9 = 9                                # rf3 destination
+RFCSR11_R = 0x03                          # FIELD8 [SRC rt2800.h:2387] rf2 destination
+RFCSR17_CODE = 0x7F                       # FIELD8 [SRC rt2800.h:2426] freq_cal_mode1
+RFCSR30_TX_H20M = 0x02                    # FIELD8 — VCO-cal block (0 at 20 MHz)
 RFCSR30_RX_H20M = 0x04
-RFCSR31_RX_CALIB = 0x7F
+RFCSR49_TX = 0x3F                         # FIELD8 [SRC rt2800.h:2543] per-chain TX power
+RFCSR50_TX = 0x3F                         # FIELD8 [SRC rt2800.h:2552] (RT5392 chain 2)
+POWER_BOUND = 0x27                        # [SRC rt2800lib.c:3299] RFCSR49/50 TX clamp
+FREQ_OFFSET_BOUND = 0x5F                  # [SRC rt2800lib.c:2445] freq_cal_mode1 clamp
 
-# BBP antenna / chain-select / TX-power-control fields [SRC rt2800.h:2226-2246]
+# RFCSR59 per-channel table, non-BT RT5390/RT5392/RT6352 [SRC rt2800lib.c:3468-3470].
+# Indexed by channel-1 (ch 1-14). RT5392 (rt != RT5390) always takes this arm.
+RF59_NON_BT = (0x8f, 0x8f, 0x8f, 0x8f, 0x8f, 0x8f, 0x8f,
+               0x8d, 0x8a, 0x88, 0x88, 0x87, 0x87, 0x86)
+
+# BBP antenna / chain-select / TX-power-control / bandwidth fields [SRC rt2800.h:2226-2246]
 BBP1_TX_POWER_CTRL = 0x03
 BBP1_TX_ANTENNA = 0x18
 BBP3_RX_ANTENNA = 0x18
 BBP3_HT40_MINUS = 0x20
+BBP4_BANDWIDTH = 0x18                     # FIELD8 [SRC rt2800.h:2242] config_channel (0 = 20 MHz)
 BBP27_RX_CHAIN_SEL = 0x60
 
 # TX-power clamp bounds [SRC rt2800.h:3171-3174]
