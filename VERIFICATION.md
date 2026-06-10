@@ -22,7 +22,7 @@ The matrix below captures *how well wifit3 drives these wireless cards* -- Every
 | [RTL8822BU](#rtl8822bu) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [MT7610U](#mt7610u) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [RT3070](#rt3070) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RT5372](#rt5372) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⬜ | C |
+| [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ | C |
 | [RTL8814AU](#rtl8814au) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | C |
 | [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ❌ | D |
@@ -172,21 +172,31 @@ tables below lead with the attack columns and any caveats.
 → [MT76X0U.md](src/wifit3/chips/mt76x0u/MT76X0U.md)
 
 ### RT5372
-*Panda PAU05 · 2.4 GHz · 1T1R*
+*Panda PAU05 + PAU06 · 2.4 GHz · 2T2R*
 
-Shared `rt2800usb` driver with the RT5572. TX inject (deauth → EAPOL recapture) was
-proven on this card.
+> **Default = standalone clean-room port** (`chips/rt5372/`) for `148f:5372`; set
+> `WIFIT3_RT5372=rt2800usb` to fall back to the shared `rt2800usb` imitation (which
+> mis-reads the EFUSE as 1T1R and under-drives RX — the reason this port exists).
+> The table below is the clean-room port.
+
+The **second byte-perfect** rt2x00 member after RT3070 — `verify_pcap rt5372` reproduces
+all **four** cold-boot captures single-cursor (init → airmon → every hop; e.g. 5060/5060),
+waiving only aireplay's TX-status polls. The correct word-offset EFUSE read recovers
+`freq_offset=59` and runs the card as **2T2R** (the imitation's byte-bug forced 1T1R); a
+same-card A/B on PAU06 hears ~2× the APs (~60 vs ~25 active BSSIDs). Full attack matrix run
+on **PAU05** — the very unit whose weak RX motivated the port.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ⚠️ | 2026-06-01 | Weak/unstable RX, poor range. Beacons wander 1–8/s with periodic ~zero gaps; a *distant* AP can read stronger than a near one — a tuning/AGC offset. |
-| Handshake | ✅ | — | Via deauth. |
-| PMKID | ✅ | 2026-06-01 | Passive + manual extract. |
-| WEP | ✅ | 2026-06-01 | Replay + ChopChop. |
-| WPS | ⚠️ | 2026-06-01 | PIN ✅. PBC failed (assoc rejected, status 12, then timeout) — likely the weak RX above. |
-| Stress | ⬜ | — | Not run. |
+| Scan | ✅ | 2026-06-10 | Healthy — cold-replug beacon-watch mean 6.7→8.2/s (median 8, max 10) on the nearby AP, top-ranked, no gaps; ~2× the rt2800usb imitation's breadth on the same card. (Warm re-runs without a replug read lower until warm-reattach lands.) |
+| Deauth | ✅ | 2026-06-10 | Live targeted deauth dropped a real client → reconnect EAPOL. TX frame **byte-matches the kernel's wire deauth** from the capture (TXINFO/TXWI/MPDU/+4-pad; only the per-frame seqctl differs, stamped at inject). |
+| Handshake | ✅ | 2026-06-10 | Deauth → 4-way; ~27 EAPOL in 30 s, M2/M4 (ToDS) + M1/M3 (FromDS). |
+| PMKID | ✅ | 2026-06-10 | Capture + active extract. |
+| WEP | ✅ | 2026-06-10 | ARP replay + ChopChop. |
+| WPS | ✅ | 2026-06-10 | PIN + PBC — PBC now works (the imitation's weak RX that failed it is gone). |
+| Stress | ⬜ | — | 30-min soak not run; a 5-min hop soak stayed flat (57–62 active BSSIDs, no decay). PAU06 full attack matrix pending (RX confirmed, same silicon). |
 
-→ [RT2800USB.md](src/wifit3/chips/rt2800usb/RT2800USB.md)
+→ [RT5372.md](src/wifit3/chips/rt5372/RT5372.md) (default) · [RT2800USB.md](src/wifit3/chips/rt2800usb/RT2800USB.md) (rt2800usb fallback)
 
 ### RT5572
 *Panda PAU09 N600 · 2.4 / 5 GHz · 2T2R*
@@ -263,4 +273,4 @@ stay flat the whole time, and the failures (RT2500USB) show within the first min
 ## Fully supported
 
 Every column ✅ *plus* a clean Stress soak. **RTL8812AU (DKMS), AR9271, RTL8821AU
-(DKMS), MT7612U, and RT3070 are there** — RT5572 is one soak away.
+(DKMS), MT7612U, and RT3070 are there** — RT5572 and RT5372 are one soak away.
