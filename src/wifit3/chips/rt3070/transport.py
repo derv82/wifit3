@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 _LIBUSB_NO_DEVICE = -4        # LIBUSB_ERROR_NO_DEVICE
 _TRANSPORT_FILE = os.path.normcase(__file__)
+_VENDOR_REQ_MAX_ATTEMPTS = 3  # kernel does ~2 (each usb_control_msg blocks); we DON'T busy-spin
 
 
 def _trace_caller() -> str:
@@ -96,35 +97,34 @@ class RT3070Transport:
     # rt2x00usb USB layer  [SRC rt2x00usb.c, rt2x00usb.h]
     # =====================================================================
     def _vendor_request(self, requesttype, request, value, index, data_or_length):
-        """One vendor control transfer, with the kernel's transient-error retry
-        [SRC rt2x00usb.c:45-80 rt2x00usb_vendor_request]: ``do { usb_control_msg }
-        while (time_before(jiffies, expire))`` — retry on ANY USB error except
-        'device gone', each attempt at half the timeout, until the wall-clock
-        deadline. This is what recovers a warm/replug bring-up where the chip's
-        control endpoint briefly NAKs/stalls mid-firmware-boot (the extra boot-signal
-        write seen in capture-2/3). Under the pcap gate the replay never errors, so
-        the loop runs exactly once and the gate is unaffected."""
-        per_attempt = max(1, self.timeout_ms // 2)        # kernel uses timeout/2 per try
-        deadline = time.monotonic() + self.timeout_ms / 1000.0
-        attempt = 0
-        while True:
-            attempt += 1
+        """One vendor control transfer with a small, BOUNDED transient-error retry
+        [SRC rt2x00usb.c:45-80 rt2x00usb_vendor_request]. The kernel loops until a
+        deadline, but each ``usb_control_msg`` BLOCKS ~timeout on a NAK, so it only
+        does ~2 tries. pyusb/libusb *fast-fails* on a pipe/IO error, so a deadline
+        loop becomes a busy-spin (565 retries in 1 s, observed wedging a chip — we may
+        have been machine-gunning a struggling endpoint into the hard WPDMA fault).
+        So: cap at ``_VENDOR_REQ_MAX_ATTEMPTS`` with real backoff, never spin. Recovers
+        the warm-boot NAK (the extra capture-2/3 boot signal) without the hammering.
+        Under the pcap gate the replay never errors, so attempt 0 returns immediately."""
+        last: usb.core.USBError | None = None
+        for attempt in range(_VENDOR_REQ_MAX_ATTEMPTS):
             try:
                 result = self.dev.ctrl_transfer(requesttype, request, value, index,
-                                                data_or_length, per_attempt)
-                if attempt > 1:
-                    logger.info("rt3070: vendor req 0x%02x off 0x%04x recovered on "
-                                "attempt %d", request, index, attempt)
+                                                data_or_length, self.timeout_ms)
+                if attempt:
+                    logger.info("rt3070: vendor req 0x%02x off 0x%04x recovered on attempt %d",
+                                request, index, attempt + 1)
                 if logger.isEnabledFor(TRACE):
                     _trace_xfer(request, requesttype, value, index, data_or_length, result)
                 return result
             except usb.core.USBError as e:
-                if _is_device_gone(e) or time.monotonic() >= deadline:
-                    if attempt > 1:
-                        logger.warning("rt3070: vendor req 0x%02x off 0x%04x failed after "
-                                       "%d attempts: %s", request, index, attempt, e)
-                    raise
-                time.sleep(0.001)                          # avoid a busy-spin on fast-fail
+                last = e
+                if _is_device_gone(e) or attempt == _VENDOR_REQ_MAX_ATTEMPTS - 1:
+                    break
+                time.sleep(0.005 * (attempt + 1))     # 5ms, 10ms — backoff, not a spin
+        logger.warning("rt3070: vendor req 0x%02x off 0x%04x failed after %d attempts: %s",
+                       request, index, _VENDOR_REQ_MAX_ATTEMPTS, last)
+        raise last
 
     def register_multiread(self, offset: int, length: int) -> bytes:
         """MULTI_READ chunked to CSR_CACHE_SIZE [SRC rt2x00usb.c:114-143

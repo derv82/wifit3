@@ -266,6 +266,12 @@ feature, not a porting step. Moved to `planning/BLANK-EFUSE-SUPPORT.md`.
 
 ## Hardware queue
 
+### morrownr's Recommendations
+
+https://github.com/morrownr/USB-WiFi/blob/main/home/Recommended_Adapters_for_Kali_Linux.md
+
+If anyone knows a good wireless card for Kali Linux, it's morrownr!
+
 ### Cards in the mail (check doorstep)
 
 - **Panda PAU06** — RT5372. Slots into existing `chips/rt2800usb/` as a
