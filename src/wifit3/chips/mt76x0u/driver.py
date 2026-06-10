@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -82,6 +83,14 @@ class MT76x0UDriver:
         self.id_entry = id_entry
         self.transport = MT76x0UTransport(dev)
         self.mcu = MCUChannel(self.transport)
+        # Serializes control-endpoint hardware ops across executor threads.
+        # set_channel runs in a run_in_executor thread; when a channel-hop tune
+        # is cancelled mid-flight (UI view switch → Focus), asyncio cancels the
+        # coroutine but cannot cancel its still-running executor thread. A new
+        # set_channel's thread would then interleave RF/BBP register batches
+        # with the orphan on the same device and land on a corrupt channel.
+        # Held by _set_channel_sync so the second tune waits for the first.
+        self._hw_lock = threading.Lock()
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
         self._rx_callback: Optional[Callable[[dict], None]] = None
@@ -556,28 +565,32 @@ class MT76x0UDriver:
         """
         if channel == self.current_channel:
             return True
-        WIRE_LOG.marker(f"begin set_channel({channel})")
-        try:
-            # Kernel mac80211 invokes mt76x0_phy_set_channel TWICE per
-            # `iw set channel` (once via .config(CONF_CHANGE_CHANNEL), once
-            # via the chandef-update path). Empirical: 2x BW_SETTING, 2x RF
-            # writes, 6x cal commands in every kernel set_channel(N) pcap
-            # window. Single-shot leaves the chip's MCU mid-state and the
-            # next channel switch's first command wedges. See wire-diff
-            # against usb_dumps/captures_mt76x0u/capture-2.pcap.
-            for _invocation in (1, 2):
-                self.last_set_channel_state = set_channel_20mhz(
-                    self.transport, self.mcu, channel,
-                    efuse_full=self.efuse_full,
-                )
-            self.current_channel = channel
-            logger.info("MT7610U: set_channel(%d) OK", channel)
-            WIRE_LOG.marker(f"end set_channel({channel}) OK")
-            return True
-        except (PHYInitError, MCUError, usb.core.USBError) as e:
-            logger.error("MT7610U: set_channel(%d) failed: %s", channel, e)
-            WIRE_LOG.marker(f"end set_channel({channel}) FAIL: {e!r}")
-            return False
+        # Block until any in-flight (incl. cancelled-but-draining) tune on
+        # another executor thread finishes, so the two never interleave their
+        # register batches on the USB control endpoint. See _hw_lock in __init__.
+        with self._hw_lock:
+            WIRE_LOG.marker(f"begin set_channel({channel})")
+            try:
+                # Kernel mac80211 invokes mt76x0_phy_set_channel TWICE per
+                # `iw set channel` (once via .config(CONF_CHANGE_CHANNEL), once
+                # via the chandef-update path). Empirical: 2x BW_SETTING, 2x RF
+                # writes, 6x cal commands in every kernel set_channel(N) pcap
+                # window. Single-shot leaves the chip's MCU mid-state and the
+                # next channel switch's first command wedges. See wire-diff
+                # against usb_dumps/captures_mt76x0u/capture-2.pcap.
+                for _invocation in (1, 2):
+                    self.last_set_channel_state = set_channel_20mhz(
+                        self.transport, self.mcu, channel,
+                        efuse_full=self.efuse_full,
+                    )
+                self.current_channel = channel
+                logger.info("MT7610U: set_channel(%d) OK", channel)
+                WIRE_LOG.marker(f"end set_channel({channel}) OK")
+                return True
+            except (PHYInitError, MCUError, usb.core.USBError) as e:
+                logger.error("MT7610U: set_channel(%d) failed: %s", channel, e)
+                WIRE_LOG.marker(f"end set_channel({channel}) FAIL: {e!r}")
+                return False
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         """Runs the full `mt76x0_phy_set_channel` chain for 20 MHz monitor mode.
