@@ -21,7 +21,7 @@ The matrix below captures *how well wifit3 drives these wireless cards* -- Every
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ⬜ | B |
 | [RTL8822BU](#rtl8822bu) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [MT7610U](#mt7610u) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
-| [RT3070](#rt3070) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
+| [RT3070](#rt3070) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5372](#rt5372) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⬜ | C |
 | [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ | C |
 | [RTL8814AU](#rtl8814au) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | C |
@@ -213,17 +213,17 @@ The first **byte-perfect** member of the rt2x00 family: a standalone clean-room
 capture single-cursor — init → airmon monitor entry → every airodump/iw channel hop,
 **8879/8879 ops**, waiving only aireplay's TX-status polls. *Verification was driven off
 that gate (byte-exact replay, no hardware) plus live hardware runs for RX/TX.* Genuinely
-excellent 2.4 GHz front-end (external LNA) — **when fresh**.
+excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ⚠️ | 2026-06-09 | Kernel-parity *cold*: 8.4 beacons/s live vs the kernel's 8.9 from the same usbmon capture (~86–91% of the 9.77/s single-AP ceiling), zero gaps. **But RX degrades over sustained attack use** — a solid 8–10/s AP fell to ~2/s mean with zero-seconds, and a retune (hop away + back) does NOT recover it; only a fresh bring-up does. Smells like an AGC/sensitivity drift: the kernel's periodic link tuner that re-arms the gain is STA-only (`intf_sta_count`), so monitor mode never runs it. Under investigation. |
+| Scan | ✅ | 2026-06-09 | Kernel-parity: 8.4 beacons/s live vs the kernel's 8.9 from the same usbmon capture (~86–91% of the 9.77/s single-AP ceiling), zero gaps. An earlier sustained-attack-use falloff (a solid 8–10/s AP decaying to ~2/s, unrecovered by a retune — only by a fresh bring-up) read like AGC drift but was the **RX-DMA wedge**: a UI view switch cancels a channel-hop mid-`set_channel`, the executor thread keeps running `config_channel` after the `asyncio` lock releases, and the next tune's thread collides on the control endpoint → `WPDMA_GLO_CFG`→0 (control alive, RX dead; only re-init recovers, hence the retune not helping). Fixed by serializing device ops under a `threading.Lock` (d425550) + regression test; not reproducible under extended TUI stress since. |
 | Deauth | ✅ | 2026-06-09 | Live targeted deauth dropped a real client. TX frame **byte-matches aireplay-ng's wire deauth** (duration `0x013a` + per-frame incrementing seqctl; the constant-seq bug would otherwise let a receiver's dup-filter drop every deauth after the first). |
 | Handshake | ✅ | 2026-06-09 | Deauth → reconnect → **39 EAPOL frames** captured in 30s, M2/M4 (ToDS) + M1/M3 (FromDS). |
 | PMKID | ✅ | 2026-06-09 | Passive capture + active extract. |
 | WEP | ✅ | 2026-06-09 | Replay + ChopChop at **~300 injections/s** — ChopChop → cracked with 20k IVs in **<90s**. Best WEP throughput of any card to date. |
-| WPS | ✅ | 2026-06-09 | PIN → M4; PBC → PSK extracted. The protocol path is byte-clean — forged-MAC auto-ACK works (AP unicasts EAPOL back to our `02:..` supplicant MAC) and the EAPOL TX is correct (LLC/SNAP + 0x888E, incrementing seqctl). An earlier run failed purely on the medium — a degraded/contended RX starves the real-time M1–M4 exchange (WPS is the most RX-fragile attack); that's the Scan ⚠️ above, not a WPS bug. |
-| Stress | ⬜ | — | Not run — the RX degradation above wants chasing first. |
+| WPS | ✅ | 2026-06-09 | PIN → M4; PBC → PSK extracted. The protocol path is byte-clean — forged-MAC auto-ACK works (AP unicasts EAPOL back to our `02:..` supplicant MAC) and the EAPOL TX is correct (LLC/SNAP + 0x888E, incrementing seqctl). An earlier run failed purely on the medium — a degraded/contended RX starves the real-time M1–M4 exchange (WPS is the most RX-fragile attack); that was the RX-DMA wedge (Scan above), since fixed — not a WPS bug. |
+| Stress | ✅ | 2026-06-09 | 30-min 14-ch soak (`sweep.py --longrun-min 30`, 0.25s hops): flat 54–69 active BSSIDs/bucket, no degradation trend (median 57→62), attacks pass. Ran pre-fix, but linear hops never cancel a tune so the soak doesn't exercise — or threaten — the RX-DMA wedge; that's validated separately (regression test + post-fix TUI stress). |
 
 → [RT3070.md](src/wifit3/chips/rt3070/RT3070.md)
 
@@ -263,4 +263,4 @@ stay flat the whole time, and the failures (RT2500USB) show within the first min
 ## Fully supported
 
 Every column ✅ *plus* a clean Stress soak. **RTL8812AU (DKMS), AR9271, RTL8821AU
-(DKMS), and MT7612U are there** — RT5572 is one soak away.
+(DKMS), MT7612U, and RT3070 are there** — RT5572 is one soak away.

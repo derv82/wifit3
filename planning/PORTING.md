@@ -289,7 +289,9 @@ If anyone knows a good wireless card for Kali Linux, it's morrownr!
   human-confirmed. New code path vs the family (RF3020 → `config_channel_rf3xxx`,
   `init_rfcsr_30xx`, `init_bbp_30xx`) — the candidate base the family converges onto later.
   Facts + gate: `chips/rt3070/RT3070.md`; per-attack status: [VERIFICATION.md](../VERIFICATION.md#rt3070).
-  Open follow-ups: RX degrades over sustained use (AGC/no-DIG), WPS fails — tracked separately.
+  Follow-ups since closed: WPS green (PIN→M4, PBC→PSK); the sustained-use RX falloff was the
+  RX-DMA wedge (concurrent control transfers when a UI view switch cancels a tune mid-flight),
+  fixed d425550 — not the AGC/no-DIG drift first suspected.
 
 ### Distant-future hardware ($$$)
 
