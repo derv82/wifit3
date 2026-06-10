@@ -15,7 +15,6 @@ confirmed EFUSE addressing bug); see ``chips/rt3070/RT3070.md`` for the ground-t
 from __future__ import annotations
 
 import asyncio
-import functools
 import logging
 import threading
 from typing import Callable, ClassVar, List, Optional
@@ -76,14 +75,28 @@ class RT3070Driver:
 
     # ---- bring-up (blocking; run in an executor) --------------------------
     def _bringup(self) -> None:
-        """Deterministic cold bring-up, in wire order — keep in lockstep with
-        ``scripts/verify_pcap.py`` ``_walk_init`` (the gate replays this exact sequence)."""
+        """Cold bring-up in wire order — the cold path stays in lockstep with
+        ``scripts/verify_pcap.py`` ``_walk_init`` (the gate replays it). The leading warm
+        check is **runtime-only** (the cold capture has no such read, so the gate does not
+        model it): on a re-run without a replug the chip is still inited + in monitor with RX
+        live (``close()`` disposes the USB handle but never resets the radio), so we skip FW
+        upload + the whole MAC/BBP/RFCSR init + ``enable_monitor`` and let ``connect()``
+        resume — faster, and it avoids re-initialising a running radio."""
         t = self.transport
         self._chip = mac.probe_rt(t)                              # MAC_CSR0 id/rev
         buf = eeprom.read_eeprom_efuse(t)                        # autorun + EFUSE (word offset)
         buf = eeprom.validate_eeprom(buf)                        # blank-field fix-up (no-op here)
         self._eeprom = eeprom.parse_eeprom(buf)
         self.mac_address = ":".join(f"{b:02x}" for b in self._eeprom.mac)
+
+        if mac.is_chip_warm(t):
+            self.is_warm = True
+            # The RX-filter cal already ran on the first cold boot; recover its result from
+            # the chip (RFCSR24) — config_channel needs it every tune (unlike rt5372/RF53xx).
+            self._drv = rfcsr.recover_drv_data(t)
+            return
+        self.is_warm = False
+
         mac.probe_hw_gpio(t)                                     # rfkill GPIO dir
 
         firmware.upload(t, firmware.load_firmware_blob())        # FW load + MCU boot
@@ -129,12 +142,14 @@ class RT3070Driver:
         # bulk-OUT (rt2x00usb assigns endpoints to queues in descriptor order). Confirmed
         # on capture-1: every aireplay deauth (FC=0xc0) rode bulk-OUT EP 0x01.
         self._bulk_out_ep = min(eps.bulk_out) if eps.bulk_out else None
-        logger.info("RT3070 EFUSE: mac=%s rf=0x%04x %dT%dR ext_lna_2g=%s freq_off=%d",
-                    self.mac_address, self._eeprom.rf_type, self._eeprom.tx_chain_num,
+        mode = "WARM reattach (skipped FW + init)" if self.is_warm else "cold bring-up"
+        logger.info("RT3070 %s: mac=%s rf=0x%04x %dT%dR ext_lna_2g=%s freq_off=%d",
+                    mode, self.mac_address, self._eeprom.rf_type, self._eeprom.tx_chain_num,
                     self._eeprom.rx_chain_num, self._eeprom.external_lna_bg,
                     self._eeprom.freq_offset)
 
         if progress_cb:
+            progress_cb(0.5, f"RT3070: {mode}")
             progress_cb(0.9, f"Tuning to channel {_SCAN_START_CHANNEL}")
         await self.set_channel(_SCAN_START_CHANNEL)
 

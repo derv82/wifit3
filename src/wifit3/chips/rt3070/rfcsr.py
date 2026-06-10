@@ -23,6 +23,15 @@ from .state import DrvData
 from .transport import RT3070Transport
 
 
+def recover_drv_data(t: RT3070Transport) -> DrvData:
+    """Warm reattach: recover the RX-filter calibration from the chip instead of re-running
+    the BBP55 loopback sweep. ``config_channel_rf3xxx`` writes ``calibration_bw20`` into
+    RFCSR24 (TX_CALIB) on every tune, so the chip's current RFCSR24 *is* that value from the
+    cold boot. bw40 is unused (20 MHz only); bbp25/26 are RF3052-only (unused on RF3020)."""
+    calib = get_field(t.rfcsr_read(24), C.RFCSR24_TX_CALIB)
+    return DrvData(calibration_bw20=calib, calibration_bw40=calib, bbp25=0, bbp26=0)
+
+
 def rf_init_calibration(t: RT3070Transport, rf_reg: int) -> None:
     """Pulse RFCSR bit7 to kick a calibration [SRC rt2800lib.c:7385-7396]."""
     rfcsr = t.rfcsr_read(rf_reg)

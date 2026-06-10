@@ -85,6 +85,8 @@ MAC_SYS_CTRL_ENABLE_RX = 0x00000008
 # --- PBF system control [SRC rt2800.h:568-570] -----------------------------
 PBF_SYS_CTRL = 0x0400
 PBF_SYS_CTRL_READY = 0x00000080
+PBF_SYS_CTRL_PRE_INIT = 0x00002000        # bit 13: set on a cold plug, cleared by
+#                                           usb_init_registers — the warm/cold tell.
 
 # --- WPDMA global config [SRC rt2800.h:346-352] ----------------------------
 WPDMA_GLO_CFG = 0x0208
