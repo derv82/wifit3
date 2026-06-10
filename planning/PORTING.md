@@ -1,5 +1,7 @@
 # Wifit3 — Porting & Hardware Enablement
 
+> **For agents, not humans.** The chipset bring-up playbook a coding agent follows.
+
 Forward-looking. Everything about getting drivers and hardware working: the
 **porting playbook** (how we do it) and the **queue** (what's pending). Current
 per-card verification state lives in `../VERIFICATION.md`; release logistics in
@@ -159,6 +161,9 @@ generated USB sequence against the cold-boot capture at each step.
 bisectable and the retired-vs-vendor history honest — don't batch several
 milestones into one commit.
 
+> **Do not mention milestones ('M1', 'M4a') in the code or comments.** They belong
+> in chipset docs and commit messages ONLY.
+
 ### Scope: 20 MHz channel *width* only — NOT "2.4 GHz only"
 
 **20 MHz is the channel *width*, not the band.** This rule has been mis-read as "skip 5 GHz"
@@ -301,18 +306,12 @@ extracted `usb_dumps_new/captures_*/driver-source/`.
 
 The **8812au / 8814au / 8821au** vendor re-ports are **done** — `chips/rtl<chip>_dkms/` exist
 and pass `verify_pcap.py`; HW A/B + default-flip status lives in `VERIFICATION.md` and each
-`<CHIP>_DKMS.md`. Two left:
+`<CHIP>_DKMS.md`. One left:
 
 - **RTL8822BU** — highest-payoff re-port, **pending**. Mainline `chips/rtl8822bu/`; vendor =
   morrownr `88x2bu-20210702` 5.13.1 (`captures_rtl88x2bu/driver-source/` +
   `usb_dumps_new/driver-sources/rtl88x2bu-5.13.1.tar.xz`); branch `dkms/88x2bu`; mainline A/B
   `captures_rtw88_8822bu/`.
-- **RTL8188EUS** — mainline fidelity fix **DONE**: IQK + LCK + crystal-cap ported, byte-verified,
-  the port now matches the mainline kernel (~77% vs 83% reception). Mainline's RX ceiling on this
-  card is ~80% with bad-window collapses. **DKMS re-port now active** — branch `dkms/8188eu`,
-  sibling `chips/rtl8188eus_dkms/`; vendor `realtek-rtl8188eus 5.3.9` in
-  `usb_dumps_new/captures_8188eu/driver-source/` (DKMS A/B 86–89%, min 7, no collapse). See
-  `chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md`.
 
 ---
 
@@ -334,58 +333,9 @@ If anyone knows a good wireless card for Kali Linux, it's morrownr!
 
 ### Cards in the mail (check doorstep)
 
-- **Panda PAU06** — RT5372, **arrived 2026-06-10**. A *healthy* unit (~7.8 beacons/s on
-  the shipping driver, vs the weak PAU05's ~3.6). It triggered the RT5372 clean-room port —
-  see **Planned** below.
-
-### Planned: RT5372 clean-room port (`chips/rt5372/`)
-
-**Decision 2026-06-10:** port RT5372 as a standalone byte-perfect clean-room driver,
-mirroring `chips/rt3070/` — NOT a `chips/rt2800usb/` DeviceID delta. The shared rt2800usb
-base is an "imitation" port (bare-minimum HW ops + a confirmed EFUSE byte/word bug) and it
-materially under-drives the hardware.
-
-**Why patch-from-inside is dead (the evidence):**
-- PAU05 userland RX is weak (~3.6 beacons/s fixed-CH1) but **PAU06 — same RT5372 silicon
-  `0x5392`, same `148f:5372`, same shipping reader — reads ~7.8/s.** Same code, 2× beacons.
-- The **same physical PAU05 on the Linux kernel** (`usb_dumps/captures_rt2800usb_rt5372/`)
-  hits ~6–8/s steady (10/s = ceiling peaks) vs our userland 3.6/s — our port leaves ~2× on
-  the table. The hardware receives fine.
-- The EFUSE byte/word fix was tried + reverted: `verify_pcap` proved the word-offset reader
-  byte-faithful (225 EFUSE ops, both rt5372+rt5572 captures), but the RX A/B **regressed**
-  PAU05 (5.5→3.8/s). So the EFUSE bug is a *faithfulness* gap, NOT the RX cause — the weak RX
-  is gated elsewhere in the imitation port. See `chips/rt2800usb/RT2800USB.md` § EFUSE.
-
-**Inputs (offline-verifiable — everything present):**
-- Capture: `usb_dumps/captures_rt2800usb_rt5372/capture-1.pcap` (+ -2, -3). Silicon 0x5392;
-  EEPROM decodes freq_offset=59 (= the live PAU05 unit).
-- Source: `data_dumps/rt2x00-source-v6.18/` (mainline rt2800lib / rt2800usb).
-- Replay seed: `scripts/rt2x00_pcap_replay.py`; `scripts/rt2800usb/verify_pcap.py` already
-  has anchored EFUSE-walk + firmware blocks to crib from. The port gets its own single-cursor
-  `scripts/rt5372/verify_pcap.py` (rt3070 shape).
-
-**Milestones** (each `verify_pcap`-gated, then HW on PAU06 *and* PAU05):
-M1 FW upload+boot · M2 MAC/BBP/RF init (`init_rfcsr_5392`, `init_bbp_53xx`) · M3 EEPROM
-(**correct word-offset reader from the start**) · M4 channel tune (RF5372) · M5 RX decode ·
-M6 TX wire (no live fire). Register `rt5372` BEFORE `rt2800usb` for `148f:5372` in
-`_all_drivers()`; rt2800usb keeps RT5572 / RT3572. Label the driver chip-accurately
-(`RT5372 (RT5392)`), not "Panda PAU05" — PAU05/PAU06 are indistinguishable by USB ID.
-
-### Shipped
-
-- **ALFA AWUS036NH** — RT3070 (`148f:3070`, REV_RT3070F, RF3020, 1T1R, burned EFUSE).
-  **DONE 2026-06-09 — the first byte-perfect rt2x00-family member.** A standalone clean-room
-  `chips/rt3070/` (NOT a `chips/rt2800usb/` DeviceID delta — that shared base has a confirmed
-  EFUSE word/byte addressing bug the old firmware-only gate hid). `verify_pcap rt3070`
-  reproduces capture-1 end to end — init → airmon monitor entry → every airodump/iw channel
-  hop, **8879/8879 ops single-cursor**, waiving only aireplay's TX-status polls. RX is
-  kernel-parity (8.4 beacons/s vs the kernel's 8.9), TX (deauth → reconnect handshake) is
-  human-confirmed. New code path vs the family (RF3020 → `config_channel_rf3xxx`,
-  `init_rfcsr_30xx`, `init_bbp_30xx`) — the candidate base the family converges onto later.
-  Facts + gate: `chips/rt3070/RT3070.md`; per-attack status: [VERIFICATION.md](../VERIFICATION.md#rt3070).
-  Follow-ups since closed: WPS green (PIN→M4, PBC→PSK); the sustained-use RX falloff was the
-  RX-DMA wedge (concurrent control transfers when a UI view switch cancels a tune mid-flight),
-  fixed d425550 — not the AGC/no-DIG drift first suspected.
+- **Panda PAU0F AXE3000** — MediaTek **MT7921AU** (`0e8d:7961`), WiFi 6E. Same chipset as
+  the AWUS036AXML — a second physical unit for the paused MT7921AU bring-up
+  (`chips/mt7921au/MT7921AU.md`).
 
 ### Distant-future hardware ($$$)
 
@@ -394,29 +344,4 @@ M6 TX wire (no live fire). Register `rt5372` BEFORE `rt2800usb` for `148f:5372` 
 
 ---
 
-## MT7921AU (AWUS036AXML) — paused, low ROI
-
-On mainline `mt7921u` it **does** enumerate on Kali (2026-06-01 trip,
-`captures_mt7921u/`) *and* under WinUSB on Windows (FW upload gets partway). The
-airodump data makes it the **weakest 2.4 GHz card in the fleet: 6–8 ch1 APs vs
-20+** on the good cards. Its usbmon shows **~1 bulk-IN frame, no RX payload**, so
-the usbcap extractor can't even measure it.
-
-One architectural trait explains all of it: the connac/mt7921 RX uses a **deep
-pre-submitted large-URB pool** that neither usbmon nor our sync transport
-captures → weak mainline monitor RX **and** unmeasurable-via-usbmon **and** hard
-bring-up, all the same root cause.
-
-**Bring-up blocker: the `FW_START_REQ` wall** (reproduces on Kali too, not
-WinUSB-specific). Leading hypothesis — **shallow bulk-IN URB pool:** the kernel
-pre-submits 128 URBs/endpoint via `mt76u_alloc_queues` before any FW traffic;
-our transport does one-at-a-time sync reads. Around `FW_START_REQ` the chip
-expects a posted URB to be receivable (a status response on EP 0x85 + a 0-length
-URB completion on EP 0x84 as the boot signal); between drainer iterations there's
-none, and EP0/bulk-OUT goes dead. Fix would mean a libusb **async URB port**
-(`libusb_submit_transfer`, pre-submit ~32 URBs/EP) — high effort, and upstream
-`mt7921u` monitor support is itself unstable.
-
-First re-confirm the hardware enumerates at all before sinking more time in.
-See `chips/mt7921au/MT7921AU.md` + `chips/mt7921au/KALI-HANDOFF-2026-05-19.md`.
-Revisit post-Defcon.
+**MT7921AU (AWUS036AXML)** — paused, low ROI. Tracked in `chips/mt7921au/MT7921AU.md`.
