@@ -123,60 +123,63 @@ class MT7921AUFirmwareLoader:
             logger.info(f"post-patch MCU drain: {drained} response(s) consumed")
 
             if not await self._load_ram():
+                # _load_ram waits for the FW_START boot event (MCU_EVENT_FW_START,
+                # eid=0x01, on EP 0x84). If it never arrived, the firmware did not
+                # start — dump the EP0/queue post-mortem and bail.
+                self._log_boot_diagnostics()
                 return False
 
-            # Drain again post-RAM-upload (before FW_START_REQ has been polled).
-            drained = 0
-            while not self.transport._mcu_rx_queue.empty():
-                resp = self.transport._mcu_rx_queue.get_nowait()
-                logger.info(f"post-ram MCU drain msg {drained} ({len(resp)} B): {resp[:32].hex()}{'...' if len(resp)>32 else ''}")
-                drained += 1
-            logger.info(f"post-ram MCU drain: {drained} response(s) consumed")
-
-            # Linux order: poll FW_N9_RDY BEFORE clearing MT_UDMA_TX_QSEL.
-            # Clearing early can confuse the device mid-boot.
-            logger.info("Waiting for firmware to boot (FW_N9_RDY)...")
-            if not await self._poll_reg(MT_CONN_ON_MISC, MT_TOP_MISC2_FW_N9_RDY,
-                                        MT_TOP_MISC2_FW_N9_RDY,
-                                        attempts=30, delay=0.2, read_timeout_ms=500):
-                # Diagnostic fallback: probe whether EP0 is alive AT ALL via three
-                # independent read paths. Linux's pcap shows EP0 responsive within
-                # ~18 ms of FW_START_REQ; if all three time out for us, firmware
-                # never started executing (cf. FW_START_REQ jumping into bad PC).
-                logger.error("FW_N9_RDY timeout — running EP0 liveness diagnostics:")
-                try:
-                    chip = self.transport.read_reg32(MT_CHIP_ID_ADDR)
-                    logger.error(f"  standard-bus read MT_HW_CHIPID(0x70010200) = 0x{chip:08x} (cold-boot value was 0x7961xxxx)")
-                except Exception as e:
-                    logger.error(f"  standard-bus read MT_HW_CHIPID FAILED: {e}")
-                try:
-                    misc_std = self.transport.read_reg32(MT_CONN_ON_MISC)
-                    logger.error(f"  standard-bus read MT_CONN_ON_MISC(0x7c0600f0) = 0x{misc_std:08x}")
-                except Exception as e:
-                    logger.error(f"  standard-bus read MT_CONN_ON_MISC FAILED: {e}")
-                try:
-                    bs = self.transport.read_boot_status(length=64)
-                    logger.error(f"  boot_status read ({len(bs)} B): {bs[:32].hex()}")
-                except Exception as e:
-                    logger.error(f"  boot_status read FAILED: {e}")
-                logger.error(f"  MCU drain queue size after FW_START_REQ: {self.transport._mcu_rx_queue.qsize()}")
-                # Drain anything that arrived too late
-                drained = 0
-                while not self.transport._mcu_rx_queue.empty():
-                    resp = self.transport._mcu_rx_queue.get_nowait()
-                    logger.error(f"    late MCU msg {drained} ({len(resp)} B): {resp[:32].hex()}")
-                    drained += 1
-                final = self.transport.read_reg32_unified(MT_CONN_ON_MISC)
-                logger.error(f"Firmware readiness timeout (unified MT_CONN_ON_MISC=0x{final:x})")
-                return False
+            # Boot event received: firmware has started. FW_N9_RDY (the "fully
+            # ready" bit, read over EP0) is a best-effort secondary confirmation —
+            # EP0 can be briefly unresponsive right after the handoff, and the
+            # bulk-IN boot event is the authoritative signal.
+            if await self._poll_reg(MT_CONN_ON_MISC, MT_TOP_MISC2_FW_N9_RDY,
+                                    MT_TOP_MISC2_FW_N9_RDY,
+                                    attempts=15, delay=0.1, read_timeout_ms=300):
+                logger.info("FW_N9_RDY confirmed over EP0.")
+            else:
+                logger.warning("FW_N9_RDY unconfirmed over EP0 — boot event already "
+                               "received, continuing.")
         finally:
             await self.transport.stop_mcu_drainer()
 
-        # Firmware is now running — clear the FW_DL_EN flag.
-        self.transport.write_reg32_unified(MT_UDMA_TX_QSEL, 0)
+        # Firmware is running — clear the FW_DL_EN flag (best-effort: EP0 may still
+        # be settling immediately after boot).
+        try:
+            self.transport.write_reg32_unified(MT_UDMA_TX_QSEL, 0)
+        except Exception as e:
+            logger.warning(f"clearing FW_DL_EN failed (firmware already up): {e}")
 
         logger.info("MT7921AU firmware ready.")
         return True
+
+    def _log_boot_diagnostics(self):
+        """Post-mortem when the FW_START boot event never arrives: probe whether
+        EP0 still answers (the documented Windows symptom is EP0 going dead at the
+        handoff) and dump any late bulk-IN responses still queued."""
+        logger.error("MCU_EVENT_FW_START never arrived — EP0 liveness diagnostics:")
+        try:
+            chip = self.transport.read_reg32(MT_CHIP_ID_ADDR)
+            logger.error(f"  standard-bus MT_HW_CHIPID = 0x{chip:08x} (cold value 0x7961xxxx)")
+        except Exception as e:
+            logger.error(f"  standard-bus MT_HW_CHIPID FAILED: {e}")
+        try:
+            misc = self.transport.read_reg32_unified(MT_CONN_ON_MISC)
+            logger.error(f"  unified MT_CONN_ON_MISC = 0x{misc:08x}")
+        except Exception as e:
+            logger.error(f"  unified MT_CONN_ON_MISC FAILED: {e}")
+        q = self.transport._mcu_rx_queue
+        logger.error(f"  bulk-IN queue depth: {q.qsize()}")
+        n = 0
+        while not q.empty():
+            try:
+                r = q.get_nowait()
+            except Exception:
+                break
+            eid = r[28] if len(r) > 28 else None
+            sq = r[29] if len(r) > 29 else None
+            logger.error(f"    late bulk-IN {n}: eid=0x{eid:02x} seq=0x{sq:02x} ({len(r)} B)")
+            n += 1
 
     def _rmw(self, addr: int, clear_mask: int, set_mask: int):
         """Read-modify-write a unified-bus register."""
@@ -361,24 +364,30 @@ class MT7921AUFirmwareLoader:
                 length = struct.unpack(">I", sec[16:20])[0]
                 logger.info(f"Patch section {i}: addr=0x{addr:08x} len={length} offs=0x{offs:x}")
 
-                # PATCH_START_REQ is fire-and-forget on this device — Linux
-                # pcap (capture-3) shows zero EP 0x85 completions during patch
-                # upload despite source code claiming wait=true.
-                await self.transport.send_mcu_command(
+                # The chip answers PATCH_START_REQ with a generic ack (eid=0x01) on
+                # EP 0x84. Wait for it before streaming the section — the kernel's
+                # lockstep; the chip stops acking if commands outrun it.
+                ack = await self.transport.send_mcu_command(
                     MCU_CMD_PATCH_START_REQ,
                     struct.pack("<III", addr, length, DL_MODE_NEED_RSP),
-                    wait_resp=False,
+                    wait_resp=True, resp_timeout_ms=3000,
                 )
+                if ack is None:
+                    logger.error(f"PATCH_START_REQ section {i}: no ack")
+                    return False
 
                 if not await self._send_fw_chunks(data, offs, length, label=f"patch sec {i}"):
                     return False
 
-            # 3. Close patch session. Fire-and-forget (no EP 0x85 response in pcap).
-            await self.transport.send_mcu_command(
+            # 3. Close patch session; the chip acks (eid=0x01) after its CRC pass.
+            ack = await self.transport.send_mcu_command(
                 MCU_CMD_PATCH_FINISH_REQ,
                 struct.pack("<I", 0),  # check_crc = 0
-                wait_resp=False,
+                wait_resp=True, resp_timeout_ms=3000,
             )
+            if ack is None:
+                logger.error("PATCH_FINISH_REQ: no ack")
+                return False
         finally:
             # 4. Always release semaphore.
             await self.transport.send_mcu_command(
@@ -438,26 +447,39 @@ class MT7921AUFirmwareLoader:
             if feature_set & FW_FEATURE_OVERRIDE_ADDR:
                 override_addr = addr
 
-            # Fire-and-forget per Linux capture-3 behavior.
-            await self.transport.send_mcu_command(
+            # The chip acks TARGET_ADDRESS_LEN_REQ (eid=0x01) on EP 0x84 before it
+            # will take the region's data — in the capture the ack precedes the
+            # FW_SCATTER chunks. Wait for it, then stream (the kernel's lockstep).
+            ack = await self.transport.send_mcu_command(
                 MCU_CMD_TARGET_ADDRESS_LEN_REQ,
                 struct.pack("<III", addr, length, DL_MODE_NEED_RSP),
-                wait_resp=False,
+                wait_resp=True, resp_timeout_ms=3000,
             )
+            if ack is None:
+                logger.error(f"TARGET_ADDRESS_LEN_REQ region {i}: no ack")
+                return False
 
             if not await self._send_fw_chunks(data, offset, length, label=f"WM region {i}"):
                 return False
             offset += length
 
-        # Boot the firmware. Fire-and-forget — success signal is FW_N9_RDY going high.
+        # Boot the firmware. The chip answers FW_START_REQ with MCU_EVENT_FW_START
+        # (eid=0x01) on EP 0x84, seq-matched to the request, ~15 ms later. That
+        # bulk-IN event — not the EP0 FW_N9_RDY control poll, which can go dead at
+        # the boot handoff — is the authoritative boot signal.
         option = FW_START_OVERRIDE if override_addr else 0
-        await self.transport.send_mcu_command(
+        logger.info(f"FW_START_REQ (override=0x{override_addr:x}, option=0x{option:x}); "
+                    "awaiting MCU_EVENT_FW_START...")
+        resp = await self.transport.send_mcu_command(
             MCU_CMD_FW_START_REQ,
             struct.pack("<II", option, override_addr),
-            wait_resp=False,
+            wait_resp=True, resp_timeout_ms=5000,
         )
-        logger.info(f"FW_START_REQ sent (override=0x{override_addr:x}, option=0x{option:x})")
-
+        if resp is None:
+            logger.error("FW_START_REQ: MCU_EVENT_FW_START never arrived")
+            return False
+        eid = resp[28] if len(resp) > 28 else None
+        logger.info(f"Firmware booted — MCU_EVENT_FW_START received (eid=0x{eid:02x}).")
         return True
 
     # ------------------------------------------------------------------

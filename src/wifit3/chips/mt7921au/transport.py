@@ -339,14 +339,31 @@ class MT7921AUTransport:
         if not wait_resp:
             return None
 
-        try:
-            data = await asyncio.wait_for(self._mcu_rx_queue.get(),
-                                          timeout=resp_timeout_ms / 1000)
-            logger.debug(f"MCU RX cid=0x{cid:02x} seq=0x{seq:02x} len={len(data)} bytes[:64]={data[:64].hex()}")
-            return data
-        except asyncio.TimeoutError:
-            logger.warning(f"MCU response timeout (cid=0x{cid:02x} seq=0x{seq:02x})")
-            return None
+        # Wait for the response whose connac2 rxd seq (offset 29) matches THIS
+        # command. The device acks each MCU command on EP 0x84, but acks can be
+        # slow (the cold-boot capture shows PATCH_SEM_RELEASE acking ~250 ms later),
+        # so an earlier command's ack can still be sitting in the queue. Taking the
+        # FIFO head would mis-pair them — match by seq and discard stale acks for
+        # already-completed commands.
+        deadline = self._loop.time() + resp_timeout_ms / 1000
+        while True:
+            remaining = deadline - self._loop.time()
+            if remaining <= 0:
+                logger.warning(f"MCU response timeout (cid=0x{cid:02x} seq=0x{seq:02x})")
+                return None
+            try:
+                data = await asyncio.wait_for(self._mcu_rx_queue.get(), timeout=remaining)
+            except asyncio.TimeoutError:
+                logger.warning(f"MCU response timeout (cid=0x{cid:02x} seq=0x{seq:02x})")
+                return None
+            rseq = data[29] if len(data) > 29 else None
+            if rseq == seq:
+                eid = data[28] if len(data) > 28 else None
+                logger.debug(f"MCU RX cid=0x{cid:02x} seq=0x{seq:02x} eid=0x{eid:02x} "
+                             f"len={len(data)} bytes[:64]={data[:64].hex()}")
+                return data
+            logger.debug(f"MCU RX skip seq=0x{rseq if rseq is None else format(rseq, '02x')} "
+                         f"(waiting for 0x{seq:02x})")
 
     async def send_fw_chunk(self, chunk: bytes, timeout_ms: int = 1000) -> bool:
         """
