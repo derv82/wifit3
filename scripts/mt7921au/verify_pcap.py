@@ -521,14 +521,6 @@ async def walk_operational(replay):
 
 
 def check_post_boot(pkts, dev):
-    # CHECK 3 pairs each post-boot MCU command with its seq-matched device response,
-    # so it needs the device->host RX a scatter capture records. On a pre-scatter
-    # capture (no RX) it can't pair and would mis-diverge — SKIP, like CHECK 2.
-    if not any(kind == "IN" for kind, _, _ in build_bulk_stream(pkts, dev)):
-        print("CHECK 3 - post-boot init")
-        print("  [SKIP] this capture has no device->host RX (pre-scatter); CHECK 3 "
-              "needs the MCU responses")
-        return "SKIP"
     merged = build_postboot_stream(pkts, dev)
     # Split at FW_START (std MCU, cid 0x02); the post-boot walk begins at the first
     # MCU command after it (GET_NIC_CAPAB) — the leading FW_N9_RDY register poll
@@ -668,6 +660,19 @@ def main():
     print(f"verify_pcap mt7921au - {cap}")
     print(f"  {len(pkts)} packets; mt7921 auto-detected as device {dev}\n")
 
+    # The gate's whole point is verifying the device's RESPONSES — the firmware-load
+    # handshake (CHECK 2) and the post-boot MCU command/response stream (CHECK 3) —
+    # which are only recorded in a scatter capture (`options mt76_usb disable_usb_sg=1`).
+    # A pre-scatter capture has zero device->host RX, so those checks cannot run; the
+    # register-only checks (CHECK 1/4) would pass on it, but that is NOT verification of
+    # the part that matters. Refuse it rather than print a hollow PASS.
+    if not any(kind == "IN" for kind, _, _ in build_bulk_stream(pkts, dev)):
+        print(f"[ABORT] {cap} has no device->host RX — it was not captured with "
+              "disable_usb_sg=1, so the firmware handshake and post-boot responses are\n"
+              "        invisible and CANNOT be verified. Use a *-scatter capture; the "
+              "register-only checks are not a substitute.")
+        return 1
+
     ok1 = check_dma_init(pkts, dev)
     print()
     ok2 = check_handshake(pkts, dev)
@@ -680,14 +685,14 @@ def main():
     if failed:
         print("\n[FAIL] see divergences above")
         return 1
-    # CHECK 3 is a work-in-progress single-cursor walk: FRONTIER means the boot
-    # path is faithful and the post-boot port has advanced to a named next op.
+    # CHECK 3 is a single-cursor walk: FRONTIER means the boot path is faithful and the
+    # post-boot port has advanced to a named next op (not yet a full pass).
     if ok3 == "FRONTIER":
         print("\n[FRONTIER] CHECK 1+2 green; CHECK 3 advancing — see the next op above")
         return 2
-    if ok2 == "SKIP" or ok3 == "SKIP":
-        tx = "CHECK 4 TX green" if ok4 is True else "CHECK 4 skipped"
-        print(f"\n[PASS] CHECK 1 green + {tx}; CHECK 2/3 skipped (capture has no RX)")
+    if ok4 == "SKIP":
+        print("\n[PASS] CHECK 1-3 green (boot + RX verified); CHECK 4 (TX) skipped — "
+              "this scatter capture stopped before the aireplay phase")
         return 0
     print("\n[PASS] all checks green")
     return 0
