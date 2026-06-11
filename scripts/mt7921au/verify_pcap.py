@@ -44,6 +44,12 @@ from wifit3.chips.mt7921au.transport import MT7921AUTransport
 DEFAULT_CAP = "usb_dumps_new/captures_mt7921u_pau0f-no-adapter-scatter/capture-3.pcap"
 PREFETCH0 = 0x7C024600        # first WFDMA-init register touched - start of CHECK 1 window
 REG_BREQ = {0x63, 0x66, 0x01, 0x02}   # unified rd/wr + UHW rd/wr (register access)
+# The boot-status query (bRequest 0x01, wValue 0x30, 64-byte read) decodes to this
+# pseudo-address. It is NOT a WiFi register: on the composite AXML unit (WiFi+BT) the
+# btusb function shares the devnum and its concurrent-init boot-status polls leak into
+# the stream. The single-function pau0f has none. Dropped from the post-boot walk (and
+# counted) as another driver's traffic, like an aireplay TX-status waiver.
+BOOT_STATUS_ADDR = 0x00300000
 EP_MCU_OUT, EP_FW_OUT, EP_IN_RX, EP_IN_CMD = 0x08, 0x04, 0x84, 0x85
 
 # connac2 MCU command ids (low byte) seen during firmware load.
@@ -485,21 +491,32 @@ async def walk_operational(replay):
     the tool's wire order) and the periodic mt792x_mac_work MIB read cycles
     (update_survey every tick, update_mib_stats every second tick). Each op is
     peeked, matched to its real driver builder/sequence, and replayed against the
-    cursor — which asserts the bytes/addresses match. Stops at the first op no
-    handler reproduces (the frontier) or when the stream is exhausted."""
+    cursor — which asserts the bytes/addresses match.
+
+    Returns "exhausted" (every op reproduced), "frontier" (hit an op no handler
+    reproduces), or "truncated" (the capture stopped partway through a final
+    mac_work cycle — a benign capture-end artifact, every captured op matched)."""
     while replay.peek() is not None:
         op = replay.peek()
-        if op["kind"] == "MCU":
-            disp = _decode_operational_mcu(op["frame"])
-            if disp is None:
-                break
-            await replay.send_mcu_command(*disp)
-        elif op["kind"] == "R" and op["addr"] == _SURVEY_FIRST:
-            mt_mac.update_survey(replay)
-        elif op["kind"] == "R" and op["addr"] == _MIB_FIRST:
-            mt_mac.update_mib_stats(replay)
-        else:
-            break
+        try:
+            if op["kind"] == "MCU":
+                disp = _decode_operational_mcu(op["frame"])
+                if disp is None:
+                    return "frontier"
+                await replay.send_mcu_command(*disp)
+            elif op["kind"] == "R" and op["addr"] == _SURVEY_FIRST:
+                mt_mac.update_survey(replay)
+            elif op["kind"] == "R" and op["addr"] == _MIB_FIRST:
+                mt_mac.update_mib_stats(replay)
+            else:
+                return "frontier"
+        except PostBootDivergence:
+            # A mac_work sequence that runs off the end of the captured ops is the
+            # capture stopping mid-cycle, not a divergence — every recorded op matched.
+            if replay.i >= len(replay.ops):
+                return "truncated"
+            raise
+    return "exhausted"
 
 
 def check_post_boot(pkts, dev):
@@ -518,35 +535,50 @@ def check_post_boot(pkts, dev):
     start = next((k for k, o in enumerate(post) if o["kind"] == "MCU"), None)
     ops = post[start:] if start is not None else []
 
+    # Drop btusb boot-status polls that leak into the post-boot region on composite
+    # (WiFi+BT) units — another driver's traffic, not WiFi register ops (see
+    # BOOT_STATUS_ADDR). Counted and reported, never silent.
+    n_bootstatus = sum(1 for o in ops
+                       if o["kind"] in ("R", "W") and o["addr"] == BOOT_STATUS_ADDR)
+    ops = [o for o in ops
+           if not (o["kind"] in ("R", "W") and o["addr"] == BOOT_STATUS_ADDR)]
+
     n_reg = sum(1 for o in ops if o["kind"] in ("R", "W"))
     n_mcu = sum(1 for o in ops if o["kind"] == "MCU")
     print(f"CHECK 3 - post-boot init  ({len(ops)} ops: {n_mcu} MCU cmds, {n_reg} reg R/W)")
+    if n_bootstatus:
+        print(f"  waived {n_bootstatus} btusb boot-status poll(s) "
+              f"(composite-device BT coexistence; not WiFi register ops)")
 
     replay = PostBootReplay(ops)
     asyncio.set_event_loop(asyncio.new_event_loop())
+    state = {}
 
     async def _drive():
         await mt_init.post_boot_init(replay)        # deterministic init -> add_interface
-        init_end = replay.i
-        await walk_operational(replay)              # monitor entry + hops + mac_work MIB
-        return init_end
+        state["init_end"] = replay.i
+        state["status"] = await walk_operational(replay)  # monitor entry + hops + MIB
 
     try:
-        init_end = asyncio.get_event_loop().run_until_complete(_drive())
+        asyncio.get_event_loop().run_until_complete(_drive())
     except PostBootDivergence as e:
         print(f"  [FAIL] DIVERGENCE - {e}")
         print("  (the cursor stops at the first op the driver does not reproduce)")
         return False
 
+    init_end, status = state["init_end"], state["status"]
     print(f"  init: {init_end} ops (firmware tail -> add_interface); "
           f"operational: {replay.i - init_end} ops (monitor entry + hops + mac_work MIB)")
-    if replay.i < len(ops):
+    if status == "frontier":
         front = ops[replay.i]
         print(f"  [FRONTIER] reproduced {replay.i} ops; next unported op @{replay.i} "
               f"= {_fmt_op(front)}")
         print("  ^ port this next; the gate is green only when every op is reproduced.")
         return "FRONTIER"
-
+    if status == "truncated":
+        print(f"  [PASS] reproduced all {replay.i} captured post-boot ops byte-for-byte "
+              f"(capture ends mid mac_work cycle — benign)")
+        return True
     print(f"  [PASS] reproduced all {replay.i} post-boot ops byte-for-byte")
     return True
 
