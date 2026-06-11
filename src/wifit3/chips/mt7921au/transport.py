@@ -46,10 +46,8 @@ class MT7921AUTransport:
         seq-matched _mcu_rx_queue — so the FW-load handshake, post-boot init and
         set_channel all get their acks — and 802.11 frames go to the callback.
 
-        Replaces the old 32-thread "deep URB pool", which generated an abnormal
-        concurrent-I/O load on the USB stack (a BSOD trigger). EP 0x85 is not
-        read: dma_init sets RXEVT_EP4_EN, routing every MCU response to EP 0x84
-        (the capture shows EP 0x85 gets zero completions)."""
+        EP 0x85 is not read: dma_init sets RXEVT_EP4_EN, routing every MCU
+        response to EP 0x84 (the capture shows EP 0x85 gets zero completions)."""
         if self._rx is not None:
             return
         self._rx = RxReaderThread(self._loop, self._read_once, self._dispatch,

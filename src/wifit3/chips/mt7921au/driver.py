@@ -31,9 +31,13 @@ class MT7921AUDriver:
     SUPPORTED_IDS = [
         DeviceID(0x0e8d, 0x7961, "Mediatek MT7921AU / ALFA AWUS036AXML"),
     ]
-    # 2.4 GHz for now. The MT7921AU is a dual-band Wi-Fi 6 radio; 5 GHz channels
-    # are added once channel tune (mt7921_mcu_config_sniffer) is ported.
-    SUPPORTED_CHANNELS = list(range(1, 14))
+    # Dual-band Wi-Fi 6 radio, 20 MHz primary. 2.4 GHz (1-13) + the 5 GHz 20 MHz
+    # channels of the world regulatory domain (regdomain.CHANNELS_5GHZ).
+    SUPPORTED_CHANNELS = list(range(1, 14)) + [
+        36, 40, 44, 48, 52, 56, 60, 64,
+        100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144,
+        149, 153, 157, 161, 165,
+    ]
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "MT7921AUDriver":
