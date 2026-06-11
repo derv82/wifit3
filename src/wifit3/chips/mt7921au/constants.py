@@ -126,23 +126,77 @@ MT_RXD1_NORMAL_BAND_IDX = 1 << 28
 MT_RXD2_NORMAL_HDR_OFFSET_SHIFT = 14
 MT_RXD2_NORMAL_HDR_OFFSET_MASK  = 0x3
 
-# Descriptor Sizes
-TXD_SIZE = 80
-RXD_SIZE = 32
+# ===========================================================================
+# connac2 TX descriptor (mt76_connac2_mac_write_txwi) — for inject/TX (tx.py).
+# Masks grepped verbatim from mt76_connac2_mac.h. The USB TX wire frame is
+# [SDIO hdr 4B][TXD 64B][802.11 frame][pad]; 9 dwords (txwi[0..8]) are written.
+# ===========================================================================
+# MT_SDIO_TXD_SIZE = MT_TXD_SIZE(8*4) + 8*4 (mt76_connac.h).
+MT_SDIO_TXD_SIZE = 64
 
-# TXD DW0 Fields
-TXD_DW0_OWNER_NIC = 0x80000000
+MT_TXD0_Q_IDX     = 0xFE000000   # GENMASK(31, 25)
+MT_TXD0_PKT_FMT   = 0x01800000   # GENMASK(24, 23)
+MT_TXD0_TX_BYTES  = 0x0000FFFF   # GENMASK(15, 0)
 
-# TXD DW1 Fields
-TXD_DW1_WLAN_IDX_MASK = 0x3FF
-TXD_DW1_Q_IDX_SHIFT = 12
+MT_TXD1_LONG_FORMAT = 0x80000000  # BIT(31)
+MT_TXD1_TGID        = 0x40000000  # BIT(30)
+MT_TXD1_OWN_MAC     = 0x3F000000  # GENMASK(29, 24)
+MT_TXD1_TID         = 0x00700000  # GENMASK(22, 20)
+MT_TXD1_HDR_FORMAT  = 0x00030000  # GENMASK(17, 16)
+MT_TXD1_HDR_INFO    = 0x0000F800  # GENMASK(15, 11)
+MT_TXD1_VTA         = 0x00000400  # BIT(10)  — set only on !connac2
+MT_TXD1_WLAN_IDX    = 0x000003FF  # GENMASK(9, 0)
 
-# TXD DW3 Fields
-TXD_DW3_FIX_RATE = 0x8000
+MT_TXD2_FIX_RATE   = 0x80000000   # BIT(31)
+MT_TXD2_FRAG       = 0x0000C000   # GENMASK(15, 14)
+MT_TXD2_HTC_VLD    = 0x00002000   # BIT(13)
+MT_TXD2_MULTICAST  = 0x00000400   # BIT(10)
+MT_TXD2_FRAME_TYPE = 0x00000030   # GENMASK(5, 4)
+MT_TXD2_SUB_TYPE   = 0x0000000F   # GENMASK(3, 0)
 
-# RXD Fields
-RXD_DW0_LEN_MASK = 0x3FFF
-RXD_DW1_FCS_ERR  = 0x00010000
+MT_TXD3_SN_VALID      = 0x80000000  # BIT(31)
+MT_TXD3_SW_POWER_MGMT = 0x20000000  # BIT(29) — set only on !connac2
+MT_TXD3_BA_DISABLE    = 0x10000000  # BIT(28)
+MT_TXD3_SEQ           = 0x0FFF0000  # GENMASK(27, 16)
+MT_TXD3_REM_TX_COUNT  = 0x0000F800  # GENMASK(15, 11)
+MT_TXD3_PROTECT_FRAME = 0x00000002  # BIT(1)
+MT_TXD3_NO_ACK        = 0x00000001  # BIT(0)
+
+MT_TXD5_TX_STATUS_HOST = 0x00000400  # BIT(10)
+MT_TXD5_PID            = 0x000000FF  # GENMASK(7, 0)
+# mt76.h: a pktid >= MT_PACKET_ID_FIRST requests host TX status. Injection uses
+# MT_PACKET_ID_NO_ACK (0) — no status tracking.
+MT_PACKET_ID_NO_ACK = 0
+MT_PACKET_ID_FIRST  = 3
+
+MT_TXD6_TX_RATE  = 0x3FFF0000   # GENMASK(29, 16)
+MT_TXD6_FIXED_BW = 0x00000004   # BIT(2)
+
+MT_TXD7_HW_AMSDU = 0x00000400   # BIT(10)
+
+MT_TXD8_L_TYPE     = 0x00000030  # GENMASK(5, 4)
+MT_TXD8_L_SUB_TYPE = 0x0000000F  # GENMASK(3, 0)
+
+# mt76_connac2_mac_tx_rate_val packed-rate fields.
+MT_TX_RATE_IDX  = 0x0000003F   # GENMASK(5, 0)
+MT_TX_RATE_MODE = 0x000003C0   # GENMASK(9, 6)
+MT_TX_RATE_NSS  = 0x00001C00   # GENMASK(12, 10)
+
+# enum values used by write_txwi.
+MT_TX_TYPE_SF        = 1     # enum tx_pkt_type (USB packet format)
+MT_HDR_FORMAT_802_11 = 2     # enum tx_header_format
+MT_LMAC_ALTX0        = 0x10  # mgmt/PSD LMAC queue
+MT_TXQ_PSD           = 4     # enum mt76_txq_id
+MT_PHY_TYPE_OFDM     = 1     # mt76_rates hw_value high byte for 5 GHz
+MT76_CONNAC_MAX_WMM_SETS = 4   # q_idx = wmm_idx * this + lmac_mapping(ac)
+
+# mt792x_skb_add_usb_sdio_hdr (USB: pkt_type 0).
+MT792x_SDIO_HDR_TX_BYTES = 0x0000FFFF   # GENMASK(15, 0)
+MT792x_SDIO_HDR_PKT_TYPE = 0x00030000   # GENMASK(17, 16)
+
+# USB bulk-OUT endpoints chosen by qid (mt76u q->ep): mgmt/PSD -> HCCA, data ->
+# its AC endpoint. EP_OUT_DATA (0x04 = AC_BE) is defined above.
+EP_OUT_HCCA = 0x09   # MT_EP_OUT_HCCA: qid == MT_TXQ_PSD (mgmt/deauth)
 
 # Vendor request opcodes (bRequest field)
 MT_VEND_POWER_ON       = 0x04   # mt792xu_mcu_power_on: wValue=0, wIndex=1

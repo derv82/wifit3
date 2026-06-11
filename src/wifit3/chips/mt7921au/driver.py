@@ -5,7 +5,7 @@ from typing import Optional, Callable
 import usb.core
 
 from . import init as chip_init
-from . import mcu, rx
+from . import mcu, rx, tx
 from .transport import MT7921AUTransport
 from .firmware import MT7921AUFirmwareLoader
 # Star-imports the chip's register/PHY constants; the names resolve at runtime
@@ -95,9 +95,21 @@ class MT7921AUDriver:
         return True
 
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
-        """Transmit a raw 802.11 frame. Not yet ported (TX is wired last)."""
-        logger.warning("MT7921AU inject_frame: not yet ported")
-        return False
+        """Transmit a raw 802.11 frame.
+
+        Builds the connac2 TX descriptor (tx.build_tx, byte-verified by verify_pcap
+        CHECK 4 against the captured aireplay TX) and sends it on the frame's USB
+        bulk-OUT endpoint — mgmt/ctrl on HCCA (0x09), data on AC_BE (0x04). The TX
+        rate is the current channel's band basic rate. The hardware appends the FCS,
+        so pass the bare MPDU.
+        """
+        try:
+            wire, endpoint = tx.build_tx(frame_bytes, band_5ghz=self._channel > 14,
+                                         no_ack=use_no_ack)
+        except ValueError as e:
+            logger.error("MT7921AU inject_frame: %s", e)
+            return False
+        return await self.transport.send_bulk_checked(wire, endpoint)
 
     async def close(self):
         await self.transport.stop_rx()

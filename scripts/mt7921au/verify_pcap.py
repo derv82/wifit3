@@ -37,7 +37,8 @@ import wifit3.chips.mt7921au as mt_pkg
 from wifit3.chips.mt7921au import init as mt_init
 from wifit3.chips.mt7921au import mcu as mt_mcu
 from wifit3.chips.mt7921au import mac as mt_mac
-from wifit3.chips.mt7921au.constants import MT_MIB_SDR9, MT_MIB_SDR3
+from wifit3.chips.mt7921au import tx as mt_tx
+from wifit3.chips.mt7921au.constants import MT_MIB_SDR9, MT_MIB_SDR3, MT_SDIO_TXD_SIZE
 from wifit3.chips.mt7921au.firmware import MT7921AUFirmwareLoader
 from wifit3.chips.mt7921au.transport import MT7921AUTransport
 
@@ -583,6 +584,69 @@ def check_post_boot(pkts, dev):
     return True
 
 
+# ----------------------------------------------------------------------------
+# CHECK 4 - TX descriptor faithfulness
+#
+# Rebuild every captured aireplay TX frame (the `-0` deauth on EP 0x09 + the
+# `--test` null frames on EP 0x04) via the driver's REAL tx.build_tx and assert
+# the full USB bulk-OUT bytes AND the chosen endpoint match the wire. The aireplay
+# target is a 2.4 GHz AP (channel 1), so the rate is the 2.4 GHz basic rate.
+# SKIP if the capture recorded no post-boot TX (it stopped before the aireplay).
+# ----------------------------------------------------------------------------
+
+_FC_NAME = {0xc0: "deauth", 0xa0: "disassoc", 0xb0: "auth", 0x40: "probe_req",
+            0x50: "probe_resp", 0x48: "null", 0x88: "qos_null", 0x80: "beacon"}
+
+
+def check_tx(pkts, dev):
+    from collections import Counter
+    evs = build_bulk_stream(pkts, dev)
+    seen_fw = False
+    txs = []   # (ep, transfer_bytes, frame_bytes)
+    for kind, ep, data in evs:
+        if (kind == "OUT" and ep == EP_MCU_OUT and len(data) > 40
+                and data[38] == 0x00 and data[39] == 0x80 and data[40] == 0x02):
+            seen_fw = True
+        elif seen_fw and kind == "OUT" and ep in (EP_FW_OUT, 0x09):
+            if len(data) < 4 + MT_SDIO_TXD_SIZE:
+                continue
+            framelen = int.from_bytes(data[0:4], "little") - MT_SDIO_TXD_SIZE
+            off = 4 + MT_SDIO_TXD_SIZE
+            if framelen < 24 or off + framelen > len(data):
+                continue                       # not an 802.11 TX frame
+            txs.append((ep, bytes(data), bytes(data[off:off + framelen])))
+
+    print("CHECK 4 - TX descriptor (connac2 TXD/TXWI)")
+    if not txs:
+        print("  [SKIP] no post-boot 802.11 TX in this capture (stopped before aireplay)")
+        return "SKIP"
+
+    ok = True
+    by_kind = Counter()
+    first_bad = None
+    for ep, wire, frame in txs:
+        built, out_ep = mt_tx.build_tx(frame, band_5ghz=False)
+        fc_stype = frame[0] & 0xFC
+        by_kind[_FC_NAME.get(fc_stype, f"0x{frame[0]:02x}")] += 1
+        if bytes(built) != wire or out_ep != ep:
+            ok = False
+            if first_bad is None:
+                n = min(len(built), len(wire))
+                d = next((i for i in range(n) if built[i] != wire[i]), n)
+                first_bad = (f"ep wire=0x{ep:02x} built=0x{out_ep:02x}; byte {d}: "
+                             f"built {built[d:d+4].hex() if d < len(built) else '-'} vs "
+                             f"wire {wire[d:d+4].hex() if d < len(wire) else '-'} "
+                             f"(len {len(built)} vs {len(wire)})")
+    n09 = sum(1 for ep, _, _ in txs if ep == 0x09)
+    print(f"  {len(txs)} TX frames ({n09} on EP 0x09 mgmt, {len(txs) - n09} on EP 0x04 data): "
+          f"{dict(by_kind)}")
+    if ok:
+        print("  [PASS] every TX frame rebuilt byte-for-byte (descriptor + endpoint)")
+        return True
+    print(f"  [FAIL] {first_bad}")
+    return False
+
+
 def main():
     cap = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CAP
     pkts = parse_pcapng(cap)
@@ -601,8 +665,10 @@ def main():
     ok2 = check_handshake(pkts, dev)
     print()
     ok3 = check_post_boot(pkts, dev)
+    print()
+    ok4 = check_tx(pkts, dev)
 
-    failed = (not ok1) or (ok2 is False) or (ok3 is False)
+    failed = (not ok1) or (ok2 is False) or (ok3 is False) or (ok4 is False)
     if failed:
         print("\n[FAIL] see divergences above")
         return 1
@@ -614,7 +680,7 @@ def main():
     if ok2 == "SKIP" or ok3 == "SKIP":
         print("\n[PASS] CHECK 1 green; later checks skipped (capture has no RX)")
         return 0
-    print("\n[PASS] all three checks green")
+    print("\n[PASS] all checks green")
     return 0
 
 
