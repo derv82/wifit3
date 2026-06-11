@@ -521,6 +521,14 @@ async def walk_operational(replay):
 
 
 def check_post_boot(pkts, dev):
+    # CHECK 3 pairs each post-boot MCU command with its seq-matched device response,
+    # so it needs the device->host RX a scatter capture records. On a pre-scatter
+    # capture (no RX) it can't pair and would mis-diverge — SKIP, like CHECK 2.
+    if not any(kind == "IN" for kind, _, _ in build_bulk_stream(pkts, dev)):
+        print("CHECK 3 - post-boot init")
+        print("  [SKIP] this capture has no device->host RX (pre-scatter); CHECK 3 "
+              "needs the MCU responses")
+        return "SKIP"
     merged = build_postboot_stream(pkts, dev)
     # Split at FW_START (std MCU, cid 0x02); the post-boot walk begins at the first
     # MCU command after it (GET_NIC_CAPAB) — the leading FW_N9_RDY register poll
@@ -678,7 +686,8 @@ def main():
         print("\n[FRONTIER] CHECK 1+2 green; CHECK 3 advancing — see the next op above")
         return 2
     if ok2 == "SKIP" or ok3 == "SKIP":
-        print("\n[PASS] CHECK 1 green; later checks skipped (capture has no RX)")
+        tx = "CHECK 4 TX green" if ok4 is True else "CHECK 4 skipped"
+        print(f"\n[PASS] CHECK 1 green + {tx}; CHECK 2/3 skipped (capture has no RX)")
         return 0
     print("\n[PASS] all checks green")
     return 0
