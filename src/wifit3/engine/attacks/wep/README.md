@@ -1,5 +1,7 @@
 # WEP attacks (and cracking)
 
+> **For agents, not humans.** WEP-attack design notes + HW-verified protocol reference for the `wep/` code.
+
 Scope doc for porting `aireplay-ng -1/-3/-4/-5` + an `aircrack-ng`-equivalent PTW key recovery into wifit3. Native Python on top of `WlanInterface`, same shape as the existing PMKID / SAE / decloak attacks.
 
 > **Status (2026-06-02): WEP fragmentation (`-5`) was removed.** Only the

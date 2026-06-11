@@ -9,8 +9,8 @@ What lives here:
   auth/assoc machinery the WEP/WPS attacks reuse.
 - `wpa3_downgrade.py` — WPA3-transition downgrade.
 - `decloak.py` — hidden-SSID reveal.
-- `wep/` — fake-auth, ARP replay, ChopChop, PTW crack.
-- `wps/` — PIN brute (Registrar) + PBC capture (Enrollee) + lock detect.
+- `wep/` — fake-auth, ARP replay, ChopChop, PTW crack. → [`wep/README.md`](wep/README.md)
+- `wps/` — PIN brute (Registrar) + PBC capture (Enrollee) + lock detect. → [`wps/README.md`](wps/README.md)
 
 `WlanInterface` primitives they build on:
 - `await iface.deauth(ap_bssid, client_bssid, burst_count=10)` — a no-ACK deauth burst.

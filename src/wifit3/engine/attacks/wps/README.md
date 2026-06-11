@@ -1,5 +1,7 @@
 # WPS attacks (PIN brute-force + pixie-dust)
 
+> **For agents, not humans.** WPS-attack design notes + HW-verified protocol reference for the `wps/` code.
+
 Scope doc for porting Reaver/Bully-style WPS PIN recovery **and** a native
 PixieWPS offline attack into wifit3. Native Python on top of `WlanInterface`,
 same shape as the WEP / PMKID / SAE attacks. Drafted 2026-05-27 after reading
