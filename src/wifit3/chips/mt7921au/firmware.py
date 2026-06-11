@@ -85,17 +85,21 @@ class MT7921AUFirmwareLoader:
 
         # If firmware is already running from a previous session, a fresh USB
         # handle can read control registers (the chip-id read above worked) but
-        # the bulk OUT (EP 0x08) DMA path is NOT established — the cold path sets
-        # it up via MCU power-on + dma_init, which can't be safely redone on a
-        # live chip without a WFSYS reset (a UHW-bus op, unverified on WinUSB).
-        # So warm reattach is not supported in userland; ask for a cold boot
-        # rather than limp through a post-boot init whose every command fails.
+        # the bulk pipes (EP 0x08 OUT / 0x84 IN) are STALLED and stay that way.
+        # Tried live on WinUSB and none clear the stall: CLEAR_FEATURE(halt), the
+        # kernel's WFSYS subsystem reset (mt792xu_wfsys_reset, driven over the UHW
+        # bus — the reset itself runs, INIT_DONE re-asserts), and a USB bus reset
+        # (dev.reset). FW_PWR_ON also latches on across a WFSYS reset, so the chip
+        # never returns to its true cold state. Only a physical replug (power-off)
+        # recovers it. So detect the warm case and ask for a replug rather than
+        # wedge the device limping through a firmware download that can't run.
+        # See MT7921AU.md "Warm re-attach" for the full investigation.
         misc = self.transport.read_reg32_unified(MT_CONN_ON_MISC)
         if (misc & MT_TOP_MISC2_FW_N9_RDY) == MT_TOP_MISC2_FW_N9_RDY:
             logger.error(
                 f"Firmware already running (MT_CONN_ON_MISC=0x{misc:x}); the bulk "
-                "command pipe can't be reattached in userland. Please PHYSICALLY "
-                "REPLUG the card for a cold boot."
+                "pipes can't be reattached in userland on Windows. Please "
+                "PHYSICALLY REPLUG the card for a cold boot."
             )
             return False
 
