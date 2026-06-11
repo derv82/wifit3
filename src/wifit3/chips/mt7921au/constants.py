@@ -45,11 +45,6 @@ EP_OUT_DATA = 0x04   # alias — same physical EP as EP_OUT_FW
 EP_IN_BULK  = 0x84   # MT_EP_IN_PKT_RX: RX 802.11 frames (+ MCU resp once RXEVT_EP4_EN set)
 EP_IN_MCU   = 0x85   # MT_EP_IN_CMD_RESP: MCU command responses (RXEVT_EP4_EN cleared)
 
-# IN URBs posted per endpoint during firmware download. The kernel
-# (mt76u_alloc_queues) keeps a deep pool before dma_init enables RX_DMA; with too
-# few posted, RX_DMA backpressure stalls the firmware-download bulk OUT.
-MCU_DRAIN_POOL = 16
-
 # MCU Command IDs (mt76_connac_mcu.h enum)
 MCU_CMD_TARGET_ADDRESS_LEN_REQ = 0x01   # per RAM region: addr/len/mode
 MCU_CMD_FW_START_REQ           = 0x02   # boot the loaded firmware

@@ -2,16 +2,19 @@ import usb.core
 import logging
 import asyncio
 import struct
-from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from . import mcu, rx
+from ..rx_reader import RxReaderThread
 # Star-imports the chip's register/PHY constants; the names resolve at runtime
 # but ruff can't see them statically, so suppress the import-* lints file-wide.
 # ruff: noqa: F403, F405
 from .constants import *
 
 logger = logging.getLogger(__name__)
+
+RX_READ_SIZE = 4096        # max bulk-IN buffer (capture's largest single read = 1620 B)
+RX_READ_TIMEOUT_MS = 100   # benign-timeout poll interval
 
 # All register access encodes the full 32-bit address as:
 #   wValue = (addr >> 16) & 0xFFFF  (upper 16 bits)
@@ -26,35 +29,56 @@ class MT7921AUTransport:
     def __init__(self, dev: usb.core.Device):
         self.dev = dev
         self._loop = asyncio.get_event_loop()
-        self._rx_task: Optional[asyncio.Task] = None
-        self._reader_tasks: list[asyncio.Task] = []
-        self._drain_executor: Optional[ThreadPoolExecutor] = None
+        self._rx: Optional[RxReaderThread] = None
         self._mcu_rx_queue: asyncio.Queue[bytes] = asyncio.Queue()
-        self._mcu_drainer_running = False
         self._callback = None
-        self._is_running = False
         # MCU sequence counter — Linux uses 4-bit wrap, skips 0
         self._mcu_seq = 0
 
     def subscribe(self, callback):
         self._callback = callback
 
-    async def start(self):
-        if self._is_running:
-            return
-        self._is_running = True
-        self._rx_task = asyncio.create_task(self._poll_loop())
-        logger.info("MT7921AU Transport started.")
+    def start_rx(self):
+        """Start the single RX reader thread on EP 0x84 (idempotent).
 
-    async def stop(self):
-        self._is_running = False
-        if self._rx_task:
-            self._rx_task.cancel()
-            try:
-                await self._rx_task
-            except asyncio.CancelledError:
-                pass
-        logger.info("MT7921AU Transport stopped.")
+        One thread keeps a read posted at all times (RxReaderThread), demuxing
+        the connac2 rxd packet type (mt7921_queue_rx_skb): MCU responses feed the
+        seq-matched _mcu_rx_queue — so the FW-load handshake, post-boot init and
+        set_channel all get their acks — and 802.11 frames go to the callback.
+
+        Replaces the old 32-thread "deep URB pool", which generated an abnormal
+        concurrent-I/O load on the USB stack (a BSOD trigger). EP 0x85 is not
+        read: dma_init sets RXEVT_EP4_EN, routing every MCU response to EP 0x84
+        (the capture shows EP 0x85 gets zero completions)."""
+        if self._rx is not None:
+            return
+        self._rx = RxReaderThread(self._loop, self._read_once, self._dispatch,
+                                  name="mt7921au-rx")
+        self._rx.start()
+
+    async def stop_rx(self):
+        if self._rx is not None:
+            reader, self._rx = self._rx, None
+            await reader.stop()
+
+    def _read_once(self) -> Optional[bytes]:
+        """One blocking bulk read on EP 0x84 (runs on the reader thread). Returns
+        the buffer, None on a benign timeout, or raises on a real USB error — the
+        reader counts consecutive errors and gives up, so a wedged pipe is not
+        hammered indefinitely."""
+        try:
+            data = self.dev.read(EP_IN_BULK, RX_READ_SIZE, timeout=RX_READ_TIMEOUT_MS)
+        except usb.core.USBTimeoutError:
+            return None
+        return bytes(data) if data else None
+
+    def _dispatch(self, data: bytes):
+        """Runs on the event loop (RxReaderThread hands off via call_soon_threadsafe).
+        MCU response -> the command-response queue; 802.11 frame -> the callback."""
+        if rx.classify(data) == "mcu":
+            self._mcu_rx_queue.put_nowait(data)
+        elif self._callback is not None:
+            self._callback(data)
 
     async def send_bulk(self, data: bytes, ep: int, timeout: int = 2000):
         """Sends a raw packet to the specified Bulk OUT endpoint."""
@@ -82,30 +106,6 @@ class MT7921AUTransport:
         except usb.core.USBError as e:
             logger.debug(f"Bulk write failed on EP {hex(ep)}: {e}")
             return False
-
-    async def _poll_loop(self):
-        """Operational RX loop on EP 0x84. Demuxes by the connac2 rxd packet type
-        (mt7921_queue_rx_skb): MCU responses feed the seq-matched response queue
-        (so set_channel can still get its ack), 802.11 frames go to the callback."""
-        while self._is_running:
-            try:
-                data = await self._loop.run_in_executor(
-                    None, lambda: self.dev.read(EP_IN_BULK, 4096, timeout=100)
-                )
-                if not data:
-                    continue
-                data = bytes(data)
-                if rx.classify(data) == "mcu":
-                    await self._mcu_rx_queue.put(data)
-                elif self._callback:
-                    self._callback(data)
-            except usb.core.USBTimeoutError:
-                continue
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Transport read error: {e}")
-                await asyncio.sleep(0.1)
 
     def send_vendor_request(self, bmRequestType: int, bRequest: int, wValue: int, wIndex: int, data: bytes = b"", timeout: int = 1000):
         """Sends a vendor-specific control transfer."""
@@ -218,62 +218,6 @@ class MT7921AUTransport:
         seq = self._next_mcu_seq()
         return mcu.build_mcu_frame(cmd, payload, seq), seq
 
-    async def start_mcu_drainer(self, pool: int = MCU_DRAIN_POOL):
-        """
-        Post a deep pool of IN URBs on EP 0x85 AND EP 0x84, all feeding
-        _mcu_rx_queue. Linux keeps ~128 URBs queued per IN endpoint
-        (mt76u_alloc_queues) before dma_init enables RX_DMA; a shallow pool lets
-        RX_DMA backpressure stall the firmware-download bulk OUT. Both endpoints
-        feed the queue because mt792xu_dma_rx_evt_ep4 routes MCU responses to EP
-        0x84 (RXEVT_EP4_EN). Reads run on a dedicated executor so the pool can't
-        starve the loop's default thread pool.
-        """
-        if self._mcu_drainer_running:
-            return
-        self._mcu_drainer_running = True
-        self._drain_executor = ThreadPoolExecutor(max_workers=2 * pool + 4)
-        for _ in range(pool):
-            self._reader_tasks.append(asyncio.create_task(self._in_reader(EP_IN_MCU)))
-            self._reader_tasks.append(asyncio.create_task(self._in_reader(EP_IN_BULK)))
-
-    async def stop_mcu_drainer(self):
-        self._mcu_drainer_running = False
-        for task in self._reader_tasks:
-            task.cancel()
-        for task in self._reader_tasks:
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-        self._reader_tasks = []
-        if self._drain_executor:
-            self._drain_executor.shutdown(wait=False)
-            self._drain_executor = None
-        # Drain any leftover queued responses.
-        while not self._mcu_rx_queue.empty():
-            try:
-                self._mcu_rx_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-
-    async def _in_reader(self, ep: int):
-        """One posted IN URB on `ep`, re-armed after each completion; data goes to
-        _mcu_rx_queue. Many of these run concurrently to keep the pool deep."""
-        while self._mcu_drainer_running:
-            try:
-                data = await self._loop.run_in_executor(
-                    self._drain_executor, lambda: self.dev.read(ep, 2048, timeout=100)
-                )
-                if data:
-                    await self._mcu_rx_queue.put(bytes(data))
-            except usb.core.USBTimeoutError:
-                continue
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.debug(f"IN drainer 0x{ep:02x} error: {e}")
-                await asyncio.sleep(0.005)
-
     async def send_mcu_command(self, cmd: int, payload: bytes = b"",
                                wait_resp: bool = True,
                                resp_timeout_ms: int = 2000) -> Optional[bytes]:
@@ -281,7 +225,7 @@ class MT7921AUTransport:
         Sends an MCU command on EP_OUT_MCU (0x08). ``cmd`` is an encoded command
         int (mcu.MCU_CMD / MCU_EXT_CMD / MCU_UNI_CMD / MCU_CE_CMD); the txd shape,
         ext_cid and set_query are derived from it. If wait_resp, waits for the
-        seq-matched response from the MCU drain queue (fed by start_mcu_drainer).
+        seq-matched response from the response queue (fed by the RX reader thread).
         Returns None if wait_resp is False or the wait times out.
         """
         frame, seq = self._build_mcu_frame(cmd, payload)

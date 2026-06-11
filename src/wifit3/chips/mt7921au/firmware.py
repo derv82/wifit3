@@ -102,10 +102,11 @@ class MT7921AUFirmwareLoader:
             return False
         logger.info("MCU powered on.")
 
-        # Post the deep IN URB pool BEFORE dma_init enables RX_DMA — mirrors the
-        # kernel order (mt76u_alloc_queues before mt792xu_dma_init). Otherwise
-        # RX_DMA backpressure stalls the firmware-download bulk OUT.
-        await self.transport.start_mcu_drainer()
+        # Start the single RX reader BEFORE dma_init enables RX_DMA — mirrors the
+        # kernel order (mt76u_alloc_queues before mt792xu_dma_init) so a read is
+        # posted on EP 0x84 by the time RX_DMA comes up. It stays running through
+        # the post-boot init and operational RX; the driver stops it at close().
+        self.transport.start_rx()
 
         self._dma_init()
 
@@ -118,47 +119,44 @@ class MT7921AUFirmwareLoader:
             logger.error(f"MT_UDMA_TX_QSEL write rejected (read back 0x{val:x})")
             return False
 
-        try:
-            if not await self._load_patch():
-                return False
+        if not await self._load_patch():
+            return False
 
-            # Mirror Linux behavior observed in capture-3 between patch and RAM
-            # upload (~89 ms after PATCH_SEM_RELEASE): two boot-status reads with
-            # wValue=0x30, wLength=64. Source unknown (possibly btusb concurrent
-            # init, possibly mt76 reset path). Cheap to replicate, side-effect-free.
-            for i in range(2):
-                bs = self.transport.read_boot_status(length=64)
-                logger.debug(f"boot_status[{i}] ({len(bs)} B): {bs[:32].hex()}{'...' if len(bs)>32 else ''}")
+        # Mirror Linux behavior observed in capture-3 between patch and RAM
+        # upload (~89 ms after PATCH_SEM_RELEASE): two boot-status reads with
+        # wValue=0x30, wLength=64. Source unknown (possibly btusb concurrent
+        # init, possibly mt76 reset path). Cheap to replicate, side-effect-free.
+        for i in range(2):
+            bs = self.transport.read_boot_status(length=64)
+            logger.debug(f"boot_status[{i}] ({len(bs)} B): {bs[:32].hex()}{'...' if len(bs)>32 else ''}")
 
-            # Drain any MCU responses that arrived during patch upload, so we can
-            # see what the device sent back (now that DL_MODE_NEED_RSP bit is correct).
-            drained = 0
-            while not self.transport._mcu_rx_queue.empty():
-                resp = self.transport._mcu_rx_queue.get_nowait()
-                logger.info(f"post-patch MCU drain msg {drained} ({len(resp)} B): {resp[:32].hex()}{'...' if len(resp)>32 else ''}")
-                drained += 1
-            logger.info(f"post-patch MCU drain: {drained} response(s) consumed")
+        # Drain any MCU responses that arrived during patch upload, so we can
+        # see what the device sent back (now that DL_MODE_NEED_RSP bit is correct).
+        drained = 0
+        while not self.transport._mcu_rx_queue.empty():
+            resp = self.transport._mcu_rx_queue.get_nowait()
+            logger.info(f"post-patch MCU drain msg {drained} ({len(resp)} B): {resp[:32].hex()}{'...' if len(resp)>32 else ''}")
+            drained += 1
+        logger.info(f"post-patch MCU drain: {drained} response(s) consumed")
 
-            if not await self._load_ram():
-                # _load_ram waits for the FW_START boot event (MCU_EVENT_FW_START,
-                # eid=0x01, on EP 0x84). If it never arrived, the firmware did not
-                # start — dump the EP0/queue post-mortem and bail.
-                self._log_boot_diagnostics()
-                return False
+        if not await self._load_ram():
+            # _load_ram waits for the FW_START boot event (MCU_EVENT_FW_START,
+            # eid=0x01, on EP 0x84). If it never arrived, the firmware did not
+            # start — dump the EP0/queue post-mortem and bail.
+            self._log_boot_diagnostics()
+            return False
 
-            # Boot event received: firmware has started. FW_N9_RDY (the "fully
-            # ready" bit, read over EP0) is a best-effort secondary confirmation —
-            # EP0 can be briefly unresponsive right after the handoff, and the
-            # bulk-IN boot event is the authoritative signal.
-            if await self._poll_reg(MT_CONN_ON_MISC, MT_TOP_MISC2_FW_N9_RDY,
-                                    MT_TOP_MISC2_FW_N9_RDY,
-                                    attempts=15, delay=0.1, read_timeout_ms=300):
-                logger.info("FW_N9_RDY confirmed over EP0.")
-            else:
-                logger.warning("FW_N9_RDY unconfirmed over EP0 — boot event already "
-                               "received, continuing.")
-        finally:
-            await self.transport.stop_mcu_drainer()
+        # Boot event received: firmware has started. FW_N9_RDY (the "fully
+        # ready" bit, read over EP0) is a best-effort secondary confirmation —
+        # EP0 can be briefly unresponsive right after the handoff, and the
+        # bulk-IN boot event is the authoritative signal.
+        if await self._poll_reg(MT_CONN_ON_MISC, MT_TOP_MISC2_FW_N9_RDY,
+                                MT_TOP_MISC2_FW_N9_RDY,
+                                attempts=15, delay=0.1, read_timeout_ms=300):
+            logger.info("FW_N9_RDY confirmed over EP0.")
+        else:
+            logger.warning("FW_N9_RDY unconfirmed over EP0 — boot event already "
+                           "received, continuing.")
 
         # FW_DL_EN stays set here. The kernel clears it in mt7921u_mcu_init only
         # AFTER mt7921_run_firmware's tail (get_nic_capability + fw_log_2_host),
@@ -254,8 +252,8 @@ class MT7921AUFirmwareLoader:
     def _rx_evt_ep4(self):
         """mt792xu_dma_rx_evt_ep4 — route RX events (the firmware-up signal and
         MCU command responses) to EP 0x84, re-toggling RX DMA across the change.
-        Responses then arrive on EP 0x84; the drainer feeds the queue from both
-        IN endpoints to match."""
+        Responses then arrive on EP 0x84 — which is why the RX reader only needs
+        that one endpoint."""
         for _ in range(100):
             if not (self.transport.read_reg32_unified(MT_UWFDMA0_GLO_CFG)
                     & MT_WFDMA0_GLO_CFG_RX_DMA_BUSY):

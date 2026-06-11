@@ -441,13 +441,6 @@ class PostBootReplay:
     def write_reg32(self, addr, value):
         raise PostBootDivergence(f"unexpected standard-bus WRITE 0x{addr:08x}")
 
-    async def start_mcu_drainer(self, *a, **k):
-        pass
-
-    async def stop_mcu_drainer(self, *a, **k):
-        pass
-
-
 def check_post_boot(pkts, dev):
     merged = build_postboot_stream(pkts, dev)
     # Split at FW_START (std MCU, cid 0x02); the post-boot walk begins at the first

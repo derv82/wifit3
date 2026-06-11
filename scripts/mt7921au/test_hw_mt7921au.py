@@ -120,7 +120,7 @@ async def main(debug: bool):
         print("       Try a busier channel (e.g. 6 or 11) if this repeats.")
 
     step("Cleanup")
-    await driver.stop()
+    await driver.close()
     print("\n=== ALL STEPS PASSED ===")
 
 

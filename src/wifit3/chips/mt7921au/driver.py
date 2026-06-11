@@ -57,21 +57,23 @@ class MT7921AUDriver:
             progress_cb("Uploading firmware...", 0.1)
         logger.info("Initializing MT7921AU...")
 
+        # Subscribe before any RX flows; the reader is started by load_firmware
+        # (cold) and ensured below (warm), and runs until close().
+        self.transport.subscribe(self._on_raw_rx)
         if not await self.firmware.load_firmware():
             logger.error("Failed to load MT7921AU firmware.")
             return False
+        self.transport.start_rx()   # idempotent — covers the warm-boot path
 
         if progress_cb:
             progress_cb("Configuring device...", 0.6)
         logger.info("Running MT7921AU post-boot init...")
         self._init_state = await chip_init.post_boot_init(self.transport)
 
-        # Start the demuxing RX loop, then enter monitor mode on the initial
-        # channel (the RX loop routes the monitor commands' acks back).
+        # Enter monitor mode on the initial channel (the RX reader routes the
+        # monitor commands' acks back, and 802.11 frames to _on_raw_rx).
         if progress_cb:
             progress_cb("Enabling monitor mode...", 0.9)
-        self.transport.subscribe(self._on_raw_rx)
-        await self.transport.start()
         await chip_init.enter_monitor(self.transport, self._channel)
 
         if progress_cb:
@@ -93,7 +95,7 @@ class MT7921AUDriver:
         return False
 
     async def close(self):
-        await self.transport.stop()
+        await self.transport.stop_rx()
 
     def _on_raw_rx(self, data: bytes):
         """Decode one 802.11 frame off EP 0x84 (MCU responses are demuxed away by

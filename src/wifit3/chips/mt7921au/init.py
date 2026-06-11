@@ -34,18 +34,17 @@ async def post_boot_init(t) -> InitState:
     """Run the full post-boot bring-up against transport ``t``.
 
     ``t`` exposes the unified-bus register R/W (read_reg32_unified /
-    write_reg32_unified), the async send_mcu_command, and the MCU drainer
-    lifecycle — satisfied by the real MT7921AUTransport and by the gate's mock.
+    write_reg32_unified) and the async send_mcu_command — satisfied by the real
+    MT7921AUTransport and by the gate's mock. The RX reader must already be
+    running (the real transport's send_mcu_command waits on responses it feeds).
     """
     state = InitState()
-    await t.start_mcu_drainer()
-    try:
-        await _run_firmware_tail(t, state)
-        await _init_hardware(t)
-        await _regd_and_start(t, state)
-        await _monitor_entry(t, state)
-    finally:
-        await t.stop_mcu_drainer()
+    # The RX reader is already running (started by firmware.load_firmware /
+    # driver.connect), feeding the seq-matched MCU responses these commands wait on.
+    await _run_firmware_tail(t, state)
+    await _init_hardware(t)
+    await _regd_and_start(t, state)
+    await _monitor_entry(t, state)
     return state
 
 
