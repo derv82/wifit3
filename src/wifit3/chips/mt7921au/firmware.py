@@ -62,13 +62,30 @@ class MT7921AUFirmwareLoader:
         logger.info(f"Claimed vendor-specific interface {iface}")
         await asyncio.sleep(0.2)
 
-        chip_id = self.transport.read_reg32(MT_CHIP_ID_ADDR)
+        # Chip-id read doubles as a control-endpoint liveness check. A COLD chip
+        # answers it (0x7961); once firmware is running, EP0 control transfers can
+        # stop being serviced and this times out. A USB reset does NOT re-cold-boot
+        # the chip in userland on Windows (verified — it re-acquires at the same
+        # address, still unresponsive), so a timeout here means a physical replug is
+        # the only path to a fresh boot. Fail fast with that guidance instead of
+        # hammering a warm/wedged chip (which only makes it worse).
+        try:
+            chip_id = self.transport.read_reg32(MT_CHIP_ID_ADDR)
+        except usb.core.USBError as e:
+            logger.error(
+                f"Chip-id read failed ({e}). The control endpoint is unresponsive — "
+                "the chip is warm or wedged from a prior boot, which userland cannot "
+                "reset on Windows. PLEASE PHYSICALLY REPLUG the card for a cold boot."
+            )
+            return False
         if (chip_id & 0xFFFF) != MT_CHIP_ID_EXPECTED:
             logger.error(f"Unexpected chip ID 0x{chip_id:x} (expected lower 16 = 0x{MT_CHIP_ID_EXPECTED:x})")
             return False
         logger.info(f"MT7921 detected: chip_id=0x{chip_id:x}")
 
-        # Warm-boot short-circuit.
+        # Warm-boot short-circuit: if firmware is already running, skip the upload
+        # and reattach. (Control reads still work here, since the chip-id read above
+        # succeeded.)
         misc = self.transport.read_reg32_unified(MT_CONN_ON_MISC)
         if (misc & MT_TOP_MISC2_FW_N9_RDY) == MT_TOP_MISC2_FW_N9_RDY:
             logger.info(f"Firmware already running (MT_CONN_ON_MISC=0x{misc:x}). Skipping upload.")

@@ -1,6 +1,4 @@
 import logging
-import asyncio
-import binascii
 import importlib
 import struct
 from pathlib import Path
@@ -67,15 +65,14 @@ class MT7921AUDriver:
             logger.error("Failed to load MT7921AU firmware.")
             return False
 
-        if progress_cb:
-            progress_cb("Executing Init Sequence...", 0.5)
-        logger.info("Executing MT7921AU hardware initialization sequence...")
-        for req in self.assets_init.INIT_SEQ:
-            bmReq, bReq, wVal, wIdx, data_hex = req
-            data = binascii.unhexlify(data_hex) if data_hex else b""
-            self.transport.send_vendor_request(bmReq, bReq, wVal, wIdx, data, timeout=200)
-            await asyncio.sleep(0.001)
-        
+        # NOTE: the captured post-boot INIT_SEQ (assets/mt7921au_init.py) is a replay
+        # of unified-bus (0x5f) register writes — but once the firmware is running it
+        # stops servicing control transfers, so every one of those writes times out
+        # (~20 s of failures that left the chip worse off). Post-boot configuration on
+        # this chip is done with MCU commands (the kernel sends ~130 after boot), not
+        # register writes. Porting that sequence faithfully from the scatter capture is
+        # the RX-path work; until then, do NOT replay INIT_SEQ.
+
         # Enable Sniffer Mode
         if progress_cb:
             progress_cb("Enabling Monitor Mode...", 0.9)
