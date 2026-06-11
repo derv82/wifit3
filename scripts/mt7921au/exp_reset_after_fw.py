@@ -58,23 +58,26 @@ class ResetAfterFwLoader(MT7921AUFirmwareLoader):
     """Reset the USB link right after FW_START, re-acquire, and let the FW_N9_RDY
     poll (in load_firmware) run on the fresh handle."""
 
-    def __init__(self, *a, backend=None, delay=0.0, **kw):
+    def __init__(self, *a, backend=None, delay=0.0, do_reset=True, **kw):
         super().__init__(*a, **kw)
         self._backend = backend
         self._delay = delay
+        self._do_reset = do_reset
         self.reacquired = None
 
     async def _load_ram(self) -> bool:
         r = await super()._load_ram()   # uploads regions + sends FW_START
         if self._delay:
-            logger.info(f"FW_START sent — waiting {self._delay}s (let the firmware boot) before reset...")
+            logger.info(f"FW_START sent — waiting {self._delay}s (let the firmware boot)...")
             await asyncio.sleep(self._delay)
+        if self._do_reset:
+            logger.info("issuing usb_reset_device()...")
+            try:
+                self.transport.dev.reset()
+            except Exception as e:
+                logger.warning(f"post-FW_START reset raised {type(e).__name__}: {e}")
         else:
-            logger.info("FW_START sent — issuing usb_reset_device() immediately...")
-        try:
-            self.transport.dev.reset()
-        except Exception as e:
-            logger.warning(f"post-FW_START reset raised {type(e).__name__}: {e}")
+            logger.info("CLOSE-ONLY (no reset): releasing the handle, then re-finding fresh...")
         usb.util.dispose_resources(self.transport.dev)
 
         # Re-acquire, retrying through the Windows re-bind window (Errno 13) and the
@@ -112,7 +115,7 @@ class ResetAfterFwLoader(MT7921AUFirmwareLoader):
         return r
 
 
-async def main(debug, delay):
+async def main(debug, delay, no_reset):
     logging.basicConfig(
         level=logging.DEBUG if debug else logging.INFO,
         format="%(asctime)s.%(msecs)03d [%(levelname)-5s] %(name)s: %(message)s", datefmt="%H:%M:%S")
@@ -131,7 +134,7 @@ async def main(debug, delay):
 
     transport = MT7921AUTransport(dev)
     loader = ResetAfterFwLoader(transport, Path(mt_pkg.__file__).parent / "assets",
-                                backend=backend, delay=delay)
+                                backend=backend, delay=delay, do_reset=not no_reset)
 
     logger.info("=== Experiment: faithful load + usb_reset AFTER FW_START ===")
     t0 = time.monotonic()
@@ -146,6 +149,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--debug", action="store_true")
     ap.add_argument("--delay", type=float, default=0.0,
-                    help="seconds to wait after FW_START before the reset (let FW boot first)")
+                    help="seconds to wait after FW_START before the reset/reopen (let FW boot first)")
+    ap.add_argument("--no-reset", action="store_true",
+                    help="close-only: release the handle and re-find fresh, WITHOUT a usb reset")
     args = ap.parse_args()
-    sys.exit(asyncio.run(main(args.debug, args.delay)))
+    sys.exit(asyncio.run(main(args.debug, args.delay, args.no_reset)))
