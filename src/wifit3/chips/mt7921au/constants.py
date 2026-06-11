@@ -174,6 +174,15 @@ MT_WPDMA0_BASE_PTR_MASK  = 0xFFFF0000   # GENMASK(31, 16)
 MT_DMA_PREFETCH_CONF = [(0, 4, 0x080), (1, 4, 0x0c0), (2, 4, 0x100), (3, 4, 0x140),
                         (4, 4, 0x180), (16, 4, 0x280), (17, 4, 0x2c0)]
 
+# MT_SSUSB_EPCTL_CSR_EP_RST_OPT = MT_SSUSB_EPCTL_CSR(0x090) = 0x74011800 + 0x090.
+# mt792xu_epctl_rst_opt(false) clears GENMASK(9,4) | GENMASK(22,20) — the reset-option
+# bits for out blk ep 4-9, in blk ep 4-5, in int ep 6. The kernel reaches it over the
+# UHW bus (Errno 5 on WinUSB); the register is also reachable over the unified bus, which
+# works on WinUSB. On a cold device these bits read SET (0x7003f0) — clearing them is NOT
+# a no-op (verified live: read 0xfffeffff -> wrote 0xff8efc0f, stuck).
+MT_SSUSB_EPCTL_CSR_EP_RST_OPT = 0x74011890
+MT_EPCTL_EP_RST_OPT_MASK      = (0x3F << 4) | (0x7 << 20)   # GENMASK(9,4) | GENMASK(22,20)
+
 # MT_UDMA_WLCFG_0/_1 — DMA TX/RX enables and timing.
 # Linux's mt792xu_dma_init writes these before firmware download.
 MT_UDMA_WLCFG_1        = 0x7400000c

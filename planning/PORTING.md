@@ -335,8 +335,10 @@ If anyone knows a good wireless card for Kali Linux, it's morrownr!
 
 - ~~**Panda PAU0F AXE3000** — MediaTek **MT7921AU** (`0e8d:7961`), WiFi 6E.~~ Arrived +
   tested 2026-06-10. Same silicon as the AWUS036AXML; reads work, firmware uploads cleanly on
-  USB-2, walls at FW_START. Sync deep-pool + true-async both fail; **narrowed to three
-  untested leads** (reset-after-FW_START next) — see `chips/mt7921au/MT7921AU.md`.
+  USB-2, walls at FW_START. Sync deep-pool + true-async both fail; the full-capture sweep
+  found `epctl_rst_opt` (bulk-EP reset bits left set) — **now ported via the unified bus, a
+  Windows-compatible fix candidate; plain `test_hw` on next replug tests it.** See
+  `chips/mt7921au/MT7921AU.md`.
 
 ### Distant-future hardware ($$$)
 
@@ -346,5 +348,6 @@ If anyone knows a good wireless card for Kali Linux, it's morrownr!
 ---
 
 **MT7921AU (AWUS036AXML / PAU0F)** — FW_START handoff wall. Byte-faithful bring-up + clean
-USB-2 upload; narrowed to three untested leads (`exp_reset_after_fw.py` next, on a fresh
-replug). Tracked in `chips/mt7921au/MT7921AU.md`.
+USB-2 upload. Full-capture sweep found `epctl_rst_opt` (bulk-EP reset bits left set), now
+ported via the unified bus — a Windows-compatible fix candidate; the next cold-boot `test_hw`
+is the test. Tracked in `chips/mt7921au/MT7921AU.md`.

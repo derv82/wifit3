@@ -190,10 +190,6 @@ class MT7921AUFirmwareLoader:
         The IN URB pool must already be posted before this runs (see
         load_firmware): GLO_CFG sets RX_DMA_EN, and with no RX URBs queued the RX
         path backs up and stalls the firmware-download bulk OUT.
-
-        epctl_rst_opt is the only kernel step omitted — it clears endpoint-reset
-        bits over the UHW bus, inaccessible from WinUSB (Errno 5 on bmRequestType
-        0x5E/0xDE), and its bits are already clear on a cold device.
         """
         # mt792xu_dma_prefetch — TX-ring prefetch depth + base pointer.
         for idx, cnt, base in MT_DMA_PREFETCH_CONF:
@@ -221,6 +217,20 @@ class MT7921AUFirmwareLoader:
         self._rmw(MT_UDMA_WLCFG_1, MT_WL_RX_AGG_PKT_LMT, 0)
 
         self._rx_evt_ep4()
+        self._epctl_rst_opt()
+
+    def _epctl_rst_opt(self):
+        """mt792xu_dma_rx_evt_ep4's sibling epctl_rst_opt(false): clear the
+        bulk-endpoint reset-option bits in MT_SSUSB_EPCTL_CSR_EP_RST_OPT. The
+        kernel uses the UHW bus (Errno 5 on WinUSB); the register is reachable over
+        the unified bus, which works on WinUSB. The bits read SET on a cold device,
+        so leaving them set holds the bulk EPs in a reset-option state the kernel
+        clears before firmware boot."""
+        v = self.transport.read_reg32_unified(MT_SSUSB_EPCTL_CSR_EP_RST_OPT)
+        new = v & ~MT_EPCTL_EP_RST_OPT_MASK
+        self.transport.write_reg32_unified(MT_SSUSB_EPCTL_CSR_EP_RST_OPT, new)
+        logger.debug(f"epctl_rst_opt 0x{MT_SSUSB_EPCTL_CSR_EP_RST_OPT:08x}: "
+                     f"0x{v:08x} -> 0x{new:08x}")
 
     def _rx_evt_ep4(self):
         """mt792xu_dma_rx_evt_ep4 — route RX events (the firmware-up signal and
