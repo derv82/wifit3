@@ -144,3 +144,21 @@ fall back to a "replug" prompt when the post-firmware node re-enumerates root-ow
 
 Target — now achievable: a card on Linux works with **at most one** `pkexec` prompt ever (the
 rule install) and **zero** per-run sudo.
+
+## Implementation plan (parked 2026-06-11)
+
+Full plan saved at `~/.claude/plans/precious-tickling-canyon.md` (Claude Code plan
+**precious-tickling-canyon**). Not yet implemented.
+
+One refinement to the Recommendation above, decided while planning: ship a **per-device**
+permission rule scoped to the single VID:PID the user activates — *not* one blanket file across
+all supported models — so a second supported card kept as the normal internet adapter stays
+untouched (mirrors the Windows "bind only the card you picked" UX). The blanket file survives as
+an explicit `wifit3 --emit-udev` power-user opt-in. The no-install bypass is `sudo wifit3`; a
+one-time per-device rule is the "never sudo again for this card" path. (A permission rule never
+unbinds the driver or hides the card — it only grants node access; the card stays a normal Wi-Fi
+adapter until wifit3 detaches it at runtime.)
+
+Shape: new `setup/linux.py` (`free_device()` mirroring `setup/windows.py:install_winusb`,
+helpers lifted from `scripts/linux_setup/probe_l1_l2.py`) + a Linux branch on the
+connect-failure path in `ui/screens/splash.py:perform_start` + a parametrized `ConfirmInstallDialog`.
