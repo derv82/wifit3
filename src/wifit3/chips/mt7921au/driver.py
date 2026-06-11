@@ -1,11 +1,11 @@
 import logging
-import struct
 from pathlib import Path
 from typing import Optional, Callable
 
 import usb.core
 
 from . import init as chip_init
+from . import mcu, rx
 from .transport import MT7921AUTransport
 from .firmware import MT7921AUFirmwareLoader
 # Star-imports the chip's register/PHY constants; the names resolve at runtime
@@ -46,6 +46,7 @@ class MT7921AUDriver:
         self.parser = WlanFrameParser()
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._init_state: Optional[chip_init.InitState] = None
+        self._channel = self.SUPPORTED_CHANNELS[0]
 
     def register_rx_callback(self, callback: Callable[[dict], None]):
         self._rx_callback = callback
@@ -65,18 +66,26 @@ class MT7921AUDriver:
         logger.info("Running MT7921AU post-boot init...")
         self._init_state = await chip_init.post_boot_init(self.transport)
 
-        # Monitor entry + channel tune + RX-descriptor decode are the remaining
-        # milestones; no frames are delivered until those land.
+        # Start the demuxing RX loop, then enter monitor mode on the initial
+        # channel (the RX loop routes the monitor commands' acks back).
+        if progress_cb:
+            progress_cb("Enabling monitor mode...", 0.9)
+        self.transport.subscribe(self._on_raw_rx)
+        await self.transport.start()
+        await chip_init.enter_monitor(self.transport, self._channel)
+
         if progress_cb:
             progress_cb("Done", 1.0)
-        logger.info("MT7921AU device init complete (monitor/RX path pending).")
+        logger.info("MT7921AU monitor mode ready on channel %d.", self._channel)
         return True
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
-        """Tune to a 20 MHz channel. Not yet ported — the monitor-mode channel
-        switch (mt7921_mcu_config_sniffer) is the next bring-up milestone."""
-        logger.warning("MT7921AU set_channel(%d): not yet ported", channel)
-        return False
+        """Tune to a 20 MHz channel via the monitor sniffer config command."""
+        logger.debug("MT7921AU: tuning to channel %d", channel)
+        cmd, payload = mcu.config_sniffer(channel)
+        await self.transport.send_mcu_command(cmd, payload, wait_resp=False)
+        self._channel = channel
+        return True
 
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
         """Transmit a raw 802.11 frame. Not yet ported (TX is wired last)."""
@@ -87,22 +96,19 @@ class MT7921AUDriver:
         await self.transport.stop()
 
     def _on_raw_rx(self, data: bytes):
-        """RX descriptor decode is not ported yet (RXD layout for 802.11 frames
-        is a remaining milestone). Wired once monitor mode delivers frames."""
-        if len(data) < RXD_SIZE:
+        """Decode one 802.11 frame off EP 0x84 (MCU responses are demuxed away by
+        the transport). Strips the connac2 RX descriptor, then parses the MPDU."""
+        decoded = rx.decode_frame(data)
+        if decoded is None:
             return
-
-        rxd0 = struct.unpack("<I", data[0:4])[0]
-        rxd1 = struct.unpack("<I", data[4:8])[0]
-        if rxd1 & RXD_DW1_FCS_ERR:
+        mpdu_off, rssi, fcs_err = decoded
+        if fcs_err:
             return
-
-        frame_len = rxd0 & RXD_DW0_LEN_MASK
-        frame_bytes = data[RXD_SIZE: RXD_SIZE + frame_len]
+        frame_bytes = data[mpdu_off:]
         if len(frame_bytes) < 10:
             return
         try:
-            parsed = self.parser.parse_80211_frame(frame_bytes, -128)
+            parsed = self.parser.parse_80211_frame(frame_bytes, rssi)
             if parsed and self._rx_callback:
                 self._rx_callback(parsed)
         except Exception as e:

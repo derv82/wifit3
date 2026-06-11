@@ -113,6 +113,24 @@ FW_TRAILER_SIZE    = 36     # mt76_connac2_fw_trailer (at end of WM file)
 FW_REGION_SIZE     = 40     # mt76_connac2_fw_region (one per region, before trailer)
 PATCH_SEC_TYPE_INFO = 0x02  # PATCH_SEC_TYPE_MASK match for info-section
 
+# --- RX descriptor (connac2, mt7921_mac_fill_rx + mt7921_queue_rx_skb demux) ---
+# rxd0: PKT_TYPE GENMASK(31,27), PKT_FLAG GENMASK(19,16).
+PKT_TYPE_NORMAL     = 2    # 802.11 frame
+PKT_TYPE_RX_EVENT   = 7    # MCU response/event
+PKT_TYPE_NORMAL_MCU = 8    # RX_EVENT with flag 0x1 -> treated as a normal frame
+# rxd1
+MT_RXD1_NORMAL_WLAN_IDX = 0x000003FF   # GENMASK(9, 0)
+MT_RXD1_NORMAL_GROUP_1  = 1 << 11
+MT_RXD1_NORMAL_GROUP_2  = 1 << 12
+MT_RXD1_NORMAL_GROUP_3  = 1 << 13
+MT_RXD1_NORMAL_GROUP_4  = 1 << 14
+MT_RXD1_NORMAL_GROUP_5  = 1 << 15
+MT_RXD1_NORMAL_FCS_ERR  = 1 << 27
+MT_RXD1_NORMAL_BAND_IDX = 1 << 28
+# rxd2: HDR_OFFSET GENMASK(15,14) -> 2*remove_pad bytes of header padding.
+MT_RXD2_NORMAL_HDR_OFFSET_SHIFT = 14
+MT_RXD2_NORMAL_HDR_OFFSET_MASK  = 0x3
+
 # Descriptor Sizes
 TXD_SIZE = 80
 RXD_SIZE = 32

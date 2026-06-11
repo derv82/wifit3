@@ -5,7 +5,7 @@ import struct
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
-from . import mcu
+from . import mcu, rx
 # Star-imports the chip's register/PHY constants; the names resolve at runtime
 # but ruff can't see them statically, so suppress the import-* lints file-wide.
 # ruff: noqa: F403, F405
@@ -84,13 +84,21 @@ class MT7921AUTransport:
             return False
 
     async def _poll_loop(self):
+        """Operational RX loop on EP 0x84. Demuxes by the connac2 rxd packet type
+        (mt7921_queue_rx_skb): MCU responses feed the seq-matched response queue
+        (so set_channel can still get its ack), 802.11 frames go to the callback."""
         while self._is_running:
             try:
                 data = await self._loop.run_in_executor(
                     None, lambda: self.dev.read(EP_IN_BULK, 4096, timeout=100)
                 )
-                if data and self._callback:
-                    self._callback(bytes(data))
+                if not data:
+                    continue
+                data = bytes(data)
+                if rx.classify(data) == "mcu":
+                    await self._mcu_rx_queue.put(data)
+                elif self._callback:
+                    self._callback(data)
             except usb.core.USBTimeoutError:
                 continue
             except asyncio.CancelledError:

@@ -125,3 +125,23 @@ async def _monitor_entry(t, state: InitState) -> None:
     cmd, payload = mcu.uni_bss_info(True)               # BSS_INFO_UPDATE
     await t.send_mcu_command(cmd, payload)
     mac.wtbl_update(t, MT792x_WTBL_RESERVED, MT_WTBL_UPDATE_ADM_COUNT_CLEAR)
+
+
+async def enter_monitor(t, channel: int) -> None:
+    """Operational monitor-mode entry + initial channel — the airmon equivalent.
+
+    NOT part of the single-cursor init gate: airmon/mac80211 interleave these in a
+    tool-timing-dependent order (it differs pau0f vs AXML), but each command is
+    byte-verified against the capture. Sent here in the kernel's logical order.
+    Requires the RX loop running so the seq-matched responses are routed back.
+    """
+    cmd, p = mcu.set_sniffer(True)                      # UNI SNIFFER enable
+    await t.send_mcu_command(cmd, p)
+    cmd, p = mcu.configure_filter()                     # SET_RX_FILTER (monitor)
+    await t.send_mcu_command(cmd, p, wait_resp=False)
+    cmd, p = mcu.set_bss_abort()                        # set_beacon_filter(false)
+    await t.send_mcu_command(cmd, p, wait_resp=False)
+    cmd, p = mcu.set_rxfilter(0, mcu.MT7921_FIF_BIT_CLR, mcu.MT_WF_RFCR_DROP_OTHER_BEACON)
+    await t.send_mcu_command(cmd, p, wait_resp=False)
+    cmd, p = mcu.config_sniffer(channel)                # initial channel
+    await t.send_mcu_command(cmd, p, wait_resp=False)
