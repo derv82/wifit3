@@ -235,3 +235,40 @@ def set_deep_sleep(enable):
     data = (b"KeepFullPwr %d" % (0 if enable else 1)).ljust(320, b"\x00")
     payload = struct.pack("<HBBHH", 0, 0, 0, 0, 0) + data
     return MCU_CE_CMD(CE_CMD_CHIP_CONFIG), payload
+
+
+# Monitor-vif constants. The first vif gets idx = omac_idx = band_idx = wmm_idx =
+# 0; mt7921_add_interface sets wcid->idx AFTER uni_add_dev runs, so the BSS basic
+# tlv carries wcid->idx 0 here. The monitor vif has no MAC, so omac_addr/bssid are
+# zero. conn_type = CONNECTION_INFRA_AP (STA_TYPE_AP | NETWORK_INFRA) for monitor.
+DEV_INFO_ACTIVE = 0
+UNI_BSS_INFO_BASIC = 0
+CONNECTION_INFRA_AP = (1 << 1) | (1 << 16)   # STA_TYPE_AP | NETWORK_INFRA = 0x10002
+
+
+def uni_dev_info(active=True):
+    """mt76_connac_mcu_uni_add_dev — DEV_INFO half, MCU_UNI_CMD(DEV_INFO_UPDATE).
+    hdr{omac_idx, band_idx, pad} + req_tlv{tag=DEV_INFO_ACTIVE, len=12, active,
+    link_idx, omac_addr[6]}."""
+    hdr = struct.pack("<BBH", 0, 0, 0)
+    tlv = struct.pack("<HHBB6s", DEV_INFO_ACTIVE, 12, 1 if active else 0, 0, b"\x00" * 6)
+    return MCU_UNI_CMD(UNI_CMD_DEV_INFO_UPDATE), hdr + tlv
+
+
+def uni_bss_info(active=True):
+    """mt76_connac_mcu_uni_add_dev — BSS_INFO half, MCU_UNI_CMD(BSS_INFO_UPDATE).
+    hdr{bss_idx, pad[3]} + mt76_connac_bss_basic_tlv (32 B)."""
+    hdr = struct.pack("<B3x", 0)
+    basic = struct.pack(
+        "<HHBBBBIBB6sHHBBHHBB",
+        UNI_BSS_INFO_BASIC, 32,         # tag, len
+        1 if active else 0, 0, 0, 0,    # active, omac_idx, hw_bss_idx, band_idx
+        CONNECTION_INFRA_AP,            # conn_type
+        1, 0,                           # conn_state, wmm_idx
+        b"\x00" * 6,                    # bssid
+        0, 0,                           # bmc_tx_wlan_idx, bcn_interval
+        0, 0,                           # dtim_period, phymode
+        0, 0,                           # sta_idx, nonht_basic_phy
+        0, 0,                           # phymode_ext, link_idx
+    )
+    return MCU_UNI_CMD(UNI_CMD_BSS_INFO_UPDATE), hdr + basic

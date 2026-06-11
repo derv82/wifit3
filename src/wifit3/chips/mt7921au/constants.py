@@ -258,6 +258,7 @@ MT_WTBL_UPDATE_WLAN_IDX        = 0x000003FF   # GENMASK(9, 0)
 MT_WTBL_UPDATE_ADM_COUNT_CLEAR = 1 << 12      # BIT(12)
 MT_WTBL_UPDATE_BUSY            = 1 << 31       # BIT(31)
 MT792x_WTBL_SIZE = 20
+MT792x_WTBL_RESERVED = MT792x_WTBL_SIZE - 1    # reserved wcid for the first vif
 
 # --- mt792x_mac_init_band: per-band MAC/MIB/DMA setup (mt792x_regs.h) ---
 def MT_WF_TMAC_BASE(b): return 0x820f4000 if b else 0x820e4000

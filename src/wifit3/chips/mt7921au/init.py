@@ -43,6 +43,7 @@ async def post_boot_init(t) -> InitState:
         await _run_firmware_tail(t, state)
         await _init_hardware(t)
         await _regd_and_start(t, state)
+        await _monitor_entry(t, state)
     finally:
         await t.stop_mcu_drainer()
     return state
@@ -113,3 +114,14 @@ async def _set_rate_txpower(t) -> None:
     for payload in txpower.rate_txpower_payloads():
         cmd, p = mcu.set_rate_txpower(payload)
         await t.send_mcu_command(cmd, p, wait_resp=False)
+
+
+async def _monitor_entry(t, state: InitState) -> None:
+    """mt7921_add_interface for the monitor vif, then configure_filter + sniffer.
+    uni_add_dev sends DEV_INFO then BSS_INFO; afterwards the reserved wcid gets a
+    WTBL admission-count clear. (rxfilter / set_sniffer / config_sniffer follow.)"""
+    cmd, payload = mcu.uni_dev_info(True)               # DEV_INFO_UPDATE
+    await t.send_mcu_command(cmd, payload)
+    cmd, payload = mcu.uni_bss_info(True)               # BSS_INFO_UPDATE
+    await t.send_mcu_command(cmd, payload)
+    mac.wtbl_update(t, MT792x_WTBL_RESERVED, MT_WTBL_UPDATE_ADM_COUNT_CLEAR)
