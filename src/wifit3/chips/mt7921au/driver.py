@@ -52,6 +52,14 @@ class MT7921AUDriver:
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._init_state: Optional[chip_init.InitState] = None
         self._channel = self.SUPPORTED_CHANNELS[0]
+        # WlanDriver protocol runtime state. is_warm is always False: warm reattach is
+        # unsupported on WinUSB (a warm chip fails connect() with "please replug"), so a
+        # successful bring-up is always a cold boot. mac_address stays None: this chip's
+        # firmware does not return the MAC in GET_NIC_CAPAB (no MT_NIC_CAP_MAC_ADDR TLV),
+        # and the cold-boot init reads no EFUSE MAC — monitor RX + spoofed-MAC injection
+        # need neither, so there is no MAC to expose without an unverified EFUSE access.
+        self.is_warm: bool = False
+        self.mac_address: Optional[str] = None
 
     def register_rx_callback(self, callback: Callable[[dict], None]):
         self._rx_callback = callback
