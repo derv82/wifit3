@@ -167,3 +167,25 @@ def set_rts_thresh(val, band):
     { u8 prot_idx=1; u8 band; u8 rsv[2]; __le32 len_thresh=val; __le32 pkt_thresh=2; }."""
     return MCU_EXT_CMD(EXT_CMD_PROTECT_CTRL), struct.pack(
         "<BB2xII", 1, band, val, 0x2)
+
+
+def set_channel_domain():
+    """mt76_connac_mcu_set_channel_domain — MCU_CE_CMD(SET_CHAN_DOMAIN), no reply.
+
+    [ hdr ][ per-channel { __le16 hw_value; __le16 pad; __le32 flags; } ]. We
+    announce the world ('00') domain (regdomain.py); the kernel skips DISABLED
+    channels, so the body is just the enabled 2.4/5 GHz channels with their
+    cfg80211 flags. hdr: alpha2[4], bw_2g, bw_5g, bw_6g, pad, n_2ch, n_5ch,
+    n_6ch, pad2."""
+    from . import regdomain as rd
+    ch = rd.CHANNELS_2GHZ + rd.CHANNELS_5GHZ
+    hdr = struct.pack("<4sBBBBBBBB", rd.WORLD_ALPHA2, rd.WORLD_BW_2G, rd.WORLD_BW_5G,
+                      rd.WORLD_BW_6G, 0, len(rd.CHANNELS_2GHZ), len(rd.CHANNELS_5GHZ), 0, 0)
+    body = b"".join(struct.pack("<HHI", hw, 0, flags) for hw, flags in ch)
+    return MCU_CE_CMD(CE_CMD_SET_CHAN_DOMAIN), hdr + body
+
+
+def set_rate_txpower(payload):
+    """One SET_RATE_TX_POWER batch (mt76_connac_mcu_skb_send_msg, no reply). The
+    per-batch payloads are built by txpower.rate_txpower_payloads()."""
+    return MCU_CE_CMD(CE_CMD_SET_RATE_TX_POWER), payload

@@ -17,7 +17,7 @@ against the captured wire; every op here reproduces the capture byte-for-byte.
 import logging
 from dataclasses import dataclass
 
-from . import mac, mcu
+from . import mac, mcu, txpower
 # ruff: noqa: F403, F405
 from .constants import *
 
@@ -42,6 +42,7 @@ async def post_boot_init(t) -> InitState:
     try:
         await _run_firmware_tail(t, state)
         await _init_hardware(t)
+        await _regd_and_start(t, state)
     finally:
         await t.stop_mcu_drainer()
     return state
@@ -76,3 +77,24 @@ async def _init_hardware(t) -> None:
     # mt7921_mac_init's trailing rts_thresh is an MCU command (PROTECT_CTRL).
     cmd, payload = mcu.set_rts_thresh(MT_RTS_THRESH_DEFAULT, 0)
     await t.send_mcu_command(cmd, payload)
+
+
+async def _regd_and_start(t, state: InitState) -> None:
+    """Regulatory + radio-start configuration, in the wire order the capture
+    records after mac_init (see MT7921AU.md): channel domain, TX-power SKU,
+    CLC, MAC-init-ctrl, channel domain again, RX path, TX-power SKU, then the
+    monitor entry. Ported incrementally; the gate names the next op."""
+    # mt76_connac_mcu_set_channel_domain (world '00' domain).
+    cmd, payload = mcu.set_channel_domain()
+    await t.send_mcu_command(cmd, payload, wait_resp=False)
+
+    # mt76_connac_mcu_set_rate_txpower — regulatory per-rate SKU limits, one
+    # command per 8-channel batch across 2.4/5/6 GHz. (The kernel's per-batch
+    # reg_rr(MT_PSE_BASE) is absent from the capture, so we omit it.)
+    await _set_rate_txpower(t)
+
+
+async def _set_rate_txpower(t) -> None:
+    for payload in txpower.rate_txpower_payloads():
+        cmd, p = mcu.set_rate_txpower(payload)
+        await t.send_mcu_command(cmd, p, wait_resp=False)
