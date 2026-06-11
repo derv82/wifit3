@@ -36,6 +36,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 import wifit3.chips.mt7921au as mt_pkg
 from wifit3.chips.mt7921au import init as mt_init
 from wifit3.chips.mt7921au import mcu as mt_mcu
+from wifit3.chips.mt7921au import mac as mt_mac
+from wifit3.chips.mt7921au.constants import MT_MIB_SDR9, MT_MIB_SDR3
 from wifit3.chips.mt7921au.firmware import MT7921AUFirmwareLoader
 from wifit3.chips.mt7921au.transport import MT7921AUTransport
 
@@ -401,6 +403,9 @@ class PostBootReplay:
         self.i += 1
         return op
 
+    def peek(self):
+        return self.ops[self.i] if self.i < len(self.ops) else None
+
     def read_reg32_unified(self, addr):
         op = self._next()
         if op["kind"] != "R" or op["addr"] != addr:
@@ -441,6 +446,62 @@ class PostBootReplay:
     def write_reg32(self, addr, value):
         raise PostBootDivergence(f"unexpected standard-bus WRITE 0x{addr:08x}")
 
+# Trigger addresses: the first register read of each periodic mac_work sequence.
+_SURVEY_FIRST = MT_MIB_SDR9(0)      # mt792x_phy_update_channel busy_time read
+_MIB_FIRST = MT_MIB_SDR3(0)         # mt792x_mac_update_mib_stats fcs_err read
+
+
+def _decode_operational_mcu(f):
+    """Peek a captured operational MCU frame and return (cmd, payload) for the real
+    driver builder that reproduces it — channel/enable/filter params read straight
+    off the wire. Returns None if it's not a recognized operational command."""
+    std = f[38] == 0x00 and f[39] == 0x80
+    if not std:                                   # UNI command
+        cid = f[38] | (f[39] << 8)
+        if cid == mt_mcu.UNI_CMD_SNIFFER:
+            band_idx = f[52]                      # payload[0]
+            tag = f[56] | (f[57] << 8)            # tlv tag (payload offset 4)
+            if tag == 0:                          # sniffer_enable_tlv
+                return mt_mcu.set_sniffer(bool(f[60]), band_idx)
+            if tag == 1:                          # sniffer_config_tlv (control_ch @ +8)
+                return mt_mcu.config_sniffer(f[64], band_idx)
+        return None
+    cid = f[40]                                   # STD command id
+    if cid == mt_mcu.CE_CMD_SET_RX_FILTER:        # payload @68: mode@4, fif@8, bit_map@12, bit_op@16
+        fif = struct.unpack_from("<I", f, 76)[0]
+        bit_map = struct.unpack_from("<I", f, 80)[0]
+        return mt_mcu.set_rxfilter(fif, f[84], bit_map)
+    if cid == mt_mcu.CE_CMD_SET_BSS_ABORT:
+        return mt_mcu.set_bss_abort()
+    if cid == mt_mcu.CE_CMD_CHIP_CONFIG:          # set_deep_sleep -> "KeepFullPwr %d"
+        idx = f.find(b"KeepFullPwr ")
+        return mt_mcu.set_deep_sleep(idx >= 0 and f[idx + 12:idx + 13] == b"0")
+    return None
+
+
+async def walk_operational(replay):
+    """Continue the CHECK-3 cursor past post_boot_init through the airmon/airodump
+    operational tail: the monitor-entry + channel-hop MCU commands (interleaved in
+    the tool's wire order) and the periodic mt792x_mac_work MIB read cycles
+    (update_survey every tick, update_mib_stats every second tick). Each op is
+    peeked, matched to its real driver builder/sequence, and replayed against the
+    cursor — which asserts the bytes/addresses match. Stops at the first op no
+    handler reproduces (the frontier) or when the stream is exhausted."""
+    while replay.peek() is not None:
+        op = replay.peek()
+        if op["kind"] == "MCU":
+            disp = _decode_operational_mcu(op["frame"])
+            if disp is None:
+                break
+            await replay.send_mcu_command(*disp)
+        elif op["kind"] == "R" and op["addr"] == _SURVEY_FIRST:
+            mt_mac.update_survey(replay)
+        elif op["kind"] == "R" and op["addr"] == _MIB_FIRST:
+            mt_mac.update_mib_stats(replay)
+        else:
+            break
+
+
 def check_post_boot(pkts, dev):
     merged = build_postboot_stream(pkts, dev)
     # Split at FW_START (std MCU, cid 0x02); the post-boot walk begins at the first
@@ -463,13 +524,22 @@ def check_post_boot(pkts, dev):
 
     replay = PostBootReplay(ops)
     asyncio.set_event_loop(asyncio.new_event_loop())
+
+    async def _drive():
+        await mt_init.post_boot_init(replay)        # deterministic init -> add_interface
+        init_end = replay.i
+        await walk_operational(replay)              # monitor entry + hops + mac_work MIB
+        return init_end
+
     try:
-        asyncio.get_event_loop().run_until_complete(mt_init.post_boot_init(replay))
+        init_end = asyncio.get_event_loop().run_until_complete(_drive())
     except PostBootDivergence as e:
         print(f"  [FAIL] DIVERGENCE - {e}")
         print("  (the cursor stops at the first op the driver does not reproduce)")
         return False
 
+    print(f"  init: {init_end} ops (firmware tail -> add_interface); "
+          f"operational: {replay.i - init_end} ops (monitor entry + hops + mac_work MIB)")
     if replay.i < len(ops):
         front = ops[replay.i]
         print(f"  [FRONTIER] reproduced {replay.i} ops; next unported op @{replay.i} "

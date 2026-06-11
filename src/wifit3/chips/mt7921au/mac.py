@@ -101,6 +101,45 @@ def reset_counters(t) -> None:
     set_bits(t, MT_WF_RMAC_MIB_AIRTIME0(0), MT_WF_RMAC_MIB_RXTIME_CLR)
 
 
+def update_survey(t) -> None:
+    """mt792x_update_channel — one mac_work survey tick. mt792x_phy_update_channel
+    reads the channel-busy / tx / rx / obss airtime counters (band 0), then
+    mt76_set clears RXTIME on the RMAC MIB time register. mt792x_phy_get_nf reads
+    no register (returns 0), so this is exactly four reads + one rmw."""
+    t.read_reg32_unified(MT_MIB_SDR9(0))                  # busy_time
+    t.read_reg32_unified(MT_MIB_SDR36(0))                 # tx_time
+    t.read_reg32_unified(MT_MIB_SDR37(0))                 # rx_time
+    t.read_reg32_unified(MT_WF_RMAC_MIB_AIRTIME14(0))     # obss_time
+    set_bits(t, MT_WF_RMAC_MIB_TIME0(0), MT_WF_RMAC_MIB_RXTIME_CLR)
+
+
+def update_mib_stats(t) -> None:
+    """mt792x_mac_update_mib_stats — the per-tick MIB counter accumulation (band 0),
+    in kernel read order. Pure reads; the driver discards the values (survey stats
+    aren't needed for passive monitor capture), but the sequence is exercised by
+    the CHECK 3 gate to prove the MIB register layout is faithful."""
+    t.read_reg32_unified(MT_MIB_SDR3(0))                  # fcs_err
+    t.read_reg32_unified(MT_MIB_MB_BSDR3(0))              # ack_fail
+    t.read_reg32_unified(MT_MIB_MB_BSDR2(0))              # ba_miss
+    t.read_reg32_unified(MT_MIB_MB_BSDR0(0))              # rts
+    t.read_reg32_unified(MT_MIB_MB_BSDR1(0))              # rts_retries
+    t.read_reg32_unified(MT_MIB_SDR12(0))                 # tx_ampdu
+    t.read_reg32_unified(MT_MIB_SDR14(0))                 # tx_mpdu_attempts
+    t.read_reg32_unified(MT_MIB_SDR15(0))                 # tx_mpdu_success
+    t.read_reg32_unified(MT_MIB_SDR32(0))                 # tx_pkt_ebf/ibf
+    t.read_reg32_unified(MT_ETBF_TX_APP_CNT(0))           # tx_bf ibf/ebf ppdu
+    t.read_reg32_unified(MT_ETBF_RX_FB_CNT(0))            # tx_bf rx fb all/he/vht/ht
+    t.read_reg32_unified(MT_MIB_SDR5(0))                  # rx_mpdu
+    t.read_reg32_unified(MT_MIB_SDR22(0))                 # rx_ampdu
+    t.read_reg32_unified(MT_MIB_SDR23(0))                 # rx_ampdu_bytes
+    t.read_reg32_unified(MT_MIB_SDR31(0))                 # rx_ba
+    for i in range(MT792x_MIB_TX_AMSDU_LEN):
+        t.read_reg32_unified(MT_PLE_AMSDU_PACK_MSDU_CNT(i))
+    for i in range(4):
+        t.read_reg32_unified(MT_TX_AGG_CNT(0, i))
+        t.read_reg32_unified(MT_TX_AGG_CNT2(0, i))
+
+
 def mac_init(t) -> None:
     """mt7921_mac_init — the register block only.
 

@@ -310,3 +310,28 @@ def MT_MIB_SDR9(b):       return MT_WF_MIB_BASE(b) + 0x02C
 def MT_MIB_SDR36(b):      return MT_WF_MIB_BASE(b) + 0x054
 def MT_MIB_SDR37(b):      return MT_WF_MIB_BASE(b) + 0x058
 MT_WF_RMAC_MIB_RXTIME_CLR = 1 << 31   # BIT(31)
+
+# --- mt792x_mac_work survey + MIB stats register reads (mt792x_regs.h) ---
+# mt792x_phy_update_channel reads the channel-busy / airtime counters; the rest
+# are the per-MIB counters mt792x_mac_update_mib_stats accumulates. All over the
+# unified bus; addresses grepped verbatim from mt792x_regs.h.
+def MT_WF_RMAC_MIB_AIRTIME14(b): return MT_WF_RMAC_BASE(b) + 0x3B8
+def MT_MIB_SDR3(b):       return MT_WF_MIB_BASE(b) + 0x698
+def MT_MIB_SDR5(b):       return MT_WF_MIB_BASE(b) + 0x780
+def MT_MIB_SDR12(b):      return MT_WF_MIB_BASE(b) + 0x558
+def MT_MIB_SDR14(b):      return MT_WF_MIB_BASE(b) + 0x564
+def MT_MIB_SDR15(b):      return MT_WF_MIB_BASE(b) + 0x568
+def MT_MIB_SDR22(b):      return MT_WF_MIB_BASE(b) + 0x770
+def MT_MIB_SDR23(b):      return MT_WF_MIB_BASE(b) + 0x774
+def MT_MIB_SDR31(b):      return MT_WF_MIB_BASE(b) + 0x55C
+def MT_MIB_SDR32(b):      return MT_WF_MIB_BASE(b) + 0x7A8
+def MT_MIB_MB_BSDR0(b):   return MT_WF_MIB_BASE(b) + 0x688
+def MT_MIB_MB_BSDR1(b):   return MT_WF_MIB_BASE(b) + 0x690
+def MT_MIB_MB_BSDR2(b):   return MT_WF_MIB_BASE(b) + 0x518
+def MT_MIB_MB_BSDR3(b):   return MT_WF_MIB_BASE(b) + 0x520
+def MT_WF_ETBF_BASE(b):   return 0x820fa000 if b else 0x820ea000
+def MT_ETBF_TX_APP_CNT(b): return MT_WF_ETBF_BASE(b) + 0x150
+def MT_ETBF_RX_FB_CNT(b):  return MT_WF_ETBF_BASE(b) + 0x158
+MT_PLE_BASE = 0x820c0000
+def MT_PLE_AMSDU_PACK_MSDU_CNT(n): return MT_PLE_BASE + 0x10E0 + (n << 2)
+MT792x_MIB_TX_AMSDU_LEN = 8     # ARRAY_SIZE(mt76_mib_stats.tx_amsdu)
