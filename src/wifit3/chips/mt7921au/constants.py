@@ -35,17 +35,20 @@ MT_EPCTL_RST_OPT_IN_EP_4_5_6        = 0x00700000   # GENMASK(22, 20)
 FIRMWARE_ROM_PATCH = "WIFI_MT7961_patch_mcu_1_2_hdr.bin"
 FIRMWARE_WM        = "WIFI_RAM_CODE_MT7961_1.bin"
 
-# USB Interface & Endpoints (verified from usb_dumps/captures_mt7921u/capture-3.pcap)
-# The MT7921AU is a composite device. Interface 3 (vendor-specific) is the one
-# the mt76 driver actually uses; interfaces 0-2 are standard-wireless-class.
-# All bulk endpoints below live on Interface 3.
-INTERFACE_NUM = 3
-
+# USB Interface & Endpoints. The vendor-specific (class 0xFF) interface owns all
+# the bulk endpoints below; it is detected at runtime, not hardcoded, because its
+# number differs per unit: the Panda PAU0F is a single-interface device (interface
+# 0); the ALFA AWUS036AXML is a composite device whose wifi function is interface 3.
 EP_OUT_MCU  = 0x08   # MT_EP_OUT_INBAND_CMD: 64+ byte MCU commands
 EP_OUT_FW   = 0x04   # MT_EP_OUT_AC_BE: FW_SCATTER chunks + 802.11 TX data
 EP_OUT_DATA = 0x04   # alias — same physical EP as EP_OUT_FW
-EP_IN_BULK  = 0x84   # MT_EP_IN_PKT_RX: RX 802.11 frames
-EP_IN_MCU   = 0x85   # MT_EP_IN_CMD_RESP: MCU command responses
+EP_IN_BULK  = 0x84   # MT_EP_IN_PKT_RX: RX 802.11 frames (+ MCU resp once RXEVT_EP4_EN set)
+EP_IN_MCU   = 0x85   # MT_EP_IN_CMD_RESP: MCU command responses (RXEVT_EP4_EN cleared)
+
+# IN URBs posted per endpoint during firmware download. The kernel
+# (mt76u_alloc_queues) keeps a deep pool before dma_init enables RX_DMA; with too
+# few posted, RX_DMA backpressure stalls the firmware-download bulk OUT.
+MCU_DRAIN_POOL = 16
 
 # MCU Command IDs (mt76_connac_mcu.h enum)
 MCU_CMD_TARGET_ADDRESS_LEN_REQ = 0x01   # per RAM region: addr/len/mode
@@ -140,10 +143,14 @@ MT_USB_SCRATCH_ADDR    = 0x00000410
 MT_UDMA_TX_QSEL        = 0x74000008
 MT_FW_DL_EN            = 0x08       # BIT(3)
 
-# MT_UWFDMA0_GLO_CFG — the DMA engine's master enable register.
-# Without TX_DMA_EN, the device's TX FIFO fills with one chunk's worth of data
-# (4096 bytes = 4 max-packet-size USB packets) and then NAKs subsequent bulk
-# OUTs forever — host gets timeout/short-write.
+# MT_UWFDMA0_GLO_CFG — WFDMA engine master enable. mt792xu_wfdma_init clears
+# OMIT_RX_INFO, then sets TX_DMA_EN | RX_DMA_EN | FW_DWLD_BYPASS_DMASHDL
+# (+ OMIT_TX_INFO | OMIT_RX_INFO_PFET2). RX_DMA_EN requires the IN URB pool to be
+# posted first (kernel order: alloc_queues before dma_init) — otherwise the RX
+# path backs up and stalls the firmware-download bulk OUT. The USB-3 4-packet
+# FW_SCATTER stall is a separate SuperSpeed link-flow-control issue (the device
+# NAKs at 4096 B and never sends ERDY to a userland sync transfer), unrelated to
+# these bits — it does not reproduce on USB-2 HighSpeed.
 MT_UWFDMA0_GLO_CFG                       = 0x7c024208
 MT_WFDMA0_GLO_CFG_TX_DMA_EN              = 0x00000001   # BIT(0)
 MT_WFDMA0_GLO_CFG_RX_DMA_EN              = 0x00000004   # BIT(2)
@@ -153,9 +160,19 @@ MT_WFDMA0_GLO_CFG_OMIT_RX_INFO_PFET2     = 0x00200000   # BIT(21)
 MT_WFDMA0_GLO_CFG_OMIT_RX_INFO           = 0x08000000   # BIT(27)
 MT_WFDMA0_GLO_CFG_OMIT_TX_INFO           = 0x10000000   # BIT(28)
 
-# MT_WFDMA_HOST_CONFIG — routes USB RX events to EP 4.
+# MT_WFDMA_HOST_CONFIG — routes USB RX events (incl. MCU responses + the
+# firmware-up signal) to EP 0x84 when RXEVT_EP4_EN is set (mt792xu_dma_rx_evt_ep4).
 MT_WFDMA_HOST_CONFIG                     = 0x7c027030
 MT_WFDMA_HOST_CONFIG_USB_RXEVT_EP4_EN    = 0x00000040   # BIT(6)
+
+# mt792xu_dma_prefetch — TX-ring extended control (prefetch depth + base ptr).
+# MT_UWFDMA0(ofs) = 0x7c024000 + ofs; TX_RING_EXT_CTRL(n) = MT_UWFDMA0(0x600 + (n<<2)).
+def MT_UWFDMA0_TX_RING_EXT_CTRL(n: int) -> int: return 0x7c024600 + (n << 2)
+MT_WPDMA0_MAX_CNT_MASK   = 0x000000FF   # GENMASK(7, 0)
+MT_WPDMA0_BASE_PTR_MASK  = 0xFFFF0000   # GENMASK(31, 16)
+# (ring_idx, max_cnt, base_ptr) per DMA_PREFETCH_CONF.
+MT_DMA_PREFETCH_CONF = [(0, 4, 0x080), (1, 4, 0x0c0), (2, 4, 0x100), (3, 4, 0x140),
+                        (4, 4, 0x180), (16, 4, 0x280), (17, 4, 0x2c0)]
 
 # MT_UDMA_WLCFG_0/_1 — DMA TX/RX enables and timing.
 # Linux's mt792xu_dma_init writes these before firmware download.

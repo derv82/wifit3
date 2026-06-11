@@ -30,6 +30,21 @@ class MT7921AUFirmwareLoader:
         self.transport = transport
         self.assets_dir = assets_dir
 
+    def _claim_vendor_interface(self) -> "int | None":
+        """Find + claim the vendor-specific (class 0xFF) interface that owns the
+        bulk endpoints, and clear-halt them. Returns its number, or None."""
+        dev = self.transport.dev
+        try:
+            for intf in dev.get_active_configuration():
+                if intf.bInterfaceClass == 0xFF:
+                    usb.util.claim_interface(dev, intf.bInterfaceNumber)
+                    for ep in (EP_OUT_FW, EP_OUT_MCU, EP_IN_BULK, EP_IN_MCU):
+                        self.transport.clear_halt(ep)
+                    return intf.bInterfaceNumber
+        except Exception as e:
+            logger.debug(f"vendor-interface claim: {e}")
+        return None
+
     # ------------------------------------------------------------------
     # Top-level orchestration
     # ------------------------------------------------------------------
@@ -37,20 +52,14 @@ class MT7921AUFirmwareLoader:
     async def load_firmware(self) -> bool:
         logger.info("Starting MT7921AU firmware upload sequence...")
 
-        # Claim Interface 3 — the vendor-specific iface that owns 0x84/0x85/0x08/0x04.
-        # NOTE: do NOT call set_configuration() on Windows / WinUSB. It resets
-        # the host-side data toggles to zero but does NOT send a SET_CONFIG over
-        # the wire, so the device-side toggles stay in their previous state.
-        # The host/device toggles then desync after ~4 packets and the bulk OUT
-        # pipe silently NAKs everything afterward.
-        logger.info(f"Claiming interface {INTERFACE_NUM}...")
-        try:
-            usb.util.claim_interface(self.transport.dev, INTERFACE_NUM)
-            # Force toggle alignment on the operational endpoints.
-            for ep in (EP_OUT_FW, EP_OUT_MCU, EP_IN_BULK, EP_IN_MCU):
-                self.transport.clear_halt(ep)
-        except Exception as e:
-            logger.debug(f"Interface prep: {e}")
+        # Claim the vendor-specific (class 0xFF) interface that owns the bulk EPs.
+        # Its number differs per unit (PAU0F=0, AWUS036AXML=3), so detect it.
+        # NOTE: do NOT call set_configuration() on Windows / WinUSB. It resets the
+        # host-side data toggles to zero but does NOT send a SET_CONFIG over the
+        # wire, so the device-side toggles stay put; they then desync after ~4
+        # packets and the bulk OUT pipe silently NAKs everything afterward.
+        iface = self._claim_vendor_interface()
+        logger.info(f"Claimed vendor-specific interface {iface}")
         await asyncio.sleep(0.2)
 
         chip_id = self.transport.read_reg32(MT_CHIP_ID_ADDR)
@@ -76,7 +85,11 @@ class MT7921AUFirmwareLoader:
             return False
         logger.info("MCU powered on.")
 
-        # WLCFG init: enables MT_TICK_1US_EN.
+        # Post the deep IN URB pool BEFORE dma_init enables RX_DMA — mirrors the
+        # kernel order (mt76u_alloc_queues before mt792xu_dma_init). Otherwise
+        # RX_DMA backpressure stalls the firmware-download bulk OUT.
+        await self.transport.start_mcu_drainer()
+
         self._dma_init()
 
         self.transport.write_reg32_unified(MT_UDMA_TX_QSEL, MT_FW_DL_EN)
@@ -84,10 +97,6 @@ class MT7921AUFirmwareLoader:
         if (val & MT_FW_DL_EN) != MT_FW_DL_EN:
             logger.error(f"MT_UDMA_TX_QSEL write rejected (read back 0x{val:x})")
             return False
-
-        # Background EP 0x85 reader so the device always has a listener for
-        # command-response/ack traffic.
-        await self.transport.start_mcu_drainer()
 
         try:
             if not await self._load_patch():
@@ -174,37 +183,57 @@ class MT7921AUFirmwareLoader:
         logger.debug(f"rmw 0x{addr:08x}: 0x{val:08x} → 0x{new:08x}")
 
     def _dma_init(self):
-        """
-        Pre-patch DMA init. Mirrors mt792xu_wfdma_init + WLCFG portion of
-        mt792xu_dma_init, in the same order as capture-3 pcap:
+        """Port of mt792xu_dma_init (mt792x_usb.c) — pre-firmware WFDMA bring-up,
+        in kernel order: dma_prefetch, GLO_CFG enables, DMASHDL, DUMMY_CR
+        (mt792xu_wfdma_init), then WLCFG, then rx_evt_ep4.
 
-        1. DMASHDL scheduler block (pcap frames 14102-14136). Group quotas,
-           queue maps, scheduler sets. Without this, the WM firmware boots
-           into a state where its TX scheduler has no work-dispatch config
-           and the chip never asserts FW_N9_RDY.
-        2. MT_WFDMA_DUMMY_CR NEED_REINIT (pcap frames 14138/14140).
-        3. WLCFG_0/_1 setup (pcap frames 14142-14156).
+        The IN URB pool must already be posted before this runs (see
+        load_firmware): GLO_CFG sets RX_DMA_EN, and with no RX URBs queued the RX
+        path backs up and stalls the firmware-download bulk OUT.
 
-        Skipped:
-        - mt792xu_dma_prefetch (TX_RING_EXT_CTRL): runtime QoS, not boot-critical.
-        - mt792xu_dma_rx_evt_ep4: setting USB_RXEVT_EP4_EN moves MCU responses
-          from EP 0x85 to EP 0x84 (empirically verified 2026-05-17). Our send/
-          response pairing assumes EP 0x85; leaving the bit cleared keeps it
-          that way.
-        - mt792xu_epctl_rst_opt: pcap shows the bulk-EP reset bits are already
-          clear on cold boot, and UHW bus is inaccessible from WinUSB anyway
-          (Errno 5 on bmRequestType 0x5E/0xDE).
+        epctl_rst_opt is the only kernel step omitted — it clears endpoint-reset
+        bits over the UHW bus, inaccessible from WinUSB (Errno 5 on bmRequestType
+        0x5E/0xDE), and its bits are already clear on a cold device.
         """
+        # mt792xu_dma_prefetch — TX-ring prefetch depth + base pointer.
+        for idx, cnt, base in MT_DMA_PREFETCH_CONF:
+            self._rmw(MT_UWFDMA0_TX_RING_EXT_CTRL(idx),
+                      MT_WPDMA0_MAX_CNT_MASK | MT_WPDMA0_BASE_PTR_MASK,
+                      (cnt & MT_WPDMA0_MAX_CNT_MASK)
+                      | ((base << 16) & MT_WPDMA0_BASE_PTR_MASK))
+
+        # MT_UWFDMA0_GLO_CFG — enable the WFDMA engines for firmware download.
+        self._rmw(MT_UWFDMA0_GLO_CFG, MT_WFDMA0_GLO_CFG_OMIT_RX_INFO, 0)
+        self._rmw(MT_UWFDMA0_GLO_CFG, 0,
+                  MT_WFDMA0_GLO_CFG_OMIT_TX_INFO | MT_WFDMA0_GLO_CFG_OMIT_RX_INFO_PFET2
+                  | MT_WFDMA0_GLO_CFG_FW_DWLD_BYPASS_DMASHDL
+                  | MT_WFDMA0_GLO_CFG_TX_DMA_EN | MT_WFDMA0_GLO_CFG_RX_DMA_EN)
+
+        # DMA scheduler group quotas / queue maps.
         self._dmashdl_init()
-
-        # MT_WFDMA_DUMMY_CR |= NEED_REINIT
         self._rmw(MT_WFDMA_DUMMY_CR, 0, MT_WFDMA_NEED_REINIT)
 
+        # WLCFG_0/_1 — DMA TX/RX enables + 1us tick.
         self._rmw(MT_UDMA_WLCFG_0, MT_WL_RX_FLUSH, 0)
         self._rmw(MT_UDMA_WLCFG_0, 0,
                   MT_WL_RX_EN | MT_WL_TX_EN | MT_WL_RX_MPSZ_PAD0 | MT_TICK_1US_EN)
         self._rmw(MT_UDMA_WLCFG_0, MT_WL_RX_AGG_TO | MT_WL_RX_AGG_LMT, 0)
         self._rmw(MT_UDMA_WLCFG_1, MT_WL_RX_AGG_PKT_LMT, 0)
+
+        self._rx_evt_ep4()
+
+    def _rx_evt_ep4(self):
+        """mt792xu_dma_rx_evt_ep4 — route RX events (the firmware-up signal and
+        MCU command responses) to EP 0x84, re-toggling RX DMA across the change.
+        Responses then arrive on EP 0x84; the drainer feeds the queue from both
+        IN endpoints to match."""
+        for _ in range(100):
+            if not (self.transport.read_reg32_unified(MT_UWFDMA0_GLO_CFG)
+                    & MT_WFDMA0_GLO_CFG_RX_DMA_BUSY):
+                break
+        self._rmw(MT_UWFDMA0_GLO_CFG, MT_WFDMA0_GLO_CFG_RX_DMA_EN, 0)
+        self._rmw(MT_WFDMA_HOST_CONFIG, 0, MT_WFDMA_HOST_CONFIG_USB_RXEVT_EP4_EN)
+        self._rmw(MT_UWFDMA0_GLO_CFG, 0, MT_WFDMA0_GLO_CFG_RX_DMA_EN)
 
     def _dmashdl_init(self):
         """DMA scheduler initialization. Matches mt792xu_wfdma_init's DMASHDL
@@ -365,9 +394,10 @@ class MT7921AUFirmwareLoader:
         trailer_off = len(data) - FW_TRAILER_SIZE
         trailer = data[trailer_off:]
         # chip_id @ 0, eco_code @ 1, n_region @ 2, format_ver @ 3, format_flag @ 4
+        # mt76_connac2_fw_trailer: chip_id@0 eco@1 n_region@2 ... fw_ver[10]@7 build_date[15]@17
         n_region = trailer[2]
-        fw_ver = trailer[8:18].rstrip(b"\x00").decode("ascii", errors="replace")
-        build_date = trailer[18:33].rstrip(b"\x00").decode("ascii", errors="replace")
+        fw_ver = trailer[7:17].rstrip(b"\x00").decode("ascii", errors="replace")
+        build_date = trailer[17:32].rstrip(b"\x00").decode("ascii", errors="replace")
         logger.info(f"WM: chip_id=0x{trailer[0]:02x} n_region={n_region} ver={fw_ver!r} build={build_date!r}")
         if n_region == 0 or n_region > 16:
             logger.error(f"Implausible WM n_region={n_region}")

@@ -2,6 +2,7 @@ import usb.core
 import logging
 import asyncio
 import struct
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 # Star-imports the chip's register/PHY constants; the names resolve at runtime
@@ -25,8 +26,8 @@ class MT7921AUTransport:
         self.dev = dev
         self._loop = asyncio.get_event_loop()
         self._rx_task: Optional[asyncio.Task] = None
-        self._mcu_rx_task: Optional[asyncio.Task] = None
-        self._pkt_rx_task: Optional[asyncio.Task] = None
+        self._reader_tasks: list[asyncio.Task] = []
+        self._drain_executor: Optional[ThreadPoolExecutor] = None
         self._mcu_rx_queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._mcu_drainer_running = False
         self._callback = None
@@ -252,30 +253,37 @@ class MT7921AUTransport:
 
         return bytes(frame), seq
 
-    async def start_mcu_drainer(self):
+    async def start_mcu_drainer(self, pool: int = MCU_DRAIN_POOL):
         """
-        Background readers on EP 0x85 (MCU responses) and EP 0x84 (RX packets).
-        Linux keeps 128 URBs queued on EACH of these. The device may rely on
-        URB pressure to maintain USB state machine — without it, bulk OUT
-        stalls after the first few packets.
+        Post a deep pool of IN URBs on EP 0x85 AND EP 0x84, all feeding
+        _mcu_rx_queue. Linux keeps ~128 URBs queued per IN endpoint
+        (mt76u_alloc_queues) before dma_init enables RX_DMA; a shallow pool lets
+        RX_DMA backpressure stall the firmware-download bulk OUT. Both endpoints
+        feed the queue because mt792xu_dma_rx_evt_ep4 routes MCU responses to EP
+        0x84 (RXEVT_EP4_EN). Reads run on a dedicated executor so the pool can't
+        starve the loop's default thread pool.
         """
         if self._mcu_drainer_running:
             return
         self._mcu_drainer_running = True
-        self._mcu_rx_task = asyncio.create_task(self._mcu_drain_loop())
-        self._pkt_rx_task = asyncio.create_task(self._pkt_drain_loop())
+        self._drain_executor = ThreadPoolExecutor(max_workers=2 * pool + 4)
+        for _ in range(pool):
+            self._reader_tasks.append(asyncio.create_task(self._in_reader(EP_IN_MCU)))
+            self._reader_tasks.append(asyncio.create_task(self._in_reader(EP_IN_BULK)))
 
     async def stop_mcu_drainer(self):
         self._mcu_drainer_running = False
-        for task in (self._mcu_rx_task, getattr(self, "_pkt_rx_task", None)):
-            if task:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-        self._mcu_rx_task = None
-        self._pkt_rx_task = None
+        for task in self._reader_tasks:
+            task.cancel()
+        for task in self._reader_tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._reader_tasks = []
+        if self._drain_executor:
+            self._drain_executor.shutdown(wait=False)
+            self._drain_executor = None
         # Drain any leftover queued responses.
         while not self._mcu_rx_queue.empty():
             try:
@@ -283,40 +291,23 @@ class MT7921AUTransport:
             except asyncio.QueueEmpty:
                 break
 
-    async def _pkt_drain_loop(self):
-        """Continuously read EP 0x84 (PKT RX) so URBs are always pending there."""
+    async def _in_reader(self, ep: int):
+        """One posted IN URB on `ep`, re-armed after each completion; data goes to
+        _mcu_rx_queue. Many of these run concurrently to keep the pool deep."""
         while self._mcu_drainer_running:
             try:
                 data = await self._loop.run_in_executor(
-                    None, lambda: self.dev.read(EP_IN_BULK, 4096, timeout=100)
+                    self._drain_executor, lambda: self.dev.read(ep, 2048, timeout=100)
                 )
                 if data:
-                    logger.debug(f"EP 0x84 drain RX len={len(data)} bytes[:32]={bytes(data[:32]).hex()}")
+                    await self._mcu_rx_queue.put(bytes(data))
             except usb.core.USBTimeoutError:
                 continue
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.debug(f"EP 0x84 drainer error: {e}")
-                await asyncio.sleep(0.01)
-
-    async def _mcu_drain_loop(self):
-        while self._mcu_drainer_running:
-            try:
-                data = await self._loop.run_in_executor(
-                    None, lambda: self.dev.read(EP_IN_MCU, 2048, timeout=100)
-                )
-                if data:
-                    payload = bytes(data)
-                    logger.debug(f"MCU drain RX len={len(payload)} bytes[:32]={payload[:32].hex()}")
-                    await self._mcu_rx_queue.put(payload)
-            except usb.core.USBTimeoutError:
-                continue
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.debug(f"MCU drainer error: {e}")
-                await asyncio.sleep(0.01)
+                logger.debug(f"IN drainer 0x{ep:02x} error: {e}")
+                await asyncio.sleep(0.005)
 
     async def send_mcu_command(self, cid: int, payload: bytes,
                                set_query: int = MCU_Q_NA, ext_cid: int = 0,
