@@ -272,3 +272,72 @@ def uni_bss_info(active=True):
         0, 0,                           # phymode_ext, link_idx
     )
     return MCU_UNI_CMD(UNI_CMD_BSS_INFO_UPDATE), hdr + basic
+
+
+# --- monitor-mode commands ---------------------------------------------------
+
+# mt7921_configure_filter flags + mt7921_mcu_set_beacon_filter bit ops.
+MT7921_FILTER_ENABLE = 1 << 31
+MT7921_FILTER_FCSFAIL = 1 << 2
+MT7921_FILTER_CONTROL = 1 << 5
+MT7921_FILTER_OTHER_BSS = 1 << 6
+MT_WF_RFCR_DROP_OTHER_BEACON = 1 << 11   # mt792x_regs.h
+MT7921_FIF_BIT_SET = 1 << 0
+MT7921_FIF_BIT_CLR = 1 << 1
+# config_sniffer ch_band: 2.4 GHz -> 1, 5 GHz -> 2, 6 GHz -> 3.
+CH_BAND_2GHZ = 1
+CH_BAND_5GHZ = 2
+
+
+def ch_band_for(channel):
+    """The firmware ch_band code for a 20 MHz channel number."""
+    return CH_BAND_2GHZ if channel <= 14 else CH_BAND_5GHZ
+
+
+def set_sniffer(enable, band_idx=0):
+    """mt7921_mcu_set_sniffer — UNI SNIFFER enable TLV (tag 0).
+    hdr{band_idx, pad[3]} + sniffer_enable_tlv{tag=0, len=8, enable, pad[3]}."""
+    hdr = struct.pack("<B3x", band_idx)
+    tlv = struct.pack("<HHB3x", 0, 8, 1 if enable else 0)
+    return MCU_UNI_CMD(UNI_CMD_SNIFFER), hdr + tlv
+
+
+def config_sniffer(channel, band_idx=0):
+    """mt7921_mcu_config_sniffer — UNI SNIFFER config TLV (tag 1), 20 MHz primary.
+    hdr{band_idx, pad[3]} + config_tlv{tag=1, len=16, aid, ch_band, bw=0,
+    control_ch, sco=0, center_ch, center_ch2=0, drop_err=1, pad[3]}. For a 20 MHz
+    tune control_ch == center_ch, so sco stays 0."""
+    hdr = struct.pack("<B3x", band_idx)
+    tlv = struct.pack("<HHHBBBBBBB3x",
+                      1, 16, 0,                 # tag, len, aid
+                      ch_band_for(channel), 0,  # ch_band, bw
+                      channel, 0, channel,      # control_ch, sco, center_ch
+                      0, 1)                     # center_ch2, drop_err
+    return MCU_UNI_CMD(UNI_CMD_SNIFFER), hdr + tlv
+
+
+def set_rxfilter(fif, bit_op=0, bit_map=0):
+    """mt7921_mcu_set_rxfilter — MCU_CE_CMD(SET_RX_FILTER), no reply.
+    { rsv[4]; mode = fif?1:2; rsv2[3]; __le32 fif; __le32 bit_map; bit_op; pad[51]; }."""
+    mode = 1 if fif else 2
+    return MCU_CE_CMD(CE_CMD_SET_RX_FILTER), struct.pack(
+        "<4xB3xIIB51x", mode, fif, bit_map, bit_op)
+
+
+def configure_filter(fcsfail=False, control=True, other_bss=True):
+    """mt7921_configure_filter -> set_rxfilter. Monitor mode passes the OTHER_BSS
+    / CONTROL filter flags; the wire shows FCSFAIL off."""
+    fif = MT7921_FILTER_ENABLE
+    if fcsfail:
+        fif |= MT7921_FILTER_FCSFAIL
+    if control:
+        fif |= MT7921_FILTER_CONTROL
+    if other_bss:
+        fif |= MT7921_FILTER_OTHER_BSS
+    return set_rxfilter(fif, 0, 0)
+
+
+def set_bss_abort():
+    """mt7921_mcu_set_bss_pm(enable=false) — MCU_CE_CMD(SET_BSS_ABORT) req_hdr
+    { bss_idx; pad[3] }."""
+    return MCU_CE_CMD(CE_CMD_SET_BSS_ABORT), struct.pack("<B3x", 0)
