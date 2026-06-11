@@ -39,16 +39,6 @@ before/after. Deliberately left unpatched until then. The RT3070 clean-room port
 `chips/rt2800usb/RT2800USB.md` § Potential Known Gaps; `chips/rt3070/RT3070.md`. Greppable:
 `EFUSE_CTRL_ADDRESS_IN`, `read_eeprom_efuse`.
 
-## Focus-entry channel tune sometimes doesn't take (0 beacons until re-enter)
-
-Entering Focus on an AP occasionally shows 0 beacons/s; exiting to Scanner and
-re-entering Focus on the same target then works (8–9/s). Confirmed cross-family —
-RT3572 (Ralink) and MT7610U (MediaTek) — so the bug is in the **shared
-Focus→stop-hop→`set_channel` path** (`wlan/interface.py` / `ui/screens/focus.py`),
-not a driver. Likely a race/ordering issue: the channel set on Focus entry is
-lost or overridden by the channel-hopper teardown, so the first tune doesn't
-stick. Repro: Focus a known AP, watch for 0 beacons, then Focus→Scanner→Focus.
-
 ## WPS PBC auto-invade can monopolize the radio on timeout (Focus)
 
 PBC auto-invade is ON by default and works well, but in Focus a PBC attempt that
