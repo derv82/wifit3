@@ -92,6 +92,9 @@ class MT7921AUFirmwareLoader:
 
         self._dma_init()
 
+        # MT_SWDEF_MODE = NORMAL before firmware download (mt7921/usb.c:118).
+        self.transport.write_reg32_unified(MT_SWDEF_MODE, MT_SWDEF_NORMAL_MODE)
+
         self.transport.write_reg32_unified(MT_UDMA_TX_QSEL, MT_FW_DL_EN)
         val = self.transport.read_reg32_unified(MT_UDMA_TX_QSEL)
         if (val & MT_FW_DL_EN) != MT_FW_DL_EN:

@@ -183,6 +183,12 @@ MT_DMA_PREFETCH_CONF = [(0, 4, 0x080), (1, 4, 0x0c0), (2, 4, 0x100), (3, 4, 0x14
 MT_SSUSB_EPCTL_CSR_EP_RST_OPT = 0x74011890
 MT_EPCTL_EP_RST_OPT_MASK      = (0x3F << 4) | (0x7 << 20)   # GENMASK(9,4) | GENMASK(22,20)
 
+# MT_SWDEF_MODE = MT_SWDEF(0x3c) = 0x41f200 + 0x3c. The kernel writes NORMAL_MODE (0)
+# after dma_init, before firmware download (mt7921/usb.c:118, init.c:187) — putting the
+# chip in normal (non-debug) mode for boot. Reachable over the unified bus (WinUSB-OK).
+MT_SWDEF_MODE        = 0x0041f23c
+MT_SWDEF_NORMAL_MODE = 0
+
 # MT_UDMA_WLCFG_0/_1 — DMA TX/RX enables and timing.
 # Linux's mt792xu_dma_init writes these before firmware download.
 MT_UDMA_WLCFG_1        = 0x7400000c
