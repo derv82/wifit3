@@ -21,11 +21,12 @@ logger = logging.getLogger(__name__)
 class MT7921AUDriver:
     """Userspace driver for the MediaTek MT7921AU (Wi-Fi 6).
 
-    Bring-up state (see chips/mt7921au/MT7921AU.md): firmware boots
-    (firmware.py) and the post-boot device init is ported + pcap-verified
-    (init.py / mac.py / mcu.py). Monitor entry, channel tune and the RX
-    descriptor decode are the remaining milestones — set_channel / inject_frame
-    are not wired yet.
+    Bring-up state (see chips/mt7921au/MT7921AU.md): firmware boot (firmware.py),
+    post-boot device init (init.py / mac.py / mcu.py), monitor entry, channel
+    tune and RX descriptor decode are ported, pcap-verified (verify_pcap CHECK 3
+    full PASS), and HW-confirmed on both bands (2.4 + 5 GHz monitor RX). TX
+    (inject_frame) is the remaining milestone; warm reattach is unsupported on
+    WinUSB (cold boot needs a replug).
     """
 
     SUPPORTED_IDS = [

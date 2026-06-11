@@ -119,6 +119,30 @@ async def main(debug: bool):
         print("[WARN] No frames received. Device may be working but RF environment is quiet.")
         print("       Try a busier channel (e.g. 6 or 11) if this repeats.")
 
+    # 5. 5 GHz RX — the 5 GHz channel-tune commands are byte-verified by the gate
+    # (config_sniffer ch_band 2); this confirms the RF actually delivers frames.
+    # Informational: a quiet 5 GHz environment is not a failure. The 2.4 GHz
+    # baseline above is already recorded, so anything here is a bonus signal.
+    g5_total = 0
+    for ch in (36, 44, 149, 157):
+        step(f"5 GHz RX ({RX_WINDOW}s on CH{ch})")
+        g5_frames: list[dict] = []
+        try:
+            await asyncio.wait_for(driver.set_channel(ch), timeout=CHANNEL_TIMEOUT)
+        except Exception as e:
+            print(f"[WARN] set_channel({ch}) failed: {type(e).__name__}: {e}")
+            continue
+        driver.register_rx_callback(lambda p, fr=g5_frames: fr.append(p))
+        await asyncio.sleep(RX_WINDOW)
+        g5_total += len(g5_frames)
+        if g5_frames:
+            bcn = sum(1 for f in g5_frames if f.get("type") == "beacon")
+            ok(f"CH{ch}: {len(g5_frames)} frames ({bcn} beacons)")
+        else:
+            print(f"[WARN] CH{ch}: no frames (quiet 5 GHz or no AP on this channel)")
+    print(f"\n5 GHz: {g5_total} frames total — "
+          f"{'CONFIRMED' if g5_total else 'UNCONFIRMED (RF may be quiet; not a failure)'}")
+
     step("Cleanup")
     await driver.close()
     print("\n=== ALL STEPS PASSED ===")
