@@ -83,13 +83,21 @@ class MT7921AUFirmwareLoader:
             return False
         logger.info(f"MT7921 detected: chip_id=0x{chip_id:x}")
 
-        # Warm-boot short-circuit: if firmware is already running, skip the upload
-        # and reattach. (Control reads still work here, since the chip-id read above
-        # succeeded.)
+        # If firmware is already running from a previous session, a fresh USB
+        # handle can read control registers (the chip-id read above worked) but
+        # the bulk OUT (EP 0x08) DMA path is NOT established — the cold path sets
+        # it up via MCU power-on + dma_init, which can't be safely redone on a
+        # live chip without a WFSYS reset (a UHW-bus op, unverified on WinUSB).
+        # So warm reattach is not supported in userland; ask for a cold boot
+        # rather than limp through a post-boot init whose every command fails.
         misc = self.transport.read_reg32_unified(MT_CONN_ON_MISC)
         if (misc & MT_TOP_MISC2_FW_N9_RDY) == MT_TOP_MISC2_FW_N9_RDY:
-            logger.info(f"Firmware already running (MT_CONN_ON_MISC=0x{misc:x}). Skipping upload.")
-            return True
+            logger.error(
+                f"Firmware already running (MT_CONN_ON_MISC=0x{misc:x}); the bulk "
+                "command pipe can't be reattached in userland. Please PHYSICALLY "
+                "REPLUG the card for a cold boot."
+            )
+            return False
 
         logger.info("Sending MCU power-on...")
         self.transport.send_vendor_request(
