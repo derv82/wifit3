@@ -160,14 +160,10 @@ class MT7921AUFirmwareLoader:
         finally:
             await self.transport.stop_mcu_drainer()
 
-        # Firmware is running — clear the FW_DL_EN flag (best-effort: EP0 may still
-        # be settling immediately after boot).
-        try:
-            self.transport.write_reg32_unified(MT_UDMA_TX_QSEL, 0)
-        except Exception as e:
-            logger.warning(f"clearing FW_DL_EN failed (firmware already up): {e}")
-
-        logger.info("MT7921AU firmware ready.")
+        # FW_DL_EN stays set here. The kernel clears it in mt7921u_mcu_init only
+        # AFTER mt7921_run_firmware's tail (get_nic_capability + fw_log_2_host),
+        # so the post-boot bring-up (init.post_boot_init) clears it in wire order.
+        logger.info("MT7921AU firmware ready (FW_DL_EN still set for run_firmware tail).")
         return True
 
     def _log_boot_diagnostics(self):

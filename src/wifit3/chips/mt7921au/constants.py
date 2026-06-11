@@ -230,3 +230,61 @@ MT_WFDMA_NEED_REINIT            = 0x00000002   # BIT(1)
 MT_CONN_ON_MISC           = 0x7c0600f0
 MT_TOP_MISC2_FW_PWR_ON    = 0x1     # BIT(0): MCU power-on done
 MT_TOP_MISC2_FW_N9_RDY    = 0x3     # GENMASK(1,0): firmware fully ready
+
+# ===========================================================================
+# Post-boot device init. All reachable over the unified bus (0x5F/0xDF) like
+# dma_init — verified from the capture. Addresses/masks grepped verbatim from
+# data_dumps/mt76-source-v6.18/{mt7921/regs.h, mt792x_regs.h}.
+# ===========================================================================
+
+# EFUSE buffer mode (mt76_connac_mcu.h EE_MODE_* / EE_FORMAT_*).
+EE_MODE_EFUSE   = 0
+EE_FORMAT_WHOLE = 1
+
+# --- mt7921_mac_init: MDP de-agg + rx-hdr-trans (mt7921/regs.h) ---
+MT_MDP_BASE = 0x820cd000
+def MT_MDP(ofs): return MT_MDP_BASE + ofs
+MT_MDP_DCR0 = MT_MDP(0x000)
+MT_MDP_DCR0_DAMSDU_EN       = 1 << 15   # BIT(15)
+MT_MDP_DCR0_RX_HDR_TRANS_EN = 1 << 19   # BIT(19)
+MT_MDP_DCR1 = MT_MDP(0x004)
+MT_MDP_DCR1_MAX_RX_LEN = 0x0000FFF8     # GENMASK(15, 3)
+
+# --- mt7921_mac_wtbl_update: per-WCID admission-count clear (mt7921/regs.h) ---
+MT_WTBLON_TOP_BASE = 0x820d4000
+def MT_WTBLON_TOP(ofs): return MT_WTBLON_TOP_BASE + ofs
+MT_WTBL_UPDATE = MT_WTBLON_TOP(0x230)
+MT_WTBL_UPDATE_WLAN_IDX        = 0x000003FF   # GENMASK(9, 0)
+MT_WTBL_UPDATE_ADM_COUNT_CLEAR = 1 << 12      # BIT(12)
+MT_WTBL_UPDATE_BUSY            = 1 << 31       # BIT(31)
+MT792x_WTBL_SIZE = 20
+
+# --- mt792x_mac_init_band: per-band MAC/MIB/DMA setup (mt792x_regs.h) ---
+def MT_WF_TMAC_BASE(b): return 0x820f4000 if b else 0x820e4000
+def MT_TMAC_CTCR0(b): return MT_WF_TMAC_BASE(b) + 0x0F4
+MT_TMAC_CTCR0_INS_DDLMT_REFTIME      = 0x0000003F   # GENMASK(5, 0)
+MT_TMAC_CTCR0_INS_DDLMT_EN           = 1 << 17      # BIT(17)
+MT_TMAC_CTCR0_INS_DDLMT_VHT_SMPDU_EN = 1 << 18      # BIT(18)
+
+def MT_WF_RMAC_BASE(b): return 0x820f5000 if b else 0x820e5000
+def MT_WF_RMAC_MIB_TIME0(b): return MT_WF_RMAC_BASE(b) + 0x3C4
+def MT_WF_RMAC_MIB_AIRTIME0(b): return MT_WF_RMAC_BASE(b) + 0x380
+MT_WF_RMAC_MIB_RXTIME_EN = 1 << 30    # BIT(30)
+
+def MT_WF_MIB_BASE(b): return 0x820fd000 if b else 0x820ed000
+def MT_MIB_SCR1(b): return MT_WF_MIB_BASE(b) + 0x004
+MT_MIB_TXDUR_EN = 1 << 8   # BIT(8)
+MT_MIB_RXDUR_EN = 1 << 9   # BIT(9)
+
+def MT_WF_DMA_BASE(b): return 0x820f7000 if b else 0x820e7000
+def MT_DMA_DCR0(b): return MT_WF_DMA_BASE(b) + 0x000
+MT_DMA_DCR0_MAX_RX_LEN = 0x0000FFF8   # GENMASK(15, 3)
+MT_DMA_DCR0_RXD_G5_EN  = 1 << 23      # BIT(23)
+
+def MT_WTBLOFF_TOP_BASE(b): return 0x820f9000 if b else 0x820e9000
+def MT_WTBLOFF_TOP_RSCR(b): return MT_WTBLOFF_TOP_BASE(b) + 0x008
+MT_WTBLOFF_TOP_RSCR_RCPI_MODE  = 0xC0000000   # GENMASK(31, 30)
+MT_WTBLOFF_TOP_RSCR_RCPI_PARAM = 0x03000000   # GENMASK(25, 24)
+
+# mt76_connac_mcu_set_rts_thresh value used by mt7921_mac_init.
+MT_RTS_THRESH_DEFAULT = 0x92B

@@ -5,6 +5,7 @@ import struct
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
+from . import mcu
 # Star-imports the chip's register/PHY constants; the names resolve at runtime
 # but ruff can't see them statically, so suppress the import-* lints file-wide.
 # ruff: noqa: F403, F405
@@ -202,56 +203,12 @@ class MT7921AUTransport:
             self._mcu_seq = 1
         return self._mcu_seq
 
-    def _build_mcu_frame(self, cid: int, payload: bytes,
-                         set_query: int = MCU_Q_NA, ext_cid: int = 0) -> tuple[bytes, int]:
-        """
-        Builds the complete on-wire bytes for an MCU command:
-          [ 4B SDIO HDR ][ 64B mt76_connac2_mcu_txd ][ payload ][ pad ]
-
-        Returns (frame_bytes, seq) so the caller can match a response later.
-        Layout decoded from capture-3 frame 14182 (PATCH_SEM_CONTROL).
-        """
+    def _build_mcu_frame(self, cmd: int, payload: bytes) -> tuple[bytes, int]:
+        """Stamp the next seq and frame an encoded ``cmd`` + payload via the
+        faithful mcu.build_mcu_frame (mt76_connac2_mcu_fill_message). Returns
+        (frame_bytes, seq) so the caller can match the device's seq-echoed reply."""
         seq = self._next_mcu_seq()
-        payload_len = len(payload)
-        skb_len = MCU_TXD_SIZE + payload_len  # bytes that go to MT_TXD0_TX_BYTES + SDIO HDR
-
-        frame = bytearray(SDIO_HDR_SIZE + MCU_TXD_SIZE + payload_len)
-
-        # 4-byte SDIO HDR: tx_bytes (15:0) | pkt_type (17:16)=0
-        struct.pack_into("<I", frame, 0, skb_len & 0xFFFF)
-
-        # 64-byte mt76_connac2_mcu_txd starts at offset 4
-        txd_off = SDIO_HDR_SIZE
-
-        # txd[0]: TXD0_BASE | skb->len (lower 16 bits)
-        struct.pack_into("<I", frame, txd_off + 0, TXD0_BASE | (skb_len & 0xFFFF))
-        # txd[1]: LONG_FORMAT | HDR_FORMAT_CMD
-        struct.pack_into("<I", frame, txd_off + 4, TXD1_CMD)
-        # txd[2..7] left as zeros
-
-        # mcu_txd metadata (offset 32 within the TXD = offset 36 in frame)
-        meta = txd_off + 32
-        struct.pack_into("<H", frame, meta + 0, 32 + payload_len)   # len = skb_len - sizeof(txd[8])
-        struct.pack_into("<H", frame, meta + 2, MCU_PQ_ID)          # pq_id = 0x8000
-        frame[meta + 4] = cid & 0xFF                                 # cid
-        frame[meta + 5] = MCU_PKT_ID                                 # pkt_type
-        frame[meta + 6] = set_query & 0xFF                           # set_query
-        frame[meta + 7] = seq & 0xFF                                 # seq
-        frame[meta + 8] = 0                                          # uc_d2b0_rev
-        frame[meta + 9] = ext_cid & 0xFF                             # ext_cid
-        frame[meta + 10] = MCU_S2D_H2N                               # s2d_index
-        frame[meta + 11] = 1 if ext_cid else 0                       # ext_cid_ack
-        # bytes meta+12..meta+31 (rsv[5]) stay zero
-
-        # Payload
-        frame[SDIO_HDR_SIZE + MCU_TXD_SIZE:] = payload
-
-        # Round up to 4-byte alignment, then add 4 trailing pad bytes
-        # (matches mt7921u_mcu_send_message: pad = round_up(len,4)+4 - len)
-        pad = ((len(frame) + 3) & ~3) + 4 - len(frame)
-        frame.extend(b"\x00" * pad)
-
-        return bytes(frame), seq
+        return mcu.build_mcu_frame(cmd, payload, seq), seq
 
     async def start_mcu_drainer(self, pool: int = MCU_DRAIN_POOL):
         """
@@ -309,17 +266,18 @@ class MT7921AUTransport:
                 logger.debug(f"IN drainer 0x{ep:02x} error: {e}")
                 await asyncio.sleep(0.005)
 
-    async def send_mcu_command(self, cid: int, payload: bytes,
-                               set_query: int = MCU_Q_NA, ext_cid: int = 0,
+    async def send_mcu_command(self, cmd: int, payload: bytes = b"",
                                wait_resp: bool = True,
                                resp_timeout_ms: int = 2000) -> Optional[bytes]:
         """
-        Sends an MCU command on EP_OUT_MCU (0x08). If wait_resp, waits for a
-        response from the MCU drain queue (fed by start_mcu_drainer).
-        Returns None if wait_resp is False or wait times out.
+        Sends an MCU command on EP_OUT_MCU (0x08). ``cmd`` is an encoded command
+        int (mcu.MCU_CMD / MCU_EXT_CMD / MCU_UNI_CMD / MCU_CE_CMD); the txd shape,
+        ext_cid and set_query are derived from it. If wait_resp, waits for the
+        seq-matched response from the MCU drain queue (fed by start_mcu_drainer).
+        Returns None if wait_resp is False or the wait times out.
         """
-        frame, seq = self._build_mcu_frame(cid, payload, set_query=set_query, ext_cid=ext_cid)
-        logger.debug(f"MCU TX cid=0x{cid:02x} seq=0x{seq:02x} len={len(frame)} payload={payload.hex()}")
+        frame, seq = self._build_mcu_frame(cmd, payload)
+        logger.debug(f"MCU TX cmd=0x{cmd:x} seq=0x{seq:02x} len={len(frame)} payload={payload.hex()}")
 
         ok = await self.send_bulk_checked(frame, EP_OUT_MCU, timeout=2000)
         if not ok:
@@ -331,9 +289,9 @@ class MT7921AUTransport:
             # timeout as "probably succeeded" and let the FW_N9_RDY poll be
             # the actual success signal.
             if not wait_resp:
-                logger.warning(f"MCU send_bulk timed out (cid=0x{cid:02x} seq=0x{seq:02x}); continuing (fire-and-forget)")
+                logger.warning(f"MCU send_bulk timed out (cmd=0x{cmd:x} seq=0x{seq:02x}); continuing (fire-and-forget)")
                 return None
-            logger.error(f"MCU send_bulk failed (cid=0x{cid:02x} seq=0x{seq:02x})")
+            logger.error(f"MCU send_bulk failed (cmd=0x{cmd:x} seq=0x{seq:02x})")
             return None
 
         if not wait_resp:
@@ -349,17 +307,17 @@ class MT7921AUTransport:
         while True:
             remaining = deadline - self._loop.time()
             if remaining <= 0:
-                logger.warning(f"MCU response timeout (cid=0x{cid:02x} seq=0x{seq:02x})")
+                logger.warning(f"MCU response timeout (cmd=0x{cmd:x} seq=0x{seq:02x})")
                 return None
             try:
                 data = await asyncio.wait_for(self._mcu_rx_queue.get(), timeout=remaining)
             except asyncio.TimeoutError:
-                logger.warning(f"MCU response timeout (cid=0x{cid:02x} seq=0x{seq:02x})")
+                logger.warning(f"MCU response timeout (cmd=0x{cmd:x} seq=0x{seq:02x})")
                 return None
             rseq = data[29] if len(data) > 29 else None
             if rseq == seq:
                 eid = data[28] if len(data) > 28 else None
-                logger.debug(f"MCU RX cid=0x{cid:02x} seq=0x{seq:02x} eid=0x{eid:02x} "
+                logger.debug(f"MCU RX cmd=0x{cmd:x} seq=0x{seq:02x} eid=0x{eid:02x} "
                              f"len={len(data)} bytes[:64]={data[:64].hex()}")
                 return data
             logger.debug(f"MCU RX skip seq=0x{rseq if rseq is None else format(rseq, '02x')} "

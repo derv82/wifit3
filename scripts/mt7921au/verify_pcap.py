@@ -34,6 +34,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 import wifit3.chips.mt7921au as mt_pkg
+from wifit3.chips.mt7921au import init as mt_init
+from wifit3.chips.mt7921au import mcu as mt_mcu
 from wifit3.chips.mt7921au.firmware import MT7921AUFirmwareLoader
 from wifit3.chips.mt7921au.transport import MT7921AUTransport
 
@@ -253,8 +255,10 @@ def check_handshake(pkts, dev):
         name = CID.get(cid, f"0x{cid:02x}?")
 
         # Rebuild via the driver's REAL frame builder, forcing the captured seq.
+        # The firmware-load commands are all plain MCU_CMD(cid) — no ext/uni/ce
+        # flags — so the encoded cmd is just the captured cid byte.
         tx._mcu_seq = (seq - 1) & 0x0F
-        built, built_seq = tx._build_mcu_frame(cid, payload, set_query=set_query, ext_cid=ext_cid)
+        built, built_seq = tx._build_mcu_frame(cid, payload)
         if built_seq != seq:
             print(f"  [FAIL] {name}: builder produced seq 0x{built_seq:02x}, wanted 0x{seq:02x}")
             ok = False
@@ -310,6 +314,180 @@ def check_handshake(pkts, dev):
     return ok
 
 
+# ----------------------------------------------------------------------------
+# CHECK 3 - post-boot device init + monitor entry + channel (single cursor)
+#
+# One cursor walks the merged post-boot stream: unified-bus register reads/writes
+# (control) AND MCU commands (bulk EP 0x08) with their seq-matched responses (bulk
+# EP 0x84), in capture order. The driver's REAL post-boot orchestration
+# (init.post_boot_init) is run against a mock transport that serves the captured
+# reads/responses and asserts every write/command byte-for-byte. Fail-closed:
+#   - matched     -> a handler reproduced the op; cursor advances.
+#   - divergence  -> a ported handler emitted the wrong bytes; STOP, name it.
+#   - frontier    -> the orchestration returned but ops remain unconsumed; the
+#                    first leftover op IS the next thing to port. PASS <=> none left.
+# ----------------------------------------------------------------------------
+
+class PostBootDivergence(Exception):
+    pass
+
+
+def build_postboot_stream(pkts, dev):
+    """Merged, capture-ordered op list for device `dev`. Each op is a dict:
+       {'kind':'R'|'W', 'addr', 'val'} for unified-bus register access, or
+       {'kind':'MCU', 'frame', 'seq', 'resp'} for an EP-0x08 command + its
+       seq-matched EP-0x84/0x85 response."""
+    merged, pending_rd, pending_mcu = [], {}, []
+    for pkt in pkts:
+        if len(pkt) < 40 or pkt[11] != dev:
+            continue
+        urb_type, xfer, ep = pkt[8], pkt[9], pkt[10]
+        urb_id = pkt[0:8]
+        if xfer == 0x02:                                  # control (register bus)
+            if urb_type == 0x53:                          # SUBMIT
+                bmReq, bReq = pkt[40], pkt[41]
+                if bReq not in REG_BREQ:
+                    continue
+                wValue, wIndex, wLength = struct.unpack_from("<HHH", pkt, 42)
+                addr = (wValue << 16) | wIndex
+                if bmReq & 0x80:
+                    pending_rd[urb_id] = addr
+                elif wLength >= 4 and len(pkt) >= 68:
+                    merged.append({"kind": "W", "addr": addr,
+                                   "val": struct.unpack_from("<I", pkt, 64)[0]})
+            elif urb_type == 0x43:                        # COMPLETE
+                addr = pending_rd.pop(urb_id, None)
+                if addr is not None and len(pkt) >= 68:
+                    merged.append({"kind": "R", "addr": addr,
+                                   "val": struct.unpack_from("<I", pkt, 64)[0]})
+        elif xfer == 0x03:                                # bulk
+            lencap = struct.unpack_from("<I", pkt, 36)[0]
+            data = pkt[64:64 + min(lencap, len(pkt) - 64)]
+            if urb_type == 0x53 and ep == EP_MCU_OUT and len(data) >= 44:
+                op = {"kind": "MCU", "frame": bytes(data), "seq": data[43], "resp": None}
+                merged.append(op)
+                pending_mcu.append(op)
+            elif urb_type == 0x43 and (ep & 0x80) and lencap > 0 and len(data) > 29:
+                rseq = data[29]                            # connac rxd seq
+                for op in pending_mcu:
+                    if op["resp"] is None and op["seq"] == rseq:
+                        op["resp"] = bytes(data)
+                        break
+    return merged
+
+
+def _fmt_op(op):
+    if op["kind"] == "MCU":
+        f = op["frame"]
+        std = f[38] == 0x00 and f[39] == 0x80
+        cid = f[40] if std else struct.unpack_from("<H", f, 38)[0]
+        ext = f[45] if std else 0
+        kind = "STD" if std else "UNI"
+        return f"MCU {kind} cid=0x{cid:02x} ext=0x{ext:02x} seq=0x{op['seq']:02x} ({len(f)}B)"
+    return f"{op['kind']} 0x{op['addr']:08x}=0x{op['val']:08x}"
+
+
+class PostBootReplay:
+    """Mock transport driving init.post_boot_init over the merged op stream."""
+
+    def __init__(self, ops):
+        self.ops = ops
+        self.i = 0
+
+    def _next(self):
+        if self.i >= len(self.ops):
+            raise PostBootDivergence(f"driver ran past the captured stream (op #{self.i})")
+        op = self.ops[self.i]
+        self.i += 1
+        return op
+
+    def read_reg32_unified(self, addr):
+        op = self._next()
+        if op["kind"] != "R" or op["addr"] != addr:
+            raise PostBootDivergence(
+                f"op #{self.i-1}: driver READ 0x{addr:08x}, wire has {_fmt_op(op)}")
+        return op["val"]
+
+    def write_reg32_unified(self, addr, value):
+        op = self._next()
+        if op["kind"] != "W" or op["addr"] != addr:
+            raise PostBootDivergence(
+                f"op #{self.i-1}: driver WROTE 0x{addr:08x}, wire has {_fmt_op(op)}")
+        if op["val"] != value:
+            raise PostBootDivergence(
+                f"op #{self.i-1}: VALUE MISMATCH at 0x{addr:08x} - "
+                f"driver 0x{value:08x} vs wire 0x{op['val']:08x}")
+
+    async def send_mcu_command(self, cmd, payload=b"", wait_resp=True, resp_timeout_ms=2000):
+        op = self._next()
+        if op["kind"] != "MCU":
+            raise PostBootDivergence(
+                f"op #{self.i-1}: driver sent MCU cmd=0x{cmd:x}, wire has {_fmt_op(op)}")
+        built = mt_mcu.build_mcu_frame(cmd, payload, op["seq"])
+        if bytes(built) != op["frame"]:
+            n = min(len(built), len(op["frame"]))
+            d = next((k for k in range(n) if built[k] != op["frame"][k]), n)
+            db = f"0x{built[d]:02x}" if d < len(built) else "-"
+            wb = f"0x{op['frame'][d]:02x}" if d < len(op["frame"]) else "-"
+            raise PostBootDivergence(
+                f"op #{self.i-1}: MCU frame mismatch cmd=0x{cmd:x} at byte {d} "
+                f"(driver {db} vs wire {wb}; len {len(built)} vs {len(op['frame'])})")
+        return op["resp"]
+
+    # standard bus is not used post-boot (everything is unified); flag if it is.
+    def read_reg32(self, addr):
+        raise PostBootDivergence(f"unexpected standard-bus READ 0x{addr:08x}")
+
+    def write_reg32(self, addr, value):
+        raise PostBootDivergence(f"unexpected standard-bus WRITE 0x{addr:08x}")
+
+    async def start_mcu_drainer(self, *a, **k):
+        pass
+
+    async def stop_mcu_drainer(self, *a, **k):
+        pass
+
+
+def check_post_boot(pkts, dev):
+    merged = build_postboot_stream(pkts, dev)
+    # Split at FW_START (std MCU, cid 0x02); the post-boot walk begins at the first
+    # MCU command after it (GET_NIC_CAPAB) — the leading FW_N9_RDY register poll
+    # belongs to firmware.load_firmware, not the post-boot orchestration.
+    fw = next((k for k, o in enumerate(merged) if o["kind"] == "MCU"
+               and o["frame"][38] == 0x00 and o["frame"][39] == 0x80
+               and o["frame"][40] == 0x02), None)
+    if fw is None:
+        print("CHECK 3 - post-boot init")
+        print("  [SKIP] FW_START not found (pre-scatter capture?)")
+        return "SKIP"
+    post = merged[fw + 1:]
+    start = next((k for k, o in enumerate(post) if o["kind"] == "MCU"), None)
+    ops = post[start:] if start is not None else []
+
+    n_reg = sum(1 for o in ops if o["kind"] in ("R", "W"))
+    n_mcu = sum(1 for o in ops if o["kind"] == "MCU")
+    print(f"CHECK 3 - post-boot init  ({len(ops)} ops: {n_mcu} MCU cmds, {n_reg} reg R/W)")
+
+    replay = PostBootReplay(ops)
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    try:
+        asyncio.get_event_loop().run_until_complete(mt_init.post_boot_init(replay))
+    except PostBootDivergence as e:
+        print(f"  [FAIL] DIVERGENCE - {e}")
+        print("  (the cursor stops at the first op the driver does not reproduce)")
+        return False
+
+    if replay.i < len(ops):
+        front = ops[replay.i]
+        print(f"  [FRONTIER] reproduced {replay.i} ops; next unported op @{replay.i} "
+              f"= {_fmt_op(front)}")
+        print("  ^ port this next; the gate is green only when every op is reproduced.")
+        return "FRONTIER"
+
+    print(f"  [PASS] reproduced all {replay.i} post-boot ops byte-for-byte")
+    return True
+
+
 def main():
     cap = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CAP
     pkts = parse_pcapng(cap)
@@ -326,15 +504,23 @@ def main():
     ok1 = check_dma_init(pkts, dev)
     print()
     ok2 = check_handshake(pkts, dev)
+    print()
+    ok3 = check_post_boot(pkts, dev)
 
-    failed = (not ok1) or (ok2 is False)
+    failed = (not ok1) or (ok2 is False) or (ok3 is False)
     if failed:
         print("\n[FAIL] see divergences above")
-    elif ok2 == "SKIP":
-        print("\n[PASS] CHECK 1 green; CHECK 2 skipped (capture has no RX)")
-    else:
-        print("\n[PASS] both checks green")
-    return 1 if failed else 0
+        return 1
+    # CHECK 3 is a work-in-progress single-cursor walk: FRONTIER means the boot
+    # path is faithful and the post-boot port has advanced to a named next op.
+    if ok3 == "FRONTIER":
+        print("\n[FRONTIER] CHECK 1+2 green; CHECK 3 advancing — see the next op above")
+        return 2
+    if ok2 == "SKIP" or ok3 == "SKIP":
+        print("\n[PASS] CHECK 1 green; later checks skipped (capture has no RX)")
+        return 0
+    print("\n[PASS] all three checks green")
+    return 0
 
 
 if __name__ == "__main__":
