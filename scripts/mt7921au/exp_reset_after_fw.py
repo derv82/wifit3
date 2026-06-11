@@ -58,35 +58,49 @@ class ResetAfterFwLoader(MT7921AUFirmwareLoader):
     """Reset the USB link right after FW_START, re-acquire, and let the FW_N9_RDY
     poll (in load_firmware) run on the fresh handle."""
 
-    def __init__(self, *a, backend=None, **kw):
+    def __init__(self, *a, backend=None, delay=0.0, **kw):
         super().__init__(*a, **kw)
         self._backend = backend
+        self._delay = delay
         self.reacquired = None
 
     async def _load_ram(self) -> bool:
         r = await super()._load_ram()   # uploads regions + sends FW_START
-        logger.info("FW_START sent — issuing usb_reset_device() to re-establish the link...")
+        if self._delay:
+            logger.info(f"FW_START sent — waiting {self._delay}s (let the firmware boot) before reset...")
+            await asyncio.sleep(self._delay)
+        else:
+            logger.info("FW_START sent — issuing usb_reset_device() immediately...")
         try:
             self.transport.dev.reset()
         except Exception as e:
             logger.warning(f"post-FW_START reset raised {type(e).__name__}: {e}")
         usb.util.dispose_resources(self.transport.dev)
-        await asyncio.sleep(1.0)
+
+        # Re-acquire, retrying through the Windows re-bind window (Errno 13) and the
+        # post-reset settle. Probe each candidate handle with a chip-id read; the
+        # device is "back" only when EP0 actually answers.
         d = None
-        for _ in range(40):
-            d = find_dev(self._backend)
-            if d is not None:
+        for i in range(40):
+            await asyncio.sleep(0.5)
+            cand = find_dev(self._backend)
+            if cand is None:
+                continue
+            try:
+                cand.ctrl_transfer(0xC0, MT_VEND_READ_REG_REQ, 0x7001, 0x0200, 4, timeout=500)
+                d = cand
+                logger.info(f"re-acquired after {0.5*(i+1):.1f}s: bus {d.bus} addr {d.address} "
+                            f"speed={getattr(d,'speed',None)}")
                 break
-            await asyncio.sleep(0.2)
+            except Exception:
+                usb.util.dispose_resources(cand)
         if d is None:
-            logger.error("device did not re-appear after post-FW_START reset")
+            logger.error("device never answered EP0 after post-FW_START reset (still wedged)")
             return r
+
         claim_vendor_iface(d)
         self.transport.dev = d          # FW_N9_RDY poll + drainer now use the fresh handle
         self.reacquired = d
-        logger.info(f"re-acquired post-reset: bus {d.bus} addr {d.address} "
-                    f"speed={getattr(d,'speed',None)}")
-        # Direct read of FW_N9_RDY right now, before the loader's own poll.
         try:
             wv, wi = (MT_CONN_ON_MISC >> 16) & 0xFFFF, MT_CONN_ON_MISC & 0xFFFF
             res = d.ctrl_transfer(MT_VEND_READ_RECIPIENT, MT_VEND_READ_REG_REQ, wv, wi, 4, timeout=800)
@@ -98,7 +112,7 @@ class ResetAfterFwLoader(MT7921AUFirmwareLoader):
         return r
 
 
-async def main(debug):
+async def main(debug, delay):
     logging.basicConfig(
         level=logging.DEBUG if debug else logging.INFO,
         format="%(asctime)s.%(msecs)03d [%(levelname)-5s] %(name)s: %(message)s", datefmt="%H:%M:%S")
@@ -116,7 +130,8 @@ async def main(debug):
     claim_vendor_iface(dev)
 
     transport = MT7921AUTransport(dev)
-    loader = ResetAfterFwLoader(transport, Path(mt_pkg.__file__).parent / "assets", backend=backend)
+    loader = ResetAfterFwLoader(transport, Path(mt_pkg.__file__).parent / "assets",
+                                backend=backend, delay=delay)
 
     logger.info("=== Experiment: faithful load + usb_reset AFTER FW_START ===")
     t0 = time.monotonic()
@@ -130,5 +145,7 @@ async def main(debug):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--debug", action="store_true")
+    ap.add_argument("--delay", type=float, default=0.0,
+                    help="seconds to wait after FW_START before the reset (let FW boot first)")
     args = ap.parse_args()
-    sys.exit(asyncio.run(main(args.debug)))
+    sys.exit(asyncio.run(main(args.debug, args.delay)))
