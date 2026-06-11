@@ -93,6 +93,21 @@ async def _regd_and_start(t, state: InitState) -> None:
     # reg_rr(MT_PSE_BASE) is absent from the capture, so we omit it.)
     await _set_rate_txpower(t)
 
+    # mt7921_init_work tail: set_deep_sleep(ds_enable). USB leaves ds_enable=0,
+    # so this is "KeepFullPwr 1" (deep sleep off).
+    cmd, payload = mcu.set_deep_sleep(False)
+    await t.send_mcu_command(cmd, payload, wait_resp=False)
+
+    # __mt7921_start: radio start.
+    cmd, payload = mcu.set_mac_enable(0, True)          # MAC_INIT_CTRL
+    await t.send_mcu_command(cmd, payload)
+    cmd, payload = mcu.set_channel_domain()             # SET_CHAN_DOMAIN (again)
+    await t.send_mcu_command(cmd, payload, wait_resp=False)
+    cmd, payload = mcu.set_chan_info(mcu.EXT_CMD_SET_RX_PATH, mcu.DEFAULT_CHANDEF)
+    await t.send_mcu_command(cmd, payload)              # SET_RX_PATH
+    await _set_rate_txpower(t)                           # set_tx_sar_pwr -> txpower
+    mac.reset_counters(t)                                # mt792x_mac_reset_counters
+
 
 async def _set_rate_txpower(t) -> None:
     for payload in txpower.rate_txpower_payloads():

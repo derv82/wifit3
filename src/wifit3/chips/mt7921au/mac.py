@@ -88,6 +88,19 @@ def mac_init_band(t, band: int) -> None:
     rmw(t, MT_WTBLOFF_TOP_RSCR(band), mask, set_)
 
 
+def reset_counters(t) -> None:
+    """mt792x_mac_reset_counters — clear-on-read the TX-aggregation and MIB
+    airtime counters, then set RXTIME_CLR on the RMAC MIB time registers."""
+    for i in range(4):
+        t.read_reg32_unified(MT_TX_AGG_CNT(0, i))
+        t.read_reg32_unified(MT_TX_AGG_CNT2(0, i))
+    t.read_reg32_unified(MT_MIB_SDR9(0))
+    t.read_reg32_unified(MT_MIB_SDR36(0))
+    t.read_reg32_unified(MT_MIB_SDR37(0))
+    set_bits(t, MT_WF_RMAC_MIB_TIME0(0), MT_WF_RMAC_MIB_RXTIME_CLR)
+    set_bits(t, MT_WF_RMAC_MIB_AIRTIME0(0), MT_WF_RMAC_MIB_RXTIME_CLR)
+
+
 def mac_init(t) -> None:
     """mt7921_mac_init — the register block only.
 

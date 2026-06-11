@@ -288,3 +288,11 @@ MT_WTBLOFF_TOP_RSCR_RCPI_PARAM = 0x03000000   # GENMASK(25, 24)
 
 # mt76_connac_mcu_set_rts_thresh value used by mt7921_mac_init.
 MT_RTS_THRESH_DEFAULT = 0x92B
+
+# --- mt792x_mac_reset_counters: TX-agg + MIB airtime counters (mt792x_regs.h) ---
+def MT_TX_AGG_CNT(b, n):  return MT_WF_MIB_BASE(b) + 0x7DC + (n << 2)
+def MT_TX_AGG_CNT2(b, n): return MT_WF_MIB_BASE(b) + 0x7EC + (n << 2)
+def MT_MIB_SDR9(b):       return MT_WF_MIB_BASE(b) + 0x02C
+def MT_MIB_SDR36(b):      return MT_WF_MIB_BASE(b) + 0x054
+def MT_MIB_SDR37(b):      return MT_WF_MIB_BASE(b) + 0x058
+MT_WF_RMAC_MIB_RXTIME_CLR = 1 << 31   # BIT(31)

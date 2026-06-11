@@ -189,3 +189,49 @@ def set_rate_txpower(payload):
     """One SET_RATE_TX_POWER batch (mt76_connac_mcu_skb_send_msg, no reply). The
     per-batch payloads are built by txpower.rate_txpower_payloads()."""
     return MCU_CE_CMD(CE_CMD_SET_RATE_TX_POWER), payload
+
+
+def set_mac_enable(band, enable):
+    """mt76_connac_mcu_set_mac_enable — MCU_EXT_CMD(MAC_INIT_CTRL).
+    { u8 enable; u8 band; u8 rsv[2]; }."""
+    return MCU_EXT_CMD(EXT_CMD_MAC_INIT_CTRL), struct.pack("<BB2x", 1 if enable else 0, band)
+
+
+# CH_SWITCH reasons (mt76_connac_mcu.h). SET_RX_PATH and monitor mode use NORMAL.
+CH_SWITCH_NORMAL = 0
+# mt7921 is 2x2: phy->mt76->antenna_mask = chainmask = 0x3.
+ANTENNA_MASK = 0x3
+# Default chandef at __mt7921_start, before any channel is set (observed on the
+# wire in the start-time SET_RX_PATH; deterministic across units/captures):
+# 6 GHz channel 1, 20 MHz. channel_band 2 = 6 GHz (the firmware's band code).
+DEFAULT_CHANDEF = {"control_ch": 1, "center_ch": 1, "bw": 0, "channel_band": 2, "band_idx": 0}
+
+
+def set_chan_info(ext_cmd, chandef, antenna_mask=ANTENNA_MASK):
+    """mt7921_mcu_set_chan_info — MCU_EXT_CMD(ext_cmd), used with SET_RX_PATH (at
+    radio start) or CHANNEL_SWITCH. 76-byte req describing channel + streams."""
+    tx_streams = bin(antenna_mask).count("1")          # hweight8(antenna_mask)
+    rx_streams = antenna_mask
+    if ext_cmd == EXT_CMD_CHANNEL_SWITCH:
+        rx_streams = bin(rx_streams).count("1")
+    req = struct.pack(
+        "<BBBBBBBBHBBIBBB57x",
+        chandef["control_ch"], chandef["center_ch"], chandef["bw"],
+        tx_streams, rx_streams, CH_SWITCH_NORMAL, chandef["band_idx"], 0,  # center_ch2
+        0,                                              # cac_case
+        chandef["channel_band"], 0,                     # channel_band, rsv0
+        0,                                              # outband_freq
+        0, 0, 0,                                        # txpower_drop, ap_bw, ap_center_ch
+    )
+    return MCU_EXT_CMD(ext_cmd), req
+
+
+def set_deep_sleep(enable):
+    """mt76_connac_mcu_set_deep_sleep — MCU_CE_CMD(CHIP_CONFIG), no reply.
+
+    struct mt76_connac_config { __le16 id; u8 type; u8 resp_type; __le16 data_size;
+    __le16 resv; u8 data[320]; } with data = snprintf("KeepFullPwr %d", !enable).
+    USB leaves pm.ds_enable = 0, so init sends enable=False -> "KeepFullPwr 1"."""
+    data = (b"KeepFullPwr %d" % (0 if enable else 1)).ljust(320, b"\x00")
+    payload = struct.pack("<HBBHH", 0, 0, 0, 0, 0) + data
+    return MCU_CE_CMD(CE_CMD_CHIP_CONFIG), payload
