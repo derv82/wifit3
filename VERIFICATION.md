@@ -178,18 +178,6 @@ tables below lead with the attack columns and any caveats.
 ### RT5372
 *Panda PAU05 + PAU06 · 2.4 GHz · 2T2R*
 
-> **Default = standalone clean-room port** (`chips/rt5372/`) for `148f:5372`; set
-> `WIFIT3_RT5372=rt2800usb` to fall back to the shared `rt2800usb` imitation (which
-> mis-reads the EFUSE as 1T1R and under-drives RX — the reason this port exists).
-> The table below is the clean-room port.
-
-The **second byte-perfect** rt2x00 member after RT3070 — `verify_pcap rt5372` reproduces
-all **four** cold-boot captures single-cursor (init → airmon → every hop; e.g. 5060/5060),
-waiving only aireplay's TX-status polls. The correct word-offset EFUSE read recovers
-`freq_offset=59` and runs the card as **2T2R** (the imitation's byte-bug forced 1T1R); a
-same-card A/B on PAU06 hears ~2× the APs (~60 vs ~25 active BSSIDs). Full attack matrix run
-on **PAU05** — the very unit whose weak RX motivated the port.
-
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | Scan | ✅ | 2026-06-10 | Healthy — beacon-watch mean ~8.5/s (median 9, max 10) on the nearby AP, top-ranked, no gaps; ~2× the rt2800usb imitation's breadth on the same card. Warm reattach implemented: a re-run without a replug skips FW + init and resumes RX, staying healthy (8.7/s, steadier than cold) instead of the old re-init-on-warm dip. |
@@ -222,12 +210,7 @@ bands read the same power).
 ### RT3070
 *ALFA AWUS036NH · 2.4 GHz · 1T1R*
 
-The first **byte-perfect** member of the rt2x00 family: a standalone clean-room
-`chips/rt3070/` port whose `verify_pcap rt3070` gate reproduces the whole cold-boot
-capture single-cursor — init → airmon monitor entry → every airodump/iw channel hop,
-**8879/8879 ops**, waiving only aireplay's TX-status polls. *Verification was driven off
-that gate (byte-exact replay, no hardware) plus live hardware runs for RX/TX.* Genuinely
-excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate.
+Excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
