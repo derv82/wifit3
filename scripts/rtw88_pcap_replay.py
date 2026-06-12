@@ -280,3 +280,131 @@ class ReplayTransport:
             raise Divergence(
                 f"op#{self.i - 1} frame {op['frame']}: bulk payload differs at "
                 f"byte {diff} (len port={len(data)} cap={len(op['data'])})")
+
+
+# ======================================================================
+# Device-level replay (ctrl_transfer layer)
+# ======================================================================
+# ``ReplayTransport`` above REIMPLEMENTS read8/write8/... and so cannot replay a
+# port whose helper reaches past the transport surface into ``t.dev.ctrl_transfer``
+# directly -- which the rtl8225 RF SPI 8051 fast path does (wValue=RF-addr,
+# wIndex=0x8225). ``ReplayDevice`` instead replays at the ``ctrl_transfer`` layer:
+# the REAL chip transport (RTL8187Transport) drives it unchanged, so every helper
+# -- register read8/16/32, the EEPROM_CMD 93cx6 bit-bang, the RF bit-bang reads, AND
+# the 8051 fast-path write -- replays with zero reimplementation. This is the Realtek
+# analogue of ``rt2x00_pcap_replay.ReplayDevice``.
+#
+# Pair with ``extract_ctrl_ops`` (NOT ``extract_ops``): its ops carry the page
+# (wIndex) and are urb-id paired, so ``configure_filter``'s async ``iowrite32_async``
+# (overlapping submit/completion) cannot mis-pair a following read's value.
+
+def extract_ctrl_ops(pcap: Path, dev: int, window=None, start=None):
+    """Device-level (ctrl_transfer) vendor-0x05 control op stream for ``dev``.
+
+    Each op is ``{dir:'IN'|'OUT', breq, wval(=addr), widx(=page), width(=wLength),
+    data, frame}``. Write data is on the submit (``usb.data_fragment``); a read's value
+    arrives on the completion bearing the same ``usb.urb_id`` (urb-id paired -- the
+    rtl8187 ``configure_filter`` uses ``iowrite32_async``, so submit/completion are not
+    strictly adjacent and the simple S/C-adjacency pairing of ``extract_ops`` would
+    attribute a write's empty completion to a pending read).
+
+    Control-only: bulk-OUT TX (aireplay's injected frames on a hard-MAC card) is out of
+    the bring-up gate and byte-diffed separately. ``window`` = inclusive
+    (first_frame, last_frame). ``start`` = a predicate ``op -> bool``; the stream is
+    trimmed to begin at the first matching op.
+    """
+    fields = ["frame.number", "usb.urb_type", "usb.urb_id", "usb.bmRequestType",
+              "usb.setup.bRequest", "usb.setup.wValue", "usb.setup.wIndex",
+              "usb.setup.wLength", "usb.data_fragment", "usb.control.Response"]
+    flt = f"usb.device_address=={dev} && usb.transfer_type==0x02"
+    if window is not None:
+        flt += f" && frame.number>={window[0]} && frame.number<={window[1]}"
+    cmd = ["tshark", "-r", str(pcap), "-Y", flt, "-T", "fields"]
+    for f in fields:
+        cmd += ["-e", f]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+
+    ops: list[dict] = []
+    pending: dict = {}  # urb_id -> read op awaiting its completion value
+    for line in out.splitlines():
+        c = line.split("\t")
+        c += [""] * (len(fields) - len(c))
+        frame, utype, urb, brt, breq, wval, widx, wlen, dfrag, resp = c[:10]
+        utype = utype.strip("'")
+        if utype == "S":
+            brt_i = int(brt, 0) if brt else -1
+            if brt_i not in (0x40, 0xC0):          # not a vendor request -- skip standard
+                continue
+            if (int(breq, 0) if breq else -1) != int(RTW_VENDOR_REQ):
+                continue
+            op = {"breq": int(breq, 0), "wval": int(wval, 0) if wval else 0,
+                  "widx": int(widx, 0) if widx else 0,
+                  "width": int(wlen, 0) if wlen else 0, "frame": int(frame), "data": b""}
+            if brt_i == 0xC0:                      # IN / read -- value on the completion
+                op["dir"] = "IN"
+                ops.append(op)                     # preserve order position now
+                pending[urb] = op                  # fill value when its completion arrives
+            else:                                  # OUT / write -- data on the submit
+                op["dir"] = "OUT"
+                op["data"] = _hex(dfrag)
+                ops.append(op)
+        elif utype == "C" and urb in pending:
+            pending[urb]["data"] = _hex(resp)
+            del pending[urb]
+
+    if start is not None:
+        for i, o in enumerate(ops):
+            if start(o):
+                return ops[i:]
+        raise SystemExit(f"start anchor not found in {pcap.name}")
+    return ops
+
+
+class ReplayDevice:
+    """A fake ``usb.core.Device`` whose ``ctrl_transfer`` walks the recorded control op
+    stream, returning recorded read bytes and byte-checking writes. The real chip
+    transport drives it, so the whole transport surface (and the 8051 fast path's direct
+    ``t.dev.ctrl_transfer``) replays unchanged. First mismatch raises ``Divergence``."""
+
+    def __init__(self, ops):
+        self.ops = ops
+        self.i = 0
+
+    def _next(self) -> dict:
+        if self.i >= len(self.ops):
+            raise Divergence("port issued a transfer past the end of the capture")
+        op = self.ops[self.i]
+        self.i += 1
+        return op
+
+    @staticmethod
+    def _fmt(op: dict) -> str:
+        d = op.get("data", b"")
+        body = (f"=0x{int.from_bytes(d, 'little'):0{max(len(d) * 2, 2)}x}" if d
+                else " (no data)")
+        return (f"{op['dir']} 0x{op['wval']:04x}/pg{op['widx']:04x}/{op['width']}"
+                f"{body} @f{op['frame']}")
+
+    def ctrl_transfer(self, bmRequestType, bRequest, wValue, wIndex,
+                      data_or_wLength, timeout=None):
+        op = self._next()
+        is_in = bool(bmRequestType & 0x80)
+        exp = "IN" if is_in else "OUT"
+        if (op["dir"] != exp or op["breq"] != bRequest
+                or op["wval"] != wValue or op["widx"] != wIndex):
+            want = f"{exp} req{bRequest} 0x{wValue:04x}/pg{wIndex:04x}"
+            raise Divergence(
+                f"op#{self.i - 1}: port issued {want}, capture has {self._fmt(op)}")
+        if is_in:
+            if op["width"] != data_or_wLength:
+                raise Divergence(
+                    f"op#{self.i - 1} read 0x{wValue:04x}: port wants {data_or_wLength}B, "
+                    f"capture has {op['width']}B @f{op['frame']}")
+            return op["data"]                      # bytes; transport does bytes(data)[...]
+        payload = bytes(data_or_wLength) if data_or_wLength else b""
+        if op["data"] != payload:
+            raise Divergence(
+                f"op#{self.i - 1} write 0x{wValue:04x}/pg{wIndex:04x}: port "
+                f"{payload.hex() or '(no data)'} != capture {op['data'].hex() or '(no data)'} "
+                f"@f{op['frame']}")
+        return len(payload)
