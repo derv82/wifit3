@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from typing import Callable, Optional
 
 import usb.core
@@ -97,6 +98,17 @@ class RT2500USBDriver:
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
         self.current_channel: int = 1
+
+        # Device-op serialization. _io_lock serializes the COROUTINES (a hop vs
+        # an inject). _hw_lock is the REAL hardware serializer held by the
+        # executor work: a coroutine cancelled mid-run_in_executor (UI view
+        # switch → hop-task cancel) releases _io_lock while its executor THREAD
+        # keeps issuing control transfers, and a new tune's thread would then
+        # collide on the control endpoint and wedge this full-speed chip. The
+        # threading.Lock blocks that second thread until the first (even a
+        # cancelled one) finishes. [[project_rt3070 RX-DMA wedge pattern]]
+        self._io_lock = asyncio.Lock()
+        self._hw_lock = threading.Lock()
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_callback = cb
@@ -257,15 +269,25 @@ class RT2500USBDriver:
                 logger.exception("rx_callback raised: %s", e)
 
     # ---- channel tune ---------------------------------------------------
+    def _tune(self, channel: int) -> bool:
+        # Executor thread; _hw_lock guarantees only one hardware op touches the
+        # control endpoint at a time, even if a cancelled tune's thread is still
+        # draining its tune_hop transfers.
+        with self._hw_lock:
+            return monitor.tune_hop(
+                self.transport, self.rf_type, channel,
+                self._eeprom, self._ant_tx, self._ant_rx,
+            )
+
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         if channel not in self.SUPPORTED_CHANNELS:
             logger.warning("rt2500usb: channel %d not supported", channel)
             return False
         try:
-            ok = await asyncio.get_event_loop().run_in_executor(
-                None, monitor.tune_hop, self.transport, self.rf_type, channel,
-                self._eeprom, self._ant_tx, self._ant_rx,
-            )
+            async with self._io_lock:
+                ok = await asyncio.get_event_loop().run_in_executor(
+                    None, self._tune, channel
+                )
         except Exception as e:
             logger.error("rt2500usb set_channel(%d) failed: %s", channel, e)
             return False
@@ -274,6 +296,12 @@ class RT2500USBDriver:
         return ok
 
     # ---- TX -------------------------------------------------------------
+    def _do_inject(self, frame_bytes: bytes, ack: bool) -> int:
+        # Shares _hw_lock with _tune so an inject can never collide with an
+        # in-flight (or cancelled-but-draining) channel tune on the device.
+        with self._hw_lock:
+            return _tx_inject(self.dev, self._bulk_out_ep, frame_bytes, ack)
+
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
         """Inject a raw 802.11 frame (no FCS) at 1 Mbps CCK. Only ever
         called behind an explicit user action [[passive_by_default]]."""
@@ -281,10 +309,10 @@ class RT2500USBDriver:
             logger.error("rt2500usb: no bulk-OUT endpoint; cannot inject")
             return False
         try:
-            sent = await asyncio.get_event_loop().run_in_executor(
-                None, _tx_inject, self.dev, self._bulk_out_ep,
-                frame_bytes, not use_no_ack,
-            )
+            async with self._io_lock:
+                sent = await asyncio.get_event_loop().run_in_executor(
+                    None, self._do_inject, frame_bytes, not use_no_ack
+                )
         except Exception as e:
             logger.error("rt2500usb inject_frame failed: %s", e)
             return False

@@ -4,17 +4,58 @@
 
 Cross-driver gap classes (project audit 2026-05-25).
 
-- [~] **RX polling loop drops frames** — PORTED to the shared RxReaderThread
-  (awaiting HW verify). Was the gap: `driver.py:_rx_loop`
-  (~155) does `await loop.run_in_executor(read_rx_burst)` then parse on the
-  event loop — no read posted while parsing. Same pattern as rtl8821au pre-fix.
-  Fix: dedicated reader thread + queue hand-off (rtl8821au commit 2e3a7a7).
-- [x] **RX filter / monitor mode (ToDS capture)** — ALREADY HANDLED (offline
-  verdict). `mac.py:apply_monitor_filter` (264) explicitly CLEARS the
-  `TXRX_CSR2` DROP bits incl. **DROP_TODS (0x20)** and **DROP_NOT_TO_ME (0x10)**
-  (lines 289-290) → client→AP frames accepted. Final 0x0046 keeps only
-  DROP_CRC/PHYSICAL/VERSION_ERROR (error classes the RX loop discards anyway).
-  This is the rt2x00 analog of the rtw88 RCR fix, done right.
+- [x] **RX polling loop drops frames** — fixed via the shared RxReaderThread
+  (`driver.py` `_rx_read_once`/`_rx_dispatch`), off the event loop.
+- [x] **RX filter / monitor mode (ToDS capture)** — HANDLED. `mac.py:config_filter`
+  clears `TXRX_CSR2` DROP_TODS (0x20) + DROP_NOT_TO_ME (0x10) → client→AP frames
+  accepted; final 0x0046 (drop CRC/PHYSICAL/VERSION). This value **matches the
+  kernel's airmon wire**, not a deviation — see "Monitor RX filter" below.
+- [x] **AGC never seeded (the weak/inconsistent-RX root cause)** — FIXED 2026-06-11.
+  The port skipped `reset_tuner`, leaving BBP R17 (the VGC/variable gain) at the
+  init value 0x30 where the kernel runs 0x3b, never re-seeding per hop. See
+  "Faithful re-port" below.
+
+## Faithful re-port — RX AGC fix + full-walk gate (2026-06-11)
+
+The port reproduced only `init_registers` + `init_bbp` (123 of 3215 control ops);
+everything operational — antenna, channel tune, the AGC seed, the LED — was
+unverified, and the AGC seed was **missing entirely**.
+
+- **Root cause of weak/inconsistent RX: missing `reset_tuner`.** rt2x00 calls
+  `rt2500usb_reset_tuner` on every `CONF_CHANGE_CHANNEL` (`rt2x00lib_config`) and
+  on antenna config — unconditionally, monitor mode included (`rt2x00link.c`:
+  the `intf_sta_count` gate is only on the *periodic* tuner, which rt2500usb
+  doesn't have). It seeds BBP R24/R25/R61/**R17** from the per-card EEPROM
+  BBP-tune words (0x31-0x34). Our port never ran it → BBP R17 stuck at 0x30 (vs
+  the kernel's 0x3b on this unit), never re-seeded per hop. `[SRC]` rt2500usb.c:689-712.
+  Ported to `bbp.reset_tuner`; wired into `monitor.tune_hop` so it re-seeds every hop.
+- **Full single-cursor gate.** `scripts/rt2500usb/verify_pcap.py` is now ONE
+  monotonic walk over the whole capture (init → airmon monitor entry → every hop),
+  the rt3070 shape. Reproduces **100%** of the control conversation with ZERO
+  waivers: 3205/3205 (new capture-2), 3201/3201 (new capture-1), 1687/1687 (old
+  capture-2/3). Old capture-1 lacks the probe reads (not anchorable).
+- **Operational sequence** (`monitor.py`, shared by driver + gate), the rt2x00
+  call order confirmed against the wire:
+  - `enable_monitor` = `led_enable` (MAC_CSR20 radio+activity) + `start_queue_rx`
+    (rt2x00lib_enable_radio tail) → `config_filter(¬mon)` → `initial_config`
+    (stop_rx, `config_txpower` rf3=0, `config_ps`, `config_ant`, `reset_tuner`,
+    start_rx) → `config_filter(mon)`.
+  - `tune_hop` = one `rt2x00mac_config(CHANGE_CHANNEL)`: stop_rx → `config_channel`
+    + `reset_tuner` → `config_ant` + `reset_tuner` → start_rx.
+  - `config_intf` is **absent**: a monitor vif programs no MAC/BSSID/beacon-sync
+    (zero MAC_CSR2/CSR5/TXRX_CSR18-20 writes on the wire).
+- **Stability hardening** (the ~1-min RF-death wedge): `transport._ctrl` adds a
+  bounded transient-error retry (3 attempts, backoff) — a full-speed control op
+  racing the bulk-IN reader can fast-fail with a transient pipe error; `driver`
+  gained the rt3070 `_io_lock` (asyncio) + `_hw_lock` (threading) so a cancelled
+  tune's draining thread can't collide with a new tune/inject on the control endpoint.
+- **[HW] 2026-06-11** — cold bring-up + RX healthy: best AP **9.2 beacons/s** (median
+  9, max 10, **0 dead seconds**), 10+ APs received on CH1 (184/168/167/138/129…
+  beacons/20s each). Transformed from the grade-D "one AP 0/s" inconsistency.
+  - **Soak:** 5-min 14-channel hop (0.25s) — no wedge, no RF death; breadth flat-
+    to-rising (48→56 active BSSIDs), ~830-950 frames/window, no degradation. The
+    old grade-D died after ~1 min. Connected **WARM** (re-arm + tune, no replug)
+    and sustained the whole run — warm reattach validated.
 
 Userland PyUSB port of the Linux `rt2500usb` kernel module. This doc
 accumulates **verified** facts. Citations:
@@ -180,15 +221,19 @@ aireplay test 4385–9842, deauth 9843–15248.
   exact multiple of usb_maxpacket (64, full-speed) add 2 — avoids a ZLP.
 - TX only behind explicit user action [[passive_by_default]].
 
-## Monitor-mode deviation
+## Monitor RX filter (matches the kernel wire)
 
-The kernel `config_filter` (399-427) sets TXRX_CSR2 DROP_* bits per the
-mac80211 filter flags (STA mode). wifit3 is always-monitor, so `mac.py
-apply_monitor_filter` opens the filter for real frames from all BSSes
-(clear DISABLE_RX + DROP_CONTROL/NOT_TO_ME/TODS/MCAST/BCAST) **but drops
-the error classes the RX loop discards anyway**: DROP_CRC=1 +
-DROP_PHYSICAL=1 + DROP_VERSION_ERROR=1. Final value **TXRX_CSR2 = 0x0046**.
-`[HW]`
+`mac.py config_filter(monitoring)` ports `rt2500usb_config_filter` (399-427)
+with the FIF_* flags airmon sets: FIF_FCSFAIL / FIF_PLCPFAIL **off** (so the
+chip drops CRC + PLCP errors — the RX loop discards them anyway, and on this
+full-speed bus surfacing them floods it), FIF_CONTROL + FIF_ALLMULTI on,
+VERSION_ERROR always dropped, BROADCAST always accepted. `monitoring=True`
+clears DROP_NOT_TO_ME + DROP_TODS so client→AP (ToDS) frames from every BSS
+arrive. Final value **TXRX_CSR2 = 0x0046** — and the cold-boot capture's airmon
+path writes the **same** value (decoded at ops 167-168), so this is **faithful
+to the wire, not a deviation** (the earlier "monitor-mode deviation" framing was
+wrong: the kernel's airmon filter drops PLCP/CRC too). DISABLE_RX is owned by
+`start_queue_rx` / `stop_queue_rx`, which bracket every config. `[WIRE]/[HW]`
 
 **[HW] 2026-05-31 — ToDS RX confirmed working; instability is the real problem.**
 A full attack pass showed the monitor filter is correct: the session log carried
@@ -244,9 +289,17 @@ See [[feedback_monitor_mode_deviation]].
   PMKID** on the same radio. 21 mocked unit tests (incl. the
   inject-frame run_in_executor path). `--phase deauth --bssid X --client Y`.
 
+- **M6** [DONE 2026-06-11, gate + hw-verified]: faithful operational re-port.
+  `reset_tuner` (AGC seed), `config_txpower`/`config_ps`/`config_filter`/LED/
+  queue-toggle in `mac.py`/`chan.py`, the `monitor.py` orchestration
+  (enable_monitor + tune_hop), and the full single-cursor `verify_pcap` (100%,
+  zero waivers). Driver runs the faithful path; stability hardened
+  (`_io_lock`/`_hw_lock` + transport bounded-retry). See "Faithful re-port" above.
+
 **Full passive + active stack complete.** The Buffalo "Nintendo Wi-Fi USB
 Connector" (RT2570) scans, monitors, channel-hops, and deauths from the
-TUI — a no-firmware, register-only userland port.
+TUI — a no-firmware, register-only userland port, now byte-faithful to the
+kernel's whole control conversation.
 
 ## Test harness
 
