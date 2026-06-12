@@ -23,7 +23,7 @@ into the timeline — plan accordingly.
 - **Tier-1 cards must be bulletproof.** RTL8812AU (AWUS036ACH), MT7612U
   (AWUS036ACM), AR9271 (AWUS036NHA) — these are in the most hands. Everything
   else is secondary.
-- **Scope cuts are features.** WEP fragmentation, PixieWPS, 40/80 MHz, MT7921AU,
+- **Scope cuts are features.** WEP fragmentation, PixieWPS, 40/80 MHz,
   multi-card — all deferred deliberately. Document limitations honestly rather
   than shipping them broken.
 
@@ -45,7 +45,7 @@ Post-Defcon                  Multi-card, Minnie Drivers, etc.
 
 The DKMS re-ports are the headline hardware work and the fix for the cross-family
 2.4 GHz RX weakness. **Full detail + priority order + per-card vendor sources live
-in `PORTING.md`** (also: cards-in-the-mail, blank-EEPROM rescue, MT7921AU). One
+in `PORTING.md`** (also: cards-in-the-mail, blank-EEPROM rescue). One
 port per session; testing + stability day(s) after each before the next. The
 8812AU hop-death (random RF wedge under sustained scanning) is the primary scan
 stability issue — expected to improve via the shared phydm RX/AGC path in the
@@ -332,6 +332,5 @@ Real features, deferred for timeline not merit. Detail in the sibling docs:
   Community builds other tools on top (triangulation, custom scanners). Central
   driver registry + hardware matrix. Lowers the contribution barrier. (Tied to the
   2b licensing/give-back strategy.)
-- **MT7921AU (AWUS036AXML)** and **blank-EEPROM override (RT3572 rescue)** →
-  `PORTING.md`.
+- **blank-EEPROM override (RT3572 rescue)** → `PORTING.md`.
 - **WPS improvements, WPA3 downgrade, triangulation map** → `FEATURES.md`.

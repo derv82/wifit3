@@ -90,7 +90,7 @@ silently).
 > **Related consideration — a `BaseDriver` class (its own design, not a v1
 > dependency).** Worth *considering*: an abstract `BaseDriver` that all drivers
 > inherit, holding the logic genuinely common to every driver — and, since not all
-> drivers run an RX reader thread (ar9271 / mt7921au don't), perhaps a
+> drivers run an RX reader thread (ar9271 doesn't), perhaps a
 > `ReaderThreadDriver(BaseDriver)` tier for the ones that do. This is
 > **significant** work: it touches all ~13 drivers and warrants a design of its own
 > — the families differ enough (HTC/WMI vs direct-register vs MCU-firmware) that a
