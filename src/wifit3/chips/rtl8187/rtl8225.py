@@ -40,7 +40,6 @@ from .constants import (
     REG_ANAPARAM2,
     REG_CONFIG3,
     REG_EEPROM_CMD,
-    REG_PGSELECT,
     REG_PHY,
     REG_RFPINSENABLE,
     REG_RFPINSINPUT,
@@ -62,6 +61,35 @@ logger = logging.getLogger(__name__)
 class RfVariant(str, Enum):
     RTL8225 = "rtl8225"      # BCD revision (M2b ported)
     RTL8225Z2 = "rtl8225z2"  # z2 revision (M2c — not yet)
+
+
+# ----------------------------------------------------------------------
+# Per-channel TX power read from the 93cx6 EEPROM during probe.
+# ----------------------------------------------------------------------
+@dataclass(frozen=True)
+class TxPower:
+    """The kernel reads ``priv->channels[ch-1].hw_value`` (cck in the low nibble, ofdm in
+    the high nibble) and ``priv->txpwr_base`` from the EEPROM, and feeds them to every
+    ``set_tx_power`` (RF init for channel 1, then each channel tune). hw_value has 14
+    entries (channels 1..14); ``base`` is added by the z2 setter only. [SRC] dev.c probe +
+    rtl8225{,z2}_rf_set_tx_power."""
+
+    hw_value: tuple[int, ...]
+    base: int = 0
+
+
+def set_tx_power(t: "RTL8187Transport", variant: "RfVariant", channel: int,
+                 power: TxPower) -> None:
+    """Dispatch the per-variant TX-power refresh for ``channel`` using the EEPROM table.
+
+    cck_power = hw_value & 0xF, ofdm_power = hw_value >> 4 (the kernel's extraction at the
+    top of rtl8225{,z2}_rf_set_tx_power). BCD ignores ``base``; z2 folds it in."""
+    hv = power.hw_value[channel - 1]
+    cck_power, ofdm_power = hv & 0xF, hv >> 4
+    if variant is RfVariant.RTL8225Z2:
+        rtl8225z2_rf_set_tx_power(t, channel, cck_power, ofdm_power, power.base)
+    else:
+        rtl8225_rf_set_tx_power(t, channel, cck_power, ofdm_power)
 
 
 # ----------------------------------------------------------------------
@@ -109,23 +137,9 @@ def write_phy_cck(t: RTL8187Transport, addr: int, data: int) -> None:
     write_phy(t, addr, data | 0x10000)
 
 
-# ----------------------------------------------------------------------
-# asic_rev probe — picks SPI write path (bitbang vs 8051 USB ctrl).
-# [SRC] dev.c:1530-1537
-# ----------------------------------------------------------------------
-def probe_asic_rev(t: RTL8187Transport) -> int:
-    """Read asic_rev (low 2 bits of register 0xFFFE under PGSELECT|1).
-
-    Returns 0 for B-cut (use SW SPI bit-bang) or non-zero (use the USB
-    8051 fast write path).
-    """
-    t.write8(REG_EEPROM_CMD, EEPROM_CMD_CONFIG)
-    reg = t.read8(REG_PGSELECT) & ~1
-    t.write8(REG_PGSELECT, reg | 1)
-    asic_rev = t.read8(0xFFFE) & 0x3
-    t.write8(REG_PGSELECT, reg & 0xFF)
-    t.write8(REG_EEPROM_CMD, EEPROM_CMD_NORMAL)
-    return asic_rev
+# asic_rev (the SPI-path selector, low 2 bits of 0xFFFE under PGSELECT|1) is read in
+# :func:`wifit3.chips.rtl8187.probe.probe`, inside the probe's single EEPROM_CMD window
+# — there is no standalone asic_rev probe, so it cannot drift from the kernel sequence.
 
 
 # ----------------------------------------------------------------------
@@ -453,14 +467,14 @@ def rtl8225_rf_set_tx_power(
 # rtl8225_rf_init — full BCD-revision RF bring-up.
 # [SRC] rtl8225.c:427-569
 # ----------------------------------------------------------------------
-def rtl8225_rf_init(t: RTL8187Transport, asic_rev: int) -> None:
+def rtl8225_rf_init(t: RTL8187Transport, asic_rev: int, power: TxPower) -> None:
     """Port of rtl8225_rf_init (rtl8225.c:427-569).
 
     Brings the external transceiver up: writes the canonical 16-entry
     RF register init sequence, retries RF calibration up to twice if
     the cal-OK bit (RF reg 6 bit 7) doesn't come up, then loads
-    rxgain/agc/ofdm/cck/phy tables, sets default TX power for channel 1,
-    and tunes RX-A antenna sensitivity.
+    rxgain/agc/ofdm/cck/phy tables, sets the channel-1 TX power (from the
+    EEPROM ``power`` table), and tunes RX-A antenna sensitivity.
 
     asic_rev selects bitbang vs 8051 SPI; pass the value from
     :func:`probe_asic_rev`.
@@ -594,8 +608,8 @@ def rtl8225_rf_init(t: RTL8187Transport, asic_rev: int) -> None:
 
     t.write8(REG_TESTR, 0x0D)
 
-    # Default TX power on channel 1 (cck=0, ofdm=0 — EEPROM is M-later).
-    rtl8225_rf_set_tx_power(t, 1)
+    # Channel-1 TX power from the EEPROM (priv->channels[0].hw_value).
+    set_tx_power(t, RfVariant.RTL8225, 1, power)
 
     # RX antenna default to A.
     write_phy_cck(t, 0x10, 0x9b)          # B variant: 0xDB
@@ -761,7 +775,7 @@ def rtl8225z2_rf_set_tx_power(
 # rtl8225z2_rf_init — full z2-revision RF bring-up.
 # [SRC] rtl8225.c:775-920
 # ----------------------------------------------------------------------
-def rtl8225z2_rf_init(t: RTL8187Transport, asic_rev: int) -> None:
+def rtl8225z2_rf_init(t: RTL8187Transport, asic_rev: int, power: TxPower) -> None:
     """Port of rtl8225z2_rf_init (rtl8225.c:775-920) — used on z2 silicon.
 
     Different RF init sequence + different rxgain/gain_bg tables + a
@@ -914,7 +928,7 @@ def rtl8225z2_rf_init(t: RTL8187Transport, asic_rev: int) -> None:
     t.write8(0xFF5B, 0x0D)
     time.sleep(0.001)
 
-    rtl8225z2_rf_set_tx_power(t, 1)
+    set_tx_power(t, RfVariant.RTL8225Z2, 1, power)
 
     # RX antenna default to A.
     write_phy_cck(t, 0x10, 0x9b)          # B variant: 0xDB
@@ -926,9 +940,8 @@ def rtl8225z2_rf_init(t: RTL8187Transport, asic_rev: int) -> None:
 
 
 # ----------------------------------------------------------------------
-# RF setup probe — runs the asic_rev + variant probes once and returns
-# a tuple the rest of the driver can reuse for set_channel + future
-# RX-RSSI tweaks.
+# RF setup — asic_rev + variant, populated by probe.probe() and cached on
+# the driver for set_channel dispatch.
 # ----------------------------------------------------------------------
 @dataclass(frozen=True)
 class RfSetup:
@@ -936,32 +949,16 @@ class RfSetup:
     variant: RfVariant
 
 
-def probe_rf_setup(t: RTL8187Transport) -> RfSetup:
-    """Probe asic_rev + RF variant. Both probes themselves issue
-    control transfers, so this must run *before* ``mac.init_hw``.
-    """
-    asic_rev = probe_asic_rev(t)
-    variant = detect_rf(t, asic_rev)
-    logger.info("RF setup: asic_rev=%d, variant=%s", asic_rev, variant.value)
-    return RfSetup(asic_rev=asic_rev, variant=variant)
-
-
-def build_rf_init(t: RTL8187Transport, setup: RfSetup | None = None):
-    """Return a one-arg ``(transport) -> None`` callable wired to the
-    right RF variant for the attached hardware.
-
-    If ``setup`` is None, runs ``probe_rf_setup`` first. Pass an
-    already-probed setup to avoid redundant control transfers.
-    """
-    if setup is None:
-        setup = probe_rf_setup(t)
-
+def build_rf_init(t: RTL8187Transport, setup: RfSetup, power: TxPower):
+    """Return a one-arg ``(transport) -> None`` callable wired to the right RF variant +
+    the EEPROM TX-power table for the attached hardware. ``setup`` (asic_rev + variant)
+    and ``power`` both come from :func:`wifit3.chips.rtl8187.probe.probe`."""
     asic_rev = setup.asic_rev
     if setup.variant is RfVariant.RTL8225Z2:
         def _rf_init(_t: RTL8187Transport) -> None:
-            rtl8225z2_rf_init(_t, asic_rev)
+            rtl8225z2_rf_init(_t, asic_rev, power)
         return _rf_init
 
     def _rf_init(_t: RTL8187Transport) -> None:
-        rtl8225_rf_init(_t, asic_rev)
+        rtl8225_rf_init(_t, asic_rev, power)
     return _rf_init

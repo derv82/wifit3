@@ -62,6 +62,7 @@ from .constants import (
     REG_WPA_CONF,
     RX_CONF_BROADCAST,
     RX_CONF_BSSID,
+    RX_CONF_CTRL,
     RX_CONF_DATA,
     RX_CONF_MGMT,
     RX_CONF_MONITOR,
@@ -306,17 +307,22 @@ def init_hw(t: RTL8187Transport, rf_init: RFInit = _stub_rf_init) -> None:
     t.write8(REG_PGSELECT, reg & 0xFF)
 
 
-def start(t: RTL8187Transport) -> None:
-    """Port of rtl8187_start (dev.c:923-1015) — L-branch.
+def start(t: RTL8187Transport) -> int:
+    """Port of rtl8187_start (dev.c:923-1015) — L-branch. Returns the RX_CONF baseline
+    written (the kernel's ``priv->rx_conf``), which :func:`configure_filter` then ORs the
+    monitor flags into.
 
-    Enables interrupts, opens multicast filters, configures RX_CONF for
-    monitor-mode-friendly capture (BROADCAST + NICMAC + MGMT + DATA),
-    clears TX_AGC_CTL per-packet overrides, sets TX_CONF, then latches
-    CMD |= TX_ENABLE|RX_ENABLE so the chip starts pushing frames to
-    bulk-IN.
+    Enables interrupts, opens multicast filters, writes the station-mode RX_CONF baseline
+    (BSSID-filtered — *no* monitor bit, exactly as the kernel does), clears the per-packet
+    CW / TX_AGC overrides, sets TX_CONF, then latches CMD |= TX_ENABLE|RX_ENABLE so the chip
+    starts pushing frames to bulk-IN.
 
-    Pre-condition: init_hw has already run (so the chip is reset, the
-    RF lines are configured, and ANAPARAM is ON).
+    Monitor mode is NOT entered here: the kernel's airmon path enters it via a *separate*
+    ``configure_filter`` write after ``start`` (dev.c:1338). Reproducing that split is what
+    makes the wire byte-faithful — folding the monitor bit into ``start`` (as an earlier
+    port did) both mis-orders the write and drops the CTRL bit airmon also requests.
+
+    Pre-condition: init_hw has already run (chip reset, RF programmed, ANAPARAM ON).
     """
     t.write16(REG_INT_MASK, 0xFFFF)
 
@@ -324,23 +330,10 @@ def start(t: RTL8187Transport) -> None:
     t.write32(REG_MAR + 0, 0xFFFFFFFF)
     t.write32(REG_MAR + 4, 0xFFFFFFFF)
 
-    # RX_CONF: monitor-mode-friendly. Kernel `start` sets the
-    # station-mode baseline (with RX_CONF_BSSID — drop anything not
-    # addressed to our BSSID), then `configure_filter` ORs in
-    # RX_CONF_MONITOR (bit 0) when FIF_OTHER_BSS gets requested. We
-    # don't have an upper stack to call configure_filter, so we OR in
-    # RX_CONF_MONITOR here at start() — the chip then accepts frames
-    # for all BSSIDs (the BSSID filter becomes a hint rather than a
-    # gate).  Same lesson as [[feedback_station_vs_monitor_rcr]] on
-    # RTL8188EUS M8 — kernel init writes a STATION filter; monitor-
-    # mode-by-default needs the all-BSSID bit set explicitly.
-    #
-    # NB: the kernel ORs in `(7 << 13)` (RX FIFO threshold NONE) and
-    # `(7 << 10)` (MAX RX DMA). Those live in bit-fields that aren't
-    # named in rtl818x.h — we mirror them verbatim.
+    # RX_CONF baseline (dev.c:982-990). `(7 << 13)` (RX FIFO threshold NONE) and
+    # `(7 << 10)` (MAX RX DMA) live in bit-fields rtl818x.h doesn't name — mirrored verbatim.
     rx_conf = (
-        RX_CONF_MONITOR           # bit 0  ← critical for EAPOL visibility
-        | RX_CONF_ONLYERLPKT
+        RX_CONF_ONLYERLPKT
         | RX_CONF_RX_AUTORESETPHY
         | RX_CONF_BSSID
         | RX_CONF_MGMT
@@ -369,20 +362,33 @@ def start(t: RTL8187Transport) -> None:
     tx_conf = TX_CONF_CW_MIN | (7 << 21) | TX_CONF_NO_ICV
     t.write32(REG_TX_CONF, tx_conf)
 
-    # Latch TX + RX enable. From this point bulk-IN should produce
-    # frames (once M2b lands the RF init — until then the receiver is
-    # blind but the FIFO machinery is fully primed).
+    # Latch TX + RX enable. From here bulk-IN produces frames.
     reg = t.read8(REG_CMD)
     reg |= CMD_TX_ENABLE
     reg |= CMD_RX_ENABLE
     t.write8(REG_CMD, reg)
+    return rx_conf
 
 
-def cold_bring_up(t: RTL8187Transport, rf_init: RFInit = _stub_rf_init) -> None:
-    """Run the full cold bring-up: init_hw → start.
+def configure_filter(t: RTL8187Transport, rx_conf: int) -> int:
+    """Enter monitor mode by ORing MONITOR + CTRL into the RX_CONF baseline and writing it.
 
-    Pass `rf_init` from M2b once that lands.  Without it the MAC is up
-    but the receiver stays silent.
+    Port of rtl8187_configure_filter (dev.c:1310-1339) for the airmon request set: monitor
+    mode asks for FIF_OTHER_BSS (→ RX_CONF_MONITOR, accept all BSSIDs incl. client→AP ToDS
+    EAPOL) and FIF_CONTROL (→ RX_CONF_CTRL, accept RTS/CTS/ACK). The kernel writes this with
+    ``iowrite32_async``; mac80211 reapplies it on each channel change, so the same value is
+    rewritten on every hop. Returns the new ``priv->rx_conf``. [[passive_by_default]] — RX
+    posture only; no TX. See [[feedback_station_vs_monitor_rcr]].
+    """
+    rx_conf |= RX_CONF_MONITOR | RX_CONF_CTRL
+    t.write32(REG_RX_CONF, rx_conf)
+    return rx_conf
+
+
+def cold_bring_up(t: RTL8187Transport, rf_init: RFInit = _stub_rf_init) -> int:
+    """Run the cold bring-up init_hw → start → configure_filter (enter monitor), returning
+    the monitor RX_CONF. ``rf_init`` programs the RF synth (without it the receiver is blind).
     """
     init_hw(t, rf_init=rf_init)
-    start(t)
+    rx_conf = start(t)
+    return configure_filter(t, rx_conf)

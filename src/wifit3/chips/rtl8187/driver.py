@@ -39,17 +39,17 @@ from wifit3.engine.protocols import DeviceID, ProgressCallback
 
 from wifit3.wlan.packet import WlanFrameParser
 
-from .chan import set_channel as _set_channel
+from .chan import config_channel as _config_channel
 from .constants import REG_CMD, CMD_RX_ENABLE, CMD_TX_ENABLE, USB_PID_RTL8187, USB_VID_REALTEK
 from .mac import (
     ChipVariant,
     cold_bring_up,
-    detect_chip_variant,
+    configure_filter,
     is_chip_warm,
-    read_perm_mac,
     start,
 )
-from .rtl8225 import RfSetup, build_rf_init, probe_rf_setup
+from .probe import probe
+from .rtl8225 import RfSetup, TxPower, build_rf_init
 from .rx import parse_rx_urb, probe_endpoints, read_rx_burst
 from ..rx_reader import RxReaderThread
 from .transport import RTL8187Transport
@@ -86,6 +86,8 @@ class RTL8187Driver:
         self._bulk_in_ep: Optional[int] = None
         self._claimed = False
         self._rf_setup: Optional[RfSetup] = None
+        self._power: Optional[TxPower] = None
+        self._rx_conf: int = 0
 
         # WlanDriver Protocol surface area.
         self.mac_address: Optional[str] = None
@@ -159,15 +161,19 @@ class RTL8187Driver:
             _progress(0.05, "Claiming USB interface")
             await loop.run_in_executor(None, self._claim)
 
-            _progress(0.15, "Probing chip variant (TX_CONF HWVER)")
-            self.chip_variant = await loop.run_in_executor(
-                None, detect_chip_variant, self.transport
-            )
+            # Faithful probe: 93cx6 EEPROM (MAC + per-channel TX power + base), asic_rev,
+            # HWVER, RF variant, rfkill — the exact rtl8187_probe wire sequence. Runs on
+            # both warm + cold paths (the EEPROM TX-power table is what set_channel needs,
+            # and the reads are safe on a warm/RF-alive chip).
+            _progress(0.20, "Probing (EEPROM MAC + TX power, asic_rev, HWVER, RF)")
+            pr = await loop.run_in_executor(None, probe, self.transport)
+            self.chip_variant = pr.chip
+            self._rf_setup = pr.setup
+            self._power = pr.power
+            self.mac_address = ":".join(f"{b:02x}" for b in pr.mac)
             logger.info(
-                "chip_variant: %s (HWVER raw=0x%08x, is_8187b_masquerade=%s)",
-                self.chip_variant.name,
-                self.chip_variant.hwver_raw,
-                self.chip_variant.is_8187b_masquerade,
+                "probe: mac=%s, chip=%s, asic_rev=%d, rf=%s",
+                self.mac_address, pr.chip.name, pr.setup.asic_rev, pr.setup.variant.value,
             )
             if self.chip_variant.is_8187b_masquerade:
                 logger.error(
@@ -176,32 +182,23 @@ class RTL8187Driver:
                 )
                 return False
 
-            _progress(0.25, "Reading permanent MAC")
-            mac_bytes = await loop.run_in_executor(None, read_perm_mac, self.transport)
-            self.mac_address = ":".join(f"{b:02x}" for b in mac_bytes)
-            logger.info("mac_address: %s", self.mac_address)
-
             _progress(0.35, "Probing endpoints + warm/cold state")
             eps = probe_endpoints(self.dev)
             self._bulk_in_ep = eps.primary_bulk_in
             warm = await loop.run_in_executor(None, is_chip_warm, self.transport)
             logger.info("is_warm: %s", warm)
 
-            # probe_rf_setup (asic_rev + RF variant) runs on both paths — the
-            # cached RfSetup is what set_channel needs, and the reads are safe
-            # on a warm (RF-alive) chip.
-            _progress(0.45, "Probing RF (asic_rev + variant)")
-            self._rf_setup = await loop.run_in_executor(
-                None, probe_rf_setup, self.transport
-            )
-
             if warm and await self._smoke_test_rx(loop):
                 # A prior session left the MAC up + RF programmed and bulk-IN is
                 # streaming. Skip the ~2 s cold init (init_hw + the rxgain SPI
-                # loops); just re-arm the monitor RX posture — start() re-applies
-                # RX_CONF + CMD TX/RX enable with no RF work. [[feedback_warm_reattach]]
+                # loops); just re-arm the monitor RX posture — start() rewrites the
+                # RX_CONF baseline + CMD TX/RX enable, configure_filter ORs the
+                # monitor flags back in, no RF work. [[feedback_warm_reattach]]
                 _progress(0.6, "chip WARM — re-arming (skip cold init + RF)")
-                await loop.run_in_executor(None, start, self.transport)
+                self._rx_conf = await loop.run_in_executor(None, start, self.transport)
+                await loop.run_in_executor(
+                    None, configure_filter, self.transport, self._rx_conf
+                )
             elif warm:
                 # CMD says warm but bulk-IN is wedged. On Windows/WinUSB the
                 # safest recovery is a replug (matches the rtw88 family).
@@ -213,9 +210,11 @@ class RTL8187Driver:
                 return False
             else:
                 _progress(0.50, "Building RF init callback")
-                rf_init = build_rf_init(self.transport, self._rf_setup)
-                _progress(0.55, "Running cold bring-up (init_hw + RF init + start)")
-                await loop.run_in_executor(None, cold_bring_up, self.transport, rf_init)
+                rf_init = build_rf_init(self.transport, self._rf_setup, self._power)
+                _progress(0.55, "Cold bring-up (init_hw + RF + start + monitor entry)")
+                self._rx_conf = await loop.run_in_executor(
+                    None, cold_bring_up, self.transport, rf_init
+                )
 
             # Verify CMD latched TX_ENABLE | RX_ENABLE (warm re-arm or cold start).
             cmd = await loop.run_in_executor(None, self.transport.read8, REG_CMD)
@@ -263,14 +262,14 @@ class RTL8187Driver:
 
     # ---- channel tune (M4) -----------------------------------------------
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
-        if self._rf_setup is None:
+        if self._rf_setup is None or self._power is None:
             logger.error("RTL8187 set_channel(%d): connect() must run first", channel)
             return False
         try:
             await asyncio.get_event_loop().run_in_executor(
-                None, _set_channel,
+                None, _config_channel,
                 self.transport, self._rf_setup.asic_rev,
-                self._rf_setup.variant, channel,
+                self._rf_setup.variant, channel, self._power,
             )
         except ValueError as e:
             logger.warning("RTL8187 set_channel: %s", e)

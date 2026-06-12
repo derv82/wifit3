@@ -169,27 +169,45 @@ class RecordingTransport(FakeTransport):
         )
 
 
-def test_start_rx_conf_includes_monitor_bit(monkeypatch):
-    """Regression for the EAPOL-invisible bug — start()'s RX_CONF must
-    have RX_CONF_MONITOR (bit 0) set so the chip accepts frames for
-    BSSIDs other than the one in the (unset) BSSID filter. Same lesson
-    as feedback_station_vs_monitor_rcr on RTL8188EUS M8."""
+def _read_rx_conf(t) -> int:
+    from wifit3.chips.rtl8187.constants import REG_RX_CONF
+    return (t.regs.get(REG_RX_CONF, 0) | (t.regs.get(REG_RX_CONF + 1, 0) << 8)
+            | (t.regs.get(REG_RX_CONF + 2, 0) << 16) | (t.regs.get(REG_RX_CONF + 3, 0) << 24))
+
+
+def test_start_writes_station_baseline_no_monitor(monkeypatch):
+    """start() writes the kernel's station-mode RX_CONF baseline (dev.c:982-990) —
+    0x9094FC0A, with NO monitor bit. Monitor mode is entered separately by
+    configure_filter (the airmon path). Folding monitor into start() (an earlier port's
+    bug) both mis-ordered the write and dropped the CTRL bit airmon also requests."""
     import wifit3.chips.rtl8187.mac as mac
-    from wifit3.chips.rtl8187.constants import REG_RX_CONF, RX_CONF_MONITOR
+    from wifit3.chips.rtl8187.constants import RX_CONF_MONITOR
 
     monkeypatch.setattr(mac.time, "sleep", lambda *_a, **_kw: None)
 
     t = RecordingTransport()
-    mac.start(t)
+    rx_conf = mac.start(t)
+    assert rx_conf == 0x9094FC0A
+    assert not (rx_conf & RX_CONF_MONITOR)
+    assert _read_rx_conf(t) == 0x9094FC0A
 
-    rx_conf = t.regs.get(REG_RX_CONF, 0) | (t.regs.get(REG_RX_CONF + 1, 0) << 8) \
-        | (t.regs.get(REG_RX_CONF + 2, 0) << 16) | (t.regs.get(REG_RX_CONF + 3, 0) << 24)
-    assert rx_conf & RX_CONF_MONITOR, (
-        f"RX_CONF=0x{rx_conf:08x} missing RX_CONF_MONITOR (bit 0). "
-        "EAPOL frames will be invisible without it."
-    )
-    # Sanity: the full word should now be 0x9094FC0A | 1 = 0x9094FC0B
-    assert rx_conf == 0x9094FC0B
+
+def test_configure_filter_enters_monitor_with_ctrl(monkeypatch):
+    """configure_filter ORs MONITOR (accept all BSSIDs incl. ToDS EAPOL) + CTRL (accept
+    control frames) into the start() baseline and writes it — the exact RX_CONF airmon
+    requests (FIF_OTHER_BSS|FIF_CONTROL): 0x9094FC0A | 0x80001 = 0x909CFC0B. Same lesson
+    as feedback_station_vs_monitor_rcr on RTL8188EUS M8."""
+    import wifit3.chips.rtl8187.mac as mac
+    from wifit3.chips.rtl8187.constants import RX_CONF_CTRL, RX_CONF_MONITOR
+
+    monkeypatch.setattr(mac.time, "sleep", lambda *_a, **_kw: None)
+
+    t = RecordingTransport()
+    mon = mac.configure_filter(t, 0x9094FC0A)
+    assert mon == 0x909CFC0B
+    assert mon & RX_CONF_MONITOR
+    assert mon & RX_CONF_CTRL
+    assert _read_rx_conf(t) == 0x909CFC0B
 
 
 def test_cold_bring_up_latches_cmd_tx_rx_enable(monkeypatch):
@@ -306,7 +324,12 @@ def test_parse_rx_urb_flags_fcs_error():
 # ----------------------------------------------------------------------
 # M4 set_channel tests
 # ----------------------------------------------------------------------
-def test_set_channel_rejects_out_of_range(monkeypatch):
+def _zero_power():
+    from wifit3.chips.rtl8187.rtl8225 import TxPower
+    return TxPower(hw_value=tuple([0] * 14), base=0)
+
+
+def test_config_channel_rejects_out_of_range(monkeypatch):
     from wifit3.chips.rtl8187 import chan as chan_mod
     from wifit3.chips.rtl8187.rtl8225 import RfVariant
     import pytest
@@ -316,44 +339,73 @@ def test_set_channel_rejects_out_of_range(monkeypatch):
     t = RecordingTransport()
     for bad in (0, 15, 100, -1):
         with pytest.raises(ValueError):
-            chan_mod.set_channel(t, asic_rev=1, variant=RfVariant.RTL8225, channel=bad)
+            chan_mod.config_channel(t, asic_rev=1, variant=RfVariant.RTL8225,
+                                    channel=bad, power=_zero_power())
 
 
-def test_set_channel_writes_correct_rf7_word(monkeypatch):
-    """set_channel(ch) must write RF reg 0x7 = rtl8225_chan[ch-1].
+def test_config_channel_writes_correct_rf7_word(monkeypatch):
+    """config_channel(ch) must write RF reg 0x7 = rtl8225_chan[ch-1] (the synth word).
 
     Spot-check a few channels — kernel table is shared across BCD + z2."""
     from wifit3.chips.rtl8187 import chan as chan_mod
     from wifit3.chips.rtl8187.rtl8225 import RfVariant, rtl8225_chan
-    import wifit3.chips.rtl8187.rtl8225 as rfm
 
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
-    monkeypatch.setattr(rfm.time, "sleep", lambda *_a, **_kw: None)
 
-    # Capture every rtl8225_write call. We're on the 8051 fast path
-    # (asic_rev=1), so each call ends with a dev.ctrl_transfer with
-    # wValue=addr — but our FakeTransport's `dev` is None, so we
-    # patch rtl8225_write_8051 to just record.
     rf_writes: list[tuple[int, int]] = []
 
     def fake_write(t, addr, data, asic_rev):
         rf_writes.append((addr, data))
 
     monkeypatch.setattr(chan_mod, "rtl8225_write", fake_write)
-    # set_tx_power also runs — patch it to a no-op to keep the test focused.
-    monkeypatch.setattr(chan_mod, "rtl8225_rf_set_tx_power", lambda *a, **kw: None)
-    monkeypatch.setattr(chan_mod, "rtl8225_z2_rf_set_tx_power", lambda *a, **kw: None, raising=False)
-    monkeypatch.setattr(chan_mod, "rtl8225z2_rf_set_tx_power", lambda *a, **kw: None)
+    # set_tx_power also runs — patch it to a no-op to keep the test focused on the synth.
+    monkeypatch.setattr(chan_mod, "set_tx_power", lambda *a, **kw: None)
 
     t = RecordingTransport()
     for ch in (1, 6, 11, 13, 14):
         rf_writes.clear()
-        chan_mod.set_channel(t, asic_rev=1, variant=RfVariant.RTL8225, channel=ch)
+        chan_mod.config_channel(t, asic_rev=1, variant=RfVariant.RTL8225,
+                                channel=ch, power=_zero_power())
         # Exactly one RF write — RF reg 0x7 with the synth word.
         assert rf_writes == [(0x7, rtl8225_chan[ch - 1])], (
             f"ch={ch}: expected single RF7 write with 0x{rtl8225_chan[ch-1]:03x}, "
             f"got {rf_writes}"
         )
+
+
+def test_config_channel_brackets_tune_in_tx_conf_loopback(monkeypatch):
+    """config_channel mirrors rtl8187_config: read TX_CONF, OR in LOOPBACK_MAC, retune,
+    restore TX_CONF, then write the 4 ATIM/beacon interval registers (dev.c:1162-1176)."""
+    from wifit3.chips.rtl8187 import chan as chan_mod
+    from wifit3.chips.rtl8187.constants import (
+        REG_ATIM_WND, REG_ATIMTR_INTERVAL, REG_BEACON_INTERVAL,
+        REG_BEACON_INTERVAL_TIME, REG_TX_CONF, TX_CONF_LOOPBACK_MAC,
+    )
+    from wifit3.chips.rtl8187.rtl8225 import RfVariant
+
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    monkeypatch.setattr(chan_mod, "rtl8225_write", lambda *a, **kw: None)
+    monkeypatch.setattr(chan_mod, "set_tx_power", lambda *a, **kw: None)
+
+    t = RecordingTransport()
+    t.write_bytes(REG_TX_CONF, [0x00, 0x00, 0xe8, 0x98])   # read-back base (HWVER bits set)
+    chan_mod.config_channel(t, asic_rev=1, variant=RfVariant.RTL8225Z2, channel=1,
+                            power=_zero_power())
+
+    tx_writes = [op for op in t.ops if op[0] == "w32" and op[1] == REG_TX_CONF]
+    assert tx_writes == [
+        ("w32", REG_TX_CONF, 0x98e80000 | TX_CONF_LOOPBACK_MAC),  # loopback on
+        ("w32", REG_TX_CONF, 0x98e80000),                         # restore
+    ]
+    atim = [op for op in t.ops if op[0] == "w16"
+            and op[1] in (REG_ATIM_WND, REG_ATIMTR_INTERVAL,
+                          REG_BEACON_INTERVAL, REG_BEACON_INTERVAL_TIME)]
+    assert atim == [
+        ("w16", REG_ATIM_WND, 2),
+        ("w16", REG_ATIMTR_INTERVAL, 100),
+        ("w16", REG_BEACON_INTERVAL, 100),
+        ("w16", REG_BEACON_INTERVAL_TIME, 100),
+    ]
 
 
 # ----------------------------------------------------------------------
@@ -423,33 +475,51 @@ def test_build_deauth_structure():
     assert f[25] == 0
 
 
-def test_set_channel_dispatches_z2_set_tx_power(monkeypatch):
-    """Variant=RTL8225Z2 must route through rtl8225z2_rf_set_tx_power,
-    NOT the BCD one — matches kernel rtl8225_rf_set_channel dispatch."""
+def test_config_channel_dispatches_z2_set_tx_power(monkeypatch):
+    """Variant=RTL8225Z2 must route through rtl8225z2_rf_set_tx_power, NOT the BCD one —
+    matches kernel rtl8225_rf_set_channel dispatch. The shared set_tx_power dispatcher
+    (rtl8225.set_tx_power) picks the variant from the EEPROM hw_value."""
     from wifit3.chips.rtl8187 import chan as chan_mod
+    import wifit3.chips.rtl8187.rtl8225 as rf
     from wifit3.chips.rtl8187.rtl8225 import RfVariant
 
     monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
 
     called = {"bcd": 0, "z2": 0}
-
-    def fake_bcd(*a, **kw):
-        called["bcd"] += 1
-
-    def fake_z2(*a, **kw):
-        called["z2"] += 1
-
-    monkeypatch.setattr(chan_mod, "rtl8225_rf_set_tx_power", fake_bcd)
-    monkeypatch.setattr(chan_mod, "rtl8225z2_rf_set_tx_power", fake_z2)
+    monkeypatch.setattr(rf, "rtl8225_rf_set_tx_power",
+                        lambda *a, **kw: called.__setitem__("bcd", called["bcd"] + 1))
+    monkeypatch.setattr(rf, "rtl8225z2_rf_set_tx_power",
+                        lambda *a, **kw: called.__setitem__("z2", called["z2"] + 1))
     monkeypatch.setattr(chan_mod, "rtl8225_write", lambda *a, **kw: None)
 
     t = RecordingTransport()
 
-    chan_mod.set_channel(t, asic_rev=1, variant=RfVariant.RTL8225Z2, channel=6)
+    chan_mod.config_channel(t, asic_rev=1, variant=RfVariant.RTL8225Z2, channel=6,
+                            power=_zero_power())
     assert called == {"bcd": 0, "z2": 1}
 
-    chan_mod.set_channel(t, asic_rev=1, variant=RfVariant.RTL8225, channel=6)
+    chan_mod.config_channel(t, asic_rev=1, variant=RfVariant.RTL8225, channel=6,
+                            power=_zero_power())
     assert called == {"bcd": 1, "z2": 1}
+
+
+def test_z2_set_tx_power_uses_eeprom_cck_ofdm_gain(monkeypatch):
+    """The AWUS036H EEPROM (ch1 hw_value=0x55, txpwr_base=0x36) must yield the calibrated
+    TX_GAIN_CCK=0x0b / TX_GAIN_OFDM=0x12 the kernel writes on the wire:
+    cck=min(5,15)+(0x36&0xF)=11, ofdm=(5+10)+(0x36>>4)=18 — both direct-index the z2 gain
+    table. The pre-EEPROM stub (cck=ofdm=0) wrote 0x00/0x03 instead; this is what made the
+    channel hops diverge from the capture until the 93cx6 read landed."""
+    import wifit3.chips.rtl8187.rtl8225 as rf
+    from wifit3.chips.rtl8187.constants import REG_TX_GAIN_CCK, REG_TX_GAIN_OFDM
+    from wifit3.chips.rtl8187.rtl8225 import RfVariant, TxPower, set_tx_power
+
+    monkeypatch.setattr(rf.time, "sleep", lambda *_a, **_kw: None)
+
+    t = RecordingTransport()
+    power = TxPower(hw_value=tuple([0x55] * 14), base=0x36)
+    set_tx_power(t, RfVariant.RTL8225Z2, 1, power)
+    assert t.regs.get(REG_TX_GAIN_CCK) == 0x0B
+    assert t.regs.get(REG_TX_GAIN_OFDM) == 0x12
 
 
 def test_set_anaparam_brackets_with_eeprom_config_normal(monkeypatch):

@@ -57,7 +57,8 @@ from wifit3.chips.rtl8187.mac import (
     is_chip_warm,
     read_perm_mac,
 )
-from wifit3.chips.rtl8187.chan import set_channel
+from wifit3.chips.rtl8187.chan import config_channel
+from wifit3.chips.rtl8187.probe import probe
 from wifit3.chips.rtl8187.tx import (
     BROADCAST_MAC,
     RATE_1MBPS_CCK,
@@ -65,12 +66,7 @@ from wifit3.chips.rtl8187.tx import (
     build_tx_hdr,
     inject_frame,
 )
-from wifit3.chips.rtl8187.rtl8225 import (
-    build_rf_init,
-    detect_rf,
-    probe_asic_rev,
-    probe_rf_setup,
-)
+from wifit3.chips.rtl8187.rtl8225 import build_rf_init
 from wifit3.chips.rtl8187.rx import (
     parse_rx_urb,
     probe_endpoints,
@@ -203,20 +199,20 @@ def phase_init(dev, transport: RTL8187Transport) -> None:
         fail("CMD did not latch TX|RX enable — bring-up incomplete.")
     ok("CMD has TX_ENABLE | RX_ENABLE")
 
-    step("Read RX_CONF@0xFF44 (should reflect start()'s RX_CONF write)")
+    step("Read RX_CONF@0xFF44 (reflects start() baseline + configure_filter monitor entry)")
     rx_conf = transport.read32(REG_RX_CONF)
     print(f"  RX_CONF  = 0x{rx_conf:08x}")
-    # MONITOR (bit 0) + NICMAC (bit 1) + BROADCAST (bit 3) +
-    # (7<<10) + (7<<13) + DATA (bit 18) + MGMT (bit 20) + BSSID (bit 23)
-    # + AUTORESETPHY (bit 28) + ONLYERLPKT (bit 31) = 0x9094FC0B
-    expected_min = (
-        (1 << 31) | (1 << 28) | (1 << 23) | (1 << 20) | (1 << 18)
+    # cold_bring_up = init_hw + start + configure_filter. start() writes the station
+    # baseline 0x9094FC0A; configure_filter ORs MONITOR (bit 0) + CTRL (bit 19) for the
+    # airmon posture → 0x909CFC0B.
+    expected = (
+        (1 << 31) | (1 << 28) | (1 << 23) | (1 << 20) | (1 << 19) | (1 << 18)
         | (7 << 13) | (7 << 10) | (1 << 3) | (1 << 1) | (1 << 0)
     )
-    if rx_conf != expected_min:
-        print(f"  NOTE: expected 0x{expected_min:08x} — diff may indicate a HW-driven bit.")
+    if rx_conf != expected:
+        print(f"  NOTE: expected 0x{expected:08x} — diff may indicate a HW-driven bit.")
     else:
-        ok("RX_CONF matches start() expected value exactly")
+        ok("RX_CONF matches the monitor-entry expected value exactly")
 
     step("Drain bulk-IN for ~1s (informational — receiver blind w/o RF init)")
     total = 0
@@ -244,19 +240,17 @@ def phase_rf(dev, transport: RTL8187Transport) -> None:
     show how many bytes came through. With RF init done the receiver
     should now produce frames on whatever the chip's default channel
     happens to be after init (typically channel 1)."""
-    step("Probe asic_rev (picks SPI bitbang vs 8051 fast path)")
-    asic_rev = probe_asic_rev(transport)
-    print(f"  asic_rev = {asic_rev}")
-    print(f"  SPI write path = {'8051 fast' if asic_rev else 'bitbang'}")
-    ok(f"asic_rev = {asic_rev}")
-
-    step("Detect RF variant (BCD vs z2 via RF reg 8/9 probe)")
-    variant = detect_rf(transport, asic_rev)
-    print(f"  RF variant = {variant.value}")
-    ok(f"RF variant = {variant.value} (both BCD + z2 paths ported)")
+    step("Probe (93cx6 EEPROM MAC + TX power, asic_rev, HWVER, RF variant)")
+    pr = probe(transport)
+    print(f"  mac        = {pr.mac.hex(':')}")
+    print(f"  asic_rev   = {pr.setup.asic_rev}  "
+          f"({'8051 fast' if pr.setup.asic_rev else 'bitbang'} SPI)")
+    print(f"  RF variant = {pr.setup.variant.value}")
+    print(f"  ch1 TXpwr  = hw_value=0x{pr.power.hw_value[0]:02x}, base=0x{pr.power.base:04x}")
+    ok(f"probe complete (RF={pr.setup.variant.value}, both BCD + z2 paths ported)")
 
     step("Build rf_init callback + run cold_bring_up with real RF init")
-    rf_init = build_rf_init(transport)
+    rf_init = build_rf_init(transport, pr.setup, pr.power)
     import time as _t
     t0 = _t.perf_counter()
     try:
@@ -377,8 +371,9 @@ def phase_channel(dev, transport: RTL8187Transport) -> None:
     beacons + unique BSSIDs per channel. Beacons-per-channel sanity-
     checks that the synth tune is actually moving the radio."""
     # cold_bring_up.
-    setup = probe_rf_setup(transport)
-    rf_init = build_rf_init(transport, setup)
+    pr = probe(transport)
+    setup = pr.setup
+    rf_init = build_rf_init(transport, setup, pr.power)
     from wifit3.chips.rtl8187.mac import cold_bring_up as _cold
     step("cold_bring_up (init_hw + RF init + start)")
     _cold(transport, rf_init)
@@ -397,7 +392,7 @@ def phase_channel(dev, transport: RTL8187Transport) -> None:
     for ch in channels:
         step(f"Tune to channel {ch}, sample 2s")
         t0 = _t.perf_counter()
-        set_channel(transport, setup.asic_rev, setup.variant, ch)
+        config_channel(transport, setup.asic_rev, setup.variant, ch, pr.power)
         # Drain any stale URBs from the previous channel before sampling.
         for _ in range(8):
             if read_rx_burst(dev, ep, timeout_ms=30) is None:
@@ -464,12 +459,13 @@ def phase_tx(dev, transport: RTL8187Transport) -> None:
     fire a burst of broadcast deauths spoofed from that BSSID. Watch
     bulk-IN to see whether our own frames bounce back (the chip's RX
     path often delivers self-TX'd frames in monitor mode)."""
-    setup = probe_rf_setup(transport)
-    rf_init = build_rf_init(transport, setup)
+    pr = probe(transport)
+    setup = pr.setup
+    rf_init = build_rf_init(transport, setup, pr.power)
     from wifit3.chips.rtl8187.mac import cold_bring_up as _cold
     step("cold_bring_up + tune to channel 11")
     _cold(transport, rf_init)
-    set_channel(transport, setup.asic_rev, setup.variant, 11)
+    config_channel(transport, setup.asic_rev, setup.variant, 11, pr.power)
     ok("ready on ch 11")
 
     eps = probe_endpoints(dev)
@@ -580,12 +576,13 @@ def phase_handshake(dev, transport: RTL8187Transport, channel: int, seconds: flo
     Useful for sanity-checking handshake capture against a known AP+
     client pair you can trigger a reconnect on.
     """
-    setup = probe_rf_setup(transport)
-    rf_init = build_rf_init(transport, setup)
+    pr = probe(transport)
+    setup = pr.setup
+    rf_init = build_rf_init(transport, setup, pr.power)
     from wifit3.chips.rtl8187.mac import cold_bring_up as _cold
     step(f"cold_bring_up + tune to channel {channel}")
     _cold(transport, rf_init)
-    set_channel(transport, setup.asic_rev, setup.variant, channel)
+    config_channel(transport, setup.asic_rev, setup.variant, channel, pr.power)
     ok(f"listening on ch {channel} for {seconds:.0f}s")
 
     eps = probe_endpoints(dev)
