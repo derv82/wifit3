@@ -20,7 +20,7 @@ The matrix below captures *how well wifit3 drives these wireless cards* -- Every
 | [RT3070](#rt3070) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5572](#rt5572) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ⬜ | B |
+| [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8822BU](#rtl8822bu) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [MT7610U](#mt7610u) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ | C |
@@ -50,11 +50,12 @@ tables below lead with the attack columns and any caveats.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Handshake | ✅ | 2026-05-31 | Full M1–M4. |
-| PMKID | ✅ | 2026-05-31 | Passive + active extract. |
-| WEP | ✅ | 2026-05-31 | Replay + ChopChop. |
-| WPS | ❌ | 2026-05-31 | PBC timed out; PIN got NACKs, no crack. Likely the [hard-MAC WPS gap](src/wifit3/engine/attacks/wps/README.md#hard-mac-wps-gap-2026-05-31) (no-firmware part, no hardware ACK). |
-| Stress | ⬜ | — | Not run. |
+| Scan | ✅ | 2026-06-12 | Healthy — 215–323 frames/s, real RSSI spread. Always cold-inits (the radio doesn't survive a handle reopen). |
+| Handshake | ✅ | 2026-06-12 | Deauth → 4-way; ~3/4 M1–M4. |
+| PMKID | ✅ | 2026-06-12 | Passive + active extract. |
+| WEP | ✅ | 2026-06-12 | FakeAuth + ARP replay (~150–200 IVs/s) + ChopChop. |
+| WPS | ✅ | 2026-06-12 | PIN + PBC. (The L-path has no hardware sequence assignment, so inject stamps the 802.11 seq in software like the kernel; without it the AP deduped the multi-frame EAP exchange.) |
+| Stress | ✅ | 2026-06-11 | 30-min 13-ch soak (0.25s hops): no wedge, no degradation trend. |
 
 → [RTL8187L.md](src/wifit3/chips/rtl8187/RTL8187L.md)
 
@@ -259,6 +260,6 @@ stay flat the whole time, and the failures (RT2500USB) show within the first min
 
 ## Fully supported
 
-Every column ✅ *plus* a clean Stress soak. **Eight cards are there: RTL8812AU (DKMS),
-AR9271, RTL8821AU (DKMS), MT7612U, RT3070, RT5372, RT5572, and RT2500USB** — every Ralink
-we have (RT2500USB / RT3070 / RT5372 / RT5572) now at full marks.
+Every column ✅ *plus* a clean Stress soak. **Nine cards are there: RTL8812AU (DKMS),
+AR9271, RTL8821AU (DKMS), MT7612U, RT3070, RT5372, RT5572, RT2500USB, and RTL8187L** — every
+Ralink we have (RT2500USB / RT3070 / RT5372 / RT5572) now at full marks.

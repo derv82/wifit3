@@ -39,11 +39,11 @@ subprocesses, no Scapy — so it runs the same on **Linux and Windows**.
 | TP-Link TL-WN722N v2/v3 | Realtek RTL8188EUS | 2.4 GHz |
 | ALFA AWUS036ACM | MediaTek MT7612U | 2.4 / 5 GHz |
 | ALFA AWUS036ACHM | MediaTek MT7610U | 2.4 / 5 GHz |
-| ALFA AWUS036H | Realtek RTL8187L * | 2.4 GHz |
+| ALFA AWUS036H | Realtek RTL8187L | 2.4 GHz |
 | Panda PAU05 / PAU06 | Ralink RT5372 | 2.4 GHz |
 | Panda PAU09 N600 | Ralink RT5572 | 2.4 / 5 GHz |
 | ALFA AWUS036NH | Ralink RT3070 | 2.4 GHz |
-| Buffalo Nintendo Wi-Fi | Ralink RT2500USB / RT2570 * | 2.4 GHz |
+| Buffalo Nintendo Wi-Fi | Ralink RT2500USB / RT2570 | 2.4 GHz |
 
 \* Known limitation — see [VERIFICATION.md](VERIFICATION.md). The absence of an
 asterisk means *no known issue*, not that every attack has been verified on that
