@@ -131,11 +131,18 @@ def _walk_operational(w: Walk, setup, power, rx_conf: int) -> dict | None:
 
 def run(cap: str | None = None) -> int:
     time.sleep = lambda *a, **k: None        # replay needs no real settle delays
-    name = Path(cap or "capture-1").stem
-    pcap = CAP_DIR / f"{name}.pcap"
-    if not pcap.exists():
-        print(f"FAIL: no such capture {pcap}")
+    # Accept either a bare capture name (under the default capture dir) or an explicit path,
+    # so the Post-Port "verify every capture" pass can point at the older usb_dumps/ ones.
+    arg = cap or "capture-1"
+    cand = Path(arg)
+    if cand.exists():
+        pcap = cand
+    elif (CAP_DIR / f"{Path(arg).stem}.pcap").exists():
+        pcap = CAP_DIR / f"{Path(arg).stem}.pcap"
+    else:
+        print(f"FAIL: no such capture {arg}")
         return 1
+    name = pcap.stem
 
     dev = rp.find_card_device(pcap)
     rp.audit_coverage(pcap, dev)
