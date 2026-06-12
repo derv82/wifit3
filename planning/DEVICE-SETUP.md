@@ -150,16 +150,19 @@ rule install) and **zero** per-run sudo.
 Full plan saved at `~/.claude/plans/precious-tickling-canyon.md` (Claude Code plan
 **precious-tickling-canyon**). **Implemented 2026-06-12 — see "Landed" below.**
 
-One refinement to the Recommendation above, decided while planning: ship a **per-device**
-permission rule scoped to the single VID:PID the user activates — *not* one blanket file across
-all supported models — so a second supported card kept as the normal internet adapter stays
-untouched (mirrors the Windows "bind only the card you picked" UX). The blanket file survives as
-an explicit `wifit3 --emit-udev` power-user opt-in. The no-install bypass is `sudo wifit3`; a
-one-time per-device rule is the "never sudo again for this card" path. (A permission rule never
-unbinds the driver or hides the card — it only grants node access; the card stays a normal Wi-Fi
-adapter until wifit3 detaches it at runtime.)
+While planning, per-device scoping was chosen to keep a second card "untouched." **Reversed
+2026-06-12 → blanket is the default** (the implemented behaviour). The reversal rationale: a
+permission rule is *permission-only* — it never unbinds the driver or changes how a card works
+as normal Wi-Fi; wifit3 only takes control via the per-session runtime detach at connect time
+(replug undoes). So a blanket rule covering every supported VID:PID leaves all cards untouched
+*just as well as* per-device scoping did — the scoping wasn't buying real protection, only fewer
+lines in a file. Blanket wins the ergonomics that matter (one `pkexec` ever; hot-plug any
+supported card with zero further prompts — the multi-card workflow). The only tradeoff is a
+slightly wider standing node-access grant to the seat user, which is permission-only and
+seat-scoped (`uaccess`, revoked on logout) — negligible on a single-user box. The no-install
+bypass is `sudo wifit3`; `--emit-udev` prints the same blanket file for manual install.
 
-Shape: new `setup/linux.py` (`free_device()` mirroring `setup/windows.py:install_winusb`,
+Shape: new `setup/linux.py` (`install_rule()` mirroring `setup/windows.py:install_winusb`,
 helpers lifted from `scripts/linux_setup/probe_l1_l2.py`) + a Linux branch on the
 connect-failure path in `ui/screens/splash.py:perform_start` + a parametrized `ConfirmInstallDialog`.
 
@@ -168,35 +171,34 @@ connect-failure path in `ui/screens/splash.py:perform_start` + a parametrized `C
 Shipped exactly the parked shape, plus the **uninstall (✕) button** (both OSes) that the plan
 flagged as a logical companion:
 
-- **`setup/linux.py`** — `free_device(vid, pid, desc)` (per-device rule install, one
-  `pkexec`→`sudo`→manual prompt), `remove_rule(vid, pid)` (uninstall; missing rule = benign
-  no-op), `build_rule_text()` (carries the trailing-comment fix — each description on its own
-  `#` line; a regression test asserts no rule line contains `#`), `emit_udev_text()` (blanket
-  file from the live registry), wired to `wifit3 --emit-udev`.
+- **`setup/linux.py`** — `install_rule()` (writes the **blanket** rule `60-wifit3.rules` for all
+  supported cards, one `pkexec`→`sudo`→manual prompt), `remove_rule()` (uninstall; removes that
+  one shared file → revokes all cards; missing rule = benign no-op), `build_rule_text()` (carries
+  the trailing-comment fix — each description on its own `#` line; a regression test asserts no
+  rule line contains `#`), `emit_udev_text()` (the same blanket text for `wifit3 --emit-udev`).
 - **`wlan/manager.py:linux_needs_permission()`** — usbfs-node-writability stat. Needed because a
   kernel-claimed Linux card still *passes* `is_openable` (descriptors read; the claim fails
   later), so node write-access — not openability — is the "install the access rule" signal.
 - **`ui/screens/splash.py`** — Linux branch on the connect-failure path (probe → confirm →
-  `free_device` → re-find → retry, with a replug hint on retry failure for FW-reenum combos);
+  `install_rule` → re-find → retry, with a replug hint on retry failure for FW-reenum combos);
   the **✕ uninstall button** next to START (tooltip-labelled) → `restore_driver` (Windows,
   already built) / `remove_rule` (Linux) via a new `ConfirmUninstallDialog`. `ConfirmInstallDialog`
   parametrized (defaults unchanged) so the Linux prompt reuses it with "Device Access" wording.
-- **18 unit tests** (`tests/setup/test_linux.py`) — rule text, path naming, `run_privileged`
-  argv, install/remove classification, the no-trailing-comment regression. Windows-runnable.
+- **18 unit tests** (`tests/setup/test_linux.py`) — rule text, `run_privileged` argv,
+  install/remove classification, the no-trailing-comment regression. Windows-runnable.
 
 **Behaviour to test on Kali (the live path can't run on Windows):**
 
-- **First card, user (non-root):** START → `pkexec` graphical *Enter-Password* prompt → per-VID:PID
-  rule written → `udevadm trigger` → node user-writable → retry connect succeeds non-root. (Confirm
-  the polkit prompt actually pops — earlier probe runs never surfaced it.)
-- **Same card, later sessions:** no prompt (rule persists).
-- **A *different* card:** prompts **once more** — the rule is per-VID:PID by design. This is the
-  intended "second supported card kept as the normal adapter stays untouched" behaviour, **not**
-  a bug. ("Install once, every supported card free" is the blanket `--emit-udev` opt-in.)
+- **First card, user (non-root):** START → `pkexec` graphical *Enter-Password* prompt → blanket
+  rule written → `udevadm trigger` → node user-writable → retry connect succeeds non-root.
+  (Confirm the polkit prompt actually pops — earlier probe runs never surfaced it.)
+- **Any other supported card (incl. the multi-card case):** plug it in → **no prompt** — the
+  blanket rule already covers it. This is the whole point of going blanket.
 - **`sudo wifit3`:** no rule needed at all (root opens + detaches everything) — the zero-install
   bypass.
-- **Uninstall (✕):** Windows removes the WinUSB binding immediately; Linux removes the rule (card
-  returns to its kernel driver on the next replug).
+- **Uninstall (✕):** Windows removes the WinUSB binding for that card immediately; Linux removes
+  the single shared rule → **all** supported cards lose access (each returns to its kernel driver
+  on the next replug). The confirm dialog says so.
 
 Still open (unchanged): `pkexec` availability on minimal/headless distros (→ `sudo`/manual), and
 arm-Linux parity.
