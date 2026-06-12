@@ -11,8 +11,10 @@ from textual import work
 from rich.text import Text
 from rich.style import Style
 
-from wifit3.setup.windows import install_winusb
+from wifit3.setup.linux import free_device, remove_rule
+from wifit3.setup.windows import install_winusb, restore_driver
 from wifit3.ui.screens.confirm_install import ConfirmInstallDialog
+from wifit3.ui.screens.confirm_uninstall import ConfirmUninstallDialog
 from wifit3.ui.screens.setup_error import SetupErrorDialog
 from wifit3.wlan.manager import WlanDeviceManager
 
@@ -117,11 +119,18 @@ class SplashView(Screen):
                 with Horizontal(id="device-row"):
                     yield ListView(id="device-list")
                     yield Button("START", id="start-btn", variant="success")
+                    # Compact uninstall: reverses wifit3's driver/access change for the
+                    # selected card (WinUSB unbind on Windows, udev-rule removal on Linux).
+                    # The bare ✕ is disambiguated by a hover tooltip (set in on_mount).
+                    yield Button("✕", id="uninstall-btn", variant="error")
         yield Footer()
 
     async def on_mount(self) -> None:
         self.query_one("#init-progress").display = False
         self.query_one("#start-btn", Button).disabled = True   # enabled once a card appears
+        uninstall_btn = self.query_one("#uninstall-btn", Button)
+        uninstall_btn.disabled = True
+        uninstall_btn.tooltip = "Uninstall the wifit3 driver / access rule for the selected card"
         # Poll frequently — discovery opens no devices now, so a tight interval makes plugging
         # a card in feel instant. The first tick runs immediately (set_interval waits a full
         # period before its first fire).
@@ -148,9 +157,11 @@ class SplashView(Screen):
 
             status = self.query_one("#status-label", Label)
             start_btn = self.query_one("#start-btn", Button)
+            uninstall_btn = self.query_one("#uninstall-btn", Button)
             if interfaces:
                 status.update("[bold bright_green]Select a card and press START[/bold bright_green]")
                 start_btn.disabled = False
+                uninstall_btn.disabled = False
                 # clear() reset index to None; re-arm the highlight so START has a target.
                 if list_view.index is None:
                     list_view.index = 0
@@ -158,6 +169,7 @@ class SplashView(Screen):
             else:
                 status.update("Scanning for compatible hardware…")
                 start_btn.disabled = True
+                uninstall_btn.disabled = True
                 self._selected_name = None
         finally:
             self._poll_in_flight = False
@@ -180,12 +192,15 @@ class SplashView(Screen):
             self.perform_start(iface)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if self._is_initializing:
+        if self._is_initializing or not self._selected_name:
             return
-        if event.button.id == "start-btn" and self._selected_name:
-            iface = self.device_manager.get_interface(self._selected_name)
-            if iface is not None:
-                self.perform_start(iface)
+        iface = self.device_manager.get_interface(self._selected_name)
+        if iface is None:
+            return
+        if event.button.id == "start-btn":
+            self.perform_start(iface)
+        elif event.button.id == "uninstall-btn":
+            self.perform_uninstall(iface)
 
     @work(exclusive=True)
     async def perform_start(self, iface) -> None:
@@ -219,52 +234,169 @@ class SplashView(Screen):
             if await self._connect(iface):
                 return  # _connect switched to the scanner
 
-            # Connect failed. On Windows the usual reason is "not WinUSB-bound"; confirm with
-            # the (blocking, but only-on-failure) openability probe before assuming so.
+            # Connect failed. The fix depends on the OS: Windows usually means "not
+            # WinUSB-bound", Linux means "the kernel driver holds it + we lack node access".
+            # Both run a blocking, only-on-failure probe before assuming so.
             await iface.close()
             openable = await asyncio.to_thread(self.device_manager.is_openable, iface)
-            if openable or sys.platform != "win32":
-                raise RuntimeError("the card failed to initialize")  # a real fault → modal
+            vid, pid, desc = iface.vid, iface.pid, iface.description
 
-            # Not openable on Windows → offer the one-time WinUSB install.
-            if not await self.app.push_screen_wait(ConfirmInstallDialog(iface.description)):
-                status.update("[bold bright_green]Select a card and press START[/bold bright_green]")
-                release()
-                return
-            status.update(f"[bold yellow]Installing WinUSB driver for {iface.description}… "
-                          f"(up to a minute)[/bold yellow]")
-            result = await asyncio.to_thread(
-                install_winusb, iface.vid, iface.pid, name=iface.description)
-            if not result.ok:
-                release()
-                if result.cancelled:
-                    status.update("[yellow]Install cancelled.[/yellow]")
-                else:
-                    status.update("[bold red]WinUSB install failed.[/bold red]")
-                    bits = []
-                    if result.wdi_code is not None:
-                        bits.append(f"libwdi code {result.wdi_code}")
-                    if result.detail:
-                        bits.append(result.detail)
-                    self.app.push_screen(SetupErrorDialog(
-                        "WinUSB install failed", result.message, " · ".join(bits) or None))
-                return
+            async def _refind_and_connect(fail_msg: str) -> None:
+                """After a setup action, re-scan, re-find the card by VID:PID, and connect.
+                Soft-fails (status + release) if it vanished; raises ``fail_msg`` if it's back
+                but still won't initialize."""
+                await self.device_manager.refresh()
+                self._last_signature = None
+                again = self.device_manager.get_interface_by_vidpid(vid, pid)
+                if again is None:
+                    status.update("[bold red]Card not found after setup — replug and retry.[/bold red]")
+                    release()
+                    return
+                if not await self._connect(again):
+                    raise RuntimeError(fail_msg)
 
-            # The card re-enumerated under WinUSB — re-find it, then connect.
-            await self.device_manager.refresh()
-            self._last_signature = None
-            iface = self.device_manager.get_interface_by_vidpid(iface.vid, iface.pid)
-            if iface is None:
-                status.update("[bold red]Card not found after install — replug and retry.[/bold red]")
-                release()
-                return
-            if not await self._connect(iface):
-                raise RuntimeError("the card failed to initialize after installing WinUSB")
+            if sys.platform == "win32":
+                if openable:
+                    raise RuntimeError("the card failed to initialize")  # a real fault → modal
+                # Not openable on Windows → offer the one-time WinUSB install.
+                if not await self.app.push_screen_wait(ConfirmInstallDialog(desc)):
+                    status.update("[bold bright_green]Select a card and press START[/bold bright_green]")
+                    release()
+                    return
+                status.update(f"[bold yellow]Installing WinUSB driver for {desc}… "
+                              f"(up to a minute)[/bold yellow]")
+                result = await asyncio.to_thread(install_winusb, vid, pid, name=desc)
+                if not result.ok:
+                    release()
+                    if result.cancelled:
+                        status.update("[yellow]Install cancelled.[/yellow]")
+                    else:
+                        status.update("[bold red]WinUSB install failed.[/bold red]")
+                        bits = []
+                        if result.wdi_code is not None:
+                            bits.append(f"libwdi code {result.wdi_code}")
+                        if result.detail:
+                            bits.append(result.detail)
+                        self.app.push_screen(SetupErrorDialog(
+                            "WinUSB install failed", result.message, " · ".join(bits) or None))
+                    return
+                # The card re-enumerated under WinUSB — re-find it, then connect.
+                await _refind_and_connect("the card failed to initialize after installing WinUSB")
+
+            elif sys.platform.startswith("linux"):
+                # On Linux a kernel-claimed card still reads as "openable", so the real signal
+                # is whether the usbfs node is writable. Writable-but-failed = a genuine fault.
+                needs_perm = await asyncio.to_thread(
+                    self.device_manager.linux_needs_permission, iface)
+                if not needs_perm:
+                    raise RuntimeError("the card failed to initialize")
+                # No node access → offer the one-time udev access rule (reuses the install
+                # dialog with Linux wording — a missing REQUIRED link, same shape).
+                if not await self.app.push_screen_wait(ConfirmInstallDialog(
+                        desc,
+                        title="Wifit3 needs one-time access to talk to this card",
+                        link_label="Device Access",
+                        warning="[bold $text-warning]One-time setup:[/] installs a small udev "
+                                "rule so wifit3 can use this card [italic]without sudo[/]. It "
+                                "does [bold]not[/] remove the card as normal Wi-Fi.\n[dim]"
+                                "Reversible: press ✕ to remove the rule (replug restores the "
+                                "driver).[/dim]",
+                        verb="Grant access for",
+                        confirm_label="Grant access")):
+                    status.update("[bold bright_green]Select a card and press START[/bold bright_green]")
+                    release()
+                    return
+                status.update(f"[bold yellow]Granting access for {desc}… "
+                              f"(one password prompt)[/bold yellow]")
+                result = await asyncio.to_thread(free_device, vid, pid, desc)
+                if not result.ok:
+                    release()
+                    if result.cancelled:
+                        status.update("[yellow]Setup cancelled.[/yellow]")
+                    else:
+                        status.update("[bold red]Couldn't set up device access.[/bold red]")
+                        self.app.push_screen(SetupErrorDialog(
+                            "Linux device-access setup failed", result.message, result.detail))
+                    return
+                # Rule installed → node should now be writable; FW-reenumerating combos
+                # (MT7921AU) may still need a replug, surfaced by the retry's failure message.
+                await _refind_and_connect(
+                    "the card failed to initialize after granting access — "
+                    "try unplugging and replugging it")
+
+            else:
+                raise RuntimeError("the card failed to initialize")
         except Exception as e:
             logger.exception("Failed to start %s", getattr(iface, "description", "?"))
             status.update(f"[bold red]Could not start: {e}[/bold red]")
             self.query_one("#init-progress", ProgressBar).display = False
             release()
+
+    @work(exclusive=True)
+    async def perform_uninstall(self, iface) -> None:
+        """Reverse wifit3's driver/access change for a card: WinUSB unbind (Windows) or remove
+        the udev access rule (Linux). Both are privileged + blocking, so they run off-thread.
+        The card returns to its normal Wi-Fi driver — Windows immediately, Linux on replug.
+        [DEVICE-SETUP.md]"""
+        if sys.platform == "win32":
+            os_kind = "win"
+        elif sys.platform.startswith("linux"):
+            os_kind = "linux"
+        else:
+            return  # no uninstall action on other platforms
+
+        status = self.query_one("#status-label", Label)
+        list_view = self.query_one("#device-list", ListView)
+        start_btn = self.query_one("#start-btn", Button)
+        uninstall_btn = self.query_one("#uninstall-btn", Button)
+
+        self._is_initializing = True
+        if self._refresh_timer:
+            self._refresh_timer.pause()
+        list_view.disabled = True
+        start_btn.disabled = True
+        uninstall_btn.disabled = True
+
+        def release():
+            list_view.disabled = False
+            start_btn.disabled = False
+            uninstall_btn.disabled = False
+            self._is_initializing = False
+            if self._refresh_timer:
+                self._refresh_timer.resume()
+            list_view.focus()
+
+        try:
+            if not await self.app.push_screen_wait(
+                    ConfirmUninstallDialog(iface.description, os_kind)):
+                status.update("[bold bright_green]Select a card and press START[/bold bright_green]")
+                release()
+                return
+            status.update(f"[bold yellow]Removing wifit3 driver for {iface.description}…[/bold yellow]")
+            # Drop our handle first so the unbind / rule reload isn't blocked by us holding it.
+            await iface.close()
+            if os_kind == "win":
+                result = await asyncio.to_thread(restore_driver, iface.vid, iface.pid)
+            else:
+                result = await asyncio.to_thread(remove_rule, iface.vid, iface.pid)
+        except Exception as e:
+            logger.exception("Uninstall failed for %s", getattr(iface, "description", "?"))
+            status.update(f"[bold red]Uninstall failed: {e}[/bold red]")
+            release()
+            return
+
+        # Re-scan so the list reflects the card's new binding state, then report.
+        await self.device_manager.refresh()
+        self._last_signature = None
+        release()
+        if result.ok:
+            status.update(f"[bold green]{result.message}[/bold green]")
+        elif result.cancelled:
+            status.update("[yellow]Uninstall cancelled.[/yellow]")
+        else:
+            status.update("[bold red]Uninstall failed.[/bold red]")
+            self.app.push_screen(SetupErrorDialog(
+                "Uninstall failed", result.message, result.detail))
 
     async def _connect(self, iface) -> bool:
         """Try to connect ``iface``; on success switch to the scanner and return True. Returns

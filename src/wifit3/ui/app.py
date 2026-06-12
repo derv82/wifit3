@@ -69,6 +69,12 @@ class WifiteApp(App):
         height: 3;
         margin-left: 2;             /* gap between the card list and START */
     }
+    #uninstall-btn {
+        height: 3;
+        width: 7;                   /* compact ✕ — reverses wifit3's driver/access change */
+        min-width: 7;
+        margin-left: 1;
+    }
     #status-label {
         content-align: center middle;
         margin-bottom: 1;

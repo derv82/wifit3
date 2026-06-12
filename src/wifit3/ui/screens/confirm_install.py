@@ -20,6 +20,16 @@ from textual.widgets import Button, Label, Static
 # Red shades cycled to make the REQUIRED badge pulse (ping-pong for a smooth throb).
 _PULSE = ["#6e0000", "#960000", "#c00000", "#ff2a2a", "#c00000", "#960000"]
 
+# Default copy = the Windows WinUSB case. The Linux connect-failure path reuses this same
+# dialog (a missing REQUIRED link between Wifit3 and the card) with its own wording, so the
+# diagram/title/warning/verb are parametrised rather than the dialog forked.
+_DEFAULT_TITLE = "Wifit3 needs the WinUSB driver to talk to this card"
+_DEFAULT_WARNING = (
+    "[bold $text-warning]Warning:[/] this [italic $text-warning]replaces the "
+    "card's current driver[/] — Windows will stop seeing it as a wireless "
+    "device.\n[dim]Reversible: uninstall the WinUSB driver in Device Manager to "
+    "restore it.[/dim]")
+
 
 class ConfirmInstallDialog(ModalScreen[bool]):
     BINDINGS = [
@@ -46,13 +56,20 @@ class ConfirmInstallDialog(ModalScreen[bool]):
     ConfirmInstallDialog #button-row Button { margin: 0 2; }
     """
 
-    def __init__(self, description: str) -> None:
+    def __init__(self, description: str, *, title: str = _DEFAULT_TITLE,
+                 link_label: str = "WinUSB Driver", warning: str = _DEFAULT_WARNING,
+                 verb: str = "Install WinUSB for", confirm_label: str = "Install") -> None:
         super().__init__()
         self._full = description
         # Short name for the diagram box (the chipset half of "Chipset / Adapter", capped so
         # a long name doesn't blow out the box width).
         self._short = description.split(" / ")[0][:18]
         self._pulse_i = 0
+        self._title = title
+        self._link_label = link_label   # middle (REQUIRED) box: "WinUSB Driver" / "Device Access"
+        self._warning = warning
+        self._verb = verb               # question stem before the card name
+        self._confirm_label = confirm_label
 
     def _diagram(self, pulse: str) -> Table:
         """The Wifit3 ◄──► WinUSB ◄──► card chain + status row, as a Rich grid (Rich handles
@@ -64,7 +81,7 @@ class ConfirmInstallDialog(ModalScreen[bool]):
         grid.add_row(
             Panel("Wifit3", border_style="green", expand=False, padding=(0, 1)),
             Text("◄──►", style="bold"),
-            Panel("WinUSB Driver", border_style="red", expand=False, padding=(0, 1)),
+            Panel(self._link_label, border_style="red", expand=False, padding=(0, 1)),
             Text("◄──►", style="bold"),
             Panel(self._short, border_style="green", expand=False, padding=(0, 1)),
         )
@@ -79,17 +96,12 @@ class ConfirmInstallDialog(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
-            yield Label("Wifit3 needs the WinUSB driver to talk to this card", id="title")
+            yield Label(self._title, id="title")
             yield Static(self._diagram(_PULSE[0]), id="diagram")
-            yield Label(
-                "[bold $text-warning]Warning:[/] this [italic $text-warning]replaces the "
-                "card's current driver[/] — Windows will stop seeing it as a wireless "
-                "device.\n[dim]Reversible: uninstall the WinUSB driver in Device Manager to "
-                "restore it.[/dim]",
-                id="warn")
-            yield Label(f"Install WinUSB for [bold]{self._full}[/]?", id="question")
+            yield Label(self._warning, id="warn")
+            yield Label(f"{self._verb} [bold]{self._full}[/]?", id="question")
             with Horizontal(id="button-row"):
-                yield Button("Install", variant="success", id="btn-yes")
+                yield Button(self._confirm_label, variant="success", id="btn-yes")
                 yield Button("Cancel", variant="default", id="btn-no")
 
     def on_mount(self) -> None:

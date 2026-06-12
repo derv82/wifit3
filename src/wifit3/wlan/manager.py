@@ -14,6 +14,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
+from pathlib import Path
 from typing import Dict, List, Optional, Type
 
 import libusb_package
@@ -267,6 +269,23 @@ class WlanDeviceManager:
         BLOCKS — call it off the event loop. Used only when ``connect()`` fails, to tell
         "not WinUSB-bound" (→ offer an install) from a genuine init fault. [DEVICE-SETUP.md]"""
         return iface.dev is None or _is_openable(iface.dev)
+
+    def linux_needs_permission(self, iface: WlanInterface) -> bool:
+        """Linux: is the card's usbfs node NOT writable by us, so open + detach would fail?
+
+        On Linux a kernel-claimed card still passes ``_is_openable`` (its descriptors read
+        fine; the claim is what fails later), so openability can't separate "needs the udev
+        access rule" from a genuine fault. The clean discriminator is node write-access:
+        USBDEVFS_DISCONNECT (and libusb_open) need the usbfs node RW, so a non-writable node
+        is exactly the "install the access rule" signal. A cheap stat — no device open.
+        Returns False off Linux or with no device handle. [DEVICE-SETUP.md L1]"""
+        if not sys.platform.startswith("linux") or iface.dev is None:
+            return False
+        try:
+            node = Path(f"/dev/bus/usb/{iface.dev.bus:03d}/{iface.dev.address:03d}")
+            return not os.access(node, os.W_OK)
+        except OSError:
+            return True
 
     async def close_all(self) -> None:
         for iface in self.interfaces:
