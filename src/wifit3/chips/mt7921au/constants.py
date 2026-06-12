@@ -109,7 +109,11 @@ FW_REGION_SIZE     = 40     # mt76_connac2_fw_region (one per region, before tra
 PATCH_SEC_TYPE_INFO = 0x02  # PATCH_SEC_TYPE_MASK match for info-section
 
 # --- RX descriptor (connac2, mt7921_mac_fill_rx + mt7921_queue_rx_skb demux) ---
-# rxd0: PKT_TYPE GENMASK(31,27), PKT_FLAG GENMASK(19,16).
+# rxd0: PKT_TYPE GENMASK(31,27), PKT_FLAG GENMASK(19,16), LENGTH GENMASK(15,0).
+# MT_RXD0_LENGTH is the RX byte count (RXD + MPDU; the HW has already stripped the
+# FCS) — the rest of the USB buffer is alignment padding. Truncate the delivered
+# frame to it so frame_end == MPDU_end.
+MT_RXD0_LENGTH      = 0x0000FFFF   # GENMASK(15, 0)
 PKT_TYPE_NORMAL     = 2    # 802.11 frame
 PKT_TYPE_RX_EVENT   = 7    # MCU response/event
 PKT_TYPE_NORMAL_MCU = 8    # RX_EVENT with flag 0x1 -> treated as a normal frame

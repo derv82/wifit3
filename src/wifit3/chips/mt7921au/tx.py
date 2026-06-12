@@ -57,6 +57,29 @@ def _tx_rate_val(band_5ghz: bool) -> int:
     return _fp(MT_TX_RATE_IDX, hw_value & 0xFF) | _fp(MT_TX_RATE_MODE, hw_value >> 8)
 
 
+def stamp_seq_ctrl(frame: bytearray, seqno: int) -> int:
+    """Stamp an incrementing 802.11 sequence number into seq_ctrl (bytes 22-23),
+    preserving the fragment number (low 4 bits); return the advanced seqno.
+
+    build_tx sets the TXD's SN_VALID with the frame's seq, so the chip transmits
+    exactly the sequence we provide — it does NOT auto-assign one for injected
+    frames. Without this every inject reuses seq 0 and an AP dedups our multi-frame
+    conversations (ChopChop, fragmentation, fake-auth) as retransmissions; single
+    frames (deauth) and seq-carrying replays are unaffected — which is why those
+    worked and the interactive attacks didn't. The number lives in bits [4:15], so
+    one step is 0x10; a fragment burst (frag>0) reuses one sequence number.
+    """
+    if len(frame) < 24:               # control frames carry no seq_ctrl
+        return seqno
+    frag = frame[22] & 0x0F
+    if frag == 0:
+        seqno = (seqno + 0x10) & 0xFFF0
+    sctl = seqno | frag
+    frame[22] = sctl & 0xFF           # seq_ctrl is __le16
+    frame[23] = (sctl >> 8) & 0xFF
+    return seqno
+
+
 def build_tx(frame: bytes, band_5ghz: bool = False,
              wcid_idx: int = MT792x_WTBL_RESERVED, no_ack: bool = True,
              pid: int = 0) -> tuple[bytes, int]:

@@ -30,7 +30,13 @@ def classify(data: bytes):
 
 
 def decode_frame(data: bytes):
-    """mt7921_mac_fill_rx — return (mpdu_offset, rssi, fcs_err) or None to drop.
+    """mt7921_mac_fill_rx — return (mpdu_offset, mpdu_end, rssi, fcs_err) or None.
+
+    ``mpdu_end`` is MT_RXD0_LENGTH — the RX byte count (RXD + MPDU, FCS already
+    HW-stripped); the buffer tail past it is alignment padding. The caller slices
+    data[mpdu_offset:mpdu_end] so the parsed frame ends exactly at the MPDU; not
+    truncating lets the beacon IE walk over-read padding (a spurious RSN IE flips
+    a WEP AP to WPA2) and corrupts WEP-ICV / WPS-HMAC / frag length math.
 
     Group sizes (words): group 0 = 6; +4 group_4; +4 group_1; +2 group_2;
     group_3 = 2 (P-RXV), +6+12 more when group_5. hdr_gap = words*4 +
@@ -39,6 +45,7 @@ def decode_frame(data: bytes):
     """
     if len(data) < 24:
         return None
+    rxd0 = struct.unpack_from("<I", data, 0)[0]
     rxd1, rxd2 = struct.unpack_from("<II", data, 4)
     if rxd1 & MT_RXD1_NORMAL_BAND_IDX:
         return None
@@ -74,6 +81,9 @@ def decode_frame(data: bytes):
                 rssi = max(rssi, sig)
 
     mpdu = words * 4 + 2 * remove_pad
-    if mpdu > len(data):
+    mpdu_end = rxd0 & MT_RXD0_LENGTH
+    if mpdu_end > len(data):
+        mpdu_end = len(data)             # defensive: never slice past the buffer
+    if not mpdu < mpdu_end:
         return None
-    return mpdu, rssi, fcs_err
+    return mpdu, mpdu_end, rssi, fcs_err

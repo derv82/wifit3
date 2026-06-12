@@ -60,6 +60,10 @@ class MT7921AUDriver:
         # need neither, so there is no MAC to expose without an unverified EFUSE access.
         self.is_warm: bool = False
         self.mac_address: Optional[str] = None
+        # 802.11 TX sequence counter (number in seq_ctrl bits [4:15], so it steps
+        # by 0x10). The chip transmits the seq we stamp (TXD SN_VALID), so we own
+        # it — see tx.stamp_seq_ctrl. Touched on the event loop only (no lock).
+        self._tx_seqno: int = 0
 
     def register_rx_callback(self, callback: Callable[[dict], None]):
         self._rx_callback = callback
@@ -112,8 +116,13 @@ class MT7921AUDriver:
         rate is the current channel's band basic rate. The hardware appends the FCS,
         so pass the bare MPDU.
         """
+        # Stamp an incrementing sequence number (frag-preserving) before building
+        # the descriptor — the chip sends whatever seq we provide, so without this
+        # every injected frame reuses seq 0 and the AP dedups interactive attacks.
+        buf = bytearray(frame_bytes)
+        self._tx_seqno = tx.stamp_seq_ctrl(buf, self._tx_seqno)
         try:
-            wire, endpoint = tx.build_tx(frame_bytes, band_5ghz=self._channel > 14,
+            wire, endpoint = tx.build_tx(bytes(buf), band_5ghz=self._channel > 14,
                                          no_ack=use_no_ack)
         except ValueError as e:
             logger.error("MT7921AU inject_frame: %s", e)
@@ -129,10 +138,13 @@ class MT7921AUDriver:
         decoded = rx.decode_frame(data)
         if decoded is None:
             return
-        mpdu_off, rssi, fcs_err = decoded
+        mpdu_off, mpdu_end, rssi, fcs_err = decoded
         if fcs_err:
             return
-        frame_bytes = data[mpdu_off:]
+        # Slice to MT_RXD0_LENGTH, not the buffer end — the tail is alignment
+        # padding; including it over-reads IEs (WEP->WPA2 flip) and breaks the
+        # WEP/WPS/frag length math (see rx.decode_frame).
+        frame_bytes = data[mpdu_off:mpdu_end]
         if len(frame_bytes) < 10:
             return
         try:
