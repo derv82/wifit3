@@ -140,7 +140,7 @@ async def run(args) -> int:
     tally = _HandshakeTally(args.bssid, client)
     driver.register_rx_callback(tally)   # listen for the deauth's effect (handshake)
 
-    def progress(msg, pct):              # MT7921AUDriver.connect calls (msg, pct)
+    def progress(pct, msg):              # ProgressCallback is (percentage, message)
         print(f"  [{pct * 100:5.1f}%] {msg}")
 
     if not await driver.connect(progress):

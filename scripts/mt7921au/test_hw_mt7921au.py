@@ -71,7 +71,7 @@ async def main(debug: bool):
     step(f"connect() [{CONNECT_TIMEOUT}s timeout]")
     driver = MT7921AUDriver(dev)
 
-    def progress(msg: str, pct: float):
+    def progress(pct: float, msg: str):
         print(f"  [{pct*100:5.1f}%] {msg}")
 
     try:

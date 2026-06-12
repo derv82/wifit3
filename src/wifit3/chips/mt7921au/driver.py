@@ -12,7 +12,7 @@ from .firmware import MT7921AUFirmwareLoader
 # but ruff can't see them statically, so suppress the import-* lints file-wide.
 # ruff: noqa: F403, F405
 from .constants import *
-from wifit3.engine.protocols import DeviceID
+from wifit3.engine.protocols import DeviceID, ProgressCallback
 from wifit3.wlan.packet import WlanFrameParser
 
 logger = logging.getLogger(__name__)
@@ -64,10 +64,11 @@ class MT7921AUDriver:
     def register_rx_callback(self, callback: Callable[[dict], None]):
         self._rx_callback = callback
 
-    async def connect(self, progress_cb: Optional[Callable[[str, float], None]] = None) -> bool:
+    async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         """Boot the firmware (cold or warm), then run the post-boot device init."""
+        # ProgressCallback is (percentage, message) — the wifit3-wide convention.
         if progress_cb:
-            progress_cb("Uploading firmware...", 0.1)
+            progress_cb(0.1, "Uploading firmware...")
         logger.info("Initializing MT7921AU...")
 
         # Subscribe before any RX flows; the reader is started by load_firmware
@@ -79,18 +80,18 @@ class MT7921AUDriver:
         self.transport.start_rx()   # idempotent — covers the warm-boot path
 
         if progress_cb:
-            progress_cb("Configuring device...", 0.6)
+            progress_cb(0.6, "Configuring device...")
         logger.info("Running MT7921AU post-boot init...")
         self._init_state = await chip_init.post_boot_init(self.transport)
 
         # Enter monitor mode on the initial channel (the RX reader routes the
         # monitor commands' acks back, and 802.11 frames to _on_raw_rx).
         if progress_cb:
-            progress_cb("Enabling monitor mode...", 0.9)
+            progress_cb(0.9, "Enabling monitor mode...")
         await chip_init.enter_monitor(self.transport, self._channel)
 
         if progress_cb:
-            progress_cb("Done", 1.0)
+            progress_cb(1.0, "Done")
         logger.info("MT7921AU monitor mode ready on channel %d.", self._channel)
         return True
 
