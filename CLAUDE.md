@@ -32,15 +32,16 @@ uv run pytest                          # all tests
 uv run pytest tests/chips/ar9271/      # single module
 uv run pytest tests/wlan/test_parser.py::test_wlan_frame_parser_extracts_ssid
 
-# Lint / format
+# Lint (lint only — NEVER format)
 uv run ruff check src/
-uv run ruff format src/
 
 # Textual live dev (hot-reload)
 uv run textual run --dev src/wifit3/ui/app.py
 ```
 
 Tests require no hardware — all USB interactions are mocked via `pytest-mock`. `asyncio_mode = "auto"` is set globally, so async tests require no decorator.
+
+**Never run `ruff format`.** This tree is hand-formatted (~99-col, multi-per-line collections) and is NOT `ruff format`-clean — running the formatter reflows the entire codebase at the default 88-col + magic-trailing-comma, burying your actual diff in thousands of unrelated lines. The formatter is disabled repo-wide in `pyproject.toml` (`[tool.ruff.format] exclude` + `force-exclude`), so `ruff format` is a deliberate no-op; lint with `ruff check` only and match the surrounding style by hand.
 
 ## Architecture Overview
 
