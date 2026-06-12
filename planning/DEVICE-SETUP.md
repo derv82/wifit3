@@ -148,7 +148,7 @@ rule install) and **zero** per-run sudo.
 ## Implementation plan (parked 2026-06-11)
 
 Full plan saved at `~/.claude/plans/precious-tickling-canyon.md` (Claude Code plan
-**precious-tickling-canyon**). Not yet implemented.
+**precious-tickling-canyon**). **Implemented 2026-06-12 — see "Landed" below.**
 
 One refinement to the Recommendation above, decided while planning: ship a **per-device**
 permission rule scoped to the single VID:PID the user activates — *not* one blanket file across
@@ -162,3 +162,41 @@ adapter until wifit3 detaches it at runtime.)
 Shape: new `setup/linux.py` (`free_device()` mirroring `setup/windows.py:install_winusb`,
 helpers lifted from `scripts/linux_setup/probe_l1_l2.py`) + a Linux branch on the
 connect-failure path in `ui/screens/splash.py:perform_start` + a parametrized `ConfirmInstallDialog`.
+
+## Landed — 2026-06-12
+
+Shipped exactly the parked shape, plus the **uninstall (✕) button** (both OSes) that the plan
+flagged as a logical companion:
+
+- **`setup/linux.py`** — `free_device(vid, pid, desc)` (per-device rule install, one
+  `pkexec`→`sudo`→manual prompt), `remove_rule(vid, pid)` (uninstall; missing rule = benign
+  no-op), `build_rule_text()` (carries the trailing-comment fix — each description on its own
+  `#` line; a regression test asserts no rule line contains `#`), `emit_udev_text()` (blanket
+  file from the live registry), wired to `wifit3 --emit-udev`.
+- **`wlan/manager.py:linux_needs_permission()`** — usbfs-node-writability stat. Needed because a
+  kernel-claimed Linux card still *passes* `is_openable` (descriptors read; the claim fails
+  later), so node write-access — not openability — is the "install the access rule" signal.
+- **`ui/screens/splash.py`** — Linux branch on the connect-failure path (probe → confirm →
+  `free_device` → re-find → retry, with a replug hint on retry failure for FW-reenum combos);
+  the **✕ uninstall button** next to START (tooltip-labelled) → `restore_driver` (Windows,
+  already built) / `remove_rule` (Linux) via a new `ConfirmUninstallDialog`. `ConfirmInstallDialog`
+  parametrized (defaults unchanged) so the Linux prompt reuses it with "Device Access" wording.
+- **18 unit tests** (`tests/setup/test_linux.py`) — rule text, path naming, `run_privileged`
+  argv, install/remove classification, the no-trailing-comment regression. Windows-runnable.
+
+**Behaviour to test on Kali (the live path can't run on Windows):**
+
+- **First card, user (non-root):** START → `pkexec` graphical *Enter-Password* prompt → per-VID:PID
+  rule written → `udevadm trigger` → node user-writable → retry connect succeeds non-root. (Confirm
+  the polkit prompt actually pops — earlier probe runs never surfaced it.)
+- **Same card, later sessions:** no prompt (rule persists).
+- **A *different* card:** prompts **once more** — the rule is per-VID:PID by design. This is the
+  intended "second supported card kept as the normal adapter stays untouched" behaviour, **not**
+  a bug. ("Install once, every supported card free" is the blanket `--emit-udev` opt-in.)
+- **`sudo wifit3`:** no rule needed at all (root opens + detaches everything) — the zero-install
+  bypass.
+- **Uninstall (✕):** Windows removes the WinUSB binding immediately; Linux removes the rule (card
+  returns to its kernel driver on the next replug).
+
+Still open (unchanged): `pkexec` availability on minimal/headless distros (→ `sudo`/manual), and
+arm-Linux parity.
