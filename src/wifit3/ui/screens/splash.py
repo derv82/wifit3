@@ -11,8 +11,9 @@ from textual import work
 from rich.text import Text
 from rich.style import Style
 
-from wifit3.setup.linux import install_rule, remove_rule
+from wifit3.setup.linux import grant_access, plugdev_members, revoke_access, supported_count
 from wifit3.setup.windows import install_winusb, restore_driver
+from wifit3.ui.screens.confirm_access import ConfirmAccessDialog
 from wifit3.ui.screens.confirm_install import ConfirmInstallDialog
 from wifit3.ui.screens.confirm_uninstall import ConfirmUninstallDialog
 from wifit3.ui.screens.setup_error import SetupErrorDialog
@@ -290,25 +291,20 @@ class SplashView(Screen):
                     self.device_manager.linux_needs_permission, iface)
                 if not needs_perm:
                     raise RuntimeError("the card failed to initialize")
-                # No node access → offer the one-time udev access rule (reuses the install
-                # dialog with Linux wording — a missing REQUIRED link, same shape).
-                if not await self.app.push_screen_wait(ConfirmInstallDialog(
-                        desc,
-                        title="Wifit3 needs one-time access to talk to this card",
-                        link_label="Device Access",
-                        warning="[bold $text-warning]One-time setup:[/] installs a udev rule so "
-                                "wifit3 can use [italic]any supported card[/] without sudo. It "
-                                "only grants access — it does [bold]not[/] change how your cards "
-                                "work as normal Wi-Fi.\n[dim]Reversible: press ✕ to remove the "
-                                "rule (replug restores the driver).[/dim]",
-                        verb="Grant access for",
-                        confirm_label="Grant access")):
+                # No node access → offer the one-time udev access rule, scoped to this card or
+                # all supported cards (the access dialog's two grant buttons).
+                choice = await self.app.push_screen_wait(ConfirmAccessDialog(
+                    desc, vid, pid, total_supported=supported_count(),
+                    plugdev_members=plugdev_members()))
+                if choice is None:
                     status.update("[bold bright_green]Select a card and press START[/bold bright_green]")
                     release()
                     return
+                # "one" → just this card; "all" → the whole supported fleet (card=None).
+                card = (vid, pid, desc) if choice == "one" else None
                 status.update(f"[bold yellow]Granting access for {desc}… "
                               f"(one password prompt)[/bold yellow]")
-                result = await asyncio.to_thread(install_rule)
+                result = await asyncio.to_thread(grant_access, card)
                 if not result.ok:
                     release()
                     if result.cancelled:
@@ -367,18 +363,22 @@ class SplashView(Screen):
             list_view.focus()
 
         try:
-            if not await self.app.push_screen_wait(
-                    ConfirmUninstallDialog(iface.description, os_kind)):
+            choice = await self.app.push_screen_wait(
+                ConfirmUninstallDialog(iface.description, os_kind,
+                                       total_supported=supported_count()))
+            if choice is None:
                 status.update("[bold bright_green]Select a card and press START[/bold bright_green]")
                 release()
                 return
-            status.update(f"[bold yellow]Removing wifit3 driver for {iface.description}…[/bold yellow]")
+            status.update(f"[bold yellow]Removing wifit3 access for {iface.description}…[/bold yellow]")
             # Drop our handle first so the unbind / rule reload isn't blocked by us holding it.
             await iface.close()
             if os_kind == "win":
                 result = await asyncio.to_thread(restore_driver, iface.vid, iface.pid)
             else:
-                result = await asyncio.to_thread(remove_rule)
+                # "one" → just this card; "all" → delete the whole rule file (card=None).
+                card = (iface.vid, iface.pid, iface.description) if choice == "one" else None
+                result = await asyncio.to_thread(revoke_access, card)
         except Exception as e:
             logger.exception("Uninstall failed for %s", getattr(iface, "description", "?"))
             status.update(f"[bold red]Uninstall failed: {e}[/bold red]")

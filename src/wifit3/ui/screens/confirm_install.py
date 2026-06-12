@@ -8,23 +8,20 @@ readers.
 """
 from __future__ import annotations
 
-from rich.panel import Panel
 from rich.table import Table
-from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Static
 
-# Red shades cycled to make the REQUIRED badge pulse (ping-pong for a smooth throb).
-_PULSE = ["#6e0000", "#960000", "#c00000", "#ff2a2a", "#c00000", "#960000"]
+from wifit3.ui.screens._device_chain import PULSE as _PULSE
+from wifit3.ui.screens._device_chain import chain_diagram
 
-# Default copy = the Windows WinUSB case. The Linux connect-failure path reuses this same
-# dialog (a missing REQUIRED link between Wifit3 and the card) with its own wording, so the
-# diagram/title/warning/verb are parametrised rather than the dialog forked.
-_DEFAULT_TITLE = "Wifit3 needs the WinUSB driver to talk to this card"
-_DEFAULT_WARNING = (
+# Windows-only (the WinUSB bind). Linux's analogous "needs setup" prompt is its own dialog
+# (ConfirmAccessDialog) — it offers a scope choice the binary install/cancel here doesn't.
+_TITLE = "Wifit3 needs the WinUSB driver to talk to this card"
+_WARNING = (
     "[bold $text-warning]Warning:[/] this [italic $text-warning]replaces the "
     "card's current driver[/] — Windows will stop seeing it as a wireless "
     "device.\n[dim]Reversible: uninstall the WinUSB driver in Device Manager to "
@@ -56,52 +53,25 @@ class ConfirmInstallDialog(ModalScreen[bool]):
     ConfirmInstallDialog #button-row Button { margin: 0 2; }
     """
 
-    def __init__(self, description: str, *, title: str = _DEFAULT_TITLE,
-                 link_label: str = "WinUSB Driver", warning: str = _DEFAULT_WARNING,
-                 verb: str = "Install WinUSB for", confirm_label: str = "Install") -> None:
+    def __init__(self, description: str) -> None:
         super().__init__()
         self._full = description
         # Short name for the diagram box (the chipset half of "Chipset / Adapter", capped so
         # a long name doesn't blow out the box width).
         self._short = description.split(" / ")[0][:18]
         self._pulse_i = 0
-        self._title = title
-        self._link_label = link_label   # middle (REQUIRED) box: "WinUSB Driver" / "Device Access"
-        self._warning = warning
-        self._verb = verb               # question stem before the card name
-        self._confirm_label = confirm_label
 
     def _diagram(self, pulse: str) -> Table:
-        """The Wifit3 ◄──► WinUSB ◄──► card chain + status row, as a Rich grid (Rich handles
-        the column alignment so the ✓/✗ land under their boxes). ``pulse`` is the REQUIRED
-        badge's current background red."""
-        grid = Table.grid(padding=(0, 1))
-        for _ in range(5):
-            grid.add_column(justify="center", vertical="middle")
-        grid.add_row(
-            Panel("Wifit3", border_style="green", expand=False, padding=(0, 1)),
-            Text("◄──►", style="bold"),
-            Panel(self._link_label, border_style="red", expand=False, padding=(0, 1)),
-            Text("◄──►", style="bold"),
-            Panel(self._short, border_style="green", expand=False, padding=(0, 1)),
-        )
-        grid.add_row(
-            Text("✓", style="bold green"),
-            Text(""),
-            Text(" ✗ REQUIRED ", style=f"bold white on {pulse}"),
-            Text(""),
-            Text("✓ SUPPORTED", style="bold green"),
-        )
-        return grid
+        return chain_diagram(self._short, "WinUSB Driver", pulse)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
-            yield Label(self._title, id="title")
+            yield Label(_TITLE, id="title")
             yield Static(self._diagram(_PULSE[0]), id="diagram")
-            yield Label(self._warning, id="warn")
-            yield Label(f"{self._verb} [bold]{self._full}[/]?", id="question")
+            yield Label(_WARNING, id="warn")
+            yield Label(f"Install WinUSB for [bold]{self._full}[/]?", id="question")
             with Horizontal(id="button-row"):
-                yield Button(self._confirm_label, variant="success", id="btn-yes")
+                yield Button("Install", variant="success", id="btn-yes")
                 yield Button("Cancel", variant="default", id="btn-no")
 
     def on_mount(self) -> None:
