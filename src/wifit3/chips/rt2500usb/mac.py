@@ -42,7 +42,11 @@ from .constants import (
     MAC_CSR17_RF_DESIRE_STATE,
     MAC_CSR17_SET_STATE,
     MAC_CSR18,
+    MAC_CSR18_AUTO_WAKE,
     MAC_CSR18_DELAY_AFTER_BEACON,
+    MAC_CSR20,
+    MAC_CSR20_ACTIVITY,
+    MAC_CSR20_LINK,
     MAC_CSR22,
     PHY_CSR2,
     PHY_CSR2_LNA,
@@ -261,41 +265,76 @@ def init_registers(t: RT2500USBTransport, revision: int) -> None:
     t.write16(TXRX_CSR1, reg)
 
 
-def apply_monitor_filter(t: RT2500USBTransport) -> None:
-    """wifit3 always-monitor deviation from the kernel STA-mode
-    rt2500usb_config_filter (rt2500usb.c:399-427).
+def led_enable(t: RT2500USBTransport) -> None:
+    """Turn the radio + activity LEDs on (rt2500usb_brightness_set, 264-281).
 
-    We surface every *real* frame from every BSS — clear DISABLE_RX and
-    the DROP_* bits for control / not-to-me / to-DS / bcast / mcast.
+    The tail of rt2x00lib_enable_radio: ``led_radio(true)`` (RADIO/ASSOC →
+    MAC_CSR20_LINK) then ``led_activity(true)`` (→ MAC_CSR20_ACTIVITY), each a
+    read-modify-write of MAC_CSR20.
+    """
+    reg = t.read16(MAC_CSR20)
+    reg = set_field16(reg, MAC_CSR20_LINK, 1)
+    t.write16(MAC_CSR20, reg)
+    reg = t.read16(MAC_CSR20)
+    reg = set_field16(reg, MAC_CSR20_ACTIVITY, 1)
+    t.write16(MAC_CSR20, reg)
 
-    We drop the error classes the RX loop discards anyway: DROP_PHYSICAL
-    (PLCP/demod failures) + DROP_CRC (FCS failures) + DROP_VERSION_ERROR
-    (malformed; the kernel sets this unconditionally). Final value 0x0046.
 
-    Two hardware findings drove this:
-      * Clearing DROP_PHYSICAL flooded the full-speed bus with ~93% PLCP
-        junk and starved real frames.
-      * DROP_CRC=0 then kept FCS-failed frames — but the RX loop drops all
-        FCS-fail in software, so it was pure cost: ~45% of URBs were
-        multi-KB FCS-fail noise (bogus length, invalid frame types) we
-        received and threw away. Dropping at the hardware reclaims the bus
-        with zero output change. [[feedback_monitor_mode_deviation]]
+def start_queue_rx(t: RT2500USBTransport) -> None:
+    """Enable the RX queue — clear DISABLE_RX (rt2500usb_start_queue QID_RX,
+    717-727). rt2x00 brackets every config with stop/start_queue(rx)."""
+    t.write16_mask(TXRX_CSR2, TXRX_CSR2_DISABLE_RX, 0)
+
+
+def stop_queue_rx(t: RT2500USBTransport) -> None:
+    """Disable the RX queue — set DISABLE_RX (rt2500usb_stop_queue QID_RX,
+    740-750). Antenna/channel changes are ignored unless RX is off first."""
+    t.write16_mask(TXRX_CSR2, TXRX_CSR2_DISABLE_RX, 1)
+
+
+def config_ps(t: RT2500USBTransport) -> None:
+    """Power-save config, STATE_AWAKE path (rt2500usb_config_ps, 644-651).
+
+    Monitor never sleeps: clear MAC_CSR18.AUTO_WAKE, then set_state(AWAKE).
+    """
+    reg = t.read16(MAC_CSR18)
+    reg = set_field16(reg, MAC_CSR18_AUTO_WAKE, 0)
+    t.write16(MAC_CSR18, reg)
+    set_state(t, STATE_AWAKE)
+
+
+def config_filter(t: RT2500USBTransport, monitoring: bool) -> None:
+    """RX frame filter (rt2500usb_config_filter, 399-427).
+
+    Driven by the mac80211 FIF_* flags airmon sets: FIF_FCSFAIL / FIF_PLCPFAIL
+    OFF (so the chip drops CRC + PLCP errors — the RX loop discards them anyway,
+    and on this full-speed bus surfacing them floods it), FIF_CONTROL +
+    FIF_ALLMULTI ON, VERSION_ERROR always dropped, BROADCAST always accepted.
+    ``monitoring`` clears DROP_NOT_TO_ME + DROP_TODS so client→AP (ToDS) frames
+    from every BSS arrive. The resulting monitor value (0x0046) is exactly what
+    the kernel's airmon path writes — this is faithful to the wire, not a
+    deviation. DISABLE_RX is owned by start/stop_queue_rx, not touched here.
     """
     reg = t.read16(TXRX_CSR2)
-    # Accept (clear): real frames from any BSS.
-    for field in (
-        TXRX_CSR2_DISABLE_RX,
-        TXRX_CSR2_DROP_CONTROL,
-        TXRX_CSR2_DROP_NOT_TO_ME,
-        TXRX_CSR2_DROP_TODS,
-        TXRX_CSR2_DROP_MULTICAST,
-        TXRX_CSR2_DROP_BROADCAST,
-    ):
-        reg = set_field16(reg, field, 0)
-    # Drop (set): the error classes the RX loop discards anyway.
-    reg = set_field16(reg, TXRX_CSR2_DROP_CRC, 1)
-    reg = set_field16(reg, TXRX_CSR2_DROP_PHYSICAL, 1)
+    reg = set_field16(reg, TXRX_CSR2_DROP_CRC, 1)            # !FIF_FCSFAIL
+    reg = set_field16(reg, TXRX_CSR2_DROP_PHYSICAL, 1)       # !FIF_PLCPFAIL
+    reg = set_field16(reg, TXRX_CSR2_DROP_CONTROL, 0)        # FIF_CONTROL
+    reg = set_field16(reg, TXRX_CSR2_DROP_NOT_TO_ME, 0 if monitoring else 1)
+    reg = set_field16(reg, TXRX_CSR2_DROP_TODS, 0 if monitoring else 1)
     reg = set_field16(reg, TXRX_CSR2_DROP_VERSION_ERROR, 1)
+    reg = set_field16(reg, TXRX_CSR2_DROP_MULTICAST, 0)      # FIF_ALLMULTI
+    reg = set_field16(reg, TXRX_CSR2_DROP_BROADCAST, 0)
     t.write16(TXRX_CSR2, reg)
-    logger.debug("monitor filter: TXRX_CSR2 = 0x%04x "
-                 "(accept real; drop CRC+PLCP+version errors)", reg)
+    logger.debug("config_filter(monitoring=%s): TXRX_CSR2 = 0x%04x",
+                 monitoring, reg)
+
+
+def apply_monitor_filter(t: RT2500USBTransport) -> None:
+    """Convenience: open the monitor RX filter and enable the RX queue.
+
+    The faithful bring-up calls config_filter / start_queue_rx in the kernel's
+    bracketed order; this one-shot wrapper (TXRX_CSR2 = 0x0046, DISABLE_RX
+    clear) is for the incremental HW-test phases and the post-warm reattach.
+    """
+    config_filter(t, monitoring=True)
+    start_queue_rx(t)

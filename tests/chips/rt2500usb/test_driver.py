@@ -20,9 +20,13 @@ from wifit3.chips.rt2500usb.chan import (
     config_channel,
     rf_write,
 )
+from wifit3.chips.rt2500usb import monitor
 from wifit3.chips.rt2500usb.constants import (
     ANTENNA_A,
     EEPROM_SIZE,
+    MAC_CSR20,
+    MAC_CSR20_ACTIVITY,
+    MAC_CSR20_LINK,
     PHY_CSR7,
     MAC_CSR1,
     MAC_CSR1_HOST_READY,
@@ -190,6 +194,36 @@ def test_reset_tuner_blank_eeprom_defaults():
     t = FakeTransport()
     reset_tuner(t, _synthetic_eeprom())       # synthetic EEPROM leaves 0x31-0x34 = 0xffff
     assert _bbp_writes(t) == {24: 0x40, 25: 0x40, 61: 0x60, 17: 0x40}
+
+
+def _calibrated_eeprom() -> bytes:
+    """Synthetic EEPROM with this unit's real BBP-tune words (R17 VGC = 0x3b)."""
+    ee = bytearray(_synthetic_eeprom())
+    ee[0x31 * 2:0x31 * 2 + 2] = b"\x80\x68"   # BBPTUNE_R24 = 0x6880
+    ee[0x32 * 2:0x32 * 2 + 2] = b"\x50\x38"   # BBPTUNE_R25 = 0x3850
+    ee[0x33 * 2:0x33 * 2 + 2] = b"\x63\x73"   # BBPTUNE_R61 = 0x7363
+    ee[0x34 * 2:0x34 * 2 + 2] = b"\x3b\xff"   # BBPTUNE_VGC = 0xff3b
+    return bytes(ee)
+
+
+# ----------------------------------------------------------------------
+# Monitor entry + per-hop tune (rt2x00 operational sequence)
+# ----------------------------------------------------------------------
+def test_tune_hop_reseeds_agc():
+    # Every channel hop must re-seed BBP R17 (the VGC) via reset_tuner — the
+    # kernel-faithful AGC behaviour. Regression guard: if a refactor drops
+    # reset_tuner from the hop, this fails (not just the pcap gate).
+    t = FakeTransport()
+    monitor.tune_hop(t, RF2525E, 1, _calibrated_eeprom(), ANTENNA_A, ANTENNA_A)
+    assert _bbp_writes(t)[17] == 0x3B
+
+
+def test_enable_monitor_led_and_filter():
+    t = FakeTransport()
+    monitor.enable_monitor(t, RF2525E, _calibrated_eeprom(), ANTENNA_A, ANTENNA_A)
+    # Radio + activity LEDs lit; monitor filter open with RX enabled.
+    assert t.regs[MAC_CSR20] & (MAC_CSR20_LINK | MAC_CSR20_ACTIVITY)
+    assert t.regs[TXRX_CSR2] == 0x46      # drop CRC/PLCP/version; accept ToDS, RX on
 
 
 # ----------------------------------------------------------------------

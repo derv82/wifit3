@@ -37,8 +37,9 @@ import usb.util
 from wifit3.engine.protocols import DeviceID, ProgressCallback
 from wifit3.wlan.packet import WlanFrameParser
 
+from . import monitor
 from .bbp import init_bbp
-from .chan import antenna_defaults, config_channel, config_ant, set_channel
+from .chan import antenna_defaults
 from .constants import (
     DEFAULT_RSSI_OFFSET,
     EEPROM_ANTENNA,
@@ -49,10 +50,11 @@ from .constants import (
     RT2500USB_DEVICE_TABLE,
 )
 from .mac import (
-    apply_monitor_filter,
+    config_filter,
     init_registers,
     is_chip_warm,
     read_revision,
+    start_queue_rx,
 )
 from .rx import parse_rx_urb, probe_endpoints, read_rx_burst
 from ..rx_reader import RxReaderThread
@@ -85,6 +87,7 @@ class RT2500USBDriver:
         self._claimed = False
 
         # EEPROM-derived, set at connect() time.
+        self._eeprom: bytes = b""        # raw one-shot read; reset_tuner re-reads it per hop
         self.rf_type: int = 0
         self._ant_tx: int = 0
         self._ant_rx: int = 0
@@ -129,6 +132,7 @@ class RT2500USBDriver:
     def _parse_eeprom(self, eeprom: bytes) -> None:
         """Pull MAC, RF type, antenna defaults, and the RSSI offset from a
         one-shot EEPROM read (rt2500usb_init_eeprom / validate_eeprom)."""
+        self._eeprom = eeprom
         mac_off = EEPROM_MAC_ADDR_0 * 2
         mac = eeprom[mac_off:mac_off + 6]
         self.mac_address = ":".join(f"{b:02x}" for b in mac)
@@ -185,7 +189,14 @@ class RT2500USBDriver:
             warm = await loop.run_in_executor(None, is_chip_warm, self.transport)
 
             if warm and await self._smoke_test_rx(loop):
-                prog(0.55, "chip WARM — skipping cold init")
+                # Already inited + monitoring from a prior session. Re-arm the
+                # monitor filter + RX queue and re-seed the AGC via a tune; skip
+                # FW-less cold init. [[feedback_warm_reattach]]
+                prog(0.55, "chip WARM — re-arming monitor + tune")
+                await loop.run_in_executor(
+                    None, config_filter, self.transport, True
+                )
+                await loop.run_in_executor(None, start_queue_rx, self.transport)
             elif warm:
                 # HOST_READY set but bulk-IN wedged. On Windows+WinUSB this
                 # pipe often can't be recovered in userland — ask for a replug
@@ -203,18 +214,15 @@ class RT2500USBDriver:
                 )
                 prog(0.5, "init_bbp")
                 await loop.run_in_executor(None, init_bbp, self.transport, eeprom)
+                prog(0.7, "enable_monitor (LED, filter, antenna, AGC seed)")
+                await loop.run_in_executor(
+                    None, monitor.enable_monitor, self.transport, self.rf_type,
+                    eeprom, self._ant_tx, self._ant_rx,
+                )
 
-            # Always (re)apply the monitor posture + antenna + channel, so a
-            # warm reattach lands in a known always-monitor state.
-            prog(0.7, "config_ant + monitor filter")
-            await loop.run_in_executor(
-                None, config_ant, self.transport, self.rf_type,
-                self._ant_tx, self._ant_rx,
-            )
-            await loop.run_in_executor(None, apply_monitor_filter, self.transport)
-            await loop.run_in_executor(
-                None, set_channel, self.transport, self.rf_type, self.current_channel
-            )
+            # Tune to the start channel (rt2x00mac_config CHANGE_CHANNEL): tunes
+            # the synth and re-seeds the AGC (reset_tuner), warm or cold.
+            await self.set_channel(self.current_channel)
             prog(0.9, f"tuned to channel {self.current_channel}")
 
             self._rx_reader = RxReaderThread(
@@ -255,7 +263,8 @@ class RT2500USBDriver:
             return False
         try:
             ok = await asyncio.get_event_loop().run_in_executor(
-                None, config_channel, self.transport, self.rf_type, channel
+                None, monitor.tune_hop, self.transport, self.rf_type, channel,
+                self._eeprom, self._ant_tx, self._ant_rx,
             )
         except Exception as e:
             logger.error("rt2500usb set_channel(%d) failed: %s", channel, e)

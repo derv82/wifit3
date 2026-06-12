@@ -167,6 +167,22 @@ def config_channel(
     return ok
 
 
+def config_txpower(
+    t: RT2500USBTransport,
+    txpower: int = DEFAULT_TXPOWER,
+    rf3: int = 0,
+) -> bool:
+    """Set TX power without retuning (rt2500usb_config_txpower, 613-621).
+
+    The first ``rt2x00mac_config`` after radio-on runs CONF_CHANGE_POWER with
+    no channel: read RF[3] (the rt2x00 RF cache — 0 before any channel tune),
+    splice TXPOWER_TO_DEV into RF3_TXPOWER, rf_write(3). Channel tunes carry the
+    TX power in RF[3] themselves, so this standalone call happens just once.
+    """
+    txp = max(MIN_TXPOWER, min(MAX_TXPOWER, txpower))
+    return rf_write(t, 3, set_field16(rf3, RF3_TXPOWER, txp))
+
+
 def set_channel(
     t: RT2500USBTransport,
     rf_type: int,
