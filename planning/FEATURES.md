@@ -172,6 +172,31 @@ into ESSID-based targeting (one logical AP, multiple BSSIDs across bands).
 **Complexity.** Moderate — touches the Focus channel/hop logic. Coordinate with
 the Focus channel-tune race fix (Bugs/QoL below).
 
+### Deauth effectiveness feedback (sent / ACKed) — if time allows
+
+**Problem.** A deauth burst is fire-and-forget: we show frames *sent*, but not
+whether they *landed*. A unicast deauth (addr1 = a specific client) is link-layer
+ACKed by the recipient's hardware, so "N sent → M ACKed" is a real reachability
+signal — and a nice live confidence readout in Focus ("client is hearing us").
+
+**Approach.** Two sources, neither needing live-TX from the agent to design:
+- **Sniff the ACKs** — our own RX path already sees control frames (RX_CONF now
+  carries `RX_CONF_CTRL` since the rtl8187 monitor-filter fix). An ACK is a 14-byte
+  control frame (FC=0xD4) whose RA = our spoofed source MAC; correlate by timing +
+  RA against each deauth we just sent. Driver-agnostic, works fleet-wide.
+- **Hardware tally (rtl8187-only)** — `rtl8187_work` reads the cumulative retry
+  count at reg `0xFFFA`; a rising tally means the chip is retransmitting (no ACK).
+  Coarser than sniffing, and L-path has no TX-status URB, so the ACK-sniff route is
+  the portable one.
+  Tie the count into the deauth UI; pairs naturally with the unicast-NAV fix below.
+
+**Related (tiny):** our `build_deauth` writes `duration = 0`; aireplay sets the
+unicast-ACK NAV (`SIFS + ACK@rate`, e.g. `0x013a` @ 1 Mbps). Harmless today (the
+deauth still lands), but a faithful injector should set it — do it alongside this.
+
+**Complexity.** Low-moderate. The ACK-sniff correlator is the real work; the NAV
+fix is one line in `build_deauth`.
+
 ### Target-based RX gain steering (focus) — post-Defcon, validate first
 
 **Problem.** When focused on one target, we passively accept whatever RX gain the
