@@ -51,11 +51,18 @@ unverified, and the AGC seed was **missing entirely**.
   tune's draining thread can't collide with a new tune/inject on the control endpoint.
 - **[HW] 2026-06-11** — cold bring-up + RX healthy: best AP **9.2 beacons/s** (median
   9, max 10, **0 dead seconds**), 10+ APs received on CH1 (184/168/167/138/129…
-  beacons/20s each). Transformed from the grade-D "one AP 0/s" inconsistency.
-  - **Soak:** 5-min 14-channel hop (0.25s) — no wedge, no RF death; breadth flat-
-    to-rising (48→56 active BSSIDs), ~830-950 frames/window, no degradation. The
-    old grade-D died after ~1 min. Connected **WARM** (re-arm + tune, no replug)
-    and sustained the whole run — warm reattach validated.
+  beacons/20s each). Grade-D "one AP 0/s" inconsistency gone.
+  - **Soak:** 30-min 14-channel hop (0.25s) — no wedge, no RF death; breadth held
+    40-58 active BSSIDs, mild taper in the last ~10 min (frames fell faster than
+    breadth → likely environmental, not RX going deaf). Connected **WARM** (re-arm
+    + tune, no replug) and sustained the whole run. The old grade-D died after ~1 min.
+  - **Full attack pass** (lead, hands-on): deauth dropped a real client; the
+    reconnect captured EAPOL **M1+M2+M3** — M2 is the ToDS message the weak-RX era
+    kept losing, so a crackable pair. WPS **PBC → PSK extracted**; PIN → M4
+    (first-half-wrong NACK). WEP **ChopChop forged a packet** (4 tries); **ARP
+    replay** works at ~60 IVs/s — burst-batched (1 s bursts) on purpose so the radio
+    RX's the replies instead of self-DoSing; the rate is the full-speed-bus ceiling,
+    not a port limit. PMKID passive + active. `deauth_hw.py` is the TX harness.
 
 Userland PyUSB port of the Linux `rt2500usb` kernel module. This doc
 accumulates **verified** facts. Citations:
