@@ -334,21 +334,11 @@ If anyone knows a good wireless card for Kali Linux, it's morrownr!
 ### Cards in the mail (check doorstep)
 
 - ~~**Panda PAU0F AXE3000** — MediaTek **MT7921AU** (`0e8d:7961`), WiFi 6E.~~ Arrived +
-  tested 2026-06-10. Same silicon as the AWUS036AXML; reads work, firmware uploads cleanly on
-  USB-2, walls at FW_START. **All Windows-userland leads now exhausted** (byte-faithful
-  register seq incl. the sweep's epctl/SWDEF finds, sync + async I/O, reset-after-FW_START) —
-  all wedge identically. A **Kali/libusb run is the last open question**. See
-  `chips/mt7921au/MT7921AU.md`.
+  brought up fully on Windows userland: cold boot + warm reattach, 2.4/5 GHz RX, and the full
+  attack suite (deauth, WEP, WPS-PBC, PMKID) all HW-validated. Same silicon as the AWUS036AXML.
+  See `chips/mt7921au/MT7921AU.md`.
 
 ### Distant-future hardware ($$$)
 
 - TP-Link Archer T2U Plus (RTL8821AU / RTL8811AU).
 - Generic MT7601U — cheapest dongle, weird packet injection.
-
----
-
-**MT7921AU (AWUS036AXML / PAU0F)** — FW_START handoff wall. Byte-faithful bring-up + clean
-USB-2 upload, but every Windows-userland path (faithful register seq, sync + async I/O,
-reset-after-FW_START) wedges identically at FW_START. Windows-userland exhausted; a
-Kali/libusb run of the now-faithful driver is the only open lead. Tracked in
-`chips/mt7921au/MT7921AU.md`.
