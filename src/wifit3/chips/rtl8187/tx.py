@@ -38,6 +38,14 @@ logger = logging.getLogger(__name__)
 
 TX_HDR_SIZE = 12
 
+# High-speed bulk-OUT max packet size (EP 0x02 wMaxPacketSize on the AWUS036H). The
+# kernel sets URB_ZERO_PACKET on every TX URB (dev.c:315); libusb only *appends* the
+# terminating zero-length packet when the transfer is an exact multiple of this — so a
+# frame whose total length is a 512-multiple would otherwise never signal end-of-transfer
+# and the chip would stall instead of transmitting. PyUSB's dev.write does NOT do this, so
+# we replicate it explicitly.
+USB_BULK_MAXPACKET = 512
+
 # 802.11 broadcast/management default — 1 Mbps CCK = rate hw_value 0.
 RATE_1MBPS_CCK = 0
 RATE_2MBPS_CCK = 1
@@ -115,6 +123,11 @@ def inject_frame(
         logger.warning(
             "bulk-OUT short write: sent=%d expected=%d", sent, len(payload)
         )
+    # URB_ZERO_PACKET (dev.c:315): if the transfer is an exact multiple of the bulk
+    # max-packet size, the trailing short packet that signals end-of-transfer is absent,
+    # so the chip waits for more data and never fires the frame. Send an explicit ZLP.
+    if sent and sent % USB_BULK_MAXPACKET == 0:
+        dev.write(ep, b"", timeout_ms)
     return sent
 
 
