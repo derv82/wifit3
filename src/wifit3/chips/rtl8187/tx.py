@@ -92,6 +92,32 @@ def build_tx_hdr(
     return struct.pack("<IHHI", flags, rts_duration, length_field, retry)
 
 
+def stamp_seq_ctrl(frame: bytearray, seqno: int) -> int:
+    """Stamp the 802.11 sequence number into seq_ctrl (bytes 22-23), preserving the
+    fragment number (low 4 bits), and return the advanced seqno for the next frame.
+
+    Mirrors the kernel L-path (``rtl8187_tx``, dev.c:270-275): advance by 0x10 (one
+    sequence, since the number lives in bits [4:15]) on a *first* fragment (frag==0) and
+    reuse it for later fragments of the same MSDU, so a fragment burst shares one seq.
+
+    The 8187L has **no hardware sequence assignment** on the L-path — the HW_SEQNUM TX_CONF
+    bit is 8187B-only — unlike the Ralink ``NEW_SEQ`` / rtw88 auto-seq the rest of the stack
+    assumes ("hardware usually overwrites seq"). Without this, every injected frame leaves
+    seq=0, and an AP dedups our multi-frame association/EAPOL conversation (PMKID extraction,
+    WPS) as retransmissions — single frames (deauth) and replays (ARP, carrying a captured
+    seq) are unaffected, which is why those worked and these didn't.
+    """
+    if len(frame) < 24:          # control frames carry no seq_ctrl — nothing to stamp
+        return seqno
+    frag = frame[22] & 0x0F
+    if frag == 0:
+        seqno = (seqno + 0x10) & 0xFFF0
+    sctl = seqno | frag
+    frame[22] = sctl & 0xFF       # seq_ctrl is __le16
+    frame[23] = (sctl >> 8) & 0xFF
+    return seqno
+
+
 def inject_frame(
     dev: usb.core.Device,
     frame: bytes,

@@ -452,6 +452,36 @@ def test_build_tx_hdr_rejects_oversized_frame():
         build_tx_hdr(0)
 
 
+def test_stamp_seq_ctrl_increments_and_preserves_frag():
+    """The 8187L has no hardware seq assignment, so inject stamps an incrementing 802.11
+    sequence number (step 0x10, the number lives in seq_ctrl bits [4:15]) while preserving
+    the fragment bits — else every injected frame is seq=0 and an AP dedups our
+    association/EAPOL conversation (PMKID extraction / WPS). Mirrors rtl8187_tx (dev.c)."""
+    from wifit3.chips.rtl8187.tx import stamp_seq_ctrl
+
+    f = bytearray(26)                       # deauth-sized, frag 0
+    seqno = stamp_seq_ctrl(f, 0)
+    assert seqno == 0x10
+    assert (f[22] | (f[23] << 8)) == 0x0010
+    seqno = stamp_seq_ctrl(bytearray(26), seqno)
+    assert seqno == 0x20                    # next frame advances one sequence
+
+    # A fragment burst shares one sequence; only frag==0 advances the counter.
+    f0, f1, f2 = bytearray(30), bytearray(30), bytearray(30)
+    f0[22], f1[22], f2[22] = 0x00, 0x01, 0x02
+    s = stamp_seq_ctrl(f0, 0x20)
+    assert s == 0x30 and (f0[22] | (f0[23] << 8)) == 0x0030
+    s = stamp_seq_ctrl(f1, s)
+    assert s == 0x30 and (f1[22] | (f1[23] << 8)) == 0x0031   # same seq, frag 1
+    s = stamp_seq_ctrl(f2, s)
+    assert s == 0x30 and (f2[22] | (f2[23] << 8)) == 0x0032
+
+    # Control frames (< 24 B) carry no seq_ctrl — untouched.
+    assert stamp_seq_ctrl(bytearray(10), 0x30) == 0x30
+    # 12-bit sequence wraps at 0xFFF0.
+    assert stamp_seq_ctrl(bytearray(26), 0xFFF0) == 0x0000
+
+
 def test_build_deauth_structure():
     from wifit3.chips.rtl8187.tx import (
         BROADCAST_MAC,

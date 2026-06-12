@@ -86,6 +86,10 @@ class RTL8187Driver:
         self._rf_setup: Optional[RfSetup] = None
         self._power: Optional[TxPower] = None
         self._rx_conf: int = 0
+        # 802.11 TX sequence counter (bits [4:15], so it steps by 0x10). The 8187L has no
+        # hardware seq assignment on the L-path, so we stamp it ourselves per injected
+        # frame — see tx.stamp_seq_ctrl. Updated on the event loop only (no lock needed).
+        self._tx_seqno: int = 0
 
         # WlanDriver Protocol surface area.
         self.mac_address: Optional[str] = None
@@ -265,13 +269,19 @@ class RTL8187Driver:
         timeout. ``use_no_ack=False`` uses ``RETRY_COUNT=7`` for
         normal unicast TX (where we actually want delivery).
         """
-        from .tx import RETRY_COUNT
+        from .tx import RETRY_COUNT, stamp_seq_ctrl
         retry_count = 1 if use_no_ack else RETRY_COUNT
+        # Stamp an incrementing 802.11 sequence number (the 8187L L-path has no hardware
+        # seq assignment; the AP dedups our association/EAPOL frames otherwise). Done on
+        # the loop before the blocking write, so _tx_seqno needs no lock.
+        buf = bytearray(frame_bytes)
+        self._tx_seqno = stamp_seq_ctrl(buf, self._tx_seqno)
+        frame_to_send = bytes(buf)
         loop = asyncio.get_event_loop()
         try:
             await loop.run_in_executor(
                 None,
-                lambda: _inject_frame(self.dev, frame_bytes, retry_count=retry_count),
+                lambda: _inject_frame(self.dev, frame_to_send, retry_count=retry_count),
             )
             return True
         except usb.core.USBError as e:
