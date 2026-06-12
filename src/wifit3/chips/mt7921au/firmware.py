@@ -30,16 +30,23 @@ class MT7921AUFirmwareLoader:
         self.transport = transport
         self.assets_dir = assets_dir
 
-    def _claim_vendor_interface(self) -> "int | None":
+    def _claim_vendor_interface(self, clear_halts: bool = True) -> "int | None":
         """Find + claim the vendor-specific (class 0xFF) interface that owns the
-        bulk endpoints, and clear-halt them. Returns its number, or None."""
+        bulk endpoints. Returns its number, or None.
+
+        With clear_halts (the default) it also clear-halts the bulk endpoints. The
+        warm re-attach passes clear_halts=False for its pre-reset claim so the
+        freshly-enumerated pipes are clear-halted exactly ONCE — by the subsequent
+        load_firmware. A second clear_halt on the re-enumerated pipes desyncs them
+        on WinUSB and wedges the device (see MT7921AU.md "Warm re-attach")."""
         dev = self.transport.dev
         try:
             for intf in dev.get_active_configuration():
                 if intf.bInterfaceClass == 0xFF:
                     usb.util.claim_interface(dev, intf.bInterfaceNumber)
-                    for ep in (EP_OUT_FW, EP_OUT_MCU, EP_IN_BULK, EP_IN_MCU):
-                        self.transport.clear_halt(ep)
+                    if clear_halts:
+                        for ep in (EP_OUT_FW, EP_OUT_MCU, EP_IN_BULK, EP_IN_MCU):
+                            self.transport.clear_halt(ep)
                     return intf.bInterfaceNumber
         except Exception as e:
             logger.debug(f"vendor-interface claim: {e}")
@@ -83,23 +90,16 @@ class MT7921AUFirmwareLoader:
             return False
         logger.info(f"MT7921 detected: chip_id=0x{chip_id:x}")
 
-        # If firmware is already running from a previous session, a fresh USB
-        # handle can read control registers (the chip-id read above worked) but
-        # the bulk pipes (EP 0x08 OUT / 0x84 IN) are STALLED and stay that way.
-        # Tried live on WinUSB and none clear the stall: CLEAR_FEATURE(halt), the
-        # kernel's WFSYS subsystem reset (mt792xu_wfsys_reset, driven over the UHW
-        # bus — the reset itself runs, INIT_DONE re-asserts), and a USB bus reset
-        # (dev.reset). FW_PWR_ON also latches on across a WFSYS reset, so the chip
-        # never returns to its true cold state. Only a physical replug (power-off)
-        # recovers it. So detect the warm case and ask for a replug rather than
-        # wedge the device limping through a firmware download that can't run.
-        # See MT7921AU.md "Warm re-attach" for the full investigation.
+        # Safety net only: driver.connect() routes a warm chip to _warm_reattach (the
+        # light reattach), so load_firmware is normally reached only on a cold chip
+        # (MISC==0). If a warm chip ever reaches here, do NOT cold-boot it — the
+        # mcu_power_on below poisons a warm chip's bulk pipes on WinUSB (no pre-reset
+        # usb_reset_device is available). Bail instead. See MT7921AU.md "Warm re-attach".
         misc = self.transport.read_reg32_unified(MT_CONN_ON_MISC)
-        if (misc & MT_TOP_MISC2_FW_N9_RDY) == MT_TOP_MISC2_FW_N9_RDY:
+        if (misc & MT_TOP_MISC2_FW_N9_RDY) != 0:
             logger.error(
-                f"Firmware already running (MT_CONN_ON_MISC=0x{misc:x}); the bulk "
-                "pipes can't be reattached in userland on Windows. Please "
-                "PHYSICALLY REPLUG the card for a cold boot."
+                f"load_firmware reached on a warm chip (MT_CONN_ON_MISC=0x{misc:x}); "
+                "warm chips must take the _warm_reattach path, not a cold boot. Aborting."
             )
             return False
 
@@ -211,10 +211,14 @@ class MT7921AUFirmwareLoader:
         self.transport.write_reg32_unified(addr, new)
         logger.debug(f"rmw 0x{addr:08x}: 0x{val:08x} → 0x{new:08x}")
 
-    def _dma_init(self):
+    def _dma_init(self, resume: bool = False):
         """Port of mt792xu_dma_init (mt792x_usb.c) — pre-firmware WFDMA bring-up,
         in kernel order: dma_prefetch, GLO_CFG enables, DMASHDL, DUMMY_CR
-        (mt792xu_wfdma_init), then WLCFG, then rx_evt_ep4.
+        (mt792xu_wfdma_init), then WLCFG, then (cold only) rx_evt_ep4 + epctl_rst_opt.
+
+        ``resume=True`` is the kernel's mt792xu_dma_init(dev, resume) light path: it
+        stops after WLCFG (skips rx_evt_ep4 + epctl_rst_opt), used by the warm
+        reattach when the DMA needs re-initialising (see driver._warm_reattach).
 
         The IN URB pool must already be posted before this runs (see
         load_firmware): GLO_CFG sets RX_DMA_EN, and with no RX URBs queued the RX
@@ -245,8 +249,19 @@ class MT7921AUFirmwareLoader:
         self._rmw(MT_UDMA_WLCFG_0, MT_WL_RX_AGG_TO | MT_WL_RX_AGG_LMT, 0)
         self._rmw(MT_UDMA_WLCFG_1, MT_WL_RX_AGG_PKT_LMT, 0)
 
+        if resume:
+            return  # kernel mt792xu_dma_init(resume): stop before rx_evt_ep4 + epctl
+
         self._rx_evt_ep4()
         self._epctl_rst_opt()
+
+    def dma_need_reinit(self) -> bool:
+        """mt792x_dma_need_reinit: True when the WFDMA NEED_REINIT latch is clear.
+        _dma_init sets it, so a warm chip whose firmware is still running reads it
+        SET and this returns False (no re-init needed). The warm reattach gates its
+        light dma_init(resume) on this, exactly like mt7921u_resume."""
+        return not (self.transport.read_reg32_unified(MT_WFDMA_DUMMY_CR)
+                    & MT_WFDMA_NEED_REINIT)
 
     def _epctl_rst_opt(self):
         """mt792xu_dma_rx_evt_ep4's sibling epctl_rst_opt(false): clear the

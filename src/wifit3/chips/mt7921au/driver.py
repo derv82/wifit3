@@ -23,10 +23,13 @@ class MT7921AUDriver:
 
     Bring-up state (see chips/mt7921au/MT7921AU.md): firmware boot (firmware.py),
     post-boot device init (init.py / mac.py / mcu.py), monitor entry, channel
-    tune and RX descriptor decode are ported, pcap-verified (verify_pcap CHECK 3
-    full PASS), and HW-confirmed on both bands (2.4 + 5 GHz monitor RX). TX
-    (inject_frame) is the remaining milestone; warm reattach is unsupported on
-    WinUSB (cold boot needs a replug).
+    tune, RX descriptor decode and TX (inject_frame) are ported, pcap-verified
+    (verify_pcap CHECK 1-4) and HW-confirmed (both bands + the full attack suite).
+
+    A warm chip (firmware still running from a prior run) is detected via
+    MT_CONN_ON_MISC/FW_N9_RDY and LIGHT-reattached (connect → _warm_reattach), the
+    kernel mt7921u_resume model: no reset, no firmware reload — just re-post RX and
+    re-sync the channel. Cold chips take the full _cold_boot path.
     """
 
     SUPPORTED_IDS = [
@@ -52,9 +55,9 @@ class MT7921AUDriver:
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._init_state: Optional[chip_init.InitState] = None
         self._channel = self.SUPPORTED_CHANNELS[0]
-        # WlanDriver protocol runtime state. is_warm is always False: warm reattach is
-        # unsupported on WinUSB (a warm chip fails connect() with "please replug"), so a
-        # successful bring-up is always a cold boot. mac_address stays None: this chip's
+        # WlanDriver protocol runtime state. is_warm reflects the bring-up path taken
+        # by connect(): True when we light-reattached to already-running firmware
+        # (_warm_reattach), False on a cold boot. mac_address stays None: this chip's
         # firmware does not return the MAC in GET_NIC_CAPAB (no MT_NIC_CAP_MAC_ADDR TLV),
         # and the cold-boot init reads no EFUSE MAC — monitor RX + spoofed-MAC injection
         # need neither, so there is no MAC to expose without an unverified EFUSE access.
@@ -69,19 +72,49 @@ class MT7921AUDriver:
         self._rx_callback = callback
 
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
-        """Boot the firmware (cold or warm), then run the post-boot device init."""
+        """Bring up monitor mode — cold-boot the firmware, or LIGHT-reattach if it is
+        already running (warm).
+
+        The kernel's mt7921u_probe reads MT_CONN_ON_MISC/FW_N9_RDY to tell whether
+        firmware is already up; that read is HW-safe here. A warm chip still has
+        firmware running in monitor mode, so we reattach to it (the mt7921u_resume
+        model) instead of cold-booting. A cold boot's wfsys_reset + mcu_power_on
+        POISON a warm chip's bulk pipes on WinUSB (where we cannot do the kernel's
+        pre-reset usb_reset_device), so warm and cold are strictly separate paths.
+        See chips/mt7921au/MT7921AU.md "Warm re-attach"."""
         # ProgressCallback is (percentage, message) — the wifit3-wide convention.
         if progress_cb:
-            progress_cb(0.1, "Uploading firmware...")
+            progress_cb(0.1, "Connecting to MT7921AU...")
         logger.info("Initializing MT7921AU...")
-
-        # Subscribe before any RX flows; the reader is started by load_firmware
-        # (cold) and ensured below (warm), and runs until close().
         self.transport.subscribe(self._on_raw_rx)
+
+        if self._detect_warm():
+            return await self._warm_reattach(progress_cb)
+        return await self._cold_boot(progress_cb)
+
+    def _detect_warm(self) -> bool:
+        """True if firmware is already running (FW_N9_RDY set in MT_CONN_ON_MISC) —
+        the kernel mt7921u_probe warm check. Claims the vendor interface (needed for
+        register access) but does NOT clear-halt or reset: a warm chip must not be
+        cold-booted. Reading MT_CONN_ON_MISC is HW-verified safe on this chip.
+        Returns False (treat as cold) if the read fails."""
+        self.firmware._claim_vendor_interface(clear_halts=False)
+        try:
+            misc = self.transport.read_reg32_unified(MT_CONN_ON_MISC)
+        except usb.core.USBError:
+            return False
+        logger.info("MT7921AU warm-check: MT_CONN_ON_MISC=0x%x", misc)
+        return (misc & MT_TOP_MISC2_FW_N9_RDY) != 0
+
+    async def _cold_boot(self, progress_cb: Optional[ProgressCallback]) -> bool:
+        """Full bring-up of a cold chip: firmware upload, post-boot device init,
+        monitor entry. The RX reader is started by load_firmware."""
+        if progress_cb:
+            progress_cb(0.1, "Uploading firmware...")
         if not await self.firmware.load_firmware():
             logger.error("Failed to load MT7921AU firmware.")
             return False
-        self.transport.start_rx()   # idempotent — covers the warm-boot path
+        self.transport.start_rx()   # idempotent — load_firmware already started it
 
         if progress_cb:
             progress_cb(0.6, "Configuring device...")
@@ -94,9 +127,42 @@ class MT7921AUDriver:
             progress_cb(0.9, "Enabling monitor mode...")
         await chip_init.enter_monitor(self.transport, self._channel)
 
+        self.is_warm = False
         if progress_cb:
             progress_cb(1.0, "Done")
-        logger.info("MT7921AU monitor mode ready on channel %d.", self._channel)
+        logger.info("MT7921AU monitor mode ready (cold boot) on channel %d.", self._channel)
+        return True
+
+    async def _warm_reattach(self, progress_cb: Optional[ProgressCallback]) -> bool:
+        """Light reattach to firmware that is already running in monitor mode — the
+        kernel mt7921u_resume model. NO reset, NO mcu_power_on, NO firmware reload, NO
+        post-boot init: the firmware already did all of that and keeps streaming RX
+        the instant we re-post a read. We only re-establish the host interface:
+
+          - a light dma_init(resume) IFF the WFDMA NEED_REINIT latch was cleared
+            (mt792x_dma_need_reinit); a normal reconnect leaves it set, so skipped.
+          - re-post RX (start the reader)  == mt76u_resume_rx
+          - re-sync the channel.
+
+        set_hif_suspend(false) is intentionally omitted: the kernel sends it on PM
+        resume because IT called set_hif_suspend(true) on suspend. Our cross-process
+        reconnect never suspended the HIF (RX streams immediately on reattach), so
+        there is nothing to un-suspend — a justified exception (the kernel has no
+        analog for a fresh-handle reconnect to never-suspended firmware)."""
+        logger.info("MT7921AU warm reattach (firmware already running)...")
+        if progress_cb:
+            progress_cb(0.5, "Reattaching to running firmware...")
+        if self.firmware.dma_need_reinit():
+            logger.info("WFDMA needs re-init; running light dma_init(resume).")
+            self.firmware._dma_init(resume=True)
+        self.transport.start_rx()
+        if progress_cb:
+            progress_cb(0.9, "Tuning...")
+        await self.set_channel(self._channel)
+        self.is_warm = True
+        if progress_cb:
+            progress_cb(1.0, "Done")
+        logger.info("MT7921AU warm reattach ready on channel %d.", self._channel)
         return True
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
