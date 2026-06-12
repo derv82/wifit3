@@ -23,6 +23,19 @@ from .constants import (
     EEPROM_BBP_SIZE,
     EEPROM_BBP_START,
     EEPROM_BBP_VALUE,
+    EEPROM_BBPTUNE_R17,
+    EEPROM_BBPTUNE_R24,
+    EEPROM_BBPTUNE_R24_LOW,
+    EEPROM_BBPTUNE_R24_LOW_DEFAULT,
+    EEPROM_BBPTUNE_R25,
+    EEPROM_BBPTUNE_R25_LOW,
+    EEPROM_BBPTUNE_R25_LOW_DEFAULT,
+    EEPROM_BBPTUNE_R61,
+    EEPROM_BBPTUNE_R61_LOW,
+    EEPROM_BBPTUNE_R61_LOW_DEFAULT,
+    EEPROM_BBPTUNE_VGC,
+    EEPROM_BBPTUNE_VGCUPPER,
+    EEPROM_BBPTUNE_VGCUPPER_DEFAULT,
     PHY_CSR7,
     PHY_CSR7_DATA,
     PHY_CSR7_READ_CONTROL,
@@ -113,6 +126,38 @@ def eeprom_bbp_overrides(eeprom: bytes) -> list[tuple[int, int]]:
             value = get_field16(word, EEPROM_BBP_VALUE)
             overrides.append((reg_id, value))
     return overrides
+
+
+def _bbptune_byte(eeprom: bytes, word: int, field_mask: int, default: int) -> int:
+    """A BBP-tune byte from the EEPROM, with the kernel's blank-word fallback.
+
+    A 0xffff word is uninitialised — ``rt2500usb_init_eeprom`` substitutes the
+    per-field default; otherwise the calibrated low byte (or VGCUPPER) is used.
+    """
+    raw = _eeprom_word(eeprom, word)
+    if raw == 0xFFFF:
+        return default
+    return get_field16(raw, field_mask)
+
+
+def reset_tuner(t: RT2500USBTransport, eeprom: bytes) -> None:
+    """Seed the AGC/VGC baseband registers (rt2500usb.c:689-712).
+
+    rt2x00 calls this on every ``CONF_CHANGE_CHANNEL`` (rt2x00lib_config) and
+    on antenna config — unconditionally, monitor mode included. It is the
+    *only* gain-control mechanism on this part (rt2500usb has no periodic
+    ``link_tuner`` callback), so without it BBP R17 (the variable gain) sits at
+    its init value and never tracks the band — the cause of weak / one-AP-only
+    RX. R24/R25/R61/R17 come from the per-card EEPROM BBP-tune words.
+    """
+    bbp_write(t, 24, _bbptune_byte(eeprom, EEPROM_BBPTUNE_R24,
+                                   EEPROM_BBPTUNE_R24_LOW, EEPROM_BBPTUNE_R24_LOW_DEFAULT))
+    bbp_write(t, 25, _bbptune_byte(eeprom, EEPROM_BBPTUNE_R25,
+                                   EEPROM_BBPTUNE_R25_LOW, EEPROM_BBPTUNE_R25_LOW_DEFAULT))
+    bbp_write(t, 61, _bbptune_byte(eeprom, EEPROM_BBPTUNE_R61,
+                                   EEPROM_BBPTUNE_R61_LOW, EEPROM_BBPTUNE_R61_LOW_DEFAULT))
+    bbp_write(t, 17, _bbptune_byte(eeprom, EEPROM_BBPTUNE_VGC,
+                                   EEPROM_BBPTUNE_VGCUPPER, EEPROM_BBPTUNE_VGCUPPER_DEFAULT))
 
 
 def init_bbp(t: RT2500USBTransport, eeprom: bytes) -> None:

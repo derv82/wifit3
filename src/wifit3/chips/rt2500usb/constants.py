@@ -331,6 +331,38 @@ EEPROM_BBP_VALUE = 0x00ff
 EEPROM_BBP_REG_ID = 0xff00
 EEPROM_TXPOWER_START = 0x001e
 EEPROM_TXPOWER_SIZE = 7
+
+# BBP link-tuning seeds (rt2500usb.h:701-737). reset_tuner reads the *_LOW /
+# VGCUPPER bytes and writes them to BBP R24/R25/R61/R17 — the AGC/VGC seed,
+# re-applied on every channel tune. The kernel fills blank (0xffff) words with
+# the defaults below in rt2500usb_init_eeprom (validate); a real EEPROM (this
+# unit) carries calibrated values, so those branches don't fire here.
+EEPROM_BBPTUNE = 0x0030
+EEPROM_BBPTUNE_THRESHOLD = 0x00ff
+EEPROM_BBPTUNE_R24 = 0x0031
+EEPROM_BBPTUNE_R24_LOW = 0x00ff
+EEPROM_BBPTUNE_R24_HIGH = 0xff00
+EEPROM_BBPTUNE_R25 = 0x0032
+EEPROM_BBPTUNE_R25_LOW = 0x00ff
+EEPROM_BBPTUNE_R25_HIGH = 0xff00
+EEPROM_BBPTUNE_R61 = 0x0033
+EEPROM_BBPTUNE_R61_LOW = 0x00ff
+EEPROM_BBPTUNE_R61_HIGH = 0xff00
+EEPROM_BBPTUNE_VGC = 0x0034
+EEPROM_BBPTUNE_VGCUPPER = 0x00ff
+EEPROM_BBPTUNE_VGCLOWER = 0xff00
+EEPROM_BBPTUNE_R17 = 0x0035
+EEPROM_BBPTUNE_R17_LOW = 0x00ff
+EEPROM_BBPTUNE_R17_HIGH = 0xff00
+# Blank-EEPROM defaults (rt2500usb.c:1398-1420, 1381) for the bytes reset_tuner
+# consumes. VGCUPPER's blank default is a constant 0x40, so reset_tuner never
+# needs the live BBP[17] read that only the (absent) periodic tuner's VGCLOWER
+# would require.
+EEPROM_BBPTUNE_R24_LOW_DEFAULT = 0x40
+EEPROM_BBPTUNE_R25_LOW_DEFAULT = 0x40
+EEPROM_BBPTUNE_R61_LOW_DEFAULT = 0x60
+EEPROM_BBPTUNE_VGCUPPER_DEFAULT = 0x40
+
 EEPROM_CALIBRATE_OFFSET = 0x0036
 EEPROM_CALIBRATE_OFFSET_RSSI = 0x00ff
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import struct
 
-from wifit3.chips.rt2500usb.bbp import eeprom_bbp_overrides
+from wifit3.chips.rt2500usb.bbp import eeprom_bbp_overrides, reset_tuner
 from wifit3.chips.rt2500usb.chan import (
     antenna_defaults,
     config_ant,
@@ -23,6 +23,7 @@ from wifit3.chips.rt2500usb.chan import (
 from wifit3.chips.rt2500usb.constants import (
     ANTENNA_A,
     EEPROM_SIZE,
+    PHY_CSR7,
     MAC_CSR1,
     MAC_CSR1_HOST_READY,
     MAC_CSR9,
@@ -158,6 +159,37 @@ def test_antenna_defaults_sw_to_hw():
 def test_eeprom_bbp_overrides():
     overrides = eeprom_bbp_overrides(_synthetic_eeprom())
     assert (17, 0x30) in overrides
+
+
+def _bbp_writes(t: "FakeTransport") -> dict[int, int]:
+    """Decode the BBP register writes recorded on a FakeTransport — each
+    bbp_write lands as a PHY_CSR7 write packing REG_ID<<8 | VALUE."""
+    out: dict[int, int] = {}
+    for addr, val in t.writes:
+        if addr == PHY_CSR7:
+            out[(val >> 8) & 0x7F] = val & 0xFF
+    return out
+
+
+def test_reset_tuner_calibrated_eeprom():
+    # BBPTUNE words carry the calibrated bytes (this unit's real values):
+    # R24=0x80, R25=0x50, R61=0x63, VGCUPPER=0x3b. reset_tuner seeds BBP
+    # R24/R25/R61/R17 with them.
+    ee = bytearray(_synthetic_eeprom())
+    ee[0x31 * 2:0x31 * 2 + 2] = b"\x80\x68"   # BBPTUNE_R24 = 0x6880
+    ee[0x32 * 2:0x32 * 2 + 2] = b"\x50\x38"   # BBPTUNE_R25 = 0x3850
+    ee[0x33 * 2:0x33 * 2 + 2] = b"\x63\x73"   # BBPTUNE_R61 = 0x7363
+    ee[0x34 * 2:0x34 * 2 + 2] = b"\x3b\xff"   # BBPTUNE_VGC = 0xff3b
+    t = FakeTransport()
+    reset_tuner(t, bytes(ee))
+    assert _bbp_writes(t) == {24: 0x80, 25: 0x50, 61: 0x63, 17: 0x3B}
+
+
+def test_reset_tuner_blank_eeprom_defaults():
+    # All-0xff BBPTUNE words → the kernel's blank-EEPROM defaults.
+    t = FakeTransport()
+    reset_tuner(t, _synthetic_eeprom())       # synthetic EEPROM leaves 0x31-0x34 = 0xffff
+    assert _bbp_writes(t) == {24: 0x40, 25: 0x40, 61: 0x60, 17: 0x40}
 
 
 # ----------------------------------------------------------------------
