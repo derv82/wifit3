@@ -25,7 +25,7 @@ The matrix below captures *how well wifit3 drives these wireless cards* -- Every
 | [MT7610U](#mt7610u) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ | C |
 | [RTL8814AU](#rtl8814au) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | C |
-| [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ❌ | D |
+| [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 
 ## Per-card notes
 
@@ -246,12 +246,12 @@ excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ⚠️ | 2026-05-31 | Inconsistent RX: one CH1 AP gave ~10 beacons/s while another on the same channel gave 0. |
-| Handshake | ❌ | 2026-05-31 | Only M1+M3 (FromDS) — no M2/M4, so no crackable pair. The ToDS filter is open (client→AP frames arrive); the weak RX + RF dying ~1 min lost M2/M4. |
-| PMKID | ✅ | 2026-05-31 | Passive + active. |
-| WEP | ⚠️ | 2026-05-31 | Replay works but slow (~1–3 IVs/s); ChopChop stuck at the 40 B cipher. |
-| WPS | ⚠️ | 2026-05-31 | PIN ✅ (valid NACKs, no full crack). PBC timed out. |
-| Stress | ❌ | 2026-05-31 | RF died after ~1 min — bulk-IN pipe error, set_channel pipe error. Wedged under sustained load. |
+| Scan | ✅ | 2026-06-11 | ~9 beacons/s on the best AP, 10+ APs, no dead seconds. |
+| Handshake | ✅ | 2026-06-11 | Deauth → reconnect; M1+M2+M3 captured (crackable pair). |
+| PMKID | ✅ | 2026-06-11 | Passive + active extract. |
+| WEP | ✅ | 2026-06-11 | ChopChop forged a packet (4 tries); ARP replay works, slow TX (~60 IVs/s). |
+| WPS | ✅ | 2026-06-11 | PBC extracted the PSK; PIN → M4 (first-half-wrong). |
+| Stress | ✅ | 2026-06-11 | 30-min 14-ch soak: no wedge, no RF death. Mild breadth taper late in the run. |
 
 → [RT2500USB.md](src/wifit3/chips/rt2500usb/RT2500USB.md)
 
@@ -276,6 +276,6 @@ stay flat the whole time, and the failures (RT2500USB) show within the first min
 
 ## Fully supported
 
-Every column ✅ *plus* a clean Stress soak. **Seven cards are there: RTL8812AU (DKMS),
-AR9271, RTL8821AU (DKMS), MT7612U, RT3070, RT5372, and RT5572** — every Ralink we have
-(RT3070 / RT5372 / RT5572) now at full marks.
+Every column ✅ *plus* a clean Stress soak. **Eight cards are there: RTL8812AU (DKMS),
+AR9271, RTL8821AU (DKMS), MT7612U, RT3070, RT5372, RT5572, and RT2500USB** — every Ralink
+we have (RT2500USB / RT3070 / RT5372 / RT5572) now at full marks.
