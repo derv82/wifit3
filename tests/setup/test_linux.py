@@ -2,9 +2,9 @@
 
 The live path (graphical pkexec → udev rule written → node becomes writable → retry connect)
 can't be exercised without a real Linux box + hardware, so it's left to the Kali smoke
-(DEVICE-SETUP.md). Everything deterministic — rule text, per-device path naming, run_privileged
-argv, and the install/remove result classification — is covered here and runs on any OS by
-forcing the platform/euid via monkeypatch.
+(DEVICE-SETUP.md). Everything deterministic — rule text, run_privileged argv, and the
+install/remove result classification — is covered here and runs on any OS by forcing the
+platform/euid via monkeypatch.
 """
 import pytest
 
@@ -16,19 +16,13 @@ from wifit3.setup.linux import (
     _choose_method,
     build_rule_text,
     emit_udev_text,
-    free_device,
+    install_rule,
     remove_rule,
-    rule_path_for,
     run_privileged,
 )
 
 
-# --- rule path + text ------------------------------------------------------------------
-
-def test_rule_path_is_per_device_lowercase_60_prefix():
-    # 60- sorts before systemd's 70-uaccess.rules so TAG+="uaccess" is set in time.
-    assert rule_path_for(0x0BDA, 0x8813) == "/etc/udev/rules.d/60-wifit3-0bda-8813.rules"
-
+# --- rule text -------------------------------------------------------------------------
 
 def test_build_rule_text_clause_hex_and_per_card_comment():
     text = build_rule_text([(0x0BDA, 0x8813, "RTL8814AU")], "all")
@@ -56,6 +50,11 @@ def test_perms_levers_ship_uaccess_plus_plugdev_not_loose():
     assert _PERMS_CLAUSE["all"] == 'TAG+="uaccess", MODE="0660", GROUP="plugdev"'
     assert _PERMS_CLAUSE["uaccess"] == 'TAG+="uaccess"'
     assert "loose" not in _PERMS_CLAUSE  # 0666 world-RW is probe-only, must not ship
+
+
+def test_rule_path_is_shared_blanket_with_60_prefix():
+    # One shared file (not per-VID:PID); 60- sorts before systemd's 70-uaccess.rules.
+    assert lin.RULE_PATH == "/etc/udev/rules.d/60-wifit3.rules"
 
 
 # --- run_privileged / _choose_method ---------------------------------------------------
@@ -87,7 +86,7 @@ def test_choose_method_prefers_pkexec_then_sudo_then_none(monkeypatch):
     assert _choose_method() is None
 
 
-# --- free_device classification --------------------------------------------------------
+# --- install_rule classification (blanket) ---------------------------------------------
 
 def _force_linux_nonroot(monkeypatch, tmp_path):
     monkeypatch.setattr(lin.sys, "platform", "linux")
@@ -95,7 +94,7 @@ def _force_linux_nonroot(monkeypatch, tmp_path):
     monkeypatch.setattr(lin.tempfile, "gettempdir", lambda: str(tmp_path))
 
 
-def test_free_device_success_stages_and_elevates(monkeypatch, tmp_path):
+def test_install_rule_success_stages_blanket_and_elevates(monkeypatch, tmp_path):
     _force_linux_nonroot(monkeypatch, tmp_path)
     monkeypatch.setattr(lin, "_choose_method", lambda: "pkexec")
     seen = {}
@@ -105,41 +104,42 @@ def test_free_device_success_stages_and_elevates(monkeypatch, tmp_path):
         return 0
 
     monkeypatch.setattr(lin, "run_privileged", fake_priv)
-    r = free_device(0x0BDA, 0x8813, "RTL8814AU")
+    r = install_rule()
     assert r.ok and not r.cancelled
-    assert r.detail == "/etc/udev/rules.d/60-wifit3-0bda-8813.rules"
-    assert (tmp_path / "wifit3-0bda-8813.rules").exists()  # staged the rule
-    assert "60-wifit3-0bda-8813.rules" in seen["cmd"]      # install shell targets it
+    assert r.detail == "/etc/udev/rules.d/60-wifit3.rules"
+    staged = (tmp_path / "wifit3.rules").read_text()
+    assert staged.count('SUBSYSTEM=="usb"') > 10        # blanket: the whole fleet
+    assert "60-wifit3.rules" in seen["cmd"]             # install shell targets the shared file
 
 
-def test_free_device_declined_is_cancelled(monkeypatch, tmp_path):
+def test_install_rule_declined_is_cancelled(monkeypatch, tmp_path):
     _force_linux_nonroot(monkeypatch, tmp_path)
     monkeypatch.setattr(lin, "_choose_method", lambda: "pkexec")
     monkeypatch.setattr(lin, "run_privileged", lambda cmd, method: 126)
-    r = free_device(0x0BDA, 0x8813, "RTL8814AU")
+    r = install_rule()
     assert not r.ok and r.cancelled
 
 
-def test_free_device_no_elevator_offers_manual_path(monkeypatch, tmp_path):
+def test_install_rule_no_elevator_offers_manual_path(monkeypatch, tmp_path):
     _force_linux_nonroot(monkeypatch, tmp_path)
     monkeypatch.setattr(lin, "_choose_method", lambda: None)
-    r = free_device(0x0BDA, 0x8813, "RTL8814AU")
+    r = install_rule()
     assert not r.ok and not r.cancelled
     assert "sudo wifit3" in r.detail
 
 
-def test_free_device_non_linux_raises(monkeypatch):
+def test_install_rule_non_linux_raises(monkeypatch):
     monkeypatch.setattr(lin.sys, "platform", "win32")
     with pytest.raises(RuntimeError):
-        free_device(0x0BDA, 0x8813)
+        install_rule()
 
 
-# --- remove_rule classification --------------------------------------------------------
+# --- remove_rule classification (blanket) ----------------------------------------------
 
 def test_remove_rule_absent_is_benign_noop(monkeypatch, tmp_path):
     monkeypatch.setattr(lin.sys, "platform", "linux")
-    monkeypatch.setattr(lin, "rule_path_for", lambda v, p: str(tmp_path / "absent.rules"))
-    r = remove_rule(0x0BDA, 0x8813)
+    monkeypatch.setattr(lin, "RULE_PATH", str(tmp_path / "absent.rules"))
+    r = remove_rule()
     assert r.ok and "nothing to remove" in r.message.lower()
 
 
@@ -148,10 +148,10 @@ def test_remove_rule_success_tells_user_to_replug(monkeypatch, tmp_path):
     rule.write_text("x")
     monkeypatch.setattr(lin.sys, "platform", "linux")
     monkeypatch.setattr(lin.os, "geteuid", lambda: 1000, raising=False)
-    monkeypatch.setattr(lin, "rule_path_for", lambda v, p: str(rule))
+    monkeypatch.setattr(lin, "RULE_PATH", str(rule))
     monkeypatch.setattr(lin, "_choose_method", lambda: "pkexec")
     monkeypatch.setattr(lin, "run_privileged", lambda cmd, method: 0)
-    r = remove_rule(0x0BDA, 0x8813)
+    r = remove_rule()
     assert r.ok and "replug" in r.message.lower()
 
 
@@ -160,17 +160,17 @@ def test_remove_rule_declined_is_cancelled(monkeypatch, tmp_path):
     rule.write_text("x")
     monkeypatch.setattr(lin.sys, "platform", "linux")
     monkeypatch.setattr(lin.os, "geteuid", lambda: 1000, raising=False)
-    monkeypatch.setattr(lin, "rule_path_for", lambda v, p: str(rule))
+    monkeypatch.setattr(lin, "RULE_PATH", str(rule))
     monkeypatch.setattr(lin, "_choose_method", lambda: "pkexec")
     monkeypatch.setattr(lin, "run_privileged", lambda cmd, method: 126)
-    r = remove_rule(0x0BDA, 0x8813)
+    r = remove_rule()
     assert not r.ok and r.cancelled
 
 
 def test_remove_rule_non_linux_raises(monkeypatch):
     monkeypatch.setattr(lin.sys, "platform", "win32")
     with pytest.raises(RuntimeError):
-        remove_rule(0x0BDA, 0x8813)
+        remove_rule()
 
 
 # --- emit_udev_text (blanket, from the live registry) ----------------------------------

@@ -13,16 +13,19 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label
 
-# Per-OS explanation of what removal does. Windows is an immediate driver swap; Linux just
-# drops the permission rule and the kernel driver returns on replug (we never replaced it).
+# Per-OS explanation of what removal does. Windows is an immediate, per-card driver swap; Linux
+# drops the single shared permission rule (covering ALL supported cards) and each card's kernel
+# driver returns on replug (we never replaced it). The Linux copy ignores {name} — the rule is
+# blanket, not per-card — but the placeholder is accepted so both share one .format() call.
 _BODY = {
     "win": (
         "This removes the WinUSB driver wifit3 installed for [bold]{name}[/], so Windows "
         "sees it as a normal wireless adapter again.\n[dim]You can re-install it any time "
         "with START.[/dim]"),
     "linux": (
-        "This removes the udev access rule wifit3 installed for [bold]{name}[/].\n[dim]The "
-        "card returns to its normal Wi-Fi driver on the next replug.[/dim]"),
+        "This removes wifit3's udev access rule, which covers [bold]all supported cards[/] "
+        "(it's one shared rule).\n[dim]Each card returns to its normal Wi-Fi driver on the "
+        "next replug.[/dim]"),
 }
 
 

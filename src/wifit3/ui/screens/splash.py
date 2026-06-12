@@ -11,7 +11,7 @@ from textual import work
 from rich.text import Text
 from rich.style import Style
 
-from wifit3.setup.linux import free_device, remove_rule
+from wifit3.setup.linux import install_rule, remove_rule
 from wifit3.setup.windows import install_winusb, restore_driver
 from wifit3.ui.screens.confirm_install import ConfirmInstallDialog
 from wifit3.ui.screens.confirm_uninstall import ConfirmUninstallDialog
@@ -296,11 +296,11 @@ class SplashView(Screen):
                         desc,
                         title="Wifit3 needs one-time access to talk to this card",
                         link_label="Device Access",
-                        warning="[bold $text-warning]One-time setup:[/] installs a small udev "
-                                "rule so wifit3 can use this card [italic]without sudo[/]. It "
-                                "does [bold]not[/] remove the card as normal Wi-Fi.\n[dim]"
-                                "Reversible: press ✕ to remove the rule (replug restores the "
-                                "driver).[/dim]",
+                        warning="[bold $text-warning]One-time setup:[/] installs a udev rule so "
+                                "wifit3 can use [italic]any supported card[/] without sudo. It "
+                                "only grants access — it does [bold]not[/] change how your cards "
+                                "work as normal Wi-Fi.\n[dim]Reversible: press ✕ to remove the "
+                                "rule (replug restores the driver).[/dim]",
                         verb="Grant access for",
                         confirm_label="Grant access")):
                     status.update("[bold bright_green]Select a card and press START[/bold bright_green]")
@@ -308,7 +308,7 @@ class SplashView(Screen):
                     return
                 status.update(f"[bold yellow]Granting access for {desc}… "
                               f"(one password prompt)[/bold yellow]")
-                result = await asyncio.to_thread(free_device, vid, pid, desc)
+                result = await asyncio.to_thread(install_rule)
                 if not result.ok:
                     release()
                     if result.cancelled:
@@ -378,7 +378,7 @@ class SplashView(Screen):
             if os_kind == "win":
                 result = await asyncio.to_thread(restore_driver, iface.vid, iface.pid)
             else:
-                result = await asyncio.to_thread(remove_rule, iface.vid, iface.pid)
+                result = await asyncio.to_thread(remove_rule)
         except Exception as e:
             logger.exception("Uninstall failed for %s", getattr(iface, "description", "?"))
             status.update(f"[bold red]Uninstall failed: {e}[/bold red]")
