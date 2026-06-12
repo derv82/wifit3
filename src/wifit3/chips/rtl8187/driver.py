@@ -47,6 +47,7 @@ from .mac import (
     detect_chip_variant,
     is_chip_warm,
     read_perm_mac,
+    start,
 )
 from .rtl8225 import RfSetup, build_rf_init, probe_rf_setup
 from .rx import parse_rx_urb, probe_endpoints, read_rx_burst
@@ -124,6 +125,21 @@ class RTL8187Driver:
             logger.warning("USB release warning: %s", e)
         self._claimed = False
 
+    # ---- warm probe -------------------------------------------------------
+    async def _smoke_test_rx(self, loop) -> bool:
+        """A warm chip should already be streaming RX. Probe the bulk-IN pipe:
+        a timeout (no data this instant) or bytes both mean "pipe alive"; only a
+        pipe-stall USBError means wedged."""
+        try:
+            for _ in range(3):
+                await loop.run_in_executor(
+                    None, read_rx_burst, self.dev, self._bulk_in_ep
+                )
+            return True
+        except usb.core.USBError as e:
+            logger.warning("warm bulk-IN smoke test failed: %s", e)
+            return False
+
     # ---- connect ----------------------------------------------------------
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         """Run identification then the cold bring-up.
@@ -165,28 +181,43 @@ class RTL8187Driver:
             self.mac_address = ":".join(f"{b:02x}" for b in mac_bytes)
             logger.info("mac_address: %s", self.mac_address)
 
-            _progress(0.35, "Probing warm/cold state")
+            _progress(0.35, "Probing endpoints + warm/cold state")
+            eps = probe_endpoints(self.dev)
+            self._bulk_in_ep = eps.primary_bulk_in
             warm = await loop.run_in_executor(None, is_chip_warm, self.transport)
             logger.info("is_warm: %s", warm)
-            if warm:
-                # M2a doesn't yet implement the warm-reattach short-circuit —
-                # for now we re-run the cold bring-up either way. M3 (which
-                # owns the RX loop) is the right place to add the warm
-                # reattach + bulk-IN smoke-test pattern.
-                logger.info("warm chip — re-running cold bring-up anyway (M2a)")
 
+            # probe_rf_setup (asic_rev + RF variant) runs on both paths — the
+            # cached RfSetup is what set_channel needs, and the reads are safe
+            # on a warm (RF-alive) chip.
             _progress(0.45, "Probing RF (asic_rev + variant)")
             self._rf_setup = await loop.run_in_executor(
                 None, probe_rf_setup, self.transport
             )
 
-            _progress(0.50, "Building RF init callback")
-            rf_init = build_rf_init(self.transport, self._rf_setup)
+            if warm and await self._smoke_test_rx(loop):
+                # A prior session left the MAC up + RF programmed and bulk-IN is
+                # streaming. Skip the ~2 s cold init (init_hw + the rxgain SPI
+                # loops); just re-arm the monitor RX posture — start() re-applies
+                # RX_CONF + CMD TX/RX enable with no RF work. [[feedback_warm_reattach]]
+                _progress(0.6, "chip WARM — re-arming (skip cold init + RF)")
+                await loop.run_in_executor(None, start, self.transport)
+            elif warm:
+                # CMD says warm but bulk-IN is wedged. On Windows/WinUSB the
+                # safest recovery is a replug (matches the rtw88 family).
+                _progress(0.5, "chip warm but bulk-IN wedged")
+                logger.error(
+                    "RTL8187: bulk-IN pipe is wedged. Please unplug the device, "
+                    "wait ~5s, replug, and reconnect."
+                )
+                return False
+            else:
+                _progress(0.50, "Building RF init callback")
+                rf_init = build_rf_init(self.transport, self._rf_setup)
+                _progress(0.55, "Running cold bring-up (init_hw + RF init + start)")
+                await loop.run_in_executor(None, cold_bring_up, self.transport, rf_init)
 
-            _progress(0.55, "Running cold bring-up (init_hw + RF init + start)")
-            await loop.run_in_executor(None, cold_bring_up, self.transport, rf_init)
-
-            # Verify CMD latched TX_ENABLE | RX_ENABLE.
+            # Verify CMD latched TX_ENABLE | RX_ENABLE (warm re-arm or cold start).
             cmd = await loop.run_in_executor(None, self.transport.read8, REG_CMD)
             if not (cmd & CMD_TX_ENABLE and cmd & CMD_RX_ENABLE):
                 logger.error(
@@ -195,9 +226,7 @@ class RTL8187Driver:
                 return False
             logger.info("CMD=0x%02x — TX_ENABLE + RX_ENABLE latched", cmd)
 
-            _progress(0.85, "Probing endpoints + starting RX loop")
-            eps = probe_endpoints(self.dev)
-            self._bulk_in_ep = eps.primary_bulk_in
+            _progress(0.85, "Starting RX loop")
             self._rx_reader = RxReaderThread(
                 loop, self._rx_read_once, self._rx_dispatch, name="rtl8187-rx"
             )
