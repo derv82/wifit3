@@ -49,16 +49,12 @@ class WifiteApp(App):
     """wifit3 TUI Main App."""
 
     TITLE = "wifit3 - Wireless Auditor"
-    
-    # Textual supports extensive CSS for styling components.
-    # We removed the global green/black override so the default Textual theme (which has visible scrollbars) works properly.
+
     CSS = """
     #ascii-art {
         content-align: center middle;
         margin-bottom: 2;
     }
-    /* Splash device picker: the card list and the START button sit side by side,
-       centered as a group. */
     #device-row {
         width: auto;
         height: auto;
@@ -67,11 +63,11 @@ class WifiteApp(App):
     }
     #start-btn {
         height: 3;
-        margin-left: 2;             /* gap between the card list and START */
+        margin-left: 2;
     }
     #uninstall-btn {
         height: 3;
-        width: 7;                   /* compact ✕ — reverses wifit3's driver/access change */
+        width: 7;
         min-width: 7;
         margin-left: 1;
     }
@@ -80,7 +76,7 @@ class WifiteApp(App):
         margin-bottom: 1;
     }
     ListView {
-        width: 52;                  /* fits the longest card name; keeps the picker compact */
+        width: 52;                  /* fits the longest card name */
         height: auto;
         max-height: 12;
     }
@@ -99,63 +95,42 @@ class WifiteApp(App):
         text-style: bold;
         width: 100%;
         content-align: center middle;
-        background: $primary;    /* a visible "window" title bar */
-        color: auto;             /* auto-contrast text on the bar */
+        background: $primary;
+        color: auto;
     }
     .info-box {
         border: solid $primary;
-        padding: 0 1;            /* title flush under the top border */
+        padding: 0 1;
     }
-    /* A left-aligned block centered as a group (TARGET's detail lines). */
     .panel-body { width: 1fr; height: auto; align-horizontal: center; }
 
-    /* ---- Layout v2 (Option A): left action column | right summary+log --- */
+    /* main row: left action column | right summary + log */
     #main-row { height: 1fr; }
 
-    /* LEFT column: TARGET / ATTACKS / CLIENTS / CLIENT DEAUTH, one shared width.
-       40 wide so the attack buttons fit "Stop Replay", CLIENTS fits PKTS, and
-       TARGET lines up with everything below it (and emphasizes the ESSID). */
+    /* 40 wide so "Stop Replay" fits and TARGET/CLIENTS line up below */
     #left-col { width: 40; }
     #panel-target { height: 8; }          /* aligns with the SECURITY|CAPTURE row */
-    /* No box around the attack buttons — they have their own borders, and a
-       title-less bordered panel just adds clutter. Height auto so the panel
-       takes only its button row(s) — 1 for WEP (Replay/Chop), 2 for WPA — and
-       the CLIENTS list below claims all the freed space. */
+    /* no box: the buttons carry their own borders; height auto frees space for CLIENTS */
     #attack-panel { height: auto; border: none; margin-top: 1; }
     #client-panel { height: 1fr; min-height: 6; }
-    /* Deauth buttons sit at the bottom of the CLIENTS panel (no own title). */
     #deauth-row { height: auto; margin-top: 1; }
 
-    /* RIGHT column: SECURITY | CAPTURE summary row (forms the TARGET | SECURITY |
-       CAPTURE header), then the tall EVENT LOG. */
+    /* right column: SECURITY | CAPTURE row, then the tall EVENT LOG */
     #right-col { width: 1fr; }
     #top-right { height: 8; }
     #panel-security { width: 38; }
     #panel-capture  { width: 38; }
-    /* Live packet dashboard fills the dead space right of CAPTURE. Bordered +
-       titled like SECURITY/CAPTURE; 1fr + min-width:0 lets it claim leftover
-       width on a wide terminal and collapse toward nothing on a narrow one.
-       Now fits the 8-tall row: border(2) + title(1) + ≤5 class rows (beacon,
-       data, one of wep-iv/eapol, inject, deauth — the two are encryption-
-       gated so never both show). */
+    /* live packet dashboard; fills the space right of CAPTURE */
     #panel-activity-box { width: 1fr; min-width: 0; }
     #panel-activity { height: 1fr; }
     #event-log-panel { height: 1fr; }
     #focus-event-log { height: 1fr; border: none; }
-    /* ESSID chip reads like a centered subtitle under the TARGET INFO title
-       (static per target, so no jitter); BSSID/channel stay left-aligned. */
     #lbl-ssid { width: 100%; text-align: center; }
 
-    /* Buttons: fat (height 3), narrow — Button defaults to min-width:16, which
-       ballooned/clipped them. Width 13 fits "Stop Replay"/"Stop Chop" in the
-       wide left column; rows touch vertically so the WPA set's 2 fit the
-       8-tall panel (WEP uses a single Replay/Chop row, vertically centered). */
     .button-row { height: auto; align-horizontal: center; }
+    /* 13 fits "Stop Replay"/"Stop Chop"; min-width:0 beats Button's 16 default */
     #attack-panel Button { width: 13; min-width: 0; }
-    /* DEAUTH buttons are flat (no border), 2 rows high for the stacked
-       "Deauth / Selected" label. Each is 1fr so the pair fills the row edge
-       to edge; the left one carries the only gap so they stay symmetric
-       (overrides the global Button margin-right). */
+    /* flat; height 2 for the stacked "Deauth / Selected" label */
     #deauth-row Button { width: 1fr; min-width: 0; height: 2; border: none; margin: 0; content-align: center middle; text-align: center; }
     #deauth-row Button#btn-deauth-sel { margin-right: 1; }
     Button {
@@ -177,8 +152,6 @@ class WifiteApp(App):
         self.install_screen(SplashView(self.device_manager), name="splash")
         self.install_screen(ScannerView(), name="scanner")
         self.install_screen(FocusView(), name="focus")
-        
-        # Start with the splash screen
         self.push_screen("splash")
 
     async def action_quit(self):
