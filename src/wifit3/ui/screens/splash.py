@@ -22,14 +22,7 @@ from wifit3.wlan.manager import WlanDeviceManager
 logger = logging.getLogger(__name__)
 
 def _without_bgcolor(style: Style) -> Style:
-    """Return a copy of ``style`` with the background color unset.
-
-    Rich styles are immutable and ``+ Style(bgcolor=None)`` is a no-op
-    (None means "no override"), so we rebuild preserving every other
-    attribute. An unset bgcolor lets Textual composite the actual
-    widget/theme background through (true transparency), unlike
-    ``"default"`` which resolves to the terminal's hard default (black).
-    """
+    """Return a copy of ``style`` with the background color unset."""
     return Style(
         color=style.color,
         bold=style.bold, dim=style.dim, italic=style.italic,
@@ -42,12 +35,7 @@ def _without_bgcolor(style: Style) -> Style:
 
 def _make_black_transparent(logo: Text) -> Text:
     """Drop black (0,0,0) backgrounds so the logo inherits the theme
-    background instead of painting its own black canvas.
-
-    The art colors each glyph via its background, so only bgcolor matters:
-    black-background spans get their bgcolor unset (transparent); every
-    other color is left untouched.
-    """
+    background instead of painting its own black canvas."""
     def transparent_if_black(style):
         if not isinstance(style, Style) or style.bgcolor is None:
             return style
@@ -85,14 +73,7 @@ def load_logo() -> Text:
 LOGO = load_logo()
 
 class SplashView(Screen):
-    """Splash + device picker: the logo, the list of supported cards found on the bus, and a
-    START button.
-
-    Discovery is descriptor-only (VID:PID match, no device opens), so the poll is cheap and
-    the UI never stalls. The "is this card WinUSB-bound?" question is answered lazily: START
-    just tries ``connect()``; only if that fails do we run the (slower, Windows-specific)
-    openability probe and offer a one-time WinUSB install. [DEVICE-SETUP.md]
-    """
+    """Splash + device picker: the logo, the list of live cards, Start and Uninstall buttons."""
 
     BINDINGS = [("q", "app.quit", "Quit")]
 
@@ -120,9 +101,7 @@ class SplashView(Screen):
                 with Horizontal(id="device-row"):
                     yield ListView(id="device-list")
                     yield Button("START", id="start-btn", variant="success")
-                    # Compact uninstall: reverses wifit3's driver/access change for the
-                    # selected card (WinUSB unbind on Windows, udev-rule removal on Linux).
-                    # The bare ✕ is disambiguated by a hover tooltip (set in on_mount).
+                    # Compact uninstall: reverses wifit3's driver/access changes.
                     yield Button("✕", id="uninstall-btn", variant="error")
         yield Footer()
 

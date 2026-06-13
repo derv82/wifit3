@@ -1,8 +1,4 @@
-"""Modal spinner shown while a privileged udev grant/revoke propagates to the live device.
-
-Pushed while the splash polls the card's usbfs node for the new access state; the caller pops
-it once the node flips (or the wait times out). Not user-dismissable — its lifetime is the wait.
-"""
+"""Modal spinner shown while a privileged udev grant/revoke propagates to the live device."""
 from __future__ import annotations
 
 from textual.app import ComposeResult
