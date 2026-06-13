@@ -2,15 +2,6 @@
 
 
 def main() -> None:
-    # `wifit3 --emit-udev`: print the blanket all-supported-cards Linux udev rules file (the
-    # power-user opt-in; the splash installs only a per-device rule for the card you activate).
-    # Handled before importing the UI so it works headless. [DEVICE-SETUP.md]
-    import sys
-    if "--emit-udev" in sys.argv[1:]:
-        from wifit3.setup.linux import emit_udev_text
-        sys.stdout.write(emit_udev_text())
-        return
-
     # Import inside main(), not at module top: the WEP cracker's
     # ProcessPoolExecutor re-imports this module to spawn workers, which must
     # not drag in Textual + the whole UI just to run RC4 math.
