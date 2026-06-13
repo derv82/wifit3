@@ -66,13 +66,10 @@ class LogHelper:
 
 
 class Capture:
-    # usbmon0 = the ALL-BUSES meta-interface. A hardcoded per-bus capture
-    # (e.g. usbmon3) silently loses the device when a FW-loading adapter
-    # USB-resets and re-enumerates onto a different bus after firmware boot —
-    # which is why earlier captures stopped dead right after init (3 caps all
-    # ended at ~5260 frames = the init burst, nothing after). Capturing all
-    # buses is immune to the bus number and to re-enumeration; the extract
-    # tooling filters by the vendor-control signature anyway.
+    # usbmon0 = the ALL-BUSES meta-interface. A hardcoded per-bus capture (e.g. usbmon3)
+    # silently loses the device when a FW-loading adapter USB-resets and re-enumerates onto a
+    # different bus after firmware boot. All-buses is immune to the bus number and to
+    # re-enumeration; the extract tooling filters by the vendor-control signature anyway.
     USBMON = "usbmon0"
     BASE_IFACE = "wlan1"
     # Seconds to wait after "INSERT CARD NOW" for the operator to plug in and the
@@ -312,14 +309,13 @@ class Capture:
 
     @staticmethod
     def _best_dkms_match(module, candidates):
-        """The (dir, ids) entry whose ids best match the bound `module` name —
-        exact first, then a >=4-char substring either direction; None if nothing
-        matches. `candidates`: list of (Path, set-of-lowercased-ids).
+        """The (dir, ids) entry whose ids best match the bound `module` name — exact first,
+        then a >=4-char substring either direction; None if nothing matches. `candidates`:
+        list of (Path, set-of-lowercased-ids).
 
-        This ties the source to *this* card's driver. The old code returned the
-        first /usr/src dkms dir it found, which grabs the wrong source whenever
-        several wifi DKMS packages are installed at once — the normal Kali
-        realtek setup (8188eus + 8812au + 88x2bu side by side)."""
+        Matching by declared id (not the first /usr/src dkms dir found) ties the source to
+        *this* card's driver even with several wifi DKMS packages installed side by side (the
+        normal Kali realtek setup: 8188eus + 8812au + 88x2bu)."""
         mod = module.lower()
         for d, ids in candidates:
             if mod in ids:

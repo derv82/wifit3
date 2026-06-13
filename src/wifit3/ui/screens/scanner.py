@@ -634,8 +634,8 @@ class ScannerView(Screen):
             is_empty = not s
 
             if is_empty:
-                # Match the column's primary type so empties compare cleanly
-                # against populated cells. Mixing 0 with "foo" was the bug.
+                # Match the column's primary type so empties compare cleanly against
+                # populated cells (mixing 0 with "foo" raises TypeError mid-sort).
                 primary: object = 0 if is_numeric_col else ""
             elif is_numeric_col:
                 # Strip non-numeric suffix (e.g. " dBm")
