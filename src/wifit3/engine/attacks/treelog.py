@@ -1,25 +1,14 @@
 """Tree-connector prefixes for the attack / scanner event logs.
 
-Shared across WEP (ChopChop, Fragmentation, …), the WPA-family attacks
-(Deauth, PMKID, SAE) and the Scanner — anywhere a bounded phase wants to
-render a small tree: a plain HEADER line, then ``├─`` step lines, then a
-terminal ``└─`` leaf.
-
-Because every group ends with a terminal line the daemon's own control flow
-reaches (success or give-up), the ``└`` connector is always correct *without*
-buffering or look-ahead — which matters, since RichLog is append-only and we
-never rewrite past lines. A group is scoped to one daemon-phase; a hand-off
-(chop → replay → crack) just starts a fresh group rather than one mega-tree.
-
-These return Rich-markup strings; the caller passes them to the same ``_log``
-callback as any other line. The message keeps its own colour; the connector
-glyph carries the status (green ✓ / red ╳).
+Shared anywhere a bounded phase renders a small tree: a HEADER line, then ``├─`` steps, then
+a terminal ``└─`` leaf. Every group ends with a terminal line the daemon's control flow
+reaches, so the ``└`` is always correct without buffering or look-ahead — which matters since
+RichLog is append-only. These return Rich markup; the glyph carries status (green ✓ / red ╳).
 """
 
 
 def header(msg: str) -> str:
-    """A group header ( ● ) — the root line above ├─/└─ children. The leading
-    space aligns the bullet with the branch connectors below it."""
+    """A group header ( ● ) — root line above the ├─/└─ children (leading space aligns the bullet)."""
     return f" [green]●[/green] {msg}"
 
 
@@ -29,20 +18,17 @@ def branch(msg: str) -> str:
 
 
 def branch_ok(msg: str) -> str:
-    """A non-terminal step that succeeded (├─✓). The group continues below it
-    (e.g. a recovered value followed by a └─► save hint)."""
+    """A non-terminal step that succeeded (├─✓); the group continues below it."""
     return f" [dim]├─[/dim][green]✓[/green] {msg}"
 
 
 def branch_fail(msg: str) -> str:
-    """A non-terminal step that failed (├─╳), followed by more lines (e.g. a
-    headline failure followed by ├─►/└─► reasons)."""
+    """A non-terminal step that failed (├─╳), followed by more lines (reasons)."""
     return f" [dim]├─[/dim][red]╳[/red] {msg}"
 
 
 def branch_dim(msg: str) -> str:
-    """A non-terminal, inert item (├──) — neither an action nor a status, just
-    an enumerated entry (e.g. an SAE group the AP doesn't support)."""
+    """A non-terminal, inert item (├──) — an enumerated entry, neither action nor status."""
     return f" [dim]├── {msg}[/dim]"
 
 
@@ -57,16 +43,12 @@ def leaf_fail(msg: str) -> str:
 
 
 def leaf_warn(msg: str) -> str:
-    """A terminal warning line that closes the group (└─⚠).
-
-    For inconclusive outcomes — neither success nor a clean failure, e.g. the
-    SAE probe couldn't get definitive results (rate-limited / PMF / off-channel)."""
+    """A terminal warning line closing the group (└─⚠) for inconclusive outcomes — neither
+    success nor clean failure (e.g. SAE probe rate-limited / PMF / off-channel)."""
     return f" [dim]└─[/dim][yellow]⚠[/yellow] {msg}"
 
 
 def leaf(msg: str) -> str:
-    """A neutral (informational) terminal line that closes the group (└─►).
-
-    For the last of a set of plain sub-items, e.g. the copy/save hints under a
-    recovered key — neither a success nor a failure."""
+    """A neutral informational terminal line closing the group (└─►) — e.g. copy/save hints
+    under a recovered key."""
     return f" [dim]└─►[/dim] {msg}"

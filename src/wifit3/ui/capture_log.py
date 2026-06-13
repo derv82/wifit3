@@ -1,15 +1,9 @@
-"""Rich-markup rendering for capture events — the presentation layer that
-``capture_events.py`` deliberately omits (it stays structural so the detector is
-testable without a terminal).
+"""Rich-markup rendering for capture events — the presentation layer ``capture_events.py``
+omits so the detector stays structural and testable without a terminal.
 
-Currently just the per-frame EAPOL trace line: an ``Mx`` label followed by a
-✓/✗ tick per hashcat-relevant field, so a fresh reader can see at a glance what
-each handshake message contributed. The label is bold-cyan when the frame helps
-form a crackable pair and dim-cyan when it arrived degraded (e.g. a clipped M2).
-
-No background chip is ever emitted here: the ``[black bold on green]`` /
-``[… on cyan]`` chips are reserved for *actual* captures (the HANDSHAKE / PMKID
-banners + recovered-credential wins), so a chip in the log always means a win.
+Currently the per-frame EAPOL trace line: an ``Mx`` label plus a ✓/✗ per hashcat-relevant
+field. Background chips (``[… on green]`` etc.) are reserved for actual captures (HANDSHAKE /
+PMKID banners, credential wins), so a chip in the log always means a win.
 """
 from __future__ import annotations
 
@@ -23,17 +17,14 @@ def _tick(ok: bool) -> str:
 
 
 def short_sta(mac: str) -> str:
-    """A STA MAC trimmed to its last 3 octets, e.g. ``11:22:33:44:55:66`` ->
-    ``…44:55:66``. Enough to tell two clients apart in the log without spending
-    a full 17-char MAC on every line. Shared with the Focus banners."""
+    """A STA MAC trimmed to its last 3 octets (``…44:55:66``) — enough to tell clients apart
+    in the log without spending 17 chars per line. Shared with the Focus banners."""
     return ("…" + mac[-8:]) if mac else "…"
 
 
 def _sta_dir(ev: CaptureEvent) -> str:
-    """The client (last 3 octets) with a direction arrow for this message: the
-    4-way runs M1→M2→M3→M4 with M1/M3 travelling AP→STA and M2/M4 STA→AP. Shows
-    *which* client a frame belongs to (two can handshake at once) and answers
-    'is this to or from the AP?' without the reader memorising the message map."""
+    """The client (last 3 octets) plus a direction arrow: M1/M3 travel AP→STA, M2/M4 STA→AP.
+    Shows which client a frame belongs to and its direction without memorising the map."""
     sta = short_sta(ev.client_mac)
     if ev.msg_num in (2, 4):
         return f"{sta}→AP"
@@ -43,11 +34,9 @@ def _sta_dir(ev: CaptureEvent) -> str:
 
 
 def _eapol_fields(ev: CaptureEvent) -> List[str]:
-    """The per-field ``label✓/✗`` fragments for one EAPOL frame, ordered as a
-    reader expects. Which fields show is message-specific — hashcat only cares
-    about an ANonce from M1/M3, and an SNonce + MIC + complete EAPOL from the
-    M2 (or M4) keystone — so we tick exactly those and omit the rest. The tick
-    hugs its label (no space) to keep the line within a narrow terminal."""
+    """The per-field ``label✓/✗`` fragments for one EAPOL frame. Which fields show is
+    message-specific — hashcat wants an ANonce from M1/M3 and SNonce + MIC + complete EAPOL
+    from the M2/M4 keystone — so we tick exactly those."""
     has_nonce = bool(ev.has_nonce)
     has_mic = bool(ev.has_mic)
     complete = bool(ev.eapol_complete)
@@ -69,11 +58,9 @@ def _eapol_fields(ev: CaptureEvent) -> List[str]:
 
 
 def eapol_message_markup(ev: CaptureEvent) -> str:
-    """One per-frame EAPOL trace line as Rich markup. Label dim-cyan unless the
-    frame contributes to a crackable pair (``ev.useful``), then bold-cyan. The
-    dim prefix names the client + direction so a lone line is self-explanatory
-    and the trace reads as the same story as the '✓ Valid 4-Way Handshake'
-    banner."""
+    """One per-frame EAPOL trace line as Rich markup. Label bold-cyan when the frame helps
+    form a crackable pair (``ev.useful``), else dim-cyan; the dim prefix names client +
+    direction so a lone line is self-explanatory."""
     style = "bold cyan" if ev.useful else "dim cyan"
     label = f"[{style}]M{ev.msg_num}[/{style}]" if ev.msg_num else f"[{style}]EAPOL-?[/{style}]"
     fields = _eapol_fields(ev)
