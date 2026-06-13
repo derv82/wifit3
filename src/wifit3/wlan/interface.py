@@ -13,14 +13,11 @@ logger = logging.getLogger(__name__)
 
 
 def _enc_rank(label: str) -> int:
-    """Rank an encryption label by *evidence strength*, not recency.
+    """Rank an encryption label by evidence strength: OPEN(0) < WEP(1) < WPA*(2).
 
-    OPEN(0) < WEP(1) < WPA*(2). A WPA/WPA2/WPA3/OWE label means we actually
-    parsed an RSN/WPA IE — which a truncated/corrupt beacon can't fabricate —
-    whereas WEP/OPEN are inferred from the always-present Privacy bit when no
-    IE was found. Used to keep the strongest evidence ever seen so a dropped
-    IE on a weak radio can't flap a WPA2 AP to "WEP" (and a mis-parsed first
-    beacon can't pin it there either). See _on_frame_parsed.
+    A WPA/WPA2/WPA3/OWE label means an RSN/WPA IE was parsed (a truncated beacon can't
+    fabricate one); WEP/OPEN are Privacy-bit fallbacks when no IE was found. Callers keep
+    the highest rank ever seen so a dropped IE can't downgrade an AP.
     """
     if label == "OPEN":
         return 0
@@ -58,20 +55,15 @@ def _bssid_byte_diff(a: str, b: str) -> int:
     return sum(1 for x, y in zip(pa, pb) if x != y)
 
 class WlanInterface:
-    """
-    High-level 802.11 abstraction for a hardware driver.
-    The UI interacts exclusively with this class.
-    """
+    """High-level 802.11 abstraction for a hardware driver; the UI talks only to this class."""
     def __init__(self, driver_instance: Any, name: str, description: str,
                  vid: Optional[int] = None, pid: Optional[int] = None,
                  dev: Any = None):
         self.driver = driver_instance
         self.name = name
         self.description = description
-        # The USB VID:PID this interface was matched on, plus the raw pyusb Device — kept so
-        # the splash can probe openability on demand (the "is it WinUSB-bound?" check at
-        # START) and re-find the card after a WinUSB install, without rebuilding the driver.
-        # All optional so test-constructed interfaces needn't supply them.
+        # VID:PID + raw pyusb Device, kept so the splash can probe openability and re-find
+        # the card after a WinUSB install. Optional so test-built interfaces can omit them.
         self.vid = vid
         self.pid = pid
         self.dev = dev
@@ -80,66 +72,47 @@ class WlanInterface:
         self.access_points: Dict[str, AccessPoint] = {}
         self.clients: Dict[str, Client] = {}
 
-        # Passive WEP IV tallying (RX-only). Hooked from _on_frame_parsed for
-        # every WEP-encrypted Data frame; updates AccessPoint.wep counters.
+        # Passive WEP IV tallying (RX-only); updates AccessPoint.wep counters.
         self.wep_store = WepCaptureStore()
 
         # Per-(bssid, class) frame counters for the Focus live packet dashboard.
-        # RX bumped in _on_frame_parsed, TX bumped in send_raw; read-only meter.
         self.packet_stats = PacketStats()
 
-        # MACs we forged for our own active attacks (e.g. PMKID harvest).
-        # Frames addressed to these MACs come from the AP, but they aren't
-        # "real clients" — skip client registration and don't append EAPOL
-        # retries to the handshake. PMKID extraction still runs.
+        # MACs we forged for active attacks (e.g. PMKID harvest). Frames to these come from
+        # the AP, so skip client registration + handshake EAPOL retries (PMKID still runs).
         self.forged_macs: Set[str] = set()
 
-        # The single stable forged STA MAC for a long-lived active attack
-        # (WEP fake-auth). Unlike forged_macs these ARE registered as a
-        # client — tagged is_self so the UI shows "YOU"
+        # Forged STA MAC for WEP fake-auth. Unlike forged_macs these ARE registered as a
+        # client, tagged is_self so the UI shows "YOU".
         self.self_macs: Set[str] = set()
 
         self._rx_callbacks: List[Callable[[bytes, int, float], None]] = []
         self._hopping_task: Optional[asyncio.Task] = None
-        # The in-flight per-hop set_channel, tracked so stop_hopping() can wait
-        # for it to drain. A tune offloads to a run_in_executor thread that
-        # cancellation can't stop; without this, an orphan tune finishes after
-        # stop_hopping returns and moves the chip off the channel Focus pinned.
+        # The in-flight per-hop set_channel, tracked so stop_hopping() can drain it
+        # (a tune runs in an executor thread that cancellation can't stop).
         self._tune_task: Optional[asyncio.Task] = None
         self._is_hopping = False
-        # Serializes start_hopping / stop_hopping so they can't interleave.
-        # Without this, stop_hopping's `await task.cancel()` yields control
-        # while _is_hopping is already False, letting a concurrent
-        # start_hopping (e.g. from a screen-resume callback) create a new
-        # task whose reference then gets clobbered when stop_hopping clears
-        # _hopping_task. Orphaned tasks ping-pong the chip across channels.
+        # Serializes start/stop_hopping so they can't interleave — a concurrent start
+        # mid-stop would orphan a hop task that ping-pongs the chip across channels.
         self._hop_lock = asyncio.Lock()
 
         if hasattr(self.driver, 'register_rx_callback'):
             self.driver.register_rx_callback(self._on_frame_parsed)
 
     def _on_frame_parsed(self, parsed: dict):
-        """
-        Mutator callback. Receives a flat dictionary from the hardware driver
-        and updates the AccessPoint registry.
-        """
+        """Mutator callback: takes the driver's parsed-frame dict and updates the registry."""
         frame_type = parsed.get("type")
         bssid = parsed.get("bssid")
         rssi = parsed.get("rssi", -100)
 
-        # Fan out the raw frame to any (rx_callback,) subscribers (used by
-        # attacks like WPA3DowngradeAttack that watch for specific reply
-        # frames). Done early so subscribers see frames even when our own
-        # state-update path bails on bssid filtering below.
+        # Fan out to raw-frame subscribers (e.g. WPA3DowngradeAttack) first, so they see
+        # frames even when the state-update path below bails on bssid filtering.
         raw = parsed.get("raw")
         if raw is not None and self._rx_callbacks:
             self._fire_rx_callbacks(raw, rssi)
 
-        # Diagnostic (WIFIT3_LOG=debug): trace every data/EAPOL frame's
-        # direction. We see M1/M3 (from_ds, AP→client) but never M2/M4
-        # (to_ds, client→AP) — this reveals whether client→AP frames reach
-        # software at all (→ RX filter / PHY) or arrive but mis-parse (→ here
-        # they'd show as "data" not "eapol"). Guarded so it's free when off.
+        # Debug trace of data/EAPOL frame direction — surfaces whether client→AP (to_ds)
+        # frames reach software at all. Guarded so it's free when off.
         if frame_type in ("data", "eapol", "wep_data") and logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "[RXFRAME] %-9s to_ds=%s from_ds=%s %s -> %s (bssid %s)",
@@ -150,8 +123,7 @@ class WlanInterface:
         if not bssid or bssid == "Unknown" or bssid == "ff:ff:ff:ff:ff:ff":
             return
 
-        # Live packet dashboard — count every received frame against its AP by
-        # class (no-op for untracked types). Cosmetic + best-effort.
+        # Live packet dashboard — tally each RX frame against its AP by class. Best-effort.
         self.packet_stats.record_rx(bssid, frame_type)
 
         # We primarily build APs from beacons and probe responses
@@ -202,17 +174,14 @@ class WlanInterface:
                 if frame_type == "beacon":
                     ap.beacons += 1
 
-                # Update SSID if it was hidden and we now see it. Method label
-                # tracks the actual frame type: "beacon" for the rare case where
-                # a hidden AP starts broadcasting its SSID in beacons (reconfig
-                # / firmware quirk), "probe_resp" for the normal directed-probe
-                # echo path. CaptureEventDetector fires a UI event off this.
+                # Decloak a hidden AP once we see its SSID; tag how (beacon vs probe_resp)
+                # for the UI's decloak event.
                 if ssid and ssid != "<hidden>":
                     if not ap.ssid or ap.ssid == "<hidden>":
                         ap.decloak_method = frame_type  # "beacon" or "probe_resp"
                     ap.ssid = ssid
 
-                # Smooth RSSI (simple average for now, could use EMA)
+                # Smooth RSSI (running average)
                 ap.signal = (ap.signal + rssi) // 2
 
                 # Update channel if it shifted — sibling links are
@@ -220,16 +189,9 @@ class WlanInterface:
                 ap.channel = channel
                 if old_channel != channel:
                     self._recompute_siblings_for(bssid)
-                # Keep the strongest encryption evidence ever seen rather than
-                # blindly trusting the latest beacon. A WPA/WPA2/WPA3/OWE label
-                # comes from a parsed RSN/WPA IE (truncation can't fabricate
-                # one); "WEP" is just the Privacy-bit fallback when no IE was
-                # found — which a dropped/truncated beacon yields exactly like a
-                # real WEP AP. Overwriting unconditionally made WPA2 APs flicker
-                # to "WEP" on weak radios (RTL8188EUS). A WPA*-vs-WPA* update
-                # still passes (rank 2 >= 2), so WPA3/PMF config reloads stay in
-                # sync; only a downgrade to WEP/OPEN is suppressed. Mirrors the
-                # "only when the IE is present" rule the WPS block below uses.
+                # Keep the strongest encryption evidence ever seen (see _enc_rank): apply
+                # only on equal-or-higher rank, so a dropped IE can't downgrade WPA2->WEP
+                # while WPA*-to-WPA* config refreshes still pass.
                 if _enc_rank(enc) >= _enc_rank(ap.encryption):
                     ap.encryption = enc
                     ap.akms = list(akms)
@@ -238,9 +200,8 @@ class WlanInterface:
                     ap.transition_mode = transition_mode
                     ap.pmf_capable = pmf_capable
                     ap.pmf_required = pmf_required
-                # Only refresh WPS when this frame actually carried the IE —
-                # a probe response without it must not clear a known WPS flag.
-                # (locked/state CAN change, so re-read when present.)
+                # Only refresh WPS when this frame carried the IE — its absence must not
+                # clear a known WPS flag (but locked/state can change, so re-read if present).
                 if wps:
                     ap.wps = True
                     ap.wps_locked = wps_locked
@@ -249,21 +210,16 @@ class WlanInterface:
                     ap.wps_device_password_id = wps_device_password_id
                     ap.wps_selected_registrar = wps_selected_registrar
 
-            # Always bump the recency clock on the AP we just saw — drives
-            # stale-row dim-out and "Last Beacon: Ns ago" in FocusView.
+            # Bump recency — drives stale-row dim-out and "Last Beacon: Ns ago" in Focus.
             self.access_points[bssid].last_seen = time.time()
 
-            # Always stash the latest RSN IE bytes (covers both new + existing
-            # AP branches above). PMKID harvest echoes this into its Assoc Req.
+            # Stash the latest RSN IE — PMKID harvest echoes it into its Assoc Req.
             rsn_ie = parsed.get("rsn_ie_raw")
             if rsn_ie:
                 self.access_points[bssid].rsn_ie = rsn_ie
 
-        # WEP capture — passive, RX-only. Only observe frames whose AP we've
-        # already classified as WEP from a beacon (guards against a stray
-        # ExtIV-clear frame on a non-WEP AP). The store does all the routing
-        # (IV count, ARP-replay seed, PTW crack sample) — the interface stays
-        # out of the ARP-size / cipher-offset business.
+        # Passive WEP capture: only for APs already classified WEP from a beacon (guards
+        # against a stray ExtIV-clear frame). The store does all the routing.
         if frame_type == "wep_data" and bssid in self.access_points:
             ap = self.access_points[bssid]
             if (ap.encryption or "").upper() == "WEP":
@@ -333,11 +289,8 @@ class WlanInterface:
                     )
                     ap.handshakes[client_mac] = hs
 
-                # For forged MACs (our own active-attack STAs) we still keep
-                # the Handshake entry so PMKID has somewhere to land, but we
-                # skip the EAPOL frame list — those are just AP retries of M1
-                # we'll never respond to. Avoids the spurious "Partial x1" in
-                # the per-client handshake column.
+                # Forged MACs keep a Handshake (for PMKID) but skip the EAPOL list — those
+                # are just AP retries of M1 we never answer, and would show a false "Partial".
                 is_forged = client_mac in self.forged_macs
                 if not is_forged and not hs.has_frame(raw_frame):
                     eapol = EapolFrame(
@@ -357,8 +310,7 @@ class WlanInterface:
                         f"(replay {eapol.replay_hex})"
                     )
 
-                # Passive PMKID capture: AP's M1 sometimes carries a PMKID
-                # KDE in Key Data. First non-zero PMKID wins — never clobber.
+                # Passive PMKID capture: AP's M1 sometimes carries a PMKID KDE. First wins.
                 pmkid = parsed.get("eapol_pmkid")
                 if pmkid and not hs.pmkid:
                     hs.pmkid = pmkid
@@ -366,9 +318,8 @@ class WlanInterface:
                         f"[PMKID] {bssid} <-> {client_mac} captured {pmkid.hex()}"
                     )
 
-        # Beacon handling: stash the most recent beacon on the AP, and
-        # back-fill any existing handshakes that don't have one yet (covers
-        # the case where EAPOL arrived before the first beacon).
+        # Stash the latest beacon and back-fill handshakes missing one (EAPOL can arrive
+        # before the first beacon).
         if frame_type == "beacon" and bssid in self.access_points:
             ap = self.access_points[bssid]
             raw_beacon = parsed.get("raw")
@@ -383,21 +334,10 @@ class WlanInterface:
     def _recompute_siblings_for(self, bssid: str) -> None:
         """Refresh sibling links for ``bssid`` against the whole registry.
 
-        Sibling rule: same channel AND (Hamming distance ≤ 4 bits OR
-        exactly one byte differs). Two-branch OR because vendors use two
-        distinct schemes:
-          - Multi-byte single-bit flips (U/L bit + 1-2 bits elsewhere) →
-            caught by the bit-diff branch (2 bits across 2 bytes is the
-            common shape).
-          - Single-byte multi-bit randomization (deliberately distinct
-            first byte) → caught by the byte-diff branch (up to 8 bits
-            packed into one byte still reads as a sibling).
-        FP rate with ~50 APs in range is still ~10⁻⁶ — the same-channel
-        constraint does most of the disambiguation work.
-
-        Mutates the sibling list on ``bssid`` AND on every counterpart so
-        the relationship stays bidirectional. Called when an AP is added
-        or its channel actually changes; O(N) per call.
+        Sibling rule: same channel AND (Hamming distance <= 4 bits OR exactly one byte
+        differs) — the two branches catch the two vendor multi-BSSID schemes (scattered
+        single-bit flips vs. one deliberately-randomized byte). Links are bidirectional;
+        called when an AP is added or changes channel.
         """
         ap = self.access_points.get(bssid)
         if not ap:
@@ -433,12 +373,9 @@ class WlanInterface:
         return await self.driver.connect(progress_cb=progress_cb)
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
-        """Translates a channel number into the driver's register sequences.
-
-        ``scan=True`` (passed by the channel hopper) hints a transient hop, so
-        a driver may skip per-hop calibration; the Focus settle path passes the
-        default False to request a full tune. See ``WlanDriver.set_channel``.
-        """
+        """Tune to ``channel`` via the driver. ``scan=True`` (channel hopper) hints a
+        transient hop so the driver may skip per-hop calibration; Focus passes False for a
+        full tune."""
         success = await self.driver.set_channel(channel, scan=scan)
         if success:
             self.current_channel = channel
@@ -484,10 +421,7 @@ class WlanInterface:
         self.clients.pop(mac_str, None)
 
     def register_rx_callback(self, callback_func: Callable[[bytes, int, float], None]):
-        """
-        UI registers a function here.
-        Expected signature: func(frame_bytes, rssi, timestamp)
-        """
+        """Register a raw-frame subscriber: func(frame_bytes, rssi, timestamp)."""
         if callback_func not in self._rx_callbacks:
             self._rx_callbacks.append(callback_func)
 
@@ -507,11 +441,7 @@ class WlanInterface:
     async def send_raw(
         self, frame_bytes: bytes, use_no_ack: bool = True,
     ) -> bool:
-        """
-        Injects a raw 802.11 frame.
-        The underlying driver is responsible for wrapping it in the correct
-        hardware descriptors (e.g., ath_tx_status) before sending.
-        """
+        """Inject a raw 802.11 frame. The driver wraps it in the hardware TX descriptors."""
         if hasattr(self.driver, 'inject_frame'):
             # Live packet dashboard — tally this inject (deauth vs other) by AP.
             self._record_tx(frame_bytes)
@@ -520,10 +450,8 @@ class WlanInterface:
         return False
 
     def _record_tx(self, frame_bytes: bytes) -> None:
-        """Classify an outgoing frame for the packet dashboard. Reuses the RX
-        parser so the BSSID is derived the same way the meter's RX side does
-        (deauth → red DEAUTH line, everything else → orange INJECT). Wrapped —
-        a malformed inject must never break TX over a cosmetic counter."""
+        """Classify an outgoing frame for the packet dashboard (deauth vs other), reusing
+        the RX parser. Wrapped so a malformed inject can't break TX over a cosmetic counter."""
         try:
             parsed = WlanFrameParser.parse_80211_frame(frame_bytes, 0)
             if not parsed:
@@ -574,9 +502,8 @@ class WlanInterface:
         
         logger.info(f"Injecting Deauth Burst ({burst_count}x) on CH {target_chan}: {ap_bssid} <-> {client_bssid}")
         
-        # Inject the frames using the hardware driver
-        # We use use_no_ack=True for "fire and forget". We are spoofing, 
-        # so ACKs will go to the real targets and cause endless hardware retries for us!
+        # use_no_ack: we're spoofing, so ACKs would go to the real targets and trigger
+        # endless hardware retries.
         for i in range(burst_count):
             await self.send_raw(client_deauth, use_no_ack=True)
             await self.send_raw(ap_deauth, use_no_ack=True)
@@ -599,10 +526,8 @@ class WlanInterface:
                 if not channels:
                     channels = [1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 5, 10]
 
-            # Hop the busy channels (1/6/11) first so the AP list fills before
-            # the scanner's first sort tick, instead of crawling 1→2→3→… and
-            # reshuffling on every later sort as each channel's burst arrives.
-            # SUPPORTED_CHANNELS stays canonical (sequential) for the filter UI.
+            # Hop busy channels (1/6/11) first so the AP list fills before the scanner's
+            # first sort tick. SUPPORTED_CHANNELS stays sequential for the filter UI.
             channels = scan_hop_order(channels)
 
             self._is_hopping = True
@@ -618,19 +543,12 @@ class WlanInterface:
         last_channel = None
         while self._is_hopping:
             channel = next(channel_cycle)
-            # Skip redundant re-tunes: re-issuing set_channel for the channel
-            # we're already parked on is pure RX disruption — each tune briefly
-            # blanks the radio (PLL relock), dropping beacons/frames. Most
-            # visible with a single-channel filter, which otherwise re-tuned
-            # every `interval`. Multi-channel hopping still tunes every hop.
+            # Skip re-tuning the channel we're already on — each tune briefly blanks the
+            # radio (PLL relock), dropping frames. Matters most with a single-channel filter.
             if channel != last_channel:
-                # Run the tune as a shielded task. A tune offloads to a
-                # run_in_executor thread that cancellation can't stop, so if a
-                # mid-tune stop_hopping() cancelled us here the tune would still
-                # finish and move the chip — landing on a stale hop channel just
-                # as Focus pins its target. The shield keeps the tune alive past
-                # our cancellation; stop_hopping awaits self._tune_task to drain
-                # it before the Focus set_channel runs.
+                # Shield the tune: its executor thread can't be cancelled, so an unshielded
+                # mid-tune stop_hopping() would let it finish and land the chip on a stale
+                # channel. stop_hopping drains self._tune_task instead.
                 self._tune_task = asyncio.ensure_future(
                     self.set_channel(channel, scan=True)
                 )
@@ -639,19 +557,15 @@ class WlanInterface:
             await asyncio.sleep(interval)
 
     async def stop_hopping(self):
-        """Cancels the hopping task, then drains any in-flight tune.
+        """Cancel the hopping task, then drain any in-flight tune.
 
-        Cancelling the loop interrupts the coroutine but NOT the executor thread
-        running a mid-flight set_channel — that orphan would finish later and move
-        the chip off the channel the caller (Focus) is about to pin. So after the
-        loop is down we await self._tune_task: the tune completes and updates
-        current_channel, and the next set_channel() tunes from a truthful state.
+        Cancelling the loop can't stop the executor thread running a mid-flight tune, so we
+        await self._tune_task afterward — otherwise that orphan moves the chip off the
+        channel Focus is about to pin.
         """
         async with self._hop_lock:
             task = self._hopping_task
-            # Clear state FIRST so a concurrent start_hopping (which would
-            # have been blocked on _hop_lock) sees a clean slate when it
-            # acquires the lock after we release it.
+            # Clear state FIRST so a start_hopping blocked on _hop_lock sees a clean slate.
             self._is_hopping = False
             self._hopping_task = None
             if task:
@@ -660,8 +574,7 @@ class WlanInterface:
                     await task
                 except asyncio.CancelledError:
                     pass
-            # Drain the tune the cancel above interrupted (its executor thread is
-            # still running). Shielded in _hop_loop, so it survived our cancel.
+            # Drain the shielded tune the cancel interrupted (its executor thread runs on).
             tune = self._tune_task
             self._tune_task = None
             if tune is not None and not tune.done():
