@@ -7,6 +7,7 @@ from __future__ import annotations
 import grp
 import logging
 import os
+import pwd
 import shutil
 import subprocess
 import sys
@@ -35,6 +36,11 @@ def _access_group() -> str | None:
         except KeyError:
             pass
     return None
+
+
+def current_user() -> str:
+    # Login name of the uid that gets access — the real uid, not env ($LOGNAME can disagree).
+    return pwd.getpwuid(os.getuid()).pw_name
 
 
 @dataclass(frozen=True)

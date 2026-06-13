@@ -23,9 +23,13 @@ _BODY = {
         "sees it as a normal wireless adapter again.\n[dim]You can re-install it any time "
         "with START.[/dim]"),
     "linux": (
-        "This removes wifit3's udev access rule, which covers [bold]all supported cards[/] "
-        "(it's one shared rule).\n[dim]Each card returns to its normal Wi-Fi driver on the "
-        "next replug.[/dim]"),
+        "This removes wifit3's one-and-only udev access rule.\n\n"
+        "[bold]Wifit3 will no longer be able to use attached wireless cards.[/bold]"),
+}
+
+_TITLE = {
+    "win": "Uninstall wifit3 driver?",
+    "linux": "Uninstall Wifit3 access rules?",
 }
 
 
@@ -40,14 +44,15 @@ class ConfirmUninstallDialog(ModalScreen[bool]):
     ConfirmUninstallDialog { align: center middle; }
     ConfirmUninstallDialog #dialog {
         width: 64; max-width: 90%; height: auto;
-        border: thick $error; background: $surface; padding: 1 2;
+        border: thick cyan; background: $surface; padding: 1 2;
     }
     ConfirmUninstallDialog #title {
-        width: 1fr; text-align: center; margin-bottom: 1; text-style: bold; color: $error;
+        width: 1fr; text-align: center; margin-bottom: 1; text-style: bold; color: cyan;
     }
     ConfirmUninstallDialog #body { width: 1fr; text-align: center; margin-bottom: 1; }
     ConfirmUninstallDialog #button-row { height: auto; align: center middle; }
     ConfirmUninstallDialog #button-row Button { margin: 0 2; }
+    ConfirmUninstallDialog #btn-yes { background: cyan; color: black; }
     """
 
     def __init__(self, description: str, os_kind: str) -> None:
@@ -57,10 +62,10 @@ class ConfirmUninstallDialog(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
-            yield Label("Uninstall wifit3 driver?", id="title")
+            yield Label(_TITLE[self._os_kind], id="title")
             yield Label(_BODY[self._os_kind].format(name=self._name), id="body")
             with Horizontal(id="button-row"):
-                yield Button("Uninstall", variant="error", id="btn-yes")
+                yield Button("Uninstall", variant="primary", id="btn-yes")
                 yield Button("Cancel", variant="default", id="btn-no")
 
     def on_mount(self) -> None:

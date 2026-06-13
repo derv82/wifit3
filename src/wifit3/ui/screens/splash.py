@@ -11,7 +11,8 @@ from textual import work
 from rich.text import Text
 from rich.style import Style
 
-from wifit3.setup.linux import install_rule, remove_rule
+from wifit3.setup import ids_from_registry
+from wifit3.setup.linux import current_user, install_rule, remove_rule
 from wifit3.setup.windows import install_winusb, restore_driver
 from wifit3.ui.screens.confirm_install import ConfirmInstallDialog
 from wifit3.ui.screens.confirm_uninstall import ConfirmUninstallDialog
@@ -272,17 +273,23 @@ class SplashView(Screen):
                     raise RuntimeError("the card failed to initialize")
                 # No node access → offer the one-time udev access rule (reuses the install
                 # dialog with Linux wording — a missing REQUIRED link, same shape).
+                others = len(ids_from_registry()) - 1
                 if not await self.app.push_screen_wait(ConfirmInstallDialog(
                         desc,
                         title="Wifit3 needs one-time access to talk to this card",
                         link_label="Device Access",
-                        warning="[bold $text-warning]One-time setup:[/] installs a udev rule so "
-                                "wifit3 can use [italic]any supported card[/] without sudo. It "
-                                "only grants access — it does [bold]not[/] change how your cards "
-                                "work as normal Wi-Fi.\n[dim]Reversible: press ✕ to remove the "
-                                "rule (replug restores the driver).[/dim]",
+                        warning=(
+                            f"[bold $text-warning]One-time sudo setup:[/bold $text-warning]\n"
+                            f"- Installs a [bold]udev rule file[/] for the current user "
+                            f"([cyan]{current_user()}[/])\n"
+                            f"- Allows Wifit3 to use [italic]any supported wireless cards[/italic] "
+                            f"[bold]without sudo[/bold].\n"
+                            f"- Does [bold]not[/bold] change how the cards work as normal Wi-Fi.\n"
+                            f"- [bold green]Reversible:[/bold green] Press "
+                            f"[bold white on red] ✕ [/bold white on red] to remove the rule."),
                         verb="Grant access for",
-                        confirm_label="Grant access")):
+                        confirm_label="Grant access",
+                        also=f" (+ {others} cards)" if others > 0 else "")):
                     status.update("[bold bright_green]Select a card and press START[/bold bright_green]")
                     release()
                     return

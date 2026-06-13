@@ -13,12 +13,12 @@ from rich.table import Table
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Center, Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Static
 
 # Red shades cycled to make the REQUIRED badge pulse (ping-pong for a smooth throb).
-_PULSE = ["#6e0000", "#960000", "#c00000", "#ff2a2a", "#c00000", "#960000"]
+_PULSE = ["#6e0000", "#8a0000", "#a40000", "#c00000", "#a40000", "#8a0000"]
 
 # Default copy = the Windows WinUSB case. The Linux connect-failure path reuses this same
 # dialog (a missing REQUIRED link between Wifit3 and the card) with its own wording, so the
@@ -48,7 +48,8 @@ class ConfirmInstallDialog(ModalScreen[bool]):
         width: 1fr; text-align: center; margin-bottom: 1; text-style: bold;
     }
     ConfirmInstallDialog #diagram { content-align: center middle; margin-bottom: 1; }
-    ConfirmInstallDialog #warn { width: 1fr; text-align: center; margin-bottom: 1; }
+    ConfirmInstallDialog #warn { width: auto; text-align: left; }
+    ConfirmInstallDialog #warn-center { width: 1fr; height: auto; margin-bottom: 1; }
     ConfirmInstallDialog #question {
         width: 1fr; text-align: center; margin-bottom: 1; text-style: bold;
     }
@@ -58,9 +59,11 @@ class ConfirmInstallDialog(ModalScreen[bool]):
 
     def __init__(self, description: str, *, title: str = _DEFAULT_TITLE,
                  link_label: str = "WinUSB Driver", warning: str = _DEFAULT_WARNING,
-                 verb: str = "Install WinUSB for", confirm_label: str = "Install") -> None:
+                 verb: str = "Install WinUSB for", confirm_label: str = "Install",
+                 also: str = "") -> None:
         super().__init__()
         self._full = description
+        self._also = also          # appended inside the question's bold (e.g. " (+ 119 cards)")
         # Short name for the diagram box (the chipset half of "Chipset / Adapter", capped so
         # a long name doesn't blow out the box width).
         self._short = description.split(" / ")[0][:18]
@@ -98,8 +101,9 @@ class ConfirmInstallDialog(ModalScreen[bool]):
         with Vertical(id="dialog"):
             yield Label(self._title, id="title")
             yield Static(self._diagram(_PULSE[0]), id="diagram")
-            yield Label(self._warning, id="warn")
-            yield Label(f"{self._verb} [bold]{self._full}[/]?", id="question")
+            with Center(id="warn-center"):
+                yield Label(self._warning, id="warn")
+            yield Label(f"{self._verb} [bold]{self._full}{self._also}[/]?", id="question")
             with Horizontal(id="button-row"):
                 yield Button(self._confirm_label, variant="success", id="btn-yes")
                 yield Button("Cancel", variant="default", id="btn-no")
