@@ -81,10 +81,8 @@ class CaptureEventDetector:
 
     def __init__(self, *, granular_eapol: bool = True):
         self._granular_eapol = granular_eapol
-        # Keys are (bssid, client_mac). Count of eapol frames already surfaced,
-        # NOT keyed by (msg, replay) — so every distinct frame the radio
-        # delivers logs (incl. M1/M3 retries), matching the [Mx] file-log
-        # trace. Handshakes are rare + central to WPA2 attacks, so err verbose.
+        # Keyed (bssid, client_mac) → count of eapol frames already surfaced, so every
+        # distinct frame logs (incl. M1/M3 retries). Handshakes are rare, so err verbose.
         self._seen_eapol_count: dict[Tuple[str, str], int] = {}
         # Keyed (bssid, client_mac, anonce) — one entry per captured handshake
         # instance, so a re-handshake (new ANonce) re-announces.
@@ -115,10 +113,9 @@ class CaptureEventDetector:
         forged_macs: Set[str] = frozenset(),
     ) -> Iterator[CaptureEvent]:
         """Yield ``CaptureEvent``s for state newly observed on ``ap``."""
-        # Decloak detection: we must have *observed* this AP as hidden during
-        # our lifetime before we can announce its decloak. Entering Focus on
-        # an already-decloaked AP therefore stays silent (old news), while
-        # Scanner — which saw it from the first beacon — fires once.
+        # Decloak: only announce for an AP we observed as hidden during our lifetime, so
+        # entering Focus on an already-decloaked AP stays silent while Scanner (saw it from
+        # the first beacon) fires once.
         if not ap.ssid or ap.ssid == "<hidden>":
             self._seen_hidden.add(ap.bssid)
         else:
@@ -146,11 +143,9 @@ class CaptureEventDetector:
                 continue
 
             if self._granular_eapol:
-                # One event per newly-seen EAPOL frame — a flat per-Mx trace.
-                # Completeness is reported only by the handshake_complete banner
-                # below (not folded into the per-frame line), so the "valid 4-way"
-                # message fires once instead of repeating on every M1/M3
-                # retransmit that lands after the pair already formed.
+                # One event per newly-seen EAPOL frame (flat per-Mx trace). Completeness is
+                # reported only by the handshake_complete banner below, so "valid 4-way" fires
+                # once, not on every later M1/M3 retransmit.
                 seen_n = self._seen_eapol_count.get(key, 0)
                 frames = hs.eapol_frames
                 if len(frames) > seen_n:
@@ -174,11 +169,9 @@ class CaptureEventDetector:
                         )
                     self._seen_eapol_count[key] = len(frames)
 
-            # Completion banner — once per distinct handshake INSTANCE (keyed by
-            # ANonce), in BOTH modes. This dedupes within a single M1-M4 (M2/M3/
-            # M4 share the instance → one banner) but re-fires on a genuine
-            # re-handshake (new ANonce), which is the feedback we want. Scanner
-            # shows only this (+ PMKID); Focus shows it after the per-frame trace.
+            # Completion banner — once per handshake INSTANCE (keyed by ANonce), in both
+            # modes: M2/M3/M4 of one handshake share the instance (one banner), but a genuine
+            # re-handshake (new ANonce) re-fires.
             for anonce, pair in hs.valid_pairs_by_instance().items():
                 ikey = (ap.bssid, client_mac, anonce)
                 if ikey in self._completed:

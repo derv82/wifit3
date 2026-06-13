@@ -9,11 +9,9 @@ The WEP-IV and EAPOL rows are encryption-gated to the focused target: WEP IVs
 only matter on a WEP AP, EAPOL only on a WPA/WPA2/WPA3 AP (see ``focus_on``),
 so at most one of the two ever shows (and neither on an OPEN AP).
 
-Scale is per-line ("breathing"): each sparkline autoscales to its own recent
-peak, so a 1/s class and a 40/s class both fill the height and stay legible
-side by side. The trailing number is the absolute volume: a ``/s`` rate for the
-continuous classes (beacon/data/wep-iv/inject) and a recent count for the
-bursty event classes (deauth/eapol).
+Scale is per-line ("breathing"): each sparkline autoscales to its own recent peak, so a 1/s
+class and a 40/s class both fill the height and stay legible. The trailing number is the
+absolute volume — a ``/s`` rate for continuous classes, a recent count for bursty ones.
 
 The "PACKET ACTIVITY" title is a sibling ``.panel-title`` Label (built in
 FocusView.compose), not painted here — so it reads as the same bar as the
@@ -167,10 +165,8 @@ class PacketDashboard(Static):
                     for v in window
                 )
             else:
-                # Match the data-row width: those cap at len(hist) (HISTORY)
-                # because window slices the ring tail, so an empty row must too —
-                # otherwise on a panel wider than HISTORY the baseline runs to the
-                # edge while data rows stop short, and the numbers misalign.
+                # Match the data-row width (capped at HISTORY by the tail slice) so an empty
+                # row doesn't outrun the data rows and misalign the numbers.
                 spark = _SPARK[0] * max(0, min(spark_w, len(hist)))
 
             # Number reads the recent (~3 s) window so a deauth burst's count

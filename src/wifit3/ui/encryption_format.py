@@ -91,13 +91,9 @@ def format_encryption_markup(
     cipher = ap.pairwise_cipher
     show_cipher = detailed and cipher is not None
 
-    # WPA3 Transition (has both SAE and PSK) — render as WPA3→2.
-    # Both sides _ATTACKABLE because the WPA2 lane is reachable via PMKID.
-    # The "WPA3→2" symbol already encodes PSK+SAE — that's the literal
-    # definition of WPA3 Personal Transition mode (AP advertises both
-    # AKM 2 / PSK and AKM 8 / SAE). So in scanner mode we suppress the
-    # AKM detail entirely; detailed mode still surfaces it in case of
-    # rare WPA3-Enterprise transition configs (PSK+SAE+EAP).
+    # WPA3 Transition (SAE + PSK) — render as WPA3→2, both sides _ATTACKABLE since the WPA2
+    # lane is reachable via PMKID. "WPA3→2" already encodes PSK+SAE, so scanner mode suppresses
+    # the AKM detail; detailed mode still surfaces it (rare PSK+SAE+EAP enterprise transition).
     if ap.wpa3 and ap.transition_mode:
         head = f"[{_ATTACKABLE}]WPA3[/{_ATTACKABLE}]→[{_ATTACKABLE}]2[/{_ATTACKABLE}]"
         if not detailed:
@@ -130,8 +126,7 @@ def format_encryption_markup(
         if detailed:
             return head
         n = ap.wep.unique_ivs if ap.wep else 0
-        # Dot separator (no parens) — the trailing ')' was getting clipped by
-        # the ENCRYPT column width, and an unmatched '(' reads worse than none.
+        # Dot separator (no parens) — the ENCRYPT column clips a trailing ')'.
         return head + f"[{muted}]·{_format_iv_count(n)} IVs[/{muted}]"
     if enc.startswith("WPA-") or enc == "WPA":
         # Legacy WPA1 vendor IE — TKIP universal. Out of scope for wifit3.
@@ -196,11 +191,9 @@ def format_wps_markup(ap: AccessPoint) -> Optional[str]:
             detail += " · " + "·".join(name for name, _ in methods)
         return f"🔒 [red]Locked[/red] · [dim]{detail}[/dim]"
 
-    # Version is neutral info, not an attackability axis: Pixie-Dust is
-    # chipset-PRNG-dependent (hits 1.0 and 2.0 alike) and the only real
-    # version difference — 2.0's mandatory lockout — is already carried by
-    # the Locked flag. Leave it uncolored so it inherits the panel fg
-    # (theme-safe; literal "white" would vanish on a light theme).
+    # Version is neutral, not an attackability axis: Pixie-Dust is chipset-PRNG-dependent
+    # (hits 1.0 and 2.0 alike), and 2.0's mandatory lockout is already carried by the Locked
+    # flag. Left uncolored so it inherits the panel fg (theme-safe).
     head = f"[{_ATTACKABLE}]Unlocked[/{_ATTACKABLE}] · {ver_label}"
     if methods:
         rendered = "·".join(

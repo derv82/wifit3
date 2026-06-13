@@ -5,11 +5,9 @@ really a *reception-quality* signal. This renders it as a horizontal meter built
 from left-fractional eighth-block glyphs (▏▎▍▌▋▊▉█) — 8 sub-steps per character,
 fine enough to track the windowed decimal rate without visibly stepping.
 
-Colour is **positional**: each cell carries a fixed red→green hue and only the
-fill *length* follows the rate. A weak AP's bar reaches only the reds; a strong
-one pushes into green — and since no cell ever changes hue, the bar never strobes
-as the rate wobbles (the reason the plain-number display refused to colour
-anything but a near-dead rate).
+Colour is **positional**: each cell carries a fixed red→green hue and only the fill *length*
+follows the rate. A weak AP's bar reaches only the reds; a strong one pushes into green — and
+since no cell ever changes hue, the bar never strobes as the rate wobbles.
 """
 from __future__ import annotations
 
