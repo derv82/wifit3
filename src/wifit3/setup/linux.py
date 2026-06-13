@@ -4,10 +4,8 @@ The Linux analog of :mod:`wifit3.setup.windows`.
 """
 from __future__ import annotations
 
-import grp
 import logging
 import os
-import pwd
 import shutil
 import subprocess
 import sys
@@ -28,6 +26,7 @@ _REMOVED_MSG = ("Removed the device-access rule. Replug a card to restore its no
 
 def _access_group() -> str | None:
     # Identifies root or wheel
+    import grp  # Unix-only
     mine = set(os.getgroups()) | {os.getgid()}
     for name in ("sudo", "wheel"):
         try:
@@ -40,6 +39,7 @@ def _access_group() -> str | None:
 
 def current_user() -> str:
     # Login name of the uid that gets access — the real uid, not env ($LOGNAME can disagree).
+    import pwd  # Unix-only
     return pwd.getpwuid(os.getuid()).pw_name
 
 
