@@ -1,12 +1,9 @@
-"""Per-(BSSID, class) cumulative frame tallies that feed the Focus live
-packet dashboard.
+"""Per-(BSSID, class) cumulative frame tallies that feed the Focus live packet dashboard.
 
-Counts are best-effort and lock-free. RX increments run on the shared
-``RxReaderThread`` (the same thread that already bumps ``AccessPoint.beacons``
-without a lock); TX increments run on the event loop. A dropped increment is
-invisible on a cosmetic meter, so the races aren't worth a lock on the RX hot
-path. The dashboard widget reads via :meth:`PacketStats.snapshot` and diffs
-successive snapshots into per-window deltas.
+Counts are best-effort and lock-free: RX increments run on the shared ``RxReaderThread``, TX
+on the event loop, and a dropped increment is invisible on a cosmetic meter — not worth a
+lock on the RX hot path. The widget diffs successive :meth:`snapshot` calls into per-window
+deltas.
 """
 
 from collections import defaultdict
@@ -30,12 +27,9 @@ PACKET_CLASSES = (
     CLASS_EAPOL,
 )
 
-# Parser frame-type (WlanFrameParser ``type``) → dashboard class. ``qos_data``
-# maps to DATA alongside plain ``data`` — almost all modern data frames are QoS,
-# so omitting it would leave the data line near-empty. Types not listed here
-# (probe_req/resp, assoc_*, mgmt_N, ctrl_*) are intentionally uncounted: it
-# keeps the panel to six lines, at the cost of the meter slightly
-# under-representing total air time.
+# Parser frame-type → dashboard class. ``qos_data`` maps to DATA (almost all modern data
+# frames are QoS). Unlisted types (probe/assoc/mgmt/ctrl) are intentionally uncounted to keep
+# the panel to six lines.
 _RX_CLASS = {
     "beacon": CLASS_BEACON,
     "data": CLASS_DATA,

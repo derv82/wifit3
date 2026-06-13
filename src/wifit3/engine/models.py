@@ -42,8 +42,7 @@ class Handshake(BaseModel):
     # captured nothing can clobber it.
     eapol_frames: List[EapolFrame] = Field(default_factory=list)
 
-    # Captured PMKID bytes (16 B from RSN IE in EAPOL M1). Forward-compat —
-    # populated by the PMKID attack path when it lands.
+    # Captured PMKID bytes (16 B from the RSN IE in EAPOL M1).
     pmkid: Optional[bytes] = None
 
     # -- Crack-validity --------------------------------------------------------
@@ -175,17 +174,12 @@ class AccessPoint(BaseModel):
     # CaptureEventDetector to surface a "Decloaked" event.
     decloak_method: Optional[str] = Field(default=None)
 
-    # BSSIDs we believe are virtual interfaces of the same physical radio
-    # (e.g. Main + Guest + IoT on the same router). Rule (5-of-6 byte
-    # match + same channel) catches both "increment last byte" and
-    # "locally-administered first byte" vendor schemes — see
-    # WlanInterface._recompute_siblings_for. Maintained bidirectionally.
+    # BSSIDs we believe are virtual interfaces of the same physical radio (Main + Guest +
+    # IoT on one router). Bidirectional; match rule in WlanInterface._recompute_siblings_for.
     siblings: List[str] = Field(default_factory=list)
 
-    # Per-client handshake captures, keyed by client MAC. Replaces the old
-    # single-handshake-per-AP field — multiple clients can be capturing
-    # simultaneously and we must not overwrite a complete one when a new
-    # client's EAPOL arrives.
+    # Per-client handshake captures, keyed by client MAC — multiple clients can capture
+    # simultaneously, so we must not overwrite a complete one when a new client's EAPOL arrives.
     handshakes: Dict[str, Handshake] = Field(default_factory=dict)
 
     # WEP IV counters, populated only for WEP APs once the first encrypted

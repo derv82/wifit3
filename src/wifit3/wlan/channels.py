@@ -9,31 +9,25 @@ from __future__ import annotations
 def is_dfs(channel: int) -> bool:
     """True for 5 GHz DFS channels — UNII-2 (52-64) + UNII-2e (100-144).
 
-    These bands are shared with radar, so a device that *transmits* there must do radar
-    detection; most APs avoid them, leaving them usually empty. Passive monitoring (RX) on
-    them is fine, so they stay tunable — they are just excluded from the default scan hop
-    (opt back in via the Channel Filter) so a fixed scan budget isn't diluted on empty air.
+    Shared with radar, so most APs avoid them (usually empty). Passive RX is fine, so they
+    stay tunable but are excluded from the default scan hop (opt back in via Channel Filter)
+    so a fixed scan budget isn't diluted on empty air.
     """
     return 52 <= channel <= 144
 
 
-# The 2.4 GHz channels that carry the bulk of APs: the non-overlapping trio
-# nearly every router parks on (FCC 1/6/11). The channels between them overlap
-# and stay mostly empty, so visiting 1/6/11 first front-loads most 2.4 GHz
-# targets into the first three hops.
+# The non-overlapping 2.4 GHz trio nearly every router parks on (FCC 1/6/11); visiting
+# these first front-loads most 2.4 GHz targets into the first three hops.
 _PRIORITY_2G = (1, 6, 11)
 
 
 def scan_hop_order(channels: list[int]) -> list[int]:
-    """Reorder a channel set into scan-priority order: the busy 2.4 GHz trio
-    (1/6/11) first, then the rest of 2.4 GHz, then 5 GHz.
+    """Reorder a channel set into scan-priority order: the busy 2.4 GHz trio (1/6/11) first,
+    then the rest of 2.4 GHz, then 5 GHz.
 
-    Front-loading the popular channels means the AP table is mostly populated
-    within the first second, before the first sort tick — instead of new APs
-    dribbling in channel-by-channel so that every later sort reshuffles the list
-    as a fresh burst lands. Pure reordering: the result holds exactly the input
-    channels (de-duped, first occurrence wins); the non-priority 2.4 GHz and the
-    5 GHz channels keep the caller's original relative order.
+    Front-loads popular channels so the AP table is mostly populated before the first sort
+    tick. Pure reordering — same channels, de-duped (first occurrence wins); non-priority
+    2.4 GHz and 5 GHz keep the caller's original order.
     """
     seen: set[int] = set()
     uniq = [c for c in channels if not (c in seen or seen.add(c))]

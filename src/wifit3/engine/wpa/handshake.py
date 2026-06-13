@@ -1,9 +1,8 @@
 """Single source of truth for WPA/WPA2 4-way handshake crackability + hc22000.
 
-Both decisions that used to disagree now route through ``crackable_pairs()``:
-the "did we capture a handshake?" verdict (events, CAPTURE-panel counts) AND the
-hc22000 hashline build. A banner can therefore never claim a capture that
-``save`` then silently refuses — they are literally the same code path.
+The "did we capture a handshake?" verdict (events, CAPTURE-panel counts) AND the
+hc22000 hashline build both route through ``crackable_pairs()``, so a banner can never
+claim a capture that ``save`` then silently refuses — they are literally the same code path.
 
 Ground truth — what each 4-way message carries and what hashcat needs
 ---------------------------------------------------------------------

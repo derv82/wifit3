@@ -100,17 +100,13 @@ class WlanFrameParser:
                 if tags is None:
                     return None
                 result["ssid"] = tags.get("ssid")
-                # Don't synthesise channel=1 when _parse_tags found nothing
-                # — caller (interface._on_frame_parsed) falls back to the
-                # chip's current tuned channel, which is correct on either
-                # band. The pre-fix default of 1 mis-tagged every 5 GHz
-                # beacon whose vendor omitted the DS Parameter Set IE.
+                # Don't synthesise channel=1 when _parse_tags found nothing — the caller
+                # falls back to the chip's current tuned channel (a default of 1 mis-tags
+                # 5 GHz beacons whose vendor omits the DS Parameter Set IE).
                 if "channel" in tags:
                     result["channel"] = tags["channel"]
                 result["encryption"] = tags.get("encryption", "OPEN")
                 # WPA3 / PMF / cipher details surfaced from the RSN IE walker.
-                # Pre-fix these were computed but silently dropped here, leaving
-                # the security panel stuck on defaults.
                 result["wpa3"] = tags.get("wpa3", False)
                 result["transition_mode"] = tags.get("transition_mode", False)
                 result["pmf_capable"] = tags.get("pmf_capable", False)
@@ -224,14 +220,9 @@ class WlanFrameParser:
                                 result["eapol_payload"] = bytes(
                                     frame[eapol_start: eapol_start + total_eapol_len]
                                 )
-                            # PMKID / key_data extraction — split out of the
-                            # full-frame check above. Some chips (observed on
-                            # mt76x0u / rt2800usb RT5572) deliver EAPOL M1 a
-                            # few bytes short; the PMKID KDE sits at the START
-                            # of key_data, so a complete KDE can still be
-                            # recovered even when the trailing few bytes of
-                            # key_data are missing. (See `eapol_payload` above
-                            # for the hashcat-grade full-frame guard.)
+                            # PMKID extraction runs even when the frame is a few bytes short
+                            # (seen on mt76x0u / rt2800usb RT5572): the PMKID KDE sits at the
+                            # START of key_data, so a complete KDE survives a truncated tail.
                             if key_data_len > 0:
                                 key_data = frame[
                                     eapol_start + 99 : eapol_start + 99 + key_data_len
@@ -360,9 +351,7 @@ class WlanFrameParser:
             return True
 
         if ftype == WlanFrameParser.TYPE_DATA:
-            # EAPOL frames are rarely very large, but must at least hold a header
-            # Check if addresses look like valid MACs (not all zeros/broadcast usually for source)
-            # This helps the 'Hunt' loop distinguish between random USB noise and a frame
+            # Sanity-check addresses to filter random USB noise from real frames.
             if len(frame) < 24:
                 return False
                 
@@ -373,10 +362,8 @@ class WlanFrameParser:
             # broadcast or zero, so it's a good noise filter.
             if addr2 == b'\x00\x00\x00\x00\x00\x00' or addr2 == b'\xff\xff\xff\xff\xff\xff':
                 return False
-            # addr3 is the DA on a ToDS frame, and a BROADCAST DA is exactly
-            # what a (WEP) ARP request carries — so only reject all-zeros here,
-            # NOT broadcast. (Rejecting broadcast dropped every replayable ARP
-            # request before it could be parsed.)
+            # addr3 is the DA on a ToDS frame, and a BROADCAST DA is exactly what a (WEP) ARP
+            # request carries — so reject only all-zeros here, NOT broadcast.
             if addr3 == b'\x00\x00\x00\x00\x00\x00':
                 return False
 
@@ -497,17 +484,13 @@ class WlanFrameParser:
         #      every 802.11n/ac AP regardless of band.
         #   3. VHT Operation (tag 192)   — channel center freq seg 0;
         #      tertiary fallback for VHT-only oddities.
-        # Without 2 + 3, 5 GHz APs whose vendor omits the DS Param IE were
-        # silently mis-reported as channel 1 (the old default).
         channel_ds: Optional[int] = None
         channel_ht: Optional[int] = None
         channel_vht: Optional[int] = None
 
-        # Per 802.11 the SSID IE is mandatory and FIRST. Any later tag_id=0
-        # we run into is either a malformed frame or — more commonly — the
-        # walker straying into trailing bytes (hardware metadata that wasn't
-        # stripped, chip-side padding, etc.). Honor only the first occurrence;
-        # bogus "decloak" events on hidden APs traced back to exactly this.
+        # Per 802.11 the SSID IE is mandatory and FIRST. A later tag_id=0 is a malformed
+        # frame or the walker straying into trailing bytes (unstripped metadata, padding),
+        # so honor only the first occurrence.
         seen_ssid = False
 
         while ptr + 2 <= len(frame):
