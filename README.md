@@ -1,6 +1,6 @@
 # Wifit3 — Wireless Auditor
 
-A cross-platform Wi-Fi auditing tool with a terminal UI. Wifit3 talks to USB
+A cross-platform, userland Wi-Fi auditing tool with a terminal UI. Wifit3 talks to USB
 Wi-Fi adapters **directly over USB** (PyUSB) — no `aircrack-ng`/`airmon-ng`
 subprocesses, no Scapy — so it runs the same on **Linux and Windows**.
 
@@ -61,17 +61,15 @@ stdout, no breakage when an external tool changes its output.
 
 **Cross-platform.** The bytes sent to the card are OS-agnostic, so one codebase
 runs on **Linux and Windows** — point the adapter at the USB stack Wifit3 talks
-through (WinUSB via Zadig on Windows; unbind the kernel driver on Linux) and go.
-No VM, no Kali boot.
+through and go. No VM, no Kali boot.
+
+**Userland.** Root/Admin is only required during the one-click setup stage.
+After that, Wifit3 can be run without privilege (no sudo, no UAC popups).
 
 **Native and responsive.** No Scapy (it's heavy and triggers a UAC prompt on
 every import on Windows); no blocking subprocesses. A Textual TUI that updates
 live via async messages — scan, pick a target, attack, save — instead of polling
 another process's output.
-
-**A fresh start, not a fork.** Wifit3 is a clean-slate reimagining, not an
-in-place upgrade. It extracts the domain knowledge from wifite/wifite2 without
-inheriting the baggage of a tool architected as an aircrack-ng wrapper.
 
 ## Installation
 
@@ -90,9 +88,15 @@ Then:
 uv run wifit3
 ```
 
-**Linux** — unload the conflicting kernel driver, then launch with `sudo` (running
-userland *without* `sudo` is designed and verified but hasn't shipped for Linux yet —
-see [DEVICE-SETUP.md](planning/DEVICE-SETUP.md)):
+**Linux** — Wifit3 installs a `udev` rules file to enable userland access to the
+supported wireless cards. This is a one-time privileged (root) action. Afterward,
+Wifit3 can be run without sudo:
+
+```bash
+uv run wifit3
+```
+
+If you don't want to install the `udev` rules file, you can still run Wifit3 as root:
 
 ```bash
 sudo rmmod <kernel_driver>   # e.g. ath9k_htc, rtl8xxxu, mt76x2u, rt2800usb

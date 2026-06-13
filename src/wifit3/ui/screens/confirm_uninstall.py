@@ -1,4 +1,4 @@
-"""Uninstall confirmation modal. [DEVICE-SETUP.md]
+"""Uninstall confirmation modal.
 
 Shown when the user presses the ✕ next to START. Asks to remove wifit3's driver/access change
 for the selected card. The body copy is OS-specific (Windows WinUSB unbind vs Linux udev-rule

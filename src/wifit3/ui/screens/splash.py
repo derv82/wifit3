@@ -187,7 +187,7 @@ class SplashView(Screen):
     async def perform_start(self, iface) -> None:
         """Start a card: try to connect; if that fails because it isn't WinUSB-bound, offer a
         one-time install and connect again. All the blocking work (connect, openability probe,
-        install) runs off-thread so the UI stays responsive. [DEVICE-SETUP.md]"""
+        install) runs off-thread so the UI stays responsive."""
         status = self.query_one("#status-label", Label)
         list_view = self.query_one("#device-list", ListView)
         start_btn = self.query_one("#start-btn", Button)
@@ -337,8 +337,7 @@ class SplashView(Screen):
     async def perform_uninstall(self, iface) -> None:
         """Reverse wifit3's driver/access change for a card: WinUSB unbind (Windows) or remove
         the udev access rule (Linux). Both are privileged + blocking, so they run off-thread.
-        The card returns to its normal Wi-Fi driver — Windows immediately, Linux on replug.
-        [DEVICE-SETUP.md]"""
+        The card returns to its normal Wi-Fi driver — Windows immediately, Linux on replug."""
         if sys.platform == "win32":
             os_kind = "win"
         elif sys.platform.startswith("linux"):

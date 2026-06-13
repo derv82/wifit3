@@ -1,4 +1,4 @@
-"""Modal shown when a device-setup action fails (WinUSB install/restore). [DEVICE-SETUP.md]
+"""Modal shown when a device-setup action fails (WinUSB install/restore).
 
 Renders a title, a human message, and an optional Details line (the raw libwdi / Win32
 code) — the §2c hardware-failure UX. Dismisses with ``None``; the caller just awaits it

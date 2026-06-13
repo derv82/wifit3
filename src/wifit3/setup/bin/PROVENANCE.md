@@ -2,7 +2,7 @@
 
 `win-x64/wdi-simple.exe` is libwdi's `wdi-simple` example program, built **unmodified**
 from a pinned upstream commit. It binds a USB device to WinUSB so libusb can open it
-(the Tier-1 "Install WinUSB" action — see `planning/DEVICE-SETUP.md`).
+(the Tier-1 "Install WinUSB" action).
 
 It is **unsigned**. libwdi's maintainer deliberately does not sign or distribute prebuilt
 `wdi-simple.exe` binaries (<https://github.com/pbatard/libwdi/issues/309>), so every

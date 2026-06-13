@@ -104,18 +104,10 @@ problem; do it design-doc-first, not zero-shot.
 
 ### 2d. Zadig / udev automation
 
-Goal: the app handles WinUSB/permission setup — no manual Zadig, no terminal sudo.
-
-**Design + detail in `DEVICE-SETUP.md`.** The short of it: the privileged step
-(WinUSB bind on Windows, kernel-driver release on Linux) can't be deleted, only made
-into one clean, reversible prompt. Ship **Tier 0 — detect & guide** as the only alpha
-gate (classify each card ready / unbound / unknown, show the exact next step, no
-elevation by us); layer assisted one-prompt bind on top afterward (Windows: bundled
-libwdi/`wdi-simple.exe` + UAC; Linux: `pkexec` a udev rules file generated from the
-drivers' `SUPPORTED_IDS`, then PyUSB auto-detach). Two feasibility forks to settle on
-hardware *before* building Tier 1: whether libusb enumerates an **unbound** device on
-Windows (W1), and whether a permissive udev rule lets a non-root user **detach** on
-Linux (L1).
+Shipped — both halves are in-TUI: Windows WinUSB bind/unbind (libwdi + UAC) and the
+no-sudo Linux path (a one-time udev access rule via `pkexec`, then runtime PyUSB
+detach). Open: no arm64 `wdi-simple.exe` yet (libwdi's VS2022 workflow builds x64/Win32
+only), so WinUSB install is x64-only on Windows.
 
 ### 2e. Versioning
 

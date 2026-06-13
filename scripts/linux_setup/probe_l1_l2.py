@@ -1,4 +1,4 @@
-"""Linux device-setup probe — answers DEVICE-SETUP.md's open questions L1 + L2 on real hardware.
+"""Linux device-setup probe — measures non-root kernel-driver detach + per-module behaviour on real hardware.
 
 Runs on the Kali box (Linux only). It is the *measurement* tool the design is gated on; the
 rule generator + splash wiring are codeable on Windows, but these two facts can only be read
@@ -229,7 +229,7 @@ def build_rule_text(ids: list[tuple[int, int, str]], perms: str, source: str) ->
         "# wifit3 Linux device-setup PROBE rule (generated - not the shipping file).",
         f"# Source: {source}. Perms lever: {perms} -> {clause}",
         "# Grants the local user RW on these cards' usbfs node so wifit3 can open AND",
-        "# (to measure DEVICE-SETUP.md L1) detach the kernel driver without root.",
+        "# detach the kernel driver without root (the non-root-detach measurement).",
         "# Remove with: probe_l1_l2.py --remove-rule",
         "",
     ]
@@ -603,7 +603,7 @@ def cmd_show(args) -> int:
 
 def main() -> int:
     p = argparse.ArgumentParser(
-        description="DEVICE-SETUP.md L1/L2 probe — measure non-root detach + per-module behaviour.",
+        description="Linux device-setup probe — measure non-root detach + per-module behaviour.",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--install-rule", action="store_true",
                    help="install the permissive udev rule (one pkexec/UAC-style prompt)")

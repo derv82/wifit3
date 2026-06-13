@@ -1,8 +1,8 @@
 """Unit tests for the pure + classification helpers in wifit3.setup.linux.
 
 The live path (graphical pkexec → udev rule written → node becomes writable → retry connect)
-can't be exercised without a real Linux box + hardware, so it's left to the Kali smoke
-(DEVICE-SETUP.md). Everything deterministic — rule text, run_privileged argv, and the
+can't be exercised without a real Linux box + hardware, so it's left to the Kali smoke.
+Everything deterministic — rule text, run_privileged argv, and the
 install/remove result classification — is covered here and runs on any OS by forcing the
 platform/euid via monkeypatch.
 """

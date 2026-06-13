@@ -1,4 +1,4 @@
-"""Windows WinUSB binding via the bundled wdi-simple.exe (libwdi). [DEVICE-SETUP.md Tier 1]
+"""Windows WinUSB binding via the bundled wdi-simple.exe (libwdi).
 
 :func:`install_winusb` shells out to a vendored, *unsigned* ``wdi-simple.exe`` under UAC
 elevation (``ShellExecuteExW`` ``"runas"``) to bind a card to WinUSB so libusb can open it.
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 _BIN = Path(__file__).parent / "bin"
 
 # CPU arch -> bundled-binary subdir. x64 only for now: libwdi's VS2022 workflow builds
-# x64/Win32, so there's no arm64 wdi-simple.exe yet (DEVICE-SETUP.md open question).
+# x64/Win32, so there's no arm64 wdi-simple.exe yet (RELEASE-PLAN.md §2d).
 _ARCH_DIRS = {"amd64": "win-x64", "x86_64": "win-x64"}
 
 _WDI_TYPE_WINUSB = 0                # wdi-simple --type 0

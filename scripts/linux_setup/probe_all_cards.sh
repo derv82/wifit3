@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Guided L1/L2 capture loop for a Kali session — DEVICE-SETUP.md.
+# Guided non-root-detach capture loop for a Kali session.
 #
 # Plug in one card, press Enter; it probes that card (non-root kernel detach = L1, per-module
 # detach behaviour = L2) and dumps the full USB picture, appending everything to ONE transcript.

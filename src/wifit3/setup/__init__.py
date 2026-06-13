@@ -2,8 +2,7 @@
 
 Tier-0 (detect + classify present-but-unbound cards) lives in ``wlan/manager.py``;
 this package is the privileged *action* layer the splash's Install / Restore buttons
-drive — WinUSB bind/unbind on Windows, kernel detach / udev on Linux. See
-``planning/DEVICE-SETUP.md``.
+drive — WinUSB bind/unbind on Windows, kernel detach / udev on Linux.
 
 The VID:PID list every per-OS step needs is derived from the driver registry
 (:attr:`SUPPORTED_IDS`), never hand-maintained — see :func:`ids_from_registry`.
