@@ -104,12 +104,12 @@ clients (secondary targets) → log (details, on demand).**
 Landscape (wide):
 
 ```
-                   ● Listening for handshake · -71 dBm
-   \ /    beacon  ──────────────────────────<- 9s   \ /
- __\Ｖ__  data    ──────────────────────────<- 1s  __\Ｖ__
- / Alfa/  inject  0s ->──────────────────────────  |NETGR91|
- /__o_/   eapol   ──────────────────────────<- 0s  |__o___|
- rtl8187l                                            NETGEAR91
+                   ● Listening for handshake       -71 dBm
+    \ /   beacon  ──────────────────────────<- 9s    \ / /
+   _\Ｖ__ data    ──────────────────────────<- 1s   __\Ｖ__
+  /Alfa / inject  0s ->──────────────────────────  |NETGR9|
+ /__o__/  eapol   ──────────────────────────<- 0s  |__o___|
+ rtl8187l                                          NETGEAR91
  ┌ LOG ───────────────┐   CLIENTS (2)
  │ Target locked.     │   ··── fa:..:aa  -79  10  [✂]
  │ M1 ▸ M2 captured   │   ··── aa:..:ff  -80 134  [✂]
