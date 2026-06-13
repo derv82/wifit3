@@ -16,6 +16,7 @@ from wifit3.setup.windows import install_winusb, restore_driver
 from wifit3.ui.screens.confirm_install import ConfirmInstallDialog
 from wifit3.ui.screens.confirm_uninstall import ConfirmUninstallDialog
 from wifit3.ui.screens.setup_error import SetupErrorDialog
+from wifit3.ui.screens.propagating import PropagatingDialog
 from wifit3.wlan.manager import WlanDeviceManager
 
 logger = logging.getLogger(__name__)
@@ -308,7 +309,8 @@ class SplashView(Screen):
                     return
                 status.update(f"[bold yellow]Granting access for {desc}… "
                               f"(one password prompt)[/bold yellow]")
-                result = await asyncio.to_thread(install_rule)
+                result = await asyncio.to_thread(
+                    install_rule, node=self.device_manager.usb_node_path(iface))
                 if not result.ok:
                     release()
                     if result.cancelled:
@@ -318,11 +320,24 @@ class SplashView(Screen):
                         self.app.push_screen(SetupErrorDialog(
                             "Linux device-access setup failed", result.message, result.detail))
                     return
-                # Rule installed → node should now be writable; FW-reenumerating combos
-                # (MT7921AU) may still need a replug, surfaced by the retry's failure message.
-                await _refind_and_connect(
-                    "the card failed to initialize after granting access — "
-                    "try unplugging and replugging it")
+                # install_rule chgrp's the live node as root before returning, so it's normally
+                # writable the instant we get here. Confirm it (behind a spinner) before connecting
+                # — connecting an unready node is the EACCES failure that used to bounce the user
+                # back to the picker with a bogus "replug" message.
+                self.app.push_screen(PropagatingDialog("Applying device access…"))
+                try:
+                    ready = await self.device_manager.linux_wait_for_access(
+                        iface, want_writable=True)
+                finally:
+                    self.app.pop_screen()
+                if not ready:
+                    release()
+                    self.app.push_screen(SetupErrorDialog(
+                        "Device access didn't take effect",
+                        f"The access rule is installed, but {desc} hasn't picked it up.",
+                        "Unplug and replug the card, then press START."))
+                    return
+                await _refind_and_connect("the card failed to initialize after granting access")
 
             else:
                 raise RuntimeError("the card failed to initialize")
@@ -378,19 +393,37 @@ class SplashView(Screen):
             if os_kind == "win":
                 result = await asyncio.to_thread(restore_driver, iface.vid, iface.pid)
             else:
-                result = await asyncio.to_thread(remove_rule)
+                result = await asyncio.to_thread(
+                    remove_rule, node=self.device_manager.usb_node_path(iface))
         except Exception as e:
             logger.exception("Uninstall failed for %s", getattr(iface, "description", "?"))
             status.update(f"[bold red]Uninstall failed: {e}[/bold red]")
             release()
             return
 
+        # Linux: remove_rule chowns the node back to root as root, so it's revoked on return.
+        # Confirm it actually went unwritable so the card is really revoked, not just de-filed —
+        # this is the bug where uninstall did nothing until a manual replug.
+        revoked = True
+        if os_kind == "linux" and result.ok:
+            self.app.push_screen(PropagatingDialog("Revoking device access…"))
+            try:
+                revoked = await self.device_manager.linux_wait_for_access(
+                    iface, want_writable=False)
+            finally:
+                self.app.pop_screen()
+
         # Re-scan so the list reflects the card's new binding state, then report.
         await self.device_manager.refresh()
         self._last_signature = None
         release()
-        if result.ok:
+        if result.ok and revoked:
             status.update(f"[bold green]{result.message}[/bold green]")
+        elif result.ok and not revoked:
+            self.app.push_screen(SetupErrorDialog(
+                "Access rule removed",
+                f"The rule is gone, but {iface.description} keeps access until it's replugged.",
+                "Unplug and replug the card to fully revoke."))
         elif result.cancelled:
             status.update("[yellow]Uninstall cancelled.[/yellow]")
         else:

@@ -15,7 +15,6 @@ import asyncio
 import logging
 import os
 import sys
-from pathlib import Path
 from typing import Dict, List, Optional, Type
 
 import libusb_package
@@ -270,6 +269,15 @@ class WlanDeviceManager:
         "not WinUSB-bound" (→ offer an install) from a genuine init fault. [DEVICE-SETUP.md]"""
         return iface.dev is None or _is_openable(iface.dev)
 
+    def usb_node_path(self, iface: WlanInterface) -> Optional[str]:
+        """The card's usbfs node ``/dev/bus/usb/BBB/DDD``, or None if there's no device handle.
+
+        The path the access rule's chgrp/chown targets and ``linux_needs_permission`` stats. Stable
+        across a permission change (granting doesn't re-enumerate)."""
+        if iface.dev is None:
+            return None
+        return f"/dev/bus/usb/{iface.dev.bus:03d}/{iface.dev.address:03d}"
+
     def linux_needs_permission(self, iface: WlanInterface) -> bool:
         """Linux: is the card's usbfs node NOT writable by us, so open + detach would fail?
 
@@ -279,13 +287,32 @@ class WlanDeviceManager:
         USBDEVFS_DISCONNECT (and libusb_open) need the usbfs node RW, so a non-writable node
         is exactly the "install the access rule" signal. A cheap stat — no device open.
         Returns False off Linux or with no device handle. [DEVICE-SETUP.md L1]"""
-        if not sys.platform.startswith("linux") or iface.dev is None:
+        node = self.usb_node_path(iface)
+        if not sys.platform.startswith("linux") or node is None:
             return False
         try:
-            node = Path(f"/dev/bus/usb/{iface.dev.bus:03d}/{iface.dev.address:03d}")
             return not os.access(node, os.W_OK)
         except OSError:
             return True
+
+    async def linux_wait_for_access(self, iface: WlanInterface, *, want_writable: bool,
+                                    timeout: float = 5.0, interval: float = 0.1) -> bool:
+        """Block until the card's usbfs node reaches ``want_writable`` (or ``timeout`` elapses).
+
+        install_rule/remove_rule chgrp/chown the node directly as root before returning, so the
+        grant/revoke is already live and this usually passes on the first check — it's the readiness
+        gate confirming the node flipped (and drives the spinner / timeout modal). ``os.access``
+        reads the real node state.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while True:
+            writable = not self.linux_needs_permission(iface)
+            if writable == want_writable:
+                return True
+            if loop.time() >= deadline:
+                return False
+            await asyncio.sleep(interval)
 
     async def close_all(self) -> None:
         for iface in self.interfaces:
