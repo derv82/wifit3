@@ -1,21 +1,13 @@
 """Pure WEP crypto for fragmentation / chopchop (M5/M6).
 
-EVERYTHING HERE IS OFFLINE-TESTABLE — no hardware. This is the trickiest
-correctness in M5/M6, so it's built + unit-tested first (the playbook that made
-RC4/PTW low-risk). The hardware-in-the-loop part (the oracle: recognizing the
-AP's relayed frame) lives in fragmentation.py / chopchop.py.
+EVERYTHING HERE IS OFFLINE-TESTABLE — no hardware (tests/engine/test_wep_crypto.py). The
+hardware-in-the-loop part (the oracle: recognizing the AP's relayed frame) lives in
+fragmentation.py / chopchop.py.
 
 WEP per-frame layout of the encrypted body (after the 24/26-byte MAC header):
     IV(3) | KeyID(1) | RC4( plaintext ++ ICV )      where ICV = CRC32(plaintext)
-The MAC header is cleartext; only plaintext++ICV is RC4'd. Forging needs only
-the *keystream* (the IV's RC4 output), never the key — the whole point of
-frag/chopchop.
-
-Status: ALL implemented + tested offline (tests/engine/test_wep_crypto.py) —
-icv, wep_encrypt, forge_arp_request, and chop_last_byte_and_fixup (the KoreK
-linear-ICV fix-up, done via affine-CRC cancellation + a GF(2) trailing-byte
-solve, gated by a decrypt-and-check-residue oracle). The hardware-needing part
-is now ONLY the live-AP oracle in fragmentation.py / chopchop.py.
+The MAC header is cleartext; only plaintext++ICV is RC4'd. Forging needs only the *keystream*
+(the IV's RC4 output), never the key — the whole point of frag/chopchop.
 """
 
 from __future__ import annotations

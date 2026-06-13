@@ -1,17 +1,12 @@
 """WEP fragmentation attack (`aireplay-ng -5`) — M5.
 
 .. warning::
-    **NOT CURRENTLY WIRED INTO THE PRODUCT — kept as a reference implementation.**
-    Fragmentation is the one WEP attack that needs every fragment of an MSDU to
-    share a single 802.11 sequence number, which required a per-driver
-    software-sequence TX path (``en_hwseq=0`` + a ``SUPPORTS_SW_SEQ`` flag). Only
-    the RTL8821AU ever implemented it; one card arbitrarily owning one attack was
-    a maintenance smell, so that sw-seq plumbing was removed and this module was
-    unhooked from the campaign + UI. ARP-replay + ChopChop carry WEP without it.
-    As-is this WILL NOT RUN: ``_inject_round`` calls
-    ``iface.send_raw(..., sw_seq=...)``, a parameter that no longer exists.
-    Re-wiring it means first restoring shared sequence-ID support in the TX
-    framework (see ``planning/PORTING.md``).
+    **NOT WIRED INTO THE PRODUCT — reference implementation.** Fragmentation needs every
+    fragment of an MSDU to share one 802.11 sequence number, i.e. a per-driver software-sequence
+    TX path (``en_hwseq=0`` + a ``SUPPORTS_SW_SEQ`` flag) that no longer exists. As-is this WILL
+    NOT RUN: ``_inject_round`` passes ``send_raw(..., sw_seq=...)``, a removed parameter. Re-wiring
+    means first restoring shared sequence-ID support in the TX framework (see ``planning/PORTING.md``).
+    ARP-replay + ChopChop carry WEP without it.
 
 Manufactures a replayable ARP when there's none to capture — the whole reason
 `-5` exists. Seed 8 bytes of keystream from ANY captured WEP *data* frame via
@@ -22,8 +17,8 @@ The AP reassembles them, re-encrypts under a fresh IV, and rebroadcasts the
 result — which is itself a replayable ARP seed. So one ordinary client data
 packet (a TCP segment you can't replay) becomes a forged ARP you can.
 
-HARDWARE-VERIFIED end-to-end (2026-05-24, dd-wrt, rtl8821au): a decrypted relay
-matched our forged ARP byte-for-byte. The crypto is in wep_crypto.py
+HARDWARE-VERIFIED end-to-end (dd-wrt, rtl8821au): a decrypted relay matched our
+forged ARP byte-for-byte. The crypto is in wep_crypto.py
 (`seed_keystream_from_arp`, `build_fragments`); this daemon wires the send loop
 + the live-AP ORACLE around it.
 

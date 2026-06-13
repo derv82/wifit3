@@ -126,9 +126,8 @@ class WepCampaign:
             # worker process exit on its own.
             self._crack_pool.shutdown(wait=False, cancel_futures=True)
             self._crack_pool = None
-        # Tear down a running ChopChop sub-mode before the TX it shares the
-        # radio with — and SAY SO (it stops silently otherwise, so "Stop IVs"
-        # mid-Chop looked like it left it running).
+        # Tear down a running ChopChop sub-mode before the TX it shares the radio with, and
+        # log it (it stops silently otherwise, so "Stop IVs" mid-Chop looks like a no-op).
         if self.chop is not None:
             self.chop.stop()
             self.chop = None
