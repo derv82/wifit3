@@ -16,8 +16,6 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 RULE_DIR = "/etc/udev/rules.d"
-# One shared rule file for every supported VID:PID. The 60- prefix sorts after 50-udev-default
-# (whose 0664 root:root node perms we override) and ahead of the seat/uaccess files we don't use.
 RULE_PATH = f"{RULE_DIR}/60-wifit3.rules"
 
 _REMOVED_MSG = ("Removed the device-access rule. Replug a card to restore its normal "
@@ -25,7 +23,6 @@ _REMOVED_MSG = ("Removed the device-access rule. Replug a card to restore its no
 
 
 def _access_group() -> str | None:
-    # Identifies root or wheel
     import grp  # Unix-only
     mine = set(os.getgroups()) | {os.getgid()}
     for name in ("sudo", "wheel"):
@@ -38,14 +35,12 @@ def _access_group() -> str | None:
 
 
 def current_user() -> str:
-    # Login name of the uid that gets access — the real uid, not env ($LOGNAME can disagree).
     import pwd  # Unix-only
     return pwd.getpwuid(os.getuid()).pw_name
 
 
 @dataclass(frozen=True)
 class LinuxSetupResult:
-    # Outcome of a privileged Linux setup action (rule install / removal).
     ok: bool
     message: str
     cancelled: bool = False
@@ -69,7 +64,6 @@ def emit_udev_text(group: str | None = None) -> str:
 
 
 def _choose_escalation_method() -> str | None:
-    # The privileged-exec method to use: ``pkexec`` (gui), ``sudo``, or ``None``
     if shutil.which("pkexec"):
         return "pkexec"
     if shutil.which("sudo"):
@@ -92,7 +86,6 @@ def run_privileged(shell_cmd: str, method: str) -> int:
 
 
 def _install_rules_and_touch(tmp_rule_file: str, group: str, dev_node_path: str | None) -> str:
-    # Installs wifit3's rule file, reloads rules, and chowns the node to invoke the new permissions.
     steps = [
         f"install -m 0644 {tmp_rule_file} {RULE_PATH}",
         "udevadm control --reload-rules",
@@ -103,20 +96,17 @@ def _install_rules_and_touch(tmp_rule_file: str, group: str, dev_node_path: str 
 
 
 def _delete_rules_and_touch(node: str | None) -> str:
-    # Deletes wifit3's rule file, reloads rules, and chowns the node to invoke the new permissions.
     steps = [
         f"rm -f {RULE_PATH}",
         "udevadm control --reload-rules",
     ]
     if node:
-        # subshell so `|| true` rescues only the chown: `&&` and `||` are equal precedence,
-        # so a bare `... && chown || true` would let `true` mask an rm/reload failure too
+        # subshell so `|| true` rescues only the chown, not the rm/reload (equal precedence)
         steps.append(f"(chown root:root {node} 2>/dev/null || true)")
     return " && ".join(steps)
 
 
 def _manual_hint() -> str:
-    """The copy-paste fallback when no graphical elevator is available (headless boxes)."""
     return (f"No pkexec/sudo found. Either run `sudo .venv/bin/python3 -m wifit3`, or install manually: "
             f"sudo cp <rule> {RULE_PATH} && sudo udevadm control --reload-rules, then replug.")
 
@@ -135,8 +125,6 @@ def install_rule(*, node: str | None = None) -> LinuxSetupResult:
 
     group = _access_group()
     if group is None:
-        # No system admin group to chgrp the node to — writing the rule anyway would let udev
-        # silently drop it (the OWNER="uid-1000-user" trap). Say so now, not via a later timeout.
         return LinuxSetupResult(
             ok=False,
             detail="Add yourself: `sudo usermod -aG sudo $USER`, then log out and back in. "
@@ -145,21 +133,18 @@ def install_rule(*, node: str | None = None) -> LinuxSetupResult:
 
     text = emit_udev_text(group)
 
-    # sudo/wheel check
     method = _choose_escalation_method()
     if method is None:
         return LinuxSetupResult(
             ok=False, detail=_manual_hint(),
-            message="No priviledge elevator (pkexec/sudo) found to install the access rule.")
+            message="No graphical elevator (pkexec/sudo) found to install the access rule.")
 
-    # Write rule
     tmp_rule = str(Path(tempfile.gettempdir()) / "wifit3.rules")
     try:
         Path(tmp_rule).write_text(text)
     except OSError as e:
         return LinuxSetupResult(ok=False, message=f"Couldn't stage the access rule: {e}")
 
-    # Install & touch
     rc = run_privileged(_install_rules_and_touch(tmp_rule, group, node), method)
     if rc == 0:
         return LinuxSetupResult(ok=True, detail=RULE_PATH,
@@ -182,7 +167,6 @@ def remove_rule(*, node: str | None = None) -> LinuxSetupResult:
             ok=True, detail=RULE_PATH,
             message="No wifit3 access rule is installed — nothing to remove.")
 
-    # User is root: directly take ownership of the device
     if os.geteuid() == 0:
         try:
             Path(RULE_PATH).unlink(missing_ok=True)
@@ -193,7 +177,6 @@ def remove_rule(*, node: str | None = None) -> LinuxSetupResult:
             return LinuxSetupResult(ok=False, message=f"Couldn't remove the access rule: {e}")
         return LinuxSetupResult(ok=True, detail=RULE_PATH, message=_REMOVED_MSG)
 
-    # Non-root, escalation
     method = _choose_escalation_method()
     if method is None:
         return LinuxSetupResult(
