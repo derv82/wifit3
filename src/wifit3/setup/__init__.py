@@ -24,11 +24,11 @@ def ids_from_registry() -> list[DeviceID]:
     needs the identifier, not the driver choice. The manager import is deferred to avoid
     pulling the chip drivers into callers that only need the protocol types.
     """
-    from wifit3.wlan.manager import _all_drivers
+    from wifit3.wlan.manager import _import_driver_classes
 
     seen: set[tuple[int, int]] = set()
     out: list[DeviceID] = []
-    for driver_cls in _all_drivers():
+    for driver_cls in _import_driver_classes().values():
         for entry in driver_cls.SUPPORTED_IDS:
             key = (entry.vid, entry.pid)
             if key not in seen:

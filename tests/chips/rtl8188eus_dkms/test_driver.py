@@ -83,12 +83,17 @@ def test_manager_registration_and_env_order(monkeypatch):
     from wifit3.chips.rtl8188eus.driver import RTL8188EUSDriver
     from wifit3.wlan import manager
 
+    class _Dev:
+        def __init__(self, vid, pid):
+            self.idVendor, self.idProduct = vid, pid
+
+    def selected():
+        manager._DRIVER_CLASSES = None   # bust the cached registry so the env var is re-read
+        return manager._match_driver(_Dev(0x2357, 0x010C))[0]
+
     monkeypatch.delenv("WIFIT3_RTL8188", raising=False)
-    drivers = manager._all_drivers()
-    assert RTL8188EUSDriver in drivers and Rtl8188eusDkmsDriver in drivers
-    # default: mainline-derived port wins (lower index) for 2357:010c.
-    assert drivers.index(RTL8188EUSDriver) < drivers.index(Rtl8188eusDkmsDriver)
+    assert selected() is RTL8188EUSDriver        # default: mainline-derived port for 2357:010c
 
     monkeypatch.setenv("WIFIT3_RTL8188", "dkms")
-    drivers = manager._all_drivers()
-    assert drivers.index(Rtl8188eusDkmsDriver) < drivers.index(RTL8188EUSDriver)
+    assert selected() is Rtl8188eusDkmsDriver     # opt-in via env
+    manager._DRIVER_CLASSES = None                # leave the cache clean

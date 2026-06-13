@@ -4,10 +4,6 @@ The manager has zero chipset-specific knowledge. Each driver declares
 its own VID:PIDs via :attr:`SUPPORTED_IDS` and constructs itself via
 :py:meth:`from_usb_device`; the manager just iterates the bus and asks
 each driver "is this yours?".
-
-Driver imports are deferred to the first :func:`_all_drivers` call to
-sidestep the cycle through ``wifit3.wlan.__init__`` that would otherwise
-form on first import.
 """
 from __future__ import annotations
 
@@ -28,32 +24,10 @@ from .interface import WlanInterface
 logger = logging.getLogger(__name__)
 
 
-# RTL8814AU (0bda:8813) is claimed by BOTH the vendor/DKMS port (default) and the
-# mainline-derived driver. Set this to "mainline" to fall back to the mainline driver.
 ENV_RTL8814_DRIVER = "WIFIT3_RTL8814"
-
-# RTL8821AU/RTL8811AU (0bda:0811) is claimed by BOTH the vendor/DKMS port (default) and
-# the mainline driver. Set this to "mainline" to fall back to the mainline driver. Read
-# fresh each call so it flips between runs.
 ENV_RTL8821_DRIVER = "WIFIT3_RTL8821"
-
-# RTL8812AU (0bda:8812) is claimed by BOTH the vendor/DKMS port (default) and the mainline
-# driver. The DKMS port wins by default: mainline RX-wedges on the 2.4+5 GHz channel hop
-# (RF-synth lock loss — its own driver logs it), which the DKMS port survives. Set this to
-# "mainline" to fall back to the mainline driver (e.g. a fixed-channel, non-hopping use).
 ENV_RTL8812_DRIVER = "WIFIT3_RTL8812"
-
-# RTL8188EUS (2357:010c) is claimed by BOTH the mainline-derived driver (default) and the
-# vendor/DKMS port. Unlike the 11ac pairs, the mainline driver stays the default until the
-# DKMS port is hardware-proven to tie/beat it on 2.4 GHz breadth; "dkms" opts in.
 ENV_RTL8188_DRIVER = "WIFIT3_RTL8188"
-
-# RT5372 (148f:5372) is claimed by BOTH the standalone clean-room port (default) and the
-# shared rt2800usb imitation base. The clean-room port wins by default (the rt2800usb base
-# mis-reads the EFUSE as 1T1R + under-drives RX); set this to "rt2800usb" to A/B the old
-# base on the same card. Read fresh each call so it flips between runs. rt2800usb keeps
-# RT3572/RT5572 either way.
-ENV_RT5372_DRIVER = "WIFIT3_RT5372"
 
 _DRIVER_CLASSES: Dict[str, Type[WlanDriver]] | None = None
 
@@ -82,73 +56,37 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
         from wifit3.chips.rtw88_8814au.driver import RTL8814AUDriver
 
         _DRIVER_CLASSES = {
+            # Kernel drivers
             "ar9271": AR9271Driver,
-            "rtl8187": RTL8187Driver,
             "rt2500usb": RT2500USBDriver,
             "rt2800usb": RT2800USBDriver,
             "rt3070": RT3070Driver,
             "rt5372": RT5372Driver,
-
-            "rtl8188eus": RTL8188EUSDriver,
-            "rtl8188eus_dkms": Rtl8188eusDkmsDriver,
-            "rtl8812au": RTL8812AUDriver,
-            "rtl8812au_dkms": Rtl8812auDkmsDriver,
-            "rtl8821au": RTL8821AUDriver,
-            "rtl8821au_dkms": Rtl8821auDkmsDriver,
+            "rtl8187": RTL8187Driver,
             "rtl8822bu": RTL8822BUDriver,
-            "rtl8814au_dkms": Rtl8814auDkmsDriver,
-            "rtl8814au_mainline": RTL8814AUDriver,
             "mt76x0u": MT76x0UDriver,
             "mt76x2u": MT76x2UDriver,
             "mt7921au": MT7921AUDriver,
+
+            # Kernel + DKMS drivers
+            "rtl8188eus": _env_driver(ENV_RTL8188_DRIVER, "dkms", Rtl8188eusDkmsDriver, RTL8188EUSDriver),
+            "rtl8812au": _env_driver(ENV_RTL8812_DRIVER, "mainline", RTL8812AUDriver, Rtl8812auDkmsDriver),
+            "rtl8821au": _env_driver(ENV_RTL8821_DRIVER, "mainline", RTL8821AUDriver, Rtl8821auDkmsDriver),
+            "rtl8814au": _env_driver(ENV_RTL8814_DRIVER, "mainline", RTL8814AUDriver, Rtl8814auDkmsDriver),
         }
     return _DRIVER_CLASSES
 
 
-def _all_drivers() -> List[Type[WlanDriver]]:
-    """The driver registry, in priority order (first match wins in `_match_driver`).
-
-    Both Realtek 11ac pairs are ordered by their env var (read fresh each call so they can
-    be flipped between runs without restarting): the DKMS port wins by default, "mainline"
-    falls back to the mainline-derived driver.
-    """
-    c = _import_driver_classes()
-    if os.environ.get(ENV_RTL8814_DRIVER, "").strip().lower() == "mainline":
-        rtl8814 = [c["rtl8814au_mainline"], c["rtl8814au_dkms"]]
-    else:
-        rtl8814 = [c["rtl8814au_dkms"], c["rtl8814au_mainline"]]
-    if os.environ.get(ENV_RTL8821_DRIVER, "").strip().lower() == "mainline":
-        rtl8821 = [c["rtl8821au"], c["rtl8821au_dkms"]]
-    else:
-        rtl8821 = [c["rtl8821au_dkms"], c["rtl8821au"]]
-    if os.environ.get(ENV_RTL8812_DRIVER, "").strip().lower() == "mainline":
-        rtl8812 = [c["rtl8812au"], c["rtl8812au_dkms"]]
-    else:
-        rtl8812 = [c["rtl8812au_dkms"], c["rtl8812au"]]
-    # RTL8188EUS: mainline-derived port is the default; "dkms" opts into the vendor port.
-    if os.environ.get(ENV_RTL8188_DRIVER, "").strip().lower() == "dkms":
-        rtl8188 = [c["rtl8188eus_dkms"], c["rtl8188eus"]]
-    else:
-        rtl8188 = [c["rtl8188eus"], c["rtl8188eus_dkms"]]
-    # RT5372: the standalone clean-room port wins 148f:5372 by default (the rt2800usb base
-    # mis-reads its EFUSE as 1T1R and under-drives RX); "rt2800usb" opts back for an A/B.
-    # It MUST precede rt2800usb here so it claims the PID first; rt2800usb keeps RT3572/RT5572.
-    if os.environ.get(ENV_RT5372_DRIVER, "").strip().lower() == "rt2800usb":
-        rt5372 = [c["rt2800usb"], c["rt5372"]]
-    else:
-        rt5372 = [c["rt5372"], c["rt2800usb"]]
-    return [
-        c["ar9271"], c["rtl8187"], c["rt2500usb"], *rt5372, c["rt3070"], *rtl8188,
-        *rtl8812, *rtl8821, c["rtl8822bu"], *rtl8814,
-        c["mt76x0u"], c["mt76x2u"], c["mt7921au"],
-    ]
+def _env_driver(key, match, driver1, driver2):
+    # Helper method to fetch the appropriate mainline/DKMS driver
+    if os.environ.get(key, "").strip().lower() == match:
+       return driver1
+    return driver2
 
 
-def _match_driver(
-    dev: usb.core.Device,
-) -> Optional[tuple[Type[WlanDriver], DeviceID]]:
+def _match_driver(dev: usb.core.Device) -> Optional[tuple[Type[WlanDriver], DeviceID]]:
     """Find the first registered driver that claims `dev`."""
-    for driver_cls in _all_drivers():
+    for entry, driver_cls in _import_driver_classes().items():
         for entry in driver_cls.SUPPORTED_IDS:
             if entry.vid == dev.idVendor and entry.pid == dev.idProduct:
                 return driver_cls, entry
@@ -156,18 +94,7 @@ def _match_driver(
 
 
 def _is_openable(dev: usb.core.Device) -> bool:
-    """Tier-0 probe: can libusb actually OPEN this device, or is it present-but-unbound?
-
-    ``find()`` enumerates every device regardless of driver, but opening one needs a
-    libusb-class driver. On Windows an un-bound card (native Wi-Fi driver, no WinUSB)
-    raises ``NotImplementedError`` (libusb ``LIBUSB_ERROR_NOT_SUPPORTED``) on the first
-    open — verified on a fresh RT3070/netr28ux [DEVICE-SETUP.md VERIFY-W1]. Reading the
-    active configuration is the least-invasive op that forces that open.
-
-    Linux note: a kernel-claimed card can still read descriptors here (the claim is what
-    fails, later, in the driver), so this returns True for it and the existing
-    ``from_usb_device`` guard handles that case — Linux 'needs-detach' classification is a
-    separate refinement (DEVICE-SETUP.md Linux / VERIFY-L2)."""
+    # Tier-0 probe: can libusb actually OPEN this device, or is it present-but-unbound?
     try:
         dev.get_active_configuration()
         return True
@@ -189,13 +116,7 @@ def _is_openable(dev: usb.core.Device) -> bool:
 
 
 def _scan_bus(backend) -> List[tuple]:
-    """Blocking bus scan: ``(dev, driver_cls, id_entry)`` for every supported VID:PID match.
-
-    ``usb.core.find`` reads each device's descriptors, which stalls ~1s+ when a non-WinUSB
-    device is present on Windows (libusb is slow to read a card it can't cleanly open). It's
-    pure CPU/IO with no event-loop interaction, so callers run it via ``asyncio.to_thread`` to
-    keep the TUI responsive. Driver construction stays on the loop — it's instant and may
-    touch asyncio objects."""
+    # Blocking bus scan: ``(dev, driver_cls, id_entry)`` for every supported VID:PID match.
     out: List[tuple] = []
     for dev in usb.core.find(find_all=True, backend=backend):
         match = _match_driver(dev)
@@ -209,15 +130,10 @@ class WlanDeviceManager:
 
     def __init__(self) -> None:
         self.interfaces: List[WlanInterface] = []
-        # Bus signature of the last build — lets refresh() skip the close+rebuild churn when
-        # the same cards are still present (see refresh()).
         self._dev_sig: Optional[list] = None
 
     async def refresh(self) -> List[WlanInterface]:
-        """Discover supported cards by VID:PID. The blocking bus scan runs in a thread (it
-        stalls ~1s+ on a non-WinUSB device on Windows), so the poll never freezes the TUI; the
-        openability/WinUSB check is deferred to connect time too. Driver construction is
-        instant and stays on the loop. [DEVICE-SETUP.md]"""
+        # Discover supported cards by VID:PID.
         backend = libusb_package.get_libusb1_backend()
         matches = await asyncio.to_thread(_scan_bus, backend)
 
@@ -237,9 +153,7 @@ class WlanDeviceManager:
             try:
                 driver = driver_cls.from_usb_device(dev, id_entry)
             except Exception as e:
-                # A not-yet-ported placeholder (or a driver that opens the device just to
-                # construct) — skip it; it simply isn't listed. Debug-level so a placeholder
-                # doesn't spam the fast poll.
+                # A not-yet-ported placeholder
                 logger.debug("Skipping %04x:%04x (%s): %s",
                              id_entry.vid, id_entry.pid, driver_cls.__name__, e)
                 continue
@@ -264,29 +178,17 @@ class WlanDeviceManager:
         return None
 
     def is_openable(self, iface: WlanInterface) -> bool:
-        """Can libusb open the card backing ``iface``? Opens + disposes the handle, so this
-        BLOCKS — call it off the event loop. Used only when ``connect()`` fails, to tell
-        "not WinUSB-bound" (→ offer an install) from a genuine init fault. [DEVICE-SETUP.md]"""
+        # Can libusb open the card backing ``iface``?
         return iface.dev is None or _is_openable(iface.dev)
 
     def usb_node_path(self, iface: WlanInterface) -> Optional[str]:
-        """The card's usbfs node ``/dev/bus/usb/BBB/DDD``, or None if there's no device handle.
-
-        The path the access rule's chgrp/chown targets and ``linux_needs_permission`` stats. Stable
-        across a permission change (granting doesn't re-enumerate)."""
+        # The card's usbfs node ``/dev/bus/usb/BBB/DDD``, or None if there's no device handle.
         if iface.dev is None:
             return None
         return f"/dev/bus/usb/{iface.dev.bus:03d}/{iface.dev.address:03d}"
 
     def linux_needs_permission(self, iface: WlanInterface) -> bool:
-        """Linux: is the card's usbfs node NOT writable by us, so open + detach would fail?
-
-        On Linux a kernel-claimed card still passes ``_is_openable`` (its descriptors read
-        fine; the claim is what fails later), so openability can't separate "needs the udev
-        access rule" from a genuine fault. The clean discriminator is node write-access:
-        USBDEVFS_DISCONNECT (and libusb_open) need the usbfs node RW, so a non-writable node
-        is exactly the "install the access rule" signal. A cheap stat — no device open.
-        Returns False off Linux or with no device handle. [DEVICE-SETUP.md L1]"""
+        # Linux: is the card's usbfs node NOT writable by us, so open + detach would fail?
         node = self.usb_node_path(iface)
         if not sys.platform.startswith("linux") or node is None:
             return False
@@ -297,13 +199,7 @@ class WlanDeviceManager:
 
     async def linux_wait_for_access(self, iface: WlanInterface, *, want_writable: bool,
                                     timeout: float = 5.0, interval: float = 0.1) -> bool:
-        """Block until the card's usbfs node reaches ``want_writable`` (or ``timeout`` elapses).
-
-        install_rule/remove_rule chgrp/chown the node directly as root before returning, so the
-        grant/revoke is already live and this usually passes on the first check — it's the readiness
-        gate confirming the node flipped (and drives the spinner / timeout modal). ``os.access``
-        reads the real node state.
-        """
+        # Block until the card's usbfs node reaches ``want_writable`` (or ``timeout`` elapses).
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         while True:
