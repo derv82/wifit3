@@ -14,6 +14,8 @@ import asyncio
 import zlib
 from types import SimpleNamespace
 
+import pytest
+
 from wifit3.engine.attacks.wep.chopchop import (
     WepChopChop,
     _SENTINEL,
@@ -128,6 +130,7 @@ def _assert_valid_forged_arp(forged: bytes):
     assert plain[-4:] == icv(plain[:-4])         # valid ICV
 
 
+@pytest.mark.slow
 async def test_chop_and_forge_recovers_and_forges_valid_arp():
     cipher, _ = _arp_cipher(bytes([10, 0, 0, 5]), bytes([10, 0, 0, 1]))
     d, _ = _daemon(oracle=_sim_oracle(IV, KEY))
@@ -191,6 +194,7 @@ def _relaying_iface(key: bytes, daemon_box, min_relay: int = 0):
                            send_raw=send_raw), box
 
 
+@pytest.mark.slow
 async def test_tag_and_read_back_recovers_keystream_end_to_end():
     """The whole new mechanism, offline: the daemon stamps each guess into the
     DA, the simulated AP relays only the valid-ICV one (echoing that DA), and
@@ -227,6 +231,7 @@ def _walled_daemon(cipher_key, min_relay):
     return d
 
 
+@pytest.mark.slow
 async def test_chop_to_wall_then_ap_brute_recovers_boundary_byte():
     """The AP walls just inside the sender MAC (won't relay a 16-byte cipher):
     chopping stalls at 17, leaving the ARP header known [0..15] and ONE unknown
@@ -238,6 +243,7 @@ async def test_chop_to_wall_then_ap_brute_recovers_boundary_byte():
     _assert_valid_forged_arp(forged)
 
 
+@pytest.mark.slow
 async def test_recovers_ip_seed_via_header_reconstruction():
     """A broadcast IP datagram (not ARP) where the AP relays down to a 12-byte
     cipher: chopping recovers bytes 12..end, and the hidden IP header [0..11] is
@@ -250,6 +256,7 @@ async def test_recovers_ip_seed_via_header_reconstruction():
     _assert_valid_forged_arp(forged)
 
 
+@pytest.mark.slow
 async def test_loop_picks_seed_from_store_and_chops_end_to_end():
     """Drive the real _loop (not just _chop_and_forge): it must pull a seed from
     the store's chop_candidates, associate, chop, and hand off — without
@@ -292,6 +299,7 @@ def test_treelog_connectors():
     assert bad.startswith(" [dim]└─[/dim]") and "╳" in bad
 
 
+@pytest.mark.slow
 async def test_succeed_hands_forged_arp_to_campaign_and_stops():
     cipher, _ = _arp_cipher(bytes([192, 168, 1, 50]), bytes([192, 168, 1, 1]))
     d, calls = _daemon(oracle=_sim_oracle(IV, KEY))

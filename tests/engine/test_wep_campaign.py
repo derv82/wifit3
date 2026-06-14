@@ -1,4 +1,6 @@
 """Tests for the WEP Generate IVs campaign orchestrator."""
+import pytest
+
 from wifit3.engine.models import AccessPoint
 from wifit3.wlan.wep_store import WepCaptureStore
 from wifit3.engine.attacks.wep.campaign import WepCampaign
@@ -24,6 +26,7 @@ async def test_campaign_starts_and_stops_both_subattacks(mocker):
     assert not campaign.replay.is_active
 
 
+@pytest.mark.slow
 async def test_campaign_recovers_key_from_collected_samples(mocker):
     """End-to-end: seed the collector with synthetic crack samples under a
     known key, run the campaign's crack loop, and confirm it recovers it."""

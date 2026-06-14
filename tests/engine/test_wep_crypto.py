@@ -131,6 +131,7 @@ def test_chopchop_fixup_valid_for_correct_guess_only():
         assert zlib.crc32(p_wrong) & 0xFFFFFFFF != CRC32_RESIDUE
 
 
+@pytest.mark.slow
 def test_chopchop_exactly_one_valid_guess_per_step():
     """EXACTLY one byte value per chop step produces a valid-ICV (relayable)
     frame — the uniqueness ChopChop's byte-walk relies on. Exhaustive over all

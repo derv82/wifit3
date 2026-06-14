@@ -52,6 +52,9 @@ from .transport import RT2800USBTransport
 # MCU command for freq offset update on USB.  [SRC] rt2800.h
 MCU_FREQ_OFFSET = 0x74
 
+# Per-tap settle before each RX-filter-calibration BBP55 read.
+_RX_FILTER_SETTLE_S = 0.002
+
 logger = logging.getLogger(__name__)
 
 
@@ -288,18 +291,10 @@ def _init_rx_filter(
 
     # Probe passband: write BBP24=0, repeatedly tap BBP25=0x90, read
     # BBP55 until non-zero (kernel: "Set power & frequency of passband
-    # test tone").
-    #
-    # Each BBP55 read needs the test tone settled first. The kernel does
-    # msleep(1) then a single read ([SRC] rt2800lib.c:7352). On Windows
-    # time.sleep() quantizes to the ~15.6 ms scheduler tick (a sub-tick sleep
-    # returns ~0 or a full tick), so a fixed sleep samples the tone mid-settle
-    # and skews BBP55 a few counts — enough to tip the (passband - stopband)
-    # vs filter_target comparison and break the tune one iteration in. Busy-wait
-    # the high-res clock for a real, reliable delay (>= the kernel's 1 ms), then
-    # read once, exactly as the kernel does.
+    # test tone"). Each read needs the test tone settled first — see
+    # _RX_FILTER_SETTLE_S for why that delay is a busy-wait, not msleep.
     def settle() -> None:
-        end = time.perf_counter() + 0.002
+        end = time.perf_counter() + _RX_FILTER_SETTLE_S
         while time.perf_counter() < end:
             pass
 

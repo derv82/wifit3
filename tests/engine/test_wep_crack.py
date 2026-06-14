@@ -7,6 +7,8 @@ generate packets under a chosen key (random IVs, known ARP plaintext), feed the
 import os
 import random
 
+import pytest
+
 from wifit3.engine.attacks.wep.crack import (
     ARP_REQUEST_PLAINTEXT,
     PlaceholderCracker,
@@ -60,6 +62,7 @@ def _synth_samples(key: bytes, n: int, seed: int = 1):
     return out
 
 
+@pytest.mark.slow
 def test_ptw_recovers_40bit_key():
     key = bytes.fromhex("6162636465")  # "abcde" — the user's dd-wrt test key
     c = PtwCracker()
@@ -68,6 +71,7 @@ def test_ptw_recovers_40bit_key():
     assert c.recover() == key
 
 
+@pytest.mark.slow
 def test_ptw_recovers_random_40bit_key():
     # Deterministic key so the test can't flake; random.Random keeps it varied.
     key = bytes(random.Random(11).randrange(256) for _ in range(5))
@@ -77,6 +81,7 @@ def test_ptw_recovers_random_40bit_key():
     assert c.recover() == key
 
 
+@pytest.mark.slow
 def test_ptw_recovers_104bit_key():
     key = bytes(random.Random(99).randrange(256) for _ in range(13))
     c = PtwCracker()
@@ -85,6 +90,7 @@ def test_ptw_recovers_104bit_key():
     assert c.recover() == key
 
 
+@pytest.mark.slow
 def test_cracker_picklable_and_recovers_after_roundtrip():
     """The campaign runs recover() in a ProcessPoolExecutor, which pickles the
     cracker to the worker. Prove that round-trip preserves recovery."""
@@ -97,6 +103,7 @@ def test_cracker_picklable_and_recovers_after_roundtrip():
     assert c2.recover() == key
 
 
+@pytest.mark.slow
 def test_ptw_tolerates_one_odd_packet_in_verify():
     """A single bad verify sample (e.g. an ARP-sized broadcast that wasn't
     actually an ARP → wrong 'known plaintext') must not reject the correct
@@ -110,6 +117,7 @@ def test_ptw_tolerates_one_odd_packet_in_verify():
     assert c.recover() == key
 
 
+@pytest.mark.slow
 def test_ptw_no_false_key_with_few_samples():
     key = os.urandom(5)
     c = PtwCracker()

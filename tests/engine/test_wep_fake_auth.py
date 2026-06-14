@@ -2,6 +2,8 @@
 import asyncio
 import struct
 
+import pytest
+
 from wifit3.engine.models import AccessPoint
 from wifit3.engine.attacks.wep.fake_auth import WepFakeAuth
 
@@ -152,6 +154,7 @@ async def test_ensure_associated_fast_path_when_already_associated(mocker):
     assert fa.stats.auth_attempts == 0          # no auth round needed
 
 
+@pytest.mark.slow
 async def test_ensure_associated_retries_3x_then_fails_once(mocker):
     fa = _fa_live(mocker)
     logs: list[str] = []

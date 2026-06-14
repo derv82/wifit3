@@ -7,7 +7,9 @@ Uses MockTransport from test_mac_init. Verifies:
 """
 from __future__ import annotations
 
-from wifit3.chips.rtl8821au.assets import agc_tbl, bb_tbl, mac_tbl, rf_a_tbl
+import pytest
+
+from wifit3.chips.rtl8821au import phy
 from wifit3.chips.rtl8821au.constants import (
     BASIC_RATES_2G,
     BIT_RF_EN,
@@ -26,7 +28,6 @@ from wifit3.chips.rtl8821au.phy import (
     load_mac_table,
     load_rf_a_table,
     phy_bb_config,
-    phy_rf_config,
     post_mac_init_phy,
     switch_band_2g_20mhz,
 )
@@ -35,6 +36,12 @@ from tests.chips.rtl8821au.test_mac_init import MockTransport
 
 
 EFUSE = EfuseDefaults()
+
+
+@pytest.fixture(autouse=True)
+def _stub_sleep(monkeypatch):
+    """Zero the table walkers' hardware-settle delays — MockTransport has nothing to settle."""
+    monkeypatch.setattr(phy.time, "sleep", lambda *_a, **_kw: None)
 
 
 def test_basic_rates_value():

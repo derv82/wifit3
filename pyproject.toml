@@ -47,4 +47,9 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "--import-mode=importlib"
+# `-m 'not slow'` deselects the @pytest.mark.slow tests on every run.
+# Opt in with `uv run pytest -m slow`; run everything with `uv run pytest -m 'slow or not slow'`.
+addopts = "--import-mode=importlib -m 'not slow'"
+markers = [
+    "slow: heavyweight end-to-end WEP crypto proof; deselected by default (see addopts).",
+]

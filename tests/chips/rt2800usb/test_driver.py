@@ -528,6 +528,7 @@ def test_init_rfcsr_3572_lays_down_kernel_table(monkeypatch):
     """Spot-check the RT3572 RFCSR init table [SRC rt2800lib.c:7907-7937]."""
     import wifit3.chips.rt2800usb.rfcsr as rfm
     monkeypatch.setattr(rfm.time, "sleep", lambda *_a, **_kw: None)
+    monkeypatch.setattr(rfm, "_RX_FILTER_SETTLE_S", 0)   # skip the RX-filter-cal busy-wait
 
     from wifit3.chips.rt2800usb.constants import RT_RT3572
     from wifit3.chips.rt2800usb.rfcsr import init_rfcsr, rfcsr_read
@@ -558,6 +559,7 @@ def test_init_rfcsr_3572_sets_rfcsr6_r2_bit(monkeypatch):
     of 0x4A. 0x4A already has bit 6 set, so the visible result is 0x4A."""
     import wifit3.chips.rt2800usb.rfcsr as rfm
     monkeypatch.setattr(rfm.time, "sleep", lambda *_a, **_kw: None)
+    monkeypatch.setattr(rfm, "_RX_FILTER_SETTLE_S", 0)   # skip the RX-filter-cal busy-wait
 
     from wifit3.chips.rt2800usb.constants import RT_RT3572
     from wifit3.chips.rt2800usb.rfcsr import init_rfcsr, rfcsr_read
@@ -573,6 +575,7 @@ def test_init_rfcsr_3572_clears_rfcsr17_tx_lo1_en(monkeypatch):
     the table writes RFCSR17=0x23. Expected after-state: 0x23 & ~0x08 = 0x23."""
     import wifit3.chips.rt2800usb.rfcsr as rfm
     monkeypatch.setattr(rfm.time, "sleep", lambda *_a, **_kw: None)
+    monkeypatch.setattr(rfm, "_RX_FILTER_SETTLE_S", 0)   # skip the RX-filter-cal busy-wait
 
     from wifit3.chips.rt2800usb.constants import RT_RT3572
     from wifit3.chips.rt2800usb.rfcsr import init_rfcsr, rfcsr_read
