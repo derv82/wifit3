@@ -18,6 +18,10 @@ FocusView.compose), not painted here — so it reads as the same bar as the
 SECURITY / CAPTURE panels.
 """
 
+# TODO: Textual 0.27+ has Sparklines built in! And they are prettier
+# https://textual.textualize.io/widgets/sparkline/
+# from textual.widgets import Sparkline
+
 from collections import deque
 from typing import Dict, Iterator, Optional
 

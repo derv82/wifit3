@@ -264,9 +264,7 @@ on the AirLink router). Remaining gaps:
   beacon `wps_locked` IE, splits hard vs soft locks, and learns a *measured*
   backoff biased to the AP's real observed lock duration. The gap: a permanently
   locked AP still loops lock→wait→retry forever. Add "locked across N
-  learned-backoff cycles with zero progress → stop and tell the user to
-  reboot/toggle WPS" (the warm-reattach "please replug" honesty pattern) instead
-  of spinning silently.
+  learned-backoff cycles with zero progress → stop and tell the user it's perma-locked.
 - **Focus WPS panel** (passive-by-default behind a button).
 - **PixieWPS** — already designed in detail in `engine/attacks/wps/README.md`
   (native, all 5 modes, no external `pixiewps` binary). Deferred on
