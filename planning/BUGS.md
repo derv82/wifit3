@@ -99,9 +99,7 @@ silently).
 
 ## rt2800usb EFUSE reader reads wrong addresses → bad freq/chain/LNA/RSSI on 3 cards
 
-TODO: was this fixed?
-
-**High impact, affects RT5372 / RT5572 / RT3572 today.** `chips/rt2800usb/eeprom.py`
+**High impact, affects RT5572 / RT3572 today.** `chips/rt2800usb/eeprom.py`
 `read_eeprom_efuse` walks the EFUSE with a **byte** offset (`range(0, 512, 16)`, writing
 `EFUSE_CTRL_ADDRESS_IN = byte_offset`), but the chip wants a **u16-word** offset — kernel
 `rt2800lib.c:10955` does `for i ... i += 8` (word units) and the field is
@@ -119,7 +117,7 @@ single-cursor full-walk gate catches it on the **2nd** EFUSE block.
 
 Fix: `ADDRESS_IN = byte_offset // 2` (or loop in word units). **It's its own task** — the fix
 shifts every EFUSE-derived value family-wide, so it needs a full-walk `verify_pcap` for the
-EFUSE loop **plus an RX A/B re-verify on all three physical cards** (RT5372/RT5572/RT3572)
+EFUSE loop **plus an RX A/B re-verify on all two physical cards** (RT5572/RT3572)
 before/after. Deliberately left unpatched until then. The RT3070 clean-room port
 (`chips/rt3070/`) ships its own correct (word-offset) reader and is unaffected. Cross-refs:
 `chips/rt2800usb/RT2800USB.md` § Potential Known Gaps; `chips/rt3070/RT3070.md`. Greppable:
@@ -156,29 +154,5 @@ treatment: (1) confirm `iw` accepted it in the capture (`return 0`), (2) byte-ve
 driver's `set_channel` reproduces the capture's DFS tunes, (3) then extend
 `SUPPORTED_CHANNELS`. The DFS infra is already in place and stays: `wlan/channels.is_dfs`
 (52–144), the scanner's non-DFS default hop, and the Channel-Filter `[d]fs` opt-in.
-
-## Driver bring-up divergences from the vendor wire (pcap replay-diff findings)
-
-TODO: was this fixed?
-
-Surfaced by the per-driver pcap byte-diff verifier (`scripts/verify_pcap.py <chip>`, which
-replays a port's bring-up against the vendor cold-boot capture). Each is a faithfulness gap
-— the port emits a USB sequence the in-tree driver does not — found while bringing the
-Ralink + legacy-Realtek families onto the verifier. None is known to break RX/TX, but each
-is an un-audited deviation worth closing.
-
-* **rt2800usb: `load_firmware` writes `AUTOWAKEUP_CFG` on USB; the kernel doesn't.** Our
-  `chips/rt2800usb/firmware.py` `load_firmware` opens with `write32(AUTOWAKEUP_CFG, 0)`, but
-  the RT5592 USB cold-boot capture never issues it. In `rt2800lib.c` that write sits inside
-  an `is_pci || is_soc` guard — PCI/SoC only — so the USB path should skip it. The 4096-byte
-  rt2870.bin upload itself is byte-perfect (verified); only this preamble write diverges.
-  Fix: gate the `AUTOWAKEUP_CFG` write out of the USB loader. Greppable: `AUTOWAKEUP_CFG`.
-  **Counter-claim (2026-06-10, kernel re-read):** the "PCI/SoC-only guard" half is falsified —
-  `rt2800lib.c:731` writes `AUTOWAKEUP_CFG` **unconditionally**, *above* the `is_pci` block
-  (which guards only `AUX_CTRL`/`PWR_PIN_CFG`, :739-750), so our write looks kernel-faithful and
-  the proposed gate would be a *regression*. The wire-omission half is still unreconciled —
-  but it's unverified too: this driver's verifier is anchored-block and never walks the
-  `load_firmware` preamble, so nothing has actually checked whether the op is on this wire.
-  **Do not apply the gate**; a single-cursor full-walk (rt3070-style) is what adjudicates it.
 
 ---
