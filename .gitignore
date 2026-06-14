@@ -33,3 +33,5 @@ wifit3*.pcap
 
 # If it starts with a dot, committed it gets not
 .*
+# ...except the GitHub Actions workflows, which must be tracked (the .* rule hides .github).
+!.github/

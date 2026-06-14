@@ -1,0 +1,96 @@
+# Build the distributable wifit3 binaries and publish them as a GitHub Release.
+#
+# How a binary becomes a downloadable release asset (the two-stage pipeline):
+#   1. `build` runs once per OS (a matrix), each runner produces its onefile binary with
+#      PyInstaller and UPLOADS it as a workflow artifact (actions/upload-artifact).
+#   2. `release` waits for all builds, DOWNLOADS every artifact, and attaches them to a
+#      GitHub Release for the pushed tag (softprops/action-gh-release).
+#
+# PyInstaller does not cross-compile, hence one job per target OS. macOS is intentionally
+# excluded — its GitHub-hosted runners bill ~10x private-repo minutes (Windows is 2x,
+# Linux 1x). See wifit3.spec.
+#
+# Trigger: push a version tag, e.g.  git tag v0.1.0 && git push origin v0.1.0
+# Dry run: the "Run workflow" button (workflow_dispatch) builds + uploads artifacts you can
+# download from the run, but SKIPS publishing a Release (no tag -> the release job is gated off).
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# Don't cancel a release build that's already publishing; just queue per ref.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false  # one OS failing shouldn't sink the other's binary
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: wifit3-windows-x64.exe
+            build_path: dist/wifit3.exe
+          - os: ubuntu-22.04          # build on older glibc so the binary runs on more distros
+            artifact_name: wifit3-linux-x64
+            build_path: dist/wifit3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync env (runtime + dev deps, incl. PyInstaller)
+        run: uv sync --group dev
+
+      - name: Build onefile binary
+        run: uv run pyinstaller wifit3.spec --noconfirm --clean
+
+      # PyInstaller emits dist/wifit3.exe (Windows) or dist/wifit3 (Linux); stage it under a
+      # per-OS name. bash runs on both runners (Git Bash on Windows), so one step covers both.
+      - name: Stage artifact
+        shell: bash
+        run: |
+          mkdir -p out
+          cp "${{ matrix.build_path }}" "out/${{ matrix.artifact_name }}"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: out/${{ matrix.artifact_name }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    # Only publish for an actual tag push; a manual workflow_dispatch just leaves the
+    # artifacts attached to the run for download.
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # required to create the Release and upload assets
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true  # flatten every artifact into ./artifacts
+
+      - name: Publish release with binaries
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**
+          generate_release_notes: true   # auto-changelog from commits/PRs since the last tag
+          fail_on_unmatched_files: true
