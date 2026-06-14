@@ -1,0 +1,52 @@
+# Fast pre-merge checks: lint, the mocked unit-test suite, and an import smoke. Runs on every
+# pull request, plus pushes to master (the repo commits directly to master, so PR-only CI would
+# never see those). All ubuntu-latest = 1x minutes; no hardware needed (USB is fully mocked).
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+# A newer push/PR-update supersedes an in-flight run on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Lint + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync env (runtime + dev deps)
+        run: uv sync --group dev
+
+      # Lint only — NEVER `ruff format` (this tree is hand-formatted ~99-col; the formatter is a
+      # deliberate no-op repo-wide). See pyproject.toml / CLAUDE.md.
+      - name: Lint (ruff check)
+        run: uv run ruff check src/ tests/
+
+      # USB is fully mocked; pyproject addopts deselects @pytest.mark.slow by default.
+      - name: Unit tests
+        run: uv run pytest
+
+      # Catches a syntax/import error in any module the test suite doesn't reach — importing the
+      # UI pulls the Textual path, and _import_driver_classes() imports every chips/*/driver.py.
+      - name: Import smoke (UI + every driver registers)
+        run: |
+          uv run python - <<'PY'
+          from wifit3.ui.app import WifiteApp  # noqa: F401  -- UI + textual import path
+          from wifit3.wlan.manager import _import_driver_classes
+          n = len(_import_driver_classes())
+          print(f"{n} drivers import cleanly")
+          assert n >= 10, f"driver registry looks broken: {n}"
+          PY
