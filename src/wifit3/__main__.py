@@ -11,4 +11,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # Frozen (PyInstaller) builds use the `spawn` start method, so each
+    # ProcessPoolExecutor worker (the WEP cracker) re-execs this exe. freeze_support()
+    # makes that re-exec run the worker bootstrap and exit, instead of launching a
+    # second TUI. It is a no-op for normal `python -m wifit3` / console-script runs.
+    import multiprocessing
+
+    multiprocessing.freeze_support()
     main()
