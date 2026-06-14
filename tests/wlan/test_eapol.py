@@ -183,6 +183,58 @@ def test_parser_rejects_truncated_kde():
     assert "eapol_pmkid" not in parsed
 
 
+# ---- M2 client-AKM extraction ---------------------------------------------------
+
+def _rsn_keydata(akm_suite: int) -> bytes:
+    """A minimal RSN IE (tag 48 + header) as the supplicant ships it in M2's
+    cleartext Key Data: CCMP group + pairwise, one AKM suite."""
+    body = (
+        b"\x01\x00"                              # Version = 1
+        + b"\x00\x0f\xac\x04"                    # Group cipher = CCMP
+        + b"\x01\x00" + b"\x00\x0f\xac\x04"      # 1 pairwise = CCMP
+        + b"\x01\x00" + b"\x00\x0f\xac" + bytes([akm_suite])   # 1 AKM
+        + b"\x00\x00"                            # RSN capabilities
+    )
+    return bytes([48, len(body)]) + body
+
+
+def _m2(key_data: bytes) -> bytes:
+    return _build_eapol_frame(
+        bssid_bytes=bytes.fromhex("AABBCCDDEEFF"),
+        client_bytes=bytes.fromhex("112233445566"),
+        key_info=0x0100 | 0x0008,   # M2: MIC, !ACK, !INSTALL, key data present
+        replay_counter=b"\x00" * 7 + b"\x01",
+        nonce=bytes(range(32)),
+        mic=bytes(range(16)),
+        key_data=key_data,
+    )
+
+
+def test_parser_extracts_sae_client_akm_from_m2():
+    parsed = WlanFrameParser.parse_80211_frame(_m2(_rsn_keydata(0x08)), -42)
+    assert parsed["eapol_msg_num"] == 2
+    assert parsed["eapol_akm"] == 0x08          # SAE — the useless case
+
+
+def test_parser_extracts_psk_client_akm_from_m2():
+    parsed = WlanFrameParser.parse_80211_frame(_m2(_rsn_keydata(0x02)), -42)
+    assert parsed["eapol_akm"] == 0x02          # PSK — crackable
+
+
+def test_parser_no_client_akm_on_m1():
+    """The AKM rides M2's RSN IE; M1 carries (at most) a PMKID KDE, no RSN IE."""
+    frame = _build_eapol_frame(
+        bssid_bytes=bytes.fromhex("AABBCCDDEEFF"),
+        client_bytes=bytes.fromhex("112233445566"),
+        key_info=0x0080 | 0x0008,               # M1
+        replay_counter=b"\x00" * 7 + b"\x01",
+        key_data=_pmkid_kde(bytes(range(16))),
+    )
+    parsed = WlanFrameParser.parse_80211_frame(frame, -42)
+    assert parsed["eapol_msg_num"] == 1
+    assert "eapol_akm" not in parsed
+
+
 # ---- Handshake pair-detection tests --------------------------------------------
 
 def _ef(msg_num, replay_int, raw=None, *, ts=0.0, nonce=None, mic=True, complete=True):

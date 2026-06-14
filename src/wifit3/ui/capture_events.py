@@ -62,6 +62,12 @@ class CaptureEvent:
     # data). True/False for an M1 frame, None for every other message — so the
     # renderer ticks PMKID on M1 and omits the field elsewhere.
     has_pmkid: Optional[bool] = None
+    # AKM crackability of the association this frame belongs to (engine.wpa.akm_verdict)
+    #  - True = passphrase-crackable,
+    #  - False = SAE/EAP/OWE (useless),
+    #  - None = not yet known (transition AP, pre-M2).
+    # The renderer flags False frames "SAE ONLY" to avoid misleading the user.
+    crackable: Optional[bool] = None
     # handshake_complete-only
     pair_label: Optional[str] = None
     # decloak-only: "probe_resp" | "assoc_req" (future: "mbssid_ie", "beacon_leak")
@@ -149,6 +155,8 @@ class CaptureEventDetector:
                 seen_n = self._seen_eapol_count.get(key, 0)
                 frames = hs.eapol_frames
                 if len(frames) > seen_n:
+                    verdict = wpa.akm_verdict(hs)
+                    crackable = None if verdict == "unknown" else verdict == "crackable"
                     for f in frames[seen_n:]:
                         info = wpa.describe(f)
                         yield CaptureEvent(
@@ -166,6 +174,7 @@ class CaptureEventDetector:
                             # ingest call that appended this frame, so it's known
                             # by the time we surface an M1. Tie it to M1 only.
                             has_pmkid=bool(hs.pmkid) if f.msg_num == 1 else None,
+                            crackable=crackable,
                         )
                     self._seen_eapol_count[key] = len(frames)
 
@@ -185,7 +194,11 @@ class CaptureEventDetector:
                     pair_label=f"M{pair[0].msg_num}+M{pair[1].msg_num}",
                 )
 
-            if hs.pmkid and key not in self._pmkid:
+            # A PMKID carries no AKM of its own, so a SAE-derived one is suppressed
+            # the same way the handshake banner is (is_crackable_akm). Only mark it
+            # seen once we actually emit, so a later M2 that confirms PSK on a
+            # transition AP can still surface it.
+            if hs.pmkid and key not in self._pmkid and wpa.is_crackable_akm(hs):
                 self._pmkid.add(key)
                 yield CaptureEvent(
                     kind=CaptureKind.PMKID,

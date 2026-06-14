@@ -46,6 +46,63 @@ def test_handshake_complete_refires_per_instance():
     assert sum(e.kind == "handshake_complete" for e in det.poll(ap)) == 1
 
 
+def _hs_with(ap, *, offered, client=None, pmkid=None):
+    hs = Handshake(bssid=ap.bssid, client_mac="11:22:33:44:55:66", beacon_frame=b"B")
+    hs.akm_offered = list(offered)
+    hs.akm_client = client
+    hs.pmkid = pmkid
+    ap.handshakes[hs.client_mac] = hs
+    return hs
+
+
+def test_sae_handshake_emits_flagged_eapol_but_no_completion():
+    """SAE 4-way: the per-frame trace still fires (so the user sees their phone
+    connect), flagged uncrackable — but no completion banner, since it's useless."""
+    det = CaptureEventDetector(granular_eapol=True)
+    ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="X")
+    hs = _hs_with(ap, offered=[8])               # SAE-only AP
+    hs.eapol_frames += [_ef(1, 5, b"\xaa" * 32, 100.0), _ef(2, 5, b"\x11" * 32, 100.1)]
+    events = list(det.poll(ap))
+
+    assert not any(e.kind == CaptureKind.HANDSHAKE for e in events)
+    eapols = [e for e in events if e.kind == CaptureKind.EAPOL]
+    assert len(eapols) == 2
+    assert all(e.crackable is False for e in eapols)
+
+
+def test_wpa2_handshake_eapol_flagged_crackable():
+    det = CaptureEventDetector(granular_eapol=True)
+    ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="X")
+    hs = _hs_with(ap, offered=[2])               # WPA2-PSK
+    hs.eapol_frames += [_ef(1, 5, b"\xaa" * 32, 100.0), _ef(2, 5, b"\x11" * 32, 100.1)]
+    events = list(det.poll(ap))
+    assert sum(e.kind == CaptureKind.HANDSHAKE for e in events) == 1
+    assert all(e.crackable is True for e in events if e.kind == CaptureKind.EAPOL)
+
+
+def test_sae_pmkid_suppressed_wpa2_pmkid_emitted():
+    det = CaptureEventDetector(granular_eapol=False)
+    sae_ap = AccessPoint(bssid="aa:bb:cc:dd:ee:f1", ssid="X")
+    _hs_with(sae_ap, offered=[8], pmkid=b"\x01" * 16)
+    assert not any(e.kind == CaptureKind.PMKID for e in det.poll(sae_ap))
+
+    wpa2_ap = AccessPoint(bssid="aa:bb:cc:dd:ee:f2", ssid="Y")
+    _hs_with(wpa2_ap, offered=[2], pmkid=b"\x02" * 16)
+    assert sum(e.kind == CaptureKind.PMKID for e in det.poll(wpa2_ap)) == 1
+
+
+def test_transition_pmkid_withheld_until_m2_confirms_psk():
+    """A transition-AP PMKID is withheld while the client AKM is unknown, then
+    surfaces once an M2 confirms PSK — proving we don't burn the dedup slot on a
+    suppressed capture."""
+    det = CaptureEventDetector(granular_eapol=False)
+    ap = AccessPoint(bssid="aa:bb:cc:dd:ee:f3", ssid="X")
+    hs = _hs_with(ap, offered=[2, 8], pmkid=b"\x03" * 16)   # transition, client unknown
+    assert not any(e.kind == CaptureKind.PMKID for e in det.poll(ap))
+    hs.akm_client = 2                                       # M2 says PSK
+    assert sum(e.kind == CaptureKind.PMKID for e in det.poll(ap)) == 1
+
+
 def _ap(bssid: str = "aa:bb:cc:dd:ee:ff", ssid=None, method=None) -> AccessPoint:
     return AccessPoint(bssid=bssid, ssid=ssid, decloak_method=method)
 

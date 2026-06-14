@@ -132,6 +132,7 @@ class WlanInterface:
             channel = parsed.get("channel", self.current_channel)
             enc = parsed.get("encryption", "OPEN")
             akms = parsed.get("akms", []) or []
+            akm_suites = parsed.get("akm_suites", []) or []
             pairwise_cipher = parsed.get("pairwise_cipher")
             wpa3 = parsed.get("wpa3", False)
             transition_mode = parsed.get("transition_mode", False)
@@ -152,6 +153,7 @@ class WlanInterface:
                     signal=rssi,
                     encryption=enc,
                     akms=list(akms),
+                    akm_suites=list(akm_suites),
                     pairwise_cipher=pairwise_cipher,
                     beacons=1 if frame_type == "beacon" else 0,
                     wpa3=wpa3,
@@ -195,6 +197,7 @@ class WlanInterface:
                 if _enc_rank(enc) >= _enc_rank(ap.encryption):
                     ap.encryption = enc
                     ap.akms = list(akms)
+                    ap.akm_suites = list(akm_suites)
                     ap.pairwise_cipher = pairwise_cipher
                     ap.wpa3 = wpa3
                     ap.transition_mode = transition_mode
@@ -286,8 +289,13 @@ class WlanInterface:
                         bssid=bssid,
                         client_mac=client_mac,
                         beacon_frame=ap.last_beacon_frame,
+                        akm_offered=list(ap.akm_suites),
                     )
                     ap.handshakes[client_mac] = hs
+                elif ap.akm_suites:
+                    # Refresh in case the handshake was created before the AP's
+                    # RSN IE was known (EAPOL can precede the first beacon).
+                    hs.akm_offered = list(ap.akm_suites)
 
                 # Forged MACs keep a Handshake (for PMKID) but skip the EAPOL list — those
                 # are just AP retries of M1 we never answer, and would show a false "Partial".
@@ -310,6 +318,13 @@ class WlanInterface:
                         f"(replay {eapol.replay_hex})"
                     )
 
+                # Client's negotiated AKM, read from M2's cleartext RSN IE. This is
+                # the authoritative per-association crackability signal (SAE vs PSK)
+                # on a WPA2/WPA3 transition AP. Latest M2 wins.
+                akm = parsed.get("eapol_akm")
+                if akm is not None:
+                    hs.akm_client = akm
+
                 # Passive PMKID capture: AP's M1 sometimes carries a PMKID KDE. First wins.
                 pmkid = parsed.get("eapol_pmkid")
                 if pmkid and not hs.pmkid:
@@ -328,6 +343,8 @@ class WlanInterface:
                 for hs in ap.handshakes.values():
                     if not hs.beacon_frame:
                         hs.beacon_frame = raw_beacon
+                    if ap.akm_suites and not hs.akm_offered:
+                        hs.akm_offered = list(ap.akm_suites)
 
     SIBLING_BIT_DIFF_MAX = 4
 

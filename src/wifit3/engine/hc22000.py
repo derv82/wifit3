@@ -20,8 +20,13 @@ from wifit3.engine.wpa.handshake import mac_compact, ssid_hex
 
 
 def pmkid_hashline(ssid: str, hs: Handshake) -> Optional[str]:
-    """Return a ``WPA*01*…`` line for the PMKID, or None if not available."""
+    """Return a ``WPA*01*…`` line for the PMKID, or None if not available or not
+    crackable. A PMKID carries no AKM of its own, so a SAE-derived one looks
+    identical on the wire — ``is_crackable_akm`` gates it off the association's
+    AKM (the AP's offered set + relevant M2 client suite); see engine.wpa.handshake."""
     if not ssid or not hs.pmkid or len(hs.pmkid) != 16:
+        return None
+    if not wpa.is_crackable_akm(hs):
         return None
     return (
         "WPA*01"

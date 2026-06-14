@@ -69,6 +69,56 @@ _NC_MAX = 8
 # message_pair bit 7 — tells hashcat nonce-error-correction is needed/allowed.
 _NC_BIT = 0x80
 
+# ----- AKM crackability (00-0F-AC suite numbers) -----------------------------
+# A captured 4-way / PMKID is only worth a passphrase attack if the PMK it
+# protects is PSK-derived (PBKDF2). SAE derives its PMK from the live,
+# password-authenticated Commit/Confirm exchange — the EAPOL that follows is a
+# normal 4-way, but the PMK is ephemeral, so the capture is uncrackable offline.
+# EAP (no passphrase) and OWE (no password) are likewise out. There is no
+# hashcat passphrase mode for any of them, so we must not emit them as captures.
+_PSK_AKMS = frozenset({2, 6, 20})        # PSK / PSK-SHA256 / PSK-SHA384 — plain PBKDF2
+_FT_PSK_AKMS = frozenset({4, 19})        # FT-PSK / FT-PSK-SHA384 — PSK-derived, FT hierarchy
+_CRACKABLE_AKMS = _PSK_AKMS | _FT_PSK_AKMS
+_SAE_AKMS = frozenset({8, 9, 24, 25})    # SAE / FT-SAE / SAE-EXT-KEY / FT-SAE-EXT-KEY
+
+
+def akm_verdict(hs: Handshake) -> str:
+    """Crackability of this capture from its negotiated AKM — one of
+    ``"crackable"`` / ``"uncrackable"`` / ``"unknown"``.
+
+    Two inputs, both stamped by the interface: 
+      1. ``akm_offered`` (the AP's RSN-IE AKM list, from beacons),
+      2. ``akm_client`` (the suite the client actually chose, read from the cleartext RSN IE in EAPOL M2).
+         The client's choice is authoritative; the offered list is the fallback.
+
+    SAE gates nothing unless the AP actually offers it — a WPA2/WPA/WEP AP keeps
+    its existing purely-structural verdict, so this only ever *removes* SAE
+    false-positives, never WPA2 captures:
+
+        no SAE offered                     -> "crackable"   (legacy behavior, untouched)
+        client chose a PSK-family suite    -> "crackable"
+        client chose SAE/EAP/OWE/…         -> "uncrackable"
+        SAE offered, client suite unknown:
+            transition (PSK also offered)  -> "unknown"     (can't confirm which side)
+            SAE-only                       -> "uncrackable"
+    """
+    offered = set(hs.akm_offered)
+    if not (offered & _SAE_AKMS):
+        return "crackable"            # no SAE in play → don't second-guess the structure
+    if hs.akm_client is not None:
+        return "crackable" if hs.akm_client in _CRACKABLE_AKMS else "uncrackable"
+    if offered & _CRACKABLE_AKMS:
+        return "unknown"              # transition AP, client's chosen suite not yet seen
+    return "uncrackable"              # SAE-only AP — no PSK association is possible
+
+
+def is_crackable_akm(hs: Handshake) -> bool:
+    """True only when the AKM is *confirmed* passphrase-crackable. An
+    unconfirmed transition-mode capture (``"unknown"``) counts as NOT crackable:
+    we emit/save on positive confirmation only, mirroring hcxpcapngtool's refusal
+    to write a hash it can't stand behind."""
+    return akm_verdict(hs) == "crackable"
+
 
 @dataclass(frozen=True)
 class MessageInfo:
@@ -159,7 +209,14 @@ def crackable_pairs(hs: Handshake) -> List[CrackablePair]:
 
     Ordering keys on arrival order, not wall-clock time, so the verdict is
     identical live and from a round-tripped pcap; the time window is only a coarse
-    backstop when timestamps are present (``_within_window``)."""
+    backstop when timestamps are present (``_within_window``).
+
+    Gated on the AKM: a SAE/EAP/OWE association still runs a structurally perfect
+    4-way, but its PMK isn't passphrase-derived, so there is nothing to crack —
+    ``is_crackable_akm`` returns False and we emit no pairs (and thus no banner,
+    save, or hashline)."""
+    if not is_crackable_akm(hs):
+        return []
     pos = {id(f): i for i, f in enumerate(hs.eapol_frames)}
     by_msg: dict[int, List[EapolFrame]] = {1: [], 2: [], 3: [], 4: []}
     for f in hs.eapol_frames:

@@ -218,6 +218,26 @@ def test_wpa2_enterprise_eap():
     assert parsed["akms"] == ["EAP"]
 
 
+def test_akm_suites_propagate_as_numbers():
+    """The numeric AKM suites drive crackability gating, parallel to the names."""
+    rsn = _rsn_ie(akms=(0x02, 0x08))
+    parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
+    assert parsed["akm_suites"] == [0x02, 0x08]
+    assert parsed["akms"] == ["PSK", "SAE"]
+
+
+def test_wpa3_sae_ext_key_h2e_flags_as_wpa3():
+    """WPA3-H2E uses SAE-EXT-KEY (00-0F-AC:24), not plain SAE(8). The wpa3 flag
+    must still trip — it's keyed on the SAE *family*, not just suite 8."""
+    rsn = _rsn_ie(akms=(0x18,), rsn_caps=0x00C0)   # SAE-EXT-KEY, MFPC+MFPR
+    parsed = WlanFrameParser.parse_80211_frame(_build_beacon(rsn_ie=rsn), -50)
+    assert parsed["akm_suites"] == [0x18]
+    assert parsed["akms"] == ["SAE-EXT-KEY"]
+    assert parsed["wpa3"] is True
+    assert parsed["transition_mode"] is False
+    assert parsed["encryption"] == "WPA3-SAE-CCMP"   # label agrees with the flag
+
+
 def test_wpa2_psk_tkip_legacy_cipher():
     """Some old routers still advertise TKIP for pairwise."""
     rsn = _rsn_ie(pairwise_ciphers=(0x02,), akms=(0x02,))

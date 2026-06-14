@@ -154,6 +154,68 @@ def test_describe_flags():
     assert m1.has_nonce and not m1.has_mic and m1.useful   # M1 needs no MIC
 
 
+# ----- AKM crackability gating (SAE/WPA3) -----------------------------------
+
+def _m1m2(*, offered, client=None):
+    """A structurally perfect M1+M2 (always a crackable pair if the AKM allows),
+    tagged with the AP's offered AKM suites and the client's chosen one."""
+    hs = _hs(_frame(1, 5, nonce=ANONCE, mic=False), _frame(2, 5, nonce=SNONCE))
+    hs.akm_offered = list(offered)
+    hs.akm_client = client
+    return hs
+
+
+def test_sae_only_ap_suppresses_handshake():
+    """The user's Beryl AX: beacon offers SAE only → every 4-way is uncrackable,
+    so no pair is emitted (and thus no banner / save / hashline)."""
+    hs = _m1m2(offered=[8])
+    assert wpa.akm_verdict(hs) == "uncrackable"
+    assert not wpa.is_crackable_akm(hs)
+    assert wpa.crackable_pairs(hs) == []
+
+
+def test_sae_ext_key_only_ap_suppresses_handshake():
+    """WPA3-H2E uses SAE-EXT-KEY (24), still SAE-family → uncrackable."""
+    assert wpa.crackable_pairs(_m1m2(offered=[24])) == []
+
+
+def test_transition_ap_psk_client_is_crackable():
+    """Transition AP, but THIS client negotiated PSK (M2 RSN IE) → crackable."""
+    hs = _m1m2(offered=[2, 8], client=2)
+    assert wpa.akm_verdict(hs) == "crackable"
+    assert len(wpa.crackable_pairs(hs)) == 1
+
+
+def test_transition_ap_sae_client_suppressed():
+    """Same transition AP, but this client chose SAE → uncrackable."""
+    hs = _m1m2(offered=[2, 8], client=8)
+    assert wpa.akm_verdict(hs) == "uncrackable"
+    assert wpa.crackable_pairs(hs) == []
+
+
+def test_transition_ap_unknown_client_not_emitted():
+    """Transition AP with no M2 AKM yet: we can't confirm which side this
+    association used, so we judiciously withhold it (never emit on a guess)."""
+    hs = _m1m2(offered=[2, 8], client=None)
+    assert wpa.akm_verdict(hs) == "unknown"
+    assert wpa.crackable_pairs(hs) == []
+
+
+def test_ft_psk_client_is_crackable():
+    """FT-PSK (4) is PSK-derived → crackable (the 'complex path', still emitted)."""
+    assert len(wpa.crackable_pairs(_m1m2(offered=[4, 8], client=4))) == 1
+
+
+def test_no_sae_offered_is_unchanged():
+    """WPA2-only AP (no SAE in the offered set): behaves exactly as before — the
+    AKM gate only ever removes SAE false-positives, never WPA2 captures."""
+    hs = _m1m2(offered=[2])
+    assert wpa.akm_verdict(hs) == "crackable"
+    assert len(wpa.crackable_pairs(hs)) == 1
+    # And with no AKM info at all (fixtures / pre-AKM captures): still crackable.
+    assert len(wpa.crackable_pairs(_m1m2(offered=[]))) == 1
+
+
 def test_hc22000_line_shape():
     hs = _hs(_frame(1, 5, nonce=ANONCE, mic=False), _frame(2, 5, nonce=SNONCE))
     line = wpa.hc22000_line("TestNet", hs, wpa.crackable_pairs(hs)[0])

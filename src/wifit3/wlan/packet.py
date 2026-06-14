@@ -113,6 +113,7 @@ class WlanFrameParser:
                 result["pmf_required"] = tags.get("pmf_required", False)
                 result["pairwise_cipher"] = tags.get("pairwise_cipher")
                 result["akms"] = tags.get("akms", [])
+                result["akm_suites"] = tags.get("akm_suites", [])
                 if "rsn_ie_raw" in tags:
                     result["rsn_ie_raw"] = tags["rsn_ie_raw"]
                 for wps_key in (
@@ -231,6 +232,14 @@ class WlanFrameParser:
                                     pmkid = WlanFrameParser._extract_pmkid_kde(key_data)
                                     if pmkid is not None:
                                         result["eapol_pmkid"] = pmkid
+                                    # M2's Key Data carries the supplicant's RSN IE in
+                                    # the clear — M2 has no GTK, so (unlike M3) its Key
+                                    # Data isn't KEK-encrypted. This is the one usable
+                                    # source of the AKM the client actually negotiated.
+                                    if msg_num == 2:
+                                        akm = WlanFrameParser._extract_keydata_akm(key_data)
+                                        if akm is not None:
+                                            result["eapol_akm"] = akm
         else:
             result["type"] = f"ctrl_{subtype}"
 
@@ -304,6 +313,32 @@ class WlanFrameParser:
                     # placeholder. Treat as "no PMKID" — uncrackable anyway.
                     if pmkid != b"\x00" * 16:
                         return pmkid
+            i = value_end
+        return None
+
+    @staticmethod
+    def _extract_keydata_akm(key_data: bytes) -> Optional[int]:
+        """Return the client's negotiated AKM suite number (00-0F-AC:N) from the
+        RSN IE in EAPOL M2's Key Data, or None if there's no parseable RSN IE.
+
+        Key Data is a sequence of elements/KDEs (tag, len, value); the RSN IE is
+        a plain element with tag 48 (0x30). We return its first AKM suite — the
+        single suite the supplicant selected for this association.
+        """
+        i = 0
+        n = len(key_data)
+        while i + 2 <= n:
+            tag = key_data[i]
+            length = key_data[i + 1]
+            value_start = i + 2
+            value_end = value_start + length
+            if value_end > n:
+                return None
+            if tag == 48:  # RSN IE (element id 48)
+                rsn = WlanFrameParser._parse_rsn_ie(key_data[value_start:value_end])
+                if rsn and rsn["akm_suites"]:
+                    return rsn["akm_suites"][0]
+                return None
             i = value_end
         return None
 
@@ -477,6 +512,7 @@ class WlanFrameParser:
         pmf_required = False
         pairwise_cipher: Optional[str] = None
         akms: List[str] = []
+        akm_suites: List[int] = []
         # Channel sources, in preference order:
         #   1. DS Parameter Set (tag 3)  — present on every 2.4 GHz beacon,
         #      OPTIONAL on 5 GHz per 802.11-2020 9.4.2.3 (most APs omit it).
@@ -539,10 +575,15 @@ class WlanFrameParser:
                 if rsn is not None:
                     pairwise_cipher = rsn["pairwise"]
                     akms = rsn["akms"]
+                    akm_suites = rsn["akm_suites"]
                     pmf_capable = rsn["pmf_capable"]
                     pmf_required = rsn["pmf_required"]
-                    has_wpa3 = "SAE" in akms
-                    transition_mode = "SAE" in akms and "PSK" in akms
+                    # SAE-family => WPA3; SAE + a PSK-family suite => transition.
+                    # Suite-number based so WPA3-H2E (SAE-EXT-KEY, 24) is caught.
+                    has_wpa3 = bool(WlanFrameParser._SAE_SUITES.intersection(akm_suites))
+                    transition_mode = has_wpa3 and bool(
+                        WlanFrameParser._PSK_SUITES.intersection(akm_suites)
+                    )
             elif tag_id == 221: # Vendor Specific
                 if tag_len >= 4:
                     oui = tag_data[:3]
@@ -575,6 +616,7 @@ class WlanFrameParser:
         parsed["pmf_required"] = pmf_required
         parsed["pairwise_cipher"] = pairwise_cipher
         parsed["akms"] = akms
+        parsed["akm_suites"] = akm_suites
         parsed["encryption"] = WlanFrameParser._format_encryption_label(
             frame=frame,
             has_rsn=has_rsn,
@@ -609,8 +651,23 @@ class WlanFrameParser:
         0x08: "SAE",      # WPA3
         0x09: "FT-SAE",
         0x0B: "EAP-SUITE-B",
+        0x0C: "EAP-SUITE-B-192",
+        0x0D: "FT-EAP-SHA384",
         0x12: "OWE",      # Enhanced Open
+        0x13: "FT-PSK-SHA384",
+        0x14: "PSK-SHA384",
+        0x18: "SAE-EXT-KEY",      # WPA3 H2E (group-dependent hash)
+        0x19: "FT-SAE-EXT-KEY",
     }
+
+    # AKM suite numbers (00-0F-AC:N) grouped for WPA3 detection: any SAE-family
+    # suite => WPA3; SAE alongside a PSK-family suite => WPA2/WPA3 transition.
+    # Mirrors the crackability split in engine.wpa.handshake (duplicated here to
+    # avoid a wlan->engine import) — keep the two in sync.
+    _SAE_SUITES = frozenset({0x08, 0x09, 0x18, 0x19})
+    _PSK_SUITES = frozenset({0x02, 0x04, 0x06, 0x13, 0x14})
+    # TODO: FT-PSK family (suites 4 & 19) is "crackable" but the FT key hierarchy
+    #       (PMK-R0 → PMK-R1 → PTK) is more involved than plain PSK.
 
     @classmethod
     def _suite_name(cls, suite: bytes, table: Dict[int, str]) -> Optional[str]:
@@ -657,11 +714,18 @@ class WlanFrameParser:
             if p + 4 * akm_count > n:
                 return None
             akms: List[str] = []
+            akm_suites: List[int] = []
             for _ in range(akm_count):
-                name = cls._suite_name(tag_data[p:p+4], cls._AKM_NAMES)
+                suite = tag_data[p:p + 4]
+                p += 4
+                if len(suite) != 4 or suite[:3] != cls._SUITE_OUI:
+                    continue
+                sid = suite[3]
+                if sid not in akm_suites:
+                    akm_suites.append(sid)   # raw 00-0F-AC:N — drives crackability
+                name = cls._AKM_NAMES.get(sid)
                 if name is not None and name not in akms:
                     akms.append(name)
-                p += 4
             pmf_capable = False
             pmf_required = False
             if p + 2 <= n:
@@ -671,6 +735,7 @@ class WlanFrameParser:
             return {
                 "pairwise": pairwise,
                 "akms": akms,
+                "akm_suites": akm_suites,
                 "pmf_capable": pmf_capable,
                 "pmf_required": pmf_required,
             }
@@ -697,7 +762,10 @@ class WlanFrameParser:
             "OPEN" / "WEP"
         """
         if has_rsn:
-            has_sae = "SAE" in akms
+            # Every SAE-family name (SAE, FT-SAE, SAE-EXT-KEY, FT-SAE-EXT-KEY)
+            # contains "SAE", so this also catches WPA3-H2E — matching the
+            # suite-number `wpa3` flag so label and flag never disagree.
+            has_sae = any("SAE" in a for a in akms)
             has_psk = "PSK" in akms or "PSK-SHA256" in akms
             has_eap = any(a.startswith("EAP") or a == "FT-EAP" for a in akms)
             has_owe = "OWE" in akms

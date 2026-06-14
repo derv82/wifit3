@@ -45,6 +45,15 @@ class Handshake(BaseModel):
     # Captured PMKID bytes (16 B from the RSN IE in EAPOL M1).
     pmkid: Optional[bytes] = None
 
+    # Negotiated AKM for THIS association (00-0F-AC:N).
+    # Read from the cleartext RSN IE from the client's EAPOL M2 (Client-level).
+    # None until an M2 is seen. Authoritative over `akm_offered` (AP-level).
+    akm_client: Optional[int] = None
+    # The AP's offered AKM suites (00-0F-AC:N) from its beacon RSN IE.
+    # Stamped by the interface so crackability can be decided without the AP in hand:
+    # SAE-only here means every capture is uncrackable. See engine.wpa.handshake.akm_verdict.
+    akm_offered: List[int] = Field(default_factory=list)
+
     # -- Crack-validity --------------------------------------------------------
     # Delegated to engine.wpa.handshake — the single source of truth shared with
     # the hc22000 / auto-save path, so "captured" and "saveable" can't diverge.
@@ -135,6 +144,10 @@ class AccessPoint(BaseModel):
     # these to render colorized + AKM-dimmed labels; `encryption` (above) is
     # still the airodump-style string for saved captures + logs.
     akms: List[str] = Field(default_factory=list)
+    # AKM suite numbers (00-0F-AC:N) from the RSN IE, parallel to `akms` (the
+    # human-readable names). The numeric form drives crackability gating
+    # (engine.wpa.handshake) and is stamped onto each Handshake as `akm_offered`.
+    akm_suites: List[int] = Field(default_factory=list)
     pairwise_cipher: Optional[str] = Field(default=None)
     beacons: int = Field(default=0)
     first_seen: float = Field(default_factory=lambda: time.time())
