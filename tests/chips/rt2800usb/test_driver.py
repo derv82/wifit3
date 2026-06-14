@@ -18,7 +18,6 @@ from wifit3.chips.rt2800usb.constants import (
     RT_RT5392,
     RT_RT5592,
     USB_PID_RT3572,
-    USB_PID_RT5372,
     USB_PID_RT5572,
     USB_VID_RALINK,
 )
@@ -66,13 +65,13 @@ class FakeTransport:
 RecordingTransport = FakeTransport
 
 
-def test_supported_ids_cover_all_three_variants():
+def test_supported_ids_cover_all_variants():
     pids = {entry.pid for entry in RT2800USBDriver.SUPPORTED_IDS}
-    assert pids == {USB_PID_RT5372, USB_PID_RT3572, USB_PID_RT5572}
+    assert pids == {USB_PID_RT3572, USB_PID_RT5572}
     assert all(entry.vid == USB_VID_RALINK for entry in RT2800USBDriver.SUPPORTED_IDS)
     # chip_id hints are populated for downstream variant dispatch
     hints = {entry.extras["chip_id"] for entry in RT2800USBDriver.SUPPORTED_IDS}
-    assert hints == {"rt5372", "rt3572", "rt5572"}
+    assert hints == {"rt3572", "rt5572"}
 
 
 def test_supported_channels_covers_2g_plus_5g_non_dfs():

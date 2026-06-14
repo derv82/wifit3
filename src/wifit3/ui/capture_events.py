@@ -62,7 +62,7 @@ class CaptureEvent:
     # data). True/False for an M1 frame, None for every other message — so the
     # renderer ticks PMKID on M1 and omits the field elsewhere.
     has_pmkid: Optional[bool] = None
-    # AKM crackability of the association this frame belongs to (engine.wpa.akm_verdict)
+    # AKM crackability of the association this frame belongs to (engine.wpa.eapol_verdict)
     #  - True  = -m 22000-crackable,
     #  - False = uncrackable (SAE / FT-PSK)
     #  - None  = not yet known (transition AP, pre-M2).
@@ -198,7 +198,7 @@ class CaptureEventDetector:
                     pair_label=f"M{pair[0].msg_num}+M{pair[1].msg_num}",
                 )
 
-            if hs.pmkid and key not in self._pmkid and wpa.is_crackable_akm(hs):
+            if hs.pmkid and key not in self._pmkid and wpa.pmkid_crackable(hs):
                 self._pmkid.add(key)
                 yield CaptureEvent(
                     kind=CaptureKind.PMKID,
