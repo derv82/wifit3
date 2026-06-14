@@ -28,7 +28,7 @@ _DEFAULT_WARNING = (
     "[bold $text-warning]Warning:[/] this [italic $text-warning]replaces the "
     "card's current driver[/]\n\n"
     "Windows will stop seeing it as a wireless device.\n\n"
-    "You can uninstall WInUSB using the [bold white on red] x [/] button")
+    "You can uninstall WinUSB using the [bold white on red] x [/] button")
 
 
 class ConfirmInstallDialog(ModalScreen[bool]):
