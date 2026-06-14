@@ -62,6 +62,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=True,
+    icon="packaging/wifit3.ico",
     runtime_tmpdir=None,
 )
 
@@ -78,6 +79,7 @@ exe = EXE(
 #     strip=False,
 #     upx=False,
 #     console=True,
+#     icon="packaging/wifit3.ico",
 # )
 # coll = COLLECT(
 #     exe,
