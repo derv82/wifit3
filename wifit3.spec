@@ -1,8 +1,8 @@
 # PyInstaller build spec for wifit3 — build with: uv run pyinstaller wifit3.spec
 #
 # Produces a single self-contained onefile binary — dist/wifit3.exe on Windows, dist/wifit3 on
-# Linux/macOS (drag-and-drop distributable). PyInstaller does NOT cross-compile: build each
-# target ON that OS (a Linux box/container for the Linux binary, a Mac for the macOS one).
+# Linux (drag-and-drop distributable). PyInstaller does NOT cross-compile: build each target ON
+# that OS (a Linux box/container for the Linux binary). macOS is not a build target.
 # Tradeoff vs onedir: onefile unpacks the ~40 MB bundle into a temp dir on each launch (a
 # slightly slower cold start) and trips AV/SmartScreen more readily. Multiprocessing is
 # unaffected — the WEP cracker's spawned workers reuse the parent's already-extracted dir
@@ -30,7 +30,7 @@ datas = collect_data_files("wifit3")
 if sys.platform != "win32":
     # wdi-simple.exe (and its PROVENANCE) is the Windows WinUSB binder — setup/windows.py only
     # ever invokes it under sys.platform == "win32". Drop the whole vendored setup/bin/ tree
-    # from Linux/macOS bundles rather than ship a dead Windows .exe inside them.
+    # from the Linux bundle rather than ship a dead Windows .exe inside it.
     datas = [(src, dest) for (src, dest) in datas
              if "/setup/bin/" not in src.replace("\\", "/")]
 binaries = []
@@ -61,15 +61,10 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
-# Per-OS app icon: .ico is a Windows resource, a macOS .app wants .icns, and a Linux ELF has no
-# icon slot (PyInstaller ignores icon= there). Use whichever exists for the build host, falling
-# back to None so a build never fails just because that platform's icon file isn't present yet.
-if sys.platform == "win32":
-    _icon = "packaging/wifit3.ico"
-elif sys.platform == "darwin":
-    _icon = "packaging/wifit3.icns"
-else:
-    _icon = None
+# App icon: .ico is a Windows resource; a Linux ELF has no icon slot (PyInstaller ignores icon=
+# there), so the icon is Windows-only. Fall back to None if the file is absent so a build never
+# fails over a missing icon.
+_icon = "packaging/wifit3.ico" if sys.platform == "win32" else None
 if _icon and not os.path.isfile(_icon):
     _icon = None
 
