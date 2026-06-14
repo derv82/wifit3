@@ -4,8 +4,7 @@ omits so the detector stays structural and testable without a terminal.
 Currently the per-frame EAPOL trace line: an ``Mx`` label plus a ✓/✗ per hashcat-relevant
 field. Background chips (``[… on green]`` etc.) are reserved for actual captures (HANDSHAKE /
 PMKID banners, credential wins), so a green chip in the log always means a win. The lone
-exception is the orange ``SAE ONLY`` chip on an uncrackable (SAE/EAP/OWE) frame — an
-anti-win marker that says "this 4-way completed but its PMK isn't passphrase-derived."
+exception is the orange ``SAE``/``FT`` chip on an uncrackable frame (anti-win marker).
 """
 from __future__ import annotations
 
@@ -64,10 +63,8 @@ def eapol_message_markup(ev: CaptureEvent) -> str:
     form a crackable pair (``ev.useful``), else dim-cyan; the dim prefix names client +
     direction so a lone line is self-explanatory.
 
-    When the association's AKM is confirmed uncrackable (``ev.crackable is False`` — SAE et
-    al.), the label goes red and an orange ``SAE ONLY`` chip is appended: the frames are
-    real, but no completion banner / save / hashline will follow, so the trace mustn't read
-    like progress. ``crackable`` None (transition AP, pre-M2) renders normally."""
+    When the association's AKM is confirmed uncrackable,  the trace mustn't read like progress.
+    ``crackable`` None (transition AP, pre-M2) renders normally."""
     uncrackable = ev.crackable is False
     style = "red" if uncrackable else ("bold cyan" if ev.useful else "dim cyan")
     label = f"[{style}]M{ev.msg_num}[/{style}]" if ev.msg_num else f"[{style}]EAPOL-?[/{style}]"
@@ -75,6 +72,7 @@ def eapol_message_markup(ev: CaptureEvent) -> str:
     body = f"{label} " + " ".join(fields) if fields else label
     line = f"[dim]4-Way Handshake ({_sta_dir(ev)}):[/dim] "
     if uncrackable:
-        line += "[bold black on orange1] SAE ONLY [/bold black on orange1] "
+        chip = ev.akm_label or "SAE"
+        line += f"[bold black on orange1] {chip} [/bold black on orange1] "
     line += body
     return line

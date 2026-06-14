@@ -154,7 +154,7 @@ def test_describe_flags():
     assert m1.has_nonce and not m1.has_mic and m1.useful   # M1 needs no MIC
 
 
-# ----- AKM crackability gating (SAE/WPA3) -----------------------------------
+# ----- AKM crackability gating (SAE / FT / SHA256-PMKID) ---------------------
 
 def _m1m2(*, offered, client=None):
     """A structurally perfect M1+M2 (always a crackable pair if the AKM allows),
@@ -165,12 +165,22 @@ def _m1m2(*, offered, client=None):
     return hs
 
 
+def _hs_pmkid(*, offered, client=None):
+    hs = Handshake(bssid="aa:bb:cc:dd:ee:ff", client_mac="11:22:33:44:55:66",
+                   beacon_frame=b"B", pmkid=b"\x01" * 16)
+    hs.akm_offered = list(offered)
+    hs.akm_client = client
+    return hs
+
+
+# --- EAPOL (WPA*02) gate: suppress SAE + FT-PSK ------------------------------
+
 def test_sae_only_ap_suppresses_handshake():
     """The user's Beryl AX: beacon offers SAE only → every 4-way is uncrackable,
     so no pair is emitted (and thus no banner / save / hashline)."""
     hs = _m1m2(offered=[8])
-    assert wpa.akm_verdict(hs) == "uncrackable"
-    assert not wpa.is_crackable_akm(hs)
+    assert wpa.eapol_verdict(hs) == "uncrackable"
+    assert not wpa.eapol_crackable(hs)
     assert wpa.crackable_pairs(hs) == []
 
 
@@ -182,38 +192,93 @@ def test_sae_ext_key_only_ap_suppresses_handshake():
 def test_transition_ap_psk_client_is_crackable():
     """Transition AP, but THIS client negotiated PSK (M2 RSN IE) → crackable."""
     hs = _m1m2(offered=[2, 8], client=2)
-    assert wpa.akm_verdict(hs) == "crackable"
+    assert wpa.eapol_verdict(hs) == "crackable"
     assert len(wpa.crackable_pairs(hs)) == 1
 
 
 def test_transition_ap_sae_client_suppressed():
     """Same transition AP, but this client chose SAE → uncrackable."""
     hs = _m1m2(offered=[2, 8], client=8)
-    assert wpa.akm_verdict(hs) == "uncrackable"
+    assert wpa.eapol_verdict(hs) == "uncrackable"
     assert wpa.crackable_pairs(hs) == []
 
 
 def test_transition_ap_unknown_client_not_emitted():
-    """Transition AP with no M2 AKM yet: we can't confirm which side this
-    association used, so we judiciously withhold it (never emit on a guess)."""
+    """Transition AP with no M2 AKM yet: can't confirm which side → withhold."""
     hs = _m1m2(offered=[2, 8], client=None)
-    assert wpa.akm_verdict(hs) == "unknown"
+    assert wpa.eapol_verdict(hs) == "unknown"
     assert wpa.crackable_pairs(hs) == []
 
 
-def test_ft_psk_client_is_crackable():
-    """FT-PSK (4) is PSK-derived → crackable (the 'complex path', still emitted)."""
-    assert len(wpa.crackable_pairs(_m1m2(offered=[4, 8], client=4))) == 1
+def test_ft_psk_handshake_suppressed():
+    """FT-PSK (4) is PSK-derived, but hashcat -m 22000 has no FT mode → the
+    handshake is NOT emitted, and the trace badges 'FT'."""
+    hs = _m1m2(offered=[4], client=4)
+    assert wpa.eapol_verdict(hs) == "uncrackable"
+    assert wpa.crackable_pairs(hs) == []
+    assert wpa.uncrackable_label(hs) == "FT"
 
 
-def test_no_sae_offered_is_unchanged():
-    """WPA2-only AP (no SAE in the offered set): behaves exactly as before — the
-    AKM gate only ever removes SAE false-positives, never WPA2 captures."""
+def test_ft_psk_only_ap_suppressed_without_client_akm():
+    assert wpa.crackable_pairs(_m1m2(offered=[4, 19])) == []
+
+
+def test_wpa2_plus_ft_unknown_client_withheld():
+    """WPA2+FT AP (PSK + FT-PSK), client AKM unknown → can't tell → withhold."""
+    assert wpa.eapol_verdict(_m1m2(offered=[2, 4])) == "unknown"
+
+
+def test_no_sae_or_ft_offered_is_unchanged():
+    """Plain WPA2-PSK (no SAE/FT): behaves exactly as before — the gate only ever
+    removes SAE/FT false-positives, never plain-PSK captures."""
     hs = _m1m2(offered=[2])
-    assert wpa.akm_verdict(hs) == "crackable"
+    assert wpa.eapol_verdict(hs) == "crackable"
     assert len(wpa.crackable_pairs(hs)) == 1
-    # And with no AKM info at all (fixtures / pre-AKM captures): still crackable.
+    # No AKM info at all (fixtures / pre-AKM captures): still crackable.
     assert len(wpa.crackable_pairs(_m1m2(offered=[]))) == 1
+
+
+# --- PMKID (WPA*01) gate: only plain-PSK (AKM 2) HMAC-SHA1 -------------------
+
+def test_pmkid_plain_psk_crackable():
+    assert wpa.pmkid_crackable(_hs_pmkid(offered=[2], client=2))
+    assert wpa.pmkid_crackable(_hs_pmkid(offered=[2]))      # unknown client, PSK-only AP
+
+
+def test_pmkid_sha256_client_suppressed():
+    """AKM-6 PMKID is HMAC-SHA256 — hashcat's PMKID path is SHA1-only."""
+    assert not wpa.pmkid_crackable(_hs_pmkid(offered=[2, 6], client=6))
+
+
+def test_pmkid_sha256_only_ap_suppressed():
+    """SHA256-PSK offered with no plain PSK → the PMKID can't be SHA1."""
+    assert not wpa.pmkid_crackable(_hs_pmkid(offered=[6]))
+
+
+def test_pmkid_unknown_client_assumes_sha1():
+    """Asymmetry vs SAE: AKM 6 is rare, so a PMKID of unknown AKM on a PSK+PSK256
+    AP is assumed to be the common SHA1 one (emit) — we don't withhold."""
+    assert wpa.pmkid_crackable(_hs_pmkid(offered=[2, 6], client=None))
+
+
+def test_pmkid_sae_or_ft_unknown_withheld():
+    """SAE/FT in the mix with unknown client → strict withhold (could be the
+    uncrackable one)."""
+    assert not wpa.pmkid_crackable(_hs_pmkid(offered=[2, 8]))   # PSK + SAE
+    assert not wpa.pmkid_crackable(_hs_pmkid(offered=[2, 4]))   # PSK + FT-PSK
+
+
+def test_ft_pmkid_suppressed():
+    assert not wpa.pmkid_crackable(_hs_pmkid(offered=[4], client=4))
+
+
+def test_akm6_eapol_crackable_but_pmkid_not():
+    """The split that motivates two gates: an AKM-6 (PSK-SHA256) network's EAPOL
+    cracks (keyver → AES-CMAC), but its PMKID (HMAC-SHA256) does not."""
+    eapol = _m1m2(offered=[6], client=6)
+    assert wpa.eapol_crackable(eapol)
+    assert len(wpa.crackable_pairs(eapol)) == 1
+    assert not wpa.pmkid_crackable(_hs_pmkid(offered=[6], client=6))
 
 
 def test_hc22000_line_shape():

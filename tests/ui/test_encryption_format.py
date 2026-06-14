@@ -111,3 +111,25 @@ def test_wep_detailed_omits_iv_count():
     assert format_encryption_markup(ap, detailed=True) == (
         "[bright_green]WEP[/bright_green]"
     )
+
+
+# ---- AKM-variant visibility in the ENCRYPT detail --------------------------
+
+def test_plain_psk_token_unchanged():
+    assert "(PSK)" in format_encryption_markup(_ap(akms=["PSK"]), muted="dim")
+
+
+def test_psk_sha256_shown_distinctly():
+    """PSK-SHA256 (AKM 6) must NOT collapse into 'PSK' — we want to see its
+    real-world prevalence in a scan."""
+    assert "(PSK256)" in format_encryption_markup(_ap(akms=["PSK-SHA256"]), muted="dim")
+
+
+def test_ft_psk_shown_distinctly():
+    assert "(FT-PSK)" in format_encryption_markup(_ap(akms=["FT-PSK"]), muted="dim")
+
+
+def test_psk_variants_not_collapsed():
+    """A PSK + FT-PSK AP keeps both variants visible, slash-joined."""
+    m = format_encryption_markup(_ap(akms=["PSK", "FT-PSK"]), muted="dim")
+    assert "(PSK/FT-PSK)" in m

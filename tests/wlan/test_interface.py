@@ -316,7 +316,7 @@ def test_transition_pmkid_only_classified_via_assoc(mocker):
         hs = iface.access_points[bssid].handshakes[client]
         assert hs.pmkid == b"\x07" * 16
         assert hs.akm_client == client_akm
-        assert wpa.is_crackable_akm(hs) is expect_crackable
+        assert wpa.pmkid_crackable(hs) is expect_crackable
 
 
 def test_wpa3_and_pmf_flags_propagate_to_access_point(mocker):

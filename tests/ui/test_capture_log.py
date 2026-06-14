@@ -96,3 +96,27 @@ def test_unclassified_frame_label_only():
                                     eapol_complete=False, useful=False))
     # No fields, no direction arrow — just the prefix + bare label.
     assert m == "[dim]4-Way Handshake (…44:55:66):[/dim] [dim cyan]EAPOL-?[/dim cyan]"
+
+
+def _uncrackable(label):
+    return CaptureEvent(
+        kind=CaptureKind.EAPOL, bssid="aa:bb:cc:dd:ee:ff",
+        client_mac="11:22:33:44:55:66", ssid="Net", msg_num=2,
+        has_nonce=True, has_mic=True, eapol_complete=True, useful=True,
+        crackable=False, akm_label=label,
+    )
+
+
+def test_uncrackable_frame_badges_akm_reason():
+    """An uncrackable EAPOL frame goes red with an orange reason chip (SAE / FT)."""
+    sae = eapol_message_markup(_uncrackable("SAE"))
+    assert "[bold black on orange1] SAE [/bold black on orange1]" in sae
+    assert "[red]M2[/red]" in sae
+    ft = eapol_message_markup(_uncrackable("FT"))
+    assert "[bold black on orange1] FT [/bold black on orange1]" in ft
+
+
+def test_crackable_frame_has_no_badge():
+    m = eapol_message_markup(_eapol(2, has_nonce=True, has_mic=True,
+                                    eapol_complete=True, useful=True))
+    assert "orange1" not in m

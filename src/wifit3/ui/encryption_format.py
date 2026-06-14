@@ -32,25 +32,24 @@ def _format_iv_count(n: int) -> str:
 
 
 def _simplified_akms(akms: List[str]) -> str:
-    """Reduce the raw AKM list to a short PSK/SAE/EAP/OWE token string."""
-    has_sae = any(a == "SAE" or a == "FT-SAE" for a in akms)
-    has_psk = any(a in ("PSK", "PSK-SHA256", "FT-PSK") for a in akms)
-    has_eap = any(a.startswith("EAP") or a == "FT-EAP" for a in akms)
-    has_owe = "OWE" in akms
-
+    """Compact AKM token string for the Scanner view's ENCRYPT column."""
     parts: List[str] = []
-    if has_psk:
-        parts.append("PSK")
-    if has_sae:
+    for name, tok in (
+        ("PSK", "PSK"), ("PSK-SHA256", "PSK256"), ("PSK-SHA384", "PSK384"),
+        ("FT-PSK", "FT-PSK"), ("FT-PSK-SHA384", "FT-PSK384"),
+    ):
+        if name in akms:
+            parts.append(tok)
+    if any("SAE" in a for a in akms):          # SAE / FT-SAE / SAE-EXT-KEY / …
         parts.append("SAE")
-    if has_eap:
+    if any(a.startswith("EAP") or a.startswith("FT-EAP") for a in akms):
         parts.append("EAP")
-    if has_owe and not parts:
+    if "OWE" in akms and not parts:
         parts.append("OWE")
     if not parts:
-        # Fall back to whatever the parser gave us (unknown / vendor AKMs)
-        return "+".join(akms) if akms else ""
-    return "+".join(parts)
+        # Fall back to whatever the parser gave us (unknown / vendor AKMs).
+        return "/".join(akms) if akms else ""
+    return "/".join(parts)
 
 
 def _detail_markup(

@@ -50,8 +50,8 @@ class Handshake(BaseModel):
     # None until an M2 is seen. Authoritative over `akm_offered` (AP-level).
     akm_client: Optional[int] = None
     # The AP's offered AKM suites (00-0F-AC:N) from its beacon RSN IE.
-    # Stamped by the interface so crackability can be decided without the AP in hand:
-    # SAE-only here means every capture is uncrackable. See engine.wpa.handshake.akm_verdict.
+    # Stamped by the interface so crackability can be decided without the AP in hand.
+    # See engine.wpa.handshake (eapol_crackable / pmkid_crackable).
     akm_offered: List[int] = Field(default_factory=list)
 
     # -- Crack-validity --------------------------------------------------------
@@ -264,7 +264,7 @@ class Client(BaseModel):
     probed_ssids: Set[str] = Field(default_factory=set) # List of SSIDs this client is actively searching for
     # AKM suite chosen by this client, read from the RSN IE in its (Re)Assoc Request. Latest-wins.
     # Filled into a capture's Handshake.akm_client when no M2 pins it down (a PMKID-only capture
-    # on a transition AP). See engine.wpa.handshake.akm_verdict.
+    # on a transition AP). See engine.wpa.handshake (eapol_crackable / pmkid_crackable).
     akm_selected: Optional[int] = Field(default=None)
     # True for the forged STA *we* inject as (e.g. WEP fake-auth). Rendered as
     # "YOU" in the client table — honest (it's this device, not a stranger)

@@ -43,7 +43,7 @@ References:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 from wifit3.engine.models import EapolFrame, Handshake
 
@@ -78,54 +78,79 @@ _NC_MAX = 8
 _NC_BIT = 0x80
 
 # ----- AKM crackability (00-0F-AC suite numbers) -----------------------------
-# A captured 4-way / PMKID is only worth a passphrase attack if the PMK it
-# protects is PSK-derived (PBKDF2). SAE derives its PMK from the live,
-# password-authenticated Commit/Confirm exchange — the EAPOL that follows is a
-# normal 4-way, but the PMK is ephemeral, so the capture is uncrackable offline.
-# EAP (no passphrase) and OWE (no password) are likewise out. There is no
-# hashcat passphrase mode for any of them, so we must not emit them as captures.
-_PSK_AKMS = frozenset({2, 6, 20})        # PSK / PSK-SHA256 / PSK-SHA384 — plain PBKDF2
-_FT_PSK_AKMS = frozenset({4, 19})        # FT-PSK / FT-PSK-SHA384 — PSK-derived, FT hierarchy
-_CRACKABLE_AKMS = _PSK_AKMS | _FT_PSK_AKMS
-_SAE_AKMS = frozenset({8, 9, 24, 25})    # SAE / FT-SAE / SAE-EXT-KEY / FT-SAE-EXT-KEY
+# A capture is worth emitting only if hashcat -m 22000 can crack the *specific
+# artifact* — the PMK must be passphrase-derived (PBKDF2) AND hashcat must support
+# the resulting hashline. SAE (ephemeral PMK), EAP (no passphrase), OWE (no
+# password) fail the first test. FT-PSK (PMK-R0→PMK-R1 hierarchy, no -m 22000
+# mode) and the SHA256 PMKID (HMAC-SHA256, while -m 22000's PMKID path is
+# HMAC-SHA1) pass it but fail the second — so the two artifacts gate differently:
+#
+#   EAPOL (WPA*02): hashcat reads the Key Descriptor Version from the embedded
+#     frame, so plain PSK (keyver 2) AND PSK-SHA256 (keyver 3 / AES-CMAC) both
+#     crack; FT has no mode. → uncrackable AKMs = SAE | FT-PSK.
+#   PMKID (WPA*01): single-algorithm HMAC-SHA1 → only plain PSK (AKM 2). FT and
+#     the SHA256-PSK AKMs (6 / 20) yield a hash -m 22000 can't take.
+#
+# SAE and FT are *strict* (withhold on an unconfirmed transition AP). The SHA256
+# PMKID is *soft* — AKM 6 is rare, so a PMKID of unknown AKM is assumed to be the
+# common HMAC-SHA1 one unless the AP offers no plain PSK at all.
+_SAE_AKMS = frozenset({8, 9, 24, 25})       # SAE / FT-SAE / SAE-EXT-KEY / FT-SAE-EXT-KEY
+_FT_PSK_AKMS = frozenset({4, 19})           # FT-PSK / FT-PSK-SHA384
+_EAPOL_BAD_AKMS = _SAE_AKMS | _FT_PSK_AKMS  # never -m 22000-crackable as EAPOL
+_PMKID_PSK_AKM = 2                          # the only HMAC-SHA1 (crackable) PMKID
 
 
-def akm_verdict(hs: Handshake) -> str:
-    """Crackability of this capture from its negotiated AKM — one of
-    ``"crackable"`` / ``"uncrackable"`` / ``"unknown"``.
+def eapol_verdict(hs: Handshake) -> str:
+    """EAPOL (``WPA*02``) crackability from the negotiated AKM.
 
-    Two inputs, both stamped by the interface: 
-      1. ``akm_offered`` (the AP's RSN-IE AKM list, from beacons),
-      2. ``akm_client`` (the suite the client actually chose, read from the cleartext RSN IE in EAPOL M2).
-         The client's choice is authoritative; the offered list is the fallback.
+    The suppressed AKMs are SAE (ephemeral PMK) and FT-PSK (no hashcat FT mode);
+    both are strict, so an unconfirmed transition AP returns ``"unknown"`` and we
+    withhold. Every other AKM — plain PSK, PSK-SHA256, and (unchanged) EAP / OWE /
+    legacy — keeps its prior emit behavior; only SAE/FT are newly gated.
 
-    SAE gates nothing unless the AP actually offers it — a WPA2/WPA/WEP AP keeps
-    its existing purely-structural verdict, so this only ever *removes* SAE
-    false-positives, never WPA2 captures:
-
-        no SAE offered                     -> "crackable"   (legacy behavior, untouched)
-        client chose a PSK-family suite    -> "crackable"
-        client chose SAE/EAP/OWE/…         -> "uncrackable"
-        SAE offered, client suite unknown:
-            transition (PSK also offered)  -> "unknown"     (can't confirm which side)
-            SAE-only                       -> "uncrackable"
-    """
+    Inputs are stamped by the interface: ``akm_client`` (the suite the client
+    chose, from M2 / (Re)Assoc — authoritative) and ``akm_offered`` (the AP's
+    beacon RSN-IE list — the fallback)."""
     offered = set(hs.akm_offered)
-    if not (offered & _SAE_AKMS):
-        return "crackable"            # no SAE in play → don't second-guess the structure
+    bad = _EAPOL_BAD_AKMS
+    if not (offered & bad):
+        return "crackable"            # no SAE/FT in play → legacy emit (incl. EAP)
     if hs.akm_client is not None:
-        return "crackable" if hs.akm_client in _CRACKABLE_AKMS else "uncrackable"
-    if offered & _CRACKABLE_AKMS:
-        return "unknown"              # transition AP, client's chosen suite not yet seen
-    return "uncrackable"              # SAE-only AP — no PSK association is possible
+        return "uncrackable" if hs.akm_client in bad else "crackable"
+    if offered - bad:
+        return "unknown"              # bad + a non-bad AKM offered, client unknown
+    return "uncrackable"              # only SAE/FT offered
 
 
-def is_crackable_akm(hs: Handshake) -> bool:
-    """True only when the AKM is *confirmed* passphrase-crackable. An
-    unconfirmed transition-mode capture (``"unknown"``) counts as NOT crackable:
-    we emit/save on positive confirmation only, mirroring hcxpcapngtool's refusal
-    to write a hash it can't stand behind."""
-    return akm_verdict(hs) == "crackable"
+def eapol_crackable(hs: Handshake) -> bool:
+    """True only when the EAPOL is *confirmed* ``-m 22000``-crackable."""
+    return eapol_verdict(hs) == "crackable"
+
+
+def pmkid_crackable(hs: Handshake) -> bool:
+    """True only for a plain-PSK (AKM 2) PMKID — the lone HMAC-SHA1 PMKID hashcat
+    ``-m 22000`` cracks."""
+    if hs.akm_client is not None:
+        return hs.akm_client == _PMKID_PSK_AKM
+    offered = set(hs.akm_offered)
+    if offered & (_SAE_AKMS | _FT_PSK_AKMS):
+        return False                  # SAE/FT could be the negotiated AKM → withhold
+    if not offered:
+        return True                   # no AKM info (fixtures / pre-RSN) → legacy
+    return _PMKID_PSK_AKM in offered  # plain PSK offered → assume the SHA1 PMKID
+
+
+def uncrackable_label(hs: Handshake) -> Optional[str]:
+    """Short reason an EAPOL capture is uncrackable."""
+    if eapol_verdict(hs) != "uncrackable":
+        return None
+    akm = hs.akm_client
+    if akm is not None:
+        return "FT" if akm in _FT_PSK_AKMS else "SAE"
+    offered = set(hs.akm_offered)
+    if offered & _FT_PSK_AKMS and not (offered & _SAE_AKMS):
+        return "FT"
+    return "SAE"
 
 
 @dataclass(frozen=True)
@@ -212,18 +237,8 @@ def crackable_pairs(hs: Handshake) -> List[CrackablePair]:
     "challenge" (M1+M2 / M1+M4), then the temporally nearest donor. Each keystone
     AND each ANonce is emitted once, so spurious cross-association donors collapse
     to the single best pair while a genuine re-handshake (fresh ANonce) adds
-    another. ``hc22000_line`` sets the NC bit, so hashcat fixes whatever small
-    nonce drift the tolerance let through.
-
-    Ordering keys on arrival order, not wall-clock time, so the verdict is
-    identical live and from a round-tripped pcap; the time window is only a coarse
-    backstop when timestamps are present (``_within_window``).
-
-    Gated on the AKM: a SAE/EAP/OWE association still runs a structurally perfect
-    4-way, but its PMK isn't passphrase-derived, so there is nothing to crack —
-    ``is_crackable_akm`` returns False and we emit no pairs (and thus no banner,
-    save, or hashline)."""
-    if not is_crackable_akm(hs):
+    another.."""
+    if not eapol_crackable(hs):
         return []
     pos = {id(f): i for i, f in enumerate(hs.eapol_frames)}
     by_msg: dict[int, List[EapolFrame]] = {1: [], 2: [], 3: [], 4: []}
