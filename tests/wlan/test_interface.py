@@ -271,6 +271,54 @@ def test_real_client_still_creates_handshake_with_eapol_frames(mocker):
     assert len(ap.handshakes[real_client].eapol_frames) == 1
 
 
+def test_assoc_req_stamps_client_akm(mocker):
+    """A (Re)Assoc Request's RSN-IE AKM is recorded on the Client, so a later
+    PMKID-only capture on a transition AP can be classified without an M2."""
+    mock_driver = mocker.MagicMock()
+    iface = WlanInterface(driver_instance=mock_driver, name="wlan0", description="Test")
+    client = "11:22:33:44:55:66"
+    iface._on_frame_parsed({
+        "type": "assoc_req",
+        "bssid": "aa:bb:cc:dd:ee:ff",
+        "source": client,
+        "dest": "aa:bb:cc:dd:ee:ff",
+        "rssi": -45,
+        "assoc_akm": 0x02,
+    })
+    assert iface.clients[client].akm_selected == 0x02
+
+
+def test_transition_pmkid_only_classified_via_assoc(mocker):
+    """Phase 2 payoff: on a WPA2/WPA3 transition AP a PMKID-only capture (no M2)
+    is classified from the client's Assoc-Req AKM — PSK -> crackable, SAE -> not."""
+    from wifit3.engine.wpa import handshake as wpa
+
+    for client_akm, expect_crackable in ((0x02, True), (0x08, False)):
+        mock_driver = mocker.MagicMock()
+        iface = WlanInterface(driver_instance=mock_driver, name="wlan0", description="Test")
+        bssid, client = "aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"
+        iface._on_frame_parsed({              # transition beacon: offers PSK + SAE
+            "type": "beacon", "bssid": bssid, "source": bssid,
+            "dest": "ff:ff:ff:ff:ff:ff", "rssi": -40, "ssid": "T", "channel": 1,
+            "encryption": "WPA2/WPA3", "akm_suites": [0x02, 0x08], "raw": b"\x00" * 36,
+        })
+        iface._on_frame_parsed({              # client associates, declaring its AKM
+            "type": "assoc_req", "bssid": bssid, "source": client,
+            "dest": bssid, "rssi": -45, "assoc_akm": client_akm,
+        })
+        iface._on_frame_parsed({              # M1 carrying a PMKID KDE, no M2 follows
+            "type": "eapol", "bssid": bssid, "source": bssid, "dest": client,
+            "rssi": -45, "raw": b"\x00" * 100, "eapol_msg_num": 1,
+            "eapol_replay_counter": b"\x00" * 8, "eapol_nonce": b"\x01" * 32,
+            "eapol_mic": b"\x00" * 16, "eapol_key_data_len": 0,
+            "eapol_payload": b"\x00" * 99, "eapol_pmkid": b"\x07" * 16,
+        })
+        hs = iface.access_points[bssid].handshakes[client]
+        assert hs.pmkid == b"\x07" * 16
+        assert hs.akm_client == client_akm
+        assert wpa.is_crackable_akm(hs) is expect_crackable
+
+
 def test_wpa3_and_pmf_flags_propagate_to_access_point(mocker):
     """Parser detects wpa3 / transition_mode / pmf_capable / pmf_required from
     the RSN IE; WlanInterface must copy them to the AccessPoint model so the

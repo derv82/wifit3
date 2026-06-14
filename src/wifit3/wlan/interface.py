@@ -231,7 +231,7 @@ class WlanInterface:
                     ap.wep = stats
 
         # Client Tracking
-        if frame_type in ("probe_req", "assoc_req", "data", "wep_data", "eapol", "deauth", "assoc_resp"):
+        if frame_type in ("probe_req", "assoc_req", "reassoc_req", "data", "wep_data", "eapol", "deauth", "assoc_resp"):
             client_mac = None
             source = parsed.get("source")
             dest = parsed.get("dest")
@@ -255,9 +255,14 @@ class WlanInterface:
                 client = self.clients[client_mac]
                 client.signal = (client.signal + rssi) // 2
                 client.packets += 1
-                
+
+                # The client's chosen AKM, from its (Re)Assoc Request RSN IE.
+                assoc_akm = parsed.get("assoc_akm")
+                if assoc_akm is not None:
+                    client.akm_selected = assoc_akm
+
                 # Track association
-                if frame_type in ("assoc_req", "data", "wep_data", "eapol"):
+                if frame_type in ("assoc_req", "reassoc_req", "data", "wep_data", "eapol"):
                     if bssid:
                         client.bssid = bssid
                     
@@ -324,6 +329,12 @@ class WlanInterface:
                 akm = parsed.get("eapol_akm")
                 if akm is not None:
                     hs.akm_client = akm
+                elif hs.akm_client is None:
+                    # No M2 yet (e.g. a PMKID-only capture) — fall back to the AKM
+                    # the client advertised in its (Re)Assoc Request.
+                    client_obj = self.clients.get(client_mac)
+                    if client_obj is not None and client_obj.akm_selected is not None:
+                        hs.akm_client = client_obj.akm_selected
 
                 # Passive PMKID capture: AP's M1 sometimes carries a PMKID KDE. First wins.
                 pmkid = parsed.get("eapol_pmkid")

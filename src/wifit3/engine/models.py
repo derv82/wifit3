@@ -262,6 +262,10 @@ class Client(BaseModel):
     signal: int = Field(default=-100)
     packets: int = Field(default=0)
     probed_ssids: Set[str] = Field(default_factory=set) # List of SSIDs this client is actively searching for
+    # AKM suite chosen by this client, read from the RSN IE in its (Re)Assoc Request. Latest-wins.
+    # Filled into a capture's Handshake.akm_client when no M2 pins it down (a PMKID-only capture
+    # on a transition AP). See engine.wpa.handshake.akm_verdict.
+    akm_selected: Optional[int] = Field(default=None)
     # True for the forged STA *we* inject as (e.g. WEP fake-auth). Rendered as
     # "YOU" in the client table — honest (it's this device, not a stranger)
     is_self: bool = Field(default=False)

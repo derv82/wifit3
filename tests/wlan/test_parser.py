@@ -238,6 +238,47 @@ def test_wpa3_sae_ext_key_h2e_flags_as_wpa3():
     assert parsed["encryption"] == "WPA3-SAE-CCMP"   # label agrees with the flag
 
 
+# ---- (Re)Assoc Request client-AKM extraction (Phase 2) ----------------------
+
+def _build_assoc_req(rsn_ie: bytes, *, reassoc: bool = False, ssid: bytes = b"Net") -> bytes:
+    """An Assoc (or Reassoc) Request from a client carrying SSID + rates + the
+    given RSN IE. Reassoc inserts a (non-zero) 6-byte Current AP Address, shifting
+    the IE list from offset 28 to 34 — so a wrong offset misparses, not silently
+    lands on the same RSN IE."""
+    subtype = 0x02 if reassoc else 0x00
+    fc0 = subtype << 4                              # type = mgmt (0)
+    bssid = bytes.fromhex("aabbccddeeff")
+    client = bytes.fromhex("112233445566")
+    hdr = bytes([fc0, 0x00]) + b"\x00\x00" + bssid + client + bssid + b"\x00\x00"
+    fixed = b"\x11\x00" + b"\x01\x00"               # Capability Info + Listen Interval
+    if reassoc:
+        fixed += bytes.fromhex("998877665544")      # Current AP Address (non-zero)
+    ssid_ie = bytes([0x00, len(ssid)]) + ssid
+    rates_ie = bytes([0x01, 0x04]) + b"\x82\x84\x8b\x96"
+    return hdr + fixed + ssid_ie + rates_ie + rsn_ie
+
+
+def test_assoc_req_client_akm_extracted():
+    parsed = WlanFrameParser.parse_80211_frame(_build_assoc_req(_rsn_ie(akms=(0x02,))), -50)
+    assert parsed["type"] == "assoc_req"
+    assert parsed["assoc_akm"] == 0x02
+
+
+def test_reassoc_req_client_akm_extracted_past_current_ap_field():
+    """Reassoc's extra 6-byte Current AP field shifts the IEs; the SAE AKM only
+    reads back if the +6 offset is honored (the non-zero field misparses at 28)."""
+    parsed = WlanFrameParser.parse_80211_frame(
+        _build_assoc_req(_rsn_ie(akms=(0x08,)), reassoc=True), -50)
+    assert parsed["type"] == "reassoc_req"
+    assert parsed["assoc_akm"] == 0x08
+
+
+def test_assoc_req_without_rsn_has_no_akm():
+    parsed = WlanFrameParser.parse_80211_frame(_build_assoc_req(b""), -50)
+    assert parsed["type"] == "assoc_req"
+    assert "assoc_akm" not in parsed
+
+
 def test_wpa2_psk_tkip_legacy_cipher():
     """Some old routers still advertise TKIP for pairwise."""
     rsn = _rsn_ie(pairwise_ciphers=(0x02,), akms=(0x02,))

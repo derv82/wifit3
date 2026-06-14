@@ -16,6 +16,7 @@ class WlanFrameParser:
 
     SUBTYPE_ASSOC_REQ = 0x00
     SUBTYPE_ASSOC_RESP = 0x01
+    SUBTYPE_REASSOC_REQ = 0x02
     SUBTYPE_PROBE_REQ = 0x04
     SUBTYPE_PROBE_RESP = 0x05
     SUBTYPE_BEACON = 0x08
@@ -89,6 +90,8 @@ class WlanFrameParser:
                 result["type"] = "deauth"
             elif subtype == WlanFrameParser.SUBTYPE_ASSOC_REQ:
                 result["type"] = "assoc_req"
+            elif subtype == WlanFrameParser.SUBTYPE_REASSOC_REQ:
+                result["type"] = "reassoc_req"
             elif subtype == WlanFrameParser.SUBTYPE_ASSOC_RESP:
                 result["type"] = "assoc_resp"
             else:
@@ -128,7 +131,19 @@ class WlanFrameParser:
                 if tags is None:
                     return None
                 result["ssid"] = tags.get("ssid")
-                
+
+            # Client's selected AKM from the RSN IE in a (Re)Assoc Request. The IE list
+            # starts past the fixed fields: 28 for Assoc (24 hdr + cap + listen),
+            # 34 for Reassoc (+ 6-byte Current AP address).
+            if subtype == WlanFrameParser.SUBTYPE_ASSOC_REQ:
+                akm = WlanFrameParser._first_rsn_akm(frame, 28)
+                if akm is not None:
+                    result["assoc_akm"] = akm
+            elif subtype == WlanFrameParser.SUBTYPE_REASSOC_REQ:
+                akm = WlanFrameParser._first_rsn_akm(frame, 34)
+                if akm is not None:
+                    result["assoc_akm"] = akm
+
         elif ftype == WlanFrameParser.TYPE_DATA:
             result["type"] = "data"
             # Check for EAPOL (Handshake)
@@ -237,7 +252,7 @@ class WlanFrameParser:
                                     # Data isn't KEK-encrypted. This is the one usable
                                     # source of the AKM the client actually negotiated.
                                     if msg_num == 2:
-                                        akm = WlanFrameParser._extract_keydata_akm(key_data)
+                                        akm = WlanFrameParser._first_rsn_akm(key_data)
                                         if akm is not None:
                                             result["eapol_akm"] = akm
         else:
@@ -317,25 +332,27 @@ class WlanFrameParser:
         return None
 
     @staticmethod
-    def _extract_keydata_akm(key_data: bytes) -> Optional[int]:
-        """Return the client's negotiated AKM suite number (00-0F-AC:N) from the
-        RSN IE in EAPOL M2's Key Data, or None if there's no parseable RSN IE.
+    def _first_rsn_akm(data: bytes, start: int = 0) -> Optional[int]:
+        """First AKM suite (00-0F-AC:N) in the RSN IE within an element/KDE list,
+        or None. ``data`` is walked as (tag, len, value) from ``start``; the RSN
+        IE is a plain element with tag 48 (0x30), and we return the single suite
+        the supplicant selected for this association.
 
-        Key Data is a sequence of elements/KDEs (tag, len, value); the RSN IE is
-        a plain element with tag 48 (0x30). We return its first AKM suite — the
-        single suite the supplicant selected for this association.
+        Shared by the two cleartext sources of the client's chosen AKM: EAPOL M2's
+        Key Data (``start=0``) and a (Re)Assoc Request's IE list (``start`` past
+        the fixed fields).
         """
-        i = 0
-        n = len(key_data)
+        i = start
+        n = len(data)
         while i + 2 <= n:
-            tag = key_data[i]
-            length = key_data[i + 1]
+            tag = data[i]
+            length = data[i + 1]
             value_start = i + 2
             value_end = value_start + length
             if value_end > n:
                 return None
             if tag == 48:  # RSN IE (element id 48)
-                rsn = WlanFrameParser._parse_rsn_ie(key_data[value_start:value_end])
+                rsn = WlanFrameParser._parse_rsn_ie(data[value_start:value_end])
                 if rsn and rsn["akm_suites"]:
                     return rsn["akm_suites"][0]
                 return None
