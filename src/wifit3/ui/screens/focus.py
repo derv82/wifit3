@@ -317,14 +317,16 @@ class FocusView(Screen):
         # capture via client deauth, PBC race via deauth, broadcast deauth)
         # will silently fail because the AP rejects unauthenticated mgmt frames.
         if self.target_ap.pmf_required:
-            self._log("[yellow][!] PMF Required[/yellow] — deauth-based attacks "
-                      "won't work on this AP (handshake/PBC race via deauth, "
-                      "broadcast deauth). PMKID / WPS / passive capture still fine.")
+            self._log("[bold yellow]PMF Required:[/] "
+                "AP requires [bold]Protected Management Frames[/]")
+            self._log(treelog.leaf("[italic]Deauth[/] attacks have been disabled"))
 
         self._log_persisted_history(self.target_ap)
         # Make it obvious the view is now primed and passively capturing.
         if enc == "WEP":
             self._log("[green]●[/green] Listening for [bold]WEP IVs[/bold]…")
+        elif enc == "WPA3 ":
+            pass
         elif enc not in ("OPEN", ""):
             self._log("[green]●[/green] Listening for [bold]handshake[/bold] + PMKID…")
         self.update_ui()

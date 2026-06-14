@@ -26,9 +26,9 @@ _PULSE = ["#6e0000", "#8a0000", "#a40000", "#c00000", "#a40000", "#8a0000"]
 _DEFAULT_TITLE = "Wifit3 needs the WinUSB driver to talk to this card"
 _DEFAULT_WARNING = (
     "[bold $text-warning]Warning:[/] this [italic $text-warning]replaces the "
-    "card's current driver[/] — Windows will stop seeing it as a wireless "
-    "device.\n[dim]Reversible: uninstall the WinUSB driver in Device Manager to "
-    "restore it.[/dim]")
+    "card's current driver[/]\n\n"
+    "Windows will stop seeing it as a wireless device.\n\n"
+    "You can uninstall WInUSB using the [bold white on red] x [/] button")
 
 
 class ConfirmInstallDialog(ModalScreen[bool]):
