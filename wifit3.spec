@@ -1,6 +1,8 @@
 # PyInstaller build spec for wifit3 — build with: uv run pyinstaller wifit3.spec
 #
-# Produces a single self-contained dist/wifit3.exe (onefile) — drag-and-drop distributable.
+# Produces a single self-contained onefile binary — dist/wifit3.exe on Windows, dist/wifit3 on
+# Linux/macOS (drag-and-drop distributable). PyInstaller does NOT cross-compile: build each
+# target ON that OS (a Linux box/container for the Linux binary, a Mac for the macOS one).
 # Tradeoff vs onedir: onefile unpacks the ~40 MB bundle into a temp dir on each launch (a
 # slightly slower cold start) and trips AV/SmartScreen more readily. Multiprocessing is
 # unaffected — the WEP cracker's spawned workers reuse the parent's already-extracted dir
@@ -15,6 +17,9 @@
 # No UAC manifest (uac_admin=False): the app self-elevates only the bundled wdi-simple.exe
 # child via ShellExecuteExW "runas" (setup/windows.py); elevating the whole TUI would be wrong.
 
+import os
+import sys
+
 from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
 
 # Assets loaded via Path(__file__).parent / "assets" / ... are invisible to import analysis:
@@ -22,6 +27,12 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_sub
 # WinUSB installer (setup/bin/win-x64/wdi-simple.exe). collect_data_files grabs them all,
 # preserving the package-relative layout that Path(__file__) resolves against in the bundle.
 datas = collect_data_files("wifit3")
+if sys.platform != "win32":
+    # wdi-simple.exe (and its PROVENANCE) is the Windows WinUSB binder — setup/windows.py only
+    # ever invokes it under sys.platform == "win32". Drop the whole vendored setup/bin/ tree
+    # from Linux/macOS bundles rather than ship a dead Windows .exe inside them.
+    datas = [(src, dest) for (src, dest) in datas
+             if "/setup/bin/" not in src.replace("\\", "/")]
 binaries = []
 # Drivers are statically imported in wlan/manager.py, but collect every chips.* submodule
 # anyway so a future dynamic/lazy driver load can't silently drop one from the bundle.
@@ -50,7 +61,19 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
-# ---- onefile build (ACTIVE): one self-contained dist/wifit3.exe ----
+# Per-OS app icon: .ico is a Windows resource, a macOS .app wants .icns, and a Linux ELF has no
+# icon slot (PyInstaller ignores icon= there). Use whichever exists for the build host, falling
+# back to None so a build never fails just because that platform's icon file isn't present yet.
+if sys.platform == "win32":
+    _icon = "packaging/wifit3.ico"
+elif sys.platform == "darwin":
+    _icon = "packaging/wifit3.icns"
+else:
+    _icon = None
+if _icon and not os.path.isfile(_icon):
+    _icon = None
+
+# ---- onefile build (ACTIVE): one self-contained binary (dist/wifit3.exe on Windows) ----
 exe = EXE(
     pyz,
     a.scripts,
@@ -62,7 +85,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=True,
-    icon="packaging/wifit3.ico",
+    icon=_icon,
     runtime_tmpdir=None,
 )
 
@@ -79,7 +102,7 @@ exe = EXE(
 #     strip=False,
 #     upx=False,
 #     console=True,
-#     icon="packaging/wifit3.ico",
+#     icon=_icon,
 # )
 # coll = COLLECT(
 #     exe,
