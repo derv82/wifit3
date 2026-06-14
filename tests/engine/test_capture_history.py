@@ -107,8 +107,8 @@ class TestSummarize:
     def test_totals(self, tmp_path):
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000000_handshake.hc22000", _HS_LINE)
         _write(tmp_path, f"TestNet_{_BSSID_DASH}_1700000001_pmkid.hc22000", _PMKID_LINE)
-        _write(tmp_path, f"Other_11-22-33-44-55-66_1700000002_wep_key.txt", _WEPKEY_TXT)
-        _write(tmp_path, f"Pbc_22-33-44-55-66-77_1700000003_wps_pbc.txt", "PSK: hunter2\n")
+        _write(tmp_path, "Other_11-22-33-44-55-66_1700000002_wep_key.txt", _WEPKEY_TXT)
+        _write(tmp_path, "Pbc_22-33-44-55-66-77_1700000003_wps_pbc.txt", "PSK: hunter2\n")
         hs, pmkid, wep, wps = summarize(load_capture_index(tmp_path))
         assert (hs, pmkid, wep, wps) == (1, 1, 1, 1)
 

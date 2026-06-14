@@ -1,4 +1,3 @@
-import pytest
 from wifit3.chips.ar9271.protocol.htc import HTCProtocol
 
 def test_htc_pack():

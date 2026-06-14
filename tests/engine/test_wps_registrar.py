@@ -15,7 +15,6 @@ correctness against a real AP's independent stack is what wps_probe.py proves.
 import asyncio
 import os
 
-import pytest
 
 from wifit3.engine.attacks.wps import messages as M
 from wifit3.engine.attacks.wps import wsc_crypto as wc

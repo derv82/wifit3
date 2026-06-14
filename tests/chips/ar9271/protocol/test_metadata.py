@@ -1,4 +1,3 @@
-import pytest
 import struct
 from wifit3.chips.ar9271.protocol.metadata import AthMetadataLayer
 

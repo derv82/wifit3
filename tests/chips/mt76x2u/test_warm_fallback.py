@@ -8,7 +8,7 @@ either). The fix is to detect the timeout and force a full cold init
 These tests exercise the _structure_ of the fallback by mocking the
 heavy machinery and asserting on call ordering / retry behavior.
 """
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -70,7 +70,6 @@ async def test_warm_path_mcu_load_cr_failure_triggers_cold_fallback(monkeypatch)
         # warm-path failure → cold fallback
         d.mcu._seq = 0
         d.is_warm = False
-        warm = False
         assert await fake_cold_init(), "cold init helper should succeed"
         assert await fake_mac_tables(mac_bytes), "mac tables should succeed"
         assert await fake_mcu_load_cr(), "retry mcu_load_cr should succeed"

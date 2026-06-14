@@ -1,4 +1,3 @@
-import pytest
 from wifit3.wlan.interface import WlanInterface
 
 def test_wlan_interface_caching(mocker):

@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 def test_ar9271_firmware_exists():

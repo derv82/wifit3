@@ -21,7 +21,6 @@ from wifit3.chips.rtl8821au.constants import (
     REG_SI_READ_A,
     REG_WMAC_TRXPTCL_CTL,
     RF18_BW_MASK,
-    RF18_CHANNEL_MASK,
     RFREG_MASK,
     RF_CFGCH,
 )
@@ -125,7 +124,7 @@ def test_set_channel_2g_20mhz_l1pkth_is_8_for_1t1r():
 
 # --- 5 GHz ---
 
-from wifit3.chips.rtl8821au.chan import (
+from wifit3.chips.rtl8821au.chan import (  # noqa: E402
     _lookup_fc_area,
     _lookup_rf_mod_ag,
     channel_band_is_2g,

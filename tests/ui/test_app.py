@@ -2,7 +2,7 @@ import pytest
 from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.splash import SplashView
 from wifit3.ui.screens.scanner import ScannerView
-from textual.widgets import Footer, Header, RichLog, DataTable, Static, ListView
+from textual.widgets import RichLog, DataTable
 
 @pytest.mark.asyncio
 async def test_app_layout_and_boot():

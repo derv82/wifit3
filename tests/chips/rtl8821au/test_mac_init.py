@@ -11,17 +11,13 @@ sequence without touching real hardware. Verifies values for:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
 
-import pytest
 
 from wifit3.chips.rtl8821au.constants import (
     BIT_LD_RQPN,
     BIT_MACRXEN,
     BIT_MACTXEN,
     REG_BCN_CTRL,
-    REG_BCNQ_BDNY,
     REG_CR,
     REG_EDCA_BE_PARAM,
     REG_HMETFR,
@@ -30,7 +26,6 @@ from wifit3.chips.rtl8821au.constants import (
     REG_RQPN,
     REG_RQPN_NPQ,
     REG_TBTT_PROHIBIT,
-    REG_TRXFF_BNDY,
     REG_TXDMA_PQ_MAP,
     REG_USTIME_EDCA,
     REG_USTIME_TSF,

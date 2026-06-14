@@ -1,4 +1,3 @@
-import pytest
 import usb.core
 from wifit3.chips.ar9271.firmware import FirmwareLoader
 

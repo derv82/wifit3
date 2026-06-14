@@ -1,9 +1,6 @@
 import pytest
-import asyncio
 import usb.core
-import struct
 from wifit3.chips.ar9271.driver import AR9271Driver
-from wifit3.chips.ar9271.constants import *
 
 @pytest.mark.asyncio
 async def test_driver_connect_warm(usb_mock):

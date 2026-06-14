@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from wifit3.engine.models import AccessPoint, EapolFrame, Handshake
 from wifit3.engine.save import (
-    SaveResult,
     save_handshake,
     save_pmkid,
     save_wep_key,

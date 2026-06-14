@@ -1,6 +1,5 @@
 import struct
 
-import pytest
 
 from wifit3.wlan.packet import WlanFrameParser
 

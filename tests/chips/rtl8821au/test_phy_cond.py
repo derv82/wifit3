@@ -18,7 +18,6 @@ from wifit3.chips.rtl8821au.assets import (
     rf_a_tbl,
 )
 from wifit3.chips.rtl8821au.phy_cond import (
-    BRANCH_ELIF,
     BRANCH_ELSE,
     BRANCH_ENDIF,
     BRANCH_IF,

@@ -6,7 +6,6 @@ Kernel reference: mt76x2/usb_mac.c:9-60. Covers:
   - The CFG-bus XO_CTRL5 (C2_VAL) RMW + XO_CTRL6 (C2_CTRL) SET
   - The conditional XO_CTRL7 write based on NIC_CONF_2.XTAL_OPTION
 """
-import pytest
 
 from wifit3.chips.mt76x2u import constants as C
 from wifit3.chips.mt76x2u import mac

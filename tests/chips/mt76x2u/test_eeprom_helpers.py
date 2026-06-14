@@ -7,7 +7,6 @@ Covers the parts that bit us in production:
   - The signed-magnitude unpackers used to decode EEPROM bytes.
   - The cal-channel-group classifier for 5 GHz high-gain table selection.
 """
-from unittest.mock import MagicMock
 
 import pytest
 
