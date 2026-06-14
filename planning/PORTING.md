@@ -2,11 +2,6 @@
 
 > **For agents, not humans.** The chipset bring-up playbook a coding agent follows.
 
-Forward-looking. Everything about getting drivers and hardware working: the
-**porting playbook** (how we do it) and the **queue** (what's pending). Current
-per-card verification state lives in `../VERIFICATION.md`; release logistics in
-`RELEASE-PLAN.md`; product/UX features in `FEATURES.md`.
-
 ---
 
 ## Porting playbook
@@ -278,7 +273,7 @@ Ralink RT5572 reads 2.4 and 5 GHz equally well). Vendor and mainline are complet
 codebases above the same registers (`rtw_phy_dig()` vs the PHYDM/ODM stack), and the vendor
 carries long-session AGC/DIG/thermal stability a 15 s snapshot can't measure. Hence: re-port
 each Realtek 11ac card from its **vendor (DKMS) source, cleanroom**. Per-card A/B detail lives
-in `usb_dumps_new/DRIVER-STATUS.md` + each `chips/<chip>/<CHIP>.md`.
+in each `chips/<chip>/<CHIP>.md`.
 
 (In-tree MediaTek / Atheros / RTL8187 cards are unaffected — no vendor fork, mainline is canonical.)
 
@@ -312,14 +307,6 @@ and pass `verify_pcap.py`; HW A/B + default-flip status lives in `VERIFICATION.m
   morrownr `88x2bu-20210702` 5.13.1 (`captures_rtl88x2bu/driver-source/` +
   `usb_dumps_new/driver-sources/rtl88x2bu-5.13.1.tar.xz`); branch `dkms/88x2bu`; mainline A/B
   `captures_rtw88_8822bu/`.
-
----
-
-## Blank-EFUSE / no-EFUSE cards → `planning/BLANK-EFUSE-SUPPORT.md`
-
-Detecting a blank/counterfeit EFUSE, warning the user, and the in-RAM override (a generic
-image substituted into the parsed struct — **never** burning fuses) are a card-support + UX
-feature, not a porting step. Moved to `planning/BLANK-EFUSE-SUPPORT.md`.
 
 ---
 

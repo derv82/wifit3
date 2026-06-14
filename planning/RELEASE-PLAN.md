@@ -1,43 +1,9 @@
 # Wifit3 — Release Plan
 
-Living document — the road to a public (open-source) Defcon release. This is the
-**logistics + timeline master**: it sequences the work and owns the ship
-blockers. Detail lives in the sibling docs:
-
+- BUGS & QoL: `BUGS.md`
 - Hardware/driver work → `PORTING.md`
-- Product/UX features + QoL bugs → `FEATURES.md`
+- Product/UX features → `FEATURES.md`
 - Current per-card state → `../VERIFICATION.md`
-
-Defcon is the target event (~2 months). One week of vacation end of June eats
-into the timeline — plan accordingly.
-
----
-
-## Guiding principles
-
-- **Alpha early, fix publicly.** Ship alpha with enough runway to squash bugs
-  before Defcon. Silent failures and crashes on tier-1 cards are more damaging to
-  reputation than missing features.
-- **"Not vibe-coded slop."** The verification matrix, per-chip docs, and honest
-  ⚠️ cells already signal rigor. The code and UX must match.
-- **Tier-1 cards must be bulletproof.** RTL8812AU (AWUS036ACH), MT7612U
-  (AWUS036ACM), AR9271 (AWUS036NHA) — these are in the most hands. Everything
-  else is secondary.
-- **Scope cuts are features.** WEP fragmentation, PixieWPS, 40/80 MHz,
-  multi-card — all deferred deliberately. Document limitations honestly rather
-  than shipping them broken.
-
----
-
-## Timeline overview
-
-```
-Now          → End of June   DKMS ports + hardware + blockers
-End of June  → 1 week        VACATION (no releases, no alphas)
-Return       → Defcon        Alpha release, bug fixing, polish
-Defcon                       Demo, community feedback
-Post-Defcon                  Multi-card, Minnie Drivers, etc.
-```
 
 ---
 
@@ -89,25 +55,8 @@ the decision + reason.)
 - [ ] **Firmware blobs:** provenance is documented per-chip ("pcap-extracted,
   byte-verified vs linux-firmware"). Verify each blob is redistributable via the
   linux-firmware `WHENCE` file and add a one-line provenance per chip in its doc.
-- [ ] Consider **Minnie Drivers** as a separate GPLv2 package post-Defcon — the
-  cleanest way to give back to the ecosystem (see Post-Defcon).
-
-### 2c. Hardware-failure UX
-
-**Release blocker — gates the alpha.** Design + detail moved to `FEATURES.md`
-§ "Hardware-failure UX" (it's a real feature with real design weight, not an
-afterthought slot). The short of it: drivers `raise` on failure (we prefer that
-over callbacks), one UI catch → red error modal with an expandable **Details**
-box, and — the headline — logs/details reachable from *inside* the UI, not via a
-`WIFIT3_LOG` env var. The runtime-wedge (off-thread) half is still an open design
-problem; do it design-doc-first, not zero-shot.
-
-### 2d. Zadig / udev automation
-
-Shipped — both halves are in-TUI: Windows WinUSB bind/unbind (libwdi + UAC) and the
-no-sudo Linux path (a one-time udev access rule via `pkexec`, then runtime PyUSB
-detach). Open: no arm64 `wdi-simple.exe` yet (libwdi's VS2022 workflow builds x64/Win32
-only), so WinUSB install is x64-only on Windows.
+- [ ] Consider **Minnie Drivers** as a separate GPLv2 package — the
+  cleanest way to give back to the ecosystem.
 
 ### 2e. Versioning
 
@@ -116,12 +65,9 @@ only), so WinUSB install is x64-only on Windows.
 - Semantic versioning: `0.x.x` pre-release, `0.1.x` alpha patches, `0.2.0` for
   multi-card etc.
 
-### 2f. README + docs
+### 2f. Documentation
 
-The `README.md` **already exists** (pitch, TUI screenshots, supported-cards table
-with the asterisk rule, feature list, how-it-differs-from-wifite, install via
-uv/Zadig/rmmod, disclaimer) — this item is **review/polish**, not write-from-
-scratch. Still to add:
+Still to add:
 
 - [ ] `CONTRIBUTING.md` — uv dev setup, the hardware-testing loop, the comment-
   style rule, where ground-truth docs live.
@@ -131,49 +77,6 @@ scratch. Still to add:
 - [ ] `ARCHITECTURE.md` — mostly distillation (the layer stack + module map
   already live in `CLAUDE.md`); add the `WlanDriver` Protocol contract. Feeds off
   the Phase 5 driver-comparison matrix.
-
-### 2g. Port-fidelity grades (`VERIFICATION.md`)
-
-A **Port** column on the verification matrix: a one-letter grade for how faithfully
-wifit3's userland port reproduces the reference Linux driver's register
-conversation. The matrix carries the letter (one char, like the ✅ cells); the
-per-card detail carries the precise figure + the gap (`Port: 82% · Functional —
-4-path AGC not ported`).
-
-Grades are **evidence gates**, not opinions:
-
-- **S — Byte Perfect.** Cold-boot register conversation reproduced byte-for-byte
-  against the vendor pcap (a `verify_pcap.py`-style gate passes). Today: RTL8812AU
-  DKMS, RTL8821AU DKMS — that's the whole list.
-- **A — Faithful.** Init byte-diffed with only minor/known deltas (≈90–99%), or
-  init diffed but a runtime path (DIG, periodic re-cal) not yet diffed.
-- **B — Functional.** Not byte-diffed; works on hardware and ties/beats the
-  reference driver in A/B. **Where most cards honestly sit — a legitimate,
-  shippable grade, not a failure.**
-- **C — Partial.** Not byte-diffed; a named unported subsystem (or a capability gap
-  traceable to one).
-
-A precise **%** exists only for the diffed tiers (S/A); B and C are qualitative —
-the tier plus the named gap, no invented number.
-
-**The grade rates the port, not the silicon — and that orthogonality is the point.**
-It answers "does wifit3 drive this chip the way Linux does," not "is this card
-good." A byte-perfect port of a weak card is **S** *and* still shows ⚠️/❌ in its
-attack columns (an S-tier card that still can't WPS is fine). That pins a card's
-limits on the hardware, not on our port, and stops "the card just sucks" from
-reading as "the port is sloppy."
-
-**Scope — the anti-churn rule:** ship the column with the grades assignable from
-evidence we already have (two **S**, most cards **B**, any with a named gap **C**).
-Wiring a byte-diff verifier onto the older, loosely-ported drivers to earn **A/S**
-is **optional, incremental, and post-release — never a gate.** No card needs to be
-diffed to ship; an honest **B** is the baseline, not a debt.
-
-- [ ] Add the **Port** column + S/A/B/C legend to `VERIFICATION.md`, graded from
-  current evidence.
-- [ ] Per-card detail line: `Port: <% or —> · <tier> — <gap, if any>`.
-- [ ] (Optional, post-release) extend the byte-diff verifier to one older port at a
-  time to lift B→A/S — driven by curiosity, not the release.
 
 ### 2h. Brick-risk disclaimer ⚠️ (userland USB can damage hardware)
 
@@ -204,21 +107,6 @@ Required before public:
   irreversible). Make it a documented invariant so a PR adding a fuse-write is an obvious red
   flag. (Ties to the Blank-EEPROM override below — soft RAM override only, never burn.)
 - [ ] (Optional, post-alpha) a first-run acknowledgment for the dev/porting tools.
-
----
-
-## Phase 3 — Pre-alpha polish (time permitting)
-
-Picked from `FEATURES.md` — prioritize the **signal-quality bar** and **config
-persistence** (both low-cost, high-visibility), then the **update check**. The
-Focus channel-tune race and the beacon-count truncation (Bugs/QoL in
-`FEATURES.md`) are good cheap fixes for the same window.
-
-- **Blank-EFUSE / counterfeit heads-up** (a kind, cheap feature). On bring-up, if a card's
-  EFUSE reads blank (likely counterfeit — RF cal never burned), surface a clear boot-time
-  warning: "this card's EFUSE is blank, likely counterfeit, RX/TX may be weak — continue?".
-  No tool tells users their card is fake; this one should. OK to show every boot. Design + the
-  in-RAM override that pairs with it: `BLANK-EFUSE-SUPPORT.md`.
 
 ---
 
@@ -312,17 +200,3 @@ recorded so they aren't re-pitched as easy wins:
   testing belongs on the same track.
 
 ---
-
-## Post-Defcon backlog
-
-Real features, deferred for timeline not merit. Detail in the sibling docs:
-
-- **Multi-card support (Minnie Drivers v2)** → `FEATURES.md`. Run N cards
-  concurrently; the demo writes itself.
-- **Minnie Drivers standalone package** — separate the PyUSB userspace driver
-  layer into its own GPLv2 library; Wifit3 ships as the reference implementation.
-  Community builds other tools on top (triangulation, custom scanners). Central
-  driver registry + hardware matrix. Lowers the contribution barrier. (Tied to the
-  2b licensing/give-back strategy.)
-- **blank-EEPROM override (RT3572 rescue)** → `PORTING.md`.
-- **WPS improvements, WPA3 downgrade, triangulation map** → `FEATURES.md`.

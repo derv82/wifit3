@@ -1,19 +1,105 @@
 # Wifit3 — Known Bugs & QoL
 
-Forward-looking. Defects and quality-of-life nits in *existing* behavior — things
-to **fix**. New capabilities to **build** live in `FEATURES.md`; release-gating
-work in `RELEASE-PLAN.md`; current per-card state in `../VERIFICATION.md`;
-tech-debt / de-vibe (ugly-but-working code) lives in `RELEASE-PLAN.md` § Phase 5.
+---
 
-Tracked in-repo on purpose — offline, greppable, versioned alongside the code
-that has the bug. When the repo goes public, GitHub Issues becomes the inbox for
-community-filed reports; this stays the curated list.
+## Tag + suppress EAP/Enterprise handshakes — High priority (correctness, small)
 
-Ordering is rough priority.
+An EAP (enterprise) 4-way is captured and currently emitted as "crackable,"
+but its PMK comes from the EAP/MSK exchange, not a passphrase.
+hashcat `-m 22000` can't touch it. Extend the "crackability gate" (handshake.py) so
+an EAP-negotiated 4-way is withheld + badged "EAP/Enterprise" rather than reported as
+a capture.
+
+---
+
+## Proposed Features
+
+### Hardware-failure UX — pre-alpha (release blocker)
+
+Hardware failure without any error message is a BUG.
+
+**Problem.** When a card fails, the UI is unhelpful: an init failure shows a
+generic message, a runtime wedge just lets the Scanner fade to empty, and the only
+real detail lives in `wifit3.log` — which a user gets *only* by knowing to set
+`WIFIT3_LOG=1` before launch. That's a developer affordance, not a user one (and
+it gets worse under PyInstaller/launchers, where there's no obvious shell to set an
+env var in). A user who hits a failure should get a clear, actionable message
+**and** be able to see the gory details — without a terminal, without an env var.
+
+**Headline requirement: logs/details reachable from *inside* the UI.**
+`wifit3.log` (behind `WIFIT3_LOG`) stays exactly what it is — a developer trace of
+the code path, intentionally hidden from users. Separately, the UI must surface
+what a *user* needs when something breaks: a plain reason up front, the technical
+detail one expand away. The user never learns an env var exists.
+
+**The error modal (the shape we want).**
+- Main line, red, plain + actionable: *"Driver is borked — please unplug and
+  replug the adapter."*
+- A collapsed **Details** disclosure holding the full technical dump: the exception
+  + stack trace, plus whatever state the driver knew (e.g. "RF went dead",
+  register/hex values, addresses). Copy-able. *This* is the in-UI "logs" the
+  requirement above asks for.
+- Dismiss returns to the splash, where device re-discovery already runs on its 1 s
+  poll — so a replug recovers without relaunching.
+
+**Mechanism — two cases, and we strongly prefer `raise()` over callbacks.**
+The ideal: a driver `raise`s at the point of failure, from anywhere in its code,
+and that plops the user out to the modal with the message + stack trace. Callbacks
+for this are explicitly *disliked* — they scatter the failure path. How achievable
+that is splits by case:
+
+1. **Init failure — the easy half, low-invasive.** `connect()` runs inside an
+   awaited Textual worker, so a raised exception already has a call stack to ride
+   up to one UI-level `except`. The reason it doesn't work today is *self-inflicted*:
+   every driver wraps bring-up in `except Exception: return False` and swallows the
+   cause, and `connect()` piles broad catches on top. The fix is mostly **deleting**
+   those swallows so the exception propagates — less code, no new subsystem. One
+   catch in the splash worker → modal → splash.
+
+2. **Runtime wedge — the hard half, no plan yet.** A driver detects mid-session
+   that it's borked and needs a replug. Several drivers *can* already self-detect
+   this (warm-reattach bulk-IN smoke tests, RX-dead watchdogs). The trouble: it's
+   often detected on a **detached background thread** (the RX reader) or a
+   fire-and-forget hop task — there's no `await` for a `raise` to bubble to, so a
+   raise there just dies on that thread. Whether raising works "depends on the
+   stack trace": clean when the wedge is noticed during an awaited call (e.g.
+   `set_channel`), useless when it's noticed off-thread.
+   - **Open question — how does an off-thread wedge become a UI `raise` without
+     callbacks?** One candidate to explore (undecided): the driver stashes the
+     failure as state and a UI-side poll (the Scanner already ticks) notices it and
+     raises at a UI-reachable point — turning it back into the clean "raise →
+     modal" flow, no callback wiring. This is the core thing to design *before* any
+     code.
+
+**Out of scope here (separate, later).** Non-fatal **toast** notifications — low
+beacon rate, weak RX, per-driver `known_issues` surfaced on bring-up. Useful, but a
+different mechanism and a lower urgency than "the card died, tell the user."
+
+**Complexity.** Init half: low (delete the swallowing + one catch). Wedge half:
+genuinely hard, design-doc-first — *not* a zero-shot. Confirmed failure modes to
+cover when built: warm-reattach init wedge (RTL8822BU — replug message currently
+lost behind a generic error) and runtime RX wedge (RTL8812AU — Scanner fades
+silently).
+
+> **Related consideration — a `BaseDriver` class (its own design, not a v1
+> dependency).** Worth *considering*: an abstract `BaseDriver` that all drivers
+> inherit, holding the logic genuinely common to every driver — and, since not all
+> drivers run an RX reader thread (ar9271 doesn't), perhaps a
+> `ReaderThreadDriver(BaseDriver)` tier for the ones that do. This is
+> **significant** work: it touches all ~13 drivers and warrants a design of its own
+> — the families differ enough (HTC/WMI vs direct-register vs MCU-firmware) that a
+> premature base would be the wrong one.
+> It's flagged *here* because it would pay off for the
+> hard half above: if `BaseDriver` / `ReaderThreadDriver` already existed, surfacing
+> a wedge from inside `RxReaderThread` (the off-thread `raise` problem) could live
+> in one shared place instead of being re-implemented per driver — the DRY win. So:
+> not required for v1, but a real reason `BaseDriver` is worth designing.
 
 ---
 
 ## rt2800usb EFUSE reader reads wrong addresses → bad freq/chain/LNA/RSSI on 3 cards
+
+TODO: was this fixed?
 
 **High impact, affects RT5372 / RT5572 / RT3572 today.** `chips/rt2800usb/eeprom.py`
 `read_eeprom_efuse` walks the EFUSE with a **byte** offset (`range(0, 512, 16)`, writing
@@ -47,38 +133,6 @@ are blocked for that span. Give it manual control — a **Stop PBC** button (and
 **Start PBC** when a window is open) — and/or bound the retry loop so a single
 timeout can't hold the radio. Minor; deferred.
 
-## WPA3 downgrade is weak today — two paths to a real one
-
-The Focus **WPA Downgrade** button reads as dead because the current approach
-genuinely is weak. Both viable approaches end at the same prize — the client's
-**EAPOL M1 + M2** for a *WPA2* association (M2's MIC is all an offline PSK crack
-needs; M3/M4 are gravy, and you can't forge M3 without the PSK anyway) — and both
-work **only on WPA3-*transition*** APs (a pure-SAE client refuses WPA2). If the AP
-sets **Transition-Disable**, both die.
-
-**Path 1 — passive downgrade (what's implemented).** Forge WPA2-only beacons /
-probe responses for the target's BSSID and let a client downgrade and run its WPA2
-4-way *with the real transition AP*, sniffing it passively. Cheap — no AP to run —
-but at the client's mercy: the real AP is advertising SAE on the same channel the
-whole time, so a sane client just picks SAE and there's nothing to capture. (Also
-never confirmed to actually inject on hardware — only docstring intent.)
-`engine/attacks/wpa3_downgrade.py`.
-
-**Path 2 — evil twin / rogue AP (the reliable build).** Isolate the client onto a
-rogue AP — same SSID (+ BSSID, to impersonate), ideally a *different* channel so it
-isn't fighting the real SAE beacon — advertising WPA2-only; accept the client's
-auth + assoc, **send EAPOL M1 yourself** (a random ANonce, no secret), capture M2.
-Deterministic: WPA2 is the only option offered. Can't finish (no PSK for M3),
-doesn't need to. The RSNE-confirmation check at M3 may make the client abort the
-connection — fine, M1+M2 are already in hand. In wifit3 this is a **minimal AP
-responder in the inject path** (beacon + probe-resp + auth + assoc + M1 → catch
-M2), *not* a shell-out to hostapd like Wifite2 (hostapd is Linux-only — it would
-kill the Windows/cross-platform model). Feature-scale, not a tweak.
-
-**Near-term QoL** on the current button regardless: disable/annotate it unless the
-target is WPA3-transition, and log "passive — waiting for a natural reconnect
-(minutes–hours)" on start so it stops looking broken.
-
 ## 5 GHz drivers under-list DFS channels the cards support (deferred — DFS ≈ empty air)
 
 Every 5 GHz driver **except** `rtl8814au_dkms` advertises the byte-identical 9
@@ -105,6 +159,8 @@ driver's `set_channel` reproduces the capture's DFS tunes, (3) then extend
 
 ## Driver bring-up divergences from the vendor wire (pcap replay-diff findings)
 
+TODO: was this fixed?
+
 Surfaced by the per-driver pcap byte-diff verifier (`scripts/verify_pcap.py <chip>`, which
 replays a port's bring-up against the vendor cold-boot capture). Each is a faithfulness gap
 — the port emits a USB sequence the in-tree driver does not — found while bringing the
@@ -125,17 +181,4 @@ is an un-audited deviation worth closing.
   `load_firmware` preamble, so nothing has actually checked whether the op is on this wire.
   **Do not apply the gate**; a single-cursor full-walk (rt3070-style) is what adjudicates it.
 
-* **rt2500usb: `config_ant` ordering — kernel touches `MAC_CSR20` first (un-audited gap).**
-  The verifier reproduces `init_registers` + `init_bbp` byte-for-byte (123 ops), then
-  diverges: our `connect()` runs `config_ant` next (first op = read `PHY_CSR8` 0x04d0), but
-  the capture's next op is `MAC_CSR20` (0x0428) — the kernel does a MAC-side step between
-  baseband and antenna config that our port skips or reorders. Could be a missing register
-  write (partial port) or a benign ordering difference; needs the `MAC_CSR20` step decoded
-  against `rt2500usb.c`. Until then `config_ant`/`config_channel` aren't pcap-gated (they
-  need their own anchored blocks in `scripts/rt2500usb/verify_pcap.py`).
-
 ---
-
-> Not here: **driver wedge / replug warnings not reaching the UI** is a **release
-> blocker** (hardware-failure UX), tracked in `RELEASE-PLAN.md` § 2c — it gates
-> the alpha, so it doesn't sit in this backlog.

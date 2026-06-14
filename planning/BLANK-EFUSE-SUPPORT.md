@@ -7,13 +7,9 @@ and (2) optionally **substitute a sane generic image in driver RAM** so the card
 stupidly. **We never write fuses** — EFUSE is one-time-programmable (bits blow `0→1`
 permanently); a wrong burn bricks the card or sets an illegal RF/regulatory state with no undo.
 
-This was in `PORTING.md`; it's a card-support + UX feature, not a porting step. First-hand
-motivation: the project's own RT3572 (rt2800usb) is a blank-EFUSE counterfeit, and nobody ever
-flagged it.
-
 ---
 
-## 1. Detect + warn the user (the kind feature) — tracked in RELEASE-PLAN.md
+## 1. Detect + warn the user (the kind feature)
 
 On bring-up, after the EFUSE read, classify it: **healthy** vs **blank/counterfeit** (identity
 present but RF/cal region `0xFF` / `NIC_CONF0 == 0`). If blank, surface a clear heads-up in the
@@ -24,7 +20,7 @@ UI before continuing — roughly:
 
 Show it **every boot** for an affected card (the user may forget which unit is unburned) —
 it's information, not nagging. This is a genuinely kind feature; no tool told the user their
-card was fake. Release-plan item lives in `RELEASE-PLAN.md` (Phase 3).
+card was fake.
 
 ## 2. In-RAM override (never burn)
 
@@ -53,5 +49,4 @@ card. Image provenance: kernel `rt2800` defaults, or a dump from a genuine RT357
 **Experiment:** inject a plausible image into the RAM struct on the RT3572, A/B the beacon rate
 + deauth strength vs blank — user-driven (try it with and without, see the diff). Low cost,
 real learning; builds the genuine-no-EFUSE-card feature either way. If it meaningfully rescues
-the unit, re-run the matrix and reconsider the demotion. (RT3572 demotion status:
-`../VERIFICATION.md` § "Unsupported — pending genuine hardware".)
+the unit, re-run the matrix and reconsider the demotion.
