@@ -31,6 +31,14 @@ frame must actually contain the SNonce. That means the MIC frame is always M2
 So a "captured handshake" requires a usable *keystone*: a complete M2 (or, rarely,
 a complete M4 with a non-zero nonce) plus an ANonce donor (M1 or M3) from the
 same association.
+
+References:
+  - hashcat 22000 hashline format + MESSAGEPAIR semantics:
+    https://github.com/hashcat/hashcat/issues/1816
+    https://github.com/hashcat/hashcat/blob/master/src/modules/module_22000.c
+  - Pairing + tolerance heuristics mirrored from hcxpcapngtool (EAPOLTIMEOUT 5 s,
+    --nonce-error-corrections 8, the MESSAGEPAIR table):
+    https://github.com/ZerBea/hcxtools
 """
 from __future__ import annotations
 

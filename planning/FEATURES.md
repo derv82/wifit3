@@ -9,6 +9,100 @@ Ordering within each section is rough priority: pre-alpha → soon → post-Defc
 
 ---
 
+## Not-Yet-Supported Attacks (Poorly Supported?)
+
+> Common thread: an AKM whose PMK is passphrase-derived is *not* enough — hashcat
+> `-m 22000` must also be able to crack the *specific artifact*. Two AKMs slip past
+> our crackability gate (`engine.wpa.handshake`) today and get captured, written,
+> and reported as "crackable" when stock hashcat cannot crack them (FT-PSK, and
+> the SHA256 PMKID). Those are near-term **correctness bugs**; the EAP families
+> below are new-attack territory.
+
+### FT-PSK / FT-* (802.11r Fast Transition) — correctness bug, fix wanted
+
+**What's wrong.** `_CRACKABLE_AKMS` includes FT-PSK (AKM 4) and FT-PSK-SHA384
+(AKM 19), so we capture, write a `WPA*02`/`WPA*01` line, and tell the user
+"crackable." But **hashcat `-m 22000` has no hash mode for FT at all** — 802.11r
+derives the PTK through PMK-R0 → PMK-R1 and hashcat only does the direct
+`PRF(PMK, …)`. It's an open feature request (hashcat issue #3887). Those lines
+never crack: we lie to the user.
+
+**Why it's not auto-caught.** The gate's master switch is "does the AP offer
+SAE?"; on a non-SAE WPA2+FT network it short-circuits to "crackable" and never
+inspects the AKM. Fixing FT means letting an AKM check run even when SAE isn't
+offered (a scoped widening of the gate). Our `akm_client` (from M2 / (Re)Assoc)
+already identifies which associations chose AKM 4/19, so detection is cheap — the
+*policy* is the open question:
+
+1. **Suppress like SAE** *(recommended — minimal, consistent)* — withhold + badge
+   "FT — not hashcat-crackable," reusing the SAE machinery (gate → no pairs → no
+   banner/save). Smallest change, fully closes the gap. Discards the capture, but
+   FT-aware cracking isn't in our pipeline anyway.
+2. **Emit but flag** — keep writing the hc22000/pcap but surface "⚠ FT-PSK — needs
+   FT-aware tooling, not `-m 22000`" (mirrors hcxpcapngtool's flag + `--ignore-ie`).
+   Faithful to the reference tool; most UI/format work; still writes a line that
+   `-m 22000` chokes on.
+3. **Pcap-only** *(future enhancement)* — keep the pcap so an FT-aware cracker (or
+   hashcat once #3887 lands) can re-extract, but drop the `WPA*02`/`WPA*01` line and
+   the "crackable" claim. Honest and preserves the data (FT-PSK's PMK *is*
+   passphrase-derived, unlike SAE's), but needs new plumbing: today a missing
+   crackable hashline makes `save_handshake` write nothing, pcap included.
+
+**Out of scope:** FT *roaming* handshakes ride Reassoc/Auth frames (MDE/FTE KDEs),
+not a 4-way EAPOL — a separate capture path we don't have, uncrackable by hashcat
+anyway.
+
+### SHA256 PMKIDs (PSK-SHA256, AKM 6) — same class of bug, PMKID-only
+
+The plain-PSK (AKM 2) PMKID is `HMAC-SHA1(PMK, "PMK Name" ‖ AA ‖ SPA)` — what
+hashcat `-m 22000` cracks. A **PSK-SHA256 (AKM 6) PMKID is HMAC-SHA256** (the
+PMKID hash follows the AKM's hash), and hashcat's PMKID path is SHA1-only ("no AKM
+suite detection or SHA-256 variant handling"). hcxpcapngtool agrees: it flags
+these "possible PSKSHA256" and needs `--ignore-ie` to force-emit past its AKM
+filter.
+
+**What's wrong.** Our gate treats AKM 6 as crackable, so we'd write a `WPA*01` for
+an AKM-6 PMKID hashcat can't crack. The AKM-6 *handshake* (`WPA*02`) is fine — the
+keyver in the embedded EAPOL tells hashcat to use AES-CMAC. So the fix is
+**PMKID-only**: exclude SHA256/FT AKMs from `pmkid_hashline`. Rare in the wild,
+but a free correctness win riding the FT fix.
+
+### EAP-MD5 (WPA/2-Enterprise) — low priority, near-extinct
+
+EAP-MD5 puts its challenge/response in the clear (not TLS-tunneled), so it's
+passively capturable — but it's essentially extinct (deprecated, offers no key
+material protection). Reference extractor: `data_dumps/eapmd5hcgen.py` (pulls
+Identity / Challenge / Response from a pcap). That 2014 script uses the `-m 10` +
+`^<id>` rule trick (prepend the EAP identifier byte so `md5($pass.$salt)` =
+`MD5(id ‖ pass ‖ challenge)`); the cleaner modern fit is **hashcat `-m 4800`**
+(iSCSI CHAP — same `MD5(id ‖ pass ‖ challenge)` construction, format
+`response:challenge:id`, no rule). Parked unless a real target appears.
+
+### EAP-MSCHAPv2 / PEAP via Rogue AP / Evil Twin — high value, active, big build
+
+**Why.** Most enterprise Wi-Fi is PEAP-MSCHAPv2. The MSCHAPv2 challenge/response
+cracks with hashcat `-m 5500` (and the DES half is near-instant via crack.sh) —
+recovering the *domain* credential, far higher value than a Wi-Fi PSK. The marquee
+enterprise capability.
+
+**Why it's different.** PEAP wraps MSCHAPv2 in TLS, so unlike EAP-MD5 you **cannot
+capture it passively** — you stand up a **rogue AP / evil twin** (hostapd-wpe /
+eaphammer-class) so the client authenticates to *you*, exposing the MSCHAPv2
+exchange (or accepting your cert). Active, TX-heavy, AP-impersonating → strictly
+behind the explicit-action gate, and a large build (beacon as the target ESSID, a
+RADIUS/EAP state machine, cert handling).
+
+**The opportunity.** Our `engine.campaign` composition format could orchestrate the
+EvilTwin/RogueAP scenario as a first-class, *correct* capability — an area to do
+better than Wifite2 (which doesn't do native enterprise). Worth a design pass on
+whether the campaign primitives compose it cleanly before committing.
+
+> **Cross-cutting design note — multi-mode hash output.** Everything we emit today is
+> hashcat `-m 22000`. The moment we add EAP-MD5 (`-m 4800`) or MSCHAPv2 (`-m 5500`),
+> the save/hc layer needs a per-attack **(hashcat mode + line format)** mapping
+> instead of the hardcoded 22000. Small, but design it once when the second target
+> lands.
+
 ## Features
 
 ### Hardware-failure UX — pre-alpha (release blocker)
