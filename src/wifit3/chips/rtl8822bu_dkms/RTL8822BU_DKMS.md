@@ -1,17 +1,42 @@
 # RTL8822BU — vendor/DKMS port (playbook)
 
-> **STATUS: the entire first init cycle is COMPLETE** — chip-ID, EFUSE (+PABias), MAC power-on
-> (pre_init + `card_en_flow` + init_system_cfg), HALMAC iDDMA FW download (40 packets + `0xC078`
-> ready), full `init_mac_cfg` (trx/protocol/edca/wmac-RX), the `init_mac_flow` driver tail
-> (RCR-sync/RTS-full-bw/USB-rx-agg), `_send_general_info` (two FW-offload H2C packets + the
-> dump_fifo H2CQ readback + the HMEBOX reg-H2C), and the `hal_read_mac_hidden_rpt` C2H report read.
-> All reproduce **byte-for-byte on capture-1/2/3** (~5269 ops; the few-op spread is variable poll
-> counts the loops reproduce). **Frontier: the 2nd init cycle** (`rtl8822b_hal_init` →
-> `_halmac_init_hal`, op ~5269 `W 0x00AA`) — a WARM re-init (card_dis+card_en) that re-runs the
-> ported power-on/FW/MAC steps then adds `_drv_enable_trx` / `init_mac_register` / `config_rx_info`
-> / **BB+RF (PHYDM)**. See "Next frontier" below for the exact wire + open questions. Promote
-> sections to ground truth with `[SRC]`/`[WIRE]` citations; by the end this reads like
-> `rtl8812au_dkms/RTL8812AU_DKMS.md`.
+> ## NEXT AGENT — START HERE
+>
+> **Done & hardware-confirmed:** the entire deterministic cold init (chip-ID → EFUSE → 2-cycle
+> power/FW/MAC → BB phy-reg/AGC → crystal → RF-A/RF-B) + **full `set_channel`** (switch_channel +
+> bandwidth + band-switch; **29/29/28 airodump hops byte-for-byte**) + the runnable **driver**
+> (`driver.py`/`bringup.py`/`rx.py`) — `test_hw.py --phase init` runs clean on the card and
+> `set_channel` tunes both radios. The byte-for-byte gate is **resumed past the BB/RF tables**:
+> `verify_pcap` is clean to **op ~9470 / 29542** on capture-1/2/3.
+>
+> **Your job:** continue the gate-driven port of the post-PHY calibration, function by function,
+> until RX delivers beacons. The chain on the wire is **IQK → LCK → one-time DPK → phydm DM init**
+> (the DM init is the RX-detection seed — see "RX bring-up" below; reaching it faithfully is what
+> lights up beacons). Frontier op ~9470 = `R 0x2b24` (RF_A 0xC9) = the start of IQK.
+>
+> **The loop (proven — `init_usb_cfg` + `config_phydm_trx_mode` were just done this way):**
+> 1. `uv run python scripts/verify_pcap.py rtl8822bu_dkms` → prints `FRONTIER -> op #N: <op>`.
+> 2. Identify the source fn for that op: resolve the register (`grep define REG_... halmac_reg2.h`),
+>    then `grep -rn` the value/reg in `hal/phydm/halrf/rtl8822b/` (IQK = `halrf_iqk_8822b.c`) or
+>    `hal/phydm/rtl8822b/phydm_hal_api8822b.c`. RF reads are direct BB reads at
+>    `{0x2800,0x2c00}[path]+(addr<<2)` (so `0x2b24` = RF_A `0xC9`); RF writes are `0xC90`/`0xE90`.
+> 3. Port it (new fns in `cal.py`; reuse `sipi`, `chan._igi_toggle`/`_ccapar_by_rfe`/`_rfe_ifem`).
+>    The replay feeds every read, so read-dependent loops/convergence reproduce — port faithfully,
+>    don't shortcut. Add the call to `bringup.cold_bringup` (shared by the gate AND the driver).
+> 4. Re-run the gate (advances), verify all 3 captures, `ruff check`, commit (no AI trailer).
+> 5. After IQK+LCK+DM (or whenever the BB starts completing packets), re-run
+>    `uv run python scripts/rtl8822bu_dkms/test_hw.py --phase beacon` on the card to confirm beacons.
+>
+> **Scope reality:** IQK (`halrf_iqk_8822b.c`, ~2000 lines, read-dependent) and DPK are large —
+> this is a multi-session grind, one function per gate step. That's expected; the methodology holds.
+> Per the Lead, the **all-channel cal SCAN is NOT replayed** (set_channel does per-channel
+> on-demand); you're porting only the **one-time** post-PHY pass. DPK is TX-quality — if RX works
+> after IQK+LCK+DM init without the one-time DPK, that's fine (gate will show DPK ops unreproduced,
+> which is the accepted boundary like the per-channel DPK).
+>
+> Everything below is verified ground truth (`[SRC]`/`[WIRE]`). The "Milestones" table at the
+> bottom is the original plan and is now mostly historical — M0–M6 + driver wiring are done; the
+> live work is M5 (cal)/M7 (DM+RX). Keep this doc current; cite `[SRC]`/`[WIRE]`.
 
 ## Verified facts (ground truth so far)
 
@@ -167,11 +192,12 @@ The tail of `hal_read_mac_hidden_rpt` / `rtl8822b_read_efuse`, all gate-clean:
   read 13 report bytes (`0x1A2..0x1AE`), ack `W 0x1A0=C2H_DBG`. Report is read-and-discarded
   (decodes wl-func/bw/proto caps into hal_spec, which wifit3 doesn't consume).
 
-### Next frontier — the 2nd init cycle (op ~5269, `W 0x00AA=0x8000` ...)
+### The 2nd init cycle (CLEARED, byte-for-byte) — historical map
 
+This whole section is **done** (it's how the init reached op 9410); kept as the structural map.
 `rtl8822b_read_efuse` returns ⇒ `rtw_hal_read_chip_info` done ⇒ `rtw_hal_init` → `rtl8822b_hal_init`
 → `_halmac_init_hal` `[SRC] hal_halmac.c:3576` — the **real** init, which RE-RUNS the already-ported
-steps then adds the new ones:
+steps then adds the new ones (all now ported; `bringup.cold_bringup` is the canonical sequence):
 0. **A power-OFF first** (f10769-f10935 — `rtw_hal_power_off`, NOT yet ported): `W16 0x00AA=0x8000`
    (`REG_PMC_DBG_CTRL1+2`, byte `0xAB` BIT7), then `mac_pwr_switch(OFF)` — probe (`R 0xFE58` /
    `R16 0x80=0xC078` ⇒ `W 0xFE58=0x80` rpwm-toggle / `R 0x100=0xFF`≠0xEA ⇒ chip ON ⇒ `R 0xF5`) ⇒
@@ -388,17 +414,21 @@ the vendor stack runs.
 - Mainline A/B baseline (tie-or-beat target, not a port reference): `usb_dumps/
   captures_rtw88_8822bu/` + `usb_dumps_new/captures_rtw88_8822bu/`.
 
-## verify_pcap — the faithfulness gate
+## verify_pcap + verify_channels — the faithfulness gates (BUILT)
 
-- `scripts/rtl8822bu_dkms/verify_pcap.py` — capture parse + coverage audit done; bring-up call
-  sequence is a TODO. Registered: `uv run python scripts/verify_pcap.py rtl8822bu_dkms`.
-- Template: `scripts/rtl8812au_dkms/verify_pcap.py` (gate) + that dir's `verify_channels.py`
-  (per-hop `iw set channel` byte-diff). Build a sibling `verify_channels.py`.
-- The shared engine `scripts/rtw88_pcap_replay.py` feeds recorded reads back so RMWs / EFUSE /
-  any live search reproduce; every write/bulk packet is checked. If the port is dev-centric
-  (register IO via `dev.ctrl_transfer`, FW via `dev.write(ep)`), wrap `ReplayTransport` in a
-  thin `ReplayDev` shim.
-- Run against capture-1/2/3 (Post-Port Checklist #3).
+- **`scripts/rtl8822bu_dkms/verify_pcap.py`** (`uv run python scripts/verify_pcap.py rtl8822bu_dkms`)
+  — replays `bringup.cold_bringup` against the merged ctrl+bulk stream; prints the running
+  reproduced-op count + the `FRONTIER` op (the next thing to port). Clean to op ~9470/29542. The
+  `CAL_SCAN_START` guard just relabels the terminal message; the real frontier is wherever the port
+  stops. Run the per-capture form (`… verify_pcap.py rtl8822bu_dkms <cap>.pcap`) on capture-1/2/3.
+- **`scripts/rtl8822bu_dkms/verify_channels.py`** (`… verify_channels.py capture-1`) — slices each
+  `iw set channel N` window from `iw.log` and byte-diffs `chan.set_channel_bw` per hop. 29/29/28
+  PASS (built; the set_channel gate).
+- **`scripts/rtl8822bu_dkms/test_hw.py`** (`--phase open|init|beacon`) — the live hardware smoke
+  test (cold init + monitor RX). Use `--phase beacon` to check RX once the cal lands.
+- The shared engine `scripts/rtw88_pcap_replay.py` feeds recorded reads back so RMWs / EFUSE / any
+  live search reproduce; every write/bulk packet is byte-checked. The 8822b transport is dev-centric
+  (it emits the 0x4E0 mirror), so the gate drives `Rtl8822buTransport` over `ReplayDevice` directly.
 
 ## Milestones (subject to change — the vendor source + capture set the real order)
 
@@ -420,10 +450,11 @@ fires live TX (Hand-off).
 | M10 | `driver.py` (WlanDriver protocol) + `manager.py` under `WIFIT3_RTL8822` + RxReaderThread (start before RX-enable) + DIG/CCK-PD ticked off the loop. | clean RX through the app; gate-faithful |
 | M11 | A/B vs the mainline baseline (run via env var) + endurance soak (≥30 min, both bands). | tie/beat it on breadth+stability → flip default |
 
-Open questions to resolve from the source (don't guess): does the 8822b HAL reuse
-`rtl88xxau_base` or need a new shared base; HALMAC vs legacy efuse path; the morrownr
-`CONFIG_*` build flags (deduce from the bytes); the monitor RCR value (a vendor/airmon tail
-may not deliver beacons into our RX pipeline — sibling ports re-open RCR after the tail).
+Resolved (no longer open): the 8822b HAL does **not** reuse `rtl88xxau_base` — it has its own
+chip-local modules (`sipi.py`, `cal.py`, `chan.py`, `bringup.py`, …); HALMAC efuse path (driver-side
+dump); monitor RCR = `0x9000380F` + `RXFLTMAP0/1/2 = 0xFFFF` (set in `driver.py`/`test_hw.py`,
+NOT a capture replay). Still open: the live `CONFIG_*` build-flag effects (deduce from the bytes
+as you hit them — e.g. `CONFIG_BW_INDICATION` is ON, confirmed by the `0x840` bw-fixed writes).
 
 ## Acceptance: Post-Port Checklist
 
