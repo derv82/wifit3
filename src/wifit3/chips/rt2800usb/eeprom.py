@@ -7,12 +7,14 @@ of bring-up via EFUSE_CTRL's bit-bang protocol — without these values
 loaded, downstream BBP/RFCSR writes use chip defaults that often gate
 RX.
 
-EFUSE_CTRL protocol (rt2800lib.c:10909-10963):
+EFUSE_CTRL protocol (rt2800lib.c:10909-10963). ADDRESS_IN is a u16-WORD
+index (the kernel loops i += 8 words), so the fetched fuse address is
+byte_offset // 2 while the 16-byte result is stored back at byte_offset:
 
     for byte_offset in range(0, 512, 16):
         # 1) Set up read request
         reg = read32(EFUSE_CTRL)
-        reg.ADDRESS_IN = byte_offset    # bits 25:17
+        reg.ADDRESS_IN = byte_offset // 2  # bits 25:17 — u16-word index
         reg.MODE = 0                    # bits 7:6
         reg.KICK = 1                    # bit 30
         write32(EFUSE_CTRL, reg)
@@ -111,7 +113,11 @@ def _efuse_read_chunk(t: RT2800USBTransport, byte_offset: int) -> bytes:
     poll, read 4 data regs in HIGH→LOW order, each LE.
     """
     reg = t.read32(EFUSE_CTRL)
-    reg = _set_field32(reg, EFUSE_CTRL_ADDRESS_IN, byte_offset)
+    # ADDRESS_IN is a u16-word index, not a byte address: rt2800_efuse_read
+    # loops in word units (i += 8) and EFUSE_CTRL_ADDRESS_IN = FIELD32(0x03fe0000).
+    # The 16-byte result is stored at byte_offset in the buffer, but the fuse
+    # itself must be addressed by word. [SRC] rt2800lib.c:10955
+    reg = _set_field32(reg, EFUSE_CTRL_ADDRESS_IN, byte_offset // 2)
     reg = _set_field32(reg, EFUSE_CTRL_MODE, 0)
     reg = _set_field32(reg, EFUSE_CTRL_KICK, 1)
     t.write32(EFUSE_CTRL, reg)

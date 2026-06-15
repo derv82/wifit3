@@ -36,19 +36,11 @@ Cross-driver gap classes (project audit 2026-05-25).
   :228 (monitor skip), :314 (DEFAULT_RSSI fallback); rt2800lib.c:12085
   (CAPABILITY_LINK_TUNING always set). Ties to VERIFICATION.md PAU05 Scan ⚠️
   and the cross-card weak-2.4 GHz-RX item in `planning/PORTING.md`.
-- [ ] **EFUSE reader uses BYTE offset where the chip wants a u16-WORD offset** — CONFIRMED
-  bug (2026-06-09), found while staging the RT3070 clean-room port. `eeprom.py
-  read_eeprom_efuse` loops `range(0, 512, 16)` and writes `EFUSE_CTRL_ADDRESS_IN = byte
-  offset`; the kernel (`rt2800lib.c:10955` `for i ... i += 8` u16 words) writes the **word**
-  offset. Block 0 (MAC) reads correctly — masking the bug — but block ≥1 fetches from *double*
-  the address, so **`NIC_CONF0` (chain counts!), `freq_offset`, `LNA`, `RSSI`, IQ-cal are read
-  from the wrong place** on RT5372/RT5572/RT3572. Never caught because the old `verify_pcap`
-  only replayed the firmware-upload block, not the EFUSE walk. Fix: `ADDRESS_IN = offset // 2`
-  (or loop in word units). **Left unpatched here on purpose** — fixing it shifts every
-  EFUSE-derived value family-wide and needs a full-walk gate + an RX A/B re-check, so it's
-  scoped to the future family-perfection pass (the RT3070 clean-room port carries its own
-  correct reader; see `chips/rt3070/RT3070.md`). **Measured PAU05 delta + RX baseline (freq_offset
-  30→59, the RX gate): see "EFUSE byte/word bug — measured PAU05 delta" below.**
+- [x] **EFUSE reader uses a u16-word ADDRESS_IN** — FIXED (2026-06-14). `eeprom.py`
+  `_efuse_read_chunk` writes `EFUSE_CTRL_ADDRESS_IN = byte_offset // 2` (kernel
+  `rt2800lib.c:10955` loops `i += 8` in word units). Reproduces the kernel EFUSE walk
+  byte-for-byte (`verify_pcap`, 225 ops, rt5372 + rt5572 captures); post-fix RX A/B shows
+  no regression — see "EFUSE addressing" below.
 
 Covers Ralink rt2800usb-family chipsets supported by wifit3:
 
@@ -395,8 +387,8 @@ all EFUSE reads (32 iterations × 7 ctrl xfers each, hitting
 **EFUSE_CTRL protocol** (see `eeprom.py`):
 
     for byte_offset in range(0, 512, 16):
-        # 1) Request a 16-byte read
-        reg.ADDRESS_IN = byte_offset; reg.MODE = 0; reg.KICK = 1
+        # 1) Request a 16-byte read (ADDRESS_IN is a u16-word index)
+        reg.ADDRESS_IN = byte_offset // 2; reg.MODE = 0; reg.KICK = 1
         write(EFUSE_CTRL, reg)
         # 2) Poll KICK clear (~5µs)
         # 3) Read 4 dwords HIGH→LOW: EFUSE_DATA3, _2, _1, _0
@@ -417,59 +409,17 @@ all EFUSE reads (32 iterations × 7 ctrl xfers each, hitting
 
 ---
 
-## EFUSE byte/word bug — measured PAU05 delta + RX baseline (2026-06-10)
+## EFUSE addressing
 
-Pre-fix record, captured before touching the reader, with
-`scripts/rt2800usb/efuse_delta.py` (read-only — reads the fuse both the
-shipping byte-`ADDRESS_IN` way and the kernel-faithful word-`ADDRESS_IN`
-way and diffs). Device: PAU05, silicon 0x5392 rev 0x0223.
+`EFUSE_CTRL.ADDRESS_IN` is a u16-word index: `_efuse_read_chunk` writes `byte_offset // 2`
+(kernel `rt2800lib.c:10955` loops `i += 8` in word units; the 16-byte result is stored back
+at `byte_offset`). The reader reproduces the kernel EFUSE walk byte-for-byte — `verify_pcap`
+matches 225 ctrl ops on both the rt5372 and rt5572 captures.
 
-**RX baseline — the gap we want to close:**
-- `beacon_watch` on a nearby CH1 AP: mean **5.5/s** fresh-replug vs **5.7/s**
-  post-soak (min 2, max 8, stdev ~1.5, zero-seconds 0). Fresh ≈ post-soak, so
-  this is a **steady-state weak RX, not degradation** — consistent with a
-  static-calibration handicap (below), not an AGC/thermal drift.
-- 6-min hop sweep (`sweep.py`): 27→22 active BSSIDs. Treat as environmental
-  AP churn, not RX decay — the single-AP beacon_watch above is flat.
-- Cross-card reference (rough — different session, not a controlled A/B):
-  RT3070 (AWUS036NH, same rt2x00 family + 1T1R but the **correct** word-offset
-  reader) reads **7.9/s** on a nearby AP (min 6, stdev 0.9) and **65** active
-  BSSIDs on the soak — ~3× PAU05's count. A correctly-calibrated same-family
-  1T1R is far healthier; the gap is too large to pin on antenna form-factor.
-
-**EFUSE delta — driver today vs corrected (`ADDRESS_IN = offset // 2`):**
-
-| field | driver today | corrected | note |
-|---|---|---|---|
-| `freq_offset` | 30 (0x1e) | **59 (0x3b)** | the RX gate — off by 29 crystal-trim units |
-| `lna_gain_bg` | 0xff | 0x00 | 0xff → BBP62 `0x37-0xff` underflows to 0x38 vs default 0x37 |
-| `rssi_bg0/1` | 0xff / 0xff | 0x00 / 0x00 | RSSI offsets that feed the link-tuner averaging |
-| `NIC_CONF0` | 0x1a19 (rxpath=9 → unburned heuristic → 1T1R) | 0xff22 (rxpath/txpath=2, rf_type=15) | corrected value reads *partly unburned* — see caveat |
-
-Raw fuse blocks make the shift obvious: the buggy read returns the per-channel
-**TX-power ramp** (block 0x30 = `16 17 18 18 19 1a 1b 1c …`), the corrected read
-the real config region (`00 00 00 00 22 ff a0 00 ff ff 3b 01 55 55 99 bb`). So
-the recorded `freq_offset=30` is a coincidental TX-power byte, not the crystal
-trim; the real trim is **59**. This *looked like* the leading explanation for PAU05's
-weak RX — **falsified; see Outcome below.**
-
-**Outcome (2026-06-10): hypothesis falsified, reverted.** The fix was applied and
-`verify_pcap`'d: the word-offset reader reproduces the kernel's EFUSE loop byte-for-byte
-(225 ops, both the rt5372 *and* rt5572 captures), so the addressing fix is genuinely
-kernel-faithful — and the capture decode confirms the real values (PAU05 freq_offset=59,
-`NIC_CONF0=0xff22` → the kernel reads rxpath/txpath=2 too). **But the RX A/B regressed
-PAU05: 5.5 → 3.8/s.** Reverted.
-
-Two facts then killed the whole "EFUSE bug = weak RX" premise:
-- **PAU06** (same RT5372 `0x5392`, same `148f:5372`, same *buggy* reader) reads **~7.8/s** —
-  2× PAU05 on identical code. So the bug does not gate RX; it is a *faithfulness* gap only.
-- The **same physical PAU05 on Linux** (this capture) does ~6–8/s steady (10/s ceiling
-  peaks) vs our userland 3.6/s. The hardware receives fine — **our port under-drives it.**
-
-So PAU05's weak RX is the unfaithful rt2800usb imitation port (RX power / AGC / something
-un-ported), not the EFUSE addressing. Fix path: a clean-room **`chips/rt5372/`** port (see
-`planning/PORTING.md` § Planned), not an inside-patch of this driver. The EFUSE byte/word
-bug stays a documented faithfulness gap here.
+Post-fix RX (2026-06-14, CH1 nearby AP, 3×20 s, fresh replug each): PAU09/RT5572 ~8.7 median 9,
+AWUS051NHv2/RT3572 ~8.0 median 8 — no regression; 30-min dual-band hop soak on the PAU09 flat
+(active BSSIDs 121→124, no wedge). No-op on the erased-EFUSE RT3572 (all-0xFF reads identically
+by byte or word).
 
 ## RT3572 unburned-EFUSE behaviour
 

@@ -97,32 +97,6 @@ silently).
 
 ---
 
-## rt2800usb EFUSE reader reads wrong addresses → bad freq/chain/LNA/RSSI on 3 cards
-
-**High impact, affects RT5572 / RT3572 today.** `chips/rt2800usb/eeprom.py`
-`read_eeprom_efuse` walks the EFUSE with a **byte** offset (`range(0, 512, 16)`, writing
-`EFUSE_CTRL_ADDRESS_IN = byte_offset`), but the chip wants a **u16-word** offset — kernel
-`rt2800lib.c:10955` does `for i ... i += 8` (word units) and the field is
-`EFUSE_CTRL_ADDRESS_IN = FIELD32(0x03fe0000)`. Block 0 (the MAC, byte 0–15) reads correctly,
-which **masked the bug**; every block past byte 16 is fetched from *double* the address. So
-`NIC_CONF0` (TX/RX **chain counts** + RF_TYPE), `freq_offset` (crystal trim — the documented
-RX gate), `LNA` gain, `RSSI` offsets, and the RT5592 IQ-cal bytes are all read from the wrong
-place. Likely consequences: off-frequency synth / weak-or-flaky RX, wrong chain/PA config,
-miscompensated RSSI — i.e. real scan/RX performance loss, not a cosmetic divergence.
-
-Why it shipped: the old `scripts/rt2800usb/verify_pcap.py` only replayed the firmware-upload
-block, never the EFUSE walk — green-but-unfaithful (the "Green ≠ faithful" trap in
-`planning/PORTING.md`). Found 2026-06-09 while staging the RT3070 clean-room port; the new
-single-cursor full-walk gate catches it on the **2nd** EFUSE block.
-
-Fix: `ADDRESS_IN = byte_offset // 2` (or loop in word units). **It's its own task** — the fix
-shifts every EFUSE-derived value family-wide, so it needs a full-walk `verify_pcap` for the
-EFUSE loop **plus an RX A/B re-verify on all two physical cards** (RT5572/RT3572)
-before/after. Deliberately left unpatched until then. The RT3070 clean-room port
-(`chips/rt3070/`) ships its own correct (word-offset) reader and is unaffected. Cross-refs:
-`chips/rt2800usb/RT2800USB.md` § Potential Known Gaps; `chips/rt3070/RT3070.md`. Greppable:
-`EFUSE_CTRL_ADDRESS_IN`, `read_eeprom_efuse`.
-
 ## WPS PBC auto-invade can monopolize the radio on timeout (Focus)
 
 PBC auto-invade is ON by default and works well, but in Focus a PBC attempt that
