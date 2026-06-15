@@ -14,7 +14,7 @@ package 7). See RTL8822BU_DKMS.md for the per-step citations.
 """
 from __future__ import annotations
 
-from . import bb, chipid, efuse, firmware, mac, phy_cond, rf, usbphy
+from . import bb, cal, chipid, efuse, firmware, mac, phy_cond, rf, usbphy
 from . import constants as const
 
 
@@ -60,4 +60,6 @@ def cold_bringup(t):
     rf.phy_rf_config(t, cfg)               # RF-A then RF-B radio tables
     bb.phy_parameter_init(t, post=True)    # PHYDM POST_SETTING (OFDM/CCK on)
     usbphy.init_usb_cfg(t)                 # init_interface_cfg: RX-DMA burst mode + drop-data
+    t.read32(const.REG_RCR)                # hal_init tail: HW_VAR_RCR sync read-back
+    cal.config_trx_mode(t)                 # config_phydm_trx_mode: 2T2R TX/RX path + RF mode
     return info, e
