@@ -1,14 +1,14 @@
 # RTL8822BU — vendor/DKMS port (playbook)
 
-> **STATUS: M0 (chip-ID) + EFUSE read + MAC power-on COMPLETE.** Transport (+0x4E0 mirror),
-> the HALMAC chip-id/cut + USB intf-phy + chip-version reads, the physical-EFUSE dump
-> (1024 B) + PG parse + PABias tail, and **MAC power-on** (pre_init_system_cfg +
-> `card_en_flow` power sequence + init_system_cfg) all reproduce **byte-for-byte on
-> capture-1/2/3** (4251 ops on cap-1/2; cap-3 needs one extra power-seq poll read — the
-> loop reproduces it). Gate frontier now at FW download (`W 0x1A0` REG_C2HEVT_MSG_NORMAL,
-> then the HALMAC iDDMA FW upload over bulk-OUT 0x05). Next milestone = firmware upload.
-> Promote sections from plan to ground truth with `[SRC]`/`[WIRE]` citations as facts get
-> confirmed; by the end this should read like `chips/rtl8812au_dkms/RTL8812AU_DKMS.md`.
+> **STATUS: M0 (chip-ID) + EFUSE + MAC power-on + FW download COMPLETE.** Transport
+> (+0x4E0 mirror), the chip-id/cut + USB intf-phy + chip-version reads, the physical-EFUSE
+> dump (1024 B) + PG parse + PABias tail, **MAC power-on** (pre_init + `card_en_flow` +
+> init_system_cfg), and the **HALMAC iDDMA firmware download** (40 bulk packets + DDMA
+> copy + FW-ready 0xC078) all reproduce **byte-for-byte on capture-1/2/3** (~5139 ops; the
+> few-op spread across captures is variable poll counts the loops reproduce). Gate frontier
+> now at MAC init for RX (`W 0x010C` REG_TXDMA_PQ_MAP = TRX-queue mapping). Next milestone =
+> MAC init / TRX enable. Promote sections from plan to ground truth with `[SRC]`/`[WIRE]`
+> citations as facts get confirmed; by the end this reads like `rtl8812au_dkms/RTL8812AU_DKMS.md`.
 
 ## Verified facts (ground truth so far)
 
@@ -110,14 +110,40 @@ read-until-masked-match, DELAY/READ as no-ops. **Capture-3 polls `0x0005 BIT(0)=
 time** (reads `01,01,01,00` vs cap-1/2's `01,01,00`); the poll loop consumes exactly the recorded
 reads on each boot — direct proof the polling is dynamic, not a single hardcoded read.
 
-### Next frontier — firmware download (op #4251, `W 0x1A0` ...)
+### Firmware download (CLEARED, byte-for-byte on capture-1/2/3)
 
-`hal_read_mac_hidden_rpt` `[SRC] rtl8822b_ops.c:681, hal_com.c:1529` is what triggers power-on
-(above) and now FW: `W 0x1A0`(`REG_C2HEVT_MSG_NORMAL` = `C2H_DEFEATURE_RSVD` 0xFD), then
-`rtw_hal_fw_dl` — the HALMAC iDDMA firmware upload over **bulk-OUT 0x05**. The FW blob must be
-extracted from the capture, byte-verified vs `linux-firmware/rtw88/`, and shipped in `assets/`.
-NB the dev-centric `ReplayDevice` only models `ctrl_transfer`; the FW bulk path needs a `write()`
-shim on the replay device (or a `bulk_out` hook) so the gate can byte-check the FW packets.
+`hal_read_mac_hidden_rpt` `[SRC] rtl8822b_ops.c:681, hal_com.c:1529` writes `W 0x1A0`
+(`REG_C2HEVT_MSG_NORMAL = C2H_DEFEATURE_RSVD` 0xFD), then `rtl8822b_fw_dl → rtw_halmac_dlfw →
+download_fw → halmac_download_firmware`, ported to `firmware.download(t, blob)`:
+
+- **FW blob** = morrownr `array_mp_8822b_fw_nic` (v30.20, 161240 B), shipped in
+  `assets/rtl8822bu_fw.bin`. It is **not** the linux-firmware rtw88 blob (161176 B, a different
+  version) — the captures use the morrownr FW, so that is the wire ground truth and the gate
+  byte-verifies it. Header: dmem 11216 B @0x200000, imem 149960 B @0x0, no emem (sizes incl. the
+  8-byte per-segment checksum).
+- **download_firmware_88xx** `[SRC] halmac_fw_88xx.c:115`: TX-FIFO-empty gate
+  (`txfifo_is_empty(chk=10)` — a fixed 10× check of `0x41A==0xFF && (0x41B&0x06)==0x06`),
+  ltecoex-0x38 save, `wlan_cpu_en(0)`, the **interleaved** reg save+set (R,W,R,W… on
+  `TXDMA_PQ_MAP+1=0xC0` / `CR=0x05` / `H2CQ_CSR=BIT31` / `FIFOPAGE_INFO_1=0x200` /
+  `RQPN_CTRL_2|BIT31` / `BCN_CTRL`), `pltfm_reset` (incl. the 8822b `SYS_CLK_CTRL+1 BIT6`
+  clock-sync), `start_dlfw` (MCUFW FWDL bit + dmem then imem), `restore_mac_reg`, `dlfw_end_flow`,
+  ltecoex restore.
+- **The chunk loop** `dlfw_to_mem → send_fwpkt → dl_rsvd_page → iddma_dlfw`: each ≤4096 B block
+  becomes a BEACON-qsel rsvd-page TX (48-byte TX descriptor `TXPKTSIZE/OFFSET=48/QSEL=0x10` +
+  XOR-16 checksum, verified byte-exact) sent on **bulk-OUT 0x05**, then DDMA-copied from
+  `TXBUF+0x30` to MCU mem with a running checksum (`CHKSUM_CONT` after block 0). USB pads one
+  dummy byte when `(chunk+48)%512==0` (only the 3024 B dmem chunk). **40 packets** total (3 dmem,
+  37 imem). `rsvd_boundary` is still 0 at this point (txff not yet allocated). `dlfw_end_flow`
+  sets `FW_DW_RDY`, re-enables the CPU, and polls `REG_MCUFW_CTRL == 0xC078` (FW ready).
+
+The gate replays a **merged ctrl+bulk** stream (`extract_bulk_out_ops` + `merge_ops_by_frame`)
+against one `ReplayDevice` whose new `write()` byte-checks each FW packet.
+
+### Next frontier — MAC init for RX (op #5139, `W 0x010C` ...)
+
+After FW download the morrownr flow runs `init_mac_flow` (TRX enable, queue mapping, RX filters,
+DRVINFO/PHYSTS). The wire opens with `W16 0x010C`(`REG_TXDMA_PQ_MAP` = TRX-queue DMA mapping).
+This is the next milestone (M3: MAC init / `REG_CR` TRX bits).
 
 ### Coverage gap — USB2-link branches untested (all captures are USB3)
 

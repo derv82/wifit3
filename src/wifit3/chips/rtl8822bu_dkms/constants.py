@@ -77,8 +77,63 @@ WLAN_FW_HDR_IMEM_ADDR = 60
 # DMA / packet sizing [SRC] halmac_88xx_cfg.h:29,38, halmac_init_88xx.c:60, h2c_extra_info_nic.h:25
 TX_DESC_SIZE_88XX = 48
 OCPBASE_TXBUF_88XX = 0x18780000
+OCPBASE_DMEM_88XX = 0x00200000          # mem_addr < this => IMEM, else DMEM [SRC] halmac_88xx_cfg.h:39
 DLFW_PKT_MAX_SIZE = 8192
 DLFW_RSVDPG_SIZE = 2048
+DLFW_USB_PKT_SIZE = 0x1000              # USB caps the per-packet FW chunk [SRC] hal_halmac.c:1099
+DLFW_RESTORE_REG_NUM = 6               # [SRC] hal_halmac.c:23
+
+# TX descriptor (the FW packet is a BEACON-qsel rsvd-page TX) [SRC] halmac_tx_desc_nic.h:131-435,
+# rtl8822bu_halmac.c:127-196 usb_write_data_not_xmitframe, halmac_common_8822b.c fill_txdesc_check_sum
+TXDESC_QSEL_BEACON = 0x10               # [SRC] halmac_type.h:634
+PACKET_OFFSET_SZ = 8
+
+# Pre-download TX-FIFO-empty gate [SRC] halmac_common_88xx.c:3271 txfifo_is_empty_88xx (chk=10)
+REG_TXPKT_EMPTY = 0x041A
+
+# download_firmware reg-backup + setup [SRC] halmac_fw_88xx.c:115-192
+REG_TXDMA_PQ_MAP = 0x010C              # +1 = HALMAC_DMA_MAPPING_HIGH<<6 = 0xC0
+HALMAC_DMA_MAPPING_HIGH = 3
+BIT_HCI_TXDMA_EN = 1 << 0              # REG_CR
+BIT_TXDMA_EN = 1 << 2
+REG_H2CQ_CSR = 0x1330                  # set BIT(31)
+REG_FIFOPAGE_INFO_1 = 0x0230           # set 0x200
+REG_RQPN_CTRL_2 = 0x022C               # set BIT(31)
+REG_BCN_CTRL = 0x0550                  # clear BIT(3), set BIT(4)
+REG_TXDMA_STATUS = 0x0210              # dlfw_end_flow: write BIT(2)
+REG_SYS_CLK_CTRL = 0x0008              # pltfm_reset clock-sync (8822b): +1 BIT(6)
+REG_FW_DBG7 = 0x10FC
+
+# dl_rsvd_page (the bulk send bracket) [SRC] halmac_common_88xx.c:314
+REG_FIFOPAGE_CTRL_2 = 0x0204           # bcn-head | BIT(15); +1 BIT(7) = bcn-valid poll
+BIT_MASK_BCN_HEAD_1_V1 = 0xFFF
+REG_FWHW_TXQ_CTRL = 0x0420             # +2 BIT(6)
+RSVD_PG_BOUNDARY_FWDL = 0              # txff_alloc.rsvd_boundary is still 0 at FW-download time [WIRE]
+
+# iDDMA copy engine [SRC] halmac_fw_88xx.c:754,783, halmac_reg2.h:6657-6659, halmac_bit2.h
+REG_DDMA_CH0SA = 0x1200
+REG_DDMA_CH0DA = 0x1204
+REG_DDMA_CH0CTRL = 0x1208
+BIT_DDMACH0_OWN = 1 << 31
+BIT_DDMACH0_CHKSUM_EN = 1 << 29
+BIT_DDMACH0_CHKSUM_STS = 1 << 27       # set after a copy => checksum mismatch
+BIT_DDMACH0_RESET_CHKSUM_STS = 1 << 25
+BIT_DDMACH0_CHKSUM_CONT = 1 << 24
+BIT_MASK_DDMACH0_DLEN = 0x3FFFF
+
+# MCUFW_CTRL DL-OK / ready bits [SRC] halmac_bit2.h:12842,12993-13096, halmac_fw_88xx.c:648-661
+BIT_FW_DW_RDY = 1 << 14
+BIT_IMEM_DW_OK = 1 << 3
+BIT_IMEM_CHKSUM_OK = 1 << 4
+BIT_DMEM_DW_OK = 1 << 5
+BIT_DMEM_CHKSUM_OK = 1 << 6
+MCUFW_CTRL_IDMEM_CHKSUM = 0x50         # (IMEM_CHKSUM_OK | DMEM_CHKSUM_OK) — end-flow gate
+
+# LTECOEX indirect access (backed up/restored around DL) [SRC] halmac_common_88xx.c:3338, reg2.h:8232
+LTECOEX_ACCESS_CTRL = 0x1700           # +3 BIT(5) = ready
+REG_LTECOEX_WRITE_DATA = 0x1704
+REG_LTECOEX_READ_DATA = 0x1708
+LTECOEX_REG_OFFSET_DL = 0x38
 
 # --- power-state detection markers (mac_pwr_switch_usb_8822b) --------------
 # [SRC] hal/halmac/halmac_88xx/halmac_8822b/halmac_usb_8822b.c:44-92

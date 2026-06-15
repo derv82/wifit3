@@ -23,3 +23,18 @@ def test_header_parse_matches_blob():
     assert (h.dmem_addr, h.imem_addr) == (0x00200000, 0x00000000)
     # header (64) + dmem + imem + emem accounts for every byte.
     assert 64 + h.dmem_size + h.imem_size + h.emem_size == 161240
+
+
+def test_fw_txdesc_matches_capture():
+    # Golden 48-byte TX descriptor of the first FW packet (4096 B chunk) from capture-1:
+    # TXPKTSIZE=0x1000, OFFSET=0x30, QSEL=0x10 (beacon), XOR-16 checksum 0x0030 @ byte 28.
+    golden = bytes.fromhex(
+        "00103000" "00100000" + "00" * 20 + "30000000" + "00" * 16)
+    assert firmware.build_fw_txdesc(4096) == golden
+    # The descriptor's own checksum (XOR of all 16 LE u16 words) is self-consistent: zero.
+    d = firmware.build_fw_txdesc(3025)
+    assert sum(int.from_bytes(d[2 * i:2 * i + 2], "little") for i in range(16)) % 2 == 0
+    chk = 0
+    for i in range(16):
+        chk ^= int.from_bytes(d[2 * i:2 * i + 2], "little")
+    assert chk == 0

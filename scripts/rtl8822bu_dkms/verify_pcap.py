@@ -22,7 +22,7 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8822bu_dkms import chipid, efuse, mac, usbphy  # noqa: E402
+from wifit3.chips.rtl8822bu_dkms import chipid, efuse, firmware, mac, usbphy  # noqa: E402
 from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport  # noqa: E402
 
 DEFAULT_CAP = REPO / "usb_dumps_new" / "captures_rtl88x2bu" / "capture-1.pcap"
@@ -42,6 +42,8 @@ def _bringup(t) -> None:
     chipid.read_chip_version(t)            # M0: rtw chip-version (R 0xF0/0xF4/0x68)
     efuse.read_efuse(t)                    # M1: HALMAC physical EFUSE dump (R 0x0A, 0x30 loop)
     mac.power_on(t, info.chip_ver)         # M2: pre_init + card_en pwr-seq + init_system_cfg
+    t.write8(0x01A0, 0xFD)                 # C2HEVT_MSG_NORMAL = C2H_DEFEATURE_RSVD (mac_hidden_rpt)
+    firmware.download(t, firmware.load_firmware_blob())   # M3: HALMAC iDDMA FW upload
 
 
 def run(cap: str | None = None) -> int:
