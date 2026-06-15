@@ -80,6 +80,7 @@ EEPROM_THERMAL_METER = 0x00BA          # :455
 EEPROM_VERSION = 0x00C4                # :470
 EEPROM_RFE_OPTION = 0x00CA             # :475  rfe_type (RF front-end variant)
 EEPROM_MAC_ADDR = 0x0107               # :479  (the 8822bU MAC sits past the 256-byte page)
+EFUSE_PA_BIAS = 0x03D7                  # physical efuse PA-bias pair [SRC] rtl8822b_ops.c:560
 # Field defaults when the efuse byte is blank (0xFF) or the map is invalid.
 EEPROM_DEFAULT_CRYSTAL_CAP = 0x00      # [SRC] hal_pg.h:841 EEPROM_Default_CrystalCap (8822b uses generic)
 EEPROM_DEFAULT_THERMAL_METER = 0x12    # [SRC] hal_pg.h:827 EEPROM_Default_ThermalMeter

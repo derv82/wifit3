@@ -72,18 +72,29 @@ dump (`dump_efuse_drv_88xx`). Ported to `efuse.read_efuse`; the de-mirrored op s
    ends the walk). No wire IO. Decoded fields validated on capture-1: rfe_type `0x03`, crystal_cap
    `0x2f`, channel_plan `0xa5`, valid unicast MAC, 312/1024 physical bytes non-blank.
 
+5. **`Hal_EfuseParsePABias`** `[SRC] rtl8822b_ops.c:553` — the tail of `read_efuse`. It reads
+   physical efuse `0x3D7/0x3D8` (PA bias) via `rtw_efuse_access`; the physical map is already
+   **cached** (valid from the dump), so HALMAC's `dump_efuse_map_88xx` `[SRC] halmac_efuse_88xx.c:132`
+   serves it from memory and the only wire op is the WIFI bank-switch `R 0x35` (no `0x30` loop).
+   This `R 0x35` is therefore the *last* EFUSE op, not the start of power-on.
+
 The PG **tx-power** block (`hal_load_pg_txpwr_info`) is deliberately **not** decoded yet — it is
 done at the tx-power milestone where each value is checked against the channel/power writes it
 drives (decoding it now, with no consumer, would be unverifiable against the wire).
 
-### Next frontier — MAC power-on (op #4119, `R 0x35` / `W 0x1c` ...)
+### Next frontier — MAC power-on (op #4121, `W 0x1c` ...)
 
-After the EFUSE dump the wire is `R 0x35` then `W 0x1c`, `R 0xFF`, RMWs on `0x64/0x4c/0x40/0x02`,
-the `R 0x100`(`REG_CR`=0xEA) / `R 0x80`(`REG_MCUFW_CTRL`) / `R 0xFE58`(RPWM) power-state probe, then
-the HALMAC power sequence. This is `rtw_halmac_poweron` → `mac_pwr_switch_usb_8822b` + the 8822b
-`card_enable_flow` `[SRC] halmac_pwr_seq_8822b.c`. Note the cold capture's `R 0x35` here is the
-*start of power-on* (a coincidental reuse of `REG_LDO_EFUSE_CTRL+1`), **not** a second EFUSE dump —
-no `0x30` loop follows it.
+After `read_efuse` the wire is `pre_init_system_cfg_8822b` `[SRC] halmac_init_8822b.c:945`:
+`W 0x1c`(`REG_RSV_CTRL`=0), `R 0xFF`(`REG_SYS_CFG2+3`; `0x80≠0x20` so the USB3-only `0xFE5B|BIT(4)`
+is **skipped here** — see the USB2/USB3 coverage note), then the PIN-mux RMWs
+`PAD_CTRL1`(0x64, set BIT28/29 → `0x36242000`) / `LED_CFG`(0x4c) / `GPIO_MUXCFG`(0x40, set BIT2),
+`set_hw_value(EN_BB_RF, 0)`, and the `REG_SYS_CFG1+2 & BIT(4)` test-mode check. Then
+`_power_switch(POWER_ON)` (the 8822b `card_enable_flow` `[SRC] halmac_pwr_seq_8822b.c`) with the
+`R 0x100`(`REG_CR`) / `R 0x80`(`REG_MCUFW_CTRL`) / `R 0xFE58`(RPWM) power-state probe, then
+`init_system_cfg_8822b`. The cold capture returns SUCCESS (already-off), so the warm-reboot
+off→on workaround `[SRC] hal_halmac.c:2744-2774` does **not** fire. NB the morrownr driver nests
+power-on + FW-download *inside* `read_efuse` (via `hal_read_mac_hidden_rpt`
+`[SRC] rtl8822b_ops.c:681`); wifit3 mirrors the wire order, not the C call tree.
 
 ### Coverage gap — USB2-link branches untested (all captures are USB3)
 

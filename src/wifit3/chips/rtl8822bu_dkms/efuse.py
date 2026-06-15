@@ -43,6 +43,7 @@ from .constants import (
     EEPROM_SIZE_8822B,
     EEPROM_THERMAL_METER,
     EEPROM_XTAL,
+    EFUSE_PA_BIAS,
     EFUSE_SIZE_8822B,
     HALMAC_EFUSE_BANK_WIFI,
     PRTCT_EFUSE_SIZE_8822B,
@@ -65,6 +66,7 @@ class Efuse8822b:
     thermal_meter: int      # [SRC] rtl8822b_ops.c:335 Hal_EfuseParseThermalMeter
     channel_plan: int       # [SRC] rtl8822b_ops.c:310 (raw efuse byte; plan resolution is registry work)
     mac_address: Optional[str]
+    pa_bias: tuple          # efuse[0x3D7], efuse[0x3D8] (PA bias) [SRC] rtl8822b_ops.c:553
 
 
 def _switch_efuse_bank_wifi(t) -> None:
@@ -178,6 +180,13 @@ def read_efuse(t) -> Efuse8822b:
     phy_map = _read_hw_efuse(t, 0, EFUSE_SIZE_8822B)
     log_map = _eeprom_parser(phy_map)
 
+    # Hal_EfuseParsePABias reads physical efuse 0x3D7/0x3D8 via rtw_efuse_access. The physical
+    # map is already cached (valid) from the dump, so HALMAC's read_physical_efuse_map serves it
+    # from cache — the only wire op is the WIFI bank-switch read, no 0x30 loop.
+    # [SRC] rtl8822b_ops.c:553 Hal_EfuseParsePABias, halmac_efuse_88xx.c:132 dump_efuse_map_88xx.
+    _switch_efuse_bank_wifi(t)
+    pa_bias = (phy_map[EFUSE_PA_BIAS], phy_map[EFUSE_PA_BIAS + 1])
+
     valid = not autoload_fail
     # rfe_type: registry default is "use efuse" (CONFIG_RTW_RFE_TYPE sentinel), so the efuse
     # byte wins; a blank byte falls back to 0. [SRC] rtl8822b_ops.c:515 Hal_ReadRFEType.
@@ -191,4 +200,5 @@ def read_efuse(t) -> Efuse8822b:
         thermal_meter=_scalar(log_map, EEPROM_THERMAL_METER, EEPROM_DEFAULT_THERMAL_METER, valid),
         channel_plan=log_map[EEPROM_CHANNEL_PLAN],
         mac_address=_mac_address(log_map, valid),
+        pa_bias=pa_bias,
     )
