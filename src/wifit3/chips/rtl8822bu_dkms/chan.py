@@ -63,18 +63,22 @@ def _ccapar_by_rfe(t, ch: int, bw20: bool) -> None:
         sipi.set_bb_reg(t, 0x0838, 0xF0, 0x5)
 
 
+def is_psd_spur_channel(ch: int, bw20: bool = True) -> bool:
+    """True for the channels whose spur reset runs the read-dependent PSD sweep (idx <= 13)."""
+    return _dsde_ch_idx(ch, bw20) <= 13
+
+
 def _spur_reset(t, ch: int, bw20: bool) -> None:
     """[SRC] phydm_spur_calibration_8822b (normal mode): drop the spur-elim enables + reset
-    NBI/CSI (phydm_dsde_init). The PSD sweep only runs on the few spur channels below idx 14."""
+    NBI/CSI (phydm_dsde_init). The read-dependent PSD sweep (phydm_dynamic_spur_det_eliminate) runs
+    only on the few spur channels below idx 14; it is not ported, so on those channels the NBI/CSI
+    notch is simply not applied (bounded RX-quality gap, not a break) — see is_psd_spur_channel."""
     sipi.set_bb_reg(t, 0x087C, 1 << 13, 0x0)
     sipi.set_bb_reg(t, 0x0C20, 1 << 28, 0x0)
     sipi.set_bb_reg(t, 0x0E20, 1 << 28, 0x0)
     for addr in (0x0880, 0x0884, 0x0888, 0x088C, 0x0890, 0x0894, 0x0898, 0x089C):
         sipi.set_bb_reg(t, addr, 0xFFFFFFFF, 0)    # phydm_dsde_init: reset NBI/CSI
-    sipi.set_bb_reg(t, 0x0874, 1 << 0, 0x0)
-    if _dsde_ch_idx(ch, bw20) <= 13:
-        raise NotImplementedError(
-            f"ch {ch}: PSD dynamic-spur eliminator (phydm_dynamic_spur_det_eliminate) not ported")
+    sipi.set_bb_reg(t, 0x0874, 1 << 0, 0x0)        # phydm_dsde_init: NBI enable bit
 
 
 def _dsde_ch_idx(ch: int, bw20: bool) -> int:

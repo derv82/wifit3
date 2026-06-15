@@ -84,6 +84,12 @@ def verify(cap_name: str) -> int:
             continue
         f0, f1 = nums[s], nums[min(e, len(nums) - 1)]
         win = [o for o in ctrl if f0 <= o["frame"] <= f1]
+        # The read-dependent PSD spur sweep is unported, so a spur channel's wire diverges after
+        # the dsde reset — skip those proactively.
+        if chan.is_psd_spur_channel(ch):
+            nskip += 1
+            print(f"  ch {ch:>3}: SKIP (PSD spur channel: dynamic_spur_det_eliminate not ported)")
+            continue
         # Both the same-band retune (switch_channel) and a crossing's band switch open with the
         # RF_A 0x18 read; anything else is a slice artifact (a window that opens mid-cal).
         head = next((o for o in win if o["wval"] != 0x04E0), None)
@@ -99,10 +105,6 @@ def verify(cap_name: str) -> int:
         except rp.Divergence as d:
             print(f"  ch {ch:>3}: FAIL -- {d}")
             nfail += 1
-            continue
-        except NotImplementedError as d:
-            print(f"  ch {ch:>3}: SKIP (PSD spur channel) -- {d}")
-            nskip += 1
             continue
         # set_channel_bw should land on the deferred cal: the per-channel DPK (0x1Dxx LUT), or on
         # a crossing the BT-coex band-notify (rtw_btcoex_..._switchband_notify, the lone 0xCBC

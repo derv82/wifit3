@@ -1,0 +1,62 @@
+"""RTL8822BU cold bring-up — the deterministic init the byte-for-byte gate verifies.
+
+`cold_bringup(t)` runs the exact vendor op sequence that
+`scripts/rtl8822bu_dkms/verify_pcap.py` reproduces against capture-1/2/3: chip-ID/USB-PHY,
+EFUSE probe, the `hal_read_mac_hidden_rpt` cycle (power-on + FW + MAC + FW-info + C2H read +
+power-off), then the real `rtl8822b_hal_init` cycle (cold power-on + FW + MAC + init_mac_register
++ config_rx_info + enable_bb_rf + BB phy-reg/AGC + crystal cap + RF-A/RF-B). Both the driver
+(`driver.connect`) and the gate call this, so the hardware path and the verified path are the
+same code. Returns the chip info + EFUSE data the channel tune needs (rfe_type, chip_ver).
+
+The two `[WIRE]`-pinned stray ops (`W 0x00AA`, `W 0xFE58`) bracket the inter-cycle power-off; the
+2nd cycle's `send_general_info` carries the real 2T2R get_trx_path config (rf_type 2, ant 3/3,
+package 7). See RTL8822BU_DKMS.md for the per-step citations.
+"""
+from __future__ import annotations
+
+from . import bb, chipid, efuse, firmware, mac, phy_cond, rf, usbphy
+from . import constants as const
+
+
+def cold_bringup(t):
+    """Run the full two-cycle cold init; return (chip_info, efuse_data)."""
+    info = chipid.get_chip_info(t)         # HALMAC chip-id / cut (R 0xFC, R 0xF1)
+    usbphy.phy_cfg_usb(t, info.chip_ver)   # USB3 intf-phy params
+    chipid.read_chip_version(t)            # rtw chip-version (R 0xF0/0xF4/0x68)
+    e = efuse.read_efuse(t)                # HALMAC physical EFUSE dump + PG parse
+
+    # --- cycle 1: hal_read_mac_hidden_rpt (power-on + FW + MAC + FW-info + C2H + power-off) ---
+    mac.power_on(t, info.chip_ver)
+    t.write8(const.REG_C2HEVT_MSG_NORMAL, const.C2H_DEFEATURE_RSVD)
+    firmware.download(t, firmware.load_firmware_blob())
+    mac.init_mac_cfg(t)
+    mac.init_mac_flow_tail(t)
+    alloc = mac.set_trx_fifo_info()
+    firmware.send_general_info(t, e.rfe_type, info.chip_ver,
+                               alloc.rsvd_fw_txbuf_addr - alloc.rsvd_boundary, alloc.rsvd_h2cq_addr)
+    firmware.read_mac_hidden_rpt(t)
+    t.write16(0x00AA, 0x8000)              # [WIRE] post-C2H op before the power-off
+    mac.power_off(t, info.chip_ver)
+    efuse.read_phydm_trim(t)               # 3 cached PG-trim reads
+    t.write8(0xFE58, 0x00)                 # [WIRE] RPWM clear before the 2nd power-on
+
+    # --- cycle 2: rtl8822b_hal_init (the real init) ---
+    mac.power_on(t, info.chip_ver)         # cold power-on (reuse)
+    firmware.download(t, firmware.load_firmware_blob(), beacon=True,
+                      rsvd_boundary=alloc.rsvd_boundary)
+    mac.init_mac_cfg(t)
+    mac.init_mac_flow_tail(t)
+    firmware.send_general_info(t, e.rfe_type, info.chip_ver,
+                               alloc.rsvd_fw_txbuf_addr - alloc.rsvd_boundary, alloc.rsvd_h2cq_addr,
+                               rf_type=2, rf_type_drv=2, tx_ant=3, rx_ant=3, package_type=7)
+    mac.init_mac_register(t)               # PHYDM MAC-reg table
+    mac.config_rx_info(t)                  # DRVINFO size + RCR app-physts
+    mac.enable_bb_rf(t, e.log_map[0xCA])   # turn on BB/RF clocks
+    bb.phy_parameter_init(t, post=False)   # PHYDM PRE_SETTING (OFDM/CCK off)
+    bb.phy_bb_config(t)                    # BB phy-reg table
+    cfg = phy_cond.PhyCondConfig(cut=info.chip_ver, rfe=e.rfe_type, package=7)
+    bb.phy_agc_config(t, cfg)              # BB AGC table (cut/rfe walker)
+    bb.set_crystal_cap(t, e.crystal_cap)   # xtal-cap into 0x24/0x28
+    rf.phy_rf_config(t, cfg)               # RF-A then RF-B radio tables
+    bb.phy_parameter_init(t, post=True)    # PHYDM POST_SETTING (OFDM/CCK on)
+    return info, e

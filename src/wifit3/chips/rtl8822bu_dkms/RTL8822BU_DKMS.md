@@ -274,9 +274,10 @@ Port the per-channel unit once and run it from `set_channel`, gating it against 
   band/Nrx → `0x82C/0x830/0x838`); `phydm_spur_calibration` → `phydm_dsde_init` (reset NBI/CSI
   `0x880-0x89C` + `0x874[0]`). `phydm_rfe` is NOT called per same-band hop (only on a band change).
   - **PSD spur sweep — deferred.** `phydm_dynamic_spur_det_eliminate` runs its read-dependent PSD
-    sweep only on spur channels (`dsde_ch_idx ≤ 13`: 2.4G ch 5-8, 5G 153/161 at 20 MHz). Those 6
-    hops `raise NotImplementedError` (verify skips them) — a bounded, flagged gap (missing NBI/CSI
-    notch on 6 channels = slightly worse RX there, not a break), not a silent partial.
+    sweep only on spur channels (`dsde_ch_idx ≤ 13`: 2.4G ch 5-8, 5G 153/161 at 20 MHz). On those
+    `_spur_reset` does the `dsde_init` reset but skips the (unported) PSD sweep, so the NBI/CSI notch
+    is not applied there — a bounded RX-quality gap, exposed via `chan.is_psd_spur_channel` (the
+    verify skips those 6 hops rather than diverging on the wire's sweep).
   - **Bandwidth re-apply (CLEARED — full `set_channel_bw`, 27/27/26 hops byte-for-byte).**
     `chan.set_channel_bw` = `switch_channel` + `mac_switch_bandwidth` (HALMAC `cfg_ch_bw_88xx`:
     `cfg_pri_ch_idx` `0x483`, `cfg_bw` clear `0x668[8:7]`, `cfg_mac_clk` `0x024[21:20]`+`0x55c`/
@@ -299,10 +300,29 @@ Port the per-channel unit once and run it from `set_channel`, gating it against 
   **Net: `set_channel` is complete** — `verify_channels.py` clears **29/29/28 hops byte-for-byte**
   on capture-1/2/3 (every same-band 2.4 + 5 GHz hop + both band crossings). Skips: the 6 PSD spur
   channels (above) + a few slicing artifacts (windows whose iw-epoch→frame head lands mid-cal).
-- **RX enable + monitor RX tail** → first beacons (RCR/monitor config is wifit3-side, like the
-  other drivers — not a capture replay).
 - **IQK + LCK** (RX-relevant image rejection / LO cal) — port if RX is deaf without them; one-time.
 - **DPK + TSSI per-channel** — deferred; rides along with TX (M8).
+
+### RX bring-up (wired; blocked on the post-init RX seed) — hardware diagnosis 2026-06-15
+
+The driver is wired end-to-end and runs on the card: `driver.py` (WlanDriver protocol) +
+`bringup.cold_bringup` (the gate-verified init, now the shared source for driver + `verify_pcap`) +
+`rx.py` (24-byte rx_pkt_desc decode `[SRC] rtl8822b_ops.c` / `halmac_rx_desc_nic.h`: word0
+PKT_LEN[13:0]/CRC32[14]/ICV[15]/DRVINFO[19:16]×8/SHIFT[25:24]/PHYST[26], C2H at 0x08[28]; MPDU at
+`24+drvinfo+shift`, 8-byte-aligned stride; FCS dropped) + `chan.set_channel_bw` + the shared
+`RxReaderThread`. `scripts/rtl8822bu_dkms/test_hw.py` (`--phase open|init|beacon`) drives it.
+
+**Confirmed on hardware:** `--phase init` runs the full two-cycle cold init with no bus errors;
+`set_channel_bw` tunes RF_A/RF_B 0x18 to the target channel (read back); both radios respond to
+SIPI. The monitor RX path is fully open — `REG_CR`=0x04ff (RXDMA+MACRXEN), `RCR`=0x9000380F,
+`RXFLTMAP0/1/2`=0xFFFF, bulk-IN ep 0x84.
+
+**The blocker:** on a live channel the **BB hears RF energy** — the FA counter `0xf48` and CCA
+`0xf08` climb fast — but **no frame ever lands in the RXFF** (`bulk_in` returns 0 bytes; tried
+IGI 0x20→0x48 and RCR accept-all incl. CRC/ICV-error: still nothing). So the RX *demodulator* is
+not completing packets — this is the post-init RX seed the vendor runs after op 9410, i.e. the
+**phydm DM init (CCK-PD + DIG + the RX demod/CCA path)**, likely with LCK/IQK. That is the next
+milestone; everything up to and including the channel tune is in place and hardware-confirmed.
 
 ### Coverage gap — USB2-link branches untested (all captures are USB3)
 
