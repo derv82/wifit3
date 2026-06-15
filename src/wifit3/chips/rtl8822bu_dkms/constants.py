@@ -49,3 +49,37 @@ REG_CR = 0x0100                        # :109 (0xEA marks the chip disabled)
 REG_RPWM = 0xFE58                      # :44  (RPWM — leave-32K toggle)
 MCUFW_CTRL_FW_EXIST = 0xC078           # :47  REG_MCUFW_CTRL value == FW still loaded
 REG_CR_DISABLED = 0xEA                 # :54  REG_CR value == chip already disabled
+
+# --- EFUSE read (HALMAC physical-map dump + 8822b logical parse) -----------
+# The chip-info probe reads the EFUSE up front (before power-on): rtl8822b_read_efuse
+# -> EFUSE_ShadowMapUpdate -> halmac dump_efuse_drv_88xx -> read_hw_efuse_88xx.
+# [SRC] hal/rtl8822b/rtl8822b_ops.c:616, hal/halmac/halmac_88xx/halmac_efuse_88xx.c:1507,1089
+REG_SYS_EEPROM_CTRL = 0x000A           # [SRC] halmac_reg_8822b.h:23 (autoload/eeprom-sel flags)
+BIT_AUTOLOAD_SUS = 1 << 5              # [SRC] halmac_bit_8822b.h:129 — set => autoload OK
+BIT_EERPOMSEL = 1 << 4                 # [SRC] halmac_bit_8822b.h:130 — set => EEPROM, else eFuse
+REG_EFUSE_CTRL = 0x0030                # [SRC] halmac_reg_8822b.h:34 (32-bit access/data/addr)
+REG_LDO_EFUSE_CTRL = 0x0034            # [SRC] halmac_reg_8822b.h:35 (+1 bank, +3 LDO25 enable)
+
+# REG_EFUSE_CTRL (0x30) field layout [SRC] halmac_bit_8822b.h:688,726-738
+BIT_EF_FLAG = 1 << 31                  # read/write-done strobe (poll until set on read)
+BIT_SHIFT_EF_ADDR = 8
+BIT_MASK_EF_ADDR = 0x3FF               # physical byte address [17:8]
+BITS_EF_ADDR = BIT_MASK_EF_ADDR << BIT_SHIFT_EF_ADDR
+BIT_MASK_EF_DATA = 0xFF                # data byte [7:0]
+
+# Map sizes [SRC] halmac_88xx/halmac_8822b/halmac_8822b_cfg.h:55-58 + halmac_efuse_88xx.c:23-24
+EFUSE_SIZE_8822B = 1024                # physical map (read addr 0..1023)
+EEPROM_SIZE_8822B = 768                # logical map produced by the PG-header parser
+PRTCT_EFUSE_SIZE_8822B = 96            # protected tail (bounds the parser walk)
+HALMAC_EFUSE_BANK_WIFI = 0             # [SRC] halmac_type.h:1771
+
+# Logical-map field offsets (8822BU) [SRC] include/hal_pg.h:453-479
+EEPROM_CHANNEL_PLAN = 0x00B8           # :453
+EEPROM_XTAL = 0x00B9                   # :454  crystal_cap
+EEPROM_THERMAL_METER = 0x00BA          # :455
+EEPROM_VERSION = 0x00C4                # :470
+EEPROM_RFE_OPTION = 0x00CA             # :475  rfe_type (RF front-end variant)
+EEPROM_MAC_ADDR = 0x0107               # :479  (the 8822bU MAC sits past the 256-byte page)
+# Field defaults when the efuse byte is blank (0xFF) or the map is invalid.
+EEPROM_DEFAULT_CRYSTAL_CAP = 0x00      # [SRC] hal_pg.h:841 EEPROM_Default_CrystalCap (8822b uses generic)
+EEPROM_DEFAULT_THERMAL_METER = 0x12    # [SRC] hal_pg.h:827 EEPROM_Default_ThermalMeter

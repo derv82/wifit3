@@ -1,11 +1,12 @@
 # RTL8822BU — vendor/DKMS port (playbook)
 
-> **STATUS: M0 (chip-ID reads) COMPLETE.** Transport (+0x4E0 mirror), constants, the
-> HALMAC chip-id/cut + USB intf-phy + chip-version reads all reproduce **byte-for-byte,
-> 13/13 ops, on capture-1/2/3** (gate frontier now at the EFUSE read). Next milestone =
-> the early EFUSE map read. Promote sections from plan to ground truth with
-> `[SRC]`/`[WIRE]` citations as facts get confirmed; by the end this should read like
-> `chips/rtl8812au_dkms/RTL8812AU_DKMS.md`.
+> **STATUS: M0 (chip-ID reads) + early EFUSE read COMPLETE.** Transport (+0x4E0 mirror),
+> constants, the HALMAC chip-id/cut + USB intf-phy + chip-version reads, and the full
+> HALMAC physical-EFUSE dump (1024 B) + PG-header logical parse all reproduce
+> **byte-for-byte, 4119/4119 ops, on capture-1/2/3**. Gate frontier now at MAC power-on
+> (`R 0x35` / `W 0x1c` / pwr-seq RMWs). Next milestone = MAC power-on. Promote sections
+> from plan to ground truth with `[SRC]`/`[WIRE]` citations as facts get confirmed; by the
+> end this should read like `chips/rtl8812au_dkms/RTL8812AU_DKMS.md`.
 
 ## Verified facts (ground truth so far)
 
@@ -47,13 +48,42 @@ The pre-power-on probe, ported from source and gate-clean (ops 0–12; de-mirror
    write but the USB3 intf-phy param for this cut.)*
 3. **`read_chip_version`** `[SRC] rtl8822b_ops.c:173` — `R32 0xF0/0xF4/0x68`. → `chipid.read_chip_version`.
 
-### Next frontier — the early EFUSE map read (op #13, `R 0x0A` ...)
+### Early EFUSE read (CLEARED, byte-for-byte on capture-1/2/3)
 
 On the wire the chip-info path reads EFUSE **up front** (before power-on), not at M4 as the
-milestone table guesses: `read_adapter_info` = `rtl8822b_read_efuse` → `EFUSE_ShadowMapUpdate`
-`[SRC] rtl8822b_ops.c:637,3930` — the `0x0A/0x35/0x37` efuse power/clock setup then the
-`REG_EFUSE_CTRL` (`0x30`) physical-map loop (`W 0x316000NN` / `R 0xB16000xx`). This is the
-next thing to port; it likely pulls the M4 EFUSE work earlier than the table implies.
+milestone table guesses: `read_adapter_info` = `rtl8822b_read_efuse` `[SRC] rtl8822b_ops.c:616,3930`
+→ `EFUSE_ShadowMapUpdate`. There is no FW yet, so the AUTO path falls to the driver-side
+dump (`dump_efuse_drv_88xx`). Ported to `efuse.read_efuse`; the de-mirrored op stream is:
+
+1. **`R 0x0A`** `REG_SYS_EEPROM_CTRL` `[SRC] halmac_reg_8822b.h:23` — autoload/eeprom-sel flags
+   (`BIT(5)` set ⇒ autoload OK; `BIT(4)` clear ⇒ on-chip eFuse). Here `0x20` ⇒ map valid, eFuse.
+2. **`switch_efuse_bank(WIFI)`** `[SRC] halmac_efuse_88xx.c:995` — `R 0x35` (`REG_LDO_EFUSE_CTRL+1`);
+   the bank lives in bits[1:0] and powers up at 0 = WIFI, so the read matches and **no write fires**.
+3. **`read_hw_efuse(0, 1024)`** `[SRC] halmac_efuse_88xx.c:1089`:
+   - `cfg_ldo25(0)` `[SRC] halmac_common_8822b.c:159` — `R 0x37` / `W 0x37` clearing `BIT(7)` of
+     `REG_LDO_EFUSE_CTRL+3` (reads need no 2.5V LDO; the bit is already clear so the value is unchanged).
+   - `R 0x30` once to latch the upper command bits of `REG_EFUSE_CTRL` (`0x31600000` on this card),
+     then per byte `addr 0..1023`: `W 0x30 = base | (addr<<8)` with `BIT(31)` clear, poll `R 0x30`
+     until `BIT(31)` set, take the low byte as data. Address is `[17:8]` (10-bit), data `[7:0]`,
+     `BIT_EF_FLAG = BIT(31)` `[SRC] halmac_bit_8822b.h:688,726-738`. `EFUSE_SIZE_8822B = 1024`
+     `[SRC] halmac_8822b_cfg.h:55`, so this is exactly **4096 wire ops** (1024 × W+R, each mirrored).
+4. **`eeprom_parser`** `[SRC] halmac_efuse_88xx.c:1198` — physical→logical (768 B) PG-header walk
+   (1-byte header, or 2-byte extended when `hdr[4:0]==0x0f`; per enabled word copy 2 bytes; `0xFF`
+   ends the walk). No wire IO. Decoded fields validated on capture-1: rfe_type `0x03`, crystal_cap
+   `0x2f`, channel_plan `0xa5`, valid unicast MAC, 312/1024 physical bytes non-blank.
+
+The PG **tx-power** block (`hal_load_pg_txpwr_info`) is deliberately **not** decoded yet — it is
+done at the tx-power milestone where each value is checked against the channel/power writes it
+drives (decoding it now, with no consumer, would be unverifiable against the wire).
+
+### Next frontier — MAC power-on (op #4119, `R 0x35` / `W 0x1c` ...)
+
+After the EFUSE dump the wire is `R 0x35` then `W 0x1c`, `R 0xFF`, RMWs on `0x64/0x4c/0x40/0x02`,
+the `R 0x100`(`REG_CR`=0xEA) / `R 0x80`(`REG_MCUFW_CTRL`) / `R 0xFE58`(RPWM) power-state probe, then
+the HALMAC power sequence. This is `rtw_halmac_poweron` → `mac_pwr_switch_usb_8822b` + the 8822b
+`card_enable_flow` `[SRC] halmac_pwr_seq_8822b.c`. Note the cold capture's `R 0x35` here is the
+*start of power-on* (a coincidental reuse of `REG_LDO_EFUSE_CTRL+1`), **not** a second EFUSE dump —
+no `0x30` loop follows it.
 
 ### Coverage gap — USB2-link branches untested (all captures are USB3)
 
