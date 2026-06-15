@@ -199,9 +199,28 @@ steps then adds the new ones:
 5. `_send_general_info` again (reuse — but **no** `mac_hidden_rpt` this cycle).
 6. `rtw_hal_init_mac_register` (new — more MAC regs).
 7. `rtw_halmac_config_rx_info(PHY_STATUS)` (new — DRVINFO/PHYSTS).
-8. **`rtw_hal_init_phy` = BB + RF init (PHYDM)** — the big one: AGC + phy-reg + RF-A/RF-B `_tbl.py`
-   tables (port 1:1 like the AU `_dkms` `*_tbl.py`), then RF calibration (IQK/DPK/LCK/TSSI — only
-   what the capture runs), channel tune (`verify_channels.py`), CCK-PD/DIG, monitor RX tail. 3.6× payoff.
+8. **`rtw_hal_init_phy` = BB + RF init (PHYDM)** — the big one. **BB phy-reg + AGC tables now
+   CLEARED** (see below); remaining: RF-A/RF-B `radioa/radiob` `_tbl.py` tables, then RF
+   calibration (IQK/DPK/LCK/TSSI — only what the capture runs), channel tune
+   (`verify_channels.py`), CCK-PD/DIG, monitor RX tail. 3.6× payoff.
+
+### BB phy-reg + AGC tables (CLEARED, byte-for-byte on capture-1/2/3)
+
+`rtl8822b_phy_bb_config -> _init_bb_reg` `[SRC] rtl8822b_phy.c` applies two PHYDM BB tables after
+`enable_bb_rf`:
+- **phy-reg** (`array_mp_8822b_phy_reg`, `bb_phy_reg_tbl.py`) — 1492 plain `(addr, value)` W32
+  rows via `odm_config_bb_phy_8822b`, preceded by an RMW pre-amble that sets `REG 0x808` byte0 =
+  `(rx_path<<4)|rx_path` (2T2R ⇒ `0x33`). No conditionals on this card.
+- **AGC** (`array_mp_8822b_agc_tab`, `bb_agc_tbl.py`) — 10684 rows **with 328 cut/rfe
+  conditionals**, so it runs through the new `phy_cond.walk` + `check_positive` (ported 1:1 from
+  `halhwimg8822b_bb.c` / `odm_read_and_config_mp_8822b_agc_tab`). check_positive matches
+  cut[27:24]/package[15:12]/interface[11:8] as value-or-don't-care and rfe[7:0] exactly; the AGC
+  conditions only constrain **rfe** (all cut/pkg/intf fields are 0). On this card (rfe 3) the
+  walker selects **521 W32 rows** (addrs `0x81C`/`0xC50`/`0xE50`) — verified == the single wire AGC
+  run (frame 16503+), byte-for-byte. `odm_config_bb_agc_8822b` also feeds each `0x81C` row to
+  `odm_update_agc_big_jump_lmt` (software DIG `big_jump_lmt[]` state, **no** register write — a
+  side-effect to reconstruct when DIG is ported, not part of the wire). `phy_cond.py` is reused by
+  the RF-A/RF-B walkers next. **Frontier: `R 0x0024` (REG_AFE_CTRL1) at op ~8645** — start of RF.
 
 ### Coverage gap — USB2-link branches untested (all captures are USB3)
 
