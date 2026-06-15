@@ -36,8 +36,20 @@
   `W 0xFF0D/0E/0C`) → `read_chip_version` (`R32 0xF0/0xF4/0x68`)
   `[SRC] hal/rtl8822b/rtl8822b_ops.c:173` → `read_adapter_info` = `rtl8822b_read_efuse`
   (`EFUSE_ShadowMapUpdate`, the `REG_EFUSE_CTRL`=0x30 physical-map loop)
-  `[SRC] hal/rtl8822b/rtl8822b_ops.c:637,3930`. **M0 frontier = the `0xFF0C/0D/0E` USB
-  preamble at op0** (origin not yet pinned; the next thing to port).
+  `[SRC] hal/rtl8822b/rtl8822b_ops.c:637,3930`.
+
+### M0 frontier — the op0 USB preamble (source not yet pinned)
+
+`[WIRE]` (raw, all 3 captures, byte-identical): `R 0xFC/1`, `R 0xF1/1`, then three
+1-byte `bRequest=0x05` writes **`W 0xFF0D=0x41`, `W 0xFF0E=0xa8`, `W 0xFF0C=0x81`**
+(`wIndex=0`; confirmed not a paged/split-wide access). Runs *before* `read_chip_version`.
+**Must be ported from its source fn, not replayed** — find it first.
+- Ruled out: `verify_io_88xx` (debug API; USB branch is one `W32 0x77665511` to
+  `REG_PAGE5_DUMMY`, not these byte writes), `mount_api_88xx` (pure fn-ptr table, no IO),
+  and any literal `0xFF0C/0D/0E` writer (none in the tree).
+- Leads to chase next: `halmac_init_adapter` entry `[SRC] hal/hal_halmac.c:1249`; the
+  rtw-core probe order (`rtw_hal_read_chip_info`, called `core/rtw_cmd.c:4531`); whether
+  `0xFF0C-0xFF0E` is a named USB reg reached via a base+offset macro.
 
 ## Cleanroom rules
 
