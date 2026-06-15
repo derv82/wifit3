@@ -238,6 +238,21 @@ passes and runs `init_bb_reg` then `init_rf_reg` between them:
 **The deterministic cold init ends at op ~9410.** Everything after is RF calibration, NOT more
 init.
 
+### Post-PHY calibration — gate resumed (frontier op ~9470)
+
+The byte-for-byte gate continues past the BB/RF tables, porting the one-time post-PHY sequence
+(this is the work the airodump cal-scan below repeats per channel; the one-time pass is what
+unblocks RX). Cleared so far:
+- **`init_usb_cfg`** (`usbphy.init_usb_cfg`) — RX-DMA burst mode by USB link speed (`REG_RXDMA_MODE`
+  0x290, read-derived) + `DROP_DATA_EN` on `0x20c`. Gate 9410→9416.
+- **`config_phydm_trx_mode`** (`cal.config_trx_mode`) — 2T2R TX/RX path + RF mode-table poll +
+  igi/ccapar (central_ch 0 → col 1). Gate 9416→9470.
+
+**Frontier op ~9470** (`R 0x2b24` = RF_A 0xC9): the **IQK** (halrf_iqk_8822b.c) — the large
+read-dependent block (backup → per-path TX/RX I/Q cal loop → restore), then **LCK**, the one-time
+**DPK**, and the **phydm DM init** (DIG/CCK-PD — the RX-detection seed diagnosed below). These are
+the next milestones; each is gate-driven against the cold capture.
+
 ### RF calibration — the rest of the capture is an all-channel scan (decoded)
 
 Decoding the RF channel-register writes (`0xC90`/`0xE90`, `addr 0x18`, `data[7:0]` = channel
