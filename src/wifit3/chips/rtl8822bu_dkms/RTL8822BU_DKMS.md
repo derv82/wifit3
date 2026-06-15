@@ -1,9 +1,43 @@
 # RTL8822BU — vendor/DKMS port (playbook)
 
-> **STATUS: not started.** This is the start-here playbook for the cleanroom DKMS
-> re-port. Read it, then begin at M0. Promote sections from plan to ground truth with
-> `[SRC]`/`[WIRE]` citations as facts get confirmed; by the end this should read like
-> `chips/rtl8812au_dkms/RTL8812AU_DKMS.md`.
+> **STATUS: M0 in progress.** Transport + constants + chip-version read + the gate
+> harness are in; the gate (`scripts/rtl8822bu_dkms/verify_pcap.py`) parses the capture,
+> decodes the op stream, and reports the frontier. Promote sections from plan to ground
+> truth with `[SRC]`/`[WIRE]` citations as facts get confirmed; by the end this should
+> read like `chips/rtl8812au_dkms/RTL8812AU_DKMS.md`.
+
+## Verified facts (ground truth so far)
+
+- **USB identity / endpoints** `[WIRE]` capture-1/2/3 + usb-topology.log: `2357:0138`
+  (TP-Link Archer T3U Plus), single config. Card traffic: control ep0; **bulk-OUT 0x05**
+  (FW/TX); **bulk-IN 0x84** (RX). The coverage audit shows no other channel.
+- **Register IO is the standard Realtek `bRequest=0x05` vendor control transfer**
+  (`READ=0xC0/WRITE=0x40`, addr in wValue) `[SRC] include/usb_ops.h:19-22` — byte-identical
+  to the AU family, so the USB layer is *not* HAL-specific.
+- **8822b register-page-switch mirror** `[SRC] os_dep/linux/usb_ops_linux.c:171-201`:
+  every vendor access to an **ON-section** register (`addr <= 0xFF` or `0x1000..0x10FF`) is
+  followed by an extra 1-byte `bRequest=0x05` write to **`0x4E0`** carrying the low byte of
+  the IO buffer (read-back value for a read, written value for a write). OFF/LOCAL-section
+  regs (incl. `0xFExx/0xFFxx`) get no mirror. Reproduced in `transport.py`; `[WIRE]` every
+  `R 0x00fc=0x0a → W 0x4e0=0x0a` pair in the capture confirms it.
+- **Re-runnability = clean reset every time, NOT skip-style warm-reattach.** The vendor's
+  own power-on handles a still-powered chip: `mac_pwr_switch_usb_8822b` reads `REG_CR`(0xEA
+  marker), `REG_MCUFW_CTRL`(0xC078=FW-exist), and `REG_SYS_STATUS1+1` BIT0 to detect
+  power state, and returns `HALMAC_RET_PWR_UNCHANGE` if already on
+  `[SRC] hal/halmac/halmac_88xx/halmac_8822b/halmac_usb_8822b.c:32-98`. `rtw_halmac_poweron`
+  catches that and **forces power-OFF (`card_dis_flow`) then power-ON again** — "Work around
+  for warm reboot but device not power off" `[SRC] hal/hal_halmac.c:2744-2774`. So our bring-up
+  prepends this reset; no replug needed, no warm-skip path. The power-OFF table is not in any
+  cold capture (cold boots return SUCCESS, so the off→on never fired), so it is ported from
+  source and proven by a hardware double-run. *Open: whether the off→on cycle recovers on
+  Windows+WinUSB (the AU/jaguar cycle did not; 8822b `card_dis_flow` is a different sequence).*
+- **Early-init order (`[WIRE]` capture op stream, de-mirrored)** — diverges from the milestone
+  table, which the chip-info path reads EFUSE up front: a USB preamble (`R 0xFC`, `R 0xF1`,
+  `W 0xFF0D/0E/0C`) → `read_chip_version` (`R32 0xF0/0xF4/0x68`)
+  `[SRC] hal/rtl8822b/rtl8822b_ops.c:173` → `read_adapter_info` = `rtl8822b_read_efuse`
+  (`EFUSE_ShadowMapUpdate`, the `REG_EFUSE_CTRL`=0x30 physical-map loop)
+  `[SRC] hal/rtl8822b/rtl8822b_ops.c:637,3930`. **M0 frontier = the `0xFF0C/0D/0E` USB
+  preamble at op0** (origin not yet pinned; the next thing to port).
 
 ## Cleanroom rules
 

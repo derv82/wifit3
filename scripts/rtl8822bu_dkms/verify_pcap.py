@@ -1,11 +1,12 @@
 """Byte-for-byte replay-diff of the rtl8822bu_dkms port vs the morrownr rtl88x2bu
 cold-boot capture.
 
-SCAFFOLD: capture parse + coverage audit are in place; the bring-up call sequence
-is a TODO, filled milestone by milestone. Template: scripts/rtl8812au_dkms/verify_pcap.py.
-
-PASS means only: for this captured boot, the port emits the same USB bytes the
-vendor driver did — a faithfulness gate, not a correctness proof. Offline.
+The 8822b transport is dev-centric (it calls ``dev.ctrl_transfer`` so it can emit
+the 0x4E0 page-switch mirror), so the gate replays at the ctrl_transfer layer:
+``extract_ctrl_ops`` + ``rtw88_pcap_replay.ReplayDevice`` feed recorded reads back
+and byte-check every write (mirror included). One monotonic cursor walks the whole
+capture; the first op the port does NOT reproduce is the frontier — the next thing
+to port.
 
     uv run python scripts/verify_pcap.py rtl8822bu_dkms
     uv run python scripts/rtl8822bu_dkms/verify_pcap.py [path/to/capture.pcap]
@@ -21,13 +22,26 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
+from wifit3.chips.rtl8822bu_dkms import chipid  # noqa: E402
+from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport  # noqa: E402
 
-CHANNEL = 1
 DEFAULT_CAP = REPO / "usb_dumps_new" / "captures_rtl88x2bu" / "capture-1.pcap"
 
 
+def _fmt(op: dict) -> str:
+    d = op.get("data", b"")
+    val = f"=0x{int.from_bytes(d, 'little'):0{max(len(d) * 2, 2)}x}" if d else ""
+    return f"{op['dir']} 0x{op['wval']:04x}/{op['width']}{val}"
+
+
+def _bringup(t) -> None:
+    """The ported bring-up so far, driven against the replay device. Each milestone
+    appends here; the gate advances to the next unaccounted op."""
+    chipid.read_chip_version(t)            # M0: chip-version reads
+
+
 def run(cap: str | None = None) -> int:
-    time.sleep = lambda *a, **k: None              # replay needs no settle delays
+    time.sleep = lambda *a, **k: None       # replay needs no settle delays
 
     pcap = Path(cap) if cap else DEFAULT_CAP
     if not pcap.exists():
@@ -36,23 +50,29 @@ def run(cap: str | None = None) -> int:
 
     dev_addr = rp.find_card_device(pcap)
     rp.audit_coverage(pcap, dev_addr)
-    ops = rp.extract_ops(pcap, dev_addr)
-    n_w = sum(o["kind"] == "W" for o in ops)
-    n_r = sum(o["kind"] == "R" for o in ops)
-    n_b = sum(o["kind"] == "B" for o in ops)
-    print(f"{pcap.name}: card=dev{dev_addr}, {len(ops)} vendor ops "
-          f"({n_r} R, {n_w} W, {n_b} bulk)")
-    if not ops:
-        return 1
-    print("  first 25 vendor ops:")
-    for k, o in enumerate(ops[:25]):
-        print(f"    [{k:3}] f{o['frame']:<7} {rp.ReplayTransport._fmt(o)}")
+    ops = rp.extract_ctrl_ops(pcap, dev_addr)
+    print(f"{pcap.name}: card=dev{dev_addr}, {len(ops)} control ops")
+    print("  first 40 control ops (* = 0x4E0 page-switch mirror):")
+    for k, o in enumerate(ops[:40]):
+        tag = " *" if o["wval"] == 0x04E0 else ""
+        print(f"    [{k:3}] f{o['frame']:<7} {_fmt(o)}{tag}")
 
-    # TODO: drive the bring-up against rp.ReplayTransport(ops), milestone by
-    # milestone, catching rp.Divergence. Add a sibling verify_channels.py for the
-    # per-hop tune. Run against capture-1/2/3. See RTL8822BU_DKMS.md and the
-    # 8812au_dkms recipe.
-    print("\nSCAFFOLD: bring-up not wired yet — capture parses; not a PASS.")
+    dev = rp.ReplayDevice(ops)
+    t = Rtl8822buTransport(dev)
+    try:
+        _bringup(t)
+    except rp.Divergence as e:
+        print(f"\nDIVERGENCE after {dev.i} ops:\n  {e}")
+        return 1
+
+    consumed = dev.i
+    print(f"\nported bring-up reproduced {consumed}/{len(ops)} ops clean.")
+    if consumed < len(ops):
+        nxt = ops[consumed]
+        print(f"FRONTIER → op #{consumed} (frame {nxt['frame']}): {_fmt(nxt)}")
+        print("  (this is the next op to port; not yet a full PASS)")
+        return 0
+    print("PASS: full single-cursor reproduction.")
     return 0
 
 
