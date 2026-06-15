@@ -7,7 +7,7 @@ plus a collapsible, plain-text trace the user can copy into a bug report.
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Label, Static
 
@@ -29,6 +29,8 @@ class FatalErrorModal(ModalScreen[None]):
         content-align: center middle; margin-bottom: 1; text-style: bold; color: $error;
     }
     FatalErrorModal #message { margin-bottom: 1; color: $error; }
+    /* Cap the expandable trace so it scrolls internally instead of shoving the buttons off-screen. */
+    FatalErrorModal #trace-scroll { max-height: 10; }
     FatalErrorModal #trace { color: $text-muted; }
     FatalErrorModal #button-row { height: auto; align: center middle; margin-top: 1; }
     FatalErrorModal #button-row Button { margin: 0 1; }
@@ -43,7 +45,8 @@ class FatalErrorModal(ModalScreen[None]):
             yield Label(self._error.title, id="title")
             yield Static(self._error.message, id="message")
             with Collapsible(title="Details", collapsed=True):
-                yield Static(self._error.trace, id="trace")
+                with VerticalScroll(id="trace-scroll"):
+                    yield Static(self._error.trace, id="trace")
             with Horizontal(id="button-row"):
                 yield Button("Copy details", variant="default", id="btn-copy")
                 yield Button("Quit", variant="error", id="btn-quit")
