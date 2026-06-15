@@ -34,15 +34,29 @@ REG_PAGE_SWITCH_CONFIRM = 0x04E0       # REG_NULL_PKT_STATUS_V1 [SRC] halmac_reg
 ON_SEC_RANGES = ((0x0000, 0x00FF), (0x1000, 0x10FF))
 
 # --- M0/M1 registers (8822b) ----------------------------------------------
-# [SRC] hal/halmac/halmac_reg_8822b.h
-REG_SYS_FUNC_EN = 0x0002               # :20
+# [SRC] hal/halmac/halmac_reg_8822b.h, halmac_reg2.h
+REG_SYS_FUNC_EN = 0x0002               # :20  (+1 SYS_FUNC_EN in init_system_cfg)
+REG_RSV_CTRL = 0x001C                  # reg2.h:149  (pre_init clears this first)
+REG_RF_CTRL = 0x001F                   # reg2.h:166  (enable_bb_rf BIT0/1/2)
+REG_GPIO_MUXCFG = 0x0040               # reg2.h:328  (pre_init sets BIT2; init_system_cfg FSPI)
+REG_LED_CFG = 0x004C                   # reg2.h:365  (pre_init clears BIT25/26)
+REG_PAD_CTRL1 = 0x0064                 # reg2.h:388  (pre_init sets BIT28/29 PIN-mux)
 REG_WL_BT_PWR_CTRL = 0x0068            # :49
 REG_MCUFW_CTRL = 0x0080                # :55  (FW-ready / boot-from-flash)
-REG_SYS_CFG1 = 0x00F0                  # :82  (chip version / cut / vendor)
+REG_WLRF1 = 0x00EC                     # reg2.h:798  (enable_bb_rf BIT24/25/26)
+REG_SYS_CFG1 = 0x00F0                  # :82  (chip version / cut / vendor; +2 test-mode BIT4)
 REG_SYS_STATUS1 = 0x00F4               # :83  (+1 BIT0 = power state probe)
-REG_SYS_CFG2 = 0x00FC                  # :85
-REG_SW_MDIO = 0x10C0                   # :96
+REG_SYS_CFG2 = 0x00FC                  # :85  (+3 == 0x20 => USB3 link)
 REG_CR = 0x0100                        # :109 (0xEA marks the chip disabled)
+REG_CPU_DMEM_CON = 0x1080              # reg2.h:6204 (init_system_cfg WL_PLATFORM_RST)
+REG_SW_MDIO = 0x10C0                   # :96  (+3 BIT0 = post-power-on read-twice probe)
+REG_PRE_INIT_FE5B = 0xFE5B             # pre_init USB3-only |= BIT(4) [SRC] halmac_init_8822b.c:963
+
+# init_system_cfg bit/value constants [SRC] halmac_init_8822b.c:36,724-735, halmac_bit2.h
+SYS_FUNC_EN = 0xDC                     # OR'd into REG_SYS_FUNC_EN+1
+BIT_WL_PLATFORM_RST = 1 << 16          # bit2.h:58085
+BIT_BOOT_FSPI_EN = 1 << 20             # bit2.h:12788 (boot-from-flash; cleared for driver FW DL)
+BIT_FSPI_EN = 1 << 19                  # bit2.h:7200
 
 # --- power-state detection markers (mac_pwr_switch_usb_8822b) --------------
 # [SRC] hal/halmac/halmac_88xx/halmac_8822b/halmac_usb_8822b.c:44-92

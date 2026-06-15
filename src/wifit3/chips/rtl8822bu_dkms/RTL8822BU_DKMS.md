@@ -1,12 +1,14 @@
 # RTL8822BU — vendor/DKMS port (playbook)
 
-> **STATUS: M0 (chip-ID reads) + early EFUSE read COMPLETE.** Transport (+0x4E0 mirror),
-> constants, the HALMAC chip-id/cut + USB intf-phy + chip-version reads, and the full
-> HALMAC physical-EFUSE dump (1024 B) + PG-header logical parse all reproduce
-> **byte-for-byte, 4119/4119 ops, on capture-1/2/3**. Gate frontier now at MAC power-on
-> (`R 0x35` / `W 0x1c` / pwr-seq RMWs). Next milestone = MAC power-on. Promote sections
-> from plan to ground truth with `[SRC]`/`[WIRE]` citations as facts get confirmed; by the
-> end this should read like `chips/rtl8812au_dkms/RTL8812AU_DKMS.md`.
+> **STATUS: M0 (chip-ID) + EFUSE read + MAC power-on COMPLETE.** Transport (+0x4E0 mirror),
+> the HALMAC chip-id/cut + USB intf-phy + chip-version reads, the physical-EFUSE dump
+> (1024 B) + PG parse + PABias tail, and **MAC power-on** (pre_init_system_cfg +
+> `card_en_flow` power sequence + init_system_cfg) all reproduce **byte-for-byte on
+> capture-1/2/3** (4251 ops on cap-1/2; cap-3 needs one extra power-seq poll read — the
+> loop reproduces it). Gate frontier now at FW download (`W 0x1A0` REG_C2HEVT_MSG_NORMAL,
+> then the HALMAC iDDMA FW upload over bulk-OUT 0x05). Next milestone = firmware upload.
+> Promote sections from plan to ground truth with `[SRC]`/`[WIRE]` citations as facts get
+> confirmed; by the end this should read like `chips/rtl8812au_dkms/RTL8812AU_DKMS.md`.
 
 ## Verified facts (ground truth so far)
 
@@ -82,19 +84,40 @@ The PG **tx-power** block (`hal_load_pg_txpwr_info`) is deliberately **not** dec
 done at the tx-power milestone where each value is checked against the channel/power writes it
 drives (decoding it now, with no consumer, would be unverifiable against the wire).
 
-### Next frontier — MAC power-on (op #4121, `W 0x1c` ...)
+### MAC power-on (CLEARED, byte-for-byte on capture-1/2/3)
 
-After `read_efuse` the wire is `pre_init_system_cfg_8822b` `[SRC] halmac_init_8822b.c:945`:
-`W 0x1c`(`REG_RSV_CTRL`=0), `R 0xFF`(`REG_SYS_CFG2+3`; `0x80≠0x20` so the USB3-only `0xFE5B|BIT(4)`
-is **skipped here** — see the USB2/USB3 coverage note), then the PIN-mux RMWs
-`PAD_CTRL1`(0x64, set BIT28/29 → `0x36242000`) / `LED_CFG`(0x4c) / `GPIO_MUXCFG`(0x40, set BIT2),
-`set_hw_value(EN_BB_RF, 0)`, and the `REG_SYS_CFG1+2 & BIT(4)` test-mode check. Then
-`_power_switch(POWER_ON)` (the 8822b `card_enable_flow` `[SRC] halmac_pwr_seq_8822b.c`) with the
-`R 0x100`(`REG_CR`) / `R 0x80`(`REG_MCUFW_CTRL`) / `R 0xFE58`(RPWM) power-state probe, then
-`init_system_cfg_8822b`. The cold capture returns SUCCESS (already-off), so the warm-reboot
-off→on workaround `[SRC] hal_halmac.c:2744-2774` does **not** fire. NB the morrownr driver nests
-power-on + FW-download *inside* `read_efuse` (via `hal_read_mac_hidden_rpt`
-`[SRC] rtl8822b_ops.c:681`); wifit3 mirrors the wire order, not the C call tree.
+`rtw_halmac_poweron` `[SRC] hal/hal_halmac.c:2705`, ported to `mac.power_on(t, chip_ver)`:
+
+1. **`pre_init_system_cfg_8822b`** `[SRC] halmac_init_8822b.c:945`: `W 0x1c`(`REG_RSV_CTRL`=0),
+   `R 0xFF`(`REG_SYS_CFG2+3`; `0x80≠0x20` so the USB3-only `0xFE5B|BIT(4)` is **skipped here** —
+   see the USB2/USB3 coverage note), PIN-mux RMWs `PAD_CTRL1`(0x64, set BIT28/29 → `0x36242000`) /
+   `LED_CFG`(0x4c, clear BIT25/26) / `GPIO_MUXCFG`(0x40, set BIT2), `enable_bb_rf(0)` (clear bits
+   on `0x02`/`0x1f`/`0xec`), and the `REG_SYS_CFG1+2 & BIT(4)` test-mode read.
+2. **`mac_pwr_switch_usb_8822b(POWER_ON)`** `[SRC] halmac_usb_8822b.c:32`: `R 0xFE58`(RPWM),
+   `R16 0x80`(`REG_MCUFW_CTRL`; `0x0001≠0xC078` so no 32K-leave toggle), `R 0x100`(`REG_CR`=`0xEA`
+   ⇒ chip OFF, so the `SYS_STATUS1+1` probe is skipped), then the `card_en_flow` power sequence
+   (`CARDDIS→CARDEMU` then `CARDEMU→ACT`) via `pwr_seq_parser_88xx`, then `W8_CLR 0xF5 BIT(0)` and
+   `R 0x10C3`(`REG_SW_MDIO+3`). Cold chip ⇒ returns SUCCESS, so the warm-reboot off→on workaround
+   `[SRC] hal_halmac.c:2768-2772` does **not** fire (it is ported in `power_on` for warm chips but
+   has no cold capture — HW-double-run only).
+3. **`init_system_cfg_8822b`** `[SRC] halmac_init_8822b.c:715`: `REG_CPU_DMEM_CON |= WL_PLATFORM_RST`,
+   `REG_SYS_FUNC_EN+1 |= 0xDC`, and the boot-from-flash disable (`BIT_BOOT_FSPI_EN` is clear on
+   cold boot, so the GPIO_MUXCFG follow-up is skipped).
+
+The pwr-seq runtime (`pwrseq.py`) filters every row by interface (USB) + cut (`BIT(chip_ver+1)`,
+D⇒BIT4, so the `CUT_C`-only `10A8/9/A` rows are skipped) and runs WRITE as a RMW, POLLING as
+read-until-masked-match, DELAY/READ as no-ops. **Capture-3 polls `0x0005 BIT(0)==0` one extra
+time** (reads `01,01,01,00` vs cap-1/2's `01,01,00`); the poll loop consumes exactly the recorded
+reads on each boot — direct proof the polling is dynamic, not a single hardcoded read.
+
+### Next frontier — firmware download (op #4251, `W 0x1A0` ...)
+
+`hal_read_mac_hidden_rpt` `[SRC] rtl8822b_ops.c:681, hal_com.c:1529` is what triggers power-on
+(above) and now FW: `W 0x1A0`(`REG_C2HEVT_MSG_NORMAL` = `C2H_DEFEATURE_RSVD` 0xFD), then
+`rtw_hal_fw_dl` — the HALMAC iDDMA firmware upload over **bulk-OUT 0x05**. The FW blob must be
+extracted from the capture, byte-verified vs `linux-firmware/rtw88/`, and shipped in `assets/`.
+NB the dev-centric `ReplayDevice` only models `ctrl_transfer`; the FW bulk path needs a `write()`
+shim on the replay device (or a `bulk_out` hook) so the gate can byte-check the FW packets.
 
 ### Coverage gap — USB2-link branches untested (all captures are USB3)
 
