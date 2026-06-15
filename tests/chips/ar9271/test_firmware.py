@@ -1,7 +1,7 @@
 import usb.core
 from wifit3.chips.ar9271.firmware import FirmwareLoader
 
-def test_firmware_load_sequence(usb_mock):
+def test_firmware_load_sequence(usb_mock):  # ar9271/conftest.py
     """
     Verify the full firmware upload sequence: Chunks -> Boot -> Wakeup.
     """
@@ -24,7 +24,7 @@ def test_firmware_load_sequence(usb_mock):
     dev = usb.core.find()
     success = FirmwareLoader.load(dev, dummy_fw)
     assert success is True
-def test_firmware_load_reset_error_is_success(usb_mock):
+def test_firmware_load_reset_error_is_success(usb_mock):  # ar9271/conftest.py
     """
     Verify that a USBError during boot trigger is treated as success (device resetting).
     """

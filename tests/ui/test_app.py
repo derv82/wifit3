@@ -5,6 +5,7 @@ from wifit3.ui.screens.scanner import ScannerView
 from textual.widgets import RichLog, DataTable
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")  # ui/conftest.py
 async def test_app_layout_and_boot():
     """Verify the app boots and registers the required screens."""
     app = WifiteApp()

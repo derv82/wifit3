@@ -3,7 +3,7 @@ import usb.core
 from wifit3.chips.ar9271.driver import AR9271Driver
 
 @pytest.mark.asyncio
-async def test_driver_connect_warm(usb_mock):
+async def test_driver_connect_warm(usb_mock):  # ar9271/conftest.py
     """
     Test that connect() successfully re-attaches to a warm device without sending the marathon.
     """
@@ -19,7 +19,7 @@ async def test_driver_connect_warm(usb_mock):
     await driver.close()
 
 @pytest.mark.asyncio
-async def test_driver_set_channel(usb_mock):
+async def test_driver_set_channel(usb_mock):  # ar9271/conftest.py
     """
     Test that set_channel sends the correct synthesizer word.
     """

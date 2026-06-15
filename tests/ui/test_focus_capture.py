@@ -58,6 +58,7 @@ def _log_text(log: RichLog) -> str:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")  # ui/conftest.py
 async def test_focus_surfaces_passive_handshake_and_pmkid(tmp_path):
     app = WifiteApp()
     async with app.run_test() as pilot:
@@ -117,6 +118,7 @@ async def test_focus_surfaces_passive_handshake_and_pmkid(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")  # ui/conftest.py
 async def test_partial_handshake_shows_per_message_counts():
     """Repeated/partial EAPOL frames the 4-way validity logic can't pair must
     still register as visible progress — the CAPTURE panel shows M{n}×count."""

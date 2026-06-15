@@ -2,6 +2,7 @@ import pytest
 import usb.core
 from unittest.mock import MagicMock, patch
 
+
 class USBExpectation:
     def __init__(self, op_type, **kwargs):
         self.op_type = op_type
@@ -20,6 +21,7 @@ class USBExpectation:
     def __repr__(self):
         return f"<USBExpectation {self.op_type} {self.params}>"
 
+
 class PyUSBMock:
     """
     A trace-replayer mock for PyUSB.
@@ -30,7 +32,7 @@ class PyUSBMock:
         self.call_index = 0
         self.device = MagicMock(spec=usb.core.Device)
         self.device._ctx = MagicMock()
-        
+
         # Wire up the mock device to our replayer
         self.device.ctrl_transfer.side_effect = self._handle_ctrl
         self.device.write.side_effect = self._handle_write
@@ -55,7 +57,7 @@ class PyUSBMock:
 
     def _handle_ctrl(self, bmRequestType, bRequest, wValue, wIndex, data=None, timeout=None):
         exp = self._get_next_expectation('ctrl')
-        
+
         # Verify parameters (handling potential None vs b'')
         if exp.params['bmRequestType'] != bmRequestType:
             pytest.fail(f"Mock mismatch (ctrl): Expected bmRequestType {hex(exp.params['bmRequestType'])}, got {hex(bmRequestType)}")
@@ -65,34 +67,34 @@ class PyUSBMock:
             pytest.fail(f"Mock mismatch (ctrl): Expected wValue {hex(exp.params['wValue'])}, got {hex(wValue)}")
         if exp.params['wIndex'] != wIndex:
             pytest.fail(f"Mock mismatch (ctrl): Expected wIndex {hex(exp.params['wIndex'])}, got {hex(wIndex)}")
-        
+
         if exp.error:
             raise exp.error
         return exp.response
 
     def _handle_write(self, endpoint, data, timeout=None):
         exp = self._get_next_expectation('write')
-        
+
         if exp.params['endpoint'] != endpoint:
             pytest.fail(f"Mock mismatch (write): Expected EP {hex(exp.params['endpoint'])}, got {hex(endpoint)}")
-        
+
         # Check data (support both bytes and bytearray)
         actual_data = bytes(data) if data is not None else b''
         expected_data = bytes(exp.params['data']) if exp.params['data'] is not None else b''
-        
+
         if actual_data != expected_data:
             pytest.fail(f"Mock mismatch (write) on EP {hex(endpoint)}:\nExpected: {expected_data.hex(' ')}\nGot:      {actual_data.hex(' ')}")
-        
+
         if exp.error:
             raise exp.error
         return len(actual_data)
 
     def _handle_read(self, endpoint, length, timeout=None):
         exp = self._get_next_expectation('read')
-        
+
         if exp.params['endpoint'] != endpoint:
             pytest.fail(f"Mock mismatch (read): Expected EP {hex(exp.params['endpoint'])}, got {hex(endpoint)}")
-        
+
         if exp.error:
             raise exp.error
         return exp.response
@@ -103,13 +105,13 @@ class PyUSBMock:
     def _get_next_expectation(self, op_type):
         if self.call_index >= len(self.expectations):
             pytest.fail(f"Unexpected USB {op_type} call (No more expectations)")
-        
+
         exp = self.expectations[self.call_index]
         self.call_index += 1
-        
+
         if exp.op_type != op_type:
             pytest.fail(f"Mock sequence mismatch: Expected {exp.op_type}, got {op_type}")
-        
+
         return exp
 
     def verify(self):
@@ -117,6 +119,7 @@ class PyUSBMock:
         if self.call_index < len(self.expectations):
             remaining = self.expectations[self.call_index:]
             pytest.fail(f"Mock verification failed: {len(remaining)} expected calls were not made: {remaining}")
+
 
 @pytest.fixture
 def usb_mock():
