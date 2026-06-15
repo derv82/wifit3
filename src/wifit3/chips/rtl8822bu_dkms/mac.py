@@ -254,11 +254,16 @@ class TxffAlloc:
     (3 bulk-OUT, 2048-page FIFO). All values are wire-verified."""
     rsvd_boundary: int      # 1996 (0x7CC) — first reserved page = ACQ page count
     rsvd_h2cq_addr: int     # 2036 — H2CQ page base
+    rsvd_fw_txbuf_addr: int  # 2044 — FW-TXBUF page base (general-info FW_TX_BOUNDARY)
     high_pg: int            # 64
     low_pg: int             # 64
     normal_pg: int          # 64
     extra_pg: int           # 0
     pub_pg: int             # 1803 (0x70B)
+
+
+def set_trx_fifo_info() -> TxffAlloc:
+    return _set_trx_fifo_info()
 
 
 def _set_trx_fifo_info() -> TxffAlloc:
@@ -273,12 +278,14 @@ def _set_trx_fifo_info() -> TxffAlloc:
     cur = tx_fifo_pg_num
     cur -= RSVD_PG_CSIBUF_NUM
     cur -= RSVD_PG_FW_TXBUF_NUM
+    rsvd_fw_txbuf_addr = cur                                          # 2044
     cur -= RSVD_PG_CPU_INSTRUCTION_NUM
     cur -= RSVD_PG_H2CQ_NUM
     rsvd_h2cq_addr = cur                                               # 2036
     pg = PG_NUM_NORMAL_3BULKOUT
     pub_pg = acq_pg_num - pg["hq"] - pg["lq"] - pg["nq"] - pg["exq"] - pg["gap"]
     return TxffAlloc(rsvd_boundary=acq_pg_num, rsvd_h2cq_addr=rsvd_h2cq_addr,
+                     rsvd_fw_txbuf_addr=rsvd_fw_txbuf_addr,
                      high_pg=pg["hq"], low_pg=pg["lq"], normal_pg=pg["nq"],
                      extra_pg=pg["exq"], pub_pg=pub_pg)
 

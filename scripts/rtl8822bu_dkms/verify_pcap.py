@@ -42,12 +42,15 @@ def _bringup(t) -> None:
     info = chipid.get_chip_info(t)         # M0: HALMAC chip-id/cut (R 0xFC, R 0xF1)
     usbphy.phy_cfg_usb(t, info.chip_ver)   # M0: USB3 intf-phy param (W 0xff0d/0e/0c)
     chipid.read_chip_version(t)            # M0: rtw chip-version (R 0xF0/0xF4/0x68)
-    efuse.read_efuse(t)                    # M1: HALMAC physical EFUSE dump (R 0x0A, 0x30 loop)
+    e = efuse.read_efuse(t)                # M1: HALMAC physical EFUSE dump (R 0x0A, 0x30 loop)
     mac.power_on(t, info.chip_ver)         # M2: pre_init + card_en pwr-seq + init_system_cfg
     t.write8(0x01A0, 0xFD)                 # C2HEVT_MSG_NORMAL = C2H_DEFEATURE_RSVD (mac_hidden_rpt)
     firmware.download(t, firmware.load_firmware_blob())   # M3: HALMAC iDDMA FW upload
     mac.init_mac_cfg(t)                    # M4: init_mac_cfg — trx + protocol + edca + wmac RX
     mac.init_mac_flow_tail(t)              # M4: RCR sync + RTS-full-bw + USB RX aggregation
+    alloc = mac.set_trx_fifo_info()        # M4: _send_general_info — two FW-offload H2C packets
+    firmware.send_general_info(t, e.rfe_type, info.chip_ver,
+                               alloc.rsvd_fw_txbuf_addr - alloc.rsvd_boundary)
 
 
 def run(cap: str | None = None) -> int:

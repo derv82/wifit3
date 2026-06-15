@@ -35,6 +35,16 @@ from .constants import (
     DLFW_RESTORE_REG_NUM,
     DLFW_USB_PKT_SIZE,
     FW_BLOB_SIZE,
+    GENINFO_EXT_PA,
+    GENINFO_MP_MODE,
+    GENINFO_PACKAGE_TYPE,
+    GENINFO_RF_TYPE,
+    GENINFO_RX_ANT_STATUS,
+    GENINFO_TX_ANT_STATUS,
+    H2C_CATEGORY,
+    H2C_CMD_ID,
+    H2C_PKT_HDR_SIZE,
+    H2C_PKT_SIZE,
     HALMAC_DMA_MAPPING_HIGH,
     LTECOEX_ACCESS_CTRL,
     LTECOEX_REG_OFFSET_DL,
@@ -63,8 +73,11 @@ from .constants import (
     REG_TXDMA_STATUS,
     REG_TXPKT_EMPTY,
     RSVD_PG_BOUNDARY_FWDL,
+    SUB_CMD_ID_GENERAL_INFO,
+    SUB_CMD_ID_PHYDM_INFO,
     TX_DESC_SIZE_88XX,
     TXDESC_QSEL_BEACON,
+    TXDESC_QSEL_H2C_CMD,
     WLAN_FW_HDR_CHKSUM_SIZE,
     WLAN_FW_HDR_DMEM_ADDR,
     WLAN_FW_HDR_DMEM_SIZE,
@@ -135,14 +148,15 @@ def _set_le32_bits(buf: bytearray, byte_off: int, shift: int, nbits: int, value:
     struct.pack_into("<I", buf, byte_off, (w & ~mask) | ((value << shift) & mask))
 
 
-def build_fw_txdesc(pkt_size: int) -> bytes:
-    """The 48-byte TX descriptor usb_write_data_not_xmitframe builds for a FW packet:
-    TXPKTSIZE + OFFSET(48) + QSEL(beacon), then the XOR-16 checksum over the first 32 bytes.
+def build_fw_txdesc(pkt_size: int, qsel: int = TXDESC_QSEL_BEACON, offset: int = TX_DESC_SIZE_88XX) -> bytes:
+    """The 48-byte TX descriptor usb_write_data_not_xmitframe builds for a not-xmitframe packet:
+    TXPKTSIZE + QSEL (+ OFFSET for the BEACON/FW-DL path; the H2C path leaves OFFSET 0), then the
+    XOR-16 checksum over the first 32 bytes.
     [SRC] rtl8822bu_halmac.c:127-184, halmac_common_8822b.c fill_txdesc_check_sum_8822b."""
     d = bytearray(TX_DESC_SIZE_88XX)
     _set_le32_bits(d, 0x00, 0, 16, pkt_size)            # TXPKTSIZE  word0[0:16]
-    _set_le32_bits(d, 0x00, 16, 8, TX_DESC_SIZE_88XX)   # OFFSET     word0[16:24]
-    _set_le32_bits(d, 0x04, 8, 5, TXDESC_QSEL_BEACON)   # QSEL       word1[8:13]
+    _set_le32_bits(d, 0x00, 16, 8, offset)              # OFFSET     word0[16:24] (0 for H2C)
+    _set_le32_bits(d, 0x04, 8, 5, qsel)                 # QSEL       word1[8:13]
     _set_le32_bits(d, 0x1C, 0, 16, 0)                   # checksum field cleared for the XOR
     chksum = 0
     for i in range(16):
@@ -346,3 +360,45 @@ def download(t, blob: bytes) -> None:
 
     _dlfw_end_flow(t)
     _ltecoex_write(t, LTECOEX_REG_OFFSET_DL, lte_backup)
+
+
+# --- _send_general_info: two FW-offload H2C packets (general + PHYDM info) ----
+def _h2c_header(pkt: bytearray, sub_cmd_id: int, content_size: int, seq: int) -> None:
+    """set_h2c_pkt_hdr_88xx [SRC] halmac_common_88xx.c:614 — the 8-byte FW-offload H2C header."""
+    _set_le32_bits(pkt, 0x00, 0, 7, H2C_CATEGORY)
+    _set_le32_bits(pkt, 0x00, 8, 8, H2C_CMD_ID)
+    _set_le32_bits(pkt, 0x00, 16, 16, sub_cmd_id)
+    _set_le32_bits(pkt, 0x04, 0, 16, H2C_PKT_HDR_SIZE + content_size)   # total_len
+    _set_le32_bits(pkt, 0x04, 16, 16, seq)
+
+
+def _send_h2c(t, pkt: bytes) -> None:
+    """send_h2c_pkt_88xx [SRC] halmac_common_88xx.c:641 — over USB this is the bulk-OUT of a
+    H2C-qsel not-xmitframe packet (txdesc + the 32-byte H2C buffer). The H2C ring has free space
+    (set in init_h2c) so no register poll precedes it."""
+    t.bulk_out(build_fw_txdesc(H2C_PKT_SIZE, qsel=TXDESC_QSEL_H2C_CMD, offset=0) + pkt)
+
+
+def send_general_info(t, rfe_type: int, chip_ver: int, fw_tx_boundary: int) -> None:
+    """_send_general_info [SRC] hal_halmac.c — after FW download, hand the FW its general info
+    and PHYDM info via two H2C packets. ``fw_tx_boundary`` = rsvd_fw_txbuf_addr - rsvd_boundary
+    (48 on this card). rfe_type/chip_ver are decoded; the rf-type/antenna/package fields are the
+    driver's get_trx_path/PackageType result for this card (see GENINFO_* constants)."""
+    # packet 0: general info — only FW_TX_BOUNDARY (+0x08[16:24]). [SRC] proc_send_general_info_88xx
+    gen = bytearray(H2C_PKT_SIZE)
+    _h2c_header(gen, SUB_CMD_ID_GENERAL_INFO, content_size=4, seq=0)
+    _set_le32_bits(gen, 0x08, 16, 8, fw_tx_boundary)
+    _send_h2c(t, bytes(gen))
+
+    # packet 1: PHYDM info — RF/antenna/package fields. [SRC] proc_send_phydm_info_88xx
+    phy = bytearray(H2C_PKT_SIZE)
+    _h2c_header(phy, SUB_CMD_ID_PHYDM_INFO, content_size=8, seq=1)
+    _set_le32_bits(phy, 0x08, 0, 8, rfe_type)              # REF_TYPE
+    _set_le32_bits(phy, 0x08, 8, 8, GENINFO_RF_TYPE)       # RF_TYPE
+    _set_le32_bits(phy, 0x08, 16, 8, chip_ver)            # CUT_VER
+    _set_le32_bits(phy, 0x08, 24, 4, GENINFO_RX_ANT_STATUS)
+    _set_le32_bits(phy, 0x08, 28, 4, GENINFO_TX_ANT_STATUS)
+    _set_le32_bits(phy, 0x0C, 0, 8, GENINFO_EXT_PA)
+    _set_le32_bits(phy, 0x0C, 8, 8, GENINFO_PACKAGE_TYPE)
+    _set_le32_bits(phy, 0x0C, 16, 1, GENINFO_MP_MODE)
+    _send_h2c(t, bytes(phy))

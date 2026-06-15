@@ -86,7 +86,27 @@ DLFW_RESTORE_REG_NUM = 6               # [SRC] hal_halmac.c:23
 # TX descriptor (the FW packet is a BEACON-qsel rsvd-page TX) [SRC] halmac_tx_desc_nic.h:131-435,
 # rtl8822bu_halmac.c:127-196 usb_write_data_not_xmitframe, halmac_common_8822b.c fill_txdesc_check_sum
 TXDESC_QSEL_BEACON = 0x10               # [SRC] halmac_type.h:634
+TXDESC_QSEL_H2C_CMD = 0x13             # [SRC] halmac_type.h:637 (H2C uses no OFFSET)
 PACKET_OFFSET_SZ = 8
+
+# --- _send_general_info: the two FW-offload H2C packets ----------------------
+# [SRC] hal_halmac.c _send_general_info + halmac_fw_88xx.c:1115,1142 proc_send_*_info_88xx +
+# halmac_common_88xx.c:614 set_h2c_pkt_hdr_88xx + halmac_fw_offload_h2c_nic.h field setters.
+H2C_PKT_SIZE = 32                      # [SRC] halmac_fw_88xx.h:32 (only 32-byte H2C supported)
+H2C_PKT_HDR_SIZE = 8                   # [SRC] :33
+H2C_CATEGORY = 0x01                    # FW_OFFLOAD_H2C_SET_CATEGORY [SRC] set_h2c_pkt_hdr_88xx:625
+H2C_CMD_ID = 0xFF                      # FW_OFFLOAD_H2C_SET_CMD_ID :626
+SUB_CMD_ID_GENERAL_INFO = 0x0D
+SUB_CMD_ID_PHYDM_INFO = 0x11
+# general_info struct fields. rfe_type / cut_ver are computed (efuse / chip_ver); the rest come
+# from the driver's get_trx_path + PackageType for this card (rf_type 2T2R->4, single-path ant
+# status, no ext-PA, package 0, non-MP) — [WIRE]-confirmed by the two H2C packets.
+GENINFO_RF_TYPE = 0x04                 # _rf_type_drv2halmac(RF_2T2R)
+GENINFO_TX_ANT_STATUS = 0x1
+GENINFO_RX_ANT_STATUS = 0x1
+GENINFO_EXT_PA = 0x0
+GENINFO_PACKAGE_TYPE = 0x0
+GENINFO_MP_MODE = 0x0
 
 # Pre-download TX-FIFO-empty gate [SRC] halmac_common_88xx.c:3271 txfifo_is_empty_88xx (chk=10)
 REG_TXPKT_EMPTY = 0x041A
