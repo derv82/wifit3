@@ -36,9 +36,11 @@
 > after IQK+LCK+DM init without the one-time DPK, that's fine (gate will show DPK ops unreproduced,
 > which is the accepted boundary like the per-channel DPK).
 >
-> Everything below is verified ground truth (`[SRC]`/`[WIRE]`). The "Milestones" table at the
-> bottom is the original plan and is now mostly historical — M0–M6 + driver wiring are done; the
-> live work is M5 (cal)/M7 (DM+RX). Keep this doc current; cite `[SRC]`/`[WIRE]`.
+> **You do NOT need to read the rest of this doc to start.** Everything below the "Post-PHY
+> calibration" section is CLEARED-milestone ground truth (`[SRC]`/`[WIRE]`) — reference only; skim
+> it only if you're debugging that specific area (the code + git log are the live record). The
+> "Milestones" table at the bottom is the original plan, now mostly historical (M0–M6 + driver
+> wiring done; live work = M5 cal / M7 DM+RX). Keep the cal section + this header current.
 
 ## Verified facts (ground truth so far)
 
