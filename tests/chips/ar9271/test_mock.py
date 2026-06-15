@@ -41,3 +41,13 @@ def test_mock_missing_call_fails(usb_mock):  # ar9271/conftest.py
     
     # Clear for clean teardown
     usb_mock.expectations = []
+
+def test_mock_ctrl_data_mismatch_fails(usb_mock):  # ar9271/conftest.py
+    """A wrong control-OUT payload must fail — guards the data check, not just request fields."""
+    usb_mock.expect_ctrl(0x40, 0x30, 0x1234, 0x5678, data=b'\x11\x22')
+
+    dev = usb.core.find()
+    with pytest.raises(pytest.fail.Exception, match="Mock mismatch"):
+        dev.ctrl_transfer(0x40, 0x30, 0x1234, 0x5678, b'\x33\x44')
+
+    usb_mock.expectations = []

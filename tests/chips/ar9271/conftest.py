@@ -68,6 +68,15 @@ class PyUSBMock:
         if exp.params['wIndex'] != wIndex:
             pytest.fail(f"Mock mismatch (ctrl): Expected wIndex {hex(exp.params['wIndex'])}, got {hex(wIndex)}")
 
+        # Verify the OUT data payload, but only when the expectation pinned one: a control-IN
+        # call passes an int wLength (or None) as the 5th arg, not bytes — there's no payload
+        # to byte-check, and its bytes come back via exp.response.
+        if exp.params['data'] is not None:
+            actual_data = bytes(data) if data is not None else b''
+            expected_data = bytes(exp.params['data'])
+            if actual_data != expected_data:
+                pytest.fail(f"Mock mismatch (ctrl) data:\nExpected: {expected_data.hex(' ')}\nGot:      {actual_data.hex(' ')}")
+
         if exp.error:
             raise exp.error
         return exp.response
