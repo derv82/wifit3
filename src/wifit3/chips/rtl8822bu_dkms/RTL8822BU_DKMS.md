@@ -7,14 +7,16 @@
 > bandwidth + band-switch; **29/29/28 airodump hops byte-for-byte**) + the runnable **driver**
 > (`driver.py`/`bringup.py`/`rx.py`) — `test_hw.py --phase init` runs clean on the card and
 > `set_channel` tunes both radios. The byte-for-byte gate is **resumed past the BB/RF tables**:
-> `verify_pcap` is clean to **op ~9470 / 29542** on capture-1/2/3.
+> `verify_pcap` is clean to **op ~9507 / 29542** on capture-1/2/3.
 >
-> **Your job:** continue the gate-driven port of the post-PHY calibration, function by function,
-> until RX delivers beacons. The chain on the wire is **IQK → LCK → one-time DPK → phydm DM init**
-> (the DM init is the RX-detection seed — see "RX bring-up" below; reaching it faithfully is what
-> lights up beacons). Frontier op ~9470 = `R 0x2b24` (RF_A 0xC9) = the start of IQK.
+> **Your job:** continue the gate-driven port of the post-PHY sequence, function by function, until
+> RX delivers beacons. The block being ported now is the **phydm DM init** (`odm_dm_init`) — DIG +
+> CCK-PD are the RX-detection seed (see "RX bring-up" + the ordered sub-init roadmap in "Post-PHY
+> calibration"). The big **IQK** (`halrf_iqk_8822b.c`) is triggered later in the same chain.
+> 5 functions already ported this way (`init_usb_cfg` → … → `phydm_init_cck_setting`); the next
+> frontier op is `R 0x808` (the `somlrxhp`/cck-rssi-tail boundary).
 >
-> **The loop (proven — `init_usb_cfg` + `config_phydm_trx_mode` were just done this way):**
+> **The loop (proven — 5 cal/DM functions were just done this way):**
 > 1. `uv run python scripts/verify_pcap.py rtl8822bu_dkms` → prints `FRONTIER -> op #N: <op>`.
 > 2. Identify the source fn for that op: resolve the register (`grep define REG_... halmac_reg2.h`),
 >    then `grep -rn` the value/reg in `hal/phydm/halrf/rtl8822b/` (IQK = `halrf_iqk_8822b.c`) or
@@ -192,42 +194,15 @@ The tail of `hal_read_mac_hidden_rpt` / `rtl8822b_read_efuse`, all gate-clean:
   read 13 report bytes (`0x1A2..0x1AE`), ack `W 0x1A0=C2H_DBG`. Report is read-and-discarded
   (decodes wl-func/bw/proto caps into hal_spec, which wifit3 doesn't consume).
 
-### The 2nd init cycle (CLEARED, byte-for-byte) — historical map
+### The 2nd init cycle (CLEARED) — historical map
 
-This whole section is **done** (it's how the init reached op 9410); kept as the structural map.
-`rtl8822b_read_efuse` returns ⇒ `rtw_hal_read_chip_info` done ⇒ `rtw_hal_init` → `rtl8822b_hal_init`
-→ `_halmac_init_hal` `[SRC] hal_halmac.c:3576` — the **real** init, which RE-RUNS the already-ported
-steps then adds the new ones (all now ported; `bringup.cold_bringup` is the canonical sequence):
-0. **A power-OFF first** (f10769-f10935 — `rtw_hal_power_off`, NOT yet ported): `W16 0x00AA=0x8000`
-   (`REG_PMC_DBG_CTRL1+2`, byte `0xAB` BIT7), then `mac_pwr_switch(OFF)` — probe (`R 0xFE58` /
-   `R16 0x80=0xC078` ⇒ `W 0xFE58=0x80` rpwm-toggle / `R 0x100=0xFF`≠0xEA ⇒ chip ON ⇒ `R 0xF5`) ⇒
-   **`card_dis_flow`** (f10787+ matches `pwrseq.CARD_DIS_FLOW` exactly: `0x93=0xC4`, `0xFF1A=0x30`,
-   …, `0x90=0x00`), then a tail `R 0x35×3` + `W 0xFE58`. **This leaves the chip OFF** (next CR read
-   is `0xEA`). The core (`mac_pwr_switch(OFF)`) is just `mac._mac_pwr_switch(power_on=False)` — port
-   a thin `power_off(t, chip_ver)` = `W 0x00AA` + that + the tail. (Open: exact origin of `W 0x00AA`
-   and the `R 0x35×3`/`W 0xFE58` tail — `mac_pwr_switch`'s init_adapter_dynamic_param? Identify, but
-   they're few ops and wire-pinned.)
-1. `rtw_hal_power_on` (f10953+) is then the **COLD path** — `pre_init` (`W 0x1C` + PIN-mux) +
-   `mac_pwr_switch(ON)` (CR=`0xEA` ⇒ cold ⇒ `card_en_flow`) + `init_system_cfg` — i.e. **exactly
-   `mac.power_on` reused unchanged** (it takes the no-reset cold branch).
-   (The read-chip-info tail — `power_off`/card_dis + `read_phydm_trim` (3 cached PG reads = `R 0x35×3`,
-   thermal+2G+5G all blank) + the cold `mac.power_on` — is now **CLEARED**, frontier at the 2nd
-   download. `W 0x00AA`/`W 0xFE58` around it are 2 stray ops [WIRE]-pinned inline, source still TBD.)
-2. `download_fw` again — **NOT a simple reuse**: this cycle `not_xmitframe_fw_dl=0`, so the FW packets
-   go through the full xmit path (`usb_write_data_rsvd_page_normal` → `dump_mgntframe` →
-   `rtl8822b fill_default_txdesc`) — a **full TX descriptor** (1st-pkt byte3 `0x84` vs the simple
-   path's `0x00`, FS/LS/MACID/rate fields), not `build_fw_txdesc`. **Port the general rtl8822b TX
-   descriptor builder** (`rtl8822bu_xmit.c` `fill_default_txdesc` for a BEACON rsvd-page) — it is
-   shared with M8 frame injection, so this is the natural place to do it. Then the 40 packets +
-   iDDMA reuse `firmware.download`'s loop.
-3. `init_mac_flow` again (reuse `mac.init_mac_cfg` + `init_mac_flow_tail`).
-4. `_drv_enable_trx` (new, driver-side TRX enable).
-5. `_send_general_info` again (reuse — but **no** `mac_hidden_rpt` this cycle).
-6. `rtw_hal_init_mac_register` (new — more MAC regs).
-7. `rtw_halmac_config_rx_info(PHY_STATUS)` (new — DRVINFO/PHYSTS).
-8. **`rtw_hal_init_phy` = BB + RF init (PHYDM)** — **CLEARED through the deterministic table init**
-   (BB phy-reg + AGC + crystal-cap + RF-A/RF-B radio tables; see below). What remains on the wire
-   (op ~9410 → end, ~20K ops) is the RF **calibration scan** — see the decode below.
+All done; `bringup.cold_bringup` is the canonical sequence (read the code for detail). After
+`read_chip_info`, `rtl8822b_hal_init → _halmac_init_hal` re-runs the ported steps then adds the new
+ones: **power-OFF** (`W 0x00AA` + `card_dis_flow` + `R 0x35×3`/`W 0xFE58` tail — 2 stray ops are
+`[WIRE]`-pinned, source TBD) → **cold power-ON** (reuses `mac.power_on`) → **2nd FW download**
+(full beacon TX descriptor, `not_xmitframe=0`) → `init_mac_cfg`/`init_mac_flow_tail` → 2nd
+`send_general_info` (2T2R config: rf_type 2, ant 3/3, pkg 7) → `init_mac_register` →
+`config_rx_info(PHY_STATUS)` → `enable_bb_rf` → **BB+RF tables** (below). Reaches op ~9410.
 
 ### BB + RF tables (CLEARED, byte-for-byte on capture-1/2/3)
 
@@ -264,20 +239,25 @@ passes and runs `init_bb_reg` then `init_rf_reg` between them:
 **The deterministic cold init ends at op ~9410.** Everything after is RF calibration, NOT more
 init.
 
-### Post-PHY calibration — gate resumed (frontier op ~9470)
+### Post-PHY calibration — gate resumed (frontier op ~9507)
 
 The byte-for-byte gate continues past the BB/RF tables, porting the one-time post-PHY sequence
-(this is the work the airodump cal-scan below repeats per channel; the one-time pass is what
-unblocks RX). Cleared so far:
-- **`init_usb_cfg`** (`usbphy.init_usb_cfg`) — RX-DMA burst mode by USB link speed (`REG_RXDMA_MODE`
-  0x290, read-derived) + `DROP_DATA_EN` on `0x20c`. Gate 9410→9416.
-- **`config_phydm_trx_mode`** (`cal.config_trx_mode`) — 2T2R TX/RX path + RF mode-table poll +
-  igi/ccapar (central_ch 0 → col 1). Gate 9416→9470.
+(`cal.py`, chained into `bringup.cold_bringup`). **Cleared:** `init_usb_cfg` (RX-DMA burst mode,
+`REG_RXDMA_MODE` 0x290; 9410→9416), `config_phydm_trx_mode` (2T2R TX/RX path + RF mode poll;
+9416→9470), `aac_check` (RF_A 0xC9 AAC; 9470→9475), `phydm_rfe_8822b_init` (RFE mux 0x64/0x1990/
+0x974; 9475→9495), `phydm_init_cck_setting` (CCK RX antenna 0xa00-0xa20; 9495→9507).
 
-**Frontier op ~9470** (`R 0x2b24` = RF_A 0xC9): the **IQK** (halrf_iqk_8822b.c) — the large
-read-dependent block (backup → per-path TX/RX I/Q cal loop → restore), then **LCK**, the one-time
-**DPK**, and the **phydm DM init** (DIG/CCK-PD — the RX-detection seed diagnosed below). These are
-the next milestones; each is gate-driven against the cold capture.
+**The block being ported is the phydm DM init** (`odm_dm_init` `[SRC] phydm.c:1789`) — the
+RX-detection seed. Its ordered sub-inits (skip the software-only ones — no wire) are the roadmap;
+port each gate-driven, identifying its source as you hit the frontier:
+`halrf_init` (incl. `aac_check`) → `phydm_rfe_init` ✓ → `phydm_init_cck_setting` ✓ →
+**`phydm_somlrxhp_setting`** (next: `0x19a8=0xd90a0000`, `phydm_rtl8822b.c:347`) →
+`phydm_dig_init` (FA/IGI thresholds `0x994/0x998/0x99c/0x9a0/0x990`) →
+`phydm_cck_pd_init` (CCK-PD `0x1c38/0x1c78/0x1cb8`) → `phydm_env_monitor_init` (NHM) →
+`phydm_adaptivity_init` (EDCCA) → `phydm_rf_init` → calibration triggers.
+**Frontier op ~9507** = `R 0x808` (the `get_cck_rssi_table_from_reg` tail of cck_setting, then
+`somlrxhp`). The **IQK** (`halrf_iqk_8822b.c`, the large read-dependent block) is triggered later
+in this chain. DIG + CCK-PD are the pieces the RX-demod diagnosis (below) points at.
 
 ### RF calibration — the rest of the capture is an all-channel scan (decoded)
 
