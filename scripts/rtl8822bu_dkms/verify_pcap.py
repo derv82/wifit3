@@ -22,7 +22,7 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8822bu_dkms import chipid, efuse, firmware, mac, usbphy  # noqa: E402
+from wifit3.chips.rtl8822bu_dkms import bb, chipid, efuse, firmware, mac, usbphy  # noqa: E402
 from wifit3.chips.rtl8822bu_dkms import constants as const  # noqa: E402
 from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport  # noqa: E402
 
@@ -73,6 +73,7 @@ def _bringup(t) -> None:
     mac.init_mac_register(t)               # rtl8822b_phy_init_mac_register: PHYDM MAC-reg table
     mac.config_rx_info(t)                  # cfg_drv_info(PHY_STATUS): DRVINFO sz + RCR app-physts
     mac.enable_bb_rf(t, e.log_map[0xCA])   # set_hw_value(EN_BB_RF): turn on BB/RF clocks
+    bb.phy_bb_config(t, rx_path=3)         # BB phy-reg table (2T2R) — odm_config_bb(PHY_REG)
 
 
 def run(cap: str | None = None) -> int:
