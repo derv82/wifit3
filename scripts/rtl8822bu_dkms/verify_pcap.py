@@ -63,6 +63,13 @@ def _bringup(t) -> None:
     mac.power_on(t, info.chip_ver)         # rtl8822b_hal_init: COLD power-on (pre_init + card_en)
     # 2nd FW DL: full beacon desc; rsvd_boundary is now the real txff boundary (set in cycle 1)
     firmware.download(t, firmware.load_firmware_blob(), beacon=True, rsvd_boundary=alloc.rsvd_boundary)
+    mac.init_mac_cfg(t)                    # 2nd init_mac_flow (reuse): trx + protocol + edca + wmac
+    mac.init_mac_flow_tail(t)              # 2nd RCR sync + RTS-full-bw + USB RX-agg
+    # _drv_enable_trx is no-wire; 2nd _send_general_info (no mac_hidden this cycle; seq reset to 0).
+    # The real init's get_trx_path has the full 2T2R config: rf_type 2, ant 3/3, package 7.
+    firmware.send_general_info(t, e.rfe_type, info.chip_ver,
+                               alloc.rsvd_fw_txbuf_addr - alloc.rsvd_boundary, alloc.rsvd_h2cq_addr,
+                               rf_type=2, rf_type_drv=2, tx_ant=3, rx_ant=3, package_type=7)
 
 
 def run(cap: str | None = None) -> int:
