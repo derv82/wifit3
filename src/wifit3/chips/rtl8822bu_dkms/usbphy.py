@@ -83,3 +83,32 @@ def phy_cfg_usb(t, chip_ver: int) -> None:
     [SRC] hal/halmac/halmac_88xx/halmac_8822b/halmac_usb_8822b.c:107."""
     _parse_intf_phy(t, USB2_PHY_PARAM, _PLATFORM_ALL, HAL_INTF_PHY_USB2, chip_ver)
     _parse_intf_phy(t, USB3_PHY_PARAM, _PLATFORM_ALL, HAL_INTF_PHY_USB3, chip_ver)
+
+
+# USB interface (RX-DMA burst) config — [SRC] halmac_usb_88xx.c:39 init_usb_cfg_88xx.
+REG_SYS_CFG2 = 0x00FC          # +3 byte == 0x20 => USB3 (else read REG_USB_USBSTAT for the speed)
+REG_USB_USBSTAT = 0xFE11
+REG_RXDMA_MODE = 0x0290
+REG_TXDMA_OFFSET_CHK = 0x020C
+_BIT_DMA_MODE = 1 << 1
+_SHIFT_BURST_CNT, _SHIFT_BURST_SIZE = 2, 4
+_BURST_SIZE_3_0, _BURST_SIZE_2_0_HS, _BURST_SIZE_2_0_FS = 0x0, 0x1, 0x2
+_BIT_DROP_DATA_EN = 1 << 9
+
+
+def init_usb_cfg(t) -> None:
+    """[SRC] init_usb_cfg_88xx: RX-DMA burst mode by USB link speed + TXDMA drop-data enable.
+
+    Runs after the PHY tables. The burst-size field is read-derived: SYS_CFG2+3 == 0x20 picks the
+    USB3 size, else REG_USB_USBSTAT[1:0] selects HS/FS — faithful to the live link, so the byte
+    differs by negotiated speed (0x1e on the HS-reported captures, 0x0e on a true-USB3 read)."""
+    value8 = _BIT_DMA_MODE | (0x3 << _SHIFT_BURST_CNT)
+    if t.read8(REG_SYS_CFG2 + 3) == 0x20:                       # USB3
+        value8 |= _BURST_SIZE_3_0 << _SHIFT_BURST_SIZE
+    elif (t.read8(REG_USB_USBSTAT) & 0x3) == 0x1:              # USB2 high-speed
+        value8 |= _BURST_SIZE_2_0_HS << _SHIFT_BURST_SIZE
+    else:                                                       # USB1.1 full-speed
+        value8 |= _BURST_SIZE_2_0_FS << _SHIFT_BURST_SIZE
+    t.write8(REG_RXDMA_MODE, value8)
+    v = t.read16(REG_TXDMA_OFFSET_CHK)
+    t.write16(REG_TXDMA_OFFSET_CHK, v | _BIT_DROP_DATA_EN)

@@ -59,4 +59,5 @@ def cold_bringup(t):
     bb.set_crystal_cap(t, e.crystal_cap)   # xtal-cap into 0x24/0x28
     rf.phy_rf_config(t, cfg)               # RF-A then RF-B radio tables
     bb.phy_parameter_init(t, post=True)    # PHYDM POST_SETTING (OFDM/CCK on)
+    usbphy.init_usb_cfg(t)                 # init_interface_cfg: RX-DMA burst mode + drop-data
     return info, e
