@@ -360,11 +360,51 @@ def extract_ctrl_ops(pcap: Path, dev: int, window=None, start=None):
     return ops
 
 
+def extract_bulk_out_ops(pcap: Path, dev: int, window=None):
+    """Ordered bulk-OUT submit ops for ``dev`` (the FW/TX packets the host sends).
+
+    Each op is ``{dir:'BULK', data, frame}``. Bulk-OUT data is on the submit
+    (``usb.capdata``); completions carry none. Merge these with ``extract_ctrl_ops`` by
+    frame number (see ``merge_ops_by_frame``) to replay a download that interleaves vendor
+    register writes (the iDDMA setup) with bulk FW packets against one ``ReplayDevice``.
+    ``window`` = inclusive (first_frame, last_frame)."""
+    fields = ["frame.number", "usb.capdata"]
+    flt = (f"usb.device_address=={dev} && usb.transfer_type==0x03 "
+           f"&& usb.endpoint_address.direction==0")
+    if window is not None:
+        flt += f" && frame.number>={window[0]} && frame.number<={window[1]}"
+    cmd = ["tshark", "-r", str(pcap), "-Y", flt, "-T", "fields"]
+    for f in fields:
+        cmd += ["-e", f]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+
+    ops = []
+    for line in out.splitlines():
+        c = line.split("\t")
+        c += [""] * (len(fields) - len(c))
+        frame, cap = c[:2]
+        data = _hex(cap)
+        if data:                                   # submits carry capdata; completions don't
+            ops.append({"dir": "BULK", "data": data, "frame": int(frame)})
+    return ops
+
+
+def merge_ops_by_frame(*op_lists):
+    """Stable-merge control and bulk op lists into one frame-ordered stream. The driver is
+    synchronous (one transfer per frame), so frame order is wire order; a stable sort keeps
+    a control op ahead of a bulk op sharing the (never-colliding) submit frame."""
+    return sorted((o for lst in op_lists for o in lst), key=lambda o: o["frame"])
+
+
 class ReplayDevice:
     """A fake ``usb.core.Device`` whose ``ctrl_transfer`` walks the recorded control op
     stream, returning recorded read bytes and byte-checking writes. The real chip
     transport drives it, so the whole transport surface (and the 8051 fast path's direct
-    ``t.dev.ctrl_transfer``) replays unchanged. First mismatch raises ``Divergence``."""
+    ``t.dev.ctrl_transfer``) replays unchanged. First mismatch raises ``Divergence``.
+
+    ``write`` consumes a bulk-OUT op so a merged ctrl+bulk stream (FW download) replays:
+    register writes go through ``ctrl_transfer``, FW packets through ``write``, both popping
+    the same cursor in frame order."""
 
     def __init__(self, ops):
         self.ops = ops
@@ -379,15 +419,37 @@ class ReplayDevice:
 
     @staticmethod
     def _fmt(op: dict) -> str:
+        if op.get("dir") == "BULK":
+            return f"BULK[{len(op['data'])}B] @f{op['frame']}"
         d = op.get("data", b"")
         body = (f"=0x{int.from_bytes(d, 'little'):0{max(len(d) * 2, 2)}x}" if d
                 else " (no data)")
         return (f"{op['dir']} 0x{op['wval']:04x}/pg{op['widx']:04x}/{op['width']}"
                 f"{body} @f{op['frame']}")
 
+    def write(self, endpoint, data, timeout=None):
+        """Bulk-OUT (the transport's ``bulk_out``): byte-check the FW/TX packet."""
+        op = self._next()
+        if op.get("dir") != "BULK":
+            raise Divergence(
+                f"op#{self.i - 1}: port sent bulk[{len(data)}B], capture has {self._fmt(op)}")
+        payload = bytes(data)
+        if op["data"] != payload:
+            n = min(len(payload), len(op["data"]))
+            diff = next((j for j in range(n) if payload[j] != op["data"][j]), n)
+            raise Divergence(
+                f"op#{self.i - 1} bulk payload differs at byte {diff} "
+                f"(len port={len(payload)} cap={len(op['data'])}) @f{op['frame']}")
+        return len(payload)
+
     def ctrl_transfer(self, bmRequestType, bRequest, wValue, wIndex,
                       data_or_wLength, timeout=None):
         op = self._next()
+        if op.get("dir") == "BULK":
+            exp = "IN" if (bmRequestType & 0x80) else "OUT"
+            raise Divergence(
+                f"op#{self.i - 1}: port issued ctrl {exp} 0x{wValue:04x}, "
+                f"capture has {self._fmt(op)}")
         is_in = bool(bmRequestType & 0x80)
         exp = "IN" if is_in else "OUT"
         if (op["dir"] != exp or op["breq"] != bRequest

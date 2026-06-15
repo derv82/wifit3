@@ -54,8 +54,12 @@ def run(cap: str | None = None) -> int:
 
     dev_addr = rp.find_card_device(pcap)
     rp.audit_coverage(pcap, dev_addr)
-    ops = rp.extract_ctrl_ops(pcap, dev_addr)
-    print(f"{pcap.name}: card=dev{dev_addr}, {len(ops)} control ops")
+    # Merge control + bulk-OUT into one frame-ordered stream so the FW download (vendor
+    # register writes interleaved with bulk FW packets) replays against one ReplayDevice.
+    ctrl = rp.extract_ctrl_ops(pcap, dev_addr)
+    bulk = rp.extract_bulk_out_ops(pcap, dev_addr)
+    ops = rp.merge_ops_by_frame(ctrl, bulk)
+    print(f"{pcap.name}: card=dev{dev_addr}, {len(ctrl)} control + {len(bulk)} bulk-OUT ops")
     print("  first 40 control ops (* = 0x4E0 page-switch mirror):")
     for k, o in enumerate(ops[:40]):
         tag = " *" if o["wval"] == 0x04E0 else ""
