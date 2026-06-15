@@ -180,6 +180,32 @@ def build_fw_txdesc(pkt_size: int, qsel: int = TXDESC_QSEL_BEACON, offset: int =
     return bytes(d)
 
 
+def build_fwdl_beacon_txdesc(pkt_size: int, bmc: bool) -> bytes:
+    """The full dump_mgntframe BEACON-class TX descriptor (the not_xmitframe_fw_dl=0 path used by
+    the 2nd FW download). update_txdesc emits a fixed beacon descriptor (MACID=1, QSEL=BEACON,
+    RATE_ID=8, last-seg/own 0x84, the HWSEQ/data-rate/own defaults) whose only content-dependent
+    field is BMC — set when the FW chunk's first byte is odd (addr1[0]&1) — which also sets the
+    broadcast MACID word (0x3F000000). Byte-identical across every FW packet; matches the sibling
+    rtl8814au_dkms build. [SRC] rtl8822b_ops.c rtl8822b_update_txdesc / fill_default_txdesc."""
+    d = bytearray(TX_DESC_SIZE_88XX)
+    w0 = (pkt_size & 0xFFFF) | (TX_DESC_SIZE_88XX << 16) | (0x84 << 24)
+    if bmc:
+        w0 |= 1 << 24
+    struct.pack_into("<I", d, 0x00, w0)
+    struct.pack_into("<I", d, 0x04, 0x00081001)         # MACID=1, QSEL=BEACON(0x10), RATE_ID=8
+    if bmc:
+        struct.pack_into("<I", d, 0x08, 0x3F000000)     # broadcast MACID (EN_DESC_ID + bmc_camid)
+    struct.pack_into("<I", d, 0x0C, 0x00000100)         # HWSEQ_EN
+    struct.pack_into("<I", d, 0x10, 0x001A0000)         # data-rate field default
+    struct.pack_into("<I", d, 0x18, 0x00000001)
+    struct.pack_into("<I", d, 0x20, 0x00008000)
+    chksum = 0
+    for i in range(16):
+        chksum ^= struct.unpack_from("<H", d, 2 * i)[0]
+    struct.pack_into("<H", d, 0x1C, chksum)
+    return bytes(d)
+
+
 # --- HALMAC download_firmware_88xx (the register + bulk sequence) -------------
 def _txfifo_wait_empty(t) -> None:
     """txfifo_is_empty_88xx(chk_num=10) [SRC] halmac_common_88xx.c:3271 — gate FW DL on a
@@ -231,10 +257,12 @@ def _pltfm_reset(t) -> None:
     t.write8(REG_SYS_CLK_CTRL + 1, t.read8(REG_SYS_CLK_CTRL + 1) | (1 << 6))
 
 
-def _dl_rsvd_page(t, pg_addr: int, buf: bytes) -> None:
+def _dl_rsvd_page(t, pg_addr: int, buf: bytes, beacon: bool = False,
+                  rsvd_boundary: int = RSVD_PG_BOUNDARY_FWDL) -> None:
     """dl_rsvd_page_88xx [SRC] halmac_common_88xx.c:314 — bracket the bulk send with the
     FIFOPAGE/CR/TXQ save+set, then send (txdesc + buf) on bulk-OUT, then poll bcn-valid and
-    restore."""
+    restore. ``beacon`` selects the full dump_mgntframe descriptor (2nd download) vs the simple
+    not-xmitframe one (1st download)."""
     pg_addr &= BIT_MASK_BCN_HEAD_1_V1
     t.write16(REG_FIFOPAGE_CTRL_2, pg_addr | (1 << 15))
     cr1 = t.read8(REG_CR + 1)
@@ -242,7 +270,13 @@ def _dl_rsvd_page(t, pg_addr: int, buf: bytes) -> None:
     txq2 = t.read8(REG_FWHW_TXQ_CTRL + 2)
     t.write8(REG_FWHW_TXQ_CTRL + 2, txq2 & ~(1 << 6))
 
-    t.bulk_out(build_fw_txdesc(len(buf)) + buf)
+    if beacon:
+        # BMC = is-multicast of the "frame" RA (addr1[0]) — byte 4 of the chunk (past the
+        # 2-byte frame-control + 2-byte duration the FW data is treated as).
+        desc = build_fwdl_beacon_txdesc(len(buf), bmc=bool(buf[4] & 1))
+    else:
+        desc = build_fw_txdesc(len(buf))
+    t.bulk_out(desc + buf)
 
     for _ in range(_POLL_CAP):
         if t.read8(REG_FIFOPAGE_CTRL_2 + 1) & (1 << 7):
@@ -250,17 +284,18 @@ def _dl_rsvd_page(t, pg_addr: int, buf: bytes) -> None:
     else:
         raise RuntimeError("RTL8822BU: bcn-valid poll timed out in rsvd-page DL")
 
-    t.write16(REG_FIFOPAGE_CTRL_2, RSVD_PG_BOUNDARY_FWDL | (1 << 15))
+    t.write16(REG_FIFOPAGE_CTRL_2, (rsvd_boundary & BIT_MASK_BCN_HEAD_1_V1) | (1 << 15))
     t.write8(REG_FWHW_TXQ_CTRL + 2, txq2)
     t.write8(REG_CR + 1, cr1)
 
 
-def _send_fwpkt(t, pg_addr: int, chunk: bytes) -> None:
+def _send_fwpkt(t, pg_addr: int, chunk: bytes, beacon: bool = False,
+                rsvd_boundary: int = RSVD_PG_BOUNDARY_FWDL) -> None:
     """send_fwpkt_88xx [SRC] halmac_fw_88xx.c:719 — for USB, pad one extra byte when
     (chunk + txdesc) is a 512-multiple, so the bulk transfer is never an exact USB packet."""
     if (len(chunk) + TX_DESC_SIZE_88XX) % 512 == 0:
         chunk = chunk + b"\x00"
-    _dl_rsvd_page(t, pg_addr, chunk)
+    _dl_rsvd_page(t, pg_addr, chunk, beacon=beacon, rsvd_boundary=rsvd_boundary)
 
 
 def _iddma_dlfw(t, src: int, dest: int, length: int, first: bool) -> None:
@@ -299,7 +334,8 @@ def _check_fw_chksum(t, dest: int) -> None:
     t.write8(REG_MCUFW_CTRL, fw_ctrl | dw_ok | chk_ok)
 
 
-def _dlfw_to_mem(t, seg: bytes, dest: int) -> None:
+def _dlfw_to_mem(t, seg: bytes, dest: int, beacon: bool = False,
+                 rsvd_boundary: int = RSVD_PG_BOUNDARY_FWDL) -> None:
     """dlfw_to_mem_88xx [SRC] halmac_fw_88xx.c:567 — stage each <=4096 B block to the rsvd
     page then DDMA it to ``dest``; one running checksum spans the whole segment."""
     t.write32(REG_DDMA_CH0CTRL, t.read32(REG_DDMA_CH0CTRL) | BIT_DDMACH0_RESET_CHKSUM_STS)
@@ -307,20 +343,22 @@ def _dlfw_to_mem(t, seg: bytes, dest: int) -> None:
     offset, first = 0, True
     while offset < len(seg):
         pkt = seg[offset:offset + DLFW_USB_PKT_SIZE]
-        _send_fwpkt(t, 0, pkt)
+        _send_fwpkt(t, 0, pkt, beacon=beacon, rsvd_boundary=rsvd_boundary)
         _iddma_dlfw(t, src_txbuf, dest + offset, len(pkt), first)
         first = False
         offset += len(pkt)
     _check_fw_chksum(t, dest)
 
 
-def _start_dlfw(t, blob: bytes, hdr: FwHeader) -> None:
+def _start_dlfw(t, blob: bytes, hdr: FwHeader, beacon: bool = False,
+                rsvd_boundary: int = RSVD_PG_BOUNDARY_FWDL) -> None:
     """start_dlfw_88xx [SRC] halmac_fw_88xx.c:233 — enable FWDL, then download dmem + imem."""
     v16 = (t.read16(REG_MCUFW_CTRL) & 0x3800) | (1 << 0)    # keep boot-sel bits, set FWDL
     t.write16(REG_MCUFW_CTRL, v16)
     body = blob[WLAN_FW_HDR_SIZE:]
-    _dlfw_to_mem(t, body[:hdr.dmem_size], hdr.dmem_addr)
-    _dlfw_to_mem(t, body[hdr.dmem_size:hdr.dmem_size + hdr.imem_size], hdr.imem_addr)
+    _dlfw_to_mem(t, body[:hdr.dmem_size], hdr.dmem_addr, beacon=beacon, rsvd_boundary=rsvd_boundary)
+    _dlfw_to_mem(t, body[hdr.dmem_size:hdr.dmem_size + hdr.imem_size], hdr.imem_addr,
+                 beacon=beacon, rsvd_boundary=rsvd_boundary)
 
 
 def _dlfw_end_flow(t) -> None:
@@ -338,11 +376,13 @@ def _dlfw_end_flow(t) -> None:
     raise RuntimeError("RTL8822BU: FW-ready (0x80==0xC078) poll timed out")
 
 
-def download(t, blob: bytes) -> None:
+def download(t, blob: bytes, beacon: bool = False,
+             rsvd_boundary: int = RSVD_PG_BOUNDARY_FWDL) -> None:
     """download_firmware_88xx [SRC] halmac_fw_88xx.c:115 — the full HALMAC iDDMA FW upload:
     wait TX-FIFO empty, back up + reconfigure the TXDMA/HIQ/beacon path, reset the platform,
     stream dmem+imem via the rsvd-page + DDMA loop, restore the saved registers, then run the
-    FW-ready end flow. LTE-coex 0x38 is saved/restored around the whole thing."""
+    FW-ready end flow. LTE-coex 0x38 is saved/restored around the whole thing. ``beacon`` picks the
+    full dump_mgntframe TX descriptor (2nd download, not_xmitframe_fw_dl=0) vs the simple one."""
     _txfifo_wait_empty(t)
     lte_backup = _ltecoex_read(t, LTECOEX_REG_OFFSET_DL)
     _wlan_cpu_en(t, enable=False)
@@ -368,7 +408,7 @@ def download(t, blob: bytes) -> None:
     assert len(backups) == DLFW_RESTORE_REG_NUM
 
     _pltfm_reset(t)
-    _start_dlfw(t, blob, parse_fw_header(blob))
+    _start_dlfw(t, blob, parse_fw_header(blob), beacon=beacon, rsvd_boundary=rsvd_boundary)
 
     for reg, width, value in backups:           # restore_mac_reg_88xx [SRC] halmac_fw_88xx.c:620
         (t.write8 if width == 1 else t.write16 if width == 2 else t.write32)(reg, value)

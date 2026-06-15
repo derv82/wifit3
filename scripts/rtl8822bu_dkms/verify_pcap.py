@@ -61,9 +61,8 @@ def _bringup(t) -> None:
     efuse.read_phydm_trim(t)               # rtw_phydm_read_efuse: 3 cached PG-trim reads (R 0x35 x3)
     t.write8(0xFE58, 0x00)                 # [WIRE] RPWM clear before the 2nd power-on (source TBD)
     mac.power_on(t, info.chip_ver)         # rtl8822b_hal_init: COLD power-on (pre_init + card_en)
-    # NEXT: the 2nd FW download — uses the FULL xmit TX descriptor (not_xmitframe_fw_dl=0 this
-    # cycle, so dump_mgntframe -> fill_default_txdesc), unlike the 1st (simple build_fw_txdesc).
-    # Needs the general rtl8822b TX-descriptor builder (shared with M8 inject). See the doc.
+    # 2nd FW DL: full beacon desc; rsvd_boundary is now the real txff boundary (set in cycle 1)
+    firmware.download(t, firmware.load_firmware_blob(), beacon=True, rsvd_boundary=alloc.rsvd_boundary)
 
 
 def run(cap: str | None = None) -> int:
