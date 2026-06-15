@@ -23,9 +23,12 @@ from . import pwrseq
 from .constants import (
     BIT_AUTO_INIT_LLT_V1,
     BIT_BOOT_FSPI_EN,
+    BIT_EN_BCN_FUNCTION,
+    BIT_EN_EOF_V1,
     BIT_FSPI_EN,
     BIT_FWEN,
     BIT_MASK_BLK_DESC_NUM,
+    BIT_R_DISABLE_CHECK_VHTSIGB_CRC,
     BIT_SHIFT_BLK_DESC_NUM,
     BIT_WL_PLATFORM_RST,
     BLK_DESC_NUM,
@@ -34,12 +37,21 @@ from .constants import (
     MAC_TRX_ENABLE,
     MCUFW_CTRL_FW_EXIST,
     PG_NUM_NORMAL_3BULKOUT,
+    REG_AMPDU_MAX_TIME_V1,
     REG_AUTO_LLT_V1,
+    REG_BAR_MODE_CTRL,
+    REG_BCN_CTRL,
+    REG_BCNDMATIM,
     REG_BCNQ1_BDNY_V1,
     REG_BCNQ_BDNY_V1,
     REG_CPU_DMEM_CON,
     REG_CR,
     REG_CR_DISABLED,
+    REG_DRVERLYINT,
+    REG_EDCA_VI_PARAM,
+    REG_EDCA_VO_PARAM,
+    REG_FAST_EDCA_BEBK_SETTING,
+    REG_FAST_EDCA_VOVI_SETTING,
     REG_FIFOPAGE_CTRL_2,
     REG_FIFOPAGE_INFO_1,
     REG_FIFOPAGE_INFO_2,
@@ -57,24 +69,45 @@ from .constants import (
     REG_H2C_READ_ADDR,
     REG_H2C_TAIL,
     REG_H2CQ_CSR,
+    REG_INIRTS_RATE_SEL,
     REG_LED_CFG,
     REG_MCUFW_CTRL,
     REG_PAD_CTRL1,
+    REG_PIFS,
     REG_PRE_INIT_FE5B,
+    REG_PROT_MODE_CTRL,
+    REG_RCR,
+    REG_RD_NAV_NXT,
     REG_RF_CTRL,
     REG_RPWM,
     REG_RQPN_CTRL_2,
     REG_RSV_CTRL,
+    REG_RX_PKT_LIMIT,
     REG_RXFF_BNDY,
+    REG_RXFLTMAP0,
+    REG_RXFLTMAP2,
+    REG_RXTSF_OFFSET_CCK,
+    REG_SIFS,
+    REG_SLOT,
+    REG_SND_PTCL_CTRL,
+    REG_SW_AMPDU_BURST_MODE_CTRL,
     REG_SW_MDIO,
     REG_SYS_CFG1,
     REG_SYS_CFG2,
     REG_SYS_FUNC_EN,
     REG_SYS_STATUS1,
+    REG_TBTT_PROHIBIT,
+    REG_TCR,
+    REG_TIMER0_SRC_SEL,
+    REG_TX_HANG_CTRL,
+    REG_TX_PTCL_CTRL,
     REG_TXDMA_OFFSET_CHK,
     REG_TXDMA_PQ_MAP,
+    REG_TXPAUSE,
     REG_WLRF1,
     REG_WMAC_FWPKT_CR,
+    REG_WMAC_OPTION_FUNCTION,
+    REG_WMAC_TRXPTCL_CTL,
     RQPN_NORMAL_3BULKOUT,
     RSVD_PG_CPU_INSTRUCTION_NUM,
     RSVD_PG_CSIBUF_NUM,
@@ -88,6 +121,28 @@ from .constants import (
     TX_FIFO_SIZE_8822B,
     TX_PAGE_SIZE_SHIFT,
     TXDMA_MAP_SHIFTS,
+    WLAN_AMPDU_MAX_TIME,
+    WLAN_BAR_MODE_CTRL_HI,
+    WLAN_BCN_DMA_TIME,
+    WLAN_DRV_EARLY_INT,
+    WLAN_FAST_EDCA_TH,
+    WLAN_MAC_OPT_FUNC2,
+    WLAN_MAC_OPT_NORM_FUNC1,
+    WLAN_NAV_CFG,
+    WLAN_PIFS_TIME,
+    WLAN_PROT_MODE_CTRL,
+    WLAN_RCR_CFG,
+    WLAN_RX_FILTER0,
+    WLAN_RX_FILTER2,
+    WLAN_RX_TSF_CFG,
+    WLAN_RXPKT_MAX_SZ_512,
+    WLAN_SIFS_CFG,
+    WLAN_SLOT_TIME,
+    WLAN_TBTT_TIME,
+    WLAN_TX_FUNC_CFG1,
+    WLAN_TX_FUNC_CFG2,
+    WLAN_VI_TXOP_LIMIT,
+    WLAN_VO_TXOP_LIMIT,
 )
 
 _SYS_CFG2_USB3 = 0x20            # REG_SYS_CFG2+3 value that marks a USB3 link
@@ -294,3 +349,58 @@ def init_trx_cfg(t) -> None:
     _priority_queue_cfg(t, alloc)
     _init_h2c(t, alloc)
     t.write8(REG_TXDMA_PQ_MAP, t.read8(REG_TXDMA_PQ_MAP) | (1 << 0))   # USB
+
+
+def init_protocol_cfg(t) -> None:
+    """init_protocol_cfg_8822b [SRC] halmac_init_8822b.c:750 — RTS/AMPDU/BAR + fast-EDCA TH."""
+    t.write8(REG_SW_AMPDU_BURST_MODE_CTRL, t.read8(REG_SW_AMPDU_BURST_MODE_CTRL) & ~(1 << 6))
+    t.write8(REG_AMPDU_MAX_TIME_V1, WLAN_AMPDU_MAX_TIME)
+    t.write8(REG_TX_HANG_CTRL, t.read8(REG_TX_HANG_CTRL) | BIT_EN_EOF_V1)
+    t.write32(REG_PROT_MODE_CTRL, WLAN_PROT_MODE_CTRL)
+    t.write16(REG_BAR_MODE_CTRL + 2, WLAN_BAR_MODE_CTRL_HI)
+    t.write8(REG_FAST_EDCA_VOVI_SETTING, WLAN_FAST_EDCA_TH)
+    t.write8(REG_FAST_EDCA_VOVI_SETTING + 2, WLAN_FAST_EDCA_TH)
+    t.write8(REG_FAST_EDCA_BEBK_SETTING, WLAN_FAST_EDCA_TH)
+    t.write8(REG_FAST_EDCA_BEBK_SETTING + 2, WLAN_FAST_EDCA_TH)
+    t.write8(REG_INIRTS_RATE_SEL, t.read8(REG_INIRTS_RATE_SEL) | (1 << 5))
+
+
+def init_edca_cfg(t) -> None:
+    """init_edca_cfg_8822b [SRC] halmac_init_8822b.c:851 — slot/PIFS/SIFS/TXOP/NAV + beacon timing."""
+    t.write8(REG_TIMER0_SRC_SEL, t.read8(REG_TIMER0_SRC_SEL) & ~((1 << 4) | (1 << 5) | (1 << 6)))
+    t.write16(REG_TXPAUSE, 0x0000)
+    t.write8(REG_SLOT, WLAN_SLOT_TIME)
+    t.write8(REG_PIFS, WLAN_PIFS_TIME)
+    t.write32(REG_SIFS, WLAN_SIFS_CFG)
+    t.write16(REG_EDCA_VO_PARAM + 2, WLAN_VO_TXOP_LIMIT)
+    t.write16(REG_EDCA_VI_PARAM + 2, WLAN_VI_TXOP_LIMIT)
+    t.write32(REG_RD_NAV_NXT, WLAN_NAV_CFG)
+    t.write16(REG_RXTSF_OFFSET_CCK, WLAN_RX_TSF_CFG)
+    t.write8(REG_BCN_CTRL, t.read8(REG_BCN_CTRL) | BIT_EN_BCN_FUNCTION)
+    t.write32(REG_TBTT_PROHIBIT, WLAN_TBTT_TIME)
+    t.write8(REG_DRVERLYINT, WLAN_DRV_EARLY_INT)
+    t.write8(REG_BCNDMATIM, WLAN_BCN_DMA_TIME)
+    t.write8(REG_TX_PTCL_CTRL + 1, t.read8(REG_TX_PTCL_CTRL + 1) & ~(1 << 4))
+
+
+def init_wmac_cfg(t) -> None:
+    """init_wmac_cfg_8822b [SRC] halmac_init_8822b.c:896 — the WMAC RX path: RXFLTMAP, RCR,
+    TCR, and the receive option functions. init_low_pwr_8822b is empty (no IO)."""
+    t.write32(REG_RXFLTMAP0, WLAN_RX_FILTER0)
+    t.write16(REG_RXFLTMAP2, WLAN_RX_FILTER2)
+    t.write32(REG_RCR, WLAN_RCR_CFG)
+    t.write8(REG_RX_PKT_LIMIT, WLAN_RXPKT_MAX_SZ_512)
+    t.write8(REG_TCR + 2, WLAN_TX_FUNC_CFG2)
+    t.write8(REG_TCR + 1, WLAN_TX_FUNC_CFG1)
+    t.write8(REG_WMAC_TRXPTCL_CTL + 4, t.read8(REG_WMAC_TRXPTCL_CTL + 4) | (1 << 1))
+    t.write8(REG_SND_PTCL_CTRL, t.read8(REG_SND_PTCL_CTRL) | BIT_R_DISABLE_CHECK_VHTSIGB_CRC)
+    t.write32(REG_WMAC_OPTION_FUNCTION + 8, WLAN_MAC_OPT_FUNC2)
+    t.write8(REG_WMAC_OPTION_FUNCTION + 4, WLAN_MAC_OPT_NORM_FUNC1)   # NORMAL transfer mode
+
+
+def init_mac_cfg(t) -> None:
+    """init_mac_cfg_88xx [SRC] halmac_init_88xx.c:504 — the four MAC sub-configs in order."""
+    init_trx_cfg(t)
+    init_protocol_cfg(t)
+    init_edca_cfg(t)
+    init_wmac_cfg(t)
