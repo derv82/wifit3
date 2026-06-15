@@ -199,9 +199,9 @@ steps then adds the new ones:
 5. `_send_general_info` again (reuse — but **no** `mac_hidden_rpt` this cycle).
 6. `rtw_hal_init_mac_register` (new — more MAC regs).
 7. `rtw_halmac_config_rx_info(PHY_STATUS)` (new — DRVINFO/PHYSTS).
-8. **`rtw_hal_init_phy` = BB + RF init (PHYDM)** — the big one. **BB phy-reg + AGC + crystal-cap +
-   RF-A/RF-B radio tables now CLEARED** (see below); remaining: RF calibration (IQK/DPK/LCK/TSSI —
-   only what the capture runs), channel tune (`verify_channels.py`), CCK-PD/DIG, monitor RX tail.
+8. **`rtw_hal_init_phy` = BB + RF init (PHYDM)** — **CLEARED through the deterministic table init**
+   (BB phy-reg + AGC + crystal-cap + RF-A/RF-B radio tables; see below). What remains on the wire
+   (op ~9410 → end, ~20K ops) is the RF **calibration scan** — see the decode below.
 
 ### BB + RF tables (CLEARED, byte-for-byte on capture-1/2/3)
 
@@ -235,8 +235,41 @@ passes and runs `init_bb_reg` then `init_rf_reg` between them:
   The tx-power-track table (`odm_config_rf_with_tx_pwr_track_header_file`) that follows is
   software-only (stores deltas, no register writes) — nothing on the wire between RF-B and POST.
 
-**Frontier: `R 0x00FF` then `R 0xFE11` / `W 0x290=0x1e` at op ~9410** — start of RF calibration
-(`rtw_phydm_init` / halrf IQK/LCK/DPK + CCK-PD/DIG).
+**The deterministic cold init ends at op ~9410.** Everything after is RF calibration, NOT more
+init.
+
+### RF calibration — the rest of the capture is an all-channel scan (decoded)
+
+Decoding the RF channel-register writes (`0xC90`/`0xE90`, `addr 0x18`, `data[7:0]` = channel
+number) across op 9410 → 29542 shows the vendor driver is **pre-calibrating every channel in both
+bands, twice** — not tuning one channel:
+- op ~9700–9740: IQK setup probing band-representative channels (36 / 100 / 149)
+- op ~9900–14200: per-channel **DPK** on 2.4 GHz ch **1–11**
+- op ~14600–16700: per-channel DPK on 5 GHz ch **36–64, 100–116**
+- op ~16800–22400: 2.4 GHz ch **1–11 again** (TSSI / power-tracking pass)
+- op ~22700–28500: 5 GHz ch **36–140, 149–165 again**
+- op ~28780 → end: settles back on **ch 1** (final `switch_channel` + spur-cal/DIG cluster)
+
+So the genuinely one-time work (IQK + LCK + first-channel DPK) is only ~2–3K ops; the other ~17K
+is a full-spectrum DPK/TSSI scan over ~25 channels × 2 bands × 2 passes.
+
+**Decision (Lead, 2026-06-15): per-channel on-demand cal — do NOT replay the all-channel scan.**
+The kernel itself cal's a channel only when it tunes to it; our userland driver does the same.
+Port the per-channel unit once and run it from `set_channel`, gating it against a single-channel
+**slice** of the capture (not one monotonic cursor to the end). DPK is TX-only pre-distortion —
+**deferred to TX (M8)**; it is not needed for RX. So the path to first beacon is small:
+- **`set_channel`** = `config_phydm_switch_band/channel/bandwidth_8822b` `[SRC] rtl8822b_phy.c:822`,
+  20 MHz only. For 2.4 GHz ch≤14, `switch_channel` does: read RF_A 0x18 (clear bits 18/17/byte0),
+  `|= ch`; AGC-tab sel `0x958[4:0]=0`; clock-offset `0x860[28:17]=0x96a`; CCK TX filter `0xA24`/
+  `0xA28`; RF_A `0xBE[17:15]=0`, `0xDF[18]=0`; write RF_A/RF_B `0x18`; RF_A `0xB8[19]` toggle; then
+  sub-helpers `phydm_rfe_8822b` (one-time per band), `phydm_igi_toggle_8822b`,
+  `phydm_ccapar_by_rfe_8822b`, `phydm_spur_calibration_8822b` (the read-dependent one). The capture
+  tail (op ~28784→end) is the ground-truth slice (ch1 settle), but it interleaves switch_channel
+  with spur-cal + DIG, so the slice covers the whole per-channel cluster.
+- **RX enable + monitor RX tail** → first beacons (RCR/monitor config is wifit3-side, like the
+  other drivers — not a capture replay).
+- **IQK + LCK** (RX-relevant image rejection / LO cal) — port if RX is deaf without them; one-time.
+- **DPK + TSSI per-channel** — deferred; rides along with TX (M8).
 
 ### Coverage gap — USB2-link branches untested (all captures are USB3)
 

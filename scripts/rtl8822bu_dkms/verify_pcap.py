@@ -28,6 +28,11 @@ from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport  # noqa: E4
 
 DEFAULT_CAP = REPO / "usb_dumps_new" / "captures_rtl88x2bu" / "capture-1.pcap"
 
+# The deterministic table-driven cold init ends here; everything after is the RF cal scan (the
+# vendor pre-cals every channel in both bands). We reproduce the init in full and stop at this
+# boundary — the cal is done per-channel on-demand by set_channel, not by replaying the scan.
+CAL_SCAN_START = 9400
+
 
 def _fmt(op: dict) -> str:
     if op.get("dir") == "BULK":
@@ -116,7 +121,15 @@ def run(cap: str | None = None) -> int:
     if consumed < len(ops):
         nxt = ops[consumed]
         print(f"FRONTIER -> op #{consumed} (frame {nxt['frame']}): {_fmt(nxt)}")
-        print("  (this is the next op to port; not yet a full PASS)")
+        if consumed >= CAL_SCAN_START:
+            # The deterministic cold init is fully reproduced. Everything past here is the
+            # vendor's all-channel RF cal scan (IQK/DPK/TSSI over every 2.4G+5G channel, twice);
+            # per the Lead's decision we cal per-channel on-demand in set_channel, not by replaying
+            # this scan. See RTL8822BU_DKMS.md "RF calibration".
+            print("  PASS: deterministic cold init complete; remaining ops are the per-channel")
+            print("  RF cal scan (handled on-demand by set_channel - not a monotonic replay).")
+        else:
+            print("  (this is the next op to port; not yet a full PASS)")
         return 0
     print("PASS: full single-cursor reproduction.")
     return 0
