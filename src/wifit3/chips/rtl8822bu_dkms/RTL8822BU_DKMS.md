@@ -47,9 +47,15 @@
 - Ruled out: `verify_io_88xx` (debug API; USB branch is one `W32 0x77665511` to
   `REG_PAGE5_DUMMY`, not these byte writes), `mount_api_88xx` (pure fn-ptr table, no IO),
   and any literal `0xFF0C/0D/0E` writer (none in the tree).
-- Leads to chase next: `halmac_init_adapter` entry `[SRC] hal/hal_halmac.c:1249`; the
-  rtw-core probe order (`rtw_hal_read_chip_info`, called `core/rtw_cmd.c:4531`); whether
-  `0xFF0C-0xFF0E` is a named USB reg reached via a base+offset macro.
+- **Confirmed 8822b/HALMAC-family-specific:** the preamble AND the 0x4E0 mirror are absent
+  from every AU `_dkms` sibling (8812/8814/8821) and the jaguar `rtl88xxau_base`; those ports
+  only share the `read_chip_version` reads (0xF0 + 0x68; 8822b adds 0xF4). So it lives in a
+  HALMAC/USB path gated by `CONFIG_RTL8822B||8821C||8822C` — the same gate as the 0x4E0 mirror
+  (`os_dep/linux/usb_ops_linux.c`). Look there, not in generic code.
+- Leads to chase next, best-first: `rtl8822bu_interface_configure` `[SRC]
+  hal/rtl8822b/usb/rtl8822bu_halinit.c:405` (the one early USB-init fn not yet read);
+  `halmac_init_adapter` entry `[SRC] hal/hal_halmac.c:1249`; the rtw-core probe order
+  (`rtw_hal_read_chip_info`, called `core/rtw_cmd.c:4531`).
 
 ## Cleanroom rules
 
