@@ -32,6 +32,8 @@ from .constants import (
     BIT_MASK_BCN_HEAD_1_V1,
     BIT_MASK_DDMACH0_DLEN,
     BIT_TXDMA_EN,
+    C2H_DBG,
+    C2H_MAC_HIDDEN_RPT,
     DLFW_RESTORE_REG_NUM,
     DLFW_USB_PKT_SIZE,
     FIFO_DUMP_DATA_BASE,
@@ -53,11 +55,13 @@ from .constants import (
     HALMAC_DMA_MAPPING_HIGH,
     LTECOEX_ACCESS_CTRL,
     LTECOEX_REG_OFFSET_DL,
+    MAC_HIDDEN_RPT_TOTAL,
     MCUFW_CTRL_FW_EXIST,
     MCUFW_CTRL_IDMEM_CHKSUM,
     OCPBASE_DMEM_88XX,
     OCPBASE_TXBUF_88XX,
     REG_BCN_CTRL,
+    REG_C2HEVT_MSG_NORMAL,
     REG_CPU_DMEM_CON,
     REG_CR,
     REG_DDMA_CH0CTRL,
@@ -463,3 +467,18 @@ def _send_general_info_by_reg(t, rfe_type: int, chip_ver: int) -> None:
         raise RuntimeError("RTL8822BU: HMEBOX 0 never went free")
     t.write32(REG_HMEBOX_E0, int.from_bytes(h2c[4:8], "little"))
     t.write32(REG_HMEBOX0, int.from_bytes(h2c[0:4], "little"))
+
+
+def read_mac_hidden_rpt(t) -> None:
+    """The tail of hal_read_mac_hidden_rpt [SRC] hal_com.c:1560-1577 — after FW download + the
+    general info, poll REG_C2HEVT_MSG_NORMAL until the FW posts C2H_MAC_HIDDEN_RPT, read the
+    13-byte report, then acknowledge with C2H_DBG. The report decodes the MAC's wl-func/bw/proto
+    caps into hal_spec, which wifit3 (monitor-focused) does not consume, so the bytes are read to
+    match the wire and discarded. The request marker (C2H_DEFEATURE_RSVD) is written earlier,
+    before FW download."""
+    for _ in range(_POLL_CAP):
+        if t.read8(REG_C2HEVT_MSG_NORMAL) == C2H_MAC_HIDDEN_RPT:
+            for i in range(MAC_HIDDEN_RPT_TOTAL):
+                t.read8(REG_C2HEVT_MSG_NORMAL + 2 + i)
+            break
+    t.write8(REG_C2HEVT_MSG_NORMAL, C2H_DBG)

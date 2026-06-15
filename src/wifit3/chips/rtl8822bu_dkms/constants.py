@@ -124,6 +124,15 @@ GENINFO_REG_CLASS = 0x02            # [byte0 5:3]
 GENINFO_RF_TYPE_DRV = 0x00          # _rf_type_halmac2drv(rf_type) [WIRE]
 # cut byte = the PHYDM cut (ODM_CUT_x == chip_ver for A..F), passed in as chip_ver.
 
+# --- hal_read_mac_hidden_rpt C2H read ----------------------------------------
+# [SRC] hal_com.c:1529 — the FW posts its MAC-hidden capability report; the driver writes the
+# request id, downloads FW + sends general info (all above), then polls + reads the report.
+REG_C2HEVT_MSG_NORMAL = 0x01A0        # [SRC] hal_com.h:149
+C2H_DEFEATURE_RSVD = 0xFD            # [SRC] hal_com_c2h.h:79 (request marker, written pre-DL)
+C2H_MAC_HIDDEN_RPT = 0x19           # [SRC] :67 (report-ready id)
+C2H_DBG = 0x00                      # [SRC] :51 (written after the report is read)
+MAC_HIDDEN_RPT_TOTAL = 8 + 5         # MAC_HIDDEN_RPT_LEN + MAC_HIDDEN_RPT_2_LEN [SRC] hal_com.h:97,101
+
 # Pre-download TX-FIFO-empty gate [SRC] halmac_common_88xx.c:3271 txfifo_is_empty_88xx (chk=10)
 REG_TXPKT_EMPTY = 0x041A
 
