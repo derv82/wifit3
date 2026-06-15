@@ -172,15 +172,19 @@ The tail of `hal_read_mac_hidden_rpt` / `rtl8822b_read_efuse`, all gate-clean:
 `rtl8822b_read_efuse` returns ⇒ `rtw_hal_read_chip_info` done ⇒ `rtw_hal_init` → `rtl8822b_hal_init`
 → `_halmac_init_hal` `[SRC] hal_halmac.c:3576` — the **real** init, which RE-RUNS the already-ported
 steps then adds the new ones:
-1. `rtw_hal_power_on` — but the wire here is **not** `pre_init`'s `W 0x1C`; it opens with
-   `W16 0x00AA=0x8000` (`REG_PMC_DBG_CTRL1+2`, byte `0xAB` BIT7) then the `mac_pwr_switch` probe
-   (`R 0xFE58`/`R16 0x80=0xC078`/`W 0xFE58` rpwm-toggle since FW resident/`R 0x100=0xFF`≠0xEA ⇒
-   chip ON). So this is the **warm path**: PWR_UNCHANGE ⇒ `card_dis_flow` (f10787+ matches
-   `pwrseq.CARD_DIS_FLOW` exactly: `0x93=0xC4`, `0xFF1A=0x30`, …) then `card_en_flow`. **OPEN:** why
-   `pre_init` is skipped + where `W 0x00AA` originates (trace `_halmac_init_hal`/the USB poweron
-   wrapper + the `bMacPwrCtrlOn` flag; `mac.power_on` ports the warm reset but its pre_init/
-   init_system_cfg wrapping differs from this wire — likely needs a warm-entry variant).
-2. `download_fw` again (FW was wiped by `card_dis` ⇒ the 40 FW packets repeat — reuse `firmware.download`).
+0. **A power-OFF first** (f10769-f10935 — `rtw_hal_power_off`, NOT yet ported): `W16 0x00AA=0x8000`
+   (`REG_PMC_DBG_CTRL1+2`, byte `0xAB` BIT7), then `mac_pwr_switch(OFF)` — probe (`R 0xFE58` /
+   `R16 0x80=0xC078` ⇒ `W 0xFE58=0x80` rpwm-toggle / `R 0x100=0xFF`≠0xEA ⇒ chip ON ⇒ `R 0xF5`) ⇒
+   **`card_dis_flow`** (f10787+ matches `pwrseq.CARD_DIS_FLOW` exactly: `0x93=0xC4`, `0xFF1A=0x30`,
+   …, `0x90=0x00`), then a tail `R 0x35×3` + `W 0xFE58`. **This leaves the chip OFF** (next CR read
+   is `0xEA`). The core (`mac_pwr_switch(OFF)`) is just `mac._mac_pwr_switch(power_on=False)` — port
+   a thin `power_off(t, chip_ver)` = `W 0x00AA` + that + the tail. (Open: exact origin of `W 0x00AA`
+   and the `R 0x35×3`/`W 0xFE58` tail — `mac_pwr_switch`'s init_adapter_dynamic_param? Identify, but
+   they're few ops and wire-pinned.)
+1. `rtw_hal_power_on` (f10953+) is then the **COLD path** — `pre_init` (`W 0x1C` + PIN-mux) +
+   `mac_pwr_switch(ON)` (CR=`0xEA` ⇒ cold ⇒ `card_en_flow`) + `init_system_cfg` — i.e. **exactly
+   `mac.power_on` reused unchanged** (it takes the no-reset cold branch).
+2. `download_fw` again (FW wiped by `card_dis` ⇒ the 40 FW packets repeat — reuse `firmware.download`).
 3. `init_mac_flow` again (reuse `mac.init_mac_cfg` + `init_mac_flow_tail`).
 4. `_drv_enable_trx` (new, driver-side TRX enable).
 5. `_send_general_info` again (reuse — but **no** `mac_hidden_rpt` this cycle).
