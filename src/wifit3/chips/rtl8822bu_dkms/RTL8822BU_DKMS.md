@@ -184,7 +184,16 @@ steps then adds the new ones:
 1. `rtw_hal_power_on` (f10953+) is then the **COLD path** — `pre_init` (`W 0x1C` + PIN-mux) +
    `mac_pwr_switch(ON)` (CR=`0xEA` ⇒ cold ⇒ `card_en_flow`) + `init_system_cfg` — i.e. **exactly
    `mac.power_on` reused unchanged** (it takes the no-reset cold branch).
-2. `download_fw` again (FW wiped by `card_dis` ⇒ the 40 FW packets repeat — reuse `firmware.download`).
+   (The read-chip-info tail — `power_off`/card_dis + `read_phydm_trim` (3 cached PG reads = `R 0x35×3`,
+   thermal+2G+5G all blank) + the cold `mac.power_on` — is now **CLEARED**, frontier at the 2nd
+   download. `W 0x00AA`/`W 0xFE58` around it are 2 stray ops [WIRE]-pinned inline, source still TBD.)
+2. `download_fw` again — **NOT a simple reuse**: this cycle `not_xmitframe_fw_dl=0`, so the FW packets
+   go through the full xmit path (`usb_write_data_rsvd_page_normal` → `dump_mgntframe` →
+   `rtl8822b fill_default_txdesc`) — a **full TX descriptor** (1st-pkt byte3 `0x84` vs the simple
+   path's `0x00`, FS/LS/MACID/rate fields), not `build_fw_txdesc`. **Port the general rtl8822b TX
+   descriptor builder** (`rtl8822bu_xmit.c` `fill_default_txdesc` for a BEACON rsvd-page) — it is
+   shared with M8 frame injection, so this is the natural place to do it. Then the 40 packets +
+   iDDMA reuse `firmware.download`'s loop.
 3. `init_mac_flow` again (reuse `mac.init_mac_cfg` + `init_mac_flow_tail`).
 4. `_drv_enable_trx` (new, driver-side TRX enable).
 5. `_send_general_info` again (reuse — but **no** `mac_hidden_rpt` this cycle).

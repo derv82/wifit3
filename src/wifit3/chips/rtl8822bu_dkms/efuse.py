@@ -168,6 +168,17 @@ def _mac_address(log_map: bytes, valid: bool) -> Optional[str]:
     return ":".join(f"{b:02x}" for b in mac)
 
 
+def read_phydm_trim(t) -> None:
+    """rtw_phydm_read_efuse [SRC] hal_dm.c -> phydm_get_thermal_trim_offset_8822b +
+    phydm_get_power_trim_offset_8822b [SRC] halrf_kfree.c — read the thermal + 2G/5G power-trim
+    PG bytes (PPG_THERMAL, PPG_2G_TXAB, PPG_5GL1_TXA). On this card those PG bytes are blank (0xFF),
+    so each is one odm_efuse_one_byte_read served from the cached physical map — only the WIFI
+    bank-switch (R 0x35) reaches the wire, three times. Runs at the tail of read_chip_info, after
+    hal_read_mac_hidden_rpt's power-off."""
+    for _ in range(3):
+        _switch_efuse_bank_wifi(t)
+
+
 def read_efuse(t) -> Efuse8822b:
     """rtl8822b_read_efuse: autoload-flag read + the HALMAC driver-side physical dump,
     then PG-header decode to the logical map and the scalar field decode.

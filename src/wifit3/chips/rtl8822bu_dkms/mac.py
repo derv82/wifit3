@@ -247,6 +247,13 @@ def power_on(t, chip_ver: int) -> None:
     init_system_cfg(t)
 
 
+def power_off(t, chip_ver: int) -> None:
+    """rtw_halmac_poweroff [SRC] hal/hal_halmac.c:2799 -> mac_pwr_switch(POWER_OFF): probe the
+    power state then run card_dis_flow, leaving the chip cold (REG_CR reads 0xEA afterward).
+    Used by the read-chip-info cleanup before the real hal_init powers the chip back on."""
+    _mac_pwr_switch(t, chip_ver, power_on=False)
+
+
 # --- MAC init for RX: init_trx_cfg (queue mapping + FIFO/page alloc + TRX enable) ----------
 @dataclass
 class TxffAlloc:

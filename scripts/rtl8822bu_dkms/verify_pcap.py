@@ -55,6 +55,15 @@ def _bringup(t) -> None:
                                alloc.rsvd_fw_txbuf_addr - alloc.rsvd_boundary,
                                alloc.rsvd_h2cq_addr)
     firmware.read_mac_hidden_rpt(t)        # M4: poll + read the FW MAC-hidden C2H report
+    # --- read-chip-info tail, then the 2nd (real) init cycle: rtl8822b_hal_init ---
+    t.write16(0x00AA, 0x8000)              # [WIRE] post-C2H op before the power-off (source TBD)
+    mac.power_off(t, info.chip_ver)        # hal_read_mac_hidden_rpt tail: power-off (card_dis -> cold)
+    efuse.read_phydm_trim(t)               # rtw_phydm_read_efuse: 3 cached PG-trim reads (R 0x35 x3)
+    t.write8(0xFE58, 0x00)                 # [WIRE] RPWM clear before the 2nd power-on (source TBD)
+    mac.power_on(t, info.chip_ver)         # rtl8822b_hal_init: COLD power-on (pre_init + card_en)
+    # NEXT: the 2nd FW download — uses the FULL xmit TX descriptor (not_xmitframe_fw_dl=0 this
+    # cycle, so dump_mgntframe -> fill_default_txdesc), unlike the 1st (simple build_fw_txdesc).
+    # Needs the general rtl8822b TX-descriptor builder (shared with M8 inject). See the doc.
 
 
 def run(cap: str | None = None) -> int:
