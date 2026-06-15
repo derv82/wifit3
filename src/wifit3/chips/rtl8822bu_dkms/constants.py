@@ -117,6 +117,12 @@ BIT_APP_PHYSTS = 1 << 28              # REG_RCR app-phystatus
 REG_AFE_CTRL1 = 0x0024                # board_rf_fine_tune: +1 BIT(1) when PCB-info == 0x0C
 EFUSE_PCB_INFO_OFFSET = 0xCA          # [SRC] halmac_cfg_wmac_88xx.c (== the rfe_type byte)
 
+# crystal-cap (xtal-K) — [SRC] phydm_cfotracking.c:255 phydm_set_crystal_cap_reg 8822b branch:
+# "write 0x24[30:25] = 0x28[6:1] = crystal_cap" (cap masked to 0x3F first).
+REG_AFE_CTRL2 = 0x0028
+XTAL_CAP_MASK_24 = 0x7E000000         # 0x24 bits 30:25
+XTAL_CAP_MASK_28 = 0x0000007E         # 0x28 bits 6:1
+
 REG_PKTBUF_DBG_CTRL = 0x0140          # [SRC] halmac_reg2.h:934 (start-page select)
 FIFO_DUMP_DATA_BASE = 0x8000          # the 4KB pkt-buf data window (R32 at base + residue)
 FIFO_TX_START_PG = 0x780              # TX-FIFO start-page bias [SRC] read_buf_88xx:2063

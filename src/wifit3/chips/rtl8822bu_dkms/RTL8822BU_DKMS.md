@@ -199,28 +199,44 @@ steps then adds the new ones:
 5. `_send_general_info` again (reuse — but **no** `mac_hidden_rpt` this cycle).
 6. `rtw_hal_init_mac_register` (new — more MAC regs).
 7. `rtw_halmac_config_rx_info(PHY_STATUS)` (new — DRVINFO/PHYSTS).
-8. **`rtw_hal_init_phy` = BB + RF init (PHYDM)** — the big one. **BB phy-reg + AGC tables now
-   CLEARED** (see below); remaining: RF-A/RF-B `radioa/radiob` `_tbl.py` tables, then RF
-   calibration (IQK/DPK/LCK/TSSI — only what the capture runs), channel tune
-   (`verify_channels.py`), CCK-PD/DIG, monitor RX tail. 3.6× payoff.
+8. **`rtw_hal_init_phy` = BB + RF init (PHYDM)** — the big one. **BB phy-reg + AGC + crystal-cap +
+   RF-A/RF-B radio tables now CLEARED** (see below); remaining: RF calibration (IQK/DPK/LCK/TSSI —
+   only what the capture runs), channel tune (`verify_channels.py`), CCK-PD/DIG, monitor RX tail.
 
-### BB phy-reg + AGC tables (CLEARED, byte-for-byte on capture-1/2/3)
+### BB + RF tables (CLEARED, byte-for-byte on capture-1/2/3)
 
-`rtl8822b_phy_bb_config -> _init_bb_reg` `[SRC] rtl8822b_phy.c` applies two PHYDM BB tables after
-`enable_bb_rf`:
+`rtl8822b_phy_init` `[SRC] rtl8822b_phy.c:278` brackets the BB+RF tables with two PHYDM parameter
+passes and runs `init_bb_reg` then `init_rf_reg` between them:
+- **PRE/POST** (`config_phydm_parameter_init_8822b`, `bb.phy_parameter_init`) — an RMW of `0x808`
+  bits 28/29 (OFDM/CCK block enable): PRE clears them before the tables, POST sets them after RF.
+  On the wire each reads-back the same `0x0E028233` (bits already in the wanted state), so the
+  pair is a no-op-equivalent here, but ported faithfully (the earlier "byte0 rx-path pre-amble"
+  guess was a misattribution — the 2T2R `0x808` byte0 = `0x33` is baked into the phy-reg table
+  value, not a separate write).
 - **phy-reg** (`array_mp_8822b_phy_reg`, `bb_phy_reg_tbl.py`) — 1492 plain `(addr, value)` W32
-  rows via `odm_config_bb_phy_8822b`, preceded by an RMW pre-amble that sets `REG 0x808` byte0 =
-  `(rx_path<<4)|rx_path` (2T2R ⇒ `0x33`). No conditionals on this card.
+  rows via `odm_config_bb_phy_8822b`. No conditionals on this card.
 - **AGC** (`array_mp_8822b_agc_tab`, `bb_agc_tbl.py`) — 10684 rows **with 328 cut/rfe
-  conditionals**, so it runs through the new `phy_cond.walk` + `check_positive` (ported 1:1 from
+  conditionals**, run through `phy_cond.walk` + `check_positive` (ported 1:1 from
   `halhwimg8822b_bb.c` / `odm_read_and_config_mp_8822b_agc_tab`). check_positive matches
   cut[27:24]/package[15:12]/interface[11:8] as value-or-don't-care and rfe[7:0] exactly; the AGC
-  conditions only constrain **rfe** (all cut/pkg/intf fields are 0). On this card (rfe 3) the
-  walker selects **521 W32 rows** (addrs `0x81C`/`0xC50`/`0xE50`) — verified == the single wire AGC
-  run (frame 16503+), byte-for-byte. `odm_config_bb_agc_8822b` also feeds each `0x81C` row to
-  `odm_update_agc_big_jump_lmt` (software DIG `big_jump_lmt[]` state, **no** register write — a
-  side-effect to reconstruct when DIG is ported, not part of the wire). `phy_cond.py` is reused by
-  the RF-A/RF-B walkers next. **Frontier: `R 0x0024` (REG_AFE_CTRL1) at op ~8645** — start of RF.
+  conditions only constrain **rfe**. On this card (rfe 3) the walker selects **521 W32 rows**
+  (addrs `0x81C`/`0xC50`/`0xE50`) == the single wire AGC run (frame 16503+), byte-for-byte.
+  `odm_config_bb_agc_8822b` also feeds each `0x81C` row to `odm_update_agc_big_jump_lmt` (software
+  DIG `big_jump_lmt[]` state, **no** register write — reconstruct when DIG is ported).
+- **crystal cap** (`bb.set_crystal_cap`, tail of `init_bb_reg`) — `[SRC] phydm_set_crystal_cap_reg`
+  8822b branch writes the EFUSE xtal-K (`0x2F` on this card, `EEPROM_XTAL=0xB9`) into
+  `0x24[30:25]` and `0x28[6:1]` (masked RMW).
+- **RF-A / RF-B** (`array_mp_8822b_radioa/radiob`, `rf_radioa_tbl.py`/`rf_radiob_tbl.py`,
+  `rf.phy_rf_config`) — `init_rf_reg` configures path A then B from PHYDM radio tables, each with
+  cut/rfe conditionals via the same `phy_cond.walk`. Each in-branch row is a single masked RF
+  write: `[SRC] config_phydm_write_rf_reg_8822b` packs `((addr & 0xFF) << 20 | data[19:0])` into a
+  W32 to `0xC90` (path A) / `0xE90` (path B); `addr 0xFE/0xFFE` rows are delays (no write). Walker
+  selects **402** path-A + **353** path-B W32 rows == the wire `0xC90`/`0xE90` runs, byte-for-byte.
+  The tx-power-track table (`odm_config_rf_with_tx_pwr_track_header_file`) that follows is
+  software-only (stores deltas, no register writes) — nothing on the wire between RF-B and POST.
+
+**Frontier: `R 0x00FF` then `R 0xFE11` / `W 0x290=0x1e` at op ~9410** — start of RF calibration
+(`rtw_phydm_init` / halrf IQK/LCK/DPK + CCK-PD/DIG).
 
 ### Coverage gap — USB2-link branches untested (all captures are USB3)
 
