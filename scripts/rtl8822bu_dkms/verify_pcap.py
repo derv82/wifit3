@@ -22,7 +22,7 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8822bu_dkms import chipid  # noqa: E402
+from wifit3.chips.rtl8822bu_dkms import chipid, usbphy  # noqa: E402
 from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport  # noqa: E402
 
 DEFAULT_CAP = REPO / "usb_dumps_new" / "captures_rtl88x2bu" / "capture-1.pcap"
@@ -37,7 +37,9 @@ def _fmt(op: dict) -> str:
 def _bringup(t) -> None:
     """The ported bring-up so far, driven against the replay device. Each milestone
     appends here; the gate advances to the next unaccounted op."""
-    chipid.read_chip_version(t)            # M0: chip-version reads
+    info = chipid.get_chip_info(t)         # M0: HALMAC chip-id/cut (R 0xFC, R 0xF1)
+    usbphy.phy_cfg_usb(t, info.chip_ver)   # M0: USB3 intf-phy param (W 0xff0d/0e/0c)
+    chipid.read_chip_version(t)            # M0: rtw chip-version (R 0xF0/0xF4/0x68)
 
 
 def run(cap: str | None = None) -> int:
@@ -69,7 +71,7 @@ def run(cap: str | None = None) -> int:
     print(f"\nported bring-up reproduced {consumed}/{len(ops)} ops clean.")
     if consumed < len(ops):
         nxt = ops[consumed]
-        print(f"FRONTIER → op #{consumed} (frame {nxt['frame']}): {_fmt(nxt)}")
+        print(f"FRONTIER -> op #{consumed} (frame {nxt['frame']}): {_fmt(nxt)}")
         print("  (this is the next op to port; not yet a full PASS)")
         return 0
     print("PASS: full single-cursor reproduction.")

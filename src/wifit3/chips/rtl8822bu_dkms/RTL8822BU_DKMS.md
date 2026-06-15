@@ -1,10 +1,11 @@
 # RTL8822BU — vendor/DKMS port (playbook)
 
-> **STATUS: M0 in progress.** Transport + constants + chip-version read + the gate
-> harness are in; the gate (`scripts/rtl8822bu_dkms/verify_pcap.py`) parses the capture,
-> decodes the op stream, and reports the frontier. Promote sections from plan to ground
-> truth with `[SRC]`/`[WIRE]` citations as facts get confirmed; by the end this should
-> read like `chips/rtl8812au_dkms/RTL8812AU_DKMS.md`.
+> **STATUS: M0 (chip-ID reads) COMPLETE.** Transport (+0x4E0 mirror), constants, the
+> HALMAC chip-id/cut + USB intf-phy + chip-version reads all reproduce **byte-for-byte,
+> 13/13 ops, on capture-1/2/3** (gate frontier now at the EFUSE read). Next milestone =
+> the early EFUSE map read. Promote sections from plan to ground truth with
+> `[SRC]`/`[WIRE]` citations as facts get confirmed; by the end this should read like
+> `chips/rtl8812au_dkms/RTL8812AU_DKMS.md`.
 
 ## Verified facts (ground truth so far)
 
@@ -31,31 +32,28 @@
   cold capture (cold boots return SUCCESS, so the off→on never fired), so it is ported from
   source and proven by a hardware double-run. *Open: whether the off→on cycle recovers on
   Windows+WinUSB (the AU/jaguar cycle did not; 8822b `card_dis_flow` is a different sequence).*
-- **Early-init order (`[WIRE]` capture op stream, de-mirrored)** — diverges from the milestone
-  table, which the chip-info path reads EFUSE up front: a USB preamble (`R 0xFC`, `R 0xF1`,
-  `W 0xFF0D/0E/0C`) → `read_chip_version` (`R32 0xF0/0xF4/0x68`)
-  `[SRC] hal/rtl8822b/rtl8822b_ops.c:173` → `read_adapter_info` = `rtl8822b_read_efuse`
-  (`EFUSE_ShadowMapUpdate`, the `REG_EFUSE_CTRL`=0x30 physical-map loop)
-  `[SRC] hal/rtl8822b/rtl8822b_ops.c:637,3930`.
+### M0 — chip-ID reads (CLEARED, byte-for-byte on capture-1/2/3)
 
-### M0 frontier — the op0 USB preamble (source not yet pinned)
+The pre-power-on probe, ported from source and gate-clean (ops 0–12; de-mirrored):
+1. **`get_chip_info`** `[SRC] halmac_api.c:517-521` — HALMAC chip-id/cut detection, the very
+   first IO: `R 0xFC` (`REG_SYS_CFG2` → `chip_id`; `0x0A` = 8822B) and `R 0xF1`
+   (`REG_SYS_CFG1+1 >> 4` → cut; `0x3` = D-cut). → `chipid.get_chip_info`.
+2. **`phy_cfg_usb_8822b`** `[SRC] halmac_usb_8822b.c:107` → `parse_intf_phy_88xx`
+   `[SRC] halmac_common_88xx.c:3168` over the USB2 (empty) then USB3 param tables
+   `[SRC] halmac_phy_8822b.c:40-58`. The D-cut USB3 entry `{0x0001, 0xA841}` is emitted by
+   `usbphy_write_88xx` `[SRC] halmac_usb_88xx.c:475` as `W 0xFF0D=0x41` / `W 0xFF0E=0xa8` /
+   `W 0xFF0C=0x81` (data-lo / data-hi / `offset | BIT(7)` strobe). `usb_page_switch` is a
+   no-op for USB3. → `usbphy.phy_cfg_usb`. *(This was the op0 mystery — not a debug/scratch
+   write but the USB3 intf-phy param for this cut.)*
+3. **`read_chip_version`** `[SRC] rtl8822b_ops.c:173` — `R32 0xF0/0xF4/0x68`. → `chipid.read_chip_version`.
 
-`[WIRE]` (raw, all 3 captures, byte-identical): `R 0xFC/1`, `R 0xF1/1`, then three
-1-byte `bRequest=0x05` writes **`W 0xFF0D=0x41`, `W 0xFF0E=0xa8`, `W 0xFF0C=0x81`**
-(`wIndex=0`; confirmed not a paged/split-wide access). Runs *before* `read_chip_version`.
-**Must be ported from its source fn, not replayed** — find it first.
-- Ruled out: `verify_io_88xx` (debug API; USB branch is one `W32 0x77665511` to
-  `REG_PAGE5_DUMMY`, not these byte writes), `mount_api_88xx` (pure fn-ptr table, no IO),
-  and any literal `0xFF0C/0D/0E` writer (none in the tree).
-- **Confirmed 8822b/HALMAC-family-specific:** the preamble AND the 0x4E0 mirror are absent
-  from every AU `_dkms` sibling (8812/8814/8821) and the jaguar `rtl88xxau_base`; those ports
-  only share the `read_chip_version` reads (0xF0 + 0x68; 8822b adds 0xF4). So it lives in a
-  HALMAC/USB path gated by `CONFIG_RTL8822B||8821C||8822C` — the same gate as the 0x4E0 mirror
-  (`os_dep/linux/usb_ops_linux.c`). Look there, not in generic code.
-- Leads to chase next, best-first: `rtl8822bu_interface_configure` `[SRC]
-  hal/rtl8822b/usb/rtl8822bu_halinit.c:405` (the one early USB-init fn not yet read);
-  `halmac_init_adapter` entry `[SRC] hal/hal_halmac.c:1249`; the rtw-core probe order
-  (`rtw_hal_read_chip_info`, called `core/rtw_cmd.c:4531`).
+### Next frontier — the early EFUSE map read (op #13, `R 0x0A` ...)
+
+On the wire the chip-info path reads EFUSE **up front** (before power-on), not at M4 as the
+milestone table guesses: `read_adapter_info` = `rtl8822b_read_efuse` → `EFUSE_ShadowMapUpdate`
+`[SRC] rtl8822b_ops.c:637,3930` — the `0x0A/0x35/0x37` efuse power/clock setup then the
+`REG_EFUSE_CTRL` (`0x30`) physical-map loop (`W 0x316000NN` / `R 0xB16000xx`). This is the
+next thing to port; it likely pulls the M4 EFUSE work earlier than the table implies.
 
 ## Cleanroom rules
 
