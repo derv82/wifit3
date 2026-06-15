@@ -259,22 +259,29 @@ Port the per-channel unit once and run it from `set_channel`, gating it against 
 **slice** of the capture (not one monotonic cursor to the end). DPK is TX-only pre-distortion —
 **deferred to TX (M8)**; it is not needed for RX. So the path to first beacon is small:
 - **`set_channel`** = `config_phydm_switch_band/channel/bandwidth_8822b` `[SRC] rtl8822b_phy.c:822`,
-  20 MHz only. For 2.4 GHz ch≤14, `switch_channel` does: read RF_A 0x18 (clear bits 18/17/byte0),
-  `|= ch`; AGC-tab sel `0x958[4:0]=0`; clock-offset `0x860[28:17]=0x96a`; CCK TX filter `0xA24`/
-  `0xA28`; RF_A `0xBE[17:15]=0`, `0xDF[18]=0`; write RF_A/RF_B `0x18`; RF_A `0xB8[19]` toggle; then
-  sub-helpers `phydm_rfe_8822b` (one-time per band), `phydm_igi_toggle_8822b`,
-  `phydm_ccapar_by_rfe_8822b`, `phydm_spur_calibration_8822b` (the read-dependent one). The capture
-  tail (op ~28784→end) is the ground-truth slice (ch1 settle), but it interleaves switch_channel
-  with spur-cal + DIG, so the slice covers the whole per-channel cluster.
-  Confirmed dispatch for this card (all source read): `switch_band` 2.4G sets `0x808[28]=1`,
-  `0x454[7]=0`, `0xa80[18]=0`, `0x814[15:10]=15`, then a read-dependent SoML branch on `0x19a8[31]`
-  (rfe_type 3 → SoML-on: `0x8cc=0x08108492`, `0x8d8[19]=0`, `0x8d8[27]=1`), writes RF_A/RF_B `0x18`
-  (band bits cleared), calls `phydm_rfe_8822b`+`spur_calibration`. `switch_bandwidth` 20 MHz:
-  `0x8ac &= 0xFFCFFC00` (| 0), `0x8c4[30]=1`, RF18 `|= BIT11|BIT10`. `phydm_igi_toggle_8822b` is
-  5 RMWs of `0xc50`/`0xe50[6:0]` (igi-2 then igi). `phydm_rfe_8822b` for rfe_type 3 →
-  `phydm_rfe_ifem`. **Gate plan (M6):** port the trio + all helpers (incl. spur_cal, fed the
-  slice's reads by the replay) and byte-diff against the ch1-settle tail with a sliced ReplayDevice
-  — a focused milestone, not a tail-of-session add.
+  20 MHz only. The captures contain an airodump `--band abg` hop sweep — **38 `iw set channel N`
+  commands** in `<cap>_logs/iw.log` (2.4 GHz 1-12, 5 GHz 36-165, back to 1), each one a vendor
+  set_channel. `scripts/rtl8822bu_dkms/verify_channels.py` slices each hop window (iw epoch → pcap
+  frame) and byte-diffs the port against it.
+
+  **`switch_channel` (CLEARED — 27/27/26 hops byte-for-byte on capture-1/2/3).** `chan.switch_channel`
+  + `sipi.py` (the BB-masked-RMW + SIPI RF read/write primitives: RF read = direct BB read at
+  `{0x2800,0x2c00}[path]+(addr<<2)`; RF write packs `((addr&0xFF)<<20|data[19:0])` into `0xC90`/
+  `0xE90`). Per channel: read RF_A 0x18 (clear bits 18/17/byte0, `|= ch`); AGC-tab `0x958[4:0]`;
+  clock-offset `0x860[28:17]`; CCK TX filter `0xA24`/`0xA28` (2.4G); RF_A `0xBE[17:15]` phase-noise
+  (5G low/mid/high tables); RF_A `0xDF[18]`; write RF_A/RF_B `0x18`; RF_A `0xB8[19]` toggle;
+  `phydm_igi_toggle` (`0xC50`/`0xE50[6:0]`); `phydm_ccapar_by_rfe` (rfe-3 iFEM CCA table, col by
+  band/Nrx → `0x82C/0x830/0x838`); `phydm_spur_calibration` → `phydm_dsde_init` (reset NBI/CSI
+  `0x880-0x89C` + `0x874[0]`). `phydm_rfe` is NOT called per same-band hop (only on a band change).
+  - **PSD spur sweep — deferred.** `phydm_dynamic_spur_det_eliminate` runs its read-dependent PSD
+    sweep only on spur channels (`dsde_ch_idx ≤ 13`: 2.4G ch 5-8, 5G 153/161 at 20 MHz). Those 6
+    hops `raise NotImplementedError` (verify skips them) — a bounded, flagged gap (missing NBI/CSI
+    notch on 6 channels = slightly worse RX there, not a break), not a silent partial.
+  - **Band switch + bandwidth — NEXT.** `switch_band` (2.4↔5 crossing: `0x808[28]`, `0x454[7]`,
+    `0xa80[18]`, SoML `0x19a8[31]` branch, `phydm_rfe_ifem`) + `mac_switch_bandwidth` (HALMAC
+    `cfg_bw`: `0x483/0x668/0x024/0x55c/0x638/0x454`) + `config_phydm_switch_bandwidth_8822b` (20 MHz:
+    `0x8ac &= 0xFFCFFC00`, `0x8c4[30]`, RF18 `|= BIT11|BIT10`) + `phydm_rxdfirpar`/`config_tx_path`
+    (`0x948/0x94c/0x93c/0x940`). The 2 crossing hops (ch 36, final ch 1) verify-SKIP until ported.
 - **RX enable + monitor RX tail** → first beacons (RCR/monitor config is wifit3-side, like the
   other drivers — not a capture replay).
 - **IQK + LCK** (RX-relevant image rejection / LO cal) — port if RX is deaf without them; one-time.

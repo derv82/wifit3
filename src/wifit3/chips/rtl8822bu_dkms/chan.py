@@ -1,0 +1,149 @@
+"""RTL8822BU channel tune — per-channel RF retune (the airodump hop primitive).
+
+Ports config_phydm_switch_channel_8822b `[SRC] phydm_hal_api8822b.c:1808` (2.4 + 5 GHz, 20 MHz),
+its inline helpers (phydm_igi_toggle_8822b, phydm_ccapar_by_rfe_8822b), and the channel-change
+spur reset (phydm_spur_calibration_8822b -> phydm_dsde_init). This is the work a single
+`iw set channel N` triggers in the vendor driver — verified hop-by-hop against the cold-boot
+capture's airodump `--band abg` sweep (see scripts/rtl8822bu_dkms/verify_channels.py).
+
+The band switch (config_phydm_switch_band_8822b, only on a 2.4<->5 crossing) and the bandwidth
+re-apply (mac_switch_bandwidth=HALMAC cfg_bw + config_phydm_switch_bandwidth_8822b) are the rest
+of switch_chnl_and_set_bw; they are the next milestone. wifit3 stays 20 MHz primary by design.
+
+This card is 2T2R (rf_type 2 -> rx/tx_ant_status = BB_PATH_AB) and rfe_type 3 (iFEM); the
+ccapar/rfe branches below resolve to those. The PSD-based dynamic spur eliminator only runs on a
+few spur-prone channels (2.4 GHz 5-8, 5 GHz 153/161 at 20 MHz); those raise until ported, rather
+than silently skip the NBI/CSI notch.
+"""
+from __future__ import annotations
+
+from . import sipi
+
+BB_PATH_A, BB_PATH_B, BB_PATH_AB = 1, 2, 3
+RF_0x18, RF_0xbe, RF_0xdf, RF_0xb8 = 0x18, 0xBE, 0xDF, 0xB8
+
+# [SRC] cca_ifem_ccut_rfe[3][4] (rfe_type 3) — Reg82C/830/838 by column (1R/2R x 2G/5G).
+_CCA_IFEM_RFE = (
+    (0x75DA8010, 0x75DA8010, 0x75DA8010, 0x75DA8010),   # 0x82C
+    (0x79A0EAAA, 0x97A0EAAC, 0x79A0EAAA, 0x79A0EAAA),   # 0x830
+    (0x87765541, 0x86666341, 0x87765561, 0x86666361),   # 0x838
+)
+# [SRC] config_phydm_switch_channel_8822b RF_0xBE phase-noise table (5 GHz, ch>=36 by (ch-base)>>1)
+_LOW_BAND = (0x7, 0x6, 0x6, 0x5, 0x0, 0x0, 0x7, 0xFF, 0x6, 0x5, 0x0, 0x0, 0x7, 0x6, 0x6)
+_MID_BAND = (0x6, 0x5, 0x0, 0x0, 0x7, 0x6, 0x6, 0xFF, 0x0, 0x0, 0x7, 0x6, 0x6, 0x5, 0x0, 0xFF,
+             0x7, 0x6, 0x6, 0x5, 0x0, 0x0, 0x7)
+_HIGH_BAND = (0x5, 0x5, 0x0, 0x7, 0x7, 0x6, 0x5, 0xFF, 0x0, 0x7, 0x7, 0x6, 0x5, 0x5, 0x0)
+
+
+def _igi_toggle(t) -> None:
+    """[SRC] phydm_igi_toggle_8822b: read IGI from 0xC50, bump down then back, both paths."""
+    igi = sipi.get_bb_reg(t, 0x0C50, 0x7F)
+    sipi.set_bb_reg(t, 0x0C50, 0x7F, igi - 2)
+    sipi.set_bb_reg(t, 0x0C50, 0x7F, igi)
+    sipi.set_bb_reg(t, 0x0E50, 0x7F, igi - 2)
+    sipi.set_bb_reg(t, 0x0E50, 0x7F, igi)
+
+
+def _ccapar_by_rfe(t, ch: int, bw20: bool) -> None:
+    """[SRC] phydm_ccapar_by_rfe_8822b: per-(band,Nrx) CCA params (rfe_type 3 => iFEM-RFE table)."""
+    col = 1 if ch <= 14 else 3                     # 2R (BB_PATH_AB): 2G->col1, 5G->col3
+    sipi.set_bb_reg(t, 0x082C, 0xFFFFFFFF, _CCA_IFEM_RFE[0][col])
+    sipi.set_bb_reg(t, 0x0830, 0xFFFFFFFF, _CCA_IFEM_RFE[1][col])
+    sipi.set_bb_reg(t, 0x0838, 0xFFFFFFFF, _CCA_IFEM_RFE[2][col])
+    # DFS 20 MHz tweak (ch 52-64 / 100-144). 2.4 GHz never hits it.
+    if bw20 and ((52 <= ch <= 64) or (100 <= ch <= 144)):
+        sipi.set_bb_reg(t, 0x0838, 0xF0, 0x5)
+
+
+def _spur_reset(t, ch: int, bw20: bool) -> None:
+    """[SRC] phydm_spur_calibration_8822b (normal mode): drop the spur-elim enables + reset
+    NBI/CSI (phydm_dsde_init). The PSD sweep only runs on the few spur channels below idx 14."""
+    sipi.set_bb_reg(t, 0x087C, 1 << 13, 0x0)
+    sipi.set_bb_reg(t, 0x0C20, 1 << 28, 0x0)
+    sipi.set_bb_reg(t, 0x0E20, 1 << 28, 0x0)
+    for addr in (0x0880, 0x0884, 0x0888, 0x088C, 0x0890, 0x0894, 0x0898, 0x089C):
+        sipi.set_bb_reg(t, addr, 0xFFFFFFFF, 0)    # phydm_dsde_init: reset NBI/CSI
+    sipi.set_bb_reg(t, 0x0874, 1 << 0, 0x0)
+    if _dsde_ch_idx(ch, bw20) <= 13:
+        raise NotImplementedError(
+            f"ch {ch}: PSD dynamic-spur eliminator (phydm_dynamic_spur_det_eliminate) not ported")
+
+
+def _dsde_ch_idx(ch: int, bw20: bool) -> int:
+    """[SRC] phydm_dsde_ch_idx: maps a channel to its spur freq-point index (16 == no spur)."""
+    if 1 <= ch <= 14:
+        if bw20:
+            if 5 <= ch <= 8:
+                return ch - 5
+            return 4 if ch == 13 else 16
+        return ch + 2 if 3 <= ch <= 11 else 16
+    return {153: 0, 161: 1, 54: 2, 118: 3, 151: 4, 159: 5, 58: 6, 122: 7, 155: 8}.get(ch, 16)
+
+
+def switch_channel(t, ch: int, rf_2t2r: bool = True, bw20: bool = True) -> None:
+    """[SRC] config_phydm_switch_channel_8822b — set RF channel + per-channel BB, both paths."""
+    rf18 = sipi.read_rf_reg(t, sipi.RF_PATH_A, RF_0x18)
+    rf18 &= ~((1 << 18) | (1 << 17) | 0xFF)        # clear band/byte0, keep BW bits
+
+    if ch <= 14:                                   # 2.4 GHz
+        rf18 |= ch
+        sipi.set_bb_reg(t, 0x0958, 0x1F, 0x0)      # AGC table 0
+        sipi.set_bb_reg(t, 0x0860, 0x1FFE0000, 0x96A)
+        if ch == 14:
+            sipi.set_bb_reg(t, 0x0A24, 0xFFFFFFFF, 0x00006577)
+            sipi.set_bb_reg(t, 0x0A28, 0x0000FFFF, 0x0000)
+        else:
+            sipi.set_bb_reg(t, 0x0A24, 0xFFFFFFFF, 0x384F6577)
+            sipi.set_bb_reg(t, 0x0A28, 0x0000FFFF, 0x1525)
+    else:                                          # 5 GHz
+        rf18 |= ch
+        if 36 <= ch <= 64:
+            sipi.set_bb_reg(t, 0x0958, 0x1F, 0x1)
+        elif 100 <= ch <= 144:
+            sipi.set_bb_reg(t, 0x0958, 0x1F, 0x2)
+        elif ch >= 149:
+            sipi.set_bb_reg(t, 0x0958, 0x1F, 0x3)
+        if 36 <= ch <= 48:
+            sipi.set_bb_reg(t, 0x0860, 0x1FFE0000, 0x494)
+        elif 52 <= ch <= 64:
+            sipi.set_bb_reg(t, 0x0860, 0x1FFE0000, 0x453)
+        elif 100 <= ch <= 116:
+            sipi.set_bb_reg(t, 0x0860, 0x1FFE0000, 0x452)
+        elif 118 <= ch <= 177:
+            sipi.set_bb_reg(t, 0x0860, 0x1FFE0000, 0x412)
+
+    rf_be = _rf_0xbe(ch)                            # phase-noise RF_0xBE[17:15]
+    sipi.set_rf_reg(t, sipi.RF_PATH_A, RF_0xbe, (1 << 17) | (1 << 16) | (1 << 15), rf_be)
+
+    if ch == 144:                                  # ch-144 synth workaround
+        sipi.set_rf_reg(t, sipi.RF_PATH_A, RF_0xdf, 1 << 18, 0x1)
+        rf18 |= (1 << 17)
+    else:
+        sipi.set_rf_reg(t, sipi.RF_PATH_A, RF_0xdf, 1 << 18, 0x0)
+        if ch > 144:
+            rf18 |= (1 << 18)
+        elif ch >= 80:
+            rf18 |= (1 << 17)
+
+    sipi.set_rf_reg(t, sipi.RF_PATH_A, RF_0x18, sipi.RFREGOFFSETMASK, rf18)
+    if rf_2t2r:
+        sipi.set_rf_reg(t, sipi.RF_PATH_B, RF_0x18, sipi.RFREGOFFSETMASK, rf18)
+
+    sipi.set_rf_reg(t, sipi.RF_PATH_A, RF_0xb8, 1 << 19, 0)   # RF read-error debug toggle
+    sipi.set_rf_reg(t, sipi.RF_PATH_A, RF_0xb8, 1 << 19, 1)
+
+    _igi_toggle(t)
+    _ccapar_by_rfe(t, ch, bw20)
+    _spur_reset(t, ch, bw20)
+
+
+def _rf_0xbe(ch: int) -> int:
+    if ch <= 14:
+        return 0x0
+    if 36 <= ch <= 64:
+        return _LOW_BAND[(ch - 36) >> 1]
+    if 100 <= ch <= 144:
+        return _MID_BAND[(ch - 100) >> 1]
+    if 149 <= ch <= 177:
+        return _HIGH_BAND[(ch - 149) >> 1]
+    return 0xFF
