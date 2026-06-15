@@ -266,6 +266,15 @@ Port the per-channel unit once and run it from `set_channel`, gating it against 
   `phydm_ccapar_by_rfe_8822b`, `phydm_spur_calibration_8822b` (the read-dependent one). The capture
   tail (op ~28784→end) is the ground-truth slice (ch1 settle), but it interleaves switch_channel
   with spur-cal + DIG, so the slice covers the whole per-channel cluster.
+  Confirmed dispatch for this card (all source read): `switch_band` 2.4G sets `0x808[28]=1`,
+  `0x454[7]=0`, `0xa80[18]=0`, `0x814[15:10]=15`, then a read-dependent SoML branch on `0x19a8[31]`
+  (rfe_type 3 → SoML-on: `0x8cc=0x08108492`, `0x8d8[19]=0`, `0x8d8[27]=1`), writes RF_A/RF_B `0x18`
+  (band bits cleared), calls `phydm_rfe_8822b`+`spur_calibration`. `switch_bandwidth` 20 MHz:
+  `0x8ac &= 0xFFCFFC00` (| 0), `0x8c4[30]=1`, RF18 `|= BIT11|BIT10`. `phydm_igi_toggle_8822b` is
+  5 RMWs of `0xc50`/`0xe50[6:0]` (igi-2 then igi). `phydm_rfe_8822b` for rfe_type 3 →
+  `phydm_rfe_ifem`. **Gate plan (M6):** port the trio + all helpers (incl. spur_cal, fed the
+  slice's reads by the replay) and byte-diff against the ch1-settle tail with a sliced ReplayDevice
+  — a focused milestone, not a tail-of-session add.
 - **RX enable + monitor RX tail** → first beacons (RCR/monitor config is wifit3-side, like the
   other drivers — not a capture replay).
 - **IQK + LCK** (RX-relevant image rejection / LO cal) — port if RX is deaf without them; one-time.
