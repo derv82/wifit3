@@ -58,6 +58,28 @@ BIT_WL_PLATFORM_RST = 1 << 16          # bit2.h:58085
 BIT_BOOT_FSPI_EN = 1 << 20             # bit2.h:12788 (boot-from-flash; cleared for driver FW DL)
 BIT_FSPI_EN = 1 << 19                  # bit2.h:7200
 
+# --- Firmware download (HALMAC iDDMA) -------------------------------------
+# FW blob: morrownr array_mp_8822b_fw_nic (v30.20, 161240 B) — NOT the linux-firmware
+# rtw88 blob (161176 B, different version). The cold captures were taken with the morrownr
+# driver, so the vendor array is the wire ground truth. [SRC] hal/rtl8822b/hal8822b_fw.c:13389
+FW_BLOB_SIZE = 161240
+# WLAN_FW header field offsets [SRC] hal/halmac/halmac_fw_info.h:22-40
+WLAN_FW_HDR_SIZE = 64
+WLAN_FW_HDR_CHKSUM_SIZE = 8
+WLAN_FW_HDR_MEM_USAGE = 24             # BIT(4) => emem present
+WLAN_FW_HDR_H2C_FMT_VER = 28
+WLAN_FW_HDR_DMEM_ADDR = 32
+WLAN_FW_HDR_DMEM_SIZE = 36
+WLAN_FW_HDR_IMEM_SIZE = 48
+WLAN_FW_HDR_EMEM_SIZE = 52
+WLAN_FW_HDR_EMEM_ADDR = 56
+WLAN_FW_HDR_IMEM_ADDR = 60
+# DMA / packet sizing [SRC] halmac_88xx_cfg.h:29,38, halmac_init_88xx.c:60, h2c_extra_info_nic.h:25
+TX_DESC_SIZE_88XX = 48
+OCPBASE_TXBUF_88XX = 0x18780000
+DLFW_PKT_MAX_SIZE = 8192
+DLFW_RSVDPG_SIZE = 2048
+
 # --- power-state detection markers (mac_pwr_switch_usb_8822b) --------------
 # [SRC] hal/halmac/halmac_88xx/halmac_8822b/halmac_usb_8822b.c:44-92
 REG_RPWM = 0xFE58                      # :44  (RPWM — leave-32K toggle)
