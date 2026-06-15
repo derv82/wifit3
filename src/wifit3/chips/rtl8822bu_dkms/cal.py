@@ -40,6 +40,20 @@ def rfe_init(t) -> None:
     sipi.set_bb_reg(t, 0x0974, (1 << 11) | (1 << 10), 0x3)
 
 
+def init_cck_setting(t) -> None:
+    """[SRC] phydm_init_cck_setting + phydm_config_cck_rx_antenna_init (2SS) — CCK RX setup.
+
+    cck_new_agc_chk reads 0xA9C[17]; is_cck_high_power reads CCK_RPT_FORMAT (0x804); both cache
+    software flags (the replay feeds them). cck_lna_bit_num_chk is a no-op on 8822b."""
+    sipi.get_bb_reg(t, 0x0A9C, 1 << 17)              # cck_new_agc flag
+    t.read32(0x0804)                                  # is_cck_high_power (CCK_RPT_FORMAT) — cached
+    sipi.set_bb_reg(t, 0x0A00, 1 << 15, 0x0)          # disable ant diversity
+    sipi.set_bb_reg(t, 0x0A70, 1 << 7, 0x0)           # concurrent CCA at LSB & USB
+    sipi.set_bb_reg(t, 0x0A74, 1 << 8, 0x0)           # RX path diversity enable
+    sipi.set_bb_reg(t, 0x0A14, 1 << 7, 0x0)           # r_en_mrc_antsel
+    sipi.set_bb_reg(t, 0x0A20, (1 << 5) | (1 << 4), 0x1)   # MBC weighting
+
+
 def _config_tx_path(t, tx_path: int, sel_1ss: int, sel_cck: int) -> None:
     """[SRC] phydm_config_tx_path_8822b + the CCK/OFDM TX-path helpers."""
     sipi.set_bb_reg(t, 0x093C, (1 << 19) | (1 << 18), 0x3)     # TX antenna by Nsts

@@ -64,4 +64,5 @@ def cold_bringup(t):
     cal.config_trx_mode(t)                 # config_phydm_trx_mode: 2T2R TX/RX path + RF mode
     cal.aac_check(t)                       # one-off AAC check (RF_A 0xC9) before the DM init
     cal.rfe_init(t)                        # phydm_rfe_8822b_init: RFE pin mux (DM init start)
+    cal.init_cck_setting(t)                # phydm_init_cck_setting: CCK RX antenna/MRC setup
     return info, e
