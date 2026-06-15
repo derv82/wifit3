@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from . import pwrseq
 from .mac_reg_tbl import MAC_REG_TBL
 from .constants import (
+    BIT_APP_PHYSTS,
     BIT_AUTO_INIT_LLT_V1,
     BIT_BOOT_FSPI_EN,
     BIT_EN_BCN_FUNCTION,
@@ -41,6 +42,7 @@ from .constants import (
     MAC_TRX_ENABLE,
     MCUFW_CTRL_FW_EXIST,
     PG_NUM_NORMAL_3BULKOUT,
+    REG_AFE_CTRL1,
     REG_AMPDU_MAX_TIME_V1,
     REG_AUTO_LLT_V1,
     REG_BAR_MODE_CTRL,
@@ -86,8 +88,10 @@ from .constants import (
     REG_RPWM,
     REG_RQPN_CTRL_2,
     REG_RSV_CTRL,
+    REG_RX_DRVINFO_SZ,
     REG_RX_PKT_LIMIT,
     REG_RXDMA_AGG_PG_TH,
+    REG_TRXFF_BNDY,
     REG_RXFF_BNDY,
     REG_RXFLTMAP0,
     REG_RXFLTMAP2,
@@ -157,21 +161,43 @@ _SYS_CFG2_USB3 = 0x20            # REG_SYS_CFG2+3 value that marks a USB3 link
 _POLL_CAP = 1_000_000
 
 
-def _enable_bb_rf(t, enable: bool) -> None:
+def _enable_bb_rf(t, enable: bool, pcb_info: int = 0) -> None:
     """enable_bb_rf_88xx [SRC] halmac_cfg_wmac_88xx.c:637 — gate BB/RF clocks.
 
     Power-on uses the disable path (enable=0): clear the BB enable bits of REG_SYS_FUNC_EN,
-    REG_RF_CTRL and REG_WLRF1. The enable path additionally runs board_rf_fine_tune (a cached
-    EFUSE read for the 2L-PCB XTAL tweak); it is wired at the MAC-init-for-RX milestone where
-    it can be checked against the wire it produces."""
+    REG_RF_CTRL, REG_WLRF1. The enable path first runs board_rf_fine_tune (a 2L-PCB XTAL tweak
+    that only writes REG_AFE_CTRL1 when the EFUSE PCB-info byte == 0x0C; this card's is 0x03, so
+    it is a no-op), then sets those same bits."""
     if enable:
-        raise NotImplementedError("RTL8822BU: enable_bb_rf(on) is wired at the MAC-init milestone")
+        if pcb_info == 0x0C:                                      # board_rf_fine_tune_88xx
+            t.write8(REG_AFE_CTRL1 + 1, t.read8(REG_AFE_CTRL1 + 1) | (1 << 1))
+        t.write8(REG_SYS_FUNC_EN, t.read8(REG_SYS_FUNC_EN) | (1 << 0) | (1 << 1))
+        t.write8(REG_RF_CTRL, t.read8(REG_RF_CTRL) | (1 << 0) | (1 << 1) | (1 << 2))
+        t.write32(REG_WLRF1, t.read32(REG_WLRF1) | (1 << 24) | (1 << 25) | (1 << 26))
+        return
     v = t.read8(REG_SYS_FUNC_EN)
     t.write8(REG_SYS_FUNC_EN, v & ~((1 << 0) | (1 << 1)))
     v = t.read8(REG_RF_CTRL)
     t.write8(REG_RF_CTRL, v & ~((1 << 0) | (1 << 1) | (1 << 2)))
     v = t.read32(REG_WLRF1)
     t.write32(REG_WLRF1, v & ~((1 << 24) | (1 << 25) | (1 << 26)))
+
+
+def enable_bb_rf(t, pcb_info: int) -> None:
+    """The set_hw_value(HALMAC_HW_EN_BB_RF) at the start of BB/RF init [SRC] hal_halmac.c:3643."""
+    _enable_bb_rf(t, enable=True, pcb_info=pcb_info)
+
+
+def config_rx_info(t) -> None:
+    """cfg_drv_info_8822b(HALMAC_DRV_INFO_PHY_STATUS) [SRC] halmac_cfg_wmac_8822b.c:30 — set the
+    4-byte DRVINFO size, the rxdesc-len-0 fix, RCR app-phystatus, and clear the sniffer/plcp bits;
+    then the driver re-syncs its RCR cache (a bare REG_RCR read)."""
+    t.write8(REG_RX_DRVINFO_SZ, 4)
+    t.write8(REG_TRXFF_BNDY + 1, (t.read8(REG_TRXFF_BNDY + 1) & 0xF0) | 0x0F)
+    t.write32(REG_RCR, t.read32(REG_RCR) | BIT_APP_PHYSTS)
+    t.write32(REG_WMAC_OPTION_FUNCTION + 4,
+              t.read32(REG_WMAC_OPTION_FUNCTION + 4) & ~((1 << 8) | (1 << 9)))
+    t.read32(REG_RCR)                                             # HW_VAR_RCR cache sync
 
 
 def pre_init_system_cfg(t) -> None:

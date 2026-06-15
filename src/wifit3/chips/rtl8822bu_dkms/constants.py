@@ -110,6 +110,13 @@ GENINFO_MP_MODE = 0x0
 
 # dump_fifo H2CQ readback (confirms the H2C packet landed) [SRC] halmac_common_88xx.c:1994
 # dump_fifo_88xx -> rx_clk_gate(0) + read_buf_88xx (packet-buffer debug window).
+# config_rx_info (cfg_drv_info_8822b) + enable_bb_rf(on) [SRC] halmac_cfg_wmac_8822b.c:30,
+# halmac_cfg_wmac_88xx.c:637 board_rf_fine_tune. DRVINFO size 4 / PHYSTS enable.
+REG_TRXFF_BNDY = 0x0114               # +1: low nibble forced 0xF (rxdesc-len-0 fix)
+BIT_APP_PHYSTS = 1 << 28              # REG_RCR app-phystatus
+REG_AFE_CTRL1 = 0x0024                # board_rf_fine_tune: +1 BIT(1) when PCB-info == 0x0C
+EFUSE_PCB_INFO_OFFSET = 0xCA          # [SRC] halmac_cfg_wmac_88xx.c (== the rfe_type byte)
+
 REG_PKTBUF_DBG_CTRL = 0x0140          # [SRC] halmac_reg2.h:934 (start-page select)
 FIFO_DUMP_DATA_BASE = 0x8000          # the 4KB pkt-buf data window (R32 at base + residue)
 FIFO_TX_START_PG = 0x780              # TX-FIFO start-page bias [SRC] read_buf_88xx:2063

@@ -71,6 +71,8 @@ def _bringup(t) -> None:
                                alloc.rsvd_fw_txbuf_addr - alloc.rsvd_boundary, alloc.rsvd_h2cq_addr,
                                rf_type=2, rf_type_drv=2, tx_ant=3, rx_ant=3, package_type=7)
     mac.init_mac_register(t)               # rtl8822b_phy_init_mac_register: PHYDM MAC-reg table
+    mac.config_rx_info(t)                  # cfg_drv_info(PHY_STATUS): DRVINFO sz + RCR app-physts
+    mac.enable_bb_rf(t, e.log_map[0xCA])   # set_hw_value(EN_BB_RF): turn on BB/RF clocks
 
 
 def run(cap: str | None = None) -> int:
