@@ -34,11 +34,16 @@ from .constants import (
     BIT_TXDMA_EN,
     DLFW_RESTORE_REG_NUM,
     DLFW_USB_PKT_SIZE,
+    FIFO_DUMP_DATA_BASE,
+    FIFO_TX_START_PG,
     FW_BLOB_SIZE,
     GENINFO_EXT_PA,
     GENINFO_MP_MODE,
     GENINFO_PACKAGE_TYPE,
+    GENINFO_REG_CLASS,
+    GENINFO_REG_CMD_ID,
     GENINFO_RF_TYPE,
+    GENINFO_RF_TYPE_DRV,
     GENINFO_RX_ANT_STATUS,
     GENINFO_TX_ANT_STATUS,
     H2C_CATEGORY,
@@ -62,9 +67,14 @@ from .constants import (
     REG_FIFOPAGE_INFO_1,
     REG_FWHW_TXQ_CTRL,
     REG_H2CQ_CSR,
+    REG_HMEBOX0,
+    REG_HMEBOX_E0,
+    REG_HMETFR,
     REG_LTECOEX_READ_DATA,
     REG_LTECOEX_WRITE_DATA,
     REG_MCUFW_CTRL,
+    REG_PKTBUF_DBG_CTRL,
+    REG_RCR,
     REG_RQPN_CTRL_2,
     REG_RSV_CTRL,
     REG_SYS_CLK_CTRL,
@@ -76,6 +86,7 @@ from .constants import (
     SUB_CMD_ID_GENERAL_INFO,
     SUB_CMD_ID_PHYDM_INFO,
     TX_DESC_SIZE_88XX,
+    TX_PAGE_SIZE_SHIFT,
     TXDESC_QSEL_BEACON,
     TXDESC_QSEL_H2C_CMD,
     WLAN_FW_HDR_CHKSUM_SIZE,
@@ -379,11 +390,30 @@ def _send_h2c(t, pkt: bytes) -> None:
     t.bulk_out(build_fw_txdesc(H2C_PKT_SIZE, qsel=TXDESC_QSEL_H2C_CMD, offset=0) + pkt)
 
 
-def send_general_info(t, rfe_type: int, chip_ver: int, fw_tx_boundary: int) -> None:
+def _dump_h2cq_fifo(t, rsvd_h2cq_addr: int) -> bytes:
+    """dump_fifo_88xx(HAL_FIFO_SEL_TX, h2cq_addr, 4) [SRC] halmac_common_88xx.c:1994 — read 4
+    bytes from the H2C ring via the packet-buffer debug window (gate RX clock first, restore
+    after). Used to confirm the FW consumed the H2C packet."""
+    h2cq_addr = rsvd_h2cq_addr << TX_PAGE_SIZE_SHIFT
+    rcr2 = t.read8(REG_RCR + 2)
+    t.write8(REG_RCR + 2, t.read8(REG_RCR + 2) | (1 << 3))     # rx_clk_gate(off)
+    start_pg = (h2cq_addr >> 12) + FIFO_TX_START_PG
+    residue = h2cq_addr & 0xFFF
+    keep = t.read16(REG_PKTBUF_DBG_CTRL) & 0xF000
+    t.write16(REG_PKTBUF_DBG_CTRL, start_pg | keep)
+    ele = t.read32(FIFO_DUMP_DATA_BASE + residue).to_bytes(4, "little")
+    t.write16(REG_PKTBUF_DBG_CTRL, keep)
+    t.write8(REG_RCR + 2, rcr2)
+    return ele
+
+
+def send_general_info(t, rfe_type: int, chip_ver: int, fw_tx_boundary: int,
+                      rsvd_h2cq_addr: int) -> None:
     """_send_general_info [SRC] hal_halmac.c — after FW download, hand the FW its general info
-    and PHYDM info via two H2C packets. ``fw_tx_boundary`` = rsvd_fw_txbuf_addr - rsvd_boundary
-    (48 on this card). rfe_type/chip_ver are decoded; the rf-type/antenna/package fields are the
-    driver's get_trx_path/PackageType result for this card (see GENINFO_* constants)."""
+    and PHYDM info via two H2C packets, then read the H2C ring back to confirm it landed.
+    ``fw_tx_boundary`` = rsvd_fw_txbuf_addr - rsvd_boundary (48 on this card). rfe_type/chip_ver
+    are decoded; the rf-type/antenna/package fields are the driver's get_trx_path/PackageType
+    result for this card (see GENINFO_* constants)."""
     # packet 0: general info — only FW_TX_BOUNDARY (+0x08[16:24]). [SRC] proc_send_general_info_88xx
     gen = bytearray(H2C_PKT_SIZE)
     _h2c_header(gen, SUB_CMD_ID_GENERAL_INFO, content_size=4, seq=0)
@@ -402,3 +432,34 @@ def send_general_info(t, rfe_type: int, chip_ver: int, fw_tx_boundary: int) -> N
     _set_le32_bits(phy, 0x0C, 8, 8, GENINFO_PACKAGE_TYPE)
     _set_le32_bits(phy, 0x0C, 16, 1, GENINFO_MP_MODE)
     _send_h2c(t, bytes(phy))
+
+    # confirm the H2C landed: read the ring back until the general-info header reappears.
+    for _ in range(100):
+        ele = _dump_h2cq_fifo(t, rsvd_h2cq_addr)
+        if (ele[0] & 0x7F) == H2C_CATEGORY and ele[1] == H2C_CMD_ID:
+            break
+    else:
+        raise RuntimeError("RTL8822BU: H2CQ readback never matched the general-info header")
+
+    _send_general_info_by_reg(t, rfe_type, chip_ver)
+
+
+def _send_general_info_by_reg(t, rfe_type: int, chip_ver: int) -> None:
+    """_send_general_info_by_reg [SRC] hal_halmac.c — a companion 8-byte reg-H2C (class/cmd +
+    rfe/rf/cut/ant) pushed through the HMEBOX, alongside the FW-offload H2C above."""
+    h2c = bytearray(8)
+    _set_le32_bits(h2c, 0, 0, 5, GENINFO_REG_CMD_ID)
+    _set_le32_bits(h2c, 0, 5, 3, GENINFO_REG_CLASS)
+    _set_le32_bits(h2c, 0, 8, 8, rfe_type)
+    _set_le32_bits(h2c, 0, 16, 8, GENINFO_RF_TYPE_DRV)
+    _set_le32_bits(h2c, 0, 24, 8, chip_ver)            # PHYDM cut (ODM_CUT_x == chip_ver)
+    h2c[4] = (GENINFO_RX_ANT_STATUS & 0xF) | ((GENINFO_TX_ANT_STATUS & 0xF) << 4)
+
+    # rtw_halmac_send_h2c, box 0: wait the box free (HMETFR BIT0), then ext then cmd.
+    for _ in range(100):
+        if (t.read8(REG_HMETFR) & (1 << 0)) == 0:
+            break
+    else:
+        raise RuntimeError("RTL8822BU: HMEBOX 0 never went free")
+    t.write32(REG_HMEBOX_E0, int.from_bytes(h2c[4:8], "little"))
+    t.write32(REG_HMEBOX0, int.from_bytes(h2c[0:4], "little"))

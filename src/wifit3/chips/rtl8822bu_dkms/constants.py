@@ -108,6 +108,22 @@ GENINFO_EXT_PA = 0x0
 GENINFO_PACKAGE_TYPE = 0x0
 GENINFO_MP_MODE = 0x0
 
+# dump_fifo H2CQ readback (confirms the H2C packet landed) [SRC] halmac_common_88xx.c:1994
+# dump_fifo_88xx -> rx_clk_gate(0) + read_buf_88xx (packet-buffer debug window).
+REG_PKTBUF_DBG_CTRL = 0x0140          # [SRC] halmac_reg2.h:934 (start-page select)
+FIFO_DUMP_DATA_BASE = 0x8000          # the 4KB pkt-buf data window (R32 at base + residue)
+FIFO_TX_START_PG = 0x780              # TX-FIFO start-page bias [SRC] read_buf_88xx:2063
+
+# _send_general_info_by_reg: the companion reg-H2C over the HMEBOX [SRC] hal_halmac.c
+# _send_general_info_by_reg + rtw_halmac_send_h2c. Box 0 (LastHMEBoxNum reset to 0 at FW DL).
+REG_HMETFR = 0x01CC                   # [SRC] halmac_reg2.h:1137 (box-free flags, BIT(box))
+REG_HMEBOX0 = 0x01D0                  # [SRC] :1138 (cmd bytes 0..3)
+REG_HMEBOX_E0 = 0x01F0                # [SRC] :1186 (ext bytes 4..7)
+GENINFO_REG_CMD_ID = 0x0C            # [byte0 0:5]
+GENINFO_REG_CLASS = 0x02            # [byte0 5:3]
+GENINFO_RF_TYPE_DRV = 0x00          # _rf_type_halmac2drv(rf_type) [WIRE]
+# cut byte = the PHYDM cut (ODM_CUT_x == chip_ver for A..F), passed in as chip_ver.
+
 # Pre-download TX-FIFO-empty gate [SRC] halmac_common_88xx.c:3271 txfifo_is_empty_88xx (chk=10)
 REG_TXPKT_EMPTY = 0x041A
 

@@ -48,9 +48,10 @@ def _bringup(t) -> None:
     firmware.download(t, firmware.load_firmware_blob())   # M3: HALMAC iDDMA FW upload
     mac.init_mac_cfg(t)                    # M4: init_mac_cfg — trx + protocol + edca + wmac RX
     mac.init_mac_flow_tail(t)              # M4: RCR sync + RTS-full-bw + USB RX aggregation
-    alloc = mac.set_trx_fifo_info()        # M4: _send_general_info — two FW-offload H2C packets
+    alloc = mac.set_trx_fifo_info()        # M4: _send_general_info — H2C packets + H2CQ readback
     firmware.send_general_info(t, e.rfe_type, info.chip_ver,
-                               alloc.rsvd_fw_txbuf_addr - alloc.rsvd_boundary)
+                               alloc.rsvd_fw_txbuf_addr - alloc.rsvd_boundary,
+                               alloc.rsvd_h2cq_addr)
 
 
 def run(cap: str | None = None) -> int:
