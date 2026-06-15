@@ -6,12 +6,11 @@
 > init_system_cfg), and the **HALMAC iDDMA firmware download** (40 bulk packets + DDMA
 > copy + FW-ready 0xC078) all reproduce **byte-for-byte on capture-1/2/3** (~5139 ops; the
 > few-op spread across captures is variable poll counts the loops reproduce). Gate frontier
-> now at **`init_mac_cfg` COMPLETE** (trx + protocol + edca + wmac-RX incl. RCR `0xE400220E`)
-> on capture-1/2/3 (~5229 ops); frontier at the post-init RCR-sync read (`R 0x608`, the start of
-> `init_mac_flow`'s driver tail). Next = the driver tail (`set_rts_full_bw` / `rx_agg_switch` /
-> `cfg_operation_mode`), then BB+RF (PHYDM), calibration, channel tune, monitor RX. Promote
-> sections to ground truth with `[SRC]`/`[WIRE]` citations; by the end this reads like
-> `rtl8812au_dkms/RTL8812AU_DKMS.md`.
+> now at **`init_mac_flow` COMPLETE** (init_mac_cfg trx/protocol/edca/wmac-RX + the driver tail:
+> RCR sync, RTS-full-bw, USB RX-aggregation) on capture-1/2/3 (~5241 ops); frontier at
+> `_send_general_info` (an 80-byte H2C packet on bulk-OUT). Next = `_send_general_info` (H2C),
+> then BB+RF (PHYDM), calibration, channel tune, monitor RX. Promote sections to ground truth
+> with `[SRC]`/`[WIRE]` citations; by the end this reads like `rtl8812au_dkms/RTL8812AU_DKMS.md`.
 
 ## Verified facts (ground truth so far)
 

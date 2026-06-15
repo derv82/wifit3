@@ -262,6 +262,19 @@ REG_WMAC_OPTION_FUNCTION = 0x07D0       # +8: MAC_OPT_FUNC2, +4: MAC_OPT_NORM_FU
 WLAN_MAC_OPT_FUNC2 = 0x30810041
 WLAN_MAC_OPT_NORM_FUNC1 = 0x98
 
+# --- init_mac_flow driver tail: RTS-full-bw + USB RX aggregation -------------
+# [SRC] hal_halmac.c init_mac_flow:3452 (HW_VAR_RCR sync, set_rts_full_bw, rx_agg_switch);
+# cfg_usb_rx_agg_88xx [SRC] halmac_usb_88xx.c:88; cfg_operation_mode/init_low_pwr are no-ops.
+REG_RXDMA_AGG_PG_TH = 0x0280            # +3 = DMA/USB agg select (BIT7); 16-bit = size|to<<8
+BIT_RXDMA_AGG_EN = 1 << 2              # in REG_TXDMA_PQ_MAP
+BIT_EN_PRE_CALC = 1 << 29             # size-limit pre-calc in REG_RXDMA_AGG_PG_TH
+BIT_SHIFT_DMA_AGG_TO = 8
+# USB RX-agg mode (morrownr default rxagg_mode = RX_AGG_USB). size/timeout from the link check:
+# REG_SYS_CFG2+3 == 0x20 -> USB3 (5/0xA) else (5/0x20). [WIRE] reads 0x80 here -> the else branch.
+RXAGG_USB_SIZE = 0x5
+RXAGG_USB_TIMEOUT_USB3 = 0xA
+RXAGG_USB_TIMEOUT_OTHER = 0x20
+
 # --- power-state detection markers (mac_pwr_switch_usb_8822b) --------------
 # [SRC] hal/halmac/halmac_88xx/halmac_8822b/halmac_usb_8822b.c:44-92
 REG_RPWM = 0xFE58                      # :44  (RPWM — leave-32K toggle)

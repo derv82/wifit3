@@ -29,6 +29,8 @@ DEFAULT_CAP = REPO / "usb_dumps_new" / "captures_rtl88x2bu" / "capture-1.pcap"
 
 
 def _fmt(op: dict) -> str:
+    if op.get("dir") == "BULK":
+        return f"BULK[{len(op['data'])}B]"
     d = op.get("data", b"")
     val = f"=0x{int.from_bytes(d, 'little'):0{max(len(d) * 2, 2)}x}" if d else ""
     return f"{op['dir']} 0x{op['wval']:04x}/{op['width']}{val}"
@@ -45,6 +47,7 @@ def _bringup(t) -> None:
     t.write8(0x01A0, 0xFD)                 # C2HEVT_MSG_NORMAL = C2H_DEFEATURE_RSVD (mac_hidden_rpt)
     firmware.download(t, firmware.load_firmware_blob())   # M3: HALMAC iDDMA FW upload
     mac.init_mac_cfg(t)                    # M4: init_mac_cfg — trx + protocol + edca + wmac RX
+    mac.init_mac_flow_tail(t)              # M4: RCR sync + RTS-full-bw + USB RX aggregation
 
 
 def run(cap: str | None = None) -> int:

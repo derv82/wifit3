@@ -25,11 +25,14 @@ from .constants import (
     BIT_BOOT_FSPI_EN,
     BIT_EN_BCN_FUNCTION,
     BIT_EN_EOF_V1,
+    BIT_EN_PRE_CALC,
     BIT_FSPI_EN,
     BIT_FWEN,
     BIT_MASK_BLK_DESC_NUM,
     BIT_R_DISABLE_CHECK_VHTSIGB_CRC,
+    BIT_RXDMA_AGG_EN,
     BIT_SHIFT_BLK_DESC_NUM,
+    BIT_SHIFT_DMA_AGG_TO,
     BIT_WL_PLATFORM_RST,
     BLK_DESC_NUM,
     C2H_PKT_BUF,
@@ -83,6 +86,7 @@ from .constants import (
     REG_RQPN_CTRL_2,
     REG_RSV_CTRL,
     REG_RX_PKT_LIMIT,
+    REG_RXDMA_AGG_PG_TH,
     REG_RXFF_BNDY,
     REG_RXFLTMAP0,
     REG_RXFLTMAP2,
@@ -117,6 +121,9 @@ from .constants import (
     RSVD_PG_H2C_STATICINFO_NUM,
     RSVD_PG_H2CQ_NUM,
     RX_FIFO_SIZE_8822B,
+    RXAGG_USB_SIZE,
+    RXAGG_USB_TIMEOUT_OTHER,
+    RXAGG_USB_TIMEOUT_USB3,
     SYS_FUNC_EN,
     TX_FIFO_SIZE_8822B,
     TX_PAGE_SIZE_SHIFT,
@@ -404,3 +411,32 @@ def init_mac_cfg(t) -> None:
     init_protocol_cfg(t)
     init_edca_cfg(t)
     init_wmac_cfg(t)
+
+
+def _cfg_usb_rx_agg(t) -> None:
+    """cfg_usb_rx_agg_88xx [SRC] halmac_usb_88xx.c:88 — USB RX aggregation (the morrownr default
+    rxagg_mode is USB). Enables agg in REG_TXDMA_PQ_MAP, selects USB (not DMA) agg, and sets the
+    size/timeout threshold from the link-speed check."""
+    dma_usb_agg = t.read8(REG_RXDMA_AGG_PG_TH + 3)
+    agg_enable = t.read8(REG_TXDMA_PQ_MAP)
+    agg_enable |= BIT_RXDMA_AGG_EN          # RX_AGG_MODE_USB
+    dma_usb_agg &= ~(1 << 7)
+    if t.read8(REG_SYS_CFG2 + 3) == _SYS_CFG2_USB3:
+        size, timeout = RXAGG_USB_SIZE, RXAGG_USB_TIMEOUT_USB3
+    else:
+        size, timeout = RXAGG_USB_SIZE, RXAGG_USB_TIMEOUT_OTHER
+    # size_limit_en is always set (avoid an RX over the driver's buffer size).
+    t.write32(REG_RXDMA_AGG_PG_TH, t.read32(REG_RXDMA_AGG_PG_TH) | BIT_EN_PRE_CALC)
+    t.write8(REG_TXDMA_PQ_MAP, agg_enable)
+    t.write8(REG_RXDMA_AGG_PG_TH + 3, dma_usb_agg)
+    t.write16(REG_RXDMA_AGG_PG_TH, size | (timeout << BIT_SHIFT_DMA_AGG_TO))
+
+
+def init_mac_flow_tail(t) -> None:
+    """The driver-side tail of init_mac_flow after init_mac_cfg [SRC] hal_halmac.c:3452:
+    sync the RCR cache, enable RTS full-BW (the morrownr build defines CONFIG_RTS_FULL_BW),
+    and turn on USB RX aggregation. _init_trx_cfg_drv (PCI-only) and cfg_operation_mode (empty)
+    add no IO here."""
+    t.read32(REG_RCR)                       # HW_VAR_RCR sync read [SRC] rtl8822b_ops.c:2076
+    t.write8(REG_INIRTS_RATE_SEL, t.read8(REG_INIRTS_RATE_SEL) | (1 << 5))   # rts_full_bw(on)
+    _cfg_usb_rx_agg(t)
