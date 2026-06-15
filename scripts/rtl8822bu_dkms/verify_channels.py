@@ -84,15 +84,8 @@ def verify(cap_name: str) -> int:
             continue
         f0, f1 = nums[s], nums[min(e, len(nums) - 1)]
         win = [o for o in ctrl if f0 <= o["frame"] <= f1]
-        # A 2.4<->5 crossing runs config_phydm_switch_band_8822b first (which also opens with the
-        # RF-0x18 read), so the head op alone can't tell it apart — skip by the channel sequence.
-        # Band switch is the next milestone.
-        if crossing:
-            nskip += 1
-            print(f"  ch {ch:>3}: SKIP (2.4<->5 crossing: band switch first, not yet ported)")
-            continue
-        # Each same-band retune begins at switch_channel's RF_A 0x18 read; anything else is a slice
-        # artifact (e.g. a window that opens mid-cal).
+        # Both the same-band retune (switch_channel) and a crossing's band switch open with the
+        # RF_A 0x18 read; anything else is a slice artifact (a window that opens mid-cal).
         head = next((o for o in win if o["wval"] != 0x04E0), None)
         if not (head and head["dir"] == "IN" and head["wval"] == RF_A_0x18_READ):
             nskip += 1
@@ -102,7 +95,7 @@ def verify(cap_name: str) -> int:
         dev = rp.ReplayDevice(win)
         t = Rtl8822buTransport(dev)
         try:
-            chan.set_channel_bw(t, ch)
+            chan.set_channel_bw(t, ch, prev_ch=prev)
         except rp.Divergence as d:
             print(f"  ch {ch:>3}: FAIL -- {d}")
             nfail += 1
@@ -111,12 +104,17 @@ def verify(cap_name: str) -> int:
             print(f"  ch {ch:>3}: SKIP (PSD spur channel) -- {d}")
             nskip += 1
             continue
-        # set_channel_bw should land on the deferred per-channel DPK (the 0x1Dxx LUT region).
+        # set_channel_bw should land on the deferred cal: the per-channel DPK (0x1Dxx LUT), or on
+        # a crossing the BT-coex band-notify (rtw_btcoex_..._switchband_notify, the lone 0xCBC
+        # antenna write) which precedes it. Both are separate, deferred subsystems.
         nxt = next((win[k] for k in range(dev.i, len(win)) if win[k]["wval"] != 0x04E0), None)
-        boundary = nxt is not None and 0x1D00 <= nxt["wval"] <= 0x1DFF
+        on_dpk = nxt is not None and 0x1D00 <= nxt["wval"] <= 0x1DFF
+        on_coex = nxt is not None and nxt["wval"] == 0x0CBC
         npass += 1
-        edge = "-> DPK boundary" if boundary else f"-> next 0x{nxt['wval']:04x}" if nxt else "-> end"
-        print(f"  ch {ch:>3}: PASS -- set_channel_bw byte-for-byte ({dev.i} ops) {edge}")
+        edge = ("-> DPK boundary" if on_dpk else "-> coex band-notify (then DPK)" if on_coex
+                else f"-> next 0x{nxt['wval']:04x}" if nxt else "-> end")
+        kind = "set_channel_bw+band" if crossing else "set_channel_bw"
+        print(f"  ch {ch:>3}: PASS -- {kind} byte-for-byte ({dev.i} ops) {edge}")
 
     print(f"\n{cap_name}: {npass} PASS, {nfail} FAIL, {nskip} skipped "
           f"(band crossings + PSD spur channels — later milestones).")

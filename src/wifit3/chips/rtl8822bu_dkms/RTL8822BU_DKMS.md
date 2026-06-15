@@ -285,11 +285,20 @@ Port the per-channel unit once and run it from `set_channel`, gating it against 
     `0x948/0x94c[29:28]=2`+`0xc20/0xe20[31]=1`, re-run `ccapar`+`spur_reset`, `phydm_bw_fixed_setting`
     `0x840[3:0]=0`/`[4]=1`, `0x808` RX-path toggle to `0x33`, re-run `igi_toggle`). Each hop lands
     **exactly on the deferred per-channel DPK** (`0x1Dxx` LUT) — that's the boundary, verified.
-  - **Band switch — NEXT (the 2 crossings).** `config_phydm_switch_band_8822b` (2.4↔5): 2.4G sets
-    `0x808[28]=1`/`0x454[7]=0`/`0xa80[18]=0`/`0x814[15:10]=15`; 5G sets them inverted +
-    `0x814=34`; both run the SoML branch on `0x19a8[31]` (rfe-3: `0xc04/0xe04[18,21]=0`, `0x8cc`,
-    `0x8d8`), write RF_A/B `0x18` band bits, then `phydm_rfe_ifem` + `spur`. The 2 crossing hops
-    (ch 36, final ch 1) verify-SKIP until this lands; `set_channel_bw` takes `prev_ch` to decide.
+  - **Band switch (CLEARED — both 2.4↔5 crossings byte-for-byte).** `chan.switch_band`
+    (`config_phydm_switch_band_8822b`): 2.4G sets `0x808[28]=1`/`0x454[7]=0`/`0xa80[18]=0`/
+    `0x814[15:10]=15`; 5G inverts those + `0x814=34`; both read the SoML marker `0x19a8[31]` and
+    branch (rfe-3: `0xc04/0xe04[18,21]=0`, `0x8cc`=`0x08108492`/`0x8d8[27]=1`, except 5G SoML-on →
+    `0x08108000`/`0x8d8[27]=0`), write RF_A/B `0x18` band bits, then `phydm_rfe_ifem`
+    (`0xcb0/0xcb4/0xcbc/0xca0`, both paths) + `spur_reset`. `set_channel_bw(prev_ch=…)` runs it
+    when `prev_ch` is on the other side of ch 14. The 2 crossing hops (ch 36, final ch 1) reproduce
+    the full PHYDM tune byte-for-byte and stop at the lone `0xCBC` BT-coex band-notify
+    (`rtw_btcoex_wifionly_switchband_notify`, a separate subsystem — wifit3 is BT-coex-less) which
+    precedes the deferred DPK.
+
+  **Net: `set_channel` is complete** — `verify_channels.py` clears **29/29/28 hops byte-for-byte**
+  on capture-1/2/3 (every same-band 2.4 + 5 GHz hop + both band crossings). Skips: the 6 PSD spur
+  channels (above) + a few slicing artifacts (windows whose iw-epoch→frame head lands mid-cal).
 - **RX enable + monitor RX tail** → first beacons (RCR/monitor config is wifit3-side, like the
   other drivers — not a capture replay).
 - **IQK + LCK** (RX-relevant image rejection / LO cal) — port if RX is deaf without them; one-time.

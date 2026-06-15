@@ -145,6 +145,63 @@ def switch_channel(t, ch: int, rf_2t2r: bool = True, bw20: bool = True) -> None:
     _spur_reset(t, ch, bw20)
 
 
+def _rfe_ifem(t, ch: int, rx2_or_tx2: bool) -> None:
+    """[SRC] phydm_rfe_ifem: RFE pinmux/inv/antenna-switch for both paths (rfe_type 3)."""
+    if ch <= 14:
+        sipi.set_bb_reg(t, 0x0CB0, 0xFFFFFF, 0x745774)
+        sipi.set_bb_reg(t, 0x0EB0, 0xFFFFFF, 0x745774)
+        sipi.set_bb_reg(t, 0x0CB4, 0xFF00, 0x57)
+        sipi.set_bb_reg(t, 0x0EB4, 0xFF00, 0x57)
+    else:
+        sipi.set_bb_reg(t, 0x0CB0, 0xFFFFFF, 0x477547)
+        sipi.set_bb_reg(t, 0x0EB0, 0xFFFFFF, 0x477547)
+        sipi.set_bb_reg(t, 0x0CB4, 0xFF00, 0x75)
+        sipi.set_bb_reg(t, 0x0EB4, 0xFF00, 0x75)
+    for inv in (0x0CBC, 0x0EBC):
+        sipi.set_bb_reg(t, inv, 0x3F, 0x0)
+        sipi.set_bb_reg(t, inv, (1 << 11) | (1 << 10), 0x0)
+    ant = 0xA501 if (ch <= 14 and rx2_or_tx2) else (0xA5A5 if ch > 14 else 0xA500)
+    sipi.set_bb_reg(t, 0x0CA0, 0xFFFF, ant)
+    sipi.set_bb_reg(t, 0x0EA0, 0xFFFF, ant)
+
+
+def switch_band(t, ch: int, rf_2t2r: bool, rx_ant: int) -> None:
+    """[SRC] config_phydm_switch_band_8822b — 2.4<->5 band swap (only on a crossing).
+
+    The SoML branch reads 0x19a8[31] (the replay feeds it). For rfe_type 3, 2.4 GHz resolves the
+    same for both SoML states; 5 GHz differs (SoML-on uses 0x08108000/0x8d8[27]=0).
+    """
+    rf18 = sipi.read_rf_reg(t, sipi.RF_PATH_A, RF_0x18)
+    if ch <= 14:                                   # 2.4 GHz
+        sipi.set_bb_reg(t, 0x0808, 1 << 28, 0x1)   # enable CCK block
+        sipi.set_bb_reg(t, 0x0454, 1 << 7, 0x0)    # disable MAC CCK check
+        sipi.set_bb_reg(t, 0x0A80, 1 << 18, 0x0)   # disable BB CCK check
+        sipi.set_bb_reg(t, 0x0814, 0x0000FC00, 15)
+        rf18 &= ~((1 << 16) | (1 << 9) | (1 << 8))
+    else:                                          # 5 GHz
+        sipi.set_bb_reg(t, 0x0A80, 1 << 18, 0x1)
+        sipi.set_bb_reg(t, 0x0454, 1 << 7, 0x1)
+        sipi.set_bb_reg(t, 0x0808, 1 << 28, 0x0)
+        sipi.set_bb_reg(t, 0x0814, 0x0000FC00, 34)
+        rf18 &= ~((1 << 16) | (1 << 9) | (1 << 8))
+        rf18 |= (1 << 8) | (1 << 16)
+    soml_on = sipi.get_bb_reg(t, 0x19A8, 1 << 31) == 0x1   # RxHP / SoML dynamic control
+    sipi.set_bb_reg(t, 0x0C04, (1 << 18) | (1 << 21), 0x0)
+    sipi.set_bb_reg(t, 0x0E04, (1 << 18) | (1 << 21), 0x0)
+    if ch > 14 and soml_on:                        # 5 GHz SoML-on (rfe 3)
+        sipi.set_bb_reg(t, 0x08CC, 0xFFFFFFFF, 0x08108000)
+        sipi.set_bb_reg(t, 0x08D8, 1 << 27, 0x0)
+    else:                                          # 2.4 GHz (either) + 5 GHz SoML-off (rfe 3)
+        sipi.set_bb_reg(t, 0x08CC, 0xFFFFFFFF, 0x08108492)
+        sipi.set_bb_reg(t, 0x08D8, 1 << 19, 0x0)
+        sipi.set_bb_reg(t, 0x08D8, 1 << 27, 0x1)
+    sipi.set_rf_reg(t, sipi.RF_PATH_A, RF_0x18, sipi.RFREGOFFSETMASK, rf18)
+    if rf_2t2r:
+        sipi.set_rf_reg(t, sipi.RF_PATH_B, RF_0x18, sipi.RFREGOFFSETMASK, rf18)
+    _rfe_ifem(t, ch, rx_ant == BB_PATH_AB)         # phydm_rfe_8822b -> rfe_ifem (rfe_type 3)
+    _spur_reset(t, ch, bw20=True)
+
+
 def _mac_switch_bandwidth(t, ch: int, pri_idx: int = 0) -> None:
     """[SRC] mac_switch_bandwidth -> HALMAC cfg_ch_bw_88xx: pri-ch-idx + bw + mac-clk + band marker.
 
@@ -187,14 +244,16 @@ def _switch_bandwidth_20(t, ch: int, rf_2t2r: bool, rx_ant: int) -> None:
     _igi_toggle(t)
 
 
-def set_channel_bw(t, ch: int, rf_2t2r: bool = True) -> None:
-    """Runtime hop (20 MHz): switch_channel + mac/PHYDM bandwidth re-apply.
+def set_channel_bw(t, ch: int, rf_2t2r: bool = True, prev_ch: int | None = None) -> None:
+    """Runtime hop (20 MHz): optional band switch + channel + bandwidth re-apply.
 
-    [SRC] switch_chnl_and_set_bw_by_drv steps 2-3 (no band switch — same-band hop only; a
-    2.4<->5 crossing additionally runs config_phydm_switch_band_8822b first). The per-channel
-    DPK/TSSI cal that the vendor runs next is deferred (TX-quality; see RTL8822BU_DKMS.md).
+    [SRC] switch_chnl_and_set_bw_by_drv steps 1-3. A 2.4<->5 crossing (prev_ch on the other side
+    of ch 14) runs config_phydm_switch_band_8822b first; same-band hops skip it. The per-channel
+    DPK/TSSI cal the vendor runs next is deferred (TX-quality; see RTL8822BU_DKMS.md).
     """
     rx_ant = BB_PATH_AB if rf_2t2r else BB_PATH_A
+    if prev_ch is not None and (prev_ch <= 14) != (ch <= 14):
+        switch_band(t, ch, rf_2t2r, rx_ant)
     switch_channel(t, ch, rf_2t2r=rf_2t2r)
     _mac_switch_bandwidth(t, ch)
     _switch_bandwidth_20(t, ch, rf_2t2r, rx_ant)
