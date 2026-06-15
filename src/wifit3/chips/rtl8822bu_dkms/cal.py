@@ -19,6 +19,27 @@ RF_0xEF, RF_0x33, RF_0x3E, RF_0x3F = 0xEF, 0x33, 0x3E, 0x3F
 _FULL = sipi.RFREGOFFSETMASK
 
 
+def aac_check(t) -> None:
+    """[SRC] aac_check_8822b (halrf_8822b.c:424) — one-off AAC check before LCK/DM init.
+
+    RF_A 0xC9[7:3] out of [4,7] => RF_A 0xCA[19]=0 + 0xB2[18:14]=0x6 (the replay feeds 0xC9)."""
+    temp = sipi.read_rf_reg(t, sipi.RF_PATH_A, 0xC9, 0xF8)
+    if temp < 4 or temp > 7:
+        sipi.set_rf_reg(t, sipi.RF_PATH_A, 0xCA, 1 << 19, 0x0)
+        sipi.set_rf_reg(t, sipi.RF_PATH_A, 0xB2, 0x7C000, 0x6)
+
+
+def rfe_init(t) -> None:
+    """[SRC] phydm_rfe_8822b_init — RFE chip-top mux + s0/s1 + in/out pin config (DM init)."""
+    sipi.set_bb_reg(t, 0x0064, (1 << 29) | (1 << 28), 0x3)    # chip top mux
+    sipi.set_bb_reg(t, 0x004C, (1 << 26) | (1 << 25), 0x0)
+    sipi.set_bb_reg(t, 0x0040, 1 << 2, 0x1)
+    sipi.set_bb_reg(t, 0x1990, 0x3F, 0x30)                    # from s0 or s1
+    sipi.set_bb_reg(t, 0x1990, (1 << 11) | (1 << 10), 0x3)
+    sipi.set_bb_reg(t, 0x0974, 0x3F, 0x3F)                    # input or output
+    sipi.set_bb_reg(t, 0x0974, (1 << 11) | (1 << 10), 0x3)
+
+
 def _config_tx_path(t, tx_path: int, sel_1ss: int, sel_cck: int) -> None:
     """[SRC] phydm_config_tx_path_8822b + the CCK/OFDM TX-path helpers."""
     sipi.set_bb_reg(t, 0x093C, (1 << 19) | (1 << 18), 0x3)     # TX antenna by Nsts

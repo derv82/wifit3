@@ -62,4 +62,6 @@ def cold_bringup(t):
     usbphy.init_usb_cfg(t)                 # init_interface_cfg: RX-DMA burst mode + drop-data
     t.read32(const.REG_RCR)                # hal_init tail: HW_VAR_RCR sync read-back
     cal.config_trx_mode(t)                 # config_phydm_trx_mode: 2T2R TX/RX path + RF mode
+    cal.aac_check(t)                       # one-off AAC check (RF_A 0xC9) before the DM init
+    cal.rfe_init(t)                        # phydm_rfe_8822b_init: RFE pin mux (DM init start)
     return info, e
