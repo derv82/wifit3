@@ -293,3 +293,8 @@ beacon/IV rate and the `pwdb` saturation-warning rate, watchdog ON vs OFF.
 - `set_antenna` API.
 - Per-rate TX power tuning from `phy_pg_type{2,3,5}` tables.
 - USB 3.0 path (`rtw_usb_switch_mode`) — driver works at USB 2.0 HS.
+- ON-section `0x04E0` write: the 8822B drivers write 1 byte to `0x04E0` after each
+  ON-section register access (addr ≤0xff, 0x1000–0x10ff)
+  `[SRC os_dep/linux/usb_ops_linux.c:171-201]`; present in the in-kernel capture,
+  omitted by our `rtw88_base` transport — a byte-diff diverges there (see
+  `scripts/rtl8822bu/verify_pcap.py`).

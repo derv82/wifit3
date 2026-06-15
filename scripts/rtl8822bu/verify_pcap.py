@@ -91,17 +91,11 @@ def run(cap: str | None = None) -> int:
     rp.audit_coverage(pcap, dev_addr)
     ops = rp.extract_ops(pcap, dev_addr)           # whole capture
 
-    # The 8822bu/88x2bu capture sessions carry a register-trace artifact: a
-    # 1-byte write to REG_NULL_PKT_STATUS (0x04E0) shadowing the low byte of
-    # EVERY register access. No driver source (in-kernel rtw88 or the kernel C
-    # we ported) emits it; the AU captures have zero such writes. Strip it so
-    # the diff sees the real driver op stream. Our port emits no 0x04E0 writes,
-    # so this can never mask a divergence on our side.
-    shadow = sum(1 for o in ops if o["kind"] == "W"
-                 and o.get("addr") == 0x04E0 and o.get("width") == 1)
-    ops = [o for o in ops if not (o["kind"] == "W"
-                                  and o.get("addr") == 0x04E0 and o.get("width") == 1)]
-    print(f"  stripped {shadow} REG_NULL_PKT_STATUS(0x04E0) trace-shadow writes")
+    # This mainline port omits 0x04E0 writes which appear in the diff.
+    # These writes are real driver ops: the 8822B vendor USB layer
+    # writes 1 byte here after each ON-section register access (addr<=0xff,
+    # 0x1000-0x10ff) [SRC os_dep/linux/usb_ops_linux.c:171-201]. A faithful
+    # transport must emit them, so they are NOT filtered.
     n_w = sum(o["kind"] == "W" for o in ops)
     n_r = sum(o["kind"] == "R" for o in ops)
     n_b = sum(o["kind"] == "B" for o in ops)
