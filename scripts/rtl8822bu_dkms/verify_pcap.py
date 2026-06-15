@@ -44,6 +44,7 @@ def _bringup(t) -> None:
     mac.power_on(t, info.chip_ver)         # M2: pre_init + card_en pwr-seq + init_system_cfg
     t.write8(0x01A0, 0xFD)                 # C2HEVT_MSG_NORMAL = C2H_DEFEATURE_RSVD (mac_hidden_rpt)
     firmware.download(t, firmware.load_firmware_blob())   # M3: HALMAC iDDMA FW upload
+    mac.init_trx_cfg(t)                    # M4: init_trx_cfg — queue map + FIFO/page + TRX enable
 
 
 def run(cap: str | None = None) -> int:

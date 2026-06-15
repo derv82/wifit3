@@ -135,6 +135,72 @@ REG_LTECOEX_WRITE_DATA = 0x1704
 REG_LTECOEX_READ_DATA = 0x1708
 LTECOEX_REG_OFFSET_DL = 0x38
 
+# --- MAC init for RX: init_trx_cfg (queue/FIFO/TRX) + init_h2c ----------------
+# [SRC] halmac_init_8822b.c:477,521,643,792 + halmac_init_88xx.c:812,867
+# TX-FIFO page allocation [SRC] halmac_8822b_cfg.h:24-25,38-44, halmac_88xx_cfg.h:24
+TX_FIFO_SIZE_8822B = 262144            # >> TX_PAGE_SIZE_SHIFT (7) = 2048 pages
+RX_FIFO_SIZE_8822B = 24576
+TX_PAGE_SIZE_SHIFT = 7
+C2H_PKT_BUF = 256                      # RXFF_BNDY = rx_fifo_size - this - 1
+RX_DESC_DUMMY_SIZE_8822B = 72
+RSVD_PG_H2C_EXTRAINFO_NUM = 24
+RSVD_PG_H2C_STATICINFO_NUM = 8
+RSVD_PG_H2CQ_NUM = 8
+RSVD_PG_CPU_INSTRUCTION_NUM = 0
+RSVD_PG_FW_TXBUF_NUM = 4
+RSVD_PG_CSIBUF_NUM = 0
+# rsvd_drv_pg_num: the morrownr driver's reserved-page need rounds up to HALMAC_RSVD_PG_NUM8
+# (8 pages) via _cfg_drv_rsvd_pg_num before init_mac_cfg. [SRC] hal_halmac.c:3132,2861-2940;
+# [WIRE] confirmed by rsvd_boundary=0x07CC (1996) and h2cq_addr=0x3FA00.
+RSVD_PG_DRV_NUM_8822BU = 8
+
+# DMA-channel ids [SRC] halmac_type.h:596-599 (EXTRA=0, LOW=1, NORMAL=2, HIGH=3)
+DMA_MAPPING_EXTRA, DMA_MAPPING_LOW, DMA_MAPPING_NORMAL, DMA_MAPPING_HIGH = 0, 1, 2, 3
+# REG_TXDMA_PQ_MAP field shifts (each AC -> a 2-bit DMA channel) [SRC] halmac_bit2.h:18939-19075
+TXDMA_MAP_SHIFTS = {                    # voq, viq, beq, bkq, mgq, hiq
+    "vo": 4, "vi": 6, "be": 8, "bk": 10, "mg": 12, "hi": 14,
+}
+# This card: 3 bulk-OUT, NORMAL mode. RQPN_3BULKOUT[NORMAL] / PG_NUM_3BULKOUT[NORMAL].
+# [SRC] halmac_init_8822b.c:203-205,295. Other modes/bulkout-counts are not ported (wifit3 is
+# monitor/NORMAL-only and the T3U Plus is 3-bulkout — verified by the 0xF5A0 queue map).
+BULKOUT_NUM_8822BU = 3
+RQPN_NORMAL_3BULKOUT = {               # AC -> DMA channel
+    "vo": DMA_MAPPING_NORMAL, "vi": DMA_MAPPING_NORMAL,
+    "be": DMA_MAPPING_LOW, "bk": DMA_MAPPING_LOW,
+    "mg": DMA_MAPPING_HIGH, "hi": DMA_MAPPING_HIGH,
+}
+PG_NUM_NORMAL_3BULKOUT = {"hq": 64, "nq": 64, "lq": 64, "exq": 0, "gap": 1}
+
+MAC_TRX_ENABLE = 0xFF                  # [SRC] halmac_8822b_cfg.h:48 (all 8 TRX/sched/MAC enable bits)
+HALMAC_TRNSFER_NORMAL = 0x0
+
+# init_trx_cfg / init_h2c registers [SRC] halmac_reg2.h
+REG_TXDMA_PQ_MAP = 0x010C              # +1 = PQ priority map already set in FW DL; here the 16-bit map
+REG_RXFF_BNDY = 0x011C
+REG_AUTO_LLT_V1 = 0x0208               # BIT(0)=auto-init-LLT; +3 = blk-desc num
+BIT_AUTO_INIT_LLT_V1 = 1 << 0
+BLK_DESC_NUM = 3
+BIT_SHIFT_BLK_DESC_NUM = 4
+BIT_MASK_BLK_DESC_NUM = 0xF
+REG_TXDMA_OFFSET_CHK = 0x020C          # +1 BIT(1); +1 BIT(7) in init_h2c
+REG_FIFOPAGE_INFO_2 = 0x0234
+REG_FIFOPAGE_INFO_3 = 0x0238
+REG_FIFOPAGE_INFO_4 = 0x023C
+REG_FIFOPAGE_INFO_5 = 0x0240
+REG_H2C_HEAD = 0x0244
+REG_H2C_TAIL = 0x0248
+REG_H2C_READ_ADDR = 0x024C
+REG_H2C_INFO = 0x0254
+REG_FWFF_CTRL = 0x029C
+REG_FWFF_PKT_INFO = 0x02A0
+REG_BCNQ_BDNY_V1 = 0x0424
+REG_BCNQ1_BDNY_V1 = 0x0456
+REG_WMAC_FWPKT_CR = 0x0601             # BIT(7) = FWEN
+BIT_FWEN = 1 << 7
+REG_RX_DRVINFO_SZ = 0x060F
+REG_H2C_PKT_READADDR = 0x10D0
+REG_H2C_PKT_WRITEADDR = 0x10D4
+
 # --- power-state detection markers (mac_pwr_switch_usb_8822b) --------------
 # [SRC] hal/halmac/halmac_88xx/halmac_8822b/halmac_usb_8822b.c:44-92
 REG_RPWM = 0xFE58                      # :44  (RPWM — leave-32K toggle)

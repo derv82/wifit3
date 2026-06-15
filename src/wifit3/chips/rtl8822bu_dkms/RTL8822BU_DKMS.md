@@ -6,9 +6,11 @@
 > init_system_cfg), and the **HALMAC iDDMA firmware download** (40 bulk packets + DDMA
 > copy + FW-ready 0xC078) all reproduce **byte-for-byte on capture-1/2/3** (~5139 ops; the
 > few-op spread across captures is variable poll counts the loops reproduce). Gate frontier
-> now at MAC init for RX (`W 0x010C` REG_TXDMA_PQ_MAP = TRX-queue mapping). Next milestone =
-> MAC init / TRX enable. Promote sections from plan to ground truth with `[SRC]`/`[WIRE]`
-> citations as facts get confirmed; by the end this reads like `rtl8812au_dkms/RTL8812AU_DKMS.md`.
+> now mid-MAC-init: `init_trx_cfg` (queue map `0xF5A0` + FIFO/page allocation + TRX enable +
+> H2C ring) is **CLEARED** on capture-1/2/3 (~5187 ops); frontier at `init_protocol_cfg`
+> (`R 0x4BC`). Next = the remaining `init_mac_cfg` sub-functions (protocol / EDCA / WMAC-RX),
+> then BB+RF. Promote sections from plan to ground truth with `[SRC]`/`[WIRE]` citations as
+> facts get confirmed; by the end this reads like `rtl8812au_dkms/RTL8812AU_DKMS.md`.
 
 ## Verified facts (ground truth so far)
 

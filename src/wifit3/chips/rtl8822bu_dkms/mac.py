@@ -17,33 +17,81 @@ Ported from:
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from . import pwrseq
 from .constants import (
+    BIT_AUTO_INIT_LLT_V1,
     BIT_BOOT_FSPI_EN,
     BIT_FSPI_EN,
+    BIT_FWEN,
+    BIT_MASK_BLK_DESC_NUM,
+    BIT_SHIFT_BLK_DESC_NUM,
     BIT_WL_PLATFORM_RST,
+    BLK_DESC_NUM,
+    C2H_PKT_BUF,
+    HALMAC_TRNSFER_NORMAL,
+    MAC_TRX_ENABLE,
     MCUFW_CTRL_FW_EXIST,
+    PG_NUM_NORMAL_3BULKOUT,
+    REG_AUTO_LLT_V1,
+    REG_BCNQ1_BDNY_V1,
+    REG_BCNQ_BDNY_V1,
     REG_CPU_DMEM_CON,
     REG_CR,
     REG_CR_DISABLED,
+    REG_FIFOPAGE_CTRL_2,
+    REG_FIFOPAGE_INFO_1,
+    REG_FIFOPAGE_INFO_2,
+    REG_FIFOPAGE_INFO_3,
+    REG_FIFOPAGE_INFO_4,
+    REG_FIFOPAGE_INFO_5,
+    REG_FWFF_CTRL,
+    REG_FWFF_PKT_INFO,
+    REG_FWHW_TXQ_CTRL,
     REG_GPIO_MUXCFG,
+    REG_H2C_HEAD,
+    REG_H2C_INFO,
+    REG_H2C_PKT_READADDR,
+    REG_H2C_PKT_WRITEADDR,
+    REG_H2C_READ_ADDR,
+    REG_H2C_TAIL,
+    REG_H2CQ_CSR,
     REG_LED_CFG,
     REG_MCUFW_CTRL,
     REG_PAD_CTRL1,
     REG_PRE_INIT_FE5B,
     REG_RF_CTRL,
     REG_RPWM,
+    REG_RQPN_CTRL_2,
     REG_RSV_CTRL,
+    REG_RXFF_BNDY,
     REG_SW_MDIO,
     REG_SYS_CFG1,
     REG_SYS_CFG2,
     REG_SYS_FUNC_EN,
     REG_SYS_STATUS1,
+    REG_TXDMA_OFFSET_CHK,
+    REG_TXDMA_PQ_MAP,
     REG_WLRF1,
+    REG_WMAC_FWPKT_CR,
+    RQPN_NORMAL_3BULKOUT,
+    RSVD_PG_CPU_INSTRUCTION_NUM,
+    RSVD_PG_CSIBUF_NUM,
+    RSVD_PG_DRV_NUM_8822BU,
+    RSVD_PG_FW_TXBUF_NUM,
+    RSVD_PG_H2C_EXTRAINFO_NUM,
+    RSVD_PG_H2C_STATICINFO_NUM,
+    RSVD_PG_H2CQ_NUM,
+    RX_FIFO_SIZE_8822B,
     SYS_FUNC_EN,
+    TX_FIFO_SIZE_8822B,
+    TX_PAGE_SIZE_SHIFT,
+    TXDMA_MAP_SHIFTS,
 )
 
 _SYS_CFG2_USB3 = 0x20            # REG_SYS_CFG2+3 value that marks a USB3 link
+_POLL_CAP = 1_000_000
 
 
 def _enable_bb_rf(t, enable: bool) -> None:
@@ -135,3 +183,114 @@ def power_on(t, chip_ver: int) -> None:
         _mac_pwr_switch(t, chip_ver, power_on=False)
         _mac_pwr_switch(t, chip_ver, power_on=True)
     init_system_cfg(t)
+
+
+# --- MAC init for RX: init_trx_cfg (queue mapping + FIFO/page alloc + TRX enable) ----------
+@dataclass
+class TxffAlloc:
+    """The TX-FIFO page layout set_trx_fifo_info computes for NORMAL mode on this card
+    (3 bulk-OUT, 2048-page FIFO). All values are wire-verified."""
+    rsvd_boundary: int      # 1996 (0x7CC) — first reserved page = ACQ page count
+    rsvd_h2cq_addr: int     # 2036 — H2CQ page base
+    high_pg: int            # 64
+    low_pg: int             # 64
+    normal_pg: int          # 64
+    extra_pg: int           # 0
+    pub_pg: int             # 1803 (0x70B)
+
+
+def _set_trx_fifo_info() -> TxffAlloc:
+    """set_trx_fifo_info_8822b [SRC] halmac_init_8822b.c:643 + pg_num_parser_88xx
+    [SRC] halmac_init_88xx.c:812 — pure page arithmetic (no IO). NORMAL mode, no RX-expand/LA."""
+    tx_fifo_pg_num = TX_FIFO_SIZE_8822B >> TX_PAGE_SIZE_SHIFT           # 2048
+    rsvd_pg_num = (RSVD_PG_DRV_NUM_8822BU + RSVD_PG_H2C_EXTRAINFO_NUM
+                   + RSVD_PG_H2C_STATICINFO_NUM + RSVD_PG_H2CQ_NUM
+                   + RSVD_PG_CPU_INSTRUCTION_NUM + RSVD_PG_FW_TXBUF_NUM
+                   + RSVD_PG_CSIBUF_NUM)                                # 52
+    acq_pg_num = tx_fifo_pg_num - rsvd_pg_num                          # 1996
+    cur = tx_fifo_pg_num
+    cur -= RSVD_PG_CSIBUF_NUM
+    cur -= RSVD_PG_FW_TXBUF_NUM
+    cur -= RSVD_PG_CPU_INSTRUCTION_NUM
+    cur -= RSVD_PG_H2CQ_NUM
+    rsvd_h2cq_addr = cur                                               # 2036
+    pg = PG_NUM_NORMAL_3BULKOUT
+    pub_pg = acq_pg_num - pg["hq"] - pg["lq"] - pg["nq"] - pg["exq"] - pg["gap"]
+    return TxffAlloc(rsvd_boundary=acq_pg_num, rsvd_h2cq_addr=rsvd_h2cq_addr,
+                     high_pg=pg["hq"], low_pg=pg["lq"], normal_pg=pg["nq"],
+                     extra_pg=pg["exq"], pub_pg=pub_pg)
+
+
+def _txdma_queue_mapping(t) -> None:
+    """txdma_queue_mapping_8822b [SRC] halmac_init_8822b.c:477 — pack each AC's DMA channel
+    (rqpn_parser, NORMAL/3-bulkout) into REG_TXDMA_PQ_MAP. Yields 0xF5A0 on this card."""
+    value16 = 0
+    for ac, shift in TXDMA_MAP_SHIFTS.items():
+        value16 |= RQPN_NORMAL_3BULKOUT[ac] << shift
+    t.write16(REG_TXDMA_PQ_MAP, value16)
+
+
+def _priority_queue_cfg(t, alloc: TxffAlloc) -> None:
+    """priority_queue_cfg_8822b [SRC] halmac_init_8822b.c:521 — write the per-queue page counts
+    and boundaries, kick the auto-LLT init, and set NORMAL transfer mode."""
+    t.write16(REG_FIFOPAGE_INFO_1, alloc.high_pg)
+    t.write16(REG_FIFOPAGE_INFO_2, alloc.low_pg)
+    t.write16(REG_FIFOPAGE_INFO_3, alloc.normal_pg)
+    t.write16(REG_FIFOPAGE_INFO_4, alloc.extra_pg)
+    t.write16(REG_FIFOPAGE_INFO_5, alloc.pub_pg)
+    t.write32(REG_RQPN_CTRL_2, t.read32(REG_RQPN_CTRL_2) | (1 << 31))
+    t.write16(REG_FIFOPAGE_CTRL_2, alloc.rsvd_boundary)
+    t.write8(REG_FWHW_TXQ_CTRL + 2, t.read8(REG_FWHW_TXQ_CTRL + 2) | (1 << 4))
+    t.write16(REG_BCNQ_BDNY_V1, alloc.rsvd_boundary)               # USB: 16-bit write
+    t.write16(REG_FIFOPAGE_CTRL_2 + 2, alloc.rsvd_boundary)
+    t.write16(REG_BCNQ1_BDNY_V1, alloc.rsvd_boundary)
+    t.write32(REG_RXFF_BNDY, RX_FIFO_SIZE_8822B - C2H_PKT_BUF - 1)
+
+    # USB block-descriptor number + TX-DMA offset check, then auto-init LLT.
+    v = t.read8(REG_AUTO_LLT_V1)
+    v &= ~(BIT_MASK_BLK_DESC_NUM << BIT_SHIFT_BLK_DESC_NUM)
+    v |= BLK_DESC_NUM << BIT_SHIFT_BLK_DESC_NUM
+    t.write8(REG_AUTO_LLT_V1, v)
+    t.write8(REG_AUTO_LLT_V1 + 3, BLK_DESC_NUM)
+    t.write8(REG_TXDMA_OFFSET_CHK + 1, t.read8(REG_TXDMA_OFFSET_CHK + 1) | (1 << 1))
+
+    t.write8(REG_AUTO_LLT_V1, t.read8(REG_AUTO_LLT_V1) | BIT_AUTO_INIT_LLT_V1)
+    for _ in range(_POLL_CAP):
+        if not (t.read8(REG_AUTO_LLT_V1) & BIT_AUTO_INIT_LLT_V1):
+            break
+    else:
+        raise RuntimeError("RTL8822BU: auto-init LLT timed out")
+    t.write8(REG_CR + 3, HALMAC_TRNSFER_NORMAL)
+
+
+def _init_h2c(t, alloc: TxffAlloc) -> None:
+    """init_h2c_8822b [SRC] halmac_init_8822b.c:792 — point the H2C ring at its reserved pages
+    and arm it, then read back the free space (a sanity read, no effect on the wire IO)."""
+    h2cq_addr = alloc.rsvd_h2cq_addr << TX_PAGE_SIZE_SHIFT
+    h2cq_size = RSVD_PG_H2CQ_NUM << TX_PAGE_SIZE_SHIFT
+    t.write32(REG_H2C_HEAD, (t.read32(REG_H2C_HEAD) & 0xFFFC0000) | h2cq_addr)
+    t.write32(REG_H2C_READ_ADDR, (t.read32(REG_H2C_READ_ADDR) & 0xFFFC0000) | h2cq_addr)
+    t.write32(REG_H2C_TAIL, (t.read32(REG_H2C_TAIL) & 0xFFFC0000) | (h2cq_addr + h2cq_size))
+    t.write8(REG_H2C_INFO, (t.read8(REG_H2C_INFO) & 0xFC) | 0x01)
+    t.write8(REG_H2C_INFO, (t.read8(REG_H2C_INFO) & 0xFB) | 0x04)
+    t.write8(REG_TXDMA_OFFSET_CHK + 1, (t.read8(REG_TXDMA_OFFSET_CHK + 1) & 0x7F) | 0x80)
+    t.read32(REG_H2C_PKT_WRITEADDR)            # get_h2c_buf_free_space: hw wptr / fw rptr
+    t.read32(REG_H2C_PKT_READADDR)
+
+
+def init_trx_cfg(t) -> None:
+    """init_trx_cfg_8822b [SRC] halmac_init_8822b.c — queue mapping, CR TRX enable, the FWFF
+    drain, page/priority config, and the H2C ring. (FW-fast-forward is not enabled here, so the
+    en_fwff branch reduces to a single REG_WMAC_FWPKT_CR read.)"""
+    _txdma_queue_mapping(t)
+    en_fwff = t.read8(REG_WMAC_FWPKT_CR) & BIT_FWEN     # 0 on this boot -> no fwff drain
+    t.write8(REG_CR, 0)
+    t.write16(REG_FWFF_CTRL, t.read16(REG_FWFF_PKT_INFO))
+    t.write8(REG_CR, MAC_TRX_ENABLE)
+    if en_fwff:
+        raise NotImplementedError("RTL8822BU: FW-fast-forward enable path unobserved")
+    t.write32(REG_H2CQ_CSR, 1 << 31)
+    alloc = _set_trx_fifo_info()
+    _priority_queue_cfg(t, alloc)
+    _init_h2c(t, alloc)
+    t.write8(REG_TXDMA_PQ_MAP, t.read8(REG_TXDMA_PQ_MAP) | (1 << 0))   # USB
