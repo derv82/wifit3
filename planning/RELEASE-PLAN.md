@@ -11,7 +11,7 @@
 
 The DKMS re-ports are the headline hardware work and the fix for the cross-family
 2.4 GHz RX weakness. **Full detail + priority order + per-card vendor sources live
-in `PORTING.md`** (also: cards-in-the-mail, blank-EEPROM rescue). One
+in `PORTING.md`** (also: cards-in-the-mail). One
 port per session; testing + stability day(s) after each before the next. The
 8812AU hop-death (random RF wedge under sustained scanning) is the primary scan
 stability issue — expected to improve via the shared phydm RX/AGC path in the
@@ -105,7 +105,7 @@ Required before public:
 - [ ] **No-fuse-burn invariant, stated + reviewed:** wifit3 only ever writes RAM/registers and
   replays the vendor's *download* path — it does **not** program EFUSE/EEPROM fuses (one-time,
   irreversible). Make it a documented invariant so a PR adding a fuse-write is an obvious red
-  flag. (Ties to the Blank-EEPROM override below — soft RAM override only, never burn.)
+  flag.
 - [ ] (Optional, post-alpha) a first-run acknowledgment for the dev/porting tools.
 
 ---
