@@ -1,16 +1,16 @@
 # RTL8822BU — vendor/DKMS port (playbook)
 
-> **STATUS: M0 (chip-ID) + EFUSE + MAC power-on + FW download COMPLETE.** Transport
-> (+0x4E0 mirror), the chip-id/cut + USB intf-phy + chip-version reads, the physical-EFUSE
-> dump (1024 B) + PG parse + PABias tail, **MAC power-on** (pre_init + `card_en_flow` +
-> init_system_cfg), and the **HALMAC iDDMA firmware download** (40 bulk packets + DDMA
-> copy + FW-ready 0xC078) all reproduce **byte-for-byte on capture-1/2/3** (~5139 ops; the
-> few-op spread across captures is variable poll counts the loops reproduce). Gate frontier
-> now at **init_mac_flow + the two general-info H2C packets COMPLETE** (general-info + PHYDM-info,
-> 32-byte FW-offload H2C over bulk-OUT, byte-exact) on capture-1/2/3 (~5243 ops); frontier at the
-> `dump_fifo` H2CQ readback (`R 0x60A`) that confirms the H2C landed. Next = `dump_fifo` readback
-> + `_send_general_info_by_reg`, then BB+RF (PHYDM), calibration, channel tune, monitor RX.
-> Promote sections to ground truth with `[SRC]`/`[WIRE]` citations; by the end this reads like
+> **STATUS: the entire first init cycle is COMPLETE** — chip-ID, EFUSE (+PABias), MAC power-on
+> (pre_init + `card_en_flow` + init_system_cfg), HALMAC iDDMA FW download (40 packets + `0xC078`
+> ready), full `init_mac_cfg` (trx/protocol/edca/wmac-RX), the `init_mac_flow` driver tail
+> (RCR-sync/RTS-full-bw/USB-rx-agg), `_send_general_info` (two FW-offload H2C packets + the
+> dump_fifo H2CQ readback + the HMEBOX reg-H2C), and the `hal_read_mac_hidden_rpt` C2H report read.
+> All reproduce **byte-for-byte on capture-1/2/3** (~5269 ops; the few-op spread is variable poll
+> counts the loops reproduce). **Frontier: the 2nd init cycle** (`rtl8822b_hal_init` →
+> `_halmac_init_hal`, op ~5269 `W 0x00AA`) — a WARM re-init (card_dis+card_en) that re-runs the
+> ported power-on/FW/MAC steps then adds `_drv_enable_trx` / `init_mac_register` / `config_rx_info`
+> / **BB+RF (PHYDM)**. See "Next frontier" below for the exact wire + open questions. Promote
+> sections to ground truth with `[SRC]`/`[WIRE]` citations; by the end this reads like
 > `rtl8812au_dkms/RTL8812AU_DKMS.md`.
 
 ## Verified facts (ground truth so far)
@@ -154,29 +154,41 @@ general-info `FW_TX_BOUNDARY=48`, PHYDM-info rfe/cut/rf/ant/package). `bulkout_n
 `rxagg_mode=USB`, and the `get_trx_path` general-info fields (`rf_type=4`, ant `1/1`, package `0`)
 are `[WIRE]`-pinned — re-derive from `get_trx_path`/`PackageType` if a different card is targeted.
 
-### Next frontier — dump_fifo readback → C2H → 2nd init cycle → BB/RF (op ~5243, `R 0x60A` ...)
+### read-chip-info tail (CLEARED) — dump_fifo readback + reg-H2C + C2H report
 
-Wire-mapped this session (capture-1 frames; not yet ported):
-- **`dump_fifo` H2CQ readback** (the tail of `send_general_info_88xx` `[SRC] halmac_fw_88xx.c:1083`):
-  confirms the H2C landed by reading 4 bytes from the TX FIFO via the packet-buffer debug interface
-  — `f10715 R/W 0x60A`, `f10723 R/W 0x140`(`REG_PKTBUF_DBG_CTRL`, sets page `0x07BF`),
-  `f10727 R 0x8A00`(the FIFO data window) `=0x000DFF01` (the general-info H2C header read back),
-  then restore. Port `dump_fifo_88xx` (HAL_FIFO_SEL_TX).
-- **`_send_general_info_by_reg`** `[SRC] hal_halmac.c` — `f10733 R 0x1CC`, `f10735 W 0x1F0=0x11`,
-  `f10737 W 0x1D0=0x0300034C` (writes the general info to registers as a companion to the H2C).
-- **`hal_read_mac_hidden_rpt` C2H read** `[SRC] hal_com.c:1560-1577` — back in the caller after
-  `rtw_hal_fw_dl` returns: poll `R 0x1A0`(`REG_C2HEVT_MSG_NORMAL`, `=0x19`=`C2H_MAC_HIDDEN_RPT`),
-  read the report bytes `f10741-10765 R 0x1A2..0x1AE`, then `W 0x1A0=C2H_DBG`. Decodes the MAC's
-  wl-func/bw/proto caps. Then `rtw_phydm_read_efuse` finishes `rtl8822b_read_efuse`.
-- **2nd init cycle** (`f10769+`: `W 0xAA`, `R 0xFE58`/`R 0x80=0xC078`/`W 0xFE58`, `R 0x100=0xFF`...):
-  this is the *real* `rtl8822b_hal_init` after `rtw_hal_read_chip_info` returns. NB the chip is now
-  ON + FW-loaded, so `mac_pwr_switch` returns PWR_UNCHANGE ⇒ the **warm-reset off→on workaround
-  fires here** (the path `mac.power_on` already ports but no cold capture exercised — this is where
-  to verify `card_dis_flow`). Expect power-on + FW-DL to **not** fully repeat (FW already resident).
-- Then **BB + RF init (PHYDM)** — the big one: `phy_bb8822b_config_parameter` / the AGC + phy-reg +
-  RF-A/RF-B `_tbl.py` tables (port 1:1 like the AU `_dkms` `*_tbl.py`), `phydm` init, then RF
-  calibration (IQK/DPK/LCK/TSSI — only what the capture runs), channel tune (`verify_channels.py`),
-  CCK-PD/DIG dynamics, and the monitor RX tail. This is the 3.6× A/B payoff.
+The tail of `hal_read_mac_hidden_rpt` / `rtl8822b_read_efuse`, all gate-clean:
+- **`dump_fifo` H2CQ readback** (`firmware._dump_h2cq_fifo`, the tail of `send_general_info_88xx`):
+  reads 4 B from the H2C ring via the packet-buffer debug window (`RCR+2` rx-clk-gate, `0x140`
+  start-page `0x7BF`, `R32 0x8A00 = 0x000DFF01` = the general-info header), confirms it landed.
+- **`_send_general_info_by_reg`** (`firmware._send_general_info_by_reg`): an 8-byte reg-H2C
+  (`0x4C` class/cmd, rfe/rf/cut/ant) over HMEBOX 0 (`HMETFR` `0x1CC`, `HMEBOX_E0` `0x1F0`,
+  `HMEBOX0` `0x1D0` = `0x0300034C`).
+- **C2H report read** (`firmware.read_mac_hidden_rpt`): poll `R 0x1A0`==`C2H_MAC_HIDDEN_RPT`(0x19),
+  read 13 report bytes (`0x1A2..0x1AE`), ack `W 0x1A0=C2H_DBG`. Report is read-and-discarded
+  (decodes wl-func/bw/proto caps into hal_spec, which wifit3 doesn't consume).
+
+### Next frontier — the 2nd init cycle (op ~5269, `W 0x00AA=0x8000` ...)
+
+`rtl8822b_read_efuse` returns ⇒ `rtw_hal_read_chip_info` done ⇒ `rtw_hal_init` → `rtl8822b_hal_init`
+→ `_halmac_init_hal` `[SRC] hal_halmac.c:3576` — the **real** init, which RE-RUNS the already-ported
+steps then adds the new ones:
+1. `rtw_hal_power_on` — but the wire here is **not** `pre_init`'s `W 0x1C`; it opens with
+   `W16 0x00AA=0x8000` (`REG_PMC_DBG_CTRL1+2`, byte `0xAB` BIT7) then the `mac_pwr_switch` probe
+   (`R 0xFE58`/`R16 0x80=0xC078`/`W 0xFE58` rpwm-toggle since FW resident/`R 0x100=0xFF`≠0xEA ⇒
+   chip ON). So this is the **warm path**: PWR_UNCHANGE ⇒ `card_dis_flow` (f10787+ matches
+   `pwrseq.CARD_DIS_FLOW` exactly: `0x93=0xC4`, `0xFF1A=0x30`, …) then `card_en_flow`. **OPEN:** why
+   `pre_init` is skipped + where `W 0x00AA` originates (trace `_halmac_init_hal`/the USB poweron
+   wrapper + the `bMacPwrCtrlOn` flag; `mac.power_on` ports the warm reset but its pre_init/
+   init_system_cfg wrapping differs from this wire — likely needs a warm-entry variant).
+2. `download_fw` again (FW was wiped by `card_dis` ⇒ the 40 FW packets repeat — reuse `firmware.download`).
+3. `init_mac_flow` again (reuse `mac.init_mac_cfg` + `init_mac_flow_tail`).
+4. `_drv_enable_trx` (new, driver-side TRX enable).
+5. `_send_general_info` again (reuse — but **no** `mac_hidden_rpt` this cycle).
+6. `rtw_hal_init_mac_register` (new — more MAC regs).
+7. `rtw_halmac_config_rx_info(PHY_STATUS)` (new — DRVINFO/PHYSTS).
+8. **`rtw_hal_init_phy` = BB + RF init (PHYDM)** — the big one: AGC + phy-reg + RF-A/RF-B `_tbl.py`
+   tables (port 1:1 like the AU `_dkms` `*_tbl.py`), then RF calibration (IQK/DPK/LCK/TSSI — only
+   what the capture runs), channel tune (`verify_channels.py`), CCK-PD/DIG, monitor RX tail. 3.6× payoff.
 
 ### Coverage gap — USB2-link branches untested (all captures are USB3)
 
