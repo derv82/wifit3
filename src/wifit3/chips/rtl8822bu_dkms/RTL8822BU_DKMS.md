@@ -55,6 +55,21 @@ milestone table guesses: `read_adapter_info` = `rtl8822b_read_efuse` → `EFUSE_
 `REG_EFUSE_CTRL` (`0x30`) physical-map loop (`W 0x316000NN` / `R 0xB16000xx`). This is the
 next thing to port; it likely pulls the M4 EFUSE work earlier than the table implies.
 
+### Coverage gap — USB2-link branches untested (all captures are USB3)
+
+capture-1/2/3 are all **SuperSpeed (USB3)** links, so every link-speed conditional is only
+verified on its USB3 side. The discriminator is `REG_SYS_CFG2+3 == 0x20` (== USB3, else USB2)
+`[SRC] halmac_usb_88xx.c:48`. A USB2-link capture (plug the card behind a USB2-only
+adapter/hub so it negotiates High-Speed) would let `verify_pcap` confirm the USB2 sides of:
+- `pre_init_system_cfg`'s `0xFE5B |= BIT(4)` — **USB3-only**, skipped on USB2 `[SRC] halmac_init_8822b.c:962`
+- USB RXDMA / aggregation mode `[SRC] halmac_usb_88xx.c:48,123,432`
+- bulk-OUT size + EP/queue layout `[SRC] rtl8822bu_halinit.c:410-437` — may change the TX bulk-OUT EP (M8)
+
+NOT covered by a USB2 capture: the USB2 intf-phy writes (`0xFE40-42`) are gated by the empty
+`usb2_phy_param_8822b` table, not link speed — dead on 8822b regardless. When porting the
+branches above, the USB3 side is gate-verified; the USB2 side stays source-ported-but-uncaptured
+until a USB2 capture exists.
+
 ## Cleanroom rules
 
 - Do **not** open `chips/rtl8822bu/`, `chips/rtw88_base/`, or `scripts/rtl8822bu/` — the
