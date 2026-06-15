@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from . import pwrseq
+from .mac_reg_tbl import MAC_REG_TBL
 from .constants import (
     BIT_AUTO_INIT_LLT_V1,
     BIT_BOOT_FSPI_EN,
@@ -425,6 +426,13 @@ def init_mac_cfg(t) -> None:
     init_protocol_cfg(t)
     init_edca_cfg(t)
     init_wmac_cfg(t)
+
+
+def init_mac_register(t) -> None:
+    """rtl8822b_phy_init_mac_register [SRC] rtl8822b_phy.c:65 -> odm_config_mac_8822b — apply the
+    PHYDM MAC-register table (125 plain 1-byte writes, no cut/rfe conditionals)."""
+    for addr, val in MAC_REG_TBL:
+        t.write8(addr, val)
 
 
 def _cfg_usb_rx_agg(t) -> None:

@@ -70,6 +70,7 @@ def _bringup(t) -> None:
     firmware.send_general_info(t, e.rfe_type, info.chip_ver,
                                alloc.rsvd_fw_txbuf_addr - alloc.rsvd_boundary, alloc.rsvd_h2cq_addr,
                                rf_type=2, rf_type_drv=2, tx_ant=3, rx_ant=3, package_type=7)
+    mac.init_mac_register(t)               # rtl8822b_phy_init_mac_register: PHYDM MAC-reg table
 
 
 def run(cap: str | None = None) -> int:
