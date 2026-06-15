@@ -99,9 +99,10 @@ def verify(cap_name: str) -> int:
             print(f"  ch {ch:>3}: SKIP (slice artifact: window head is not the retune)")
             continue
 
-        t = Rtl8822buTransport(rp.ReplayDevice(win))
+        dev = rp.ReplayDevice(win)
+        t = Rtl8822buTransport(dev)
         try:
-            chan.switch_channel(t, ch)
+            chan.set_channel_bw(t, ch)
         except rp.Divergence as d:
             print(f"  ch {ch:>3}: FAIL -- {d}")
             nfail += 1
@@ -110,8 +111,12 @@ def verify(cap_name: str) -> int:
             print(f"  ch {ch:>3}: SKIP (PSD spur channel) -- {d}")
             nskip += 1
             continue
+        # set_channel_bw should land on the deferred per-channel DPK (the 0x1Dxx LUT region).
+        nxt = next((win[k] for k in range(dev.i, len(win)) if win[k]["wval"] != 0x04E0), None)
+        boundary = nxt is not None and 0x1D00 <= nxt["wval"] <= 0x1DFF
         npass += 1
-        print(f"  ch {ch:>3}: PASS -- switch_channel reproduced its retune prologue byte-for-byte")
+        edge = "-> DPK boundary" if boundary else f"-> next 0x{nxt['wval']:04x}" if nxt else "-> end"
+        print(f"  ch {ch:>3}: PASS -- set_channel_bw byte-for-byte ({dev.i} ops) {edge}")
 
     print(f"\n{cap_name}: {npass} PASS, {nfail} FAIL, {nskip} skipped "
           f"(band crossings + PSD spur channels — later milestones).")

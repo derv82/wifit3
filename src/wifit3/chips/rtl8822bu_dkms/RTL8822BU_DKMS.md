@@ -277,11 +277,19 @@ Port the per-channel unit once and run it from `set_channel`, gating it against 
     sweep only on spur channels (`dsde_ch_idx ≤ 13`: 2.4G ch 5-8, 5G 153/161 at 20 MHz). Those 6
     hops `raise NotImplementedError` (verify skips them) — a bounded, flagged gap (missing NBI/CSI
     notch on 6 channels = slightly worse RX there, not a break), not a silent partial.
-  - **Band switch + bandwidth — NEXT.** `switch_band` (2.4↔5 crossing: `0x808[28]`, `0x454[7]`,
-    `0xa80[18]`, SoML `0x19a8[31]` branch, `phydm_rfe_ifem`) + `mac_switch_bandwidth` (HALMAC
-    `cfg_bw`: `0x483/0x668/0x024/0x55c/0x638/0x454`) + `config_phydm_switch_bandwidth_8822b` (20 MHz:
-    `0x8ac &= 0xFFCFFC00`, `0x8c4[30]`, RF18 `|= BIT11|BIT10`) + `phydm_rxdfirpar`/`config_tx_path`
-    (`0x948/0x94c/0x93c/0x940`). The 2 crossing hops (ch 36, final ch 1) verify-SKIP until ported.
+  - **Bandwidth re-apply (CLEARED — full `set_channel_bw`, 27/27/26 hops byte-for-byte).**
+    `chan.set_channel_bw` = `switch_channel` + `mac_switch_bandwidth` (HALMAC `cfg_ch_bw_88xx`:
+    `cfg_pri_ch_idx` `0x483`, `cfg_bw` clear `0x668[8:7]`, `cfg_mac_clk` `0x024[21:20]`+`0x55c`/
+    `0x638`=`0x50`, `cfg_ch` `0x454[7]` band marker) + `config_phydm_switch_bandwidth_8822b` (20 MHz:
+    `0x8ac &= 0xFFCFFC00`, `0x8c4[30]`, RF18 `|= BIT11|BIT10`, both paths; then `phydm_rxdfirpar`
+    `0x948/0x94c[29:28]=2`+`0xc20/0xe20[31]=1`, re-run `ccapar`+`spur_reset`, `phydm_bw_fixed_setting`
+    `0x840[3:0]=0`/`[4]=1`, `0x808` RX-path toggle to `0x33`, re-run `igi_toggle`). Each hop lands
+    **exactly on the deferred per-channel DPK** (`0x1Dxx` LUT) — that's the boundary, verified.
+  - **Band switch — NEXT (the 2 crossings).** `config_phydm_switch_band_8822b` (2.4↔5): 2.4G sets
+    `0x808[28]=1`/`0x454[7]=0`/`0xa80[18]=0`/`0x814[15:10]=15`; 5G sets them inverted +
+    `0x814=34`; both run the SoML branch on `0x19a8[31]` (rfe-3: `0xc04/0xe04[18,21]=0`, `0x8cc`,
+    `0x8d8`), write RF_A/B `0x18` band bits, then `phydm_rfe_ifem` + `spur`. The 2 crossing hops
+    (ch 36, final ch 1) verify-SKIP until this lands; `set_channel_bw` takes `prev_ch` to decide.
 - **RX enable + monitor RX tail** → first beacons (RCR/monitor config is wifit3-side, like the
   other drivers — not a capture replay).
 - **IQK + LCK** (RX-relevant image rejection / LO cal) — port if RX is deaf without them; one-time.

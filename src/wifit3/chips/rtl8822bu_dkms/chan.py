@@ -22,6 +22,14 @@ from . import sipi
 BB_PATH_A, BB_PATH_B, BB_PATH_AB = 1, 2, 3
 RF_0x18, RF_0xbe, RF_0xdf, RF_0xb8 = 0x18, 0xBE, 0xDF, 0xB8
 
+# HALMAC mac_switch_bandwidth (cfg_ch_bw_88xx) registers
+REG_DATA_SC = 0x0483               # cfg_pri_ch_idx: TXSC_40M<<4 | TXSC_20M
+REG_WMAC_TRXPTCL_CTL = 0x0668      # cfg_bw: clear BIT7/8 for BW20
+REG_AFE_CTRL1 = 0x0024             # cfg_mac_clk: MAC_CLK_SEL[21:20]
+REG_USTIME_TSF, REG_USTIME_EDCA = 0x055C, 0x0638
+REG_CCK_CHECK = 0x0454             # cfg_ch: BIT7 = 5 GHz band marker
+MAC_CLK_SPEED = 0x50               # MAC clock 80 MHz scaler ([WIRE] 0x55c/0x638)
+
 # [SRC] cca_ifem_ccut_rfe[3][4] (rfe_type 3) — Reg82C/830/838 by column (1R/2R x 2G/5G).
 _CCA_IFEM_RFE = (
     (0x75DA8010, 0x75DA8010, 0x75DA8010, 0x75DA8010),   # 0x82C
@@ -135,6 +143,61 @@ def switch_channel(t, ch: int, rf_2t2r: bool = True, bw20: bool = True) -> None:
     _igi_toggle(t)
     _ccapar_by_rfe(t, ch, bw20)
     _spur_reset(t, ch, bw20)
+
+
+def _mac_switch_bandwidth(t, ch: int, pri_idx: int = 0) -> None:
+    """[SRC] mac_switch_bandwidth -> HALMAC cfg_ch_bw_88xx: pri-ch-idx + bw + mac-clk + band marker.
+
+    20 MHz / primary-index 0: REG_DATA_SC = TXSC_40M(10)<<4 (0xA0); clear BW bits in
+    REG_WMAC_TRXPTCL_CTL; cfg_mac_clk (80 MHz); REG_CCK_CHECK band marker (BIT7 = 5 GHz).
+    """
+    txsc40 = 9 if pri_idx in (1, 3) else 10
+    t.write8(REG_DATA_SC, (pri_idx & 0xF) | ((txsc40 & 0xF) << 4))          # cfg_pri_ch_idx
+    sipi.set_bb_reg(t, REG_WMAC_TRXPTCL_CTL, (1 << 7) | (1 << 8), 0x0)      # cfg_bw (BW20)
+    sipi.set_bb_reg(t, REG_AFE_CTRL1, (1 << 21) | (1 << 20), 0x0)          # cfg_mac_clk: 80 MHz
+    t.write8(REG_USTIME_TSF, MAC_CLK_SPEED)
+    t.write8(REG_USTIME_EDCA, MAC_CLK_SPEED)
+    v = t.read8(REG_CCK_CHECK) & ~0x80                                      # cfg_ch: band marker
+    t.write8(REG_CCK_CHECK, (v | 0x80) if ch > 35 else v)
+
+
+def _switch_bandwidth_20(t, ch: int, rf_2t2r: bool, rx_ant: int) -> None:
+    """[SRC] config_phydm_switch_bandwidth_8822b (CHANNEL_WIDTH_20) + its tail helpers."""
+    rf18 = sipi.read_rf_reg(t, sipi.RF_PATH_A, RF_0x18)
+    val32 = (t.read32(0x08AC) & 0xFFCFFC00)            # | CHANNEL_WIDTH_20 (== 0)
+    t.write32(0x08AC, val32)
+    sipi.set_bb_reg(t, 0x08C4, 1 << 30, 0x1)           # ADC buffer clock
+    rf18 |= (1 << 11) | (1 << 10)                      # RF BW = 20 MHz
+    sipi.set_rf_reg(t, sipi.RF_PATH_A, RF_0x18, sipi.RFREGOFFSETMASK, rf18)
+    if rf_2t2r:
+        sipi.set_rf_reg(t, sipi.RF_PATH_B, RF_0x18, sipi.RFREGOFFSETMASK, rf18)
+    # phydm_rxdfirpar_by_bw_8822b (BW20)
+    sipi.set_bb_reg(t, 0x0948, (1 << 29) | (1 << 28), 0x2)
+    sipi.set_bb_reg(t, 0x094C, (1 << 29) | (1 << 28), 0x2)
+    sipi.set_bb_reg(t, 0x0C20, 1 << 31, 0x1)
+    sipi.set_bb_reg(t, 0x0E20, 1 << 31, 0x1)
+    _ccapar_by_rfe(t, ch, bw20=True)
+    _spur_reset(t, ch, bw20=True)
+    # phydm_bw_fixed_setting (BW20) + phydm_bw_fixed_enable
+    sipi.set_bb_reg(t, 0x0840, 0xF, 0x0)
+    sipi.set_bb_reg(t, 0x0840, 1 << 4, 0x1)
+    # Toggle RX path to avoid the RX dead-zone, then IGI to enter RX mode
+    sipi.set_bb_reg(t, 0x0808, 0xFF, 0x0)
+    sipi.set_bb_reg(t, 0x0808, 0xFF, rx_ant | (rx_ant << 4))
+    _igi_toggle(t)
+
+
+def set_channel_bw(t, ch: int, rf_2t2r: bool = True) -> None:
+    """Runtime hop (20 MHz): switch_channel + mac/PHYDM bandwidth re-apply.
+
+    [SRC] switch_chnl_and_set_bw_by_drv steps 2-3 (no band switch — same-band hop only; a
+    2.4<->5 crossing additionally runs config_phydm_switch_band_8822b first). The per-channel
+    DPK/TSSI cal that the vendor runs next is deferred (TX-quality; see RTL8822BU_DKMS.md).
+    """
+    rx_ant = BB_PATH_AB if rf_2t2r else BB_PATH_A
+    switch_channel(t, ch, rf_2t2r=rf_2t2r)
+    _mac_switch_bandwidth(t, ch)
+    _switch_bandwidth_20(t, ch, rf_2t2r, rx_ant)
 
 
 def _rf_0xbe(ch: int) -> int:
