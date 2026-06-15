@@ -139,11 +139,28 @@ download_fw → halmac_download_firmware`, ported to `firmware.download(t, blob)
 The gate replays a **merged ctrl+bulk** stream (`extract_bulk_out_ops` + `merge_ops_by_frame`)
 against one `ReplayDevice` whose new `write()` byte-checks each FW packet.
 
-### Next frontier — MAC init for RX (op #5139, `W 0x010C` ...)
+### Next frontier — MAC init for RX (op #5139, `W 0x010C` ...) — roadmap mapped
 
-After FW download the morrownr flow runs `init_mac_flow` (TRX enable, queue mapping, RX filters,
-DRVINFO/PHYSTS). The wire opens with `W16 0x010C`(`REG_TXDMA_PQ_MAP` = TRX-queue DMA mapping).
-This is the next milestone (M3: MAC init / `REG_CR` TRX bits).
+After FW download the morrownr flow runs `init_mac_flow` `[SRC] hal_halmac.c:3452` →
+`halmac_init_mac_cfg(trx_mode)` `[SRC] halmac_init_88xx.c:504`, a clean sequence of four
+sub-functions (each its own gate-able step):
+
+1. **`init_trx_cfg_8822b`** `[SRC] halmac_init_8822b.c` — the frontier. `txdma_queue_mapping_8822b`
+   (the `W16 0x010C` REG_TXDMA_PQ_MAP queue→DMA priority map), then `W8 REG_CR=0` /
+   `FWFF_PKT_INFO→FWFF_CTRL` / `W8 REG_CR=MAC_TRX_ENABLE` / `W32 H2CQ_CSR=BIT31`,
+   `priority_queue_cfg_8822b` (the RQPN/FIFOPAGE page-boundary allocation — depends on `trx_mode`
+   + `tx_fifo_size`, so port the `txff_allocation` math), `init_h2c_8822b` (H2CQ head/tail/addr),
+   and the USB `REG_TXDMA_PQ_MAP |= BIT(0)`.
+2. **`init_protocol_cfg_8822b`** `[SRC] halmac_init_8822b.c:750` — RSV/AMPDU/EOF, PROT_MODE_CTRL,
+   BAR/EDCA thresholds, INIRTS_RATE_SEL.
+3. **`init_edca_cfg_88xx`** — EDCA/SIFS/slot/retry-limit.
+4. **`init_wmac_cfg_88xx`** — the WMAC RX path: RCR, RXFLTMAP, TCR, and the receive filters. This
+   is where the monitor RCR will eventually be opened (watch the open-RCR-after-tail pattern the
+   sibling ports use — see the open questions).
+
+Then `_choose_trx_mode`, `set_bulkout_num`, and the driver-side `_init_trx_cfg_drv` /
+`rx_agg_switch` / `cfg_operation_mode` follow. After MAC init comes BB+RF (PHYDM tables), RF
+calibration, channel tune, and the monitor RX tail (the A/B 3.6× payoff).
 
 ### Coverage gap — USB2-link branches untested (all captures are USB3)
 
