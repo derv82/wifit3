@@ -11,13 +11,14 @@ import asyncio
 import logging
 import os
 import sys
-from typing import Dict, List, Optional, Type
+from typing import Dict, List, NoReturn, Optional, Type
 
 import libusb_package
 import usb.core
 import usb.util
 
 from wifit3.engine.protocols import DeviceID, WlanDriver
+from wifit3.errors import WifiteFatalError
 
 from .interface import WlanInterface
 
@@ -115,13 +116,36 @@ def _is_openable(dev: usb.core.Device) -> bool:
             pass
 
 
+def _raise_usblib_fatal(cause: Exception) -> NoReturn:
+    # pyusb's NoBackendError is opaque. libusb ships with wifit3 (libusb_package), so the only way
+    # it fails to load is a missing OS dependency — on Linux almost always libudev; on Windows/macOS
+    # the bundled lib should always load, so it points at a broken install. Turn it into an
+    # actionable fatal error the splash surfaces in a modal.
+    if sys.platform.startswith("linux"):
+        message = (
+            "The bundled libusb could not be loaded — a system dependency is missing.\n\n"
+            "Install it for your architecture and replug the card:\n"
+            "  Debian / Ubuntu / Kali:   sudo apt install libudev1\n"
+            "  Fedora / RHEL:            sudo dnf install systemd-libs\n"
+            "  Arch:                     sudo pacman -S systemd-libs")
+    else:
+        message = (
+            "The bundled libusb failed to initialize. Reinstall wifit3 — the install is likely "
+            "corrupt or being blocked by security software.")
+    raise WifiteFatalError("USB backend unavailable", message) from cause
+
+
 def _scan_bus(backend) -> List[tuple]:
     # Blocking bus scan: ``(dev, driver_cls, id_entry)`` for every supported VID:PID match.
     out: List[tuple] = []
-    for dev in usb.core.find(find_all=True, backend=backend):
-        match = _match_driver(dev)
-        if match is not None:
-            out.append((dev, match[0], match[1]))
+    try:
+        for dev in usb.core.find(find_all=True, backend=backend):
+            match = _match_driver(dev)
+            if match is not None:
+                out.append((dev, match[0], match[1]))
+    except usb.core.NoBackendError as exc:
+        # No usable libusb backend (its OS glue is missing) — fatal, the app can't run.
+        _raise_usblib_fatal(exc)
     return out
 
 

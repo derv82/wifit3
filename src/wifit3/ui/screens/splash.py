@@ -11,12 +11,14 @@ from textual import work
 from rich.text import Text
 from rich.style import Style
 
+from wifit3.errors import WifiteFatalError
 from wifit3.setup import ids_from_registry
 from wifit3.setup.linux import current_user, install_rule, remove_rule
 from wifit3.setup.windows import install_winusb, restore_driver
 from wifit3.ui.screens.confirm_install import ConfirmInstallDialog
 from wifit3.ui.screens.confirm_uninstall import ConfirmUninstallDialog
 from wifit3.ui.screens.setup_error import SetupErrorDialog
+from wifit3.ui.screens.fatal_error import FatalErrorModal
 from wifit3.ui.screens.propagating import PropagatingDialog
 from wifit3.wlan.manager import WlanDeviceManager
 
@@ -152,6 +154,11 @@ class SplashView(Screen):
                 start_btn.disabled = True
                 uninstall_btn.disabled = True
                 self._selected_name = None
+        except WifiteFatalError as err:
+            # Unrecoverable (e.g. no USB backend) and it surfaces on the very first scan — stop
+            # polling and replace the splash with the Quit-only fatal modal.
+            self._refresh_timer.stop()
+            self.app.push_screen(FatalErrorModal(err))
         finally:
             self._poll_in_flight = False
 
