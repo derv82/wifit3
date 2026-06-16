@@ -28,13 +28,11 @@ import libusb_package
 import usb.core
 import usb.util
 
-from wifit3.chips.rtl8822bu_dkms import bringup, chan, chipid, rx
-from wifit3.chips.rtl8822bu_dkms.constants import REG_RCR
+from wifit3.chips.rtl8822bu_dkms import bringup, chan, chipid, mac, rx
 from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport
 from wifit3.wlan.packet import WlanFrameParser
 
 USB_VID, USB_PID = 0x2357, 0x0138
-RCR_MONITOR = 0x9000380F                       # AAP|APM|AM|AB|ADF|ACF|AMF|APP_PHYST|APPFCS
 CHANNELS_2G = list(range(1, 14))
 
 
@@ -71,10 +69,10 @@ def _watch(t, channels, dwell: float, prev_ch):
     per_ch: dict[int, Counter] = {}
     rssi: dict[str, int] = {}
     total_frames = 0
+    mac.enable_monitor(t)                          # faithful airmon monitor RX-enable (once)
     for ch in channels:
         chan.set_channel_bw(t, ch, prev_ch=prev_ch)
         prev_ch = ch
-        t.write32(REG_RCR, RCR_MONITOR)            # (re)assert monitor RCR after the tune
         beacons: Counter = Counter()
         raw_bytes = raw_bufs = ch_frames = 0
         start = time.monotonic()

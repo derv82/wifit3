@@ -304,10 +304,14 @@ REG_TX_PTCL_CTRL = 0x0520               # +1: clear BIT(4)
 # init_wmac_cfg
 REG_RXFLTMAP0 = 0x06A0
 WLAN_RX_FILTER0 = 0x0FFFFFFF
+REG_RXFLTMAP1 = 0x06A2                  # management-frame subtype RX filter
 REG_RXFLTMAP2 = 0x06A4
 WLAN_RX_FILTER2 = 0xFFFF
 REG_RCR = 0x0608
 WLAN_RCR_CFG = 0xE400220E
+REG_MSR = REG_CR + 2                    # 0x102 — media/network-type (port 0 in [1:0])
+BIT_AAP = 1 << 0                        # REG_RCR accept-all-physical-address (promiscuous)
+BIT_APP_FCS = 1 << 31                   # REG_RCR append FCS to RX (radiotap monitor)
 REG_RX_PKT_LIMIT = 0x060C
 WLAN_RXPKT_MAX_SZ_512 = 12288 >> 9      # 24
 REG_TCR = 0x0604                        # +1: TX_FUNC_CFG1, +2: TX_FUNC_CFG2

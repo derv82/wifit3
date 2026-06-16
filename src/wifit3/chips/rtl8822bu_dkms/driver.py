@@ -1,22 +1,18 @@
 """RTL8822BU / 2T2R driver — vendor (HALMAC/PHYDM) cleanroom port.
 
-`connect()` runs the deterministic cold bring-up that the byte-for-byte gate verifies
-(`scripts/rtl8822bu_dkms/verify_pcap.py` → `bringup.cold_bringup`): chip-ID/USB-PHY → EFUSE →
-two-cycle power/FW/MAC init → BB phy-reg/AGC + crystal + RF-A/RF-B tables. It then tunes to the
-default channel (`chan.set_channel_bw`, byte-verified against the capture's airodump hops), starts
-the bulk-IN RX reader, and opens the monitor RCR.
-
-**RX status (hardware, 2026-06-15):** cold init + `set_channel` run clean on the card (RF tunes to
-the target channel, both radios respond). The monitor RX path is fully wired (RCR=0x9000380F,
-RXFLTMAP=0xFFFF, bulk-IN 0x84 reader, FCS-stripped rx-desc decode), and the BB hears RF energy on
-a live channel (the FA/CCA counters climb). But **no frame yet completes into the RXFF**, so
-beacons are not delivered. The blocker is the post-init RX seed the vendor runs after the BB/RF
-tables (the phydm DM init / RX cal — CCK-PD + DIG + the RX demod path), which is the next
-milestone. See RTL8822BU_DKMS.md "RX bring-up". No RF calibration (IQK/DPK) is ported yet either.
+`connect()` runs the deterministic cold bring-up the byte-for-byte gate verifies
+(`scripts/rtl8822bu_dkms/verify_pcap.py` → `bringup.cold_bringup`): the entire vendor `rtl8822b_init`
+— chip-ID/USB-PHY → EFUSE → two-cycle power/FW/MAC → BB/AGC/crystal/RF tables → full `odm_dm_init`
+(RX seed + RF-cal tail) → `phy_bf_init`/wifi-only-coex/`init_misc`. It then tunes to the default
+channel (`chan.set_channel_bw`, byte-verified against the capture's airodump hops), starts the bulk-IN
+RX reader, and runs the faithful airmon monitor RX-enable (`mac.enable_monitor`, gate-verified against
+the capture's monitor switch: MSR no-link, RCR=AAP|APP_PHYSTS|APP_FCS, DRVINFO sniffer-mode,
+RXFLTMAP0/1/2=0xFFFF). RX frames decode via `rx.iter_frames` (24-byte rx_pkt_desc + jaguar2 phy-status
+RSSI, FCS-stripped).
 
 Not registered in the manager (the mainline `chips/rtl8822bu/` owns 2357:0138); this `_dkms` port
-is exercised standalone via `scripts/rtl8822bu_dkms/test_hw.py`. `inject_frame` is a stub — TX (M8)
-is a later milestone, and the agent never fires live TX.
+is exercised standalone via `scripts/rtl8822bu_dkms/test_hw.py`. `inject_frame` is a stub — the TX
+descriptor is a later milestone, and the agent never fires live TX.
 """
 from __future__ import annotations
 
@@ -31,8 +27,7 @@ from wifit3.engine.protocols import DeviceID, ProgressCallback
 from wifit3.wlan.packet import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
-from . import bringup, chan, txpower
-from .constants import REG_RCR
+from . import bringup, chan, mac, txpower
 from .rx import iter_frames
 from .transport import Rtl8822buTransport
 
@@ -42,7 +37,6 @@ USB_VID_REALTEK = 0x2357
 USB_PID_T3U_PLUS = 0x0138
 _DEFAULT_CHANNEL = 1
 _BULK_OUT_EP_TX = 0x05                          # 8822b bulk-OUT (FW/TX)
-RCR_MONITOR_VALUE = 0x9000380F                  # AAP|APM|AM|AB|ADF|ACF|AMF|APP_PHYST|APPFCS
 CHANNELS_2G = list(range(1, 14))
 CHANNELS_5G = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124,
                128, 132, 136, 140, 144, 149, 153, 157, 161, 165]
@@ -111,7 +105,9 @@ class Rtl8822buDkmsDriver:
         # Start the bulk-IN reader before opening the RX gate (an undrained pipe wedges RX FIFO).
         self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="8822bu-dkms-rx")
         self._reader.start()
-        await loop.run_in_executor(None, self.transport.write32, REG_RCR, RCR_MONITOR_VALUE)
+        # The faithful airmon monitor RX-enable (gate-verified vs the capture's monitor switch):
+        # MSR no-link, RCR=AAP|APP_PHYSTS|APP_FCS, DRVINFO sniffer-mode, RXFLTMAP0/1/2=0xFFFF.
+        await loop.run_in_executor(None, mac.enable_monitor, self.transport)
 
         if progress_cb:
             progress_cb(1.0, f"Tuned to channel {_DEFAULT_CHANNEL} @ 20 MHz (monitor)")

@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from . import pwrseq
 from .mac_reg_tbl import MAC_REG_TBL
 from .constants import (
+    BIT_AAP,
+    BIT_APP_FCS,
     BIT_APP_PHYSTS,
     BIT_AUTO_INIT_LLT_V1,
     BIT_BOOT_FSPI_EN,
@@ -78,6 +80,7 @@ from .constants import (
     REG_INIRTS_RATE_SEL,
     REG_LED_CFG,
     REG_MCUFW_CTRL,
+    REG_MSR,
     REG_PAD_CTRL1,
     REG_PIFS,
     REG_PRE_INIT_FE5B,
@@ -94,6 +97,7 @@ from .constants import (
     REG_TRXFF_BNDY,
     REG_RXFF_BNDY,
     REG_RXFLTMAP0,
+    REG_RXFLTMAP1,
     REG_RXFLTMAP2,
     REG_RXTSF_OFFSET_CCK,
     REG_SIFS,
@@ -188,16 +192,47 @@ def enable_bb_rf(t, pcb_info: int) -> None:
     _enable_bb_rf(t, enable=True, pcb_info=pcb_info)
 
 
-def config_rx_info(t) -> None:
-    """cfg_drv_info_8822b(HALMAC_DRV_INFO_PHY_STATUS) [SRC] halmac_cfg_wmac_8822b.c:30 — set the
-    4-byte DRVINFO size, the rxdesc-len-0 fix, RCR app-phystatus, and clear the sniffer/plcp bits;
-    then the driver re-syncs its RCR cache (a bare REG_RCR read)."""
-    t.write8(REG_RX_DRVINFO_SZ, 4)
+_DRV_INFO_SIZE = {"NONE": 0, "PHY_STATUS": 4, "PHY_SNIFFER": 5, "PHY_PLCP": 6}
+
+
+def config_rx_info(t, drv_info: str = "PHY_STATUS") -> None:
+    """cfg_drv_info_8822b [SRC] halmac_cfg_wmac_8822b.c:30 — set the DRVINFO size + the rxdesc-len-0
+    fix, RCR app-phystatus, and the sniffer/plcp option bits, by drv_info mode. Cold init uses
+    PHY_STATUS (4-byte phy status); monitor enter uses PHY_SNIFFER (+1-byte sniffer info, sets
+    0x7d4[9]). Followed (in rtw_halmac_config_rx_info) by the driver's RCR-cache resync (REG_RCR read)."""
+    t.write8(REG_RX_DRVINFO_SZ, _DRV_INFO_SIZE[drv_info])
     t.write8(REG_TRXFF_BNDY + 1, (t.read8(REG_TRXFF_BNDY + 1) & 0xF0) | 0x0F)
-    t.write32(REG_RCR, t.read32(REG_RCR) | BIT_APP_PHYSTS)
-    t.write32(REG_WMAC_OPTION_FUNCTION + 4,
-              t.read32(REG_WMAC_OPTION_FUNCTION + 4) & ~((1 << 8) | (1 << 9)))
-    t.read32(REG_RCR)                                             # HW_VAR_RCR cache sync
+    rcr = t.read32(REG_RCR) & ~BIT_APP_PHYSTS
+    if drv_info != "NONE":                                        # phy_status_en
+        rcr |= BIT_APP_PHYSTS
+    t.write32(REG_RCR, rcr)
+    opt = t.read32(REG_WMAC_OPTION_FUNCTION + 4) & ~((1 << 8) | (1 << 9))
+    if drv_info == "PHY_SNIFFER":                                # sniffer_en -> BIT(9)
+        opt |= 1 << 9
+    elif drv_info == "PHY_PLCP":                                 # plcp_hdr_en -> BIT(8)
+        opt |= 1 << 8
+    t.write32(REG_WMAC_OPTION_FUNCTION + 4, opt)
+    t.read32(REG_RCR)                                            # HW_VAR_RCR cache sync
+
+
+def enable_monitor(t) -> None:
+    """[SRC] hw_var_set_opmode(_HW_STATE_MONITOR_) (rtl8822b_ops.c:1299) → Set_MSR(NOLINK) +
+    set_opmode_monitor — the airmon monitor RX-enable. In the capture this is the op the first RX
+    frame lands right after; the vendor's monitor RCR is **0x90000001** (AAP|APP_PHYSTS|APP_FCS), not
+    an ad-hoc value. Set MSR to no-link, set that RCR, put the DRVINFO in sniffer mode
+    (config_rx_info(PHY_SNIFFER)), flag the DRVINFO-present bit (REG_RX_DRVINFO_SZ|=0x80), then open all
+    three RX filter maps (RXFLTMAP0/1/2 = 0xFFFF) after backing up their values."""
+    t.write8(REG_MSR, t.read8(REG_MSR) & ~0x3)                  # Set_MSR(NOLINK), port 0 [1:0]=0
+    t.read32(REG_RCR)                                           # get_hwreg(HW_VAR_RCR) — backup
+    t.write32(REG_RCR, BIT_AAP | BIT_APP_PHYSTS | BIT_APP_FCS)  # radiotap monitor RCR (0x90000001)
+    config_rx_info(t, "PHY_SNIFFER")
+    t.write8(REG_RX_DRVINFO_SZ, t.read8(REG_RX_DRVINFO_SZ) | 0x80)
+    t.read16(REG_RXFLTMAP0)                                     # backup the three RX filter maps
+    t.read16(REG_RXFLTMAP1)
+    t.read16(REG_RXFLTMAP2)
+    t.write16(REG_RXFLTMAP0, 0xFFFF)
+    t.write16(REG_RXFLTMAP1, 0xFFFF)
+    t.write16(REG_RXFLTMAP2, 0xFFFF)
 
 
 def pre_init_system_cfg(t) -> None:
