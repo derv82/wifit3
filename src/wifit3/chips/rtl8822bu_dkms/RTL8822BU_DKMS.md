@@ -7,29 +7,28 @@
 > not. Don't chase RX symptoms; reproduce the wire.
 >
 > **Done & gate-verified (cap-1 byte-for-byte unless noted):**
-> - Full deterministic **cold init** (chip-ID → EFUSE → 2× power/FW/MAC → BB phy-reg/AGC → crystal →
->   RF-A/RF-B), ends op ~9410.
-> - **`odm_dm_init` — PORTED IN FULL** (gate 9509→**9805**): the RX seed (dig / cck_pd /
->   env_monitor[nhm·clm·fahm] / adaptivity / ra_info) **and the entire RF-cal tail** — `cfo_tracking_init`
->   → `rf_init`(tx-pwr-track) → **`dc_cancellation`** (RX DC-offset cal) → **`tx_current_calibration`**
->   (TxA bias) → **`get_pa_bias_offset`** (PG PA-bias→RF). The remaining tail inits (antdiv / soml /
->   path_div / primary_cca / psd) are wire-silent on 8822b.
+> - **The ENTIRE vendor chip init `rtl8822b_init` — reproduced byte-for-byte to op 9855.** This is the
+>   whole `verify_pcap` deterministic span: chip-ID → EFUSE → 2× power/FW/MAC → BB/AGC/crystal → RF-A/B →
+>   **`odm_dm_init` in full** (dig / cck_pd / env_monitor / adaptivity / ra_info RX seed + the RF-cal tail
+>   `cfo_tracking_init` → `rf_init` → **`dc_cancellation`** RX-DC-offset → **`tx_current_calibration`** →
+>   **`get_pa_bias_offset`** → **`psd_init`**) → the **`rtl8822b_init` tail** (**`phy_bf_init`** MU-MIMO
+>   seed `txbf.py`, **wifi-only coex** antenna/RFE `coex.py`, **`init_misc`** CAM/RCR/sec-en/TXQ/AMPDU).
 > - **`set_channel`** (switch_channel + bandwidth + band-switch + **PSD spur eliminator** +
 >   **per-channel TXAGC**) — `verify_channels` 35/35/34 hops on cap-1/2/3.
+> - **RX decode + jaguar2 phy-status RSSI** — verified vs 9292 real bulk-IN frames (median -66 dBm).
 > - Runnable **driver** (`driver.py`/`bringup.py`/`rx.py`); `test_hw.py --phase init` runs clean on HW.
 >
-> **Frontier = op 9805: TX-beamforming/MU-MIMO init** (`0x14c0`/`0x167c`/`0x1680`/`0x1c94`, confirmed
-> `haltxbf8822b.c`), then **BT-coex HW init** and **monitor-mode MAC setup** (9805→~9872), then at
-> op ~9873 the **per-channel cal scan** (the airodump hops). None of 9805→9872 is in `cold_bringup`:
-> TX-beamforming + BT-coex are subsystems a passive-RX monitor driver does not use (marked skips, see
-> "Coverage gaps"); the monitor MAC setup the driver does its own way. **Next real work: the per-channel
-> scan** (Lead: port the per-channel unit once, run on-demand from `set_channel`, gate per-channel) +
-> RX phy-status parse + TX descriptor (build-only).
+> **Frontier = op 9855: the OS interface-up / opmode state machine** (`hw_var_set_opmode` — MSR/network-
+> type `0x4e`, MAC addr `0x610/0x614` from EFUSE, beacon ctrl `0x550`, RX-filter `0x6a2`). This is the
+> driver's **connect()/`WlanInterface` layer** (mode-dependent managed↔monitor), NOT chip bring-up — a
+> design-level port (discuss before execution). After it: op ~9873 the **per-channel cal scan** (airodump
+> hops, `verify_channels`' domain), then **op 28910 = aireplay-ng TX injection** — the intentional gate
+> stop (a different program's traffic, the legitimate waiver). So the full driver-constructed wire up to
+> injection is covered by `verify_pcap` (chip init → 9855) + `verify_channels` (the sweep).
 >
 > **IQK is FW-offloaded — confirmed.** `[SRC] hal_dm.c:75 phydm_fwoffload_ability_init(_, PHYDM_RF_IQK_
 > OFFLOAD)`. So `phy_iq_calibrate_8822b` takes the FW-H2C path; the software IQK engine (`0x1b00`)
-> appears in **0 of 29542 ops**. (The old "frontier 9556 = IQK" claim was an unverified guess — 9556 is
-> `cfo_tracking_init`'s `0x10[6]`, long ported.) The per-channel FW-IQK in `set_channel` is un-ported.
+> appears in **0 of 29542 ops**. The per-channel FW-IQK in `set_channel` is un-ported (an H2C subsystem).
 >
 > **The loop (proven — ~16 functions done this way):**
 > 1. `uv run python scripts/verify_pcap.py rtl8822bu_dkms` → prints `FRONTIER -> op #N: <op>`.
@@ -59,11 +58,12 @@
 |---|---|
 | Cold init (chip-ID/EFUSE/power/FW/MAC/BB/RF) | ✅ byte-for-byte cap-1/2/3, ends op ~9410 |
 | DM-init RX seed (dig/cck_pd/env_monitor/adaptivity/ra_info) | ✅ gate 9509→9556 (cap-1) |
-| DM-init cal tail (cfo/rf_init/dc_cancellation/txcurrent_cal/pa_bias) | ✅ gate 9556→9805 (cap-1) |
+| DM-init cal tail (cfo/rf_init/dc_cancel/txcurrent/pa_bias/psd_init) | ✅ gate 9556→9815 (cap-1) |
+| rtl8822b_init tail (phy_bf_init / wifi-only coex / init_misc) | ✅ gate 9815→9855 (cap-1) |
 | set_channel (+ spur eliminator + TXAGC) | ✅ 35/35/34 hops |
 | RX decode + phy-status RSSI | ✅ verified vs 9292 real bulk-IN frames (median -66 dBm) |
-| TX-beamforming / BT-coex / monitor MAC (op 9805→9872) | ⬜ skipped — TX/coex subsystems (not in cold_bringup) |
-| **per-channel cal scan** (kfree-noop → tx-pwr → FW-IQK → coex) | ⬜ frontier op ~9873 — deferred per-channel cal |
+| OS interface-up / opmode (op 9855→9872) | ⬜ frontier — driver connect()/WlanInterface layer (design-level) |
+| **per-channel cal scan** (kfree-noop → tx-pwr → FW-IQK) | ⬜ op ~9873 — verify_channels' domain (FW-IQK un-ported) |
 | TX inject descriptor (build-only) | ⬜ remaining — no injector in the passive capture to byte-diff |
 | Live RX (monitor beacons) | ⬜ 0 frames — RX-DMA/monitor-enable gap (cold init + decode proven OK) |
 
@@ -177,14 +177,19 @@ only `BIT_MAC_SEC_EN`, the HW security engine — irrelevant to unencrypted-beac
 
 ## Coverage gaps (verified one axis only)
 
-- **TX-beamforming / BT-coex / monitor-MAC (op 9805→9872) — deliberately not in `cold_bringup`.**
-  After `odm_dm_init` the vendor runs `hal_txbf_8822b_init` (MU-MIMO sounding/precoding: `0x14c0`,
-  `0x167c`, `0x1680`, `0x45f`, `0x1c94`), BT-coex HW init (RFE/GPIO/`0x1700` LTE-coex), then monitor-mode
-  MAC setup. TX-beamforming + BT-coex are **TX/combo subsystems a passive-RX monitor driver never
-  exercises** (`# TODO untestable`-class skips, like a 2T2R card's unused 3T3R arms); the monitor MAC
-  setup the driver re-does its own way (RCR=0x9000380F). **Un-audited risk:** the monitor-MAC RX-DMA
-  writes (op 9847+) are not yet byte-diffed against the driver's monitor path — a candidate for the
-  RX=0 blocker. The per-channel **FW-IQK** (H2C, `[SRC] hal_dm.c:75` IQK offload) is likewise un-ported.
+- **`rtl8822b_init` tail (op 9815→9855) — now PORTED** (`txbf.py`/`coex.py`/`mac.init_misc`): the
+  MU-MIMO/sounding seed (`phy_bf_init`: `0x14c0/0x167c/0x1680/0x45f/0x1c94`), the **wifi-only** coex
+  antenna/RFE seed (`ex_hal8822b_wifi_only_hw_config`: `0x4c/0xcb4/0x974/0x1990/0xcbc/0x70` + gnt
+  `0x1704/0x1700` — this dongle has `EEPROMBluetoothCoexist=false`, so the **full BT-coex stack is not
+  in this capture** and is correctly not ported), and `init_misc` (CAM/RCR/sec-en/TXQ/AMPDU). MU-MIMO
+  sounding/precoding itself only fires with TX+association (out of scope for passive RX).
+- **OS interface-up / opmode (op 9855→9872) — driver-connect layer, un-ported.** `hw_var_set_opmode`
+  (MSR/network-type, MAC addr from EFUSE `0x610/0x614`, beacon ctrl `0x550`, RX-filter `0x6a2`) is the
+  mode-dependent (managed↔monitor) `WlanInterface`/connect() setup, not chip bring-up — a design-level
+  port (Lead: discuss before execution). It is also the **RX-DMA/monitor-enable region** that is the
+  candidate RX=0 blocker — to diff next when RX is chased. The per-channel **FW-IQK** (H2C,
+  `[SRC] hal_dm.c:75` IQK offload) and the **aireplay-ng TX injection** (op 28910+, the gate's
+  intentional stop — a different program's traffic) are likewise out of the chip-init gate.
 - **per-channel kfree no-ops:** `phydm_config_kfree` early-returns on this card (power-trim PG blank,
   `!(pwrtrim->flag & KFREE_FLAG_ON)`), so the per-channel set_channel cal that runs is tx-power + FW-IQK,
   not kfree. (Distinct from the one-time `get_pa_bias_offset`, which *does* run — that's PG 0x3D5≠0xff.)
