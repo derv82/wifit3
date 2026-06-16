@@ -74,7 +74,8 @@ where aireplay TX begins) is partial or unported:
 | `enable_monitor` (20 ops) | ✅ slice-verified (`verify_pcap`) |
 | initial channel-set / `switch_band` | ✅ 165 ops, offline replay — **no standing gate** |
 | `set_channel` hop **tail** (per-ch DPK, DIG tail) | ⛔ unported — `verify_channels` stops at the prologue |
-| opmode block (op 9855: MAC-addr/LED/TSF/RXFLTMAP1) | ⛔ unported |
+| opmode block (op 9855) — MAC-addr | ✅ ported (`set_mac_addr`, EFUSE, replay-verified) |
+| opmode block — LED / BCN_CTRL / RXFLTMAP1 | ⚠️ OS managed-vif layer (see note) — scope decision pending |
 | **DIG/FA watchdog** (runtime IGI; capture fires ~2 s) | ⛔ unported |
 | PSD/spur runtime re-eval during RX | ⛔ unported |
 | TX descriptor | ⛔ unported |
@@ -82,6 +83,18 @@ where aireplay TX begins) is partial or unported:
 RX works, but the continuous runtime adaptation the capture runs (DIG/FA/spur) is not reproduced: the
 golden capture holds **24 bcn/s median, 90+/s peak** while hopping; our RX measures lower. The honest
 one-line status is **"cold init faithful; runtime partial,"** never "100% faithful."
+
+**Opmode-block scope finding.** The opmode block (f19967–19999) is *not* HALMAC chip init — it is the
+kernel net/mlme/cfg80211 + LED layer bringing up a default **managed** vif, which airmon then overrides
+with monitor. Evidence: `0x4a`/`0x4e` are the HALMAC GPIO-pinmux **WL_LED** indicator
+(`pinmux_wl_led_sw_ctrl` = `0x4e` BIT3; the full init pulls in the pinmux mode engine), driven by the
+**async** `LedControlUSB` handler; `0x550=0x1c` is a 1-byte BCN_CTRL RMW (not the flat `InitBeaconParameters`
+write16); `0x6a2=0x0001` is a managed mgmt filter that `enable_monitor` overwrites with `0xFFFF` ~400
+frames later in the same capture. The only chip-state piece functional for wifit3 (a monitor/injection
+tool that implements its *own* net layer) is the **MAC-addr — ported**. Open question for the lead:
+byte-replay the kernel's managed-vif interface-up (port the mlme RMWs + the pinmux LED engine for a
+cosmetic light), or treat it as out-of-scope like aireplay's TX? Until decided, it is flagged, not
+silently skipped.
 
 ## RX = 0 frames — RESOLVED (live monitor RX works)
 
