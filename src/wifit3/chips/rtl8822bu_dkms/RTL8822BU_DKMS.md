@@ -7,14 +7,16 @@
 > bandwidth + band-switch; **29/29/28 airodump hops byte-for-byte**) + the runnable **driver**
 > (`driver.py`/`bringup.py`/`rx.py`) — `test_hw.py --phase init` runs clean on the card and
 > `set_channel` tunes both radios. The byte-for-byte gate is **resumed past the BB/RF tables**:
-> `verify_pcap` is clean to **op ~9507 / 29542** on capture-1/2/3.
+> `verify_pcap` is clean to **op ~9509 / 29542** on capture-1 (the cold reference). capture-2/3
+> diverge earlier (op ~9467) on a stale-module-global artifact — **not** a port bug; see "Gate
+> scope" in "Post-PHY calibration" before worrying about it.
 >
 > **Your job:** continue the gate-driven port of the post-PHY sequence, function by function, until
 > RX delivers beacons. The block being ported now is the **phydm DM init** (`odm_dm_init`) — DIG +
 > CCK-PD are the RX-detection seed (see "RX bring-up" + the ordered sub-init roadmap in "Post-PHY
 > calibration"). The big **IQK** (`halrf_iqk_8822b.c`) is triggered later in the same chain.
-> 5 functions already ported this way (`init_usb_cfg` → … → `phydm_init_cck_setting`); the next
-> frontier op is `R 0x808` (the `somlrxhp`/cck-rssi-tail boundary).
+> 6 functions already ported this way (`init_usb_cfg` → … → `phydm_common_info_self_init`); the
+> next frontier op is `R 0x0c50` (the IGI read that opens `phydm_dig_init`).
 >
 > **The loop (proven — 5 cal/DM functions were just done this way):**
 > 1. `uv run python scripts/verify_pcap.py rtl8822bu_dkms` → prints `FRONTIER -> op #N: <op>`.
@@ -247,19 +249,34 @@ The byte-for-byte gate continues past the BB/RF tables, porting the one-time pos
 (`cal.py`, chained into `bringup.cold_bringup`). **Cleared:** `init_usb_cfg` (RX-DMA burst mode,
 `REG_RXDMA_MODE` 0x290; 9410→9416), `config_phydm_trx_mode` (2T2R TX/RX path + RF mode poll;
 9416→9470), `aac_check` (RF_A 0xC9 AAC; 9470→9475), `phydm_rfe_8822b_init` (RFE mux 0x64/0x1990/
-0x974; 9475→9495), `phydm_init_cck_setting` (CCK RX antenna 0xa00-0xa20; 9495→9507).
+0x974; 9475→9495), `phydm_init_cck_setting` (CCK RX antenna 0xa00-0xa20; 9495→9507),
+`phydm_common_info_self_init` tail (rf_path_rx_enable read 0x808 + `phydm_somlrxhp_setting` SoML
+RxHP seed 0x19a8=0xd90a0000; 9507→9509).
 
 **The block being ported is the phydm DM init** (`odm_dm_init` `[SRC] phydm.c:1789`) — the
 RX-detection seed. Its ordered sub-inits (skip the software-only ones — no wire) are the roadmap;
 port each gate-driven, identifying its source as you hit the frontier:
-`halrf_init` (incl. `aac_check`) → `phydm_rfe_init` ✓ → `phydm_init_cck_setting` ✓ →
-**`phydm_somlrxhp_setting`** (next: `0x19a8=0xd90a0000`, `phydm_rtl8822b.c:347`) →
-`phydm_dig_init` (FA/IGI thresholds `0x994/0x998/0x99c/0x9a0/0x990`) →
+`halrf_init` (incl. `aac_check`) → `phydm_rfe_init` ✓ → `phydm_common_info_self_init` ✓
+(`phydm_init_cck_setting` + rf_path_rx_enable read + `phydm_somlrxhp_setting` `0x19a8=0xd90a0000`;
+`phydm_trx_antenna_setting_init` is a no-op on 8822b) →
+**`phydm_dig_init`** (next: FA/IGI thresholds `0x994/0x998/0x99c/0x9a0/0x990`, `phydm_dig.c`) →
 `phydm_cck_pd_init` (CCK-PD `0x1c38/0x1c78/0x1cb8`) → `phydm_env_monitor_init` (NHM) →
 `phydm_adaptivity_init` (EDCCA) → `phydm_rf_init` → calibration triggers.
-**Frontier op ~9507** = `R 0x808` (the `get_cck_rssi_table_from_reg` tail of cck_setting, then
-`somlrxhp`). The **IQK** (`halrf_iqk_8822b.c`, the large read-dependent block) is triggered later
-in this chain. DIG + CCK-PD are the pieces the RX-demod diagnosis (below) points at.
+**Frontier op ~9509** = `R 0x0c50` (the IGI read that opens `phydm_dig_init`). The **IQK**
+(`halrf_iqk_8822b.c`, the large read-dependent block) is triggered later in this chain. DIG +
+CCK-PD are the pieces the RX-demod diagnosis (below) points at.
+
+**Gate scope past op ~9467 = capture-1 only (a stale-module-global artifact, not a port bug).**
+`config_phydm_trx_mode`'s closing `phydm_rfe_8822b(central_ch_8822b)` `[SRC]
+phydm_hal_api8822b.c:2567,616` is a no-op when `central_ch_8822b == 0` (or 15–35) but writes the
+iFEM table (`0xcb0/0xeb0/0xcb4/...`) for a real channel. `central_ch_8822b` is a **module global**
+`[SRC] phydm_hal_api8822b.c:34` set only by `config_phydm_switch_channel` (`:1837`); the DM init
+runs *before* any channel switch, so on the first cold boot it is 0 — **capture-1**, which the port
+reproduces (the cold path). **capture-2/3** are later boots whose module global survived from the
+prior airodump scan (it ends on ch 1), so they emit the extra 2.4 GHz iFEM block at op ~9467 and
+diverge there. That is stale cross-capture state that cannot be derived from cold inputs, so
+**capture-1 is the authoritative gate from `config_trx_mode` onward**. The DM seed itself
+(somlrxhp/DIG/CCK-PD) is identical on all three boots since `*dm->channel ≤ 14` either way.
 
 ### RF calibration — the rest of the capture is an all-channel scan (decoded)
 

@@ -16,7 +16,8 @@ from . import chan, sipi
 
 BB_PATH_A, BB_PATH_B, BB_PATH_AB = 1, 2, 3
 RF_0xEF, RF_0x33, RF_0x3E, RF_0x3F = 0xEF, 0x33, 0x3E, 0x3F
-_FULL = sipi.RFREGOFFSETMASK
+_FULL = sipi.RFREGOFFSETMASK          # 20-bit RF-register mask
+MASKDWORD = 0xFFFFFFFF                 # full 32-bit BB write (plain write32, no RMW)
 
 
 def aac_check(t) -> None:
@@ -52,6 +53,50 @@ def init_cck_setting(t) -> None:
     sipi.set_bb_reg(t, 0x0A74, 1 << 8, 0x0)           # RX path diversity enable
     sipi.set_bb_reg(t, 0x0A14, 1 << 7, 0x0)           # r_en_mrc_antsel
     sipi.set_bb_reg(t, 0x0A20, (1 << 5) | (1 << 4), 0x1)   # MBC weighting
+
+
+def _somlrxhp_setting(t, switch_soml: bool, channel: int, rfe_type: int,
+                      is_dfs_band: bool = False) -> None:
+    """[SRC] phydm_somlrxhp_setting (phydm_rtl8822b.c:347) — SoML RxHP register seed.
+
+    With SoML on (`switch_soml`) writes 0x19a8=0xd90a0000; the dynamic RxHP 0x8cc/0x8d8 writes
+    apply per channel/rfe_type. On rfe_type 3 (iFEM) at a 2.4 GHz channel both branches exclude
+    the 0x8cc/0x8d8 writes, so the seed is the lone 0x19a8 write."""
+    sipi.set_bb_reg(t, 0x19A8, MASKDWORD, 0xD90A0000 if switch_soml else 0x090A0000)
+    if (not switch_soml) and rfe_type in (1, 6, 7, 9):
+        sipi.set_bb_reg(t, 0x08CC, MASKDWORD, 0x08108000)
+        sipi.set_bb_reg(t, 0x08D8, 1 << 27, 0x0)
+    if channel <= 14:
+        if switch_soml and rfe_type not in (3, 5, 8, 17):
+            sipi.set_bb_reg(t, 0x08CC, MASKDWORD, 0x08108000)
+            sipi.set_bb_reg(t, 0x08D8, 1 << 27, 0x0)
+    elif channel > 35:
+        if switch_soml:
+            sipi.set_bb_reg(t, 0x08CC, MASKDWORD, 0x08108000)
+            sipi.set_bb_reg(t, 0x08D8, 1 << 27, 0x0)
+    if is_dfs_band:                                    # always-low RxHP causes DFS FRD
+        sipi.set_bb_reg(t, 0x08D8, MASKDWORD, 0x29035612)
+        sipi.set_bb_reg(t, 0x08CC, MASKDWORD, 0x08108492)
+
+
+def init_soft_ml_setting(t, channel: int, rfe_type: int) -> None:
+    """[SRC] phydm_init_soft_ml_setting (phydm_soml.c:1423) — 8822b non-MP: enable SoML RxHP.
+
+    wifit3 is always in normal (not MP) mode, so the 8822b branch fires: somlrxhp(on)."""
+    _somlrxhp_setting(t, True, channel, rfe_type)     # dm->bsomlenabled = True (software)
+
+
+def common_info_self_init(t, rfe_type: int, channel: int = 1) -> None:
+    """[SRC] phydm_common_info_self_init (phydm.c:238) — DM self-init after phydm_rfe_init.
+
+    Only three steps touch the wire: phydm_init_cck_setting (CCK RX setup), the BB_RX_PATH read
+    that caches rf_path_rx_enable (ODM_REG_BB_RX_PATH_11AC 0x808, software-only), and
+    phydm_init_soft_ml_setting (SoML RxHP seed). The CE-gated debug-setting block and
+    phydm_trx_antenna_setting_init (a no-op on 8822b — only 8192F/E/97F + 8812/8814A read regs
+    there) emit nothing. `channel` is the cold default (2.4 GHz, ≤14)."""
+    init_cck_setting(t)                                # phydm_init_cck_setting
+    sipi.get_bb_reg(t, 0x0808, 0xF)                    # rf_path_rx_enable (BB_RX_PATH, cached)
+    init_soft_ml_setting(t, channel, rfe_type)         # phydm_init_soft_ml_setting
 
 
 def _config_tx_path(t, tx_path: int, sel_1ss: int, sel_cck: int) -> None:
