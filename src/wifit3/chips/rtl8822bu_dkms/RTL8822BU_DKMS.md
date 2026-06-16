@@ -21,7 +21,27 @@
 > now arrive ~−41 dBm and saturate at the frozen `dig_init` IGI — the **DIG watchdog** must run to back
 > gain off; tune/verify the watchdog for the now-loud environment to land NETGEAR2G at the 8–10 bcn/s target.
 > The diagnostics: `cck_diag.py` (live, rate-split, capture% vs beacon-interval) + `cck_capref.py` (the
-> vendor's own bulk-IN from the capture's FIXED-CH1 window). TX is byte-faithful + handshake-confirmed.
+> vendor's own bulk-IN from the capture's FIXED-CH1 window).
+>
+> **SESSION 2026-06-16 — port functionally complete + faithfulness-audited (for post-port work):**
+> - Antenna-mux fix **committed** (`chan._wifi_only_switch_antenna`), not just `--set`-tested.
+> - **TX descriptor fixed**: G_ID was hardcoded 63 (broke *unicast*/targeted-deauth — 0/128 match); now
+>   BMC-keyed (63 bcast / 0 unicast) = **251/251 byte-for-byte** vs the captured aireplay injector. The
+>   old "byte-faithful, only seqctl varies" claim was never actually byte-checked — it was wrong.
+> - **Deauth + 4-way handshake confirmed LIVE** (user run): client dropped+reconnected, M1-M4 captured,
+>   crackable M2 (ToDS) reachable. TX *and* concurrent RX both work.
+> - **Severe `verify_pcap` audit COMPLETE → see the Faithfulness Gap Ledger below.** Every potential
+>   divergence G1–G19 resolved 🟢; the antenna mux was the SOLE real RX bug. New gates close verify_pcap's
+>   three blind spots (early-stop, matched-prologue, replayed-reads): `verify_initial_tune.py`,
+>   `verify_strict_audit.py` (0 wrong-writes across all 35 hops), `verify_abg_hop.py`, `poll_probe.py`
+>   (HW-verified dc_cancellation/poll-loops converge live), `verify_full_audit.py`, `driver_rx_probe.py`.
+> - **OPEN (none block the port):** (1) **matched-load RX capture%** — confirm NETGEAR2G hits ~vendor 84% on a
+>   QUIET ch1 (the user's work box was flooding ch1 at ~10× the capture's load; test with it off — this is
+>   the last "is the ~6/s vs ~8/s gap pure airtime?" check); (2) **thermal tx-power tracking** un-ported
+>   (`phydm_rf_watchdog`; minor, sustained-flood-only — the one TX gap); (3) a **transient cold-state RX
+>   wedge** seen once (0 frames; replug/rerun clears — the known 8822bu pattern, not a code defect).
+> - **DO NOT** re-assert "byte-faithful" anywhere without a fresh byte-diff vs the capture — two bugs
+>   (RX antenna mux, TX G_ID) hid behind exactly that unverified claim this campaign.
 >
 > **Current state (honest): cold init faithful; runtime mostly ported (watchdog/TX done).** `verify_pcap`
 > byte-verifies the cold init (op 0–9855, ~33% of captured ops). Runtime now ported: `set_channel`
