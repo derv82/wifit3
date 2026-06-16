@@ -179,6 +179,16 @@ def read_phydm_trim(t) -> None:
         _switch_efuse_bank_wifi(t)
 
 
+def efuse_one_byte_read(t, phy_map: bytes, addr: int) -> int:
+    """[SRC] odm_efuse_one_byte_read — a single PG byte served from the cached physical map.
+
+    The byte itself comes from `phy_map` (already dumped at read_efuse), so the only wire op is the
+    WIFI bank-switch (one R 0x35; bank is already 0 ⇒ no write). PHYDM's PG readers (kfree / pa-bias)
+    call this per byte, so each shows up as one 0x35 read [SRC] halmac read_physical_efuse_map."""
+    _switch_efuse_bank_wifi(t)
+    return phy_map[addr]
+
+
 def read_efuse(t) -> Efuse8822b:
     """rtl8822b_read_efuse: autoload-flag read + the HALMAC driver-side physical dump,
     then PG-header decode to the logical map and the scalar field decode.

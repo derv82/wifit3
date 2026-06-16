@@ -432,6 +432,53 @@ def tx_current_calibration(t, efuse0x3d7: int, efuse0x3d8: int, rf_type: int = 2
     sipi.set_rf_reg(t, sipi.RF_PATH_B, 0x18, _FULL, orig_b)
 
 
+def _set_pa_bias_to_rf(t, path: int, tx_pa_bias: int) -> None:
+    """[SRC] phydm_set_pa_bias_to_rf_8822b — fold the PG PA-bias into RF 0x3f[12:9].
+
+    Read RF 0x51/0x52, reassemble the current 0x3f bias field from their bits, add the signed PG
+    offset (clamp 0..7), then write it back through the RF 0x3f LUT (0xef[10] enable, the 0x33
+    bank-index 0/1/2/3 sweep each followed by 0x3f). The replay feeds the 0x51/0x52 reads."""
+    rf51 = sipi.read_rf_reg(t, path, 0x51, _FULL)
+    rf52 = sipi.read_rf_reg(t, path, 0x52, _FULL)
+    rf3f = (((rf52 & 0xE0000) >> 17)
+            | (((rf52 & 0x18000) >> 15) << 3)
+            | ((rf52 & 0xF) << 5)
+            | (((rf51 & 0x78) >> 3) << 9)
+            | (((rf52 & 0x2000) >> 13) << 13))
+    bias = ((rf3f & 0x1E00) >> 9) + tx_pa_bias            # tx_pa_bias_bmask = BIT12..9
+    bias = max(0, min(7, bias))
+    rf3f = (rf3f & 0xFE1FF) | (bias << 9)
+    sipi.set_rf_reg(t, path, 0xEF, 1 << 10, 0x1)          # enable set-TxA-bias LUT
+    sipi.set_rf_reg(t, path, 0x33, _FULL, 0x0)            # bank 0
+    sipi.set_rf_reg(t, path, 0x3F, _FULL, rf3f)
+    sipi.set_rf_reg(t, path, 0x33, 1 << 0, 0x1)           # bank 1
+    sipi.set_rf_reg(t, path, 0x3F, _FULL, rf3f)
+    sipi.set_rf_reg(t, path, 0x33, 1 << 1, 0x1)           # bank 3 (sets bit1; bit0 already 1)
+    sipi.set_rf_reg(t, path, 0x3F, _FULL, rf3f)
+    sipi.set_rf_reg(t, path, 0x33, 0x3, 0x3)              # bank 3 (idempotent)
+    sipi.set_rf_reg(t, path, 0x3F, _FULL, rf3f)
+    sipi.set_rf_reg(t, path, 0xEF, 1 << 10, 0x0)          # disable LUT
+
+
+def get_pa_bias_offset(t, phy_map: bytes) -> None:
+    """[SRC] phydm_get_pa_bias_offset / _8822b (halrf_kfree.c) — PG PA-bias trim to RF.
+
+    Read PPG_PABIAS_2GA (efuse 0x3D5); if blank (0xFF) do nothing. Otherwise decode the signed 2GA
+    (0x3D5) + 2GB (0x3D6) nibbles (bit0 = sign) and fold each path's offset into RF 0x3f (both paths,
+    unconditionally). The three efuse reads each cost one WIFI bank-switch (0x35); the byte values
+    come from the cached map."""
+    from . import efuse
+    pg = efuse.efuse_one_byte_read(t, phy_map, 0x3D5)
+    if pg == 0xFF:
+        return
+    pg_a = efuse.efuse_one_byte_read(t, phy_map, 0x3D5) & 0xF
+    bias_a = (pg_a >> 1) if (pg_a & 1) else -(pg_a >> 1)
+    pg_b = efuse.efuse_one_byte_read(t, phy_map, 0x3D6) & 0xF
+    bias_b = (pg_b >> 1) if (pg_b & 1) else -(pg_b >> 1)
+    _set_pa_bias_to_rf(t, sipi.RF_PATH_A, bias_a)
+    _set_pa_bias_to_rf(t, sipi.RF_PATH_B, bias_b)
+
+
 def _config_tx_path(t, tx_path: int, sel_1ss: int, sel_cck: int) -> None:
     """[SRC] phydm_config_tx_path_8822b + the CCK/OFDM TX-path helpers."""
     sipi.set_bb_reg(t, 0x093C, (1 << 19) | (1 << 18), 0x3)     # TX antenna by Nsts

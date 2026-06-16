@@ -76,6 +76,5 @@ def cold_bringup(t):
     cal.rf_init(t)                         # phydm_rf_init: tx-power-track init (get_swing_index 0xc1c)
     cal.dc_cancellation(t, st)             # phydm_dc_cancellation: RX DC-offset measure + cancel
     cal.tx_current_calibration(t, e.pa_bias[0], e.pa_bias[1])  # phydm_txcurrentcalibration (TxA bias)
-    # phydm_get_pa_bias_offset is wire-silent here: its PPG PA-bias byte is blank, so it returns
-    # before any RF write (only cached-efuse reads, no bank-switch).
+    cal.get_pa_bias_offset(t, e.phy_map)   # phydm_get_pa_bias_offset: PG PA-bias (0x3D5/6) -> RF 0x3f
     return info, e
