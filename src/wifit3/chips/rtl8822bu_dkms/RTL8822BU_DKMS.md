@@ -42,10 +42,9 @@
 > 3. Port it (new fns in `cal.py`/`chan.py`; reuse `sipi`). Chain into the shared path (`cold_bringup`
 >    for cold init; `set_channel` for per-channel cal).
 > 4. Re-run the gate (advances), `uv run ruff check`, commit (one fn/commit, no AI trailer).
-> 5. `test_hw.py --phase beacon` checks RX (passive; card plugged in + WinUSB-bound). **RX = 0 frames
->    even with the full `dc_cancellation`/TxA cal ported** — so the post-DM-init cal is NOT the RX
->    blocker the prior doc claimed. Real blocker unknown; likely the per-channel cal (kfree / FW-IQK)
->    or an RX-path config gap. Faithfulness is still the goal — port the per-channel cal regardless.
+> 5. `test_hw.py --phase beacon` checks RX (passive; card plugged in + WinUSB-bound). **Live monitor RX
+>    WORKS** (ch6 → 7 APs/383 bcn; hop 1-13 → 25 APs/447 bcn) since the `switch_band`-on-initial-tune
+>    fix (`8c2e907`) — see "RX = 0 frames — RESOLVED". The remaining work is faithfulness, not RX.
 >
 > **Hard rules:** cleanroom — port only from `usb_dumps_new/captures_rtl88x2bu/driver-source/`; do NOT
 > open `chips/rtl8822bu/`, `chips/rtw88_base/`, or `scripts/rtl8822bu/` (`scripts/rtl8822bu_dkms/` is
@@ -56,12 +55,35 @@
 > cap-2/3 diverge there on a stale `central_ch_8822b` module-global (a benign cross-capture artifact,
 > not a port bug; see "Coverage gaps"). Everything earlier is byte-clean on all three.
 
-## RX = 0 frames — investigation ledger
+## RX = 0 frames — RESOLVED (live monitor RX works)
 
-The full driver-constructed wire is byte-faithful (cold init → op 9855, every `set_channel` hop,
-`enable_monitor`) yet `test_hw --phase beacon` delivers **0 bytes off bulk-IN 0x84**. The gate is
-structurally blind to two things only: stripped `time.sleep` delays, and any path it does not slice.
-This ledger records what is ruled out so the seam isn't re-walked.
+**Root cause: `set_channel_bw` skipped `switch_band` on the initial tune.** It only ran `switch_band`
+on a 2.4↔5 crossing (`prev_ch` across ch14), so the first tune (`prev_ch=None`) skipped it. The
+cold-init RF tables leave the synth in the **5 GHz** band, so the first 2.4 GHz tune *is* a band
+change — and `switch_band` is what wires the 2.4 GHz RX path to the antenna (CCK enable `0x808[28]`,
+the iFEM RFE antenna switch `0xCB0/0xCA0`, the `0x8CC/0x8D8` RX config). Skipping it left the antenna
+unswitched: the BB heard only the noise floor and **every frame failed FCS** (so default RCR dropped
+them → 0 bytes; `--rcr` accept showed them → 0 *good* frames). Fix: `prev_band_5g = (prev_ch is None
+or prev_ch > 14)`; run `switch_band` when that differs from the target band. (commit `8c2e907`.)
+
+**Why the gate stayed green** (the `[[gate_not_faithful]]` lesson, made concrete): the *initial*
+channel-set is its own window in the capture (f20001+), never sliced by `verify_pcap` (stops at op
+9855) or `verify_channels` (checks only the iw.log airodump hops, which all have `prev_ch` set). The
+deaf path lived exactly in that seam. An offline replay of the initial-set window found the
+divergence at op#1 (port read `0x0958`; capture wrote `0x0808` CCK-enable).
+
+**HW-verified** (`test_hw --phase beacon`): ch6 → 7 APs / 383 beacons in 8 s; hop 1-13 → 25 APs / 447
+beacons. RSSI for strong APs −72..−89 dBm (matches the capture's −66 median). The initial tune
+(`switch_band`) *and* the same-band per-hop retune (no `switch_band`) both deliver beacons.
+
+**How it was localized** (`--rxstats` diagnostic, retained): `RF_0x18` read-back was correctly on
+ch/20 MHz (not a retune-frequency bug); per-frame phy-status RSSI was −88..−96 dBm (noise floor) on
+every `crc_err` frame → antenna path never wired in. Live large phantom frames (317–3994 B, all
+`crc=1`) vs the capture's small CRC-clean frames (14–399 B) was the tell.
+
+### Earlier ruled-out leads (kept for reference)
+
+Before the root cause, these were eliminated (none was it, but the eliminations stand):
 
 **Ruled OUT (evidence in parens):**
 - **Bulk-IN endpoint** — the config descriptor advertises eps `0x84,0x05,0x06,0x87,0x08`; **0x84 is the
@@ -80,31 +102,17 @@ This ledger records what is ruled out so the seam isn't re-walked.
   deferred; neither is an RX-demod step.
 
 **The seam (cold-init-end f19965 → first RX f20445):**
-1. f19967–19999 **opmode block** (= frontier op 9855, un-ported): R/W `0x4a`, `0x4e` (=0x62 then 0x28),
-   MAC-addr `0x610/0x614` (from EFUSE), TSF `0x550`, RXFLTMAP1 `0x6a2`=0x0001 (later overwritten 0xFFFF).
-   MAC-addr/TSF/RXFLTMAP1 are RX-benign in monitor mode (AAP + RXFLTMAP=0xFFFF accept everything);
-   `0x4a`/`0x4e` (opmode/GPIO) are of uncertain RX effect.
-2. f20001–20405 **initial channel-set** — reproduced by `set_channel_bw` (≈ an airodump hop).
+1. f19967–19999 **opmode block** (= frontier op 9855, still un-ported): R/W `0x4a`, `0x4e`,
+   MAC-addr `0x610/0x614` (from EFUSE), TSF `0x550`, RXFLTMAP1 `0x6a2`. RX-benign in monitor mode
+   (AAP + RXFLTMAP=0xFFFF), so not the RX blocker — a faithfulness TODO, not urgent.
+2. f20001–20405 **initial channel-set** — THIS was the deaf seam: `set_channel_bw` skipped
+   `switch_band` here (fixed in `8c2e907`).
 3. f20405–20411 **enable_monitor** — gate-clean 20/20.
 4. f20445 **first RX frame** (ep 0x84, 328 B).
 
-**Still OPEN (ranked, cheapest first):**
-1. **The un-ported opmode block** — port `hw_var_set_opmode` (MAC-addr from EFUSE, the `0x4a`/`0x4e`
-   GPIO writes, TSF) and retest. Likely benign but it is the last un-ported pre-RX op; closing it
-   removes the doubt.
-2. **A missing settle DELAY** the gate strips (RF PLL lock / BB-reset settle). A write that lands during
-   a reset window is value-correct (gate-clean) yet timing-wrong. Hard to see offline; weakened by the
-   multi-second dwell but not excluded.
-3. **RX-DMA aggregation vs low traffic** — agg config is in the byte-perfect cold init so it matches the
-   capture, but if it needs traffic the capture had and the test channel lacks, frames buffer in-chip
-   (weak: the user's env hits 8–10 bcn/s on good cards).
-4. **Deep BB-demod gap** — BB never demodulates despite byte-perfect config.
-
-**Next diagnostic (wired, was interrupted by a replug):**
-`test_hw --phase beacon --channel 6 --rcr 0x90000301 --dwell 12` accepts CRC/ICV-error frames
-(0x90000001 | ACRC32 | AICV). It forks the tree: **bytes appear** ⇒ BB demods but the CRC fails (an
-unfaithful RF/BB cal) → chase the cal; **still 0** ⇒ BB never demods → chase delays / BB-reset. Ask
-before running — it is a beacons→0 HW test.
+Leftover diagnostic, retained: `test_hw --rxstats CH [--rcr 0x90000301]` walks the bulk-IN buffer
+without the good-frame filter and tallies `rx_pkt_desc` categories + RSSI + `RF_0x18` — re-use it if a
+future change regresses RX.
 
 ## Status
 
@@ -119,7 +127,7 @@ before running — it is a beacons→0 HW test.
 | RX decode + phy-status RSSI | ✅ verified vs 9292 real bulk-IN frames (median -66 dBm) |
 | initial managed opmode (op 9855→9872) | ⬜ the OS's default vif setup — the monitor driver skips it (uses enable_monitor) |
 | **per-channel cal scan** (kfree-noop → tx-pwr → FW-IQK) | ⬜ op ~9873 — verify_channels' domain (FW-IQK un-ported) |
-| Live RX (monitor beacons) | ⏳ re-test pending: faithful enable_monitor replaces the ad-hoc RCR |
+| Live RX (monitor beacons) | ✅ HW: ch6 → 7 APs/383 bcn (8s); hop 1-13 → 25 APs/447 bcn. Fixed by switch_band-on-init (8c2e907) |
 | TX inject descriptor (build-only) | ⬜ remaining — no injector in the passive capture to byte-diff |
 
 ## Verified facts (ground truth)
