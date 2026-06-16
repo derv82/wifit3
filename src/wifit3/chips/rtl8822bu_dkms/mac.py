@@ -79,6 +79,7 @@ from .constants import (
     REG_H2CQ_CSR,
     REG_INIRTS_RATE_SEL,
     REG_LED_CFG,
+    REG_MACID,
     REG_MCUFW_CTRL,
     REG_MSR,
     REG_PAD_CTRL1,
@@ -233,6 +234,19 @@ def enable_monitor(t) -> None:
     t.write16(REG_RXFLTMAP0, 0xFFFF)
     t.write16(REG_RXFLTMAP1, 0xFFFF)
     t.write16(REG_RXFLTMAP2, 0xFFFF)
+
+
+def set_mac_addr(t, mac: str) -> None:
+    """[SRC] SetHwReg8822B(HW_VAR_MAC_ADDR) → HALMAC cfg_mac_addr: program the per-port MAC into
+    REG_MACID — low 4 bytes at 0x610, high 2 at 0x614. `mac` is the EFUSE-read address, so the write
+    reproduces the capture without hardcoding this card's identity. The card needs its own address for
+    TX (ACK/source); monitor RX does not, which is why the opmode block around it (LED pinmux, beacon
+    ctrl, the managed RXFLTMAP1 that enable_monitor overrides) is the OS managed-vif layer, not ported."""
+    b = bytes(int(x, 16) for x in mac.split(":"))
+    if len(b) != 6:
+        raise ValueError(f"RTL8822BU: malformed MAC address {mac!r}")
+    t.write32(REG_MACID, int.from_bytes(b[:4], "little"))
+    t.write16(REG_MACID + 4, int.from_bytes(b[4:], "little"))
 
 
 def pre_init_system_cfg(t) -> None:

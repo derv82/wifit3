@@ -310,6 +310,7 @@ WLAN_RX_FILTER2 = 0xFFFF
 REG_RCR = 0x0608
 WLAN_RCR_CFG = 0xE400220E
 REG_MSR = REG_CR + 2                    # 0x102 — media/network-type (port 0 in [1:0])
+REG_MACID = 0x0610                      # per-port MAC address (6 bytes: 0x610 low4 + 0x614 high2)
 BIT_AAP = 1 << 0                        # REG_RCR accept-all-physical-address (promiscuous)
 BIT_APP_FCS = 1 << 31                   # REG_RCR append FCS to RX (radiotap monitor)
 REG_RX_PKT_LIMIT = 0x060C

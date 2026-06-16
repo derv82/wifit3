@@ -90,6 +90,9 @@ class Rtl8822buDkmsDriver:
         info, e = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
         self._chip = (info, e)
         self._txpwr_pg = txpower.parse_pg(e.log_map)
+        if e.mac_address:                          # program the card's own MAC (TX source/ACK)
+            await loop.run_in_executor(None, mac.set_mac_addr, self.transport, e.mac_address)
+            self.mac_address = e.mac_address
         logger.info("RTL8822BU cold init done: cut=%d rfe_type=%d crystal_cap=0x%02x",
                     info.chip_ver, e.rfe_type, e.crystal_cap)
 
