@@ -206,6 +206,12 @@ def main() -> int:
     ap.add_argument("--set", action="append", default=[], metavar="ADDR=VAL[:SZ]",
                     help="force an arbitrary reg after tune (SZ bytes 1/2/4, default 4); repeatable")
     ap.add_argument("--rcr", default=None, help="override monitor RCR (hex) after enable_monitor")
+    ap.add_argument("--bssid", default=None,
+                    help="focus AP for the per-second / sweep report (default: the top CCK AP)")
+    ap.add_argument("--igisweep", default=None,
+                    help="comma list of IGI hex values to A/B in ONE run (same tune/environment), e.g. "
+                         "0x20,0x18,0x10,0x08. Splits --dwell across them; per IGI reports the focus "
+                         "AP's beacons/s + zero-seconds. Finds the gain that hits 8-10/s, no zero-secs.")
     ap.add_argument("--watchdog", action="store_true",
                     help="run the ported PHYDM watchdog every ~2s during the dwell (live IGI/CCK-PD "
                          "adaptation) and report the IGI it converges to — tests whether our DIG "
@@ -286,6 +292,36 @@ def main() -> int:
             sz = int(szs) if szs else 4
             {1: t.write8, 2: t.write16, 4: t.write32}[sz](reg, val)
             print(f"  [override] 0x{reg:X} <- 0x{val:X} ({sz}B)")
+
+        if args.igisweep:
+            vals = [int(v, 0) & 0x7F for v in args.igisweep.split(",")]
+            seg = args.dwell / len(vals)
+            target = (args.bssid or "").lower()
+            print(f"\n  IGI sweep, ch{args.channel}, {seg:.0f}s/step, "
+                  f"focus={target or 'top CCK AP/step'}  (goal: 8-10 bcn/s, 0 zero-secs):")
+            print(f"    {'IGI':>5} {'0xA0C':>5} {'bcn':>4} {'bcn/s':>6} {'zero-s':>6} {'rssi':>5}  AP")
+            for g in vals:
+                for reg in (0x0C50, 0x0E50):
+                    t.write32(reg, (t.read32(reg) & ~0x7F) | g)
+                t.write32(0x0A0C, (t.read32(0x0A0C) & ~0x3F00) | (((g >> 1) & 0x3F) << 8))
+                seg_tally = Tally()
+                s0 = time.monotonic()
+                while time.monotonic() - s0 < seg:
+                    buf = t.bulk_in()
+                    if buf:
+                        seg_tally.walk(buf, time.monotonic())
+                foc = target
+                if not foc:
+                    rows = sorted(((sum(n for r, n in pr.items() if _is_cck(r)), b)
+                                   for b, pr in seg_tally.beacons.items()), reverse=True)
+                    foc = rows[0][1] if rows else "-"
+                nsec = max(1, int(seg))
+                tot = sum(seg_tally.buckets.get(s, {}).get(foc, 0) for s in range(nsec))
+                zeros = sum(1 for s in range(nsec)
+                            if seg_tally.buckets.get(s, {}).get(foc, 0) == 0)
+                print(f"    0x{g:02x}  0x{(g >> 1) & 0x3F:02x}  {tot:>4} {tot / seg:>6.1f} "
+                      f"{zeros:>6} {seg_tally.rssi.get(foc, '?'):>5}  {foc}")
+            return 0
 
         wd = None
         if args.watchdog:
