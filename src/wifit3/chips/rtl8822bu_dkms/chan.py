@@ -7,8 +7,10 @@ spur reset (phydm_spur_calibration_8822b -> phydm_dsde_init). This is the work a
 capture's airodump `--band abg` sweep (see scripts/rtl8822bu_dkms/verify_channels.py).
 
 The band switch (config_phydm_switch_band_8822b, only on a 2.4<->5 crossing) and the bandwidth
-re-apply (mac_switch_bandwidth=HALMAC cfg_bw + config_phydm_switch_bandwidth_8822b) are the rest
-of switch_chnl_and_set_bw; they are the next milestone. wifit3 stays 20 MHz primary by design.
+re-apply (mac_switch_bandwidth=HALMAC cfg_bw + config_phydm_switch_bandwidth_8822b) complete
+switch_chnl_and_set_bw and are ported below (`switch_band`, `_mac_switch_bandwidth`,
+`_switch_bandwidth_20`). The per-channel DPK the vendor runs after TXAGC is the lone deferred tail
+(TX pre-distortion, not RX). wifit3 stays 20 MHz primary by design.
 
 This card is 2T2R (rf_type 2 -> rx/tx_ant_status = BB_PATH_AB) and rfe_type 3 (iFEM); the
 ccapar/rfe branches below resolve to those. The PSD-based dynamic spur eliminator

@@ -61,44 +61,63 @@ def _open_device():
     return dev
 
 
-def _watch(t, channels, dwell: float, prev_ch):
-    """Tune each channel, then run a bulk-IN loop for `dwell` s; tally beacons per channel.
+def _force_igi(t, igi: int) -> None:
+    """Override RX gain (IGI [6:0]) on both paths — bypasses the dig_init seed for the DIG test."""
+    for reg in (0x0C50, 0x0E50):
+        v = t.read32(reg)
+        t.write32(reg, (v & ~0x7F) | (igi & 0x7F))
 
-    Also tracks raw RX-DMA bytes + total parsed frames so a 0-beacon result distinguishes
-    "no bytes off USB" (RX-DMA/enable problem) from "bytes but no good frames" (deaf/AGC/parse)."""
+
+def _dwell_count(t, dwell, rssi, total):
+    """One dwell window: bulk-IN loop, tally beacons. Returns (beacons, bufs, bytes, frames, total)."""
+    beacons: Counter = Counter()
+    raw_bytes = raw_bufs = ch_frames = 0
+    start = time.monotonic()
+    while time.monotonic() - start < dwell:
+        buf = t.bulk_in()
+        if not buf:
+            continue
+        raw_bufs += 1
+        raw_bytes += len(buf)
+        for frame, r in rx.iter_frames(buf):
+            total += 1
+            ch_frames += 1
+            parsed = WlanFrameParser.parse_80211_frame(frame, r)
+            if not parsed or parsed.get("type") != "beacon":
+                continue
+            b = (parsed.get("bssid") or "").lower()
+            if not b or b == "ff:ff:ff:ff:ff:ff":
+                continue
+            beacons[b] += 1
+            if r and (b not in rssi or r > rssi[b]):
+                rssi[b] = r
+    return beacons, raw_bufs, raw_bytes, ch_frames, total
+
+
+def _watch(t, channels, dwell: float, prev_ch, igi=None, rcr=None):
+    """Tune each channel, then a bulk-IN loop for `dwell` s; tally beacons. `igi` forces RX gain to a
+    hex value or sweeps a range (DIG-watchdog hypothesis test); `rcr` overrides the monitor RCR. rx-dma
+    bytes vs parsed frames split "no bytes off USB" (RX-DMA gap) from "bytes but no good frames"."""
     per_ch: dict[int, Counter] = {}
     rssi: dict[str, int] = {}
-    total_frames = 0
+    total = 0
+    igis = ([None] if not igi
+            else [0x1C, 0x24, 0x2C, 0x34, 0x3C, 0x44] if igi == "sweep" else [int(igi, 0)])
     mac.enable_monitor(t)                          # faithful airmon monitor RX-enable (once)
+    if rcr is not None:
+        t.write32(0x0608, int(rcr, 0))             # diagnostic RCR override (e.g. accept CRC/ICV errors)
     for ch in channels:
         chan.set_channel_bw(t, ch, prev_ch=prev_ch)
         prev_ch = ch
-        beacons: Counter = Counter()
-        raw_bytes = raw_bufs = ch_frames = 0
-        start = time.monotonic()
-        while time.monotonic() - start < dwell:
-            buf = t.bulk_in()
-            if not buf:
-                continue
-            raw_bufs += 1
-            raw_bytes += len(buf)
-            for frame, r in rx.iter_frames(buf):
-                total_frames += 1
-                ch_frames += 1
-                parsed = WlanFrameParser.parse_80211_frame(frame, r)
-                if not parsed or parsed.get("type") != "beacon":
-                    continue
-                b = (parsed.get("bssid") or "").lower()
-                if not b or b == "ff:ff:ff:ff:ff:ff":
-                    continue
-                beacons[b] += 1
-                if r and (b not in rssi or r > rssi[b]):
-                    rssi[b] = r
-        per_ch[ch] = beacons
-        n_ap, n_b = len(beacons), sum(beacons.values())
-        print(f"    ch {ch:>3}: {n_ap:>2} APs, {n_b:>4} beacons ({n_b / max(dwell,1e-3):.1f}/s)  "
-              f"[rx-dma {raw_bufs} bufs / {raw_bytes} B, {ch_frames} frames]")
-    return per_ch, rssi, total_frames
+        for g in igis:
+            if g is not None:
+                _force_igi(t, g)
+            beacons, bufs, nbytes, frames, total = _dwell_count(t, dwell / len(igis), rssi, total)
+            per_ch[ch] = per_ch.get(ch, Counter()) + beacons
+            tag = f" IGI=0x{g:02x}" if g is not None else ""
+            print(f"    ch {ch:>3}{tag}: {len(beacons):>2} APs, {sum(beacons.values()):>4} beacons  "
+                  f"[rx-dma {bufs} bufs / {nbytes} B, {frames} frames]")
+    return per_ch, rssi, total
 
 
 def main() -> int:
@@ -106,6 +125,14 @@ def main() -> int:
     ap.add_argument("--phase", choices=("open", "init", "beacon"), default="beacon")
     ap.add_argument("--channel", type=int, default=None, help="single channel (default: hop 1-13)")
     ap.add_argument("--dwell", type=float, default=2.5, help="seconds per channel")
+    ap.add_argument("--igi", default=None,
+                    help="force RX gain IGI to a hex value (0x30) or 'sweep' (try a range). "
+                         "Tests the DIG-watchdog hypothesis: without the runtime DIG, IGI is frozen "
+                         "at the dig_init seed, which may be too low (saturating FA -> no demod).")
+    ap.add_argument("--rcr", default=None,
+                    help="override the monitor RCR after enable_monitor (hex, e.g. 0x90000301 to "
+                         "ACCEPT CRC/ICV-error frames). Diagnostic: if bytes arrive only with errors "
+                         "accepted, the BB demods but the CRC fails (RF/BB offset), not an RX-DMA gap.")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(
@@ -136,9 +163,10 @@ def main() -> int:
 
         channels = [args.channel] if args.channel else CHANNELS_2G
         dwell = args.dwell if args.channel else args.dwell
+        igi_note = f", IGI={args.igi}" if args.igi else ""
         print(f"[*] monitor RX: {'channel ' + str(args.channel) if args.channel else 'hop 1-13'}, "
-              f"{dwell:g}s/ch...")
-        per_ch, rssi, frames = _watch(t, channels, dwell, prev_ch=None)
+              f"{dwell:g}s/ch{igi_note}...")
+        per_ch, rssi, frames = _watch(t, channels, dwell, prev_ch=None, igi=args.igi, rcr=args.rcr)
 
         allb: Counter = Counter()
         for c in per_ch.values():

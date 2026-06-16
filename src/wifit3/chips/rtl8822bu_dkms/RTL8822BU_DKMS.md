@@ -56,6 +56,56 @@
 > cap-2/3 diverge there on a stale `central_ch_8822b` module-global (a benign cross-capture artifact,
 > not a port bug; see "Coverage gaps"). Everything earlier is byte-clean on all three.
 
+## RX = 0 frames — investigation ledger
+
+The full driver-constructed wire is byte-faithful (cold init → op 9855, every `set_channel` hop,
+`enable_monitor`) yet `test_hw --phase beacon` delivers **0 bytes off bulk-IN 0x84**. The gate is
+structurally blind to two things only: stripped `time.sleep` delays, and any path it does not slice.
+This ledger records what is ruled out so the seam isn't re-walked.
+
+**Ruled OUT (evidence in parens):**
+- **Bulk-IN endpoint** — the config descriptor advertises eps `0x84,0x05,0x06,0x87,0x08`; **0x84 is the
+  only bulk-IN** and is listed first, so `transport._bulk_in_ep()` (picks the first bulk-IN) selects it.
+  It carried all 9292 RX frames in the capture.
+- **RX gain / DIG** — forcing IGI across 0x1c–0x44 (write 0xC50/0xE50) gave 0 bytes at *every* value;
+  gain is not the gate.
+- **FW H2C (per-channel IQK / AGC assist)** — only **2** HMEBOX (0x1CC–0x1DF) writes exist in the
+  *entire* capture, both in cold init, **none** in the seam or RX region. There is no per-hop FW-IQK to
+  be missing (refines the header's "per-channel FW-IQK un-ported" — at RX time there is none).
+- **Skipped blocking read** ("write; blockingRead; write" with the read dropped) — `ReplayDevice`'s
+  cursor is strict and monotonic, so a read the port skips makes the next *write* land on a read op and
+  raises Divergence. Gate-green to 9855 ⇒ **no skipped read in any byte-checked path**.
+- **Channel-set bandwidth-apply** — `set_channel_bw` *does* call `_mac_switch_bandwidth` +
+  `_switch_bandwidth_20`. Only the per-channel **DPK** (TX pre-distortion) and the **DIG tail** are
+  deferred; neither is an RX-demod step.
+
+**The seam (cold-init-end f19965 → first RX f20445):**
+1. f19967–19999 **opmode block** (= frontier op 9855, un-ported): R/W `0x4a`, `0x4e` (=0x62 then 0x28),
+   MAC-addr `0x610/0x614` (from EFUSE), TSF `0x550`, RXFLTMAP1 `0x6a2`=0x0001 (later overwritten 0xFFFF).
+   MAC-addr/TSF/RXFLTMAP1 are RX-benign in monitor mode (AAP + RXFLTMAP=0xFFFF accept everything);
+   `0x4a`/`0x4e` (opmode/GPIO) are of uncertain RX effect.
+2. f20001–20405 **initial channel-set** — reproduced by `set_channel_bw` (≈ an airodump hop).
+3. f20405–20411 **enable_monitor** — gate-clean 20/20.
+4. f20445 **first RX frame** (ep 0x84, 328 B).
+
+**Still OPEN (ranked, cheapest first):**
+1. **The un-ported opmode block** — port `hw_var_set_opmode` (MAC-addr from EFUSE, the `0x4a`/`0x4e`
+   GPIO writes, TSF) and retest. Likely benign but it is the last un-ported pre-RX op; closing it
+   removes the doubt.
+2. **A missing settle DELAY** the gate strips (RF PLL lock / BB-reset settle). A write that lands during
+   a reset window is value-correct (gate-clean) yet timing-wrong. Hard to see offline; weakened by the
+   multi-second dwell but not excluded.
+3. **RX-DMA aggregation vs low traffic** — agg config is in the byte-perfect cold init so it matches the
+   capture, but if it needs traffic the capture had and the test channel lacks, frames buffer in-chip
+   (weak: the user's env hits 8–10 bcn/s on good cards).
+4. **Deep BB-demod gap** — BB never demodulates despite byte-perfect config.
+
+**Next diagnostic (wired, was interrupted by a replug):**
+`test_hw --phase beacon --channel 6 --rcr 0x90000301 --dwell 12` accepts CRC/ICV-error frames
+(0x90000001 | ACRC32 | AICV). It forks the tree: **bytes appear** ⇒ BB demods but the CRC fails (an
+unfaithful RF/BB cal) → chase the cal; **still 0** ⇒ BB never demods → chase delays / BB-reset. Ask
+before running — it is a beacons→0 HW test.
+
 ## Status
 
 | Area | State |
