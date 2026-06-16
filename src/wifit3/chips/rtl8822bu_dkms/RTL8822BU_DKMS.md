@@ -75,7 +75,9 @@ where aireplay TX begins) is partial or unported:
 | initial channel-set / `switch_band` | ✅ 165 ops, offline replay — **no standing gate** |
 | opmode block (op 9855) — MAC-addr | ✅ ported (`set_mac_addr`, EFUSE, replay-verified) |
 | opmode block — LED / BCN_CTRL / RXFLTMAP1 | ⚠️ OS managed-vif layer (see note) — scope decision pending |
-| **`phydm_watchdog`** (FA-stats → DIG/IGI + CCK-PD + TX-pwr-track + spur) | 🚧 in progress — `fa_cnt_statistics_ac` done (replay-verified); DIG + rest pending. Dominant RX-quality lever |
+| **`phydm_watchdog`** RX core (`fa_cnt` → `phydm_dig` → `reg_reset`) | ✅ ported + wired (2 s loop in connect()): `fa_cnt` replay-verified 20/20, DIG IGI adapt 8 unit tests, `reg_reset`. Un-freezes the IGI |
+| `phydm_watchdog` — cck_pd, adaptivity, get_dbg_port_info | 🚧 pending (secondary RX members) |
+| `phydm_watchdog` — tx_power_tracking, cfo_tracking, ra_info | ⚠️ monitor dead-code (TX / association-specific; never run unlinked) — wire-only, documented |
 | TX descriptor (`build_inject_txdesc`, inject_frame) | ✅ ported — `fill_fake_txdesc` + XOR-16 checksum, 7 unit tests (no pcap gate: no TX in capture) |
 | TX descriptor | ⛔ unported |
 
