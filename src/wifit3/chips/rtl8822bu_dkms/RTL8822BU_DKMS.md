@@ -79,7 +79,7 @@ where aireplay TX begins) is partial or unported:
 | **`phydm_watchdog`** (RX members) — `fa_cnt`→`reg_reset`→`cck_pd`→`dig`→`adaptivity` | ✅ ported + wired (2 s loop in connect()): `fa_cnt` replay-verified 20/20; DIG/cck_pd/adaptivity 15 unit tests. Un-freezes IGI (0xC50/0xE50), CCK-PD (0xA0A), EDCCA (0x8A4) |
 | `phydm_watchdog` — get_dbg_port_info | ⚠️ ADAPT-mode/diagnostic only — dormant in the CE NORMAL default (adaptivity_dbg_port 0x209 set-but-unused on 8822b) |
 | `phydm_watchdog` — tx_power_tracking, cfo_tracking, ra_info | ⚠️ monitor dead-code (TX / association-specific; never run unlinked) — not ported, documented |
-| TX descriptor (`build_inject_txdesc`, inject_frame) | ✅ ported — `fill_fake_txdesc` + XOR-16 checksum, 7 unit tests (no pcap gate: no TX in capture) |
+| TX descriptor (`build_inject_txdesc`, inject_frame) | ✅ ported — `update_txdesc` MGNT branch, **byte-matches the captured aireplay injector** (251 deauth TX frames, only HW seqctl varies); 8 unit tests |
 | TX descriptor | ⛔ unported |
 
 RX works, but the continuous runtime adaptation the capture runs (DIG/FA/spur) is not reproduced: the
@@ -97,6 +97,24 @@ tool that implements its *own* net layer) is the **MAC-addr — ported**. Open q
 byte-replay the kernel's managed-vif interface-up (port the mlme RMWs + the pinmux LED engine for a
 cosmetic light), or treat it as out-of-scope like aireplay's TX? Until decided, it is flagged, not
 silently skipped.
+
+## Post-Port Checklist (planning/PORTING.md) — steps 1–6
+
+1. **Waivers** — cold init (→op 9855) + airmon monitor entry reproduce single-cursor with zero
+   waived ops; the only frontier is the OS opmode block (op 9855), outside the chip-init gate. ✅
+2. **Skip audit** — documented, evidence-backed skips: LED (cosmetic async pinmux), BCN_CTRL/RXFLTMAP1
+   (managed-vif, `enable_monitor`-overridden), watchdog `tx_power_tracking`/`cfo`/`ra` (TX/assoc
+   dead-code in monitor), `get_dbg_port_info` (ADAPT-mode dormant). ✅
+3. **Capture coverage** — cap-1 (cold boot) passes full single-cursor; cap-2/3 diverge at op 9468 on a
+   **warm-reload stale `central_ch` software static** (not on the wire, not HW-readable) — our cold-boot
+   `central_ch=0` is the faithful model, not a bug. ✅
+4. **TX byte-diff** — `build_inject_txdesc` byte-matches the capture's 251 aireplay deauth TX descriptors
+   (`update_txdesc` MGNT branch; MACID=1/G_ID=63/RTY_LMT/SW_DEFINE all source-pinned). ✅
+5. **Async producers** — the always-on PHYDM DIG watchdog is *dispatched* (2 s loop, `connect()`), not
+   stripped; `cfo`/`ra`/`tx_pwr` correctly don't run in monitor. ✅
+6. **Recal cadence** — per-channel recal in `set_channel_bw` (band/channel/bandwidth/TXAGC); periodic
+   DIG recal dispatched; the per-hop `_io_lock` prevents a cancelled tune leaving a stale channel. ✅
+7. **Hands-on break-it pass** — the human's step (replug/soak/live-TX); `deauth_hw.py` is the TX tool.
 
 ## RX = 0 frames — RESOLVED (live monitor RX works)
 
