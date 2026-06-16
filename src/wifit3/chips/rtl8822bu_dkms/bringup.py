@@ -69,4 +69,5 @@ def cold_bringup(t):
     cal.cck_pd_init(t)                     # phydm_cck_pd_init: CCK packet-detection threshold
     cal.env_monitor_init(t)                # phydm_env_monitor_init: NHM + CLM + FAHM env-monitor
     cal.adaptivity_init(t)                 # phydm_adaptivity_init: EDCCA seed
+    cal.ra_info_init(t)                    # phydm_ra_info_init: rate-adaptation + ARFR tables
     return info, e

@@ -161,6 +161,21 @@ def adaptivity_init(t) -> None:
     sipi.set_bb_reg(t, 0x0524, 1 << 11, 0x1)          # mac_edcca_state: disable count-down
 
 
+def ra_info_init(t) -> None:
+    """[SRC] phydm_ra_info_init (phydm_rainfo.c:2034) — rate-adaptation init.
+
+    Caches rrsr_val_init (R 0x440); 8822b sets 0x4cc[31:24] = 0x4c8[23:16] - 1; phydm_arfr_table_init
+    (RATEID_IDX_TYPE2) writes the 2.4G AC 2ss/1ss auto-rate-fallback tables to 0x494/0x498/0x4a4/
+    0x4a8. phydm_rate_adaptive_mask_init is software."""
+    sipi.get_bb_reg(t, 0x0440, 0xFFFFFFFF)            # rrsr_val_init
+    rv = sipi.get_bb_reg(t, 0x04C8, 0xFF0000)         # 0x4c8[23:16]
+    sipi.set_bb_reg(t, 0x04CC, 0xFF000000, (rv - 1) & 0xFF)
+    t.write32(0x0494, 0xFE01F015)                     # phydm_arfr_table_init
+    t.write32(0x0498, 0x40000000)
+    t.write32(0x04A4, 0x003FF015)
+    t.write32(0x04A8, 0x40000000)
+
+
 def _config_tx_path(t, tx_path: int, sel_1ss: int, sel_cck: int) -> None:
     """[SRC] phydm_config_tx_path_8822b + the CCK/OFDM TX-path helpers."""
     sipi.set_bb_reg(t, 0x093C, (1 << 19) | (1 << 18), 0x3)     # TX antenna by Nsts
