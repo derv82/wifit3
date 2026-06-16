@@ -19,6 +19,16 @@ DIG_MAX_COVERAGE = 0x26                  # DIG_MAX_COVERAGR — unlinked upper
 DIG_MIN_COVERAGE = 0x1C                  # DIG_MIN_COVERAGE — unlinked lower
 DIG_MAX_OF_MIN_COVERAGE = 0x22           # the unlinked dig_max_of_min default
 
+# CCK packet-detection (8822b == CCK_PD_IC_TYPE1, single-byte 0xA0A writer) [SRC] phydm_cck_pd.c
+CCK_FA_MA_RESET = 0xFFFFFFFF
+CCK_PD_LV_0, CCK_PD_LV_1 = 0, 1
+_CCK_PD_TH = {CCK_PD_LV_0: 0x40, CCK_PD_LV_1: 0x83}   # LV_2/3/4 only reachable when linked
+
+# Adaptivity / EDCCA (NORMAL mode = the CE default) [SRC] phydm_adaptivity.h:33-35
+TH_L2H_DIFF_IGI = 8
+EDCCA_TH_L2H_LB = 48
+EDCCA_HL_DIFF_NORMAL = 8
+
 
 @dataclass
 class FaCnt:
@@ -95,6 +105,8 @@ class DigState:
     first_connect: bool = False
     first_disconnect: bool = True                   # the first post-init tick sees a disconnect
     fa_th: tuple = (2000, 4000, 5000)
+    cck_fa_ma: int = CCK_FA_MA_RESET                # CCK-FA moving average (EWMA across ticks)
+    cck_pd_lv: int = CCK_PD_LV_1                    # cck_pd_init writes LV_1 (0xA0A=0x83) at cold init
 
 
 def _new_igi_by_fa(igi: int, cnt_all: int, fa_th: tuple, step: tuple) -> int:
@@ -153,15 +165,51 @@ def _odm_write_dig(t, st: DigState, new_igi: int) -> None:
     st.cur_ig_value = new_igi
 
 
+def cck_pd_th(t, st: DigState, fa: FaCnt) -> None:
+    """[SRC] phydm_cck_pd_th + phydm_cckpd_type1 (phydm_cck_pd.c, 8822b = CCK_PD_IC_TYPE1, unlinked):
+    smooth the CCK false-alarm count into an EWMA, pick LV_1 (>1000) / LV_0 (<500) / hold (500-1000
+    hysteresis), and on a level *change* write the single-byte CCK PD threshold to 0xA0A (0x83 / 0x40).
+    rssi_min/IGI are irrelevant on the unlinked branch; the only input is the CCK FA count."""
+    cck_fa = fa.cck_fail
+    if st.cck_fa_ma == CCK_FA_MA_RESET:
+        st.cck_fa_ma = cck_fa
+    else:
+        st.cck_fa_ma = (st.cck_fa_ma * 3 + cck_fa) >> 2
+    if st.cck_fa_ma > 1000:
+        lv = CCK_PD_LV_1
+    elif st.cck_fa_ma < 500:
+        lv = CCK_PD_LV_0
+    else:
+        return                                       # hysteresis band: hold, no write
+    if st.cck_pd_lv == lv:
+        return
+    st.cck_pd_lv = lv
+    st.cck_fa_ma = CCK_FA_MA_RESET                    # MA resets on every level change
+    t.write8(0x0A0A, _CCK_PD_TH[lv])
+
+
+def adaptivity(t, st: DigState) -> None:
+    """[SRC] phydm_edcca_thre_calc (NORMAL mode, 11AC `< JGR2 & N` branch) + phydm_set_edcca_threshold
+    (phydm_adaptivity.c) — derive the EDCCA L2H/H2L thresholds from the current IGI and write them to
+    0x8A4 byte0/byte1 each tick. `th_l2h = max(igi+8, 48)`, `th_h2l = th_l2h - 8`. The ADAPT-mode path
+    (l2h_dyn_min, the 0x209 dbg port, 0xCE8/0x8DC) stays dormant — the CE build defaults to NORMAL."""
+    th_l2h = max(st.cur_ig_value + TH_L2H_DIFF_IGI, EDCCA_TH_L2H_LB)
+    th_h2l = (th_l2h - EDCCA_HL_DIFF_NORMAL) & 0xFF
+    sipi.set_bb_reg(t, 0x08A4, 0x000000FF, th_l2h)   # MASKBYTE0 = L2H
+    sipi.set_bb_reg(t, 0x08A4, 0x0000FF00, th_h2l)   # MASKBYTE1 = H2L
+
+
 def phydm_watchdog(t, st: DigState) -> None:
     """The runtime PHYDM loop wifit3 runs every ~2 s + after each hop: read the FA/CCA counters, adapt
     the RX IGI from them, then reset the counters for the next window. This is the functional core of
     `phydm_watchdog` (phydm.c:2384) — the part that keeps RX gain tracking the channel. Other watchdog
-    members the vendor also runs (cck_pd, TX-power tracking, adaptivity, cfo/ra) are not yet ported; see
-    RTL8822BU_DKMS.md. After init `first_disconnect` is True for one tick (forces IGI to 0x1c), then the
-    steady FA-driven hunt takes over."""
+    members the vendor also runs (TX-power tracking, cfo/ra) are TX/association-specific and never run in
+    monitor; see RTL8822BU_DKMS.md. After init `first_disconnect` is True for one tick (forces IGI to
+    0x1c), then the steady FA-driven hunt takes over."""
     fa = fa_cnt_statistics_ac(t)
-    phydm_dig(t, st, fa)
-    false_alarm_counter_reg_reset(t)
+    false_alarm_counter_reg_reset(t)                 # latch counters after reading (per the vendor order)
+    cck_pd_th(t, st, fa)                             # CCK PD threshold (0xA0A) from CCK FA
+    phydm_dig(t, st, fa)                             # RX IGI (0xC50/0xE50) from total FA
+    adaptivity(t, st)                                # EDCCA thresholds (0x8A4) from the new IGI
     st.first_disconnect = False
     st.first_connect = False
