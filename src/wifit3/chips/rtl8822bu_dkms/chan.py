@@ -351,6 +351,15 @@ def switch_band(t, ch: int, rf_2t2r: bool, rx_ant: int) -> None:
     _spur_reset(t, ch, True, rf_2t2r)
 
 
+def _wifi_only_switch_antenna(t, ch: int) -> None:
+    """[SRC] hal8822b_wifi_only_switch_antenna (halbtc8822bwifionly.c:69) — the wifi-only coex
+    band-notify's antenna mux. 0xCBC[9:8] selects the RX antenna path per band: 2.4 GHz = 2,
+    5 GHz = 1. It is the band-dependent antenna selection (fired on every scan/band/connect
+    notify), so the RX front end is only routed to the band's antenna once this runs — the
+    cold-init tables leave 0xCBC[9:8] at 0, which is neither band's path."""
+    sipi.set_bb_reg(t, 0x0CBC, (1 << 9) | (1 << 8), 0x2 if ch <= 14 else 0x1)
+
+
 def _mac_switch_bandwidth(t, ch: int, pri_idx: int = 0) -> None:
     """[SRC] mac_switch_bandwidth -> HALMAC cfg_ch_bw_88xx: pri-ch-idx + bw + mac-clk + band marker.
 
@@ -409,13 +418,16 @@ def set_channel_bw(t, ch: int, rf_2t2r: bool = True, prev_ch: int | None = None,
     """
     rx_ant = BB_PATH_AB if rf_2t2r else BB_PATH_A
     prev_band_5g = True if prev_ch is None else prev_ch > 14   # cold-init default band = 5 GHz
-    if prev_band_5g != (ch > 14):
+    band_changed = prev_band_5g != (ch > 14)
+    if band_changed:
         switch_band(t, ch, rf_2t2r, rx_ant)
     switch_channel(t, ch, rf_2t2r=rf_2t2r)
     _mac_switch_bandwidth(t, ch)
     _switch_bandwidth_20(t, ch, rf_2t2r, rx_ant)
-    if txpwr_pg is not None:
-        txpower.set_tx_power_level(t, ch, txpwr_pg, rf_2t2r)
+    if band_changed:                                 # wifi-only coex band-notify (after the channel
+        _wifi_only_switch_antenna(t, ch)             # set, matching the wire) — routes RX to the
+    if txpwr_pg is not None:                          # band's antenna (0xCBC[9:8]); without it the
+        txpower.set_tx_power_level(t, ch, txpwr_pg, rf_2t2r)   # 2.4 GHz RX path is left deaf
 
 
 def _rf_0xbe(ch: int) -> int:

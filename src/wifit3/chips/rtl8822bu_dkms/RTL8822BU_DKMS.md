@@ -6,21 +6,22 @@
 > beacons** — a fully faithful port that yields 0 beacons is the win; a <100% port that "works" is
 > not. Don't chase RX symptoms; reproduce the wire.
 >
-> **TOP OPEN BUG — 2.4 GHz RX is ~15–20 dB DEAF (re-diagnosed 2026-06-16; earlier "CCK-only" framing
-> was wrong).** It is NOT CCK-specific and NOT the CCK-PD threshold. It is a flat 2.4 GHz RX *sensitivity*
-> deficit: **both** CCK-1M beacons **and** low-rate OFDM beacons capture far below the vendor; only strong
-> local stations (data) punch through, so the UI shows "data flies, beacons die." 5 GHz is perfect.
-> **Ground truth (`cck_capref.py`, the capture's 15 s FIXED-CH1 window):** the vendor driver caught CCK
-> beacons at **79–89%** of advertised rate on the strong ch1 APs and hit 9–10 bcn/s every second; **we get
-> 23–60%** on the *same* APs (`cck_diag.py`). Both tools count beacons against each AP's advertised beacon
-> interval, so the metric is RSSI-decode-independent. **The RX gain index (IGI) is the dominant lever:**
-> forcing IGI `0x20→0x10` (more sensitive than the DIG floor `0x1c`) lifts a near AP from 13% → 74%, and
-> the OFDM beacons rise with it. Ruled out: CRC/demod (0 crc/icv ever), CCK-PD `0xA0A` (`--cckpd 0x40` no
-> change on busy *or* quiet channels), airtime (quiet ch3 still deficient). **Open: where the gain is lost
-> at a given IGI** — front-end (iFEM/RFE 2.4 GHz LNA) or a read-dependent cold-init cal that mis-converges
-> live (RSSI reads swing ±25 dB run-to-run → unstable AGC/DC-offset; `dc_cancellation`'s live `0xFA0`
-> idle-poll is the prime suspect — verify_pcap feeds it the capture's idle value, so the gate can't see a
-> live-HW divergence). See "2.4 GHz RX deafness" below. TX is byte-faithful + handshake-confirmed.
+> **TOP BUG — SOLVED 2026-06-16: 2.4 GHz RX was on the WRONG ANTENNA.** Root cause: the wifi-only
+> coex band-notify (`hal8822b_wifi_only_switch_antenna`, `halbtc8822bwifionly.c:69`) sets the RX
+> **antenna mux** `0xCBC[9:8]` per band (2.4 GHz = 2, 5 GHz = 1). It was **un-ported** — mis-deferred as
+> "BT-coex no-op" — so cold init left `0xCBC[9:8] = 0` (neither band's path) and 2.4 GHz RX ran on the
+> wrong antenna: a flat ~15–20 dB deficit hitting **both** CCK-1M and low-rate OFDM beacons (5 GHz fine,
+> since its path is the cold-init default; CCK-demod/CCK-PD/IGI/IQK all ruled out). The symptom was
+> "data flies, beacons die" — only strong local stations punched through. **Fix:** `chan._wifi_only_
+> switch_antenna` writes `0xCBC[9:8]=2/1`, called from `set_channel_bw` on a band change (after the
+> channel set, matching the wire). **Confirmed:** HW `--set 0xCBC=0x200` lifted NETGEAR2G (30:85:..d2:18)
+> from ~0% → 59%, RSSI recovered +20–40 dB (now −53, matching the vendor's −48), APs heard 9 → 23.
+> Gate: `verify_initial_tune` 167 ops byte-for-byte, `verify_channels` 35/35 (ch1 crossing now lands on
+> TXAGC), `verify_pcap` unchanged. **Secondary (open, minor):** with the right antenna the strongest APs
+> now arrive ~−41 dBm and saturate at the frozen `dig_init` IGI — the **DIG watchdog** must run to back
+> gain off; tune/verify the watchdog for the now-loud environment to land NETGEAR2G at the 8–10 bcn/s target.
+> The diagnostics: `cck_diag.py` (live, rate-split, capture% vs beacon-interval) + `cck_capref.py` (the
+> vendor's own bulk-IN from the capture's FIXED-CH1 window). TX is byte-faithful + handshake-confirmed.
 >
 > **Current state (honest): cold init faithful; runtime mostly ported (watchdog/TX done).** `verify_pcap`
 > byte-verifies the cold init (op 0–9855, ~33% of captured ops). Runtime now ported: `set_channel`
@@ -78,14 +79,24 @@
 > cap-2/3 diverge there on a stale `central_ch_8822b` module-global (a benign cross-capture artifact,
 > not a port bug; see "Coverage gaps"). Everything earlier is byte-clean on all three.
 
-## 2.4 GHz RX deafness — the open bug (START HERE)
+## 2.4 GHz RX deafness — SOLVED (wrong antenna mux)
 
-**Re-diagnosed 2026-06-16 with rate-resolved tooling.** The earlier "CCK demod is broken / OFDM fine"
-framing was an artifact of (a) the doc mislabelling the strong `38:d5` APs as OFDM-beacon when the HW
-`rx_rate` field says they beacon at **CCK-1M**, and (b) a channel saturated with OFDM *data*. The actual
-bug is a **flat ~15–20 dB 2.4 GHz RX sensitivity deficit** that hits every weak signal — CCK-1M beacons
-*and* low-rate OFDM beacons alike. 5 GHz is fine. Strong local stations (data) overcome it, so the UI
-reads "data flies (1400/s), beacons die (0–1/s)."
+**Root cause (2026-06-16): the 2.4 GHz RX antenna mux `0xCBC[9:8]` was never set.** The wifi-only coex
+band-notify (`hal8822b_wifi_only_switch_antenna`, `halbtc8822bwifionly.c:69`) selects the RX antenna path
+per band — 2.4 GHz = 2, 5 GHz = 1 — and fires on every scan/band/connect notify. It was un-ported
+(mis-deferred as "BT-coex no-op"; even this doc's old "Coverage gaps" note waved off the `0xCBC` write on
+crossings as BT-coex). Cold init leaves `0xCBC[9:8] = 0` (neither band), so 2.4 GHz RX ran on the wrong
+antenna — a flat ~15–20 dB deficit on **every** 2.4 GHz signal. 5 GHz was unaffected (its path is the
+default). **Fix:** `chan._wifi_only_switch_antenna` (called from `set_channel_bw` on a band change, after
+the channel set). Gate-verified byte-for-byte (`verify_initial_tune` 167 ops → TXAGC; `verify_channels`
+35/35). HW: forcing `0xCBC[9:8]=2` lifted NETGEAR2G 0% → 59%, RSSI +20–40 dB (−53, ≈ the vendor's −48), APs
+heard 9 → 23. The diagnostic methodology that found it is below; it earlier mis-pointed at IGI/gain (a
+confound — see the footnote).
+
+The symptom was "data flies (1400/s), beacons die (0–1/s)": only strong local stations punched through the
+bad antenna path. The earlier "CCK demod broken / OFDM fine" framing was wrong on two counts — the strong
+`38:d5` APs actually beacon at **CCK-1M** (HW `rx_rate`), and low-rate **OFDM** beacons were hit just as
+hard (the tell it was a band-wide RX-path problem, not CCK demod).
 
 **Ground truth — vendor vs us, same APs / same environment, ch1** (`cck_capref.py` reads the capture's
 15 s FIXED-CH1 bulk-IN; `cck_diag.py` measures live; capture% = beacons caught ÷ the AP's advertised
@@ -108,28 +119,17 @@ LV_0 → no change on busy ch1 *or* quiet ch3); airtime contention (quiet ch3, ~
 strongest CCK AP). The runtime watchdog drives IGI the *right* way (→`0x1c` + CCK-PD→`0x40`); the old
 "watchdog makes CCK worse" claim did not reproduce.
 
-**The lever is RX gain (IGI).** Forcing IGI `0x20→0x10` (more sensitive than the DIG floor `0x1c`) lifts
-d2:18 from 13% → 74% and the OFDM beacons rise with it (`cck_diag --igi 0x10`). But at the *same* IGI the
-vendor still out-receives us (it got 79–89% near the DIG floor; we get ~40–55% at `0x1c`), and our RSSI
-readings for one AP swing **±25 dB run-to-run** — a stable gain-table error would not swing. So two
-things are in play: the default IGI is too high *and* something makes the live front-end gain
-non-deterministic / lower than the vendor's at the same index.
+**IGI was a red herring (footnote).** Forcing IGI `0x20→0x10` *seemed* to lift d2:18 to 74% in one run,
+but a within-run `--igisweep` on a strong AP was flat across `0x10..0x38` — the "improvement" was the
+run-to-run instability of the wrong-antenna path (RSSI swung ±25 dB, RF18 occasionally read a stray
+`0x18c01`), not a gain effect. With the antenna fixed, RX is sensitive again; the remaining gain work is
+the opposite — the **DIG watchdog** must run to tame now-strong APs (≈−41 dBm) that saturate at the
+frozen `dig_init` IGI. That is the secondary, open item for hitting the 8–10 bcn/s target on NETGEAR2G.
 
-**Open leads (prioritised) — see the task list:**
-1. **`dc_cancellation` live poll integrity.** `phydm_stop_ic_trx` polls `0xFA0` for BB-idle; the replay
-   *feeds* an idle value so `verify_pcap` always "passes," but on live HW the poll may bail → the RX
-   DC-offset comp (`0xC10/0xC14/0xE10/0xE14`) is wrong and varies per boot. Best fit for the ±25 dB
-   instability. Instrument it on HW and compare the computed offsets to the capture's writes.
-2. **Front-end / iFEM RFE 2.4 GHz LNA gain** at a fixed IGI (5 GHz works → the 2.4 GHz-specific RFE path
-   in `switch_band` + `_rfe_ifem`, or the 2.4 GHz AGC LNA rows). Gate the initial channel-set (no
-   standing gate today) byte-for-byte against the FIXED-CH1 entry.
-3. **EFUSE / crystal-cap** misread feeding wrong gain/cal (`[[feedback_constants_from_source]]`; the
-   user's "EFUSE misread swung DIG wildly" memory).
-4. Whole-cold-path poll-loop audit (verify_pcap's structural blind spot — it replays reads).
-
-**Repro:** `uv run python scripts/rtl8822bu_dkms/cck_diag.py --channel 1 --dwell 20` (add `--igi 0x10`,
-`--cckpd 0x40`, `--watchdog`, or `--scan`); `uv run python scripts/rtl8822bu_dkms/cck_capref.py` for the
-vendor reference.
+**Repro / diagnostics:** `uv run python scripts/rtl8822bu_dkms/cck_diag.py --channel 1 --dwell 20`
+(rate-split, per-AP capture% vs beacon-interval; flags `--watchdog`, `--igisweep`, `--bssid`, `--set`,
+`--cckpd`, `--scan`); `cck_capref.py` for the vendor's own bulk-IN from the FIXED-CH1 window;
+`verify_initial_tune.py` gates the initial 2.4 GHz channel-set + antenna notify byte-for-byte.
 
 ## Faithfulness scoreboard — what "pcap-faithful" actually covers
 
