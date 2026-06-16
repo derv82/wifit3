@@ -28,7 +28,7 @@ import libusb_package
 import usb.core
 import usb.util
 
-from wifit3.chips.rtl8822bu_dkms import bringup, chan, chipid, mac, rx, sipi
+from wifit3.chips.rtl8822bu_dkms import bringup, chan, chipid, dm_watchdog, mac, rx, sipi
 from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -147,12 +147,16 @@ def _rxstats(t, channel, dwell, rcr):
         print("  => no good frames and no crc/icv: walk likely mis-aligned -> decode bug, not CRC.")
 
 
-def _dwell_count(t, dwell, rssi, total):
-    """One dwell window: bulk-IN loop, tally beacons. Returns (beacons, bufs, bytes, frames, total)."""
+def _dwell_count(t, dwell, rssi, total, wd=None):
+    """One dwell window: bulk-IN loop, tally beacons. If `wd` (a DigState) is set, tick the PHYDM
+    watchdog every ~2 s to adapt RX gain. Returns (beacons, bufs, bytes, frames, total)."""
     beacons: Counter = Counter()
     raw_bytes = raw_bufs = ch_frames = 0
-    start = time.monotonic()
+    start = last_wd = time.monotonic()
     while time.monotonic() - start < dwell:
+        if wd is not None and time.monotonic() - last_wd >= 2.0:
+            dm_watchdog.phydm_watchdog(t, wd)        # runtime IGI/CCK-PD/EDCCA adaptation
+            last_wd = time.monotonic()
         buf = t.bulk_in()
         if not buf:
             continue
@@ -173,10 +177,11 @@ def _dwell_count(t, dwell, rssi, total):
     return beacons, raw_bufs, raw_bytes, ch_frames, total
 
 
-def _watch(t, channels, dwell: float, prev_ch, igi=None, rcr=None):
+def _watch(t, channels, dwell: float, prev_ch, igi=None, rcr=None, watchdog=False):
     """Tune each channel, then a bulk-IN loop for `dwell` s; tally beacons. `igi` forces RX gain to a
-    hex value or sweeps a range (DIG-watchdog hypothesis test); `rcr` overrides the monitor RCR. rx-dma
-    bytes vs parsed frames split "no bytes off USB" (RX-DMA gap) from "bytes but no good frames"."""
+    hex value or sweeps a range (DIG-watchdog hypothesis test); `rcr` overrides the monitor RCR;
+    `watchdog` runs the runtime PHYDM watchdog (live IGI adaptation) every ~2 s. rx-dma bytes vs parsed
+    frames split "no bytes off USB" (RX-DMA gap) from "bytes but no good frames"."""
     per_ch: dict[int, Counter] = {}
     rssi: dict[str, int] = {}
     total = 0
@@ -185,13 +190,17 @@ def _watch(t, channels, dwell: float, prev_ch, igi=None, rcr=None):
     mac.enable_monitor(t)                          # faithful airmon monitor RX-enable (once)
     if rcr is not None:
         t.write32(0x0608, int(rcr, 0))             # diagnostic RCR override (e.g. accept CRC/ICV errors)
+    wd = None
+    if watchdog:
+        wd = dm_watchdog.DigState(cur_ig_value=sipi.get_bb_reg(t, 0x0C50, 0x7F),
+                                  cck_new_agc=bool(sipi.get_bb_reg(t, 0x0A9C, 1 << 17)))
     for ch in channels:
         chan.set_channel_bw(t, ch, prev_ch=prev_ch)
         prev_ch = ch
         for g in igis:
             if g is not None:
                 _force_igi(t, g)
-            beacons, bufs, nbytes, frames, total = _dwell_count(t, dwell / len(igis), rssi, total)
+            beacons, bufs, nbytes, frames, total = _dwell_count(t, dwell / len(igis), rssi, total, wd=wd)
             per_ch[ch] = per_ch.get(ch, Counter()) + beacons
             tag = f" IGI=0x{g:02x}" if g is not None else ""
             print(f"    ch {ch:>3}{tag}: {len(beacons):>2} APs, {sum(beacons.values()):>4} beacons  "
@@ -216,6 +225,9 @@ def main() -> int:
                     help="diagnostic: tally rx_pkt_desc categories (good/crc_err/icv_err/c2h) on CH "
                          "instead of parsing frames. Pair with --rcr 0x90000301 to DMA error frames. "
                          "Tells crc_err-cal-issue apart from a descriptor-decode/alignment bug.")
+    ap.add_argument("--watchdog", action="store_true",
+                    help="run the runtime PHYDM watchdog (live IGI/CCK-PD/EDCCA adaptation) every ~2s "
+                         "during the dwell — A/B the beacon rate against the frozen dig_init seed.")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(
@@ -253,7 +265,8 @@ def main() -> int:
         igi_note = f", IGI={args.igi}" if args.igi else ""
         print(f"[*] monitor RX: {'channel ' + str(args.channel) if args.channel else 'hop 1-13'}, "
               f"{dwell:g}s/ch{igi_note}...")
-        per_ch, rssi, frames = _watch(t, channels, dwell, prev_ch=None, igi=args.igi, rcr=args.rcr)
+        per_ch, rssi, frames = _watch(t, channels, dwell, prev_ch=None, igi=args.igi, rcr=args.rcr,
+                                      watchdog=args.watchdog)
 
         allb: Counter = Counter()
         for c in per_ch.values():

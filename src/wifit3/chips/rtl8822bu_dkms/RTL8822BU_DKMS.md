@@ -74,7 +74,8 @@ where aireplay TX begins) is partial or unported:
 | `enable_monitor` (20 ops) | ✅ slice-verified (`verify_pcap`) |
 | initial channel-set / `switch_band` | ✅ 165 ops, offline replay — **no standing gate** |
 | opmode block (op 9855) — MAC-addr | ✅ ported (`set_mac_addr`, EFUSE, replay-verified) |
-| opmode block — LED / BCN_CTRL / RXFLTMAP1 | ⚠️ OS managed-vif layer (see note) — scope decision pending |
+| opmode block — LED (`0x4a`/`0x4e`) | ⏭️ SKIPPED by lead decision — cosmetic async pinmux indicator (`LedControlUSB` timer; `0x62→0x28` not byte-reproducible) |
+| opmode block — BCN_CTRL / RXFLTMAP1 | ⚠️ managed-vif defaults `enable_monitor` overrides (RXFLTMAP1→0xFFFF) — monitor-inert, not ported |
 | **`phydm_watchdog`** (RX members) — `fa_cnt`→`reg_reset`→`cck_pd`→`dig`→`adaptivity` | ✅ ported + wired (2 s loop in connect()): `fa_cnt` replay-verified 20/20; DIG/cck_pd/adaptivity 15 unit tests. Un-freezes IGI (0xC50/0xE50), CCK-PD (0xA0A), EDCCA (0x8A4) |
 | `phydm_watchdog` — get_dbg_port_info | ⚠️ ADAPT-mode/diagnostic only — dormant in the CE NORMAL default (adaptivity_dbg_port 0x209 set-but-unused on 8822b) |
 | `phydm_watchdog` — tx_power_tracking, cfo_tracking, ra_info | ⚠️ monitor dead-code (TX / association-specific; never run unlinked) — not ported, documented |
