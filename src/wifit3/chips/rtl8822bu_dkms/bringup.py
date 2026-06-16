@@ -14,7 +14,7 @@ package 7). See RTL8822BU_DKMS.md for the per-step citations.
 """
 from __future__ import annotations
 
-from . import bb, cal, chipid, efuse, firmware, mac, phy_cond, rf, txbf, usbphy
+from . import bb, cal, chipid, coex, efuse, firmware, mac, phy_cond, rf, txbf, usbphy
 from . import constants as const
 
 
@@ -80,4 +80,5 @@ def cold_bringup(t):
     cal.psd_init(t)                        # phydm_psd_init: PSD-tool HW params (0x910) — odm_dm_init tail
     # --- rtl8822b_init tail (after rtw_phydm_init): post-phydm one-time HW seeding ---
     txbf.phy_bf_init(t)                    # rtl8822b_phy_bf_init: MU-MIMO/sounding default seed
+    coex.wifi_only_hw_config(t)            # rtw_btcoex_wifionly_hw_config: wifi-only antenna/RFE seed
     return info, e
