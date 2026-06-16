@@ -69,3 +69,11 @@ def test_checksum_total_xor_is_zero():
 def test_bmc_bit_tracks_addr1_group_bit():
     assert (int.from_bytes(build_inject_txdesc(_DEAUTH_BCAST)[0:4], "little") >> 24) & 1 == 1
     assert (int.from_bytes(build_inject_txdesc(_DEAUTH_UNICAST)[0:4], "little") >> 24) & 1 == 0
+
+
+def test_g_id_tracks_addr1_group_bit():
+    # G_ID (word2[24:30]) = the RA station's beamforming group: 63 for a broadcast/group-addressed
+    # frame, 0 for unicast (no BF station). Matches the captured aireplay injector byte-for-byte
+    # (broadcast probe-req G_ID=63, unicast deauth G_ID=0); a hardcoded 63 broke unicast injection.
+    assert (int.from_bytes(build_inject_txdesc(_DEAUTH_BCAST)[8:12], "little") >> 24) & 0x3F == 0x3F
+    assert (int.from_bytes(build_inject_txdesc(_DEAUTH_UNICAST)[8:12], "little") >> 24) & 0x3F == 0x00
