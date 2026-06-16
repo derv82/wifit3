@@ -479,6 +479,19 @@ def get_pa_bias_offset(t, phy_map: bytes) -> None:
     _set_pa_bias_to_rf(t, sipi.RF_PATH_B, bias_b)
 
 
+def psd_init(t) -> None:
+    """[SRC] phydm_psd_init -> phydm_psd_para_setting(dm, 1, 2, 3, 128, 0, 0, 7, 0) (phydm_psd.c) —
+    the last wire-emitting odm_dm_init tail fn. 11AC caches psd_reg/report_reg (software) then writes
+    the PSD-tool HW params into 0x910: i_q_setting=3, hw_avg_time=2, fft_smp_point_idx=0 (128 pt),
+    ant_sel=0, psd_input=0. (The odm_dm_init fns between get_pa_bias and here — antdiv / soml / path_div
+    / dynamic_tx / la / beamforming / primary_cca — are wire-silent on 8822b.)"""
+    sipi.set_bb_reg(t, 0x0910, (1 << 11) | (1 << 10), 3)   # i_q_setting
+    sipi.set_bb_reg(t, 0x0910, (1 << 13) | (1 << 12), 2)   # hw_avg_time
+    sipi.set_bb_reg(t, 0x0910, (1 << 15) | (1 << 14), 0)   # fft_smp_point_idx (128 -> 0)
+    sipi.set_bb_reg(t, 0x0910, (1 << 17) | (1 << 16), 0)   # ant_sel
+    sipi.set_bb_reg(t, 0x0910, 1 << 23, 0)                 # psd_input
+
+
 def _config_tx_path(t, tx_path: int, sel_1ss: int, sel_cck: int) -> None:
     """[SRC] phydm_config_tx_path_8822b + the CCK/OFDM TX-path helpers."""
     sipi.set_bb_reg(t, 0x093C, (1 << 19) | (1 << 18), 0x3)     # TX antenna by Nsts

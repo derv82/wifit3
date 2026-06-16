@@ -77,4 +77,5 @@ def cold_bringup(t):
     cal.dc_cancellation(t, st)             # phydm_dc_cancellation: RX DC-offset measure + cancel
     cal.tx_current_calibration(t, e.pa_bias[0], e.pa_bias[1])  # phydm_txcurrentcalibration (TxA bias)
     cal.get_pa_bias_offset(t, e.phy_map)   # phydm_get_pa_bias_offset: PG PA-bias (0x3D5/6) -> RF 0x3f
+    cal.psd_init(t)                        # phydm_psd_init: PSD-tool HW params (0x910) — odm_dm_init tail
     return info, e
