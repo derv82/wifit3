@@ -395,16 +395,21 @@ def _switch_bandwidth_20(t, ch: int, rf_2t2r: bool, rx_ant: int) -> None:
 
 def set_channel_bw(t, ch: int, rf_2t2r: bool = True, prev_ch: int | None = None,
                    txpwr_pg: "txpower.TxpwrPG | None" = None) -> None:
-    """Runtime hop (20 MHz): optional band switch + channel + bandwidth re-apply + TX power.
+    """Runtime hop (20 MHz): band switch (when the band changes) + channel + bandwidth + TX power.
 
-    [SRC] switch_chnl_and_set_bw_by_drv steps 1-3, then rtl8822b_set_tx_power_level. A 2.4<->5
-    crossing (prev_ch on the other side of ch 14) runs config_phydm_switch_band_8822b first;
-    same-band hops skip it. `txpwr_pg` (the decoded EFUSE PG block) drives the per-channel TXAGC
-    write; pass None to stop before it (e.g. before the PG is available). The per-channel DPK the
-    vendor runs after TXAGC is deferred (TX pre-distortion; see RTL8822BU_DKMS.md).
+    [SRC] switch_chnl_and_set_bw_by_drv steps 1-3, then rtl8822b_set_tx_power_level.
+    config_phydm_switch_band_8822b establishes the target band's RX path — CCK enable (`0x808[28]`),
+    the iFEM RFE antenna switch (`0xCB0/0xCA0`), the `0x8CC/0x8D8` RX config — so it must run whenever
+    the band changes. The cold-init RF tables leave the synth in the 5 GHz band, so the FIRST tune
+    (`prev_ch` None) to a 2.4 GHz channel is a band change and runs it: skip it there and the 2.4 GHz
+    RX path is never wired to the antenna, so the BB hears only the noise floor and every frame fails
+    FCS. (switch_band(ch1)+switch_channel+bandwidth reproduces the capture's initial channel-set,
+    f20001+, 165 ops byte-for-byte.) `txpwr_pg` drives the per-channel TXAGC write; pass None to stop
+    before it. The per-channel DPK the vendor runs after TXAGC is deferred (TX pre-distortion).
     """
     rx_ant = BB_PATH_AB if rf_2t2r else BB_PATH_A
-    if prev_ch is not None and (prev_ch <= 14) != (ch <= 14):
+    prev_band_5g = True if prev_ch is None else prev_ch > 14   # cold-init default band = 5 GHz
+    if prev_band_5g != (ch > 14):
         switch_band(t, ch, rf_2t2r, rx_ant)
     switch_channel(t, ch, rf_2t2r=rf_2t2r)
     _mac_switch_bandwidth(t, ch)
