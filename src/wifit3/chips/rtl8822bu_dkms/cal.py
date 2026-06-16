@@ -381,6 +381,57 @@ def dc_cancellation(t, st: DmState, rf_type: int = 2) -> None:
         _apply_dc_offset(t, 0x0E10, 0x0E14, reg_value32[1])  # path B
 
 
+# RF 0x18 sweep written per TxA-bias offset (0..0xb) [SRC] _set_tx_a_cali_value (phydm_rtl8822b.c).
+_TXA_18 = (0x10124, 0x10524, 0x10924, 0x10D24, 0x30164, 0x30564,
+           0x30964, 0x30D64, 0x50195, 0x50595, 0x50995, 0x50D95)
+# efuse byte -> (is_minus, comp); any other value (0xF0/default) means "no calibration".
+_TXA_COMP = {0xF6: (True, 3), 0xF4: (True, 2), 0xF2: (True, 1),
+             0xF3: (False, 1), 0xF5: (False, 2), 0xF7: (False, 3), 0xF9: (False, 4)}
+
+
+def _set_txa_cali_value(t, path: int, offset: int, efuse_value: int) -> None:
+    """[SRC] _set_tx_a_cali_value (phydm_rtl8822b.c) — one TxA-bias offset: drive RF 0x18 to the
+    fixed sweep value, read RF 0x61, and (only for an F2..F9 efuse byte) write the corrected bias
+    to RF 0x30. On this card the PG byte is 0xF0 ("do nothing"), so it stops after the 0x61 read."""
+    sipi.set_rf_reg(t, path, 0x18, _FULL, _TXA_18[offset])
+    modi = sipi.read_rf_reg(t, path, 0x61, _FULL)
+    comp = _TXA_COMP.get(efuse_value)
+    if comp is None:                                       # 0xF0 / default -> no RF 0x30 write
+        return
+    is_minus, comp_value = comp
+    tmp1 = modi & 0xF
+    if is_minus:
+        tmp1 = tmp1 - comp_value if tmp1 >= comp_value else 0
+    else:
+        tmp1 = min(tmp1 + comp_value, 7)
+    sipi.set_rf_reg(t, path, 0x30, 0xFFFF, (offset << 12) | (modi & 0xFF0) | tmp1)
+
+
+def _txa_bias_cali_path(t, path: int, efuse_value: int) -> None:
+    """[SRC] _txa_bias_cali_4_each_path — RF 0xEF=0x200 (set-TxA-bias on), 12 offsets, then off."""
+    sipi.set_rf_reg(t, path, 0xEF, _FULL, 0x200)
+    for offset in range(12):
+        _set_txa_cali_value(t, path, offset, efuse_value)
+    sipi.set_rf_reg(t, path, 0xEF, _FULL, 0x0)
+
+
+def tx_current_calibration(t, efuse0x3d7: int, efuse0x3d8: int, rf_type: int = 2) -> None:
+    """[SRC] phydm_txcurrentcalibration (phydm_rtl8822b.c:240, 8822b) — 5G TxA-bias current cal.
+
+    Save RF 0x18 (both paths), and unless PG efuse 0x3D7 is blank (0xFF) run the per-path TxA-bias
+    sweep keyed by efuse 0x3D7 (path A) / 0x3D8 (path B), then restore RF 0x18. The replay feeds
+    the RF 0x61 reads; on this card 0x3D7/0x3D8 are 0xF0, so the sweep only programs RF 0x18 and
+    reads RF 0x61 (no RF 0x30 correction)."""
+    orig_a = sipi.read_rf_reg(t, sipi.RF_PATH_A, 0x18, _FULL)
+    orig_b = sipi.read_rf_reg(t, sipi.RF_PATH_B, 0x18, _FULL)
+    if efuse0x3d7 == 0xFF:                                  # no PG -> no TxA cali
+        return
+    _txa_bias_cali_path(t, sipi.RF_PATH_A, efuse0x3d7)
+    _txa_bias_cali_path(t, sipi.RF_PATH_B, efuse0x3d8)
+    sipi.set_rf_reg(t, sipi.RF_PATH_A, 0x18, _FULL, orig_a)   # restore 0x18
+    sipi.set_rf_reg(t, sipi.RF_PATH_B, 0x18, _FULL, orig_b)
+
+
 def _config_tx_path(t, tx_path: int, sel_1ss: int, sel_cck: int) -> None:
     """[SRC] phydm_config_tx_path_8822b + the CCK/OFDM TX-path helpers."""
     sipi.set_bb_reg(t, 0x093C, (1 << 19) | (1 << 18), 0x3)     # TX antenna by Nsts

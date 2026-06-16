@@ -75,4 +75,7 @@ def cold_bringup(t):
     cal.cfo_tracking_init(t)               # phydm_cfo_tracking_init: crystal-cap-by-WiFi (0x10[6])
     cal.rf_init(t)                         # phydm_rf_init: tx-power-track init (get_swing_index 0xc1c)
     cal.dc_cancellation(t, st)             # phydm_dc_cancellation: RX DC-offset measure + cancel
+    cal.tx_current_calibration(t, e.pa_bias[0], e.pa_bias[1])  # phydm_txcurrentcalibration (TxA bias)
+    # phydm_get_pa_bias_offset is wire-silent here: its PPG PA-bias byte is blank, so it returns
+    # before any RF write (only cached-efuse reads, no bank-switch).
     return info, e
