@@ -9,24 +9,27 @@
 > **Done & gate-verified (cap-1 byte-for-byte unless noted):**
 > - Full deterministic **cold init** (chip-ID → EFUSE → 2× power/FW/MAC → BB phy-reg/AGC → crystal →
 >   RF-A/RF-B), ends op ~9410.
-> - Full **`odm_dm_init`** — both the RX seed (dig / cck_pd / env_monitor[nhm·clm·fahm] / adaptivity /
->   ra_info) **and its calibration tail** (`cfo_tracking_init` → `rf_init`(tx-pwr-track) →
->   **`dc_cancellation`** (RX DC-offset cal) → **`tx_current_calibration`** (TxA bias)). Gate 9509→**9765**.
+> - **`odm_dm_init` — PORTED IN FULL** (gate 9509→**9805**): the RX seed (dig / cck_pd /
+>   env_monitor[nhm·clm·fahm] / adaptivity / ra_info) **and the entire RF-cal tail** — `cfo_tracking_init`
+>   → `rf_init`(tx-pwr-track) → **`dc_cancellation`** (RX DC-offset cal) → **`tx_current_calibration`**
+>   (TxA bias) → **`get_pa_bias_offset`** (PG PA-bias→RF). The remaining tail inits (antdiv / soml /
+>   path_div / primary_cca / psd) are wire-silent on 8822b.
 > - **`set_channel`** (switch_channel + bandwidth + band-switch + **PSD spur eliminator** +
 >   **per-channel TXAGC**) — `verify_channels` 35/35/34 hops on cap-1/2/3.
 > - Runnable **driver** (`driver.py`/`bringup.py`/`rx.py`); `test_hw.py --phase init` runs clean on HW.
 >
-> **Frontier = op 9765: the per-channel cal scan** — the first op is `phydm_do_kfree` (RF k-free,
-> RF `0xef`[10]+`0x33`/`0x3f` sweep), called from `phydm_config_kfree` *inside the channel-switch
-> path*. So op 9765+ is the first `set_channel` (kfree → tx-power → IQK-if-bNeedIQK → BT/LTE coex →
-> MAC). This is the **deferred per-channel cal** (Lead: port the per-channel unit once, run on-demand
-> from `set_channel`, gate against a per-channel slice). Next: port `phydm_do_kfree` into `set_channel`.
+> **Frontier = op 9805: TX-beamforming/MU-MIMO init** (`0x14c0`/`0x167c`/`0x1680`/`0x1c94`, confirmed
+> `haltxbf8822b.c`), then **BT-coex HW init** and **monitor-mode MAC setup** (9805→~9872), then at
+> op ~9873 the **per-channel cal scan** (the airodump hops). None of 9805→9872 is in `cold_bringup`:
+> TX-beamforming + BT-coex are subsystems a passive-RX monitor driver does not use (marked skips, see
+> "Coverage gaps"); the monitor MAC setup the driver does its own way. **Next real work: the per-channel
+> scan** (Lead: port the per-channel unit once, run on-demand from `set_channel`, gate per-channel) +
+> RX phy-status parse + TX descriptor (build-only).
 >
-> **⚠️ The old "frontier 9556 = IQK" claim was WRONG** (an unverified guess from an earlier pass).
-> Op 9556 is the `odm_dm_init` tail (`cfo_tracking_init`'s `0x10[6]`), now ported. **The software IQK
-> engine (`0x1b00`) appears NOWHERE in the 29542-op capture**, so the software IQK never runs here.
-> IQK is either FW-offloaded (an H2C in some `set_channel`) or simply not triggered (`bNeedIQK` false
-> during the captured hops) — an OPEN question for the per-channel work, not a cold-init gap.
+> **IQK is FW-offloaded — confirmed.** `[SRC] hal_dm.c:75 phydm_fwoffload_ability_init(_, PHYDM_RF_IQK_
+> OFFLOAD)`. So `phy_iq_calibrate_8822b` takes the FW-H2C path; the software IQK engine (`0x1b00`)
+> appears in **0 of 29542 ops**. (The old "frontier 9556 = IQK" claim was an unverified guess — 9556 is
+> `cfo_tracking_init`'s `0x10[6]`, long ported.) The per-channel FW-IQK in `set_channel` is un-ported.
 >
 > **The loop (proven — ~16 functions done this way):**
 > 1. `uv run python scripts/verify_pcap.py rtl8822bu_dkms` → prints `FRONTIER -> op #N: <op>`.
@@ -56,9 +59,10 @@
 |---|---|
 | Cold init (chip-ID/EFUSE/power/FW/MAC/BB/RF) | ✅ byte-for-byte cap-1/2/3, ends op ~9410 |
 | DM-init RX seed (dig/cck_pd/env_monitor/adaptivity/ra_info) | ✅ gate 9509→9556 (cap-1) |
-| DM-init cal tail (cfo_track/rf_init/dc_cancellation/txcurrent_cal) | ✅ gate 9556→9765 (cap-1) |
+| DM-init cal tail (cfo/rf_init/dc_cancellation/txcurrent_cal/pa_bias) | ✅ gate 9556→9805 (cap-1) |
 | set_channel (+ spur eliminator + TXAGC) | ✅ 35/35/34 hops |
-| **per-channel cal scan** (kfree → tx-pwr → IQK? → coex) | ⬜ frontier op 9765 — deferred per-channel cal |
+| TX-beamforming / BT-coex / monitor MAC (op 9805→9872) | ⬜ skipped — TX/coex subsystems (not in cold_bringup) |
+| **per-channel cal scan** (kfree-noop → tx-pwr → FW-IQK → coex) | ⬜ frontier op ~9873 — deferred per-channel cal |
 | TX inject · RX phy-status | ⬜ remaining |
 
 ## Verified facts (ground truth)
@@ -98,44 +102,47 @@
   (1492 rows), AGC (10684 rows, 328 cut/rfe conds → 521 selected for rfe 3), crystal cap → 0x24/0x28,
   RF-A (402) + RF-B (353) masked RF writes via `phy_cond.walk`. tx-pwr-track table is software-only.
 
-## Post-PHY: full `odm_dm_init` (PORTED, ends op 9765) + the deferred per-channel cal scan
+## Post-PHY: full `odm_dm_init` (PORTED, ends op 9805) + TX-bf/coex/monitor + the per-channel scan
 
-The capture past op 9410 is `odm_dm_init` then RF calibration. `odm_dm_init` ends at **op 9765**;
-op 9765+ is the **per-channel cal scan** (op 9765→29542) — the vendor pre-cals every channel ×2 bands
-(the captured monitor + 2.4/5 GHz hops drive it via `set_channel`). **Lead decision: do NOT replay the
-scan — port the per-channel unit once and run it on-demand from `set_channel`**, gated per-channel.
+The capture past op 9410 is `odm_dm_init`, then (op 9805+) TX-beamforming + BT-coex + monitor MAC setup,
+then (op ~9873+) the **per-channel cal scan** — the vendor pre-cals every channel ×2 bands (the captured
+monitor + 2.4/5 GHz hops drive it via `set_channel`). **Lead decision: do NOT replay the scan — port the
+per-channel unit once and run it on-demand from `set_channel`**, gated per-channel by `verify_channels`.
 
-**DM init (`odm_dm_init` `[SRC] phydm.c:1789`) — PORTED in full** (`cal.py`):
-- *RX seed* (gate 9509→9556): `halrf_init`(aac_check) → `rfe_init` → `common_info_self_init`
-  (cck_setting + rf_path_rx + somlrxhp `0x19a8`) → `dig_init` (get_igi 0xC50, big_jump 0x8C8;
-  `big_jump_step1` latched into `DmState`) → `cck_pd_init` (type1: 0xA0A=0x83) → `env_monitor_init`
-  (ccx_hw_restart 0x994; nhm/clm/fahm — 11 thresholds `th[i]=((igi-14)<<1)+4i`) → `adaptivity_init`
-  (EDCCA 0x944/0x8a4/0x520/0x524) → `ra_info_init` (ARFR 0x494/0x498/0x4a4/0x4a8).
-- *Cal tail* (gate 9556→9765): `rssi_monitor_init`(sw no-op) → **`cfo_tracking_init`** (crystal-cap-by-
-  WiFi `odm_set_mac_reg(0x10,0x40,1)`) → **`rf_init`** (tx-pwr-track init; `get_swing_index` reads
+**DM init (`odm_dm_init` `[SRC] phydm.c:1789`) — PORTED in full** (`cal.py`, gate 9509→9805):
+- *RX seed* (→9556): `halrf_init`(aac_check) → `rfe_init` → `common_info_self_init` (cck_setting +
+  rf_path_rx + somlrxhp `0x19a8`) → `dig_init` (get_igi 0xC50, big_jump 0x8C8; `big_jump_step1` latched
+  into `DmState`) → `cck_pd_init` (type1: 0xA0A=0x83) → `env_monitor_init` (ccx_hw_restart 0x994;
+  nhm/clm/fahm — 11 thresholds `th[i]=((igi-14)<<1)+4i`) → `adaptivity_init` (EDCCA
+  0x944/0x8a4/0x520/0x524) → `ra_info_init` (ARFR 0x494/0x498/0x4a4/0x4a8).
+- *RF-cal tail* (→9805): `rssi_monitor_init`(sw no-op) → **`cfo_tracking_init`** (crystal-cap-by-WiFi
+  `odm_set_mac_reg(0x10,0x40,1)`) → **`rf_init`** (tx-pwr-track init; `get_swing_index` reads
   `0xc1c[31:21]`) → **`dc_cancellation`** (`phydm.c:3496`, the RX DC-offset cal: per path A/B — stop
   TRX → IGI 0x7E → stop 3-wire → park debug-port 0x200/0x202 → stop ck320 → read `0xFA0` → restore;
   then CCK-path DC comp `0xA9C[20]` + per-path I/Q offsets to `0xC10/0xC14`,`0xE10/0xE14`) →
   **`tx_current_calibration`** (`phydm_rtl8822b.c:240`, TxA-bias: RF `0xef`=0x200 + 12× RF `0x18`
-  sweep reading RF `0x61`, keyed by efuse `0x3D7/0x3D8`=`0xF0` ⇒ no RF `0x30` correction). The
-  `#ifdef PHYDM_TXA_CALIBRATION` `get_pa_bias_offset` is wire-silent (PPG PA-bias byte blank).
-  `DmState` carries the few values whose *writes* derive from cached reads (dig IGI + big_jump_step1,
-  cck_new_agc, dbg-port priority, stop_ic_trx save/restore).
+  sweep reading RF `0x61`, keyed by efuse `0x3D7/0x3D8`=`0xF0` ⇒ no RF `0x30` correction) →
+  **`get_pa_bias_offset`** (`halrf_kfree.c`, PG PA-bias 0x3D5=0xF2/0x3D6=0xF0 → signed offset folded
+  into RF `0x3f` via the `0xef`[10] LUT). Remaining tail inits (antdiv / soml / path_div / primary_cca /
+  psd) are **wire-silent on 8822b** (verified each). `DmState` carries the few values whose *writes*
+  derive from cached reads (dig IGI + big_jump_step1, cck_new_agc, dbg-port priority, stop_ic_trx s/r).
 
-**Frontier op 9765 = the per-channel cal scan (first `set_channel`).** First op is `phydm_do_kfree`
-(`halrf_kfree.c`, RF k-free: RF `0xef`[10] + RF `0x33`/`0x3f` sweep), called from `phydm_config_kfree`
-inside the channel-switch path; then tx-power, IQK-if-`bNeedIQK`, BT/LTE coex, MAC. Port `phydm_do_kfree`
-into `set_channel` next. **No software IQK runs in the capture** — `0x1b00` (the IQK engine) appears in
-0 of 29542 ops; IQK is FW-offloaded or `bNeedIQK` is false during the captured hops (open question).
+**Frontier op 9805 = TX-beamforming/MU-MIMO init** (`hal_txbf_8822b_init`: `0x14c0`/`0x167c`/`0x1680`/
+`0x45f`/`0x1c94`), then **BT-coex HW init** + **monitor-mode MAC setup** (→~9872), then op ~9873 the
+**per-channel cal scan**. None of 9805→9872 is in `cold_bringup` (see "Coverage gaps"). **No software
+IQK runs anywhere** — `0x1b00` (the IQK engine) is in 0 of 29542 ops; IQK is FW-offloaded
+`[SRC] hal_dm.c:75`. The per-channel kfree no-ops on this card (`phydm_config_kfree` early-returns:
+power-trim PG blank), so the per-channel cal that *does* run is tx-power (ported) + FW-IQK (H2C, un-ported).
 
-**RX status (HW, 2026-06-15):** cold init + the FULL `odm_dm_init` (incl. `dc_cancellation`'s RX
-DC-offset comp + TxA cal) run clean on the card, but `test_hw.py --phase beacon` still shows **0 frames
-/ 0 beacons** — BB hears RF energy (FA 0xf48 / CCA 0xf08 climb) but nothing lands in the RXFF (`bulk_in`
-returns 0 bytes). **So the post-DM-init cal is NOT the RX blocker** (correcting the prior doc's "IQK is
-the confirmed blocker" — both that the frontier was IQK and that IQK is the blocker were unverified).
-Real blocker is unknown; the live suspects are the per-channel cal (`phydm_do_kfree` / FW-IQK in
-`set_channel`) or an RX-path config gap. RX path is open: `REG_CR`=0x04ff, `RCR`=0x9000380F,
-`RXFLTMAP0/1/2`=0xFFFF, bulk-IN 0x84 (`rx.py` decodes the 24-byte rx_pkt_desc, FCS-stripped).
+**RX status (HW, 2026-06-16):** cold init + the FULL `odm_dm_init` (incl. `dc_cancellation`'s RX
+DC-offset comp + TxA/PA-bias cal) run clean on the card, but `test_hw.py --phase beacon` still shows
+**0 frames / 0 beacons** — BB hears RF energy (FA 0xf48 / CCA 0xf08 climb) but nothing lands in the RXFF
+(`bulk_in` returns 0 bytes). **So the post-DM-init cal is NOT the RX blocker** (correcting the prior
+doc's "IQK is the confirmed blocker" — both that the frontier was IQK and that IQK is the blocker were
+unverified). Real blocker unknown; live suspects: the per-channel **FW-IQK** (H2C, un-ported) or an
+**RX-path / monitor-MAC config gap** (the capture's op 9847+ monitor-setup MAC writes — `REG_CR`,
+RX-DMA — are not yet diffed against the driver's own monitor RCR). RX path is open: `REG_CR`=0x04ff,
+`RCR`=0x9000380F, `RXFLTMAP0/1/2`=0xFFFF, bulk-IN 0x84 (`rx.py` decodes the 24-byte rx_pkt_desc).
 
 ### Per-channel cal — in `set_channel`, gated by `verify_channels` (35/35/34 hops)
 
@@ -156,12 +163,24 @@ Real blocker is unknown; the live suspects are the per-channel cal (`phydm_do_kf
   `phy_get_txpwr_lmt` early-returns → `power_idx = base`, **domain-independent** (verified base==wire,
   0 mismatches). PHY_REG_PG + the 7215-entry txpwr_lmt tables are inert in this build → correctly not
   ported. Caveat: no regulatory TX-power cap (matches the captured default).
-- **Deferred:** per-channel **DPK** (the *real* read-dependent pre-distortion in the cold scan, op
-  ~9900+) — rides with TX. Gate skips: the 2 band crossings (unported BT-coex `0xCBC` precedes TXAGC)
+- **Deferred per-channel cal:** after the ported retune + TXAGC, each hop runs **FW-IQK** (H2C image-
+  rejection; 8822b has no software DPK) + the BT-coex band-notify. `verify_channels` lands `set_channel_bw`
+  on that post-power boundary. Gate skips: the 2 band crossings (unported BT-coex `0xCBC` precedes TXAGC)
   + a few slice artifacts (window head lands mid-cal).
 
 ## Coverage gaps (verified one axis only)
 
+- **TX-beamforming / BT-coex / monitor-MAC (op 9805→9872) — deliberately not in `cold_bringup`.**
+  After `odm_dm_init` the vendor runs `hal_txbf_8822b_init` (MU-MIMO sounding/precoding: `0x14c0`,
+  `0x167c`, `0x1680`, `0x45f`, `0x1c94`), BT-coex HW init (RFE/GPIO/`0x1700` LTE-coex), then monitor-mode
+  MAC setup. TX-beamforming + BT-coex are **TX/combo subsystems a passive-RX monitor driver never
+  exercises** (`# TODO untestable`-class skips, like a 2T2R card's unused 3T3R arms); the monitor MAC
+  setup the driver re-does its own way (RCR=0x9000380F). **Un-audited risk:** the monitor-MAC RX-DMA
+  writes (op 9847+) are not yet byte-diffed against the driver's monitor path — a candidate for the
+  RX=0 blocker. The per-channel **FW-IQK** (H2C, `[SRC] hal_dm.c:75` IQK offload) is likewise un-ported.
+- **per-channel kfree no-ops:** `phydm_config_kfree` early-returns on this card (power-trim PG blank,
+  `!(pwrtrim->flag & KFREE_FLAG_ON)`), so the per-channel set_channel cal that runs is tx-power + FW-IQK,
+  not kfree. (Distinct from the one-time `get_pa_bias_offset`, which *does* run — that's PG 0x3D5≠0xff.)
 - **cap-2/3 from op ~9467:** `config_trx_mode`'s closing `phydm_rfe_8822b(central_ch_8822b)` is a
   no-op when the channel is 0 (or 15-35) but writes the iFEM table otherwise. `central_ch_8822b` is a
   **module global** `[SRC] phydm_hal_api8822b.c:34` set only by `config_phydm_switch_channel`; DM init

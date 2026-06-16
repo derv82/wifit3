@@ -27,12 +27,14 @@ from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport  # noqa: E4
 
 DEFAULT_CAP = REPO / "usb_dumps_new" / "captures_rtl88x2bu" / "capture-1.pcap"
 
-# The deterministic cold init ends here (op 9765): chip-ID/EFUSE/power/FW/MAC/BB/RF, the full
-# odm_dm_init (DIG/CCK-PD/env-monitor/adaptivity/ra-info seed + cfo-tracking/rf-init/dc-cancellation/
-# tx-current-cal tail). Op 9765 is the first per-channel set_channel op (phydm_do_kfree). Everything
-# after is the RF cal scan — the vendor pre-cals every channel in both bands — handled per-channel
-# on-demand by set_channel (gated by verify_channels), not by replaying the scan here.
-CAL_SCAN_START = 9765
+# The deterministic cold init (everything cold_bringup runs) ends at op 9805: chip-ID/EFUSE/power/
+# FW/MAC/BB/RF + the full odm_dm_init — the DIG/CCK-PD/env-monitor/adaptivity/ra-info RX seed AND its
+# RF-cal tail (cfo-tracking / rf-init / dc-cancellation / tx-current-cal / get-pa-bias). The remaining
+# odm_dm_init tail inits (antdiv/soml/path-div/primary-cca/psd) are wire-silent on 8822b. Op 9805+ is
+# NOT in cold_bringup: TX-beamforming/MU-MIMO init (9805-9824), BT-coex HW init, and monitor-mode MAC
+# setup (TX/coex subsystems a passive-RX monitor driver does not use), then at op ~9873 the per-channel
+# cal scan (handled on-demand by set_channel, gated by verify_channels — not replayed here).
+CAL_SCAN_START = 9805
 
 
 def _fmt(op: dict) -> str:
@@ -89,8 +91,9 @@ def run(cap: str | None = None) -> int:
             # vendor's all-channel RF cal scan (IQK/DPK/TSSI over every 2.4G+5G channel, twice);
             # per the Lead's decision we cal per-channel on-demand in set_channel, not by replaying
             # this scan. See RTL8822BU_DKMS.md "RF calibration".
-            print("  PASS: deterministic cold init complete; remaining ops are the per-channel")
-            print("  RF cal scan (handled on-demand by set_channel - not a monotonic replay).")
+            print("  PASS: deterministic cold init complete (full odm_dm_init). Remaining ops are")
+            print("  TX-beamforming/coex/monitor setup (TX/coex subsystems, not in cold_bringup),")
+            print("  then the per-channel cal scan (on-demand via set_channel - not a monotonic replay).")
         else:
             print("  (this is the next op to port; not yet a full PASS)")
         return 0
