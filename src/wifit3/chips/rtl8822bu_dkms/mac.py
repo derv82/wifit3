@@ -488,3 +488,23 @@ def init_mac_flow_tail(t) -> None:
     t.read32(REG_RCR)                       # HW_VAR_RCR sync read [SRC] rtl8822b_ops.c:2076
     t.write8(REG_INIRTS_RATE_SEL, t.read8(REG_INIRTS_RATE_SEL) | (1 << 5))   # rts_full_bw(on)
     _cfg_usb_rx_agg(t)
+
+
+def init_misc(t) -> None:
+    """[SRC] rtl8822b_init_misc (rtl8822b_halinit.c:215) — the last step of rtl8822b_init.
+
+    CUT_D (not A/B), so the 5G-only-cut branch is a software no-op. Wire ops, in order:
+    invalidate_cam_all (CAMCMD POLLING|CLR), rcr_clear(AICV|ACRC32) on RCR, clear the RX ctrl-frame
+    filter (RXFLTMAP1=0), enable the MAC security engine (REG_CR|=MAC_SEC_EN), ack xmit-mgmt
+    (TXQ_CTRL EN_QUEUE_RPT, CONFIG_XMIT_ACK), rcr_add(TCPOFLD_EN, CONFIG_TCP_CSUM_OFFLOAD_RX), and the
+    AMPDU agg-retry tweak (TXQ_CTRL clear EN_RTY_BK / set EN_RTY_BK_COD, written only when changed)."""
+    t.write32(0x0670, 0xC0000000)                       # invalidate_cam_all: CAMCMD POLLING|CLR
+    t.write32(0x0608, t.read32(0x0608) & ~0x300)        # rcr_clear(AICV BIT9 | ACRC32 BIT8)
+    t.write16(0x06A2, 0x0000)                           # REG_RXFLTMAP1 = 0 (clear rx ctrl frame)
+    t.write16(0x0100, t.read16(0x0100) | (1 << 9))      # REG_CR |= BIT_MAC_SEC_EN
+    t.write32(0x0420, t.read32(0x0420) | 0x1000)        # XMIT_ACK: TXQ_CTRL EN_QUEUE_RPT(BIT4)
+    t.write32(0x0608, t.read32(0x0608) | (1 << 25))     # rcr_add(TCPOFLD_EN)
+    v = t.read32(0x0420)                                # AMPDU: clear EN_RTY_BK (BIT7), set EN_RTY_BK_COD
+    nv = (v & ~(1 << 7)) | (1 << 26)                    # EN_RTY_BK_COD = BIT(2) << 24
+    if nv != v:
+        t.write32(0x0420, nv)
