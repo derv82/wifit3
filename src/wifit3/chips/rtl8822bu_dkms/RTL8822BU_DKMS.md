@@ -57,62 +57,18 @@
 
 ## RX = 0 frames — RESOLVED (live monitor RX works)
 
-**Root cause: `set_channel_bw` skipped `switch_band` on the initial tune.** It only ran `switch_band`
-on a 2.4↔5 crossing (`prev_ch` across ch14), so the first tune (`prev_ch=None`) skipped it. The
-cold-init RF tables leave the synth in the **5 GHz** band, so the first 2.4 GHz tune *is* a band
-change — and `switch_band` is what wires the 2.4 GHz RX path to the antenna (CCK enable `0x808[28]`,
-the iFEM RFE antenna switch `0xCB0/0xCA0`, the `0x8CC/0x8D8` RX config). Skipping it left the antenna
-unswitched: the BB heard only the noise floor and **every frame failed FCS** (so default RCR dropped
-them → 0 bytes; `--rcr` accept showed them → 0 *good* frames). Fix: `prev_band_5g = (prev_ch is None
-or prev_ch > 14)`; run `switch_band` when that differs from the target band. (commit `8c2e907`.)
+**Root cause:** `set_channel_bw` ran `switch_band` only on a 2.4↔5 crossing, so the first tune
+(`prev_ch=None`) skipped it. Cold init leaves the synth in 5 GHz, so the first 2.4 GHz tune *is* a
+band change — and `switch_band` wires the 2.4 GHz RX path to the antenna (CCK enable `0x808[28]`,
+iFEM RFE switch `0xCB0/0xCA0`, `0x8CC/0x8D8`). Without it the antenna stays unswitched → BB hears
+only the noise floor → every frame fails FCS. Fix (`8c2e907`): run `switch_band` whenever
+`(prev_ch is None or prev_ch>14)` differs from `ch>14`. HW: ch6 → 7 APs/383 bcn; hop 1-13 → 25 APs/
+447 bcn.
 
-**Why the gate stayed green** (the `[[gate_not_faithful]]` lesson, made concrete): the *initial*
-channel-set is its own window in the capture (f20001+), never sliced by `verify_pcap` (stops at op
-9855) or `verify_channels` (checks only the iw.log airodump hops, which all have `prev_ch` set). The
-deaf path lived exactly in that seam. An offline replay of the initial-set window found the
-divergence at op#1 (port read `0x0958`; capture wrote `0x0808` CCK-enable).
-
-**HW-verified** (`test_hw --phase beacon`): ch6 → 7 APs / 383 beacons in 8 s; hop 1-13 → 25 APs / 447
-beacons. RSSI for strong APs −72..−89 dBm (matches the capture's −66 median). The initial tune
-(`switch_band`) *and* the same-band per-hop retune (no `switch_band`) both deliver beacons.
-
-**How it was localized** (`--rxstats` diagnostic, retained): `RF_0x18` read-back was correctly on
-ch/20 MHz (not a retune-frequency bug); per-frame phy-status RSSI was −88..−96 dBm (noise floor) on
-every `crc_err` frame → antenna path never wired in. Live large phantom frames (317–3994 B, all
-`crc=1`) vs the capture's small CRC-clean frames (14–399 B) was the tell.
-
-### Earlier ruled-out leads (kept for reference)
-
-Before the root cause, these were eliminated (none was it, but the eliminations stand):
-
-**Ruled OUT (evidence in parens):**
-- **Bulk-IN endpoint** — the config descriptor advertises eps `0x84,0x05,0x06,0x87,0x08`; **0x84 is the
-  only bulk-IN** and is listed first, so `transport._bulk_in_ep()` (picks the first bulk-IN) selects it.
-  It carried all 9292 RX frames in the capture.
-- **RX gain / DIG** — forcing IGI across 0x1c–0x44 (write 0xC50/0xE50) gave 0 bytes at *every* value;
-  gain is not the gate.
-- **FW H2C (per-channel IQK / AGC assist)** — only **2** HMEBOX (0x1CC–0x1DF) writes exist in the
-  *entire* capture, both in cold init, **none** in the seam or RX region. There is no per-hop FW-IQK to
-  be missing (refines the header's "per-channel FW-IQK un-ported" — at RX time there is none).
-- **Skipped blocking read** ("write; blockingRead; write" with the read dropped) — `ReplayDevice`'s
-  cursor is strict and monotonic, so a read the port skips makes the next *write* land on a read op and
-  raises Divergence. Gate-green to 9855 ⇒ **no skipped read in any byte-checked path**.
-- **Channel-set bandwidth-apply** — `set_channel_bw` *does* call `_mac_switch_bandwidth` +
-  `_switch_bandwidth_20`. Only the per-channel **DPK** (TX pre-distortion) and the **DIG tail** are
-  deferred; neither is an RX-demod step.
-
-**The seam (cold-init-end f19965 → first RX f20445):**
-1. f19967–19999 **opmode block** (= frontier op 9855, still un-ported): R/W `0x4a`, `0x4e`,
-   MAC-addr `0x610/0x614` (from EFUSE), TSF `0x550`, RXFLTMAP1 `0x6a2`. RX-benign in monitor mode
-   (AAP + RXFLTMAP=0xFFFF), so not the RX blocker — a faithfulness TODO, not urgent.
-2. f20001–20405 **initial channel-set** — THIS was the deaf seam: `set_channel_bw` skipped
-   `switch_band` here (fixed in `8c2e907`).
-3. f20405–20411 **enable_monitor** — gate-clean 20/20.
-4. f20445 **first RX frame** (ep 0x84, 328 B).
-
-Leftover diagnostic, retained: `test_hw --rxstats CH [--rcr 0x90000301]` walks the bulk-IN buffer
-without the good-frame filter and tallies `rx_pkt_desc` categories + RSSI + `RF_0x18` — re-use it if a
-future change regresses RX.
+The byte-for-byte gate stayed green because the *initial* channel-set is a capture window neither
+`verify_pcap` (stops at op 9855) nor `verify_channels` (iw.log hops, all `prev_ch` set) slices — a
+[[gate_not_faithful]] seam. If RX regresses, `test_hw --rxstats CH [--rcr 0x90000301]` tallies
+`rx_pkt_desc` categories + RSSI + `RF_0x18` without the good-frame filter.
 
 ## Status
 
