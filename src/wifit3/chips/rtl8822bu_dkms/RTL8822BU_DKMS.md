@@ -2,517 +2,175 @@
 
 > ## NEXT AGENT — START HERE
 >
-> **Done & hardware-confirmed:** the entire deterministic cold init (chip-ID → EFUSE → 2-cycle
-> power/FW/MAC → BB phy-reg/AGC → crystal → RF-A/RF-B) + **full `set_channel`** (switch_channel +
-> bandwidth + band-switch; **29/29/28 airodump hops byte-for-byte**) + the runnable **driver**
-> (`driver.py`/`bringup.py`/`rx.py`) — `test_hw.py --phase init` runs clean on the card and
-> `set_channel` tunes both radios. The byte-for-byte gate is **resumed past the BB/RF tables**:
-> `verify_pcap` is clean to **op ~9509 / 29542** on capture-1 (the cold reference). capture-2/3
-> diverge earlier (op ~9467) on a stale-module-global artifact — **not** a port bug; see "Gate
-> scope" in "Post-PHY calibration" before worrying about it.
+> **Goal: a 100% faithful byte-for-byte port of the morrownr vendor stack. Faithfulness over
+> beacons** — a fully faithful port that yields 0 beacons is the win; a <100% port that "works" is
+> not. Don't chase RX symptoms; reproduce the wire.
 >
-> **Your job:** continue the gate-driven port of the post-PHY sequence, function by function, until
-> RX delivers beacons. The block being ported now is the **phydm DM init** (`odm_dm_init`) — DIG +
-> CCK-PD are the RX-detection seed (see "RX bring-up" + the ordered sub-init roadmap in "Post-PHY
-> calibration"). The big **IQK** (`halrf_iqk_8822b.c`) is triggered later in the same chain.
-> 6 functions already ported this way (`init_usb_cfg` → … → `phydm_common_info_self_init`); the
-> next frontier op is `R 0x0c50` (the IGI read that opens `phydm_dig_init`).
+> **Done & gate-verified (cap-1 byte-for-byte unless noted):**
+> - Full deterministic **cold init** (chip-ID → EFUSE → 2× power/FW/MAC → BB phy-reg/AGC → crystal →
+>   RF-A/RF-B), ends op ~9410.
+> - Full **`odm_dm_init` RX seed** (dig / cck_pd / env_monitor[nhm·clm·fahm] / adaptivity / ra_info),
+>   gate 9509→9556.
+> - **`set_channel`** (switch_channel + bandwidth + band-switch + **PSD spur eliminator** +
+>   **per-channel TXAGC**) — `verify_channels` 35/35/34 hops on cap-1/2/3.
+> - Runnable **driver** (`driver.py`/`bringup.py`/`rx.py`); `test_hw.py --phase init` runs clean on HW.
 >
-> **The loop (proven — 5 cal/DM functions were just done this way):**
+> **Frontier = op ~9556: the IQK** (`halrf_iqk_8822b.c`). Continue the cold-gate port from here.
+> Remaining: IQK + LCK, the one-time per-channel DPK, TX descriptor (build-only), RX phy-status parse.
+>
+> **The loop (proven — ~12 functions done this way):**
 > 1. `uv run python scripts/verify_pcap.py rtl8822bu_dkms` → prints `FRONTIER -> op #N: <op>`.
-> 2. Identify the source fn for that op: resolve the register (`grep define REG_... halmac_reg2.h`),
->    then `grep -rn` the value/reg in `hal/phydm/halrf/rtl8822b/` (IQK = `halrf_iqk_8822b.c`) or
->    `hal/phydm/rtl8822b/phydm_hal_api8822b.c`. RF reads are direct BB reads at
->    `{0x2800,0x2c00}[path]+(addr<<2)` (so `0x2b24` = RF_A `0xC9`); RF writes are `0xC90`/`0xE90`.
-> 3. Port it (new fns in `cal.py`; reuse `sipi`, `chan._igi_toggle`/`_ccapar_by_rfe`/`_rfe_ifem`).
->    The replay feeds every read, so read-dependent loops/convergence reproduce — port faithfully,
->    don't shortcut. Add the call to `bringup.cold_bringup` (shared by the gate AND the driver).
-> 4. Re-run the gate (advances), verify all 3 captures, `ruff check`, commit (no AI trailer).
-> 5. After IQK+LCK+DM (or whenever the BB starts completing packets), re-run
->    `uv run python scripts/rtl8822bu_dkms/test_hw.py --phase beacon` on the card to confirm beacons.
+> 2. Resolve the register (`grep define REG_… halmac_reg2.h`; RF reads = direct BB read at
+>    `{0x2800,0x2c00}[path]+(addr<<2)`, RF writes = 0xC90/0xE90), then `grep -rn` the value/reg in the
+>    vendor source to find the fn. The replay feeds every read, so read-dependent loops reproduce.
+> 3. Port it (new fns in `cal.py` or a new module; reuse `sipi`). Chain into `bringup.cold_bringup`.
+> 4. Re-run the gate (advances), `uv run ruff check`, commit (one fn/commit, no AI trailer).
+> 5. When the BB completes packets, `test_hw.py --phase beacon` checks RX (passive; the card is
+>    plugged in + WinUSB-bound). RX is currently 0 frames — the IQK is the confirmed blocker (below).
 >
-> **Scope reality:** IQK (`halrf_iqk_8822b.c`, ~2000 lines, read-dependent) and DPK are large —
-> this is a multi-session grind, one function per gate step. That's expected; the methodology holds.
-> Per the Lead, the **all-channel cal SCAN is NOT replayed** (set_channel does per-channel
-> on-demand); you're porting only the **one-time** post-PHY pass. DPK is TX-quality — if RX works
-> after IQK+LCK+DM init without the one-time DPK, that's fine (gate will show DPK ops unreproduced,
-> which is the accepted boundary like the per-channel DPK).
+> **Hard rules:** cleanroom — port only from `usb_dumps_new/captures_rtl88x2bu/driver-source/`; do NOT
+> open `chips/rtl8822bu/`, `chips/rtw88_base/`, or `scripts/rtl8822bu/`. Never fire live 802.11 TX. No
+> AI-authorship trailer. Always `uv run python`. Stage only your files. Gate every milestone.
 >
-> **You do NOT need to read the rest of this doc to start.** Everything below the "Post-PHY
-> calibration" section is CLEARED-milestone ground truth (`[SRC]`/`[WIRE]`) — reference only; skim
-> it only if you're debugging that specific area (the code + git log are the live record). The
-> "Milestones" table at the bottom is the original plan, now mostly historical (M0–M6 + driver
-> wiring done; live work = M5 cal / M7 DM+RX). Keep the cal section + this header current.
+> **cap-2/3 caveat:** the gate is **cap-1-authoritative from `config_trx_mode` (op ~9467) onward** —
+> cap-2/3 diverge there on a stale `central_ch_8822b` module-global (a benign cross-capture artifact,
+> not a port bug; see "Coverage gaps"). Everything earlier is byte-clean on all three.
 
-## Verified facts (ground truth so far)
+## Status
 
-- **USB identity / endpoints** `[WIRE]` capture-1/2/3 + usb-topology.log: `2357:0138`
-  (TP-Link Archer T3U Plus), single config. Card traffic: control ep0; **bulk-OUT 0x05**
-  (FW/TX); **bulk-IN 0x84** (RX). The coverage audit shows no other channel.
-- **Register IO is the standard Realtek `bRequest=0x05` vendor control transfer**
-  (`READ=0xC0/WRITE=0x40`, addr in wValue) `[SRC] include/usb_ops.h:19-22` — byte-identical
-  to the AU family, so the USB layer is *not* HAL-specific.
-- **8822b register-page-switch mirror** `[SRC] os_dep/linux/usb_ops_linux.c:171-201`:
-  every vendor access to an **ON-section** register (`addr <= 0xFF` or `0x1000..0x10FF`) is
-  followed by an extra 1-byte `bRequest=0x05` write to **`0x4E0`** carrying the low byte of
-  the IO buffer (read-back value for a read, written value for a write). OFF/LOCAL-section
-  regs (incl. `0xFExx/0xFFxx`) get no mirror. Reproduced in `transport.py`; `[WIRE]` every
-  `R 0x00fc=0x0a → W 0x4e0=0x0a` pair in the capture confirms it.
-- **Re-runnability = clean reset every time, NOT skip-style warm-reattach.** The vendor's
-  own power-on handles a still-powered chip: `mac_pwr_switch_usb_8822b` reads `REG_CR`(0xEA
-  marker), `REG_MCUFW_CTRL`(0xC078=FW-exist), and `REG_SYS_STATUS1+1` BIT0 to detect
-  power state, and returns `HALMAC_RET_PWR_UNCHANGE` if already on
-  `[SRC] hal/halmac/halmac_88xx/halmac_8822b/halmac_usb_8822b.c:32-98`. `rtw_halmac_poweron`
-  catches that and **forces power-OFF (`card_dis_flow`) then power-ON again** — "Work around
-  for warm reboot but device not power off" `[SRC] hal/hal_halmac.c:2744-2774`. So our bring-up
-  prepends this reset; no replug needed, no warm-skip path. The power-OFF table is not in any
-  cold capture (cold boots return SUCCESS, so the off→on never fired), so it is ported from
-  source and proven by a hardware double-run. *Open: whether the off→on cycle recovers on
-  Windows+WinUSB (the AU/jaguar cycle did not; 8822b `card_dis_flow` is a different sequence).*
-### M0 — chip-ID reads (CLEARED, byte-for-byte on capture-1/2/3)
+| Area | State |
+|---|---|
+| Cold init (chip-ID/EFUSE/power/FW/MAC/BB/RF) | ✅ byte-for-byte cap-1/2/3, ends op ~9410 |
+| DM-init RX seed (dig/cck_pd/env_monitor/adaptivity/ra_info) | ✅ gate 9509→9556 (cap-1) |
+| set_channel (+ spur eliminator + TXAGC) | ✅ 35/35/34 hops |
+| **IQK + LCK** | ⬜ frontier op ~9556 — confirmed RX blocker |
+| per-channel DPK · TX inject · RX phy-status | ⬜ remaining |
 
-The pre-power-on probe, ported from source and gate-clean (ops 0–12; de-mirrored):
-1. **`get_chip_info`** `[SRC] halmac_api.c:517-521` — HALMAC chip-id/cut detection, the very
-   first IO: `R 0xFC` (`REG_SYS_CFG2` → `chip_id`; `0x0A` = 8822B) and `R 0xF1`
-   (`REG_SYS_CFG1+1 >> 4` → cut; `0x3` = D-cut). → `chipid.get_chip_info`.
-2. **`phy_cfg_usb_8822b`** `[SRC] halmac_usb_8822b.c:107` → `parse_intf_phy_88xx`
-   `[SRC] halmac_common_88xx.c:3168` over the USB2 (empty) then USB3 param tables
-   `[SRC] halmac_phy_8822b.c:40-58`. The D-cut USB3 entry `{0x0001, 0xA841}` is emitted by
-   `usbphy_write_88xx` `[SRC] halmac_usb_88xx.c:475` as `W 0xFF0D=0x41` / `W 0xFF0E=0xa8` /
-   `W 0xFF0C=0x81` (data-lo / data-hi / `offset | BIT(7)` strobe). `usb_page_switch` is a
-   no-op for USB3. → `usbphy.phy_cfg_usb`. *(This was the op0 mystery — not a debug/scratch
-   write but the USB3 intf-phy param for this cut.)*
-3. **`read_chip_version`** `[SRC] rtl8822b_ops.c:173` — `R32 0xF0/0xF4/0x68`. → `chipid.read_chip_version`.
+## Verified facts (ground truth)
 
-### Early EFUSE read (CLEARED, byte-for-byte on capture-1/2/3)
+- **USB** `[WIRE]`: `2357:0138` (Archer T3U Plus), single config; control ep0, **bulk-OUT 0x05**
+  (FW/TX), **bulk-IN 0x84** (RX). Register IO = Realtek `bRequest=0x05` vendor control xfer (READ
+  0xC0/WRITE 0x40, addr in wValue) `[SRC] include/usb_ops.h:19`. **0x4E0 page-switch mirror**: every
+  ON-section access (`addr ≤ 0xFF` or `0x1000-0x10FF`) is followed by a 1-byte W to `0x4E0` carrying
+  the IO low byte `[SRC] os_dep/linux/usb_ops_linux.c:171`; reproduced in `transport.py`.
+- **Re-runnability** = clean reset every boot (not warm-skip). `mac_pwr_switch_usb_8822b` detects
+  already-on (returns UNCHANGE); `rtw_halmac_poweron` then forces card_dis_flow OFF→ON
+  `[SRC] hal_halmac.c:2744`. Ported in `mac.power_on`; the OFF→ON cycle has no cold capture (proven by
+  HW double-run). *Open: whether it recovers on Windows+WinUSB.*
 
-On the wire the chip-info path reads EFUSE **up front** (before power-on), not at M4 as the
-milestone table guesses: `read_adapter_info` = `rtl8822b_read_efuse` `[SRC] rtl8822b_ops.c:616,3930`
-→ `EFUSE_ShadowMapUpdate`. There is no FW yet, so the AUTO path falls to the driver-side
-dump (`dump_efuse_drv_88xx`). Ported to `efuse.read_efuse`; the de-mirrored op stream is:
+## Cold init (CLEARED — byte-for-byte cap-1/2/3; code + commits are the live record)
 
-1. **`R 0x0A`** `REG_SYS_EEPROM_CTRL` `[SRC] halmac_reg_8822b.h:23` — autoload/eeprom-sel flags
-   (`BIT(5)` set ⇒ autoload OK; `BIT(4)` clear ⇒ on-chip eFuse). Here `0x20` ⇒ map valid, eFuse.
-2. **`switch_efuse_bank(WIFI)`** `[SRC] halmac_efuse_88xx.c:995` — `R 0x35` (`REG_LDO_EFUSE_CTRL+1`);
-   the bank lives in bits[1:0] and powers up at 0 = WIFI, so the read matches and **no write fires**.
-3. **`read_hw_efuse(0, 1024)`** `[SRC] halmac_efuse_88xx.c:1089`:
-   - `cfg_ldo25(0)` `[SRC] halmac_common_8822b.c:159` — `R 0x37` / `W 0x37` clearing `BIT(7)` of
-     `REG_LDO_EFUSE_CTRL+3` (reads need no 2.5V LDO; the bit is already clear so the value is unchanged).
-   - `R 0x30` once to latch the upper command bits of `REG_EFUSE_CTRL` (`0x31600000` on this card),
-     then per byte `addr 0..1023`: `W 0x30 = base | (addr<<8)` with `BIT(31)` clear, poll `R 0x30`
-     until `BIT(31)` set, take the low byte as data. Address is `[17:8]` (10-bit), data `[7:0]`,
-     `BIT_EF_FLAG = BIT(31)` `[SRC] halmac_bit_8822b.h:688,726-738`. `EFUSE_SIZE_8822B = 1024`
-     `[SRC] halmac_8822b_cfg.h:55`, so this is exactly **4096 wire ops** (1024 × W+R, each mirrored).
-4. **`eeprom_parser`** `[SRC] halmac_efuse_88xx.c:1198` — physical→logical (768 B) PG-header walk
-   (1-byte header, or 2-byte extended when `hdr[4:0]==0x0f`; per enabled word copy 2 bytes; `0xFF`
-   ends the walk). No wire IO. Decoded fields validated on capture-1: rfe_type `0x03`, crystal_cap
-   `0x2f`, channel_plan `0xa5`, valid unicast MAC, 312/1024 physical bytes non-blank.
+`bringup.cold_bringup` is the canonical sequence (shared by the driver + `verify_pcap`). Two cycles —
+`hal_read_mac_hidden_rpt` then the real `rtl8822b_hal_init` — reaching op ~9410:
 
-5. **`Hal_EfuseParsePABias`** `[SRC] rtl8822b_ops.c:553` — the tail of `read_efuse`. It reads
-   physical efuse `0x3D7/0x3D8` (PA bias) via `rtw_efuse_access`; the physical map is already
-   **cached** (valid from the dump), so HALMAC's `dump_efuse_map_88xx` `[SRC] halmac_efuse_88xx.c:132`
-   serves it from memory and the only wire op is the WIFI bank-switch `R 0x35` (no `0x30` loop).
-   This `R 0x35` is therefore the *last* EFUSE op, not the start of power-on.
+- **chip-ID** `chipid.py`: `R 0xFC`/`0xF1` (chip 0x0A=8822B, cut 0x3=D); USB3 intf-phy param
+  `{0x0001,0xA841}` → `W 0xFF0D/0E/0C` `[SRC] halmac_usb_8822b.c:107`; `R32 0xF0/0xF4/0x68`.
+- **EFUSE** `efuse.py` (read up front, before power-on): driver-side dump (`R 0x0A` autoload,
+  WIFI-bank `R 0x35`, the 1024-byte `0x30` poll loop), PG-header → 768 B logical map. Decoded:
+  rfe_type **3** (iFEM), crystal_cap **0x2F**, channel_plan **0xa5**, MAC, PA-bias. The PG tx-power
+  block @ logical **0x10** is decoded in `txpower.py` (see TXAGC).
+- **MAC power-on** `mac.power_on` `[SRC] hal_halmac.c:2705`: pre_init_system_cfg (pin-mux, enable_bb_rf
+  off), the `card_en_flow` pwr sequence (`pwrseq.py`, filtered by USB + cut BIT4), init_system_cfg.
+  Poll loops consume the recorded reads (cap-3 polls `0x0005` one extra time — proof it's dynamic).
+- **Firmware** `firmware.py`: morrownr `array_mp_8822b_fw_nic` v30.20 (161240 B, in
+  `assets/rtl8822bu_fw.bin` — **not** the linux-firmware blob). `download_firmware_88xx`: txfifo gate,
+  interleaved reg save/set, 40 BEACON-qsel rsvd-page TX packets (48-byte desc + XOR-16 cksum) on
+  bulk-OUT 0x05 → iDDMA to MCU, FW-ready poll `0xC078`. Gate replays merged ctrl+bulk.
+- **MAC init + FW-info** `mac.py`/`firmware.py`: init_trx_cfg (queue map, txff page math
+  rsvd_boundary 1996), protocol/edca/wmac (RCR), send_general_info (2 H2C: FW boundary + PHYDM
+  rfe/cut/rf/ant/package), dump_h2cq readback, reg-H2C, C2H report read+discard.
+- **BB + RF tables** `bb.py`/`rf.py`/`phy_cond.py`: PRE/POST `0x808[28:29]` (no-op here), phy-reg
+  (1492 rows), AGC (10684 rows, 328 cut/rfe conds → 521 selected for rfe 3), crystal cap → 0x24/0x28,
+  RF-A (402) + RF-B (353) masked RF writes via `phy_cond.walk`. tx-pwr-track table is software-only.
 
-The PG **tx-power** block (`hal_load_pg_txpwr_info`) is deliberately **not** decoded yet — it is
-done at the tx-power milestone where each value is checked against the channel/power writes it
-drives (decoding it now, with no consumer, would be unverifiable against the wire).
+## Post-PHY: DM-init RX seed + per-channel cal (frontier = IQK)
 
-### MAC power-on (CLEARED, byte-for-byte on capture-1/2/3)
+The capture past op 9410 is RF calibration. The **all-channel scan** (op ~9700→29542) pre-cals every
+channel ×2 bands ×2 passes (IQK setup → per-channel DPK 2.4G/5G → TSSI → settle ch 1). **Lead
+decision: do NOT replay the scan — port the per-channel unit once and run it on-demand from
+`set_channel`**, gated against a per-channel slice.
 
-`rtw_halmac_poweron` `[SRC] hal/hal_halmac.c:2705`, ported to `mac.power_on(t, chip_ver)`:
+**DM init (`odm_dm_init` `[SRC] phydm.c:1789`) — PORTED in full** (`cal.py`, gate 9509→9556):
+`halrf_init`(aac_check) → `rfe_init` → `common_info_self_init` (cck_setting + rf_path_rx + somlrxhp
+`0x19a8`) → `dig_init` (get_igi 0xC50, big_jump 0x8C8) → `cck_pd_init` (type1: 0xA0A=0x83) →
+`env_monitor_init` (ccx_hw_restart 0x994; nhm/clm/fahm — 11 thresholds `th[i]=((igi-14)<<1)+4i` into
+0x998/0x99c/0x9a0/0x994 + 0x990 + 0x1c38/0x1c78/0x1c7c/0x1cb8) → `adaptivity_init` (EDCCA
+0x944/0x8a4/0x520/0x524; forgetting-factor + decision-opt are no-ops, edcca_mode≠ADAPT) →
+`ra_info_init` (ARFR 0x494/0x498/0x4a4/0x4a8).
 
-1. **`pre_init_system_cfg_8822b`** `[SRC] halmac_init_8822b.c:945`: `W 0x1c`(`REG_RSV_CTRL`=0),
-   `R 0xFF`(`REG_SYS_CFG2+3`; `0x80≠0x20` so the USB3-only `0xFE5B|BIT(4)` is **skipped here** —
-   see the USB2/USB3 coverage note), PIN-mux RMWs `PAD_CTRL1`(0x64, set BIT28/29 → `0x36242000`) /
-   `LED_CFG`(0x4c, clear BIT25/26) / `GPIO_MUXCFG`(0x40, set BIT2), `enable_bb_rf(0)` (clear bits
-   on `0x02`/`0x1f`/`0xec`), and the `REG_SYS_CFG1+2 & BIT(4)` test-mode read.
-2. **`mac_pwr_switch_usb_8822b(POWER_ON)`** `[SRC] halmac_usb_8822b.c:32`: `R 0xFE58`(RPWM),
-   `R16 0x80`(`REG_MCUFW_CTRL`; `0x0001≠0xC078` so no 32K-leave toggle), `R 0x100`(`REG_CR`=`0xEA`
-   ⇒ chip OFF, so the `SYS_STATUS1+1` probe is skipped), then the `card_en_flow` power sequence
-   (`CARDDIS→CARDEMU` then `CARDEMU→ACT`) via `pwr_seq_parser_88xx`, then `W8_CLR 0xF5 BIT(0)` and
-   `R 0x10C3`(`REG_SW_MDIO+3`). Cold chip ⇒ returns SUCCESS, so the warm-reboot off→on workaround
-   `[SRC] hal_halmac.c:2768-2772` does **not** fire (it is ported in `power_on` for warm chips but
-   has no cold capture — HW-double-run only).
-3. **`init_system_cfg_8822b`** `[SRC] halmac_init_8822b.c:715`: `REG_CPU_DMEM_CON |= WL_PLATFORM_RST`,
-   `REG_SYS_FUNC_EN+1 |= 0xDC`, and the boot-from-flash disable (`BIT_BOOT_FSPI_EN` is clear on
-   cold boot, so the GPIO_MUXCFG follow-up is skipped).
+**Frontier op ~9556 = the IQK** (`halrf_iqk_8822b.c`, read-dependent RF image-rejection cal): `R 0x10`
+macbb-backup → `0x0c1c`/`0x198c` RF-mode. LCK + the one-time per-channel DPK follow it.
 
-The pwr-seq runtime (`pwrseq.py`) filters every row by interface (USB) + cut (`BIT(chip_ver+1)`,
-D⇒BIT4, so the `CUT_C`-only `10A8/9/A` rows are skipped) and runs WRITE as a RMW, POLLING as
-read-until-masked-match, DELAY/READ as no-ops. **Capture-3 polls `0x0005 BIT(0)==0` one extra
-time** (reads `01,01,01,00` vs cap-1/2's `01,01,00`); the poll loop consumes exactly the recorded
-reads on each boot — direct proof the polling is dynamic, not a single hardcoded read.
+**RX status (HW, 2026-06-15):** the cold init + full DM init run clean on the card, but
+`test_hw.py --phase beacon` shows **0 frames / 0 beacons** — the BB hears RF energy (FA 0xf48 / CCA
+0xf08 climb) but no frame lands in the RXFF (`bulk_in` returns 0 bytes). The DM init was necessary but
+**not sufficient**; the **IQK is the confirmed RX blocker**. The RX path is fully open: `REG_CR`=0x04ff,
+`RCR`=0x9000380F, `RXFLTMAP0/1/2`=0xFFFF, bulk-IN 0x84 (`rx.py` decodes the 24-byte rx_pkt_desc,
+FCS-stripped).
 
-### Firmware download (CLEARED, byte-for-byte on capture-1/2/3)
+### Per-channel cal — in `set_channel`, gated by `verify_channels` (35/35/34 hops)
 
-`hal_read_mac_hidden_rpt` `[SRC] rtl8822b_ops.c:681, hal_com.c:1529` writes `W 0x1A0`
-(`REG_C2HEVT_MSG_NORMAL = C2H_DEFEATURE_RSVD` 0xFD), then `rtl8822b_fw_dl → rtw_halmac_dlfw →
-download_fw → halmac_download_firmware`, ported to `firmware.download(t, blob)`:
+- **switch_channel** `chan.py`/`sipi.py`: RF18 channel + AGC `0x958` + clock `0x860` + CCK filter
+  `0xA24/0xA28` + phase-noise `0xBE` + igi_toggle + ccapar (rfe-3 iFEM `0x82C/830/838`) + spur_reset.
+  SIPI primitives: RF read = direct BB read at `{0x2800,0x2c00}[path]+(addr<<2)`; RF write packs
+  `((addr&0xFF)<<20|data[19:0])` into `0xC90`/`0xE90`.
+- **PSD spur eliminator — PORTED** (`chan._dynamic_spur_det_eliminate`): the read-dependent PSD sweep
+  on spur channels (2.4G 5-8/13, 5G 153/161) + NBI notch (`0x87C`) + CSI notch (`0x880-0x89C` +
+  `0x874[0]`). The replay feeds 0xF44, so the in-capture spur (ch6 PSD 0x197 ≥ 0x8D) drives the notch.
+- **bandwidth** (`mac_switch_bandwidth` HALMAC cfg_ch_bw + `config_phydm_switch_bandwidth_8822b`,
+  20 MHz) + **band switch** (both 2.4↔5 crossings; rfe-3 iFEM + SoML branch on `0x19a8[31]`).
+- **TXAGC tx-power — PORTED** (`txpower.py`): `rtl8822b_set_tx_power_level` → per path × rate-section,
+  `power_idx = phy_get_pg_txpwr_idx` (EFUSE PG base @ 0x10 + section/ntx BW20 diff), packed 4
+  rates/dword at `0x1d00+(hw_rate&0xfc)`/`0x1d80`. **Faithfulness — build-config, not pcap-coincidence:
+  the captured build sets `CONFIG_TXPWR_BY_RATE_EN=n` + `CONFIG_TXPWR_LIMIT_EN=n`
+  `[SRC] driver-source/Makefile:130,132`** → by_rate folds to 0 (`phy_get_txpwr_target:5940`) and
+  `phy_get_txpwr_lmt` early-returns → `power_idx = base`, **domain-independent** (verified base==wire,
+  0 mismatches). PHY_REG_PG + the 7215-entry txpwr_lmt tables are inert in this build → correctly not
+  ported. Caveat: no regulatory TX-power cap (matches the captured default).
+- **Deferred:** per-channel **DPK** (the *real* read-dependent pre-distortion in the cold scan, op
+  ~9900+) — rides with TX. Gate skips: the 2 band crossings (unported BT-coex `0xCBC` precedes TXAGC)
+  + a few slice artifacts (window head lands mid-cal).
 
-- **FW blob** = morrownr `array_mp_8822b_fw_nic` (v30.20, 161240 B), shipped in
-  `assets/rtl8822bu_fw.bin`. It is **not** the linux-firmware rtw88 blob (161176 B, a different
-  version) — the captures use the morrownr FW, so that is the wire ground truth and the gate
-  byte-verifies it. Header: dmem 11216 B @0x200000, imem 149960 B @0x0, no emem (sizes incl. the
-  8-byte per-segment checksum).
-- **download_firmware_88xx** `[SRC] halmac_fw_88xx.c:115`: TX-FIFO-empty gate
-  (`txfifo_is_empty(chk=10)` — a fixed 10× check of `0x41A==0xFF && (0x41B&0x06)==0x06`),
-  ltecoex-0x38 save, `wlan_cpu_en(0)`, the **interleaved** reg save+set (R,W,R,W… on
-  `TXDMA_PQ_MAP+1=0xC0` / `CR=0x05` / `H2CQ_CSR=BIT31` / `FIFOPAGE_INFO_1=0x200` /
-  `RQPN_CTRL_2|BIT31` / `BCN_CTRL`), `pltfm_reset` (incl. the 8822b `SYS_CLK_CTRL+1 BIT6`
-  clock-sync), `start_dlfw` (MCUFW FWDL bit + dmem then imem), `restore_mac_reg`, `dlfw_end_flow`,
-  ltecoex restore.
-- **The chunk loop** `dlfw_to_mem → send_fwpkt → dl_rsvd_page → iddma_dlfw`: each ≤4096 B block
-  becomes a BEACON-qsel rsvd-page TX (48-byte TX descriptor `TXPKTSIZE/OFFSET=48/QSEL=0x10` +
-  XOR-16 checksum, verified byte-exact) sent on **bulk-OUT 0x05**, then DDMA-copied from
-  `TXBUF+0x30` to MCU mem with a running checksum (`CHKSUM_CONT` after block 0). USB pads one
-  dummy byte when `(chunk+48)%512==0` (only the 3024 B dmem chunk). **40 packets** total (3 dmem,
-  37 imem). `rsvd_boundary` is still 0 at this point (txff not yet allocated). `dlfw_end_flow`
-  sets `FW_DW_RDY`, re-enables the CPU, and polls `REG_MCUFW_CTRL == 0xC078` (FW ready).
+## Coverage gaps (verified one axis only)
 
-The gate replays a **merged ctrl+bulk** stream (`extract_bulk_out_ops` + `merge_ops_by_frame`)
-against one `ReplayDevice` whose new `write()` byte-checks each FW packet.
-
-### MAC init for RX (CLEARED) + the FW-info H2C (CLEARED)
-
-`init_mac_flow` `[SRC] hal_halmac.c:3452` → `init_mac_cfg(trx_mode=NORMAL)` `[SRC] halmac_init_88xx.c:504`
-is ported in `mac.py` as four sub-functions, all gate-clean: `init_trx_cfg` (queue map `0xF5A0`,
-the `txff_allocation` page math — `rsvd_boundary=1996`/`pub=1803`/`h2cq_addr=0x3FA00` all
-wire-verified, LLT auto-init), `init_protocol_cfg`, `init_edca_cfg`, `init_wmac_cfg` (RCR
-`0xE400220E`). Then the driver tail `init_mac_flow_tail` (HW_VAR_RCR sync, `rts_full_bw(on)`,
-USB `rx_agg` mode), and `firmware.send_general_info` (two 32-byte FW-offload H2C packets:
-general-info `FW_TX_BOUNDARY=48`, PHYDM-info rfe/cut/rf/ant/package). `bulkout_num=3`,
-`rxagg_mode=USB`, and the `get_trx_path` general-info fields (`rf_type=4`, ant `1/1`, package `0`)
-are `[WIRE]`-pinned — re-derive from `get_trx_path`/`PackageType` if a different card is targeted.
-
-### read-chip-info tail (CLEARED) — dump_fifo readback + reg-H2C + C2H report
-
-The tail of `hal_read_mac_hidden_rpt` / `rtl8822b_read_efuse`, all gate-clean:
-- **`dump_fifo` H2CQ readback** (`firmware._dump_h2cq_fifo`, the tail of `send_general_info_88xx`):
-  reads 4 B from the H2C ring via the packet-buffer debug window (`RCR+2` rx-clk-gate, `0x140`
-  start-page `0x7BF`, `R32 0x8A00 = 0x000DFF01` = the general-info header), confirms it landed.
-- **`_send_general_info_by_reg`** (`firmware._send_general_info_by_reg`): an 8-byte reg-H2C
-  (`0x4C` class/cmd, rfe/rf/cut/ant) over HMEBOX 0 (`HMETFR` `0x1CC`, `HMEBOX_E0` `0x1F0`,
-  `HMEBOX0` `0x1D0` = `0x0300034C`).
-- **C2H report read** (`firmware.read_mac_hidden_rpt`): poll `R 0x1A0`==`C2H_MAC_HIDDEN_RPT`(0x19),
-  read 13 report bytes (`0x1A2..0x1AE`), ack `W 0x1A0=C2H_DBG`. Report is read-and-discarded
-  (decodes wl-func/bw/proto caps into hal_spec, which wifit3 doesn't consume).
-
-### The 2nd init cycle (CLEARED) — historical map
-
-All done; `bringup.cold_bringup` is the canonical sequence (read the code for detail). After
-`read_chip_info`, `rtl8822b_hal_init → _halmac_init_hal` re-runs the ported steps then adds the new
-ones: **power-OFF** (`W 0x00AA` + `card_dis_flow` + `R 0x35×3`/`W 0xFE58` tail — 2 stray ops are
-`[WIRE]`-pinned, source TBD) → **cold power-ON** (reuses `mac.power_on`) → **2nd FW download**
-(full beacon TX descriptor, `not_xmitframe=0`) → `init_mac_cfg`/`init_mac_flow_tail` → 2nd
-`send_general_info` (2T2R config: rf_type 2, ant 3/3, pkg 7) → `init_mac_register` →
-`config_rx_info(PHY_STATUS)` → `enable_bb_rf` → **BB+RF tables** (below). Reaches op ~9410.
-
-### BB + RF tables (CLEARED, byte-for-byte on capture-1/2/3)
-
-`rtl8822b_phy_init` `[SRC] rtl8822b_phy.c:278` brackets the BB+RF tables with two PHYDM parameter
-passes and runs `init_bb_reg` then `init_rf_reg` between them:
-- **PRE/POST** (`config_phydm_parameter_init_8822b`, `bb.phy_parameter_init`) — an RMW of `0x808`
-  bits 28/29 (OFDM/CCK block enable): PRE clears them before the tables, POST sets them after RF.
-  On the wire each reads-back the same `0x0E028233` (bits already in the wanted state), so the
-  pair is a no-op-equivalent here, but ported faithfully (the earlier "byte0 rx-path pre-amble"
-  guess was a misattribution — the 2T2R `0x808` byte0 = `0x33` is baked into the phy-reg table
-  value, not a separate write).
-- **phy-reg** (`array_mp_8822b_phy_reg`, `bb_phy_reg_tbl.py`) — 1492 plain `(addr, value)` W32
-  rows via `odm_config_bb_phy_8822b`. No conditionals on this card.
-- **AGC** (`array_mp_8822b_agc_tab`, `bb_agc_tbl.py`) — 10684 rows **with 328 cut/rfe
-  conditionals**, run through `phy_cond.walk` + `check_positive` (ported 1:1 from
-  `halhwimg8822b_bb.c` / `odm_read_and_config_mp_8822b_agc_tab`). check_positive matches
-  cut[27:24]/package[15:12]/interface[11:8] as value-or-don't-care and rfe[7:0] exactly; the AGC
-  conditions only constrain **rfe**. On this card (rfe 3) the walker selects **521 W32 rows**
-  (addrs `0x81C`/`0xC50`/`0xE50`) == the single wire AGC run (frame 16503+), byte-for-byte.
-  `odm_config_bb_agc_8822b` also feeds each `0x81C` row to `odm_update_agc_big_jump_lmt` (software
-  DIG `big_jump_lmt[]` state, **no** register write — reconstruct when DIG is ported).
-- **crystal cap** (`bb.set_crystal_cap`, tail of `init_bb_reg`) — `[SRC] phydm_set_crystal_cap_reg`
-  8822b branch writes the EFUSE xtal-K (`0x2F` on this card, `EEPROM_XTAL=0xB9`) into
-  `0x24[30:25]` and `0x28[6:1]` (masked RMW).
-- **RF-A / RF-B** (`array_mp_8822b_radioa/radiob`, `rf_radioa_tbl.py`/`rf_radiob_tbl.py`,
-  `rf.phy_rf_config`) — `init_rf_reg` configures path A then B from PHYDM radio tables, each with
-  cut/rfe conditionals via the same `phy_cond.walk`. Each in-branch row is a single masked RF
-  write: `[SRC] config_phydm_write_rf_reg_8822b` packs `((addr & 0xFF) << 20 | data[19:0])` into a
-  W32 to `0xC90` (path A) / `0xE90` (path B); `addr 0xFE/0xFFE` rows are delays (no write). Walker
-  selects **402** path-A + **353** path-B W32 rows == the wire `0xC90`/`0xE90` runs, byte-for-byte.
-  The tx-power-track table (`odm_config_rf_with_tx_pwr_track_header_file`) that follows is
-  software-only (stores deltas, no register writes) — nothing on the wire between RF-B and POST.
-
-**The deterministic cold init ends at op ~9410.** Everything after is RF calibration, NOT more
-init.
-
-### Post-PHY calibration — gate resumed (frontier op ~9507)
-
-The byte-for-byte gate continues past the BB/RF tables, porting the one-time post-PHY sequence
-(`cal.py`, chained into `bringup.cold_bringup`). **Cleared:** `init_usb_cfg` (RX-DMA burst mode,
-`REG_RXDMA_MODE` 0x290; 9410→9416), `config_phydm_trx_mode` (2T2R TX/RX path + RF mode poll;
-9416→9470), `aac_check` (RF_A 0xC9 AAC; 9470→9475), `phydm_rfe_8822b_init` (RFE mux 0x64/0x1990/
-0x974; 9475→9495), `phydm_init_cck_setting` (CCK RX antenna 0xa00-0xa20; 9495→9507),
-`phydm_common_info_self_init` tail (rf_path_rx_enable read 0x808 + `phydm_somlrxhp_setting` SoML
-RxHP seed 0x19a8=0xd90a0000; 9507→9509).
-
-**The phydm DM init (`odm_dm_init` `[SRC] phydm.c:1789`) — the RX-detection seed — is now PORTED in
-full** (cal.py, chained in bringup.cold_bringup). Each sub-init was done gate-driven:
-`halrf_init` (incl. `aac_check`) ✓ → `phydm_rfe_init` ✓ → `phydm_common_info_self_init` ✓
-(`init_cck_setting` + rf_path_rx_enable + `somlrxhp` `0x19a8`) → `phydm_dig_init` ✓ (get_igi 0xC50 +
-big_jump 0x8C8) → `phydm_cck_pd_init` ✓ (type1: 0xA0A=0x83) → `phydm_env_monitor_init` ✓
-(`ccx_hw_restart` 0x994 + `nhm_init` 0x998/0x99c/0x9a0/0x994 + `clm_init` 0x990 + `fahm_init`
-0x1c38/0x1c78/0x1c7c/0x1cb8 — all 11 thresholds from `th[i]=((igi-14)<<1)+4i`) →
-`phydm_adaptivity_init` ✓ (EDCCA 0x944/0x8a4/0x520/0x524) → `phydm_ra_info_init` ✓ (ARFR 0x494/...).
-**Frontier op ~9556** = the **IQK** (`halrf_iqk_8822b.c`, ~2165 lines, read-dependent RF
-image-rejection cal) — `R 0x10` macbb-backup, then `0x0c1c`/`0x198c` RF-mode. Per the **hardware
-beacon test (2026-06-15)**, the cold init + full DM init now run **clean on the card** but RX still
-delivers **0 frames / 0 beacons** — so the IQK (not the DM init) is the confirmed RX blocker. LCK +
-the one-time DPK follow it. This is the next milestone.
-
-**Gate scope past op ~9467 = capture-1 only (a stale-module-global artifact, not a port bug).**
-`config_phydm_trx_mode`'s closing `phydm_rfe_8822b(central_ch_8822b)` `[SRC]
-phydm_hal_api8822b.c:2567,616` is a no-op when `central_ch_8822b == 0` (or 15–35) but writes the
-iFEM table (`0xcb0/0xeb0/0xcb4/...`) for a real channel. `central_ch_8822b` is a **module global**
-`[SRC] phydm_hal_api8822b.c:34` set only by `config_phydm_switch_channel` (`:1837`); the DM init
-runs *before* any channel switch, so on the first cold boot it is 0 — **capture-1**, which the port
-reproduces (the cold path). **capture-2/3** are later boots whose module global survived from the
-prior airodump scan (it ends on ch 1), so they emit the extra 2.4 GHz iFEM block at op ~9467 and
-diverge there. That is stale cross-capture state that cannot be derived from cold inputs, so
-**capture-1 is the authoritative gate from `config_trx_mode` onward**. The DM seed itself
-(somlrxhp/DIG/CCK-PD) is identical on all three boots since `*dm->channel ≤ 14` either way.
-
-### RF calibration — the rest of the capture is an all-channel scan (decoded)
-
-Decoding the RF channel-register writes (`0xC90`/`0xE90`, `addr 0x18`, `data[7:0]` = channel
-number) across op 9410 → 29542 shows the vendor driver is **pre-calibrating every channel in both
-bands, twice** — not tuning one channel:
-- op ~9700–9740: IQK setup probing band-representative channels (36 / 100 / 149)
-- op ~9900–14200: per-channel **DPK** on 2.4 GHz ch **1–11**
-- op ~14600–16700: per-channel DPK on 5 GHz ch **36–64, 100–116**
-- op ~16800–22400: 2.4 GHz ch **1–11 again** (TSSI / power-tracking pass)
-- op ~22700–28500: 5 GHz ch **36–140, 149–165 again**
-- op ~28780 → end: settles back on **ch 1** (final `switch_channel` + spur-cal/DIG cluster)
-
-So the genuinely one-time work (IQK + LCK + first-channel DPK) is only ~2–3K ops; the other ~17K
-is a full-spectrum DPK/TSSI scan over ~25 channels × 2 bands × 2 passes.
-
-**Decision (Lead, 2026-06-15): per-channel on-demand cal — do NOT replay the all-channel scan.**
-The kernel itself cal's a channel only when it tunes to it; our userland driver does the same.
-Port the per-channel unit once and run it from `set_channel`, gating it against a single-channel
-**slice** of the capture (not one monotonic cursor to the end). DPK is TX-only pre-distortion —
-**deferred to TX (M8)**; it is not needed for RX. So the path to first beacon is small:
-- **`set_channel`** = `config_phydm_switch_band/channel/bandwidth_8822b` `[SRC] rtl8822b_phy.c:822`,
-  20 MHz only. The captures contain an airodump `--band abg` hop sweep — **38 `iw set channel N`
-  commands** in `<cap>_logs/iw.log` (2.4 GHz 1-12, 5 GHz 36-165, back to 1), each one a vendor
-  set_channel. `scripts/rtl8822bu_dkms/verify_channels.py` slices each hop window (iw epoch → pcap
-  frame) and byte-diffs the port against it.
-
-  **`switch_channel` (CLEARED — 27/27/26 hops byte-for-byte on capture-1/2/3).** `chan.switch_channel`
-  + `sipi.py` (the BB-masked-RMW + SIPI RF read/write primitives: RF read = direct BB read at
-  `{0x2800,0x2c00}[path]+(addr<<2)`; RF write packs `((addr&0xFF)<<20|data[19:0])` into `0xC90`/
-  `0xE90`). Per channel: read RF_A 0x18 (clear bits 18/17/byte0, `|= ch`); AGC-tab `0x958[4:0]`;
-  clock-offset `0x860[28:17]`; CCK TX filter `0xA24`/`0xA28` (2.4G); RF_A `0xBE[17:15]` phase-noise
-  (5G low/mid/high tables); RF_A `0xDF[18]`; write RF_A/RF_B `0x18`; RF_A `0xB8[19]` toggle;
-  `phydm_igi_toggle` (`0xC50`/`0xE50[6:0]`); `phydm_ccapar_by_rfe` (rfe-3 iFEM CCA table, col by
-  band/Nrx → `0x82C/0x830/0x838`); `phydm_spur_calibration` → `phydm_dsde_init` (reset NBI/CSI
-  `0x880-0x89C` + `0x874[0]`). `phydm_rfe` is NOT called per same-band hop (only on a band change).
-  - **PSD spur sweep — PORTED (byte-for-byte on all 6 in-capture spur hops).**
-    `phydm_dynamic_spur_det_eliminate` runs its read-dependent PSD sweep on spur channels
-    (`dsde_ch_idx ≤ 13`: 2.4G ch 5-8/13, 5G 153/161 at 20 MHz) at each of the three `_spur_reset`
-    sites. `chan._dynamic_spur_det_eliminate` ports the full sweep (PSD_SMP_NUM×PSD_VAL_NUM probes
-    of 0xF44 per path, both runs per hop) + the threshold decision + the **NBI** notch
-    (`phydm_nbi_setting`: fc/intf-distance → reg_idx → 0x87C[19:14] + enable 0x87C[13]/0xC20/0xE20)
-    + the **CSI** notch (`phydm_csi_mask_setting`: tone bit at 0x880-0x89C + enable 0x874[0]). The
-    replay feeds every 0xF44 read, so the in-capture spur energy (e.g. ch6 PSD `0x197 ≥ 0x8D`)
-    drives the notch identically — `verify_channels` clears ch 5/6/7/8/153/161 (752/749/717 ops).
-  - **Bandwidth re-apply (CLEARED — full `set_channel_bw`, 27/27/26 hops byte-for-byte).**
-    `chan.set_channel_bw` = `switch_channel` + `mac_switch_bandwidth` (HALMAC `cfg_ch_bw_88xx`:
-    `cfg_pri_ch_idx` `0x483`, `cfg_bw` clear `0x668[8:7]`, `cfg_mac_clk` `0x024[21:20]`+`0x55c`/
-    `0x638`=`0x50`, `cfg_ch` `0x454[7]` band marker) + `config_phydm_switch_bandwidth_8822b` (20 MHz:
-    `0x8ac &= 0xFFCFFC00`, `0x8c4[30]`, RF18 `|= BIT11|BIT10`, both paths; then `phydm_rxdfirpar`
-    `0x948/0x94c[29:28]=2`+`0xc20/0xe20[31]=1`, re-run `ccapar`+`spur_reset`, `phydm_bw_fixed_setting`
-    `0x840[3:0]=0`/`[4]=1`, `0x808` RX-path toggle to `0x33`, re-run `igi_toggle`). Each hop then
-    writes the per-channel **TXAGC** (`0x1d00`/`0x1d80`) — **PORTED** (see "Per-channel TX power"),
-    landing on the post-power cal (the real per-channel DPK / DIG watchdog tail), the deferred edge.
-  - **Band switch (CLEARED — both 2.4↔5 crossings byte-for-byte).** `chan.switch_band`
-    (`config_phydm_switch_band_8822b`): 2.4G sets `0x808[28]=1`/`0x454[7]=0`/`0xa80[18]=0`/
-    `0x814[15:10]=15`; 5G inverts those + `0x814=34`; both read the SoML marker `0x19a8[31]` and
-    branch (rfe-3: `0xc04/0xe04[18,21]=0`, `0x8cc`=`0x08108492`/`0x8d8[27]=1`, except 5G SoML-on →
-    `0x08108000`/`0x8d8[27]=0`), write RF_A/B `0x18` band bits, then `phydm_rfe_ifem`
-    (`0xcb0/0xcb4/0xcbc/0xca0`, both paths) + `spur_reset`. `set_channel_bw(prev_ch=…)` runs it
-    when `prev_ch` is on the other side of ch 14. The 2 crossing hops (ch 36, final ch 1) reproduce
-    the full PHYDM tune byte-for-byte and stop at the lone `0xCBC` BT-coex band-notify
-    (`rtw_btcoex_wifionly_switchband_notify`, a separate subsystem — wifit3 is BT-coex-less) which
-    precedes the TXAGC write — so a crossing's tx-power is the one hop the gate can't bridge (the
-    coex op is unported); the driver still writes TXAGC, the coex being a no-op for our build.
-  - **Per-channel TX power (TXAGC) — PORTED (35/35/34 hops byte-for-byte).** The `0x1d00`/`0x1d80`
-    block every hop writes after the bandwidth re-apply is the per-rate **TXAGC** table — **not** DPK
-    (the `0x1Dxx` boundary was previously mislabelled). `txpower.py` ports `rtl8822b_set_tx_power_level`:
-    per path × rate-section, `power_idx = phy_get_pg_txpwr_idx` (EFUSE PG base @ `0x10` + section/ntx
-    BW20 diff), packed 4 rates/dword at `0x1d00 + (hw_rate & 0xfc)`.
-    **Faithfulness — build-config, not pcap-coincidence:** the captured morrownr build compiles with
-    `CONFIG_TXPWR_BY_RATE_EN=n` + `CONFIG_TXPWR_LIMIT_EN=n` `[SRC] driver-source/Makefile:130,132`, so
-    `by_rate` folds to 0 (`phy_get_txpwr_target` `:5940`) and `phy_get_txpwr_lmt` early-returns no
-    limit — `hal_com_get_txpwr_idx` reduces to `base`, **domain-independently** (no `channel_plan`
-    dependency). Verified `base == wire` on every captured channel/path (0 mismatches); the wire and
-    the Makefile agree. The PHY_REG_PG by-rate table and the 7215-entry `txpwr_lmt` regulatory tables
-    are inert in this build, so they are *correctly* not ported. **Caveat (documented):** wifit3 thus
-    applies **no regulatory TX-power cap** (matching the captured default build) — the user owns
-    regional compliance for any manual TX.
-
-  **Net: `set_channel` is complete** — `verify_channels.py` clears **35/35/34 hops byte-for-byte**
-  on capture-1/2/3 — same-band 2.4 + 5 GHz hops + the 6 PSD spur hops, now THROUGH the TXAGC block to
-  the post-power cal. Skips: the 2.4↔5 crossings (unported BT-coex `0xCBC` precedes TXAGC) + a few
-  slicing artifacts (windows whose iw-epoch→frame head lands mid-cal).
-- **IQK + LCK** (RX-relevant image rejection / LO cal) — port if RX is deaf without them; one-time.
-- **Per-channel DPK** (the *real* DPK: the read-dependent pre-distortion in the cold-init all-channel
-  scan, op ~9900+ — NOT the hop's TXAGC) — deferred; rides along with TX (M8).
-
-### RX bring-up (wired; blocked on the post-init RX seed) — hardware diagnosis 2026-06-15
-
-The driver is wired end-to-end and runs on the card: `driver.py` (WlanDriver protocol) +
-`bringup.cold_bringup` (the gate-verified init, now the shared source for driver + `verify_pcap`) +
-`rx.py` (24-byte rx_pkt_desc decode `[SRC] rtl8822b_ops.c` / `halmac_rx_desc_nic.h`: word0
-PKT_LEN[13:0]/CRC32[14]/ICV[15]/DRVINFO[19:16]×8/SHIFT[25:24]/PHYST[26], C2H at 0x08[28]; MPDU at
-`24+drvinfo+shift`, 8-byte-aligned stride; FCS dropped) + `chan.set_channel_bw` + the shared
-`RxReaderThread`. `scripts/rtl8822bu_dkms/test_hw.py` (`--phase open|init|beacon`) drives it.
-
-**Confirmed on hardware:** `--phase init` runs the full two-cycle cold init with no bus errors;
-`set_channel_bw` tunes RF_A/RF_B 0x18 to the target channel (read back); both radios respond to
-SIPI. The monitor RX path is fully open — `REG_CR`=0x04ff (RXDMA+MACRXEN), `RCR`=0x9000380F,
-`RXFLTMAP0/1/2`=0xFFFF, bulk-IN ep 0x84.
-
-**The blocker (updated 2026-06-15 — DM init ruled out, IQK confirmed):** the **BB hears RF energy**
-(FA `0xf48` / CCA `0xf08` climb) but **no frame lands in the RXFF** (`bulk_in` returns 0 bytes).
-The full **phydm DM init is now ported** (DIG + CCK-PD + NHM/CLM/FAHM + EDCCA + RA — gate 9509→9556)
-and runs **clean on the card**, but a fresh `test_hw.py --phase beacon` still shows **0 frames / 0
-beacons** across the 2.4 GHz sweep. So the DM init was **necessary but not sufficient** — the RX
-demodulator still doesn't complete packets without the **IQK** (`halrf_iqk_8822b.c`, the one-time RF
-image-rejection cal at op ~9556+), and likely LCK. The IQK is therefore the confirmed RX blocker and
-the next milestone; everything up to and including the channel tune + DM init is in place and
-hardware-confirmed.
-
-### Coverage gap — USB2-link branches untested (all captures are USB3)
-
-capture-1/2/3 are all **SuperSpeed (USB3)** links, so every link-speed conditional is only
-verified on its USB3 side. The discriminator is `REG_SYS_CFG2+3 == 0x20` (== USB3, else USB2)
-`[SRC] halmac_usb_88xx.c:48`. A USB2-link capture (plug the card behind a USB2-only
-adapter/hub so it negotiates High-Speed) would let `verify_pcap` confirm the USB2 sides of:
-- `pre_init_system_cfg`'s `0xFE5B |= BIT(4)` — **USB3-only**, skipped on USB2 `[SRC] halmac_init_8822b.c:962`
-- USB RXDMA / aggregation mode `[SRC] halmac_usb_88xx.c:48,123,432`
-- bulk-OUT size + EP/queue layout `[SRC] rtl8822bu_halinit.c:410-437` — may change the TX bulk-OUT EP (M8)
-
-NOT covered by a USB2 capture: the USB2 intf-phy writes (`0xFE40-42`) are gated by the empty
-`usb2_phy_param_8822b` table, not link speed — dead on 8822b regardless. When porting the
-branches above, the USB3 side is gate-verified; the USB2 side stays source-ported-but-uncaptured
-until a USB2 capture exists.
+- **cap-2/3 from op ~9467:** `config_trx_mode`'s closing `phydm_rfe_8822b(central_ch_8822b)` is a
+  no-op when the channel is 0 (or 15-35) but writes the iFEM table otherwise. `central_ch_8822b` is a
+  **module global** `[SRC] phydm_hal_api8822b.c:34` set only by `config_phydm_switch_channel`; DM init
+  runs before any channel switch, so it's 0 on the first cold boot (cap-1 — port reproduces it) but
+  stale (ch 1, from the prior scan — the captures share a loaded module via unplug/replug, no rmmod)
+  on cap-2/3, which emit the extra iFEM block and diverge. Benign cross-capture artifact → **cap-1 is
+  authoritative from config_trx_mode on**. (The DM seed is identical on all 3 since `channel ≤ 14`.)
+- **USB2-link branches** untested — all captures are USB3 (`REG_SYS_CFG2+3==0x20`
+  `[SRC] halmac_usb_88xx.c:48`). The USB2 sides of `pre_init_system_cfg` `0xFE5B`, USB RXDMA/agg, and
+  bulk-OUT sizing are source-ported-but-uncaptured.
+- **Warm OFF→ON power cycle**: source-ported, no cold capture (cold boots return SUCCESS).
 
 ## Cleanroom rules
 
-- Do **not** open `chips/rtl8822bu/`, `chips/rtw88_base/`, or `scripts/rtl8822bu/` — the
-  mainline rtw88-derived driver, its shared base, and its tooling. Reading them produces a
-  hybrid; no `_dkms` port imports `rtw88_base` (the AU ports use `rtl88xxau_base` instead).
-  (The shared gate *engine* `scripts/rtw88_pcap_replay.py` is fine — family tooling used by
-  every `_dkms` recipe, not driver code.)
-- This is the **HALMAC + PHYDM (ODM)** vendor stack — port it from the vendor source.
-- Sanctioned references: the vendor source (below), the sibling `chips/rtl8812au_dkms/`
-  (closest: 2T2R 11ac), `rtl8821au_dkms`, `rtl8814au_dkms`, and their `scripts/*_dkms/`
-  recipes. The AU family shares `chips/rtl88xxau_base/`; 8822b is a different HAL, so expect
-  new chip-local modules (and possibly a new shared base), not reuse of that one.
+- Do **not** open `chips/rtl8822bu/`, `chips/rtw88_base/`, or `scripts/rtl8822bu/` (mainline + base +
+  tooling — reading them produces a hybrid). The shared gate engine `scripts/rtw88_pcap_replay.py` is
+  fine (family tooling, not driver code).
+- Port from the **HALMAC + PHYDM (ODM)** vendor source. Sanctioned refs: that source + the sibling
+  `chips/rtl8812au_dkms/`·`rtl8821au_dkms`·`rtl8814au_dkms` (a different HAL — expect new chip-local
+  modules, not `rtw88_base`/`rtl88xxau_base` reuse).
 
-## Why this port
+## Gates + provenance
 
-Biggest win of the four Realtek 11ac DKMS re-ports — A/B baseline **8 → 29 APs (3.6×)**
-(`planning/PORTING.md` § "Cleanroom DKMS re-ports"); the last one pending (8812/8814/8821
-`_dkms` done). The gain is the full HALMAC/PHYDM calibration (IQK/DPK/CCK-PD/power-by-rate)
-the vendor stack runs.
+- **`verify_pcap.py rtl8822bu_dkms [<cap>]`** — replays `cold_bringup` vs the merged ctrl+bulk stream;
+  prints reproduced-op count + `FRONTIER`. **`verify_channels.py <cap>`** — per-hop `set_channel_bw`
+  diff (35/35/34). **`test_hw.py --phase open|init|beacon`** — live HW smoke. The engine feeds recorded
+  reads back so read-dependent code reproduces; every write/bulk packet is byte-checked.
+- Card: Archer T3U Plus v1 `2357:0138`, CUT_D, 2T2R, dual-band (Zadig→WinUSB on Windows; unbind kernel
+  driver on Linux). Vendor: morrownr `rtl88x2bu` 5.13.1, source @
+  `usb_dumps_new/captures_rtl88x2bu/driver-source/`. Captures: `capture-1/2/3.pcap` + `_logs/`
+  (cold-boot, monitor, 2.4 then 5 GHz hops; `iw.log` has the per-channel `set channel` windows).
 
-## Hardware / provenance
+## Acceptance + working style
 
-- Card: TP-Link Archer T3U Plus v1, `2357:0138`, CUT_D, MP, 2T2R, dual-band (in the DKMS
-  `supported-device-IDs`). Windows: Zadig→WinUSB. Linux: unbind kernel driver.
-- Vendor: morrownr `rtl88x2bu` 5.13.1 (Realtek 20210702 + community).
-  - source: `usb_dumps_new/captures_rtl88x2bu/driver-source/` — HALMAC `hal/halmac/`, 8822b HAL
-    `hal/rtl8822b/`, PHYDM/ODM `hal/phydm/`, efuse `hal/efuse/`.
-  - tarball: `usb_dumps_new/driver-sources/rtl88x2bu-5.13.1.tar.xz`.
-- DKMS cold-boot captures (byte-diff ground truth): `usb_dumps_new/captures_rtl88x2bu/`
-  `capture-1/2/3.pcap` + `_logs/` (driver.log, `iw.log` with per-channel `set channel`
-  windows, airodump, usb-topology). Driver `rtl88x2bu`, monitor, hops 2.4 then 5 GHz.
-- Mainline A/B baseline (tie-or-beat target, not a port reference): `usb_dumps/
-  captures_rtw88_8822bu/` + `usb_dumps_new/captures_rtw88_8822bu/`.
-
-## verify_pcap + verify_channels — the faithfulness gates (BUILT)
-
-- **`scripts/rtl8822bu_dkms/verify_pcap.py`** (`uv run python scripts/verify_pcap.py rtl8822bu_dkms`)
-  — replays `bringup.cold_bringup` against the merged ctrl+bulk stream; prints the running
-  reproduced-op count + the `FRONTIER` op (the next thing to port). Clean to op ~9470/29542. The
-  `CAL_SCAN_START` guard just relabels the terminal message; the real frontier is wherever the port
-  stops. Run the per-capture form (`… verify_pcap.py rtl8822bu_dkms <cap>.pcap`) on capture-1/2/3.
-- **`scripts/rtl8822bu_dkms/verify_channels.py`** (`… verify_channels.py capture-1`) — slices each
-  `iw set channel N` window from `iw.log` and byte-diffs `chan.set_channel_bw` per hop. 29/29/28
-  PASS (built; the set_channel gate).
-- **`scripts/rtl8822bu_dkms/test_hw.py`** (`--phase open|init|beacon`) — the live hardware smoke
-  test (cold init + monitor RX). Use `--phase beacon` to check RX once the cal lands.
-- The shared engine `scripts/rtw88_pcap_replay.py` feeds recorded reads back so RMWs / EFUSE / any
-  live search reproduce; every write/bulk packet is byte-checked. The 8822b transport is dev-centric
-  (it emits the 0x4E0 mirror), so the gate drives `Rtl8822buTransport` over `ReplayDevice` directly.
-
-## Milestones (subject to change — the vendor source + capture set the real order)
-
-Port tiny-first, gate every milestone. The agent completes through *wiring* TX; the human
-fires live TX (Hand-off).
-
-| M | Scope | HW-verifiable signal |
-|---|-------|----------------------|
-| M0 | Enumerate + claim + transport + chip-ID reads. Confirm USB topology from the capture. | control plumbing works; chip-id matches; gate green |
-| M1 | MAC power-on (HALMAC power sequence + LLT/autoload). | power-on regs byte-for-byte |
-| M2 | Firmware upload (HALMAC iDDMA) + FW-ready ACK. Extract FW from pcap, byte-verify vs `linux-firmware/rtw88/`, ship in `assets/`. | FW-ready bit; byte-for-byte |
-| M3 | MAC init for RX (TRX enable, RX filters, DRVINFO/PHYSTS). | `REG_CR` TRX bits; byte-for-byte |
-| M4 | BB + RF init (PHYDM config tables) + EFUSE read (rfe/board/xtal/tx-power). | tables byte-for-byte; EFUSE decode matches |
-| M5 | RF calibration as the vendor runs it on this boot (IQK/DPK/LCK/TSSI — only what's in the capture, reproduced). | byte-for-byte incl. any live search |
-| M6 | Channel tune 2.4 + 5 GHz (per-hop). Build `verify_channels.py`. | every `iw set channel` window byte-diffs (incl. band crossings + DFS) |
-| M7 | PHYDM dynamics (DIG + CCK-PD) + monitor-mode RX filter. | clean 2.4 GHz beacons, ≥8–10/s, ~29 APs across a hop (beat the A/B 3.6×) |
-| M8 | TX descriptor + `inject_frame` wiring. Build `deauth_hw.py`. Agent does not live-inject. | TX byte-diff vs any captured injector, else behavioural via `deauth_hw.py` (human) |
-| M9 | Warm-reattach: detect warm (FW-ready + TRX up), skip bring-up, light reattach + bulk-IN smoke test; surface "please replug" if the pipe is wedged. | relaunch resumes RX; wedged pipe → clear message |
-| M10 | `driver.py` (WlanDriver protocol) + `manager.py` under `WIFIT3_RTL8822` + RxReaderThread (start before RX-enable) + DIG/CCK-PD ticked off the loop. | clean RX through the app; gate-faithful |
-| M11 | A/B vs the mainline baseline (run via env var) + endurance soak (≥30 min, both bands). | tie/beat it on breadth+stability → flip default |
-
-Resolved (no longer open): the 8822b HAL does **not** reuse `rtl88xxau_base` — it has its own
-chip-local modules (`sipi.py`, `cal.py`, `chan.py`, `bringup.py`, …); HALMAC efuse path (driver-side
-dump); monitor RCR = `0x9000380F` + `RXFLTMAP0/1/2 = 0xFFFF` (set in `driver.py`/`test_hw.py`,
-NOT a capture replay). Still open: the live `CONFIG_*` build-flag effects (deduce from the bytes
-as you hit them — e.g. `CONFIG_BW_INDICATION` is ON, confirmed by the `0x840` bw-fixed writes).
-
-## Acceptance: Post-Port Checklist
-
-Run `planning/PORTING.md` § "Post-Port Checklist" before declaring done — gate-green is
-necessary, not sufficient. Agent runs 1–6 and reports; 7 is the human's:
-
-1. Waiver review — init + airmon reproduce single-cursor, zero waived ops (only a different
-   program's traffic is a legitimate waiver).
-2. Skip audit — every kernel/vendor branch we don't emit is a marked `# TODO untestable: <why>`
-   genuine no-hardware skip; classify every leaf faithful/hardcoded/omitted/N-A.
-3. Capture coverage — gate PASSES on capture-1/2/3 (same silicon confirmed).
-4. TX byte-diff vs the captured injector (if any; else `deauth_hw.py` is the only TX check).
-5. Async producers — enumerate the vendor's periodic threads (DIG/CCK-PD/link-tuner/thermal);
-   dispatch the ones that fire in monitor.
-6. Recalibration cadence — per-hop recal matches the vendor's `config_channel`; per-hop HW lock
-   holds so a cancelled tune can't strand the chip on a stale channel.
-
-## Hand-off to the user
-
-- TX is the human's trigger; the agent never live-injects. Build `scripts/rtl8822bu_dkms/
-  deauth_hw.py` modelled on `scripts/rtl8812au_dkms/deauth_hw.py`: targeted unicast `--client`
-  only, `--dry-run` default, watches RX for the target's EAPOL. Target MACs stay on the
-  terminal — never commit them.
-- Post-Port Checklist #7: hammer it in-app — alternate targets, hop hard, switch channels,
-  replug mid-run, soak, fire the live attacks. Hunt the stale-channel hop and any wedge.
-
-## Working style
-
-- Do it inline in the main session. Don't over-decompose into subagents — past ports show it
-  slows things down and a port usually leaves 50–70 % context free. Use agents only for
-  genuinely parallel independent search.
-- Gate each milestone before any hardware/behavioural debugging.
-- Commit each milestone (stage only your files; no AI-authorship trailer).
-- Keep this doc current with `[SRC]`/`[WIRE]` citations.
-- Reference: `planning/PORTING.md` (recipe, hardware-verifiable milestones, Post-Port
-  Checklist, the cleanroom-re-port workflow).
+- Before "done": `planning/PORTING.md` § Post-Port Checklist (waiver review = zero waived init/airmon
+  ops; skip audit = every un-emitted branch is a marked `# TODO untestable: <why>`; cap-1/2/3 coverage;
+  async producers DIG/CCK-PD; per-hop recal + lock). Gate-green is necessary, not sufficient.
+- Work inline in the main session (subagents only for parallel independent search). Gate + commit each
+  milestone (one fn/commit, stage only your files, no AI trailer). Keep this doc current and concise
+  with `[SRC]`/`[WIRE]` citations. TX `deauth_hw.py` is the human's trigger; the agent never
+  live-injects.
