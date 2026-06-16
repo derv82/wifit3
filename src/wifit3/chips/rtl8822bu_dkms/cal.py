@@ -19,6 +19,32 @@ RF_0xEF, RF_0x33, RF_0x3E, RF_0x3F = 0xEF, 0x33, 0x3E, 0x3F
 _FULL = sipi.RFREGOFFSETMASK          # 20-bit RF-register mask
 MASKDWORD = 0xFFFFFFFF                 # full 32-bit BB write (plain write32, no RMW)
 
+# Debug-port priorities [SRC] phydm_debug.h:317 (RELEASE=0 lowest .. PRI_3=3 highest).
+DBGPORT_RELEASE, DBGPORT_PRI_1, DBGPORT_PRI_3 = 0, 1, 3
+
+
+class DmState:
+    """The parts of PHYDM's `struct dm_struct` whose register *writes* are computed from cached
+    values, so a faithful replay must carry them between the functions that set and use them.
+    Seeded during the DM init (dig_init / init_cck_setting) and consumed by `dc_cancellation`:
+
+    - cur_ig_value      `dig_t->cur_ig_value` — live IGI; the !=-guard in odm_write_dig.
+    - big_jump_step1    `dig_t->big_jump_step1` = (0x8C8[3:1] read once at dig_init); drives the
+                        0x8C8 big-jump write, which CANNOT be re-derived later (the write mutates
+                        those very bits), so it must be latched at dig_init.
+    - cck_new_agc       `dm->cck_new_agc` = 0xA9C[17]; gates the 0xA0C IGI-for-CCK write.
+    - pre_dbg_priority  `dm->pre_dbg_priority`; set_bb_dbg_port only fires when priority rises.
+    - tx_queue_bitmap / ccktx_path  `api->...`; saved on stop_ic_trx SET, restored on REVERT.
+    """
+
+    def __init__(self) -> None:
+        self.cur_ig_value = 0
+        self.big_jump_step1 = 0
+        self.cck_new_agc = False
+        self.pre_dbg_priority = DBGPORT_RELEASE
+        self.tx_queue_bitmap = 0
+        self.ccktx_path = 0
+
 
 def aac_check(t) -> None:
     """[SRC] aac_check_8822b (halrf_8822b.c:424) — one-off AAC check before LCK/DM init.
@@ -41,12 +67,13 @@ def rfe_init(t) -> None:
     sipi.set_bb_reg(t, 0x0974, (1 << 11) | (1 << 10), 0x3)
 
 
-def init_cck_setting(t) -> None:
+def init_cck_setting(t, st: DmState) -> None:
     """[SRC] phydm_init_cck_setting + phydm_config_cck_rx_antenna_init (2SS) — CCK RX setup.
 
-    cck_new_agc_chk reads 0xA9C[17]; is_cck_high_power reads CCK_RPT_FORMAT (0x804); both cache
-    software flags (the replay feeds them). cck_lna_bit_num_chk is a no-op on 8822b."""
-    sipi.get_bb_reg(t, 0x0A9C, 1 << 17)              # cck_new_agc flag
+    cck_new_agc_chk reads 0xA9C[17] (8822b new-agc flag, latched in `st`); is_cck_high_power reads
+    CCK_RPT_FORMAT (0x804); both cache software flags (the replay feeds them). cck_lna_bit_num_chk
+    is a no-op on 8822b."""
+    st.cck_new_agc = bool(sipi.get_bb_reg(t, 0x0A9C, 1 << 17))   # phydm_cck_new_agc_chk
     t.read32(0x0804)                                  # is_cck_high_power (CCK_RPT_FORMAT) — cached
     sipi.set_bb_reg(t, 0x0A00, 1 << 15, 0x0)          # disable ant diversity
     sipi.set_bb_reg(t, 0x0A70, 1 << 7, 0x0)           # concurrent CCA at LSB & USB
@@ -86,7 +113,7 @@ def init_soft_ml_setting(t, channel: int, rfe_type: int) -> None:
     _somlrxhp_setting(t, True, channel, rfe_type)     # dm->bsomlenabled = True (software)
 
 
-def common_info_self_init(t, rfe_type: int, channel: int = 1) -> None:
+def common_info_self_init(t, st: DmState, rfe_type: int, channel: int = 1) -> None:
     """[SRC] phydm_common_info_self_init (phydm.c:238) — DM self-init after phydm_rfe_init.
 
     Only three steps touch the wire: phydm_init_cck_setting (CCK RX setup), the BB_RX_PATH read
@@ -94,19 +121,21 @@ def common_info_self_init(t, rfe_type: int, channel: int = 1) -> None:
     phydm_init_soft_ml_setting (SoML RxHP seed). The CE-gated debug-setting block and
     phydm_trx_antenna_setting_init (a no-op on 8822b — only 8192F/E/97F + 8812/8814A read regs
     there) emit nothing. `channel` is the cold default (2.4 GHz, ≤14)."""
-    init_cck_setting(t)                                # phydm_init_cck_setting
+    init_cck_setting(t, st)                            # phydm_init_cck_setting
     sipi.get_bb_reg(t, 0x0808, 0xF)                    # rf_path_rx_enable (BB_RX_PATH, cached)
     init_soft_ml_setting(t, channel, rfe_type)         # phydm_init_soft_ml_setting
 
 
-def dig_init(t) -> None:
+def dig_init(t, st: DmState) -> None:
     """[SRC] phydm_dig_init (phydm_dig.c:1000) — DIG (RX IGI) seed.
 
     Mostly software field-setup; the only wire reads are the current IGI (phydm_get_igi path-A,
-    0xC50[6:0]) into cur_ig_value, and the 8822b big-jump steps from 0x8C8[15:0] (the replay feeds
-    both)."""
-    sipi.get_bb_reg(t, 0x0C50, 0x7F)              # phydm_get_igi(path A) -> cur_ig_value
-    sipi.get_bb_reg(t, 0x08C8, 0xFFFF)            # big_jump_step1/2/3 (RTL8822B)
+    0xC50[6:0]) into cur_ig_value, and the 8822b big-jump steps from 0x8C8[15:0]. Both are latched
+    in `st`: enable_adjust_big_jump=1 and big_jump_step1=0x8C8[3:1] feed phydm_set_big_jump_step
+    in odm_write_dig later (big_jump_lmt defaults to 0x64 / agc_table_idx 0)."""
+    st.cur_ig_value = sipi.get_bb_reg(t, 0x0C50, 0x7F)   # phydm_get_igi(path A) -> cur_ig_value
+    ret = sipi.get_bb_reg(t, 0x08C8, 0xFFFF)             # big_jump_step1/2/3 (RTL8822B)
+    st.big_jump_step1 = (ret & 0xE) >> 1
 
 
 def cck_pd_init(t) -> None:
@@ -192,6 +221,164 @@ def rf_init(t) -> None:
     OFDM bb-swing read 0xc1c[31:21] (compared against tx_scaling_table_jaguar in software);
     get_cck_swing_index and odm_clear_txpowertracking_state are software-only on 8822b."""
     sipi.get_bb_reg(t, 0x0C1C, 0xFFE00000)            # get_swing_index: default OFDM bb-swing
+
+
+# --- DC-cancellation BB primitives [SRC] phydm_api.c / phydm_debug.c / phydm_dig.c (11AC paths) ---
+
+def _bb_dbg_port_clock_en(t, enable: bool) -> None:
+    """[SRC] phydm_bb_dbg_port_clock_en — 11AC_2: gate the debug-port clock 0x198C[2:0]."""
+    sipi.set_bb_reg(t, 0x198C, 0x7, 0x7 if enable else 0x0)
+
+
+def _bb_dbg_port_header_sel(t, header_idx: int) -> None:
+    """[SRC] phydm_bb_dbg_port_header_sel — 11AC: debug-port header select 0x8F8[25:22]."""
+    sipi.set_bb_reg(t, 0x08F8, 0x3C00000, header_idx)
+
+
+def _set_bb_dbg_port(t, st: DmState, priority: int, debug_port: int) -> bool:
+    """[SRC] phydm_set_bb_dbg_port — only fires when priority rises; 11AC: clock-en + 0x8FC."""
+    if priority > st.pre_dbg_priority:
+        _bb_dbg_port_clock_en(t, True)
+        sipi.set_bb_reg(t, 0x08FC, MASKDWORD, debug_port)
+        st.pre_dbg_priority = priority
+        return True
+    return False
+
+
+def _release_bb_dbg_port(t, st: DmState) -> None:
+    """[SRC] phydm_release_bb_dbg_port — clock off + header 0 + drop priority."""
+    _bb_dbg_port_clock_en(t, False)
+    _bb_dbg_port_header_sel(t, 0)
+    st.pre_dbg_priority = DBGPORT_RELEASE
+
+
+def _get_bb_dbg_port_val(t) -> int:
+    """[SRC] phydm_get_bb_dbg_port_val — 11AC: read the debug port at 0xFA0."""
+    return t.read32(0x0FA0)
+
+
+def _stop_3_wire(t, revert: bool) -> None:
+    """[SRC] phydm_stop_3_wire — 11AC: 0xC00/0xE00[3:0] = 7 (start) or 4 (stop)."""
+    v = 0x7 if revert else 0x4
+    sipi.set_bb_reg(t, 0x0C00, 0xF, v)
+    sipi.set_bb_reg(t, 0x0E00, 0xF, v)
+
+
+def _stop_ck320(t, enable: bool) -> None:
+    """[SRC] phydm_stop_ck320 — 11AC: 0x8B4[6] (1 stop / 0 start)."""
+    sipi.set_bb_reg(t, 0x08B4, 1 << 6, 0x1 if enable else 0x0)
+
+
+def _dis_cck_trx(t, st: DmState, revert: bool) -> None:
+    """[SRC] phydm_dis_cck_trx — 11AC: save/disable then restore the CCK block + TX path."""
+    if not revert:                                          # PHYDM_SET
+        st.ccktx_path = sipi.get_bb_reg(t, 0x0A04, 0xF0000000)  # save CCK TX path
+        sipi.set_bb_reg(t, 0x0808, 1 << 28, 0x0)            # disable CCK block
+        sipi.set_bb_reg(t, 0x0A04, 0xF0000000, 0x0)         # disable CCK Tx
+    else:                                                   # PHYDM_REVERT
+        sipi.set_bb_reg(t, 0x0808, 1 << 28, 0x1)            # enable CCK block
+        sipi.set_bb_reg(t, 0x0A04, 0xF0000000, st.ccktx_path)  # restore CCK Tx
+
+
+def _stop_ic_trx(t, st: DmState, revert: bool) -> bool:
+    """[SRC] phydm_stop_ic_trx (11AC) — stop/restore MAC+BB TRX around a measurement.
+
+    SET: park the debug port at 0x0, poll it (0xFA0) until BB idle (PHYTXON BIT17 + CCA_all BIT3
+    clear; the replay feeds an already-idle value so the loop breaks on read 1), pause all TX
+    queues (0x520[23:16]=0xFF), kill OFDM RX CCA (0x838[1]) + the CCK block. REVERT undoes them."""
+    if not revert:                                          # PHYDM_SET
+        _set_bb_dbg_port(t, st, DBGPORT_PRI_3, 0x0)
+        idle = False
+        for _ in range(100):
+            if (_get_bb_dbg_port_val(t) & ((1 << 17) | (1 << 3))) == 0:
+                idle = True
+                break
+        _release_bb_dbg_port(t, st)
+        if not idle:
+            return False
+        st.tx_queue_bitmap = t.read8(0x0522)                # save TX-queue pause bitmap
+        sipi.set_bb_reg(t, 0x0520, 0xFF0000, 0xFF)          # pause all TX queues
+        sipi.set_bb_reg(t, 0x0838, 1 << 1, 0x1)            # disable OFDM RX CCA
+        _dis_cck_trx(t, st, revert=False)
+        return True
+    t.write8(0x0522, st.tx_queue_bitmap)                    # release all TX queues
+    sipi.set_bb_reg(t, 0x0838, 1 << 1, 0x0)                # enable OFDM RX CCA
+    _dis_cck_trx(t, st, revert=True)
+    return True
+
+
+def _set_big_jump_step(t, st: DmState, curr_igi: int) -> None:
+    """[SRC] phydm_set_big_jump_step (8822b) — pick the big-jump index for curr_igi and write
+    0x8C8[3:1]. step table + big_jump_lmt (0x64 default) are fixed; big_jump_step1 from dig_init."""
+    step1 = (24, 30, 40, 50, 60, 70, 80, 90)
+    big_jump_lmt = 0x64                                     # big_jump_lmt[agc_table_idx=0]
+    i = 0
+    while i <= st.big_jump_step1:                           # enable_adjust_big_jump=1 on 8822b
+        if (curr_igi + step1[i]) > big_jump_lmt:
+            if i != 0:
+                i -= 1
+            break
+        if i == st.big_jump_step1:
+            break
+        i += 1
+    sipi.set_bb_reg(t, 0x08C8, 0xE, i)
+
+
+def _odm_write_dig(t, st: DmState, new_igi: int) -> None:
+    """[SRC] odm_write_dig / phydm_write_dig_reg_c50 (8822b, no-link) — set IGI to new_igi.
+
+    No-link + edcca!=ADAPT, so the only paths are: big-jump step (0x8C8), the new-CCK-AGC IGI
+    0xA0C[13:8]=igi>>1 (when cck_new_agc), and the path-A/B IGI 0xC50/0xE50[6:0]."""
+    if st.cur_ig_value == new_igi:
+        return
+    _set_big_jump_step(t, st, new_igi)
+    if st.cck_new_agc:
+        sipi.set_bb_reg(t, 0x0A0C, 0x3F00, new_igi >> 1)
+    sipi.set_bb_reg(t, 0x0C50, 0x7F, new_igi)              # IGI path A
+    sipi.set_bb_reg(t, 0x0E50, 0x7F, new_igi)              # IGI path B
+    st.cur_ig_value = new_igi
+
+
+def _apply_dc_offset(t, reg_i: int, reg_q: int, reg_value32: int) -> None:
+    """[SRC] phydm_dc_cancellation tail (8822b) — turn one path's measured debug-port word into
+    the RX DC compensation: I = 0xFA0[19:10], Q = 0xFA0[9:0], negate, split across [29:26]/[15:10]."""
+    offset_i = 0x400 - ((reg_value32 & 0xFFC00) >> 10)
+    offset_q = 0x400 - (reg_value32 & 0x3FF)
+    sipi.set_bb_reg(t, reg_i, 0x3C000000, (0x3C0 & offset_i) >> 6)
+    sipi.set_bb_reg(t, reg_i, 0xFC00, 0x3F & offset_i)
+    sipi.set_bb_reg(t, reg_q, 0x3C000000, (0x3C0 & offset_q) >> 6)
+    sipi.set_bb_reg(t, reg_q, 0xFC00, 0x3F & offset_q)
+
+
+def dc_cancellation(t, st: DmState, rf_type: int = 2) -> None:
+    """[SRC] phydm_dc_cancellation (phydm.c:3496, 8822b 20 MHz) — measure + cancel RX DC offset.
+
+    For each path (A, then B — 8822b breaks after B): stop TRX, force IGI 0x7E, stop 3-wire,
+    park the debug port (0x200 path-A / 0x202 path-B), disable CCK DCNF (0xA78[15:8]=0), stop
+    ck320, read the DC word from 0xFA0, then restore everything (IGI 0x20). Finally enable the
+    CCK-path DC comp (0xA9C[20]) and write the per-path I/Q offsets (0xC10/0xC14, 0xE10/0xE14).
+    The replay feeds the 0xFA0 words, so the offsets reproduce byte-for-byte."""
+    reg_value32 = [0, 0]
+    for path in range(2):                                  # break after RF_PATH_B on 8822b
+        if not _stop_ic_trx(t, st, revert=False):
+            return
+        _odm_write_dig(t, st, 0x7E)
+        _stop_3_wire(t, revert=False)
+        if not _set_bb_dbg_port(t, st, DBGPORT_PRI_1, 0x200 if path == 0 else 0x202):
+            return
+        _bb_dbg_port_header_sel(t, 0x0)
+        sipi.set_bb_reg(t, 0x0A78, 0xFF00, 0x0)            # disable CCK DCNF
+        _stop_ck320(t, True)
+        reg_value32[path] = _get_bb_dbg_port_val(t)        # the measured DC word
+        _stop_ck320(t, False)
+        _release_bb_dbg_port(t, st)
+        _stop_3_wire(t, revert=True)
+        _odm_write_dig(t, st, 0x20)
+        _stop_ic_trx(t, st, revert=True)
+    sipi.set_bb_reg(t, 0x0A9C, 1 << 20, 0x1)              # DC comp to CCK data path
+    _apply_dc_offset(t, 0x0C10, 0x0C14, reg_value32[0])    # path A
+    if rf_type > 0:                                        # > RF_1T1R
+        _apply_dc_offset(t, 0x0E10, 0x0E14, reg_value32[1])  # path B
 
 
 def _config_tx_path(t, tx_path: int, sel_1ss: int, sel_cck: int) -> None:

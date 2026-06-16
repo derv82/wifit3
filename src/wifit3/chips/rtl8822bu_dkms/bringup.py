@@ -64,8 +64,9 @@ def cold_bringup(t):
     cal.config_trx_mode(t)                 # config_phydm_trx_mode: 2T2R TX/RX path + RF mode
     cal.aac_check(t)                       # one-off AAC check (RF_A 0xC9) before the DM init
     cal.rfe_init(t)                        # phydm_rfe_8822b_init: RFE pin mux (DM init start)
-    cal.common_info_self_init(t, e.rfe_type)   # cck_setting + rf_path_rx_enable + SoML RxHP seed
-    cal.dig_init(t)                        # phydm_dig_init: DIG/IGI seed (RX detection)
+    st = cal.DmState()                     # PHYDM software state seeded here, used by dc_cancellation
+    cal.common_info_self_init(t, st, e.rfe_type)   # cck_setting + rf_path_rx_enable + SoML RxHP seed
+    cal.dig_init(t, st)                    # phydm_dig_init: DIG/IGI seed (RX detection)
     cal.cck_pd_init(t)                     # phydm_cck_pd_init: CCK packet-detection threshold
     cal.env_monitor_init(t)                # phydm_env_monitor_init: NHM + CLM + FAHM env-monitor
     cal.adaptivity_init(t)                 # phydm_adaptivity_init: EDCCA seed
@@ -73,4 +74,5 @@ def cold_bringup(t):
     # phydm_rssi_monitor_init is a software no-op (no wire ops).
     cal.cfo_tracking_init(t)               # phydm_cfo_tracking_init: crystal-cap-by-WiFi (0x10[6])
     cal.rf_init(t)                         # phydm_rf_init: tx-power-track init (get_swing_index 0xc1c)
+    cal.dc_cancellation(t, st)             # phydm_dc_cancellation: RX DC-offset measure + cancel
     return info, e
