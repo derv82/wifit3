@@ -6,6 +6,11 @@
 > beacons** — a fully faithful port that yields 0 beacons is the win; a <100% port that "works" is
 > not. Don't chase RX symptoms; reproduce the wire.
 >
+> **Current state (honest): cold init faithful; runtime PARTIAL.** `verify_pcap` byte-verifies only the
+> cold init (op 0–9855, ~33% of the captured ops). The runtime wire (opmode block, hop tails/DPK, the
+> DIG/FA watchdog, spur re-eval, TX) is unported. See "Faithfulness scoreboard". Do NOT say "100%
+> faithful" — say what the gate actually covers.
+>
 > **Done & gate-verified (cap-1 byte-for-byte unless noted):**
 > - **The ENTIRE vendor chip init `rtl8822b_init` — reproduced byte-for-byte to op 9855.** This is the
 >   whole `verify_pcap` deterministic span: chip-ID → EFUSE → 2× power/FW/MAC → BB/AGC/crystal → RF-A/B →
@@ -54,6 +59,29 @@
 > **cap-2/3 caveat:** the gate is **cap-1-authoritative from `config_trx_mode` (op ~9467) onward** —
 > cap-2/3 diverge there on a stale `central_ch_8822b` module-global (a benign cross-capture artifact,
 > not a port bug; see "Coverage gaps"). Everything earlier is byte-clean on all three.
+
+## Faithfulness scoreboard — what "pcap-faithful" actually covers
+
+**Do not call this port "pcap-faithful" without this qualifier.** It means exactly one thing:
+`verify_pcap` reproduces the **cold init** (op 0–9855, ~33% of the 29 542 captured control ops)
+byte-for-byte. That is the only span with a standing 100% gate. The runtime wire (op 9855 → ~28910,
+where aireplay TX begins) is partial or unported:
+
+| Span | State |
+|---|---|
+| Cold init, op 0–9855 | ✅ byte-for-byte (`verify_pcap`) |
+| `set_channel` hop **prologue** | ✅ byte-for-byte (`verify_channels`, 132–776 ops/hop) |
+| `enable_monitor` (20 ops) | ✅ slice-verified (`verify_pcap`) |
+| initial channel-set / `switch_band` | ✅ 165 ops, offline replay — **no standing gate** |
+| `set_channel` hop **tail** (per-ch DPK, DIG tail) | ⛔ unported — `verify_channels` stops at the prologue |
+| opmode block (op 9855: MAC-addr/LED/TSF/RXFLTMAP1) | ⛔ unported |
+| **DIG/FA watchdog** (runtime IGI; capture fires ~2 s) | ⛔ unported |
+| PSD/spur runtime re-eval during RX | ⛔ unported |
+| TX descriptor | ⛔ unported |
+
+RX works, but the continuous runtime adaptation the capture runs (DIG/FA/spur) is not reproduced: the
+golden capture holds **24 bcn/s median, 90+/s peak** while hopping; our RX measures lower. The honest
+one-line status is **"cold init faithful; runtime partial,"** never "100% faithful."
 
 ## RX = 0 frames — RESOLVED (live monitor RX works)
 
