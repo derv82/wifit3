@@ -6,11 +6,21 @@
 > beacons** — a fully faithful port that yields 0 beacons is the win; a <100% port that "works" is
 > not. Don't chase RX symptoms; reproduce the wire.
 >
-> **TOP OPEN BUG — 2.4 GHz CCK RX is broken (the whole reason this re-port exists).** 5 GHz/OFDM RX is
-> *perfect* (steady 9.6 bcn/s, zero-seconds=0); 2.4 GHz **OFDM** RX is fine (data/handshakes flow); but
-> 2.4 GHz **CCK** RX is starved — APs whose beacons ride **CCK 1 Mbps** capture at ~1–2/s while OFDM-beacon
-> APs at the *same* signal capture at ~8.5/s (see "2.4 GHz CCK RX — the open bug"). TX is byte-faithful +
-> handshake-confirmed; the rest works. **Start here.**
+> **TOP OPEN BUG — 2.4 GHz RX is ~15–20 dB DEAF (re-diagnosed 2026-06-16; earlier "CCK-only" framing
+> was wrong).** It is NOT CCK-specific and NOT the CCK-PD threshold. It is a flat 2.4 GHz RX *sensitivity*
+> deficit: **both** CCK-1M beacons **and** low-rate OFDM beacons capture far below the vendor; only strong
+> local stations (data) punch through, so the UI shows "data flies, beacons die." 5 GHz is perfect.
+> **Ground truth (`cck_capref.py`, the capture's 15 s FIXED-CH1 window):** the vendor driver caught CCK
+> beacons at **79–89%** of advertised rate on the strong ch1 APs and hit 9–10 bcn/s every second; **we get
+> 23–60%** on the *same* APs (`cck_diag.py`). Both tools count beacons against each AP's advertised beacon
+> interval, so the metric is RSSI-decode-independent. **The RX gain index (IGI) is the dominant lever:**
+> forcing IGI `0x20→0x10` (more sensitive than the DIG floor `0x1c`) lifts a near AP from 13% → 74%, and
+> the OFDM beacons rise with it. Ruled out: CRC/demod (0 crc/icv ever), CCK-PD `0xA0A` (`--cckpd 0x40` no
+> change on busy *or* quiet channels), airtime (quiet ch3 still deficient). **Open: where the gain is lost
+> at a given IGI** — front-end (iFEM/RFE 2.4 GHz LNA) or a read-dependent cold-init cal that mis-converges
+> live (RSSI reads swing ±25 dB run-to-run → unstable AGC/DC-offset; `dc_cancellation`'s live `0xFA0`
+> idle-poll is the prime suspect — verify_pcap feeds it the capture's idle value, so the gate can't see a
+> live-HW divergence). See "2.4 GHz RX deafness" below. TX is byte-faithful + handshake-confirmed.
 >
 > **Current state (honest): cold init faithful; runtime mostly ported (watchdog/TX done).** `verify_pcap`
 > byte-verifies the cold init (op 0–9855, ~33% of captured ops). Runtime now ported: `set_channel`
@@ -68,44 +78,58 @@
 > cap-2/3 diverge there on a stale `central_ch_8822b` module-global (a benign cross-capture artifact,
 > not a port bug; see "Coverage gaps"). Everything earlier is byte-clean on all three.
 
-## 2.4 GHz CCK RX — the open bug (START HERE)
+## 2.4 GHz RX deafness — the open bug (START HERE)
 
-**Symptom (HW, reproduced in the UI):** 5 GHz monitor RX is perfect; 2.4 GHz **CCK**-beacon capture is
-starved. Same physical AP, both radios:
+**Re-diagnosed 2026-06-16 with rate-resolved tooling.** The earlier "CCK demod is broken / OFDM fine"
+framing was an artifact of (a) the doc mislabelling the strong `38:d5` APs as OFDM-beacon when the HW
+`rx_rate` field says they beacon at **CCK-1M**, and (b) a channel saturated with OFDM *data*. The actual
+bug is a **flat ~15–20 dB 2.4 GHz RX sensitivity deficit** that hits every weak signal — CCK-1M beacons
+*and* low-rate OFDM beacons alike. 5 GHz is fine. Strong local stations (data) overcome it, so the UI
+reads "data flies (1400/s), beacons die (0–1/s)."
 
-| | RSSI | beacons/20 s | notes |
-|---|---|---|---|
-| 5 GHz ch36 (d2:**1c**, OFDM) | — | **192 = 9.6/s**, steady, zero-secs=0 | perfect |
-| 2.4 GHz ch1 (d2:**18**, CCK 1M) | −71 | **38 = 1.9/s**, 10 zero-secs | starved |
-| 2.4 GHz ch1 (38:d5:..eb, OFDM) | −70 | **170 = 8.5/s** | fine — OFDM beacon |
-| 2.4 GHz ch1 (38:d5:..e8, OFDM) | −82 | **168 = 8.4/s** | fine — OFDM beacon |
+**Ground truth — vendor vs us, same APs / same environment, ch1** (`cck_capref.py` reads the capture's
+15 s FIXED-CH1 bulk-IN; `cck_diag.py` measures live; capture% = beacons caught ÷ the AP's advertised
+100-TU interval, so it is independent of our RSSI decode):
 
-**Diagnosis — CCK demod is broken; OFDM everywhere is fine.** It is NOT signal strength (d2:18 at −71
-is *stronger* than the 38:d5 APs at −70/−82 that capture 4× better) and NOT the parse/reader/descriptor
-(5 GHz is flawless, proving the whole pipeline). 2.4 GHz **OFDM** data flows fine — the deauth run caught
-a full WPA handshake on ch1 and `--rxstats` pulled 6521 good frames. Only **CCK 1 Mbps** frames (the
-legacy basic rate most 2.4 GHz beacons ride) are dropped at the BB.
+| AP (beacon rate) | vendor capt% | our capt% (live) |
+|---|---|---|
+| 38:d5:..eb (CCK-1M) | **89%** | ~18–55% |
+| 30:85:..d2:18 (CCK-1M) | **84%** | ~13–32% |
+| 38:d5:..e8 (CCK-1M) | **79%** | ~40–60% |
+| 1e:9e:..e4:7e (**OFDM**-6M) | **79%** | **3%** |
+| 1e:9e:..e4:7a (**OFDM**-6M) | **73%** | **1%** |
 
-**Not (primarily) the watchdog:** watchdog-OFF (`test_hw --phase beacon`) still gives d2:18 = 1.9/s;
-watchdog-ON (driver/UI) = 1.1/s. So the runtime `cck_pd` makes it marginally worse but the root cause is
-the **cold-init CCK RX config**. (Secondary fix: `cck_pd_th` faithfully *raises* the CCK PD threshold
-0xA0A under CCK false-alarms — vendor-correct but costs monitor sensitivity; consider clamping it to the
-sensitive level for the capture-everything goal once the cold-init gap is closed.)
+The OFDM-beacon rows are the tell: the deficit is **not CCK-specific**, so it is not a CCK-demod/filter
+bug. The vendor hits 9–10 bcn/s every second of the 15 s window; we average ~5.
 
-**FIRST test (one shot):** `test_hw --phase beacon --channel 1 --dwell 20 --cckpd 0x40` forces the CCK
-PD threshold `0xA0A` to the sensitive LV_0 (cold init seeds it to `0x83`/LV_1). If a CCK-1M-beacon AP
-(e.g. d2:18) jumps from ~2/s toward ~8/s, the PD threshold is the cause and the fix is to seed/clamp
-`0xA0A` sensitive for the monitor goal (override the vendor's adaptive `cck_pd` that trades CCK
-sensitivity for false-alarm rejection). If it does NOT move, the bug is deeper (CCK AGC/BB table).
+**Ruled out (HW-measured):** CRC/demod corruption (0 crc_err / 0 icv_err across *every* rate, every run —
+when a frame is detected it decodes perfectly); the **CCK-PD threshold** `0xA0A` (`--cckpd 0x40` sensitive
+LV_0 → no change on busy ch1 *or* quiet ch3); airtime contention (quiet ch3, ~0 OFDM/s, still ~55% on the
+strongest CCK AP). The runtime watchdog drives IGI the *right* way (→`0x1c` + CCK-PD→`0x40`); the old
+"watchdog makes CCK worse" claim did not reproduce.
 
-**Next step:** the golden capture *did* receive 2.4 GHz CCK beacons, so it is the reference. Diff our
-live 2.4 GHz CCK-path registers against the capture at RX time. Suspects: CCK-enable `0x808[28]`
-(switch_band), the CCK-PD threshold seed `0xA0A` (cck_pd_init), the new-CCK-AGC enable `0xA9C[17]`
-(drives whether CCK uses the LNA/VGA table vs the simple pwdb path — `[[project_rtw88_dig_watchdog]]`
-relative), the CCK AGC table, and the CCK BB regs in the cold-init tables (0x454 MAC CCK-check, 0xA80 BB
-CCK-check, the `cck_setting`/`init_cck_setting` block in cal.py). Likely a single CCK register ported
-wrong or a CCK table row missed — bisect by forcing each suspect to the capture's value and re-running
-`beacon_watch --bssid <CCK-AP> --channel 1`.
+**The lever is RX gain (IGI).** Forcing IGI `0x20→0x10` (more sensitive than the DIG floor `0x1c`) lifts
+d2:18 from 13% → 74% and the OFDM beacons rise with it (`cck_diag --igi 0x10`). But at the *same* IGI the
+vendor still out-receives us (it got 79–89% near the DIG floor; we get ~40–55% at `0x1c`), and our RSSI
+readings for one AP swing **±25 dB run-to-run** — a stable gain-table error would not swing. So two
+things are in play: the default IGI is too high *and* something makes the live front-end gain
+non-deterministic / lower than the vendor's at the same index.
+
+**Open leads (prioritised) — see the task list:**
+1. **`dc_cancellation` live poll integrity.** `phydm_stop_ic_trx` polls `0xFA0` for BB-idle; the replay
+   *feeds* an idle value so `verify_pcap` always "passes," but on live HW the poll may bail → the RX
+   DC-offset comp (`0xC10/0xC14/0xE10/0xE14`) is wrong and varies per boot. Best fit for the ±25 dB
+   instability. Instrument it on HW and compare the computed offsets to the capture's writes.
+2. **Front-end / iFEM RFE 2.4 GHz LNA gain** at a fixed IGI (5 GHz works → the 2.4 GHz-specific RFE path
+   in `switch_band` + `_rfe_ifem`, or the 2.4 GHz AGC LNA rows). Gate the initial channel-set (no
+   standing gate today) byte-for-byte against the FIXED-CH1 entry.
+3. **EFUSE / crystal-cap** misread feeding wrong gain/cal (`[[feedback_constants_from_source]]`; the
+   user's "EFUSE misread swung DIG wildly" memory).
+4. Whole-cold-path poll-loop audit (verify_pcap's structural blind spot — it replays reads).
+
+**Repro:** `uv run python scripts/rtl8822bu_dkms/cck_diag.py --channel 1 --dwell 20` (add `--igi 0x10`,
+`--cckpd 0x40`, `--watchdog`, or `--scan`); `uv run python scripts/rtl8822bu_dkms/cck_capref.py` for the
+vendor reference.
 
 ## Faithfulness scoreboard — what "pcap-faithful" actually covers
 
