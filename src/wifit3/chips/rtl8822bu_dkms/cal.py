@@ -99,6 +99,43 @@ def common_info_self_init(t, rfe_type: int, channel: int = 1) -> None:
     init_soft_ml_setting(t, channel, rfe_type)         # phydm_init_soft_ml_setting
 
 
+def dig_init(t) -> None:
+    """[SRC] phydm_dig_init (phydm_dig.c:1000) — DIG (RX IGI) seed.
+
+    Mostly software field-setup; the only wire reads are the current IGI (phydm_get_igi path-A,
+    0xC50[6:0]) into cur_ig_value, and the 8822b big-jump steps from 0x8C8[15:0] (the replay feeds
+    both)."""
+    sipi.get_bb_reg(t, 0x0C50, 0x7F)              # phydm_get_igi(path A) -> cur_ig_value
+    sipi.get_bb_reg(t, 0x08C8, 0xFFFF)            # big_jump_step1/2/3 (RTL8822B)
+
+
+def cck_pd_init(t) -> None:
+    """[SRC] phydm_cck_pd_init (phydm_cck_pd.c:1698) — 8822b is CCK-PD type1 (non-MP): the only wire
+    op is phydm_set_cckpd_lv_type1(CCK_PD_LV_1) writing pd_th 0x83 to CCK_CCA_TH (0xA0A)."""
+    t.write8(0x0A0A, 0x83)
+
+
+def env_monitor_init(t) -> None:
+    """[SRC] phydm_env_monitor_init (phydm_ccx.c:3447) — NHM + CLM environment-monitor seed.
+
+    phydm_ccx_hw_restart (11AC reg 0x994): disable NHM/CLM/FAHM then toggle BIT(8). phydm_nhm_init →
+    phydm_nhm_th_update_chk(NHM_BACKGROUND) derives 11 thresholds from the live IGI
+    (`th[i] = ((igi - CCA_CAP=14) << 1) + IGI_2_NHM_TH(2)*i`, IGI_2_NHM_TH(x)=x<<1) and
+    phydm_nhm_set_th_reg packs them into 0x998/0x99c/0x9a0[7:0]/0x994[31:16]. phydm_clm_init →
+    phydm_clm_setting(65535) writes the CLM period to 0x990[15:0]."""
+    sipi.set_bb_reg(t, 0x0994, 0x7, 0x0)              # ccx_hw_restart: disable NHM/CLM/FAHM
+    sipi.set_bb_reg(t, 0x0994, 1 << 8, 0x0)
+    sipi.set_bb_reg(t, 0x0994, 1 << 8, 0x1)
+    igi = sipi.get_bb_reg(t, 0x0C50, 0x7F)            # phydm_get_igi(path A)
+    th0 = (igi - 14) << 1
+    th = [(th0 + 4 * i) & 0xFF for i in range(11)]    # th_step 2 -> +IGI_2_NHM_TH(2*i) = +4*i
+    sipi.set_bb_reg(t, 0x0998, 0xFFFFFFFF, th[3] << 24 | th[2] << 16 | th[1] << 8 | th[0])
+    sipi.set_bb_reg(t, 0x099C, 0xFFFFFFFF, th[7] << 24 | th[6] << 16 | th[5] << 8 | th[4])
+    sipi.set_bb_reg(t, 0x09A0, 0xFF, th[8])
+    sipi.set_bb_reg(t, 0x0994, 0xFFFF0000, th[10] << 8 | th[9])
+    sipi.set_bb_reg(t, 0x0990, 0xFFFF, 65535)         # phydm_clm_setting period
+
+
 def _config_tx_path(t, tx_path: int, sel_1ss: int, sel_cck: int) -> None:
     """[SRC] phydm_config_tx_path_8822b + the CCK/OFDM TX-path helpers."""
     sipi.set_bb_reg(t, 0x093C, (1 << 19) | (1 << 18), 0x3)     # TX antenna by Nsts

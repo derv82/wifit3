@@ -65,4 +65,7 @@ def cold_bringup(t):
     cal.aac_check(t)                       # one-off AAC check (RF_A 0xC9) before the DM init
     cal.rfe_init(t)                        # phydm_rfe_8822b_init: RFE pin mux (DM init start)
     cal.common_info_self_init(t, e.rfe_type)   # cck_setting + rf_path_rx_enable + SoML RxHP seed
+    cal.dig_init(t)                        # phydm_dig_init: DIG/IGI seed (RX detection)
+    cal.cck_pd_init(t)                     # phydm_cck_pd_init: CCK packet-detection threshold
+    cal.env_monitor_init(t)                # phydm_env_monitor_init: NHM + CLM env-monitor seed
     return info, e
