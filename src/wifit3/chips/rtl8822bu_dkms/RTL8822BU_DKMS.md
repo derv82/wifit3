@@ -15,6 +15,10 @@
 >   seed `txbf.py`, **wifi-only coex** antenna/RFE `coex.py`, **`init_misc`** CAM/RCR/sec-en/TXQ/AMPDU).
 > - **`set_channel`** (switch_channel + bandwidth + band-switch + **PSD spur eliminator** +
 >   **per-channel TXAGC**) — `verify_channels` 35/35/34 hops on cap-1/2/3.
+> - **`enable_monitor`** (`mac.py`) — the airmon monitor RX-enable (`set_opmode_monitor`): MSR no-link,
+>   RCR=**0x90000001**, `config_rx_info(PHY_SNIFFER)`, `DRVINFO_SZ|=0x80`, RXFLTMAP0/1/2=0xFFFF. **Gate-
+>   verified 20/20** vs the capture's monitor switch (`verify_pcap` sliced-window check) — the very op
+>   the first RX frame lands after. Wired into `driver.connect()` + `test_hw`.
 > - **RX decode + jaguar2 phy-status RSSI** — verified vs 9292 real bulk-IN frames (median -66 dBm).
 > - Runnable **driver** (`driver.py`/`bringup.py`/`rx.py`); `test_hw.py --phase init` runs clean on HW.
 >
@@ -61,11 +65,12 @@
 | DM-init cal tail (cfo/rf_init/dc_cancel/txcurrent/pa_bias/psd_init) | ✅ gate 9556→9815 (cap-1) |
 | rtl8822b_init tail (phy_bf_init / wifi-only coex / init_misc) | ✅ gate 9815→9855 (cap-1) |
 | set_channel (+ spur eliminator + TXAGC) | ✅ 35/35/34 hops |
+| `enable_monitor` (set_opmode_monitor, the monitor RX-enable) | ✅ gate 20/20 vs the airmon switch (op 10075) |
 | RX decode + phy-status RSSI | ✅ verified vs 9292 real bulk-IN frames (median -66 dBm) |
-| OS interface-up / opmode (op 9855→9872) | ⬜ frontier — driver connect()/WlanInterface layer (design-level) |
+| initial managed opmode (op 9855→9872) | ⬜ the OS's default vif setup — the monitor driver skips it (uses enable_monitor) |
 | **per-channel cal scan** (kfree-noop → tx-pwr → FW-IQK) | ⬜ op ~9873 — verify_channels' domain (FW-IQK un-ported) |
+| Live RX (monitor beacons) | ⏳ re-test pending: faithful enable_monitor replaces the ad-hoc RCR |
 | TX inject descriptor (build-only) | ⬜ remaining — no injector in the passive capture to byte-diff |
-| Live RX (monitor beacons) | ⬜ 0 frames — RX-DMA/monitor-enable gap (cold init + decode proven OK) |
 
 ## Verified facts (ground truth)
 
@@ -136,20 +141,18 @@ IQK runs anywhere** — `0x1b00` (the IQK engine) is in 0 of 29542 ops; IQK is F
 `[SRC] hal_dm.c:75`. The per-channel kfree no-ops on this card (`phydm_config_kfree` early-returns:
 power-trim PG blank), so the per-channel cal that *does* run is tx-power (ported) + FW-IQK (H2C, un-ported).
 
-**RX status (HW, 2026-06-16):** cold init + the FULL `odm_dm_init` (incl. `dc_cancellation`'s RX
-DC-offset comp + TxA/PA-bias cal) run clean on the card, but `test_hw.py --phase beacon` still shows
-**0 frames / 0 beacons** — BB hears RF energy (FA 0xf48 / CCA 0xf08 climb) but `bulk_in` returns **0
-bytes** (not garbage — the HW isn't DMA-ing RX packets to the USB bulk-IN pipe at all).
-**The cold init + RX decode are now PROVEN faithful/correct, so the blocker is downstream:** capture-1
-holds **9292 real bulk-IN RX frames** the vendor driver received in monitor mode, and `rx.iter_frames`
-decodes them all to valid beacons/probes with sensible RSSI (median -66 dBm) — so the rx_pkt_desc walk
-+ phy-status parse are right. The post-DM-init cal is likewise NOT the blocker (full cal ported, still
-0). **Remaining suspect = the monitor-mode RX-enable / USB RX-DMA setup** the driver does ad-hoc
-(`test_hw` sets `RCR`=0x9000380F + `RXFLTMAP*`=0xFFFF) rather than porting the capture's airmon
-monitor-entry sequence — that sequence (and the USB RXDMA aggregation/threshold in `init_usb_cfg`) is
-the place to diff next. (Ruled out: the capture's monitor `REG_CR`=0x06ff vs the driver's 0x04ff is
-only `BIT_MAC_SEC_EN`, the HW security engine — irrelevant to unencrypted-beacon RX.) Per the Lead's
-"faithfulness over beacons", this is logged for the hands-on pass, not chased blind.
+**RX status (HW): pending re-test with the faithful `enable_monitor`.** The prior HW run showed 0
+frames / 0 beacons with the driver's **ad-hoc** monitor RCR (`RCR`=0x9000380F, RXFLTMAP=0xFFFF) — but
+`bulk_in` returned **0 bytes** (the HW wasn't DMA-ing RX to the bulk-IN at all). That ad-hoc path is now
+replaced by the **vendor-faithful `enable_monitor`** (`set_opmode_monitor`, gate-verified 20/20), which
+does what the ad-hoc path omitted: MSR no-link, `RCR`=**0x90000001** (not 0x9000380F),
+**`config_rx_info(PHY_SNIFFER)`** (DRVINFO size 5 + `0x7d4[9]` sniffer bit), and **`REG_RX_DRVINFO_SZ`
+|=0x80** (the DRVINFO-present flag). The missing DRVINFO/sniffer config is the prime RX-0 suspect: a
+wrong RX-desc/DRVINFO size readily stalls the RX-DMA. In the capture, the first RX bulk-IN frame lands
+the op *right after* this sequence. **Next: re-run `test_hw.py --phase beacon` on the card** (ask first
+per the don't-auto-test-beacons rule) to see if the faithful enter lights up RX. Proven solid: cold
+init (full `rtl8822b_init`) byte-for-byte, and `rx.iter_frames` decoding all 9292 real capture frames
+to valid beacons/probes (median -66 dBm) — so the rx_pkt_desc walk + phy-status parse are correct.
 
 ### Per-channel cal — in `set_channel`, gated by `verify_channels` (35/35/34 hops)
 
