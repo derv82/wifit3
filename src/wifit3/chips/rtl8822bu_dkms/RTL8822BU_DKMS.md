@@ -6,10 +6,18 @@
 > beacons** — a fully faithful port that yields 0 beacons is the win; a <100% port that "works" is
 > not. Don't chase RX symptoms; reproduce the wire.
 >
-> **Current state (honest): cold init faithful; runtime PARTIAL.** `verify_pcap` byte-verifies only the
-> cold init (op 0–9855, ~33% of the captured ops). The runtime wire (opmode block, hop tails/DPK, the
-> DIG/FA watchdog, spur re-eval, TX) is unported. See "Faithfulness scoreboard". Do NOT say "100%
-> faithful" — say what the gate actually covers.
+> **TOP OPEN BUG — 2.4 GHz CCK RX is broken (the whole reason this re-port exists).** 5 GHz/OFDM RX is
+> *perfect* (steady 9.6 bcn/s, zero-seconds=0); 2.4 GHz **OFDM** RX is fine (data/handshakes flow); but
+> 2.4 GHz **CCK** RX is starved — APs whose beacons ride **CCK 1 Mbps** capture at ~1–2/s while OFDM-beacon
+> APs at the *same* signal capture at ~8.5/s (see "2.4 GHz CCK RX — the open bug"). TX is byte-faithful +
+> handshake-confirmed; the rest works. **Start here.**
+>
+> **Current state (honest): cold init faithful; runtime mostly ported (watchdog/TX done).** `verify_pcap`
+> byte-verifies the cold init (op 0–9855, ~33% of captured ops). Runtime now ported: `set_channel`
+> (incl. switch_band-on-init RX fix), `enable_monitor`, the **PHYDM watchdog** (fa_cnt→DIG→cck_pd→
+> adaptivity, 2 s loop), **TX descriptor** (byte-matches the captured injector). Un-ported by evidence-
+> backed choice: LED (cosmetic async), managed-vif BCN/RXFLTMAP (overridden), watchdog tx_pwr/cfo/ra
+> (monitor dead-code). See "Faithfulness scoreboard". Do NOT say "100% faithful".
 >
 > **Done & gate-verified (cap-1 byte-for-byte unless noted):**
 > - **The ENTIRE vendor chip init `rtl8822b_init` — reproduced byte-for-byte to op 9855.** This is the
@@ -59,6 +67,39 @@
 > **cap-2/3 caveat:** the gate is **cap-1-authoritative from `config_trx_mode` (op ~9467) onward** —
 > cap-2/3 diverge there on a stale `central_ch_8822b` module-global (a benign cross-capture artifact,
 > not a port bug; see "Coverage gaps"). Everything earlier is byte-clean on all three.
+
+## 2.4 GHz CCK RX — the open bug (START HERE)
+
+**Symptom (HW, reproduced in the UI):** 5 GHz monitor RX is perfect; 2.4 GHz **CCK**-beacon capture is
+starved. Same physical AP, both radios:
+
+| | RSSI | beacons/20 s | notes |
+|---|---|---|---|
+| 5 GHz ch36 (d2:**1c**, OFDM) | — | **192 = 9.6/s**, steady, zero-secs=0 | perfect |
+| 2.4 GHz ch1 (d2:**18**, CCK 1M) | −71 | **38 = 1.9/s**, 10 zero-secs | starved |
+| 2.4 GHz ch1 (38:d5:..eb, OFDM) | −70 | **170 = 8.5/s** | fine — OFDM beacon |
+| 2.4 GHz ch1 (38:d5:..e8, OFDM) | −82 | **168 = 8.4/s** | fine — OFDM beacon |
+
+**Diagnosis — CCK demod is broken; OFDM everywhere is fine.** It is NOT signal strength (d2:18 at −71
+is *stronger* than the 38:d5 APs at −70/−82 that capture 4× better) and NOT the parse/reader/descriptor
+(5 GHz is flawless, proving the whole pipeline). 2.4 GHz **OFDM** data flows fine — the deauth run caught
+a full WPA handshake on ch1 and `--rxstats` pulled 6521 good frames. Only **CCK 1 Mbps** frames (the
+legacy basic rate most 2.4 GHz beacons ride) are dropped at the BB.
+
+**Not (primarily) the watchdog:** watchdog-OFF (`test_hw --phase beacon`) still gives d2:18 = 1.9/s;
+watchdog-ON (driver/UI) = 1.1/s. So the runtime `cck_pd` makes it marginally worse but the root cause is
+the **cold-init CCK RX config**. (Secondary fix: `cck_pd_th` faithfully *raises* the CCK PD threshold
+0xA0A under CCK false-alarms — vendor-correct but costs monitor sensitivity; consider clamping it to the
+sensitive level for the capture-everything goal once the cold-init gap is closed.)
+
+**Next step:** the golden capture *did* receive 2.4 GHz CCK beacons, so it is the reference. Diff our
+live 2.4 GHz CCK-path registers against the capture at RX time. Suspects: CCK-enable `0x808[28]`
+(switch_band), the CCK-PD threshold seed `0xA0A` (cck_pd_init), the new-CCK-AGC enable `0xA9C[17]`
+(drives whether CCK uses the LNA/VGA table vs the simple pwdb path — `[[project_rtw88_dig_watchdog]]`
+relative), the CCK AGC table, and the CCK BB regs in the cold-init tables (0x454 MAC CCK-check, 0xA80 BB
+CCK-check, the `cck_setting`/`init_cck_setting` block in cal.py). Likely a single CCK register ported
+wrong or a CCK table row missed — bisect by forcing each suspect to the capture's value and re-running
+`beacon_watch --bssid <CCK-AP> --channel 1`.
 
 ## Faithfulness scoreboard — what "pcap-faithful" actually covers
 
