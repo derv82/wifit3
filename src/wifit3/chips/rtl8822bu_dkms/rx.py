@@ -24,13 +24,29 @@ def _rnd8(x: int) -> int:
     return (x + 7) & ~7
 
 
+def _s8(v: int) -> int:
+    """C `s8` cast (the vendor stores rx_pow in an s8, so pwdb-110 wraps at the byte boundary)."""
+    v &= 0xFF
+    return v - 256 if v >= 128 else v
+
+
 def _decode_rssi(phy_status: bytes) -> int:
-    """Coarse RSSI (dBm) from the jaguar2 PHY-status report. pwdb_all lives at byte 0 of the
-    rx_phy_status; the full per-path LNA/VGA parse is deferred. Returns RSSI_UNKNOWN if absent."""
-    if len(phy_status) < 1:
+    """RSSI (dBm) from the 8822b jaguar2 PHY-status report `[SRC] phydm_get_phy_sts_type0/1`.
+
+    The report is a `phy_sts_rpt_jgr2_type{0,1,2}`; `page = byte0[3:0]` selects it (0 = CCK / type0,
+    1·2 = OFDM / type1·2). For CCK, 8822b runs new-CCK-AGC (`0xA9C[17]`), so the RSSI is the simple
+    `pwdb(byte1) - 110` — the `!cck_new_agc` lna/vga-table path (`phydm_get_cck_rssi`) does NOT run on
+    this card. For OFDM, each path's `pwdb[i]` is `byte[1+i]`; RSSI is the strongest active-path power
+    (paths A·B on this 2T2R card). `pwdb` is the HW power index, `- 110` (as an s8, like the vendor's
+    `s8 rx_pow`) maps it to dBm — so a saturating 0xfd reads as a wrapped -113, not +143."""
+    if len(phy_status) < 2:
         return RSSI_UNKNOWN
-    pwdb = phy_status[0] & 0x7F
-    return pwdb - 110
+    page = phy_status[0] & 0xF
+    if page == 0:                                              # type0 (CCK), new-CCK-AGC
+        return _s8(phy_status[1] - 110)
+    if page in (1, 2) and len(phy_status) >= 3:                # type1/2 (OFDM): max per-path pwdb
+        return max(_s8(phy_status[1] - 110), _s8(phy_status[2] - 110))  # active paths A, B (2T2R)
+    return RSSI_UNKNOWN
 
 
 def iter_frames(buf: bytes) -> Iterator[Tuple[bytes, int]]:
