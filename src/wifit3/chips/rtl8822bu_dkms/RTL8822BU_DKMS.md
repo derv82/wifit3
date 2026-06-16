@@ -61,9 +61,11 @@
 | DM-init RX seed (dig/cck_pd/env_monitor/adaptivity/ra_info) | ✅ gate 9509→9556 (cap-1) |
 | DM-init cal tail (cfo/rf_init/dc_cancellation/txcurrent_cal/pa_bias) | ✅ gate 9556→9805 (cap-1) |
 | set_channel (+ spur eliminator + TXAGC) | ✅ 35/35/34 hops |
+| RX decode + phy-status RSSI | ✅ verified vs 9292 real bulk-IN frames (median -66 dBm) |
 | TX-beamforming / BT-coex / monitor MAC (op 9805→9872) | ⬜ skipped — TX/coex subsystems (not in cold_bringup) |
 | **per-channel cal scan** (kfree-noop → tx-pwr → FW-IQK → coex) | ⬜ frontier op ~9873 — deferred per-channel cal |
-| TX inject · RX phy-status | ⬜ remaining |
+| TX inject descriptor (build-only) | ⬜ remaining — no injector in the passive capture to byte-diff |
+| Live RX (monitor beacons) | ⬜ 0 frames — RX-DMA/monitor-enable gap (cold init + decode proven OK) |
 
 ## Verified facts (ground truth)
 
@@ -136,13 +138,18 @@ power-trim PG blank), so the per-channel cal that *does* run is tx-power (ported
 
 **RX status (HW, 2026-06-16):** cold init + the FULL `odm_dm_init` (incl. `dc_cancellation`'s RX
 DC-offset comp + TxA/PA-bias cal) run clean on the card, but `test_hw.py --phase beacon` still shows
-**0 frames / 0 beacons** — BB hears RF energy (FA 0xf48 / CCA 0xf08 climb) but nothing lands in the RXFF
-(`bulk_in` returns 0 bytes). **So the post-DM-init cal is NOT the RX blocker** (correcting the prior
-doc's "IQK is the confirmed blocker" — both that the frontier was IQK and that IQK is the blocker were
-unverified). Real blocker unknown; live suspects: the per-channel **FW-IQK** (H2C, un-ported) or an
-**RX-path / monitor-MAC config gap** (the capture's op 9847+ monitor-setup MAC writes — `REG_CR`,
-RX-DMA — are not yet diffed against the driver's own monitor RCR). RX path is open: `REG_CR`=0x04ff,
-`RCR`=0x9000380F, `RXFLTMAP0/1/2`=0xFFFF, bulk-IN 0x84 (`rx.py` decodes the 24-byte rx_pkt_desc).
+**0 frames / 0 beacons** — BB hears RF energy (FA 0xf48 / CCA 0xf08 climb) but `bulk_in` returns **0
+bytes** (not garbage — the HW isn't DMA-ing RX packets to the USB bulk-IN pipe at all).
+**The cold init + RX decode are now PROVEN faithful/correct, so the blocker is downstream:** capture-1
+holds **9292 real bulk-IN RX frames** the vendor driver received in monitor mode, and `rx.iter_frames`
+decodes them all to valid beacons/probes with sensible RSSI (median -66 dBm) — so the rx_pkt_desc walk
++ phy-status parse are right. The post-DM-init cal is likewise NOT the blocker (full cal ported, still
+0). **Remaining suspect = the monitor-mode RX-enable / USB RX-DMA setup** the driver does ad-hoc
+(`test_hw` sets `RCR`=0x9000380F + `RXFLTMAP*`=0xFFFF) rather than porting the capture's airmon
+monitor-entry sequence — that sequence (and the USB RXDMA aggregation/threshold in `init_usb_cfg`) is
+the place to diff next. (Ruled out: the capture's monitor `REG_CR`=0x06ff vs the driver's 0x04ff is
+only `BIT_MAC_SEC_EN`, the HW security engine — irrelevant to unencrypted-beacon RX.) Per the Lead's
+"faithfulness over beacons", this is logged for the hands-on pass, not chased blind.
 
 ### Per-channel cal — in `set_channel`, gated by `verify_channels` (35/35/34 hops)
 
