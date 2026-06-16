@@ -87,6 +87,11 @@ DLFW_RESTORE_REG_NUM = 6               # [SRC] hal_halmac.c:23
 # rtl8822bu_halmac.c:127-196 usb_write_data_not_xmitframe, halmac_common_8822b.c fill_txdesc_check_sum
 TXDESC_QSEL_BEACON = 0x10               # [SRC] halmac_type.h:634
 TXDESC_QSEL_H2C_CMD = 0x13             # [SRC] halmac_type.h:637 (H2C uses no OFFSET)
+TXDESC_QSEL_MGNT = 0x12                 # [SRC] halmac_type.h QSLT_MGNT (monitor injection queue)
+RATEID_IDX_B = 8                        # [SRC] fill_fake_txdesc RATE_ID: 2.4 GHz CCK-capable (B)
+RATEID_IDX_G = 7                        # 5 GHz / OFDM-only (G)
+DESC_RATE1M = 0x00                      # [SRC] hal_com.h DESC_RATE1M — CCK 1M (2.4 GHz inject default)
+DESC_RATE6M = 0x04                      # OFDM 6M (5 GHz inject default)
 PACKET_OFFSET_SZ = 8
 
 # --- _send_general_info: the two FW-offload H2C packets ----------------------

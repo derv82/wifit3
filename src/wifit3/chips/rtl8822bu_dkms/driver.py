@@ -27,7 +27,7 @@ from wifit3.engine.protocols import DeviceID, ProgressCallback
 from wifit3.wlan.packet import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
-from . import bringup, chan, mac, txpower
+from . import bringup, chan, mac, tx, txpower
 from .rx import iter_frames
 from .transport import Rtl8822buTransport
 
@@ -142,9 +142,14 @@ class Rtl8822buDkmsDriver:
         return True
 
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
-        """TX is a later milestone (M8); the agent never fires live TX."""
-        logger.warning("RTL8822BU inject_frame: TX not yet ported (M8)")
-        return False
+        """Build the fill_fake_txdesc descriptor (`tx.build_inject_txdesc`) and bulk-OUT the frame.
+        Live TX is the user's explicit action — the agent never calls this; the descriptor build is
+        unit-tested in test_tx.py (no TX in the passive capture to pcap-diff)."""
+        payload = tx.build_inject_txdesc(bytes(frame_bytes))
+        loop = asyncio.get_running_loop()
+        async with self._io_lock:
+            await loop.run_in_executor(None, self.transport.bulk_out, payload)
+        return True
 
     async def close(self) -> None:
         if self._reader is not None:
