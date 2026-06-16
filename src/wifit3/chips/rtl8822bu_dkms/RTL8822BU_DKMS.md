@@ -40,6 +40,12 @@
 >   the last "is the ~6/s vs ~8/s gap pure airtime?" check); (2) **thermal tx-power tracking** un-ported
 >   (`phydm_rf_watchdog`; minor, sustained-flood-only — the one TX gap); (3) a **transient cold-state RX
 >   wedge** seen once (0 frames; replug/rerun clears — the known 8822bu pattern, not a code defect).
+>   (4) **Slow hop / late first-AP (QoL, unconfirmed):** a UI run found its first AP ~3.6 s in, on ch36;
+>   the early 2.4 GHz hops (incl. NETGEAR2G's ch1) found nothing. Hypothesis: `set_channel_bw` is
+>   USB-control-heavy (verify_channels: 127-776 ops/hop, roughly 130-780 ms) which exceeds the 0.25 s
+>   dwell, so tuning starves each hop's RX window (NOT an RX warmup -- fixed-channel `driver_rx_probe`
+>   saw frames in under 1 s). Fix ideas: a lighter scan-tune (the vendor sw-scan path is lighter, see
+>   `verify_abg_hop`) or a longer dwell. Measure per-hop tune time first.
 > - **DO NOT** re-assert "byte-faithful" anywhere without a fresh byte-diff vs the capture — two bugs
 >   (RX antenna mux, TX G_ID) hid behind exactly that unverified claim this campaign.
 >
