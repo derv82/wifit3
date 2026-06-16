@@ -40,12 +40,23 @@
 >   the last "is the ~6/s vs ~8/s gap pure airtime?" check); (2) **thermal tx-power tracking** un-ported
 >   (`phydm_rf_watchdog`; minor, sustained-flood-only — the one TX gap); (3) a **transient cold-state RX
 >   wedge** seen once (0 frames; replug/rerun clears — the known 8822bu pattern, not a code defect).
->   (4) **Slow hop / late first-AP (QoL, unconfirmed):** a UI run found its first AP ~3.6 s in, on ch36;
->   the early 2.4 GHz hops (incl. NETGEAR2G's ch1) found nothing. Hypothesis: `set_channel_bw` is
->   USB-control-heavy (verify_channels: 127-776 ops/hop, roughly 130-780 ms) which exceeds the 0.25 s
->   dwell, so tuning starves each hop's RX window (NOT an RX warmup -- fixed-channel `driver_rx_probe`
->   saw frames in under 1 s). Fix ideas: a lighter scan-tune (the vendor sw-scan path is lighter, see
->   `verify_abg_hop`) or a longer dwell. Measure per-hop tune time first.
+>   (4) **Intermittent cold-boot 2.4 GHz synth wedge — SOLVED 2026-06-16.** ~20% of cold boots left the
+>   2.4 GHz synth **unlocked** (RF18 **bit15** set after the initial tune) → every 2.4 GHz hop caught 0
+>   frames until a 5→2.4 band re-cycle; 5 GHz always fine. **Not a port miss** — the bring-up wire is
+>   byte-faithful (verify_pcap / verify_channels green) and the vendor reproduces the same ops; it's a
+>   HW synth-lock fault the kernel's tight transfer pacing avoids and userland USB intermittently hits.
+>   Proven on HW: the cold→2.4 tune writes RF18 bit16=0 but the chip forces it back (synth pinned at
+>   5 GHz); no RF18 write un-sticks it. **Recovery = the chip's own 5→2.4 re-cycle, but only after the
+>   synth has SETTLED** — an immediate bounce does nothing (HW-measured: heal fired 3× back-to-back,
+>   still deaf), a bounce after a short settle re-locks every time. **Fix:** `driver._heal_cold_synth`
+>   (runs after `enable_monitor`): if RF18 bit15 is set, `sleep(0.3)` + re-cycle 5→2.4, re-check, ≤4×.
+>   No-op on the ~80% of clean boots. **Validated: 80/80 cold-boot soak 2.4 GHz-OK (was ~20% deaf);
+>   `scripts/rtl8822bu_dkms/soak_2g.py` is the automated repro (each connect() is a cold cycle — no
+>   physical replug needed).** The earlier "slow hop / tune starves the RX window" theory was REFUTED
+>   by measurement (`hop_timing.py`: cold init 0.54 s, per-hop tune 7-58 ms, 2.4 GHz delivers 88-684
+>   beacons while hopping; `ui_startup_probe.py` first AP at t+0.65 s on ch1). DEBUG diagnostics kept:
+>   `[RXSTATE]` (decoded RX-path read-back), `[HOP] chN dwell: frames=`, `[CHAN] switch_band/channel
+>   RF18 read/write` — `synth_lock_probe.py` is the recovery-strategy bench.
 > - **DO NOT** re-assert "byte-faithful" anywhere without a fresh byte-diff vs the capture — two bugs
 >   (RX antenna mux, TX G_ID) hid behind exactly that unverified claim this campaign.
 >

@@ -20,7 +20,11 @@ are fed back, so the threshold branch reproduces the capture's notch byte-for-by
 """
 from __future__ import annotations
 
+import logging
+
 from . import sipi, txpower
+
+logger = logging.getLogger(__name__)
 
 BB_PATH_A, BB_PATH_B, BB_PATH_AB = 1, 2, 3
 RF_0x18, RF_0xbe, RF_0xdf, RF_0xb8 = 0x18, 0xBE, 0xDF, 0xB8
@@ -240,6 +244,8 @@ def _dsde_ch_idx(ch: int, bw20: bool) -> int:
 def switch_channel(t, ch: int, rf_2t2r: bool = True, bw20: bool = True) -> None:
     """[SRC] config_phydm_switch_channel_8822b — set RF channel + per-channel BB, both paths."""
     rf18 = sipi.read_rf_reg(t, sipi.RF_PATH_A, RF_0x18)
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug("[CHAN] switch_channel ch%d: RF18 read=0x%05x", ch, rf18)
     rf18 &= ~((1 << 18) | (1 << 17) | 0xFF)        # clear band/byte0, keep BW bits
 
     if ch <= 14:                                   # 2.4 GHz
@@ -321,6 +327,8 @@ def switch_band(t, ch: int, rf_2t2r: bool, rx_ant: int) -> None:
     same for both SoML states; 5 GHz differs (SoML-on uses 0x08108000/0x8d8[27]=0).
     """
     rf18 = sipi.read_rf_reg(t, sipi.RF_PATH_A, RF_0x18)
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug("[CHAN] switch_band  ch%d: RF18 read=0x%05x", ch, rf18)
     if ch <= 14:                                   # 2.4 GHz
         sipi.set_bb_reg(t, 0x0808, 1 << 28, 0x1)   # enable CCK block
         sipi.set_bb_reg(t, 0x0454, 1 << 7, 0x0)    # disable MAC CCK check
@@ -344,6 +352,8 @@ def switch_band(t, ch: int, rf_2t2r: bool, rx_ant: int) -> None:
         sipi.set_bb_reg(t, 0x08CC, 0xFFFFFFFF, 0x08108492)
         sipi.set_bb_reg(t, 0x08D8, 1 << 19, 0x0)
         sipi.set_bb_reg(t, 0x08D8, 1 << 27, 0x1)
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug("[CHAN] switch_band  ch%d: RF18 write=0x%05x soml_on=%s", ch, rf18, soml_on)
     sipi.set_rf_reg(t, sipi.RF_PATH_A, RF_0x18, sipi.RFREGOFFSETMASK, rf18)
     if rf_2t2r:
         sipi.set_rf_reg(t, sipi.RF_PATH_B, RF_0x18, sipi.RFREGOFFSETMASK, rf18)
