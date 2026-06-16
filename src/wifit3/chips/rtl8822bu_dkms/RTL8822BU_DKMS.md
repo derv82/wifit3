@@ -147,7 +147,8 @@ Status key: 🔴 confirmed gap (port it) · 🟡 pending source verdict · 🟢 
 | G1 | `0x98c` RX MRC antenna-weighting | `phydm_dynamic_ant_weighting_8822b` — every watchdog, uncond.; 2.4G `rssi_min≤37`→`0x98c=0x43440000` | never write `0x98c` | yes (few-dB 2-path combining) | 🔴 |
 | G2 | opmode block op 9855 | `hw_var_set_opmode`: MSR/net-type `0x4e`, BCN_CTRL `0x550`, RX-filter `0x6a2`, LED `0x4a/0x4e` | `enable_monitor` instead; MAC-addr ported | per-op TBD | 🟡 |
 | G3 | airodump `--band abg` native hop | mac80211 scan sweeps every ch | only explicit `iw` hops replayed | maybe | 🟡 |
-| G4 | per-channel DPK | post-TXAGC TX pre-distortion | un-ported | TX-side | 🟡 |
+| G4 | per-channel DPK | post-TXAGC TX pre-distortion (`0xfa4/0xfb4/0x280/0x283/0x840/0x8d8` recurring tail) | un-ported | TX pre-distortion — RX-irrelevant (confirmed the recurring per-hop DARK tail via strict audit) | 🟢 |
+| G19 | `0x0608` (RCR) ~1×/hop | appears once per hop window in the DARK census | our `set_channel` doesn't touch RCR | RX-config reg — verify it's watchdog/monitor-entry bleed vs a real per-hop RCR refresh | 🟡 |
 | G5 | env-monitor watchdog `0x994` | `phydm_env_mntr_{result,set}_watchdog` (NHM/CLM/FAHM) | not run in our 2s loop | **telemetry** — DIG `fa_source=0` (dig.c:1023) so DIG uses `cnt_all`, not FAHM | 🟢 |
 | G6 | `phydm_noisy_detection` | 11AC, every watchdog | not run | **telemetry** — `noisy_decision` absent from `phydm_dig.c` (no DIG coupling) | 🟢 |
 | G13 | DIG damping `phydm_dig_damping_chk` | `CFG_DIG_DAMPING_CHK` on (8822b); runs every `phydm_dig` (dig.c:1454) | our `phydm_dig` omits it | yes — damps IGI oscillation, shapes IGI | 🔴 |
@@ -162,6 +163,12 @@ Status key: 🔴 confirmed gap (port it) · 🟡 pending source verdict · 🟢 
 | G16 | `get_dbg_port_info` (adaptivity) | `phydm_adaptivity` ADAPT-mode dbg-port `0x209` | not run | NORMAL-mode default → dormant (verify edcca_mode) | 🟡 |
 | G17 | crystal-cap + EFUSE decode | xtal_cap (efuse `0x2F`)→`0x24/0x28`; PG map | ported (read-dependent) | verify decoded values vs `_logs/driver.log` | 🟡 |
 | G18 | cold-path poll-loops live integrity | FW-ready `0xC078`, mac_pwr `0x05`, `config_trx_mode` RF33, tx_current_cal | ported; gate feeds convergent reads | verify each converges on live HW (gate-blind) | 🟡 (HW) |
+
+**Strict per-phase audit result (`verify_strict_audit.py`, cap-1):** initial-tune + all 35 hops replay
+**byte-for-byte with ZERO wrong-writes** — no second antenna-mux-class bug in any hop tail (the
+matched-prologue blind spot is closed). The DARK tails decode entirely to DPK (G4) + the watchdog cycle
+(incl. G1 `0x98c`) + opmode/band bleed from the coarse iw.log windows + TXAGC-skipped-on-crossings — no
+novel RX register beyond the cataloged gaps (and the `0x608` curiosity, G19).
 
 Proven-legit (no action): `adaptive_soml` (`!is_linked` early-return), `receiver_blocking`/`primary_cca`/
 `hwigi`/`lna_sat_chk`/`beamforming_watchdog(V1)`/`mu_rsoml` (compiled-out for 8822b — `phydm_features_ce.h`).
