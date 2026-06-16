@@ -68,6 +68,77 @@ def _force_igi(t, igi: int) -> None:
         t.write32(reg, (v & ~0x7F) | (igi & 0x7F))
 
 
+def _rnd8(x):
+    return (x + 7) & ~7
+
+
+def _rx_descriptor_stats(buf, acc):
+    """Walk the aggregated bulk-IN buffer WITHOUT iter_frames' good-frame filter, tallying each
+    24-byte rx_pkt_desc by category. Settles WHY 0 frames parse from real bytes: are they genuinely
+    crc_err/icv_err (BB demods but the bits are corrupt -> cal), c2h reports, or is the walk
+    mis-aligned (garbage pkt_len -> decode bug, not CRC)?"""
+    off, n = 0, len(buf)
+    while off + 24 <= n:
+        w0 = int.from_bytes(buf[off:off + 4], "little")
+        pkt_len = w0 & 0x3FFF
+        crc_err = (w0 >> 14) & 1
+        icv_err = (w0 >> 15) & 1
+        drvinfo_sz = ((w0 >> 16) & 0xF) << 3
+        shift_sz = (w0 >> 24) & 0x3
+        physt = (w0 >> 26) & 1
+        c2h = (int.from_bytes(buf[off + 8:off + 12], "little") >> 28) & 1
+        if pkt_len <= 0:
+            acc["zero_len"] += 1
+            break
+        pkt_offset = 24 + drvinfo_sz + shift_sz + pkt_len
+        if pkt_offset > n - off:
+            acc["truncated"] += 1
+            break
+        acc["pkts"] += 1
+        cat = ("c2h" if c2h else "crc_err" if crc_err else "icv_err" if icv_err
+               else "runt" if pkt_len <= 4 else "good")
+        acc[cat] += 1
+        if len(acc["samples"]) < 8:
+            acc["samples"].append(
+                f"len={pkt_len:>4} crc={crc_err} icv={icv_err} c2h={c2h} drv={drvinfo_sz} "
+                f"sh={shift_sz} physt={physt}  desc={buf[off:off + 24].hex()}")
+        off += _rnd8(pkt_offset)
+
+
+def _rxstats(t, channel, dwell, rcr):
+    """Diagnostic: monitor-enable (+optional RCR override) + tune, then a dwell tallying rx_pkt_desc
+    categories instead of parsing frames. Reveals whether real RX bytes are crc_err vs a decode gap."""
+    mac.enable_monitor(t)
+    if rcr is not None:
+        t.write32(0x0608, int(rcr, 0))
+    chan.set_channel_bw(t, channel, prev_ch=None)
+    acc = {k: 0 for k in ("pkts", "good", "crc_err", "icv_err", "c2h", "runt",
+                          "zero_len", "truncated")}
+    acc["samples"] = []
+    bufs = nbytes = 0
+    start = time.monotonic()
+    while time.monotonic() - start < dwell:
+        buf = t.bulk_in()
+        if not buf:
+            continue
+        bufs += 1
+        nbytes += len(buf)
+        _rx_descriptor_stats(buf, acc)
+    print(f"\n[RXSTATS] ch {channel}, {dwell:g}s: {bufs} bufs / {nbytes} B, {acc['pkts']} packets")
+    print(f"  good={acc['good']}  crc_err={acc['crc_err']}  icv_err={acc['icv_err']}  "
+          f"c2h={acc['c2h']}  runt={acc['runt']}  zero_len={acc['zero_len']}  "
+          f"truncated={acc['truncated']}")
+    print("  first packets (decoded rx_pkt_desc):")
+    for s in acc["samples"]:
+        print(f"    {s}")
+    if acc["good"]:
+        print("  => GOOD frames present: the decode/CRC is fine; iter_frames should yield these.")
+    elif acc["crc_err"] or acc["icv_err"]:
+        print("  => all crc/icv-err: BB demods but bits are corrupt -> RF/BB cal faithfulness.")
+    else:
+        print("  => no good frames and no crc/icv: walk likely mis-aligned -> decode bug, not CRC.")
+
+
 def _dwell_count(t, dwell, rssi, total):
     """One dwell window: bulk-IN loop, tally beacons. Returns (beacons, bufs, bytes, frames, total)."""
     beacons: Counter = Counter()
@@ -133,6 +204,10 @@ def main() -> int:
                     help="override the monitor RCR after enable_monitor (hex, e.g. 0x90000301 to "
                          "ACCEPT CRC/ICV-error frames). Diagnostic: if bytes arrive only with errors "
                          "accepted, the BB demods but the CRC fails (RF/BB offset), not an RX-DMA gap.")
+    ap.add_argument("--rxstats", type=int, default=None, metavar="CH",
+                    help="diagnostic: tally rx_pkt_desc categories (good/crc_err/icv_err/c2h) on CH "
+                         "instead of parsing frames. Pair with --rcr 0x90000301 to DMA error frames. "
+                         "Tells crc_err-cal-issue apart from a descriptor-decode/alignment bug.")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(
@@ -159,6 +234,10 @@ def main() -> int:
         bringup.cold_bringup(t)
         print("[PASS] cold init complete (no bus errors).")
         if args.phase == "init":
+            return 0
+
+        if args.rxstats is not None:
+            _rxstats(t, args.rxstats, args.dwell, args.rcr)
             return 0
 
         channels = [args.channel] if args.channel else CHANNELS_2G
