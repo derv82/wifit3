@@ -14,7 +14,7 @@ package 7). See RTL8822BU_DKMS.md for the per-step citations.
 """
 from __future__ import annotations
 
-from . import bb, cal, chipid, efuse, firmware, mac, phy_cond, rf, usbphy
+from . import bb, cal, chipid, efuse, firmware, mac, phy_cond, rf, txbf, usbphy
 from . import constants as const
 
 
@@ -78,4 +78,6 @@ def cold_bringup(t):
     cal.tx_current_calibration(t, e.pa_bias[0], e.pa_bias[1])  # phydm_txcurrentcalibration (TxA bias)
     cal.get_pa_bias_offset(t, e.phy_map)   # phydm_get_pa_bias_offset: PG PA-bias (0x3D5/6) -> RF 0x3f
     cal.psd_init(t)                        # phydm_psd_init: PSD-tool HW params (0x910) — odm_dm_init tail
+    # --- rtl8822b_init tail (after rtw_phydm_init): post-phydm one-time HW seeding ---
+    txbf.phy_bf_init(t)                    # rtl8822b_phy_bf_init: MU-MIMO/sounding default seed
     return info, e
