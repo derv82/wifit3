@@ -9,28 +9,42 @@
 > **Done & gate-verified (cap-1 byte-for-byte unless noted):**
 > - Full deterministic **cold init** (chip-ID → EFUSE → 2× power/FW/MAC → BB phy-reg/AGC → crystal →
 >   RF-A/RF-B), ends op ~9410.
-> - Full **`odm_dm_init` RX seed** (dig / cck_pd / env_monitor[nhm·clm·fahm] / adaptivity / ra_info),
->   gate 9509→9556.
+> - Full **`odm_dm_init`** — both the RX seed (dig / cck_pd / env_monitor[nhm·clm·fahm] / adaptivity /
+>   ra_info) **and its calibration tail** (`cfo_tracking_init` → `rf_init`(tx-pwr-track) →
+>   **`dc_cancellation`** (RX DC-offset cal) → **`tx_current_calibration`** (TxA bias)). Gate 9509→**9765**.
 > - **`set_channel`** (switch_channel + bandwidth + band-switch + **PSD spur eliminator** +
 >   **per-channel TXAGC**) — `verify_channels` 35/35/34 hops on cap-1/2/3.
 > - Runnable **driver** (`driver.py`/`bringup.py`/`rx.py`); `test_hw.py --phase init` runs clean on HW.
 >
-> **Frontier = op ~9556: the IQK** (`halrf_iqk_8822b.c`). Continue the cold-gate port from here.
-> Remaining: IQK + LCK, the one-time per-channel DPK, TX descriptor (build-only), RX phy-status parse.
+> **Frontier = op 9765: the per-channel cal scan** — the first op is `phydm_do_kfree` (RF k-free,
+> RF `0xef`[10]+`0x33`/`0x3f` sweep), called from `phydm_config_kfree` *inside the channel-switch
+> path*. So op 9765+ is the first `set_channel` (kfree → tx-power → IQK-if-bNeedIQK → BT/LTE coex →
+> MAC). This is the **deferred per-channel cal** (Lead: port the per-channel unit once, run on-demand
+> from `set_channel`, gate against a per-channel slice). Next: port `phydm_do_kfree` into `set_channel`.
 >
-> **The loop (proven — ~12 functions done this way):**
+> **⚠️ The old "frontier 9556 = IQK" claim was WRONG** (an unverified guess from an earlier pass).
+> Op 9556 is the `odm_dm_init` tail (`cfo_tracking_init`'s `0x10[6]`), now ported. **The software IQK
+> engine (`0x1b00`) appears NOWHERE in the 29542-op capture**, so the software IQK never runs here.
+> IQK is either FW-offloaded (an H2C in some `set_channel`) or simply not triggered (`bNeedIQK` false
+> during the captured hops) — an OPEN question for the per-channel work, not a cold-init gap.
+>
+> **The loop (proven — ~16 functions done this way):**
 > 1. `uv run python scripts/verify_pcap.py rtl8822bu_dkms` → prints `FRONTIER -> op #N: <op>`.
 > 2. Resolve the register (`grep define REG_… halmac_reg2.h`; RF reads = direct BB read at
 >    `{0x2800,0x2c00}[path]+(addr<<2)`, RF writes = 0xC90/0xE90), then `grep -rn` the value/reg in the
 >    vendor source to find the fn. The replay feeds every read, so read-dependent loops reproduce.
-> 3. Port it (new fns in `cal.py` or a new module; reuse `sipi`). Chain into `bringup.cold_bringup`.
+> 3. Port it (new fns in `cal.py`/`chan.py`; reuse `sipi`). Chain into the shared path (`cold_bringup`
+>    for cold init; `set_channel` for per-channel cal).
 > 4. Re-run the gate (advances), `uv run ruff check`, commit (one fn/commit, no AI trailer).
-> 5. When the BB completes packets, `test_hw.py --phase beacon` checks RX (passive; the card is
->    plugged in + WinUSB-bound). RX is currently 0 frames — the IQK is the confirmed blocker (below).
+> 5. `test_hw.py --phase beacon` checks RX (passive; card plugged in + WinUSB-bound). **RX = 0 frames
+>    even with the full `dc_cancellation`/TxA cal ported** — so the post-DM-init cal is NOT the RX
+>    blocker the prior doc claimed. Real blocker unknown; likely the per-channel cal (kfree / FW-IQK)
+>    or an RX-path config gap. Faithfulness is still the goal — port the per-channel cal regardless.
 >
 > **Hard rules:** cleanroom — port only from `usb_dumps_new/captures_rtl88x2bu/driver-source/`; do NOT
-> open `chips/rtl8822bu/`, `chips/rtw88_base/`, or `scripts/rtl8822bu/`. Never fire live 802.11 TX. No
-> AI-authorship trailer. Always `uv run python`. Stage only your files. Gate every milestone.
+> open `chips/rtl8822bu/`, `chips/rtw88_base/`, or `scripts/rtl8822bu/` (`scripts/rtl8822bu_dkms/` is
+> yours). Never fire live 802.11 TX. No AI-authorship trailer. Always `uv run python`. Stage only your
+> files. Gate every milestone.
 >
 > **cap-2/3 caveat:** the gate is **cap-1-authoritative from `config_trx_mode` (op ~9467) onward** —
 > cap-2/3 diverge there on a stale `central_ch_8822b` module-global (a benign cross-capture artifact,
@@ -42,9 +56,10 @@
 |---|---|
 | Cold init (chip-ID/EFUSE/power/FW/MAC/BB/RF) | ✅ byte-for-byte cap-1/2/3, ends op ~9410 |
 | DM-init RX seed (dig/cck_pd/env_monitor/adaptivity/ra_info) | ✅ gate 9509→9556 (cap-1) |
+| DM-init cal tail (cfo_track/rf_init/dc_cancellation/txcurrent_cal) | ✅ gate 9556→9765 (cap-1) |
 | set_channel (+ spur eliminator + TXAGC) | ✅ 35/35/34 hops |
-| **IQK + LCK** | ⬜ frontier op ~9556 — confirmed RX blocker |
-| per-channel DPK · TX inject · RX phy-status | ⬜ remaining |
+| **per-channel cal scan** (kfree → tx-pwr → IQK? → coex) | ⬜ frontier op 9765 — deferred per-channel cal |
+| TX inject · RX phy-status | ⬜ remaining |
 
 ## Verified facts (ground truth)
 
@@ -83,30 +98,44 @@
   (1492 rows), AGC (10684 rows, 328 cut/rfe conds → 521 selected for rfe 3), crystal cap → 0x24/0x28,
   RF-A (402) + RF-B (353) masked RF writes via `phy_cond.walk`. tx-pwr-track table is software-only.
 
-## Post-PHY: DM-init RX seed + per-channel cal (frontier = IQK)
+## Post-PHY: full `odm_dm_init` (PORTED, ends op 9765) + the deferred per-channel cal scan
 
-The capture past op 9410 is RF calibration. The **all-channel scan** (op ~9700→29542) pre-cals every
-channel ×2 bands ×2 passes (IQK setup → per-channel DPK 2.4G/5G → TSSI → settle ch 1). **Lead
-decision: do NOT replay the scan — port the per-channel unit once and run it on-demand from
-`set_channel`**, gated against a per-channel slice.
+The capture past op 9410 is `odm_dm_init` then RF calibration. `odm_dm_init` ends at **op 9765**;
+op 9765+ is the **per-channel cal scan** (op 9765→29542) — the vendor pre-cals every channel ×2 bands
+(the captured monitor + 2.4/5 GHz hops drive it via `set_channel`). **Lead decision: do NOT replay the
+scan — port the per-channel unit once and run it on-demand from `set_channel`**, gated per-channel.
 
-**DM init (`odm_dm_init` `[SRC] phydm.c:1789`) — PORTED in full** (`cal.py`, gate 9509→9556):
-`halrf_init`(aac_check) → `rfe_init` → `common_info_self_init` (cck_setting + rf_path_rx + somlrxhp
-`0x19a8`) → `dig_init` (get_igi 0xC50, big_jump 0x8C8) → `cck_pd_init` (type1: 0xA0A=0x83) →
-`env_monitor_init` (ccx_hw_restart 0x994; nhm/clm/fahm — 11 thresholds `th[i]=((igi-14)<<1)+4i` into
-0x998/0x99c/0x9a0/0x994 + 0x990 + 0x1c38/0x1c78/0x1c7c/0x1cb8) → `adaptivity_init` (EDCCA
-0x944/0x8a4/0x520/0x524; forgetting-factor + decision-opt are no-ops, edcca_mode≠ADAPT) →
-`ra_info_init` (ARFR 0x494/0x498/0x4a4/0x4a8).
+**DM init (`odm_dm_init` `[SRC] phydm.c:1789`) — PORTED in full** (`cal.py`):
+- *RX seed* (gate 9509→9556): `halrf_init`(aac_check) → `rfe_init` → `common_info_self_init`
+  (cck_setting + rf_path_rx + somlrxhp `0x19a8`) → `dig_init` (get_igi 0xC50, big_jump 0x8C8;
+  `big_jump_step1` latched into `DmState`) → `cck_pd_init` (type1: 0xA0A=0x83) → `env_monitor_init`
+  (ccx_hw_restart 0x994; nhm/clm/fahm — 11 thresholds `th[i]=((igi-14)<<1)+4i`) → `adaptivity_init`
+  (EDCCA 0x944/0x8a4/0x520/0x524) → `ra_info_init` (ARFR 0x494/0x498/0x4a4/0x4a8).
+- *Cal tail* (gate 9556→9765): `rssi_monitor_init`(sw no-op) → **`cfo_tracking_init`** (crystal-cap-by-
+  WiFi `odm_set_mac_reg(0x10,0x40,1)`) → **`rf_init`** (tx-pwr-track init; `get_swing_index` reads
+  `0xc1c[31:21]`) → **`dc_cancellation`** (`phydm.c:3496`, the RX DC-offset cal: per path A/B — stop
+  TRX → IGI 0x7E → stop 3-wire → park debug-port 0x200/0x202 → stop ck320 → read `0xFA0` → restore;
+  then CCK-path DC comp `0xA9C[20]` + per-path I/Q offsets to `0xC10/0xC14`,`0xE10/0xE14`) →
+  **`tx_current_calibration`** (`phydm_rtl8822b.c:240`, TxA-bias: RF `0xef`=0x200 + 12× RF `0x18`
+  sweep reading RF `0x61`, keyed by efuse `0x3D7/0x3D8`=`0xF0` ⇒ no RF `0x30` correction). The
+  `#ifdef PHYDM_TXA_CALIBRATION` `get_pa_bias_offset` is wire-silent (PPG PA-bias byte blank).
+  `DmState` carries the few values whose *writes* derive from cached reads (dig IGI + big_jump_step1,
+  cck_new_agc, dbg-port priority, stop_ic_trx save/restore).
 
-**Frontier op ~9556 = the IQK** (`halrf_iqk_8822b.c`, read-dependent RF image-rejection cal): `R 0x10`
-macbb-backup → `0x0c1c`/`0x198c` RF-mode. LCK + the one-time per-channel DPK follow it.
+**Frontier op 9765 = the per-channel cal scan (first `set_channel`).** First op is `phydm_do_kfree`
+(`halrf_kfree.c`, RF k-free: RF `0xef`[10] + RF `0x33`/`0x3f` sweep), called from `phydm_config_kfree`
+inside the channel-switch path; then tx-power, IQK-if-`bNeedIQK`, BT/LTE coex, MAC. Port `phydm_do_kfree`
+into `set_channel` next. **No software IQK runs in the capture** — `0x1b00` (the IQK engine) appears in
+0 of 29542 ops; IQK is FW-offloaded or `bNeedIQK` is false during the captured hops (open question).
 
-**RX status (HW, 2026-06-15):** the cold init + full DM init run clean on the card, but
-`test_hw.py --phase beacon` shows **0 frames / 0 beacons** — the BB hears RF energy (FA 0xf48 / CCA
-0xf08 climb) but no frame lands in the RXFF (`bulk_in` returns 0 bytes). The DM init was necessary but
-**not sufficient**; the **IQK is the confirmed RX blocker**. The RX path is fully open: `REG_CR`=0x04ff,
-`RCR`=0x9000380F, `RXFLTMAP0/1/2`=0xFFFF, bulk-IN 0x84 (`rx.py` decodes the 24-byte rx_pkt_desc,
-FCS-stripped).
+**RX status (HW, 2026-06-15):** cold init + the FULL `odm_dm_init` (incl. `dc_cancellation`'s RX
+DC-offset comp + TxA cal) run clean on the card, but `test_hw.py --phase beacon` still shows **0 frames
+/ 0 beacons** — BB hears RF energy (FA 0xf48 / CCA 0xf08 climb) but nothing lands in the RXFF (`bulk_in`
+returns 0 bytes). **So the post-DM-init cal is NOT the RX blocker** (correcting the prior doc's "IQK is
+the confirmed blocker" — both that the frontier was IQK and that IQK is the blocker were unverified).
+Real blocker is unknown; the live suspects are the per-channel cal (`phydm_do_kfree` / FW-IQK in
+`set_channel`) or an RX-path config gap. RX path is open: `REG_CR`=0x04ff, `RCR`=0x9000380F,
+`RXFLTMAP0/1/2`=0xFFFF, bulk-IN 0x84 (`rx.py` decodes the 24-byte rx_pkt_desc, FCS-stripped).
 
 ### Per-channel cal — in `set_channel`, gated by `verify_channels` (35/35/34 hops)
 

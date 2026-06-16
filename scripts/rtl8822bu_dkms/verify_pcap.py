@@ -27,10 +27,12 @@ from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport  # noqa: E4
 
 DEFAULT_CAP = REPO / "usb_dumps_new" / "captures_rtl88x2bu" / "capture-1.pcap"
 
-# The deterministic table-driven cold init ends here; everything after is the RF cal scan (the
-# vendor pre-cals every channel in both bands). We reproduce the init in full and stop at this
-# boundary — the cal is done per-channel on-demand by set_channel, not by replaying the scan.
-CAL_SCAN_START = 9400
+# The deterministic cold init ends here (op 9765): chip-ID/EFUSE/power/FW/MAC/BB/RF, the full
+# odm_dm_init (DIG/CCK-PD/env-monitor/adaptivity/ra-info seed + cfo-tracking/rf-init/dc-cancellation/
+# tx-current-cal tail). Op 9765 is the first per-channel set_channel op (phydm_do_kfree). Everything
+# after is the RF cal scan — the vendor pre-cals every channel in both bands — handled per-channel
+# on-demand by set_channel (gated by verify_channels), not by replaying the scan here.
+CAL_SCAN_START = 9765
 
 
 def _fmt(op: dict) -> str:
