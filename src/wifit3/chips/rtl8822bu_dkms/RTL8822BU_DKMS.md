@@ -142,27 +142,35 @@ source-proven verdict, never an assumption). **Per-gap A/B protocol** (run once 
 
 Status key: 🔴 confirmed gap (port it) · 🟡 pending source verdict · 🟢 proven legit (cite) · ⚪ A/B done.
 
+**AUDIT OUTCOME (2026-06-16): all gaps G1–G19 resolved 🟢 — the antenna mux (`0xCBC[9:8]`, fixed +
+committed) was the SOLE real RX bug.** Every other potential divergence is proven no-op / inert-unlinked
+/ telemetry / TX-side / superseded-by-enable_monitor / HW-verified-converges for monitor RX, so **no
+further port changes were needed** (the A/B sweep produced documentation, not code). G1/G11/G13 (the
+watchdog "real gaps") turned out to be no-ops in monitor: their register values already match the
+vendor's monitor values, `rssi_min` stays low unlinked, and DIG-damping is `!is_linked`-gated. The port
+is faithful for monitor RX; remaining beacon-rate headroom vs baseline is airtime, not a port gap.
+
 | # | Gap | Vendor [SRC] | Our state | RX? | Status |
 |---|---|---|---|---|---|
-| G1 | `0x98c` RX MRC antenna-weighting | `phydm_dynamic_ant_weighting_8822b` — every watchdog, uncond.; 2.4G `rssi_min≤37`→`0x98c=0x43440000` | never write `0x98c` | yes (few-dB 2-path combining) | 🔴 |
-| G2 | opmode block op 9855 | `hw_var_set_opmode`: MSR/net-type `0x4e`, BCN_CTRL `0x550`, RX-filter `0x6a2`, LED `0x4a/0x4e` | `enable_monitor` instead; MAC-addr ported | per-op TBD | 🟡 |
-| G3 | airodump `--band abg` native hop | mac80211 scan sweeps every ch | only explicit `iw` hops replayed | maybe | 🟡 |
+| G1 | `0x98c` RX MRC antenna-weighting | `phydm_dynamic_ant_weighting_8822b` — every watchdog; 2.4G `rssi_min≤37`→`0x98c=0x43440000` | cold-init table already sets `0x98c=0x43440000` | **no-op**: capture writes `0x43440000` 35×/monitor (rssi_min stays ≤37 unlinked) = our default; value never changes | 🟢 |
+| G2 | opmode block op 9855 | `hw_var_set_opmode`: MSR/net-type, BCN_CTRL `0x550`, RX-filter `0x6a2`, LED | `enable_monitor` instead; MAC-addr ported | OS interface-up — RX parts superseded by `enable_monitor` (RCR/RXFLTMAP/MSR-no-link); MAC-addr ported; strict-audit found no wrong-writes | 🟢 |
+| G3 | airodump `--band abg` native hop | mac80211 sw-scan issues per-ch `set_channel` | our hop uses the same `set_channel` (verify_channels 35/35) | not a driver op — the scan *pattern* is airodump's; each `set_channel` is byte-faithful | 🟢 |
 | G4 | per-channel DPK | post-TXAGC TX pre-distortion (`0xfa4/0xfb4/0x280/0x283/0x840/0x8d8` recurring tail) | un-ported | TX pre-distortion — RX-irrelevant (confirmed the recurring per-hop DARK tail via strict audit) | 🟢 |
-| G19 | `0x0608` (RCR) ~1×/hop | appears once per hop window in the DARK census | our `set_channel` doesn't touch RCR | RX-config reg — verify it's watchdog/monitor-entry bleed vs a real per-hop RCR refresh | 🟡 |
+| G19 | `0x0608` (RCR) in DARK census | only 2 writes post-monitor (f20411/20421), both `0x90000001` = the enable_monitor RCR | `enable_monitor` sets RCR=0x90000001 | enable-monitor bleed, not per-hop; we reproduce it | 🟢 |
 | G5 | env-monitor watchdog `0x994` | `phydm_env_mntr_{result,set}_watchdog` (NHM/CLM/FAHM) | not run in our 2s loop | **telemetry** — DIG `fa_source=0` (dig.c:1023) so DIG uses `cnt_all`, not FAHM | 🟢 |
 | G6 | `phydm_noisy_detection` | 11AC, every watchdog | not run | **telemetry** — `noisy_decision` absent from `phydm_dig.c` (no DIG coupling) | 🟢 |
-| G13 | DIG damping `phydm_dig_damping_chk` | `CFG_DIG_DAMPING_CHK` on (8822b); runs every `phydm_dig` (dig.c:1454) | our `phydm_dig` omits it | yes — damps IGI oscillation, shapes IGI | 🔴 |
+| G13 | DIG damping `phydm_dig_damping_chk` | `CFG_DIG_DAMPING_CHK` on (8822b) | our `phydm_dig` omits it | **inert unlinked**: both `phydm_dig_damping_chk` (dig.c:111) + `phydm_dig_recorder` (dig.c:55) return on `!is_linked` | 🟢 |
 | G7 | `odm_dtc` (CE) | body wrapped in `CONFIG_DM_RESP_TXAGC`; RSSI-based **TX-power** decade | not run | TX-side + needs link → inert in monitor | 🟢 |
 | G8 | `halrf_watchdog` | `phydm_rf_watchdog` (thermal TX-pwr track) + `halrf_dpk_track` (DPK) | not run | TX/thermal/DPK cal — RX-irrelevant in monitor | 🟢 |
 | G9 | `phydm_update_power_training_state` | returns on `!is_linked` (pow_train.c:54) | not run | inert unlinked | 🟢 |
-| G10 | `phydm_dyn_bw_indication` | `CONFIG_BW_INDICATION` on (8822b); 20/40 BW-ind | not run | likely inert (20 MHz only) — verify | 🟡 |
-| G11 | `phydm_dynamic_switch_htstf_mumimo_8822b` | uncond.; rssi_min<35 → `0x8d8[17]=0` | never write `0x8d8[17]` | HT-STF gain — affects HT *data* RX, not legacy beacons | 🔴 |
-| G12 | `dc_cancellation` live-poll integrity | `phydm_stop_ic_trx` polls `0xFA0` for BB-idle | ported; gate feeds idle value | live poll may bail → wrong RX DC | 🟡 (HW) |
+| G10 | `phydm_dyn_bw_indication` | `phydm_bw_fixed_setting` (`0x840` BW20); auto-bw branch needs `is_linked` | we already write `0x840` BW20 in `_switch_bandwidth_20` | no-op: watchdog re-applies the same 20 MHz value; auto-bw inert unlinked | 🟢 |
+| G11 | `phydm_dynamic_switch_htstf_mumimo_8822b` | uncond.; rssi_min<35 → `0x8d8[17]=0` | runtime `0x8d8[17]=0` already (cold-init + switch_band) | **no-op**: capture's monitor `0x8d8` has bit 17=0; htstf writes 0 = our value | 🟢 |
+| G12 | `dc_cancellation` live-poll integrity | `phydm_stop_ic_trx` polls `0xFA0` for BB-idle | ported | **HW-verified** (`poll_probe.py`): idle reached both paths (1 read each); DC comp applied `0xC10=0x100`/`0xC14=0x3d00dc00`/… from live `0xFA0` — runs fully | 🟢 |
 | G14 | opmode LED `0x4a`/`0x4e` | `pinmux_wl_led` (async `LedControlUSB`) | not ported | cosmetic pinmux — no RX | 🟢 |
-| G15 | opmode BCN_CTRL `0x550` / RX-filter `0x6a2` | managed-vif `InitBeaconParameters` + mgmt filter | `enable_monitor` sets RCR + RXFLTMAP=0xFFFF | confirm enable_monitor's RX-filter fully supersedes `0x6a2` | 🟡 |
-| G16 | `get_dbg_port_info` (adaptivity) | `phydm_adaptivity` ADAPT-mode dbg-port `0x209` | not run | NORMAL-mode default → dormant (verify edcca_mode) | 🟡 |
-| G17 | crystal-cap + EFUSE decode | xtal_cap (efuse `0x2F`)→`0x24/0x28`; PG map | ported (read-dependent) | verify decoded values vs `_logs/driver.log` | 🟡 |
-| G18 | cold-path poll-loops live integrity | FW-ready `0xC078`, mac_pwr `0x05`, `config_trx_mode` RF33, tx_current_cal | ported; gate feeds convergent reads | verify each converges on live HW (gate-blind) | 🟡 (HW) |
+| G15 | opmode BCN_CTRL `0x550` / RX-filter `0x6a2` | managed-vif beacon-params + mgmt filter | `enable_monitor` sets RCR=0x90000001 + RXFLTMAP0/1/2=0xFFFF (gate-verified 20 ops) | RXFLTMAP=0xFFFF supersedes the managed `0x6a2`; BCN_CTRL monitor-inert | 🟢 |
+| G16 | `get_dbg_port_info` (adaptivity) | `phydm_adaptivity` ADAPT-mode dbg-port `0x209` | not run | adaptivity_init seeds NORMAL (not ADAPT) mode → ADAPT dbg-port dormant; our adaptivity ports the NORMAL branch | 🟢 |
+| G17 | crystal-cap + EFUSE decode | xtal_cap (efuse `0x2F`)→`0x24/0x28`; PG map | ported (read-dependent) | validated transitively — all EFUSE-derived cold-init writes are byte-for-byte in verify_pcap (a misread would diverge) | 🟢 |
+| G18 | cold-path poll-loops live integrity | FW-ready `0xC078`, mac_pwr `0x05`, `config_trx_mode` RF33, tx_current_cal | ported | **HW-verified**: `cold_bringup` runs to completion live (`poll_probe.py`/`test_hw --phase init`) → every poll converges (would hang otherwise) | 🟢 |
 
 **Strict per-phase audit result (`verify_strict_audit.py`, cap-1):** initial-tune + all 35 hops replay
 **byte-for-byte with ZERO wrong-writes** — no second antenna-mux-class bug in any hop tail (the
