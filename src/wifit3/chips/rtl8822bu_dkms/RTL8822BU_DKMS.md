@@ -75,7 +75,8 @@ where aireplay TX begins) is partial or unported:
 | initial channel-set / `switch_band` | ✅ 165 ops, offline replay — **no standing gate** |
 | opmode block (op 9855) — MAC-addr | ✅ ported (`set_mac_addr`, EFUSE, replay-verified) |
 | opmode block — LED / BCN_CTRL / RXFLTMAP1 | ⚠️ OS managed-vif layer (see note) — scope decision pending |
-| **`phydm_watchdog`** (FA-stats → DIG/IGI + CCK-PD + TX-pwr-track + spur) | ⛔ unported — the hop tail AND the ~2 s timer are this one loop; dominant RX-quality lever |
+| **`phydm_watchdog`** (FA-stats → DIG/IGI + CCK-PD + TX-pwr-track + spur) | 🚧 in progress — `fa_cnt_statistics_ac` done (replay-verified); DIG + rest pending. Dominant RX-quality lever |
+| TX descriptor (`build_inject_txdesc`, inject_frame) | ✅ ported — `fill_fake_txdesc` + XOR-16 checksum, 7 unit tests (no pcap gate: no TX in capture) |
 | TX descriptor | ⛔ unported |
 
 RX works, but the continuous runtime adaptation the capture runs (DIG/FA/spur) is not reproduced: the
