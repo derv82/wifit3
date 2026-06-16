@@ -253,18 +253,19 @@ The byte-for-byte gate continues past the BB/RF tables, porting the one-time pos
 `phydm_common_info_self_init` tail (rf_path_rx_enable read 0x808 + `phydm_somlrxhp_setting` SoML
 RxHP seed 0x19a8=0xd90a0000; 9507→9509).
 
-**The block being ported is the phydm DM init** (`odm_dm_init` `[SRC] phydm.c:1789`) — the
-RX-detection seed. Its ordered sub-inits (skip the software-only ones — no wire) are the roadmap;
-port each gate-driven, identifying its source as you hit the frontier:
-`halrf_init` (incl. `aac_check`) → `phydm_rfe_init` ✓ → `phydm_common_info_self_init` ✓
-(`phydm_init_cck_setting` + rf_path_rx_enable read + `phydm_somlrxhp_setting` `0x19a8=0xd90a0000`;
-`phydm_trx_antenna_setting_init` is a no-op on 8822b) →
-**`phydm_dig_init`** (next: FA/IGI thresholds `0x994/0x998/0x99c/0x9a0/0x990`, `phydm_dig.c`) →
-`phydm_cck_pd_init` (CCK-PD `0x1c38/0x1c78/0x1cb8`) → `phydm_env_monitor_init` (NHM) →
-`phydm_adaptivity_init` (EDCCA) → `phydm_rf_init` → calibration triggers.
-**Frontier op ~9509** = `R 0x0c50` (the IGI read that opens `phydm_dig_init`). The **IQK**
-(`halrf_iqk_8822b.c`, the large read-dependent block) is triggered later in this chain. DIG +
-CCK-PD are the pieces the RX-demod diagnosis (below) points at.
+**The phydm DM init (`odm_dm_init` `[SRC] phydm.c:1789`) — the RX-detection seed — is now PORTED in
+full** (cal.py, chained in bringup.cold_bringup). Each sub-init was done gate-driven:
+`halrf_init` (incl. `aac_check`) ✓ → `phydm_rfe_init` ✓ → `phydm_common_info_self_init` ✓
+(`init_cck_setting` + rf_path_rx_enable + `somlrxhp` `0x19a8`) → `phydm_dig_init` ✓ (get_igi 0xC50 +
+big_jump 0x8C8) → `phydm_cck_pd_init` ✓ (type1: 0xA0A=0x83) → `phydm_env_monitor_init` ✓
+(`ccx_hw_restart` 0x994 + `nhm_init` 0x998/0x99c/0x9a0/0x994 + `clm_init` 0x990 + `fahm_init`
+0x1c38/0x1c78/0x1c7c/0x1cb8 — all 11 thresholds from `th[i]=((igi-14)<<1)+4i`) →
+`phydm_adaptivity_init` ✓ (EDCCA 0x944/0x8a4/0x520/0x524) → `phydm_ra_info_init` ✓ (ARFR 0x494/...).
+**Frontier op ~9556** = the **IQK** (`halrf_iqk_8822b.c`, ~2165 lines, read-dependent RF
+image-rejection cal) — `R 0x10` macbb-backup, then `0x0c1c`/`0x198c` RF-mode. Per the **hardware
+beacon test (2026-06-15)**, the cold init + full DM init now run **clean on the card** but RX still
+delivers **0 frames / 0 beacons** — so the IQK (not the DM init) is the confirmed RX blocker. LCK +
+the one-time DPK follow it. This is the next milestone.
 
 **Gate scope past op ~9467 = capture-1 only (a stale-module-global artifact, not a port bug).**
 `config_phydm_trx_mode`'s closing `phydm_rfe_8822b(central_ch_8822b)` `[SRC]
@@ -379,12 +380,15 @@ PKT_LEN[13:0]/CRC32[14]/ICV[15]/DRVINFO[19:16]×8/SHIFT[25:24]/PHYST[26], C2H at
 SIPI. The monitor RX path is fully open — `REG_CR`=0x04ff (RXDMA+MACRXEN), `RCR`=0x9000380F,
 `RXFLTMAP0/1/2`=0xFFFF, bulk-IN ep 0x84.
 
-**The blocker:** on a live channel the **BB hears RF energy** — the FA counter `0xf48` and CCA
-`0xf08` climb fast — but **no frame ever lands in the RXFF** (`bulk_in` returns 0 bytes; tried
-IGI 0x20→0x48 and RCR accept-all incl. CRC/ICV-error: still nothing). So the RX *demodulator* is
-not completing packets — this is the post-init RX seed the vendor runs after op 9410, i.e. the
-**phydm DM init (CCK-PD + DIG + the RX demod/CCA path)**, likely with LCK/IQK. That is the next
-milestone; everything up to and including the channel tune is in place and hardware-confirmed.
+**The blocker (updated 2026-06-15 — DM init ruled out, IQK confirmed):** the **BB hears RF energy**
+(FA `0xf48` / CCA `0xf08` climb) but **no frame lands in the RXFF** (`bulk_in` returns 0 bytes).
+The full **phydm DM init is now ported** (DIG + CCK-PD + NHM/CLM/FAHM + EDCCA + RA — gate 9509→9556)
+and runs **clean on the card**, but a fresh `test_hw.py --phase beacon` still shows **0 frames / 0
+beacons** across the 2.4 GHz sweep. So the DM init was **necessary but not sufficient** — the RX
+demodulator still doesn't complete packets without the **IQK** (`halrf_iqk_8822b.c`, the one-time RF
+image-rejection cal at op ~9556+), and likely LCK. The IQK is therefore the confirmed RX blocker and
+the next milestone; everything up to and including the channel tune + DM init is in place and
+hardware-confirmed.
 
 ### Coverage gap — USB2-link branches untested (all captures are USB3)
 
