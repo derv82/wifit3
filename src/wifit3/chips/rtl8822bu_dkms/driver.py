@@ -31,7 +31,7 @@ from wifit3.engine.protocols import DeviceID, ProgressCallback
 from wifit3.wlan.packet import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
-from . import bringup, chan
+from . import bringup, chan, txpower
 from .constants import REG_RCR
 from .rx import iter_frames
 from .transport import Rtl8822buTransport
@@ -59,6 +59,7 @@ class Rtl8822buDkmsDriver:
         self.transport = transport
         self.mac_address: Optional[str] = None
         self._chip = None                       # (info, efuse) from cold_bringup
+        self._txpwr_pg = None                   # decoded PG TX-power block (per-channel TXAGC)
         self._channel: Optional[int] = None
         self._rx_cb: Optional[Callable[[dict], None]] = None
         self._reader: Optional[RxReaderThread] = None
@@ -94,12 +95,17 @@ class Rtl8822buDkmsDriver:
             progress_cb(0.1, "Cold bring-up: chip-ID / EFUSE / FW / MAC / BB / RF")
         info, e = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
         self._chip = (info, e)
+        self._txpwr_pg = txpower.parse_pg(e.log_map)
         logger.info("RTL8822BU cold init done: cut=%d rfe_type=%d crystal_cap=0x%02x",
                     info.chip_ver, e.rfe_type, e.crystal_cap)
 
         if progress_cb:
             progress_cb(0.8, f"Tuning to channel {_DEFAULT_CHANNEL} @ 20 MHz")
-        await loop.run_in_executor(None, chan.set_channel_bw, self.transport, _DEFAULT_CHANNEL)
+
+        def _initial_tune(t):
+            chan.set_channel_bw(t, _DEFAULT_CHANNEL, txpwr_pg=self._txpwr_pg)
+
+        await loop.run_in_executor(None, _initial_tune, self.transport)
         self._channel = _DEFAULT_CHANNEL
 
         # Start the bulk-IN reader before opening the RX gate (an undrained pipe wedges RX FIFO).
@@ -129,7 +135,7 @@ class Rtl8822buDkmsDriver:
         prev = self._channel
 
         def _tune(t):
-            chan.set_channel_bw(t, channel, prev_ch=prev)
+            chan.set_channel_bw(t, channel, prev_ch=prev, txpwr_pg=self._txpwr_pg)
 
         async with self._io_lock:
             await loop.run_in_executor(None, _tune, self.transport)

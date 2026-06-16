@@ -18,7 +18,7 @@ are fed back, so the threshold branch reproduces the capture's notch byte-for-by
 """
 from __future__ import annotations
 
-from . import sipi
+from . import sipi, txpower
 
 BB_PATH_A, BB_PATH_B, BB_PATH_AB = 1, 2, 3
 RF_0x18, RF_0xbe, RF_0xdf, RF_0xb8 = 0x18, 0xBE, 0xDF, 0xB8
@@ -391,12 +391,15 @@ def _switch_bandwidth_20(t, ch: int, rf_2t2r: bool, rx_ant: int) -> None:
     _igi_toggle(t)
 
 
-def set_channel_bw(t, ch: int, rf_2t2r: bool = True, prev_ch: int | None = None) -> None:
-    """Runtime hop (20 MHz): optional band switch + channel + bandwidth re-apply.
+def set_channel_bw(t, ch: int, rf_2t2r: bool = True, prev_ch: int | None = None,
+                   txpwr_pg: "txpower.TxpwrPG | None" = None) -> None:
+    """Runtime hop (20 MHz): optional band switch + channel + bandwidth re-apply + TX power.
 
-    [SRC] switch_chnl_and_set_bw_by_drv steps 1-3. A 2.4<->5 crossing (prev_ch on the other side
-    of ch 14) runs config_phydm_switch_band_8822b first; same-band hops skip it. The per-channel
-    DPK/TSSI cal the vendor runs next is deferred (TX-quality; see RTL8822BU_DKMS.md).
+    [SRC] switch_chnl_and_set_bw_by_drv steps 1-3, then rtl8822b_set_tx_power_level. A 2.4<->5
+    crossing (prev_ch on the other side of ch 14) runs config_phydm_switch_band_8822b first;
+    same-band hops skip it. `txpwr_pg` (the decoded EFUSE PG block) drives the per-channel TXAGC
+    write; pass None to stop before it (e.g. before the PG is available). The per-channel DPK the
+    vendor runs after TXAGC is deferred (TX pre-distortion; see RTL8822BU_DKMS.md).
     """
     rx_ant = BB_PATH_AB if rf_2t2r else BB_PATH_A
     if prev_ch is not None and (prev_ch <= 14) != (ch <= 14):
@@ -404,6 +407,8 @@ def set_channel_bw(t, ch: int, rf_2t2r: bool = True, prev_ch: int | None = None)
     switch_channel(t, ch, rf_2t2r=rf_2t2r)
     _mac_switch_bandwidth(t, ch)
     _switch_bandwidth_20(t, ch, rf_2t2r, rx_ant)
+    if txpwr_pg is not None:
+        txpower.set_tx_power_level(t, ch, txpwr_pg, rf_2t2r)
 
 
 def _rf_0xbe(ch: int) -> int:

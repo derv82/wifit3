@@ -328,8 +328,9 @@ Port the per-channel unit once and run it from `set_channel`, gating it against 
     `0x638`=`0x50`, `cfg_ch` `0x454[7]` band marker) + `config_phydm_switch_bandwidth_8822b` (20 MHz:
     `0x8ac &= 0xFFCFFC00`, `0x8c4[30]`, RF18 `|= BIT11|BIT10`, both paths; then `phydm_rxdfirpar`
     `0x948/0x94c[29:28]=2`+`0xc20/0xe20[31]=1`, re-run `ccapar`+`spur_reset`, `phydm_bw_fixed_setting`
-    `0x840[3:0]=0`/`[4]=1`, `0x808` RX-path toggle to `0x33`, re-run `igi_toggle`). Each hop lands
-    **exactly on the deferred per-channel DPK** (`0x1Dxx` LUT) — that's the boundary, verified.
+    `0x840[3:0]=0`/`[4]=1`, `0x808` RX-path toggle to `0x33`, re-run `igi_toggle`). Each hop then
+    writes the per-channel **TXAGC** (`0x1d00`/`0x1d80`) — **PORTED** (see "Per-channel TX power"),
+    landing on the post-power cal (the real per-channel DPK / DIG watchdog tail), the deferred edge.
   - **Band switch (CLEARED — both 2.4↔5 crossings byte-for-byte).** `chan.switch_band`
     (`config_phydm_switch_band_8822b`): 2.4G sets `0x808[28]=1`/`0x454[7]=0`/`0xa80[18]=0`/
     `0x814[15:10]=15`; 5G inverts those + `0x814=34`; both read the SoML marker `0x19a8[31]` and
@@ -339,14 +340,30 @@ Port the per-channel unit once and run it from `set_channel`, gating it against 
     when `prev_ch` is on the other side of ch 14. The 2 crossing hops (ch 36, final ch 1) reproduce
     the full PHYDM tune byte-for-byte and stop at the lone `0xCBC` BT-coex band-notify
     (`rtw_btcoex_wifionly_switchband_notify`, a separate subsystem — wifit3 is BT-coex-less) which
-    precedes the deferred DPK.
+    precedes the TXAGC write — so a crossing's tx-power is the one hop the gate can't bridge (the
+    coex op is unported); the driver still writes TXAGC, the coex being a no-op for our build.
+  - **Per-channel TX power (TXAGC) — PORTED (35/35/34 hops byte-for-byte).** The `0x1d00`/`0x1d80`
+    block every hop writes after the bandwidth re-apply is the per-rate **TXAGC** table — **not** DPK
+    (the `0x1Dxx` boundary was previously mislabelled). `txpower.py` ports `rtl8822b_set_tx_power_level`:
+    per path × rate-section, `power_idx = phy_get_pg_txpwr_idx` (EFUSE PG base @ `0x10` + section/ntx
+    BW20 diff), packed 4 rates/dword at `0x1d00 + (hw_rate & 0xfc)`.
+    **Faithfulness — build-config, not pcap-coincidence:** the captured morrownr build compiles with
+    `CONFIG_TXPWR_BY_RATE_EN=n` + `CONFIG_TXPWR_LIMIT_EN=n` `[SRC] driver-source/Makefile:130,132`, so
+    `by_rate` folds to 0 (`phy_get_txpwr_target` `:5940`) and `phy_get_txpwr_lmt` early-returns no
+    limit — `hal_com_get_txpwr_idx` reduces to `base`, **domain-independently** (no `channel_plan`
+    dependency). Verified `base == wire` on every captured channel/path (0 mismatches); the wire and
+    the Makefile agree. The PHY_REG_PG by-rate table and the 7215-entry `txpwr_lmt` regulatory tables
+    are inert in this build, so they are *correctly* not ported. **Caveat (documented):** wifit3 thus
+    applies **no regulatory TX-power cap** (matching the captured default build) — the user owns
+    regional compliance for any manual TX.
 
   **Net: `set_channel` is complete** — `verify_channels.py` clears **35/35/34 hops byte-for-byte**
-  on capture-1/2/3 (same-band 2.4 + 5 GHz hops, the 2.4→5 band crossing, AND the 6 PSD spur hops).
-  Skips: only 3-4 slicing artifacts (windows whose iw-epoch→frame head lands mid-cal, so the
-  replay can't open at the retune's RF-0x18 read).
+  on capture-1/2/3 — same-band 2.4 + 5 GHz hops + the 6 PSD spur hops, now THROUGH the TXAGC block to
+  the post-power cal. Skips: the 2.4↔5 crossings (unported BT-coex `0xCBC` precedes TXAGC) + a few
+  slicing artifacts (windows whose iw-epoch→frame head lands mid-cal).
 - **IQK + LCK** (RX-relevant image rejection / LO cal) — port if RX is deaf without them; one-time.
-- **DPK + TSSI per-channel** — deferred; rides along with TX (M8).
+- **Per-channel DPK** (the *real* DPK: the read-dependent pre-distortion in the cold-init all-channel
+  scan, op ~9900+ — NOT the hop's TXAGC) — deferred; rides along with TX (M8).
 
 ### RX bring-up (wired; blocked on the post-init RX seed) — hardware diagnosis 2026-06-15
 

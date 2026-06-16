@@ -29,7 +29,7 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8822bu_dkms import chan  # noqa: E402
+from wifit3.chips.rtl8822bu_dkms import chan, chipid, efuse, txpower, usbphy  # noqa: E402
 from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport  # noqa: E402
 
 CAP_DIR = REPO / "usb_dumps_new" / "captures_rtl88x2bu"
@@ -73,6 +73,16 @@ def verify(cap_name: str) -> int:
     cmds = _parse_iw(iw_log)
     print(f"{cap_name}: card=dev{dev}, {len(cmds)} channel-set commands")
 
+    # Decode the PG TX-power block once (it is read during cold init) so each hop's set_channel_bw
+    # can write the per-channel TXAGC table (0x1d00/0x1d80) instead of stopping at it. Run only the
+    # EFUSE prefix (chip-id -> usbphy -> efuse, all <op 4100) — the full cold_bringup would hit the
+    # capture-2/3 central_ch stale-global divergence at op 9467, but EFUSE is read long before that.
+    ct = Rtl8822buTransport(rp.ReplayDevice(rp.merge_ops_by_frame(ctrl, rp.extract_bulk_out_ops(pcap, dev))))
+    info = chipid.get_chip_info(ct)
+    usbphy.phy_cfg_usb(ct, info.chip_ver)
+    chipid.read_chip_version(ct)
+    pg = txpower.parse_pg(efuse.read_efuse(ct).log_map)
+
     npass = nfail = nskip = 0
     for i, (epoch, ch) in enumerate(cmds):
         prev = cmds[i - 1][1] if i > 0 else None
@@ -92,25 +102,28 @@ def verify(cap_name: str) -> int:
             print(f"  ch {ch:>3}: SKIP (slice artifact: window head is not the retune)")
             continue
 
-        dev = rp.ReplayDevice(win)
-        t = Rtl8822buTransport(dev)
+        rdev = rp.ReplayDevice(win)
+        t = Rtl8822buTransport(rdev)
+        # On a 2.4<->5 crossing the vendor emits the BT-coex band-notify (0xCBC, a separate
+        # subsystem wifit3 does not port) BEFORE the TXAGC write, so the gate can't bridge to
+        # tx-power there — land on the coex boundary instead (the driver still writes TXAGC, the
+        # coex op is a no-op for our BT-coex-less build).
         try:
-            chan.set_channel_bw(t, ch, prev_ch=prev)
+            chan.set_channel_bw(t, ch, prev_ch=prev, txpwr_pg=(None if crossing else pg))
         except rp.Divergence as d:
             print(f"  ch {ch:>3}: FAIL -- {d}")
             nfail += 1
             continue
-        # set_channel_bw should land on the deferred cal: the per-channel DPK (0x1Dxx LUT), or on
-        # a crossing the BT-coex band-notify (rtw_btcoex_..._switchband_notify, the lone 0xCBC
-        # antenna write) which precedes it. Both are separate, deferred subsystems.
-        nxt = next((win[k] for k in range(dev.i, len(win)) if win[k]["wval"] != 0x04E0), None)
-        on_dpk = nxt is not None and 0x1D00 <= nxt["wval"] <= 0x1DFF
+        # set_channel_bw now writes the TXAGC table too, so it lands on the post-power cal: the
+        # per-channel DPK (0x1Dxx is now consumed), the DIG/FA watchdog tail (0x0210/0x0280...), or
+        # on a crossing the BT-coex band-notify (the lone 0xCBC antenna write). All deferred.
+        nxt = next((win[k] for k in range(rdev.i, len(win)) if win[k]["wval"] != 0x04E0), None)
         on_coex = nxt is not None and nxt["wval"] == 0x0CBC
         npass += 1
-        edge = ("-> DPK boundary" if on_dpk else "-> coex band-notify (then DPK)" if on_coex
-                else f"-> next 0x{nxt['wval']:04x}" if nxt else "-> end")
+        edge = ("-> coex band-notify" if on_coex
+                else f"-> post-power cal (0x{nxt['wval']:04x})" if nxt else "-> end")
         kind = "set_channel_bw+band" if crossing else "set_channel_bw"
-        print(f"  ch {ch:>3}: PASS -- {kind} byte-for-byte ({dev.i} ops) {edge}")
+        print(f"  ch {ch:>3}: PASS -- {kind} byte-for-byte ({rdev.i} ops) {edge}")
 
     print(f"\n{cap_name}: {npass} PASS, {nfail} FAIL, {nskip} skipped "
           f"(band-switch crossings + slice artifacts — windows whose head isn't the retune).")
