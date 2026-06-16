@@ -134,6 +134,31 @@ def env_monitor_init(t) -> None:
     sipi.set_bb_reg(t, 0x09A0, 0xFF, th[8])
     sipi.set_bb_reg(t, 0x0994, 0xFFFF0000, th[10] << 8 | th[9])
     sipi.set_bb_reg(t, 0x0990, 0xFFFF, 65535)         # phydm_clm_setting period
+    # phydm_fahm_init: same IGI-derived thresholds (FAHM_BACKGROUND) -> 0x1c38/0x1c78/0x1c7c/0x1cb8
+    # (PHYDM_IC_AC packing), then count-OFDM-pkt enable 0x994[3].
+    fi = sipi.get_bb_reg(t, 0x0C50, 0x7F)
+    f0 = (fi - 14) << 1
+    f = [(f0 + 4 * i) & 0xFF for i in range(11)]
+    sipi.set_bb_reg(t, 0x1C38, 0xFFFFFF00, f[2] << 16 | f[1] << 8 | f[0])
+    sipi.set_bb_reg(t, 0x1C78, 0xFFFFFF00, f[5] << 16 | f[4] << 8 | f[3])
+    sipi.set_bb_reg(t, 0x1C7C, 0xFFFF0000, f[7] << 8 | f[6])
+    sipi.set_bb_reg(t, 0x1CB8, 0xFFFFFF00, f[10] << 16 | f[9] << 8 | f[8])
+    sipi.set_bb_reg(t, 0x0994, 1 << 3, 1)             # phydm_fahm_init: count OFDM pkt
+
+
+def adaptivity_init(t) -> None:
+    """[SRC] phydm_adaptivity_init (phydm_adaptivity.c:666) — EDCCA seed (CE, 11AC, !PWDB_EDCCA).
+
+    th_l2h_ini/th_edcca_hl_diff are software. 11AC && !PWDB_EDCCA picks the EDCCA dbg source
+    (0x944[29:28]=1); the no-link resume sets the EDCCA threshold to 0x7f/0x7f
+    (phydm_set_edcca_threshold -> 0x8a4 byte0=L2H, byte1=H2L); phydm_mac_edcca_state(DONT_IGNORE)
+    sets 0x520[15]=0 + 0x524[11]=1. phydm_set_forgetting_factor and phydm_edcca_decision_opt are
+    no-ops (edcca_mode != ADAPT_MODE)."""
+    sipi.set_bb_reg(t, 0x0944, (1 << 29) | (1 << 28), 0x1)
+    sipi.set_bb_reg(t, 0x08A4, 0x00FF, 0x7F)          # set_edcca_threshold L2H
+    sipi.set_bb_reg(t, 0x08A4, 0xFF00, 0x7F)          # set_edcca_threshold H2L
+    sipi.set_bb_reg(t, 0x0520, 1 << 15, 0x0)          # mac_edcca_state: don't ignore EDCCA
+    sipi.set_bb_reg(t, 0x0524, 1 << 11, 0x1)          # mac_edcca_state: disable count-down
 
 
 def _config_tx_path(t, tx_path: int, sel_1ss: int, sel_cck: int) -> None:
