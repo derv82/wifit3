@@ -177,7 +177,7 @@ def _dwell_count(t, dwell, rssi, total, wd=None):
     return beacons, raw_bufs, raw_bytes, ch_frames, total
 
 
-def _watch(t, channels, dwell: float, prev_ch, igi=None, rcr=None, watchdog=False):
+def _watch(t, channels, dwell: float, prev_ch, igi=None, rcr=None, watchdog=False, cckpd=None):
     """Tune each channel, then a bulk-IN loop for `dwell` s; tally beacons. `igi` forces RX gain to a
     hex value or sweeps a range (DIG-watchdog hypothesis test); `rcr` overrides the monitor RCR;
     `watchdog` runs the runtime PHYDM watchdog (live IGI adaptation) every ~2 s. rx-dma bytes vs parsed
@@ -196,6 +196,8 @@ def _watch(t, channels, dwell: float, prev_ch, igi=None, rcr=None, watchdog=Fals
                                   cck_new_agc=bool(sipi.get_bb_reg(t, 0x0A9C, 1 << 17)))
     for ch in channels:
         chan.set_channel_bw(t, ch, prev_ch=prev_ch)
+        if cckpd is not None:
+            t.write8(0x0A0A, int(cckpd, 0))        # force CCK PD threshold (0x40 sensitive .. 0x83 LV_1)
         prev_ch = ch
         for g in igis:
             if g is not None:
@@ -225,6 +227,10 @@ def main() -> int:
                     help="diagnostic: tally rx_pkt_desc categories (good/crc_err/icv_err/c2h) on CH "
                          "instead of parsing frames. Pair with --rcr 0x90000301 to DMA error frames. "
                          "Tells crc_err-cal-issue apart from a descriptor-decode/alignment bug.")
+    ap.add_argument("--cckpd", default=None,
+                    help="force the CCK packet-detection threshold 0xA0A (hex) after each tune. "
+                         "0x40 = sensitive (LV_0), 0x83 = the LV_1 seed. Tests the 2.4 GHz CCK-RX bug: "
+                         "if 2.4 GHz CCK beacons jump with --cckpd 0x40, the PD threshold is the cause.")
     ap.add_argument("--watchdog", action="store_true",
                     help="run the runtime PHYDM watchdog (live IGI/CCK-PD/EDCCA adaptation) every ~2s "
                          "during the dwell — A/B the beacon rate against the frozen dig_init seed.")
@@ -266,7 +272,7 @@ def main() -> int:
         print(f"[*] monitor RX: {'channel ' + str(args.channel) if args.channel else 'hop 1-13'}, "
               f"{dwell:g}s/ch{igi_note}...")
         per_ch, rssi, frames = _watch(t, channels, dwell, prev_ch=None, igi=args.igi, rcr=args.rcr,
-                                      watchdog=args.watchdog)
+                                      watchdog=args.watchdog, cckpd=args.cckpd)
 
         allb: Counter = Counter()
         for c in per_ch.values():
