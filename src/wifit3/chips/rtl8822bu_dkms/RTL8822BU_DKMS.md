@@ -313,11 +313,15 @@ Port the per-channel unit once and run it from `set_channel`, gating it against 
   `phydm_igi_toggle` (`0xC50`/`0xE50[6:0]`); `phydm_ccapar_by_rfe` (rfe-3 iFEM CCA table, col by
   band/Nrx → `0x82C/0x830/0x838`); `phydm_spur_calibration` → `phydm_dsde_init` (reset NBI/CSI
   `0x880-0x89C` + `0x874[0]`). `phydm_rfe` is NOT called per same-band hop (only on a band change).
-  - **PSD spur sweep — deferred.** `phydm_dynamic_spur_det_eliminate` runs its read-dependent PSD
-    sweep only on spur channels (`dsde_ch_idx ≤ 13`: 2.4G ch 5-8, 5G 153/161 at 20 MHz). On those
-    `_spur_reset` does the `dsde_init` reset but skips the (unported) PSD sweep, so the NBI/CSI notch
-    is not applied there — a bounded RX-quality gap, exposed via `chan.is_psd_spur_channel` (the
-    verify skips those 6 hops rather than diverging on the wire's sweep).
+  - **PSD spur sweep — PORTED (byte-for-byte on all 6 in-capture spur hops).**
+    `phydm_dynamic_spur_det_eliminate` runs its read-dependent PSD sweep on spur channels
+    (`dsde_ch_idx ≤ 13`: 2.4G ch 5-8/13, 5G 153/161 at 20 MHz) at each of the three `_spur_reset`
+    sites. `chan._dynamic_spur_det_eliminate` ports the full sweep (PSD_SMP_NUM×PSD_VAL_NUM probes
+    of 0xF44 per path, both runs per hop) + the threshold decision + the **NBI** notch
+    (`phydm_nbi_setting`: fc/intf-distance → reg_idx → 0x87C[19:14] + enable 0x87C[13]/0xC20/0xE20)
+    + the **CSI** notch (`phydm_csi_mask_setting`: tone bit at 0x880-0x89C + enable 0x874[0]). The
+    replay feeds every 0xF44 read, so the in-capture spur energy (e.g. ch6 PSD `0x197 ≥ 0x8D`)
+    drives the notch identically — `verify_channels` clears ch 5/6/7/8/153/161 (752/749/717 ops).
   - **Bandwidth re-apply (CLEARED — full `set_channel_bw`, 27/27/26 hops byte-for-byte).**
     `chan.set_channel_bw` = `switch_channel` + `mac_switch_bandwidth` (HALMAC `cfg_ch_bw_88xx`:
     `cfg_pri_ch_idx` `0x483`, `cfg_bw` clear `0x668[8:7]`, `cfg_mac_clk` `0x024[21:20]`+`0x55c`/
@@ -337,9 +341,10 @@ Port the per-channel unit once and run it from `set_channel`, gating it against 
     (`rtw_btcoex_wifionly_switchband_notify`, a separate subsystem — wifit3 is BT-coex-less) which
     precedes the deferred DPK.
 
-  **Net: `set_channel` is complete** — `verify_channels.py` clears **29/29/28 hops byte-for-byte**
-  on capture-1/2/3 (every same-band 2.4 + 5 GHz hop + both band crossings). Skips: the 6 PSD spur
-  channels (above) + a few slicing artifacts (windows whose iw-epoch→frame head lands mid-cal).
+  **Net: `set_channel` is complete** — `verify_channels.py` clears **35/35/34 hops byte-for-byte**
+  on capture-1/2/3 (same-band 2.4 + 5 GHz hops, the 2.4→5 band crossing, AND the 6 PSD spur hops).
+  Skips: only 3-4 slicing artifacts (windows whose iw-epoch→frame head lands mid-cal, so the
+  replay can't open at the retune's RF-0x18 read).
 - **IQK + LCK** (RX-relevant image rejection / LO cal) — port if RX is deaf without them; one-time.
 - **DPK + TSSI per-channel** — deferred; rides along with TX (M8).
 

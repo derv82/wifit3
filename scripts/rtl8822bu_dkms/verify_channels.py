@@ -84,12 +84,6 @@ def verify(cap_name: str) -> int:
             continue
         f0, f1 = nums[s], nums[min(e, len(nums) - 1)]
         win = [o for o in ctrl if f0 <= o["frame"] <= f1]
-        # The read-dependent PSD spur sweep is unported, so a spur channel's wire diverges after
-        # the dsde reset — skip those proactively.
-        if chan.is_psd_spur_channel(ch):
-            nskip += 1
-            print(f"  ch {ch:>3}: SKIP (PSD spur channel: dynamic_spur_det_eliminate not ported)")
-            continue
         # Both the same-band retune (switch_channel) and a crossing's band switch open with the
         # RF_A 0x18 read; anything else is a slice artifact (a window that opens mid-cal).
         head = next((o for o in win if o["wval"] != 0x04E0), None)
@@ -119,7 +113,7 @@ def verify(cap_name: str) -> int:
         print(f"  ch {ch:>3}: PASS -- {kind} byte-for-byte ({dev.i} ops) {edge}")
 
     print(f"\n{cap_name}: {npass} PASS, {nfail} FAIL, {nskip} skipped "
-          f"(band crossings + PSD spur channels — later milestones).")
+          f"(band-switch crossings + slice artifacts — windows whose head isn't the retune).")
     return 1 if nfail else 0
 
 

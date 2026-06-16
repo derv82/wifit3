@@ -11,9 +11,10 @@ re-apply (mac_switch_bandwidth=HALMAC cfg_bw + config_phydm_switch_bandwidth_882
 of switch_chnl_and_set_bw; they are the next milestone. wifit3 stays 20 MHz primary by design.
 
 This card is 2T2R (rf_type 2 -> rx/tx_ant_status = BB_PATH_AB) and rfe_type 3 (iFEM); the
-ccapar/rfe branches below resolve to those. The PSD-based dynamic spur eliminator only runs on a
-few spur-prone channels (2.4 GHz 5-8, 5 GHz 153/161 at 20 MHz); those raise until ported, rather
-than silently skip the NBI/CSI notch.
+ccapar/rfe branches below resolve to those. The PSD-based dynamic spur eliminator
+(phydm_dynamic_spur_det_eliminate) runs the full read-dependent PSD sweep + NBI/CSI notch on the
+spur-prone channels (2.4 GHz 5-8/13, 5 GHz 153/161 at 20 MHz); on the replay the 0xF44 PSD reads
+are fed back, so the threshold branch reproduces the capture's notch byte-for-byte.
 """
 from __future__ import annotations
 
@@ -42,6 +43,17 @@ _MID_BAND = (0x6, 0x5, 0x0, 0x0, 0x7, 0x6, 0x6, 0xFF, 0x0, 0x0, 0x7, 0x6, 0x6, 0
              0x7, 0x6, 0x6, 0x5, 0x0, 0x0, 0x7)
 _HIGH_BAND = (0x5, 0x5, 0x0, 0x7, 0x7, 0x6, 0x5, 0xFF, 0x0, 0x7, 0x7, 0x6, 0x5, 0x5, 0x0)
 
+# [SRC] phydm_dynamic_spur_det_eliminate (phydm_hal_api8822b.c:1342) — PSD probe freq points by
+# spur idx (the |+/-1| neighbours are computed at use). Path-B reuses the 2G/5G point | BIT(16).
+_FREQ_2G = (0xFC67, 0xFC27, 0xFFE6, 0xFFA6, 0xFC67, 0xFCE7, 0xFCA7, 0xFC67, 0xFC27, 0xFFE6,
+            0xFFA6, 0xFF66, 0xFF26, 0xFCE7)
+_FREQ_5G = (0xFFC0, 0xFFC0, 0xFC81, 0xFC81, 0xFC41, 0xFC40, 0xFF80, 0xFF80, 0xFF40, 0xFD42)
+_PSD_NBI_TH = 0x8D                 # PSD >= this on either path => apply the NBI + CSI notch
+# [SRC] phydm_set_nbi_reg nbi_128[] (phydm_api.c:992) — FFT-128 tone boundaries (tone_idx x 10);
+# reg_idx = 1 + index of the first boundary the tone is below. 8822b BW20/40 uses FFT-128.
+_NBI_128 = (25, 55, 85, 115, 135, 155, 185, 205, 225, 245, 265, 285, 305, 335, 355,
+            375, 395, 415, 435, 455, 485, 505, 525, 555, 585, 615, 635)
+
 
 def _igi_toggle(t) -> None:
     """[SRC] phydm_igi_toggle_8822b: read IGI from 0xC50, bump down then back, both paths."""
@@ -63,22 +75,153 @@ def _ccapar_by_rfe(t, ch: int, bw20: bool) -> None:
         sipi.set_bb_reg(t, 0x0838, 0xF0, 0x5)
 
 
-def is_psd_spur_channel(ch: int, bw20: bool = True) -> bool:
-    """True for the channels whose spur reset runs the read-dependent PSD sweep (idx <= 13)."""
-    return _dsde_ch_idx(ch, bw20) <= 13
-
-
-def _spur_reset(t, ch: int, bw20: bool) -> None:
-    """[SRC] phydm_spur_calibration_8822b (normal mode): drop the spur-elim enables + reset
-    NBI/CSI (phydm_dsde_init). The read-dependent PSD sweep (phydm_dynamic_spur_det_eliminate) runs
-    only on the few spur channels below idx 14; it is not ported, so on those channels the NBI/CSI
-    notch is simply not applied (bounded RX-quality gap, not a break) — see is_psd_spur_channel."""
+def _spur_reset(t, ch: int, bw20: bool, rf_2t2r: bool = True, rfe_type: int = 3) -> None:
+    """[SRC] phydm_spur_calibration_8822b (normal mode, not scan-in-process): drop the spur-elim
+    enables, then run phydm_dynamic_spur_det_eliminate (NBI/CSI reset + the PSD spur sweep)."""
     sipi.set_bb_reg(t, 0x087C, 1 << 13, 0x0)
     sipi.set_bb_reg(t, 0x0C20, 1 << 28, 0x0)
     sipi.set_bb_reg(t, 0x0E20, 1 << 28, 0x0)
+    _dynamic_spur_det_eliminate(t, ch, bw20, rf_2t2r, rfe_type)
+
+
+def _dsde_init(t) -> None:
+    """[SRC] phydm_dsde_init: clear the NBI/CSI notch mask (0x880-0x89C) + the CSI-mask enable
+    (0x874[0]) on every channel/BW/band change."""
     for addr in (0x0880, 0x0884, 0x0888, 0x088C, 0x0890, 0x0894, 0x0898, 0x089C):
-        sipi.set_bb_reg(t, addr, 0xFFFFFFFF, 0)    # phydm_dsde_init: reset NBI/CSI
-    sipi.set_bb_reg(t, 0x0874, 1 << 0, 0x0)        # phydm_dsde_init: NBI enable bit
+        sipi.set_bb_reg(t, addr, 0xFFFFFFFF, 0)
+    sipi.set_bb_reg(t, 0x0874, 1 << 0, 0x0)
+
+
+def _dynamic_spur_det_eliminate(t, ch: int, bw20: bool, rf_2t2r: bool, rfe_type: int) -> None:
+    """[SRC] phydm_dynamic_spur_det_eliminate: reset the notch, then on a spur channel (idx <= 13)
+    sweep the PSD at the spur freq point (+/-1 neighbours, both paths, PSD_SMP_NUM x PSD_VAL_NUM)
+    and, if the peak crosses the threshold on either path, apply the NBI + CSI notch.
+
+    The PSD is read from 0xF44; on the replay every read is fed back, so the threshold branch (and
+    thus whether the notch fires) reproduces the capture exactly. On hardware it measures live spur."""
+    _dsde_init(t)
+    idx = _dsde_ch_idx(ch, bw20)
+    if idx > 13:
+        return                                       # no spur freq point on this channel
+    rx_ant = BB_PATH_AB if rf_2t2r else BB_PATH_A
+    base = _FREQ_2G[idx] if ch <= 14 else _FREQ_5G[idx]
+    peak_a = peak_b = 0
+    for k in range(3):                               # PSD_SMP_NUM: f-1, f, f+1
+        f_pt = (base + (k - 1)) & 0xFFFF
+        f_pt_b = f_pt | (1 << 16)
+        smp_a = smp_b = 0
+        for _ in range(3):                           # PSD_VAL_NUM samples per point
+            sipi.set_bb_reg(t, 0x0C00, 0xFF, 0x4)    # disable 3-wire, both paths
+            sipi.set_bb_reg(t, 0x0E00, 0xFF, 0x4)
+            saved = sipi.get_bb_reg(t, 0x0910, 0xF000)
+            if rx_ant & BB_PATH_A:
+                sipi.set_bb_reg(t, 0x0808, 0xFF, (BB_PATH_A << 4) | BB_PATH_A)
+                sipi.set_bb_reg(t, 0x0910, 0xFFFFFFFF, (1 << 22) | f_pt)   # start PSD @ f_pt
+                smp_a = max(smp_a, sipi.get_bb_reg(t, 0x0F44, 0xFFFF))
+                sipi.set_bb_reg(t, 0x0910, 1 << 22, 0x0)                   # stop PSD
+            if rx_ant & BB_PATH_B:
+                sipi.set_bb_reg(t, 0x0808, 0xFF, (BB_PATH_B << 4) | BB_PATH_B)
+                sipi.set_bb_reg(t, 0x0910, 0xFFFFFFFF, (1 << 22) | f_pt_b)
+                smp_b = max(smp_b, sipi.get_bb_reg(t, 0x0F44, 0xFFFF))
+                sipi.set_bb_reg(t, 0x0910, 1 << 22, 0x0)
+            sipi.set_bb_reg(t, 0x0C00, 0xFF, 0x7)    # re-enable 3-wire
+            sipi.set_bb_reg(t, 0x0E00, 0xFF, 0x7)
+            sipi.set_bb_reg(t, 0x0910, 0xF000, saved)
+            sipi.set_bb_reg(t, 0x0808, 0xFF, (rx_ant << 4) | rx_ant)
+            _igi_toggle(t)                           # let RF re-enter RX mode
+        peak_a, peak_b = max(peak_a, smp_a), max(peak_b, smp_b)
+    if peak_a >= _PSD_NBI_TH or peak_b >= _PSD_NBI_TH:
+        _dsde_nbi(t, ch, bw20, rf_2t2r, rfe_type)
+        _dsde_csi(t, ch, bw20)
+
+
+def _spur_f_intf(ch: int) -> int | None:
+    """[SRC] phydm_dsde_nbi/phydm_dsde_csi (20 MHz) — the interference freq (MHz) per spur channel."""
+    if ch == 153:
+        return 5760
+    if ch == 161:
+        return 5800
+    if ch == 13:
+        return 2480
+    return 2440 if 5 <= ch <= 8 else None
+
+
+def _find_fc(ch: int) -> int | None:
+    """[SRC] phydm_find_fc (20 MHz primary) — channel centre freq (MHz)."""
+    if 1 <= ch <= 14:
+        return 2412 + (ch - 1) * 5
+    if 36 <= ch <= 177:
+        return 5180 + (ch - 36) * 5
+    return None
+
+
+def _find_intf_distance(fc: int, f_intf: int, bw: int = 20) -> int | None:
+    """[SRC] phydm_find_intf_distance — tone index (x10) for an interferer inside the band, else None."""
+    if fc - bw // 2 <= f_intf <= fc + bw // 2:
+        return abs(fc - f_intf) << 5                 # 10 * (dist / 0.3125)
+    return None
+
+
+def _set_nbi_reg(t, tone_idx: int) -> None:
+    """[SRC] phydm_set_nbi_reg (8822b FFT-128): map the tone index to reg_idx, write 0x87C[19:14]."""
+    reg_idx = 0
+    for i, bound in enumerate(_NBI_128):
+        if tone_idx < bound:
+            reg_idx = i + 1
+            break
+    sipi.set_bb_reg(t, 0x087C, 0xFC000, reg_idx)
+
+
+def _nbi_enable(t, enable: bool, rf_2t2r: bool) -> None:
+    """[SRC] phydm_nbi_enable (8822b): NBI on/off at 0x87C[13] + 0xC20[28] (+ 0xE20[28] for 2T)."""
+    val = 1 if enable else 0
+    sipi.set_bb_reg(t, 0x087C, 1 << 13, val)
+    sipi.set_bb_reg(t, 0x0C20, 1 << 28, val)
+    if rf_2t2r:
+        sipi.set_bb_reg(t, 0x0E20, 1 << 28, val)
+
+
+def _dsde_nbi(t, ch: int, bw20: bool, rf_2t2r: bool, rfe_type: int) -> None:
+    """[SRC] phydm_dsde_nbi: CCA-param tweak for NBI, then phydm_nbi_setting at the spur freq."""
+    sipi.set_bb_reg(t, 0x082C, 0xFF000, 0x86 if rfe_type in (15, 16) else 0x97)
+    if rfe_type in (12, 19):
+        if bw20 and 5 <= ch <= 7:
+            sipi.set_bb_reg(t, 0x082C, 0xF000, 0x3)
+    else:
+        sipi.set_bb_reg(t, 0x082C, 0xF000, 0x7)
+    f_intf = _spur_f_intf(ch) if bw20 else None
+    fc = _find_fc(ch)
+    tone = _find_intf_distance(fc, f_intf) if (f_intf is not None and fc is not None) else None
+    if tone is not None:                             # phydm_nbi_setting: SUCCESS path
+        _set_nbi_reg(t, tone)
+        _nbi_enable(t, True, rf_2t2r)
+    else:
+        _nbi_enable(t, False, rf_2t2r)
+
+
+def _set_csi_mask(t, tone_idx: int, positive: bool) -> None:
+    """[SRC] phydm_set_csi_mask (8822b, 128-tone): set one mask bit at 0x880 (pos) / 0x890 (neg)."""
+    tone = tone_idx + 10 if (tone_idx % 10) >= 5 else tone_idx
+    tone //= 10
+    if positive:
+        tone = min(tone, 127)
+        reg, bit = 0x0880 + (tone >> 3), tone & 0x7
+    else:
+        tone = 128 - min(tone, 128)
+        reg, bit = 0x0890 + (tone >> 3), tone & 0x7
+    t.write8(reg, t.read8(reg) | (1 << bit))
+
+
+def _dsde_csi(t, ch: int, bw20: bool) -> None:
+    """[SRC] phydm_dsde_csi -> phydm_csi_mask_setting: mask the spur tone, then enable at 0x874[0]."""
+    f_intf = _spur_f_intf(ch) if bw20 else None
+    fc = _find_fc(ch)
+    tone = _find_intf_distance(fc, f_intf) if (f_intf is not None and fc is not None) else None
+    if tone is not None:
+        _set_csi_mask(t, tone, f_intf >= fc)
+        sipi.set_bb_reg(t, 0x0874, 1 << 0, 0x1)      # phydm_csi_mask_enable
+    else:
+        sipi.set_bb_reg(t, 0x0874, 1 << 0, 0x0)
 
 
 def _dsde_ch_idx(ch: int, bw20: bool) -> int:
@@ -146,7 +289,7 @@ def switch_channel(t, ch: int, rf_2t2r: bool = True, bw20: bool = True) -> None:
 
     _igi_toggle(t)
     _ccapar_by_rfe(t, ch, bw20)
-    _spur_reset(t, ch, bw20)
+    _spur_reset(t, ch, bw20, rf_2t2r)
 
 
 def _rfe_ifem(t, ch: int, rx2_or_tx2: bool) -> None:
@@ -203,7 +346,7 @@ def switch_band(t, ch: int, rf_2t2r: bool, rx_ant: int) -> None:
     if rf_2t2r:
         sipi.set_rf_reg(t, sipi.RF_PATH_B, RF_0x18, sipi.RFREGOFFSETMASK, rf18)
     _rfe_ifem(t, ch, rx_ant == BB_PATH_AB)         # phydm_rfe_8822b -> rfe_ifem (rfe_type 3)
-    _spur_reset(t, ch, bw20=True)
+    _spur_reset(t, ch, True, rf_2t2r)
 
 
 def _mac_switch_bandwidth(t, ch: int, pri_idx: int = 0) -> None:
@@ -238,7 +381,7 @@ def _switch_bandwidth_20(t, ch: int, rf_2t2r: bool, rx_ant: int) -> None:
     sipi.set_bb_reg(t, 0x0C20, 1 << 31, 0x1)
     sipi.set_bb_reg(t, 0x0E20, 1 << 31, 0x1)
     _ccapar_by_rfe(t, ch, bw20=True)
-    _spur_reset(t, ch, bw20=True)
+    _spur_reset(t, ch, True, rf_2t2r)
     # phydm_bw_fixed_setting (BW20) + phydm_bw_fixed_enable
     sipi.set_bb_reg(t, 0x0840, 0xF, 0x0)
     sipi.set_bb_reg(t, 0x0840, 1 << 4, 0x1)
