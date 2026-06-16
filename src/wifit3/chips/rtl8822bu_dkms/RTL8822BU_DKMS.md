@@ -155,7 +155,7 @@ is faithful for monitor RX; remaining beacon-rate headroom vs baseline is airtim
 | G1 | `0x98c` RX MRC antenna-weighting | `phydm_dynamic_ant_weighting_8822b` — every watchdog; 2.4G `rssi_min≤37`→`0x98c=0x43440000` | cold-init table already sets `0x98c=0x43440000` | **no-op**: capture writes `0x43440000` 35×/monitor (rssi_min stays ≤37 unlinked) = our default; value never changes | 🟢 |
 | G2 | opmode block op 9855 | `hw_var_set_opmode`: MSR/net-type, BCN_CTRL `0x550`, RX-filter `0x6a2`, LED | `enable_monitor` instead; MAC-addr ported | OS interface-up — RX parts superseded by `enable_monitor` (RCR/RXFLTMAP/MSR-no-link); MAC-addr ported; strict-audit found no wrong-writes | 🟢 |
 | G3 | airodump `--band abg` native hop | scan-tune == `config_phydm_switch_channel`; window interleaves 2 s watchdog ticks | we hop via the same `set_channel` | `verify_abg_hop.py`: scan-tune == set_channel (ch1 replays 131 ops byte-for-byte); rest of the window is watchdog ticks (`0x98c/0x994/0xfa4`/FA-counters) — both verified components; no hidden op | 🟢 |
-| G4 | per-channel DPK | post-TXAGC TX pre-distortion (`0xfa4/0xfb4/0x280/0x283/0x840/0x8d8` recurring tail) | un-ported | TX pre-distortion — RX-irrelevant (confirmed the recurring per-hop DARK tail via strict audit) | 🟢 |
+| G4 | recurring post-TXAGC tail `0xfa4/0xfb4/0x280/0x283/0x840/0x8d8` | **NOT DPK** — 8822b has no DPK (no `dpk_track_8822b` case; `HAL_RF_DPK_TRACK` unset). It is the 2 s PHYDM watchdog firing in the window (TXPAUSE + env-monitor + CFO/FA-counter reads) | watchdog ported | watchdog activity, already characterized — not a per-channel cal | 🟢 |
 | G19 | `0x0608` (RCR) in DARK census | only 2 writes post-monitor (f20411/20421), both `0x90000001` = the enable_monitor RCR | `enable_monitor` sets RCR=0x90000001 | enable-monitor bleed, not per-hop; we reproduce it | 🟢 |
 | G5 | env-monitor watchdog `0x994` | `phydm_env_mntr_{result,set}_watchdog` (NHM/CLM/FAHM) | not run in our 2s loop | **telemetry** — DIG `fa_source=0` (dig.c:1023) so DIG uses `cnt_all`, not FAHM | 🟢 |
 | G6 | `phydm_noisy_detection` | 11AC, every watchdog | not run | **telemetry** — `noisy_decision` absent from `phydm_dig.c` (no DIG coupling) | 🟢 |
@@ -174,9 +174,28 @@ is faithful for monitor RX; remaining beacon-rate headroom vs baseline is airtim
 
 **Strict per-phase audit result (`verify_strict_audit.py`, cap-1):** initial-tune + all 35 hops replay
 **byte-for-byte with ZERO wrong-writes** — no second antenna-mux-class bug in any hop tail (the
-matched-prologue blind spot is closed). The DARK tails decode entirely to DPK (G4) + the watchdog cycle
-(incl. G1 `0x98c`) + opmode/band bleed from the coarse iw.log windows + TXAGC-skipped-on-crossings — no
-novel RX register beyond the cataloged gaps (and the `0x608` curiosity, G19).
+matched-prologue blind spot is closed). The DARK tails decode entirely to the 2 s watchdog cycle
+(incl. G1 `0x98c`; G4 — there is no DPK on 8822b) + opmode/band bleed from the coarse iw.log windows +
+TXAGC-skipped-on-crossings — no novel RX register beyond the cataloged gaps (and the `0x608` curiosity, G19).
+
+## TX-path audit (2026-06-16) — for the injection/deauth path
+
+wifit3's TX is frame injection (the agent never live-fires; faithfulness is source + pcap-verified,
+benefit measured by the human). Audited against the captured aireplay injector (251 TX frames, f74236+):
+
+| Item | State | Verdict |
+|---|---|---|
+| TX descriptor `build_inject_txdesc` | **FIXED** (G_ID was hardcoded 63) | **byte-for-byte 251/251** vs the capture (33 bcast + 218 unicast, each fed its own rate) after the G_ID=BMC-keyed fix |
+| TXAGC TX-power `set_tx_power_level` | ported | faithful — `verify_channels` 35/35; by-rate/limit fold to base (`CONFIG_TXPWR_*_EN=n`) |
+| TxA-bias current cal `tx_current_calibration` | ported (cold init) | byte-verified in `verify_pcap` |
+| IQK | not run | `mp_mode`-gated — vendor doesn't run it in normal mode either (RX-audit finding) |
+| DPK | n/a | does not exist on 8822b (no `dpk_track_8822b`) |
+| Thermal TX-power tracking `phydm_rf_watchdog`→`odm_txpowertracking_check_ce` | un-ported | TX-side; gated on `HAL_RF_TX_PWR_TRACK` + thermal-delta. Negligible for burst injection (TXAGC base is faithful), at most a few-dB drift on a sustained flood — the one open (minor) TX gap |
+| watchdog `cfo_tracking` / `ra_info` / `dynamic_tx_power` | un-ported | link/assoc-gated — inert for injection (no association) |
+
+**Headline: the G_ID hardcode was a real injector bug** — it broke unicast (targeted-deauth) descriptors
+(0/128 match); now byte-faithful. The rest of the TX path is faithful or negligibly-gapped; the only
+standing TX item is thermal power-tracking, which matters only for sustained injection.
 
 Proven-legit (no action): `adaptive_soml` (`!is_linked` early-return), `receiver_blocking`/`primary_cca`/
 `hwigi`/`lna_sat_chk`/`beamforming_watchdog(V1)`/`mu_rsoml` (compiled-out for 8822b — `phydm_features_ce.h`).
