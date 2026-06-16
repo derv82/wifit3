@@ -30,9 +30,19 @@ def test_word0_fields():
 
 def test_word1_qsel_macid_rateid():
     w1 = int.from_bytes(build_inject_txdesc(_DEAUTH_UNICAST, rate_id=RATEID_IDX_B)[4:8], "little")
-    assert w1 & 0x7F == 0                         # MACID 0 for mgmt
+    assert w1 & 0x7F == 1                         # MACID == RTW_DEFAULT_MGMT_MACID (bcast mgmt)
     assert (w1 >> 8) & 0x1F == 0x12               # QSEL == QSLT_MGNT
     assert (w1 >> 16) & 0x1F == 8                 # RATE_ID == B
+
+
+def test_matches_captured_aireplay_descriptor():
+    # The exact 48-byte descriptor the capture's aireplay-ng injector emitted for a 42-byte broadcast
+    # mgmt frame (FC=0x40) — PORTING.md step-4 byte-diff. Only the frame's own seqctl varies per send.
+    frame = bytes([0x40, 0x00, 0x00, 0x00]) + b"\xff" * 6 + bytes(42 - 10)
+    expected = bytes.fromhex(
+        "2a003085011208000000003f0001000000003200000000000100000020a9000000800000"
+        "000000000000000000000000")
+    assert build_inject_txdesc(frame)[:48] == expected
 
 
 def test_use_rate_and_datarate():
