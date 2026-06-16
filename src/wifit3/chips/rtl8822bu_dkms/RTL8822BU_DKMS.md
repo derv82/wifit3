@@ -131,6 +131,43 @@ frozen `dig_init` IGI. That is the secondary, open item for hitting the 8–10 b
 `--cckpd`, `--scan`); `cck_capref.py` for the vendor's own bulk-IN from the FIXED-CH1 window;
 `verify_initial_tune.py` gates the initial 2.4 GHz channel-set + antenna notify byte-for-byte.
 
+## Faithfulness Gap Ledger (severe audit, opened 2026-06-16)
+
+Running list of every place our port may diverge from the vendor wire, found by source diff against
+`driver-source/` (the antenna mux taught us "deferred/dead-code" labels lie — every entry gets a
+source-proven verdict, never an assumption). **Per-gap A/B protocol** (run once gap-finding is complete):
+(A) baseline beacon capture before any change; (2) make the port faithful for that gap; (3) re-measure (B);
+(4) **regression → revert + flag** (a miss can be an improvement only once combined with other misses);
+**no-change/improvement → commit + document** (faithful is the goal regardless of beacon delta).
+
+Status key: 🔴 confirmed gap (port it) · 🟡 pending source verdict · 🟢 proven legit (cite) · ⚪ A/B done.
+
+| # | Gap | Vendor [SRC] | Our state | RX? | Status |
+|---|---|---|---|---|---|
+| G1 | `0x98c` RX MRC antenna-weighting | `phydm_dynamic_ant_weighting_8822b` — every watchdog, uncond.; 2.4G `rssi_min≤37`→`0x98c=0x43440000` | never write `0x98c` | yes (few-dB 2-path combining) | 🔴 |
+| G2 | opmode block op 9855 | `hw_var_set_opmode`: MSR/net-type `0x4e`, BCN_CTRL `0x550`, RX-filter `0x6a2`, LED `0x4a/0x4e` | `enable_monitor` instead; MAC-addr ported | per-op TBD | 🟡 |
+| G3 | airodump `--band abg` native hop | mac80211 scan sweeps every ch | only explicit `iw` hops replayed | maybe | 🟡 |
+| G4 | per-channel DPK | post-TXAGC TX pre-distortion | un-ported | TX-side | 🟡 |
+| G5 | env-monitor watchdog `0x994` | `phydm_env_mntr_{result,set}_watchdog` (NHM/CLM/FAHM) | not run in our 2s loop | **telemetry** — DIG `fa_source=0` (dig.c:1023) so DIG uses `cnt_all`, not FAHM | 🟢 |
+| G6 | `phydm_noisy_detection` | 11AC, every watchdog | not run | **telemetry** — `noisy_decision` absent from `phydm_dig.c` (no DIG coupling) | 🟢 |
+| G13 | DIG damping `phydm_dig_damping_chk` | `CFG_DIG_DAMPING_CHK` on (8822b); runs every `phydm_dig` (dig.c:1454) | our `phydm_dig` omits it | yes — damps IGI oscillation, shapes IGI | 🔴 |
+| G7 | `odm_dtc` (CE) | body wrapped in `CONFIG_DM_RESP_TXAGC`; RSSI-based **TX-power** decade | not run | TX-side + needs link → inert in monitor | 🟢 |
+| G8 | `halrf_watchdog` | `phydm_rf_watchdog` (thermal TX-pwr track) + `halrf_dpk_track` (DPK) | not run | TX/thermal/DPK cal — RX-irrelevant in monitor | 🟢 |
+| G9 | `phydm_update_power_training_state` | returns on `!is_linked` (pow_train.c:54) | not run | inert unlinked | 🟢 |
+| G10 | `phydm_dyn_bw_indication` | `CONFIG_BW_INDICATION` on (8822b); 20/40 BW-ind | not run | likely inert (20 MHz only) — verify | 🟡 |
+| G11 | `phydm_dynamic_switch_htstf_mumimo_8822b` | uncond.; rssi_min<35 → `0x8d8[17]=0` | never write `0x8d8[17]` | HT-STF gain — affects HT *data* RX, not legacy beacons | 🔴 |
+| G12 | `dc_cancellation` live-poll integrity | `phydm_stop_ic_trx` polls `0xFA0` for BB-idle | ported; gate feeds idle value | live poll may bail → wrong RX DC | 🟡 (HW) |
+| G14 | opmode LED `0x4a`/`0x4e` | `pinmux_wl_led` (async `LedControlUSB`) | not ported | cosmetic pinmux — no RX | 🟢 |
+| G15 | opmode BCN_CTRL `0x550` / RX-filter `0x6a2` | managed-vif `InitBeaconParameters` + mgmt filter | `enable_monitor` sets RCR + RXFLTMAP=0xFFFF | confirm enable_monitor's RX-filter fully supersedes `0x6a2` | 🟡 |
+| G16 | `get_dbg_port_info` (adaptivity) | `phydm_adaptivity` ADAPT-mode dbg-port `0x209` | not run | NORMAL-mode default → dormant (verify edcca_mode) | 🟡 |
+| G17 | crystal-cap + EFUSE decode | xtal_cap (efuse `0x2F`)→`0x24/0x28`; PG map | ported (read-dependent) | verify decoded values vs `_logs/driver.log` | 🟡 |
+| G18 | cold-path poll-loops live integrity | FW-ready `0xC078`, mac_pwr `0x05`, `config_trx_mode` RF33, tx_current_cal | ported; gate feeds convergent reads | verify each converges on live HW (gate-blind) | 🟡 (HW) |
+
+Proven-legit (no action): `adaptive_soml` (`!is_linked` early-return), `receiver_blocking`/`primary_cca`/
+`hwigi`/`lna_sat_chk`/`beamforming_watchdog(V1)`/`mu_rsoml` (compiled-out for 8822b — `phydm_features_ce.h`).
+TX/assoc watchdog members expected-inert unlinked, verdict pending: `ra_info`, `cfo_tracking`,
+`tx_path_diversity`, `dynamic_tx_power`.
+
 ## Faithfulness scoreboard — what "pcap-faithful" actually covers
 
 **Do not call this port "pcap-faithful" without this qualifier.** It means exactly one thing:
