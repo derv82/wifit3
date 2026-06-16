@@ -185,6 +185,15 @@ def cfo_tracking_init(t) -> None:
     sipi.set_bb_reg(t, 0x0010, 0x40, 0x1)             # crystal cap control by WiFi
 
 
+def rf_init(t) -> None:
+    """[SRC] phydm_rf_init (halphyrf_ce.c:1152) — odm_txpowertracking_init + clear-state.
+
+    odm_txpowertracking_thermal_meter_init calls get_swing_index, whose only 8822b wire op is the
+    OFDM bb-swing read 0xc1c[31:21] (compared against tx_scaling_table_jaguar in software);
+    get_cck_swing_index and odm_clear_txpowertracking_state are software-only on 8822b."""
+    sipi.get_bb_reg(t, 0x0C1C, 0xFFE00000)            # get_swing_index: default OFDM bb-swing
+
+
 def _config_tx_path(t, tx_path: int, sel_1ss: int, sel_cck: int) -> None:
     """[SRC] phydm_config_tx_path_8822b + the CCK/OFDM TX-path helpers."""
     sipi.set_bb_reg(t, 0x093C, (1 << 19) | (1 << 18), 0x3)     # TX antenna by Nsts
