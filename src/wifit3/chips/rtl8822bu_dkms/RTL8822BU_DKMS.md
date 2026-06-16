@@ -92,6 +92,12 @@ the **cold-init CCK RX config**. (Secondary fix: `cck_pd_th` faithfully *raises*
 0xA0A under CCK false-alarms — vendor-correct but costs monitor sensitivity; consider clamping it to the
 sensitive level for the capture-everything goal once the cold-init gap is closed.)
 
+**FIRST test (one shot):** `test_hw --phase beacon --channel 1 --dwell 20 --cckpd 0x40` forces the CCK
+PD threshold `0xA0A` to the sensitive LV_0 (cold init seeds it to `0x83`/LV_1). If a CCK-1M-beacon AP
+(e.g. d2:18) jumps from ~2/s toward ~8/s, the PD threshold is the cause and the fix is to seed/clamp
+`0xA0A` sensitive for the monitor goal (override the vendor's adaptive `cck_pd` that trades CCK
+sensitivity for false-alarm rejection). If it does NOT move, the bug is deeper (CCK AGC/BB table).
+
 **Next step:** the golden capture *did* receive 2.4 GHz CCK beacons, so it is the reference. Diff our
 live 2.4 GHz CCK-path registers against the capture at RX time. Suspects: CCK-enable `0x808[28]`
 (switch_band), the CCK-PD threshold seed `0xA0A` (cck_pd_init), the new-CCK-AGC enable `0xA9C[17]`
