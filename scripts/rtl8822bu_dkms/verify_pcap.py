@@ -22,7 +22,7 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8822bu_dkms import bringup  # noqa: E402
+from wifit3.chips.rtl8822bu_dkms import bringup, mac  # noqa: E402
 from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport  # noqa: E402
 
 DEFAULT_CAP = REPO / "usb_dumps_new" / "captures_rtl88x2bu" / "capture-1.pcap"
@@ -51,6 +51,34 @@ def _bringup(t) -> None:
     `bringup.cold_bringup` (the driver's connect() path), so the gate verifies the exact code the
     hardware runs. The frontier past this (op ~9410) is the per-channel cal scan — see the doc."""
     bringup.cold_bringup(t)
+
+
+def _verify_monitor(ops) -> None:
+    """Replay `mac.enable_monitor` against the capture's airmon monitor switch (a sliced window, like
+    verify_channels does for the hops — it is runtime, not part of the monotonic cold init). Anchor on
+    the unique monitor RCR write (0x608 = 0x90000001); the window runs from the Set_MSR read (0x102) to
+    the third RXFLTMAP write (0x6a4 = 0xFFFF), after which the first RX frame lands on the bulk-IN."""
+    def _val(o):
+        return int.from_bytes(o["data"], "little") if o.get("data") else None
+    rcr = next((k for k, o in enumerate(ops)
+                if o.get("dir") == "OUT" and o["wval"] == 0x0608 and _val(o) == 0x90000001), None)
+    if rcr is None:
+        print("  monitor-enable: RCR=0x90000001 not in capture (skipped)")
+        return
+    start = next((k for k in range(rcr - 1, rcr - 6, -1)
+                  if ops[k].get("dir") == "IN" and ops[k]["wval"] == 0x0102), rcr - 2)
+    end = next((k for k in range(rcr, len(ops))
+                if ops[k].get("dir") == "OUT" and ops[k]["wval"] == 0x06A4 and _val(ops[k]) == 0xFFFF), None)
+    win = ops[start:end + 1]
+    dev = rp.ReplayDevice(win)
+    try:
+        mac.enable_monitor(Rtl8822buTransport(dev))
+    except rp.Divergence as e:
+        print(f"  monitor-enable (set_opmode_monitor): DIVERGENCE -- {e}")
+        return
+    tag = "byte-for-byte CLEAN" if dev.i == len(win) else f"PARTIAL ({dev.i}/{len(win)})"
+    print(f"  monitor-enable (set_opmode_monitor): {dev.i} ops {tag} @f{win[0]['frame']} "
+          f"-> RX frames land next")
 
 
 def run(cap: str | None = None) -> int:
@@ -95,6 +123,7 @@ def run(cap: str | None = None) -> int:
             print("  PASS: the full vendor chip init (rtl8822b_init) is reproduced byte-for-byte.")
             print("  Remaining: OS interface-up/opmode (driver connect()), then the per-channel cal")
             print("  scan (verify_channels), then aireplay-ng TX injection at op 28910 (the stop).")
+            _verify_monitor(ops)   # the driver's runtime monitor RX-enable (sliced-window check)
         else:
             print("  (this is the next op to port; not yet a full PASS)")
         return 0
