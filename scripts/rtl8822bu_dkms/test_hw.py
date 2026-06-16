@@ -28,7 +28,7 @@ import libusb_package
 import usb.core
 import usb.util
 
-from wifit3.chips.rtl8822bu_dkms import bringup, chan, chipid, mac, rx
+from wifit3.chips.rtl8822bu_dkms import bringup, chan, chipid, mac, rx, sipi
 from wifit3.chips.rtl8822bu_dkms.transport import Rtl8822buTransport
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -99,9 +99,11 @@ def _rx_descriptor_stats(buf, acc):
                else "runt" if pkt_len <= 4 else "good")
         acc[cat] += 1
         if len(acc["samples"]) < 8:
+            phy = buf[off + 24:off + 24 + drvinfo_sz] if physt else b""
+            rssi = rx._decode_rssi(phy) if phy else "?"
             acc["samples"].append(
                 f"len={pkt_len:>4} crc={crc_err} icv={icv_err} c2h={c2h} drv={drvinfo_sz} "
-                f"sh={shift_sz} physt={physt}  desc={buf[off:off + 24].hex()}")
+                f"sh={shift_sz} physt={physt} rssi={rssi}  phy={phy[:8].hex()}")
         off += _rnd8(pkt_offset)
 
 
@@ -112,6 +114,12 @@ def _rxstats(t, channel, dwell, rcr):
     if rcr is not None:
         t.write32(0x0608, int(rcr, 0))
     chan.set_channel_bw(t, channel, prev_ch=None)
+    # Read back RF reg 0x18 (the channel/BW reg) on both paths: confirm the retune actually moved the
+    # synth to `channel`. RF_0x18[7:0] = channel number; [11:10] = BW (0b11 = 20 MHz).
+    rf18_a = sipi.read_rf_reg(t, sipi.RF_PATH_A, 0x18)
+    rf18_b = sipi.read_rf_reg(t, sipi.RF_PATH_B, 0x18)
+    print(f"  RF_0x18 after tune: A=0x{rf18_a:05x} (ch={rf18_a & 0xFF}), "
+          f"B=0x{rf18_b:05x} (ch={rf18_b & 0xFF})  [requested ch {channel}]")
     acc = {k: 0 for k in ("pkts", "good", "crc_err", "icv_err", "c2h", "runt",
                           "zero_len", "truncated")}
     acc["samples"] = []
