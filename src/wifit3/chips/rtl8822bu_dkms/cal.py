@@ -176,6 +176,15 @@ def ra_info_init(t) -> None:
     t.write32(0x04A8, 0x40000000)
 
 
+def cfo_tracking_init(t) -> None:
+    """[SRC] phydm_cfo_tracking_init (phydm_cfotracking.c:367) — CFO-tracking seed.
+
+    All software (crystal-cap caching) except the 8822b/8821c tail: crystal-cap is controlled
+    by WiFi, so `odm_set_mac_reg(R_0x10, 0x40, 1)` sets REG_SYS_SWR_CTRL1[6]. The replay reads
+    0x10 (a SYS reg ≤ 0xFF, so the 0x4E0 page-switch mirror applies — transport handles it)."""
+    sipi.set_bb_reg(t, 0x0010, 0x40, 0x1)             # crystal cap control by WiFi
+
+
 def _config_tx_path(t, tx_path: int, sel_1ss: int, sel_cck: int) -> None:
     """[SRC] phydm_config_tx_path_8822b + the CCK/OFDM TX-path helpers."""
     sipi.set_bb_reg(t, 0x093C, (1 << 19) | (1 << 18), 0x3)     # TX antenna by Nsts
