@@ -29,6 +29,7 @@ ENV_RTL8814_DRIVER = "WIFIT3_RTL8814"
 ENV_RTL8821_DRIVER = "WIFIT3_RTL8821"
 ENV_RTL8812_DRIVER = "WIFIT3_RTL8812"
 ENV_RTL8188_DRIVER = "WIFIT3_RTL8188"
+ENV_RTL8822_DRIVER = "WIFIT3_RTL8822"
 
 _DRIVER_CLASSES: Dict[str, Type[WlanDriver]] | None = None
 
@@ -54,6 +55,7 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
         from wifit3.chips.rtl8821au.driver import RTL8821AUDriver
         from wifit3.chips.rtl8821au_dkms.driver import Rtl8821auDkmsDriver
         from wifit3.chips.rtl8822bu.driver import RTL8822BUDriver
+        from wifit3.chips.rtl8822bu_dkms.driver import Rtl8822buDkmsDriver
         from wifit3.chips.rtw88_8814au.driver import RTL8814AUDriver
 
         _DRIVER_CLASSES = {
@@ -64,7 +66,6 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
             "rt3070": RT3070Driver,
             "rt5372": RT5372Driver,
             "rtl8187": RTL8187Driver,
-            "rtl8822bu": RTL8822BUDriver,
             "mt76x0u": MT76x0UDriver,
             "mt76x2u": MT76x2UDriver,
             "mt7921au": MT7921AUDriver,
@@ -74,6 +75,9 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
             "rtl8812au":  env_or_none(ENV_RTL8812_DRIVER, "mainline", RTL8812AUDriver) or Rtl8812auDkmsDriver,
             "rtl8821au":  env_or_none(ENV_RTL8821_DRIVER, "mainline", RTL8821AUDriver) or Rtl8821auDkmsDriver,
             "rtl8814au":  env_or_none(ENV_RTL8814_DRIVER, "mainline", RTL8814AUDriver) or Rtl8814auDkmsDriver,
+            # 8822bu dkms is the new vendor/PHYDM port (better 2.4 GHz monitor RX); mainline stays the
+            # default until the dkms port is HW-proven to tie/beat it — opt in with WIFIT3_RTL8822=dkms.
+            "rtl8822bu":  env_or_none(ENV_RTL8822_DRIVER, "dkms", Rtl8822buDkmsDriver) or RTL8822BUDriver,
         }
     return _DRIVER_CLASSES
 
