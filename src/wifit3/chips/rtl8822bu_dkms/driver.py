@@ -27,7 +27,7 @@ from wifit3.engine.protocols import DeviceID, ProgressCallback
 from wifit3.wlan.packet import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
-from . import bringup, chan, mac, tx, txpower
+from . import bringup, chan, dm_watchdog, mac, sipi, tx, txpower
 from .rx import iter_frames
 from .transport import Rtl8822buTransport
 
@@ -58,6 +58,8 @@ class Rtl8822buDkmsDriver:
         self._rx_cb: Optional[Callable[[dict], None]] = None
         self._reader: Optional[RxReaderThread] = None
         self._io_lock = asyncio.Lock()
+        self._dig_st: Optional[dm_watchdog.DigState] = None
+        self._watchdog_task: Optional[asyncio.Task] = None
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "Rtl8822buDkmsDriver":
@@ -112,9 +114,36 @@ class Rtl8822buDkmsDriver:
         # MSR no-link, RCR=AAP|APP_PHYSTS|APP_FCS, DRVINFO sniffer-mode, RXFLTMAP0/1/2=0xFFFF.
         await loop.run_in_executor(None, mac.enable_monitor, self.transport)
 
+        # Seed the DIG state from the chip and start the runtime PHYDM watchdog (~2 s cadence): the
+        # dig_init IGI is only a seed, so without this loop the RX gain never tracks the channel's
+        # false-alarm rate. Reads FA counters, adapts IGI (0xC50/0xE50), resets the counters.
+        def _seed_dig(tr):
+            return dm_watchdog.DigState(
+                cur_ig_value=sipi.get_bb_reg(tr, 0x0C50, 0x7F),
+                cck_new_agc=bool(sipi.get_bb_reg(tr, 0x0A9C, 1 << 17)))
+
+        self._dig_st = await loop.run_in_executor(None, _seed_dig, self.transport)
+        self._watchdog_task = loop.create_task(self._watchdog_loop())
+
         if progress_cb:
             progress_cb(1.0, f"Tuned to channel {_DEFAULT_CHANNEL} @ 20 MHz (monitor)")
         return True
+
+    async def _watchdog_loop(self) -> None:
+        """Run `phydm_watchdog` every ~2 s (the vendor cadence) — read the FA counters, adapt the RX
+        IGI, reset the counters. Serialized with `set_channel` via `_io_lock`; control I/O only, never
+        802.11 TX. A transient USB hiccup skips the tick rather than killing the loop."""
+        loop = asyncio.get_running_loop()
+        while True:
+            await asyncio.sleep(2.0)
+            try:
+                async with self._io_lock:
+                    await loop.run_in_executor(
+                        None, dm_watchdog.phydm_watchdog, self.transport, self._dig_st)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.debug("8822bu watchdog tick skipped: %s", e)
 
     # --- RX path -----------------------------------------------------------
     def _read_once(self) -> Optional[bytes]:
@@ -152,6 +181,9 @@ class Rtl8822buDkmsDriver:
         return True
 
     async def close(self) -> None:
+        if self._watchdog_task is not None:
+            self._watchdog_task.cancel()
+            self._watchdog_task = None
         if self._reader is not None:
             await self._reader.stop()
             self._reader = None
