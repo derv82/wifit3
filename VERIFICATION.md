@@ -24,7 +24,7 @@ The matrix below captures *how well wifit3 drives these wireless cards* -- Every
 | [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8822BU](#rtl8822bu) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | B |
 | [MT7610U](#mt7610u) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
-| [RTL8188EUS](#rtl8188eus) | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ | B |
+| [RTL8188EUS](#rtl8188eus) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [RTL8814AU](#rtl8814au) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | C |
 
 ## Per-card notes
@@ -72,7 +72,7 @@ tables below lead with the attack columns and any caveats.
 | Scan | ✅ | 2026-06-16 | Healthy 2.4 GHz — ~6.6 bcn/s on a strong AP, no dead seconds. The old ~1–3/s was the pre-`dc621ce` RX-loop frame drop; fixed. DKMS opt-in measures the same (clean cold A/B). |
 | Handshake | ✅ | 2026-05-19 | Passive 4-way, end-to-end. |
 | PMKID | ✅ | 2026-05-19 | Active harvest — instant. |
-| WEP | ⚠️ | 2026-05-31 | Replay ✅. ChopChop stalled at 9/32 bytes on the *old* weak RX; that RX is fixed now (`dc621ce`) so a re-test should clear it — not yet re-run. |
+| WEP | ✅ | 2026-06-16 | ChopChop 32/32 bytes first try; ARP replay 200+ IVs/s. (The old 9/32 stall was the pre-`dc621ce` weak RX.) |
 | WPS | ✅ | 2026-05-31 | PIN + PBC. |
 | Stress | ⬜ | — | Not run. |
 
