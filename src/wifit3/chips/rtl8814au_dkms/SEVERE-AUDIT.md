@@ -59,6 +59,14 @@
 >    once** (scan + 30-min dual-band soak — the dropout is the **2.4 GHz** one). Do NOT soak-test
 >    before the set is complete + the driver migrated.
 >
+> ### HW smoke (session 3, the connect() airmon-dance change validated)
+> `scan_hw.py --duration 20` (2.4 GHz hop) through the NEW connect() (airmon STA→monitor dance +
+> band-state) reported **51 unique APs / 462 beacons in 20 s**, strongest APs −40…−46 dBm — RX
+> healthy, no regression, breadth well above the ~21-24 DKMS bar. This used the OLD
+> `dig.watchdog_tick` (driver not yet migrated to `watchdog.tick`), so it validates the connect
+> path, NOT the new watchdog members. The 2.4 GHz dropout is a sustained-soak/stability concern
+> (gain drift over ~30 min), which the ported DIG-carry + adaptivity address once migrated + soaked.
+>
 > ### How it was built (reference, steps 1+2 of the original plan — DONE)
 > The current `scripts/rtl8814au_dkms/verify_pcap.py` IS the single-cursor gate (replaced the
 > windowed anti-pattern). Reference shape was `scripts/rtl8188eus_dkms/verify_pcap.py`. Walk the
