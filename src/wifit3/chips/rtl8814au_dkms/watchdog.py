@@ -277,8 +277,12 @@ def _env_mntr(t, st: WatchdogState) -> None:
     _bb32(t, _REG_CCX, 1 << 0, 1)
 
 
-def tick(t, st: WatchdogState) -> None:
-    """One dynamic-check tick: sreset poll + the phydm_watchdog members, in wire order."""
+def tick(t, st: WatchdogState) -> int:
+    """One dynamic-check tick: sreset poll + the phydm_watchdog members, in wire order.
+
+    Mutates ``st`` (carried IGI / CCX state) and returns ``cnt_all`` (the FA count this tick)
+    for the driver's debug log. The DIG IGI after the tick is ``st.cur_ig_value``.
+    """
     _sreset_status_check(t)
     _hw_setting_nbi(t)
     cnt_all, cck_fa = _fa_cnt_statistics(t)
@@ -288,3 +292,4 @@ def tick(t, st: WatchdogState) -> None:
     _adaptivity(t, st)
     _halrf(t, st)
     _env_mntr(t, st)
+    return cnt_all

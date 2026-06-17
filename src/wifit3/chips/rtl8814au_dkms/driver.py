@@ -33,8 +33,9 @@ from .chan import init_tune, set_channel_bw, set_rfe_reg_init
 from .constants import (
     BAND_MAX, BBSWING_DEFAULT, CHANNELS_2G, CHANNELS_5G, PID_RTL8814AU, VID_REALTEK,
 )
-from .dig import WATCHDOG_PERIOD_S, watchdog_tick
 from .dm import init_hal_dm
+from .watchdog import WATCHDOG_PERIOD_S, WatchdogState
+from .watchdog import tick as watchdog_tick
 from .efuse import read_chip_params
 from .firmware import bring_up
 from .mac import hal_init_turn_on, mac_init_misc, phy_mac_config
@@ -77,9 +78,11 @@ class Rtl8814auDkmsDriver:
         self._bb_swing_2g: tuple = (BBSWING_DEFAULT,) * 4
         self._bb_swing_5g: tuple = (BBSWING_DEFAULT,) * 4
         self.is_warm: bool = False
-        # Runtime DIG/AGC watchdog (M3c). Toggleable so a fixed-channel A/B can
-        # isolate the watchdog's effect on RX breadth (scan_hw.py --no-dig).
+        # Runtime phydm watchdog (M3c). Toggleable so a fixed-channel A/B can isolate the
+        # watchdog's effect on RX breadth (scan_hw.py --no-dig). _wd_state carries the IGI +
+        # CCX state across ticks (seeded from InitHalDm at connect).
         self.enable_dig: bool = True
+        self._wd_state: Optional[WatchdogState] = None
         self._rx_cb: Optional[Callable[[dict], None]] = None
         self._reader: Optional[RxReaderThread] = None
         self._dig_task: Optional[asyncio.Task] = None
@@ -135,7 +138,7 @@ class Rtl8814auDkmsDriver:
             phy_rf_config(t, params.rfe_type)                      # PHY_RFConfig8814A
             init_tune(t, _DEFAULT_CHANNEL, params.tx_power, params.tx_power_5g,
                       self._bb_swing_2g, self._bb_swing_5g)  # ch tune + TX power (commits 2.4G)
-            init_hal_dm(t)                                         # InitHalDm DIG/AGC seed
+            igi_seed = init_hal_dm(t)                              # InitHalDm DIG/AGC seed (IGI)
             set_rfe_reg_init(t, params.rfe_type)                   # PHY_SetRFEReg8814A(TRUE)
             hal_init_turn_on(t, self.mac_address)                  # turn-on tail + MAC addr
             # airmon STA->monitor dance — reach monitor the way the vendor does, not via a
@@ -145,9 +148,13 @@ class Rtl8814auDkmsDriver:
                                   self._bb_swing_2g, self._bb_swing_5g, current_band=BAND_MAX)
             set_sta_opmode(t, self.mac_address)                   # hw_var_set_opmode(STATION)
             enter_monitor(t)                                       # hw_var_set_opmode(MONITOR)
-            return band
+            return band, igi_seed
 
-        self._current_band = await loop.run_in_executor(None, _phy_config, self.transport)
+        self._current_band, igi_seed = await loop.run_in_executor(
+            None, _phy_config, self.transport)
+        # Seed the runtime watchdog's carried state from the InitHalDm DIG seed (cur_ig_value
+        # and the CCX nhm_igi both start at the AGC-default IGI).
+        self._wd_state = WatchdogState(cur_ig_value=igi_seed, nhm_igi=igi_seed)
         self._channel = _DEFAULT_CHANNEL
 
         # M3b-3a: start the bulk-IN RX reader. It keeps a blocking bulk read posted
@@ -170,19 +177,25 @@ class Rtl8814auDkmsDriver:
         return True
 
     async def _dig_watchdog(self) -> None:
-        """Periodic DIG watchdog (M3c). Serialized with set_channel via _io_lock."""
+        """Periodic phydm watchdog (M3c). Serialized with set_channel via _io_lock.
+
+        Runs the full dynamic-check tick (sreset poll + phydm_watchdog members: FA-stats,
+        DIG, adaptivity, CCX env-monitor) carrying ``_wd_state`` across fires, so the IGI +
+        EDCCA thresholds adapt to the live RF environment instead of freezing at the seed.
+        The TX-power thermal-delta correction is a no-op here (RX-irrelevant).
+        """
         loop = asyncio.get_running_loop()
+        st = self._wd_state
         try:
             while True:
                 await asyncio.sleep(WATCHDOG_PERIOD_S)
                 async with self._io_lock:
-                    tick = await loop.run_in_executor(None, watchdog_tick, self.transport)
-                logger.debug("RTL8814AU DIG: IGI=0x%02x fa=%d (ofdm=%d cck=%d)",
-                             tick.igi, tick.fa_cnt, tick.ofdm_fa, tick.cck_fa)
+                    fa = await loop.run_in_executor(None, watchdog_tick, self.transport, st)
+                logger.debug("RTL8814AU watchdog: IGI=0x%02x fa=%d", st.cur_ig_value, fa)
         except asyncio.CancelledError:
             pass
         except Exception:  # noqa: BLE001 — a watchdog fault must not kill RX
-            logger.exception("RTL8814AU DIG watchdog stopped on error")
+            logger.exception("RTL8814AU phydm watchdog stopped on error")
 
     # --- RX path (M3b-3a) --------------------------------------------------
     def _read_once(self) -> Optional[bytes]:
