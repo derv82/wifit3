@@ -18,7 +18,7 @@ from __future__ import annotations
 USB_IDS_MT76X0U: list[tuple[int, int, str]] = [
     (0x148F, 0x7610, "MediaTek MT7610U reference"),
     (0x13B1, 0x003E, "Linksys AE6000"),
-    (0x0E8D, 0x7610, "MediaTek MT7610U (Alfa AWUS036ACM/ACHM, Sabrent NTWLAC, etc.)"),
+    (0x0E8D, 0x7610, "MediaTek MT7610U (Alfa AWUS036ACHM)"),
     (0x7392, 0xa711, "Edimax 7711mac"),
     (0x7392, 0xb711, "Edimax / Elecom"),
     (0x148F, 0x761a, "TP-Link TL-WDN5200"),

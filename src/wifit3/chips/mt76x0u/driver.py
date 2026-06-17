@@ -54,11 +54,7 @@ FW_FILE_FALLBACK = ASSETS_DIR / "mt7610u_linux-firmware.bin"
 
 
 class MT76x0UDriver:
-    """Driver for MT7610U-family USB cards (Alfa AWUS036ACM mt7610u variant,
-    Sabrent NTWLAC, ...). WIRE-verified on 0e8d:7610.
-
-    M1 only does enough to upload firmware and confirm FW_READY.
-    """
+    """Driver for MT7610U-family USB cards (e.g. Alfa AWUS036ACHM). WIRE-verified on 0e8d:7610."""
 
     SUPPORTED_IDS = [
         DeviceID(vid, pid, desc) for (vid, pid, desc) in USB_IDS_MT76X0U
