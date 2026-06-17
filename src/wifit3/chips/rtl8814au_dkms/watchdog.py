@@ -26,6 +26,7 @@ from .bb import _set_reg_masked as _bb32
 from .dig import (
     _IGI_MASK, _IGI_MAX, _IGI_MIN, _REG_IGI, _new_igi_by_fa, _reset_fa_cnt,
 )
+from .rf import set_rf_masked
 
 WATCHDOG_PERIOD_S = 2.0        # kernel dynamic-check cadence
 
@@ -71,11 +72,21 @@ _LED_GPO_VAL = (1 << 8) | (1 << 9) | (1 << 13) | (1 << 14)     # gpo output valu
 _LED_GPI_VAL = (1 << 0) | (1 << 1) | (1 << 5) | (1 << 6)       # gpi value (cleared on)
 
 
+# halrf_watchdog -> phydm_rf_watchdog -> odm_txpowertracking_check [SRC halphyrf_ce.c:1151]:
+# the thermal-meter read of RF reg 0x42 (R 0x2908 path-A readback) paired with a re-trigger
+# write (W 0xc90); halrf_dpk_track is a no-op on 8814A. TX-thermal compensation, RX-irrelevant,
+# but on the wire each tick. The first call runs the txpwrtrack init (a no-change RMW of 0x440).
+_REG_THERMAL_RF = 0x42         # RF_T_METER; read via the path-A RF-readback window (0x2908)
+_THERMAL_TRIGGER = 0x30000     # RF 0x42[17:16] = 3 re-arms the meter for the next measurement
+_REG_TXPWRTRACK_INIT = 0x0440  # BB reg touched once on the first txpwrtrack init (no change)
+
+
 @dataclass
 class WatchdogState:
     """State carried across watchdog ticks (the parts the chip does not re-encode in a read)."""
     cur_ig_value: int = _IGI_MIN   # phydm_dig cur_ig_value; SEED from InitHalDm's _dig_init read
     led_on: bool = True            # SwLed starts ON; the blink strictly alternates each fire
+    txpwrtrack_init: bool = False  # odm_txpowertracking_check is_txpowertracking_init first-run
 
 
 def led_blink(t, st: WatchdogState) -> None:
@@ -168,6 +179,21 @@ def _adaptivity(t, st: WatchdogState) -> None:
     _bb32(t, _REG_EDCCA, 0xFF00, th_h2l & 0xFF)    # MASKBYTE1 = H2L
 
 
+def _halrf(t, st: WatchdogState) -> None:
+    """[SRC] halrf_watchdog -> odm_txpowertracking_check — read + re-trigger the RF thermal meter.
+
+    On the first call the txpwrtrack init touches a BB reg once (no change here); every call
+    reads RF 0x42 (the path-A readback at 0x2908) and re-arms it (RF 0x42[17:16]=3 -> 0xc90).
+    The thermal value drives no TX-power change while temperature is steady, so only this
+    read/re-trigger reaches the wire.
+    """
+    if not st.txpwrtrack_init:
+        v = t.read32(_REG_TXPWRTRACK_INIT)
+        t.write32(_REG_TXPWRTRACK_INIT, v)             # first-run init: no-change RMW
+        st.txpwrtrack_init = True
+    set_rf_masked(t, "a", _REG_THERMAL_RF, _THERMAL_TRIGGER, 0x3)
+
+
 def tick(t, st: WatchdogState) -> None:
     """One dynamic-check tick: sreset poll + the phydm_watchdog members, in wire order."""
     _sreset_status_check(t)
@@ -177,3 +203,4 @@ def tick(t, st: WatchdogState) -> None:
     _reset_fa_cnt(t)
     _dig(t, st, cnt_all)
     _adaptivity(t, st)
+    _halrf(t, st)
