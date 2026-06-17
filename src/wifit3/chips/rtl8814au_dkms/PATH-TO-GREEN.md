@@ -22,6 +22,31 @@ uv run python scripts/diag/beacon_watch.py --bssid <ref> --channel 1 --duration 
 - Today this port hears the reference AP **worst of the room (~2.6–3/s)** while the *aggregate*
   looks fine (~26–32/s). **Aggregate / best-AP / total-AP-count are lies. Ignore them entirely.**
 
+## Step 0 — BASELINE FIRST (before you read a line of code)
+
+Get two numbers in hand so the gap is concrete and you have a falsifiable target. Record both in
+the coverage ledger.
+
+1. **Our port, live** (the failure baseline):
+   ```
+   uv run python scripts/diag/beacon_watch.py --bssid <ref> --channel 1 --duration 60
+   ```
+   `<ref>` = the 2.4 GHz reference BSSID from your loaded memory `feedback_beacon_rate_bar.md`.
+   The card was just plugged in, so this first run is **cold**. Expect ~2.6–3/s, reference AP
+   ranked near-last of the room.
+
+2. **The kernel, from the capture** (the answer-key target — no hardware, no replug):
+   ```
+   uv run python scripts/diag/beacon_watch.py --pcap usb_dumps_new/captures_rtl8814au/capture-1.pcap --bssid <ref>
+   ```
+   Same driver you're porting, same AP. Confirms the reference AP is in the capture and shows the
+   rate the kernel achieved — your target. (The capture hops channels, so read the ch-1 dwell, not
+   the diluted whole-run mean.)
+
+You are chasing #1 up to #2. **Re-run #1 (live) after every fix** — it is the only signal that
+counts. (Live runs after the first are warm; the offline `--pcap` state-diff is your
+replug-independent primary tool.)
+
 ## What is already established — do NOT re-investigate these (all disproven)
 
 - **NOT the environment** — the known-good card gets 9.6/s in the same spot, same minute.
