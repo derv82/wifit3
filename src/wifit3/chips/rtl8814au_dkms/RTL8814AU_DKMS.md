@@ -38,10 +38,23 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
       - **Fix:** decode on the reader thread (`_read_once` returns parsed frames; the loop
         only fans them). Full driver path (DIG on) went **mean 3.1/s → 6.6–7.2/s, median
         7–8, max 10**, now matching the tight-loop ceiling in the same RF window. [HW]
-      - **Absolute ≥8/s confirmation needs a COLD card.** Across this session's runs the
-        single-thread ceiling decayed 8.9 → 6.5/s as the card was hammered without a replug
-        (the documented warm-state decay); the fixed driver tracks that ceiling. A cold
-        replug + `beacon_watch --bssid <ref> --channel 1 --duration 60` should read ≥8/s.
+      - **Cross-card baselines (same AP, same room, fresh-plugged):** MT7921AU **9.4/s**
+        (median 10, stdev 0.7), RTL8821AU **7.8/s** (median 8) — both via the *same* wifit3
+        `RxReaderThread` architecture, so the architecture is not the limit. 8814AU **cold
+        6.3/s** at the first replug, decaying to **2.6/s** after a session of hammering it
+        without a replug (severe warm-state decay — the [[feedback_beacon_rate_bar]] confound).
+      - **A RESIDUAL 8814AU-specific gap likely remains (vs the 8821AU's 7.8/s), but its cause
+        is NOT RX volume/processing — that is fully ruled out:** dropping the crc-error flood
+        (`--no-crc`, −25% bulk bytes) did not move the beacon rate; the data/ctrl flood swung
+        3× (422→1293 frames/s) while the beacon rate held ~4.6–4.9/s; N concurrent reader
+        threads did not raise drain (sync reads serialize). So whatever remains is the chip
+        delivering ~half the reference AP's beacons, *independent of host load* — points at
+        warm-state decay and/or an RX-sensitivity/aggregation difference, NOT the delivery path.
+      - **Next step (needs a FRESH-COLD 8814AU, left plugged, minimal bring-up cycling):** a
+        clean 60s `beacon_watch` vs the 8821AU baseline in the same minutes, to tell a real
+        residual chip gap from warm-state decay. The structural 8814AU-vs-8821AU difference to
+        probe: the 8814AU USB-aggregates (multi-frame bulk buffers) while the 8821AU does not
+        (1 frame/read) — but verify against source before assuming it matters.
 - [x] **2.4 GHz per-channel spur/NBI — DONE.** `chan._spur_nbi_2g` ports
       `phydm_spur_nbi_setting_8814a` [SRC phydm_rtl8814a.c:47] + `phydm_nbi_setting`: on
       2.4 GHz ch 4-8 (spur 2440 MHz) and ch14 (2480) it computes the per-channel NBI notch
