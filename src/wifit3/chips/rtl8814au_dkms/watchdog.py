@@ -99,12 +99,29 @@ _THERMAL_TRIGGER = 0x30000     # RF 0x42[17:16] = 3 re-arms the meter for the ne
 _REG_TXPWRTRACK_INIT = 0x0440  # BB reg touched once on the first txpwrtrack init (no change)
 
 
+# phydm_cck_pd_th + phydm_cckpd_type1 [SRC phydm_cck_pd.c:1019/78] — CCK packet-detect
+# threshold adaptation (the 8814A is CCK_PD_IC_TYPE1, ODM_RTL8814A in phydm_cck_pd.h:43).
+# Each tick folds the CCK false-alarm count into a moving average and, in the no-link
+# (always-monitor) case, raises the CCK-PD threshold to LV_1 when the channel is noisy
+# (cck_fa_ma > 1000) so the over-sensitive LV_0 detector is not swamped by CCK false
+# alarms (which makes it miss real strong CCK beacons), dropping back to LV_0 when quiet
+# (< 500); the 500..1000 band holds (hysteresis). 0xa0a is written only on a level change.
+_REG_CCK_PD = 0x0A0A
+_CCK_FA_MA_RESET = 0xFFFFFFFF
+_CCK_PD_LV0, _CCK_PD_LV1 = 0, 1
+_CCK_PD_TH = {_CCK_PD_LV0: 0x40, _CCK_PD_LV1: 0x83}   # phydm_set_cckpd_lv_type1 LV_0/LV_1
+
+
 @dataclass
 class WatchdogState:
     """State carried across watchdog ticks (the parts the chip does not re-encode in a read)."""
     cur_ig_value: int = _IGI_MIN   # phydm_dig cur_ig_value; SEED from InitHalDm's _dig_init read
     led_on: bool = True            # SwLed starts ON; the blink strictly alternates each fire
     txpwrtrack_init: bool = False  # odm_txpowertracking_check is_txpowertracking_init first-run
+    # phydm_cckpd: CCK-PD moving average + current level. InitHalDm commits LV_0 (0xa0a=0x40)
+    # and leaves the MA reset, so the carried state starts there.
+    cck_fa_ma: int = _CCK_FA_MA_RESET
+    cck_pd_lv: int = _CCK_PD_LV0
     # CCX (env_mntr) carried state. phydm_nhm_init leaves nhm_igi at the seed IGI, the include
     # fields at *_INIT (≠ the watchdog's params, so they re-set once), nhm_period 0, clm_period
     # 0xffff. SEED nhm_igi from InitHalDm alongside cur_ig_value.
@@ -188,6 +205,34 @@ def _dig(t, st: WatchdogState, cnt_all: int) -> None:
         for reg in _REG_IGI:
             _bb32(t, reg, _IGI_MASK, new_igi)      # odm_write_dig per-path RMW
         st.cur_ig_value = new_igi
+
+
+def _cck_pd(t, st: WatchdogState, cck_fa: int) -> None:
+    """[SRC] phydm_cck_pd_th + phydm_cckpd_type1 (no-link) — adapt the CCK-PD threshold.
+
+    Fold this tick's CCK false-alarm count into the moving average, then in the no-link
+    (always-monitor) case raise CCK-PD to LV_1 (0xa0a=0x83) when the channel is noisy
+    (cck_fa_ma > 1000) and drop to LV_0 (0x40) when quiet (< 500); 500..1000 holds the
+    current level. 0xa0a is written only on a level change, which also resets the MA.
+    Without this, CCK-PD is stuck at the over-sensitive LV_0 seed and a busy 2.4 GHz
+    channel swamps the CCK detector with false alarms — it then misses real CCK beacons
+    (e.g. a 1 Mbps-beaconing AP), the dominant 2.4 GHz RX deficit. [HW] raising LV_0->LV_1
+    ~doubled reference-AP CCK reception.
+    """
+    if st.cck_fa_ma == _CCK_FA_MA_RESET:
+        st.cck_fa_ma = cck_fa
+    else:
+        st.cck_fa_ma = (st.cck_fa_ma * 3 + cck_fa) >> 2
+    if st.cck_fa_ma > 1000:
+        lv = _CCK_PD_LV1
+    elif st.cck_fa_ma < 500:
+        lv = _CCK_PD_LV0
+    else:
+        return                                 # hysteresis band: keep the current level
+    if lv != st.cck_pd_lv:
+        t.write8(_REG_CCK_PD, _CCK_PD_TH[lv])
+        st.cck_pd_lv = lv
+        st.cck_fa_ma = _CCK_FA_MA_RESET        # phydm_set_cckpd_lv_type1 resets the MA
 
 
 def _adaptivity(t, st: WatchdogState) -> None:
@@ -289,6 +334,7 @@ def tick(t, st: WatchdogState) -> int:
     _get_dbg_port_info(t)
     _reset_fa_cnt(t)
     _dig(t, st, cnt_all)
+    _cck_pd(t, st, cck_fa)
     _adaptivity(t, st)
     _halrf(t, st)
     _env_mntr(t, st)
