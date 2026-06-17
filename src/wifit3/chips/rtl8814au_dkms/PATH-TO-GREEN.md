@@ -1,23 +1,26 @@
 # RTL8814AU_DKMS — Path to Green (autonomous agent runbook)
 
-> ## RESOLVED — the hypothesis below (init/AGC saturation) was WRONG. Root cause found + fixed.
-> The reference-AP deficit was **RX delivery, not the chip bring-up.** `iter_frames` + the 802.11
-> parse ran on the asyncio event loop; under the 8814AU's heavy 4T4R monitor frame stream the loop
-> held the GIL long enough to gap the reader's next bulk read → chip RX-FIFO overflow → beacons
-> dropped before delivery. The strong near AP showed the gain-too-high *look* (it drops while loud
-> far APs stay fine) but the cause was delivery. **Fix (committed):** decode on the reader thread
-> (`driver._read_once` returns parsed frames; the loop only fans them). Live: full driver path went
-> **mean 3.1/s → 6.6–7.2/s, median 7–8, max 10** on the reference AP, now matching the tight-loop
-> ceiling. How it was proven (every saturation suspect cleared): see the top entry of
-> **`RTL8814AU_DKMS.md` → Potential Known Gaps** + the diagnostic `scripts/rtl8814au_dkms/
-> rx_saturation_probe.py` (init-only tight-loop read holds the AP at 8–9/s, pwdb never rails).
+> ## RESOLVED — the init/AGC-saturation hypothesis below was WRONG. Root cause = CCK packet-detect.
+> The reference AP (`NETGEAR2G`) beacons **100% CCK (1 Mbps)**. The real bug: the runtime **CCK-PD
+> adaptation was unported**. Init seeds CCK-PD at the most-sensitive LV_0 (0xa0a=0x40); on a busy
+> 2.4 GHz channel that over-sensitive detector is swamped by CCK false alarms and **misses the real
+> strong CCK beacons** — the strong AP reads "worst of the room" (the saturation *look*) while OFDM
+> neighbours are fine. The kernel raises CCK-PD to LV_1 (0x83) when `cck_fa_ma>1000`
+> (`phydm_cck_pd_th`→`phydm_cckpd_type1`, 8814A = `CCK_PD_IC_TYPE1`). [HW] forcing LV_0→LV_1
+> **~doubled** reference-AP reception (3.5→6.0/s). **Fixes (committed):** port the CCK-PD adaptation
+> into `watchdog._cck_pd` (+ seed the MA from the first real sample so LV_1 is hit ~4 s in, not ~8);
+> plus two RX-path fixes — decode on the reader thread (off the GIL-bound loop) and start the reader
+> BEFORE `enter_monitor` (kernel URB order). **Result: ~3/s ranked #6–8 → 6.7/s median 7, ranked #1**
+> (strong AP now heard best). Full chain + what was ruled out IN SOURCE: `RTL8814AU_DKMS.md` →
+> Potential Known Gaps (top entry). Diagnostics: `scripts/rtl8814au_dkms/{rx_saturation_probe,
+> cck_state_diff,dump_tune_regs}.py`.
 >
-> **Remaining:** the absolute ≥8/s headline needs a COLD card. This session's single-thread ceiling
-> decayed 8.9 → 6.5/s as the card was hammered without a replug (documented warm-state decay); the
-> fixed driver tracks that ceiling. Replug cold, then
-> `uv run python scripts/diag/beacon_watch.py --bssid <ref> --channel 1 --duration 60` to confirm.
-> The original runbook (kept below for history) sent agents into the init/tune path — **don't**;
-> that path is faithful (`verify_pcap` green through init+tune+airmon, `rx_saturation_probe` 8–9/s).
+> **REMAINING (open): ~6.7 vs MT7921 8.1/s** (same room, both USB2). Not gain, not delivery, not USB
+> mode, not the cut hardcode (all ruled out in source). Likely the residual ~4 s CCK-PD ramp + a
+> busy-channel ceiling, or a smaller CCK gain / per-path-B item. CCK-PD LV_2 does not beat LV_1, so
+> it is not "raise the threshold further." **Do NOT chase the init/tune path** — faithful in source.
+> **Do NOT trust `verify_pcap` for direction** — it walks only the ops it chooses; verify in vendor
+> source. The original runbook is kept below for history only.
 
 > **NEXT AGENT: READ THIS FIRST. You are autonomous for the entire session.**
 > Do **not** stop to report partial findings. Do **not** ask the user questions. Do **not**

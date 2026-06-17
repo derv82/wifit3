@@ -13,48 +13,43 @@ Sources of truth: the vendor tree at
 file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
 
 ## Potential Known Gaps (audit before trusting any milestone)
-- [x] **Reference-AP RX deficit — ROOT CAUSE FOUND + FIXED (RX delivery, NOT init/AGC).**
-      The long-standing "hears the 2.4 GHz reference AP worst of the room (~3/s) while the
-      aggregate looks fine" symptom was diagnosed end-to-end and is **not** front-end
-      saturation, a wrong AGC/RF/IGI value, an efuse-derived value, or the DIG watchdog —
-      every one of those was tested and cleared:
-      - **Init/tune is faithful.** A from-scratch bring-up read in a tight single-thread loop
-        (`scripts/rtl8814au_dkms/rx_saturation_probe.py`) holds the fixed reference AP at
-        **8–9 beacons/s, #1-ranked, crc ~3%, pwdb never railing** (max ~150–210, not 253),
-        matching the kernel's 8.7/s from the capture. So the init path the runbook suspected
-        is correct; the chip + our bring-up hear the AP fine. [HW]
-      - **Not the DIG watchdog.** With the watchdog disabled (`--no-dig`) the rate was
-        unchanged (3.1 → 3.3/s before the fix); inline watchdog ticks in the probe (IGI
-        climbing 0x28→0x2a) left the rate at 8.6/s. The watchdog is RX-neutral. [HW]
-      - **Not the chip delivering fewer frames.** Our reader pulls *more* bulk-IN bytes/s
-        than the kernel did in the capture (≈140–1240 KiB/s vs the kernel's 41–59 KiB/s),
-        with zero host-side cap drops and zero `iter_frames` garbage (FC version bits all 0).
-      - **The cause was RX *delivery*.** `iter_frames` + the 802.11 parse ran on the asyncio
-        event loop (`driver._dispatch`). The 8814AU in monitor mode (4T4R) delivers a heavy
-        frame stream (thousands of data/control frames/s), so under load the loop held the
-        GIL long enough to gap the reader's next bulk read → chip RX-FIFO overflow → beacons
-        dropped before delivery. The strong near AP showed the *gain-too-high look* (it drops
-        while loud far APs stay fine) but the mechanism was delivery, not gain.
-      - **Fix:** decode on the reader thread (`_read_once` returns parsed frames; the loop
-        only fans them). Full driver path (DIG on) went **mean 3.1/s → 6.6–7.2/s, median
-        7–8, max 10**, now matching the tight-loop ceiling in the same RF window. [HW]
-      - **Cross-card baselines (same AP, same room, fresh-plugged):** MT7921AU **9.4/s**
-        (median 10, stdev 0.7), RTL8821AU **7.8/s** (median 8) — both via the *same* wifit3
-        `RxReaderThread` architecture, so the architecture is not the limit. 8814AU **cold
-        6.3/s** at the first replug, decaying to **2.6/s** after a session of hammering it
-        without a replug (severe warm-state decay — the [[feedback_beacon_rate_bar]] confound).
-      - **A RESIDUAL 8814AU-specific gap likely remains (vs the 8821AU's 7.8/s), but its cause
-        is NOT RX volume/processing — that is fully ruled out:** dropping the crc-error flood
-        (`--no-crc`, −25% bulk bytes) did not move the beacon rate; the data/ctrl flood swung
-        3× (422→1293 frames/s) while the beacon rate held ~4.6–4.9/s; N concurrent reader
-        threads did not raise drain (sync reads serialize). So whatever remains is the chip
-        delivering ~half the reference AP's beacons, *independent of host load* — points at
-        warm-state decay and/or an RX-sensitivity/aggregation difference, NOT the delivery path.
-      - **Next step (needs a FRESH-COLD 8814AU, left plugged, minimal bring-up cycling):** a
-        clean 60s `beacon_watch` vs the 8821AU baseline in the same minutes, to tell a real
-        residual chip gap from warm-state decay. The structural 8814AU-vs-8821AU difference to
-        probe: the 8814AU USB-aggregates (multi-frame bulk buffers) while the 8821AU does not
-        (1 frame/read) — but verify against source before assuming it matters.
+- [x] **Reference-AP RX deficit — ROOT CAUSE FOUND + FIXED (CCK packet-detection adaptation).**
+      Symptom: the 2.4 GHz reference AP (`NETGEAR2G`, beacons 100% **CCK** at 1 Mbps) was heard
+      *worst of the room* (~3/s, ranked #6–8) while loud OFDM neighbours were fine and the
+      aggregate looked healthy — the classic "gain too high / saturation" *look*. It is NOT
+      gain/saturation. The chain (all hardware-verified, all source-verified — `verify_pcap`
+      green is necessary-not-sufficient and was NOT relied on for direction):
+      - **ROOT CAUSE — CCK-PD runtime adaptation was unported (the old G1 gap).** The 8814A is
+        `CCK_PD_IC_TYPE1` [phydm_cck_pd.h:43], so CCK packet-detect threshold lives at 0xa0a.
+        Init seeds the most-sensitive level **LV_0 (0xa0a=0x40)**; the kernel's
+        `phydm_cck_pd_th`→`phydm_cckpd_type1` then **adapts** it: fold `cnt_cck_fail` into
+        `cck_fa_ma=(ma*3+fa)>>2`, and no-link raise to **LV_1 (0x83)** when `cck_fa_ma>1000`
+        (drop to LV_0 <500, hysteresis 500–1000). Our port seeded LV_0 and never adapted, so on
+        a busy 2.4 GHz channel the over-sensitive CCK detector is **swamped by CCK false alarms
+        and misses the real strong CCK beacons**. [HW] forcing 0xa0a LV_0→LV_1 **~doubled**
+        reference-AP CCK reception (3.5→6.0/s). Ported into `watchdog._cck_pd` (carries
+        `cck_fa_ma`+`cck_pd_lv`); also seed the MA from the first *real* sample (skip the
+        cold-start `cck_fa=0`) so LV_1 is reached ~4 s in, not ~8 s (Focus shows beacons fast).
+      - **Two supporting RX-path fixes:** (1) decode moved off the asyncio loop onto the reader
+        thread (`_read_once` returns parsed frames) — the loop held the GIL and gapped reads
+        under the 4T4R monitor flood; (2) start the RX reader **before** `enter_monitor` opens
+        the accept-all RCR (kernel order: post URBs, then write RCR), matching `rtl8821au_dkms`.
+      - **Result:** full driver path went **~3/s ranked #6–8 → 6.7/s, median 7, ranked #1**
+        (beats every neighbour), zero dead seconds. The strong-AP inversion is gone. [HW]
+      - **Ruled out IN SOURCE (not via the gate):** init/tune faithful; mis-tuning (live regs =
+        20 MHz/ch1); IQK/LCK/pwr-track (`/*commented out*/` for 8814A); RxGainOffset /
+        `phy_ModifyInitialGain` (applied only if `BackUp_IG_REG!=0`, set MP-only → no-op);
+        cut hardcode 15-vs-real-1 (walking the real tables emits byte-identical writes — they
+        gate on rfe only); USB mode (card + capture both **USB2**, our USB2 burst/agg path is
+        correct — but the **USB3 branch is unported**, a latent gap if it ever links USB3);
+        RX aggregation mode/threshold + `_InitDriverInfoSize` (present, faithful). The
+        earlier "warm-state decay" and "RX-delivery-is-the-whole-cause" theories were
+        confounded by a laptop flooding ch1 (now moved to 5 GHz) — discard them.
+      - **RESIDUAL (open, ~6.7 vs MT7921 8.1/s, both same room/USB2):** likely the ~4 s CCK-PD
+        ramp + busy-channel ceiling, or a smaller CCK gain/per-path-B item. CCK-PD LV_2 (0xcd)
+        does not beat LV_1 in the sweep, so it is not "raise the threshold more." Diagnostics:
+        `rx_saturation_probe.py` (`--cck-pd` sweep, per-AP CCK/OFDM, `--dig` cck_pd_lv trace),
+        `cck_state_diff.py`, `dump_tune_regs.py`.
 - [x] **2.4 GHz per-channel spur/NBI — DONE.** `chan._spur_nbi_2g` ports
       `phydm_spur_nbi_setting_8814a` [SRC phydm_rtl8814a.c:47] + `phydm_nbi_setting`: on
       2.4 GHz ch 4-8 (spur 2440 MHz) and ch14 (2480) it computes the per-channel NBI notch
