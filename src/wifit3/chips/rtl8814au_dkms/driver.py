@@ -149,7 +149,10 @@ class Rtl8814auDkmsDriver:
             band = set_channel_bw(t, _DEFAULT_CHANNEL, params.tx_power, params.tx_power_5g,
                                   self._bb_swing_2g, self._bb_swing_5g, current_band=BAND_MAX)
             set_sta_opmode(t, self.mac_address)                   # hw_var_set_opmode(STATION)
-            enter_monitor(t)                                       # hw_var_set_opmode(MONITOR)
+            # enter_monitor (the accept-all monitor RCR — the RX gate) is intentionally NOT
+            # here. It runs only after the bulk-IN reader is already draining (below), so the
+            # chip's RX FIFO is never left filling with no host read posted. Opening the gate
+            # with no reader overflows the FIFO at startup and leaves RX degraded.
             return band, igi_seed
 
         self._current_band, igi_seed = await loop.run_in_executor(
@@ -159,13 +162,19 @@ class Rtl8814auDkmsDriver:
         self._wd_state = WatchdogState(cur_ig_value=igi_seed, nhm_igi=igi_seed)
         self._channel = _DEFAULT_CHANNEL
 
-        # M3b-3a: start the bulk-IN RX reader. It keeps a blocking bulk read posted
-        # on a dedicated thread (off the event loop, so the TUI can't starve RX);
-        # each aggregated buffer is split into 802.11 frames and fanned to the rx
-        # callback. RSSI is a placeholder until the PHY-status decode (M3b-3b).
+        # M3b-3a: start the bulk-IN RX reader BEFORE the monitor RX gate opens. It keeps a
+        # blocking bulk read posted on a dedicated thread (off the event loop, so the TUI
+        # can't starve RX); each aggregated buffer is split into 802.11 frames and fanned to
+        # the rx callback. Reads before enter_monitor just time out harmlessly.
         self._reader = RxReaderThread(
             loop, self._read_once, self._dispatch, name="8814au-dkms-rx")
         self._reader.start()
+
+        # Now open the monitor RX gate (accept-all RCR + RXFLTMAP). The reader is already
+        # draining the bulk-IN pipe, so the chip RX FIFO has a host read posted the moment
+        # frames are accepted — the kernel's order (post URBs, then write the RCR). Doing the
+        # reverse overflows the FIFO at startup and leaves 2.4 GHz RX degraded.
+        await loop.run_in_executor(None, enter_monitor, self.transport)
 
         # M3c: the runtime phydm DIG/AGC watchdog — adapt the M3a IGI seed to the
         # live false-alarm rate every ~2 s (the kernel cadence). RX-side only.
