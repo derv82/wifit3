@@ -23,9 +23,9 @@ The matrix below captures *how well wifit3 drives these wireless cards* -- Every
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [MT7610U](#mt7610u) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8822BU](#rtl8822bu) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | B |
+| [RTL8822BU](#rtl8822bu) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | C |
 | [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | B |
-| [RTL8814AU](#rtl8814au) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | C |
+| [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | D |
 
 ## Per-card notes
 
@@ -120,19 +120,20 @@ tables below lead with the attack columns and any caveats.
 ### RTL8822BU
 *TP-Link Archer T3U Plus v1 · 2.4 / 5 GHz*
 
-> **Default = vendor/DKMS port** ([RTL8822BU_DKMS.md](src/wifit3/chips/rtl8822bu_dkms/RTL8822BU_DKMS.md));
-> the table below is that port. It fixes mainline's weak 2.4 GHz monitor RX (a wrong RX antenna mux):
-> ~2× the 2.4 GHz breadth of mainline over a 30-min soak, 5 GHz tied. `WIFIT3_RTL8822=mainline` opts back.
+> **Default = vendor/DKMS port** ([RTL8822BU_DKMS.md](src/wifit3/chips/rtl8822bu_dkms/RTL8822BU_DKMS.md);
+> `WIFIT3_RTL8822=mainline` opts back). The table below is that port. DKMS earns the default on
+> *breadth* — it hears ~2× the 2.4 GHz APs of mainline (a wrong-RX-antenna-mux fix), 5 GHz tied.
+> But neither port handles a strong near AP: both saturate on it and tie at ~2.6 bcn/s (see Scan).
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ⚠️ | 2026-06-16 | 5 GHz rock-solid at the ~9.8/s ceiling. 2.4 GHz much improved over mainline (6.5 vs 4.9 bcn/s, no dead seconds) but still below the 8–10/s bar — feels weak on 2.4. |
+| Scan | ❌ | 2026-06-17 | Fails the reference bar. Against the strongest near AP (a known-good MT7921AU holds it at 9.6 bcn/s flat, #1-ranked, same spot) the 8822bu hears it *worst* at ~2.6 bcn/s — **both ports tied** (DKMS 2.6 / mainline 2.7). mainline's phy_status logged the cause: `pwdb=253 … chip is saturating` — RX front-end overload on the strong signal. DKMS does hear ~2× mainline's breadth (~56 vs ~27/s, 10 vs 5 APs) — why it's the default, and why the old best-AP "6.5 vs 4.9" read ⚠️ — but breadth ≠ the reference AP. 5 GHz was solid at the ceiling (not re-tested this round). |
 | Deauth | ✅ | 2026-06-16 | Dropped a real laptop + phone off the AP. |
 | Handshake | ✅ | 2026-06-16 | Deauth → 4-way; full M1–M4. |
 | PMKID | ✅ | 2026-06-16 | Passive capture + extract. |
 | WEP | ✅ | 2026-06-16 | ChopChop + ARP replay (~225 IVs/s avg). |
 | WPS | ✅ | 2026-06-16 | PBC → PSK; PIN → M4 (first-half-wrong). |
-| Stress | ✅ | 2026-06-16 | 30-min 38-ch soak: no degradation (106→110 active BSSIDs/bucket), 2.4 GHz held 58–72 APs/bucket (~2× mainline), no dropout or wedge. |
+| Stress | ✅ | 2026-06-16 | Breadth-stability: 30-min 38-ch soak, no degradation (106→110 active BSSIDs/bucket), 2.4 GHz held 58–72 APs/bucket (~2× mainline), no dropout or wedge. (Measures discovery breadth over time, not the strong-near-AP weakness — see Scan.) |
 
 → [RTL8822BU_DKMS.md](src/wifit3/chips/rtl8822bu_dkms/RTL8822BU_DKMS.md) (default) · [RTL8822BU.md](src/wifit3/chips/rtl8822bu/RTL8822BU.md) (mainline)
 
@@ -140,18 +141,19 @@ tables below lead with the attack columns and any caveats.
 *ALFA AWUS1900 · 2.4 / 5 GHz · 4T4R*
 
 > **Default = vendor/DKMS port** ([RTL8814AU_DKMS.md](src/wifit3/chips/rtl8814au_dkms/RTL8814AU_DKMS.md);
-> `WIFIT3_RTL8814=mainline` falls back). DKMS fixes the mainline 2.4 GHz signal
-> miscalibration (−45 dBm vs mainline's −81), but 2.4 GHz RX still drops out
-> intermittently under sustained hopping (see Scan/Stress). The table below is that port.
+> `WIFIT3_RTL8814=mainline` falls back) — but the port choice is moot here: both behave
+> identically at the reference (see Scan). The earlier flip rationale (DKMS reads −45 dBm
+> vs mainline's −81) was an RSSI-*readout* difference, not a reception advantage — mainline
+> receives the reference AP no worse. The table below is the DKMS port.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ⚠️ | 2026-06-05 | 5 GHz solid. 2.4 GHz RX intermittent under sustained hopping — a 30-min soak hit a full 60s with zero 2.4 GHz APs (5 GHz fine); OK in short / fixed-channel use. |
+| Scan | ❌ | 2026-06-17 | Fails the reference bar. Against the strongest near AP — a known-good MT7921AU holds it at 9.6 bcn/s flat, top-ranked, same spot + minute — the 8814au hears it *worst* (last of ~10 APs) and decays ~5→2 bcn/s over a 60s fixed-channel soak. Identical on both ports (mainline 2.7 / DKMS 3.2 mean). Aggregate is fine (~63/s flat across all APs) — only the strongest signal rots: the signature of RX front-end overload. The old ⚠️ was the all-APs metric masking it. 5 GHz not re-tested this round. |
 | Handshake | ✅ | 2026-06-05 | Deauth → 4-way. |
 | PMKID | ✅ | 2026-06-05 | Passive + active extract. |
 | WEP | ✅ | 2026-06-05 | Replay + ChopChop. |
 | WPS | ✅ | 2026-06-05 | PIN + PBC. |
-| Stress | ⚠️ | 2026-06-05 | Survives 30 min (no progressive degradation, 98→98; 5 GHz flat), but 2.4 GHz RX intermittently drops out under sustained hop — one full 60s bucket of zero 2.4 GHz APs, periodic dips, lowest/jitteriest frame rate of the soaked cards. |
+| Stress | ❌ | 2026-06-17 | The strong-near-AP decay appears within a single 60s fixed-channel window (see Scan), so sustained RX on a target AP isn't trustworthy. The old 30-min hop soak read flat (98→98) only because it scored aggregate breadth — the metric, not the card, hid the rot. |
 
 → [RTL8814AU.md](src/wifit3/chips/rtw88_8814au/RTL8814AU.md) (mainline) · [RTL8814AU_DKMS.md](src/wifit3/chips/rtl8814au_dkms/RTL8814AU_DKMS.md) (default)
 
