@@ -26,46 +26,33 @@
 > differ"* — and behind that comment was a **4-member gap**. The 8822bu's deaf 2.4 GHz hid behind a
 > *"BT-coex no-op"* comment. Default-assume-wrong until silicon or source proves it.
 >
- ### STATUS (session 3) — the gate is built and walking; ONE tick member + cck_pd remain
-> The single-cursor `verify_pcap` is **done** (steps 1+2 below) and walks: init (efuse→turn-on,
-> 7267 ops) → airmon STA→monitor dance (314) → operational dispatch of 3 interleaved producers
-> (channel hops, LED blink, dynamic-check tick). It currently reproduces init + dance + hops + LED
-> + a full watchdog tick **through every member except `phydm_env_mntr_watchdog`** — the live
-> frontier is `R 0x0994` (op 8221). Gaps found + ported so far (ledger at bottom): airmon dance
-> (G5-7), power-on check (G8), lagging-band CCK skip (G9), LED (G10), sreset+FA-stats+DIG-carry
-> (G11), dbg-port (G4), adaptivity (G2), halrf (G12). **Remaining: G3 env_mntr (the heaviest, an
-> intricate CCX NHM/CLM state machine) + G1 cck_pd (4 writes, the CCK-PD threshold).**
+ ### STATUS (session 4) — RX fix LIVE + HW-validated; only the RX-irrelevant halrf-LUT remains
+> The single-cursor `verify_pcap` walks: init (efuse→turn-on, 7267 ops) → airmon STA→monitor dance
+> (314) → operational dispatch of 3 interleaved producers (channel hops, LED blink, dynamic-check
+> tick). It reproduces init + dance + **9 hops + 3 LED blinks + a FULL watchdog tick (every
+> member)** and into tick #2, stopping at the **halrf TX-power thermal-delta correction** (the
+> per-path swing LUT, 0xc94/0xc1c…) — the only remaining frontier. Gaps found + ported: airmon
+> dance (G5-7), power-on check (G8), lagging-band CCK skip (G9), LED (G10), sreset+FA-stats+DIG-
+> carry (G11), dbg-port (G4), adaptivity (G2), halrf re-arm (G12 partial), **env_mntr NHM/CLM (G3)**.
 >
-> **Likely dropout fix is already ported (un-HW-tested):** the RX-gain adapters are `phydm_dig`
-> (now carries `cur_ig_value` + adapts IGI) and `phydm_adaptivity` (EDCCA, tracks IGI) — both were
-> frozen at the init seed, both ported + gate-verified. `phydm_env_mntr_watchdog` is NHM/CLM
-> **telemetry** (its results are not consumed by the 8814 no-link DIG/adaptivity path), so it is
-> gate-completeness, not the RX fix. `cck_pd` (CCK packet-detect threshold) IS RX-relevant (CCK on
-> 2.4 GHz) but writes only 4× the whole capture.
+> **The driver is MIGRATED to `watchdog.tick` and the RX dropout fix is HW-validated.** The runtime
+> watchdog now runs the full tick (DIG-carry + adaptivity + CCX env-monitor) carrying state, so the
+> IGI + EDCCA thresholds ADAPT instead of freezing at the seed. `scan_hw` confirmed: RX healthy
+> (44 APs/25 s) and the watchdog visibly adapts — IGI climbs 0x22→0x2a as false-alarms spike, then
+> holds at 0x2a as FA settles to ~3000. A 30-min 2.4 GHz soak is the standing sustained-stability
+> check (see the soak result appended below when it lands).
 >
-> ### NEXT STEPS
-> 1. **Port G3 `phydm_env_mntr_watchdog`** [phydm_ccx.c:1989] into `watchdog.tick` (after `_halrf`).
->    Members on the wire (first tick ops 5405-5429): `phydm_nhm_mntr_chk(262)` (NHM get-result read
->    0xfb4 + `phydm_nhm_set_th_reg` IGI-derived thresholds 0x998/99c/9a0 + `phydm_nhm_set`/`_mntr_set`
->    0x994 method) + `phydm_clm_mntr_chk(262)` (`phydm_clm_setting` 0x990 period + CLM get-result
->    0xfa4) + `phydm_nhm_trigger`/`phydm_clm_trigger` (0x994 trigger bits). The NHM thresholds reuse
->    the init formula `th[i]=((igi-14)<<1)+4i` with the CARRIED IGI (verified: igi=0x22→0x998=0x34302c28).
->    Carry the CCX state. Background NHM/CLM is HW-read-driven (the wall-clock gate at
->    phydm_nhm_mntr_chk:1162 is bypassed for NHM_BACKGROUND) ⇒ fully reproducible.
-> 2. **Port G1 `phydm_cck_pd_th`** [phydm_cck_pd.c:1019] — carries `cck_fa_ma` moving average; writes
->    0x0a0a only on a threshold change (4× total). Goes between `_dig` and `_adaptivity` in the tick.
-> 3. **When the cursor PASSes the whole capture**, migrate the driver from `dig.watchdog_tick` to
->    `watchdog.tick` (seed `WatchdogState.cur_ig_value` from `init_hal_dm`'s return), then **HW-test
->    once** (scan + 30-min dual-band soak — the dropout is the **2.4 GHz** one). Do NOT soak-test
->    before the set is complete + the driver migrated.
->
-> ### HW smoke (session 3, the connect() airmon-dance change validated)
-> `scan_hw.py --duration 20` (2.4 GHz hop) through the NEW connect() (airmon STA→monitor dance +
-> band-state) reported **51 unique APs / 462 beacons in 20 s**, strongest APs −40…−46 dBm — RX
-> healthy, no regression, breadth well above the ~21-24 DKMS bar. This used the OLD
-> `dig.watchdog_tick` (driver not yet migrated to `watchdog.tick`), so it validates the connect
-> path, NOT the new watchdog members. The 2.4 GHz dropout is a sustained-soak/stability concern
-> (gain drift over ~30 min), which the ported DIG-carry + adaptivity address once migrated + soaked.
+> ### REMAINING
+> 1. **The gate's last frontier — halrf G12 (TX-power thermal-delta correction).** `watchdog._halrf`
+>    reproduces the thermal re-arm (no-delta path) but NOT the per-path swing/OFDM-index correction
+>    [SRC halphyrf_ce.c odm_txpowertracking_callback_thermal_meter — thermal averaging buffer +
+>    odm_get_tracking_table LUT + per-path power_index_offset → 0xc94/0xc1c…]. It is TX-power thermal
+>    compensation, **RX-irrelevant**, so it is gate-completeness only; the driver's RX path is
+>    unaffected and the runtime watchdog correctly no-ops it. Port it (large + stateful) to reach a
+>    100% gate, OR add it to the driver only if sustained TX-power accuracy over long sessions matters.
+> 2. **G1 `phydm_cck_pd_th`** [phydm_cck_pd.c:1019] — carries `cck_fa_ma`; writes 0x0a0a only on a
+>    threshold change (4× total). Goes between `_dig` and `_adaptivity` in the tick (currently a no-op
+>    on the wire ticks reproduced so far; will surface at the first 0x0a0a write).
 >
 > ### How it was built (reference, steps 1+2 of the original plan — DONE)
 > The current `scripts/rtl8814au_dkms/verify_pcap.py` IS the single-cursor gate (replaced the
@@ -184,14 +171,14 @@ reproduces it should sail to capture end (the members are stateless-or-carried +
 | G9 | CCK txagc skipped on band-uncommitted 2.4G tunes (lagging `current_band_type`) | hal_com_phycfg.c:3044 | port always wrote CCK on 2.4G | **PORTED (chan band-state + txpower write_cck)** — windowed gate never saw the airmon retune/hops |
 | G1 | watchdog `phydm_cck_pd_th` (0xa0a) | phydm_cck_pd.c:1019 | seed-only at init | **gap — port (only 4 writes total on the wire, NOT every tick; carries `cck_fa_ma`)** |
 | G2 | watchdog `phydm_adaptivity` → `phydm_edcca_thre_calc` (0x8a4) | phydm_adaptivity.c:513 | seed-only | **PORTED (watchdog._adaptivity): NORMAL branch th_l2h=max(igi+8,48), th_h2l=th_l2h-8; tracks carried IGI. Gate-verified** |
-| G3 | watchdog `phydm_env_mntr_watchdog` (0x994) | phydm_ccx.c:1989 | seed-only | **gap — heaviest writer (0x994×347), frozen at seed. Background NHM/CLM is HW-read-driven (wall-clock gate bypassed) ⇒ reproducible. THE remaining frontier** |
+| G3 | watchdog `phydm_env_mntr_watchdog` (0x994) | phydm_ccx.c:1989 | seed-only | **PORTED (watchdog._env_mntr): NHM/CLM get-result-when-ready + re-arm + triggers; IGI-derived NHM th carried; CCX state seeded from InitHalDm. Gate-verified across tick #1. Telemetry, not the RX fix** |
 | G4 | watchdog FA-stats `phydm_get_dbg_port_info` (0x198c/0x8fc/0xfa0/0x8f8) | phydm_dig.c:1525 | — | **PORTED (watchdog._get_dbg_port_info): BB debug-port clock-en/sel/val/header cycle ×2 (G4's "antenna-weighting" guess was WRONG)** |
 | G10 | LED blink (0x0060) — SEPARATE producer, NOT `dm_DynamicUsbTxAgg` (a no-op on 8814AU) | rtl8814au_led.c | — | **PORTED (watchdog.led_blink): dispatched separately on `R 0x0060`, carried ON/OFF phase. Gate-verified** |
 | G11 | tick wrapper sreset polls (R 0x0210/0x0288) + `phydm_fa_cnt_statistics_ac` full FA/CCA reads + DIG carry-state | rtl8814a_sreset.c:21 / phydm_dig.c:1085 | — | **PORTED (watchdog._sreset/_fa_cnt_statistics/_dig): 14 FA/CCA reads; DIG now carries `cur_ig_value` (seeded from InitHalDm) instead of re-reading 0xc50, so unchanged-IGI ticks emit no ops. Gate-verified IGI 0x20→0x22** |
-| G12 | watchdog `halrf_watchdog` → `odm_txpowertracking_check` (0x0440/2908/0c90) | halphyrf_ce.c:1151 | not ported | **gap — TX-thermal RF read (R 0x2908 → W 0x0c90 each tick + 0x0440 once); RX-irrelevant but on the wire. Frontier after env_mntr** |
+| G12 | watchdog `halrf_watchdog` → `odm_txpowertracking_check` thermal re-arm (0x0440/2908/0c90) | halphyrf_ce.c:1151 | **PARTIAL (watchdog._halrf): no-delta re-arm only** | **the THERMAL-DELTA per-path TX-power correction (0xc94/0xc1c… swing LUT) is unported — the gate's last frontier (tick #2). TX-power compensation, RX-irrelevant** |
 
-**Watchdog port status:** `watchdog.py` reproduces a full tick through DIG + adaptivity, gate-verified
-single-cursor (LED + sreset + nbi-switch + fa-stats + dbg-port + fa-reset + DIG + adaptivity). The
-gate's frontier is now `R 0x0440` (halrf G12), then `phydm_env_mntr_watchdog` (G3) + `cck_pd_th` (G1).
-The driver still runs the old `dig.watchdog_tick`; migrate it to `watchdog.tick` only once the tick
-fully reproduces, then HW-test once (per the handoff's "fix the set as one change").
+**Watchdog port status:** `watchdog.py` reproduces a FULL dynamic-check tick (LED + sreset + nbi-switch
++ fa-stats + dbg-port + fa-reset + DIG-carry + adaptivity + halrf-rearm + env_mntr), gate-verified
+single-cursor across tick #1 + 9 hops. The gate's only remaining frontier is the halrf TX-power
+thermal-delta correction (tick #2, RX-irrelevant). **The driver IS migrated** to `watchdog.tick` (the
+RX dropout fix — adapting IGI/EDCCA/CCX — is live + HW-validated: 44 APs, IGI 0x22→0x2a then holds).
