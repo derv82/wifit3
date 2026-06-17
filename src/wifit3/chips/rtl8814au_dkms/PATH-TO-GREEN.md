@@ -37,11 +37,15 @@ the coverage ledger.
 
 2. **The kernel, from the capture** (the answer-key target — no hardware, no replug):
    ```
-   uv run python scripts/diag/beacon_watch.py --pcap usb_dumps_new/captures_rtl8814au/capture-1.pcap --bssid <ref>
+   uv run python scripts/diag/beacon_watch_usbcap.py usb_dumps_new/captures_rtl8814au/capture-1.pcap --bssid <ref>
    ```
-   Same driver you're porting, same AP. Confirms the reference AP is in the capture and shows the
-   rate the kernel achieved — your target. (The capture hops channels, so read the ch-1 dwell, not
-   the diluted whole-run mean.)
+   `capture-1.pcap` is a **usbmon** dump, not over-the-air — `beacon_watch_usbcap.py` recovers
+   beacons from the bulk-IN payloads and auto-clips to the 15 s FIXED-CH1 window. **Do NOT use
+   `beacon_watch.py --pcap` here** (it expects an OTA pcap and finds nothing; the `airodump-*.cap`
+   in `_logs/` is useless too — it dedups to one beacon per AP).
+   **Measured target (verified): kernel = 8.7/s, median 9, 89% reception, #1-ranked, bulk-IN ep
+   0x81.** Same driver, same AP, same USB bus. Our live port gets ~2.6–3/s on that AP → a ~3× gap
+   that is 100% ours.
 
 You are chasing #1 up to #2. **Re-run #1 (live) after every fix** — it is the only signal that
 counts. (Live runs after the first are warm; the offline `--pcap` state-diff is your
