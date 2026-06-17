@@ -22,7 +22,7 @@ The matrix below captures *how well wifit3 drives these wireless cards* -- Every
 | [RT5572](#rt5572) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8822BU](#rtl8822bu) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
+| [RTL8822BU](#rtl8822bu) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [MT7610U](#mt7610u) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ | C |
 | [RTL8814AU](#rtl8814au) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | C |
@@ -126,7 +126,7 @@ tables below lead with the attack columns and any caveats.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-06-16 | 2.4 + 5 GHz. ch1 best-AP 6.5 bcn/s (mainline 4.9), no dead seconds; 5 GHz at the ~9.8/s ceiling. |
+| Scan | ⚠️ | 2026-06-16 | 5 GHz rock-solid at the ~9.8/s ceiling. 2.4 GHz much improved over mainline (6.5 vs 4.9 bcn/s, no dead seconds) but still below the 8–10/s bar — feels weak on 2.4. |
 | Deauth | ✅ | 2026-06-16 | Dropped a real laptop + phone off the AP. |
 | Handshake | ✅ | 2026-06-16 | Deauth → 4-way; full M1–M4. |
 | PMKID | ✅ | 2026-06-16 | Passive capture + extract. |
