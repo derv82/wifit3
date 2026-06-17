@@ -65,6 +65,24 @@ _TH_L2H_DIFF_IGI = 8
 _EDCCA_TH_L2H_LB = 48
 _EDCCA_HL_DIFF_NORMAL = 8
 
+# phydm_env_mntr_watchdog -> NHM + CLM (CCX) [SRC phydm_ccx.c:1989]. A stateful measurement
+# engine: each tick reads the previous NHM/CLM report (when the HW ready bit is set), re-arms the
+# measurement, and (when the IGI moved) re-derives the NHM thresholds. It is the heaviest writer
+# on the wire but pure telemetry — its results are not consumed by the no-link DIG/adaptivity RX
+# path. CCA_CAP/IGI_2_NHM_TH match phydm; thresholds reuse the init formula with the carried IGI.
+_REG_CCX = 0x0994              # NHM/CLM control: [0]=CLM trig, [1]=NHM trig, [11:8]=incl, [31:16]=th9/10
+_REG_NHM_PERIOD = 0x0990      # [31:16]=NHM period, [15:0]=CLM period
+_REG_NHM_TH_3_0 = 0x0998      # NHM th[3..0] (full DWORD)
+_REG_NHM_TH_7_4 = 0x099C      # NHM th[7..4] (full DWORD)
+_REG_NHM_TH_8 = 0x09A0        # [7:0] = NHM th[8]
+_REG_NHM_RDY = 0x0FB4         # [16] = NHM report ready; [15:0] = duration
+_NHM_RPT = (0x0FA8, 0x0FAC, 0x0FB0, 0x0FB4)   # NHM report words read when ready (+ duration)
+_REG_CLM_RDY = 0x0FA4         # [16] = CLM report ready; [15:0] = result
+_CCA_CAP = 14
+_NHM_PERIOD_MAX = 0xFFFE      # NHM_PERIOD_MAX (mntr_time >= 262 ms)
+_CLM_PERIOD_MAX = 0xFFFF      # CLM_PERIOD_MAX
+_NHM_INCL_FIELD = 0x1         # BIT_2_BYTE(CNT_ALL=0, EXCLUDE_TXON=0, EXCLUDE_CCA=0, en=1) -> 0x994[11:8]
+
 # LED blink [SRC rtl8814au_led.c SwLedOn/Off_8814AU], LED_PIN_LED0 over REG_GPIO_PIN_CTRL_2 (0x60).
 _REG_LED = 0x0060
 _LED_GPO_CFG = (1 << 16) | (1 << 17) | (1 << 21) | (1 << 22)   # config pins as GPO
@@ -87,6 +105,13 @@ class WatchdogState:
     cur_ig_value: int = _IGI_MIN   # phydm_dig cur_ig_value; SEED from InitHalDm's _dig_init read
     led_on: bool = True            # SwLed starts ON; the blink strictly alternates each fire
     txpwrtrack_init: bool = False  # odm_txpowertracking_check is_txpowertracking_init first-run
+    # CCX (env_mntr) carried state. phydm_nhm_init leaves nhm_igi at the seed IGI, the include
+    # fields at *_INIT (≠ the watchdog's params, so they re-set once), nhm_period 0, clm_period
+    # 0xffff. SEED nhm_igi from InitHalDm alongside cur_ig_value.
+    nhm_igi: int = 0xFF
+    nhm_include_set: bool = False
+    nhm_period: int = 0
+    clm_period: int = _CLM_PERIOD_MAX
 
 
 def led_blink(t, st: WatchdogState) -> None:
@@ -180,18 +205,76 @@ def _adaptivity(t, st: WatchdogState) -> None:
 
 
 def _halrf(t, st: WatchdogState) -> None:
-    """[SRC] halrf_watchdog -> odm_txpowertracking_check — read + re-trigger the RF thermal meter.
+    """[SRC] halrf_watchdog -> odm_txpowertracking_check — read + re-arm the RF thermal meter.
 
     On the first call the txpwrtrack init touches a BB reg once (no change here); every call
     reads RF 0x42 (the path-A readback at 0x2908) and re-arms it (RF 0x42[17:16]=3 -> 0xc90).
-    The thermal value drives no TX-power change while temperature is steady, so only this
-    read/re-trigger reaches the wire.
+
+    SCOPE: this reproduces only the no-thermal-delta path. When the averaged thermal value
+    diverges from the EFUSE base, odm_txpowertracking_callback_thermal_meter applies a per-path
+    TX-power swing/OFDM-index correction (0xc94/0xc1c/... per path) via the tracking-table LUT.
+    That correction — TX-power thermal compensation, RX-irrelevant — is NOT ported; it is the
+    capture gate's remaining frontier (first delta tick). The runtime watchdog only needs the
+    re-arm, so the driver's RX behaviour is unaffected by the omission.
     """
     if not st.txpwrtrack_init:
         v = t.read32(_REG_TXPWRTRACK_INIT)
         t.write32(_REG_TXPWRTRACK_INIT, v)             # first-run init: no-change RMW
         st.txpwrtrack_init = True
     set_rf_masked(t, "a", _REG_THERMAL_RF, _THERMAL_TRIGGER, 0x3)
+
+
+def _set_nhm_th(t, igi: int) -> None:
+    """[SRC] phydm_nhm_set_th_reg — write the 11 IGI-derived NHM thresholds.
+
+    nhm_th[0] = (igi - CCA_CAP) << 1; nhm_th[i] = nhm_th[0] + ((2*i) << 1). 0x998/0x99c are full
+    DWORD writes; 0x9a0[7:0]=th[8] and 0x994[31:16]=th[10]<<8|th[9] are masked.
+    """
+    th0 = ((igi - _CCA_CAP) << 1) & 0xFF
+    th = [th0] + [(th0 + ((2 * i) << 1)) & 0xFF for i in range(1, 11)]
+    t.write32(_REG_NHM_TH_3_0, th[0] | th[1] << 8 | th[2] << 16 | th[3] << 24)
+    t.write32(_REG_NHM_TH_7_4, th[4] | th[5] << 8 | th[6] << 16 | th[7] << 24)
+    _bb32(t, _REG_NHM_TH_8, 0xFF, th[8])
+    _bb32(t, _REG_CCX, 0xFFFF0000, th[9] | th[10] << 8)
+
+
+def _nhm_mntr_chk(t, st: WatchdogState) -> None:
+    """[SRC] phydm_nhm_mntr_chk(262) — get the prior NHM report then re-arm (background)."""
+    _bb32(t, _REG_CCX, 1 << 1, 0)                       # nhm_get_result: clear trigger bit
+    if t.read32(_REG_NHM_RDY) & (1 << 16):              # NHM report ready -> read it
+        for reg in _NHM_RPT:
+            t.read32(reg)
+    # phydm_nhm_set(EXCLUDE_TXON, EXCLUDE_CCA, CNT_ALL, BACKGROUND, NHM_PERIOD_MAX):
+    if not st.nhm_include_set:                          # include/cca/divider differ from *_INIT once
+        _bb32(t, _REG_CCX, 0xF00, _NHM_INCL_FIELD)
+        st.nhm_include_set = True
+    if st.nhm_period != _NHM_PERIOD_MAX:
+        _bb32(t, _REG_NHM_PERIOD, 0xFFFF0000, _NHM_PERIOD_MAX)
+        st.nhm_period = _NHM_PERIOD_MAX
+    igi_curr = t.read32(_REG_IGI[0]) & _IGI_MASK        # phydm_get_igi (th_update_chk reads it)
+    if igi_curr != st.nhm_igi:
+        _set_nhm_th(t, igi_curr)
+        st.nhm_igi = igi_curr
+
+
+def _clm_mntr_chk(t, st: WatchdogState) -> None:
+    """[SRC] phydm_clm_mntr_chk(262) — get the prior CLM report then re-arm (background)."""
+    _bb32(t, _REG_CCX, 1 << 0, 0)                       # clm_get_result: clear trigger bit
+    if t.read32(_REG_CLM_RDY) & (1 << 16):              # CLM report ready -> read the result
+        t.read32(_REG_CLM_RDY)
+    if st.clm_period != _CLM_PERIOD_MAX:               # clm_setting (period unchanged after init)
+        _bb32(t, _REG_NHM_PERIOD, 0xFFFF, _CLM_PERIOD_MAX)
+        st.clm_period = _CLM_PERIOD_MAX
+
+
+def _env_mntr(t, st: WatchdogState) -> None:
+    """[SRC] phydm_env_mntr_watchdog — NHM + CLM check, then trigger each. Telemetry only."""
+    _nhm_mntr_chk(t, st)
+    _clm_mntr_chk(t, st)
+    _bb32(t, _REG_CCX, 1 << 1, 0)                       # phydm_nhm_trigger: clear then set BIT1
+    _bb32(t, _REG_CCX, 1 << 1, 1)
+    _bb32(t, _REG_CCX, 1 << 0, 0)                       # phydm_clm_trigger: clear then set BIT0
+    _bb32(t, _REG_CCX, 1 << 0, 1)
 
 
 def tick(t, st: WatchdogState) -> None:
@@ -204,3 +287,4 @@ def tick(t, st: WatchdogState) -> None:
     _dig(t, st, cnt_all)
     _adaptivity(t, st)
     _halrf(t, st)
+    _env_mntr(t, st)

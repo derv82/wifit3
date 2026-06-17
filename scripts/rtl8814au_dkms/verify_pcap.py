@@ -117,7 +117,7 @@ def _walk_operational(w: Walk, p: efuse.ChipParams, band: int,
     interleave: channel hops (carry the lagging software band), the LED blink (carries an ON/OFF
     phase), and the dynamic-check tick (sreset + phydm_watchdog, carrying DM state). The first op
     that opens no wired handler STOPS the walk and is returned as the frontier."""
-    st = watchdog.WatchdogState(cur_ig_value=igi_seed)
+    st = watchdog.WatchdogState(cur_ig_value=igi_seed, nhm_igi=igi_seed)
     hops = ticks = leds = 0
     while w.i < len(w.ops):
         o = w.peek()
