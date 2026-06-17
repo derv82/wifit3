@@ -24,7 +24,7 @@ The matrix below captures *how well wifit3 drives these wireless cards* -- Every
 | [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8822BU](#rtl8822bu) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | B |
 | [MT7610U](#mt7610u) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
-| [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
+| [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | B |
 | [RTL8814AU](#rtl8814au) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | C |
 
 ## Per-card notes
@@ -62,21 +62,21 @@ tables below lead with the attack columns and any caveats.
 ### RTL8188EUS
 *TP-Link TL-WN722N v2/v3 · 2.4 GHz*
 
-> **Default = the mainline-derived port** — now healthy after the `dc621ce` RX-loop fix (2.4 GHz
-> lifted from ~1–3 to ~6–7 bcn/s). `WIFIT3_RTL8188=dkms` (vendor port) **ties** it in a clean cold
-> A/B, so it stays an opt-in for weak-RX spots, not the default. (The earlier 86–89% vs ~77% A/B
-> was vs the *pre-fix* mainline.)
+> **Default = vendor/DKMS port** ([RTL8188EUS_DKMS.md](src/wifit3/chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md));
+> the table below is that port. RX ties mainline (~6.6 bcn/s both, post-`dc621ce`); the 30-min soak is the
+> tie-break — **DKMS holds (1.07) while mainline degrades (0.84)**, the long-session stability the re-port
+> was for. `WIFIT3_RTL8188=mainline` opts back.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ⚠️ | 2026-06-16 | ~6.6 bcn/s best-AP average (both ports, no dead seconds) — below the 8/s bar. (Old ~1–3/s was the pre-`dc621ce` RX-loop drop, fixed.) Severe audit (`SEVERE-AUDIT.md`) proved the port faithful: the ceiling is 1T1R silicon + airtime, not a port gap. |
+| Scan | ⚠️ | 2026-06-16 | ~6.6 bcn/s best-AP average (both ports, no dead seconds) — below the 8/s bar. (Old ~1–3/s was the pre-`dc621ce` RX-loop drop, fixed.) Severe audit (`SEVERE-AUDIT.md`) found no port-side divergence in scope — the ceiling is 1T1R silicon + airtime. |
 | Handshake | ✅ | 2026-05-19 | Passive 4-way, end-to-end. |
 | PMKID | ✅ | 2026-05-19 | Active harvest — instant. |
 | WEP | ✅ | 2026-06-16 | ChopChop 32/32 bytes first try; ARP replay 200+ IVs/s. (The old 9/32 stall was the pre-`dc621ce` weak RX.) |
 | WPS | ✅ | 2026-05-31 | PIN + PBC. |
-| Stress | ⬜ | — | Not run. |
+| Stress | ✅ | 2026-06-16 | 30-min 13-ch soak: no degradation (76→81, ratio 1.07), ~71–88 APs/bucket steady, no wedge. Mainline degrades on the same soak (83→70, 0.84) — the reason DKMS is the default. |
 
-→ [RTL8188EUS.md](src/wifit3/chips/rtl8188eus/RTL8188EUS.md) (default) · [RTL8188EUS_DKMS.md](src/wifit3/chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md) (vendor opt-in)
+→ [RTL8188EUS_DKMS.md](src/wifit3/chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md) (default) · [RTL8188EUS.md](src/wifit3/chips/rtl8188eus/RTL8188EUS.md) (mainline)
 
 ### RTL8821AU
 *ALFA AWUS036ACS · 2.4 / 5 GHz*

@@ -92,8 +92,8 @@ def test_manager_registration_and_env_order(monkeypatch):
         return manager._match_driver(_Dev(0x2357, 0x010C))[0]
 
     monkeypatch.delenv("WIFIT3_RTL8188", raising=False)
-    assert selected() is RTL8188EUSDriver        # default: mainline-derived port for 2357:010c
+    assert selected() is Rtl8188eusDkmsDriver     # default: vendor/DKMS port for 2357:010c (stress-stable)
 
-    monkeypatch.setenv("WIFIT3_RTL8188", "dkms")
-    assert selected() is Rtl8188eusDkmsDriver     # opt-in via env
+    monkeypatch.setenv("WIFIT3_RTL8188", "mainline")
+    assert selected() is RTL8188EUSDriver          # opt back to mainline via env
     manager._DRIVER_CLASSES = None                # leave the cache clean

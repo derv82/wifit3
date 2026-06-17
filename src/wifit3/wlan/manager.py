@@ -71,7 +71,7 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
             "mt7921au": MT7921AUDriver,
 
             # Kernel + DKMS drivers
-            "rtl8188eus": env_or_none(ENV_RTL8188_DRIVER, "dkms", Rtl8188eusDkmsDriver) or RTL8188EUSDriver,
+            "rtl8188eus": env_or_none(ENV_RTL8188_DRIVER, "mainline", RTL8188EUSDriver) or Rtl8188eusDkmsDriver,
             "rtl8812au":  env_or_none(ENV_RTL8812_DRIVER, "mainline", RTL8812AUDriver) or Rtl8812auDkmsDriver,
             "rtl8821au":  env_or_none(ENV_RTL8821_DRIVER, "mainline", RTL8821AUDriver) or Rtl8821auDkmsDriver,
             "rtl8814au":  env_or_none(ENV_RTL8814_DRIVER, "mainline", RTL8814AUDriver) or Rtl8814auDkmsDriver,
