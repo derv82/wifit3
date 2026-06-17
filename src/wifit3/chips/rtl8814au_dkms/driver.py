@@ -198,20 +198,37 @@ class Rtl8814auDkmsDriver:
             logger.exception("RTL8814AU phydm watchdog stopped on error")
 
     # --- RX path (M3b-3a) --------------------------------------------------
-    def _read_once(self) -> Optional[bytes]:
-        """Reader-thread side: one blocking bulk-IN read (None on no traffic)."""
-        return self.transport.bulk_in()
+    def _read_once(self) -> Optional[list]:
+        """Reader-thread side: one blocking bulk-IN read, fully decoded to parsed frames.
 
-    def _dispatch(self, buf: bytes) -> None:
-        """Loop side: split the aggregated bulk-IN buffer into (frame, rssi) pairs
-        and fan each parsed dict to the rx callback. FCS already stripped."""
+        The 8814AU in monitor mode delivers a heavy frame stream (every data/control frame
+        on the channel, 4T4R), so iter_frames + 802.11 parse is done HERE, on the reader
+        thread, not on the event loop. Decoding on the loop made the loop the bottleneck: a
+        burst of frames held the GIL long enough to gap the next bulk read, the chip's RX FIFO
+        overflowed, and beacons were lost (the reference AP — a fixed 9.8 beacons/s — dropped
+        to a fraction). Keeping decode on the reader (like a tight single-thread reader) leaves
+        the loop only the lightweight callback fan-out below. Returns parsed dicts, or None on
+        a benign no-traffic timeout.
+        """
+        buf = self.transport.bulk_in()
+        if not buf:
+            return None
+        frames = [
+            parsed for parsed in (
+                WlanFrameParser.parse_80211_frame(frame, rssi)
+                for frame, rssi in iter_frames(buf)
+            ) if parsed is not None
+        ]
+        return frames or None
+
+    def _dispatch(self, frames: list) -> None:
+        """Loop side: fan each already-parsed frame to the rx callback (registry update runs
+        on the loop, so it never races the UI's reads). Decode happened on the reader thread."""
         cb = self._rx_cb
         if cb is None:
             return
-        for frame, rssi in iter_frames(buf):
-            parsed = WlanFrameParser.parse_80211_frame(frame, rssi)
-            if parsed is not None:
-                cb(parsed)
+        for parsed in frames:
+            cb(parsed)
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         """Tune to a 2.4 GHz or 5 GHz channel at 20 MHz (band-switches on a crossing).
