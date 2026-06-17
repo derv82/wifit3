@@ -197,6 +197,58 @@ def _trace_walk(buf: bytes, limit: int = 40) -> None:
         step += 1
 
 
+def _multi_reader(t, ref: str, channel: int, duration: float, n_threads: int) -> int:
+    """N concurrent bulk-IN reader threads, each decoding ref-AP beacons independently.
+
+    Tests whether keeping more reads in flight drains the chip RX FIFO faster (the kernel
+    keeps multiple URBs posted; our single sync read loop has a gap between each read). Each
+    thread reads + counts ref beacons into its own Stat (no shared lock on the hot path)."""
+    import threading
+    t._bulk_in_ep()                       # prime the cached endpoint probe before the race
+    print(f"[*] watching ch{channel} for {duration:g}s with {n_threads} reader threads...",
+          file=sys.stderr)
+    stop = threading.Event()
+    results: list = [None] * n_threads
+
+    def worker(idx: int) -> None:
+        st: dict = defaultdict(Stat)
+        nbuf = nbytes = 0
+        while not stop.is_set():
+            try:
+                buf = t.bulk_in()
+            except Exception as e:  # noqa: BLE001
+                print(f"  [thread {idx}] read error: {e}", file=sys.stderr)
+                break
+            if buf:
+                nbuf += 1
+                nbytes += len(buf)
+                _walk_raw(buf, st)
+            s = st[ref]
+            results[idx] = (s.descs - s.crc - s.icv, nbuf, nbytes)
+
+    threads = [threading.Thread(target=worker, args=(i,), daemon=True) for i in range(n_threads)]
+    start = time.monotonic()
+    for th in threads:
+        th.start()
+    while time.monotonic() - start < duration:
+        time.sleep(0.2)
+    stop.set()
+    for th in threads:
+        th.join(timeout=2.0)
+    elapsed = time.monotonic() - start
+    t.close()
+
+    tot_bcn = sum(r[0] for r in results if r)
+    tot_buf = sum(r[1] for r in results if r)
+    tot_bytes = sum(r[2] for r in results if r)
+    print(f"\n[*] {n_threads} threads, {elapsed:.0f}s: ref-AP good beacons = {tot_bcn} "
+          f"({tot_bcn / elapsed:.1f}/s)", file=sys.stderr)
+    print(f"[*] aggregate drain: {tot_buf} buffers ({tot_buf / elapsed:.0f}/s), "
+          f"{tot_bytes / elapsed / 1024:.0f} KiB/s", file=sys.stderr)
+    print(f"[*] per-thread ref beacons: {[r[0] if r else 0 for r in results]}", file=sys.stderr)
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Raw-RX per-BSSID saturation probe (incl. CRC errors).")
     ap.add_argument("--bssid", required=True, help="reference BSSID to highlight")
@@ -204,6 +256,12 @@ def main() -> int:
     ap.add_argument("--duration", type=float, default=30.0)
     ap.add_argument("--dig", action="store_true",
                     help="run the phydm watchdog tick inline every 2s (isolate its RX effect)")
+    ap.add_argument("--fast", action="store_true",
+                    help="skip the per-frame full parse/characterization (minimal per-buffer work) "
+                         "— measures the drain-limited beacon ceiling vs the heavy-parse path")
+    ap.add_argument("--threads", type=int, default=1,
+                    help="N concurrent bulk-IN reader threads (keep more reads in flight to drain "
+                         "the chip RX FIFO faster). >1 uses the multi-reader measurement path.")
     args = ap.parse_args()
     ref = args.bssid.lower()
 
@@ -211,6 +269,10 @@ def main() -> int:
     t = Rtl8814auTransport(dev)
     print(f"[*] bringing up on ch{args.channel}...", file=sys.stderr)
     igi_seed = _bring_up(t, args.channel)
+
+    if args.threads > 1:
+        return _multi_reader(t, ref, args.channel, args.duration, args.threads)
+
     print(f"[*] watching ch{args.channel} for {args.duration:g}s (raw descriptors)"
           f"{' + inline DIG watchdog' if args.dig else ''}...", file=sys.stderr)
 
@@ -240,7 +302,8 @@ def main() -> int:
             _walk_raw(buf, stats)
             after = stats[ref].descs - stats[ref].crc - stats[ref].icv
             ref_win[int((time.monotonic() - start) // win_sz)] += (after - before)
-            parser_ref += _walk_parsed(buf, ref)
+            if not args.fast:
+                parser_ref += _walk_parsed(buf, ref)
     elapsed = time.monotonic() - start
     t.close()
     print(f"\n[*] bulk-IN throughput: {n_buf} buffers ({n_buf / elapsed:.0f}/s), "
