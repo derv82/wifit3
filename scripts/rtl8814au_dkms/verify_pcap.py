@@ -33,7 +33,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
 from wifit3.chips.rtl8814au_dkms import (  # noqa: E402
-    bb, chan, dig, dm, efuse, firmware, mac, monitor, rf,
+    bb, chan, dm, efuse, firmware, mac, monitor, rf, watchdog,
 )
 from wifit3.chips.rtl8814au_dkms import constants as C  # noqa: E402
 
@@ -45,7 +45,8 @@ INIT_CHANNEL = 1                 # the cold-boot connect-time tune target
 _ANCHOR_ADDR = C.REG_SYS_CFG1    # 0xF0 — read_chip_version, the first vendor op
 # Operational-dispatch openers (each the unique first op of a vendor handler at the cursor):
 _OP_HOP = C.REG_CCK_CHECK        # 0x0454 R: phy_SwBand8814A band-marker read opens a tune
-_OP_TICK = 0x0060                # R: dm_DynamicUsbTxAgg opens a dynamic-check tick
+_OP_LED = 0x0060                 # R: SwLedOn/Off_8814AU — the LED blink (a separate producer)
+_OP_TICK = 0x0210                # R: rtl8814_sreset_xmit_status_check opens a dynamic-check tick
 _REG_RF_CHNL_A = 0x0C90          # path-A RF_CHNLBW MMIO write — carries the tuned channel
 
 
@@ -77,10 +78,10 @@ def _peek_channel(ops: list[dict], i: int, window: int = 120) -> int | None:
     return None
 
 
-def _walk_init(w: Walk, fw: bytes) -> efuse.ChipParams:
+def _walk_init(w: Walk, fw: bytes) -> tuple[efuse.ChipParams, int]:
     """Probe + deterministic bring-up, in driver source order, threaded through one cursor.
     Mirrors driver.py connect(): EFUSE -> firmware -> MAC/BB/RF -> tune -> InitHalDm ->
-    RFE-true -> turn-on tail."""
+    RFE-true -> turn-on tail. Returns (params, the DIG IGI seed the watchdog carries)."""
     p = w.run(efuse.read_chip_params, "efuse")                            # probe (pre power-on)
     w.run(lambda t: firmware.bring_up(t, fw), "bring-up")                 # M1: pwr-on -> FW ready
     w.run(mac.phy_mac_config, "mac-cfg")                                  # MAC register table
@@ -89,10 +90,10 @@ def _walk_init(w: Walk, fw: bytes) -> efuse.ChipParams:
     w.run(lambda t: rf.phy_rf_config(t, p.rfe_type), "rf-cfg")
     w.run(lambda t: chan.init_tune(t, INIT_CHANNEL, p.tx_power, p.tx_power_5g,
                                    p.bb_swing, p.bb_swing_5g), "init-tune")
-    w.run(dm.init_hal_dm, "init-hal-dm")                                  # phydm DIG/AGC seed
+    igi_seed = w.run(dm.init_hal_dm, "init-hal-dm")                       # phydm DIG/AGC seed
     w.run(lambda t: chan.set_rfe_reg_init(t, p.rfe_type), "rfe-init")     # PHY_SetRFEReg(TRUE)
     w.run(lambda t: mac.hal_init_turn_on(t, p.mac_address), "turn-on")    # turn-on tail + MAC
-    return p
+    return p, igi_seed
 
 
 def _walk_airmon(w: Walk, p: efuse.ChipParams) -> int:
@@ -110,12 +111,14 @@ def _walk_airmon(w: Walk, p: efuse.ChipParams) -> int:
     return band
 
 
-def _walk_operational(w: Walk, p: efuse.ChipParams, band: int) -> tuple[int, int, dict | None]:
-    """Dispatch each operational burst to the real vendor handler at the cursor. The channel
-    hop carries the lagging software band (CCK-skip state); the watchdog re-reads IGI/FA from
-    the chip each fire (no carried state). The first op that opens no wired handler STOPS the
-    walk and is returned as the frontier."""
-    hops = ticks = 0
+def _walk_operational(w: Walk, p: efuse.ChipParams, band: int,
+                      igi_seed: int) -> tuple[int, int, int, dict | None]:
+    """Dispatch each operational burst to the real vendor handler at the cursor. Three producers
+    interleave: channel hops (carry the lagging software band), the LED blink (carries an ON/OFF
+    phase), and the dynamic-check tick (sreset + phydm_watchdog, carrying DM state). The first op
+    that opens no wired handler STOPS the walk and is returned as the frontier."""
+    st = watchdog.WatchdogState(cur_ig_value=igi_seed)
+    hops = ticks = leds = 0
     while w.i < len(w.ops):
         o = w.peek()
         if o["kind"] == "R" and o.get("addr") == _OP_HOP:
@@ -127,18 +130,25 @@ def _walk_operational(w: Walk, p: efuse.ChipParams, band: int) -> tuple[int, int
                     t, c, p.tx_power, p.tx_power_5g, p.bb_swing, p.bb_swing_5g,
                     current_band=b), f"hop{ch}")
             except (rp.Divergence, Exception) as e:  # noqa: BLE001
-                return hops, ticks, _frontier(w, o, f"hop ch{ch}", e)
+                return hops, ticks, leds, _frontier(w, o, f"hop ch{ch}", e)
             hops += 1
+            continue
+        if o["kind"] == "R" and o.get("addr") == _OP_LED:
+            try:
+                w.run(lambda t: watchdog.led_blink(t, st), f"led#{leds + 1}")
+            except (rp.Divergence, Exception) as e:  # noqa: BLE001
+                return hops, ticks, leds, _frontier(w, o, f"led #{leds + 1}", e)
+            leds += 1
             continue
         if o["kind"] == "R" and o.get("addr") == _OP_TICK:
             try:
-                w.run(dig.watchdog_tick, f"tick#{ticks + 1}")
+                w.run(lambda t: watchdog.tick(t, st), f"tick#{ticks + 1}")
             except (rp.Divergence, Exception) as e:  # noqa: BLE001
-                return hops, ticks, _frontier(w, o, f"tick #{ticks + 1}", e)
+                return hops, ticks, leds, _frontier(w, o, f"tick #{ticks + 1}", e)
             ticks += 1
             continue
         break  # frontier: unknown opener
-    return hops, ticks, w.peek()
+    return hops, ticks, leds, w.peek()
 
 
 def _frontier(w: Walk, o: dict, label: str, e: Exception) -> dict:
@@ -172,7 +182,7 @@ def run(cap: str | None = None) -> int:
 
     w = Walk(ops)
     try:
-        p = _walk_init(w, fw)
+        p, igi_seed = _walk_init(w, fw)
         print(f"  init: reproduced {w.i} ops single-cursor (efuse -> turn-on tail, no gaps)")
         init_end = w.i
         band = _walk_airmon(w, p)
@@ -184,8 +194,9 @@ def run(cap: str | None = None) -> int:
         print(f"\nERROR (harness/port bug) at op {w.i}: {type(e).__name__}: {e}")
         return 2
 
-    hops, ticks, frontier = _walk_operational(w, p, band)
-    print(f"  operational: {hops} channel hops + {ticks} dynamic-check ticks reproduced")
+    hops, ticks, leds, frontier = _walk_operational(w, p, band, igi_seed)
+    print(f"  operational: {hops} channel hops + {ticks} dynamic-check ticks + {leds} LED "
+          f"blinks reproduced")
 
     if frontier is not None:
         fa = frontier

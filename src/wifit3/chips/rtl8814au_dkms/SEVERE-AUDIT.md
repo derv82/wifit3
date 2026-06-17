@@ -151,10 +151,16 @@ reproduces it should sail to capture end (the members are stateless-or-carried +
 | G7 | frames 30000-85279 outside the gate window | — | cursor walks to capture end | **FIXED (single cursor)** |
 | G8 | `_mac_power_on_check` (R 0x09/0x100) before _InitPowerOn | usb_halinit.c:1073 | hidden by the windowed gate; now reproduced | **PORTED (firmware.bring_up)** — falsified the "hw_reset is #if 0 ⇒ no preamble ops" assumption |
 | G9 | CCK txagc skipped on band-uncommitted 2.4G tunes (lagging `current_band_type`) | hal_com_phycfg.c:3044 | port always wrote CCK on 2.4G | **PORTED (chan band-state + txpower write_cck)** — windowed gate never saw the airmon retune/hops |
-| G1 | watchdog `phydm_cck_pd_th` (0xa0a) | phydm_cck_pd.c:1019 | seed-only at init | **gap — port (but only 4 writes total on the wire, NOT every tick; G1 premise corrected). Carries `cck_fa_ma`** |
-| G2 | watchdog `phydm_adaptivity` → `phydm_edcca_thre_calc` (0x8a4) | phydm_adaptivity.c:768 | seed-only | **gap — PRIME suspect; writes 0x8a4×2 EVERY tick (108 total), frozen at the init seed** |
-| G3 | watchdog `phydm_env_mntr_watchdog` (0x994) | phydm_ccx.c:1989 | seed-only | **gap — PRIME suspect; heaviest writer (0x994×347), frozen at seed. Background NHM/CLM is HW-read-driven (wall-clock gate bypassed) ⇒ reproducible** |
-| G4 | watchdog FA-stats `phydm_get_dbg_port_info` (0x198c/0x8fc/0xfa0/0x8f8) | phydm_dig.c:1580 | NOT ported | **gap — BB debug-port read (G4's "antenna-weighting" guess was WRONG)** |
-| G10 | LED blink (0x0060) — SEPARATE producer, NOT `dm_DynamicUsbTxAgg` (a no-op on 8814AU) | rtl8814au_led.c | not ported | **gap — dispatch `R 0x0060` separately, carried 1-bit ON/OFF phase (start ON)** |
-| G11 | tick wrapper `rtl8814_sreset_xmit_status_check` (R 0x0210/0x0288) + `phydm_fa_cnt_statistics_ac` full FA/CCA reads | rtl8814a_sreset.c:21 / phydm_dig.c | partial (cnt_all only) | **gap — tick opener is `R 0x0210`; port the full FA/CCA read set** |
-| G12 | watchdog `halrf_watchdog` (0x0440/2908/0c90) | halrf | not ported | **gap — minor (1 write total)** |
+| G1 | watchdog `phydm_cck_pd_th` (0xa0a) | phydm_cck_pd.c:1019 | seed-only at init | **gap — port (only 4 writes total on the wire, NOT every tick; carries `cck_fa_ma`)** |
+| G2 | watchdog `phydm_adaptivity` → `phydm_edcca_thre_calc` (0x8a4) | phydm_adaptivity.c:513 | seed-only | **PORTED (watchdog._adaptivity): NORMAL branch th_l2h=max(igi+8,48), th_h2l=th_l2h-8; tracks carried IGI. Gate-verified** |
+| G3 | watchdog `phydm_env_mntr_watchdog` (0x994) | phydm_ccx.c:1989 | seed-only | **gap — heaviest writer (0x994×347), frozen at seed. Background NHM/CLM is HW-read-driven (wall-clock gate bypassed) ⇒ reproducible. THE remaining frontier** |
+| G4 | watchdog FA-stats `phydm_get_dbg_port_info` (0x198c/0x8fc/0xfa0/0x8f8) | phydm_dig.c:1525 | — | **PORTED (watchdog._get_dbg_port_info): BB debug-port clock-en/sel/val/header cycle ×2 (G4's "antenna-weighting" guess was WRONG)** |
+| G10 | LED blink (0x0060) — SEPARATE producer, NOT `dm_DynamicUsbTxAgg` (a no-op on 8814AU) | rtl8814au_led.c | — | **PORTED (watchdog.led_blink): dispatched separately on `R 0x0060`, carried ON/OFF phase. Gate-verified** |
+| G11 | tick wrapper sreset polls (R 0x0210/0x0288) + `phydm_fa_cnt_statistics_ac` full FA/CCA reads + DIG carry-state | rtl8814a_sreset.c:21 / phydm_dig.c:1085 | — | **PORTED (watchdog._sreset/_fa_cnt_statistics/_dig): 14 FA/CCA reads; DIG now carries `cur_ig_value` (seeded from InitHalDm) instead of re-reading 0xc50, so unchanged-IGI ticks emit no ops. Gate-verified IGI 0x20→0x22** |
+| G12 | watchdog `halrf_watchdog` → `odm_txpowertracking_check` (0x0440/2908/0c90) | halphyrf_ce.c:1151 | not ported | **gap — TX-thermal RF read (R 0x2908 → W 0x0c90 each tick + 0x0440 once); RX-irrelevant but on the wire. Frontier after env_mntr** |
+
+**Watchdog port status:** `watchdog.py` reproduces a full tick through DIG + adaptivity, gate-verified
+single-cursor (LED + sreset + nbi-switch + fa-stats + dbg-port + fa-reset + DIG + adaptivity). The
+gate's frontier is now `R 0x0440` (halrf G12), then `phydm_env_mntr_watchdog` (G3) + `cck_pd_th` (G1).
+The driver still runs the old `dig.watchdog_tick`; migrate it to `watchdog.tick` only once the tick
+fully reproduces, then HW-test once (per the handoff's "fix the set as one change").

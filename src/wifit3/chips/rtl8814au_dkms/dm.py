@@ -118,13 +118,18 @@ def _rf_gain_table(t) -> None:
         _bb32(t, 0x0910, 0xFC00, (val >> 10) & 0x3F)
 
 
-def init_hal_dm(t) -> None:
-    """hal_init MISC11 + rtl8814_InitHalDm (phydm DIG/AGC/false-alarm seed)."""
+def init_hal_dm(t) -> int:
+    """hal_init MISC11 + rtl8814_InitHalDm (phydm DIG/AGC/false-alarm seed).
+
+    Returns the DIG seed (the AGC-default IGI read by phydm_dig_init); the runtime watchdog
+    carries it as ``cur_ig_value`` and the chip is never re-read for it.
+    """
     _misc11(t)
     _init_gpio(t)
     _config_cck_rx_antenna(t)
-    _dig_init(t)
+    igi_seed = _dig_init(t)
     _cck_pd_init(t)
     _env_monitor_init(t)
     _adaptivity_init(t)
     _rf_gain_table(t)
+    return igi_seed
