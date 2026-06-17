@@ -7,11 +7,22 @@ behind waivers, "skip-because-TX" that is actually constant cal, a dropped `if`,
 
 ## Verdict (TL;DR)
 
-**The port is faithful across everything the capture + source can observe.** No waiver hides a
-vendor op; the runtime watchdog, the RX decode, and the RF/BB/AGC init are byte/algorithm-faithful;
-no EFUSE field that affects RX is hardcoded or dropped. **The live RX gap is _not_ a port-faithfulness
-defect** — it is RF/silicon/environment, or an effect outside the ~15 s captured window. Two narrow,
-**non-default, honestly-flagged** divergence points exist; neither fires in the captured/default build.
+**No divergence found across everything the capture + source let me check — which is _not_ the same
+as "faithful."** Hold the two halves apart:
+
+- **Byte-level proven:** `verify_pcap` reproduces the captured **control** ops byte-for-byte, and our
+  RX decode matches the kernel's bulk-IN **beacon-for-beacon** (3120/3120 on cap-1, identical on 2/3).
+  No waiver hides a vendor op; the watchdog gating, EFUSE decode, and receiver-blocking gate are all
+  source-confirmed. ("faithful" elsewhere in this doc means "no divergence found for *that item*.")
+- **NOT proven:** a line-by-line equivalence of the *whole* vendor driver; behavior on paths/scenarios
+  absent from the ~15 s capture; and **live-identical beacons** measured against a running kernel.
+
+So: **no port defect found _in the audited scope_**, and the live RX ceiling isn't attributable to
+anything this audit could see (→ RF/silicon/airtime). But certainty of faithfulness would need a
+line-by-line read or a same-time/same-place kernel-vs-port beacon A/B — neither done. Treat this as
+**"audited clean, not proven identical."** Two narrow non-default divergence points stay flagged below.
+*(Live proof this matters: the sibling **mainline** port passes its cold gate too, yet **degrades**
+over a 30-min soak — 0.84 — while this DKMS port holds at 1.07. Cold-green ≠ long-run-correct.)*
 
 This is the opposite of the 8822bu outcome (where the audit found the real antenna-mux bug). Here the
 same rigor exonerates the port — which is itself the useful result: stop hunting a software wall, the

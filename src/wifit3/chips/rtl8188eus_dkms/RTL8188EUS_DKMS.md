@@ -5,7 +5,9 @@ monitor RX than mainline drives the 8188e at — the vendor phydm/ODM RX stack.
 
 ## ⚠ Port-completeness audit — RX/waiver/EFUSE axes CLEARED 2026-06-16 (see `SEVERE-AUDIT.md`)
 
-**Severe audit done — verdict: faithful (`SEVERE-AUDIT.md`).** The `verify_pcap` waivers (aireplay
+**Severe audit done — no divergence found in the audited scope (`SEVERE-AUDIT.md`); NOT a line-by-line
+proof of the whole driver, and live-identical beacons were never measured against a kernel.** The
+`verify_pcap` waivers (aireplay
 bulk-OUT + `0x4F0`), the no-link phydm watchdog (incl. the 24 SYS_CFG reads + tick boundaries), the RX
 decode (**3120/3120** beacons our-decoder-vs-raw over the capture bulk-IN, offline), the RF/BB/AGC init,
 and every RX-relevant EFUSE field are reproduced faithfully. **The live ~6.5-vs-~8.9 bcn/s gap is
