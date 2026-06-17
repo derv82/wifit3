@@ -3,7 +3,18 @@
 Sibling vendor port of `chips/rtl8188eus/` (mainline). Goal: hotter, **stable** 2.4 GHz
 monitor RX than mainline drives the 8188e at — the vendor phydm/ODM RX stack.
 
-## ⚠ Port-completeness audit (OPEN — this port is NOT trustworthy beyond the captured path)
+## ⚠ Port-completeness audit — RX/waiver/EFUSE axes CLEARED 2026-06-16 (see `SEVERE-AUDIT.md`)
+
+**Severe audit done — verdict: faithful (`SEVERE-AUDIT.md`).** The `verify_pcap` waivers (aireplay
+bulk-OUT + `0x4F0`), the no-link phydm watchdog (incl. the 24 SYS_CFG reads + tick boundaries), the RX
+decode (**3120/3120** beacons our-decoder-vs-raw over the capture bulk-IN, offline), the RF/BB/AGC init,
+and every RX-relevant EFUSE field are reproduced faithfully. **The live ~6.5-vs-~8.9 bcn/s gap is
+RF/silicon/environment, not a port defect.** The prior "efuse CONFIRMED gap" is **RX-inert on this card**
+(`0xCA=0xFF` blank ⇒ internal LNA = our default) — it stays a *robustness* concern only for a different
+8188eus with `0xCA/0xC9/0xB8` programmed. Two **non-default** deferred items remain flagged: the
+receiver-blocking NBI notch (arms only with `rtw_adaptivity_en=1`, e.g. ETSI) and powertrack IQK/LCK
+(only on ≥8 °C thermal drift). Still un-walked: uncaptured TX-desc variants / 40 MHz / power-save /
+sreset-recovery.
 
 `verify_pcap` green and `beacon_watch` healthy do **not** mean this port is faithful. Both gates
 have structural blind spots, and we were flying blind to a whole gap class until a question about
