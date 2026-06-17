@@ -22,7 +22,7 @@ The matrix below captures *how well wifit3 drives these wireless cards* -- Every
 | [RT5572](#rt5572) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8822BU](#rtl8822bu) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
+| [RTL8822BU](#rtl8822bu) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | B |
 | [MT7610U](#mt7610u) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ | C |
 | [RTL8814AU](#rtl8814au) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | C |
@@ -119,10 +119,9 @@ tables below lead with the attack columns and any caveats.
 ### RTL8822BU
 *TP-Link Archer T3U Plus v1 · 2.4 / 5 GHz*
 
-> **Vendor/DKMS port** ([RTL8822BU_DKMS.md](src/wifit3/chips/rtl8822bu_dkms/RTL8822BU_DKMS.md)) —
-> the table below is that port. It fixes mainline's weak 2.4 GHz monitor RX (a wrong RX antenna
-> mux): same-spot A/B is +32% frames / +33% beacon rate on 2.4 GHz, tied on 5 GHz. Opt in with
-> `WIFIT3_RTL8822=dkms`; the default flips from mainline once the 30-min stress soak ties/beats it.
+> **Default = vendor/DKMS port** ([RTL8822BU_DKMS.md](src/wifit3/chips/rtl8822bu_dkms/RTL8822BU_DKMS.md));
+> the table below is that port. It fixes mainline's weak 2.4 GHz monitor RX (a wrong RX antenna mux):
+> ~2× the 2.4 GHz breadth of mainline over a 30-min soak, 5 GHz tied. `WIFIT3_RTL8822=mainline` opts back.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
@@ -132,9 +131,9 @@ tables below lead with the attack columns and any caveats.
 | PMKID | ✅ | 2026-06-16 | Passive capture + extract. |
 | WEP | ✅ | 2026-06-16 | ChopChop + ARP replay (~225 IVs/s avg). |
 | WPS | ✅ | 2026-06-16 | PBC → PSK; PIN → M4 (first-half-wrong). |
-| Stress | ⬜ | — | Soak not yet run (the card soaks clean on mainline — no degradation over 30 min). |
+| Stress | ✅ | 2026-06-16 | 30-min 38-ch soak: no degradation (106→110 active BSSIDs/bucket), 2.4 GHz held 58–72 APs/bucket (~2× mainline), no dropout or wedge. |
 
-→ [RTL8822BU_DKMS.md](src/wifit3/chips/rtl8822bu_dkms/RTL8822BU_DKMS.md) (vendor) · [RTL8822BU.md](src/wifit3/chips/rtl8822bu/RTL8822BU.md) (mainline)
+→ [RTL8822BU_DKMS.md](src/wifit3/chips/rtl8822bu_dkms/RTL8822BU_DKMS.md) (default) · [RTL8822BU.md](src/wifit3/chips/rtl8822bu/RTL8822BU.md) (mainline)
 
 ### RTL8814AU
 *ALFA AWUS1900 · 2.4 / 5 GHz · 4T4R*

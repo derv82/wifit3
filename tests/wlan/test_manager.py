@@ -74,3 +74,23 @@ def test_rtl8812_unknown_value_stays_dkms(monkeypatch):
 def test_both_8812_drivers_claim_8812():
     from wifit3.chips.rtl8812au_dkms.driver import Rtl8812auDkmsDriver
     assert (0x0BDA, 0x8812) in {(e.vid, e.pid) for e in Rtl8812auDkmsDriver.SUPPORTED_IDS}
+
+
+def test_rtl8822_default_is_dkms(monkeypatch):
+    monkeypatch.delenv("WIFIT3_RTL8822", raising=False)
+    assert _driver_for(0x2357, 0x0138) == "Rtl8822buDkmsDriver"
+
+
+def test_rtl8822_mainline_opt_in(monkeypatch):
+    monkeypatch.setenv("WIFIT3_RTL8822", "MainLine")   # case-insensitive
+    assert _driver_for(0x2357, 0x0138) == "RTL8822BUDriver"
+
+
+def test_rtl8822_unknown_value_stays_dkms(monkeypatch):
+    monkeypatch.setenv("WIFIT3_RTL8822", "dkms")
+    assert _driver_for(0x2357, 0x0138) == "Rtl8822buDkmsDriver"
+
+
+def test_both_8822_drivers_claim_0138():
+    from wifit3.chips.rtl8822bu_dkms.driver import Rtl8822buDkmsDriver
+    assert (0x2357, 0x0138) in {(e.vid, e.pid) for e in Rtl8822buDkmsDriver.SUPPORTED_IDS}

@@ -299,14 +299,16 @@ extracted `usb_dumps_new/captures_*/driver-source/`.
 
 ### Remaining work
 
-The **8812au / 8814au / 8821au** vendor re-ports are **done** — `chips/rtl<chip>_dkms/` exist
-and pass `verify_pcap.py`; HW A/B + default-flip status lives in `VERIFICATION.md` and each
-`<CHIP>_DKMS.md`. One left:
+**All four** Realtek 11ac vendor re-ports (8812au / 8814au / 8821au / 8822bu) are **done** — each
+`chips/rtl<chip>_dkms/` exists, passes `verify_pcap.py`, and is the HW-proven default
+(`WIFIT3_RTL<chip>=mainline` opts back). Per-card A/B + default-flip status lives in `VERIFICATION.md`
+and each `<CHIP>_DKMS.md`. The cleanroom DKMS re-port campaign is complete; `rtw88_base/` stays only
+as long as a mainline-derived driver still imports it.
 
-- **RTL8822BU** — highest-payoff re-port, **pending**. Mainline `chips/rtl8822bu/`; vendor =
-  morrownr `88x2bu-20210702` 5.13.1 (`captures_rtl88x2bu/driver-source/` +
-  `usb_dumps_new/driver-sources/rtl88x2bu-5.13.1.tar.xz`); branch `dkms/88x2bu`; mainline A/B
-  `captures_rtw88_8822bu/`.
+RTL8822BU was the last and highest-payoff: vendor = morrownr `88x2bu-20210702` 5.13.1
+(`captures_rtl88x2bu/driver-source/`); the antenna-mux fix (`0xCBC[9:8]` per band) lifted 2.4 GHz
+monitor RX to ~2× mainline's breadth (mainline A/B `captures_rtw88_8822bu/`). The standing 2.4 GHz
+item is sensitivity headroom (best-AP ~6.5/s vs the 8–10/s bar — DIG-watchdog tuning), not breadth.
 
 ---
 
