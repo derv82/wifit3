@@ -45,11 +45,37 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
         RX aggregation mode/threshold + `_InitDriverInfoSize` (present, faithful). The
         earlier "warm-state decay" and "RX-delivery-is-the-whole-cause" theories were
         confounded by a laptop flooding ch1 (now moved to 5 GHz) — discard them.
-      - **RESIDUAL (open, ~6.7 vs MT7921 8.1/s, both same room/USB2):** likely the ~4 s CCK-PD
-        ramp + busy-channel ceiling, or a smaller CCK gain/per-path-B item. CCK-PD LV_2 (0xcd)
-        does not beat LV_1 in the sweep, so it is not "raise the threshold more." Diagnostics:
-        `rx_saturation_probe.py` (`--cck-pd` sweep, per-AP CCK/OFDM, `--dig` cck_pd_lv trace),
-        `cck_state_diff.py`, `dump_tune_regs.py`.
+      - **RESIDUAL (~6.7 vs MT7921 8.1/s, same room/USB2) — NOT a faithfulness gap; chip-inherent.**
+        A full bias-free deep-dive (trust nothing by name; ground-truth + source, not the gate) found
+        no remaining RX unfaithfulness, so the residual is the 8814A simply being a weaker CCK
+        receiver in a busy channel than the MT7921 (the 8814A kernel's own 8.7/s was on a *quiet*
+        channel). What was verified — all live or in-source:
+          - **Operational-tail by-register** (every periodic write the kernel makes, decoded by
+            address): the only writes our watchdog does NOT model are the halrf TX-power thermal
+            delta — no missing *RX* periodic op.
+          - **Live state-diff, MAC (0x0-0x7ff) + every BB page (0x800-0x1bff):** byte-identical to
+            the kernel modulo chip-dynamic status/echo bits (MAC `0x208/0x22c/0x230-0x240` upper
+            halves, BB `0xa08`). Tooling: `cck_state_diff.py [LO HI]`.
+          - **RF registers, all 4 paths** (`rf_state_diff.py`): our LSSI *writes* are faithful;
+            live readback differs only because PLL/RC-cal/status RF regs return a chip-computed
+            value (e.g. write `0x8a=0x43e50` → read `0x42470` on all paths, right after the radio
+            table, independent of `_copy_rck1`). `_copy_rck1` = vendor's exact single-`RCK1` copy.
+          - **FA-counting → DIG/IGI:** `phydm_fa_cnt_statistics_ac` reads `cck_enable` from
+            `ODM_REG_BB_RX_PATH_11AC` BIT(28) = `0x808[28]`, our exact register + polarity.
+          - **LED:** `SwLedOn/Off_8814AU` touch only `0x60` GPIO bits — cosmetic; `led_blink`
+            reproduces them. **`phydm_config_cck_rx_path`** is not called for this card
+            (`valid_path_set` ≠ A/B), so our `0xa04` matches; faithful.
+        Diagnostics: `rx_saturation_probe.py` (`--cck-pd`/`--cck-rx-path` sweeps, per-AP CCK/OFDM,
+        `--dig` cck_pd_lv trace), `cck_state_diff.py`, `rf_state_diff.py`, `dump_tune_regs.py`.
+- [ ] **halrf TX-power thermal-delta — the one unported watchdog member (the `verify_pcap` frontier
+      at op 10263 / tick #2). CONFIRMED RX-neutral by op-trace, not by label.** The tick's RX work
+      (DIG `0xc50/e50/1850/1a50`, EDCCA `0x8a4`, NHM `0x198c/8fc/8f8/fa0`, FA reads) is all modeled;
+      the unported tail (f21361+) reads a power/thermal reference (`R 0x2908`) then per-path: reads
+      `0xN94` (TX AFE) and **writes it back unchanged**, and writes `0xN1c[31:21]` = `bb_swing`/`ele_D`
+      (TX digital scale; e.g. `0x200→0x197` thermal knockdown) while **preserving the low RX-IQ bits**.
+      So it adjusts TX power only — no RX register is modified (`0x2908` is read-only here). Not
+      `phydm_antdiv` (which would write `0xc1c` BIT7|6, absent here). Porting it would complete the
+      watchdog + advance the gate but is RX-neutral; large/stateful (per-path swing LUT + thermal MA).
 - [x] **2.4 GHz per-channel spur/NBI — DONE.** `chan._spur_nbi_2g` ports
       `phydm_spur_nbi_setting_8814a` [SRC phydm_rtl8814a.c:47] + `phydm_nbi_setting`: on
       2.4 GHz ch 4-8 (spur 2440 MHz) and ch14 (2480) it computes the per-channel NBI notch

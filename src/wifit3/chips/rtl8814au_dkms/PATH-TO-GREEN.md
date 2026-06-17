@@ -15,12 +15,19 @@
 > Potential Known Gaps (top entry). Diagnostics: `scripts/rtl8814au_dkms/{rx_saturation_probe,
 > cck_state_diff,dump_tune_regs}.py`.
 >
-> **REMAINING (open): ~6.7 vs MT7921 8.1/s** (same room, both USB2). Not gain, not delivery, not USB
-> mode, not the cut hardcode (all ruled out in source). Likely the residual ~4 s CCK-PD ramp + a
-> busy-channel ceiling, or a smaller CCK gain / per-path-B item. CCK-PD LV_2 does not beat LV_1, so
-> it is not "raise the threshold further." **Do NOT chase the init/tune path** — faithful in source.
-> **Do NOT trust `verify_pcap` for direction** — it walks only the ops it chooses; verify in vendor
-> source. The original runbook is kept below for history only.
+> **REMAINING: ~6.7 vs MT7921 8.1/s is NOT a faithfulness gap — chip-inherent.** A full bias-free
+> deep-dive (trust nothing by name; ground-truth + source, not the gate) verified the RX path
+> faithful: operational-tail by-register (no missing RX periodic op), live state-diff of MAC + every
+> BB page (byte-identical modulo chip-dynamics), RF state-diff (writes faithful; readback is
+> chip-computed), FA-counting/DIG (`0x808[28]`, matches vendor), LED (pure GPIO/cosmetic), CCK init
+> (`_copy_rck1` = vendor's 1-reg copy; `config_cck_rx_path` not called here). So the 8814A is just a
+> weaker CCK receiver in a busy channel than the MT7921 (its own kernel got 8.7/s on a *quiet*
+> channel). Full evidence + tools: `RTL8814AU_DKMS.md` → Potential Known Gaps. **The ONE unported
+> watchdog member is the halrf TX-power thermal-delta** (the `verify_pcap` frontier): op-trace
+> CONFIRMS it writes only TX (`0xN1c[31:21]` bb_swing, RX-IQ low bits preserved; `0xN94` TX-AFE
+> read-back unchanged; `0x2908` read-only) — RX-neutral. Porting it completes the watchdog/gate but
+> won't move RX. **Do NOT chase the init/tune/RF path** — verified faithful. **Do NOT trust
+> `verify_pcap` for direction.** The original runbook is kept below for history only.
 
 > **NEXT AGENT: READ THIS FIRST. You are autonomous for the entire session.**
 > Do **not** stop to report partial findings. Do **not** ask the user questions. Do **not**
