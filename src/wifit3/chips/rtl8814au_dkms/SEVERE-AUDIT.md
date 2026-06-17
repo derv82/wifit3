@@ -102,16 +102,45 @@ band state.
 Building the gate surfaced two gaps the windowed anti-pattern hid (G8, G9 below) — exactly the
 PORTING.md warning that a windowed gate is blind between its windows.
 
-### The watchdog tick, decoded from the wire (the remaining work)
-A tick = `rtw_dynamic_chk_wk_hdl` [SRC rtw_cmd.c:3268]: `dm_DynamicUsbTxAgg` (the `R/W 0x0060`
-opener) → sreset poll (`R 0x0210`/`R 0x0288`) → `rtw_hal_dm_watchdog` → **`phydm_watchdog`**
-[SRC phydm.c:2162]. Within phydm_watchdog the wire shows, in order:
-`phydm_false_alarm_counter_statistics` = `phydm_fa_cnt_statistics_ac` (FA/CCA reads 0x0fxx) +
-`phydm_get_dbg_port_info` (the `0x198c`/`0x8fc`/`0xfa0`/`0x8f8` debug-port block — **NOT** the
-antenna-weighting G4 guessed) + `phydm_false_alarm_counter_reg_reset` (0x09a4/0a2c/0b58) →
-`phydm_dig` (IGI, conditional) → `phydm_cck_pd_th` → `phydm_adaptivity` (0x08a4) → `halrf_watchdog`
-(0x0440/2908/0c90) → `phydm_env_mntr_watchdog` (0x0994/0fb4/0990/0998/099c/09a0, a stateful CCX
-machine). Port these into `dig.watchdog_tick` member-by-member, gate-confirming each.
+### The watchdog tick, fully decoded + de-risked (the remaining work = the dropout fix)
+
+**The whole operational tail IS wire-reproducible** — confirmed by reading every member's
+source. Every write is either a function of a replayed HW read or of carried deterministic SW
+state (LED phase, cck_fa_ma, adaptivity/CCX state). The one wall-clock gate (env_mntr's
+`phydm_nhm_mntr_chk` line 1162) is **bypassed for NHM_BACKGROUND** — its branch is driven by
+`phydm_nhm_get_result` (a HW read). So a **100% single-cursor gate over the whole capture is
+achievable**; there is no genuine non-reproducible op (this capture has no aireplay TX either).
+
+**The LED (`0x0060`) is a SEPARATE producer, not the tick.** `dm_DynamicUsbTxAgg` is a **no-op
+on 8814AU** [SRC hal_com.c:13787 — only the 8821U/8812/HALMAC branches write]. `0x0060` is the
+USB LED blink [SRC rtl8814au_led.c `SwLedOn_8814AU`/`SwLedOff_8814AU`]: a strict ON/OFF
+alternation starting ON. ON = `read32(0x60) | 0x630000 & ~0x6300 & ~0x63`; OFF =
+`read32 | 0x630000 | 0x6300`. Reproduce by **dispatching `R 0x0060` separately** with a carried
+1-bit phase (start ON). 212 ops total. The driver itself need not blink the LED (cosmetic, no RX
+effect) — but the gate must account for it.
+
+**The dynamic-check tick** opens on `R 0x0210` (= `rtl8814_sreset_xmit_status_check` reading
+REG_TXDMA_STATUS; monitor has no TX so it only reads `0x0210` + `0x0288`). Then
+`rtw_hal_dm_watchdog` → **`phydm_watchdog`** [SRC phydm.c:2162]. Per-tick wire ops, in order,
+with measured capture-1 counts (operational phase, ÷54 ticks):
+
+| phydm member | [SRC] | wire ops / tick | total W | carried state | port note |
+|---|---|---|---|---|---|
+| `phydm_fa_cnt_statistics_ac` | phydm_dig.c (called from 1576) | 13 reads (0x0fcc/0fd0/0fbc/0fc0/0fc4/0fc8/0f48/0a5c/0f08/0f04/0f14/0f10/0f0c) + 0x0808 | 0 | — | port full FA/CCA read set (we read only cnt_all today) |
+| `phydm_get_dbg_port_info` | phydm_dig.c:1580 | 0x198c/0x8fc/0xfa0/0x8f8 (~16) | — | — | **this is G4, NOT antenna-weighting** — BB debug-port read |
+| `phydm_false_alarm_counter_reg_reset` | phydm_dig.c | 0x09a4/0a2c/0b58 (12) | 134/108/108 | — | already in `dig._reset_fa_cnt` |
+| `phydm_dig` | phydm_dig.c:1085 | IGI 0xc50/e50/1850/1a50 (conditional) | 22 each | igi (re-read each tick) | core ported; verify full path |
+| `phydm_cck_pd_th` | phydm_cck_pd.c:1019 | 0x0a0a **only 4× total** (not every tick) | 4 | `cck_fa_ma` | mostly no-op on wire; G1 "every tick" was WRONG |
+| `phydm_adaptivity` → `phydm_edcca_thre_calc` | phydm_adaptivity.c:768 | 0x08a4 ×2 (L2H+H2L) | 108 | adaptivity th | **writes every tick** — frozen at seed today (G2, prime suspect) |
+| `halrf_watchdog` | halrf | 0x0440(1×) + 0x2908(R, 54×) + 0x0c90 | 1 | thermal/IQK | minor |
+| `phydm_env_mntr_watchdog` | phydm_ccx.c:1989 | 0x0994 + 0x0fb4/0990/0998/099c/09a0 | 347 | CCX NHM/CLM | **heaviest; writes every tick** — frozen at seed today (G3, prime suspect) |
+
+**Dropout fix = make adaptivity (G2) + env_mntr (G3) re-run at runtime** (they write every tick
+in the kernel; our port seeds them once at init and never updates → EDCCA + CCX/NHM thresholds
+freeze). DIG (0xc50) already adapts. cck_pd (G1) barely writes. Port plan: build the full tick
+orchestrator (LED dispatch + sreset + the phydm members above, in order), carry the small DM
+state structs, gate-confirm the cursor advances op-by-op through one tick — once one full tick
+reproduces it should sail to capture end (the members are stateless-or-carried + HW-read-driven).
 
 ## Known gaps ledger (verdict = ported / fixed / proven-faithful / waived-named)
 
@@ -122,10 +151,10 @@ machine). Port these into `dig.watchdog_tick` member-by-member, gate-confirming 
 | G7 | frames 30000-85279 outside the gate window | — | cursor walks to capture end | **FIXED (single cursor)** |
 | G8 | `_mac_power_on_check` (R 0x09/0x100) before _InitPowerOn | usb_halinit.c:1073 | hidden by the windowed gate; now reproduced | **PORTED (firmware.bring_up)** — falsified the "hw_reset is #if 0 ⇒ no preamble ops" assumption |
 | G9 | CCK txagc skipped on band-uncommitted 2.4G tunes (lagging `current_band_type`) | hal_com_phycfg.c:3044 | port always wrote CCK on 2.4G | **PORTED (chan band-state + txpower write_cck)** — windowed gate never saw the airmon retune/hops |
-| G1 | watchdog `phydm_cck_pd_th` (0xa0a) | phydm_cck_pd.c:1019 | seed-only at init | **gap — port into watchdog_tick** |
-| G2 | watchdog `phydm_adaptivity` (0x8a4) | phydm_adaptivity.c:768 | seed-only | **gap — port** |
-| G3 | watchdog `phydm_env_mntr_watchdog` (0x994) | phydm_ccx.c:1989 | seed-only | **gap — port (stateful CCX)** |
-| G4 | watchdog FA-stats `phydm_get_dbg_port_info` (0x198c/0x8fc/0xfa0) | phydm_dig.c:1580 | NOT antenna-weighting (G4 guess wrong); debug-port read | **gap — port** |
-| G10 | tick wrapper: `dm_DynamicUsbTxAgg` (0x0060) + sreset poll (0x0210/0x0288) | rtw_cmd.c:3268 | not ported | **gap — port (tick opener)** |
-| G11 | watchdog `phydm_fa_cnt_statistics_ac` full FA/CCA reads (0x0fxx) | phydm_dig.c | partial (cnt_all only) | **gap — port full** |
-| G12 | watchdog `halrf_watchdog` (0x0440/2908/0c90) | halrf | not ported | **gap — port** |
+| G1 | watchdog `phydm_cck_pd_th` (0xa0a) | phydm_cck_pd.c:1019 | seed-only at init | **gap — port (but only 4 writes total on the wire, NOT every tick; G1 premise corrected). Carries `cck_fa_ma`** |
+| G2 | watchdog `phydm_adaptivity` → `phydm_edcca_thre_calc` (0x8a4) | phydm_adaptivity.c:768 | seed-only | **gap — PRIME suspect; writes 0x8a4×2 EVERY tick (108 total), frozen at the init seed** |
+| G3 | watchdog `phydm_env_mntr_watchdog` (0x994) | phydm_ccx.c:1989 | seed-only | **gap — PRIME suspect; heaviest writer (0x994×347), frozen at seed. Background NHM/CLM is HW-read-driven (wall-clock gate bypassed) ⇒ reproducible** |
+| G4 | watchdog FA-stats `phydm_get_dbg_port_info` (0x198c/0x8fc/0xfa0/0x8f8) | phydm_dig.c:1580 | NOT ported | **gap — BB debug-port read (G4's "antenna-weighting" guess was WRONG)** |
+| G10 | LED blink (0x0060) — SEPARATE producer, NOT `dm_DynamicUsbTxAgg` (a no-op on 8814AU) | rtl8814au_led.c | not ported | **gap — dispatch `R 0x0060` separately, carried 1-bit ON/OFF phase (start ON)** |
+| G11 | tick wrapper `rtl8814_sreset_xmit_status_check` (R 0x0210/0x0288) + `phydm_fa_cnt_statistics_ac` full FA/CCA reads | rtl8814a_sreset.c:21 / phydm_dig.c | partial (cnt_all only) | **gap — tick opener is `R 0x0210`; port the full FA/CCA read set** |
+| G12 | watchdog `halrf_watchdog` (0x0440/2908/0c90) | halrf | not ported | **gap — minor (1 write total)** |
