@@ -21,11 +21,11 @@ The matrix below captures *how well wifit3 drives these wireless cards* -- Every
 | [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5572](#rt5572) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8822BU](#rtl8822bu) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
+| [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RTL8822BU](#rtl8822bu) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [MT7610U](#mt7610u) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ | C |
 | [RTL8814AU](#rtl8814au) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | C |
-| [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 
 ## Per-card notes
 
@@ -119,16 +119,22 @@ tables below lead with the attack columns and any caveats.
 ### RTL8822BU
 *TP-Link Archer T3U Plus v1 · 2.4 / 5 GHz*
 
+> **Vendor/DKMS port** ([RTL8822BU_DKMS.md](src/wifit3/chips/rtl8822bu_dkms/RTL8822BU_DKMS.md)) —
+> the table below is that port. It fixes mainline's weak 2.4 GHz monitor RX (a wrong RX antenna
+> mux): same-spot A/B is +32% frames / +33% beacon rate on 2.4 GHz, tied on 5 GHz. Opt in with
+> `WIFIT3_RTL8822=dkms`; the default flips from mainline once the 30-min stress soak ties/beats it.
+
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ⚠️ | 2026-05-31 | Weak 2.4 GHz RX — a 2.4 GHz AP reads −81 dBm where 5 GHz reads −50 at the same spot. Scanning works. |
-| Handshake | ✅ | 2026-05-31 | Via deauth; full M1–M4. |
-| PMKID | ✅ | 2026-05-31 | Active + passive. |
-| WEP | ✅ | 2026-05-31 | Replay + ChopChop. |
-| WPS | ✅ | 2026-05-31 | PIN + PBC. |
-| Stress | ⬜ | — | Not run. Warm reattach on restart can wedge the bulk-IN pipe → replug. |
+| Scan | ✅ | 2026-06-16 | 2.4 + 5 GHz. ch1 best-AP 6.5 bcn/s (mainline 4.9), no dead seconds; 5 GHz at the ~9.8/s ceiling. |
+| Deauth | ✅ | 2026-06-16 | Dropped a real laptop + phone off the AP. |
+| Handshake | ✅ | 2026-06-16 | Deauth → 4-way; full M1–M4. |
+| PMKID | ✅ | 2026-06-16 | Passive capture + extract. |
+| WEP | ✅ | 2026-06-16 | ChopChop + ARP replay (~225 IVs/s avg). |
+| WPS | ✅ | 2026-06-16 | PBC → PSK; PIN → M4 (first-half-wrong). |
+| Stress | ⬜ | — | Soak not yet run (the card soaks clean on mainline — no degradation over 30 min). |
 
-→ [RTL8822BU.md](src/wifit3/chips/rtl8822bu/RTL8822BU.md)
+→ [RTL8822BU_DKMS.md](src/wifit3/chips/rtl8822bu_dkms/RTL8822BU_DKMS.md) (vendor) · [RTL8822BU.md](src/wifit3/chips/rtl8822bu/RTL8822BU.md) (mainline)
 
 ### RTL8814AU
 *ALFA AWUS1900 · 2.4 / 5 GHz · 4T4R*
