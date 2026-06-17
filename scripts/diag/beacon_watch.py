@@ -163,6 +163,9 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="(live mode) Watch window in seconds (default: 15).")
     p.add_argument("--bssid", type=str, default=None,
                    help="Report this BSSID instead of the best-heard one.")
+    p.add_argument("--no-dig", action="store_true",
+                   help="(live mode) Disable the driver's DIG/AGC watchdog before connect "
+                        "(no-op for drivers without one) — isolates its RX effect.")
     p.add_argument("--debug", action="store_true", help="DEBUG logging (live mode).")
     return p
 
@@ -188,6 +191,14 @@ async def run_live(args) -> int:
 
     def _progress(pct: float, msg: str) -> None:
         print(f"  [{int(pct * 100):3d}%] {msg}", file=sys.stderr)
+
+    if getattr(args, "no_dig", False):
+        if hasattr(iface.driver, "enable_dig"):
+            iface.driver.enable_dig = False
+            print("[*] DIG/AGC watchdog DISABLED for this run.", file=sys.stderr)
+        else:
+            print(f"[!] --no-dig ignored: {type(iface.driver).__name__} has no DIG watchdog.",
+                  file=sys.stderr)
 
     print(f"[*] Bringing up {iface.name} ({iface.description})...", file=sys.stderr)
     try:
