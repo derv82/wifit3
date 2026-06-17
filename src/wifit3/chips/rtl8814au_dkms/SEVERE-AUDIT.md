@@ -39,8 +39,13 @@
 > watchdog now runs the full tick (DIG-carry + adaptivity + CCX env-monitor) carrying state, so the
 > IGI + EDCCA thresholds ADAPT instead of freezing at the seed. `scan_hw` confirmed: RX healthy
 > (44 APs/25 s) and the watchdog visibly adapts — IGI climbs 0x22→0x2a as false-alarms spike, then
-> holds at 0x2a as FA settles to ~3000. A 30-min 2.4 GHz soak is the standing sustained-stability
-> check (see the soak result appended below when it lands).
+> holds at 0x2a as FA settles to ~3000.
+>
+> **30-min 2.4 GHz soak — DROPOUT FIXED.** `scan_hw --duration 1800` (2.4 GHz hop): **85 APs,
+> 51,128 beacons over 30 min**, and the aggregate beacon rate holds **rock-steady at ~26–32/s for
+> the whole 30 minutes with zero decay** (per-~3-min windows: 28.4 → 27.8 → 30.1 → 28.6 → 31.6 →
+> 26.3 → 25.2 → 27.1 → 31.6/s). The sustained 2.4 GHz RX that the frozen-watchdog port lacked is
+> now stable — the adapting DIG + adaptivity + CCX maintain it across the full soak.
 >
 > ### REMAINING
 > 1. **The gate's last frontier — halrf G12 (TX-power thermal-delta correction).** `watchdog._halrf`
