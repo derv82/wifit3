@@ -155,8 +155,11 @@ time difference — **not a port defect.**
 
 ## Provenance
 
-verify_pcap cap-1: 5769/5769 PASS, 254 waived. RX-decode: `tshark` ep 0x81 → `rx.iter_frames` vs regex,
-3120/3120. EFUSE: `read_chip_params` over the replayed capture. Source: `captures_8188eu/driver-source/`
+verify_pcap cap-1: 5769/5769 PASS, 254 waived. **RX-decode + EFUSE confirmed on cap-1/2/3** (offline):
+our `rx.iter_frames` == the raw beacon-signature regex on every capture (3120/3120, 2732/2732,
+3068/3069 — the one cap-3 delta is a single crc-flagged beacon our decoder correctly drops); the efuse
+is **identical on all three** (`0xCA=FF 0xC9=03 0xB8=A2 0xB9=20 0xBA=1D 0xC1=00`), so the `0xCA=FF`-blank
+→ internal-LNA reasoning holds per-boot. Source: `captures_8188eu/driver-source/`
 (realtek-rtl8188eus 5.3.9, module `8188eu`, CE). Three read-only source audits (waiver gating, SYS_CFG
 attribution, EFUSE/init) cross-checked against our `chips/rtl8188eus_dkms/`. No hardware used — the audit
 is entirely offline (capture + source), per the porting playbook.
