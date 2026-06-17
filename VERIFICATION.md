@@ -24,7 +24,7 @@ The matrix below captures *how well wifit3 drives these wireless cards* -- Every
 | [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8822BU](#rtl8822bu) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | B |
 | [MT7610U](#mt7610u) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
-| [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ | C |
+| [RTL8188EUS](#rtl8188eus) | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⬜ | B |
 | [RTL8814AU](#rtl8814au) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | C |
 
 ## Per-card notes
@@ -62,20 +62,21 @@ tables below lead with the attack columns and any caveats.
 ### RTL8188EUS
 *TP-Link TL-WN722N v2/v3 · 2.4 GHz*
 
-> Default = the mainline-derived port; `WIFIT3_RTL8188=dkms` switches to the vendor
-> DKMS port (stronger 2.4 GHz RX in A/B — 86–89% vs ~77%), worth trying given the
-> weak Scan below.
+> **Default = the mainline-derived port** — now healthy after the `dc621ce` RX-loop fix (2.4 GHz
+> lifted from ~1–3 to ~6–7 bcn/s). `WIFIT3_RTL8188=dkms` (vendor port) **ties** it in a clean cold
+> A/B, so it stays an opt-in for weak-RX spots, not the default. (The earlier 86–89% vs ~77% A/B
+> was vs the *pre-fix* mainline.)
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ⚠️ | 2026-05-31 | Weak 2.4 GHz RX — ~1–3 beacons/s from a router *inches* away (healthy ~10/s). Smells like a gain/DIG bug; worth chasing. |
+| Scan | ✅ | 2026-06-16 | Healthy 2.4 GHz — ~6.6 bcn/s on a strong AP, no dead seconds. The old ~1–3/s was the pre-`dc621ce` RX-loop frame drop; fixed. DKMS opt-in measures the same (clean cold A/B). |
 | Handshake | ✅ | 2026-05-19 | Passive 4-way, end-to-end. |
 | PMKID | ✅ | 2026-05-19 | Active harvest — instant. |
-| WEP | ⚠️ | 2026-05-31 | Replay ✅. ChopChop stalled at 9/32 bytes — same weak RX (TX side is fine, so kept ⚠️ not ❌). |
+| WEP | ⚠️ | 2026-05-31 | Replay ✅. ChopChop stalled at 9/32 bytes on the *old* weak RX; that RX is fixed now (`dc621ce`) so a re-test should clear it — not yet re-run. |
 | WPS | ✅ | 2026-05-31 | PIN + PBC. |
 | Stress | ⬜ | — | Not run. |
 
-→ [RTL8188EUS.md](src/wifit3/chips/rtl8188eus/RTL8188EUS.md)
+→ [RTL8188EUS.md](src/wifit3/chips/rtl8188eus/RTL8188EUS.md) (default) · [RTL8188EUS_DKMS.md](src/wifit3/chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md) (vendor opt-in)
 
 ### RTL8821AU
 *ALFA AWUS036ACS · 2.4 / 5 GHz*
