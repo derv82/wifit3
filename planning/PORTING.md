@@ -177,7 +177,7 @@ human-in-the-loop one:
    [[passive_by_default]].
 6. RX-health A/B: `beacon_watch.py` (live device) vs `beacon_watch_usbcap.py` (the
    `usb_dumps_new/` capture's beacon count for the same APs) — how our driver compares to the
-   kernel's, same location, the nearby-AP beacons/s as the stable yardstick.
+   kernel's, same location, the **fixed reference-AP** beacons/s as the yardstick — `beacon_watch.py --bssid <ref> --channel <ch> --duration 60`, replug-cold between runs. **NOT** best-AP / average / active-AP breadth: those are gameable proxies (a card reads healthy while deaf or *saturating* on the one near AP that matters, and they pick the wrong winner). Sanity-check the ceiling with a known-good card at the same AP, same RF moment (~9.6/s = healthy); a card that hears the reference AP *worst* of the room while its aggregate is fine = RX front-end overload, not RF.
 
 Device borked? The user replugs (resets cold-boot state).
 
@@ -297,24 +297,26 @@ pass. Worked example: the RT5372 port (`chips/rt5372/RT5372.md`).
 
 ---
 
-## Cleanroom DKMS re-ports (the 2.4 GHz RX fix)
+## Cleanroom DKMS re-ports (2.4 GHz monitor breadth)
 
-The four Realtek 11ac-family cards (8822bu, 8814au, 8821au, 8812au) are currently
-mainline-`rtw88`-derived and share `chips/rtw88_base/`. They inherit mainline's
-weak 2.4 GHz monitor RX. The fix is to **re-port each from its vendor (DKMS)
-source, cleanroom**.
+The four Realtek 11ac-family cards (8822bu, 8814au, 8821au, 8812au) began as
+mainline-`rtw88`-derived ports sharing `chips/rtw88_base/`, which inherits mainline's narrow
+2.4 GHz monitor breadth (few APs heard). Each was re-ported from its **vendor (DKMS) source,
+cleanroom**, which roughly doubles that breadth. Breadth is *not* the bar, though: against a
+strong near reference AP the DKMS ports tie mainline and both still fail (front-end saturation —
+see Remaining work). The re-ports are a breadth win, not a 2.4 GHz RX fix.
 
-### Why — mainline's weak 2.4 GHz monitor RX
+### Why — mainline's narrow 2.4 GHz monitor breadth
 
 The Kali A/B (`usb_dumps_new/`, same physical cards on their in-kernel vs vendor DKMS driver,
-fixed-channel) showed mainline `rtw88`'s 2.4 GHz monitor RX (AGC/DIG) is materially weaker than
-the vendor stack — cleanest case **RTL8822BU: 8 APs → DKMS 29 (3.6×)**. The deficit is in the
-shared `rtw88_base` RX path our mainline-derived ports inherit, not the hardware or PyUSB (the
-Ralink RT5572 reads 2.4 and 5 GHz equally well). Vendor and mainline are completely different
-codebases above the same registers (`rtw_phy_dig()` vs the PHYDM/ODM stack), and the vendor
-carries long-session AGC/DIG/thermal stability a 15 s snapshot can't measure. Hence: re-port
-each Realtek 11ac card from its **vendor (DKMS) source, cleanroom**. Per-card A/B detail lives
-in each `chips/<chip>/<CHIP>.md`.
+fixed-channel) showed mainline `rtw88` hears far fewer 2.4 GHz APs than the vendor stack —
+cleanest case **RTL8822BU: 8 APs → DKMS 29 (3.6×)**. That breadth gap lives in the shared
+`rtw88_base` RX path the mainline-derived ports inherit, not the hardware or PyUSB (the Ralink
+RT5572 reads 2.4 and 5 GHz equally well). Vendor and mainline are completely different codebases
+above the same registers (`rtw_phy_dig()` vs the PHYDM/ODM stack), so re-porting from the vendor
+source recovers the breadth. What it does **not** recover is per-AP RX on a strong near signal:
+both stacks saturate the front-end there (see Remaining work). Per-card A/B detail lives in each
+`chips/<chip>/<CHIP>.md`.
 
 (In-tree MediaTek / Atheros / RTL8187 cards are unaffected — no vendor fork, mainline is canonical.)
 
@@ -330,9 +332,8 @@ in each `chips/<chip>/<CHIP>.md`.
 3. Port in a **fresh session** with only the vendor source + the new cold-boot pcap in view —
    the mainline driver and the mainline-derived Python kept out of context, so the port is
    faithful to the vendor code, not a hybrid. Treat as a new bring-up (recipe above). Capture
-   the live mainline baseline (max beacons/s + nAPs) first — the A/B target to tie-or-beat.
-4. The default flips to the vendor port once it's **HW-proven** to tie/beat mainline on breadth
-   + stability (`WIFIT3_RTL<chip>` default ordering). `rtw88_base/` stays as long as any
+   the live mainline baseline (at the fixed reference AP — pinned BSSID, 60s cold soak — **not** max-beacons/s or active-AP breadth) first — the A/B target to tie-or-beat.
+4. The default flips to the vendor port once it's **HW-proven** to tie/beat mainline **at the fixed reference AP** — breadth and stability secondary (`WIFIT3_RTL<chip>` default ordering). `rtw88_base/` stays as long as any
    mainline-derived driver still imports it.
 
 All four vendor sources are in `usb_dumps_new/driver-sources/` (tarballs) +
@@ -340,16 +341,23 @@ extracted `usb_dumps_new/captures_*/driver-source/`.
 
 ### Remaining work
 
-**All four** Realtek 11ac vendor re-ports (8812au / 8814au / 8821au / 8822bu) are **done** — each
-`chips/rtl<chip>_dkms/` exists, passes `verify_pcap.py`, and is the HW-proven default
-(`WIFIT3_RTL<chip>=mainline` opts back). Per-card A/B + default-flip status lives in `VERIFICATION.md`
-and each `<CHIP>_DKMS.md`. The cleanroom DKMS re-port campaign is complete; `rtw88_base/` stays only
-as long as a mainline-derived driver still imports it.
+**All four** Realtek 11ac vendor re-ports (8812au / 8814au / 8821au / 8822bu) exist — each
+`chips/rtl<chip>_dkms/` passes `verify_pcap.py` and is the default (`WIFIT3_RTL<chip>=mainline`
+opts back), delivering the ~2× 2.4 GHz breadth they were built for. Per-card A/B + flip status
+lives in `VERIFICATION.md` and each `<CHIP>_DKMS.md`. `rtw88_base/` stays only as long as a
+mainline-derived driver still imports it.
 
 RTL8822BU was the last and highest-payoff: vendor = morrownr `88x2bu-20210702` 5.13.1
 (`captures_rtl88x2bu/driver-source/`); the antenna-mux fix (`0xCBC[9:8]` per band) lifted 2.4 GHz
-monitor RX to ~2× mainline's breadth (mainline A/B `captures_rtw88_8822bu/`). The standing 2.4 GHz
-item is sensitivity headroom (best-AP ~6.5/s vs the 8–10/s bar — DIG-watchdog tuning), not breadth.
+monitor RX to ~2× mainline's breadth (mainline A/B `captures_rtw88_8822bu/`). 
+
+**Open — the real 2.4 GHz bug is unfixed.** The remaining 2.4 GHz problem is not sensitivity
+headroom or breadth. Against a strong near reference AP (the bar: ~9.6 bcn/s, held by a known-good
+MT7921AU at the same spot), the 8814au and 8822bu both sit at ~2.6–3 bcn/s in *either* port — they
+hear that AP worst of the room while the aggregate is fine, and the chip's `phy_status` power-word
+saturates on it. That's RX front-end overload: the AGC/initial-gain (DIG) does not back off for a
+strong signal. The DKMS port and its DIG-watchdog have not solved it. Current grades: **8814au D,
+8822bu C** (`VERIFICATION.md`); **8821au / 8812au not yet reference-AP re-tested** — likely the same.
 
 ---
 
