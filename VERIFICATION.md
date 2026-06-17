@@ -22,8 +22,8 @@ The matrix below captures *how well wifit3 drives these wireless cards* -- Every
 | [RT5572](#rt5572) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [MT7610U](#mt7610u) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8822BU](#rtl8822bu) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | B |
-| [MT7610U](#mt7610u) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | B |
 | [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | B |
 | [RTL8814AU](#rtl8814au) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | C |
 
@@ -173,12 +173,12 @@ tables below lead with the attack columns and any caveats.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ⚠️ | 2026-05-31 | Focus-entry tune glitch: 0 beacons/s on entering Focus until you exit + re-enter. |
+| Scan | ✅ | 2026-06-16 | 2.4 + 5 GHz, healthy both bands. The Focus-entry tune glitch (0 beacons until exit+re-enter) is fixed by synchronous hopping (`b2bf17c`) — confirmed gone, couldn't repro. |
 | Handshake | ✅ | 2026-05-31 | M1+M2. |
 | PMKID | ✅ | 2026-05-31 | Passive + active. |
 | WEP | ✅ | 2026-05-31 | Replay + ChopChop. |
 | WPS | ✅ | 2026-05-31 | PIN + PBC. |
-| Stress | ⬜ | — | Not run. |
+| Stress | ✅ | 2026-06-16 | 30-min 22-ch dual-band soak: no degradation (88→100, ratio 1.14), both bands steady (2.4 ~50/bucket, 5 ~40), no wedge. |
 
 → [MT76X0U.md](src/wifit3/chips/mt76x0u/MT76X0U.md)
 
@@ -266,6 +266,6 @@ stay flat the whole time, and the failures (RT2500USB) show within the first min
 
 ## Fully supported
 
-Every column ✅ *plus* a clean Stress soak. **Nine cards are there: RTL8812AU (DKMS),
-AR9271, RTL8821AU (DKMS), MT7612U, RT3070, RT5372, RT5572, RT2500USB, and RTL8187L** — every
+Every column ✅ *plus* a clean Stress soak. **Ten cards are there: RTL8812AU (DKMS),
+AR9271, RTL8821AU (DKMS), MT7612U, MT7610U, RT3070, RT5372, RT5572, RT2500USB, and RTL8187L** — every
 Ralink we have (RT2500USB / RT3070 / RT5372 / RT5572) now at full marks.
