@@ -55,10 +55,14 @@ looking linear.
 
 **Every op has exactly one honest fate** as the cursor advances:
 - **matched** — the port's real handler reproduces it byte-for-byte; or
-- **waived** — an *explicit, named, counted* boundary for a producer the port doesn't
-  reproduce (a separate timer like the sreset poll; the chip-version probe before power-on;
-  airmon-the-tool's own mac80211 setup — we port the *vendor driver*, not airmon). Printed in
-  the report, never a silent drop; or
+- **waived** — an *explicit, named, counted* boundary for **a different program's TX traffic**:
+  aireplay-ng's injection and the bulk-OUT it generates. That is the **only** legitimate waiver —
+  it is the one thing on the wire the vendor *driver* did not author. Printed in the report, never
+  a silent drop. **NOT waivers** (we kept mistaking these for waivers, and it blurred the fences):
+  the async timers (sreset poll, phydm watchdog) → *dispatch* them; the chip-version probe →
+  *anchor* on it and reproduce it; airmon/iw's STA→monitor setup → reproduce the **driver's**
+  register writes it triggers (we port the driver's response even when airmon is the trigger — see
+  "the operating rules" below); or
 - **unaccounted** — anything else **stops the walk and names the op**: the frontier, the next
   thing to make faithful. PASS ⇔ zero unaccounted.
 
@@ -69,13 +73,50 @@ delete them — you **dispatch**: when the cursor hits a producer's opening op, 
 handler (carrying its state across fires), then continue. An un-ported mechanism then can't
 hide — it writes a register no handler claims and surfaces as the next unaccounted op.
 
+*Why dispatch is trustworthy, not guesswork* (the part that feels like it "could be wrong"): the
+kernel holds the device IO lock across each timer callback, so a tick lands as **one contiguous
+block** — it never splices into the middle of a tune. And dispatch is **self-checking** — the
+handler replays against the recorded wire, so it can only consume an op whose emitted byte
+*matches*; dispatch the wrong handler and its first op mismatches → **Divergence, fail-loud.**
+There is no quiet-mis-attribution path. The one thing to get right is a **unique opener** per
+producer; an ambiguous opener surfaces as a divergence, never as silent rot. (Slicing by log
+timestamps instead *asserts* the attribution where dispatch *proves* it — prefer dispatch.)
+
 **Never "improve" on the wire.** The capture is ground truth for the chip's end state.
 Reproduce what the driver wrote; never *add* a write "for breadth" or substitute a value you
 assume is better. A write nobody made is as much a divergence as one you missed — that is
 exactly how an ungrounded, possibly-harmful deviation gets bolted onto a faithful port.
 
 Reference shapes: `scripts/rtl8187/verify_pcap.py` (clean single-cursor init walk) and
-`scripts/rtl8188eus_dkms/verify_pcap.py` (same, plus operational-phase dispatch).
+`scripts/rtl8188eus_dkms/verify_pcap.py` (same, plus operational-phase dispatch). Note: both
+**predate the "reproduce the airmon dance" rule below** — they waive it — so they are the
+structural template, not a fully-complete example. The windowed/milestone-counting gates
+(`rtl8814au_dkms`, `rtl8822bu_dkms`) are the **anti-**pattern; bring them to the rules below.
+
+### The full-capture replay — the operating rules
+
+Hard-won, and the source of most blurred fences. The single cursor runs from the driver's **first
+op** to the **aireplay-ng injection** (the TX boundary); everything in between is reproduce-or-fail.
+The recurring rules — write them on the wall:
+
+- **Stop at aireplay-ng.** Injection ends the gate: that traffic is TX, ported and byte-diffed
+  separately (Post-Port Checklist §4). It is the *only* waiver.
+- **Do the airmon dance — reproduce it, do not skip it.** The vendor driver's register writes
+  during airmon/iw's STA→monitor setup *are the driver's behaviour*; it does them to reach the
+  state it ends in. Skip them and a later monitor entry *looks* identical, but the chip may carry
+  different state — and you can no longer tell a real RX bug from the missing dance. Reproduce the
+  **path**, not just the endpoint. This is also a **runtime** rule: `connect()` should reach monitor
+  the way the driver does, not via a shortcut — the shortcut is exactly how dropout-class state bugs
+  creep in.
+- **op #0 (or any op) differs → go to the source, not the bytes.** Find the driver's entry point —
+  the first register it reads, the first it writes — and anchor the cursor there. Never infer the
+  sequence by staring at the capture.
+- **Slice airodump by doing `iw set channel` first.** A manual `iw set channel N` sweep delineates
+  each channel cleanly (one tune per command, timestamped in `iw.log`). Get *one* tune byte-for-byte;
+  airodump is then the same tune on a ~0.25 s timer in scrambled order — trivial once the unit tune
+  is proven. Don't fight airodump's interleave up front.
+- **Async timers → dispatch** (contiguous IO-locked block + fail-loud byte-match + unique opener;
+  the trust model is above).
 
 ### Port every operation — the EFUSE read especially
 
