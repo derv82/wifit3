@@ -65,10 +65,10 @@ _SW = (0x200, 0x200, 0x200, 0x200)   # 0 dB per-path BB-swing, both bands
 def test_set_channel_bw_cck_dfir_arms():
     # channels 1-11 vs 12-13 use different CCK TX-filter values.
     rec = Rec()
-    chan._phy_sw_chnl(rec, 6, _SW, _SW)
+    chan._phy_sw_chnl(rec, 6, _SW, _SW, chan.C.BAND_ON_2_4G)
     assert ("W32", 0x0A24, 0x090E1317) in rec.ops   # ch<=11 arm
     rec = Rec()
-    chan._phy_sw_chnl(rec, 12, _SW, _SW)
+    chan._phy_sw_chnl(rec, 12, _SW, _SW, chan.C.BAND_ON_2_4G)
     assert ("W32", 0x0A24, 0x090E1217) in rec.ops   # ch 12-13 arm
 
 
@@ -94,17 +94,32 @@ def test_set_channel_bw_5g_sets_5g_tx_power(monkeypatch):
 def test_set_channel_bw_2g_sets_2g_tx_power(monkeypatch):
     # A 2.4 GHz tune sets the per-rate 2.4G TX power (M2e), not the 5G table.
     calls = []
-    monkeypatch.setattr(chan, "set_tx_power", lambda t, ch, tp: calls.append(("2g", ch, tp)))
+    monkeypatch.setattr(chan, "set_tx_power",
+                        lambda t, ch, tp, write_cck=True: calls.append(("2g", ch, tp, write_cck)))
     monkeypatch.setattr(chan, "set_tx_power_5g", lambda *a: calls.append(("5g", a)))
     rec = Rec(reads={0x454: 0x00})
-    chan.set_channel_bw(rec, 6, ("tx2g",), ("tx5g",), _SW, _SW)
-    assert calls == [("2g", 6, ("tx2g",))]
+    # current_band already committed 2.4G + chip 2.4G -> no switch -> write CCK.
+    assert chan.set_channel_bw(rec, 6, ("tx2g",), ("tx5g",), _SW, _SW,
+                               chan.C.BAND_ON_2_4G) == chan.C.BAND_ON_2_4G
+    assert calls == [("2g", 6, ("tx2g",), True)]
+
+
+def test_set_channel_bw_2g_skips_cck_when_band_uncommitted(monkeypatch):
+    # The lagging-band fix: post-init_hw_mlme_ext the software band is BAND_MAX, so a 2.4 GHz
+    # hop (chip already 2.4 GHz -> no switch) leaves it BAND_MAX and skips CCK txagc.
+    calls = []
+    monkeypatch.setattr(chan, "set_tx_power",
+                        lambda t, ch, tp, write_cck=True: calls.append(write_cck))
+    rec = Rec(reads={0x454: 0x00})
+    assert chan.set_channel_bw(rec, 6, ("tx2g",), ("tx5g",), _SW, _SW,
+                               chan.C.BAND_MAX) == chan.C.BAND_MAX
+    assert calls == [False]                          # CCK skipped (band never committed 2.4G)
 
 
 def test_phy_sw_chnl_5g_low_subband():
     # Already on 5 GHz (0x454 bit7=1) so phy_sw_band does not switch — isolates the select.
     rec = Rec(reads={0x454: 0x80})
-    chan._phy_sw_chnl(rec, 36, _SW, _SW)
+    chan._phy_sw_chnl(rec, 36, _SW, _SW, chan.C.BAND_ON_5G)
     w = rec.ops
     assert ("W32", 0x0860, 0x494 << 17) in w            # fc-area 0x494 (36-48) -> 0x860[28:17]
     # RF 0x18 = channel | (RF_MOD_AG<<8): ch36 | (0x101<<8) -> LSSI 0xc90 = (0x18<<20)|0x10124.
@@ -116,7 +131,7 @@ def test_phy_sw_chnl_5g_low_subband():
 def test_phy_sw_chnl_5g_high_subband():
     # ch149: fc-area 0x412 (>=118), RF_MOD_AG 0x501 (>140), AGC-table select 3 (>=149).
     rec = Rec(reads={0x454: 0x80})
-    chan._phy_sw_chnl(rec, 149, _SW, _SW)
+    chan._phy_sw_chnl(rec, 149, _SW, _SW, chan.C.BAND_ON_5G)
     w = rec.ops
     assert ("W32", 0x0860, 0x412 << 17) in w
     assert ("W32", 0x0C90, 0x01850195) in w             # 149 | (0x501<<8) = 0x50195
@@ -149,25 +164,26 @@ def test_switch_wireless_band_5g_sequence():
 
 
 def test_phy_sw_band_no_switch_same_band():
-    # current 2.4G (0x454 bit7=0) + target 2.4G (ch6) -> only the band-marker read.
+    # current 2.4G (0x454 bit7=0) + target 2.4G (ch6) -> only the band-marker read; the
+    # lagging software band is returned unchanged (here BAND_MAX, so CCK stays skipped).
     rec = Rec(reads={0x454: 0x00})
-    chan.phy_sw_band(rec, 6, _SW, _SW)
+    assert chan.phy_sw_band(rec, 6, _SW, _SW, chan.C.BAND_MAX) == chan.C.BAND_MAX
     assert rec.ops == [("R8", 0x0454)]
     # current 5G (bit7=1) + target 5G (ch36) -> only the read, no switch.
     rec = Rec(reads={0x454: 0x80})
-    chan.phy_sw_band(rec, 36, _SW, _SW)
+    assert chan.phy_sw_band(rec, 36, _SW, _SW, chan.C.BAND_ON_5G) == chan.C.BAND_ON_5G
     assert rec.ops == [("R8", 0x0454)]
 
 
 def test_phy_sw_band_switches_on_crossing():
-    # 2.4G -> 5G (ch36): writes the 5G marker + 5G RFE pinmux.
+    # 2.4G -> 5G (ch36): writes the 5G marker + 5G RFE pinmux; commits BAND_ON_5G.
     rec = Rec(reads={0x454: 0x00})
-    chan.phy_sw_band(rec, 36, _SW, _SW)
+    assert chan.phy_sw_band(rec, 36, _SW, _SW, chan.C.BAND_MAX) == chan.C.BAND_ON_5G
     assert ("W8", 0x0454, 0x80) in rec.ops
     assert ("W32", 0x0CB0, 0x33173317) in rec.ops
-    # 5G -> 2.4G (ch1, the 165->1 wrap): clears the marker + 2.4G RFE pinmux.
+    # 5G -> 2.4G (ch1, the 165->1 wrap): clears the marker + 2.4G RFE pinmux; commits 2.4G.
     rec = Rec(reads={0x454: 0x80})
-    chan.phy_sw_band(rec, 1, _SW, _SW)
+    assert chan.phy_sw_band(rec, 1, _SW, _SW, chan.C.BAND_ON_5G) == chan.C.BAND_ON_2_4G
     assert ("W8", 0x0454, 0x00) in rec.ops
     assert ("W32", 0x0CB0, 0x77777777) in rec.ops
 

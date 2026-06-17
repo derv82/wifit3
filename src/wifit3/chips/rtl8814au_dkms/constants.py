@@ -30,6 +30,7 @@ EP_BULK_OUT_FW = 0x02
 # --- Power-on / MAC bring-up registers --------------------------------------
 # [SRC] include/rtl8814a_spec.h
 REG_SYS_FUNC_EN = 0x0002      # +1 (0x03) bit2 = 3081 MCU-core reset gate
+REG_SYS_CLKR = 0x0008         # +1 (0x09) bit3 = MAC-already-powered check
 REG_CR = 0x0100              # MAC TRX enable word
 REG_RXFF_PTR = 0x011C
 REG_FIFOPAGE_CTRL_2 = 0x0204  # +1 (0x205) bit7 = beacon-valid
@@ -64,6 +65,7 @@ CR_ENABLE_BITS = (
 )  # = 0x063F [WIRE] cap1 frame 5787 writes REG_CR=0x063F
 
 # REG_BCN_CTRL bits [SRC] include/hal_com_reg.h
+DIS_ATIM = BIT(0)
 EN_BCN_FUNCTION = BIT(3)
 DIS_TSF_UDT = BIT(4)
 
@@ -327,6 +329,15 @@ CHANNELS_2G = tuple(range(1, 14))
 CHANNELS_5G = (36, 40, 44, 48, 52, 56, 60, 64,
                100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144,
                149, 153, 157, 161, 165)
+
+# Software band-type state [SRC] BAND_TYPE. The vendor tracks current_band_type and only
+# updates it inside PHY_SwitchWirelessBand8814A (an *actual* band switch). The CCK txagc
+# section is written only when current_band_type == BAND_ON_2_4G, so after init_hw_mlme_ext
+# resets it to BAND_MAX a no-switch 2.4 GHz tune (chip already 2.4 GHz) skips CCK until a real
+# 5G->2.4G crossing sets it back to 2.4 GHz.
+BAND_ON_2_4G = 0
+BAND_ON_5G = 1
+BAND_MAX = 0xFF               # init_hw_mlme_ext reset value (no band committed yet)
 REG_TRXPTCL_CTL = 0x0668      # MAC bw: clear BIT7|BIT8 for 20 MHz
 REG_DATA_SC = 0x0483          # secondary-channel = 0 for 20 MHz
 # phy_SpurCalibration NBI/CSI reset (2.4G has no spur -> reset)
@@ -385,6 +396,7 @@ ETH_ALEN = 6
 MSR = REG_CR + 2               # 0x0102 Media Status reg; [1:0] = port0 net-type
 MSR_NETTYPE_MASK = 0x0C        # Set_MSR keeps [3:2] (port1), rewrites [1:0]
 MSR_NOLINK = 0x00              # _HW_STATE_NOLINK_ net-type
+MSR_STATION = 0x02             # _HW_STATE_STATION_ net-type (airmon's up-time opmode)
 REG_RXFLTMAP0 = 0x06A0         # RX filter map: data subtypes
 REG_RXFLTMAP2 = 0x06A4         # RX filter map: control subtypes
 RXFLTMAP_ACCEPT_ALL = 0xFFFF   # monitor: accept all mgmt/ctrl/data subtypes

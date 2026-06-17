@@ -92,12 +92,20 @@ def power_index(pp, base_kind: str, diff_kind: str, nss: int,
     return max(0, min(_TXGI_MAX, idx))
 
 
-def set_tx_power(t, channel: int, tx_power: tuple) -> None:
-    """[SRC] PHY_SetTxPowerLevel8814 — write the 2.4 GHz txagc table for all 4 paths."""
+def set_tx_power(t, channel: int, tx_power: tuple, write_cck: bool = True) -> None:
+    """[SRC] PHY_SetTxPowerLevel8814 -> phy_set_tx_power_level_by_path — write the 2.4 GHz
+    txagc table for all 4 paths.
+
+    ``phy_set_tx_power_level_by_path`` writes the CCK rate section only when
+    ``current_band_type == BAND_ON_2_4G``; ``write_cck`` carries that decision. When False
+    (the software band field is still BAND_MAX, e.g. the airmon retune + 2.4 GHz hops before
+    any 5G crossing), CCK is skipped and the table starts at OFDM (hw rate 0x04).
+    """
     g, cck_g = _ch_group_2g(channel)
+    rate_table = RATE_TABLE if write_cck else RATE_TABLE_5G   # _5G == RATE_TABLE minus CCK
     for path in range(4):
         pp = tx_power[path]
-        for hw, base_kind, diff_kind, nss in RATE_TABLE:
+        for hw, base_kind, diff_kind, nss in rate_table:
             pidx = power_index(pp, base_kind, diff_kind, nss, g, cck_g)
             wd = (_TXAGC_BASE | (path << 8) | hw | (pidx << 24)) & 0xFFFFFFFF
             t.write32(REG_TXAGC, wd)

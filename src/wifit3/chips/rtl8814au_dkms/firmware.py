@@ -380,11 +380,24 @@ def download_firmware(t, fw: bytes) -> bool:
     return ready
 
 
+def _mac_power_on_check(t) -> None:
+    """[SRC] rtl8814au_hal_init:1073-1086 — "Check if MAC has already power on".
+
+    Two inert reads (REG_SYS_CLKR+1 bit3 + REG_CR) whose only effect is a log line; the
+    result is not used to branch the bring-up. Reproduced so the single cursor accounts
+    for the first two ops of the open path. [WIRE] cap1 frames 5707-5709.
+    """
+    from .constants import REG_SYS_CLKR
+    t.read8(REG_SYS_CLKR + 1)
+    t.read8(REG_CR)
+
+
 def bring_up(t, fw: bytes) -> bool:
     """M1: power-on -> LLT -> drop-incorrect -> firmware download to FW-ready.
 
-    [SRC] rtl8814au_hal_init lines 1106..1133 (rtl8814au_hw_reset is #if 0).
+    [SRC] rtl8814au_hal_init lines 1073..1133 (rtl8814au_hw_reset is #if 0).
     """
+    _mac_power_on_check(t)
     power_on(t)
     init_llt(t)
     init_drop_incorrect(t)

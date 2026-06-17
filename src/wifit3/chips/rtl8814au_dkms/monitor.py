@@ -1,40 +1,93 @@
-"""RTL8814AU monitor-mode entry (M3b-2) — vendor faithful, with a deliberate
-deviation from the cold-boot pcap.
+"""RTL8814AU airmon STA->monitor entry — vendor faithful, full dance reproduced.
 
-DIVERGENCE FROM THE PCAP / AIRMON (read this before comparing to the capture):
-The cold-boot capture was taken under airmon-ng, which drives the *STA-initialised*
-vendor driver into monitor mode through a sequence of cfg80211 ioctls. On the wire
-[WIRE] cap1 ops 4451-4764 that looks like: enable beacon RX (RXFLTMAP1 0x420->0x520),
-re-tune the channel that hal_init already tuned, re-program the MAC that was already
-written, tear down the STA/AP beacon function (StopTxBeacon + BCN_CTRL), set opmode
-NOLINK, and finally enter monitor. wifit3 is *always* monitor — it never enters STA
-mode — so it does NOT replay airmon's STA-mode dance. It runs only the vendor's
-actual monitor opmode entry, which is the last 10 ops of that wire block
-(4755-4764) and maps to exactly one vendor function:
+The cold-boot capture was taken under airmon-ng, which brings the interface up as a
+STA, sets the channel, then switches it to monitor. On the wire that is four vendor
+steps, each a real driver function, reproduced here so the chip reaches monitor along
+the *same path* the kernel takes (a shortcut to the endpoint can carry different chip
+state and hide an RX bug):
 
-    hw_var_set_opmode(_HW_STATE_MONITOR_)   [SRC rtl8814a_hal_init.c:3222]
-        Set_MSR(_HW_STATE_NOLINK_)          net-type -> NOLINK
-        hw_var_set_monitor()                [SRC rtl8814a_hal_init.c:3155]
+  1. enable_rx_bar           init_hw_mlme_ext -> HW_VAR_ENABLE_RX_BAR [SRC hal_com.c:12384]
+  2. (channel re-tune)       init_hw_mlme_ext -> set_channel_bwmode   (chan.set_channel_bw)
+  3. set_sta_opmode          hw_var_set_opmode(_HW_STATE_STATION_)    [SRC rtl8814a_hal_init.c:3204]
+  4. enter_monitor           hw_var_set_opmode(_HW_STATE_MONITOR_)    [SRC rtl8814a_hal_init.c:3222]
 
-Because of this deviation the contiguous byte-for-byte differ stops at M3b-1; this
-block is instead verified as a *targeted* 10-op diff against wire 4755-4764 (the
-~300 skipped ops in between are airmon's STA-mode artifacts). The monitor RCR /
-RXFLTMAP *values* are taken straight from that wire — they are what airmon's working
-monitor session programmed.
+Step 2 is the bare channel tune (chan.set_channel_bw), sequenced by the caller; this
+module owns steps 1, 3 and 4. [WIRE] cap1: RX-BAR op 4451, STA opmode 4740-4754,
+monitor opmode 4755-4764.
 """
 from __future__ import annotations
 
 from . import constants as C
 
 
+def enable_rx_bar(t) -> None:
+    """[SRC] HW_VAR_ENABLE_RX_BAR — RXFLTMAP1 |= BIT8 (accept block-ack requests).
+
+    init_hw_mlme_ext sets this when the interface comes up. [WIRE] op 4451 (0x420->0x520).
+    """
+    v = t.read16(C.REG_RXFLTMAP1)
+    t.write16(C.REG_RXFLTMAP1, v | (1 << 8))
+
+
 def _set_msr(t, net_type: int) -> None:
     """[SRC] Set_MSR / rtw_hal_set_msr(HW_PORT0) — REG_CR[17:16] net-type.
 
-    Keeps port1's net-type [3:2], rewrites port0's [1:0]. hal_init left this at
-    NT_LINK_AP; monitor needs NOLINK. [WIRE] op 4755-4756 (0x02 -> 0x00).
+    Keeps port1's net-type [3:2], rewrites port0's [1:0].
     """
     v = t.read8(C.MSR)
     t.write8(C.MSR, (v & C.MSR_NETTYPE_MASK) | net_type)
+
+
+def _set_macaddr(t, mac_address: str) -> None:
+    """[SRC] HW_VAR_MAC_ADDR -> set_macaddr_port — write the 6-byte MAC to REG_MACID.
+
+    hw_var_set_opmode rewrites the efuse MAC before setting the net-type. [WIRE] op
+    4740-4745 (6 writes, no readback). The hal_init turn-on tail already wrote it once.
+    """
+    if not mac_address:
+        raise ValueError("set_sta_opmode: no MAC address (efuse read failed?)")
+    mac = bytes.fromhex(mac_address.replace(":", ""))
+    for i in range(C.ETH_ALEN):
+        t.write8(C.REG_MACID + i, mac[i])
+
+
+def _disable_tsf_update(t) -> None:
+    """[SRC] rtw_iface_disable_tsf_update -> rtw_hal_set_tsf_update(0).
+
+    Reads REG_BCN_CTRL and sets DIS_TSF_UDT only if it is clear. The hal_init beacon
+    setup already left DIS_TSF_UDT set, so this is a bare read (no write). [WIRE] op 4746.
+    """
+    v = t.read8(C.REG_BCN_CTRL)
+    if not (v & C.DIS_TSF_UDT):
+        t.write8(C.REG_BCN_CTRL, v | C.DIS_TSF_UDT)
+
+
+def _stop_tx_beacon(t) -> None:
+    """[SRC] StopTxBeacon [hal_com.c:14821] — clear the beacon-function bit, set hold time.
+
+    [WIRE] op 4749-4753: 0x422 &= ~BIT6, 0x541 = STOP_BCN hold low byte, 0x542 high nibble.
+    """
+    v = t.read8(C.REG_FWHW_TXQ_CTRL + 2)
+    t.write8(C.REG_FWHW_TXQ_CTRL + 2, v & ~(1 << 6))
+    t.write8(C.REG_TBTT_PROHIBIT + 1, C.TBTT_PROHIBIT_HOLD_TIME_STOP_BCN & 0xFF)
+    v = t.read8(C.REG_TBTT_PROHIBIT + 2)
+    t.write8(C.REG_TBTT_PROHIBIT + 2,
+             (v & 0xF0) | (C.TBTT_PROHIBIT_HOLD_TIME_STOP_BCN >> 8))
+
+
+def set_sta_opmode(t, mac_address: str) -> None:
+    """[SRC] hw_var_set_opmode(_HW_STATE_STATION_) — port0, non-concurrent path.
+
+    Airmon brings the interface up as a STA before switching to monitor. Reproduces the
+    driver's port0 opmode block: set MAC addr, disable TSF update, Set_MSR(STATION),
+    StopTxBeacon, then REG_BCN_CTRL = DIS_TSF_UDT | EN_BCN_FUNCTION | DIS_ATIM. [WIRE] op
+    4740-4754.
+    """
+    _set_macaddr(t, mac_address)                        # HW_VAR_MAC_ADDR
+    _disable_tsf_update(t)                               # rtw_iface_disable_tsf_update
+    _set_msr(t, C.MSR_STATION)                           # Set_MSR(_HW_STATE_STATION_)
+    _stop_tx_beacon(t)                                   # StopTxBeacon
+    t.write8(C.REG_BCN_CTRL, C.DIS_TSF_UDT | C.EN_BCN_FUNCTION | C.DIS_ATIM)
 
 
 def _hw_var_set_monitor(t) -> None:
@@ -56,10 +109,10 @@ def _hw_var_set_monitor(t) -> None:
 
 
 def enter_monitor(t) -> None:
-    """[SRC] hw_var_set_opmode(_HW_STATE_MONITOR_) — the always-monitor entry.
+    """[SRC] hw_var_set_opmode(_HW_STATE_MONITOR_) — Set_MSR(NOLINK) + hw_var_set_monitor.
 
-    See the module docstring for why this is the vendor monitor opmode entry only,
-    not airmon's full STA->monitor transition.
+    The final airmon step: net-type to NOLINK then the monitor RCR/RXFLTMAP. [WIRE] op
+    4755-4764.
     """
     _set_msr(t, C.MSR_NOLINK)
     _hw_var_set_monitor(t)

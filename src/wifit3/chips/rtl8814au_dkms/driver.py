@@ -30,13 +30,15 @@ from wifit3.wlan.packet import WlanFrameParser
 from ..rx_reader import RxReaderThread
 from .bb import phy_bb_config
 from .chan import init_tune, set_channel_bw, set_rfe_reg_init
-from .constants import BBSWING_DEFAULT, CHANNELS_2G, CHANNELS_5G, PID_RTL8814AU, VID_REALTEK
+from .constants import (
+    BAND_MAX, BBSWING_DEFAULT, CHANNELS_2G, CHANNELS_5G, PID_RTL8814AU, VID_REALTEK,
+)
 from .dig import WATCHDOG_PERIOD_S, watchdog_tick
 from .dm import init_hal_dm
 from .efuse import read_chip_params
 from .firmware import bring_up
 from .mac import hal_init_turn_on, mac_init_misc, phy_mac_config
-from .monitor import enter_monitor
+from .monitor import enable_rx_bar, enter_monitor, set_sta_opmode
 from .rf import phy_rf_config
 from .rx import iter_frames
 from .transport import Rtl8814auTransport
@@ -65,6 +67,9 @@ class Rtl8814auDkmsDriver:
         self.transport = transport
         self.mac_address: Optional[str] = None  # M2: efuse read
         self._channel: Optional[int] = None
+        # Vendor lagging current_band_type. init_hw_mlme_ext resets it to BAND_MAX, so 2.4 GHz
+        # hops skip CCK txagc until a 5G<->2.4G crossing commits a band (matches the wire).
+        self._current_band: int = BAND_MAX
         self._tx_power: tuple = ()  # per-path efuse TX-power info, 2.4 GHz (M2e)
         self._tx_power_5g: tuple = ()  # per-path efuse TX-power info, 5 GHz (M5d)
         # Per-path BB-swing (TxScale) per band — phy_SetBBSwingByBand on a band switch.
@@ -124,18 +129,25 @@ class Rtl8814auDkmsDriver:
             progress_cb(0.7, "Configuring MAC / BB / RF registers")
 
         def _phy_config(t):
-            phy_mac_config(t)     # M2a: MAC register table
-            mac_init_misc(t)      # M2b: hal_init MISC stage
-            phy_bb_config(t, params.rfe_type, params.crystal_cap)  # M2b: PHY_BBConfig8814
-            phy_rf_config(t, params.rfe_type)                      # M2c: PHY_RFConfig8814A
+            phy_mac_config(t)     # MAC register table
+            mac_init_misc(t)      # hal_init MISC stage
+            phy_bb_config(t, params.rfe_type, params.crystal_cap)  # PHY_BBConfig8814
+            phy_rf_config(t, params.rfe_type)                      # PHY_RFConfig8814A
             init_tune(t, _DEFAULT_CHANNEL, params.tx_power, params.tx_power_5g,
-                      self._bb_swing_2g, self._bb_swing_5g)  # M2d/M2e: ch tune + TX power
-            init_hal_dm(t)                                         # M3a: InitHalDm DIG/AGC seed
-            set_rfe_reg_init(t, params.rfe_type)                   # M3b-1: PHY_SetRFEReg8814A(TRUE)
-            hal_init_turn_on(t, self.mac_address)                  # M3b-1: turn-on tail + MAC addr
-            enter_monitor(t)                                       # M3b-2: monitor opmode (RCR/RXFLTMAP)
+                      self._bb_swing_2g, self._bb_swing_5g)  # ch tune + TX power (commits 2.4G)
+            init_hal_dm(t)                                         # InitHalDm DIG/AGC seed
+            set_rfe_reg_init(t, params.rfe_type)                   # PHY_SetRFEReg8814A(TRUE)
+            hal_init_turn_on(t, self.mac_address)                  # turn-on tail + MAC addr
+            # airmon STA->monitor dance — reach monitor the way the vendor does, not via a
+            # shortcut. init_hw_mlme_ext resets the band to BAND_MAX (so the retune skips CCK).
+            enable_rx_bar(t)                                       # init_hw_mlme_ext RX-BAR
+            band = set_channel_bw(t, _DEFAULT_CHANNEL, params.tx_power, params.tx_power_5g,
+                                  self._bb_swing_2g, self._bb_swing_5g, current_band=BAND_MAX)
+            set_sta_opmode(t, self.mac_address)                   # hw_var_set_opmode(STATION)
+            enter_monitor(t)                                       # hw_var_set_opmode(MONITOR)
+            return band
 
-        await loop.run_in_executor(None, _phy_config, self.transport)
+        self._current_band = await loop.run_in_executor(None, _phy_config, self.transport)
         self._channel = _DEFAULT_CHANNEL
 
         # M3b-3a: start the bulk-IN RX reader. It keeps a blocking bulk read posted
@@ -196,9 +208,9 @@ class Rtl8814auDkmsDriver:
         """
         loop = asyncio.get_running_loop()
         async with self._io_lock:   # don't race the DIG watchdog's control I/O
-            await loop.run_in_executor(
+            self._current_band = await loop.run_in_executor(
                 None, set_channel_bw, self.transport, channel, self._tx_power,
-                self._tx_power_5g, self._bb_swing_2g, self._bb_swing_5g)
+                self._tx_power_5g, self._bb_swing_2g, self._bb_swing_5g, self._current_band)
         self._channel = channel
         return True
 

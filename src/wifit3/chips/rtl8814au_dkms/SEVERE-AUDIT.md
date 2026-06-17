@@ -87,15 +87,45 @@ the ones we don't, then fix the whole set together.
   (per-hop, sliced — FOLD into the single cursor), `verify_efuse_pcap.py` (probe efuse read).
 - HW smoke: `scripts/rtl8814au_dkms/{test_hw,scan_hw,ab_scan}.py`.
 
-## Known gaps ledger (fill as you walk; verdict = ported / fixed / proven-faithful / waived-named)
+## Session 2 progress — the single-cursor gate is built; airmon dance + 2 hidden gaps ported
+
+`scripts/rtl8814au_dkms/verify_pcap.py` is now a **single monotonic cursor** over the whole
+capture (anchor = the probe chip-version read; no window, no aireplay waiver — this capture has
+**no injection**, every bulk-OUT is an FW packet). It walks: init (efuse → turn-on tail, 7267
+ops) → **airmon STA→monitor dance** (314 ops, reproduced not waived) → operational dispatch
+(hop = `R 0x0454`, tick = `R 0x0060`). It currently reproduces init + dance + the first hop and
+stops at the **first watchdog tick** (`R 0x0060` @ op 7868 / frame 15933) — the FA→IGI-only
+`dig.watchdog_tick` can't reproduce a full tick. **That is the live frontier.** `verify_channels.py`
+is **folded into the cursor** (deleted); per-hop tunes are now dispatched in-context with carried
+band state.
+
+Building the gate surfaced two gaps the windowed anti-pattern hid (G8, G9 below) — exactly the
+PORTING.md warning that a windowed gate is blind between its windows.
+
+### The watchdog tick, decoded from the wire (the remaining work)
+A tick = `rtw_dynamic_chk_wk_hdl` [SRC rtw_cmd.c:3268]: `dm_DynamicUsbTxAgg` (the `R/W 0x0060`
+opener) → sreset poll (`R 0x0210`/`R 0x0288`) → `rtw_hal_dm_watchdog` → **`phydm_watchdog`**
+[SRC phydm.c:2162]. Within phydm_watchdog the wire shows, in order:
+`phydm_false_alarm_counter_statistics` = `phydm_fa_cnt_statistics_ac` (FA/CCA reads 0x0fxx) +
+`phydm_get_dbg_port_info` (the `0x198c`/`0x8fc`/`0xfa0`/`0x8f8` debug-port block — **NOT** the
+antenna-weighting G4 guessed) + `phydm_false_alarm_counter_reg_reset` (0x09a4/0a2c/0b58) →
+`phydm_dig` (IGI, conditional) → `phydm_cck_pd_th` → `phydm_adaptivity` (0x08a4) → `halrf_watchdog`
+(0x0440/2908/0c90) → `phydm_env_mntr_watchdog` (0x0994/0fb4/0990/0998/099c/09a0, a stateful CCX
+machine). Port these into `dig.watchdog_tick` member-by-member, gate-confirming each.
+
+## Known gaps ledger (verdict = ported / fixed / proven-faithful / waived-named)
 
 | # | Op / area (wire landmark) | Vendor [SRC] | Our state | Verdict |
 |---|---|---|---|---|
-| G1 | watchdog `phydm_cck_pd_th` (0xa0a) every tick | phydm.c:1828 | seed-only at init | **gap — port into watchdog_tick** |
-| G2 | watchdog `phydm_adaptivity` (0x8a4) every tick | phydm.c:1830 | seed-only | **gap — port** |
-| G3 | watchdog `phydm_env_mntr_watchdog` (0x994) | phydm.c:2226 | seed-only | **gap — port** |
-| G4 | dynamic antenna-weighting (0x98c/0x198c) | phydm_rtl8814a | not ported | **gap — port (4T4R RX)** |
-| G5 | airmon STA→monitor dance | (driver's writes) | waived silently | **reproduce, don't waive** |
-| G6 | monitor entry verified out-of-context (10-op slice) | — | sliced | **dispatch inline in the single cursor** |
-| G7 | frames 30000-85279 outside the gate window | — | never replayed | **extend the cursor to capture end** |
-| … | (the gate's next frontier) | — | — | (walk it) |
+| G5 | airmon STA→monitor dance (RX-BAR + retune + STA-opmode + monitor) | hal_com.c:12384 / rtl8814a_hal_init.c:3204 | reproduced single-cursor | **PORTED (monitor.py + driver connect)** |
+| G6 | monitor entry verified out-of-context (10-op slice) | — | dispatched inline | **FIXED (single cursor)** |
+| G7 | frames 30000-85279 outside the gate window | — | cursor walks to capture end | **FIXED (single cursor)** |
+| G8 | `_mac_power_on_check` (R 0x09/0x100) before _InitPowerOn | usb_halinit.c:1073 | hidden by the windowed gate; now reproduced | **PORTED (firmware.bring_up)** — falsified the "hw_reset is #if 0 ⇒ no preamble ops" assumption |
+| G9 | CCK txagc skipped on band-uncommitted 2.4G tunes (lagging `current_band_type`) | hal_com_phycfg.c:3044 | port always wrote CCK on 2.4G | **PORTED (chan band-state + txpower write_cck)** — windowed gate never saw the airmon retune/hops |
+| G1 | watchdog `phydm_cck_pd_th` (0xa0a) | phydm_cck_pd.c:1019 | seed-only at init | **gap — port into watchdog_tick** |
+| G2 | watchdog `phydm_adaptivity` (0x8a4) | phydm_adaptivity.c:768 | seed-only | **gap — port** |
+| G3 | watchdog `phydm_env_mntr_watchdog` (0x994) | phydm_ccx.c:1989 | seed-only | **gap — port (stateful CCX)** |
+| G4 | watchdog FA-stats `phydm_get_dbg_port_info` (0x198c/0x8fc/0xfa0) | phydm_dig.c:1580 | NOT antenna-weighting (G4 guess wrong); debug-port read | **gap — port** |
+| G10 | tick wrapper: `dm_DynamicUsbTxAgg` (0x0060) + sreset poll (0x0210/0x0288) | rtw_cmd.c:3268 | not ported | **gap — port (tick opener)** |
+| G11 | watchdog `phydm_fa_cnt_statistics_ac` full FA/CCA reads (0x0fxx) | phydm_dig.c | partial (cnt_all only) | **gap — port full** |
+| G12 | watchdog `halrf_watchdog` (0x0440/2908/0c90) | halrf | not ported | **gap — port** |
