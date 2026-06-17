@@ -113,6 +113,26 @@ def main() -> int:
     v = t.read8(C.REG_CCK_CHECK)
     all_ok &= _chk("MAC 0x454 CCK_CHECK bit7 (band)", v, (v & 0x80) == 0, "bit7 clear (2.4G)")
 
+    # --- CCK RX path / antenna / packet-detect (the ref AP beacons 100% CCK) ---
+    print("  --- CCK RX path/antenna/PD ---")
+    v = t.read32(0x0A04)   # rCCK_RX: [31:28]=pathB tx=4, [27:24]=pathB rx=5
+    all_ok &= _chk("BB 0x0a04 CCK_RX (txB/rxB)", v,
+                   ((v >> 28) & 0xF) == 0x4 and ((v >> 24) & 0xF) == 0x5, "[31:28]=4 [27:24]=5")
+    v = t.read32(0x0A00)
+    all_ok &= _chk("BB 0x0a00 CCK ant-div [15]", v, (v & (1 << 15)) == 0, "[15]=0 (ant-div off)")
+    v = t.read32(0x0A70)
+    all_ok &= _chk("BB 0x0a70 concurrent-CCA [7]", v, (v & (1 << 7)) == 0, "[7]=0")
+    v = t.read32(0x0A74)
+    all_ok &= _chk("BB 0x0a74 RX path-div [8]", v, (v & (1 << 8)) == 0, "[8]=0")
+    v = t.read32(0x0A14)
+    all_ok &= _chk("BB 0x0a14 mrc_antsel [7]", v, (v & (1 << 7)) == 0, "[7]=0")
+    v = t.read32(0x0A20)
+    all_ok &= _chk("BB 0x0a20 MBC weight [5:4]", v, ((v >> 4) & 0x3) == 1, "[5:4]=1")
+    v = t.read32(0x0A84)
+    all_ok &= _chk("BB 0x0a84 2R-CCA-only [28]", v, (v & (1 << 28)) != 0, "[28]=1")
+    v = t.read8(0x0A0A)
+    all_ok &= _chk("BB 0x0a0a CCK-PD threshold", v, v == 0x40, "0x40 (cck_pd_init level0)")
+
     t.close()
     if all_ok:
         print(f"\nPASS — chip is on 20 MHz / ch{ch} as intended.")

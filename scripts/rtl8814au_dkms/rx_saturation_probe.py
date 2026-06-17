@@ -102,7 +102,7 @@ def _bssid_of_beacon(frame: bytes) -> str | None:
 
 
 class Stat:
-    __slots__ = ("descs", "crc", "icv", "pwdb", "rssi")
+    __slots__ = ("descs", "crc", "icv", "pwdb", "rssi", "cck", "ofdm")
 
     def __init__(self):
         self.descs = 0
@@ -110,6 +110,8 @@ class Stat:
         self.icv = 0
         self.pwdb: list[int] = []
         self.rssi: list[int] = []
+        self.cck = 0    # beacons at a CCK rate (data_rate <= 3): 1/2/5.5/11 Mbps
+        self.ofdm = 0   # beacons at an OFDM/HT rate (data_rate >= 4)
 
 
 def _walk_raw(buf: bytes, stats: dict):
@@ -127,6 +129,10 @@ def _walk_raw(buf: bytes, stats: dict):
             if bssid is not None:
                 s = stats[bssid]
                 s.descs += 1
+                if d.data_rate <= 3:
+                    s.cck += 1
+                else:
+                    s.ofdm += 1
                 if d.crc_err:
                     s.crc += 1
                 if d.icv_err:
@@ -358,13 +364,16 @@ def main() -> int:
         rssi_mean = sum(s.rssi) / len(s.rssi) if s.rssi else 0
         mark = "  <-- REF" if b == ref else ""
         return (f"  {b}  descs={s.descs:>5} good={good:>5} crc={s.crc:>5}({crc_pct:>4.0f}%) "
-                f"icv={s.icv:>4} pwdb(mean/max)={pwdb_mean:>5.0f}/{pwdb_max:>3} "
+                f"cck={s.cck:>5} ofdm={s.ofdm:>5} "
                 f"rssi~{rssi_mean:>5.0f}dBm{mark}")
 
     print(f"\n[*] per-BSSID over {args.duration:g}s on ch{args.channel}:")
     ordered = sorted(stats.items(), key=lambda kv: kv[1].descs, reverse=True)
-    for b, s in ordered[:15]:
+    shown = ordered[:15]
+    for b, s in shown:
         print(fmt(b, s))
+    if ref in stats and ref not in dict(shown):     # always surface the reference AP
+        print(fmt(ref, stats[ref]))
     if ref not in stats:
         print(f"\n[!] reference {ref} produced ZERO descriptors (not even crc-error).")
     return 0
