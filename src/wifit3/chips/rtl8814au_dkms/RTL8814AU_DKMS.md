@@ -13,6 +13,35 @@ Sources of truth: the vendor tree at
 file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
 
 ## Potential Known Gaps (audit before trusting any milestone)
+- [x] **Reference-AP RX deficit — ROOT CAUSE FOUND + FIXED (RX delivery, NOT init/AGC).**
+      The long-standing "hears the 2.4 GHz reference AP worst of the room (~3/s) while the
+      aggregate looks fine" symptom was diagnosed end-to-end and is **not** front-end
+      saturation, a wrong AGC/RF/IGI value, an efuse-derived value, or the DIG watchdog —
+      every one of those was tested and cleared:
+      - **Init/tune is faithful.** A from-scratch bring-up read in a tight single-thread loop
+        (`scripts/rtl8814au_dkms/rx_saturation_probe.py`) holds the fixed reference AP at
+        **8–9 beacons/s, #1-ranked, crc ~3%, pwdb never railing** (max ~150–210, not 253),
+        matching the kernel's 8.7/s from the capture. So the init path the runbook suspected
+        is correct; the chip + our bring-up hear the AP fine. [HW]
+      - **Not the DIG watchdog.** With the watchdog disabled (`--no-dig`) the rate was
+        unchanged (3.1 → 3.3/s before the fix); inline watchdog ticks in the probe (IGI
+        climbing 0x28→0x2a) left the rate at 8.6/s. The watchdog is RX-neutral. [HW]
+      - **Not the chip delivering fewer frames.** Our reader pulls *more* bulk-IN bytes/s
+        than the kernel did in the capture (≈140–1240 KiB/s vs the kernel's 41–59 KiB/s),
+        with zero host-side cap drops and zero `iter_frames` garbage (FC version bits all 0).
+      - **The cause was RX *delivery*.** `iter_frames` + the 802.11 parse ran on the asyncio
+        event loop (`driver._dispatch`). The 8814AU in monitor mode (4T4R) delivers a heavy
+        frame stream (thousands of data/control frames/s), so under load the loop held the
+        GIL long enough to gap the reader's next bulk read → chip RX-FIFO overflow → beacons
+        dropped before delivery. The strong near AP showed the *gain-too-high look* (it drops
+        while loud far APs stay fine) but the mechanism was delivery, not gain.
+      - **Fix:** decode on the reader thread (`_read_once` returns parsed frames; the loop
+        only fans them). Full driver path (DIG on) went **mean 3.1/s → 6.6–7.2/s, median
+        7–8, max 10**, now matching the tight-loop ceiling in the same RF window. [HW]
+      - **Absolute ≥8/s confirmation needs a COLD card.** Across this session's runs the
+        single-thread ceiling decayed 8.9 → 6.5/s as the card was hammered without a replug
+        (the documented warm-state decay); the fixed driver tracks that ceiling. A cold
+        replug + `beacon_watch --bssid <ref> --channel 1 --duration 60` should read ≥8/s.
 - [x] **2.4 GHz per-channel spur/NBI — DONE.** `chan._spur_nbi_2g` ports
       `phydm_spur_nbi_setting_8814a` [SRC phydm_rtl8814a.c:47] + `phydm_nbi_setting`: on
       2.4 GHz ch 4-8 (spur 2440 MHz) and ch14 (2480) it computes the per-channel NBI notch
