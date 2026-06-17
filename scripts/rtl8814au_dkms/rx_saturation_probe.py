@@ -262,13 +262,35 @@ def main() -> int:
     ap.add_argument("--threads", type=int, default=1,
                     help="N concurrent bulk-IN reader threads (keep more reads in flight to drain "
                          "the chip RX FIFO faster). >1 uses the multi-reader measurement path.")
+    ap.add_argument("--no-crc", action="store_true",
+                    help="drop RCR_ACRC32|RCR_AICV after bring-up so the chip filters crc/icv-error "
+                         "frames at the FIFO (iter_frames discards them anyway) — tests whether the "
+                         "crc flood is starving beacon delivery.")
+    ap.add_argument("--read-size", type=lambda s: int(s, 0), default=None,
+                    help="bulk-IN read buffer size (default 32KB); try 0x1000/0x2000 to test "
+                         "whether smaller, more frequent reads drain the FIFO better.")
+    ap.add_argument("--mgmt-only", action="store_true",
+                    help="drop data+control frames at the chip (RCR ADF|ACF) so only mgmt/beacons "
+                         "reach the FIFO — tests whether the data/ctrl flood crowds out beacons.")
     args = ap.parse_args()
+    rd = args.read_size  # None => transport default
     ref = args.bssid.lower()
 
     dev = _find_dev()
     t = Rtl8814auTransport(dev)
     print(f"[*] bringing up on ch{args.channel}...", file=sys.stderr)
     igi_seed = _bring_up(t, args.channel)
+    if args.no_crc:
+        rcr = t.read32(C.REG_RCR)
+        t.write32(C.REG_RCR, rcr & ~(C.RCR_ACRC32 | C.RCR_AICV))
+        print(f"[*] RCR 0x{rcr:08x} -> 0x{t.read32(C.REG_RCR):08x} (crc/icv-error frames dropped "
+              f"at the chip)", file=sys.stderr)
+    if args.mgmt_only:
+        rcr = t.read32(C.REG_RCR)
+        # clear ADF (data) + ACF (control) so only mgmt frames (beacons) reach the FIFO
+        t.write32(C.REG_RCR, rcr & ~(C.RCR_ADF | C.RCR_ACF))
+        print(f"[*] RCR 0x{rcr:08x} -> 0x{t.read32(C.REG_RCR):08x} (data+ctrl frames dropped at "
+              f"the chip; mgmt only)", file=sys.stderr)
 
     if args.threads > 1:
         return _multi_reader(t, ref, args.channel, args.duration, args.threads)
@@ -294,7 +316,7 @@ def main() -> int:
             print(f"  [t={now - start:4.0f}s] DIG tick: IGI=0x{st.cur_ig_value:02x} fa={fa}",
                   file=sys.stderr)
             next_tick += WATCHDOG_PERIOD_S
-        buf = t.bulk_in()
+        buf = t.bulk_in(rd) if rd else t.bulk_in()
         if buf:
             n_buf += 1
             n_bytes += len(buf)
