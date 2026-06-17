@@ -26,21 +26,44 @@
 > differ"* — and behind that comment was a **4-member gap**. The 8822bu's deaf 2.4 GHz hid behind a
 > *"BT-coex no-op"* comment. Default-assume-wrong until silicon or source proves it.
 >
-> ### The plan
-> 0. **This doc is the gap ledger.** Log every gap + verdict as you go (table at the bottom).
-> 1. **Build a NEW single-cursor `verify_pcap`** to the full-capture methodology. The current
->    `scripts/rtl8814au_dkms/verify_pcap.py` is the **anti-pattern** — replace it (details below).
->    Reference shape (good structure, single-cursor + operational dispatch):
->    `scripts/rtl8188eus_dkms/verify_pcap.py`. *(It still waives the airmon dance, which the new
->    rule reverses — so it's the template, not a complete example.)*
-> 2. **Walk the vendor source using the gate's frontiers as landmarks.** Each unaccounted op the
->    cursor stops on names the next thing to make faithful:
->    - **gap** (an op no handler reproduces) → **port it.**
->    - **inconsistency** (we emit a different byte, or skip a branch) → **make it consistent with the wire.**
-> 3. **Only once the cursor PASSes across the WHOLE capture** do you know the *full* gap list. Fix
->    the set as one change, **then** HW-test once (scan + a 30-min dual-band soak — the dropout is
->    the **2.4 GHz** one). **Do NOT port one gap and soak-test** — that loop wastes hours and can't
->    surface the gap you can't see (PORTING.md names it).
+ ### STATUS (session 3) — the gate is built and walking; ONE tick member + cck_pd remain
+> The single-cursor `verify_pcap` is **done** (steps 1+2 below) and walks: init (efuse→turn-on,
+> 7267 ops) → airmon STA→monitor dance (314) → operational dispatch of 3 interleaved producers
+> (channel hops, LED blink, dynamic-check tick). It currently reproduces init + dance + hops + LED
+> + a full watchdog tick **through every member except `phydm_env_mntr_watchdog`** — the live
+> frontier is `R 0x0994` (op 8221). Gaps found + ported so far (ledger at bottom): airmon dance
+> (G5-7), power-on check (G8), lagging-band CCK skip (G9), LED (G10), sreset+FA-stats+DIG-carry
+> (G11), dbg-port (G4), adaptivity (G2), halrf (G12). **Remaining: G3 env_mntr (the heaviest, an
+> intricate CCX NHM/CLM state machine) + G1 cck_pd (4 writes, the CCK-PD threshold).**
+>
+> **Likely dropout fix is already ported (un-HW-tested):** the RX-gain adapters are `phydm_dig`
+> (now carries `cur_ig_value` + adapts IGI) and `phydm_adaptivity` (EDCCA, tracks IGI) — both were
+> frozen at the init seed, both ported + gate-verified. `phydm_env_mntr_watchdog` is NHM/CLM
+> **telemetry** (its results are not consumed by the 8814 no-link DIG/adaptivity path), so it is
+> gate-completeness, not the RX fix. `cck_pd` (CCK packet-detect threshold) IS RX-relevant (CCK on
+> 2.4 GHz) but writes only 4× the whole capture.
+>
+> ### NEXT STEPS
+> 1. **Port G3 `phydm_env_mntr_watchdog`** [phydm_ccx.c:1989] into `watchdog.tick` (after `_halrf`).
+>    Members on the wire (first tick ops 5405-5429): `phydm_nhm_mntr_chk(262)` (NHM get-result read
+>    0xfb4 + `phydm_nhm_set_th_reg` IGI-derived thresholds 0x998/99c/9a0 + `phydm_nhm_set`/`_mntr_set`
+>    0x994 method) + `phydm_clm_mntr_chk(262)` (`phydm_clm_setting` 0x990 period + CLM get-result
+>    0xfa4) + `phydm_nhm_trigger`/`phydm_clm_trigger` (0x994 trigger bits). The NHM thresholds reuse
+>    the init formula `th[i]=((igi-14)<<1)+4i` with the CARRIED IGI (verified: igi=0x22→0x998=0x34302c28).
+>    Carry the CCX state. Background NHM/CLM is HW-read-driven (the wall-clock gate at
+>    phydm_nhm_mntr_chk:1162 is bypassed for NHM_BACKGROUND) ⇒ fully reproducible.
+> 2. **Port G1 `phydm_cck_pd_th`** [phydm_cck_pd.c:1019] — carries `cck_fa_ma` moving average; writes
+>    0x0a0a only on a threshold change (4× total). Goes between `_dig` and `_adaptivity` in the tick.
+> 3. **When the cursor PASSes the whole capture**, migrate the driver from `dig.watchdog_tick` to
+>    `watchdog.tick` (seed `WatchdogState.cur_ig_value` from `init_hal_dm`'s return), then **HW-test
+>    once** (scan + 30-min dual-band soak — the dropout is the **2.4 GHz** one). Do NOT soak-test
+>    before the set is complete + the driver migrated.
+>
+> ### How it was built (reference, steps 1+2 of the original plan — DONE)
+> The current `scripts/rtl8814au_dkms/verify_pcap.py` IS the single-cursor gate (replaced the
+> windowed anti-pattern). Reference shape was `scripts/rtl8188eus_dkms/verify_pcap.py`. Walk the
+> vendor source using the gate's frontiers: each unaccounted op the cursor stops on names the next
+> thing to port (gap) or make consistent with the wire (inconsistency).
 
 ## What this session found (don't re-derive — start from here)
 
