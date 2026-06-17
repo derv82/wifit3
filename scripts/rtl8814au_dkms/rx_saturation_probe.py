@@ -278,6 +278,10 @@ def main() -> int:
     ap.add_argument("--mgmt-only", action="store_true",
                     help="drop data+control frames at the chip (RCR ADF|ACF) so only mgmt/beacons "
                          "reach the FIFO — tests whether the data/ctrl flood crowds out beacons.")
+    ap.add_argument("--cck-pd", type=lambda s: int(s, 0), default=None,
+                    help="write this CCK-PD threshold to 0xa0a after bring-up (LV_0=0x40, "
+                         "LV_1=0x83, LV_2=0xcd) — tests whether a less-sensitive CCK PD (rejecting "
+                         "false alarms in a busy channel) recovers the strong CCK reference AP.")
     args = ap.parse_args()
     rd = args.read_size  # None => transport default
     ref = args.bssid.lower()
@@ -286,6 +290,10 @@ def main() -> int:
     t = Rtl8814auTransport(dev)
     print(f"[*] bringing up on ch{args.channel}...", file=sys.stderr)
     igi_seed = _bring_up(t, args.channel)
+    if args.cck_pd is not None:
+        t.write8(0x0A0A, args.cck_pd & 0xFF)
+        print(f"[*] CCK-PD 0xa0a <- 0x{t.read8(0x0A0A):02x} (LV_0=0x40/LV_1=0x83/LV_2=0xcd)",
+              file=sys.stderr)
     if args.no_crc:
         rcr = t.read32(C.REG_RCR)
         t.write32(C.REG_RCR, rcr & ~(C.RCR_ACRC32 | C.RCR_AICV))
@@ -319,8 +327,9 @@ def main() -> int:
             break
         if args.dig and now >= next_tick:
             fa = watchdog_tick(t, st)
-            print(f"  [t={now - start:4.0f}s] DIG tick: IGI=0x{st.cur_ig_value:02x} fa={fa}",
-                  file=sys.stderr)
+            print(f"  [t={now - start:4.0f}s] tick: IGI=0x{st.cur_ig_value:02x} fa={fa} "
+                  f"cck_pd_lv={st.cck_pd_lv}(0xa0a=0x{t.read8(0x0A0A):02x}) "
+                  f"cck_fa_ma={st.cck_fa_ma}", file=sys.stderr)
             next_tick += WATCHDOG_PERIOD_S
         buf = t.bulk_in(rd) if rd else t.bulk_in()
         if buf:
