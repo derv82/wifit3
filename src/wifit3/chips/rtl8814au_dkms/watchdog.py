@@ -220,6 +220,13 @@ def _cck_pd(t, st: WatchdogState, cck_fa: int) -> None:
     ~doubled reference-AP CCK reception.
     """
     if st.cck_fa_ma == _CCK_FA_MA_RESET:
+        # Seed the MA from the first REAL sample. The very first tick after init/retune reads
+        # cck_fa=0 (the CCK FA counter only starts accumulating after the first reset pulse);
+        # seeding the MA with that spurious 0 doubles the ramp to LV_1 (~8 s -> the strong CCK
+        # AP looks dead in Focus for that long). A genuinely quiet channel keeps reading 0,
+        # stays unseeded, and correctly holds LV_0.
+        if cck_fa == 0:
+            return
         st.cck_fa_ma = cck_fa
     else:
         st.cck_fa_ma = (st.cck_fa_ma * 3 + cck_fa) >> 2
