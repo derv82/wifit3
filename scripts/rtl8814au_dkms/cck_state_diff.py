@@ -31,13 +31,23 @@ from wifit3.chips.rtl8814au_dkms.transport import Rtl8814auTransport  # noqa: E4
 
 CAP_DIR = REPO / "usb_dumps_new" / "captures_rtl8814au"
 
-# BB AGC + CCK block. Registers that COUNT/latch at runtime (FA/CCA counters, report
-# regs) are excluded — they legitimately differ from any single capture snapshot.
-LO, HI = 0x0800, 0x0BFF
+# Range is CLI-selectable: `cck_state_diff.py [capture] [LO] [HI]`. Default = BB AGC/CCK block.
+# Registers that COUNT/latch/adapt at runtime are excluded — they legitimately differ from a
+# single capture snapshot. (Bias-free: this compares live state vs the kernel's, not by name.)
+import sys as _sys
+LO = int(_sys.argv[2], 0) if len(_sys.argv) > 2 else 0x0800
+HI = int(_sys.argv[3], 0) if len(_sys.argv) > 3 else 0x0BFF
 _RUNTIME_EXCLUDE = {
-    0x0A2C, 0x0A5C, 0x0B58, 0x09A4,        # FA/CCA counters + reset pulses
-    0x0F48, 0x0FA0, 0x08FC, 0x08F8, 0x198C,  # dbg-port (out of range anyway)
-    0x0A0A,                                 # CCK-PD: written 0x40 at init but adapts at runtime
+    # BB FA/CCA counters + reset pulses, dbg-port, adapted gain/CCK-PD/EDCCA/NHM
+    0x0A2C, 0x0A5C, 0x0B58, 0x09A4, 0x0F48, 0x0FA0, 0x08FC, 0x08F8, 0x198C, 0x0A0A,
+    0x0A08, 0x0C50, 0x0E50, 0x1850, 0x1A50, 0x08A4, 0x0994, 0x0998, 0x099C, 0x09A0, 0x0990,
+    # MAC dynamic: LED, TX/RX DMA status, EDCCA countdown, beacon/TSF/FWHW toggles, efuse, CR
+    0x0060, 0x0210, 0x0288, 0x0520, 0x0524, 0x0550, 0x0422, 0x0423, 0x0205, 0x0100, 0x0002,
+    0x0008, 0x0090, 0x06A4, 0x0670, 0x010C,
+    # halrf TX-power thermal + txagc + RF-SIPI write regs (per-path, runtime-corrected)
+    0x1998, 0x1B00, 0x0C90, 0x0E90, 0x1890, 0x1A90, 0x0440,
+    # per-hop channel-dependent (our state-diff tunes ch1 only; capture window includes hops)
+    0x0A20, 0x0A24, 0x0A28, 0x0958, 0x0860, 0x087C,
 }
 
 

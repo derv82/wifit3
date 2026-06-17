@@ -282,6 +282,10 @@ def main() -> int:
                     help="write this CCK-PD threshold to 0xa0a after bring-up (LV_0=0x40, "
                          "LV_1=0x83, LV_2=0xcd) — tests whether a less-sensitive CCK PD (rejecting "
                          "false alarms in a busy channel) recovers the strong CCK reference AP.")
+    ap.add_argument("--cck-rx-path", type=lambda s: int(s, 0), default=None,
+                    help="write 0xa04[27:24] (CCK_1/CCK_2 input path) after bring-up. The vendor's "
+                         "phydm_config_cck_rx_path (which we skip) leaves 0x4 (CCK_2=0) for single "
+                         "path B; our _config_trx_path leaves 0x5. Test 0x4 vs 0x5.")
     args = ap.parse_args()
     rd = args.read_size  # None => transport default
     ref = args.bssid.lower()
@@ -293,6 +297,11 @@ def main() -> int:
     if args.cck_pd is not None:
         t.write8(0x0A0A, args.cck_pd & 0xFF)
         print(f"[*] CCK-PD 0xa0a <- 0x{t.read8(0x0A0A):02x} (LV_0=0x40/LV_1=0x83/LV_2=0xcd)",
+              file=sys.stderr)
+    if args.cck_rx_path is not None:
+        v = t.read32(0x0A04)
+        t.write32(0x0A04, (v & ~0x0F000000) | ((args.cck_rx_path << 24) & 0x0F000000))
+        print(f"[*] 0xa04 0x{v:08x} -> 0x{t.read32(0x0A04):08x} ([27:24]<-0x{args.cck_rx_path:x})",
               file=sys.stderr)
     if args.no_crc:
         rcr = t.read32(C.REG_RCR)
