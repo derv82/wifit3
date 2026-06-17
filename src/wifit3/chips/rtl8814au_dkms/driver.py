@@ -11,9 +11,11 @@ confirmed promiscuous in both directions (captures client->AP, incl. WPA M2/M4).
 power — ``set_channel`` tunes 2.4 GHz + 5 GHz with correct per-rate TX power). Pending:
 the ch153 spur notch (M5f, minor RX polish).
 
-This driver is intentionally NOT registered in ``wlan/manager.py`` yet — master
-keeps the working mainline-derived ``rtw88_8814au`` port until this vendor port is
-hardware-proven to beat it on 2.4 GHz breadth. Exercise it via ``scripts/rtl8814au_dkms/``.
+``wlan/manager.py`` selects this DKMS port for 0bda:8813 by DEFAULT; the mainline
+``rtw88_8814au`` port loads only when ``WIFIT3_RTL8814=mainline`` is set in the
+environment (the ``env_or_none(..., "mainline", RTL8814AUDriver) or Rtl8814auDkmsDriver``
+fallthrough). So ``beacon_watch`` / the app exercise THIS driver unless that env var
+is set; ``scripts/rtl8814au_dkms/`` drives the bring-up + handlers directly.
 """
 from __future__ import annotations
 
