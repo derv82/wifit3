@@ -28,6 +28,13 @@ def _wep_camp(*, chop=False, cracker_samples=0, replay_state=None):
     )
 
 
+def _wpa_ap(*, known_psk=None):
+    return types.SimpleNamespace(
+        encryption="WPA2", wep_key=None, persisted=[], wep=None,
+        handshakes={}, wpa3=False, transition_mode=False, known_psk=known_psk,
+    )
+
+
 def test_headline_persisted_wep_idle_shows_recovered():
     """An already-cracked AP, no campaign → the recovered-key banner."""
     h = fm.derive_headline(_wep_ap(persisted_wep=True), None, fm.Campaigns())
@@ -69,6 +76,33 @@ def test_headline_cracking_names_the_concurrent_tx_action():
     chopping = fm.derive_headline(
         ap, None, fm.Campaigns(wep=_wep_camp(chop=True, cracker_samples=crk)))
     assert "Chopping a packet" in chopping[0] and "Cracking" in chopping[0]
+
+
+def test_headline_recovered_wps_psk_outranks_listening():
+    """A recovered WPS PSK (PBC or PIN, after the campaign is torn down) shows a
+    terminal banner instead of decaying back to 'Listening'."""
+    h = fm.derive_headline(_wpa_ap(known_psk="hunter2"), None, fm.Campaigns())
+    assert "WPS PSK recovered" in h[0]
+
+
+def test_headline_listening_when_no_psk():
+    h = fm.derive_headline(_wpa_ap(known_psk=None), None, fm.Campaigns())
+    assert "Listening for handshake" in h[0]
+
+
+def test_headline_live_pbc_outranks_listening():
+    h = fm.derive_headline(_wpa_ap(known_psk=None), None, fm.Campaigns(pbc_busy=True))
+    assert "PushButton" in h[0] and "capturing" in h[0].lower()
+
+
+def test_headline_wps_pin_found_while_held_then_psk_after_teardown():
+    # Campaign still held with a found PIN → cracked banner.
+    wps = types.SimpleNamespace(state=types.SimpleNamespace(found_pin="12345670"))
+    held = fm.derive_headline(_wpa_ap(known_psk=None), None, fm.Campaigns(wps=wps))
+    assert "WPS PIN cracked" in held[0]
+    # After teardown the PSK lives on the AP → recovered banner (not Listening).
+    after = fm.derive_headline(_wpa_ap(known_psk="hunter2"), None, fm.Campaigns())
+    assert "WPS PSK recovered" in after[0]
 
 
 def _iface_with_usable(n):

@@ -124,6 +124,23 @@ async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_v2_recovered_wps_psk_shows_in_status():
+    """After a WPS PBC/PIN win the recovered PSK lives on the AP; the v2 headline
+    shows a terminal banner instead of decaying back to 'Listening' once the
+    capture task finishes."""
+    bssid = "aa:bb:cc:dd:ee:01"
+    iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
+    ap = iface.access_points[bssid]
+    ap.wps_pbc_psk = "hunter2"          # as set by a successful PBC capture
+    app = _Host(iface, ap)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        status = str(app.screen.query_one("#status", Static).render())
+        assert "WPS PSK recovered" in status, status
+
+
+@pytest.mark.asyncio
 async def test_v2_button_wiring():
     """The attack buttons are encryption-conditional (derive_buttons), the inline
     ✕ maps to the right client, and that mapping reaches iface.deauth — proving

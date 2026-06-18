@@ -607,11 +607,12 @@ def wep_action_phrase(campaign) -> str:
 def derive_headline(ap, iface, campaigns: Campaigns) -> list[str]:
     """The CAMPAIGN HEADLINE — up to 3 markup lines naming the dominant current
     activity (the focal point of the v2 view). Priority, highest first:
-    active attack → recovered creds → running campaign → captured handshake/PMKID
-    → partial capture → passive listening. An ACTIVE attack outranks a past win
-    so re-running it on an already-cracked AP (re-test, or after a password
-    change) shows live progress instead of a frozen 'recovered' banner. Line 2/3
-    carry the salient detail for the headline state."""
+    active attack (WEP replay/crack, WPS PBC/PIN, WPA3-down) → recovered creds
+    (WEP key / WPS PSK) → captured handshake/PMKID → partial capture → passive
+    listening. An ACTIVE attack outranks a past win so re-running it on an
+    already-cracked AP (re-test, or after a password change) shows live progress;
+    and a recovered credential outranks listening so the win never decays back to
+    'Listening'. Line 2/3 carry the salient detail for the headline state."""
     enc = (ap.encryption or "").upper()
     wep = enc == "WEP"
 
@@ -639,25 +640,35 @@ def derive_headline(ap, iface, campaigns: Campaigns) -> list[str]:
                 f"[dim]{n_ivs:,} IVs · cracks at "
                 f"{CRACK_READY_THRESHOLD // 1000}k usable[/dim]"]
 
-    # 2. Recovered credentials (terminal win), only when idle — WEP key / WPS PIN.
-    if ap.wep_key is not None or any(p.kind == "WEP" for p in ap.persisted):
-        return ["[black bold on green] ✓ WEP key recovered [/black bold on green]",
-                "[dim]see the event log for the key[/dim]"]
+    # 2. Live WPS attack — opportunistic PBC auto-invade or PIN brute-force.
+    # Outranks the recovered banner + listening (an active attack is the dominant
+    # activity), same as an active WEP campaign above.
     wps = campaigns.wps
-    if wps is not None and wps.state.found_pin:
-        return ["[black bold on green] ✓ WPS PIN cracked [/black bold on green]",
-                f"[dim]PIN {escape(wps.state.found_pin)}[/dim]"]
-
-    # 3. Running long-running campaign — WPS PIN / WPA downgrade.
+    if campaigns.pbc_busy:
+        return ["[bold green]● WPS PushButton[/bold green] window — capturing PSK"]
     if wps is not None:
+        if wps.state.found_pin:
+            return ["[black bold on green] ✓ WPS PIN cracked [/black bold on green]",
+                    f"[dim]PIN {escape(wps.state.found_pin)}[/dim]"]
         return ["[bold cyan]● WPS PIN brute-force[/bold cyan]",
                 f"[dim]{wps_status_markup(wps)}[/dim]"]
+
+    # 3. WPA3 downgrade daemon running.
     if campaigns.wpa3_down is not None:
         st = campaigns.wpa3_down.stats
         return ["[bold cyan]● WPA Downgrade active[/bold cyan]",
                 f"[dim]spoofing WPA2-only · {st.responses_sent} responses[/dim]"]
-    if campaigns.pbc_busy:
-        return ["[bold green]● WPS PushButton[/bold green] window — capturing PSK"]
+
+    # 4. Recovered credentials (terminal win), when idle — WEP key / WPS PSK.
+    # known_psk covers a PSK recovered live this session (PBC or PIN) AND a
+    # persisted one, so the banner survives the campaign being torn down (the win
+    # shouldn't decay back to "Listening").
+    if ap.wep_key is not None or any(p.kind == "WEP" for p in ap.persisted):
+        return ["[black bold on green] ✓ WEP key recovered [/black bold on green]",
+                "[dim]see the event log for the key[/dim]"]
+    if ap.known_psk:
+        return ["[black bold on green] ✓ WPS PSK recovered [/black bold on green]",
+                "[dim]see the event log for the passphrase[/dim]"]
 
     # 4–5. Passive capture state — captured / partial / listening.
     if wep:
