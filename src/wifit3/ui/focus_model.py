@@ -401,25 +401,44 @@ def crack_section(ap, campaign, samples: int):
             "[dim]Some keys require >40K samples[/dim]")
 
 
-def fakeauth_markup(campaign, now: float) -> str:
-    """The SECURITY-panel Fake-Auth status (caller renders the whole string).
-    ``Off`` when no campaign; otherwise the fake-auth state machine."""
+def fakeauth_value_markup(campaign, now: float) -> str:
+    """Just the fake-auth status value (no 'Fake-Auth:' label) — the state
+    machine: associating / associated (+ re-auth countdown) / failed / idle."""
     if campaign is None:
-        return "Fake-Auth: [dim]Off[/dim]"
+        return "[dim]Off[/dim]"
     fa = campaign.fake_auth
     if fa.state == "associated":
         countdown = ""
         if fa.next_reauth_at:
             secs = max(0, int(fa.next_reauth_at - now))
             countdown = f" [dim](re-auth in {secs}s)[/dim]"
-        m = f"[green]✓ Associated[/green]{countdown}"
-    elif fa.state == "authenticating":
-        m = "[yellow]Associating…[/yellow]"
-    elif fa.state == "failed":
-        m = f"[red]Failed: {escape(fa.fail_reason or 'unknown')}[/red]"
-    else:
-        m = "[dim]Idle[/dim]"
-    return f"Fake-Auth: {m}"
+        return f"[green]✓ Associated[/green]{countdown}"
+    if fa.state == "authenticating":
+        return "[yellow]Associating…[/yellow]"
+    if fa.state == "failed":
+        return f"[red]Failed: {escape(fa.fail_reason or 'unknown')}[/red]"
+    return "[dim]Idle[/dim]"
+
+
+def fakeauth_markup(campaign, now: float) -> str:
+    """The SECURITY-panel Fake-Auth line (v1): the 'Fake-Auth:' label + value.
+    ``Off`` when no campaign; otherwise the fake-auth state machine."""
+    return f"Fake-Auth: {fakeauth_value_markup(campaign, now)}"
+
+
+def wep_status_line(ap, iface, campaign, now: float) -> str:
+    """The WEP status strip (v2): live fake-auth status (only while a campaign
+    runs — some routers guard against fake-auth, so its state is vital) plus the
+    always-on usable-IV count (red at 0, cyan once IVs are flowing). 'Usable' is
+    the crack-sample count — what the crack threshold (CRACK_READY_THRESHOLD) is
+    measured against, so it directly answers 'how close to cracking?'."""
+    samples = iface.wep_store.crack_sample_count(ap.bssid) if iface else 0
+    ivs = f"[cyan]{samples:,}[/cyan]" if samples else "[red]0[/red]"
+    parts = []
+    if campaign is not None:
+        parts.append(f"[dim]Fake-Auth:[/dim] {fakeauth_value_markup(campaign, now)}")
+    parts.append(f"[dim]Usable IVs:[/dim] {ivs}")
+    return "  ·  ".join(parts)
 
 
 # ---------------------------------------------------------------------------

@@ -52,3 +52,25 @@ def test_headline_chop_and_crack_states():
     cracking = fm.derive_headline(
         ap, None, fm.Campaigns(wep=_wep_camp(cracker_samples=CRACK_READY_THRESHOLD)))
     assert "Cracking" in cracking[0]
+
+
+def _iface_with_usable(n):
+    return types.SimpleNamespace(
+        wep_store=types.SimpleNamespace(crack_sample_count=lambda bssid: n))
+
+
+def test_wep_status_line_idle_shows_only_usable_ivs():
+    """No campaign → no fake-auth half; usable IVs always present, red at 0."""
+    ap = types.SimpleNamespace(bssid="aa:bb:cc:dd:ee:ff")
+    line = fm.wep_status_line(ap, _iface_with_usable(0), None, 0)
+    assert "Usable IVs:" in line and "[red]0[/red]" in line
+    assert "Fake-Auth" not in line
+
+
+def test_wep_status_line_with_campaign_shows_fakeauth_and_cyan_ivs():
+    ap = types.SimpleNamespace(bssid="aa:bb:cc:dd:ee:ff")
+    camp = types.SimpleNamespace(fake_auth=types.SimpleNamespace(
+        state="associated", next_reauth_at=0, fail_reason=None))
+    line = fm.wep_status_line(ap, _iface_with_usable(1234), camp, 0)
+    assert "Fake-Auth:" in line and "Associated" in line
+    assert "[cyan]1,234[/cyan]" in line

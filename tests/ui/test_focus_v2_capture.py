@@ -188,3 +188,15 @@ async def test_v2_wep_initial_load_surfaces_history_and_listening():
         # Idle → recovered banner; the wep iv flow row is present.
         assert "WEP key recovered" in str(focus.query_one("#status", Static).render())
         assert "wep_iv" in {r.key for r in focus.query_one("#flow", FlowChannel)._rows}
+        # The WEP status strip is visible and carries the always-on usable-IV
+        # count (idle → no fake-auth half, IVs red 0).
+        strip = focus.query_one("#wep-strip", Static)
+        assert strip.display is True
+        assert "Usable IVs" in str(strip.render())
+        # …and it's docked exactly between the mid band and the bottom band
+        # (no overlap, full width) — the "above the LOG border" slot.
+        mid = focus.query_one("#mid").region
+        bottom = focus.query_one("#bottom").region
+        sr = strip.region
+        assert sr.y == mid.bottom and sr.bottom == bottom.y
+        assert sr.height == 1 and sr.width == 120

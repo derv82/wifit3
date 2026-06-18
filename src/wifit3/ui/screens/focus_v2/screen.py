@@ -128,6 +128,10 @@ class FocusViewV2(Screen):
        channel line up with the card's bssid/dynamic row. */
     #router { align: center bottom; }
     #flow { width: 1fr; height: 100%%; padding: 0 1; }
+    /* WEP status strip — a full-width line docked at the bottom of the mid band
+       (above the LOG border). Hidden for non-WEP targets (display toggled in
+       _distribute), so the 3-band height ladder is unaffected off WEP. */
+    #wep-strip { width: 100%%; height: 1; content-align: center middle; color: $text-muted; }
     .endpoint-art { width: %(ew)d; background: transparent; }
     .card-static, .ap-static { width: 100%%; height: 1; text-align: center; color: $text-muted; }
     .card-dynamic { width: 100%%; height: 1; text-align: center; color: $accent; }
@@ -184,6 +188,9 @@ class FocusViewV2(Screen):
             yield CardEndpoint(self._snap, id="card")
             yield FlowChannel(self._snap.flow, id="flow")
             yield RouterEndpoint(self._snap, id="router")
+        strip = Static("", id="wep-strip")
+        strip.display = False        # shown only for WEP targets (see _distribute)
+        yield strip
         with Horizontal(id="bottom"):
             yield LogBand(self._snap.log_lines, id="log")
             yield ClientsList(self._snap.clients, id="clients")
@@ -274,6 +281,9 @@ class FocusViewV2(Screen):
         self.query_one("#router", RouterEndpoint).update_dynamic(snap)
         self.query_one("#status", Static).update(self._render_status(snap.status))
         self._refresh_buttons()
+        # Show/size the WEP status strip for this target (hidden off WEP) + fill it.
+        self._distribute()
+        self._refresh_wep_strip()
 
         # Log acquisition + tune the radio to the pinned target channel.
         if ap.ssid:
@@ -384,6 +394,7 @@ class FocusViewV2(Screen):
         self.query_one("#router", RouterEndpoint).update_dynamic(snap)
         self.query_one("#clients", ClientsList).sync(snap.clients)
         self._refresh_buttons()
+        self._refresh_wep_strip()
         # The flow channel self-samples on its own timer (bound in _enter_target).
         iface = getattr(self.app, "active_interface", None)
         self._drain_capture_events(ap, iface.forged_macs if iface else set())
@@ -393,15 +404,32 @@ class FocusViewV2(Screen):
         reserving a floor for the bottom band, then pour any extra height into the
         bottom (log + clients grow). Also ramp horizontal padding onto the mid row
         on wide terminals so the endpoints aren't glued to the edges — the bottom
-        band stays full width."""
+        band stays full width. WEP targets get a 1-row status strip between mid and
+        bottom (hidden otherwise, so the 3-band ladder is unchanged off WEP)."""
+        wep = self._target_ap is not None and fm.is_wep(self._target_ap)
+        strip = self.query_one("#wep-strip", Static)
+        strip.display = wep
+        strip_h = 1 if wep else 0
         avail = max(1, self.size.height - _TOPBAR_H)
-        center = min(_CENTER_MAX, max(_CENTER_MIN, avail - _BOTTOM_MIN))
-        center = max(1, min(center, avail - 1))
+        center = min(_CENTER_MAX, max(_CENTER_MIN, avail - _BOTTOM_MIN - strip_h))
+        center = max(1, min(center, avail - 1 - strip_h))
         mid = self.query_one("#mid")
         mid.styles.height = center
-        self.query_one("#bottom").styles.height = avail - center
+        if wep:
+            strip.styles.height = 1
+        self.query_one("#bottom").styles.height = max(1, avail - center - strip_h)
         pad = max(0, round((self.size.width - _PAD_START) * _PAD_RATE))
         mid.styles.padding = (0, pad, 0, pad)
+
+    def _refresh_wep_strip(self) -> None:
+        """Update the WEP status strip (fake-auth + usable IVs). No-op off WEP —
+        _distribute keeps it hidden there."""
+        ap = self._target_ap
+        if ap is None or not fm.is_wep(ap):
+            return
+        iface = getattr(self.app, "active_interface", None)
+        self.query_one("#wep-strip", Static).update(Text.from_markup(
+            fm.wep_status_line(ap, iface, self._wep_campaign, time.time()), emoji=False))
 
     # ----- event log (capture pipeline, duplicated from v1) ------------------
 
