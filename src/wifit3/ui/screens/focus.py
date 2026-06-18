@@ -2,7 +2,7 @@ import asyncio
 import logging
 import math
 import time
-from collections import Counter, deque
+from collections import deque
 from datetime import datetime
 from typing import Optional, Set
 
@@ -22,18 +22,17 @@ from wifit3.engine.save import (
 from wifit3.engine.attacks.pmkid_harvest import PmkidHarvestAttack
 from wifit3.engine.attacks.wpa3_downgrade import WPA3DowngradeAttack
 from wifit3.engine.attacks.wep.campaign import WepCampaign
-from wifit3.engine.attacks.wep.crack import CRACK_READY_THRESHOLD
 from wifit3.engine.attacks.wps.campaign import WpsCampaign
 from wifit3.engine.attacks.wps.pbc import WpsPbcCapture
 from wifit3.engine.attacks.wps.registrar import PinResult
 
+from .. import focus_model as fm
 from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind
 from ..capture_log import eapol_message_markup, short_sta
 from ..widgets.packet_dashboard import PacketDashboard
 from ..signal_bar import render_signal_bar
 from ..encryption_format import (
     format_encryption_markup,
-    format_pmf_markup,
     wep_key_ascii,
 )
 
@@ -52,25 +51,6 @@ def _wep_key_chip(key_hex: Optional[str]) -> str:
     if not key_hex:
         return "[dim]?[/dim]"
     return f"[black bold on cyan] {wep_key_ascii(key_hex)} [/black bold on cyan]"
-
-
-def _format_duration(seconds: int) -> str:
-    """Human-readable duration for the Focus 'Last Beacon' line.
-    Examples: '5s', '1m 12s', '1h 4m', '2d 3h'. Drops the lower unit
-    when it's zero to keep the line tight."""
-    seconds = max(0, int(seconds))
-    if seconds < 60:
-        return f"{seconds}s"
-    if seconds < 3600:
-        m, s = divmod(seconds, 60)
-        return f"{m}m {s}s" if s else f"{m}m"
-    if seconds < 86400:
-        h, rem = divmod(seconds, 3600)
-        m = rem // 60
-        return f"{h}h {m}m" if m else f"{h}h"
-    d, rem = divmod(seconds, 86400)
-    h = rem // 3600
-    return f"{d}d {h}h" if h else f"{d}d"
 
 
 class FocusView(Screen):
@@ -405,15 +385,8 @@ class FocusView(Screen):
 
         # TARGET INFO panel. SSID as a chip (no "ESSID:" prefix) so short names
         # like "NETGEAR" are still visible; truncated with … to fit the panel.
-        if ap.ssid:
-            maxname = 24   # TARGET inner (26) minus the chip's 2 padding spaces
-            shown = (ap.ssid if len(ap.ssid) <= maxname
-                     else ap.ssid[:maxname - 1].rstrip() + "…")
-            ssid_markup = f"[black on cyan] {escape(shown)} [/black on cyan]"
-        else:
-            ssid_markup = "[italic cyan]‹hidden›[/italic cyan]"
         self.query_one("#lbl-ssid", Label).update(
-            Text.from_markup(ssid_markup, emoji=False)
+            Text.from_markup(fm.ssid_chip_markup(ap), emoji=False)
         )
         self.query_one("#lbl-bssid", Label).update(
             Text.from_markup(f"BSSID: [bold]{ap.bssid}[/bold]", emoji=False)
@@ -426,15 +399,9 @@ class FocusView(Screen):
         # readout: an active AP sits at "now", so any drift is the tell that we've
         # stopped hearing it (mistune / wedged RX). Escalate hard — a coloured
         # chip by 1s, red by 3s — so a deaf card can't be missed.
-        last_seen_s = max(0, int(time.time() - ap.last_seen))
-        if last_seen_s == 0:
-            beacon = "[green]now[/green]"
-        elif last_seen_s < 3:
-            beacon = f"[black bold on orange1] {last_seen_s}s [/black bold on orange1]"
-        else:
-            beacon = f"[black bold on red] {_format_duration(last_seen_s)} [/black bold on red]"
         self.query_one("#lbl-last-beacon", Label).update(
-            Text.from_markup(f"Last Beacon: {beacon}", emoji=False)
+            Text.from_markup(
+                f"Last Beacon: {fm.last_beacon_markup(ap, time.time())}", emoji=False)
         )
 
         # SECURITY panel.
@@ -454,17 +421,10 @@ class FocusView(Screen):
         # visible). A second dedicated row (lbl-wps-status) carries the live PIN
         # campaign status when it's running — hidden otherwise.
         wps_label = self.query_one("#lbl-wps", Label)
-        if ap.wps:
-            lock = "[red]🔒[/red]" if ap.wps_locked else "[green]🔓[/green]"
-            ver = f"{ap.wps_version} " if ap.wps_version else ""
-            wps_part = f"WPS: {ver}{lock}"
-        else:
-            wps_part = None
-        pmf_part = f"PMF: {format_pmf_markup(ap)}" if (ap.akms or ap.wpa3) else None
-        parts = [p for p in (wps_part, pmf_part) if p]
-        if parts:
+        wps_pmf = fm.wps_pmf_markup(ap)
+        if wps_pmf:
             wps_label.display = True
-            wps_label.update(Text.from_markup("  ·  ".join(parts), emoji=False))
+            wps_label.update(Text.from_markup(wps_pmf, emoji=False))
         else:
             wps_label.display = False
 
@@ -479,7 +439,7 @@ class FocusView(Screen):
         if self._wps_campaign is not None:
             wps_status_label.display = True
             wps_status_label.update(Text.from_markup(
-                self._wps_status_markup(self._wps_campaign), emoji=False))
+                fm.wps_status_markup(self._wps_campaign), emoji=False))
         else:
             wps_status_label.display = False
         self.query_one("#lbl-pmf", Label).display = False
@@ -491,125 +451,58 @@ class FocusView(Screen):
         # WPA3-Down live status — shown only while the daemon is running. This
         # is where the per-probe counts surface (instead of flooding the log).
         down_label = self.query_one("#lbl-wpa3-down", Label)
-        if self._wpa3_down_attack:
-            st = self._wpa3_down_attack.stats
+        wpa3_down_line = fm.wpa3_down_markup(self._wpa3_down_attack)
+        if wpa3_down_line:
             down_label.display = True
-            down_label.update(Text.from_markup(
-                f"WPA2↓: [bold green]✓ ON[/bold green] "
-                f"[dim]({st.directed_probes} dir., {st.wildcard_probes} wild.)[/dim]",
-                emoji=False,
-            ))
+            down_label.update(Text.from_markup(wpa3_down_line, emoji=False))
         else:
             down_label.display = False
 
         # Attack buttons. WEP and WPA targets get disjoint button sets — the
-        # WPA buttons (PMKID/WPA3 Down) are meaningless for WEP, so hide
-        # (not just disable) them and surface Fake Auth in their place.
-        btn_wps = self.query_one("#btn-wps-pin", Button)
-        btn_down = self.query_one("#btn-wpa3-down", Button)
-        btn_pmkid = self.query_one("#btn-pmkid", Button)
-        btn_gen = self.query_one("#btn-gen-ivs", Button)
-        btn_chop = self.query_one("#btn-chop", Button)
-
-        # (ATTACKS panel has no title now — the buttons + TARGET's Encryption
-        # line convey the family.) Each button is shown only when the attack can
-        # plausibly work against this AP — "useless disabled buttons" just clutter
-        # the panel (the security row + tooltip-via-log convey what's missing).
-        # WPS PIN: WPA-only with WPS (WEP+WPS is a narrow historical slice).
-        btn_wps.display = not is_wep and bool(ap.wps)
-        # WPA Downgrade only works against WPA3-transition APs.
-        btn_down.display = bool(ap.wpa3 and ap.transition_mode)
-        # PMKID is dead on pure SAE (uncrackable). Show for WPA/WPA2 and for
-        # WPA3-transition (the WPA2 portion is the attack surface).
-        btn_pmkid.display = not is_wep and ((not ap.wpa3) or ap.transition_mode)
-        # Replay/Chop stay visible for ANY WEP target, including after a crack —
-        # re-running the attack (e.g. while testing) shouldn't require leaving and
-        # re-entering Focus. The recovered key persists on ap.wep_key and shows in
-        # SECURITY; clicking Replay just starts a fresh campaign.
-        btn_gen.display = is_wep
-        # Chop is a sub-mode of the campaign (needs its fake-auth), so it's
-        # disabled until Replay starts it — visible-but-grey reads cleaner than
-        # vanish-on-Replay-click ("where did it come from?").
-        btn_chop.display = is_wep
-
+        # WPA buttons (PMKID/WPA3 Down) are meaningless for WEP, so hide (not
+        # just disable) them and surface Fake-Auth in their place. The per-button
+        # visibility + enablement + label/variant is derived in focus_model
+        # (shared with v2); only the side effect of tearing down a finished WEP
+        # campaign stays here.
         if is_wep:
-            # A finished campaign (key recovered) is torn down so the button
-            # reverts to "Generate IVs" — the user shouldn't have to click Stop
-            # after a successful crack. The key persists on ap.wep_key.
+            # A finished campaign (key recovered) is torn down so Replay reverts
+            # from "Stop Replay" — the user shouldn't have to click Stop after a
+            # successful crack. The branch may fire on several update_ui ticks
+            # before _stop_generate_ivs nulls the campaign; save_wep_key reports
+            # was_new=False on the second+ pass and we surface the path either
+            # way so the user always sees where the key landed (it persists on
+            # ap.wep_key). Done BEFORE derive_buttons so it sees the nulled
+            # campaign and renders the start ("Replay") state.
             camp = self._wep_campaign
             if camp is not None and camp.recovered_key is not None:
-                # Persist the key. The branch may fire on several update_ui
-                # ticks before _stop_generate_ivs nulls the campaign; save_wep_key
-                # reports was_new=False on the second+ pass and we surface the
-                # existing path either way so the user always sees where it is.
                 result = save_wep_key(ap, camp.recovered_key)
                 if result is not None:
                     verb = "saved" if result.was_new else "already saved as"
                     self._log(f"[dim]({verb} {escape(result.path.name)})[/dim]")
                 self._stop_generate_ivs()
-                camp = None
-            # Replay is the campaign switch: green to start, red to STOP the
-            # whole campaign. Chop is a sub-attack: blue to start, orange
-            # ("Stop Chop") to stop just it (the campaign keeps running).
-            running = camp is not None
-            btn_gen.label = "Stop Replay" if running else "Replay"
-            btn_gen.variant = "error" if running else "success"
-            # Chop visibility set above (any WEP target before crack); here we
-            # just gate the disabled state on whether the campaign is running.
-            chopping = bool(camp and camp.chop_active)
-            btn_chop.label = "Stop Chop" if chopping else "Chop"
-            btn_chop.variant = "warning" if chopping else "primary"
-            btn_chop.disabled = not running
+
+        btns = fm.derive_buttons(ap, self._campaigns())
+        self._apply_button("#btn-gen-ivs", btns.gen_ivs)
+        self._apply_button("#btn-chop", btns.chop)
+        self._apply_button("#btn-pmkid", btns.pmkid)
+        self._apply_button("#btn-wps-pin", btns.wps_pin)
+        self._apply_button("#btn-wpa3-down", btns.wpa3_down)
+
+        if is_wep:
             self._update_fakeauth_line()
         else:
             self.query_one("#lbl-fakeauth", Label).display = False
             self.query_one("#lbl-crack", Label).display = False
             self.query_one("#lbl-crack-info", Label).display = False
-            # Per-attack eligibility, gated by the cross-attack TX mutex.
-            # WPA3 Down: only against transition-mode APs (pure WPA3 clients
-            # refuse a WPA2-only ad from a known-SAE network). When running,
-            # always enabled so Stop works.
-            wpa3down_eligible = bool(ap.wpa3 and ap.transition_mode)
-            if self._wpa3_down_attack is not None:
-                btn_down.disabled = False
-            else:
-                btn_down.disabled = (not wpa3down_eligible
-                                     or self._other_long_running_tx(exclude="wpa3down"))
-            btn_down.label = "Stop ↓" if self._wpa3_down_attack else "WPA ↓"
-
-            # PMKID: pure SAE PMKID isn't crackable, so only WPA2 + WPA3-Transition.
-            # One-shot, so no self-exclusion — any other long-running TX blocks it.
-            pmkid_eligible = (not ap.wpa3) or ap.transition_mode
-            btn_pmkid.disabled = not pmkid_eligible or self._other_long_running_tx()
-
-            # WPS PIN: Start/Stop toggle, AP must be WPS-capable + unlocked.
-            if self._wps_campaign is not None:
-                btn_wps.label = "Stop PIN"
-                btn_wps.variant = "error"
-                btn_wps.disabled = False
-            else:
-                btn_wps.label = "WPS PIN"
-                btn_wps.variant = "primary"
-                wps_eligible = bool(ap.wps and not ap.wps_locked)
-                btn_wps.disabled = (not wps_eligible
-                                    or self._other_long_running_tx(exclude="wps"))
 
         # CAPTURE panel (dynamic). Beacon RATE is windowed over the last few
         # seconds, not averaged since first_seen — an average converges to a
         # flat line and hides how RX is doing *right now* (e.g. you moved, or
-        # the AP got busy). Total count stays cumulative.
-        now = time.time()
-        self._beacon_samples.append((now, ap.beacons))
-        BEACON_WINDOW_S = 5.0
-        while len(self._beacon_samples) > 1 and now - self._beacon_samples[0][0] > BEACON_WINDOW_S:
-            self._beacon_samples.popleft()
-        oldest_t, oldest_n = self._beacon_samples[0]
-        span = now - oldest_t
-        # Hand the windowed rate + count to the 30 FPS signal-bar animator;
-        # _animate_signal owns the lbl-beacons render so the bar can ease and
-        # pulse between these 10 Hz updates. None (span < 1 s) = warming up.
-        self._sig_target = (ap.beacons - oldest_n) / span if span >= 1.0 else None
-        self._sig_count = ap.beacons
+        # the AP got busy). Total count stays cumulative. The windowed rate +
+        # count feed the 30 FPS signal-bar animator (_animate_signal owns the
+        # lbl-beacons render so the bar eases/pulses between these 10 Hz ticks).
+        self._sig_target, self._sig_count = fm.beacon_rate(
+            ap, self._beacon_samples, time.time())
         # Power stays uncoloured — RSSI is too inconsistent across cards/ports to
         # map to a meaningful health gradient without it flickering noise.
         self.query_one("#lbl-pwr", Label).update(
@@ -632,57 +525,13 @@ class FocusView(Screen):
             # lbl-crack / lbl-crack-info (SECURITY).
             self._update_wep_capture(ap)
         else:
-            # Count distinct captured handshake INSTANCES (by ANonce), so a
-            # client that re-handshakes several times shows x2, x3, … instead of
-            # collapsing to x1 (one Handshake object per client). Matches the
-            # per-instance "Valid 4-Way Handshake" log.
-            n_complete = sum(
-                hs.complete_instances for hs in ap.handshakes.values()
-            )
-            n_partial = sum(
-                1
-                for hs in ap.handshakes.values()
-                if not hs.is_complete and hs.total_eapol_frames > 0
-            )
-            # Per-message tally across this AP's handshakes. The 4-way validity
-            # logic dedups by (msg, replay), so repeated M1/M3 retries collapse
-            # to one — but the user still wants to see those frames landing as
-            # progress, so surface the raw-frame counts here (matches the log).
-            msg_counts: Counter = Counter()
-            for hs in ap.handshakes.values():
-                for f in hs.eapol_frames:
-                    if f.msg_num:
-                        msg_counts[f.msg_num] += 1
-            breakdown = " · ".join(f"M{m}×{msg_counts[m]}" for m in sorted(msg_counts))
-            # Persisted (captures/) counts back-fill the live ones: if we have
-            # nothing live but a saved capture exists, show it green + (history)
-            # so the badge on Scanner has a matching explanation here.
-            persisted_hs = sum(1 for p in ap.persisted if p.kind == "HS")
-            persisted_pmkid = sum(1 for p in ap.persisted if p.kind == "PMKID")
-            if n_complete:
-                hs_text = f"[bold green]Captured x{n_complete}[/bold green]"
-                if n_partial:
-                    hs_text += f" [dim](+{n_partial} partial)[/dim]"
-            elif n_partial:
-                hs_text = f"[yellow]Partial[/yellow] [dim]{breakdown}[/dim]"
-            elif persisted_hs:
-                hs_text = (f"[bold green]Captured x{persisted_hs}[/bold green] "
-                           f"[dim](history)[/dim]")
-            else:
-                hs_text = "[dim]Not captured[/dim]"
-            hs_label.update(Text.from_markup(f"Handshake: {hs_text}", emoji=False))
-
-            n_pmkid = sum(1 for hs in ap.handshakes.values() if hs.pmkid)
-            if n_pmkid:
-                pmkid_text = f"[bold green]Captured x{n_pmkid}[/bold green]"
-            elif persisted_pmkid:
-                pmkid_text = (f"[bold green]Captured x{persisted_pmkid}[/bold green] "
-                              f"[dim](history)[/dim]")
-            else:
-                pmkid_text = "[dim]Not captured[/dim]"
-            pmkid_label.update(
-                Text.from_markup(f"PMKID:     {pmkid_text}", emoji=False)
-            )
+            # Handshake/PMKID counting + persisted-history back-fill live in
+            # focus_model (shared with v2). The "PMKID:" label pads to align its
+            # value column with "Handshake: ".
+            hs_label.update(Text.from_markup(
+                f"Handshake: {fm.handshake_value_markup(ap)}", emoji=False))
+            pmkid_label.update(Text.from_markup(
+                f"PMKID:     {fm.pmkid_value_markup(ap)}", emoji=False))
 
         # Clients.
         iface = getattr(self.app, "active_interface", None)
@@ -699,59 +548,26 @@ class FocusView(Screen):
         # mutex, AND PMF: a PMF-Required AP rejects unauthenticated deauth, so
         # the attack does nothing. The "PMF Required → attacks won't work"
         # warning is also logged once on target acquisition (_init_target).
-        other_tx = self._other_long_running_tx()
-        deauth_blocked = other_tx or ap.pmf_required
+        blocked = fm.deauth_blocked(ap, self._campaigns())
         self.query_one("#btn-deauth-sel", Button).disabled = (
-            self._cursor_mac() is None or deauth_blocked)
-        self.query_one("#btn-deauth-bcast", Button).disabled = deauth_blocked
-
-    @staticmethod
-    def _replay_status_markup(campaign) -> str:
-        """The Replay-status row's value. Surfaces ChopChop too — while it
-        runs, replay is paused on purpose, so say WHAT'S running (not a bare
-        'paused' that reads like the attack stalled)."""
-        if campaign is None:
-            return "[dim]not started[/dim]"
-        # ChopChop takes over the radio (replay paused by design) — name it.
-        if campaign.chop_active:
-            return "forging packet [dim]via[/dim] [bold cyan]ChopChop[/bold cyan]"
-        s = campaign.replay.state
-        if s == "replaying":
-            # target_pps = the smooth P&O rate, not the jittery per-cycle
-            # measured effective_pps.
-            return (
-                f"[green]Replaying ARP[/green] "
-                f"[dim]({campaign.replay.target_pps:.0f}pps)[/dim]"
-            )
-        if s == "testing":
-            return "[cyan]Trying candidate ARP…[/cyan]"
-        if s == "waiting-arp":
-            return "[yellow]waiting for ARP[/yellow]"
-        if s == "waiting-auth":
-            return "[dim]associating…[/dim]"
-        if s == "paused":
-            return "[dim]paused[/dim]"
-        return "[dim]idle[/dim]"
+            self._cursor_mac() is None or blocked)
+        self.query_one("#btn-deauth-bcast", Button).disabled = blocked
 
     def _update_wep_capture(self, ap: AccessPoint) -> None:
         """WEP CAPTURE rows — IVs + a dedicated Replay-status row — plus the
         Crack section (under SECURITY). The usable-IV (crack-sample) count is no
         longer shown here; it lives in SECURITY's Crack line (N/10k usable IVs),
-        which is what gates cracking."""
+        which is what gates cracking. The derivations are shared with v2."""
         iface = getattr(self.app, "active_interface", None)
-        n = ap.wep.unique_ivs if ap.wep else 0
-        rate = iface.wep_store.rate(ap.bssid) if iface else 0.0
         samples = iface.wep_store.crack_sample_count(ap.bssid) if iface else 0
         campaign = self._wep_campaign
 
-        count = f"[bold green]{n:,}[/bold green]" if n else "[red]0[/red]"
         self.query_one("#lbl-ivs", Label).update(Text.from_markup(
-            f"IVs: {count} [dim]({rate:.0f}/s)[/dim]", emoji=False
-        ))
+            f"IVs: {fm.ivs_value_markup(ap, iface)}", emoji=False))
 
         replay_markup = (
             "[green]✓ done[/green]" if ap.wep_key is not None
-            else self._replay_status_markup(campaign)
+            else fm.replay_status_markup(campaign)
         )
         self.query_one("#lbl-replay", Label).update(
             Text.from_markup(f"Replay: {replay_markup}", emoji=False)
@@ -764,111 +580,43 @@ class FocusView(Screen):
         line. Only shown during a running campaign or once a key is found."""
         crack = self.query_one("#lbl-crack", Label)
         info = self.query_one("#lbl-crack-info", Label)
-        persisted_wep = next((p for p in ap.persisted if p.kind == "WEP"), None)
-        if campaign is None and ap.wep_key is None and persisted_wep is None:
-            crack.display = False
-            info.display = False
-            return
-        crack.display = True
-        info.display = True
-        target_k = CRACK_READY_THRESHOLD // 1000
-
-        if ap.wep_key is not None:
-            # Short status here — the full black-on-cyan KEY banner lives in the
-            # (wide) EVENT LOG (a 104-bit key is too wide for this column).
-            crack.update(Text.from_markup(
-                "Crack: [bold green]✓ Key recovered[/bold green]", emoji=False
-            ))
-            info.update(Text.from_markup(
-                "[dim]see EVENT LOG[/dim]", emoji=False
-            ))
-        elif campaign is None and persisted_wep is not None:
-            # No live key/campaign, but a saved WEP key exists — mirror the
-            # recovered state, tagged (history). Key chip is in the EVENT LOG.
-            crack.update(Text.from_markup(
-                "Crack: [bold green]✓ Key recovered[/bold green] [dim](history)[/dim]",
-                emoji=False
-            ))
-            info.update(Text.from_markup(
-                "[dim]see EVENT LOG[/dim]", emoji=False
-            ))
-        elif samples < CRACK_READY_THRESHOLD:
-            crack.update(Text.from_markup(
-                f"Crack: [white]{samples:,}/{target_k}k usable IVs[/white]",
-                emoji=False
-            ))
-            info.update(Text.from_markup(
-                f"[dim]Crack begins at {target_k}k[/dim]", emoji=False
-            ))
-        else:
-            # The store crossed the 10k threshold, but the cracker ingests in
-            # batches — until ITS own sample_count reaches the threshold it's
-            # still spinning up, not yet crunching. Say "Starting…" (the truth)
-            # and flip to "Cracking…" only once it's actually working ≥10k.
-            sc = campaign.cracker.sample_count if campaign else samples
-            status = (
-                "[cyan italic]Starting…[/cyan italic]"
-                if sc < CRACK_READY_THRESHOLD
-                else "[cyan]Cracking…[/cyan]"
-            )
-            crack.update(Text.from_markup(
-                f"Crack: {status} [dim]({sc:,} samples)[/dim]",
-                emoji=False
-            ))
-            info.update(Text.from_markup(
-                "[dim]Some keys require >40K samples[/dim]", emoji=False
-            ))
+        visible, crack_markup, info_markup = fm.crack_section(ap, campaign, samples)
+        crack.display = visible
+        info.display = visible
+        if visible:
+            crack.update(Text.from_markup(crack_markup, emoji=False))
+            info.update(Text.from_markup(info_markup, emoji=False))
 
     def _update_fakeauth_line(self) -> None:
         """Render the SECURITY-panel Fake-Auth status from the running campaign."""
         fa_label = self.query_one("#lbl-fakeauth", Label)
         fa_label.display = True
-        campaign = self._wep_campaign
-        if campaign is None:
-            fa_label.update(Text.from_markup("Fake-Auth: [dim]Off[/dim]", emoji=False))
-            return
-        fa = campaign.fake_auth
-        if fa.state == "associated":
-            countdown = ""
-            if fa.next_reauth_at:
-                secs = max(0, int(fa.next_reauth_at - time.time()))
-                countdown = f" [dim](re-auth in {secs}s)[/dim]"
-            fa_markup = f"[green]✓ Associated[/green]{countdown}"
-        elif fa.state == "authenticating":
-            fa_markup = "[yellow]Associating…[/yellow]"
-        elif fa.state == "failed":
-            fa_markup = f"[red]Failed: {escape(fa.fail_reason or 'unknown')}[/red]"
-        else:
-            fa_markup = "[dim]Idle[/dim]"
-        fa_label.update(Text.from_markup(f"Fake-Auth: {fa_markup}", emoji=False))
+        fa_label.update(Text.from_markup(
+            fm.fakeauth_markup(self._wep_campaign, time.time()), emoji=False))
 
     # ----- Client table ------------------------------------------------------
 
     def _refresh_clients(self, iface) -> None:
-        ap = self.target_ap
+        # focus_model.client_rows owns the filtering (skip our own forged/self
+        # STAs); here we just sync the rows into the DataTable, incrementally so
+        # the cursor/scroll position is preserved between ticks.
         client_table = self.query_one("#client-table", DataTable)
-        forged = iface.forged_macs
-        for mac, client in iface.clients.items():
-            if client.bssid != ap.bssid:
-                continue
-            # Skip our own forged STA(s) — fake-auth, replay source, etc. They're
-            # not real clients (no more "YOU" marker; just don't list them).
-            if mac in forged or client.is_self:
-                continue
+        for row in fm.client_rows(self.target_ap, iface):
+            mac = row.bssid
             if mac not in self._known_clients:
                 self._known_clients.add(mac)
                 client_table.add_row(
                     Text(mac),
-                    Text(f"{client.signal} dBm", justify="right"),
-                    Text(str(client.packets), justify="right"),
+                    Text(f"{row.power} dBm", justify="right"),
+                    Text(str(row.packets), justify="right"),
                     key=mac,
                 )
             else:
                 client_table.update_cell(
-                    mac, "signal", Text(f"{client.signal} dBm", justify="right")
+                    mac, "signal", Text(f"{row.power} dBm", justify="right")
                 )
                 client_table.update_cell(
-                    mac, "packets", Text(str(client.packets), justify="right")
+                    mac, "packets", Text(str(row.packets), justify="right")
                 )
 
     # ----- Capture-event log -------------------------------------------------
@@ -930,20 +678,28 @@ class FocusView(Screen):
     def _pbc_busy(self) -> bool:
         return self._pbc_task is not None and not self._pbc_task.done()
 
+    def _campaigns(self) -> fm.Campaigns:
+        """Bundle the live campaign handles for the shared derivations."""
+        return fm.Campaigns(
+            wep=self._wep_campaign, wps=self._wps_campaign,
+            wpa3_down=self._wpa3_down_attack, pbc_busy=self._pbc_busy(),
+        )
+
     def _other_long_running_tx(self, exclude: str = "") -> bool:
         """True if any long-running TX activity is running, EXCLUDING the named
         one (one of ``"wep"`` / ``"wpa3down"`` / ``"wps"`` / ``"pbc"``). Used to
         disable buttons for OTHER attacks so the half-duplex radio is never
         shared. Pass the running attack's name to keep its own Stop button live."""
-        if exclude != "wep" and self._wep_campaign is not None:
-            return True
-        if exclude != "wpa3down" and self._wpa3_down_attack is not None:
-            return True
-        if exclude != "wps" and self._wps_campaign is not None:
-            return True
-        if exclude != "pbc" and self._pbc_busy():
-            return True
-        return False
+        return fm.other_long_running_tx(self._campaigns(), exclude)
+
+    def _apply_button(self, selector: str, state: fm.ButtonState) -> None:
+        """Apply a derived :class:`focus_model.ButtonState` to a Button widget —
+        visibility, enablement, label, and variant in one place."""
+        btn = self.query_one(selector, Button)
+        btn.display = state.visible
+        btn.disabled = state.disabled
+        btn.label = state.label
+        btn.variant = state.variant
 
     async def _auto_capture_pbc(self, ap: AccessPoint) -> None:
         iface = getattr(self.app, "active_interface", None)
@@ -1055,57 +811,6 @@ class FocusView(Screen):
             self._log(treelog.leaf(
                 f"[yellow]WPS PIN stopped[/yellow] "
                 f"[dim]({camp.state.tested} tested, phase {camp.state.phase})[/dim]"))
-
-    @staticmethod
-    def _fmt_eta(secs: Optional[float]) -> str:
-        if secs is None:
-            return "?"
-        if secs < 60:
-            return f"{int(secs)}s"
-        if secs < 3600:
-            return f"{int(secs / 60)}m"
-        return f"{secs / 3600:.1f}h"
-
-    @staticmethod
-    def _compact_count(n: int) -> str:
-        """Width-bounded counter — keeps `tested` to ≤4 chars so the narrow
-        SECURITY row never truncates: 0..999 verbatim, then 1.5k / 15k."""
-        if n < 1000:
-            return str(n)
-        if n < 10000:
-            return f"{n / 1000:.1f}k"        # 1500 → "1.5k"
-        return f"{n // 1000}k"               # 15000 → "15k"
-
-    def _wps_status_markup(self, camp: WpsCampaign) -> str:
-        """Compact campaign status for the dedicated lbl-wps-status row (~29
-        chars before the SECURITY panel truncates). The static WPS/PMF row
-        carries the beacon-level 🔒 (the "hard lock"); this row carries the
-        live PIN-campaign progress and our internal soft/hard backoff state."""
-        st = camp.state
-        if st.found_pin:
-            return (f"[black bold on cyan] PIN CRACKED: ✓ "
-                    f"{escape(st.found_pin)} [/black bold on cyan]")
-        tested = self._compact_count(st.tested)
-        if camp.status == "locked":
-            # Countdown updates each tick (10 Hz); kind disambiguates the 🔒
-            # in the row above (hard = AP says no; soft = our own backoff).
-            remaining = int(camp.lock_remaining_seconds)
-            m, s = divmod(remaining, 60)
-            countdown = f"{m}:{s:02d}"
-            kind = camp.lock_kind or "soft"
-            color = "red" if kind == "hard" else "dark_orange"
-            return (f"WPS PIN: [cyan]{tested}[/cyan]/11k · "
-                    f"[{color}]{kind} {countdown}[/{color}]")
-        if camp.status in ("failed", "error"):
-            return f"WPS PIN: [red]{camp.status}[/red] [dim]({tested}/11k)[/dim]"
-        eta = self._fmt_eta(camp.eta_seconds)
-        if st.phase == "second_half" and st.first_half:
-            # First half is locked in — the meaningful keyspace is the second
-            # half (1k candidates), so the denominator narrows from 11k to 1k.
-            # p2_index = "how many second-half candidates we've burned through."
-            return (f"WPS PIN: [cyan]{st.p2_index}[/cyan]/1k · "
-                    f"[green]p1={escape(st.first_half)}[/green] [dim]{eta}[/dim]")
-        return f"WPS PIN: [cyan]{tested}[/cyan]/11k · [dim]ETA {eta}[/dim]"
 
     # ----- Actions / handlers ------------------------------------------------
 
@@ -1354,7 +1059,7 @@ class FocusView(Screen):
         self._log("[bold red]WPA3 Downgrade stopped[/bold red]")
         self._log(treelog.branch(
             f"[dim]Sent {stats.responses_sent} probe responses in "
-            f"{_format_duration(duration)}{failed}[/dim]"
+            f"{fm.format_duration(duration)}{failed}[/dim]"
         ))
         self._log(treelog.leaf(
             f"[dim]Probe requests: {stats.directed_probes} directed, "
