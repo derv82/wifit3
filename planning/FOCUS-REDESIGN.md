@@ -1,15 +1,27 @@
 # Focus View Redesign
 
-## Status — v1 spec locked 2026-06-17, shell in progress
+## Status — 2026-06-17: **shell shipped (step 2 done), step 3 = view-model wiring next**
 
 The spatial "router-admin" redesign (originally "Idea #1" below) is the chosen
-direction, and the full v1 layout is now pinned to the cell (see **Locked layout
-decisions** + **Mockup**). v1 is **landscape-only** — portrait is explicitly
-deferred to its own later feature (rationale in Deferred). The migration is
-staged so v1 (today's Focus) is never broken, never branched, never
-throwaway-blocking — see **Migration plan**. Being built behind
-`WIFIT3_FOCUS_V2=1` as a throwaway-able shell (fake data) first, to prove the
-layout looks good before any campaign wiring.
+direction; the full v1 layout is pinned to the cell (see **Locked layout
+decisions** + **Mockup**). v1 is **landscape-only** — portrait is deferred to its
+own later feature (rationale in Deferred). The migration is staged so v1 (today's
+Focus) is never broken, never branched, never throwaway-blocking — see
+**Migration plan**.
+
+**Done & shipped to `origin/master`** (5 commits, `c84d362`..`7b05904`): the
+throwaway-able **shell** behind `WIFIT3_FOCUS_V2=1` — region-per-module package
+`ui/screens/focus_v2/` painted from `ui/focus_model.fake_snapshot()`, plus the
+shared `ui/ansi_art.py` (black→transparent art) and `scripts/ui/shoot_focus_v2.py`
+(headless SVG/geometry/text harness). v1 `FocusView` untouched + default. Layout
+proven at 80×24 → 180×45, geometry locked by `tests/ui/test_focus_v2_layout.py`,
+`1226` tests green. **Steps 2.1–2.x of the Migration plan are complete.**
+
+**Next — step 3 (Migration plan §3):** extract v1's campaign-value derivations
+out of `focus.py`'s `update_ui` into the shared `ui/focus_model.py` (a real
+`FocusSnapshot` factory replacing `fake_snapshot()`), then wire `FocusViewV2` to
+paint it. Behavior-preserving for v1 (keeps its tests green); see **View model —
+decouple the brains from the layout** for the exact list of what moves.
 
 ---
 
