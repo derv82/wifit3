@@ -44,6 +44,10 @@ class FlowChannel(Static):
         self._iface = None
         self._bssid = None
         self._prev = None
+        # Optional centered footer line painted in the channel's own vertical
+        # slack below the sparklines (the WEP fake-auth + usable-IV status), so
+        # it costs no row from the LOG/CLIENTS bands. None -> no footer.
+        self._footer = None
 
     def on_mount(self) -> None:
         self.set_interval(self.SAMPLE_S, self._tick)
@@ -65,6 +69,13 @@ class FlowChannel(Static):
         self._bssid = bssid
         self._prev = (iface.packet_stats.snapshot(bssid)
                       if (iface is not None and bssid) else None)
+        self._footer = None              # cleared per target; the screen re-sets it for WEP
+        self._repaint()
+
+    def set_footer(self, footer) -> None:
+        """Set (or clear, with None) the centered footer line below the
+        sparklines. ``footer`` is a rich Text the caller has already rendered."""
+        self._footer = footer
         self._repaint()
 
     # ---- sampling -----------------------------------------------------------
@@ -128,8 +139,15 @@ class FlowChannel(Static):
             else:
                 cells = "".join(_BLOCKS[max(1, self._col(v, peak, 8))] for v in window)
                 lines.append(self._row(r.label, r.color, cells, num, bw))
-        # Vertically centre the sparkline block so it lines up with the
-        # vertically-centred card/router columns as the band grows.
+        # A WEP status footer sits a blank line below the sparklines, centered in
+        # the channel width — it lives in the block's own vertical slack so it
+        # costs no row from the LOG/CLIENTS bands below.
+        if self._footer is not None:
+            w = self.content_size.width or 50
+            lead = max(0, (w - self._footer.cell_len) // 2)
+            lines += [Text(""), Text(" " * lead) + self._footer]
+        # Vertically centre the block so it lines up with the vertically-centred
+        # card/router columns as the band grows.
         h = self.content_size.height or len(lines)
         pad = max(0, (h - len(lines)) // 2)
         self.update(Text("\n").join([Text("")] * pad + lines))

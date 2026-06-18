@@ -401,15 +401,17 @@ def crack_section(ap, campaign, samples: int):
             "[dim]Some keys require >40K samples[/dim]")
 
 
-def fakeauth_value_markup(campaign, now: float) -> str:
+def fakeauth_value_markup(campaign, now: float, compact: bool = False) -> str:
     """Just the fake-auth status value (no 'Fake-Auth:' label) — the state
-    machine: associating / associated (+ re-auth countdown) / failed / idle."""
+    machine: associating / associated (+ re-auth countdown) / failed / idle.
+    ``compact`` drops the re-auth countdown (the v2 flow footer is width-tight;
+    the countdown stays in v1's wide SECURITY panel)."""
     if campaign is None:
         return "[dim]Off[/dim]"
     fa = campaign.fake_auth
     if fa.state == "associated":
         countdown = ""
-        if fa.next_reauth_at:
+        if fa.next_reauth_at and not compact:
             secs = max(0, int(fa.next_reauth_at - now))
             countdown = f" [dim](re-auth in {secs}s)[/dim]"
         return f"[green]✓ Associated[/green]{countdown}"
@@ -433,12 +435,16 @@ def wep_status_line(ap, iface, campaign, now: float) -> str:
     the crack-sample count — what the crack threshold (CRACK_READY_THRESHOLD) is
     measured against, so it directly answers 'how close to cracking?'."""
     samples = iface.wep_store.crack_sample_count(ap.bssid) if iface else 0
-    ivs = f"[cyan]{samples:,}[/cyan]" if samples else "[red]0[/red]"
+    n = f"[cyan]{samples:,}[/cyan]" if samples else "[red]0[/red]"
+    # /10k tags the crack threshold — this is the metric we crack at, distinct
+    # from the gross "wep iv" rate on the flow channel above.
+    ivs = f"{n}[dim]/{CRACK_READY_THRESHOLD // 1000}k[/dim]"
     parts = []
     if campaign is not None:
-        parts.append(f"[dim]Fake-Auth:[/dim] {fakeauth_value_markup(campaign, now)}")
+        parts.append(
+            f"[dim]Fake-Auth:[/dim] {fakeauth_value_markup(campaign, now, compact=True)}")
     parts.append(f"[dim]Usable IVs:[/dim] {ivs}")
-    return "  ·  ".join(parts)
+    return " · ".join(parts)
 
 
 # ---------------------------------------------------------------------------
