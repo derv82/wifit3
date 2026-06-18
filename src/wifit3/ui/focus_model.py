@@ -586,6 +586,23 @@ def card_dynamic(campaigns: Campaigns) -> str:
     return ""
 
 
+def wep_action_phrase(campaign) -> str:
+    """Short present-tense phrase for what the WEP campaign's TX side is doing
+    right now — drives the headline (and reads alongside the concurrent crack).
+    A replay can drop back from 'Replaying ARP' to 'Waiting for a packet' or
+    'Chopping' mid-crack, so this is read live, not pinned at start."""
+    if getattr(campaign, "chop_active", False):
+        return "Chopping a packet"
+    state = getattr(getattr(campaign, "replay", None), "state", None)
+    return {
+        "replaying": "Replaying ARP",
+        "testing": "Testing a packet",
+        "waiting-arp": "Waiting for a packet",
+        "waiting-auth": "Associating",
+        "paused": "Paused",
+    }.get(state, "Listening for a packet")
+
+
 def derive_headline(ap, iface, campaigns: Campaigns) -> list[str]:
     """The CAMPAIGN HEADLINE — up to 3 markup lines naming the dominant current
     activity (the focal point of the v2 view). Priority, highest first:
@@ -603,14 +620,21 @@ def derive_headline(ap, iface, campaigns: Campaigns) -> list[str]:
     camp = campaigns.wep
     if camp is not None:
         n_ivs = ap.wep.unique_ivs if ap.wep else 0
+        cracker_samples = getattr(getattr(camp, "cracker", None), "sample_count", 0)
+        action = wep_action_phrase(camp)
+        if cracker_samples >= CRACK_READY_THRESHOLD:
+            # Replay/chop and cracking run concurrently — name BOTH. The live TX
+            # action (the thermally-intensive part) can drop back to waiting or
+            # chopping while the cracker keeps crunching, so surface it, not just
+            # a frozen "Cracking".
+            return [f"[bold cyan]● {action}[/bold cyan] & "
+                    f"[bold cyan]Cracking[/bold cyan] WEP key",
+                    f"[dim]{cracker_samples:,} usable IVs[/dim]"]
         if camp.chop_active:
             return ["[bold cyan]● ChopChop[/bold cyan] forging an ARP seed",
                     f"[dim]{n_ivs:,} IVs captured[/dim]"]
-        cracker_samples = getattr(getattr(camp, "cracker", None), "sample_count", 0)
-        if cracker_samples >= CRACK_READY_THRESHOLD:
-            return ["[bold cyan]● Cracking WEP key[/bold cyan]",
-                    f"[dim]{cracker_samples:,} usable IVs[/dim]"]
-        return ["[bold green]● Replaying ARP[/bold green] [dim]for IVs[/dim]",
+        suffix = " [dim]for IVs[/dim]" if action == "Replaying ARP" else ""
+        return [f"[bold green]● {action}[/bold green]{suffix}",
                 f"[dim]{n_ivs:,} IVs · cracks at "
                 f"{CRACK_READY_THRESHOLD // 1000}k usable[/dim]"]
 

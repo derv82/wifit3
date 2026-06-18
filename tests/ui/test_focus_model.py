@@ -20,10 +20,11 @@ def _wep_ap(*, wep_key=None, persisted_wep=False, unique_ivs=0):
     )
 
 
-def _wep_camp(*, chop=False, cracker_samples=0):
+def _wep_camp(*, chop=False, cracker_samples=0, replay_state=None):
     return types.SimpleNamespace(
         chop_active=chop,
         cracker=types.SimpleNamespace(sample_count=cracker_samples),
+        replay=types.SimpleNamespace(state=replay_state),
     )
 
 
@@ -38,7 +39,7 @@ def test_headline_active_campaign_outranks_recovered_key():
     the IV count), not the frozen 'recovered' banner — an active attack is the
     dominant activity."""
     ap = _wep_ap(persisted_wep=True, unique_ivs=1234)
-    h = fm.derive_headline(ap, None, fm.Campaigns(wep=_wep_camp()))
+    h = fm.derive_headline(ap, None, fm.Campaigns(wep=_wep_camp(replay_state="replaying")))
     joined = " ".join(h)
     assert "Replaying" in h[0]
     assert "recovered" not in joined.lower()
@@ -52,6 +53,22 @@ def test_headline_chop_and_crack_states():
     cracking = fm.derive_headline(
         ap, None, fm.Campaigns(wep=_wep_camp(cracker_samples=CRACK_READY_THRESHOLD)))
     assert "Cracking" in cracking[0]
+
+
+def test_headline_cracking_names_the_concurrent_tx_action():
+    """While cracking, the headline names BOTH the live TX action and the crack
+    (replay/chop run concurrently and the action can change mid-crack)."""
+    ap = _wep_ap(persisted_wep=True)
+    crk = CRACK_READY_THRESHOLD
+    replaying = fm.derive_headline(
+        ap, None, fm.Campaigns(wep=_wep_camp(cracker_samples=crk, replay_state="replaying")))
+    assert "Replaying ARP" in replaying[0] and "Cracking" in replaying[0]
+    waiting = fm.derive_headline(
+        ap, None, fm.Campaigns(wep=_wep_camp(cracker_samples=crk, replay_state="waiting-arp")))
+    assert "Waiting for a packet" in waiting[0] and "Cracking" in waiting[0]
+    chopping = fm.derive_headline(
+        ap, None, fm.Campaigns(wep=_wep_camp(chop=True, cracker_samples=crk)))
+    assert "Chopping a packet" in chopping[0] and "Cracking" in chopping[0]
 
 
 def _iface_with_usable(n):
