@@ -6,6 +6,7 @@ look good") stay the human's call, fed by the exported SVGs.
 Sizes are pinned headless via ``run_test(size=...)`` — no real terminal."""
 import pytest
 from textual.app import App
+from textual.widgets import Button
 
 from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.ui.screens.focus_v2.art import art_size, breathe
@@ -60,9 +61,12 @@ async def test_topbar_is_the_action_area_and_card_has_no_buttons():
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         scr = app.screen
-        # Back button + the 3 attack buttons all live in the top action area;
-        # none remain in the card column.
-        assert len(scr.query("#topbar Button")) == 4
+        # Back button + the full conditional attack set (5 fixed ids, shown/hidden
+        # per target by derive_buttons) all live in the top action area; none
+        # remain in the card column.
+        assert len(scr.query("#topbar Button")) == 6
+        for bid in ("btn-gen-ivs", "btn-chop", "btn-pmkid", "btn-wps-pin", "btn-wpa3-down"):
+            assert scr.query_one(f"#topbar #{bid}", Button) is not None
         assert len(scr.query("#card Button")) == 0
 
 

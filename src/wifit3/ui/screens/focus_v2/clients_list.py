@@ -24,6 +24,9 @@ class ClientsList(Vertical):
         self._clients = clients
         # mac -> (pwr_label, pkts_label) for in-place updates without re-mounting.
         self._known: dict[str, tuple[Label, Label]] = {}
+        # deauth button id -> client mac, so the screen's handler knows whom to
+        # deauth from the inline ✕ that was clicked.
+        self._by_button: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
         yield Button("Deauth all", id="deauth-all", classes="bcast-btn")
@@ -52,7 +55,12 @@ class ClientsList(Vertical):
         for row in self.query(".client-row"):
             row.remove()
         self._known.clear()
+        self._by_button.clear()
         self._update_title()
+
+    def client_mac(self, button_id: str) -> str | None:
+        """The client MAC behind an inline-deauth ✕ button id (None if unknown)."""
+        return self._by_button.get(button_id)
 
     # ----- helpers -----------------------------------------------------------
 
@@ -60,10 +68,12 @@ class ClientsList(Vertical):
         pwr = Label(str(power), classes="cl-pwr")
         pkts = Label(str(packets), classes="cl-pkts")
         self._known[mac] = (pwr, pkts)
+        btn_id = f"{_row_id(mac)}-deauth"
+        self._by_button[btn_id] = mac
         return Horizontal(
             Label(mac, classes="cl-bssid"),
             pwr, pkts,
-            Button("✕", id=f"{_row_id(mac)}-deauth", classes="cl-deauth"),
+            Button("✕", id=btn_id, classes="cl-deauth"),
             classes="client-row", id=_row_id(mac),
         )
 

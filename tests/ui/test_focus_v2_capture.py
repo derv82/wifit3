@@ -6,7 +6,7 @@ auto-save. Also checks the flow channel binds to the live interface (so its
 sparklines sample real ``packet_stats``)."""
 import pytest
 from textual.app import App
-from textual.widgets import RichLog, Static
+from textual.widgets import Button, RichLog, Static
 
 from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.ui.screens.focus_v2.clients_list import ClientsList
@@ -120,3 +120,44 @@ async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
         saved = {p.name for p in (tmp_path / "captures").iterdir()}
         assert any(n.endswith("_handshake.hc22000") for n in saved), saved
         assert any(n.endswith("_pmkid.hc22000") for n in saved), saved
+
+
+@pytest.mark.asyncio
+async def test_v2_button_wiring():
+    """The attack buttons are encryption-conditional (derive_buttons), the inline
+    ✕ maps to the right client, and that mapping reaches iface.deauth — proving
+    the trigger wiring with NO live TX (the recorder stands in for the radio)."""
+    bssid = "aa:bb:cc:dd:ee:01"
+    client = "9c:b6:d0:1a:2b:3c"
+    iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
+    ap = iface.access_points[bssid]
+    # Register a real client (a data frame) so a ✕ row appears.
+    iface._on_frame_parsed({"type": "data", "bssid": bssid, "source": client,
+                            "dest": bssid, "rssi": -67, "raw": b"d"})
+
+    deauthed = []
+
+    async def _record_deauth(ap_bssid, client_bssid, burst_count=10):
+        deauthed.append((ap_bssid, client_bssid, burst_count))
+
+    iface.deauth = _record_deauth  # stand in for the radio — no real TX
+
+    app = _Host(iface, ap)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        focus = app.screen
+
+        # WPA2 (no WPS, not WPA3): only PMKID is plausible — the rest hide.
+        assert focus.query_one("#btn-pmkid", Button).display is True
+        for bid in ("#btn-gen-ivs", "#btn-chop", "#btn-wps-pin", "#btn-wpa3-down"):
+            assert focus.query_one(bid, Button).display is False, bid
+
+        # The inline ✕ resolves to its client, and the handler reaches deauth.
+        clients = focus.query_one("#clients", ClientsList)
+        focus._tick()
+        await pilot.pause()
+        btn_id = next(b for b, m in clients._by_button.items() if m == client)
+        assert clients.client_mac(btn_id) == client
+        await focus._run_deauth_selected(client)
+        assert deauthed and all(c == (bssid, client, 1) for c in deauthed), deauthed
