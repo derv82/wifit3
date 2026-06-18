@@ -1,6 +1,6 @@
 # Focus View Redesign
 
-## Status — 2026-06-17: **view-model extracted + v2 painting live data (step 3a–3c done); step 3d = attack-button triggers next**
+## Status — 2026-06-17: **v2 fully wired (steps 3a–3d done) — feature-complete behind the flag; step 4 (flip the default) pending the aesthetic review**
 
 The spatial "router-admin" redesign (originally "Idea #1" below) is the chosen
 direction; the full v1 layout is pinned to the cell (see **Locked layout
@@ -27,11 +27,19 @@ channel fed real `packet_stats` deltas, and the rainbow signal bar on the router
 power line. `fake_snapshot()` is kept as the no-target fallback. Verified by
 `tests/ui/test_focus_v2_capture.py` (mock interface, no hardware).
 
-**Next — step 3d:** wire the v2 attack + per-client deauth BUTTONS to the real
-campaign handlers (duplicate v1's `on_button_pressed` + campaign start/stop into
-`FocusViewV2` — the screen-side logic stays per-view by design; only the
-derivations are shared). The agent wires the TX paths; firing live deauth/inject
-remains the user's explicit action.
+**Done — step 3d:** v2's attack + per-client/broadcast deauth BUTTONS are wired.
+The topbar composes the full attack set (5 stable ids); `derive_buttons` shows
+only the ones that fit the target + drives their label/variant/enabled each tick
+(Start/Stop toggles, the cross-attack TX mutex). The screen-side handlers +
+campaign lifecycle (PMKID, WPS PIN, WPA3 down, WEP Replay/Chop, WPS-PBC
+auto-capture) are duplicated from v1 — the log/save/teardown side effects stay
+per-view by design; only the derivations are shared. Verified by the v2
+button-wiring test (no live TX). v2 is now feature-complete behind the flag.
+
+**Next — step 4 (Migration plan §4):** flip the default to v2 once the aesthetic
+review passes (the user's call — minor UI tweaks are parked for a later pass),
+then delete `focus.py` when happy. Until then v1 stays default; v2 is opt-in via
+`WIFIT3_FOCUS_V2=1`.
 
 ---
 
