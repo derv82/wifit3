@@ -18,6 +18,8 @@ from rich.style import Style
 from rich.text import Span, Text
 from textual.widgets import Static
 
+from ...ansi_art import make_black_transparent
+
 _ASSETS = Path(__file__).parent.parent.parent / "assets"
 _LED = (0, 128, 0)                 # dark green = the animation target
 
@@ -37,22 +39,24 @@ def _is_led(color: Color | None) -> bool:
     return color is not None and color.triplet is not None and tuple(color.triplet) == _LED
 
 
+@lru_cache(maxsize=None)
+def _transparent(name: str) -> Text:
+    """Art with pure-black cells made transparent (both the black canvas and the
+    black ink), so it blends into the theme surface. See ``ui/ansi_art``."""
+    return make_black_transparent(_load(name), blank_black_ink=True)
+
+
 def breathe(name: str, phase: float) -> Text:
-    """The art with its LED cells lerped to a brightness set by ``phase`` (0..1,
-    one smooth dark->bright->dark cycle). Non-LED cells are untouched."""
+    """The (transparent) art with its LED cells lerped to a brightness set by
+    ``phase`` (0..1, one smooth dark->bright->dark cycle). Non-LED cells stay."""
     factor = (1.0 - math.cos(2.0 * math.pi * phase)) / 2.0      # 0 -> 1 -> 0
     lit = Color.from_rgb(0, int(round(128 + 127 * factor)), 0)
-    src = _load(name)
+    src = _transparent(name)
     spans: list[Span] = []
     for span in src.spans:
         st = span.style
-        if isinstance(st, Style) and (_is_led(st.color) or _is_led(st.bgcolor)):
-            patch = {}
-            if _is_led(st.color):
-                patch["color"] = lit
-            if _is_led(st.bgcolor):
-                patch["bgcolor"] = lit
-            st = st + Style(**patch)
+        if isinstance(st, Style) and _is_led(st.color):
+            st = st + Style(color=lit)
         spans.append(Span(span.start, span.end, st))
     out = src.copy()
     out.spans = spans

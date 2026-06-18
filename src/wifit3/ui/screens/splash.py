@@ -9,9 +9,9 @@ from textual.message import Message
 from textual.containers import Vertical, Center, Horizontal
 from textual import work
 from rich.text import Text
-from rich.style import Style
 
 from wifit3.errors import WifiteFatalError
+from wifit3.ui.ansi_art import make_black_transparent
 from wifit3.setup import ids_from_registry
 from wifit3.setup.linux import current_user, install_rule, remove_rule
 from wifit3.setup.windows import install_winusb, restore_driver
@@ -24,33 +24,6 @@ from wifit3.wlan.manager import WlanDeviceManager
 
 logger = logging.getLogger(__name__)
 
-def _without_bgcolor(style: Style) -> Style:
-    """Return a copy of ``style`` with the background color unset."""
-    return Style(
-        color=style.color,
-        bold=style.bold, dim=style.dim, italic=style.italic,
-        underline=style.underline, blink=style.blink, blink2=style.blink2,
-        reverse=style.reverse, conceal=style.conceal, strike=style.strike,
-        underline2=style.underline2, frame=style.frame,
-        encircle=style.encircle, overline=style.overline, link=style.link,
-    )
-
-
-def _make_black_transparent(logo: Text) -> Text:
-    """Drop black (0,0,0) backgrounds so the logo inherits the theme
-    background instead of painting its own black canvas."""
-    def transparent_if_black(style):
-        if not isinstance(style, Style) or style.bgcolor is None:
-            return style
-        try:
-            if tuple(style.bgcolor.get_truecolor()) == (0, 0, 0):
-                return _without_bgcolor(style)
-        except Exception:
-            pass
-        return style
-
-    logo.spans = [s._replace(style=transparent_if_black(s.style)) for s in logo.spans]
-    return logo
 
 class DriverProgress(Message):
     """Message sent from background threads to update the splash progress."""
@@ -64,7 +37,7 @@ def load_logo() -> Text:
     logo_path = Path(__file__).parent.parent / "assets" / "logo_sm.ans"
     try:
         if logo_path.exists():
-            return _make_black_transparent(
+            return make_black_transparent(
                 Text.from_ansi(logo_path.read_text(encoding="utf-8"))
             )
     except Exception:

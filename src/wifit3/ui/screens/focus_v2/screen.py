@@ -58,7 +58,7 @@ class FocusViewV2(Screen):
     #mid { height: 1fr; }
     #card, #router { width: %(ew)d; align: center middle; }
     #flow { width: 1fr; height: 100%%; padding: 0 1; }
-    .endpoint-art { width: %(ew)d; }
+    .endpoint-art { width: %(ew)d; background: transparent; }
     .card-static, .ap-static { width: 100%%; height: 1; text-align: center; color: $text-muted; }
     .card-dynamic { width: 100%%; height: 1; text-align: center; color: $accent; }
     .ap-essid { width: 100%%; height: 1; text-align: center; text-style: bold; }
