@@ -278,15 +278,17 @@ class FocusViewV2(Screen):
         # rows, keeps a re-entered target's rows in place — no reset/remount race).
         self.query_one("#clients", ClientsList).sync(snap.clients)
         self._refresh_buttons()
-        self._refresh_wep_strip()    # WEP-only flow-channel footer (cleared by reconfigure)
+        self._refresh_status_footer()  # flow-channel footer (cleared by reconfigure)
 
-        # Log acquisition + tune the radio to the pinned target channel.
+        # Log acquisition (with the encryption family next to the name) + tune the
+        # radio to the pinned target channel.
+        enc = fm.encryption_chip(ap)
         if ap.ssid:
             chip = f"[black bold on cyan] {escape(ap.ssid)} [/black bold on cyan]"
-            self._log(f"[bold]Target acquired:[/bold] {chip}")
+            self._log(f"[bold]Target acquired:[/bold] {chip}  {enc}")
         else:
             self._log("[bold]Target acquired:[/bold] "
-                      "[dim italic]cloaked network — hidden SSID[/dim italic]")
+                      f"[dim italic]cloaked network — hidden SSID[/dim italic]  {enc}")
         self._log(treelog.branch(f"[dim]BSSID:[/dim] [white]{ap.bssid}[/white]"))
         if iface:
             try:
@@ -387,9 +389,14 @@ class FocusViewV2(Screen):
         self.query_one("#status", Static).update(self._render_status(snap.status))
         self.query_one("#card", CardEndpoint).update_dynamic(snap)
         self.query_one("#router", RouterEndpoint).update_dynamic(snap)
-        self.query_one("#clients", ClientsList).sync(snap.clients)
+        clients = self.query_one("#clients", ClientsList)
+        clients.sync(snap.clients)
+        # Deauth controls (broadcast + per-client ✕) are greyed when a PMF-Required
+        # AP would refuse them, or another long-running TX owns the half-duplex
+        # radio (mirrors v1's deauth gating).
+        clients.set_deauth_enabled(not fm.deauth_blocked(ap, self._campaigns()))
         self._refresh_buttons()
-        self._refresh_wep_strip()
+        self._refresh_status_footer()
         # The flow channel self-samples on its own timer (bound in _enter_target).
         iface = getattr(self.app, "active_interface", None)
         self._drain_capture_events(ap, iface.forged_macs if iface else set())
@@ -409,17 +416,16 @@ class FocusViewV2(Screen):
         pad = max(0, round((self.size.width - _PAD_START) * _PAD_RATE))
         mid.styles.padding = (0, pad, 0, pad)
 
-    def _refresh_wep_strip(self) -> None:
-        """WEP-only: feed the fake-auth + usable-IV status line to the flow
-        channel, which paints it centered in its own vertical slack below the
-        sparklines (so the LOG/CLIENTS bands never shift). Off WEP, the footer is
-        already cleared by FlowChannel.reconfigure."""
+    def _refresh_status_footer(self) -> None:
+        """Feed the flow channel its target-status footer (painted centered in
+        the channel's own vertical slack, so the LOG/CLIENTS bands never shift):
+        WEP → fake-auth + usable IVs; everything else → encryption + PMF."""
         ap = self._target_ap
-        if ap is None or not fm.is_wep(ap):
+        if ap is None:
             return
         iface = getattr(self.app, "active_interface", None)
         lines = [Text.from_markup(m, emoji=False)
-                 for m in fm.wep_status_lines(ap, iface, self._wep_campaign, time.time())]
+                 for m in fm.status_footer_lines(ap, iface, self._wep_campaign, time.time())]
         self.query_one("#flow", FlowChannel).set_footer(lines)
 
     # ----- event log (capture pipeline, duplicated from v1) ------------------

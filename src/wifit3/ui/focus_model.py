@@ -450,6 +450,36 @@ def wep_status_lines(ap, iface, campaign, now: float) -> list[str]:
     return lines
 
 
+def encryption_chip(ap) -> str:
+    """The encryption family for the 'Target acquired' log — the Scanner cell's
+    own markup (matching its colours), compact form (no pairwise cipher)."""
+    return format_encryption_markup(ap, detailed=False)
+
+
+def pmf_status_markup(ap) -> str:
+    """PMF status for the Focus footer — an escalating 'will deauth work?'
+    gradient: Disabled (dim) → Optional (orange) → Required (red). Distinct from
+    the Scanner's format_pmf_markup (which greens 'Disabled' from a protection
+    POV); here Disabled is neutral info."""
+    if ap.pmf_required:
+        return "[red]Required[/red]"
+    if ap.pmf_capable:
+        return "[dark_orange]Optional[/dark_orange]"
+    return "[dim]Disabled[/dim]"
+
+
+def status_footer_lines(ap, iface, campaign, now: float) -> list[str]:
+    """The flow-channel footer lines for this target, painted in the channel's
+    vertical slack below the sparklines. WEP → fake-auth + usable IVs; every
+    other family → the encryption string + (for RSN) the PMF status."""
+    if is_wep(ap):
+        return wep_status_lines(ap, iface, campaign, now)
+    lines = [f"[dim]Encryption:[/dim] {format_encryption_markup(ap, detailed=True)}"]
+    if ap.akms or ap.wpa3:              # RSN (WPA2/3) — PMF is meaningful
+        lines.append(f"[dim]Protected Mgmt Frames:[/dim] {pmf_status_markup(ap)}")
+    return lines
+
+
 # ---------------------------------------------------------------------------
 # Attack-button eligibility.
 # ---------------------------------------------------------------------------

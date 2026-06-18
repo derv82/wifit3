@@ -183,6 +183,44 @@ async def test_v2_reenter_same_target_no_duplicate_client_ids():
 
 
 @pytest.mark.asyncio
+async def test_v2_pmf_required_disables_deauth_and_logs():
+    """A PMF-Required AP refuses unauthenticated deauth: every deauth control
+    (broadcast + per-client ✕) is greyed, and the requirement is logged."""
+    bssid = "aa:bb:cc:dd:ee:01"
+    client = "9c:b6:d0:1a:2b:3c"
+    iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
+    ap = iface.access_points[bssid]
+    ap.pmf_required = True
+    iface._on_frame_parsed({"type": "data", "bssid": bssid, "source": client,
+                            "dest": bssid, "rssi": -60, "raw": b"d"})
+    app = _Host(iface, ap)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        focus = app.screen
+        focus._tick()
+        await pilot.pause()
+        clients = focus.query_one("#clients", ClientsList)
+        deauth_btns = list(clients.query(Button))
+        assert deauth_btns and all(b.disabled for b in deauth_btns), deauth_btns
+        assert "PMF Required" in _log_text(focus.query_one("#log", LogBand))
+
+
+@pytest.mark.asyncio
+async def test_v2_target_acquired_log_names_encryption():
+    """The acquisition log carries the encryption family next to the name."""
+    bssid = "aa:bb:cc:dd:ee:01"
+    iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))     # WPA2 beacon
+    ap = iface.access_points[bssid]
+    app = _Host(iface, ap)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        text = _log_text(app.screen.query_one("#log", LogBand))
+        assert "Target acquired" in text and "WPA2" in text, text
+
+
+@pytest.mark.asyncio
 async def test_v2_button_wiring():
     """The attack buttons are encryption-conditional (derive_buttons), the inline
     ✕ maps to the right client, and that mapping reaches iface.deauth — proving

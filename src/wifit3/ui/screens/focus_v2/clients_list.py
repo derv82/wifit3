@@ -81,6 +81,14 @@ class ClientsList(Vertical):
         """The client MAC behind an inline-deauth ✕ button id (None if unknown)."""
         return self._by_button.get(button_id)
 
+    def set_deauth_enabled(self, enabled: bool) -> None:
+        """Enable/disable every deauth control at once — the broadcast button and
+        each per-client ✕ (the only Buttons this list owns). Greyed when a
+        PMF-Required AP would refuse the deauth, or another attack owns the radio."""
+        disabled = not enabled
+        for btn in self.query(Button):
+            btn.disabled = disabled
+
     # ----- helpers -----------------------------------------------------------
 
     def _make_row(self, mac: str, power: int, packets: int) -> Horizontal:

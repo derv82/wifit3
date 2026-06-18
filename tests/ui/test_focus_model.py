@@ -139,6 +139,44 @@ def test_wep_status_lines_drops_threshold_once_crossed():
     assert "/10k" not in crossed and "13,982" in crossed
 
 
+def _rsn_ap(*, encryption="WPA2", akms=("PSK",), wpa3=False, transition_mode=False,
+            pmf_required=False, pmf_capable=False):
+    return types.SimpleNamespace(
+        encryption=encryption, akms=list(akms), pairwise_cipher="CCMP",
+        wpa3=wpa3, transition_mode=transition_mode, wep=None,
+        pmf_required=pmf_required, pmf_capable=pmf_capable, bssid="aa:bb:cc:dd:ee:ff")
+
+
+def test_pmf_status_markup_gradient():
+    assert fm.pmf_status_markup(_rsn_ap(pmf_required=True, pmf_capable=True)) == "[red]Required[/red]"
+    assert "dark_orange" in fm.pmf_status_markup(_rsn_ap(pmf_capable=True))
+    assert fm.pmf_status_markup(_rsn_ap()) == "[dim]Disabled[/dim]"
+
+
+def test_status_footer_wpa_shows_encryption_and_pmf():
+    lines = fm.status_footer_lines(_rsn_ap(pmf_required=True, pmf_capable=True), None, None, 0)
+    assert len(lines) == 2
+    assert "Encryption:" in lines[0] and "WPA2" in lines[0]
+    assert "Protected Mgmt Frames:" in lines[1] and "Required" in lines[1]
+
+
+def test_status_footer_open_is_encryption_only():
+    ap = types.SimpleNamespace(
+        encryption="OPEN", akms=[], pairwise_cipher=None, wpa3=False,
+        transition_mode=False, wep=None, pmf_required=False, pmf_capable=False, bssid="x")
+    lines = fm.status_footer_lines(ap, None, None, 0)
+    assert len(lines) == 1 and "Encryption:" in lines[0]
+
+
+def test_status_footer_wep_is_fakeauth_and_usable_ivs():
+    ap = types.SimpleNamespace(
+        encryption="WEP", akms=[], pairwise_cipher=None, wpa3=False,
+        transition_mode=False, wep=types.SimpleNamespace(unique_ivs=0), bssid="x")
+    lines = fm.status_footer_lines(ap, _iface_with_usable(5), None, 0)
+    assert any("Usable IVs" in ln for ln in lines)
+    assert not any("Encryption:" in ln for ln in lines)
+
+
 def _wep_btn_ap():
     return types.SimpleNamespace(encryption="WEP", wps=None, wpa3=False,
                                  transition_mode=False, wps_locked=False)
