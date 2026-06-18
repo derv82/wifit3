@@ -265,7 +265,6 @@ class FocusViewV2(Screen):
 
         self._beacon_samples.clear()
         self._events.reset()
-        self.query_one("#clients", ClientsList).reset()
         self.query_one("#log", LogBand).clear()
 
         snap = self._snapshot()
@@ -274,6 +273,9 @@ class FocusViewV2(Screen):
         self.query_one("#card", CardEndpoint).update_dynamic(snap)
         self.query_one("#router", RouterEndpoint).update_dynamic(snap)
         self.query_one("#status", Static).update(self._render_status(snap.status))
+        # Reconcile the client list to THIS target (drops the previous target's
+        # rows, keeps a re-entered target's rows in place — no reset/remount race).
+        self.query_one("#clients", ClientsList).sync(snap.clients)
         self._refresh_buttons()
         self._refresh_wep_strip()    # WEP-only flow-channel footer (cleared by reconfigure)
 

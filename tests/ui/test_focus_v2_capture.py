@@ -141,6 +141,36 @@ async def test_v2_recovered_wps_psk_shows_in_status():
 
 
 @pytest.mark.asyncio
+async def test_v2_reenter_same_target_no_duplicate_client_ids():
+    """Scanner→Focus→back→Focus on the SAME target must not crash with
+    DuplicateIds. The client list reconciles in place instead of clear-then-
+    remount, which raced Textual's async row removal."""
+    bssid = "aa:bb:cc:dd:ee:01"
+    client = "aa:bb:cc:dd:ee:03"
+    rid = "cl-" + client.replace(":", "")
+    iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
+    ap = iface.access_points[bssid]
+    iface._on_frame_parsed({"type": "data", "bssid": bssid, "source": client,
+                            "dest": bssid, "rssi": -55, "raw": b"d"})
+
+    app = _Host(iface, ap)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        focus = app.screen
+        focus._tick()
+        await pilot.pause()
+        assert len(focus.query(f"#{rid}")) == 1                 # mounted once
+
+        # Re-acquire the same target (as a Scanner→Focus return does).
+        await focus._enter_target()
+        focus._tick()
+        await pilot.pause()
+        assert len(focus.query(f"#{rid}")) == 1                 # still one, no dup/crash
+        assert client in focus.query_one("#clients", ClientsList)._known
+
+
+@pytest.mark.asyncio
 async def test_v2_button_wiring():
     """The attack buttons are encryption-conditional (derive_buttons), the inline
     ✕ maps to the right client, and that mapping reaches iface.deauth — proving

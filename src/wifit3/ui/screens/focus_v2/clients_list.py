@@ -2,10 +2,13 @@
 then one compact left-aligned row per client: BSSID · power · packets · an
 inline ``✕`` (white-on-red) that deauths just that client — no select-then-act.
 
-Rows sync live: :meth:`ClientsList.sync` adds newly-seen clients and updates the
-power/packets of known ones each tick; :meth:`reset` clears them on a target
-switch. Each ``✕`` carries the client's BSSID so the screen's button handler
-knows whom to deauth (wired in a later step)."""
+Rows sync live: :meth:`ClientsList.sync` reconciles the rows to the current
+client set each tick — add newly-seen, update power/packets, drop departed (a
+client that left, or the previous target's clients after a switch). It's
+idempotent and never removes-then-remounts the same id in one pass, so it's safe
+across target switches and screen re-entry (no reset that races Textual's async
+widget removal). Each ``✕`` carries the client's BSSID so the screen's button
+handler knows whom to deauth."""
 from __future__ import annotations
 
 from textual.app import ComposeResult
@@ -39,10 +42,25 @@ class ClientsList(Vertical):
     # ----- live sync ---------------------------------------------------------
 
     def sync(self, clients) -> None:
-        """Add rows for newly-seen clients, update power/packets on known ones."""
+        """Reconcile rows to ``clients``: drop departed, update known, add new.
+
+        Diffing against ``_known`` (rather than clearing + re-adding) keeps
+        re-entry to the same target a no-op for unchanged rows, which is what
+        avoids the DuplicateIds crash: ``row.remove()`` is async in Textual, so a
+        clear-then-readd of the same id can collide with the still-pending
+        removal. The add path also guards against a row whose removal hasn't yet
+        landed (a flapping client)."""
+        current = {c.bssid for c in clients}
+        for mac in list(self._known):
+            if mac not in current:
+                self._remove_row(mac)
         for c in clients:
             refs = self._known.get(c.bssid)
             if refs is None:
+                # Skip if a same-id row is still mid-removal — it mounts cleanly
+                # next tick once the removal lands, rather than duplicating the id.
+                if self.query(f"#{_row_id(c.bssid)}"):
+                    continue
                 self.mount(self._make_row(c.bssid, c.power, c.packets))
             else:
                 pwr, pkts = refs
@@ -50,13 +68,14 @@ class ClientsList(Vertical):
                 pkts.update(str(c.packets))
         self._update_title()
 
-    def reset(self) -> None:
-        """Drop every client row (target switch). The broadcast button stays."""
-        for row in self.query(".client-row"):
-            row.remove()
-        self._known.clear()
-        self._by_button.clear()
-        self._update_title()
+    def _remove_row(self, mac: str) -> None:
+        rid = _row_id(mac)
+        try:
+            self.query_one(f"#{rid}").remove()
+        except Exception:
+            pass
+        self._known.pop(mac, None)
+        self._by_button.pop(f"{rid}-deauth", None)
 
     def client_mac(self, button_id: str) -> str | None:
         """The client MAC behind an inline-deauth ✕ button id (None if unknown)."""
