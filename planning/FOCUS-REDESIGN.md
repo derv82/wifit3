@@ -1,6 +1,6 @@
 # Focus View Redesign
 
-## Status — 2026-06-17: **shell shipped (step 2 done), step 3 = view-model wiring next**
+## Status — 2026-06-17: **view-model extracted + v2 painting live data (step 3a–3c done); step 3d = attack-button triggers next**
 
 The spatial "router-admin" redesign (originally "Idea #1" below) is the chosen
 direction; the full v1 layout is pinned to the cell (see **Locked layout
@@ -17,11 +17,21 @@ shared `ui/ansi_art.py` (black→transparent art) and `scripts/ui/shoot_focus_v2
 proven at 80×24 → 180×45, geometry locked by `tests/ui/test_focus_v2_layout.py`,
 `1226` tests green. **Steps 2.1–2.x of the Migration plan are complete.**
 
-**Next — step 3 (Migration plan §3):** extract v1's campaign-value derivations
-out of `focus.py`'s `update_ui` into the shared `ui/focus_model.py` (a real
-`FocusSnapshot` factory replacing `fake_snapshot()`), then wire `FocusViewV2` to
-paint it. Behavior-preserving for v1 (keeps its tests green); see **View model —
-decouple the brains from the layout** for the exact list of what moves.
+**Done — step 3a–3c (Migration plan §3):** v1's campaign-value derivations are
+extracted into the shared `ui/focus_model.py` as pure functions + a
+`build_snapshot()` factory (incl. the synthesized CAMPAIGN HEADLINE); v1's
+`update_ui` calls them (behavior-preserving, tests green). `FocusViewV2` now
+builds + paints a real `FocusSnapshot` each tick — live headline, endpoints,
+clients, event log (capture pipeline duplicated from v1, with auto-save), flow
+channel fed real `packet_stats` deltas, and the rainbow signal bar on the router
+power line. `fake_snapshot()` is kept as the no-target fallback. Verified by
+`tests/ui/test_focus_v2_capture.py` (mock interface, no hardware).
+
+**Next — step 3d:** wire the v2 attack + per-client deauth BUTTONS to the real
+campaign handlers (duplicate v1's `on_button_pressed` + campaign start/stop into
+`FocusViewV2` — the screen-side logic stays per-view by design; only the
+derivations are shared). The agent wires the TX paths; firing live deauth/inject
+remains the user's explicit action.
 
 ---
 
