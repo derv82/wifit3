@@ -109,10 +109,11 @@ full BSSID, `aa:bb:cc:dd:ee:ff` = 17, beneath it).
   (replaying / chopping / cracking / PIN % + ETA). The card BSSID lives here, NOT
   in CLIENTS (our card isn't the target's client). Buttons moved to the top
   action area, freeing vertical room in this column.
-- **Router endpoint** (right, vertically centered): **power + signal bar
-  *directly above* the ESSID** (correlating signal with the named target — the
-  satisfying bit), then the (short) router art, then BSSID and `ch · WPA2/CCMP`.
-  No "N clients" line (redundant with the CLIENTS header).
+- **Router endpoint** (right, vertically centered): **power + signal *directly
+  above* the router art; the ESSID *directly below* it** (the name labels the
+  router), then BSSID and `ch · WPA2/CCMP`. Splitting the ESSID away from the
+  power line spreads the labels out instead of clustering them above the art. No
+  "N clients" line (redundant with the CLIENTS header).
 - **Clients**: bordered list, **fixed exact-fit width** (BSSID · pwr · pkts ·
   button), left-aligned rows, each with an **inline `[✕]`** (white-on-red) — one
   click deauths that client, no select-then-act. Broadcast `[ Deauth all ]`
