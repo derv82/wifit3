@@ -85,7 +85,7 @@ _PAD_RATE = 0.4
 # The full attack-button set (stable ids, shared with v1). All are composed once;
 # derive_buttons toggles visibility/enablement/label/variant per target + tick.
 _ATTACK_BUTTONS = [
-    ("btn-gen-ivs", "Replay"), ("btn-chop", "Chop"), ("btn-pmkid", "PMKID"),
+    ("btn-gen-ivs", "ARP Replay"), ("btn-chop", "ChopChop"), ("btn-pmkid", "PMKID"),
     ("btn-wps-pin", "WPS PIN"), ("btn-wpa3-down", "WPA ↓"),
 ]
 
@@ -118,7 +118,8 @@ class FocusViewV2(Screen):
 
     #topbar { height: %(top)d; }
     #topbar Button { height: 3; width: auto; min-width: 0; margin: 0 1 0 0; }
-    .attack-btn { background: $primary; color: $text; }
+    /* No background override on .attack-btn — let each Button's variant drive its
+       colour (success=ARP Replay, warning=Stop Chop, error=Stop Replay/PIN). */
     #status { width: 1fr; height: 3; content-align: center middle; text-align: center; }
 
     #mid { height: 1fr; }

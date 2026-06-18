@@ -440,7 +440,7 @@ class WepArpReplay:
                 "[bold green]replayable[/bold green]"
             ))
             self._log(treelog.leaf_ok(
-                "[green]ARP Replaying now[/green] [dim](see CAPTURE)[/dim]"
+                "[green]ARP Replaying now[/green] [dim]for IVs[/dim]"
             ))
         elif (time.time() - self._trial_started) >= self._TRIAL_WINDOW:
             failed_len = len(self._current)

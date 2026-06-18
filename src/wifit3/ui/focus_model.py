@@ -436,9 +436,11 @@ def wep_status_line(ap, iface, campaign, now: float) -> str:
     measured against, so it directly answers 'how close to cracking?'."""
     samples = iface.wep_store.crack_sample_count(ap.bssid) if iface else 0
     n = f"[cyan]{samples:,}[/cyan]" if samples else "[red]0[/red]"
-    # /10k tags the crack threshold — this is the metric we crack at, distinct
-    # from the gross "wep iv" rate on the flow channel above.
-    ivs = f"{n}[dim]/{CRACK_READY_THRESHOLD // 1000}k[/dim]"
+    # /10k tags the crack threshold (distinct from the gross "wep iv" rate above)
+    # while we're below it; once crossed the denominator is meaningless, so drop
+    # it and just show the climbing count.
+    ivs = (n if samples >= CRACK_READY_THRESHOLD
+           else f"{n}[dim]/{CRACK_READY_THRESHOLD // 1000}k[/dim]")
     parts = []
     if campaign is not None:
         parts.append(
@@ -485,14 +487,14 @@ def derive_buttons(ap, campaigns: Campaigns) -> ButtonStates:
     gen = ButtonState(
         visible=wep,
         disabled=False,
-        label="Stop Replay" if wep_running else "Replay",
+        label="Stop Replay" if wep_running else "ARP Replay",
         variant="error" if wep_running else "success",
     )
     chopping = bool(campaigns.wep and campaigns.wep.chop_active)
     chop = ButtonState(
         visible=wep,
         disabled=not wep_running,
-        label="Stop Chop" if chopping else "Chop",
+        label="Stop Chop" if chopping else "ChopChop",
         variant="warning" if chopping else "primary",
     )
 
