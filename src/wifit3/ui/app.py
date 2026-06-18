@@ -151,7 +151,13 @@ class WifiteApp(App):
         """Register screens and push the initial SplashView."""
         self.install_screen(SplashView(self.device_manager), name="splash")
         self.install_screen(ScannerView(), name="scanner")
-        self.install_screen(FocusView(), name="focus")
+        # Focus v2 (spatial redesign) is opt-in behind WIFIT3_FOCUS_V2 while it's
+        # built out; Scanner's push_screen("focus") lands on whichever installs.
+        if os.environ.get("WIFIT3_FOCUS_V2", "").strip().lower() in ("1", "true", "yes", "on"):
+            from .screens.focus_v2 import FocusViewV2
+            self.install_screen(FocusViewV2(), name="focus")
+        else:
+            self.install_screen(FocusView(), name="focus")
         self.push_screen("splash")
 
     async def action_quit(self):

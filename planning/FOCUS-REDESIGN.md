@@ -1,13 +1,15 @@
 # Focus View Redesign
 
-## Status — direction locked 2026-06-12, NOT yet built
+## Status — v1 spec locked 2026-06-17, shell in progress
 
 The spatial "router-admin" redesign (originally "Idea #1" below) is the chosen
-direction. The layout, the responsive story, the art convention, and a
-risk-managed migration plan are agreed. Nothing is built yet. The plan is
-deliberately staged so v1 is never broken, never branched, and never
-throwaway-blocking — see **Migration plan**. Build only when there's time;
-until then this doc is the spec.
+direction, and the full v1 layout is now pinned to the cell (see **Locked layout
+decisions** + **Mockup**). v1 is **landscape-only** — portrait is explicitly
+deferred to its own later feature (rationale in Deferred). The migration is
+staged so v1 (today's Focus) is never broken, never branched, never
+throwaway-blocking — see **Migration plan**. Being built behind
+`WIFIT3_FOCUS_V2=1` as a throwaway-able shell (fake data) first, to prove the
+layout looks good before any campaign wiring.
 
 ---
 
@@ -59,10 +61,14 @@ Each previously-open question collapses once this principle is accepted:
   axis.
 - **What guides the eye** → the dead center-top becomes the single big CAMPAIGN
   headline ("what am I doing right now").
-- **Responsiveness** → the metaphor is endpoints-along-the-long-axis, so in
-  portrait the long axis is *vertical*: router on top, card on bottom, data
-  flows *down*, dashboard rows become vertical wires. Same mental model, same
-  code, transposed on a Horizontal/Vertical swap at a width breakpoint.
+- **Responsiveness** → landscape **width tiers** via Textual's
+  `HORIZONTAL_BREAKPOINTS` (confirmed in 8.2.5: it auto-applies a CSS class per
+  width breakpoint, so sizing is pure CSS keyed off `-compact`/`-normal`/`-wide`,
+  with no resize-watching glue). **Portrait is deferred** to its own later
+  feature — the Scanner view isn't portrait-friendly either, so a portrait Focus
+  would be inconsistent, and dropping it removes the only fiddly part (the
+  endpoint order-reversal). Endpoints are still built as dockable regions so a
+  future `-portrait` breakpoint is mostly added CSS, not a rewrite.
 
 Resulting hierarchy (the thing the spreadsheet has none of):
 **headline (what) → flow channel (proof it's working) → endpoints (who) →
@@ -72,65 +78,88 @@ clients (secondary targets) → log (details, on demand).**
 
 ## Locked layout decisions
 
-- **Campaign headline**: center-top, surrounded by lots of negative space to
-  emphasize it. The one big "listening / attacking / cracking / cracked" focal
-  point. This is the new heart of the view — it absorbs the live state that
-  CAPTURE used to carry.
-- **Flow channel**: the packet dashboard, stretched between card and router as
-  the centerpiece (finally given the room it deserves). Data flows right→left
-  (router → card); injections/deauths flow left→right (card → router). A deauth
-  lighting the channel red and fading back is the long-term flourish.
-- **Card endpoint** (left in landscape / bottom in portrait): one clearly-a-
-  wireless-card art. Static facts *above* (model, chipset/driver); dynamic
-  *below* (what the card is doing — replaying / chopping / cracking / PIN
-  attempt %, ETA).
-- **Router endpoint** (right in landscape / top in portrait): one clearly-a-
-  router art. Static facts *above* (ESSID, channel, encryption); dynamic
-  *below* (beacons, signal, clients, handshakes/IVs).
-- **Clients**: a **list** (not per-client connector lines — those are an O(n)
-  layout problem only a list solves cleanly), pinned under the router,
-  **bottom-right half**. Compact rows: MAC · power · pkts · per-row deauth.
-  Broadcast-deauth button at the top of the list.
-- **Event log**: **bottom-left half**. The hard-won <40-char log lines are
-  finally justified — fixed, capped width, never expands.
-- **Degradation on tiny terminals (80×40)**: collapse art to a single glyph,
-  keep headline + one flow line + log. Same "gut irrelevant things when
-  real-estate is small" rule that today collapses PACKET ACTIVITY, but applied
-  to a layout that degrades gracefully along *one* axis instead of a 6-box grid
-  reflowing in two.
+Landscape only. **80-col floor**; the full scene is comfortable at ~30 rows and
+must not *break* at 80×24 (24 rows is the true classic-terminal default, not 40).
+The **20-col endpoint width** is set by the `.ans` art (itself sized to hold a
+full BSSID, `aa:bb:cc:dd:ee:ff` = 17, beneath it).
 
-### Mockups
+- **Top "action area"** (fixed height ≈3): the back button + the
+  encryption-conditional attack buttons live together top-left — all the
+  clickables in one place ("argh that didn't work, lemme go back"). The **status
+  line** fills the remaining width and stays centered (it's usually short —
+  "Cracking", "Replaying", "PIN 8021/11000"); on a very wide terminal it floats
+  centered in the gap. Up to 3 status lines.
+- **Only LOG and CLIENTS are bordered/titled panels.** Card, flow channel, and
+  router are borderless/title-less — the card and router *are* their own labels;
+  dropping that chrome buys the flow channel its width.
+- **Flow channel** (centerpiece, vertically centered): the packet dashboard
+  stretched between the endpoints. 5 rows — `beacon · data · (wep iv | eapol,
+  encryption-gated) · inject · deauth`. All flow **right→left** (newest at the
+  right, scrolling left — you read the attack's recent history L→R); no
+  directional arrows, the motion *is* the direction. **Labels right-aligned,
+  numbers left-aligned**, both flush against the bars. Trailing number = running
+  `/s` for the continuous rows, a recent **count** for `eapol` (a handshake is
+  ~4 frames). **Custom** sparklines (Textual's `Sparkline` is single-series),
+  **adaptive height**: 2-row (16 levels) when there's vertical room, 1-row when
+  cramped. `deauth` kept (it's the frame we inject — honesty over the
+  "INJECT/DEATH" optics; can de-stack by row order if it grates).
+- **Card endpoint** (left, vertically centered): the card art, then static facts
+  — **chipset/driver + the card's own BSSID** when the driver exposes it (not the
+  marketing name, often unresolvable from VID:PID) — then the dynamic line
+  (replaying / chopping / cracking / PIN % + ETA). The card BSSID lives here, NOT
+  in CLIENTS (our card isn't the target's client). Buttons moved to the top
+  action area, freeing vertical room in this column.
+- **Router endpoint** (right, vertically centered): **power + signal bar
+  *directly above* the ESSID** (correlating signal with the named target — the
+  satisfying bit), then the (short) router art, then BSSID and `ch · WPA2/CCMP`.
+  No "N clients" line (redundant with the CLIENTS header).
+- **Clients**: bordered list, **fixed exact-fit width** (BSSID · pwr · pkts ·
+  button), left-aligned rows, each with an **inline `[✕]`** (white-on-red) — one
+  click deauths that client, no select-then-act. Broadcast `[ Deauth all ]`
+  pinned at the top.
+- **Event log**: bordered, bottom-left, **fluid width** (it expands; CLIENTS
+  stays fixed). The <40-char lines mean it never *needs* width, but logs are the
+  priority so they get the slack.
 
-Landscape (wide):
+### Vertical height ladder
+
+Height fills in a deliberate order, so the view stays dense rather than stretched:
+
+1. **Top** band fixed (~3 rows; up to 3 status lines).
+2. **Mid** band (card · flow · router) grows first, capping once the sparklines
+   reach full 2-row height and the endpoint columns fit (~13 rows). A floor is
+   reserved for the bottom so ≥3 clients always show.
+3. **Bottom** band (LOG · CLIENTS) takes everything beyond that — so a taller
+   terminal shows *more log lines and more clients*, not taller sparklines.
+
+Shrink → 1-row sparklines + a few clients; grow → 2-row sparklines lock in, then
+log/clients keep expanding. (Width: endpoints fixed, flow + log fluid, clients
+fixed.)
+
+### Mockup — landscape schematic
+
+WPA2 target mid WPA-downgrade (every region populated). Schematic, *not*
+cell-exact — the live shell render is in the SVG shots / `scripts/ui/shoot_focus_v2.py`
+text dumps. Sparklines 2-row; labels right-flush, numbers left-flush.
 
 ```
-                   ● Listening for handshake       -71 dBm
-    \ /   beacon  ──────────────────────────<- 9s    \ / /
-   _\Ｖ__ data    ──────────────────────────<- 1s   __\Ｖ__
-  /Alfa / inject  0s ->──────────────────────────  |NETGR9|
- /__o__/  eapol   ──────────────────────────<- 0s  |__o___|
- rtl8187l                                          NETGEAR91
- ┌ LOG ───────────────┐   CLIENTS (2)
- │ Target locked.     │   ··── fa:..:aa  -79  10  [✂]
- │ M1 ▸ M2 captured   │   ··── aa:..:ff  -80 134  [✂]
- └────────────────────┘            [ Deauth all ]
-```
-
-Portrait (narrow / phone SSH) — same scene, axis rotated, zero new concepts:
-
-```
-    NETGEAR91  ch6 -71dBm
-        |NETGR91|
-   clients: 2  [deauth all]
-   ··fa:aa -79  [✂]
-   ··aa:ff -80  [✂]
-   ─────┼─────  ● handshake
-   beacon ▼ data ▼ eapol ▼
-   ─────┼─────
-      __\Ｖ__  Alfa
-   ┌ LOG ──────────┐
-   │ M1 ▸ M2 ok    │
-   └───────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ ‹ Scanner   Extract PMKID   WPA Downgrade   WPS Brute Force   ● WPA Downgrade   │
+│                                                                deauthing 2 …    │
+│                                                                M1 ✓   M2 —      │
+│  __▌__             beacon ▇▇███████▆▆▆████████  7/s           ▂▄▅█ -71 dBm      │
+│ /Alfa/             data   ▆▇████████████████████ 180/s         NETGEAR91        │
+│  ‾‾‾               eapol  ▅▅████████▅▅██▅▅▅▅▅██ 10              \   /            │
+│ rtl8187l          inject  ▅▅████████▇▆██▃▄▅▆██ 34/s            ▟███▙            │
+│ 00:c0:ca:..:33    deauth  ▅▅████████▆▅██▃▃▅▆██ 13/s             NETGEAR91       │
+│ ● deauthing                                                    a8:fc:b7:..:42   │
+│                                                                ch 6 · WPA2/CCMP │
+│╭ LOG ─────────────────────────────────╮╭ CLIENTS (5) ─────────────────────────╮│
+││ 19:42:01 Target locked.              ││          [ Deauth all ]              ││
+││ 19:42:04 M1 captured (ANonce)        ││ fa:11:22:33:44:aa  -79   10    [✕]    ││
+││ 19:42:06 Deauth ▸ 04:2e:…:b8         ││ 9c:b6:d0:1a:2b:3c  -67  512    [✕]    ││
+│╰──────────────────────────────────────╯╰──────────────────────────────────────╯│
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -148,11 +177,23 @@ Portrait (narrow / phone SSH) — same scene, axis rotated, zero new concepts:
   actually firing; a pulse means a beacon actually landed. Throttle frame rate
   over SSH/pihole. (We already run a 30 FPS easing timer for the signal bar, so
   this is cheap.)
+- **Green-LED breathe convention**: art cells painted dark green `rgb(0,128,0)`
+  are the animation targets — the breather lerps them `(0,128,0) → (0,255,0) →
+  (0,128,0)` on a ~1.5 s cycle. The `.ans` art self-describes its live cells, so
+  art edits and animation code never couple (paint a cell dark green → it
+  breathes). v1 = always-breathe; gating the breathe on real events (card LED
+  while RX flows, router LED on an actual beacon) is the additive instrumentation
+  upgrade.
 
 ---
 
 ## Deferred (explicitly NOT in v1 of the redesign)
 
+- **Portrait / axis-rotate.** Deferred to its own later feature. The Scanner view
+  isn't portrait-friendly, so a portrait Focus would be inconsistent; deferring
+  also drops the endpoint order-reversal (the only fiddly part of the responsive
+  story). Endpoints stay dockable so a `-portrait` breakpoint is mostly added CSS
+  later, not a rewrite.
 - **Per-chipset ANSI art.** Delightful, but the single thing most likely to eat
   days and block the layout. It's a pure skin / lookup table once the metaphor
   is proven — add it *after* the layout is nailed, never before.
@@ -212,13 +253,17 @@ Shape: a per-tick snapshot (dataclass) the layout just paints — roughly
 The whole point is to never break v1, never diverge a branch (no merge
 conflicts / cherry-pick reverts), and keep a one-command abandon path.
 
-- **Coexist, don't branch.** v2 is a **new file** `focus_v2.py` (a second
-  Screen), selected behind a flag (env var `WIFIT3_FOCUS_V2=1` or a hidden
-  dev keybind). `focus.py` stays the default and is untouched except for
-  importing the shared view-model. Both screens install. No long-lived branch →
-  nothing to diverge or conflict → never blocked.
-- **Abandon path** if v2 doesn't pan out: `rm focus_v2.py` + delete the flag.
-  No reverts. The view-model extraction stays as a v1 cleanup.
+- **Coexist, don't branch.** v2 is a **new package** `ui/screens/focus_v2/`
+  (region-per-module widgets + a `FocusViewV2(Screen)`), selected behind a flag:
+  `app.py:on_mount` installs `FocusViewV2` as the `"focus"` screen when
+  `WIFIT3_FOCUS_V2=1`, else the v1 `FocusView` — so Scanner's existing
+  `push_screen("focus")` transparently lands on whichever. The shared view-model
+  lives at `ui/focus_model.py`, **outside** the package, imported by both
+  screens. `focus.py` stays the default, untouched but for that import. No
+  long-lived branch → nothing to diverge → never blocked.
+- **Abandon path** if v2 doesn't pan out: `rm -rf focus_v2/` + delete the flag
+  branch in `on_mount`. One directory, no reverts. `ui/focus_model.py` stays as a
+  v1 cleanup (it's shared).
 
 Order (each step protects the next):
 
@@ -241,16 +286,22 @@ artifact is one new file.
 
 ---
 
-## Open testing/sizing questions (carried over, still unresolved)
+## Testing/sizing — resolved
 
-- Bare-minimum supported dimensions — 80×40? 100×80? 120×80? Everything above
-  expands to fill.
-- Most common real terminal sizes to test (laptop / desktop / mobile-SSH
-  portrait + landscape / low-res / high-res, small vs big fonts).
-- How to size Windows Terminal to an exact width/height for repeatable testing.
-- Does Textual support portrait/landscape-conditional box rendering (flexbox-
-  like)? The width-breakpoint axis-rotate above assumes yes via CSS + a
-  Horizontal/Vertical swap — confirm the cleanest mechanism.
+- **Dimensions**: 80-col floor (classic terminal width). Full scene comfortable
+  at ~30 rows; must not break at 80×24 (the real classic default — 40 rows is
+  generous). Everything above expands to fill (flow channel + LOG/CLIENTS first).
+- **Repeatable sizing needs no real terminal**: Textual's
+  `app.run_test(size=(w, h))` pins exact dimensions headless, so geometry tests
+  reproduce 80×24 / 80×30 / 120×40 deterministically (and the phone-SSH portrait
+  size once portrait is built — just feed its cols×rows).
+- **Conditional box rendering**: yes — `HORIZONTAL_BREAKPOINTS` (8.2.5)
+  auto-toggles a per-width CSS class; layout swaps are pure CSS off that class.
+  No Textual CSS media-queries needed.
+- **Autonomy split**: geometry / placement / overflow / width-cap, and "the
+  animation fires on the right event", are agent-verifiable via Pilot +
+  `widget.region`/`.size`; the aesthetic go/no-go is the human's, fed by exported
+  SVG screenshots at each size.
 
 ---
 ---
