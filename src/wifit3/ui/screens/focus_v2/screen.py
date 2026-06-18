@@ -62,6 +62,10 @@ class FocusViewV2(Screen):
 
     #mid { height: 1fr; }
     #card, #router { width: %(ew)d; align: center middle; }
+    /* Router art is a row shorter than the card's, so bottom-align it: the freed
+       row sits above the power line (de-clustering it) and the router's BSSID/
+       channel line up with the card's bssid/dynamic row. */
+    #router { align: center bottom; }
     #flow { width: 1fr; height: 100%%; padding: 0 1; }
     .endpoint-art { width: %(ew)d; background: transparent; }
     .card-static, .ap-static { width: 100%%; height: 1; text-align: center; color: $text-muted; }
