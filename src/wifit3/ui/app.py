@@ -9,7 +9,7 @@ from wifit3.engine.models import AccessPoint
 
 from .screens.splash import SplashView
 from .screens.scanner import ScannerView
-from .screens.focus import FocusView
+from .screens.focus_v2 import FocusViewV2
 
 logger = logging.getLogger(__name__)
 
@@ -151,13 +151,14 @@ class WifiteApp(App):
         """Register screens and push the initial SplashView."""
         self.install_screen(SplashView(self.device_manager), name="splash")
         self.install_screen(ScannerView(), name="scanner")
-        # Focus v2 (spatial redesign) is opt-in behind WIFIT3_FOCUS_V2 while it's
-        # built out; Scanner's push_screen("focus") lands on whichever installs.
-        if os.environ.get("WIFIT3_FOCUS_V2", "").strip().lower() in ("1", "true", "yes", "on"):
-            from .screens.focus_v2 import FocusViewV2
-            self.install_screen(FocusViewV2(), name="focus")
-        else:
+        # Focus v2 (the spatial router-admin redesign) is the default; the legacy
+        # v1 panel grid is kept as a fallback behind WIFIT3_FOCUS_V1 during the
+        # soak. Scanner's push_screen("focus") lands on whichever installs.
+        if os.environ.get("WIFIT3_FOCUS_V1", "").strip().lower() in ("1", "true", "yes", "on"):
+            from .screens.focus import FocusView
             self.install_screen(FocusView(), name="focus")
+        else:
+            self.install_screen(FocusViewV2(), name="focus")
         self.push_screen("splash")
 
     async def action_quit(self):

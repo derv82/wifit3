@@ -1,6 +1,6 @@
 # Focus View Redesign
 
-## Status — 2026-06-17: **v2 fully wired (steps 3a–3d done) — feature-complete behind the flag; step 4 (flip the default) pending the aesthetic review**
+## Status — 2026-06-18: **v2 is the DEFAULT (step 4 done) — v1 kept behind `WIFIT3_FOCUS_V1=1` for the soak; delete v1 later**
 
 The spatial "router-admin" redesign (originally "Idea #1" below) is the chosen
 direction; the full v1 layout is pinned to the cell (see **Locked layout
@@ -36,10 +36,15 @@ auto-capture) are duplicated from v1 — the log/save/teardown side effects stay
 per-view by design; only the derivations are shared. Verified by the v2
 button-wiring test (no live TX). v2 is now feature-complete behind the flag.
 
-**Next — step 4 (Migration plan §4):** flip the default to v2 once the aesthetic
-review passes (the user's call — minor UI tweaks are parked for a later pass),
-then delete `focus.py` when happy. Until then v1 stays default; v2 is opt-in via
-`WIFIT3_FOCUS_V2=1`.
+**Done — step 4 (Migration plan §4):** v2 is the default Focus screen. The flag
+flipped — v1 `FocusView` is now the fallback behind `WIFIT3_FOCUS_V1=1` (the
+inverse of the old `WIFIT3_FOCUS_V2`), kept as a zero-cost escape hatch during
+the soak. WEP / WPS / WPA (PMKID + handshake) all exercised live on hardware.
+
+**Remaining — delete v1 (deferred):** once v2 has run as daily-driver a while,
+delete `focus.py` + its v1-only tests (`tests/ui/test_focus_capture.py`) and the
+`WIFIT3_FOCUS_V1` branch in `ui/app.py` in one sweep. The shared `focus_model`
+brains stay. Kept for now as the field fallback + behavior source-of-truth.
 
 ---
 

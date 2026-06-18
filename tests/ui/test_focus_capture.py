@@ -13,8 +13,11 @@ from wifit3.wlan.interface import WlanInterface
 @pytest.fixture(autouse=True)
 def _isolate_captures_dir(monkeypatch, tmp_path):
     """Auto-save writes to ``Path("captures")`` (cwd-relative). Tests park in
-    tmp_path so we don't litter the real captures/ directory."""
+    tmp_path so we don't litter the real captures/ directory. Also opts into the
+    v1 Focus screen (now behind WIFIT3_FOCUS_V1) — this module tests v1's panel
+    grid, which ``push_screen("focus")`` only installs under that flag."""
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("WIFIT3_FOCUS_V1", "1")
 
 
 class MockDriver:

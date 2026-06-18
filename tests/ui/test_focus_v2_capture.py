@@ -9,6 +9,7 @@ from textual.app import App
 from textual.widgets import Button, RichLog, Static
 
 from wifit3.engine.models import PersistedCapture
+from wifit3.ui.app import WifiteApp
 from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.ui.screens.focus_v2.clients_list import ClientsList
 from wifit3.ui.screens.focus_v2.flow_channel import FlowChannel
@@ -121,6 +122,17 @@ async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
         saved = {p.name for p in (tmp_path / "captures").iterdir()}
         assert any(n.endswith("_handshake.hc22000") for n in saved), saved
         assert any(n.endswith("_pmkid.hc22000") for n in saved), saved
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")  # ui/conftest.py
+async def test_default_focus_screen_is_v2(monkeypatch):
+    """The flip: with no flag, push_screen("focus") installs v2; v1 is only the
+    fallback under WIFIT3_FOCUS_V1."""
+    monkeypatch.delenv("WIFIT3_FOCUS_V1", raising=False)
+    app = WifiteApp()
+    async with app.run_test():
+        assert isinstance(app.get_screen("focus"), FocusViewV2)
 
 
 @pytest.mark.asyncio

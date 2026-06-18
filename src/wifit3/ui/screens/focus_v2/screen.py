@@ -23,8 +23,9 @@ The campaign brains are shared via ``focus_model``; the *screen-side* attack
 handlers + campaign lifecycle are duplicated per-view by design (the log/save/
 teardown side effects are too entangled with the widgets to share cheaply, and
 keeping them separate lets v2 evolve without touching v1). The agent wires the
-TX paths; firing live deauth/inject is the user's explicit action. Selected
-behind ``WIFIT3_FOCUS_V2=1`` (see ``ui/app.py``); v1 ``FocusView`` stays default.
+TX paths; firing live deauth/inject is the user's explicit action. This is the
+default Focus screen (see ``ui/app.py``); v1 ``FocusView`` is the fallback behind
+``WIFIT3_FOCUS_V1=1`` during the soak.
 """
 from __future__ import annotations
 
