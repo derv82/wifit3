@@ -7,9 +7,11 @@ history scrolling left — you read the attack's recent past L->R). Height is
 **adaptive**: 2-row (16 levels) when there's vertical room, 1-row (8 levels)
 when cramped — the same "shrink gracefully" rule the bottom band rides.
 
-The shell feeds lively fake data so the look can be judged; real wiring samples
-``WlanInterface.packet_stats`` deltas into ``_hist`` later (the render is
-data-source agnostic).
+Data-source agnostic: once :meth:`FlowChannel.reconfigure` binds an interface +
+BSSID, ``_tick`` samples ``WlanInterface.packet_stats`` deltas (each row's key
+matches a ``wlan.packet_stats`` class). Unbound (the geometry tests, the
+``shoot_focus_v2`` screenshots), it falls back to a lively fake generator so the
+look can still be judged.
 """
 from __future__ import annotations
 
@@ -37,6 +39,11 @@ class FlowChannel(Static):
         self._rows = rows                 # list[FlowRow]
         self._hist = {r.key: deque([0] * _HISTORY, maxlen=_HISTORY) for r in rows}
         self._t = 0
+        # Live binding (None -> fake generator). _prev is the last cumulative
+        # packet_stats snapshot, diffed each tick into a per-window delta.
+        self._iface = None
+        self._bssid = None
+        self._prev = None
 
     def on_mount(self) -> None:
         self.set_interval(self.SAMPLE_S, self._tick)
@@ -45,9 +52,39 @@ class FlowChannel(Static):
     def on_resize(self) -> None:
         self._repaint()
 
-    # ---- fake data (shell only) --------------------------------------------
+    # ---- target binding -----------------------------------------------------
+
+    def reconfigure(self, rows, iface, bssid) -> None:
+        """Point the channel at a target: swap in the family's rows (WEP shows
+        wep_iv, WPA eapol), bind the interface + BSSID, and clear history so a
+        previous target's bars never bleed in. ``iface``/``bssid`` may be None,
+        which drops back to the fake generator."""
+        self._rows = rows
+        self._hist = {r.key: deque([0] * _HISTORY, maxlen=_HISTORY) for r in rows}
+        self._iface = iface
+        self._bssid = bssid
+        self._prev = (iface.packet_stats.snapshot(bssid)
+                      if (iface is not None and bssid) else None)
+        self._repaint()
+
+    # ---- sampling -----------------------------------------------------------
 
     def _tick(self) -> None:
+        if self._iface is not None and self._bssid is not None:
+            self._sample_live()
+        else:
+            self._sample_fake()
+        self._repaint()
+
+    def _sample_live(self) -> None:
+        snap = self._iface.packet_stats.snapshot(self._bssid)
+        if self._prev is not None:
+            for r in self._rows:
+                # max(0, …) guards a fresh rebind where prev briefly out-runs snap.
+                self._hist[r.key].append(max(0, snap.get(r.key, 0) - self._prev.get(r.key, 0)))
+        self._prev = snap
+
+    def _sample_fake(self) -> None:
         self._t += 1
         for r in self._rows:
             # Per-window counts scaled so the trailing /s reads near the row's
@@ -57,7 +94,6 @@ class FlowChannel(Static):
             if r.key in ("inject", "deauth", "eapol") and (self._t % 11) in (0, 1):
                 sample += r.peak * self.SAMPLE_S * 0.8
             self._hist[r.key].append(max(0, int(round(sample))))
-        self._repaint()
 
     # ---- paint --------------------------------------------------------------
 

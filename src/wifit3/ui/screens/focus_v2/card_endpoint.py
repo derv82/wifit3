@@ -19,8 +19,21 @@ class CardEndpoint(Vertical):
 
     def compose(self) -> ComposeResult:
         yield BreathingArt("focus-card.ans", classes="endpoint-art")
-        yield Label(self._snap.card_chipset, classes="card-static")
-        if self._snap.card_bssid:
-            yield Label(self._snap.card_bssid, classes="card-static")
-        if self._snap.card_dynamic:
-            yield Label(self._snap.card_dynamic, classes="card-dynamic")
+        yield Label(self._snap.card_chipset, classes="card-static", id="card-chipset")
+        # Always present (the card MAC is static per card) so a later tick can
+        # show/hide it; hidden when the driver doesn't expose its own BSSID.
+        bssid = Label(self._snap.card_bssid or "", classes="card-static", id="card-bssid")
+        bssid.display = bool(self._snap.card_bssid)
+        yield bssid
+        # The dynamic line ("● replaying" etc) is always composed so update_dynamic
+        # can toggle it; hidden while the card is idle (passive capture).
+        dyn = Label(self._snap.card_dynamic, classes="card-dynamic", id="card-dynamic")
+        dyn.display = bool(self._snap.card_dynamic)
+        yield dyn
+
+    def update_dynamic(self, snap) -> None:
+        """Refresh the live 'what the card is doing' line each tick. Identity
+        (chipset / BSSID) is static per card, set once at compose."""
+        dyn = self.query_one("#card-dynamic", Label)
+        dyn.update(snap.card_dynamic)
+        dyn.display = bool(snap.card_dynamic)
