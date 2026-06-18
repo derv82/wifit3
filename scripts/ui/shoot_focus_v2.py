@@ -18,7 +18,7 @@ from wifit3.ui.screens.focus_v2 import FocusViewV2
 
 sys.stdout.reconfigure(encoding="utf-8")  # block glyphs vs Windows cp1252 stdout
 
-SIZES = [(80, 24), (80, 30), (100, 35), (120, 40)]
+SIZES = [(80, 24), (80, 30), (100, 35), (120, 40), (180, 45)]
 REGIONS = ["#topbar", "#mid", "#bottom", "#card", "#flow", "#router", "#log", "#clients"]
 
 

@@ -19,7 +19,9 @@ from collections import deque
 from rich.text import Text
 from textual.widgets import Static
 
-# 0..8 eighths; index 0 is blank (a quiet column reads as empty, not a bar).
+# " ▁▂▃▄▅▆▇█": index 0 is blank, used only for the upper row of a 2-row pair.
+# The lower row and the 1-row sparkline floor at ▁ (index 1), so a zero/quiet row
+# reads as a continuous flat line end-to-end rather than an empty gap.
 _BLOCKS = " ▁▂▃▄▅▆▇█"
 _LABEL_W = 6
 _NUM_W = 5
@@ -84,11 +86,11 @@ class FlowChannel(Static):
 
             if two:
                 upper = "".join(_BLOCKS[max(0, self._col(v, peak, 16) - 8)] for v in window)
-                lower = "".join(_BLOCKS[min(8, self._col(v, peak, 16))] for v in window)
+                lower = "".join(_BLOCKS[max(1, min(8, self._col(v, peak, 16)))] for v in window)
                 lines.append(self._row("", r.color, upper, "", bw))
                 lines.append(self._row(r.label, r.color, lower, num, bw))
             else:
-                cells = "".join(_BLOCKS[self._col(v, peak, 8)] for v in window)
+                cells = "".join(_BLOCKS[max(1, self._col(v, peak, 8))] for v in window)
                 lines.append(self._row(r.label, r.color, cells, num, bw))
         # Vertically centre the sparkline block so it lines up with the
         # vertically-centred card/router columns as the band grows.

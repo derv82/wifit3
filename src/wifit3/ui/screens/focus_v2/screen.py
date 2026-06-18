@@ -40,6 +40,11 @@ _TOPBAR_H = 3
 _CENTER_MAX = 13
 _CENTER_MIN = 7
 _BOTTOM_MIN = 6
+# Horizontal breathing room on the mid row: none up to ~80 cols, then ramped so a
+# wide terminal centers card | flow | router with side margins instead of
+# stretching them to the edges (~40 cols/side by ~180 wide). Bottom stays full.
+_PAD_START = 80
+_PAD_RATE = 0.4
 
 
 class FocusViewV2(Screen):
@@ -105,10 +110,15 @@ class FocusViewV2(Screen):
 
     def _distribute(self) -> None:
         """Fill the mid band to full 2-row sparklines (capped at _CENTER_MAX),
-        reserving a floor for the bottom band, then pour any extra height into
-        the bottom (log + clients grow)."""
+        reserving a floor for the bottom band, then pour any extra height into the
+        bottom (log + clients grow). Also ramp horizontal padding onto the mid row
+        on wide terminals so the endpoints aren't glued to the edges — the bottom
+        band stays full width."""
         avail = max(1, self.size.height - _TOPBAR_H)
         center = min(_CENTER_MAX, max(_CENTER_MIN, avail - _BOTTOM_MIN))
         center = max(1, min(center, avail - 1))
-        self.query_one("#mid").styles.height = center
+        mid = self.query_one("#mid")
+        mid.styles.height = center
         self.query_one("#bottom").styles.height = avail - center
+        pad = max(0, round((self.size.width - _PAD_START) * _PAD_RATE))
+        mid.styles.padding = (0, pad, 0, pad)

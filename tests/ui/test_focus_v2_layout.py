@@ -31,12 +31,13 @@ async def test_layout_geometry(w, h):
             return scr.query_one(sel).region
 
         card, flow, router = reg("#card"), reg("#flow"), reg("#router")
-        # Endpoints pinned at the art width (20); flow fills the middle; the row
-        # tiles edge-to-edge with no overlap and no gap.
+        # Endpoints pinned at the art width (20); flow fills the middle. On wide
+        # terminals the mid row gets symmetric side padding (none at 80 cols).
+        pad = max(0, round((w - 80) * 0.4))
         assert card.width == 20 and router.width == 20
-        assert card.x == 0 and card.right == flow.x
-        assert flow.right == router.x and router.right == w
-        assert flow.width == w - 40
+        assert card.x == pad and card.right == flow.x
+        assert flow.right == router.x and router.right == w - pad
+        assert flow.width == w - 2 * pad - 40
 
         log, clients = reg("#log"), reg("#clients")
         # Clients is a fixed exact-fit column; log takes the rest; no overlap.
