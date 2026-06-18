@@ -428,12 +428,13 @@ def fakeauth_markup(campaign, now: float) -> str:
     return f"Fake-Auth: {fakeauth_value_markup(campaign, now)}"
 
 
-def wep_status_line(ap, iface, campaign, now: float) -> str:
-    """The WEP status strip (v2): live fake-auth status (only while a campaign
-    runs — some routers guard against fake-auth, so its state is vital) plus the
-    always-on usable-IV count (red at 0, cyan once IVs are flowing). 'Usable' is
-    the crack-sample count — what the crack threshold (CRACK_READY_THRESHOLD) is
-    measured against, so it directly answers 'how close to cracking?'."""
+def wep_status_lines(ap, iface, campaign, now: float) -> list[str]:
+    """The WEP status footer (v2), as separate lines so neither scrunches on a
+    narrow terminal: live fake-auth status (only while a campaign runs — some
+    routers guard against fake-auth, so its state is vital) on its own line, then
+    the always-on usable-IV count (red at 0, cyan once IVs are flowing). 'Usable'
+    is the crack-sample count — what the crack threshold (CRACK_READY_THRESHOLD)
+    is measured against, so it directly answers 'how close to cracking?'."""
     samples = iface.wep_store.crack_sample_count(ap.bssid) if iface else 0
     n = f"[cyan]{samples:,}[/cyan]" if samples else "[red]0[/red]"
     # /10k tags the crack threshold (distinct from the gross "wep iv" rate above)
@@ -441,12 +442,12 @@ def wep_status_line(ap, iface, campaign, now: float) -> str:
     # it and just show the climbing count.
     ivs = (n if samples >= CRACK_READY_THRESHOLD
            else f"{n}[dim]/{CRACK_READY_THRESHOLD // 1000}k[/dim]")
-    parts = []
+    lines = []
     if campaign is not None:
-        parts.append(
+        lines.append(
             f"[dim]Fake-Auth:[/dim] {fakeauth_value_markup(campaign, now, compact=True)}")
-    parts.append(f"[dim]Usable IVs:[/dim] {ivs}")
-    return " · ".join(parts)
+    lines.append(f"[dim]Usable IVs:[/dim] {ivs}")
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -701,6 +702,11 @@ def card_identity(iface) -> tuple[str, str | None]:
     label = (getattr(driver, "chipset", None)
              or getattr(iface, "description", None)
              or getattr(iface, "name", None) or "card")
+    # DeviceID descriptions are "chipset / marketing name" (e.g. "Mediatek
+    # MT7921AU / ALFA AWUS036AXML"). The endpoint wants just the chipset — and
+    # the full string overflows the 20-col card column, truncating to a dangling
+    # "/". Keep the part before the slash.
+    label = str(label).split("/")[0].strip() or "card"
     mac = getattr(driver, "card_mac", None) or getattr(driver, "mac", None)
     if isinstance(mac, (bytes, bytearray)) and len(mac) == 6:
         mac = ":".join(f"{b:02x}" for b in mac)

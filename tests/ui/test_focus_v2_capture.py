@@ -189,9 +189,11 @@ async def test_v2_wep_initial_load_surfaces_history_and_listening():
         assert "WEP key recovered" in str(focus.query_one("#status", Static).render())
         flow = focus.query_one("#flow", FlowChannel)
         assert "wep_iv" in {r.key for r in flow._rows}
-        # The WEP status line is painted as a flow-channel footer (always-on
-        # usable-IV count, idle → no fake-auth half) — NOT a separate band, so it
-        # steals no row: the mid band still abuts the bottom band directly.
+        # The WEP status is painted as flow-channel footer lines (always-on
+        # usable-IV count, idle → just that one line, no fake-auth) — NOT a
+        # separate band, so it steals no row: the mid band still abuts the bottom
+        # band directly.
         assert flow._footer is not None
-        assert "Usable IVs" in flow._footer.plain and "/10k" in flow._footer.plain
+        footer_text = " ".join(t.plain for t in flow._footer)
+        assert "Usable IVs" in footer_text and "/10k" in footer_text
         assert focus.query_one("#mid").region.bottom == focus.query_one("#bottom").region.y

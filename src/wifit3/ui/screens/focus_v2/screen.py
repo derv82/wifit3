@@ -415,8 +415,9 @@ class FocusViewV2(Screen):
         if ap is None or not fm.is_wep(ap):
             return
         iface = getattr(self.app, "active_interface", None)
-        self.query_one("#flow", FlowChannel).set_footer(Text.from_markup(
-            fm.wep_status_line(ap, iface, self._wep_campaign, time.time()), emoji=False))
+        lines = [Text.from_markup(m, emoji=False)
+                 for m in fm.wep_status_lines(ap, iface, self._wep_campaign, time.time())]
+        self.query_one("#flow", FlowChannel).set_footer(lines)
 
     # ----- event log (capture pipeline, duplicated from v1) ------------------
 

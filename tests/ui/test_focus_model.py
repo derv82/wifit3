@@ -76,29 +76,32 @@ def _iface_with_usable(n):
         wep_store=types.SimpleNamespace(crack_sample_count=lambda bssid: n))
 
 
-def test_wep_status_line_idle_shows_only_usable_ivs():
-    """No campaign → no fake-auth half; usable IVs always present, red at 0."""
+def test_wep_status_lines_idle_is_one_line_usable_only():
+    """No campaign → a single usable-IVs line (red at 0), no fake-auth line."""
     ap = types.SimpleNamespace(bssid="aa:bb:cc:dd:ee:ff")
-    line = fm.wep_status_line(ap, _iface_with_usable(0), None, 0)
-    assert "Usable IVs:" in line and "[red]0[/red]" in line
-    assert "Fake-Auth" not in line
+    lines = fm.wep_status_lines(ap, _iface_with_usable(0), None, 0)
+    assert len(lines) == 1
+    assert "Usable IVs:" in lines[0] and "[red]0[/red]" in lines[0]
 
 
-def test_wep_status_line_with_campaign_shows_fakeauth_and_cyan_ivs():
+def test_wep_status_lines_campaign_splits_fakeauth_and_ivs():
+    """A running campaign → two separate lines (fake-auth, then usable IVs) so
+    neither scrunches on a narrow terminal."""
     ap = types.SimpleNamespace(bssid="aa:bb:cc:dd:ee:ff")
     camp = types.SimpleNamespace(fake_auth=types.SimpleNamespace(
         state="associated", next_reauth_at=0, fail_reason=None))
-    line = fm.wep_status_line(ap, _iface_with_usable(1234), camp, 0)
-    assert "Fake-Auth:" in line and "Associated" in line
-    assert "[cyan]1,234[/cyan]" in line
+    lines = fm.wep_status_lines(ap, _iface_with_usable(1234), camp, 0)
+    assert len(lines) == 2
+    assert "Fake-Auth:" in lines[0] and "Associated" in lines[0]
+    assert "[cyan]1,234[/cyan]" in lines[1] and "Usable IVs:" in lines[1]
 
 
-def test_wep_status_line_drops_threshold_once_crossed():
+def test_wep_status_lines_drops_threshold_once_crossed():
     """/10k tags the goal while below it; once crossed the denominator is
     meaningless, so it's dropped and only the climbing count shows."""
     ap = types.SimpleNamespace(bssid="aa:bb:cc:dd:ee:ff")
-    assert "/10k" in fm.wep_status_line(ap, _iface_with_usable(9999), None, 0)
-    crossed = fm.wep_status_line(ap, _iface_with_usable(13982), None, 0)
+    assert "/10k" in fm.wep_status_lines(ap, _iface_with_usable(9999), None, 0)[-1]
+    crossed = fm.wep_status_lines(ap, _iface_with_usable(13982), None, 0)[-1]
     assert "/10k" not in crossed and "13,982" in crossed
 
 

@@ -44,9 +44,9 @@ class FlowChannel(Static):
         self._iface = None
         self._bssid = None
         self._prev = None
-        # Optional centered footer line painted in the channel's own vertical
+        # Optional centered footer lines painted in the channel's own vertical
         # slack below the sparklines (the WEP fake-auth + usable-IV status), so
-        # it costs no row from the LOG/CLIENTS bands. None -> no footer.
+        # they cost no row from the LOG/CLIENTS bands. None/[] -> no footer.
         self._footer = None
 
     def on_mount(self) -> None:
@@ -72,10 +72,10 @@ class FlowChannel(Static):
         self._footer = None              # cleared per target; the screen re-sets it for WEP
         self._repaint()
 
-    def set_footer(self, footer) -> None:
-        """Set (or clear, with None) the centered footer line below the
-        sparklines. ``footer`` is a rich Text the caller has already rendered."""
-        self._footer = footer
+    def set_footer(self, lines) -> None:
+        """Set (or clear, with None/[]) the centered footer lines below the
+        sparklines. ``lines`` is a list of rich Texts the caller has rendered."""
+        self._footer = lines or None
         self._repaint()
 
     # ---- sampling -----------------------------------------------------------
@@ -139,13 +139,15 @@ class FlowChannel(Static):
             else:
                 cells = "".join(_BLOCKS[max(1, self._col(v, peak, 8))] for v in window)
                 lines.append(self._row(r.label, r.color, cells, num, bw))
-        # A WEP status footer sits a blank line below the sparklines, centered in
-        # the channel width — it lives in the block's own vertical slack so it
-        # costs no row from the LOG/CLIENTS bands below.
+        # WEP status footer lines sit a blank line below the sparklines, each
+        # centered in the channel width — they live in the block's own vertical
+        # slack so they cost no row from the LOG/CLIENTS bands below.
         if self._footer is not None:
             w = self.content_size.width or 50
-            lead = max(0, (w - self._footer.cell_len) // 2)
-            lines += [Text(""), Text(" " * lead) + self._footer]
+            lines.append(Text(""))
+            for fl in self._footer:
+                lead = max(0, (w - fl.cell_len) // 2)
+                lines.append(Text(" " * lead) + fl)
         # Vertically centre the block so it lines up with the vertically-centred
         # card/router columns as the band grows.
         h = self.content_size.height or len(lines)
