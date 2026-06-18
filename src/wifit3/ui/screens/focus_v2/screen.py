@@ -32,6 +32,7 @@ import asyncio
 import logging
 import time
 from collections import deque
+from datetime import datetime
 from typing import Optional, Set
 
 from rich.markup import escape
@@ -58,6 +59,7 @@ from ...capture_events import (
     DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind,
 )
 from ...capture_log import eapol_message_markup, short_sta
+from ...encryption_format import wep_key_ascii
 from .card_endpoint import CardEndpoint
 from .clients_list import ClientsList
 from .flow_channel import FlowChannel
@@ -86,6 +88,14 @@ _ATTACK_BUTTONS = [
     ("btn-gen-ivs", "Replay"), ("btn-chop", "Chop"), ("btn-pmkid", "PMKID"),
     ("btn-wps-pin", "WPS PIN"), ("btn-wpa3-down", "WPA ↓"),
 ]
+
+
+def _wep_key_chip(key_hex) -> str:
+    """Black-bold-on-cyan WEP key chip wrapping the shared `<hex> = "ascii"`
+    display form (bare hex for non-printable / binary keys)."""
+    if not key_hex:
+        return "[dim]?[/dim]"
+    return f"[black bold on cyan] {wep_key_ascii(key_hex)} [/black bold on cyan]"
 
 
 class FocusViewV2(Screen):
@@ -290,6 +300,59 @@ class FocusViewV2(Screen):
         if ap.pmf_required:
             self._log("[bold yellow]PMF Required:[/] "
                       "AP requires [bold]Protected Management Frames[/]")
+            self._log(treelog.leaf("[italic]Deauth[/] attacks have been disabled"))
+
+        # Surface saved captures/ artifacts (incl. the recovered WEP key chip) so
+        # the user sees what's already on disk, then announce passive capture.
+        self._log_persisted_history(ap)
+        enc = (ap.encryption or "").upper()
+        if enc == "WEP":
+            self._log("[green]●[/green] Listening for [bold]WEP IVs[/bold]…")
+        elif enc not in ("OPEN", "", "WPA3 "):
+            self._log("[green]●[/green] Listening for [bold]handshake[/bold] + PMKID…")
+
+    def _log_persisted_history(self, ap) -> None:
+        """On target acquisition, surface saved captures/ artifacts for this AP
+        (the same data that lights the Scanner badges) — newest of each kind plus
+        a single '(+N older)' leaf, so an AP with 20 PMKIDs lists one row."""
+        if not ap.persisted:
+            return
+        newest_first = sorted(ap.persisted, key=lambda c: c.timestamp, reverse=True)
+        by_kind: dict[str, list] = {}
+        for cap in newest_first:
+            by_kind.setdefault(cap.kind, []).append(cap)
+
+        nouns = {"HS": "handshake", "PMKID": "PMKID", "WEP": "WEP key", "WPS": "WPS PSK"}
+        parts = [
+            f"[bold]{len(by_kind[k])}[/bold] {nouns[k]}{'s' if len(by_kind[k]) != 1 else ''}"
+            for k in ("HS", "PMKID", "WEP", "WPS") if k in by_kind
+        ]
+        self._log(f"[bold]Existing captures[/bold] in [cyan]captures/[/cyan] — "
+                  f"{', '.join(parts)}:")
+
+        shown = sorted((caps[0] for caps in by_kind.values()),
+                       key=lambda c: c.timestamp, reverse=True)
+        older = len(ap.persisted) - len(shown)
+        for i, cap in enumerate(shown):
+            is_last = i == len(shown) - 1 and older == 0
+            line = treelog.leaf if is_last else treelog.branch
+            dt = datetime.fromtimestamp(cap.timestamp)
+            ts = f"[dim]{dt:%Y-%m-%d %H:%M}[/dim]"
+            if cap.kind == "WEP":
+                self._log(line(f"[bold cyan]{'WEP Key:':<9}[/bold cyan] "
+                               f"{_wep_key_chip(cap.value)}  {ts}"))
+            elif cap.kind == "WPS":
+                self._log(line(f"[bold cyan]{'WPS PSK:':<9}[/bold cyan] "
+                               f"[black bold on cyan] {escape(cap.value or '?')} "
+                               f"[/black bold on cyan]  {ts}"))
+            else:
+                label = "Handshake" if cap.kind == "HS" else "PMKID"
+                self._log(line(
+                    f"[bold cyan]{label:<9}[/bold cyan] "
+                    f"[white]{dt:%Y-%m-%d}[/white] [dim]{dt:%H:%M}[/dim]"))
+        if older:
+            self._log(treelog.leaf(
+                f"[dim](+{older} older capture{'s' if older != 1 else ''})[/dim]"))
 
     # ----- per-tick paint ----------------------------------------------------
 

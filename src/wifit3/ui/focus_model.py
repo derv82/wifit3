@@ -562,22 +562,17 @@ def card_dynamic(campaigns: Campaigns) -> str:
 def derive_headline(ap, iface, campaigns: Campaigns) -> list[str]:
     """The CAMPAIGN HEADLINE — up to 3 markup lines naming the dominant current
     activity (the focal point of the v2 view). Priority, highest first:
-    recovered creds → active crack/replay → running campaign → captured
-    handshake/PMKID → partial capture → passive listening. Line 2/3 carry the
-    salient detail for the headline state."""
+    active attack → recovered creds → running campaign → captured handshake/PMKID
+    → partial capture → passive listening. An ACTIVE attack outranks a past win
+    so re-running it on an already-cracked AP (re-test, or after a password
+    change) shows live progress instead of a frozen 'recovered' banner. Line 2/3
+    carry the salient detail for the headline state."""
     enc = (ap.encryption or "").upper()
     wep = enc == "WEP"
 
-    # 1. Recovered credentials (terminal win) — WEP key / WPS PIN.
-    if ap.wep_key is not None or any(p.kind == "WEP" for p in ap.persisted):
-        return ["[black bold on green] ✓ WEP key recovered [/black bold on green]",
-                "[dim]see the event log for the key[/dim]"]
-    wps = campaigns.wps
-    if wps is not None and wps.state.found_pin:
-        return ["[black bold on green] ✓ WPS PIN cracked [/black bold on green]",
-                f"[dim]PIN {escape(wps.state.found_pin)}[/dim]"]
-
-    # 2. WEP active attack — cracking / replaying / chopping.
+    # 1. WEP active attack — cracking / replaying / chopping. Outranks the
+    # recovered-key banner below (a running campaign is the dominant activity even
+    # when a key was found on a previous run).
     camp = campaigns.wep
     if camp is not None:
         n_ivs = ap.wep.unique_ivs if ap.wep else 0
@@ -591,6 +586,15 @@ def derive_headline(ap, iface, campaigns: Campaigns) -> list[str]:
         return ["[bold green]● Replaying ARP[/bold green] [dim]for IVs[/dim]",
                 f"[dim]{n_ivs:,} IVs · cracks at "
                 f"{CRACK_READY_THRESHOLD // 1000}k usable[/dim]"]
+
+    # 2. Recovered credentials (terminal win), only when idle — WEP key / WPS PIN.
+    if ap.wep_key is not None or any(p.kind == "WEP" for p in ap.persisted):
+        return ["[black bold on green] ✓ WEP key recovered [/black bold on green]",
+                "[dim]see the event log for the key[/dim]"]
+    wps = campaigns.wps
+    if wps is not None and wps.state.found_pin:
+        return ["[black bold on green] ✓ WPS PIN cracked [/black bold on green]",
+                f"[dim]PIN {escape(wps.state.found_pin)}[/dim]"]
 
     # 3. Running long-running campaign — WPS PIN / WPA downgrade.
     if wps is not None:

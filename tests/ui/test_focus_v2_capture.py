@@ -8,6 +8,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, RichLog, Static
 
+from wifit3.engine.models import PersistedCapture
 from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.ui.screens.focus_v2.clients_list import ClientsList
 from wifit3.ui.screens.focus_v2.flow_channel import FlowChannel
@@ -161,3 +162,29 @@ async def test_v2_button_wiring():
         assert clients.client_mac(btn_id) == client
         await focus._run_deauth_selected(client)
         assert deauthed and all(c == (bssid, client, 1) for c in deauthed), deauthed
+
+
+@pytest.mark.asyncio
+async def test_v2_wep_initial_load_surfaces_history_and_listening():
+    """An already-cracked WEP target: the event log shows the saved key chip + a
+    'Listening for WEP IVs' line on load (mirrors v1's _log_persisted_history),
+    and the headline reads the recovered banner while idle."""
+    bssid = "aa:bb:cc:dd:ee:06"
+    iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    iface._on_frame_parsed(_beacon(bssid, "dd-wrt", 6))
+    ap = iface.access_points[bssid]
+    ap.encryption = "WEP"
+    ap.persisted = [PersistedCapture(
+        kind="WEP", value="6162636465", timestamp=1748487420, path="dd-wrt_wep.txt")]
+
+    app = _Host(iface, ap)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        focus = app.screen
+        text = _log_text(focus.query_one("#log", LogBand))
+        assert "Existing captures" in text, text
+        assert "WEP Key:" in text and "abcde" in text, text          # the saved key chip
+        assert "Listening for WEP IVs" in text, text
+        # Idle → recovered banner; the wep iv flow row is present.
+        assert "WEP key recovered" in str(focus.query_one("#status", Static).render())
+        assert "wep_iv" in {r.key for r in focus.query_one("#flow", FlowChannel)._rows}
