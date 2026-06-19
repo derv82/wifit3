@@ -280,7 +280,7 @@ async def test_v2_wep_initial_load_surfaces_history_and_listening():
         focus = app.screen
         text = _log_text(focus.query_one("#log", LogBand))
         assert "Existing captures" in text, text
-        assert "WEP Key:" in text and "abcde" in text, text          # the saved key chip
+        assert "WEP Key" in text and "abcde" in text, text          # the saved key chip
         assert "Listening for WEP IVs" in text, text
         # Idle → recovered banner; the wep iv flow row is present.
         assert "WEP key recovered" in str(focus.query_one("#status", Static).render())

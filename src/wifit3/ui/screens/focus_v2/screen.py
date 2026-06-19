@@ -285,10 +285,14 @@ class FocusViewV2(Screen):
         enc = fm.encryption_chip(ap)
         if ap.ssid:
             chip = f"[black bold on cyan] {escape(ap.ssid)} [/black bold on cyan]"
-            self._log(f"[bold]Target acquired:[/bold] {chip}  {enc}")
+            self._log(f"[bold]Target acquired:[/bold] {chip}")
         else:
             self._log("[bold]Target acquired:[/bold] "
-                      f"[dim italic]cloaked network — hidden SSID[/dim italic]  {enc}")
+                      "[dim italic]cloaked network — hidden SSID[/dim italic]")
+        # Encryption + BSSID hang off the headline as branches so the (often long)
+        # encryption family never truncates the 'Target acquired' line on a narrow
+        # terminal; the detailed cipher also lives in the under-sparkline footer.
+        self._log(treelog.branch(f"[dim]Encryption:[/dim] {enc}"))
         self._log(treelog.branch(f"[dim]BSSID:[/dim] [white]{ap.bssid}[/white]"))
         if iface:
             try:
@@ -314,52 +318,51 @@ class FocusViewV2(Screen):
         self._log_persisted_history(ap)
         enc = (ap.encryption or "").upper()
         if enc == "WEP":
-            self._log("[green]●[/green] Listening for [bold]WEP IVs[/bold]…")
+            self._log("[green]●[/green] [bold]Passively Listening for WEP IVs[/bold]")
         elif enc not in ("OPEN", "", "WPA3 "):
-            self._log("[green]●[/green] Listening for [bold]handshake[/bold] + PMKID…")
+            # The two leaves sit flush at column 0 to line up with the ● above
+            # (treelog's branch/leaf are indented one space — deliberately not
+            # used here). 'Crackable' because the capture pipeline already filters
+            # uncrackable (SAE-only) handshakes/PMKIDs out.
+            self._log("[green]●[/green] [bold]Passively Listening for[/bold]")
+            self._log("[dim]├─►[/dim] Crackable 4-Way Handshakes")
+            self._log("[dim]└─►[/dim] Crackable PMKIDs")
 
     def _log_persisted_history(self, ap) -> None:
         """On target acquisition, surface saved captures/ artifacts for this AP
-        (the same data that lights the Scanner badges) — newest of each kind plus
-        a single '(+N older)' leaf, so an AP with 20 PMKIDs lists one row."""
+        (the same data that lights the Scanner badges). One row per kind — the
+        newest capture of that kind — with the per-kind count baked in as a dim
+        ``(N)``, so an AP with 20 PMKIDs lists a single row. The old inline
+        '— N handshakes, M PMKIDs' summary + '(+N older)' leaf are gone (the (N)
+        and the date carry that information more tersely)."""
         if not ap.persisted:
             return
-        newest_first = sorted(ap.persisted, key=lambda c: c.timestamp, reverse=True)
         by_kind: dict[str, list] = {}
-        for cap in newest_first:
+        for cap in sorted(ap.persisted, key=lambda c: c.timestamp, reverse=True):
             by_kind.setdefault(cap.kind, []).append(cap)
 
-        nouns = {"HS": "handshake", "PMKID": "PMKID", "WEP": "WEP key", "WPS": "WPS PSK"}
-        parts = [
-            f"[bold]{len(by_kind[k])}[/bold] {nouns[k]}{'s' if len(by_kind[k]) != 1 else ''}"
-            for k in ("HS", "PMKID", "WEP", "WPS") if k in by_kind
-        ]
-        self._log(f"[bold]Existing captures[/bold] in [cyan]captures/[/cyan] — "
-                  f"{', '.join(parts)}:")
+        nouns = {"HS": "Handshake", "PMKID": "PMKID", "WEP": "WEP Key", "WPS": "WPS PSK"}
+        self._log("[bold]Existing captures[/bold] in [cyan]captures/[/cyan]:")
 
-        shown = sorted((caps[0] for caps in by_kind.values()),
-                       key=lambda c: c.timestamp, reverse=True)
-        older = len(ap.persisted) - len(shown)
-        for i, cap in enumerate(shown):
-            is_last = i == len(shown) - 1 and older == 0
-            line = treelog.leaf if is_last else treelog.branch
+        # Newest of each kind, newest kind first; (count) rides each row. The
+        # label column is padded to a common width so the dates line up.
+        rows = sorted(((k, caps[0], len(caps)) for k, caps in by_kind.items()),
+                      key=lambda r: r[1].timestamp, reverse=True)
+        label_w = max(len(f"{nouns[k]} ({n})") for k, _cap, n in rows)
+        for i, (kind, cap, n) in enumerate(rows):
+            line = treelog.leaf if i == len(rows) - 1 else treelog.branch
+            pad = " " * (label_w - len(f"{nouns[kind]} ({n})"))
+            label = f"[bold cyan]{nouns[kind]}[/bold cyan] [dim]({n})[/dim]{pad}"
             dt = datetime.fromtimestamp(cap.timestamp)
-            ts = f"[dim]{dt:%Y-%m-%d %H:%M}[/dim]"
-            if cap.kind == "WEP":
-                self._log(line(f"[bold cyan]{'WEP Key:':<9}[/bold cyan] "
-                               f"{_wep_key_chip(cap.value)}  {ts}"))
-            elif cap.kind == "WPS":
-                self._log(line(f"[bold cyan]{'WPS PSK:':<9}[/bold cyan] "
-                               f"[black bold on cyan] {escape(cap.value or '?')} "
-                               f"[/black bold on cyan]  {ts}"))
+            if kind == "WEP":
+                self._log(line(f"{label}  {_wep_key_chip(cap.value)} "
+                               f"[dim]{dt:%Y-%m-%d %H:%M}[/dim]"))
+            elif kind == "WPS":
+                self._log(line(f"{label}  [black bold on cyan] {escape(cap.value or '?')} "
+                               f"[/black bold on cyan] [dim]{dt:%Y-%m-%d %H:%M}[/dim]"))
             else:
-                label = "Handshake" if cap.kind == "HS" else "PMKID"
-                self._log(line(
-                    f"[bold cyan]{label:<9}[/bold cyan] "
-                    f"[white]{dt:%Y-%m-%d}[/white] [dim]{dt:%H:%M}[/dim]"))
-        if older:
-            self._log(treelog.leaf(
-                f"[dim](+{older} older capture{'s' if older != 1 else ''})[/dim]"))
+                self._log(line(f"{label}  [white]{dt:%Y-%m-%d}[/white] "
+                               f"[dim]{dt:%H:%M}[/dim]"))
 
     # ----- per-tick paint ----------------------------------------------------
 
@@ -508,10 +511,7 @@ class FocusViewV2(Screen):
             self._log("[red]✗ No target / interface — aborting Broadcast.[/red]")
             return
         BROADCAST = "ff:ff:ff:ff:ff:ff"
-        self._log(
-            f"[bold]Broadcast de-auth[/bold] on "
-            f"[bold]{escape(ap.ssid or '<hidden>')}[/bold] · CH {ap.channel}"
-        )
+        self._log("[bold]Broadcast de-auth — all clients[/bold]")
         try:
             await iface.deauth(ap.bssid, BROADCAST)
         except Exception as exc:
@@ -529,10 +529,10 @@ class FocusViewV2(Screen):
         if not ap or not iface:
             self._log("[red]✗ No target / interface — aborting Deauth.[/red]")
             return
-        self._log(
-            f"[bold]De-authenticating[/bold] [bold]{escape(mac)}[/bold] "
-            f"on [bold]{escape(ap.ssid or '<hidden>')}[/bold] · CH {ap.channel}"
-        )
+        # ESSID + channel are dropped: the user picked this target (its name +
+        # channel sit under the router art); the one thing they DON'T know is
+        # which client this MAC is, so that's all the line carries.
+        self._log(f"[bold]De-authenticating Client {escape(mac)}[/bold]")
         try:
             for _ in range(self._DEAUTH_SEL_ROUNDS):
                 await iface.deauth(ap.bssid, mac, burst_count=1)
