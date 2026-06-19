@@ -25,6 +25,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [MT7610U](#mt7610u) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [MT7921AU](#mt7921au) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | A |
 | [RTL8822BU](#rtl8822bu) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | C |
 | [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | B |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | D |
@@ -168,6 +169,21 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 | Stress | ✅ | 2026-06-16 | 30-min 22-ch dual-band soak, flat. |
 
 → [MT76X0U.md](src/wifit3/chips/mt76x0u/MT76X0U.md)
+
+### MT7921AU
+*ALFA AWUS036AXML / Panda PAU0F · 2.4 / 5 GHz*
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| Scan | ✅ | 2026-06-11 | Healthy, 2.4 + 5 GHz. |
+| Deauth | ✅ | 2026-06-12 | Live deauth dropped client. |
+| Handshake | ✅ | 2026-06-12 | Deauth → 4-way (28 EAPOL, M1–M4). |
+| PMKID | ✅ | 2026-06-12 | Passive + active. |
+| WEP | ✅ | 2026-06-12 | ChopChop + ARP replay ~350 IVs/s. |
+| WPS | ✅ | 2026-06-12 | PBC. |
+| Stress | ⬜ | — | 30-min soak not run yet. |
+
+→ [MT7921AU.md](src/wifit3/chips/mt7921au/MT7921AU.md)
 
 ### RT5372
 *Panda PAU05 + PAU06 · 2.4 GHz · 2T2R*

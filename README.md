@@ -42,6 +42,7 @@ subprocesses, no Scapy — so it runs the same on **Linux and Windows**.
 | ALFA AWUS036**ACH** | Realtek RTL8812AU | 2.4 / 5 GHz |
 | ALFA AWUS036**ACM** | MediaTek MT7612U | 2.4 / 5 GHz |
 | ALFA AWUS036**ACHM** | MediaTek MT7610U | 2.4 / 5 GHz |
+| ALFA AWUS036**AXML** / Panda PAU0F | MediaTek MT7921AU | 2.4 / 5 GHz |
 | ALFA AWUS036**H** | Realtek RTL8187L | 2.4 GHz |
 | ALFA AWUS036**NH** | Ralink RT3070 | 2.4 GHz |
 | ALFA AWUS1900 | Realtek RTL8814AU | 2.4 / 5 GHz |
