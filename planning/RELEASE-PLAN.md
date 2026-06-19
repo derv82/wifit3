@@ -26,10 +26,41 @@ opt-in `WIFIT3_RTL8812=mainline` fallback only.
 
 ### PII / git-history scrub ⚠️ DO THIS BEFORE ANYTHING GOES PUBLIC
 
-Home BSSID, WEP-router details, and related IDs are in **git history**, not just the tree —
-hard to undo post-public. (`usb_dumps/`, `data_dumps/` already gitignored.) Decide before going
-public: **lean `git filter-repo`** (surgical, keeps history's decision-signal) over a fresh
-orphan repo; do **not** squash. Going forward, the `no SSIDs/BSSIDs in commits` rule covers it.
+Real-environment identifiers are in the **tree and the git history**. Threat model is
+**location**: one leaked BSSID or unique ESSID pins the maintainer's home, so this has to be
+airtight, not best-effort. (`usb_dumps/`, `data_dumps/` are already gitignored.)
+
+**What counts as PII** — the *literal* values live ONLY in the untracked `.git/pii-denylist.txt`
+the hooks read; never write them into a tracked file (including this one):
+
+- the maintainer's personal name;
+- home / known-network **ESSIDs**, including the fixed beacon-rate **reference APs** — these
+  sit in `VERIFICATION.md`, the per-chip `<CHIP>.md` docs, and the `scripts/` test-harnesses
+  (the inventory grep flags ~a dozen real files, plus binary false-positives to ignore);
+- their **BSSIDs**;
+- **screenshots** (committed ones already obfuscated) and **videos** (the hard case — audit
+  any before they go public).
+
+**Cut-over** (decided — this supersedes the earlier `git filter-repo` lean):
+
+1. **Clean HEAD.** Scrub every PII hit from the working tree (the squash keeps only HEAD's
+   tree, so clean HEAD ⇒ clean public repo). Re-grep until zero matches.
+2. **Preserve history privately.** Create a **private** `wifit3-history` repo and push the
+   full-history `master` there. Verify it landed *before* anything destructive.
+3. **Publish one clean commit.** Orphan-squash the clean tree to a single PII-free commit:
+
+       git checkout --orphan public && git commit -m "wifit3 <version>"
+
+   Then publish it. **Prefer a *fresh* public repo (or delete + recreate the public one) over a
+   force-push:** a force-push leaves the old commits as *unreachable* objects GitHub still
+   serves by SHA and keeps in forks / PR refs / caches — **not** a guaranteed scrub. A brand-new
+   repo from the single commit has no old objects at all; `wifit3-history` keeps the real history.
+
+**Going forward** — local, untracked hooks block re-introduction: `.git/hooks/pre-commit`
+(staged file contents) + `.git/hooks/commit-msg` (commit message) grep against
+`.git/pii-denylist.txt`. All live under `.git/` so they're never committed; the denylist holds
+the literal terms and is local-only (`--no-verify` bypasses in a pinch). This replaces leaning
+on the `no SSIDs/BSSIDs in commits` memory.
 
 ### Licensing — decision: GPLv2
 
