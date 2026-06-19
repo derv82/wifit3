@@ -10,7 +10,7 @@ mainline `torvalds/linux` driver paths and the vendor GitHub repos — and mappe
 substantive contributor to the wifit3 card(s) their work made possible. Tree-wide
 mechanical commits (checkpatch / SPDX / build-warning sweeps) are filtered out so the
 people who actually *built* the drivers stand out. Ordering favors **breadth** (how many of
-our drivers a person underpins) then **depth** (volume of authorship upstream). A `—` means
+our drivers a person underpins) then **depth** (volume of authorship upstream) — though the vendor list opens with our deepest personal thanks (below), metrics aside. A `—` means
 the kernel commits carry no linked GitHub account (common for vendor `@realtek.com` authors
 and pre-GitHub-era contributors).
 
@@ -24,8 +24,11 @@ and pre-GitHub-era contributors).
 The out-of-tree vendor drivers we ported the `*_dkms` variants from — the people who kept
 Realtek USB Wi-Fi working for the Linux community, year after year, outside the kernel tree.
 
+- **Christian "kimo" B.** ([@kimocoder](https://github.com/kimocoder)) — RTL8188EUS.
+  **Our biggest thanks.** Christian took over **wifite2** when its original maintainer
+  stepped away, and has kept it alive and evolving for years since — wifit3 owes its
+  lineage to that work. (He also maintains `aircrack-ng`'s RTL8188EUS driver, ported here.)
 - **Nick Morrow** ([@morrownr](https://github.com/morrownr)) — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU, MT7921AU
-- **Christian "kimo" B.** ([@kimocoder](https://github.com/kimocoder)) — RTL8188EUS
 - **@5kft** ([@5kft](https://github.com/5kft)) — RTL8821AU, RTL8822BU
 - **jose guzman** ([@joseguzman1337](https://github.com/joseguzman1337)) — RTL8814AU
 - **Andras Gemes** ([@gemesa](https://github.com/gemesa)) — RTL8821AU

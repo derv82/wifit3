@@ -52,11 +52,16 @@ card — see the matrix for the full per-attack status.
 ## Thanks
 
 wifit3 only exists because of the people who reverse-engineered and maintained the Linux
-drivers we ported from. A few of the giants whose shoulders we stand on:
+drivers we ported from — and who carried this lineage of tools forward.
+
+**Biggest thanks: Christian "kimo" B. ([@kimocoder](https://github.com/kimocoder))** — who
+took over **wifite2** when its original maintainer stepped away and has kept it alive and
+evolving for years since (and maintains `aircrack-ng`'s RTL8188EUS driver, which we port here).
+
+A few more of the giants whose shoulders we stand on:
 
 - **Nick Morrow** ([@morrownr](https://github.com/morrownr)) — the out-of-tree Realtek USB
   DKMS drivers (RTL8812AU / RTL8814AU / RTL8821AU / RTL8822BU) that keep these cards alive.
-- **Christian "kimo" B.** ([@kimocoder](https://github.com/kimocoder)) — `aircrack-ng`'s RTL8188EUS driver.
 - **Stanislaw Gruszka**, **Ivo van Doorn**, and the **rt2x00** team — the Ralink drivers.
 - **Lorenzo Bianconi** and **Felix Fietkau** — MediaTek `mt76`.
 - **Sujith Manoharan** and the **ath9k** team; **Bitterblue Smith** and the Realtek **rtw88** team.
