@@ -36,6 +36,7 @@ import usb.core
 import usb.util
 
 from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.errors import BringUpError
 
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -213,8 +214,7 @@ class RTL8187Driver:
             return True
 
         except (IOError, usb.core.USBError, NotImplementedError) as e:
-            logger.error("RTL8187 connect failed: %s", e)
-            return False
+            raise BringUpError("bring-up", str(e)) from e
 
     # ---- RX loop ----------------------------------------------------------
     # ---- RX callables for the shared RxReaderThread ---------------------

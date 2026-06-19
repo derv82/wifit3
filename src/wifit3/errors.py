@@ -21,6 +21,22 @@ def _scrub_paths(text: str) -> str:
     return text
 
 
+class BringUpError(Exception):
+    """A recoverable failure while bringing up one card's driver (claim, firmware, init, …).
+
+    Per-card and non-fatal — unlike WifiteFatalError: the card is skipped and the user can pick
+    another or replug. A driver raises this (instead of logging + returning False) so the splash
+    surfaces it in a persistent error label + a toast. ``stage`` names the bring-up phase that
+    failed; ``detail`` is the short underlying reason. The UI prepends the card description, so
+    don't repeat it here. Raise it ``from`` the underlying cause to keep the real error in logs.
+    """
+
+    def __init__(self, stage: str, detail: str = "") -> None:
+        self.stage = stage
+        self.detail = detail
+        super().__init__(f"{stage}: {detail}" if detail else stage)
+
+
 class WifiteFatalError(Exception):
     """An unrecoverable condition the user must fix before wifit3 can run (e.g. no USB backend).
 

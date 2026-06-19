@@ -24,6 +24,7 @@ import usb.core
 import usb.util
 
 from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
@@ -128,11 +129,8 @@ class RT5372Driver:
             progress_cb(0.1, "RT5372: probe + EFUSE + firmware + radio bring-up")
         try:
             await loop.run_in_executor(None, self._bringup)
-        except Exception:  # noqa: BLE001
-            logger.exception("RT5372 bring-up failed")
-            if progress_cb:
-                progress_cb(1.0, "RT5372 bring-up failed")
-            return False
+        except Exception as e:  # noqa: BLE001
+            raise BringUpError("bring-up", str(e)) from e
 
         eps = probe_endpoints(self.transport.dev)
         self._bulk_in_ep = eps.primary_bulk_in

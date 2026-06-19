@@ -24,6 +24,7 @@ import usb.core
 import usb.util
 
 from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
 from wifit3.chips.rtw88_base.registers import (
@@ -136,8 +137,7 @@ class RTL8814AUDriver:
             return await self._bring_up(_progress, warm=warm)
 
         except (IOError, usb.core.USBError, NotImplementedError) as e:
-            logger.error("RTL8814AU connect failed: %s", e)
-            return False
+            raise BringUpError("bring-up", str(e)) from e
 
     async def _bring_up(self, _progress, *, warm: bool) -> bool:
         loop = asyncio.get_event_loop()

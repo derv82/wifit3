@@ -38,6 +38,7 @@ import usb.core
 import usb.util
 
 from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
 from .chan import set_channel_2g_20mhz
@@ -131,9 +132,8 @@ class RTL8188EUSDriver:
 
             logger.info("RTL8188EUS is COLD — running full bring-up")
             return await self._cold_bring_up(_update)
-        except Exception:
-            logger.exception("RTL8188EUS connect failed")
-            return False
+        except Exception as e:
+            raise BringUpError("bring-up", str(e)) from e
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         loop = asyncio.get_running_loop()

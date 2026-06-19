@@ -10,7 +10,7 @@ from textual.containers import Vertical, Center, Horizontal
 from textual import work
 from rich.text import Text
 
-from wifit3.errors import WifiteFatalError
+from wifit3.errors import BringUpError, WifiteFatalError
 from wifit3.ui.ansi_art import make_black_transparent
 from wifit3.setup import ids_from_registry
 from wifit3.setup.linux import current_user, install_rule, remove_rule
@@ -74,6 +74,10 @@ class SplashView(Screen):
             with Center():
                 yield ProgressBar(total=100, show_eta=False, id="init-progress")
             with Center():
+                # Persistent failure line. poll_usb only ever touches #status-label, so an error
+                # parked here survives the next bus scan (the status line gets overwritten ~2x/s).
+                yield Label("", id="error-label")
+            with Center():
                 with Horizontal(id="device-row"):
                     yield ListView(id="device-list")
                     yield Button("START", id="start-btn", variant="success")
@@ -83,6 +87,7 @@ class SplashView(Screen):
 
     async def on_mount(self) -> None:
         self.query_one("#init-progress").display = False
+        self.query_one("#error-label").display = False
         self.query_one("#start-btn", Button).disabled = True   # enabled once a card appears
         uninstall_btn = self.query_one("#uninstall-btn", Button)
         uninstall_btn.disabled = True
@@ -141,6 +146,19 @@ class SplashView(Screen):
         self.query_one("#init-progress", ProgressBar).progress = event.percentage * 100
         self.query_one("#status-label", Label).update(f"[bold {warn}]{event.message}[/bold {warn}]")
 
+    def _show_error(self, message: str) -> None:
+        """Surface a recoverable bring-up failure: a persistent red label (which poll_usb leaves
+        alone, unlike the status line) plus a toast."""
+        label = self.query_one("#error-label", Label)
+        label.update(f"[bold red]⚠ {message}[/bold red]")
+        label.display = True
+        self.notify(message, title="Card bring-up failed", severity="error")
+
+    def _clear_error(self) -> None:
+        label = self.query_one("#error-label", Label)
+        label.update("")
+        label.display = False
+
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         self._selected_name = event.item.name if event.item is not None else None
 
@@ -172,6 +190,7 @@ class SplashView(Screen):
         list_view = self.query_one("#device-list", ListView)
         start_btn = self.query_one("#start-btn", Button)
 
+        self._clear_error()
         self._is_initializing = True
         if self._refresh_timer:
             self._refresh_timer.pause()
@@ -307,9 +326,15 @@ class SplashView(Screen):
 
             else:
                 raise RuntimeError("the card failed to initialize")
+        except BringUpError as e:
+            logger.warning("Bring-up failed for %s: %s", getattr(iface, "description", "?"), e)
+            detail = f": {e.detail}" if e.detail else ""
+            self._show_error(f"{getattr(iface, 'description', 'Card')} — {e.stage} failed{detail}")
+            self.query_one("#init-progress", ProgressBar).display = False
+            release()
         except Exception as e:
             logger.exception("Failed to start %s", getattr(iface, "description", "?"))
-            status.update(f"[bold red]Could not start: {e}[/bold red]")
+            self._show_error(f"Could not start {getattr(iface, 'description', 'card')}: {e}")
             self.query_one("#init-progress", ProgressBar).display = False
             release()
 
@@ -406,6 +431,11 @@ class SplashView(Screen):
         try:
             ok = await iface.connect(
                 progress_cb=lambda p, m: self.post_message(DriverProgress(p, m)))
+        except BringUpError:
+            # A genuine post-open bring-up fault (firmware/init/…) — let perform_start surface it.
+            # (A card that won't even open raises a plain USBError below → the install flow.)
+            progress.display = False
+            raise
         except Exception as e:
             logger.info("connect() failed for %s: %s", iface.description, e)
             progress.display = False
