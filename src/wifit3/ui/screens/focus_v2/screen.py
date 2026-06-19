@@ -59,7 +59,8 @@ from ... import focus_model as fm
 from ...capture_events import (
     DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind,
 )
-from ...capture_log import eapol_message_markup, short_sta
+from ...capture_log import short_sta
+from ...eapol_aggregate import EapolAggregator
 from ...encryption_format import wep_key_ascii
 from .card_endpoint import CardEndpoint
 from .clients_list import ClientsList
@@ -168,6 +169,9 @@ class FocusViewV2(Screen):
         self._beacon_samples: deque = deque()
         # Granular: surfaces every new EAPOL frame, not just completions.
         self._events = CaptureEventDetector(granular_eapol=True)
+        # Defers + aggregates those EAPOL frames into one handshake tree per
+        # client (flush on first crackable pair; partials after 3s of quiet).
+        self._eapol_agg = EapolAggregator(settle_s=3.0)
         self._tick_timer = None
         # Live campaign handles — held so the toggle buttons can Start/Stop and so
         # target/screen transitions tear them down deterministically.
@@ -278,6 +282,7 @@ class FocusViewV2(Screen):
 
         self._beacon_samples.clear()
         self._events.reset()
+        self._eapol_agg.reset()
         self._prev_stats = None        # drop the old target's counters
         self.query_one("#log", LogBand).clear()
 
@@ -416,7 +421,7 @@ class FocusViewV2(Screen):
         # The flow channel self-samples on its own timer (bound in _enter_target).
         iface = getattr(self.app, "active_interface", None)
         self._drive_leds(ap, iface)
-        self._drain_capture_events(ap, iface.forged_macs if iface else set())
+        self._drain_capture_events(ap, iface.forged_macs if iface else set(), time.time())
 
     def _distribute(self) -> None:
         """Fill the mid band to full 2-row sparklines (capped at _CENTER_MAX),
@@ -470,27 +475,31 @@ class FocusViewV2(Screen):
 
     # ----- event log (capture pipeline, duplicated from v1) ------------------
 
-    def _drain_capture_events(self, ap, forged_macs: Set[str]) -> None:
+    def _drain_capture_events(self, ap, forged_macs: Set[str], now: float) -> None:
+        # EAPOL frames + handshake completions go through the aggregator (one tidy
+        # tree per client, deferred); PMKID / decloak stay immediate banners.
         for ev in self._events.poll(ap, forged_macs=forged_macs):
-            self._log_capture_event(ev, ap)
+            if ev.kind == CaptureKind.EAPOL:
+                self._eapol_agg.on_eapol(ev, now)
+            elif ev.kind == CaptureKind.HANDSHAKE:
+                self._emit_lines(self._eapol_agg.on_handshake(ev, now))
+                # Save instantly — never gated on the (deferred) log rendering.
+                result = save_handshake(ap, ev.client_mac)
+                if result is not None:
+                    verb = "saved" if result.was_new else "already saved as"
+                    self._log(f"[dim]({verb} {escape(result.path.name)})[/dim]")
+            else:
+                self._log_capture_event(ev, ap)
+        # Flush any per-client bursts that have gone quiet (partials, no verdict).
+        for lines in self._eapol_agg.tick(now):
+            self._emit_lines(lines)
+
+    def _emit_lines(self, lines) -> None:
+        for ln in lines:
+            self._log(ln)
 
     def _log_capture_event(self, ev: CaptureEvent, ap) -> None:
-        if ev.kind == CaptureKind.EAPOL:
-            # Per-frame trace: one line per M1-M4 as it lands; the solid-highlight
-            # banner is reserved for the completion lines below.
-            self._log(eapol_message_markup(ev))
-        elif ev.kind == CaptureKind.HANDSHAKE:
-            essid = escape(ev.ssid or ev.bssid)
-            self._log(
-                f"[black bold on green] ✓ Valid 4-Way Handshake "
-                f"({ev.pair_label}) [/black bold on green] "
-                f"[bold]{short_sta(ev.client_mac)}[/bold] for [bold]{essid}[/bold]"
-            )
-            result = save_handshake(ap, ev.client_mac)
-            if result is not None:
-                verb = "saved" if result.was_new else "already saved as"
-                self._log(f"[dim]({verb} {escape(result.path.name)})[/dim]")
-        elif ev.kind == CaptureKind.PMKID:
+        if ev.kind == CaptureKind.PMKID:
             self._log(
                 f"[black bold on green] ✓ PMKID captured [/black bold on green] "
                 f"from [bold]{short_sta(ev.client_mac)}[/bold]"

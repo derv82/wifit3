@@ -103,15 +103,19 @@ async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
         focus._tick()
         await pilot.pause()
         text = _log_text(log)
-        assert "M1" in text and "ANonce" in text, text
+        # M1 is buffered (deferred aggregation) so its tree isn't logged yet —
+        # but PMKID is an immediate win banner.
         assert "PMKID captured" in text, text
+        assert "Valid 4-Way Handshake" not in text, text
 
-        # M2 completes a hashcat-valid M1+M2 pair.
+        # M2 completes a hashcat-valid M1+M2 pair → the aggregated tree flushes
+        # immediately (first crackable pair), carrying the buffered M1 detail.
         iface._on_frame_parsed(_eapol(bssid, client, 2, replay, to_ap=True))
         focus._tick()
         await pilot.pause()
         text = _log_text(log)
         assert "Valid 4-Way Handshake" in text, text
+        assert "M1" in text and "ANonce" in text and "M2" in text, text
 
         # Headline flips to a captured state; the client row is synced in.
         assert "Captured" in str(status.render()), str(status.render())
