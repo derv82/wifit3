@@ -296,3 +296,21 @@ When re-porting a card from a different source tree, keep both drivers and A/B t
    new port only once it ties or beats that baseline on hardware.
 
 Supported-hardware status and the pending-hardware queue live in `VERIFICATION.md`.
+
+---
+
+## Housekeeping — every new port
+
+Before a port is "done", two things outside the code need updating:
+
+- **Credits.** Add the upstream driver's substantive contributors to `CREDITS.md`, mapped
+  to the new card. Tally commit authorship of the kernel path
+  (`gh api --paginate "repos/torvalds/linux/commits?path=<driver path>" -q '.[].commit.author.name' | sort | uniq -c | sort -rn`)
+  and/or the vendor repo's contributors API. **Beware kernel file renames** — GitHub's
+  `?path=` filter does not follow them, so scrape the pre-reorg path too (e.g. the old
+  `drivers/net/wireless/rt2x00/…` and `drivers/net/wireless/rtl8187_*.c`) or you'll miss
+  the original authors. Drop tree-wide mechanical committers; keep the real builders.
+- **Licensing.** wifit3 is **GPL-2.0-only** (a derivative work of GPLv2 kernel/vendor
+  drivers — not an optional choice). Any new firmware blob shipped in
+  `chips/<chip>/assets/` is **not** GPL: record its provenance + redistribution terms from
+  the linux-firmware `WHENCE` manifest, and byte-verify the blob against `linux-firmware`.

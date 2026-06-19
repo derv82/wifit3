@@ -49,6 +49,21 @@ subprocesses, no Scapy — so it runs the same on **Linux and Windows**.
 asterisk means *no known issue*, not that every attack has been verified on that
 card — see the matrix for the full per-attack status.
 
+## Thanks
+
+wifit3 only exists because of the people who reverse-engineered and maintained the Linux
+drivers we ported from. A few of the giants whose shoulders we stand on:
+
+- **Nick Morrow** ([@morrownr](https://github.com/morrownr)) — the out-of-tree Realtek USB
+  DKMS drivers (RTL8812AU / RTL8814AU / RTL8821AU / RTL8822BU) that keep these cards alive.
+- **Christian "kimo" B.** ([@kimocoder](https://github.com/kimocoder)) — `aircrack-ng`'s RTL8188EUS driver.
+- **Stanislaw Gruszka**, **Ivo van Doorn**, and the **rt2x00** team — the Ralink drivers.
+- **Lorenzo Bianconi** and **Felix Fietkau** — MediaTek `mt76`.
+- **Sujith Manoharan** and the **ath9k** team; **Bitterblue Smith** and the Realtek **rtw88** team.
+
+The full list — every substantive contributor to the drivers we ported, and the cards they
+enabled — is in **[CREDITS.md](CREDITS.md)**.
+
 ## Philosophy
 
 **Zero dependencies.** Wifit3 implements the whole stack itself — the USB device
