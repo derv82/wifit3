@@ -41,20 +41,30 @@ the hooks read; never write them into a tracked file (including this one):
 - **screenshots** (committed ones already obfuscated) and **videos** (the hard case — audit
   any before they go public).
 
-**Cut-over** (decided — this supersedes the earlier `git filter-repo` lean):
+**Cut-over** (decided — *rewrite* the history in place; keep the full ~1,124-commit graph —
+the history is worth more than a single sterile commit, and one commit reads as suspicious):
 
-1. **Clean HEAD.** Scrub every PII hit from the working tree (the squash keeps only HEAD's
-   tree, so clean HEAD ⇒ clean public repo). Re-grep until zero matches.
-2. **Preserve history privately.** Create a **private** `wifit3-history` repo and push the
-   full-history `master` there. Verify it landed *before* anything destructive.
-3. **Publish one clean commit.** Orphan-squash the clean tree to a single PII-free commit:
-
-       git checkout --orphan public && git commit -m "wifit3 <version>"
-
-   Then publish it. **Prefer a *fresh* public repo (or delete + recreate the public one) over a
-   force-push:** a force-push leaves the old commits as *unreachable* objects GitHub still
-   serves by SHA and keeps in forks / PR refs / caches — **not** a guaranteed scrub. A brand-new
-   repo from the single commit has no old objects at all; `wifit3-history` keeps the real history.
+1. **Rewrite history.** `git filter-repo --replace-text rules.txt --replace-message rules.txt`
+   replaces every PII literal with a placeholder across *all* commits — file contents **and**
+   commit messages. `rules.txt` maps each literal to a fake (BSSIDs → `aa:bb:cc:dd:ee:ff`,
+   ESSIDs → `NETGEAR` / `NETGEAR2G`, the name → `xxxx`) as **word-boundary regex**
+   (`regex:\b…\b==>…`) so short tokens don't maul real words. Generate it from
+   `.git/pii-denylist.txt`; both stay untracked. SHAs change, but the count, dates, messages,
+   and graph are preserved.
+   - **Author fields are already clean** — every commit is `derv82` except **one** authored by
+     `Claude` (the Focus-redesign PR); fold that into `derv82` with a `--mailmap` in the same
+     pass (no-AI-authorship rule).
+2. **Verify.** `git log -p --all | grep -iE <literals>` returns **zero**, *and* the firmware
+   `.bin` blobs are byte-identical to before (check against the FIRMWARE.md hashes). A short
+   ESSID can byte-match a firmware blob and corrupt it on rewrite — confirm none moved, and
+   re-run excluding `*/assets/*` if one did.
+3. **Preserve history privately.** Push the *rewritten* full history to a **private**
+   `wifit3-history` repo; verify it landed.
+4. **Publish.** The merged **PR #1** keeps the *pre-rewrite* PII commits alive in
+   `refs/pull/1/head` — a force-push can't remove it, and once the repo is public that ref is
+   fetchable (and drags its ancestor history along). So **delete and recreate `wifit3`** under
+   the same name (drops all PR refs + the 0 forks), push the rewritten history, then flip to
+   public. A force-push-in-place would leave that PR ref behind.
 
 **Going forward** — local, untracked hooks block re-introduction: `.git/hooks/pre-commit`
 (staged file contents) + `.git/hooks/commit-msg` (commit message) grep against
