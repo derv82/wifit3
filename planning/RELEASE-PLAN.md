@@ -54,6 +54,11 @@ the history is worth more than a single sterile commit, and one commit reads as 
    - **Author fields are already clean** — every commit is `derv82` except **one** authored by
      `Claude` (the Focus-redesign PR); fold that into `derv82` with a `--mailmap` in the same
      pass (no-AI-authorship rule).
+   - **AI co-authorship trailers** are in **279** commit messages (auto-inserted for a stretch
+     before the rule landed). The same `--replace-message` pass drops them
+     (`Co-authored-by:.*(Claude|Anthropic)` → removed) — the no-AI-authorship rule applied
+     retroactively. The local `commit-msg` hook auto-strips them going forward, so this is a
+     one-time backfill.
 2. **Verify.** `git log -p --all | grep -iE <literals>` returns **zero**, *and* the firmware
    `.bin` blobs are byte-identical to before (check against the FIRMWARE.md hashes). A short
    ESSID can byte-match a firmware blob and corrupt it on rewrite — confirm none moved, and
