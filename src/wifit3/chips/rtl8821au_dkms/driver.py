@@ -27,6 +27,7 @@ from typing import Callable, ClassVar, List, Optional
 import usb.core
 
 from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
@@ -111,10 +112,7 @@ class Rtl8821auDkmsDriver:
         fw = _load_firmware()
         ready = await loop.run_in_executor(None, firmware.bring_up, self.transport, fw)
         if not ready:
-            logger.error("RTL8821AU firmware download did not reach FW-ready (WINTINI_RDY)")
-            if progress_cb:
-                progress_cb(1.0, "Firmware NOT ready")
-            return False
+            raise BringUpError("firmware", "MCU never signalled ready (WINTINI_RDY timeout)")
 
         if progress_cb:
             progress_cb(0.6, "Configuring MAC / BB / RF + channel tune + TX power + phydm seed")

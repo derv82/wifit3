@@ -432,9 +432,11 @@ class SplashView(Screen):
             ok = await iface.connect(
                 progress_cb=lambda p, m: self.post_message(DriverProgress(p, m)))
         except BringUpError:
-            # A genuine post-open bring-up fault (firmware/init/…) — let perform_start surface it.
-            # (A card that won't even open raises a plain USBError below → the install flow.)
+            # A genuine post-open bring-up fault (firmware/init/…) — release the partial open,
+            # then let perform_start surface it. (A card that won't even open raises a plain
+            # USBError below → the install flow.)
             progress.display = False
+            await iface.close()
             raise
         except Exception as e:
             logger.info("connect() failed for %s: %s", iface.description, e)

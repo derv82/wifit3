@@ -27,6 +27,7 @@ from typing import Callable, ClassVar, List, Optional
 import usb.core
 
 from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
@@ -123,10 +124,7 @@ class Rtl8814auDkmsDriver:
         fw = _load_firmware()
         ready = await loop.run_in_executor(None, bring_up, self.transport, fw)
         if not ready:
-            logger.error("RTL8814AU firmware download did not reach CPU_DL_READY")
-            if progress_cb:
-                progress_cb(1.0, "Firmware NOT ready")
-            return False
+            raise BringUpError("firmware", "MCU never signalled ready (CPU_DL_READY timeout)")
 
         # Deterministic init chain M2a -> M3b-2 (all pcap-verified). Keep it in sync
         # with scripts/rtl8814au_dkms/verify_pcap.py.

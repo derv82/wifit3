@@ -32,6 +32,7 @@ import usb.core
 import usb.util
 
 from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
 from ..rtl88xxau_base.transport import Rtl88xxauTransport
@@ -117,11 +118,9 @@ class Rtl8812auDkmsDriver:
         self._params = params
         self.mac_address = params.mac_address
         if params.sys_cfg in (0, 0xFFFFFFFF):
-            logger.error("RTL8812AU: implausible REG_SYS_CFG=0x%08x — card wedged or the USB "
-                         "plug fell out; unplug ~5 s, replug, retry.", params.sys_cfg)
-            if progress_cb:
-                progress_cb(1.0, "Card not responding — replug and retry")
-            return False
+            raise BringUpError(
+                "probe", "implausible REG_SYS_CFG=0x%08x — card wedged or the USB plug fell "
+                "out; unplug ~5 s, replug, retry" % params.sys_cfg)
         jp = efuse.build_jaguar_params(params, params.sys_cfg)
         logger.info("RTL8812AU efuse: sys_cfg=0x%08x cut=%d rfe_type=%d crystal_cap=0x%02x "
                     "mac=%s bb_swing 2g=%s", params.sys_cfg, jp.cut_version, params.rfe_type,
@@ -133,10 +132,7 @@ class Rtl8812auDkmsDriver:
         fw = firmware.load_firmware_blob()
         ready = await loop.run_in_executor(None, firmware.bring_up, self.transport, fw)
         if not ready:
-            logger.error("RTL8812AU firmware download did not reach FW-ready")
-            if progress_cb:
-                progress_cb(1.0, "Firmware NOT ready")
-            return False
+            raise BringUpError("firmware", "MCU never signalled ready (FW-ready timeout)")
 
         if progress_cb:
             progress_cb(0.6, "Configuring MAC / BB / RF + channel tune + TX power + phydm seed")

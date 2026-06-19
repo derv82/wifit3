@@ -25,6 +25,7 @@ import usb.core
 import usb.util
 
 from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
@@ -121,52 +122,55 @@ class Rtl8822buDkmsDriver:
 
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._claim)
+        try:
+            await loop.run_in_executor(None, self._claim)
 
-        if progress_cb:
-            progress_cb(0.1, "Cold bring-up: chip-ID / EFUSE / FW / MAC / BB / RF")
-        info, e = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
-        self._chip = (info, e)
-        self._txpwr_pg = txpower.parse_pg(e.log_map)
-        if e.mac_address:                          # program the card's own MAC (TX source/ACK)
-            await loop.run_in_executor(None, mac.set_mac_addr, self.transport, e.mac_address)
-            self.mac_address = e.mac_address
-        logger.info("RTL8822BU cold init done: cut=%d rfe_type=%d crystal_cap=0x%02x",
-                    info.chip_ver, e.rfe_type, e.crystal_cap)
+            if progress_cb:
+                progress_cb(0.1, "Cold bring-up: chip-ID / EFUSE / FW / MAC / BB / RF")
+            info, e = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
+            self._chip = (info, e)
+            self._txpwr_pg = txpower.parse_pg(e.log_map)
+            if e.mac_address:                          # program the card's own MAC (TX source/ACK)
+                await loop.run_in_executor(None, mac.set_mac_addr, self.transport, e.mac_address)
+                self.mac_address = e.mac_address
+            logger.info("RTL8822BU cold init done: cut=%d rfe_type=%d crystal_cap=0x%02x",
+                        info.chip_ver, e.rfe_type, e.crystal_cap)
 
-        if progress_cb:
-            progress_cb(0.8, f"Tuning to channel {_DEFAULT_CHANNEL} @ 20 MHz")
+            if progress_cb:
+                progress_cb(0.8, f"Tuning to channel {_DEFAULT_CHANNEL} @ 20 MHz")
 
-        def _initial_tune(t):
-            chan.set_channel_bw(t, _DEFAULT_CHANNEL, txpwr_pg=self._txpwr_pg)
+            def _initial_tune(t):
+                chan.set_channel_bw(t, _DEFAULT_CHANNEL, txpwr_pg=self._txpwr_pg)
 
-        await loop.run_in_executor(None, _initial_tune, self.transport)
-        self._channel = _DEFAULT_CHANNEL
-        await self._dbg_rx_state(f"post-initial-tune ch{_DEFAULT_CHANNEL}")
+            await loop.run_in_executor(None, _initial_tune, self.transport)
+            self._channel = _DEFAULT_CHANNEL
+            await self._dbg_rx_state(f"post-initial-tune ch{_DEFAULT_CHANNEL}")
 
-        # Start the bulk-IN reader before opening the RX gate (an undrained pipe wedges RX FIFO).
-        self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="8822bu-dkms-rx")
-        self._reader.start()
-        # The faithful airmon monitor RX-enable (gate-verified vs the capture's monitor switch):
-        # MSR no-link, RCR=AAP|APP_PHYSTS|APP_FCS, DRVINFO sniffer-mode, RXFLTMAP0/1/2=0xFFFF.
-        await loop.run_in_executor(None, mac.enable_monitor, self.transport)
-        await loop.run_in_executor(None, self._heal_cold_synth, self.transport)
-        await self._dbg_rx_state(f"post-enable-monitor ch{_DEFAULT_CHANNEL}")
+            # Start the bulk-IN reader before opening the RX gate (an undrained pipe wedges RX FIFO).
+            self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="8822bu-dkms-rx")
+            self._reader.start()
+            # The faithful airmon monitor RX-enable (gate-verified vs the capture's monitor switch):
+            # MSR no-link, RCR=AAP|APP_PHYSTS|APP_FCS, DRVINFO sniffer-mode, RXFLTMAP0/1/2=0xFFFF.
+            await loop.run_in_executor(None, mac.enable_monitor, self.transport)
+            await loop.run_in_executor(None, self._heal_cold_synth, self.transport)
+            await self._dbg_rx_state(f"post-enable-monitor ch{_DEFAULT_CHANNEL}")
 
-        # Seed the DIG state from the chip and start the runtime PHYDM watchdog (~2 s cadence): the
-        # dig_init IGI is only a seed, so without this loop the RX gain never tracks the channel's
-        # false-alarm rate. Reads FA counters, adapts IGI (0xC50/0xE50), resets the counters.
-        def _seed_dig(tr):
-            return dm_watchdog.DigState(
-                cur_ig_value=sipi.get_bb_reg(tr, 0x0C50, 0x7F),
-                cck_new_agc=bool(sipi.get_bb_reg(tr, 0x0A9C, 1 << 17)))
+            # Seed the DIG state from the chip and start the runtime PHYDM watchdog (~2 s cadence): the
+            # dig_init IGI is only a seed, so without this loop the RX gain never tracks the channel's
+            # false-alarm rate. Reads FA counters, adapts IGI (0xC50/0xE50), resets the counters.
+            def _seed_dig(tr):
+                return dm_watchdog.DigState(
+                    cur_ig_value=sipi.get_bb_reg(tr, 0x0C50, 0x7F),
+                    cck_new_agc=bool(sipi.get_bb_reg(tr, 0x0A9C, 1 << 17)))
 
-        self._dig_st = await loop.run_in_executor(None, _seed_dig, self.transport)
-        self._watchdog_task = loop.create_task(self._watchdog_loop())
+            self._dig_st = await loop.run_in_executor(None, _seed_dig, self.transport)
+            self._watchdog_task = loop.create_task(self._watchdog_loop())
 
-        if progress_cb:
-            progress_cb(1.0, f"Tuned to channel {_DEFAULT_CHANNEL} @ 20 MHz (monitor)")
-        return True
+            if progress_cb:
+                progress_cb(1.0, f"Tuned to channel {_DEFAULT_CHANNEL} @ 20 MHz (monitor)")
+            return True
+        except (IOError, usb.core.USBError, NotImplementedError) as e:
+            raise BringUpError("bring-up", str(e)) from e
 
     async def _watchdog_loop(self) -> None:
         """Run `phydm_watchdog` every ~2 s (the vendor cadence) — read the FA counters, adapt the RX
