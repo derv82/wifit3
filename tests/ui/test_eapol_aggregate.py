@@ -36,6 +36,19 @@ def test_complete_handshake_flushes_one_tree():
     assert len(lines) == 4                                      # header + M1 + M2 + verdict
 
 
+def test_save_hint_folds_in_as_the_closing_leaf():
+    agg = EapolAggregator()
+    agg.on_eapol(_eapol(1, pmkid=True), now=0.0)
+    agg.on_eapol(_eapol(2), now=0.1)
+    hint = "[dim]saved: captures/NETGEAR2G_…_handshake.hc22000[/dim]"
+    lines = agg.on_handshake(_hs("M1+M2"), now=0.1, save_hint=hint)
+    # header + M1 + M2 + verdict(branch) + save(leaf) → the verdict is no longer
+    # the terminal node; the save note closes the tree.
+    assert len(lines) == 5
+    assert "saved: captures/" in lines[-1]
+    assert "Valid 4-Way Handshake" in "\n".join(lines)
+
+
 def test_aggregates_repeated_messages_with_count():
     agg = EapolAggregator()
     for i in range(20):

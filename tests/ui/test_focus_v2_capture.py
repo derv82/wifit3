@@ -128,6 +128,24 @@ async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
         assert any(n.endswith("_pmkid.hc22000") for n in saved), saved
 
 
+def test_save_line_elides_bssid_and_timestamp():
+    """The save note keeps the readable head (essid) + tail (kind.ext) and elides
+    the BSSID + epoch middle that bloated the log."""
+    import types
+
+    from wifit3.ui.screens.focus_v2.screen import _save_line
+
+    new = types.SimpleNamespace(was_new=True, path=types.SimpleNamespace(
+        name="NETGEAR2G_aa:bb:cc:dd:ee:01_1781842298_handshake.hc22000"))
+    line = _save_line(new)
+    assert "saved: captures/NETGEAR2G_…_handshake.hc22000" in line
+    assert "aa-bb-cc" not in line and "1781842298" not in line
+
+    old = types.SimpleNamespace(was_new=False, path=types.SimpleNamespace(
+        name="net_aa-bb-cc-dd-ee-ff_123_pmkid.hc22000"))
+    assert "exists: captures/net_…_pmkid.hc22000" in _save_line(old)
+
+
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")  # ui/conftest.py
 async def test_default_focus_screen_is_v2(monkeypatch):

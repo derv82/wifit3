@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections import deque
 from datetime import datetime
@@ -73,10 +74,10 @@ logger = logging.getLogger(__name__)
 _ENDPOINT_W = 20          # the .ans art is exactly 20 cells wide
 _TOPBAR_H = 3
 # Border + title colour for the LOG / CLIENTS panels. The textual-dark $primary
-# was a dim cyan that read as near-invisible; matrix green matches the splash /
-# scanner brand. One knob — flip it (or swap in `grey`/`cyan`) and rerun
-# scripts/ui/preview_focus_chrome.py to compare in a real terminal.
-_BORDER = "#00ff00"
+# read as near-invisible and matrix green was too loud for the calm lower band;
+# ANSI cyan blends with the rest of the UI (buttons, the [cyan] log highlights).
+# One knob — flip it (or rerun scripts/ui/preview_focus_chrome.py to compare).
+_BORDER = "ansi_cyan"
 # Mid band caps once the sparklines hit full 2-row height and the endpoint
 # columns fit; beyond that, extra height flows to the bottom band. The bottom
 # floor keeps >= 3 client rows visible even on short terminals.
@@ -95,6 +96,22 @@ _ATTACK_BUTTONS = [
     ("btn-gen-ivs", "ARP Replay"), ("btn-chop", "ChopChop"), ("btn-pmkid", "PMKID"),
     ("btn-wps-pin", "WPS PIN"), ("btn-wpa3-down", "WPA ↓"),
 ]
+
+
+# A capture filename is `<essid>_<bssid-dashes>_<epoch>_<kind>.<ext>`; this elides
+# the BSSID + timestamp middle, which bloated the save log into ugly left-aligned
+# 60-char lines. Keeps the readable head (essid) + tail (kind.ext).
+_FILENAME_MIDDLE = re.compile(r"_[0-9a-fA-F]{2}(?:-[0-9a-fA-F]{2}){5}_\d+_")
+
+
+def _save_line(result) -> str:
+    """Short, dim 'saved/exists: captures/<essid>_…_<kind>.<ext>' for a save
+    result. ``was_new`` → 'saved', else 'exists' (it was already on disk)."""
+    verb = "saved" if result.was_new else "exists"
+    name = result.path.name
+    m = _FILENAME_MIDDLE.search(name)
+    short = f"{name[:m.start()]}_…_{name[m.end():]}" if m else name
+    return f"[dim]{verb}: captures/{escape(short)}[/dim]"
 
 
 def _wep_key_chip(key_hex) -> str:
@@ -336,15 +353,15 @@ class FocusViewV2(Screen):
         self._log_persisted_history(ap)
         enc = (ap.encryption or "").upper()
         if enc == "WEP":
-            self._log("[green]●[/green] [bold]Passively Listening for WEP IVs[/bold]")
+            self._log(treelog.header(
+                "[italic]Passively Listening[/italic] for [bold]WEP IVs[/bold]"))
         elif enc not in ("OPEN", "", "WPA3 "):
-            # The two leaves sit flush at column 0 to line up with the ● above
-            # (treelog's branch/leaf are indented one space — deliberately not
-            # used here). 'Crackable' because the capture pipeline already filters
-            # uncrackable (SAE-only) handshakes/PMKIDs out.
-            self._log("[green]●[/green] [bold]Passively Listening for[/bold]")
-            self._log("[dim]├─►[/dim] Crackable 4-Way Handshakes")
-            self._log("[dim]└─►[/dim] Crackable PMKIDs")
+            # treelog so the ● and its branches share the one-space indent of the
+            # other trees above. 'Crackable' because the capture pipeline already
+            # filters uncrackable (SAE-only) handshakes/PMKIDs out.
+            self._log(treelog.header("[italic]Passively Listening[/italic] for"))
+            self._log(treelog.branch("Crackable 4-Way [bold]Handshakes[/bold]"))
+            self._log(treelog.leaf("Crackable [bold]PMKIDs[/bold]"))
 
     def _log_persisted_history(self, ap) -> None:
         """On target acquisition, surface saved captures/ artifacts for this AP
@@ -397,8 +414,7 @@ class FocusViewV2(Screen):
         if self._wep_campaign is not None and self._wep_campaign.recovered_key is not None:
             result = save_wep_key(ap, self._wep_campaign.recovered_key)
             if result is not None:
-                verb = "saved" if result.was_new else "already saved as"
-                self._log(f"[dim]({verb} {escape(result.path.name)})[/dim]")
+                self._log(treelog.leaf(_save_line(result)))
             self._stop_generate_ivs()
         if (ap.wps_pbc_active and not self._pbc_busy() and not ap.has_psk
                 and self._wep_campaign is None and self._wpa3_down_attack is None
@@ -482,12 +498,11 @@ class FocusViewV2(Screen):
             if ev.kind == CaptureKind.EAPOL:
                 self._eapol_agg.on_eapol(ev, now)
             elif ev.kind == CaptureKind.HANDSHAKE:
-                self._emit_lines(self._eapol_agg.on_handshake(ev, now))
-                # Save instantly — never gated on the (deferred) log rendering.
+                # Save instantly (never gated on the deferred log), then fold the
+                # short save note into the tree as its closing leaf.
                 result = save_handshake(ap, ev.client_mac)
-                if result is not None:
-                    verb = "saved" if result.was_new else "already saved as"
-                    self._log(f"[dim]({verb} {escape(result.path.name)})[/dim]")
+                hint = _save_line(result) if result is not None else None
+                self._emit_lines(self._eapol_agg.on_handshake(ev, now, save_hint=hint))
             else:
                 self._log_capture_event(ev, ap)
         # Flush any per-client bursts that have gone quiet (partials, no verdict).
@@ -506,8 +521,7 @@ class FocusViewV2(Screen):
             )
             result = save_pmkid(ap, ev.client_mac)
             if result is not None:
-                verb = "saved" if result.was_new else "already saved as"
-                self._log(f"[dim]({verb} {escape(result.path.name)})[/dim]")
+                self._log(treelog.leaf(_save_line(result)))
         elif ev.kind == CaptureKind.DECLOAK:
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
             self._log(
@@ -623,8 +637,7 @@ class FocusViewV2(Screen):
             if result is None:
                 self._log(treelog.leaf("[dim](save failed)[/dim]"))
             else:
-                verb = "saved" if result.was_new else "already saved as"
-                self._log(treelog.leaf(f"[dim]({verb} {escape(result.path.name)})[/dim]"))
+                self._log(treelog.leaf(_save_line(result)))
         else:
             self._log(treelog.branch_fail("[bold red]No PMKID harvested[/bold red] — possible reasons:"))
             self._log(treelog.branch("[dim]AP may not advertise a PMKID KDE[/dim]"))
@@ -774,8 +787,7 @@ class FocusViewV2(Screen):
                 if result is None:
                     self._log(treelog.leaf("[dim](save failed)[/dim]"))
                 else:
-                    verb = "saved" if result.was_new else "already saved as"
-                    self._log(treelog.leaf(f"[dim]({verb} {escape(result.path.name)})[/dim]"))
+                    self._log(treelog.leaf(_save_line(result)))
             except Exception:
                 self._log(treelog.leaf("[dim](save failed)[/dim]"))
         else:
@@ -806,8 +818,7 @@ class FocusViewV2(Screen):
                     if result is None:
                         self._log(treelog.leaf("[dim](save failed)[/dim]"))
                     else:
-                        verb = "saved" if result.was_new else "already saved as"
-                        self._log(treelog.leaf(f"[dim]({verb} {escape(result.path.name)})[/dim]"))
+                        self._log(treelog.leaf(_save_line(result)))
                 except Exception:
                     self._log(treelog.leaf("[dim](save failed)[/dim]"))
             else:

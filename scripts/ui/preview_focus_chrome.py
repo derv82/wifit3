@@ -21,7 +21,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 # (label, colour) — keep the first in sync with screen.py:_BORDER.
-CANDIDATES = [("Matrix green (shipped)", "#00ff00"), ("Cyan", "cyan"), ("Grey", "grey50")]
+CANDIDATES = [("Cyan (shipped)", "cyan"), ("Matrix green", "#00ff00"), ("Grey", "grey50")]
 
 _LOG_LINES = [
     "[dim]19:42:01[/dim]  [bold]Target acquired:[/bold] [black bold on cyan] NETGEAR91 [/]",

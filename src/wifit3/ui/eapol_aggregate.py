@@ -73,8 +73,13 @@ def _msg_label(msg_num: int, count: int) -> str:
     return f"{base} ×{count}" if count > 1 else base
 
 
-def _render_tree(client_mac: str, burst: _Burst, hs_ev, instance: int) -> list[str]:
-    """A burst (+ optional completion event) as treelog markup lines."""
+def _render_tree(client_mac: str, burst: _Burst, hs_ev, instance: int,
+                 save_hint: str | None = None) -> list[str]:
+    """A burst (+ optional completion event + save note) as treelog markup lines.
+
+    ``save_hint`` (the screen's short 'saved: captures/…' string) closes the tree
+    as its terminal leaf, so the save note lives *inside* the handshake tree
+    rather than as a stray left-aligned line below it."""
     header = f"[bold]4-Way Handshake[/bold] [dim]·[/dim] Client: [white]{client_mac}[/white]"
     nums = sorted(burst.msgs, key=lambda m: (m == 0, m))   # M1..M4, unclassified last
     label_w = max((len(_msg_label(m, burst.msgs[m].count)) for m in nums), default=0)
@@ -92,7 +97,11 @@ def _render_tree(client_mac: str, burst: _Burst, hs_ev, instance: int) -> list[s
         if instance > 1:
             verdict += f" [dim](capture ×{instance})[/dim]"
         lines += [treelog.branch(b) for b in bodies]       # every Mx a branch …
-        lines.append(treelog.leaf(verdict))                # … verdict closes it
+        if save_hint:                                      # … verdict branches too,
+            lines.append(treelog.branch(verdict))          #     the save note closes
+            lines.append(treelog.leaf(save_hint))
+        else:
+            lines.append(treelog.leaf(verdict))            # … else verdict closes it
     else:                                                  # partial — no verdict
         for i, body in enumerate(bodies):
             connector = treelog.leaf if i == len(bodies) - 1 else treelog.branch
@@ -132,16 +141,18 @@ class EapolAggregator:
             return
         self._bursts.setdefault(ev.client_mac, _Burst()).add(ev, now)
 
-    def on_handshake(self, ev: CaptureEvent, now: float) -> list[str]:
+    def on_handshake(self, ev: CaptureEvent, now: float,
+                     save_hint: str | None = None) -> list[str]:
         """A crackable pair completed (one HANDSHAKE per instance). First time for
-        a client → flush its buffered tree with the verdict; afterwards → a
-        compact ``×N`` re-announce. Returns the markup lines to log now."""
+        a client → flush its buffered tree with the verdict (and the screen's
+        ``save_hint`` as the closing leaf); afterwards → a compact ``×N``
+        re-announce. Returns the markup lines to log now."""
         n = self._instances.get(ev.client_mac, 0) + 1
         self._instances[ev.client_mac] = n
         if ev.client_mac not in self._captured:
             self._captured.add(ev.client_mac)
             burst = self._bursts.pop(ev.client_mac, _Burst())
-            return _render_tree(ev.client_mac, burst, ev, n)
+            return _render_tree(ev.client_mac, burst, ev, n, save_hint)
         return _render_reannounce(ev.client_mac, ev, n)
 
     def tick(self, now: float) -> list[list[str]]:

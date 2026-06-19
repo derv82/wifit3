@@ -130,15 +130,19 @@ class FlowChannel(Static):
             recent = list(self._hist[r.key])[-6:]
             avg = sum(recent) / (len(recent) * self.SAMPLE_S) if recent else 0
             num = f"{avg:.0f}/s" if r.as_rate else str(sum(recent))
+            # A flat row (no datapoint in the drawn window) is dimmed whole — label,
+            # bars, rate — so quiet rows (inject/deauth/eapol when idle) recede
+            # instead of competing for attention. Keeps the colour, drops the shout.
+            color = r.color if any(window) else f"dim {r.color}"
 
             if two:
                 upper = "".join(_BLOCKS[max(0, self._col(v, peak, 16) - 8)] for v in window)
                 lower = "".join(_BLOCKS[max(1, min(8, self._col(v, peak, 16)))] for v in window)
-                lines.append(self._row("", r.color, upper, "", bw))
-                lines.append(self._row(r.label, r.color, lower, num, bw))
+                lines.append(self._row("", color, upper, "", bw))
+                lines.append(self._row(r.label, color, lower, num, bw))
             else:
                 cells = "".join(_BLOCKS[max(1, self._col(v, peak, 8))] for v in window)
-                lines.append(self._row(r.label, r.color, cells, num, bw))
+                lines.append(self._row(r.label, color, cells, num, bw))
         # WEP status footer lines sit a blank line below the sparklines, each
         # centered in the channel width — they live in the block's own vertical
         # slack so they cost no row from the LOG/CLIENTS bands below.
