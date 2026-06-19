@@ -5,9 +5,9 @@ Wifit3 drives these USB radios directly and (mostly) correctly by imitating Linu
 - Some drivers are a complete byte-perfect port of a known-good driver.
 - Others merely imitate one — the bare-minimum hardware operations for a working radio.
 
-The matrix below captures *how well wifit3 drives each card*. Every blemish is either a
-documented Wifit3 bug or a hardware limitation; the deep per-card detail lives in each
-chip's `<CHIP>.md` (linked under its table).
+The matrix below captures *how well wifit3 drives each card* right now. Every blemish is
+either a documented Wifit3 bug or a hardware limitation; the deep per-card detail and history
+live in each chip's `<CHIP>.md` (linked under its table).
 
 **✅** works · **⚠️** works, with a caveat · **❌** tried, broken · **⬜** not run yet — *not* a failure, just unconfirmed
 
@@ -31,8 +31,7 @@ chip's `<CHIP>.md` (linked under its table).
 
 ## Per-card notes
 
-Scan + Deauth work on every supported card unless a note says otherwise. Cells are kept
-terse — the full evidence and mechanics are in each `<CHIP>.md`.
+Scan + Deauth work on every supported card unless a note says otherwise.
 
 ### AR9271
 *ALFA AWUS036NHA · 2.4 GHz*
@@ -43,7 +42,7 @@ terse — the full evidence and mechanics are in each `<CHIP>.md`.
 | PMKID | ✅ | 2026-05-25 | First-try, cold boot, real APs. |
 | WEP | ✅ | 2026-05-31 | Replay + ChopChop. |
 | WPS | ✅ | 2026-05-31 | PIN + PBC. |
-| Stress | ✅ | 2026-06-05 | 30-min 13-ch soak, no degradation. |
+| Stress | ✅ | 2026-06-05 | 30-min 13-ch soak, flat. |
 
 → [AR9271.md](src/wifit3/chips/ar9271/AR9271.md)
 
@@ -52,101 +51,94 @@ terse — the full evidence and mechanics are in each `<CHIP>.md`.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-06-12 | Healthy, 215–323 frames/s; always cold-inits (radio doesn't survive a handle reopen). |
+| Scan | ✅ | 2026-06-12 | Healthy, 215–323 frames/s. |
 | Handshake | ✅ | 2026-06-12 | Deauth → 4-way (~3/4 M1–M4). |
 | PMKID | ✅ | 2026-06-12 | Passive + active. |
-| WEP | ✅ | 2026-06-12 | FakeAuth + ARP replay (~150–200 IVs/s) + ChopChop. |
+| WEP | ✅ | 2026-06-12 | FakeAuth + ARP replay + ChopChop. |
 | WPS | ✅ | 2026-06-12 | PIN + PBC. |
-| Stress | ✅ | 2026-06-11 | 30-min 13-ch soak, no wedge or degradation. |
+| Stress | ✅ | 2026-06-11 | 30-min 13-ch soak, flat. |
 
 → [RTL8187L.md](src/wifit3/chips/rtl8187/RTL8187L.md)
 
 ### RTL8188EUS
 *TP-Link TL-WN722N v2/v3 · 2.4 GHz*
 
-> **Default = vendor/DKMS port.** RX ties mainline (~6.6 bcn/s); DKMS wins the soak
-> tie-break (holds 1.07 vs mainline's 0.84 degradation). `WIFIT3_RTL8188=mainline` opts back.
+> **Default = vendor/DKMS port** (table below). `WIFIT3_RTL8188=mainline` opts back.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ⚠️ | 2026-06-16 | ~6.6 bcn/s best-AP (both ports) — below the 8/s bar. Ceiling is 1T1R silicon + airtime, not a port bug (severe audit found no divergence). |
-| Handshake | ✅ | 2026-05-19 | Passive 4-way, end-to-end. |
+| Scan | ⚠️ | 2026-06-16 | Strong nearby AP ~6.6 bcn/s. |
+| Handshake | ✅ | 2026-05-19 | Passive 4-way. |
 | PMKID | ✅ | 2026-05-19 | Active harvest — instant. |
-| WEP | ✅ | 2026-06-16 | ChopChop 32/32 first try; ARP replay 200+ IVs/s. |
+| WEP | ✅ | 2026-06-16 | ChopChop 32/32; ARP replay 200+ IVs/s. |
 | WPS | ✅ | 2026-05-31 | PIN + PBC. |
-| Stress | ✅ | 2026-06-16 | 30-min 13-ch soak: no degradation (1.07); mainline degrades (0.84) — why DKMS is default. |
+| Stress | ✅ | 2026-06-16 | 30-min 13-ch soak, flat (mainline degrades). |
 
 → [RTL8188EUS_DKMS.md](src/wifit3/chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md) (default) · [RTL8188EUS.md](src/wifit3/chips/rtl8188eus/RTL8188EUS.md) (mainline)
 
 ### RTL8821AU
 *ALFA AWUS036ACS · 2.4 / 5 GHz*
 
-> **Default = vendor/DKMS port** for `0bda:0811` (hotter 2.4 GHz RX, 5 GHz tied;
-> `WIFIT3_RTL8821=mainline` falls back). Table below is that port.
+> **Default = vendor/DKMS port** (table below). `WIFIT3_RTL8821=mainline` opts back.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-06-05 | 2.4 + 5 GHz; beacon-watch steady ~9/s, no gaps. |
+| Scan | ✅ | 2026-06-05 | 2.4 + 5 GHz, steady ~9 bcn/s. |
 | Handshake | ✅ | 2026-06-05 | Deauth → 4-way. |
 | PMKID | ✅ | 2026-06-05 | Passive + active. |
 | WEP | ✅ | 2026-06-05 | Replay + ChopChop. |
 | WPS | ✅ | 2026-06-05 | PIN + PBC. |
-| Stress | ✅ | 2026-06-05 | 30-min dual-band soak, no degradation. |
+| Stress | ✅ | 2026-06-05 | 30-min dual-band soak, flat. |
 
 → [RTL8821AU.md](src/wifit3/chips/rtl8821au/RTL8821AU.md) (mainline) · [RTL8821AU_DKMS.md](src/wifit3/chips/rtl8821au_dkms/RTL8821AU_DKMS.md) (default)
 
 ### RTL8812AU
 *ALFA AWUS036ACH · 2.4 / 5 GHz*
 
-> **Default = vendor/DKMS port** (table below). Survives dual-band hopping; mainline
-> (`WIFIT3_RTL8812=mainline`) RF-wedges at ~110 s on the same hop → fixed-channel fallback.
+> **Default = vendor/DKMS port** (table below). `WIFIT3_RTL8812=mainline` opts back (fixed-channel only).
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-06-05 | 2.4 + 5 GHz; survives the dual-band hop (incl. DFS). |
-| Deauth | ✅ | 2026-06-05 | 2.4 + 5 GHz; client drop + reconnect caught. |
+| Scan | ✅ | 2026-06-05 | 2.4 + 5 GHz, survives dual-band hop. |
+| Deauth | ✅ | 2026-06-05 | Client drop + reconnect caught. |
 | Handshake | ✅ | 2026-06-05 | M2/M4 (ToDS) — crackable. |
 | PMKID | ✅ | 2026-06-05 | Capture + active extract. |
 | WEP | ✅ | 2026-06-05 | Replay + ChopChop. |
 | WPS | ✅ | 2026-06-05 | PIN + PBC. |
-| Stress | ✅ | 2026-06-05 | 30-min dual-band soak, no degradation. |
+| Stress | ✅ | 2026-06-05 | 30-min dual-band soak, flat. |
 
 → [RTL8812AU_DKMS.md](src/wifit3/chips/rtl8812au_dkms/RTL8812AU_DKMS.md) (default) · [RTL8812AU.md](src/wifit3/chips/rtl8812au/RTL8812AU.md) (mainline)
 
 ### RTL8822BU
 *TP-Link Archer T3U Plus v1 · 2.4 / 5 GHz*
 
-> **Default = vendor/DKMS port** (`WIFIT3_RTL8822=mainline` opts back). DKMS earns it on
-> *breadth* — ~2× the 2.4 GHz APs of mainline (antenna-mux fix), 5 GHz tied — but neither
-> port handles a strong near AP (both saturate; see Scan).
+> **Default = vendor/DKMS port** (table below). `WIFIT3_RTL8822=mainline` opts back.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ❌ | 2026-06-17 | Fails the reference bar — saturates on the strongest near AP (~2.6 bcn/s, both ports): RX front-end overload (`pwdb=253`). DKMS hears ~2× mainline's breadth, but breadth ≠ the reference AP. 5 GHz fine (not re-tested). |
-| Deauth | ✅ | 2026-06-16 | Dropped a real laptop + phone off the AP. |
+| Scan | ❌ | 2026-06-17 | Strong nearby AP ~2.6 bcn/s (both ports). |
+| Deauth | ✅ | 2026-06-16 | Dropped a real laptop + phone. |
 | Handshake | ✅ | 2026-06-16 | Deauth → full M1–M4. |
 | PMKID | ✅ | 2026-06-16 | Passive capture + extract. |
-| WEP | ✅ | 2026-06-16 | ChopChop + ARP replay (~225 IVs/s avg). |
+| WEP | ✅ | 2026-06-16 | ChopChop + ARP replay ~225 IVs/s. |
 | WPS | ✅ | 2026-06-16 | PBC → PSK; PIN → M4. |
-| Stress | ✅ | 2026-06-16 | 30-min 38-ch soak: breadth flat (~2× mainline), no wedge. (Measures breadth, not the strong-AP weakness — see Scan.) |
+| Stress | ✅ | 2026-06-16 | 30-min 38-ch soak, flat. |
 
 → [RTL8822BU_DKMS.md](src/wifit3/chips/rtl8822bu_dkms/RTL8822BU_DKMS.md) (default) · [RTL8822BU.md](src/wifit3/chips/rtl8822bu/RTL8822BU.md) (mainline)
 
 ### RTL8814AU
 *ALFA AWUS1900 · 2.4 / 5 GHz · 4T4R*
 
-> **Default = vendor/DKMS port** (`WIFIT3_RTL8814=mainline` falls back) — but moot here:
-> both ports behave identically at the reference (see Scan). The earlier flip rationale was
-> an RSSI-*readout* difference, not better reception.
+> **Default = vendor/DKMS port** (table below). `WIFIT3_RTL8814=mainline` opts back (both behave the same).
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ❌ | 2026-06-17 | Fails the reference bar — strongest near AP decays ~5→2 bcn/s over 60 s (RX front-end overload), both ports. Aggregate fine (~63/s). 5 GHz not re-tested. |
+| Scan | ❌ | 2026-06-17 | Strong nearby AP decays 5→2 bcn/s over 60 s. |
 | Handshake | ✅ | 2026-06-05 | Deauth → 4-way. |
 | PMKID | ✅ | 2026-06-05 | Passive + active. |
 | WEP | ✅ | 2026-06-05 | Replay + ChopChop. |
 | WPS | ✅ | 2026-06-05 | PIN + PBC. |
-| Stress | ❌ | 2026-06-17 | Strong-near-AP decay shows within a single 60 s window (see Scan) — sustained target RX isn't trustworthy. |
+| Stress | ❌ | 2026-06-17 | Strong-near-AP decays within 60 s. |
 
 → [RTL8814AU.md](src/wifit3/chips/rtw88_8814au/RTL8814AU.md) (mainline) · [RTL8814AU_DKMS.md](src/wifit3/chips/rtl8814au_dkms/RTL8814AU_DKMS.md) (default)
 
@@ -159,7 +151,7 @@ terse — the full evidence and mechanics are in each `<CHIP>.md`.
 | PMKID | ✅ | 2026-05-31 | Passive + active. |
 | WEP | ✅ | 2026-05-31 | Replay + ChopChop. |
 | WPS | ✅ | 2026-05-31 | PIN + PBC. |
-| Stress | ✅ | 2026-06-05 | 30-min dual-band soak, no degradation. |
+| Stress | ✅ | 2026-06-05 | 30-min dual-band soak, flat. |
 
 → [MT76X2U.md](src/wifit3/chips/mt76x2u/MT76X2U.md)
 
@@ -168,12 +160,12 @@ terse — the full evidence and mechanics are in each `<CHIP>.md`.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-06-16 | 2.4 + 5 GHz healthy; the Focus-entry tune glitch (0 beacons until re-enter) fixed by synchronous hopping (`b2bf17c`). |
+| Scan | ✅ | 2026-06-16 | 2.4 + 5 GHz healthy. |
 | Handshake | ✅ | 2026-05-31 | M1+M2. |
 | PMKID | ✅ | 2026-05-31 | Passive + active. |
 | WEP | ✅ | 2026-05-31 | Replay + ChopChop. |
 | WPS | ✅ | 2026-05-31 | PIN + PBC. |
-| Stress | ✅ | 2026-06-16 | 30-min 22-ch dual-band soak, no degradation. |
+| Stress | ✅ | 2026-06-16 | 30-min 22-ch dual-band soak, flat. |
 
 → [MT76X0U.md](src/wifit3/chips/mt76x0u/MT76X0U.md)
 
@@ -182,13 +174,13 @@ terse — the full evidence and mechanics are in each `<CHIP>.md`.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-06-10 | Healthy ~8.5/s (max 10), top-ranked; ~2× the rt2800usb imitation's breadth. Warm reattach works (skips FW/init, stays healthy). |
-| Deauth | ✅ | 2026-06-10 | Live deauth → reconnect EAPOL; TX byte-matches the kernel's wire deauth (only seqctl differs). |
+| Scan | ✅ | 2026-06-10 | Healthy ~8.5 bcn/s. |
+| Deauth | ✅ | 2026-06-10 | Live deauth → reconnect; byte-match w/ aireplay-ng. |
 | Handshake | ✅ | 2026-06-10 | Deauth → 4-way (~27 EAPOL/30 s). |
 | PMKID | ✅ | 2026-06-10 | Capture + active extract. |
 | WEP | ✅ | 2026-06-10 | ARP replay + ChopChop. |
 | WPS | ✅ | 2026-06-10 | PIN + PBC. |
-| Stress | ✅ | 2026-06-10 | 30-min 14-ch soak on both PAU05 + PAU06: no wedge, flat; attacks pass post-soak. |
+| Stress | ✅ | 2026-06-10 | 30-min 14-ch soak (PAU05 + PAU06), flat. |
 
 → [RT5372.md](src/wifit3/chips/rt5372/RT5372.md) (default) · [RT2800USB.md](src/wifit3/chips/rt2800usb/RT2800USB.md) (rt2800usb fallback)
 
@@ -204,7 +196,7 @@ The best-behaved Ralink — snappy, great beacon rate, balanced 2.4/5 GHz RX.
 | PMKID | ✅ | 2026-05-31 | Passive + active. |
 | WEP | ✅ | 2026-05-31 | Replay + ChopChop. |
 | WPS | ✅ | 2026-05-31 | PIN + PBC. |
-| Stress | ✅ | 2026-06-10 | 30-min 22-ch dual-band soak: no wedge, flat (0.95), both bands held; attacks pass post-soak. |
+| Stress | ✅ | 2026-06-10 | 30-min 22-ch dual-band soak, flat. |
 
 → [RT2800USB.md](src/wifit3/chips/rt2800usb/RT2800USB.md)
 
@@ -215,13 +207,13 @@ Excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-06-09 | Kernel-parity ~8.4 bcn/s (vs kernel's 8.9), zero gaps. An earlier sustained-attack RX-DMA wedge is fixed (`d425550` + regression test). |
-| Deauth | ✅ | 2026-06-09 | Live deauth dropped a client; TX byte-matches aireplay-ng's wire deauth (incrementing seqctl). |
-| Handshake | ✅ | 2026-06-09 | Deauth → reconnect → 39 EAPOL/30 s, M1–M4. |
-| PMKID | ✅ | 2026-06-09 | Passive capture + active extract. |
-| WEP | ✅ | 2026-06-09 | Replay + ChopChop ~300 inj/s — 20k IVs cracked in <90 s (best WEP throughput so far). |
+| Scan | ✅ | 2026-06-09 | Kernel parity (~8.4 bcn/s vs kernel's 8.9). |
+| Deauth | ✅ | 2026-06-09 | Live deauth dropped client; byte-match w/ aireplay-ng. |
+| Handshake | ✅ | 2026-06-09 | Deauth → reconnect; 39 EAPOL/30 s. |
+| PMKID | ✅ | 2026-06-09 | Passive + active extract. |
+| WEP | ✅ | 2026-06-09 | Replay + ChopChop ~300 inj/s (20k IVs <90 s). |
 | WPS | ✅ | 2026-06-09 | PIN → M4; PBC → PSK. |
-| Stress | ✅ | 2026-06-09 | 30-min 14-ch soak: flat (median 57→62), attacks pass. |
+| Stress | ✅ | 2026-06-09 | 30-min 14-ch soak, flat. |
 
 → [RT3070.md](src/wifit3/chips/rt3070/RT3070.md)
 
@@ -230,12 +222,12 @@ Excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-06-11 | ~9 beacons/s on the best AP, 10+ APs, no dead seconds. |
-| Handshake | ✅ | 2026-06-11 | Deauth → reconnect; M1+M2+M3 (crackable pair). |
+| Scan | ✅ | 2026-06-11 | ~9 bcn/s, 10+ APs. |
+| Handshake | ✅ | 2026-06-11 | Deauth → reconnect; M1+M2+M3. |
 | PMKID | ✅ | 2026-06-11 | Passive + active extract. |
-| WEP | ✅ | 2026-06-11 | ChopChop (4 tries); ARP replay works, slow TX (~60 IVs/s). |
+| WEP | ✅ | 2026-06-11 | ChopChop + ARP replay (slow, ~60 IVs/s). |
 | WPS | ✅ | 2026-06-11 | PBC → PSK; PIN → M4. |
-| Stress | ✅ | 2026-06-11 | 30-min 14-ch soak: no wedge, no RF death. Mild breadth taper late. |
+| Stress | ✅ | 2026-06-11 | 30-min 14-ch soak; mild late taper. |
 
 → [RT2500USB.md](src/wifit3/chips/rt2500usb/RT2500USB.md)
 
@@ -257,12 +249,6 @@ across the 60 s buckets *and* post-soak attacks pass.
 *Why 30 min, not an hour:* across a dozen cards a 1-hour bar is a full day of hands-on
 scanning, and 30 min already resolves the degradation curve — clean runs stay flat the whole
 time, and the failures (RT2500USB) show within the first minute.
-
-## Fully supported
-
-Every column ✅ *plus* a clean Stress soak. **Ten cards: RTL8812AU (DKMS), AR9271,
-RTL8821AU (DKMS), MT7612U, MT7610U, RT3070, RT5372, RT5572, RT2500USB, and RTL8187L** —
-every Ralink we have (RT2500USB / RT3070 / RT5372 / RT5572) now at full marks.
 
 ## Hardware queue
 
