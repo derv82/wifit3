@@ -71,6 +71,11 @@ logger = logging.getLogger(__name__)
 
 _ENDPOINT_W = 20          # the .ans art is exactly 20 cells wide
 _TOPBAR_H = 3
+# Border + title colour for the LOG / CLIENTS panels. The textual-dark $primary
+# was a dim cyan that read as near-invisible; matrix green matches the splash /
+# scanner brand. One knob — flip it (or swap in `grey`/`cyan`) and rerun
+# scripts/ui/preview_focus_chrome.py to compare in a real terminal.
+_BORDER = "#00ff00"
 # Mid band caps once the sparklines hit full 2-row height and the endpoint
 # columns fit; beyond that, extra height flows to the bottom band. The bottom
 # floor keeps >= 3 client rows visible even on short terminals.
@@ -137,9 +142,13 @@ class FocusViewV2(Screen):
     .ap-power { width: 100%%; height: 1; text-align: center; }
 
     #bottom { height: 1fr; }
-    #log { width: 1fr; height: 100%%; border: round $primary; padding: 0 1; }
+    #log { width: 1fr; height: 100%%; border: round %(border)s;
+           border-title-color: %(border)s; border-title-style: bold; padding: 0 1; }
     #log-rich { width: 100%%; height: 1fr; background: transparent; border: none; padding: 0; }
-    #clients { width: 40; height: 100%%; border: round $primary; padding: 0 1; }
+    #clients { width: 40; height: 100%%; border: round %(border)s;
+               border-title-color: %(border)s; border-title-style: bold; padding: 0 1; }
+    /* Rows scroll inside a fixed-height region; the broadcast button stays pinned. */
+    #client-rows { width: 100%%; height: 1fr; }
 
     .bcast-btn { width: 100%%; height: 1; min-width: 0; border: none; margin: 0 0 1 0;
                  background: $error; color: $text; content-align: center middle; }
@@ -149,7 +158,7 @@ class FocusViewV2(Screen):
     .cl-pkts { width: 6; text-align: right; }
     .cl-deauth { width: 3; min-width: 3; height: 1; border: none; margin: 0 0 0 1;
                  background: red; color: white; content-align: center middle; }
-    """ % {"ew": _ENDPOINT_W, "top": _TOPBAR_H}
+    """ % {"ew": _ENDPOINT_W, "top": _TOPBAR_H, "border": _BORDER}
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)

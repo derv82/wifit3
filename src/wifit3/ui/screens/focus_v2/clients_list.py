@@ -12,7 +12,7 @@ handler knows whom to deauth."""
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Label
 
 
@@ -32,12 +32,19 @@ class ClientsList(Vertical):
         self._by_button: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
+        # Broadcast button pinned at the top; only the row list scrolls below it.
         yield Button("Deauth all", id="deauth-all", classes="bcast-btn")
-        for c in self._clients:
-            yield self._make_row(c.bssid, c.power, c.packets)
+        yield VerticalScroll(
+            *(self._make_row(c.bssid, c.power, c.packets) for c in self._clients),
+            id="client-rows",
+        )
 
     def on_mount(self) -> None:
         self._update_title()
+
+    def _rows_host(self) -> VerticalScroll:
+        """The scroll container the client rows live in (new rows mount here)."""
+        return self.query_one("#client-rows", VerticalScroll)
 
     # ----- live sync ---------------------------------------------------------
 
@@ -61,7 +68,7 @@ class ClientsList(Vertical):
                 # next tick once the removal lands, rather than duplicating the id.
                 if self.query(f"#{_row_id(c.bssid)}"):
                     continue
-                self.mount(self._make_row(c.bssid, c.power, c.packets))
+                self._rows_host().mount(self._make_row(c.bssid, c.power, c.packets))
             else:
                 pwr, pkts = refs
                 pwr.update(str(c.power))

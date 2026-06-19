@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import time
 
+from rich.markup import escape
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -31,7 +32,7 @@ class RouterEndpoint(Vertical):
     def compose(self) -> ComposeResult:
         yield Label(self._power_line(self._snap), classes="ap-power", id="ap-power")
         yield BreathingArt("focus-ap.ans", classes="endpoint-art")
-        yield Label(self._snap.ap_essid, classes="ap-essid", id="ap-essid")
+        yield Label(self._essid_markup(self._snap.ap_essid), classes="ap-essid", id="ap-essid")
         yield Label(self._snap.ap_bssid, classes="ap-static", id="ap-bssid")
         yield Label(f"channel {self._snap.ap_channel}", classes="ap-static", id="ap-chan")
 
@@ -39,9 +40,18 @@ class RouterEndpoint(Vertical):
         """Refresh the power meter (every tick) + the identity facts (cheap; they
         only change on a target switch)."""
         self.query_one("#ap-power", Label).update(self._power_line(snap))
-        self.query_one("#ap-essid", Label).update(snap.ap_essid)
+        self.query_one("#ap-essid", Label).update(self._essid_markup(snap.ap_essid))
         self.query_one("#ap-bssid", Label).update(snap.ap_bssid)
         self.query_one("#ap-chan", Label).update(f"channel {snap.ap_channel}")
+
+    @staticmethod
+    def _essid_markup(essid: str) -> str:
+        """The ESSID as a black-on-cyan chip so it pops as the AP's identity (it
+        kept blending in as plain bold white). A cloaked AP stays a dim italic
+        marker — no chip on a name we don't have."""
+        if essid == "‹hidden›":
+            return "[dim italic]‹hidden›[/dim italic]"
+        return f"[black bold on cyan] {escape(essid)} [/black bold on cyan]"
 
     def _power_line(self, snap) -> Text:
         """Rainbow signal bar (left, filling the negative space) + dBm (right).
