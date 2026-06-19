@@ -271,3 +271,17 @@ stay flat the whole time, and the failures (RT2500USB) show within the first min
 Every column ✅ *plus* a clean Stress soak. **Ten cards are there: RTL8812AU (DKMS),
 AR9271, RTL8821AU (DKMS), MT7612U, MT7610U, RT3070, RT5372, RT5572, RT2500USB, and RTL8187L** — every
 Ralink we have (RT2500USB / RT3070 / RT5372 / RT5572) now at full marks.
+
+## Hardware queue
+
+*"Will you support card X?"* — maybe. A chipset gets added when we have the adapter in
+hand **and** a clean cold-boot USB capture to port against (the process is
+`planning/PORTING.md`). Good candidates are the USB adapters morrownr recommends for
+Kali: <https://github.com/morrownr/USB-WiFi/blob/main/home/Recommended_Adapters_for_Kali_Linux.md>
+
+**En route:** nothing right now — every adapter we have is delivered and ported.
+
+**Wishlist (not yet bought):**
+
+- **TP-Link Archer T2U Plus** — RTL8821AU / RTL8811AU.
+- **Generic MT7601U** — cheapest dongle; known for awkward packet injection.
