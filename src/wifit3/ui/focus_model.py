@@ -471,12 +471,24 @@ def pmf_status_markup(ap) -> str:
 def status_footer_lines(ap, iface, campaign, now: float) -> list[str]:
     """The flow-channel footer lines for this target, painted in the channel's
     vertical slack below the sparklines. WEP → fake-auth + usable IVs; every
-    other family → the encryption string + (for RSN) the PMF status."""
+    other family → the encryption string, then a combined PMF + WPS line.
+
+    PMF is abbreviated (the full 'Protected Management Frames' is one long lonely
+    grey line when Disabled) and WPS rejoins it on the same row (it was dropped in
+    the v2 footer): ``PMF: Disabled  ·  WPS: 1.0 🔓``. The WPS lock glyph is the
+    beacon-level attackability (green 🔓 open, red 🔒 locked)."""
     if is_wep(ap):
         return wep_status_lines(ap, iface, campaign, now)
     lines = [f"[dim]Encryption:[/dim] {format_encryption_markup(ap, detailed=True)}"]
+    parts = []
     if ap.akms or ap.wpa3:              # RSN (WPA2/3) — PMF is meaningful
-        lines.append(f"[dim]Protected Mgmt Frames:[/dim] {pmf_status_markup(ap)}")
+        parts.append(f"[dim]PMF:[/dim] {pmf_status_markup(ap)}")
+    if getattr(ap, "wps", None):
+        lock = "[red]🔒[/red]" if ap.wps_locked else "[green]🔓[/green]"
+        ver = f"{ap.wps_version} " if ap.wps_version else ""
+        parts.append(f"[dim]WPS:[/dim] {ver}{lock}")
+    if parts:
+        lines.append("  ·  ".join(parts))
     return lines
 
 

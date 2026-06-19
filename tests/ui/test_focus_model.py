@@ -140,11 +140,13 @@ def test_wep_status_lines_drops_threshold_once_crossed():
 
 
 def _rsn_ap(*, encryption="WPA2", akms=("PSK",), wpa3=False, transition_mode=False,
-            pmf_required=False, pmf_capable=False):
+            pmf_required=False, pmf_capable=False,
+            wps=False, wps_locked=False, wps_version="1.0"):
     return types.SimpleNamespace(
         encryption=encryption, akms=list(akms), pairwise_cipher="CCMP",
         wpa3=wpa3, transition_mode=transition_mode, wep=None,
-        pmf_required=pmf_required, pmf_capable=pmf_capable, bssid="aa:bb:cc:dd:ee:ff")
+        pmf_required=pmf_required, pmf_capable=pmf_capable, bssid="aa:bb:cc:dd:ee:ff",
+        wps=wps, wps_locked=wps_locked, wps_version=wps_version)
 
 
 def test_pmf_status_markup_gradient():
@@ -157,7 +159,15 @@ def test_status_footer_wpa_shows_encryption_and_pmf():
     lines = fm.status_footer_lines(_rsn_ap(pmf_required=True, pmf_capable=True), None, None, 0)
     assert len(lines) == 2
     assert "Encryption:" in lines[0] and "WPA2" in lines[0]
-    assert "Protected Mgmt Frames:" in lines[1] and "Required" in lines[1]
+    assert "PMF:" in lines[1] and "Required" in lines[1]
+    assert "Protected Mgmt Frames" not in lines[1]      # abbreviated
+
+
+def test_status_footer_combines_pmf_and_wps():
+    """WPS rejoins the footer (it was dropped in v2) on the same row as PMF."""
+    lines = fm.status_footer_lines(_rsn_ap(wps=True, wps_version="1.0"), None, None, 0)
+    assert len(lines) == 2
+    assert "PMF:" in lines[1] and "WPS:" in lines[1] and "1.0" in lines[1]
 
 
 def test_status_footer_open_is_encryption_only():
