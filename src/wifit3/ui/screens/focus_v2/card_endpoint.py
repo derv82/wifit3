@@ -37,3 +37,7 @@ class CardEndpoint(Vertical):
         dyn = self.query_one("#card-dynamic", Label)
         dyn.update(snap.card_dynamic)
         dyn.display = bool(snap.card_dynamic)
+
+    def flicker(self) -> None:
+        """Pulse the card LED — the screen calls this when we TX a frame."""
+        self.query_one(BreathingArt).pulse()

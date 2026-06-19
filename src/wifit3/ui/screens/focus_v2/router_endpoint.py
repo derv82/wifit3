@@ -44,6 +44,10 @@ class RouterEndpoint(Vertical):
         self.query_one("#ap-bssid", Label).update(snap.ap_bssid)
         self.query_one("#ap-chan", Label).update(f"channel {snap.ap_channel}")
 
+    def flicker(self) -> None:
+        """Pulse the router LED — the screen calls this on RX from the target."""
+        self.query_one(BreathingArt).pulse()
+
     @staticmethod
     def _essid_markup(essid: str) -> str:
         """The ESSID as a black-on-cyan chip so it pops as the AP's identity (it

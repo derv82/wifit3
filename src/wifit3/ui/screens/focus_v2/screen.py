@@ -175,6 +175,9 @@ class FocusViewV2(Screen):
         self._wps_campaign: Optional[WpsCampaign] = None
         self._wpa3_down_attack: Optional[WPA3DowngradeAttack] = None
         self._pbc_task: Optional[asyncio.Task] = None
+        # Last packet_stats snapshot, diffed each tick to flicker the endpoint LEDs
+        # (router on RX from the target, card on TX we send). None = no baseline yet.
+        self._prev_stats = None
 
     # ----- compose -----------------------------------------------------------
 
@@ -275,6 +278,7 @@ class FocusViewV2(Screen):
 
         self._beacon_samples.clear()
         self._events.reset()
+        self._prev_stats = None        # drop the old target's counters
         self.query_one("#log", LogBand).clear()
 
         snap = self._snapshot()
@@ -411,6 +415,7 @@ class FocusViewV2(Screen):
         self._refresh_status_footer()
         # The flow channel self-samples on its own timer (bound in _enter_target).
         iface = getattr(self.app, "active_interface", None)
+        self._drive_leds(ap, iface)
         self._drain_capture_events(ap, iface.forged_macs if iface else set())
 
     def _distribute(self) -> None:
@@ -439,6 +444,29 @@ class FocusViewV2(Screen):
         lines = [Text.from_markup(m, emoji=False)
                  for m in fm.status_footer_lines(ap, iface, self._wep_campaign, time.time())]
         self.query_one("#flow", FlowChannel).set_footer(lines)
+
+    # ----- endpoint LED flicker (instrumentation) ----------------------------
+
+    # Router LED = RX from the target; card LED = TX we send. Keys match
+    # wlan.packet_stats.PACKET_CLASSES (absent keys read as 0 via .get).
+    _RX_KEYS = ("beacon", "data", "eapol", "wep_iv")
+    _TX_KEYS = ("inject", "deauth")
+
+    def _drive_leds(self, ap, iface) -> None:
+        """Flicker the endpoint LEDs on real traffic — the router on any RX from
+        the target, the card on any frame we TX. Idle keeps the gentle breathe;
+        the flicker itself is rate-capped in art.BreathingArt, so a beacon storm
+        or 400 Hz WEP injection blinks calmly rather than strobing."""
+        if iface is None:
+            return
+        snap = iface.packet_stats.snapshot(ap.bssid)
+        prev, self._prev_stats = self._prev_stats, snap
+        if prev is None:           # first frame after (re)acquire — no delta yet
+            return
+        if any(snap.get(k, 0) > prev.get(k, 0) for k in self._RX_KEYS):
+            self.query_one("#router", RouterEndpoint).flicker()
+        if any(snap.get(k, 0) > prev.get(k, 0) for k in self._TX_KEYS):
+            self.query_one("#card", CardEndpoint).flicker()
 
     # ----- event log (capture pipeline, duplicated from v1) ------------------
 

@@ -112,3 +112,39 @@ def test_art_pure_black_is_transparent():
         for span in _transparent(name).spans:
             assert not is_black(span.style.color)
             assert not is_black(span.style.bgcolor)
+
+
+def test_flicker_spikes_above_the_breathe_band():
+    """A packet flicker must be unmistakably brighter than the dim idle breathe,
+    so activity reads as a spike, not a slightly-brighter glow."""
+    from wifit3.ui.screens.focus_v2.art import (
+        _BREATHE_HI, _BREATHE_LO, _FLICKER_GREEN, _breathe_green,
+    )
+    assert _breathe_green(0.0) == _BREATHE_LO
+    assert _breathe_green(0.5) == _BREATHE_HI
+    assert _FLICKER_GREEN > _BREATHE_HI
+
+
+def test_flicker_state_machine_caps_rate_then_decays():
+    """pulse() lights ON for one frame, then a refractory forces it dim; a pulse
+    arriving mid-refractory only arms the *next* blink (no strobe). With no more
+    pulses the LED settles back to idle (breathe only)."""
+    from wifit3.ui.screens.focus_v2.art import BreathingArt
+
+    art = BreathingArt("focus-card.ans")          # not mounted — drive it by hand
+    assert art._blink == "idle"
+    art.pulse()
+    assert art._blink == "on"                     # bright this frame
+    art._advance_blink()
+    assert art._blink == "refractory"             # forced dim …
+    art.pulse()                                   # … a fresh pulse can't strobe it
+    assert art._blink == "refractory"
+    art._advance_blink()
+    art._advance_blink()                          # refractory done → pending → on
+    assert art._blink == "on"
+    # No further pulses → on → refractory → idle.
+    art._advance_blink()
+    assert art._blink == "refractory"
+    art._advance_blink()
+    art._advance_blink()
+    assert art._blink == "idle"
