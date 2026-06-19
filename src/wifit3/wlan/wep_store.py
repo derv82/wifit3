@@ -14,7 +14,7 @@ from the Scanner (channel hopping) and Focus (parked), the only difference
 being how fast frames arrive.
 
 The light, UI-facing counters live on ``AccessPoint.wep`` (a ``WepStats``);
-the heavy buffers live here so the pydantic model stays cheap to poll. Named
+the heavy buffers live here so the ``WepStats`` model stays cheap to poll. Named
 "store" (not "collector") because it could move to disk if memory ever
 matters, without changing its role.
 """

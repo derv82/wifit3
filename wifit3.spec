@@ -40,7 +40,7 @@ hiddenimports = collect_submodules("wifit3.chips")
 
 # libusb_package ships libusb-1.0.dll as a binary (no DLL -> zero USB devices found).
 # textual ships its widgets' built-in .tcss as data files. Pull each fully.
-for _pkg in ("libusb_package", "textual", "rich", "pydantic"):
+for _pkg in ("libusb_package", "textual", "rich"):
     _d, _b, _h = collect_all(_pkg)
     datas += _d
     binaries += _b
