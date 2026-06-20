@@ -558,12 +558,13 @@ class ScannerView(Screen):
             )
             save_result = save_pmkid(ap, ev.client_mac)
         elif ev.kind == CaptureKind.DECLOAK:
+            # A ● header (not a ✓ win): a hidden SSID became visible, not a credential.
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
-            msg = (
+            self._write_log(Text.from_markup(treelog.header(
                 f"[bold]Decloaked[/bold] [cyan]{escape(ev.bssid)}[/cyan] → "
                 f"[green]{escape(ev.ssid or '')}[/green] "
-                f"[dim]via {method_label}[/dim]"
-            )
+                f"[dim]via {method_label}[/dim]"), emoji=False))
+            return
         elif ev.kind == CaptureKind.WEP_KEY:
             msg = (f"[bold green]✓ WEP KEY[/bold green] on "
                    f"[bold]{ap_label}[/bold] = {escape(wep_key_ascii(ev.value or ''))}")
@@ -578,11 +579,12 @@ class ScannerView(Screen):
                    f'[bold]{ap_label}[/bold] = "{escape(ev.value or "")}"')
         else:
             return  # eapol events suppressed in scanner
-        self._write_log(Text.from_markup(msg, emoji=False))
+        # Leading space aligns the ✓ win with the ● / ├─► / └─► tree log above it.
+        self._write_log(Text.from_markup(f" {msg}", emoji=False))
         if save_result is not None:
             verb = "saved" if save_result.was_new else "already saved as"
-            self._write_log(Text.from_markup(
-                f"[dim]({verb} {escape(save_result.path.name)})[/dim]", emoji=False))
+            self._write_log(Text.from_markup(treelog.leaf(
+                f"[dim]({verb} {escape(save_result.path.name)})[/dim]"), emoji=False))
 
     def _write_log(self, text) -> None:
         try:
