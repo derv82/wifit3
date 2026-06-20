@@ -153,6 +153,15 @@ Headers from linux-firmware (`mt76x02_patch_header` for ROM patch, 32-byte
 header-stripped bodies and `firmware.py` skips the header-read step.
 `[[firmware-extraction]]` precedent.
 
+**Upstream provenance (verified 2026-06-20).** The pcap-extracted bodies are byte-identical to
+linux-firmware `mediatek/mt7662.bin` + `mediatek/mt7662_rom_patch.bin` — **not** the `mt7662u*`
+variants: `mt7662.bin[32:32+ilm_len]` == `mt7662_ilm.bin`, the trailing DLM == `mt7662_dlm.bin`,
+and `mt7662_rom_patch.bin[30:]` == `mt7662_rom_patch_body.bin`. Mainline `mt76x2u` requests
+exactly these (`MT7662_FIRMWARE` / `MT7662_ROM_PATCH`, `usb_mcu.c:85,151`), same as PCIe
+`mt76x2e`. `WHENCE` files them under driver `mt76x2e` → governed by
+`LICENCE.ralink_a_mediatek_company_firmware` (not `LICENCE.mediatek`); that license text ships
+alongside the blobs in `assets/`.
+
 ## Verified wire facts (capture-1)
 
 - **L2 alignment pad — remove BEFORE trimming to MPDU_LEN.** mt76x02 sets

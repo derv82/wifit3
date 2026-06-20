@@ -126,6 +126,22 @@ sudo rmmod <kernel_driver>   # e.g. ath9k_htc, rtl8xxxu, mt76x2u, rt2800usb
 sudo .venv/bin/python3 -m wifit3
 ```
 
+## License
+
+Wifit3 is licensed under the **GNU General Public License v2.0** (GPL-2.0-only) — see
+[LICENSE](LICENSE). The userland drivers are ports of GPLv2 Linux kernel and vendor DKMS
+drivers, so GPLv2 is the natural fit; the upstream authors are credited in [CREDITS.md](CREDITS.md).
+
+**Source for binary releases.** The prebuilt executables on the Releases page are built from
+this repository. The complete corresponding source for any released binary is this repository
+at its matching version tag — GPLv2 §3 is satisfied by offering source from the same place the
+binary is offered.
+
+**Firmware is not GPL.** The vendor firmware blobs Wifit3 loads onto the cards are
+redistributed verbatim under their own manufacturers' licenses (Realtek / MediaTek / Ralink),
+*not* the GPL. Each ships with its license text alongside it; provenance and byte-verification
+are documented in [FIRMWARE.md](FIRMWARE.md).
+
 ## Disclaimer
 
 For use only on networks you own or are explicitly authorized to test.

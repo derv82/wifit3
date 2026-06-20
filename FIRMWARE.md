@@ -31,9 +31,9 @@ the verification detail, frame ranges, and hashes; this file is the licensing su
 | `rtl8188eufw.bin` (dkms) | RTL8188EUS (vendor DKMS) | aircrack-ng/kimocoder `8188eus` DKMS (`array_mp_8188e_t_fw_nic`) | Realtek redistributable (`LICENCE.rtlwifi_firmware.txt`) | ✅ SHA-256 == linux-firmware copy |
 | `WIFI_MT7961_patch_mcu_1_2_hdr.bin` | MT7921AU | `linux-firmware` `mediatek/WIFI_MT7961_patch_mcu_1_2_hdr.bin` | MediaTek redistributable (`LICENCE.mediatek`) | ✅ SHA-256 vs linux-firmware |
 | `WIFI_RAM_CODE_MT7961_1.bin` | MT7921AU | `linux-firmware` `mediatek/WIFI_RAM_CODE_MT7961_1.bin` | MediaTek redistributable (`LICENCE.mediatek`) | ✅ SHA-256 vs linux-firmware |
-| `mt7662_ilm.bin` | MT7612U (MT76x2U) | `linux-firmware` `mediatek/mt7662u.bin` (ILM region) **(confirm)** | MediaTek redistributable (`LICENCE.mediatek`) | ✅ pcap bulk-OUT split, body diff |
-| `mt7662_dlm.bin` | MT7612U (MT76x2U) | `linux-firmware` `mediatek/mt7662u.bin` (DLM region) **(confirm)** | MediaTek redistributable (`LICENCE.mediatek`) | ✅ pcap bulk-OUT split, body diff |
-| `mt7662_rom_patch_body.bin` | MT7612U (MT76x2U) | `linux-firmware` `mediatek/mt7662u_rom_patch.bin` (header stripped) **(confirm)** | MediaTek redistributable (`LICENCE.mediatek`) | ✅ pcap bulk-OUT split, body diff |
+| `mt7662_ilm.bin` | MT7612U (MT76x2U) | `linux-firmware` `mediatek/mt7662.bin` (ILM region) | Ralink/MediaTek redistributable (`LICENCE.ralink_a_mediatek_company_firmware`) | ✅ == `mt7662.bin[32:32+ilm_len]` |
+| `mt7662_dlm.bin` | MT7612U (MT76x2U) | `linux-firmware` `mediatek/mt7662.bin` (DLM region) | Ralink/MediaTek redistributable (`LICENCE.ralink_a_mediatek_company_firmware`) | ✅ == `mt7662.bin` DLM region |
+| `mt7662_rom_patch_body.bin` | MT7612U (MT76x2U) | `linux-firmware` `mediatek/mt7662_rom_patch.bin` (30-B header stripped) | Ralink/MediaTek redistributable (`LICENCE.ralink_a_mediatek_company_firmware`) | ✅ == `mt7662_rom_patch.bin[30:]` |
 | `mt7610e_linux-firmware.bin` | MT7610U (MT76x0U) | `linux-firmware` `mediatek/mt7610e.bin` | MediaTek redistributable (`LICENCE.mediatek`) | ✅ pcap body == `mt7610e.bin[32:]` |
 | `mt7610u_linux-firmware.bin` | MT7610U (MT76x0U) | `linux-firmware` `mediatek/mt7610u.bin` | MediaTek redistributable (`LICENCE.mediatek`) | ✅ shipped verbatim (kernel fallback variant) |
 | `mt7610u_pcap_body.bin` | MT7610U (MT76x0U) | extracted from cold-boot pcap; == `mt7610e.bin[32:]` | MediaTek redistributable (`LICENCE.mediatek`) | ✅ byte-for-byte vs `mt7610e.bin[32:]` |
@@ -57,12 +57,21 @@ Notes:
   embedded firmware payload is Realtek's redistributable binary and is governed by the same
   Realtek firmware terms as the mainline copies (`LICENCE.rtlwifi_firmware.txt`). We extract
   the array to a `.bin` and ship it unmodified.
+- **MT7612U firmware is `mt7662.bin`, not `mt7662u.bin`.** The mainline `mt76x2u` USB driver
+  requests `MT7662_FIRMWARE` / `MT7662_ROM_PATCH` = `mt7662.bin` / `mt7662_rom_patch.bin`
+  (`mt76x2/mt76x2.h`, `usb_mcu.c`) — the same files the PCIe `mt76x2e` driver uses. Our three
+  blobs are byte-identical to them (ILM+DLM == `mt7662.bin[32:]`; rom-patch body ==
+  `mt7662_rom_patch.bin[30:]`, the 30-byte `mt76x02_patch_header` stripped). The similarly
+  named `mt7662u.bin` (a different, larger build that `WHENCE` files under `mt76x2u` /
+  `LICENCE.mediatek`) is *not* what mainline loads or what wifit3 ships — called out here so
+  the provenance and the governing license stay correct.
 
 ## Per-vendor license summary
 
-The blobs group under three vendor licenses, mirroring `linux-firmware`'s `WHENCE`. The
-governing-license wording is quoted verbatim from the corresponding
-`linux-firmware` `LICENSES/LICENCE.*` file.
+The blobs group under four vendor licenses, mirroring `linux-firmware`'s `WHENCE`. The
+verbatim `linux-firmware` `LICENCE.*` file for each blob now ships next to it in that chip's
+`assets/` directory — so the license travels with the binary in the repo, the built wheel, and
+the PyInstaller bundle. The governing-license wording quoted below is from that same file.
 
 ### Realtek — `LICENCE.rtlwifi_firmware.txt`
 
@@ -79,9 +88,9 @@ combination with an OSI-approved open-source-licensed operating system.
 
 ### MediaTek — `LICENCE.mediatek`
 
-Covers the MT7921AU (`WIFI_MT7961_*`, `WIFI_RAM_CODE_MT7961_*`), MT7610U
-(`mt7610e`/`mt7610u`), and MT7612U-USB (`mt7662u.bin` / `mt7662u_rom_patch.bin`, the
-MT76x2U variant) blobs. `WHENCE` marks them:
+Covers the MT7921AU (`WIFI_MT7961_*`, `WIFI_RAM_CODE_MT7961_*`) and MT7610U
+(`mt7610e`/`mt7610u`) blobs. (The MT7612U `mt7662*` blobs are **not** here — `WHENCE` files
+them under the Ralink/MediaTek license below.) `WHENCE` marks the MediaTek blobs:
 
 > Licence: Redistributable. See LICENCE.mediatek for details.
 
@@ -106,10 +115,20 @@ The RT2800USB-family blobs (`rt2870.bin` slices: `rt3070_fw.bin`, `rt5372_fw.bin
 The license (Copyright (c) 2007, Ralink Technology Corporation) permits redistribution and
 use **in binary form, without modification** provided redistributions reproduce the
 copyright notice and disclaimer; no reverse engineering, decompilation, or disassembly; with
-the same limited patent license as the Realtek terms above. (A sibling file,
-`LICENCE.ralink_a_mediatek_company_firmware` — Copyright (c) 2013, Ralink, A MediaTek
-Company — carries identical terms and governs the PCIe `mt7662.bin` variant; wifit3 ships
-only the USB MT76x2U blobs, which `WHENCE` files under `LICENCE.mediatek` above.)
+the same limited patent license as the Realtek terms above.
+
+### Ralink / MediaTek — `LICENCE.ralink_a_mediatek_company_firmware`
+
+Covers the MT7612U (MT76x2U) blobs: `mt7662_ilm.bin` + `mt7662_dlm.bin` (carved from
+`mt7662.bin`) and `mt7662_rom_patch_body.bin` (from `mt7662_rom_patch.bin`). The card is USB,
+but the mainline `mt76x2u` driver loads the same `mt7662.bin` / `mt7662_rom_patch.bin` the
+PCIe `mt76x2e` driver does, and `WHENCE` files those under driver `mt76x2e`:
+
+> Licence: Redistributable. See LICENCE.ralink_a_mediatek_company_firmware for details
+
+The license (Copyright (c) 2013, Ralink, A MediaTek Company) carries terms identical to the
+2007 Ralink license above: binary redistribution provided the copyright notice and disclaimer
+are reproduced, no reverse engineering, and the same limited patent license.
 
 ---
 
