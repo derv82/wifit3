@@ -10,7 +10,7 @@ from wifit3.chips.rtw88_base.registers import (
 )
 from wifit3.chips.rtw88_8814au.tx import build_deauth_frame, build_tx_desc_mgmt
 
-_AP = bytes.fromhex("aa:bb:cc:dd:ee:01")
+_AP = bytes.fromhex("aabbccddee01")
 _CLIENT = bytes.fromhex("042ec15143b8")
 
 

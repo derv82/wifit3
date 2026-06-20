@@ -136,7 +136,7 @@ def test_save_line_elides_bssid_and_timestamp():
     from wifit3.ui.screens.focus_v2.screen import _save_line
 
     new = types.SimpleNamespace(was_new=True, path=types.SimpleNamespace(
-        name="NETGEAR2G_aa:bb:cc:dd:ee:01_1781842298_handshake.hc22000"))
+        name="NETGEAR2G_aa-bb-cc-dd-ee-01_1781842298_handshake.hc22000"))
     line = _save_line(new)
     assert "saved: captures/NETGEAR2G_…_handshake.hc22000" in line
     assert "aa-bb-cc" not in line and "1781842298" not in line

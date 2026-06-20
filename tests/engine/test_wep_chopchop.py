@@ -316,7 +316,7 @@ async def test_stop_halts_an_in_flight_byte_walk():
     """Regression: clicking Stop IVs calls campaign.stop() → chop.stop(); the
     long byte-walk must actually end (not orphan after the buttons hide)."""
     captured = (bytes([0x08, 0x42, 0, 0]) + b"\xff" * 6
-                + bytes.fromhex("aa:bb:cc:dd:ee:06") + OUR + b"\x00\x00"
+                + bytes.fromhex("aabbccddee06") + OUR + b"\x00\x00"
                 + IV + b"\x00" + bytes(40))               # 68B broadcast WEP
 
     async def slow(_body):            # never relays → keeps the walk going
