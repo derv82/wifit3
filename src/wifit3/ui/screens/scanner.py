@@ -733,13 +733,14 @@ class ScannerView(Screen):
                 "[dim](detect + alert only — never transmits)[/dim]"))
 
     def _poll_pbc(self) -> None:
-        # This interval timer keeps firing while Focus is pushed on top (Textual
-        # doesn't pause a suspended screen's timers). Focus runs its own PBC
-        # auto-capture on the focused AP, so a Scanner invade here would be a
-        # second enrollment racing Focus over the single radio. Defer to Focus
-        # whenever we're not the foreground screen.
+        # This 1 Hz timer keeps firing while Focus is pushed on top (Textual doesn't
+        # pause a suspended screen's timers), and Focus runs its own PBC capture — so
+        # a Scanner invade here would race Focus over the single radio. Bail unless
+        # we're the *true* top screen. NOT is_current: that's also True for background
+        # screens (the suspended Scanner under Focus is one), so it can't tell
+        # foreground from suspended — use screen-stack identity.
         iface = self.app.active_interface
-        if not iface or not self.is_current:
+        if not iface or self.app.screen is not self:
             return
         for ap in self._pbc_watcher.new_windows(iface.get_access_points()):
             self._on_pbc_window(ap)
@@ -805,9 +806,11 @@ class ScannerView(Screen):
             self._write_log(treelog.leaf_fail(f"capture error: {escape(str(exc))}"))
         finally:
             self._pbc_capturing = False
-            # Only resume hopping if we're still the live screen — returning from
-            # Focus restarts the hopper via on_screen_resume otherwise.
-            if self.is_current:
+            # Resume hopping only if we're still the foreground screen (screen-stack
+            # identity, not is_current — that's True for background screens too). If
+            # the user switched to Focus mid-invade, Focus owns the channel and its
+            # on_screen_resume restarts the hopper.
+            if self.app.screen is self:
                 await iface.start_hopping(channels=self._channel_filter, interval=0.25)
 
     def action_toggle_fade(self) -> None:
