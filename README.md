@@ -8,6 +8,10 @@ subprocesses, no Scapy — so it runs the same on **Linux and Windows**.
   <img src="screenshots/wifit3-1-splash.png" alt="Wifit3 splash / adapter picker" width="700">
 </p>
 
+<p align="center">
+  <img src="screenshots/wifit3-demo.gif" alt="Wifit3 in action — WPS PushButton PSK capture" width="700">
+</p>
+
 ## Features
 
 - **Live scan** — APs and clients with channel hopping, signal, encryption,
