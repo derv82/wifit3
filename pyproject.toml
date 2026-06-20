@@ -1,6 +1,6 @@
 [project]
 name = "wifit3"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Wireless Auditor TUI"
 readme = "README.md"
 license = "GPL-2.0-only"
@@ -19,6 +19,11 @@ wifit3 = "wifit3.__main__:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# Version lives in src/wifit3/__init__.py (__version__); hatchling reads it at build time so
+# there is one source of truth. The release workflow's tag-gate reads the same literal.
+[tool.hatch.version]
+path = "src/wifit3/__init__.py"
 
 [dependency-groups]
 dev = [

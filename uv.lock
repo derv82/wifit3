@@ -1371,7 +1371,6 @@ wheels = [
 
 [[package]]
 name = "wifit3"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "libusb-package" },
