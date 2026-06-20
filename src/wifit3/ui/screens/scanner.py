@@ -733,8 +733,13 @@ class ScannerView(Screen):
                 "[dim](detect + alert only — never transmits)[/dim]"))
 
     def _poll_pbc(self) -> None:
+        # This interval timer keeps firing while Focus is pushed on top (Textual
+        # doesn't pause a suspended screen's timers). Focus runs its own PBC
+        # auto-capture on the focused AP, so a Scanner invade here would be a
+        # second enrollment racing Focus over the single radio. Defer to Focus
+        # whenever we're not the foreground screen.
         iface = self.app.active_interface
-        if not iface:
+        if not iface or not self.is_current:
             return
         for ap in self._pbc_watcher.new_windows(iface.get_access_points()):
             self._on_pbc_window(ap)
