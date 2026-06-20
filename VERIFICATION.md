@@ -273,7 +273,16 @@ hand **and** a clean cold-boot USB capture to port against (the process is
 `planning/PORTING.md`). Good candidates are the USB adapters morrownr recommends for
 Kali: <https://github.com/morrownr/USB-WiFi/blob/main/home/Recommended_Adapters_for_Kali_Linux.md>
 
-**En route:** nothing right now — every adapter we have is delivered and ported.
+**En route (ordered, awaiting delivery):**
+
+- **Auscoumer 600 Mbps** — **RTL8821CU** · *new chipset.* The cheap-ubiquitous Wi-Fi 5 gap;
+  port from mainline `rtw88` (kernel 6.12+) or `morrownr/8821cu-20210916`. Same family as the
+  RTL8812AU / 8821AU / 8822BU we already run.
+- **Deal4Go K2-544DW** — **AR9271** · *consistency test* (already supported on the AWUS036NHA).
+  Confirms a second AR9271 card behaves identically — the "any AR9271 works" claim.
+- **LOTEKOO 150 Mbps** — **RT5370** · *consistency test.* 1×1 sibling of RT5372 / RT5572 in the
+  `rt2800usb` family; confirms the driver covers the 1×1 variant (may need its VID:PID added to
+  `SUPPORTED_IDS`).
 
 **Wishlist (not yet bought):**
 

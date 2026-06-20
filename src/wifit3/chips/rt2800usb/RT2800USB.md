@@ -545,7 +545,7 @@ Focus→set_channel path**, not RT3572-specific. Tracked in
    USB_EEPROM_READ one-shot 512-byte streaming path.
 5. **AWUS036NH (RT3070)** — fresh chip not yet supported. Captures
    not yet collected; pcap drop-in extension once captures land.
-   See `planning/PORTING.md` § Hardware queue.
+   See `VERIFICATION.md` § Hardware queue.
 
 ---
 
