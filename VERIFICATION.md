@@ -25,7 +25,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [MT7610U](#mt7610u) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [MT7921AU](#mt7921au) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | A |
+| [MT7921AU](#mt7921au) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8822BU](#rtl8822bu) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | C |
 | [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | B |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | D |
@@ -181,7 +181,7 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 | PMKID | ✅ | 2026-06-12 | Passive + active. |
 | WEP | ✅ | 2026-06-12 | ChopChop + ARP replay ~350 IVs/s. |
 | WPS | ✅ | 2026-06-12 | PBC. |
-| Stress | ⬜ | — | 30-min soak not run yet. |
+| Stress | ✅ | 2026-06-19 | 30-min 38-ch dual-band soak, flat. |
 
 → [MT7921AU.md](src/wifit3/chips/mt7921au/MT7921AU.md)
 
