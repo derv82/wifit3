@@ -45,16 +45,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Fail the build if the pushed tag (vX.Y.Z) doesn't match version in pyproject.toml.
-      - name: Verify tag matches pyproject version
+      # Fail the build if the pushed tag (vX.Y.Z) doesn't match __version__ — the single source
+      # of truth. pyproject derives its version from it (hatchling dynamic version), so we grep
+      # the literal in __init__.py rather than pyproject.
+      - name: Verify tag matches package version
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          proj=$(grep -m1 '^version = ' pyproject.toml | sed -E 's/.*"(.*)".*/\1/')
-          echo "tag=$tag  pyproject=$proj"
+          proj=$(grep -m1 '^__version__ = ' src/wifit3/__init__.py | sed -E 's/.*"(.*)".*/\1/')
+          echo "tag=$tag  __version__=$proj"
           if [ "$tag" != "$proj" ]; then
-            echo "::error::Tag v$tag does not match pyproject.toml version $proj"
+            echo "::error::Tag v$tag does not match src/wifit3/__init__.py __version__ $proj"
             exit 1
           fi
 
@@ -69,6 +71,19 @@ jobs:
 
       - name: Build onefile binary
         run: uv run pyinstaller wifit3.spec --noconfirm --clean
+
+      # Boot the just-built binary headless (Textual run_test — no TTY) to prove the bundle
+      # actually launches: --smoke loads the packed libusb backend and mounts every screen,
+      # exercising the widget .tcss + ANSI assets that PyInstaller's collect_all must include.
+      # This catches a dropped data file that ci.yml's import-smoke can't see. Runs the REAL
+      # artifact, so it doubles as the PyInstaller bundle-validation. Hard gate: non-zero fails.
+      - name: Smoke-test the bundle (headless launch)
+        shell: bash
+        run: |
+          chmod +x "${{ matrix.build_path }}" || true
+          "${{ matrix.build_path }}" --version
+          "${{ matrix.build_path }}" --smoke
+          echo "bundle smoke OK"
 
       # PyInstaller emits dist/wifit3.exe (Windows) or dist/wifit3 (Linux); stage it under a
       # per-OS name. bash runs on both runners (Git Bash on Windows), so one step covers both.
@@ -107,3 +122,6 @@ jobs:
           files: artifacts/**
           generate_release_notes: true   # auto-changelog from commits/PRs since the last tag
           fail_on_unmatched_files: true
+          # Mark PEP 440 pre-releases (…aN / …bN / …rcN, e.g. v0.1.0a1) as GitHub pre-releases;
+          # a plain vX.Y.Z tag publishes as a normal release.
+          prerelease: ${{ contains(github.ref_name, 'a') || contains(github.ref_name, 'b') || contains(github.ref_name, 'rc') }}
