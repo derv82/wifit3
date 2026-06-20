@@ -543,9 +543,6 @@ Focus→set_channel path**, not RT3572-specific. Tracked in
 4. **93C66 EEPROM fallback** — older RT2870 dongles don't have
    EFUSE; `efuse_detect` would return False. Would need to port the
    USB_EEPROM_READ one-shot 512-byte streaming path.
-5. **AWUS036NH (RT3070)** — fresh chip not yet supported. Captures
-   not yet collected; pcap drop-in extension once captures land.
-   See `VERIFICATION.md` § Hardware queue.
 
 ---
 
