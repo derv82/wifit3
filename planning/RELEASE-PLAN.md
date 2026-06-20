@@ -21,8 +21,8 @@ session; stability day(s) between.
 
 Still to add:
 
-- [ ] `CONTRIBUTING.md` — uv setup, the hardware-testing loop, comment-style rule, ground-truth
-  doc locations.
+- [ ] `CONTRIBUTING.md` — uv setup, the hardware-testing loop, comment-style rule, the
+  `<CHIP>.md` port-reference doc locations.
 - [ ] **Authorized-use / ethics notice** — a clear "your own networks / authorized testing
   only" statement (wifite/aircrack carry one), beyond the README one-liner.
 - [ ] `ARCHITECTURE.md` — distill the layer-stack/module-map from `CLAUDE.md` + the

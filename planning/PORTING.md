@@ -118,9 +118,10 @@ Hold for every driver:
 - **Commit each milestone on its own** once it ports and verifies — never batch. Never
   write a milestone label ("M1", "M4a") into code or comments; those live in commit
   messages and the per-chip `<CHIP>.md` doc.
-- **Start the `chips/<chipset>/<CHIP>.md` ground-truth doc** as you port — record each
-  fact you verify with its `[SRC]`/`[WIRE]` citation (FW path, init order, tune semantics,
-  per-chip bit gotchas), so the next session reads them instead of re-deriving.
+- **Start the `chips/<chipset>/<CHIP>.md` port reference** as you port — record each fact
+  you verify pointer-style with its `[SRC]`/`[WIRE]` citation (entry points, hot paths,
+  per-chip bit gotchas) so the next session reads them instead of re-deriving. Shape +
+  rules: § The `<CHIP>.md` port reference.
 
 The `WlanDriver` Protocol your `driver.py` must satisfy, and how to register it, are in
 `CLAUDE.md` → "Adding a New Chipset".
@@ -305,6 +306,52 @@ When re-porting a card from a different source tree, keep both drivers and A/B t
    new port only once it ties or beats that baseline on hardware.
 
 Supported-hardware status and the pending-hardware queue live in `VERIFICATION.md`.
+
+---
+
+## The `<CHIP>.md` port reference
+
+Every chip dir carries a `<CHIP>.md` — the **port README**, a doc a Linux kernel driver
+maintainer could open and start contributing from. Write it for that reader: a maintainer
+won't accept "trust me", so every claim about the silicon or the wire carries its citation
+(`[SRC] <file>:<line>`, `[WIRE] frame N`) and is therefore *checkable*. The doc never
+asserts "ground truth"; it points at the evidence. What serves that reader serves the next
+agent — the demanding human is the right target, not "by-LLMs-for-LLMs".
+
+Two rules keep it from rotting:
+
+- **Pointers, not paraphrase — one line max.** An entry is `path:line` + a one-line
+  "what & why". A pointer survives a refactor; a paraphrase of the code goes stale and has
+  to be chased down and corrected. The code and its docstrings are the truth; this doc is
+  the index into them.
+- **Reference up top is current state; dated narrative lives at the bottom.** A future
+  reader looks up top for what is true *now*. Session stories — what a port did, what a
+  debug chase found — go in dated, append-only sections below, never interleaved. When a
+  dated finding becomes durable (a real caveat or an open bug), *promote* it up into
+  Caveats / Known issues; the dated section keeps the "why we found it".
+
+Author it as the port stabilizes — not churned every milestone (pointers mean it rarely
+needs touching once written). Skeleton:
+
+```
+# <CHIP> — port reference
+
+## Silicon        antennas (NxN), bands, PHY/MAC family, firmware-or-not, chip-id — a short facts table.
+## Entry points   table mapping our .py <-> kernel .c: probe / fw-load / init / set_channel / RX-filter / TX.
+## Hot paths      the load-bearing functions only (per-tune RF/recal, RSSI decode, DIG watchdog, FW upload):
+                  each `.py:line` + `.c:line` + one line on what it does and why it is critical.
+## Scripts        only the reusable/diagnostic scripts/<chip>/ tools (e.g. rx_diag.py), one line each.
+                  Skip the one-shots (firmware_download.py) once their output — the .bin — is committed.
+## Caveats        environmental truths that change how you read results (blank EFUSE, USB-3 adapter
+                  quirk, no userland cold reset).
+## Known issues   open defects: symptom + investigation breadcrumb + debug-script pointer.
+
+## Port log — <start> -> <end>    append-only; subsections per phase (Firmware / Init / Monitor / Hop / Timers).
+## <topic> debugging — <date>     append-only; an investigation worth not retracing.
+```
+
+The **Entry points** table is the highest-value section for a maintainer — it is the
+Step 1 "doors" written down: the map from the kernel into the port.
 
 ---
 

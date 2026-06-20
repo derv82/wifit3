@@ -18,7 +18,7 @@ read, it returns the bytes the real card returned at that point; when our driver
 write, it checks the bytes against what the kernel driver wrote. Walk the whole pcap with
 a single cursor and our driver must reproduce every operation the kernel driver made.
 
-That makes it an **integration test of the port against ground truth** — the strongest
+That makes it an **integration test of the port against the recorded wire** — the strongest
 correctness signal we have offline, and the thing that lets a chipset be ported without
 the hardware in hand. (Reception *quality* — does the card actually hear a near AP — is
 `beacon_watch`'s job, not this tool's; see PORTING.md Step 4.)
