@@ -2,20 +2,29 @@
 
 
 async def _smoke() -> None:
-    """Headless self-test: boot the full TUI, render a frame, exit. Used by CI to catch
-    PyInstaller bundling breaks the import-smoke can't (missing libusb DLL, missing Textual
-    widget .tcss or ANSI assets that only load at mount).
+    """Headless self-test: prove the PyInstaller bundle is intact, then exit. Used by CI to
+    catch bundling breaks the unit-test import-smoke can't.
 
     Two checks, in order of what they prove about the bundle:
-      1. ``WlanDeviceManager().refresh()`` loads the bundled libusb backend — a missing DLL
-         raises WifiteFatalError here (no card needed; an empty scan is success).
-      2. ``App.run_test()`` mounts every screen headless (no TTY), pulling the widget .tcss
-         and logo assets that a broken ``collect_all`` would silently drop.
+      1. The bundled libusb shared lib is where ``libusb_package.get_library_path()`` looks
+         (``libusb_package/libusb-1.0.*``) and actually loads. A onefile build can misplace it,
+         which breaks USB enumeration with "No backend available". We deliberately do NOT
+         ``libusb_init``/enumerate here: CI runners have no USB subsystem (no ``/dev/bus/usb``),
+         so init legitimately fails there — that's a runtime-env concern, not a packaging break.
+      2. ``App.run_test()`` mounts every screen headless (no TTY), pulling the widget .tcss and
+         logo assets that a broken ``collect_all`` would silently drop.
     """
-    from wifit3.ui.app import WifiteApp
-    from wifit3.wlan.manager import WlanDeviceManager
+    import ctypes
+    import os
 
-    await WlanDeviceManager().refresh()
+    from libusb_package import get_library_path
+
+    lib = get_library_path()
+    if not (lib and os.path.isfile(str(lib))):
+        raise RuntimeError(f"bundled libusb not found via libusb_package: {lib!r}")
+    ctypes.CDLL(str(lib))  # must load from the bundle (deps resolved), not just exist on disk
+
+    from wifit3.ui.app import WifiteApp
 
     app = WifiteApp()
     async with app.run_test() as pilot:

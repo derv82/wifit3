@@ -46,6 +46,19 @@ for _pkg in ("libusb_package", "textual", "rich"):
     binaries += _b
     hiddenimports += _h
 
+# libusb_package.get_library_path() locates the libusb shared lib via importlib.resources, i.e.
+# it must sit at libusb_package/libusb-1.0.* INSIDE the package dir of the bundle. collect_all
+# pulls the lib in as a BINARY, but a onefile build flattens binaries to the bundle root on
+# extraction — so importlib.resources can't see it under libusb_package/ and pyusb falls back to
+# a (frozen-broken) system search → "No backend available". Re-add the lib as a DATA file under
+# libusb_package/ so it extracts into the package dir where get_library_path() looks. Windows is
+# unaffected (its .dll is already collected as data, which keeps its subdir); the Linux .so is not.
+import libusb_package as _libusb_package
+_lp_dir = os.path.dirname(_libusb_package.__file__)
+for _f in os.listdir(_lp_dir):
+    if _f.startswith("libusb-1.0."):
+        datas.append((os.path.join(_lp_dir, _f), "libusb_package"))
+
 a = Analysis(
     ["src/wifit3/__main__.py"],
     pathex=["src"],
