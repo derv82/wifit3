@@ -82,12 +82,13 @@ advice.)
   provenance per chip.
 - [ ] Consider shipping **Minnie Drivers** as a separate GPLv2 package.
 
-### Versioning
+### Versioning ✅
 
-- Add `version = "0.1.0-alpha.1"` to `pyproject.toml`; expose `__version__`.
-- Tag git: `git tag v0.1.0-alpha.1`.
-- Semantic versioning: `0.x.x` pre-release, `0.1.x` alpha patches, `0.2.0` for
-  multi-card etc.
+- `__version__` in `src/wifit3/__init__.py` is the single source of truth; `pyproject` derives
+  `[project].version` from it (hatchling dynamic version). `wifit3 --version` reports it.
+- Released alpha tagged `v0.1.0a1` (PEP 440); `release.yml` gates the tag against `__version__`
+  and marks `aN`/`bN`/`rcN` tags as GitHub pre-releases.
+- Semantic versioning: `0.x.x` pre-release, `0.1.x` alpha patches, `0.2.0` for multi-card etc.
 
 ### Documentation
 

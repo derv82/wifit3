@@ -6,16 +6,6 @@ Known bugs + QoL nits live in `BUGS.md`.
 
 ## High Priority
 
-### CI, Packaging, and Deployment Pipeline
-
-`ci.yml` ✅ (per-PR: imports, unit tests) and `release.yml` ✅ (on tag: matrix-build Win+Linux,
-PyInstaller on the Windows runner, GitHub Release with artifacts) are **done**. Remaining:
-- `smoke.yml` — reusable headless Textual launch + clean exit, to catch bundling breaks.
-- Bundle testing — PyInstaller packs interpreter + deps + firmware + `wdi-simple.exe`;
-  Textual+PyInstaller has quirks, validate on the Windows runner.
-
-**Complexity:** moderate now (the hard parts shipped).
-
 ### Test & Fix macOS support
 
 Figure out how to detect & access drivers from userland in OSX.
