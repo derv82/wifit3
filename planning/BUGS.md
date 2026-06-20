@@ -14,20 +14,6 @@ a capture.
 
 ## BUGS
 
-### Confirm/Disconfirm USB 2.0 Support across all drivers
-
-All captures were on USB 3.0 - some (all?) drivers behave differently on USB3 vs USB2.
-
-1. List every card/driver (including env-opt-in mainline+dkms ports)
-2. Create "USB Speed" diag script to print out the usb information (VID:PID/SuperSpeed/High/etc).
-3. Use "32x" adapter to downgrade to USB2
-4. Huamn tests every driver on USB2 via 32x (similar to VERIFICATION.md tests):
-  - Both RX & TX.
-  - Scan/WEP/WPS/Handhake/PMKID
-5. Identify all drivers that misbehave on USB2 (total failure, low/weak RX, lag).
-  - User collects USB2-specific captures for each impacted card
-  - Agent ports once captures are available.
-
 ### Hardware-failure UX — pre-alpha (release blocker)
 
 Failures must surface *in the Textual UI*, not just in dev-only `wifit3.log`

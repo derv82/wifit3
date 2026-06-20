@@ -13,13 +13,6 @@ The DKMS re-ports are the headline hardware work (the cross-family 2.4 GHz RX fi
 priority order, vendor sources, and cards-in-the-mail live in `PORTING.md`.** One port per
 session; stability day(s) between.
 
-### Stress soaks
-
-Run the longrun test script (all attacks, sustained channel hopping, **30 min**) on
-tier-1 cards. **Gate alpha on clean soaks for MT7612U and AR9271 at minimum.**
-RTL8812AU (DKMS, the default) cleared its 30-min soak; the ⚠️ RF hop-death is the
-opt-in `WIFIT3_RTL8812=mainline` fallback only.
-
 ---
 
 ## Release blockers
