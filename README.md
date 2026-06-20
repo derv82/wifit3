@@ -145,3 +145,8 @@ are documented in [FIRMWARE.md](FIRMWARE.md).
 ## Disclaimer
 
 For use only on networks you own or are explicitly authorized to test.
+
+⚠️ **Hardware-damage risk.** Wifit3 talks to USB Wi-Fi hardware at the register level, with no
+kernel driver between it and the silicon. A bad register write, firmware page, or power sequence
+can damage or permanently disable ("brick") a device. **Use at your own risk — there is no
+liability for hardware damage.**

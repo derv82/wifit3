@@ -35,14 +35,15 @@ path with no kernel driver between us and the silicon, so a bad write/FW-page/po
 brick a card or leave it in an illegal RF state. Amplified by AI-assisted porting (non-
 deterministic; the pcap gate catches *unfaithful* sequences, not every *dangerous* one) and
 community PRs. Required:
-- [ ] **README disclaimer** (reinforced by the LICENSE): *"This software talks to USB Wi-Fi
+- [x] **README disclaimer** (reinforced by the LICENSE): *"This software talks to USB Wi-Fi
   hardware at the register level. It can damage or permanently disable ('brick') a device. Use
   at your own risk; no liability for hardware damage."* GPLv2 §15–16 (NO WARRANTY) is the legal
   backstop; this is the human-readable layer.
-- [ ] **Porting-safety warning** (`PORTING.md`/`CONTRIBUTING.md`): port at your own risk, test
+- [x] **Porting-safety warning** (`PORTING.md` Step 0 callout): port at your own risk, test
   on hardware you can lose; risk peaks at FW-download / EFUSE / power-seq.
-- [ ] **No-fuse-burn invariant:** we only write RAM/registers + replay the vendor *download*
-  path, never program EFUSE/EEPROM fuses — documented so a fuse-write PR is an obvious red flag.
+- [x] **No-fuse-burn invariant** (`PORTING.md` Prerequisites): we only write RAM/registers +
+  replay the vendor *download* path, never program EFUSE/EEPROM fuses — documented so a
+  fuse-write PR is an obvious red flag.
 - [ ] (Optional, post-alpha) first-run acknowledgment for the dev/porting tools.
 
 ---

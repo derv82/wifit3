@@ -39,11 +39,20 @@ Never write "the capture" on its own. Say **pcap**, **timeline**, or **bundle**.
     `src/wifit3/platform/linux.py`). Replugging on Linux re-binds the kernel module, so
     prefer the udev rule over replug cycles.
 
+**Invariant — we never burn fuses.** Wifit3 only writes RAM and registers and replays the
+vendor *download* path. It never programs EFUSE/EEPROM fuses (which are one-time-writable and
+permanent). Any PR that adds a fuse/EEPROM *write* is an immediate red flag and must be rejected.
+
 ---
 
 ## Step 0 — Ask the user
 
 Ask these before writing any code. Do not assume paths, bands, or feature sets.
+
+> ⚠️ **Porting touches the silicon directly.** A new port writes registers and replays the
+> vendor firmware-download path with nothing between you and the hardware. A faithful pcap diff
+> catches *unfaithful* sequences, not every *dangerous* one. **Test on a card you can afford to
+> lose.** Risk peaks at firmware-download, EFUSE reads, and the power-sequence steps.
 
 1. **Which mode?**
    - **Kernel-dev** — I show you each function as I port it, propose the milestone plan
