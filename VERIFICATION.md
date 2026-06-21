@@ -22,12 +22,12 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RT3070](#rt3070) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5572](#rt5572) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [MT7610U](#mt7610u) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [MT7921AU](#mt7921au) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8822BU](#rtl8822bu) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | C |
 | [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | B |
+| [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | B |
+| [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | B |
+| [RTL8822BU](#rtl8822bu) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | C |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | D |
 
 ## Per-card notes
@@ -56,7 +56,7 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 | Handshake | ✅ | 2026-06-12 | Deauth → 4-way (~3/4 M1–M4). |
 | PMKID | ✅ | 2026-06-12 | Passive + active. |
 | WEP | ✅ | 2026-06-12 | FakeAuth + ARP replay + ChopChop. |
-| WPS | ✅ | 2026-06-12 | PIN + PBC. |
+| WPS | ⚠️ | 2026-06-21 | hard-MAC, card cannot ACK, WPS fails frequently. |
 | Stress | ✅ | 2026-06-11 | 30-min 13-ch soak, flat. |
 
 → [RTL8187L.md](src/wifit3/chips/rtl8187/RTL8187L.md)
@@ -242,7 +242,7 @@ Excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate
 | Handshake | ✅ | 2026-06-11 | Deauth → reconnect; M1+M2+M3. |
 | PMKID | ✅ | 2026-06-11 | Passive + active extract. |
 | WEP | ✅ | 2026-06-11 | ChopChop + ARP replay (slow, ~60 IVs/s). |
-| WPS | ✅ | 2026-06-11 | PBC → PSK; PIN → M4. |
+| WPS | ⚠️ | 2026-06-21 | hard-MAC, card cannot ACK, WPS fails frequently. |
 | Stress | ✅ | 2026-06-11 | 30-min 14-ch soak; mild late taper. |
 
 → [RT2500USB.md](src/wifit3/chips/rt2500usb/RT2500USB.md)
