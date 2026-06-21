@@ -35,7 +35,7 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
     ChannelFilterDialog #dialog {
         width: 48;
         height: auto;
-        max-height: 80%;
+        max-height: 90%;
         border: thick $primary;
         background: $surface;
         padding: 1 2;
@@ -54,11 +54,17 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
         margin-bottom: 1;
     }
     ChannelFilterDialog SelectionList {
-        height: auto;
+        height: 1fr;
         max-height: 16;
+        min-height: 3;
+        overflow-y: auto;
         margin-bottom: 1;
     }
+    /* Dock the buttons to the dialog's bottom edge so a tall channel list (or a
+       short terminal) can never push them out of view — the list scrolls in the
+       space that remains above. */
     ChannelFilterDialog #button-row {
+        dock: bottom;
         height: auto;
         align: center middle;
     }
