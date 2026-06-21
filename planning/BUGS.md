@@ -49,17 +49,28 @@ first-contact (before the first EAP-Request; never mid-exchange, where it would 
 AP) recovers a lost first frame in <1 s instead of a whole retry. Small, isolated change
 in `WpsEnrollee.run()`.
 
-## 5 GHz injection likely broken on mt7921au (PAU0F) — unverified TX path (flag, not root-caused)
+## 5 GHz injection broken on multiple cards — wrong TX rate for the band
 
-Observed (human, vs an AC66U's 5 GHz band): WPS-PBC **and** PMKID both FAIL on the 5 GHz
-AP but WORK on 2.4 GHz, on the PAU0F. 5 GHz **RX** is confirmed (`MT7921AU.md`: beacons on
-CH36/44/149/157), so this isolates to **TX/inject**: RX hears the AP, our injected frames
-never land. The TX gate (`verify_pcap` CHECK 4) byte-matched only *2.4 GHz* aireplay
-captures, so the `band_5ghz=True` branch in `tx._tx_rate_val` (OFDM rate swap) is
-**unverified** — prime suspect. Cross-cutting: active-station WPS on 5 GHz fails on ANY
-card whose 5 GHz inject is unverified, not just the PAU0F — and every active-station HW
-test so far is 2.4 GHz. To chase: capture a 5 GHz aireplay TX, diff the driver's 5 GHz
-inject path against it, fix the rate/path. Flagged, not yet root-caused.
+Two cards confirmed (human, vs an AC66U 5 GHz band): PAU0F (mt7921au) and AWUS036ACM
+(mt76x2u). On each, WPS-PBC **and** PMKID FAIL on 5 GHz but WORK on 2.4 GHz; 5 GHz **RX**
+is fine, so it isolates to **TX/inject** — RX hears the AP, our frames never land.
+
+**mt76x2u — root cause confirmed:** `tx.py` hardcodes every injected frame to CCK 1 Mbps
+(`_TXWI_RATE_CCK_1MBPS = 0x0000`). CCK is 2.4 GHz-only, so on 5 GHz the rate is invalid and
+the PHY drops the frame. Fix: peep the channel (>=36 → 5 GHz) and pass an OFDM rate to
+`build_txwi` (need the mt76x02 OFDM-6 Mbps rate value from source). CCK was a deliberate
+2.4 GHz choice (basic rate the AP always accepts), so keep CCK on 2.4, OFDM on 5.
+
+**mt7921au — separate flavor:** its `tx._tx_rate_val` already has a `band_5ghz` OFDM
+branch, so the CCK story doesn't apply — its 5 GHz failure is a different bug (band flag
+not reaching, wrong rate value, or more than rate). Needs its own look.
+
+**Verification blocked:** no offline gate (verify_pcap CHECK 4 only matched 2.4 GHz
+aireplay) and the agent can't fire live 5 GHz TX. To close: extend `capture.py` to record
+5 GHz inject (`--bssid2g/--bssid5g`, `--channel2g/--channel5g`), capture a 5 GHz aireplay
+session, byte-diff the driver's 5 GHz inject, then human HW-test. Cross-cutting:
+active-station WPS on 5 GHz fails on any card whose 5 GHz inject is broken; every
+active-station HW test so far is 2.4 GHz.
 
 ## 5 GHz drivers under-list DFS channels the cards support (deferred — DFS ≈ empty air)
 
