@@ -110,3 +110,12 @@ driver's `set_channel` reproduces the capture's DFS tunes, (3) then extend
 (52–144), the scanner's non-DFS default hop, and the Channel-Filter `[d]fs` opt-in.
 
 ---
+
+## Channel Filter modal cuts off OK / Cancel in small terminals
+
+The Channel-Filter modal (`ui/screens/channel_filter.py`, `ChannelFilterDialog`) clips its
+**OK / Cancel** buttons in a small terminal window — the channel list eats the available
+height. The buttons must always stay visible: shrink/scroll the list when space is tight,
+and/or give the modal a taller min-height.
+
+---

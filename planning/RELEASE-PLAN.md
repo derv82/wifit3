@@ -60,3 +60,20 @@ community PRs. Required:
   constants + `[WIRE]` cites.
 
 ---
+
+## Channel Tune Crackdown
+
+The ar9271 shipped a 2-channel placeholder that silently pinned every tune to CH6 — a
+card-wrecking bug that bring-up testing (CH1/CH6 only) sailed right past. Before release,
+exercise the tune path on every common channel, every card:
+
+- Test every (common) channel on every card thoroughly.
+  - Use test routers (dual 2G & 5G) when possible to enforce a high expected beacon throughput.
+  - Common 2G: 1, 3, 6, 8, 11
+  - Common 5G: 36, 44, 149, 157
+- Focus a unique target in every common channel.
+  - Look for: lower beacon rate compared to other channels.
+- Channel-filter each of the common channels.
+  - Look for: seeing *other* channels' APs when filtering for one channel.
+
+---
