@@ -1,30 +1,19 @@
-from ..constants import AR_PHY_SYNTH_CONTROL
+import struct
 
-# Synthesizer Words for Fractional-N Math (Channel -> Word)
-SYNTH_WORDS = {
-    1: 0x30a0cccc,
-    6: 0x30a27777,
-}
+from ..constants import AR_PHY_SYNTH_CONTROL, WMI_REG_WRITE_CMDID
 
-# The "Golden Sequence" - a simplified version for implementation.
-# In a real scenario, this would be a large list of WMI_REG_WRITE payloads.
+
+def _synth_word(channel: int) -> int:
+    """AR9271 2.4 GHz synthesizer-control word — ath9k CHANSEL_2G fractional-N:
+    0x30000000 (the fixed 2.4 GHz PLL bits) | (freq * 0x10000 / 15). Reproduces the two
+    captured words exactly (CH1=0x30a0cccc, CH6=0x30a27777). [SRC] ath9k ar9002_phy."""
+    freq = 2412 + 5 * (channel - 1)          # 2.4 GHz channel center in MHz (CH1..13)
+    return 0x30000000 | ((freq * 0x10000) // 15)
+
+
 def get_channel_hop_sequence(channel: int):
-    """
-    Returns a list of (command_id, payload) tuples for a channel change.
-    """
-    seq = []
-    
-    # Placeholder: In a real implementation, this would contain the 50+ 
-    # register writes captured in the golden templates.
-    
-    # The most critical poke: The Synthesizer Control
-    synth_word = SYNTH_WORDS.get(channel, 0x30a27777)
-    
-    # 0x0015 = WMI_REG_WRITE_CMDID
-    # Payload: [Addr(4, BE)] [Value(4, BE)]
-    import struct
-    synth_payload = struct.pack(">II", AR_PHY_SYNTH_CONTROL, synth_word)
-    
-    seq.append((0x0015, synth_payload))
-    
-    return seq
+    """WMI reg-writes for a channel change — the synth poke that moves the RF onto
+    ``channel``. (ath9k's per-channel analog/calibration writes aren't ported; basic RX
+    works without them, as CH1/CH6 always did — the bug was the synth, not the cal.)"""
+    return [(WMI_REG_WRITE_CMDID,
+             struct.pack(">II", AR_PHY_SYNTH_CONTROL, _synth_word(channel)))]
