@@ -907,11 +907,18 @@ def set_channel_20mhz(
     else:
         transport.clear_bits(MT_BBP_CORE(1), 0x20)
 
-    # Step 11 (skipped — display only): mt76x0_read_rx_gain.
-    # Without it, lna_gain stays at the default 0; AGC,8 isn't adjusted.
+    # Step 11: mt76x0_read_rx_gain — read this channel's RX LNA gain from EEPROM
+    # so the AGC,8 gain is corrected per-band/subband (the kernel's per-tune RX
+    # sensitivity cal). [SRC] mt76x0/phy.c:1002. With no cache (caller passed no
+    # efuse_full) lna_gain stays 0 — the pre-fix behaviour.
+    from .eeprom import lna_gain_for_channel
+    lna_gain = 0
+    if efuse_full is not None:
+        lna_gain = lna_gain_for_channel(efuse_full.cache, channel)
 
-    # Step 12: mt76x0_phy_set_chan_bbp_params — per-channel BBP tweaks.
-    phy_set_chan_bbp_params(transport, rf_bw_band, lna_gain=0)
+    # Step 12: mt76x0_phy_set_chan_bbp_params — per-channel BBP tweaks, incl.
+    # AGC,8 gain -= lna_gain*2. [SRC] mt76x0/phy.c:400-418.
+    phy_set_chan_bbp_params(transport, rf_bw_band, lna_gain=lna_gain)
 
     # Step 13: enable VCO. [SRC] mt76x0/phy.c:1006.
     rf_set(mcu, MT_RF(0, 4), 0x80)

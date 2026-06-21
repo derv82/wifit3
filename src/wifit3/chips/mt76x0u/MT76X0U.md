@@ -17,13 +17,12 @@ Cross-driver gap classes (project audit 2026-05-25).
   registers (`MT_MAC_ADDR_DW1` U2ME_MASK, `MT_MAC_BSSID_DW1` MBSS) with bare
   MAC so unicast DATA (incl. EAPOL) isn't dropped. ToDS capture should work.
   [SRC mt76x0/main.c:80-86]
-- [ ] **Weak 5 GHz RX — per-channel LNA gain skipped** — CONFIRMED root cause of the
-  desensitized 5 GHz RX (~3.5 vs ~9.8 beacons/s ceiling on CH157, [HW] 2026-06-21).
-  `set_channel_20mhz` (`phy.py:914`) hardcodes `lna_gain=0` and skips `mt76x0_read_rx_gain`
-  (Step 11, `phy.py:910`); the kernel reads a per-band / per-5GHz-subband LNA gain from
-  EEPROM and applies `AGC,8 gain -= lna_gain*2` (`mt76x0/phy.c:1002,415`). The skip comment
-  claims "display only" but `lna_gain` feeds the AGC gain register, not just RSSI display.
-  Detail in "Weak 5 GHz RX — root cause" below; NOT fixed (awaiting a 5 GHz capture gate).
+- [x] **Weak 5 GHz RX — per-channel LNA gain** — FIXED + agent-verified (2026-06-21). Was:
+  `set_channel_20mhz` (`phy.py`) hardcoded `lna_gain=0`, skipping `mt76x0_read_rx_gain`, so
+  the per-band/subband AGC,8 gain correction (`gain -= lna_gain*2`, `mt76x0/phy.c:415`) was
+  never applied → ~36% beacon reception on 5 GHz. Now ported via
+  `eeprom.lna_gain_for_channel`. Cold-boot beacon_watch on CH157: **3.5/s → 9.5/s** (~97% of
+  the ceiling). Detail in "Weak 5 GHz RX — root cause + fix" below.
 
 Verified facts only. Anything unverified is excluded; if a claim isn't
 backed by either kernel source or pcap evidence, it isn't here.
@@ -653,7 +652,7 @@ All values used in M1+M2+M3 with their kernel source line.
 | `MT_SKEY_MODE_MASK` | GENMASK(3,0) = 0xF | mt76x02_regs.h:677 |
 | `MT_SKEY_MODE_SHIFT(bss, idx)` | `4*(idx + 4*(bss & 1))` | mt76x02_regs.h:678 |
 
-## Weak 5 GHz RX — root cause: per-channel LNA gain skipped (2026-06-21)
+## Weak 5 GHz RX — root cause + fix: per-channel LNA gain (2026-06-21)
 
 **Symptom** ([HW], agent baseline 2026-06-21): on 5 GHz the card receives but is
 desensitized. Cold 60 s soak on CH157 pinned to a reference AP: **mean 3.5 beacons/s**
@@ -687,10 +686,13 @@ comment mispredicts the axis:
 **not ported** — no host-side dynamic gain re-seed. It compounds a wrong static baseline but
 isn't the primary cause.
 
-**Proposed fix (NOT applied — awaiting a 5 GHz capture gate):** port `mt76x0_read_rx_gain`
-(read `MT_EE_LNA_GAIN` + the RSSI-offset EEPROM words, derive `lna_gain` via the
-band/sub-band table) and thread the real `lna_gain` into `phy_set_chan_bbp_params` from
-`set_channel_20mhz`. The EFUSE read path already exists (`eeprom.py`), so this is two more
-EEPROM words + one threaded value. Gate it: capture a 5 GHz session with the new `capture.py`
-5 GHz flags, byte-diff the `MT_BBP(AGC,8)` write vs the kernel, then re-run the beacon_watch
-soak (target ≥8/s on CH157) to confirm the sensitivity recovery.
+**Fix applied + agent-verified (2026-06-21).** Ported the LNA-gain half of
+`mt76x0_read_rx_gain` as `eeprom.lna_gain_for_channel(cache, channel)` (reads `MT_EE_LNA_GAIN`
++ the two RSSI-offset words, band/sub-band select, `!= 0 && != 0xff` fallback to lna_5g[0],
+0xff→0, s8 sign-extend) and threaded the real `lna_gain` into `phy_set_chan_bbp_params` from
+`set_channel_20mhz` (`phy.py`). A cold-boot beacon_watch soak on CH157 (the reference AP) jumped from
+**mean 3.5/s → 9.5/s** (212 → 572 beacons/60s, ~36% → ~97% of the 9.77/s ceiling; median 10,
+min 8, stdev 0.6), and the whole band lifted (top APs ~290 → ~580 beacons/60s). Unit test:
+`tests/chips/mt76x0u/test_eeprom_lna_gain.py`. Still open: the `rssi_offset[]` (RSSI-display)
+half is unported, and the periodic `mt76x0_phy_update_channel_gain` tracker remains a
+separate, lower-priority gap. User to HW-test the full 5 GHz attack suite.

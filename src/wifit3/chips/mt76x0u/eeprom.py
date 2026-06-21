@@ -40,6 +40,9 @@ from .constants import (
     MT_EE_2G_TARGET_POWER,
     MT_EE_CHIP_ID,
     MT_EE_FREQ_OFFSET,
+    MT_EE_LNA_GAIN,
+    MT_EE_RSSI_OFFSET_2G_1,
+    MT_EE_RSSI_OFFSET_5G_1,
     MT_EE_MAC_ADDR,
     MT_EE_NIC_CONF_0,
     MT_EE_NIC_CONF_0_BOARD_TYPE_MASK,
@@ -285,6 +288,46 @@ def decode_freq_offset(cache: EEPROMCache) -> int:
         comp = 0
     freq_offset -= _sign_extend(comp, 8)
     return freq_offset
+
+
+def lna_gain_for_channel(cache: EEPROMCache, channel: int) -> int:
+    """Per-channel RX LNA gain (signed dB) — the value the AGC gain register is
+    corrected by (`AGC,8 gain -= lna_gain*2`) for sensitivity on this channel.
+
+    Ports `mt76x02_get_rx_gain` (LNA extraction) + `mt76x02_get_lna_gain` (band /
+    5 GHz-subband select) [SRC] mt76x02_eeprom.c:102-147, as driven per-tune by
+    `mt76x0_read_rx_gain` [SRC] mt76x0/eeprom.c:110. Only the LNA-gain half is
+    ported; the `rssi_offset[]` half is RSSI-display-only and unused here.
+
+    Subband map by channel number (`chan->hw_value`): 2.4 GHz → lna_2g; 5 GHz
+    ch≤64 → lna_5g[0], ch≤128 → lna_5g[1], else → lna_5g[2]. An invalid 5 GHz
+    subband entry (`mt76x02_field_valid` = ``!= 0 and != 0xff``) falls back to
+    lna_5g[0]; a 0xff selection yields 0. The result is sign-extended because the
+    kernel stores it in an ``s8`` (`mt76x02_rx_freq_cal.lna_gain`).
+    """
+    lna_word = cache.get_u16(MT_EE_LNA_GAIN)
+    lna_2g = lna_word & 0xFF
+    lna_5g = [
+        lna_word >> 8,
+        cache.get_u16(MT_EE_RSSI_OFFSET_2G_1) >> 8,
+        cache.get_u16(MT_EE_RSSI_OFFSET_5G_1) >> 8,
+    ]
+    # mt76x02_field_valid(u8) = (val != 0 && val != 0xff) — NB stricter than the
+    # local _field_valid_u8 (which only excludes 0xff); 0 must also fall back.
+    for i in (1, 2):
+        if lna_5g[i] in (0, 0xFF):
+            lna_5g[i] = lna_5g[0]
+
+    if channel <= 14:
+        lna = lna_2g
+    elif channel <= 64:
+        lna = lna_5g[0]
+    elif channel <= 128:
+        lna = lna_5g[1]
+    else:
+        lna = lna_5g[2]
+
+    return 0 if lna == 0xFF else _sign_extend(lna, 8)
 
 
 @dataclass

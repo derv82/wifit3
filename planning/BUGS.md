@@ -89,10 +89,12 @@ work on 5 GHz — it is purely the RX sensitivity. 2.4 GHz RX is fine.
 EEPROM (`mt76x0/phy.c:1002`; `mt76x02_eeprom.c:136` — CH157 → `lna_5g[2]`) and applies
 `AGC,8 gain -= lna_gain*2` (`mt76x0/phy.c:415`); the port leaves AGC,8 uncorrected on 5 GHz.
 The `lna_gain` half of read_rx_gain is functional, not display-only (only `rssi_offset` is).
-Agent baseline confirms it: 3.5/s mean on CH157 (~36% of the 9.77/s ceiling), card-wide. Fix
-(NOT applied — awaiting a 5 GHz capture gate): port read_rx_gain + thread the real lna_gain;
-secondary, the periodic `mt76x0_phy_update_channel_gain` AGC tracker is also unported. Full
-audit + proposed fix + gate plan: `MT76X0U.md`.
+**FIXED + agent-verified (2026-06-21):** ported `mt76x0_read_rx_gain`'s LNA-gain half
+(`eeprom.lna_gain_for_channel`) and threaded the real `lna_gain` into `phy_set_chan_bbp_params`.
+Cold-boot beacon_watch on CH157 jumped **3.5/s → 9.5/s** (~36% → ~97% of the 9.77/s ceiling),
+and the whole band lifted. Still open (lower priority): the periodic
+`mt76x0_phy_update_channel_gain` AGC tracker is unported; `rssi_offset[]` (display) unported.
+User to HW-test the full 5 GHz attack suite. Full audit: `MT76X0U.md`.
 
 **Verification blocked:** no offline gate (verify_pcap CHECK 4 only matched 2.4 GHz
 aireplay) and the agent can't fire live 5 GHz TX. To close: extend `capture.py` to record

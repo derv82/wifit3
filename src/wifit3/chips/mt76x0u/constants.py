@@ -639,6 +639,11 @@ MT_EE_COUNTRY_REGION_5GHZ    = 0x038
 MT_EE_COUNTRY_REGION_2GHZ    = 0x039
 MT_EE_FREQ_OFFSET            = 0x03A
 MT_EE_NIC_CONF_2             = 0x042
+# RX LNA gain (per-band / per-5GHz-subband). [SRC] mt76x02_eeprom.h:29-35.
+# Read as u16 words; the gains are the high bytes (lna_2g is the 0x044 low byte).
+MT_EE_LNA_GAIN               = 0x044   # lo=lna_2g, hi=lna_5g[0]
+MT_EE_RSSI_OFFSET_2G_1       = 0x048   # hi byte = lna_5g[1] (== MT_EE_LNA_GAIN_5GHZ_1 0x049)
+MT_EE_RSSI_OFFSET_5G_1       = 0x04C   # hi byte = lna_5g[2] (== MT_EE_LNA_GAIN_5GHZ_2 0x04d)
 MT_EE_USAGE_MAP_START        = 0x1E0
 MT_EE_USAGE_MAP_END          = 0x1FC
 MT_EFUSE_USAGE_MAP_SIZE      = MT_EE_USAGE_MAP_END - MT_EE_USAGE_MAP_START + 1
