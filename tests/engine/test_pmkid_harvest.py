@@ -8,7 +8,7 @@ rotate the MAC + retry when the AP stays silent (no M1).
 """
 from types import SimpleNamespace
 
-from wifit3.engine.attacks.pmkid_harvest import PmkidHarvestAttack
+from wifit3.engine.attacks.pmkid_harvest import PmkidFail, PmkidHarvestAttack
 
 _BSSID = "aa:bb:cc:dd:ee:01"
 _BSSID_B = bytes.fromhex("aabbccddee01")
@@ -70,7 +70,7 @@ async def test_empty_m1_deauths_does_not_retry_and_says_why():
     a = PmkidHarvestAttack(iface, _target())
     out = await a.run(attempts=3, m1_timeout=0.05)
     assert out is None
-    assert "no PMKID KDE" in a.fail_reason                     # specific, definitive reason
+    assert a.fail_reason is PmkidFail.NO_KDE                   # specific, definitive reason
     assert len(_deauths(iface)) == 3                           # still deauth — we got M1
     assert len(_assoc_reqs(iface)) == 1                        # the fix: ONE attempt, not 3
 
@@ -80,7 +80,7 @@ async def test_silent_ap_retries_then_gives_up_without_deauth():
     a = PmkidHarvestAttack(iface, _target())
     out = await a.run(attempts=3, m1_timeout=0.02)
     assert out is None
-    assert "never answered" in a.fail_reason
+    assert a.fail_reason is PmkidFail.NO_RESPONSE
     assert len(_assoc_reqs(iface)) == 3                        # rotate + retry while silent
     assert _deauths(iface) == []                               # never got M1 → nothing to leave
 
@@ -90,7 +90,7 @@ async def test_pmf_required_short_circuits_without_tx():
     a = PmkidHarvestAttack(iface, _target(pmf_required=True))
     out = await a.run()
     assert out is None
-    assert "PMF Required" in a.fail_reason
+    assert a.fail_reason is PmkidFail.PMF_REQUIRED
     assert iface.sent == []                                    # don't even try — no auth/assoc/deauth
 
 

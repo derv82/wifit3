@@ -23,6 +23,7 @@ with a PMKID-less M1 (or never answers). Cracker-side, the existing
 from __future__ import annotations
 
 import asyncio
+import enum
 import logging
 import os
 import struct
@@ -32,6 +33,14 @@ from typing import Optional
 from wifit3.engine.models import AccessPoint
 
 logger = logging.getLogger(__name__)
+
+
+class PmkidFail(enum.Enum):
+    """Why a PMKID harvest failed — the UI maps each to a short display line
+    (engine stays markup-free; presentation/length live in the view)."""
+    PMF_REQUIRED = "pmf_required"   # AP only associates protected (802.11w) clients
+    NO_KDE = "no_kde"               # M1 arrived but carried no PMKID KDE
+    NO_RESPONSE = "no_response"     # never got an M1 (AP stayed silent)
 
 
 def _mac_bytes_to_str(b: bytes) -> str:
@@ -84,7 +93,7 @@ class PmkidHarvestAttack:
         self.source_mac = source_mac or _random_client_mac()
         # Set by run() on failure to the specific cause (PMF / PMKID-less M1 /
         # silent), so the UI reports why instead of guessing.
-        self.fail_reason: Optional[str] = None
+        self.fail_reason: Optional[PmkidFail] = None
         # Register with the interface so client/handshake registration
         # ignores these MACs (they're not real clients).
         self.iface.register_forged_mac(self.source_mac)
@@ -199,11 +208,7 @@ class PmkidHarvestAttack:
         # PMF Required: the AP only associates protected (802.11w) clients, so our
         # unprotected Auth/Assoc is ignored — no M1, no PMKID. Don't waste the air.
         if self.target.pmf_required:
-            self.fail_reason = (
-                "PMF Required — the AP only talks to protected (802.11w) clients; "
-                "our unprotected association is ignored, so there's no M1 to read a "
-                "PMKID from"
-            )
+            self.fail_reason = PmkidFail.PMF_REQUIRED
             logger.info("[PMKID] %s is PMF-Required — unharvestable, skipping.",
                         self.target.bssid)
             return None
@@ -238,10 +243,7 @@ class PmkidHarvestAttack:
                             f"(STA {_mac_bytes_to_str(self.source_mac)})"
                         )
                         return hs.pmkid
-                    self.fail_reason = (
-                        "the AP answered with an M1 but no PMKID KDE — it doesn't "
-                        "expose one (retrying the same AP won't help)"
-                    )
+                    self.fail_reason = PmkidFail.NO_KDE
                     logger.info(
                         f"[PMKID] {self.target.bssid} answered with a PMKID-less M1 — "
                         f"this AP doesn't expose one; not retrying."
@@ -255,10 +257,5 @@ class PmkidHarvestAttack:
             self._rotate_mac()
 
         # Exhausted every attempt without a single M1.
-        if self.target.pmf_capable:
-            self.fail_reason = ("no M1 — the AP is PMF-capable and may be dropping "
-                                "our (non-PMF) association")
-        else:
-            self.fail_reason = ("no M1 — the AP never answered our Auth/Assoc "
-                                "(out of range, busy, or refused)")
+        self.fail_reason = PmkidFail.NO_RESPONSE
         return None

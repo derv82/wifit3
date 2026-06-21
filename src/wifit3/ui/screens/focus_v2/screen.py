@@ -44,7 +44,7 @@ from textual.screen import Screen
 from textual.widgets import Button, Static
 
 from wifit3.engine.attacks import treelog
-from wifit3.engine.attacks.pmkid_harvest import PmkidHarvestAttack
+from wifit3.engine.attacks.pmkid_harvest import PmkidFail, PmkidHarvestAttack
 from wifit3.engine.attacks.wep.campaign import WepCampaign
 from wifit3.engine.attacks.wpa3_downgrade import WPA3DowngradeAttack
 from wifit3.engine.attacks.wps.campaign import WpsCampaign
@@ -649,8 +649,12 @@ class FocusViewV2(Screen):
             else:
                 self._log(treelog.leaf(_save_line(result)))
         else:
-            reason = attack.fail_reason or "no M1 / PMKID (unknown reason)"
-            self._log(treelog.leaf_fail(f"[bold red]No PMKID:[/bold red] {reason}"))
+            blurb = {
+                PmkidFail.PMF_REQUIRED: "[bold]PMF Required[/bold] — AP ignores us",
+                PmkidFail.NO_KDE: "AP [italic]does not[/italic] include [bold]PMKID[/bold] in [bold]M1[/bold]",
+                PmkidFail.NO_RESPONSE: "AP [italic]never answered[/italic]",
+            }.get(attack.fail_reason, "harvest failed")
+            self._log(treelog.leaf_fail(f"[bold red]No PMKID:[/bold red] {blurb}"))
 
     # ----- WPA3 downgrade ----------------------------------------------------
 
