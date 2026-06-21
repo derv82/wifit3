@@ -26,7 +26,7 @@ from typing import Callable, ClassVar, List, Optional
 
 import usb.core
 
-from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -42,7 +42,7 @@ from .watchdog import tick as watchdog_tick
 from .efuse import read_chip_params
 from .firmware import bring_up
 from .mac import hal_init_turn_on, mac_init_misc, phy_mac_config
-from .monitor import enable_rx_bar, enter_monitor, set_sta_opmode
+from .monitor import _set_macaddr, enable_rx_bar, enter_monitor, set_sta_opmode
 from .rf import phy_rf_config
 from .rx import iter_frames
 from .transport import Rtl8814auTransport
@@ -66,6 +66,7 @@ class Rtl8814auDkmsDriver:
     # 2.4 GHz + 5 GHz, 20 MHz primary (M5a band switch / M5b select / M5c runtime / M5d TX
     # power) — both bands tune with correct per-rate TX power for RX and inject.
     SUPPORTED_CHANNELS: ClassVar[List[int]] = list(CHANNELS_2G + CHANNELS_5G)
+    FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     def __init__(self, transport: Rtl8814auTransport):
         self.transport = transport
@@ -277,6 +278,23 @@ class Rtl8814auDkmsDriver:
             await loop.run_in_executor(
                 None, self.transport.bulk_out, desc + frame_bytes)
         return True
+
+    async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
+        """Re-point REG_MACID to ``mac`` so the hardware HW-ACKs frames to it.
+        Reversed by exit_active_monitor."""
+        mac_str = ":".join(f"{b:02x}" for b in mac)
+        loop = asyncio.get_running_loop()
+        async with self._io_lock:
+            await loop.run_in_executor(None, _set_macaddr, self.transport, mac_str)
+        return bytes(mac)
+
+    async def exit_active_monitor(self) -> None:
+        """Restore the card's real MAC in REG_MACID."""
+        if not self.mac_address:
+            return
+        loop = asyncio.get_running_loop()
+        async with self._io_lock:
+            await loop.run_in_executor(None, _set_macaddr, self.transport, self.mac_address)
 
     async def close(self) -> None:
         # Stop the DIG watchdog and the reader before releasing the USB handle.

@@ -127,13 +127,14 @@ This board + the commits are the durable record; the lead's context is a disposa
 cache. A mid-rollout reset resumes from here, not from holding 14 drivers in head.
 `[x]` HW-green · `[~]` wired, awaiting HW · `[ ]` not started.
 
-- `[x]` mt7921au — SPOOFABLE — HW-green (commit 8c0bcb9e)
+- `[x]` mt7921au — SPOOFABLE — HW-green (commit 8c0bcb9e); **chatty ~120 EAPOLs** (reserved-WCID uplink → no ACK-tracked retransmit). STA_REC would fix it AND unlock per-frame TX-status (the "ACK effectiveness %" feature). Both PAU0F + AXML.
 - `[x]` rt2800usb — SPOOFABLE — HW-green (PAU09/RT5572, ~20 EAPOLs, clean)
 - `[x]` rt3070 — SPOOFABLE — HW-green (AWUS036NH, ~13 EAPOLs; added write_mac_address)
 - `[x]` mt76x2u — SPOOFABLE — HW-green (AWUS036ACM, ~24 EAPOLs, 2.4 GHz; 5 GHz inject broken, see BUGS)
 - `[x]` rtl8812au_dkms — SPOOFABLE — HW-green (AWUS036ACH, ~25 EAPOLs; MAC-only, no RCR flip; 5 GHz works too)
 - `[x]` rtl8822bu_dkms — SPOOFABLE — HW-green (Archer T3U Plus, ~22 EAPOLs, 2.4+5 GHz; rtw88 stack, MAC-only)
 - `[x]` ar9271 — SPOOFABLE — HW-green (AWUS036NHA, ~14 EAPOLs; STA_ID0/1 via WMI, flags-clear OK; needed a tuning fix first)
-- `[ ]` siblings: rtl8812au, rtl8821au(+dkms), rtl8188eus(+dkms), rtl8814au_dkms, rtw88_8814au, rt5372, mt76x0u
+- `[x]` rtl8814au_dkms — SPOOFABLE — HW-green (AWUS1900, ~25 EAPOLs, 2.4+5 GHz; rtl8xxxu sibling)
+- `[ ]` remaining default siblings: rtl8821au_dkms, rtl8188eus_dkms, rt5372, mt76x0u (mainline/non-dkms variants stay UNIMPLEMENTED per Scope)
 - `[ ]` rtl8187 — NONE (passive monitor, no ACK engine)
 - `[ ]` rt2500usb — NONE (no autoresponder)
