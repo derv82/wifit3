@@ -42,6 +42,25 @@ are blocked for that span. Give it manual control — a **Stop PBC** button (and
 **Start PBC** when a window is open) — and/or bound the retry loop so a single
 timeout can't hold the radio. Minor; deferred.
 
+First-contact angle (shrinks these timeout windows): a zero-EAPOL timeout is usually a
+lost EAPOL-Start (or auth/assoc) — the AP stays silent and the enrollee burns its full
+~2–3 s wait before the outer retry. Resending EAPOL-Start every ~700 ms during
+first-contact (before the first EAP-Request; never mid-exchange, where it would reset the
+AP) recovers a lost first frame in <1 s instead of a whole retry. Small, isolated change
+in `WpsEnrollee.run()`.
+
+## 5 GHz injection likely broken on mt7921au (PAU0F) — unverified TX path (flag, not root-caused)
+
+Observed (human, vs an AC66U's 5 GHz band): WPS-PBC **and** PMKID both FAIL on the 5 GHz
+AP but WORK on 2.4 GHz, on the PAU0F. 5 GHz **RX** is confirmed (`MT7921AU.md`: beacons on
+CH36/44/149/157), so this isolates to **TX/inject**: RX hears the AP, our injected frames
+never land. The TX gate (`verify_pcap` CHECK 4) byte-matched only *2.4 GHz* aireplay
+captures, so the `band_5ghz=True` branch in `tx._tx_rate_val` (OFDM rate swap) is
+**unverified** — prime suspect. Cross-cutting: active-station WPS on 5 GHz fails on ANY
+card whose 5 GHz inject is unverified, not just the PAU0F — and every active-station HW
+test so far is 2.4 GHz. To chase: capture a 5 GHz aireplay TX, diff the driver's 5 GHz
+inject path against it, fix the rate/path. Flagged, not yet root-caused.
+
 ## 5 GHz drivers under-list DFS channels the cards support (deferred — DFS ≈ empty air)
 
 Every 5 GHz driver **except** `rtl8814au_dkms` advertises the byte-identical 9
