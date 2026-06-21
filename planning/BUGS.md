@@ -51,6 +51,16 @@ in `WpsEnrollee.run()`. (Decided against the ~700 ms resend: it inflates the ~20
 cleanliness metric we gauge active-monitor ports by. A fix must NOT add to the count —
 e.g. a single resend only *after* the first timeout, or a faster outer retry.)
 
+**Root-caused + fixed (2026-06-21):** the dominant PBC stall isn't a lost first frame — it's
+a *slow* AP. On 5 GHz an AP's M6 can take ~4.6 s, but `WpsEnrollee.msg_timeout` was 3 s, so we
+abandoned mid-exchange ~1.6 s early, then rotated to a fresh MAC and orphaned the AP's EAP
+session (it keeps retransmitting the in-flight WSC message to the dead MAC and won't service
+the next MAC → every retry hangs at Identity). Fix: `msg_timeout` 3→5 s (patience, zero added
+traffic) + a client-leaving deauth on PBC teardown (`association.build_client_leaving`, sent in
+`WpsPbcCapture.capture()` on non-success) so the AP drops the session before the next attempt's
+MAC. The 700 ms resend above stays a *separate*, first-contact-only idea — it must never fire
+mid-exchange (it would reset a slow-but-working AP).
+
 ## 5 GHz injection broken on multiple cards — per-driver TX-side causes
 
 Two cards confirmed (human, vs an AC66U 5 GHz band): PAU0F (mt7921au) and AWUS036ACM

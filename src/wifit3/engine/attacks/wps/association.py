@@ -56,6 +56,21 @@ def random_client_mac() -> bytes:
     return bytes([0x02]) + os.urandom(5)
 
 
+def build_client_leaving(bssid: bytes, our_mac: bytes, deauth: bool = True) -> bytes:
+    """A client→AP deauth (default) / disassoc announcing we're leaving the BSS.
+
+    Sent when abandoning a stalled WPS attempt so the AP drops our (possibly
+    mid-exchange) EAP session. Otherwise it keeps retransmitting the in-flight WSC
+    message to our now-dead MAC and won't start a fresh session for the next
+    attempt's new MAC — the "stuck at Identity" lockout. Reason 3 = STA leaving
+    (deauth); reason 8 = STA leaving (disassoc). addr1=AP, addr2=us, addr3=AP."""
+    subtype = _SUBTYPE_DEAUTH if deauth else _SUBTYPE_DISASSOC
+    reason = 3 if deauth else 8
+    return (bytes([subtype << 4, 0x00]) + b"\x00\x00"        # frame control + duration
+            + bssid + our_mac + bssid + b"\x00\x00"          # addr1/2/3 + seq_ctrl
+            + struct.pack("<H", reason))
+
+
 class WlanTransport:
     """Registrar transport over a live WlanInterface."""
 

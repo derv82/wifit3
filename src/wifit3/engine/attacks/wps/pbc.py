@@ -15,9 +15,12 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from .association import WPS_REQ_ENROLLEE, WlanTransport, WpsAssociation, random_client_mac, str_to_mac
+from .association import (
+    WPS_REQ_ENROLLEE, WlanTransport, WpsAssociation, build_client_leaving,
+    random_client_mac, str_to_mac,
+)
 from .enrollee import WpsEnrollee
-from .registrar import AttemptOutcome
+from .registrar import AttemptOutcome, PinResult
 
 logger = logging.getLogger(__name__)
 
@@ -66,12 +69,24 @@ class WpsPbcCapture:
         transport = WlanTransport(self.iface, str_to_mac(self.bssid), self.our_mac,
                                   tx_observer=self.tx_observer, ack=armed is not None)
         transport.start()
+        outcome = None
         try:
             if not await assoc.associate():
                 self.log(f"assoc failed ({assoc.fail_reason}); running EAPOL anyway")
             outcome = await WpsEnrollee(transport, str_to_mac(self.bssid),
                                         self.our_mac, log=self.log).run()
         finally:
+            # Abandoning a (possibly mid-exchange) attempt: tell the AP we're
+            # leaving so it drops our EAP session. Otherwise it keeps retransmitting
+            # the in-flight WSC message to this now-dead MAC and won't service the
+            # next attempt's fresh MAC — the "stuck at Identity" lockout cascade.
+            # Skipped on SUCCESS (the exchange already completed cleanly).
+            if outcome is None or outcome.result is not PinResult.SUCCESS:
+                try:
+                    await self.iface.send_raw(
+                        build_client_leaving(str_to_mac(self.bssid), self.our_mac))
+                except Exception:
+                    logger.debug("PBC leaving-deauth failed", exc_info=True)
             await self.iface.clear_fake_mac()
             transport.stop()
             assoc.stop()

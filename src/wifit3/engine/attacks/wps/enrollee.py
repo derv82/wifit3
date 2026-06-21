@@ -34,7 +34,7 @@ class WpsEnrollee:
         transport: WpsTransport,
         bssid: bytes,
         our_mac: bytes,
-        msg_timeout: float = 3.0,
+        msg_timeout: float = 5.0,
         eapol_start_timeout: float = 2.0,
         overall_timeout: float = 30.0,
         log=None,
