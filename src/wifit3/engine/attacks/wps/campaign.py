@@ -70,6 +70,7 @@ class WpsCampaign:
         self.our_mac = random_client_mac()
         self.assoc: Optional[WpsAssociation] = None
         self.transport: Optional[WlanTransport] = None
+        self._ack = False   # set per-session in _ensure_session from set_fake_mac (active-monitor)
         self.lock = LockTracker()
 
         self.state = self._load_state()
@@ -171,10 +172,15 @@ class WpsCampaign:
     # ---- the sweep ----------------------------------------------------------
     async def _ensure_session(self) -> bool:
         if self.assoc is None:
+            # Arm active-monitor for THIS session's MAC (re-armed after every _rotate_mac) so
+            # the AP's M-frames are HW-ACKed — un-ACKed is too flaky for an 11k-PIN sweep.
+            armed = await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
+            self._ack = armed is not None
             self.assoc = WpsAssociation(self.iface, self.bssid, self.target.ssid or "",
                                         self.channel, our_mac=self.our_mac)
             self.assoc.start()
-            self.transport = WlanTransport(self.iface, str_to_mac(self.bssid), self.our_mac)
+            self.transport = WlanTransport(self.iface, str_to_mac(self.bssid), self.our_mac,
+                                           ack=self._ack)
             self.transport.start()
         if not self.assoc.associated:
             return await self.assoc.associate()
@@ -361,6 +367,7 @@ class WpsCampaign:
         finally:
             self._save_state()
             self._teardown()
+            await self.iface.clear_fake_mac()
 
     def _beacon_locked(self) -> bool:
         ap = self.iface.access_points.get(self.bssid) if hasattr(self.iface, "access_points") else None

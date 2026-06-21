@@ -17,8 +17,17 @@ def _target(bssid="aa:bb:cc:dd:ee:ff", ssid="Net", ch=1):
     return SimpleNamespace(bssid=bssid, ssid=ssid, channel=ch, wps_locked=False)
 
 
+async def _set_fake_mac(*_a, **_k):
+    return None   # un-ACked path: campaign falls back to use_no_ack, as before active-monitor
+
+
+async def _clear_fake_mac(*_a, **_k):
+    return None
+
+
 def _iface():
-    return SimpleNamespace(access_points={})
+    return SimpleNamespace(access_points={},
+                           set_fake_mac=_set_fake_mac, clear_fake_mac=_clear_fake_mac)
 
 
 class ScriptedCampaign(WpsCampaign):
