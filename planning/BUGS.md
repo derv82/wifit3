@@ -51,21 +51,27 @@ in `WpsEnrollee.run()`. (Decided against the ~700 ms resend: it inflates the ~20
 cleanliness metric we gauge active-monitor ports by. A fix must NOT add to the count —
 e.g. a single resend only *after* the first timeout, or a faster outer retry.)
 
-## 5 GHz injection broken on multiple cards — wrong TX rate for the band
+## 5 GHz injection broken on multiple cards — per-driver TX-side causes
 
 Two cards confirmed (human, vs an AC66U 5 GHz band): PAU0F (mt7921au) and AWUS036ACM
 (mt76x2u). On each, WPS-PBC **and** PMKID FAIL on 5 GHz but WORK on 2.4 GHz; 5 GHz **RX**
 is fine, so it isolates to **TX/inject** — RX hears the AP, our frames never land.
 
-**mt76x2u — root cause confirmed:** `tx.py` hardcodes every injected frame to CCK 1 Mbps
-(`_TXWI_RATE_CCK_1MBPS = 0x0000`). CCK is 2.4 GHz-only, so on 5 GHz the rate is invalid and
-the PHY drops the frame. Fix: peep the channel (>=36 → 5 GHz) and pass an OFDM rate to
-`build_txwi` (need the mt76x02 OFDM-6 Mbps rate value from source). CCK was a deliberate
-2.4 GHz choice (basic rate the AP always accepts), so keep CCK on 2.4, OFDM on 5.
+**mt76x2u — root cause confirmed; FIXED source-side (2026-06-21, pending HW):** `tx.py`
+hardcoded every injected frame to CCK 1 Mbps (`_TXWI_RATE_CCK_1MBPS = 0x0000`). CCK is
+2.4 GHz-only, so on 5 GHz the rate is invalid and the PHY drops the frame. Fix shipped:
+`inject_frame` threads the tuned channel and `_txwi_rate_for_channel` picks OFDM 6 Mbps
+(`0x2000`) for ch>=36, CCK 1 Mbps (the AP-accepted basic rate) on 2.4 GHz. Source-faithful;
+awaits a 5 GHz HW test (no mt76 verify_pcap codec to gate it offline).
 
-**mt7921au — separate flavor:** its `tx._tx_rate_val` already has a `band_5ghz` OFDM
-branch, so the CCK story doesn't apply — its 5 GHz failure is a different bug (band flag
-not reaching, wrong rate value, or more than rate). Needs its own look.
+**mt7921au — rate ruled out; RF-side suspect (2026-06-21):** source audit confirms the
+`band_5ghz` path is faithful — the flag reaches (`driver.py:192`), `_tx_rate_val(True)` =
+OFDM idx 11/mode 1 (`0x4b`) matches `mt76_connac2_mac_tx_rate_val` exactly, and the
+FIXED_RATE TXD block is 1:1 with the kernel with `TX_RATE` the only band-dependent field —
+so the 5 GHz TXD is byte-correct (2.4 GHz is CHECK-4 verified). The failure is therefore
+**outside the descriptor**; leading suspect is 5 GHz TX power / per-channel cal not applied
+by the monitor `config_sniffer` channel-switch. Confirm via a 5 GHz inject byte-diff (the
+new `capture.py` per-band flags), then check the TX-power path. Full audit: `MT7921AU.md`.
 
 **Not universal:** rtl8812au_dkms (AWUS036ACH) injects fine on 5 GHz (WPS-PBC + PMKID both
 worked first try). So the *inject* gap is per-driver (mt76x2u + mt7921au), not fleet-wide.
