@@ -37,7 +37,7 @@ bits it flipped) — never invent a teardown.
 | connac2 | mt7921au | omac via `DEV_INFO` | **done** | confirmed (HW) | SPOOFABLE |
 | Realtek rtl8xxxu | rtl8812au, rtl8821au, rtl8188eus (+dkms) | `REG_MACID` 0x0610 [SRC regs.h:789] | **MAC-only** — re-point REG_MACID; the accept-all monitor RCR still HW-ACKs RA==REG_MACID (no RCR flip needed) | **high (proven rtl8812au_dkms)** | SPOOFABLE |
 | Realtek rtw88 | rtl8822bu, rtw88_8814au (+dkms) | `REG_MACID` 0x0610 [SRC main.c:925] | same as rtl8xxxu (MAC-only) | **high (proven rtl8822bu_dkms)** | SPOOFABLE |
-| Atheros | ar9271 | `AR_STA_ID0/1` 0x8000/0x8004 via WMI reg-write [SRC reg.h:1637] | MAC → STA_ID (agent claims ACK matches `AR_BSS_ID`; verify STA_ID first) | low (ACK addr) | SPOOFABLE |
+| Atheros | ar9271 | `AR_STA_ID0/1` 0x8000/0x8004 via WMI reg-write [SRC reg.h:1637] | MAC → `AR_STA_ID0/1` (flags cleared — fine in monitor); ACK matches STA_ID, **not** BSS_ID | **high (proven ar9271)** | SPOOFABLE |
 | Realtek rtl8187 | rtl8187 | MAC[0:5] EEPROM-backed [SRC rtl818x.h:17] | — monitor is passive RX, no ACK engine | confirmed | **NONE** |
 | Ralink rt2500usb | rt2500usb | MAC_CSR2/3/4 writable [SRC rt2500usb.h:79] | — no hardware autoresponder | confirmed | **NONE** |
 
@@ -133,7 +133,7 @@ cache. A mid-rollout reset resumes from here, not from holding 14 drivers in hea
 - `[x]` mt76x2u — SPOOFABLE — HW-green (AWUS036ACM, ~24 EAPOLs, 2.4 GHz; 5 GHz inject broken, see BUGS)
 - `[x]` rtl8812au_dkms — SPOOFABLE — HW-green (AWUS036ACH, ~25 EAPOLs; MAC-only, no RCR flip; 5 GHz works too)
 - `[x]` rtl8822bu_dkms — SPOOFABLE — HW-green (Archer T3U Plus, ~22 EAPOLs, 2.4+5 GHz; rtw88 stack, MAC-only)
-- `[ ]` ar9271 — SPOOFABLE — rep (settle STA_ID vs BSS_ID)
+- `[x]` ar9271 — SPOOFABLE — HW-green (AWUS036NHA, ~14 EAPOLs; STA_ID0/1 via WMI, flags-clear OK; needed a tuning fix first)
 - `[ ]` siblings: rtl8812au, rtl8821au(+dkms), rtl8188eus(+dkms), rtl8814au_dkms, rtw88_8814au, rt5372, mt76x0u
 - `[ ]` rtl8187 — NONE (passive monitor, no ACK engine)
 - `[ ]` rt2500usb — NONE (no autoresponder)

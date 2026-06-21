@@ -15,9 +15,14 @@ from .protocol.metadata import AthMetadataLayer
 # but ruff can't see them statically, so suppress the import-* lints file-wide.
 # ruff: noqa: F403, F405
 from .constants import *
-from wifit3.engine.protocols import DeviceID
+from wifit3.engine.protocols import DeviceID, FakeMacSupport
 
 logger = logging.getLogger(__name__)
+
+# Atheros own-MAC registers — the RA the hardware matches to auto-ACK.
+AR_STA_ID0 = 0x8000   # [SRC] ath9k reg.h: MAC bytes 0-3 (LE)
+AR_STA_ID1 = 0x8004   # [SRC] ath9k reg.h: bytes 4-5 (LE) in [15:0], opmode/KSRCH in [31:16]
+
 
 class AR9271Driver:
     """
@@ -30,6 +35,7 @@ class AR9271Driver:
     ]
     # 2.4 GHz only (no 5 GHz radio).
     SUPPORTED_CHANNELS = list(range(1, 14))
+    FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "AR9271Driver":
@@ -416,6 +422,25 @@ class AR9271Driver:
         # is_data=True means it must go to Bulk OUT (EP 0x01) with a 4-byte HIF header!
         await self.transport.send(self.data_endpoint_id, tx_payload, is_wmi=False, is_data=True)
         return True
+
+    async def enter_active_monitor(self, mac: bytes, bssid=None) -> bytes:
+        """Program ``mac`` into AR_STA_ID0/1 so the hardware HW-ACKs frames to it (ath9k
+        matches RA against AR_STA_ID; our cold path leaves the firmware's real MAC there).
+        Reversed by exit_active_monitor."""
+        await self._write_sta_id(bytes(mac))
+        return bytes(mac)
+
+    async def exit_active_monitor(self) -> None:
+        """Restore the card's real MAC in AR_STA_ID0/1."""
+        if self.mac_address:
+            await self._write_sta_id(bytes(int(b, 16) for b in self.mac_address.split(":")))
+
+    async def _write_sta_id(self, mac: bytes) -> None:
+        # AR_STA_ID1 upper 16 (opmode/KSRCH) cleared — monitor keeps no such state.
+        await self.send_wmi_command(
+            WMI_REG_WRITE_CMDID, struct.pack(">II", AR_STA_ID0, int.from_bytes(mac[0:4], "little")))
+        await self.send_wmi_command(
+            WMI_REG_WRITE_CMDID, struct.pack(">II", AR_STA_ID1, int.from_bytes(mac[4:6], "little")))
 
     async def close(self):
         await self.transport.stop()
