@@ -155,7 +155,7 @@ class AccessPoint:
     beacons: int = 0
     first_seen: float = field(default_factory=time.time)
     # Most recent beacon/probe-resp timestamp. Drives "Last Beacon: Ns ago"
-    # in FocusView and the stale-row dim-out in ScannerView.
+    # in FocusViewV2 and the stale-row dim-out in ScannerView.
     last_seen: float = field(default_factory=time.time)
     wpa3: bool = False
     transition_mode: bool = False

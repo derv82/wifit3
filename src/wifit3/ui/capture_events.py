@@ -4,7 +4,7 @@ harvests) by diffing AP state across polls.
 Lives between the engine and the views: engines mutate ``AccessPoint``
 objects, views poll ``CaptureEventDetector`` once per UI tick and decide
 how to render each event. The detector is purely structural — no Rich
-markup, no logging — so ScannerView and FocusView can shape events
+markup, no logging — so ScannerView and FocusViewV2 can shape events
 differently while sharing dedup state.
 """
 from __future__ import annotations
@@ -82,7 +82,7 @@ class CaptureEvent:
 class CaptureEventDetector:
     """Stateful event differ.
 
-    Pass ``granular_eapol=True`` (FocusView) to also surface every new
+    Pass ``granular_eapol=True`` (FocusViewV2) to also surface every new
     EAPOL frame; ``False`` (ScannerView) skips them and only emits
     completions + PMKID captures.
     """

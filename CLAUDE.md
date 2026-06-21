@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Drivers are deliberately anti-DRY — don't assume a shared family base.** Some families share infra (`chips/rtw88_base/`, `chips/rtl88xxau_base/`), but many are separate per-chip implementations with their *own* transports (`rt2800usb` uses `read32/write32`; `rt3070`/`rt5372` use `register_read/register_write`), and a chip's mainline vs `_dkms` variant are independent. *Why:* a shared core meant a fix for one card forced re-testing every card and risked regressing the others. *So:* porting a cross-cutting change (a new capability, a core fix) is a **separate port into each driver's own structure** — the mechanism (registers) transfers, the code does not. Check the actual imports before assuming a sibling inherits anything.
 - **Lead's rule**: discuss class design (`GenericDriver` vs `WlanInterface` responsibilities, etc.) BEFORE execution. Treat the user as Senior Lead.
 - **Never write to auto-memory without asking.** Before saving or updating any file under the auto-memory dir (`MEMORY.md` + its entries), show the user the proposed entry and wait for explicit approval. This overrides the default proactive-save behavior — the user owns what goes into always-loaded context.
-- **Planning docs** (NOT auto-loaded — open as needed): `planning/RELEASE-PLAN.md` (road to release + logistics + code-quality/de-vibe), `planning/PORTING.md` (driver/hardware porting playbook + queue), `planning/FEATURES.md` (capabilities to build), `planning/BUGS.md` (defects + QoL to fix), `planning/FOCUS-REDESIGN.md` (Focus-view layout/redesign ideas). Current per-card state: `VERIFICATION.md`.
+- **Planning docs** (NOT auto-loaded — open as needed): `planning/RELEASE-PLAN.md` (road to release + logistics + code-quality/de-vibe), `planning/PORTING.md` (driver/hardware porting playbook + queue), `planning/FEATURES.md` (capabilities to build), `planning/BUGS.md` (defects + QoL to fix). Current per-card state: `VERIFICATION.md`.
 
 ## Commands
 
@@ -130,5 +130,5 @@ transport._rx_loop()
 ### TUI Screens
 
 - **SplashView** — USB device discovery, driver progress, interface selection
-- **ScannerView** — Live AP table; triggers channel hopping; leads to FocusView
-- **FocusView** — Single-target attack panel (deauth, handshake capture)
+- **ScannerView** — Live AP table; triggers channel hopping; leads to FocusViewV2
+- **FocusViewV2** — Single-target attack panel (deauth, handshake capture)

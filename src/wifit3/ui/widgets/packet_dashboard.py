@@ -14,7 +14,7 @@ class and a 40/s class both fill the height and stay legible. The trailing numbe
 absolute volume — a ``/s`` rate for continuous classes, a recent count for bursty ones.
 
 The "PACKET ACTIVITY" title is a sibling ``.panel-title`` Label (built in
-FocusView.compose), not painted here — so it reads as the same bar as the
+FocusViewV2.compose), not painted here — so it reads as the same bar as the
 SECURITY / CAPTURE panels.
 """
 

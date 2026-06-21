@@ -1,6 +1,6 @@
 """Render AccessPoint security info as Rich-markup for the UI.
 
-ScannerView and FocusView both call into here so the color scheme + AKM
+ScannerView and FocusViewV2 both call into here so the color scheme + AKM
 formatting stay in lock-step. Pure functions — no Textual, no I/O.
 """
 from __future__ import annotations

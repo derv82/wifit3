@@ -34,5 +34,5 @@ async def test_app_layout_and_boot():
         log = pilot.app.screen.query_one("#system-log", RichLog)
         assert log is not None
         
-        # Check that FocusView is registered (but requires target_ap to mount properly without escaping immediately, so we won't push it here)
+        # Check that FocusViewV2 is registered (but requires target_ap to mount properly without escaping immediately, so we won't push it here)
         assert "focus" in pilot.app._installed_screens

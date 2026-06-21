@@ -12,7 +12,7 @@ Layout (top to bottom):
   band is satisfied, so tall terminals show more log lines + clients.
 
 Power + signal live above the router ESSID (the live rainbow signal bar), not in
-the top bar. Portrait is deferred (see ``planning/FOCUS-REDESIGN.md``).
+the top bar. Portrait is deferred.
 
 Data flow: the shared ``focus_model`` derivations drive everything — a per-tick
 ``build_snapshot`` paints the regions, ``derive_buttons`` drives the conditional
@@ -20,12 +20,10 @@ attack buttons. With no target (the geometry tests) it falls back to
 ``fake_snapshot()`` so the layout stays populated.
 
 The campaign brains are shared via ``focus_model``; the *screen-side* attack
-handlers + campaign lifecycle are duplicated per-view by design (the log/save/
-teardown side effects are too entangled with the widgets to share cheaply, and
-keeping them separate lets v2 evolve without touching v1). The agent wires the
-TX paths; firing live deauth/inject is the user's explicit action. This is the
-default Focus screen (see ``ui/app.py``); v1 ``FocusView`` is the fallback behind
-``WIFIT3_FOCUS_V1=1`` during the soak.
+handlers + campaign lifecycle live here (the log/save/teardown side effects are
+too entangled with the widgets to factor out). The agent wires the TX paths;
+firing live deauth/inject is the user's explicit action. Installed as the
+``"focus"`` screen in ``ui/app.py``.
 """
 from __future__ import annotations
 

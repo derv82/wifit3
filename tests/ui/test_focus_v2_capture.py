@@ -148,10 +148,8 @@ def test_save_line_elides_bssid_and_timestamp():
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")  # ui/conftest.py
-async def test_default_focus_screen_is_v2(monkeypatch):
-    """The flip: with no flag, push_screen("focus") installs v2; v1 is only the
-    fallback under WIFIT3_FOCUS_V1."""
-    monkeypatch.delenv("WIFIT3_FOCUS_V1", raising=False)
+async def test_default_focus_screen_is_v2():
+    """``push_screen("focus")`` installs ``FocusViewV2`` — the sole Focus screen."""
     app = WifiteApp()
     async with app.run_test():
         assert isinstance(app.get_screen("focus"), FocusViewV2)

@@ -60,7 +60,7 @@ async def test_focus_on_renders_classes_and_data():
         w._sample()
         plain = w.render().plain
         # The widget no longer paints its own title — that's a sibling Label in
-        # FocusView now — so it must NOT appear in the widget's own render.
+        # FocusViewV2 now — so it must NOT appear in the widget's own render.
         assert "PACKET ACTIVITY" not in plain
         # Always-on rows are present.
         for label in ("beacon", "data", "inject", "deauth"):

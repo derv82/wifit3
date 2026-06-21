@@ -1,21 +1,14 @@
-"""Shared Focus view-model — the campaign-value picture, decoupled from layout.
+"""Focus view-model — the campaign-value picture, decoupled from layout.
 
-Both the v1 ``FocusView`` and the v2 ``FocusViewV2`` paint the same campaign
-derivations; this module holds those derivations as pure functions so neither
-screen re-derives them. A function takes ``(ap, iface, campaigns)`` (plus, where
-a sliding window is involved, the caller-owned state) and returns a render-ready
-string / number / small struct. The layout is then the only disposable part.
-
-Two consumption styles share one set of brains:
-
-* v1 calls the individual ``*_markup`` / ``derive_*`` helpers from ``update_ui``,
-  one per Label — a behavior-preserving refactor (its existing markup strings are
-  reproduced verbatim, so its tests stay green).
-* v2 calls :func:`build_snapshot`, which composes the helpers into a
-  :class:`FocusSnapshot` — a per-tick, render-ready description its widgets paint.
+``FocusViewV2`` paints these campaign derivations; this module holds them as pure
+functions so the screen never re-derives them. A function takes
+``(ap, iface, campaigns)`` (plus, where a sliding window is involved, the
+caller-owned state) and returns a render-ready string / number / small struct.
+The screen calls :func:`build_snapshot`, which composes the helpers into a
+:class:`FocusSnapshot` — a per-tick, render-ready description its widgets paint.
 
 Side effects (auto-save, campaign teardown, capture-event logging, PBC spawning)
-deliberately stay in the screens — only pure derivations live here.
+deliberately stay in the screen — only pure derivations live here.
 """
 from __future__ import annotations
 

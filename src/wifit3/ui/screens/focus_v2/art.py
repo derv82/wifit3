@@ -4,8 +4,7 @@ The ``.ans`` files are pre-rendered 24-bit art, 20x10 cells each. Convention:
 any cell painted dark green ``rgb(0,128,0)`` is a live-indicator LED — the
 breather lerps it toward bright green ``(0,255,0)`` and back on a slow cycle, so
 the art self-describes what animates without coordinate tables in code (paint a
-cell dark green and it breathes). See ``planning/FOCUS-REDESIGN.md`` →
-"Green-LED breathe convention".
+cell dark green and it breathes).
 """
 from __future__ import annotations
 
