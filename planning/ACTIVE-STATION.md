@@ -118,7 +118,7 @@ cache. A mid-rollout reset resumes from here, not from holding 14 drivers in hea
 - `[x]` mt7921au — SPOOFABLE — HW-green (commit 8c0bcb9e)
 - `[x]` rt2800usb — SPOOFABLE — HW-green (PAU09/RT5572, ~20 EAPOLs, clean)
 - `[x]` rt3070 — SPOOFABLE — HW-green (AWUS036NH, ~13 EAPOLs; added write_mac_address)
-- `[ ]` mt76x2u — SPOOFABLE — rep
+- `[x]` mt76x2u — SPOOFABLE — HW-green (AWUS036ACM, ~24 EAPOLs, 2.4 GHz; 5 GHz inject broken, see BUGS)
 - `[ ]` rtl8812au_dkms — SPOOFABLE — rep (resolve the RCR combo here)
 - `[ ]` rtl8822bu_dkms — SPOOFABLE — rep
 - `[ ]` ar9271 — SPOOFABLE — rep (settle STA_ID vs BSS_ID)

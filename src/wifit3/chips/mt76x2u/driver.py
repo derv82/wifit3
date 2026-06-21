@@ -17,7 +17,7 @@ from typing import Callable, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
 from wifit3.wlan.packet import WlanFrameParser
 
 from .chan import set_channel_20mhz, phy_channel_calibrate
@@ -97,6 +97,7 @@ class MT76x2UDriver:
         + [36, 40, 44, 48]
         + [149, 153, 157, 161, 165]
     )
+    FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device,
@@ -626,6 +627,22 @@ class MT76x2UDriver:
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
         # `use_no_ack=True` (the wifit3 convention) → ack=False on the chip.
         return await _inject_frame(self.transport, frame_bytes, ack=not use_no_ack)
+
+    async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
+        """Re-point the self-MAC to ``mac`` so the autoresponder HW-ACKs frames to it
+        (mac_setaddr bakes in U2ME_MASK=0xff). RX stays promiscuous; reversed by
+        exit_active_monitor."""
+        async with self._cal_lock:
+            mac_setaddr(self.transport, bytes(mac))
+        return bytes(mac)
+
+    async def exit_active_monitor(self) -> None:
+        """Restore the card's real MAC (autoresponder back to ACKing only it)."""
+        if not self.mac_address:
+            return
+        real = bytes(int(b, 16) for b in self.mac_address.split(":"))
+        async with self._cal_lock:
+            mac_setaddr(self.transport, real)
 
     async def close(self) -> None:
         if self._cal_task is not None:
