@@ -58,6 +58,9 @@ community PRs. Required:
 - **Code-quality audit** — full pass for shortcuts / over-complicated edge cases. Known offender:
   `wlan/packet.py` (802.11 parser) is bare magic numbers (offsets, FC masks, IE tags) → named
   constants + `[WIRE]` cites.
+- **Kill Focus V1** — delete `ui/screens/focus.py` (the legacy panel grid), the `WIFIT3_FOCUS_V1`
+  routing in `app.py`, and `planning/FOCUS-REDESIGN.md`. V2 is the default and proven; V1 was
+  kept only as a soak fallback. Self-contained delete (watch for v1-only tests).
 
 ---
 

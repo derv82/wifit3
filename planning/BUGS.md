@@ -119,3 +119,14 @@ height. The buttons must always stay visible: shrink/scroll the list when space 
 and/or give the modal a taller min-height.
 
 ---
+
+## connac2 / mt7921au — chatty WPS, no per-frame TX-status (needs STA_REC)
+
+mt7921au WPS works but is **chatty — ~120 EAPOLs vs ~20** on the Ralink/Realtek cards: we
+inject from a reserved WCID, so the firmware doesn't ACK-track our uplink and can't suppress
+the AP's retransmit storm. The fix is a real **STA_REC** (MCU `sta_rec` add) so our forged STA
+is a tracked peer. That ALSO unlocks **per-frame TX-status** on connac2 — the hardware reports
+ACK/no-ACK per frame, the clean data source for the "ACK effectiveness %" / deauth-landed
+feature (see FEATURES.md "Deauth effectiveness feedback"). Observed ~120 on both PAU0F + AXML.
+
+---

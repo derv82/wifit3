@@ -53,6 +53,17 @@ unicast-ACK NAV (`SIFS + ACK@rate`, e.g. `0x013a` @ 1 Mbps) — one line, do it 
 
 **Complexity.** Low-moderate; the ACK-sniff correlator is the real work.
 
+### Per-AP persistent log — if time allows
+
+**Problem.** The Focus log is per-session and per-target — switch APs (or bounce to Scanner)
+and the previous AP's attack log is gone.
+
+**Approach.** A capped `AccessPoint.log_history` ring buffer (the lines are already rendered
+markup strings): append on each `_log`, and on `_enter_target` replay it instead of clearing.
+
+**Complexity.** Low — unbounded growth (a long WPS sweep is thousands of lines × N APs) is the
+only gotcha, bounded by the cap (~200 lines/AP).
+
 ### Multi-card support (Minnie Drivers v2)
 
 Run 2+ USB cards in one session — pool RX, split TX. Possible because drivers are generic
