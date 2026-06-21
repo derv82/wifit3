@@ -135,6 +135,7 @@ class WpsAssociation:
 
     def __init__(self, iface, bssid: str, ssid: str, channel: int,
                  our_mac: Optional[bytes] = None, assoc_timeout: float = 1.0,
+                 auth_timeout: float = 0.5,
                  wps_request_type: int = WPS_REQ_REGISTRAR):
         self.iface = iface
         self.bssid = bssid.lower()
@@ -143,10 +144,12 @@ class WpsAssociation:
         self.channel = channel
         self.our_mac = our_mac or random_client_mac()
         self.assoc_timeout = assoc_timeout
+        self.auth_timeout = auth_timeout
         # Registrar (PIN attack) vs Enrollee (PBC capture) intent in the assoc IE.
         self.wps_request_type = wps_request_type
         self.associated = False
         self.fail_reason: Optional[str] = None
+        self._auth_ok = False
         self._assoc_ok = False
         self._active = False
 
@@ -185,13 +188,22 @@ class WpsAssociation:
         self.iface.unregister_rx_callback(self._rx_cb)
 
     async def associate(self, attempts: int = 3) -> bool:
-        """Open-auth + assoc. Returns True once the AP accepts us (status 0)."""
+        """Open-auth + assoc. Returns True once the AP accepts us (status 0).
+
+        Waits for the Open-System Auth Resp (status 0) before sending the Assoc
+        Req: an AP drops an Assoc from a not-yet-authenticated STA, so a blind
+        delay races a slow/cold AP and whiffs first contact. Falls back to sending
+        the Assoc anyway after ``auth_timeout`` for APs/captures that don't surface
+        a matchable Auth Resp."""
         if self.iface.current_channel != self.channel:
             await self.iface.set_channel(self.channel)
         for _ in range(attempts):
+            self._auth_ok = False
             self._assoc_ok = False
             await self.iface.send_raw(self._auth_req(), use_no_ack=True)
-            await asyncio.sleep(0.1)
+            auth_deadline = time.time() + self.auth_timeout
+            while time.time() < auth_deadline and not self._auth_ok:
+                await asyncio.sleep(0.02)
             await self.iface.send_raw(self._assoc_req(), use_no_ack=True)
             deadline = time.time() + self.assoc_timeout
             while time.time() < deadline and not self._assoc_ok:
@@ -220,7 +232,9 @@ class WpsAssociation:
                 self.fail_reason = f"Assoc rejected (status {status})"
         elif subtype == _SUBTYPE_AUTH and len(frame) >= 30:
             status = struct.unpack("<H", frame[28:30])[0]
-            if status != 0:
+            if status == 0:
+                self._auth_ok = True
+            else:
                 self.fail_reason = f"Auth rejected (status {status})"
         elif subtype in (_SUBTYPE_DEAUTH, _SUBTYPE_DISASSOC):
             self.associated = False
