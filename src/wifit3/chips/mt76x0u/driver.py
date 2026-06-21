@@ -18,7 +18,7 @@ from typing import Callable, Optional
 
 import usb.core
 
-from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
 
 from .constants import (
     EP_IN_PKT_RX,
@@ -68,6 +68,7 @@ class MT76x0UDriver:
         + [36, 40, 44, 48]
         + [149, 153, 157, 161, 165]
     )
+    FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device,
@@ -927,6 +928,30 @@ class MT76x0UDriver:
         except usb.core.USBError as e:
             logger.error("MT7610U: inject_frame USB error: %s", e)
             return False
+
+    async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
+        """Set MT_MAC_ADDR_DW0/1 to ``mac`` with U2ME_MASK=0xff so the autoresponder
+        HW-ACKs frames to it (the monitor baseline runs U2ME=0). Reversed by exit."""
+        await self._write_self_mac(bytes(mac), u2me=True)
+        return bytes(mac)
+
+    async def exit_active_monitor(self) -> None:
+        """Restore the monitor baseline: real MAC with U2ME_MASK cleared."""
+        if not self.mac_address:
+            return
+        real = bytes(int(b, 16) for b in self.mac_address.split(":"))
+        await self._write_self_mac(real, u2me=False)
+
+    async def _write_self_mac(self, mac: bytes, u2me: bool) -> None:
+        from .constants import MT_MAC_ADDR_DW0, MT_MAC_ADDR_DW1, MT_MAC_ADDR_DW1_U2ME_MASK
+        lo = int.from_bytes(mac[0:4], "little")
+        hi = int.from_bytes(mac[4:6], "little") | (MT_MAC_ADDR_DW1_U2ME_MASK if u2me else 0)
+
+        def _write():
+            with self._hw_lock:
+                self.transport.write32(MT_MAC_ADDR_DW0, lo)
+                self.transport.write32(MT_MAC_ADDR_DW1, hi)
+        await asyncio.get_running_loop().run_in_executor(None, _write)
 
     async def close(self) -> None:
         WIRE_LOG.marker("close")

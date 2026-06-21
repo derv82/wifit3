@@ -47,7 +47,9 @@ lost EAPOL-Start (or auth/assoc) — the AP stays silent and the enrollee burns 
 ~2–3 s wait before the outer retry. Resending EAPOL-Start every ~700 ms during
 first-contact (before the first EAP-Request; never mid-exchange, where it would reset the
 AP) recovers a lost first frame in <1 s instead of a whole retry. Small, isolated change
-in `WpsEnrollee.run()`.
+in `WpsEnrollee.run()`. (Decided against the ~700 ms resend: it inflates the ~20-EAPOL
+cleanliness metric we gauge active-monitor ports by. A fix must NOT add to the count —
+e.g. a single resend only *after* the first timeout, or a faster outer retry.)
 
 ## 5 GHz injection broken on multiple cards — wrong TX rate for the band
 
@@ -66,8 +68,15 @@ branch, so the CCK story doesn't apply — its 5 GHz failure is a different bug 
 not reaching, wrong rate value, or more than rate). Needs its own look.
 
 **Not universal:** rtl8812au_dkms (AWUS036ACH) injects fine on 5 GHz (WPS-PBC + PMKID both
-worked first try). So this is a per-driver TX-rate gap (the two MediaTek cards), not a
-fleet-wide problem.
+worked first try). So the *inject* gap is per-driver (mt76x2u + mt7921au), not fleet-wide.
+
+## mt76x0u — weak 5 GHz RX (sensitivity, not TX/ACK)
+
+On 5 GHz, mt76x0u receives but desensitized: `beacon_watch --bssid <ap> --channel 157`
+yields ~3 beacons/s (mean 3.3, max 7) where a strong nearby AP should give ~10/s, and the
+nearby home AP doesn't crack the top-10 list. Inject, PMKID, and active-station WPS-PBC all
+work on 5 GHz — it is purely the RX sensitivity. Likely incomplete 5 GHz RX calibration
+(LNA / AGC / per-channel gain) in the port. 2.4 GHz RX is fine. Needs its own look.
 
 **Verification blocked:** no offline gate (verify_pcap CHECK 4 only matched 2.4 GHz
 aireplay) and the agent can't fire live 5 GHz TX. To close: extend `capture.py` to record
