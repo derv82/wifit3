@@ -117,10 +117,11 @@ cache. A mid-rollout reset resumes from here, not from holding 14 drivers in hea
 
 - `[x]` mt7921au — SPOOFABLE — HW-green (commit 8c0bcb9e)
 - `[x]` rt2800usb — SPOOFABLE — HW-green (PAU09/RT5572, ~20 EAPOLs, clean)
+- `[x]` rt3070 — SPOOFABLE — HW-green (AWUS036NH, ~13 EAPOLs; added write_mac_address)
 - `[ ]` mt76x2u — SPOOFABLE — rep
 - `[ ]` rtl8812au_dkms — SPOOFABLE — rep (resolve the RCR combo here)
 - `[ ]` rtl8822bu_dkms — SPOOFABLE — rep
 - `[ ]` ar9271 — SPOOFABLE — rep (settle STA_ID vs BSS_ID)
-- `[ ]` siblings: rtl8812au, rtl8821au(+dkms), rtl8188eus(+dkms), rtl8814au_dkms, rtw88_8814au, rt3070, rt5372, mt76x0u
+- `[ ]` siblings: rtl8812au, rtl8821au(+dkms), rtl8188eus(+dkms), rtl8814au_dkms, rtw88_8814au, rt5372, mt76x0u
 - `[ ]` rtl8187 — NONE (passive monitor, no ACK engine)
 - `[ ]` rt2500usb — NONE (no autoresponder)
