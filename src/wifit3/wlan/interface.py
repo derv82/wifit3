@@ -4,6 +4,7 @@ import time
 from typing import List, Optional, Callable, Any, Dict, Set
 
 from wifit3.engine.models import AccessPoint, Client, Handshake, EapolFrame
+from wifit3.engine.protocols import FakeMacSupport
 from wifit3.wlan.channels import scan_hop_order
 from wifit3.wlan.packet import WlanFrameParser
 from wifit3.wlan.packet_stats import PacketStats
@@ -418,6 +419,38 @@ class WlanInterface:
             mac_str = str(mac).lower()
         self.forged_macs.add(mac_str)
 
+    async def set_fake_mac(self, mac: Any, bssid: Any = None) -> Optional[str]:
+        """Ask the driver to HW-ACK frames addressed to ``mac`` (active-monitor) — the
+        prerequisite for an ACKed conversation (WPS/EAP). ``bssid`` is the peer AP
+        (firmware-offload radios only). Also registers the MAC as forged. Accepts bytes
+        or a colon-string. Returns the MAC armed, or None if the card can't spoof one
+        (FakeMacSupport.NONE / absent); a FIXED_MAC card returns its own MAC."""
+        support = getattr(self.driver, "FAKE_MAC", FakeMacSupport.NONE)
+        if support == FakeMacSupport.NONE or not hasattr(self.driver, "enter_active_monitor"):
+            logger.info("set_fake_mac: %s cannot ACK a spoofed MAC (%s)", self.name, support)
+            return None
+        mac_b = self._to_mac_bytes(mac)
+        bssid_b = self._to_mac_bytes(bssid) if bssid is not None else None
+        assumed = await self.driver.enter_active_monitor(mac_b, bssid_b)
+        self.register_forged_mac(assumed)
+        assumed_str = ":".join(f"{b:02x}" for b in assumed)
+        logger.info("[FAKEMAC] %s now HW-ACKing %s", self.name, assumed_str)
+        return assumed_str
+
+    async def clear_fake_mac(self) -> None:
+        """Inverse of set_fake_mac: stop HW-ACKing the forged MAC, restore plain
+        monitor. Idempotent and safe on drivers without the capability."""
+        if hasattr(self.driver, "exit_active_monitor"):
+            await self.driver.exit_active_monitor()
+            logger.info("[FAKEMAC] %s restored plain monitor", self.name)
+
+    @staticmethod
+    def _to_mac_bytes(mac: Any) -> bytes:
+        """Coerce a MAC given as 6 raw bytes or a colon-separated string to bytes."""
+        if isinstance(mac, bytes):
+            return mac
+        return bytes(int(x, 16) for x in str(mac).split(":"))
+
     def register_self_mac(self, mac: Any, bssid: Optional[str] = None) -> str:
         """Mark ``mac`` as our own forged STA and surface it in the client
         table tagged ``is_self`` (rendered "YOU"). Accepts bytes or a string;
@@ -484,6 +517,13 @@ class WlanInterface:
             parsed = WlanFrameParser.parse_80211_frame(frame_bytes, 0)
             if not parsed:
                 return
+            # Mirror of [RXFRAME] for our injects — reappearing as RX would mean chip loopback.
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "[TXFRAME] %-9s to_ds=%s from_ds=%s %s -> %s (bssid %s)",
+                    parsed.get("type"), parsed.get("to_ds"), parsed.get("from_ds"),
+                    parsed.get("source"), parsed.get("dest"), parsed.get("bssid"),
+                )
             bssid = parsed.get("bssid")
             if bssid and bssid not in ("Unknown", "ff:ff:ff:ff:ff:ff"):
                 self.packet_stats.record_tx(bssid, parsed.get("type") == "deauth")

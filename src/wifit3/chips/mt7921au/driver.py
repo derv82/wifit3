@@ -12,7 +12,7 @@ from .firmware import MT7921AUFirmwareLoader
 # but ruff can't see them statically, so suppress the import-* lints file-wide.
 # ruff: noqa: F403, F405
 from .constants import *
-from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
 from wifit3.wlan.packet import WlanFrameParser
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,8 @@ class MT7921AUDriver:
         100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144,
         149, 153, 157, 161, 165,
     ]
+    # connac2 HW-ACKs frames whose RA matches the programmed omac — see enter_active_monitor.
+    FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "MT7921AUDriver":
@@ -194,6 +196,27 @@ class MT7921AUDriver:
             logger.error("MT7921AU inject_frame: %s", e)
             return False
         return await self.transport.send_bulk_checked(wire, endpoint)
+
+    async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
+        """Arm HW auto-ACK for ``mac`` by programming it as the device omac (connac2
+        ACKs on RA==omac); return the MAC armed. The monitor BSS is already active from
+        bring-up, so this is DEV_INFO with a non-zero omac, plus the peer ``bssid`` into
+        the BSS when given. Reversed by exit_active_monitor."""
+        cmd, payload = mcu.uni_dev_info(True, bytes(mac))
+        await self.transport.send_mcu_command(cmd, payload, wait_resp=False)
+        if bssid is not None:
+            cmd, payload = mcu.uni_bss_info(True, bytes(bssid))
+            await self.transport.send_mcu_command(cmd, payload, wait_resp=False)
+        return bytes(mac)
+
+    async def exit_active_monitor(self) -> None:
+        """Restore the plain-monitor baseline (re-zero the omac + BSS bssid). The BSS
+        stays active — its resting state since bring-up, where a zero omac matches
+        nothing."""
+        cmd, payload = mcu.uni_dev_info(True, b"\x00" * 6)
+        await self.transport.send_mcu_command(cmd, payload, wait_resp=False)
+        cmd, payload = mcu.uni_bss_info(True, b"\x00" * 6)
+        await self.transport.send_mcu_command(cmd, payload, wait_resp=False)
 
     async def close(self):
         await self.transport.stop_rx()

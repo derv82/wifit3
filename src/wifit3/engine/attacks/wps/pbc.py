@@ -58,8 +58,9 @@ class WpsPbcCapture:
                                self.channel, our_mac=self.our_mac,
                                wps_request_type=WPS_REQ_ENROLLEE)
         assoc.start()
+        armed = await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
         transport = WlanTransport(self.iface, str_to_mac(self.bssid), self.our_mac,
-                                  tx_observer=self.tx_observer)
+                                  tx_observer=self.tx_observer, ack=armed is not None)
         transport.start()
         try:
             if not await assoc.associate():
@@ -67,6 +68,7 @@ class WpsPbcCapture:
             outcome = await WpsEnrollee(transport, str_to_mac(self.bssid),
                                         self.our_mac, log=self.log).run()
         finally:
+            await self.iface.clear_fake_mac()
             transport.stop()
             assoc.stop()
         return outcome

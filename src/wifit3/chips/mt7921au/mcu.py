@@ -239,25 +239,27 @@ def set_deep_sleep(enable):
 
 # Monitor-vif constants. The first vif gets idx = omac_idx = band_idx = wmm_idx =
 # 0; mt7921_add_interface sets wcid->idx AFTER uni_add_dev runs, so the BSS basic
-# tlv carries wcid->idx 0 here. The monitor vif has no MAC, so omac_addr/bssid are
-# zero. conn_type = CONNECTION_INFRA_AP (STA_TYPE_AP | NETWORK_INFRA) for monitor.
+# tlv carries wcid->idx 0 here. omac_addr/bssid default zero (plain monitor); a
+# non-zero omac arms HW auto-ACK for that MAC. conn_type = CONNECTION_INFRA_AP.
 DEV_INFO_ACTIVE = 0
 UNI_BSS_INFO_BASIC = 0
 CONNECTION_INFRA_AP = (1 << 1) | (1 << 16)   # STA_TYPE_AP | NETWORK_INFRA = 0x10002
 
 
-def uni_dev_info(active=True):
+def uni_dev_info(active=True, omac_addr=b"\x00" * 6):
     """mt76_connac_mcu_uni_add_dev — DEV_INFO half, MCU_UNI_CMD(DEV_INFO_UPDATE).
     hdr{omac_idx, band_idx, pad} + req_tlv{tag=DEV_INFO_ACTIVE, len=12, active,
-    link_idx, omac_addr[6]}."""
+    link_idx, omac_addr[6]}. ``omac_addr`` is the MAC the radio HW-ACKs for; zero
+    (the bring-up default) means it ACKs nothing."""
     hdr = struct.pack("<BBH", 0, 0, 0)
-    tlv = struct.pack("<HHBB6s", DEV_INFO_ACTIVE, 12, 1 if active else 0, 0, b"\x00" * 6)
+    tlv = struct.pack("<HHBB6s", DEV_INFO_ACTIVE, 12, 1 if active else 0, 0, omac_addr)
     return MCU_UNI_CMD(UNI_CMD_DEV_INFO_UPDATE), hdr + tlv
 
 
-def uni_bss_info(active=True):
+def uni_bss_info(active=True, bssid=b"\x00" * 6):
     """mt76_connac_mcu_uni_add_dev — BSS_INFO half, MCU_UNI_CMD(BSS_INFO_UPDATE).
-    hdr{bss_idx, pad[3]} + mt76_connac_bss_basic_tlv (32 B)."""
+    hdr{bss_idx, pad[3]} + mt76_connac_bss_basic_tlv (32 B). ``bssid`` is the peer
+    AP; zero (the bring-up default) for plain monitor."""
     hdr = struct.pack("<B3x", 0)
     basic = struct.pack(
         "<HHBBBBIBB6sHHBBHHBB",
@@ -265,7 +267,7 @@ def uni_bss_info(active=True):
         1 if active else 0, 0, 0, 0,    # active, omac_idx, hw_bss_idx, band_idx
         CONNECTION_INFRA_AP,            # conn_type
         1, 0,                           # conn_state, wmm_idx
-        b"\x00" * 6,                    # bssid
+        bssid,                          # bssid
         0, 0,                           # bmc_tx_wlan_idx, bcn_interval
         0, 0,                           # dtim_period, phymode
         0, 0,                           # sta_idx, nonht_basic_phy

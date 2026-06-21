@@ -15,6 +15,7 @@ satisfies this Protocol and:
 """
 from __future__ import annotations
 
+import enum
 from dataclasses import dataclass, field
 from typing import Any, Callable, ClassVar, List, Optional, Protocol
 
@@ -23,6 +24,24 @@ import usb.core
 
 class ProgressCallback(Protocol):
     def __call__(self, percentage: float, message: str) -> None: ...
+
+
+class FakeMacSupport(enum.Enum):
+    """Whether/how a driver can make the radio auto-ACK a chosen MAC.
+
+    Auto-ACK for a programmed MAC is the prerequisite for any *ACKed conversation*
+    where the AP addresses us and expects a link-layer ACK — WPS, EAP, and a
+    software FakeAP/EvilTwin. Without it the AP retransmits each frame to its retry
+    limit and abandons the session. Drivers that omit a value are treated as NONE.
+
+    NONE      — the radio cannot ACK a chosen MAC (a card with a hard/un-spoofable MAC).
+    FIXED_MAC — it ACKs, but only for the card's own MAC; ``enter_active_monitor``
+                ignores the requested MAC and returns the card's MAC instead.
+    SPOOFABLE — it ACKs an arbitrary forged MAC programmed at runtime.
+    """
+    NONE = "none"
+    FIXED_MAC = "fixed_mac"
+    SPOOFABLE = "spoofable"
 
 
 @dataclass(frozen=True)
@@ -96,4 +115,28 @@ class WlanDriver(Protocol):
 
     async def close(self) -> None:
         """Stop RX loops, release the USB interface."""
+        ...
+
+    # ---- Optional capability: active monitor (HW-ACK a chosen MAC) -----
+    # Soft contract for now: a driver that can ACK a chosen MAC declares
+    # FAKE_MAC and implements enter/exit_active_monitor; the interface gates on
+    # both via getattr/hasattr, so drivers predating this stay valid (treated as
+    # FakeMacSupport.NONE). Promote to a hard member once every driver declares it.
+    FAKE_MAC: ClassVar[FakeMacSupport]
+    """This radio's ability to auto-ACK a programmed MAC (default NONE if absent)."""
+
+    async def enter_active_monitor(
+        self, mac: bytes, bssid: Optional[bytes] = None
+    ) -> bytes:
+        """Arm hardware auto-ACK for ``mac`` while staying in monitor mode.
+
+        ``bssid`` is the AP we're conversing with — required only by firmware-offload
+        radios that gate ACK on an active BSS link (connac2); register-MAC radios
+        ignore it (ACK is a pure RA==own-MAC match). Returns the MAC actually armed:
+        == ``mac`` on a SPOOFABLE radio, the card's own MAC on a FIXED_MAC one.
+        """
+        ...
+
+    async def exit_active_monitor(self) -> None:
+        """Restore the plain-monitor baseline (stop ACKing the chosen MAC)."""
         ...

@@ -72,6 +72,16 @@ class WpsEnrollee:
                 logged.add(stage)
                 self.log(msg)
 
+        # Deduped wire-phase skeleton in the debug log (→ sent, ← received), so the
+        # frame stream can be read against the WSC stage rather than "eapol" alone.
+        phased: set = set()
+
+        def phase(label: str) -> None:
+            if label not in phased:
+                phased.add(label)
+                logger.debug("[WPS] %s", label)
+
+        phase("→ EAPOL-Start")
         await self._send_1x(M.eapol_start())
 
         deadline = time.monotonic() + self.overall_timeout
@@ -87,18 +97,23 @@ class WpsEnrollee:
                 continue
 
             if p.is_identity_request:
+                phase("← Identity-Req")
                 if not sent_m1:
+                    phase("→ Identity")
                     await self._send_1x(M.eap_identity_response(p.eap_id, M.ENROLLEE_IDENTITY))
                 continue
 
             if p.is_eap_failure or p.wsc_msg_type == M.WPS_WSC_NACK:
+                phase("← EAP-FAIL/NACK")
                 return AttemptOutcome(PinResult.PROTO_ERROR, "<PBC>",
                                       detail="EAP-FAIL/NACK (overlap or refused)")
 
             # WSC_Start (an opcode, not a msg-type) kicks off M1.
             if p.wsc_opcode == M.WSC_START and p.wsc_msg_type == 0:
+                phase("← WSC_Start")
                 if not sent_m1:
                     m1 = M.build_m1(uuid_e, mac_e, nonce_e, pke)
+                    phase("→ M1")
                     await self._send_1x(M.eap_wsc_response(p.eap_id, M.WSC_MSG, m1))
                     sent_m1 = True
                     once("m1", "M1: sending enrollee identity + public key")
@@ -111,6 +126,7 @@ class WpsEnrollee:
                 highest_mt = mt
 
             if mt == M.WPS_M2:
+                phase("← M2")
                 pkr = p.attrs.get(M.ATTR_PUBLIC_KEY)
                 nonce_r = p.attrs.get(M.ATTR_REGISTRAR_NONCE)
                 if not pkr or not nonce_r:
@@ -120,23 +136,30 @@ class WpsEnrollee:
                 psk1, psk2 = wc.derive_psk(authkey, M.PBC_PASSWORD)
                 m3 = M.build_m3_enrollee(nonce_r, e_s1, e_s2, psk1, psk2, pke, pkr,
                                          authkey, p.raw_wsc_attrs)
+                phase("→ M3")
                 await self._send_1x(M.eap_wsc_response(p.eap_id, M.WSC_MSG, m3))
                 once("m3", "M2 → M3: E-hash committed")
 
             elif mt == M.WPS_M4:
+                phase("← M4")
                 if authkey is None:
                     return AttemptOutcome(PinResult.PROTO_ERROR, "<PBC>", detail="M4 before keys")
                 m5 = M.build_m5_enrollee(nonce_r, e_s1, authkey, keywrapkey, p.raw_wsc_attrs)
+                phase("→ M5")
                 await self._send_1x(M.eap_wsc_response(p.eap_id, M.WSC_MSG, m5))
                 once("m5", "M4 → M5: revealing E-S1")
 
             elif mt == M.WPS_M6:
+                phase("← M6")
                 m7 = M.build_m7_enrollee(nonce_r, e_s2, authkey, keywrapkey, p.raw_wsc_attrs)
+                phase("→ M7")
                 await self._send_1x(M.eap_wsc_response(p.eap_id, M.WSC_MSG, m7))
                 once("m7", "M6 → M7: revealing E-S2")
 
             elif mt == M.WPS_M8:
+                phase("← M8")
                 creds = M.extract_m8_credentials(p.attrs.get(M.ATTR_ENCR_SETTINGS, b""), keywrapkey)
+                phase("→ WSC_DONE")
                 await self._send_1x(M.eap_wsc_response(p.eap_id, M.WSC_DONE,
                                                        M.build_wsc_done(nonce_e, nonce_r)))
                 if not creds or "network_key" not in creds:
