@@ -107,7 +107,6 @@ class RT2800USBDriver:
     # missing (e.g. test code instantiates without going through
     # from_usb_device). Instance __init__ overlays the per-chip list.
     SUPPORTED_CHANNELS = list(range(1, 14)) + list(CHANNELS_5G_NON_DFS)
-    # Autoresponder ACKs frames matching MAC_ADDR_DW0/1 — see enter_active_monitor.
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     @classmethod

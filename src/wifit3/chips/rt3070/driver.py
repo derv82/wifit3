@@ -43,8 +43,6 @@ class RT3070Driver:
         DeviceID(_VID_RALINK, _PID_RT3070, "Ralink RT3070 1T1R / ALFA AWUS036NH"),
     ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 15))   # 2.4 GHz, 20 MHz
-    # Autoresponder (monitor.enable_monitor) ACKs frames matching MAC_ADDR_DW0/1 once we
-    # give it a self-MAC — see enter_active_monitor.
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     def __init__(self, transport: RT3070Transport):

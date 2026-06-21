@@ -42,7 +42,6 @@ class MT7921AUDriver:
         100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144,
         149, 153, 157, 161, 165,
     ]
-    # connac2 HW-ACKs frames whose RA matches the programmed omac — see enter_active_monitor.
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     @classmethod
