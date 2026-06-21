@@ -625,8 +625,10 @@ class MT76x2UDriver:
             pass
 
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
-        # `use_no_ack=True` (the wifit3 convention) → ack=False on the chip.
-        return await _inject_frame(self.transport, frame_bytes, ack=not use_no_ack)
+        # `use_no_ack=True` (the wifit3 convention) → ack=False on the chip. Pass the
+        # tuned channel so a 5 GHz inject goes out as OFDM (CCK is 2.4 GHz-only).
+        return await _inject_frame(self.transport, frame_bytes,
+                                   ack=not use_no_ack, channel=self.current_channel)
 
     async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
         """Re-point the self-MAC to ``mac`` so the autoresponder HW-ACKs frames to it

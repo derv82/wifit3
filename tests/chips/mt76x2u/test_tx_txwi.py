@@ -42,3 +42,24 @@ def test_txwi_pktid_stays_zero_even_when_ack_requested():
     assert d["pktid"] == 0x00
     # ack still flips the ack_ctl REQ bit.
     assert d["ack_ctl"] == tx._TXWI_ACK_CTL_REQ
+
+
+def test_rate_for_channel_band_split():
+    """2.4 GHz → CCK 1 Mbps; 5 GHz (ch >= 36) → OFDM 6 Mbps. CCK is invalid on
+    5 GHz, so the band split is mandatory, not cosmetic."""
+    assert tx._txwi_rate_for_channel(1) == 0x0000
+    assert tx._txwi_rate_for_channel(11) == 0x0000
+    assert tx._txwi_rate_for_channel(36) == 0x2000
+    assert tx._txwi_rate_for_channel(149) == 0x2000
+
+
+def test_assembled_txwi_rate_follows_band():
+    """The rate threads all the way into the assembled bulk-OUT TXWI: CCK by
+    default (2.4 GHz wire match) and OFDM 6 Mbps when a 5 GHz rate is passed."""
+    frame = b"\xc0\x00" + b"\x00" * 24      # 26-byte deauth, 24B hdr (no pad)
+    rate_24 = _decode(tx.assemble_tx_frame(frame)[4:24])["rate"]
+    rate_5 = _decode(
+        tx.assemble_tx_frame(frame, rate=tx._txwi_rate_for_channel(36))[4:24]
+    )["rate"]
+    assert rate_24 == 0x0000
+    assert rate_5 == 0x2000

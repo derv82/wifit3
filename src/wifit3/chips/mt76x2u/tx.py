@@ -39,13 +39,24 @@ _WLAN_PORT = 0                 # enum dma_msg_port = 0
 
 _TXWI_LEN = 20
 
-# Rate field. Kernel mt76x2u sends every injected mgmt frame with
-# `rate=0x0000` (PHY=CCK, idx=0 = 1 Mbps) — verified on the wire in
-# usb_dumps/captures_mt76x2u/capture-1.pcap (frame 32207, aireplay-ng's
-# first deauth bulk-OUT). 1 Mbps CCK is universally a basic rate so the
-# AP accepts it; OFDM 6 Mbps works for mgmt round-trips but the AP can
-# reject ToDS DATA at that rate, silently killing ARP-replay / ChopChop.
+# TXWI rate field (16-bit `rateval`). [SRC] mt76x02_mac.c:218-220 composes it as
+# FIELD_PREP(MT_RXWI_RATE_INDEX, idx) | FIELD_PREP(MT_RXWI_RATE_PHY, phy), with
+# MT_RXWI_RATE_PHY = GENMASK(15,13) [SRC] mt76x02_mac.h:92 and MT_PHY_TYPE_CCK=0 /
+# MT_PHY_TYPE_OFDM=1 [SRC] mt76.h:327.
+#
+# 2.4 GHz: CCK 1 Mbps (PHY=CCK, idx=0 → 0x0000) — verified on the wire in
+# usb_dumps/captures_mt76x2u/capture-1.pcap (frame 32207, aireplay-ng's first
+# deauth bulk-OUT). 1 Mbps CCK is universally a basic rate so the AP accepts it.
 _TXWI_RATE_CCK_1MBPS = 0x0000
+# 5 GHz: OFDM 6 Mbps (OFDM_RATE(0,60) → hw_value=(OFDM<<8)|0 → phy=1,idx=0 →
+# 1<<13 = 0x2000) [SRC] mt76.h:1172. CCK is a 2.4 GHz-only modulation: a CCK rate
+# on a 5 GHz channel is invalid and the chip drops the frame, so a 5 GHz inject
+# MUST go out as OFDM. The AP can still reject ToDS DATA at OFDM 6 (silently
+# killing ARP-replay / ChopChop), but on 5 GHz there is no CCK fallback to pick.
+_TXWI_RATE_OFDM_6MBPS = 0x2000
+
+# 5 GHz starts at channel 36 (UNII-1); anything below is 2.4 GHz.
+_CH_5GHZ_MIN = 36
 
 # txstream: kernel sets 0x13 for 2x2 MIMO chips at rev >= E4 (the
 # AWUS036ACM is E4 — capture-1 frame 32207 shows txstream=0x13 on the
@@ -114,10 +125,20 @@ def _txinfo_word(payload_len_rounded: int, ack: bool) -> int:
     return info
 
 
-def assemble_tx_frame(frame_802_11: bytes, ack: bool = False) -> bytes:
+def _txwi_rate_for_channel(channel: int) -> int:
+    """TXWI rate word for an inject on `channel`: OFDM 6 Mbps on 5 GHz, CCK 1 Mbps
+    on 2.4 GHz. CCK does not exist on 5 GHz, so a 5 GHz inject at CCK is dropped by
+    the chip — picking by band is mandatory, not a tuning preference."""
+    return _TXWI_RATE_OFDM_6MBPS if channel >= _CH_5GHZ_MIN else _TXWI_RATE_CCK_1MBPS
+
+
+def assemble_tx_frame(frame_802_11: bytes, ack: bool = False,
+                      rate: int = _TXWI_RATE_CCK_1MBPS) -> bytes:
     """Build the full bulk-OUT bytes for one TX inject.
 
-    Returns: [TXINFO 4B] + [TXWI 20B] + [hdr-pad 0 or 2B] + [802.11] + [tail-pad].
+    `rate` is the 16-bit TXWI rate word — CCK 1 Mbps by default (valid on 2.4 GHz);
+    pass an OFDM rate for 5 GHz. Returns:
+    [TXINFO 4B] + [TXWI 20B] + [hdr-pad 0 or 2B] + [802.11] + [tail-pad].
     """
     frame_len = len(frame_802_11)
     # mt76_insert_hdr_pad inserts 2 bytes between MAC hdr and body when the
@@ -133,7 +154,7 @@ def assemble_tx_frame(frame_802_11: bytes, ack: bool = False) -> bytes:
     else:
         frame_with_pad = frame_802_11
 
-    txwi = build_txwi(frame_len, ack=ack)
+    txwi = build_txwi(frame_len, ack=ack, rate=rate)
     skb_body = txwi + frame_with_pad
     rounded = (len(skb_body) + 3) & ~3
     if rounded > len(skb_body):
@@ -191,9 +212,14 @@ def build_deauth(target_mac: bytes, bssid: bytes,
 
 
 async def inject_frame(transport: MT76x2UTransport, frame_802_11: bytes,
-                       ack: bool = False) -> bool:
-    """Send a raw 802.11 frame via bulk-OUT EP 0x07 (AC_VO)."""
-    blob = assemble_tx_frame(frame_802_11, ack=ack)
+                       ack: bool = False, channel: int = 0) -> bool:
+    """Send a raw 802.11 frame via bulk-OUT EP 0x07 (AC_VO).
+
+    `channel` is the currently-tuned channel; it selects the TXWI rate band (OFDM
+    on 5 GHz, CCK on 2.4 GHz). 0 (the default) keeps the 2.4 GHz / CCK behaviour.
+    """
+    blob = assemble_tx_frame(frame_802_11, ack=ack,
+                             rate=_txwi_rate_for_channel(channel))
     try:
         written = await transport.async_write_bulk(
             EP_OUT_AC_VO, blob, timeout_ms=500,
