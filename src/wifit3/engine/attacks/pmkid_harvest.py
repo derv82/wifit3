@@ -82,6 +82,9 @@ class PmkidHarvestAttack:
         self.target = target
         self.bssid_bytes = _str_to_mac(target.bssid)
         self.source_mac = source_mac or _random_client_mac()
+        # Set by run() on failure to the specific cause (PMF / PMKID-less M1 /
+        # silent), so the UI reports why instead of guessing.
+        self.fail_reason: Optional[str] = None
         # Register with the interface so client/handshake registration
         # ignores these MACs (they're not real clients).
         self.iface.register_forged_mac(self.source_mac)
@@ -189,7 +192,21 @@ class PmkidHarvestAttack:
         Receiving M1 is terminal: we deauth (we can never answer with M2) and stop
         — with the PMKID on success, or empty-handed if this AP ships a PMKID-less
         M1 (no point retrying the same AP). We only rotate the MAC and retry when
-        the AP stays *silent* (a lost Auth/Assoc in the pre-M1 dance)."""
+        the AP stays *silent* (a lost Auth/Assoc in the pre-M1 dance). On any
+        failure ``self.fail_reason`` carries the specific cause for the UI."""
+        self.fail_reason = None
+
+        # PMF Required: the AP only associates protected (802.11w) clients, so our
+        # unprotected Auth/Assoc is ignored — no M1, no PMKID. Don't waste the air.
+        if self.target.pmf_required:
+            self.fail_reason = (
+                "PMF Required — the AP only talks to protected (802.11w) clients; "
+                "our unprotected association is ignored, so there's no M1 to read a "
+                "PMKID from"
+            )
+            logger.info("[PMKID] %s is PMF-Required — unharvestable, skipping.",
+                        self.target.bssid)
+            return None
 
         # Make sure we're on the AP's channel — Focus already tunes here,
         # but be defensive.
@@ -221,6 +238,10 @@ class PmkidHarvestAttack:
                             f"(STA {_mac_bytes_to_str(self.source_mac)})"
                         )
                         return hs.pmkid
+                    self.fail_reason = (
+                        "the AP answered with an M1 but no PMKID KDE — it doesn't "
+                        "expose one (retrying the same AP won't help)"
+                    )
                     logger.info(
                         f"[PMKID] {self.target.bssid} answered with a PMKID-less M1 — "
                         f"this AP doesn't expose one; not retrying."
@@ -233,4 +254,11 @@ class PmkidHarvestAttack:
             )
             self._rotate_mac()
 
+        # Exhausted every attempt without a single M1.
+        if self.target.pmf_capable:
+            self.fail_reason = ("no M1 — the AP is PMF-capable and may be dropping "
+                                "our (non-PMF) association")
+        else:
+            self.fail_reason = ("no M1 — the AP never answered our Auth/Assoc "
+                                "(out of range, busy, or refused)")
         return None

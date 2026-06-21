@@ -649,9 +649,8 @@ class FocusViewV2(Screen):
             else:
                 self._log(treelog.leaf(_save_line(result)))
         else:
-            self._log(treelog.branch_fail("[bold red]No PMKID harvested[/bold red] — possible reasons:"))
-            self._log(treelog.branch("[dim]AP may not advertise a PMKID KDE[/dim]"))
-            self._log(treelog.leaf("[dim]PMF / status rejected the request[/dim]"))
+            reason = attack.fail_reason or "no M1 / PMKID (unknown reason)"
+            self._log(treelog.leaf_fail(f"[bold red]No PMKID:[/bold red] {reason}"))
 
     # ----- WPA3 downgrade ----------------------------------------------------
 
