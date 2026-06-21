@@ -81,8 +81,18 @@ worked first try). So the *inject* gap is per-driver (mt76x2u + mt7921au), not f
 On 5 GHz, mt76x0u receives but desensitized: `beacon_watch --bssid <ap> --channel 157`
 yields ~3 beacons/s (mean 3.3, max 7) where a strong nearby AP should give ~10/s, and the
 nearby home AP doesn't crack the top-10 list. Inject, PMKID, and active-station WPS-PBC all
-work on 5 GHz — it is purely the RX sensitivity. Likely incomplete 5 GHz RX calibration
-(LNA / AGC / per-channel gain) in the port. 2.4 GHz RX is fine. Needs its own look.
+work on 5 GHz — it is purely the RX sensitivity. 2.4 GHz RX is fine.
+
+**Root cause confirmed (2026-06-21):** the per-channel LNA-gain RX cal is skipped.
+`set_channel_20mhz` (`phy.py:914`) hardcodes `lna_gain=0` and skips `mt76x0_read_rx_gain`
+(`phy.py:910`, comment "display only"). The kernel reads a band/5GHz-subband LNA gain from
+EEPROM (`mt76x0/phy.c:1002`; `mt76x02_eeprom.c:136` — CH157 → `lna_5g[2]`) and applies
+`AGC,8 gain -= lna_gain*2` (`mt76x0/phy.c:415`); the port leaves AGC,8 uncorrected on 5 GHz.
+The `lna_gain` half of read_rx_gain is functional, not display-only (only `rssi_offset` is).
+Agent baseline confirms it: 3.5/s mean on CH157 (~36% of the 9.77/s ceiling), card-wide. Fix
+(NOT applied — awaiting a 5 GHz capture gate): port read_rx_gain + thread the real lna_gain;
+secondary, the periodic `mt76x0_phy_update_channel_gain` AGC tracker is also unported. Full
+audit + proposed fix + gate plan: `MT76X0U.md`.
 
 **Verification blocked:** no offline gate (verify_pcap CHECK 4 only matched 2.4 GHz
 aireplay) and the agent can't fire live 5 GHz TX. To close: extend `capture.py` to record

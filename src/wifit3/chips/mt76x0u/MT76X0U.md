@@ -17,6 +17,13 @@ Cross-driver gap classes (project audit 2026-05-25).
   registers (`MT_MAC_ADDR_DW1` U2ME_MASK, `MT_MAC_BSSID_DW1` MBSS) with bare
   MAC so unicast DATA (incl. EAPOL) isn't dropped. ToDS capture should work.
   [SRC mt76x0/main.c:80-86]
+- [ ] **Weak 5 GHz RX — per-channel LNA gain skipped** — CONFIRMED root cause of the
+  desensitized 5 GHz RX (~3.5 vs ~9.8 beacons/s ceiling on CH157, [HW] 2026-06-21).
+  `set_channel_20mhz` (`phy.py:914`) hardcodes `lna_gain=0` and skips `mt76x0_read_rx_gain`
+  (Step 11, `phy.py:910`); the kernel reads a per-band / per-5GHz-subband LNA gain from
+  EEPROM and applies `AGC,8 gain -= lna_gain*2` (`mt76x0/phy.c:1002,415`). The skip comment
+  claims "display only" but `lna_gain` feeds the AGC gain register, not just RSSI display.
+  Detail in "Weak 5 GHz RX — root cause" below; NOT fixed (awaiting a 5 GHz capture gate).
 
 Verified facts only. Anything unverified is excluded; if a claim isn't
 backed by either kernel source or pcap evidence, it isn't here.
@@ -645,3 +652,45 @@ All values used in M1+M2+M3 with their kernel source line.
 | `MT_SKEY_MODE_BASE_0/1` | 0xb000 / 0xb3f0 | mt76x02_regs.h:672-673 |
 | `MT_SKEY_MODE_MASK` | GENMASK(3,0) = 0xF | mt76x02_regs.h:677 |
 | `MT_SKEY_MODE_SHIFT(bss, idx)` | `4*(idx + 4*(bss & 1))` | mt76x02_regs.h:678 |
+
+## Weak 5 GHz RX — root cause: per-channel LNA gain skipped (2026-06-21)
+
+**Symptom** ([HW], agent baseline 2026-06-21): on 5 GHz the card receives but is
+desensitized. Cold 60 s soak on CH157 pinned to a reference AP: **mean 3.5 beacons/s**
+(total 212, ~36% of the ~9.77/s single-AP ceiling); card-wide, not AP-specific — the
+best-heard AP on CH157 still only reached ~4.9/s (~50%). Steady-state (sec 1 already at
+rate, no warm-up ramp). Good cards report 8-10/s for the same AP. 2.4 GHz RX is fine.
+
+**Root cause: the per-channel LNA-gain RX calibration is skipped.** `set_channel_20mhz`
+(`phy.py:914`) calls `phy_set_chan_bbp_params(..., lna_gain=0)`, and Step 11
+(`phy.py:910-911`) skips `mt76x0_read_rx_gain` with the comment "display only". That
+comment mispredicts the axis:
+
+- The kernel's `mt76x0_phy_set_channel` calls `mt76x0_read_rx_gain(dev)` (`mt76x0/phy.c:1002`)
+  *before* `mt76x0_phy_set_chan_bbp_params`.
+- `mt76x0_read_rx_gain` (`mt76x0/eeprom.c:110`) sets `dev->cal.rx.lna_gain =
+  mt76x02_get_lna_gain(...)`, which is **band- and 5 GHz-subband-specific**
+  (`mt76x02_eeprom.c:136`): 2.4 GHz → `lna_2g`; 5 GHz ch≤64 → `lna_5g[0]`, ch≤128 →
+  `lna_5g[1]`, **else → `lna_5g[2]`** (CH157 lands here), each from EEPROM (`MT_EE_LNA_GAIN`
+  / `MT_EE_RSSI_OFFSET_*`).
+- `mt76x0_phy_set_chan_bbp_params` (`mt76x0/phy.c:415-418`) then does `AGC,8 gain -=
+  lna_gain*2`. With the port's `lna_gain=0` this correction is **never applied**, so on 5 GHz
+  the BBP AGC gain (`MT_BBP(AGC,8)`) is left at the wrong value for the band/sub-band →
+  desensitized RX. The port already implements the `gain -= lna_gain*2` adjust
+  (`phy.py:546-551`) — it's just fed 0.
+
+  Only the `rssi_offset[]` half of `mt76x0_read_rx_gain` is display-only; the `lna_gain` half
+  is functional. The skip conflated the two — a skip-rationale that mispredicted the axis.
+
+**Likely-secondary gap:** the periodic RSSI-driven AGC tracker `mt76x0_phy_update_channel_gain`
+/ `mt76x0_phy_calibration_work` (`mt76x0/phy.c:1068,1101`, every `MT_CALIBRATE_INTERVAL`) is
+**not ported** — no host-side dynamic gain re-seed. It compounds a wrong static baseline but
+isn't the primary cause.
+
+**Proposed fix (NOT applied — awaiting a 5 GHz capture gate):** port `mt76x0_read_rx_gain`
+(read `MT_EE_LNA_GAIN` + the RSSI-offset EEPROM words, derive `lna_gain` via the
+band/sub-band table) and thread the real `lna_gain` into `phy_set_chan_bbp_params` from
+`set_channel_20mhz`. The EFUSE read path already exists (`eeprom.py`), so this is two more
+EEPROM words + one threaded value. Gate it: capture a 5 GHz session with the new `capture.py`
+5 GHz flags, byte-diff the `MT_BBP(AGC,8)` write vs the kernel, then re-run the beacon_watch
+soak (target ≥8/s on CH157) to confirm the sensitivity recovery.
