@@ -35,7 +35,7 @@ from typing import Callable, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
 from wifit3.wlan.packet import WlanFrameParser
 
 from . import monitor
@@ -73,6 +73,8 @@ class RT2500USBDriver:
     ]
     # RF2525/RF2525E are 2.4 GHz only (channels 1-14).
     SUPPORTED_CHANNELS = list(range(1, 15))
+    # NONE: rt2500usb has no hardware autoresponder — it can't ACK any MAC.
+    FAKE_MAC = FakeMacSupport.NONE
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RT2500USBDriver":

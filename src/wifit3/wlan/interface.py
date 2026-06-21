@@ -428,14 +428,15 @@ class WlanInterface:
         support = getattr(self.driver, "FAKE_MAC", FakeMacSupport.UNIMPLEMENTED)
         unavailable = support in (FakeMacSupport.NONE, FakeMacSupport.UNIMPLEMENTED)
         if unavailable or not hasattr(self.driver, "enter_active_monitor"):
-            logger.info("set_fake_mac: %s — active-monitor unavailable (%s)", self.name, support.value)
+            logger.info("set_fake_mac: %s (%s) — active-monitor unavailable (%s)",
+                        self.name, self._chipset, support.value)
             return None
         mac_b = self._to_mac_bytes(mac)
         bssid_b = self._to_mac_bytes(bssid) if bssid is not None else None
         assumed = await self.driver.enter_active_monitor(mac_b, bssid_b)
         self.register_forged_mac(assumed)
         assumed_str = ":".join(f"{b:02x}" for b in assumed)
-        logger.info("[FAKEMAC] %s now HW-ACKing %s", self.name, assumed_str)
+        logger.info("[FAKEMAC] %s (%s) now HW-ACKing %s", self.name, self._chipset, assumed_str)
         return assumed_str
 
     async def clear_fake_mac(self) -> None:
@@ -443,7 +444,7 @@ class WlanInterface:
         monitor. Idempotent and safe on drivers without the capability."""
         if hasattr(self.driver, "exit_active_monitor"):
             await self.driver.exit_active_monitor()
-            logger.info("[FAKEMAC] %s restored plain monitor", self.name)
+            logger.info("[FAKEMAC] %s (%s) restored plain monitor", self.name, self._chipset)
 
     @staticmethod
     def _to_mac_bytes(mac: Any) -> bytes:
@@ -451,6 +452,12 @@ class WlanInterface:
         if isinstance(mac, bytes):
             return mac
         return bytes(int(x, 16) for x in str(mac).split(":"))
+
+    @property
+    def _chipset(self) -> str:
+        """The chips/<name> dir of the active driver — for driver-specific log lines."""
+        parts = type(self.driver).__module__.split(".")
+        return parts[-2] if len(parts) >= 2 else parts[-1]
 
     def register_self_mac(self, mac: Any, bssid: Optional[str] = None) -> str:
         """Mark ``mac`` as our own forged STA and surface it in the client

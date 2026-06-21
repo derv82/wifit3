@@ -138,5 +138,5 @@ cache. A mid-rollout reset resumes from here, not from holding 14 drivers in hea
 - `[x]` mt76x0u — SPOOFABLE — HW-green 2.4 + 5 GHz (AWUS036ACHM, ~24 EAPOLs; needed U2ME-aware writes). WPS+PMKID work both bands; 5 GHz RX is *weak* (separate RF-sensitivity issue, see BUGS)
 - `[x]` rtl8188eus_dkms — SPOOFABLE — HW-green (TL-WN722N v2/v3, ~23 EAPOLs, 2.4 GHz; rtl8xxxu sibling)
 - `[ ]` remaining default siblings: rtl8821au_dkms, rt5372 (mainline/non-dkms variants stay UNIMPLEMENTED per Scope)
-- `[ ]` rtl8187 — NONE (passive monitor, no ACK engine)
-- `[ ]` rt2500usb — NONE (no autoresponder)
+- `[x]` rtl8187 — NONE declared (passive monitor, no ACK engine; WPS only limps through un-ACKed, slow/unreliable)
+- `[x]` rt2500usb — NONE declared (no autoresponder)

@@ -35,7 +35,7 @@ from typing import Callable, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 
 from wifit3.wlan.packet import WlanFrameParser
@@ -72,6 +72,8 @@ class RTL8187Driver:
     # it (rtl818x_channels[13].center_freq=2484) but we leave it off the
     # default hop list to match the other 2.4 GHz drivers.
     SUPPORTED_CHANNELS = list(range(1, 14))
+    # NONE: rtl8187 monitor is passive RX — no hardware ACK engine, so nothing to spoof.
+    FAKE_MAC = FakeMacSupport.NONE
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RTL8187Driver":
