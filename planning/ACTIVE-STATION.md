@@ -35,8 +35,8 @@ bits it flipped) — never invent a teardown.
 | Ralink rt2800 | rt2800usb, rt3070, rt5372 | `MAC_ADDR_DW0/1` 0x1008/0x100c [SRC rt2800lib.c:2046-2065] | MAC + `U2ME_MASK=0xff`; autoresponder already on, monitor already clears `DROP_NOT_TO_ME` | **high** (MAC-only) | SPOOFABLE |
 | MediaTek mt76x | mt76x0u, mt76x2u | `MT_MAC_ADDR_DW0/1` 0x1008/0x100c [SRC mt76x02_mac.c:727] | re-point MAC (drivers already write EFUSE MAC) + ensure `AUTO_RSP` | med (verify AUTO_RSP) | SPOOFABLE |
 | connac2 | mt7921au | omac via `DEV_INFO` | **done** | confirmed (HW) | SPOOFABLE |
-| Realtek rtl8xxxu | rtl8812au, rtl8821au, rtl8188eus (+dkms) | `REG_MACID` 0x0610 [SRC regs.h:789] | MAC + BSSID + set `RCR_CHECK_BSSID_MATCH` (monitor clears it → no ACK otherwise) [SRC core.c:6864] | med (RCR combo) | SPOOFABLE |
-| Realtek rtw88 | rtl8822bu, rtw88_8814au (+dkms) | `REG_MACID` 0x0610 [SRC main.c:925] | same as rtl8xxxu | med | SPOOFABLE |
+| Realtek rtl8xxxu | rtl8812au, rtl8821au, rtl8188eus (+dkms) | `REG_MACID` 0x0610 [SRC regs.h:789] | **MAC-only** — re-point REG_MACID; the accept-all monitor RCR still HW-ACKs RA==REG_MACID (no RCR flip needed) | **high (proven rtl8812au_dkms)** | SPOOFABLE |
+| Realtek rtw88 | rtl8822bu, rtw88_8814au (+dkms) | `REG_MACID` 0x0610 [SRC main.c:925] | same as rtl8xxxu (MAC-only; confirm on rtl8822bu) | med-high | SPOOFABLE |
 | Atheros | ar9271 | `AR_STA_ID0/1` 0x8000/0x8004 via WMI reg-write [SRC reg.h:1637] | MAC → STA_ID (agent claims ACK matches `AR_BSS_ID`; verify STA_ID first) | low (ACK addr) | SPOOFABLE |
 | Realtek rtl8187 | rtl8187 | MAC[0:5] EEPROM-backed [SRC rtl818x.h:17] | — monitor is passive RX, no ACK engine | confirmed | **NONE** |
 | Ralink rt2500usb | rt2500usb | MAC_CSR2/3/4 writable [SRC rt2500usb.h:79] | — no hardware autoresponder | confirmed | **NONE** |
@@ -119,7 +119,7 @@ cache. A mid-rollout reset resumes from here, not from holding 14 drivers in hea
 - `[x]` rt2800usb — SPOOFABLE — HW-green (PAU09/RT5572, ~20 EAPOLs, clean)
 - `[x]` rt3070 — SPOOFABLE — HW-green (AWUS036NH, ~13 EAPOLs; added write_mac_address)
 - `[x]` mt76x2u — SPOOFABLE — HW-green (AWUS036ACM, ~24 EAPOLs, 2.4 GHz; 5 GHz inject broken, see BUGS)
-- `[ ]` rtl8812au_dkms — SPOOFABLE — rep (resolve the RCR combo here)
+- `[x]` rtl8812au_dkms — SPOOFABLE — HW-green (AWUS036ACH, ~25 EAPOLs; MAC-only, no RCR flip; 5 GHz works too)
 - `[ ]` rtl8822bu_dkms — SPOOFABLE — rep
 - `[ ]` ar9271 — SPOOFABLE — rep (settle STA_ID vs BSS_ID)
 - `[ ]` siblings: rtl8812au, rtl8821au(+dkms), rtl8188eus(+dkms), rtl8814au_dkms, rtw88_8814au, rt5372, mt76x0u

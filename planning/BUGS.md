@@ -65,6 +65,10 @@ the PHY drops the frame. Fix: peep the channel (>=36 → 5 GHz) and pass an OFDM
 branch, so the CCK story doesn't apply — its 5 GHz failure is a different bug (band flag
 not reaching, wrong rate value, or more than rate). Needs its own look.
 
+**Not universal:** rtl8812au_dkms (AWUS036ACH) injects fine on 5 GHz (WPS-PBC + PMKID both
+worked first try). So this is a per-driver TX-rate gap (the two MediaTek cards), not a
+fleet-wide problem.
+
 **Verification blocked:** no offline gate (verify_pcap CHECK 4 only matched 2.4 GHz
 aireplay) and the agent can't fire live 5 GHz TX. To close: extend `capture.py` to record
 5 GHz inject (`--bssid2g/--bssid5g`, `--channel2g/--channel5g`), capture a 5 GHz aireplay
