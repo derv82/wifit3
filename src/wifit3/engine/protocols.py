@@ -32,13 +32,18 @@ class FakeMacSupport(enum.Enum):
     Auto-ACK for a programmed MAC is the prerequisite for any *ACKed conversation*
     where the AP addresses us and expects a link-layer ACK — WPS, EAP, and a
     software FakeAP/EvilTwin. Without it the AP retransmits each frame to its retry
-    limit and abandons the session. Drivers that omit a value are treated as NONE.
+    limit and abandons the session. A driver that omits FAKE_MAC is UNIMPLEMENTED.
 
-    NONE      — the radio cannot ACK a chosen MAC (a card with a hard/un-spoofable MAC).
-    FIXED_MAC — it ACKs, but only for the card's own MAC; ``enter_active_monitor``
-                ignores the requested MAC and returns the card's MAC instead.
+    UNIMPLEMENTED — this driver hasn't ported active-monitor; the silicon may be capable,
+                so steer the user to the card's default/recommended driver, NOT to a
+                hardware limit. (The default for any driver that omits FAKE_MAC.)
+    NONE      — the silicon genuinely cannot ACK a chosen MAC (hard/un-spoofable MAC,
+                e.g. rtl8187, rt2500usb).
+    FIXED_MAC — it ACKs, but only the card's own MAC; ``enter_active_monitor`` ignores the
+                requested MAC and returns the card's own.
     SPOOFABLE — it ACKs an arbitrary forged MAC programmed at runtime.
     """
+    UNIMPLEMENTED = "unimplemented"
     NONE = "none"
     FIXED_MAC = "fixed_mac"
     SPOOFABLE = "spoofable"
@@ -121,9 +126,9 @@ class WlanDriver(Protocol):
     # Soft contract for now: a driver that can ACK a chosen MAC declares
     # FAKE_MAC and implements enter/exit_active_monitor; the interface gates on
     # both via getattr/hasattr, so drivers predating this stay valid (treated as
-    # FakeMacSupport.NONE). Promote to a hard member once every driver declares it.
+    # FakeMacSupport.UNIMPLEMENTED). Promote to a hard member once every driver declares it.
     FAKE_MAC: ClassVar[FakeMacSupport]
-    """This radio's ability to auto-ACK a programmed MAC (default NONE if absent)."""
+    """This radio's ability to auto-ACK a programmed MAC (default UNIMPLEMENTED if absent)."""
 
     async def enter_active_monitor(
         self, mac: bytes, bssid: Optional[bytes] = None

@@ -425,9 +425,10 @@ class WlanInterface:
         (firmware-offload radios only). Also registers the MAC as forged. Accepts bytes
         or a colon-string. Returns the MAC armed, or None if the card can't spoof one
         (FakeMacSupport.NONE / absent); a FIXED_MAC card returns its own MAC."""
-        support = getattr(self.driver, "FAKE_MAC", FakeMacSupport.NONE)
-        if support == FakeMacSupport.NONE or not hasattr(self.driver, "enter_active_monitor"):
-            logger.info("set_fake_mac: %s cannot ACK a spoofed MAC (%s)", self.name, support)
+        support = getattr(self.driver, "FAKE_MAC", FakeMacSupport.UNIMPLEMENTED)
+        unavailable = support in (FakeMacSupport.NONE, FakeMacSupport.UNIMPLEMENTED)
+        if unavailable or not hasattr(self.driver, "enter_active_monitor"):
+            logger.info("set_fake_mac: %s — active-monitor unavailable (%s)", self.name, support.value)
             return None
         mac_b = self._to_mac_bytes(mac)
         bssid_b = self._to_mac_bytes(bssid) if bssid is not None else None

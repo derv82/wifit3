@@ -56,8 +56,11 @@ unavailable," and the attack stops cleanly. Accurate > green.
 ## Scope — default drivers only
 
 Active-station lands on each card's **default/recommended** driver (what we ship + test).
-Fallback variants (mainline ↔ `_dkms`, env-selectable) stay `FAKE_MAC=NONE` by default —
-**zero work**, the UX degrades gracefully (WPS-unavailable toast), no crash. Parity follows
+Fallback variants (mainline ↔ `_dkms`, env-selectable) stay `FAKE_MAC=UNIMPLEMENTED` by
+default (the undeclared default) — **zero work**, and the UX stays honest: "Active Monitor
+not implemented for `<chip>` — use `<default driver>`", NOT a false "card can't" (the
+silicon can; our fallback driver just didn't). Distinct from `NONE` = hardware genuinely
+can't (rtl8187, rt2500usb). Parity follows
 recommendation, not existence: a fallback earns active-station only if it ever becomes the
 *better* driver for a card. (rtl8812au mainline: never — RF-deaths in 1–5 min; superseded by
 the DKMS port.)
