@@ -53,6 +53,15 @@ unavailable," and the attack stops cleanly. Accurate > green.
 - rt2800usb has `MAC_ADDR_DW0/1` constants; rt3070/rt5372 share `rt2800lib` semantics but
   need the register write added.
 
+## Scope — default drivers only
+
+Active-station lands on each card's **default/recommended** driver (what we ship + test).
+Fallback variants (mainline ↔ `_dkms`, env-selectable) stay `FAKE_MAC=NONE` by default —
+**zero work**, the UX degrades gracefully (WPS-unavailable toast), no crash. Parity follows
+recommendation, not existence: a fallback earns active-station only if it ever becomes the
+*better* driver for a card. (rtl8812au mainline: never — RF-deaths in 1–5 min; superseded by
+the DKMS port.)
+
 ## Rollout (phased)
 
 The capability is identical everywhere; the *mechanism* differs per family and is
