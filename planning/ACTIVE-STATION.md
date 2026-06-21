@@ -104,9 +104,13 @@ Monitor not implemented / not possible (hard-MAC) for <chipset>`; the shared `pb
 it + "continuing anyway" and runs WPS **un-ACKed anyway** — never skip, since an un-ACKed
 exchange still completes on a tolerant AP (HW-confirmed: the UNIMPLEMENTED rtl8821au_dkms
 cracked a PSK that way). One place, so Scanner + Focus both render it. (No "use the default
-driver" hint — wrong while bringing up a new driver.) Remaining: WPS-PIN button → modal.
+driver" hint — wrong while bringing up a new driver.) WPS-PIN: arms active-monitor in
+WpsCampaign + a confirm modal when unsupported — done.
 
-**Phase 5 — tighten the contract.** Once every driver declares `FAKE_MAC`, promote it +
+**Phase 5 — tighten the contract — DROPPED.** (The `hasattr(enter_active_monitor)` gate must
+stay regardless — the NONE cards have no enter/exit — and the non-default fallbacks degrade
+fine as UNIMPLEMENTED, so promoting buys ~nothing.) Original plan: once every driver declares
+`FAKE_MAC`, promote it +
 `enter/exit_active_monitor` from optional (getattr/hasattr) into the required `WlanDriver`
 Protocol (or an ABC). The hasattr hack dies.
 
@@ -144,9 +148,11 @@ cache. A mid-rollout reset resumes from here, not from holding 14 drivers in hea
 - `[x]` rtl8821au_dkms — SPOOFABLE — HW-green 2.4 + 5 GHz (AWUS036ACS, ~21 EAPOLs; rtl8xxxu sibling, REG_MACID re-point)
 - `[x]` rtl8187 — NONE declared (passive monitor, no ACK engine; WPS only limps through un-ACKed, slow/unreliable)
 - `[x]` rt2500usb — NONE declared (no autoresponder)
-- `[x]` UX — PBC auto-invade emits `active_monitor_warning()` + runs un-ACKed anyway (Scanner + Focus, HW-confirmed on UNIMPLEMENTED 8821); WPS-PIN modal still TODO
+- `[x]` UX — PBC auto-invade emits `active_monitor_warning()` + runs un-ACKed anyway (Scanner + Focus, HW-confirmed on UNIMPLEMENTED 8821); WPS-PIN arms active-monitor + confirm modal when unsupported (HW-confirmed)
 
-**Rollout complete (2026-06-21): 12 SPOOFABLE + 2 NONE = all 14 default drivers, plus the
-PBC active-monitor warning UX. Every default driver HW-confirmed against an ACK-strict
-Broadcom AP. Remaining follow-ups: WPS-PIN modal UX, and Phase 5 (promote `FAKE_MAC` +
-`enter/exit_active_monitor` into the required `WlanDriver` Protocol).**
+**Rollout complete (2026-06-21): 12 SPOOFABLE + 2 NONE = all 14 default drivers, plus the PBC
+warning UX and WPS-PIN active-monitor + confirm modal. Every default driver HW-confirmed
+against an ACK-strict Broadcom AP. Phase 5 dropped (hasattr gate must stay; fallbacks degrade
+fine as UNIMPLEMENTED). Toasts intentionally dropped — don't pile on a single-card user
+already clicking through modals; the logs suffice. Parked own-pass cleanups: kill Focus V1,
+and a per-AP `log_history` ring buffer (preserve each AP's log across switches).**
