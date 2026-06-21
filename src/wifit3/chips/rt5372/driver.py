@@ -23,7 +23,7 @@ from typing import Callable, ClassVar, List, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -44,6 +44,7 @@ class RT5372Driver:
         DeviceID(_VID_RALINK, _PID_RT5372, "Ralink RT5372 (RT5392) 2T2R / Panda PAU05+PAU06"),
     ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 15))   # 2.4 GHz, 20 MHz
+    FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     def __init__(self, transport: RT5372Transport):
         self.transport = transport
@@ -209,6 +210,27 @@ class RT5372Driver:
         buf = bytearray(frame)
         buf[22:24] = ((seq << 4) & 0xFFFF).to_bytes(2, "little")
         return bytes(buf)
+
+    async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
+        """Program ``mac`` as the self-MAC with UNICAST_TO_ME_MASK=0xff so the
+        autoresponder HW-ACKs frames to it (rt5372's cold path never set a self-MAC).
+        Reversed by exit_active_monitor."""
+        loop = asyncio.get_running_loop()
+        async with self._io_lock:
+            await loop.run_in_executor(None, self._set_self_mac, bytes(mac), 0xFF)
+        return bytes(mac)
+
+    async def exit_active_monitor(self) -> None:
+        """Restore the monitor baseline: real EFUSE MAC + UNICAST_TO_ME_MASK=0."""
+        if self._eeprom is None:
+            return
+        loop = asyncio.get_running_loop()
+        async with self._io_lock:
+            await loop.run_in_executor(None, self._set_self_mac, self._eeprom.mac, 0x00)
+
+    def _set_self_mac(self, mac_bytes: bytes, u2me_mask: int) -> None:
+        with self._hw_lock:
+            mac.write_mac_address(self.transport, mac_bytes, u2me_mask=u2me_mask)
 
     async def close(self) -> None:
         if self._reader is not None:

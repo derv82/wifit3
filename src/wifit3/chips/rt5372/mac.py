@@ -32,6 +32,21 @@ def probe_hw_gpio(t: RT5372Transport) -> None:
     t.register_write(C.GPIO_CTRL, reg)
 
 
+def write_mac_address(t: RT5372Transport, mac: bytes, u2me_mask: int = 0x00) -> None:
+    """Program the chip's self-MAC into MAC_ADDR_DW0/1 (0x1008/0x100c).
+
+    The cold path never sets this, so the MAC-match engine has no identity and the
+    autoresponder can't ACK us. ``u2me_mask`` (DW1[23:16]) gates that match: 0 = match
+    nothing (monitor default — promiscuous capture); 0xFF = strict-match, so
+    active-monitor HW-ACKs only frames to ``mac``.  [SRC rt2800.h MAC_ADDR_DW0/1]"""
+    if len(mac) != 6:
+        raise ValueError(f"MAC must be 6 bytes, got {len(mac)}")
+    dw0 = mac[0] | (mac[1] << 8) | (mac[2] << 16) | (mac[3] << 24)
+    dw1 = (mac[5] << 8) | mac[4] | ((u2me_mask & 0xFF) << 16)
+    t.register_write(0x1008, dw0)   # MAC_ADDR_DW0
+    t.register_write(0x100C, dw1)   # MAC_ADDR_DW1
+
+
 def is_chip_warm(t: RT5372Transport) -> bool:
     """True if a prior bring-up already ran — the PBF pre-init bit (0x2000) is clear.
 

@@ -137,6 +137,7 @@ cache. A mid-rollout reset resumes from here, not from holding 14 drivers in hea
 - `[x]` rtl8814au_dkms — SPOOFABLE — HW-green (AWUS1900, ~25 EAPOLs, 2.4+5 GHz; rtl8xxxu sibling)
 - `[x]` mt76x0u — SPOOFABLE — HW-green 2.4 + 5 GHz (AWUS036ACHM, ~24 EAPOLs; needed U2ME-aware writes). WPS+PMKID work both bands; 5 GHz RX is *weak* (separate RF-sensitivity issue, see BUGS)
 - `[x]` rtl8188eus_dkms — SPOOFABLE — HW-green (TL-WN722N v2/v3, ~23 EAPOLs, 2.4 GHz; rtl8xxxu sibling)
-- `[ ]` remaining default siblings: rtl8821au_dkms, rt5372 (mainline/non-dkms variants stay UNIMPLEMENTED per Scope)
+- `[x]` rt5372 — SPOOFABLE — HW-green (Panda PAU05, ~24 EAPOLs, 2.4 GHz; Ralink sibling, rt3070 twin)
+- `[ ]` last sibling: rtl8821au_dkms (mainline/non-dkms variants stay UNIMPLEMENTED per Scope)
 - `[x]` rtl8187 — NONE declared (passive monitor, no ACK engine; WPS only limps through un-ACKed, slow/unreliable)
 - `[x]` rt2500usb — NONE declared (no autoresponder)
