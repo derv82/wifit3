@@ -314,3 +314,35 @@ def test_cleanup_saves_to_repo_when_chipset_known(tmp_path):
     mock_save.assert_called_once()
     dest_dir = mock_save.call_args[0][0]
     assert dest_dir.name == "captures_ath9k_htc"
+
+
+# --- injection plan: per-band passes + the 5 GHz supports_5g gate -------------
+# Fake BSSIDs (AA:BB:... — not network identifiers).
+
+def test_injection_plan_legacy_target_pins_ch1(tmp_path):
+    cap = _capture(tmp_path)
+    cap.target_bssid, cap.client_bssid = "AA:BB:CC:DD:EE:01", "AA:BB:CC:DD:EE:02"
+    assert cap._injection_plan() == [(1, "AA:BB:CC:DD:EE:01", "AA:BB:CC:DD:EE:02", "CH1")]
+
+
+def test_injection_plan_5g_dropped_without_support(tmp_path):
+    # --bssid5g passed but the card is 2.4-only → the 5 GHz pass is a no-op,
+    # while the 2.4 GHz pass still runs.
+    cap = _capture(tmp_path)
+    cap.bssid2g, cap.channel2g, cap.client2g = "AA:BB:CC:DD:EE:01", 6, None
+    cap.bssid5g, cap.channel5g, cap.client5g = "AA:BB:CC:DD:EE:03", 157, "AA:BB:CC:DD:EE:04"
+    cap.supports_5g = False
+    plan = cap._injection_plan()
+    assert (6, "AA:BB:CC:DD:EE:01", None, "2G") in plan
+    assert all(label != "5G" for *_, label in plan)
+
+
+def test_injection_plan_5g_included_when_supported(tmp_path):
+    cap = _capture(tmp_path)
+    cap.bssid5g, cap.channel5g, cap.client5g = "AA:BB:CC:DD:EE:03", 157, "AA:BB:CC:DD:EE:04"
+    cap.supports_5g = True
+    assert (157, "AA:BB:CC:DD:EE:03", "AA:BB:CC:DD:EE:04", "5G") in cap._injection_plan()
+
+
+def test_injection_plan_empty_with_no_targets(tmp_path):
+    assert _capture(tmp_path)._injection_plan() == []

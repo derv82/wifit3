@@ -13,9 +13,18 @@ injection test. It saves the usbmon pcap + per-tool logs + a sysinfo snapshot
 timestamps); `pcap_slicer.py` maps those to pcap frame ranges.
 
 Options:
-  --target BSSID    AP for the aireplay injection test + deauth. Omit and both
-                    are skipped (the scan/monitor capture still happens).
+  --target BSSID    AP for the aireplay injection test + deauth, pinned to CH1.
+                    Omit and both are skipped (the scan/monitor capture still
+                    happens).
   --client BSSID    client for the deauth (needs --target too).
+  --bssid2g BSSID   2.4 GHz AP for an injection test + deauth on --channel2g.
+  --channel2g N     channel for the --bssid2g pass (default 1).
+  --client2g BSSID  client for the --bssid2g deauth.
+  --bssid5g BSSID   5 GHz AP for an injection test + deauth on --channel5g.
+                    A no-op (skipped) when the card has no 5 GHz support, even
+                    if passed — so a dual-band invocation is safe on any card.
+  --channel5g N     channel for the --bssid5g pass (default 36).
+  --client5g BSSID  client for the --bssid5g deauth.
   --no-air          skip the airodump segments (native-hop reference + the
                     fixed-channel over-air pcap that feeds beacon_watch.py).
   --fast-hop        also run the pathological 0.25 s fast-hop stress segment.
@@ -76,9 +85,15 @@ class Capture:
     # device to enumerate, before bringing up monitor mode.
     PLUG_IN_WAIT = 10
 
-    def __init__(self, target=None, client=None, run_air=True, fast_hop=False):
+    def __init__(self, target=None, client=None, run_air=True, fast_hop=False,
+                 bssid2g=None, channel2g=1, client2g=None,
+                 bssid5g=None, channel5g=36, client5g=None):
         self.target_bssid = target
         self.client_bssid = client
+        # Per-band injection targets. The 5 GHz pass is gated on supports_5g at
+        # run time (see _injection_plan), so --bssid5g is safe to always pass.
+        self.bssid2g, self.channel2g, self.client2g = bssid2g, channel2g, client2g
+        self.bssid5g, self.channel5g, self.client5g = bssid5g, channel5g, client5g
         # The two airodump segments (native-hop reference + fixed-channel
         # over-air pcap) run by default — they're the runtime data a bring-up
         # needs. fast_hop is the pathological 0.25 s stress probe, opt-in.
@@ -494,6 +509,39 @@ class Capture:
             if remain > 0:
                 time.sleep(remain)
 
+    def _injection_plan(self):
+        """The injection passes to run, as ``(channel, bssid, client, label)``
+        tuples. Pure (no I/O) so the 5 GHz gate is unit-testable: legacy --target
+        pins to CH1; --bssid2g / --bssid5g add their own channel. The 5 GHz pass
+        is dropped when the card has no 5 GHz support, even if --bssid5g was
+        passed — so a dual-band invocation is safe on a 2.4-only card."""
+        plan = []
+        if self.target_bssid:
+            plan.append((1, self.target_bssid, self.client_bssid, "CH1"))
+        if self.bssid2g:
+            plan.append((self.channel2g, self.bssid2g, self.client2g, "2G"))
+        if self.bssid5g and self.supports_5g:
+            plan.append((self.channel5g, self.bssid5g, self.client5g, "5G"))
+        return plan
+
+    def _injection_segment(self, channel, bssid, client, label):
+        """Tune to `channel`, run aireplay's injection self-test against `bssid`,
+        then — if a `client` is given — one deauth. This is the over-air TX a
+        5 GHz (or 2.4 GHz) inject port is byte-matched against. Non-fatal
+        throughout, like the rest of the capture sequence."""
+        self.logger.log_main(
+            f"[{time.time():.3f}] [INJECT-{label}] ch{channel} bssid={bssid}")
+        self.run_cmd(["sudo", "iw", "dev", self.mon_iface, "set", "channel",
+                      str(channel)], timeout=10)
+        self.run_cmd(["sudo", "aireplay-ng", "-a", bssid, "--test",
+                      self.mon_iface], timeout=60)
+        if client:
+            self.run_cmd(["sudo", "aireplay-ng", "-0", "1", "-a", bssid,
+                          "-c", client, self.mon_iface], timeout=30)
+        else:
+            self.logger.log_main(
+                f"[*] No client for the {label} pass; skipping its deauth.")
+
     def _save_artifacts(self, dest_dir):
         """Move the pcap and copy the per-tool logs into dest_dir (next free
         capture-N slot)."""
@@ -658,20 +706,18 @@ class Capture:
             for ch in channels_5g:
                 self.run_cmd(["sudo", "iw", "dev", self.mon_iface, "set", "channel", str(ch)], timeout=10)
 
-        # Back to channel 1 for the injection tests.
-        self.run_cmd(["sudo", "iw", "dev", self.mon_iface, "set", "channel", "1"], timeout=10)
-
-        # Injection test + a single deauth — only with a --target, and both
-        # non-fatal so a slow/failing aireplay never discards the capture.
-        if self.target_bssid:
-            self.run_cmd(["sudo", "aireplay-ng", "-a", self.target_bssid, "--test", self.mon_iface], timeout=60)
-            if self.client_bssid:
-                self.run_cmd(["sudo", "aireplay-ng", "-0", "1",
-                              "-a", self.target_bssid, "-c", self.client_bssid, self.mon_iface], timeout=30)
-            else:
-                self.logger.log_main("[*] No --client given; skipping deauth.")
-        else:
-            self.logger.log_main("[*] No --target given; skipping injection test + deauth.")
+        # Injection passes (the over-air TX an inject port is byte-matched
+        # against). Each pins its own channel; the 5 GHz pass is dropped on a
+        # 2.4-only card. All non-fatal so a slow/failing aireplay never discards
+        # the capture.
+        if self.bssid5g and not self.supports_5g:
+            self.logger.log_main("[*] --bssid5g passed but the card has no 5 GHz "
+                                 "support — skipping the 5 GHz injection pass.")
+        plan = self._injection_plan()
+        if not plan:
+            self.logger.log_main("[*] No injection target given; skipping injection test + deauth.")
+        for channel, bssid, client, label in plan:
+            self._injection_segment(channel, bssid, client, label)
 
         # Opt-in (--fast-hop): 0.25 s fast-hop stress (does the kernel survive
         # the TUI's hop cadence?). Last, so it can't disturb the clean per-hop
@@ -685,8 +731,14 @@ class Capture:
 def main():
     parser = argparse.ArgumentParser(
         description="Wifit3 automated USB capture tool (run as root).")
-    parser.add_argument("--target", help="AP BSSID for the aireplay injection test + deauth")
+    parser.add_argument("--target", help="AP BSSID for the aireplay injection test + deauth (pinned to CH1)")
     parser.add_argument("--client", help="client BSSID for the deauth (needs --target too)")
+    parser.add_argument("--bssid2g", help="2.4 GHz AP BSSID for an injection test + deauth")
+    parser.add_argument("--channel2g", type=int, default=1, help="channel for the --bssid2g pass (default 1)")
+    parser.add_argument("--client2g", help="client BSSID for the --bssid2g deauth")
+    parser.add_argument("--bssid5g", help="5 GHz AP BSSID for an injection test + deauth (no-op without 5 GHz support)")
+    parser.add_argument("--channel5g", type=int, default=36, help="channel for the --bssid5g pass (default 36)")
+    parser.add_argument("--client5g", help="client BSSID for the --bssid5g deauth")
     parser.add_argument("--no-air", action="store_true",
                         help="skip the airodump segments (native-hop + fixed-channel pcap)")
     parser.add_argument("--fast-hop", action="store_true",
@@ -701,7 +753,9 @@ def main():
     app = None
     try:
         app = Capture(target=args.target, client=args.client,
-                      run_air=not args.no_air, fast_hop=args.fast_hop)
+                      run_air=not args.no_air, fast_hop=args.fast_hop,
+                      bssid2g=args.bssid2g, channel2g=args.channel2g, client2g=args.client2g,
+                      bssid5g=args.bssid5g, channel5g=args.channel5g, client5g=args.client5g)
         app.run()
     except KeyboardInterrupt:
         # Use stdout.write to ensure clean newline even in raw mode
