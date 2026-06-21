@@ -456,7 +456,7 @@ class WpsCampaign:
         label = f"trying [cyan]{pin}[/cyan]"
         if first_half_just_confirmed:
             self.log(f"{label} → [green]first half OK[/green] "
-                     f"[dim bold]\\[M5][/dim bold] — sweeping second half")
+                     f"[dim bold]\\[M5][/dim bold]")
             return
         if out.result is PinResult.FIRST_HALF_WRONG:
             self.log(f"{label} → [red]first half wrong[/red] [dim bold]\\[M4][/dim bold]")
