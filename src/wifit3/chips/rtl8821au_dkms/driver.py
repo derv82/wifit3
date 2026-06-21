@@ -26,7 +26,7 @@ from typing import Callable, ClassVar, List, Optional
 
 import usb.core
 
-from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -59,6 +59,7 @@ class Rtl8821auDkmsDriver:
                  "Realtek RTL8821AU/RTL8811AU 1T1R (ALFA AWUS036ACS) — vendor/DKMS port"),
     ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G + CHANNELS_5G
+    FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     def __init__(self, transport: RTL8821AUDkmsTransport):
         self.transport = transport
@@ -239,6 +240,23 @@ class Rtl8821auDkmsDriver:
         async with self._io_lock:           # don't TX mid-retune (set_channel/DIG)
             await loop.run_in_executor(None, self.transport.bulk_out, desc + frame_bytes)
         return True
+
+    async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
+        """Re-point REG_MACID to ``mac`` so the hardware HW-ACKs frames to it.
+        Reversed by exit_active_monitor."""
+        loop = asyncio.get_running_loop()
+        async with self._io_lock:
+            await loop.run_in_executor(None, monitor._write_mac_addr, self.transport, bytes(mac))
+        return bytes(mac)
+
+    async def exit_active_monitor(self) -> None:
+        """Restore the card's real MAC in REG_MACID."""
+        if not self.mac_address:
+            return
+        real = bytes(int(b, 16) for b in self.mac_address.split(":"))
+        loop = asyncio.get_running_loop()
+        async with self._io_lock:
+            await loop.run_in_executor(None, monitor._write_mac_addr, self.transport, real)
 
     async def close(self) -> None:
         # Stop the DIG watchdog and the reader before releasing the USB handle.

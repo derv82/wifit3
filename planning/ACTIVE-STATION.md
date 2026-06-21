@@ -141,7 +141,12 @@ cache. A mid-rollout reset resumes from here, not from holding 14 drivers in hea
 - `[x]` mt76x0u — SPOOFABLE — HW-green 2.4 + 5 GHz (AWUS036ACHM, ~24 EAPOLs; needed U2ME-aware writes). WPS+PMKID work both bands; 5 GHz RX is *weak* (separate RF-sensitivity issue, see BUGS)
 - `[x]` rtl8188eus_dkms — SPOOFABLE — HW-green (TL-WN722N v2/v3, ~23 EAPOLs, 2.4 GHz; rtl8xxxu sibling)
 - `[x]` rt5372 — SPOOFABLE — HW-green (Panda PAU05, ~24 EAPOLs, 2.4 GHz; Ralink sibling, rt3070 twin)
-- `[ ]` last sibling: rtl8821au_dkms (mainline/non-dkms variants stay UNIMPLEMENTED per Scope)
+- `[x]` rtl8821au_dkms — SPOOFABLE — HW-green 2.4 + 5 GHz (AWUS036ACS, ~21 EAPOLs; rtl8xxxu sibling, REG_MACID re-point)
 - `[x]` rtl8187 — NONE declared (passive monitor, no ACK engine; WPS only limps through un-ACKed, slow/unreliable)
 - `[x]` rt2500usb — NONE declared (no autoresponder)
 - `[x]` UX — PBC auto-invade emits `active_monitor_warning()` + runs un-ACKed anyway (Scanner + Focus, HW-confirmed on UNIMPLEMENTED 8821); WPS-PIN modal still TODO
+
+**Rollout complete (2026-06-21): 12 SPOOFABLE + 2 NONE = all 14 default drivers, plus the
+PBC active-monitor warning UX. Every default driver HW-confirmed against an ACK-strict
+Broadcom AP. Remaining follow-ups: WPS-PIN modal UX, and Phase 5 (promote `FAKE_MAC` +
+`enter/exit_active_monitor` into the required `WlanDriver` Protocol).**

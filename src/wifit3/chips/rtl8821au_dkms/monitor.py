@@ -22,6 +22,7 @@ REG_RXFLTMAP0 = 0x06A0
 REG_RXFLTMAP1 = 0x06A2
 REG_RXFLTMAP2 = 0x06A4
 RXFLTMAP_ACCEPT_ALL = 0xFFFF
+REG_MAC_ADDR = 0x0610           # REG_MACID — the card's own 6-byte address
 
 
 def _set_msr(t, net_type: int) -> None:
@@ -46,3 +47,10 @@ def _hw_var_set_monitor(t) -> None:
 def enter_monitor(t) -> None:
     _set_msr(t, MSR_NOLINK)
     _hw_var_set_monitor(t)
+
+
+def _write_mac_addr(t, mac6) -> None:
+    """[SRC] SetHwReg(HW_VAR_MAC_ADDR) — REG_MACID 0x610-0x615. The cold monitor path never
+    sets it; active-monitor re-points it so the hardware HW-ACKs frames to ``mac6``."""
+    for i, b in enumerate(mac6):
+        t.write8(REG_MAC_ADDR + i, b)
