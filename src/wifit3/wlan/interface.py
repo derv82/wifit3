@@ -459,6 +459,17 @@ class WlanInterface:
         parts = type(self.driver).__module__.split(".")
         return parts[-2] if len(parts) >= 2 else parts[-1]
 
+    def active_monitor_warning(self) -> Optional[str]:
+        """Treelog warning (rich markup) if this card can't HW-ACK a spoofed MAC, else None.
+        WPS still runs — un-ACKed, so expect timeouts/retries. NONE = the silicon can't
+        (hard MAC); UNIMPLEMENTED = this driver didn't port active-monitor."""
+        support = getattr(self.driver, "FAKE_MAC", FakeMacSupport.UNIMPLEMENTED)
+        if support in (FakeMacSupport.SPOOFABLE, FakeMacSupport.FIXED_MAC):
+            return None
+        reason = "not possible (hard-MAC)" if support is FakeMacSupport.NONE else "not implemented"
+        return (f"⚠  [orange1][bold]Active Monitor[/bold] {reason} "
+                f"for [bold]{self._chipset}[/bold][/orange1]")
+
     def register_self_mac(self, mac: Any, bssid: Optional[str] = None) -> str:
         """Mark ``mac`` as our own forged STA and surface it in the client
         table tagged ``is_self`` (rendered "YOU"). Accepts bytes or a string;

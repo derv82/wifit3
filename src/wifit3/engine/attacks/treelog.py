@@ -45,7 +45,7 @@ def leaf_fail(msg: str) -> str:
 def leaf_warn(msg: str) -> str:
     """A terminal warning line closing the group (└─⚠) for inconclusive outcomes — neither
     success nor clean failure (e.g. SAE probe rate-limited / PMF / off-channel)."""
-    return f" [dim]└─[/dim][yellow]⚠[/yellow] {msg}"
+    return f" [dim]└─[/dim][yellow]⚠ [/yellow] {msg}"
 
 
 def leaf(msg: str) -> str:

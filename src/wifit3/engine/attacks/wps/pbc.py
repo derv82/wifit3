@@ -59,6 +59,10 @@ class WpsPbcCapture:
                                wps_request_type=WPS_REQ_ENROLLEE)
         assoc.start()
         armed = await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
+        warning = self.iface.active_monitor_warning()
+        if isinstance(warning, str):
+            self.log(warning)
+            self.log("[dim]Continuing anyway (expect failures/timeouts)[/dim]")
         transport = WlanTransport(self.iface, str_to_mac(self.bssid), self.our_mac,
                                   tx_observer=self.tx_observer, ack=armed is not None)
         transport.start()

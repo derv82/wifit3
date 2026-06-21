@@ -98,10 +98,13 @@ loop). Context stays bounded by the per-driver boundary + the Status board below
 - Ralink: rt3070, rt5372
 - mt76x: mt76x0u
 
-**Phase 4 — the two NONEs + UX.** Declare `FAKE_MAC=NONE` on rtl8187 + rt2500usb, and wire
-the stage-specific UX (enum-gated, one place): WPS-PBC auto-invade → log + toast "card
-can't ACK a spoofed MAC, skipping"; WPS-PIN button → modal "This card can't spoof a MAC
-for WPS" + [Continue with real MAC] / [Cancel].
+**Phase 4 — the two NONEs + UX.** Declare `FAKE_MAC=NONE` on rtl8187 + rt2500usb (done). UX:
+`interface.active_monitor_warning()` (enum-gated, one place) returns a treelog `⚠ Active
+Monitor not implemented / not possible (hard-MAC) for <chipset>`; the shared `pbc.py` emits
+it + "continuing anyway" and runs WPS **un-ACKed anyway** — never skip, since an un-ACKed
+exchange still completes on a tolerant AP (HW-confirmed: the UNIMPLEMENTED rtl8821au_dkms
+cracked a PSK that way). One place, so Scanner + Focus both render it. (No "use the default
+driver" hint — wrong while bringing up a new driver.) Remaining: WPS-PIN button → modal.
 
 **Phase 5 — tighten the contract.** Once every driver declares `FAKE_MAC`, promote it +
 `enter/exit_active_monitor` from optional (getattr/hasattr) into the required `WlanDriver`
@@ -141,3 +144,4 @@ cache. A mid-rollout reset resumes from here, not from holding 14 drivers in hea
 - `[ ]` last sibling: rtl8821au_dkms (mainline/non-dkms variants stay UNIMPLEMENTED per Scope)
 - `[x]` rtl8187 — NONE declared (passive monitor, no ACK engine; WPS only limps through un-ACKed, slow/unreliable)
 - `[x]` rt2500usb — NONE declared (no autoresponder)
+- `[x]` UX — PBC auto-invade emits `active_monitor_warning()` + runs un-ACKed anyway (Scanner + Focus, HW-confirmed on UNIMPLEMENTED 8821); WPS-PIN modal still TODO
