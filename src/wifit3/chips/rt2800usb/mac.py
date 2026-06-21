@@ -168,21 +168,19 @@ def usb_init_registers(t: RT2800USBTransport) -> None:
 # [SRC] rt2800lib.c:10790-10860 (rt2800_enable_radio)
 #       rt2800usb.c:296-318 (rt2800usb_enable_radio)
 # ----------------------------------------------------------------------
-def write_mac_address(t: RT2800USBTransport, mac: bytes) -> None:
+def write_mac_address(t: RT2800USBTransport, mac: bytes, u2me_mask: int = 0x00) -> None:
     """Program the chip's self-MAC into MAC_ADDR_DW0/DW1.
 
     Without this set to a real value, RX may stay silent on some chip
     revs because the MAC matching engine has no valid identity.
 
-    UNICAST_TO_ME_MASK lives in MAC_ADDR_DW1 bits [23:16] and gates
-    whether the chip's RX path accepts unicast frames not addressed to
-    its own MAC. Kernel default (STA mode) is 0xFF — strict-match all
-    8 bits of the unicast destination's first byte, so frames addressed
-    to anyone else are dropped. We clear it to 0 because wifit3 is
-    always-monitor: PMKID/SAE/handshake-capture all rely on receiving
+    UNICAST_TO_ME_MASK lives in MAC_ADDR_DW1 bits [23:16] and gates the
+    "unicast to me" match the autoresponder ACKs on. Kernel default (STA
+    mode) is 0xFF — strict-match. ``u2me_mask`` defaults to 0 because wifit3
+    is always-monitor: PMKID/SAE/handshake-capture all rely on receiving
     unicast DATA addressed to a *forged* source MAC the chip doesn't
-    recognise as itself. Without this, the AP's M1 reply to our forged
-    Assoc Req is silently dropped before reaching the RX URB.
+    recognise as itself. Active-monitor (WPS/EAP) passes 0xFF so the
+    autoresponder strict-matches and HW-ACKs frames to our forged MAC.
 
     mt76 analog: chips/mt76x0u/driver.py rewrites MT_MAC_ADDR_DW1 with
     U2ME_MASK cleared for the same reason.
@@ -193,8 +191,7 @@ def write_mac_address(t: RT2800USBTransport, mac: bytes) -> None:
     if len(mac) != 6:
         raise ValueError(f"MAC must be 6 bytes, got {len(mac)}")
     dw0 = mac[0] | (mac[1] << 8) | (mac[2] << 16) | (mac[3] << 24)
-    # UNICAST_TO_ME_MASK=0 in the high bits — see docstring.
-    dw1 = (mac[5] << 8) | mac[4]
+    dw1 = (mac[5] << 8) | mac[4] | ((u2me_mask & 0xFF) << 16)
     t.write32(0x1008, dw0)   # MAC_ADDR_DW0
     t.write32(0x100C, dw1)   # MAC_ADDR_DW1
 

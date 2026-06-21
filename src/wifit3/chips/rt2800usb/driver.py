@@ -50,7 +50,7 @@ from typing import Callable, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
 
 from .constants import (
     EEPROM_NIC_CONF1_ANT_DIVERSITY_MASK,
@@ -107,6 +107,8 @@ class RT2800USBDriver:
     # missing (e.g. test code instantiates without going through
     # from_usb_device). Instance __init__ overlays the per-chip list.
     SUPPORTED_CHANNELS = list(range(1, 14)) + list(CHANNELS_5G_NON_DFS)
+    # Autoresponder ACKs frames matching MAC_ADDR_DW0/1 — see enter_active_monitor.
+    FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RT2800USBDriver":
@@ -721,6 +723,26 @@ class RT2800USBDriver:
             )
         except (IOError, usb.core.USBError) as e:
             logger.debug("[%s] TX counter read failed: %s", tag, e)
+
+    async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
+        """Program ``mac`` as the self-MAC with UNICAST_TO_ME_MASK=0xff so the
+        autoresponder HW-ACKs frames to it. RX stays promiscuous and the AP's replies
+        are addressed to ``mac``, so they still arrive. Reversed by exit_active_monitor."""
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None, lambda: write_mac_address(self.transport, bytes(mac), u2me_mask=0xFF),
+        )
+        return bytes(mac)
+
+    async def exit_active_monitor(self) -> None:
+        """Restore the monitor baseline: re-program the real MAC with
+        UNICAST_TO_ME_MASK=0 (promiscuous capture, autoresponder matches nothing)."""
+        if self._eeprom is None:
+            return
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None, lambda: write_mac_address(self.transport, self._eeprom.mac_address),
+        )
 
     async def close(self) -> None:
         if self._link_tuner_task is not None:
