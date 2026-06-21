@@ -24,7 +24,7 @@ from typing import Callable, ClassVar, List, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -81,6 +81,7 @@ class Rtl8822buDkmsDriver:
                  "Realtek RTL8822BU 2T2R (TP-Link Archer T3U Plus) — vendor/DKMS port"),
     ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G + CHANNELS_5G
+    FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     def __init__(self, transport: Rtl8822buTransport):
         self.transport = transport
@@ -266,6 +267,22 @@ class Rtl8822buDkmsDriver:
         async with self._io_lock:
             await loop.run_in_executor(None, self.transport.bulk_out, payload)
         return True
+
+    async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
+        """Re-point REG_MACID to ``mac`` so the hardware HW-ACKs frames to it.
+        Reversed by exit_active_monitor."""
+        await self._set_self_mac(":".join(f"{b:02x}" for b in mac))
+        return bytes(mac)
+
+    async def exit_active_monitor(self) -> None:
+        """Restore the card's real MAC in REG_MACID."""
+        if self.mac_address:
+            await self._set_self_mac(self.mac_address)
+
+    async def _set_self_mac(self, mac_str: str) -> None:
+        loop = asyncio.get_running_loop()
+        async with self._io_lock:
+            await loop.run_in_executor(None, mac.set_mac_addr, self.transport, mac_str)
 
     async def close(self) -> None:
         if self._watchdog_task is not None:
