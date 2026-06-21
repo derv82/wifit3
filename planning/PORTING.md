@@ -1,7 +1,8 @@
 # Porting a chipset to wifit3
 
-> The procedure a coding agent follows to bring up a new USB Wi-Fi chipset.
-> Read it top to bottom, then start at Step 0. The steps are ordered.
+> The procedure for bringing up a new USB Wi-Fi chipset. Written in the voice of our coding
+> agent, but human contributors follow the same steps and ship the same `<CHIP>.md` (see
+> `CONTRIBUTING.md`). Read it top to bottom, then start at Step 0. The steps are ordered.
 
 You are re-implementing a Linux kernel driver in Python. The kernel/vendor C **source**
 is what you translate. A recorded run of that driver — talking to *this exact card* over
