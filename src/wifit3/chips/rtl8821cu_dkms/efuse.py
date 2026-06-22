@@ -1,26 +1,40 @@
-"""RTL8821CU EFUSE read — the indirect read loop over REG_EFUSE_CTRL (0x30).
+"""RTL8821CU EFUSE read — the indirect read loop over REG_EFUSE_CTRL (0x30), the
+physical->logical decode, and the one register read in the EFUSE-parse chain.
 
 The vendor reads the full 512-byte physical EFUSE through an indirect controller: write the
 byte address into bits [17:8] with the ready flag (bit 31) cleared, poll until the chip sets
 the flag, then take the data from the low byte. This is the bulk of the cold-boot prologue
-(one 4-byte write + poll per byte).
+(one 4-byte write + poll per byte). The packed physical bytes are then decoded into the
+512-byte logical shadow map the rest of the HAL indexes, and the parse chain reads it —
+only the BT-coexist parse touches a register (REG_WL_BT_PWR_CTRL), so that read is the sole
+wire op of the whole parse step.
 
 Ported from:
-  [SRC] hal/rtl8821c/rtl8821c_ops.c:462          rtl8821c_read_efuse (autoload check + dump)
+  [SRC] hal/rtl8821c/rtl8821c_ops.c:462          rtl8821c_read_efuse (autoload + dump + parse)
+  [SRC] hal/rtl8821c/rtl8821c_ops.c:134          Hal_EfuseParseBTCoexistInfo (the 0x68 read)
+  [SRC] hal/rtl8821c/rtl8821c_ops.c:80           Hal_EfuseParseIDCode (map-valid = ID 0x8129)
   [SRC] hal/halmac/halmac_88xx/halmac_efuse_88xx.c:1088  read_hw_efuse_88xx (the 0x30 loop)
+  [SRC] hal/halmac/halmac_88xx/halmac_efuse_88xx.c:1198  eeprom_parser_88xx (phys->logical)
   [SRC] hal/halmac/halmac_88xx/halmac_efuse_88xx.c (switch_efuse_bank_88xx)
   [SRC] hal/halmac/halmac_88xx/halmac_8821c/halmac_common_8821c.c:169  cfg_ldo25_8821c
-  [SRC] hal/halmac/halmac_88xx/halmac_8821c/halmac_8821c_cfg.h:47      EFUSE_SIZE_8821C = 512
+  [SRC] hal/halmac/halmac_88xx/halmac_8821c/halmac_8821c_cfg.h:47-50   sizes (below)
 Bit fields [SRC] hal/halmac/halmac_bit_8821c.h: EF_FLAG :689, EF_ADDR shift/mask :727-731,
-EF_DATA mask :739, AUTOLOAD_SUS :129.
+EF_DATA mask :739, AUTOLOAD_SUS :129, BT_FUNC_EN :1395.
 """
 from __future__ import annotations
 
 REG_SYS_EEPROM_CTRL = 0x000A
 REG_EFUSE_CTRL = 0x0030
 REG_LDO_EFUSE_CTRL = 0x0034
+REG_WL_BT_PWR_CTRL = 0x0068        # [SRC] halmac_reg2.h:406
 
-EFUSE_SIZE_8821C = 512
+EFUSE_SIZE_8821C = 512             # physical [SRC] halmac_8821c_cfg.h:47 EFUSE_SIZE_8821C
+EEPROM_SIZE_8821C = 512            # logical shadow-map [SRC] halmac_8821c_cfg.h:48 EEPROM_SIZE_8821C
+_PRTCT_EFUSE_SIZE = 96             # [SRC] halmac_8821c_cfg.h:50 PRTCT_EFUSE_SIZE_8821C
+
+_RTL_EEPROM_ID = 0x8129            # [SRC] include/hal_pg.h:824 — log_map[0:2] when autoload valid
+_EEPROM_RF_BOARD_OPTION = 0xC1     # [SRC] include/hal_pg.h:509 EEPROM_RF_BOARD_OPTION_8821C
+_BIT_BT_FUNC_EN = 1 << 18          # [SRC] halmac_bit_8821c.h:1395 BIT_BT_FUNC_EN_8821C
 
 _BIT_AUTOLOAD_SUS = 1 << 5
 _BIT_EF_FLAG = 1 << 31
@@ -68,11 +82,66 @@ def read_hw_efuse(t, offset: int = 0, size: int = EFUSE_SIZE_8821C) -> bytes:
     return bytes(out)
 
 
+def eeprom_parser(phy_map: bytes) -> bytes:
+    """Decode the packed physical EFUSE into the 0xFF-initialised logical shadow map.
+
+    Each block is a 1-byte header (or 2-byte, when ``hdr & 0x1F == 0x0F``) giving a block
+    index + a 4-bit word-enable; each enabled 16-bit word is scattered to
+    ``blk*8 + word*2``. A 0xFF header ends the map. [SRC] eeprom_parser_88xx
+    halmac_efuse_88xx.c:1198 (sizes: efuse 512, eeprom 512, prtct 96)."""
+    log_map = bytearray(b"\xff" * EEPROM_SIZE_8821C)
+    end_m1 = EFUSE_SIZE_8821C - _PRTCT_EFUSE_SIZE - 1     # 415
+    end = EFUSE_SIZE_8821C - _PRTCT_EFUSE_SIZE            # 416
+    idx = 0
+    while True:
+        hdr = phy_map[idx]
+        if (hdr & 0x1F) == 0x0F:
+            idx += 1
+            hdr2 = phy_map[idx]
+            if hdr2 == 0xFF:
+                break
+            blk = ((hdr2 & 0xF0) >> 1) | ((hdr >> 5) & 0x07)
+            word_en = hdr2 & 0x0F
+        else:
+            blk = (hdr & 0xF0) >> 4
+            word_en = hdr & 0x0F
+        if hdr == 0xFF:
+            break
+        idx += 1
+        if idx >= end_m1:
+            raise RuntimeError("RTL8821CU: efuse parse overran physical map (header)")
+        for i in range(4):
+            if (~(word_en >> i)) & 1:
+                eep = (blk << 3) + (i << 1)
+                if eep + 1 > EEPROM_SIZE_8821C:
+                    raise RuntimeError("RTL8821CU: efuse parse logical idx overflow")
+                log_map[eep] = phy_map[idx]
+                idx += 1
+                if idx > end_m1:
+                    raise RuntimeError("RTL8821CU: efuse parse overran physical map (word lo)")
+                log_map[eep + 1] = phy_map[idx]
+                idx += 1
+                if idx > end:
+                    raise RuntimeError("RTL8821CU: efuse parse overran physical map (word hi)")
+    return bytes(log_map)
+
+
+def _parse_bt_coexist(t, log_map: bytes, map_valid: bool) -> None:
+    """The only register-touching EFUSE-parse step: when the map is valid and carries a
+    board option, read REG_WL_BT_PWR_CTRL to learn whether BT is fused on (combo card).
+    Decode unused so far — the read itself is the wire op. [SRC] rtl8821c_ops.c:141-150."""
+    if map_valid and log_map[_EEPROM_RF_BOARD_OPTION] != 0xFF:
+        t.read32(REG_WL_BT_PWR_CTRL)
+
+
 def read_efuse(t) -> tuple[bool, bytes]:
-    """[SRC] rtl8821c_read_efuse steps 1-2: autoload-status check, then the WIFI dump.
-    Returns (autoload_ok, 512-byte efuse map)."""
+    """[SRC] rtl8821c_read_efuse: autoload-status check, the WIFI physical dump decoded
+    to the logical shadow map, then the parse chain (only BT-coex touches a register).
+    Returns (autoload_ok, 512-byte logical efuse map)."""
     val8 = t.read8(REG_SYS_EEPROM_CTRL)
     autoload_ok = not (val8 & _BIT_AUTOLOAD_SUS)
     _switch_efuse_bank_wifi(t)
-    efuse_map = read_hw_efuse(t)
-    return autoload_ok, efuse_map
+    log_map = eeprom_parser(read_hw_efuse(t))
+    map_valid = int.from_bytes(log_map[0:2], "little") == _RTL_EEPROM_ID
+    _parse_bt_coexist(t, log_map, map_valid)
+    return autoload_ok, log_map
