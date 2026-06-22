@@ -56,17 +56,17 @@ def run(cap: str | None = None) -> int:
     dev = rp.ReplayDevice(ops)
     t = Rtl8821cuTransport(dev)
     try:
-        bringup.power_on(t)
+        bringup.cold_bringup(t)
     except rp.Divergence as e:
         print(f"\nDIVERGENCE after {dev.i} ops:\n  {e}")
         return 1
 
     consumed = dev.i
-    print(f"\nM1 power-on reproduced {consumed}/{len(ops)} control ops clean.")
+    print(f"\nM1 chip-id + EFUSE prologue reproduced {consumed}/{len(ops)} control ops clean.")
     if consumed < len(ops):
         nxt = ops[consumed]
         print(f"FRONTIER -> op #{consumed} (frame {nxt['frame']}): {_fmt(nxt)}")
-        print("  (the next op to port — milestone 2; M1 power-on itself is clean above)")
+        print("  (next: the pre-power-on init block, then the card-enable power sequence in pwrseq)")
     return 0
 
 
