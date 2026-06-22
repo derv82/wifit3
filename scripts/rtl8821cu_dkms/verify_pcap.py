@@ -46,11 +46,15 @@ def run(cap: str | None = None) -> int:
 
     dev_addr = rp.find_card_device(pcap)
     rp.audit_coverage(pcap, dev_addr)
-    ops = rp.extract_ctrl_ops(pcap, dev_addr)
-    print(f"{pcap.name}: card=dev{dev_addr}, {len(ops)} control ops")
-    print("  first 40 control ops (* = 0x4E0 ON-section mirror):")
+    # Merge the vendor register stream with the FW/TX bulk-OUT packets (ep 0x05) in frame
+    # order: firmware download interleaves register writes (iDDMA/MCU setup) with bulk FW
+    # chunks, and ReplayDevice.write byte-checks the bulk against the wire.
+    ops = rp.merge_ops_by_frame(rp.extract_ctrl_ops(pcap, dev_addr),
+                                rp.extract_bulk_out_ops(pcap, dev_addr))
+    print(f"{pcap.name}: card=dev{dev_addr}, {len(ops)} ctrl+bulk ops")
+    print("  first 40 ops (* = 0x4E0 ON-section mirror):")
     for k, o in enumerate(ops[:40]):
-        tag = " *" if o["wval"] == 0x04E0 else ""
+        tag = " *" if o.get("wval") == 0x04E0 else ""
         print(f"    [{k:3}] f{o['frame']:<7} {_fmt(o)}{tag}")
 
     dev = rp.ReplayDevice(ops)
