@@ -62,11 +62,11 @@ def run(cap: str | None = None) -> int:
         return 1
 
     consumed = dev.i
-    print(f"\nM1 chip-id + EFUSE prologue reproduced {consumed}/{len(ops)} control ops clean.")
+    print(f"\nCold bring-up through power-on reproduced {consumed}/{len(ops)} control ops clean.")
     if consumed < len(ops):
         nxt = ops[consumed]
         print(f"FRONTIER -> op #{consumed} (frame {nxt['frame']}): {_fmt(nxt)}")
-        print("  (next: the pre-power-on init block, then the card-enable power sequence in pwrseq)")
+        print("  (next: firmware download - 8051 DMEM/IMEM setup, then the FW-blob bulk upload)")
     return 0
 
 
