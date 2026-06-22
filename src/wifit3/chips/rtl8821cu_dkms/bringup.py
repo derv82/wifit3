@@ -12,7 +12,7 @@ entry) extend ``cold_bringup`` past the report readback.
 """
 from __future__ import annotations
 
-from . import btc, chipid, efuse, firmware, init, phy, pwrseq
+from . import btc, chipid, efuse, firmware, init, mac, phy, pwrseq
 
 REG_C2HEVT_MSG_NORMAL = 0x01A0      # [SRC] include/hal_com_reg.h:149
 _C2H_DEFEATURE_RSVD = 0xFD          # [SRC] hal/hal_com_c2h.h:79 — "FW: report MAC-hidden via reg"
@@ -52,8 +52,11 @@ def read_mac_hidden_rpt(t, info) -> None:
             break
     else:
         raise RuntimeError("RTL8821CU: MAC-hidden report not ready")
-    for i in range(_MAC_HIDDEN_RPT_LEN):
-        t.read8(REG_C2HEVT_MSG_NORMAL + 2 + i)
+    rpt = bytes(t.read8(REG_C2HEVT_MSG_NORMAL + 2 + i) for i in range(_MAC_HIDDEN_RPT_LEN))
+    # c2h_mac_hidden_rpt_hdl [SRC] hal_com.c:1426 — PackageType = report[4] bits 4..6. It feeds
+    # the phydm general-info H2C, but only on the *next* init: this report is read after the cold
+    # _send_general_info already ran (inside fw_dl above), so cold sends package_type=0.
+    info.package_type = (rpt[4] >> 4) & 0x07
     t.write8(REG_C2HEVT_MSG_NORMAL, _C2H_DBG)
     power_off(t, info)
 
@@ -71,6 +74,21 @@ def power_off(t, info) -> None:
     pwrseq.mac_pwr_switch(t, power_on=False)
 
 
+def hal_init(t, info) -> None:
+    """[SRC] _halmac_init_hal hal_halmac.c:3576 — the real HW init `airmon-ng start` triggers
+    (via rtw_hal_init). The probe powered the chip off after reading FW caps, so this re-runs
+    the full bring-up: power on, download FW, init the MAC flow, send the FW general/phydm info,
+    then init the MAC registers / RX-info / BB+RF / interface (later milestones).
+
+    Unlike the cold MAC-hidden FW download, ``not_xmitframe_fw_dl`` is 0 here, so the reserved-
+    page chunks take the full ``update_txdesc`` descriptor (``full=True``). The H2C general-info
+    path is byte-identical to cold (``update_txdesc_h2c_pkt`` == the minimal H2C descriptor)."""
+    power_on(t, info, already_on=False)
+    firmware.download_fw(t, info, full=True, rsvd_boundary=mac.txff_pages()["boundary"])
+    mac.init_mac_flow(t, info)
+    firmware.send_general_info(t, info)
+
+
 def cold_bringup(t) -> None:
     """The cold init the driver's connect() runs, in the order the wire shows. See module
     docstring. Verified byte-for-byte by ``scripts/verify_pcap.py rtl8821cu_dkms``."""
@@ -81,3 +99,4 @@ def cold_bringup(t) -> None:
     read_mac_hidden_rpt(t, info)
     efuse.read_phydm_trim(t, info.phys_map)
     phy.init_hw_info_by_rfe(t, info.rfe_type)
+    hal_init(t, info)

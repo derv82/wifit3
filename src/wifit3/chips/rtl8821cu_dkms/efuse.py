@@ -142,6 +142,7 @@ class EfuseInfo:
     ant_num: int            # 1 or 2 BT/WL shared antennas
     phys_map: bytes = b""   # raw 512-B physical dump (cached; PPG trim bytes index into it)
     chip_ver: int = 0       # halmac chip_ver (cut), set by bring-up from mount_get_chip_info
+    package_type: int = 0   # hal->PackageType from the MAC-hidden report; 0 until that read
 
 
 def _parse_board_info(t, log_map: bytes, map_valid: bool) -> tuple[bool, int, int, int]:

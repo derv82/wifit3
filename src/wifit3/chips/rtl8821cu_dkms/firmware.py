@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import mac
+from . import mac, tx
 
 # --- registers [SRC] halmac_reg2.h -----------------------------------------
 REG_SYS_FUNC_EN = 0x0002
@@ -177,9 +177,16 @@ def _build_txdesc_pkt(chunk: bytes, qsel: int = _QSEL_BEACON, set_offset: bool =
     return bytes(buf)
 
 
-def _send_rsvd_page(t, chunk: bytes) -> None:
+def _send_rsvd_page(t, chunk: bytes, full: bool = False, rsvd_boundary: int = 0) -> None:
     """dl_rsvd_page_88xx [SRC] common_88xx.c:314 (+ send_fwpkt's USB dummy byte, fw_88xx.c:726):
-    open the rsvd-page window, bulk the txdesc+chunk, poll bcn-valid, restore CR/TXQ/window."""
+    open the rsvd-page window, bulk the txdesc+chunk, poll bcn-valid, restore CR/TXQ/window.
+
+    ``full`` selects the descriptor: cold init (not_xmitframe_fw_dl=1) takes the minimal
+    ``usb_write_data_not_xmitframe`` path; the real hal_init (airmon) leaves the flag 0 so the
+    chunk goes through ``dump_mgntframe`` -> the full ``update_txdesc`` builder [SRC]
+    rtl8821cu_xmit.c:35. ``rsvd_boundary`` is the window restored at the end (``txff_alloc
+    .rsvd_boundary``): 0 on the cold FW download (it runs before the first init_mac_flow), and
+    the MAC reserved-page boundary afterwards (it persists in adapter state into the airmon dl)."""
     if (len(chunk) + _TX_DESC_SIZE) % _USB_BULK_OUT_SIZE == 0:
         chunk = chunk + b"\x00"             # send_fwpkt dummy (untested here — never aligns)
     t.write16(REG_FIFOPAGE_CTRL_2, 0 | (1 << 15))       # pg_addr 0 (src fixed at 0)
@@ -187,13 +194,14 @@ def _send_rsvd_page(t, chunk: bytes) -> None:
     t.write8(REG_CR + 1, r_cr | (1 << 0))
     r_txq = t.read8(REG_FWHW_TXQ_CTRL + 2)
     t.write8(REG_FWHW_TXQ_CTRL + 2, r_txq & ~(1 << 6))
-    t.bulk_out(_build_txdesc_pkt(chunk))
+    pkt = tx.build_mgnt_txdesc(chunk, qsel=_QSEL_BEACON) if full else _build_txdesc_pkt(chunk)
+    t.bulk_out(pkt)
     for _ in range(1000):
         if t.read8(REG_FIFOPAGE_CTRL_2 + 1) & (1 << 7):
             break
     else:
         raise RuntimeError("RTL8821CU: rsvd-page bcn-valid poll timed out")
-    t.write16(REG_FIFOPAGE_CTRL_2, 0 | (1 << 15))       # rsvd_boundary = 0 at FW-DL time
+    t.write16(REG_FIFOPAGE_CTRL_2, rsvd_boundary | (1 << 15))
     t.write8(REG_FWHW_TXQ_CTRL + 2, r_txq)
     t.write8(REG_CR + 1, r_cr)
 
@@ -235,7 +243,8 @@ def _check_fw_chksum(t, mem_addr: int) -> None:
         raise RuntimeError(f"RTL8821CU: FW checksum failed for mem 0x{mem_addr:08x}")
 
 
-def _dlfw_to_mem(t, data: bytes, dest: int, size: int) -> None:
+def _dlfw_to_mem(t, data: bytes, dest: int, size: int, full: bool = False,
+                 rsvd_boundary: int = 0) -> None:
     """dlfw_to_mem_88xx [SRC] fw_88xx.c:567 — reset the rolling checksum, then chunk the section:
     send each chunk to TXBUF and iDDMA it to dest+offset; finally verify the checksum."""
     t.write32(REG_DDMA_CH0CTRL, t.read32(REG_DDMA_CH0CTRL) | _BIT_DDMACH0_RESET_CHKSUM_STS)
@@ -243,14 +252,14 @@ def _dlfw_to_mem(t, data: bytes, dest: int, size: int) -> None:
     first = True
     while offset < size:
         pkt = min(size - offset, _DLFW_PKT_SIZE)
-        _send_rsvd_page(t, data[offset:offset + pkt])
+        _send_rsvd_page(t, data[offset:offset + pkt], full, rsvd_boundary)
         _iddma_dlfw(t, _OCPBASE_TXBUF + _TX_DESC_SIZE, dest + offset, pkt, first)
         first = False
         offset += pkt
     _check_fw_chksum(t, dest)
 
 
-def download_firmware(t, info) -> None:
+def download_firmware(t, info, full: bool = False, rsvd_boundary: int = 0) -> None:
     """download_firmware_88xx [SRC] fw_88xx.c:115 — back up LTE-coex + the MAC regs the iDDMA
     download borrows, push DMEM/IMEM/EMEM, restore, then end-flow (FW-ready + CPU enable)."""
     fw = _FW_BIN.read_bytes()
@@ -286,12 +295,12 @@ def download_firmware(t, info) -> None:
     # start_dlfw_88xx: enable FW-download, push the sections.
     t.write16(REG_MCUFW_CTRL, (t.read16(REG_MCUFW_CTRL) & 0x3800) | (1 << 0))
     base = _HDR_SIZE
-    _dlfw_to_mem(t, fw[base:base + dmem_size], dmem_dest, dmem_size)
+    _dlfw_to_mem(t, fw[base:base + dmem_size], dmem_dest, dmem_size, full, rsvd_boundary)
     base += dmem_size
-    _dlfw_to_mem(t, fw[base:base + imem_size], imem_dest, imem_size)
+    _dlfw_to_mem(t, fw[base:base + imem_size], imem_dest, imem_size, full, rsvd_boundary)
     base += imem_size
     if emem_size:
-        _dlfw_to_mem(t, fw[base:base + emem_size], emem_dest, emem_size)
+        _dlfw_to_mem(t, fw[base:base + emem_size], emem_dest, emem_size, full, rsvd_boundary)
 
     # restore_mac_reg_88xx (in backup order).
     t.write8(REG_TXDMA_PQ_MAP + 1, b_pq)
@@ -317,10 +326,10 @@ def download_firmware(t, info) -> None:
     _ltecoex_write(t, 0x38, lte_backup)
 
 
-def download_fw(t, info) -> None:
+def download_fw(t, info, full: bool = False, rsvd_boundary: int = 0) -> None:
     """[SRC] download_fw hal_halmac.c:3350 — drain TX FIFO, then download firmware."""
     _txfifo_wait_empty(t)
-    download_firmware(t, info)
+    download_firmware(t, info, full, rsvd_boundary)
 
 
 def _h2c_header(buf: bytearray, sub_cmd: int, content_size: int, seq: int) -> None:
@@ -386,6 +395,9 @@ def send_general_info(t, info) -> None:
     _set_field(phy, 0x08, 16, 8, info.chip_ver)     # CUT_VER
     _set_field(phy, 0x08, 24, 4, _BB_PATH_A)        # RX_ANT_STATUS
     _set_field(phy, 0x08, 28, 4, _BB_PATH_A)        # TX_ANT_STATUS
+    _set_field(phy, 0x0C, 0, 8, 0)                  # EXT_PA (driver hardcodes 0)
+    _set_field(phy, 0x0C, 8, 8, info.package_type)  # PACKAGE_TYPE (0 until MAC-hidden rpt read)
+    _set_field(phy, 0x0C, 16, 1, 0)                 # MP_MODE (mp_mode=0)
     _h2c_header(phy, _SUB_CMD_PHYDM_INFO, 8, 1)
     _send_h2c_pkt(t, bytes(phy))
 
