@@ -651,6 +651,7 @@ class FocusViewV2(Screen):
         else:
             blurb = {
                 PmkidFail.PMF_REQUIRED: "[bold]PMF Required[/bold] — AP ignores us",
+                PmkidFail.NO_PSK_AKM: "AP offers [bold]no PSK[/bold] AKM",
                 PmkidFail.NO_KDE: "AP [italic]does not[/italic] include [bold]PMKID[/bold] in [bold]M1[/bold]",
                 PmkidFail.NO_RESPONSE: "AP [italic]never answered[/italic]",
             }.get(attack.fail_reason, "harvest failed")

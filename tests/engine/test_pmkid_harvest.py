@@ -8,15 +8,18 @@ rotate the MAC + retry when the AP stays silent (no M1).
 """
 from types import SimpleNamespace
 
-from wifit3.engine.attacks.pmkid_harvest import PmkidFail, PmkidHarvestAttack
+from wifit3.engine.attacks.pmkid_harvest import (
+    PmkidFail, PmkidHarvestAttack, _force_psk_akm,
+)
 
 _BSSID = "aa:bb:cc:dd:ee:01"
 _BSSID_B = bytes.fromhex("aabbccddee01")
 
 
-def _target(pmf_required=False, pmf_capable=False):
-    return SimpleNamespace(bssid=_BSSID, channel=36, ssid="TESTNET", rsn_ie=None,
-                           pmf_required=pmf_required, pmf_capable=pmf_capable)
+def _target(pmf_required=False, pmf_capable=False, akm_suites=(0x02,), rsn_ie=None):
+    return SimpleNamespace(bssid=_BSSID, channel=36, ssid="TESTNET", rsn_ie=rsn_ie,
+                           pmf_required=pmf_required, pmf_capable=pmf_capable,
+                           akm_suites=list(akm_suites))
 
 
 class _FakeIface:
@@ -92,6 +95,34 @@ async def test_pmf_required_short_circuits_without_tx():
     assert out is None
     assert a.fail_reason is PmkidFail.PMF_REQUIRED
     assert iface.sent == []                                    # don't even try — no auth/assoc/deauth
+
+
+async def test_no_psk_akm_short_circuits():
+    # SAE-only AP (WPA3) → no PSK PMK to harvest → bail before any TX.
+    iface = _FakeIface(deliver_m1=True, pmkid=bytes(16))
+    a = PmkidHarvestAttack(iface, _target(akm_suites=(0x08,)))   # 0x08 = SAE
+    out = await a.run()
+    assert out is None
+    assert a.fail_reason is PmkidFail.NO_PSK_AKM
+    assert iface.sent == []
+
+
+def test_force_psk_akm_selects_psk_from_sae_first_list():
+    # SAE + PSK (SAE listed first) → rewritten to a single PSK AKM.
+    rsn = bytes.fromhex("30180100000fac040100000fac040200000fac08000fac020000")
+    assert _force_psk_akm(rsn) == bytes.fromhex(
+        "30140100000fac040100000fac040100000fac020000")
+
+
+def test_force_psk_akm_preserves_caps_and_group_mgmt():
+    # PSK + RSN caps (PMF bits) + group-mgmt cipher (BIP) → tail untouched.
+    rsn = bytes.fromhex("30180100000fac040100000fac040100000fac028c00000fac06")
+    assert _force_psk_akm(rsn) == rsn          # already single-PSK; nothing else moves
+
+
+def test_force_psk_akm_rejects_malformed():
+    assert _force_psk_akm(b"\x30\x02\x01\x00") is None         # too short for an AKM list
+    assert _force_psk_akm(b"\xdd\x10rubbish!!") is None        # not an RSN IE (tag 0xDD)
 
 
 def test_build_deauth_frame():
