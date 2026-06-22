@@ -47,10 +47,7 @@ from wifit3.chips.mt76x2u.chan import (  # noqa: E402
 )
 from wifit3.chips.mt76x2u.constants import (  # noqa: E402
     MT_ASIC_VERSION,
-    MT_MCU_CLOCK_CTL,
     MT_MCU_COM_REG0,
-    MT_WLAN_FUN_CTRL,
-    MT76XX_REV_E3,
 )
 from wifit3.chips.mt76x2u.eeprom import (  # noqa: E402
     read_mac_address,
@@ -131,59 +128,46 @@ def _first_switch_channel(host_ops: list[dict]) -> int | None:
 
 
 # ---------------------------------------------------------------------------
-# CHECK A->C — one monotonic cursor over reset/power -> FW/MCU -> post-FW init.
+# CHECK A->C — STRICT single monotonic cursor over the REAL connect() cold path.
+# No anchor, no off-cursor serving, no reorder: every op (reads included) is
+# matched positionally against the wire and the walk stops at the first byte
+# that differs. The phase labels are context for the divergence, not waivers.
 # ---------------------------------------------------------------------------
 
-def check_boot(data: dict, asic_rev: int, channel: int) -> tuple[str, int]:
-    """Single-cursor walk. Returns (verdict, ops_consumed). verdict ∈
-    {"pass", "fail"}; phase PASS/FAIL lines are printed as the cursor crosses
-    each milestone, and a divergence stops the walk with a localized report."""
+def check_boot(data: dict, channel: int) -> tuple[str, int]:
+    """Drive connect()'s cold path against a strict cursor from op #0. Returns
+    (verdict, ops_matched). A divergence is reported with the exact op and the
+    kernel-vs-port bytes, then the walk stops."""
     ops = data["host_ops"]
-    anchor = rp.find_anchor(
-        ops, lambda o: (o["kind"] == "ctrl" and o["dir"] == "IN" and o["breq"] == 0x07
-                        and (o["wval"] << 16 | o["widx"]) == MT_WLAN_FUN_CTRL))
-    if anchor is None:
-        print("  [FAIL] reset_wlan anchor (WLAN_FUN_CTRL read) not found in capture")
-        return "fail", 0
-
-    # wifit3's load_rom_patch reads the patch register once for an idempotency check
-    # the kernel cold-boot wire never issues; serve that one read off-cursor (not
-    # applied -> proceed) so the FW upload that follows is still verified. The later
-    # post-upload poll of the same register IS on the wire and stays positional.
-    patch_reg = MT_MCU_CLOCK_CTL if asic_rev >= MT76XX_REV_E3 else MT_MCU_COM_REG0
-    dev = rp.ReplayDevice(ops, data["eeprom"], data["responses"], start=anchor,
-                          extra_reads={patch_reg: 0x00000000})
+    dev = rp.ReplayDevice(ops, data["responses"])      # start at op #0
     t = MT76x2UTransport(dev)
     mcu = McuChannel(t)
     cal = Mt76x2CalState()
     band_2g = channel < 36
-
-    state = {"phase": "A", "marks": {}}
+    state = {"phase": "prologue"}
 
     async def _drive():
-        # --- CHECK A: cold register init -----------------------------------
-        state["phase"] = "A"
+        # connect() prologue: ASIC version read, then the warm-reattach gate read.
+        state["phase"] = "prologue (ASIC version + warm-reattach gate)"
+        asic = t.read32(MT_ASIC_VERSION)
+        asic_rev = asic & 0xFF
+        t.read32(MT_MCU_COM_REG0)                       # connect()'s warm gate
+
+        state["phase"] = "cold register init (reset_wlan + power_on)"
         reset_wlan(t)
         power_on(t)
         await wait_for_mac(t)
-        state["marks"]["A"] = dev.i
 
-        # --- CHECK B: firmware upload + MCU init ----------------------------
-        # NB: connect() polls wait_for_mac then wait_for_wpdma_idle; the kernel
-        # cold-boot wire polls them in the opposite order (WPDMA-idle then MAC). Both
-        # are benign reads (no chip write), so the cursor follows the wire's order.
-        state["phase"] = "B"
+        state["phase"] = "firmware upload + MCU init"
         if not await upload_firmware(t, asic_rev):
             raise rp.Divergence("upload_firmware returned False (FW-ready poll ran dry)")
-        await wait_for_wpdma_idle(t, timeout_ms=100)
         await wait_for_mac(t)
+        await wait_for_wpdma_idle(t, timeout_ms=100)
         init_dma(t)
         if not await mcu_init(mcu):
             raise rp.Divergence("mcu_init returned False")
-        state["marks"]["B"] = dev.i
 
-        # --- CHECK C: post-FW init + channel + mac_start -------------------
-        state["phase"] = "C"
+        state["phase"] = "post-FW init + channel + mac_start"
         mac_str = read_mac_address(t)
         mac_bytes = bytes(int(b, 16) for b in mac_str.split(":"))
         nic0 = read_nic_conf_0(t)
@@ -216,54 +200,20 @@ def check_boot(data: dict, asic_rev: int, channel: int) -> tuple[str, int]:
         mac_cc_reset(t)
         if not await mac_start(t, monitor=True):
             raise rp.Divergence("mac_start returned False")
-        state["marks"]["C"] = dev.i
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         loop.run_until_complete(_drive())
     except rp.Divergence as e:
-        ph = state["phase"]
-        names = {"A": "CHECK A (cold register init)", "B": "CHECK B (firmware + MCU init)",
-                 "C": "CHECK C (post-FW init + channel + mac_start)"}
-        # Print PASS lines for phases already crossed.
-        _print_phase_marks(state["marks"], anchor, dev.i)
-        _print_extra(dev)
-        print(f"  [FAIL] {names[ph]} DIVERGENCE - {e}")
-        print("         (cursor stops at the first op the driver does not reproduce; a genuine")
-        print("          driver-vs-wire divergence, left red and localized per the gate mandate)")
-        return "fail", dev.i - anchor
+        print(f"  [FAIL] DIVERGENCE in {state['phase']} after {dev.i} matched op(s)")
+        print(f"         {e}")
+        return "fail", dev.i
     finally:
         loop.close()
 
-    _print_phase_marks(state["marks"], anchor, dev.i)
-    _print_extra(dev)
-    print(f"  [PASS] CHECK A-C reproduced {dev.i - anchor} cold-boot + post-FW ops "
-          f"byte-for-byte (single cursor)")
-    return "pass", dev.i - anchor
-
-
-def _print_extra(dev) -> None:
-    """Name + count the driver-issued reads served off the positional cursor (reads the
-    kernel cold-boot wire never made — a wifit3 defensive read, not a chip write)."""
-    for addr, n in sorted(dev.extra_hits.items()):
-        print(f"  [note] served {n} off-cursor read(s) of 0x{addr:08x} (wifit3 "
-              f"load_rom_patch idempotency check; absent from the kernel cold-boot wire)")
-
-
-def _print_phase_marks(marks: dict, anchor: int, end: int) -> None:
-    a = marks.get("A")
-    b = marks.get("B")
-    c = marks.get("C")
-    if a is not None:
-        print(f"  [PASS] CHECK A (cold register init): reset_wlan + power_on "
-              f"({a - anchor} ops)")
-    if b is not None:
-        print(f"  [PASS] CHECK B (firmware + MCU init): ROM patch + ILM/DLM + init_dma + "
-              f"mcu_init ({b - a} ops)")
-    if c is not None:
-        print(f"  [PASS] CHECK C (post-FW init + channel + mac_start): "
-              f"({c - b} ops)")
+    print(f"  [PASS] reproduced all {dev.i} cold-boot + post-FW ops byte-for-byte")
+    return "pass", dev.i
 
 
 # ---------------------------------------------------------------------------
@@ -302,12 +252,11 @@ def _extract_802_11(wire: bytes, frame_len: int) -> bytes:
     return body[:frame_len]
 
 
-# Subtypes (fc0 & 0xFC) that wifit3's inject path actually produces (mgmt + data).
-# RTS/CTS/etc. control frames seen on the wire are aireplay-generated, not wifit3 injects.
-_INJECT_TYPES = {0xc0, 0xa0, 0xb0, 0x00, 0x10, 0x40, 0x50, 0x48, 0x88}
-
-
 def check_tx(data: dict) -> str:
+    """STRICT: rebuild every wire TX frame via the driver's real inject builder
+    (tx.assemble_tx_frame + the EP_OUT_AC_VO endpoint inject_frame always uses) and
+    assert both bytes AND endpoint match. No frame type is excluded; a tally of exact
+    / byte-divergent / endpoint-divergent is printed and any divergence fails."""
     ops = data["host_ops"]
     seen_fw = False
     current_channel = None
@@ -339,45 +288,43 @@ def check_tx(data: dict) -> str:
         print("  [UNVERIFIED] no post-boot 802.11 TX in this capture (stopped before aireplay)")
         return "skip"
 
-    inj_ok = True
-    inj_n = ctrl_n = 0
+    exact = byte_div = ep_div = 0
     by_kind = Counter()
-    by_band = Counter()
-    first_bad = None
+    first_byte = first_ep = None
     for ep, wire, frame, ack, band_5ghz in txs:
-        fc_stype = frame[0] & 0xFC
-        by_kind[_FC_NAME.get(fc_stype, f"0x{frame[0]:02x}")] += 1
-        if fc_stype not in _INJECT_TYPES:
-            ctrl_n += 1                    # aireplay-generated control frame
-            continue
-        inj_n += 1
-        by_band["5GHz" if band_5ghz else "2.4GHz"] += 1
+        by_kind[_FC_NAME.get(frame[0] & 0xFC, f"0x{frame[0]:02x}")] += 1
         rate = mt_tx._TXWI_RATE_OFDM_6MBPS if band_5ghz else mt_tx._TXWI_RATE_CCK_1MBPS
-        built = mt_tx.assemble_tx_frame(frame, ack=ack, rate=rate)
-        if bytes(built) != bytes(wire):
-            inj_ok = False
-            if first_bad is None:
-                n = min(len(built), len(wire))
-                d = next((i for i in range(n) if built[i] != wire[i]), n)
-                first_bad = (f"band={'5GHz' if band_5ghz else '2.4GHz'} ep=0x{ep:02x} "
-                             f"fc0=0x{frame[0]:02x} byte {d}: built "
-                             f"{built[d:d+4].hex() if d < len(built) else '-'} vs wire "
-                             f"{wire[d:d+4].hex() if d < len(wire) else '-'} "
-                             f"(len {len(built)} vs {len(wire)})")
-    n07 = sum(1 for ep, *_ in txs if ep == 0x07)
-    print(f"  {len(txs)} TX frames ({n07} on EP 0x07, {len(txs) - n07} on EP 0x04): "
-          f"{dict(by_kind)}")
-    print(f"  wifit3 inject types: {inj_n} ({dict(by_band)}); "
-          f"aireplay control frames (RTS/etc, not a wifit3 inject path): {ctrl_n}")
-    if not inj_ok:
-        print(f"  [FAIL] {first_bad}")
+        built = bytes(mt_tx.assemble_tx_frame(frame, ack=ack, rate=rate))
+        wire = bytes(wire)
+        # inject_frame always routes to EP_OUT_AC_VO (0x07); the kernel put data on AC_BE.
+        if ep != mt_tx.EP_OUT_AC_VO:
+            ep_div += 1
+            if first_ep is None:
+                first_ep = (f"fc0=0x{frame[0]:02x} wire ep=0x{ep:02x}, "
+                            f"wifit3 inject_frame would send on EP 0x{mt_tx.EP_OUT_AC_VO:02x}")
+            continue
+        if built == wire:
+            exact += 1
+            continue
+        byte_div += 1
+        if first_byte is None:
+            n = min(len(built), len(wire))
+            d = next((i for i in range(n) if built[i] != wire[i]), n)
+            first_byte = (f"band={'5GHz' if band_5ghz else '2.4GHz'} ep=0x{ep:02x} "
+                          f"fc0=0x{frame[0]:02x} byte {d}: built "
+                          f"{built[d:d+4].hex() if d < len(built) else '-'} vs wire "
+                          f"{wire[d:d+4].hex() if d < len(wire) else '-'} "
+                          f"(len {len(built)} vs {len(wire)})")
+    print(f"  {len(txs)} TX frames: {dict(by_kind)}")
+    print(f"  exact byte+endpoint match: {exact}; byte-divergent: {byte_div}; "
+          f"endpoint-divergent: {ep_div}")
+    if byte_div:
+        print(f"  [FAIL] first byte divergence: {first_byte}")
+    if ep_div:
+        print(f"  [FAIL] first endpoint divergence: {first_ep}")
+    if byte_div or ep_div:
         return "fail"
-    print("  [PASS] every wifit3-inject frame (mgmt + data) rebuilt byte-for-byte "
-          "(TXINFO + TXWI, both bands)")
-    if ctrl_n:
-        print(f"  [note] {ctrl_n} RTS control frames not rebuilt: wifit3 tx._ieee80211_hdrlen "
-              "returns 10 for all control frames but RTS is 16 -> a spurious hdr-pad. These are")
-        print("         aireplay-generated, not a wifit3 inject type; reported, not a port fix.")
+    print(f"  [PASS] all {exact} TX frames rebuilt byte-for-byte (descriptor + endpoint)")
     return "pass"
 
 
@@ -400,11 +347,11 @@ def run(cap=None) -> int:
     print(f"verify_pcap mt76x2u - {cap}")
     print(f"  {len(pkts)} packets; card auto-detected as device {dev}; "
           f"ASIC rev=0x{asic_rev:02x}; first tuned channel={channel}")
-    print(f"  ops: {len(data['host_ops'])} positional, {len(data['eeprom'])} EEPROM words, "
+    print(f"  ops: {len(data['host_ops'])} positional, "
           f"{len(data['responses'])} MCU responses\n")
 
-    print("CHECK A-C - cold boot + firmware + post-FW init (single cursor)")
-    boot_verdict, _ = check_boot(data, asic_rev, channel)
+    print("CHECK A-C - cold boot + firmware + post-FW init (STRICT single cursor)")
+    boot_verdict, _ = check_boot(data, channel)
     print()
     tx_verdict = check_tx(data)
 

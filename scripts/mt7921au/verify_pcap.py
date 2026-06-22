@@ -1,5 +1,12 @@
 """
-verify_pcap for MT7921AU - the faithfulness gate for the cold-boot bring-up.
+verify_pcap for MT7921AU - PARTIAL cold-boot gate. Read the warning first.
+
+WARNING: this does NOT diff the capture byte-for-byte. It runs windowed, anchored
+checks that SKIP the ops between windows, WAIVE some (the btusb boot-status polls),
+and assert the call order THIS SCRIPT picks for the driver's functions - not the order
+connect() actually uses. So it cannot catch a driver that reorders its bring-up, and a
+PASS only means the chosen windows matched, not that the port reproduces the capture.
+It is a smoke test over significant skipped/waived portions, not a fidelity gate.
 
 Runs two offline checks against a Linux usbmon cold-boot capture, exercising the
 driver's REAL code (no reimplementation):
