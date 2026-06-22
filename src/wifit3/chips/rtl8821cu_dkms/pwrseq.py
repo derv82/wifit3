@@ -49,6 +49,15 @@ _DELAY_MS = 1
 INTF_USB = _U
 POLLING_CNT = 20000  # HALMAC_PWR_POLLING_CNT [SRC] :21; replay matches on read #1
 
+# mac_pwr_switch register map [SRC] halmac_reg2.h
+REG_RPWM = 0xFE58               # bare 0xFE58 in source (LOCAL section >= 0xFE00 -> no 0x4E0 mirror)
+REG_MCUFW_CTRL = 0x0080         # [SRC] halmac_reg2.h:497
+REG_CR = 0x0100                 # [SRC] halmac_reg2.h:818
+REG_SYS_STATUS1 = 0x00F4        # [SRC] halmac_reg2.h:815
+REG_SW_MDIO = 0x10C0            # [SRC] halmac_reg2.h:6286
+_MCUFW_FW_PRESENT = 0xC078      # [SRC] halmac_usb_8821c.c:47 — FW still resident marker
+_CR_POWER_OFF = 0xEA            # [SRC] halmac_usb_8821c.c:54 — REG_CR sentinel for MAC-off
+
 
 def _b(*bits: int) -> int:
     """BIT(a) | BIT(b) | ... — readability shim matching the source's BIT() rows."""
@@ -175,3 +184,32 @@ def run_pwr_seq(t, flow, cut: int = _CUT_ALL, intf: int = _U) -> None:
     """
     for table in flow:
         _run_table(t, table, cut, intf)
+
+
+def mac_pwr_switch(t, power_on: bool = True) -> None:
+    """mac_pwr_switch_usb_8821c: sample the current MAC power state, then run the
+    card-enable (or -disable) flow only if a switch is actually needed.
+    [SRC] halmac_usb_8821c.c:31 (USB path).
+
+    The state read is REG_CR==0xEA, else REG_SYS_STATUS1+1 BIT0 (set => off). On a cold
+    boot the chip is off, so the enable flow runs; its tail clears that status bit and
+    re-reads SW_MDIO+3 (a vendor "read twice" quirk whose body is a no-op).
+    """
+    rpwm = t.read8(REG_RPWM)
+    if t.read16(REG_MCUFW_CTRL) == _MCUFW_FW_PRESENT:
+        t.write8(REG_RPWM, (rpwm ^ 0x80) & 0x80)        # leave 32K: toggle RPWM bit7
+
+    if t.read8(REG_CR) == _CR_POWER_OFF:
+        powered = False
+    else:
+        powered = (t.read8(REG_SYS_STATUS1 + 1) & (1 << 0)) == 0
+
+    if power_on and powered:
+        return                                          # HALMAC_RET_PWR_UNCHANGE
+    if not power_on:
+        run_pwr_seq(t, CARD_DIS_FLOW)
+        return
+
+    run_pwr_seq(t, CARD_EN_FLOW)
+    t.write8(REG_SYS_STATUS1 + 1, t.read8(REG_SYS_STATUS1 + 1) & ~(1 << 0))
+    t.read8(REG_SW_MDIO + 3)
