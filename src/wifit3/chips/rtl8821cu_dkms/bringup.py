@@ -12,7 +12,7 @@ entry) extend ``cold_bringup`` past the report readback.
 """
 from __future__ import annotations
 
-from . import bb, btc, chipid, efuse, firmware, init, mac, phy, phy_cond, pwrseq
+from . import bb, btc, chipid, efuse, firmware, init, mac, phy, phy_cond, pwrseq, rf
 
 REG_C2HEVT_MSG_NORMAL = 0x01A0      # [SRC] include/hal_com_reg.h:149
 _C2H_DEFEATURE_RSVD = 0xFD          # [SRC] hal/hal_com_c2h.h:79 — "FW: report MAC-hidden via reg"
@@ -96,6 +96,8 @@ def hal_init(t, info) -> None:
     bb.init_bb_rf(t)
     bb.phy_parameter_init(t, post=False)
     bb.init_bb_reg(t, cfg, info.default_rf_set, info.crystal_cap)
+    rf.config_radioa(t, cfg)
+    bb.phy_parameter_init(t, post=True)
 
 
 def cold_bringup(t) -> None:

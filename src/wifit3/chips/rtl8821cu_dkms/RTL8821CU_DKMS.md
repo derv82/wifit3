@@ -7,8 +7,8 @@
 
 > **Status — cold-init probe GREEN + airmon re-init through general-info GREEN.** The
 > byte-for-byte gate (`scripts/rtl8821cu_dkms/verify_pcap.py`, replaying ctrl + the FW/TX
-> bulk-OUT stream) reproduces the **whole cold-boot probe and the first ~3501 ops of the airmon
-> monitor-entry phase — 6872 ops, zero divergence**. Cold init (frames 1-7672): USB transport
+> bulk-OUT stream) reproduces the **whole cold-boot probe and the first ~4084 ops of the airmon
+> monitor-entry phase — 7455 ops, zero divergence**. Cold init (frames 1-7672): USB transport
 > (+ the `0x4E0` mirror), chip-detect/version, EFUSE dump + decode + BT-coex read, pre-power
 > init + card-enable + init_system_cfg, the BT-coex power-on setting, the **iDDMA firmware
 > download** (the 138 KB blob byte-matched vs bulk-OUT), `init_mac_flow` (queue/page/H2C/
@@ -19,9 +19,11 @@
 > descriptor, `tx.py`) + init_mac_flow + general-info + **`init_mac_register`** (the 138-entry
 > PHYDM MAC-reg table, `mac_reg_tbl.py`) + **`config_rx_info`** (DRV_INFO_PHY_STATUS) +
 > `rtw_hal_init_phy` so far (BB/RF enable + PRE-setting + the **1678-row PHYDM BB PHY_REG table** +
-> the **1600-row AGC table + 390-row BTG AGC-diff**, then **set_crystal_cap + rCCK0** (init_bb_reg
-> complete), all byte-matched. Frontier is op #6872 (frame 14683), **`init_rf_reg`** — the RF
-> radio-A table via the LSSI/3-wire `write_rf` path (0x0C90). Not registered in `wlan/manager.py`.
+> the **1600-row AGC table + 390-row BTG AGC-diff**, then **set_crystal_cap + rCCK0**, the
+> **2712-row RF radio-A table** (LSSI `write_rf`, `rf.py`), and the **POST-setting** — i.e.
+> `rtw_hal_init_phy` is complete, all byte-matched. Frontier is op #7455 (frame 15861), the
+> post-PHY MAC/RX-filter config (`init_interface_cfg` + monitor RX-filter/RCR). Not registered in
+> `wlan/manager.py`.
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
@@ -102,14 +104,14 @@
 
 ## Known issues
 
-- **Frontier (next milestone): op #6872 (frame 14683): `OUT 0x0c90/4=...`** — **`init_rf_reg`**
-  ([SRC] rtl8821c_phy.c:207 `_init_phy_parameter_rf`): the RF radio-A table
-  (`array_mp_8821c_radioa`, `odm_config_rf_radioa_8821c` -> `odm_config_rf_reg_8821c`) written via
-  the **LSSI/3-wire `write_rf`** path — `phy_set_rf_reg` -> the chip's RF write (REG 0x0C90 the
-  LSSI write port). The table has 0xFF/0xFE/0xFD delay opcodes and cut/rfe conditionals (the
-  `phy_cond` walker applies). Then the **POST-setting** (0x808 enable + 0xa24/0xa28/0xaac caches),
-  phydm **calibration** (IQK etc.), `halmac_init_interface_cfg`, the monitor-mode RX-filter/RCR
-  setup, and the channel hops (airodump). `_drv_enable_trx` is RX/thread-side only — a gate no-op.
+- **Frontier (next milestone): op #7455 (frame 15861): `IN 0x00ff/1=0x80`** — the post-PHY config
+  after `rtw_hal_init_phy` returns. The capture reads SYS_CFG2+3 / USB-PHY 0xFE11, then writes a
+  MAC/RX-filter block: 0x0290 (RXDMA), 0x020C, 0x0670, **0x06A0/0x06A2/0x06A4 (RXFLTMAP)**, 0x0608
+  (**RCR**), 0x0420, 0x04CC, 0x0577, 0x0100 (CR), ... — i.e. `halmac_init_interface_cfg` ([SRC]
+  hal_halmac.c:3649) and the **monitor-mode RX-filter/RCR** setup (this is what makes RX actually
+  flow — high-value for the beacon-watch RX-health check). Note: no IQK/calibration appears here —
+  it is triggered later (channel-set / watchdog), not in `_halmac_init_hal`. After this: the
+  channel hops (airodump). `_drv_enable_trx` is RX/thread-side only — a gate no-op.
 - **PHYDM discriminators are transformed, not the hal->* values** (the AGC walker forced this out):
   `dm->rfe_type = rfe_type_expand >> 3` (0x22 -> 4) and `dm->package_type = 1` for the 0x2x combo
   range ([SRC] phydm_hal_api8821c.c:336/349) — both differ from `hal->rfe_type`=0x22 /
@@ -293,3 +295,12 @@
 - crystal_cap comes from EEPROM_XTAL (0xB9) = 0x2e; gated on the EEPROM-ID map-valid check (NOT
   autoload_ok — this card has autoload_ok=False but a valid 0x8129 map, same as BTCoexist uses).
   Added `crystal_cap` to `EfuseInfo`. Frontier #6872 = init_rf_reg (RF radio-A via LSSI write_rf).
+
+## Port log — 2026-06-22 (RF radio-A + POST-setting: rtw_hal_init_phy complete @ 7455)
+
+- New `rf.py` ports `init_rf_reg`: the 2712-row RF radio-A table (`rf_radioa_tbl.py`) written via
+  the LSSI 3-wire port (0x0C90), value = `(addr[7:0]<<20)|data[19:0]`; addr 0xFE/0xFFE are delay
+  opcodes. Walked by `phy_cond.walk` (rfe=4 branches). `bb.phy_parameter_init(post=True)` closes
+  the phase (0x808 OFDM/CCK enable + 0xa24/0xa28/0xaac caches). → 6872 -> **7455 ops**.
+- That completes `rtw_hal_init_phy`. Frontier #7455 = the post-PHY MAC/RX-filter config
+  (`init_interface_cfg` + monitor RX-filter/RCR — the piece that turns RX on).
