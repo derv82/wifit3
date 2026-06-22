@@ -7,8 +7,9 @@
 
 > **Status — cold-init probe GREEN + airmon re-init through general-info GREEN.** The
 > byte-for-byte gate (`scripts/rtl8821cu_dkms/verify_pcap.py`, replaying ctrl + the FW/TX
-> bulk-OUT stream) reproduces the **whole cold-boot probe and the first ~4084 ops of the airmon
-> monitor-entry phase — 7455 ops, zero divergence**. Cold init (frames 1-7672): USB transport
+> bulk-OUT stream) reproduces the **whole cold-boot probe and the first ~4090 ops of the airmon
+> monitor-entry phase — 7461 ops, zero divergence — the entire `_halmac_init_hal`**. Cold init
+> (frames 1-7672): USB transport
 > (+ the `0x4E0` mirror), chip-detect/version, EFUSE dump + decode + BT-coex read, pre-power
 > init + card-enable + init_system_cfg, the BT-coex power-on setting, the **iDDMA firmware
 > download** (the 138 KB blob byte-matched vs bulk-OUT), `init_mac_flow` (queue/page/H2C/
@@ -20,10 +21,10 @@
 > PHYDM MAC-reg table, `mac_reg_tbl.py`) + **`config_rx_info`** (DRV_INFO_PHY_STATUS) +
 > `rtw_hal_init_phy` so far (BB/RF enable + PRE-setting + the **1678-row PHYDM BB PHY_REG table** +
 > the **1600-row AGC table + 390-row BTG AGC-diff**, then **set_crystal_cap + rCCK0**, the
-> **2712-row RF radio-A table** (LSSI `write_rf`, `rf.py`), and the **POST-setting** — i.e.
-> `rtw_hal_init_phy` is complete, all byte-matched. Frontier is op #7455 (frame 15861), the
-> post-PHY MAC/RX-filter config (`init_interface_cfg` + monitor RX-filter/RCR). Not registered in
-> `wlan/manager.py`.
+> **2712-row RF radio-A table** (LSSI `write_rf`, `rf.py`), the **POST-setting**, and
+> **`init_interface_cfg`** (USB RXDMA burst) — i.e. the **whole `_halmac_init_hal` is byte-matched**.
+> Frontier is op #7461 (frame 15873), the **monitor-mode RX-filter + BB dynamic-mechanism** setup
+> that follows hal_init (the RX-enabling step). Not registered in `wlan/manager.py`.
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
@@ -73,7 +74,9 @@
 | MAC-reg table | `mac.init_mac_register` / `mac_reg_tbl` | `rtl8821c_init_phy_parameter_mac` rtl8821c_phy.c:97 -> `odm_config_mac_8821c` | 138 plain 1-byte writes, no cut/rfe conditionals — **VERIFIED** |
 | RX drv-info cfg | `mac.config_rx_info` | `cfg_drv_info_8821c` halmac_cfg_wmac_8821c.c (PHY_STATUS) | DRVINFO_SZ=4 + APP_PHYSTS on + RCR sync — **VERIFIED** |
 | BB enable + PHY_REG | `bb.init_bb_rf` / `bb.phy_bb_config` / `phy_cond` | `init_bb_rf` + `_init_phy_parameter_bb` rtl8821c_phy.c:57/113 ; `odm_config_bb_phy_8821c` phydm_regconfig8821c.c:171 | BB/RF enable + PRE-setting + 1678-row PHY_REG table (cut/rfe walker) — **VERIFIED** |
-| monitor entry (airmon) | `bringup.hal_init` | `_halmac_init_hal` hal_halmac.c:3576 | + init_mac_register + config_rx_info + BB enable/PHY_REG **VERIFIED**; **(frontier)** BB AGC table -> RF radio-A -> POST-setting + calibration -> monitor RX-filter |
+| AGC + RF radio-A | `bb.phy_agc_config` / `rf.config_radioa` | `_init_phy_parameter_bb` :172 (AGC + BTG diff) ; `_init_phy_parameter_rf` :207 (RF radio-A via LSSI 0x0C90) | AGC 1600 + BTG-diff 390 + crystal_cap + RF radio-A 2712 + POST — **VERIFIED** |
+| USB interface cfg | `mac.init_interface_cfg` | `init_usb_cfg_88xx` halmac_usb_88xx.c:39 | RXDMA burst mode/size + TXDMA drop-on-overflow — **VERIFIED** |
+| monitor entry (airmon) | `bringup.hal_init` | `_halmac_init_hal` hal_halmac.c:3576 | whole `_halmac_init_hal` (power-on..init_phy..init_interface_cfg) **VERIFIED**; **(frontier)** monitor RX-filter/RCR + BB dynamic-mechanism -> channel hops |
 
 ## Hot paths
 
@@ -104,14 +107,22 @@
 
 ## Known issues
 
-- **Frontier (next milestone): op #7455 (frame 15861): `IN 0x00ff/1=0x80`** — the post-PHY config
-  after `rtw_hal_init_phy` returns. The capture reads SYS_CFG2+3 / USB-PHY 0xFE11, then writes a
-  MAC/RX-filter block: 0x0290 (RXDMA), 0x020C, 0x0670, **0x06A0/0x06A2/0x06A4 (RXFLTMAP)**, 0x0608
-  (**RCR**), 0x0420, 0x04CC, 0x0577, 0x0100 (CR), ... — i.e. `halmac_init_interface_cfg` ([SRC]
-  hal_halmac.c:3649) and the **monitor-mode RX-filter/RCR** setup (this is what makes RX actually
-  flow — high-value for the beacon-watch RX-health check). Note: no IQK/calibration appears here —
-  it is triggered later (channel-set / watchdog), not in `_halmac_init_hal`. After this: the
-  channel hops (airodump). `_drv_enable_trx` is RX/thread-side only — a gate no-op.
+- **Frontier (next milestone): op #7461 (frame 15873): `OUT 0x0670/4=0xc0000000`** — the
+  **monitor-mode RX-filter + BB dynamic-mechanism** setup that runs *after* `_halmac_init_hal`
+  returns (driver-level, the `airmon-ng` set-monitor path). The whole `_halmac_init_hal` is now
+  byte-matched through op #7460. The remaining recorded sequence (decoded, not yet ported):
+  - **Monitor RX-filter** (frames ~15873+): `0x0670=0xc0000000`, RXFLTMAP `0x06A2=0x0400`/
+    `0x06A4=0xffff`/`0x06A0=0xffff`, **RCR `0x0608`** RMW (0xf400220e -> 0x7400200e — accept-all/
+    promiscuous bits), `0x0420` (FWHW_TXQ), `0x04CC` (BAR), `0x0577`, **CR `0x0100`** RMW
+    (0x04ff -> 0x06ff). This is the RX-enabling block — highest value for the beacon-watch
+    RX-health A/B. Likely `rtw_hal_set_hwreg(HW_VAR_*)` / the mac80211 `configure_filter` +
+    `rtw_hal_rcr_*` path (driver, not halmac); trace from `core/` not `hal/halmac/`.
+  - **BB dynamic mechanism / DIG** (interleaved, ~op 7475+): reads/RMWs of 0x0A9C, 0x0804/0x0808,
+    0x19A8, 0x0C50 (IGI), 0x0A08/0x0AA8/0x0994 etc. — phydm `phydm_dm_init` / DIG / CCK-related.
+  - Then the **channel hops** (airodump: set_channel via the RF/BB channel-tune path — the agent's
+    to wire; live TX stays the user's).
+  - No IQK appears in this init window (it is triggered later — channel-set / watchdog).
+- `_drv_enable_trx` (between init_mac_flow and general-info) is RX/thread-side only — a gate no-op.
 - **PHYDM discriminators are transformed, not the hal->* values** (the AGC walker forced this out):
   `dm->rfe_type = rfe_type_expand >> 3` (0x22 -> 4) and `dm->package_type = 1` for the 0x2x combo
   range ([SRC] phydm_hal_api8821c.c:336/349) — both differ from `hal->rfe_type`=0x22 /
@@ -304,3 +315,11 @@
   the phase (0x808 OFDM/CCK enable + 0xa24/0xa28/0xaac caches). → 6872 -> **7455 ops**.
 - That completes `rtw_hal_init_phy`. Frontier #7455 = the post-PHY MAC/RX-filter config
   (`init_interface_cfg` + monitor RX-filter/RCR — the piece that turns RX on).
+
+## Port log — 2026-06-22 (init_interface_cfg: whole _halmac_init_hal GREEN @ 7461)
+
+- `mac.init_interface_cfg` ports `init_usb_cfg_88xx` (USB RXDMA burst mode/size from link speed +
+  TXDMA drop-on-overflow). → 7455 -> **7461 ops** — the entire `_halmac_init_hal` is byte-matched.
+- Frontier #7461 = the driver-level monitor-mode RX-filter (RCR/RXFLTMAP/CR) + BB dynamic-mechanism
+  setup (see Known issues for the decoded register map). That RX-filter block is the RX-enabling
+  step; trace it from `core/` (HW_VAR / configure_filter), not halmac.

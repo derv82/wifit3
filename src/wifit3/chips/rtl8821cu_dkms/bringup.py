@@ -98,6 +98,7 @@ def hal_init(t, info) -> None:
     bb.init_bb_reg(t, cfg, info.default_rf_set, info.crystal_cap)
     rf.config_radioa(t, cfg)
     bb.phy_parameter_init(t, post=True)
+    mac.init_interface_cfg(t)
 
 
 def cold_bringup(t) -> None:

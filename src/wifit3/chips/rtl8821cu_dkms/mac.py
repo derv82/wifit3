@@ -73,6 +73,8 @@ REG_SND_PTCL_CTRL = 0x0718
 REG_WMAC_OPTION_FUNCTION = 0x07D0
 REG_WMAC_OPTION_FUNCTION_2 = 0x07D8
 REG_SYS_CFG2 = 0x00FC
+REG_RXDMA_MODE = 0x0290
+REG_USB_USBSTAT = 0xFE11
 REG_H2CQ_CSR = 0x1330
 REG_FAST_EDCA_VOVI_SETTING = 0x1448
 REG_FAST_EDCA_BEBK_SETTING = 0x144C
@@ -276,3 +278,25 @@ def config_rx_info(t) -> None:
     t.write32(REG_WMAC_OPTION_FUNCTION + 4,
               t.read32(REG_WMAC_OPTION_FUNCTION + 4) & ~((1 << 8) | (1 << 9)))
     t.read32(REG_RCR)                                       # HW_VAR_RCR cache sync
+
+
+# RXDMA burst [SRC] halmac_usb_88xx.c:20 enum + halmac_bit2.h
+_BIT_DMA_MODE = 1 << 1
+_BURST_CNT_SHIFT, _BURST_SIZE_SHIFT = 2, 4
+_USB_BURST_3_0, _USB_BURST_2_0_HS, _USB_BURST_2_0_FS = 0, 1, 2
+_BIT_DROP_DATA_EN = 1 << 9
+
+
+def init_interface_cfg(t) -> None:
+    """init_usb_cfg_88xx [SRC] halmac_usb_88xx.c:39 — the USB RXDMA burst mode/size (from the link
+    speed: USB3 via SYS_CFG2+3==0x20, else USB2 HS/FS via USBSTAT) and the TXDMA drop-on-overflow
+    enable. Run from `_halmac_init_hal` after `rtw_hal_init_phy`."""
+    value8 = _BIT_DMA_MODE | (0x3 << _BURST_CNT_SHIFT)
+    if t.read8(REG_SYS_CFG2 + 3) == 0x20:
+        value8 |= _USB_BURST_3_0 << _BURST_SIZE_SHIFT
+    elif (t.read8(REG_USB_USBSTAT) & 0x3) == 0x1:
+        value8 |= _USB_BURST_2_0_HS << _BURST_SIZE_SHIFT
+    else:
+        value8 |= _USB_BURST_2_0_FS << _BURST_SIZE_SHIFT
+    t.write8(REG_RXDMA_MODE, value8)
+    t.write16(REG_TXDMA_OFFSET_CHK, t.read16(REG_TXDMA_OFFSET_CHK) | _BIT_DROP_DATA_EN)
