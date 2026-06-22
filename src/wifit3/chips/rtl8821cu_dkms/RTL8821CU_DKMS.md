@@ -82,13 +82,41 @@
 
 ## Known issues
 
-- **Frontier (next milestone): the post-power-on MAC init block, starting op #2170
-  (frame 5046): `IN 0x1080/4`.** This is the head of `rtl8821c_halinit.c:264` MAC/DMA init
-  (TRX-mode / queue / FIFO setup) that follows `rtw_halmac_poweron`; firmware download
-  (hal_halmac.c:3350 `download_fw`) lands in this region too. Trace from the wire as before.
-- `transport` bulk-OUT EP defaulted to `0x04` (not on the prologue path) — confirm against the
-  coverage audit (`bulk-OUT ep 0x05`) at the FW/TX milestone. The audit also flags interrupt-IN
-  ep `0x81` (360 pkts) as a blind spot to check at the FW/C2H milestone.
+- **Frontier (next milestone): BT-coex power-on setting, then firmware download — op #2186
+  (frame 5078): `IN 0x0002/2`.** The whole region #2186-~3360 is driven by **one function**:
+  `hal_read_mac_hidden_rpt` ([SRC] hal_com.c:1550), called from `rtl8821c_read_efuse:525` — it
+  reads the FW MAC-hidden capability bits, and to do so powers the chip and downloads firmware:
+  1. `rtw_hal_power_on` (hal_com.c:1571) — our `bringup.power_on`, **already ported** (#2070-2185).
+     Its tail calls `rtw_btcoex_PowerOnSetting` (hal_intf.c:470, gated on `EEPROMBluetoothCoexist`,
+     which is TRUE on this combo-silicon card) → `ex_halbtc8821c1ant_power_on_setting`
+     ([SRC] halbtc8821c1ant.c:3838). That is the **btc block #2186-2217** (decoded below).
+  2. `rtw_write8(REG_C2HEVT_MSG_NORMAL=0x1A0, C2H_DEFEATURE_RSVD=0xfd)` (hal_com.c:1575) — op #2218.
+  3. `rtw_hal_fw_dl` (hal_com.c:1579) → the chip `fw_dl` op → a 2nd btc power-on pass (#2219-2250,
+     identical, no C2HEVT) then `download_firmware_88xx` ([SRC] halmac_fw_88xx.c:115) at #2271:
+     ltecoex backup (0x1700/0x1708 indirect, `ltecoex_reg_read_88xx` common_88xx.c:3338) → MCUFW/CR/
+     FIFOPAGE/RQPN/BCN_CTRL backups+writes → `pltfm_reset_88xx` → `start_dlfw_88xx` (`dlfw_to_mem_88xx`
+     pushes the FW blob over **bulk-OUT ep 0x05**, first packet frame 5346, 4144 B each) → checksum/
+     MCU-boot → `dlfw_end_flow_88xx` → ltecoex restore. Then poll C2HEVT for `C2H_MAC_HIDDEN_RPT`,
+     read the rpt, write C2HEVT=`C2H_DBG` (hal_com.c:1588-1601).
+- **btc power-on register sequence (decoded, matches #2186-2217 byte-for-byte)** —
+  `ex_halbtc8821c1ant_power_on_setting`: W16 0x02 |= BIT0|BIT1 (BB enable, :3855); `set_ant_path`
+  POWERON (:3884) → `coex_ctrl_owner(BTSIDE)` clears 0x73 BIT2 (:1604) + `set_ant_switch(BBSW,TO_BT)`
+  (:2394-2470): 0x4e &= ~BIT7, 0x4f |= BIT0, 0xcb4 = 0x77, 0xcb7[5:4] = polarity (0x1 here), then
+  0x67 |= BIT5 (PAPE) and 0x67 |= BIT4 (LNA_ON); `table` (:1664) writes 0x6c0/0x6c4 = 0x55555555,
+  0x6c8 = 0x00ffffff, 0x6cc = 0x13; W8 0xfe08 = 0 (USB ant-path-for-FW local reg, :3895);
+  `enable_gnt_to_gpio(TRUE)` is a no-op here (early return). The cb7 polarity + ant path come from
+  `set_rfe_type` (:2474, pure logic) keyed on `board_info->rfe_type` + `single_ant_path` (efuse
+  0xc3[6]) — **port those EFUSE reads (`Hal_ReadRFEType`, single_ant_path) so a sibling card's
+  polarity is correct; do NOT hardcode 0x1**. The 2× repetition = two power-on passes (caller #1 =
+  `rtw_hal_power_on`; caller #2 lives inside the chip `fw_dl` path — confirm exact site when porting).
+- **To verify FW download the gate must replay bulk-OUT:** switch `scripts/rtl8821cu_dkms/verify_pcap.py`
+  from `extract_ctrl_ops` alone to `merge_ops_by_frame(extract_ctrl_ops(...), extract_bulk_out_ops(...))`
+  (both already in `rtw88_pcap_replay`; `ReplayDevice.write` byte-checks bulk). The FW blob is
+  `array_mp_8821c_fw_nic[]` ([SRC] hal/rtl8821c/hal8821c_fw.c) — extract + byte-verify vs the bulk-OUT
+  packets and vs linux-firmware, record provenance (PORTING.md Housekeeping).
+- `transport` bulk-OUT EP defaulted to `0x04` but the **coverage audit shows FW/TX bulk-OUT is on
+  ep `0x05`** (1152 pkts) — fix `Rtl8821cuTransport(bulk_out_ep=0x05)` (or probe it) at the FW milestone.
+  The audit also flags interrupt-IN ep `0x81` (360 pkts) as a C2H blind spot.
 
 ## Port log — 2026-06-22 (scaffold + M1 power tables)
 
@@ -134,3 +162,21 @@
   behind their real checks. → **2170 ops, zero divergence.**
 - New frontier op #2170 (`IN 0x1080`): the post-power-on MAC/DMA init (rtl8821c_halinit.c:264)
   and firmware download — next milestone.
+
+## Port log — 2026-06-22 (init_system_cfg GREEN @ 2186; FW-download region mapped)
+
+- Ported `init.init_system_cfg` (init_system_cfg_8821c halmac_init_8821c.c:721) — the third leg of
+  `rtw_hal_power_on` after the power switch: CPU_DMEM_CON BIT16 platform reset, SYS_FUNC_EN+1 |= 0xD8,
+  boot-from-flash disable. → **2186 ops, zero divergence.**
+- Then reverse-engineered the whole #2186-~3360 region (see Known issues for the decoded detail). The
+  surprise: the cold-boot **firmware download is not in `_halmac_init_hal`** — it is driven by
+  `hal_read_mac_hidden_rpt` (hal_com.c:1550) called from `rtl8821c_read_efuse:525`, which powers the
+  chip (→ btc power-on setting, the BT-coex block) then `rtw_hal_fw_dl`. Anchored empirically:
+  pcap_slicer puts frame 5078 in `<hardware_plugin_and_initialization>`; `extract_bulk_out_ops` shows
+  the FW blob on **bulk-OUT ep 0x05** (first packet frame 5346, 4144 B); `ltecoex_reg_read_88xx`
+  (0x1700/0x1708) confirms `download_firmware_88xx` starts at op #2271; an Explore subagent + manual
+  read of halbtc8821c1ant.c decoded every btc register write.
+- **Stopped here (not a failure — a milestone boundary).** The next milestone (btc power-on setting +
+  `hal_read_mac_hidden_rpt` orchestration + `download_firmware_88xx` + gate bulk-merge + 139 KB blob
+  extraction/provenance) is large and multi-function; the full map is recorded in Known issues so it
+  can be ported faithfully rather than rushed. `bulk_out_ep` must move 0x04 → 0x05 at that milestone.
