@@ -10,26 +10,28 @@ past power-on.
 """
 from __future__ import annotations
 
-from . import chipid, efuse, init, pwrseq
+from . import btc, chipid, efuse, init, pwrseq
 
 
-def power_on(t) -> None:
-    """HALMAC power-on: pre-init system config, the card-enable power switch, then the
-    post-switch system config. [SRC] rtw_hal_power_on (pre_init_system_cfg ->
-    mac_power_switch ON -> init_system_cfg), per _halmac_init_hal hal_halmac.c:3597-3600."""
+def power_on(t, info) -> None:
+    """[SRC] rtw_hal_power_on hal_intf.c:461 — `hal_power_on` (pre-init system config, the
+    card-enable power switch, the post-switch system config) then, when the card reports BT
+    present, the BT-coex power-on setting (hal_intf.c:470, gated on EEPROMBluetoothCoexist)."""
     init.pre_init_system_cfg(t)
     pwrseq.mac_pwr_switch(t, power_on=True)
     init.init_system_cfg(t)
+    if info.bt_coexist:
+        btc.power_on_setting(t, info.rfe_type, info.single_ant_path)
 
 
 def cold_bringup(t) -> None:
     """The cold init the driver's connect() runs, in the order the wire shows.
 
-    Through power-on: the chip-id/EFUSE prologue, the pre-power-on system config, and the
-    card-enable power sequence. Later milestones (firmware download, MAC/BB/RF init, monitor
-    entry) extend this past power-on.
+    Through power-on: the chip-id/EFUSE prologue, the pre-power-on system config, the
+    card-enable power sequence, and (combo card) the BT-coex power-on setting. Later milestones
+    (firmware download, MAC/BB/RF init, monitor entry) extend this past power-on.
     """
     chipid.mount_get_chip_info(t)
     chipid.read_chip_version(t)
-    efuse.read_efuse(t)
-    power_on(t)
+    info = efuse.read_efuse(t)
+    power_on(t, info)

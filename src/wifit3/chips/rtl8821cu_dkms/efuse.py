@@ -23,6 +23,8 @@ EF_DATA mask :739, AUTOLOAD_SUS :129, BT_FUNC_EN :1395.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 REG_SYS_EEPROM_CTRL = 0x000A
 REG_EFUSE_CTRL = 0x0030
 REG_LDO_EFUSE_CTRL = 0x0034
@@ -34,6 +36,8 @@ _PRTCT_EFUSE_SIZE = 96             # [SRC] halmac_8821c_cfg.h:50 PRTCT_EFUSE_SIZ
 
 _RTL_EEPROM_ID = 0x8129            # [SRC] include/hal_pg.h:824 — log_map[0:2] when autoload valid
 _EEPROM_RF_BOARD_OPTION = 0xC1     # [SRC] include/hal_pg.h:509 EEPROM_RF_BOARD_OPTION_8821C
+_EEPROM_RF_BT_SETTING = 0xC3       # [SRC] include/hal_pg.h:511 EEPROM_RF_BT_SETTING_8821C
+_EEPROM_RFE_OPTION = 0xCA          # [SRC] include/hal_pg.h:518 EEPROM_RFE_OPTION_8821C
 _BIT_BT_FUNC_EN = 1 << 18          # [SRC] halmac_bit_8821c.h:1395 BIT_BT_FUNC_EN_8821C
 
 _BIT_AUTOLOAD_SUS = 1 << 5
@@ -126,22 +130,48 @@ def eeprom_parser(phy_map: bytes) -> bytes:
     return bytes(log_map)
 
 
-def _parse_bt_coexist(t, log_map: bytes, map_valid: bool) -> None:
-    """The only register-touching EFUSE-parse step: when the map is valid and carries a
-    board option, read REG_WL_BT_PWR_CTRL to learn whether BT is fused on (combo card).
-    Decode unused so far — the read itself is the wire op. [SRC] rtl8821c_ops.c:141-150."""
-    if map_valid and log_map[_EEPROM_RF_BOARD_OPTION] != 0xFF:
-        t.read32(REG_WL_BT_PWR_CTRL)
+@dataclass
+class EfuseInfo:
+    """The handful of parsed EFUSE fields the post-EFUSE bring-up consumes (BT-coex
+    power-on, RF front-end). Read at runtime, never hardcoded — a sibling card differs."""
+    autoload_ok: bool
+    log_map: bytes
+    bt_coexist: bool        # combo card with BT fused on -> rtw_hal_power_on runs btc PowerOnSetting
+    rfe_type: int           # RF front-end module type (board_info->rfe_type)
+    single_ant_path: int    # 0 = RF_PATH_A/aux, 1 = RF_PATH_B/main
+    ant_num: int            # 1 or 2 BT/WL shared antennas
 
 
-def read_efuse(t) -> tuple[bool, bytes]:
-    """[SRC] rtl8821c_read_efuse: autoload-status check, the WIFI physical dump decoded
-    to the logical shadow map, then the parse chain (only BT-coex touches a register).
-    Returns (autoload_ok, 512-byte logical efuse map)."""
+def _parse_board_info(t, log_map: bytes, map_valid: bool) -> tuple[bool, int, int, int]:
+    """The EFUSE-parse fields with side effects: `Hal_EfuseParseBTCoexistInfo` (the only
+    register touch — REG_WL_BT_PWR_CTRL for BT_FUNC_EN), board RFE type, and the RF_BT_SETTING
+    antenna byte. [SRC] rtl8821c_ops.c:134-175 (BT-coex) / :376-414 (RFE) / hal_pg.h offsets."""
+    board_opt = log_map[_EEPROM_RF_BOARD_OPTION]
+    bt_coexist = False
+    if map_valid and board_opt != 0xFF:
+        pwr_ctrl = t.read32(REG_WL_BT_PWR_CTRL)
+        interface_sel = (board_opt & 0xE0) >> 5          # 0x01 == combo card
+        bt_coexist = interface_sel == 0x01 and bool(pwr_ctrl & _BIT_BT_FUNC_EN)
+
+    setting = log_map[_EEPROM_RF_BT_SETTING]
+    if map_valid and setting != 0xFF:
+        ant_num = 1 if (setting & (1 << 0)) else 2       # BIT0: 1 => 1-Ant (Ant_x1), 0 => 2-Ant
+        single_ant_path = 1 if (setting & (1 << 6)) else 0   # BIT6: RF_PATH_B(1) / RF_PATH_A(0)
+    else:
+        ant_num, single_ant_path = 1, 0
+
+    rfe_type = log_map[_EEPROM_RFE_OPTION] if map_valid else 0
+    return bt_coexist, rfe_type, single_ant_path, ant_num
+
+
+def read_efuse(t) -> EfuseInfo:
+    """[SRC] rtl8821c_read_efuse: autoload-status check, the WIFI physical dump decoded to
+    the logical shadow map, then the parse chain (only BT-coex touches a register). Returns
+    the parsed fields the later bring-up consumes."""
     val8 = t.read8(REG_SYS_EEPROM_CTRL)
     autoload_ok = not (val8 & _BIT_AUTOLOAD_SUS)
     _switch_efuse_bank_wifi(t)
     log_map = eeprom_parser(read_hw_efuse(t))
     map_valid = int.from_bytes(log_map[0:2], "little") == _RTL_EEPROM_ID
-    _parse_bt_coexist(t, log_map, map_valid)
-    return autoload_ok, log_map
+    bt_coexist, rfe_type, single_ant_path, ant_num = _parse_board_info(t, log_map, map_valid)
+    return EfuseInfo(autoload_ok, log_map, bt_coexist, rfe_type, single_ant_path, ant_num)
