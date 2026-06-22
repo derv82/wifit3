@@ -12,6 +12,20 @@
 > power tables are also ported (they verify once the short pre-power init block lands — the
 > current frontier). Not registered in `wlan/manager.py` (claims nothing until complete).
 
+> ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
+>
+> This card enumerates as a **USB CD-ROM** (mass-storage "ZeroCD") and must be mode-switched to
+> the Wi-Fi function (PID `0bda:c820`) before any driver can bind. A fresh user who plugs it in
+> sees a CD-ROM, **not** a Wi-Fi card — Wifit3 currently finds nothing, so the card is unusable
+> end-to-end until the discovery layer handles this. The cold-boot pcap was captured already in
+> Wi-Fi mode (Linux `usb_modeswitch` flips it at plug-in via udev), so the **offline port + verify
+> are unaffected** — this blocks the *product*, not the port.
+>
+> This is a **manager/discovery-architecture** problem, not a per-chip detail, and not unique to
+> 8821cu (many Realtek USB adapters ZeroCD). Open design questions — auto-eject vs consent modal,
+> per-plug behavior, and the Windows WinUSB re-bind after the switch — are under discussion; the
+> canonical write-up belongs in `planning/` once decided. Tracking decisions here until then.
+
 ## Silicon
 
 | | | |
@@ -62,13 +76,8 @@
   not a reuse of `rtl8822bu_dkms`.
 - Every 8821c card_en/dis row is `CUT_ALL`, so the chip cut does not filter the power sequence;
   the real cut (from `SYS_CFG1` 0xF0) only gates the init tables that follow.
-- **ZeroCD / mode-switch (hardware only).** The card ships in a USB CD-ROM ("ZeroCD") mass-storage
-  mode and must be mode-switched to the WiFi function (PID `0bda:c820`) before the driver binds;
-  on Windows it also exposes a CD-ROM LUN alongside the NIC. The cold-boot pcap was captured
-  already in WiFi mode (the kernel / usb_modeswitch flips it at plug-in), so the **offline verify
-  is unaffected** — but the runtime driver (a later milestone) must issue the mode-switch (SCSI
-  eject / usb_modeswitch payload) when it sees the CD-ROM PID, before WinUSB/Zadig binding. Not on
-  the verify path.
+- **ZeroCD / mode-switch:** see the ⚠️ bring-up-blocker callout at the top — it's a
+  discovery-layer architecture problem, not a per-chip caveat.
 
 ## Known issues
 
