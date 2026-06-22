@@ -70,7 +70,7 @@ def run(cap: str | None = None) -> int:
     if consumed < len(ops):
         nxt = ops[consumed]
         print(f"FRONTIER -> op #{consumed} (frame {nxt['frame']}): {_fmt(nxt)}")
-        print("  (next: firmware download - 8051 DMEM/IMEM setup, then the FW-blob bulk upload)")
+        print("  (cold path through MAC init is green; next: _send_general_info H2C + the rpt tail)")
     return 0
 
 
