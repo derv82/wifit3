@@ -7,8 +7,8 @@
 
 > **Status — cold-init probe GREEN + airmon re-init through general-info GREEN.** The
 > byte-for-byte gate (`scripts/rtl8821cu_dkms/verify_pcap.py`, replaying ctrl + the FW/TX
-> bulk-OUT stream) reproduces the **whole cold-boot probe and the first 1142 ops of the airmon
-> monitor-entry phase — 4513 ops, zero divergence**. Cold init (frames 1-7672): USB transport
+> bulk-OUT stream) reproduces the **whole cold-boot probe and the first ~2977 ops of the airmon
+> monitor-entry phase — 6348 ops, zero divergence**. Cold init (frames 1-7672): USB transport
 > (+ the `0x4E0` mirror), chip-detect/version, EFUSE dump + decode + BT-coex read, pre-power
 > init + card-enable + init_system_cfg, the BT-coex power-on setting, the **iDDMA firmware
 > download** (the 138 KB blob byte-matched vs bulk-OUT), `init_mac_flow` (queue/page/H2C/
@@ -17,9 +17,10 @@
 > phydm kfree-trim + RFE-type init. **Airmon `_halmac_init_hal`** (`bringup.hal_init`) then
 > re-runs power-on + FW download (this time through the **full `update_txdesc`** reserved-page
 > descriptor, `tx.py`) + init_mac_flow + general-info + **`init_mac_register`** (the 138-entry
-> PHYDM MAC-reg table, `mac_reg_tbl.py`) + **`config_rx_info`** (DRV_INFO_PHY_STATUS), all
-> byte-matched. Frontier is op #4664 (frame 10267), `rtw_hal_init_phy` (BB + RF — the bulk of the
-> phase). Not registered in `wlan/manager.py` (claims nothing until complete).
+> PHYDM MAC-reg table, `mac_reg_tbl.py`) + **`config_rx_info`** (DRV_INFO_PHY_STATUS) +
+> `rtw_hal_init_phy` so far (BB/RF enable + PRE-setting + the **1678-row PHYDM BB PHY_REG table**
+> via the cut/rfe conditional walker `phy_cond.py`), all byte-matched. Frontier is op #6348 (frame
+> 13635), the **BB AGC table**. Not registered in `wlan/manager.py` (claims nothing until complete).
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
@@ -68,7 +69,8 @@
 | full TX descriptor | `tx.build_mgnt_txdesc` | `update_txdesc` rtl8821cu_xmit.c:35 (USB filler, via `dump_mgntframe`->`rtw_dump_xframe`) ; ra from `update_mgntframe_attrib_addr` hal_intf.c:885 | MGNT_FRAMETAG branch: LS/MACID/RAID/QSEL/HWSEQ/MBSSID/USE_RATE/DATARATE/RTY/SW_DEFINE/BMC + XOR cksum — **VERIFIED** (airmon FW dl) |
 | MAC-reg table | `mac.init_mac_register` / `mac_reg_tbl` | `rtl8821c_init_phy_parameter_mac` rtl8821c_phy.c:97 -> `odm_config_mac_8821c` | 138 plain 1-byte writes, no cut/rfe conditionals — **VERIFIED** |
 | RX drv-info cfg | `mac.config_rx_info` | `cfg_drv_info_8821c` halmac_cfg_wmac_8821c.c (PHY_STATUS) | DRVINFO_SZ=4 + APP_PHYSTS on + RCR sync — **VERIFIED** |
-| monitor entry (airmon) | `bringup.hal_init` | `_halmac_init_hal` hal_halmac.c:3576 | power-on + FW dl (full txdesc) + init_mac_flow + general-info + init_mac_register + config_rx_info **VERIFIED**; **(frontier)** `rtw_hal_init_phy` (BB/RF) -> monitor RX-filter |
+| BB enable + PHY_REG | `bb.init_bb_rf` / `bb.phy_bb_config` / `phy_cond` | `init_bb_rf` + `_init_phy_parameter_bb` rtl8821c_phy.c:57/113 ; `odm_config_bb_phy_8821c` phydm_regconfig8821c.c:171 | BB/RF enable + PRE-setting + 1678-row PHY_REG table (cut/rfe walker) — **VERIFIED** |
+| monitor entry (airmon) | `bringup.hal_init` | `_halmac_init_hal` hal_halmac.c:3576 | + init_mac_register + config_rx_info + BB enable/PHY_REG **VERIFIED**; **(frontier)** BB AGC table -> RF radio-A -> POST-setting + calibration -> monitor RX-filter |
 
 ## Hot paths
 
@@ -99,15 +101,16 @@
 
 ## Known issues
 
-- **Frontier (next milestone): op #4664 (frame 10267): `IN 0x0002/1=0x1f`** — the start of
-  **`rtw_hal_init_phy`** ([SRC] rtl8821c_phy.c `rtl8821c_phy_init`, called from `_halmac_init_hal`
-  after `config_rx_info`): BB enable, the BB phy-reg + AGC PHYDM tables, RF radio-A reg table, and
-  RF calibration (IQK/etc.) — the bulk of this phase, thousands of ops, with cut/rfe **conditional
-  rows** (so the phydm `check_positive` walker must be ported, unlike the flat MAC-reg table). Then
-  `halmac_init_interface_cfg`, the monitor-mode RX-filter/RCR setup, and the channel hops
-  (airodump). `_drv_enable_trx` (between init_mac_flow and general-info) is RX/thread-side only —
-  no control-OUT ops, a gate no-op. The 8822bu_dkms sibling (`bb.py`/`rf.py`/`cal.py` +
-  `*_tbl.py` + `phy_cond.py`) is the structural template.
+- **Frontier (next milestone): op #6348 (frame 13635): `OUT 0x081c/4=0xfb000003`** — the BB **AGC
+  table** (`odm_config_bb_agc_8821c` [SRC] phydm_regconfig8821c.c:137, walked like PHY_REG;
+  `odm_update_agc_big_jump_lmt` is software-only). After AGC: `rtw_phydm_set_crystal_cap` +
+  `phy_set_bb_reg(rCCK0_FalseAlarmReport, BIT18|BIT22, 0)`, then **`init_rf_reg`** (the RF radio-A
+  table via SIPI write_rf — needs the LSSI/3-wire RF write path, the one genuinely new mechanism
+  left), the **POST-setting** (0x808 enable + 0xa24/0xa28/0xaac caches), then phydm **calibration**
+  (IQK etc.), `halmac_init_interface_cfg`, the monitor-mode RX-filter/RCR setup, and the channel
+  hops (airodump). `_drv_enable_trx` is RX/thread-side only — a gate no-op. The 8822bu_dkms sibling
+  (`bb.py`/`rf.py`/`cal.py` + `*_tbl.py` + `phy_cond.py`) is the structural template; `phy_cond.py`
+  + `bb.py` are now ported and reusable for AGC.
 - **DONE — the full TX-descriptor builder (`tx.build_mgnt_txdesc`).** The airmon FW download takes
   the full reserved-page descriptor: cold-init set `not_xmitframe_fw_dl=1` ([SRC] hal_com.c:1578)
   so its rsvd-page write took the minimal `usb_write_data_not_xmitframe` path; airmon leaves the
@@ -256,3 +259,13 @@
   APP_PHYSTS + the TRXFF_BNDY rxdesc-len workaround + RCR sync). → 4513 -> **4664 ops**.
 - Followed the rtl8822bu_dkms `mac_reg_tbl.py` convention. Frontier #4664 = `rtw_hal_init_phy`
   (BB + RF, the big PHYDM-table milestone; needs the `check_positive` conditional walker).
+
+## Port log — 2026-06-22 (BB enable + PHY_REG table GREEN @ 6348)
+
+- Started `rtw_hal_init_phy`. New `phy_cond.py` (the PHYDM cut/rfe/package `check_positive` +
+  IF/ELSE/ENDIF walker — identical to the 8822b family, reused for AGC/RF next) and `bb.py`
+  (`init_bb_rf` BB/RF enable, `set_bb_reg` masked write [SRC] rtl8821c_phy.c:347, PRE-setting
+  0x808, `phy_bb_config`). `bb_phy_reg_tbl.py` is the 1678-row table generated 1:1 from
+  `array_mp_8821c_phy_reg`. → 4664 -> **6348 ops, zero divergence**.
+- Discriminators (cut=chip_ver=4, rfe=info.rfe_type, package=7): both PHY_REG conditional groups
+  fall to ELSE (cut 2≠4, rfe 5≠ours), reproduced exactly. Frontier #6348 = the BB AGC table.
