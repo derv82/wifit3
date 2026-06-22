@@ -95,8 +95,7 @@ def hal_init(t, info) -> None:
                                  package=info.phydm_package_type)
     bb.init_bb_rf(t)
     bb.phy_parameter_init(t, post=False)
-    bb.phy_bb_config(t, cfg)
-    bb.phy_agc_config(t, cfg, info.default_rf_set)
+    bb.init_bb_reg(t, cfg, info.default_rf_set, info.crystal_cap)
 
 
 def cold_bringup(t) -> None:

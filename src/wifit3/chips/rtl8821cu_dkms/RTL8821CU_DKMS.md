@@ -7,8 +7,8 @@
 
 > **Status — cold-init probe GREEN + airmon re-init through general-info GREEN.** The
 > byte-for-byte gate (`scripts/rtl8821cu_dkms/verify_pcap.py`, replaying ctrl + the FW/TX
-> bulk-OUT stream) reproduces the **whole cold-boot probe and the first ~3491 ops of the airmon
-> monitor-entry phase — 6862 ops, zero divergence**. Cold init (frames 1-7672): USB transport
+> bulk-OUT stream) reproduces the **whole cold-boot probe and the first ~3501 ops of the airmon
+> monitor-entry phase — 6872 ops, zero divergence**. Cold init (frames 1-7672): USB transport
 > (+ the `0x4E0` mirror), chip-detect/version, EFUSE dump + decode + BT-coex read, pre-power
 > init + card-enable + init_system_cfg, the BT-coex power-on setting, the **iDDMA firmware
 > download** (the 138 KB blob byte-matched vs bulk-OUT), `init_mac_flow` (queue/page/H2C/
@@ -19,9 +19,9 @@
 > descriptor, `tx.py`) + init_mac_flow + general-info + **`init_mac_register`** (the 138-entry
 > PHYDM MAC-reg table, `mac_reg_tbl.py`) + **`config_rx_info`** (DRV_INFO_PHY_STATUS) +
 > `rtw_hal_init_phy` so far (BB/RF enable + PRE-setting + the **1678-row PHYDM BB PHY_REG table** +
-> the **1600-row AGC table + 390-row BTG AGC-diff** via the cut/rfe conditional walker
-> `phy_cond.py`), all byte-matched. Frontier is op #6862 (frame 14663), `rtw_phydm_set_crystal_cap`
-> then `init_rf_reg` (RF radio-A). Not registered in `wlan/manager.py` (claims nothing until done).
+> the **1600-row AGC table + 390-row BTG AGC-diff**, then **set_crystal_cap + rCCK0** (init_bb_reg
+> complete), all byte-matched. Frontier is op #6872 (frame 14683), **`init_rf_reg`** — the RF
+> radio-A table via the LSSI/3-wire `write_rf` path (0x0C90). Not registered in `wlan/manager.py`.
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
@@ -102,13 +102,14 @@
 
 ## Known issues
 
-- **Frontier (next milestone): op #6862 (frame 14663): `IN 0x0024/4=...`** — `rtw_phydm_set
-  _crystal_cap` (RMW of the 0x24 crystal-cap field) + `phy_set_bb_reg(rCCK0_FalseAlarmReport,
-  BIT18|BIT22, 0)` close `init_bb_reg`. Then **`init_rf_reg`** (the RF radio-A table via SIPI
-  `write_rf` — the LSSI/3-wire RF write path, the one genuinely new mechanism left), the
-  **POST-setting** (0x808 enable + 0xa24/0xa28/0xaac caches), then phydm **calibration** (IQK
-  etc.), `halmac_init_interface_cfg`, the monitor-mode RX-filter/RCR setup, and the channel hops
-  (airodump). `_drv_enable_trx` is RX/thread-side only — a gate no-op.
+- **Frontier (next milestone): op #6872 (frame 14683): `OUT 0x0c90/4=...`** — **`init_rf_reg`**
+  ([SRC] rtl8821c_phy.c:207 `_init_phy_parameter_rf`): the RF radio-A table
+  (`array_mp_8821c_radioa`, `odm_config_rf_radioa_8821c` -> `odm_config_rf_reg_8821c`) written via
+  the **LSSI/3-wire `write_rf`** path — `phy_set_rf_reg` -> the chip's RF write (REG 0x0C90 the
+  LSSI write port). The table has 0xFF/0xFE/0xFD delay opcodes and cut/rfe conditionals (the
+  `phy_cond` walker applies). Then the **POST-setting** (0x808 enable + 0xa24/0xa28/0xaac caches),
+  phydm **calibration** (IQK etc.), `halmac_init_interface_cfg`, the monitor-mode RX-filter/RCR
+  setup, and the channel hops (airodump). `_drv_enable_trx` is RX/thread-side only — a gate no-op.
 - **PHYDM discriminators are transformed, not the hal->* values** (the AGC walker forced this out):
   `dm->rfe_type = rfe_type_expand >> 3` (0x22 -> 4) and `dm->package_type = 1` for the 0x2x combo
   range ([SRC] phydm_hal_api8821c.c:336/349) — both differ from `hal->rfe_type`=0x22 /
@@ -284,3 +285,11 @@
   `phydm_rfe_type` / `phydm_package_type` / `default_rf_set` in `EfuseInfo`, and `hal_init` builds
   the `PhyCondConfig` from those. (PHY_REG still resolves to ELSE under the corrected values, so it
   stayed green.) Frontier #6862 = set_crystal_cap + init_rf_reg.
+
+## Port log — 2026-06-22 (set_crystal_cap + rCCK0: init_bb_reg complete @ 6872)
+
+- `bb.set_crystal_cap` (phydm_set_crystal_cap_reg 8821c arm: 6-bit cap into 0x24[30:25] + 0x28[6:1])
+  and the rCCK0_FalseAlarmReport (0xA2C) BIT18|BIT22 clear close `init_bb_reg`. → 6862 -> **6872**.
+- crystal_cap comes from EEPROM_XTAL (0xB9) = 0x2e; gated on the EEPROM-ID map-valid check (NOT
+  autoload_ok — this card has autoload_ok=False but a valid 0x8129 map, same as BTCoexist uses).
+  Added `crystal_cap` to `EfuseInfo`. Frontier #6872 = init_rf_reg (RF radio-A via LSSI write_rf).

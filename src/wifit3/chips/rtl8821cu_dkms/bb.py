@@ -81,6 +81,28 @@ def phy_bb_config(t, cfg: phy_cond.PhyCondConfig) -> None:
     phy_cond.walk(PHY_REG_TBL, cfg, lambda addr, val: _apply_phy(t, addr, val))
 
 
+REG_AFE_XTAL = 0x0024              # crystal-cap field 0x24[30:25]
+REG_AFE_PLL = 0x0028              # crystal-cap field 0x28[6:1]
+R_0xA2C = 0x0A2C                  # rCCK0_FalseAlarmReport [SRC] rtl8821c_phy.c:203
+
+
+def set_crystal_cap(t, crystal_cap: int) -> None:
+    """phydm_set_crystal_cap_reg (8821c arm) [SRC] phydm_cfotracking.c:255 — write the 6-bit
+    crystal cap to 0x24[30:25] and 0x28[6:1] (masked RMW; odm_set_mac_reg is the BB write path)."""
+    cap = crystal_cap & 0x3F
+    set_bb_reg(t, REG_AFE_XTAL, 0x7E000000, cap)
+    set_bb_reg(t, REG_AFE_PLL, 0x0000007E, cap)
+
+
+def init_bb_reg(t, cfg: phy_cond.PhyCondConfig, default_rf_set: int, crystal_cap: int) -> None:
+    """init_bb_reg [SRC] rtl8821c_phy.c:186 — the PHY_REG + AGC tables, then set the crystal cap
+    and clear rCCK0_FalseAlarmReport BIT18|BIT22."""
+    phy_bb_config(t, cfg)
+    phy_agc_config(t, cfg, default_rf_set)
+    set_crystal_cap(t, crystal_cap)
+    set_bb_reg(t, R_0xA2C, (1 << 18) | (1 << 22), 0)
+
+
 def phy_agc_config(t, cfg: phy_cond.PhyCondConfig, default_rf_set: int) -> None:
     """_init_phy_parameter_bb step 2 — apply the AGC table, then (per [SRC] phydm_hwconfig.c:1225)
     the BTG "diff" table for a BTG card. ``odm_config_bb_agc_8821c`` has no delay opcodes (every

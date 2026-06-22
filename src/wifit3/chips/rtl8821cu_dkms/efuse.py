@@ -38,6 +38,7 @@ _RTL_EEPROM_ID = 0x8129            # [SRC] include/hal_pg.h:824 — log_map[0:2]
 _EEPROM_RF_BOARD_OPTION = 0xC1     # [SRC] include/hal_pg.h:509 EEPROM_RF_BOARD_OPTION_8821C
 _EEPROM_RF_BT_SETTING = 0xC3       # [SRC] include/hal_pg.h:511 EEPROM_RF_BT_SETTING_8821C
 _EEPROM_RFE_OPTION = 0xCA          # [SRC] include/hal_pg.h:518 EEPROM_RFE_OPTION_8821C
+_EEPROM_XTAL = 0xB9                # [SRC] include/hal_pg.h:496 EEPROM_XTAL_8821C
 _BIT_BT_FUNC_EN = 1 << 18          # [SRC] halmac_bit_8821c.h:1395 BIT_BT_FUNC_EN_8821C
 
 _BIT_AUTOLOAD_SUS = 1 << 5
@@ -146,6 +147,7 @@ class EfuseInfo:
     phydm_rfe_type: int = 0     # dm->rfe_type = rfe_type_expand >> 3 (PHYDM table discriminator)
     phydm_package_type: int = 0  # dm->package_type (phydm override; differs from hal->PackageType)
     default_rf_set: int = 1     # dm->default_rf_set_8821c (SWITCH_TO_BTG=0 / WLG=1) — picks AGC diff
+    crystal_cap: int = 0        # hal->crystal_cap from EEPROM_XTAL (0xB9); BB crystal-cap trim
 
 
 def _parse_board_info(t, log_map: bytes, map_valid: bool) -> tuple[bool, int, int, int]:
@@ -181,8 +183,12 @@ def read_efuse(t) -> EfuseInfo:
     log_map = eeprom_parser(phys_map)
     map_valid = int.from_bytes(log_map[0:2], "little") == _RTL_EEPROM_ID
     bt_coexist, rfe_type, single_ant_path, ant_num = _parse_board_info(t, log_map, map_valid)
+    # hal->crystal_cap [SRC] Hal_EfuseParseXtal rtl8821c_ops.c:194 — EEPROM_XTAL (0xB9) when the
+    # map is valid (the same `valid` BTCoexist uses — EEPROM-ID, not autoload), else default 0.
+    xtal = log_map[_EEPROM_XTAL]
+    crystal_cap = xtal if (map_valid and xtal != 0xFF) else 0
     return EfuseInfo(autoload_ok, log_map, bt_coexist, rfe_type, single_ant_path, ant_num,
-                     phys_map=phys_map)
+                     phys_map=phys_map, crystal_cap=crystal_cap)
 
 
 # PPG (per-package-gain) physical EFUSE offsets for kfree trim [SRC] halrf_kfree.h:69-75
