@@ -140,6 +140,7 @@ class EfuseInfo:
     rfe_type: int           # RF front-end module type (board_info->rfe_type)
     single_ant_path: int    # 0 = RF_PATH_A/aux, 1 = RF_PATH_B/main
     ant_num: int            # 1 or 2 BT/WL shared antennas
+    chip_ver: int = 0       # halmac chip_ver (cut), set by bring-up from mount_get_chip_info
 
 
 def _parse_board_info(t, log_map: bytes, map_valid: bool) -> tuple[bool, int, int, int]:

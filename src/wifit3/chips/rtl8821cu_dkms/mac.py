@@ -99,8 +99,16 @@ def _txff_pages() -> dict:
             + _RSVD_CPU_INSTR + _RSVD_FW_TXBUF + _RSVD_CSIBUF)
     acq = tx_pg - rsvd
     pubq = acq - _PG_HQ - _PG_LQ - _PG_NQ - _PG_EXQ - _PG_GAPQ
-    h2cq_addr = (tx_pg - _RSVD_CSIBUF - _RSVD_FW_TXBUF - _RSVD_CPU_INSTR - _RSVD_H2CQ)
-    return {"boundary": tx_pg - rsvd, "pubq": pubq, "h2cq_addr": h2cq_addr}
+    boundary = tx_pg - rsvd
+    fw_txbuf_addr = tx_pg - _RSVD_CSIBUF - _RSVD_FW_TXBUF
+    h2cq_addr = fw_txbuf_addr - _RSVD_CPU_INSTR - _RSVD_H2CQ
+    return {"boundary": boundary, "pubq": pubq, "h2cq_addr": h2cq_addr,
+            "fw_tx_boundary": fw_txbuf_addr - boundary}
+
+
+def txff_pages() -> dict:
+    """Public view of the reserved-page layout for the H2C/general-info path."""
+    return _txff_pages()
 
 
 def _init_trx_cfg(t, bulkout_num: int) -> None:

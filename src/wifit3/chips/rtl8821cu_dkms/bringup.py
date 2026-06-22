@@ -16,7 +16,9 @@ from . import btc, chipid, efuse, firmware, init, pwrseq
 
 REG_C2HEVT_MSG_NORMAL = 0x01A0      # [SRC] include/hal_com_reg.h:149
 _C2H_DEFEATURE_RSVD = 0xFD          # [SRC] hal/hal_com_c2h.h:79 — "FW: report MAC-hidden via reg"
+_C2H_MAC_HIDDEN_RPT = 0x19          # [SRC] hal/hal_com_c2h.h:67 — report-ready marker
 _C2H_DBG = 0x00                     # [SRC] hal/hal_com_c2h.h:51 — "host done reading"
+_MAC_HIDDEN_RPT_LEN = 8 + 5         # MAC_HIDDEN_RPT_LEN + MAC_HIDDEN_RPT_2_LEN
 
 
 def power_on(t, info, already_on: bool = False) -> bool:
@@ -45,12 +47,21 @@ def read_mac_hidden_rpt(t, info) -> None:
     on = power_on(t, info, already_on=False)
     t.write8(REG_C2HEVT_MSG_NORMAL, _C2H_DEFEATURE_RSVD)
     firmware.fw_dl(t, info, on, power_on)
+    for _ in range(800):
+        if t.read8(REG_C2HEVT_MSG_NORMAL) == _C2H_MAC_HIDDEN_RPT:
+            break
+    else:
+        raise RuntimeError("RTL8821CU: MAC-hidden report not ready")
+    for i in range(_MAC_HIDDEN_RPT_LEN):
+        t.read8(REG_C2HEVT_MSG_NORMAL + 2 + i)
+    t.write8(REG_C2HEVT_MSG_NORMAL, _C2H_DBG)
 
 
 def cold_bringup(t) -> None:
     """The cold init the driver's connect() runs, in the order the wire shows. See module
     docstring. Verified byte-for-byte by ``scripts/verify_pcap.py rtl8821cu_dkms``."""
-    chipid.mount_get_chip_info(t)
+    _, chip_ver = chipid.mount_get_chip_info(t)
     chipid.read_chip_version(t)
     info = efuse.read_efuse(t)
+    info.chip_ver = chip_ver
     read_mac_hidden_rpt(t, info)

@@ -49,6 +49,19 @@ REG_H2CQ_CSR = 0x1330               # :6772
 REG_LTECOEX_CTRL = 0x1700           # REG_WL2LTECOEX_INDIRECT_ACCESS_CTRL_V1 :8232
 REG_LTECOEX_WDATA = 0x1704          # :8233
 REG_LTECOEX_RDATA = 0x1708          # :8234
+# general-info H2C path
+REG_PKTBUF_DBG_CTRL = 0x0140        # :? FIFO page select for dump
+REG_HMETFR = 0x01CC                 # H2C box fw-read flags
+REG_HMEBOX0 = 0x01D0                # H2C message box 0
+REG_HMEBOX_E0 = 0x01F0              # H2C ext message box 0
+REG_RCR = 0x0608
+
+_QSEL_H2C = 0x13                    # [SRC] halmac_type.h HALMAC_TXDESC_QSEL_H2C_CMD
+_H2C_PKT_SIZE = 32                  # [SRC] halmac_88xx_cfg.h:32 H2C_PKT_SIZE_88XX
+_SUB_CMD_GENERAL_INFO = 0x0D       # [SRC] halmac_fw_offload_h2c_nic.h:88
+_SUB_CMD_PHYDM_INFO = 0x11         # [SRC] halmac_fw_offload_h2c_nic.h:92
+_HALMAC_RF_1T1R = 4                # [SRC] halmac_type.h:1080
+_BB_PATH_A = 1                     # rx/tx ant status for the 1T1R A path
 
 # --- bits [SRC] halmac_bit_8821c.h ; CR/iDDMA semantics ---------------------
 _BIT_HCI_TXDMA_EN = 1 << 0
@@ -140,20 +153,21 @@ def _wlan_cpu_en(t, enable: bool) -> None:
 
 
 # --- the rsvd-page TX packet (txdesc + chunk) -------------------------------
-def _build_txdesc_pkt(chunk: bytes) -> bytes:
-    """usb_write_data BEACON path [SRC] rtl8821cu_halmac.c:142-182: a zeroed 48-byte TX desc
-    (TXPKTSIZE / OFFSET / QSEL=BEACON) + the chunk, with the HW XOR checksum. The +8 PACKET_OFFSET
-    arm fires only when (48+size) aligns to the USB bulk size — not on this card's chunk sizes."""
+def _build_txdesc_pkt(chunk: bytes, qsel: int = _QSEL_BEACON, set_offset: bool = True) -> bytes:
+    """usb_write_data [SRC] rtl8821cu_halmac.c:142-182: a zeroed 48-byte TX desc + the chunk with
+    the HW XOR checksum. The BEACON (rsvd-page) path sets OFFSET and the +8 PACKET_OFFSET arm
+    (which fires only when (48+size) aligns to the USB bulk size — not on this card's chunks); the
+    H2C_CMD path sets only TXPKTSIZE + QSEL."""
     size = len(chunk)
-    add_off = (_TX_DESC_SIZE + size) % _USB_BULK_OUT_SIZE == 0
-    extra = _PACKET_OFFSET_SZ if add_off else 0
+    extra = _PACKET_OFFSET_SZ if (set_offset and (_TX_DESC_SIZE + size) % _USB_BULK_OUT_SIZE == 0) else 0
     buf = bytearray(_TX_DESC_SIZE + extra + size)
     buf[_TX_DESC_SIZE + extra:] = chunk
     _set_field(buf, 0x00, 0, 16, size)                  # TXPKTSIZE
-    _set_field(buf, 0x00, 16, 8, _TX_DESC_SIZE + extra)  # OFFSET
-    if add_off:
-        _set_field(buf, 0x04, 24, 5, 1)                 # PKT_OFFSET
-    _set_field(buf, 0x04, 8, 5, _QSEL_BEACON)           # QSEL
+    if set_offset:
+        _set_field(buf, 0x00, 16, 8, _TX_DESC_SIZE + extra)  # OFFSET
+        if extra:
+            _set_field(buf, 0x04, 24, 5, 1)             # PKT_OFFSET
+    _set_field(buf, 0x04, 8, 5, qsel)                   # QSEL
     # fill_txdesc_check_sum_8821c: XOR the 16 LE halfwords of the first 32 B into TXDESC_CHECKSUM.
     _set_field(buf, 0x1C, 0, 16, 0)
     chksum = 0
@@ -309,10 +323,81 @@ def download_fw(t, info) -> None:
     download_firmware(t, info)
 
 
+def _h2c_header(buf: bytearray, sub_cmd: int, content_size: int, seq: int) -> None:
+    """set_h2c_pkt_hdr_88xx [SRC] common_88xx.c:614 — the 8-byte FW-offload H2C header
+    (category 0x01, cmd 0xFF, sub-cmd, total len, seq)."""
+    _set_field(buf, 0x00, 0, 7, 0x01)
+    _set_field(buf, 0x00, 8, 8, 0xFF)
+    _set_field(buf, 0x00, 16, 16, sub_cmd)
+    _set_field(buf, 0x04, 0, 16, 8 + content_size)
+    _set_field(buf, 0x04, 16, 16, seq)
+
+
+def _send_h2c_pkt(t, h2c: bytes) -> None:
+    """send_h2c_pkt_88xx -> PLTFM_SEND_H2C_PKT (usb_write_data H2C_CMD): wrap the 32-byte H2C in a
+    TX desc (QSEL=H2C, no OFFSET) and bulk it out. [SRC] common_88xx.c:640 / rtl8821cu_halmac.c:165.
+    The free-space guard never fires (buf_fs starts at the full h2cq size), so this is one bulk."""
+    t.bulk_out(_build_txdesc_pkt(h2c, qsel=_QSEL_H2C, set_offset=False))
+
+
+def _h2c_dump_poll(t) -> None:
+    """send_general_info_88xx h2cq verify [SRC] fw_88xx.c:1086 -> dump_fifo_88xx: read the queued
+    H2C back from the TX FIFO (page-select via PKTBUF_DBG_CTRL, RX clock gated) and confirm it."""
+    h2cq_addr = mac.txff_pages()["h2cq_addr"] << 7
+    tmp8 = t.read8(REG_RCR + 2)
+    t.write8(REG_RCR + 2, t.read8(REG_RCR + 2) | (1 << 3))      # rx_clk_gate(enable=0)
+    start_pg = (h2cq_addr >> 12) + 0x780
+    residue = h2cq_addr & 0xFFF
+    value32 = t.read16(REG_PKTBUF_DBG_CTRL) & 0xF000
+    t.write16(REG_PKTBUF_DBG_CTRL, (start_pg | value32) & 0xFFFF)
+    t.read32(0x8000 + residue)                                 # h2cq_ele == {0x01,0xFF}
+    t.write16(REG_PKTBUF_DBG_CTRL, value32 & 0xFFFF)
+    t.write8(REG_RCR + 2, tmp8)
+
+
+def _send_general_info_by_reg(t, info) -> None:
+    """_send_general_info_by_reg [SRC] hal_halmac.c:3035 -> rtw_halmac_send_h2c HMEBOX box0:
+    an 8-byte general-info-reg H2C (drv rf_type 0 for 1T1R, cut = chip_ver) written to the box."""
+    h2c = bytearray(8)
+    _set_field(h2c, 0, 0, 5, 0x0C)                  # CMD_ID_GENERAL_INFO_REG
+    _set_field(h2c, 0, 5, 3, 0x02)                  # CLASS_GENERAL_INFO_REG
+    _set_field(h2c, 0, 8, 8, info.rfe_type)
+    _set_field(h2c, 0, 16, 8, 0)                    # RF_TYPE drv (RF_1T1R == 0)
+    _set_field(h2c, 0, 24, 8, info.chip_ver)        # CUT_VERSION (phydm)
+    _set_field(h2c, 4, 0, 4, _BB_PATH_A)            # RX_ANT_STATUS
+    _set_field(h2c, 4, 4, 4, _BB_PATH_A)            # TX_ANT_STATUS
+    if t.read8(REG_HMETFR) & (1 << 0):              # _is_fw_read_cmd_down(box0)
+        raise RuntimeError("RTL8821CU: H2C box0 not free")
+    t.write32(REG_HMEBOX_E0, int.from_bytes(h2c[4:8], "little"))
+    t.write32(REG_HMEBOX0, int.from_bytes(h2c[0:4], "little"))
+
+
+def send_general_info(t, info) -> None:
+    """_send_general_info [SRC] hal_halmac.c:3073 — two FW-offload H2C info packets (general-info
+    FW_TX_BOUNDARY + phydm rfe/rf/cut/ant), verified via the h2cq dump, then the by-reg copy."""
+    gen = bytearray(_H2C_PKT_SIZE)
+    _set_field(gen, 0x08, 16, 8, mac.txff_pages()["fw_tx_boundary"])  # FW_TX_BOUNDARY
+    _h2c_header(gen, _SUB_CMD_GENERAL_INFO, 4, 0)
+    _send_h2c_pkt(t, bytes(gen))
+
+    phy = bytearray(_H2C_PKT_SIZE)
+    _set_field(phy, 0x08, 0, 8, info.rfe_type)      # REF_TYPE
+    _set_field(phy, 0x08, 8, 8, _HALMAC_RF_1T1R)    # RF_TYPE (halmac)
+    _set_field(phy, 0x08, 16, 8, info.chip_ver)     # CUT_VER
+    _set_field(phy, 0x08, 24, 4, _BB_PATH_A)        # RX_ANT_STATUS
+    _set_field(phy, 0x08, 28, 4, _BB_PATH_A)        # TX_ANT_STATUS
+    _h2c_header(phy, _SUB_CMD_PHYDM_INFO, 8, 1)
+    _send_h2c_pkt(t, bytes(phy))
+
+    _h2c_dump_poll(t)
+    _send_general_info_by_reg(t, info)
+
+
 def fw_dl(t, info, already_on: bool, power_on_fn) -> None:
-    """[SRC] rtw_halmac_dlfw hal_halmac.c:3964 — power on (idempotent), then download_fw. HW
-    init is not yet complete during the MAC-hidden readback, so the full path runs (not the
-    re-download shortcut). ``power_on_fn`` is passed in to avoid a bringup<->firmware cycle."""
+    """[SRC] rtw_halmac_dlfw hal_halmac.c:3964 — power on (idempotent), download_fw, init MAC,
+    send the FW general/phydm info. HW init is not yet complete during the MAC-hidden readback,
+    so the full path runs. ``power_on_fn`` is passed in to avoid a bringup<->firmware cycle."""
     power_on_fn(t, info, already_on=already_on)
     download_fw(t, info)
     mac.init_mac_flow(t, info)
+    send_general_info(t, info)
