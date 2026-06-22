@@ -25,6 +25,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from . import mac
+
 # --- registers [SRC] halmac_reg2.h -----------------------------------------
 REG_SYS_FUNC_EN = 0x0002
 REG_SYS_CLK_CTRL = 0x0008           # :64
@@ -313,3 +315,4 @@ def fw_dl(t, info, already_on: bool, power_on_fn) -> None:
     re-download shortcut). ``power_on_fn`` is passed in to avoid a bringup<->firmware cycle."""
     power_on_fn(t, info, already_on=already_on)
     download_fw(t, info)
+    mac.init_mac_flow(t, info)
