@@ -32,7 +32,7 @@
 | mount chip-detect | `chipid.mount_get_chip_info` | hal/halmac/halmac_api.c:492 get_chip_info (USB :518-520) | SYS_CFG2 0xFC + SYS_CFG1+1 0xF1 — **VERIFIED** |
 | chip-version read | `chipid.read_chip_version` | hal/rtl8821c/rtl8821c_ops.c:34 | SYS_CFG1/STATUS1/0x68 — **VERIFIED** |
 | EFUSE dump | `efuse.read_efuse` / `read_hw_efuse` | hal/halmac/halmac_88xx/halmac_efuse_88xx.c:1088 + rtl8821c_ops.c:462 | 512 B via the 0x30 indirect loop — **VERIFIED** |
-| pre-power init | — **(M1 frontier)** | init_system_cfg / mac_power_switch preamble | ops 2068-2105: rmw RSV_CTRL/PAD_CTRL1/LED_CFG/GPIO_MUXCFG/SYS_FUNC_EN/RF_CTRL/WLRF1 + MCUFW/CR reads |
+| pre-power init | — **(frontier)** | `pre_init_system_cfg_8821c` halmac_init_8821c.c:975 ; `mac_pwr_switch_usb_8821c` preamble halmac_usb_8821c.c:32 (:44-61) | ops 2068-2105: RSV_CTRL/PAD_CTRL1/LED_CFG/GPIO_MUXCFG/SYS_FUNC_EN/RF_CTRL/WLRF1 rmw, then rpwm 0xFE58 / MCUFW 0x80 / CR 0x100 / SYS_STATUS1+1 reads |
 | power on/off | `pwrseq` (CARD_EN_FLOW) | hal/halmac/halmac_88xx/halmac_8821c/halmac_pwr_seq_8821c.c:20-349 | 4 tables transcribed 1:1; verifies once pre-power lands |
 | pwr-seq runtime | `pwrseq.run_pwr_seq` / `_run_table` | hal/halmac/halmac_88xx/halmac_common_88xx.c:2980 / :3051 | doors-map; confirm at next M |
 | firmware download | — | hal/hal_halmac.c:3350 `download_fw` ; hal/rtl8821c/rtl8821c_halinit.c:149 | doors-map; later milestone |
@@ -45,6 +45,15 @@
   against the wire. [SRC] usb_ops_linux.c:171-201.
 - `pwrseq._run_table` (`pwrseq.py`) — HALMAC `pwr_sub_seq_parser`: WRITE = read-modify-write,
   POLLING = read-until-masked-match, DELAY/READ = no-op, the USB intf filter drops SDIO/PCI rows.
+
+## Scripts
+
+- `scripts/rtl8821cu_dkms/verify_pcap.py` — the byte-diff gate vs the cold-boot pcap
+  (`usb_dumps_new2/captures_rtl8821cu/capture-1.pcap`, the cold-boot of the 4 captures). Run:
+  `uv run python scripts/verify_pcap.py rtl8821cu_dkms`. It drives `bringup.cold_bringup` against
+  the recorded wire; a clean run prints `reproduced N/… ops clean` and a `FRONTIER ->` line naming
+  the next op to port. Add ops-dump probes inline (see this session's frontier dumps) to read a
+  byte range. Do NOT edit the gate to pass — port the diverging op (PORTING.md Step 3).
 
 ## Caveats
 
@@ -63,13 +72,15 @@
 
 ## Known issues
 
-- **Frontier (next milestone): the pre-power-on init block, wire ops 2068-2105.** After the
-  EFUSE dump the wire runs a short `init_system_cfg`/`mac_power_switch` preamble — rmw of
-  RSV_CTRL (0x1C), PAD_CTRL1 (0x64), LED_CFG (0x4C), GPIO_MUXCFG (0x40 |= BIT2), SYS_FUNC_EN
-  (0x02), RF_CTRL (0x1F), WLRF1 (0xEC), then reads of 0xF2 / 0xFE58 / MCUFW_CTRL (0x80) / CR
-  (0x100) / 0xF5 — then power-on (`0x4A`) at op #2106. Port this block, and the already-ported
-  `pwrseq` card-enable flow verifies in behind it. (Note: `0xFE58` is LOCAL-section ≥ 0xFE00, so
-  it gets NO `0x4E0` mirror — the transport already handles that via `ON_SEC_RANGES`.)
+- **Frontier (next milestone): the pre-power-on init block, wire ops 2068-2105.** Two doors:
+  `pre_init_system_cfg_8821c` ([SRC] halmac_init_8821c.c:975) — rmw of RSV_CTRL (0x1C=0),
+  PAD_CTRL1 (0x64), LED_CFG (0x4C), GPIO_MUXCFG (0x40), and the SYS_FUNC_EN (0x02) / RF_CTRL
+  (0x1F) / WLRF1 (0xEC) enable writes; then the head of `mac_pwr_switch_usb_8821c`
+  ([SRC] halmac_usb_8821c.c:32, :44-61) — reads rpwm (0xFE58), MCUFW_CTRL (0x80), CR (0x100),
+  SYS_STATUS1+1 (0xF5) to decide power state — which then calls `run_pwr_seq(card_en)` at op
+  #2106 (the already-ported `pwrseq.CARD_EN_FLOW`). Port the two doors above; `pwrseq` verifies
+  in behind them. (Gate-driven: confirm the exact 0x02/0x1F/0xEC attribution as each op lands.
+  Note `0xFE58` is LOCAL-section ≥ 0xFE00 → NO `0x4E0` mirror; the transport handles that.)
 - `transport` bulk-OUT EP defaulted to `0x04` (not on the prologue path) — confirm against the
   coverage audit (`bulk-OUT ep 0x05`) at the FW/TX milestone. The audit also flags interrupt-IN
   ep `0x81` (360 pkts) as a blind spot to check at the FW/C2H milestone.
