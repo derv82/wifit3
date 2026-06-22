@@ -44,7 +44,7 @@ from textual.screen import Screen
 from textual.widgets import Button, Static
 
 from wifit3.engine.attacks import treelog
-from wifit3.engine.attacks.pmkid_harvest import PmkidFail, PmkidHarvestAttack
+from wifit3.engine.attacks.pmkid_harvest import PmkidHarvestAttack
 from wifit3.engine.attacks.wep.campaign import WepCampaign
 from wifit3.engine.attacks.wpa3_downgrade import WPA3DowngradeAttack
 from wifit3.engine.attacks.wps.campaign import WpsCampaign
@@ -62,6 +62,8 @@ from ...capture_events import (
 )
 from ...capture_log import short_sta
 from ...eapol_aggregate import EapolAggregator
+from ...pmkid_log import render_failure as pmkid_failure_lines
+from ...pmkid_log import render_success as pmkid_success_lines
 from ...encryption_format import wep_key_ascii
 from .card_endpoint import CardEndpoint
 from .clients_list import ClientsList
@@ -623,10 +625,6 @@ class FocusViewV2(Screen):
         if not ap or not iface:
             self._log("[red]✗ No target / interface — aborting PMKID harvest.[/red]")
             return
-        self._log(
-            f"[bold cyan]Harvesting PMKID[/bold cyan] from "
-            f"[bold]{escape(ap.ssid or '<hidden>')}[/bold]…"
-        )
         attack = PmkidHarvestAttack(iface, ap)
         try:
             pmkid = await attack.run()
@@ -634,28 +632,13 @@ class FocusViewV2(Screen):
             logger.exception("PMKID harvest crashed")
             self._log(treelog.leaf_fail(f"PMKID harvest crashed: {escape(str(exc))}"))
             return
+        essid = escape(ap.ssid or "<hidden>")
         if pmkid:
-            self._log(treelog.branch_ok(
-                f"[bold green]PMKID harvested:[/bold green] "
-                f"[black bold on cyan] {pmkid.hex()} [/black bold on cyan]"
-            ))
-            result = None
-            for client_mac, hs in ap.handshakes.items():
-                if hs.pmkid == pmkid:
-                    result = save_pmkid(ap, client_mac)
-                    break
-            if result is None:
-                self._log(treelog.leaf("[dim](save failed)[/dim]"))
-            else:
-                self._log(treelog.leaf(_save_line(result)))
+            result = save_pmkid(ap, attack.client_mac)
+            hint = _save_line(result) if result is not None else None
+            self._emit_lines(pmkid_success_lines(essid, hint))
         else:
-            blurb = {
-                PmkidFail.PMF_REQUIRED: "[bold]PMF Required[/bold] — AP ignores us",
-                PmkidFail.NO_PSK_AKM: "AP offers [bold]no PSK[/bold] AKM",
-                PmkidFail.NO_KDE: "AP [italic]does not[/italic] include [bold]PMKID[/bold] in [bold]M1[/bold]",
-                PmkidFail.NO_RESPONSE: "AP [italic]never answered[/italic]",
-            }.get(attack.fail_reason, "harvest failed")
-            self._log(treelog.leaf_fail(f"[bold red]No PMKID:[/bold red] {blurb}"))
+            self._emit_lines(pmkid_failure_lines(essid, attack.fail_reason))
 
     # ----- WPA3 downgrade ----------------------------------------------------
 

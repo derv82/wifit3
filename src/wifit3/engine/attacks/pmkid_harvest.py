@@ -136,6 +136,14 @@ class PmkidHarvestAttack:
         # ignores these MACs (they're not real clients).
         self.iface.register_forged_mac(self.source_mac)
 
+    @property
+    def client_mac(self) -> str:
+        """The forged STA MAC we currently impersonate, as a colon string — the UI
+        labels the harvest tree's ``Client:`` with it. Matches the handshake-dict
+        key the parser populates, so it names the STA that received (or would have
+        received) the M1."""
+        return _mac_bytes_to_str(self.source_mac)
+
     def _rotate_mac(self) -> None:
         self.source_mac = _random_client_mac()
         self.iface.register_forged_mac(self.source_mac)
