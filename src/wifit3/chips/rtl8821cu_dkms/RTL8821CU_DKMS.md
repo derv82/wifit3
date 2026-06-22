@@ -5,15 +5,17 @@
 > `usb_dumps_new2/captures_rtl8821cu/driver-source/` (vendor `rtl8821cu-5.12.0.4`) and the
 > cold-boot pcap `usb_dumps_new2/captures_rtl8821cu/capture-1.pcap`.
 
-> **Status — MAC init GREEN.** The byte-for-byte gate
-> (`scripts/rtl8821cu_dkms/verify_pcap.py`, now replaying ctrl + the FW/TX bulk-OUT stream)
-> reproduces the cold-boot wire for **3257 ops, zero divergence**: USB transport (+ the 8821c
-> `0x4E0` mirror), chip-detect/version, the EFUSE dump + physical→logical decode + BT-coex read,
+> **Status — entire cold-init probe GREEN.** The byte-for-byte gate
+> (`scripts/rtl8821cu_dkms/verify_pcap.py`, replaying ctrl + the FW/TX bulk-OUT stream)
+> reproduces the **whole cold-boot probe — 3371 ops (frames 1-7672), zero divergence**: USB
+> transport (+ the `0x4E0` mirror), chip-detect/version, EFUSE dump + decode + BT-coex read,
 > pre-power init + card-enable + init_system_cfg, the BT-coex power-on setting, the **iDDMA
-> firmware download** (the 138 KB blob, byte-matched against the bulk-OUT), and
-> **init_mac_flow** (queue/page/H2C/protocol/EDCA/WMAC cfg + RX-aggregation). Frontier is
-> `_send_general_info` (op #3257, the first H2C bulk packet). Not registered in
-> `wlan/manager.py` (claims nothing until complete).
+> firmware download** (the 138 KB blob byte-matched vs bulk-OUT), `init_mac_flow`
+> (queue/page/H2C/protocol/EDCA/WMAC + RX-agg), `_send_general_info` (two H2C packets + h2cq
+> dump-poll + HMEBOX), the MAC-hidden-report readback, `power_off` (the probe powers the chip
+> back down), and the phydm kfree-trim + RFE-type init. Frontier is op #3371 (frame 7673), the
+> start of the **airmon monitor-entry phase**. Not registered in `wlan/manager.py` (claims
+> nothing until complete).
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
@@ -90,23 +92,27 @@
 
 ## Known issues
 
-- **Frontier (next): `_send_general_info` — op #3257 (frame 7220), the first H2C bulk packet.**
-  After `init_mac_flow`, `rtw_halmac_dlfw` calls `_send_general_info` ([SRC] hal_halmac.c:3073):
-  `send_general_info_88xx` ([SRC] halmac_fw_88xx.c:1046) sends two H2C bulk packets — gen-info
-  (sub-cmd 0x0D, content = FW_TX_BOUNDARY = rsvd_fw_txbuf−rsvd_boundary = 0x30) and phydm-info
-  (sub-cmd 0x11, content = rfe_type 0x22 / rf_type 1T1R / cut / ant) — each an 80-B bulk = the same
-  48-B TX desc as FW-DL (QSEL=H2C_CMD 0x13, OFFSET unset, XOR checksum) + 32-B H2C
-  (`set_h2c_pkt_hdr_88xx` 8-B header: cat 0x01, cmd 0xFF, sub-cmd, len, seq). Then the h2cq
-  dump-poll (`dump_fifo_88xx`: RX-clk-gate 0x060A, PKTBUF_DBG_CTRL 0x0140, read FIFO word at
-  0x8000+residue == {0x01,0xFF}), then `_send_general_info_by_reg` (HMEBOX: read 0x1CC ready,
-  W 0x1F0 ext, W 0x1D0 box0). The H2C txdesc reuses `firmware._build_txdesc_pkt` (qsel param).
-- **Then the cold-init tail (#3270-3370):** the `hal_read_mac_hidden_rpt` readback (poll 0x1A0 ==
-  C2H_MAC_HIDDEN_RPT 0x19, read the 13-byte report at 0x1A2.., write 0x1A0 = C2H_DBG 0x00), then
-  `rtw_hal_power_off` (the probe powers the chip back off — `CARD_DIS_FLOW`, already transcribed in
-  `pwrseq`, via `mac_pwr_switch(power_on=False)`). Cold init ends at op #3370 (frame 7672).
-- **After cold init: the monitor-entry (airmon) phase, op #3371+ (frame 7673+)** — a fresh large
-  region (MAC/BB/RF init, RF calibration, channel tune). This is where RX actually comes up; it is
-  the next major milestone after the cold path closes.
+- **Frontier (next milestone): the airmon monitor-entry phase, op #3371 (frame 7673): `OUT
+  0x001c/1=0x00`.** `airmon-ng start` triggers the real `rtw_hal_init` -> `_halmac_init_hal`
+  ([SRC] hal_halmac.c:3576), which re-powers the chip (it was powered off after the probe) and
+  brings the MAC/BB/RF fully up. It re-runs the cold-path components (power_on / download_fw /
+  init_mac_flow / send_general_info all reproduce — a `hal_init` reusing them advances the gate
+  to ~#3578), then adds: `_drv_enable_trx`, `rtw_hal_init_mac_register`, `config_rx_info`,
+  **`rtw_hal_init_phy`** (BB PHY-parameter tables + RF calibration — the bulk of this phase,
+  thousands of ops), and `init_interface_cfg`, plus the monitor-mode RX-filter/RCR setup.
+- **First new piece — the real TX-descriptor builder.** The airmon FW download diverges from the
+  cold one at the bulk's TX descriptor: cold-init set `not_xmitframe_fw_dl=1`
+  ([SRC] hal_com.c:1578) so `usb_write_data_rsvd_page` ([SRC] rtl8821cu_halmac.c:284) took the
+  minimal `usb_write_data_not_xmitframe` path (the 48-B desc we already build); airmon leaves the
+  flag 0 so it takes `usb_write_data_rsvd_page_normal` -> `dump_mgntframe` ->
+  `rtl8821c_update_txdesc` -> **`fill_default_txdesc`** ([SRC] rtl8821c_ops.c:2986), the full
+  builder (MACID / RATE_ID / QSEL / HWSEQ / MBSSID / USE_RATE / DATARATE=MRateToHwRate / RTY_LMT /
+  SW_DEFINE / PORT_ID + the XOR checksum). The recorded airmon FW-DL txdesc is
+  `dword0=0x84301000 dword1=0x00081001 dword3=0x100 dword4=0x001a0000 dword6=1 dword7=chksum(0x8522)
+  dword8=0x8000`. Porting `fill_default_txdesc` (+ `update_mgntframe_attrib` defaults: mac_id /
+  raid / rate / qsel=BEACON / hw_ssn_sel) is the first airmon sub-milestone — and the same builder
+  is what `inject_frame`/deauth TX will need, so it is high-value. (A scaffold that ports it lets
+  the reused `download_fw` byte-match the airmon FW chunks.)
 - `transport` bulk-OUT EP defaults to `0x04`, but the coverage audit shows FW/TX bulk-OUT is on
   **ep `0x05`** — the offline gate's `ReplayDevice.write` ignores the endpoint so it passes, but
   real-HW FW download/TX must target `0x05`: set `Rtl8821cuTransport(bulk_out_ep=0x05)` (or probe)
@@ -201,3 +207,18 @@
   dumped the wire and traced the source; every value was then re-verified byte-for-byte by the gate.
 - Frontier #3257 = `_send_general_info` (H2C). Remaining cold-init tail + the monitor phase are
   mapped in Known issues.
+
+## Port log — 2026-06-22 (general-info + readback + power-off + phydm: cold-init COMPLETE @ 3371)
+
+- Closed out the cold-init probe, all gate-verified byte-for-byte:
+  `_send_general_info` (two H2C packets via the TX-desc builder with QSEL=H2C + the h2cq dump-poll
+  + the HMEBOX by-reg copy), the `hal_read_mac_hidden_rpt` 13-byte readback, `power_off`
+  (`hal_btcoex_PowerOffSetting` 0xAA + `mac_pwr_switch(OFF)` CARD_DIS_FLOW — FW now resident so the
+  rpwm leave-32K toggle fires), `rtw_phydm_read_efuse` (7 PPG kfree-trim bank reads), and
+  `phydm_init_hw_info_by_rfe_type_8821c` (the 0xCB4 DPDT default). → **3371 ops, zero divergence —
+  the entire frames-1-7672 probe.**
+- Began the airmon phase: a `hal_init` reusing power_on + download_fw + init_mac_flow reproduced to
+  ~#3578, confirming the monitor-entry re-init reuses the cold path. It diverges at the FW-DL bulk
+  TX descriptor because airmon takes the full xmit path (`not_xmitframe_fw_dl` clear ->
+  `fill_default_txdesc`) instead of the minimal one. Reverted that scaffold to keep the gate green
+  at the cold-init boundary; the TX-descriptor builder (see Known issues) is the next sub-milestone.
