@@ -143,6 +143,9 @@ class EfuseInfo:
     phys_map: bytes = b""   # raw 512-B physical dump (cached; PPG trim bytes index into it)
     chip_ver: int = 0       # halmac chip_ver (cut), set by bring-up from mount_get_chip_info
     package_type: int = 0   # hal->PackageType from the MAC-hidden report; 0 until that read
+    phydm_rfe_type: int = 0     # dm->rfe_type = rfe_type_expand >> 3 (PHYDM table discriminator)
+    phydm_package_type: int = 0  # dm->package_type (phydm override; differs from hal->PackageType)
+    default_rf_set: int = 1     # dm->default_rf_set_8821c (SWITCH_TO_BTG=0 / WLG=1) — picks AGC diff
 
 
 def _parse_board_info(t, log_map: bytes, map_valid: bool) -> tuple[bool, int, int, int]:

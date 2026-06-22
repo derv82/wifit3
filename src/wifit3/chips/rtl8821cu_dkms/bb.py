@@ -10,7 +10,11 @@ which are pure delays (no register I/O).
 from __future__ import annotations
 
 from . import phy_cond
+from .bb_agc_diff_btg_tbl import AGC_TAB_DIFF_BTG
+from .bb_agc_tbl import AGC_TAB
 from .bb_phy_reg_tbl import PHY_REG_TBL
+
+_SWITCH_TO_BTG = 0                  # [SRC] phydm_hal_api8821c.h:33
 
 # --- registers / bits [SRC] halmac_reg_8821c.h, halmac_bit_8821c.h ----------
 REG_SYS_FUNC_EN = 0x0002
@@ -75,3 +79,14 @@ def _apply_phy(t, addr: int, val: int) -> None:
 def phy_bb_config(t, cfg: phy_cond.PhyCondConfig) -> None:
     """_init_phy_parameter_bb step 1 — apply the PHY_REG table via the conditional walker."""
     phy_cond.walk(PHY_REG_TBL, cfg, lambda addr, val: _apply_phy(t, addr, val))
+
+
+def phy_agc_config(t, cfg: phy_cond.PhyCondConfig, default_rf_set: int) -> None:
+    """_init_phy_parameter_bb step 2 — apply the AGC table, then (per [SRC] phydm_hwconfig.c:1225)
+    the BTG "diff" table for a BTG card. ``odm_config_bb_agc_8821c`` has no delay opcodes (every
+    row is a full-dword BB write); the big-jump-limit update it also runs is software-only state."""
+    def apply(addr, val):
+        set_bb_reg(t, addr, _MASKDWORD, val)
+    phy_cond.walk(AGC_TAB, cfg, apply)
+    if default_rf_set == _SWITCH_TO_BTG:
+        phy_cond.walk(AGC_TAB_DIFF_BTG, cfg, apply)

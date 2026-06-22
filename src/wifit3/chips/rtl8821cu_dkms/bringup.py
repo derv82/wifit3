@@ -89,11 +89,14 @@ def hal_init(t, info) -> None:
     firmware.send_general_info(t, info)
     mac.init_mac_register(t)
     mac.config_rx_info(t)
-    # rtl8821c_phy_init: enable BB/RF, then the PHYDM BB parameter tables.
-    cfg = phy_cond.PhyCondConfig(cut=info.chip_ver, rfe=info.rfe_type, package=info.package_type)
+    # rtl8821c_phy_init: enable BB/RF, then the PHYDM BB parameter tables. The table walker keys
+    # on the PHYDM-transformed rfe/package (rfe>>3, package override), not the hal->* values.
+    cfg = phy_cond.PhyCondConfig(cut=info.chip_ver, rfe=info.phydm_rfe_type,
+                                 package=info.phydm_package_type)
     bb.init_bb_rf(t)
     bb.phy_parameter_init(t, post=False)
     bb.phy_bb_config(t, cfg)
+    bb.phy_agc_config(t, cfg, info.default_rf_set)
 
 
 def cold_bringup(t) -> None:
@@ -105,5 +108,5 @@ def cold_bringup(t) -> None:
     info.chip_ver = chip_ver
     read_mac_hidden_rpt(t, info)
     efuse.read_phydm_trim(t, info.phys_map)
-    phy.init_hw_info_by_rfe(t, info.rfe_type)
+    phy.init_hw_info_by_rfe(t, info)
     hal_init(t, info)
