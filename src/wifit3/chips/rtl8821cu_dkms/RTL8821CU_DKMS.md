@@ -55,13 +55,13 @@
 | power on/off | `pwrseq.mac_pwr_switch` + `pwrseq` (CARD_EN_FLOW) | `mac_pwr_switch_usb_8821c` halmac_usb_8821c.c:31 ; halmac_pwr_seq_8821c.c:20-349 | state-sample preamble + 4 tables run 1:1 + status-clear/SW_MDIO tail — **VERIFIED** |
 | pwr-seq runtime | `pwrseq.run_pwr_seq` / `_run_table` | hal/halmac/halmac_88xx/halmac_common_88xx.c:2980 / :3051 | WRITE=rmw, POLLING=read-until-match — **VERIFIED** |
 | BT-coex power-on | `btc.power_on_setting` | `ex_halbtc8821c1ant_power_on_setting` halbtc8821c1ant.c:3838 | combo card: ant→BT, wifi-only coex tables — **VERIFIED** |
-| chip-info readback | `bringup.read_mac_hidden_rpt` | `hal_read_mac_hidden_rpt` hal_com.c:1550 | drives power-on + FW dl + C2HEVT readback — **partial** (FW dl + MAC cfg done; H2C/rpt tail pending) |
+| chip-info readback | `bringup.read_mac_hidden_rpt` | `hal_read_mac_hidden_rpt` hal_com.c:1550 | power-on + FW dl + MAC cfg + general-info + 13-byte C2HEVT readback + power-off — **VERIFIED** |
 | firmware download | `firmware.download_firmware` (+ `fw_dl`) | `download_firmware_88xx` halmac_fw_88xx.c:115 ; iDDMA `dlfw_to_mem` :567 | blob `assets/rtl8821cu_fw_nic.bin` byte-matched vs bulk-OUT — **VERIFIED** |
 | MAC init | `mac.init_mac_flow` / `init_mac_cfg` | `init_mac_flow` hal_halmac.c:3452 ; `init_mac_cfg_8821c` halmac_init_8821c.c:382 | queue/page/H2C/protocol/EDCA/WMAC + RX-agg — **VERIFIED** |
-| general info H2C | — **(frontier)** | `_send_general_info` hal_halmac.c:3073 ; `send_general_info_88xx` halmac_fw_88xx.c:1046 | op #3257: 2 H2C bulk pkts (gen-info + phydm-info) + h2cq dump-poll + HMEBOX reg send |
-| MAC-hidden rpt tail | — | `hal_read_mac_hidden_rpt` hal_com.c:1586-1605 | op ~#3270: poll C2HEVT==0x19, read 13-byte rpt, write C2H_DBG |
-| power off | `pwrseq` (CARD_DIS_FLOW) | `rtw_hal_power_off` hal_com.c ; `mac_pwr_switch_usb_8821c` OFF | op ~#3285: the probe powers the chip back off (CARD_DIS_FLOW, already transcribed) |
-| monitor entry (airmon) | — | rtl8821cu MAC/BB/RF + monitor; frame 7673+ | next phase after cold init (op #3371+) |
+| general info H2C | `firmware.send_general_info` | `_send_general_info` hal_halmac.c:3073 ; `send_general_info_88xx` halmac_fw_88xx.c:1046 | 2 H2C bulk pkts (QSEL=H2C txdesc) + h2cq dump-poll + HMEBOX reg send — **VERIFIED** |
+| power off | `bringup.power_off` + `pwrseq` (CARD_DIS_FLOW) | `rtw_hal_power_off` hal_intf.c:475 ; `mac_pwr_switch_usb_8821c` OFF | btc scoreboard 0xAA + CARD_DIS_FLOW — **VERIFIED** |
+| phydm trim + RFE | `efuse.read_phydm_trim` / `phy.init_hw_info_by_rfe` | `rtw_phydm_read_efuse` hal_dm.c:1832 ; `phydm_init_hw_info_by_rfe_type_8821c` phydm_hal_api8821c.c:328 | PPG kfree-trim bank reads + 0xCB4 DPDT default — **VERIFIED** |
+| monitor entry (airmon) | — **(frontier)** | `_halmac_init_hal` hal_halmac.c:3576 ; `fill_default_txdesc` rtl8821c_ops.c:2986 (TX desc) ; `rtw_hal_init_phy` (BB/RF) | op #3371+: re-init reuses cold path, then TX-desc builder + BB/RF init + monitor setup |
 
 ## Hot paths
 
