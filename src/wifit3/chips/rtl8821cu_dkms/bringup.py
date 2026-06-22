@@ -87,6 +87,8 @@ def hal_init(t, info) -> None:
     firmware.download_fw(t, info, full=True, rsvd_boundary=mac.txff_pages()["boundary"])
     mac.init_mac_flow(t, info)
     firmware.send_general_info(t, info)
+    mac.init_mac_register(t)
+    mac.config_rx_info(t)
 
 
 def cold_bringup(t) -> None:

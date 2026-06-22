@@ -16,9 +16,10 @@
 > HMEBOX), the MAC-hidden-report readback (now also parsing `PackageType`), `power_off`, and the
 > phydm kfree-trim + RFE-type init. **Airmon `_halmac_init_hal`** (`bringup.hal_init`) then
 > re-runs power-on + FW download (this time through the **full `update_txdesc`** reserved-page
-> descriptor, `tx.py`) + init_mac_flow + general-info, all byte-matched. Frontier is op #4513
-> (frame 9965), `rtw_hal_init_mac_register`. Not registered in `wlan/manager.py` (claims nothing
-> until complete).
+> descriptor, `tx.py`) + init_mac_flow + general-info + **`init_mac_register`** (the 138-entry
+> PHYDM MAC-reg table, `mac_reg_tbl.py`) + **`config_rx_info`** (DRV_INFO_PHY_STATUS), all
+> byte-matched. Frontier is op #4664 (frame 10267), `rtw_hal_init_phy` (BB + RF — the bulk of the
+> phase). Not registered in `wlan/manager.py` (claims nothing until complete).
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
@@ -65,7 +66,9 @@
 | power off | `bringup.power_off` + `pwrseq` (CARD_DIS_FLOW) | `rtw_hal_power_off` hal_intf.c:475 ; `mac_pwr_switch_usb_8821c` OFF | btc scoreboard 0xAA + CARD_DIS_FLOW — **VERIFIED** |
 | phydm trim + RFE | `efuse.read_phydm_trim` / `phy.init_hw_info_by_rfe` | `rtw_phydm_read_efuse` hal_dm.c:1832 ; `phydm_init_hw_info_by_rfe_type_8821c` phydm_hal_api8821c.c:328 | PPG kfree-trim bank reads + 0xCB4 DPDT default — **VERIFIED** |
 | full TX descriptor | `tx.build_mgnt_txdesc` | `update_txdesc` rtl8821cu_xmit.c:35 (USB filler, via `dump_mgntframe`->`rtw_dump_xframe`) ; ra from `update_mgntframe_attrib_addr` hal_intf.c:885 | MGNT_FRAMETAG branch: LS/MACID/RAID/QSEL/HWSEQ/MBSSID/USE_RATE/DATARATE/RTY/SW_DEFINE/BMC + XOR cksum — **VERIFIED** (airmon FW dl) |
-| monitor entry (airmon) | `bringup.hal_init` | `_halmac_init_hal` hal_halmac.c:3576 | power-on + FW dl (full txdesc) + init_mac_flow + general-info **VERIFIED**; **(frontier)** `rtw_hal_init_mac_register` -> config_rx_info -> `rtw_hal_init_phy` (BB/RF) -> monitor RX-filter |
+| MAC-reg table | `mac.init_mac_register` / `mac_reg_tbl` | `rtl8821c_init_phy_parameter_mac` rtl8821c_phy.c:97 -> `odm_config_mac_8821c` | 138 plain 1-byte writes, no cut/rfe conditionals — **VERIFIED** |
+| RX drv-info cfg | `mac.config_rx_info` | `cfg_drv_info_8821c` halmac_cfg_wmac_8821c.c (PHY_STATUS) | DRVINFO_SZ=4 + APP_PHYSTS on + RCR sync — **VERIFIED** |
+| monitor entry (airmon) | `bringup.hal_init` | `_halmac_init_hal` hal_halmac.c:3576 | power-on + FW dl (full txdesc) + init_mac_flow + general-info + init_mac_register + config_rx_info **VERIFIED**; **(frontier)** `rtw_hal_init_phy` (BB/RF) -> monitor RX-filter |
 
 ## Hot paths
 
@@ -96,14 +99,15 @@
 
 ## Known issues
 
-- **Frontier (next milestone): op #4513 (frame 9965): `OUT 0x0010/1=0x43`** — the start of
-  `rtw_hal_init_mac_register` ([SRC] rtl8821c_init_mac_register, called from `_halmac_init_hal`
-  after `_send_general_info`). The airmon re-init reproduces through general-info; what remains in
-  `_halmac_init_hal`: `rtw_hal_init_mac_register`, `rtw_halmac_config_rx_info`,
-  **`rtw_hal_init_phy`** (BB PHY-parameter tables + RF calibration — the bulk of this phase,
-  thousands of ops), `halmac_init_interface_cfg`, plus the monitor-mode RX-filter/RCR setup, then
-  the channel hops (airodump). `_drv_enable_trx` (between init_mac_flow and general-info) is RX/
-  thread-side only — no control-OUT ops, so it is a gate no-op.
+- **Frontier (next milestone): op #4664 (frame 10267): `IN 0x0002/1=0x1f`** — the start of
+  **`rtw_hal_init_phy`** ([SRC] rtl8821c_phy.c `rtl8821c_phy_init`, called from `_halmac_init_hal`
+  after `config_rx_info`): BB enable, the BB phy-reg + AGC PHYDM tables, RF radio-A reg table, and
+  RF calibration (IQK/etc.) — the bulk of this phase, thousands of ops, with cut/rfe **conditional
+  rows** (so the phydm `check_positive` walker must be ported, unlike the flat MAC-reg table). Then
+  `halmac_init_interface_cfg`, the monitor-mode RX-filter/RCR setup, and the channel hops
+  (airodump). `_drv_enable_trx` (between init_mac_flow and general-info) is RX/thread-side only —
+  no control-OUT ops, a gate no-op. The 8822bu_dkms sibling (`bb.py`/`rf.py`/`cal.py` +
+  `*_tbl.py` + `phy_cond.py`) is the structural template.
 - **DONE — the full TX-descriptor builder (`tx.build_mgnt_txdesc`).** The airmon FW download takes
   the full reserved-page descriptor: cold-init set `not_xmitframe_fw_dl=1` ([SRC] hal_com.c:1578)
   so its rsvd-page write took the minimal `usb_write_data_not_xmitframe` path; airmon leaves the
@@ -243,3 +247,12 @@
 - `read_mac_hidden_rpt` now parses + stores `PackageType` (report byte 4 bits 4..6); `EfuseInfo`
   gained `package_type` (default 0 so the cold general-info, which runs before that read, stays 0).
 - Frontier #4513 = `rtw_hal_init_mac_register` — next milestone.
+
+## Port log — 2026-06-22 (init_mac_register + config_rx_info GREEN @ 4664)
+
+- `mac.init_mac_register` applies `mac_reg_tbl.MAC_REG_TBL` — the 138-entry PHYDM MAC-reg table
+  (`array_mp_8821c_mac_reg`, generated 1:1 from the vendor header; all flat 1-byte writes, zero
+  conditional rows). `mac.config_rx_info` ports `cfg_drv_info_8821c(PHY_STATUS)` (DRVINFO_SZ=4 +
+  APP_PHYSTS + the TRXFF_BNDY rxdesc-len workaround + RCR sync). → 4513 -> **4664 ops**.
+- Followed the rtl8822bu_dkms `mac_reg_tbl.py` convention. Frontier #4664 = `rtw_hal_init_phy`
+  (BB + RF, the big PHYDM-table milestone; needs the `check_positive` conditional walker).

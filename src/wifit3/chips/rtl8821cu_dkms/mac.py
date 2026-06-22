@@ -14,10 +14,15 @@ The bulk-OUT count selects the RQPN / page-num tables; an 8821CU enumerates 3 OU
 """
 from __future__ import annotations
 
+from .mac_reg_tbl import MAC_REG_TBL
+
 # --- registers [SRC] halmac_reg2.h -----------------------------------------
 REG_CR = 0x0100
 REG_TXDMA_PQ_MAP = 0x010C
+REG_TRXFF_BNDY = 0x0114
 REG_RXFF_BNDY = 0x011C
+REG_RX_DRVINFO_SZ = 0x060F
+_BIT_APP_PHYSTS = 1 << 28           # [SRC] halmac_bit2.h:46980
 REG_C2HEVT_MSG_NORMAL = 0x01A0
 REG_FIFOPAGE_CTRL_2 = 0x0204
 REG_AUTO_LLT_V1 = 0x0208
@@ -251,3 +256,23 @@ def init_mac_flow(t, info) -> None:
     t.read32(REG_RCR)                                        # HW_VAR_RCR cache sync
     t.write8(REG_INIRTS_RATE_SEL, t.read8(REG_INIRTS_RATE_SEL) | (1 << 5))  # rts_full_bw(TRUE)
     _cfg_usb_rx_agg(t)
+
+
+def init_mac_register(t) -> None:
+    """rtl8821c_init_phy_parameter_mac [SRC] rtl8821c_phy.c:97 -> odm_config_mac_8821c — apply the
+    PHYDM MAC-register table (138 plain 1-byte writes, no cut/rfe conditionals)."""
+    for addr, val in MAC_REG_TBL:
+        t.write8(addr, val)
+
+
+def config_rx_info(t) -> None:
+    """cfg_drv_info_8821c(HALMAC_DRV_INFO_PHY_STATUS) [SRC] halmac_cfg_wmac_8821c.c — size the RX
+    driver-info area to 4 B and turn on APP_PHYSTS so RX carries the PHY status; sniffer/PLCP off.
+    Then the RCR cache-sync read (rtw_halmac_config_rx_info's HW_VAR_RCR get [SRC] hal_halmac.c)."""
+    t.write8(REG_RX_DRVINFO_SZ, 4)                          # drv_info_size (PHY_STATUS)
+    v = t.read8(REG_TRXFF_BNDY + 1)
+    t.write8(REG_TRXFF_BNDY + 1, (v & 0xF0) | 0x0F)         # rxdesc len=0 workaround
+    t.write32(REG_RCR, t.read32(REG_RCR) | _BIT_APP_PHYSTS)
+    t.write32(REG_WMAC_OPTION_FUNCTION + 4,
+              t.read32(REG_WMAC_OPTION_FUNCTION + 4) & ~((1 << 8) | (1 << 9)))
+    t.read32(REG_RCR)                                       # HW_VAR_RCR cache sync
