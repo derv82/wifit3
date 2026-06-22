@@ -12,7 +12,7 @@ entry) extend ``cold_bringup`` past the report readback.
 """
 from __future__ import annotations
 
-from . import btc, chipid, efuse, firmware, init, pwrseq
+from . import btc, chipid, efuse, firmware, init, phy, pwrseq
 
 REG_C2HEVT_MSG_NORMAL = 0x01A0      # [SRC] include/hal_com_reg.h:149
 _C2H_DEFEATURE_RSVD = 0xFD          # [SRC] hal/hal_com_c2h.h:79 — "FW: report MAC-hidden via reg"
@@ -79,3 +79,5 @@ def cold_bringup(t) -> None:
     info = efuse.read_efuse(t)
     info.chip_ver = chip_ver
     read_mac_hidden_rpt(t, info)
+    efuse.read_phydm_trim(t, info.phys_map)
+    phy.init_hw_info_by_rfe(t, info.rfe_type)

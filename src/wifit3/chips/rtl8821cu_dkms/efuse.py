@@ -140,6 +140,7 @@ class EfuseInfo:
     rfe_type: int           # RF front-end module type (board_info->rfe_type)
     single_ant_path: int    # 0 = RF_PATH_A/aux, 1 = RF_PATH_B/main
     ant_num: int            # 1 or 2 BT/WL shared antennas
+    phys_map: bytes = b""   # raw 512-B physical dump (cached; PPG trim bytes index into it)
     chip_ver: int = 0       # halmac chip_ver (cut), set by bring-up from mount_get_chip_info
 
 
@@ -172,7 +173,27 @@ def read_efuse(t) -> EfuseInfo:
     val8 = t.read8(REG_SYS_EEPROM_CTRL)
     autoload_ok = not (val8 & _BIT_AUTOLOAD_SUS)
     _switch_efuse_bank_wifi(t)
-    log_map = eeprom_parser(read_hw_efuse(t))
+    phys_map = read_hw_efuse(t)
+    log_map = eeprom_parser(phys_map)
     map_valid = int.from_bytes(log_map[0:2], "little") == _RTL_EEPROM_ID
     bt_coexist, rfe_type, single_ant_path, ant_num = _parse_board_info(t, log_map, map_valid)
-    return EfuseInfo(autoload_ok, log_map, bt_coexist, rfe_type, single_ant_path, ant_num)
+    return EfuseInfo(autoload_ok, log_map, bt_coexist, rfe_type, single_ant_path, ant_num,
+                     phys_map=phys_map)
+
+
+# PPG (per-package-gain) physical EFUSE offsets for kfree trim [SRC] halrf_kfree.h:69-75
+_PPG_THERMAL = 0x1EF
+_PPG_2G_TXAB = 0x1EE
+_PPG_5G = (0x1EC, 0x1E8, 0x1E4, 0x1E0, 0x1DC)
+
+
+def read_phydm_trim(t, phys_map: bytes) -> None:
+    """rtw_phydm_read_efuse [SRC] hal_dm.c:1832 -> phydm thermal + power trim (kfree): read the
+    PPG physical EFUSE bytes. Each odm_efuse_one_byte_read does a bank-switch read (REG 0x35);
+    the byte itself is served from the cached physical map, so the only wire op is the bank read.
+    [SRC] halrf_kfree.c:127 (thermal) / :154 (power: 2G then, if present, five 5G sub-bands)."""
+    _switch_efuse_bank_wifi(t)              # thermal trim @ 0x1EF
+    _switch_efuse_bank_wifi(t)              # power trim 2G @ 0x1EE
+    if phys_map[_PPG_2G_TXAB] != 0xFF:
+        for _off in _PPG_5G:
+            _switch_efuse_bank_wifi(t)

@@ -70,7 +70,7 @@ def run(cap: str | None = None) -> int:
     if consumed < len(ops):
         nxt = ops[consumed]
         print(f"FRONTIER -> op #{consumed} (frame {nxt['frame']}): {_fmt(nxt)}")
-        print("  (cold path through MAC init is green; next: _send_general_info H2C + the rpt tail)")
+        print("  (the whole cold-init probe is green through op #3370; next: airmon monitor entry)")
     return 0
 
 
