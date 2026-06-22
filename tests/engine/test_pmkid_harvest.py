@@ -26,16 +26,28 @@ class _FakeIface:
     """Records injected frames; optionally drops an M1 into the handshake dict the
     instant the Assoc Req is sent (simulating the AP's reply)."""
 
-    def __init__(self, deliver_m1: bool, pmkid=None):
+    def __init__(self, deliver_m1: bool, pmkid=None, fake_mac_supported: bool = False):
         self._deliver_m1 = deliver_m1
         self._pmkid = pmkid
+        self._fake_mac_supported = fake_mac_supported
         self.current_channel = 36
         self.ap = SimpleNamespace(handshakes={})
         self.access_points = {_BSSID: self.ap}
         self.sent: list = []
+        self.fake_mac_arms = 0
+        self.fake_mac_clears = 0
 
     def register_forged_mac(self, mac):
         pass
+
+    async def set_fake_mac(self, mac, bssid=None):
+        if not self._fake_mac_supported:
+            return None                              # card lacks FAKE_MAC → un-ACKed
+        self.fake_mac_arms += 1
+        return ":".join(f"{b:02x}" for b in mac)
+
+    async def clear_fake_mac(self):
+        self.fake_mac_clears += 1
 
     async def set_channel(self, ch):
         self.current_channel = ch
@@ -123,6 +135,24 @@ def test_force_psk_akm_preserves_caps_and_group_mgmt():
 def test_force_psk_akm_rejects_malformed():
     assert _force_psk_akm(b"\x30\x02\x01\x00") is None         # too short for an AKM list
     assert _force_psk_akm(b"\xdd\x10rubbish!!") is None        # not an RSN IE (tag 0xDD)
+
+
+async def test_active_monitor_armed_when_supported():
+    iface = _FakeIface(deliver_m1=True, pmkid=bytes(range(16)), fake_mac_supported=True)
+    a = PmkidHarvestAttack(iface, _target())
+    out = await a.run(m1_timeout=0.05)
+    assert out == bytes(range(16))
+    assert iface.fake_mac_arms >= 1            # HW-ACK armed for our forged MAC
+    assert iface.fake_mac_clears == 1          # and torn down exactly once at the end
+
+
+async def test_active_monitor_skipped_when_unsupported():
+    # FAKE_MAC unsupported → set_fake_mac returns None → keep going un-ACKed, no clear.
+    iface = _FakeIface(deliver_m1=True, pmkid=bytes(range(16)))   # fake_mac_supported=False
+    a = PmkidHarvestAttack(iface, _target())
+    out = await a.run(m1_timeout=0.05)
+    assert out == bytes(range(16))             # still harvests via the un-ACKed fallback
+    assert iface.fake_mac_clears == 0          # nothing armed → nothing to clear
 
 
 def test_build_deauth_frame():
