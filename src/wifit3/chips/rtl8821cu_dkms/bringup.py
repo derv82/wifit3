@@ -55,6 +55,20 @@ def read_mac_hidden_rpt(t, info) -> None:
     for i in range(_MAC_HIDDEN_RPT_LEN):
         t.read8(REG_C2HEVT_MSG_NORMAL + 2 + i)
     t.write8(REG_C2HEVT_MSG_NORMAL, _C2H_DBG)
+    power_off(t, info)
+
+
+REG_BT_SCOREBOARD = 0x00AA          # WiFi on/off bit cleared at power-off [SRC] hal_btcoex.c:5904
+
+
+def power_off(t, info) -> None:
+    """[SRC] rtw_hal_power_off hal_intf.c:475 — clear the BT-coex scoreboard WiFi bit (combo
+    card) then the card-disable power switch. The probe powered the chip on only to read FW
+    caps; with HW init not yet complete it powers back off (the real hal_init powers on again).
+    """
+    if info.bt_coexist:
+        t.write16(REG_BT_SCOREBOARD, 0x8000)
+    pwrseq.mac_pwr_switch(t, power_on=False)
 
 
 def cold_bringup(t) -> None:
