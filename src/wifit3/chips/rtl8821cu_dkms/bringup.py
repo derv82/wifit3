@@ -99,6 +99,8 @@ def hal_init(t, info) -> None:
     rf.config_radioa(t, cfg)
     bb.phy_parameter_init(t, post=True)
     mac.init_interface_cfg(t)
+    # rtl8821c_hal_init tail (after _halmac_init_hal): the driver misc/monitor RX-filter setup.
+    mac.hal_init_misc(t)
 
 
 def cold_bringup(t) -> None:

@@ -46,7 +46,14 @@ REG_TX_HANG_CTRL = 0x045E
 REG_INIRTS_RATE_SEL = 0x0480
 REG_PROT_MODE_CTRL = 0x04C8
 REG_BAR_MODE_CTRL = 0x04CC
+REG_RA_TRY_RATE_AGG_LMT = 0x04CF
 REG_PRECNT_CTRL = 0x04E5
+REG_MISC_CTRL = 0x0577
+REG_CAMCMD = 0x0670
+REG_NAN_RX_TSF_FILTER = 0x0691
+REG_RXFLTMAP0 = 0x06A0          # mgmt-subtype accept map
+REG_RXFLTMAP1 = 0x06A2          # ctrl-subtype accept map
+REG_RXFLTMAP2 = 0x06A4          # data-subtype accept map
 REG_EDCA_VO_PARAM = 0x0500
 REG_EDCA_VI_PARAM = 0x0504
 REG_PIFS = 0x0512
@@ -300,3 +307,39 @@ def init_interface_cfg(t) -> None:
         value8 |= _USB_BURST_2_0_FS << _BURST_SIZE_SHIFT
     t.write8(REG_RXDMA_MODE, value8)
     t.write16(REG_TXDMA_OFFSET_CHK, t.read16(REG_TXDMA_OFFSET_CHK) | _BIT_DROP_DATA_EN)
+
+
+# --- hal_init_misc bits [SRC] halmac_bit_8821c.h -----------------------------
+_BIT_SECCAM_POLLING = 1 << 31      # :15050
+_BIT_SECCAM_CLR = 1 << 30          # :15051
+_BIT_APP_FCS = 1 << 31             # RCR :14151
+_BIT_APP_PHYSTS = 1 << 28          # RCR :14154
+_BIT_AICV = 1 << 9                 # RCR :14171
+_BIT_ACRC32 = 1 << 8               # RCR :14172
+_BIT_APWRMGT = 1 << 5              # RCR :14175
+_BIT_MGNT_XMIT_ACK = 1 << 12       # FWHW_TXQ_CTRL — ack for xmit mgmt frames
+_BIT_MAC_SEC_EN = 1 << 9           # CR :18758
+_CHK_TSF_EN_CBSSID = 0x03          # BIT_CHK_TSF_EN | BIT_CHK_TSF_CBSSID :15374-15375
+_DRV_INFO_SZ = 4                   # config_rx_info set DRV_INFO_PHY_STATUS (= 4 B, nonzero)
+
+
+def hal_init_misc(t) -> None:
+    """rtl8821c_hal_init_misc [SRC] rtl8821c_halinit.c:203 — the driver-level post-hal_init setup
+    `airmon-ng` reaches: clear the security CAM, open the RX filter maps (accept all mgmt + all
+    data, ps-poll-only ctrl), sync RCR (drop CRC/ICV/PWRMGT err frames, keep PHY-status), enable
+    the mgmt-xmit ack + MAC security engine, disable BAR, and turn the RX-TSF address filter on.
+    This is the block that actually makes monitor-mode RX flow."""
+    t.write32(REG_CAMCMD, _BIT_SECCAM_POLLING | _BIT_SECCAM_CLR)     # invalidate_cam_all
+    t.write16(REG_RXFLTMAP1, 0x0400)                                # ps-poll only, ctrl off
+    t.write16(REG_RXFLTMAP2, 0xFFFF)                                # all data
+    t.write16(REG_RXFLTMAP0, 0xFFFF)                                # all mgmt
+    rcr = t.read32(REG_RCR)
+    rcr &= ~(_BIT_AICV | _BIT_ACRC32 | _BIT_APP_FCS | _BIT_APWRMGT)
+    if _DRV_INFO_SZ:
+        rcr |= _BIT_APP_PHYSTS
+    t.write32(REG_RCR, rcr)
+    t.write32(REG_FWHW_TXQ_CTRL, t.read32(REG_FWHW_TXQ_CTRL) | _BIT_MGNT_XMIT_ACK)
+    t.write32(REG_BAR_MODE_CTRL, 0x01FFFF | (t.read8(REG_RA_TRY_RATE_AGG_LMT) << 24))
+    t.write8(REG_MISC_CTRL, 0x03)                                   # disable secondary CCA 20/40M
+    t.write16(REG_CR, t.read16(REG_CR) | _BIT_MAC_SEC_EN)
+    t.write8(REG_NAN_RX_TSF_FILTER, _CHK_TSF_EN_CBSSID)
