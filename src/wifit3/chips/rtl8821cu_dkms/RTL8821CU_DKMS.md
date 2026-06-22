@@ -5,12 +5,13 @@
 > `usb_dumps_new2/captures_rtl8821cu/driver-source/` (vendor `rtl8821cu-5.12.0.4`) and the
 > cold-boot pcap `usb_dumps_new2/captures_rtl8821cu/capture-1.pcap`.
 
-> **Status — milestone 1 prologue GREEN.** The byte-for-byte gate
-> (`scripts/rtl8821cu_dkms/verify_pcap.py`) reproduces the cold-boot wire for **2068 control
+> **Status — power-on GREEN.** The byte-for-byte gate
+> (`scripts/rtl8821cu_dkms/verify_pcap.py`) reproduces the cold-boot wire for **2170 control
 > ops, zero divergence**: USB transport (+ the 8821c `0x4E0` mirror), the halmac mount
-> chip-detect, the chip-version read, and the full 512-byte EFUSE dump. The HALMAC card-enable
-> power tables are also ported (they verify once the short pre-power init block lands — the
-> current frontier). Not registered in `wlan/manager.py` (claims nothing until complete).
+> chip-detect, the chip-version read, the full 512-byte EFUSE dump + physical→logical decode +
+> BT-coex parse read, the pre-power-on system config, and the HALMAC card-enable power
+> sequence. Frontier is now the post-power-on MAC init block (op #2170, a read of `0x1080`).
+> Not registered in `wlan/manager.py` (claims nothing until complete).
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
@@ -45,11 +46,11 @@
 | ON-section mirror | `transport._mirror` | os_dep/linux/usb_ops_linux.c:171-201 (`t_reg = 0x4e0` :191) | gated on `CONFIG_RTL8821C` |
 | mount chip-detect | `chipid.mount_get_chip_info` | hal/halmac/halmac_api.c:492 get_chip_info (USB :518-520) | SYS_CFG2 0xFC + SYS_CFG1+1 0xF1 — **VERIFIED** |
 | chip-version read | `chipid.read_chip_version` | hal/rtl8821c/rtl8821c_ops.c:34 | SYS_CFG1/STATUS1/0x68 — **VERIFIED** |
-| EFUSE dump | `efuse.read_efuse` / `read_hw_efuse` | hal/halmac/halmac_88xx/halmac_efuse_88xx.c:1088 + rtl8821c_ops.c:462 | 512 B via the 0x30 indirect loop — **VERIFIED** |
-| pre-power init | — **(frontier)** | `pre_init_system_cfg_8821c` halmac_init_8821c.c:975 ; `mac_pwr_switch_usb_8821c` preamble halmac_usb_8821c.c:32 (:44-61) | ops 2068-2105: RSV_CTRL/PAD_CTRL1/LED_CFG/GPIO_MUXCFG/SYS_FUNC_EN/RF_CTRL/WLRF1 rmw, then rpwm 0xFE58 / MCUFW 0x80 / CR 0x100 / SYS_STATUS1+1 reads |
-| power on/off | `pwrseq` (CARD_EN_FLOW) | hal/halmac/halmac_88xx/halmac_8821c/halmac_pwr_seq_8821c.c:20-349 | 4 tables transcribed 1:1; verifies once pre-power lands |
-| pwr-seq runtime | `pwrseq.run_pwr_seq` / `_run_table` | hal/halmac/halmac_88xx/halmac_common_88xx.c:2980 / :3051 | doors-map; confirm at next M |
-| firmware download | — | hal/hal_halmac.c:3350 `download_fw` ; hal/rtl8821c/rtl8821c_halinit.c:149 | doors-map; later milestone |
+| EFUSE dump + decode | `efuse.read_efuse` / `read_hw_efuse` / `eeprom_parser` | rtl8821c_ops.c:462 + halmac_efuse_88xx.c:1088 (dump), :1198 (decode) | 512 B via the 0x30 loop, packed→logical decode, BT-coex 0x68 read — **VERIFIED** |
+| pre-power init | `init.pre_init_system_cfg` / `_enable_bb_rf` | `pre_init_system_cfg_8821c` halmac_init_8821c.c:975 ; `enable_bb_rf_88xx` halmac_cfg_wmac_88xx.c:637 | RSV_CTRL / PAD_CTRL1 / LED_CFG / GPIO_MUXCFG rmw + BB/RF disable + test-mode probe — **VERIFIED** |
+| power on/off | `pwrseq.mac_pwr_switch` + `pwrseq` (CARD_EN_FLOW) | `mac_pwr_switch_usb_8821c` halmac_usb_8821c.c:31 ; halmac_pwr_seq_8821c.c:20-349 | state-sample preamble + 4 tables run 1:1 + status-clear/SW_MDIO tail — **VERIFIED** |
+| pwr-seq runtime | `pwrseq.run_pwr_seq` / `_run_table` | hal/halmac/halmac_88xx/halmac_common_88xx.c:2980 / :3051 | WRITE=rmw, POLLING=read-until-match — **VERIFIED** |
+| firmware download | — **(frontier)** | hal/hal_halmac.c:3350 `download_fw` ; hal/rtl8821c/rtl8821c_halinit.c:149 ; post-power MAC init rtl8821c_halinit.c:264 (op #2170 reads `0x1080`) | doors-map; next milestone |
 | MAC/BB/RF init | — | hal/rtl8821c/usb/rtl8821cu_halinit.c:55 → rtl8821c_halinit.c:264 | doors-map; later milestone |
 
 ## Hot paths
@@ -81,15 +82,10 @@
 
 ## Known issues
 
-- **Frontier (next milestone): the pre-power-on init block, wire ops 2068-2105.** Two doors:
-  `pre_init_system_cfg_8821c` ([SRC] halmac_init_8821c.c:975) — rmw of RSV_CTRL (0x1C=0),
-  PAD_CTRL1 (0x64), LED_CFG (0x4C), GPIO_MUXCFG (0x40), and the SYS_FUNC_EN (0x02) / RF_CTRL
-  (0x1F) / WLRF1 (0xEC) enable writes; then the head of `mac_pwr_switch_usb_8821c`
-  ([SRC] halmac_usb_8821c.c:32, :44-61) — reads rpwm (0xFE58), MCUFW_CTRL (0x80), CR (0x100),
-  SYS_STATUS1+1 (0xF5) to decide power state — which then calls `run_pwr_seq(card_en)` at op
-  #2106 (the already-ported `pwrseq.CARD_EN_FLOW`). Port the two doors above; `pwrseq` verifies
-  in behind them. (Gate-driven: confirm the exact 0x02/0x1F/0xEC attribution as each op lands.
-  Note `0xFE58` is LOCAL-section ≥ 0xFE00 → NO `0x4E0` mirror; the transport handles that.)
+- **Frontier (next milestone): the post-power-on MAC init block, starting op #2170
+  (frame 5046): `IN 0x1080/4`.** This is the head of `rtl8821c_halinit.c:264` MAC/DMA init
+  (TRX-mode / queue / FIFO setup) that follows `rtw_halmac_poweron`; firmware download
+  (hal_halmac.c:3350 `download_fw`) lands in this region too. Trace from the wire as before.
 - `transport` bulk-OUT EP defaulted to `0x04` (not on the prologue path) — confirm against the
   coverage audit (`bulk-OUT ep 0x05`) at the FW/TX milestone. The audit also flags interrupt-IN
   ep `0x81` (360 pkts) as a blind spot to check at the FW/C2H milestone.
@@ -119,3 +115,22 @@
 - New frontier at op #2068: the pre-power-on init block (see Known issues), then `0x4A`
   power-on at op #2106. `power_on` removed from `cold_bringup` for now (not wire-adjacent to
   EFUSE); the power tables stay in `pwrseq`, ready to verify once the pre-power block lands.
+
+## Port log — 2026-06-22 (EFUSE decode + parse, pre-power init, power-on GREEN)
+
+- Op #2068 (`IN 0x68`) was **not** the head of pre-init as the prior doors-map note guessed —
+  it is the tail of `rtl8821c_read_efuse`: `Hal_EfuseParseBTCoexistInfo` (rtl8821c_ops.c:134)
+  reads `REG_WL_BT_PWR_CTRL` iff the EFUSE map is valid (logical[0:2]==0x8129) and carries a
+  board option (logical[0xC1]!=0xFF). Reaching that condition required the packed→logical
+  decode, so ported `eeprom_parser` (`eeprom_parser_88xx` halmac_efuse_88xx.c:1198); the BT-coex
+  read is the only register touch in the whole parse chain (rest is pure map decode). `read_efuse`
+  now returns the logical map. → 2070 ops.
+- Then the two pre-power doors: `init.pre_init_system_cfg` (pre_init_system_cfg_8821c
+  halmac_init_8821c.c:975) with its BB/RF-disable helper `_enable_bb_rf` (enable_bb_rf_88xx
+  halmac_cfg_wmac_88xx.c:637), and `pwrseq.mac_pwr_switch` (mac_pwr_switch_usb_8821c
+  halmac_usb_8821c.c:31) — the state-sample preamble (RPWM/MCUFW/CR/SYS_STATUS1+1) wrapping the
+  already-transcribed `CARD_EN_FLOW`, plus the post-seq SYS_STATUS1+1 clear and SW_MDIO+3 probe.
+  Untaken arms (USB SYS_CFG2+3==0x20, MCUFW==0xC078 FW-present) and the power-off branch ported
+  behind their real checks. → **2170 ops, zero divergence.**
+- New frontier op #2170 (`IN 0x1080`): the post-power-on MAC/DMA init (rtl8821c_halinit.c:264)
+  and firmware download — next milestone.
