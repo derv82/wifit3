@@ -672,11 +672,18 @@ class MT76x2UDriver:
 
     # ---- Internal helpers -------------------------------------------------
     def _claim_interface(self) -> None:
-        """Activate cfg 1 and claim interface 0.
+        """Detach the kernel driver (Linux), activate cfg 1, claim interface 0.
 
-        WinUSB usually leaves the device pre-configured; on Linux the
-        kernel's mt76x2u must be blacklisted first (rmmod / modprobe -r).
+        On Linux the kernel ``mt76x2u`` auto-binds the card and must be released
+        before we can drive it; on Windows + WinUSB there is no kernel driver, so
+        the detach is a no-op.
         """
+        try:
+            if self.dev.is_kernel_driver_active(0):
+                self.dev.detach_kernel_driver(0)
+                logger.info("MT7612U: detached kernel driver from interface 0")
+        except (NotImplementedError, usb.core.USBError) as e:
+            logger.debug("MT7612U: kernel-driver detach skipped: %s", e)
         try:
             self.dev.set_configuration(1)
         except usb.core.USBError as e:

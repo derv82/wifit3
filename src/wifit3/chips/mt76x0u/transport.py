@@ -126,7 +126,7 @@ class MT76x0UTransport:
     # Interface lifecycle.
     # ------------------------------------------------------------------
     def claim(self) -> None:
-        """Set configuration + claim interface 0. Idempotent."""
+        """Detach the kernel driver (Linux), then claim interface 0. Idempotent."""
         if self._interface_claimed:
             return
         # On Windows + WinUSB the configuration is already set by Zadig.
@@ -136,6 +136,13 @@ class MT76x0UTransport:
         try:
             cfg = self.dev.get_active_configuration()
             intf = cfg[(0, 0)]
+            try:
+                if self.dev.is_kernel_driver_active(intf.bInterfaceNumber):
+                    self.dev.detach_kernel_driver(intf.bInterfaceNumber)
+                    logger.info("Detached kernel driver from interface %d",
+                                intf.bInterfaceNumber)
+            except (NotImplementedError, usb.core.USBError) as e:
+                logger.debug("kernel-driver detach skipped: %s", e)
             usb.util.claim_interface(self.dev, intf.bInterfaceNumber)
             self._interface_claimed = True
             logger.debug("Claimed interface %d.%d",

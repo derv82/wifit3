@@ -43,6 +43,13 @@ class MT7921AUFirmwareLoader:
         try:
             for intf in dev.get_active_configuration():
                 if intf.bInterfaceClass == 0xFF:
+                    try:
+                        if dev.is_kernel_driver_active(intf.bInterfaceNumber):
+                            dev.detach_kernel_driver(intf.bInterfaceNumber)
+                            logger.info("detached kernel driver from interface %d",
+                                        intf.bInterfaceNumber)
+                    except (NotImplementedError, usb.core.USBError) as e:
+                        logger.debug("kernel-driver detach skipped: %s", e)
                     usb.util.claim_interface(dev, intf.bInterfaceNumber)
                     if clear_halts:
                         for ep in (EP_OUT_FW, EP_OUT_MCU, EP_IN_BULK, EP_IN_MCU):
