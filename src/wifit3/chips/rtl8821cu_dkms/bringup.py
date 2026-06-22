@@ -14,10 +14,12 @@ from . import chipid, efuse, init, pwrseq
 
 
 def power_on(t) -> None:
-    """HALMAC power-on: pre-init system config, then the card-enable power switch.
-    [SRC] rtw_halmac_poweron hal_halmac.c:2701 (pre_init_system_cfg -> _power_switch ON)."""
+    """HALMAC power-on: pre-init system config, the card-enable power switch, then the
+    post-switch system config. [SRC] rtw_hal_power_on (pre_init_system_cfg ->
+    mac_power_switch ON -> init_system_cfg), per _halmac_init_hal hal_halmac.c:3597-3600."""
     init.pre_init_system_cfg(t)
     pwrseq.mac_pwr_switch(t, power_on=True)
+    init.init_system_cfg(t)
 
 
 def cold_bringup(t) -> None:

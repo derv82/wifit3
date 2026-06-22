@@ -21,10 +21,17 @@ REG_RF_CTRL = 0x001F            # [SRC] halmac_reg2.h:166
 REG_GPIO_MUXCFG = 0x0040        # [SRC] halmac_reg2.h:328
 REG_LED_CFG = 0x004C            # [SRC] halmac_reg2.h:365
 REG_PAD_CTRL1 = 0x0064          # [SRC] halmac_reg2.h:388
+REG_MCUFW_CTRL = 0x0080         # [SRC] halmac_reg2.h:497
 REG_WLRF1 = 0x00EC              # [SRC] halmac_reg2.h:798
 REG_SYS_CFG1 = 0x00F0           # [SRC] halmac_reg2.h:814
 REG_SYS_CFG2 = 0x00FC           # [SRC] halmac_reg2.h:817
+REG_CPU_DMEM_CON = 0x1080       # [SRC] halmac_reg2.h:6204
 REG_USB_DMA_AGG_TO = 0xFE5B     # [SRC] halmac_reg2.h:8540
+
+_SYS_FUNC_EN = 0xD8             # [SRC] halmac_init_8821c.c:36 SYS_FUNC_EN (written to FUNC_EN+1)
+_BIT_WL_PLATFORM_RST = 1 << 16  # [SRC] halmac_bit2.h:58085
+_BIT_BOOT_FSPI_EN = 1 << 20     # [SRC] halmac_bit2.h:12788
+_BIT_FSPI_EN = 1 << 19          # [SRC] halmac_bit2.h:7200
 
 
 def _enable_bb_rf(t, enable: bool) -> None:
@@ -60,3 +67,17 @@ def pre_init_system_cfg(t) -> None:
     _enable_bb_rf(t, False)
 
     t.read8(REG_SYS_CFG1 + 2)       # test-mode probe (BIT4); vendor only logs, no state change
+
+
+def init_system_cfg(t) -> None:
+    """The third leg of rtw_hal_power_on (after pre-init + power switch): platform-reset
+    the WL CPU, enable the SYS clocks, and disable boot-from-flash so the driver downloads
+    FW itself. [SRC] init_system_cfg_8821c halmac_init_8821c.c:721 (USB path; the
+    HW_PCIE_REF_AUTOK arm is PCIe-only, not on the USB call graph)."""
+    t.write32(REG_CPU_DMEM_CON, t.read32(REG_CPU_DMEM_CON) | _BIT_WL_PLATFORM_RST)
+    t.write8(REG_SYS_FUNC_EN + 1, t.read8(REG_SYS_FUNC_EN + 1) | _SYS_FUNC_EN)
+
+    tmp = t.read32(REG_MCUFW_CTRL)
+    if tmp & _BIT_BOOT_FSPI_EN:
+        t.write32(REG_MCUFW_CTRL, tmp & ~_BIT_BOOT_FSPI_EN)
+        t.write32(REG_GPIO_MUXCFG, t.read32(REG_GPIO_MUXCFG) & ~_BIT_FSPI_EN)
