@@ -115,9 +115,14 @@
   0x0A9C, 0x0804/0x0808, **0x19A8** (RMW 0x010a0000 -> 0xd10a0000), 0x0C50 (IGI), 0x0AAA, 0x0A2C,
   **0x0A08** (RMW 0x9c838300 -> 0x9c878300), **0x0AA8** (RMW 0xeacf0004 -> 0xead10004), 0x0994, ...
   Trace from `hal/phydm/phydm_dig.c` / `phydm.c` `odm_dm_init` (the per-sub-mechanism init writes).
-  After this: the **channel hops** (airodump set_channel via the RF/BB channel-tune path — the
-  agent's to wire; live TX stays the user's). No IQK appears in this window (triggered later —
-  channel-set / watchdog).
+  **Scope:** `odm_dm_init` ([SRC] phydm.c, via hal_dm.c:1601) calls ~35 sub-inits — most are
+  software-only state init (no register I/O, gate no-ops), but several write BB regs:
+  `phydm_dig_init`, `phydm_cck_pd_init`, `phydm_env_monitor_init`, `phydm_adaptivity_init`,
+  `phydm_rf_init`, `phydm_dc_cancellation`, `phydm_txcurrentcalibration`. Port one sub-init per
+  milestone (each is a self-contained chunk; many use computed values, not flat tables — verify
+  each against the gate). After this: the **channel hops** (airodump set_channel via the RF/BB
+  channel-tune path — the agent's to wire; live TX stays the user's). No IQK in this window
+  (triggered later — channel-set / watchdog).
 - `_drv_enable_trx` (between init_mac_flow and general-info) is RX/thread-side only — a gate no-op.
 - **PHYDM discriminators are transformed, not the hal->* values** (the AGC walker forced this out):
   `dm->rfe_type = rfe_type_expand >> 3` (0x22 -> 4) and `dm->package_type = 1` for the 0x2x combo
