@@ -11,12 +11,14 @@ This dispatcher only ROUTES <chip> to that chip's recipe in scripts/<chip>/verif
 (exposing ``run(capture) -> int``); the chip-specific bring-up call sequence stays sealed
 in that one module. The wire-format op-extractor + ReplayTransport are shared per USB
 family -- ``rtw88_pcap_replay.py`` for Realtek (vendor bRequest 0x05); a Ralink
-``rt2x00_pcap_replay.py`` (bRequest 0x06/0x07) lands with those recipes.
+``rt2x00_pcap_replay.py`` (bRequest 0x06/0x07); an mt76-USB ``mt76usb_pcap_replay.py``
+(MediaTek bRequest 0x06/0x07, shared by mt76x2u + mt76x0u).
 
-Out of scope here: mt76 (MediaTek) bring-up is MCU command/response, not register writes,
-so its PHY/calibration is not a register byte-diff (deferred). AR9271 is event-driven
-HTC/WMI with firmware re-enumeration -- it has its own harness
-(scripts/ar9271/build_template.py) and is listed below only as a pointer.
+mt76 (MediaTek) is in scope: mt76x2u / mt76x0u do register I/O over vendor bRequest 0x06/0x07
+(the mt76-USB codec) and a single-cursor walk reproduces cold-boot + FW + MCU + TX; mt7921au
+is connac2's unified bus with its own decoder. AR9271 is event-driven HTC/WMI with firmware
+re-enumeration -- it has its own harness (scripts/ar9271/build_template.py) and is listed
+below only as a pointer.
 """
 from __future__ import annotations
 
@@ -82,6 +84,8 @@ REGISTRY: dict[str, Chip] = {
                             "Realtek RTL8188EUS 1T1R DKMS (vendor 0x05)"),
     "rtl8187": Chip("rtl8187", "rtl8187/verify_pcap.py",
                     "Realtek RTL8187L / rtl818x (vendor 0x05)"),
+    "mt7921au": Chip("mt7921au", "mt7921au/verify_pcap.py",
+                     "MediaTek MT7921AU connac2 unified-bus (cold-boot + FW + MCU + TX)"),
     "ar9271": Chip("ar9271", None, "Atheros AR9271 (HTC/WMI)",
                    pointer="event-driven HTC/WMI + firmware re-enumeration -- not a "
                            "register byte-diff; use scripts/ar9271/build_template.py"),

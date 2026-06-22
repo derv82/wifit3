@@ -589,24 +589,44 @@ def check_post_boot(pkts, dev):
 #
 # Rebuild every captured aireplay TX frame (the `-0` deauth on EP 0x09 + the
 # `--test` null frames on EP 0x04) via the driver's REAL tx.build_tx and assert
-# the full USB bulk-OUT bytes AND the chosen endpoint match the wire. The aireplay
-# target is a 2.4 GHz AP (channel 1), so the rate is the 2.4 GHz basic rate.
-# SKIP if the capture recorded no post-boot TX (it stopped before the aireplay).
+# the full USB bulk-OUT bytes AND the chosen endpoint match the wire. The TX band
+# is driven by the wire: a `current_channel` tracker updates on each config_sniffer
+# command (UNI 0x24, tlv tag 1) so 2.4 GHz frames rebuild as CCK and 5 GHz frames
+# as the band-offset OFDM rate (txwi[6] = 0x04004b00). SKIP only when the capture
+# recorded no post-boot TX (it stopped before the aireplay).
 # ----------------------------------------------------------------------------
 
 _FC_NAME = {0xc0: "deauth", 0xa0: "disassoc", 0xb0: "auth", 0x40: "probe_req",
             0x50: "probe_resp", 0x48: "null", 0x88: "qos_null", 0x80: "beacon"}
 
 
+def _sniffer_channel(f):
+    """If MCU frame `f` is a UNI SNIFFER config_sniffer (tlv tag 1), return its
+    control channel; else None. Mirrors _decode_operational_mcu's config_sniffer
+    parse (band_idx @ payload[0], tag @ payload+4, control_ch @ payload+8)."""
+    if len(f) < 65 or (f[38] == 0x00 and f[39] == 0x80):
+        return None                                   # not a UNI command
+    if (f[38] | (f[39] << 8)) != mt_mcu.UNI_CMD_SNIFFER:
+        return None
+    if (f[56] | (f[57] << 8)) != 1:                   # tlv tag 1 = config_sniffer
+        return None
+    return f[64]                                       # control_ch
+
+
 def check_tx(pkts, dev):
     from collections import Counter
     evs = build_bulk_stream(pkts, dev)
     seen_fw = False
-    txs = []   # (ep, transfer_bytes, frame_bytes)
+    current_channel = None       # set by the wire's last config_sniffer before each TX
+    txs = []   # (ep, transfer_bytes, frame_bytes, band_5ghz)
     for kind, ep, data in evs:
-        if (kind == "OUT" and ep == EP_MCU_OUT and len(data) > 40
-                and data[38] == 0x00 and data[39] == 0x80 and data[40] == 0x02):
-            seen_fw = True
+        if kind == "OUT" and ep == EP_MCU_OUT:
+            if (len(data) > 40 and data[38] == 0x00 and data[39] == 0x80
+                    and data[40] == 0x02):
+                seen_fw = True
+            ch = _sniffer_channel(data)
+            if ch is not None:
+                current_channel = ch
         elif seen_fw and kind == "OUT" and ep in (EP_FW_OUT, 0x09):
             if len(data) < 4 + MT_SDIO_TXD_SIZE:
                 continue
@@ -614,41 +634,48 @@ def check_tx(pkts, dev):
             off = 4 + MT_SDIO_TXD_SIZE
             if framelen < 24 or off + framelen > len(data):
                 continue                       # not an 802.11 TX frame
-            txs.append((ep, bytes(data), bytes(data[off:off + framelen])))
+            band_5ghz = (current_channel or 0) > 14
+            txs.append((ep, bytes(data), bytes(data[off:off + framelen]), band_5ghz))
 
     print("CHECK 4 - TX descriptor (connac2 TXD/TXWI)")
     if not txs:
-        print("  [SKIP] no post-boot 802.11 TX in this capture (stopped before aireplay)")
+        print("  [UNVERIFIED] no post-boot 802.11 TX in this capture (stopped before aireplay)")
         return "SKIP"
 
     ok = True
     by_kind = Counter()
+    by_band = Counter()
     first_bad = None
-    for ep, wire, frame in txs:
-        built, out_ep = mt_tx.build_tx(frame, band_5ghz=False)
+    for ep, wire, frame, band_5ghz in txs:
+        built, out_ep = mt_tx.build_tx(frame, band_5ghz=band_5ghz)
         fc_stype = frame[0] & 0xFC
         by_kind[_FC_NAME.get(fc_stype, f"0x{frame[0]:02x}")] += 1
+        by_band["5GHz" if band_5ghz else "2.4GHz"] += 1
         if bytes(built) != wire or out_ep != ep:
             ok = False
             if first_bad is None:
                 n = min(len(built), len(wire))
                 d = next((i for i in range(n) if built[i] != wire[i]), n)
-                first_bad = (f"ep wire=0x{ep:02x} built=0x{out_ep:02x}; byte {d}: "
+                first_bad = (f"band={'5GHz' if band_5ghz else '2.4GHz'} "
+                             f"ep wire=0x{ep:02x} built=0x{out_ep:02x}; byte {d}: "
                              f"built {built[d:d+4].hex() if d < len(built) else '-'} vs "
                              f"wire {wire[d:d+4].hex() if d < len(wire) else '-'} "
                              f"(len {len(built)} vs {len(wire)})")
-    n09 = sum(1 for ep, _, _ in txs if ep == 0x09)
+    n09 = sum(1 for ep, *_ in txs if ep == 0x09)
     print(f"  {len(txs)} TX frames ({n09} on EP 0x09 mgmt, {len(txs) - n09} on EP 0x04 data): "
           f"{dict(by_kind)}")
+    print(f"  band split (from config_sniffer on the wire): {dict(by_band)}")
     if ok:
-        print("  [PASS] every TX frame rebuilt byte-for-byte (descriptor + endpoint)")
+        print("  [PASS] every TX frame rebuilt byte-for-byte (descriptor + endpoint, both bands)")
         return True
     print(f"  [FAIL] {first_bad}")
     return False
 
 
-def main():
-    cap = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CAP
+def run(cap=None):
+    """Dispatcher entry (scripts/verify_pcap.py). Returns 0 = full green,
+    1 = divergence/failure, 2 = incomplete (CHECK 3 frontier or TX unverified)."""
+    cap = cap or DEFAULT_CAP
     pkts = parse_pcapng(cap)
     if not pkts:
         print(f"[FAIL] no packets parsed from {cap}")
@@ -691,11 +718,19 @@ def main():
         print("\n[FRONTIER] CHECK 1+2 green; CHECK 3 advancing — see the next op above")
         return 2
     if ok4 == "SKIP":
-        print("\n[PASS] CHECK 1-3 green (boot + RX verified); CHECK 4 (TX) skipped — "
-              "this scatter capture stopped before the aireplay phase")
-        return 0
+        # Fail-closed: a capture with no post-boot TX cannot verify the TX path, so
+        # this is NOT a full green. CHECK 1-3 are verified; TX is unverified.
+        print("\n[INCOMPLETE] CHECK 1-3 green (boot + RX verified); CHECK 4 TX UNVERIFIED — "
+              "this capture has no post-boot 802.11 TX. Supply a capture that exercises\n"
+              "             inject/aireplay (e.g. the 5g-injection capture) to verify TX; "
+              "this run is NOT a full pass.")
+        return 2
     print("\n[PASS] all checks green")
     return 0
+
+
+def main():
+    return run(sys.argv[1] if len(sys.argv) > 1 else None)
 
 
 if __name__ == "__main__":
