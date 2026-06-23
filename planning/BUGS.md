@@ -47,11 +47,19 @@ Each `⏳` is a CLAIM lifted from the card's `<CHIP>.md`, **unconfirmed on hardw
 sweep confirms or kills each: a killed one gets deleted here *and* its stale line removed
 from the chip doc. `✅` = nothing open (already HW-confirmed). `🛑`/`⚠️` = read before using.
 
-### ar9271 — ⚠️ suspect (the 2-channel-bug card)
-- ⏳ Per-channel calibration not ported → RX sensitivity unverified across channels; doc
-  flags "PORT NOW SUSPECT, audit the whole port" [AR9271.md:28]. **Test every channel.**
-- ⏳ Cleanroom FW only partially promiscuous — passes other-BSSID beacons but drops
-  downlink-unicast (RA = other client); may miss frames [AR9271.md:76].
+> **Active Mode** (HW-ACK forged MAC) landed on every card on 2026-06-21, each with a named
+> test card in the commit (AWUS1900 / AWUS036ACS / Archer T3U Plus / …) — implemented +
+> once-tested per card; re-confirm in the sweep. **rt2500usb + rtl8187 are NONE** (no active
+> mode, by design).
+
+### ar9271 — channel-tune FIXED since the doc; verify
+- ✅ The CH1/CH6-stuck channel bug (the one that started this sweep) is **fixed** —
+  `2bb6f90f` (Jun 21) computes the per-channel synth word, *after* AR9271.md's Jun 10
+  "PORT NOW SUSPECT." **Verify every channel now tunes.**
+- ⏳ Deeper per-channel analog/NF/IQ calibration may still be unported → per-channel RX
+  sensitivity unverified [AR9271.md:28].
+- ⏳ Cleanroom FW only partially promiscuous — drops downlink-unicast (RA = other client);
+  may miss frames [AR9271.md:76].
 
 ### rtl8187 (8187L)
 - ⏳ Injected deauth `duration=0` instead of the unicast-ACK NAV — minor TX-correctness nit
@@ -94,10 +102,13 @@ from the chip doc. `✅` = nothing open (already HW-confirmed). `🛑`/`⚠️` 
 - ⏳ Live RX ~6.5 vs ~8.9 bcn/s vs kernel — RX-perf gap, cause unconfirmed [RTL8188EUS_DKMS.md:12].
 - ⏳ EFUSE antenna/channel-plan hardcoded from the dev card — wrong on other 8188eus units [RTL8188EUS_DKMS.md:62].
 
-### rtl8812au (mainline) — 🛑 DO NOT USE for multi-band scanning
-- 🛑 RX wedges **dead** under sustained 2.4 + 5 GHz hopping (RF synth loses lock; replug to
-  recover). Doc calls it an rtw88-inherited HW limit; mitigation only delays it [RTL8812AU.md:4].
-- ⏳ No UI feedback when it wedges — targets just fade to nothing [RTL8812AU.md:65].
+### rtl8812au — RESOLVED at the product level (`26c93d7`, Jun 5)
+- ✅ The multi-band hop-death is **resolved**: the DKMS port is now the **default** for
+  `0bda:8812` (240 s+ hopping, zero wedge). The mainline driver still wedges (rtw88 HW limit)
+  but users only reach it via `WIFIT3_RTL8812=mainline`, so the 🛑 applies to the opt-in
+  legacy driver only. Use 8812 on its default.
+- ⏳ No-UI-feedback-on-wedge applies only if someone opts into mainline [RTL8812AU.md:65];
+  the cross-cutting "Hardware-failure UX" item is the real fix.
 
 ### rtl8812au_dkms (AWUS036ACH)
 - ⏳ 5 GHz RX + TX off the antenna **untested** — tune is byte-verified, live RX/TX await your
@@ -132,12 +143,3 @@ Blocked at discovery: ZeroCD/USB mode-switch unsolved (enumerates as CD-ROM), of
   (80/80); confirm it holds across your soak [RTL8822BU_DKMS.md:44].
 - ⏳ Matched-load RX capture % unconfirmed vs vendor ~84 % (needs a quiet ch1) [RTL8822BU_DKMS.md:41].
 - ⚠️ Doc self-contradicts on the TX descriptor (⛔ unported vs ✅ byte-for-byte 251/251) — resolve [RTL8822BU_DKMS.md:262 vs 225].
-
----
-
-## Deliberately excluded from the list above (port-internal, NOT user-facing bugs)
-Kept out so this stays "what might not work for a user," not "what a porter hasn't finished":
-by-design scope (20 MHz-only, non-DFS channels); port-faithfulness coverage notes (un-walked
-code paths, USB3 branches untested on USB2-only cards, monitor-dead-code watchdog members);
-deferred TX-power / IQK calibration on cards where inject already works (a quality ceiling, not
-a break). All of it lives in the `<CHIP>.md` docs if ever needed.
