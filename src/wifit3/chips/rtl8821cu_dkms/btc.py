@@ -163,6 +163,8 @@ _TO_WLA = 0x2                                   # [SRC] halbtc8821c1ant.h:143
 _RSN_2GSWITCHBAND, _RSN_2GMEDIA = 0x3, 0x9      # [SRC] halbtc8821c1ant.h:176/182
 _RSN_5GSWITCHBAND = 0x4                         # [SRC] halbtc8821c1ant.h:177
 _BAND_5G = 1                                    # chan._need_switch_band latches t.current_band
+# the 2G reasons that set is_wifi_linkscan_process -> action_wifi_linkscan [SRC] :3510
+_LINKSCAN_REASONS = frozenset({0x0, 0x3, 0x5, 0xC})   # 2G SCANSTART / SWITCHBAND / CONSTART / SPECIALPKT
 
 
 @dataclass
@@ -320,7 +322,9 @@ def _write_scbd(t, st: BtcState, bitpos: int, state: bool) -> None:
 
 
 # coex table (type -> (0x6c0, 0x6c4)); break/select come from concurrent_rx_mode_on. [SRC] :1697
-_COEX_TABLE = {0: (0x55555555, 0x55555555)}
+_COEX_TABLE = {0: (0x55555555, 0x55555555), 4: (0x66555555, 0x5A5A5A5A)}      # [SRC] :1697/1718
+# PS-TDMA-on cases (type -> the 5 set_tdma bytes) [SRC] halbtc8821c1ant.c:2156 — ported as reached.
+_TDMA_ON_CASES = {21: (0x61, 0x30, 0x03, 0x11, 0x10)}
 
 
 def _set_table(t, st: BtcState, v6c0: int, v6c4: int, v6c8: int, v6cc: int, force: bool) -> None:
@@ -328,7 +332,9 @@ def _set_table(t, st: BtcState, v6c0: int, v6c4: int, v6c8: int, v6cc: int, forc
     reads back 0x6c0/0x6c4 and returns when both match the wanted values; force writes all 4 rows
     unconditionally."""
     if not force and not st.wl_slot_toggle_change:
-        if t.read32(REG_COEX_TABLE0) == v6c0 and t.read32(REG_COEX_TABLE1) == v6c4:
+        cur0 = t.read32(REG_COEX_TABLE0)                 # both read-backs happen before the compare
+        cur1 = t.read32(REG_COEX_TABLE1)                 # (the C reads into temps; no short-circuit)
+        if cur0 == v6c0 and cur1 == v6c4:
             return
     t.write32(REG_COEX_TABLE0, v6c0)
     t.write32(REG_COEX_TABLE1, v6c4)
@@ -403,14 +409,16 @@ def _tdma(t, st: BtcState, force: bool, turn_on: bool, tcase: int) -> None:
     # wifi not busy in monitor -> TDMA scoreboard bit off.
     _write_scbd(t, st, _SCBD_TDMA, False)
     if turn_on:
-        raise NotImplementedError("RTL8821CU: PS-TDMA-on not reached in this bring-up window")
-    _write_scbd(t, st, _SCBD_TDMA, False)
-    if type_ == 8:
-        _set_tdma(t, 0x8, 0x0, 0x0, 0x0, 0x0)           # PTA control
-    elif type_ == 1:
-        _set_tdma(t, 0x0, 0x0, 0x0, 0x48, 0x0)          # 2-ant antenna-diversity control
+        _write_bitmask8(t, 0x0550, 0x8, 0x1)            # enable TBTT interrupt [SRC] :2154
+        _set_tdma(t, *_TDMA_ON_CASES[type_])            # PS-TDMA on (native-PS, byte1 BIT4 clear)
     else:
-        _set_tdma(t, 0x0, 0x0, 0x0, 0x0, 0x0)           # software control, antenna at BT
+        _write_scbd(t, st, _SCBD_TDMA, False)
+        if type_ == 8:
+            _set_tdma(t, 0x8, 0x0, 0x0, 0x0, 0x0)       # PTA control
+        elif type_ == 1:
+            _set_tdma(t, 0x0, 0x0, 0x0, 0x48, 0x0)      # 2-ant antenna-diversity control
+        else:
+            _set_tdma(t, 0x0, 0x0, 0x0, 0x0, 0x0)       # software control, antenna at BT
     st.cur_ps_tdma_on, st.cur_ps_tdma = turn_on, type_
 
 
@@ -547,6 +555,13 @@ def _action_wifi_not_connected(t, st: BtcState) -> None:
     _tdma(t, st, force=True, turn_on=False, tcase=8)
 
 
+def _action_wifi_linkscan(t, st: BtcState) -> None:
+    """halbtc8821c1ant_action_wifi_linkscan [SRC] :3280 — the scan / link / band-switch coex action
+    (no BT link here -> the pan/a2dp-absent arm): coex table type 4 + PS-TDMA on type 21."""
+    _table(t, st, 4, force=False)
+    _tdma(t, st, force=False, turn_on=True, tcase=21)
+
+
 def run_coex(t, reason: int) -> None:
     """halbtc8821c1ant_run_coex [SRC] :3493. `update_wifi_link_info` runs first (the `limited_tx`
     backup reads), then the run-time gate: at the first band switch `run_time_state` is FALSE
@@ -565,7 +580,10 @@ def run_coex(t, reason: int) -> None:
         return
     _set_ant_path_2g(t, st, force=False)                 # single-port 2G, re-assert (no wire)
     _write_scbd(t, st, _SCBD_BTCQDDR, True)
-    _action_wifi_not_connected(t, st)
+    if reason in _LINKSCAN_REASONS:                      # is_wifi_linkscan_process [SRC] :3696
+        _action_wifi_linkscan(t, st)
+    else:
+        _action_wifi_not_connected(t, st)
 
 
 def _set_ant_path_5g(t, st: BtcState, force: bool) -> None:

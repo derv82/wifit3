@@ -45,10 +45,9 @@
 > compiled for this CE+8821C build), **`rtl8821c_phy_bf_init`** (`mac.phy_bf_init`), and the **BT-coex
 > HAL init** (`btc.hal_init` = the 1-ant `init_hw_config`: PTA/3-wire enable, ltecoex 0x1700 indirect
 > GNT setup, antenna-to-BT switch, WiFi-only coex table, the tdma/query-BT-info H2Cs via the HMEBOX
-> rotation). Frontier is op #11963 (frame 27307, `IN 0x0430`): the **5G->2.4G** band switch back to
-> ch1, where `run_coex(2GSWITCHBAND)` resolves to `action_wifi_linkscan` (coex table type 4 +
-> PS-TDMA **on**, type 21) — 2GSWITCHBAND is in the scan-list, so the action differs from the 2GMEDIA/
-> periodical `action_wifi_not_connected`; needs the tdma-on path + table type 4. Not registered in
+> rotation). Frontier is op #12197 (frame 27783, `IN 0x0210`): the phydm watchdog's **first 2.4G tick
+> after returning from 5G** (tick6) — with the CCK block re-enabled, the FA-counter / CCK-PD path
+> now exercises the CCK branch (`0x0a2c`) that was silent on 5G / the 1R card. Not registered in
 > `wlan/manager.py`.
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
@@ -895,3 +894,18 @@
 - Frontier #10809 = the watchdog env-monitor's NHM/FAHM `set_th` recompute: on 5G the DIG drops the
   IGI to 0x1e (low 5G FA count), so the threshold curve (`th[i]=((igi-14)<<1)+4i`) is rewritten
   (0x998/0x99c/0x9a0) instead of suppressed — port the IGI-changed `*_set_th` path next.
+
+## Port log — 2026-06-23 (5G->2.4G band switch: action_wifi_linkscan GREEN @ 12197)
+
+- The op-11963 frontier was the **5G->2.4G** band switch back to ch1. `run_coex(2GSWITCHBAND)`
+  resolves to **`action_wifi_linkscan`** ([SRC] :3280), not `action_wifi_not_connected`: 2GSWITCHBAND
+  is in the `is_wifi_linkscan_process` reason set ([SRC] :3510), unlike 2GMEDIA/PERIODICAL. New in
+  btc.py: `_action_wifi_linkscan` (coex table type 4 = `(0x66555555, 0x5a5a5a5a)` + the **PS-TDMA-on**
+  path, type 21 = `set_tdma(0x61,0x30,0x03,0x11,0x10)`, native-PS since byte1 BIT4 is clear; the
+  tdma-on arm also sets 0x550[3] TBTT-int). `run_coex` now branches on `_LINKSCAN_REASONS`.
+- Gate trap fixed: `_set_table`'s non-force read-compare must read **both** 0x6c0 and 0x6c4 before
+  comparing (the C reads into temps; Python's `and` was short-circuiting the 0x6c4 read on a type-4
+  mismatch). -> 11963 -> **12197, zero divergence** (now 28 hops + 11 LED + 5 ticks + 5 periodicals;
+  both band directions reproduce).
+- Frontier #12197 = tick6, the first 2.4G watchdog tick after 5G: the CCK block is re-enabled so the
+  FA-counter / CCK-PD path now hits the CCK branch (`0x0a2c`) that was silent on 5G / 1R — next milestone.
