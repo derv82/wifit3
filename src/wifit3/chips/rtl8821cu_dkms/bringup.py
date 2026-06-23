@@ -12,7 +12,7 @@ entry) extend ``cold_bringup`` past the report readback.
 """
 from __future__ import annotations
 
-from . import bb, btc, chipid, dm, efuse, firmware, init, led, mac, phy, phy_cond, pwrseq, rf
+from . import bb, btc, chan, chipid, dm, efuse, firmware, init, led, mac, phy, phy_cond, pwrseq, rf
 
 REG_C2HEVT_MSG_NORMAL = 0x01A0      # [SRC] include/hal_com_reg.h:149
 _C2H_DEFEATURE_RSVD = 0xFD          # [SRC] hal/hal_com_c2h.h:79 — "FW: report MAC-hidden via reg"
@@ -125,7 +125,8 @@ def init_hw_mlme_ext(t, info) -> None:
     """[SRC] init_hw_mlme_ext rtw_mlme_ext.c:1279 — sync driver/HW state: enable RX BAR, then the
     first channel/bandwidth set (current_channel/bw were forced invalid so this always runs)."""
     mac.enable_rx_bar(t)
-    # set_channel_bwmode -> rtw_hal_set_chnl_bw: the phydm channel tune — next milestone.
+    # set_channel_bwmode(cur_channel): the default airmon channel is 1 (2.4 GHz, 20 MHz).
+    chan.set_channel(t, info, 1)
 
 
 def cold_bringup(t) -> None:

@@ -324,6 +324,36 @@ def _rf_init(t, info, st: DmState) -> None:
     t.read32(R_0xc1c)
 
 
+@dataclass
+class TrxStop:
+    """State `phydm_stop_ic_trx` saves between its SET and REVERT halves (the TX-queue pause
+    bitmap and the CCK Tx-path nibble)."""
+    tx_queue_bitmap: int = 0
+    ccktx_path: int = 0
+
+
+def stop_ic_trx(t, set_type: bool, ts: TrxStop) -> None:
+    """phydm_stop_ic_trx [SRC] phydm_api.c:606 (11AC arm). SET: wait BB idle on the dbg port
+    (`(BIT17|BIT3)==0`, true on the first read here), pause all TX (0x520), disable OFDM RX CCA
+    (0x838[1]) and the CCK TRX (`phydm_dis_cck_trx`: 0x808[28] / 0xa04[31:28]), saving the TX
+    bitmap + CCK Tx path. REVERT restores them. Reused by the DC-cancellation and channel tune."""
+    if set_type:
+        _set_bb_dbg_port(t, 0x0)
+        _get_bb_dbg_port_val(t)
+        _release_bb_dbg_port(t)
+        ts.tx_queue_bitmap = t.read8(R_0x522)
+        set_bb_reg(t, R_0x520, 0xFF0000, 0xFF)
+        set_bb_reg(t, R_0x838, 1 << 1, 1)
+        ts.ccktx_path = (t.read32(R_0xa04) & 0xF0000000) >> 28
+        set_bb_reg(t, R_0x808, 1 << 28, 0)
+        set_bb_reg(t, R_0xa04, 0xF0000000, 0)
+    else:
+        t.write8(R_0x522, ts.tx_queue_bitmap)
+        set_bb_reg(t, R_0x838, 1 << 1, 0)
+        set_bb_reg(t, R_0x808, 1 << 28, 1)
+        set_bb_reg(t, R_0xa04, 0xF0000000, ts.ccktx_path)
+
+
 def _dc_cancellation(t, info, st: DmState) -> None:
     """phydm_dc_cancellation [SRC] phydm.c (PHYDM_DC_CANCELLATION; 8821C in
     ODM_DC_CANCELLATION_SUPPORT, 20 MHz so it runs; 1T1R = path-A only). Measure the path-A DC
@@ -332,16 +362,8 @@ def _dc_cancellation(t, info, st: DmState) -> None:
 
     Phases: stop-TRX -> stop-3-wire/LNA-off -> measure -> restore -> DC compensation.
     """
-    # phydm_stop_ic_trx(SET): wait BB idle on the dbg port, pause TX, kill OFDM/CCK RX
-    _set_bb_dbg_port(t, 0x0)
-    _get_bb_dbg_port_val(t)                  # idle when (BIT17|BIT3)==0 — true on the first read
-    _release_bb_dbg_port(t)
-    tx_queue_bitmap = t.read8(R_0x522)
-    set_bb_reg(t, R_0x520, 0xFF0000, 0xFF)   # pause all TX queues
-    set_bb_reg(t, R_0x838, 1 << 1, 1)        # disable OFDM RX CCA
-    ccktx_path = (t.read32(R_0xa04) & 0xF0000000) >> 28   # phydm_dis_cck_trx(SET)
-    set_bb_reg(t, R_0x808, 1 << 28, 0)       # disable CCK block
-    set_bb_reg(t, R_0xa04, 0xF0000000, 0)    # disable CCK Tx
+    ts = TrxStop()
+    stop_ic_trx(t, True, ts)
 
     _write_dig(t, st, 0x7E)                  # raise IGI for the measurement
     _lna_setting(t, enable=False)
@@ -360,10 +382,7 @@ def _dc_cancellation(t, info, st: DmState) -> None:
     _stop_3_wire(t, revert=True)
     _lna_setting(t, enable=True)
     _write_dig(t, st, 0x20)
-    t.write8(R_0x522, tx_queue_bitmap)       # release TX queues
-    set_bb_reg(t, R_0x838, 1 << 1, 0)        # enable OFDM RX CCA
-    set_bb_reg(t, R_0x808, 1 << 28, 1)       # phydm_dis_cck_trx(REVERT): enable CCK block
-    set_bb_reg(t, R_0xa04, 0xF0000000, ccktx_path)
+    stop_ic_trx(t, False, ts)
 
     # DC compensation to the CCK data path (8821C/8822B field layout, path A)
     set_bb_reg(t, R_0xa9c, 1 << 20, 0x1)

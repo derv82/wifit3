@@ -63,9 +63,11 @@ def phy_parameter_init(t, post: bool) -> None:
     in 0x808 BIT28|29 (off before the tables, on after); POST also caches three AGC regs."""
     set_bb_reg(t, R_0x808, (1 << 28) | (1 << 29), 0x3 if post else 0x0)
     if post:
-        t.read32(0x0A24)
-        t.read32(0x0A28)
-        t.read32(0x0AAC)
+        # rega24/28/aac_8821c globals — cached here, re-applied per channel by
+        # config_phydm_switch_channel ([SRC] phydm_hal_api8821c.c:1234-1236).
+        t.rega24 = t.read32(0x0A24)
+        t.rega28 = t.read32(0x0A28)
+        t.regaac = t.read32(0x0AAC)
 
 
 def _apply_phy(t, addr: int, val: int) -> None:

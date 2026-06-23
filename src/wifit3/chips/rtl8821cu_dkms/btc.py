@@ -159,13 +159,26 @@ _TO_WLG = 1                     # the only pos that flips polarity (when wlg not
 
 @dataclass
 class BtcState:
-    """The slice of btc `coex_sta`/`coex_dm` the init phase keeps between calls: the decoded
-    RFE board type, the concurrent-RX flag that selects the coex table, and the BT scoreboard
-    mirror (write_scbd reads back its own last-written value, not the register)."""
+    """The persistent btc `coex_sta`/`coex_dm` state — the `GLBtCoexist` analog. `init_hw_config`
+    sets it up and the channel tune's `run_coex` reads/mutates it, so bring-up keeps one instance
+    for the session (stored on the transport as ``t.btc``). The scoreboard mirror tracks its own
+    last-written value (write_scbd reads back the driver copy, not the register)."""
     rfe: RfeType
     concurrent_rx_mode_on: bool = False
     scbd_val: int = _SCBD_INIT
     scbd_prev: int = 0
+    # run_coex run-time flags (channel-tune path); seeded by set_ant_path(INIT) -> run_time FALSE
+    run_time_state: bool = False
+    wl_tx_limit_en: bool = False
+    wl_ampdu_limit_en: bool = False
+    cur_low_penalty_ra: bool = False
+    cur_low_penalty_thres: int = 0
+    wl_rxagg_limit_en: bool = False
+    wl_rxagg_size: int = 0
+    wl_0x430: int = 0
+    wl_0x434: int = 0
+    wl_0x42a: int = 0
+    wl_0x455: int = 0
 
 
 def _wait_indirect_ready(t) -> None:
@@ -276,6 +289,7 @@ def _set_ant_path_init(t, st: BtcState) -> None:
     _set_gnt_bt(t, _GNT_SW_HIGH)
     _set_gnt_wl(t, _GNT_SW_LOW)
     _set_ant_switch(t, st.rfe, _CTRL_BY_BBSW, 0x0)       # AUTO->BT, pos TO_BT
+    st.run_time_state = False                            # PHASE_INIT [SRC] :2632
 
 
 def _write_scbd(t, st: BtcState, bitpos: int, state: bool) -> None:
@@ -336,8 +350,9 @@ def hal_init(t, info) -> None:
     to BT, lay the WiFi-only coex table.
 
     `init_coex_var` and `enable_gnt_to_gpio` (dbg_mode off) are wire-silent here; the else arm
-    runs because the RF is on and the card is not WiFi-only."""
-    st = BtcState(rfe=_decode_rfe(info.rfe_type))
+    runs because the RF is on and the card is not WiFi-only. The state persists on ``t.btc`` (the
+    GLBtCoexist analog) for the channel tune's run_coex."""
+    st = t.btc = BtcState(rfe=_decode_rfe(info.rfe_type))
     (t.read8(0x00F1) >> 4)                           # coex_sta->kt_ver [SRC] :3765
     _write_bitmask8(t, 0x0550, 0x8, 0x1)             # enable TBTT interrupt [SRC] :3768
     t.write8(0x0790, 0x5)                            # BT report packet sample rate [SRC] :3771
@@ -354,3 +369,92 @@ def hal_init(t, info) -> None:
     _table(t, st, 0)
     _tdma(t, st)
     _query_bt_info(t)
+
+
+# ======================================================================
+# run_coex (the channel-tune coex path)
+# ======================================================================
+# The phydm band switch calls `rtw_btcoex_switchband_notify(under_scan=FALSE, band)`. For a 2.4G
+# band with no scan that maps to `run_coex(RSN_2GSWITCHBAND)`. run_coex first runs
+# `update_wifi_link_info` (which, for monitor mode / no link / BT-idle, applies the low-penalty-RA
+# + tx/rx limits) then early-returns at `!run_time_state` (set FALSE by PHASE_INIT, not yet TRUE).
+# So the only wire effect at the first band switch is `limited_tx`'s 4 backup reads.
+# [SRC] halbtc8821c1ant.c:3493 run_coex / :1080 update_wifi_link_info / :171 limited_tx.
+
+_REG_WL_0x430, _REG_WL_0x434, _REG_WL_0x42A, _REG_WL_0x455 = 0x0430, 0x0434, 0x042A, 0x0455
+
+
+def _low_penalty_ra(t, st: BtcState, force: bool, low_penalty: bool, thres: int) -> None:
+    """halbtc8821c1ant_low_penalty_ra [SRC] :1xxx — modify the RA PCR threshold via phydm; a
+    no-change call (force off, same low_penalty + thres) returns without touching the chip. At
+    monitor idle this is the no-change path (silent)."""
+    if not force and low_penalty == st.cur_low_penalty_ra and thres == st.cur_low_penalty_thres:
+        return
+    # btc_phydm_modify_RA_PCR_threshold(0, thres or 0) — phydm H2C/reg; not exercised at idle.
+    st.cur_low_penalty_ra = low_penalty
+    st.cur_low_penalty_thres = thres
+
+
+def _limited_tx(t, st: BtcState, force: bool, tx_limit_en: bool, ampdu_limit_en: bool) -> None:
+    """halbtc8821c1ant_limited_tx [SRC] :171 — back up the WL tx-retry / AMPDU regs while the BT
+    tx-limit is not engaged, then either return (no change) or apply / restore the limit. At
+    monitor / no-link / BT-idle (tx_limit_en=ampdu_limit_en=FALSE, already FALSE) only the 4
+    backup reads hit the wire."""
+    if not st.wl_tx_limit_en:
+        st.wl_0x430 = t.read32(_REG_WL_0x430)
+        st.wl_0x434 = t.read32(_REG_WL_0x434)
+        st.wl_0x42a = t.read16(_REG_WL_0x42A)
+    if not st.wl_ampdu_limit_en:
+        st.wl_0x455 = t.read8(_REG_WL_0x455)
+    if not force and tx_limit_en == st.wl_tx_limit_en and ampdu_limit_en == st.wl_ampdu_limit_en:
+        return
+    st.wl_tx_limit_en, st.wl_ampdu_limit_en = tx_limit_en, ampdu_limit_en
+    if tx_limit_en:
+        _write_bitmask8(t, 0x045E, 0x8, 0x1)
+        _write_bitmask8(t, 0x0426, 0xF, 0xF)
+        t.write16(0x042A, 0x0808)
+        t.write32(0x0430, 0x1000000)
+        t.write32(0x0434, 0x4030201)            # wifi !b-mode (the captured cards are not 11b)
+    else:
+        _write_bitmask8(t, 0x045E, 0x8, 0x0)
+        _write_bitmask8(t, 0x0426, 0xF, 0x0)
+        t.write16(0x042A, st.wl_0x42a)
+        t.write32(0x0430, st.wl_0x430)
+        t.write32(0x0434, st.wl_0x434)
+    t.write8(0x0455, 0x20 if ampdu_limit_en else st.wl_0x455)
+
+
+def _limited_rx(t, st: BtcState, force: bool, bt_ctrl_agg: bool, agg_size: int) -> None:
+    """halbtc8821c1ant_limited_rx [SRC] :limited_rx — updates RX-aggregation via btc_set (driver
+    state / RX-thread), no direct register write on this path. Tracked for the no-change guard."""
+    if not force and bt_ctrl_agg == st.wl_rxagg_limit_en and agg_size == st.wl_rxagg_size:
+        return
+    st.wl_rxagg_limit_en, st.wl_rxagg_size = bt_ctrl_agg, agg_size
+
+
+def _update_wifi_link_info(t, st: BtcState) -> None:
+    """halbtc8821c1ant_update_wifi_link_info [SRC] :1080 (monitor / num_of_wifi_link==0 /
+    BT-NCON-IDLE branch): low-penalty-RA off, tx-limit off, rx-limit off. The btc_get classifiers
+    are software; the only wire effect is `limited_tx`'s 4 backup reads."""
+    _low_penalty_ra(t, st, force=False, low_penalty=False, thres=0)
+    _limited_tx(t, st, force=False, tx_limit_en=False, ampdu_limit_en=False)
+    _limited_rx(t, st, force=False, bt_ctrl_agg=True, agg_size=64)
+
+
+def run_coex(t) -> None:
+    """halbtc8821c1ant_run_coex [SRC] :3493 — at the first 2.4G band switch this runs
+    `update_wifi_link_info` then returns early (`run_time_state` FALSE, set by PHASE_INIT). The
+    btc_get gating + manual/stop/ips/lps checks are all software."""
+    st = t.btc
+    _update_wifi_link_info(t, st)
+    if not st.run_time_state:
+        return
+    # run_time actions (set_ant_path runtime + coex table/tdma) — reached once a runtime phase set
+    # run_time_state TRUE; ported when the channel tune's later coex passes need them.
+
+
+def switchband_notify_2g(t) -> None:
+    """rtw_btcoex_switchband_notify(under_scan=FALSE, BAND_ON_2_4G) [SRC] hal_btcoex.c -> the 1-ant
+    `ex_halbtc8821c1ant_switchband_notify(BTC_SWITCH_TO_24G_NOFORSCAN)` -> `run_coex(2GSWITCHBAND)`.
+    Returns immediately if stop_coex_dm (not the case here)."""
+    run_coex(t)
