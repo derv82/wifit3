@@ -48,6 +48,19 @@ _CCK_PD_LV_1 = 1
 _CCKPD_LV2_PARAMS = {0: (0, 0, 0x3), 1: (2, 1, 0x7), 2: (4, 3, 0xD),
                      3: (6, 4, 0xD), 4: (8, 5, 0xD)}
 
+# --- phydm_env_monitor_init (NHM/CLM/FAHM, 11AC) [SRC] phydm_ccx.c -----------
+R_0x990 = 0x0990                   # CLM period (MASKLWORD)
+R_0x994 = 0x0994                   # NHM/FAHM ctrl + nhm_th[10:9] + CRC-check
+R_0x998 = 0x0998                   # nhm_th[3:0]
+R_0x99c = 0x099C                   # nhm_th[7:4]
+R_0x9a0 = 0x09A0                   # nhm_th[8] (MASKBYTE0)
+R_0x1c38 = 0x1C38                  # fahm_th[2:0]
+R_0x1c78 = 0x1C78                  # fahm_th[5:3]
+R_0x1c7c = 0x1C7C                  # fahm_th[7:6]
+R_0x1cb8 = 0x1CB8                  # fahm_th[10:8]
+_CCA_CAP = 14                      # [SRC] phydm_ccx.h:41
+_CLM_PERIOD_INIT = 65535           # phydm_clm_init -> phydm_clm_setting(65535)
+
 
 def get_bb_reg(t, addr: int, mask: int) -> int:
     """odm_get_bb_reg — full-dword read masked + right-shifted to the mask's lowest set bit."""
@@ -111,6 +124,58 @@ def _cck_pd_init(t, info, st: DmState) -> None:
     _set_cckpd_lv_type2(t, aaa_default, _CCK_PD_LV_1)
 
 
+def _b2d(b3: int, b2: int, b1: int, b0: int) -> int:
+    """BYTE_2_DWORD — pack 4 bytes MSB-first into a u32 field value."""
+    return (b3 << 24) | (b2 << 16) | (b1 << 8) | b0
+
+
+def _nhm_th_background(igi_curr: int) -> list[int]:
+    """NHM/FAHM BACKGROUND threshold curve [SRC] phydm_nhm/fahm_th_update_chk: th[0] =
+    IGI_2_NHM_TH(igi-CCA_CAP), th[i] = th[0] + IGI_2_NHM_TH(2*i) (IGI_2_NHM_TH(x)=x<<1), as u8."""
+    th0 = ((igi_curr - _CCA_CAP) << 1) & 0xFF
+    return [th0] + [(th0 + ((2 * i) << 1)) & 0xFF for i in range(1, 11)]
+
+
+def _ccx_hw_restart(t) -> None:
+    """phydm_ccx_hw_restart [SRC] phydm_ccx.c — disable then re-arm NHM/CLM/FAHM via 0x994."""
+    set_bb_reg(t, R_0x994, 0x7, 0x0)
+    set_bb_reg(t, R_0x994, 1 << 8, 0x0)
+    set_bb_reg(t, R_0x994, 1 << 8, 0x1)
+
+
+def _nhm_init(t, st: DmState) -> None:
+    """phydm_nhm_init -> phydm_nhm_th_update_chk(BACKGROUND) + phydm_nhm_set_th_reg (11AC) [SRC]
+    phydm_ccx.c. Reads the live IGI to build the threshold curve, then loads 0x998/0x99c/0x9a0/
+    0x994."""
+    th = _nhm_th_background(get_bb_reg(t, R_0xc50, _MASK_IGI))
+    set_bb_reg(t, R_0x998, _MASKDWORD, _b2d(th[3], th[2], th[1], th[0]))
+    set_bb_reg(t, R_0x99c, _MASKDWORD, _b2d(th[7], th[6], th[5], th[4]))
+    set_bb_reg(t, R_0x9a0, 0xFF, th[8])
+    set_bb_reg(t, R_0x994, 0xFFFF0000, _b2d(0, 0, th[10], th[9]))
+
+
+def _fahm_init(t, st: DmState) -> None:
+    """phydm_fahm_init -> phydm_fahm_th_update_chk(BACKGROUND) + phydm_fahm_set_th_reg (AC) [SRC]
+    phydm_ccx.c (8821C is in PHYDM_IC_SUPPORT_FAHM). Same threshold curve as NHM, loaded into
+    0x1c38/0x1c78/0x1c7c/0x1cb8, then enables CRC32 check + denominator select on 0x994."""
+    th = _nhm_th_background(get_bb_reg(t, R_0xc50, _MASK_IGI))
+    set_bb_reg(t, R_0x1c38, 0xFFFFFF00, _b2d(0, th[2], th[1], th[0]))
+    set_bb_reg(t, R_0x1c78, 0xFFFFFF00, _b2d(0, th[5], th[4], th[3]))
+    set_bb_reg(t, R_0x1c7c, 0xFFFF0000, _b2d(0, 0, th[7], th[6]))
+    set_bb_reg(t, R_0x1cb8, 0xFFFFFF00, _b2d(0, th[10], th[9], th[8]))
+    set_bb_reg(t, R_0x994, 0x18, 0x3)
+    set_bb_reg(t, R_0x994, 0x7000, 0x7)
+
+
+def _env_monitor_init(t, info, st: DmState) -> None:
+    """phydm_env_monitor_init [SRC] phydm_ccx.c — restart the CCX HW, then NHM, CLM
+    (period=65535 via 0x990), and FAHM init. NHM_SUPPORT/CLM_SUPPORT/FAHM_SUPPORT all on for CE."""
+    _ccx_hw_restart(t)
+    _nhm_init(t, st)
+    set_bb_reg(t, R_0x990, 0xFFFF, _CLM_PERIOD_INIT)        # phydm_clm_init -> clm_setting
+    _fahm_init(t, st)
+
+
 def phy_init_haldm(t, info) -> DmState:
     """rtl8821c_phy_init_haldm [SRC] rtl8821c_dm.c:174 -> rtw_phydm_init -> odm_dm_init. The
     8821C path of ``odm_dm_init``, wire-touching sub-inits only, in capture order. Returns the
@@ -119,4 +184,5 @@ def phy_init_haldm(t, info) -> DmState:
     _common_info_self_init(t, info, st)
     _dig_init(t, info, st)
     _cck_pd_init(t, info, st)
+    _env_monitor_init(t, info, st)
     return st

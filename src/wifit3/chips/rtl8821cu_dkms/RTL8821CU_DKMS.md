@@ -110,9 +110,9 @@
 
 ## Known issues
 
-- **Frontier (next milestone): op #7487 (frame 15925): `IN 0x0994/4=0xffff0100`** —
-  `phydm_env_monitor_init`, the next `odm_dm_init` sub-init after CCK-PD. Trace from
-  `hal/phydm/phydm_ccx.c` (the NHM/CLM environment monitor).
+- **Frontier (next milestone): op #7515 (frame 15981): `IN 0x0944/4=0x00000000`** —
+  `phydm_enhance_monitor_init` (or `phydm_adaptivity_init`), the next `odm_dm_init` sub-init after
+  env-monitor. Trace from `hal/phydm/`.
   **Scope:** `odm_dm_init` ([SRC] phydm.c:1786, via hal_dm.c:1601) calls ~35 sub-inits. The
   **compiled-for-this-build** (CE + `CONFIG_RTL8821C` only; all other `RTLxxxx_SUPPORT`=0) set,
   in wire order, is: `common_info_self_init`, `rx_phy_status_init` (sw), `dig_init`, `cck_pd_init`,
@@ -365,3 +365,16 @@
   feature set (CE + CONFIG_RTL8821C only) so the remaining sub-inits' compile gates are settled —
   `phydm_adaptive_soml_init` is NOT compiled (CONFIG_ADAPTIVE_SOML off), confirming the 0x19a8 write
   was `phydm_init_soft_ml_setting`. Frontier #7487 = `phydm_env_monitor_init`.
+
+## Port log — 2026-06-22 (phydm env_monitor_init: NHM/CLM/FAHM GREEN @ 7515)
+
+- `dm._env_monitor_init` ports `phydm_env_monitor_init` ([SRC] phydm_ccx.c, NHM_SUPPORT +
+  CLM_SUPPORT + FAHM_SUPPORT all on for CE): `phydm_ccx_hw_restart` (disable+re-arm via 0x994 ×3),
+  `phydm_nhm_init` (live-IGI threshold curve -> 0x998/0x99c/0x9a0/0x994), `phydm_clm_init`
+  (period 65535 -> 0x990), and `phydm_fahm_init` (8821C is in PHYDM_IC_SUPPORT_FAHM — same curve
+  into 0x1c38/0x1c78/0x1c7c/0x1cb8 + CRC32-check/denominator on 0x994). → 7487 -> **7515**.
+- Computed-value milestone: the NHM/FAHM thresholds derive from the live IGI (0xc50 read each),
+  `th[0] = (igi-CCA_CAP)<<1`, `th[i] = th[0] + (2*i)<<1` ([SRC] phydm_ccx.h: CCA_CAP=14,
+  IGI_2_NHM_TH(x)=x<<1). igi=0x20 -> th = {0x24,0x28,..,0x4c}; NHM and FAHM share the curve. The
+  `set_th_reg` bit-packing (BYTE_2_DWORD + odd 0x1c7c HWORD / 0x9a0 byte masks) was byte-matched.
+  Frontier #7515 = `phydm_enhance_monitor_init`/`phydm_adaptivity_init` (0x0944).
