@@ -42,7 +42,12 @@ class MT7921AUDriver:
         100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144,
         149, 153, 157, 161, 165,
     ]
-    FAKE_MAC = FakeMacSupport.SPOOFABLE
+    # Auto-ACK is non-functional here: WPS stays at ~120 EAPOL (AP retransmits) whether we
+    # arm a forged or the real silicon MAC, so the radio ACKs neither in our monitor path.
+    # Not NONE — the connac2 RMAC MUAR is programmable and a sibling (mt76x0u) ACKs; the
+    # whole mt76 family bar mt76x0u is broken (openwrt/mt76#839). Untried lead: the
+    # REPT_MUAR/MUAR_UPDATE MCU command we never send. UNIMPLEMENTED until that's ported.
+    FAKE_MAC = FakeMacSupport.UNIMPLEMENTED
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "MT7921AUDriver":
