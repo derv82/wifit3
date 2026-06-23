@@ -14,7 +14,7 @@ hops report "divergent" because the 2 s PHYDM watchdog fires BETWEEN scan-tunes 
 0xf50/0xfcc.. FA-counters is a watchdog tick, not a tune), and this single-cursor replay doesn't
 interleave it. So the abg window = set_channel tunes + watchdog ticks, both already verified
 elsewhere; nothing in it is an un-accounted driver op. Reproducing it fully would just mean
-interleaving dm_watchdog at the capture's firing cadence (a timing chore, not a faithfulness gap).
+interleaving dm_watchdog at the capture's firing cadence (a timing chore, not a divergence).
 
 Run: uv run python scripts/rtl8822bu_dkms/verify_abg_hop.py
 """

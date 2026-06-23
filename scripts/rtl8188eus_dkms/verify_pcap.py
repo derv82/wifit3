@@ -11,7 +11,7 @@ phydm chips need. Every op the card emitted has exactly one honest fate:
                     bulk-OUT frames + its RA TX-report-timing writes). A waiver is reported,
                     never a silent strip.
   * **unaccounted** — anything else STOPS the walk and names the op. That is the porting
-                    frontier: the next thing to make faithful. PASS ⇔ zero unaccounted.
+                    frontier: the next op to reproduce. PASS ⇔ zero unaccounted.
 
 We do not run airmon-ng / airodump-ng / iw / aireplay-ng against our port; the chip only
 sees register writes, so the *vendor-driver* writes those tools trigger are ours to
@@ -280,7 +280,7 @@ def run(cap: str | None = None) -> int:
 
     # 3) Report — fail-closed. PASS only if the whole stream is matched-or-waived.
     print(f"  operational: dispatched {len(ticks)} dynamic-check ticks "
-          f"(sreset poll + phydm watchdog, {sum(ticks)} ops byte-faithful, carried state)")
+          f"(sreset poll + phydm watchdog, {sum(ticks)} ops byte-for-byte, carried state)")
     for reason, n in w.waived.most_common():
         print(f"  waived {n:5} ops  — {reason}")
 
@@ -290,7 +290,7 @@ def run(cap: str | None = None) -> int:
                 f"=0x{fa.get('value', 0):x}" if fa["kind"] != "B" else "bulk")
         print(f"\nFRONTIER: reproduced {w.i} of {total} ops; first unaccounted op "
               f"@{w.i} = {desc} (frame {fa.get('frame')})")
-        print("  ^ the next thing to make faithful (port it, or add a named waiver).")
+        print("  ^ the next op to reproduce (port it, or add a named waiver).")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {total} ops — every op matched or explicitly waived.")

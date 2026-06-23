@@ -157,7 +157,7 @@ def _iqk_gate(ops) -> bool:
     opens IQK (and the only read of that reg in the boot). The full 3-iteration calibration,
     the similarity-compare candidate pick, ``fill_iqk_matrix_a``, and the recovery snapshot
     must replay byte-for-byte: every correction write is computed from the recorded
-    measurement-reads the replay serves, so a PASS proves the algorithm is kernel-faithful."""
+    measurement-reads the replay serves, so a PASS proves the algorithm matches the kernel."""
     fw_writes = [i for i, o in enumerate(ops)
                  if o["kind"] == "W" and o.get("addr") == REG_FW_START_ADDRESS]
     if not fw_writes:

@@ -83,7 +83,7 @@ RULE_PATH = "/etc/udev/rules.d/60-wifit3-probe.rules"
 LEGACY_RULE_PATHS = ("/etc/udev/rules.d/70-wifit3-probe.rules",)
 DEFAULT_RESULTS = Path.cwd() / "wifit3-l1l2-results.tsv"
 
-# Fallback VID:PID snapshot, captured from `ids_from_registry()` so it is faithful to the
+# Fallback VID:PID snapshot, captured from `ids_from_registry()` so it mirrors the
 # driver registry at write time. The live registry is preferred at runtime (see
 # load_supported_ids); this only kicks in if importing wifit3 fails on a half-set-up box.
 # Not the shipping source of truth — the real udev emitter reads ids_from_registry() directly.

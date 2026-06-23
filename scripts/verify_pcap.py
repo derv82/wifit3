@@ -4,7 +4,7 @@
     uv run python scripts/verify_pcap.py --list
 
 A PASS means only that, for the given capture, the port emits the same USB bytes the
-vendor driver did -- a faithfulness gate against partial-port divergence, NOT a
+vendor driver did -- a Pcap Replay against partial-port divergence, NOT a
 correctness proof (see each chip's verify_pcap.py header).
 
 This dispatcher only ROUTES <chip> to that chip's recipe in scripts/<chip>/verify_pcap.py

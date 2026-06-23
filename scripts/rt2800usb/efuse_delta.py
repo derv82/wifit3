@@ -83,7 +83,7 @@ def open_device():
 
 
 def read_eeprom_corrected(t: RT2800USBTransport) -> bytes:
-    """Kernel-faithful read: ADDRESS_IN is the u16-word index (byte // 2).
+    """Read mirroring the kernel: ADDRESS_IN is the u16-word index (byte // 2).
     Storage block stays at the same byte offset; only the fetched fuse
     address is corrected. Mirrors the proposed fix to read_eeprom_efuse."""
     if not efuse_detect(t):
@@ -134,7 +134,7 @@ def main() -> None:
         print(f"  chip = {chip.name}  silicon=0x{chip.silicon_id:04x}  rev=0x{chip.revision:04x}\n")
 
         buggy = read_eeprom_efuse(t)        # current shipping reader (byte ADDRESS_IN)
-        corrected = read_eeprom_corrected(t)  # kernel-faithful (word ADDRESS_IN)
+        corrected = read_eeprom_corrected(t)  # mirrors kernel (word ADDRESS_IN)
 
         # Sanity: block 0 (MAC + first 16 bytes) must be identical both ways.
         same_block0 = buggy[:16] == corrected[:16]

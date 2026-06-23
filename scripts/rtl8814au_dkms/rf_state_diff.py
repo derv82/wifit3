@@ -91,12 +91,12 @@ def main() -> int:
     t.close()
     print(f"\n  checked {checked} RF registers across 4 paths; {diffs} diverged.")
     if diffs == 0:
-        print("  => RF register state is identical to the kernel's bring-up. RX RF path is faithful.")
+        print("  => RF register state is identical to the kernel's bring-up. RX RF path matches.")
     else:
         print("  NOTE: many RF registers read back a chip-computed value (PLL/RC-cal/status) that\n"
               "  differs from the LSSI-written value — e.g. writing 0x8a=0x43e50 reads back 0x42470\n"
               "  uniformly on all 4 paths, immediately after the radio table and independent of\n"
-              "  _copy_rck1. So a live-read vs capture-WRITE mismatch on these is NOT unfaithfulness:\n"
+              "  _copy_rck1. So a live-read vs capture-WRITE mismatch on these is NOT a divergence:\n"
               "  our writes match the kernel (verify_pcap), and the kernel's chip reads back the same.\n"
               "  Treat a divergence here as a lead only if the register is a static config field.")
     return 0

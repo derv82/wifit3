@@ -22,7 +22,7 @@ verified independently of that preamble.
 
 Counter (2026-06-10): the "PCI/SoC-only" reading above is falsified -- ``rt2800lib.c:731``
 writes ``AUTOWAKEUP_CFG`` *unconditionally*, above the ``is_pci`` guard (which holds only
-``AUX_CTRL``/``PWR_PIN_CFG``). So the write is kernel-faithful and gating it out would be a
+``AUX_CTRL``/``PWR_PIN_CFG``). So the write matches the kernel and gating it out would be a
 regression. The remaining open question is the wire-absence claim itself -- which this
 *anchored-block* verifier can't settle, since it never replays the preamble. A single-cursor
 full-walk would.

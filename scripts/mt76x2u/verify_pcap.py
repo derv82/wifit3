@@ -1,4 +1,4 @@
-"""verify_pcap for MT76x2U (MT7612U) — the faithfulness gate for cold-boot bring-up.
+"""verify_pcap for MT76x2U (MT7612U) — the Pcap Replay for cold-boot bring-up.
 
 Drives the driver's REAL bring-up (chips/mt76x2u/*) against an mt76-USB cold-boot capture
 via a ReplayDevice (scripts/mt76usb_pcap_replay.py): the recorded reads/MCU-responses are
@@ -20,7 +20,7 @@ Four checks, mirroring scripts/mt7921au/verify_pcap.py:
 
 CHECK A->C share ONE monotonic cursor and one McuChannel (so the MCU seq counter stays
 continuous): on a mismatch the cursor stops and the phase + byte-aligned expected-vs-got is
-printed. A RED here is a faithful result — a genuine driver<->wire divergence is left red and
+printed. A RED here is a true result — a genuine driver<->wire divergence is left red and
 localized, never patched away.
 
 Usage: uv run python scripts/mt76x2u/verify_pcap.py [<pcap>]
@@ -217,7 +217,7 @@ def check_boot(data: dict, channel: int) -> tuple[str, int]:
 
 
 # ---------------------------------------------------------------------------
-# CHECK D — TX descriptor faithfulness (both bands).
+# CHECK D — TX descriptor accuracy (both bands).
 # ---------------------------------------------------------------------------
 
 def _kernel_hdrlen(fc0: int, fc1: int) -> int:

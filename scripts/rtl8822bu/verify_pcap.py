@@ -10,7 +10,7 @@ device-layer `ReplayDev` and let the REAL transport + REAL firmware/phy/mac
 code run unchanged. Reads return the chip's recorded values; every write +
 FW bulk packet is checked against the wire; first mismatch raises Divergence.
 
-This is a faithfulness PROBE — it short-circuits at the first divergence and
+This is a Pcap Replay accuracy probe — it short-circuits at the first divergence and
 reports where. A PASS would mean the cold path is byte-identical (necessary,
 not sufficient). Fully offline.
 
@@ -94,7 +94,7 @@ def run(cap: str | None = None) -> int:
     # This mainline port omits 0x04E0 writes which appear in the diff.
     # These writes are real driver ops: the 8822B vendor USB layer
     # writes 1 byte here after each ON-section register access (addr<=0xff,
-    # 0x1000-0x10ff) [SRC os_dep/linux/usb_ops_linux.c:171-201]. A faithful
+    # 0x1000-0x10ff) [SRC os_dep/linux/usb_ops_linux.c:171-201]. A complete
     # transport must emit them, so they are NOT filtered.
     n_w = sum(o["kind"] == "W" for o in ops)
     n_r = sum(o["kind"] == "R" for o in ops)

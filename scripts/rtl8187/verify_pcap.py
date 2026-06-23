@@ -192,7 +192,7 @@ def run(cap: str | None = None) -> int:
     if frontier is not None:
         print(f"\nFRONTIER: reproduced {w.i} of {total} ops; first unaccounted op @{w.i} "
               f"= {rp.ReplayDevice._fmt(frontier)}")
-        print("  ^ the next thing to make faithful (port it, or add a named waiver).")
+        print("  ^ the next op to reproduce (port it, or add a named waiver).")
         return 1
 
     print(f"\nPASS: reproduced all {total} control ops single-cursor — probe -> init_hw -> "

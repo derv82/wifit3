@@ -1,11 +1,11 @@
 """RTL8822BU — offline CCK capture-reference: what CCK beacon rate did the VENDOR driver
 actually achieve, decoded from the cold-boot capture's bulk-IN RX stream.
 
-The decisive faithfulness check for the 2.4 GHz CCK bug: capture-1.pcap has a 15 s FIXED-CH1
+The decisive accuracy check for the 2.4 GHz CCK bug: capture-1.pcap has a 15 s FIXED-CH1
 phase (main.log: [FIXED-CH1] start -w (15s)) where the vendor driver monitored ch1 and delivered
 bulk-IN RX. We replay those bulk-IN buffers through the SAME rx_pkt_desc walk our live diagnostic
 uses (cck_diag.Tally) and report the vendor's per-AP CCK beacon capture% over that window. If the
-vendor also got ~55% on the same APs, our port is faithful and CCK starvation is hardware/monitor
+vendor also got ~55% on the same APs, our port matches and CCK starvation is hardware/monitor
 reality; if the vendor got ~95%, we have a real port gap.
 
 No hardware. tshark pulls the bulk-IN completion payloads (usb.capdata, endpoint 0x84) inside the

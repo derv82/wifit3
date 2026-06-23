@@ -11,13 +11,14 @@ the EFUSE walker) replays with zero reimplementation.
                       rt2800usb kernel driver (aireplay-ng's TX_STA_FIFO status polling from the
                       human-fired injection; bulk-OUT TX itself never enters the control stream).
   * **unaccounted** — anything else STOPS the walk and names the op. That op IS the porting
-                      frontier: the next thing to make faithful. PASS ⇔ zero unaccounted.
+                      frontier: the next op to reproduce. PASS ⇔ zero unaccounted.
 
 RULES (do not violate — this is the whole point of the gate):
   * NEVER edit this file to make it print PASS.
-  * NEVER copy logic from chips/rt2800usb/ — it is the unfaithful imitation port this clean-room
-    driver replaces (and has a CONFIRMED EFUSE word-vs-byte addressing bug). Port from the kernel
-    C in data_dumps/rt2x00-source-v6.18/ and let THIS wire confirm it.
+  * NEVER copy logic from chips/rt2800usb/ — it is the imitation port, highly inaccurate per the
+    Pcap Replay, that this clean-room driver replaces (and has a CONFIRMED EFUSE word-vs-byte
+    addressing bug). Port from the kernel C in data_dumps/rt2x00-source-v6.18/ and let THIS wire
+    confirm it.
   * The cursor only advances by reproducing the wire or by an explicit named waiver.
 
 We do not run airmon-ng / airodump-ng / iw / aireplay-ng against the port; the chip only sees
@@ -248,7 +249,7 @@ def run(cap: str | None = None) -> int:
     if frontier is not None:
         print(f"\nFRONTIER: reproduced {w.i} of {len(ops)} ops; first unaccounted op @{w.i} "
               f"= {rp.ReplayDevice._fmt(frontier)} (frame {frontier.get('frame')})")
-        print("  ^ the next thing to make faithful (port it, or add a named waiver).")
+        print("  ^ the next op to reproduce (port it, or add a named waiver).")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")

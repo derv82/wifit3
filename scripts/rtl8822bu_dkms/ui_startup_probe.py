@@ -1,6 +1,6 @@
 """Drive the REAL WifiteApp headless to time when APs first appear after START.
 
-Reproduces the user's symptom path faithfully: the full Textual event loop, every
+Reproduces the user's symptom path: the full Textual event loop, every
 UI timer (15 Hz table refresh, sort, PBC poll), the scanner DataTable render, the
 RxReaderThread call_soon_threadsafe decode-on-loop, and start_hopping @ 0.25 s.
 

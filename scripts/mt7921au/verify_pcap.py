@@ -142,7 +142,7 @@ def build_bulk_stream(pkts, dev):
 
 
 # ----------------------------------------------------------------------------
-# CHECK 1 - _dma_init register-write faithfulness
+# CHECK 1 - _dma_init register-write accuracy
 # ----------------------------------------------------------------------------
 
 class Divergence(Exception):
@@ -325,7 +325,7 @@ def check_handshake(pkts, dev):
     n_target = sum(1 for c in cids if c == 0x01)
     print(f"  {n_target} TARGET_ADDR_LEN_REQ (one per downloaded RAM region); "
           f"sequence {'OK' if ok else 'FAILED'}")
-    print(f"  [{'PASS' if ok else 'FAIL'}] every MCU command rebuilt byte-faithfully "
+    print(f"  [{'PASS' if ok else 'FAIL'}] every MCU command rebuilt byte-for-byte "
           f"and paired with its device response")
     return ok
 
@@ -592,7 +592,7 @@ def check_post_boot(pkts, dev):
 
 
 # ----------------------------------------------------------------------------
-# CHECK 4 - TX descriptor faithfulness
+# CHECK 4 - TX descriptor accuracy
 #
 # Rebuild every captured aireplay TX frame (the `-0` deauth on EP 0x09 + the
 # `--test` null frames on EP 0x04) via the driver's REAL tx.build_tx and assert
@@ -719,7 +719,7 @@ def run(cap=None):
     if failed:
         print("\n[FAIL] see divergences above")
         return 1
-    # CHECK 3 is a single-cursor walk: FRONTIER means the boot path is faithful and the
+    # CHECK 3 is a single-cursor walk: FRONTIER means the boot path is byte-for-byte and the
     # post-boot port has advanced to a named next op (not yet a full pass).
     if ok3 == "FRONTIER":
         print("\n[FRONTIER] CHECK 1+2 green; CHECK 3 advancing — see the next op above")

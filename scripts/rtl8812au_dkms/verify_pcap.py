@@ -4,7 +4,7 @@ PASS means ONLY: for this captured boot, the port emits the same USB bytes the v
 driver did. It does NOT mean the code is correct or robust (the driver may poll a loop that
 iterated once on this boot where we hardcode one write -- same bytes today, divergent
 behaviour on a colder boot). The only real pass is beacons off the antenna. This is a
-faithfulness gate, not a correctness proof.
+Pcap Replay, not a correctness proof.
 
 Rides the shared rtw88-family replay engine (`scripts/rtw88_pcap_replay`): tshark extraction
 + a transport that feeds back the chip's recorded reads (so read-modify-writes see the real

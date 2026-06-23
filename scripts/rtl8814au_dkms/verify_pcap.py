@@ -6,7 +6,7 @@ fate as the cursor advances:
 
   * matched       — the port's real handler reproduces it byte-for-byte at the cursor.
   * unaccounted   — anything else STOPS the walk and names the op: the porting frontier,
-                    the next thing to make faithful. PASS <=> zero unaccounted.
+                    the next op to reproduce. PASS <=> zero unaccounted.
 
 This capture has **no aireplay-ng injection** (every bulk-OUT is a firmware-download
 packet in frames 6145-6667), so there is **no legitimate waiver** — the whole control
@@ -204,7 +204,7 @@ def run(cap: str | None = None) -> int:
                 f"=0x{fa.get('value', 0):x}" if fa["kind"] != "B" else "bulk")
         print(f"\nFRONTIER: reproduced {w.i} of {total} ops; first unaccounted op "
               f"@{w.i} = {desc} (frame {fa.get('frame')})")
-        print("  ^ the next thing to make faithful (port it).")
+        print("  ^ the next op to reproduce (port it).")
         return 1
 
     print(f"\nPASS: reproduced all {w.i} of {total} ops single-cursor — entire cold-boot "

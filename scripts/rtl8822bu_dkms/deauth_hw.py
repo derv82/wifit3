@@ -3,7 +3,7 @@
 Drives the DKMS driver DIRECTLY (like ``test_hw.py``), since the port is intentionally not the
 manager default (opt in with ``WIFIT3_RTL8822=dkms``). Brings the card up, tunes to the target AP's
 channel, injects the classic bidirectional deauth (spoof-AP -> client and spoof-client -> AP) via
-``driver.inject_frame`` (the byte-faithful ``build_inject_txdesc`` descriptor), then LISTENS for the
+``driver.inject_frame`` (the byte-for-byte ``build_inject_txdesc`` descriptor), then LISTENS for the
 reconnect 4-way handshake — counting EAPOL M1/M3 (AP->client, FromDS) vs M2/M4 (client->AP, ToDS).
 This is the live gate for TX: does the card actually emit a deauth that drops a client, and does
 always-monitor RX hear the resulting handshake?

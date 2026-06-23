@@ -13,7 +13,7 @@ the EFUSE walker) replays with zero reimplementation.
                       enters the control op stream, so it needs no waiver here; a waiver slot
                       is kept for any aireplay-*triggered* control op the agent identifies).
   * **unaccounted** — anything else STOPS the walk and names the op. That op IS the porting
-                      frontier: the next thing to make faithful. PASS ⇔ zero unaccounted.
+                      frontier: the next op to reproduce. PASS ⇔ zero unaccounted.
 
 RULES (do not violate — this is the whole point of the gate):
   * NEVER edit this file to make it print PASS. A prior rt2800usb gate was whittled down to a
@@ -243,7 +243,7 @@ def run(cap: str | None = None) -> int:
     if frontier is not None:
         print(f"\nFRONTIER: reproduced {w.i} of {len(ops)} ops; first unaccounted op @{w.i} "
               f"= {rp.ReplayDevice._fmt(frontier)} (frame {frontier.get('frame')})")
-        print("  ^ the next thing to make faithful (port it, or add a named waiver).")
+        print("  ^ the next op to reproduce (port it, or add a named waiver).")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")

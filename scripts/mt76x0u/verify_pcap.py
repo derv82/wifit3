@@ -1,4 +1,4 @@
-"""verify_pcap for MT76x0U (MT7610U) — the faithfulness gate for cold-boot bring-up.
+"""verify_pcap for MT76x0U (MT7610U) — the Pcap Replay for cold-boot bring-up.
 
 Drives the driver's REAL bring-up (chips/mt76x0u/*) against an mt76-USB cold-boot capture
 via the SHARED ReplayDevice (scripts/mt76usb_pcap_replay.py — same 0x06/0x07 codec as
@@ -20,7 +20,7 @@ Checks, mirroring the mt7921au / mt76x2u templates:
   CHECK D   — TX inject (2.4 GHz): every aireplay TX frame on EP 0x07 (AC_VO), rebuilt via
               tx.build_inject_packet and asserted byte-for-byte.
 
-A RED here is a faithful result: a genuine driver-vs-wire divergence is localized and left
+A RED here is a true result: a genuine driver-vs-wire divergence is localized and left
 red per the gate mandate, never patched away.
 
 Usage: uv run python scripts/mt76x0u/verify_pcap.py [<pcap>]
@@ -132,7 +132,7 @@ def check_boot(data: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# CHECK D — TX descriptor faithfulness (2.4 GHz inject only).
+# CHECK D — TX descriptor accuracy (2.4 GHz inject only).
 # ---------------------------------------------------------------------------
 
 def check_tx(data: dict) -> str:

@@ -142,7 +142,7 @@ def _rxstats(t, channel, dwell, rcr):
     if acc["good"]:
         print("  => GOOD frames present: the decode/CRC is fine; iter_frames should yield these.")
     elif acc["crc_err"] or acc["icv_err"]:
-        print("  => all crc/icv-err: BB demods but bits are corrupt -> RF/BB cal faithfulness.")
+        print("  => all crc/icv-err: BB demods but bits are corrupt -> RF/BB cal accuracy.")
     else:
         print("  => no good frames and no crc/icv: walk likely mis-aligned -> decode bug, not CRC.")
 
@@ -187,7 +187,7 @@ def _watch(t, channels, dwell: float, prev_ch, igi=None, rcr=None, watchdog=Fals
     total = 0
     igis = ([None] if not igi
             else [0x1C, 0x24, 0x2C, 0x34, 0x3C, 0x44] if igi == "sweep" else [int(igi, 0)])
-    mac.enable_monitor(t)                          # faithful airmon monitor RX-enable (once)
+    mac.enable_monitor(t)                          # airmon monitor RX-enable (once)
     if rcr is not None:
         t.write32(0x0608, int(rcr, 0))             # diagnostic RCR override (e.g. accept CRC/ICV errors)
     wd = None
