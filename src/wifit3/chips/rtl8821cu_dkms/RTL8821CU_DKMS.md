@@ -15,10 +15,10 @@
 > pass** (the media-connect antenna switch to WiFi: set_ant_path PHASE_2G + run_coex action), then the
 > **operational phase via a single-cursor Walk + async-handler dispatch** (8814-style): the airodump
 > channel hops (`chan.set_channel`), the SW-LED blink (`led.led_blink`, the BlinkTimer producer), and
-> the **phydm dynamic-check watchdog tick** (`watchdog.tick`: sreset + USB rx-agg + false-alarm
-> counters + DIG + CCK-PD + adaptivity EDCCA + halrf thermal + dyn-bw; env-monitor NHM/CLM/FAHM tail
-> pending) are dispatched by their unique opener ops — 2 hops + 2 LED + 1 tick reproduced, op #8356,
-> zero divergence. Cold init is HW-validated on real silicon (FW boots). — `_halmac_init_hal` + the monitor
+> the **whole phydm dynamic-check watchdog tick** (`watchdog.tick`: sreset + USB rx-agg + false-alarm
+> counters + DIG + CCK-PD + adaptivity EDCCA + halrf thermal + dyn-bw + env-monitor NHM/CLM/FAHM) are
+> dispatched by their unique opener ops — 2 hops + 2 LED + 1 full tick reproduced, op #8392, zero
+> divergence. Cold init is HW-validated on real silicon (FW boots). — `_halmac_init_hal` + the monitor
 > RX-filter + the entire `rtl8821c_phy_init_haldm`/`odm_dm_init` (11 compiled sub-inits incl. the
 > DC-cancellation measurement calibration) + the MU-MIMO/TXBF beamforming defaults**. Cold init
 > (frames 1-7672): USB transport
@@ -41,9 +41,9 @@
 > compiled for this CE+8821C build), **`rtl8821c_phy_bf_init`** (`mac.phy_bf_init`), and the **BT-coex
 > HAL init** (`btc.hal_init` = the 1-ant `init_hw_config`: PTA/3-wire enable, ltecoex 0x1700 indirect
 > GNT setup, antenna-to-BT switch, WiFi-only coex table, the tdma/query-BT-info H2Cs via the HMEBOX
-> rotation). Frontier is op #8356 (frame 18219, `IN 0x0994`): the **env-monitor tail** of the
-> watchdog tick (`phydm_env_mntr_watchdog` — NHM/CLM/FAHM), the last member; then the BT-coex
-> periodical + the next hop. Not registered in `wlan/manager.py`.
+> rotation). Frontier is op #8392 (frame 18291, `IN 0x0770`): the **BT-coex periodical**
+> (`ex_halbtc8821c1ant_periodical` — limited_tx + scoreboard + coex table + tdma/query H2Cs), a
+> fourth async producer; then the next hop. Not registered in `wlan/manager.py`.
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
@@ -103,7 +103,7 @@
 | H2C-by-reg (HMEBOX) | `firmware.send_h2c_by_reg` | `rtw_halmac_send_h2c` hal_halmac.c:4103 | box index `t.last_hme_box` rotates mod 4, reset to 0 after each FW dl — **VERIFIED** |
 | WL activity LED | `led.cfg_wl_led` | `rtw_halmac_led_cfg(TRUE,3)` hal_halmac.c:5094 (USB `hal_init_misc` rtl8821cu_halinit.c:41) | pinmux GPIO8->WL_LED (0x4a/0x4e[5]) + SW-control mode (0x4e=0x28) — **VERIFIED** |
 | SW-LED blink (async) | `led.led_blink` / `LedBlinkState` | `SwLedBlink1` hal/led/hal_usb_led.c:112 (BlinkTimer) | no-link `LED_BLINK_SLOWLY` tick: alternate 0x4e[3] (active-low) via `pinmux_wl_led_sw_ctrl` — async producer #2 — **VERIFIED** (2 ticks) |
-| phydm watchdog (async) | `watchdog.tick` / `WatchdogState` | `rtw_dynamic_chk_wk_hdl` rtw_cmd.c:2992 -> `phydm_watchdog` phydm.c:2382 | dynamic-check tick (async producer #3): sreset + USB rx-agg + FA-counters + DIG + CCK-PD + adaptivity + halrf-thermal + dyn-bw — **VERIFIED** (front, 1 tick); env-monitor tail pending |
+| phydm watchdog (async) | `watchdog.tick` / `WatchdogState` | `rtw_dynamic_chk_wk_hdl` rtw_cmd.c:2992 -> `phydm_watchdog` phydm.c:2382 | dynamic-check tick (async producer #3): sreset + USB rx-agg + FA-counters + DIG + CCK-PD + adaptivity + halrf-thermal + dyn-bw + env-monitor NHM/CLM/FAHM — **VERIFIED** (whole tick, 1 tick) |
 | iface MAC addr | `mac.set_mac_addr` / `efuse.mac_address` | `rtw_hal_iface_init` hal_intf.c:521 -> `cfg_mac_addr_88xx` | REG_MACID 0x0610/4 + 0x0614/2 from EFUSE 0x107 (per-card, never hardcoded) — **VERIFIED** |
 | iface port-enable / RX-BAR | `mac.hw_port_enable` / `mac.enable_rx_bar` | `hw_var_hw_port_cfg` / `init_hw_mlme_ext` rtw_mlme_ext.c:1279 | BCN_CTRL 0x0550 \|= 0x1c ; RXFLTMAP1 0x06a2 \|= BIT8 — **VERIFIED** |
 | channel tune (RF/BB) | `chan.set_channel` / `_need_switch_band` | `rtl8821c_switch_chnl_and_set_bw` rtl8821c_phy.c:740 ; `need_switch_band` :477 | 2.4G ch1 + same-band hop ch10: band switch (coex notify + phydm band) only on band change, then switch_channel/switch_bandwidth (20 MHz) + kfree — **VERIFIED** |
@@ -216,11 +216,19 @@
   0x42[17:16]=3 -> 0x2908 read + 0x0c90 LSSI) + `phydm_dyn_bw_indication` (0x840 bw-fixed). Silent
   members (#if'd out / software / no-link): noisy-detection, ra-info, cfo-tracking, primary-cca,
   enhance-mntr, hwsetting_8821c (empty), receiver_blocking. Carried state lives in `WatchdogState`.
-- **Frontier (next milestone): op #8356 (frame 18219): `IN 0x0994` — `phydm_env_mntr_watchdog`**
-  (NHM/CLM/FAHM, the watchdog tick's last member): 0x994 trigger/option RMWs, 0x990 period, 0x0c50
-  IGI re-read for the NHM/FAHM threshold curve, 0x0fb4/0x0fa4 ready polls, 0x1f80-0x1f98 FAHM report,
-  0x1cf8 FAHM. Then the **BT-coex periodical** (0x770/0x76e + limited_tx + scoreboard 0xaa + coex
-  table + tdma/query H2Cs, ~8392-8412) and the next hop. Live TX stays the user's.
+- **The env-monitor (`watchdog._env_mntr`) is GREEN @ 8392 — the whole watchdog tick is complete.**
+  `phydm_env_mntr_watchdog`: NHM get/set, CLM get/set, NHM trigger, CLM trigger, then FAHM (get/set/
+  trigger). At monitor idle with IGI steady (0x20) the threshold curves are suppressed (carried
+  `nhm_igi`/`fahm_igi` already equal the live IGI) and CLM period is suppressed (init set 0xffff); the
+  only real changes are the NHM period (0x990 -> 0xfffe) + FAHM period (0x1cf8 -> 0xfffe, first tick)
+  and the trigger-bit chain on 0x994 (`...18 -> 1a NHM -> 1b CLM -> 3b FAHM-incl -> 3f FAHM-trig`).
+  NHM/CLM are not-ready (one ready poll each, no report read); FAHM is ready (denom + 6 report dwords).
+  Period/include writes are first-tick-only (carried in `WatchdogState`), so later ticks suppress them.
+- **Frontier (next milestone): op #8392 (frame 18291): `IN 0x0770` — the BT-coex periodical**
+  (`ex_halbtc8821c1ant_periodical`, a fourth async producer): the 0x770/0x774/0x76e block + a
+  `run_coex` (`limited_tx` reads, scoreboard 0xaa, coex table) + tdma/query H2Cs (~8392-8412), then
+  the next channel hop. Reuses the existing `btc.py` run_coex/limited_tx/table/tdma primitives. Live
+  TX stays the user's.
 - `_drv_enable_trx` (between init_mac_flow and general-info) is RX/thread-side only — a gate no-op.
 - **PHYDM discriminators are transformed, not the hal->* values** (the AGC walker forced this out):
   `dm->rfe_type = rfe_type_expand >> 3` (0x22 -> 4) and `dm->package_type = 1` for the 0x2x combo
@@ -735,3 +743,20 @@
   DBG_RX_COUNTER_DUMP off, edcca_mode NORMAL, CCK-PD type2, NHM/CLM/FAHM on, IFS_CLM off.
 - Frontier #8356 = `phydm_env_mntr_watchdog` (NHM/CLM/FAHM), the tick's last member — then the BT-coex
   periodical + the next hop.
+
+## Port log — 2026-06-23 (phydm env-monitor: whole watchdog tick GREEN @ 8392)
+
+- `watchdog._env_mntr` ports `phydm_env_mntr_watchdog` (NHM + CLM + FAHM) [SRC] phydm_ccx.c:2338,
+  completing the watchdog tick. Order: NHM get/set, CLM get/set, NHM trigger, CLM trigger, FAHM
+  (get/set/trigger). A second general-purpose subagent spec'd it from source (every op attributed,
+  both non-identity RMWs + the trigger chain arithmetically verified); the gate confirmed byte-exact.
+  -> 8356 -> **8392, zero divergence — the whole phydm dynamic-check tick reproduces**.
+- The crux (carried state in `WatchdogState`): with IGI steady at 0x20 the NHM/FAHM threshold curves
+  are suppressed (`*_igi == igi_curr` -> `th_update_chk` false), and CLM period is suppressed (init
+  set 0xffff). So the only real writes are the NHM period (0x990 -> 0xfffe) + FAHM period (0x1cf8 ->
+  0xfffe), both first-tick-only, and the 0x994 trigger-bit chain `18->1a->1b->3b->3f`. `pdm_set_reg`
+  is a masked RMW, so most 0x994 touches are identity reads/writes. NHM/CLM not-ready (ready poll
+  only); FAHM ready (denom + 6 report dwords). The period/include first-tick flags make later ticks
+  suppress those writes.
+- Frontier #8392 = the BT-coex periodical (`ex_halbtc8821c1ant_periodical`), a 4th async producer
+  reusing the existing btc.py primitives — the next milestone.

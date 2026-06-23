@@ -83,6 +83,17 @@ _RF_T_METER_TRIG = 0x3
 # --- dyn-bw indication (bw-fixed) [SRC] phydm_api.c:800 ----------------------
 _REG_BW_FIXED = 0x0840          # [3:0]=pri-ch (20 MHz->0) ; BIT4 = bw-fixed enable
 
+# --- env-monitor NHM/CLM/FAHM [SRC] phydm_ccx.c:2338 phydm_env_mntr_watchdog -
+_REG_CCX_CTRL = 0x0994          # [0]=CLM trig [1]=NHM trig [2]=FAHM trig [11:8]=NHM incl [31:16]=th9/10
+_REG_CCX_PERIOD = 0x0990        # [31:16]=NHM period [15:0]=CLM period
+_REG_NHM_RDY = 0x0FB4           # NHM ready BIT16 (+ duration [15:0])
+_REG_NHM_RPT = (0x0FA8, 0x0FAC, 0x0FB0)     # NHM report words (read when ready)
+_REG_CLM_RDY = 0x0FA4           # CLM ready BIT16 (+ result [15:0])
+_REG_FAHM_RDY = 0x1F98          # FAHM ready BIT31 (+ denom [15:0])
+_REG_FAHM_RPT = 0x1F80          # FAHM report base (6 dwords)
+_REG_FAHM_CTRL = 0x1CF8         # FAHM period [23:8]
+_NHM_PERIOD_MAX, _CLM_PERIOD_MAX = 0xFFFE, 0xFFFF        # [SRC] phydm_ccx.h:43/45
+
 
 @dataclass
 class WatchdogState:
@@ -95,6 +106,15 @@ class WatchdogState:
     aaa_default: int = 0x0F             # _cck_pd_init: 0xAAA[4:0]
     first_tick: bool = True             # crc32-cnt2-rate writes fire only while *_rate_idx==0
     tm_trigger: bool = False            # halrf: init 0 -> first tick arms the thermal meter
+    # env-monitor carried state (seeded from phydm_env_monitor_init); IGI 0x20 so the th curves
+    # already match -> th writes suppressed. period/include fire on the first tick then suppress.
+    nhm_igi: int = 0x20
+    fahm_igi: int = 0x20
+    nhm_period: int = 0                 # init leaves NHM/FAHM period 0; CLM period 0xffff
+    fahm_period: int = 0
+    clm_period: int = _CLM_PERIOD_MAX
+    nhm_include_set: bool = False       # include fields at *_INIT sentinel until the first set
+    fahm_include_set: bool = False
 
 
 # ======================================================================
@@ -229,10 +249,67 @@ def _dyn_bw_indication(t) -> None:
     set_bb_reg(t, _REG_BW_FIXED, 1 << 4, 0x1)
 
 
+def _ccx_get_result(t, st: WatchdogState, trig_bit: int, rdy_reg: int,
+                    rpt_regs: tuple[int, ...]) -> None:
+    """phydm_{nhm,clm}_get_result [SRC] phydm_ccx.c:993/1960 — clear the trigger bit, poll the
+    ready flag (BIT16), and read the report words only when ready (no-link monitor: not ready, so
+    only the clear RMW + the ready poll hit the wire)."""
+    set_bb_reg(t, _REG_CCX_CTRL, trig_bit, 0)
+    if t.read32(rdy_reg) & (1 << 16):
+        for r in rpt_regs:
+            t.read32(r)
+        t.read32(rdy_reg)                               # duration/result re-read when ready
+
+
+def _ccx_trigger(t, trig_bit: int) -> None:
+    """phydm_{nhm,clm,fahm}_trigger [SRC] phydm_ccx.c:820/1884/98 — clear then set the trigger bit."""
+    set_bb_reg(t, _REG_CCX_CTRL, trig_bit, 0)
+    set_bb_reg(t, _REG_CCX_CTRL, trig_bit, 1)
+
+
+def _env_mntr(t, st: WatchdogState) -> None:
+    """phydm_env_mntr_watchdog [SRC] phydm_ccx.c:2338 — the NHM/CLM/FAHM measurement engines, in
+    order NHM-get/set, CLM-get/set, NHM-trig, CLM-trig, then FAHM (get/set/trig). At monitor idle
+    with the IGI unchanged the period/include SETs fire once (first tick) and the threshold curves
+    are suppressed (carried *_igi already equals the live IGI); only the trigger bit flips repeat."""
+    # NHM get + mntr_set
+    _ccx_get_result(t, st, 1 << 1, _REG_NHM_RDY, _REG_NHM_RPT)
+    if not st.nhm_include_set:
+        set_bb_reg(t, _REG_CCX_CTRL, 0xF00, 0x1)        # CNT_ALL + ccx-enable (identity)
+        st.nhm_include_set = True
+    if st.nhm_period != _NHM_PERIOD_MAX:
+        set_bb_reg(t, _REG_CCX_PERIOD, 0xFFFF0000, _NHM_PERIOD_MAX)
+        st.nhm_period = _NHM_PERIOD_MAX
+    igi = t.read32(_REG_IGI_A) & 0x7F                    # nhm th_update_chk
+    if igi != st.nhm_igi:
+        st.nhm_igi = igi                                # th-curve writes — unexercised (IGI steady)
+    # CLM get + mntr_set (period already 0xffff from init -> suppressed)
+    _ccx_get_result(t, st, 1 << 0, _REG_CLM_RDY, ())
+    if st.clm_period != _CLM_PERIOD_MAX:
+        set_bb_reg(t, _REG_CCX_PERIOD, 0x0000FFFF, _CLM_PERIOD_MAX)
+        st.clm_period = _CLM_PERIOD_MAX
+    _ccx_trigger(t, 1 << 1)                             # NHM trigger
+    _ccx_trigger(t, 1 << 0)                             # CLM trigger
+    # FAHM get + mntr_set + trig (FAHM is ready in the capture -> denom + 6 report dwords read)
+    if t.read32(_REG_FAHM_RDY) & (1 << 31):
+        t.read32(_REG_FAHM_RDY)                         # denominator [15:0]
+        for i in range(6):
+            t.read32(_REG_FAHM_RPT + i * 4)
+    if not st.fahm_include_set:
+        set_bb_reg(t, _REG_CCX_CTRL, 0xE0, 0x1)         # INCLUDE_FA
+        st.fahm_include_set = True
+    if st.fahm_period != _NHM_PERIOD_MAX:
+        set_bb_reg(t, _REG_FAHM_CTRL, 0xFFFF00, _NHM_PERIOD_MAX)
+        st.fahm_period = _NHM_PERIOD_MAX
+    igi = t.read32(_REG_IGI_A) & 0x7F                    # fahm th_update_chk
+    if igi != st.fahm_igi:
+        st.fahm_igi = igi
+    _ccx_trigger(t, 1 << 2)                             # FAHM trigger
+
+
 def tick(t, st: WatchdogState) -> None:
-    """One dynamic-check watchdog tick, in wire order, through the dyn-bw member. The env-monitor
-    (NHM/CLM/FAHM) tail is a follow-on milestone. ``phydm_noisy_detection`` / ``phydm_dig`` (no
-    change) / ``phydm_ra_info_watchdog`` / ``phydm_cfo_tracking`` are software-silent here."""
+    """One dynamic-check watchdog tick, in wire order. ``phydm_noisy_detection`` / ``phydm_dig``
+    (no change) / ``phydm_ra_info_watchdog`` / ``phydm_cfo_tracking`` are software-silent here."""
     _sreset_check(t)
     _usb_rx_agg(t)
     t.read32(_REG_RCR)                                   # hw_var_rcr_get (interleaved)
@@ -243,4 +320,5 @@ def tick(t, st: WatchdogState) -> None:
     _rrsr_reset(t)
     _halrf_thermal(t, st)
     _dyn_bw_indication(t)
+    _env_mntr(t, st)
     st.first_tick = False
