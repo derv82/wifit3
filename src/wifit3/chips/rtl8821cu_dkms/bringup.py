@@ -129,6 +129,14 @@ def init_hw_mlme_ext(t, info) -> None:
     chan.set_channel(t, info, 1)
 
 
+def set_monitor_mode(t, info) -> None:
+    """The airmon vif setopmode sequence after the channel tune ([SRC] hw_var_set_opmode
+    rtl8821c_ops.c:1002): set STATION net-type on the primary vif, then MONITOR (promiscuous RCR +
+    all-open RXFLTMAP) on the monitor vif — the driver-side RX-enable for monitor capture."""
+    mac.set_opmode_station(t, efuse.mac_address(info))
+    mac.set_opmode_monitor(t)
+
+
 def cold_bringup(t) -> None:
     """The cold init the driver's connect() runs, in the order the wire shows. See module
     docstring. Verified byte-for-byte by ``scripts/verify_pcap.py rtl8821cu_dkms``."""
@@ -142,3 +150,4 @@ def cold_bringup(t) -> None:
     hal_init(t, info)
     iface_init(t, info)
     init_hw_mlme_ext(t, info)
+    set_monitor_mode(t, info)

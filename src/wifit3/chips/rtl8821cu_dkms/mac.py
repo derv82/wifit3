@@ -312,6 +312,70 @@ def enable_rx_bar(t) -> None:
     t.write16(REG_RXFLTMAP1, t.read16(REG_RXFLTMAP1) | (1 << 8))
 
 
+# --- opmode / monitor-mode entry (the airmon vif setopmode after the channel tune) ---
+REG_MSR = 0x0102                # net-type (REG_CR+2); port 0 = bits [1:0]
+REG_TBTT_PROHIBIT = 0x0540
+_HW_STATE_NOLINK, _HW_STATE_STATION = 0, 2
+_TBTT_HOLD_STOP_BCN = 0x64
+_MONITOR_RCR = 0x90000001       # AAP | APP_PHYSTS | APP_FCS (radiotap monitor) [SRC] rtl8821c_ops.c:893
+_BIT_DIS_TSF_UDT = 1 << 4       # BCN_CTRL DIS_TSF_UDT [SRC] hal_com_reg.h:1548
+_BIT_EN_BCN_FUNCTION = 1 << 3
+
+
+def _set_msr(t, net_type: int) -> None:
+    """Set_MSR -> HW_VAR_MEDIA_STATUS [SRC] rtw_wlan_util.c — the port-0 net-type into MSR
+    (0x0102[1:0])."""
+    t.write8(REG_MSR, (t.read8(REG_MSR) & ~0x3) | (net_type & 0x3))
+
+
+def _stop_tx_beacon(t) -> None:
+    """StopTxBeacon [SRC] hal_com.c — pause beacon TX (FWHW_TXQ_CTRL+2[6]=0) and load the
+    stop-beacon TBTT-prohibit hold time (0x540[19:8] = 0x64)."""
+    t.write8(REG_FWHW_TXQ_CTRL + 2, t.read8(REG_FWHW_TXQ_CTRL + 2) & ~(1 << 6))
+    t.write8(REG_TBTT_PROHIBIT + 1, _TBTT_HOLD_STOP_BCN & 0xFF)
+    t.write8(REG_TBTT_PROHIBIT + 2,
+             (t.read8(REG_TBTT_PROHIBIT + 2) & 0xF0) | (_TBTT_HOLD_STOP_BCN >> 8))
+
+
+def set_opmode_station(t, mac6: bytes) -> None:
+    """hw_var_set_opmode(STATION) [SRC] rtl8821c_ops.c:1002 (non-monitor path) — re-program the
+    MAC, disable TSF update (BCN_CTRL[DIS_TSF_UDT], already set so no write), net-type STATION,
+    stop beacon TX, then BCN_CTRL = EN_BCN_FUNCTION | DIS_TSF_UDT."""
+    set_mac_addr(t, mac6)
+    if not (t.read8(REG_BCN_CTRL) & _BIT_DIS_TSF_UDT):
+        t.write8(REG_BCN_CTRL, t.read8(REG_BCN_CTRL) | _BIT_DIS_TSF_UDT)
+    _set_msr(t, _HW_STATE_STATION)
+    _stop_tx_beacon(t)
+    t.write8(REG_BCN_CTRL, _BIT_EN_BCN_FUNCTION | _BIT_DIS_TSF_UDT)
+
+
+def _config_rx_info_sniffer(t) -> None:
+    """cfg_drv_info_8821c(PHY_SNIFFER) [SRC] halmac_cfg_wmac_8821c.c:57 — 5-byte drv-info,
+    APP_PHYSTS on (RCR), sniffer-info on (0x7d4[9]), the rxdesc-len-0 workaround (0x115), then the
+    HW_VAR_RCR cache-sync read."""
+    t.write8(REG_RX_DRVINFO_SZ, 5)
+    t.write8(REG_TRXFF_BNDY + 1, (t.read8(REG_TRXFF_BNDY + 1) & 0xF0) | 0x0F)
+    t.write32(REG_RCR, t.read32(REG_RCR) | _BIT_APP_PHYSTS)
+    t.write32(REG_WMAC_OPTION_FUNCTION + 4,
+              (t.read32(REG_WMAC_OPTION_FUNCTION + 4) & ~((1 << 8) | (1 << 9))) | (1 << 9))
+    t.read32(REG_RCR)
+
+
+def set_opmode_monitor(t) -> None:
+    """hw_var_set_opmode(MONITOR) [SRC] rtl8821c_ops.c:1035 -> Set_MSR(NOLINK) + hw_var_set_monitor:
+    promiscuous RCR (AAP|APP_PHYSTS|APP_FCS), sniffer drv-info, RX_DRVINFO_SZ|0x80, and all-open
+    RXFLTMAP — the airmon monitor RX-enable."""
+    _set_msr(t, _HW_STATE_NOLINK)
+    t.read32(REG_RCR)                                       # mon->rcr backup
+    t.write32(REG_RCR, _MONITOR_RCR)
+    _config_rx_info_sniffer(t)
+    t.write8(REG_RX_DRVINFO_SZ, t.read8(REG_RX_DRVINFO_SZ) | 0x80)
+    for r in (REG_RXFLTMAP0, REG_RXFLTMAP1, REG_RXFLTMAP2):    # back up all three first,
+        t.read16(r)
+    for r in (REG_RXFLTMAP0, REG_RXFLTMAP1, REG_RXFLTMAP2):    # then open all (accept everything)
+        t.write16(r, 0xFFFF)
+
+
 # RXDMA burst [SRC] halmac_usb_88xx.c:20 enum + halmac_bit2.h
 _BIT_DMA_MODE = 1 << 1
 _BURST_CNT_SHIFT, _BURST_SIZE_SHIFT = 2, 4
