@@ -5,11 +5,13 @@
 > `usb_dumps_new2/captures_rtl8821cu/driver-source/` (vendor `rtl8821cu-5.12.0.4`) and the
 > cold-boot pcap `usb_dumps_new2/captures_rtl8821cu/capture-1.pcap`.
 
-> **Status — cold-init probe GREEN + airmon re-init through general-info GREEN.** The
-> byte-for-byte gate (`scripts/rtl8821cu_dkms/verify_pcap.py`, replaying ctrl + the FW/TX
-> bulk-OUT stream) reproduces the **whole cold-boot probe and the first ~4104 ops of the airmon
-> monitor-entry phase — 7475 ops, zero divergence — the entire `_halmac_init_hal` + the monitor
-> RX-filter**. Cold init (frames 1-7672): USB transport
+> **Status — cold-init probe GREEN + airmon re-init through the whole PHYDM DM-init + beamforming
+> GREEN.** The byte-for-byte gate (`scripts/rtl8821cu_dkms/verify_pcap.py`, replaying ctrl + the
+> FW/TX bulk-OUT stream) reproduces the **whole cold-boot probe and the airmon monitor-entry phase
+> through `rtl8821c_phy_bf_init` — 7648 ops, zero divergence — `_halmac_init_hal` + the monitor
+> RX-filter + the entire `rtl8821c_phy_init_haldm`/`odm_dm_init` (11 compiled sub-inits incl. the
+> DC-cancellation measurement calibration) + the MU-MIMO/TXBF beamforming defaults**. Cold init
+> (frames 1-7672): USB transport
 > (+ the `0x4E0` mirror), chip-detect/version, EFUSE dump + decode + BT-coex read, pre-power
 > init + card-enable + init_system_cfg, the BT-coex power-on setting, the **iDDMA firmware
 > download** (the 138 KB blob byte-matched vs bulk-OUT), `init_mac_flow` (queue/page/H2C/
@@ -23,9 +25,13 @@
 > the **1600-row AGC table + 390-row BTG AGC-diff**, then **set_crystal_cap + rCCK0**, the
 > **2712-row RF radio-A table** (LSSI `write_rf`, `rf.py`), the **POST-setting**, and
 > **`init_interface_cfg`** (USB RXDMA burst), and **`hal_init_misc`** — the driver-level monitor
-> RX-filter (RXFLTMAP all-mgmt/all-data + RCR + MAC-sec + RX-TSF filter), i.e. **the whole
-> `rtl8821c_hal_init` through the RX-enabling step is byte-matched**. Frontier is op #7475 (frame
-> 15901), `rtl8821c_phy_init_haldm` (phydm DIG/DM init). Not registered in `wlan/manager.py`.
+> RX-filter (RXFLTMAP all-mgmt/all-data + RCR + MAC-sec + RX-TSF filter). Then the **whole PHYDM
+> `odm_dm_init`** (`dm.py`: common-info / dig / cck-pd / env-monitor NHM-CLM-FAHM / adaptivity /
+> ra-info / cfo-track / rf-init / **dc-cancellation** / la-init / psd-init — only the sub-inits
+> compiled for this CE+8821C build) and **`rtl8821c_phy_bf_init`** (`mac.phy_bf_init`). Frontier is
+> op #7648 (frame 16247), the **BT-coex HAL init** (`rtw_btcoex_HAL_Initialize`, combo card) — a new
+> large subsystem (ltecoex 0x1700 indirect block + coex tables + RF reads). Not registered in
+> `wlan/manager.py`.
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
@@ -119,10 +125,18 @@
   (`rtw_btcoex_HAL_Initialize`, combo card) and/or `rtw_hal_set_default_port_id_cmd`, the
   `rtl8821c_hal_init` steps after `phy_bf_init`. Recorded ops: 0x00f1, 0x0550/0x0790/0x0778,
   0x0040/0x0041/0x04c6/0x0763/0x06cf (coex MAC regs), an RF 0x0 write (0x2804 read -> 0x0c90), then
-  the **0x1700/0x1703/0x1704/0x1708 ltecoex indirect-access** block (large). Trace from
-  `hal/hal_btcoex.c` + `halbtc8821c*.c`. After btcoex, `rtl8821c_hal_init` returns and the **channel
-  hops** follow (airodump set_channel via the RF/BB channel-tune path — the agent's to wire; live TX
-  stays the user's). No IQK in this window (triggered later — channel-set / watchdog).
+  the **0x1700/0x1703/0x1704/0x1708 ltecoex indirect-access** block (large). Trace
+  `rtw_btcoex_HAL_Initialize` (core/rtw_btcoex.c) -> the 8821c **1-ant** `init_hw_config`
+  (`halbtc8821c1ant.c`, same family as the already-ported `btc.power_on_setting`). Mapped structure
+  of the block (for the next session): (1) the ltecoex 0x1700 read/write pairs use the **0x1703
+  poll + 0x1704 write / 0x1708 read** indirect protocol (same as the FW-dl `ltecoex_reg_*`);
+  (2) coex scoreboard/tables 0x00aa/0x06c0-0x06cc, ant-switch 0x0cb4/0x0cb7, 0x0067; (3) a coex
+  BB/MAC table burst (0x0610/0x0614, 0x06a2 RXFLTMAP1, 0x0430/0x0434/0x042a/0x0455, 0x0454, 0x0a80,
+  0x0814, 0x1080, 0x0a84); (4) an **RF read under stopped-TRX** (reuses `dm.py`'s
+  `_set_bb_dbg_port`/`_stop_ic_trx`/`_stop_3_wire` primitives + 0x0c90 RF writes @ ~7793-7822);
+  (5) AGC re-cache 0x0860/0x0a24/0x0a28/0x0aac. After btcoex, `rtl8821c_hal_init` returns and the
+  **channel hops** follow (airodump set_channel via the RF/BB channel-tune path — the agent's to
+  wire; live TX stays the user's). No IQK in this window (triggered later — channel-set / watchdog).
   **Scope:** `odm_dm_init` ([SRC] phydm.c:1786, via hal_dm.c:1601) calls ~35 sub-inits. The
   **compiled-for-this-build** (CE + `CONFIG_RTL8821C` only; all other `RTLxxxx_SUPPORT`=0) set,
   in wire order, is: `common_info_self_init`, `rx_phy_status_init` (sw), `dig_init`, `cck_pd_init`,
