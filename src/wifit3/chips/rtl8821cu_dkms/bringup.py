@@ -105,6 +105,9 @@ def hal_init(t, info) -> None:
     dm.phy_init_haldm(t, info)
     # rtl8821c_hal_init tail after phy_init_haldm: beamforming MU-MIMO/TXBF defaults.
     mac.phy_bf_init(t)
+    # rtl8821c_hal_init tail: BT-coex HAL init (combo card -> rtw_btcoex_HAL_Initialize).
+    if info.bt_coexist:
+        btc.hal_init(t, info)
 
 
 def cold_bringup(t) -> None:

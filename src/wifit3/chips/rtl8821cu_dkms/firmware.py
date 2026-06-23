@@ -330,6 +330,21 @@ def download_fw(t, info, full: bool = False, rsvd_boundary: int = 0) -> None:
     """[SRC] download_fw hal_halmac.c:3350 — drain TX FIFO, then download firmware."""
     _txfifo_wait_empty(t)
     download_firmware(t, info, full, rsvd_boundary)
+    t.last_hme_box = 0                              # rtw_halmac_dlfw reset [SRC] hal_halmac.c:3405
+
+
+def send_h2c_by_reg(t, h2c: bytes) -> None:
+    """rtw_halmac_send_h2c [SRC] hal_halmac.c:4103 — push an (up to 8-byte) H2C through the next
+    HMEBOX (hal->LastHMEBoxNum, rotated mod 4 and reset to 0 after each FW download): poll the
+    box free in HMETFR, write the ext box (bytes 4-7) then the main box (bytes 0-3, the write
+    that triggers the FW read), and advance the box index."""
+    box = t.last_hme_box
+    if t.read8(REG_HMETFR) & (1 << box):            # _is_fw_read_cmd_down: box must be free
+        raise RuntimeError(f"RTL8821CU: H2C box{box} not free")
+    h2c = bytes(h2c).ljust(8, b"\x00")
+    t.write32(REG_HMEBOX_E0 + box * 4, int.from_bytes(h2c[4:8], "little"))
+    t.write32(REG_HMEBOX0 + box * 4, int.from_bytes(h2c[0:4], "little"))
+    t.last_hme_box = (box + 1) % 4
 
 
 def _h2c_header(buf: bytearray, sub_cmd: int, content_size: int, seq: int) -> None:
@@ -375,10 +390,7 @@ def _send_general_info_by_reg(t, info) -> None:
     _set_field(h2c, 0, 24, 8, info.chip_ver)        # CUT_VERSION (phydm)
     _set_field(h2c, 4, 0, 4, _BB_PATH_A)            # RX_ANT_STATUS
     _set_field(h2c, 4, 4, 4, _BB_PATH_A)            # TX_ANT_STATUS
-    if t.read8(REG_HMETFR) & (1 << 0):              # _is_fw_read_cmd_down(box0)
-        raise RuntimeError("RTL8821CU: H2C box0 not free")
-    t.write32(REG_HMEBOX_E0, int.from_bytes(h2c[4:8], "little"))
-    t.write32(REG_HMEBOX0, int.from_bytes(h2c[0:4], "little"))
+    send_h2c_by_reg(t, bytes(h2c))
 
 
 def send_general_info(t, info) -> None:

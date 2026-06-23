@@ -6,9 +6,9 @@
 > cold-boot pcap `usb_dumps_new2/captures_rtl8821cu/capture-1.pcap`.
 
 > **Status — cold-init probe GREEN + airmon re-init through the whole PHYDM DM-init + beamforming
-> GREEN.** The byte-for-byte gate (`scripts/rtl8821cu_dkms/verify_pcap.py`, replaying ctrl + the
-> FW/TX bulk-OUT stream) reproduces the **whole cold-boot probe and the airmon monitor-entry phase
-> through `rtl8821c_phy_bf_init` — 7648 ops, zero divergence — `_halmac_init_hal` + the monitor
+> + the BT-coex `init_hw_config` GREEN.** The byte-for-byte gate (`scripts/rtl8821cu_dkms/verify_pcap.py`,
+> replaying ctrl + the FW/TX bulk-OUT stream) reproduces the **whole cold-boot probe and the airmon
+> monitor-entry phase through the BT-coex HAL init — 7748 ops, zero divergence — `_halmac_init_hal` + the monitor
 > RX-filter + the entire `rtl8821c_phy_init_haldm`/`odm_dm_init` (11 compiled sub-inits incl. the
 > DC-cancellation measurement calibration) + the MU-MIMO/TXBF beamforming defaults**. Cold init
 > (frames 1-7672): USB transport
@@ -28,10 +28,11 @@
 > RX-filter (RXFLTMAP all-mgmt/all-data + RCR + MAC-sec + RX-TSF filter). Then the **whole PHYDM
 > `odm_dm_init`** (`dm.py`: common-info / dig / cck-pd / env-monitor NHM-CLM-FAHM / adaptivity /
 > ra-info / cfo-track / rf-init / **dc-cancellation** / la-init / psd-init — only the sub-inits
-> compiled for this CE+8821C build) and **`rtl8821c_phy_bf_init`** (`mac.phy_bf_init`). Frontier is
-> op #7648 (frame 16247), the **BT-coex HAL init** (`rtw_btcoex_HAL_Initialize`, combo card) — a new
-> large subsystem (ltecoex 0x1700 indirect block + coex tables + RF reads). Not registered in
-> `wlan/manager.py`.
+> compiled for this CE+8821C build), **`rtl8821c_phy_bf_init`** (`mac.phy_bf_init`), and the **BT-coex
+> HAL init** (`btc.hal_init` = the 1-ant `init_hw_config`: PTA/3-wire enable, ltecoex 0x1700 indirect
+> GNT setup, antenna-to-BT switch, WiFi-only coex table, the tdma/query-BT-info H2Cs via the HMEBOX
+> rotation). Frontier is op #7748 (frame 16447, `IN 0x004a`): the post-hal_init airmon sequence
+> (channel-tune / RFE — under investigation). Not registered in `wlan/manager.py`.
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
@@ -87,7 +88,8 @@
 | monitor entry (airmon) | `bringup.hal_init` | `rtl8821c_hal_init` halinit.c:264 | `_halmac_init_hal` + `hal_init_misc` (RX-enabled) **VERIFIED** |
 | phydm DM init | `dm.phy_init_haldm` | `rtl8821c_phy_init_haldm` rtl8821c_dm.c:174 -> `rtw_phydm_init` hal_dm.c:1594 -> `odm_dm_init` phydm.c:1786 | the whole compiled `odm_dm_init`: common-info/dig/cck-pd/env-monitor/adaptivity/ra-info/cfo-track/rf-init/**dc-cancellation**/la-init/psd-init — **VERIFIED** |
 | beamforming init | `mac.phy_bf_init` | `rtl8821c_phy_bf_init` rtl8821c_phy.c | MU-MIMO/TXBF defaults (0x14c0/0x167c/0x1680/0x42f/0x45f/0x6df/0x1c94) — **VERIFIED** |
-| BT-coex HAL init | `bringup.hal_init` (WIP) | `rtw_btcoex_HAL_Initialize` hal_btcoex.c | **(frontier)** combo-card coex init (0x1700 ltecoex / 0x042f-0x06cf) -> channel hops |
+| BT-coex HAL init | `btc.hal_init` | `halbtc8821c1ant_init_hw_config` halbtc8821c1ant.c:3739 (via `rtw_btcoex_HAL_Initialize`) | combo-card 1-ant init: PTA/3-wire enable + ltecoex 0x1700 GNT + ant-to-BT + coex table + tdma/query H2Cs — **VERIFIED**. `init_coex_dm` is empty |
+| H2C-by-reg (HMEBOX) | `firmware.send_h2c_by_reg` | `rtw_halmac_send_h2c` hal_halmac.c:4103 | box index `t.last_hme_box` rotates mod 4, reset to 0 after each FW dl — **VERIFIED** |
 
 ## Hot paths
 
@@ -118,39 +120,30 @@
 
 ## Known issues
 
-- **`odm_dm_init` / `phy_init_haldm` is COMPLETE @ 7638.** (Correction to the prior note:
-  `PHYDM_TXA_CALIBRATION` is gated to `RTL8822B_SUPPORT`=0, so `phydm_txcurrentcalibration` /
-  `phydm_get_pa_bias_offset` are NOT compiled; the 0x07cc/0x0910 ops are the LA-mode + PSD inits.)
-- **Frontier (next milestone): op #7648 (frame 16247): `IN 0x00f1/1=0x45`** — the BT-coex HAL init
-  (`rtw_btcoex_HAL_Initialize`, combo card) and/or `rtw_hal_set_default_port_id_cmd`, the
-  `rtl8821c_hal_init` steps after `phy_bf_init`. Recorded ops: 0x00f1, 0x0550/0x0790/0x0778,
-  0x0040/0x0041/0x04c6/0x0763/0x06cf (coex MAC regs), an RF 0x0 write (0x2804 read -> 0x0c90), then
-  the **0x1700/0x1703/0x1704/0x1708 ltecoex indirect-access** block (large). Trace
-  `rtw_btcoex_HAL_Initialize` (core/rtw_btcoex.c) -> the 8821c **1-ant** `init_hw_config`
-  (`halbtc8821c1ant.c`, same family as the already-ported `btc.power_on_setting`). Mapped structure
-  of the block (for the next session): (1) the ltecoex 0x1700 read/write pairs use the **0x1703
-  poll + 0x1704 write / 0x1708 read** indirect protocol (same as the FW-dl `ltecoex_reg_*`);
-  (2) coex scoreboard/tables 0x00aa/0x06c0-0x06cc, ant-switch 0x0cb4/0x0cb7, 0x0067; (3) a coex
-  BB/MAC table burst (0x0610/0x0614, 0x06a2 RXFLTMAP1, 0x0430/0x0434/0x042a/0x0455, 0x0454, 0x0a80,
-  0x0814, 0x1080, 0x0a84); (4) an **RF read under stopped-TRX** (reuses `dm.py`'s
-  `_set_bb_dbg_port`/`_stop_ic_trx`/`_stop_3_wire` primitives + 0x0c90 RF writes @ ~7793-7822);
-  (5) AGC re-cache 0x0860/0x0a24/0x0a28/0x0aac. After btcoex, `rtl8821c_hal_init` returns and the
-  **channel hops** follow (airodump set_channel via the RF/BB channel-tune path — the agent's to
-  wire; live TX stays the user's). No IQK in this window (triggered later — channel-set / watchdog).
-  **Scope:** `odm_dm_init` ([SRC] phydm.c:1786, via hal_dm.c:1601) calls ~35 sub-inits. The
-  **compiled-for-this-build** (CE + `CONFIG_RTL8821C` only; all other `RTLxxxx_SUPPORT`=0) set,
-  in wire order, is: `common_info_self_init`, `rx_phy_status_init` (sw), `dig_init`, `cck_pd_init`,
-  `env_monitor_init`, `enhance_monitor_init`, `adaptivity_init`, `ra_info_init`,
-  `rssi_monitor_init`, `cfo_tracking_init`, `rf_init`, `dc_cancellation`, `txcurrentcalibration`
-  (+`get_pa_bias_offset`). NOT compiled here: `adaptive_soml_init` (CONFIG_ADAPTIVE_SOML off),
-  `antenna_diversity_init`/`CFG_DIG_DAMPING_CHK` (antenna-div off), `PHYDM_HW_IGI`/`hwigi_init`
-  (8822C-only), `dig_cckpd_coex_init` (PHYDM_DCC_ENHANCE off), `auto_dbg_engine_init`
-  (PHYDM_AUTO_DEGBUG off). **Done so far:** `common_info_self_init` (0xa9c/0x804/0x808 reads +
-  0x19a8 soft-ML), `dig_init` (IGI 0xc50 read), `cck_pd_init` (TYPE2: 0xaaa/0xa2c reads + 0xa08/
-  0xaa8 pd-th/cs-ratio writes) — all in `dm.py`. Port one sub-init per milestone (computed values,
-  not flat tables — verify each against the gate). After this: the **channel hops** (airodump
-  set_channel via the RF/BB channel-tune path — the agent's to wire; live TX stays the user's). No
-  IQK in this window (triggered later — channel-set / watchdog).
+- **BT-coex HAL init (`init_hw_config`) is COMPLETE @ 7748.** `rtl8821c_hal_init` runs it after
+  `phy_bf_init` because the combo card reports `EEPROMBluetoothCoexist`
+  (`rtw_btcoex_HAL_Initialize(_FALSE)` -> `halbtc8821c1ant_init_hw_config(back_up, wifi_only=FALSE)`,
+  [SRC] halbtc8821c1ant.c:3739). Wire order (all in `btc.hal_init`): kt_ver read 0x00f1; PTA/3-wire
+  enables 0x0550/0x0790/0x0778/0x0040/0x0041/0x04c6/0x0763/0x06cf; `btc_set_rf_reg(RF_A,0x1,0x2,0x0)`;
+  `set_ant_path(INIT)` = ltecoex-disable + WL/BT-vs-LTE tables + GNT_BT-hi/GNT_WL-lo via the **0x1700
+  indirect protocol** (0x1703 ready-poll + 0x1700 addr-latch + 0x1704 wdata / 0x1708 rdata) + the
+  ant-to-BT switch (0x004e/0x004f/0x0cb4/0x0cb7/0x0067); `write_scbd(ACTIVE|ONOFF)` -> 0x00aa=0x8003;
+  `table(0)` -> 0x06c0-0x06cc (break/select = 0xf0ffffff/0x1b because `concurrent_rx_mode_on`=TRUE);
+  `tdma(off,8)` + `query_bt_info` -> two H2Cs (0x60 / 0x61) through the **HMEBOX rotation**
+  (`firmware.send_h2c_by_reg`, box1 then box2). `init_coex_var`/`enable_gnt_to_gpio`(dbg off) are
+  wire-silent; `init_coex_dm` is an empty function. The HMEBOX box index (`t.last_hme_box`) advances
+  mod 4 per send and resets to 0 after each FW dl — that is why both general-infos are box0.
+- **Frontier (next milestone): op #7748 (frame 16447): `IN 0x004a`.** This is PAST `rtl8821c_hal_init`
+  (init_hw_config was its last step; `init_coex_dm` empty; `rtw_hal_set_wifi_btc_port_id_cmd` is an
+  H2C, not a 0x4a read). It is the post-hal_init airmon sequence — likely the **channel set**
+  (airodump tune): a coex/MAC burst (0x004a/0x004e ant-switch, 0x0610/0x0614, 0x06a2 RXFLTMAP1,
+  0x0430/0x0434/0x042a/0x0455/0x0454/0x0a80/0x0814/0x1080/0x0a84), then a phydm **RF-read-under-
+  stopped-TRX** block (~7793-7822 / 7888-7917 — reuses `dm.py`'s `_set_bb_dbg_port` / `_stop_3_wire`
+  / `_stop_ck320` + 0x0c90 RF writes), an **AGC re-cache** (0x0860/0x0a24/0x0a28/0x0aac), then RF
+  channel registers (0x2954/0x2994 reads -> 0x0c90 writes @ ~7860-7875). Identify op #7748's function
+  from `core/`/`rtl8821c_phy.c` (set_channel / set_chnl_bw path) before porting — the agent wires the
+  channel-tune; **live TX stays the user's**. No IQK in this window (triggered later — channel-set /
+  watchdog).
 - `_drv_enable_trx` (between init_mac_flow and general-info) is RX/thread-side only — a gate no-op.
 - **PHYDM discriminators are transformed, not the hal->* values** (the AGC walker forced this out):
   `dm->rfe_type = rfe_type_expand >> 3` (0x22 -> 4) and `dm->package_type = 1` for the 0x2x combo
@@ -463,3 +456,26 @@
   default (0x167c=0x70), WMAC MU-BF ctl 0 (0x1680), NDPA-from-0x45f (0x42f[6]), NDPA opt OFDM-6M/
   BW20 (0x45f=0x10), STA2 CSI rate 6M (0x6df), grouping bitmap (0x1c94=0xafffafff). -> 7638 -> **7648**.
 - Frontier #7648 = BT-coex HAL init / port-id H2C (0x00f1 + the 0x1700 ltecoex block).
+
+## Port log — 2026-06-22 (BT-coex init_hw_config GREEN @ 7748)
+
+- `btc.hal_init` ports the whole 1-ant `halbtc8821c1ant_init_hw_config(back_up, wifi_only=FALSE)`
+  ([SRC] halbtc8821c1ant.c:3739), the `rtl8821c_hal_init` step after `phy_bf_init` (combo card).
+  New helpers in `btc.py`: the 0x1700 LTE-coex indirect-access protocol (`_read_indirect` /
+  `_write_indirect` / `_wait_indirect_ready` — 0x1703 ready-poll, 0x1700 addr-latch, 0x1704 wdata,
+  0x1708 rdata), `_ltecoex_enable`, `_set_gnt_bt` / `_set_gnt_wl`, the real
+  `halbtc8821c1ant_set_ant_switch` (all ctrl arms; BBSW/TO_BT gate-verified), `_write_scbd` (0xaa
+  scoreboard with the driver-tracked 0x8002 seed), `_table` (concurrent_rx picks 0xf0ffffff/0x1b),
+  `_tdma`, `_query_bt_info`. `rtw_hal_set_default_port_id_cmd(0)` before it early-returns (dft id/mac
+  already 0); `init_coex_var`/`enable_gnt_to_gpio` are wire-silent; `init_coex_dm` is empty. -> 7648
+  -> **7748, zero divergence**.
+- The two btc H2Cs (tdma 0x60, query 0x61) and the cold/airmon general-infos all go through
+  `rtw_halmac_send_h2c`'s HMEBOX rotation. Generalized that into `firmware.send_h2c_by_reg` and added
+  `t.last_hme_box` (the `hal->LastHMEBoxNum` mirror): it advances mod 4 per send and resets to 0 after
+  each FW download ([SRC] hal_halmac.c:3405/4128), so general-info=box0, tdma=box1, query=box2.
+  `_send_general_info_by_reg` now calls the shared helper (still box0, still green).
+- Trap the gate confirmed: `concurrent_rx_mode_on` is set TRUE in the `else` arm *before* `table(0)`,
+  so the init coex table's break/select (0xf0ffffff/0x1b) differs from the power-on `_coex_table0`
+  (0x00ffffff/0x13) — same `type 0`, different computed rows. The values are state, not constants.
+- Frontier #7748 = the post-hal_init airmon sequence (`IN 0x004a` — channel set / RFE, under
+  investigation; see the Known-issues frontier bullet).

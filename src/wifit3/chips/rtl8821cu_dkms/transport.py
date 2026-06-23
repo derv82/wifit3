@@ -49,6 +49,9 @@ class Rtl8821cuTransport:
         self.dev = dev
         self._bulk_out_ep = bulk_out_ep
         self._in_ep = None  # bulk-IN (RX) endpoint, probed lazily
+        # hal->LastHMEBoxNum: the HMEBOX index rtw_halmac_send_h2c rotates through (mod 4),
+        # reset to 0 after each FW download. [SRC] hal_halmac.c:4128.
+        self.last_hme_box = 0
 
     # --- vendor control transfers (with the ON-section page-switch mirror) ---
     def _mirror(self, low_byte: int) -> None:
