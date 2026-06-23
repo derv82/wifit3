@@ -7,12 +7,14 @@ capture (all 21409 ctrl + bulk-OUT ops) byte-for-byte, so what the gate verifies
 product code path. The chip→host interrupt-IN (C2H) and bulk-IN (RX) streams are a separate blind
 spot the host-side replay does not model — see RTL8821CU_DKMS.md.
 
-Registered in ``wlan/manager.py``. The cold init is HW-validated on real silicon (FW boots, radio
-tunes — ``test_hw.py --phase init``). RX is wired (the bulk-IN ``RxReaderThread`` started before the
-monitor RX gate, the combo-card WiFi-interface claim, the ep-0x05 FW/TX pipe), and ``connect`` comes
-up clean on hardware, **but monitor RX delivers only C2H events so far — no 802.11 frames** (the
-read-back-dependent RF/tune state the offline replay can't cover; under diagnosis — see
-RTL8821CU_DKMS.md). Warm reattach and the ZeroCD / mode-switch discovery blocker are still open.
+Registered in ``wlan/manager.py``. ``connect`` claims the combo card's WiFi (vendor-class)
+interface, starts the bulk-IN ``RxReaderThread``, runs ``bringup.cold_bringup`` (FW download +
+MAC/BB/RF + BT-coex + the ch1 monitor tune over the ep-0x05 FW/TX pipe), widens the monitor RCR,
+grants the shared 1-antenna to WiFi, and runs the phydm watchdog on a background task.
+``set_channel`` and ``inject_frame`` drive the phydm tune and the TX-descriptor path. The whole
+cold-boot pcap is reproduced byte-for-byte by ``scripts/rtl8821cu_dkms/verify_pcap.py``, and cold
+init is HW-validated (FW boots). Hardware status — including the open monitor-RX bring-up — is
+tracked in RTL8821CU_DKMS.md. Warm reattach and the ZeroCD mode-switch discovery blocker are open.
 Shares no code with the other Realtek drivers by design (anti-DRY).
 """
 from __future__ import annotations
@@ -130,8 +132,8 @@ class Rtl8821cuDkmsDriver:
         self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="8821cu-dkms-rx")
         self._reader.start()
         self.info = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
-        self.transport.write32(_REG_RCR, _RCR_MONITOR)      # widen the airmon RCR to accept beacons
-        btc.force_wifi_only_antenna(self.transport)         # grant the shared 1-ant antenna to WiFi
+        self.transport.write32(_REG_RCR, _RCR_MONITOR)      # widen RCR: add accept-broadcast/mgmt
+        btc.force_wifi_only_antenna(self.transport)         # GNT the shared 1-ant to WiFi
         self._wd_state = watchdog.WatchdogState(
             eeprom_thermal=self.info.eeprom_thermal, thermal_offset=efuse.thermal_offset(self.info))
         self._watchdog_task = loop.create_task(self._watchdog_loop())

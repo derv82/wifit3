@@ -311,12 +311,12 @@ def _set_ant_path_init(t, st: BtcState) -> None:
 
 def force_wifi_only_antenna(t) -> None:
     """Force the shared 1-antenna grant to WiFi — the GNT half of ``set_ant_path(.., PHASE_WONLY)``
-    [SRC] halbtc8821c1ant.c:2637. The cold path runs ``init_hw_config(wifi_only=FALSE)`` (matching
-    the capture), so the antenna is parked for real BT coex: GNT_WL is SW-low at PHASE_INIT, then
-    HW-PTA at the media-connect PHASE_2G. In a WiFi-only userland the BT function is never
-    initialized, so the PTA never grants WiFi the shared antenna and monitor RX hears only leakage.
-    Take path control to WL and force GNT_BT low / GNT_WL high. (The antenna switch is already
-    routed TO_WLG by the media-connect pass; LTE-coex is already off from init.)"""
+    [SRC] halbtc8821c1ant.c:2637. ``cold_bringup`` runs ``init_hw_config(wifi_only=FALSE)`` (matching
+    the pcap), which leaves GNT_WL SW-low at PHASE_INIT and HW-PTA at the media-connect PHASE_2G — so
+    the grant is arbitrated by the BT-side PTA. wifit3 drives only the WiFi function (the BT function
+    is not initialized), so take path control to WL and force GNT_BT low / GNT_WL high here instead.
+    (The antenna switch is already routed TO_WLG by the media-connect pass; LTE-coex is off from
+    init.)"""
     _write_bitmask8(t, REG_COEX_CTRL_OWNER, 1 << 2, 1)   # coex_ctrl_owner(WLSIDE) [SRC] :2656
     _set_gnt_bt(t, _GNT_SW_LOW)                          # [SRC] :2659
     _set_gnt_wl(t, _GNT_SW_HIGH)                         # [SRC] :2661

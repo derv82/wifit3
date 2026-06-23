@@ -5,14 +5,13 @@
 > `usb_dumps_new2/captures_rtl8821cu/driver-source/` (vendor `rtl8821cu-5.12.0.4`) and the
 > cold-boot pcap `usb_dumps_new2/captures_rtl8821cu/capture-1.pcap`.
 
-> **Status — the byte-for-byte gate reproduces the ENTIRE cold-boot capture (all 21409 ctrl +
-> bulk-OUT ops), PASS, driving the driver's PUBLIC interface.** `verify_pcap.py` now invokes
-> `driver.connect()` (cold init + airmon), `driver.set_channel()` (the airodump/iw hops) and
-> `driver.inject_frame()` (the aireplay-ng `--test` + deauth TX — 502 frames), so what it verifies is
-> exactly the product code path, not a parallel reimplementation. The chip→host interrupt-IN (C2H,
-> ep 0x81, 360 pkts) + bulk-IN (RX) streams are the remaining blind spot (host-side replay doesn't
-> model chip responses). Not registered in `wlan/manager.py` (warm reattach + RX-reader + the ZeroCD
-> mode-switch are unresolved). Below is the per-phase detail, still valid:
+> **Status — the byte-for-byte gate reproduces the ENTIRE cold-boot pcap (all 21409 ctrl + bulk-OUT
+> ops), PASS, driving the driver's PUBLIC interface** (`driver.connect/set_channel/inject_frame`), so
+> it verifies the product code path, not a parallel reimplementation. Registered in `wlan/manager.py`;
+> cold init is HW-validated (FW boots). **Open: monitor RX delivers 0 802.11 frames on hardware** —
+> see the "HW monitor-RX bring-up" port log at the bottom. The chip→host interrupt-IN (C2H, ep 0x81,
+> 360 pkts) + bulk-IN (RX, ep 0x84) streams are not modeled by the host-side replay. Warm reattach +
+> the ZeroCD mode-switch are open. Below is the per-phase detail, still valid:
 > The gate (`scripts/rtl8821cu_dkms/verify_pcap.py`,
 > replaying ctrl + the FW/TX bulk-OUT stream) reproduces the **whole cold-boot probe and the airmon
 > monitor-entry phase through the BT-coex HAL init + the USB hal_init_misc LED + the iface-init MAC
@@ -977,35 +976,28 @@
   now verified against 502 real aireplay frames. Remaining blind spot: the chip→host interrupt-IN
   (C2H, ep 0x81) + bulk-IN (RX) streams, which the host-side replay does not model.
 
-## Port log — 2026-06-23 (HW RX bring-up: cold init works, no 802.11 frames — OPEN)
+## Port log — 2026-06-23 (HW monitor-RX bring-up: cold init works, 0 802.11 frames — OPEN)
 
-- Registered in `wlan/manager.py`; `connect()` comes up clean on real silicon (FW boots, ch1 tuned).
-  RX path wired (RxReaderThread before `cold_bringup`, combo-card WiFi-interface claim, ep-0x05 FW/TX
-  pipe). New `scripts/rtl8821cu_dkms/rx_diag.py` snapshots the live RX state + A/Bs registers.
-- **Symptom:** monitor RX delivers only the occasional C2H on bulk-IN 0x84 — **zero 802.11 frames**
-  (`beacon_watch` ch1 = 0, with a known CCK AP present). The PHY false-alarm/CCA counters move (DIG
-  adapts IGI), so the receiver processes RF *energy*, but no beacon ever reaches the RX-DMA.
-- **Ruled out** (all read back correct on HW): RF off (RF 0x00=0x37de0 on), tune (RF 0x18 ch1,
-  central_fc 0x96a), monitor filters (RXFLTMAP 0xffff×3), RX-DMA/MAC-RX enable (REG_CR 0x06ff:
-  RXDMA_EN+MACRX set), reader-start ordering (reader starts before the RX gate), warm state (a clean
-  replug is also 0), `_drv_enable_trx` ([SRC] hal_halmac.c:3543 = start threads + `rtw_intf_start`
-  URB-post only, NO register writes — replicated by the reader, hence the gate saw it as a no-op).
-- **RCR gap found + fixed (necessary, not sufficient):** the airmon capture's monitor RCR
-  `0x90000001` = AAP|APP_PHYSTS|APP_FCS only — it lacks AB (accept-broadcast) + AMF (accept-mgmt), so
-  the MAC drops beacons (broadcast mgmt). Sibling Jaguar drivers use `0x9000382f`. `connect()` now
-  widens RCR to `0x9000382f` AFTER `cold_bringup` (product path only, so the gate stays byte-for-byte).
-  This did NOT by itself restore frames — the bottleneck is upstream (no frames reach bulk-IN at all).
-- **Antenna / BT-coex GNT gap found + fixed (real, but not the blocker).** The cold path runs
-  `init_hw_config(wifi_only=FALSE)` (matching the capture), so the 1-ant grant is parked for real BT
-  coex: GNT_WL SW-low at PHASE_INIT, then HW-PTA at the media-connect PHASE_2G ([SRC] :3801 vs the
-  `wifi_only` branch's `set_ant_path(PHASE_WONLY)` → GNT_WL SW-HIGH, :2661). In a WiFi-only userland
-  the BT function is never initialized, so the PTA never grants WiFi the shared antenna. `connect()`
-  now calls `btc.force_wifi_only_antenna` after cold_bringup (coex owner WL + GNT_BT SW-low + GNT_WL
-  SW-high). **Verified it lands on HW** (ltecoex 0x38 → 0x7703 = GNT_WL SW-HIGH, 0x73=0x06 WLSIDE,
-  DPDT 0xcb4=0x...77 TO_WLG) — but monitor RX is **still 0 frames**, so the antenna grant is ruled out
-  as the blocker.
-- **Standout open clue: `cck_fa = 0` on every run.** OFDM sees energy (DIG adapts IGI) but the CCK
-  receiver detects nothing on 2.4 GHz, and the test AP beacons at 1 Mbps CCK. Next: check the CCK RX
-  enable (0x808[28]) + the CCK datapath on HW, and a full HW-vs-capture RX-chain register diff for a
-  read-back-dependent value (AGC/RX-calibration) the offline replay can't validate. RCR-widen + the
-  GNT force are correct, necessary, and kept; the remaining blocker is upstream in the RX/CCK chain.
+Wired this session (all gated on a running loop, so verify_pcap still PASSes 21409/21409):
+RxReaderThread started before `cold_bringup`; combo-card WiFi-interface claim; ep-0x05 FW/TX pipe;
+RCR widened to `0x9000382f` after cold_bringup (sibling Jaguar parity — adds the AB/AMF accept bits
+the airmon `0x90000001` lacks); `btc.force_wifi_only_antenna` (PHASE_WONLY GNT, GNT_WL SW-high);
+phydm watchdog on a 2s background task. `scripts/rtl8821cu_dkms/rx_diag.py` snapshots the live state.
+
+- **Symptom:** `beacon_watch` ch1 = 0 beacons; bulk-IN 0x84 delivers only the occasional C2H, no
+  802.11 MPDU. The PHY false-alarm/CCA counters move (DIG adapts IGI) but `cck_fa = 0` every run.
+- **Read back correct on HW** (so not a missing/wrong host→chip op): RF on (RF 0x00=0x37de0), ch1
+  tuned (RF 0x18, central_fc 0x96a), RXFLTMAP 0xffff×3, RCR widened, REG_CR 0x06ff (RXDMA_EN+MACRX),
+  **CCK enabled (0x808[28]=1)**, GNT_WL SW-high (ltecoex 0x38=0x7703, owner 0x73 WLSIDE), DPDT TO_WLG,
+  watchdog running.
+- **Ruled out as the cause** (each verified, none restored RX): reader-start ordering; warm state
+  (clean replug also 0); the RCR widen; the antenna GNT force; the watchdog; CCK-disabled (it reads
+  enabled); `_drv_enable_trx` ([SRC] hal_halmac.c:3543 = start-threads + URB-post only, no register
+  writes — the reader replicates it, hence a gate no-op).
+- **Open — cause not isolated.** The receiver is fully configured yet decodes no frames. The cause is
+  not in the verified host→chip ops, so it is in what verify_pcap does not cover (PORTING Step-6 blind
+  spots): the chip→host RX path, or a write whose value is computed from a *live* register read (the
+  gate checks such writes only against the *recorded* read — e.g. the DC-cancellation dbg-port
+  measurement). A concrete split-test: set RCR to accept CRC-error frames — frames then arriving means
+  the AP is received and demod fails; nothing means no reception. (Needs the ACRC32 bit from source.)
+  The RCR/GNT/watchdog additions are kernel/sibling-parity and kept regardless of this bug.

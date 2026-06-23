@@ -7,9 +7,8 @@ then on live silicon:
   snapshot : read back the monitor RX config (RCR / RXFLTMAP / MSR), the tune (RF 0x18 channel,
              central freq, AGC idx, IGI), and the antenna routing (DPDT) — to confirm the
              registers actually hold the monitor/WiFi state on this card.
-  fa-dwell : sample the PHY false-alarm + CCA counters over a few seconds. INCREMENTING => the
-             receiver is processing RF energy (so antenna/tune are alive; the gap is downstream
-             DMA/descriptor). FLAT => no RF reaches the PHY (antenna parked / RF off / tune off).
+  fa-dwell : sample the raw page-F counters over a few seconds — a coarse "is the BB counting"
+             probe (the masked false-alarm count the DIG uses is a subset of these raw reads).
   rx-tally : a short bulk-IN loop splitting C2H reports from 802.11 MPDUs from empty reads.
 
 Passive: no 802.11 TX. Usage (card WinUSB-bound, Wi-Fi mode 0bda:c820):
@@ -86,7 +85,11 @@ def _snapshot(t) -> None:
     led = t.read8(_REG_LED_ANT)
     cr = t.read16(0x0100)
     rxdma = t.read8(0x0286)
+    r808 = t.read32(0x0808)
+    ra04 = t.read32(0x0A04)
     print("\n[snapshot] monitor RX config + tune + antenna")
+    print(f"  0x808      0x{r808:08x}   CCK_EN[28]={r808 >> 28 & 1}  (0 => CCK receiver off)  "
+          f"0xa04=0x{ra04:08x} (cck_tx_path[31:28]={ra04 >> 28 & 0xF})")
     cr_bits = (f"HCI_RXDMA={cr >> 1 & 1} RXDMA_EN={cr >> 3 & 1} PROT={cr >> 4 & 1} "
                f"SCHED={cr >> 5 & 1} MACTX={cr >> 6 & 1} MACRX={cr >> 7 & 1}")
     print(f"  REG_CR     0x{cr:04x}       {cr_bits}  (RXDMA_EN+MACRX must be 1 for RX)")
@@ -114,8 +117,8 @@ def _fa_dwell(t, dwell: float) -> None:
         print(f"  d(ofdm_fa)={(o - o0) & 0xFFFFFFFF:>8}  d(cck_fa)={(c - c0) & 0xFFFFFFFF:>8}  "
               f"d(cca_sum)={(a - a0) & 0xFFFFFFFF:>10}")
         o0, c0, a0 = o, c, a
-    print("  ^ nonzero deltas => the receiver IS processing RF energy (issue is downstream DMA);")
-    print("    all-zero => no RF reaches the PHY (antenna parked / RF off / tune off-frequency).")
+    print("  ^ raw 32-bit reads (the masked FA the watchdog/DIG actually uses is a subset of these);")
+    print("    treat as a coarse 'is the BB counting' probe, not an FA count.")
 
 
 def _rx_tally(t, dwell: float) -> None:
@@ -187,8 +190,8 @@ def main() -> int:
         t.write32(_REG_RCR, 0x9000382F)
         print(f"  RCR now 0x{t.read32(_REG_RCR):08x}")
         _rx_tally(t, args.dwell)
-        # The 1-ant combo card parked GNT_WL low/HW_PTA (coex mode); with BT dead the PTA never
-        # grants WiFi the antenna. Force the PHASE_WONLY grant: coex owner WL + GNT_BT low + GNT_WL high.
+        # Probe: force the PHASE_WONLY antenna grant (coex owner WL + GNT_BT low + GNT_WL high),
+        # read 0x38 back to confirm it lands, and re-tally.
         print("\n[gnt force-wifi] coex_ctrl_owner(WL) + GNT_BT=SW_LOW + GNT_WL=SW_HIGH")
         before = btc._read_indirect(t, 0x38)
         btc._write_bitmask8(t, btc.REG_COEX_CTRL_OWNER, 1 << 2, 1)
