@@ -32,13 +32,6 @@ a manual **Stop PBC** button so a single timeout can't hold the radio.
 `ui/screens/channel_filter.py` — the channel list eats the height and hides the buttons.
 Shrink/scroll the list when tight, and/or a taller min-height.
 
-### 5 GHz drivers under-list DFS channels — deferred (DFS ≈ empty air)
-Every 5 GHz driver except `rtl8814au_dkms` advertises the same 9 non-DFS channels; their
-captures show `iw set channel 52/100/144` returning 0, i.e. the cards *do* tune DFS. Deferred
-on purpose — DFS is radar-shared, usually empty, and omitting it means faster hops. To add
-later: per-driver, confirm the capture tuned it + byte-verify `set_channel`, never a blind
-list edit (the truncated drivers likely never exercised the DFS tune path).
-
 ---
 
 ## Per-card — HW-verify sweep
