@@ -110,9 +110,13 @@
 
 ## Known issues
 
-- **Frontier (next milestone): op #7525 (frame 16001): `IN 0x0440/4=0x0000015d`** —
-  `phydm_ra_info_init` (or `phydm_rssi_monitor_init` / `phydm_cfo_tracking_init`), the next
-  `odm_dm_init` sub-init after adaptivity. Trace from `hal/phydm/`.
+- **Frontier (next milestone): op #7534 (frame 16019): `IN 0x0c1c/4=0x40040053`** —
+  `phydm_rf_init` (the RF/DPK/LCK-setup sub-init), after RA-info + CFO-tracking. The recorded
+  sequence reads/RMWs 0x0c1c, 0x198c, 0x08fc, 0x0fa0, 0x08f8, 0x0522/0x0520, 0x0838, 0x0a04/0x0808,
+  writes the IGI 0x0c50=0x7e, then RF radio-A LSSI writes via 0x0c90 (with 0x2bbc/0x2bb8 polls).
+  Trace from `hal/phydm/halrf/` (`halrf_rf_init` / the LCK / `phydm_rf_init`). **This is the last
+  big DM sub-init**; after it `phydm_dc_cancellation` + `phydm_txcurrentcalibration`
+  (PHYDM_TXA_CALIBRATION on) close `odm_dm_init`. Then the **channel hops**.
   **Scope:** `odm_dm_init` ([SRC] phydm.c:1786, via hal_dm.c:1601) calls ~35 sub-inits. The
   **compiled-for-this-build** (CE + `CONFIG_RTL8821C` only; all other `RTLxxxx_SUPPORT`=0) set,
   in wire order, is: `common_info_self_init`, `rx_phy_status_init` (sw), `dig_init`, `cck_pd_init`,
@@ -390,3 +394,14 @@
 - `set_forgetting_factor` / `edcca_decision_opt` are PHYDM_EDCCA_ADAPT_MODE-gated; this build's
   edcca_mode is 'normal' so both early-return — confirmed silent by the gate (no 0x8a0/0x8dc).
   Frontier #7525 = `phydm_ra_info_init` (0x0440).
+
+## Port log — 2026-06-22 (phydm ra_info_init + cfo_tracking_init GREEN @ 7534)
+
+- `dm._ra_info_init` ports `phydm_ra_info_init` ([SRC] phydm_rainfo.c): latch RRSR init (read
+  0x440) then load the ARFR fallback tables (`phydm_arfr_table_init`, 8821C is
+  PHYDM_IC_RATEID_IDX_TYPE2: rate_id 16 -> 0x494=0xfe01f015/0x498=0x40000000, rate_id 18 ->
+  0x4a4=0x003ff015/0x4a8=0x40000000). `phydm_rate_adaptive_mask_init` is software. → 7525 -> 7530.
+- `dm._cfo_tracking_init` ports `phydm_cfo_tracking_init` ([SRC] phydm_cfotracking.c): crystal-cap
+  bookkeeping is software; the only 8821C register touch is crystal-cap-control-by-WiFi (0x10[6]=1).
+  `phydm_rssi_monitor_init` before it is pure software. → 7530 -> **7534**.
+- Frontier #7534 = `phydm_rf_init` (0x0c1c) — the last big DM sub-init (RF radio-A LSSI + IGI 0x7e).

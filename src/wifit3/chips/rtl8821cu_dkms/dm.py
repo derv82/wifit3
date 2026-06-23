@@ -68,6 +68,15 @@ R_0x520 = 0x0520                   # MAC: ignore-EDCCA bit15
 R_0x524 = 0x0524                   # MAC: EDCCA count-down bit11
 _EDCCA_NOLINK_TH = 0x7F            # phydm_set_edcca_threshold(0x7f, 0x7f) resume-to-no-link
 
+# --- phydm_ra_info_init [SRC] phydm_rainfo.c --------------------------------
+R_0x440 = 0x0440                   # RRSR (rrsr_val_init read)
+# ARFR fallback tables for rate_id 16/18 (PHYDM_IC_RATEID_IDX_TYPE2) [SRC] phydm_arfr_table_init
+_ARFR_WRITES = ((0x0494, 0xFE01F015), (0x0498, 0x40000000),
+                (0x04A4, 0x003FF015), (0x04A8, 0x40000000))
+
+# --- phydm_cfo_tracking_init [SRC] phydm_cfotracking.c ----------------------
+R_0x10 = 0x0010                    # crystal-cap control-by-WiFi bit6
+
 
 def get_bb_reg(t, addr: int, mask: int) -> int:
     """odm_get_bb_reg — full-dword read masked + right-shifted to the mask's lowest set bit."""
@@ -199,6 +208,22 @@ def _adaptivity_init(t, info, st: DmState) -> None:
     set_bb_reg(t, R_0x524, 1 << 11, 1)
 
 
+def _ra_info_init(t, info, st: DmState) -> None:
+    """phydm_ra_info_init [SRC] phydm_rainfo.c — latch the RRSR init value (0x440) then load the
+    ARFR fallback tables (`phydm_arfr_table_init`, 8821C is PHYDM_IC_RATEID_IDX_TYPE2: rate_id
+    16 -> 0x494/0x498, rate_id 18 -> 0x4a4/0x4a8). `phydm_rate_adaptive_mask_init` is software."""
+    t.read32(R_0x440)
+    for addr, val in _ARFR_WRITES:
+        set_bb_reg(t, addr, _MASKDWORD, val)
+
+
+def _cfo_tracking_init(t, info, st: DmState) -> None:
+    """phydm_cfo_tracking_init [SRC] phydm_cfotracking.c — crystal-cap bookkeeping is software;
+    for 8821C the only register touch is putting crystal-cap control under WiFi (0x10[6]=1).
+    `phydm_rssi_monitor_init` before this is pure software."""
+    set_bb_reg(t, R_0x10, 0x40, 0x1)
+
+
 def phy_init_haldm(t, info) -> DmState:
     """rtl8821c_phy_init_haldm [SRC] rtl8821c_dm.c:174 -> rtw_phydm_init -> odm_dm_init. The
     8821C path of ``odm_dm_init``, wire-touching sub-inits only, in capture order. Returns the
@@ -209,4 +234,6 @@ def phy_init_haldm(t, info) -> DmState:
     _cck_pd_init(t, info, st)
     _env_monitor_init(t, info, st)
     _adaptivity_init(t, info, st)
+    _ra_info_init(t, info, st)
+    _cfo_tracking_init(t, info, st)
     return st
