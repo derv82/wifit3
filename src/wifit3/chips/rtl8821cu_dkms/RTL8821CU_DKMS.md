@@ -80,7 +80,8 @@
 | monitor RX-filter | `mac.hal_init_misc` | `rtl8821c_hal_init_misc` rtl8821c_halinit.c:203 | CAM clear + RXFLTMAP all-mgmt/data + RCR + mgmt-ack + MAC-sec + RX-TSF filter — **VERIFIED** |
 | monitor entry (airmon) | `bringup.hal_init` | `rtl8821c_hal_init` halinit.c:264 | `_halmac_init_hal` + `hal_init_misc` (RX-enabled) **VERIFIED** |
 | phydm DM init | `dm.phy_init_haldm` | `rtl8821c_phy_init_haldm` rtl8821c_dm.c:174 -> `rtw_phydm_init` hal_dm.c:1594 -> `odm_dm_init` phydm.c:1786 | the whole compiled `odm_dm_init`: common-info/dig/cck-pd/env-monitor/adaptivity/ra-info/cfo-track/rf-init/**dc-cancellation**/la-init/psd-init — **VERIFIED** |
-| beamforming init | `bringup.hal_init` (WIP) | `rtl8821c_phy_bf_init` rtl8821c_phy.c | **(frontier)** MU-MIMO/TXBF defaults (0x14c0/0x167c/0x1680/0x42f/0x45f/0x6df/0x1c94) -> then BT-coex HAL init -> channel hops |
+| beamforming init | `mac.phy_bf_init` | `rtl8821c_phy_bf_init` rtl8821c_phy.c | MU-MIMO/TXBF defaults (0x14c0/0x167c/0x1680/0x42f/0x45f/0x6df/0x1c94) — **VERIFIED** |
+| BT-coex HAL init | `bringup.hal_init` (WIP) | `rtw_btcoex_HAL_Initialize` hal_btcoex.c | **(frontier)** combo-card coex init (0x1700 ltecoex / 0x042f-0x06cf) -> channel hops |
 
 ## Hot paths
 
@@ -114,14 +115,14 @@
 - **`odm_dm_init` / `phy_init_haldm` is COMPLETE @ 7638.** (Correction to the prior note:
   `PHYDM_TXA_CALIBRATION` is gated to `RTL8822B_SUPPORT`=0, so `phydm_txcurrentcalibration` /
   `phydm_get_pa_bias_offset` are NOT compiled; the 0x07cc/0x0910 ops are the LA-mode + PSD inits.)
-- **Frontier (next milestone): op #7638 (frame 16227): `IN 0x14c0/4=0x00011000`** —
-  `rtl8821c_phy_bf_init` ([SRC] rtl8821c_phy.c, `CONFIG_BEAMFORMING` on), called from
-  `rtl8821c_hal_init` right after `phy_init_haldm`: MU-MIMO/TXBF defaults (REG_MU_TX_CTL 0x14c0,
-  REG_MU_BF_OPTION 0x167c, REG_WMAC_MU_BF_CTL 0x1680, REG_TXBF_CTRL+3 0x42f, REG_NDPA_OPT 0x45f,
-  0x6df CSI-rate, 0x1c94 grouping). **After bf_init: BT-coex HAL init** (`rtw_btcoex_HAL_Initialize`,
-  the 0x1700 ltecoex / 0x042f-0x06cf coex block — large), then `rtl8821c_hal_init` returns and the
-  **channel hops** follow (airodump set_channel via the RF/BB channel-tune path — the agent's to
-  wire; live TX stays the user's). No IQK in this window (triggered later — channel-set / watchdog).
+- **Frontier (next milestone): op #7648 (frame 16247): `IN 0x00f1/1=0x45`** — the BT-coex HAL init
+  (`rtw_btcoex_HAL_Initialize`, combo card) and/or `rtw_hal_set_default_port_id_cmd`, the
+  `rtl8821c_hal_init` steps after `phy_bf_init`. Recorded ops: 0x00f1, 0x0550/0x0790/0x0778,
+  0x0040/0x0041/0x04c6/0x0763/0x06cf (coex MAC regs), an RF 0x0 write (0x2804 read -> 0x0c90), then
+  the **0x1700/0x1703/0x1704/0x1708 ltecoex indirect-access** block (large). Trace from
+  `hal/hal_btcoex.c` + `halbtc8821c*.c`. After btcoex, `rtl8821c_hal_init` returns and the **channel
+  hops** follow (airodump set_channel via the RF/BB channel-tune path — the agent's to wire; live TX
+  stays the user's). No IQK in this window (triggered later — channel-set / watchdog).
   **Scope:** `odm_dm_init` ([SRC] phydm.c:1786, via hal_dm.c:1601) calls ~35 sub-inits. The
   **compiled-for-this-build** (CE + `CONFIG_RTL8821C` only; all other `RTLxxxx_SUPPORT`=0) set,
   in wire order, is: `common_info_self_init`, `rx_phy_status_init` (sw), `dig_init`, `cck_pd_init`,
@@ -439,3 +440,12 @@
   gated (RTL8822B-only, OFF), and `phydm_dynamic_tx_power_init` is software — so dc_cancellation was
   NOT the last sub-init; la_init (0x7cc) + psd_init (0x910) close the function. Frontier #7638 =
   `rtl8821c_phy_bf_init` (REG_MU_TX_CTL 0x14c0) — beamforming defaults, then BT-coex HAL init.
+
+## Port log — 2026-06-22 (rtl8821c_phy_bf_init GREEN @ 7648)
+
+- `mac.phy_bf_init` ports `rtl8821c_phy_bf_init` ([SRC] rtl8821c_phy.c, CONFIG_BEAMFORMING on),
+  the first `rtl8821c_hal_init` step after `phy_init_haldm`: MU retry-limit 0xA + P1-wait-state +
+  clear-EN_MU_MIMO/MU-table-valid on REG_MU_TX_CTL (0x14c0: 0x11000 -> 0x1a000), MU ack-policy
+  default (0x167c=0x70), WMAC MU-BF ctl 0 (0x1680), NDPA-from-0x45f (0x42f[6]), NDPA opt OFDM-6M/
+  BW20 (0x45f=0x10), STA2 CSI rate 6M (0x6df), grouping bitmap (0x1c94=0xafffafff). -> 7638 -> **7648**.
+- Frontier #7648 = BT-coex HAL init / port-id H2C (0x00f1 + the 0x1700 ltecoex block).

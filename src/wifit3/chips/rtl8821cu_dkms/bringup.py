@@ -103,6 +103,8 @@ def hal_init(t, info) -> None:
     # then the PHYDM dynamic-mechanism init (DIG/CCK-PD/adaptivity/...).
     mac.hal_init_misc(t)
     dm.phy_init_haldm(t, info)
+    # rtl8821c_hal_init tail after phy_init_haldm: beamforming MU-MIMO/TXBF defaults.
+    mac.phy_bf_init(t)
 
 
 def cold_bringup(t) -> None:

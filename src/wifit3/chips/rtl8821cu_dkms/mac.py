@@ -343,3 +343,38 @@ def hal_init_misc(t) -> None:
     t.write8(REG_MISC_CTRL, 0x03)                                   # disable secondary CCA 20/40M
     t.write16(REG_CR, t.read16(REG_CR) | _BIT_MAC_SEC_EN)
     t.write8(REG_NAN_RX_TSF_FILTER, _CHK_TSF_EN_CBSSID)
+
+
+# --- rtl8821c_phy_bf_init [SRC] rtl8821c_phy.c (CONFIG_BEAMFORMING) ----------
+REG_MU_TX_CTL = 0x14C0
+REG_MU_BF_OPTION = 0x167C
+REG_WMAC_MU_BF_CTL = 0x1680
+REG_TXBF_CTRL = 0x042C
+REG_NDPA_OPT_CTRL = 0x045F
+REG_STA2_CSI_RATE = 0x06DF          # STA2 CSI rate (fixed 6M)
+REG_BF_GROUPING = 0x1C94
+_BIT_MU_P1_WAIT_STATE_EN = 1 << 16  # [SRC] halmac_bit_8821c.h:11806
+_MU_RL_SHIFT, _MU_RL_MASK = 12, 0xF   # :11808-11809 BIT_*_R_MU_RL
+_BIT_EN_MU_MIMO = 1 << 7            # :11833
+_MU_TABLE_VALID_MASK = 0x3F        # :11837 (shift 0)
+_TXMU_ACKPOLICY_SHIFT = 4          # :16609 BIT_*_WMAC_TXMU_ACKPOLICY
+_BIT_TXMU_ACKPOLICY_EN = 1 << 6    # :16607
+_BIT_USE_NDPA_PARAMETER = 1 << 30  # :9233 (REG_TXBF_CTRL+3 byte = BIT(30) >> 24)
+
+
+def phy_bf_init(t) -> None:
+    """rtl8821c_phy_bf_init [SRC] rtl8821c_phy.c — MU-MIMO / TX-beamforming defaults, the first
+    `rtl8821c_hal_init` step after `phy_init_haldm`: set MU retry-limit 0xA + P1-wait-state, clear
+    EN_MU_MIMO until sounding + the MU-STA-valid table, default the MU ack-policy, take NDPA
+    rate/BW from 0x45F (OFDM-6M/BW20), fix STA2 CSI rate at 6M, and load the grouping bitmap."""
+    v32 = t.read32(REG_MU_TX_CTL) | _BIT_MU_P1_WAIT_STATE_EN
+    v32 = (v32 & ~(_MU_RL_MASK << _MU_RL_SHIFT)) | (0xA << _MU_RL_SHIFT)
+    v32 &= ~_BIT_EN_MU_MIMO
+    v32 &= ~_MU_TABLE_VALID_MASK
+    t.write32(REG_MU_TX_CTL, v32)
+    t.write8(REG_MU_BF_OPTION, (3 << _TXMU_ACKPOLICY_SHIFT) | _BIT_TXMU_ACKPOLICY_EN)
+    t.write16(REG_WMAC_MU_BF_CTL, 0)
+    t.write8(REG_TXBF_CTRL + 3, t.read8(REG_TXBF_CTRL + 3) | (_BIT_USE_NDPA_PARAMETER >> 24))
+    t.write8(REG_NDPA_OPT_CTRL, 0x10)                    # Rate=OFDM_6M, BW20
+    t.write8(REG_STA2_CSI_RATE, (t.read8(REG_STA2_CSI_RATE) & 0xC0) | 0x4)
+    t.write32(REG_BF_GROUPING, 0xAFFFAFFF)
