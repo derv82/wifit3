@@ -1,4 +1,4 @@
-"""RTL8814AU dynamic-mechanism (phydm) init seed (M3a) — vendor faithful port.
+"""RTL8814AU dynamic-mechanism (phydm) init seed (M3a) — port of the vendor stack.
 
 The hal_init tail after the channel tune: a small MISC11 block then
 `rtl8814_InitHalDm` [SRC rtl8814a_dm.c:203] = `dm_InitGPIOSetting` (USB) +

@@ -229,7 +229,7 @@ class MT76x0UDriver:
 
         # ---- M3a step 8: wait_for_mac (second time, post-FW upload).
         # Kernel does this in init_hardware:179. Already done once during M1
-        # (after chip_onoff), but the kernel re-checks here too — port faithfully.
+        # (after chip_onoff), but the kernel re-checks here too — ported as-is.
         if progress_cb:
             progress_cb(0.93, "wait_for_mac (post-FW)")
         try:

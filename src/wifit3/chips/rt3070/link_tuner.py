@@ -9,7 +9,7 @@ Two consumers:
     VGC is *always* re-written to BBP66; we model that (no stale-skip).
   * ``link_tuner`` — the periodic ~1 Hz worker. It only runs for STA/AP interfaces
     (``intf_sta_count``); a monitor-only interface never schedules it, so it emits
-    nothing in the airmon capture. Ported faithfully for a future managed-mode port.
+    nothing in the airmon capture. Ported for a future managed-mode port; no pcap exercises it.
 
 This card is 2.4 GHz only (RF3020), so ``get_default_vgc`` always takes the 2.4 GHz
 RT3070 arm: ``0x1c + 2*lna_gain``. The 5 GHz arms are ported for a future band.

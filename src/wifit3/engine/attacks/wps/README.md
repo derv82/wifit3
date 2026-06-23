@@ -234,7 +234,7 @@ truth). The fleet drives the M6 timing work.
   ([[feedback_passive_by_default]]).
 - **No real network identifiers in commits** ([[feedback_no_ssids_in_commits]]) —
   test PINs/BSSIDs from the fleet stay out of git.
-- **Root-cause, not band-aids** ([[feedback_no_bandaids_root_cause]]) — if an
+- **Root-cause, not band-aids** (PORTING.md Step 6) — if an
   exchange is flaky, diff our M-frames against a reaver/bully pcap; don't paper
   over it with retry loops.
 

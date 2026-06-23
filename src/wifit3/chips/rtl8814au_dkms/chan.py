@@ -1,4 +1,4 @@
-"""RTL8814AU channel tune (M2d/M5a) — vendor faithful port, 20 MHz primary only.
+"""RTL8814AU channel tune (M2d/M5a) — port of the vendor stack, 20 MHz primary only.
 
 Mirrors the hal_init tail [SRC usb_halinit.c:1229-1237]:
     PHY_ConfigBB_8814A           enable OFDM + CCK

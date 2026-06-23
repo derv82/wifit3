@@ -1,4 +1,4 @@
-"""RTL8188EUS runtime phydm no-link DM watchdog — vendor faithful.
+"""RTL8188EUS runtime phydm no-link DM watchdog.
 
 Ports the periodic ~2 s ``phydm_watchdog`` no-link (always-monitor) path [SRC] phydm.c:1823.
 On the wire each fire is one contiguous EP0 run (the kernel holds the IO lock across the

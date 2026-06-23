@@ -1,7 +1,7 @@
 """
 MT7921AU post-boot bring-up sequence.
 
-A faithful port of the kernel's post-firmware-boot path, in the exact order the
+A port of the kernel's post-firmware-boot path, in the exact order the
 cold-boot capture records it. The boundary with firmware.py is mt792x_load_firmware:
 firmware.load_firmware() ends at the FW_N9_RDY poll with FW_DL_EN still set; this
 module takes over at mt7921_run_firmware's tail.

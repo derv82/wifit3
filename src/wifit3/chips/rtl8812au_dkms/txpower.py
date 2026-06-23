@@ -1,4 +1,4 @@
-"""RTL8812AU per-rate TX-power level — 2-path (2T2R), vendor faithful, 2.4 GHz.
+"""RTL8812AU per-rate TX-power level — 2-path (2T2R), vendor port, 2.4 GHz.
 
 ``PHY_SetTxPowerLevel8812`` loops each path; ``phy_set_tx_power_level_by_path`` emits the
 rate sections in this order (CCK only on 2.4 GHz; the 2SS sections only because the 8812

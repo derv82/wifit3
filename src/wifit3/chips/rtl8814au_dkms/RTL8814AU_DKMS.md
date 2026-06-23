@@ -36,18 +36,18 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
         the accept-all RCR (kernel order: post URBs, then write RCR), matching `rtl8821au_dkms`.
       - **Result:** full driver path went **~3/s ranked #6–8 → 6.7/s, median 7, ranked #1**
         (beats every neighbour), zero dead seconds. The strong-AP inversion is gone. [HW]
-      - **Ruled out IN SOURCE (not via the gate):** init/tune faithful; mis-tuning (live regs =
+      - **Ruled out IN SOURCE (not via the gate):** init/tune matches the kernel; mis-tuning (live regs =
         20 MHz/ch1); IQK/LCK/pwr-track (`/*commented out*/` for 8814A); RxGainOffset /
         `phy_ModifyInitialGain` (applied only if `BackUp_IG_REG!=0`, set MP-only → no-op);
         cut hardcode 15-vs-real-1 (walking the real tables emits byte-identical writes — they
         gate on rfe only); USB mode (card + capture both **USB2**, our USB2 burst/agg path is
         correct — but the **USB3 branch is unported**, a latent gap if it ever links USB3);
-        RX aggregation mode/threshold + `_InitDriverInfoSize` (present, faithful). The
+        RX aggregation mode/threshold + `_InitDriverInfoSize` (present, matches). The
         earlier "warm-state decay" and "RX-delivery-is-the-whole-cause" theories were
         confounded by a laptop flooding ch1 (now moved to 5 GHz) — discard them.
-      - **RESIDUAL (~6.7 vs MT7921 8.1/s, same room/USB2) — NOT a faithfulness gap; chip-inherent.**
+      - **RESIDUAL (~6.7 vs MT7921 8.1/s, same room/USB2) — NOT an accuracy gap; chip-inherent.**
         A full bias-free deep-dive (trust nothing by name; ground-truth + source, not the gate) found
-        no remaining RX unfaithfulness, so the residual is the 8814A simply being a weaker CCK
+        no remaining RX divergence, so the residual is the 8814A simply being a weaker CCK
         receiver in a busy channel than the MT7921 (the 8814A kernel's own 8.7/s was on a *quiet*
         channel). What was verified — all live or in-source:
           - **Operational-tail by-register** (every periodic write the kernel makes, decoded by
@@ -56,7 +56,7 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
           - **Live state-diff, MAC (0x0-0x7ff) + every BB page (0x800-0x1bff):** byte-identical to
             the kernel modulo chip-dynamic status/echo bits (MAC `0x208/0x22c/0x230-0x240` upper
             halves, BB `0xa08`). Tooling: `cck_state_diff.py [LO HI]`.
-          - **RF registers, all 4 paths** (`rf_state_diff.py`): our LSSI *writes* are faithful;
+          - **RF registers, all 4 paths** (`rf_state_diff.py`): our LSSI *writes* match;
             live readback differs only because PLL/RC-cal/status RF regs return a chip-computed
             value (e.g. write `0x8a=0x43e50` → read `0x42470` on all paths, right after the radio
             table, independent of `_copy_rck1`). `_copy_rck1` = vendor's exact single-`RCK1` copy.
@@ -64,7 +64,7 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
             `ODM_REG_BB_RX_PATH_11AC` BIT(28) = `0x808[28]`, our exact register + polarity.
           - **LED:** `SwLedOn/Off_8814AU` touch only `0x60` GPIO bits — cosmetic; `led_blink`
             reproduces them. **`phydm_config_cck_rx_path`** is not called for this card
-            (`valid_path_set` ≠ A/B), so our `0xa04` matches; faithful.
+            (`valid_path_set` ≠ A/B), so our `0xa04` matches.
         Diagnostics: `rx_saturation_probe.py` (`--cck-pd`/`--cck-rx-path` sweeps, per-AP CCK/OFDM,
         `--dig` cck_pd_lv trace), `cck_state_diff.py`, `rf_state_diff.py`, `dump_tune_regs.py`.
 - [ ] **halrf TX-power thermal-delta — the one unported watchdog member (the `verify_pcap` frontier
@@ -95,8 +95,8 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
         stays bounded and bounces (~2.8k–11k per 2 s window) — it does *not* climb
         monotonically, so the OFDM (0x9a4[17]) + CCK (0xa2c[15]) pulses do clear the
         counters. (M3e adds the third vendor reset pulse — the page-F CCA reset
-        `phydm_reset_bb_hw_cnt` 0xb58[0] — for byte-faithfulness with the chip's
-        runtime reset, since the cold-boot wire emits all three every FA-stats cycle.)
+        `phydm_reset_bb_hw_cnt` 0xb58[0] — to match the chip's runtime reset
+        byte-for-byte, since the cold-boot wire emits all three every FA-stats cycle.)
       - **No strong-AP collapse.** Fixed-ch1 30 s, the strongest on-ch1 AP (~−44 dBm)
         held **150–197 beacons** with DIG ON (vs the earlier uncontrolled "~19"),
         matching DIG OFF (150–185). Across 4 fixed + 2 hop runs the unique-AP and beacon
@@ -104,7 +104,7 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
         (5599 frames) drove the original "halved frames" worry and did not repeat.
         Beacon *count* follows beacon interval / multi-BSSID radios, not RSSI, so a
         strong AP ranking below a chatty distant one is expected, not a regression.
-      - **IGI 0x2a is faithful + harmless.** In a busy band the no-link FA is genuinely
+      - **IGI 0x2a matches the kernel + harmless.** In a busy band the no-link FA is genuinely
         > fa_th, so DIG steps IGI to the [0x1c, 0x2a] ceiling (= DIG_MAX_OF_MIN_BALANCE_
         MODE); on a hop scan it also steps *down* (0x2a→0x28→0x26→0x24) on quiet
         channels. 0x2a is the least-sensitive bound but sits well below the strong AP's
@@ -233,7 +233,7 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   frames instead of ending the buffer walk, so good frames aggregated after a bad one
   are delivered (monitor RCR accepts crc/icv-error frames; only a malformed length ends
   the walk). [HW] beacon scans show no regression (26 APs fixed / 67-74 hop).
-- **M3e (DIG CCA-reset faithfulness): done.** `dig._reset_fa_cnt` now emits all three
+- **M3e (DIG CCA-reset match): done.** `dig._reset_fa_cnt` now emits all three
   vendor FA/CCA reset pulses (OFDM 0x9a4[17] 1->0, CCK 0xa2c[15] 0->1, page-F CCA
   0xb58[0] 1->0), matching the chip's runtime reset. [WIRE] confirmed: the cold-boot
   captures show this exact 6-write group repeating each FA-stats cycle (108/70/88
@@ -260,7 +260,7 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   gap; the crackable WPA M2 is reachable).
 - **M4e (per-board TxBBSwing efuse decode): done.** `efuse._parse_bb_swing_2g` decodes
   byte 0xC6 (2 bits/path, 0xFF->0 dB guard); `chan._set_bb_swing` writes the per-path
-  TxScale. Faithful no-op on this card for 2.4 GHz (verify_pcap byte-for-byte all 3
+  TxScale. No-op on this card for 2.4 GHz (verify_pcap byte-for-byte all 3
   captures; live `bb_swing=0x200/0x200/0x200/0x200`); handles a burned fuse on any board.
   (The 5 GHz fuse 0xC7 on this card is **not** 0 dB — see M5e.)
 - **M4d (WEP ARP replay): VERIFIED [HW].** `scripts/rtl8814au_dkms/wep_replay_hw.py` runs
@@ -295,8 +295,8 @@ file; `[WIRE]` cites a capture frame range; `[HW]` a hardware run.
   EEPROM_TX_BBSWING_5G_8814=0xC7, PHY_GetTxBBSwing_8814A(BAND_ON_5G).
 - **M5a (5 GHz band switch): done — byte-diffed.** `chan.switch_wireless_band_5g` ports the
   5G branch of `PHY_SwitchWirelessBand8814A` (rfe=1 values verbatim) and `chan.phy_sw_band`
-  ports `phy_SwBand8814A` — the band-crossing dispatcher. **Band detection is stateless and
-  vendor-faithful:** the chip records the current band in REG_CCK_CHECK (0x454) bit7 (the
+  ports `phy_SwBand8814A` — the band-crossing dispatcher. **Band detection is stateless:**
+  the chip records the current band in REG_CCK_CHECK (0x454) bit7 (the
   switch sets it: 5G->0x80, 2.4G->0x00), so `phy_sw_band` reads it back and compares to the
   target band (`channel > 14`), switching only on a real crossing — no software band state
   is tracked (handles any crossing, e.g. 165->2). It is the first op of `phy_SwChnl8814A`,
@@ -454,8 +454,8 @@ Every captured per-channel tune is now byte-diffed by `verify_channels.py` (not 
 ch1). **[WIRE] scan-mode parity:** the airodump native 250 ms hop issues the SAME full
 tune as an explicit `iw set channel` — identical per-channel txpower (0x1998 ~250×),
 NBI (0x87c), RF (0xc90), fc-area (0x860) footprint — so this chip has no reduced
-"scan-mode" channel-set path, and `set_channel(scan=True)` running the full tune is
-faithful (no scan-mode command-skip to mirror).
+"scan-mode" channel-set path, and `set_channel(scan=True)` running the full tune
+matches the kernel (no scan-mode command-skip to mirror).
 - **PHY_ConfigBB_8814A** — one masked write: rOFDMCCKEN (0x808)[29:28] = 3 (enable
   OFDM + CCK).
 - **PHY_SwitchWirelessBand8814A(2.4G)** — gate the CCK/OFDM clock off (0x1002[0]=0),
@@ -506,7 +506,7 @@ power index into the txagc table at BB reg 0x1998 [SRC PHY_SetTxPowerIndex_8814A
   per-path base + signed-nibble nTX diffs are parsed from the efuse PG block
   (`efuse._parse_tx_power`, offsets 0x10/0x3A/0x64/0x8E). For this card every diff
   nets to zero across the txagc rate set, so PowerIndex = base + 2 — but the diff
-  accumulation is ported faithfully (channel/efuse general).
+  accumulation is ported in full (channel/efuse general).
 - **Empirically confirmed** the EN=0 model against the wire: path A base 0x20 → 0x22,
   path B CCK 0x27 → 0x29 / BW40 0x28 → 0x2a, etc., all matching the captured PP bytes.
 - **5 GHz (M5d):** `set_tx_power_5g` reuses this exact 0x1998 write + `power_index` math
@@ -780,7 +780,7 @@ wlan/manager.py is a separate productization gate, not a numbered milestone.)
 
 **Verification anchor — decide first.** The 2.4 GHz init is byte-diffed against the
 cold-boot pcap. The 5 GHz band-switch + channel-tune + TX-power are likewise
-DETERMINISTIC, so the faithful anchor is a **5 GHz cold-boot capture** (airmon-ng
+DETERMINISTIC, so the verification anchor is a **5 GHz cold-boot capture** (airmon-ng
 bringing the card up / hopping onto a 5 GHz channel) — strongly recommended so
 `verify_pcap` can byte-diff M5. Without it we port from the vendor source and validate
 live (a 5 GHz beacon count); the 5 GHz channel→RF / fc-area / PG-parse math is intricate
@@ -904,7 +904,7 @@ the 5 GHz capture).
 - M3d: RX CRC-walk skip-and-continue (`rx.iter_frames`) — skip crc/icv-error frames and
        keep walking; only a malformed descriptor length ends the walk. **DONE**
        (unit-tested; [HW] beacon scans show no regression, 26 APs fixed / 67-74 hop).
-- M3e: DIG CCA-reset faithfulness (`dig._reset_fa_cnt`) — add the third vendor reset
+- M3e: DIG CCA-reset match (`dig._reset_fa_cnt`) — add the third vendor reset
        pulse (page-F CCA 0xb58[0]) so all three FA/CCA pulses match the chip's runtime
        reset. **DONE** ([WIRE] the 6-write reset group repeats each FA-stats cycle in
        all three captures; [HW] no regression, fa_cnt still bounded, ESSID canary clean).

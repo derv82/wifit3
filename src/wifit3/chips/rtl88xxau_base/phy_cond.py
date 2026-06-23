@@ -8,7 +8,7 @@ identical across the three tables and shared by the 8812a tables). ``apply_table
 emits write_fn(addr, value) for each taken data row.
 
 For a default board every block resolves to its default / ELSE branch
-(board_type=0, cut=0, USB, CE) — but the walker is faithful, so an external-PA/LNA
+(board_type=0, cut=0, USB, CE) — but the walker handles every branch, so an external-PA/LNA
 card would re-derive correctly from its own efuse-decoded params.
 """
 from __future__ import annotations

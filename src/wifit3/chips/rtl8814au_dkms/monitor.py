@@ -1,4 +1,4 @@
-"""RTL8814AU airmon STA->monitor entry — vendor faithful, full dance reproduced.
+"""RTL8814AU airmon STA->monitor entry — full dance reproduced.
 
 The cold-boot capture was taken under airmon-ng, which brings the interface up as a
 STA, sets the channel, then switches it to monitor. On the wire that is four vendor

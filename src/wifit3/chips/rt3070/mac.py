@@ -70,7 +70,7 @@ def set_radio_led(t: RT3070Transport, ev: EepromValues) -> None:
     """Radio LED on — ``rt2800_brightness_set(LED_TYPE_RADIO, enabled)`` [SRC
     rt2800lib.c:1636-1638]. The kernel emits this via the leds-class/rfkill trigger
     as the interface comes up (before STATE_AWAKE on the wire); reproduced here with
-    EEPROM-derived args (ledmode from EEPROM_FREQ) so the byte stays faithful, not
+    EEPROM-derived args (ledmode from EEPROM_FREQ) so the byte tracks the EEPROM, not
     hardcoded. arg1=0x20 = radio enabled."""
     ledmode = get_field(ev.led_mcu_reg, C.EEPROM_FREQ_LED_MODE)
     t.mcu_request(C.MCU_LED, 0xFF, ledmode, 0x20)
@@ -247,7 +247,7 @@ def init_registers(t: RT3070Transport, chip: ChipInfo, ev: EepromValues) -> None
 
     # TX_SW_CFG: RF30xx-family arm [SRC rt2800lib.c:5921-5956].
     if chip.is_rt(C.RT3071) or chip.is_rt(C.RT3090):
-        # #TODO untestable: no RT3071/RT3090 hardware. Faithful per source.
+        # #TODO untestable: no RT3071/RT3090 hardware. Ported from source; no pcap exercises it.
         t.register_write(C.TX_SW_CFG0, 0x00000400)
         t.register_write(C.TX_SW_CFG1, 0x00000000)
         if chip.rt_rev_lt(C.RT3071, C.REV_RT3071E):

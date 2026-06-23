@@ -1,4 +1,4 @@
-"""RTL8814AU bring-up to FW-ready (M1) — vendor (morrownr) faithful port.
+"""RTL8814AU bring-up to FW-ready (M1) — port of the vendor (morrownr) stack.
 
 Mirrors ``rtl8814au_hal_init`` up to and including ``FirmwareDownload8814A``:
 

@@ -215,7 +215,7 @@ def mac_init_misc(t) -> None:
         pro = t.read8(REG_RXDMA_PRO_8812)
         t.write8(REG_RXDMA_PRO_8812, (pro | 0x0E) & ~0x30)           # burst 1k (BIT3|2|1, ~BIT5|4)
         t.write8(0xF008, t.read8(0xF008) & 0xE7)
-    # reset 8051 (faithful: REG_SYS_FUNC_EN is read/written as the low byte; ~BIT(10)
+    # reset 8051 (REG_SYS_FUNC_EN is read/written as the low byte; ~BIT(10)
     # has no effect on it, so this rewrites the low byte — matches the vendor).
     t.write8(R.REG_SYS_FUNC_EN, t.read8(R.REG_SYS_FUNC_EN) & ~(1 << 10) & 0xFF)
     t.write8(REG_HT_SINGLE_AMPDU_8812, t.read8(REG_HT_SINGLE_AMPDU_8812) | 0x80)

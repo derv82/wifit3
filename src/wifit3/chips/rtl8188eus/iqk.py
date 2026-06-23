@@ -15,7 +15,7 @@ IQK is a closed-loop calibration: write a trigger, the chip measures the path-A 
 imbalance, the driver reads the result registers (``0xe94``/``0xe9c``/``0xea4``/``0xeac``)
 and either accepts or retries, then a final pass fills the OFDM correction matrix. Because
 every measurement-read and correction-write is on the wire, this replays against the
-cold-boot capture: ``verify_pcap`` serves the recorded reads, a faithful algorithm
+cold-boot capture: ``verify_pcap`` serves the recorded reads, the ported algorithm
 reproduces the recorded writes.
 """
 from __future__ import annotations

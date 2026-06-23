@@ -1,4 +1,4 @@
-"""RTL8821AU EFUSE read + chip-param decode — vendor faithful port.
+"""RTL8821AU EFUSE read + chip-param decode — vendor port.
 
 The probe phase reads the burned-in efuse to recover per-card parameters: the
 ``crystal_cap`` (AFE trim, replaces the M3 hardcode), the ``mac_address``, and the

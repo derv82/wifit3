@@ -5,7 +5,7 @@
 — chip-ID/USB-PHY → EFUSE → two-cycle power/FW/MAC → BB/AGC/crystal/RF tables → full `odm_dm_init`
 (RX seed + RF-cal tail) → `phy_bf_init`/wifi-only-coex/`init_misc`. It then tunes to the default
 channel (`chan.set_channel_bw`, byte-verified against the capture's airodump hops), starts the bulk-IN
-RX reader, and runs the faithful airmon monitor RX-enable (`mac.enable_monitor`, gate-verified against
+RX reader, and runs the airmon monitor RX-enable (`mac.enable_monitor`, gate-verified against
 the capture's monitor switch: MSR no-link, RCR=AAP|APP_PHYSTS|APP_FCS, DRVINFO sniffer-mode,
 RXFLTMAP0/1/2=0xFFFF). RX frames decode via `rx.iter_frames` (24-byte rx_pkt_desc + jaguar2 phy-status
 RSSI, FCS-stripped).
@@ -150,7 +150,7 @@ class Rtl8822buDkmsDriver:
             # Start the bulk-IN reader before opening the RX gate (an undrained pipe wedges RX FIFO).
             self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="8822bu-dkms-rx")
             self._reader.start()
-            # The faithful airmon monitor RX-enable (gate-verified vs the capture's monitor switch):
+            # The airmon monitor RX-enable (gate-verified vs the capture's monitor switch):
             # MSR no-link, RCR=AAP|APP_PHYSTS|APP_FCS, DRVINFO sniffer-mode, RXFLTMAP0/1/2=0xFFFF.
             await loop.run_in_executor(None, mac.enable_monitor, self.transport)
             await loop.run_in_executor(None, self._heal_cold_synth, self.transport)
@@ -209,7 +209,7 @@ class Rtl8822buDkmsDriver:
         """Recover the intermittent cold-boot 2.4 GHz synth wedge (~20% of cold boots).
 
         Symptom: the cold->2.4 GHz tune leaves the synth unlocked (RF18 bit15 set) and 2.4 GHz RX
-        is deaf until a band re-cycle. The bring-up wire is byte-faithful (verify_pcap /
+        is deaf until a band re-cycle. The bring-up wire is byte-for-byte (verify_pcap /
         verify_channels green), so this is a HW synth-lock fault the kernel's tight transfer pacing
         avoids and userland USB intermittently hits — not a missing op. The chip's own recovery is a
         5->2.4 GHz re-cycle, but HW-measured it only re-locks once the synth has SETTLED: an immediate

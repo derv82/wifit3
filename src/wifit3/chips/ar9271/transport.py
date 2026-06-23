@@ -171,7 +171,7 @@ class AR9271USBTransport:
             await self._process_htc_frame(bytes(data))
 
     async def _handle_bulk_in(self, data: bytes):
-        """Kernel-faithful HIF stream reassembler for Bulk-IN.
+        """HIF stream reassembler for Bulk-IN, ported from the kernel.
 
         Each chunk on the wire is `[pkt_len: LE16][pkt_tag: LE16][HTC frame
         of pkt_len B][pad to 4 B]`. Multiple chunks can share a URB; a chunk

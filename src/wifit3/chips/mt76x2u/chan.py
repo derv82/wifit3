@@ -3,7 +3,7 @@
 SPDX-License-Identifier: GPL-2.0-or-later
 Ported from Linux mt76 (kernel v6.18) by wifit3, 2026.
 
-Faithful port of `mt76x2u_phy_set_channel` (mt76x2/usb_phy.c:60) and its
+Port of `mt76x2u_phy_set_channel` (mt76x2/usb_phy.c:60) and its
 called helpers. Every kernel write to a chip register in the channel-tune
 + calibrate path is mirrored here — the TX-side programming (per-rate TX
 power, PA mode, antenna-pin enable) is load-bearing for injection, not a

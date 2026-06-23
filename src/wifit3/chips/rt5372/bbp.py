@@ -31,7 +31,7 @@ def init_freq_calibration(t: RT5372Transport) -> None:
 def disable_unused_dac_adc(t: RT5372Transport, ev: EepromValues) -> None:
     """Power down DAC1/ADC1 on a single-chain part [SRC rt2800lib.c:6434-6446]. Gated on
     the RAW NIC_CONF0 TXPATH/RXPATH==1; on PAU05/PAU06 both read 2 (2T2R), so BBP138 is
-    read and written back unchanged — still a wire op pair, reproduced faithfully."""
+    read and written back unchanged — still a wire op pair, reproduced here."""
     value = t.bbp_read(138)
     if ev.tx_chain_num == 1:
         value |= 0x20                      # BBP138_TX_DAC1

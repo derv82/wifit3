@@ -120,7 +120,7 @@ def validate_eeprom(buf: bytes) -> bytearray:
                        lna_field: int = 0, lna_default: int = 0) -> None:
         w = word(word_idx)
         for f in fields:
-            if C.get_field(w, f) > 10:            # kernel abs() on the u8 field (quirk-faithful)
+            if C.get_field(w, f) > 10:            # kernel abs() on the u8 field (kernel quirk)
                 w = C.set_field(w, f, 0)
         if lna_field and C.get_field(w, lna_field) in (0x00, 0xFF):
             w = C.set_field(w, lna_field, lna_default)

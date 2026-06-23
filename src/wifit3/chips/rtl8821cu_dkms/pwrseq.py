@@ -8,7 +8,7 @@ match this card. WRITE is a read-modify-write; POLLING reads until the masked va
 matches; DELAY and READ touch no register; END terminates a table.
 
 The four 8821c tables are transcribed 1:1 from the vendor source (SDIO/PCI rows kept
-verbatim — the interface filter drops them for USB, but a faithful copy is the safest
+verbatim — the interface filter drops them for USB, but a verbatim copy is the safest
 port). These differ from the 8822b tables (no 0xFF0A/0xFF0B/0x0012 LDO rows, different
 PCI block, no cut-C 0x10A8 rows, the ACT table ends at 0x007C) — which is exactly why
 this is a separate self-contained port, not a reuse.
@@ -179,7 +179,7 @@ def run_pwr_seq(t, flow, cut: int = _CUT_ALL, intf: int = _U) -> None:
     """pwr_seq_parser_88xx [SRC] halmac_common_88xx.c:2980 — walk a flow's tables.
 
     Every 8821c card_en/dis row is CUT_ALL, so the chip cut never filters here and
-    the default (match-all) cut is faithful; the real cut is read at chip-id (a later
+    the default (match-all) cut is correct; the real cut is read at chip-id (a later
     milestone) and only matters for the init tables that follow power-on.
     """
     for table in flow:

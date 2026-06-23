@@ -13,9 +13,9 @@ Cross-driver gap classes (project audit 2026-05-25).
 - [x] **AGC never seeded (the weak/inconsistent-RX root cause)** — FIXED 2026-06-11.
   The port skipped `reset_tuner`, leaving BBP R17 (the VGC/variable gain) at the
   init value 0x30 where the kernel runs 0x3b, never re-seeding per hop. See
-  "Faithful re-port" below.
+  "Operational re-port" below.
 
-## Faithful re-port — RX AGC fix + full-walk gate (2026-06-11)
+## Operational re-port — RX AGC fix + full-walk gate (2026-06-11)
 
 The port reproduced only `init_registers` + `init_bbp` (123 of 3215 control ops);
 everything operational — antenna, channel tune, the AGC seed, the LED — was
@@ -237,8 +237,8 @@ full-speed bus surfacing them floods it), FIF_CONTROL + FIF_ALLMULTI on,
 VERSION_ERROR always dropped, BROADCAST always accepted. `monitoring=True`
 clears DROP_NOT_TO_ME + DROP_TODS so client→AP (ToDS) frames from every BSS
 arrive. Final value **TXRX_CSR2 = 0x0046** — and the cold-boot capture's airmon
-path writes the **same** value (decoded at ops 167-168), so this is **faithful
-to the wire, not a deviation** (the earlier "monitor-mode deviation" framing was
+path writes the **same** value (decoded at ops 167-168), so this **matches
+the wire, not a deviation** (the earlier "monitor-mode deviation" framing was
 wrong: the kernel's airmon filter drops PLCP/CRC too). DISABLE_RX is owned by
 `start_queue_rx` / `stop_queue_rx`, which bracket every config. `[WIRE]/[HW]`
 
@@ -296,17 +296,17 @@ See [[feedback_monitor_mode_deviation]].
   PMKID** on the same radio. 21 mocked unit tests (incl. the
   inject-frame run_in_executor path). `--phase deauth --bssid X --client Y`.
 
-- **M6** [DONE 2026-06-11, gate + hw-verified]: faithful operational re-port.
+- **M6** [DONE 2026-06-11, gate + hw-verified]: operational re-port.
   `reset_tuner` (AGC seed), `config_txpower`/`config_ps`/`config_filter`/LED/
   queue-toggle in `mac.py`/`chan.py`, the `monitor.py` orchestration
   (enable_monitor + tune_hop), and the full single-cursor `verify_pcap` (100%,
-  zero waivers). Driver runs the faithful path; stability hardened
-  (`_io_lock`/`_hw_lock` + transport bounded-retry). See "Faithful re-port" above.
+  zero waivers). Driver runs the operational path; stability hardened
+  (`_io_lock`/`_hw_lock` + transport bounded-retry). See "Operational re-port" above.
 
 **Full passive + active stack complete.** The Buffalo "Nintendo Wi-Fi USB
 Connector" (RT2570) scans, monitors, channel-hops, and deauths from the
-TUI — a no-firmware, register-only userland port, now byte-faithful to the
-kernel's whole control conversation.
+TUI — a no-firmware, register-only userland port, now byte-for-byte with the
+kernel's whole control conversation (per the Pcap Replay).
 
 ## Test harness
 

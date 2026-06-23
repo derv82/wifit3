@@ -1,4 +1,4 @@
-"""RTL8821AU (DKMS) RX path — bulk-IN buffer decode, vendor faithful.
+"""RTL8821AU (DKMS) RX path — bulk-IN buffer decode, vendor port.
 
 Mirrors `rtl8812_query_rx_desc_status` [SRC] rtl8812a_rxdesc.c + `recvbuf2recvframe`
 [SRC] usb/usb_ops_linux.c:104. One bulk-IN transfer carries several USB-aggregated

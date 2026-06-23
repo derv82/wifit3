@@ -1,4 +1,4 @@
-"""RTL8821AU (DKMS) M-TXPWR: per-rate TX-power level — vendor faithful, 2.4 GHz.
+"""RTL8821AU (DKMS) M-TXPWR: per-rate TX-power level — vendor port, 2.4 GHz.
 
 `rtw_hal_set_tx_power_level` -> `PHY_SetTxPowerLevel8812` -> `phy_set_tx_power_level_by_path`
 loops the (path-A, 1SS) rate sections and writes each rate's power index into the direct

@@ -6,11 +6,12 @@ post-radio config → monitor filter) and the default channel tune, and starts t
 RX reader. Every wire op through the channel hops is byte-diffed against the cold-boot
 capture by ``scripts/verify_pcap.py rt5372`` (the operational gate).
 
-TX (``inject_frame`` → ``tx.send_frame``) is wired and pcap-faithful but **never fired by
+TX (``inject_frame`` → ``tx.send_frame``) is wired but **never fired by
 the driver** — injection/deauth is the user's explicit action [[passive_by_default]].
 
 Standalone port (NOT a ``chips/rt2800usb`` DeviceID delta — that shared base is an
-unfaithful imitation with a confirmed EFUSE addressing bug); see ``chips/rt5372/RT5372.md``
+imitation port, highly inaccurate per the Pcap Replay, with a confirmed EFUSE addressing
+bug); see ``chips/rt5372/RT5372.md``
 for the ground-truth facts. RT5392 is 2T2R (txpath=rxpath=2 per the correct EFUSE read).
 """
 from __future__ import annotations

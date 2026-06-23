@@ -6,12 +6,12 @@ it calls: ``rt2800_rf_init_calibration`` (7385), ``rt2800_init_rx_filter`` (7320
 ``rt2800_normal_mode_setup_3xxx`` (7444). Confirmed against capture-1 by verify_pcap.
 
 RX-filter calibration is read-feedback: its tuning loops branch on BBP55
-passband/stopband reads. Under the gate those reads are the recorded ones, so a
-faithful port reproduces the captured write sequence exactly [[feedback_porting_no_hardware]].
+passband/stopband reads. Under the gate those reads are the recorded ones, so the
+port reproduces the captured write sequence exactly (see PORTING.md Step 3).
 
 This card is RT3070 rev REV_RT3070F, so the LDO_CFG0 BGSEL/VLEVEL write, the
 RT3071/RT3090 branch, and the trailing RFCSR27=0x03 are all NOT taken (rev gating);
-they are ported faithfully and marked ``#TODO untestable`` so a future RT3071/3090
+they are ported and marked ``#TODO untestable`` so a future RT3071/3090
 inherits a correct port.
 """
 from __future__ import annotations

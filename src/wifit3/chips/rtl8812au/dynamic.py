@@ -126,7 +126,7 @@ def dig_step(transport: RTL8812AUTransport, state: DigState, fa_cnt: int) -> Non
 # ---------------------------------------------------------------------------
 
 class _ThermalEwma:
-    """Faithful port of the kernel's DECLARE_EWMA(thermal, 10, 4): precision=10,
+    """Port of the kernel's DECLARE_EWMA(thermal, 10, 4): precision=10,
     weight_rcp=4 — each new sample gets 1/16 weight."""
 
     __slots__ = ("internal",)

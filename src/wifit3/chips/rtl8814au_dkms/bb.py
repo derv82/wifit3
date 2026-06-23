@@ -1,4 +1,4 @@
-"""RTL8814AU baseband (BB) configuration (M2b) — vendor faithful port.
+"""RTL8814AU baseband (BB) configuration (M2b) — port of the vendor stack.
 
 `PHY_BBConfig8814` [SRC rtl8814a_phycfg.c:334] brings the baseband up:
 

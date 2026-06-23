@@ -242,7 +242,7 @@
 - **Stopped here (not a failure — a milestone boundary).** The next milestone (btc power-on setting +
   `hal_read_mac_hidden_rpt` orchestration + `download_firmware_88xx` + gate bulk-merge + 139 KB blob
   extraction/provenance) is large and multi-function; the full map is recorded in Known issues so it
-  can be ported faithfully rather than rushed. `bulk_out_ep` must move 0x04 → 0x05 at that milestone.
+  can be ported carefully rather than rushed. `bulk_out_ep` must move 0x04 → 0x05 at that milestone.
 
 ## Port log — 2026-06-22 (BT-coex power-on, FW download, MAC init GREEN @ 3257)
 

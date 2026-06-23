@@ -212,7 +212,7 @@ MT_BEACON_TIME_CFG_TBTT_EN     = 1 << 19
 MT_BEACON_TIME_CFG_BEACON_TX   = 1 << 20
 # Per-slot beacon offset table + bypass mask — kernel clears at init via
 # `mt76x02_init_beacon_config` (`mt76x02_beacon.c:205`). We don't TX
-# beacons, but kernel-faithful init still does this for hardware state
+# beacons, but the kernel init still does this for hardware state
 # hygiene. [SRC] mt76x02_regs.h:194, 304.
 MT_BCN_OFFSET_BASE             = 0x041C
 MT_BCN_BYPASS_MASK             = 0x108C

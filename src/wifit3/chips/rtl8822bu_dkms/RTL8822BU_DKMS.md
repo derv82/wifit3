@@ -2,9 +2,9 @@
 
 > ## NEXT AGENT — START HERE
 >
-> **Goal: a 100% faithful byte-for-byte port of the morrownr vendor stack. Faithfulness over
-> beacons** — a fully faithful port that yields 0 beacons is the win; a <100% port that "works" is
-> not. Don't chase RX symptoms; reproduce the wire.
+> **Goal: a 100% byte-for-byte port of the morrownr vendor stack, measured by the Pcap Replay.
+> Byte-for-byte over beacons** — a fully reproduced port that yields 0 beacons is the win; a <100%
+> port that "works" is not. Don't chase RX symptoms; reproduce the wire.
 >
 > **TOP BUG — SOLVED 2026-06-16: 2.4 GHz RX was on the WRONG ANTENNA.** Root cause: the wifi-only
 > coex band-notify (`hal8822b_wifi_only_switch_antenna`, `halbtc8822bwifionly.c:69`) sets the RX
@@ -23,14 +23,14 @@
 > The diagnostics: `cck_diag.py` (live, rate-split, capture% vs beacon-interval) + `cck_capref.py` (the
 > vendor's own bulk-IN from the capture's FIXED-CH1 window).
 >
-> **SESSION 2026-06-16 — port functionally complete + faithfulness-audited (for post-port work):**
+> **SESSION 2026-06-16 — port functionally complete + Pcap-Replay-audited (for post-port work):**
 > - Antenna-mux fix **committed** (`chan._wifi_only_switch_antenna`), not just `--set`-tested.
 > - **TX descriptor fixed**: G_ID was hardcoded 63 (broke *unicast*/targeted-deauth — 0/128 match); now
 >   BMC-keyed (63 bcast / 0 unicast) = **251/251 byte-for-byte** vs the captured aireplay injector. The
->   old "byte-faithful, only seqctl varies" claim was never actually byte-checked — it was wrong.
+>   old "byte-for-byte, only seqctl varies" claim was never actually byte-checked — it was wrong.
 > - **Deauth + 4-way handshake confirmed LIVE** (user run): client dropped+reconnected, M1-M4 captured,
 >   crackable M2 (ToDS) reachable. TX *and* concurrent RX both work.
-> - **Severe `verify_pcap` audit COMPLETE → see the Faithfulness Gap Ledger below.** Every potential
+> - **Severe `verify_pcap` audit COMPLETE → see the Pcap Replay Gap Ledger below.** Every potential
 >   divergence G1–G19 resolved 🟢; the antenna mux was the SOLE real RX bug. New gates close verify_pcap's
 >   three blind spots (early-stop, matched-prologue, replayed-reads): `verify_initial_tune.py`,
 >   `verify_strict_audit.py` (0 wrong-writes across all 35 hops), `verify_abg_hop.py`, `poll_probe.py`
@@ -43,7 +43,7 @@
 >   (4) **Intermittent cold-boot 2.4 GHz synth wedge — SOLVED 2026-06-16.** ~20% of cold boots left the
 >   2.4 GHz synth **unlocked** (RF18 **bit15** set after the initial tune) → every 2.4 GHz hop caught 0
 >   frames until a 5→2.4 band re-cycle; 5 GHz always fine. **Not a port miss** — the bring-up wire is
->   byte-faithful (verify_pcap / verify_channels green) and the vendor reproduces the same ops; it's a
+>   byte-for-byte (verify_pcap / verify_channels green) and the vendor reproduces the same ops; it's a
 >   HW synth-lock fault the kernel's tight transfer pacing avoids and userland USB intermittently hits.
 >   Proven on HW: the cold→2.4 tune writes RF18 bit16=0 but the chip forces it back (synth pinned at
 >   5 GHz); no RF18 write un-sticks it. **Recovery = the chip's own 5→2.4 re-cycle, but only after the
@@ -57,15 +57,15 @@
 >   beacons while hopping; `ui_startup_probe.py` first AP at t+0.65 s on ch1). DEBUG diagnostics kept:
 >   `[RXSTATE]` (decoded RX-path read-back), `[HOP] chN dwell: frames=`, `[CHAN] switch_band/channel
 >   RF18 read/write` — `synth_lock_probe.py` is the recovery-strategy bench.
-> - **DO NOT** re-assert "byte-faithful" anywhere without a fresh byte-diff vs the capture — two bugs
+> - **DO NOT** re-assert "byte-for-byte" anywhere without a fresh byte-diff vs the capture — two bugs
 >   (RX antenna mux, TX G_ID) hid behind exactly that unverified claim this campaign.
 >
-> **Current state (honest): cold init faithful; runtime mostly ported (watchdog/TX done).** `verify_pcap`
+> **Current state (honest): cold init byte-for-byte; runtime mostly ported (watchdog/TX done).** `verify_pcap`
 > byte-verifies the cold init (op 0–9855, ~33% of captured ops). Runtime now ported: `set_channel`
 > (incl. switch_band-on-init RX fix), `enable_monitor`, the **PHYDM watchdog** (fa_cnt→DIG→cck_pd→
 > adaptivity, 2 s loop), **TX descriptor** (byte-matches the captured injector). Un-ported by evidence-
 > backed choice: LED (cosmetic async), managed-vif BCN/RXFLTMAP (overridden), watchdog tx_pwr/cfo/ra
-> (monitor dead-code). See "Faithfulness scoreboard". Do NOT say "100% faithful".
+> (monitor dead-code). See "Pcap Replay Accuracy scoreboard". Do NOT claim 100% byte-for-byte without a fresh Pcap Replay run.
 >
 > **Done & gate-verified (cap-1 byte-for-byte unless noted):**
 > - **The ENTIRE vendor chip init `rtl8822b_init` — reproduced byte-for-byte to op 9855.** This is the
@@ -105,7 +105,7 @@
 > 4. Re-run the gate (advances), `uv run ruff check`, commit (one fn/commit, no AI trailer).
 > 5. `test_hw.py --phase beacon` checks RX (passive; card plugged in + WinUSB-bound). **Live monitor RX
 >    WORKS** (ch6 → 7 APs/383 bcn; hop 1-13 → 25 APs/447 bcn) since the `switch_band`-on-initial-tune
->    fix (`8c2e907`) — see "RX = 0 frames — RESOLVED". The remaining work is faithfulness, not RX.
+>    fix (`8c2e907`) — see "RX = 0 frames — RESOLVED". The remaining work is byte-for-byte coverage, not RX.
 >
 > **Hard rules:** cleanroom — port only from `usb_dumps_new/captures_rtl88x2bu/driver-source/`; do NOT
 > open `chips/rtl8822bu/`, `chips/rtw88_base/`, or `scripts/rtl8822bu/` (`scripts/rtl8822bu_dkms/` is
@@ -168,14 +168,14 @@ frozen `dig_init` IGI. That is the secondary, open item for hitting the 8–10 b
 `--cckpd`, `--scan`); `cck_capref.py` for the vendor's own bulk-IN from the FIXED-CH1 window;
 `verify_initial_tune.py` gates the initial 2.4 GHz channel-set + antenna notify byte-for-byte.
 
-## Faithfulness Gap Ledger (severe audit, opened 2026-06-16)
+## Pcap Replay Gap Ledger (severe audit, opened 2026-06-16)
 
 Running list of every place our port may diverge from the vendor wire, found by source diff against
 `driver-source/` (the antenna mux taught us "deferred/dead-code" labels lie — every entry gets a
 source-proven verdict, never an assumption). **Per-gap A/B protocol** (run once gap-finding is complete):
-(A) baseline beacon capture before any change; (2) make the port faithful for that gap; (3) re-measure (B);
+(A) baseline beacon capture before any change; (2) make the port reproduce the vendor wire for that gap; (3) re-measure (B);
 (4) **regression → revert + flag** (a miss can be an improvement only once combined with other misses);
-**no-change/improvement → commit + document** (faithful is the goal regardless of beacon delta).
+**no-change/improvement → commit + document** (byte-for-byte reproduction is the goal regardless of beacon delta).
 
 Status key: 🔴 confirmed gap (port it) · 🟡 pending source verdict · 🟢 proven legit (cite) · ⚪ A/B done.
 
@@ -185,7 +185,7 @@ committed) was the SOLE real RX bug.** Every other potential divergence is prove
 further port changes were needed** (the A/B sweep produced documentation, not code). G1/G11/G13 (the
 watchdog "real gaps") turned out to be no-ops in monitor: their register values already match the
 vendor's monitor values, `rssi_min` stays low unlinked, and DIG-damping is `!is_linked`-gated. The port
-is faithful for monitor RX; remaining beacon-rate headroom vs baseline is airtime, not a port gap.
+reproduces the vendor wire for monitor RX; remaining beacon-rate headroom vs baseline is airtime, not a port gap.
 
 | # | Gap | Vendor [SRC] | Our state | RX? | Status |
 |---|---|---|---|---|---|
@@ -217,21 +217,21 @@ TXAGC-skipped-on-crossings — no novel RX register beyond the cataloged gaps (a
 
 ## TX-path audit (2026-06-16) — for the injection/deauth path
 
-wifit3's TX is frame injection (the agent never live-fires; faithfulness is source + pcap-verified,
+wifit3's TX is frame injection (the agent never live-fires; correctness is source + pcap-verified,
 benefit measured by the human). Audited against the captured aireplay injector (251 TX frames, f74236+):
 
 | Item | State | Verdict |
 |---|---|---|
 | TX descriptor `build_inject_txdesc` | **FIXED** (G_ID was hardcoded 63) | **byte-for-byte 251/251** vs the capture (33 bcast + 218 unicast, each fed its own rate) after the G_ID=BMC-keyed fix |
-| TXAGC TX-power `set_tx_power_level` | ported | faithful — `verify_channels` 35/35; by-rate/limit fold to base (`CONFIG_TXPWR_*_EN=n`) |
+| TXAGC TX-power `set_tx_power_level` | ported | byte-for-byte — `verify_channels` 35/35; by-rate/limit fold to base (`CONFIG_TXPWR_*_EN=n`) |
 | TxA-bias current cal `tx_current_calibration` | ported (cold init) | byte-verified in `verify_pcap` |
 | IQK | not run | `mp_mode`-gated — vendor doesn't run it in normal mode either (RX-audit finding) |
 | DPK | n/a | does not exist on 8822b (no `dpk_track_8822b`) |
-| Thermal TX-power tracking `phydm_rf_watchdog`→`odm_txpowertracking_check_ce` | un-ported | TX-side; gated on `HAL_RF_TX_PWR_TRACK` + thermal-delta. Negligible for burst injection (TXAGC base is faithful), at most a few-dB drift on a sustained flood — the one open (minor) TX gap |
+| Thermal TX-power tracking `phydm_rf_watchdog`→`odm_txpowertracking_check_ce` | un-ported | TX-side; gated on `HAL_RF_TX_PWR_TRACK` + thermal-delta. Negligible for burst injection (TXAGC base is byte-for-byte), at most a few-dB drift on a sustained flood — the one open (minor) TX gap |
 | watchdog `cfo_tracking` / `ra_info` / `dynamic_tx_power` | un-ported | link/assoc-gated — inert for injection (no association) |
 
 **Headline: the G_ID hardcode was a real injector bug** — it broke unicast (targeted-deauth) descriptors
-(0/128 match); now byte-faithful. The rest of the TX path is faithful or negligibly-gapped; the only
+(0/128 match); now byte-for-byte. The rest of the TX path is byte-for-byte or negligibly-gapped; the only
 standing TX item is thermal power-tracking, which matters only for sustained injection.
 
 Proven-legit (no action): `adaptive_soml` (`!is_linked` early-return), `receiver_blocking`/`primary_cca`/
@@ -239,9 +239,9 @@ Proven-legit (no action): `adaptive_soml` (`!is_linked` early-return), `receiver
 TX/assoc watchdog members expected-inert unlinked, verdict pending: `ra_info`, `cfo_tracking`,
 `tx_path_diversity`, `dynamic_tx_power`.
 
-## Faithfulness scoreboard — what "pcap-faithful" actually covers
+## Pcap Replay Accuracy scoreboard — what "byte-for-byte per the Pcap Replay" actually covers
 
-**Do not call this port "pcap-faithful" without this qualifier.** It means exactly one thing:
+**Do not call this port "byte-for-byte per the Pcap Replay" without this qualifier.** It means exactly one thing:
 `verify_pcap` reproduces the **cold init** (op 0–9855, ~33% of the 29 542 captured control ops)
 byte-for-byte. That is the only span with a standing 100% gate. The runtime wire (op 9855 → ~28910,
 where aireplay TX begins) is partial or unported:
@@ -263,7 +263,7 @@ where aireplay TX begins) is partial or unported:
 
 RX works, but the continuous runtime adaptation the capture runs (DIG/FA/spur) is not reproduced: the
 golden capture holds **24 bcn/s median, 90+/s peak** while hopping; our RX measures lower. The honest
-one-line status is **"cold init faithful; runtime partial,"** never "100% faithful."
+one-line status is **"cold init byte-for-byte; runtime partial,"** never "100% byte-for-byte."
 
 **Opmode-block scope finding.** The opmode block (f19967–19999) is *not* HALMAC chip init — it is the
 kernel net/mlme/cfg80211 + LED layer bringing up a default **managed** vif, which airmon then overrides
@@ -286,7 +286,7 @@ silently skipped.
    dead-code in monitor), `get_dbg_port_info` (ADAPT-mode dormant). ✅
 3. **Capture coverage** — cap-1 (cold boot) passes full single-cursor; cap-2/3 diverge at op 9468 on a
    **warm-reload stale `central_ch` software static** (not on the wire, not HW-readable) — our cold-boot
-   `central_ch=0` is the faithful model, not a bug. ✅
+   `central_ch=0` is the correct cold-boot model, not a bug. ✅
 4. **TX byte-diff** — `build_inject_txdesc` byte-matches the capture's 251 aireplay deauth TX descriptors
    (`update_txdesc` MGNT branch; MACID=1/G_ID=63/RTY_LMT/SW_DEFINE all source-pinned). ✅
 5. **Async producers** — the always-on PHYDM DIG watchdog is *dispatched* (2 s loop, `connect()`), not
@@ -307,7 +307,7 @@ only the noise floor → every frame fails FCS. Fix (`8c2e907`): run `switch_ban
 
 The byte-for-byte gate stayed green because the *initial* channel-set is a capture window neither
 `verify_pcap` (stops at op 9855) nor `verify_channels` (iw.log hops, all `prev_ch` set) slices — a
-[[gate_not_faithful]] seam. If RX regresses, `test_hw --rxstats CH [--rcr 0x90000301]` tallies
+gate-green-but-not-sufficient seam (PORTING.md Step 6). If RX regresses, `test_hw --rxstats CH [--rcr 0x90000301]` tallies
 `rx_pkt_desc` categories + RSSI + `RF_0x18` without the good-frame filter.
 
 ## Status
@@ -395,16 +395,16 @@ IQK runs anywhere** — `0x1b00` (the IQK engine) is in 0 of 29542 ops; IQK is F
 `[SRC] hal_dm.c:75`. The per-channel kfree no-ops on this card (`phydm_config_kfree` early-returns:
 power-trim PG blank), so the per-channel cal that *does* run is tx-power (ported) + FW-IQK (H2C, un-ported).
 
-**RX status (HW): pending re-test with the faithful `enable_monitor`.** The prior HW run showed 0
+**RX status (HW): pending re-test with the ported `enable_monitor`.** The prior HW run showed 0
 frames / 0 beacons with the driver's **ad-hoc** monitor RCR (`RCR`=0x9000380F, RXFLTMAP=0xFFFF) — but
 `bulk_in` returned **0 bytes** (the HW wasn't DMA-ing RX to the bulk-IN at all). That ad-hoc path is now
-replaced by the **vendor-faithful `enable_monitor`** (`set_opmode_monitor`, gate-verified 20/20), which
+replaced by the **vendor `enable_monitor`** (`set_opmode_monitor`, gate-verified 20/20 byte-for-byte), which
 does what the ad-hoc path omitted: MSR no-link, `RCR`=**0x90000001** (not 0x9000380F),
 **`config_rx_info(PHY_SNIFFER)`** (DRVINFO size 5 + `0x7d4[9]` sniffer bit), and **`REG_RX_DRVINFO_SZ`
 |=0x80** (the DRVINFO-present flag). The missing DRVINFO/sniffer config is the prime RX-0 suspect: a
 wrong RX-desc/DRVINFO size readily stalls the RX-DMA. In the capture, the first RX bulk-IN frame lands
 the op *right after* this sequence. **Next: re-run `test_hw.py --phase beacon` on the card** (ask first
-per the don't-auto-test-beacons rule) to see if the faithful enter lights up RX. Proven solid: cold
+per the don't-auto-test-beacons rule) to see if the ported enter lights up RX. Proven solid: cold
 init (full `rtl8822b_init`) byte-for-byte, and `rx.iter_frames` decoding all 9292 real capture frames
 to valid beacons/probes (median -66 dBm) — so the rx_pkt_desc walk + phy-status parse are correct.
 
@@ -421,7 +421,7 @@ to valid beacons/probes (median -66 dBm) — so the rx_pkt_desc walk + phy-statu
   20 MHz) + **band switch** (both 2.4↔5 crossings; rfe-3 iFEM + SoML branch on `0x19a8[31]`).
 - **TXAGC tx-power — PORTED** (`txpower.py`): `rtl8822b_set_tx_power_level` → per path × rate-section,
   `power_idx = phy_get_pg_txpwr_idx` (EFUSE PG base @ 0x10 + section/ntx BW20 diff), packed 4
-  rates/dword at `0x1d00+(hw_rate&0xfc)`/`0x1d80`. **Faithfulness — build-config, not pcap-coincidence:
+  rates/dword at `0x1d00+(hw_rate&0xfc)`/`0x1d80`. **Byte-for-byte — build-config, not pcap-coincidence:
   the captured build sets `CONFIG_TXPWR_BY_RATE_EN=n` + `CONFIG_TXPWR_LIMIT_EN=n`
   `[SRC] driver-source/Makefile:130,132`** → by_rate folds to 0 (`phy_get_txpwr_target:5940`) and
   `phy_get_txpwr_lmt` early-returns → `power_idx = base`, **domain-independent** (verified base==wire,

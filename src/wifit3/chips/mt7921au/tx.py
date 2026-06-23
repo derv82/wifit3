@@ -126,7 +126,7 @@ def build_tx(frame: bytes, band_5ghz: bool = False,
         val2 |= MT_TXD2_MULTICAST
     if fix_rate:
         val2 |= MT_TXD2_FIX_RATE
-    # FRAG: NONE for a whole frame (morefrags=0, frag-number=0); kept faithful.
+    # FRAG: NONE for a whole frame (morefrags=0, frag-number=0); kept per the kernel.
     morefrags = bool(fc & _FCTL_MOREFRAGS)
     first_frag = (seq_ctrl & 0x000F) == 0
     if morefrags and first_frag:

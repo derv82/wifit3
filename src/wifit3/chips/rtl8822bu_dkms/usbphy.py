@@ -100,7 +100,7 @@ def init_usb_cfg(t) -> None:
     """[SRC] init_usb_cfg_88xx: RX-DMA burst mode by USB link speed + TXDMA drop-data enable.
 
     Runs after the PHY tables. The burst-size field is read-derived: SYS_CFG2+3 == 0x20 picks the
-    USB3 size, else REG_USB_USBSTAT[1:0] selects HS/FS — faithful to the live link, so the byte
+    USB3 size, else REG_USB_USBSTAT[1:0] selects HS/FS — keyed to the live link, so the byte
     differs by negotiated speed (0x1e on the HS-reported captures, 0x0e on a true-USB3 read)."""
     value8 = _BIT_DMA_MODE | (0x3 << _SHIFT_BURST_CNT)
     if t.read8(REG_SYS_CFG2 + 3) == 0x20:                       # USB3

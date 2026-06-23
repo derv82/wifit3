@@ -20,7 +20,7 @@ class DrvData:
     ``calibration_bw20`` is the RX-filter calibration result (rfcsr24 after
     ``init_rx_filter(bw20)``); it becomes RFCSR24_TX_CALIB / RFCSR31_RX_CALIB on
     every 20 MHz channel tune. ``bbp25``/``bbp26`` are saved for RF3052 channel
-    switching (unused on this RF3020 card, but captured faithfully)."""
+    switching (unused on this RF3020 card, but saved from the capture)."""
 
     calibration_bw20: int
     calibration_bw40: int

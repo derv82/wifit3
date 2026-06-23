@@ -146,7 +146,7 @@ class MT76x2UDriver:
         # ``WIFIT3_MT76X2U_SET_TXPOWER=0`` skips the kernel's
         # `mt76x2_phy_set_txpower` per-rate TX_PWR_CFG_0..9 + TX_ALC_CFG_0
         # writes on each channel-tune, leaving the static 0x3a3a3a3a
-        # initvals in place. Default ON (kernel-faithful); the switch exists
+        # initvals in place. Default ON (the kernel default); the switch exists
         # to isolate per-rate TX power when debugging injection on hardware.
         env_setpwr = os.environ.get(
             "WIFIT3_MT76X2U_SET_TXPOWER", "1"
@@ -160,7 +160,7 @@ class MT76x2UDriver:
     async def _cold_init_chip(
         self, progress_cb: Optional[ProgressCallback] = None
     ) -> bool:
-        """The kernel-faithful cold-start sequence: WLAN reset, RF/MTCMOS
+        """The kernel cold-start sequence: WLAN reset, RF/MTCMOS
         power-on, firmware upload, DMA init, MCU init.
 
         Extracted from connect() so the warm-reattach fallback can re-run

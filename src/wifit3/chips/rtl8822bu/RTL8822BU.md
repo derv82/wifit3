@@ -19,7 +19,7 @@ Cross-driver gap classes (project audit 2026-05-25).
   HW A/B. IGI was frozen at the AGC-table default for the whole session →
   RX either deaf to weak APs or saturating on a strong one (`pwdb` pinned high,
   the +143 dBm clamp warning). Now a 2 s FA-driven IGI walk on 0xc50/0xe50 with
-  a kernel-faithful seed — details + wire evidence in § DIG watchdog.
+  a kernel-derived seed — details + wire evidence in § DIG watchdog.
   [SRC phy.c rtw_phy_dig; WIRE capture-1 frames 19870-21021]
 
 Family: rtw88, modern (iDDMA) FW path, NOT 8051. 2T2R, 802.11ac, dual-band.
@@ -260,11 +260,11 @@ strong one (`phy_status pwdb` pinned near 255 → the +143 dBm clamp warning in
   `0xb58 BIT0` set/clr.
 - **Bounds / steps** (phy.c:365-371; `.dig_min=0x1c`, rtw8822b.c:2542): IGI ∈
   [`0x1c`, `0x2a`]; FA thresholds 2000/4000/5000 → step +2/+3/+4, then −2.
-- **Seed = kernel-faithful** (`rtw_phy_init`, phy.c:251-253): `dig_init` reads
+- **Seed = kernel-derived** (`rtw_phy_init`, phy.c:251-253): `dig_init` reads
   the current `0xc50` (AGC default) as the start IGI and does **not** write —
   the watchdog converges from there. Deliberately unlike the 8814au (which
   seeds `DIG_CVRG_MIN` to fight a deaf boot); the 8822b symptom is the opposite
-  (gain too high → saturation), so the faithful seed + FA-driven raise toward
+  (gain too high → saturation), so the AGC-default seed + FA-driven raise toward
   `0x2a` is the correct medicine.
 - **Omitted**: `rtw_phy_dig_check_damping` (linked-mode oscillation guard — a
   no-op in the constant-min_rssi coverage path) and the CRC/CCA stats reads

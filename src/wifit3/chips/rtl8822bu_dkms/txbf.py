@@ -4,7 +4,7 @@
 their defaults: MU TX control (retry limit, MU disabled until sounding), the WMAC MU-BF option/control,
 the NDPA rate/BW source, the fixed-6M CSI rate, and the grouping bitmap. The driver never sounds in
 monitor mode (no association), so this is one-time default seeding only — but it is part of the cold
-wire sequence the gate reproduces, so it lives here as a faithful port. Only the live data (the actual
+wire sequence the gate reproduces, so it lives here as a port of that sequence. Only the live data (the actual
 MU sounding/precoding) would arrive once TX/association is wired; that is out of scope for passive RX.
 """
 from __future__ import annotations

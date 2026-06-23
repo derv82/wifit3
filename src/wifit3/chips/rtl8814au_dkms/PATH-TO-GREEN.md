@@ -15,10 +15,10 @@
 > Potential Known Gaps (top entry). Diagnostics: `scripts/rtl8814au_dkms/{rx_saturation_probe,
 > cck_state_diff,dump_tune_regs}.py`.
 >
-> **REMAINING: ~6.7 vs MT7921 8.1/s is NOT a faithfulness gap — chip-inherent.** A full bias-free
+> **REMAINING: ~6.7 vs MT7921 8.1/s is NOT an accuracy gap — chip-inherent.** A full bias-free
 > deep-dive (trust nothing by name; ground-truth + source, not the gate) verified the RX path
-> faithful: operational-tail by-register (no missing RX periodic op), live state-diff of MAC + every
-> BB page (byte-identical modulo chip-dynamics), RF state-diff (writes faithful; readback is
+> matches the kernel: operational-tail by-register (no missing RX periodic op), live state-diff of MAC + every
+> BB page (byte-identical modulo chip-dynamics), RF state-diff (writes match; readback is
 > chip-computed), FA-counting/DIG (`0x808[28]`, matches vendor), LED (pure GPIO/cosmetic), CCK init
 > (`_copy_rck1` = vendor's 1-reg copy; `config_cck_rx_path` not called here). So the 8814A is just a
 > weaker CCK receiver in a busy channel than the MT7921 (its own kernel got 8.7/s on a *quiet*
@@ -26,7 +26,7 @@
 > watchdog member is the halrf TX-power thermal-delta** (the `verify_pcap` frontier): op-trace
 > CONFIRMS it writes only TX (`0xN1c[31:21]` bb_swing, RX-IQ low bits preserved; `0xN94` TX-AFE
 > read-back unchanged; `0x2908` read-only) — RX-neutral. Porting it completes the watchdog/gate but
-> won't move RX. **Do NOT chase the init/tune/RF path** — verified faithful. **Do NOT trust
+> won't move RX. **Do NOT chase the init/tune/RF path** — state-diff-matched. **Do NOT trust
 > `verify_pcap` for direction.** The original runbook is kept below for history only.
 
 > **NEXT AGENT: READ THIS FIRST. You are autonomous for the entire session.**
@@ -111,7 +111,7 @@ For **every** register write and **every** branch in the vendor init+tune path, 
 trusting a comment. Treat every `# skip`, `# no-op`, `# RX-irrelevant`, `# validated`, `# always X`
 in our port **and in `SEVERE-AUDIT.md`** as a **hypothesis to falsify** against `[SRC]` + live
 silicon. **Default-assume-wrong.** (This is the comment-blind audit in `planning/PORTING.md` →
-"Green ≠ faithful". Read it.)
+Step 6, green is necessary-not-sufficient. Read it.)
 
 Run **two** diffs together:
 
@@ -129,7 +129,7 @@ Run **two** diffs together:
 ## Audit scope — EXHAUSTIVE (do not stop early)
 
 Walk the **complete** init+tune path in vendor source order. Classify **every** register write and
-**every** efuse field: `faithful / hardcoded / omitted / wrong-value / N-A`, each with a `[SRC]`
+**every** efuse field: `matches / hardcoded / omitted / wrong-value / N-A`, each with a `[SRC]`
 cite. **Maintain a coverage ledger in this file.** You are not done auditing until **100 %** of the
 init+tune path is classified. Do **not** report "found 3 things" after auditing 1 %.
 
@@ -162,7 +162,7 @@ of it.**
    (Confirm the < 8/s failure first, so you have a falsifiable baseline.)
 2. **Audit** the next un-audited region of init/tune, comment-blind: source + wire diff + **live
    register state diff vs the capture.**
-3. **Fix** every divergence found, faithful to the vendor source.
+3. **Fix** every divergence found, matching the vendor source.
 4. **`verify_pcap` must still pass** (no wire regression).
 5. **Re-measure.** ≥ 8/s on the reference AP → **GREEN** → document root cause here +
    `RTL8814AU_DKMS.md`, update `VERIFICATION.md` (reference-AP rate), commit. Done.
@@ -193,13 +193,13 @@ Same saturation symptom, same method. Once 8814au is green, apply this runbook t
 
 | Handler / region | [SRC] | wire-diff | live-state-diff vs capture | verdict |
 |---|---|---|---|---|
-| `efuse.read_chip_params` | hal_EfuseReadEFuse8814A | green (`verify_efuse_pcap`) | live efuse decodes rfe_type=1, crystal_cap=0x23, cut=B (chip_ver 0x044411b5) — matches capture | **faithful** |
+| `efuse.read_chip_params` | hal_EfuseReadEFuse8814A | green (`verify_efuse_pcap`) | live efuse decodes rfe_type=1, crystal_cap=0x23, cut=B (chip_ver 0x044411b5) — matches capture | **matches** |
 | `phy_cond.build_driver1` cut nibble | check_positive preamble | green | hardcoded A_CUT (0xF) but live cut=B; harmless — no BB/RF/AGC row is cut-conditional (verify_pcap green ⇒ same writes), and `chan` correctly skips the A-cut-only `phy_ADC_CLK` | **N-A (harmless)** |
-| `bb.phy_bb_config` (PHY_REG + AGC_TAB) | PHY_BBConfig8814 | green (full table byte-for-byte) | AGC writes absolute (not RMW); identical live | **faithful** |
-| `rf.phy_rf_config` (radio A–D + RCK1) | PHY_RFConfig8814A | green | LSSI writes absolute; identical live | **faithful** |
-| `chan.init_tune` / `set_channel_bw` / RFE | phy_SwChnlAndSetBwMode8814A | green (incl. all 2.4G hops) | tune writes match; pwdb on live RX never rails (≤~210) ⇒ no gain saturation | **faithful** |
-| `dm.init_hal_dm` (IGI seed / AGC gain rows) | rtl8814_InitHalDm | green | IGI seed read from 0xc50 (AGC default), not hardcoded; live RX at seed = 8–9/s | **faithful** |
+| `bb.phy_bb_config` (PHY_REG + AGC_TAB) | PHY_BBConfig8814 | green (full table byte-for-byte) | AGC writes absolute (not RMW); identical live | **matches** |
+| `rf.phy_rf_config` (radio A–D + RCK1) | PHY_RFConfig8814A | green | LSSI writes absolute; identical live | **matches** |
+| `chan.init_tune` / `set_channel_bw` / RFE | phy_SwChnlAndSetBwMode8814A | green (incl. all 2.4G hops) | tune writes match; pwdb on live RX never rails (≤~210) ⇒ no gain saturation | **matches** |
+| `dm.init_hal_dm` (IGI seed / AGC gain rows) | rtl8814_InitHalDm | green | IGI seed read from 0xc50 (AGC default), not hardcoded; live RX at seed = 8–9/s | **matches** |
 | **RX delivery (`driver._dispatch` on event loop)** | — (wifit3 host path) | n/a | decode-on-loop bottleneck under 4T4R monitor flood → chip FIFO overflow → beacon loss | **WRONG-VALUE → FIXED (decode on reader thread)** |
 
-**Conclusion:** 100% of the init/tune path classified **faithful** (the saturation hypothesis is
+**Conclusion:** 100% of the init/tune path classified **matches the kernel** (the saturation hypothesis is
 falsified). The only divergence from kernel behaviour was the host-side RX delivery path, now fixed.

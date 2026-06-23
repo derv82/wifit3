@@ -1,4 +1,4 @@
-"""RTL8814AU RX path (M3b-3a) — bulk-IN buffer decode, vendor faithful.
+"""RTL8814AU RX path (M3b-3a) — bulk-IN buffer decode.
 
 Mirrors `rtl8814_query_rx_desc_status` [SRC rtl8814a_rxdesc.c] + `recvbuf2recvframe`
 [SRC usb/usb_ops_linux.c:105]. One bulk-IN transfer may carry several USB-aggregated

@@ -1,4 +1,4 @@
-"""RTL8188EUS firmware download to FW-ready (M1) — vendor-faithful port.
+"""RTL8188EUS firmware download to FW-ready (M1) — port.
 
 Mirrors ``rtl8188e_FirmwareDownload`` [SRC] hal/rtl8188e/rtl8188e_hal_init.c:859
 and its helpers. The 8188e uploads the FW blob over EP0 as wide vendor control

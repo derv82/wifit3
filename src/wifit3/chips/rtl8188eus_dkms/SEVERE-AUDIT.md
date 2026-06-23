@@ -8,17 +8,17 @@ behind waivers, "skip-because-TX" that is actually constant cal, a dropped `if`,
 ## Verdict (TL;DR)
 
 **No divergence found across everything the capture + source let me check — which is _not_ the same
-as "faithful."** Hold the two halves apart:
+as a line-by-line equivalence of the whole vendor driver.** Hold the two halves apart:
 
 - **Byte-level proven:** `verify_pcap` reproduces the captured **control** ops byte-for-byte, and our
   RX decode matches the kernel's bulk-IN **beacon-for-beacon** (3120/3120 on cap-1, identical on 2/3).
   No waiver hides a vendor op; the watchdog gating, EFUSE decode, and receiver-blocking gate are all
-  source-confirmed. ("faithful" elsewhere in this doc means "no divergence found for *that item*.")
+  source-confirmed. ("no divergence found" elsewhere in this doc means "no divergence found for *that item*.")
 - **NOT proven:** a line-by-line equivalence of the *whole* vendor driver; behavior on paths/scenarios
   absent from the ~15 s capture; and **live-identical beacons** measured against a running kernel.
 
 So: **no port defect found _in the audited scope_**, and the live RX ceiling isn't attributable to
-anything this audit could see (→ RF/silicon/airtime). But certainty of faithfulness would need a
+anything this audit could see (→ RF/silicon/airtime). But certainty of whole-driver equivalence would need a
 line-by-line read or a same-time/same-place kernel-vs-port beacon A/B — neither done. Treat this as
 **"audited clean, not proven identical."** Two narrow non-default divergence points stay flagged below.
 *(Live proof this matters: the sibling **mainline** port passes its cold gate too, yet **degrades**
@@ -46,10 +46,10 @@ WN722N's ~6.5/s is the silicon/environment, and both our ports already match the
 | W-B | Waiver: `0x4F0` TX_RPT_TIME (3) | ✅ legit | `odm_ra_set_tx_rpt_time` fires only on TX_REPORT2 (TX-driven); no-link watchdog never writes it; init's 2 writes are **matched** |
 | S | Dropped `R 0xF0/4` global filter → "all 24 reproduced" | ✅ accurate | `phydm_receiver_blocking` reads `0xf0` MASKDWORD every tick; 1 probe + 1 rf-config + 22 ticks = 24 |
 | B | Tick-boundary slicing | ✅ clean | exactly 1 SYS_CFG read per tick (22:22); per-tick op counts uniform (~76–85) — no under-consume |
-| G | Watchdog member gating (cfo/ra/pow-train) | ✅ faithful skip | each early-returns `!is_linked`/`!number_linked_client`; correctly not run unlinked |
-| L1 | `phydm_receiver_blocking` NBI notch (ch1/ch13) | ✅ faithful no-op | gated on `adaptivity_enable`, which is **off by default** (`rtw_adaptivity_en=0`); wire confirms |
+| G | Watchdog member gating (cfo/ra/pow-train) | ✅ verified-equivalent skip | each early-returns `!is_linked`/`!number_linked_client`; correctly not run unlinked |
+| L1 | `phydm_receiver_blocking` NBI notch (ch1/ch13) | ✅ confirmed no-op | gated on `adaptivity_enable`, which is **off by default** (`rtw_adaptivity_en=0`); wire confirms |
 | L2 | powertrack deferred IQK/LCK (≥8 °C) | ⚠️ documented gap | safe (driver catches + continues, DIG keeps adapting); long-hot-session only, mostly TX |
-| L3 | Missing-`if` in RF/BB/AGC init | ✅ none found | BB/RF/TXpwr/RCR/DM-init faithful; key conditionals verified |
+| L3 | Missing-`if` in RF/BB/AGC init | ✅ none found | BB/RF/TXpwr/RCR/DM-init confirmed-correct; key conditionals verified |
 | L4 | Hardcoded EFUSE | ✅ no RX gap | every RX-relevant field applied or correctly inert; `0xCA=0xFF` blank ⇒ internal LNA = our default |
 | RX | Controlled RX-decode (our decoder vs raw) | ✅ 100% | 3120/3120 beacons, ratio 1.00 per AP — decode drops nothing |
 
@@ -74,7 +74,7 @@ every tick from `phydm_watchdog` (phydm.c:1833). `CONFIG_RECEIVER_BLOCKING` is e
 Count: 1 chip-version probe (`read_chip_version_8188e`, rtl8188e_hal_init.c:2458) + 1 rf-config tail + 22
 ticks = **24**, matching the capture. No other 32-bit `0xF0` read omitted.
 
-### L1 · receiver-blocking NBI notch — faithful no-op (the "missing if-statement that does cal")
+### L1 · receiver-blocking NBI notch — confirmed no-op (the "missing if-statement that does cal")
 This is the scar-class case and it was checked hardest. `phydm_receiver_blocking` reads `0xf0` (which we
 reproduce) then, **only if** `consecutive_idle_time > 10 && !mp_mode && adaptivity_enable`, enables a
 narrowband-interference notch on **ch1 (2410 MHz)** / **ch13 (2473 MHz)** via `phydm_nbi_setting` +
@@ -83,14 +83,14 @@ calling the notch "a separate (live-relevant) milestone." The notch write never 
 (idle < 10), so `verify_pcap` is green either way — and **every measurement we took was on ch1**, the
 exact channel it notches. So it had to be falsified, not trusted.
 
-**Falsified → faithful.** For the CE build, `phydm_check_adaptivity` reduces to
+**Falsified → confirmed no-op.** For the CE build, `phydm_check_adaptivity` reduces to
 `adaptivity_enable = (support_ability & ODM_BB_ADAPTIVITY)` (phydm_adaptivity.c:78–100; the WIN/AP blocks
 are `#elif`-excluded). `ODM_BB_ADAPTIVITY` is set only `if (IS_FUNC_EN(dm->enable_adaptivity))`
 (phydm.c:1278–1280) — the per-IC CE default that would set it is `#if 0`'d (phydm.c:1116–1124).
 `enable_adaptivity` ← `registrypriv.adaptivity_en` (hal_dm.c:280) ← `rtw_adaptivity_en`
 (`CONFIG_RTW_ADAPTIVITY_EN`, module param "0:disable, 1:enable", os_intfs.c:510), **default disable**
 (rtw_odm.c:81). So `adaptivity_enable=false` ⇒ the notch is dead code and the final disable block never
-runs either ⇒ reading-`0xf0`-only is faithful. **Empirical corroboration:** our `_adaptivity` mode2 path
+runs either ⇒ reading-`0xf0`-only is correct. **Empirical corroboration:** our `_adaptivity` mode2 path
 (which assumes `adaptivity_enable=false`) byte-matches the capture's `0xc4c` EDCCA writes.
 
 > **Non-default caveat (flag, don't fix):** a user who loads `rtw_adaptivity_en=1` (e.g. an ETSI region)
@@ -111,7 +111,7 @@ in-code; not a captured-path defect.
 BB (`phy_bb_config`: crystal-cap `0x24`, SYS_FUNC_EN gates, table loads), RF (`phy_rf_config`: RFENV
 save/restore, radio-A table, foundry check), TX-power (`set_tx_power` per-rate TXAGC), MAC RCR
 (`init_misc02`: `0x700060CE`, ACRC32 correctly excluded for 8188E), and DM-init (DIG `0xC50` seed,
-CCK-CCA `0xA08`, NHM thresholds, EDCCA) all port faithfully. Conditionals verified rather than assumed:
+CCK-CCA `0xA08`, NHM thresholds, EDCCA) all port correctly. Conditionals verified rather than assumed:
 `phydm_set_lna(disable)` gate includes 8188E (we call it); EDCCA asserted-bit is `BIT(30)` for 8188E
 (hardcoded right, phydm_adaptivity.c:380); path-B RF is gated `rf_type > 1T1R` (correctly skipped);
 `_InitPABias` is commented out vendor-side too. No dropped branch.
@@ -133,7 +133,7 @@ A source audit *suspected* a missing 10–14 dB external-LNA gain (`0xCA[6:4]` G
 hardcode. **Suspicion dismissed by silicon.** No efuse-derived RX gain is dropped. (The card MAC, crystal,
 and thermal all decode correctly.)
 
-### RX · controlled RX-decode test — decode is 100% faithful
+### RX · controlled RX-decode test — decode is byte-for-byte correct
 Offline, no card: ran our `rx.iter_frames` over capture-1's raw bulk-IN (ep 0x81, 4809 transfers) and
 counted beacons, vs the raw beacon-signature regex (`beacon_watch_usbcap`'s method) over the **same**
 bytes. Result: **identical, ratio 1.00 on every AP** — `…d3:eb` 218/218, `…d2:18` 210/210, `…d3:e8`
@@ -143,12 +143,12 @@ alignment, and the crc/icv handling drop **nothing** the kernel's bulk-IN carrie
 
 ## What this audit does *not* cover (honest limits)
 
-`verify_pcap` + this audit assert faithfulness for the **captured path** (cold init → the 22-tick no-link
+`verify_pcap` + this audit assert byte-for-byte correctness for the **captured path** (cold init → the 22-tick no-link
 watchdog window → monitor entry → channel set → decode) and the source-derived gating of everything
 around it. They cannot speak to behaviors that need conditions absent from the ~15 s capture:
 - **receiver-blocking under `rtw_adaptivity_en=1`** (L1) — would arm a ch1/ch13 notch; unported.
 - **powertrack IQK/LCK under ≥8 °C drift** (L2) — unported re-cal on a long hot run.
-- **long-session DIG convergence** — byte-faithful for the captured ticks; over many more live ticks it
+- **long-session DIG convergence** — byte-for-byte for the captured ticks; over many more live ticks it
   follows the same algorithm but on environment-dependent FA counters (not a port variable).
 
 None of these explain the *cold/short-window* ~6.5-vs-~8.9 gap (the notch needs >20 s idle; thermal needs
@@ -157,7 +157,7 @@ time difference — **not a port defect.**
 
 ## Recommendation
 
-- **No fix warranted** for the captured/default build — the port is faithful. Do not chase the RX wall in
+- **No fix warranted** for the captured/default build — the port matches the wire. Do not chase the RX wall in
   software; it isn't there.
 - **If** 8188eus adaptivity-region (ETSI) support is ever wanted, port the receiver-blocking NBI notch
   (L1) and verify with `rtw_adaptivity_en=1`.

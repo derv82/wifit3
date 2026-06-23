@@ -17,7 +17,7 @@ zero-delta core — the parts byte-identical across the family:
 The chip-shaped modules (mac/bb/chan/txpower/dig/monitor + the efuse parse + the
 RSSI formula + every init table) stay per-chip and are NOT shared here — they
 differ enough (RF path count, RFE registers, per-chip PHYDM values) that one
-parameterised copy would be less honest than two faithful ports. The mainline
+parameterised copy would be less honest than two separate ports. The mainline
 precedent for a family base is ``chips/rtw88_base/``.
 
 ``chips/rtl8821au_dkms/`` is intentionally NOT migrated onto this base: it is the

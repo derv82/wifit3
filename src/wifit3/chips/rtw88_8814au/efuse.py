@@ -141,7 +141,7 @@ class EfuseRead:
 
 
 def _efuse_grant(transport: RTL8814AUTransport, on: bool) -> None:
-    """rtw8814a_efuse_grant (rtw8814a.c) — kernel-faithful."""
+    """Port of rtw8814a_efuse_grant (rtw8814a.c)."""
     if on:
         transport.write8(REG_EFUSE_ACCESS, EFUSE_ACCESS_ON)
         transport.write16(REG_SYS_FUNC_EN,

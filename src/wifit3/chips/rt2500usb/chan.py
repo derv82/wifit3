@@ -2,7 +2,7 @@
 
 The RF synthesizer is programmed serially through PHY_CSR9 (low 16 bits)
 and PHY_CSR10 (high bits + RF_BUSY trigger + bit count). RF registers are
-**write-only** — there is no read path. Faithful port of rt2500usb.c:
+**write-only** — there is no read path. Port of rt2500usb.c:
   * rt2500usb_rf_write       (179-206)
   * rt2500usb_config_channel (582-611)
   * rf_vals_bg_2525 / 2525e tables (1574-1610)

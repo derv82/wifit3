@@ -1,7 +1,7 @@
 """rt2500usb MAC bring-up: revision read, warm probe, register init,
 the MAC_CSR17 power-state handshake, and the always-monitor RX filter.
 
-Faithful port of rt2500usb.c:
+Port of rt2500usb.c:
   * rt2500usb_init_eeprom rev/RF identification (1434-1446) -> read_revision
   * rt2500usb_init_registers (766-879)                      -> init_registers
   * rt2500usb_set_state (981-1017)                          -> set_state
@@ -312,7 +312,7 @@ def config_filter(t: RT2500USBTransport, monitoring: bool) -> None:
     FIF_ALLMULTI ON, VERSION_ERROR always dropped, BROADCAST always accepted.
     ``monitoring`` clears DROP_NOT_TO_ME + DROP_TODS so client→AP (ToDS) frames
     from every BSS arrive. The resulting monitor value (0x0046) is exactly what
-    the kernel's airmon path writes — this is faithful to the wire, not a
+    the kernel's airmon path writes — this matches the wire, not a
     deviation. DISABLE_RX is owned by start/stop_queue_rx, not touched here.
     """
     reg = t.read16(TXRX_CSR2)
@@ -332,7 +332,7 @@ def config_filter(t: RT2500USBTransport, monitoring: bool) -> None:
 def apply_monitor_filter(t: RT2500USBTransport) -> None:
     """Convenience: open the monitor RX filter and enable the RX queue.
 
-    The faithful bring-up calls config_filter / start_queue_rx in the kernel's
+    The bring-up calls config_filter / start_queue_rx in the kernel's
     bracketed order; this one-shot wrapper (TXRX_CSR2 = 0x0046, DISABLE_RX
     clear) is for the incremental HW-test phases and the post-warm reattach.
     """

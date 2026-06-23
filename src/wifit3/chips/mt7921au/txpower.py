@@ -1,5 +1,5 @@
 """
-MT7921AU TX-power SKU limits — a faithful port of mt76_connac_mcu_set_rate_txpower
+MT7921AU TX-power SKU limits — a port of mt76_connac_mcu_set_rate_txpower
 / mt76_connac_mcu_rate_txpower_band / mt76_connac_mcu_build_sku.
 
 The host sends *regulatory* per-rate power limits (the firmware applies the

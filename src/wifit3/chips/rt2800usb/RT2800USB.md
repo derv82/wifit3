@@ -76,7 +76,7 @@ verified — do not let speculation accumulate here.
   calibration is **degenerate** — see "RT3572 unburned-EFUSE behaviour"
   below. The cal loop (`init_rfcsr_3572` → `_rx_filter_calibration_3572`)
   still produces the per-bw RFCSR24/31 values replayed on every channel
-  tune; we run it faithfully and accept the rail it returns.
+  tune; we run it as the kernel does and accept the rail it returns.
 - **PAU09 N600** (silicon 0x5592 rev 0x0222 = REV_RT5592C+): RT5572 +
   RF5592. 2T2R 2.4 + 5 GHz. USB 2.0. EFUSE NIC_CONF0=NIC_CONF1=0x0F0F
   (unburned, factory-test pattern — handled by
@@ -439,7 +439,7 @@ single chain. [WIRE] `aireplay.pcap` writes `RFCSR1 = 0xf1`
 chain 0 live). So `EepromValues.{tx,rx}path` default the unburned case
 to **1 TX / 1 RX**, and `config_channel` lights a single PA
 (`PA_PE_G0`). An earlier "force 2T2R" override was a workaround for our
-own DAC-gate bug (next) — not faithful, removed.
+own DAC-gate bug (next) — diverged from the wire, removed.
 
 ### DAC1/ADC1 gate reads the RAW NIC_CONF0 field
 
@@ -481,13 +481,13 @@ Both rails are non-physical; neither is a calibration. The ~7-count
 reading offset between the drivers is noise-level on a degenerate filter
 and is **not** a portable bug — the RFCSR + BBP init tables, init order,
 chain/DAC state, and the cal code were all verified byte-for-byte
-faithful. We run the loop unmodified and accept its result. **The TX
+per the Pcap Replay. We run the loop unmodified and accept its result. **The TX
 ceiling on this unit (~20/40 deauths on-air, high run-to-run variance)
 is the missing factory calibration, not the driver**; a properly-burned
 RT3572 converges to a real value and sees none of this. (We briefly
 tested forcing the kernel's `0x6b` and sweeping mid-range values; the
 on-air metric is dominated by RF environment, so nothing beat the
-faithful loop reliably — reverted.)
+kernel's loop reliably — reverted.)
 
 ### Settle timing is a non-issue on userland USB
 

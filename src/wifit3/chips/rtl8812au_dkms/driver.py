@@ -88,7 +88,7 @@ class Rtl8812auDkmsDriver:
     def _claim(self) -> None:
         """Detach any kernel driver, set the configuration, claim interface 0. This is
         OS-level USB plumbing — outside the vendor op stream the byte-for-byte gate
-        reproduces (std enumeration is OS-level), so it does not affect gate faithfulness.
+        reproduces (std enumeration is OS-level), so it does not affect the byte-for-byte gate.
         On Windows+WinUSB the device is already configured; on Linux this is the rmmod-
         equivalent that frees the device from the kernel rtw88/rtl8xxxu driver."""
         dev = self.transport.dev

@@ -1,4 +1,4 @@
-"""RTL8821AU (DKMS) M6: TX descriptor builder — vendor faithful.
+"""RTL8821AU (DKMS) M6: TX descriptor builder — vendor port.
 
 Ports `rtl8812a_fill_fake_txdesc` [SRC] rtl8812a_xmit.c:265 — the vendor's minimal,
 self-contained "send this frame directly" descriptor. That field set is exactly what

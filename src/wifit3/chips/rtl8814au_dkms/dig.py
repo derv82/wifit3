@@ -1,4 +1,4 @@
-"""RTL8814AU runtime DIG/AGC watchdog (M3c) — vendor faithful, no-link path.
+"""RTL8814AU runtime DIG/AGC watchdog (M3c) — no-link path.
 
 Ports the phydm DIG watchdog [SRC phydm_dig.c phydm_dig] for the always-monitor
 (never-linked) case: read the false-alarm (FA) counters, step the initial gain index

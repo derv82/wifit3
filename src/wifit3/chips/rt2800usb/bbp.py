@@ -502,7 +502,7 @@ def init_bbp_5592(
     bbp_write(t, 103, 0xC0)
     bbp_write(t, 104, 0x92)
     # Kernel comment: "FIXME BBP105 overwrite" — the earlier MLD bit gets
-    # clobbered here. Faithful port (the chip clearly tolerates this).
+    # clobbered here. Ported as-is (the chip clearly tolerates this).
     bbp_write(t, 105, 0x3C)
     bbp_write(t, 106, 0x35)
     bbp_write(t, 128, 0x12)

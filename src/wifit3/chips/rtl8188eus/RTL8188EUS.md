@@ -31,13 +31,13 @@ Verified facts only. Anything not in this doc is a hypothesis.
 
 Citations: `[SRC]` = kernel source path, `[WIRE]` = `usb_dumps/captures_rtl8xxxu/capture-N.pcap` frame numbers.
 
-## RX baseline — pre-faithfulness-pass (2026-06-06)
+## RX baseline — pre-equivalence-pass (2026-06-06)
 
 Recorded before the IQK/LCK + runtime-gain port, so that work has a before/after.
 `beacon_watch.py` on the canary AP (CH1, ~1 m, strong signal) driving wifit3's own
 userland driver. RX is **bimodal**: typical windows are a healthy ~8/s, but it
 intermittently collapses into bad windows where the canary is heard *worse* than
-further-away neighbours — the variance itself is the defect a faithful port should
+further-away neighbours — the variance itself is the defect a correct port should
 remove. One-AP wire ceiling ≈ 9.77 beacons/s.
 
 | Window | mean | median | min | max | stdev |
@@ -46,7 +46,7 @@ remove. One-AP wire ceiling ≈ 9.77 beacons/s.
 | 30 s, cold | 8.3 | 8 | 6 | 10 | 1.0 |
 | 60 s, warm | 7.8 | 8 | 5 | 10 | 1.2 |
 
-## Bring-up faithfulness walk (2026-06-06, in progress)
+## Bring-up equivalence walk (2026-06-06, in progress)
 
 **Goal:** behave identically to mainline `rtl8xxxu` — port the *source* control flow
 (branches, loops, EFUSE-driven values), not byte-match one capture. The original port was a
@@ -56,7 +56,7 @@ rtl8188eus` is the byte-perfect unit test that corroborates each fix against the
 capture and pinpoints the next divergence (its value is bounded by being one card — it proves
 determinism here + locates drift, but the kernel C is the spec).
 
-**Verified byte-faithful** (gated in `verify_pcap.py`, all 3 captures — 523 post-FW ops + the
+**Verified byte-for-byte** (gated in `verify_pcap.py`, all 3 captures — 523 post-FW ops + the
 FW blob): `download_firmware` · `init_mac` (MAC table + MAX_AGGR) · `init_phy_bb` (BB+AGC) ·
 `set_crystal_cap` · `init_phy_rf` (RADIO_A).
 
@@ -72,7 +72,7 @@ FW blob): `download_firmware` · `init_mac` (MAC table + MAX_AGGR) · `init_phy_
 | adaptive controls (RESPONSE_RATE_SET, SIFS, retry, EDCA×4, DARFRC, RARFRC, FWHW_TXQ_CTRL, ACKTO) | missing |
 | beacon params, CAM invalidate, LEDCFG2 DPDT, HWSEQ_CTRL, BAR_MODE_CTRL, NAV_UPPER, USB_HRPWM | missing |
 | `init_aggregation`, `init_reg_pkt_life_time`, thermal-meter RF write | missing (all in the 8188e fops vector) |
-| `phy_iq_calibrate` (path-A IQK) | **ported 2026-06-06** ✓ → `iqk.py`; gated in `verify_pcap` — 270 ops (cap-1/3) / 413 ops (cap-2, more iterations) byte-exact, which proves the retry + similarity-compare logic follows the recorded path. Wired into `_cold_bring_up` before `enable_rf`. (Disproves the earlier "runtime-computed, can't replay-match" note: the replay serves the recorded measurement-reads, so a faithful algorithm reproduces the recorded writes.) |
+| `phy_iq_calibrate` (path-A IQK) | **ported 2026-06-06** ✓ → `iqk.py`; gated in `verify_pcap` — 270 ops (cap-1/3) / 413 ops (cap-2, more iterations) byte-exact, which proves the retry + similarity-compare logic follows the recorded path. Wired into `_cold_bring_up` before `enable_rf`. (Disproves the earlier "runtime-computed, can't replay-match" note: the replay serves the recorded measurement-reads, so the ported algorithm reproduces the recorded writes.) |
 | `phy_lc_calibrate` (LCK) | **ported 2026-06-07** ✓ → `iqk.py`; gated (10 ops, exact-fills the gap to IQK on all 3 captures). Wired into `_cold_bring_up` before IQK. |
 
 **Stopping point (2026-06-07): mainline maxed → DKMS warranted.** Clean fixed-ch1 *passive*
@@ -83,8 +83,8 @@ bring-up is ported + byte-verified (FW · MAC · BB/AGC/RF tables · crystal cap
 gated across the mainline captures. **No more mainline RX to win** — the remaining
 `init_device` tail (post-PHY block, runtime DIG) is TX/housekeeping + environment-dependent.
 The RX win is the DKMS re-port → branch `dkms/8188eu`, sibling `chips/rtl8188eus_dkms/`
-(doc `RTL8188EUS_DKMS.md`). The post-PHY/un-hoist restructure stays available if a faithful
-mainline ever matters, but it won't move beacons.
+(doc `RTL8188EUS_DKMS.md`). The post-PHY/un-hoist restructure stays available if a mainline-equivalent
+port ever matters, but it won't move beacons.
 
 ## 1. Project Objective
 
@@ -251,7 +251,7 @@ Total wire writes: 192 + 130 + 91 = 413, plus 4 × `time.sleep(0.05)` for the RF
 
 ### Skipped in M3 (calibration; chip will RX without these but with degraded sensitivity)
 
-- `rtl8188eu_phy_iq_calibrate` (`8188e.c:906-991`) — IQ calibration — **ported 2026-06-06** → `iqk.py` (gated, all 3 captures); see the faithfulness-walk section up top
+- `rtl8188eu_phy_iq_calibrate` (`8188e.c:906-991`) — IQ calibration — **ported 2026-06-06** → `iqk.py` (gated, all 3 captures); see the equivalence-walk section up top
 - `rtl8723a_phy_lc_calibrate` — LC calibration (path-A only on 8188e) — **ported 2026-06-07** → `iqk.py` (gated)
 - `usb_quirks` rest of body (`8188e.c:1302-1306`)
 

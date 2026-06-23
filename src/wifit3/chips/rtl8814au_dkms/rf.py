@@ -1,4 +1,4 @@
-"""RTL8814AU RF (radio) configuration (M2c) — vendor faithful port.
+"""RTL8814AU RF (radio) configuration (M2c) — port of the vendor stack.
 
 `PHY_RFConfig8814A` [SRC rtl8814a_phycfg.c:570] -> `PHY_RF6052_Config_8814A` loads
 one conditional radio table per RF path A..D through the same phy_cond walker as

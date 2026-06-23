@@ -66,7 +66,7 @@ def set_radio_led(t: RT5372Transport, ev: EepromValues) -> None:
     """Radio LED on — ``rt2800_brightness_set(LED_TYPE_RADIO, enabled)`` [SRC
     rt2800lib.c:1636-1638]. The kernel emits this via the leds-class/rfkill trigger
     as the interface comes up (before STATE_AWAKE on the wire); reproduced here with
-    EEPROM-derived args (ledmode from EEPROM_FREQ) so the byte stays faithful, not
+    EEPROM-derived args (ledmode from EEPROM_FREQ) so the byte tracks the EEPROM, not
     hardcoded. arg1=0x20 = radio enabled."""
     ledmode = get_field(ev.led_mcu_reg, C.EEPROM_FREQ_LED_MODE)
     t.mcu_request(C.MCU_LED, 0xFF, ledmode, 0x20)

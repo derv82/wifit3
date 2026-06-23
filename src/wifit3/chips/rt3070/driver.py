@@ -6,7 +6,7 @@ interface-up filter → post-radio config → monitor filter) and the default ch
 and starts the bulk-IN RX reader. Every wire op through the channel hops is byte-diffed
 against the cold-boot capture by ``scripts/verify_pcap.py rt3070`` (the operational gate).
 
-TX (``inject_frame`` → ``tx.send_frame``) is wired and pcap-faithful but **never fired by
+TX (``inject_frame`` → ``tx.send_frame``) is wired but **never fired by
 the driver** — injection/deauth is the user's explicit action [[passive_by_default]].
 
 Standalone port (NOT a ``chips/rt2800usb`` DeviceID delta — that shared base has a

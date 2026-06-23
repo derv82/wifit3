@@ -326,7 +326,7 @@ def _compute_xtal_trim(trim_2: int, trim_1_byte: int) -> tuple[int, int]:
 def _mac_fixup_xtal(transport: MT76x2UTransport) -> None:
     """`mt76x2u_mac_fixup_xtal` — [SRC] mt76x2/usb_mac.c:9-60.
 
-    Kernel-faithful port. Reads two EEPROM bytes for the per-board XTAL
+    Kernel port. Reads two EEPROM bytes for the per-board XTAL
     trim, programs CFG-bus MT_XO_CTRL5.C2_VAL + MT_XO_CTRL6.C2_CTRL, runs
     the four MAC-engine housekeeping writes around 0x504/0x50c, sets the
     OFDM SIFS / slot CC_DELAY / FCE L2 stuff bits, and conditionally
@@ -417,7 +417,7 @@ def mac_set_bssid(transport: MT76x2UTransport, idx: int, addr: bytes) -> None:
 def mac_setaddr(transport: MT76x2UTransport, mac_bytes: bytes) -> None:
     """`mt76x02_mac_setaddr` — [SRC] mt76x02_mac.c:727-758.
 
-    Kernel-faithful port. Writes ADDR_DW0/DW1 (with U2ME_MASK=0xff in
+    Kernel port. Writes ADDR_DW0/DW1 (with U2ME_MASK=0xff in
     DW1's high byte), BSSID_DW0/DW1 (with MBSS_MODE=3 + MBSS_LOCAL_BIT
     in DW1's upper bits), then RMW's MBEACON_N=7 onto BSSID_DW1, then
     clears all 8 per-vif APC_BSSID slots via 16 iterations of
@@ -516,7 +516,7 @@ def mac_cc_reset(transport: MT76x2UTransport) -> None:
 def init_beacon_config(transport: MT76x2UTransport) -> None:
     """`mt76x02_init_beacon_config` — [SRC] mt76x02_beacon.c:205-213.
 
-    Kernel-faithful init even though wifit3 never TX's beacons:
+    Kernel init even though wifit3 never TX's beacons:
       - CLEAR BEACON_TIME_CFG.{TIMER_EN | TBTT_EN | BEACON_TX}
       - SET   BEACON_TIME_CFG.SYNC_MODE
       - WRITE BCN_BYPASS_MASK = 0xFFFF

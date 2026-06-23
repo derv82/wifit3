@@ -211,7 +211,7 @@ class MT7921AUTransport:
 
     def _build_mcu_frame(self, cmd: int, payload: bytes) -> tuple[bytes, int]:
         """Stamp the next seq and frame an encoded ``cmd`` + payload via the
-        faithful mcu.build_mcu_frame (mt76_connac2_mcu_fill_message). Returns
+        mcu.build_mcu_frame (mt76_connac2_mcu_fill_message). Returns
         (frame_bytes, seq) so the caller can match the device's seq-echoed reply."""
         seq = self._next_mcu_seq()
         return mcu.build_mcu_frame(cmd, payload, seq), seq

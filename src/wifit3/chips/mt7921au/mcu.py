@@ -1,7 +1,7 @@
 """
 MT7921AU connac2 MCU command layer.
 
-A faithful port of two kernel pieces:
+A port of two kernel pieces:
 
   * the command-id field encoding — the ``MCU_CMD`` / ``MCU_EXT_CMD`` /
     ``MCU_UNI_CMD`` / ``MCU_CE_CMD`` macros in mt76_connac_mcu.h. A command is a

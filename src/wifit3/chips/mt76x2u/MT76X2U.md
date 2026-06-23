@@ -196,7 +196,7 @@ alongside the blobs in `assets/`.
   kernel, which trusts the EEPROM. The periodic `tssi_compensate` path is
   suspected of zeroing TX power on this silicon (observed `tssi_slope=127`,
   near max). The `phy.py` port of `mt76x2_phy_tssi_compensate` audited as
-  faithful, so the root cause is more likely in the EEPROM read feeding it
+  matching the kernel, so the root cause is more likely in the EEPROM read feeding it
   or the monitor-mode `avg_rssi_all=-75` placeholder. Needs hardware
   diagnosis before flipping the default back to kernel behavior.
 - Whether the wireless-mode endpoints we see are stable across power

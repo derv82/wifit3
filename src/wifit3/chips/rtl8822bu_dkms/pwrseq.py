@@ -8,7 +8,7 @@ match this card. WRITE is a read-modify-write; POLLING reads until the masked va
 matches; DELAY and READ touch no register; END terminates a table.
 
 The tables are transcribed 1:1 from the vendor (SDIO/PCI rows kept verbatim — the
-interface filter drops them for USB, but a faithful copy is the safest port). The 8822b
+interface filter drops them for USB, but a complete copy is the safest port). The 8822b
 power-seq has no USB-specific divergence beyond that filter.
 
 Ported from:

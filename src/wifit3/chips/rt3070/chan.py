@@ -61,8 +61,8 @@ def _get_gain_calibration_delta(t: RT3070Transport, ev: EepromValues) -> int:
     """TSSI-based temperature compensation, 2.4 GHz [SRC rt2800lib.c:4566-4681].
 
     Gated on EEPROM EXTERNAL_TX_ALC; bails to 0 when the TSSI reference / AGC step
-    are unprogrammed (0xff) — which is this card (so BBP49 is never read). Ported
-    faithfully; the per-step adjustment is #TODO untestable here (no TSSI table)."""
+    are unprogrammed (0xff) — which is this card (so BBP49 is never read). Ported;
+    the per-step adjustment is #TODO untestable here (no TSSI table)."""
     if not ev.external_tx_alc:
         return 0
     tssi_bounds = [

@@ -4,7 +4,7 @@ MT7921AU RX path — connac2 RX descriptor decode + EP-0x84 demux.
 EP 0x84 carries both MCU responses and 802.11 frames; the rxd0 packet type tells
 them apart (mt7921_queue_rx_skb). For an 802.11 frame, mt7921_mac_fill_rx walks
 the variable RXD groups (selected by rxd1) to find where the MPDU begins and pulls
-the RCPI-derived signal from the P-RXV / GROUP_5 vector. Faithful port of
+the RCPI-derived signal from the P-RXV / GROUP_5 vector. Port of
 mt7921/mac.c; validatable offline against captured beacons.
 """
 import struct

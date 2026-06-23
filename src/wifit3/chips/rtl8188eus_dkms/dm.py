@@ -14,7 +14,7 @@ Two parts:
     looping until the band reads clear or the L2H ceiling (10) is hit, then re-enable
     the LNA and reset the threshold. The loop length is **data-dependent** (it follows
     the debug-port reads), so it is ported as the real algorithm — the replay serves
-    the reads and a faithful port reproduces the writes. [WIRE] cap1 ops 1631-1865.
+    the reads and the port reproduces the writes. [WIRE] cap1 ops 1631-1865.
 
 Several SW-state reads (RF-interface/RX-path/CCK/RF-gain) feed phydm structs and change
 no chip state; they are reproduced in wire order so the replay stays aligned.

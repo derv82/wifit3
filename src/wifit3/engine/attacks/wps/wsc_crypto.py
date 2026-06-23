@@ -2,7 +2,7 @@
 
 The whole cryptographic surface of the WPS registration protocol, shared by the
 online PIN brute-force (registrar building M2/M4/M6) and the future PixieWPS
-offline attack. Faithfully ported from hostapd's ``src/wps/wps_common.c`` /
+offline attack. Ported from hostapd's ``src/wps/wps_common.c`` /
 ``wps_attr_build.c`` (the reference the kernel + reaver/bully all embed).
 
 Anchors (so this isn't validated only against itself):

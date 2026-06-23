@@ -1,4 +1,4 @@
-"""RTL8812AU EFUSE parse — 2-path (2T2R), vendor faithful.
+"""RTL8812AU EFUSE parse — 2-path (2T2R), vendor port.
 
 Uses the shared base EFUSE read mechanics (byte read + PG logical-map walk) and decodes
 the 8812a logical offsets. The 8812 is 2T2R, so the PG TX-power block holds TWO paths
@@ -228,7 +228,7 @@ def _read_usb_type(t) -> None:
 
 
 def read_chip_params(t) -> ChipParams:
-    """Probe-phase chip-info + EFUSE read (2T2R), byte-faithful to the vendor
+    """Probe-phase chip-info + EFUSE read (2T2R), byte-for-byte to the vendor
     ReadAdapterInfo8812AU -> Hal_ReadPROMContent_8812A -> InitAdapterVariablesByPROM_8812AU.
     """
     sys_cfg = t.read32(R.REG_SYS_CFG)               # 0xF0 read_chip_version (also seeds cut_version)

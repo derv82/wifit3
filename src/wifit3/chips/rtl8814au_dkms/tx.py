@@ -1,4 +1,4 @@
-"""RTL8814AU TX descriptor builder (M4a) — vendor faithful.
+"""RTL8814AU TX descriptor builder (M4a) — port of the vendor stack.
 
 Ports `rtl8814a_fill_fake_txdesc` [SRC rtl8814a_xmit.c:267] — the vendor's minimal,
 self-contained management TX descriptor (what it hands the HW to transmit a frame

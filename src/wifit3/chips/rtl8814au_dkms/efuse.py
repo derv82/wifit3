@@ -1,4 +1,4 @@
-"""RTL8814AU EFUSE read + chip-param decode — vendor faithful port.
+"""RTL8814AU EFUSE read + chip-param decode — port of the vendor stack.
 
 The probe phase reads the burned-in efuse to recover per-card parameters the BB
 config needs: ``rfe_type`` (phy_cond walker discriminator), ``crystal_cap`` (AFE
@@ -160,7 +160,7 @@ _TXPWR_PATH_OFF = (0x10, 0x3A, 0x64, 0x8E)
 # [WIRE] confirmed: the cold-boot txagc applies the 1st/2nd-stream BW20 diffs but NOT the
 # 3rd (path C ch36-64 byte 0xC9=0xff yet the 3rd-stream notch is absent). Super-speed USB
 # would give RF_3T3R (max_tx_cnt=3), but that only changes nss>=3 TX power, which monitor
-# inject (fixed nss=1 rate) never uses, so this is a safe, capture-faithful default.
+# inject (fixed nss=1 rate) never uses, so this is a safe, capture-matching default.
 MAX_TX_CNT = 2
 
 

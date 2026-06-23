@@ -1,4 +1,4 @@
-"""RTL8814AU TX-power level (M2e) — vendor faithful port, 2.4 GHz.
+"""RTL8814AU TX-power level (M2e) — port of the vendor stack, 2.4 GHz.
 
 `rtw_hal_set_tx_power_level` -> `PHY_SetTxPowerLevel8814` loops the 4 RF paths and,
 per rate, writes the per-rate power index into the "txagc table" at BB reg 0x1998
@@ -15,7 +15,7 @@ returns the non-binding ceiling. `PHY_GetTxPowerIndex8814A` then collapses to:
 where `pg` is the efuse base for the rate's group + the cumulative nTX diff
 [SRC phy_get_pg_txpwr_idx]. CurrentTxPwrIdx defaults to 20 (-> +2). For this card
 the diffs net to zero across every rate, so PowerIndex = base + 2 — but the diff
-accumulation is ported faithfully (it is channel/efuse general). Verified
+accumulation is ported in full (it is channel/efuse general). Verified
 byte-for-byte; [WIRE] cap1 frames 13843-14377 (268 writes = 67/path x 4).
 """
 from __future__ import annotations

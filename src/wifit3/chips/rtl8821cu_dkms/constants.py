@@ -30,7 +30,7 @@ FW_START_ADDRESS = 0x1000              # [SRC] include/usb_ops_linux.h (FW DL wi
 # an extra 1-byte bRequest=0x05 write to 0x4E0 carrying the low byte of the IO
 # buffer (read-back value for a read, written value for a write). ON-section is
 # reg addr <= 0xFF or 0x1000..0x10FF (all under 0xFE00); OFF/LOCAL get no mirror.
-# Gated by CONFIG_RTL8821C, so 8821c does it; reproduce it for byte-faithfulness.
+# Gated by CONFIG_RTL8821C, so 8821c does it; reproduce it for byte-for-byte parity.
 # [SRC] os_dep/linux/usb_ops_linux.c:171-201 (t_reg = 0x4e0 at :191)
 REG_PAGE_SWITCH_CONFIRM = 0x04E0
 ON_SEC_RANGES = ((0x0000, 0x00FF), (0x1000, 0x10FF))

@@ -10,7 +10,7 @@ concatenation the vendor builds in ``hal/rtl8812a/Hal8812PwrSeq.c``:
 branch — distinct from the 8821's cut-A MP path). The C array's terminating END row is
 a no-op terminator and is omitted (it emits no register transfer); the PCI-only rows
 fall out under intf=USB. The 8812's CARDEMU_TO_ACT is markedly shorter than the 8821's
-(no LDO/SPS regulator block) — a real chip difference, ported faithfully.
+(no LDO/SPS regulator block) — a real chip difference, ported as-is.
 """
 from __future__ import annotations
 

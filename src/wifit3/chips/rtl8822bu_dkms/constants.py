@@ -29,7 +29,7 @@ FW_START_ADDRESS = 0x1000              # [SRC] include/usb_ops_linux.h:19
 # of the IO buffer (read-back value for reads, written value for writes). The
 # ON-section is reg addr <= 0xFF or 0x1000..0x10FF; everything else (OFF/LOCAL)
 # gets no mirror. This is the chip's banked-register confirm; it must be
-# reproduced for byte-faithfulness. [SRC] os_dep/linux/usb_ops_linux.c:171-201
+# reproduced for a byte-for-byte replay. [SRC] os_dep/linux/usb_ops_linux.c:171-201
 REG_PAGE_SWITCH_CONFIRM = 0x04E0       # REG_NULL_PKT_STATUS_V1 [SRC] halmac_reg_8822b.h:379
 ON_SEC_RANGES = ((0x0000, 0x00FF), (0x1000, 0x10FF))
 

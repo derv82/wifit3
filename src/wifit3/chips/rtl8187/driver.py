@@ -151,7 +151,7 @@ class RTL8187Driver:
             _progress(0.05, "Claiming USB interface")
             await loop.run_in_executor(None, self._claim)
 
-            # Faithful probe: 93cx6 EEPROM (MAC + per-channel TX power + base), asic_rev,
+            # Probe: 93cx6 EEPROM (MAC + per-channel TX power + base), asic_rev,
             # HWVER, RF variant, rfkill — the exact rtl8187_probe wire sequence. Runs on
             # both warm + cold paths (the EEPROM TX-power table is what set_channel needs,
             # and the reads are safe on a warm/RF-alive chip).

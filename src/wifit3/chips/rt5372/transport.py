@@ -76,7 +76,7 @@ def _trace_xfer(request, requesttype, value, index, data, result) -> None:
 def _is_device_gone(err: usb.core.USBError) -> bool:
     """True only when the device is *truly* gone — retry everything else.
 
-    Faithful to the kernel's intent (rt2x00usb_check_usb_error stops on a removed device)
+    Mirrors the kernel's intent (rt2x00usb_check_usb_error stops on a removed device)
     but mapped to libusb reality: only ``LIBUSB_ERROR_NO_DEVICE (-4)`` / ``ENODEV`` mean
     physically-gone. NOT ``LIBUSB_ERROR_NOT_FOUND (-5)`` / ``ENOENT`` — on Windows/WinUSB
     that's a *transient* stale-handle / mid-enumeration hiccup, not a removed device, so
@@ -178,7 +178,7 @@ class RT5372Transport:
         """One-shot EEPROM read (wValue=wIndex=0) [SRC rt2x00usb.h:170-176].
 
         #TODO untestable: PAU05/PAU06 are EFUSE cards, so the chip never takes
-        the USB_EEPROM_READ path (see eeprom.read_eeprom_efuse). Ported faithfully
+        the USB_EEPROM_READ path (see eeprom.read_eeprom_efuse). Ported
         for a future 93C66-EEPROM rt2x00 member; no wire exercises it.
         """
         return bytes(self._vendor_request(C.USB_VENDOR_REQUEST_IN, C.USB_EEPROM_READ,

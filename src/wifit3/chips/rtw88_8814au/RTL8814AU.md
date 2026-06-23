@@ -115,7 +115,7 @@ Analysis only (no fixes yet), grounded in kernel source (`data_dumps/rtw88-sourc
 and the 3 cold-boot pcaps. Driving concern: the `connect()` "re-roll
 phy_set_param up to 8×" retry loop is a band-aid — if the kernel/airmon is
 reliable and we're 50/50, we are **skipping a step the kernel does**, not hitting
-unavoidable hardware flakiness. [[feedback_no_bandaids_root_cause]]
+unavoidable hardware flakiness. (root-cause, not a band-aid; PORTING.md Step 3.)
 
 ### What the pcaps can and cannot tell us (important scoping result)
 
@@ -169,7 +169,7 @@ Consequences:
    `REG_CCK0_FAREPORT` 2RX|MRC, sets CCK RX→path B. *Status: now ported into
    `phy.config_trx_path`, called from `phy_set_param`. (Consistently-wrong path
    config would be consistently bad, not 50/50, so it wasn't the 50/50 cause —
-   but it's a real faithfulness gap, now closed. crystal_cap→AFE_CTRL3 was also
+   but it's a real divergence from the kernel, now closed. crystal_cap→AFE_CTRL3 was also
    added in the same pass.)*
 4. **[LOW] No RF/PLL settle or lock-poll after RF power-on.** Neither kernel nor we
    poll, but the kernel emits ~thousands more writes (full phy_init, init_rfe_reg,
@@ -261,7 +261,7 @@ lag the user saw once is shelved (likely Textual latency, not card-specific).
   (power-by-rate parse) landed; steps 2-6 (by-rate offset, computation, REG_AGC_TBL
   write, bb_swing, wiring) parked. See "M6 — TX power" plan above.
 - **Two recovery-style fixes not fully root-caused** (acknowledged band-aids; the
-  cold-boot/agg + DIG fixes ARE faithful state-matches, these two are not):
+  cold-boot/agg + DIG fixes ARE verified state-matches, these two are not):
   1. **8× phy_set_param re-roll in `connect()`** — now likely unnecessary since
      cold boots are 10/10 with DIG + agg-off; flagged for removal/verification.
   2. **Band-switch CCA re-lock in `set_channel`** — detect-deaf-and-re-tune. Fixed
@@ -340,7 +340,7 @@ airodump 20407–88479, then 1 s iw hops, aireplay, 0.25 s fast-hops.
 Suspects now (need Windows-HW toggling, not more pcap): (a) our **RX aggregation**
 desyncing on rapid retune; (b) our **extra per-hop writes** the kernel never does
 (`rx.tune_monitor_cck_sensitivity` + `dynamic.dig_init` re-seed); (c) WinUSB
-reader-thread ↔ control-transfer contention. Separate faithfulness win available:
+reader-thread ↔ control-transfer contention. Separate accuracy win available:
 **port `rtw8814a_do_iqk`** (run once after phy_set_param at connect), per finding #4.
 
 ---
@@ -546,7 +546,7 @@ chip's real descriptor size. For the 8822b these happen to be equal (48); for
 the 8814a they differ. Our `firmware.py` keeps them separate: `TX_PKT_DESC_SZ`
 (40) for the descriptor + iddma offset, `FW_DLFW_ZLP_TXDESC` (48) for the ZLP
 check. For the current blob no chunk actually triggers the +1, but the split is
-the faithful port and is robust if the FW changes.
+the port of the kernel's two defines and is robust if the FW changes.
 
 ### 1.3 Chip-ops surface — `rtw8814a_ops` (`rtw8814a.c:2050`)
 

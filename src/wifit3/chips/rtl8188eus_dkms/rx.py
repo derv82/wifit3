@@ -1,4 +1,4 @@
-"""RTL8188EUS RX path — bulk-IN buffer decode, vendor faithful.
+"""RTL8188EUS RX path — bulk-IN buffer decode.
 
 Mirrors ``rtl8188e_query_rx_desc_status`` [SRC] rtl8188e_rxdesc.c:20 +
 ``recvbuf2recvframe`` [SRC] usb/usb_ops_linux.c:108. One bulk-IN transfer carries one or

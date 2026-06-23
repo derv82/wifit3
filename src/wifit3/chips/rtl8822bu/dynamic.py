@@ -17,11 +17,11 @@ STAs (`sta_cnt == 0`), so we run the kernel's **no-link / coverage** path of
 `rtw_phy_dig` (`linked=false`): IGI clamped to [DIG_CVRG_MIN=0x1c,
 DIG_CVRG_MAX=0x2a], FA thresholds 2000/4000/5000, step {+4,+3,+2} then -2.
 
-Seed (kernel-faithful): `dig_init` reads dig[0] (0xc50) for the starting IGI,
+Seed (per kernel): `dig_init` reads dig[0] (0xc50) for the starting IGI,
 exactly as `rtw_phy_init` seeds `igi_history[0]`. This is the AGC-table default;
 the FA-driven watchdog then converges from there. (The 8814au port instead seeds
 DIG_CVRG_MIN to fight a deaf-boot; the 8822b symptom is the opposite — gain too
-high, hence saturation — so the faithful AGC-default seed lets the FA loop raise
+high, hence saturation — so the AGC-default seed lets the FA loop raise
 IGI toward 0x2a and back the gain off.)
 
 Intentionally omitted from the core algorithm:

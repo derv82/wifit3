@@ -9,7 +9,7 @@ Two consumers:
     to BBP66; we model that (no stale-skip).
   * ``link_tuner`` — the periodic ~1 Hz worker. It only runs for STA/AP interfaces
     (``intf_sta_count``); a monitor-only interface never schedules it, so it emits
-    nothing in the airmon capture. Ported faithfully for a future managed-mode port.
+    nothing in the airmon capture. Ported for a future managed-mode port; no pcap exercises it.
 
 This card is 2.4 GHz only (RF5372), so ``get_default_vgc`` always takes the 2.4 GHz
 RT5392 arm: ``0x1c + 2*lna_gain`` [SRC rt2800lib.c:5735-5739]. The 5 GHz arms are

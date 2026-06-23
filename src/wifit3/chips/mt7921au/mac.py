@@ -1,7 +1,7 @@
 """
 MT7921AU MAC-layer register init.
 
-A faithful port of mt7921_mac_init (mt7921/init.c) and mt792x_mac_init_band
+A port of mt7921_mac_init (mt7921/init.c) and mt792x_mac_init_band
 (mt792x_mac.c). Every register here is reached over the unified bus
 (read_reg32_unified / write_reg32_unified) — confirmed from the cold-boot
 capture, where each of these writes appears as a 0x5F vendor control transfer.
@@ -117,7 +117,7 @@ def update_mib_stats(t) -> None:
     """mt792x_mac_update_mib_stats — the per-tick MIB counter accumulation (band 0),
     in kernel read order. Pure reads; the driver discards the values (survey stats
     aren't needed for passive monitor capture), but the sequence is exercised by
-    the CHECK 3 gate to prove the MIB register layout is faithful."""
+    the CHECK 3 gate to prove the MIB register layout matches the capture."""
     t.read_reg32_unified(MT_MIB_SDR3(0))                  # fcs_err
     t.read_reg32_unified(MT_MIB_MB_BSDR3(0))              # ack_fail
     t.read_reg32_unified(MT_MIB_MB_BSDR2(0))              # ba_miss

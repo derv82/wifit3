@@ -850,7 +850,7 @@ def _set_channel_5592_2g(
     rfcsr_write(t, 10, 0x90)
     # Kernel comment: "FIXME: RF11 overwrite?" — kernel deliberately
     # clobbers the synthesizer R/MOD bits from step 2 with 0x4A here.
-    # Faithful port.
+    # Ported as-is.
     rfcsr_write(t, 11, 0x4A)
     rfcsr_write(t, 12, 0x52)
     rfcsr_write(t, 13, 0x42)
@@ -963,7 +963,7 @@ def _set_channel_5592_2g(
 
     # ---- (13) Post-RF tail of rt2800_config_channel ------------------
     # BBP62/63/64 NF + BBP86=0 (else branch of 4258-4306).
-    # The earlier NF writes (step 11) and these are duplicates; faithful
+    # The earlier NF writes (step 11) and these are duplicates; the
     # port matches kernel order.
     bbp_write(t, 62, nf)
     bbp_write(t, 63, nf)
@@ -1086,7 +1086,7 @@ def _set_channel_5592_5g(
 
     # ---- (3) 5 GHz fixed-value RFCSR block. [SRC] 3574-3589 ----
     # Kernel comment: "FIMXE: RF11 overwrite" — clobbers synthesizer
-    # bits from step 2 (faithful port).
+    # bits from step 2 (ported as-is).
     rfcsr_write(t, 10, 0x97)
     rfcsr_write(t, 11, 0x40)
     rfcsr_write(t, 25, 0xBF)

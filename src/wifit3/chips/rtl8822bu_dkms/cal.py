@@ -25,7 +25,7 @@ DBGPORT_RELEASE, DBGPORT_PRI_1, DBGPORT_PRI_3 = 0, 1, 3
 
 class DmState:
     """The parts of PHYDM's `struct dm_struct` whose register *writes* are computed from cached
-    values, so a faithful replay must carry them between the functions that set and use them.
+    values, so a correct replay must carry them between the functions that set and use them.
     Seeded during the DM init (dig_init / init_cck_setting) and consumed by `dc_cancellation`:
 
     - cur_ig_value      `dig_t->cur_ig_value` — live IGI; the !=-guard in odm_write_dig.

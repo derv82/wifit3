@@ -1,4 +1,4 @@
-"""RTL8814AU runtime phydm watchdog tick (M3c) — vendor faithful, no-link monitor path.
+"""RTL8814AU runtime phydm watchdog tick (M3c) — no-link monitor path.
 
 The 2 s dynamic-check work [SRC rtw_cmd.c:3268 rtw_dynamic_chk_wk_hdl]:
 

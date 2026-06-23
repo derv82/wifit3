@@ -319,7 +319,7 @@ def start(t: RTL8187Transport) -> int:
 
     Monitor mode is NOT entered here: the kernel's airmon path enters it via a *separate*
     ``configure_filter`` write after ``start`` (dev.c:1338). Reproducing that split is what
-    makes the wire byte-faithful — folding the monitor bit into ``start`` (as an earlier
+    makes the wire byte-for-byte — folding the monitor bit into ``start`` (as an earlier
     port did) both mis-orders the write and drops the CTRL bit airmon also requests.
 
     Pre-condition: init_hw has already run (chip reset, RF programmed, ANAPARAM ON).

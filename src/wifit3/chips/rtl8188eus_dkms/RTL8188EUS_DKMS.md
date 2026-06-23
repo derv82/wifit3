@@ -10,7 +10,7 @@ proof of the whole driver, and live-identical beacons were never measured agains
 `verify_pcap` waivers (aireplay
 bulk-OUT + `0x4F0`), the no-link phydm watchdog (incl. the 24 SYS_CFG reads + tick boundaries), the RX
 decode (**3120/3120** beacons our-decoder-vs-raw over the capture bulk-IN, offline), the RF/BB/AGC init,
-and every RX-relevant EFUSE field are reproduced faithfully. **The live ~6.5-vs-~8.9 bcn/s gap is
+and every RX-relevant EFUSE field are reproduced byte-for-byte. **The live ~6.5-vs-~8.9 bcn/s gap is
 RF/silicon/environment, not a port defect.** The prior "efuse CONFIRMED gap" is **RX-inert on this card**
 (`0xCA=0xFF` blank ⇒ internal LNA = our default) — it stays a *robustness* concern only for a different
 8188eus with `0xCA/0xC9/0xB8` programmed. Two **non-default** deferred items remain flagged: the
@@ -18,7 +18,7 @@ receiver-blocking NBI notch (arms only with `rtw_adaptivity_en=1`, e.g. ETSI) an
 (only on ≥8 °C thermal drift). Still un-walked: uncaptured TX-desc variants / 40 MHz / power-save /
 sreset-recovery.
 
-`verify_pcap` green and `beacon_watch` healthy do **not** mean this port is faithful. Both gates
+`verify_pcap` green and `beacon_watch` healthy do **not** mean this port matches the kernel line-by-line. Both gates
 have structural blind spots, and we were flying blind to a whole gap class until a question about
 the `misc` names accidentally surfaced it. Do not trust this driver on any card / efuse variant /
 chip cut / band / mode / code path outside the single 20 MHz-2.4-monitor capture until this is done.
@@ -43,7 +43,7 @@ a **hypothesis to falsify**, default-assume-wrong until silicon or source proves
 1. Walk the kernel **call graph** (`rtl8188eu_hal_init` → stages → helpers → leaves). Straight-line
    table writes are already wire-verified — *not* the risk surface.
 2. Risk surface = **leaves that branch on per-card state, or are omitted / `#ifdef`'d / deferred.**
-   Classify each: `faithful` / `hardcoded-assumption` / `omitted` / `N/A-this-config`.
+   Classify each: `verified-equivalent` / `hardcoded-assumption` / `omitted` / `N/A-this-config`.
 3. **Every verdict cites a ground-truth anchor** — real efuse map (pcap), pcap wire, chip-version
    read, or kernel source line. No "looks fine."
 4. Prioritise conditional / per-card / runtime (watchdog, channel-set, IQK) over init tables.
@@ -54,7 +54,7 @@ a **hypothesis to falsify**, default-assume-wrong until silicon or source proves
 2. **Collapsed conditionals** — kernel `if/switch` on per-card state where we took only our branch.
 3. **Omitted / deferred helpers**, esp. ones with skip-rationale comments. Re-derive from kernel.
 4. **Uncaptured code paths** — TX-desc variants, 40 MHz, power-save, sreset/recovery, the runtime
-   IQK/LCK/power-track triggers. **No wire ground-truth exists** — source-faithfulness only.
+   IQK/LCK/power-track triggers. **No wire ground-truth exists** — source-provenance only.
 5. **Constants from memory vs source** — verbatim re-grep of every reg addr / `BIT(n)` / magic.
 6. **Decomposition boundaries** — intra-stage op misattribution (the single cursor can't see it).
 
@@ -71,12 +71,12 @@ rest from this card's values** —
 | `0xB8` channel plan | `0xA2` **programmed** | 1–13 | **ignored, non-default** |
 
 Fix = wire from the map we already hold: **decode** the programmed-here fields (channel plan,
-antenna) faithfully to the kernel; **fail-loud** (`NotImplementedError` naming the byte) on fields
+antenna) to match the kernel; **fail-loud** (`NotImplementedError` naming the byte) on fields
 default/blank here that need un-ported code if non-default (external PA → `PHY_SetRFEReg_8188E`;
 board_type≠0 → `phy_cond` driver words; antdiv → `_InitAntenna_Selection`). verify_pcap stays green
 for this card by construction; the value is for *other* 8188eus.
 
-**IQK — RESOLVED, faithful (proven on the wire).** Init-time IQK is faithful (kernel's
+**IQK — RESOLVED, byte-for-byte (proven on the wire).** Init-time IQK matches the kernel (its
 `HAL_INIT_STAGES_IQK` only flags `neediqk_24g`, no calibration — `usb_halinit.c:1611` — same as us).
 The deferred IQK fires in `rtl8188e_PHY_SetSwChnlBWMode` (`phycfg.c:1870`) only when `bNeedIQK &&
 neediqk_24g`; `bNeedIQK` is armed by `HW_VAR_DO_IQK` (`hal_com.c:10069`) from **link / AP-start / join
@@ -87,11 +87,11 @@ triggered. And the `0xe30–0xe8c` writes that *look* IQK-adjacent are the **BB-
 each (addr,value) matches `halhwimg8188e_bb.c` rows (`0xE30,0x1000DC1F`@1581; `0xE40,0x01007C00`@1585;
 `0xE68,0x001B25A4`@1594), inside a monotonic `0x0d38→0x0f14→0x0c78` sweep — config our `phy_bb_config`
 already reproduces, not a calibration. So the kernel never IQKs in monitor mode and `chan.set_channel`
-skipping it is faithful. The dm.py "fires on first link" comment is correct, but verified by the wire,
+skipping it is correct. The dm.py "fires on first link" comment is correct, but verified by the wire,
 not trusted. (NB: the full `hal_init` BB/RF config executes *within* the airmon-window timestamps —
 it runs at iface bring-up — so register writes there are bring-up config, not airmon-specific.)
 
-**Status:** efuse axis confirmed (fix pending); IQK resolved-faithful; the **runtime DIG/AGC long-run**
+**Status:** efuse axis confirmed (fix pending); IQK resolved-equivalent; the **runtime DIG/AGC long-run**
 (only the first watchdog ticks are wire-verified) is the next RX-perf suspect; axes 2–6 not walked.
 Fleet-wide — every driver brought up against one dev card likely shares this pattern; see
 `planning/PORTING.md`.
@@ -107,7 +107,7 @@ Clean fixed-ch1 **passive** reception, canary AP, same physical card
 | mainline kernel | 83% | 5 | 10 |
 | our mainline port (`chips/rtl8188eus/`) | ~77% | 3 | 9–10 |
 
-The mainline port is byte-faithful to the mainline kernel and tops out at ~77–83% **with
+The mainline port is byte-for-byte to the mainline kernel and tops out at ~77–83% **with
 bad-window collapses (min 3–5)**. The DKMS stack runs ~10 pts hotter with a **tight floor
 (min 7 — no collapse)**, from `captures_8188eu/capture-{1,3}` (capture-2 is an RF-moment
 outlier at 59%; even its floor, min 4, beats ours). **That floor is the win** — it kills the
@@ -142,7 +142,7 @@ bimodal collapse, not just the mean.
 
 ## Current state
 
-**The whole capture is byte-faithful — `verify_pcap.py` PASSes end-to-end on cap1/2/3** (5740 /
+**The whole capture replays byte-for-byte — `verify_pcap.py` PASSes end-to-end on cap1/2/3** (5740 /
 5800 / 5723 ops, every op matched or named-and-counted waived). One cursor walks power-on →
 set-macid (init), then dispatches the operational stream to the real handlers, carrying channel +
 DM state: RX-BAR enable → per-hop channel tunes → monitor opmode → 22 dynamic-check ticks (the
@@ -159,7 +159,7 @@ bring-up; each named + counted in the report): the read-only chip-version probe 
 write (`REG_TX_RPT_TIME`) its injection triggers. Everything else — including the silent-reset
 status poll — is ported and reproduced.
 
-**Top RX-gap lead — now also the faithfulness fix (DONE in code, needs HW A/B):** `monitor.py` used
+**Top RX-gap lead — now also the wire-match fix (DONE in code, needs HW A/B):** `monitor.py` used
 to write an *ungrounded* `RXFLTMAP0/1 = 0xffff` (accept every control subtype incl. ACK — suspected
 bulk-IN flood starving beacons; a write the vendor never made). The wire's real RXFLTMAP1 is
 `init_hw_mlme_ext` → `HW_VAR_ENABLE_RX_BAR` = `|= BIT(8)` (BlockAckReq only), and RXFLTMAP0 stays at
@@ -216,14 +216,14 @@ the default. Default stays `WIFIT3_RTL8188=mainline` until that A/B settles the 
   seeded from M4a; spur cal is I-cut-only (skipped, cut A). `verify_channels.py` byte-diffs the
   initial ch1 set (49 ops) on all 3 captures (RfRegChnlVal 0x07407→0x07c01). The per-hop airodump
   differ (DIG-burst interleave) is deferred to the DIG-watchdog milestone.
-- **M10 (monitor-mode entry): complete — byte-faithful, ungrounded over-add removed.** The chip
+- **M10 (monitor-mode entry): complete — byte-for-byte, ungrounded over-add removed.** The chip
   enters monitor through two vendor functions (in wire order): `init_hw_mlme_ext` →
   `HW_VAR_ENABLE_RX_BAR` = `RXFLTMAP1 |= BIT(8)` (`monitor.enable_rx_bar`, accept BlockAckReq) then
   the channel tune, and `hw_var_set_opmode(MONITOR)` (`monitor.enter_monitor`): Set_MSR(NOLINK) +
   RCR=0x9000382f (accept-all-physical + append-FCS, no ACRC32/AICV — the 8188e #if 0) +
   RXFLTMAP2=0xffff (data subtypes). RXFLTMAP0 stays at reset (`hal_init` leaves it unwritten). The
   port previously wrote an **ungrounded** `RXFLTMAP0/1 = 0xffff` (accept every control subtype incl.
-  ACK) — a write neither the kernel nor the wire makes; removed (faithfulness + the top RX-gap lead,
+  ACK) — a write neither the kernel nor the wire makes; removed (wire-match + the top RX-gap lead,
   since the ACK flood was the suspected beacon-starve). `RXFLTMAP1=0x100` on the wire is decoded as
   `HW_VAR_ENABLE_RX_BAR` [SRC] rtw_mlme_ext.c:1560 / hal_com.c:10257, **not** airmon — so we port it.
   The before/after RX A/B (`beacon_watch.py`) is the remaining human gate.
@@ -253,7 +253,7 @@ the default. Default stays `WIFIT3_RTL8188=mainline` until that A/B settles the 
   fires healthy [SRC] rtl8188e_sreset.c) then the no-link `phydm_watchdog` tick (`dig.watchdog_tick`):
   FA-stats → DIG (IGI clamp [0x1c,0x2a], 0xC50) → CCK-PD 0xa0a → adaptivity EDCCA 0xc4c → thermal
   power-track → NHM/CLM env-monitor. `verify_pcap` carries DM state across **all 22 ticks** of each
-  capture byte-faithfully (`WIFIT3_RTL8188_DIG=off` disables the live task). **NHM fix found by the
+  capture byte-for-byte (`WIFIT3_RTL8188_DIG=off` disables the live task). **NHM fix found by the
   gate:** `phydm_nhm_get_result` reads the 12-bin histogram (`0x8d8/0x8dc/0x8d0/0x8d4`) only when the
   report is ready (`0x8b4 BIT17`); the original tick skipped the result reads and diverged on the
   second tick (results ready) — now gated on the ready bit [SRC] phydm_ccx.c:472,506.

@@ -1,7 +1,7 @@
 """rt2500usb BBP (baseband) indirect register access + init_bbp.
 
 The BBP is not directly addressable; it is reached through the PHY_CSR7
-(data/reg-id/read-control) and PHY_CSR8 (busy) registers. Faithful port
+(data/reg-id/read-control) and PHY_CSR8 (busy) registers. Port
 of rt2500usb.c:
   * rt2500usb_bbp_write    (122-143)
   * rt2500usb_bbp_read     (145-177)

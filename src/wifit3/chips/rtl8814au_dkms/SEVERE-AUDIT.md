@@ -2,7 +2,7 @@
 
 > ## NEXT AGENT — START HERE
 >
-> **Goal: a faithful port of `rtl8814au_dkms`** (the morrownr 8814au vendor stack), to the point
+> **Goal: a byte-for-byte port of `rtl8814au_dkms`** (the morrownr 8814au vendor stack), to the point
 > where a single-cursor `verify_pcap` reproduces the **entire** cold-boot capture byte-for-byte
 > (every op matched, the only waiver being aireplay-ng's TX).
 >
@@ -15,10 +15,10 @@
 > operating rules."** Read those first; they are the method. The card (ALFA AWUS1900, `0bda:8813`)
 > is plugged in + WinUSB-bound — **run on hardware freely** (RX, channel tune, scan, 30-min soak).
 > The **only** thing you may not do is **live 802.11 TX / injection / deauth** — that is the user's
-> hands. Everything else: go. Whatever gets us to faithful.
+> hands. Everything else: go. Whatever gets us to byte-for-byte.
 >
 > ### Mindset (load-bearing)
-> **Assume the port is NOT faithful — lazy, many ops skipped.** This session proved it (below).
+> **Assume the port does NOT match the wire — lazy, many ops skipped.** This session proved it (below).
 > **Do not trust the port's comments** — *especially* any `skipped because X` / `no-op here` /
 > `monitor dead-code` / `validated live` rationale, even when it sounds airtight. Treat every such
 > comment as a **hypothesis to FALSIFY** against the vendor source + the wire. We have been burned
@@ -165,7 +165,7 @@ orchestrator (LED dispatch + sreset + the phydm members above, in order), carry 
 state structs, gate-confirm the cursor advances op-by-op through one tick — once one full tick
 reproduces it should sail to capture end (the members are stateless-or-carried + HW-read-driven).
 
-## Known gaps ledger (verdict = ported / fixed / proven-faithful / waived-named)
+## Known gaps ledger (verdict = ported / fixed / proven-matching / waived-named)
 
 | # | Op / area (wire landmark) | Vendor [SRC] | Our state | Verdict |
 |---|---|---|---|---|
