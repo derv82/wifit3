@@ -58,12 +58,12 @@ class MT7921AUDriver:
         self._channel = self.SUPPORTED_CHANNELS[0]
         # WlanDriver protocol runtime state. is_warm reflects the bring-up path taken
         # by connect(): True when we light-reattached to already-running firmware
-        # (_warm_reattach), False on a cold boot. mac_address stays None: this chip's
-        # firmware does not return the MAC in GET_NIC_CAPAB (no MT_NIC_CAP_MAC_ADDR TLV),
-        # and the cold-boot init reads no EFUSE MAC — monitor RX + spoofed-MAC injection
-        # need neither, so there is no MAC to expose without an unverified EFUSE access.
+        # (_warm_reattach), False on a cold boot. mac_address is parsed from the
+        # GET_NIC_CAPAB reply during cold boot (MT_NIC_CAP_MAC_ADDR TLV); it stays None
+        # on a warm reattach, which skips post-boot init.
         self.is_warm: bool = False
         self.mac_address: Optional[str] = None
+        self._nic_has_6ghz: int = 0
         # 802.11 TX sequence counter (number in seq_ctrl bits [4:15], so it steps
         # by 0x10). The chip transmits the seq we stamp (TXD SN_VALID), so we own
         # it — see tx.stamp_seq_ctrl. Touched on the event loop only (no lock).
@@ -121,6 +121,10 @@ class MT7921AUDriver:
             progress_cb(0.6, "Configuring device...")
         logger.info("Running MT7921AU post-boot init...")
         self._init_state = await chip_init.post_boot_init(self.transport)
+        caps = mcu.parse_nic_capability(self._init_state.nic_capab_resp)
+        self.mac_address = caps["mac"]
+        self._nic_has_6ghz = caps["has_6ghz"]
+        logger.info("MT7921AU silicon MAC: %s", self.mac_address)
 
         # Enter monitor mode on the initial channel (the RX reader routes the
         # monitor commands' acks back, and 802.11 frames to _on_raw_rx).

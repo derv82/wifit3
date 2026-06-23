@@ -150,6 +150,42 @@ def get_nic_capability():
     return MCU_CE_CMD(CE_CMD_GET_NIC_CAPAB), b""
 
 
+# The GET_NIC_CAPAB reply, as returned by transport.send_mcu_command, is the whole
+# device buffer with the connac2 rxd header in front (eid@28, seq@29); the
+# mt76_connac2_mcu_rxd ends at byte 36, where mt76_connac_cap_hdr {n_element:u16,
+# rsv[2]} begins, followed by {type:u32, len:u32, data[len]} TLVs.
+_NIC_CAPAB_PAYLOAD_OFF = 36
+MT_NIC_CAP_MAC_ADDR = 0x07
+MT_NIC_CAP_6G = 0x18
+
+
+def parse_nic_capability(resp):
+    """Walk the GET_NIC_CAPAB reply TLVs (mt7921_mcu_get_nic_capability) for the
+    values bring-up consumes. ``resp`` is the raw send_mcu_command buffer. Returns
+    {"mac": <colon-str|None>, "has_6ghz": <int>}; unrecognised TLVs are stepped
+    over, as the kernel switch falls through default."""
+    out = {"mac": None, "has_6ghz": 0}
+    if not resp or len(resp) < _NIC_CAPAB_PAYLOAD_OFF + 4:
+        return out
+    body = resp[_NIC_CAPAB_PAYLOAD_OFF:]
+    n_element = struct.unpack_from("<H", body, 0)[0]
+    off = 4
+    for _ in range(n_element):
+        if off + 8 > len(body):
+            break
+        tlv_type, tlv_len = struct.unpack_from("<II", body, off)
+        off += 8
+        if off + tlv_len > len(body):
+            break
+        data = body[off:off + tlv_len]
+        if tlv_type == MT_NIC_CAP_MAC_ADDR and tlv_len >= 6:
+            out["mac"] = ":".join(f"{b:02x}" for b in data[:6])
+        elif tlv_type == MT_NIC_CAP_6G and tlv_len >= 1:
+            out["has_6ghz"] = data[0]
+        off += tlv_len
+    return out
+
+
 def fw_log_2_host(ctrl):
     """mt7921_mcu_fw_log_2_host — MCU_CE_CMD(FWLOG_2_HOST). { u8 ctrl_val; u8 pad[3]; }."""
     return MCU_CE_CMD(CE_CMD_FWLOG_2_HOST), struct.pack("<B3x", ctrl)
