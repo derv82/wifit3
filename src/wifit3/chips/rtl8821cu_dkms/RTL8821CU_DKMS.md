@@ -552,3 +552,24 @@
 - Frontier #7930 = the TX-power-by-rate table (`set_tx_power_level`) — a large EFUSE/regulatory
   subsystem, TX-side only (does not gate RX). See the Known-issues frontier bullet for the post-tune
   structure (monitor-mode set + a real second run_coex pass + the airodump channel hops).
+
+## Port log — 2026-06-22 (LIVE HARDWARE: cold init validated on silicon)
+
+- Ran `scripts/rtl8821cu_dkms/test_hw.py` against the real card (`0bda:c820`). **`--phase open` and
+  `--phase init` PASS**: chip-ID reads (cut 4), and the whole `bringup.cold_bringup` runs end to end
+  on metal — the 138 KB iDDMA **firmware download boots** (the `0xC078` FW-ready poll succeeds, which
+  the offline replay cannot prove), MAC/BB/RF + BT-coex + channel tune to ch 1 complete, no bus
+  errors. This validates the entire ported cold path on hardware, not just against the wire.
+- **The card is a combo BT+WiFi device** (this is why BT-coex runs at all): USB config has 3
+  interfaces — **interface 0/1 = Bluetooth** (class 0xE0; bulk 0x02/0x82, iso 0x03/0x83), **interface
+  2 = WiFi** (vendor class 0xFF; bulk-IN **0x84**, bulk-OUT **0x05**/0x06/0x08, int-IN 0x87). Zadig
+  must bind WinUSB to **interface 2**. `transport._bulk_in_ep` now picks the vendor (WiFi) interface's
+  bulk-IN (0x84), never the BT 0x82; FW/TX bulk-OUT is **0x05** (the 0x04 transport default is wrong
+  on HW — the test passes `bulk_out_ep=0x05`).
+- **RX not yet delivering frames** (diagnostic, deferred): after init the bulk-IN path works (FW C2H
+  events arrive on 0x84), RXFLTMAP0=0xffff (mgmt accepted), RF18 ch=1, IGI=0x20 — but zero 802.11
+  frames demod in several seconds. Almost certainly the **post-tune steps past op 7930 are not yet
+  ported**: the monitor-mode set (RXFLTMAP/RCR promiscuous) and the second `run_coex` pass that
+  switches the shared antenna from BT back to WiFi. Porting forward (past tx-power) is the fix — do
+  NOT chase this as a separate HW-debug thread. (DIG-watchdog/AGC is the secondary suspect — the
+  sibling `rtl8822bu_dkms/test_hw.py --igi/--watchdog` pattern, if needed later.)
