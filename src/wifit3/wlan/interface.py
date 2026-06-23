@@ -112,9 +112,15 @@ class WlanInterface:
         if raw is not None and self._rx_callbacks:
             self._fire_rx_callbacks(raw, rssi)
 
-        # Debug trace of data/EAPOL frame direction — surfaces whether client→AP (to_ds)
-        # frames reach software at all. Guarded so it's free when off.
-        if frame_type in ("data", "eapol", "wep_data") and logger.isEnabledFor(logging.DEBUG):
+        # Debug trace of attack-relevant RX — data/EAPOL plus the AP's mgmt replies
+        # (assoc-resp, auth=mgmt_11, deauth), so a whole exchange is visible: whether the AP
+        # answers our auth/assoc at all, not just whether data reaches us. Beacons/probes
+        # stay out as noise; control frames never reach here. Guarded so it's free when off.
+        if (
+            frame_type in ("data", "eapol", "wep_data", "assoc_resp", "reassoc_resp",
+                           "deauth", "disassoc")
+            or (isinstance(frame_type, str) and frame_type.startswith("mgmt_"))
+        ) and logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "[RXFRAME] %-9s to_ds=%s from_ds=%s %s -> %s (bssid %s)",
                 frame_type, parsed.get("to_ds"), parsed.get("from_ds"),
