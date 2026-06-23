@@ -132,9 +132,13 @@ def init_hw_mlme_ext(t, info) -> None:
 def set_monitor_mode(t, info) -> None:
     """The airmon vif setopmode sequence after the channel tune ([SRC] hw_var_set_opmode
     rtl8821c_ops.c:1002): set STATION net-type on the primary vif, then MONITOR (promiscuous RCR +
-    all-open RXFLTMAP) on the monitor vif — the driver-side RX-enable for monitor capture."""
+    all-open RXFLTMAP) on the monitor vif — the driver-side RX-enable for monitor capture. For a
+    combo card the MONITOR setopmode handler ends by firing the BT-coex media-connect notify
+    ([SRC] setopmode_hdl core/rtw_mlme_ext.c:13575), which switches the shared antenna to WiFi."""
     mac.set_opmode_station(t, efuse.mac_address(info))
     mac.set_opmode_monitor(t)
+    if info.bt_coexist:
+        btc.media_status_notify_connect_2g(t)
 
 
 def cold_bringup(t) -> None:

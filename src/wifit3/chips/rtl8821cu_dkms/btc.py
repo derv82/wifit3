@@ -154,7 +154,12 @@ _SCBD_INIT = 0x8002             # write_scbd static originalval seed [SRC] :467
 # set_ant_switch control/position selectors [SRC] halbtc8821c1ant.h
 _CTRL_BY_BBSW, _CTRL_BY_PTA, _CTRL_BY_ANTDIV = 0, 1, 2
 _CTRL_BY_MAC, _CTRL_BY_FW, _CTRL_BY_BT = 3, 4, 5
-_TO_WLG = 1                     # the only pos that flips polarity (when wlg not at btg)
+_TO_WLG, _TO_NOCARE = 1, 4      # TO_WLG is the only pos that flips polarity (when wlg not at btg)
+
+_SCBD_SCAN, _SCBD_BTCQDDR = 1 << 2, 1 << 10     # [SRC] halbtc8821c1ant.h:164/168
+_PHASE_INIT, _PHASE_2G = 0x0, 0x3               # [SRC] halbtc8821c1ant.h:149/152
+_ANT_PATH_WIFI, _ANT_PATH_PTA, _ANT_PATH_AUTO = 0, 2, 4   # [SRC] halbtcoutsrc.h:164-168
+_RSN_2GSWITCHBAND, _RSN_2GMEDIA = 0x3, 0x9      # [SRC] halbtc8821c1ant.h:176/182
 
 
 @dataclass
@@ -169,6 +174,8 @@ class BtcState:
     scbd_prev: int = 0
     # run_coex run-time flags (channel-tune path); seeded by set_ant_path(INIT) -> run_time FALSE
     run_time_state: bool = False
+    cur_ant_pos_type: int = -1          # (ant_pos_type<<8)|phase, set_ant_path no-change guard
+    coex_run_reason: int = -1
     wl_tx_limit_en: bool = False
     wl_ampdu_limit_en: bool = False
     cur_low_penalty_ra: bool = False
@@ -179,6 +186,10 @@ class BtcState:
     wl_0x434: int = 0
     wl_0x42a: int = 0
     wl_0x455: int = 0
+    wl_slot_toggle_change: bool = False
+    tdma_timer_base: int = 0
+    cur_ps_tdma: int = -1
+    cur_ps_tdma_on: bool = False
 
 
 def _wait_indirect_ready(t) -> None:
@@ -290,6 +301,7 @@ def _set_ant_path_init(t, st: BtcState) -> None:
     _set_gnt_wl(t, _GNT_SW_LOW)
     _set_ant_switch(t, st.rfe, _CTRL_BY_BBSW, 0x0)       # AUTO->BT, pos TO_BT
     st.run_time_state = False                            # PHASE_INIT [SRC] :2632
+    st.cur_ant_pos_type = (_ANT_PATH_AUTO << 8) | _PHASE_INIT
 
 
 def _write_scbd(t, st: BtcState, bitpos: int, state: bool) -> None:
@@ -308,19 +320,30 @@ def _write_scbd(t, st: BtcState, bitpos: int, state: bool) -> None:
 _COEX_TABLE = {0: (0x55555555, 0x55555555)}
 
 
-def _table(t, st: BtcState, type_: int) -> None:
-    """halbtc8821c1ant_table(FC_EXCU, type) [SRC] :1674 -> set_table (force_exec writes all 4
-    rows, no read-back). concurrent_rx_mode_on picks the WL-hi-pri break/select tables. Init
-    lays type 0 only; the runtime action-algorithm tables aren't in the cold-boot window."""
+def _set_table(t, st: BtcState, v6c0: int, v6c4: int, v6c8: int, v6cc: int, force: bool) -> None:
+    """halbtc8821c1ant_set_table [SRC] :1648 — a non-force call (and no wl-slot-toggle change)
+    reads back 0x6c0/0x6c4 and returns when both match the wanted values; force writes all 4 rows
+    unconditionally."""
+    if not force and not st.wl_slot_toggle_change:
+        if t.read32(REG_COEX_TABLE0) == v6c0 and t.read32(REG_COEX_TABLE1) == v6c4:
+            return
+    t.write32(REG_COEX_TABLE0, v6c0)
+    t.write32(REG_COEX_TABLE1, v6c4)
+    t.write32(REG_COEX_BREAK_TABLE, v6c8)
+    t.write8(REG_COEX_TABLE_TYPE, v6cc)
+
+
+def _table(t, st: BtcState, type_: int, force: bool) -> None:
+    """halbtc8821c1ant_table(type) [SRC] :1674. concurrent_rx_mode_on picks the WL-hi-pri break/
+    select tables. Init lays type 0 (force); the not-connected action re-lays type 0 (non-force,
+    which is a no-op read here since the table is unchanged). Other action-algorithm types aren't
+    reached in the cold-boot window."""
     if st.concurrent_rx_mode_on:
         break_table, select_table = 0xF0FFFFFF, 0x1B
     else:
         break_table, select_table = 0x00FFFFFF, 0x13
     v6c0, v6c4 = _COEX_TABLE[type_]
-    t.write32(REG_COEX_TABLE0, v6c0)
-    t.write32(REG_COEX_TABLE1, v6c4)
-    t.write32(REG_COEX_BREAK_TABLE, break_table)
-    t.write8(REG_COEX_TABLE_TYPE, select_table)
+    _set_table(t, st, v6c0, v6c4, break_table, select_table, force)
 
 
 def _fill_h2c(t, cmd_id: int, pbuf: tuple[int, ...]) -> None:
@@ -329,13 +352,63 @@ def _fill_h2c(t, cmd_id: int, pbuf: tuple[int, ...]) -> None:
     firmware.send_h2c_by_reg(t, bytes((cmd_id, *pbuf)))
 
 
-def _tdma(t, st: BtcState) -> None:
-    """halbtc8821c1ant_tdma(FC_EXCU, turn_on=FALSE, tcase=8) [SRC] :2101 — at init, TDMA-off
-    type 8 is PTA control: clear the TDMA scoreboard bit (no-op, already clear) and send the
-    stop-PS-TDMA H2C set_tdma(0x8,0,0,0,0)->0x60. set_tdma_timer_base(0) early-returns
-    (timer_base already 0) and power_save_state(WIFI_NATIVE) only notifies — both wire-silent."""
+def _set_tdma_timer_base(t, st: BtcState, type_: int) -> None:
+    """halbtc8821c1ant_set_tdma_timer_base [SRC] :384 — pick the TDMA slot timer base from the
+    beacon period (4-slot 50ms when ``type_``==3). Returns without an H2C when the base is
+    unchanged. The exercised tcases here carry no 4-slot bit (``type_``==0) and the base starts 0,
+    so this is wire-silent; the other beacon-period arms are kept for the runtime tdma path."""
+    tbtt = 100                                          # BTC_GET_U2_BEACON_PERIOD default
+    if type_ == 3 and tbtt >= 100:
+        if st.tdma_timer_base == 3:
+            return
+        para1 = ((tbtt // 50) - 1) | 0xC0
+        st.tdma_timer_base = 3
+    elif 0 < tbtt < 80:
+        para1 = (100 // tbtt) + (1 if 100 % tbtt else 0)
+        if st.tdma_timer_base == 2:
+            return
+        para1 &= 0x3F
+        st.tdma_timer_base = 2
+    elif tbtt >= 180:
+        if st.tdma_timer_base == 1:
+            return
+        para1 = ((tbtt // 100) - (1 if tbtt % 100 <= 80 else 0)) & 0x3F | 0x80
+        st.tdma_timer_base = 1
+    else:
+        if st.tdma_timer_base == 0:
+            return
+        para1, st.tdma_timer_base = 0x1, 0
+    _fill_h2c(t, 0x69, (0xB, para1))
+
+
+def _set_tdma(t, b1: int, b2: int, b3: int, b4: int, b5: int) -> None:
+    """halbtc8821c1ant_set_tdma [SRC] :2010 — the PS-TDMA H2C 0x60 (5 bytes). The Force-LPS arm
+    (byte1 BIT4 set, BIT5 clear) is not on the exercised off-cases (byte1 0x8/0x0), so
+    power_save_state stays WIFI_NATIVE (wire-silent) and the H2C is always sent."""
+    _fill_h2c(t, 0x60, (b1, b2, b3, b4, b5))
+
+
+def _tdma(t, st: BtcState, force: bool, turn_on: bool, tcase: int) -> None:
+    """halbtc8821c1ant_tdma [SRC] :2101 — set the PS-TDMA case. Init and the not-connected action
+    both use (force, off, 8): TDMA-off type 8 is PTA control, so it clears the TDMA scoreboard bit
+    (no-op when already clear) and sends set_tdma(0x8,0,0,0,0). ``turn_on`` (the PS-TDMA-on cases)
+    isn't reached in the cold-boot/monitor window; only the off arm is ported."""
+    _set_tdma_timer_base(t, st, 3 if (tcase & 0x100) else 0)
+    type_ = tcase & 0xFF
+    if not force and turn_on == st.cur_ps_tdma_on and type_ == st.cur_ps_tdma:
+        return
+    # wifi not busy in monitor -> TDMA scoreboard bit off.
     _write_scbd(t, st, _SCBD_TDMA, False)
-    _fill_h2c(t, 0x60, (0x8, 0x0, 0x0, 0x0, 0x0))
+    if turn_on:
+        raise NotImplementedError("RTL8821CU: PS-TDMA-on not reached in this bring-up window")
+    _write_scbd(t, st, _SCBD_TDMA, False)
+    if type_ == 8:
+        _set_tdma(t, 0x8, 0x0, 0x0, 0x0, 0x0)           # PTA control
+    elif type_ == 1:
+        _set_tdma(t, 0x0, 0x0, 0x0, 0x48, 0x0)          # 2-ant antenna-diversity control
+    else:
+        _set_tdma(t, 0x0, 0x0, 0x0, 0x0, 0x0)           # software control, antenna at BT
+    st.cur_ps_tdma_on, st.cur_ps_tdma = turn_on, type_
 
 
 def _query_bt_info(t) -> None:
@@ -366,8 +439,8 @@ def hal_init(t, info) -> None:
     write_rf_masked(t, 0x1, 0x2, 0x0)                # btc_set_rf_reg(RF_A,0x1,0x2,0x0) [SRC] :3811
     _set_ant_path_init(t, st)
     _write_scbd(t, st, _SCBD_ACTIVE | _SCBD_ONOFF, True)
-    _table(t, st, 0)
-    _tdma(t, st)
+    _table(t, st, 0, force=True)
+    _tdma(t, st, force=True, turn_on=False, tcase=8)
     _query_bt_info(t)
 
 
@@ -441,20 +514,71 @@ def _update_wifi_link_info(t, st: BtcState) -> None:
     _limited_rx(t, st, force=False, bt_ctrl_agg=True, agg_size=64)
 
 
-def run_coex(t) -> None:
-    """halbtc8821c1ant_run_coex [SRC] :3493 — at the first 2.4G band switch this runs
-    `update_wifi_link_info` then returns early (`run_time_state` FALSE, set by PHASE_INIT). The
-    btc_get gating + manual/stop/ips/lps checks are all software."""
+def _set_ant_path_2g(t, st: BtcState, force: bool) -> None:
+    """halbtc8821c1ant_set_ant_path(AUTO, force, PHASE_2G) [SRC] :2678 — route the shared antenna
+    to WiFi at runtime. A non-force call returns early when the path is unchanged (run_coex
+    re-asserts the path after the media-connect trigger already set it). Otherwise: wait out any
+    in-progress WL/BT IQK (0x49c[0]/[1]), take path control to WL, drive both GNT to HW-PTA, arm
+    run_time_state, then route the BB-SW switch to WiFi (AUTO -> WIFI for a wlg-at-btg card)."""
+    key = (_ANT_PATH_AUTO << 8) | _PHASE_2G
+    if not force and st.cur_ant_pos_type == key:
+        return
+    st.cur_ant_pos_type = key
+    for _ in range(21):
+        if not (t.read8(REG_BT_CAL_CHK) & ((1 << 0) | (1 << 1))):
+            break
+    _write_bitmask8(t, REG_COEX_CTRL_OWNER, 1 << 2, 1)   # coex_ctrl_owner(WLSIDE) [SRC] :2706
+    _set_gnt_bt(t, _GNT_HW_PTA)
+    _set_gnt_wl(t, _GNT_HW_PTA)
+    st.run_time_state = True                             # PHASE_2G [SRC] :2713
+    if st.rfe.wlg_locate_at_btg:                         # AUTO -> WIFI (BBSW/TO_WLG)
+        _set_ant_switch(t, st.rfe, _CTRL_BY_BBSW, _TO_WLG)
+    else:                                                # AUTO -> PTA (BBSW->PTA, TO_NOCARE)
+        _set_ant_switch(t, st.rfe, _CTRL_BY_PTA, _TO_NOCARE)
+
+
+def _action_wifi_not_connected(t, st: BtcState) -> None:
+    """halbtc8821c1ant_action_wifi_not_connected [SRC] :3297 — the monitor / no-link coex action:
+    coex table type 0 (non-force, a no-op read here) + PTA-control PS-TDMA off (type 8)."""
+    _table(t, st, 0, force=False)
+    _tdma(t, st, force=True, turn_on=False, tcase=8)
+
+
+def run_coex(t, reason: int) -> None:
+    """halbtc8821c1ant_run_coex [SRC] :3493. `update_wifi_link_info` runs first (the `limited_tx`
+    backup reads), then the run-time gate: at the first band switch `run_time_state` is FALSE
+    (PHASE_INIT) so it returns there. Once a runtime phase armed it (media-connect's PHASE_2G),
+    the single-port-2G path re-asserts the antenna (non-force -> no wire), sets the BTCQDDR
+    scoreboard bit, and runs the not-connected action. The connected / link-scan / BT-active
+    branches need link or BT state that monitor bring-up never has — ported when a pass reaches
+    them."""
     st = t.btc
+    st.coex_run_reason = reason
     _update_wifi_link_info(t, st)
     if not st.run_time_state:
         return
-    # run_time actions (set_ant_path runtime + coex table/tdma) — reached once a runtime phase set
-    # run_time_state TRUE; ported when the channel tune's later coex passes need them.
+    _set_ant_path_2g(t, st, force=False)                 # single-port 2G, re-assert (no wire)
+    _write_scbd(t, st, _SCBD_BTCQDDR, True)
+    _action_wifi_not_connected(t, st)
 
 
 def switchband_notify_2g(t) -> None:
     """rtw_btcoex_switchband_notify(under_scan=FALSE, BAND_ON_2_4G) [SRC] hal_btcoex.c -> the 1-ant
     `ex_halbtc8821c1ant_switchband_notify(BTC_SWITCH_TO_24G_NOFORSCAN)` -> `run_coex(2GSWITCHBAND)`.
     Returns immediately if stop_coex_dm (not the case here)."""
-    run_coex(t)
+    run_coex(t, _RSN_2GSWITCHBAND)
+
+
+def media_status_notify_connect_2g(t) -> None:
+    """ex_halbtc8821c1ant_media_status_notify(BTC_MEDIA_CONNECT) [SRC] :4851 (2.4 GHz arm). The
+    airmon setopmode(MONITOR) handler fires this 'connect' notify [SRC] core/rtw_mlme_ext.c:13575,
+    after the monitor RX-filter. It is the antenna switch the cold HW test was missing: route the
+    shared antenna from BT to WiFi (set_ant_path PHASE_2G, which arms run_time_state), set CCK
+    Tx/Rx hi-priority (not 11b), send the leap-AP-protection H2C, then run_coex(2GMEDIA) lays the
+    not-connected coex table + PTA tdma."""
+    st = t.btc
+    _write_scbd(t, st, _SCBD_ACTIVE | _SCBD_ONOFF, True)     # already set at init -> no wire
+    _set_ant_path_2g(t, st, force=True)
+    _write_bitmask8(t, 0x06CF, 1 << 4, 0x1)                 # CCK Tx/Rx hi-pri (not 11b) [SRC] :4897
+    _fill_h2c(t, 0x69, (0xC, 0x0))                          # leap-AP protection reopen [SRC] :4900
+    run_coex(t, _RSN_2GMEDIA)

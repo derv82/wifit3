@@ -11,8 +11,9 @@
 > monitor-entry phase through the BT-coex HAL init + the USB hal_init_misc LED + the iface-init MAC
 > address / port-enable + RX-BAR + the **whole first channel set** (coex run_coex + phydm band switch
 > + channel RF + 20 MHz bandwidth + kfree + **TX-power-by-rate table**, channel 1) + the **monitor-mode
-> RX-enable** (setopmode STATION/MONITOR: promiscuous RCR + RXFLTMAP=0xffff) — 7969 ops, zero
-> divergence. Cold init is HW-validated on real silicon (FW boots). — `_halmac_init_hal` + the monitor
+> RX-enable** (setopmode STATION/MONITOR: promiscuous RCR + RXFLTMAP=0xffff) + the **second BT-coex
+> pass** (the media-connect antenna switch to WiFi: set_ant_path PHASE_2G + run_coex action) — 8033
+> ops, zero divergence. Cold init is HW-validated on real silicon (FW boots). — `_halmac_init_hal` + the monitor
 > RX-filter + the entire `rtl8821c_phy_init_haldm`/`odm_dm_init` (11 compiled sub-inits incl. the
 > DC-cancellation measurement calibration) + the MU-MIMO/TXBF beamforming defaults**. Cold init
 > (frames 1-7672): USB transport
@@ -35,8 +36,9 @@
 > compiled for this CE+8821C build), **`rtl8821c_phy_bf_init`** (`mac.phy_bf_init`), and the **BT-coex
 > HAL init** (`btc.hal_init` = the 1-ant `init_hw_config`: PTA/3-wire enable, ltecoex 0x1700 indirect
 > GNT setup, antenna-to-BT switch, WiFi-only coex table, the tdma/query-BT-info H2Cs via the HMEBOX
-> rotation). Frontier is op #7748 (frame 16447, `IN 0x004a`): the post-hal_init airmon sequence
-> (channel-tune / RFE — under investigation). Not registered in `wlan/manager.py`.
+> rotation). Frontier is op #8033 (frame 17019, `IN 0x2860`): the **second channel set** (the
+> airodump channel tune, same `chan.set_channel` path, starting with `read_rf(0x18)`). Not registered
+> in `wlan/manager.py`.
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
@@ -98,10 +100,11 @@
 | iface MAC addr | `mac.set_mac_addr` / `efuse.mac_address` | `rtw_hal_iface_init` hal_intf.c:521 -> `cfg_mac_addr_88xx` | REG_MACID 0x0610/4 + 0x0614/2 from EFUSE 0x107 (per-card, never hardcoded) — **VERIFIED** |
 | iface port-enable / RX-BAR | `mac.hw_port_enable` / `mac.enable_rx_bar` | `hw_var_hw_port_cfg` / `init_hw_mlme_ext` rtw_mlme_ext.c:1279 | BCN_CTRL 0x0550 \|= 0x1c ; RXFLTMAP1 0x06a2 \|= BIT8 — **VERIFIED** |
 | channel tune (RF/BB) | `chan.set_channel` | `rtl8821c_switch_chnl_and_set_bw` rtl8821c_phy.c:740 | 2.4G ch1: coex run_coex (4 reads), config_phydm switch_band/switch_channel/switch_bandwidth (20 MHz) + kfree — **VERIFIED** |
-| coex run_coex | `btc.run_coex` / `btc.switchband_notify_2g` | `halbtc8821c1ant_run_coex` halbtc8821c1ant.c:3493 | first band switch: update_wifi_link_info (limited_tx 4 backup reads) then early-return (run_time FALSE) — **VERIFIED** |
+| coex run_coex | `btc.run_coex` / `btc.switchband_notify_2g` | `halbtc8821c1ant_run_coex` halbtc8821c1ant.c:3493 | band switch: update_wifi_link_info (limited_tx 4 backup reads) then early-return (run_time FALSE); media-connect (run_time TRUE): BTCQDDR + action_wifi_not_connected — **VERIFIED** |
 | phydm stop-TRX | `dm.stop_ic_trx` | `phydm_stop_ic_trx` phydm_api.c:606 (11AC) | dbg-port idle wait + TX pause + OFDM/CCK TRX off / restore; reused by DC-cancel + channel tune — **VERIFIED** |
 | TX-power-by-rate | `txpower.set_tx_power_level` | `rtl8821c_set_tx_power_level` rtl8821c_phy.c:556 | 0x1d00-0x1d34 txagc = EFUSE PG base (by-rate/limit disabled in the DKMS build); BTG looks up RF_PATH_B — **VERIFIED** |
 | monitor RX-enable | `mac.set_opmode_station` / `set_opmode_monitor` | `hw_var_set_opmode` rtl8821c_ops.c:1002 (STATION+MONITOR) | re-MAC + MSR + StopTxBeacon; promiscuous RCR 0x90000001 + cfg_drv_info(SNIFFER) + RXFLTMAP=0xffff — **VERIFIED** |
+| media-connect coex | `btc.media_status_notify_connect_2g` / `run_coex` | `ex_halbtc8821c1ant_media_status_notify` halbtc8821c1ant.c:4851 (via setopmode_hdl rtw_mlme_ext.c:13575) | combo card: set_ant_path PHASE_2G (antenna BT->WiFi, GNT HW-PTA), CCK hi-pri 0x6cf[4], leap-AP H2C 0x69, run_coex(2GMEDIA) -> action_wifi_not_connected (coex table + PTA tdma) — **VERIFIED** |
 
 ## Hot paths
 
@@ -161,19 +164,28 @@
   channel set is COMPLETE @ 7938. Then **`bringup.set_monitor_mode`** (`setopmode` STATION then
   MONITOR) opens the monitor RX path: promiscuous RCR 0x90000001, `cfg_drv_info(SNIFFER)`,
   RXFLTMAP0/1/2 = 0xffff. GREEN @ 7969.
-- **Frontier (next milestone): op #7969 (frame 16891): `IN 0x049c` — the second BT-coex pass (the
-  antenna switch to WiFi).** This is `run_coex`/scan_notify reaching its ACTIONS (`run_time_state`
-  becomes TRUE via `set_ant_path(PHASE_2G)`): BT-cal-check (0x49c), `coex_ctrl_owner(WLSIDE)` (0x73),
-  the 0x1700 ltecoex `set_gnt_bt(HW_PTA)`/`set_gnt_wl(HW_PTA)` block (7974-7997), then
-  `set_ant_switch(BBSW, TO_WLG)` — the antenna DPDT to WiFi (0x4e/0x4f/0xcb4/0xcb7/0x67, 7998-8016) —
-  **all reusing the existing `btc.py` ltecoex/GNT/ant-switch primitives, just the PHASE_2G arm**. Then
-  0x06cf beacon-prio, a `set_tdma_timer_base` H2C (0x69, box3 @ 8019-8021), more `run_coex`
-  (`limited_tx` reads @ 8022, scoreboard 0x00aa=0x8403, coex table). **This + the RXFLTMAP=0xffff just
-  ported is the full RX-enable** (HW test saw no beacons because the antenna was still parked at BT and
-  this pass — which routes it to WiFi — was unported). After it: a **second channel set** (~8067-8148,
-  airodump) then the channel hops (8149+, ~3400 ops, the same `chan.set_channel` path). No IQK in this
-  window. The run_coex action machine is the chunk to port; the set_ant_path(PHASE_2G) part is cheap
-  (primitives exist). Live TX stays the user's.
+- **The second BT-coex pass (the media-connect antenna switch to WiFi) is GREEN @ 8033**
+  (`btc.media_status_notify_connect_2g` + `run_coex`). The trigger is **not** scan_notify (as the
+  pre-port note guessed) but `ex_halbtc8821c1ant_media_status_notify(BTC_MEDIA_CONNECT)` ([SRC]
+  halbtc8821c1ant.c:4851), fired by `setopmode_hdl` for a monitor vif ([SRC] rtw_mlme_ext.c:13575) —
+  which is why there is no leading scoreboard write (its `write_scbd(ACTIVE|ONOFF)` is already set, a
+  no-op). Order, all ported: (1) `set_ant_path(AUTO, FC, PHASE_2G)` ([SRC] :2678) — BT-cal-check
+  (0x49c[0]/[1]), `coex_ctrl_owner(WLSIDE)` (0x73), the 0x1700 ltecoex `set_gnt_bt(HW_PTA)` /
+  `set_gnt_wl(HW_PTA)` block (7974-7997, GNT field value 0x0), `set_ant_switch(BBSW, TO_WLG)` routing
+  the DPDT to WiFi (0x4e/0x4f/0xcb4/0xcb7/0x67, 7998-8016), **`run_time_state` -> TRUE**; (2)
+  `0x6cf[4]=1` CCK Tx/Rx hi-pri (not 11b); (3) the inline leap-AP-protection H2C `0x69 {0xc,0}`
+  (box3 @ 8019-8021 — **not** `set_tdma_timer_base`, which would send `{0xb,..}` and here early-returns
+  silent); (4) `run_coex(2GMEDIA)`: `update_wifi_link_info` (`limited_tx` 4 reads @ 8022-8025), then —
+  now that `run_time_state` is TRUE — `set_ant_path(NM, PHASE_2G)` (early-return, no wire via the
+  `cur_ant_pos_type` guard), `write_scbd(BTCQDDR)` -> 0x00aa=0x8403, and `action_wifi_not_connected`
+  (`table(NM,0)` = a no-op read of 0x6c0/0x6c4 + `tdma(FC, off, 8)` = the PTA-control set_tdma 0x60
+  box0 @ 8030-8032). The HMEBOX box chain validates end-to-end (media-connect H2C box3 -> tdma box0).
+  **This + the RXFLTMAP=0xffff is the full RX-enable** (the cold HW test saw no beacons because the
+  antenna was still parked at BT — this pass routes it to WiFi).
+- **Frontier (next milestone): op #8033 (frame 17019): `IN 0x2860` — the second channel set** (the
+  airodump channel tune). `0x2860` is `read_rf(0x18)` (= 0x2800 + (0x18<<2)), the head of the same
+  `chan.set_channel` path. After it: the airodump channel hops (~3400 ops, the same path per hop). No
+  IQK in this window. Live TX stays the user's.
 - `_drv_enable_trx` (between init_mac_flow and general-info) is RX/thread-side only — a gate no-op.
 - **PHYDM discriminators are transformed, not the hal->* values** (the AGC walker forced this out):
   `dm->rfe_type = rfe_type_expand >> 3` (0x22 -> 4) and `dm->package_type = 1` for the 0x2x combo
@@ -578,6 +590,8 @@
   switches the shared antenna from BT back to WiFi. Porting forward (past tx-power) is the fix — do
   NOT chase this as a separate HW-debug thread. (DIG-watchdog/AGC is the secondary suspect — the
   sibling `rtl8822bu_dkms/test_hw.py --igi/--watchdog` pattern, if needed later.)
+  **Update (GREEN @ 8033):** both predicted pieces are now ported — the monitor RX-filter (@ 7969)
+  and the media-connect antenna switch to WiFi (@ 8033). HW re-test is the next check.
 
 ## Port log — 2026-06-22 (TX-power + monitor RX-enable GREEN @ 7969)
 
@@ -595,3 +609,28 @@
 - This is the RX-filter half of the HW no-beacons; the antenna switch to WiFi is the **second coex
   pass** (frontier 7969 — `set_ant_path(PHASE_2G)`, reuses the existing btc primitives). Frontier
   #7969 = the run_coex action machine.
+
+## Port log — 2026-06-22 (second BT-coex pass: media-connect antenna switch GREEN @ 8033)
+
+- Ported the second BT-coex pass (the antenna switch from BT to WiFi — the other half of the cold-HW
+  no-beacons). The pre-port note guessed scan_notify; the wire identified it as
+  **`ex_halbtc8821c1ant_media_status_notify(BTC_MEDIA_CONNECT)`** ([SRC] halbtc8821c1ant.c:4851),
+  which `setopmode_hdl` fires for a monitor vif after the RX-filter ([SRC] rtw_mlme_ext.c:13575). The
+  tell was the missing leading scoreboard write: media-connect's `write_scbd(ACTIVE|ONOFF)` is already
+  set (no-op), whereas scan_notify writes `...|SCAN` first. Added to `bringup.set_monitor_mode`.
+- New in `btc.py`: `media_status_notify_connect_2g`, `_set_ant_path_2g` (the PHASE_2G arm — reuses the
+  existing `_set_gnt_bt/_set_gnt_wl/_set_ant_switch/_write_bitmask8` primitives; GNT field value `0x0`
+  for HW-PTA), `_action_wifi_not_connected`, `_set_table` (the non-force read-compare path),
+  `_set_tdma` + `_set_tdma_timer_base` (the general PS-TDMA H2C), and a generalized
+  `_tdma(force, turn_on, tcase)`. `run_coex` now takes a `reason` and, when `run_time_state` is TRUE,
+  re-asserts the antenna (non-force `set_ant_path` -> no wire via the new `cur_ant_pos_type` guard),
+  sets BTCQDDR (0x00aa=0x8403), and runs `action_wifi_not_connected` (`table(NM,0)` no-op read +
+  `tdma(FC, off, 8)` PTA H2C 0x60 box0). `BtcState` gained the matching fields. -> 7969 -> **8033, zero
+  divergence**.
+- Two gate-confirmed traps: (1) the box3 H2C `0x69 {0xc,0}` is the inline leap-AP-protection write
+  in media_status_notify, **not** `set_tdma_timer_base` (which sends `{0xb,..}` and here early-returns
+  silent because tbtt=100/type=0/base=0). (2) the action's `table(NM,0)` takes the non-force path
+  (reads 0x6c0/0x6c4, both 0x55555555 -> returns, no write) because `wl_slot_toggle_change` is FALSE.
+- The HMEBOX rotation validated end-to-end: airmon general-info box0, init-coex tdma/query box1/box2,
+  media-connect leap-AP box3, action tdma box0. Frontier #8033 = the second channel set (`read_rf
+  0x18` @ 0x2860), the airodump channel tune.
