@@ -8,7 +8,7 @@ not transcribed.
 """
 from __future__ import annotations
 
-from . import btc, dm, efuse
+from . import btc, dm, efuse, txpower
 from .bb import set_bb_reg
 from .rf import read_rf, write_rf, write_rf_masked
 
@@ -155,3 +155,4 @@ def set_channel(t, info, channel: int) -> None:
     # set bandwidth (20 MHz, primary-channel index 0)
     _mac_switch_bandwidth(t, channel, 0)
     _switch_bandwidth_20(t)
+    txpower.set_tx_power_level(t, info, channel)
