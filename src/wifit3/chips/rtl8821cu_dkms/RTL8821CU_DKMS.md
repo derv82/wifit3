@@ -78,7 +78,8 @@
 | AGC + RF radio-A | `bb.phy_agc_config` / `rf.config_radioa` | `_init_phy_parameter_bb` :172 (AGC + BTG diff) ; `_init_phy_parameter_rf` :207 (RF radio-A via LSSI 0x0C90) | AGC 1600 + BTG-diff 390 + crystal_cap + RF radio-A 2712 + POST — **VERIFIED** |
 | USB interface cfg | `mac.init_interface_cfg` | `init_usb_cfg_88xx` halmac_usb_88xx.c:39 | RXDMA burst mode/size + TXDMA drop-on-overflow — **VERIFIED** |
 | monitor RX-filter | `mac.hal_init_misc` | `rtl8821c_hal_init_misc` rtl8821c_halinit.c:203 | CAM clear + RXFLTMAP all-mgmt/data + RCR + mgmt-ack + MAC-sec + RX-TSF filter — **VERIFIED** |
-| monitor entry (airmon) | `bringup.hal_init` | `rtl8821c_hal_init` halinit.c:264 | `_halmac_init_hal` + `hal_init_misc` (RX-enabled) **VERIFIED**; **(frontier)** `phy_init_haldm` (phydm DIG/DM) -> channel hops |
+| monitor entry (airmon) | `bringup.hal_init` | `rtl8821c_hal_init` halinit.c:264 | `_halmac_init_hal` + `hal_init_misc` (RX-enabled) **VERIFIED** |
+| phydm DM init | `dm.phy_init_haldm` | `rtl8821c_phy_init_haldm` rtl8821c_dm.c:174 -> `rtw_phydm_init` hal_dm.c:1594 -> `odm_dm_init` phydm.c:1786 | `phydm_common_info_self_init` (CCK new-AGC + report-fmt + BB-rx-path reads + soft-ML 0x19a8) **VERIFIED**; **(frontier)** `phydm_dig_init` -> CCK-PD/adaptivity/rf -> channel hops |
 
 ## Hot paths
 
@@ -109,20 +110,21 @@
 
 ## Known issues
 
-- **Frontier (next milestone): op #7475 (frame 15901): `IN 0x0a9c/4=0x3f000000`** — the phydm DM
-  init **`rtl8821c_phy_init_haldm`** ([SRC] rtl8821c_phy.c -> `odm_dm_init`/`phydm_dm_init`): DIG
-  (dynamic initial gain), CCK-PD, RA-init, etc. The recorded sequence reads/RMWs BB registers —
-  0x0A9C, 0x0804/0x0808, **0x19A8** (RMW 0x010a0000 -> 0xd10a0000), 0x0C50 (IGI), 0x0AAA, 0x0A2C,
-  **0x0A08** (RMW 0x9c838300 -> 0x9c878300), **0x0AA8** (RMW 0xeacf0004 -> 0xead10004), 0x0994, ...
-  Trace from `hal/phydm/phydm_dig.c` / `phydm.c` `odm_dm_init` (the per-sub-mechanism init writes).
-  **Scope:** `odm_dm_init` ([SRC] phydm.c, via hal_dm.c:1601) calls ~35 sub-inits — most are
+- **Frontier (next milestone): op #7480 (frame 15911): `IN 0x0c50/4=0x00000020`** — `phydm_dig_init`
+  (dynamic initial gain), the next `odm_dm_init` sub-init after `phydm_common_info_self_init`. The
+  recorded sequence reads/RMWs BB registers — 0x0C50 (IGI), 0x0AAA, 0x0A2C, **0x0A08** (RMW
+  0x9c838300 -> 0x9c878300), **0x0AA8** (RMW 0xeacf0004 -> 0xead10004), 0x0994, ... Trace from
+  `hal/phydm/phydm_dig.c` `phydm_dig_init`.
+  **Scope:** `odm_dm_init` ([SRC] phydm.c:1786, via hal_dm.c:1601) calls ~35 sub-inits — most are
   software-only state init (no register I/O, gate no-ops), but several write BB regs:
   `phydm_dig_init`, `phydm_cck_pd_init`, `phydm_env_monitor_init`, `phydm_adaptivity_init`,
-  `phydm_rf_init`, `phydm_dc_cancellation`, `phydm_txcurrentcalibration`. Port one sub-init per
-  milestone (each is a self-contained chunk; many use computed values, not flat tables — verify
-  each against the gate). After this: the **channel hops** (airodump set_channel via the RF/BB
-  channel-tune path — the agent's to wire; live TX stays the user's). No IQK in this window
-  (triggered later — channel-set / watchdog).
+  `phydm_rf_init`, `phydm_dc_cancellation`, `phydm_txcurrentcalibration`,
+  `phydm_adaptive_soml_init`. **Done so far:** `phydm_common_info_self_init` (the opening CCK reads
+  0xa9c/0x804/0x808 + the soft-ML 0x19a8 RMW — `dm.py`). Port one sub-init per milestone (each is a
+  self-contained chunk; many use computed values, not flat tables — verify each against the gate).
+  After this: the **channel hops** (airodump set_channel via the RF/BB channel-tune path — the
+  agent's to wire; live TX stays the user's). No IQK in this window (triggered later — channel-set /
+  watchdog).
 - `_drv_enable_trx` (between init_mac_flow and general-info) is RX/thread-side only — a gate no-op.
 - **PHYDM discriminators are transformed, not the hal->* values** (the AGC walker forced this out):
   `dm->rfe_type = rfe_type_expand >> 3` (0x22 -> 4) and `dm->package_type = 1` for the 0x2x combo
@@ -334,3 +336,15 @@
   RX-enabling block (the beacon-watch A/B should see RX once HW-tested).
 - Frontier #7475 = `rtl8821c_phy_init_haldm` (phydm DIG/DM init) — see Known issues for the decoded
   BB-register sequence; trace from `hal/phydm/`.
+
+## Port log — 2026-06-22 (phydm DM init: common_info_self_init GREEN @ 7480)
+
+- New `dm.py` ports `rtl8821c_phy_init_haldm` -> `rtw_phydm_init` -> `odm_dm_init` (8821C path),
+  starting with `phydm_common_info_self_init` ([SRC] phydm.c:238): `phydm_init_cck_setting` reads
+  the CCK new-AGC flag (0xa9c BIT17) + CCK report-format (0x804 BIT16), the BB-rx-path enable
+  (0x808 mask 0xF), then `phydm_init_soft_ml_setting` RMWs 0x19a8[31:28]=0xd. → 7475 -> **7480**.
+- Traced the order traps: `halrf_init` + `supportability/pause/rfe_init` are all wire-silent for
+  8821C (IC-/mp_mode-gated), so the opening reads come from `common_info_self_init`; the 0x19a8
+  write is `phydm_init_soft_ml_setting` (reached *inside* common_info_self_init), not the later
+  `phydm_adaptive_soml_init` as the pre-port note guessed. The CCK rx-antenna/path/lna/rssi helpers
+  are 1SS-/non-8821C-gated no-ops. Frontier #7480 = `phydm_dig_init` (IGI 0x0c50).

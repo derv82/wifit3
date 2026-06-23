@@ -12,7 +12,7 @@ entry) extend ``cold_bringup`` past the report readback.
 """
 from __future__ import annotations
 
-from . import bb, btc, chipid, efuse, firmware, init, mac, phy, phy_cond, pwrseq, rf
+from . import bb, btc, chipid, dm, efuse, firmware, init, mac, phy, phy_cond, pwrseq, rf
 
 REG_C2HEVT_MSG_NORMAL = 0x01A0      # [SRC] include/hal_com_reg.h:149
 _C2H_DEFEATURE_RSVD = 0xFD          # [SRC] hal/hal_com_c2h.h:79 — "FW: report MAC-hidden via reg"
@@ -99,8 +99,10 @@ def hal_init(t, info) -> None:
     rf.config_radioa(t, cfg)
     bb.phy_parameter_init(t, post=True)
     mac.init_interface_cfg(t)
-    # rtl8821c_hal_init tail (after _halmac_init_hal): the driver misc/monitor RX-filter setup.
+    # rtl8821c_hal_init tail (after _halmac_init_hal): the driver misc/monitor RX-filter setup,
+    # then the PHYDM dynamic-mechanism init (DIG/CCK-PD/adaptivity/...).
     mac.hal_init_misc(t)
+    dm.phy_init_haldm(t, info)
 
 
 def cold_bringup(t) -> None:
