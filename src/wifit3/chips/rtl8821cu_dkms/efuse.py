@@ -39,6 +39,8 @@ _EEPROM_RF_BOARD_OPTION = 0xC1     # [SRC] include/hal_pg.h:509 EEPROM_RF_BOARD_
 _EEPROM_RF_BT_SETTING = 0xC3       # [SRC] include/hal_pg.h:511 EEPROM_RF_BT_SETTING_8821C
 _EEPROM_RFE_OPTION = 0xCA          # [SRC] include/hal_pg.h:518 EEPROM_RFE_OPTION_8821C
 _EEPROM_XTAL = 0xB9                # [SRC] include/hal_pg.h:496 EEPROM_XTAL_8821C
+_EEPROM_THERMAL_METER = 0xBA       # [SRC] include/hal_pg.h:497 EEPROM_THERMAL_METER_8821C
+_DEFAULT_THERMAL_METER = 0x12      # [SRC] include/hal_pg.h:827 EEPROM_Default_ThermalMeter
 _BIT_BT_FUNC_EN = 1 << 18          # [SRC] halmac_bit_8821c.h:1395 BIT_BT_FUNC_EN_8821C
 
 _BIT_AUTOLOAD_SUS = 1 << 5
@@ -148,6 +150,7 @@ class EfuseInfo:
     phydm_package_type: int = 0  # dm->package_type (phydm override; differs from hal->PackageType)
     default_rf_set: int = 1     # dm->default_rf_set_8821c (SWITCH_TO_BTG=0 / WLG=1) — picks AGC diff
     crystal_cap: int = 0        # hal->crystal_cap from EEPROM_XTAL (0xB9); BB crystal-cap trim
+    eeprom_thermal: int = _DEFAULT_THERMAL_METER  # rf->eeprom_thermal (0xBA); halrf thermal-track base
 
 
 def _parse_board_info(t, log_map: bytes, map_valid: bool) -> tuple[bool, int, int, int]:
@@ -197,8 +200,23 @@ def read_efuse(t) -> EfuseInfo:
     # map is valid (the same `valid` BTCoexist uses — EEPROM-ID, not autoload), else default 0.
     xtal = log_map[_EEPROM_XTAL]
     crystal_cap = xtal if (map_valid and xtal != 0xFF) else 0
+    # rf->eeprom_thermal [SRC] Hal_EfuseParseThermalMeter rtl8821c_ops.c:202 — EEPROM_THERMAL_METER
+    # (0xBA), default 0x12 when unfused; the halrf thermal-tracking delta base.
+    therm = log_map[_EEPROM_THERMAL_METER]
+    eeprom_thermal = therm if (map_valid and therm != 0xFF) else _DEFAULT_THERMAL_METER
     return EfuseInfo(autoload_ok, log_map, bt_coexist, rfe_type, single_ant_path, ant_num,
-                     phys_map=phys_map, crystal_cap=crystal_cap)
+                     phys_map=phys_map, crystal_cap=crystal_cap, eeprom_thermal=eeprom_thermal)
+
+
+def thermal_offset(info: EfuseInfo) -> int:
+    """phydm_get_thermal_trim_offset_8821c [SRC] halrf_kfree.c:127 — the kfree thermal trim added to
+    the raw meter reading (PPG byte 0x1EF): 0 when unfused (0xff); else a signed (pg_therm>>1) whose
+    sign is BIT0 of pg_therm (BIT0 set -> positive). On this card 0xE9 & 0x1f = 0x09 -> +4."""
+    pg = info.phys_map[_PPG_THERMAL]
+    if pg == 0xFF:
+        return 0
+    pg &= 0x1F
+    return (pg >> 1) if (pg & 1) else -(pg >> 1)
 
 
 # PPG (per-package-gain) physical EFUSE offsets for kfree trim [SRC] halrf_kfree.h:69-75

@@ -30,7 +30,7 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8821cu_dkms import bringup, btc, chan, led, watchdog  # noqa: E402
+from wifit3.chips.rtl8821cu_dkms import bringup, btc, chan, efuse, led, watchdog  # noqa: E402
 from wifit3.chips.rtl8821cu_dkms.transport import Rtl8821cuTransport  # noqa: E402
 
 DEFAULT_CAP = REPO / "usb_dumps_new2" / "captures_rtl8821cu" / "capture-1.pcap"
@@ -91,7 +91,8 @@ def _walk_operational(w: Walk, info) -> tuple[int, int, int, int, dict | None]:
     periodical (``btc.periodical``, opener = read 0x770). The first op that opens no handler STOPS
     the walk and is returned as the frontier."""
     led_st = led.LedBlinkState()
-    wd_st = watchdog.WatchdogState()
+    wd_st = watchdog.WatchdogState(eeprom_thermal=info.eeprom_thermal,
+                                   thermal_offset=efuse.thermal_offset(info))
     peri_st = btc.PeriodicalState()
     hops = leds = ticks = peris = 0
     while w.i < len(w.ops):

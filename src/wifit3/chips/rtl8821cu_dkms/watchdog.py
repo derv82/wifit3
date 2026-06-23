@@ -17,7 +17,7 @@ the hold band, computes no change and writes nothing — matching the wire.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .bb import set_bb_reg
 from .dm import _get_bb_dbg_port_val, _release_bb_dbg_port, _set_bb_dbg_port
@@ -77,8 +77,20 @@ _REG_RRSR = 0x0440              # rtw_phydm_set_rrsr re-set (interleaved); rrsr_
 _RRSR_VAL_INIT = 0x15D
 
 # --- halrf thermal (tx-power tracking) [SRC] halrf_powertracking_ce.c:818 ----
-_REG_RF_T_METER = 0x42          # RF reg 0x42; phase-1 sets [17:16]=3 to arm the meter
+# A 2-phase trigger toggled by tm_trigger each callback: ARM (read meter, set RF 0x42[17:16]=3)
+# then, the next tick, CALLBACK (read the now-settled meter, run odm_pwrtrk_method). [SRC] :836/873.
+_REG_RF_T_METER = 0x42          # RF reg 0x42 (= BB 0x2908); ARM sets [17:16]=3, CALLBACK reads [15:10]
 _RF_T_METER_TRIG = 0x3
+_THERMAL_FIELD = 0xFC00         # meter value = RF 0x42[15:10]  [SRC] halphyrf_ce.c:462
+_REG_OFDM_TX_AGC = 0x0C94       # set_pwr8821c: [6:1] = absolute_ofdm_swing_idx & 0x3f  [SRC] halrf_8821c.c:221
+_REG_OFDM_BB_SWING = 0x0C1C     # [31:21] = tx_scaling_table_jaguar[bb_swing_idx_ofdm]  [SRC] :222
+_AVG_THERMAL_NUM = 4            # AVG_THERMAL_NUM_8821C [SRC] halrf_8821c.h:19
+_TXPWR_TRACK_TABLE_MAX = 29     # TXPWR_TRACK_TABLE_SIZE-1 clamp [SRC] halrf_powertracking_ce.h:40
+# delta-swing index tables, path-A 2.4 GHz [SRC] halhwimg8821c_rf.c:2808/2811 (rfe-invariant).
+_DELTA_SWING_2GA_N = (0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 3, 4,
+                      4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 7, 7, 8, 8, 9)
+_DELTA_SWING_2GA_P = (0, 1, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 4, 4, 5,
+                      5, 5, 5, 6, 6, 6, 7, 7, 7, 8, 8, 9, 9, 9, 9)
 
 # --- dyn-bw indication (bw-fixed) [SRC] phydm_api.c:800 ----------------------
 _REG_BW_FIXED = 0x0840          # [3:0]=pri-ch (20 MHz->0) ; BIT4 = bw-fixed enable
@@ -115,6 +127,18 @@ class WatchdogState:
     clm_period: int = _CLM_PERIOD_MAX
     nhm_include_set: bool = False       # include fields at *_INIT sentinel until the first set
     fahm_include_set: bool = False
+    # halrf thermal power-tracking (CALLBACK phase). eeprom_thermal/thermal_offset are seeded from
+    # EFUSE by the gate; the rest are the cali_info carried state (thermal_value init = eeprom).
+    eeprom_thermal: int = 0x12          # rf->eeprom_thermal (EFUSE 0xBA); delta base
+    thermal_offset: int = 0             # kfree thermal trim (EFUSE 0x1EF), added to the raw meter
+    thermal_value: int = -1             # last averaged meter; __post_init__ seeds it = eeprom_thermal
+    thermal_avg: list[int] = field(default_factory=lambda: [0] * _AVG_THERMAL_NUM)  # averaging ring
+    thermal_avg_idx: int = 0
+    ofdm_swing_idx: int = 0             # delta_power_index[A] = last applied OFDM swing index
+
+    def __post_init__(self) -> None:
+        if self.thermal_value < 0:      # cali_info->thermal_value seeds to eeprom_thermal [SRC] ce.c:712
+            self.thermal_value = self.eeprom_thermal
 
 
 # ======================================================================
@@ -232,14 +256,48 @@ def _rrsr_reset(t) -> None:
 
 
 def _halrf_thermal(t, st: WatchdogState) -> None:
-    """halrf_watchdog -> odm_txpowertracking_check [SRC] halrf_powertracking_ce.c:818 — the thermal
-    meter is a 2-phase trigger: the first tick (tm_trigger=0) arms it by RF 0x42[17:16]=3 (a masked
-    RF write = read-back at 0x2908 + LSSI write at 0xc90), then flips the flag."""
+    """odm_txpowertracking_check_ce [SRC] halrf_powertracking_ce.c:818 — a 2-phase trigger toggled
+    by tm_trigger every tick. ARM (tm_trigger 0->1): read the meter, set RF 0x42[17:16]=3 (a masked
+    RF write = the 0x2908 read-back + LSSI 0xc90 write) so it settles for next tick. CALLBACK
+    (tm_trigger 1->0): the meter has settled -> run the thermal power-tracking callback."""
     if not st.tm_trigger:
         cur = read_rf(t, _REG_RF_T_METER)               # 0x2800 + (0x42<<2) = 0x2908
         data = (cur & ~(0x3 << 16)) | (_RF_T_METER_TRIG << 16)
         t.write32(0x0C90, (_REG_RF_T_METER << 20) | (data & 0xFFFFF))
         st.tm_trigger = True
+    else:
+        _halrf_thermal_callback(t, st)
+        st.tm_trigger = False
+
+
+def _halrf_thermal_callback(t, st: WatchdogState) -> None:
+    """odm_txpowertracking_callback_thermal_meter [SRC] halphyrf_ce.c:409 (8821C MIX_MODE, path A).
+    Read the settled meter, average it (4-deep ring), and only when the averaged value moved since
+    last callback re-derive the OFDM swing index from the 2.4G delta-swing table and apply it:
+    0xc94[6:1] = absolute_ofdm_swing_idx & 0x3f, 0xc1c[31:21] = the BB-swing scaling. In the
+    monitor / small-delta regime the swing index stays within [-tx_pwr_idx, 63-tx_pwr_idx] so it
+    passes `get_mix_mode` unchanged and the BB-swing index stays at default_ofdm_index (0xc1c
+    write is identity). The averaging / table math is software; only the two writes hit the wire."""
+    raw = (read_rf(t, _REG_RF_T_METER) & _THERMAL_FIELD) >> 10
+    thermal = max(0, min(raw + st.thermal_offset, 63))
+    st.thermal_avg[st.thermal_avg_idx] = thermal
+    st.thermal_avg_idx = (st.thermal_avg_idx + 1) % _AVG_THERMAL_NUM
+    nz = [v for v in st.thermal_avg if v]
+    avg = sum(nz) // len(nz) if nz else thermal
+    if avg == st.thermal_value:                         # outer delta 0 -> no power-track this tick
+        return
+    delta = min(abs(avg - st.eeprom_thermal), _TXPWR_TRACK_TABLE_MAX)
+    if avg > st.eeprom_thermal:                         # temp above PG base: positive swing
+        new_idx = _DELTA_SWING_2GA_P[delta]
+    else:                                               # at/below base: negative swing
+        new_idx = -_DELTA_SWING_2GA_N[delta]
+    st.thermal_value = avg
+    if new_idx == st.ofdm_swing_idx:                    # power_index_offset 0 -> no apply
+        return
+    st.ofdm_swing_idx = new_idx
+    set_bb_reg(t, _REG_OFDM_TX_AGC, 0x7E, new_idx & 0x3F)
+    cur = t.read32(_REG_OFDM_BB_SWING)                  # bb_swing stays at default -> identity write
+    t.write32(_REG_OFDM_BB_SWING, cur)
 
 
 def _dyn_bw_indication(t) -> None:
@@ -317,7 +375,8 @@ def tick(t, st: WatchdogState) -> None:
     _dig(t, st, cnt_all)
     _cck_pd_th(t, st, cnt_cck_fail)
     _adaptivity(t, st)
-    _rrsr_reset(t)
+    if st.first_tick:
+        _rrsr_reset(t)              # interleaved one-shot RRSR update; absent on later ticks
     _halrf_thermal(t, st)
     _dyn_bw_indication(t)
     _env_mntr(t, st)

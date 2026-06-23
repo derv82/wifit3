@@ -19,8 +19,10 @@
 > counters + DIG + CCK-PD + adaptivity EDCCA + halrf thermal + dyn-bw + env-monitor NHM/CLM/FAHM), and
 > the **BT-coex periodical** (`btc.periodical`: monitor BT/WiFi counters + update_wifi_link_info +
 > read scoreboard + the one-shot first-tick run_coex & BT-FW-version query) are dispatched by their
-> unique opener ops — 9 hops + 3 LED + 1 tick + 1 periodical reproduced, op #9284, zero divergence.
-> Cold init is HW-validated on real silicon (FW boots). — `_halmac_init_hal` + the monitor
+> unique opener ops — 14 hops + 5 LED + 2 ticks + 2 periodicals reproduced, op #9941, zero divergence.
+> (The watchdog's halrf thermal member is the 2-phase arm/callback toggle: odd ticks arm the meter,
+> even ticks read it + run the OFDM-swing power-track.) Cold init is HW-validated on real silicon
+> (FW boots). — `_halmac_init_hal` + the monitor
 > RX-filter + the entire `rtl8821c_phy_init_haldm`/`odm_dm_init` (11 compiled sub-inits incl. the
 > DC-cancellation measurement calibration) + the MU-MIMO/TXBF beamforming defaults**. Cold init
 > (frames 1-7672): USB transport
@@ -43,10 +45,10 @@
 > compiled for this CE+8821C build), **`rtl8821c_phy_bf_init`** (`mac.phy_bf_init`), and the **BT-coex
 > HAL init** (`btc.hal_init` = the 1-ant `init_hw_config`: PTA/3-wire enable, ltecoex 0x1700 indirect
 > GNT setup, antenna-to-BT switch, WiFi-only coex table, the tdma/query-BT-info H2Cs via the HMEBOX
-> rotation). Frontier is op #9284 (frame 20121, `IN 0x0210`): the phydm watchdog's **second tick**
-> — the halrf thermal meter is now armed, so the tick reads the meter (0x2908) and runs power-
-> tracking (0x0c94/0x0c1c) instead of arming, and the first-tick-only `rtw_phydm_set_rrsr` (0x440)
-> drops out. Not registered in `wlan/manager.py`.
+> rotation). Frontier is op #9941 (frame 21811, `IN 0x0430`): a **BT-coex scan-notify** (a 5th async
+> producer fired by airodump's channel scanning) — `limited_tx` + `coex_ctrl_owner(WLSIDE)` + the
+> 0x1700 GNT block + the forced `set_ant_path(PHASE_2G)` antenna switch + run_coex. Not registered in
+> `wlan/manager.py`.
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
@@ -106,7 +108,8 @@
 | H2C-by-reg (HMEBOX) | `firmware.send_h2c_by_reg` | `rtw_halmac_send_h2c` hal_halmac.c:4103 | box index `t.last_hme_box` rotates mod 4, reset to 0 after each FW dl — **VERIFIED** |
 | WL activity LED | `led.cfg_wl_led` | `rtw_halmac_led_cfg(TRUE,3)` hal_halmac.c:5094 (USB `hal_init_misc` rtl8821cu_halinit.c:41) | pinmux GPIO8->WL_LED (0x4a/0x4e[5]) + SW-control mode (0x4e=0x28) — **VERIFIED** |
 | SW-LED blink (async) | `led.led_blink` / `LedBlinkState` | `SwLedBlink1` hal/led/hal_usb_led.c:112 (BlinkTimer) | no-link `LED_BLINK_SLOWLY` tick: alternate 0x4e[3] (active-low) via `pinmux_wl_led_sw_ctrl` — async producer #2 — **VERIFIED** (2 ticks) |
-| phydm watchdog (async) | `watchdog.tick` / `WatchdogState` | `rtw_dynamic_chk_wk_hdl` rtw_cmd.c:2992 -> `phydm_watchdog` phydm.c:2382 | dynamic-check tick (async producer #3): sreset + USB rx-agg + FA-counters + DIG + CCK-PD + adaptivity + halrf-thermal + dyn-bw + env-monitor NHM/CLM/FAHM — **VERIFIED** (whole tick, 1 tick) |
+| phydm watchdog (async) | `watchdog.tick` / `WatchdogState` | `rtw_dynamic_chk_wk_hdl` rtw_cmd.c:2992 -> `phydm_watchdog` phydm.c:2382 | dynamic-check tick (async producer #3): sreset + USB rx-agg + FA-counters + DIG + CCK-PD + adaptivity + halrf-thermal (2-phase arm/callback) + dyn-bw + env-monitor NHM/CLM/FAHM. `rtw_phydm_set_rrsr` (0x440) is first-tick-only — **VERIFIED** (tick1 arm + tick2 CB0) |
+| halrf thermal track | `watchdog._halrf_thermal` / `_halrf_thermal_callback` | `odm_txpowertracking_check_ce` halrf_powertracking_ce.c:818 ; `..._callback_thermal_meter` halphyrf_ce.c:409 ; `set_pwr8821c` halrf_8821c.c:123 | ARM (odd: RF 0x42[17:16]=3) / CALLBACK (even: meter avg vs `eeprom_thermal`+kfree-trim -> 2ga delta-swing table -> 0xc94[6:1] OFDM-AGC + 0xc1c BB-swing) — **VERIFIED** (CB0); CB1 anomaly open (see below) |
 | BT-coex periodical (async) | `btc.periodical` / `PeriodicalState` | `hal_btcoex_Hanlder` hal_btcoex.c:6069 -> `ex_halbtc8821c1ant_periodical` halbtc8821c1ant.c:5411 | BT-coex periodical (async producer #4): monitor_bt_ctr (0x770/0x774/0x76e) + monitor_wifi_ctr (silent) + update_wifi_link_info + read_scbd; first-tick-only run_coex (action_wifi_not_connected) + the post-periodical BT-FW-version query (BT_MP_OPER 0x67) — **VERIFIED** (1 periodical) |
 | iface MAC addr | `mac.set_mac_addr` / `efuse.mac_address` | `rtw_hal_iface_init` hal_intf.c:521 -> `cfg_mac_addr_88xx` | REG_MACID 0x0610/4 + 0x0614/2 from EFUSE 0x107 (per-card, never hardcoded) — **VERIFIED** |
 | iface port-enable / RX-BAR | `mac.hw_port_enable` / `mac.enable_rx_bar` | `hw_var_hw_port_cfg` / `init_hw_mlme_ext` rtw_mlme_ext.c:1279 | BCN_CTRL 0x0550 \|= 0x1c ; RXFLTMAP1 0x06a2 \|= BIT8 — **VERIFIED** |
@@ -250,13 +253,32 @@
   buf {(seq<<4)|0, 0}=0..0 → main box 0x00000067; the real C2H caches `bt_get_fw_ver` so later ticks
   skip it). The 38 capture periodicals confirm: only #1 runs run_coex + the query; #2+ are the
   prefix only. Carried state in `PeriodicalState`. Live TX stays the user's.
-- **Frontier (next milestone): op #9284 (frame 20121): `IN 0x0210` — the phydm watchdog's SECOND
-  tick.** Two tick-2 deltas vs tick-1 (`watchdog.tick`): (1) `rtw_phydm_set_rrsr` (0x440) is
-  **first-tick-only** — absent on tick 2 (the port currently re-issues it every tick); (2)
-  `_halrf_thermal` no longer just *arms* — with `tm_trigger` set, the now-armed meter is **read**
-  (0x2908=0x54a0) and `odm_txpowertracking_check` runs power-tracking (0x0c94 RMW 0x01000100->
-  0x0100017e, 0x0c1c BB-swing read) instead of the 0x0c90 arm-write. So the thermal member needs
-  its 2-phase split ported and rrsr gated to the first tick.
+- **The halrf thermal 2-phase + rrsr-gate is GREEN @ 9941** (`watchdog._halrf_thermal`). `rtw_phydm_
+  set_rrsr` (0x440) is **first-tick-only** (it is NOT a watchdog member — a one-shot RRSR/rate update
+  that interleaved into tick1; gated on `WatchdogState.first_tick`). The thermal meter is a 2-phase
+  toggle on `tm_trigger`: ODD ticks ARM (RF 0x42[17:16]=3 -> 0x2908 read + 0x0c90 LSSI), EVEN ticks
+  CALLBACK (`odm_txpowertracking_callback_thermal_meter`): read the settled meter [15:10], average
+  it (4-deep ring), and when the average moved re-derive the OFDM swing index from the 2.4G
+  delta-swing table (`-2ga_n[delta]` at/below the PG base) and apply `0xc94[6:1]=idx&0x3f` +
+  `0xc1c[31:21]` BB-swing. `eeprom_thermal` (EFUSE 0xBA = 30) + kfree thermal trim (EFUSE 0x1EF =
+  +4) seed `WatchdogState` from the gate. Tick2/CB0: meter 21 -> avg 25, |25-30|=5, -2ga_n[5]=-1 ->
+  0xc94=0x7e; bb-swing stays at default_ofdm_index (24) so 0xc1c is identity. **VERIFIED** (CB0).
+- **OPEN — the CB1 thermal anomaly (parked behind the scan-notify frontier).** The 38-callback
+  classification shows CB1 (tick4, meter 22) writes `0xc94=0x7a` (swing idx -3), but the documented
+  model gives avg=(25+26)//2=25 -> outer-delta 0 -> NO write. A monotonically rising meter cannot
+  produce the non-monotonic -1,-3,-1 swing sequence via `-2ga_n[|avg-eeprom|]` for ANY (eeprom, trim,
+  AVG) — verified by brute force. So CB1's write is an **interleaved producer** (likely an IQK /
+  tx-power re-derive, `do_iqk_8821c` is gated by `delta_iqk>=8`), not the thermal callback. It sits
+  at op ~10791, **behind** the scan-notify (9941) and LED-double (9975) frontiers, so it does not
+  block yet — resolve it when the cursor reaches tick4. Full analysis: the thermal-tracking subagent
+  spec (carried in this session's notes).
+- **Frontier (next milestone): op #9941 (frame 21811): `IN 0x0430` — a BT-coex scan-notify** (the
+  5th async producer, fired by airodump's channel scanning): `limited_tx` backup reads (0x430/0x434/
+  0x42a/0x455) + `coex_ctrl_owner(WLSIDE)` (0x73) + the 0x1700 ltecoex GNT block + the **forced**
+  `set_ant_path(PHASE_2G)` antenna switch (0x4e/0x4f/0xcb4/0xcb7/0x67) + run_coex. Trace it from
+  `ex_halbtc8821c1ant_scan_notify` (halbtc8821c1ant.c) -> `run_coex(2GSCANSTART)`; reuses the existing
+  `btc.py` set_ant_path / run_coex primitives. The LED-double (0x4e[3] re-assert, lead-approved
+  value-bypass) is at ~9975, just after.
 - `_drv_enable_trx` (between init_mac_flow and general-info) is RX/thread-side only — a gate no-op.
 - **PHYDM discriminators are transformed, not the hal->* values** (the AGC walker forced this out):
   `dm->rfe_type = rfe_type_expand >> 3` (0x22 -> 4) and `dm->package_type = 1` for the 0x2x combo
@@ -813,3 +835,27 @@
   meter is read (0x2908) + power-tracked (0x0c94/0x0c1c) instead of armed, and `rtw_phydm_set_rrsr`
   (0x440) is first-tick-only — the tick's thermal member needs its 2-phase split. The LED re-assert
   "double" (~op 9975, lead-approved 0x4e[3] value-bypass) is the milestone after that.
+
+## Port log — 2026-06-23 (watchdog thermal 2-phase + rrsr-gate GREEN @ 9941)
+
+- `watchdog._halrf_thermal` now models the halrf thermal meter's 2-phase toggle ([SRC]
+  odm_txpowertracking_check_ce halrf_powertracking_ce.c:818): ODD ticks ARM (the existing RF
+  0x42[17:16]=3), EVEN ticks run `_halrf_thermal_callback` (`odm_txpowertracking_callback_thermal_
+  meter` halphyrf_ce.c:409, 8821C MIX_MODE path A). And `rtw_phydm_set_rrsr` (0x440) is gated to the
+  first tick (it is interleaved one-shot housekeeping, not a watchdog member). -> 9284 -> **9941,
+  zero divergence** (now 14 hops + 5 LED + 2 ticks + 2 periodicals; reproduces the first thermal
+  CALLBACK CB0 byte-exact).
+- The callback: read the settled meter [15:10], average over a 4-deep ring (`AVG_THERMAL_NUM_8821C`),
+  and when the average moved since last callback re-derive the OFDM swing index from the 2.4G
+  delta-swing table (`get_delta_swing_table_8821c`: `-2ga_n[delta]` at/below the PG base) and apply
+  `0xc94[6:1] = idx & 0x3f` + `0xc1c[31:21]` BB-swing. New EFUSE plumbing: `efuse.read_efuse` now
+  parses `eeprom_thermal` (0xBA, default 0x12) and `efuse.thermal_offset` decodes the kfree thermal
+  trim (phys 0x1EF, signed by BIT0); the gate seeds both into `WatchdogState`. On this card
+  eeprom_thermal=30, trim=+4. CB0: meter 21 -> avg 25 -> -2ga_n[5]=-1 -> 0xc94=0x7e; bb-swing stays
+  at default_ofdm_index (24) -> 0xc1c identity.
+- A thorough subagent mapped the algorithm + extracted the constants/tables from source and the
+  capture's EFUSE, and flagged the **CB1 anomaly** (tick4 writes 0xc94=0x7a / idx -3, which the
+  thermal model cannot produce from a monotonically-rising meter — an interleaved producer, parked
+  behind the scan-notify frontier; see Known issues).
+- Frontier #9941 = a BT-coex **scan-notify** (5th async producer, airodump scan): forced
+  `set_ant_path(PHASE_2G)` + run_coex(2GSCANSTART), reusing the btc.py primitives — the next milestone.
