@@ -45,10 +45,10 @@
 > compiled for this CE+8821C build), **`rtl8821c_phy_bf_init`** (`mac.phy_bf_init`), and the **BT-coex
 > HAL init** (`btc.hal_init` = the 1-ant `init_hw_config`: PTA/3-wire enable, ltecoex 0x1700 indirect
 > GNT setup, antenna-to-BT switch, WiFi-only coex table, the tdma/query-BT-info H2Cs via the HMEBOX
-> rotation). Frontier is op #9941 (frame 21811, `IN 0x0430`): a **BT-coex scan-notify** (a 5th async
-> producer fired by airodump's channel scanning) — `limited_tx` + `coex_ctrl_owner(WLSIDE)` + the
-> 0x1700 GNT block + the forced `set_ant_path(PHASE_2G)` antenna switch + run_coex. Not registered in
-> `wlan/manager.py`.
+> rotation). Frontier is op #9941 (frame 21811, `IN 0x0430`): a **BT-coex run_coex pass** (a 5th async
+> producer) at the 2.4G->5G airodump-scan transition — `limited_tx` + `coex_ctrl_owner(WLSIDE)` + the
+> 0x1700 GNT block + `set_ant_switch(BBSW, TO_WLG)` + a `table(0)` read (exact trigger / the absent
+> tdma+scbd are open; see Known issues). Not registered in `wlan/manager.py`.
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
@@ -272,13 +272,22 @@
   at op ~10791, **behind** the scan-notify (9941) and LED-double (9975) frontiers, so it does not
   block yet — resolve it when the cursor reaches tick4. Full analysis: the thermal-tracking subagent
   spec (carried in this session's notes).
-- **Frontier (next milestone): op #9941 (frame 21811): `IN 0x0430` — a BT-coex scan-notify** (the
-  5th async producer, fired by airodump's channel scanning): `limited_tx` backup reads (0x430/0x434/
-  0x42a/0x455) + `coex_ctrl_owner(WLSIDE)` (0x73) + the 0x1700 ltecoex GNT block + the **forced**
-  `set_ant_path(PHASE_2G)` antenna switch (0x4e/0x4f/0xcb4/0xcb7/0x67) + run_coex. Trace it from
-  `ex_halbtc8821c1ant_scan_notify` (halbtc8821c1ant.c) -> `run_coex(2GSCANSTART)`; reuses the existing
-  `btc.py` set_ant_path / run_coex primitives. The LED-double (0x4e[3] re-assert, lead-approved
-  value-bypass) is at ~9975, just after.
+- **Frontier (next milestone): op #9941 (frame 21811): `IN 0x0430` — a BT-coex run_coex pass (5th
+  async producer) at the 2.4G->5G airodump-scan transition.** Wire shape (ops 9941-9993, between a
+  paired ch12 hop @9890 and @9994, right before the first 5G hop ch36 @10043): `limited_tx` backup
+  reads (0x430/0x434/0x42a/0x455) -> `coex_ctrl_owner(WLSIDE)` (0x73) -> the 0x1700 ltecoex GNT block
+  -> `set_ant_switch(BBSW, TO_WLG)` (0x4e/0x4f/0xcb4/0xcb7/0x67) -> `table(0)` read (0x6c0/0x6c4, no
+  write). The `limited_tx`-before-`set_ant_path` order matches **run_coex**'s internal order
+  (update_wifi_link_info then set_ant_path), NOT `scan_notify`'s (scbd->set_ant_path->run_coex). Open
+  questions to resolve before porting: (1) the exact trigger (scan_notify / switchband / connect /
+  the 5G-tune's own coex) and reason code; (2) why `set_ant_path(NM,2G)` re-fires GNT/switch here
+  (cur_ant_pos_type must have been reset to non-2G before 9941 — likely by an intervening 5G/scan
+  step); (3) why there is **no tdma H2C and no 0xaa scbd write** in the block (action took a
+  table-only path, or it is not `action_wifi_not_connected`). NOTE: `set_ant_switch` reads/writes
+  `0x4e` — the SAME reg as the SW-LED opener — so this block's 0x4e must be consumed by the coex
+  handler, not mis-dispatched as an LED blink. The 5G band switch (hop ch36, `need_switch_band` TRUE)
+  and the genuine LED-double (the traffic-driven 0x4e[3] re-assert, lead-approved value-bypass) are
+  further milestones in this region.
 - `_drv_enable_trx` (between init_mac_flow and general-info) is RX/thread-side only — a gate no-op.
 - **PHYDM discriminators are transformed, not the hal->* values** (the AGC walker forced this out):
   `dm->rfe_type = rfe_type_expand >> 3` (0x22 -> 4) and `dm->package_type = 1` for the 0x2x combo
@@ -857,5 +866,6 @@
   capture's EFUSE, and flagged the **CB1 anomaly** (tick4 writes 0xc94=0x7a / idx -3, which the
   thermal model cannot produce from a monotonically-rising meter — an interleaved producer, parked
   behind the scan-notify frontier; see Known issues).
-- Frontier #9941 = a BT-coex **scan-notify** (5th async producer, airodump scan): forced
-  `set_ant_path(PHASE_2G)` + run_coex(2GSCANSTART), reusing the btc.py primitives — the next milestone.
+- Frontier #9941 = a BT-coex **run_coex pass** (5th async producer) at the 2.4G->5G scan transition:
+  limited_tx -> set_ant_switch(TO_WLG) -> table(0) read (no tdma/scbd). Exact trigger + the absent
+  tdma are open (see Known issues); reuses the btc.py set_ant_path/run_coex primitives — next milestone.
