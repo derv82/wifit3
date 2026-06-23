@@ -1000,4 +1000,7 @@ phydm watchdog on a 2s background task. `scripts/rtl8821cu_dkms/rx_diag.py` snap
   gate checks such writes only against the *recorded* read — e.g. the DC-cancellation dbg-port
   measurement). A concrete split-test: set RCR to accept CRC-error frames — frames then arriving means
   the AP is received and demod fails; nothing means no reception. (Needs the ACRC32 bit from source.)
-  The RCR/GNT/watchdog additions are kernel/sibling-parity and kept regardless of this bug.
+- **Tried, not proven.** RCR-widen, the GNT force, and the watchdog were each tried for this bug.
+  None fixed it. The RCR-widen and the GNT force are not in the pcap (it ran `wifi_only=FALSE`). So
+  the *running* driver deviates from the wire past `cold_bringup`. The gate skips the product path,
+  so it stays byte-for-byte. The watchdog is kernel-parity (its ticks are in the pcap).

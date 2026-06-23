@@ -132,6 +132,8 @@ class Rtl8821cuDkmsDriver:
         self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="8821cu-dkms-rx")
         self._reader.start()
         self.info = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
+        # The next three go beyond the pcap. Each was tried for the open monitor-RX bug. None fixed
+        # it. RCR-widen and the GNT force are not in the pcap (it ran wifi_only=FALSE).
         self.transport.write32(_REG_RCR, _RCR_MONITOR)      # widen RCR: add accept-broadcast/mgmt
         btc.force_wifi_only_antenna(self.transport)         # GNT the shared 1-ant to WiFi
         self._wd_state = watchdog.WatchdogState(

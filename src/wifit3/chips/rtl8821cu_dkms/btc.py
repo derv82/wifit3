@@ -316,7 +316,7 @@ def force_wifi_only_antenna(t) -> None:
     the grant is arbitrated by the BT-side PTA. wifit3 drives only the WiFi function (the BT function
     is not initialized), so take path control to WL and force GNT_BT low / GNT_WL high here instead.
     (The antenna switch is already routed TO_WLG by the media-connect pass; LTE-coex is off from
-    init.)"""
+    init.) Not in the pcap. Tried for the open monitor-RX bug. Lands; did not fix RX."""
     _write_bitmask8(t, REG_COEX_CTRL_OWNER, 1 << 2, 1)   # coex_ctrl_owner(WLSIDE) [SRC] :2656
     _set_gnt_bt(t, _GNT_SW_LOW)                          # [SRC] :2659
     _set_gnt_wl(t, _GNT_SW_HIGH)                         # [SRC] :2661
