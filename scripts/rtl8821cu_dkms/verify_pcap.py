@@ -30,7 +30,7 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8821cu_dkms import bringup, chan, led  # noqa: E402
+from wifit3.chips.rtl8821cu_dkms import bringup, chan, led, watchdog  # noqa: E402
 from wifit3.chips.rtl8821cu_dkms.transport import Rtl8821cuTransport  # noqa: E402
 
 DEFAULT_CAP = REPO / "usb_dumps_new2" / "captures_rtl8821cu" / "capture-1.pcap"
@@ -38,6 +38,7 @@ DEFAULT_CAP = REPO / "usb_dumps_new2" / "captures_rtl8821cu" / "capture-1.pcap"
 # Operational-dispatch openers (each the unique first op of a vendor handler at the cursor):
 _OP_HOP = 0x2860                 # R: read_rf(0x18) = 0x2800+(0x18<<2) opens a same-band tune
 _OP_LED = 0x004E                 # R: SwLedBlink1 / pinmux_wl_led_sw_ctrl opens an LED blink tick
+_OP_TICK = 0x0210                # R: sreset xmit_status_check opens a phydm dynamic-check tick
 _REG_RF_CHNL_LSSI = 0x0C90       # path-A LSSI write — carries the tuned channel in addr 0x18
 
 
@@ -82,12 +83,14 @@ def _peek_channel(w: Walk, start: int, window: int = 200) -> int | None:
     return None
 
 
-def _walk_operational(w: Walk, info) -> tuple[int, int, dict | None]:
-    """Dispatch each operational burst to its real handler at the cursor. Two producers interleave:
-    channel hops (``set_channel``, opener = read_rf 0x18) and the LED blink (``led_blink``, opener
-    = read 0x4e). The first op that opens no handler STOPS the walk and is returned as the frontier."""
+def _walk_operational(w: Walk, info) -> tuple[int, int, int, dict | None]:
+    """Dispatch each operational burst to its real handler at the cursor. Three producers interleave:
+    channel hops (``set_channel``, opener = read_rf 0x18), the LED blink (``led_blink``, opener =
+    read 0x4e) and the phydm dynamic-check tick (``watchdog.tick``, opener = read 0x210). The first
+    op that opens no handler STOPS the walk and is returned as the frontier."""
     led_st = led.LedBlinkState()
-    hops = leds = 0
+    wd_st = watchdog.WatchdogState()
+    hops = leds = ticks = 0
     while w.i < len(w.ops):
         o = w.peek()
         if o["dir"] == "IN" and o.get("wval") == _OP_HOP:
@@ -97,18 +100,25 @@ def _walk_operational(w: Walk, info) -> tuple[int, int, dict | None]:
             try:
                 w.run(lambda c=ch: chan.set_channel(w.t, info, c), f"hop{ch}")
             except Exception as e:  # noqa: BLE001
-                return hops, leds, _frontier(w, o, f"hop ch{ch}", e)
+                return hops, leds, ticks, _frontier(w, o, f"hop ch{ch}", e)
             hops += 1
             continue
         if o["dir"] == "IN" and o.get("wval") == _OP_LED:
             try:
                 w.run(lambda: led.led_blink(w.t, led_st), f"led#{leds + 1}")
             except Exception as e:  # noqa: BLE001
-                return hops, leds, _frontier(w, o, f"led #{leds + 1}", e)
+                return hops, leds, ticks, _frontier(w, o, f"led #{leds + 1}", e)
             leds += 1
             continue
+        if o["dir"] == "IN" and o.get("wval") == _OP_TICK:
+            try:
+                w.run(lambda: watchdog.tick(w.t, wd_st), f"tick#{ticks + 1}")
+            except Exception as e:  # noqa: BLE001
+                return hops, leds, ticks, _frontier(w, o, f"tick #{ticks + 1}", e)
+            ticks += 1
+            continue
         break  # frontier: unknown opener
-    return hops, leds, w.peek()
+    return hops, leds, ticks, w.peek()
 
 
 def _frontier(w: Walk, o: dict, label: str, e: Exception) -> dict:
@@ -145,9 +155,9 @@ def run(cap: str | None = None) -> int:
           " -> MAC/BB/RF -> channel tune -> monitor entry -> media-connect coex)")
 
     init_end = w.i
-    hops, leds, frontier = _walk_operational(w, info)
-    print(f"  operational: {hops} channel hops + {leds} LED blinks reproduced "
-          f"({w.i - init_end} ops)")
+    hops, leds, ticks, frontier = _walk_operational(w, info)
+    print(f"  operational: {hops} channel hops + {leds} LED blinks + {ticks} watchdog ticks "
+          f"reproduced ({w.i - init_end} ops)")
 
     if frontier is not None:
         print(f"\nFRONTIER -> op #{w.i} (frame {frontier['frame']}): {_fmt(frontier)}")
@@ -155,7 +165,7 @@ def run(cap: str | None = None) -> int:
         return 1
 
     print(f"\nPASS: reproduced all {w.i} of {total} ops single-cursor — entire capture "
-          f"byte-for-byte (init + airmon + {hops} hops + {leds} LED blinks).")
+          f"byte-for-byte (init + airmon + {hops} hops + {leds} LED + {ticks} ticks).")
     return 0
 
 

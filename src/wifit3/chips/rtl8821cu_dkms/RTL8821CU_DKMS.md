@@ -14,9 +14,11 @@
 > RX-enable** (setopmode STATION/MONITOR: promiscuous RCR + RXFLTMAP=0xffff) + the **second BT-coex
 > pass** (the media-connect antenna switch to WiFi: set_ant_path PHASE_2G + run_coex action), then the
 > **operational phase via a single-cursor Walk + async-handler dispatch** (8814-style): the airodump
-> channel hops (`chan.set_channel`) and the SW-LED blink (`led.led_blink`, the BlinkTimer producer)
-> are dispatched by their unique opener ops — 2 hops + 2 LED blinks reproduced, op #8275, zero
-> divergence. Cold init is HW-validated on real silicon (FW boots). — `_halmac_init_hal` + the monitor
+> channel hops (`chan.set_channel`), the SW-LED blink (`led.led_blink`, the BlinkTimer producer), and
+> the **phydm dynamic-check watchdog tick** (`watchdog.tick`: sreset + USB rx-agg + false-alarm
+> counters + DIG + CCK-PD + adaptivity EDCCA + halrf thermal + dyn-bw; env-monitor NHM/CLM/FAHM tail
+> pending) are dispatched by their unique opener ops — 2 hops + 2 LED + 1 tick reproduced, op #8356,
+> zero divergence. Cold init is HW-validated on real silicon (FW boots). — `_halmac_init_hal` + the monitor
 > RX-filter + the entire `rtl8821c_phy_init_haldm`/`odm_dm_init` (11 compiled sub-inits incl. the
 > DC-cancellation measurement calibration) + the MU-MIMO/TXBF beamforming defaults**. Cold init
 > (frames 1-7672): USB transport
@@ -39,10 +41,9 @@
 > compiled for this CE+8821C build), **`rtl8821c_phy_bf_init`** (`mac.phy_bf_init`), and the **BT-coex
 > HAL init** (`btc.hal_init` = the 1-ant `init_hw_config`: PTA/3-wire enable, ltecoex 0x1700 indirect
 > GNT setup, antenna-to-BT switch, WiFi-only coex table, the tdma/query-BT-info H2Cs via the HMEBOX
-> rotation). Frontier is op #8275 (frame 18057, `IN 0x0210`): the **phydm dynamic-check tick** — the
-> third async producer (`sreset_xmit_status_check` + `phydm_watchdog`: false-alarm counts, DIG,
-> CCK-PD, EDCCA, RA), interleaved with the hops + LED blink and dispatched by its own opener.
-> Not registered in `wlan/manager.py`.
+> rotation). Frontier is op #8356 (frame 18219, `IN 0x0994`): the **env-monitor tail** of the
+> watchdog tick (`phydm_env_mntr_watchdog` — NHM/CLM/FAHM), the last member; then the BT-coex
+> periodical + the next hop. Not registered in `wlan/manager.py`.
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
@@ -102,6 +103,7 @@
 | H2C-by-reg (HMEBOX) | `firmware.send_h2c_by_reg` | `rtw_halmac_send_h2c` hal_halmac.c:4103 | box index `t.last_hme_box` rotates mod 4, reset to 0 after each FW dl — **VERIFIED** |
 | WL activity LED | `led.cfg_wl_led` | `rtw_halmac_led_cfg(TRUE,3)` hal_halmac.c:5094 (USB `hal_init_misc` rtl8821cu_halinit.c:41) | pinmux GPIO8->WL_LED (0x4a/0x4e[5]) + SW-control mode (0x4e=0x28) — **VERIFIED** |
 | SW-LED blink (async) | `led.led_blink` / `LedBlinkState` | `SwLedBlink1` hal/led/hal_usb_led.c:112 (BlinkTimer) | no-link `LED_BLINK_SLOWLY` tick: alternate 0x4e[3] (active-low) via `pinmux_wl_led_sw_ctrl` — async producer #2 — **VERIFIED** (2 ticks) |
+| phydm watchdog (async) | `watchdog.tick` / `WatchdogState` | `rtw_dynamic_chk_wk_hdl` rtw_cmd.c:2992 -> `phydm_watchdog` phydm.c:2382 | dynamic-check tick (async producer #3): sreset + USB rx-agg + FA-counters + DIG + CCK-PD + adaptivity + halrf-thermal + dyn-bw — **VERIFIED** (front, 1 tick); env-monitor tail pending |
 | iface MAC addr | `mac.set_mac_addr` / `efuse.mac_address` | `rtw_hal_iface_init` hal_intf.c:521 -> `cfg_mac_addr_88xx` | REG_MACID 0x0610/4 + 0x0614/2 from EFUSE 0x107 (per-card, never hardcoded) — **VERIFIED** |
 | iface port-enable / RX-BAR | `mac.hw_port_enable` / `mac.enable_rx_bar` | `hw_var_hw_port_cfg` / `init_hw_mlme_ext` rtw_mlme_ext.c:1279 | BCN_CTRL 0x0550 \|= 0x1c ; RXFLTMAP1 0x06a2 \|= BIT8 — **VERIFIED** |
 | channel tune (RF/BB) | `chan.set_channel` / `_need_switch_band` | `rtl8821c_switch_chnl_and_set_bw` rtl8821c_phy.c:740 ; `need_switch_band` :477 | 2.4G ch1 + same-band hop ch10: band switch (coex notify + phydm band) only on band change, then switch_channel/switch_bandwidth (20 MHz) + kfree — **VERIFIED** |
@@ -197,17 +199,28 @@
   scripts/rtl8814au_dkms/verify_pcap.py). After the deterministic prefix (`cold_bringup`), the gate
   dispatches each interleaved async burst to its real port handler by a unique opener op: a channel
   hop (`chan.set_channel`, opener `IN 0x2860` = `read_rf 0x18`), an LED blink (`led.led_blink`, opener
-  `IN 0x004e`), and the phydm dynamic-check tick (opener `IN 0x0210`, not yet ported). The SW-LED is
+  `IN 0x004e`), and the phydm dynamic-check tick (`watchdog.tick`, opener `IN 0x0210`). The SW-LED is
   **ported, not stripped** (PORTING.md Step 3) — `SwLedBlink1`'s no-link `LED_BLINK_SLOWLY` tick is a
   strict-alternation BlinkTimer producer. (The traffic-driven `LED_CTL_TX/RX/site-survey` re-asserts
   that produce the occasional no-change LED write are a separate producer; whether they need their own
   handler is TBD once the gate reaches the first one ~op 9975.)
-- **Frontier (next milestone): op #8275 (frame 18057): `IN 0x0210` — the phydm dynamic-check tick.**
-  `rtl8821c_sreset_xmit_status_check` (0x210/0x288/0x1118/0x283/0x10c/0x280) + `phydm_watchdog`: the
-  false-alarm-count read block (0x0fcc-0x0f54), the BB dbg-port reads, then DIG (0x9a4/0xa2c/0xc50),
-  CCK-PD (0xb58/0xb04/0xa08/0xaa8), EDCCA (0x8a4), RA (0x440), RF (0x2908). A large phydm subsystem —
-  the third async producer. After it: more hops + ticks + the 5G band switch (ch36+). Live TX stays
-  the user's.
+- **The phydm watchdog tick (`watchdog.tick`) front is GREEN @ 8356** (members 1-14): sreset
+  xmit/linked (0x210/0x288/0x1118) + the 8821CU USB rx-agg reconfig (`cfg_usb_rx_agg_88xx`:
+  0x283/0x10c/0x280) + an interleaved RCR read (0x608) + `phydm_false_alarm_counter_statistics`
+  (the 16 FA/CCA/CRC32 reads 0xfcc-0xf54 + 0x808 cck-enable; `phydm_get_dbg_port_info` dbg ports
+  0x0 then 0x209; the FA-reset toggles 0x9a4[17]/0xa2c[15]/0xb58[0]; first-tick crc32-cnt2-rate
+  0xb04=6M) + `phydm_dig` (silent: cur_ig_value=0x20, FA in the [2000,4000] hold band -> no change;
+  IGI lives at **0xc50**, not 0x9a4) + `phydm_cck_pd_th` type2 (LV_1->LV_0: 0xa08 pd_th 0x7->0x3,
+  0xaa8 cs_ratio 0x11->0xf) + `phydm_adaptivity` EDCCA NORMAL (L2H=max(igi+8,48)=0x30, H2L=0x28 ->
+  0x8a4) + interleaved `rtw_phydm_set_rrsr` (0x440=0x15d) + `halrf` thermal arm (tm_trigger 0->1: RF
+  0x42[17:16]=3 -> 0x2908 read + 0x0c90 LSSI) + `phydm_dyn_bw_indication` (0x840 bw-fixed). Silent
+  members (#if'd out / software / no-link): noisy-detection, ra-info, cfo-tracking, primary-cca,
+  enhance-mntr, hwsetting_8821c (empty), receiver_blocking. Carried state lives in `WatchdogState`.
+- **Frontier (next milestone): op #8356 (frame 18219): `IN 0x0994` — `phydm_env_mntr_watchdog`**
+  (NHM/CLM/FAHM, the watchdog tick's last member): 0x994 trigger/option RMWs, 0x990 period, 0x0c50
+  IGI re-read for the NHM/FAHM threshold curve, 0x0fb4/0x0fa4 ready polls, 0x1f80-0x1f98 FAHM report,
+  0x1cf8 FAHM. Then the **BT-coex periodical** (0x770/0x76e + limited_tx + scoreboard 0xaa + coex
+  table + tdma/query H2Cs, ~8392-8412) and the next hop. Live TX stays the user's.
 - `_drv_enable_trx` (between init_mac_flow and general-info) is RX/thread-side only — a gate no-op.
 - **PHYDM discriminators are transformed, not the hal->* values** (the AGC walker forced this out):
   `dm->rfe_type = rfe_type_expand >> 3` (0x22 -> 4) and `dm->package_type = 1` for the 0x2x combo
@@ -702,3 +715,23 @@
   the traffic-driven `LED_CTL_TX/RX/site-survey` re-asserts (a distinct producer from the BlinkTimer);
   the strict-alternation handler will diverge at the first one. Decide then whether they get their own
   handler (driven by the recorded RX stream) or another faithful treatment — do not strip.
+
+## Port log — 2026-06-23 (phydm watchdog tick FRONT — sreset->dyn-bw GREEN @ 8356)
+
+- New `watchdog.py` ports the phydm dynamic-check tick (async producer #3, dispatched by opener
+  `IN 0x0210`), members 1-14 of `rtw_dynamic_chk_wk_hdl` -> `phydm_watchdog` in wire order. A
+  general-purpose subagent mapped the whole tick to source (build-config #if verdicts, per-member
+  register/value derivations, carried state); every value was then byte-verified by the gate. -> 8275
+  -> **8356, zero divergence** (1 tick).
+- Corrections the gate + source forced over the first map: the 0x283/0x10c/0x280 block is
+  `dm_DynamicUsbTxAgg` via the **8821CU-specific** `rtl8821cu_sethwreg` -> `cfg_usb_rx_agg_88xx` (NOT
+  the generic `rx_agg_switch`, which is a no-op); the dbg-port + 0x9a4/0xa2c/0xb58/0xb04 toggles are
+  `phydm_false_alarm_counter_statistics` (FA-count + dbg-info + FA-reset + first-tick crc32-cnt2-rate),
+  NOT DIG; **IGI is 0xc50 (=0x20), not 0x9a4** — so DIG (FA in the [2000,4000] hold band) computes no
+  change and is wire-silent; CCK-PD is the LV_1->LV_0 down-transition (cck_fa_ma seeded 0); adaptivity
+  EDCCA NORMAL derives L2H/H2L from igi=0x20; halrf arms the thermal meter (tm_trigger 0->1) on this
+  first tick; the 0x608/0x440 reads are interleaved housekeeping (hw_var_rcr_get / rtw_phydm_set_rrsr),
+  emitted positionally. Build verdicts (from autoconf/Makefile): DBG_CONFIG_ERROR_DETECT on,
+  DBG_RX_COUNTER_DUMP off, edcca_mode NORMAL, CCK-PD type2, NHM/CLM/FAHM on, IFS_CLM off.
+- Frontier #8356 = `phydm_env_mntr_watchdog` (NHM/CLM/FAHM), the tick's last member — then the BT-coex
+  periodical + the next hop.
