@@ -7,23 +7,31 @@ capture (all 21409 ctrl + bulk-OUT ops) byte-for-byte, so what the gate verifies
 product code path. The chip→host interrupt-IN (C2H) and bulk-IN (RX) streams are a separate blind
 spot the host-side replay does not model — see RTL8821CU_DKMS.md.
 
-Deliberately NOT registered in ``wlan/manager.py`` yet: warm reattach and the RX-reader thread are
-not wired, and the ZeroCD / mode-switch discovery blocker (see RTL8821CU_DKMS.md) means a fresh
-plug enumerates as a CD-ROM, not the Wi-Fi function. Registration lands once those are resolved;
-until then it is exercised through verify_pcap (and ``scripts/rtl8821cu_dkms/test_hw.py``). Shares
-no code with the other Realtek drivers by design (anti-DRY).
+Registered in ``wlan/manager.py``. The cold init is HW-validated on real silicon (FW boots, radio
+tunes — ``test_hw.py --phase init``). RX is wired (the bulk-IN ``RxReaderThread`` started before the
+monitor RX gate, the combo-card WiFi-interface claim, the ep-0x05 FW/TX pipe), and ``connect`` comes
+up clean on hardware, **but monitor RX delivers only C2H events so far — no 802.11 frames** (the
+read-back-dependent RF/tune state the offline replay can't cover; under diagnosis — see
+RTL8821CU_DKMS.md). Warm reattach and the ZeroCD / mode-switch discovery blocker are still open.
+Shares no code with the other Realtek drivers by design (anti-DRY).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Callable, ClassVar, List, Optional
 
 import usb.core
+import usb.util
 
+from wifit3.chips.rx_reader import RxReaderThread
 from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.errors import BringUpError
+from wifit3.wlan.packet import WlanFrameParser
 
 from . import bringup, chan, tx
 from .constants import USB_PID_8821CU, USB_VID_REALTEK
+from .rx import iter_frames
 from .transport import Rtl8821cuTransport
 
 logger = logging.getLogger(__name__)
@@ -39,6 +47,9 @@ CHANNELS_5G = [36, 40, 44, 48, 149, 153, 157, 161, 165]
 _QSEL_MGNT = 0x12              # [SRC] halmac_type.h HALMAC_TXDESC_QSEL_MGNT
 _RAID_INJECT = 1              # [WIRE] aireplay tx-desc dw1[20:16]
 
+_WIFI_INTF_CLASS = 0xFF        # combo card: the WiFi function is the vendor-specific interface
+                               # (class 0xFF, #2); the Bluetooth interfaces 0/1 are class 0xE0
+
 
 class Rtl8821cuDkmsDriver:
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
@@ -48,11 +59,17 @@ class Rtl8821cuDkmsDriver:
     FAKE_MAC: ClassVar[FakeMacSupport] = FakeMacSupport.UNIMPLEMENTED
 
     def __init__(self, dev: usb.core.Device):
-        self.transport = Rtl8821cuTransport(dev)
+        self.dev = dev
+        # FW download + TX bulk-OUT is on ep 0x05, not the transport's 0x04 default [WIRE]
+        # coverage audit. (The offline gate's ReplayDevice ignores the endpoint, so this only
+        # matters on real silicon — without it the FW download writes to the wrong pipe.)
+        self.transport = Rtl8821cuTransport(dev, bulk_out_ep=0x05)
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
         self.info = None                # EfuseInfo from cold_bringup; set_channel/inject need it
         self._rx_cb: Optional[Callable[[dict], None]] = None
+        self._reader: Optional[RxReaderThread] = None
+        self._wifi_intf: Optional[int] = None       # claimed vendor (WiFi) interface number
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "Rtl8821cuDkmsDriver":
@@ -61,13 +78,64 @@ class Rtl8821cuDkmsDriver:
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_cb = cb
 
+    def _claim(self) -> None:
+        """Combo card: set the configuration and claim the vendor-specific (class 0xFF) WiFi
+        interface — NOT the Bluetooth interfaces (class 0xE0). The manager is chipset-agnostic and
+        does not claim, so the driver must (mirrors test_hw's manual claim). No-op once claimed."""
+        if self._wifi_intf is not None:
+            return
+        try:
+            self.dev.set_configuration()
+        except usb.core.USBError as e:
+            logger.debug("set_configuration: %s", e)
+        intf_num = next((i.bInterfaceNumber for i in self.dev.get_active_configuration()
+                         if i.bInterfaceClass == _WIFI_INTF_CLASS), None)
+        if intf_num is None:
+            raise BringUpError("RTL8821CU: no vendor-specific WiFi interface — the combo card is "
+                               "likely still in ZeroCD (CD-ROM) mode; mode-switch it first.")
+        try:
+            if self.dev.is_kernel_driver_active(intf_num):
+                self.dev.detach_kernel_driver(intf_num)
+        except (NotImplementedError, usb.core.USBError) as e:
+            logger.debug("kernel-driver detach skipped: %s", e)
+        usb.util.claim_interface(self.dev, intf_num)
+        self._wifi_intf = intf_num
+
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         """Cold bring-up + airmon monitor entry (``bringup.cold_bringup``), caching the decoded
-        EFUSE/board info that ``set_channel`` and the watchdog/coex producers key on. Reproduced
-        byte-for-byte by ``scripts/rtl8821cu_dkms/verify_pcap.py``. Warm reattach + the RX-reader
-        thread are not wired yet, so this is not yet registered in ``wlan/manager.py``."""
-        self.info = bringup.cold_bringup(self.transport)
+        EFUSE/board info that ``set_channel`` and the watchdog/coex producers key on. The cold path
+        is reproduced byte-for-byte by ``scripts/rtl8821cu_dkms/verify_pcap.py`` — which drives this
+        method synchronously with NO running loop, so that path skips the RX reader (host->chip
+        only). Under a real event loop the bulk-IN RX reader starts FIRST: the monitor RX-enable
+        lives inside ``cold_bringup``, and the kernel posts RX URBs before that gate — a reader
+        started after it leaves the RX-DMA stalled (the chip's RX-starvation history)."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.info = bringup.cold_bringup(self.transport)
+            return True
+        self._claim()
+        self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="8821cu-dkms-rx")
+        self._reader.start()
+        self.info = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
+        if progress_cb:
+            progress_cb(1.0, "RTL8821CU monitor up (ch 1 @ 20 MHz)")
         return True
+
+    def _read_once(self) -> Optional[bytes]:
+        """Reader-thread side: one blocking bulk-IN read (None on no traffic)."""
+        return self.transport.bulk_in()
+
+    def _dispatch(self, buf: bytes) -> None:
+        """Loop side: split the aggregated bulk-IN buffer into (frame, rssi) pairs (FCS already
+        stripped) and fan each parsed dict to the rx callback."""
+        cb = self._rx_cb
+        if cb is None:
+            return
+        for frame, rssi in iter_frames(buf):
+            parsed = WlanFrameParser.parse_80211_frame(frame, rssi)
+            if parsed is not None:
+                cb(parsed)
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         """Tune to ``channel`` via the phydm band/channel/bandwidth set (``chan.set_channel``,
@@ -86,4 +154,7 @@ class Rtl8821cuDkmsDriver:
         return True
 
     async def close(self) -> None:
+        if self._reader is not None:
+            await self._reader.stop()       # join the reader BEFORE releasing the USB handle
+            self._reader = None
         self.transport.close()

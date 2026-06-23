@@ -54,6 +54,7 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
         from wifit3.chips.rtl8814au_dkms.driver import Rtl8814auDkmsDriver
         from wifit3.chips.rtl8821au.driver import RTL8821AUDriver
         from wifit3.chips.rtl8821au_dkms.driver import Rtl8821auDkmsDriver
+        from wifit3.chips.rtl8821cu_dkms.driver import Rtl8821cuDkmsDriver
         from wifit3.chips.rtl8822bu.driver import RTL8822BUDriver
         from wifit3.chips.rtl8822bu_dkms.driver import Rtl8822buDkmsDriver
         from wifit3.chips.rtw88_8814au.driver import RTL8814AUDriver
@@ -74,6 +75,7 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
             "rtl8188eus": env_or_none(ENV_RTL8188_DRIVER, "mainline", RTL8188EUSDriver) or Rtl8188eusDkmsDriver,
             "rtl8812au":  env_or_none(ENV_RTL8812_DRIVER, "mainline", RTL8812AUDriver) or Rtl8812auDkmsDriver,
             "rtl8821au":  env_or_none(ENV_RTL8821_DRIVER, "mainline", RTL8821AUDriver) or Rtl8821auDkmsDriver,
+            "rtl8821cu": Rtl8821cuDkmsDriver,
             "rtl8814au":  env_or_none(ENV_RTL8814_DRIVER, "mainline", RTL8814AUDriver) or Rtl8814auDkmsDriver,
             "rtl8822bu":  env_or_none(ENV_RTL8822_DRIVER, "mainline", RTL8822BUDriver) or Rtl8822buDkmsDriver,
         }
