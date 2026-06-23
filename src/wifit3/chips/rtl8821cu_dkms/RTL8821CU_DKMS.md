@@ -134,16 +134,36 @@
   wire-silent; `init_coex_dm` is an empty function. The HMEBOX box index (`t.last_hme_box`) advances
   mod 4 per send and resets to 0 after each FW dl — that is why both general-infos are box0.
 - **Frontier (next milestone): op #7748 (frame 16447): `IN 0x004a`.** This is PAST `rtl8821c_hal_init`
-  (init_hw_config was its last step; `init_coex_dm` empty; `rtw_hal_set_wifi_btc_port_id_cmd` is an
-  H2C, not a 0x4a read). It is the post-hal_init airmon sequence — likely the **channel set**
-  (airodump tune): a coex/MAC burst (0x004a/0x004e ant-switch, 0x0610/0x0614, 0x06a2 RXFLTMAP1,
-  0x0430/0x0434/0x042a/0x0455/0x0454/0x0a80/0x0814/0x1080/0x0a84), then a phydm **RF-read-under-
-  stopped-TRX** block (~7793-7822 / 7888-7917 — reuses `dm.py`'s `_set_bb_dbg_port` / `_stop_3_wire`
-  / `_stop_ck320` + 0x0c90 RF writes), an **AGC re-cache** (0x0860/0x0a24/0x0a28/0x0aac), then RF
-  channel registers (0x2954/0x2994 reads -> 0x0c90 writes @ ~7860-7875). Identify op #7748's function
-  from `core/`/`rtl8821c_phy.c` (set_channel / set_chnl_bw path) before porting — the agent wires the
-  channel-tune; **live TX stays the user's**. No IQK in this window (triggered later — channel-set /
-  watchdog).
+  (init_hw_config was its last step; `init_coex_dm` empty). The post-hal_init airmon flow, traced
+  against source (build = CE + CONFIG_RTL8821C; `rtw_hal_init` continues after `hal_func.hal_init`
+  returns, then the caller runs `rtw_hal_iface_init`):
+  1. **`rtw_led_control(LED_CTL_POWER_ON)`** ([SRC] hal_intf.c:555) -> `LedControlUSB` -> `swledon`
+     -> `rtw_halmac_led_switch(1)` -> `pinmux_wl_led_sw_ctrl_88xx` ([SRC] halmac_gpio_88xx.c) = one
+     RMW clearing 0x4e[3] (REG_LED_CFG+2). That is op 7752 (0x4e stays 0x62). Op **7748 `0x004a`** and
+     op 7756 (0x4e -> 0x28) are the LED-mode/GPIO-mux setup around it (trace `LedControlUSB` POWER_ON
+     + the LED pin GPIO mode) — the exact first op to port. `CONFIG_RTW_SW_LED` is on (the writes are
+     on the wire). `init_hw_mlme_ext` + `rtw_phydm_dyn_rrsr_en` after it look wire-silent.
+  2. **`rtw_hal_iface_init`** ([SRC] hal_intf.c:521): `rtw_hal_set_hwreg(HW_VAR_MAC_ADDR)` ->
+     `rtw_hal_set_macaddr_port` ([SRC] hal_com.c:3250) writes **0x0610 REG_MACID** (+0x0614) with the
+     **EFUSE MAC — read it from `info`/efuse, never hardcode the wire value** [[no_ssids_in_commits]];
+     then `rtw_hal_init_opmode` -> `setopmode_hdl` -> `hw_var_set_opmode` (RCR / 0x0550 / RXFLTMAP1
+     0x06a2 / 0x0430-0x0455 rate regs).
+  3. **`set_channel_bwmode` -> `rtw_hal_set_chnl_bw` -> `rtl8821c_set_channel_bw`** ([SRC]
+     rtl8821c_phy.c) -> `rtl8821c_switch_chnl_and_set_bw`: `config_phydm_switch_channel_8821c` +
+     `config_phydm_switch_bandwidth_8821c` ([SRC] phydm_hal_api8821c.c) — this is the phydm
+     **RF-read-under-stopped-TRX** block (~7793-7822 / 7888-7917, reuses `dm.py`'s `_set_bb_dbg_port`
+     / `_stop_3_wire` / `_stop_ck320` + 0x0c90 RF writes), the **AGC re-cache** (0x0860/0x0a24/0x0a28/
+     0x0aac), the RF channel-reg reload (0x2954/0x2994 reads -> 0x0c90 @ ~7860-7875), then CCA-param
+     by-bw. Wire the channel tune here.
+  4. **`rtw_hal_set_tx_power_level` -> `rtl8821c_set_tx_power_level`** -> `config_phydm_write_txagc_8821c`
+     writes the **TX-power-by-rate table 0x1d00-0x1d34** (0x2d2d2d2d/0x2a2a2a2a/0x28282828...). Computed
+     from the EFUSE tx-power map — do NOT transcribe the wire constants.
+  5. A **second coex pass** (another 0x1700 ltecoex + ant-switch + scoreboard 0x00aa=0x8403 + coex
+     table) — likely the runtime `run_coex` / band-change coex notify after the channel lands.
+  The Explore-agent call map (this session) loosely attributed the early ops to coex/phydm-init —
+  that was wrong (both already ported); the chain above is verified against the actual call sites.
+  **The agent wires the channel tune; live TX stays the user's.** No IQK in this window (triggered
+  later — channel-set / watchdog).
 - `_drv_enable_trx` (between init_mac_flow and general-info) is RX/thread-side only — a gate no-op.
 - **PHYDM discriminators are transformed, not the hal->* values** (the AGC walker forced this out):
   `dm->rfe_type = rfe_type_expand >> 3` (0x22 -> 4) and `dm->package_type = 1` for the 0x2x combo
