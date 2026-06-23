@@ -9,10 +9,10 @@
 > + the BT-coex `init_hw_config` GREEN.** The byte-for-byte gate (`scripts/rtl8821cu_dkms/verify_pcap.py`,
 > replaying ctrl + the FW/TX bulk-OUT stream) reproduces the **whole cold-boot probe and the airmon
 > monitor-entry phase through the BT-coex HAL init + the USB hal_init_misc LED + the iface-init MAC
-> address / port-enable + RX-BAR + the **first channel set's RF/BB tune** (coex run_coex + phydm band
-> switch + channel RF + 20 MHz bandwidth + kfree, channel 1) — 7930 ops, zero divergence. The radio
-> is physically tuned to ch 1 / 20 MHz / 2.4 GHz and RX-ready (the RX filter/RCR were set in
-> hal_init_misc). — `_halmac_init_hal` + the monitor
+> address / port-enable + RX-BAR + the **whole first channel set** (coex run_coex + phydm band switch
+> + channel RF + 20 MHz bandwidth + kfree + **TX-power-by-rate table**, channel 1) + the **monitor-mode
+> RX-enable** (setopmode STATION/MONITOR: promiscuous RCR + RXFLTMAP=0xffff) — 7969 ops, zero
+> divergence. Cold init is HW-validated on real silicon (FW boots). — `_halmac_init_hal` + the monitor
 > RX-filter + the entire `rtl8821c_phy_init_haldm`/`odm_dm_init` (11 compiled sub-inits incl. the
 > DC-cancellation measurement calibration) + the MU-MIMO/TXBF beamforming defaults**. Cold init
 > (frames 1-7672): USB transport
@@ -100,7 +100,8 @@
 | channel tune (RF/BB) | `chan.set_channel` | `rtl8821c_switch_chnl_and_set_bw` rtl8821c_phy.c:740 | 2.4G ch1: coex run_coex (4 reads), config_phydm switch_band/switch_channel/switch_bandwidth (20 MHz) + kfree — **VERIFIED** |
 | coex run_coex | `btc.run_coex` / `btc.switchband_notify_2g` | `halbtc8821c1ant_run_coex` halbtc8821c1ant.c:3493 | first band switch: update_wifi_link_info (limited_tx 4 backup reads) then early-return (run_time FALSE) — **VERIFIED** |
 | phydm stop-TRX | `dm.stop_ic_trx` | `phydm_stop_ic_trx` phydm_api.c:606 (11AC) | dbg-port idle wait + TX pause + OFDM/CCK TRX off / restore; reused by DC-cancel + channel tune — **VERIFIED** |
-| TX-power-by-rate | (WIP) | `set_tx_power_level` rtl8821c_phy.c:556 -> `rtw_hal_get_tx_power_index` | **(frontier @ 7930)** the 0x1d00-0x1d34 txagc table — large EFUSE/regulatory subsystem, TX-side |
+| TX-power-by-rate | `txpower.set_tx_power_level` | `rtl8821c_set_tx_power_level` rtl8821c_phy.c:556 | 0x1d00-0x1d34 txagc = EFUSE PG base (by-rate/limit disabled in the DKMS build); BTG looks up RF_PATH_B — **VERIFIED** |
+| monitor RX-enable | `mac.set_opmode_station` / `set_opmode_monitor` | `hw_var_set_opmode` rtl8821c_ops.c:1002 (STATION+MONITOR) | re-MAC + MSR + StopTxBeacon; promiscuous RCR 0x90000001 + cfg_drv_info(SNIFFER) + RXFLTMAP=0xffff — **VERIFIED** |
 
 ## Hot paths
 
@@ -154,21 +155,25 @@
   here 0); (4) `mac_switch_bandwidth` (halmac cfg_ch_bw 20 MHz) + `config_phydm_switch_bandwidth_8821c`
   (0x8ac BW word, RF 0x18 |= BIT11|BIT10, RX-DFIR, bw-fixed). **`default_rf_set` is BTG (0)** for this
   rfe-0x22 card — the band switch takes the BTG arm (0xa84=0xe / 0xa80=0xfc84). `phydm_rfe_8821c`,
-  `ccapar_by_bw`, `ccapar_8821c` are all `#if 0` (silent). The radio is now tuned + RX-ready.
-- **Frontier (next milestone): op #7930 (frame 16813): `OUT 0x1d00=0x2d2d2d2d` — TX-power-by-rate.**
-  This is `set_tx_power_level` ([SRC] rtl8821c_phy.c:556, BTG -> path B) -> per-rate-section
-  `phy_get_tx_power_index_ex` -> **`rtw_hal_get_tx_power_index`** (`base + min(by_rate, rlimit, limit,
-  ulimit) + tpc + tpt + dpd`) -> `config_phydm_write_txagc_8821c` writing the **0x1d00-0x1d34 txagc
-  table** (CCK 0x2d / OFDM 0x2a / HT-VHT 0x28, uniform = base-only here). This is a **large
-  EFUSE/regulatory tx-power subsystem** (one of the biggest in the driver; needs the EFUSE tx-power
-  parse + base/by-rate/limit tables) and is **TX-side only** — it does NOT gate RX/monitoring, but
-  the gate needs it to advance. Compute from the EFUSE tx-power map; never transcribe the wire bytes.
-- **After the first channel set** (op ~7938): a re-write of REG_MACID + MSR/0x0102 + RXFLTMAP=0xffff
-  (the **monitor-mode set**, `hw_var_set_monitor`), then a **second `run_coex` pass** that DOES reach
-  actions (0x1700 ltecoex + ant-switch + scoreboard 0x00aa=0x8403 + coex table — `run_time_state` is
-  TRUE by then), then a **second channel set** (~8067-8148, airodump). The 8149+ block (~3400 ops) is
-  the airodump channel hopping (the same `chan.set_channel` path per channel). No IQK in this window
-  (bNeedIQK FALSE on the first set — the txagc is the last op of set #1). Live TX stays the user's.
+  `ccapar_by_bw`, `ccapar_8821c` are all `#if 0` (silent); (5) `txpower.set_tx_power_level` writes the
+  **0x1d00-0x1d34 TXAGC table** = the EFUSE PG base (`by_rate`/`limit` disabled in the DKMS build,
+  CONFIG_TXPWR_*_EN=n; BTG looks up RF_PATH_B's PG @ 0x10+42). The radio is tuned and the first
+  channel set is COMPLETE @ 7938. Then **`bringup.set_monitor_mode`** (`setopmode` STATION then
+  MONITOR) opens the monitor RX path: promiscuous RCR 0x90000001, `cfg_drv_info(SNIFFER)`,
+  RXFLTMAP0/1/2 = 0xffff. GREEN @ 7969.
+- **Frontier (next milestone): op #7969 (frame 16891): `IN 0x049c` — the second BT-coex pass (the
+  antenna switch to WiFi).** This is `run_coex`/scan_notify reaching its ACTIONS (`run_time_state`
+  becomes TRUE via `set_ant_path(PHASE_2G)`): BT-cal-check (0x49c), `coex_ctrl_owner(WLSIDE)` (0x73),
+  the 0x1700 ltecoex `set_gnt_bt(HW_PTA)`/`set_gnt_wl(HW_PTA)` block (7974-7997), then
+  `set_ant_switch(BBSW, TO_WLG)` — the antenna DPDT to WiFi (0x4e/0x4f/0xcb4/0xcb7/0x67, 7998-8016) —
+  **all reusing the existing `btc.py` ltecoex/GNT/ant-switch primitives, just the PHASE_2G arm**. Then
+  0x06cf beacon-prio, a `set_tdma_timer_base` H2C (0x69, box3 @ 8019-8021), more `run_coex`
+  (`limited_tx` reads @ 8022, scoreboard 0x00aa=0x8403, coex table). **This + the RXFLTMAP=0xffff just
+  ported is the full RX-enable** (HW test saw no beacons because the antenna was still parked at BT and
+  this pass — which routes it to WiFi — was unported). After it: a **second channel set** (~8067-8148,
+  airodump) then the channel hops (8149+, ~3400 ops, the same `chan.set_channel` path). No IQK in this
+  window. The run_coex action machine is the chunk to port; the set_ant_path(PHASE_2G) part is cheap
+  (primitives exist). Live TX stays the user's.
 - `_drv_enable_trx` (between init_mac_flow and general-info) is RX/thread-side only — a gate no-op.
 - **PHYDM discriminators are transformed, not the hal->* values** (the AGC walker forced this out):
   `dm->rfe_type = rfe_type_expand >> 3` (0x22 -> 4) and `dm->package_type = 1` for the 0x2x combo
@@ -573,3 +578,20 @@
   switches the shared antenna from BT back to WiFi. Porting forward (past tx-power) is the fix — do
   NOT chase this as a separate HW-debug thread. (DIG-watchdog/AGC is the secondary suspect — the
   sibling `rtl8822bu_dkms/test_hw.py --igi/--watchdog` pattern, if needed later.)
+
+## Port log — 2026-06-22 (TX-power + monitor RX-enable GREEN @ 7969)
+
+- `txpower.set_tx_power_level` closes the first channel set (7930 -> 7938). The captured DKMS build
+  has `CONFIG_TXPWR_BY_RATE_EN=n` + `CONFIG_TXPWR_LIMIT_EN=n` ([SRC] Makefile:94,96), so the per-rate
+  index collapses to the EFUSE PG base (`phy_get_pg_txpwr_idx`) — verified byte-equal to the wire on
+  ch1 (CCK 0x2d / OFDM 0x2a / HT-VHT 0x28). BTG looks up RF_PATH_B's PG block (0x10 + 42), writes
+  path A (0x1d00). Mirrors `rtl8822bu_dkms/txpower.py` (same family, re-ported per anti-DRY). No
+  regulatory cap applied (matches the build); user owns compliance for manual TX.
+- `bringup.set_monitor_mode` (7938 -> 7969): the airmon vif setopmode. `mac.set_opmode_station`
+  (hw_var_set_opmode non-monitor: re-MAC, disable-TSF, MSR=STATION, StopTxBeacon 0x422/0x541/0x542,
+  BCN_CTRL=0x18) then `mac.set_opmode_monitor` (Set_MSR NOLINK + hw_var_set_monitor: promiscuous RCR
+  0x90000001, `cfg_drv_info(SNIFFER)`, RX_DRVINFO_SZ|0x80, RXFLTMAP0/1/2=0xffff). Gate trap: the three
+  RXFLTMAP backups are read *all-first* then written all (not interleaved).
+- This is the RX-filter half of the HW no-beacons; the antenna switch to WiFi is the **second coex
+  pass** (frontier 7969 — `set_ant_path(PHASE_2G)`, reuses the existing btc primitives). Frontier
+  #7969 = the run_coex action machine.
