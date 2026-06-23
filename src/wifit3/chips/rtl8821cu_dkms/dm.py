@@ -34,6 +34,20 @@ R_0x19a8 = 0x19A8                  # soft-ML setting [SRC] phydm_soml.c phydm_in
 _SOML_MASK = (1 << 31) | (1 << 30) | (1 << 29) | (1 << 28)
 _SOML_VAL = 0xD
 
+# --- phydm_dig_init register I/O [SRC] phydm_dig.c:980 ----------------------
+R_0xc50 = 0x0C50                   # IGI_A [SRC] phydm_regdefine11ac.h:62
+_MASK_IGI = 0x7F                   # [SRC] phydm_regdefine11ac.h:100
+
+# --- phydm_cck_pd_init (8821C = CCK_PD_IC_TYPE2) [SRC] phydm_cck_pd.c --------
+R_0xaaa = 0x0AAA                   # aaa_default source (extend cca) [SRC] phydm_cck_pd.c
+R_0xa2c = 0x0A2C                   # r_mrx / r_cca_mrc (cck_n_rx probe)
+R_0xa08 = 0x0A08                   # cck pd_th field [4:0]<<16
+R_0xaa8 = 0x0AA8                   # cck cs_ratio field [4:0]<<16
+_CCK_PD_LV_1 = 1
+# lv -> (cs_ratio add, 2R offset, pd_th) [SRC] phydm_set_cckpd_lv_type2
+_CCKPD_LV2_PARAMS = {0: (0, 0, 0x3), 1: (2, 1, 0x7), 2: (4, 3, 0xD),
+                     3: (6, 4, 0xD), 4: (8, 5, 0xD)}
+
 
 def get_bb_reg(t, addr: int, mask: int) -> int:
     """odm_get_bb_reg — full-dword read masked + right-shifted to the mask's lowest set bit."""
@@ -48,6 +62,7 @@ class DmState:
     cck_new_agc: bool = False
     is_cck_high_power: bool = False
     rf_path_rx_enable: int = 0
+    cur_ig_value: int = 0
 
 
 def _common_info_self_init(t, info, st: DmState) -> None:
@@ -61,10 +76,47 @@ def _common_info_self_init(t, info, st: DmState) -> None:
     set_bb_reg(t, R_0x19a8, _SOML_MASK, _SOML_VAL)
 
 
+def _dig_init(t, info, st: DmState) -> None:
+    """phydm_dig_init [SRC] phydm_dig.c:980 — read the current path-A IGI (initial gain). The
+    big-jump-step block is 8822B/97F/92F-only; for this build CFG_DIG_DAMPING_CHK (antenna-div,
+    off), PHYDM_HW_IGI (8822C, off) and the TDMA-DIG block contribute no register I/O. Phy-status
+    init (``phydm_rx_phy_status_init``) before this is pure software."""
+    st.cur_ig_value = get_bb_reg(t, R_0xc50, _MASK_IGI)
+
+
+def _write_cck_pd_type2(t, cca_th: int, cca_th_aaa: int) -> None:
+    """phydm_write_cck_pd_type2 [SRC] phydm_cck_pd.c — pd_th into 0xa08[21:16], cs_ratio into
+    0xaa8[20:16]."""
+    set_bb_reg(t, R_0xa08, 0x3F0000, cca_th)
+    set_bb_reg(t, R_0xaa8, 0x1F0000, cca_th_aaa)
+
+
+def _set_cckpd_lv_type2(t, aaa_default: int, lv: int) -> None:
+    """phydm_set_cckpd_lv_type2 [SRC] phydm_cck_pd.c. cck_n_rx keys on 0xa2c BIT18 && BIT22 —
+    the C ``&&`` short-circuits, so when BIT18 is clear (1R, this card) only one 0xa2c read hits
+    the wire. (The lv==cur-level early-return never fires from init: cur level is CCK_PD_LV_INIT.)"""
+    cck_n_rx = 2 if (get_bb_reg(t, R_0xa2c, 1 << 18) and get_bb_reg(t, R_0xa2c, 1 << 22)) else 1
+    add, cs_2r_offset, pd_th = _CCKPD_LV2_PARAMS[lv]
+    cs_ratio = aaa_default + add
+    if cck_n_rx == 2:
+        cs_ratio = cs_ratio - cs_2r_offset if cs_ratio >= cs_2r_offset else 0
+    _write_cck_pd_type2(t, pd_th, cs_ratio)
+
+
+def _cck_pd_init(t, info, st: DmState) -> None:
+    """phydm_cck_pd_init [SRC] phydm_cck_pd.c — 8821C is CCK_PD_IC_TYPE2: latch aaa_default
+    (0xaaa[4:0]) then set CCK-PD level to CCK_PD_LV_1. (phydm_dig_cckpd_coex_init is
+    PHYDM_DCC_ENHANCE-gated, off for this build.)"""
+    aaa_default = t.read8(R_0xaaa) & 0x1F
+    _set_cckpd_lv_type2(t, aaa_default, _CCK_PD_LV_1)
+
+
 def phy_init_haldm(t, info) -> DmState:
     """rtl8821c_phy_init_haldm [SRC] rtl8821c_dm.c:174 -> rtw_phydm_init -> odm_dm_init. The
     8821C path of ``odm_dm_init``, wire-touching sub-inits only, in capture order. Returns the
     accumulated ``DmState`` (callers downstream — channel tune — may need it)."""
     st = DmState()
     _common_info_self_init(t, info, st)
+    _dig_init(t, info, st)
+    _cck_pd_init(t, info, st)
     return st

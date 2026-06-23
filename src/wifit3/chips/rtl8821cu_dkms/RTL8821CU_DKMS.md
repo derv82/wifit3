@@ -110,21 +110,23 @@
 
 ## Known issues
 
-- **Frontier (next milestone): op #7480 (frame 15911): `IN 0x0c50/4=0x00000020`** — `phydm_dig_init`
-  (dynamic initial gain), the next `odm_dm_init` sub-init after `phydm_common_info_self_init`. The
-  recorded sequence reads/RMWs BB registers — 0x0C50 (IGI), 0x0AAA, 0x0A2C, **0x0A08** (RMW
-  0x9c838300 -> 0x9c878300), **0x0AA8** (RMW 0xeacf0004 -> 0xead10004), 0x0994, ... Trace from
-  `hal/phydm/phydm_dig.c` `phydm_dig_init`.
-  **Scope:** `odm_dm_init` ([SRC] phydm.c:1786, via hal_dm.c:1601) calls ~35 sub-inits — most are
-  software-only state init (no register I/O, gate no-ops), but several write BB regs:
-  `phydm_dig_init`, `phydm_cck_pd_init`, `phydm_env_monitor_init`, `phydm_adaptivity_init`,
-  `phydm_rf_init`, `phydm_dc_cancellation`, `phydm_txcurrentcalibration`,
-  `phydm_adaptive_soml_init`. **Done so far:** `phydm_common_info_self_init` (the opening CCK reads
-  0xa9c/0x804/0x808 + the soft-ML 0x19a8 RMW — `dm.py`). Port one sub-init per milestone (each is a
-  self-contained chunk; many use computed values, not flat tables — verify each against the gate).
-  After this: the **channel hops** (airodump set_channel via the RF/BB channel-tune path — the
-  agent's to wire; live TX stays the user's). No IQK in this window (triggered later — channel-set /
-  watchdog).
+- **Frontier (next milestone): op #7487 (frame 15925): `IN 0x0994/4=0xffff0100`** —
+  `phydm_env_monitor_init`, the next `odm_dm_init` sub-init after CCK-PD. Trace from
+  `hal/phydm/phydm_ccx.c` (the NHM/CLM environment monitor).
+  **Scope:** `odm_dm_init` ([SRC] phydm.c:1786, via hal_dm.c:1601) calls ~35 sub-inits. The
+  **compiled-for-this-build** (CE + `CONFIG_RTL8821C` only; all other `RTLxxxx_SUPPORT`=0) set,
+  in wire order, is: `common_info_self_init`, `rx_phy_status_init` (sw), `dig_init`, `cck_pd_init`,
+  `env_monitor_init`, `enhance_monitor_init`, `adaptivity_init`, `ra_info_init`,
+  `rssi_monitor_init`, `cfo_tracking_init`, `rf_init`, `dc_cancellation`, `txcurrentcalibration`
+  (+`get_pa_bias_offset`). NOT compiled here: `adaptive_soml_init` (CONFIG_ADAPTIVE_SOML off),
+  `antenna_diversity_init`/`CFG_DIG_DAMPING_CHK` (antenna-div off), `PHYDM_HW_IGI`/`hwigi_init`
+  (8822C-only), `dig_cckpd_coex_init` (PHYDM_DCC_ENHANCE off), `auto_dbg_engine_init`
+  (PHYDM_AUTO_DEGBUG off). **Done so far:** `common_info_self_init` (0xa9c/0x804/0x808 reads +
+  0x19a8 soft-ML), `dig_init` (IGI 0xc50 read), `cck_pd_init` (TYPE2: 0xaaa/0xa2c reads + 0xa08/
+  0xaa8 pd-th/cs-ratio writes) — all in `dm.py`. Port one sub-init per milestone (computed values,
+  not flat tables — verify each against the gate). After this: the **channel hops** (airodump
+  set_channel via the RF/BB channel-tune path — the agent's to wire; live TX stays the user's). No
+  IQK in this window (triggered later — channel-set / watchdog).
 - `_drv_enable_trx` (between init_mac_flow and general-info) is RX/thread-side only — a gate no-op.
 - **PHYDM discriminators are transformed, not the hal->* values** (the AGC walker forced this out):
   `dm->rfe_type = rfe_type_expand >> 3` (0x22 -> 4) and `dm->package_type = 1` for the 0x2x combo
@@ -348,3 +350,18 @@
   write is `phydm_init_soft_ml_setting` (reached *inside* common_info_self_init), not the later
   `phydm_adaptive_soml_init` as the pre-port note guessed. The CCK rx-antenna/path/lna/rssi helpers
   are 1SS-/non-8821C-gated no-ops. Frontier #7480 = `phydm_dig_init` (IGI 0x0c50).
+
+## Port log — 2026-06-22 (phydm DIG + CCK-PD init GREEN @ 7487)
+
+- `dm._dig_init` ports `phydm_dig_init` ([SRC] phydm_dig.c:980): a single path-A IGI read
+  (0xc50[6:0]). The big-jump-step block is 8822B/97F/92F-only; `CFG_DIG_DAMPING_CHK` (antenna-div),
+  `PHYDM_HW_IGI` (8822C) and TDMA-DIG all evaluate to no register I/O for this build. → 7480 -> 7481.
+- `dm._cck_pd_init` ports `phydm_cck_pd_init` ([SRC] phydm_cck_pd.c): 8821C resolves to
+  CCK_PD_IC_TYPE2, so it latches `aaa_default = 0xaaa[4:0]` then runs `phydm_set_cckpd_lv_type2`
+  at CCK_PD_LV_1 -> `phydm_write_cck_pd_type2(pd_th=0x7, cs_ratio=0x11)` (0xa08[21:16]=0x7,
+  0xaa8[20:16]=0x11). → 7481 -> **7487**.
+- Trap confirmed by the gate: `cck_n_rx` is `0xa2c BIT18 && 0xa2c BIT22` — the C `&&` short-circuits,
+  and BIT18 is clear (1R card), so only **one** 0xa2c read reaches the wire. Established the active
+  feature set (CE + CONFIG_RTL8821C only) so the remaining sub-inits' compile gates are settled —
+  `phydm_adaptive_soml_init` is NOT compiled (CONFIG_ADAPTIVE_SOML off), confirming the 0x19a8 write
+  was `phydm_init_soft_ml_setting`. Frontier #7487 = `phydm_env_monitor_init`.
