@@ -9,7 +9,10 @@
 > + the BT-coex `init_hw_config` GREEN.** The byte-for-byte gate (`scripts/rtl8821cu_dkms/verify_pcap.py`,
 > replaying ctrl + the FW/TX bulk-OUT stream) reproduces the **whole cold-boot probe and the airmon
 > monitor-entry phase through the BT-coex HAL init + the USB hal_init_misc LED + the iface-init MAC
-> address / port-enable + RX-BAR — 7766 ops, zero divergence — `_halmac_init_hal` + the monitor
+> address / port-enable + RX-BAR + the **first channel set's RF/BB tune** (coex run_coex + phydm band
+> switch + channel RF + 20 MHz bandwidth + kfree, channel 1) — 7930 ops, zero divergence. The radio
+> is physically tuned to ch 1 / 20 MHz / 2.4 GHz and RX-ready (the RX filter/RCR were set in
+> hal_init_misc). — `_halmac_init_hal` + the monitor
 > RX-filter + the entire `rtl8821c_phy_init_haldm`/`odm_dm_init` (11 compiled sub-inits incl. the
 > DC-cancellation measurement calibration) + the MU-MIMO/TXBF beamforming defaults**. Cold init
 > (frames 1-7672): USB transport
@@ -93,6 +96,11 @@
 | H2C-by-reg (HMEBOX) | `firmware.send_h2c_by_reg` | `rtw_halmac_send_h2c` hal_halmac.c:4103 | box index `t.last_hme_box` rotates mod 4, reset to 0 after each FW dl — **VERIFIED** |
 | WL activity LED | `led.cfg_wl_led` | `rtw_halmac_led_cfg(TRUE,3)` hal_halmac.c:5094 (USB `hal_init_misc` rtl8821cu_halinit.c:41) | pinmux GPIO8->WL_LED (0x4a/0x4e[5]) + SW-control mode (0x4e=0x28) — **VERIFIED** |
 | iface MAC addr | `mac.set_mac_addr` / `efuse.mac_address` | `rtw_hal_iface_init` hal_intf.c:521 -> `cfg_mac_addr_88xx` | REG_MACID 0x0610/4 + 0x0614/2 from EFUSE 0x107 (per-card, never hardcoded) — **VERIFIED** |
+| iface port-enable / RX-BAR | `mac.hw_port_enable` / `mac.enable_rx_bar` | `hw_var_hw_port_cfg` / `init_hw_mlme_ext` rtw_mlme_ext.c:1279 | BCN_CTRL 0x0550 \|= 0x1c ; RXFLTMAP1 0x06a2 \|= BIT8 — **VERIFIED** |
+| channel tune (RF/BB) | `chan.set_channel` | `rtl8821c_switch_chnl_and_set_bw` rtl8821c_phy.c:740 | 2.4G ch1: coex run_coex (4 reads), config_phydm switch_band/switch_channel/switch_bandwidth (20 MHz) + kfree — **VERIFIED** |
+| coex run_coex | `btc.run_coex` / `btc.switchband_notify_2g` | `halbtc8821c1ant_run_coex` halbtc8821c1ant.c:3493 | first band switch: update_wifi_link_info (limited_tx 4 backup reads) then early-return (run_time FALSE) — **VERIFIED** |
+| phydm stop-TRX | `dm.stop_ic_trx` | `phydm_stop_ic_trx` phydm_api.c:606 (11AC) | dbg-port idle wait + TX pause + OFDM/CCK TRX off / restore; reused by DC-cancel + channel tune — **VERIFIED** |
+| TX-power-by-rate | (WIP) | `set_tx_power_level` rtl8821c_phy.c:556 -> `rtw_hal_get_tx_power_index` | **(frontier @ 7930)** the 0x1d00-0x1d34 txagc table — large EFUSE/regulatory subsystem, TX-side |
 
 ## Hot paths
 
@@ -136,40 +144,31 @@
   (`firmware.send_h2c_by_reg`, box1 then box2). `init_coex_var`/`enable_gnt_to_gpio`(dbg off) are
   wire-silent; `init_coex_dm` is an empty function. The HMEBOX box index (`t.last_hme_box`) advances
   mod 4 per send and resets to 0 after each FW dl — that is why both general-infos are box0.
-- **Frontier (next milestone): op #7766 (frame 16485): `IN 0x0430` — the channel tune.** Everything
-  up to it (LED, MAC, port-enable, RX-BAR) is GREEN. The entry is `init_hw_mlme_ext`
-  ([SRC] rtw_mlme_ext.c:1279) -> `set_channel_bwmode(cur_channel)` -> `rtw_hal_set_chnl_bw` ->
-  `rtl8821c_set_channel_bw` -> `handle_sw_chnl_and_set_bw(TRUE,TRUE)` -> **`rtl8821c_switch_chnl_and_set_bw`**
-  ([SRC] rtl8821c_phy.c:740). The first set is a **2.4 GHz** channel (the wire takes the `central_ch<=14`
-  phydm arms). `switch_chnl_and_set_bw` runs, in order:
-  1. `phy_switch_wireless_band_8821c` ([SRC] :700) — runs because `need_switch_band` (band forced to
-     BAND_MAX). (a) **`rtw_btcoex_switchband_notify(FALSE, band)`** -> `ex_halbtc8821c1ant_switchband_notify`
-     -> (2G) `ex_halbtc8821c1ant_scan_notify(SCAN_START_2G)` -> **the coex `run_coex`/scan_notify decision
-     machine** (`stop_coex_dm`=FALSE so it runs). On the wire it does **only 4 reads** here
-     (0x0430/0x0434/**0x042a coex** [SRC] halbtc8821c1ant.c:183/0x0455) and no writes — BT idle decided
-     no-op. **This is the size risk: porting it needs the run_coex/scan_notify framework so it touches
-     exactly those regs and nothing else — a large stateful coex subsystem; do it as its own
-     sub-milestone first.** (b) **`config_phydm_switch_band_8821c`** ([SRC] phydm_hal_api8821c.c:707),
-     2.4G arm: read RF 0x18 (=BB 0x2860), BB 0x808[28]=1 / 0x454[7]=0 / 0xa80[18]=0 / 0x814[15:10]=15,
-     `config_phydm_switch_rf_set(WLG)`, RF 0xdf[6]=1 / 0x64[3:0]=0xf, `phydm_stop_ic_trx(SET)` (reuse
-     `dm.py` dbg-port / `_stop_3_wire` / `_stop_ck320` + 0x520/0x838/0x808/0xa04/0xc90), set RF 0x18 =
-     computed, `phydm_stop_ic_trx(REVERT)`, `phydm_rfe_8821c(ch)` (~ops 7770-7822). (c)
-     `phy_set_bb_swing_by_band_8821c` — 0xc1c[31:21] = tx_bbswing.
-  2. **`config_phydm_switch_channel_8821c`** ([SRC] :812), 2.4G arm: read RF 0x18 (0x2860 @ 7825),
-     0xc1c[11:8]=0 (AGC table idx), 0x860[28:17]=0x96a (clock-offset central freq), and the CCK-TX-filter
-     0xa24/0xa28/0xaac (ch != 14 -> `rega24/28/aac_8821c`) (~ops 7823-7833).
-  3. `phydm_config_kfree(ch)` — PPG kfree trim (likely minimal).
-  4. if bSetChnlBW (20 MHz): `mac_switch_bandwidth(pri_ch_idx)` + **`config_phydm_switch_bandwidth_8821c`**
-     ([SRC] :972) — another stop-TRX RF block (~7888-7917) + RX-DFIR + CCA-param-by-bw.
-  5. **`rtw_hal_set_tx_power_level(ch)`** -> `rtl8821c_set_tx_power_level` -> `config_phydm_write_txagc_8821c`
-     -> the **TX-power-by-rate table 0x1d00-0x1d34** (0x2d2d2d2d/0x2a2a2a2a/0x28282828...) — computed
-     from the EFUSE tx-power map, do NOT transcribe the wire constants.
-  6. if bNeedIQK (TRUE on first set): `rtw_phydm_iqk_trigger` -> **IQK** (large RF calibration).
-  Then a **second coex pass** (0x1700 ltecoex + ant-switch + scoreboard 0x00aa=0x8403 + coex table,
-  ~7974-8066) — `run_coex` acting on the landed 2G band. **Recommended order: port the coex
-  run_coex/scan_notify/switchband framework first (it bookends the phydm work), then the phydm
-  band/channel/bw, then tx-power, then IQK — each a sub-milestone, gate-verified.** The agent wires
-  the channel tune; **live TX stays the user's.**
+- **The channel tune's RF/BB is GREEN @ 7930** (`chan.set_channel`, ch 1 / 20 MHz / 2.4 GHz). Order
+  inside `rtl8821c_switch_chnl_and_set_bw` ([SRC] rtl8821c_phy.c:740), all ported: (1)
+  `phy_switch_wireless_band` = `btc.switchband_notify_2g` -> `run_coex` (the 4 `limited_tx` backup
+  reads then early-return, `run_time_state` FALSE) + `config_phydm_switch_band_8821c` (2.4G: RF 0x18,
+  CCK gates, `switch_rf_set(BTG)`, RF 0xdf/0x64, RF 0x18 under stopped TRX) + `phy_set_bb_swing`
+  (0xc1c=0x200); (2) `config_phydm_switch_channel_8821c` (AGC idx, clock-offset 0x860=0x96a, cached
+  CCK-TX-filter 0xa24/0xa28/0xaac); (3) `phydm_config_kfree` -> `set_kfree_to_rf_8821c` (2G PPG gain,
+  here 0); (4) `mac_switch_bandwidth` (halmac cfg_ch_bw 20 MHz) + `config_phydm_switch_bandwidth_8821c`
+  (0x8ac BW word, RF 0x18 |= BIT11|BIT10, RX-DFIR, bw-fixed). **`default_rf_set` is BTG (0)** for this
+  rfe-0x22 card — the band switch takes the BTG arm (0xa84=0xe / 0xa80=0xfc84). `phydm_rfe_8821c`,
+  `ccapar_by_bw`, `ccapar_8821c` are all `#if 0` (silent). The radio is now tuned + RX-ready.
+- **Frontier (next milestone): op #7930 (frame 16813): `OUT 0x1d00=0x2d2d2d2d` — TX-power-by-rate.**
+  This is `set_tx_power_level` ([SRC] rtl8821c_phy.c:556, BTG -> path B) -> per-rate-section
+  `phy_get_tx_power_index_ex` -> **`rtw_hal_get_tx_power_index`** (`base + min(by_rate, rlimit, limit,
+  ulimit) + tpc + tpt + dpd`) -> `config_phydm_write_txagc_8821c` writing the **0x1d00-0x1d34 txagc
+  table** (CCK 0x2d / OFDM 0x2a / HT-VHT 0x28, uniform = base-only here). This is a **large
+  EFUSE/regulatory tx-power subsystem** (one of the biggest in the driver; needs the EFUSE tx-power
+  parse + base/by-rate/limit tables) and is **TX-side only** — it does NOT gate RX/monitoring, but
+  the gate needs it to advance. Compute from the EFUSE tx-power map; never transcribe the wire bytes.
+- **After the first channel set** (op ~7938): a re-write of REG_MACID + MSR/0x0102 + RXFLTMAP=0xffff
+  (the **monitor-mode set**, `hw_var_set_monitor`), then a **second `run_coex` pass** that DOES reach
+  actions (0x1700 ltecoex + ant-switch + scoreboard 0x00aa=0x8403 + coex table — `run_time_state` is
+  TRUE by then), then a **second channel set** (~8067-8148, airodump). The 8149+ block (~3400 ops) is
+  the airodump channel hopping (the same `chan.set_channel` path per channel). No IQK in this window
+  (bNeedIQK FALSE on the first set — the txagc is the last op of set #1). Live TX stays the user's.
 - `_drv_enable_trx` (between init_mac_flow and general-info) is RX/thread-side only — a gate no-op.
 - **PHYDM discriminators are transformed, not the hal->* values** (the AGC walker forced this out):
   `dm->rfe_type = rfe_type_expand >> 3` (0x22 -> 4) and `dm->package_type = 1` for the 0x2x combo
@@ -534,3 +533,22 @@
   `run_coex`/scan_notify decision machine** (via `rtw_btcoex_switchband_notify`) with clean phydm
   band/channel/bandwidth + tx-power table + IQK. The coex bookends are the size risk and should be
   ported as their own sub-milestone first. Frontier #7766 = the channel tune.
+
+## Port log — 2026-06-22 (channel tune RF/BB GREEN @ 7930 — radio tuned to ch 1)
+
+- Traversed (not just mapped) the first channel set's RF/BB tune, op by op, gate-verified. New
+  `chan.py` orchestrates `rtl8821c_switch_chnl_and_set_bw`; new `btc.run_coex` framework with a
+  **session-persistent `BtcState` on `t.btc`** (the GLBtCoexist analog) so init_hw_config's coex
+  state reaches the tune. The coex bookend turned out small: `switchband_notify(2G_NOFORSCAN)` ->
+  `run_coex` -> `update_wifi_link_info` (`limited_tx` 4 backup reads) then early-return on
+  `run_time_state` FALSE — NOT a full run_coex.
+- phydm: `config_phydm_switch_band` (BTG arm — `default_rf_set`=0 for rfe 0x22, the band switch loads
+  0xa84=0xe/0xa80=0xfc84), `config_phydm_switch_channel` (AGC idx + clock-offset 0x860=0x96a + cached
+  CCK-filter from `bb.phy_parameter_init` POST now stored as `t.rega24/28/aac`), `config_kfree` (2G
+  PPG gain 0), halmac `cfg_ch_bw` (20 MHz), `config_phydm_switch_bandwidth` (RF 0x18 |= BIT11|BIT10,
+  RX-DFIR, bw-fixed). `phydm_stop_ic_trx` factored out of `dm._dc_cancellation` into `dm.stop_ic_trx`
+  and reused for every RF-0x18-under-stopped-TRX write. `phydm_rfe`/`ccapar`/`ccapar_by_bw` are
+  `#if 0`. `phy_get_tx_bbswing` = 0x200 (0 dB, autoload-fail path). -> 7766 -> **7930**.
+- Frontier #7930 = the TX-power-by-rate table (`set_tx_power_level`) — a large EFUSE/regulatory
+  subsystem, TX-side only (does not gate RX). See the Known-issues frontier bullet for the post-tune
+  structure (monitor-mode set + a real second run_coex pass + the airodump channel hops).
