@@ -14,11 +14,13 @@
 > RX-enable** (setopmode STATION/MONITOR: promiscuous RCR + RXFLTMAP=0xffff) + the **second BT-coex
 > pass** (the media-connect antenna switch to WiFi: set_ant_path PHASE_2G + run_coex action), then the
 > **operational phase via a single-cursor Walk + async-handler dispatch** (8814-style): the airodump
-> channel hops (`chan.set_channel`), the SW-LED blink (`led.led_blink`, the BlinkTimer producer), and
+> channel hops (`chan.set_channel`), the SW-LED blink (`led.led_blink`, the BlinkTimer producer),
 > the **whole phydm dynamic-check watchdog tick** (`watchdog.tick`: sreset + USB rx-agg + false-alarm
-> counters + DIG + CCK-PD + adaptivity EDCCA + halrf thermal + dyn-bw + env-monitor NHM/CLM/FAHM) are
-> dispatched by their unique opener ops — 2 hops + 2 LED + 1 full tick reproduced, op #8392, zero
-> divergence. Cold init is HW-validated on real silicon (FW boots). — `_halmac_init_hal` + the monitor
+> counters + DIG + CCK-PD + adaptivity EDCCA + halrf thermal + dyn-bw + env-monitor NHM/CLM/FAHM), and
+> the **BT-coex periodical** (`btc.periodical`: monitor BT/WiFi counters + update_wifi_link_info +
+> read scoreboard + the one-shot first-tick run_coex & BT-FW-version query) are dispatched by their
+> unique opener ops — 9 hops + 3 LED + 1 tick + 1 periodical reproduced, op #9284, zero divergence.
+> Cold init is HW-validated on real silicon (FW boots). — `_halmac_init_hal` + the monitor
 > RX-filter + the entire `rtl8821c_phy_init_haldm`/`odm_dm_init` (11 compiled sub-inits incl. the
 > DC-cancellation measurement calibration) + the MU-MIMO/TXBF beamforming defaults**. Cold init
 > (frames 1-7672): USB transport
@@ -41,9 +43,10 @@
 > compiled for this CE+8821C build), **`rtl8821c_phy_bf_init`** (`mac.phy_bf_init`), and the **BT-coex
 > HAL init** (`btc.hal_init` = the 1-ant `init_hw_config`: PTA/3-wire enable, ltecoex 0x1700 indirect
 > GNT setup, antenna-to-BT switch, WiFi-only coex table, the tdma/query-BT-info H2Cs via the HMEBOX
-> rotation). Frontier is op #8392 (frame 18291, `IN 0x0770`): the **BT-coex periodical**
-> (`ex_halbtc8821c1ant_periodical` — limited_tx + scoreboard + coex table + tdma/query H2Cs), a
-> fourth async producer; then the next hop. Not registered in `wlan/manager.py`.
+> rotation). Frontier is op #9284 (frame 20121, `IN 0x0210`): the phydm watchdog's **second tick**
+> — the halrf thermal meter is now armed, so the tick reads the meter (0x2908) and runs power-
+> tracking (0x0c94/0x0c1c) instead of arming, and the first-tick-only `rtw_phydm_set_rrsr` (0x440)
+> drops out. Not registered in `wlan/manager.py`.
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
@@ -104,6 +107,7 @@
 | WL activity LED | `led.cfg_wl_led` | `rtw_halmac_led_cfg(TRUE,3)` hal_halmac.c:5094 (USB `hal_init_misc` rtl8821cu_halinit.c:41) | pinmux GPIO8->WL_LED (0x4a/0x4e[5]) + SW-control mode (0x4e=0x28) — **VERIFIED** |
 | SW-LED blink (async) | `led.led_blink` / `LedBlinkState` | `SwLedBlink1` hal/led/hal_usb_led.c:112 (BlinkTimer) | no-link `LED_BLINK_SLOWLY` tick: alternate 0x4e[3] (active-low) via `pinmux_wl_led_sw_ctrl` — async producer #2 — **VERIFIED** (2 ticks) |
 | phydm watchdog (async) | `watchdog.tick` / `WatchdogState` | `rtw_dynamic_chk_wk_hdl` rtw_cmd.c:2992 -> `phydm_watchdog` phydm.c:2382 | dynamic-check tick (async producer #3): sreset + USB rx-agg + FA-counters + DIG + CCK-PD + adaptivity + halrf-thermal + dyn-bw + env-monitor NHM/CLM/FAHM — **VERIFIED** (whole tick, 1 tick) |
+| BT-coex periodical (async) | `btc.periodical` / `PeriodicalState` | `hal_btcoex_Hanlder` hal_btcoex.c:6069 -> `ex_halbtc8821c1ant_periodical` halbtc8821c1ant.c:5411 | BT-coex periodical (async producer #4): monitor_bt_ctr (0x770/0x774/0x76e) + monitor_wifi_ctr (silent) + update_wifi_link_info + read_scbd; first-tick-only run_coex (action_wifi_not_connected) + the post-periodical BT-FW-version query (BT_MP_OPER 0x67) — **VERIFIED** (1 periodical) |
 | iface MAC addr | `mac.set_mac_addr` / `efuse.mac_address` | `rtw_hal_iface_init` hal_intf.c:521 -> `cfg_mac_addr_88xx` | REG_MACID 0x0610/4 + 0x0614/2 from EFUSE 0x107 (per-card, never hardcoded) — **VERIFIED** |
 | iface port-enable / RX-BAR | `mac.hw_port_enable` / `mac.enable_rx_bar` | `hw_var_hw_port_cfg` / `init_hw_mlme_ext` rtw_mlme_ext.c:1279 | BCN_CTRL 0x0550 \|= 0x1c ; RXFLTMAP1 0x06a2 \|= BIT8 — **VERIFIED** |
 | channel tune (RF/BB) | `chan.set_channel` / `_need_switch_band` | `rtl8821c_switch_chnl_and_set_bw` rtl8821c_phy.c:740 ; `need_switch_band` :477 | 2.4G ch1 + same-band hop ch10: band switch (coex notify + phydm band) only on band change, then switch_channel/switch_bandwidth (20 MHz) + kfree — **VERIFIED** |
@@ -234,11 +238,25 @@
   and the trigger-bit chain on 0x994 (`...18 -> 1a NHM -> 1b CLM -> 3b FAHM-incl -> 3f FAHM-trig`).
   NHM/CLM are not-ready (one ready poll each, no report read); FAHM is ready (denom + 6 report dwords).
   Period/include writes are first-tick-only (carried in `WatchdogState`), so later ticks suppress them.
-- **Frontier (next milestone): op #8392 (frame 18291): `IN 0x0770` — the BT-coex periodical**
-  (`ex_halbtc8821c1ant_periodical`, a fourth async producer): the 0x770/0x774/0x76e block + a
-  `run_coex` (`limited_tx` reads, scoreboard 0xaa, coex table) + tdma/query H2Cs (~8392-8412), then
-  the next channel hop. Reuses the existing `btc.py` run_coex/limited_tx/table/tdma primitives. Live
-  TX stays the user's.
+- **The BT-coex periodical (`btc.periodical`) is GREEN @ 9284** (1 periodical, op 8392-8412). The
+  driver thread's `hal_btcoex_Hanlder` ([SRC] hal_btcoex.c:6069) runs `ex_halbtc8821c1ant_periodical`
+  ([SRC] halbtc8821c1ant.c:5411) then a one-shot BT-FW-version query. Wire order: `monitor_bt_ctr`
+  (read 0x770/0x774, reset 0x76e=0xc) + `monitor_wifi_ctr` (silent — its 0x69{0x8} H2C is gated on
+  `cur_ps_tdma_on`, off in monitor) + `update_wifi_link_info` (the 4 `limited_tx` backup reads) +
+  `monitor_bt_enable`->`read_scbd` (0x00aa). Then **first-tick-only** `run_coex(RSN_PERIODICAL)`
+  (the trigger `moniter_wifibt_status` sees the monitor port-count go 0->1 once → action_wifi_not_
+  connected: table(0) no-op read + tdma 0x60 box1) and the **once** BT-FW-version query
+  (`halbtcoutsrc_GetBtPatchVer`->`_btmpoper_cmd(BT_OP_GET_BT_VERSION)` → H2C **BT_MP_OPER 0x67** box2,
+  buf {(seq<<4)|0, 0}=0..0 → main box 0x00000067; the real C2H caches `bt_get_fw_ver` so later ticks
+  skip it). The 38 capture periodicals confirm: only #1 runs run_coex + the query; #2+ are the
+  prefix only. Carried state in `PeriodicalState`. Live TX stays the user's.
+- **Frontier (next milestone): op #9284 (frame 20121): `IN 0x0210` — the phydm watchdog's SECOND
+  tick.** Two tick-2 deltas vs tick-1 (`watchdog.tick`): (1) `rtw_phydm_set_rrsr` (0x440) is
+  **first-tick-only** — absent on tick 2 (the port currently re-issues it every tick); (2)
+  `_halrf_thermal` no longer just *arms* — with `tm_trigger` set, the now-armed meter is **read**
+  (0x2908=0x54a0) and `odm_txpowertracking_check` runs power-tracking (0x0c94 RMW 0x01000100->
+  0x0100017e, 0x0c1c BB-swing read) instead of the 0x0c90 arm-write. So the thermal member needs
+  its 2-phase split ported and rrsr gated to the first tick.
 - `_drv_enable_trx` (between init_mac_flow and general-info) is RX/thread-side only — a gate no-op.
 - **PHYDM discriminators are transformed, not the hal->* values** (the AGC walker forced this out):
   `dm->rfe_type = rfe_type_expand >> 3` (0x22 -> 4) and `dm->package_type = 1` for the 0x2x combo
@@ -770,3 +788,28 @@
   suppress those writes.
 - Frontier #8392 = the BT-coex periodical (`ex_halbtc8821c1ant_periodical`), a 4th async producer
   reusing the existing btc.py primitives — the next milestone.
+
+## Port log — 2026-06-23 (BT-coex periodical: 4th async producer GREEN @ 9284)
+
+- `btc.periodical` + `PeriodicalState` port the driver thread's BT-coex periodical (async producer
+  #4, opener `IN 0x0770`), dispatched by the gate's `_walk_operational`. The wrapper is
+  `hal_btcoex_Hanlder` ([SRC] hal_btcoex.c:6069) -> `ex_halbtc8821c1ant_periodical` ([SRC]
+  halbtc8821c1ant.c:5411) then the post-call BT-FW-version query. -> 8392 -> **9284, zero divergence**
+  (op 8392-8412 = 1 periodical; the gate now reproduces 9 hops + 3 LED + 1 tick + 1 periodical).
+- The 0x67 mystery the wire forced out: the periodical's `run_coex` emits one H2C (tdma 0x60, box1),
+  but the wire has a second box write (0x67, box2). It is **not** btc — it is `hal_btcoex_Hanlder`'s
+  trailing `btc_get(BTC_GET_U4_BT_PATCH_VER)` -> `halbtcoutsrc_GetBtPatchVer` ([SRC] :859) ->
+  `_btmpoper_cmd(BT_OP_GET_BT_VERSION, 0, NULL, 0)` ([SRC] :775): H2C **BT_MP_OPER (0x67)**
+  ([SRC] hal_com_h2c.h:95) carrying buf = {(seq<<4)|opcodever, opcode} = {0, 0} -> main box
+  0x00000067. The function blocks on the C2H reply (interrupt-IN, off the gate's replay), so we send
+  the H2C and return.
+- Two one-shots, both confirmed by classifying all 38 capture periodicals (only #1 is "long"):
+  `run_coex` runs once (its trigger `moniter_wifibt_status` detects the monitor port-count 0->1 on
+  the first tick, then steady; `bt_ctr_change` is always FALSE — the 0x770/0x774 counters read 0),
+  and the BT-FW-version query runs once (the real C2H caches `bt_get_fw_ver` non-zero). Modeled with
+  carried `first_tick` / `fw_ver_queried` flags (the watchdog's compute-from-state style, no wire
+  peek). `monitor_wifi_ctr`'s 0x69{0x8} H2C is gated on `cur_ps_tdma_on` (off in monitor → silent).
+- Frontier #9284 = the phydm watchdog's **second tick** (`IN 0x0210`): the now-armed halrf thermal
+  meter is read (0x2908) + power-tracked (0x0c94/0x0c1c) instead of armed, and `rtw_phydm_set_rrsr`
+  (0x440) is first-tick-only — the tick's thermal member needs its 2-phase split. The LED re-assert
+  "double" (~op 9975, lead-approved 0x4e[3] value-bypass) is the milestone after that.

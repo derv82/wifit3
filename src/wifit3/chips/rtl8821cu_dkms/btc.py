@@ -582,3 +582,86 @@ def media_status_notify_connect_2g(t) -> None:
     _write_bitmask8(t, 0x06CF, 1 << 4, 0x1)                 # CCK Tx/Rx hi-pri (not 11b) [SRC] :4897
     _fill_h2c(t, 0x69, (0xC, 0x0))                          # leap-AP protection reopen [SRC] :4900
     run_coex(t, _RSN_2GMEDIA)
+
+
+# ======================================================================
+# the BT-coex periodical (the 4th operational async producer)
+# ======================================================================
+# `hal_btcoex_Hanlder` [SRC] hal_btcoex.c:6069 runs every ~2 s from the driver's dynamic-check
+# thread (alongside the phydm watchdog). It calls `EXhalbtcoutsrc_periodical` ->
+# `ex_halbtc8821c1ant_periodical` [SRC] halbtc8821c1ant.c:5411, then a one-shot BT-FW-version
+# query. Opener = the BT hi-pri TX/RX counter read 0x0770 (unique in the operational phase).
+
+REG_BT_HI_PRI_TXRX = 0x0770     # monitor_bt_ctr hi-pri counter [SRC] :590
+REG_BT_LO_PRI_TXRX = 0x0774     # monitor_bt_ctr lo-pri counter [SRC] :591
+REG_BT_CNT_RST = 0x076E         # 0x76e=0xc resets the BT counters [SRC] :613
+_RSN_PERIODICAL = 0xF           # [SRC] halbtc8821c1ant.h:188
+_H2C_BT_MP_OPER = 0x67          # [SRC] include/hal_com_h2c.h:95 H2C_BT_MP_OPER
+_BT_OP_GET_BT_VERSION = 0x00    # [SRC] hal_btcoex.c:165
+
+
+@dataclass
+class PeriodicalState:
+    """ex_halbtc8821c1ant_periodical carried state — the bits the time-less replay can't re-derive
+    from a chip read. `run_coex` re-runs only when a wifi/bt status change is detected
+    (`moniter_wifibt_status`): in monitor-idle that is the monitor port-count going 0->1 on the
+    first tick, then steady, so the run fires once. The BT-FW-version query also fires once — the
+    real C2H reply caches `bt_get_fw_ver` non-zero, which gates out later ticks."""
+    first_tick: bool = True
+    fw_ver_queried: bool = False
+    bt_mp_oper_seq: int = 0
+
+
+def _monitor_bt_ctr(t) -> None:
+    """halbtc8821c1ant_monitor_bt_ctr [SRC] :576 — sample the BT hi/lo-priority TX/RX counters and
+    reset them. The `is_run_coex` return (a >50 counter delta while BT is NCON_IDLE) is FALSE in the
+    capture (the counters read 0), so it never forces run_coex; the fold-in stats are software."""
+    t.read32(REG_BT_HI_PRI_TXRX)
+    t.read32(REG_BT_LO_PRI_TXRX)
+    t.write8(REG_BT_CNT_RST, 0x0C)
+
+
+def _monitor_wifi_ctr(t, st: BtcState) -> None:
+    """halbtc8821c1ant_monitor_wifi_ctr [SRC] :669 — the CCK-lock / wl-noisy identification reads
+    phydm's cached PHY counters (software, not the wire). The only register effect is the WL-FW-dbg
+    H2C 0x69 {0x8}, gated on `cur_ps_tdma_on` (the fw-version outer gate is TRUE for this card's FW).
+    PS-TDMA is off in monitor, so this stays silent until a PS-TDMA-on action sets the flag."""
+    if st.cur_ps_tdma_on:
+        _fill_h2c(t, 0x69, (0x8,))
+
+
+def _read_scbd(t) -> int:
+    """halbtc8821c1ant_read_scbd [SRC] :487 — read the 15-bit BT scoreboard mirror (0xaa). Called by
+    monitor_bt_enable; the rest of that function (bt_disable_cnt bookkeeping) is software."""
+    return t.read16(REG_BT_SCOREBOARD_W) & 0x7FFF
+
+
+def _get_bt_patch_ver(t, st: PeriodicalState) -> None:
+    """hal_btcoex_Hanlder's post-periodical BT-FW-version query [SRC] hal_btcoex.c:6075 ->
+    halbtcoutsrc_GetBtPatchVer :859 -> _btmpoper_cmd(BT_OP_GET_BT_VERSION, 0, NULL, 0) :775. The
+    H2C is BT_MP_OPER (0x67) carrying buf = {(seq<<4)|opcodever, opcode} = {0, 0} on the first send
+    (seq starts 0), so the message-box word reads 0x00000067. The function then blocks on the C2H
+    reply (interrupt-IN, off the gate's replay) — we send the H2C and return."""
+    seq = st.bt_mp_oper_seq & 0xF
+    st.bt_mp_oper_seq += 1
+    _fill_h2c(t, _H2C_BT_MP_OPER, ((seq << 4), _BT_OP_GET_BT_VERSION))
+
+
+def periodical(t, st: PeriodicalState) -> None:
+    """One BT-coex periodical tick, in wire order [SRC] ex_halbtc8821c1ant_periodical :5411 wrapped
+    by hal_btcoex_Hanlder :6069. `auto_report` is on so the leading query_bt_info is skipped; the
+    downcounts / freeze / moniter_wifibt_status bookkeeping is software.
+
+    Wire effects: monitor_bt_ctr (counters + reset), monitor_wifi_ctr (silent in monitor),
+    update_wifi_link_info (the limited_tx backup reads), monitor_bt_enable (read_scbd); then the
+    gated run_coex (first tick) and the gated post-periodical BT-FW-version query (first tick)."""
+    _monitor_bt_ctr(t)
+    _monitor_wifi_ctr(t, t.btc)
+    _update_wifi_link_info(t, t.btc)
+    _read_scbd(t)
+    if st.first_tick:
+        run_coex(t, _RSN_PERIODICAL)
+    if not st.fw_ver_queried:
+        _get_bt_patch_ver(t, st)
+        st.fw_ver_queried = True
+    st.first_tick = False
