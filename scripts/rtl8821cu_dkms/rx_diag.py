@@ -84,7 +84,13 @@ def _snapshot(t) -> None:
     igi = t.read32(_REG_IGI) & 0x7F
     dpdt = t.read32(_REG_DPDT)
     led = t.read8(_REG_LED_ANT)
+    cr = t.read16(0x0100)
+    rxdma = t.read8(0x0286)
     print("\n[snapshot] monitor RX config + tune + antenna")
+    cr_bits = (f"HCI_RXDMA={cr >> 1 & 1} RXDMA_EN={cr >> 3 & 1} PROT={cr >> 4 & 1} "
+               f"SCHED={cr >> 5 & 1} MACTX={cr >> 6 & 1} MACRX={cr >> 7 & 1}")
+    print(f"  REG_CR     0x{cr:04x}       {cr_bits}  (RXDMA_EN+MACRX must be 1 for RX)")
+    print(f"  0x286      0x{rxdma:02x}         RXDMA mode/agg byte")
     print(f"  RCR        0x{rcr:08x}   (expect 0x90000001 promiscuous monitor)")
     print(f"  MSR        0x{msr:02x}         RXFLTMAP mgmt/ctrl/data = "
           f"0x{flt[0]:04x}/0x{flt[1]:04x}/0x{flt[2]:04x} (expect 0xffff each)")
@@ -173,9 +179,14 @@ def main() -> int:
               f"rfe=0x{getattr(info, 'rfe_type', 0):x} xtal=0x{getattr(info, 'crystal_cap', 0):x} "
               f"thermal={getattr(info, 'eeprom_thermal', 0)}")
         _snapshot(t)
-        _fa_dwell(t, args.dwell)
         _rx_tally(t, args.dwell)
-        _watchdog_experiment(t, info, args.ticks, args.dwell)
+        # A/B the RCR: the airmon capture's 0x90000001 is AAP|APP_PHYSTS|APP_FCS only — no
+        # AB (broadcast) / AMF (mgmt) accept bits, so the MAC drops beacons. The sibling Jaguar
+        # drivers use 0x9000382f (adds APM|AM|AB|ADF|ACF|AMF). Rewrite and re-tally.
+        print("\n[rcr A/B] rewriting RCR 0x90000001 -> 0x9000382f (adds AB|AM|ADF|ACF|AMF)")
+        t.write32(_REG_RCR, 0x9000382F)
+        print(f"  RCR now 0x{t.read32(_REG_RCR):08x}")
+        _rx_tally(t, args.dwell)
         return 0
     finally:
         try:

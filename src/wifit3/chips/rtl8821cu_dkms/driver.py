@@ -50,6 +50,14 @@ _RAID_INJECT = 1              # [WIRE] aireplay tx-desc dw1[20:16]
 _WIFI_INTF_CLASS = 0xFF        # combo card: the WiFi function is the vendor-specific interface
                                # (class 0xFF, #2); the Bluetooth interfaces 0/1 are class 0xE0
 
+# The airmon capture's monitor RCR (0x90000001 = AAP|APP_PHYSTS|APP_FCS) only makes the address
+# filter promiscuous — it lacks AB (accept broadcast) and AMF (accept management), so the MAC drops
+# beacons (broadcast mgmt frames). The sibling Jaguar drivers (rtl8821au/8812au) widen it to
+# 0x9000382f (adds APM|AM|AB|ADF|ACF|AMF). cold_bringup writes the airmon value the offline gate
+# verifies; this is applied AFTER, in the product path only, so the gate stays byte-for-byte.
+_REG_RCR = 0x0608
+_RCR_MONITOR = 0x9000382F
+
 
 class Rtl8821cuDkmsDriver:
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
@@ -118,6 +126,7 @@ class Rtl8821cuDkmsDriver:
         self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="8821cu-dkms-rx")
         self._reader.start()
         self.info = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
+        self.transport.write32(_REG_RCR, _RCR_MONITOR)      # widen the airmon RCR to accept beacons
         if progress_cb:
             progress_cb(1.0, "RTL8821CU monitor up (ch 1 @ 20 MHz)")
         return True

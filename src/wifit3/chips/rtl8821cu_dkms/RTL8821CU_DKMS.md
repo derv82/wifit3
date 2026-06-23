@@ -976,3 +976,28 @@
   38 ticks + 38 periodicals. The TX-descriptor builder that `inject_frame`/deauth uses on real HW is
   now verified against 502 real aireplay frames. Remaining blind spot: the chip→host interrupt-IN
   (C2H, ep 0x81) + bulk-IN (RX) streams, which the host-side replay does not model.
+
+## Port log — 2026-06-23 (HW RX bring-up: cold init works, no 802.11 frames — OPEN)
+
+- Registered in `wlan/manager.py`; `connect()` comes up clean on real silicon (FW boots, ch1 tuned).
+  RX path wired (RxReaderThread before `cold_bringup`, combo-card WiFi-interface claim, ep-0x05 FW/TX
+  pipe). New `scripts/rtl8821cu_dkms/rx_diag.py` snapshots the live RX state + A/Bs registers.
+- **Symptom:** monitor RX delivers only the occasional C2H on bulk-IN 0x84 — **zero 802.11 frames**
+  (`beacon_watch` ch1 = 0, with a known CCK AP present). The PHY false-alarm/CCA counters move (DIG
+  adapts IGI), so the receiver processes RF *energy*, but no beacon ever reaches the RX-DMA.
+- **Ruled out** (all read back correct on HW): RF off (RF 0x00=0x37de0 on), tune (RF 0x18 ch1,
+  central_fc 0x96a), monitor filters (RXFLTMAP 0xffff×3), RX-DMA/MAC-RX enable (REG_CR 0x06ff:
+  RXDMA_EN+MACRX set), reader-start ordering (reader starts before the RX gate), warm state (a clean
+  replug is also 0), `_drv_enable_trx` ([SRC] hal_halmac.c:3543 = start threads + `rtw_intf_start`
+  URB-post only, NO register writes — replicated by the reader, hence the gate saw it as a no-op).
+- **RCR gap found + fixed (necessary, not sufficient):** the airmon capture's monitor RCR
+  `0x90000001` = AAP|APP_PHYSTS|APP_FCS only — it lacks AB (accept-broadcast) + AMF (accept-mgmt), so
+  the MAC drops beacons (broadcast mgmt). Sibling Jaguar drivers use `0x9000382f`. `connect()` now
+  widens RCR to `0x9000382f` AFTER `cold_bringup` (product path only, so the gate stays byte-for-byte).
+  This did NOT by itself restore frames — the bottleneck is upstream (no frames reach bulk-IN at all).
+- **Open lead:** the PHY detects energy but produces no 802.11 frames despite RF on + tuned + filters
+  open + RX-DMA enabled. Most likely this 1-antenna BT+WiFi combo card's **antenna / BT-coex GNT/PTA**
+  arbitration (we drive only the WiFi function; the BT function on interfaces 0/1 is uninitialized) or
+  an RX AGC/gain calibration the offline replay (recorded reads) can't validate. Next: a full
+  HW-vs-capture register diff across the RX chain + the coex GNT/antenna state, and check whether the
+  capture had RX-critical registers already set (absent from the wire) that fresh silicon does not.
