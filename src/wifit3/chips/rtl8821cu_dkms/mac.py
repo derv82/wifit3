@@ -17,6 +17,7 @@ from __future__ import annotations
 from .mac_reg_tbl import MAC_REG_TBL
 
 # --- registers [SRC] halmac_reg2.h -----------------------------------------
+REG_MACID = 0x0610              # port-0 MAC address (REG_MACID) [SRC] hal_com_reg.h:419
 REG_CR = 0x0100
 REG_TXDMA_PQ_MAP = 0x010C
 REG_TRXFF_BNDY = 0x0114
@@ -285,6 +286,14 @@ def config_rx_info(t) -> None:
     t.write32(REG_WMAC_OPTION_FUNCTION + 4,
               t.read32(REG_WMAC_OPTION_FUNCTION + 4) & ~((1 << 8) | (1 << 9)))
     t.read32(REG_RCR)                                       # HW_VAR_RCR cache sync
+
+
+def set_mac_addr(t, mac6: bytes) -> None:
+    """cfg_mac_addr_88xx(port 0) [SRC] halmac_cfg_wmac_88xx.c — program the interface MAC into
+    REG_MACID: the low 4 bytes as a dword, the high 2 as a word (`rtw_hal_iface_init` ->
+    HW_VAR_MAC_ADDR -> rtw_halmac_set_mac_address)."""
+    t.write32(REG_MACID, int.from_bytes(mac6[0:4], "little"))
+    t.write16(REG_MACID + 4, int.from_bytes(mac6[4:6], "little"))
 
 
 # RXDMA burst [SRC] halmac_usb_88xx.c:20 enum + halmac_bit2.h

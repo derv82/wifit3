@@ -8,7 +8,8 @@
 > **Status — cold-init probe GREEN + airmon re-init through the whole PHYDM DM-init + beamforming
 > + the BT-coex `init_hw_config` GREEN.** The byte-for-byte gate (`scripts/rtl8821cu_dkms/verify_pcap.py`,
 > replaying ctrl + the FW/TX bulk-OUT stream) reproduces the **whole cold-boot probe and the airmon
-> monitor-entry phase through the BT-coex HAL init — 7748 ops, zero divergence — `_halmac_init_hal` + the monitor
+> monitor-entry phase through the BT-coex HAL init + the USB hal_init_misc LED + the iface-init MAC
+> address — 7762 ops, zero divergence — `_halmac_init_hal` + the monitor
 > RX-filter + the entire `rtl8821c_phy_init_haldm`/`odm_dm_init` (11 compiled sub-inits incl. the
 > DC-cancellation measurement calibration) + the MU-MIMO/TXBF beamforming defaults**. Cold init
 > (frames 1-7672): USB transport
@@ -90,6 +91,8 @@
 | beamforming init | `mac.phy_bf_init` | `rtl8821c_phy_bf_init` rtl8821c_phy.c | MU-MIMO/TXBF defaults (0x14c0/0x167c/0x1680/0x42f/0x45f/0x6df/0x1c94) — **VERIFIED** |
 | BT-coex HAL init | `btc.hal_init` | `halbtc8821c1ant_init_hw_config` halbtc8821c1ant.c:3739 (via `rtw_btcoex_HAL_Initialize`) | combo-card 1-ant init: PTA/3-wire enable + ltecoex 0x1700 GNT + ant-to-BT + coex table + tdma/query H2Cs — **VERIFIED**. `init_coex_dm` is empty |
 | H2C-by-reg (HMEBOX) | `firmware.send_h2c_by_reg` | `rtw_halmac_send_h2c` hal_halmac.c:4103 | box index `t.last_hme_box` rotates mod 4, reset to 0 after each FW dl — **VERIFIED** |
+| WL activity LED | `led.cfg_wl_led` | `rtw_halmac_led_cfg(TRUE,3)` hal_halmac.c:5094 (USB `hal_init_misc` rtl8821cu_halinit.c:41) | pinmux GPIO8->WL_LED (0x4a/0x4e[5]) + SW-control mode (0x4e=0x28) — **VERIFIED** |
+| iface MAC addr | `mac.set_mac_addr` / `efuse.mac_address` | `rtw_hal_iface_init` hal_intf.c:521 -> `cfg_mac_addr_88xx` | REG_MACID 0x0610/4 + 0x0614/2 from EFUSE 0x107 (per-card, never hardcoded) — **VERIFIED** |
 
 ## Hot paths
 
@@ -133,10 +136,11 @@
   (`firmware.send_h2c_by_reg`, box1 then box2). `init_coex_var`/`enable_gnt_to_gpio`(dbg off) are
   wire-silent; `init_coex_dm` is an empty function. The HMEBOX box index (`t.last_hme_box`) advances
   mod 4 per send and resets to 0 after each FW dl — that is why both general-infos are box0.
-- **Frontier (next milestone): op #7748 (frame 16447): `IN 0x004a`.** This is PAST `rtl8821c_hal_init`
-  (init_hw_config was its last step; `init_coex_dm` empty). The post-hal_init airmon flow, traced
-  against source (build = CE + CONFIG_RTL8821C; `rtw_hal_init` continues after `hal_func.hal_init`
-  returns, then the caller runs `rtw_hal_iface_init`):
+- **Frontier (next milestone): op #7762 (frame 16477): `IN 0x0550`** — the opmode/RCR set (step 2
+  below, after the now-ported MAC addr). Steps 1 (LED) and the MAC half of step 2 are GREEN. The
+  full post-hal_init airmon flow, traced against source (build = CE + CONFIG_RTL8821C; the hal op is
+  the USB wrapper `rtl8821cu_hal_init` = `rtl8821c_hal_init` + `hal_init_misc`; then `rtw_hal_init`
+  returns and the caller runs `rtw_hal_iface_init`):
   1. **`rtw_led_control(LED_CTL_POWER_ON)`** ([SRC] hal_intf.c:555) -> `LedControlUSB` -> `swledon`
      -> `rtw_halmac_led_switch(1)` -> `pinmux_wl_led_sw_ctrl_88xx` ([SRC] halmac_gpio_88xx.c) = one
      RMW clearing 0x4e[3] (REG_LED_CFG+2). That is op 7752 (0x4e stays 0x62). Op **7748 `0x004a`** and
@@ -499,3 +503,20 @@
   (0x00ffffff/0x13) — same `type 0`, different computed rows. The values are state, not constants.
 - Frontier #7748 = the post-hal_init airmon sequence (`IN 0x004a` — channel set / RFE, under
   investigation; see the Known-issues frontier bullet).
+
+## Port log — 2026-06-22 (post-hal_init iface-init head: LED + MAC GREEN @ 7762)
+
+- Identified op #7748: the hal op is the USB wrapper `rtl8821cu_hal_init` ([SRC] rtl8821cu_halinit.c:55)
+  = `rtl8821c_hal_init` (everything through btcoex) + `hal_init_misc` ([SRC] :41). `hal_init_misc`'s
+  SW-LED arm runs `rtw_halmac_led_cfg(TRUE, 3)`. New `led.py` ports it: `pinmux_set_func(WL_LED)`
+  walks the GPIO8 list (deselect WL_EXT_WOL 0x4a[1:0], select WL_LED 0x4e[5]) then
+  `pinmux_wl_led_mode(SW_CTRL)` (0x4e: clear bit6, set bit3, clear bits[2:0] -> 0x28). `init_hwled`
+  is a no-op (LedStrategy != HW_LED). -> 7748 -> **7760**.
+- `mac.set_mac_addr` + `efuse.mac_address` port `rtw_hal_iface_init` ([SRC] hal_intf.c:521) ->
+  HW_VAR_MAC_ADDR -> `cfg_mac_addr_88xx`: REG_MACID 0x0610/4 (low) + 0x0614/2 (high). The MAC is
+  read from the logical EFUSE map at EEPROM_MAC_ADDR_8821CU (0x107) — verified byte-equal to the
+  wire, **read per-card, never hardcoded** (no network identifiers persisted). New `bringup.iface_init`.
+  `rtw_led_control(POWER_ON)` between hal_init and iface_init is wire-silent. -> 7760 -> **7762**.
+- Frontier #7762 = `IN 0x0550` — the opmode/RCR set (`rtw_hal_init_opmode` -> `setopmode_hdl` ->
+  `hw_var_set_opmode`: 0x0550 BCN_CTRL, 0x06a2 RXFLTMAP1, 0x0430/0x0434/0x042a/0x0455 rate regs),
+  then the channel tune.

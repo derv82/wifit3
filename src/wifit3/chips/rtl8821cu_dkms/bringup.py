@@ -12,7 +12,7 @@ entry) extend ``cold_bringup`` past the report readback.
 """
 from __future__ import annotations
 
-from . import bb, btc, chipid, dm, efuse, firmware, init, mac, phy, phy_cond, pwrseq, rf
+from . import bb, btc, chipid, dm, efuse, firmware, init, led, mac, phy, phy_cond, pwrseq, rf
 
 REG_C2HEVT_MSG_NORMAL = 0x01A0      # [SRC] include/hal_com_reg.h:149
 _C2H_DEFEATURE_RSVD = 0xFD          # [SRC] hal/hal_com_c2h.h:79 — "FW: report MAC-hidden via reg"
@@ -108,6 +108,16 @@ def hal_init(t, info) -> None:
     # rtl8821c_hal_init tail: BT-coex HAL init (combo card -> rtw_btcoex_HAL_Initialize).
     if info.bt_coexist:
         btc.hal_init(t, info)
+    # rtl8821cu_hal_init (USB wrapper) tail: hal_init_misc enables the cosmetic WL activity LED.
+    led.cfg_wl_led(t)
+
+
+def iface_init(t, info) -> None:
+    """[SRC] rtw_hal_iface_init hal_intf.c:521 — runs after rtw_hal_init returns. Programs the
+    interface MAC into REG_MACID (HW_VAR_MAC_ADDR), then sets the operating mode (RCR / RX-filter).
+    `rtw_led_control(POWER_ON)` between hal_init and here is wire-silent (the LED was already put
+    in SW-control by hal_init_misc)."""
+    mac.set_mac_addr(t, efuse.mac_address(info))
 
 
 def cold_bringup(t) -> None:
@@ -121,3 +131,4 @@ def cold_bringup(t) -> None:
     efuse.read_phydm_trim(t, info.phys_map)
     phy.init_hw_info_by_rfe(t, info)
     hal_init(t, info)
+    iface_init(t, info)

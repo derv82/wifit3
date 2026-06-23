@@ -172,6 +172,16 @@ def _parse_board_info(t, log_map: bytes, map_valid: bool) -> tuple[bool, int, in
     return bt_coexist, rfe_type, single_ant_path, ant_num
 
 
+EEPROM_MAC_ADDR_8821CU = 0x107      # [SRC] include/hal_pg.h:522
+
+
+def mac_address(info: EfuseInfo) -> bytes:
+    """The 6-byte permanent MAC from the logical EFUSE map (EEPROM_MAC_ADDR_8821CU). The
+    interface MAC `rtw_hal_iface_init` programs into REG_MACID — read from EFUSE per card, never
+    hardcoded (a sibling card differs, and it must not be persisted)."""
+    return bytes(info.log_map[EEPROM_MAC_ADDR_8821CU:EEPROM_MAC_ADDR_8821CU + 6])
+
+
 def read_efuse(t) -> EfuseInfo:
     """[SRC] rtl8821c_read_efuse: autoload-status check, the WIFI physical dump decoded to
     the logical shadow map, then the parse chain (only BT-coex touches a register). Returns
