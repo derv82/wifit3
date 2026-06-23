@@ -28,7 +28,7 @@ import libusb_package
 import usb.core
 import usb.util
 
-from wifit3.chips.rtl8821cu_dkms import bringup, chipid, efuse, watchdog
+from wifit3.chips.rtl8821cu_dkms import bringup, btc, chipid, efuse, watchdog
 from wifit3.chips.rtl8821cu_dkms.rf import read_rf
 from wifit3.chips.rtl8821cu_dkms.rx import query_rx_desc
 from wifit3.chips.rtl8821cu_dkms.transport import Rtl8821cuTransport
@@ -186,6 +186,17 @@ def main() -> int:
         print("\n[rcr A/B] rewriting RCR 0x90000001 -> 0x9000382f (adds AB|AM|ADF|ACF|AMF)")
         t.write32(_REG_RCR, 0x9000382F)
         print(f"  RCR now 0x{t.read32(_REG_RCR):08x}")
+        _rx_tally(t, args.dwell)
+        # The 1-ant combo card parked GNT_WL low/HW_PTA (coex mode); with BT dead the PTA never
+        # grants WiFi the antenna. Force the PHASE_WONLY grant: coex owner WL + GNT_BT low + GNT_WL high.
+        print("\n[gnt force-wifi] coex_ctrl_owner(WL) + GNT_BT=SW_LOW + GNT_WL=SW_HIGH")
+        before = btc._read_indirect(t, 0x38)
+        btc._write_bitmask8(t, btc.REG_COEX_CTRL_OWNER, 1 << 2, 1)
+        btc._set_gnt_bt(t, btc._GNT_SW_LOW)
+        btc._set_gnt_wl(t, btc._GNT_SW_HIGH)
+        after = btc._read_indirect(t, 0x38)
+        print(f"  ltecoex 0x38: 0x{before:08x} -> 0x{after:08x}  (GNT_WL nibbles -> SW_HIGH=0x3)")
+        print(f"  path owner 0x73=0x{t.read8(0x73):02x} (bit2=1 => WLSIDE)  DPDT 0xcb4=0x{t.read32(0x0cb4):08x}")
         _rx_tally(t, args.dwell)
         return 0
     finally:

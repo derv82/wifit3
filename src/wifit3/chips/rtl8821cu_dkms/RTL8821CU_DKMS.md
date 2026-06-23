@@ -995,9 +995,17 @@
   the MAC drops beacons (broadcast mgmt). Sibling Jaguar drivers use `0x9000382f`. `connect()` now
   widens RCR to `0x9000382f` AFTER `cold_bringup` (product path only, so the gate stays byte-for-byte).
   This did NOT by itself restore frames — the bottleneck is upstream (no frames reach bulk-IN at all).
-- **Open lead:** the PHY detects energy but produces no 802.11 frames despite RF on + tuned + filters
-  open + RX-DMA enabled. Most likely this 1-antenna BT+WiFi combo card's **antenna / BT-coex GNT/PTA**
-  arbitration (we drive only the WiFi function; the BT function on interfaces 0/1 is uninitialized) or
-  an RX AGC/gain calibration the offline replay (recorded reads) can't validate. Next: a full
-  HW-vs-capture register diff across the RX chain + the coex GNT/antenna state, and check whether the
-  capture had RX-critical registers already set (absent from the wire) that fresh silicon does not.
+- **Antenna / BT-coex GNT gap found + fixed (real, but not the blocker).** The cold path runs
+  `init_hw_config(wifi_only=FALSE)` (matching the capture), so the 1-ant grant is parked for real BT
+  coex: GNT_WL SW-low at PHASE_INIT, then HW-PTA at the media-connect PHASE_2G ([SRC] :3801 vs the
+  `wifi_only` branch's `set_ant_path(PHASE_WONLY)` → GNT_WL SW-HIGH, :2661). In a WiFi-only userland
+  the BT function is never initialized, so the PTA never grants WiFi the shared antenna. `connect()`
+  now calls `btc.force_wifi_only_antenna` after cold_bringup (coex owner WL + GNT_BT SW-low + GNT_WL
+  SW-high). **Verified it lands on HW** (ltecoex 0x38 → 0x7703 = GNT_WL SW-HIGH, 0x73=0x06 WLSIDE,
+  DPDT 0xcb4=0x...77 TO_WLG) — but monitor RX is **still 0 frames**, so the antenna grant is ruled out
+  as the blocker.
+- **Standout open clue: `cck_fa = 0` on every run.** OFDM sees energy (DIG adapts IGI) but the CCK
+  receiver detects nothing on 2.4 GHz, and the test AP beacons at 1 Mbps CCK. Next: check the CCK RX
+  enable (0x808[28]) + the CCK datapath on HW, and a full HW-vs-capture RX-chain register diff for a
+  read-back-dependent value (AGC/RX-calibration) the offline replay can't validate. RCR-widen + the
+  GNT force are correct, necessary, and kept; the remaining blocker is upstream in the RX/CCK chain.

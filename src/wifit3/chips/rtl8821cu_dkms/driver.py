@@ -29,7 +29,7 @@ from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
-from . import bringup, chan, tx
+from . import bringup, btc, chan, efuse, tx, watchdog
 from .constants import USB_PID_8821CU, USB_VID_REALTEK
 from .rx import iter_frames
 from .transport import Rtl8821cuTransport
@@ -57,6 +57,7 @@ _WIFI_INTF_CLASS = 0xFF        # combo card: the WiFi function is the vendor-spe
 # verifies; this is applied AFTER, in the product path only, so the gate stays byte-for-byte.
 _REG_RCR = 0x0608
 _RCR_MONITOR = 0x9000382F
+_WATCHDOG_PERIOD_S = 2.0        # phydm dynamic-check cadence [SRC] rtw_cmd.c rtw_dynamic_chk_wk
 
 
 class Rtl8821cuDkmsDriver:
@@ -78,6 +79,9 @@ class Rtl8821cuDkmsDriver:
         self._rx_cb: Optional[Callable[[dict], None]] = None
         self._reader: Optional[RxReaderThread] = None
         self._wifi_intf: Optional[int] = None       # claimed vendor (WiFi) interface number
+        self._io_lock = asyncio.Lock()              # serialize watchdog tick vs set_channel
+        self._wd_state = None
+        self._watchdog_task = None
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "Rtl8821cuDkmsDriver":
@@ -127,9 +131,29 @@ class Rtl8821cuDkmsDriver:
         self._reader.start()
         self.info = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
         self.transport.write32(_REG_RCR, _RCR_MONITOR)      # widen the airmon RCR to accept beacons
+        btc.force_wifi_only_antenna(self.transport)         # grant the shared 1-ant antenna to WiFi
+        self._wd_state = watchdog.WatchdogState(
+            eeprom_thermal=self.info.eeprom_thermal, thermal_offset=efuse.thermal_offset(self.info))
+        self._watchdog_task = loop.create_task(self._watchdog_loop())
         if progress_cb:
             progress_cb(1.0, "RTL8821CU monitor up (ch 1 @ 20 MHz)")
         return True
+
+    async def _watchdog_loop(self) -> None:
+        """Run the phydm dynamic-check tick at the kernel ~2 s cadence (DIG / CCK-PD / RX-agg /
+        thermal / env-monitor) — the runtime maintenance the kernel does and the cold path does not.
+        Serialized with set_channel via _io_lock so two control-transfer sequences never interleave;
+        the blocking tick is offloaded so it never stalls the RX dispatch on the event loop."""
+        loop = asyncio.get_running_loop()
+        try:
+            while True:
+                await asyncio.sleep(_WATCHDOG_PERIOD_S)
+                async with self._io_lock:
+                    await loop.run_in_executor(None, watchdog.tick, self.transport, self._wd_state)
+        except asyncio.CancelledError:
+            pass
+        except Exception:  # noqa: BLE001 — a watchdog fault must not kill RX
+            logger.exception("RTL8821CU watchdog stopped on error")
 
     def _read_once(self) -> Optional[bytes]:
         """Reader-thread side: one blocking bulk-IN read (None on no traffic)."""
@@ -148,8 +172,16 @@ class Rtl8821cuDkmsDriver:
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         """Tune to ``channel`` via the phydm band/channel/bandwidth set (``chan.set_channel``,
-        20 MHz). Requires a prior ``connect`` (needs the cached ``info``)."""
-        chan.set_channel(self.transport, self.info, channel)
+        20 MHz). Requires a prior ``connect`` (needs the cached ``info``). Under a real loop the
+        tune is serialized with the watchdog tick (``_io_lock``) and offloaded; the offline gate
+        drives it synchronously (no running loop)."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            chan.set_channel(self.transport, self.info, channel)
+            return True
+        async with self._io_lock:
+            await loop.run_in_executor(None, chan.set_channel, self.transport, self.info, channel)
         return True
 
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
@@ -163,6 +195,9 @@ class Rtl8821cuDkmsDriver:
         return True
 
     async def close(self) -> None:
+        if self._watchdog_task is not None:
+            self._watchdog_task.cancel()
+            self._watchdog_task = None
         if self._reader is not None:
             await self._reader.stop()       # join the reader BEFORE releasing the USB handle
             self._reader = None
