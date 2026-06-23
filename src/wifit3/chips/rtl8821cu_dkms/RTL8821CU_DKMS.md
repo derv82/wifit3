@@ -109,7 +109,7 @@
 | WL activity LED | `led.cfg_wl_led` | `rtw_halmac_led_cfg(TRUE,3)` hal_halmac.c:5094 (USB `hal_init_misc` rtl8821cu_halinit.c:41) | pinmux GPIO8->WL_LED (0x4a/0x4e[5]) + SW-control mode (0x4e=0x28) — **VERIFIED** |
 | SW-LED blink (async) | `led.led_blink` / `LedBlinkState` | `SwLedBlink1` hal/led/hal_usb_led.c:112 (BlinkTimer) | no-link `LED_BLINK_SLOWLY` tick: alternate 0x4e[3] (active-low) via `pinmux_wl_led_sw_ctrl` — async producer #2 — **VERIFIED** (2 ticks) |
 | phydm watchdog (async) | `watchdog.tick` / `WatchdogState` | `rtw_dynamic_chk_wk_hdl` rtw_cmd.c:2992 -> `phydm_watchdog` phydm.c:2382 | dynamic-check tick (async producer #3): sreset + USB rx-agg + FA-counters + DIG + CCK-PD + adaptivity + halrf-thermal (2-phase arm/callback) + dyn-bw + env-monitor NHM/CLM/FAHM. `rtw_phydm_set_rrsr` (0x440) is first-tick-only — **VERIFIED** (tick1 arm + tick2 CB0) |
-| halrf thermal track | `watchdog._halrf_thermal` / `_halrf_thermal_callback` | `odm_txpowertracking_check_ce` halrf_powertracking_ce.c:818 ; `..._callback_thermal_meter` halphyrf_ce.c:409 ; `set_pwr8821c` halrf_8821c.c:123 | ARM (odd: RF 0x42[17:16]=3) / CALLBACK (even: meter avg vs `eeprom_thermal`+kfree-trim -> 2ga delta-swing table -> 0xc94[6:1] OFDM-AGC + 0xc1c BB-swing) — **VERIFIED** (CB0); CB1 anomaly open (see below) |
+| halrf thermal track | `watchdog._halrf_thermal` / `_halrf_thermal_callback` | `odm_txpowertracking_check_ce` halrf_powertracking_ce.c:818 ; `..._callback_thermal_meter` halphyrf_ce.c:409 ; `set_pwr8821c` halrf_8821c.c:123 | ARM (odd: RF 0x42[17:16]=3) / CALLBACK (even: meter avg vs `eeprom_thermal`+kfree-trim -> 2ga/5ga delta-swing table -> 0xc94[6:1] OFDM-AGC + 0xc1c BB-swing) — **VERIFIED** (CB0, 2G). 5G callbacks need band-aware table + the band-switch `odm_clear_txpowertracking_state` reset (see Known issues) |
 | BT-coex periodical (async) | `btc.periodical` / `PeriodicalState` | `hal_btcoex_Hanlder` hal_btcoex.c:6069 -> `ex_halbtc8821c1ant_periodical` halbtc8821c1ant.c:5411 | BT-coex periodical (async producer #4): monitor_bt_ctr (0x770/0x774/0x76e) + monitor_wifi_ctr (silent) + update_wifi_link_info + read_scbd; first-tick-only run_coex (action_wifi_not_connected) + the post-periodical BT-FW-version query (BT_MP_OPER 0x67) — **VERIFIED** (1 periodical) |
 | iface MAC addr | `mac.set_mac_addr` / `efuse.mac_address` | `rtw_hal_iface_init` hal_intf.c:521 -> `cfg_mac_addr_88xx` | REG_MACID 0x0610/4 + 0x0614/2 from EFUSE 0x107 (per-card, never hardcoded) — **VERIFIED** |
 | iface port-enable / RX-BAR | `mac.hw_port_enable` / `mac.enable_rx_bar` | `hw_var_hw_port_cfg` / `init_hw_mlme_ext` rtw_mlme_ext.c:1279 | BCN_CTRL 0x0550 \|= 0x1c ; RXFLTMAP1 0x06a2 \|= BIT8 — **VERIFIED** |
@@ -263,15 +263,25 @@
   `0xc1c[31:21]` BB-swing. `eeprom_thermal` (EFUSE 0xBA = 30) + kfree thermal trim (EFUSE 0x1EF =
   +4) seed `WatchdogState` from the gate. Tick2/CB0: meter 21 -> avg 25, |25-30|=5, -2ga_n[5]=-1 ->
   0xc94=0x7e; bb-swing stays at default_ofdm_index (24) so 0xc1c is identity. **VERIFIED** (CB0).
-- **OPEN — the CB1 thermal anomaly (parked behind the scan-notify frontier).** The 38-callback
-  classification shows CB1 (tick4, meter 22) writes `0xc94=0x7a` (swing idx -3), but the documented
-  model gives avg=(25+26)//2=25 -> outer-delta 0 -> NO write. A monotonically rising meter cannot
-  produce the non-monotonic -1,-3,-1 swing sequence via `-2ga_n[|avg-eeprom|]` for ANY (eeprom, trim,
-  AVG) — verified by brute force. So CB1's write is an **interleaved producer** (likely an IQK /
-  tx-power re-derive, `do_iqk_8821c` is gated by `delta_iqk>=8`), not the thermal callback. It sits
-  at op ~10791, **behind** the scan-notify (9941) and LED-double (9975) frontiers, so it does not
-  block yet — resolve it when the cursor reaches tick4. Full analysis: the thermal-tracking subagent
-  spec (carried in this session's notes).
+- **RESOLVED — the "CB1 anomaly" is the 2.4G->5G band switch, NOT an interleaved producer.** The
+  earlier impossibility proof assumed (a) the 2G delta-swing table and (b) `thermal_value` carried =
+  25 — both wrong. CB1 (tick4, op ~10791) is the **first thermal callback AFTER the 2.4G->5G band
+  switch** (ch12 @9890 -> ch36 @10043; CB1 is on ch52 = 5G). Two things the band switch does, both
+  byte-confirmed against the wire (0x0c1c write @10044-10045):
+  1. `rtl8821c_switch_chnl_and_set_bw` -> `phy_switch_wireless_band` -> `phy_set_bb_swing_8821c`
+     ([SRC] rtl8821c_phy.c:682-695) calls **`odm_clear_txpowertracking_state`** ([SRC]
+     halphyrf_ce.c:134), which **resets `cali_info->thermal_value = rf->eeprom_thermal` (=30)** (line
+     166) and `delta_power_index[A]/_last/absolute_ofdm_swing_idx = 0`. So at CB1 the "last" thermal
+     is 30, not 25.
+  2. The callback now indexes the **5G** table (`get_delta_swing_table_8821c`: ch36-64 ->
+     `delta_swing_table_idx_5ga_n[0]` = `{0,1,1,2,3,3,3,4,...}` [SRC] halhwimg8821c_rf.c:2785), not 2ga_n.
+  CB1 then: avg=25 (ring [25,26] is NOT reset), outer-delta=|25-30|=5>0 (because last was reset to 30)
+  -> d=5 -> `5ga_n[0][5]=3` -> idx **-3** -> `0xc94=0x7a`; offset = -3 - 0(reset last) != 0 -> applies.
+  Exactly the wire. **Porting implication** (for the 5G-band-switch milestone, when the cursor reaches
+  it): the thermal callback must be **band-aware** (pick 2ga/5ga by channel), and `chan.set_channel`'s
+  band switch must apply the `odm_clear_txpowertracking_state` reset to `WatchdogState`
+  (thermal_value=eeprom_thermal, ofdm_swing_idx=0, + default_ofdm_index += BBDiff*2 — 0 on this card).
+  No external/IQK writer is involved (`do_iqk` needs `is_linked`, FALSE in monitor).
 - **Frontier (next milestone): op #9941 (frame 21811): `IN 0x0430` — a BT-coex run_coex pass (5th
   async producer) at the 2.4G->5G airodump-scan transition.** Wire shape (ops 9941-9993, between a
   paired ch12 hop @9890 and @9994, right before the first 5G hop ch36 @10043): `limited_tx` backup
