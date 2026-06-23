@@ -141,9 +141,11 @@ def set_monitor_mode(t, info) -> None:
         btc.media_status_notify_connect_2g(t)
 
 
-def cold_bringup(t) -> None:
-    """The cold init the driver's connect() runs, in the order the wire shows. See module
-    docstring. Verified byte-for-byte by ``scripts/verify_pcap.py rtl8821cu_dkms``."""
+def cold_bringup(t):
+    """The deterministic cold init the driver's connect() runs, in the order the wire shows (see
+    module docstring), through monitor entry. Returns the ``EfuseInfo`` so the operational phase
+    (airodump channel hops + the LED blink) can drive ``chan.set_channel``. Verified byte-for-byte
+    by ``scripts/verify_pcap.py rtl8821cu_dkms``."""
     _, chip_ver = chipid.mount_get_chip_info(t)
     chipid.read_chip_version(t)
     info = efuse.read_efuse(t)
@@ -155,5 +157,4 @@ def cold_bringup(t) -> None:
     iface_init(t, info)
     init_hw_mlme_ext(t, info)
     set_monitor_mode(t, info)
-    # airodump-ng channel hop: the first hop is to channel 10 (same band -> no band switch).
-    chan.set_channel(t, info, 10)
+    return info

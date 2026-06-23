@@ -1,15 +1,23 @@
-"""Byte-for-byte replay-diff of the rtl8821cu_dkms port vs the vendor cold-boot capture.
+"""Acceptance gate: ONE monotonic single-cursor walk of the rtl8821cu_dkms cold-boot capture.
 
-One monotonic cursor walks the recorded control stream; the port must reproduce every
-vendor register op (the ON-section 0x4E0 mirror included). The first op the port does
-NOT reproduce is the frontier — the next thing to port.
+Fail-closed, never short-circuited. One cursor runs from the driver's first vendor op to the
+end of the capture; every op has exactly one honest fate as the cursor advances:
 
-Milestone 1 scope: the HALMAC card-enable power sequence (``bringup.power_on``). The
-frontier after a clean M1 is whatever the vendor does next (chip-id/EFUSE, firmware
-download) — that is milestone 2, not a failure.
+  * matched     — a real port handler reproduces it byte-for-byte at the cursor.
+  * unaccounted — anything else STOPS the walk and names the op: the porting frontier.
+
+Two phases. The **deterministic** phase (``bringup.cold_bringup``) is the single-threaded cold
+init + airmon monitor entry, reproduced in driver source order. The **operational** phase
+dispatches each interleaved async burst to its real port handler at the cursor — a channel hop
+(``chan.set_channel``) or an LED blink (``led.led_blink``, the BlinkTimer producer) — each
+distinguished by a unique opener op. Nothing is stripped: the LED writes are reproduced by the
+driver's LED code, not waived (PORTING.md Step 3).
+
+The replay drives the real ``Rtl8821cuTransport`` over a ``ReplayDevice`` (one ctrl_transfer
+cursor), so the 0x4E0 ON-section mirror + the merged bulk-OUT FW stream replay unchanged and the
+transport's session state (btc / HMEBOX / band / cached BB regs) persists across handlers.
 
     uv run python scripts/verify_pcap.py rtl8821cu_dkms
-    uv run python scripts/rtl8821cu_dkms/verify_pcap.py [path/to/capture.pcap]
 """
 from __future__ import annotations
 
@@ -22,10 +30,15 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8821cu_dkms import bringup  # noqa: E402
+from wifit3.chips.rtl8821cu_dkms import bringup, chan, led  # noqa: E402
 from wifit3.chips.rtl8821cu_dkms.transport import Rtl8821cuTransport  # noqa: E402
 
 DEFAULT_CAP = REPO / "usb_dumps_new2" / "captures_rtl8821cu" / "capture-1.pcap"
+
+# Operational-dispatch openers (each the unique first op of a vendor handler at the cursor):
+_OP_HOP = 0x2860                 # R: read_rf(0x18) = 0x2800+(0x18<<2) opens a same-band tune
+_OP_LED = 0x004E                 # R: SwLedBlink1 / pinmux_wl_led_sw_ctrl opens an LED blink tick
+_REG_RF_CHNL_LSSI = 0x0C90       # path-A LSSI write — carries the tuned channel in addr 0x18
 
 
 def _fmt(op: dict) -> str:
@@ -34,6 +47,74 @@ def _fmt(op: dict) -> str:
     d = op.get("data", b"")
     val = f"=0x{int.from_bytes(d, 'little'):0{max(len(d) * 2, 2)}x}" if d else ""
     return f"{op['dir']} 0x{op['wval']:04x}/{op['width']}{val}"
+
+
+class Walk:
+    """One ctrl_transfer cursor over the whole capture, driving the real transport. ``run`` calls
+    a port handler against the shared transport; the device cursor advances by exactly the ops the
+    handler consumed. Session state lives on the transport, so it persists across handlers."""
+
+    def __init__(self, ops: list[dict]):
+        self.ops = ops
+        self.dev = rp.ReplayDevice(ops)
+        self.t = Rtl8821cuTransport(self.dev)
+
+    @property
+    def i(self) -> int:
+        return self.dev.i
+
+    def peek(self) -> dict | None:
+        return self.ops[self.dev.i] if self.dev.i < len(self.ops) else None
+
+    def run(self, fn, label: str):
+        return fn()
+
+
+def _peek_channel(w: Walk, start: int, window: int = 200) -> int | None:
+    """The channel a tune targets is a runtime input (airodump chooses it); read it from the
+    upcoming path-A LSSI write to RF 0x18. The LSSI word is (addr[7:0]<<20)|data[19:0]; RF
+    0x18[7:0] holds the channel number."""
+    for o in w.ops[start:start + window]:
+        if o["dir"] == "OUT" and o.get("wval") == _REG_RF_CHNL_LSSI and o["width"] == 4:
+            v = int.from_bytes(o["data"], "little")
+            if (v >> 20) == 0x18:
+                return v & 0xFF
+    return None
+
+
+def _walk_operational(w: Walk, info) -> tuple[int, int, dict | None]:
+    """Dispatch each operational burst to its real handler at the cursor. Two producers interleave:
+    channel hops (``set_channel``, opener = read_rf 0x18) and the LED blink (``led_blink``, opener
+    = read 0x4e). The first op that opens no handler STOPS the walk and is returned as the frontier."""
+    led_st = led.LedBlinkState()
+    hops = leds = 0
+    while w.i < len(w.ops):
+        o = w.peek()
+        if o["dir"] == "IN" and o.get("wval") == _OP_HOP:
+            ch = _peek_channel(w, w.i)
+            if ch is None:
+                break
+            try:
+                w.run(lambda c=ch: chan.set_channel(w.t, info, c), f"hop{ch}")
+            except Exception as e:  # noqa: BLE001
+                return hops, leds, _frontier(w, o, f"hop ch{ch}", e)
+            hops += 1
+            continue
+        if o["dir"] == "IN" and o.get("wval") == _OP_LED:
+            try:
+                w.run(lambda: led.led_blink(w.t, led_st), f"led#{leds + 1}")
+            except Exception as e:  # noqa: BLE001
+                return hops, leds, _frontier(w, o, f"led #{leds + 1}", e)
+            leds += 1
+            continue
+        break  # frontier: unknown opener
+    return hops, leds, w.peek()
+
+
+def _frontier(w: Walk, o: dict, label: str, e: Exception) -> dict:
+    kind = "DIVERGED" if isinstance(e, rp.Divergence) else "ERROR"
+    print(f"\n  {label} {kind} at op {w.i}:\n    {type(e).__name__}: {e}")
+    return o
 
 
 def run(cap: str | None = None) -> int:
@@ -46,32 +127,35 @@ def run(cap: str | None = None) -> int:
 
     dev_addr = rp.find_card_device(pcap)
     rp.audit_coverage(pcap, dev_addr)
-    # Merge the vendor register stream with the FW/TX bulk-OUT packets (ep 0x05) in frame
-    # order: firmware download interleaves register writes (iDDMA/MCU setup) with bulk FW
-    # chunks, and ReplayDevice.write byte-checks the bulk against the wire.
     ops = rp.merge_ops_by_frame(rp.extract_ctrl_ops(pcap, dev_addr),
                                 rp.extract_bulk_out_ops(pcap, dev_addr))
-    print(f"{pcap.name}: card=dev{dev_addr}, {len(ops)} ctrl+bulk ops")
-    print("  first 40 ops (* = 0x4E0 ON-section mirror):")
-    for k, o in enumerate(ops[:40]):
-        tag = " *" if o.get("wval") == 0x04E0 else ""
-        print(f"    [{k:3}] f{o['frame']:<7} {_fmt(o)}{tag}")
+    total = len(ops)
+    print(f"{pcap.name}: card=dev{dev_addr}, {total} ctrl+bulk ops")
 
-    dev = rp.ReplayDevice(ops)
-    t = Rtl8821cuTransport(dev)
+    w = Walk(ops)
     try:
-        bringup.cold_bringup(t)
+        info = bringup.cold_bringup(w.t)
     except rp.Divergence as e:
-        print(f"\nDIVERGENCE after {dev.i} ops:\n  {e}")
+        print(f"\nFAIL (cold-init/airmon divergence) after {w.i} ops:\n  {e}")
+        return 1
+    except Exception as e:  # noqa: BLE001
+        print(f"\nERROR (harness/port bug) at op {w.i}: {type(e).__name__}: {e}")
+        return 2
+    print(f"  deterministic init+airmon: reproduced {w.i} ops single-cursor (cold probe -> FW dl"
+          " -> MAC/BB/RF -> channel tune -> monitor entry -> media-connect coex)")
+
+    init_end = w.i
+    hops, leds, frontier = _walk_operational(w, info)
+    print(f"  operational: {hops} channel hops + {leds} LED blinks reproduced "
+          f"({w.i - init_end} ops)")
+
+    if frontier is not None:
+        print(f"\nFRONTIER -> op #{w.i} (frame {frontier['frame']}): {_fmt(frontier)}")
+        print("  ^ the next op to reproduce (port it).")
         return 1
 
-    consumed = dev.i
-    print(f"\nCold bring-up through power-on reproduced {consumed}/{len(ops)} control ops clean.")
-    if consumed < len(ops):
-        nxt = ops[consumed]
-        print(f"FRONTIER -> op #{consumed} (frame {nxt['frame']}): {_fmt(nxt)}")
-        print("  (cold-init probe + airmon power-on/FW-dl/init-mac/general-info green through"
-              f" op #{consumed - 1}; next: rtw_hal_init_mac_register)")
+    print(f"\nPASS: reproduced all {w.i} of {total} ops single-cursor — entire capture "
+          f"byte-for-byte (init + airmon + {hops} hops + {leds} LED blinks).")
     return 0
 
 

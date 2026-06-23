@@ -12,9 +12,11 @@
 > address / port-enable + RX-BAR + the **whole first channel set** (coex run_coex + phydm band switch
 > + channel RF + 20 MHz bandwidth + kfree + **TX-power-by-rate table**, channel 1) + the **monitor-mode
 > RX-enable** (setopmode STATION/MONITOR: promiscuous RCR + RXFLTMAP=0xffff) + the **second BT-coex
-> pass** (the media-connect antenna switch to WiFi: set_ant_path PHASE_2G + run_coex action) + the
-> **first airodump channel hop** (set_channel ch10, the same-band no-band-switch path) — 8149 ops,
-> zero divergence. Cold init is HW-validated on real silicon (FW boots). — `_halmac_init_hal` + the monitor
+> pass** (the media-connect antenna switch to WiFi: set_ant_path PHASE_2G + run_coex action), then the
+> **operational phase via a single-cursor Walk + async-handler dispatch** (8814-style): the airodump
+> channel hops (`chan.set_channel`) and the SW-LED blink (`led.led_blink`, the BlinkTimer producer)
+> are dispatched by their unique opener ops — 2 hops + 2 LED blinks reproduced, op #8275, zero
+> divergence. Cold init is HW-validated on real silicon (FW boots). — `_halmac_init_hal` + the monitor
 > RX-filter + the entire `rtl8821c_phy_init_haldm`/`odm_dm_init` (11 compiled sub-inits incl. the
 > DC-cancellation measurement calibration) + the MU-MIMO/TXBF beamforming defaults**. Cold init
 > (frames 1-7672): USB transport
@@ -37,9 +39,9 @@
 > compiled for this CE+8821C build), **`rtl8821c_phy_bf_init`** (`mac.phy_bf_init`), and the **BT-coex
 > HAL init** (`btc.hal_init` = the 1-ant `init_hw_config`: PTA/3-wire enable, ltecoex 0x1700 indirect
 > GNT setup, antenna-to-BT switch, WiFi-only coex table, the tdma/query-BT-info H2Cs via the HMEBOX
-> rotation). Frontier is op #8149 (frame 17615, `IN 0x004e`): the **airodump runtime hop+LED loop**
-> — a timer-driven WL activity-LED blink (0x4e[3]) interleaved with the channel-hop loop at
-> timing-dependent positions, so it is a runtime-session boundary (not a deterministic port target).
+> rotation). Frontier is op #8275 (frame 18057, `IN 0x0210`): the **phydm dynamic-check tick** — the
+> third async producer (`sreset_xmit_status_check` + `phydm_watchdog`: false-alarm counts, DIG,
+> CCK-PD, EDCCA, RA), interleaved with the hops + LED blink and dispatched by its own opener.
 > Not registered in `wlan/manager.py`.
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
@@ -99,6 +101,7 @@
 | BT-coex HAL init | `btc.hal_init` | `halbtc8821c1ant_init_hw_config` halbtc8821c1ant.c:3739 (via `rtw_btcoex_HAL_Initialize`) | combo-card 1-ant init: PTA/3-wire enable + ltecoex 0x1700 GNT + ant-to-BT + coex table + tdma/query H2Cs — **VERIFIED**. `init_coex_dm` is empty |
 | H2C-by-reg (HMEBOX) | `firmware.send_h2c_by_reg` | `rtw_halmac_send_h2c` hal_halmac.c:4103 | box index `t.last_hme_box` rotates mod 4, reset to 0 after each FW dl — **VERIFIED** |
 | WL activity LED | `led.cfg_wl_led` | `rtw_halmac_led_cfg(TRUE,3)` hal_halmac.c:5094 (USB `hal_init_misc` rtl8821cu_halinit.c:41) | pinmux GPIO8->WL_LED (0x4a/0x4e[5]) + SW-control mode (0x4e=0x28) — **VERIFIED** |
+| SW-LED blink (async) | `led.led_blink` / `LedBlinkState` | `SwLedBlink1` hal/led/hal_usb_led.c:112 (BlinkTimer) | no-link `LED_BLINK_SLOWLY` tick: alternate 0x4e[3] (active-low) via `pinmux_wl_led_sw_ctrl` — async producer #2 — **VERIFIED** (2 ticks) |
 | iface MAC addr | `mac.set_mac_addr` / `efuse.mac_address` | `rtw_hal_iface_init` hal_intf.c:521 -> `cfg_mac_addr_88xx` | REG_MACID 0x0610/4 + 0x0614/2 from EFUSE 0x107 (per-card, never hardcoded) — **VERIFIED** |
 | iface port-enable / RX-BAR | `mac.hw_port_enable` / `mac.enable_rx_bar` | `hw_var_hw_port_cfg` / `init_hw_mlme_ext` rtw_mlme_ext.c:1279 | BCN_CTRL 0x0550 \|= 0x1c ; RXFLTMAP1 0x06a2 \|= BIT8 — **VERIFIED** |
 | channel tune (RF/BB) | `chan.set_channel` / `_need_switch_band` | `rtl8821c_switch_chnl_and_set_bw` rtl8821c_phy.c:740 ; `need_switch_band` :477 | 2.4G ch1 + same-band hop ch10: band switch (coex notify + phydm band) only on band change, then switch_channel/switch_bandwidth (20 MHz) + kfree — **VERIFIED** |
@@ -120,10 +123,16 @@
 
 - `scripts/rtl8821cu_dkms/verify_pcap.py` — the byte-diff gate vs the cold-boot pcap
   (`usb_dumps_new2/captures_rtl8821cu/capture-1.pcap`, the cold-boot of the 4 captures). Run:
-  `uv run python scripts/verify_pcap.py rtl8821cu_dkms`. It drives `bringup.cold_bringup` against
-  the recorded wire; a clean run prints `reproduced N/… ops clean` and a `FRONTIER ->` line naming
-  the next op to port. Add ops-dump probes inline (see this session's frontier dumps) to read a
-  byte range. Do NOT edit the gate to pass — port the diverging op (PORTING.md Step 3).
+  `uv run python scripts/verify_pcap.py rtl8821cu_dkms`. **Single-cursor `Walk` + async-handler
+  dispatch** (8814-style): the deterministic prefix is `bringup.cold_bringup`; the operational phase
+  dispatches each interleaved async burst (channel hop / LED blink / phydm tick) to its real port
+  handler by a unique opener op, advancing the cursor by what the handler consumes. A clean run prints
+  the per-phase op counts and a `FRONTIER ->` line naming the next op to port. Do NOT edit the gate to
+  pass and do NOT strip async ops — port the diverging op / register the producer as an async handler
+  (PORTING.md Step 3).
+- `scripts/rtl8821cu_dkms/dump_ops.py` — throwaway wire inspector (rebuilds the merged ctrl+bulk
+  stream): `dump_ops.py <start> <end>` prints an op range (0x4e0 mirror filtered unless `--all`);
+  `--led` tabulates the LED on/off sequence; `--rf18` tabulates the RF 0x18 channel-write (hop) order.
 
 ## Caveats
 
@@ -184,10 +193,21 @@
   box0 @ 8030-8032). The HMEBOX box chain validates end-to-end (media-connect H2C box3 -> tdma box0).
   **This + the RXFLTMAP=0xffff is the full RX-enable** (the cold HW test saw no beacons because the
   antenna was still parked at BT — this pass routes it to WiFi).
-- **Frontier (next milestone): op #8033 (frame 17019): `IN 0x2860` — the second channel set** (the
-  airodump channel tune). `0x2860` is `read_rf(0x18)` (= 0x2800 + (0x18<<2)), the head of the same
-  `chan.set_channel` path. After it: the airodump channel hops (~3400 ops, the same path per hop). No
-  IQK in this window. Live TX stays the user's.
+- **The operational phase runs via a single-cursor Walk + async-handler dispatch** (8814-style, [SRC]
+  scripts/rtl8814au_dkms/verify_pcap.py). After the deterministic prefix (`cold_bringup`), the gate
+  dispatches each interleaved async burst to its real port handler by a unique opener op: a channel
+  hop (`chan.set_channel`, opener `IN 0x2860` = `read_rf 0x18`), an LED blink (`led.led_blink`, opener
+  `IN 0x004e`), and the phydm dynamic-check tick (opener `IN 0x0210`, not yet ported). The SW-LED is
+  **ported, not stripped** (PORTING.md Step 3) — `SwLedBlink1`'s no-link `LED_BLINK_SLOWLY` tick is a
+  strict-alternation BlinkTimer producer. (The traffic-driven `LED_CTL_TX/RX/site-survey` re-asserts
+  that produce the occasional no-change LED write are a separate producer; whether they need their own
+  handler is TBD once the gate reaches the first one ~op 9975.)
+- **Frontier (next milestone): op #8275 (frame 18057): `IN 0x0210` — the phydm dynamic-check tick.**
+  `rtl8821c_sreset_xmit_status_check` (0x210/0x288/0x1118/0x283/0x10c/0x280) + `phydm_watchdog`: the
+  false-alarm-count read block (0x0fcc-0x0f54), the BB dbg-port reads, then DIG (0x9a4/0xa2c/0xc50),
+  CCK-PD (0xb58/0xb04/0xa08/0xaa8), EDCCA (0x8a4), RA (0x440), RF (0x2908). A large phydm subsystem —
+  the third async producer. After it: more hops + ticks + the 5G band switch (ch36+). Live TX stays
+  the user's.
 - `_drv_enable_trx` (between init_mac_flow and general-info) is RX/thread-side only — a gate no-op.
 - **PHYDM discriminators are transformed, not the hal->* values** (the AGC walker forced this out):
   `dm->rfe_type = rfe_type_expand >> 3` (0x22 -> 4) and `dm->package_type = 1` for the 0x2x combo
@@ -658,3 +678,27 @@
   -specific (not deterministic across runs), op #8149 is the natural end of the byte-for-byte gate:
   the deterministic init (cold probe + airmon monitor entry + 2.4G channel tune) is complete. The
   cosmetic LED blink + the 5G band switch are the remaining driver work; live TX stays the user's.
+  **(Superseded below — the LED blink IS ported as an async handler, not stripped, per PORTING.md
+  Step 3; "natural end of the gate" was wrong.)**
+
+## Port log — 2026-06-23 (Walk + async-handler dispatch; LED blink ported GREEN @ 8275)
+
+- Reworked `scripts/rtl8821cu_dkms/verify_pcap.py` to the **single-cursor Walk + async-handler
+  dispatch** model ([SRC] scripts/rtl8814au_dkms/verify_pcap.py — the established pattern). The
+  deterministic prefix stays `bringup.cold_bringup` (now returns `EfuseInfo`); the operational phase
+  dispatches each interleaved async burst to its real port handler by a unique opener: channel hop
+  (`chan.set_channel`, opener `IN 0x2860`) and LED blink (`led.led_blink`, opener `IN 0x004e`). The
+  Walk drives the real `Rtl8821cuTransport` over one `ReplayDevice` cursor, so the 0x4e0 mirror, the
+  merged bulk-OUT FW stream, and the transport session state all persist across handlers.
+- **The SW-LED blink is ported, not stripped** (correcting the prior entry — PORTING.md line 219
+  forbids stripping; the user flagged it). New `led.led_blink` + `LedBlinkState` port `SwLedBlink1`'s
+  no-link `LED_BLINK_SLOWLY` tick: apply the pending on/off via `pinmux_wl_led_sw_ctrl` (0x4e[3],
+  active-low) then toggle (strict alternation). The earlier `chan.set_channel(ch10)` hardcoded into
+  `cold_bringup` was removed — the dispatch loop owns all hops now.
+- Gate reproduces the cold init + airmon + media-connect, then **2 channel hops + 2 LED blinks** via
+  dispatch -> **op #8275, zero divergence**. Frontier #8275 = `IN 0x0210`, the third async producer:
+  the phydm dynamic-check tick (`sreset_xmit_status_check` + `phydm_watchdog`) — the next milestone.
+- Note for that milestone: the wire's occasional **no-change LED writes** (the first ~op 9975) are
+  the traffic-driven `LED_CTL_TX/RX/site-survey` re-asserts (a distinct producer from the BlinkTimer);
+  the strict-alternation handler will diverge at the first one. Decide then whether they get their own
+  handler (driven by the recorded RX stream) or another faithful treatment — do not strip.
