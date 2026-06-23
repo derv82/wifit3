@@ -329,6 +329,9 @@ CHANNELS_2G = tuple(range(1, 14))
 CHANNELS_5G = (36, 40, 44, 48, 52, 56, 60, 64,
                100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144,
                149, 153, 157, 161, 165)
+# Advertised/hopped set: UNII-1 + UNII-3 only. DFS (52-144) is radar-shared and usually
+# empty; the chip still tunes it via set_channel, it's just not in SUPPORTED_CHANNELS.
+CHANNELS_5G_NON_DFS = (36, 40, 44, 48, 149, 153, 157, 161, 165)
 
 # Software band-type state [SRC] BAND_TYPE. The vendor tracks current_band_type and only
 # updates it inside PHY_SwitchWirelessBand8814A (an *actual* band switch). The CCK txagc

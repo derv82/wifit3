@@ -1,19 +1,5 @@
-"""802.11 channel helpers (band / DFS classification).
-
-Device-agnostic facts shared by the scanner default-hop logic and the Channel Filter
-dialog, so "what counts as DFS" lives in exactly one place.
-"""
+"""802.11 channel helpers — scan-hop ordering and per-band label/range compression."""
 from __future__ import annotations
-
-
-def is_dfs(channel: int) -> bool:
-    """True for 5 GHz DFS channels — UNII-2 (52-64) + UNII-2e (100-144).
-
-    Shared with radar, so most APs avoid them (usually empty). Passive RX is fine, so they
-    stay tunable but are excluded from the default scan hop (opt back in via Channel Filter)
-    so a fixed scan budget isn't diluted on empty air.
-    """
-    return 52 <= channel <= 144
 
 
 # The non-overlapping 2.4 GHz trio nearly every router parks on (FCC 1/6/11); visiting

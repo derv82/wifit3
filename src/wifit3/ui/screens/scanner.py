@@ -22,7 +22,7 @@ from wifit3.engine.save import save_handshake, save_pmkid, save_wps_pbc
 
 from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind
 from ..encryption_format import format_encryption_markup, wep_key_ascii
-from wifit3.wlan.channels import band_label, band_ranges, is_dfs
+from wifit3.wlan.channels import band_label, band_ranges
 
 from .channel_filter import ChannelFilterDialog
 
@@ -206,9 +206,6 @@ class ScannerView(Screen):
         if summary:
             rows.append(summary)
         if iface:
-            dfs_note = self._seed_default_channel_filter(iface)
-            if dfs_note:
-                rows.append(dfs_note)
             hopped = self._channel_filter or list(
                 getattr(iface.driver, "SUPPORTED_CHANNELS", None) or []
             )
@@ -849,23 +846,6 @@ class ScannerView(Screen):
         table = self.query_one("#ap-table", DataTable)
         if table.row_count > 0:
             table.move_cursor(row=table.row_count - 1, animate=True)
-
-    def _seed_default_channel_filter(self, iface) -> Optional[str]:
-        """Exclude DFS channels (52-144) from the default hop when the driver exposes them.
-
-        They are radar-shared and usually empty, so scanning them by default dilutes a fixed
-        scan budget; they stay tunable (and listed in the [c] Channel Filter) — this just sets
-        the *initial* hop set to the non-DFS channels. Returns a one-line note for the init
-        tree (None when the driver has no DFS channels, leaving the filter at None = all)."""
-        supported = list(getattr(iface.driver, "SUPPORTED_CHANNELS", None) or [])
-        dfs = sorted(c for c in supported if is_dfs(c))
-        if not dfs:
-            return None
-        self._channel_filter = [c for c in supported if not is_dfs(c)]
-        return (
-            f"[dim]DFS channels ({dfs[0]}–{dfs[-1]}) excluded by default — "
-            f"press [bold cyan]c[/bold cyan] to enable[/dim]"
-        )
 
     def action_change_channel(self) -> None:
         log = self.query_one("#system-log", RichLog)
