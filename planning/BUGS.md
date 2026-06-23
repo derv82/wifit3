@@ -88,10 +88,6 @@ from the chip doc. `✅` = nothing open (already HW-confirmed). `🛑`/`⚠️` 
 - ⏳ Endpoint stability across power cycles unknown; channel-switch wants ~2 s settle [MT76X2U.md:202-207].
 - ⏳ RX-poll unverified on HW [MT76X2U.md:7].
 
-### mt7921au (PAU0F / AXML)
-- ⏳ Suspected: HW auto-ACK not working (2.4 + 5 GHz), WPS chatty/intermittent — unconfirmed.
-  Leads: conn_type STA vs INFRA_AP; diff the kernel's `uni_add_dev` (capture) vs our `enter_active_monitor`.
-
 ### rtl8188eus (mainline) — prefer the DKMS variant
 - ⏳ Intermittent RX collapse — bad windows hear the reference AP *worse* than further
   neighbours [RTL8188EUS.md:38].
