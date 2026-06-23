@@ -20,7 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .bb import set_bb_reg
-from .dm import _b2d, _get_bb_dbg_port_val, _nhm_th_background, _release_bb_dbg_port, _set_bb_dbg_port
+from .dm import (_b2d, _get_bb_dbg_port_val, _nhm_th_background, _release_bb_dbg_port,
+                 _set_bb_dbg_port, get_bb_reg)
 from .rf import read_rf
 
 # --- sreset status checks [SRC] rtl8821c_ops.c -----------------------------
@@ -62,12 +63,14 @@ _REG_IGI_A = 0x0C50             # ODM_REG_IGI_A_11AC ([6:0] = IGI)
 _DIG_MIN, _DIG_MAX_OF_MIN = 0x1C, 0x2A      # no-link rx_gain_range_min / max
 _FA_TH = (2000, 4000, 5000)                 # no-link non-DFS FA thresholds [SRC] :226-230
 
-# --- CCK-PD type2 [SRC] phydm_cck_pd.c:319 / :156 ---------------------------
-_REG_CCK_N_RX = 0x0A2C          # BIT22 = 2nd RX path present
+# --- CCK-PD type2 [SRC] phydm_cck_pd.c:1617 / :319 / :170 / :156 ------------
+_REG_CCK_N_RX = 0x0A2C          # cck_n_rx = (BIT18 && BIT22) ? 2 : 1 (r_mrx / r_cca_mrc)
 _REG_CCK_PD_TH = 0x0A08         # [21:16] = pd_th
 _REG_CCK_CS_RATIO = 0x0AA8      # [20:16] = cs_ratio
 _CCK_PD_LV0, _CCK_PD_LV1 = 0, 1
 _CCK_FA_MA_RESET = 0xFFFFFFFF
+# lv -> (cs_ratio add, 2R cs offset, pd_th) [SRC] phydm_set_cckpd_lv_type2 (no-link reaches LV0/LV1)
+_CCKPD_LV2_PARAMS = {0: (0, 0, 0x3), 1: (2, 1, 0x7), 2: (4, 3, 0xD), 3: (6, 4, 0xD), 4: (8, 5, 0xD)}
 
 # --- adaptivity EDCCA [SRC] phydm_adaptivity.c:203 (NORMAL mode) -------------
 _REG_EDCCA = 0x08A4             # byte0 = L2H, byte1 = H2L
@@ -156,6 +159,7 @@ class WatchdogState:
     these are the pure-software carried fields the chip does not re-encode in a read."""
     cur_ig_value: int = 0x20            # DIG IGI, seeded from _dig_init's 0xC50 read
     cck_pd_lv: int = _CCK_PD_LV1        # _cck_pd_init commits LV_1
+    cck_n_rx: int = 1                   # _set_cckpd_lv_type2 saved n_rx (1R card -> always 1)
     cck_fa_ma: int = _CCK_FA_MA_RESET   # CCK-FA moving average (reset)
     aaa_default: int = 0x0F             # _cck_pd_init: 0xAAA[4:0]
     first_tick: bool = True             # crc32-cnt2-rate writes fire only while *_rate_idx==0
@@ -257,10 +261,40 @@ def _dig(t, st: WatchdogState, cnt_all: int) -> None:
         st.cur_ig_value = new_igi
 
 
+def _write_cck_pd_type2(t, pd_th: int, cs_ratio: int) -> None:
+    """phydm_write_cck_pd_type2 [SRC] phydm_cck_pd.c:156 — pd_th into 0xa08[21:16], cs_ratio into
+    0xaa8[20:16]."""
+    set_bb_reg(t, _REG_CCK_PD_TH, 0x3F0000, pd_th)
+    set_bb_reg(t, _REG_CCK_CS_RATIO, 0x1F0000, cs_ratio)
+
+
+def _set_cckpd_lv_type2(t, st: WatchdogState, lv: int) -> None:
+    """phydm_set_cckpd_lv_type2 [SRC] phydm_cck_pd.c:170 — read cck_n_rx (0xa2c: BIT18 && BIT22),
+    THEN the (lv, n_rx)-unchanged early-return. On this 1R card BIT18 is clear so the C ``&&``
+    short-circuits to a single 0xa2c read; a same-level update still issues that read while writing
+    nothing. On a real change reset the FA moving-average and write pd_th/cs_ratio (the 2R cs offset
+    never applies at n_rx=1)."""
+    cck_n_rx = 2 if (get_bb_reg(t, _REG_CCK_N_RX, 1 << 18)
+                     and get_bb_reg(t, _REG_CCK_N_RX, 1 << 22)) else 1
+    if lv == st.cck_pd_lv and cck_n_rx == st.cck_n_rx:
+        return
+    st.cck_n_rx = cck_n_rx
+    st.cck_pd_lv = lv
+    st.cck_fa_ma = _CCK_FA_MA_RESET
+    cs_add, cs_2r_offset, pd_th = _CCKPD_LV2_PARAMS[lv]
+    cs_ratio = st.aaa_default + cs_add
+    if cck_n_rx == 2:
+        cs_ratio = cs_ratio - cs_2r_offset if cs_ratio >= cs_2r_offset else 0
+    _write_cck_pd_type2(t, pd_th, cs_ratio)
+
+
 def _cck_pd_th(t, st: WatchdogState, cnt_cck_fail: int) -> None:
-    """phydm_cck_pd_th -> type2 [SRC] phydm_cck_pd.c:319 — fold the CCK-FA count into a moving
-    average and pick the PD level (no-link: LV_1 if >1000, LV_0 if <500, else hold). On a level
-    change write pd_th (0xa08[21:16]) + cs_ratio (0xaa8[20:16]); cs_ratio uses aaa_default."""
+    """phydm_cck_pd_th -> phydm_cckpd_type2 (no-link) [SRC] phydm_cck_pd.c:1617 / :319. Fold the
+    CCK-FA count into the moving average, then pick the PD level (no-link: LV_1 if MA>1000, LV_0 if
+    MA<500, else hold = no update). ``phydm_stop_cck_pd_th``'s only no-link gate (5G + is_linked)
+    never fires in monitor, so this runs every tick / band; on 5G the CCK-FA reads ~0 so the MA
+    holds and no update fires. On an update the lv/n_rx check (incl. the 0xa2c read) lives in
+    ``_set_cckpd_lv_type2`` — so a same-level update still reads 0xa2c."""
     if st.cck_fa_ma == _CCK_FA_MA_RESET:
         st.cck_fa_ma = cnt_cck_fail
     else:
@@ -271,14 +305,7 @@ def _cck_pd_th(t, st: WatchdogState, cnt_cck_fail: int) -> None:
         lv = _CCK_PD_LV0
     else:
         return
-    if lv == st.cck_pd_lv:
-        return
-    t.read32(_REG_CCK_N_RX)                              # n_rx (BIT22) — 1T1R here
-    pd_th = 0x7 if lv == _CCK_PD_LV1 else 0x3
-    cs_ratio = (st.aaa_default + 2) if lv == _CCK_PD_LV1 else st.aaa_default
-    set_bb_reg(t, _REG_CCK_PD_TH, 0x3F0000, pd_th)
-    set_bb_reg(t, _REG_CCK_CS_RATIO, 0x1F0000, cs_ratio)
-    st.cck_pd_lv = lv
+    _set_cckpd_lv_type2(t, st, lv)
 
 
 def _adaptivity(t, st: WatchdogState) -> None:

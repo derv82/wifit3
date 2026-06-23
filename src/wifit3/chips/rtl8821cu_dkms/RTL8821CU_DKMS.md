@@ -45,10 +45,10 @@
 > compiled for this CE+8821C build), **`rtl8821c_phy_bf_init`** (`mac.phy_bf_init`), and the **BT-coex
 > HAL init** (`btc.hal_init` = the 1-ant `init_hw_config`: PTA/3-wire enable, ltecoex 0x1700 indirect
 > GNT setup, antenna-to-BT switch, WiFi-only coex table, the tdma/query-BT-info H2Cs via the HMEBOX
-> rotation). Frontier is op #12197 (frame 27783, `IN 0x0210`): the phydm watchdog's **first 2.4G tick
-> after returning from 5G** (tick6) — with the CCK block re-enabled, the FA-counter / CCK-PD path
-> now exercises the CCK branch (`0x0a2c`) that was silent on 5G / the 1R card. Not registered in
-> `wlan/manager.py`.
+> rotation). Frontier is op #18984 (frame 54712, `IN 0x2860`): a channel hop to **ch153** (5G band-3,
+> 149-177) whose RF/BB tune diverges (port `OUT 0x0880`, capture `IN 0x089e`) — the first hop into
+> the highest 5G sub-band, not yet exercised. Operational phase now reproduces 59 hops + 59 LED
+> blinks + 30 watchdog ticks + 30 BT-coex periodicals (op #18984). Not registered in `wlan/manager.py`.
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
@@ -228,8 +228,11 @@
   (the 16 FA/CCA/CRC32 reads 0xfcc-0xf54 + 0x808 cck-enable; `phydm_get_dbg_port_info` dbg ports
   0x0 then 0x209; the FA-reset toggles 0x9a4[17]/0xa2c[15]/0xb58[0]; first-tick crc32-cnt2-rate
   0xb04=6M) + `phydm_dig` (silent: cur_ig_value=0x20, FA in the [2000,4000] hold band -> no change;
-  IGI lives at **0xc50**, not 0x9a4) + `phydm_cck_pd_th` type2 (LV_1->LV_0: 0xa08 pd_th 0x7->0x3,
-  0xaa8 cs_ratio 0x11->0xf) + `phydm_adaptivity` EDCCA NORMAL (L2H=max(igi+8,48)=0x30, H2L=0x28 ->
+  IGI lives at **0xc50**, not 0x9a4) + `phydm_cck_pd_th` type2 (tick1 LV_1->LV_0: 0xa08 pd_th
+  0x7->0x3, 0xaa8 cs_ratio 0x11->0xf; `set_cckpd_lv` reads cck_n_rx `0xa2c` (BIT18&&BIT22, one read
+  on 1R) **before** its lv-unchanged early-return, so a same-level update still reads 0xa2c and
+  writes nothing — that read was the tick6 frontier) + `phydm_adaptivity` EDCCA NORMAL
+  (L2H=max(igi+8,48)=0x30, H2L=0x28 ->
   0x8a4) + interleaved `rtw_phydm_set_rrsr` (0x440=0x15d) + `halrf` thermal arm (tm_trigger 0->1: RF
   0x42[17:16]=3 -> 0x2908 read + 0x0c90 LSSI) + `phydm_dyn_bw_indication` (0x840 bw-fixed). Silent
   members (#if'd out / software / no-link): noisy-detection, ra-info, cfo-tracking, primary-cca,
@@ -909,3 +912,22 @@
   both band directions reproduce).
 - Frontier #12197 = tick6, the first 2.4G watchdog tick after 5G: the CCK block is re-enabled so the
   FA-counter / CCK-PD path now hits the CCK branch (`0x0a2c`) that was silent on 5G / 1R — next milestone.
+
+## Port log — 2026-06-23 (CCK-PD same-level read: tick6 GREEN @ 18984)
+
+- Tick6 (first 2.4G tick after 5G) diverged at op 12196: the port jumped to adaptivity (`0x08a4`)
+  while the wire read `0x0a2c` first. Root cause: `_cck_pd_th` checked `lv == cck_pd_lv` and returned
+  **before** the `0xa2c` read. The C truth ([SRC] phydm_cck_pd.c:170 `phydm_set_cckpd_lv_type2`) is
+  that `phydm_cckpd_type2` calls `set_cckpd_lv` on any update (no-link: cck_fa_ma crossed a band), and
+  `set_cckpd_lv` reads cck_n_rx (`0xa2c` BIT18 && BIT22 — BIT18 clear on 1R short-circuits the C `&&`
+  to one read) **before** its `(lv, n_rx)`-unchanged early-return. So a same-level update still issues
+  the `0xa2c` read while writing nothing. tick6: cck_fa_ma in the no-link branch picks the level it is
+  already at -> read 0xa2c, early-return, no pd_th/cs_ratio write — exactly the wire.
+- Fix: split `_cck_pd_th` (MA + level pick = `phydm_cckpd_type2`) from new `_set_cckpd_lv_type2` (0xa2c
+  read + early-return + reset/write, mirroring the C). Added `WatchdogState.cck_n_rx` (saved n_rx) and
+  the `_CCKPD_LV2_PARAMS` table; `_set_cckpd_lv_type2` resets `cck_fa_ma` on a real write per source.
+  `phydm_cck_pd_th` runs every tick/band in monitor (`phydm_stop_cck_pd_th`'s only no-link gate is
+  unreachable); on 5G the CCK-FA reads ~0 so the MA holds and no update fires (silent, as before).
+- -> 12197 -> **18984, zero divergence** (now 59 hops + 59 LED + 30 ticks + 30 periodicals). New
+  frontier #18984 = a hop to **ch153** (5G band-3, 149-177): port `OUT 0x0880`, capture `IN 0x089e`
+  — the first tune into the highest 5G sub-band; next milestone.
