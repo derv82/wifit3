@@ -11,9 +11,13 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 **✅** works · **⚠️** works, with a caveat · **❌** tried, broken · **⬜** not run yet — *not* a failure, just unconfirmed
 
+**ACKs** — the radio HW-ACKs a chosen MAC (active monitor), the prerequisite for *conversational*
+attacks. ❌ means WPS and *active* PMKID run un-ACKed and frequently time out (passive PMKID still
+works). *Deauth* is no longer a column — it works on every supported card.
+
 ## Matrix
 
-| Chipset | Scan | Deauth | Hand-<br>shake | PMKID | WEP | WPS | Stress | Grade |
+| Chipset | Scan | Hand-<br>shake | PMKID | WEP | WPS | ACKs | Stress | Grade |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | [AR9271](#ar9271) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [MT7612U](#mt7612u) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
@@ -23,10 +27,10 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5572](#rt5572) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [MT7610U](#mt7610u) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [MT7921AU](#mt7921au) | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ✅ | B |
+| [MT7921AU](#mt7921au) | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ❌ | ✅ | B |
 | [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | B |
-| [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | B |
-| [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | B |
+| [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ⚠️ | ❌ | ✅ | B |
+| [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ⚠️ | ❌ | ✅ | B |
 | [RTL8822BU](#rtl8822bu) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | C |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | D |
 
