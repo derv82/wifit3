@@ -150,10 +150,9 @@ def get_nic_capability():
     return MCU_CE_CMD(CE_CMD_GET_NIC_CAPAB), b""
 
 
-# The GET_NIC_CAPAB reply, as returned by transport.send_mcu_command, is the whole
-# device buffer with the connac2 rxd header in front (eid@28, seq@29); the
-# mt76_connac2_mcu_rxd ends at byte 36, where mt76_connac_cap_hdr {n_element:u16,
-# rsv[2]} begins, followed by {type:u32, len:u32, data[len]} TLVs.
+# Offset of the capability payload in the send_mcu_command buffer: the connac2 rxd header
+# (eid@28, seq@29) runs to byte 36, then mt76_connac_cap_hdr {n_element:u16, rsv[2]} +
+# {type:u32, len:u32, data[len]} TLVs. Confirmed: the parser reproduces the captured MAC.
 _NIC_CAPAB_PAYLOAD_OFF = 36
 MT_NIC_CAP_MAC_ADDR = 0x07
 MT_NIC_CAP_6G = 0x18
