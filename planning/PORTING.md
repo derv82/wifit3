@@ -25,14 +25,14 @@ guess; it is a translation you can verify against the wire.
 - **bundle** — the `captures_<chipset>/` directory `capture.py` produced: the pcap, the
   timeline + per-tool logs, the over-air pcap, the firmware blob, and (DKMS only) the
   vendor `driver-source/`.
-- **Capture Replay** — the offline instrument that drives the *real* driver against the
+- **Pcap Replay** — the offline instrument that drives the *real* driver against the
   **pcap** and reports **byte-for-byte accuracy**: how far the driver reproduces the
-  recording before the first diverging byte (100% = clean to end-of-capture). It is the
+  recording before the first diverging byte (100% = clean to the end of the pcap). It is the
   *measurement tool*, never the data — the data is the **pcap**. (Today the per-chip
   `scripts/<chip>/verify_pcap.py`; being unified under `scripts/pcap_replay/`.)
 
 Never write "the capture" on its own. Say **pcap**, **timeline**, or **bundle** for the
-data; **Capture Replay** is the tool that replays it.
+data; **Pcap Replay** is the tool that replays it.
 
 ### Claims are measurements, never virtues
 
@@ -41,11 +41,11 @@ never a bare adjective. **"faithful"/"faithfulness" are banned**: an agent has n
 faith, and the word silently smears three different evidence levels into one self-awarded
 grade. Name the actual evidence:
 
-- **byte-for-byte accurate per the Capture Replay** — measured; cite the op count
+- **byte-for-byte accurate per the Pcap Replay** — measured; cite the op count
   (`5740/5740`).
 - **covered by test vectors** — code with no USB wire (e.g. WPS crypto ported from
   hostapd, checked against published vectors). A different instrument — name it.
-- **ported from `<src cite>`; no capture exercises it** — honest *absence* of evidence, for
+- **ported from `<src cite>`; no pcap exercises it** — honest *absence* of evidence, for
   code on no captured path. Do **not** imply an accuracy you never measured.
 
 ## Prerequisites
