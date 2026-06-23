@@ -89,10 +89,8 @@ from the chip doc. `✅` = nothing open (already HW-confirmed). `🛑`/`⚠️` 
 - ⏳ RX-poll unverified on HW [MT76X2U.md:7].
 
 ### mt7921au (PAU0F / AXML)
-- ⏳ No working HW auto-ACK — one WPS PBC sends ~120 EAPOLs vs ~15-25 on cards that ACK; the AP
-  retransmits every WSC msg because our forged STA isn't ACKed. WPS is chatty + intermittent
-  (timeouts both bands). The omac `uni_dev_info` we send doesn't arm it — needs a connac2
-  `sta_rec`. (5 GHz unicast-data inject was a separate bug, fixed `8798c38d`.) [MT7921AU.md:151]
+- ⏳ Suspected: HW auto-ACK not working (2.4 + 5 GHz), WPS chatty/intermittent — unconfirmed.
+  Leads: conn_type STA vs INFRA_AP; diff the kernel's `uni_add_dev` (capture) vs our `enter_active_monitor`.
 
 ### rtl8188eus (mainline) — prefer the DKMS variant
 - ⏳ Intermittent RX collapse — bad windows hear the reference AP *worse* than further
