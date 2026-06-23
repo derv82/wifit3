@@ -19,10 +19,10 @@
 > counters + DIG + CCK-PD + adaptivity EDCCA + halrf thermal + dyn-bw + env-monitor NHM/CLM/FAHM), and
 > the **BT-coex periodical** (`btc.periodical`: monitor BT/WiFi counters + update_wifi_link_info +
 > read scoreboard + the one-shot first-tick run_coex & BT-FW-version query) are dispatched by their
-> unique opener ops — 14 hops + 5 LED + 2 ticks + 2 periodicals reproduced, op #9941, zero divergence.
-> (The watchdog's halrf thermal member is the 2-phase arm/callback toggle: odd ticks arm the meter,
-> even ticks read it + run the OFDM-swing power-track.) Cold init is HW-validated on real silicon
-> (FW boots). — `_halmac_init_hal` + the monitor
+> unique opener ops — 19 hops (incl. the **2.4G->5G band switch**) + 7 LED + 3 ticks + 3 periodicals
+> reproduced, op #10809, zero divergence. (The watchdog's halrf thermal member is the 2-phase
+> arm/callback toggle; the 5G band switch resets its tracking baseline — see the CB1 resolution.)
+> Cold init is HW-validated on real silicon (FW boots). — `_halmac_init_hal` + the monitor
 > RX-filter + the entire `rtl8821c_phy_init_haldm`/`odm_dm_init` (11 compiled sub-inits incl. the
 > DC-cancellation measurement calibration) + the MU-MIMO/TXBF beamforming defaults**. Cold init
 > (frames 1-7672): USB transport
@@ -45,10 +45,10 @@
 > compiled for this CE+8821C build), **`rtl8821c_phy_bf_init`** (`mac.phy_bf_init`), and the **BT-coex
 > HAL init** (`btc.hal_init` = the 1-ant `init_hw_config`: PTA/3-wire enable, ltecoex 0x1700 indirect
 > GNT setup, antenna-to-BT switch, WiFi-only coex table, the tdma/query-BT-info H2Cs via the HMEBOX
-> rotation). Frontier is op #9941 (frame 21811, `IN 0x0430`): a **BT-coex run_coex pass** (a 5th async
-> producer) at the 2.4G->5G airodump-scan transition — `limited_tx` + `coex_ctrl_owner(WLSIDE)` + the
-> 0x1700 GNT block + `set_ant_switch(BBSW, TO_WLG)` + a `table(0)` read (exact trigger / the absent
-> tdma+scbd are open; see Known issues). Not registered in `wlan/manager.py`.
+> rotation). Frontier is op #10809 (frame 23519, `IN 0x0210`): the phydm watchdog's env-monitor
+> recomputes the NHM threshold curve because the **IGI dropped to 0x1e on 5G** (DIG -2 from the low
+> 5G FA count); the port currently suppresses the `*_set_th` write (it was IGI-steady before). Not
+> registered in `wlan/manager.py`.
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
@@ -114,6 +114,7 @@
 | iface MAC addr | `mac.set_mac_addr` / `efuse.mac_address` | `rtw_hal_iface_init` hal_intf.c:521 -> `cfg_mac_addr_88xx` | REG_MACID 0x0610/4 + 0x0614/2 from EFUSE 0x107 (per-card, never hardcoded) — **VERIFIED** |
 | iface port-enable / RX-BAR | `mac.hw_port_enable` / `mac.enable_rx_bar` | `hw_var_hw_port_cfg` / `init_hw_mlme_ext` rtw_mlme_ext.c:1279 | BCN_CTRL 0x0550 \|= 0x1c ; RXFLTMAP1 0x06a2 \|= BIT8 — **VERIFIED** |
 | channel tune (RF/BB) | `chan.set_channel` / `_need_switch_band` | `rtl8821c_switch_chnl_and_set_bw` rtl8821c_phy.c:740 ; `need_switch_band` :477 | 2.4G ch1 + same-band hop ch10: band switch (coex notify + phydm band) only on band change, then switch_channel/switch_bandwidth (20 MHz) + kfree — **VERIFIED** |
+| 5G band switch + tune | `chan._switch_band_5g` / `_switch_channel_5g` / `_csi_mask_disable` / `txpower` 5G | `config_phydm_switch_band_8821c` :756 ; `..._channel_8821c` :865 ; `phydm_csi_mask_setting` phydm_api.c:1190 | 2.4G->5G (ch36..64): `switchband_notify_5g`->`action_wifi_under5g` (set_ant_path PHASE_5G + table0, no tdma) + 5G band/channel (WLA rf-set, AGC idx, fc, csi-mask off) + 5G kfree (RF 0x55 gain) + 5G TXAGC (no CCK) — **VERIFIED** |
 | coex run_coex | `btc.run_coex` / `btc.switchband_notify_2g` | `halbtc8821c1ant_run_coex` halbtc8821c1ant.c:3493 | band switch: update_wifi_link_info (limited_tx 4 backup reads) then early-return (run_time FALSE); media-connect (run_time TRUE): BTCQDDR + action_wifi_not_connected — **VERIFIED** |
 | phydm stop-TRX | `dm.stop_ic_trx` | `phydm_stop_ic_trx` phydm_api.c:606 (11AC) | dbg-port BB-idle **poll** ((BIT17\|BIT3)==0, ≤100 reads) + TX pause + OFDM/CCK TRX off / restore; reused by DC-cancel + channel tune — **VERIFIED** |
 | TX-power-by-rate | `txpower.set_tx_power_level` | `rtl8821c_set_tx_power_level` rtl8821c_phy.c:556 | 0x1d00-0x1d34 txagc = EFUSE PG base (by-rate/limit disabled in the DKMS build); BTG looks up RF_PATH_B — **VERIFIED** |
@@ -277,27 +278,20 @@
      `delta_swing_table_idx_5ga_n[0]` = `{0,1,1,2,3,3,3,4,...}` [SRC] halhwimg8821c_rf.c:2785), not 2ga_n.
   CB1 then: avg=25 (ring [25,26] is NOT reset), outer-delta=|25-30|=5>0 (because last was reset to 30)
   -> d=5 -> `5ga_n[0][5]=3` -> idx **-3** -> `0xc94=0x7a`; offset = -3 - 0(reset last) != 0 -> applies.
-  Exactly the wire. **Porting implication** (for the 5G-band-switch milestone, when the cursor reaches
-  it): the thermal callback must be **band-aware** (pick 2ga/5ga by channel), and `chan.set_channel`'s
-  band switch must apply the `odm_clear_txpowertracking_state` reset to `WatchdogState`
-  (thermal_value=eeprom_thermal, ofdm_swing_idx=0, + default_ofdm_index += BBDiff*2 — 0 on this card).
-  No external/IQK writer is involved (`do_iqk` needs `is_linked`, FALSE in monitor).
-- **Frontier (next milestone): op #9941 (frame 21811): `IN 0x0430` — a BT-coex run_coex pass (5th
-  async producer) at the 2.4G->5G airodump-scan transition.** Wire shape (ops 9941-9993, between a
-  paired ch12 hop @9890 and @9994, right before the first 5G hop ch36 @10043): `limited_tx` backup
-  reads (0x430/0x434/0x42a/0x455) -> `coex_ctrl_owner(WLSIDE)` (0x73) -> the 0x1700 ltecoex GNT block
-  -> `set_ant_switch(BBSW, TO_WLG)` (0x4e/0x4f/0xcb4/0xcb7/0x67) -> `table(0)` read (0x6c0/0x6c4, no
-  write). The `limited_tx`-before-`set_ant_path` order matches **run_coex**'s internal order
-  (update_wifi_link_info then set_ant_path), NOT `scan_notify`'s (scbd->set_ant_path->run_coex). Open
-  questions to resolve before porting: (1) the exact trigger (scan_notify / switchband / connect /
-  the 5G-tune's own coex) and reason code; (2) why `set_ant_path(NM,2G)` re-fires GNT/switch here
-  (cur_ant_pos_type must have been reset to non-2G before 9941 — likely by an intervening 5G/scan
-  step); (3) why there is **no tdma H2C and no 0xaa scbd write** in the block (action took a
-  table-only path, or it is not `action_wifi_not_connected`). NOTE: `set_ant_switch` reads/writes
-  `0x4e` — the SAME reg as the SW-LED opener — so this block's 0x4e must be consumed by the coex
-  handler, not mis-dispatched as an LED blink. The 5G band switch (hop ch36, `need_switch_band` TRUE)
-  and the genuine LED-double (the traffic-driven 0x4e[3] re-assert, lead-approved value-bypass) are
-  further milestones in this region.
+  Exactly the wire. **DONE + gate-VERIFIED @ 10809:** the thermal callback is band-aware
+  (`watchdog._delta_swing_tables`, 2ga / 5ga[sub-band] by `t.current_channel`), and the band switch
+  flags `t.thermal_reset_pending` (`chan.set_channel`) which the next callback applies
+  (thermal_value=eeprom, ofdm_swing_idx=0). CB1 (`0xc94=0x7a`) reproduces exactly. No external/IQK
+  writer (`do_iqk` needs `is_linked`, FALSE in monitor).
+- **The op-9941 run_coex pass was the 2.4G->5G band switch — DONE + gate-VERIFIED @ 10809.** Not
+  scan_notify: it is `set_channel(ch36)`'s `phy_switch_wireless_band` -> `switchband_notify_5g` ->
+  `run_coex(5GSWITCHBAND)` -> **`action_wifi_under5g`** ([SRC] :3257): `set_ant_path(NM, PHASE_5G)`
+  (no 0x49c poll / no ltecoex; GNT_BT=HW_PTA, GNT_WL=SW_HIGH -> 0x38=0x3303; `set_ant_switch(BBSW,
+  TO_WLA)`) + `table(0)` (non-force read, no write) + `tdma(NM, off, 8)` (**no-op H2C** — already
+  off/type-8). No scbd write (BTCQDDR already set). The run_coex's `update_wifi_link_info` runs first
+  (the leading `limited_tx`), which is why `limited_tx` precedes set_ant_path. Dispatched as a
+  band-switch hop (opener `IN 0x0430`). Then the full 5G tune (`_switch_band_5g` WLA / `_switch_
+  channel_5g` AGC-idx+fc+csi-mask / 5G kfree RF 0x55 / 5G TXAGC no-CCK) reproduces ch36-64.
 - `_drv_enable_trx` (between init_mac_flow and general-info) is RX/thread-side only — a gate no-op.
 - **PHYDM discriminators are transformed, not the hal->* values** (the AGC walker forced this out):
   `dm->rfe_type = rfe_type_expand >> 3` (0x22 -> 4) and `dm->package_type = 1` for the 0x2x combo
@@ -879,3 +873,24 @@
 - Frontier #9941 = a BT-coex **run_coex pass** (5th async producer) at the 2.4G->5G scan transition:
   limited_tx -> set_ant_switch(TO_WLG) -> table(0) read (no tdma/scbd). Exact trigger + the absent
   tdma are open (see Known issues); reuses the btc.py set_ant_path/run_coex primitives — next milestone.
+
+## Port log — 2026-06-23 (2.4G->5G band switch + CB1 thermal anomaly RESOLVED, GREEN @ 10809)
+
+- Ported the whole 2.4G->5G band switch + 5G channel tune, dispatched as a band-switch hop (opener
+  `IN 0x0430`). New btc 5G coex (`switchband_notify_5g` -> band-aware `run_coex` -> `action_wifi_
+  under5g`: `_set_ant_path_5g` PHASE_5G + table0 + the no-op `tdma(NM,off,8)`), chan 5G arms
+  (`_switch_band_5g` WLA rf-set, `_switch_channel_5g` AGC-idx/fc/`_csi_mask_disable`, 5G `_config_
+  kfree` RF 0x55 gain from PPG 0x1EC), and 5G `txpower` (no CCK, 5G PG: 14 BW40 groups + the BW20/
+  OFDM diff byte). -> 9941 -> **10809, zero divergence** (now 19 hops + 7 LED + 3 ticks + 3 periodicals).
+- **The "interleaved producer" was the band switch — now proven end-to-end against the wire.** CB1
+  (tick4, 5G) writes `0xc94=0x7a` (idx -3): the 5G band switch flags `t.thermal_reset_pending`
+  (`odm_clear_txpowertracking_state`), the next callback resets thermal_value->eeprom(30) +
+  ofdm_swing_idx->0, and `_delta_swing_tables` picks the **5G** table (5ga_n[0][5]=3) -> avg 25 vs
+  last 30 = delta 5 -> -3. No IQK / external writer. `t.current_channel` (transport) drives the
+  band-aware table; the avg ring is NOT reset on band switch (matching source).
+- Two facts the gate forced out: the 5G `action_wifi_under5g` tdma is `NM` (non-force) so it is a
+  no-op H2C (already off/type-8) — that is why op 9941 has no tdma box write; and the 5G channel
+  tune's `phydm_csi_mask_setting(FUNC_DISABLE)` clears the 8 CSI-mask dwords 0x880-0x89c + 0x874[0].
+- Frontier #10809 = the watchdog env-monitor's NHM/FAHM `set_th` recompute: on 5G the DIG drops the
+  IGI to 0x1e (low 5G FA count), so the threshold curve (`th[i]=((igi-14)<<1)+4i`) is rewritten
+  (0x998/0x99c/0x9a0) instead of suppressed — port the IGI-changed `*_set_th` path next.

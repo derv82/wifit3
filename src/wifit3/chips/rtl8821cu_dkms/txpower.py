@@ -30,14 +30,21 @@ _GRP_2G = 6                        # MAX_CHNL_GROUP_24G (CCK base count; BW40 ba
 _SWITCH_TO_BTG = 0
 
 
+_BYTES_2G = 18                     # PG_TXPWR_1PATH_BYTE_NUM_2G (5G block starts after this)
+_GRP_5G = 14                       # MAX_CHNL_GROUP_5G (BW40-1S base groups)
+
+
 @dataclass
 class TxpwrPG:
-    """Per-path PG TX-power base + the 1T BW20-relevant 2.4G diffs — enough for the BW20 base
-    lookup. The 5G block and the 2T/3T/4T diff bytes are skipped (1T1R, 2.4 GHz)."""
+    """Per-path PG TX-power base + the 1T BW20-relevant diffs (both bands) — enough for the BW20
+    base lookup. The 2T/3T/4T diff bytes are skipped (1T1R)."""
     cck_base: list        # [path][group]  (6 groups)
     bw40_base_2g: list    # [path][group]  (5 groups)
     ofdm_1t: list         # [path]
     bw20_1t: list         # [path]
+    bw40_base_5g: list    # [path][group]  (14 groups)
+    ofdm_5g_1t: list      # [path]
+    bw20_5g_1t: list      # [path]
 
 
 def _s4(nib: int) -> int:
@@ -46,24 +53,43 @@ def _s4(nib: int) -> int:
 
 
 def parse_pg(log_map: bytes, npaths: int = 2) -> TxpwrPG:
-    """Decode the 2.4G PG TX-power base (both paths) from the logical EFUSE map: CCK base x6, BW40
-    base x5, then diff byte 0 = BW20-1T[7:4] | OFDM-1T[3:0]. The rest of each path's block (more
-    diffs + the 5G block) is skipped via the fixed per-path stride."""
+    """Decode the PG TX-power base (both paths) from the logical EFUSE map. 2.4G block (18 B): CCK
+    base x6, BW40 base x5, diff byte 0 = BW20-1T[7:4] | OFDM-1T[3:0]. 5G block (next 24 B [SRC]
+    hal_com_phycfg.c:844): BW40-1S base x14, then diff byte 0 = BW20-1T[7:4] | OFDM-1T[3:0]. The
+    rest of each block (2T/3T/4T diffs) is skipped via the fixed per-path stride."""
     cck, bw40, ofdm_1t, bw20_1t = [], [], [], []
+    bw40_5g, ofdm_5g, bw20_5g = [], [], []
     for p in range(npaths):
         base = _PG_SADDR + p * _PG_1PATH
         cck.append([log_map[base + g] for g in range(_GRP_2G)])
         bw40.append([log_map[base + _GRP_2G + g] for g in range(_GRP_2G - 1)])
-        d0 = log_map[base + _GRP_2G + (_GRP_2G - 1)]     # first diff byte
+        d0 = log_map[base + _GRP_2G + (_GRP_2G - 1)]     # first 2.4G diff byte
         ofdm_1t.append(_s4(d0 & 0xF))
         bw20_1t.append(_s4(d0 >> 4))
-    return TxpwrPG(cck, bw40, ofdm_1t, bw20_1t)
+        base5 = base + _BYTES_2G
+        bw40_5g.append([log_map[base5 + g] for g in range(_GRP_5G)])
+        d5 = log_map[base5 + _GRP_5G]                    # first 5G diff byte
+        ofdm_5g.append(_s4(d5 & 0xF))
+        bw20_5g.append(_s4(d5 >> 4))
+    return TxpwrPG(cck, bw40, ofdm_1t, bw20_1t, bw40_5g, ofdm_5g, bw20_5g)
 
 
 def _ch_group_2g(ch: int) -> tuple[int, int]:
     """rtw_get_ch_group [SRC] rtw_rf.c:505 — 2.4G (bw40 group, cck group)."""
     g = 0 if ch <= 2 else 1 if ch <= 5 else 2 if ch <= 8 else 3 if ch <= 11 else 4
     return g, (5 if ch == 14 else g)
+
+
+# 5G BW40-1S group boundaries (upper channel of each group) [SRC] rtw_rf.c:531-558.
+_GRP_5G_HI = (42, 48, 58, 64, 106, 114, 122, 130, 138, 144, 155, 161, 171, 177)
+
+
+def _ch_group_5g(ch: int) -> int:
+    """rtw_get_ch_group [SRC] rtw_rf.c:531 — the 5 GHz BW40-1S base group (0-13)."""
+    for g, hi in enumerate(_GRP_5G_HI):
+        if ch <= hi:
+            return g
+    return _GRP_5G - 1
 
 
 # 1T rate sections written at init (under_survey false). hw_rate is the DESC rate index; the
@@ -74,12 +100,16 @@ _SECTIONS = (
     ("ht", range(12, 20)),         # HT MCS0-7 (1ss)
     ("vht", range(44, 54)),        # VHT 1SS MCS0-9 (DESC 0x2c-0x35)
 )
+_SECTIONS_5G = _SECTIONS[1:]       # 5G has no CCK (rate section skipped)
 _VHTSS1MCS9 = 53                   # the extra flush point besides hw_rate%4==3
 
 
-def _pg_base(pg: TxpwrPG, path: int, ch: int, section: str) -> int:
+def _pg_base(pg: TxpwrPG, path: int, ch: int, section: str, is_5g: bool) -> int:
     """phy_get_pg_txpwr_idx [SRC] hal_com_phycfg.c:2322 at BW20 — EFUSE PG base + section diff:
-    CCK is the CCK base; OFDM adds the OFDM-1T diff; HT/VHT add the BW20-1T diff."""
+    CCK is the CCK base; OFDM adds the OFDM-1T diff; HT/VHT add the BW20-1T diff (per band)."""
+    if is_5g:
+        base = pg.bw40_base_5g[path][_ch_group_5g(ch)]
+        return base + (pg.ofdm_5g_1t[path] if section == "ofdm" else pg.bw20_5g_1t[path])
     g, cck_g = _ch_group_2g(ch)
     if section == "cck":
         return pg.cck_base[path][cck_g]
@@ -93,14 +123,16 @@ def set_tx_power_level(t, info, channel: int) -> None:
     """rtl8821c_set_tx_power_level [SRC] rtl8821c_phy.c:556 — write the per-channel TXAGC table
     (0x1d00). A BTG 2.4 GHz card looks the index up on RF_PATH_B; the register write is always
     path A. 4 rate bytes accumulate per dword, flushed at hw_rate%4==3 (and at the last VHT rate).
+    A 5G channel uses RF_PATH_A's 5G PG and skips the CCK section.
 
-    under_survey_ch is FALSE at init, so all four 1SS sections are written."""
+    under_survey_ch is FALSE at init, so all four (three on 5G) 1SS sections are written."""
     pg = parse_pg(info.log_map)
     btg = info.default_rf_set == _SWITCH_TO_BTG
+    is_5g = channel > 14
     path = 1 if (channel <= 14 and btg) else 0          # RF_PATH_B for a BTG 2.4 GHz card
     buf = 0
-    for section, hw_rates in _SECTIONS:
-        val = _pg_base(pg, path, channel, section) & 0xFF
+    for section, hw_rates in (_SECTIONS_5G if is_5g else _SECTIONS):
+        val = _pg_base(pg, path, channel, section, is_5g) & 0xFF
         for hw in hw_rates:
             shift = hw & 0x3
             buf |= val << (shift * 8)

@@ -40,6 +40,7 @@ _OP_HOP = 0x2860                 # R: read_rf(0x18) = 0x2800+(0x18<<2) opens a s
 _OP_LED = 0x004E                 # R: SwLedBlink1 / pinmux_wl_led_sw_ctrl opens an LED blink tick
 _OP_TICK = 0x0210                # R: sreset xmit_status_check opens a phydm dynamic-check tick
 _OP_PERI = 0x0770                # R: monitor_bt_ctr hi-pri counter opens a BT-coex periodical
+_OP_BANDSW = 0x0430              # R: a band-switching tune opens with run_coex's limited_tx (0x430)
 _REG_RF_CHNL_LSSI = 0x0C90       # path-A LSSI write — carries the tuned channel in addr 0x18
 
 
@@ -97,7 +98,7 @@ def _walk_operational(w: Walk, info) -> tuple[int, int, int, int, dict | None]:
     hops = leds = ticks = peris = 0
     while w.i < len(w.ops):
         o = w.peek()
-        if o["dir"] == "IN" and o.get("wval") == _OP_HOP:
+        if o["dir"] == "IN" and o.get("wval") in (_OP_HOP, _OP_BANDSW):
             ch = _peek_channel(w, w.i)
             if ch is None:
                 break

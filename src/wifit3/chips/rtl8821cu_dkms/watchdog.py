@@ -86,11 +86,31 @@ _REG_OFDM_TX_AGC = 0x0C94       # set_pwr8821c: [6:1] = absolute_ofdm_swing_idx 
 _REG_OFDM_BB_SWING = 0x0C1C     # [31:21] = tx_scaling_table_jaguar[bb_swing_idx_ofdm]  [SRC] :222
 _AVG_THERMAL_NUM = 4            # AVG_THERMAL_NUM_8821C [SRC] halrf_8821c.h:19
 _TXPWR_TRACK_TABLE_MAX = 29     # TXPWR_TRACK_TABLE_SIZE-1 clamp [SRC] halrf_powertracking_ce.h:40
-# delta-swing index tables, path-A 2.4 GHz [SRC] halhwimg8821c_rf.c:2808/2811 (rfe-invariant).
+# delta-swing index tables, path-A [SRC] halhwimg8821c_rf.c (rfe-invariant). 2.4 GHz is one table;
+# 5 GHz has three sub-bands (band-1 36-64 / band-2 100-144 / band-3 149-177) [SRC] :2784/2793.
 _DELTA_SWING_2GA_N = (0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 3, 4,
                       4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 7, 7, 8, 8, 9)
 _DELTA_SWING_2GA_P = (0, 1, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 4, 4, 5,
                       5, 5, 5, 6, 6, 6, 7, 7, 7, 8, 8, 9, 9, 9, 9)
+_DELTA_SWING_5GA_N = (
+    (0, 1, 1, 2, 3, 3, 3, 4, 4, 5, 5, 6, 6, 6, 7, 8, 8, 8, 9, 9, 9, 10, 10, 11, 11, 12, 12, 12, 12, 12),
+    (0, 1, 1, 1, 2, 3, 3, 4, 4, 5, 5, 5, 6, 6, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 12, 12, 12, 12, 12),
+    (0, 1, 2, 2, 3, 4, 4, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 9, 10, 10, 11, 11, 12, 12, 12, 12, 12, 12),
+)
+_DELTA_SWING_5GA_P = (
+    (0, 1, 1, 2, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 11, 11, 12, 12, 12, 12, 12, 12, 12),
+    (0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 5, 6, 7, 7, 8, 8, 9, 10, 10, 11, 11, 12, 12, 12, 12, 12, 12, 12, 12),
+    (0, 1, 1, 1, 2, 3, 3, 3, 4, 4, 4, 5, 6, 6, 7, 7, 8, 8, 9, 10, 10, 11, 11, 12, 12, 12, 12, 12, 12, 12),
+)
+
+
+def _delta_swing_tables(channel: int | None) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """get_delta_swing_table_8821c [SRC] halrf_8821c.c:239 — the (down, up) delta-swing tables for
+    the tune's band: the 2.4 GHz pair, or the 5 GHz sub-band pair (36-64 / 100-144 / 149-177)."""
+    if channel is None or channel <= 14:
+        return _DELTA_SWING_2GA_N, _DELTA_SWING_2GA_P
+    sub = 0 if channel <= 64 else 1 if channel <= 144 else 2
+    return _DELTA_SWING_5GA_N[sub], _DELTA_SWING_5GA_P[sub]
 
 # --- dyn-bw indication (bw-fixed) [SRC] phydm_api.c:800 ----------------------
 _REG_BW_FIXED = 0x0840          # [3:0]=pri-ch (20 MHz->0) ; BIT4 = bw-fixed enable
@@ -278,19 +298,24 @@ def _halrf_thermal_callback(t, st: WatchdogState) -> None:
     monitor / small-delta regime the swing index stays within [-tx_pwr_idx, 63-tx_pwr_idx] so it
     passes `get_mix_mode` unchanged and the BB-swing index stays at default_ofdm_index (0xc1c
     write is identity). The averaging / table math is software; only the two writes hit the wire."""
+    if t.thermal_reset_pending:                         # a band switch reset the tracking baseline
+        st.thermal_value = st.eeprom_thermal            # odm_clear_txpowertracking_state [SRC] :166
+        st.ofdm_swing_idx = 0
+        t.thermal_reset_pending = False
     raw = (read_rf(t, _REG_RF_T_METER) & _THERMAL_FIELD) >> 10
     thermal = max(0, min(raw + st.thermal_offset, 63))
-    st.thermal_avg[st.thermal_avg_idx] = thermal
+    st.thermal_avg[st.thermal_avg_idx] = thermal        # the avg ring is NOT reset on band switch
     st.thermal_avg_idx = (st.thermal_avg_idx + 1) % _AVG_THERMAL_NUM
     nz = [v for v in st.thermal_avg if v]
     avg = sum(nz) // len(nz) if nz else thermal
     if avg == st.thermal_value:                         # outer delta 0 -> no power-track this tick
         return
     delta = min(abs(avg - st.eeprom_thermal), _TXPWR_TRACK_TABLE_MAX)
+    tbl_n, tbl_p = _delta_swing_tables(t.current_channel)
     if avg > st.eeprom_thermal:                         # temp above PG base: positive swing
-        new_idx = _DELTA_SWING_2GA_P[delta]
+        new_idx = tbl_p[delta]
     else:                                               # at/below base: negative swing
-        new_idx = -_DELTA_SWING_2GA_N[delta]
+        new_idx = -tbl_n[delta]
     st.thermal_value = avg
     if new_idx == st.ofdm_swing_idx:                    # power_index_offset 0 -> no apply
         return

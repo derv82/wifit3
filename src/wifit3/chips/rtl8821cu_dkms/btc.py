@@ -157,9 +157,12 @@ _CTRL_BY_MAC, _CTRL_BY_FW, _CTRL_BY_BT = 3, 4, 5
 _TO_WLG, _TO_NOCARE = 1, 4      # TO_WLG is the only pos that flips polarity (when wlg not at btg)
 
 _SCBD_SCAN, _SCBD_BTCQDDR = 1 << 2, 1 << 10     # [SRC] halbtc8821c1ant.h:164/168
-_PHASE_INIT, _PHASE_2G = 0x0, 0x3               # [SRC] halbtc8821c1ant.h:149/152
+_PHASE_INIT, _PHASE_2G, _PHASE_5G = 0x0, 0x3, 0x4   # [SRC] halbtc8821c1ant.h:149/152/153
 _ANT_PATH_WIFI, _ANT_PATH_PTA, _ANT_PATH_AUTO = 0, 2, 4   # [SRC] halbtcoutsrc.h:164-168
+_TO_WLA = 0x2                                   # [SRC] halbtc8821c1ant.h:143
 _RSN_2GSWITCHBAND, _RSN_2GMEDIA = 0x3, 0x9      # [SRC] halbtc8821c1ant.h:176/182
+_RSN_5GSWITCHBAND = 0x4                         # [SRC] halbtc8821c1ant.h:177
+_BAND_5G = 1                                    # chan._need_switch_band latches t.current_band
 
 
 @dataclass
@@ -557,9 +560,38 @@ def run_coex(t, reason: int) -> None:
     _update_wifi_link_info(t, st)
     if not st.run_time_state:
         return
+    if t.current_band == _BAND_5G:                       # is_all_under_5g [SRC] :3588
+        _action_wifi_under5g(t, st)
+        return
     _set_ant_path_2g(t, st, force=False)                 # single-port 2G, re-assert (no wire)
     _write_scbd(t, st, _SCBD_BTCQDDR, True)
     _action_wifi_not_connected(t, st)
+
+
+def _set_ant_path_5g(t, st: BtcState, force: bool) -> None:
+    """halbtc8821c1ant_set_ant_path(AUTO, force, PHASE_5G) [SRC] :2722 — 5G is WiFi-exclusive, so
+    (unlike PHASE_2G) there is no BT-IQK 0x49c poll and no ltecoex setup: take path control to WL,
+    drive GNT_BT to HW-PTA and GNT_WL to SW-high, arm run_time, then route the BB-SW switch to 5G
+    WiFi (AUTO -> WIFI5G -> BBSW/TO_WLA). A non-force call returns early when the path is unchanged."""
+    key = (_ANT_PATH_AUTO << 8) | _PHASE_5G
+    if not force and st.cur_ant_pos_type == key:
+        return
+    st.cur_ant_pos_type = key
+    _write_bitmask8(t, REG_COEX_CTRL_OWNER, 1 << 2, 1)   # coex_ctrl_owner(WLSIDE) [SRC] :2725
+    _set_gnt_bt(t, _GNT_HW_PTA)
+    _set_gnt_wl(t, _GNT_SW_HIGH)
+    st.run_time_state = True                             # PHASE_5G [SRC] :2733
+    _set_ant_switch(t, st.rfe, _CTRL_BY_BBSW, _TO_WLA)
+
+
+def _action_wifi_under5g(t, st: BtcState) -> None:
+    """halbtc8821c1ant_action_wifi_under5g [SRC] :3257 — the WiFi-is-under-5G coex action:
+    set_ant_path(PHASE_5G) + coex table type 0 + PTA-control PS-TDMA off (type 8). Both the table
+    and the tdma are non-force here: the table read-compare matches (no write) and the tdma is a
+    no-op (cur PS-TDMA is already off/type-8 from init), so neither emits an H2C."""
+    _set_ant_path_5g(t, st, force=False)
+    _table(t, st, 0, force=False)
+    _tdma(t, st, force=False, turn_on=False, tcase=8)
 
 
 def switchband_notify_2g(t) -> None:
@@ -567,6 +599,13 @@ def switchband_notify_2g(t) -> None:
     `ex_halbtc8821c1ant_switchband_notify(BTC_SWITCH_TO_24G_NOFORSCAN)` -> `run_coex(2GSWITCHBAND)`.
     Returns immediately if stop_coex_dm (not the case here)."""
     run_coex(t, _RSN_2GSWITCHBAND)
+
+
+def switchband_notify_5g(t) -> None:
+    """rtw_btcoex_switchband_notify(BAND_ON_5G) [SRC] hal_btcoex.c -> the 1-ant
+    `ex_halbtc8821c1ant_switchband_notify(BTC_SWITCH_TO_5G)` -> `run_coex(5GSWITCHBAND)` [SRC] :4761.
+    With the channel now on 5G (`t.current_band`), run_coex takes the wifi-under-5G action."""
+    run_coex(t, _RSN_5GSWITCHBAND)
 
 
 def media_status_notify_connect_2g(t) -> None:

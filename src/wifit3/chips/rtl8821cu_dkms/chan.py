@@ -15,6 +15,7 @@ from .rf import read_rf, write_rf, write_rf_masked
 _MASKDWORD = 0xFFFFFFFF
 _KFREE_GAIN_BMASK = 0x7C000        # RF 0x55/0x65 [18:14] kfree gain field
 _BAND_2_4G, _BAND_5G = 0, 1       # [SRC] include/rtw_rf.h:97
+_SWITCH_TO_BTG, _SWITCH_TO_WLG, _SWITCH_TO_WLA = 0, 1, 2   # [SRC] phydm_hal_api8821c.h rf_set enum
 
 
 def _need_switch_band(t, channel: int) -> bool:
@@ -29,22 +30,24 @@ def _need_switch_band(t, channel: int) -> bool:
     return False
 
 
-def _switch_rf_set(t, info) -> None:
-    """config_phydm_switch_rf_set_8821c [SRC] phydm_hal_api8821c.c — route the RF front-end to the
-    WLG/BTG/WLA set. This card's ``default_rf_set`` is BTG (combo, rfe 0x22): 0x1080[16]=1,
-    0x00[26]=1, then merge the 0xcb8 select bits and load the BTG 0xa84/0xa80 gains. ``mp_mode`` is
-    off so the AGC-diff retune is skipped."""
+def _switch_rf_set(t, rf_set: int) -> None:
+    """config_phydm_switch_rf_set_8821c [SRC] phydm_hal_api8821c.c:1240 — route the RF front-end to
+    the BTG/WLG/WLA set: 0x1080[16]=1, 0x00[26]=1, then merge the 0xcb8 select bits (and, for the
+    2.4 GHz BTG/WLG sets, the 0xa84/0xa80 gains). The 5G WLA set only flips the 0xcb8 bits.
+    ``mp_mode`` is off so the AGC-diff retune is skipped."""
     set_bb_reg(t, 0x1080, 1 << 16, 0x1)
     set_bb_reg(t, 0x0000, 1 << 26, 0x1)
     bb = t.read32(0x0CB8)
-    if info.default_rf_set == 0:                            # SWITCH_TO_BTG
+    if rf_set == _SWITCH_TO_BTG:
         bb = (bb | (1 << 16)) & ~((1 << 18) | (1 << 20) | (1 << 21) | (1 << 22) | (1 << 23))
         set_bb_reg(t, 0x0A84, 0x00FF0000, 0xE)
         set_bb_reg(t, 0x0A80, 0x0000FFFF, 0xFC84)
-    else:                                                   # SWITCH_TO_WLG
+    elif rf_set == _SWITCH_TO_WLG:
         bb = (bb | (1 << 20) | (1 << 21) | (1 << 22)) & ~((1 << 16) | (1 << 18) | (1 << 23))
         set_bb_reg(t, 0x0A84, 0x00FF0000, 0x12)
         set_bb_reg(t, 0x0A80, 0x0000FFFF, 0x7532)
+    else:                                                   # SWITCH_TO_WLA (5G) [SRC] :1308
+        bb = (bb | (1 << 20) | (1 << 22) | (1 << 23)) & ~((1 << 16) | (1 << 18) | (1 << 21))
     set_bb_reg(t, 0x0CB8, _MASKDWORD, bb)
 
 
@@ -58,13 +61,83 @@ def _switch_band(t, info, central_ch: int) -> None:
     set_bb_reg(t, 0x0A80, 1 << 18, 0x0)                     # disable BB CCK check
     set_bb_reg(t, 0x0814, 0x0000FC00, 15)                  # CCA mask (default)
     rf18 = (rf18 & ~((1 << 16) | (1 << 9) | (1 << 8))) & ~0xFF | central_ch
-    _switch_rf_set(t, info)
+    _switch_rf_set(t, info.default_rf_set)
     write_rf_masked(t, 0xDF, 1 << 6, 0x1)                  # RF TXA_TANK LUT mode
     write_rf_masked(t, 0x64, 0xF, 0xF)                     # RF TXA_PA_TANK
     ts = dm.TrxStop()
     dm.stop_ic_trx(t, True, ts)
     write_rf(t, 0x18, rf18)
     dm.stop_ic_trx(t, False, ts)
+
+
+def _switch_band_5g(t, central_ch: int) -> None:
+    """config_phydm_switch_band_8821c [SRC] phydm_hal_api8821c.c:756 (5G arm). The mirror of the
+    2.4 GHz arm: disable the CCK block + re-enable the CCK checks (5G has no CCK), set the CCA mask,
+    set the RF band/channel word (RF 0x18 |= BIT16|BIT8 = 5G), route the RF set to WLA, clear the
+    RF TXA_TANK LUT-mode bit, then write RF 0x18 with TRX stopped. No RF 0x64 write on the 5G arm."""
+    rf18 = read_rf(t, 0x18)
+    set_bb_reg(t, 0x0A80, 1 << 18, 0x1)                     # enable BB CCK check
+    set_bb_reg(t, 0x0454, 1 << 7, 0x1)                      # enable MAC CCK check
+    set_bb_reg(t, 0x0808, 1 << 28, 0x0)                     # disable CCK block
+    set_bb_reg(t, 0x0814, 0x0000FC00, 15)                  # CCA mask (default)
+    rf18 = (rf18 & ~((1 << 16) | (1 << 9) | (1 << 8))) | (1 << 8) | (1 << 16)
+    rf18 = (rf18 & ~0xFF) | central_ch
+    _switch_rf_set(t, _SWITCH_TO_WLA)
+    write_rf_masked(t, 0xDF, 1 << 6, 0x0)                  # RF TXA_TANK LUT mode off
+    ts = dm.TrxStop()
+    dm.stop_ic_trx(t, True, ts)
+    write_rf(t, 0x18, rf18)
+    dm.stop_ic_trx(t, False, ts)
+
+
+def _set_bb_swing_by_band_5g(t) -> None:
+    """phy_set_bb_swing_by_band_8821c [SRC] rtl8821c_phy.c (5G band) — 0xc1c[31:21] = tx BB swing.
+    The 0 dB registry swing yields 0x200 (same as 2.4 GHz on this card). (The companion
+    `odm_clear_txpowertracking_state` is software — its thermal-baseline reset is applied to the
+    watchdog state by the gate's band-switch handler, see RTL8821CU_DKMS.md.)"""
+    set_bb_reg(t, 0x0C1C, 0xFFE00000, 0x200)
+
+
+def _switch_channel_5g(t, central_ch: int) -> None:
+    """config_phydm_switch_channel_8821c [SRC] phydm_hal_api8821c.c:865 (5G arm): set the RF band/
+    channel word (RF 0x18 + the >64 sub-band bits BIT17/BIT18), the AGC table index by sub-band
+    (0xc1c[11:8]: 36-64->1, 100-144->2, >=149->3), the clock-offset central frequency (0x860), then
+    write RF 0x18 with TRX stopped. No CCK-TX-filter (5G has no CCK); cut != A so no RF 0xb8."""
+    rf18 = read_rf(t, 0x18)
+    rf18 = (rf18 & ~((1 << 18) | (1 << 17) | 0xFF)) | central_ch
+    if 100 <= central_ch <= 140:
+        rf18 |= 1 << 17
+    elif central_ch > 140:
+        rf18 |= 1 << 18
+    if 36 <= central_ch <= 64:
+        set_bb_reg(t, 0x0C1C, 0x00000F00, 0x1)
+    elif 100 <= central_ch <= 144:
+        set_bb_reg(t, 0x0C1C, 0x00000F00, 0x2)
+    else:                                                   # >= 149
+        set_bb_reg(t, 0x0C1C, 0x00000F00, 0x3)
+    if 36 <= central_ch <= 48:
+        fc = 0x494
+    elif 52 <= central_ch <= 64:
+        fc = 0x453
+    elif 100 <= central_ch <= 116:
+        fc = 0x452
+    else:                                                   # 118-177
+        fc = 0x412
+    set_bb_reg(t, 0x0860, 0x1FFE0000, fc)
+    _csi_mask_disable(t)                                    # ch not 151/153/155 -> FUNC_DISABLE
+    ts = dm.TrxStop()
+    dm.stop_ic_trx(t, True, ts)
+    write_rf(t, 0x18, rf18)
+    dm.stop_ic_trx(t, False, ts)
+
+
+def _csi_mask_disable(t) -> None:
+    """phydm_csi_mask_setting(FUNC_DISABLE) [SRC] phydm_api.c:1190 — for a 5G channel that is not a
+    5760-spur notch channel (151/153/155): `phydm_clean_all_csi_mask` clears the 8 CSI-mask dwords
+    (0x880-0x89c, 11AC arm) then `phydm_csi_mask_enable(FALSE)` clears 0x874[0]."""
+    for reg in range(0x0880, 0x08A0, 4):
+        set_bb_reg(t, reg, _MASKDWORD, 0)
+    set_bb_reg(t, 0x0874, 1 << 0, 0)
 
 
 def _set_bb_swing_by_band_2g(t) -> None:
@@ -106,15 +179,28 @@ def _set_kfree_to_rf_2g(t, data: int) -> None:
     write_rf_masked(t, 0x65, _KFREE_GAIN_BMASK, btg >> 1)
 
 
+def _set_kfree_to_rf_5g(t, data: int) -> None:
+    """phydm_set_kfree_to_rf_8821c(wlg_btg=FALSE) [SRC] halrf_kfree.c:214 — 5 GHz path A only:
+    enable (RF 0xde[0]/[5], 0x55[6], 0x65[6]) then 0x55[19]=data[0] + 0x55[18:14]=(data&0x1f)>>1.
+    Unlike the 2.4 GHz arm there is no 0x65 gain write (5G uses only RF 0x55)."""
+    write_rf_masked(t, 0xDE, 1 << 0, 0x1)
+    write_rf_masked(t, 0xDE, 1 << 5, 0x1)
+    write_rf_masked(t, 0x55, 1 << 6, 0x1)
+    write_rf_masked(t, 0x65, 1 << 6, 0x1)
+    write_rf_masked(t, 0x55, 1 << 19, data & 0x1)
+    write_rf_masked(t, 0x55, _KFREE_GAIN_BMASK, (data & 0x1F) >> 1)
+
+
 def _config_kfree(t, info, channel: int) -> None:
     """phydm_config_kfree -> phydm_do_kfree [SRC] halrf_kfree.c:3666/3537 — apply the per-channel
-    kfree gain. 8821C 2.4 GHz uses the 2G PPG byte; when present (KFREE_FLAG_ON_2G) it loads the
-    gain into RF (here gain 0, but the enable/gain RF writes still run)."""
-    gain = efuse.kfree_2g_gain(info)
-    if gain is None:                                       # KFREE_FLAG_ON not set
+    kfree gain. 8821C loads the 2.4 GHz PPG byte on a 2G channel (KFREE_FLAG_ON_2G) or the per-
+    sub-band 5 GHz PPG byte on a 5G channel (KFREE_FLAG_ON_5G); both gated on KFREE_FLAG_ON."""
+    if efuse.kfree_2g_gain(info) is None:                  # KFREE_FLAG_ON not set
         return
     if channel <= 14:                                      # KFREE_FLAG_ON_2G
-        _set_kfree_to_rf_2g(t, gain)
+        _set_kfree_to_rf_2g(t, efuse.kfree_2g_gain(info))
+    else:                                                  # KFREE_FLAG_ON_5G
+        _set_kfree_to_rf_5g(t, efuse.kfree_5g_gain(info, channel))
 
 
 def _switch_bandwidth_20(t) -> None:
@@ -160,12 +246,23 @@ def set_channel(t, info, channel: int) -> None:
     switches band (forced invalid by init_hw_mlme_ext); same-band airodump hops skip it. For
     20 MHz center channel == channel."""
     central_ch = channel
+    t.current_channel = channel
+    is_5g = channel > 14
     # phy_switch_wireless_band_8821c [SRC] rtl8821c_phy.c:700 — band-switch sub-step, gated.
     if _need_switch_band(t, channel):
-        btc.switchband_notify_2g(t)
-        _switch_band(t, info, central_ch)
-        _set_bb_swing_by_band_2g(t)
-    _switch_channel(t, central_ch)
+        t.thermal_reset_pending = True          # phy_set_bb_swing -> odm_clear_txpowertracking_state
+        if is_5g:
+            btc.switchband_notify_5g(t)
+            _switch_band_5g(t, central_ch)
+            _set_bb_swing_by_band_5g(t)
+        else:
+            btc.switchband_notify_2g(t)
+            _switch_band(t, info, central_ch)
+            _set_bb_swing_by_band_2g(t)
+    if is_5g:
+        _switch_channel_5g(t, central_ch)
+    else:
+        _switch_channel(t, central_ch)
     _config_kfree(t, info, channel)
     # set bandwidth (20 MHz, primary-channel index 0)
     _mac_switch_bandwidth(t, channel, 0)

@@ -228,9 +228,27 @@ _PPG_5G = (0x1EC, 0x1E8, 0x1E4, 0x1E0, 0x1DC)
 def kfree_2g_gain(info: EfuseInfo) -> int | None:
     """phydm_get_power_trim_offset_8821c [SRC] halrf_kfree.c:154 — the 2.4 GHz PPG kfree gain byte
     (0x1EE) the per-channel kfree applies to the RF gain regs; None when 0xff (KFREE_FLAG_ON unset,
-    i.e. no kfree). On this card it is 0 (no trim)."""
+    i.e. no kfree). On this card it is 0 (no trim). KFREE_FLAG_ON / _2G / _5G are all set together
+    when 0x1EE is fused, so this same not-None test gates the 5 GHz kfree too."""
     gain = info.phys_map[_PPG_2G_TXAB]
     return None if gain == 0xFF else gain
+
+
+def kfree_5g_gain(info: EfuseInfo, channel: int) -> int:
+    """phydm_do_kfree [SRC] halrf_kfree.c:3603 — the 5 GHz bb_gain for the channel's sub-band
+    (`bb_gain[1..5][A]` loaded from PPG 0x1EC/0x1E8/0x1E4/0x1E0/0x1DC [SRC] :165-174). Only valid
+    when `kfree_2g_gain` is not None (KFREE_FLAG_ON_5G)."""
+    if 36 <= channel <= 48:
+        off = _PPG_5G[0]            # PHYDM_5GLB1
+    elif 52 <= channel <= 64:
+        off = _PPG_5G[1]            # PHYDM_5GLB2
+    elif 100 <= channel <= 120:
+        off = _PPG_5G[2]            # PHYDM_5GMB1
+    elif 122 <= channel <= 144:
+        off = _PPG_5G[3]            # PHYDM_5GMB2
+    else:                          # 149-177
+        off = _PPG_5G[4]            # PHYDM_5GHB
+    return info.phys_map[off]
 
 
 def read_phydm_trim(t, phys_map: bytes) -> None:

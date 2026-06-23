@@ -56,6 +56,12 @@ class Rtl8821cuTransport:
         # hal->current_band_type: the band the last channel tune left the RF in (None until the
         # first tune switches it). need_switch_band keys the band-switch sub-step off it.
         self.current_band = None
+        # *dm->channel: the channel of the last tune (None until the first). The halrf thermal
+        # callback reads it to pick the per-band delta-swing table.
+        self.current_channel = None
+        # cali_info reset pending: a band switch ran phy_set_bb_swing -> odm_clear_txpowertracking_
+        # state, which resets the thermal-tracking baseline; the next thermal callback applies it.
+        self.thermal_reset_pending = False
 
     # --- vendor control transfers (with the ON-section page-switch mirror) ---
     def _mirror(self, low_byte: int) -> None:
