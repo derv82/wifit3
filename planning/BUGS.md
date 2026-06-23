@@ -32,6 +32,14 @@ a manual **Stop PBC** button so a single timeout can't hold the radio.
 `ui/screens/channel_filter.py` — the channel list eats the height and hides the buttons.
 Shrink/scroll the list when tight, and/or a taller min-height.
 
+### PMKID on WPA3→WPA2 transition (PMF:Optional) — "M1 not found" but Data frames seen
+On a WPA3→2 transition AP (PMF:Optional), PMKID reports "M1 not found" while frames appear in
+the Data sparkline right when M1 should arrive — suspect a more complex AKM (SAE/transition)
+routes M1 somewhere we don't match, or we forge the assoc with the wrong AKM. **Needs logging
+before it's confirmable:** log the AKM we advertise in the forged assoc + how we classify each
+inbound frame, so it's provable at the UI without the agent. First check: confirm we send
+AKM=PSK in the assoc for *all* cases.
+
 ---
 
 ## Per-card — HW-verify sweep
@@ -80,10 +88,14 @@ from the chip doc. `✅` = nothing open (already HW-confirmed). `🛑`/`⚠️` 
 - ⏳ Endpoint stability across power cycles unknown; channel-switch wants ~2 s settle [MT76X2U.md:202-207].
 - ⏳ RX-poll unverified on HW [MT76X2U.md:7].
 
-### mt7921au (PAU0F / AXML)
-- ⏳ **5 GHz inject FAILS on HW** — frames don't land (5 GHz RX is fine). TXD ruled
-  byte-correct; suspect 5 GHz TX-power not programmed on the sniffer channel-switch [MT7921AU.md:30].
-- ⏳ Chatty WPS — ~120 EAPOLs vs ~20 elsewhere (no STA_REC, so no TX-status tracking) [MT7921AU.md:151].
+### mt7921au (PAU0F / AXML) — HW-swept 2026-06-22
+2.4 GHz solid (RX + TX). **5 GHz RX + inject both work** — deauth landed + PMKID extracted on
+ch36 and ch157; the old "5 GHz inject FAILS" claim was just wrong.
+- ⚠️ **No hardware auto-ACK (needs STA_REC).** We inject from a reserved WCID, so the firmware
+  never ACKs the AP's WSC retransmits (~120 EAPOLs vs ~20). WPS finishes on 2.4 GHz *by software
+  speed alone* (barely beats the AP's give-up timer) but **times out on 5 GHz**, and even the
+  2.4 GHz win is fragile. Fix: a connac2 `sta_rec` (MCU station record) so the forged STA is
+  HW-tracked + ACK'd — also unlocks per-frame TX-status. [MT7921AU.md:151]
 
 ### rtl8188eus (mainline) — prefer the DKMS variant
 - ⏳ Intermittent RX collapse — bad windows hear the reference AP *worse* than further
