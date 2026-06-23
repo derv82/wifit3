@@ -110,13 +110,12 @@
 
 ## Known issues
 
-- **Frontier (next milestone): op #7534 (frame 16019): `IN 0x0c1c/4=0x40040053`** —
-  `phydm_rf_init` (the RF/DPK/LCK-setup sub-init), after RA-info + CFO-tracking. The recorded
-  sequence reads/RMWs 0x0c1c, 0x198c, 0x08fc, 0x0fa0, 0x08f8, 0x0522/0x0520, 0x0838, 0x0a04/0x0808,
-  writes the IGI 0x0c50=0x7e, then RF radio-A LSSI writes via 0x0c90 (with 0x2bbc/0x2bb8 polls).
-  Trace from `hal/phydm/halrf/` (`halrf_rf_init` / the LCK / `phydm_rf_init`). **This is the last
-  big DM sub-init**; after it `phydm_dc_cancellation` + `phydm_txcurrentcalibration`
-  (PHYDM_TXA_CALIBRATION on) close `odm_dm_init`. Then the **channel hops**.
+- **Frontier (next milestone): op #7626 (frame 16203): `IN 0x07cc/4=0x00000000`** —
+  `phydm_txcurrentcalibration` (PHYDM_TXA_CALIBRATION on) + `phydm_get_pa_bias_offset`, the last
+  `odm_dm_init` sub-inits. Recorded ops touch 0x07cc, 0x0910, ... Trace from `hal/phydm/halrf/`.
+  After these `odm_dm_init` is complete and `phy_init_haldm` returns — then the **channel hops**
+  (airodump set_channel via the RF/BB channel-tune path — the agent's to wire; live TX stays the
+  user's). No IQK in this window (triggered later — channel-set / watchdog).
   **Scope:** `odm_dm_init` ([SRC] phydm.c:1786, via hal_dm.c:1601) calls ~35 sub-inits. The
   **compiled-for-this-build** (CE + `CONFIG_RTL8821C` only; all other `RTLxxxx_SUPPORT`=0) set,
   in wire order, is: `common_info_self_init`, `rx_phy_status_init` (sw), `dig_init`, `cck_pd_init`,
@@ -405,3 +404,20 @@
   bookkeeping is software; the only 8821C register touch is crystal-cap-control-by-WiFi (0x10[6]=1).
   `phydm_rssi_monitor_init` before it is pure software. → 7530 -> **7534**.
 - Frontier #7534 = `phydm_rf_init` (0x0c1c) — the last big DM sub-init (RF radio-A LSSI + IGI 0x7e).
+
+## Port log — 2026-06-22 (phydm rf_init + dc_cancellation GREEN @ 7626)
+
+- `dm._rf_init` ports `phydm_rf_init` ([SRC] halphyrf_ce.c:1152 -> odm_txpowertracking_init): all
+  software except `get_swing_index` reading the OFDM BB-swing (0xc1c) to seed the default index.
+- `dm._dc_cancellation` ports `phydm_dc_cancellation` ([SRC] phydm.c, 8821C in
+  ODM_DC_CANCELLATION_SUPPORT, 20 MHz, 1T1R path-A): stop-TRX (BB-idle dbg-port poll, pause TX
+  0x520, kill OFDM/CCK RX) -> IGI 0x7e + LNA-off + 3-wire-halt -> measure the path-A DC offset on
+  dbg-port 0x200 (0x0fa0 read) -> restore -> write the DC compensation into 0xc10/0xc14. → 7534 ->
+  **7626** (92 ops). New reusable primitives: BB dbg-port (clock-en 0x198c / index 0x8fc / value
+  0x0fa0 / header 0x8f8), `_stop_3_wire` (0xc00/0xe00), `_stop_ck320` (0x8b4), `_write_dig` (0xc50).
+- Two new RF primitives in `rf.py`: `read_rf` (the 8821C RF readback is a **direct BB read at
+  0x2800 + (addr<<2)** — RF 0xef -> 0x2bbc, 0xee -> 0x2bb8, [SRC] config_phydm_read_rf_reg_8821c)
+  and `write_rf_masked` (partial-mask RMW: read-merge-LSSI-write). Computed-value milestone: the
+  0xc10/0xc14 offsets derive from the **measured** dbg-port value (recorded on the wire), e.g.
+  reg=0x7fe01806 -> offset_i=offset_q=0x3fa -> 0xc10[29:26]=0xf/[15:10]=0x3a. Frontier #7626 =
+  `phydm_txcurrentcalibration` (0x07cc).

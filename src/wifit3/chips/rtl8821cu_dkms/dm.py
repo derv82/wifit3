@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .bb import set_bb_reg
+from .rf import write_rf, write_rf_masked
 
 _MASKDWORD = 0xFFFFFFFF
 
@@ -76,6 +77,23 @@ _ARFR_WRITES = ((0x0494, 0xFE01F015), (0x0498, 0x40000000),
 
 # --- phydm_cfo_tracking_init [SRC] phydm_cfotracking.c ----------------------
 R_0x10 = 0x0010                    # crystal-cap control-by-WiFi bit6
+
+# --- phydm_rf_init (get_swing_index) + phydm_dc_cancellation [SRC] -----------
+R_0xc1c = 0x0C1C                   # OFDM TX BB-swing (get_swing_index read)
+R_0x198c = 0x198C                  # BB dbg-port clock enable [2:0]
+R_0x8fc = 0x08FC                   # BB dbg-port index select
+R_0xfa0 = 0x0FA0                   # BB dbg-port read-back value (11AC)
+R_0x8f8 = 0x08F8                   # BB dbg-port header select [25:22]
+R_0x522 = 0x0522                   # MAC TX-queue pause bitmap (1 byte)
+R_0x838 = 0x0838                   # OFDM RX-CCA disable bit1
+R_0xa04 = 0x0A04                   # CCK Tx-path enable [31:28]
+R_0xc00 = 0x0C00                   # path-A 3-wire ctrl [3:0]
+R_0xe00 = 0x0E00                   # path-B 3-wire ctrl [3:0]
+R_0xa78 = 0x0A78                   # CCK DCNF disable (MASKBYTE1)
+R_0x8b4 = 0x08B4                   # ck320 stop bit6
+R_0xc10 = 0x0C10                   # path-A DC-cancel I (offset)
+R_0xc14 = 0x0C14                   # path-A DC-cancel Q (offset)
+R_0xa0c = 0x0A0C                   # CCK IGI for new-CCK-AGC (cck_new_agc only)
 
 
 def get_bb_reg(t, addr: int, mask: int) -> int:
@@ -224,6 +242,135 @@ def _cfo_tracking_init(t, info, st: DmState) -> None:
     set_bb_reg(t, R_0x10, 0x40, 0x1)
 
 
+# --- BB debug-port primitives [SRC] phydm_debug.c (11AC), reused by IQK -------
+def _bb_dbg_port_clock_en(t, enable: bool) -> None:
+    """phydm_bb_dbg_port_clock_en — gate the dbg-port clock (0x198c[2:0]=7/0)."""
+    set_bb_reg(t, R_0x198c, 0x7, 0x7 if enable else 0)
+
+
+def _set_bb_dbg_port(t, debug_port: int) -> None:
+    """phydm_set_bb_dbg_port (11AC) — enable the clock then select the dbg-port index (0x8fc).
+    The priority gate (curr > pre_dbg_priority) is always satisfied here: every call in this flow
+    is preceded by a release that resets pre_dbg_priority to DBGPORT_RELEASE."""
+    _bb_dbg_port_clock_en(t, True)
+    set_bb_reg(t, R_0x8fc, _MASKDWORD, debug_port)
+
+
+def _get_bb_dbg_port_val(t) -> int:
+    """phydm_get_bb_dbg_port_val (11AC) — read the dbg-port value at 0x0fa0."""
+    return t.read32(R_0xfa0)
+
+
+def _bb_dbg_port_header_sel(t, header_idx: int) -> None:
+    """phydm_bb_dbg_port_header_sel (11AC) — select the dbg-port header (0x8f8[25:22])."""
+    set_bb_reg(t, R_0x8f8, 0x3C00000, header_idx)
+
+
+def _release_bb_dbg_port(t) -> None:
+    """phydm_release_bb_dbg_port — disable the clock then reset the header select."""
+    _bb_dbg_port_clock_en(t, False)
+    _bb_dbg_port_header_sel(t, 0)
+
+
+def _stop_3_wire(t, revert: bool) -> None:
+    """phydm_stop_3_wire (11AC) [SRC] phydm_api.c — stop (0x4) / restart (0x7) the path-A/B
+    3-wire RF interface (0xc00/0xe00[3:0])."""
+    val = 0x7 if revert else 0x4
+    set_bb_reg(t, R_0xc00, 0xF, val)
+    set_bb_reg(t, R_0xe00, 0xF, val)
+
+
+def _stop_ck320(t, enable: bool) -> None:
+    """phydm_stop_ck320 (11AC) [SRC] phydm_api.c — stop/run the ck320 clock (0x8b4[6])."""
+    set_bb_reg(t, R_0x8b4, 1 << 6, 1 if enable else 0)
+
+
+def _write_dig(t, st: DmState, new_igi: int) -> None:
+    """odm_write_dig -> phydm_write_dig_reg_c50 [SRC] phydm_dig.c — set path-A IGI (0xc50[6:0]),
+    only when it changes. For new-CCK-AGC cards it also sets 0xa0c[13:8]=igi>>1; this card reads
+    cck_new_agc=False so that is skipped. Adaptivity-mode IGI clamping is off (edcca_mode normal)."""
+    if st.cur_ig_value == new_igi:
+        return
+    if st.cck_new_agc:
+        set_bb_reg(t, R_0xa0c, 0x3F00, new_igi >> 1)
+    set_bb_reg(t, R_0xc50, _MASK_IGI, new_igi)
+    st.cur_ig_value = new_igi
+
+
+def _lna_setting(t, *, enable: bool) -> None:
+    """halrf_rf_lna_setting_8821c [SRC] halrf_8821c.c:28 — path-A RF-reg sequence to enable/disable
+    the LNA during DC estimation. Only the two RF 0x3f writes differ between enable and disable."""
+    g1, g2 = (0x1AFCE, 0x0281D) if enable else (0x0AFCE, 0x0280D)
+    write_rf_masked(t, 0xEF, 1 << 19, 0x1)
+    write_rf(t, 0x33, 0x00003)
+    write_rf(t, 0x3E, 0x00064)
+    write_rf(t, 0x3F, g1)
+    write_rf_masked(t, 0xEF, 1 << 19, 0x0)
+    write_rf_masked(t, 0xEE, 1 << 12, 0x1)
+    write_rf(t, 0x33, 0x00003)
+    write_rf(t, 0x3E, 0x00064)
+    write_rf(t, 0x3F, g2)
+    write_rf_masked(t, 0xEE, 1 << 12, 0x0)
+
+
+def _rf_init(t, info, st: DmState) -> None:
+    """phydm_rf_init [SRC] halphyrf_ce.c:1152 -> odm_txpowertracking_init. Almost all software
+    (thermal-meter/swing bookkeeping); the only register touch on 8821C is ``get_swing_index``
+    reading the OFDM TX BB-swing (0xc1c[31:21]) to seed the default swing index."""
+    t.read32(R_0xc1c)
+
+
+def _dc_cancellation(t, info, st: DmState) -> None:
+    """phydm_dc_cancellation [SRC] phydm.c (PHYDM_DC_CANCELLATION; 8821C in
+    ODM_DC_CANCELLATION_SUPPORT, 20 MHz so it runs; 1T1R = path-A only). Measure the path-A DC
+    offset on the BB debug port with TRX stopped, LNA off and 3-wire halted, then write the
+    compensation. The measured dbg-port value (recorded on the wire) drives the 0xc10/0xc14 fields.
+
+    Phases: stop-TRX -> stop-3-wire/LNA-off -> measure -> restore -> DC compensation.
+    """
+    # phydm_stop_ic_trx(SET): wait BB idle on the dbg port, pause TX, kill OFDM/CCK RX
+    _set_bb_dbg_port(t, 0x0)
+    _get_bb_dbg_port_val(t)                  # idle when (BIT17|BIT3)==0 — true on the first read
+    _release_bb_dbg_port(t)
+    tx_queue_bitmap = t.read8(R_0x522)
+    set_bb_reg(t, R_0x520, 0xFF0000, 0xFF)   # pause all TX queues
+    set_bb_reg(t, R_0x838, 1 << 1, 1)        # disable OFDM RX CCA
+    ccktx_path = (t.read32(R_0xa04) & 0xF0000000) >> 28   # phydm_dis_cck_trx(SET)
+    set_bb_reg(t, R_0x808, 1 << 28, 0)       # disable CCK block
+    set_bb_reg(t, R_0xa04, 0xF0000000, 0)    # disable CCK Tx
+
+    _write_dig(t, st, 0x7E)                  # raise IGI for the measurement
+    _lna_setting(t, enable=False)
+    _stop_3_wire(t, revert=False)
+
+    # Set dbg port to 0x200 (DC estimation read), disable CCK DCNF, latch the offset
+    _set_bb_dbg_port(t, 0x200)
+    _bb_dbg_port_header_sel(t, 0x0)
+    set_bb_reg(t, R_0xa78, 0xFF00, 0x0)      # disable CCK DCNF
+    _stop_ck320(t, True)
+    reg_value32 = _get_bb_dbg_port_val(t)    # the measured DC offset
+    _stop_ck320(t, False)
+    _release_bb_dbg_port(t)
+
+    # Restore: 3-wire, LNA, IGI, then phydm_stop_ic_trx(REVERT)
+    _stop_3_wire(t, revert=True)
+    _lna_setting(t, enable=True)
+    _write_dig(t, st, 0x20)
+    t.write8(R_0x522, tx_queue_bitmap)       # release TX queues
+    set_bb_reg(t, R_0x838, 1 << 1, 0)        # enable OFDM RX CCA
+    set_bb_reg(t, R_0x808, 1 << 28, 1)       # phydm_dis_cck_trx(REVERT): enable CCK block
+    set_bb_reg(t, R_0xa04, 0xF0000000, ccktx_path)
+
+    # DC compensation to the CCK data path (8821C/8822B field layout, path A)
+    set_bb_reg(t, R_0xa9c, 1 << 20, 0x1)
+    offset_i = 0x400 - ((reg_value32 & 0xFFC00) >> 10)
+    offset_q = 0x400 - (reg_value32 & 0x3FF)
+    set_bb_reg(t, R_0xc10, 0x3C000000, (0x3C0 & offset_i) >> 6)
+    set_bb_reg(t, R_0xc10, 0xFC00, 0x3F & offset_i)
+    set_bb_reg(t, R_0xc14, 0x3C000000, (0x3C0 & offset_q) >> 6)
+    set_bb_reg(t, R_0xc14, 0xFC00, 0x3F & offset_q)
+
+
 def phy_init_haldm(t, info) -> DmState:
     """rtl8821c_phy_init_haldm [SRC] rtl8821c_dm.c:174 -> rtw_phydm_init -> odm_dm_init. The
     8821C path of ``odm_dm_init``, wire-touching sub-inits only, in capture order. Returns the
@@ -236,4 +383,6 @@ def phy_init_haldm(t, info) -> DmState:
     _adaptivity_init(t, info, st)
     _ra_info_init(t, info, st)
     _cfo_tracking_init(t, info, st)
+    _rf_init(t, info, st)
+    _dc_cancellation(t, info, st)
     return st
