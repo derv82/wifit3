@@ -61,6 +61,13 @@ R_0x1cb8 = 0x1CB8                  # fahm_th[10:8]
 _CCA_CAP = 14                      # [SRC] phydm_ccx.h:41
 _CLM_PERIOD_INIT = 65535           # phydm_clm_init -> phydm_clm_setting(65535)
 
+# --- phydm_adaptivity_init (11AC, not PWDB_EDCCA) [SRC] phydm_adaptivity.c ---
+R_0x944 = 0x0944                   # rx-source select for EDCCA [29:28]
+R_0x8a4 = 0x08A4                   # EDCCA L2H[7:0] / H2L[15:8] threshold
+R_0x520 = 0x0520                   # MAC: ignore-EDCCA bit15
+R_0x524 = 0x0524                   # MAC: EDCCA count-down bit11
+_EDCCA_NOLINK_TH = 0x7F            # phydm_set_edcca_threshold(0x7f, 0x7f) resume-to-no-link
+
 
 def get_bb_reg(t, addr: int, mask: int) -> int:
     """odm_get_bb_reg — full-dword read masked + right-shifted to the mask's lowest set bit."""
@@ -176,6 +183,22 @@ def _env_monitor_init(t, info, st: DmState) -> None:
     _fahm_init(t, st)
 
 
+def _adaptivity_init(t, info, st: DmState) -> None:
+    """phydm_adaptivity_init [SRC] phydm_adaptivity.c (PHYDM_SUPPORT_ADAPTIVITY, CE path).
+    ``phydm_set_l2h_th_ini`` only sets a software value here; 8821C is 11AC and not
+    ODM_IC_PWDB_EDCCA, so the RX-source select writes 0x944[29:28]=1, then the no-link EDCCA
+    threshold (``phydm_set_edcca_threshold(0x7f, 0x7f)`` -> 0x8a4 L2H[7:0]/H2L[15:8]) and the MAC
+    don't-ignore-EDCCA state (0x520[15]=0, 0x524[11]=1). ``phydm_set_forgetting_factor`` /
+    ``phydm_edcca_decision_opt`` are PHYDM_EDCCA_ADAPT_MODE-only — this build's edcca_mode is
+    'normal', so both early-return (no register I/O), matching the wire. ``phydm_enhance_monitor_init``
+    before this is IFS-CLM, not in PHYDM_IC_SUPPORT_IFS_CLM for 8821C (silent)."""
+    set_bb_reg(t, R_0x944, (1 << 29) | (1 << 28), 0x1)
+    set_bb_reg(t, R_0x8a4, 0x00FF, _EDCCA_NOLINK_TH)
+    set_bb_reg(t, R_0x8a4, 0xFF00, _EDCCA_NOLINK_TH)
+    set_bb_reg(t, R_0x520, 1 << 15, 0)
+    set_bb_reg(t, R_0x524, 1 << 11, 1)
+
+
 def phy_init_haldm(t, info) -> DmState:
     """rtl8821c_phy_init_haldm [SRC] rtl8821c_dm.c:174 -> rtw_phydm_init -> odm_dm_init. The
     8821C path of ``odm_dm_init``, wire-touching sub-inits only, in capture order. Returns the
@@ -185,4 +208,5 @@ def phy_init_haldm(t, info) -> DmState:
     _dig_init(t, info, st)
     _cck_pd_init(t, info, st)
     _env_monitor_init(t, info, st)
+    _adaptivity_init(t, info, st)
     return st

@@ -110,9 +110,9 @@
 
 ## Known issues
 
-- **Frontier (next milestone): op #7515 (frame 15981): `IN 0x0944/4=0x00000000`** —
-  `phydm_enhance_monitor_init` (or `phydm_adaptivity_init`), the next `odm_dm_init` sub-init after
-  env-monitor. Trace from `hal/phydm/`.
+- **Frontier (next milestone): op #7525 (frame 16001): `IN 0x0440/4=0x0000015d`** —
+  `phydm_ra_info_init` (or `phydm_rssi_monitor_init` / `phydm_cfo_tracking_init`), the next
+  `odm_dm_init` sub-init after adaptivity. Trace from `hal/phydm/`.
   **Scope:** `odm_dm_init` ([SRC] phydm.c:1786, via hal_dm.c:1601) calls ~35 sub-inits. The
   **compiled-for-this-build** (CE + `CONFIG_RTL8821C` only; all other `RTLxxxx_SUPPORT`=0) set,
   in wire order, is: `common_info_self_init`, `rx_phy_status_init` (sw), `dig_init`, `cck_pd_init`,
@@ -378,3 +378,15 @@
   IGI_2_NHM_TH(x)=x<<1). igi=0x20 -> th = {0x24,0x28,..,0x4c}; NHM and FAHM share the curve. The
   `set_th_reg` bit-packing (BYTE_2_DWORD + odd 0x1c7c HWORD / 0x9a0 byte masks) was byte-matched.
   Frontier #7515 = `phydm_enhance_monitor_init`/`phydm_adaptivity_init` (0x0944).
+
+## Port log — 2026-06-22 (phydm adaptivity_init GREEN @ 7525)
+
+- `dm._adaptivity_init` ports `phydm_adaptivity_init` ([SRC] phydm_adaptivity.c, CE path).
+  `phydm_enhance_monitor_init` before it is IFS-CLM, and 8821C is NOT in PHYDM_IC_SUPPORT_IFS_CLM
+  (8822C/8812F/8197G/8723F only) -> silent. Adaptivity: `set_l2h_th_ini` is software-only; 8821C
+  is 11AC & not ODM_IC_PWDB_EDCCA so it writes the RX-source select 0x944[29:28]=1, the no-link
+  EDCCA threshold `set_edcca_threshold(0x7f,0x7f)` (0x8a4 L2H[7:0]/H2L[15:8]) and the MAC
+  don't-ignore-EDCCA state (0x520[15]=0, 0x524[11]=1). → 7515 -> **7525**.
+- `set_forgetting_factor` / `edcca_decision_opt` are PHYDM_EDCCA_ADAPT_MODE-gated; this build's
+  edcca_mode is 'normal' so both early-return — confirmed silent by the gate (no 0x8a0/0x8dc).
+  Frontier #7525 = `phydm_ra_info_init` (0x0440).
