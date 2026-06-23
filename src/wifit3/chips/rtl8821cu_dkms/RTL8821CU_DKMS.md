@@ -45,10 +45,11 @@
 > compiled for this CE+8821C build), **`rtl8821c_phy_bf_init`** (`mac.phy_bf_init`), and the **BT-coex
 > HAL init** (`btc.hal_init` = the 1-ant `init_hw_config`: PTA/3-wire enable, ltecoex 0x1700 indirect
 > GNT setup, antenna-to-BT switch, WiFi-only coex table, the tdma/query-BT-info H2Cs via the HMEBOX
-> rotation). Frontier is op #18984 (frame 54712, `IN 0x2860`): a channel hop to **ch153** (5G band-3,
-> 149-177) whose RF/BB tune diverges (port `OUT 0x0880`, capture `IN 0x089e`) — the first hop into
-> the highest 5G sub-band, not yet exercised. Operational phase now reproduces 59 hops + 59 LED
-> blinks + 30 watchdog ticks + 30 BT-coex periodicals (op #18984). Not registered in `wlan/manager.py`.
+> rotation). Frontier is op #19900 (frame 58012, `BULK[90B]`): two 90-byte bulk-OUT **TX frames**
+> the vendor driver emits in the operational phase (between an LED blink and a watchdog tick) — the
+> first operational-phase TX, not yet identified/ported. Operational phase now reproduces 64 hops +
+> 64 LED blinks + 32 watchdog ticks + 32 BT-coex periodicals (op #19900). Not registered in
+> `wlan/manager.py`.
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
@@ -931,3 +932,19 @@
 - -> 12197 -> **18984, zero divergence** (now 59 hops + 59 LED + 30 ticks + 30 periodicals). New
   frontier #18984 = a hop to **ch153** (5G band-3, 149-177): port `OUT 0x0880`, capture `IN 0x089e`
   — the first tune into the highest 5G sub-band; next milestone.
+
+## Port log — 2026-06-23 (5G ch153 CSI-mask 5760 spur notch GREEN @ 19900)
+
+- The ch153 hop diverged: the port ran `_csi_mask_disable` (clearing 0x880-0x89c) where the wire
+  enabled a single-tone CSI mask. ch153/BW20 is a **5760 MHz spur notch channel** — `config_phydm_
+  switch_channel_8821c` ([SRC] phydm_hal_api8821c.c:927) calls `phydm_csi_mask_setting(FUNC_ENABLE,
+  153, 20, 5760)` for 153 (and the 40/80 MHz variants 151/155, outside our 20 MHz scope), else
+  FUNC_DISABLE. The enable path: fc = 5180+(153-36)*5 = 5765; `phydm_find_intf_distance` |5765-5760|
+  = 5 -> tone_idx 160; NEGATIVE (5760 < 5765); `phydm_set_csi_mask` 160/10=16 -> 128-16=112 ->
+  0x890+14 = **0x89e** byte, bit0 -> `IN 0x089e=0x00`/`OUT 0x089e=0x01`; then `phydm_csi_mask_enable`
+  0x874[0]=1. Exactly the wire (ops 18983-18986).
+- New chan.py helpers (`_csi_mask_enable` / `_set_csi_mask` / `_csi_mask_setting_5760`); refactored
+  `_csi_mask_disable` to share `_csi_mask_enable`. -> 18984 -> **19900, zero divergence** (now 64
+  hops + 64 LED + 32 ticks + 32 periodicals). New frontier #19900 = two 90-byte bulk-OUT **TX
+  frames** in the operational phase (between an LED blink and a watchdog tick) — the first
+  operational-phase TX; identify + port next.

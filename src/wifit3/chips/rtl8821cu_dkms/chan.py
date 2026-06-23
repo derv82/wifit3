@@ -124,20 +124,66 @@ def _switch_channel_5g(t, central_ch: int) -> None:
     else:                                                   # 118-177
         fc = 0x412
     set_bb_reg(t, 0x0860, 0x1FFE0000, fc)
-    _csi_mask_disable(t)                                    # ch not 151/153/155 -> FUNC_DISABLE
+    if central_ch == 153:
+        _csi_mask_setting_5760(t, central_ch)              # FUNC_ENABLE: notch the 5760 MHz spur
+    else:
+        _csi_mask_disable(t)                               # FUNC_DISABLE (every other 5G channel)
     ts = dm.TrxStop()
     dm.stop_ic_trx(t, True, ts)
     write_rf(t, 0x18, rf18)
     dm.stop_ic_trx(t, False, ts)
 
 
+# --- CSI-mask 5760 MHz spur notch (5G ch 151/153/155) [SRC] phydm_api.c:1190 -
+_CSI_MASK_REG_P, _CSI_MASK_REG_N = 0x0880, 0x0890   # 11AC positive / negative tone banks
+_CSI_MASK_TONE_NUM = 128                             # 11AC FFT tone count
+_REG_CSI_MASK_EN = 0x0874                            # [0] = CSI-mask enable (11AC)
+_SPUR_5760 = 5760                                    # the notched interferer (MHz)
+
+
+def _csi_mask_enable(t, enable: bool) -> None:
+    """phydm_csi_mask_enable (11AC) [SRC] phydm_api.c:866 — 0x874[0] = on/off."""
+    set_bb_reg(t, _REG_CSI_MASK_EN, 1 << 0, 1 if enable else 0)
+
+
 def _csi_mask_disable(t) -> None:
-    """phydm_csi_mask_setting(FUNC_DISABLE) [SRC] phydm_api.c:1190 — for a 5G channel that is not a
-    5760-spur notch channel (151/153/155): `phydm_clean_all_csi_mask` clears the 8 CSI-mask dwords
-    (0x880-0x89c, 11AC arm) then `phydm_csi_mask_enable(FALSE)` clears 0x874[0]."""
-    for reg in range(0x0880, 0x08A0, 4):
+    """phydm_csi_mask_setting(FUNC_DISABLE) -> phydm_clean_all_csi_mask (11AC) [SRC] phydm_api.c:1190
+    / :890 — clear the 8 CSI-mask dwords (0x880-0x89c) then disable 0x874[0]. Every 5G channel except
+    the 5760 MHz spur notch channels (151/153/155) takes this."""
+    for reg in range(_CSI_MASK_REG_P, _CSI_MASK_REG_P + 0x20, 4):
         set_bb_reg(t, reg, _MASKDWORD, 0)
-    set_bb_reg(t, 0x0874, 1 << 0, 0)
+    _csi_mask_enable(t, False)
+
+
+def _set_csi_mask(t, tone_idx: int, positive: bool) -> None:
+    """phydm_set_csi_mask (11AC) [SRC] phydm_api.c:929 — round the raw tone index to the nearest
+    tone (/10), pick the positive (0x880+) or negative (0x890+, reflected through tone_num=128) tone
+    bank, and OR the per-tone bit into the target byte."""
+    if tone_idx % 10 >= 5:
+        tone_idx += 10
+    tone_idx //= 10
+    if positive:
+        tone_idx = min(tone_idx, _CSI_MASK_TONE_NUM - 1)
+        target = _CSI_MASK_REG_P + (tone_idx >> 3)
+    else:
+        tone_idx = _CSI_MASK_TONE_NUM - min(tone_idx, _CSI_MASK_TONE_NUM)
+        target = _CSI_MASK_REG_N + (tone_idx >> 3)
+    t.write8(target, t.read8(target) | (1 << (tone_idx & 0x7)))
+
+
+def _csi_mask_setting_5760(t, central_ch: int) -> None:
+    """phydm_csi_mask_setting(FUNC_ENABLE, f_intf=5760) [SRC] phydm_hal_api8821c.c:927 ->
+    phydm_api.c:1190 — notch the 5760 MHz spur on the 20 MHz channel 153. fc = 5180 + (ch-36)*5
+    (phydm_find_fc, 5G/20 MHz); the interferer's tone distance to fc (<<5) drives phydm_set_csi_mask,
+    then 0x874[0] enables the mask. The 40/80 MHz notch channels 151/155 are outside this driver's
+    20 MHz hop scope, so only ch153 reaches here."""
+    fc = 5180 + (central_ch - 36) * 5
+    if not (fc - 10 <= _SPUR_5760 <= fc + 10):              # phydm_find_intf_distance in-band check (bw/2=10)
+        _csi_mask_enable(t, False)                          # PHYDM_SET_NO_NEED -> mask off
+        return
+    tone_idx = abs(fc - _SPUR_5760) << 5
+    _set_csi_mask(t, tone_idx, _SPUR_5760 >= fc)
+    _csi_mask_enable(t, True)
 
 
 def _set_bb_swing_by_band_2g(t) -> None:
