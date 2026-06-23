@@ -23,7 +23,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5572](#rt5572) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [MT7610U](#mt7610u) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [MT7921AU](#mt7921au) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [MT7921AU](#mt7921au) | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ✅ | B |
 | [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | B |
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | B |
 | [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | B |
@@ -173,14 +173,20 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 ### MT7921AU
 *ALFA AWUS036AXML / Panda PAU0F · 2.4 / 5 GHz*
 
+> **No active-monitor / auto-ACK.** The mt76 driver we ported doesn't appear to support
+> Active Monitor Mode, so the card won't auto-ACK frames addressed to its MAC. That makes
+> conversational attacks — PMKID and WPS — chatty and prone to timeout/failure. Corroborated
+> upstream: [openwrt/mt76#839](https://github.com/openwrt/mt76/issues/839) ·
+> [morrownr/USB-WiFi#107](https://github.com/morrownr/USB-WiFi/issues/107).
+
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | Scan | ✅ | 2026-06-11 | Healthy, 2.4 + 5 GHz. |
 | Deauth | ✅ | 2026-06-12 | Live deauth dropped client. |
 | Handshake | ✅ | 2026-06-12 | Deauth → 4-way (28 EAPOL, M1–M4). |
-| PMKID | ✅ | 2026-06-12 | Passive + active. |
+| PMKID | ⚠️ | 2026-06-23 | Auto-ACKing not supported. |
 | WEP | ✅ | 2026-06-12 | ChopChop + ARP replay ~350 IVs/s. |
-| WPS | ✅ | 2026-06-12 | PBC. |
+| WPS | ⚠️ | 2026-06-23 | Auto-ACKing not supported. |
 | Stress | ✅ | 2026-06-19 | 30-min 38-ch dual-band soak, flat. |
 
 → [MT7921AU.md](src/wifit3/chips/mt7921au/MT7921AU.md)
