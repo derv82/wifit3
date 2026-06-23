@@ -9,7 +9,7 @@
 > + the BT-coex `init_hw_config` GREEN.** The byte-for-byte gate (`scripts/rtl8821cu_dkms/verify_pcap.py`,
 > replaying ctrl + the FW/TX bulk-OUT stream) reproduces the **whole cold-boot probe and the airmon
 > monitor-entry phase through the BT-coex HAL init + the USB hal_init_misc LED + the iface-init MAC
-> address — 7762 ops, zero divergence — `_halmac_init_hal` + the monitor
+> address / port-enable + RX-BAR — 7766 ops, zero divergence — `_halmac_init_hal` + the monitor
 > RX-filter + the entire `rtl8821c_phy_init_haldm`/`odm_dm_init` (11 compiled sub-inits incl. the
 > DC-cancellation measurement calibration) + the MU-MIMO/TXBF beamforming defaults**. Cold init
 > (frames 1-7672): USB transport

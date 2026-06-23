@@ -296,6 +296,22 @@ def set_mac_addr(t, mac6: bytes) -> None:
     t.write16(REG_MACID + 4, int.from_bytes(mac6[4:6], "little"))
 
 
+REG_BCN_CTRL = 0x0550           # port-0 beacon control [SRC] hal_com_reg.h
+_BCN_PORT_EN = (1 << 2) | (1 << 3) | (1 << 4)   # EN_RXBCN_RPT | EN_BCN_FUNCTION | DIS_TSF_UDT
+
+
+def hw_port_enable(t) -> None:
+    """hw_var_hw_port_cfg(enable) [SRC] rtl8821c_ops.c -> hw_bcn_ctrl_add(port 0): BCN_CTRL |=
+    EN_P0_RXBCN_RPT | DIS_TSF_UDT | EN_BCN_FUNCTION. (`rtw_hal_hw_port_enable`, iface-init tail.)"""
+    t.write8(REG_BCN_CTRL, t.read8(REG_BCN_CTRL) | _BCN_PORT_EN)
+
+
+def enable_rx_bar(t) -> None:
+    """HW_VAR_ENABLE_RX_BAR(TRUE) [SRC] hal_com.c:13475 — accept BlockAckReq control frames
+    (RXFLTMAP1 |= BIT8). `init_hw_mlme_ext` sets this before the first channel set."""
+    t.write16(REG_RXFLTMAP1, t.read16(REG_RXFLTMAP1) | (1 << 8))
+
+
 # RXDMA burst [SRC] halmac_usb_88xx.c:20 enum + halmac_bit2.h
 _BIT_DMA_MODE = 1 << 1
 _BURST_CNT_SHIFT, _BURST_SIZE_SHIFT = 2, 4

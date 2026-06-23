@@ -114,10 +114,18 @@ def hal_init(t, info) -> None:
 
 def iface_init(t, info) -> None:
     """[SRC] rtw_hal_iface_init hal_intf.c:521 — runs after rtw_hal_init returns. Programs the
-    interface MAC into REG_MACID (HW_VAR_MAC_ADDR), then sets the operating mode (RCR / RX-filter).
+    interface MAC into REG_MACID (HW_VAR_MAC_ADDR), then enables the HW port (BCN_CTRL).
     `rtw_led_control(POWER_ON)` between hal_init and here is wire-silent (the LED was already put
     in SW-control by hal_init_misc)."""
     mac.set_mac_addr(t, efuse.mac_address(info))
+    mac.hw_port_enable(t)
+
+
+def init_hw_mlme_ext(t, info) -> None:
+    """[SRC] init_hw_mlme_ext rtw_mlme_ext.c:1279 — sync driver/HW state: enable RX BAR, then the
+    first channel/bandwidth set (current_channel/bw were forced invalid so this always runs)."""
+    mac.enable_rx_bar(t)
+    # set_channel_bwmode -> rtw_hal_set_chnl_bw: the phydm channel tune — next milestone.
 
 
 def cold_bringup(t) -> None:
@@ -132,3 +140,4 @@ def cold_bringup(t) -> None:
     phy.init_hw_info_by_rfe(t, info)
     hal_init(t, info)
     iface_init(t, info)
+    init_hw_mlme_ext(t, info)
