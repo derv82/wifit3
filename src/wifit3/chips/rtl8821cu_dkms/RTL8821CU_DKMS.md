@@ -201,9 +201,19 @@
   hop (`chan.set_channel`, opener `IN 0x2860` = `read_rf 0x18`), an LED blink (`led.led_blink`, opener
   `IN 0x004e`), and the phydm dynamic-check tick (`watchdog.tick`, opener `IN 0x0210`). The SW-LED is
   **ported, not stripped** (PORTING.md Step 3) — `SwLedBlink1`'s no-link `LED_BLINK_SLOWLY` tick is a
-  strict-alternation BlinkTimer producer. (The traffic-driven `LED_CTL_TX/RX/site-survey` re-asserts
-  that produce the occasional no-change LED write are a separate producer; whether they need their own
-  handler is TBD once the gate reaches the first one ~op 9975.)
+  strict-alternation BlinkTimer producer.
+  - **LED-double treatment — DECIDED (lead-approved 2026-06-23).** The occasional **no-change** LED
+    write in the wire (first ~op 9975) is a traffic-driven `LED_CTL_TX/RX/site-survey` re-assert — a
+    separate producer from the BlinkTimer, whose interleaving the time-less replay can't predict.
+    Source-confirmed the LED is a **single cosmetic bit** `0x4e[3]` (`pinmux_wl_led_sw_ctrl_88xx`,
+    active-low: ON clears bit3, OFF sets it) with no RX effect. So when the strict-alternation
+    `led_blink` handler first diverges on a re-assert, the agreed fix is to **bypass the LED-bit
+    value-check** for that op (advance the cursor, treat ON==OFF) — NOT to model the recorded RX
+    stream (overkill for one cosmetic bit). This is the one sanctioned value-bypass: it is scoped to
+    the `0x4e[3]` LED bit only; every other op stays strict. (Cleanest impl: when `led_blink` /the
+    dispatch hits a `0x4e` op whose write value differs from the strict-alternation prediction by
+    only bit3, accept it / write the recorded value. Keep the BlinkTimer alternation handler for the
+    majority of LED ticks; the bypass covers only the re-assert doubles.)
 - **The phydm watchdog tick (`watchdog.tick`) front is GREEN @ 8356** (members 1-14): sreset
   xmit/linked (0x210/0x288/0x1118) + the 8821CU USB rx-agg reconfig (`cfg_usb_rx_agg_88xx`:
   0x283/0x10c/0x280) + an interleaved RCR read (0x608) + `phydm_false_alarm_counter_statistics`
