@@ -30,8 +30,8 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8821cu_dkms import bringup, btc, chan, efuse, led, watchdog  # noqa: E402
-from wifit3.chips.rtl8821cu_dkms.transport import Rtl8821cuTransport  # noqa: E402
+from wifit3.chips.rtl8821cu_dkms import btc, efuse, led, tx, watchdog  # noqa: E402
+from wifit3.chips.rtl8821cu_dkms.driver import Rtl8821cuDkmsDriver  # noqa: E402
 
 DEFAULT_CAP = REPO / "usb_dumps_new2" / "captures_rtl8821cu" / "capture-1.pcap"
 
@@ -52,15 +52,27 @@ def _fmt(op: dict) -> str:
     return f"{op['dir']} 0x{op['wval']:04x}/{op['width']}{val}"
 
 
+def _run(coro):
+    """Drive a driver coroutine to completion. Replay transport I/O is synchronous, so the
+    coroutine never suspends on a real await — one ``send`` runs it straight to its ``return``."""
+    try:
+        coro.send(None)
+    except StopIteration as e:
+        return e.value
+    raise RuntimeError("driver coroutine suspended on a real await; replay is synchronous")
+
+
 class Walk:
-    """One ctrl_transfer cursor over the whole capture, driving the real transport. ``run`` calls
-    a port handler against the shared transport; the device cursor advances by exactly the ops the
-    handler consumed. Session state lives on the transport, so it persists across handlers."""
+    """One ctrl_transfer cursor over the whole capture, driving the **real driver**. The gate
+    invokes the driver's public interface (``connect`` / ``set_channel`` / ``inject_frame``) so the
+    bytes it verifies are exactly the product's, not a parallel reimplementation. The device cursor
+    advances by the ops each call consumed; session state lives on the shared transport."""
 
     def __init__(self, ops: list[dict]):
         self.ops = ops
         self.dev = rp.ReplayDevice(ops)
-        self.t = Rtl8821cuTransport(self.dev)
+        self.driver = Rtl8821cuDkmsDriver(self.dev)
+        self.t = self.driver.transport
 
     @property
     def i(self) -> int:
@@ -85,17 +97,20 @@ def _peek_channel(w: Walk, start: int, window: int = 200) -> int | None:
     return None
 
 
-def _walk_operational(w: Walk, info) -> tuple[int, int, int, int, dict | None]:
-    """Dispatch each operational burst to its real handler at the cursor. Four producers interleave:
-    channel hops (``set_channel``, opener = read_rf 0x18), the LED blink (``led_blink``, opener =
-    read 0x4e), the phydm dynamic-check tick (``watchdog.tick``, opener = read 0x210) and the BT-coex
-    periodical (``btc.periodical``, opener = read 0x770). The first op that opens no handler STOPS
-    the walk and is returned as the frontier."""
+def _walk_operational(w: Walk, info) -> tuple[int, int, int, int, int, dict | None]:
+    """Dispatch each operational op at the cursor. Two kinds interleave. Driver-autonomous async
+    producers: the LED blink (``led_blink``, opener read 0x4e), the phydm dynamic-check tick
+    (``watchdog.tick``, opener read 0x210) and the BT-coex periodical (``btc.periodical``, opener
+    read 0x770). And externally-scripted commands, replayed through the driver's public interface:
+    a channel hop (``driver.set_channel``, opener read_rf 0x18 — the channel is read from the wire)
+    and a frame inject (``driver.inject_frame``, a bulk-OUT TX — the 802.11 frame is the recorded
+    bulk minus its descriptor, which the driver rebuilds and the replay byte-verifies). The first op
+    that opens no handler STOPS the walk and is returned as the frontier."""
     led_st = led.LedBlinkState()
     wd_st = watchdog.WatchdogState(eeprom_thermal=info.eeprom_thermal,
                                    thermal_offset=efuse.thermal_offset(info))
     peri_st = btc.PeriodicalState()
-    hops = leds = ticks = peris = 0
+    hops = leds = ticks = peris = injects = 0
     while w.i < len(w.ops):
         o = w.peek()
         if o["dir"] == "IN" and o.get("wval") in (_OP_HOP, _OP_BANDSW):
@@ -103,34 +118,42 @@ def _walk_operational(w: Walk, info) -> tuple[int, int, int, int, dict | None]:
             if ch is None:
                 break
             try:
-                w.run(lambda c=ch: chan.set_channel(w.t, info, c), f"hop{ch}")
+                w.run(lambda c=ch: _run(w.driver.set_channel(c)), f"hop{ch}")
             except Exception as e:  # noqa: BLE001
-                return hops, leds, ticks, peris, _frontier(w, o, f"hop ch{ch}", e)
+                return hops, leds, ticks, peris, injects, _frontier(w, o, f"hop ch{ch}", e)
             hops += 1
+            continue
+        if o["dir"] == "BULK":
+            frame = o["data"][tx.TXDESC_SIZE:]
+            try:
+                w.run(lambda f=frame: _run(w.driver.inject_frame(f)), f"inject{len(frame)}")
+            except Exception as e:  # noqa: BLE001
+                return hops, leds, ticks, peris, injects, _frontier(w, o, f"inject {len(o['data'])}B", e)
+            injects += 1
             continue
         if o["dir"] == "IN" and o.get("wval") == _OP_LED:
             try:
                 w.run(lambda: led.led_blink(w.t, led_st), f"led#{leds + 1}")
             except Exception as e:  # noqa: BLE001
-                return hops, leds, ticks, peris, _frontier(w, o, f"led #{leds + 1}", e)
+                return hops, leds, ticks, peris, injects, _frontier(w, o, f"led #{leds + 1}", e)
             leds += 1
             continue
         if o["dir"] == "IN" and o.get("wval") == _OP_TICK:
             try:
                 w.run(lambda: watchdog.tick(w.t, wd_st), f"tick#{ticks + 1}")
             except Exception as e:  # noqa: BLE001
-                return hops, leds, ticks, peris, _frontier(w, o, f"tick #{ticks + 1}", e)
+                return hops, leds, ticks, peris, injects, _frontier(w, o, f"tick #{ticks + 1}", e)
             ticks += 1
             continue
         if o["dir"] == "IN" and o.get("wval") == _OP_PERI:
             try:
                 w.run(lambda: btc.periodical(w.t, peri_st), f"peri#{peris + 1}")
             except Exception as e:  # noqa: BLE001
-                return hops, leds, ticks, peris, _frontier(w, o, f"peri #{peris + 1}", e)
+                return hops, leds, ticks, peris, injects, _frontier(w, o, f"peri #{peris + 1}", e)
             peris += 1
             continue
         break  # frontier: unknown opener
-    return hops, leds, ticks, peris, w.peek()
+    return hops, leds, ticks, peris, injects, w.peek()
 
 
 def _frontier(w: Walk, o: dict, label: str, e: Exception) -> dict:
@@ -156,20 +179,21 @@ def run(cap: str | None = None) -> int:
 
     w = Walk(ops)
     try:
-        info = bringup.cold_bringup(w.t)
+        _run(w.driver.connect())
     except rp.Divergence as e:
         print(f"\nFAIL (cold-init/airmon divergence) after {w.i} ops:\n  {e}")
         return 1
     except Exception as e:  # noqa: BLE001
         print(f"\nERROR (harness/port bug) at op {w.i}: {type(e).__name__}: {e}")
         return 2
+    info = w.driver.info
     print(f"  deterministic init+airmon: reproduced {w.i} ops single-cursor (cold probe -> FW dl"
           " -> MAC/BB/RF -> channel tune -> monitor entry -> media-connect coex)")
 
     init_end = w.i
-    hops, leds, ticks, peris, frontier = _walk_operational(w, info)
-    print(f"  operational: {hops} channel hops + {leds} LED blinks + {ticks} watchdog ticks "
-          f"+ {peris} BT-coex periodicals reproduced ({w.i - init_end} ops)")
+    hops, leds, ticks, peris, injects, frontier = _walk_operational(w, info)
+    print(f"  operational: {hops} channel hops + {injects} injects + {leds} LED blinks + "
+          f"{ticks} watchdog ticks + {peris} BT-coex periodicals reproduced ({w.i - init_end} ops)")
 
     if frontier is not None:
         print(f"\nFRONTIER -> op #{w.i} (frame {frontier['frame']}): {_fmt(frontier)}")
@@ -177,8 +201,8 @@ def run(cap: str | None = None) -> int:
         return 1
 
     print(f"\nPASS: reproduced all {w.i} of {total} ops single-cursor — entire capture "
-          f"byte-for-byte (init + airmon + {hops} hops + {leds} LED + {ticks} ticks + "
-          f"{peris} periodicals).")
+          f"byte-for-byte (init + airmon + {hops} hops + {injects} injects + {leds} LED + "
+          f"{ticks} ticks + {peris} periodicals).")
     return 0
 
 

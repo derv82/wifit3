@@ -5,8 +5,15 @@
 > `usb_dumps_new2/captures_rtl8821cu/driver-source/` (vendor `rtl8821cu-5.12.0.4`) and the
 > cold-boot pcap `usb_dumps_new2/captures_rtl8821cu/capture-1.pcap`.
 
-> **Status — cold-init probe GREEN + airmon re-init through the whole PHYDM DM-init + beamforming
-> + the BT-coex `init_hw_config` GREEN.** The byte-for-byte gate (`scripts/rtl8821cu_dkms/verify_pcap.py`,
+> **Status — the byte-for-byte gate reproduces the ENTIRE cold-boot capture (all 21409 ctrl +
+> bulk-OUT ops), PASS, driving the driver's PUBLIC interface.** `verify_pcap.py` now invokes
+> `driver.connect()` (cold init + airmon), `driver.set_channel()` (the airodump/iw hops) and
+> `driver.inject_frame()` (the aireplay-ng `--test` + deauth TX — 502 frames), so what it verifies is
+> exactly the product code path, not a parallel reimplementation. The chip→host interrupt-IN (C2H,
+> ep 0x81, 360 pkts) + bulk-IN (RX) streams are the remaining blind spot (host-side replay doesn't
+> model chip responses). Not registered in `wlan/manager.py` (warm reattach + RX-reader + the ZeroCD
+> mode-switch are unresolved). Below is the per-phase detail, still valid:
+> The gate (`scripts/rtl8821cu_dkms/verify_pcap.py`,
 > replaying ctrl + the FW/TX bulk-OUT stream) reproduces the **whole cold-boot probe and the airmon
 > monitor-entry phase through the BT-coex HAL init + the USB hal_init_misc LED + the iface-init MAC
 > address / port-enable + RX-BAR + the **whole first channel set** (coex run_coex + phydm band switch
@@ -45,11 +52,11 @@
 > compiled for this CE+8821C build), **`rtl8821c_phy_bf_init`** (`mac.phy_bf_init`), and the **BT-coex
 > HAL init** (`btc.hal_init` = the 1-ant `init_hw_config`: PTA/3-wire enable, ltecoex 0x1700 indirect
 > GNT setup, antenna-to-BT switch, WiFi-only coex table, the tdma/query-BT-info H2Cs via the HMEBOX
-> rotation). Frontier is op #19900 (frame 58012, `BULK[90B]`): two 90-byte bulk-OUT **TX frames**
-> the vendor driver emits in the operational phase (between an LED blink and a watchdog tick) — the
-> first operational-phase TX, not yet identified/ported. Operational phase now reproduces 64 hops +
-> 64 LED blinks + 32 watchdog ticks + 32 BT-coex periodicals (op #19900). Not registered in
-> `wlan/manager.py`.
+> rotation). The operational phase then reproduces 65 hops + 502 injects + 75 LED blinks + 38
+> watchdog ticks + 38 BT-coex periodicals — the **whole capture, 21409/21409 ops, PASS**. The injects
+> are the aireplay-ng `--test` (broadcast probe-req / RTS / auth) + `-0` deauth, all built by
+> `tx.build_mgnt_txdesc` via `driver.inject_frame` (MGNT qsel 0x12, raid 1, 1M, no-retry; size + BMC
+> + checksum derived from the frame). Not registered in `wlan/manager.py`.
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
@@ -948,3 +955,24 @@
   hops + 64 LED + 32 ticks + 32 periodicals). New frontier #19900 = two 90-byte bulk-OUT **TX
   frames** in the operational phase (between an LED blink and a watchdog tick) — the first
   operational-phase TX; identify + port next.
+
+## Port log — 2026-06-23 (inject TX path + driver-driven gate: WHOLE CAPTURE PASS @ 21409)
+
+- `pcap_slicer.py` placed op #19900 (frame 58012) inside `aireplay-ng -a <BSSID> --test` (then `-0`
+  deauth + repeated rounds), NOT a wpa_supplicant scan. The TX frames are the aireplay injection
+  test + deauth: probe-req (BMC=1) / RTS / auth / deauth, each [48-B TX desc][802.11 frame]. All four
+  share identical descriptor params ([WIRE] dw1=`01120100`, dw4=`00000200`): macid 1, **QSEL_MGNT
+  0x12, raid 1**, 1M CCK, retry off — only TXPKTSIZE + BMC (from addr1) + the XOR checksum vary, all
+  derived from the frame. So `tx.build_mgnt_txdesc` reproduces every inject from the 802.11 frame alone.
+- Wired the driver's public interface to the generic functions: `connect()` = `cold_bringup` + cache
+  `info`; `set_channel()` = `chan.set_channel`; `inject_frame()` = `build_mgnt_txdesc` (qsel 0x12,
+  raid 1, `retry_ctrl = not use_no_ack`) + `bulk_out`. The gate now **drives the driver object**
+  (`driver.connect/set_channel/inject_frame`, via a sync coroutine runner) instead of the module
+  functions, so it verifies the exact product code path. Scripted commands (hops/injects) go through
+  the public API; the autonomous async producers (LED/tick/periodical) stay as internal handlers.
+- New gate branch: at a bulk-OUT op, strip the recorded 48-B descriptor and pass the frame to
+  `driver.inject_frame`; the rebuilt [desc][frame] is byte-compared against the recorded bulk. -> 19900
+  -> **21409 / 21409, PASS** — the whole capture byte-for-byte: 65 hops + **502 injects** + 75 LED +
+  38 ticks + 38 periodicals. The TX-descriptor builder that `inject_frame`/deauth uses on real HW is
+  now verified against 502 real aireplay frames. Remaining blind spot: the chip→host interrupt-IN
+  (C2H, ep 0x81) + bulk-IN (RX) streams, which the host-side replay does not model.
