@@ -95,6 +95,10 @@ R_0xc10 = 0x0C10                   # path-A DC-cancel I (offset)
 R_0xc14 = 0x0C14                   # path-A DC-cancel Q (offset)
 R_0xa0c = 0x0A0C                   # CCK IGI for new-CCK-AGC (cck_new_agc only)
 
+# --- odm_dm_init tail: la_init / psd_init [SRC] phydm_adc_sampling.c, phydm_psd.c
+R_0x7cc = 0x07CC                   # LA-mode buffer select (bit30 = full/half)
+R_0x910 = 0x0910                   # PSD parameter register (11AC)
+
 
 def get_bb_reg(t, addr: int, mask: int) -> int:
     """odm_get_bb_reg — full-dword read masked + right-shifted to the mask's lowest set bit."""
@@ -371,6 +375,24 @@ def _dc_cancellation(t, info, st: DmState) -> None:
     set_bb_reg(t, R_0xc14, 0xFC00, 0x3F & offset_q)
 
 
+def _la_init(t, info, st: DmState) -> None:
+    """phydm_la_init -> phydm_la_set_buff_mode(ADCSMP_BUFF_HALF) [SRC] phydm_adc_sampling.c. 8821C
+    is in PHYDM_IC_SUPPORT_LA_MODE + FULL_BUFF_MODE_SUPPORT, so HALF buffer mode clears 0x7cc[30].
+    ``phydm_dynamic_tx_power_init`` before this is software-only (txagc read from the cached table)."""
+    set_bb_reg(t, R_0x7cc, 1 << 30, 0)
+
+
+def _psd_init(t, info, st: DmState) -> None:
+    """phydm_psd_init -> phydm_psd_para_setting(sw_avg=1, hw_avg=2, i_q=3, fft=128, ant=0, psd_in=0,
+    ch=7, noise_k=0) [SRC] phydm_psd.c (11AC arm, 0x910): i_q[11:10]=3, hw_avg[13:12]=2,
+    fft_idx[15:14]=0 (128 pt -> idx 0), ant_sel[17:16]=0, psd_input[23]=0."""
+    set_bb_reg(t, R_0x910, (1 << 11) | (1 << 10), 3)
+    set_bb_reg(t, R_0x910, (1 << 13) | (1 << 12), 2)
+    set_bb_reg(t, R_0x910, (1 << 15) | (1 << 14), 0)
+    set_bb_reg(t, R_0x910, (1 << 17) | (1 << 16), 0)
+    set_bb_reg(t, R_0x910, 1 << 23, 0)
+
+
 def phy_init_haldm(t, info) -> DmState:
     """rtl8821c_phy_init_haldm [SRC] rtl8821c_dm.c:174 -> rtw_phydm_init -> odm_dm_init. The
     8821C path of ``odm_dm_init``, wire-touching sub-inits only, in capture order. Returns the
@@ -385,4 +407,6 @@ def phy_init_haldm(t, info) -> DmState:
     _cfo_tracking_init(t, info, st)
     _rf_init(t, info, st)
     _dc_cancellation(t, info, st)
+    _la_init(t, info, st)
+    _psd_init(t, info, st)
     return st

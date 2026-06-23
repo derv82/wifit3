@@ -79,7 +79,8 @@
 | USB interface cfg | `mac.init_interface_cfg` | `init_usb_cfg_88xx` halmac_usb_88xx.c:39 | RXDMA burst mode/size + TXDMA drop-on-overflow — **VERIFIED** |
 | monitor RX-filter | `mac.hal_init_misc` | `rtl8821c_hal_init_misc` rtl8821c_halinit.c:203 | CAM clear + RXFLTMAP all-mgmt/data + RCR + mgmt-ack + MAC-sec + RX-TSF filter — **VERIFIED** |
 | monitor entry (airmon) | `bringup.hal_init` | `rtl8821c_hal_init` halinit.c:264 | `_halmac_init_hal` + `hal_init_misc` (RX-enabled) **VERIFIED** |
-| phydm DM init | `dm.phy_init_haldm` | `rtl8821c_phy_init_haldm` rtl8821c_dm.c:174 -> `rtw_phydm_init` hal_dm.c:1594 -> `odm_dm_init` phydm.c:1786 | `phydm_common_info_self_init` (CCK new-AGC + report-fmt + BB-rx-path reads + soft-ML 0x19a8) **VERIFIED**; **(frontier)** `phydm_dig_init` -> CCK-PD/adaptivity/rf -> channel hops |
+| phydm DM init | `dm.phy_init_haldm` | `rtl8821c_phy_init_haldm` rtl8821c_dm.c:174 -> `rtw_phydm_init` hal_dm.c:1594 -> `odm_dm_init` phydm.c:1786 | the whole compiled `odm_dm_init`: common-info/dig/cck-pd/env-monitor/adaptivity/ra-info/cfo-track/rf-init/**dc-cancellation**/la-init/psd-init — **VERIFIED** |
+| beamforming init | `bringup.hal_init` (WIP) | `rtl8821c_phy_bf_init` rtl8821c_phy.c | **(frontier)** MU-MIMO/TXBF defaults (0x14c0/0x167c/0x1680/0x42f/0x45f/0x6df/0x1c94) -> then BT-coex HAL init -> channel hops |
 
 ## Hot paths
 
@@ -110,12 +111,17 @@
 
 ## Known issues
 
-- **Frontier (next milestone): op #7626 (frame 16203): `IN 0x07cc/4=0x00000000`** —
-  `phydm_txcurrentcalibration` (PHYDM_TXA_CALIBRATION on) + `phydm_get_pa_bias_offset`, the last
-  `odm_dm_init` sub-inits. Recorded ops touch 0x07cc, 0x0910, ... Trace from `hal/phydm/halrf/`.
-  After these `odm_dm_init` is complete and `phy_init_haldm` returns — then the **channel hops**
-  (airodump set_channel via the RF/BB channel-tune path — the agent's to wire; live TX stays the
-  user's). No IQK in this window (triggered later — channel-set / watchdog).
+- **`odm_dm_init` / `phy_init_haldm` is COMPLETE @ 7638.** (Correction to the prior note:
+  `PHYDM_TXA_CALIBRATION` is gated to `RTL8822B_SUPPORT`=0, so `phydm_txcurrentcalibration` /
+  `phydm_get_pa_bias_offset` are NOT compiled; the 0x07cc/0x0910 ops are the LA-mode + PSD inits.)
+- **Frontier (next milestone): op #7638 (frame 16227): `IN 0x14c0/4=0x00011000`** —
+  `rtl8821c_phy_bf_init` ([SRC] rtl8821c_phy.c, `CONFIG_BEAMFORMING` on), called from
+  `rtl8821c_hal_init` right after `phy_init_haldm`: MU-MIMO/TXBF defaults (REG_MU_TX_CTL 0x14c0,
+  REG_MU_BF_OPTION 0x167c, REG_WMAC_MU_BF_CTL 0x1680, REG_TXBF_CTRL+3 0x42f, REG_NDPA_OPT 0x45f,
+  0x6df CSI-rate, 0x1c94 grouping). **After bf_init: BT-coex HAL init** (`rtw_btcoex_HAL_Initialize`,
+  the 0x1700 ltecoex / 0x042f-0x06cf coex block — large), then `rtl8821c_hal_init` returns and the
+  **channel hops** follow (airodump set_channel via the RF/BB channel-tune path — the agent's to
+  wire; live TX stays the user's). No IQK in this window (triggered later — channel-set / watchdog).
   **Scope:** `odm_dm_init` ([SRC] phydm.c:1786, via hal_dm.c:1601) calls ~35 sub-inits. The
   **compiled-for-this-build** (CE + `CONFIG_RTL8821C` only; all other `RTLxxxx_SUPPORT`=0) set,
   in wire order, is: `common_info_self_init`, `rx_phy_status_init` (sw), `dig_init`, `cck_pd_init`,
@@ -421,3 +427,15 @@
   0xc10/0xc14 offsets derive from the **measured** dbg-port value (recorded on the wire), e.g.
   reg=0x7fe01806 -> offset_i=offset_q=0x3fa -> 0xc10[29:26]=0xf/[15:10]=0x3a. Frontier #7626 =
   `phydm_txcurrentcalibration` (0x07cc).
+
+## Port log — 2026-06-22 (phydm la_init + psd_init: odm_dm_init COMPLETE @ 7638)
+
+- `dm._la_init` ports `phydm_la_init` -> `phydm_la_set_buff_mode(HALF)` (8821C is in
+  PHYDM_IC_SUPPORT_LA_MODE + FULL_BUFF_MODE_SUPPORT -> clear 0x7cc[30]); `dm._psd_init` ports
+  `phydm_psd_init` -> `phydm_psd_para_setting(1,2,3,128,0,0,7,0)` (11AC 0x910: i_q[11:10]=3,
+  hw_avg[13:12]=2, fft_idx[15:14]=0, ant[17:16]=0, psd_in[23]=0). → 7626 -> **7638**.
+- **`odm_dm_init` / `phy_init_haldm` is now byte-for-byte complete.** Corrected the milestone
+  boundary: `phydm_txcurrentcalibration` + `phydm_get_pa_bias_offset` are PHYDM_TXA_CALIBRATION-
+  gated (RTL8822B-only, OFF), and `phydm_dynamic_tx_power_init` is software — so dc_cancellation was
+  NOT the last sub-init; la_init (0x7cc) + psd_init (0x910) close the function. Frontier #7638 =
+  `rtl8821c_phy_bf_init` (REG_MU_TX_CTL 0x14c0) — beamforming defaults, then BT-coex HAL init.
