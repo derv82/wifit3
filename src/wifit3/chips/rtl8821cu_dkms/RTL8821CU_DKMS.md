@@ -12,8 +12,9 @@
 > address / port-enable + RX-BAR + the **whole first channel set** (coex run_coex + phydm band switch
 > + channel RF + 20 MHz bandwidth + kfree + **TX-power-by-rate table**, channel 1) + the **monitor-mode
 > RX-enable** (setopmode STATION/MONITOR: promiscuous RCR + RXFLTMAP=0xffff) + the **second BT-coex
-> pass** (the media-connect antenna switch to WiFi: set_ant_path PHASE_2G + run_coex action) — 8033
-> ops, zero divergence. Cold init is HW-validated on real silicon (FW boots). — `_halmac_init_hal` + the monitor
+> pass** (the media-connect antenna switch to WiFi: set_ant_path PHASE_2G + run_coex action) + the
+> **first airodump channel hop** (set_channel ch10, the same-band no-band-switch path) — 8149 ops,
+> zero divergence. Cold init is HW-validated on real silicon (FW boots). — `_halmac_init_hal` + the monitor
 > RX-filter + the entire `rtl8821c_phy_init_haldm`/`odm_dm_init` (11 compiled sub-inits incl. the
 > DC-cancellation measurement calibration) + the MU-MIMO/TXBF beamforming defaults**. Cold init
 > (frames 1-7672): USB transport
@@ -36,9 +37,10 @@
 > compiled for this CE+8821C build), **`rtl8821c_phy_bf_init`** (`mac.phy_bf_init`), and the **BT-coex
 > HAL init** (`btc.hal_init` = the 1-ant `init_hw_config`: PTA/3-wire enable, ltecoex 0x1700 indirect
 > GNT setup, antenna-to-BT switch, WiFi-only coex table, the tdma/query-BT-info H2Cs via the HMEBOX
-> rotation). Frontier is op #8033 (frame 17019, `IN 0x2860`): the **second channel set** (the
-> airodump channel tune, same `chan.set_channel` path, starting with `read_rf(0x18)`). Not registered
-> in `wlan/manager.py`.
+> rotation). Frontier is op #8149 (frame 17615, `IN 0x004e`): the **airodump runtime hop+LED loop**
+> — a timer-driven WL activity-LED blink (0x4e[3]) interleaved with the channel-hop loop at
+> timing-dependent positions, so it is a runtime-session boundary (not a deterministic port target).
+> Not registered in `wlan/manager.py`.
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
@@ -99,9 +101,9 @@
 | WL activity LED | `led.cfg_wl_led` | `rtw_halmac_led_cfg(TRUE,3)` hal_halmac.c:5094 (USB `hal_init_misc` rtl8821cu_halinit.c:41) | pinmux GPIO8->WL_LED (0x4a/0x4e[5]) + SW-control mode (0x4e=0x28) — **VERIFIED** |
 | iface MAC addr | `mac.set_mac_addr` / `efuse.mac_address` | `rtw_hal_iface_init` hal_intf.c:521 -> `cfg_mac_addr_88xx` | REG_MACID 0x0610/4 + 0x0614/2 from EFUSE 0x107 (per-card, never hardcoded) — **VERIFIED** |
 | iface port-enable / RX-BAR | `mac.hw_port_enable` / `mac.enable_rx_bar` | `hw_var_hw_port_cfg` / `init_hw_mlme_ext` rtw_mlme_ext.c:1279 | BCN_CTRL 0x0550 \|= 0x1c ; RXFLTMAP1 0x06a2 \|= BIT8 — **VERIFIED** |
-| channel tune (RF/BB) | `chan.set_channel` | `rtl8821c_switch_chnl_and_set_bw` rtl8821c_phy.c:740 | 2.4G ch1: coex run_coex (4 reads), config_phydm switch_band/switch_channel/switch_bandwidth (20 MHz) + kfree — **VERIFIED** |
+| channel tune (RF/BB) | `chan.set_channel` / `_need_switch_band` | `rtl8821c_switch_chnl_and_set_bw` rtl8821c_phy.c:740 ; `need_switch_band` :477 | 2.4G ch1 + same-band hop ch10: band switch (coex notify + phydm band) only on band change, then switch_channel/switch_bandwidth (20 MHz) + kfree — **VERIFIED** |
 | coex run_coex | `btc.run_coex` / `btc.switchband_notify_2g` | `halbtc8821c1ant_run_coex` halbtc8821c1ant.c:3493 | band switch: update_wifi_link_info (limited_tx 4 backup reads) then early-return (run_time FALSE); media-connect (run_time TRUE): BTCQDDR + action_wifi_not_connected — **VERIFIED** |
-| phydm stop-TRX | `dm.stop_ic_trx` | `phydm_stop_ic_trx` phydm_api.c:606 (11AC) | dbg-port idle wait + TX pause + OFDM/CCK TRX off / restore; reused by DC-cancel + channel tune — **VERIFIED** |
+| phydm stop-TRX | `dm.stop_ic_trx` | `phydm_stop_ic_trx` phydm_api.c:606 (11AC) | dbg-port BB-idle **poll** ((BIT17\|BIT3)==0, ≤100 reads) + TX pause + OFDM/CCK TRX off / restore; reused by DC-cancel + channel tune — **VERIFIED** |
 | TX-power-by-rate | `txpower.set_tx_power_level` | `rtl8821c_set_tx_power_level` rtl8821c_phy.c:556 | 0x1d00-0x1d34 txagc = EFUSE PG base (by-rate/limit disabled in the DKMS build); BTG looks up RF_PATH_B — **VERIFIED** |
 | monitor RX-enable | `mac.set_opmode_station` / `set_opmode_monitor` | `hw_var_set_opmode` rtl8821c_ops.c:1002 (STATION+MONITOR) | re-MAC + MSR + StopTxBeacon; promiscuous RCR 0x90000001 + cfg_drv_info(SNIFFER) + RXFLTMAP=0xffff — **VERIFIED** |
 | media-connect coex | `btc.media_status_notify_connect_2g` / `run_coex` | `ex_halbtc8821c1ant_media_status_notify` halbtc8821c1ant.c:4851 (via setopmode_hdl rtw_mlme_ext.c:13575) | combo card: set_ant_path PHASE_2G (antenna BT->WiFi, GNT HW-PTA), CCK hi-pri 0x6cf[4], leap-AP H2C 0x69, run_coex(2GMEDIA) -> action_wifi_not_connected (coex table + PTA tdma) — **VERIFIED** |
@@ -634,3 +636,25 @@
 - The HMEBOX rotation validated end-to-end: airmon general-info box0, init-coex tdma/query box1/box2,
   media-connect leap-AP box3, action tdma box0. Frontier #8033 = the second channel set (`read_rf
   0x18` @ 0x2860), the airodump channel tune.
+
+## Port log — 2026-06-23 (first airodump hop ch10 + stop_ic_trx BB-idle poll fix GREEN @ 8149)
+
+- The second channel set is the **first airodump channel hop** to **ch10** (RF 0x18 = 0x3c0a) — same
+  band as ch1, so `phy_switch_wireless_band_8821c` ([SRC] rtl8821c_phy.c:700) runs its band-switch
+  sub-step (coex notify + phydm band + bb-swing) only inside `need_switch_band` ([SRC] :477), which is
+  FALSE here. Added `chan._need_switch_band` (latches `t.current_band`, None until the first tune)
+  and gated the three band-switch calls behind it; the rest of `set_channel` (switch_channel + kfree +
+  bandwidth + tx-power) replays unchanged. Added the hop to `cold_bringup`. -> 8033 -> 8148.
+- **Real bug fixed (partial-port):** `dm.stop_ic_trx` hardcoded a single dbg-port read; the source is
+  a BB-idle **poll loop** (`(BIT17|BIT3)==0`, ≤100 reads, [SRC] phydm_api.c:642). The first tune was
+  idle on read 1 so the single read passed by luck; the ch10 hop needs 4 reads (0x0fa0 = 0x7c00000c
+  ×3 then 0x7c000000). Replaced with the loop — correct for every stop_ic_trx caller (DC-cancel + both
+  tunes). -> **8149, zero divergence**.
+- **Frontier #8149 = the airodump runtime hop+LED loop** (`IN 0x004e`). The full hop order is now
+  visible: 2.4G 10,1,7,13,2,8,3,9,4,(10),5,11,6,12 then 5G 36,40,44,... — each hop the same
+  `set_channel` path (a 5G hop will need the 5G band-switch arm, a future milestone). Interleaved is a
+  **timer-driven WL activity-LED blink** (0x4e[3] toggled at frames 17615/18049/19337/20345/... — every
+  few hops, at timing-dependent positions). Because the blink/hop interleaving is session-timing
+  -specific (not deterministic across runs), op #8149 is the natural end of the byte-for-byte gate:
+  the deterministic init (cold probe + airmon monitor entry + 2.4G channel tune) is complete. The
+  cosmetic LED blink + the 5G band switch are the remaining driver work; live TX stays the user's.

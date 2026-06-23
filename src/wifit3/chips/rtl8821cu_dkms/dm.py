@@ -333,13 +333,16 @@ class TrxStop:
 
 
 def stop_ic_trx(t, set_type: bool, ts: TrxStop) -> None:
-    """phydm_stop_ic_trx [SRC] phydm_api.c:606 (11AC arm). SET: wait BB idle on the dbg port
-    (`(BIT17|BIT3)==0`, true on the first read here), pause all TX (0x520), disable OFDM RX CCA
+    """phydm_stop_ic_trx [SRC] phydm_api.c:606 (11AC arm). SET: poll the dbg port until the BB is
+    idle (`(BIT17|BIT3)==0`, up to 100 reads — one suffices when the chip is already quiet, more
+    while a channel hop still has TRX in flight), pause all TX (0x520), disable OFDM RX CCA
     (0x838[1]) and the CCK TRX (`phydm_dis_cck_trx`: 0x808[28] / 0xa04[31:28]), saving the TX
     bitmap + CCK Tx path. REVERT restores them. Reused by the DC-cancellation and channel tune."""
     if set_type:
         _set_bb_dbg_port(t, 0x0)
-        _get_bb_dbg_port_val(t)
+        for _ in range(100):
+            if (_get_bb_dbg_port_val(t) & ((1 << 17) | (1 << 3))) == 0:
+                break
         _release_bb_dbg_port(t)
         ts.tx_queue_bitmap = t.read8(R_0x522)
         set_bb_reg(t, R_0x520, 0xFF0000, 0xFF)

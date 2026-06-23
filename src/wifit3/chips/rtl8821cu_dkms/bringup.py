@@ -155,3 +155,5 @@ def cold_bringup(t) -> None:
     iface_init(t, info)
     init_hw_mlme_ext(t, info)
     set_monitor_mode(t, info)
+    # airodump-ng channel hop: the first hop is to channel 10 (same band -> no band switch).
+    chan.set_channel(t, info, 10)

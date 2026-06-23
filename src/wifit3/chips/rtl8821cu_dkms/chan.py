@@ -14,6 +14,19 @@ from .rf import read_rf, write_rf, write_rf_masked
 
 _MASKDWORD = 0xFFFFFFFF
 _KFREE_GAIN_BMASK = 0x7C000        # RF 0x55/0x65 [18:14] kfree gain field
+_BAND_2_4G, _BAND_5G = 0, 1       # [SRC] include/rtw_rf.h:97
+
+
+def _need_switch_band(t, channel: int) -> bool:
+    """need_switch_band [SRC] rtl8821c_phy.c:477 — TRUE (and latches ``t.current_band``) when the
+    channel's band differs from the last tune's. The first set always switches (band starts
+    invalid); a same-band airodump hop skips the coex-notify + phydm band-switch + bb-swing
+    sub-step (`phy_switch_wireless_band_8821c` runs it only inside this gate)."""
+    band_to_sw = _BAND_5G if channel > 14 else _BAND_2_4G
+    if band_to_sw != t.current_band:
+        t.current_band = band_to_sw
+        return True
+    return False
 
 
 def _switch_rf_set(t, info) -> None:
@@ -143,13 +156,15 @@ def _mac_switch_bandwidth(t, channel: int, pri_ch_idx: int) -> None:
 
 def set_channel(t, info, channel: int) -> None:
     """rtl8821c_switch_chnl_and_set_bw [SRC] :740 (2.4 GHz, 20 MHz): band switch (coex notify +
-    phydm band RF), channel RF, bandwidth, then tx-power. ``need_switch_band`` is TRUE on the first
-    set (band forced to BAND_MAX by init_hw_mlme_ext); for 20 MHz center channel == channel."""
+    phydm band RF) only on a band change, channel RF, bandwidth, then tx-power. The first set
+    switches band (forced invalid by init_hw_mlme_ext); same-band airodump hops skip it. For
+    20 MHz center channel == channel."""
     central_ch = channel
-    # phy_switch_wireless_band_8821c [SRC] rtl8821c_phy.c:700
-    btc.switchband_notify_2g(t)
-    _switch_band(t, info, central_ch)
-    _set_bb_swing_by_band_2g(t)
+    # phy_switch_wireless_band_8821c [SRC] rtl8821c_phy.c:700 — band-switch sub-step, gated.
+    if _need_switch_band(t, channel):
+        btc.switchband_notify_2g(t)
+        _switch_band(t, info, central_ch)
+        _set_bb_swing_by_band_2g(t)
     _switch_channel(t, central_ch)
     _config_kfree(t, info, channel)
     # set bandwidth (20 MHz, primary-channel index 0)

@@ -53,6 +53,9 @@ class Rtl8821cuTransport:
         # hal->LastHMEBoxNum: the HMEBOX index rtw_halmac_send_h2c rotates through (mod 4),
         # reset to 0 after each FW download. [SRC] hal_halmac.c:4128.
         self.last_hme_box = 0
+        # hal->current_band_type: the band the last channel tune left the RF in (None until the
+        # first tune switches it). need_switch_band keys the band-switch sub-step off it.
+        self.current_band = None
 
     # --- vendor control transfers (with the ON-section page-switch mirror) ---
     def _mirror(self, low_byte: int) -> None:
