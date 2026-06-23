@@ -88,14 +88,8 @@ from the chip doc. `✅` = nothing open (already HW-confirmed). `🛑`/`⚠️` 
 - ⏳ Endpoint stability across power cycles unknown; channel-switch wants ~2 s settle [MT76X2U.md:202-207].
 - ⏳ RX-poll unverified on HW [MT76X2U.md:7].
 
-### mt7921au (PAU0F / AXML) — HW-swept 2026-06-22
-2.4 GHz solid (RX + TX). **5 GHz RX + inject both work** — deauth landed + PMKID extracted on
-ch36 and ch157; the old "5 GHz inject FAILS" claim was just wrong.
-- ⚠️ **No hardware auto-ACK (needs STA_REC).** We inject from a reserved WCID, so the firmware
-  never ACKs the AP's WSC retransmits (~120 EAPOLs vs ~20). WPS finishes on 2.4 GHz *by software
-  speed alone* (barely beats the AP's give-up timer) but **times out on 5 GHz**, and even the
-  2.4 GHz win is fragile. Fix: a connac2 `sta_rec` (MCU station record) so the forged STA is
-  HW-tracked + ACK'd — also unlocks per-frame TX-status. [MT7921AU.md:151]
+### mt7921au (PAU0F / AXML) — ✅
+2.4 GHz + 5 GHz both solid: RX, inject, WPS HW-confirmed. 5 GHz unicast-data inject was CCK-rated → fixed `8798c38d`.
 
 ### rtl8188eus (mainline) — prefer the DKMS variant
 - ⏳ Intermittent RX collapse — bad windows hear the reference AP *worse* than further

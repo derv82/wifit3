@@ -109,12 +109,13 @@ def build_tx(frame: bytes, band_5ghz: bool = False,
     else:
         q_idx, tid, endpoint = MT_LMAC_ALTX0, 7, EP_OUT_HCCA
 
-    # FIX_RATE for everything except unicast data (mt76_connac2_mac_write_txwi) — plus
-    # unicast data on 5 GHz. We inject from the monitor's reserved WCID (no rate table); the
-    # kernel leaves unicast data to a real STA's rate control, but we have none, so on 5 GHz
-    # the HW falls back to CCK 1 Mbps (2.4 GHz-only) and silently drops the frame — which is
-    # why the WPS EAPOL-Start (our one unicast data TX) stalls on 5 GHz while mgmt and 2.4 GHz
-    # work. 2.4 GHz stays kernel-faithful (matches the capture / verify_pcap CHECK 4).
+    # [SRC] mt76_connac2_mac_write_txwi (mt76_connac_mac.c:450): FIX_RATE if non-data OR
+    # multicast OR IEEE80211_TX_CTL_USE_MINRATE. mac80211 sets USE_MINRATE for frames with no
+    # rate-control context — i.e. everything we inject (monitor vif, reserved WCID, no STA rate
+    # table). We can't read info->flags, so we dropped that 3rd condition; without it injected
+    # unicast data carries no fixed rate and the HW falls back to CCK 1 Mbps (2.4 GHz-only),
+    # silently dropping data uplink on 5 GHz (the WPS EAPOL-Start). Force the band rate on
+    # 5 GHz; 2.4 GHz's CCK fallback is legal there and matches the capture (verify_pcap CHECK 4).
     fix_rate = (not is_data) or multicast or band_5ghz
 
     txwi = [0] * 9
