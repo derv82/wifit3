@@ -88,8 +88,11 @@ from the chip doc. `✅` = nothing open (already HW-confirmed). `🛑`/`⚠️` 
 - ⏳ Endpoint stability across power cycles unknown; channel-switch wants ~2 s settle [MT76X2U.md:202-207].
 - ⏳ RX-poll unverified on HW [MT76X2U.md:7].
 
-### mt7921au (PAU0F / AXML) — ✅
-2.4 GHz + 5 GHz both solid: RX, inject, WPS HW-confirmed. 5 GHz unicast-data inject was CCK-rated → fixed `8798c38d`.
+### mt7921au (PAU0F / AXML)
+- ⏳ No working HW auto-ACK — one WPS PBC sends ~120 EAPOLs vs ~15-25 on cards that ACK; the AP
+  retransmits every WSC msg because our forged STA isn't ACKed. WPS is chatty + intermittent
+  (timeouts both bands). The omac `uni_dev_info` we send doesn't arm it — needs a connac2
+  `sta_rec`. (5 GHz unicast-data inject was a separate bug, fixed `8798c38d`.) [MT7921AU.md:151]
 
 ### rtl8188eus (mainline) — prefer the DKMS variant
 - ⏳ Intermittent RX collapse — bad windows hear the reference AP *worse* than further
