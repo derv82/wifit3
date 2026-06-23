@@ -207,6 +207,14 @@ _PPG_2G_TXAB = 0x1EE
 _PPG_5G = (0x1EC, 0x1E8, 0x1E4, 0x1E0, 0x1DC)
 
 
+def kfree_2g_gain(info: EfuseInfo) -> int | None:
+    """phydm_get_power_trim_offset_8821c [SRC] halrf_kfree.c:154 — the 2.4 GHz PPG kfree gain byte
+    (0x1EE) the per-channel kfree applies to the RF gain regs; None when 0xff (KFREE_FLAG_ON unset,
+    i.e. no kfree). On this card it is 0 (no trim)."""
+    gain = info.phys_map[_PPG_2G_TXAB]
+    return None if gain == 0xFF else gain
+
+
 def read_phydm_trim(t, phys_map: bytes) -> None:
     """rtw_phydm_read_efuse [SRC] hal_dm.c:1832 -> phydm thermal + power trim (kfree): read the
     PPG physical EFUSE bytes. Each odm_efuse_one_byte_read does a bank-switch read (REG 0x35);

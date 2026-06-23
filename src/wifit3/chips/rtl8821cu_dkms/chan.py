@@ -8,11 +8,12 @@ not transcribed.
 """
 from __future__ import annotations
 
-from . import btc, dm
+from . import btc, dm, efuse
 from .bb import set_bb_reg
 from .rf import read_rf, write_rf, write_rf_masked
 
 _MASKDWORD = 0xFFFFFFFF
+_KFREE_GAIN_BMASK = 0x7C000        # RF 0x55/0x65 [18:14] kfree gain field
 
 
 def _switch_rf_set(t, info) -> None:
@@ -77,6 +78,69 @@ def _switch_channel(t, central_ch: int) -> None:
     # phydm_ccapar_8821c is #if 0 (and cut != B) -> silent.
 
 
+def _set_kfree_to_rf_2g(t, data: int) -> None:
+    """phydm_set_kfree_to_rf_8821c(wlg_btg=TRUE) [SRC] halrf_kfree.c — enable the kfree gain
+    override (RF 0xde[0], 0xde[5], 0x55[6], 0x65[6]) then load the WLG/BTG gain nibbles of ``data``
+    into RF 0x55/0x65 [19] (lsb) + [18:14] (>>1)."""
+    write_rf_masked(t, 0xDE, 1 << 0, 0x1)
+    write_rf_masked(t, 0xDE, 1 << 5, 0x1)
+    write_rf_masked(t, 0x55, 1 << 6, 0x1)
+    write_rf_masked(t, 0x65, 1 << 6, 0x1)
+    wlg, btg = data & 0xF, (data & 0xF0) >> 4
+    write_rf_masked(t, 0x55, 1 << 19, wlg & 0x1)
+    write_rf_masked(t, 0x55, _KFREE_GAIN_BMASK, wlg >> 1)
+    write_rf_masked(t, 0x65, 1 << 19, btg & 0x1)
+    write_rf_masked(t, 0x65, _KFREE_GAIN_BMASK, btg >> 1)
+
+
+def _config_kfree(t, info, channel: int) -> None:
+    """phydm_config_kfree -> phydm_do_kfree [SRC] halrf_kfree.c:3666/3537 — apply the per-channel
+    kfree gain. 8821C 2.4 GHz uses the 2G PPG byte; when present (KFREE_FLAG_ON_2G) it loads the
+    gain into RF (here gain 0, but the enable/gain RF writes still run)."""
+    gain = efuse.kfree_2g_gain(info)
+    if gain is None:                                       # KFREE_FLAG_ON not set
+        return
+    if channel <= 14:                                      # KFREE_FLAG_ON_2G
+        _set_kfree_to_rf_2g(t, gain)
+
+
+def _switch_bandwidth_20(t) -> None:
+    """config_phydm_switch_bandwidth_8821c(20 MHz) [SRC] phydm_hal_api8821c.c:972: the 0x8ac
+    BW/ADC-DAC-clock word (& 0xffcffc00 | 0x10010000), 0x8c4[30] ADC buffer clock, RF 0x18 |=
+    BIT11|BIT10 under stopped TRX, then RX-DFIR (0x948/0x94c[29:28]=2, 0xc20[31]=1, 0x8f0[31]=0)
+    and the BW-fixed indication (0x840[3:0]=pri_ch_idx 0, then 0x840[4]=enable). ccapar_by_bw /
+    ccapar_8821c are #if 0 -> silent."""
+    rf18 = read_rf(t, 0x18)
+    t.write32(0x08AC, (t.read32(0x08AC) & 0xFFCFFC00) | 0x10010000)
+    set_bb_reg(t, 0x08C4, 1 << 30, 0x1)
+    rf18 |= (1 << 11) | (1 << 10)
+    ts = dm.TrxStop()
+    dm.stop_ic_trx(t, True, ts)
+    write_rf(t, 0x18, rf18)
+    dm.stop_ic_trx(t, False, ts)
+    set_bb_reg(t, 0x0948, (1 << 29) | (1 << 28), 0x2)      # RX DFIR
+    set_bb_reg(t, 0x094C, (1 << 29) | (1 << 28), 0x2)
+    set_bb_reg(t, 0x0C20, 1 << 31, 0x1)
+    set_bb_reg(t, 0x08F0, 1 << 31, 0x0)
+    set_bb_reg(t, 0x0840, 0xF, 0x0)                        # bw_fixed_setting (pri_ch_idx 0)
+    set_bb_reg(t, 0x0840, 1 << 4, 0x1)                     # bw_fixed_enable
+
+
+def _mac_switch_bandwidth(t, channel: int, pri_ch_idx: int) -> None:
+    """mac_switch_bandwidth [SRC] rtl8821c_phy.c:542 -> halmac cfg_ch_bw_88xx (20 MHz):
+    cfg_pri_ch_idx (0x483 = txsc20 | txsc40<<4), cfg_bw (0x668 clears BIT7|8 for 20 MHz) +
+    cfg_mac_clk (0x024[21:20]=80M-def(0), USTIME 0x55c/0x638 = MAC_CLK_SPEED 0x50), cfg_ch
+    (0x454[7] = ch>35, 8-bit RMW). 0x454 is byte-wide here vs dword in switch_band."""
+    txsc40 = 9 if pri_ch_idx in (1, 3) else 10
+    t.write8(0x0483, (pri_ch_idx & 0xF) | ((txsc40 & 0xF) << 4))
+    t.write32(0x0668, t.read32(0x0668) & ~((1 << 7) | (1 << 8)))          # cfg_bw 20 MHz
+    t.write32(0x0024, t.read32(0x0024) & ~((1 << 20) | (1 << 21)))        # MAC clk 80M-def
+    t.write8(0x055C, 0x50)
+    t.write8(0x0638, 0x50)
+    cck = t.read8(0x0454) & ~0x80
+    t.write8(0x0454, cck | (0x80 if channel > 35 else 0))
+
+
 def set_channel(t, info, channel: int) -> None:
     """rtl8821c_switch_chnl_and_set_bw [SRC] :740 (2.4 GHz, 20 MHz): band switch (coex notify +
     phydm band RF), channel RF, bandwidth, then tx-power. ``need_switch_band`` is TRUE on the first
@@ -86,5 +150,8 @@ def set_channel(t, info, channel: int) -> None:
     btc.switchband_notify_2g(t)
     _switch_band(t, info, central_ch)
     _set_bb_swing_by_band_2g(t)
-    # config_phydm_switch_channel
     _switch_channel(t, central_ch)
+    _config_kfree(t, info, channel)
+    # set bandwidth (20 MHz, primary-channel index 0)
+    _mac_switch_bandwidth(t, channel, 0)
+    _switch_bandwidth_20(t)
