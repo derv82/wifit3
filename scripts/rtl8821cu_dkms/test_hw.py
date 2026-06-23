@@ -46,6 +46,18 @@ def _fail(msg: str) -> int:
     return 1
 
 
+_WIFI_INTF_CLASS = 0xFF             # the WiFi interface (vendor-specific); 0xE0 = the BT interfaces
+
+
+def _wifi_interface(dev) -> int:
+    """The combo card's WiFi interface number — the vendor-specific (class 0xFF) one (interface 2),
+    NOT the Bluetooth interfaces 0/1 (class 0xE0). Zadig must bind WinUSB to this interface."""
+    for intf in dev.get_active_configuration():
+        if intf.bInterfaceClass == _WIFI_INTF_CLASS:
+            return intf.bInterfaceNumber
+    raise RuntimeError("no vendor-specific (WiFi) interface found")
+
+
 def _open_device():
     backend = libusb_package.get_libusb1_backend()
     dev = usb.core.find(idVendor=USB_VID, idProduct=USB_PID, backend=backend)
@@ -55,11 +67,6 @@ def _open_device():
               "Then confirm Zadig bound it to WinUSB.")
         return None
     print(f"[*] Found RTL8821CU at bus {dev.bus}, address {dev.address}")
-    try:
-        if dev.is_kernel_driver_active(0):
-            dev.detach_kernel_driver(0)
-    except (NotImplementedError, usb.core.USBError):
-        pass
     try:
         dev.set_configuration()
     except usb.core.USBError as e:
@@ -135,13 +142,16 @@ def main() -> int:
     dev = _open_device()
     if dev is None:
         return 1
+    wifi_intf = _wifi_interface(dev)
+    print(f"[*] WiFi (vendor) interface = {wifi_intf}  (BT is on interfaces 0/1)")
     try:
-        usb.util.claim_interface(dev, 0)
+        usb.util.claim_interface(dev, wifi_intf)
     except (usb.core.USBError, NotImplementedError) as e:
-        return _fail(f"claim_interface(0): {e}\n"
-                     "       The card is in Wi-Fi mode but bound to the Realtek Windows driver, not "
-                     "WinUSB.\n       Run Zadig -> Options -> List All Devices -> select '802.11ac "
-                     "NIC' (0bda:c820)\n       -> Install/Replace driver with WinUSB, then re-run.")
+        return _fail(f"claim_interface({wifi_intf}): {e}\n"
+                     f"       Zadig must bind WinUSB to the WiFi interface (#{wifi_intf}, '802.11ac "
+                     "NIC' 0bda:c820),\n       not the Bluetooth interfaces. Options -> List All "
+                     "Devices -> the 0bda:c820 entry\n       whose interface is the vendor/WiFi one "
+                     "-> Replace with WinUSB, then re-run.")
 
     t = Rtl8821cuTransport(dev, bulk_out_ep=FW_BULK_OUT_EP)
     try:
@@ -169,7 +179,7 @@ def main() -> int:
         return 0
     finally:
         try:
-            usb.util.release_interface(dev, 0)
+            usb.util.release_interface(dev, wifi_intf)
             usb.util.dispose_resources(dev)
         except usb.core.USBError as e:
             print(f"  (release warning: {e})")

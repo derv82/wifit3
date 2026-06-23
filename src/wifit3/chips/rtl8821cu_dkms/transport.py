@@ -36,6 +36,7 @@ CTRL_TIMEOUT_MS = 500
 RX_BUF_SIZE = 0x8000
 RX_TIMEOUT_MS = 200
 _BULK_TIMEOUT_MS = 1000
+_WIFI_INTF_CLASS = 0xFF         # vendor-specific = the WiFi interface (intf 2); 0xE0 = the BT side
 
 
 def _is_on_sec(addr: int) -> bool:
@@ -105,14 +106,19 @@ class Rtl8821cuTransport:
         if self._in_ep is not None:
             return self._in_ep
         cfg = self.dev.get_active_configuration()
+        # This is a combo BT+WiFi card: the WiFi data path is the vendor-specific interface
+        # (bInterfaceClass 0xFF); interfaces 0/1 are Bluetooth (0xE0) with their own bulk-IN
+        # (0x82). Pick the WiFi interface's bulk-IN (0x84), never the BT one.
         for intf in cfg:
+            if intf.bInterfaceClass != _WIFI_INTF_CLASS:
+                continue
             for ep in intf:
                 if (usb.util.endpoint_direction(ep.bEndpointAddress) == usb.util.ENDPOINT_IN
                         and usb.util.endpoint_type(ep.bmAttributes)
                         == usb.util.ENDPOINT_TYPE_BULK):
                     self._in_ep = ep.bEndpointAddress
                     return self._in_ep
-        raise RuntimeError("RTL8821CU: no bulk-IN endpoint on the active interface")
+        raise RuntimeError("RTL8821CU: no bulk-IN endpoint on the WiFi (vendor) interface")
 
     def bulk_in(self, size: int = RX_BUF_SIZE, timeout: int = RX_TIMEOUT_MS):
         """One blocking bulk-IN read. None on a benign timeout (quiet channel)."""
