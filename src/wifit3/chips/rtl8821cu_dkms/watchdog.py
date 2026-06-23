@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .bb import set_bb_reg
-from .dm import _get_bb_dbg_port_val, _release_bb_dbg_port, _set_bb_dbg_port
+from .dm import _b2d, _get_bb_dbg_port_val, _nhm_th_background, _release_bb_dbg_port, _set_bb_dbg_port
 from .rf import read_rf
 
 # --- sreset status checks [SRC] rtl8821c_ops.c -----------------------------
@@ -125,6 +125,28 @@ _REG_FAHM_RDY = 0x1F98          # FAHM ready BIT31 (+ denom [15:0])
 _REG_FAHM_RPT = 0x1F80          # FAHM report base (6 dwords)
 _REG_FAHM_CTRL = 0x1CF8         # FAHM period [23:8]
 _NHM_PERIOD_MAX, _CLM_PERIOD_MAX = 0xFFFE, 0xFFFF        # [SRC] phydm_ccx.h:43/45
+# NHM/FAHM set_th_reg targets (IGI-changed threshold recompute, mirrors dm._nhm_init/_fahm_init)
+_REG_NHM_TH0, _REG_NHM_TH4, _REG_NHM_TH8 = 0x0998, 0x099C, 0x09A0
+_REG_FAHM_TH0, _REG_FAHM_TH3, _REG_FAHM_TH6, _REG_FAHM_TH8 = 0x1C38, 0x1C78, 0x1C7C, 0x1CB8
+
+
+def _nhm_set_th(t, igi: int) -> None:
+    """phydm_nhm_set_th_reg (11AC) [SRC] phydm_ccx.c — the same BACKGROUND curve as `dm._nhm_init`,
+    rewritten when the live IGI moved (e.g. DIG dropped it on 5G)."""
+    th = _nhm_th_background(igi)
+    set_bb_reg(t, _REG_NHM_TH0, 0xFFFFFFFF, _b2d(th[3], th[2], th[1], th[0]))
+    set_bb_reg(t, _REG_NHM_TH4, 0xFFFFFFFF, _b2d(th[7], th[6], th[5], th[4]))
+    set_bb_reg(t, _REG_NHM_TH8, 0xFF, th[8])
+    set_bb_reg(t, _REG_CCX_CTRL, 0xFFFF0000, _b2d(0, 0, th[10], th[9]))
+
+
+def _fahm_set_th(t, igi: int) -> None:
+    """phydm_fahm_set_th_reg (AC) [SRC] phydm_ccx.c — the FAHM threshold rewrite on an IGI change."""
+    th = _nhm_th_background(igi)
+    set_bb_reg(t, _REG_FAHM_TH0, 0xFFFFFF00, _b2d(0, th[2], th[1], th[0]))
+    set_bb_reg(t, _REG_FAHM_TH3, 0xFFFFFF00, _b2d(0, th[5], th[4], th[3]))
+    set_bb_reg(t, _REG_FAHM_TH6, 0xFFFF0000, _b2d(0, 0, th[7], th[6]))
+    set_bb_reg(t, _REG_FAHM_TH8, 0xFFFFFF00, _b2d(0, th[10], th[9], th[8]))
 
 
 @dataclass
@@ -365,7 +387,8 @@ def _env_mntr(t, st: WatchdogState) -> None:
         st.nhm_period = _NHM_PERIOD_MAX
     igi = t.read32(_REG_IGI_A) & 0x7F                    # nhm th_update_chk
     if igi != st.nhm_igi:
-        st.nhm_igi = igi                                # th-curve writes — unexercised (IGI steady)
+        st.nhm_igi = igi
+        _nhm_set_th(t, igi)                             # IGI moved -> rewrite the threshold curve
     # CLM get + mntr_set (period already 0xffff from init -> suppressed)
     _ccx_get_result(t, st, 1 << 0, _REG_CLM_RDY, ())
     if st.clm_period != _CLM_PERIOD_MAX:
@@ -387,6 +410,7 @@ def _env_mntr(t, st: WatchdogState) -> None:
     igi = t.read32(_REG_IGI_A) & 0x7F                    # fahm th_update_chk
     if igi != st.fahm_igi:
         st.fahm_igi = igi
+        _fahm_set_th(t, igi)                            # IGI moved -> rewrite the FAHM threshold
     _ccx_trigger(t, 1 << 2)                             # FAHM trigger
 
 

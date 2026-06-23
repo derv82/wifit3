@@ -45,10 +45,11 @@
 > compiled for this CE+8821C build), **`rtl8821c_phy_bf_init`** (`mac.phy_bf_init`), and the **BT-coex
 > HAL init** (`btc.hal_init` = the 1-ant `init_hw_config`: PTA/3-wire enable, ltecoex 0x1700 indirect
 > GNT setup, antenna-to-BT switch, WiFi-only coex table, the tdma/query-BT-info H2Cs via the HMEBOX
-> rotation). Frontier is op #10809 (frame 23519, `IN 0x0210`): the phydm watchdog's env-monitor
-> recomputes the NHM threshold curve because the **IGI dropped to 0x1e on 5G** (DIG -2 from the low
-> 5G FA count); the port currently suppresses the `*_set_th` write (it was IGI-steady before). Not
-> registered in `wlan/manager.py`.
+> rotation). Frontier is op #11963 (frame 27307, `IN 0x0430`): the **5G->2.4G** band switch back to
+> ch1, where `run_coex(2GSWITCHBAND)` resolves to `action_wifi_linkscan` (coex table type 4 +
+> PS-TDMA **on**, type 21) — 2GSWITCHBAND is in the scan-list, so the action differs from the 2GMEDIA/
+> periodical `action_wifi_not_connected`; needs the tdma-on path + table type 4. Not registered in
+> `wlan/manager.py`.
 
 > ## ⚠️ Bring-up blocker — ZeroCD / mode-switch (UNSOLVED, likely fleet-wide)
 >
