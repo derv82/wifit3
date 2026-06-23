@@ -211,7 +211,7 @@ def _calibrated_eeprom() -> bytes:
 # ----------------------------------------------------------------------
 def test_tune_hop_reseeds_agc():
     # Every channel hop must re-seed BBP R17 (the VGC) via reset_tuner — the
-    # kernel-faithful AGC behaviour. Regression guard: if a refactor drops
+    # kernel AGC behaviour. Regression guard: if a refactor drops
     # reset_tuner from the hop, this fails (not just the pcap gate).
     t = FakeTransport()
     monitor.tune_hop(t, RF2525E, 1, _calibrated_eeprom(), ANTENNA_A, ANTENNA_A)

@@ -47,7 +47,7 @@ def test_read_block_aligned_offset():
 
 
 def test_read_block_unaligned_offset_no_crash():
-    """The bug: kernel-faithful power-info reads at 0x56 / 0x5C must work.
+    """The bug: kernel power-info reads at 0x56 / 0x5C must work.
     Previously raised ValueError; now slices out of the surrounding words."""
     t = FakeTransport(bytes(range(0x80)))
     got = eeprom.read_block(t, 0x56, 6)

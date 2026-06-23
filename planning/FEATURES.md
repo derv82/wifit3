@@ -48,7 +48,7 @@ is hardware-ACKed, so "N sent → M ACKed" is a real reachability readout in Foc
 - **HW retry tally (rtl8187 only)** — `0xFFFA` cumulative retry count rises when un-ACKed;
   coarser, and L has no TX-status URB, so ACK-sniff is the portable route.
 
-**Related (tiny):** `build_deauth` writes `duration = 0`; a faithful injector sets the
+**Related (tiny):** `build_deauth` writes `duration = 0`; a correct injector sets the
 unicast-ACK NAV (`SIFS + ACK@rate`, e.g. `0x013a` @ 1 Mbps) — one line, do it here.
 
 **Complexity.** Low-moderate; the ACK-sniff correlator is the real work.

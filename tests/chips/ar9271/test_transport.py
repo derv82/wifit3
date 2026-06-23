@@ -1,6 +1,6 @@
 """HIF stream reassembly tests for AR9271USBTransport._handle_bulk_in.
 
-These exercise the kernel-faithful parser without touching real USB — the
+These exercise the kernel parser without touching real USB — the
 transport is constructed with a MagicMock device, and we feed bytes directly
 into the bulk-in handler while capturing dispatched HTC payloads.
 """

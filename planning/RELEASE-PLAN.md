@@ -33,7 +33,7 @@ Still to add:
 **Release blocker — visible before public.** Userland USB writes registers + the FW-download
 path with no kernel driver between us and the silicon, so a bad write/FW-page/power-seq can
 brick a card or leave it in an illegal RF state. Amplified by AI-assisted porting (non-
-deterministic; the pcap gate catches *unfaithful* sequences, not every *dangerous* one) and
+deterministic; the pcap gate catches *inaccurate* sequences, not every *dangerous* one) and
 community PRs. Required:
 - [x] **README disclaimer** (reinforced by the LICENSE): *"This software talks to USB Wi-Fi
   hardware at the register level. It can damage or permanently disable ('brick') a device. Use

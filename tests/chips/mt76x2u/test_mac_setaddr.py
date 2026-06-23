@@ -1,4 +1,4 @@
-"""Kernel-faithful `mt76x02_mac_setaddr` + `mt76x02_mac_set_bssid`.
+"""`mt76x02_mac_setaddr` + `mt76x02_mac_set_bssid`.
 
 Kernel reference: mt76x02_mac.c:727-758 (setaddr) and 1232-1238 (set_bssid).
 """
@@ -77,7 +77,7 @@ def test_set_bssid_rejects_wrong_length():
 
 
 # ---------------------------------------------------------------------------
-# mac_setaddr — full kernel-faithful sequence
+# mac_setaddr — full kernel sequence
 # ---------------------------------------------------------------------------
 
 def test_mac_setaddr_writes_addr_dw0_low_4_bytes_le():

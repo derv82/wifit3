@@ -1,4 +1,4 @@
-"""mt76x2u phy.py kernel-faithful helpers.
+"""mt76x2u phy.py kernel helpers.
 
 Coverage targets:
   - rate-power math (`_tx_power_mask`, `_get_max_rate_power`, `_get_min_rate_power`,

@@ -71,11 +71,11 @@ is fine, so it isolates to **TX/inject** — RX hears the AP, our frames never l
 hardcoded every injected frame to CCK 1 Mbps (`_TXWI_RATE_CCK_1MBPS = 0x0000`). CCK is
 2.4 GHz-only, so on 5 GHz the rate is invalid and the PHY drops the frame. Fix shipped:
 `inject_frame` threads the tuned channel and `_txwi_rate_for_channel` picks OFDM 6 Mbps
-(`0x2000`) for ch>=36, CCK 1 Mbps (the AP-accepted basic rate) on 2.4 GHz. Source-faithful;
+(`0x2000`) for ch>=36, CCK 1 Mbps (the AP-accepted basic rate) on 2.4 GHz. Matches kernel source;
 awaits a 5 GHz HW test (no mt76 verify_pcap codec to gate it offline).
 
 **mt7921au — rate ruled out; RF-side suspect (2026-06-21):** source audit confirms the
-`band_5ghz` path is faithful — the flag reaches (`driver.py:192`), `_tx_rate_val(True)` =
+`band_5ghz` path matches the kernel — the flag reaches (`driver.py:192`), `_tx_rate_val(True)` =
 OFDM idx 11/mode 1 (`0x4b`) matches `mt76_connac2_mac_tx_rate_val` exactly, and the
 FIXED_RATE TXD block is 1:1 with the kernel with `TX_RATE` the only band-dependent field —
 so the 5 GHz TXD is byte-correct (2.4 GHz is CHECK-4 verified). The failure is therefore

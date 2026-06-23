@@ -48,6 +48,6 @@ def test_selected_0xff_yields_zero():
 
 
 def test_high_bit_byte_sign_extends():
-    # cal.rx.lna_gain is s8; a high-bit byte is a (rare but faithful) negative gain.
+    # cal.rx.lna_gain is s8; a high-bit byte is a (rare but genuine) negative gain.
     assert lna_gain_for_channel(_cache(lna_2g=0xFE), 6) == -2
     assert lna_gain_for_channel(_cache(lna_2g=0x80), 6) == -128

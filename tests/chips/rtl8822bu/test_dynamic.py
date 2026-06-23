@@ -2,7 +2,7 @@
 coverage path of rtw_phy_dig: walk IGI from the false-alarm count, clamped to
 [0x1c, 0x2a], written to both OFDM paths (0xc50/0xe50).
 
-Also covers the kernel-faithful seed (dig_init reads dig[0], no write) and the
+Also covers the kernel seed (dig_init reads dig[0], no write) and the
 8822b false-alarm accounting (ofdm + cck-if-enabled, then counter reset). A fake
 transport stands in for USB — no hardware.
 """
@@ -83,7 +83,7 @@ class TestDigStep:
         assert _igi_written(t) is None
 
     def test_high_default_pulled_into_range(self):
-        # A faithful seed can read an AGC default above the coverage band; the
+        # A seed can read an AGC default above the coverage band; the
         # first tick must pull it down to the 0x2a ceiling (fixes saturation).
         t = FakeTransport()
         st = dynamic.DigState(igi=0x30, history=[0x30] * 4)
@@ -105,7 +105,7 @@ class TestDigInit:
         st = dynamic.dig_init(t)
         assert st.igi == 0x24                       # 0x...24 & 0x7f
         assert st.history == [0x24] * 4
-        assert t.mask_writes == []                  # faithful: read-only seed
+        assert t.mask_writes == []                  # read-only seed
 
 
 class TestFalseAlarm:

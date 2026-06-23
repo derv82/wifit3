@@ -1,4 +1,4 @@
-"""Kernel-faithful `mt76x2u_mac_fixup_xtal` — EEPROM-derived XO_CTRL writes.
+"""`mt76x2u_mac_fixup_xtal` — EEPROM-derived XO_CTRL writes.
 
 Kernel reference: mt76x2/usb_mac.c:9-60. Covers:
   - The signed-magnitude offset math on TRIM_2 low byte
