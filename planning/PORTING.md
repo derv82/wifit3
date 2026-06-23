@@ -25,8 +25,28 @@ guess; it is a translation you can verify against the wire.
 - **bundle** — the `captures_<chipset>/` directory `capture.py` produced: the pcap, the
   timeline + per-tool logs, the over-air pcap, the firmware blob, and (DKMS only) the
   vendor `driver-source/`.
+- **Capture Replay** — the offline instrument that drives the *real* driver against the
+  **pcap** and reports **byte-for-byte accuracy**: how far the driver reproduces the
+  recording before the first diverging byte (100% = clean to end-of-capture). It is the
+  *measurement tool*, never the data — the data is the **pcap**. (Today the per-chip
+  `scripts/<chip>/verify_pcap.py`; being unified under `scripts/pcap_replay/`.)
 
-Never write "the capture" on its own. Say **pcap**, **timeline**, or **bundle**.
+Never write "the capture" on its own. Say **pcap**, **timeline**, or **bundle** for the
+data; **Capture Replay** is the tool that replays it.
+
+### Claims are measurements, never virtues
+
+A statement about a port is **[what] + [which instrument measured it] + [the number]** —
+never a bare adjective. **"faithful"/"faithfulness" are banned**: an agent has no notion of
+faith, and the word silently smears three different evidence levels into one self-awarded
+grade. Name the actual evidence:
+
+- **byte-for-byte accurate per the Capture Replay** — measured; cite the op count
+  (`5740/5740`).
+- **covered by test vectors** — code with no USB wire (e.g. WPS crypto ported from
+  hostapd, checked against published vectors). A different instrument — name it.
+- **ported from `<src cite>`; no capture exercises it** — honest *absence* of evidence, for
+  code on no captured path. Do **not** imply an accuracy you never measured.
 
 ## Prerequisites
 
@@ -51,8 +71,8 @@ permanent). Any PR that adds a fuse/EEPROM *write* is an immediate red flag and 
 Ask these before writing any code. Do not assume paths, bands, or feature sets.
 
 > ⚠️ **Porting touches the silicon directly.** A new port writes registers and replays the
-> vendor firmware-download path with nothing between you and the hardware. A faithful pcap diff
-> catches *unfaithful* sequences, not every *dangerous* one. **Test on a card you can afford to
+> vendor firmware-download path with nothing between you and the hardware. A byte-for-byte pcap
+> diff catches *inaccurate* sequences, not every *dangerous* one. **Test on a card you can afford to
 > lose.** Risk peaks at firmware-download, EFUSE reads, and the power-sequence steps.
 
 1. **Which mode?**
@@ -186,6 +206,9 @@ a broken port:
 
 - **Never hardcode the diverging byte** to match the recording.
 - **Never waive the op, and never edit the tool to skip or pass.**
+- **Never paper over a flaky step with a retry/re-roll loop.** If an op needs N attempts to
+  land, the port diverged from `<src>` — diff the command sequence, find the missing or
+  reordered op, and fix *that* (the 8814au 8× RF re-roll was a port gap, not hardware).
 
 **Waive nothing.** The target is a clean run with **zero** waived ops, end to end:
 
