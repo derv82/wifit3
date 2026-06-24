@@ -125,6 +125,9 @@ class Rtl8821cuDkmsDriver:
         self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="8821cu-dkms-rx")
         self._reader.start()
         self.info = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
+        # HACK: the 2.4 GHz RX path is dead after cold init until a 5 GHz->2.4 GHz band switch re-locks
+        # the VCO — the cold-direct 2.4 GHz tune runs the same _switch_band but the LO never jumps.
+        await loop.run_in_executor(None, self._prime_2g_rx)
         # phydm dynamic-check watchdog (kernel-parity — its ~2 s ticks are in the pcap). DIG runs
         # here; without it the RX AGC sits at full gain and the OFDM false-alarm count floods.
         self._wd_state = watchdog.WatchdogState(
@@ -133,6 +136,12 @@ class Rtl8821cuDkmsDriver:
         if progress_cb:
             progress_cb(1.0, "RTL8821CU monitor up (ch 1 @ 20 MHz)")
         return True
+
+    def _prime_2g_rx(self) -> None:
+        """Round-trip the band (2.4G->5G->2.4G) once so the first 2.4 GHz tune re-locks the VCO and
+        the RX path comes alive — see the HACK at the connect() call site. Leaves the chip on ch1."""
+        chan.set_channel(self.transport, self.info, 36)
+        chan.set_channel(self.transport, self.info, 1)
 
     async def _watchdog_loop(self) -> None:
         """Run the phydm dynamic-check tick at the kernel ~2 s cadence (DIG / CCK-PD / RX-agg /
