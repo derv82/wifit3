@@ -62,6 +62,9 @@ class Rtl8821cuTransport:
         # cali_info reset pending: a band switch ran phy_set_bb_swing -> odm_clear_txpowertracking_
         # state, which resets the thermal-tracking baseline; the next thermal callback applies it.
         self.thermal_reset_pending = False
+        # dm->cck_new_agc: the CCK-AGC report-format latch (0xa9c[17]) phydm reads once at
+        # odm_dm_init; the RX RSSI decode picks the CCK formula on it. Set by dm.py at init.
+        self.cck_new_agc = False
 
     # --- vendor control transfers (with the ON-section page-switch mirror) ---
     def _mirror(self, low_byte: int) -> None:

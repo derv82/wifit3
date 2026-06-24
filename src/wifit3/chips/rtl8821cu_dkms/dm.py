@@ -122,6 +122,7 @@ def _common_info_self_init(t, info, st: DmState) -> None:
     helpers are all 1SS- or non-8821C-gated no-ops here. Then the BB_RX_PATH read (0x808) and
     ``phydm_init_soft_ml_setting`` (0x19a8). ``phydm_trx_antenna_setting_init`` is a 1SS no-op."""
     st.cck_new_agc = bool(get_bb_reg(t, R_0xa9c, _BIT_CCK_NEW_AGC))
+    t.cck_new_agc = st.cck_new_agc          # surface to the RX RSSI decode (rx.decode_rssi)
     st.is_cck_high_power = bool(get_bb_reg(t, R_0x804, _BIT_CCK_RPT_FORMAT))
     st.rf_path_rx_enable = get_bb_reg(t, R_0x808, _MASK_BB_RX_PATH)
     set_bb_reg(t, R_0x19a8, _SOML_MASK, _SOML_VAL)

@@ -169,7 +169,7 @@ class Rtl8821cuDkmsDriver:
         cb = self._rx_cb
         if cb is None:
             return
-        for frame, rssi in iter_frames(buf):
+        for frame, rssi in iter_frames(buf, self.transport.cck_new_agc):
             parsed = WlanFrameParser.parse_80211_frame(frame, rssi)
             if parsed is not None:
                 cb(parsed)
