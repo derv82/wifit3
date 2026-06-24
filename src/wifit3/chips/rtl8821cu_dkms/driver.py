@@ -33,6 +33,7 @@ from wifit3.wlan.packet import WlanFrameParser
 
 from . import bringup, chan, efuse, tx, watchdog
 from .constants import USB_PID_8821CU, USB_VID_REALTEK
+from .rf import read_rf, write_rf
 from .rx import iter_frames
 from .transport import Rtl8821cuTransport
 
@@ -125,9 +126,7 @@ class Rtl8821cuDkmsDriver:
         self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="8821cu-dkms-rx")
         self._reader.start()
         self.info = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
-        # HACK: the 2.4 GHz RX path is dead after cold init until a 5 GHz->2.4 GHz band switch re-locks
-        # the VCO — the cold-direct 2.4 GHz tune runs the same _switch_band but the LO never jumps.
-        await loop.run_in_executor(None, self._prime_2g_rx)
+        await loop.run_in_executor(None, self._relatch_2g_band)
         # phydm dynamic-check watchdog (kernel-parity — its ~2 s ticks are in the pcap). DIG runs
         # here; without it the RX AGC sits at full gain and the OFDM false-alarm count floods.
         self._wd_state = watchdog.WatchdogState(
@@ -137,11 +136,24 @@ class Rtl8821cuDkmsDriver:
             progress_cb(1.0, "RTL8821CU monitor up (ch 1 @ 20 MHz)")
         return True
 
-    def _prime_2g_rx(self) -> None:
-        """Round-trip the band (2.4G->5G->2.4G) once so the first 2.4 GHz tune re-locks the VCO and
-        the RX path comes alive — see the HACK at the connect() call site. Leaves the chip on ch1."""
-        chan.set_channel(self.transport, self.info, 36)
-        chan.set_channel(self.transport, self.info, 1)
+    def _relatch_2g_band(self) -> None:
+        """Re-assert the RF18 2.4 GHz band bit after cold init. The cold first channel tune runs
+        inside ``cold_bringup`` BEFORE the monitor RX-enable + the media-connect antenna switch to
+        WiFi, and on this silicon the RF18 band-select bit (BIT16) does not latch on that premature
+        cold tune — it reads back stuck SET (5 GHz), so the 2.4 GHz demod yields only CRC-fail
+        frames (0 good beacons; HW-confirmed: bit16=1 => 100% crc_err, bit16=0 => ~half pass). The
+        kernel hides this because airodump hops to 5 GHz immediately and the first 5 GHz->2.4 GHz
+        transition re-latches it warm; a direct warm RF18 write does it deterministically (a 5 GHz
+        bounce is flaky on this chip). Read-back-verified because a concurrent bulk-IN read can drop
+        the write. Only runs on a 2.4 GHz channel."""
+        if (self.transport.current_channel or 1) > 14:
+            return
+        for _ in range(5):
+            rf18 = read_rf(self.transport, 0x18)
+            if not (rf18 & (1 << 16)):
+                return
+            write_rf(self.transport, 0x18, rf18 & ~(1 << 16))
+        logger.warning("RTL8821CU: RF18 5G band bit still set after re-latch — 2.4 GHz RX may be dead")
 
     async def _watchdog_loop(self) -> None:
         """Run the phydm dynamic-check tick at the kernel ~2 s cadence (DIG / CCK-PD / RX-agg /
