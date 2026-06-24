@@ -8,10 +8,13 @@
 > **Status — the byte-for-byte gate reproduces the ENTIRE cold-boot pcap (all 21409 ctrl + bulk-OUT
 > ops), PASS, driving the driver's PUBLIC interface** (`driver.connect/set_channel/inject_frame`), so
 > it verifies the product code path, not a parallel reimplementation. Registered in `wlan/manager.py`;
-> cold init is HW-validated (FW boots). **Open: monitor RX delivers 0 802.11 frames on hardware** —
-> see the "HW monitor-RX bring-up" port log at the bottom. The chip→host interrupt-IN (C2H, ep 0x81,
-> 360 pkts) + bulk-IN (RX, ep 0x84) streams are not modeled by the host-side replay. Warm reattach +
-> the ZeroCD mode-switch are open. Below is the per-phase detail, still valid:
+> cold init is HW-validated (FW boots). **Open — monitor RX is a DEMOD fault, not a config or "0
+> frames" fault**: frames ARE received (bulk-IN ep 0x84 works; the rx.py decoder is proven on the
+> vendor's 2039 recorded beacons) and the demod decodes beacon HEADERS perfectly, but ~99% of frames
+> fail CRC with errors that accumulate over frame length (CFO/SFO/marginal-EVM). The host→chip config
+> is byte-for-byte identical to the vendor on HW (765 BB + 85 RF regs; only RF 0x18 self-corrects).
+> See the "HW monitor-RX: demod fault isolated" port log at the bottom. Warm reattach + the ZeroCD
+> mode-switch are open. Below is the per-phase detail, still valid:
 > The gate (`scripts/rtl8821cu_dkms/verify_pcap.py`,
 > replaying ctrl + the FW/TX bulk-OUT stream) reproduces the **whole cold-boot probe and the airmon
 > monitor-entry phase through the BT-coex HAL init + the USB hal_init_misc LED + the iface-init MAC
@@ -1004,3 +1007,49 @@ phydm watchdog on a 2s background task. `scripts/rtl8821cu_dkms/rx_diag.py` snap
   None fixed it. The RCR-widen and the GNT force are not in the pcap (it ran `wifi_only=FALSE`). So
   the *running* driver deviates from the wire past `cold_bringup`. The gate skips the product path,
   so it stays byte-for-byte. The watchdog is kernel-parity (its ticks are in the pcap).
+
+## Port log — 2026-06-23 (HW monitor-RX: demod fault isolated — NOT config, NOT "0 frames")
+
+The prior entry's framing ("0 frames; cause is the chip→host path or a live-read write") is
+**superseded**. The chip→host RX path works and the host→chip config is byte-for-byte correct; the
+fault is in the analog demod. New RE instruments (`scripts/rtl8821cu_dkms/`): `rx_pcap_mine.py`,
+`rx_onset.py`, `trace_cold.py` (mine the pcap's chip→host stream the gate ignores), `live_write_diff.py`
++ `rf_diff.py` (final-state register diff, live HW vs vendor pcap), `dc_probe.py`, `phy_status_dump.py`
++ `vendor_phy.py`, `frame_dump.py`, `good_capture.py`, `beacon_align.py`, `xtal_sweep.py` (live RX
+characterization). All passive (no TX).
+
+- **Frames ARE received; the decoder works.** [HW] With monitor RCR set to also accept CRC/ICV-error
+  frames (ACRC32|AICV, RCR `0x90000301`), bulk-IN ep 0x84 delivers ~100 real 802.11 frames / 5 s per
+  busy channel. The vendor's recorded bulk-IN (capture-1) carries **11903 good MPDUs / 2039 beacons,
+  0 CRC errors**, all decoded correctly by the existing `rx.py` (`rx_pcap_mine.py`). So neither the
+  RX pipe nor the decoder is the fault.
+- **The "RCR drops beacons" theory is FALSE.** The vendor received 2039 beacons with `RCR=0x90000001`
+  (AAP + RXFLTMAP=0xffff is fully promiscuous in monitor). The widen to `0x9000382f` was a
+  misdiagnosis; removed from `connect()` along with the GNT force (commit dropping the deviations).
+- **The config is byte-for-byte identical to the vendor ON HARDWARE.** `live_write_diff.py` /
+  `rf_diff.py` run the real `cold_bringup` on silicon, log every write, and diff the final per-register
+  state against the vendor pcap: of **765 BB + 85 RF** registers, only **3** differ, all benign
+  live-read divergences — RF 0x18 (`0x1bc01` vs `0x03c01`, bits 15/16; self-corrects on the first
+  `set_channel`), 0xc10 (DC-cancel, our live measurement `0x7fe01405` ≈ vendor `0x7fe01806`, comp
+  within 1 LSB — `dc_probe.py`), and 0x4c (REG_LEDCFG0, cosmetic). Crystal cap, IQK preload (the
+  0x1bxx PHY_REG rows = kernel `array_mp_8821c_phy_reg`, card-independent), AGC, RF radio-A: all match.
+- **No live calibration is the differentiator.** No live IQK ran in the capture (8821c IQK uses the
+  0x1bxx page; the only 0x1bxx writes are the PHY_REG preload, none in the operational phase — IQK is
+  gated on `hal->bNeedIQK` [SRC] rtl8821c_phy.c:801, **not** `is_linked` as the old note claimed, but
+  it was never set here). No LCK ran (its RF 0xcc=0x2018 / 0xc4=0x8f602 signature is absent).
+- **It is a DEMOD fault, length-dependent.** [HW] `beacon_align.py` on a busy channel: 310 frames
+  carry a **perfect 22-byte beacon header** (FC=0x80, broadcast addr1, addr2==addr3) yet fail CRC over
+  their full 238–526 B length. Headers decode; errors accumulate over frame length ⇒ residual
+  **CFO/SFO / marginal EVM** (a flat per-symbol BER would pass a fraction of bodies; 310 headers + 0
+  bodies fits an *accumulating* phase error). DIG works (`wd_tally.py`: IGI climbs 0x1e→0x2a, OFDM-FA
+  flood 32000→~12) but does not restore long frames. CCK is not "dead" — short CCK frames decode too;
+  earlier CCK-FA≈0 was just no CCK traffic in-window.
+- **Open — per-unit crystal vs weak environment.** CFO/SFO is set by the crystal; we apply the
+  capture card's `xtal=0x2e`. If this unit's crystal wants a different cap (per-unit tolerance, or a
+  wrong EFUSE field), every long frame accumulates phase error. `xtal_sweep.py` tests this but needs
+  reliable strong signal — the test environment is **intermittent** (a 310-header burst, then minutes
+  of only noise across all channels, despite the vendor capture showing 42 SSIDs). Decisive next
+  steps (need conditions the agent can't summon solo): (1) re-run `xtal_sweep.py` under a sustained
+  strong AP — a clear good-frame peak ≠ 0x2e ⇒ crystal/CFO is the fault and the cap is the fix;
+  (2) A/B a known-good card on the same machine/moment to split "this unit's RX is degraded" from
+  "the environment is RF-quiet right now" (the beacon-rate-bar method).
