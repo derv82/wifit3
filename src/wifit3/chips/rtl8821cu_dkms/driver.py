@@ -31,7 +31,7 @@ from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
-from . import bringup, chan, efuse, tx, watchdog
+from . import bringup, chan, efuse, mac, tx, watchdog
 from .constants import USB_PID_8821CU, USB_VID_REALTEK
 from .rf import read_rf
 from .rx import iter_frames
@@ -68,7 +68,7 @@ class Rtl8821cuDkmsDriver:
         DeviceID(USB_VID_REALTEK, USB_PID_8821CU, "Realtek RTL8821CU 802.11ac (8821cu_dkms)"),
     ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G + CHANNELS_5G
-    FAKE_MAC: ClassVar[FakeMacSupport] = FakeMacSupport.UNIMPLEMENTED
+    FAKE_MAC: ClassVar[FakeMacSupport] = FakeMacSupport.SPOOFABLE
 
     def __init__(self, dev: usb.core.Device):
         self.dev = dev
@@ -229,6 +229,26 @@ class Rtl8821cuDkmsDriver:
                                    retry_ctrl=not use_no_ack)
         self.transport.bulk_out(pkt)
         return True
+
+    async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
+        """Re-point REG_MACID to ``mac`` so the hardware HW-ACKs frames addressed to it while
+        staying in monitor mode — the accept-all monitor RCR (AAP) still HW-ACKs RA==REG_MACID,
+        so no RCR flip is needed. MAC-only, mirroring the proven Realtek siblings. Reversed by
+        exit_active_monitor. ``bssid`` is unused (register-MAC ACK is a pure RA-match)."""
+        await self._write_mac(bytes(mac))
+        return bytes(mac)
+
+    async def exit_active_monitor(self) -> None:
+        """Restore the card's real EFUSE MAC in REG_MACID (stop ACKing the forged MAC)."""
+        if self.info is not None:
+            await self._write_mac(efuse.mac_address(self.info))
+
+    async def _write_mac(self, mac6: bytes) -> None:
+        """Program ``mac6`` into REG_MACID, serialized with the watchdog/set_channel (``_io_lock``)
+        and offloaded so the blocking control transfers never stall the RX dispatch."""
+        loop = asyncio.get_running_loop()
+        async with self._io_lock:
+            await loop.run_in_executor(None, mac.set_mac_addr, self.transport, mac6)
 
     async def close(self) -> None:
         if self._watchdog_task is not None:
