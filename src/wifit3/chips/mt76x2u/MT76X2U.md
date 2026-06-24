@@ -1,207 +1,91 @@
-# MT76x2U / MT7612U — Ground Truth
+# MT76x2U / MT7612U
 
-## Potential Known Gaps
+A port of the mt76 kernel driver, generation `mt76x02` (the older sibling of `mt76_connac`;
+kernel module `mt76x2u`, vs `mt7921u` for the WiFi-6 sibling). MT7612U silicon: 2T2R, 2.4 + 5 GHz
+802.11ac, two-stage firmware (ROM patch + main FW). The dev-machine card is `0e8d:7612` (Alfa
+AWUS036ACM), a USB 3.0 device; 15 VID:PIDs are claimed (`constants.py::USB_IDS_MT76X2U`).
 
-Cross-driver gap classes (project audit 2026-05-25).
+## Status
 
-- [~] **RX polling loop drops frames** — PORTED to the shared RxReaderThread
-  (RxDrainer now drives it; awaiting HW verify). Was the gap: `rx.py:_loop` (187)
-  does `await transport.async_read_bulk(...)` (executor read) then decode +
-  parse + callback on the event loop — no read posted while parsing. Same
-  pattern as rtl8821au pre-fix. Fix: dedicated reader thread + queue hand-off
-  (rtl8821au commit 2e3a7a7).
-- [x] **RX filter / monitor mode (ToDS capture)** — ALREADY HANDLED (offline
-  verdict; the "working monitor sibling" per the monitor-deviation memory).
-  `mac.py:mac_start(monitor=True)` (309-328) clears `MT_RX_FILTR_CFG`
-  DROP_UC_NOME(bit2) + DROP_NOT_MYBSSID(bit3); `mac.py:301-304` writes bare MAC
-  to `MT_MAC_ADDR_DW1`/`MT_MAC_BSSID_DW1` (no U2ME/MBSS drop). ToDS should work.
+Cold init, two-stage firmware boot, and dual-band monitor RX all work on hardware. A 30-min
+dual-band soak (22 channels, 0.25 s hops) ran with no frame-rate sag — active BSSIDs 147→155, 2.4
+GHz ~100+ and 5 GHz ~52 steady. ARP replay works first try and handshakes auto-save (after the
+L2PAD fix, below). TSSI is the one open hardware question (see Gotchas).
 
-Verified facts only. Hypothesis-level material goes in commit messages,
-not here. `[SRC]` = kernel source (`data_dumps/mt76-source-v6.18/`). `[WIRE]`
-= pcap evidence (`usb_dumps/captures_mt76x2u/capture-1.pcap`).
+## Gotchas
 
-**Stress: 30-min dual-band soak PASS (2026-06-05).** `scripts/diag/sweep.py
---longrun-min 30 --hop-interval 0.25` over 22 channels — no degradation: active
-BSSIDs 147→155 (ratio 1.05), 2.4 GHz ~100+ and 5 GHz ~52 both steady, frames
-~2.2–3.0 k/60 s. 30 min of sustained RX with no frame-rate sag is consistent with
-the RxReaderThread port (the `[~]` item above) holding under load — corroborating,
-not the targeted `test_pollgap_load.py` proof. Report
-`scripts/diag/reports/mt76x2u_20260605-212516.md`.
+**Remove the L2 alignment pad BEFORE trimming to MPDU_LEN.** mt76x02 sets `MT_RXINFO_L2PAD` and
+inserts 2 bytes between the 802.11 header and the body whenever the header isn't 4-byte aligned —
+i.e. every QoS-Data frame (26-byte header), which is what EAPOL and WEP-ARP ride on. The kernel
+de-pads *then* trims, and MPDU_LEN counts the de-padded MPDU, so `rx.py::decode_urb` must match that
+order. Windowing to MPDU_LEN first drops the last 2 body bytes — it clipped EAPOL M2 `key_data`
+(uncrackable handshake) and shrank WEP ARP from 70→68 B (flaky replay). Beacons/mgmt are unaffected
+(24-byte header, no L2PAD), which is why scanning always looked healthy.
 
-## Identity
+**TSSI is gated OFF by default** (`driver.py::_tssi_enabled` needs both the EEPROM flag and
+`WIFIT3_MT76X2U_TSSI=1`), deviating from the kernel which trusts the EEPROM. The periodic
+`tssi_compensate` path is suspected of zeroing TX power on this silicon (observed `tssi_slope=127`,
+near max). The `phy.py` port of `mt76x2_phy_tssi_compensate` audited as matching the kernel, so the
+root cause is more likely the EEPROM read feeding it, or the monitor-mode `avg_rssi_all=-75`
+placeholder. Needs hardware diagnosis before flipping the default back.
 
-- **Family**: mt76, generation `mt76x02` (older sibling of mt76_connac).
-- **Kernel module**: `mt76x2u` (vs `mt7921u` for the WiFi-6 sibling).
-- **VID:PID claimed**: 15 entries — see `constants.py::USB_IDS_MT76X2U`. The
-  card on the dev machine right now is **`0e8d:7612`** = Alfa AWUS036ACM.
-  `[SRC]` `mt76x2/usb.c:12`.
-- **USB 3.0 capable**. `bcdUSB=0x0300`, PyUSB speed=4 (SUPER).
-  `[WIRE]` live pyusb dump on `0e8d:7612`.
+**No patch-semaphore wall.** `rom_protect = !is_mt7612(dev)` is false for this silicon, so the
+`MT_MCU_SEMAPHORE_03` acquisition is skipped — this is the structural reason MT7612U doesn't hit the
+wall that paused MT7921AU.
 
-## Channel width — 20 MHz only (intentional)
+**The card enumerates as USB mass storage first** (SCSI BBB, EPs 0x81 IN / 0x02 OUT) before exposing
+the wireless EP set. On Windows the WinUSB/Zadig binding plus the first open re-enumerates it into
+wireless mode automatically (no manual switch). `transport.assert_expected_endpoints()` fails fast
+with an actionable error if the wireless EPs are still missing — also the early-detection guard for
+whether the mode switch is stable across power cycles, which is unconfirmed.
 
-wifit3 tunes this card to the **20 MHz primary channel only**: `set_channel_20mhz`
-hardcodes `bw = 0` / `ch_group_index = 0`, and `phy_channel_calibrate` follows.
-The kernel's `mt76x2u_phy_set_channel` handles 40/80 MHz — the `chandef.width`
-switch → `bw=1/2`, the primary-channel offset math, the per-width `EXT_CCA` group,
-the secondary-channel setup. **We deliberately skip all of that.**
+**Channel switches may need ~2 s of breathing room** — observed against the vendor stack, not yet
+replicated against the wifit3 driver, so unconfirmed as a real firmware constraint.
 
-This is **not** a capture gap. Everything wifit3 acts on rides the 20 MHz primary
-at legacy rates: beacons, probe/auth/assoc, EAPOL (handshake/PMKID), WEP data +
-IVs. 40/80 MHz only carries high-throughput *data payloads*, which wifit3 neither
-needs nor transmits (deauth / fake-auth / ARP-replay are legacy-rate on the
-primary too). So 20 MHz primary capture covers 100% of the attack surface; the
-only thing it misses is data MPDUs sent *solely* on a 40/80 extension — irrelevant
-to every wifit3 attack. This is the project-wide posture for all drivers.
+**20 MHz primary only, by design.** `set_channel_20mhz` hardcodes `bw=0` / `ch_group_index=0`; we
+deliberately skip the kernel's 40/80 MHz path. This is the project-wide posture, not a capture gap —
+everything wifit3 acts on (beacons, auth/assoc, EAPOL, WEP IVs, all legacy-rate attacks) rides the
+20 MHz primary; 40/80 MHz only carries HT data payloads wifit3 never needs.
 
-## Endpoint layout
+## Orientation
 
-After the boot-ROM/mass-storage→wireless mode switch (which Windows + WinUSB
-triggers automatically on first open), interface 0.0 exposes 2 bulk-IN + 6
-bulk-OUT, ALL at 1024-byte maxPacketSize. Kernel enum order is positional —
-endpoints are assigned to the `mt76u_in_ep` / `mt76u_out_ep` slots in
-descriptor order. `[SRC]` `usb.c:292` (`mt76u_set_endpoints`).
+Two-stage firmware lives in `firmware.py`: a ROM patch (`mt7662_rom_patch.bin` → `0x00090000`) then
+main FW split into ILM (`0x00080000`) and DLM (`0x00110000`, or `0x00110800` on rev ≥ E3 — this card
+is E4). Chunks upload over the bulk-OUT MCU path on EP 0x08, with the dst address split across two
+no-payload control transfers per `mt76u_single_wr`. We ship header-stripped bodies (the
+linux-firmware headers never appear on the wire) and skip the header-read step.
 
-| Slot | Kernel name | Address |
-|---|---|---|
-| in_ep[0]  | `MT_EP_IN_PKT_RX`      | **0x84** |
-| in_ep[1]  | `MT_EP_IN_CMD_RESP`    | **0x85** |
-| out_ep[0] | `MT_EP_OUT_INBAND_CMD` | **0x08** |  ← FW upload + MCU
-| out_ep[1] | `MT_EP_OUT_AC_BE`      | 0x04 |
-| out_ep[2] | `MT_EP_OUT_AC_BK`      | 0x05 |
-| out_ep[3] | `MT_EP_OUT_AC_VI`      | 0x06 |
-| out_ep[4] | `MT_EP_OUT_AC_VO`      | 0x07 |
-| out_ep[5] | `MT_EP_OUT_HCCA`       | 0x09 |
+Register access is one vendor control transfer each, with two virtual-bus marker bits at the top of
+the address selecting bRequest: none → MULTI_READ/WRITE (MAC/BB/RF), `BIT(30)` → CFG bus, `BIT(31)`
+→ EEPROM read. Encoding: `wValue = addr >> 16`, `wIndex = addr & 0xFFFF`, 4-byte LE payload.
 
-`[WIRE]` pyusb descriptor dump; matches kernel descriptor-iteration order.
+RX decode + monitor filtering: `mac.py::mac_start(monitor=True)` clears the `MT_RX_FILTR_CFG`
+unicast/BSSID drop bits so ToDS capture works. Endpoints are assigned positionally in descriptor
+order (`mt76u_set_endpoints`): in_ep `0x84`/`0x85`, out_ep `0x04`–`0x09`, with `0x08` the inband-cmd
+EP used for FW upload + MCU. Names match the kernel; grep `data_dumps/mt76-source-v6.18/` to
+cross-reference.
 
-## Cold-boot mass-storage stub (avoid)
+## Scripts
 
-Before the wireless EP set is exposed, the device enumerates as USB Mass
-Storage SCSI BBB with EPs **0x81 IN / 0x02 OUT**. `[WIRE]` capture-1 frames
-1-6 (`bInterfaceClass=0x08`). On Windows the WinUSB Zadig binding plus the
-first `usb_reset_device`-equivalent open causes the device to re-enumerate
-into wireless mode automatically — confirmed by the live pyusb dump showing
-the wireless EP set with no manual switch. `transport.assert_expected_endpoints()`
-fails fast with an actionable error if the wireless EPs are still missing.
+- `extract_mt7662_fw.py` — splits the bulk-OUT FW chunks out of the cold-boot pcap into `assets/`.
+- `scripts/diag/sweep.py` — multi-channel RX soak / longrun stress (used for the 30-min dual-band run).
+- `verify_pcap.py` — offline cold-boot byte gate against `captures_mt76x2u/capture-1.pcap`.
 
-## Register-access protocol
+## Debug log
 
-Every register read/write is one vendor control transfer. The 32-bit
-address has two virtual-bus marker bits at the top; the kernel strips them
-and picks bRequest accordingly. `[SRC]` `usb.c:85` (`__mt76u_rr`) and
-`usb.c:111` (`__mt76u_wr`).
+### 2026-05-29 — L2PAD clipped EAPOL/WEP
 
-| Bus | Address marker | Read bReq | Write bReq |
-|---|---|---|---|
-| Default (MAC/BB/RF) | none | `0x07 MT_VEND_MULTI_READ` | `0x06 MT_VEND_MULTI_WRITE` |
-| CFG bus             | `BIT(30)` | `0x47 MT_VEND_READ_CFG`  | `0x46 MT_VEND_WRITE_CFG` |
-| EEPROM              | `BIT(31)` | `0x09 MT_VEND_READ_EEPROM` | — |
+RX was healthy for scanning but handshakes were uncrackable and WEP ARP replay flaky. Root cause was
+the L2PAD ordering (now in Gotchas): windowing to MPDU_LEN before de-padding dropped the trailing 2
+body bytes, but only on QoS-Data frames — beacons/mgmt have a 4-byte-aligned header and never set
+L2PAD, so scanning masked it. Fixing the de-pad-then-trim order made ARP replay work first try and
+handshakes auto-save.
 
-Encoding: `wValue = addr >> 16`, `wIndex = addr & 0xFFFF`, payload = 4-byte
-little-endian value.
+### 2026-06-20 — firmware provenance
 
-## Firmware upload — two stages
-
-**Stage 1 — ROM patch** (`mt7662_rom_patch.bin`):
-
-- `[SRC]` `mt76x2/usb_mcu.c:57` (`mt76x2u_mcu_load_rom_patch`).
-- **MT7612 special-case**: `rom_protect = !is_mt7612(dev)` evaluates **false**
-  for our silicon — the `MT_MCU_SEMAPHORE_03` acquisition is skipped entirely.
-  This is the structural reason MT7612U doesn't hit the patch-semaphore wall
-  that paused MT7921AU. `[SRC]` `usb_mcu.c:59`.
-- Vendor reset (`MT_VEND_DEV_MODE`, `wValue=0x0001`).
-- FCE config writes (PSE_CTRL=1, base_ptr=0x400230, max_cnt=1, pdma=0x44,
-  skip_fs=3) and USB-DMA CFG (BULK_EN bits + RX_BULK_AGG_TOUT=0x20).
-- Each chunk (max 2048 B) uploaded via the bulk-OUT path on **EP 0x08**:
-  1. `MT_VEND_WRITE_FCE` to `MT_FCE_DMA_ADDR` (0x0230) — `mt76u_single_wr`
-     splits the 32-bit dst across TWO control transfers (low half in wValue
-     at addr+0, high half in wValue at addr+2, **no payload either**).
-  2. Same dance for `MT_FCE_DMA_LEN` (0x0234) with `len << 16`.
-  3. Bulk-OUT on EP 0x08: `[4B mt76 info: PORT|LEN|TYPE_CMD][chunk bytes][4B zero pad]`.
-  4. RR + ++ + WR on `MT_TX_CPU_FROM_FCE_CPU_DESC_IDX` (0x09a8).
-- After all chunks: `enable_patch` + `reset_wmt` (two raw vendor packets
-  with hard-coded payloads — see kernel for byte sequences).
-- Poll: rev≥E3 → `MT_MCU_CLOCK_CTL` BIT(0) goes high. Pre-E3 → `MT_MCU_COM_REG0`
-  BIT(1).
-
-**Stage 2 — Main firmware** (`mt7662.bin`):
-
-- `[SRC]` `mt76x2/usb_mcu.c:144` (`mt76x2u_mcu_load_firmware`).
-- Vendor reset again.
-- FCE + USB-DMA CFG re-programmed (same values).
-- **ILM** (instruction memory) uploaded to `0x00080000`, chunks up to 14592 B.
-- **DLM** (data memory) uploaded to `0x00110000`, **or `0x00110800` if rev ≥ E3**.
-- IVB trigger: `MT_VEND_DEV_MODE` `wValue=0x0012`.
-- Poll: `MT_MCU_COM_REG0` BIT(0) goes high → FW is running.
-
-## Pcap-derived FW sizes (capture-1)
-
-`extract_mt7662_fw.py` walks `usb_dumps/captures_mt76x2u/capture-1.pcap` and
-splits the bulk-OUT chunks by section. Outputs land in `assets/`:
-
-| File | Bytes | Target |
-|---|---|---|
-| `mt7662_rom_patch_body.bin` | 26320 | `0x00090000` |
-| `mt7662_ilm.bin`            | 64448 | `0x00080000` |
-| `mt7662_dlm.bin`            | 17428 | **`0x00110800`** (confirms rev ≥ E3) |
-
-DLM target = `0x110000 + 0x800` → the dev machine's MT7612U is **rev E3+**.
-
-Headers from linux-firmware (`mt76x02_patch_header` for ROM patch, 32-byte
-`mt76x02_fw_header` for main FW) never appear on the wire. We ship the
-header-stripped bodies and `firmware.py` skips the header-read step.
-`[[firmware-extraction]]` precedent.
-
-**Upstream provenance (verified 2026-06-20).** The pcap-extracted bodies are byte-identical to
-linux-firmware `mediatek/mt7662.bin` + `mediatek/mt7662_rom_patch.bin` — **not** the `mt7662u*`
-variants: `mt7662.bin[32:32+ilm_len]` == `mt7662_ilm.bin`, the trailing DLM == `mt7662_dlm.bin`,
-and `mt7662_rom_patch.bin[30:]` == `mt7662_rom_patch_body.bin`. Mainline `mt76x2u` requests
-exactly these (`MT7662_FIRMWARE` / `MT7662_ROM_PATCH`, `usb_mcu.c:85,151`), same as PCIe
-`mt76x2e`. `WHENCE` files them under driver `mt76x2e` → governed by
-`LICENCE.ralink_a_mediatek_company_firmware` (not `LICENCE.mediatek`); that license text ships
-alongside the blobs in `assets/`.
-
-## Verified wire facts (capture-1)
-
-- **L2 alignment pad — remove BEFORE trimming to MPDU_LEN.** mt76x02 sets
-  `MT_RXINFO_L2PAD` and inserts 2 bytes between the 802.11 header and the body
-  whenever the header isn't 4-byte aligned — i.e. every QoS-Data frame (26-byte
-  header), which is what EAPOL and WEP-ARP ride on. The kernel de-pads, *then*
-  trims (`mt76x02_remove_hdr_pad` → `pskb_trim(skb, len)`); MPDU_LEN counts the
-  de-padded MPDU. `rx.py::decode_urb` must match that order — windowing to
-  MPDU_LEN first drops the last 2 body bytes, which clipped EAPOL M2 `key_data`
-  (→ uncrackable handshake) and shrank WEP ARP from 70→68 B (→ flaky replay).
-  Beacons/mgmt are unaffected (24-byte aligned header → no L2PAD), which is why
-  scanning always looked healthy. `[SRC]` mt76x02_mac.c:831,854. `[HW]` confirmed
-  2026-05-29: ARP replay works first try, handshake auto-saves.
-- **ASIC version = `0x76120044`** → rev **E4** (low byte 0x44). `[WIRE]`
-  control READ bReq=0x07 of reg 0x0000, frame 137/138. Confirms the
-  rev-≥E3 inference from the DLM offset, and pins it precisely at E4.
-- **Inject TXWI** (aireplay-ng directed deauth, frame 32207): `rate=0x0000`
-  (CCK 1 Mbps), `wcid=0xff`, `txstream=0x13` (2x2 MIMO, rev≥E4 branch),
-  `pktid=0x00` (MT_PACKET_ID_NO_ACK — wcid-less frames never get a status
-  push). `[WIRE]` `[SRC]` mt76x02_mac.c:397, tx.c:132.
-- **MCU LOAD_CR** (frame 2457): `cmd=2`, `len=8`, payload
-  `02 00 00 00 | ff 00 00 80` → cr_mode=`MT_RF_BBP_CR`(2), cfg=`0x800000FF`
-  (BIT(31) | NIC_CONF nibbles). One LOAD_CR per init.
-- **MCU SWITCH_CHANNEL_OP is sent twice** per channel switch (~13 ms apart):
-  first with `ext_chan=0x00`, then `ext_chan=0xe0 + bw_index`. e.g. ch1
-  frames 3005/3009.
-
-## Open / unknown
-
-- **TSSI is gated OFF by default** (`driver.py`: `_tssi_enabled` requires
-  both the EEPROM flag and `WIFIT3_MT76X2U_TSSI=1`). This deviates from the
-  kernel, which trusts the EEPROM. The periodic `tssi_compensate` path is
-  suspected of zeroing TX power on this silicon (observed `tssi_slope=127`,
-  near max). The `phy.py` port of `mt76x2_phy_tssi_compensate` audited as
-  matching the kernel, so the root cause is more likely in the EEPROM read feeding it
-  or the monitor-mode `avg_rssi_all=-75` placeholder. Needs hardware
-  diagnosis before flipping the default back to kernel behavior.
-- Whether the wireless-mode endpoints we see are stable across power
-  cycles, or whether some interactions stall mid-mode-switch (the
-  `assert_expected_endpoints` guard is the early-detection mechanism).
-- Channel-switch quirk (observed): "channel switches need ~2 s
-  of breathing room". Not yet replicated against the wifit3 driver — M5
-  will baseline + bake in the delay if it's a real firmware constraint.
+The pcap-extracted bodies are byte-identical to linux-firmware `mediatek/mt7662.bin` +
+`mediatek/mt7662_rom_patch.bin` (not the `mt7662u*` variants): the ILM slice, trailing DLM, and
+rom-patch body all match, and mainline `mt76x2u` requests exactly these. WHENCE files them under
+driver `mt76x2e` → governed by `LICENCE.ralink_a_mediatek_company_firmware`, which ships alongside
+the blobs in `assets/`. The DLM landing at `0x110800` plus an ASIC version of `0x76120044` pins the
+silicon at rev E4.
