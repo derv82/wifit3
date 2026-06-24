@@ -27,29 +27,32 @@ from wifit3.chips.rtl8821cu_dkms.bb import set_bb_reg
 from wifit3.chips.rtl8821cu_dkms.driver import Rtl8821cuDkmsDriver
 
 CH = 36
-MODES = ("normal", "disable_comp")    # disable_comp: run DC cal, then clear 0xa9c[20] (comp off)
+MODES = ("normal", "skip_dc")    # skip_dc: no-op _dc_cancellation entirely
 _ORIG_DC = dm_mod._dc_cancellation
 
 
-async def one(dev, mode: str, dwell: float) -> int:
+async def one(dev, mode: str, dwell: float) -> tuple[int, int]:
     dm_mod._dc_cancellation = (lambda *a, **k: None) if mode == "skip_dc" else _ORIG_DC
     drv = Rtl8821cuDkmsDriver(dev)
-    n = [0]
-    drv.register_rx_callback(lambda p: n.__setitem__(0, n[0] + 1))
+    cnt = {"5g": 0, "2g": 0, "cur": "5g"}
+    drv.register_rx_callback(lambda p: cnt.__setitem__(cnt["cur"], cnt[cnt["cur"]] + 1))
     await drv.connect()
     if mode == "disable_comp":         # DC cal ran; now turn OFF its compensation (0xa9c[20]=0)
         await asyncio.get_running_loop().run_in_executor(
             None, set_bb_reg, drv.transport, 0x0A9C, 1 << 20, 0)
-    await drv.set_channel(CH)
+    await drv.set_channel(36)
+    cnt["cur"] = "5g"
     await asyncio.sleep(dwell)
-    frames = n[0]
+    await drv.set_channel(1)           # 5->2.4 GHz switch clears RF18 bit16 so ch1 can RX
+    cnt["cur"] = "2g"
+    await asyncio.sleep(dwell)
     await drv.close()
-    return frames
+    return cnt["5g"], cnt["2g"]
 
 
 async def run(pairs: int, dwell: float, rest: float) -> int:
     backend = libusb_package.get_libusb1_backend()
-    tally = {m: [0, 0] for m in MODES}
+    tally = {m: {"5g": [], "2g": []} for m in MODES}    # mode -> band -> [frame counts]
     try:
         for k in range(pairs):
             order = MODES if k % 2 == 0 else MODES[::-1]
@@ -59,22 +62,29 @@ async def run(pairs: int, dwell: float, rest: float) -> int:
                     print("no 0bda:c820 device")
                     return 1
                 try:
-                    frames = await one(dev, mode, dwell)
+                    n5, n2 = await one(dev, mode, dwell)
                 except Exception as e:  # noqa: BLE001
-                    print(f"pair {k} {mode:7s}: EXCEPTION {type(e).__name__}: {e}")
+                    print(f"pair {k} {mode:12s}: EXCEPTION {type(e).__name__}: {e}")
                     await asyncio.sleep(rest)
                     continue
-                verdict = "GOOD" if frames >= 10 else "DEAD"
-                tally[mode][0 if verdict == "GOOD" else 1] += 1
-                print(f"pair {k} {mode:7s}: {verdict}  ch36_frames={frames}")
+                tally[mode]["5g"].append(n5)
+                tally[mode]["2g"].append(n2)
+                print(f"pair {k} {mode:12s}: 5g={n5:4d} ({'GOOD' if n5>=10 else 'DEAD'})  "
+                      f"2g={n2:4d} ({'GOOD' if n2>=5 else 'dead'})")
                 await asyncio.sleep(rest)
     finally:
         dm_mod._dc_cancellation = _ORIG_DC
 
-    print(f"\n=== 5 GHz ch{CH} dead rate ===")
+    print("\n=== per-mode summary (frames/dwell) ===")
     for mode in MODES:
-        g, d = tally[mode]
-        print(f"  {mode:7s}: {g} GOOD / {d} DEAD  ({d}/{g+d} dead)")
+        for band, thr in (("5g", 10), ("2g", 5)):
+            xs = tally[mode][band]
+            if not xs:
+                continue
+            dead = sum(1 for x in xs if x < thr)
+            xs_s = sorted(xs)
+            print(f"  {mode:12s} {band}: {len(xs)-dead} GOOD / {dead} dead  "
+                  f"median={xs_s[len(xs_s)//2]:4d}  range={min(xs)}-{max(xs)}")
     return 0
 
 

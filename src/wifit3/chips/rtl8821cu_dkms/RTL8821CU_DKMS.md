@@ -8,13 +8,13 @@ other drivers.
 ## Status
 
 - Cold init and firmware boot: working on hardware.
-- **RX is an intermittent coin toss — ROOT CAUSE STILL OPEN.** Dead = chip-side RX: the RX FIFO
-  never fills (`RXFF_PTR=0`) though the demod runs (FA counters tick) = front-end never locks =
-  analog. Two SEPARATE phenomena, don't conflate them: (1) **2.4 GHz is gated by RF18 bit16** — on a
-  cold tune the bit stays SET, so ch1 is dead until a 5→2.4 GHz band switch clears it (the running
-  app's continuous hop revives it; a ch1-parked or ch1-first probe never will — measured ch1=0 on
-  8/8 launches that were all GOOD on 5 GHz). (2) **5 GHz is the actual per-boot coin toss** — ~0–30%
-  of launches deliver 0 frames on 5 GHz, intermittently, fresh-plug or soft-reinit alike.
+- **RX coin toss — CAUSE IDENTIFIED: `dm._dc_cancellation` (see LIVE-LEAD/ROOT-CAUSE bullet below);
+  fix pending.** Skipping the cal makes BOTH bands reliable. Dead = chip-side RX: RX FIFO never fills
+  (`RXFF_PTR=0`) though the demod runs (FA flood) = front-end uncalibrated = analog. Note two
+  things were conflated historically: (1) **2.4 GHz also has the RF18-bit16 gate** — on a cold tune
+  the bit stays SET so ch1 needs a 5→2.4 GHz band switch to RX; but the bigger 2.4 GHz killer is
+  dc_cancellation (6/9 dead with it, 0/9 without). (2) the per-boot variability on BOTH bands is
+  dc_cancellation, not RF/MAC config (which reads byte-identical good-vs-dead).
 - **Eliminated this round (2026-06-24 cont'd 3), with hardware data — do NOT re-chase these:**
   - **DC-offset cancellation OUTPUT** (`0xc10`/`0xc14`): benign — byte-identical between a 346-frame
     GOOD and a 0-frame DEAD launch, and disabling it (`0xa9c[20]=0`) does not help. BUT *running* the
@@ -44,16 +44,25 @@ other drivers.
   and never locking a real packet, with `RXFF_PTR=0`. So with identical RF + MAC config the RX gain
   is physically wrong ~60% of boots = an analog RX-gain/calibration whose result lands in NO readable
   register. No C2H (interrupt-IN ep 0x81) arrives before RX onset.
-- **LIVE LEAD — running `dm._dc_cancellation` destabilizes 5 GHz RX (`dc_ab.py`, order-controlled
-  A/B).** Cal SKIPPED → 5 GHz consistently good (0/10 dead, tight 82–173 beacons/3 s); cal run
-  normally → erratic (low tail 0–40, occasional dead) — SAME card, interleaved, so not luck.
-  Disabling only the comp output (`0xa9c[20]=0`) does NOT recover it → the culprit is the cal's
-  analog disturbance (LNA off/on via RF `0x3f/0xef/0xee`, 3-wire + ck320 stop/restart, IGI→0x7e),
-  NOT the written offset. DC cancellation is a 2.4 GHz/CCK DC cal run once at cold init on ch1; it
-  perturbs the front-end so the later 5 GHz tune intermittently comes up uncalibrated. This is the
-  FIRST lead that moved the metric. NEXT: (a) check whether skipping it hurts 2.4 GHz/CCK (its actual
-  purpose) before any fix; (b) make it band-aware, or re-establish the front-end on the 5 GHz tune,
-  or robustify the analog restore — do NOT just delete it (vendor-faithful + the byte-gate needs it).
+- **ROOT CAUSE (highest confidence reached) — running `dm._dc_cancellation` intermittently breaks RX
+  on BOTH bands; skipping it fixes both (`dc_ab.py`, order-controlled, interleaved, same card).**
+  Cal run → 5 GHz median 33 (2/9 dead), 2.4 GHz mostly DEAD (6/9 dead, median 0); cal SKIPPED →
+  5 GHz median 121 (0/9 dead) AND 2.4 GHz median 133 (0/9 dead). The vendor runs the same cal with
+  steady RX, so our byte-faithful port leaves the analog front-end wrong on silicon — gate-invisible,
+  since the gate replays captured reads. It is an analog RESTORE, not the DC offset (disabling the
+  comp `0xa9c[20]=0` does NOT recover RX). `dc_restore.py` localized what the cal leaves
+  non-operational: **RF `0x3f` (LNA-path gain) = `0x281d` vs the operational `0x1f9d`** (3-wire
+  `0xc00/0xe00`, ck320 `0x8b4`, IGI `0xc50` all restore fine; `0xa78`=0 and `0xa9c[20]`=1 differ but
+  are vendor-faithful comp state, exonerated). `_lna_setting` writes the LNA gain through RF banks
+  (`0xEF[19]`/`0xEE[12]`); on silicon RF `0x3f` ends at the cal value, not the operational gain —
+  wrong LNA gain → demod floods on noise / can't lock → the dead symptom. FIX (Lead's call, byte-gate
+  tension): (a) restore the operational LNA gain after dc_cancellation (re-apply RF `0x3f`=`0x1f9d` /
+  re-run config_radioa's LNA path); (b) audit `_lna_setting` + `rf.write_rf`/`write_rf_masked`
+  RF-bank handling vs the vendor — the LNA write likely leaks into the main bank on hardware (a
+  gate-invisible bank bug); or (c) gate the cal off (simplest, needs a verify_pcap exception).
+  Confidence the cal is the cause: HIGH (multi-batch, both bands, order-controlled). That RF `0x3f`
+  is the exact mechanism: MEDIUM — localized, but the confirming run was all-GOOD so not yet
+  correlated with a dead launch.
 - `verify_pcap`: clean — but BLIND to (a) timing and (b) read-modify-write correctness, since it
   replays CAPTURED read values (a wrong RMW only diverges when the REAL chip reads differently). Both
   blind spots were checked this round; neither is the cause. See Gotchas.
@@ -104,6 +113,19 @@ Names match the vendor C, so grep the bundle's `driver-source/` to cross-referen
 - `driver_rx_diag.py` — re-run after a fresh plug to confirm 2.4 GHz comes back.
 
 ## Debug log
+
+### 2026-06-24 (cont'd 5) — both bands fixed by skipping the cal; LNA gain (RF 0x3f) localized
+
+`dc_ab.py` extended to measure both bands (5 GHz then ch1 after a band switch): skipping
+`_dc_cancellation` fixes BOTH — 2.4 GHz goes 6/9 dead (median 0) → 0/9 dead (median 133), 5 GHz
+median 33 → 121. So the cal is the dominant RX killer, not just a 5 GHz thing, and NOT the 2.4 GHz
+cal's "purpose" (skipping helps 2.4 GHz, doesn't hurt it). `dc_restore.py` dumped the regs the cal
+disturbs-and-should-restore, normal vs skip: only **RF 0x3f (LNA gain) = 0x281d vs operational
+0x1f9d** stands out (plus the vendor-faithful comp state 0xa78=0 / 0xa9c[20]=1). `_lna_setting`'s
+banked RF writes (0xEF[19]/0xEE[12]) leave the LNA gain at the cal value on silicon. Fix options in
+the Status ROOT-CAUSE bullet (restore LNA gain / audit RF-bank handling / gate the cal off). Did NOT
+commit a fix — byte-gate tension + it's a design call. Confidence: cal=cause HIGH; RF-0x3f=mechanism
+MEDIUM (localizing run was all-GOOD, not yet correlated with a dead launch).
 
 ### 2026-06-24 (cont'd 4) — METRIC MOVED: running dm._dc_cancellation destabilizes 5 GHz RX
 
