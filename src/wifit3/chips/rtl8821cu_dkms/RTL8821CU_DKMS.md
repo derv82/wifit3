@@ -75,11 +75,16 @@ per-launch AND per-band AND across band switches (e.g. ch1 GOOD → ch36 dead af
 dead → ch36 GOOD; both-dead; both-good — all seen in 6 launches). Dead = `RXFF_PTR` stuck at 0 (the
 chip's RX FIFO is not filling) with the PHY demod running (FA counters tick) and byte-identical MAC
 config — so it is chip-side PHY/MAC RX, NOT the USB bulk-IN pipe (a pipe stall would still advance
-RXFF_PTR) and NOT a MAC register. Chip-side-RX failure + band-switch sensitivity points at missing
-RX calibration: the vendor runs IQK / RX gain-DC cal at init and around channel-set, and this port
-implements none of it (`dm.py` even notes IQK is "triggered later" — but nothing triggers it). The
-DELAY fix stays (it is a real, correct fix — the vendor does that delay) but it is not the cure.
-Next: port the 8821C RX calibration, or instrument the RX-DMA/PHY-RX state that differs good-vs-dead.
+RXFF_PTR) and NOT a MAC register. The register diff was then WIDENED to the RX-enable / TRX-stop BB
+state (0x808 CCK-block, 0x838 OFDM-RX-CCA, 0xa04, 0x520, 0xc00, 0x900) — also byte-identical
+good-vs-dead, so `dm.stop_ic_trx`'s revert is fine and the RX block is enabled in dead launches too.
+Conclusion: across a launch doing ~78 frames/s and one doing 0, the ENTIRE register state is
+identical; only RXFF_PTR (a consequence) and IGI (DIG) differ. A digital-config bug is ruled out —
+this is ANALOG: the demod runs but can't lock onto real packets = an uncalibrated RX front-end. The
+vendor runs IQK / RX gain-DC cal (init + around channel-set); this port implements none (`dm.py`
+notes IQK is "triggered later" — but nothing triggers it). The DELAY fix stays (a real, correct fix —
+the vendor does that delay) but is not the cure. Next: port the 8821C RX calibration (large; needs a
+replug-friendly rig — the card degrades after ~8 soft re-inits, which confounds loop testing).
 
 ### 2026-06-24 — bring-up coin toss: the power-seq DELAY was a no-op
 

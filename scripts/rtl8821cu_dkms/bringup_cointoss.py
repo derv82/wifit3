@@ -38,6 +38,9 @@ _REGS = [
     (0x0208, 4, "AUTO_LLT_V1"), (0x060F, 1, "RX_DRVINFO_SZ"), (0x060C, 1, "RX_PKT_LIMIT"),
     (0xFE11, 1, "USBSTAT"), (0x00FF, 1, "SYS_CFG2_3"), (0x0C50, 1, "IGI"),
     (0x0073, 1, "COEX_OWNER"), (0x0770, 4, "BT_HI_CTR"), (0x0774, 4, "BT_LO_CTR"),
+    # RX-enable / TRX-stop state (dm.stop_ic_trx disables these on a tune and must revert them):
+    (0x0808, 4, "R808_cck_rxpath"), (0x0838, 4, "R838_ofdm_cca"), (0x0A04, 4, "Ra04_ccktx"),
+    (0x0520, 4, "R520_txpause"), (0x0C00, 4, "Rc00_3wireA"), (0x0900, 4, "R900_ofdm_trx"),
 ]
 
 
