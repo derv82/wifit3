@@ -33,7 +33,7 @@ from wifit3.wlan.packet import WlanFrameParser
 
 from . import bringup, chan, efuse, tx, watchdog
 from .constants import USB_PID_8821CU, USB_VID_REALTEK
-from .rf import read_rf, write_rf
+from .rf import read_rf
 from .rx import iter_frames
 from .transport import Rtl8821cuTransport
 
@@ -54,6 +54,13 @@ _WIFI_INTF_CLASS = 0xFF        # combo card: the WiFi function is the vendor-spe
                                # (class 0xFF, #2); the Bluetooth interfaces 0/1 are class 0xE0
 
 _WATCHDOG_PERIOD_S = 2.0        # phydm dynamic-check cadence [SRC] rtw_cmd.c rtw_dynamic_chk_wk
+
+# 2.4 GHz LO-relock prime: the cold ch1 tune never makes the synth actually jump TO 2.4 GHz, so
+# RF18 BIT16 reads stuck-SET and the 2.4 GHz demod decodes nothing. Only a real 5 GHz->2.4 GHz band
+# switch re-locks the VCO (a direct RF18[16]=0 write does not). Bounce 2.4G->5G->2.4G with a settle.
+_PRIME_5G_CH = 36
+_PRIME_2G_CH = 1
+_PRIME_SETTLE_S = 0.1           # VCO settle after each band jump (the old bounce lacked this)
 
 
 class Rtl8821cuDkmsDriver:
@@ -126,7 +133,7 @@ class Rtl8821cuDkmsDriver:
         self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="8821cu-dkms-rx")
         self._reader.start()
         self.info = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
-        await loop.run_in_executor(None, self._relatch_2g_band)
+        await self._prime_2g_band(loop)
         # phydm dynamic-check watchdog (kernel-parity — its ~2 s ticks are in the pcap). DIG runs
         # here; without it the RX AGC sits at full gain and the OFDM false-alarm count floods.
         self._wd_state = watchdog.WatchdogState(
@@ -136,24 +143,37 @@ class Rtl8821cuDkmsDriver:
             progress_cb(1.0, "RTL8821CU monitor up (ch 1 @ 20 MHz)")
         return True
 
-    def _relatch_2g_band(self) -> None:
-        """Re-assert the RF18 2.4 GHz band bit after cold init. The cold first channel tune runs
-        inside ``cold_bringup`` BEFORE the monitor RX-enable + the media-connect antenna switch to
-        WiFi, and on this silicon the RF18 band-select bit (BIT16) does not latch on that premature
-        cold tune — it reads back stuck SET (5 GHz), so the 2.4 GHz demod yields only CRC-fail
-        frames (0 good beacons; HW-confirmed: bit16=1 => 100% crc_err, bit16=0 => ~half pass). The
-        kernel hides this because airodump hops to 5 GHz immediately and the first 5 GHz->2.4 GHz
-        transition re-latches it warm; a direct warm RF18 write does it deterministically (a 5 GHz
-        bounce is flaky on this chip). Read-back-verified because a concurrent bulk-IN read can drop
-        the write. Only runs on a 2.4 GHz channel."""
-        if (self.transport.current_channel or 1) > 14:
-            return
-        for _ in range(5):
-            rf18 = read_rf(self.transport, 0x18)
-            if not (rf18 & (1 << 16)):
-                return
-            write_rf(self.transport, 0x18, rf18 & ~(1 << 16))
-        logger.warning("RTL8821CU: RF18 5G band bit still set after re-latch — 2.4 GHz RX may be dead")
+    async def _prime_2g_band(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Wake 2.4 GHz RX with a real cross-band LO jump. After cold init the chip sits on ch1 but
+        the synthesizer never actually jumped TO 2.4 GHz (the cold tune runs ``_switch_band`` but the
+        LO doesn't re-lock on the premature, pre-antenna-switch tune), so RF18 BIT16 reads stuck-SET
+        and the 2.4 GHz demod decodes 0 frames even with signal. A direct ``RF18[16]=0`` write does
+        NOT re-lock the LO (the reverted ``_relatch_2g_band`` did that and failed) — only a
+        5 GHz->2.4 GHz band switch does. So bounce 2.4G->5G->2.4G.
+
+        Critical: the band-switch RF18 write is DROPPED if the bulk-IN reader runs concurrently
+        (HW-confirmed — ``_switch_channel`` then read-back-rewrites the stale BIT16=1). Continuous
+        hopping survives because some later switch lands; a one-shot prime does not. So quiet the
+        reader across the bounce, then restart it. The app's normal hopping clears this too, but a
+        fixed-2.4 GHz session never hops, so prime it here. (The cold-only ``verify_pcap`` path
+        returns before this — no running loop — so the gate is unaffected.)"""
+        if self._reader is not None:
+            await self._reader.stop()                  # no concurrent bulk-IN -> the RF18 write lands
+        try:
+            await self.set_channel(_PRIME_5G_CH)
+            await asyncio.sleep(_PRIME_SETTLE_S)
+            await self.set_channel(_PRIME_2G_CH)
+            await asyncio.sleep(_PRIME_SETTLE_S)
+            rf18 = await loop.run_in_executor(None, read_rf, self.transport, 0x18)
+            if rf18 & (1 << 16):
+                logger.warning("RTL8821CU: RF18 5G band bit still set after prime bounce — "
+                               "2.4 GHz RX may be dead")
+        except Exception:  # noqa: BLE001 — priming must never kill bring-up
+            logger.exception("RTL8821CU: 2.4 GHz prime bounce failed")
+        finally:
+            self._reader = RxReaderThread(loop, self._read_once, self._dispatch,
+                                          name="8821cu-dkms-rx")
+            self._reader.start()
 
     async def _watchdog_loop(self) -> None:
         """Run the phydm dynamic-check tick at the kernel ~2 s cadence (DIG / CCK-PD / RX-agg /

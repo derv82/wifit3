@@ -72,7 +72,11 @@ other drivers.
 - The card is NOT permanently wedged by soft re-inits — it recovers on the next launch with no
   replug (user-confirmed; an earlier "wedged, must replug" claim was wrong). Rapid back-to-back
   re-inits (<1 s rest) do raise the dead rate transiently; space launches ≥1.5 s.
-- Not done: root-cause of the 5 GHz coin toss, ZeroCD discovery, warm reattach.
+- **2.4 GHz fixed-channel RX — FIXED (2026-06-24).** Was dead on a non-hopping ch1 session (RF18
+  bit16 stuck-set); now primed by a reader-quieted band bounce in `connect` (see Gotchas). The ch1
+  reference AP reads ~6.5 beacons/s, matching the kernel baseline.
+- Not done: ZeroCD discovery, warm reattach. (The RX coin toss and 2.4 GHz fixed-channel are both
+  fixed.)
 
 ## Gotchas
 
@@ -83,16 +87,23 @@ layer handles the switch. This is a manager-level problem that affects most Real
 not just this one. The offline port and verify are unaffected — the pcap was captured already in
 Wi-Fi mode.
 
-**2.4 GHz RX hangs on one bit: RF18 bit16.** Set, every frame fails CRC; clear, the demod works.
-The cold channel tune doesn't clear it, and an ordinary same-band hop can't either — the vendor's
-channel-switch path never touches bit16. Only a band switch or an explicit warm rewrite clears it,
-which is what `driver._relatch_2g_band` does after cold init. The vendor stack gets away with it
-because airodump jumps to 5 GHz immediately, and the first 5→2.4 GHz transition clears the bit as a
-side effect.
+**2.4 GHz RX hangs on RF18 bit16 — FIXED by a reader-quieted band bounce.** After cold init the chip
+sits on ch1 but the synth never actually jumped TO 2.4 GHz (the cold tune runs `_switch_band` but the
+LO doesn't re-lock on the premature, pre-antenna-switch tune), so RF18 BIT16 reads stuck-SET (5 GHz)
+and every 2.4 GHz frame fails CRC. A direct `RF18[16]=0` write does NOT re-lock the LO (the reverted
+`_relatch_2g_band` regression — it "passed" by writing the bit but RX stayed dead); only a real
+5→2.4 GHz band switch does. `driver._prime_2g_band` bounces 2.4G→5G→2.4G after cold init. **Critical
+gotcha within the fix:** the band-switch RF18 write is DROPPED if the bulk-IN reader runs
+concurrently (`_switch_channel` then read-back-rewrites the stale BIT16=1), so a one-shot bounce with
+the reader live silently fails — `_prime_2g_band` STOPS the reader across the bounce, then restarts
+it. (Continuous hopping survives the race because a later switch eventually lands; that's why hopping
+masked this and only a fixed-2.4 GHz session exposed it.) The vendor stack gets away without an
+explicit prime because airodump hops to 5 GHz immediately.
 
-**This card's 2.4 GHz is genuinely weak**, even under the vendor driver — the kernel's own
-fixed-channel capture shows only ~13–21 beacons over 15 s. Judge RX against a strong nearby
-reference AP, not against this capture.
+**2.4 GHz is fine once primed** — fixed-ch1 against the reference AP now reads ~6.5 beacons/s
+(total 129 / 20 s, min 4 max 10), matching the kernel's own fixed-ch1 baseline (~6.1–6.6/s). The
+earlier "genuinely weak ~13–21/15 s" reading was the bug (RF18-bit16 + the dc_cancellation damage),
+not the antenna.
 
 **`verify_pcap` cannot see timing.** A power-sequence (or PHY-table) `DELAY` emits no register op,
 so it is invisible in the capture — a byte-faithful port, and the gate, will happily drop required
@@ -116,6 +127,20 @@ Names match the vendor C, so grep the bundle's `driver-source/` to cross-referen
 - `driver_rx_diag.py` — re-run after a fresh plug to confirm 2.4 GHz comes back.
 
 ## Debug log
+
+### 2026-06-24 (cont'd 7) — FIXED 2.4 GHz fixed-channel RX (reader-quieted band bounce)
+
+After the dc_cancellation fix, 5 GHz was solid but a FIXED ch1 session still decoded 0 beacons (the
+RF18-bit16 gate — hopping had been masking it). History: `8b279ac1` primed 2.4 GHz with a 2.4→5→2.4
+band bounce; `62dcf199` replaced it with a direct `RF18[16]=0` write (`_relatch_2g_band`) that
+"passed" but never re-locks the LO — a regression, swapped in because that dev had no clean 2.4 GHz
+AP to validate against. Restored the bounce (`_prime_2g_band`). First try still failed (warning fired,
+bit16 stuck): the band-switch RF18 write was being DROPPED by the concurrent bulk-IN reader
+(`_switch_channel` then read-back-rewrites the stale BIT16=1; continuous hopping survives because a
+later switch lands, a one-shot bounce doesn't). Fix: STOP the reader across the bounce, then restart
+it. Validated: `beacon_watch --channel 1 --bssid <ch1-ref-ap>` → total 129 / mean 6.5/s (min 4 max 10,
+0 zero-seconds), matching the kernel's fixed-ch1 baseline (~6.1–6.6/s); 5 GHz unregressed
+(ch36 multi-AP). verify_pcap unaffected (prime is loop-only; the gate's cold path returns before it).
 
 ### 2026-06-24 (cont'd 6) — FIXED: ck320 stop/restart in _dc_cancellation was the root cause
 
