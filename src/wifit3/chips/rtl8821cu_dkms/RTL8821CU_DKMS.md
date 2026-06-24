@@ -35,11 +35,17 @@ other drivers.
     RX death. So "the bytes differ on silicon" is true but benign — not the bug.
 - Where RX first arrives in the capture: airmon stage, frame 17261 (`pcap_slicer.py` window
   7673–17766; `airmon_rx_onset.py`), right after a normal channel/bw tune we DO reproduce.
-- Leading remaining lead: an analog RX/RF bring-up that varies per boot and is invisible to the
-  digital register trace (good-vs-dead final state byte-identical except `RXFF_PTR`/IGI). Next step:
-  catch DEAD 5 GHz launches and instrument the front-end on them (RF PLL/synth lock status, AGC/IGI,
-  RX gain) — the digital trace has been exhausted. `cold_divergence.py`'s 1-sample DEAD launch showed
-  the only separators in the RF-0x18 tune region; needs more dead samples to trust.
+- **Front-end instrumented on DEAD launches (`dead_frontend.py`, 10 DEAD / 6 GOOD on 5 GHz):** the
+  RF synth/PLL word reads byte-IDENTICAL good-vs-dead (`RF18=0x13d24`, `RFca=0x80000`,
+  `RFb0=0xff0f8`, `RFb8=0x80a00`) and so does the MAC RX path (`r808`/`r838`/`CR=0x6ff`/
+  `RCR=0x90000001`). On DEAD launches the OFDM false-alarm counter FLOODS (`ofdmFA` up to `0x7057`
+  vs ~`0x100` on GOOD) and DIG reactively backs IGI off to `0x22` — the demod is triggering on noise
+  and never locking a real packet, with `RXFF_PTR=0`. So with identical RF + MAC config the RX gain
+  is physically wrong ~60% of boots = an analog RX-gain/calibration whose result lands in NO readable
+  register. No C2H (interrupt-IN ep 0x81) arrives before RX onset, so it's not a FW-readiness signal
+  there. Leading lead: the vendor's analog RX-gain/cal path (8821c `halrf` RX gain / RX-DCK) that is
+  either FW-side (H2C → gate-blind, since the gate only checks host ops) or host-side with a
+  completion wait we skip. The digital read/write trace is exhausted; this is the frontier.
 - `verify_pcap`: clean — but BLIND to (a) timing and (b) read-modify-write correctness, since it
   replays CAPTURED read values (a wrong RMW only diverges when the REAL chip reads differently). Both
   blind spots were checked this round; neither is the cause. See Gotchas.
