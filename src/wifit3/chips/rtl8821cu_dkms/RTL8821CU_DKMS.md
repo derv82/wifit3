@@ -8,13 +8,15 @@
 > **Status — the byte-for-byte gate reproduces the ENTIRE cold-boot pcap (all 21409 ctrl + bulk-OUT
 > ops), PASS, driving the driver's PUBLIC interface** (`driver.connect/set_channel/inject_frame`), so
 > it verifies the product code path, not a parallel reimplementation. Registered in `wlan/manager.py`;
-> cold init is HW-validated (FW boots). **Open — monitor RX is a DEMOD fault, not a config or "0
-> frames" fault**: frames ARE received (bulk-IN ep 0x84 works; the rx.py decoder is proven on the
-> vendor's 2039 recorded beacons) and the demod decodes beacon HEADERS perfectly, but ~99% of frames
-> fail CRC with errors that accumulate over frame length (CFO/SFO/marginal-EVM). The host→chip config
-> is byte-for-byte identical to the vendor on HW (765 BB + 85 RF regs; only RF 0x18 self-corrects).
-> See the "HW monitor-RX: demod fault isolated" port log at the bottom. Warm reattach + the ZeroCD
-> mode-switch are open. Below is the per-phase detail, still valid:
+> cold init is HW-validated (FW boots). **5 GHz monitor RX WORKS on hardware** (hundreds of good
+> CRC-passing frames across ch36–161) — receiver, demod, `rx.py`, and crystal all proven. **Open —
+> RX fails on 2.4 GHz only**: ch1–11 deliver 0 good frames. Crystal/CFO is exonerated (the 5 GHz
+> crystal-cap sweep peaks at the default 0x2e; the crystal is shared by both bands). The 2.4 GHz band
+> uses this combo card's BTG (BT-shared) LNA + DPDT/PTA antenna, while 5 GHz uses a dedicated path —
+> so the shared 2.4 GHz path is the prime suspect (BT side is uninitialized). The cold ch1 config is
+> byte-for-byte identical to the vendor on HW (765 BB + 85 RF regs; only RF 0x18 self-corrects). See
+> the bottom port logs ("BREAKTHROUGH: 5 GHz works"). Warm reattach + the ZeroCD mode-switch are open.
+> Below is the per-phase detail, still valid:
 > The gate (`scripts/rtl8821cu_dkms/verify_pcap.py`,
 > replaying ctrl + the FW/TX bulk-OUT stream) reproduces the **whole cold-boot probe and the airmon
 > monitor-entry phase through the BT-coex HAL init + the USB hal_init_misc LED + the iface-init MAC
@@ -1053,3 +1055,29 @@ characterization). All passive (no TX).
   strong AP — a clear good-frame peak ≠ 0x2e ⇒ crystal/CFO is the fault and the cap is the fix;
   (2) A/B a known-good card on the same machine/moment to split "this unit's RX is degraded" from
   "the environment is RF-quiet right now" (the beacon-rate-bar method).
+
+## Port log — 2026-06-23 (BREAKTHROUGH: 5 GHz monitor RX WORKS; the fault is 2.4 GHz-only)
+
+`scan_and_sweep.py` (scan every channel, then sweep the crystal on the busiest) found the test
+environment's APs are on **5 GHz**, and the result splits cleanly by band:
+
+- **5 GHz RX fully works** [HW]. ch36/40/44/48/149/153/157/161 all deliver good CRC-passing frames
+  (ch44: 118 good/1.2s, ch149: 149, ch157: 110). So the receiver, the demod, `rx.py`, the crystal,
+  and the 5 GHz RF path are all **proven good on silicon** — the first end-to-end-verified monitor RX
+  for this port.
+- **2.4 GHz RX is the fault** [HW]. ch1–11 deliver **0 good frames** (only ~400–570 noise units/1.2s
+  at full gain). An earlier strong-AP burst on ch11 decoded beacon HEADERS (310) but failed every
+  body over length — length-dependent failure on 2.4 GHz only.
+- **Crystal/CFO is EXONERATED.** The ch157 (5 GHz) crystal-cap sweep peaks at the **default 0x2e**
+  (good frames flat 282–383 across caps 0x24–0x38). The crystal is correct, and it is shared by both
+  bands — so the 2.4 GHz failure is **not** frequency offset. The prior entry's CFO/crystal
+  hypothesis is superseded by this band split.
+
+So the open fault is a **2.4 GHz RF-path issue**, the band that on this rfe-0x22 combo card uses the
+**BTG (BT-shared) LNA + the DPDT/PTA antenna** ([SRC] `default_rf_set`=BTG; `btc.set_ant_path`), while
+5 GHz uses a dedicated WiFi path. wifit3 drives only the WiFi function (the BT coprocessor is
+uninitialized), so the shared-antenna / BTG path is the prime suspect — though the cold ch1 config is
+byte-identical to the vendor (who DID receive on 2.4 GHz), so a 2.4 GHz live-calibration divergence or
+a per-unit 2.4 GHz hardware issue are also open. Decisive next test: a **strong, close 2.4 GHz AP**
+(the environment's are all 5 GHz) to tell a real 2.4 GHz-path bug from merely weak/distant 2.4 GHz
+signal — re-run `scan_and_sweep.py` / `beacon_align.py` with one beside the card.
