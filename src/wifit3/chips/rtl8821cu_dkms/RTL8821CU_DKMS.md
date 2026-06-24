@@ -16,9 +16,13 @@ other drivers.
   Leading hypothesis: the **live DC-offset cancellation** (`dm._dc_cancellation`, which measures a DC
   offset off the BB dbg port each boot and writes `0xc10`/`0xc14`) is mis-measuring per boot →
   DC-saturated ADC → demod garbage. Invisible to `verify_pcap` (the replay feeds back the *captured*
-  measured value). **IQK is NOT it** — the vendor has it commented out (`rtl8821c_phy.c:807`), and
-  LCK isn't in the captured cold/hop path. Probe (ready in `bringup_cointoss.py`): diff `0xc10`/`0xc14`
-  good-vs-dead on a fresh card; if they differ, the DC cal is the culprit. Unconfirmed. See debug log.
+  measured value). Probe (ready in `bringup_cointoss.py`): diff `0xc10`/`0xc14` good-vs-dead on a
+  fresh card; if they differ, the DC cal is the culprit. Second suspect: **IQK** — it is NOT disabled
+  (an earlier note here wrongly read the vestigial comment at `rtl8821c_phy.c:807`; the live call is
+  `:808 rtw_phydm_iqk_trigger`). It fires on channel-set gated on `bNeedIQK`, but the captured monitor
+  session never triggered it (`verify_pcap` passes with no host-side IQK; the `HW_VAR_DO_IQK` set-sites
+  are link/AP/TDLS/MCC/sreset/CAC, not monitor hops). Open: does init/first-channel-set set `bNeedIQK`
+  (a cold capture may not show it) — i.e. does our truly-cold boot skip a one-time IQK? Both unconfirmed.
 - 5 GHz / 2.4 GHz monitor RX: works *when RX comes up alive*; the flakiness gates everything, so
   earlier per-band findings were confounded by which launches happened to be alive. NB: an earlier
   ch1-parked diagnostic conflated "2.4 GHz/RF18 dead" with "bring-up dead" — use `bringup_bands.py`.
@@ -70,14 +74,21 @@ Names match the vendor C, so grep the bundle's `driver-source/` to cross-referen
 
 ## Debug log
 
-### 2026-06-24 (cont'd 2) — IQK ruled out; the live DC-cancellation is the new suspect
+### 2026-06-24 (cont'd 2) — the live DC-cancellation suspect; IQK status corrected
 
 Chasing the "analog" conclusion: searched the vendor for the RF cal it runs that we don't.
-**IQK is a dead end** — `rtl8821c_phy.c:807` has it commented out (`/*phy_iq_calibrate_8821c(...)*/`),
-so the vendor 8821C driver runs no IQK; porting it would have been a wasted mountain. LCK (LC/VCO
-tank, `halrf_8821c.c:332`; lock-progress bit `RF0x18[15]`, AACK busy bit `RF0xca[12]`) isn't in the
-captured cold path or the 65 hops (`verify_pcap` passes without it), so it's a periodic cal, not the
-cold-boot divergence — and its lock bits are cal-in-progress flags, not a passive lock-detect.
+**Correction — IQK is NOT disabled** (an earlier draft of this entry wrongly claimed it was). The
+comment at `rtl8821c_phy.c:807` (`/*phy_iq_calibrate_8821c(...)*/`) is a vestigial refactor; the LIVE
+call is `:808 rtw_phydm_iqk_trigger(adapter)` → `halrf_segment_iqk_trigger` (host-side, 8821C). It
+fires inside the channel-set path gated on `bNeedIQK` (`HW_VAR_DO_IQK`). BUT `verify_pcap` passes
+byte-exact through cold + 65 hops with no host-side IQK, and the `HW_VAR_DO_IQK` set-sites are
+link/AP/TDLS/MCC/sreset/CAC-finish events — not plain monitor channel hops — so the captured monitor
+session never triggered IQK. Open question: does init / the first channel-set set `bNeedIQK` (which a
+cold capture might not show), i.e. does our truly-cold boot skip a one-time IQK the chip needs? Trace
+the airmon/`rtw_hal_init` path for a `DO_IQK` before the first `set_channel_bwmode`. So IQK is a live
+SECONDARY suspect, not ruled out. LCK (LC/VCO tank, `halrf_8821c.c:332`; lock-progress bit
+`RF0x18[15]`, AACK busy bit `RF0xca[12]`) is not in the captured cold/hop path → periodic cal, not
+the cold divergence; its lock bits are cal-in-progress flags, not a passive lock-detect.
 
 The one per-boot-variable analog cal we DO run is `dm._dc_cancellation`: it measures a live DC offset
 off the BB dbg port (TRX stopped, LNA off) and writes the path-A I/Q compensation to `0xc10`/`0xc14`.
