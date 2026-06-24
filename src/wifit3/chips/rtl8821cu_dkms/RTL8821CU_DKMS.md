@@ -50,19 +50,20 @@ other drivers.
   5 GHz median 121 (0/9 dead) AND 2.4 GHz median 133 (0/9 dead). The vendor runs the same cal with
   steady RX, so our byte-faithful port leaves the analog front-end wrong on silicon — gate-invisible,
   since the gate replays captured reads. It is an analog RESTORE, not the DC offset (disabling the
-  comp `0xa9c[20]=0` does NOT recover RX). `dc_restore.py` localized what the cal leaves
-  non-operational: **RF `0x3f` (LNA-path gain) = `0x281d` vs the operational `0x1f9d`** (3-wire
-  `0xc00/0xe00`, ck320 `0x8b4`, IGI `0xc50` all restore fine; `0xa78`=0 and `0xa9c[20]`=1 differ but
-  are vendor-faithful comp state, exonerated). `_lna_setting` writes the LNA gain through RF banks
-  (`0xEF[19]`/`0xEE[12]`); on silicon RF `0x3f` ends at the cal value, not the operational gain —
-  wrong LNA gain → demod floods on noise / can't lock → the dead symptom. FIX (Lead's call, byte-gate
-  tension): (a) restore the operational LNA gain after dc_cancellation (re-apply RF `0x3f`=`0x1f9d` /
-  re-run config_radioa's LNA path); (b) audit `_lna_setting` + `rf.write_rf`/`write_rf_masked`
-  RF-bank handling vs the vendor — the LNA write likely leaks into the main bank on hardware (a
-  gate-invisible bank bug); or (c) gate the cal off (simplest, needs a verify_pcap exception).
-  Confidence the cal is the cause: HIGH (multi-batch, both bands, order-controlled). That RF `0x3f`
-  is the exact mechanism: MEDIUM — localized, but the confirming run was all-GOOD so not yet
-  correlated with a dead launch.
+  comp `0xa9c[20]=0` does NOT recover RX). `dc_restore.py` found the cal leaves RF `0x3f` (LNA-path
+  gain) = `0x281d` vs the operational `0x1f9d` (3-wire `0xc00/0xe00`, ck320, IGI all restore fine).
+  BUT that is a DEAD END as a mechanism: the byte-gate is green, so the capture contains the exact
+  same `_lna_setting` `0x3f`=`0x281d` write — the **vendor leaves RF `0x3f`=`0x281d` too**, via
+  identical wire ops, and its RX is steady. So no register VALUE the cal leaves can be the
+  differentiator (we match the vendor byte-for-byte through the cal). **Why running the cal breaks
+  OUR RX but not the vendor's, given identical wire ops, is UNRESOLVED — it lives in the gate's blind
+  spot: sub-op timing / analog settling of the LNA + 3-wire + ck320 stop/restart, or a hardware-state
+  dependence, NOT a register value.** FIX: the hardware-proven one is to **skip / gate-off
+  `_dc_cancellation`** (reliably fixes both bands; needs a verify_pcap exception since it drops those
+  ops). Principled open question for the Lead: why our faithful replay of the cal diverges in analog
+  outcome — likely the transient timing of the stop/restart steps under our USB stack vs the kernel.
+  Confidence the cal is the cause: HIGH (multi-batch, both bands, order-controlled). Confidence in a
+  specific register mechanism: LOW — every value we leave matches the vendor.
 - `verify_pcap`: clean — but BLIND to (a) timing and (b) read-modify-write correctness, since it
   replays CAPTURED read values (a wrong RMW only diverges when the REAL chip reads differently). Both
   blind spots were checked this round; neither is the cause. See Gotchas.
@@ -121,11 +122,12 @@ Names match the vendor C, so grep the bundle's `driver-source/` to cross-referen
 median 33 → 121. So the cal is the dominant RX killer, not just a 5 GHz thing, and NOT the 2.4 GHz
 cal's "purpose" (skipping helps 2.4 GHz, doesn't hurt it). `dc_restore.py` dumped the regs the cal
 disturbs-and-should-restore, normal vs skip: only **RF 0x3f (LNA gain) = 0x281d vs operational
-0x1f9d** stands out (plus the vendor-faithful comp state 0xa78=0 / 0xa9c[20]=1). `_lna_setting`'s
-banked RF writes (0xEF[19]/0xEE[12]) leave the LNA gain at the cal value on silicon. Fix options in
-the Status ROOT-CAUSE bullet (restore LNA gain / audit RF-bank handling / gate the cal off). Did NOT
-commit a fix — byte-gate tension + it's a design call. Confidence: cal=cause HIGH; RF-0x3f=mechanism
-MEDIUM (localizing run was all-GOOD, not yet correlated with a dead launch).
+0x1f9d** stands out. BUT (corrected) that's a dead end: the byte-gate is green, so the vendor writes
+the same 0x3f=0x281d via the same ops and has steady RX — no register VALUE the cal leaves can be the
+differentiator. So the mechanism is NOT a register value; it's in the gate's blind spot (sub-op
+timing / analog settling of the LNA + 3-wire + ck320 stop/restart). Fix = skip/gate-off the cal
+(hardware-proven; needs a verify_pcap exception). Did NOT commit a fix — byte-gate tension + design
+call. Confidence: cal=cause HIGH; specific register mechanism LOW (every value matches the vendor).
 
 ### 2026-06-24 (cont'd 4) — METRIC MOVED: running dm._dc_cancellation destabilizes 5 GHz RX
 
