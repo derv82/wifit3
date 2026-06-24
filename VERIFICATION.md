@@ -34,6 +34,7 @@ works). *Deauth* is no longer a column — it works on every supported card.
 | [RTL8822BU](#rtl8822bu) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | C |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | D |
 | [RTL8821CU](#rtl8821cu) | ✅ | ✅ | ✅ | ⬜ | ✅ | ✅ | ⬜ | - |
+| [RT5370](#rt5370) | ⚠️ | ✅ | ✅ | ⬜ | ✅ | ✅ | ⬜ | - |
 
 ## Per-card notes
 
@@ -275,6 +276,20 @@ Excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate
 
 → [RTL8821CU_DKMS.md](src/wifit3/chips/rtl8821cu_dkms/RTL8821CU_DKMS.md)
 
+### RT5370
+*LOTEKOO 150 Mbps · 2.4 GHz · 1T1R*
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| Scan | ⚠️ | 2026-06-24 | Nearby AP 8–10 bcn/s; adjacent AP 3–5/s. |
+| Handshake | ✅ | 2026-06-24 | 4-way captured. |
+| PMKID | ✅ | 2026-06-24 | Capture + active extract. |
+| WEP | ⬜ | — | Untested. |
+| WPS | ✅ | 2026-06-24 | PBC — 13 EAPOLs (HW-ACK forged MAC). |
+| Stress | ⬜ | — | Untested. |
+
+→ [RT5370.md](src/wifit3/chips/rt5370/RT5370.md)
+
 ## Unsupported
 
 ### RT3572 — ALFA AWUS051NH v2 — untested
@@ -305,9 +320,6 @@ Kali: <https://github.com/morrownr/USB-WiFi/blob/main/home/Recommended_Adapters_
 
 - **Deal4Go K2-544DW** — **AR9271** · *consistency test* (already supported on the AWUS036NHA).
   Confirms a second AR9271 card behaves identically — the "any AR9271 works" claim.
-- **LOTEKOO 150 Mbps** — **RT5370** · *consistency test.* 1×1 sibling of RT5372 / RT5572 in the
-  `rt2800usb` family; confirms the driver covers the 1×1 variant (may need its VID:PID added to
-  `SUPPORTED_IDS`).
 
 **Wishlist (not yet bought):**
 
