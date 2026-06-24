@@ -8,13 +8,16 @@ other drivers.
 ## Status
 
 - Cold init and firmware boot: working on hardware.
-- **RX coin toss — CAUSE IDENTIFIED: `dm._dc_cancellation` (see LIVE-LEAD/ROOT-CAUSE bullet below);
-  fix pending.** Skipping the cal makes BOTH bands reliable. Dead = chip-side RX: RX FIFO never fills
-  (`RXFF_PTR=0`) though the demod runs (FA flood) = front-end uncalibrated = analog. Note two
-  things were conflated historically: (1) **2.4 GHz also has the RF18-bit16 gate** — on a cold tune
-  the bit stays SET so ch1 needs a 5→2.4 GHz band switch to RX; but the bigger 2.4 GHz killer is
-  dc_cancellation (6/9 dead with it, 0/9 without). (2) the per-boot variability on BOTH bands is
-  dc_cancellation, not RF/MAC config (which reads byte-identical good-vs-dead).
+- **RX coin toss — FIXED (2026-06-24).** Root cause: `dm._dc_cancellation`'s **ck320 (320 MHz BB
+  clock) stop/restart** (`0x8b4[6]`). Stopping then restarting that clock during the cal
+  intermittently fails to re-lock the demod → RX FIFO never fills (`RXFF_PTR=0`) though the demod
+  runs (FA flood) → dead on BOTH bands ~half of cold boots. Subtractive A/B (`dc_steps.py`) isolated
+  it: skipping just the ck320 toggle restores RX, skipping the LNA/3-wire does not; a settle delay
+  does not rescue it (`dc_ck320.py`). **Fix: `_dc_cancellation` is no longer called** (its DC comp is
+  unneeded here — disabling it changes nothing, and skipping the cal *raises* the beacon rate on both
+  bands). Validated end-to-end in the real driver: `bringup_hop.py` 8/8 GOOD, 2.4 GHz ~220–350 +
+  5 GHz ~200–344 beacons/12 s, 0 dead (was a ~30–60% coin toss). NB the RF18-bit16 2.4 GHz gate is a
+  *separate* known thing (ch1 needs a 5→2.4 GHz band switch); the per-boot variability was the cal.
 - **Eliminated this round (2026-06-24 cont'd 3), with hardware data — do NOT re-chase these:**
   - **DC-offset cancellation OUTPUT** (`0xc10`/`0xc14`): benign — byte-identical between a 346-frame
     GOOD and a 0-frame DEAD launch, and disabling it (`0xa9c[20]=0`) does not help. BUT *running* the
@@ -44,29 +47,27 @@ other drivers.
   and never locking a real packet, with `RXFF_PTR=0`. So with identical RF + MAC config the RX gain
   is physically wrong ~60% of boots = an analog RX-gain/calibration whose result lands in NO readable
   register. No C2H (interrupt-IN ep 0x81) arrives before RX onset.
-- **ROOT CAUSE (highest confidence reached) — running `dm._dc_cancellation` intermittently breaks RX
-  on BOTH bands; skipping it fixes both (`dc_ab.py`, order-controlled, interleaved, same card).**
-  Cal run → 5 GHz median 33 (2/9 dead), 2.4 GHz mostly DEAD (6/9 dead, median 0); cal SKIPPED →
-  5 GHz median 121 (0/9 dead) AND 2.4 GHz median 133 (0/9 dead). The vendor runs the same cal with
-  steady RX, so our byte-faithful port leaves the analog front-end wrong on silicon — gate-invisible,
-  since the gate replays captured reads. It is an analog RESTORE, not the DC offset (disabling the
-  comp `0xa9c[20]=0` does NOT recover RX). `dc_restore.py` found the cal leaves RF `0x3f` (LNA-path
-  gain) = `0x281d` vs the operational `0x1f9d` (3-wire `0xc00/0xe00`, ck320, IGI all restore fine).
-  BUT that is a DEAD END as a mechanism: the byte-gate is green, so the capture contains the exact
-  same `_lna_setting` `0x3f`=`0x281d` write — the **vendor leaves RF `0x3f`=`0x281d` too**, via
-  identical wire ops, and its RX is steady. So no register VALUE the cal leaves can be the
-  differentiator (we match the vendor byte-for-byte through the cal). **Why running the cal breaks
-  OUR RX but not the vendor's, given identical wire ops, is UNRESOLVED — it lives in the gate's blind
-  spot: sub-op timing / analog settling of the LNA + 3-wire + ck320 stop/restart, or a hardware-state
-  dependence, NOT a register value.** FIX: the hardware-proven one is to **skip / gate-off
-  `_dc_cancellation`** (reliably fixes both bands; needs a verify_pcap exception since it drops those
-  ops). Principled open question for the Lead: why our faithful replay of the cal diverges in analog
-  outcome — likely the transient timing of the stop/restart steps under our USB stack vs the kernel.
-  Confidence the cal is the cause: HIGH (multi-batch, both bands, order-controlled). Confidence in a
-  specific register mechanism: LOW — every value we leave matches the vendor.
-- `verify_pcap`: clean — but BLIND to (a) timing and (b) read-modify-write correctness, since it
-  replays CAPTURED read values (a wrong RMW only diverges when the REAL chip reads differently). Both
-  blind spots were checked this round; neither is the cause. See Gotchas.
+- **ROOT CAUSE (resolved) — `dm._dc_cancellation`'s ck320 stop/restart.** The cal toggling the
+  320 MHz BB clock (`_stop_ck320`, `0x8b4[6]`) intermittently leaves the demod un-relocked. Drill-down:
+  `dc_ab.py` (order-controlled, same card) showed running the cal → 5 GHz median 33 (2/9 dead),
+  2.4 GHz 6/9 dead; skipping → 5 GHz median 121, 2.4 GHz median 133, both 0 dead. NOT the DC-comp
+  output (`disable_comp` via `0xa9c[20]=0` did not recover RX; and the RF `0x3f`=`0x281d` the cal
+  leaves is vendor-faithful, the capture has the same write — so no register VALUE is the
+  differentiator). `dc_steps.py` subtracted one analog step at a time: skipping **only** `_stop_ck320`
+  restored RX (0 dead), while skipping `_lna_setting` or `_stop_3_wire` did NOT — pinning it to the
+  ck320 toggle. `dc_ck320.py`: a 2 ms settle delay around the toggle does NOT rescue it, so it's the
+  clock-restart transient itself, not a missing wait — invisible to verify_pcap because every wire op
+  matches the vendor. **FIX APPLIED: `_dc_cancellation` is not called** (`dm.phy_init_haldm`); its
+  comp is unneeded here. Validated: `bringup_hop.py` 8/8 GOOD both bands. Cost: `verify_pcap` now
+  diverges at op 7536 (the first cal op, `0x198c` @ frame 16021) — intentional. (Open, low-priority:
+  why our faithful replay of the ck320 toggle settles differently than the kernel's — a sub-op
+  silicon-timing question; not worth chasing now that RX works.)
+- `verify_pcap`: now INTENTIONALLY diverges at op 7536 (the first `_dc_cancellation` op, `0x198c` @
+  frame 16021) — we deliberately skip that HW-harmful cal, so the byte-gate can't be green through it
+  anymore. Everything before op 7536 still reproduces byte-for-byte. The gate is also structurally
+  BLIND to (a) timing and (b) read-modify-write correctness (it replays CAPTURED reads) — which is
+  exactly why the ck320-toggle bug survived a byte-faithful port. Updating the gate to expect the
+  dc_cancellation skip is a follow-up.
 - The card is NOT permanently wedged by soft re-inits — it recovers on the next launch with no
   replug (user-confirmed; an earlier "wedged, must replug" claim was wrong). Rapid back-to-back
   re-inits (<1 s rest) do raise the dead rate transiently; space launches ≥1.5 s.
@@ -114,6 +115,20 @@ Names match the vendor C, so grep the bundle's `driver-source/` to cross-referen
 - `driver_rx_diag.py` — re-run after a fresh plug to confirm 2.4 GHz comes back.
 
 ## Debug log
+
+### 2026-06-24 (cont'd 6) — FIXED: ck320 stop/restart in _dc_cancellation was the root cause
+
+Subtracted `_dc_cancellation`'s analog steps one at a time (`dc_steps.py`): skipping ONLY the ck320
+stop/restart (`_stop_ck320`, `0x8b4[6]`) restored RX (0 dead, median ~130); skipping `_lna_setting`
+or `_stop_3_wire` did not. So toggling the 320 MHz BB clock during the cal is the destabilizer.
+`dc_ck320.py`: a 2 ms settle delay around the toggle did NOT rescue it (still erratic, 1 dead) — it's
+the clock-restart transient itself, not a missing wait. Ruled out earlier this session, all with
+controlled hardware A/Bs: the DC-comp output, LNA port (byte-faithful), 3-wire, IGI, RF/MAC config,
+reader ordering, BT-coex (held constant across the dc_ab arms), interrupts (empty), C2H/skipped comm
+(none), CCK value handling. Fix: stop calling `_dc_cancellation` in `phy_init_haldm` (its comp is
+unneeded here; skipping raises the beacon rate on both bands). Validated end-to-end: `bringup_hop.py`
+8/8 GOOD, 2.4 GHz ~220–350 + 5 GHz ~200–344 beacons/12 s. verify_pcap now diverges at op 7536 (first
+cal op) — intentional, hardware-driven deviation (user OK'd dropping the byte-gate for the root fix).
 
 ### 2026-06-24 (cont'd 5) — both bands fixed by skipping the cal; LNA gain (RF 0x3f) localized
 

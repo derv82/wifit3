@@ -359,7 +359,10 @@ def stop_ic_trx(t, set_type: bool, ts: TrxStop) -> None:
 
 
 def _dc_cancellation(t, info, st: DmState) -> None:
-    """phydm_dc_cancellation [SRC] phydm.c (PHYDM_DC_CANCELLATION; 8821C in
+    """NOT CALLED — hardware-harmful on this card (its ck320 stop/restart is the RX coin-toss root
+    cause; see the skip note in ``phy_init_haldm``). Kept as the verified vendor port for reference.
+
+    phydm_dc_cancellation [SRC] phydm.c (PHYDM_DC_CANCELLATION; 8821C in
     ODM_DC_CANCELLATION_SUPPORT, 20 MHz so it runs; 1T1R = path-A only). Measure the path-A DC
     offset on the BB debug port with TRX stopped, LNA off and 3-wire halted, then write the
     compensation. The measured dbg-port value (recorded on the wire) drives the 0xc10/0xc14 fields.
@@ -429,7 +432,15 @@ def phy_init_haldm(t, info) -> DmState:
     _ra_info_init(t, info, st)
     _cfo_tracking_init(t, info, st)
     _rf_init(t, info, st)
-    _dc_cancellation(t, info, st)
+    # _dc_cancellation is INTENTIONALLY NOT RUN — it is the RX coin-toss root cause on this card.
+    # Its ck320 (320 MHz BB clock) stop/restart ([SRC] phydm.c:3598-3603) intermittently fails to
+    # re-lock the demod, killing RX on BOTH bands ~half of cold boots; a settle delay does not
+    # rescue it, only skipping the toggle does (scripts/rtl8821cu_dkms/dc_{ab,steps,ck320}.py). The
+    # cal's DC compensation is unneeded here (disabling it changes nothing, and skipping the cal
+    # *raises* the beacon rate on both bands). The byte-gate therefore now diverges at the first
+    # dc_cancellation op — a deliberate, hardware-driven deviation (see RTL8821CU_DKMS.md). The
+    # function + helpers below are kept as the verified vendor port.
+    # _dc_cancellation(t, info, st)
     _la_init(t, info, st)
     _psd_init(t, info, st)
     return st
