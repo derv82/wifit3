@@ -9,14 +9,15 @@
 > ops), PASS, driving the driver's PUBLIC interface** (`driver.connect/set_channel/inject_frame`), so
 > it verifies the product code path, not a parallel reimplementation. Registered in `wlan/manager.py`;
 > cold init is HW-validated (FW boots). **5 GHz monitor RX WORKS on hardware** (hundreds of good
-> CRC-passing frames across ch36–161) — receiver, demod, `rx.py`, and crystal all proven. **Open —
-> RX fails on 2.4 GHz only**: ch1–11 deliver 0 good frames. Crystal/CFO is exonerated (the 5 GHz
-> crystal-cap sweep peaks at the default 0x2e; the crystal is shared by both bands). The 2.4 GHz band
-> uses this combo card's BTG (BT-shared) LNA + DPDT/PTA antenna, while 5 GHz uses a dedicated path —
-> so the shared 2.4 GHz path is the prime suspect (BT side is uninitialized). The cold ch1 config is
-> byte-for-byte identical to the vendor on HW (765 BB + 85 RF regs; only RF 0x18 self-corrects). See
-> the bottom port logs ("BREAKTHROUGH: 5 GHz works"). Warm reattach + the ZeroCD mode-switch are open.
-> Below is the per-phase detail, still valid:
+> CRC-passing frames across ch36–161). **2.4 GHz ROOT CAUSE FOUND:** after cold init 2.4 GHz decodes
+> 0 frames even with signal, but a single **5 GHz→2.4 GHz band switch wakes it** (then it decodes
+> hundreds, reproducible) — a latent VCO/PLL re-lock the large LO jump forces and the cold-direct
+> 2.4 GHz tune does not (the user's "flip" hypothesis, confirmed; same band-switch code runs both
+> times, so it's analog, not config — `env_monitor.py`). **Fix (candidate, pending a stable 2.4 GHz
+> signal to A/B):** prime `connect()` with a band switch (tune 5 GHz then back), or force the LCK on
+> the first tune. The cold ch1 config is byte-identical to the vendor on HW (765 BB + 85 RF regs).
+> See the bottom port logs. Warm reattach + the ZeroCD mode-switch are open. Below is the per-phase
+> detail, still valid:
 > The gate (`scripts/rtl8821cu_dkms/verify_pcap.py`,
 > replaying ctrl + the FW/TX bulk-OUT stream) reproduces the **whole cold-boot probe and the airmon
 > monitor-entry phase through the BT-coex HAL init + the USB hal_init_misc LED + the iface-init MAC
@@ -1081,3 +1082,44 @@ byte-identical to the vendor (who DID receive on 2.4 GHz), so a 2.4 GHz live-cal
 a per-unit 2.4 GHz hardware issue are also open. Decisive next test: a **strong, close 2.4 GHz AP**
 (the environment's are all 5 GHz) to tell a real 2.4 GHz-path bug from merely weak/distant 2.4 GHz
 signal — re-run `scan_and_sweep.py` / `beacon_align.py` with one beside the card.
+
+- **2.4 GHz CONFIRMED broken with a strong close AP** [HW]. With a 2.4 GHz AP a few feet from the
+  card, the band scan still decodes **0 beacon headers on every 2.4 GHz channel** (and the strong
+  signal even suppresses the full-gain noise floor in its footprint — the front-end + AGC sense it,
+  the demod decodes nothing), while 5 GHz keeps decoding hundreds. So it is a real 2.4 GHz RF-path
+  fault, not absent signal. (`gnt_5g_test.py`, `tune_check.py`, `flip_compare.py`.)
+- **Ruled out, all controlled on the working 5 GHz band or offline:** GNT/antenna-grant
+  (`gnt_5g_test.py`: dropping 5 GHz's GNT_WL from SW_HIGH to the 2.4 GHz HW_PTA value does NOT break
+  5 GHz RX); the band-switch tune path (`flip_compare.py`: a 5 GHz→ch1 flip lands the 2.4 GHz state
+  identical to cold-direct-ch1 except one VCO reg RF 0xb2); and `central_fc` 0x860 (constant 0x96a
+  across 2.4 GHz is correct — the vendor pcap is the same; the LO does the per-channel tune).
+- **Remaining 2.4 GHz-specific suspects:** the BTG (BT-shared) LNA + RF mixer path (band-specific, so
+  it cannot be tested by borrowing 5 GHz signal), a 2.4 GHz live-RF-calibration divergence the gate
+  can't see, or per-unit 2.4 GHz hardware degradation on this card. A second 8821cu unit would split
+  driver-bug from per-unit hardware. Next live test: a confirmed-channel 2.4 GHz AP (ch1/6) to test
+  2.4 GHz-path tweaks directly against a known strong signal.
+
+## Port log — 2026-06-23 (ROOT CAUSE: 2.4 GHz needs a 5 GHz→2.4 GHz band switch to wake)
+
+The 2.4 GHz fault is **not** a broken path and not interference — it is a latent **VCO/PLL lock**
+quirk, and the user's "flip from 5 GHz to 2.4 GHz" hypothesis is correct.
+
+- **Reproducible (`env_monitor.py`, two runs):** right after cold init, 2.4 GHz decodes **0 good
+  frames even with signal present** (ch1/6 total ≈ 300 noise units, good=0). The instant the monitor
+  hops to a 5 GHz channel and returns, **every 2.4 GHz channel decodes hundreds of good frames** and
+  stays working. The transition is the 5 GHz→2.4 GHz band switch, not anything external. (An earlier
+  "the work computer was jamming" guess was WRONG — the same round1-dead/round2-works pattern repeats
+  with nothing touched.)
+- **Same code both times.** `cold_bringup` reaches its first 2.4 GHz tune via `chan.set_channel(t,
+  info, 1)`, so `_need_switch_band` (None→2.4 GHz) already runs the full `_switch_band` +
+  `switchband_notify_2g`. A later 5 GHz→2.4 GHz hop runs the identical code, yet only it wakes the
+  receiver — so the difference is **analog**: the large 5 GHz→2.4 GHz LO jump forces a clean VCO
+  re-lock the cold-direct 2.4 GHz tune does not. (RF 0xb2, the lone `flip_compare` diff, jitters
+  run-to-run = red herring; writing it did not fix 2.4 GHz.)
+- **Fix (candidate):** prime the 2.4 GHz path during `connect()` with a band-switch — tune a 5 GHz
+  channel then back to the 2.4 GHz target (the user's flip), or force the equivalent VCO re-lock
+  (LCK/`_phy_lc_calibrate_8821c`) on the first tune. The `env_monitor` round1→round2 contrast already
+  IS the before/after for the band-switch prime; a clean A/B of the in-`connect()` fix is pending a
+  stable 2.4 GHz signal (this environment's 2.4 GHz comes and goes by the minute).
+- New scripts: `env_monitor.py` (live per-channel noise+decode timeline — the instrument that caught
+  the round1/round2 flip), `rf_b2_fix_test.py`.
