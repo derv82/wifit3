@@ -34,7 +34,7 @@ works). *Deauth* is no longer a column — it works on every supported card.
 | [RTL8822BU](#rtl8822bu) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | C |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | D |
 | [RTL8821CU](#rtl8821cu) | ✅ | ✅ | ✅ | ⬜ | ✅ | ✅ | ⬜ | - |
-| [RT5370](#rt5370) | ⚠️ | ✅ | ✅ | ⬜ | ✅ | ✅ | ⬜ | - |
+| [RT5370](#rt5370) | ✅ | ✅ | ✅ | ⬜ | ✅ | ✅ | ⬜ | - |
 
 ## Per-card notes
 
@@ -281,7 +281,7 @@ Excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ⚠️ | 2026-06-24 | Nearby AP 8–10 bcn/s; adjacent AP 3–5/s. |
+| Scan | ✅ | 2026-06-24 | BBP66 link tuning sees nearby AP ~7/s. |
 | Handshake | ✅ | 2026-06-24 | 4-way captured. |
 | PMKID | ✅ | 2026-06-24 | Capture + active extract. |
 | WEP | ⬜ | — | Untested. |
