@@ -62,12 +62,13 @@ other drivers.
   diverges at op 7536 (the first cal op, `0x198c` @ frame 16021) — intentional. (Open, low-priority:
   why our faithful replay of the ck320 toggle settles differently than the kernel's — a sub-op
   silicon-timing question; not worth chasing now that RX works.)
-- `verify_pcap`: now INTENTIONALLY diverges at op 7536 (the first `_dc_cancellation` op, `0x198c` @
-  frame 16021) — we deliberately skip that HW-harmful cal, so the byte-gate can't be green through it
-  anymore. Everything before op 7536 still reproduces byte-for-byte. The gate is also structurally
-  BLIND to (a) timing and (b) read-modify-write correctness (it replays CAPTURED reads) — which is
-  exactly why the ck320-toggle bug survived a byte-faithful port. Updating the gate to expect the
-  dc_cancellation skip is a follow-up.
+- `verify_pcap`: PASS — reproduces 21318 of 21409 ops byte-for-byte and **EXCEPTS** the 91-op
+  `_dc_cancellation` block (frames 16021-16201) we deliberately skip, reporting it explicitly. The
+  except is safe: it only triggers once, resyncs forward to the driver's next op, and verifies the
+  skipped span is dc_cancellation by its unique `0xc10` DC-comp write (so it can't mask a real
+  divergence). The gate is still structurally BLIND to (a) timing and (b) read-modify-write
+  correctness (it replays CAPTURED reads) — which is exactly why the ck320-toggle bug survived a
+  byte-faithful port; that blindness is inherent, not specific to this except.
 - The card is NOT permanently wedged by soft re-inits — it recovers on the next launch with no
   replug (user-confirmed; an earlier "wedged, must replug" claim was wrong). Rapid back-to-back
   re-inits (<1 s rest) do raise the dead rate transiently; space launches ≥1.5 s.

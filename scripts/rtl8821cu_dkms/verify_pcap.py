@@ -62,6 +62,48 @@ def _run(coro):
     raise RuntimeError("driver coroutine suspended on a real await; replay is synchronous")
 
 
+# The driver INTENTIONALLY does not run dm._dc_cancellation (its ck320 stop/restart is a HW-proven RX
+# killer — see RTL8821CU_DKMS.md), so the capture's dc_cancellation ops have no producer. The gate
+# EXCEPTS exactly that one block: on the first mismatch it resyncs forward to the driver's next op,
+# verifies the skipped span really is dc_cancellation by its unique 0xc10 path-A DC-comp write (so
+# this can never mask a real divergence), records it, and continues — everything else still verifies
+# byte-for-byte. Only one such except is allowed.
+_DC_EXCEPT_SIG = 0x0C10          # path-A DC-cancel I write, unique to _dc_cancellation
+_DC_EXCEPT_WINDOW = 120          # max ops the skipped block may span
+
+
+class ExceptingReplayDevice(rp.ReplayDevice):
+    def __init__(self, ops):
+        super().__init__(ops)
+        self.excepted: list[dict] = []
+        self._used = False
+
+    def ctrl_transfer(self, bmRequestType, bRequest, wValue, wIndex, data_or_wLength, timeout=None):
+        start = self.i
+        try:
+            return super().ctrl_transfer(bmRequestType, bRequest, wValue, wIndex,
+                                         data_or_wLength, timeout)
+        except rp.Divergence:
+            if self._used:
+                raise
+            want = "IN" if (bmRequestType & 0x80) else "OUT"
+            width = data_or_wLength if want == "IN" else len(bytes(data_or_wLength or b""))
+            for j in range(start + 1, min(start + _DC_EXCEPT_WINDOW, len(self.ops))):
+                o = self.ops[j]
+                if (o.get("dir") == want and o.get("wval") == wValue
+                        and o.get("widx") == wIndex and o.get("width") == width):
+                    block = self.ops[start:j]
+                    if not any(b.get("dir") == "OUT" and b.get("wval") == _DC_EXCEPT_SIG
+                               for b in block):
+                        break              # span isn't dc_cancellation -> this is a real divergence
+                    self.excepted = block
+                    self.i = j
+                    self._used = True
+                    return super().ctrl_transfer(bmRequestType, bRequest, wValue, wIndex,
+                                                 data_or_wLength, timeout)
+            raise
+
+
 class Walk:
     """One ctrl_transfer cursor over the whole capture, driving the **real driver**. The gate
     invokes the driver's public interface (``connect`` / ``set_channel`` / ``inject_frame``) so the
@@ -70,7 +112,7 @@ class Walk:
 
     def __init__(self, ops: list[dict]):
         self.ops = ops
-        self.dev = rp.ReplayDevice(ops)
+        self.dev = ExceptingReplayDevice(ops)
         self.driver = Rtl8821cuDkmsDriver(self.dev)
         self.t = self.driver.transport
 
@@ -187,8 +229,15 @@ def run(cap: str | None = None) -> int:
         print(f"\nERROR (harness/port bug) at op {w.i}: {type(e).__name__}: {e}")
         return 2
     info = w.driver.info
-    print(f"  deterministic init+airmon: reproduced {w.i} ops single-cursor (cold probe -> FW dl"
-          " -> MAC/BB/RF -> channel tune -> monitor entry -> media-connect coex)")
+    exc = w.dev.excepted
+    reproduced = w.i - len(exc)
+    print(f"  deterministic init+airmon: reproduced {reproduced} ops single-cursor (cold probe -> "
+          "FW dl -> MAC/BB/RF -> channel tune -> monitor entry -> media-connect coex)")
+    if exc:
+        addrs = " ".join(f"0x{o['wval']:04x}" for o in exc)
+        print(f"  EXCEPTED (intentional skip, NOT reproduced): {len(exc)} dm._dc_cancellation ops, "
+              f"frames {exc[0]['frame']}-{exc[-1]['frame']} — HW-harmful ck320 toggle, see CHIP doc")
+        print(f"    {addrs}")
 
     init_end = w.i
     hops, leds, ticks, peris, injects, frontier = _walk_operational(w, info)
@@ -200,9 +249,11 @@ def run(cap: str | None = None) -> int:
         print("  ^ the next op to reproduce (port it).")
         return 1
 
-    print(f"\nPASS: reproduced all {w.i} of {total} ops single-cursor — entire capture "
-          f"byte-for-byte (init + airmon + {hops} hops + {injects} injects + {leds} LED + "
-          f"{ticks} ticks + {peris} periodicals).")
+    n_exc = len(w.dev.excepted)
+    print(f"\nPASS: reproduced {w.i - n_exc} of {total} ops byte-for-byte single-cursor "
+          f"(init + airmon + {hops} hops + {injects} injects + {leds} LED + {ticks} ticks + "
+          f"{peris} periodicals)"
+          + (f"; EXCEPTED {n_exc} dm._dc_cancellation ops (intentional skip)." if n_exc else "."))
     return 0
 
 
