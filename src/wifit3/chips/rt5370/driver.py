@@ -30,7 +30,7 @@ from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
-from . import bbp, chan, eeprom, firmware, mac, monitor, rfcsr, tx
+from . import bbp, chan, eeprom, firmware, link_tuner, mac, monitor, rfcsr, tx
 from .rx import iter_frames, probe_endpoints, read_rx_burst
 from .transport import RT5370Transport
 
@@ -39,6 +39,8 @@ logger = logging.getLogger(__name__)
 _VID_RALINK = 0x148F
 _PID_RT5370 = 0x5370
 _SCAN_START_CHANNEL = 1            # first channel tuned at connect
+_AGC_INTERVAL_S = 1.0            # link-tuner cadence (kernel rt2x00link runs ~1 Hz)
+_RSSI_EWMA_N = 8                 # EWMA window: ewma = (ewma*(N-1) + rssi)/N
 
 
 class RT5370Driver:
@@ -57,6 +59,15 @@ class RT5370Driver:
         self._drv = None                 # RT5390 threads no init-derived calibration (None)
         self._channel: Optional[int] = None
         self._lna_gain: int = 0          # current-channel LNA gain (RSSI conversion)
+        # Monitor-mode AGC (link tuner). The kernel runs rt2800_link_tuner only for STA/AP
+        # vifs, so in monitor BBP66 is pinned to the per-tune default and a very-close AP
+        # compresses the front-end (measured: a -36 dBm AP self-strangled 4→8 bcn/s on ch9
+        # until BBP66 backed off). We run the kernel's own heuristic (+0x10 when the RX RSSI
+        # EWMA beats -80 dBm) on a ~1 Hz task. Runtime-only — the cold-boot capture has no
+        # link-tuner writes (kernel monitor vif), so verify_pcap doesn't model it, stays green.
+        self._rssi_ewma: Optional[float] = None          # EWMA of RX RSSI (steers the tuner)
+        self._vgc_level: Optional[int] = None            # last BBP66 the tuner wrote
+        self._agc_task: Optional[asyncio.Task] = None
         self._bulk_in_ep: Optional[int] = None
         self._bulk_out_ep: Optional[int] = None
         self._tx_seq: int = 0            # running 802.11 seq stamped into injected frames
@@ -155,6 +166,7 @@ class RT5370Driver:
         # starve RX); each aggregated buffer → 802.11 frames + RSSI → rx callback.
         self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="rt5370-rx")
         self._reader.start()
+        self._agc_task = loop.create_task(self._agc_loop())   # monitor-mode link tuner
 
         if progress_cb:
             progress_cb(1.0, f"RT5370 tuned to channel {_SCAN_START_CHANNEL} @ 20 MHz")
@@ -164,18 +176,49 @@ class RT5370Driver:
         return read_rx_burst(self.transport.dev, self._bulk_in_ep)
 
     def _dispatch(self, buf: bytes) -> None:
+        # Runs on the event loop (RxReaderThread posts via call_soon_threadsafe), so the AGC
+        # EWMA update here shares a thread with the AGC task — no lock needed on the float.
         cb = self._rx_cb
-        if cb is None:
-            return
         for frame, rssi in iter_frames(buf, self._eeprom, self._lna_gain):
+            self._rssi_ewma = (rssi if self._rssi_ewma is None
+                               else (self._rssi_ewma * (_RSSI_EWMA_N - 1) + rssi) / _RSSI_EWMA_N)
+            if cb is None:
+                continue
             parsed = WlanFrameParser.parse_80211_frame(frame, rssi)
             if parsed is not None:
                 cb(parsed)
+
+    # ---- monitor-mode AGC (link tuner) ------------------------------------
+    def _apply_agc(self, rssi: int) -> None:
+        # Executor thread; _hw_lock serializes BBP66 vs set_channel's reset_tuner and inject.
+        with self._hw_lock:
+            self._vgc_level = link_tuner.link_tuner(
+                self.transport, self._chip, self._lna_gain, rssi,
+                self._vgc_level if self._vgc_level is not None else -1)
+
+    async def _agc_loop(self) -> None:
+        """~1 Hz monitor-mode link tuner: back BBP66 off (+0x10) once the RX RSSI EWMA beats
+        -80 dBm, the kernel's rt2800_link_tuner heuristic run in a context the kernel skips."""
+        loop = asyncio.get_running_loop()
+        try:
+            while True:
+                await asyncio.sleep(_AGC_INTERVAL_S)
+                if self._rssi_ewma is None:
+                    continue
+                # Share _io_lock with set_channel/inject so an AGC write can't land mid-tune.
+                async with self._io_lock:
+                    await loop.run_in_executor(None, self._apply_agc, int(self._rssi_ewma))
+        except asyncio.CancelledError:
+            pass
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         loop = asyncio.get_running_loop()
         async with self._io_lock:
             await loop.run_in_executor(None, self._tune, channel)
+            # The tune just wrote BBP66 = default (reset_tuner); re-seed the AGC from there so
+            # it only writes when it backs the gain off, and drop the previous channel's EWMA.
+            self._rssi_ewma = None
+            self._vgc_level = link_tuner.get_default_vgc(self._chip, self._lna_gain)
         self._channel = channel
         return True
 
@@ -235,6 +278,13 @@ class RT5370Driver:
             mac.write_mac_address(self.transport, mac_bytes, u2me_mask=u2me_mask)
 
     async def close(self) -> None:
+        if self._agc_task is not None:
+            self._agc_task.cancel()
+            try:
+                await self._agc_task
+            except asyncio.CancelledError:
+                pass
+            self._agc_task = None
         if self._reader is not None:
             await self._reader.stop()
             self._reader = None
