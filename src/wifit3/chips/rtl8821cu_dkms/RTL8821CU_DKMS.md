@@ -16,9 +16,10 @@ other drivers.
   8/8 launches that were all GOOD on 5 GHz). (2) **5 GHz is the actual per-boot coin toss** — ~0–30%
   of launches deliver 0 frames on 5 GHz, intermittently, fresh-plug or soft-reinit alike.
 - **Eliminated this round (2026-06-24 cont'd 3), with hardware data — do NOT re-chase these:**
-  - **DC-offset cancellation** (`dm._dc_cancellation`, `0xc10`/`0xc14`): NOT it. The DC compensation
-    is byte-identical between a 346-frame GOOD launch and a 0-frame DEAD one; the values don't track
-    good/dead (`bringup_hop.py`, `cold_divergence.py`).
+  - **DC-offset cancellation OUTPUT** (`0xc10`/`0xc14`): benign — byte-identical between a 346-frame
+    GOOD and a 0-frame DEAD launch, and disabling it (`0xa9c[20]=0`) does not help. BUT *running* the
+    cal IS the lead — see LIVE LEAD below. (I first marked DC fully "ruled out" on the output alone;
+    that was premature — corrected.)
   - **IQK**: NOT missing. `bNeedIQK` is zero-init and set TRUE only on link/AP/TDLS/sreset/MCC events
     (traced every set-site); cold boot / monitor entry / PHY init never set it, so the vendor runs no
     IQK in monitor mode either. The vendor also posts RX URBs only AFTER `rtw_hal_init`
@@ -42,10 +43,17 @@ other drivers.
   vs ~`0x100` on GOOD) and DIG reactively backs IGI off to `0x22` — the demod is triggering on noise
   and never locking a real packet, with `RXFF_PTR=0`. So with identical RF + MAC config the RX gain
   is physically wrong ~60% of boots = an analog RX-gain/calibration whose result lands in NO readable
-  register. No C2H (interrupt-IN ep 0x81) arrives before RX onset, so it's not a FW-readiness signal
-  there. Leading lead: the vendor's analog RX-gain/cal path (8821c `halrf` RX gain / RX-DCK) that is
-  either FW-side (H2C → gate-blind, since the gate only checks host ops) or host-side with a
-  completion wait we skip. The digital read/write trace is exhausted; this is the frontier.
+  register. No C2H (interrupt-IN ep 0x81) arrives before RX onset.
+- **LIVE LEAD — running `dm._dc_cancellation` destabilizes 5 GHz RX (`dc_ab.py`, order-controlled
+  A/B).** Cal SKIPPED → 5 GHz consistently good (0/10 dead, tight 82–173 beacons/3 s); cal run
+  normally → erratic (low tail 0–40, occasional dead) — SAME card, interleaved, so not luck.
+  Disabling only the comp output (`0xa9c[20]=0`) does NOT recover it → the culprit is the cal's
+  analog disturbance (LNA off/on via RF `0x3f/0xef/0xee`, 3-wire + ck320 stop/restart, IGI→0x7e),
+  NOT the written offset. DC cancellation is a 2.4 GHz/CCK DC cal run once at cold init on ch1; it
+  perturbs the front-end so the later 5 GHz tune intermittently comes up uncalibrated. This is the
+  FIRST lead that moved the metric. NEXT: (a) check whether skipping it hurts 2.4 GHz/CCK (its actual
+  purpose) before any fix; (b) make it band-aware, or re-establish the front-end on the 5 GHz tune,
+  or robustify the analog restore — do NOT just delete it (vendor-faithful + the byte-gate needs it).
 - `verify_pcap`: clean — but BLIND to (a) timing and (b) read-modify-write correctness, since it
   replays CAPTURED read values (a wrong RMW only diverges when the REAL chip reads differently). Both
   blind spots were checked this round; neither is the cause. See Gotchas.
@@ -96,6 +104,21 @@ Names match the vendor C, so grep the bundle's `driver-source/` to cross-referen
 - `driver_rx_diag.py` — re-run after a fresh plug to confirm 2.4 GHz comes back.
 
 ## Debug log
+
+### 2026-06-24 (cont'd 4) — METRIC MOVED: running dm._dc_cancellation destabilizes 5 GHz RX
+
+The first lead in 7 sessions that moved the metric. `dead_frontend.py` proved the 5 GHz dead state
+is analog (RF synth/PLL `RF18/ca/b0/b8` + MAC RX path byte-identical good-vs-dead; dead = OFDM-FA
+flood to `0x7057` + `RXFF_PTR=0`). `reader_ab.py` ruled out reader-start ordering (during 1/6 vs
+quiet 2/6 dead — and "quiet" delivers fine, so the "start reader before RX-enable or the pipe
+wedges" note is also unreliable). Then `dc_ab.py` (order-controlled A/B, real driver): with
+`_dc_cancellation` SKIPPED, 5 GHz is consistently good (0/10 dead, tight 82–173 beacons); run
+normally, 5 GHz is erratic (low tail 0–40, 1 dead) — same card, interleaved. Disabling only the comp
+output (`0xa9c[20]=0`) does NOT recover it, so it's the cal's analog disturbance (LNA off/on, 3-wire
++ ck320 stop/restart, IGI→0x7e), not the written 0xc10/0xc14. Corrected my own premature "DC ruled
+out (cont'd 3)" — that was output-only; running the cal is implicated. NEXT: test 2.4 GHz/CCK impact
+of skipping (don't break its real purpose), then a band-aware / robustified fix (NOT a delete —
+breaks the byte-gate + vendor-faithfulness).
 
 ### 2026-06-24 (cont'd 3) — eliminations: DC, IQK, timing all OUT; coin toss is 5 GHz + analog
 
