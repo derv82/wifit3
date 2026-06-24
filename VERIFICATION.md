@@ -261,9 +261,8 @@ Excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate
 ### RTL8821CU
 *Auscoumer 600 Mbps · 2.4 / 5 GHz*
 
-> **Hides as a CD-ROM (ZeroCD).** The combo card enumerates as USB mass-storage and must be
-> mode-switched to the Wi-Fi PID `0bda:c820` before Wifit3 sees it — a freshly-plugged card shows
-> nothing until then (a discovery-layer gap, tracked in the chip doc).
+> **ZeroCD (Windows only).** The unit tested enumerates as a CD-ROM (ZeroCD) on Windows; eject the
+> disk drive before Wifit3 can see the radio. Not an issue on Linux.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
