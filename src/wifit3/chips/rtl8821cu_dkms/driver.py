@@ -9,13 +9,13 @@ spot the host-side replay does not model — see RTL8821CU_DKMS.md.
 
 Registered in ``wlan/manager.py``. ``connect`` claims the combo card's WiFi (vendor-class)
 interface, starts the bulk-IN ``RxReaderThread``, runs ``bringup.cold_bringup`` (FW download +
-MAC/BB/RF + BT-coex + the ch1 monitor tune over the ep-0x05 FW/TX pipe), widens the monitor RCR,
-grants the shared 1-antenna to WiFi, and runs the phydm watchdog on a background task.
-``set_channel`` and ``inject_frame`` drive the phydm tune and the TX-descriptor path. The whole
-cold-boot pcap is reproduced byte-for-byte by ``scripts/rtl8821cu_dkms/verify_pcap.py``, and cold
-init is HW-validated (FW boots). Hardware status — including the open monitor-RX bring-up — is
-tracked in RTL8821CU_DKMS.md. Warm reattach and the ZeroCD mode-switch discovery blocker are open.
-Shares no code with the other Realtek drivers by design (anti-DRY).
+MAC/BB/RF + BT-coex + the ch1 monitor tune over the ep-0x05 FW/TX pipe — which leaves the chip in
+the vendor's exact receiving config, byte-for-byte), then runs the phydm watchdog on a background
+task. ``set_channel`` and ``inject_frame`` drive the phydm tune and the TX-descriptor path. The
+whole cold-boot pcap is reproduced byte-for-byte by ``scripts/rtl8821cu_dkms/verify_pcap.py``, and
+cold init is HW-validated (FW boots). Hardware status — including the open monitor-RX demod fault
+(frames received, ~99% fail CRC) — is tracked in RTL8821CU_DKMS.md. Warm reattach and the ZeroCD
+mode-switch discovery blocker are open. Shares no code with the other Realtek drivers (anti-DRY).
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
-from . import bringup, btc, chan, efuse, tx, watchdog
+from . import bringup, chan, efuse, tx, watchdog
 from .constants import USB_PID_8821CU, USB_VID_REALTEK
 from .rx import iter_frames
 from .transport import Rtl8821cuTransport
@@ -52,13 +52,6 @@ _RAID_INJECT = 1              # [WIRE] aireplay tx-desc dw1[20:16]
 _WIFI_INTF_CLASS = 0xFF        # combo card: the WiFi function is the vendor-specific interface
                                # (class 0xFF, #2); the Bluetooth interfaces 0/1 are class 0xE0
 
-# The airmon capture's monitor RCR (0x90000001 = AAP|APP_PHYSTS|APP_FCS) only makes the address
-# filter promiscuous — it lacks AB (accept broadcast) and AMF (accept management), so the MAC drops
-# beacons (broadcast mgmt frames). The sibling Jaguar drivers (rtl8821au/8812au) widen it to
-# 0x9000382f (adds APM|AM|AB|ADF|ACF|AMF). cold_bringup writes the airmon value the offline gate
-# verifies; this is applied AFTER, in the product path only, so the gate stays byte-for-byte.
-_REG_RCR = 0x0608
-_RCR_MONITOR = 0x9000382F
 _WATCHDOG_PERIOD_S = 2.0        # phydm dynamic-check cadence [SRC] rtw_cmd.c rtw_dynamic_chk_wk
 
 
@@ -132,10 +125,8 @@ class Rtl8821cuDkmsDriver:
         self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="8821cu-dkms-rx")
         self._reader.start()
         self.info = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
-        # The next three go beyond the pcap. Each was tried for the open monitor-RX bug. None fixed
-        # it. RCR-widen and the GNT force are not in the pcap (it ran wifi_only=FALSE).
-        self.transport.write32(_REG_RCR, _RCR_MONITOR)      # widen RCR: add accept-broadcast/mgmt
-        btc.force_wifi_only_antenna(self.transport)         # GNT the shared 1-ant to WiFi
+        # phydm dynamic-check watchdog (kernel-parity — its ~2 s ticks are in the pcap). DIG runs
+        # here; without it the RX AGC sits at full gain and the OFDM false-alarm count floods.
         self._wd_state = watchdog.WatchdogState(
             eeprom_thermal=self.info.eeprom_thermal, thermal_offset=efuse.thermal_offset(self.info))
         self._watchdog_task = loop.create_task(self._watchdog_loop())
