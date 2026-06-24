@@ -8,28 +8,45 @@ other drivers.
 ## Status
 
 - Cold init and firmware boot: working on hardware.
-- **RX is flaky (~50% of launches deliver no frames), and the power-seq DELAY fix did NOT cure it**
-  (that fixed a real but separate defect — see debug log). Fresh-plug `bringup_bands.py` shows the
-  dead state is CHIP-SIDE RX: the RX FIFO never fills (`RXFF_PTR=0`) though the PHY demod runs (FA
-  counters tick) and the MAC config is byte-identical to good launches. It hits BOTH bands, varies
-  per launch AND flips across band switches (ch1 alive → ch36 dead after the switch, and vice-versa).
-  Leading hypothesis: the **live DC-offset cancellation** (`dm._dc_cancellation`, which measures a DC
-  offset off the BB dbg port each boot and writes `0xc10`/`0xc14`) is mis-measuring per boot →
-  DC-saturated ADC → demod garbage. Invisible to `verify_pcap` (the replay feeds back the *captured*
-  measured value). Probe (ready in `bringup_cointoss.py`): diff `0xc10`/`0xc14` good-vs-dead on a
-  fresh card; if they differ, the DC cal is the culprit. Second suspect: **IQK** — it is NOT disabled
-  (an earlier note here wrongly read the vestigial comment at `rtl8821c_phy.c:807`; the live call is
-  `:808 rtw_phydm_iqk_trigger`). It fires on channel-set gated on `bNeedIQK`, but the captured monitor
-  session never triggered it (`verify_pcap` passes with no host-side IQK; the `HW_VAR_DO_IQK` set-sites
-  are link/AP/TDLS/MCC/sreset/CAC, not monitor hops). Open: does init/first-channel-set set `bNeedIQK`
-  (a cold capture may not show it) — i.e. does our truly-cold boot skip a one-time IQK? Both unconfirmed.
-- 5 GHz / 2.4 GHz monitor RX: works *when RX comes up alive*; the flakiness gates everything, so
-  earlier per-band findings were confounded by which launches happened to be alive. NB: an earlier
-  ch1-parked diagnostic conflated "2.4 GHz/RF18 dead" with "bring-up dead" — use `bringup_bands.py`.
-- `verify_pcap`: clean — but BLIND to timing (a DELAY emits no register op), which is exactly how
-  the missing settle survived a byte-faithful port. See Gotchas.
-- Not done: fresh-plug coin-toss validation, ZeroCD discovery, warm reattach, the
-  degrades-after-~8-soft-reinits issue (separate from the coin toss).
+- **RX is an intermittent coin toss — ROOT CAUSE STILL OPEN.** Dead = chip-side RX: the RX FIFO
+  never fills (`RXFF_PTR=0`) though the demod runs (FA counters tick) = front-end never locks =
+  analog. Two SEPARATE phenomena, don't conflate them: (1) **2.4 GHz is gated by RF18 bit16** — on a
+  cold tune the bit stays SET, so ch1 is dead until a 5→2.4 GHz band switch clears it (the running
+  app's continuous hop revives it; a ch1-parked or ch1-first probe never will — measured ch1=0 on
+  8/8 launches that were all GOOD on 5 GHz). (2) **5 GHz is the actual per-boot coin toss** — ~0–30%
+  of launches deliver 0 frames on 5 GHz, intermittently, fresh-plug or soft-reinit alike.
+- **Eliminated this round (2026-06-24 cont'd 3), with hardware data — do NOT re-chase these:**
+  - **DC-offset cancellation** (`dm._dc_cancellation`, `0xc10`/`0xc14`): NOT it. The DC compensation
+    is byte-identical between a 346-frame GOOD launch and a 0-frame DEAD one; the values don't track
+    good/dead (`bringup_hop.py`, `cold_divergence.py`).
+  - **IQK**: NOT missing. `bNeedIQK` is zero-init and set TRUE only on link/AP/TDLS/sreset/MCC events
+    (traced every set-site); cold boot / monitor entry / PHY init never set it, so the vendor runs no
+    IQK in monitor mode either. The vendor also posts RX URBs only AFTER `rtw_hal_init`
+    (`rtw_intf_start` → `rtl8821cu_inirp_init`), so no concurrent-RX-during-init in the kernel.
+  - **Missing settle delays / write pacing**: NOT the story. The kernel capture has ~no explicit
+    inter-op waits — 24 gaps ≥0.3 ms in all of init+airmon, all explained (6.7 s idle before airmon,
+    RF-LSSI `0xc90` pacing, the `stop_ic_trx` 1 ms idle-poll). Our synchronous libusb transfers are
+    if anything SLOWER than the kernel's ~40 µs op cadence (`airmon_rx_onset.py`).
+  - **vs-capture byte divergences are BENIGN card-identity.** `cold_divergence.py` (real silicon vs
+    the capture, op-by-op) finds ~36 *consistent* divergences present on GOOD launches: GPIO
+    (`0x40/0x4c/0x4e/0x64`), RFE/antenna mux (`0x1080`), coex GNT (`0x73`), chip-version bits, + the
+    live DC cal. The capture is from a slightly different board/antenna config; our per-card RMWs
+    correctly differ there. The byte-gate hides this (it feeds captured reads) but it does NOT cause
+    RX death. So "the bytes differ on silicon" is true but benign — not the bug.
+- Where RX first arrives in the capture: airmon stage, frame 17261 (`pcap_slicer.py` window
+  7673–17766; `airmon_rx_onset.py`), right after a normal channel/bw tune we DO reproduce.
+- Leading remaining lead: an analog RX/RF bring-up that varies per boot and is invisible to the
+  digital register trace (good-vs-dead final state byte-identical except `RXFF_PTR`/IGI). Next step:
+  catch DEAD 5 GHz launches and instrument the front-end on them (RF PLL/synth lock status, AGC/IGI,
+  RX gain) — the digital trace has been exhausted. `cold_divergence.py`'s 1-sample DEAD launch showed
+  the only separators in the RF-0x18 tune region; needs more dead samples to trust.
+- `verify_pcap`: clean — but BLIND to (a) timing and (b) read-modify-write correctness, since it
+  replays CAPTURED read values (a wrong RMW only diverges when the REAL chip reads differently). Both
+  blind spots were checked this round; neither is the cause. See Gotchas.
+- The card is NOT permanently wedged by soft re-inits — it recovers on the next launch with no
+  replug (user-confirmed; an earlier "wedged, must replug" claim was wrong). Rapid back-to-back
+  re-inits (<1 s rest) do raise the dead rate transiently; space launches ≥1.5 s.
+- Not done: root-cause of the 5 GHz coin toss, ZeroCD discovery, warm reattach.
 
 ## Gotchas
 
@@ -73,6 +90,29 @@ Names match the vendor C, so grep the bundle's `driver-source/` to cross-referen
 - `driver_rx_diag.py` — re-run after a fresh plug to confirm 2.4 GHz comes back.
 
 ## Debug log
+
+### 2026-06-24 (cont'd 3) — eliminations: DC, IQK, timing all OUT; coin toss is 5 GHz + analog
+
+Re-grounded the whole hunt against the pcap + live silicon (card recovers without replug — the
+"wedged" claim was wrong). New tools: `airmon_rx_onset.py` (work backwards from the first RX frame +
+inter-op gap scan), `cold_divergence.py` (drive the REAL driver on silicon, compare every read/write
+to the capture op-by-op with tolerant resync, label GOOD/DEAD, diff), `bringup_hop.py` (continuous
+dual-band hop like the app, with DC telemetry), `rf18_latch.py`.
+
+Killed three leads with data: **DC cancellation** — `0xc10`/`0xc14` byte-identical on a 346-frame
+GOOD and a 0-frame DEAD launch (the staged "diff the DC values" probe finally ran; they don't track
+RX). The `stop_ic_trx` delay+fail-abort port (vendor `ODM_delay_ms(1)`/`PHYDM_SET_FAIL`) is real but
+INERT here — `stop_fail=0` every launch, BB always idles — so it was reverted, not committed.
+**IQK** — `bNeedIQK` zero-init, set only on link/AP/TDLS/sreset/MCC; never in monitor; vendor runs
+no IQK either. (The "FW-offloaded IQK" doc is the 8822bu's, a different chip — it kept corrupting the
+IQK question.) **Timing** — kernel init has ~no inter-op waits (24 gaps ≥0.3 ms, all explained); we
+fire no faster than it. **vs-capture divergences** — ~36, consistent, all on GOOD launches =
+card-identity (GPIO/RFE/coex/version + live DC); benign, not the bug.
+
+Net: the 5 GHz coin toss is NOT in the digital read/write trace (good-vs-dead identical bar
+`RXFF_PTR`/IGI) and NOT timing — it's an analog front-end bring-up that varies per boot. Next:
+reproduce DEAD 5 GHz launches and instrument the front-end on them (PLL/synth lock, AGC/IGI, RX
+gain); pursue the RF-0x18-tune-region separator `cold_divergence.py` flagged on its 1 DEAD sample.
 
 ### 2026-06-24 (cont'd 2) — the live DC-cancellation suspect; IQK status corrected
 
