@@ -319,4 +319,4 @@ the removed `send_raw(sw_seq=)`).
 
 Re-introducing it should NOT recreate a per-driver special case. The honest path
 is *shared* sequence-ID support in the TX framework (e.g. `rtw88_base`) first —
-deferred; tracked in `planning/PORTING.md`.
+deferred; tracked in `docs/porting/METHODOLOGY.md`.

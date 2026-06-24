@@ -35,7 +35,7 @@ Cross-driver gap classes (project audit 2026-05-25).
   :5759 (set_vgc), :5787 (link_tuner); rt2x00link.c:341 (1 Hz work),
   :228 (monitor skip), :314 (DEFAULT_RSSI fallback); rt2800lib.c:12085
   (CAPABILITY_LINK_TUNING always set). Ties to VERIFICATION.md PAU05 Scan ⚠️
-  and the cross-card weak-2.4 GHz-RX item in `planning/PORTING.md`.
+  and the cross-card weak-2.4 GHz-RX item in `docs/porting/METHODOLOGY.md`.
 - [x] **EFUSE reader uses a u16-word ADDRESS_IN** — FIXED (2026-06-14). `eeprom.py`
   `_efuse_read_chunk` writes `EFUSE_CTRL_ADDRESS_IN = byte_offset // 2` (kernel
   `rt2800lib.c:10955` loops `i += 8` in word units). Reproduces the kernel EFUSE walk

@@ -94,7 +94,7 @@ it runs at iface bring-up — so register writes there are bring-up config, not 
 **Status:** efuse axis confirmed (fix pending); IQK resolved-equivalent; the **runtime DIG/AGC long-run**
 (only the first watchdog ticks are wire-verified) is the next RX-perf suspect; axes 2–6 not walked.
 Fleet-wide — every driver brought up against one dev card likely shares this pattern; see
-`planning/PORTING.md`.
+`docs/porting/METHODOLOGY.md`.
 
 ## Why — the A/B that justifies the re-port
 

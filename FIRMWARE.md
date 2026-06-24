@@ -135,4 +135,4 @@ are reproduced, no reverse engineering, and the same limited patent license.
 *Every new firmware blob added under `chips/<chip>/assets/` must be recorded in this file —
 its provenance and redistribution terms from the `linux-firmware` `WHENCE` manifest, and a
 byte-verification against `linux-firmware` (or the vendor source it was extracted from). See
-`planning/PORTING.md` → "Housekeeping — every new port" → Licensing.*
+`docs/porting/METHODOLOGY.md` → "Housekeeping — every new port" → Licensing.*

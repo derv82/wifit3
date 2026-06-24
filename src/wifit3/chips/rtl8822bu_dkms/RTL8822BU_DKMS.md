@@ -277,7 +277,7 @@ byte-replay the kernel's managed-vif interface-up (port the mlme RMWs + the pinm
 cosmetic light), or treat it as out-of-scope like aireplay's TX? Until decided, it is flagged, not
 silently skipped.
 
-## Post-Port Checklist (planning/PORTING.md) — steps 1–6
+## Post-Port Checklist (docs/porting/METHODOLOGY.md) — steps 1–6
 
 1. **Waivers** — cold init (→op 9855) + airmon monitor entry reproduce single-cursor with zero
    waived ops; the only frontier is the OS opmode block (op 9855), outside the chip-init gate. ✅
@@ -307,7 +307,7 @@ only the noise floor → every frame fails FCS. Fix (`8c2e907`): run `switch_ban
 
 The byte-for-byte gate stayed green because the *initial* channel-set is a capture window neither
 `verify_pcap` (stops at op 9855) nor `verify_channels` (iw.log hops, all `prev_ch` set) slices — a
-gate-green-but-not-sufficient seam (PORTING.md Step 6). If RX regresses, `test_hw --rxstats CH [--rcr 0x90000301]` tallies
+gate-green-but-not-sufficient seam (docs/porting/METHODOLOGY.md Step 6). If RX regresses, `test_hw --rxstats CH [--rcr 0x90000301]` tallies
 `rx_pkt_desc` categories + RSSI + `RF_0x18` without the good-frame filter.
 
 ## Status
@@ -484,7 +484,7 @@ to valid beacons/probes (median -66 dBm) — so the rx_pkt_desc walk + phy-statu
 
 ## Acceptance + working style
 
-- Before "done": `planning/PORTING.md` § Post-Port Checklist (waiver review = zero waived init/airmon
+- Before "done": `docs/porting/METHODOLOGY.md` § Post-Port Checklist (waiver review = zero waived init/airmon
   ops; skip audit = every un-emitted branch is a marked `# TODO untestable: <why>`; cap-1/2/3 coverage;
   async producers DIG/CCK-PD; per-hop recal + lock). Gate-green is necessary, not sufficient.
 - Work inline in the main session (subagents only for parallel independent search). Gate + commit each

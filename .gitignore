@@ -35,3 +35,9 @@ wifit3*.pcap
 .*
 # ...except the GitHub Actions workflows, which must be tracked (the .* rule hides .github).
 !.github/
+# ...and the shareable Claude Code assets: skills/commands travel with the repo so anyone who
+# clones can run /port. Local settings (settings.local.json, etc.) stay out.
+!.claude/
+.claude/*
+!.claude/skills/
+!.claude/commands/

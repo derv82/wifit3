@@ -37,7 +37,7 @@ def test_word1_qsel_macid_rateid():
 
 def test_matches_captured_aireplay_descriptor():
     # The exact 48-byte descriptor the capture's aireplay-ng injector emitted for a 42-byte broadcast
-    # mgmt frame (FC=0x40) — PORTING.md step-4 byte-diff. Only the frame's own seqctl varies per send.
+    # mgmt frame (FC=0x40) — docs/porting/METHODOLOGY.md step-4 byte-diff. Only the frame's own seqctl varies per send.
     frame = bytes([0x40, 0x00, 0x00, 0x00]) + b"\xff" * 6 + bytes(42 - 10)
     expected = bytes.fromhex(
         "2a003085011208000000003f0001000000003200000000000100000020a9000000800000"

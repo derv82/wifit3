@@ -286,7 +286,7 @@ BIT_RXDMA_AGG_EN = 1 << 2        # BIT(2) of REG_TXDMA_PQ_MAP (0x010C)
 # cold-boot pcap: REG_RXDMA_AGG_PG_TH=0x0100 every time, never the 0x2005 enable
 # value). size=0 => the RX-DMA flushes each frame immediately instead of
 # accumulating pages; accumulation is what intermittently wedged the DMA at cold
-# boot (deliver-once-then-halt). (root-cause, not a band-aid; PORTING.md Step 3.)
+# boot (deliver-once-then-halt). (root-cause, not a band-aid; docs/porting/METHODOLOGY.md Step 3.)
 RXDMA_AGG_SIZE = 0x00
 RXDMA_AGG_TIMEOUT = 0x01
 # Promiscuous monitor RCR (AAP|APM|AM|AB + APP_PHYSTS, CBSSID_* cleared) —

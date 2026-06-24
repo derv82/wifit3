@@ -7,7 +7,7 @@ it calls: ``rt2800_rf_init_calibration`` (7385), ``rt2800_init_rx_filter`` (7320
 
 RX-filter calibration is read-feedback: its tuning loops branch on BBP55
 passband/stopband reads. Under the gate those reads are the recorded ones, so the
-port reproduces the captured write sequence exactly (see PORTING.md Step 3).
+port reproduces the captured write sequence exactly (see docs/porting/METHODOLOGY.md Step 3).
 
 This card is RT3070 rev REV_RT3070F, so the LDO_CFG0 BGSEL/VLEVEL write, the
 RT3071/RT3090 branch, and the trailing RFCSR27=0x03 are all NOT taken (rev gating);

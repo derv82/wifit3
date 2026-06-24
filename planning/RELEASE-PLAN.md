@@ -1,7 +1,7 @@
 # Wifit3 — Release Plan
 
 - BUGS & QoL: `BUGS.md`
-- Hardware/driver work → `PORTING.md`
+- Hardware/driver work → `docs/porting/METHODOLOGY.md`
 - Product/UX features → `FEATURES.md`
 - Current per-card state → `../VERIFICATION.md`
 
@@ -10,7 +10,7 @@
 ## Core hardware
 
 The DKMS re-ports are the headline hardware work (the cross-family 2.4 GHz RX fix). **Detail,
-priority order, vendor sources, and cards-in-the-mail live in `PORTING.md`.** One port per
+priority order, vendor sources, and cards-in-the-mail live in `docs/porting/METHODOLOGY.md`.** One port per
 session; stability day(s) between.
 
 ---
@@ -39,9 +39,9 @@ community PRs. Required:
   hardware at the register level. It can damage or permanently disable ('brick') a device. Use
   at your own risk; no liability for hardware damage."* GPLv2 §15–16 (NO WARRANTY) is the legal
   backstop; this is the human-readable layer.
-- [x] **Porting-safety warning** (`PORTING.md` Step 0 callout): port at your own risk, test
+- [x] **Porting-safety warning** (`docs/porting/METHODOLOGY.md` Step 0 callout): port at your own risk, test
   on hardware you can lose; risk peaks at FW-download / EFUSE / power-seq.
-- [x] **No-fuse-burn invariant** (`PORTING.md` Prerequisites): we only write RAM/registers +
+- [x] **No-fuse-burn invariant** (`docs/porting/METHODOLOGY.md` Prerequisites): we only write RAM/registers +
   replay the vendor *download* path, never program EFUSE/EEPROM fuses — documented so a
   fuse-write PR is an obvious red flag.
 - [ ] (Optional, post-alpha) first-run acknowledgment for the dev/porting tools.

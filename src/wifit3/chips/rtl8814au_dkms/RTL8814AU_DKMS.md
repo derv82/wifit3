@@ -5,7 +5,7 @@ from the Realtek PHYDM/ODM vendor source** (morrownr `8814au` 5.8.5.1), NOT the
 mainline-`rtw88`-derived `chips/rtw88_8814au/`. The two are different codebases;
 addresses, init flow, and the firmware-download mechanism all differ. Goal: regain
 the vendor driver's 2.4 GHz monitor RX breadth (robust 21–24 APs vs mainline's
-noisy 1–11). See `planning/PORTING.md` → "Cleanroom DKMS re-ports".
+noisy 1–11). See `docs/porting/METHODOLOGY.md` → "Cleanroom DKMS re-ports".
 
 Sources of truth: the vendor tree at
 `usb_dumps_new/captures_rtl8814au/driver-source/` and the cold-boot captures

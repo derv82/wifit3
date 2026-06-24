@@ -115,7 +115,7 @@ Analysis only (no fixes yet), grounded in kernel source (`data_dumps/rtw88-sourc
 and the 3 cold-boot pcaps. Driving concern: the `connect()` "re-roll
 phy_set_param up to 8×" retry loop is a band-aid — if the kernel/airmon is
 reliable and we're 50/50, we are **skipping a step the kernel does**, not hitting
-unavoidable hardware flakiness. (root-cause, not a band-aid; PORTING.md Step 3.)
+unavoidable hardware flakiness. (root-cause, not a band-aid; docs/porting/METHODOLOGY.md Step 3.)
 
 ### What the pcaps can and cannot tell us (important scoping result)
 

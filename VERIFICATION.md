@@ -280,7 +280,7 @@ time, and the failures (RT2500USB) show within the first minute.
 
 *"Will you support card X?"* — maybe. A chipset gets added when we have the adapter in
 hand **and** a clean cold-boot USB capture to port against (the process is
-`planning/PORTING.md`). Good candidates are the USB adapters morrownr recommends for
+`docs/porting/METHODOLOGY.md`). Good candidates are the USB adapters morrownr recommends for
 Kali: <https://github.com/morrownr/USB-WiFi/blob/main/home/Recommended_Adapters_for_Kali_Linux.md>
 
 **En route (ordered, awaiting delivery):**

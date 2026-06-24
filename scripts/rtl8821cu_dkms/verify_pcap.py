@@ -11,7 +11,7 @@ init + airmon monitor entry, reproduced in driver source order. The **operationa
 dispatches each interleaved async burst to its real port handler at the cursor — a channel hop
 (``chan.set_channel``) or an LED blink (``led.led_blink``, the BlinkTimer producer) — each
 distinguished by a unique opener op. Nothing is stripped: the LED writes are reproduced by the
-driver's LED code, not waived (PORTING.md Step 3).
+driver's LED code, not waived (docs/porting/METHODOLOGY.md Step 3).
 
 The replay drives the real ``Rtl8821cuTransport`` over a ``ReplayDevice`` (one ctrl_transfer
 cursor), so the 0x4E0 ON-section mirror + the merged bulk-OUT FW stream replay unchanged and the

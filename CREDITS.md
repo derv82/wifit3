@@ -15,7 +15,7 @@ the kernel commits carry no linked GitHub account (common for vendor `@realtek.c
 and pre-GitHub-era contributors).
 
 > **Maintainers:** when a new chipset is ported, update this file. See
-> `planning/PORTING.md` → "Housekeeping".
+> `docs/porting/METHODOLOGY.md` → "Housekeeping".
 
 ---
 

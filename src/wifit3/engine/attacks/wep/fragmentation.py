@@ -5,7 +5,7 @@
     fragment of an MSDU to share one 802.11 sequence number, i.e. a per-driver software-sequence
     TX path (``en_hwseq=0`` + a ``SUPPORTS_SW_SEQ`` flag) that no longer exists. As-is this WILL
     NOT RUN: ``_inject_round`` passes ``send_raw(..., sw_seq=...)``, a removed parameter. Re-wiring
-    means first restoring shared sequence-ID support in the TX framework (see ``planning/PORTING.md``).
+    means first restoring shared sequence-ID support in the TX framework (see ``docs/porting/METHODOLOGY.md``).
     ARP-replay + ChopChop carry WEP without it.
 
 Manufactures a replayable ARP when there's none to capture — the whole reason
