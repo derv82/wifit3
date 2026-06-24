@@ -33,6 +33,7 @@ works). *Deauth* is no longer a column — it works on every supported card.
 | [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ⚠️ | ❌ | ✅ | B |
 | [RTL8822BU](#rtl8822bu) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | C |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | D |
+| [RTL8821CU](#rtl8821cu) | ✅ | ✅ | ✅ | ⬜ | ✅ | ✅ | ⬜ | - |
 
 ## Per-card notes
 
@@ -257,6 +258,24 @@ Excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate
 
 → [RT2500USB.md](src/wifit3/chips/rt2500usb/RT2500USB.md)
 
+### RTL8821CU
+*Auscoumer 600 Mbps · 2.4 / 5 GHz*
+
+> **Hides as a CD-ROM (ZeroCD).** The combo card enumerates as USB mass-storage and must be
+> mode-switched to the Wi-Fi PID `0bda:c820` before Wifit3 sees it — a freshly-plugged card shows
+> nothing until then (a discovery-layer gap, tracked in the chip doc).
+
+| Capability | Status | Date | Notes |
+|---|:--:|---|---|
+| Scan | ✅ | 2026-06-24 | 2.4 + 5 GHz; fixed-ch1 ~6.5 bcn/s (kernel parity). |
+| Handshake | ✅ | 2026-06-24 | 4-way captured. |
+| PMKID | ✅ | 2026-06-24 | Capture + active extract. |
+| WEP | ⬜ | — | Untested. |
+| WPS | ✅ | 2026-06-24 | PBC — ~25 EAPOLs (HW-ACK forged MAC). |
+| Stress | ⬜ | — | Untested. |
+
+→ [RTL8821CU_DKMS.md](src/wifit3/chips/rtl8821cu_dkms/RTL8821CU_DKMS.md)
+
 ## Unsupported
 
 ### RT3572 — ALFA AWUS051NH v2 — untested
@@ -285,9 +304,6 @@ Kali: <https://github.com/morrownr/USB-WiFi/blob/main/home/Recommended_Adapters_
 
 **En route (ordered, awaiting delivery):**
 
-- **Auscoumer 600 Mbps** — **RTL8821CU** · *new chipset.* The cheap-ubiquitous Wi-Fi 5 gap;
-  port from mainline `rtw88` (kernel 6.12+) or `morrownr/8821cu-20210916`. Same family as the
-  RTL8812AU / 8821AU / 8822BU we already run.
 - **Deal4Go K2-544DW** — **AR9271** · *consistency test* (already supported on the AWUS036NHA).
   Confirms a second AR9271 card behaves identically — the "any AR9271 works" claim.
 - **LOTEKOO 150 Mbps** — **RT5370** · *consistency test.* 1×1 sibling of RT5372 / RT5572 in the
