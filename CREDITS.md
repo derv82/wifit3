@@ -49,20 +49,20 @@ The people who wrote and maintained these drivers in `drivers/net/wireless/` —
 Ralink (`rt2x00`), MediaTek (`mt76`), Atheros (`ath9k`), and Realtek (`rtl818x`, `rtw88`)
 trees.
 
-- **Stanislaw Gruszka** ([@sgruszka](https://github.com/sgruszka)) — RT2500USB, RT2800USB, RT3070, RT5372, RT5572, MT7610U, MT7612U, MT7921AU, AR9271
+- **Stanislaw Gruszka** ([@sgruszka](https://github.com/sgruszka)) — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572, MT7610U, MT7612U, MT7921AU, AR9271
 - **Lorenzo Bianconi** ([@LorenzoBianconi](https://github.com/LorenzoBianconi)) — MT7610U, MT7612U, MT7921AU, AR9271
 - **Felix Fietkau** ([@nbd168](https://github.com/nbd168)) — MT7610U, MT7612U, MT7921AU, AR9271
-- **Ivo van Doorn** (—) — RT2500USB, RT2800USB, RT3070, RT5372, RT5572
-- **Gertjan van Wingerde** (—) — RT2500USB, RT2800USB, RT3070, RT5372, RT5572
-- **Helmut Schaa** (—) — RT2500USB, RT2800USB, RT3070, RT5372, RT5572
+- **Ivo van Doorn** (—) — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572
+- **Gertjan van Wingerde** (—) — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572
+- **Helmut Schaa** (—) — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572
 - **Sujith Manoharan** (—) — AR9271
 - **Bitterblue Smith** (—) — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
 - **Sean Wang** ([@moore-bros](https://github.com/moore-bros)) — MT7610U, MT7612U, MT7921AU
 - **Ryder Lee** ([@ryderlee1110](https://github.com/ryderlee1110)) — MT7610U, MT7612U, MT7921AU
 - **Yan-Hsuan Chuang** (—) — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
 - **Ping-Ke Shih** (—) — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
-- **Gabor Juhos** ([@juhosg](https://github.com/juhosg)) — RT2800USB, RT3070, RT5372, RT5572, AR9271
-- **John W. Linville** ([@linvjw](https://github.com/linvjw)) — RT2500USB, RT2800USB, RT3070, RT5372, RT5572, AR9271, RTL8187
+- **Gabor Juhos** ([@juhosg](https://github.com/juhosg)) — RT2800USB, RT3070, RT5370, RT5372, RT5572, AR9271
+- **John W. Linville** ([@linvjw](https://github.com/linvjw)) — RT2500USB, RT2800USB, RT3070, RT5370, RT5372, RT5572, AR9271, RTL8187
 - **Luis R. Rodriguez** ([@mcgrof](https://github.com/mcgrof)) — AR9271
 - **Shayne Chen** ([@csyuanc](https://github.com/csyuanc)) — MT7610U, MT7612U, MT7921AU
 - **Po-Hao Huang** (—) — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
@@ -70,7 +70,7 @@ trees.
 - **Deren Wu** ([@deren](https://github.com/deren)) — MT7610U, MT7612U, MT7921AU
 - **Larry Finger** ([@lwfinger](https://github.com/lwfinger)) — RTL8187, RTL8822BU
 - **Michael Wu** (—) — RTL8187
-- **Bartlomiej Zolnierkiewicz** (—) — RT2800USB, RT3070, RT5372, RT5572
+- **Bartlomiej Zolnierkiewicz** (—) — RT2800USB, RT3070, RT5370, RT5372, RT5572
 - **Ming Yen Hsieh** (—) — MT7610U, MT7612U, MT7921AU
 - **Zong-Zhe Yang** (—) — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
 - **Chin-Yen Lee** (—) — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
@@ -78,9 +78,9 @@ trees.
 - **Oleksij Rempel** ([@olerem](https://github.com/olerem)) — AR9271
 - **Rajkumar Manoharan** (—) — AR9271
 - **Peter Chiu** (—) — MT7610U, MT7612U, MT7921AU
-- **Daniel Golle** ([@dangowrt](https://github.com/dangowrt)) — RT2800USB, RT3070, RT5372, RT5572
-- **Tomislav Požega** ([@psyborg55](https://github.com/psyborg55)) — RT2800USB, RT3070, RT5372, RT5572
-- **Xose Vazquez Perez** ([@xosevp](https://github.com/xosevp)) — RT2800USB, RT3070, RT5372, RT5572
+- **Daniel Golle** ([@dangowrt](https://github.com/dangowrt)) — RT2800USB, RT3070, RT5370, RT5372, RT5572
+- **Tomislav Požega** ([@psyborg55](https://github.com/psyborg55)) — RT2800USB, RT3070, RT5370, RT5372, RT5572
+- **Xose Vazquez Perez** ([@xosevp](https://github.com/xosevp)) — RT2800USB, RT3070, RT5370, RT5372, RT5572
 - **Andrey Skvortsov** ([@AndreySV](https://github.com/AndreySV)) — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
 - **Chih-Kang Chang** (—) — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
 - **Sascha Hauer** ([@saschahauer](https://github.com/saschahauer)) — RTL8812AU, RTL8821AU, RTL8814AU, RTL8822BU
