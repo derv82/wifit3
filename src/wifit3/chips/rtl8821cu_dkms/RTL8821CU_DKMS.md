@@ -9,6 +9,7 @@ other drivers.
 
 Cold init, firmware boot, and monitor RX all work on hardware — both bands, fixed-channel or
 hopping, on par with the vendor driver (fixed-ch1 ~6.5 beacons/s vs the kernel's ~6.1–6.6/s).
+Active monitor (HW-ACK a forged MAC) works too — WPS-PBC HW-confirmed (see log).
 
 Two hardware bugs, both invisible to the byte-gate, were found and fixed (see Gotchas + log):
 
@@ -63,6 +64,14 @@ match the vendor C, so grep the bundle's `driver-source/` to cross-reference.
 - `dc_ab.py` / `dc_steps.py` — the A/B harnesses that pinned the dc_cancellation ck320 bug; kept for re-validation.
 
 ## Debug log
+
+### 2026-06-24 — active-monitor (HW-ACK forged MAC)
+
+`FAKE_MAC` UNIMPLEMENTED → SPOOFABLE. `enter/exit_active_monitor` re-point REG_MACID (0x0610)
+to the chosen MAC and back to the EFUSE MAC — MAC-only, like every Realtek sibling: the
+accept-all monitor RCR (`_MONITOR_RCR` AAP) already HW-ACKs `RA==REG_MACID`, no RCR flip. Both
+run under `_io_lock`, offloaded, like `set_channel` / the watchdog tick. Cold path untouched
+(byte-gate still PASS). HW-confirmed: WPS-PBC completes against an ACK-strict AP (~25 EAPOLs).
 
 ### 2026-06-24 — RX fixed on both bands
 
