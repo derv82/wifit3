@@ -8,13 +8,16 @@ other drivers.
 ## Status
 
 - Cold init and firmware boot: working on hardware.
-- **Bring-up was a coin toss (~80%+ of cold boots came up dead-RX on BOTH bands, fresh plug
-  included) — root cause found: the power-sequence `DELAY` command was a no-op, dropping the 1 ms
-  LDO settle in the card-enable flow. Fixed in `pwrseq.py`. NOT yet HW-validated** — the test card
-  degraded past its replug threshold (~34 soft re-inits) before the fix landed, so a fresh-plug
-  `bringup_cointoss.py` run is still owed to confirm the dead-rate collapses. See debug log.
-- 5 GHz / 2.4 GHz monitor RX: working *when bring-up succeeds* — the coin toss gated everything, so
-  earlier per-band RX findings were confounded by which launches happened to come up alive.
+- **RX is flaky (~50% of launches deliver no frames), and the power-seq DELAY fix did NOT cure it**
+  (that fixed a real but separate defect — see debug log). Fresh-plug `bringup_bands.py` shows the
+  dead state is CHIP-SIDE RX: the RX FIFO never fills (`RXFF_PTR=0`) though the PHY demod runs (FA
+  counters tick) and the MAC config is byte-identical to good launches. It hits BOTH bands, varies
+  per launch AND flips across band switches (ch1 alive → ch36 dead after the switch, and vice-versa).
+  Leading hypothesis: **missing RX calibration (IQK / RX gain-DC)** — the vendor runs it at init and
+  around channel changes; this port implements none. Unconfirmed. See debug log.
+- 5 GHz / 2.4 GHz monitor RX: works *when RX comes up alive*; the flakiness gates everything, so
+  earlier per-band findings were confounded by which launches happened to be alive. NB: an earlier
+  ch1-parked diagnostic conflated "2.4 GHz/RF18 dead" with "bring-up dead" — use `bringup_bands.py`.
 - `verify_pcap`: clean — but BLIND to timing (a DELAY emits no register op), which is exactly how
   the missing settle survived a byte-faithful port. See Gotchas.
 - Not done: fresh-plug coin-toss validation, ZeroCD discovery, warm reattach, the
@@ -62,6 +65,21 @@ Names match the vendor C, so grep the bundle's `driver-source/` to cross-referen
 - `driver_rx_diag.py` — re-run after a fresh plug to confirm 2.4 GHz comes back.
 
 ## Debug log
+
+### 2026-06-24 (cont'd) — the DELAY fix is NOT the cure; RX is chip-side flaky
+
+Fresh-plug validation: honoring the power-seq DELAY did not collapse the dead-rate. `bringup_bands.py`
+(count ch1 then tune ch36 and count, per launch) shows why the earlier ch1-parked loops misled —
+they conflated "2.4 GHz/RF18 dead" with "bring-up dead". Real picture: RX delivery is flaky
+per-launch AND per-band AND across band switches (e.g. ch1 GOOD → ch36 dead after the switch; ch1
+dead → ch36 GOOD; both-dead; both-good — all seen in 6 launches). Dead = `RXFF_PTR` stuck at 0 (the
+chip's RX FIFO is not filling) with the PHY demod running (FA counters tick) and byte-identical MAC
+config — so it is chip-side PHY/MAC RX, NOT the USB bulk-IN pipe (a pipe stall would still advance
+RXFF_PTR) and NOT a MAC register. Chip-side-RX failure + band-switch sensitivity points at missing
+RX calibration: the vendor runs IQK / RX gain-DC cal at init and around channel-set, and this port
+implements none of it (`dm.py` even notes IQK is "triggered later" — but nothing triggers it). The
+DELAY fix stays (it is a real, correct fix — the vendor does that delay) but it is not the cure.
+Next: port the 8821C RX calibration, or instrument the RX-DMA/PHY-RX state that differs good-vs-dead.
 
 ### 2026-06-24 — bring-up coin toss: the power-seq DELAY was a no-op
 
