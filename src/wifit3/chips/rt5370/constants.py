@@ -1,0 +1,685 @@
+"""Register addresses, bitfields and magic constants for the Ralink RT5370 (RT5390).
+
+Every symbol here is transcribed verbatim from the mainline kernel headers in
+``data_dumps/rt2x00-source-v6.18/`` — never typed from memory [[feedback_constants_from_source]].
+``[SRC]`` cites the header + line so a future reader can re-verify.
+
+Field masks follow the kernel ``FIELD32`` convention: the mask marks the bit
+span and the value is shifted to the mask's lowest set bit. ``set_field`` /
+``get_field`` mirror ``rt2x00_set_field32`` / ``rt2x00_get_field32``.
+"""
+from __future__ import annotations
+
+# --- USB vendor request codes [SRC rt2x00usb.h:50-56] ----------------------
+USB_DEVICE_MODE = 1
+USB_SINGLE_WRITE = 2
+USB_SINGLE_READ = 3
+USB_MULTI_WRITE = 6
+USB_MULTI_READ = 7
+USB_EEPROM_READ = 9
+
+# --- USB_DEVICE_MODE sub-modes [SRC rt2x00usb.h:65-72] ---------------------
+USB_MODE_RESET = 1
+USB_MODE_FIRMWARE = 8
+USB_MODE_AUTORUN = 17
+
+# --- bmRequestType [SRC rt2x00usb.h:42-44; USB_TYPE_VENDOR|RECIP_DEVICE] ----
+USB_VENDOR_REQUEST_IN = 0xC0   # USB_DIR_IN  | USB_TYPE_VENDOR | USB_RECIP_DEVICE
+USB_VENDOR_REQUEST_OUT = 0x40  # USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE
+
+# --- transport tunables [SRC rt2x00usb.h:30-37, rt2x00.h:1041-1043] ---------
+CSR_CACHE_SIZE = 64               # max bytes per vendor-request chunk
+REGISTER_TIMEOUT = 100            # ms
+REGISTER_TIMEOUT_FIRMWARE = 1000  # ms
+REGISTER_BUSY_COUNT = 100         # CSR-ready / PBF-ready poll attempts
+REGISTER_USB_BUSY_COUNT = 20      # indirect-register (BBP/RFCSR/MCU/EFUSE) poll attempts
+
+# --- EEPROM / RF sizes [SRC rt2800.h:100,104] ------------------------------
+EEPROM_SIZE = 0x0200              # bytes (256 u16 words)
+RF_SIZE = 0x0010
+
+# --- chip identity [SRC rt2800.h:722-724] ----------------------------------
+MAC_CSR0 = 0x1000
+MAC_CSR0_REVISION = 0x0000FFFF
+MAC_CSR0_CHIPSET = 0xFFFF0000
+
+# RT chipset ids (== the MAC_CSR0 chipset field) [SRC rt2x00.h:161-163].
+# This card reports rt=RT5390 (the silicon id); the 148f:5370 USB PID is the
+# marketing SKU. RT5392 is the 2T2R sibling (chips/rt5372/) that shares
+# init_bbp_53xx / config_channel_rf53xx; init_rfcsr forks RT5390→init_rfcsr_5390
+# (RT5392→init_rfcsr_5392) and the rfcsr table + RFCSR50 chain-2 write differ.
+RT5390 = 0x5390
+RT5392 = 0x5392
+
+# chipset revisions [SRC rt2800.h:87-89] — REV_RT5390F gates the F-arm of both
+# init_rfcsr_5390 (RFCSR 6/25/46/53/56/61) and config_channel_rf53xx (the per-
+# channel RFCSR55+59 _rev tables). This card reads rev=0x0502 == REV_RT5390F.
+REV_RT5390F = 0x0502
+REV_RT5390R = 0x1502
+REV_RT5370G = 0x0503
+
+# RF chip ids [SRC rt2800.h:69-72] (read from EEPROM_CHIP_ID for RT53xx). This
+# card reads RF5370 (1T1R); RF5372 is the 2T2R sibling.
+RF5370 = 0x5370
+RF5372 = 0x5372
+RF5390 = 0x5390
+RF5392 = 0x5392
+RF2820 = 0x0001                          # blank-EEPROM NIC_CONF0 default [SRC rt2800lib.c:11053]
+
+# LED mode (blank-EEPROM FREQ default) [SRC rt2x00reg.h:41]
+LED_MODE_TXRX_ACTIVITY = 1
+
+# RSSI / LNA EEPROM fields used by rt2800_validate_eeprom [SRC rt2800.h:2768-2797]
+EEPROM_LNA_A0 = 0xFF00
+EEPROM_RSSI_BG2_LNA_A1 = 0xFF00
+EEPROM_RSSI_A_OFFSET0 = 0x00FF
+EEPROM_RSSI_A_OFFSET1 = 0xFF00
+EEPROM_RSSI_A2_OFFSET2 = 0x00FF
+EEPROM_RSSI_A2_LNA_A2 = 0xFF00
+
+# --- MAC system control [SRC rt2800.h:729-734] -----------------------------
+MAC_SYS_CTRL = 0x1004
+MAC_SYS_CTRL_RESET_CSR = 0x00000001
+MAC_SYS_CTRL_RESET_BBP = 0x00000002
+MAC_SYS_CTRL_ENABLE_TX = 0x00000004
+MAC_SYS_CTRL_ENABLE_RX = 0x00000008
+
+# --- PBF system control [SRC rt2800.h:568-570] -----------------------------
+PBF_SYS_CTRL = 0x0400
+PBF_SYS_CTRL_READY = 0x00000080
+PBF_SYS_CTRL_PRE_INIT = 0x00002000        # bit 13: set on a cold plug, cleared by
+#                                           usb_init_registers — the warm/cold tell.
+
+# --- WPDMA global config [SRC rt2800.h:346-352] ----------------------------
+WPDMA_GLO_CFG = 0x0208
+WPDMA_GLO_CFG_ENABLE_TX_DMA = 0x00000001
+WPDMA_GLO_CFG_TX_DMA_BUSY = 0x00000002
+WPDMA_GLO_CFG_ENABLE_RX_DMA = 0x00000004
+WPDMA_GLO_CFG_RX_DMA_BUSY = 0x00000008
+WPDMA_GLO_CFG_TX_WRITEBACK_DONE = 0x00000040
+
+# --- USB DMA config [SRC rt2800.h:541-549] ---------------------------------
+USB_DMA_CFG = 0x02A0
+USB_DMA_CFG_RX_BULK_AGG_TIMEOUT = 0x000000FF
+USB_DMA_CFG_RX_BULK_AGG_LIMIT = 0x0000FF00
+USB_DMA_CFG_PHY_CLEAR = 0x00010000
+USB_DMA_CFG_RX_BULK_AGG_EN = 0x00200000
+USB_DMA_CFG_RX_BULK_EN = 0x00400000
+USB_DMA_CFG_TX_BULK_EN = 0x00800000
+
+# --- EFUSE [SRC rt2800.h:655-679] ------------------------------------------
+EFUSE_CTRL = 0x0580
+EFUSE_CTRL_ADDRESS_IN = 0x03FE0000     # NB: a u16-WORD index, not a byte offset
+EFUSE_CTRL_MODE = 0x000000C0
+EFUSE_CTRL_KICK = 0x40000000
+EFUSE_CTRL_PRESENT = 0x80000000
+EFUSE_DATA0 = 0x0590
+EFUSE_DATA1 = 0x0594
+EFUSE_DATA2 = 0x0598
+EFUSE_DATA3 = 0x059C
+
+# --- GPIO control (rfkill direction + BT-coex antenna) [SRC rt2800.h:442-457] --
+GPIO_CTRL = 0x0228
+GPIO_CTRL_DIR2 = 0x00000400
+GPIO_CTRL_VAL3 = 0x00000008               # BT-coex antenna select (init_bbp_53xx)
+GPIO_CTRL_VAL6 = 0x00000040
+GPIO_CTRL_DIR3 = 0x00000800
+GPIO_CTRL_DIR6 = 0x00004000
+
+# --- firmware / MCU mailbox [SRC rt2800usb.h:25, rt2800.h:2112-2143,575] ----
+FIRMWARE_IMAGE_BASE = 0x3000
+AUTOWAKEUP_CFG = 0x1208
+HOST_CMD_CSR = 0x0404
+HOST_CMD_CSR_HOST_COMMAND = 0x000000FF
+H2M_MAILBOX_CSR = 0x7010
+H2M_MAILBOX_CSR_ARG0 = 0x000000FF
+H2M_MAILBOX_CSR_ARG1 = 0x0000FF00
+H2M_MAILBOX_CSR_CMD_TOKEN = 0x00FF0000
+H2M_MAILBOX_CSR_OWNER = 0xFF000000
+H2M_MAILBOX_CID = 0x7014
+H2M_MAILBOX_STATUS = 0x701C
+H2M_INT_SRC = 0x7024
+H2M_BBP_AGENT = 0x7028
+
+# MCU command opcodes [SRC rt2800.h:3023-3033]
+MCU_SLEEP = 0x30
+MCU_WAKEUP = 0x31
+MCU_RADIO_OFF = 0x35
+MCU_CURRENT = 0x36
+MCU_FREQ_OFFSET = 0x74                     # [SRC rt2800.h:3035] freq_cal_mode1 (USB)
+MCU_LED = 0x50
+MCU_LED_STRENGTH = 0x51
+MCU_LED_AG_CONF = 0x52
+MCU_LED_ACT_CONF = 0x53
+MCU_LED_LED_POLARITY = 0x54
+MCU_BOOT_SIGNAL = 0x72
+
+# --- indirect BBP register access [SRC rt2800.h:808-814] -------------------
+BBP_CSR_CFG = 0x101C
+BBP_CSR_CFG_VALUE = 0x000000FF
+BBP_CSR_CFG_REGNUM = 0x0000FF00
+BBP_CSR_CFG_READ_CONTROL = 0x00010000
+BBP_CSR_CFG_BUSY = 0x00020000
+BBP_CSR_CFG_BBP_RW_MODE = 0x00080000
+
+# --- indirect RF (RFCSR) register access [SRC rt2800.h:628-632] ------------
+RF_CSR_CFG = 0x0500
+RF_CSR_CFG_DATA = 0x000000FF
+RF_CSR_CFG_REGNUM = 0x00003F00
+RF_CSR_CFG_WRITE = 0x00010000
+RF_CSR_CFG_BUSY = 0x00020000
+
+# --- BBP / RFCSR init fields (M3: init_bbp_53xx, init_rfcsr_5392) [SRC rt2800.h] ---
+OPT_14_CSR = 0x0114                      # [SRC rt2800.h:292-293] led_open_drain_enable
+OPT_14_CSR_BIT0 = 0x00000001
+BBP4_MAC_IF_CTRL = 0x40                  # FIELD8 [SRC rt2800.h:2243] bbp4_mac_if_ctrl
+BBP138_RX_ADC1 = 0x02                    # FIELD8 [SRC rt2800.h:2288] disable_unused_dac_adc
+BBP138_TX_DAC1 = 0x20                    # FIELD8 [SRC rt2800.h:2290]
+BBP152_RX_DEFAULT_ANT = 0x80             # FIELD8 [SRC rt2800.h:2296] init_bbp_53xx antenna
+RFCSR30_RX_VCM = 0x18                    # FIELD8 [SRC rt2800.h:2492] normal_mode_setup_5xxx
+RFCSR38_RX_LO1_EN = 0x20                 # FIELD8 [SRC rt2800.h:2519]
+RFCSR39_RX_LO2_EN = 0x80                 # FIELD8 [SRC rt2800.h:2525]
+
+# RFCSR1 chain power-down (config_channel_rf53xx) [SRC rt2800.h:2311-2316]
+RFCSR1_RF_BLOCK_EN = 0x01                # FIELD8
+RFCSR1_RX0_PD = 0x04
+RFCSR1_TX0_PD = 0x08
+RFCSR1_RX1_PD = 0x10
+RFCSR1_TX1_PD = 0x20
+
+# --- EEPROM word map [SRC rt2800lib.c:308-347 rt2800_eeprom_map] -----------
+EEPROM_CHIP_ID = 0x0000
+EEPROM_VERSION = 0x0001
+EEPROM_MAC_ADDR_0 = 0x0002
+EEPROM_MAC_ADDR_1 = 0x0003
+EEPROM_MAC_ADDR_2 = 0x0004
+EEPROM_NIC_CONF0 = 0x001A
+EEPROM_NIC_CONF1 = 0x001B
+EEPROM_FREQ = 0x001D
+EEPROM_LED_AG_CONF = 0x001E
+EEPROM_LED_ACT_CONF = 0x001F
+EEPROM_LED_POLARITY = 0x0020
+EEPROM_NIC_CONF2 = 0x0021
+EEPROM_LNA = 0x0022
+EEPROM_RSSI_BG = 0x0023
+EEPROM_RSSI_BG2 = 0x0024
+EEPROM_RSSI_A = 0x0025
+EEPROM_RSSI_A2 = 0x0026
+EEPROM_BBP_START = 0x0078                # [SRC rt2800lib.c:346] EEPROM_BBP array base word
+EEPROM_BBP_SIZE = 16                     # [SRC rt2800.h:2951-2953]
+EEPROM_BBP_VALUE = 0x00FF
+EEPROM_BBP_REG_ID = 0xFF00
+
+# EEPROM bitfields [SRC rt2800.h:2681-2683,2727-2729] (FIELD16)
+EEPROM_NIC_CONF0_RXPATH = 0x000F
+EEPROM_NIC_CONF0_TXPATH = 0x00F0
+EEPROM_NIC_CONF0_RF_TYPE = 0x0F00
+EEPROM_NIC_CONF1_EXTERNAL_LNA_2G = 0x0004   # [SRC rt2800.h:2708]
+EEPROM_NIC_CONF1_BT_COEXIST = 0x4000        # [SRC rt2800.h:2719] CAPABILITY_BT_COEXIST
+EEPROM_NIC_CONF1_DAC_TEST = 0x8000          # [SRC rt2800.h:2720]
+EEPROM_FREQ_OFFSET = 0x00FF
+EEPROM_FREQ_LED_MODE = 0x7F00
+EEPROM_FREQ_LED_POLARITY = 0x1000
+EEPROM_TXMIXER_GAIN_BG = 0x0024             # overlaps RSSI_BG2 [SRC rt2800lib.c:324]
+EEPROM_TXMIXER_GAIN_BG_VAL = 0x0007         # FIELD16 [SRC rt2800.h:2785]
+
+# MAC_STATUS_CFG — BBP/RF busy poll [SRC rt2800.h:1029-1030]
+MAC_STATUS_CFG = 0x1200
+MAC_STATUS_CFG_BBP_RF_BUSY = 0x00000003
+
+# RX queue depth [SRC rt2800usb.c:727 rt2800usb_queue_init QID_RX] — USB_DMA bulk-agg-limit
+RX_QUEUE_LIMIT = 128
+
+# DATA_FRAME_SIZE [SRC rt2x00queue.h:28] — RX bulk-agg-limit math in enable_radio
+DATA_FRAME_SIZE = 2432
+AGGREGATION_SIZE = 3840                  # [SRC rt2x00queue.h:30] MAX_LEN_CFG_MAX_MPDU
+IEEE80211_MAX_RTS_THRESHOLD = 2353       # [SRC linux/ieee80211.h] TX_RTS_CFG_RTS_THRES
+
+# =====================================================================
+# MAC config block — rt2800_init_registers [SRC rt2800lib.c:5836-6375] + rt2800.h
+# =====================================================================
+WPDMA_GLO_CFG_WP_DMA_BURST_SIZE = 0x00000030  # [SRC rt2800.h:351-355]
+WPDMA_GLO_CFG_BIG_ENDIAN = 0x00000080
+WPDMA_GLO_CFG_RX_HDR_SCATTER = 0x0000FF00
+WPDMA_GLO_CFG_HDR_SEG_LEN = 0xFFFF0000
+
+US_CYC_CNT = 0x02A4                      # [SRC rt2800.h:560-562]
+US_CYC_CNT_CLOCK_CYCLE = 0x000000FF
+PBF_CFG = 0x0408                         # [SRC rt2800.h:582-583]
+PBF_MAX_PCNT = 0x040C
+
+MAX_LEN_CFG = 0x1018                     # [SRC rt2800.h:793-797]
+MAX_LEN_CFG_MAX_MPDU = 0x00000FFF
+MAX_LEN_CFG_MAX_PSDU = 0x00003000
+MAX_LEN_CFG_MIN_PSDU = 0x0000C000
+MAX_LEN_CFG_MIN_MPDU = 0x000F0000
+
+LED_CFG = 0x102C                         # [SRC rt2800.h:864-871]
+LED_CFG_ON_PERIOD = 0x000000FF
+LED_CFG_OFF_PERIOD = 0x0000FF00
+LED_CFG_SLOW_BLINK_PERIOD = 0x003F0000
+LED_CFG_R_LED_MODE = 0x03000000
+LED_CFG_G_LED_MODE = 0x0C000000
+LED_CFG_Y_LED_MODE = 0x30000000
+LED_CFG_LED_POLAR = 0x40000000
+
+AMPDU_BA_WINSIZE = 0x1040                # [SRC rt2800.h:893-895]
+AMPDU_BA_WINSIZE_FORCE_WINSIZE_ENABLE = 0x00000020
+AMPDU_BA_WINSIZE_FORCE_WINSIZE = 0x0000001F
+
+XIFS_TIME_CFG = 0x1100                   # [SRC rt2800.h:907-912]
+XIFS_TIME_CFG_CCKM_SIFS_TIME = 0x000000FF
+XIFS_TIME_CFG_OFDM_SIFS_TIME = 0x0000FF00
+XIFS_TIME_CFG_OFDM_XIFS_TIME = 0x000F0000
+XIFS_TIME_CFG_EIFS = 0x1FF00000
+XIFS_TIME_CFG_BB_RXEND_ENABLE = 0x20000000
+
+BKOFF_SLOT_CFG = 0x1104                  # [SRC rt2800.h:917-919]
+BKOFF_SLOT_CFG_SLOT_TIME = 0x000000FF
+BKOFF_SLOT_CFG_CC_DELAY_TIME = 0x0000FF00
+
+CH_TIME_CFG = 0x110C                     # [SRC rt2800.h:938-943]
+CH_TIME_CFG_EIFS_BUSY = 0x00000010
+CH_TIME_CFG_NAV_BUSY = 0x00000008
+CH_TIME_CFG_RX_BUSY = 0x00000004
+CH_TIME_CFG_TX_BUSY = 0x00000002
+CH_TIME_CFG_TMR_EN = 0x00000001
+
+BCN_TIME_CFG = 0x1114                    # [SRC rt2800.h:957-963]
+BCN_TIME_CFG_BEACON_INTERVAL = 0x0000FFFF
+BCN_TIME_CFG_TSF_TICKING = 0x00010000
+BCN_TIME_CFG_TSF_SYNC = 0x00060000
+BCN_TIME_CFG_TBTT_ENABLE = 0x00080000
+BCN_TIME_CFG_BEACON_GEN = 0x00100000
+BCN_TIME_CFG_TX_TIME_COMPENSATE = 0xF0000000
+
+INT_TIMER_CFG = 0x1128                   # [SRC rt2800.h:998-1000]
+INT_TIMER_CFG_PRE_TBTT_TIMER = 0x0000FFFF
+
+PWR_PIN_CFG = 0x1204                     # [SRC rt2800.h:1037]
+
+TX_SW_CFG0 = 0x1330                      # [SRC rt2800.h:1285-1295]
+TX_SW_CFG1 = 0x1334
+TX_SW_CFG2 = 0x1338
+
+TXOP_CTRL_CFG = 0x1340                   # [SRC rt2800.h:1318-1328]
+TXOP_CTRL_CFG_TIMEOUT_TRUN_EN = 0x00000001
+TXOP_CTRL_CFG_AC_TRUN_EN = 0x00000002
+TXOP_CTRL_CFG_TXRATEGRP_TRUN_EN = 0x00000004
+TXOP_CTRL_CFG_USER_MODE_TRUN_EN = 0x00000008
+TXOP_CTRL_CFG_MIMO_PS_TRUN_EN = 0x00000010
+TXOP_CTRL_CFG_RESERVED_TRUN_EN = 0x00000020
+TXOP_CTRL_CFG_LSIG_TXOP_EN = 0x00000040
+TXOP_CTRL_CFG_EXT_CCA_EN = 0x00000080
+TXOP_CTRL_CFG_EXT_CCA_DLY = 0x0000FF00
+TXOP_CTRL_CFG_EXT_CWMIN = 0x000F0000
+
+TX_RTS_CFG = 0x1344                      # [SRC rt2800.h:1335-1338]
+TX_RTS_CFG_AUTO_RTS_RETRY_LIMIT = 0x000000FF
+TX_RTS_CFG_RTS_THRES = 0x00FFFF00
+TX_RTS_CFG_RTS_FBK_EN = 0x01000000
+
+TX_TIMEOUT_CFG = 0x1348                  # [SRC rt2800.h:1348-1351]
+TX_TIMEOUT_CFG_MPDU_LIFETIME = 0x000000F0
+TX_TIMEOUT_CFG_RX_ACK_TIMEOUT = 0x0000FF00
+TX_TIMEOUT_CFG_TX_OP_TIMEOUT = 0x00FF0000
+
+TX_RTY_CFG = 0x134C                      # [SRC rt2800.h:1364-1370]
+TX_RTY_CFG_SHORT_RTY_LIMIT = 0x000000FF
+TX_RTY_CFG_LONG_RTY_LIMIT = 0x0000FF00
+TX_RTY_CFG_LONG_RTY_THRE = 0x0FFF0000
+TX_RTY_CFG_NON_AGG_RTY_MODE = 0x10000000
+TX_RTY_CFG_AGG_RTY_MODE = 0x20000000
+TX_RTY_CFG_TX_AUTO_FB_ENABLE = 0x40000000
+
+TX_LINK_CFG = 0x1350                     # [SRC rt2800.h:1384-1392]
+TX_LINK_CFG_REMOTE_MFB_LIFETIME = 0x000000FF
+TX_LINK_CFG_MFB_ENABLE = 0x00000100
+TX_LINK_CFG_REMOTE_UMFS_ENABLE = 0x00000200
+TX_LINK_CFG_TX_MRQ_EN = 0x00000400
+TX_LINK_CFG_TX_RDG_EN = 0x00000800
+TX_LINK_CFG_TX_CF_ACK_EN = 0x00001000
+TX_LINK_CFG_REMOTE_MFB = 0x00FF0000
+TX_LINK_CFG_REMOTE_MFS = 0xFF000000
+
+HT_FBK_CFG0 = 0x1354                     # [SRC rt2800.h:1397-1418]
+HT_FBK_CFG1 = 0x1358
+LG_FBK_CFG0 = 0x135C
+LG_FBK_CFG1 = 0x1360
+# HT/LG fallback nibbles are 8 contiguous 4-bit fields per word (MCS0..7 / 8..15).
+_NIBBLES = tuple(0x0000000F << (4 * n) for n in range(8))
+
+# Protection-config registers share one bitfield layout [SRC rt2800.h:1457-1548].
+CCK_PROT_CFG = 0x1364
+OFDM_PROT_CFG = 0x1368
+MM20_PROT_CFG = 0x136C
+MM40_PROT_CFG = 0x1370
+GF20_PROT_CFG = 0x1374
+GF40_PROT_CFG = 0x1378
+PROT_CFG_PROTECT_RATE = 0x0000FFFF
+PROT_CFG_PROTECT_CTRL = 0x00030000
+PROT_CFG_PROTECT_NAV_SHORT = 0x00040000
+PROT_CFG_PROTECT_NAV_LONG = 0x00080000
+PROT_CFG_TX_OP_ALLOW_CCK = 0x00100000
+PROT_CFG_TX_OP_ALLOW_OFDM = 0x00200000
+PROT_CFG_TX_OP_ALLOW_MM20 = 0x00400000
+PROT_CFG_TX_OP_ALLOW_MM40 = 0x00800000
+PROT_CFG_TX_OP_ALLOW_GF20 = 0x01000000
+PROT_CFG_TX_OP_ALLOW_GF40 = 0x02000000
+PROT_CFG_RTS_TH_EN = 0x04000000
+
+EXP_ACK_TIME = 0x1380                    # [SRC rt2800.h:1558]
+TXOP_HLDR_ET = 0x1608                    # [SRC rt2800.h:1848]
+
+RX_FILTER_CFG = 0x1400                   # [SRC rt2800.h:1756-1773]
+RX_FILTER_CFG_DROP_CRC_ERROR = 0x00000001
+RX_FILTER_CFG_DROP_PHY_ERROR = 0x00000002
+RX_FILTER_CFG_DROP_NOT_TO_ME = 0x00000004
+RX_FILTER_CFG_DROP_NOT_MY_BSSD = 0x00000008
+RX_FILTER_CFG_DROP_VER_ERROR = 0x00000010
+RX_FILTER_CFG_DROP_MULTICAST = 0x00000020
+RX_FILTER_CFG_DROP_BROADCAST = 0x00000040
+RX_FILTER_CFG_DROP_DUPLICATE = 0x00000080
+RX_FILTER_CFG_DROP_CF_END_ACK = 0x00000100
+RX_FILTER_CFG_DROP_CF_END = 0x00000200
+RX_FILTER_CFG_DROP_ACK = 0x00000400
+RX_FILTER_CFG_DROP_CTS = 0x00000800
+RX_FILTER_CFG_DROP_RTS = 0x00001000
+RX_FILTER_CFG_DROP_PSPOLL = 0x00002000
+RX_FILTER_CFG_DROP_BA = 0x00004000
+RX_FILTER_CFG_DROP_BAR = 0x00008000
+RX_FILTER_CFG_DROP_CNTL = 0x00010000
+
+AUTO_RSP_CFG = 0x1404                    # [SRC rt2800.h:1785-1792]
+AUTO_RSP_CFG_AUTORESPONDER = 0x00000001
+AUTO_RSP_CFG_BAC_ACK_POLICY = 0x00000002
+AUTO_RSP_CFG_CTS_40_MMODE = 0x00000004
+AUTO_RSP_CFG_CTS_40_MREF = 0x00000008
+AUTO_RSP_CFG_AR_PREAMBLE = 0x00000010
+AUTO_RSP_CFG_DUAL_CTS_EN = 0x00000040
+AUTO_RSP_CFG_ACK_CTS_PSM_BIT = 0x00000080
+
+LEGACY_BASIC_RATE = 0x1408               # [SRC rt2800.h:1797-1802]
+HT_BASIC_RATE = 0x140C
+
+TX_STA_FIFO = 0x1718                     # [SRC rt2800.h:1931] TX status FIFO (aireplay polls)
+RX_STA_CNT0 = 0x1700                     # [SRC rt2800.h:1868-1903] cleared-on-read
+RX_STA_CNT1 = 0x1704
+RX_STA_CNT2 = 0x1708
+TX_STA_CNT0 = 0x170C
+TX_STA_CNT1 = 0x1710
+TX_STA_CNT2 = 0x1714
+
+# Per-entry key/station tables [SRC rt2800.h:2045-2063] (sizeof mac_wcid_entry=8,
+# mac_iveiv_entry=8; wcid-attr + shared-key-mode entries are u32=4).
+MAC_WCID_BASE = 0x1800
+MAC_IVEIV_TABLE_BASE = 0x6000
+MAC_WCID_ATTRIBUTE_BASE = 0x6800
+SHARED_KEY_MODE_BASE = 0x7000
+
+
+def shared_key_mode_entry(idx: int) -> int:
+    return SHARED_KEY_MODE_BASE + idx * 4
+
+
+def mac_wcid_entry(idx: int) -> int:
+    return MAC_WCID_BASE + idx * 8
+
+
+def mac_iveiv_entry(idx: int) -> int:
+    return MAC_IVEIV_TABLE_BASE + idx * 8
+
+
+def mac_wcid_attr_entry(idx: int) -> int:
+    return MAC_WCID_ATTRIBUTE_BASE + idx * 4
+
+
+# Hardware beacon bases [SRC rt2800.h:2197-2209 HW_BEACON_BASE].
+_HW_BEACON_BASE = (0x7800, 0x7A00, 0x7C00, 0x7E00, 0x7200, 0x7400, 0x5DC0, 0x5BC0)
+TXWI_DESC_SIZE_4WORDS = 16               # [SRC rt2800.h:3052] beacon TXWI clear length
+
+
+def hw_beacon_base(index: int) -> int:
+    return _HW_BEACON_BASE[index]
+
+
+# =====================================================================
+# Operational phase — channel tune / txpower / filter / antenna / link tuner
+# [SRC rt2800lib.c {config_channel,config_txpower,config_ant,config_filter},
+#  rt2x00link.c, rt2x00mac.c; rt2800.h field masks]
+# =====================================================================
+
+# RX-filter flags — the subset of mac80211 FIF_* the driver honors [SRC
+# rt2x00mac.c:366-372]. The bit values are ours; only membership in the
+# filter_flags set matters (config_filter maps each to a DROP_* field).
+FIF_ALLMULTI = 0x01
+FIF_FCSFAIL = 0x02
+FIF_PLCPFAIL = 0x04
+FIF_CONTROL = 0x08
+FIF_PSPOLL = 0x10
+
+# Channel-survey counters (cleared-on-read) [SRC rt2800.h:1012-1022]
+CH_IDLE_STA = 0x1130
+CH_BUSY_STA = 0x1134
+CH_BUSY_STA_SEC = 0x1138
+
+# Per-rate TX power registers + nibble fields [SRC rt2800.h:1103-1110,1115-1224]
+TX_PWR_CFG_0 = 0x1314
+TX_PWR_CFG_1 = 0x1318
+TX_PWR_CFG_2 = 0x131C
+TX_PWR_CFG_3 = 0x1320
+TX_PWR_CFG_4 = 0x1324
+_TX_PWR_CFG_RATE = tuple(0x0000000F << (4 * n) for n in range(8))  # RATE0..RATE7
+
+# TX band + pin (PA/LNA path enables) config [SRC rt2800.h:1241-1280]
+TX_BAND_CFG = 0x132C
+TX_BAND_CFG_HT40_MINUS = 0x00000001
+TX_BAND_CFG_A = 0x00000002
+TX_BAND_CFG_BG = 0x00000004
+TX_PIN_CFG = 0x1328
+TX_PIN_CFG_PA_PE_A0_EN = 0x00000001
+TX_PIN_CFG_PA_PE_G0_EN = 0x00000002
+TX_PIN_CFG_PA_PE_A1_EN = 0x00000004
+TX_PIN_CFG_PA_PE_G1_EN = 0x00000008
+TX_PIN_CFG_LNA_PE_A0_EN = 0x00000100
+TX_PIN_CFG_LNA_PE_G0_EN = 0x00000200
+TX_PIN_CFG_LNA_PE_A1_EN = 0x00000400
+TX_PIN_CFG_LNA_PE_G1_EN = 0x00000800
+TX_PIN_CFG_RFTR_EN = 0x00010000
+TX_PIN_CFG_TRSW_EN = 0x00040000
+TX_PIN_CFG_RFRX_EN = 0x00100000
+TX_PIN_CFG_PA_PE_A2_EN = 0x01000000
+TX_PIN_CFG_PA_PE_G2_EN = 0x02000000
+TX_PIN_CFG_LNA_PE_A2_EN = 0x10000000
+TX_PIN_CFG_LNA_PE_G2_EN = 0x20000000
+TX_PIN_CFG_PA_PE_DISABLE = 0xFCFFFFF0   # VCO-cal PA mask [SRC rt2800.h:1242]
+
+# Power-save autowake [SRC rt2800.h:1044-1047]
+AUTOWAKEUP_CFG_AUTO_LEAD_TIME = 0x000000FF
+AUTOWAKEUP_CFG_TBCN_BEFORE_WAKE = 0x00007F00
+AUTOWAKEUP_CFG_AUTOWAKE = 0x00008000
+
+# RFCSR channel-tune fields (config_channel_rf53xx) [SRC rt2800.h:2311-2552]
+RFCSR1_PLL_PD = 0x02                      # FIELD8 [SRC rt2800.h:2312]
+RFCSR3_VCOCAL_EN = 0x80                   # FIELD8 [SRC rt2800.h] per-tune VCO cal
+RFCSR8 = 8                                # rf1 destination (RF53xx synth)
+RFCSR9 = 9                                # rf3 destination
+RFCSR11_R = 0x03                          # FIELD8 [SRC rt2800.h:2387] rf2 destination
+RFCSR17_CODE = 0x7F                       # FIELD8 [SRC rt2800.h:2426] freq_cal_mode1
+RFCSR30_TX_H20M = 0x02                    # FIELD8 — VCO-cal block (0 at 20 MHz)
+RFCSR30_RX_H20M = 0x04
+RFCSR49_TX = 0x3F                         # FIELD8 [SRC rt2800.h:2543] per-chain TX power
+RFCSR50_TX = 0x3F                         # FIELD8 [SRC rt2800.h:2552] (RT5392 chain 2)
+POWER_BOUND = 0x27                        # [SRC rt2800lib.c:3299] RFCSR49/50 TX clamp
+FREQ_OFFSET_BOUND = 0x5F                  # [SRC rt2800lib.c:2445] freq_cal_mode1 clamp
+
+# Per-channel non-BT RFCSR tune tables for config_channel_rf53xx [SRC rt2800lib.c:
+# 3452-3482]. Indexed by channel-1 (ch 1-14).
+#
+#   RT5390 rev >= REV_RT5390F  → write BOTH RFCSR55 and RFCSR59 from the _rev tables
+#                                (this card: rev 0x0502). [SRC rt2800lib.c:3453-3464]
+#   RT5390 (pre-F) / RT5392 / RT6352 → write only RFCSR59 from RF59_NON_BT
+#                                [SRC rt2800lib.c:3465-3473]
+RF55_NON_BT_REV = (0x23, 0x23, 0x23, 0x23, 0x13, 0x13, 0x03,
+                   0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03)
+RF59_NON_BT_REV = (0x07, 0x07, 0x07, 0x07, 0x07, 0x07, 0x07,
+                   0x07, 0x07, 0x07, 0x06, 0x05, 0x04, 0x04)
+RF59_NON_BT = (0x8f, 0x8f, 0x8f, 0x8f, 0x8f, 0x8f, 0x8f,
+               0x8d, 0x8a, 0x88, 0x88, 0x87, 0x87, 0x86)
+
+# BBP antenna / chain-select / TX-power-control / bandwidth fields [SRC rt2800.h:2226-2246]
+BBP1_TX_POWER_CTRL = 0x03
+BBP1_TX_ANTENNA = 0x18
+BBP3_RX_ANTENNA = 0x18
+BBP3_HT40_MINUS = 0x20
+BBP4_BANDWIDTH = 0x18                     # FIELD8 [SRC rt2800.h:2242] config_channel (0 = 20 MHz)
+BBP27_RX_CHAIN_SEL = 0x60
+
+# TX-power clamp bounds [SRC rt2800.h:3171-3174]
+MIN_G_TXPOWER = 0
+MAX_G_TXPOWER = 31
+MIN_A_TXPOWER = -7
+MAX_A_TXPOWER = 15
+
+# RX FCS-error counter field (link stats) [SRC rt2800.h:1869]
+RX_STA_CNT0_CRC_ERR = 0x0000FFFF
+
+# EEPROM words / fields for the txpower + gain decode [SRC rt2800lib.c:308-347 map,
+# rt2800.h:2807-2877]. Word numbers are the mapped offsets (non-ext map / RT3070).
+EEPROM_EIRP_MAX_TX_POWER = 0x0027
+EEPROM_EIRP_MAX_TX_POWER_2GHZ = 0x00FF
+EIRP_MAX_TX_POWER_LIMIT = 0x50
+EEPROM_TXPOWER_DELTA = 0x0028
+EEPROM_TXPOWER_DELTA_VALUE_2G = 0x003F
+EEPROM_TXPOWER_DELTA_TYPE_2G = 0x0040
+EEPROM_TXPOWER_DELTA_ENABLE_2G = 0x0080
+EEPROM_TXPOWER_BG1 = 0x0029
+EEPROM_TXPOWER_BG2 = 0x0030
+EEPROM_TXPOWER_BYRATE = 0x006F
+EEPROM_TXPOWER_BYRATE_SIZE = 9
+_EEPROM_TXPOWER_BYRATE_RATE = (0x000F, 0x00F0, 0x0F00, 0xF000)
+EEPROM_LNA_BG = 0x00FF
+EEPROM_NIC_CONF1_EXTERNAL_TX_ALC = 0x0002
+EEPROM_NIC_CONF1_ANT_DIVERSITY = 0x1800
+
+# TSSI temperature-comp bounds, 2.4 GHz [SRC rt2800lib.c map + rt2800.h:2838-2877]
+EEPROM_TSSI_BOUND_BG1 = 0x0037
+EEPROM_TSSI_BOUND_BG2 = 0x0038
+EEPROM_TSSI_BOUND_BG3 = 0x0039
+EEPROM_TSSI_BOUND_BG4 = 0x003A
+EEPROM_TSSI_BOUND_BG5 = 0x003B
+EEPROM_TSSI_BOUND_BG1_MINUS4 = 0x00FF
+EEPROM_TSSI_BOUND_BG1_MINUS3 = 0xFF00
+EEPROM_TSSI_BOUND_BG2_MINUS2 = 0x00FF
+EEPROM_TSSI_BOUND_BG2_MINUS1 = 0xFF00
+EEPROM_TSSI_BOUND_BG3_REF = 0x00FF
+EEPROM_TSSI_BOUND_BG3_PLUS1 = 0xFF00
+EEPROM_TSSI_BOUND_BG4_PLUS2 = 0x00FF
+EEPROM_TSSI_BOUND_BG4_PLUS3 = 0xFF00
+EEPROM_TSSI_BOUND_BG5_PLUS4 = 0x00FF
+EEPROM_TSSI_BOUND_BG5_AGC_STEP = 0xFF00
+
+# =====================================================================
+# RX / TX descriptors (USB wire format) [SRC rt2800usb.h, rt2800.h §3052-3160]
+# =====================================================================
+RXINFO_DESC_SIZE = 4                     # [SRC rt2800usb.h:31] 1 * __le32
+TXINFO_DESC_SIZE = 4                     # [SRC rt2800usb.h:30]
+RXD_DESC_SIZE = 4                        # RXD trailer is one __le32 [SRC rt2800usb.c:520-525]
+RXWI_DESC_SIZE_4WORDS = 16              # [SRC rt2800.h:3055] RF30xx/53xx (RT5592 is 6 words)
+TXWI_DESC_SIZE_4WORDS = 16              # [SRC rt2800.h:3052] (already used for beacon clears)
+
+# RXINFO / RXWI / RXD fields [SRC rt2800usb.h:61-97, rt2800.h:3139-3159]
+RXINFO_W0_USB_DMA_RX_PKT_LEN = 0x0000FFFF
+RXWI_W0_MPDU_TOTAL_BYTE_COUNT = 0x0FFF0000
+RXWI_W1_MCS = 0x007F0000
+RXWI_W1_PHYMODE = 0xC0000000
+RXWI_W2_RSSI0 = 0x000000FF
+RXWI_W2_RSSI1 = 0x0000FF00
+RXWI_W2_RSSI2 = 0x00FF0000
+RXD_W0_MY_BSS = 0x00000080
+RXD_W0_CRC_ERROR = 0x00000100
+RXD_W0_L2PAD = 0x00004000
+
+# TXINFO / TXWI fields [SRC rt2800usb.h:46-51, rt2800.h:3087-3117]
+TXINFO_W0_USB_DMA_TX_PKT_LEN = 0x0000FFFF
+TXINFO_W0_WIV = 0x01000000
+TXINFO_W0_QSEL = 0x06000000
+TXINFO_W0_SW_USE_LAST_ROUND = 0x08000000
+TXINFO_W0_USB_DMA_NEXT_VALID = 0x40000000
+TXINFO_W0_USB_DMA_TX_BURST = 0x80000000
+TXWI_W0_TX_OP = 0x00000300
+TXWI_W0_MCS = 0x007F0000
+TXWI_W0_PHYMODE = 0xC0000000
+TXWI_W1_ACK = 0x00000001
+TXWI_W1_NSEQ = 0x00000002
+TXWI_W1_WIRELESS_CLI_ID = 0x0000FF00
+TXWI_W1_MPDU_TOTAL_BYTE_COUNT = 0x0FFF0000
+TXWI_W1_PACKETID_QUEUE = 0x30000000
+TXWI_W1_PACKETID_ENTRY = 0xC0000000
+TXWI_TX_OP_HT_NONE = 3                   # HT_TXOP_NONE: skip RTS/CTS for mgmt inject
+RATE_MODE_CCK = 0                        # [SRC rt2800.h] TXWI/RXWI PHYMODE = CCK
+QSEL_EDCA = 2                            # rt2800usb_write_tx_desc hardcodes QSEL=2 [SRC :422]
+
+# RSSI conversion (rt2800_agc_to_rssi) — EEPROM offset fields + base [SRC rt2800lib.c:856-898,
+# rt2800.h:2773-2780]. base_val is -12 on everything but RT6352.
+RSSI_BASE_VAL = -12
+EEPROM_RSSI_BG_OFFSET0 = 0x00FF
+EEPROM_RSSI_BG_OFFSET1 = 0xFF00
+EEPROM_RSSI_BG2_OFFSET2 = 0x00FF
+
+# TX queue id (QID_MGMT) for the management-frame inject path [SRC rt2x00queue.h].
+QID_MGMT = 5
+
+# 2.4 GHz channel table {rf1, rf2, rf3} [SRC rt2800lib.c:11435 rf_vals_3x] — the byte
+# values are shared across the rt3/rt5 family. RF53xx (this card) packs rf1->RFCSR8,
+# rf3->RFCSR9, rf2->RFCSR11.R (vs RF3020's RFCSR2/3/6). 2.4 GHz only; chs 1-14.
+RF_VALS_3X_2G = {
+    1: (241, 2, 2), 2: (241, 2, 7), 3: (242, 2, 2), 4: (242, 2, 7),
+    5: (243, 2, 2), 6: (243, 2, 7), 7: (244, 2, 2), 8: (244, 2, 7),
+    9: (245, 2, 2), 10: (245, 2, 7), 11: (246, 2, 2), 12: (246, 2, 7),
+    13: (247, 2, 2), 14: (248, 2, 4),
+}
+
+
+from dataclasses import dataclass  # noqa: E402  (kept with the ChipInfo it serves)
+
+
+@dataclass(frozen=True)
+class ChipInfo:
+    """Chip id + revision from MAC_CSR0, with the kernel's rt/rev predicates
+    (``rt2x00_rt`` / ``rt2x00_rt_rev_lt`` / ``rt2x00_rt_rev_gte``). This card
+    reads rt=RT5390, rev=0x0502 (== REV_RT5390F)."""
+
+    rt: int
+    rev: int
+
+    def is_rt(self, rt: int) -> bool:
+        return self.rt == rt
+
+    def rt_rev(self, rt: int, rev: int) -> bool:
+        return self.rt == rt and self.rev == rev
+
+    def rt_rev_lt(self, rt: int, rev: int) -> bool:
+        return self.rt == rt and self.rev < rev
+
+    def rt_rev_gte(self, rt: int, rev: int) -> bool:
+        return self.rt == rt and self.rev >= rev
+
+
+def _shift(mask: int) -> int:
+    """Bit offset of a FIELD mask's lowest set bit (kernel ``rt2x00_field*``)."""
+    return (mask & -mask).bit_length() - 1
+
+
+def set_field(reg: int, mask: int, value: int) -> int:
+    """Replace the ``mask`` bits of ``reg`` with ``value`` shifted into place.
+
+    Mirrors ``rt2x00_set_field32``; result masked to 32 bits.
+    """
+    shift = _shift(mask)
+    return ((reg & ~mask) | ((value << shift) & mask)) & 0xFFFFFFFF
+
+
+def get_field(reg: int, mask: int) -> int:
+    """Extract the ``mask`` bits of ``reg`` (mirrors ``rt2x00_get_field32``)."""
+    return (reg & mask) >> _shift(mask)

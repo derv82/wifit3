@@ -76,6 +76,8 @@ REGISTRY: dict[str, Chip] = {
                       "Ralink RT3572/RT5372/RT5572 rt2x00 (vendor 0x06/0x07)"),
     "rt3070": Chip("rt3070", "rt3070/verify_pcap.py",
                    "Ralink RT3070 / ALFA AWUS036NH clean-room (vendor 0x06/0x07)"),
+    "rt5370": Chip("rt5370", "rt5370/verify_pcap.py",
+                   "Ralink RT5370 (RT5390) 1T1R clean-room (vendor 0x06/0x07)"),
     "rt5372": Chip("rt5372", "rt5372/verify_pcap.py",
                    "Ralink RT5372 (RT5392) / Panda PAU05+PAU06 clean-room (vendor 0x06/0x07)"),
     "rtl8188eus": Chip("rtl8188eus", "rtl8188eus/verify_pcap.py",
