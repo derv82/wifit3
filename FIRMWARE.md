@@ -40,12 +40,13 @@ the verification detail, frame ranges, and hashes; this file is the licensing su
 | `rt5572.bin` | RT5572 / RT3572 (RT2800USB) | `linux-firmware` `rt2870.bin` (USB half, offset 4096) | Ralink redistributable (`LICENCE.ralink-firmware.txt`) | ✅ md5 `8d98ca9f…`, second 4 KB of `rt2870.bin` |
 | `rt3070_fw.bin` | RT3070 | `linux-firmware` `rt2870.bin` (first 4 KB, offset 0) | Ralink redistributable (`LICENCE.ralink-firmware.txt`) | ✅ md5 `d94f0280…`, wire multiwrite == `rt2870.bin[:4096]` |
 | `rt5372_fw.bin` | RT5372 | `linux-firmware` `rt2870.bin` (USB half, offset 4096) | Ralink redistributable (`LICENCE.ralink-firmware.txt`) | ✅ md5 `8d98ca9f…`, `rt2870.bin[4096:]` |
+| `rt5370_fw.bin` | RT5370 | `linux-firmware` `rt2870.bin` (USB half, offset 4096) | Ralink redistributable (`LICENCE.ralink-firmware.txt`) | ✅ md5 `8d98ca9f…`, `rt2870.bin[4096:]` (byte-identical to `rt5372_fw.bin`) |
 
 Notes:
 
-- **One blob shared, two slices.** The Ralink `rt3070_fw.bin`, `rt5372_fw.bin`, and
-  `rt5572.bin` are all carved from the single `linux-firmware` `rt2870.bin`: RT3070 uses the
-  first 4 KB (PCI half), RT5372/RT5572 use the second 4 KB (USB half). In `WHENCE`,
+- **One blob shared, two slices.** The Ralink `rt3070_fw.bin`, `rt5370_fw.bin`, `rt5372_fw.bin`,
+  and `rt5572.bin` are all carved from the single `linux-firmware` `rt2870.bin`: RT3070 uses the
+  first 4 KB (PCI half), RT5370/RT5372/RT5572 use the second 4 KB (USB half). In `WHENCE`,
   `rt3070.bin` is a symlink to `rt2870.bin`, and `rt3071.bin` is documented as "a copy of
   bytes 4096-8191 of rt2870.bin."
 - **RTL8814AU.** Both the mainline (`rtw88_8814au`) and the vendor-DKMS (`rtl8814au_dkms`)
@@ -107,8 +108,9 @@ codebase.
 
 ### Ralink — `LICENCE.ralink-firmware.txt`
 
-The RT2800USB-family blobs (`rt2870.bin` slices: `rt3070_fw.bin`, `rt5372_fw.bin`,
-`rt5572.bin`) fall under the original Ralink firmware license. `WHENCE` marks `rt2870.bin`:
+The RT2800USB-family blobs (`rt2870.bin` slices: `rt3070_fw.bin`, `rt5370_fw.bin`,
+`rt5372_fw.bin`, `rt5572.bin`) fall under the original Ralink firmware license. `WHENCE` marks
+`rt2870.bin`:
 
 > Licence: Redistributable. See LICENCE.ralink-firmware.txt for details
 
