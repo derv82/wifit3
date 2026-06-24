@@ -8,11 +8,17 @@ other drivers.
 ## Status
 
 - Cold init and firmware boot: working on hardware.
-- 5 GHz monitor RX: working.
-- 2.4 GHz monitor RX: working, but only after a warm fix (see Gotchas); not yet re-confirmed on a
-  fresh plug.
-- `verify_pcap`: clean against the full cold-boot pcap.
-- Not done: ZeroCD discovery (below), warm reattach, fresh-plug RX confirmation.
+- **Bring-up was a coin toss (~80%+ of cold boots came up dead-RX on BOTH bands, fresh plug
+  included) — root cause found: the power-sequence `DELAY` command was a no-op, dropping the 1 ms
+  LDO settle in the card-enable flow. Fixed in `pwrseq.py`. NOT yet HW-validated** — the test card
+  degraded past its replug threshold (~34 soft re-inits) before the fix landed, so a fresh-plug
+  `bringup_cointoss.py` run is still owed to confirm the dead-rate collapses. See debug log.
+- 5 GHz / 2.4 GHz monitor RX: working *when bring-up succeeds* — the coin toss gated everything, so
+  earlier per-band RX findings were confounded by which launches happened to come up alive.
+- `verify_pcap`: clean — but BLIND to timing (a DELAY emits no register op), which is exactly how
+  the missing settle survived a byte-faithful port. See Gotchas.
+- Not done: fresh-plug coin-toss validation, ZeroCD discovery, warm reattach, the
+  degrades-after-~8-soft-reinits issue (separate from the coin toss).
 
 ## Gotchas
 
@@ -34,6 +40,12 @@ side effect.
 fixed-channel capture shows only ~13–21 beacons over 15 s. Judge RX against a strong nearby
 reference AP, not against this capture.
 
+**`verify_pcap` cannot see timing.** A power-sequence (or PHY-table) `DELAY` emits no register op,
+so it is invisible in the capture — a byte-faithful port, and the gate, will happily drop required
+settle delays and still PASS. The bring-up coin toss was exactly this. When you hit a coin toss with
+*identical* register state between good and dead launches (`bringup_cointoss.py` proves it: same
+CR/RCR/RXDMA/filter, different RX outcome), the culprit is a skipped delay/poll, not a missed write.
+
 ## Orientation
 
 Start at `bringup.cold_bringup` — it runs init → power sequence → firmware → MAC → BB → RF in the
@@ -50,6 +62,28 @@ Names match the vendor C, so grep the bundle's `driver-source/` to cross-referen
 - `driver_rx_diag.py` — re-run after a fresh plug to confirm 2.4 GHz comes back.
 
 ## Debug log
+
+### 2026-06-24 — bring-up coin toss: the power-seq DELAY was a no-op
+
+Bring-up RX was a coin toss — ~80%+ of cold boots came up dead on BOTH bands (a fresh plug too, per
+the user), control path fully alive (registers read, FA counters tick) but the RX FIFO never filled.
+`bringup_cointoss.py` reproduced it headlessly (e.g. 2 GOOD / 10 DEAD) and gave the decisive clue:
+the RX-path register dump is IDENTICAL between good and dead launches (CR=0x6ff, RCR=0x90000001,
+RXDMA_STATUS=0, filters all the same). Identical config + different outcome = a timing race, not a
+missed register — which is why a "faithful" port that passes `verify_pcap` still failed.
+
+The seam: the byte-gate matches the op SEQUENCE but is blind to delays between ops. Auditing the
+bring-up for waits that emit no register op found it — `pwrseq._run_table` treated `_CMD_DELAY` as a
+no-op ("replay strips it"), but `CARDEMU_TO_ACT` carries a 1 ms DELAY: the LDO settle after the
+0x20[0]=1 power enable. Skip it → proceed before the rail settles → power-on lands marginal at
+random. Vendor honors it at `halmac_common_88xx.c:3078` (`PLTFM_DELAY_US`). Fix: sleep offset us/ms;
+gate stays green (a sleep is no op on the wire).
+
+NOT HW-validated yet: by the time the bug was found the test card had degraded past its
+~8-soft-reinit replug threshold (I was at ~34), so every launch was dead regardless and a 20 s rest
+between boots didn't recover it. A fresh-plug `bringup_cointoss.py` run is owed. FW-download polls +
+BB/AGC/RF tables were checked for other skipped delays — none. The degrade-after-N-boots behaviour
+is a separate, still-open issue (likely its own missing reset on soft re-init).
 
 ### 2026-06-23 — 2.4 GHz RX root cause
 

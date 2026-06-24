@@ -19,6 +19,8 @@ Ported from:
 """
 from __future__ import annotations
 
+import time
+
 # command codes [SRC] halmac_pwr_seq_cmd.h:30-56
 _CMD_READ = 0x00
 _CMD_WRITE = 0x01
@@ -169,8 +171,15 @@ def _run_table(t, table, cut, intf) -> None:
                     break
             else:
                 raise RuntimeError(f"RTL8821CU: pwr-seq polling 0x{offset:04x} timed out")
-        elif cmd == _CMD_DELAY or cmd == _CMD_READ:
-            pass            # DELAY: settle only (replay strips it); READ: no-op
+        elif cmd == _CMD_DELAY:
+            # Real hardware settle, NOT a no-op. A pwr-seq DELAY emits no register op, so it is
+            # invisible in the pcap and an earlier port stripped it to match the replay — but the
+            # card-enable flow's 1 ms DELAY is the LDO power-rail settle after 0x20[0]=1. Skipping
+            # it makes power-on a coin toss: identical register writes, ~random RX-dead, fresh plug
+            # included, byte-gate still green. duration=offset, unit=value. [SRC] halmac_common_88xx.c:3078.
+            time.sleep(offset * (1e-6 if value == _DELAY_US else 1e-3))
+        elif cmd == _CMD_READ:
+            pass            # READ: no-op (touches no register)
         else:
             raise ValueError(f"RTL8821CU: bad pwr-seq cmd {cmd}")
 
