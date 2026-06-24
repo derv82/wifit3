@@ -7,285 +7,89 @@ other drivers.
 
 ## Status
 
-- Cold init and firmware boot: working on hardware.
-- **RX coin toss — FIXED (2026-06-24).** Root cause: `dm._dc_cancellation`'s **ck320 (320 MHz BB
-  clock) stop/restart** (`0x8b4[6]`). Stopping then restarting that clock during the cal
-  intermittently fails to re-lock the demod → RX FIFO never fills (`RXFF_PTR=0`) though the demod
-  runs (FA flood) → dead on BOTH bands ~half of cold boots. Subtractive A/B (`dc_steps.py`) isolated
-  it: skipping just the ck320 toggle restores RX, skipping the LNA/3-wire does not; a settle delay
-  does not rescue it (`dc_ck320.py`). **Fix: `_dc_cancellation` is no longer called** (its DC comp is
-  unneeded here — disabling it changes nothing, and skipping the cal *raises* the beacon rate on both
-  bands). Validated end-to-end in the real driver: `bringup_hop.py` 8/8 GOOD, 2.4 GHz ~220–350 +
-  5 GHz ~200–344 beacons/12 s, 0 dead (was a ~30–60% coin toss). NB the RF18-bit16 2.4 GHz gate is a
-  *separate* known thing (ch1 needs a 5→2.4 GHz band switch); the per-boot variability was the cal.
-- **Eliminated this round (2026-06-24 cont'd 3), with hardware data — do NOT re-chase these:**
-  - **DC-offset cancellation OUTPUT** (`0xc10`/`0xc14`): benign — byte-identical between a 346-frame
-    GOOD and a 0-frame DEAD launch, and disabling it (`0xa9c[20]=0`) does not help. BUT *running* the
-    cal IS the lead — see LIVE LEAD below. (I first marked DC fully "ruled out" on the output alone;
-    that was premature — corrected.)
-  - **IQK**: NOT missing. `bNeedIQK` is zero-init and set TRUE only on link/AP/TDLS/sreset/MCC events
-    (traced every set-site); cold boot / monitor entry / PHY init never set it, so the vendor runs no
-    IQK in monitor mode either. The vendor also posts RX URBs only AFTER `rtw_hal_init`
-    (`rtw_intf_start` → `rtl8821cu_inirp_init`), so no concurrent-RX-during-init in the kernel.
-  - **Missing settle delays / write pacing**: NOT the story. The kernel capture has ~no explicit
-    inter-op waits — 24 gaps ≥0.3 ms in all of init+airmon, all explained (6.7 s idle before airmon,
-    RF-LSSI `0xc90` pacing, the `stop_ic_trx` 1 ms idle-poll). Our synchronous libusb transfers are
-    if anything SLOWER than the kernel's ~40 µs op cadence (`airmon_rx_onset.py`).
-  - **vs-capture byte divergences are BENIGN card-identity.** `cold_divergence.py` (real silicon vs
-    the capture, op-by-op) finds ~36 *consistent* divergences present on GOOD launches: GPIO
-    (`0x40/0x4c/0x4e/0x64`), RFE/antenna mux (`0x1080`), coex GNT (`0x73`), chip-version bits, + the
-    live DC cal. The capture is from a slightly different board/antenna config; our per-card RMWs
-    correctly differ there. The byte-gate hides this (it feeds captured reads) but it does NOT cause
-    RX death. So "the bytes differ on silicon" is true but benign — not the bug.
-- Where RX first arrives in the capture: airmon stage, frame 17261 (`pcap_slicer.py` window
-  7673–17766; `airmon_rx_onset.py`), right after a normal channel/bw tune we DO reproduce.
-- **Front-end instrumented on DEAD launches (`dead_frontend.py`, 10 DEAD / 6 GOOD on 5 GHz):** the
-  RF synth/PLL word reads byte-IDENTICAL good-vs-dead (`RF18=0x13d24`, `RFca=0x80000`,
-  `RFb0=0xff0f8`, `RFb8=0x80a00`) and so does the MAC RX path (`r808`/`r838`/`CR=0x6ff`/
-  `RCR=0x90000001`). On DEAD launches the OFDM false-alarm counter FLOODS (`ofdmFA` up to `0x7057`
-  vs ~`0x100` on GOOD) and DIG reactively backs IGI off to `0x22` — the demod is triggering on noise
-  and never locking a real packet, with `RXFF_PTR=0`. So with identical RF + MAC config the RX gain
-  is physically wrong ~60% of boots = an analog RX-gain/calibration whose result lands in NO readable
-  register. No C2H (interrupt-IN ep 0x81) arrives before RX onset.
-- **ROOT CAUSE (resolved) — `dm._dc_cancellation`'s ck320 stop/restart.** The cal toggling the
-  320 MHz BB clock (`_stop_ck320`, `0x8b4[6]`) intermittently leaves the demod un-relocked. Drill-down:
-  `dc_ab.py` (order-controlled, same card) showed running the cal → 5 GHz median 33 (2/9 dead),
-  2.4 GHz 6/9 dead; skipping → 5 GHz median 121, 2.4 GHz median 133, both 0 dead. NOT the DC-comp
-  output (`disable_comp` via `0xa9c[20]=0` did not recover RX; and the RF `0x3f`=`0x281d` the cal
-  leaves is vendor-faithful, the capture has the same write — so no register VALUE is the
-  differentiator). `dc_steps.py` subtracted one analog step at a time: skipping **only** `_stop_ck320`
-  restored RX (0 dead), while skipping `_lna_setting` or `_stop_3_wire` did NOT — pinning it to the
-  ck320 toggle. `dc_ck320.py`: a 2 ms settle delay around the toggle does NOT rescue it, so it's the
-  clock-restart transient itself, not a missing wait — invisible to verify_pcap because every wire op
-  matches the vendor. **FIX APPLIED: `_dc_cancellation` is not called** (`dm.phy_init_haldm`); its
-  comp is unneeded here. Validated: `bringup_hop.py` 8/8 GOOD both bands. Cost: `verify_pcap` now
-  diverges at op 7536 (the first cal op, `0x198c` @ frame 16021) — intentional. (Open, low-priority:
-  why our faithful replay of the ck320 toggle settles differently than the kernel's — a sub-op
-  silicon-timing question; not worth chasing now that RX works.)
-- `verify_pcap`: PASS — reproduces 21318 of 21409 ops byte-for-byte and **EXCEPTS** the 91-op
-  `_dc_cancellation` block (frames 16021-16201) we deliberately skip, reporting it explicitly. The
-  except is safe: it only triggers once, resyncs forward to the driver's next op, and verifies the
-  skipped span is dc_cancellation by its unique `0xc10` DC-comp write (so it can't mask a real
-  divergence). The gate is still structurally BLIND to (a) timing and (b) read-modify-write
-  correctness (it replays CAPTURED reads) — which is exactly why the ck320-toggle bug survived a
-  byte-faithful port; that blindness is inherent, not specific to this except.
-- The card is NOT permanently wedged by soft re-inits — it recovers on the next launch with no
-  replug (user-confirmed; an earlier "wedged, must replug" claim was wrong). Rapid back-to-back
-  re-inits (<1 s rest) do raise the dead rate transiently; space launches ≥1.5 s.
-- **2.4 GHz fixed-channel RX — FIXED (2026-06-24).** Was dead on a non-hopping ch1 session (RF18
-  bit16 stuck-set); now primed by a reader-quieted band bounce in `connect` (see Gotchas). The ch1
-  reference AP reads ~6.5 beacons/s, matching the kernel baseline.
-- Not done: ZeroCD discovery, warm reattach. (The RX coin toss and 2.4 GHz fixed-channel are both
-  fixed.)
+Cold init, firmware boot, and monitor RX all work on hardware — both bands, fixed-channel or
+hopping, on par with the vendor driver (fixed-ch1 ~6.5 beacons/s vs the kernel's ~6.1–6.6/s).
+
+Two hardware bugs, both invisible to the byte-gate, were found and fixed (see Gotchas + log):
+
+- the cross-band RX coin toss — `_dc_cancellation` is no longer called (its ck320 toggle killed RX).
+- fixed-channel 2.4 GHz dead — a reader-quieted band bounce in `connect` (`_prime_2g_band`).
+
+Not done: ZeroCD discovery (the card enumerates as a CD-ROM — see Gotchas) and warm reattach.
 
 ## Gotchas
 
-**The card hides as a CD-ROM.** It enumerates as USB mass-storage ("ZeroCD") and must be
-mode-switched to the Wi-Fi PID `0bda:c820` before any driver can bind. A user who plugs it in today
-sees a CD-ROM and Wifit3 finds nothing, so the card is unusable end-to-end until the discovery
-layer handles the switch. This is a manager-level problem that affects most Realtek USB adapters,
-not just this one. The offline port and verify are unaffected — the pcap was captured already in
-Wi-Fi mode.
+**The card hides as a CD-ROM (ZeroCD).** It enumerates as USB mass-storage and must be mode-switched
+to the Wi-Fi PID `0bda:c820` before any driver binds — so a freshly-plugged card shows a CD-ROM and
+Wifit3 finds nothing until the discovery layer handles the switch (a manager-level gap that hits most
+Realtek USB adapters). The offline port and gate are unaffected; the pcap was captured in Wi-Fi mode.
 
-**2.4 GHz RX hangs on RF18 bit16 — FIXED by a reader-quieted band bounce.** After cold init the chip
-sits on ch1 but the synth never actually jumped TO 2.4 GHz (the cold tune runs `_switch_band` but the
-LO doesn't re-lock on the premature, pre-antenna-switch tune), so RF18 BIT16 reads stuck-SET (5 GHz)
-and every 2.4 GHz frame fails CRC. A direct `RF18[16]=0` write does NOT re-lock the LO (the reverted
-`_relatch_2g_band` regression — it "passed" by writing the bit but RX stayed dead); only a real
-5→2.4 GHz band switch does. `driver._prime_2g_band` bounces 2.4G→5G→2.4G after cold init. **Critical
-gotcha within the fix:** the band-switch RF18 write is DROPPED if the bulk-IN reader runs
-concurrently (`_switch_channel` then read-back-rewrites the stale BIT16=1), so a one-shot bounce with
-the reader live silently fails — `_prime_2g_band` STOPS the reader across the bounce, then restarts
-it. (Continuous hopping survives the race because a later switch eventually lands; that's why hopping
-masked this and only a fixed-2.4 GHz session exposed it.) The vendor stack gets away without an
-explicit prime because airodump hops to 5 GHz immediately.
+**`_dc_cancellation` is deliberately not called** (`dm.phy_init_haldm`). The cal stops then restarts
+the 320 MHz BB clock (`_stop_ck320`, `0x8b4[6]`) for its DC measurement, and that restart
+intermittently fails to re-lock the demod → `RXFF_PTR=0`, OFDM false-alarm flood, dead RX on both
+bands ~half of cold boots. Its DC compensation is unneeded here — skipping it *raises* the beacon
+rate. Don't re-enable without re-validating on hardware; the byte-gate can't catch it (every wire op
+matches the vendor — the failure is the analog clock-restart transient, not a register value).
 
-**2.4 GHz is fine once primed** — fixed-ch1 against the reference AP now reads ~6.5 beacons/s
-(total 129 / 20 s, min 4 max 10), matching the kernel's own fixed-ch1 baseline (~6.1–6.6/s). The
-earlier "genuinely weak ~13–21/15 s" reading was the bug (RF18-bit16 + the dc_cancellation damage),
-not the antenna.
+**2.4 GHz needs a band-bounce prime, with the reader quiet.** The cold ch1 tune never makes the synth
+actually jump TO 2.4 GHz (it runs `_switch_band` but the LO doesn't re-lock on the premature,
+pre-antenna-switch tune), so RF18 BIT16 reads stuck-SET and every 2.4 GHz frame fails CRC. Only a
+real 5→2.4 GHz band switch re-locks the LO — a direct `RF18[16]=0` write does not (a reverted
+regression). `driver._prime_2g_band` bounces 2.4→5→2.4 after cold init; crucially the band-switch
+RF18 write is DROPPED if the bulk-IN reader runs concurrently (`_switch_channel` re-writes the stale
+BIT16=1), so it STOPS the reader across the bounce, then restarts it. Continuous hopping hides this
+(a later switch lands); only a fixed-2.4 GHz session exposes it.
 
-**`verify_pcap` cannot see timing.** A power-sequence (or PHY-table) `DELAY` emits no register op,
-so it is invisible in the capture — a byte-faithful port, and the gate, will happily drop required
-settle delays and still PASS. The bring-up coin toss was exactly this. When you hit a coin toss with
-*identical* register state between good and dead launches (`bringup_cointoss.py` proves it: same
-CR/RCR/RXDMA/filter, different RX outcome), the culprit is a skipped delay/poll, not a missed write.
+**The byte-gate is blind to timing and to read-modify-write correctness.** `verify_pcap` replays the
+*captured* read values, so a dropped settle delay, or an RMW that's only wrong when the real chip
+reads differently, both PASS — exactly how the dc_cancellation ck320 and the power-seq LDO-settle
+bugs survived byte-faithful ports. It PASSES while EXCEPTING (and reporting) the 91-op
+`_dc_cancellation` block we skip; the except is signature-checked (the unique `0xc10` write) so it
+can't mask a real divergence.
 
 ## Orientation
 
-Start at `bringup.cold_bringup` — it runs init → power sequence → firmware → MAC → BB → RF in the
-kernel's order. Channel tuning is `chan.set_channel` (it only switches bands when the band actually
-changes). RSSI is in `rx.decode_rssi`, which parses the jgr2 phystatus format — it's a Jaguar-2
-chip, and decoding it as Jaguar-1 was an early mistake.
-
-Names match the vendor C, so grep the bundle's `driver-source/` to cross-reference.
+Start at `bringup.cold_bringup` — init → power seq → firmware → MAC → BB → RF, in kernel order.
+Channel tuning is `chan.set_channel` (band-switch sub-step only when the band changes). RSSI is
+`rx.decode_rssi` — jgr2 phystatus (decoding it as Jaguar-1 was an early mistake). The two
+hardware-bug fixes live in `dm.phy_init_haldm` (the skipped cal) and `driver._prime_2g_band`. Names
+match the vendor C, so grep the bundle's `driver-source/` to cross-reference.
 
 ## Scripts
 
-- `verify_pcap.py` — the cold-boot byte gate.
-- `band_state_probe.py` — HW RX diagnostic; this is what isolated the RF18 bit16 gate.
-- `driver_rx_diag.py` — re-run after a fresh plug to confirm 2.4 GHz comes back.
+- `verify_pcap.py` — the cold-boot byte gate (PASS; excepts the skipped dc_cancellation block).
+- `scripts/diag/beacon_watch.py` (+ `beacon_watch_usbcap.py`) — live beacons/s vs the kernel baseline.
+- `bringup_hop.py` — continuous dual-band RX-health check, GOOD/DEAD per launch.
+- `dc_ab.py` / `dc_steps.py` — the A/B harnesses that pinned the dc_cancellation ck320 bug; kept for re-validation.
 
 ## Debug log
 
-### 2026-06-24 (cont'd 7) — FIXED 2.4 GHz fixed-channel RX (reader-quieted band bounce)
+### 2026-06-24 — RX fixed on both bands
 
-After the dc_cancellation fix, 5 GHz was solid but a FIXED ch1 session still decoded 0 beacons (the
-RF18-bit16 gate — hopping had been masking it). History: `8b279ac1` primed 2.4 GHz with a 2.4→5→2.4
-band bounce; `62dcf199` replaced it with a direct `RF18[16]=0` write (`_relatch_2g_band`) that
-"passed" but never re-locks the LO — a regression, swapped in because that dev had no clean 2.4 GHz
-AP to validate against. Restored the bounce (`_prime_2g_band`). First try still failed (warning fired,
-bit16 stuck): the band-switch RF18 write was being DROPPED by the concurrent bulk-IN reader
-(`_switch_channel` then read-back-rewrites the stale BIT16=1; continuous hopping survives because a
-later switch lands, a one-shot bounce doesn't). Fix: STOP the reader across the bounce, then restart
-it. Validated: `beacon_watch --channel 1 --bssid <ch1-ref-ap>` → total 129 / mean 6.5/s (min 4 max 10,
-0 zero-seconds), matching the kernel's fixed-ch1 baseline (~6.1–6.6/s); 5 GHz unregressed
-(ch36 multi-AP). verify_pcap unaffected (prime is loop-only; the gate's cold path returns before it).
+The cross-band coin toss (~30–60% of cold boots dead on both bands, `RXFF_PTR=0` with the demod
+false-alarm-flooding) was `_dc_cancellation`. The RF/MAC register state was byte-identical
+good-vs-dead, so a subtractive A/B (`dc_steps.py`, monkeypatching one analog step out at a time)
+pinned it to the cal's ck320 (320 MHz BB clock) stop/restart: skipping only that toggle restores RX,
+skipping the LNA or 3-wire does not, and a settle delay doesn't rescue it — the clock-restart
+transient itself, not a missing wait. Fix: stop calling `_dc_cancellation`; its DC comp is unneeded
+and skipping raises the beacon rate. (Eliminated along the way, all with hardware A/Bs: the DC-comp
+output, IQK — `bNeedIQK` is never set in monitor mode — timing/pacing, reader-start ordering,
+BT-coex, the interrupt/C2H channels, and CCK value handling.)
 
-### 2026-06-24 (cont'd 6) — FIXED: ck320 stop/restart in _dc_cancellation was the root cause
+Fixed 2.4 GHz separately: a non-hopping ch1 session decoded 0 beacons because the cold tune leaves
+RF18 BIT16 stuck-set and `_switch_channel` re-asserts it from a stale read. Restored a 2.4→5→2.4 band
+bounce (`_prime_2g_band`) to re-lock the LO, and STOP the reader across it so the band-switch RF18
+write isn't dropped by a concurrent bulk-IN read. Fixed-ch1 then reads ~6.5 beacons/s.
 
-Subtracted `_dc_cancellation`'s analog steps one at a time (`dc_steps.py`): skipping ONLY the ck320
-stop/restart (`_stop_ck320`, `0x8b4[6]`) restored RX (0 dead, median ~130); skipping `_lna_setting`
-or `_stop_3_wire` did not. So toggling the 320 MHz BB clock during the cal is the destabilizer.
-`dc_ck320.py`: a 2 ms settle delay around the toggle did NOT rescue it (still erratic, 1 dead) — it's
-the clock-restart transient itself, not a missing wait. Ruled out earlier this session, all with
-controlled hardware A/Bs: the DC-comp output, LNA port (byte-faithful), 3-wire, IGI, RF/MAC config,
-reader ordering, BT-coex (held constant across the dc_ab arms), interrupts (empty), C2H/skipped comm
-(none), CCK value handling. Fix: stop calling `_dc_cancellation` in `phy_init_haldm` (its comp is
-unneeded here; skipping raises the beacon rate on both bands). Validated end-to-end: `bringup_hop.py`
-8/8 GOOD, 2.4 GHz ~220–350 + 5 GHz ~200–344 beacons/12 s. verify_pcap now diverges at op 7536 (first
-cal op) — intentional, hardware-driven deviation (user OK'd dropping the byte-gate for the root fix).
+### 2026-06-24 — power-seq LDO settle
 
-### 2026-06-24 (cont'd 5) — both bands fixed by skipping the cal; LNA gain (RF 0x3f) localized
+`pwrseq._run_table` treated `_CMD_DELAY` as a no-op, dropping the 1 ms LDO settle `CARDEMU_TO_ACT`
+carries after the `0x20[0]=1` power enable (vendor `halmac_common_88xx.c:3078`). A sleep emits no
+wire op, so the byte-gate never saw it missing. A real fix (the vendor does it), but NOT the
+coin-toss cure — that was dc_cancellation.
 
-`dc_ab.py` extended to measure both bands (5 GHz then ch1 after a band switch): skipping
-`_dc_cancellation` fixes BOTH — 2.4 GHz goes 6/9 dead (median 0) → 0/9 dead (median 133), 5 GHz
-median 33 → 121. So the cal is the dominant RX killer, not just a 5 GHz thing, and NOT the 2.4 GHz
-cal's "purpose" (skipping helps 2.4 GHz, doesn't hurt it). `dc_restore.py` dumped the regs the cal
-disturbs-and-should-restore, normal vs skip: only **RF 0x3f (LNA gain) = 0x281d vs operational
-0x1f9d** stands out. BUT (corrected) that's a dead end: the byte-gate is green, so the vendor writes
-the same 0x3f=0x281d via the same ops and has steady RX — no register VALUE the cal leaves can be the
-differentiator. So the mechanism is NOT a register value; it's in the gate's blind spot (sub-op
-timing / analog settling of the LNA + 3-wire + ck320 stop/restart). Fix = skip/gate-off the cal
-(hardware-proven; needs a verify_pcap exception). Did NOT commit a fix — byte-gate tension + design
-call. Confidence: cal=cause HIGH; specific register mechanism LOW (every value matches the vendor).
+### 2026-06-23 — first 2.4 GHz light + RSSI
 
-### 2026-06-24 (cont'd 4) — METRIC MOVED: running dm._dc_cancellation destabilizes 5 GHz RX
-
-The first lead in 7 sessions that moved the metric. `dead_frontend.py` proved the 5 GHz dead state
-is analog (RF synth/PLL `RF18/ca/b0/b8` + MAC RX path byte-identical good-vs-dead; dead = OFDM-FA
-flood to `0x7057` + `RXFF_PTR=0`). `reader_ab.py` ruled out reader-start ordering (during 1/6 vs
-quiet 2/6 dead — and "quiet" delivers fine, so the "start reader before RX-enable or the pipe
-wedges" note is also unreliable). Then `dc_ab.py` (order-controlled A/B, real driver): with
-`_dc_cancellation` SKIPPED, 5 GHz is consistently good (0/10 dead, tight 82–173 beacons); run
-normally, 5 GHz is erratic (low tail 0–40, 1 dead) — same card, interleaved. Disabling only the comp
-output (`0xa9c[20]=0`) does NOT recover it, so it's the cal's analog disturbance (LNA off/on, 3-wire
-+ ck320 stop/restart, IGI→0x7e), not the written 0xc10/0xc14. Corrected my own premature "DC ruled
-out (cont'd 3)" — that was output-only; running the cal is implicated. NEXT: test 2.4 GHz/CCK impact
-of skipping (don't break its real purpose), then a band-aware / robustified fix (NOT a delete —
-breaks the byte-gate + vendor-faithfulness).
-
-### 2026-06-24 (cont'd 3) — eliminations: DC, IQK, timing all OUT; coin toss is 5 GHz + analog
-
-Re-grounded the whole hunt against the pcap + live silicon (card recovers without replug — the
-"wedged" claim was wrong). New tools: `airmon_rx_onset.py` (work backwards from the first RX frame +
-inter-op gap scan), `cold_divergence.py` (drive the REAL driver on silicon, compare every read/write
-to the capture op-by-op with tolerant resync, label GOOD/DEAD, diff), `bringup_hop.py` (continuous
-dual-band hop like the app, with DC telemetry), `rf18_latch.py`.
-
-Killed three leads with data: **DC cancellation** — `0xc10`/`0xc14` byte-identical on a 346-frame
-GOOD and a 0-frame DEAD launch (the staged "diff the DC values" probe finally ran; they don't track
-RX). The `stop_ic_trx` delay+fail-abort port (vendor `ODM_delay_ms(1)`/`PHYDM_SET_FAIL`) is real but
-INERT here — `stop_fail=0` every launch, BB always idles — so it was reverted, not committed.
-**IQK** — `bNeedIQK` zero-init, set only on link/AP/TDLS/sreset/MCC; never in monitor; vendor runs
-no IQK either. (The "FW-offloaded IQK" doc is the 8822bu's, a different chip — it kept corrupting the
-IQK question.) **Timing** — kernel init has ~no inter-op waits (24 gaps ≥0.3 ms, all explained); we
-fire no faster than it. **vs-capture divergences** — ~36, consistent, all on GOOD launches =
-card-identity (GPIO/RFE/coex/version + live DC); benign, not the bug.
-
-Net: the 5 GHz coin toss is NOT in the digital read/write trace (good-vs-dead identical bar
-`RXFF_PTR`/IGI) and NOT timing — it's an analog front-end bring-up that varies per boot. Next:
-reproduce DEAD 5 GHz launches and instrument the front-end on them (PLL/synth lock, AGC/IGI, RX
-gain); pursue the RF-0x18-tune-region separator `cold_divergence.py` flagged on its 1 DEAD sample.
-
-### 2026-06-24 (cont'd 2) — the live DC-cancellation suspect; IQK status corrected
-
-Chasing the "analog" conclusion: searched the vendor for the RF cal it runs that we don't.
-**Correction — IQK is NOT disabled** (an earlier draft of this entry wrongly claimed it was). The
-comment at `rtl8821c_phy.c:807` (`/*phy_iq_calibrate_8821c(...)*/`) is a vestigial refactor; the LIVE
-call is `:808 rtw_phydm_iqk_trigger(adapter)` → `halrf_segment_iqk_trigger` (host-side, 8821C). It
-fires inside the channel-set path gated on `bNeedIQK` (`HW_VAR_DO_IQK`). BUT `verify_pcap` passes
-byte-exact through cold + 65 hops with no host-side IQK, and the `HW_VAR_DO_IQK` set-sites are
-link/AP/TDLS/MCC/sreset/CAC-finish events — not plain monitor channel hops — so the captured monitor
-session never triggered IQK. Open question: does init / the first channel-set set `bNeedIQK` (which a
-cold capture might not show), i.e. does our truly-cold boot skip a one-time IQK the chip needs? Trace
-the airmon/`rtw_hal_init` path for a `DO_IQK` before the first `set_channel_bwmode`. So IQK is a live
-SECONDARY suspect, not ruled out. LCK (LC/VCO tank, `halrf_8821c.c:332`; lock-progress bit
-`RF0x18[15]`, AACK busy bit `RF0xca[12]`) is not in the captured cold/hop path → periodic cal, not
-the cold divergence; its lock bits are cal-in-progress flags, not a passive lock-detect.
-
-The one per-boot-variable analog cal we DO run is `dm._dc_cancellation`: it measures a live DC offset
-off the BB dbg port (TRX stopped, LNA off) and writes the path-A I/Q compensation to `0xc10`/`0xc14`.
-A corrupted measurement (e.g. raced by the RX reader thread, which runs during cold_bringup) → wrong
-compensation → DC-saturated ADC → demod sees garbage → RX dead, per boot. Invisible to `verify_pcap`
-(the replay feeds back the captured measured value, so the gate can't see a bad LIVE one). Probe is
-staged in `bringup_cointoss.py` (`0xc10`/`0xc14`/`0xa9c`/`0xc1c` in the dump) but couldn't run — the
-card re-entered the degraded all-dead state (~40 soft re-inits this session). NEXT, on a fresh card:
-(1) diff `0xc10`/`0xc14` good-vs-dead — if they differ, the DC cal is it; (2) test `bringup_timing.py
-quiet` (no RX reader during init) — if quiet stabilizes RX, the reader is racing the DC measurement.
-
-### 2026-06-24 (cont'd) — the DELAY fix is NOT the cure; RX is chip-side flaky
-
-Fresh-plug validation: honoring the power-seq DELAY did not collapse the dead-rate. `bringup_bands.py`
-(count ch1 then tune ch36 and count, per launch) shows why the earlier ch1-parked loops misled —
-they conflated "2.4 GHz/RF18 dead" with "bring-up dead". Real picture: RX delivery is flaky
-per-launch AND per-band AND across band switches (e.g. ch1 GOOD → ch36 dead after the switch; ch1
-dead → ch36 GOOD; both-dead; both-good — all seen in 6 launches). Dead = `RXFF_PTR` stuck at 0 (the
-chip's RX FIFO is not filling) with the PHY demod running (FA counters tick) and byte-identical MAC
-config — so it is chip-side PHY/MAC RX, NOT the USB bulk-IN pipe (a pipe stall would still advance
-RXFF_PTR) and NOT a MAC register. The register diff was then WIDENED to the RX-enable / TRX-stop BB
-state (0x808 CCK-block, 0x838 OFDM-RX-CCA, 0xa04, 0x520, 0xc00, 0x900) — also byte-identical
-good-vs-dead, so `dm.stop_ic_trx`'s revert is fine and the RX block is enabled in dead launches too.
-Conclusion: across a launch doing ~78 frames/s and one doing 0, the ENTIRE register state is
-identical; only RXFF_PTR (a consequence) and IGI (DIG) differ. A digital-config bug is ruled out —
-this is ANALOG: the demod runs but can't lock onto real packets = an uncalibrated RX front-end. The
-vendor runs IQK / RX gain-DC cal (init + around channel-set); this port implements none (`dm.py`
-notes IQK is "triggered later" — but nothing triggers it). The DELAY fix stays (a real, correct fix —
-the vendor does that delay) but is not the cure. Next: port the 8821C RX calibration (large; needs a
-replug-friendly rig — the card degrades after ~8 soft re-inits, which confounds loop testing).
-
-### 2026-06-24 — bring-up coin toss: the power-seq DELAY was a no-op
-
-Bring-up RX was a coin toss — ~80%+ of cold boots came up dead on BOTH bands (a fresh plug too, per
-the user), control path fully alive (registers read, FA counters tick) but the RX FIFO never filled.
-`bringup_cointoss.py` reproduced it headlessly (e.g. 2 GOOD / 10 DEAD) and gave the decisive clue:
-the RX-path register dump is IDENTICAL between good and dead launches (CR=0x6ff, RCR=0x90000001,
-RXDMA_STATUS=0, filters all the same). Identical config + different outcome = a timing race, not a
-missed register — which is why a "faithful" port that passes `verify_pcap` still failed.
-
-The seam: the byte-gate matches the op SEQUENCE but is blind to delays between ops. Auditing the
-bring-up for waits that emit no register op found it — `pwrseq._run_table` treated `_CMD_DELAY` as a
-no-op ("replay strips it"), but `CARDEMU_TO_ACT` carries a 1 ms DELAY: the LDO settle after the
-0x20[0]=1 power enable. Skip it → proceed before the rail settles → power-on lands marginal at
-random. Vendor honors it at `halmac_common_88xx.c:3078` (`PLTFM_DELAY_US`). Fix: sleep offset us/ms;
-gate stays green (a sleep is no op on the wire).
-
-NOT HW-validated yet: by the time the bug was found the test card had degraded past its
-~8-soft-reinit replug threshold (I was at ~34), so every launch was dead regardless and a 20 s rest
-between boots didn't recover it. A fresh-plug `bringup_cointoss.py` run is owed. FW-download polls +
-BB/AGC/RF tables were checked for other skipped delays — none. The degrade-after-N-boots behaviour
-is a separate, still-open issue (likely its own missing reset on soft re-init).
-
-### 2026-06-23 — 2.4 GHz RX root cause
-
-The cold-boot pcap reproduces byte-for-byte, but on hardware 2.4 GHz RX was dead while 5 GHz
-worked. `band_state_probe.py` (cold ch1 → 5 GHz → ch1) pinned it to RF18 bit16, perfectly
-correlated with CRC failure across every run. The cold tune runs before RX-enable and the antenna
-switch, and leaves the bit stuck set; the channel-switch path only ever clears BIT18/17 and byte0.
-The fix replaced an earlier flaky 5 GHz-bounce (`_prime_2g_rx`) with a deterministic,
-read-back-verified warm clear. Same session: RSSI had been decoding with a Jaguar-1 borrow;
-switched to the real jgr2 format and it now reads sane (−60 to −84 dBm).
-
-Not re-verified after the test card degraded (~8 cold boots without a replug, RF18 writes started
-intermittently failing): fresh-plug 2.4 GHz revival, whether the phydm DIG watchdog sagging IGI
-hurts beacon rate, and reader-vs-init USB ordering.
+Cold boot reproduced byte-for-byte but 2.4 GHz RX was dead while 5 GHz worked — pinned to RF18 bit16
+(perfectly correlated with CRC failure). Same session: RSSI had been decoding with a Jaguar-1 borrow;
+switched to the real jgr2 format and it reads sane (−60 to −84 dBm).
