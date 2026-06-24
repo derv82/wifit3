@@ -41,6 +41,8 @@ _REGS = [
     # RX-enable / TRX-stop state (dm.stop_ic_trx disables these on a tune and must revert them):
     (0x0808, 4, "R808_cck_rxpath"), (0x0838, 4, "R838_ofdm_cca"), (0x0A04, 4, "Ra04_ccktx"),
     (0x0520, 4, "R520_txpause"), (0x0C00, 4, "Rc00_3wireA"), (0x0900, 4, "R900_ofdm_trx"),
+    # DC-offset cancellation result (dm._dc_cancellation measures live + writes these per boot):
+    (0x0C10, 4, "Rc10_dcI"), (0x0C14, 4, "Rc14_dcQ"), (0x0A9C, 4, "Ra9c_dcen"), (0x0C1C, 4, "Rc1c_swing"),
 ]
 
 

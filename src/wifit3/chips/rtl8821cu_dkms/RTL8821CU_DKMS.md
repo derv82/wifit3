@@ -13,8 +13,12 @@ other drivers.
   dead state is CHIP-SIDE RX: the RX FIFO never fills (`RXFF_PTR=0`) though the PHY demod runs (FA
   counters tick) and the MAC config is byte-identical to good launches. It hits BOTH bands, varies
   per launch AND flips across band switches (ch1 alive → ch36 dead after the switch, and vice-versa).
-  Leading hypothesis: **missing RX calibration (IQK / RX gain-DC)** — the vendor runs it at init and
-  around channel changes; this port implements none. Unconfirmed. See debug log.
+  Leading hypothesis: the **live DC-offset cancellation** (`dm._dc_cancellation`, which measures a DC
+  offset off the BB dbg port each boot and writes `0xc10`/`0xc14`) is mis-measuring per boot →
+  DC-saturated ADC → demod garbage. Invisible to `verify_pcap` (the replay feeds back the *captured*
+  measured value). **IQK is NOT it** — the vendor has it commented out (`rtl8821c_phy.c:807`), and
+  LCK isn't in the captured cold/hop path. Probe (ready in `bringup_cointoss.py`): diff `0xc10`/`0xc14`
+  good-vs-dead on a fresh card; if they differ, the DC cal is the culprit. Unconfirmed. See debug log.
 - 5 GHz / 2.4 GHz monitor RX: works *when RX comes up alive*; the flakiness gates everything, so
   earlier per-band findings were confounded by which launches happened to be alive. NB: an earlier
   ch1-parked diagnostic conflated "2.4 GHz/RF18 dead" with "bring-up dead" — use `bringup_bands.py`.
@@ -65,6 +69,25 @@ Names match the vendor C, so grep the bundle's `driver-source/` to cross-referen
 - `driver_rx_diag.py` — re-run after a fresh plug to confirm 2.4 GHz comes back.
 
 ## Debug log
+
+### 2026-06-24 (cont'd 2) — IQK ruled out; the live DC-cancellation is the new suspect
+
+Chasing the "analog" conclusion: searched the vendor for the RF cal it runs that we don't.
+**IQK is a dead end** — `rtl8821c_phy.c:807` has it commented out (`/*phy_iq_calibrate_8821c(...)*/`),
+so the vendor 8821C driver runs no IQK; porting it would have been a wasted mountain. LCK (LC/VCO
+tank, `halrf_8821c.c:332`; lock-progress bit `RF0x18[15]`, AACK busy bit `RF0xca[12]`) isn't in the
+captured cold path or the 65 hops (`verify_pcap` passes without it), so it's a periodic cal, not the
+cold-boot divergence — and its lock bits are cal-in-progress flags, not a passive lock-detect.
+
+The one per-boot-variable analog cal we DO run is `dm._dc_cancellation`: it measures a live DC offset
+off the BB dbg port (TRX stopped, LNA off) and writes the path-A I/Q compensation to `0xc10`/`0xc14`.
+A corrupted measurement (e.g. raced by the RX reader thread, which runs during cold_bringup) → wrong
+compensation → DC-saturated ADC → demod sees garbage → RX dead, per boot. Invisible to `verify_pcap`
+(the replay feeds back the captured measured value, so the gate can't see a bad LIVE one). Probe is
+staged in `bringup_cointoss.py` (`0xc10`/`0xc14`/`0xa9c`/`0xc1c` in the dump) but couldn't run — the
+card re-entered the degraded all-dead state (~40 soft re-inits this session). NEXT, on a fresh card:
+(1) diff `0xc10`/`0xc14` good-vs-dead — if they differ, the DC cal is it; (2) test `bringup_timing.py
+quiet` (no RX reader during init) — if quiet stabilizes RX, the reader is racing the DC measurement.
 
 ### 2026-06-24 (cont'd) — the DELAY fix is NOT the cure; RX is chip-side flaky
 
