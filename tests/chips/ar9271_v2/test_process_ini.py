@@ -45,12 +45,12 @@ def test_process_ini_write_order():
     assert w[0] == (R.AR_PHY(0), 0x07)
     assert w[1] == (R.AR_PHY_ADC_SERIAL_CTL, R.AR_PHY_SEL_EXTERNAL_RADIO)
     assert w[2] == (R.AR_PHY_ADC_SERIAL_CTL, R.AR_PHY_SEL_INTERNAL_ADDAC)
-    # Then iniModes(col4) + normal txgain(col4) + iniCommon(col1), in that order.
-    body = w[3:]
+    # Then iniModes(col4) + normal txgain(col4) + iniCommon(col1), in that order
+    # (override_ini / set_channel_regs writes follow).
     expected = ([(r[0], r[4]) for r in I.MODES_9271]
                 + [(r[0], r[4]) for r in I.MODES_NORMAL_POWER_TX_GAIN_9271]
                 + [(r[0], r[1]) for r in I.COMMON_9271])
-    assert body == expected
+    assert w[3:3 + len(expected)] == expected
 
 
 def test_process_ini_high_power_selects_high_table():

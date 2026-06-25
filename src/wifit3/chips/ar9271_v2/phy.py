@@ -46,6 +46,34 @@ def process_ini(hw: AthHw, chan: Channel) -> None:
 
     _write_ini_array(hw, I.COMMON_9271, 1)               # iniCommon (325 rows)
 
+    override_ini(hw, chan)
+    set_channel_regs(hw, chan)
+
+
+def override_ini(hw: AthHw, chan: Channel) -> None:
+    """ar5008_hw_override_ini [SRC] ar5008_phy.c:653 — block RX during the change, then drop
+    the adhoc multicast-key search and ignore CFP. For 9280+ it returns right after."""
+    hw.rmw(R.AR_DIAG_SW, R.AR_DIAG_RX_DIS | R.AR_DIAG_RX_ABORT, 0)   # REG_SET_BIT
+    val = hw.read(R.AR_PCU_MISC_MODE2) & ~R.AR_ADHOC_MCAST_KEYID_ENABLE
+    # !AR_SREV_9271 would clear HWWAR1 — skipped here (this is a 9271).
+    val |= R.AR_PCU_MISC_MODE2_CFP_IGNORE
+    hw.write(R.AR_PCU_MISC_MODE2, val)
+
+
+def set_channel_regs(hw: AthHw, chan: Channel) -> None:
+    """ar5008_hw_set_channel_regs [SRC] ar5008_phy.c:678 — the per-channel PHY config: 11n
+    flags (20 MHz here), the 20/40 MAC mode, and the global TX / carrier-sense timeouts."""
+    enable_dac_fifo = hw.read(R.AR_PHY_TURBO) & R.AR_PHY_FC_ENABLE_DAC_FIFO   # 9285_12+
+    phymode = (R.AR_PHY_FC_HT_EN | R.AR_PHY_FC_SHORT_GI_40
+               | R.AR_PHY_FC_SINGLE_HT_LTF1 | R.AR_PHY_FC_WALSH | enable_dac_fifo)
+    # HT40 would add DYN2040 bits; monitor runs 20 MHz.
+    hw.enable_write_buffer()
+    hw.write(R.AR_PHY_TURBO, phymode)
+    hw.write(R.AR_2040_MODE, 0)                          # set11nmac2040 (20 MHz -> 0)
+    hw.write(R.AR_GTXTO, 25 << R.AR_GTXTO_TIMEOUT_LIMIT_S)
+    hw.write(R.AR_CST, 0xF << R.AR_CST_TIMEOUT_LIMIT_S)
+    hw.write_flush()
+
 
 def compute_pll_control(ah: AthHw, chan: Channel | None) -> int:
     """ar9002_hw_compute_pll_control [SRC] ar9002_phy.c — for the AR9271 (2.4 GHz, no fast

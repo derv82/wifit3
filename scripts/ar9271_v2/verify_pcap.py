@@ -207,6 +207,9 @@ def run(cap: str | None = None) -> int:
         elif w.i == 389:
             print("  M2d-3 OK: + process_ini initvals (iniModes + txgain + iniCommon) matched; "
                   "frontier is override_ini / set_channel_regs.")
+        elif w.i == 394:
+            print("  M2d-4 OK: + override_ini & set_channel_regs (20 MHz) matched; frontier is "
+                  "init_chain_masks / RF banks.")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")
