@@ -1,0 +1,32 @@
+# Card health check — wifit3 vs Linux
+
+Two scripts compare our userland driver against the Linux/Kali stack on the **same card,
+back-to-back**, so a difference is the driver or the RF — never the test tooling. Run on Kali.
+
+## Scripts
+- `baseline-wifit3.py` — bring up our driver, sweep the channels, write `wifit3-<chip>.csv`.
+- `baseline-linux.py` — `airmon-ng`/`iw` to monitor + lock channel, `tcpdump -w` per channel,
+  `aireplay-ng` for injection; write `linux-<chip>.csv`.
+
+Fixed filenames, no timestamps — re-running a card overwrites its file, so nothing goes stale.
+
+## Rules
+- **One parser, both sides.** `WlanFrameParser.parse_80211_frame()` takes raw bytes.
+  `baseline-linux.py` reads the pcap itself: skip the radiotap header (RSSI is in it), hand the
+  802.11 to the same parser. No tshark — same parser both sides means a gap is the driver/RF.
+- **`tcpdump`, not airodump** — airodump dedups beacons to one per AP and drops radiotap.
+- **Reference AP pinned by BSSID.** If it isn't on the expected channel, that run is invalid
+  (don't score a zero) — the test router hops channels.
+- The comparison **prints to the terminal** in plain sentences. No report file; the two CSVs
+  are the only thing written.
+
+## What it measures, per card
+Each line reads `value | gap from Linux | gap from the best card so far`:
+- **Breadth** — access points heard, 2.4 and 5 GHz separately.
+- **Beacon rate** — beacons/sec from the reference AP.
+- **RSSI** — per-BSSID against Linux. Same card, so a consistent gap is a decode bug.
+- **Channel tune** — `N/N channels heard their own beacons | silent | cross-channel`.
+- **Injection** — IVs/sec (WEP replay) and deauth landed. You run these (aireplay).
+
+Per-channel numbers stay in the CSV; the terminal shows the rollup. "Best card" is just the max
+across the CSVs collected so far — no matrix, no letter grades.
