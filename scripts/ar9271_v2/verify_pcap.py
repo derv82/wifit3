@@ -42,7 +42,7 @@ CAP_DIR = REPO / "usb_dumps_new" / "captures_ath9k_htc_newddevice"
 
 _IMPORT_ERR = None
 try:
-    from wifit3.chips.ar9271_v2 import ani, chan as chanmod, constants as C, eeprom, firmware, htc, hw, key, phy, reg as R  # noqa: E402
+    from wifit3.chips.ar9271_v2 import ani, chan as chanmod, constants as C, eeprom, firmware, gpio, htc, hw, key, phy, reg as R  # noqa: E402
     from wifit3.chips.ar9271_v2.wmi import WMI               # noqa: E402
     from wifit3.chips.ar9271_v2.transport import AR9271Transport  # noqa: E402
 except ImportError as e:                                  # driver not scaffolded yet
@@ -116,6 +116,9 @@ def _walk_init(w: Walk) -> None:
     w.chan = chanmod.channel_2ghz(1)
     w.run(lambda t: w.hw.set_reset_reg(R.ATH9K_RESET_COLD), "chip-reset-cold")
     w.run(lambda t: w.hw.init_pll(w.chan), "init-pll")
+    w.run(lambda t: gpio.led_init(w.hw), "led-gpio")
+    from wifit3.chips.ar9271_v2.wmi import WMI_FLUSH_RECV_CMDID
+    w.run(lambda t: w.wmi.cmd(WMI_FLUSH_RECV_CMDID, b""), "flush-recv")
 
 
 def run(cap: str | None = None) -> int:
@@ -180,6 +183,9 @@ def run(cap: str | None = None) -> int:
                   "frontier is init_pll (channel-aware).")
         elif w.i == 347:
             print("  M2c-4 OK: + channel model & init_pll matched; frontier is GPIO config.")
+        elif w.i == 351:
+            print("  M2c-5 OK: + LED GPIO config & WMI_FLUSH_RECV matched; frontier is "
+                  "ath9k_hw_reset (DEF_ANTENNA read).")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")
