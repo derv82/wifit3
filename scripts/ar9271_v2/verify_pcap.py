@@ -42,7 +42,7 @@ CAP_DIR = REPO / "usb_dumps_new" / "captures_ath9k_htc_newddevice"
 
 _IMPORT_ERR = None
 try:
-    from wifit3.chips.ar9271_v2 import ani, constants as C, eeprom, firmware, htc, hw, key, phy  # noqa: E402
+    from wifit3.chips.ar9271_v2 import ani, constants as C, eeprom, firmware, htc, hw, key, phy, reg as R  # noqa: E402
     from wifit3.chips.ar9271_v2.wmi import WMI               # noqa: E402
     from wifit3.chips.ar9271_v2.transport import AR9271Transport  # noqa: E402
 except ImportError as e:                                  # driver not scaffolded yet
@@ -109,6 +109,10 @@ def _walk_init(w: Walk) -> None:
     w.run(lambda t: eeprom.init(w.hw), "eeprom")
     w.run(lambda t: ani.ani_init(w.hw), "ani-init")
     w.run(lambda t: key.init_crypto(w.hw), "key-cache-clear")
+    w.run(lambda t: w.wmi.get_fw_version(), "get-fw-version")
+    # ath9k_htc_start's wake path: a COLD chip reset (chip was FULL_SLEEPed after probe).
+    # init_pll + GPIO config + the channel-aware ath9k_hw_reset follow with M3.
+    w.run(lambda t: w.hw.set_reset_reg(R.ATH9K_RESET_COLD), "chip-reset-cold")
 
 
 def run(cap: str | None = None) -> int:
@@ -168,6 +172,9 @@ def run(cap: str | None = None) -> int:
             print("  M2c-1 OK: + ANI init (PHY-error + MIB counters) matched.")
         elif w.i == 337:
             print("  M2c-2 OK: + key-cache clear (128 entries) matched.")
+        elif w.i == 344:
+            print("  M2c-3 OK: + WMI_GET_FW_VERSION & htc-start COLD chip reset matched; "
+                  "frontier is init_pll (channel-aware).")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")
