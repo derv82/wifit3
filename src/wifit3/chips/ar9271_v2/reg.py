@@ -165,6 +165,27 @@ AR_AN_TOP2 = 0x7894                     # [SRC] reg.h:1457
 AR_AN_TOP2_PWDCLKIND = 0x00400000
 AR5416_EEP_TXGAIN_HIGH_POWER = 1        # [SRC] eeprom.h:174 (0 = original/normal)
 
+# ---- process_ini override + per-channel regs [SRC] ar5008_phy.c:653-734 ----
+AR_DIAG_SW = 0x8048                     # [SRC] reg.h:1689
+AR_DIAG_RX_DIS = 0x00000020
+AR_DIAG_RX_ABORT = 0x02000000
+AR_PCU_MISC_MODE2 = 0x8344             # [SRC] reg.h:2041
+AR_PCU_MISC_MODE2_CFP_IGNORE = 0x00000080
+AR_PCU_MISC_MODE2_HWWAR1 = 0x00100000
+AR_ADHOC_MCAST_KEYID_ENABLE = 0x00000040
+AR_PHY_TURBO = 0x9804                   # [SRC] ar9002_phy.h:23
+AR_PHY_FC_HT_EN = 0x00000040
+AR_PHY_FC_SHORT_GI_40 = 0x00000080
+AR_PHY_FC_WALSH = 0x00000100
+AR_PHY_FC_SINGLE_HT_LTF1 = 0x00000200
+AR_PHY_FC_ENABLE_DAC_FIFO = 0x00000800
+AR_2040_MODE = 0x8318                   # [SRC] reg.h:2027
+AR_2040_JOINED_RX_CLEAR = 0x00000001
+AR_GTXTO = 0x0064                       # [SRC] reg.h:160
+AR_GTXTO_TIMEOUT_LIMIT_S = 16
+AR_CST = 0x006c                         # [SRC] reg.h:171
+AR_CST_TIMEOUT_LIMIT_S = 16
+
 # ---- PLL / clock [SRC] reg.h:1334-1400 -------------------------------------
 AR_RTC_PLL_CONTROL = 0x7014            # non-9100/soc
 AR_RTC_9160_PLL_DIV = 0x000003ff
