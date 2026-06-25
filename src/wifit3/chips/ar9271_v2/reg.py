@@ -474,3 +474,18 @@ AR_PHY_FIND_SIG = 0x9858
 AR_PHY_FIND_SIG_LOW = 0x9840
 AR_PHY_TIMING5 = 0x9924
 AR_PHY_EXT_CCA = 0x99BC
+
+# ---- init_global_settings (MAC timing) [SRC] hw.c:1051 + reg.h --------------
+ATH9K_CLOCK_RATE_2GHZ_OFDM = 44         # [SRC] hw.h:1227
+AR_PCU_MISC = 0x8120                    # [SRC] reg.h:1829
+AR_PCU_MIC_NEW_LOC_ENA = 0x00000004
+AR_D_GBL_IFS_SIFS = 0x1030              # [SRC] reg.h:609
+AR_D_GBL_IFS_SLOT = 0x1070
+AR_D_GBL_IFS_EIFS = 0x10B0
+AR_TIME_OUT = 0x8014                    # [SRC] reg.h:1646
+AR_TIME_OUT_ACK = 0x00003FFF
+AR_TIME_OUT_CTS = 0x3FFF0000
+AR_USEC = 0x801C                        # [SRC] reg.h:1660
+AR_USEC_USEC = 0x0000007F
+AR_USEC_TX_LAT = 0x007FC000
+AR_USEC_RX_LAT = 0x1F800000

@@ -143,6 +143,7 @@ def _walk_init(w: Walk) -> None:
     w.run(lambda t: w.hw.init_interrupt_masks(), "init-interrupt-masks")
     w.run(lambda t: w.hw.ani_cache_ini_regs(), "ani-cache-ini-regs")
     w.run(lambda t: w.hw.init_qos(), "init-qos")
+    w.run(lambda t: w.hw.init_global_settings(w.chan), "init-global-settings")
 
 
 def run(cap: str | None = None) -> int:
@@ -249,6 +250,9 @@ def run(cap: str | None = None) -> int:
         elif w.i == 450:
             print("  M2e-6 OK: + init_interrupt_masks, ani_cache_ini_regs, init_qos matched; "
                   "frontier is init_global_settings / PCU.")
+        elif w.i == 459:
+            print("  M2e-7 OK: + init_global_settings (SIFS/slot/ACK/CTS/EIFS/USEC timing) "
+                  "matched; frontier is STA_ID1 PRESERVE_SEQNUM / set_dma.")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")
