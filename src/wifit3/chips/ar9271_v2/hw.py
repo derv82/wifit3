@@ -275,6 +275,18 @@ class AthHw:
         if self.is_9280_20_or_later():
             self.rmw(R.AR_GPIO_INPUT_EN_VAL, R.AR_GPIO_JTAG_DISABLE, 0)
 
+    def init_mfp(self) -> None:
+        """ath9k_hw_init_mfp [SRC] hw.c — CCMP management-frame protection. On 9280_20+ mask
+        Retry/PwrMgt/MoreData out of the CCMP AAD; the 9271 also does mgmt-crypto TX in sw."""
+        if self.is_9280_20_or_later():
+            self.rmw_field(R.AR_AES_MUTE_MASK1, R.AR_AES_MUTE_MASK1_FC_MGMT,
+                           R.AR_AES_MUTE_MASK1_FC_MGMT_VAL)
+            self.sw_mgmt_crypto_tx = self.is_9271()       # AR_DEVID_7010 never matches here
+            self.sw_mgmt_crypto_rx = False
+        else:                                             # untested (pre-9280 silicon)
+            self.sw_mgmt_crypto_tx = True
+            self.sw_mgmt_crypto_rx = True
+
 
 def init_reset(wmi: WMI) -> AthHw:
     """The opening of __ath9k_hw_init: read the silicon revision, power-on reset the chip, wake

@@ -269,3 +269,24 @@ def CTL_EDGE_TPOWER(ctl: int) -> int:       # [SRC] eeprom.h:217
     return ctl & 0x3f
 def CTL_EDGE_FLAGS(ctl: int) -> int:        # [SRC] eeprom.h:218
     return (ctl >> 6) & 0x03
+
+# ---- reset tail: rfmode / mfp / delta-slope / spur [SRC] ar5008_phy.c + hw.c -
+AR_PHY_MODE = 0xA200                    # [SRC] ar9002_phy.h:401
+AR_PHY_MODE_DYNAMIC = 0x04
+AR_PHY_MODE_OFDM = 0x00
+AR_PHY_MODE_RF2GHZ = 0x02
+AR_AES_MUTE_MASK1 = 0x8060              # [SRC] reg.h:2072
+AR_AES_MUTE_MASK1_FC_MGMT = 0xFFFF0000
+AR_AES_MUTE_MASK1_FC_MGMT_VAL = 0xc7ff  # [SRC] hw.c init_mfp
+COEF_SCALE_S = 24                       # [SRC] hw.h:166
+AR_PHY_TIMING3 = 0x9814                 # [SRC] ar9002_phy.h:40
+AR_PHY_TIMING3_DSC_MAN = 0xFFFE0000
+AR_PHY_TIMING3_DSC_EXP = 0x0001E000
+AR_PHY_HALFGI = 0x99D0                  # [SRC] ar9002_phy.h:360
+AR_PHY_HALFGI_DSC_MAN = 0x0007FFF0
+AR_PHY_HALFGI_DSC_EXP = 0x0000000F
+AR_PHY_FORCE_CLKEN_CCK = 0xA22C         # [SRC] ar9002_phy.h:453
+AR_PHY_FORCE_CLKEN_CCK_MRC_MUX = 0x00000040
+AR_NO_SPUR = 0x8000                     # [SRC] hw.h:313
+AR_BASE_FREQ_2GHZ = 2300                # [SRC] hw.h:314
+AR_SPUR_FEEQ_BOUND_HT20 = 10            # [SRC] hw.h:317

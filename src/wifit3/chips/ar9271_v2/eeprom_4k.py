@@ -28,6 +28,7 @@ _CALTARGET_2G = 198                   # 3 x cal_target_power_leg (5B)
 _CALTARGET_2GHT20 = 213               # 3 x cal_target_power_ht (9B)
 _CTLINDEX = 267                       # ctlIndex[12]
 _CTLDATA = 279                        # 12 x cal_ctl_data_4k (1 chain x 4 edges x 2B = 8B)
+_SPURCHANS = _MODAL + 48              # modalHeader.spurChans[5], spur_chan = 4B each
 
 
 @dataclass
@@ -131,3 +132,7 @@ class Map4k:
         base = _CTLDATA + i * 8
         return [(self._u8(base + 2 * k), self._u8(base + 2 * k + 1))
                 for k in range(R.AR5416_EEP4K_NUM_BAND_EDGES)]
+
+    def get_spur_channel(self, i: int) -> int:
+        """modalHeader.spurChans[i].spurChan (__le16) [SRC] eeprom_4k.c get_spur_channel."""
+        return self._le16(_SPURCHANS + i * 4)
