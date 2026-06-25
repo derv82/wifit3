@@ -4,9 +4,11 @@ Two scripts compare our userland driver against the Linux/Kali stack on the **sa
 back-to-back**, so a difference is the driver or the RF — never the test tooling. Run on Kali.
 
 ## Scripts
-- `baseline-wifit3.py` — bring up our driver, sweep the channels, write `wifit3-<chip>.csv`.
-- `baseline-linux.py` — `airmon-ng`/`iw` to monitor + lock channel, `tcpdump -w` per channel,
-  `aireplay-ng` for injection; write `linux-<chip>.csv`.
+- `baseline-wifit3.py` — bring up our driver, sweep the channels, write `wifit3-<chip>.json`.
+- `baseline-linux.py` — `airmon-ng`/`iw` to monitor + lock channel, `tcpdump -w` per channel
+  (`--capture`) or read existing pcaps (`--pcap`); write `linux-<chip>.json`.
+- `driver_health.py` — shared core: both collectors call `feed(ts, parsed, rssi, channel)`, so
+  grouping is identical. It writes the JSON rollup and prints the diff.
 
 Fixed filenames, no timestamps — re-running a card overwrites its file, so nothing goes stale.
 
@@ -17,8 +19,9 @@ Fixed filenames, no timestamps — re-running a card overwrites its file, so not
 - **`tcpdump`, not airodump** — airodump dedups beacons to one per AP and drops radiotap.
 - **Reference AP pinned by BSSID.** If it isn't on the expected channel, that run is invalid
   (don't score a zero) — the test router hops channels.
-- The comparison **prints to the terminal** in plain sentences. No report file; the two CSVs
-  are the only thing written.
+- The comparison **prints to the terminal** in plain sentences — a pure function of the two
+  JSONs, so it's recomputable on demand and never stored (can't go stale). The two JSONs are
+  the only thing written.
 
 ## What it measures, per card
 Each line reads `value | gap from Linux | gap from the best card so far`:
@@ -28,5 +31,5 @@ Each line reads `value | gap from Linux | gap from the best card so far`:
 - **Channel tune** — `N/N channels heard their own beacons | silent | cross-channel`.
 - **Injection** — IVs/sec (WEP replay) and deauth landed. You run these (aireplay).
 
-Per-channel numbers stay in the CSV; the terminal shows the rollup. "Best card" is just the max
-across the CSVs collected so far — no matrix, no letter grades.
+Per-channel numbers stay in the JSON; the terminal shows the rollup. "Best card" is just the max
+across the JSONs collected so far — no matrix, no letter grades.
