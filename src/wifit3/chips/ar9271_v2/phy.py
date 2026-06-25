@@ -6,7 +6,24 @@ from ath9k_hw_post_init (not 9300+ path).
 from __future__ import annotations
 
 from . import reg as R
+from .chan import Channel
 from .hw import AthHw
+
+
+def compute_pll_control(ah: AthHw, chan: Channel | None) -> int:
+    """ar9002_hw_compute_pll_control [SRC] ar9002_phy.c — for the AR9271 (2.4 GHz, no fast
+    clock / half / quarter rate) this is the constant ref_div=5, pll_div=0x2c -> 0x142c."""
+    ref_div = 5
+    pll_div = 0x2c
+    if chan and chan.is_5ghz():          # untested here (AR9271 is 2.4 GHz only)
+        pll_div = 0x28
+    pll = R.SM(ref_div, R.AR_RTC_9160_PLL_REFDIV)
+    pll |= R.SM(pll_div, R.AR_RTC_9160_PLL_DIV)
+    if chan and chan.is_half_rate():
+        pll |= R.SM(0x1, R.AR_RTC_9160_PLL_CLKSEL)
+    elif chan and chan.is_quarter_rate():
+        pll |= R.SM(0x2, R.AR_RTC_9160_PLL_CLKSEL)
+    return pll
 
 
 def reverse_bits(val: int, n: int) -> int:
