@@ -85,6 +85,12 @@ class RT3070Driver:
         upload + the whole MAC/BBP/RFCSR init + ``enable_monitor`` and let ``connect()``
         resume — faster, and it avoids re-initialising a running radio."""
         t = self.transport
+        try:
+            if t.dev.is_kernel_driver_active(0):
+                t.dev.detach_kernel_driver(0)
+                logger.info("rt3070: detached kernel driver from interface 0")
+        except (NotImplementedError, usb.core.USBError) as e:
+            logger.debug("rt3070: kernel-driver detach skipped: %s", e)
         self._chip = mac.probe_rt(t)                              # MAC_CSR0 id/rev
         buf = eeprom.read_eeprom_efuse(t)                        # autorun + EFUSE (word offset)
         buf = eeprom.validate_eeprom(buf)                        # blank-field fix-up (no-op here)
