@@ -112,6 +112,13 @@ def spur_mitigate(hw: AthHw, chan: Channel) -> None:
         raise NotImplementedError("ar9271_v2: in-band spur mitigation not ported (unseen)")
 
 
+def init_bb(hw: AthHw, chan: Channel) -> None:
+    """ar5008_hw_init_bb [SRC] ar5008_phy.c — read the synth delay (for the post-enable wait)
+    then power the baseband on via AR_PHY_ACTIVE. The synth-delay udelay has no wire effect."""
+    hw.read(R.AR_PHY_RX_DELAY)                            # & AR_PHY_RX_DELAY_DELAY (for the wait)
+    hw.write(R.AR_PHY_ACTIVE, R.AR_PHY_ACTIVE_EN)
+
+
 def rf_set_freq(hw: AthHw, chan: Channel) -> None:
     """ar9002_hw_set_channel [SRC] ar9002_phy.c:66 — program the single-chip synthesizer. The
     AR9271 is 2.4 GHz only, so this is always the fractional 2 GHz path: seed CHANSEL_2G and
