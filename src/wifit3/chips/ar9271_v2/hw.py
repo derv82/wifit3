@@ -27,6 +27,8 @@ class AthHw:
         self.reset_power_on = False
         self.WARegVal = 0                         # 9300+ AR_WA shadow; unused on 9271
         self.phyRev = 0
+        self.analog5GhzRev = 0
+        self.eeprom = bytearray()                 # raw map4k bytes (LE u16 words), filled at post_init
 
     # ---- silicon-revision predicates [SRC] reg.h:837-928 ------------------
     def is_9271(self) -> bool:
@@ -44,6 +46,9 @@ class AthHw:
     # ---- register access (over WMI) ---------------------------------------
     def read(self, reg: int) -> int:
         return self.wmi.reg_read(reg)
+
+    def multi_read(self, addrs: list[int]) -> list[int]:
+        return self.wmi.multi_reg_read(addrs)
 
     def write(self, reg: int, val: int) -> None:
         self.wmi.reg_write(reg, val)

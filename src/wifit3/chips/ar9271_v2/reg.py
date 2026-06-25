@@ -55,7 +55,36 @@ AR_STA_ID0 = 0x8000                    # [SRC] ath/reg.h:26 (shared ath common)
 AR_STA_ID1 = 0x8004
 AR_STA_ID1_PWR_SAV = 0x00040000        # [SRC] reg.h:1621
 
-# ---- PHY -------------------------------------------------------------------
+# ---- EEPROM access (USB) [SRC] eeprom.h:66-68,177 / reg.h:1250-1256 --------
+AR5416_EEPROM_OFFSET = 0x2000          # EEPROM word window base
+AR5416_EEPROM_S = 2                    # word -> byte-address shift (<<2)
+AR_EEPROM_STATUS_DATA = 0x407c         # non-9340
+AR_EEPROM_STATUS_DATA_VAL = 0x0000ffff
+AR_EEPROM_STATUS_DATA_BUSY = 0x00010000
+AR_EEPROM_STATUS_DATA_PROT_ACCESS = 0x00040000
+
+SIZE_EEPROM_4K = 188                   # sizeof(ar5416_eeprom_4k)/2 [SRC] eeprom_4k.c:36
+AR5416_EEP4K_START_LOC = 64            # [SRC] eeprom_4k.c:56
+AR5416_EEPROM_MAGIC = 0xa55a           # [SRC] eeprom.h:36-41 (#else = little-endian host)
+AR5416_EEPROM_MAGIC_OFFSET = 0x0       # [SRC] eeprom.h:66
+AR5416_EEPMISC_BIG_ENDIAN = 0x01       # [SRC] eeprom.h:177
+AR5416_EEP_VER = 0xE                   # [SRC] eeprom.h:133
+AR5416_EEP_NO_BACK_VER = 0x1           # [SRC] eeprom.h:132
+AR5416_EEP_VER_MAJOR_SHIFT = 12        # [SRC] eeprom.h:134-136
+AR5416_EEP_VER_MAJOR_MASK = 0xF000
+AR5416_EEP_VER_MINOR_MASK = 0x0FFF
+
+# ---- radio revision (ar9002) [SRC] reg.h:1014-1018 -------------------------
+AR_RADIO_SREV_MAJOR = 0xf0
+AR_RAD5133_SREV_MAJOR = 0xc0
+AR_RAD2133_SREV_MAJOR = 0xd0
+AR_RAD5122_SREV_MAJOR = 0xe0
+AR_RAD2122_SREV_MAJOR = 0xf0
+
+# ---- PHY [SRC] phy.h:24-25,43 ----------------------------------------------
+AR_PHY_BASE = 0x9800
+def AR_PHY(n: int) -> int:             # AR_PHY(_n) = AR_PHY_BASE + (_n << 2)
+    return AR_PHY_BASE + (n << 2)
 AR_PHY_CHIP_ID = 0x9818                # [SRC] phy.h:43
 
 # ---- timing [SRC] hw.h:177-181 ---------------------------------------------
