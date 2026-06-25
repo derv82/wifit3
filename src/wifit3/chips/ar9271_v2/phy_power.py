@@ -364,3 +364,18 @@ def apply_txpower(hw: AthHw, chan: Channel) -> None:
     chan_pwr = min(_DEFAULT_CHAN_MAX_POWER * 2, _MAX_COMBINED_POWER)
     new_pwr = min(chan_pwr, _MAX_COMBINED_POWER)
     _set_txpower(hw, chan, ctl, eep.antennaGainCh0, new_pwr)
+
+
+def update_txpow(hw: AthHw, chan: Channel, new_txpow: int) -> None:
+    """ath9k_cmn_update_txpow -> ath9k_hw_set_txpowerlimit [SRC] common.c:74 / hw.c:2966.
+
+    htc-start re-applies tx power with priv->txpowlimit, which is 0 at the first start. Since
+    reg->power_limit was MAX_COMBINED_POWER (init default), the guard fires and the limit drops
+    to 0, clamping every per-rate target to 0 (-> 0x0a after the +10 table offset). The gain cfg
+    and PDADC table are limit-independent, so they reproduce identically to the reset-time
+    apply_txpower."""
+    eep = Map4k(hw.eeprom)
+    power_limit = min(new_txpow, _MAX_COMBINED_POWER)
+    chan_pwr = min(_DEFAULT_CHAN_MAX_POWER * 2, R.MAX_RATE_POWER)
+    new_pwr = min(chan_pwr, power_limit)
+    _set_txpower(hw, chan, NO_CTL, eep.antennaGainCh0, new_pwr)

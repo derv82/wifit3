@@ -149,6 +149,16 @@ def _walk_init(w: Walk) -> None:
     from wifit3.chips.ar9271_v2 import calib
     w.run(lambda t: calib.init_cal(w.hw, w.chan), "init-cal")
     w.run(lambda t: w.hw.reset_tail(), "reset-tail")
+    # ath9k_htc_start tail [SRC] htc_drv_main.c:941: re-apply tx power (priv->txpowlimit=0 at
+    # first start), then SET_MODE(11ng) / ATH_INIT / START_RECV.
+    import struct
+    from wifit3.chips.ar9271_v2 import phy_power
+    from wifit3.chips.ar9271_v2.wmi import (
+        WMI_ATH_INIT_CMDID, WMI_SET_MODE_CMDID, WMI_START_RECV_CMDID)
+    w.run(lambda t: phy_power.update_txpow(w.hw, w.chan, 0), "update-txpow")
+    w.run(lambda t: w.wmi.cmd(WMI_SET_MODE_CMDID, struct.pack(">H", 1)), "wmi-set-mode")
+    w.run(lambda t: w.wmi.cmd(WMI_ATH_INIT_CMDID, b""), "wmi-ath-init")
+    w.run(lambda t: w.wmi.cmd(WMI_START_RECV_CMDID, b""), "wmi-start-recv")
 
 
 def run(cap: str | None = None) -> int:
@@ -272,6 +282,10 @@ def run(cap: str | None = None) -> int:
             print("  M4 OK: + ath9k_hw_reset tail (LED+32kHz, init_desc AR9271 byte-swap; "
                   "restore_chainmask/gen_timer/gpio-override are no-ops) matched; frontier is "
                   "the post-reset htc-start (txpower update + WMI mode/init/start-recv).")
+        elif w.i == 528:
+            print("  M5 OK: + htc-start tail (txpowlimit=0 update clamps rates to 0x0a, then "
+                  "WMI SET_MODE(11ng)/ATH_INIT/START_RECV) matched; frontier is the RX path "
+                  "(host_rx_init / cap-target update).")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")
