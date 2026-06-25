@@ -137,6 +137,9 @@ def _walk_init(w: Walk) -> None:
     w.run(lambda t: phy_board.set_board_values(w.hw, w.chan), "set-board-values")
     w.run(lambda t: w.hw.reset_opmode(w.hw.macStaId1, w.hw.saveDefAntenna), "reset-opmode")
     w.run(lambda t: phy.rf_set_freq(w.hw, w.chan), "rf-set-freq")
+    from wifit3.chips.ar9271_v2 import mac_queue
+    mac_queue.init_tx_queues(w.hw)                       # driver-side alloc (no wire ops)
+    w.run(lambda t: mac_queue.init_queues(w.hw), "init-queues")
 
 
 def run(cap: str | None = None) -> int:
@@ -237,6 +240,9 @@ def run(cap: str | None = None) -> int:
         elif w.i == 423:
             print("  M2e-4 OK: + rf_set_freq (2.4 GHz CHANSEL synthesizer) matched; frontier "
                   "is init_queues (QCU/DCU setup).")
+        elif w.i == 441:
+            print("  M2e-5 OK: + init_queues (DQCUMASK + 4 data/CAB/beacon DCU config + per-"
+                  "queue IMR) matched; frontier is init_interrupt_masks.")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")

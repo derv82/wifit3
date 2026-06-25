@@ -48,6 +48,17 @@ class AthHw:
         self.sta_id1_defaults = R.AR_STA_ID1_DEFAULTS
         self.sw_mgmt_crypto_tx = True
         self.sw_mgmt_crypto_rx = True
+        # TX-queue subsystem (ath9k_tx_queue_info[]) + interrupt-mask shadows:
+        self.txq: list = []                        # populated by mac_queue.init_tx_queues
+        self.txok_interrupt_mask = 0
+        self.txerr_interrupt_mask = 0
+        self.txdesc_interrupt_mask = 0
+        self.txeol_interrupt_mask = 0
+        self.txurn_interrupt_mask = 0
+        self.imrs2_reg = 0
+        self.intr_txqs = 0
+        self.sw_beacon_response_time = 6           # [SRC] hw.c:400
+        self.dma_beacon_response_time = 1          # [SRC] hw.c:399
 
     # ---- silicon-revision predicates [SRC] reg.h:837-928 ------------------
     def is_9271(self) -> bool:
