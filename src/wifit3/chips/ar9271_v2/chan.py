@@ -10,6 +10,9 @@ from dataclasses import dataclass
 CHANNEL_5GHZ = 0x1                      # [SRC] hw.h:457
 CHANNEL_HALF = 0x2
 CHANNEL_QUARTER = 0x4
+CHANNEL_HT = 0x8                        # [SRC] hw.h:460
+CHANNEL_HT40PLUS = 0x10
+CHANNEL_HT40MINUS = 0x20
 
 
 @dataclass
@@ -29,6 +32,12 @@ class Channel:
 
     def is_quarter_rate(self) -> bool:
         return bool(self.channelFlags & CHANNEL_QUARTER)
+
+    def is_ht40(self) -> bool:                  # [SRC] hw.h:477
+        return bool(self.channelFlags & (CHANNEL_HT40PLUS | CHANNEL_HT40MINUS))
+
+    def is_ht20(self) -> bool:                  # [SRC] hw.h IS_CHAN_HT20
+        return bool(self.channelFlags & CHANNEL_HT) and not self.is_ht40()
 
 
 def channel_2ghz(ch: int) -> Channel:
