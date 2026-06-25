@@ -26,6 +26,7 @@ from . import constants as C
 from . import htc
 from .transport import AR9271Transport
 
+WMI_GET_FW_VERSION_CMDID = 0x0003
 WMI_REG_READ_CMDID = 0x0014
 WMI_REG_WRITE_CMDID = 0x0015
 WMI_REG_RMW_CMDID = 0x0020
@@ -68,6 +69,13 @@ class WMI:
             if cmd_id & WMI_EVENT_BIT:
                 continue                                   # async event — not our response
             return body[4:]                                # strip wmi_cmd_hdr -> value(s)
+
+    def get_fw_version(self) -> tuple[int, int]:
+        """WMI_GET_FW_VERSION — empty command, response is wmi_fw_version (be16 major, minor)
+        [SRC] htc_drv_init.c:785 ath9k_init_firmware_version."""
+        rsp = self.cmd(WMI_GET_FW_VERSION_CMDID, b"")
+        major, minor = struct.unpack_from(">HH", rsp)
+        return major, minor
 
     # ---- register reads ---------------------------------------------------
     def reg_read(self, addr: int) -> int:

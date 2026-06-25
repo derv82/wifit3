@@ -64,6 +64,24 @@ def test_reg_rmw_single_bytes():
     assert w.t.dev.writes[0].hex() == "010000100000000000200001" + "0000704c0000000100000000"
 
 
+def test_get_fw_version():
+    w = _wmi()
+    # Override the canned response to a wmi_fw_version (major=1, minor=4).
+    dev = w.t.dev
+
+    def write(ep, data, timeout=None):
+        cmd_id, seq = struct.unpack_from(">HH", data, 8)
+        dev.writes.append(bytes(data))
+        body = struct.pack(">HH", cmd_id, seq) + struct.pack(">HH", 1, 4)
+        dev._resp = struct.pack(">BBH", 1, 0, len(body)) + b"\x00\x00\x00\x00" + body
+        return len(data)
+
+    dev.write = write
+    assert w.get_fw_version() == (1, 4)
+    # Command is empty (no payload): htc(8) + wmi hdr(4) only.
+    assert dev.writes[0].hex() == "0100000400000000" + "00030001"
+
+
 def test_seq_increments_per_command():
     w = _wmi()
     for _ in range(5):
