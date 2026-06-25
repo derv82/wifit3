@@ -28,7 +28,13 @@ class AthHw:
         self.WARegVal = 0                         # 9300+ AR_WA shadow; unused on 9271
         self.phyRev = 0
         self.analog5GhzRev = 0
+        self.chip_fullsleep = False               # cleared by chip_reset; reset-type gate
         self.eeprom = bytearray()                 # raw map4k bytes (LE u16 words), filled at post_init
+        # saved across a reset, restored by reset_opmode (later milestone):
+        self.saveDefAntenna = 0
+        self.macStaId1 = 0
+        self.saveLedState = 0
+        self.tsf = 0
 
     # ---- silicon-revision predicates [SRC] reg.h:837-928 ------------------
     def is_9271(self) -> bool:
@@ -194,6 +200,52 @@ class AthHw:
 
         self.rmw(R.AR_STA_ID1, 0, R.AR_STA_ID1_PWR_SAV)           # REG_CLR_BIT
         return True
+
+
+    # ---- TSF + phy state [SRC] mac.c / hw.c -------------------------------
+    def gettsf64(self) -> int:
+        """ath9k_hw_gettsf64 [SRC] mac.c — read U32, then (L32, U32) until the high word is
+        stable; here it settles on the first pass."""
+        upper1 = self.read(R.AR_TSF_U32)
+        lower = 0
+        for _ in range(16):                       # ATH9K_MAX_TSF_READ
+            lower = self.read(R.AR_TSF_L32)
+            upper2 = self.read(R.AR_TSF_U32)
+            if upper2 == upper1:
+                break
+            upper1 = upper2
+        return (upper1 << 32) | lower
+
+    def mark_phy_inactive(self) -> None:
+        self.write(R.AR_PHY_ACTIVE, R.AR_PHY_ACTIVE_DIS)   # [SRC] hw.c ath9k_hw_mark_phy_inactive
+
+    # ---- chip reset (within ath9k_hw_reset) [SRC] hw.c:1519-1541 ----------
+    def chip_reset(self, chan) -> None:
+        """ath9k_hw_chip_reset: pick WARM unless TX/RX is pending (or the chip is full-asleep),
+        reset, then re-init the PLL. chip_fullsleep is False by this second reset, so the
+        AR_Q_TXE / AR_CR probes run."""
+        reset_type = R.ATH9K_RESET_WARM
+        if self.chip_fullsleep or self.read(R.AR_Q_TXE) or (self.read(R.AR_CR) & R.AR_CR_RXE):
+            reset_type = R.ATH9K_RESET_COLD
+        self.set_reset_reg(reset_type)
+        # ath9k_hw_setpower(AWAKE) here is a no-op — power_mode is already AWAKE.
+        self.chip_fullsleep = False
+        self.init_pll(chan)
+
+    def reset_begin(self, chan) -> None:
+        """The opening of ath9k_hw_reset [SRC] hw.c:1859-1943, through chip_reset: save the
+        antenna/sta-id/TSF/LED state, mark the PHY inactive, the AR9271 RF reset, chip_reset,
+        then the AR9271 MAC-gate write. (TSF restore, JTAG-disable and process_ini follow.)"""
+        self.saveDefAntenna = self.read(R.AR_DEF_ANTENNA) or 1
+        self.macStaId1 = self.read(R.AR_STA_ID1) & R.AR_STA_ID1_BASE_RATE_11B
+        self.tsf = self.gettsf64()
+        self.saveLedState = self.read(R.AR_CFG_LED) & R.AR_CFG_LED_SAVE_MASK
+        self.mark_phy_inactive()
+        # AR9271 + htc_reset_init: pulse the radio RF reset before the chip reset [SRC] hw.c:1924.
+        self.write(R.AR9271_RESET_POWER_DOWN_CONTROL, R.AR9271_RADIO_RF_RST)
+        self.chip_reset(chan)
+        # ... and gate the MAC clock after [SRC] hw.c:1937.
+        self.write(R.AR9271_RESET_POWER_DOWN_CONTROL, R.AR9271_GATE_MAC_CTL)
 
 
 def init_reset(wmi: WMI) -> AthHw:
