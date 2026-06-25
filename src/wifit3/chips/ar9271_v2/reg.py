@@ -6,6 +6,20 @@ to the source. Citations: ``data_dumps/ath9k-source-v6.18/ath9k/<file>:line`` at
 """
 from __future__ import annotations
 
+
+def _shift(mask: int) -> int:
+    return (mask & -mask).bit_length() - 1
+
+
+def SM(value: int, mask: int) -> int:
+    """Set-field: place ``value`` into the bits ``mask`` covers (ath9k SM macro)."""
+    return (value << _shift(mask)) & mask
+
+
+def MS(value: int, mask: int) -> int:
+    """Get-field: extract the bits ``mask`` covers from ``value`` (ath9k MS macro)."""
+    return (value & mask) >> _shift(mask)
+
 # ---- SREV (silicon revision) [SRC] reg.h:753-795 ---------------------------
 AR_SREV = 0x4020                       # AR_SREV(ah) for non-9100/9340
 AR_SREV_ID = 0x000000FF                # non-9100 mask
@@ -116,6 +130,16 @@ AR_PHY_BASE = 0x9800
 def AR_PHY(n: int) -> int:             # AR_PHY(_n) = AR_PHY_BASE + (_n << 2)
     return AR_PHY_BASE + (n << 2)
 AR_PHY_CHIP_ID = 0x9818                # [SRC] phy.h:43
+
+# ---- PLL / clock [SRC] reg.h:1334-1400 -------------------------------------
+AR_RTC_PLL_CONTROL = 0x7014            # non-9100/soc
+AR_RTC_9160_PLL_DIV = 0x000003ff
+AR_RTC_9160_PLL_REFDIV = 0x00003c00
+AR_RTC_9160_PLL_CLKSEL = 0x0000c000
+AR_RTC_SLEEP_CLK = 0x7048              # non-9100
+AR_RTC_FORCE_DERIVED_CLK = 0x2
+AR9271_CORE_CLOCK = 0x50040            # [SRC] hw.c:924 "switch core clock to 117MHz"
+AR9271_CORE_CLOCK_VAL = 0x304
 
 # ---- timing [SRC] hw.h:177-181 ---------------------------------------------
 AH_WAIT_TIMEOUT = 100000               # us

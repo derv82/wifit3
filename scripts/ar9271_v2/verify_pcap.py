@@ -42,7 +42,7 @@ CAP_DIR = REPO / "usb_dumps_new" / "captures_ath9k_htc_newddevice"
 
 _IMPORT_ERR = None
 try:
-    from wifit3.chips.ar9271_v2 import ani, constants as C, eeprom, firmware, htc, hw, key, phy, reg as R  # noqa: E402
+    from wifit3.chips.ar9271_v2 import ani, chan as chanmod, constants as C, eeprom, firmware, htc, hw, key, phy, reg as R  # noqa: E402
     from wifit3.chips.ar9271_v2.wmi import WMI               # noqa: E402
     from wifit3.chips.ar9271_v2.transport import AR9271Transport  # noqa: E402
 except ImportError as e:                                  # driver not scaffolded yet
@@ -61,6 +61,7 @@ class Walk:
         self.resp_pos: dict[int, int] = {}
         self.wmi = None                     # persistent WMI channel, bound after the handshake
         self.hw = None                      # persistent AthHw, created at chip reset
+        self.chan = None                    # the channel being brought up
         self.waived: Counter = Counter()
 
     def run(self, fn, label: str):
@@ -110,9 +111,11 @@ def _walk_init(w: Walk) -> None:
     w.run(lambda t: ani.ani_init(w.hw), "ani-init")
     w.run(lambda t: key.init_crypto(w.hw), "key-cache-clear")
     w.run(lambda t: w.wmi.get_fw_version(), "get-fw-version")
-    # ath9k_htc_start's wake path: a COLD chip reset (chip was FULL_SLEEPed after probe).
-    # init_pll + GPIO config + the channel-aware ath9k_hw_reset follow with M3.
+    # ath9k_htc_start's wake path: a COLD chip reset (chip was FULL_SLEEPed after probe),
+    # then init_pll for the initial channel (mac80211 default = ch1, 2412 MHz).
+    w.chan = chanmod.channel_2ghz(1)
     w.run(lambda t: w.hw.set_reset_reg(R.ATH9K_RESET_COLD), "chip-reset-cold")
+    w.run(lambda t: w.hw.init_pll(w.chan), "init-pll")
 
 
 def run(cap: str | None = None) -> int:
@@ -175,6 +178,8 @@ def run(cap: str | None = None) -> int:
         elif w.i == 344:
             print("  M2c-3 OK: + WMI_GET_FW_VERSION & htc-start COLD chip reset matched; "
                   "frontier is init_pll (channel-aware).")
+        elif w.i == 347:
+            print("  M2c-4 OK: + channel model & init_pll matched; frontier is GPIO config.")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")

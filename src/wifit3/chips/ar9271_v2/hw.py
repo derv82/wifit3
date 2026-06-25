@@ -157,6 +157,17 @@ class AthHw:
         return True
 
 
+    # ---- PLL [SRC] hw.c:761-930 -------------------------------------------
+    def init_pll(self, chan) -> None:
+        """ath9k_hw_init_pll for the AR9271: write the computed PLL control, switch the core
+        clock to 117 MHz, and force the derived sleep clock. (Other-silicon DPLL branches are
+        not on the 9271 path.)"""
+        from . import phy
+        pll = phy.compute_pll_control(self, chan)
+        self.write(R.AR_RTC_PLL_CONTROL, pll)
+        self.write(R.AR9271_CORE_CLOCK, R.AR9271_CORE_CLOCK_VAL)   # [SRC] hw.c:922-924
+        self.write(R.AR_RTC_SLEEP_CLK, R.AR_RTC_FORCE_DERIVED_CLK)
+
     # ---- power management [SRC] hw.c:2169-2218 ----------------------------
     def set_power_awake(self) -> bool:
         """ath9k_hw_set_power_awake: force the RTC awake and wait for it to come on."""
