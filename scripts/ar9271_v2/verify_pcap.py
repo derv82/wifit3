@@ -145,6 +145,7 @@ def _walk_init(w: Walk) -> None:
     w.run(lambda t: w.hw.init_qos(), "init-qos")
     w.run(lambda t: w.hw.init_global_settings(w.chan), "init-global-settings")
     w.run(lambda t: w.hw.reset_dma_and_intr(), "set-dma-obs-rimt")
+    w.run(lambda t: phy.init_bb(w.hw, w.chan), "init-bb")
 
 
 def run(cap: str | None = None) -> int:
@@ -257,6 +258,9 @@ def run(cap: str | None = None) -> int:
         elif w.i == 467:
             print("  M2e-8 OK: + STA_ID1 seqnum, set_dma, AR_OBS, RX-intr-mitigation matched; "
                   "frontier is init_bb / calibration.")
+        elif w.i == 469:
+            print("  M2e-9 OK: + init_bb (AR_PHY_ACTIVE enable) matched; frontier is "
+                  "init_cal (IQ/ADC calibration).")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")
