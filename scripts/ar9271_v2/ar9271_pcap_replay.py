@@ -133,9 +133,12 @@ class ReplayDevice:
     Divergence. read() serves device->host responses in capture order (filtered by ep)."""
 
     def __init__(self, host_ops: list[dict], responses: list[dict] | None = None,
-                 op_start: int = 0, resp_pos: dict[int, int] | None = None):
+                 op_start: int = 0, resp_pos: dict[int, int] | None = None,
+                 value_except_regs: set[int] | None = None):
         self.ops = host_ops                       # full host-op list; op_start is the cursor
         self.i = op_start
+        self.value_except_regs = value_except_regs or set()
+        self.value_excepted = 0
         # Per-ep response queues: reading the REG_IN (0x83) stream must not consume or
         # discard pending WLAN_RX (0x82) frames, and vice versa. resp_pos carries the
         # progress so a multi-call WMI conversation reads responses continuously.
@@ -173,12 +176,27 @@ class ReplayDevice:
                 f"(len {len(payload)} vs wire {len(op['data'])}) @f{op['frame']}")
         return len(payload)
 
+    def _value_excepted(self, port: bytes, wire: bytes) -> bool:
+        """A single WMI REG_WRITE to a value-excepted register: the address (and htc/wmi
+        headers + seq) must match, but the 4-byte value is allowed to differ. For writes
+        whose value is hardware/wall-clock-dependent (TSF restore, calibration results) and
+        so can never be byte-reproduced — counted, not silently waved."""
+        if len(port) != 20 or len(wire) != 20 or port[8:10] != b"\x00\x15":
+            return False
+        reg = int.from_bytes(port[12:16], "big")
+        if reg not in self.value_except_regs:
+            return False
+        return port[:16] == wire[:16]            # htc hdr + wmi cmd/seq + register match
+
     def write(self, ep, data, timeout=None):
         op = self._next()
         data = bytes(data)
         if op["kind"] not in ("bulk", "int") or op["ep"] != ep:
             raise Divergence(f"op #{self.i-1}: port OUT ep=0x{ep:02x}, wire has {fmt_op(op)}")
         if op["data"] != data:
+            if self._value_excepted(data, op["data"]):
+                self.value_excepted += 1
+                return len(data)
             n = min(len(op["data"]), len(data))
             d = next((k for k in range(n) if op["data"][k] != data[k]), n)
             pb = data[d:d+4].hex() if d < len(data) else "-"
