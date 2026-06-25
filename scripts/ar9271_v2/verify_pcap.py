@@ -213,6 +213,9 @@ def run(cap: str | None = None) -> int:
         elif w.i == 395:
             print("  M2d-5 OK: + init_chain_masks (1T1R) matched; frontier is the "
                   "txpower / RF-bank writes.")
+        elif w.i == 398:
+            print("  M2d-6 OK: + apply_txpower (TPCRG1 gain cfg + 32 PDADC words + per-rate "
+                  "power) matched; frontier is set_rfmode / rf_set_freq.")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")

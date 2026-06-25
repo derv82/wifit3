@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from . import eeprom
 from . import initvals as I
+from . import phy_power
 from . import reg as R
 from .chan import Channel
 from .hw import AthHw
@@ -49,6 +50,8 @@ def process_ini(hw: AthHw, chan: Channel) -> None:
     override_ini(hw, chan)
     set_channel_regs(hw, chan)
     init_chain_masks(hw)
+    # ath9k_olc_init is a no-op on the 9271 (4k eeprom has no EEP_OL_PWRCTRL -> OLC disabled).
+    phy_power.apply_txpower(hw, chan)
 
 
 def init_chain_masks(hw: AthHw) -> None:

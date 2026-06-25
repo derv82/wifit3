@@ -68,11 +68,21 @@ class AthHw:
     def rmw(self, reg: int, set_bits: int, clr_bits: int) -> None:
         self.wmi.reg_rmw(reg, set_bits, clr_bits)
 
+    def rmw_field(self, reg: int, mask: int, value: int) -> None:
+        """REG_RMW_FIELD [SRC] reg.h — set the bits ``mask`` covers to ``value``."""
+        self.rmw(reg, R.SM(value, mask), mask)
+
     def enable_write_buffer(self) -> None:
         self.wmi.enable_write_buffer()
 
     def write_flush(self) -> None:
         self.wmi.write_flush()
+
+    def enable_rmw_buffer(self) -> None:
+        self.wmi.enable_rmw_buffer()
+
+    def rmw_buffer_flush(self) -> None:
+        self.wmi.rmw_flush()
 
     def wait(self, reg: int, mask: int, val: int, timeout: int = R.AH_WAIT_TIMEOUT) -> bool:
         """ath9k_hw_wait: poll ``reg`` until ``(read & mask) == val`` [SRC] hw.c:77."""

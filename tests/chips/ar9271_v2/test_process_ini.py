@@ -36,7 +36,7 @@ def test_table_shapes():
 def test_process_ini_write_order():
     dev = FakeDev()
     h = hw.AthHw(WMI(AR9271Transport(dev), ctrl_epid=1))
-    h.eeprom = bytearray(64)
+    h.eeprom = bytearray(376)
     h.eeprom[31] = 0                      # txGainType = normal
     phy.process_ini(h, chanmod.channel_2ghz(1))
 
@@ -56,7 +56,7 @@ def test_process_ini_write_order():
 def test_process_ini_high_power_selects_high_table():
     dev = FakeDev()
     h = hw.AthHw(WMI(AR9271Transport(dev), ctrl_epid=1))
-    h.eeprom = bytearray(64)
+    h.eeprom = bytearray(376)
     h.eeprom[31] = R.AR5416_EEP_TXGAIN_HIGH_POWER
     phy.process_ini(h, chanmod.channel_2ghz(1))
     high = [(r[0], r[4]) for r in I.MODES_HIGH_POWER_TX_GAIN_9271]
