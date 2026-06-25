@@ -93,8 +93,9 @@ def _walk_init(w: Walk) -> None:
     firmware   13x 4096B RAM writes (bRequest 0x30) + COMP (0x31)   ath9k_hif_usb_download_fw
     htc        READY -> 9x connect_service -> config credits ->      htc_hst.c / htc_drv_init.c
                setup complete
-    reset      SREV read + power-on chip reset (RTC/RC block)        hw.c __ath9k_hw_init
-    --- M2b frontier: ath9k_hw_setpower(AWAKE) / PHY init / EEPROM / calibration ---
+    reset      SREV read + power-on chip reset (RTC/RC block) +       hw.c __ath9k_hw_init
+               setpower(AWAKE) + AR_PHY_CHIP_ID read
+    --- M2b frontier: PHY init (analog/initvals) / EEPROM / calibration ---
     """
     fw = firmware.load_firmware_blob()
     w.run(lambda t: firmware.download(t, fw), "firmware")
@@ -151,6 +152,9 @@ def run(cap: str | None = None) -> int:
         elif w.i == 42:
             print("  M2b-1 OK: + SREV read & power-on chip reset matched; frontier is "
                   "ath9k_hw_setpower(AWAKE).")
+        elif w.i == 47:
+            print("  M2b-2 OK: + setpower(AWAKE) & phyRev read matched; frontier is the PHY "
+                  "init writes (analog/initvals).")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")

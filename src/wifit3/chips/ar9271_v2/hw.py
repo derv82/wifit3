@@ -26,6 +26,7 @@ class AthHw:
         self.macRev = 0
         self.reset_power_on = False
         self.WARegVal = 0                         # 9300+ AR_WA shadow; unused on 9271
+        self.phyRev = 0
 
     # ---- silicon-revision predicates [SRC] reg.h:837-928 ------------------
     def is_9271(self) -> bool:
@@ -151,12 +152,44 @@ class AthHw:
         return True
 
 
+    # ---- power management [SRC] hw.c:2169-2218 ----------------------------
+    def set_power_awake(self) -> bool:
+        """ath9k_hw_set_power_awake: force the RTC awake and wait for it to come on."""
+        if self.is_9300_20_or_later():               # untested here
+            self.write(R.AR_WA, self.WARegVal)
+
+        if (self.read(R.AR_RTC_STATUS) & R.AR_RTC_STATUS_M) == R.AR_RTC_STATUS_SHUTDOWN:
+            if not self.set_reset_reg(R.ATH9K_RESET_POWER_ON):
+                return False
+            if not self.is_9300_20_or_later():
+                pass                                  # ath9k_hw_init_pll(NULL) — ported with M3
+        if self.is_9100():                            # untested here
+            self.rmw(R.AR_RTC_RESET, R.AR_RTC_RESET_EN, 0)
+
+        self.rmw(R.AR_RTC_FORCE_WAKE, R.AR_RTC_FORCE_WAKE_EN, 0)   # REG_SET_BIT
+
+        for _ in range(R.POWER_UP_TIME // 50):
+            if (self.read(R.AR_RTC_STATUS) & R.AR_RTC_STATUS_M) == R.AR_RTC_STATUS_ON:
+                break
+            self.rmw(R.AR_RTC_FORCE_WAKE, R.AR_RTC_FORCE_WAKE_EN, 0)
+        else:
+            logger.error("ar9271_v2: failed to wake up")
+            return False
+
+        self.rmw(R.AR_STA_ID1, 0, R.AR_STA_ID1_PWR_SAV)           # REG_CLR_BIT
+        return True
+
+
 def init_reset(wmi: WMI) -> AthHw:
-    """The opening of __ath9k_hw_init: read the silicon revision, then power-on reset the chip
-    [SRC] hw.c:573,615. Returns the AthHw so later milestones keep the same register channel."""
+    """The opening of __ath9k_hw_init: read the silicon revision, power-on reset the chip, wake
+    it, and read the PHY revision [SRC] hw.c:573-641. Returns the AthHw so later milestones keep
+    the same register channel."""
     hw = AthHw(wmi)
     if not hw.read_revisions():
         raise RuntimeError("ar9271_v2: read_revisions failed")
     if not hw.set_reset_reg(R.ATH9K_RESET_POWER_ON):
         raise RuntimeError("ar9271_v2: chip power-on reset failed")
+    if not hw.set_power_awake():
+        raise RuntimeError("ar9271_v2: failed to wake chip")
+    hw.phyRev = hw.read(R.AR_PHY_CHIP_ID)             # [SRC] hw.c:641
     return hw

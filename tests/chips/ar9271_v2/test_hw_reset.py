@@ -34,11 +34,14 @@ class FakeDev:
 
 
 def _run():
+    ON = R.AR_RTC_STATUS_ON
     dev = FakeDev({
         R.AR_SREV: [0x001411FF],                       # -> macVersion 0x140, macRev 1
-        R.AR_RTC_STATUS: [0, 0, 0, 0, 0, 0, R.AR_RTC_STATUS_ON],   # 7th read = ON
+        # 7 reset-poll reads (7th = ON), then 2 setpower reads (not-SHUTDOWN, then ON).
+        R.AR_RTC_STATUS: [0, 0, 0, 0, 0, 0, ON, ON, ON],
         R.AR_INTR_SYNC_CAUSE: [0],                      # masked 0 -> AR_RC=AHB branch
         R.AR_RTC_RC: [0],                               # reset cleared immediately
+        R.AR_PHY_CHIP_ID: [0x0000_0040],               # phyRev read (value unused)
     })
     w = WMI(AR9271Transport(dev), ctrl_epid=1)
     ath = hw.init_reset(w)
@@ -67,11 +70,21 @@ def test_reset_register_sequence():
     got = [(c, b.hex()) for c, b in dev.cmds]
     assert got[:5] == expected
 
-    # STATUS poll: 7 reads of AR_RTC_STATUS.
+    # AR_RTC_STATUS reads: 7 reset-poll + 2 setpower(AWAKE).
     status_reads = [b for c, b in dev.cmds if c == READ and b.hex() == "00007044"]
-    assert len(status_reads) == 7
+    assert len(status_reads) == 9
 
     # set_reset(WARM): INTR_SYNC read then the warm flush batch [FORCE_WAKE, AR_RC, AR_RTC_RC].
     assert (READ, bytes.fromhex("00004028")) in dev.cmds
     warm_flush = "0000704c00000003" "0000400000000001" "0000700000000001"
     assert (WRITE, bytes.fromhex(warm_flush)) in dev.cmds
+
+
+def test_setpower_awake_sequence():
+    _, dev = _run()
+    RMW, READ = 0x0020, 0x0014
+    # REG_SET_BIT(FORCE_WAKE, EN) and REG_CLR_BIT(AR_STA_ID1, PWR_SAV).
+    assert (RMW, bytes.fromhex("0000704c0000000100000000")) in dev.cmds
+    assert (RMW, bytes.fromhex("000080040000000000040000")) in dev.cmds
+    # phyRev read of AR_PHY_CHIP_ID closes init_reset.
+    assert dev.cmds[-1] == (READ, bytes.fromhex("00009818"))
