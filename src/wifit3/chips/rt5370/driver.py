@@ -203,11 +203,11 @@ class RT5370Driver:
         try:
             while True:
                 await asyncio.sleep(_AGC_INTERVAL_S)
-                if self._rssi_ewma is None:
-                    continue
                 # Share _io_lock with set_channel/inject so an AGC write can't land mid-tune.
                 async with self._io_lock:
-                    await loop.run_in_executor(None, self._apply_agc, int(self._rssi_ewma))
+                    rssi = self._rssi_ewma
+                    if rssi is not None:
+                        await loop.run_in_executor(None, self._apply_agc, int(rssi))
         except asyncio.CancelledError:
             pass
 
