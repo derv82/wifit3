@@ -136,6 +136,7 @@ def _walk_init(w: Walk) -> None:
     from wifit3.chips.ar9271_v2 import phy_board
     w.run(lambda t: phy_board.set_board_values(w.hw, w.chan), "set-board-values")
     w.run(lambda t: w.hw.reset_opmode(w.hw.macStaId1, w.hw.saveDefAntenna), "reset-opmode")
+    w.run(lambda t: phy.rf_set_freq(w.hw, w.chan), "rf-set-freq")
 
 
 def run(cap: str | None = None) -> int:
@@ -233,6 +234,9 @@ def run(cap: str | None = None) -> int:
         elif w.i == 419:
             print("  M2e-3 OK: + reset_opmode (STA id/defaults, bssidmask, antenna, associd, "
                   "STATION mode) matched; frontier is rf_set_freq (synthesizer).")
+        elif w.i == 423:
+            print("  M2e-4 OK: + rf_set_freq (2.4 GHz CHANSEL synthesizer) matched; frontier "
+                  "is init_queues (QCU/DCU setup).")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")

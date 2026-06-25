@@ -362,3 +362,11 @@ INIT_RSSI_THR = 0x00000700              # [SRC] hw.h:192
 AR_BSSMSKL = 0x80E0                     # [SRC] reg.h
 AR_BSSMSKU = 0x80E4
 IFTYPE_STATION = 2                      # NL80211_IFTYPE_STATION
+
+# ---- rf_set_freq (synthesizer) [SRC] ar9002_phy.c:66 + phy.h:20-22 ----------
+AR_PHY_SYNTH_CONTROL = 0x9874           # [SRC] ar9002_phy.h:158
+AR_PHY_CCK_TX_CTRL = 0xA204             # [SRC] ar9002_phy.h:413
+AR_PHY_CCK_TX_CTRL_JAPAN = 0x00000010
+CHANSEL_DIV = 15                        # [SRC] phy.h:20
+def CHANSEL_2G(freq: int) -> int:       # [SRC] phy.h:21
+    return (freq * 0x10000) // CHANSEL_DIV
