@@ -54,3 +54,15 @@ def test_set_channel_regs_20mhz():
     assert (R.AR_2040_MODE, 0) in pairs
     assert (R.AR_GTXTO, 25 << 16) in pairs
     assert (R.AR_CST, 0xF << 16) in pairs
+
+
+def test_init_chain_masks_1t1r():
+    dev = FakeDev()
+    h = hw.AthHw(WMI(AR9271Transport(dev), ctrl_epid=1))
+    h.rxchainmask = h.txchainmask = 1
+    phy.init_chain_masks(h)
+    pairs = _pairs(dev)
+    assert pairs == [(R.AR_PHY_RX_CHAINMASK, 1), (R.AR_PHY_CAL_CHAINMASK, 1),
+                     (R.AR_SELFGEN_MASK, 1)]
+    # No analog-swap RMW for a single chain.
+    assert not any(c == 0x20 for c, _ in dev.cmds)

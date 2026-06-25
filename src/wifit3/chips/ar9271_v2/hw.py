@@ -30,6 +30,8 @@ class AthHw:
         self.analog5GhzRev = 0
         self.chip_fullsleep = False               # cleared by chip_reset; reset-type gate
         self.need_an_top2_fixup = False            # set only by the def-eeprom path (not 4k/9271)
+        self.rxchainmask = 1                       # from eeprom rx/tx mask (fill_cap_info)
+        self.txchainmask = 1
         self.eeprom = bytearray()                 # raw map4k bytes (LE u16 words), filled at post_init
         # saved across a reset, restored by reset_opmode (later milestone):
         self.saveDefAntenna = 0

@@ -210,6 +210,9 @@ def run(cap: str | None = None) -> int:
         elif w.i == 394:
             print("  M2d-4 OK: + override_ini & set_channel_regs (20 MHz) matched; frontier is "
                   "init_chain_masks / RF banks.")
+        elif w.i == 395:
+            print("  M2d-5 OK: + init_chain_masks (1T1R) matched; frontier is the "
+                  "txpower / RF-bank writes.")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")

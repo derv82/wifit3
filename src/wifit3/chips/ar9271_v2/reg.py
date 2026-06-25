@@ -186,6 +186,13 @@ AR_GTXTO_TIMEOUT_LIMIT_S = 16
 AR_CST = 0x006c                         # [SRC] reg.h:171
 AR_CST_TIMEOUT_LIMIT_S = 16
 
+# ---- chain masks [SRC] ar9002_phy.h:304-563 + reg.h:2033 -------------------
+AR_PHY_RX_CHAINMASK = 0x99a4
+AR_PHY_CAL_CHAINMASK = 0xa39c
+AR_SELFGEN_MASK = 0x832c
+AR_PHY_ANALOG_SWAP = 0xa268
+AR_PHY_SWAP_ALT_CHAIN = 0x00000040
+
 # ---- PLL / clock [SRC] reg.h:1334-1400 -------------------------------------
 AR_RTC_PLL_CONTROL = 0x7014            # non-9100/soc
 AR_RTC_9160_PLL_DIV = 0x000003ff

@@ -48,6 +48,24 @@ def process_ini(hw: AthHw, chan: Channel) -> None:
 
     override_ini(hw, chan)
     set_channel_regs(hw, chan)
+    init_chain_masks(hw)
+
+
+def init_chain_masks(hw: AthHw) -> None:
+    """ar5008_hw_init_chain_masks [SRC] ar5008_phy.c:813 — program the RX/cal/self-gen chain
+    masks from the eeprom-derived chainmask (1T1R on the AR9271). The 3-chain alt-swap and the
+    5416_1.0 special case are ported behind their checks but never run here."""
+    rx, tx = hw.rxchainmask, hw.txchainmask
+    if rx == 0x5:                                        # untested: 3-chain alt-swap
+        hw.rmw(R.AR_PHY_ANALOG_SWAP, R.AR_PHY_SWAP_ALT_CHAIN, 0)
+    hw.enable_write_buffer()
+    if rx in (0x1, 0x2, 0x3, 0x5, 0x7):
+        hw.write(R.AR_PHY_RX_CHAINMASK, rx)
+        hw.write(R.AR_PHY_CAL_CHAINMASK, rx)
+    hw.write(R.AR_SELFGEN_MASK, tx)
+    hw.write_flush()
+    if tx == 0x5:                                        # untested
+        hw.rmw(R.AR_PHY_ANALOG_SWAP, R.AR_PHY_SWAP_ALT_CHAIN, 0)
 
 
 def override_ini(hw: AthHw, chan: Channel) -> None:
