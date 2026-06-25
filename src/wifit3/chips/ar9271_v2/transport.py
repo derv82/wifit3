@@ -24,3 +24,21 @@ class AR9271Transport:
         """
         return self.dev.ctrl_transfer(C.BMREQ_VENDOR_OUT, bRequest, wValue, 0,
                                       data if data is not None else 0, C.USB_MSG_TIMEOUT)
+
+    def reg_out(self, data: bytes) -> int:
+        """Send an HTC control / WMI command frame on the REG_OUT interrupt pipe (EP 0x04)
+        [SRC] hif_usb.c:119-120 usb_sndintpipe(USB_REG_OUT_PIPE)."""
+        return self.dev.write(C.EP_REG_OUT, data, C.USB_MSG_TIMEOUT)
+
+    def reg_in(self, length: int = 64) -> bytes:
+        """Read one HTC control / WMI event frame from the REG_IN interrupt pipe (EP 0x83)
+        [SRC] hif_usb.c:781-783 usb_rcvintpipe(USB_REG_IN_PIPE)."""
+        return bytes(self.dev.read(C.EP_REG_IN, length, C.USB_MSG_TIMEOUT))
+
+    def wlan_out(self, data: bytes) -> int:
+        """Send a TX/HTC data frame on the WLAN_TX bulk pipe (EP 0x01) [SRC] hif_usb.c:206-207."""
+        return self.dev.write(C.EP_WLAN_TX, data, C.USB_MSG_TIMEOUT)
+
+    def wlan_in(self, length: int = 4096) -> bytes:
+        """Read from the WLAN_RX bulk pipe (EP 0x82) [SRC] hif_usb.c:923-925."""
+        return bytes(self.dev.read(C.EP_WLAN_RX, length, C.USB_MSG_TIMEOUT))

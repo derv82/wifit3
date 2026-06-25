@@ -42,7 +42,7 @@ CAP_DIR = REPO / "usb_dumps_new" / "captures_ath9k_htc_newddevice"
 
 _IMPORT_ERR = None
 try:
-    from wifit3.chips.ar9271_v2 import firmware           # noqa: E402
+    from wifit3.chips.ar9271_v2 import firmware, htc       # noqa: E402
     from wifit3.chips.ar9271_v2.transport import AR9271Transport  # noqa: E402
 except ImportError as e:                                  # driver not scaffolded yet
     _IMPORT_ERR = e
@@ -81,10 +81,13 @@ def _walk_init(w: Walk) -> None:
     Source: data_dumps/ath9k-source-v6.18/ath9k/hif_usb.c.
 
     firmware   13x 4096B RAM writes (bRequest 0x30) + COMP (0x31)   ath9k_hif_usb_download_fw
-    --- M2+ frontier: HTC service connect / WMI handshake / ath9k_hw init / monitor ---
+    htc        READY -> 9x connect_service -> config credits ->      htc_hst.c / htc_drv_init.c
+               setup complete
+    --- M2b frontier: WMI register init (ath9k_hw) / calibration / monitor RX filter ---
     """
     fw = firmware.load_firmware_blob()
     w.run(lambda t: firmware.download(t, fw), "firmware")
+    w.run(lambda t: htc.handshake(t), "htc-handshake")
 
 
 def run(cap: str | None = None) -> int:
@@ -124,11 +127,13 @@ def run(cap: str | None = None) -> int:
         print(f"\nFRONTIER: reproduced {w.i} of {len(ops)} ops; first unaccounted op @{w.i} "
               f"= {rp.fmt_op(front)}")
         print("  ^ the next op to reproduce (port the next milestone, or add a named waiver).")
-        # Mid-port: the frontier landing exactly at the HTC handshake (int-OUT 0x04) means
-        # M1 (firmware download) reproduced every control op byte-for-byte.
-        if front and front.get("kind") == "int" and front.get("ep") == rp.EP_REG_OUT and w.i == 14:
-            print("  M1 OK: all 14 firmware-download control ops matched; frontier is the "
-                  "HTC/WMI handshake (M2).")
+        # Mid-port milestone markers: each frontier op names where the next milestone begins.
+        if w.i == 14:
+            print("  M1 OK: 14 firmware-download control ops matched; frontier is the HTC "
+                  "handshake (M2a).")
+        elif w.i == 25:
+            print("  M2a OK: firmware + HTC handshake (9 service connects + config credits + "
+                  "setup complete) matched; frontier is the WMI register init (M2b).")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")
