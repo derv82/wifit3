@@ -44,17 +44,24 @@ AR_RTC_RESET_EN = 0x00000001
 AR_RTC_STATUS = 0x7044                 # non-9100
 AR_RTC_STATUS_M = 0x0000000f           # non-9100
 AR_RTC_STATUS_ON = 0x00000002
+AR_RTC_STATUS_SHUTDOWN = 0x00000001    # [SRC] reg.h:1393
 
 AR_RTC_FORCE_WAKE = 0x704c             # non-9100
 AR_RTC_FORCE_WAKE_EN = 0x00000001
 AR_RTC_FORCE_WAKE_ON_INT = 0x00000002
 
+# ---- station id / power save -----------------------------------------------
+AR_STA_ID0 = 0x8000                    # [SRC] ath/reg.h:26 (shared ath common)
+AR_STA_ID1 = 0x8004
+AR_STA_ID1_PWR_SAV = 0x00040000        # [SRC] reg.h:1621
+
 # ---- PHY -------------------------------------------------------------------
 AR_PHY_CHIP_ID = 0x9818                # [SRC] phy.h:43
 
-# ---- timing [SRC] hw.h:177-179 ---------------------------------------------
+# ---- timing [SRC] hw.h:177-181 ---------------------------------------------
 AH_WAIT_TIMEOUT = 100000               # us
 AH_TIME_QUANTUM = 10                   # us
+POWER_UP_TIME = 10000                  # us
 
 # ---- reset types [SRC] hw.h enum ath9k_reset_type --------------------------
 ATH9K_RESET_POWER_ON = 1
