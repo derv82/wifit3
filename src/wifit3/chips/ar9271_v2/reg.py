@@ -341,3 +341,24 @@ AR_PHY_TX_END_DATA_START = 0x000000FF
 AR_PHY_TX_END_PA_ON = 0x0000FF00
 EEP_4K_BB_DESIRED_SCALE_MASK = 0x1f     # [SRC] eeprom.h
 CHAIN_BLOCK1_OFFSET = 0x1000            # block-1 = block-0 + 0x1000
+
+# ---- reset_opmode / operating mode [SRC] hw.c + common(ath)/hw.c + reg.h -----
+AR_CFG = 0x0014                         # [SRC] reg.h:29
+AR_CFG_AP_ADHOC_INDICATION = 0x00000020
+AR_ISR = 0x0080                         # [SRC] reg.h:179
+AR_STA_ID1_SADH_MASK = 0x0000FFFF
+AR_STA_ID1_STA_AP = 0x00010000
+AR_STA_ID1_ADHOC = 0x00020000
+AR_STA_ID1_RTS_USE_DEF = 0x00800000
+AR_STA_ID1_CRPT_MIC_ENABLE = 0x08000000
+AR_STA_ID1_KSRCH_MODE = 0x10000000
+AR_STA_ID1_MCAST_KSRCH = 0x80000000
+AR_STA_ID1_DEFAULTS = AR_STA_ID1_CRPT_MIC_ENABLE | AR_STA_ID1_MCAST_KSRCH   # [SRC] hw.c:465
+AR_BSS_ID0 = 0x8008                     # [SRC] reg.h:1637
+AR_BSS_ID1 = 0x800C
+AR_BSS_ID1_AID_S = 16
+AR_RSSI_THR = 0x8018                    # [SRC] reg.h:1652
+INIT_RSSI_THR = 0x00000700              # [SRC] hw.h:192
+AR_BSSMSKL = 0x80E0                     # [SRC] reg.h
+AR_BSSMSKU = 0x80E4
+IFTYPE_STATION = 2                      # NL80211_IFTYPE_STATION
