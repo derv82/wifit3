@@ -40,6 +40,14 @@ def enable_mib_counters(hw: AthHw) -> None:
     hw.write_flush()
 
 
+def ani_reset(hw: AthHw, is_scanning: bool = False) -> None:
+    """ath9k_ani_reset [SRC] ani.c:309 — called from startpcureceive. Computes the OFDM/CCK
+    noise-immunity levels then restarts ANI. On cold STA bring-up the levels resolve to the
+    defaults and the cached INI ANI state already matches the default-level table entries, so
+    set_ofdm_nil/set_cck_nil issue no register writes — only ani_restart touches the wire."""
+    ani_restart(hw)
+
+
 def ani_init(hw: AthHw) -> None:
     """ath9k_hw_ani_init [SRC] ani.c — the only ANI work in cold bring-up (sw config + the two
     register helpers); the trigger thresholds are driver state, not wire ops."""

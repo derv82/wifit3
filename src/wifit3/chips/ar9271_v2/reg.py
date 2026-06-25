@@ -172,6 +172,20 @@ AR5416_EEP_TXGAIN_HIGH_POWER = 1        # [SRC] eeprom.h:174 (0 = original/norma
 AR_DIAG_SW = 0x8048                     # [SRC] reg.h:1689
 AR_DIAG_RX_DIS = 0x00000020
 AR_DIAG_RX_ABORT = 0x02000000
+
+# ---- RX control / filter (host_rx_init) [SRC] reg.h:1675 + mac.h:642 ----
+AR_RX_FILTER = 0x803C                   # [SRC] reg.h:1675
+AR_PHY_ERR = 0x810C                     # [SRC] reg.h:1816 (filter phy-err, not the ANI counters)
+AR_PHY_ERR_RADAR = 0x00000020           # [SRC] reg.h:1819
+AR_MCAST_FIL0 = 0x8040                  # [SRC] reg.h:1677
+AR_MCAST_FIL1 = 0x8044
+AR_RXCFG_ZLFDMA = 0x00000010            # [SRC] reg.h:101
+ATH9K_RX_FILTER_UCAST = 0x00000001      # [SRC] mac.h:643
+ATH9K_RX_FILTER_MCAST = 0x00000002
+ATH9K_RX_FILTER_BCAST = 0x00000004
+ATH9K_RX_FILTER_PHYERR = 0x00000100
+ATH9K_RX_FILTER_MYBEACON = 0x00000200
+ATH9K_RX_FILTER_PHYRADAR = 0x00002000
 AR_PCU_MISC_MODE2 = 0x8344             # [SRC] reg.h:2041
 AR_PCU_MISC_MODE2_CFP_IGNORE = 0x00000080
 AR_PCU_MISC_MODE2_HWWAR1 = 0x00100000

@@ -159,6 +159,9 @@ def _walk_init(w: Walk) -> None:
     w.run(lambda t: w.wmi.cmd(WMI_SET_MODE_CMDID, struct.pack(">H", 1)), "wmi-set-mode")
     w.run(lambda t: w.wmi.cmd(WMI_ATH_INIT_CMDID, b""), "wmi-ath-init")
     w.run(lambda t: w.wmi.cmd(WMI_START_RECV_CMDID, b""), "wmi-start-recv")
+    from wifit3.chips.ar9271_v2 import rx
+    w.run(lambda t: rx.host_rx_init(w.hw), "host-rx-init")
+    w.run(lambda t: w.wmi.update_cap_target(w.hw.txchainmask), "update-cap-target")
 
 
 def run(cap: str | None = None) -> int:
@@ -286,6 +289,10 @@ def run(cap: str | None = None) -> int:
             print("  M5 OK: + htc-start tail (txpowlimit=0 update clamps rates to 0x0a, then "
                   "WMI SET_MODE(11ng)/ATH_INIT/START_RECV) matched; frontier is the RX path "
                   "(host_rx_init / cap-target update).")
+        elif w.i == 541:
+            print("  M6 OK: + host_rx_init (rxena, STA rx/mcast filters, startpcureceive: "
+                  "mib + ani_reset + DIAG-RX clear) and WMI_TARGET_IC_UPDATE matched; frontier "
+                  "is the channel-config / tune sweep.")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")

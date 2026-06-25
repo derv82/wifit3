@@ -33,6 +33,7 @@ WMI_FLUSH_RECV_CMDID = 0x000e
 WMI_SET_MODE_CMDID = 0x000f
 WMI_REG_READ_CMDID = 0x0014
 WMI_REG_WRITE_CMDID = 0x0015
+WMI_TARGET_IC_UPDATE_CMDID = 0x0018
 WMI_REG_RMW_CMDID = 0x0020
 
 WMI_EVENT_BIT = 0x1000           # command_id & 0x1000 => async event, not a cmd response
@@ -73,6 +74,13 @@ class WMI:
             if cmd_id & WMI_EVENT_BIT:
                 continue                                   # async event — not our response
             return body[4:]                                # strip wmi_cmd_hdr -> value(s)
+
+    def update_cap_target(self, tx_chainmask: int, enable_coex: int = 0) -> None:
+        """ath9k_htc_update_cap_target [SRC] htc_drv_main.c:574 — push HW caps to the target:
+        ampdu limit 0xffff, 0xff subframes, coex flag, tx chainmask (struct is 8 bytes incl.
+        one tail pad byte)."""
+        tcap = struct.pack(">IBBBB", 0xFFFF, 0xFF, enable_coex, tx_chainmask, 0)
+        self.cmd(WMI_TARGET_IC_UPDATE_CMDID, tcap)
 
     def get_fw_version(self) -> tuple[int, int]:
         """WMI_GET_FW_VERSION — empty command, response is wmi_fw_version (be16 major, minor)
