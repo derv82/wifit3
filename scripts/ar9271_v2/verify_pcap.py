@@ -42,7 +42,7 @@ CAP_DIR = REPO / "usb_dumps_new" / "captures_ath9k_htc_newddevice"
 
 _IMPORT_ERR = None
 try:
-    from wifit3.chips.ar9271_v2 import ani, constants as C, eeprom, firmware, htc, hw, phy  # noqa: E402
+    from wifit3.chips.ar9271_v2 import ani, constants as C, eeprom, firmware, htc, hw, key, phy  # noqa: E402
     from wifit3.chips.ar9271_v2.wmi import WMI               # noqa: E402
     from wifit3.chips.ar9271_v2.transport import AR9271Transport  # noqa: E402
 except ImportError as e:                                  # driver not scaffolded yet
@@ -108,6 +108,7 @@ def _walk_init(w: Walk) -> None:
     w.run(lambda t: phy.rf_claim(w.hw), "rf-claim")
     w.run(lambda t: eeprom.init(w.hw), "eeprom")
     w.run(lambda t: ani.ani_init(w.hw), "ani-init")
+    w.run(lambda t: key.init_crypto(w.hw), "key-cache-clear")
 
 
 def run(cap: str | None = None) -> int:
@@ -165,6 +166,8 @@ def run(cap: str | None = None) -> int:
                   "ar9002 analog/initvals tables.")
         elif w.i == 81:
             print("  M2c-1 OK: + ANI init (PHY-error + MIB counters) matched.")
+        elif w.i == 337:
+            print("  M2c-2 OK: + key-cache clear (128 entries) matched.")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")
