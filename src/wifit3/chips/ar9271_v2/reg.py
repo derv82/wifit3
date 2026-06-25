@@ -117,6 +117,16 @@ AR_PHY_ERR_MASK_2 = 0x8138
 AR_PHY_ERR_OFDM_TIMING = 0x00020000    # [SRC] reg.h:1820
 AR_PHY_ERR_CCK_TIMING = 0x02000000     # [SRC] reg.h:1821
 
+# ---- GPIO / LED [SRC] reg.h:1159-1244 + hw.h:144 + htc.h:397 ---------------
+AR_GPIO_IN_OUT = 0x4048                # non-9340
+AR_GPIO_OE_OUT = 0x404c                # non-9340/non-9300
+AR_GPIO_OE_OUT_DRV_NO = 0x0
+AR_GPIO_OE_OUT_DRV_ALL = 0x3
+AR_GPIO_OE_OUT_DRV = 0x3
+AR_GPIO_OUTPUT_MUX3 = 0x4068           # non-9340/non-9300 (gpio > 11, e.g. the led pin)
+AR_GPIO_OUTPUT_MUX_AS_OUTPUT = 0       # [SRC] hw.h:144
+ATH_LED_PIN_9271 = 15                  # [SRC] htc.h:397
+
 # ---- key cache [SRC] ath/reg.h:42-62 + hw.h:180 ----------------------------
 AR_KEYTABLE_0 = 0x8800
 AR_KEYTABLE_SIZE = 128
