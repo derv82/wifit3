@@ -112,6 +112,26 @@ def spur_mitigate(hw: AthHw, chan: Channel) -> None:
         raise NotImplementedError("ar9271_v2: in-band spur mitigation not ported (unseen)")
 
 
+def rf_set_freq(hw: AthHw, chan: Channel) -> None:
+    """ar9002_hw_set_channel [SRC] ar9002_phy.c:66 — program the single-chip synthesizer. The
+    AR9271 is 2.4 GHz only, so this is always the fractional 2 GHz path: seed CHANSEL_2G and
+    set bMode/fracMode in AR_PHY_SYNTH_CONTROL (the 5 GHz ndiv branch is guarded out)."""
+    freq = chan.center_freq                              # centers.synth_center
+    reg32 = hw.read(R.AR_PHY_SYNTH_CONTROL) & 0xc0000000
+    if freq >= 4800:                                     # 5 GHz — never on the 9271
+        raise NotImplementedError("ar9271_v2: 5 GHz synthesizer not ported")
+    b_mode, frac_mode, amode_ref_sel = 1, 1, 0
+    channel_sel = R.CHANSEL_2G(freq)
+    # not AR_SREV_9287_11_OR_LATER: toggle CCK channel-14 spreading via AR_PHY_CCK_TX_CTRL.
+    txctl = hw.read(R.AR_PHY_CCK_TX_CTRL)
+    if freq == 2484:                                     # channel 14 (unused here)
+        hw.write(R.AR_PHY_CCK_TX_CTRL, txctl | R.AR_PHY_CCK_TX_CTRL_JAPAN)
+    else:
+        hw.write(R.AR_PHY_CCK_TX_CTRL, txctl & ~R.AR_PHY_CCK_TX_CTRL_JAPAN)
+    reg32 |= (b_mode << 29) | (frac_mode << 28) | (amode_ref_sel << 26) | channel_sel
+    hw.write(R.AR_PHY_SYNTH_CONTROL, reg32 & 0xFFFFFFFF)
+
+
 def init_chain_masks(hw: AthHw) -> None:
     """ar5008_hw_init_chain_masks [SRC] ar5008_phy.c:813 — program the RX/cal/self-gen chain
     masks from the eeprom-derived chainmask (1T1R on the AR9271). The 3-chain alt-swap and the
