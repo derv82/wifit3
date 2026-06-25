@@ -20,7 +20,7 @@ import usb.core
 
 from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
 
-from . import constants as C, firmware
+from . import constants as C, firmware, htc
 from .transport import AR9271Transport
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,7 @@ class AR9271V2Driver:
         self.transport = AR9271Transport(dev)
         self.is_warm = False
         self.mac_address: Optional[str] = None
+        self.htc: Optional[htc.HTCState] = None
         self._rx_callback: Optional[Callable[[dict], None]] = None
 
     @classmethod
@@ -66,9 +67,12 @@ class AR9271V2Driver:
             return False
         self.transport = AR9271Transport(warm)
 
-        # M2+: HTC/WMI handshake, ath9k_hw init, monitor RX filter. Not yet ported — fail
-        # loudly rather than report a half-initialised card as ready.
-        raise NotImplementedError("ar9271_v2: M2 (HTC/WMI init) not yet ported")
+        _p(0.45, "HTC/WMI handshake...")
+        self.htc = await loop.run_in_executor(None, htc.handshake, self.transport)
+
+        # M2b+: WMI register init (ath9k_hw), calibration, monitor RX filter. Not yet ported
+        # — fail loudly rather than report a half-initialised card as ready.
+        raise NotImplementedError("ar9271_v2: M2b (WMI register init) not yet ported")
 
     async def _await_reenumeration(self) -> Optional[usb.core.Device]:
         backend = libusb_package.get_libusb1_backend()

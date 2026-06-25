@@ -37,3 +37,49 @@ EP_WLAN_TX = 0x01
 EP_WLAN_RX = 0x82
 EP_REG_IN = 0x83
 EP_REG_OUT = 0x04
+
+# ---- HTC (host-target communication) ---------------------------------------
+# [SRC] htc_hst.h:42-53,132-139,164-172.
+ENDPOINT0 = 0                          # the reserved HTC control endpoint
+ENDPOINT_MAX = 22
+ENDPOINT_UNUSED = -1
+
+HTC_MSG_READY_ID = 1                   # device->host: target ready (credits, credit_size)
+HTC_MSG_CONNECT_SERVICE_ID = 2
+HTC_MSG_CONNECT_SERVICE_RESPONSE_ID = 3
+HTC_MSG_SETUP_COMPLETE_ID = 4
+HTC_MSG_CONFIG_PIPE_ID = 5
+HTC_MSG_CONFIG_PIPE_RESPONSE_ID = 6
+
+HTC_FRAME_HDR_LEN = 8                  # endpoint_id, flags, be16 payload_len, control[4]
+HTC_SERVICE_SUCCESS = 0                # [SRC] htc_hst.h:185
+
+# Service IDs: MAKE_SERVICE_ID(WMI_SERVICE_GROUP=1, index) [SRC] htc_hst.h:164-172.
+WMI_CONTROL_SVC = 0x0100
+WMI_BEACON_SVC = 0x0101
+WMI_CAB_SVC = 0x0102
+WMI_UAPSD_SVC = 0x0103
+WMI_MGMT_SVC = 0x0104
+WMI_DATA_VO_SVC = 0x0105
+WMI_DATA_VI_SVC = 0x0106
+WMI_DATA_BE_SVC = 0x0107
+WMI_DATA_BK_SVC = 0x0108
+
+# AR9271 advertises 33 host->target credits (AR7010 uses 45) [SRC] htc_drv_init.c:206-208.
+HTC_CREDITS_AR9271 = 33
+
+# service_id -> (ul_pipe, dl_pipe). WMI control rides the REG pipes; everything else the bulk
+# WLAN pipes [SRC] htc_hst.c:50-86 service_to_ulpipe / service_to_dlpipe.
+SERVICE_PIPES = {
+    WMI_CONTROL_SVC: (USB_REG_OUT_PIPE, USB_REG_IN_PIPE),
+}
+for _svc in (WMI_BEACON_SVC, WMI_CAB_SVC, WMI_UAPSD_SVC, WMI_MGMT_SVC,
+             WMI_DATA_VO_SVC, WMI_DATA_VI_SVC, WMI_DATA_BE_SVC, WMI_DATA_BK_SVC):
+    SERVICE_PIPES[_svc] = (USB_WLAN_TX_PIPE, USB_WLAN_RX_PIPE)
+
+# Connect order: WMI control first (ath9k_wmi_connect), then the data services
+# [SRC] htc_drv_init.c:140-198 ath9k_init_htc_services.
+SERVICE_CONNECT_ORDER = [
+    WMI_CONTROL_SVC, WMI_BEACON_SVC, WMI_CAB_SVC, WMI_UAPSD_SVC, WMI_MGMT_SVC,
+    WMI_DATA_BE_SVC, WMI_DATA_BK_SVC, WMI_DATA_VI_SVC, WMI_DATA_VO_SVC,
+]

@@ -136,8 +136,12 @@ class ReplayDevice:
                  start: int = 0):
         self.ops = host_ops
         self.i = start
-        self.responses = responses or []
-        self.resp_i = 0
+        # Per-ep response queues: reading the REG_IN (0x83) stream must not consume or
+        # discard pending WLAN_RX (0x82) frames, and vice versa.
+        self.resp: dict[int, list[bytes]] = {}
+        for r in (responses or []):
+            self.resp.setdefault(r["ep"], []).append(r["data"])
+        self.resp_pos: dict[int, int] = {}
 
     def _next(self) -> dict:
         if self.i >= len(self.ops):
@@ -184,9 +188,9 @@ class ReplayDevice:
         return len(data)
 
     def read(self, ep, length, timeout=None):
-        while self.resp_i < len(self.responses):
-            r = self.responses[self.resp_i]
-            self.resp_i += 1
-            if r["ep"] == ep:
-                return bytearray(r["data"])
-        raise Divergence(f"port awaited an IN ep=0x{ep:02x} response the wire never carried")
+        pos = self.resp_pos.get(ep, 0)
+        queue = self.resp.get(ep, [])
+        if pos >= len(queue):
+            raise Divergence(f"port awaited an IN ep=0x{ep:02x} response the wire never carried")
+        self.resp_pos[ep] = pos + 1
+        return bytearray(queue[pos])
