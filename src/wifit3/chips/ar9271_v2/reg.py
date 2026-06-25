@@ -489,3 +489,22 @@ AR_USEC = 0x801C                        # [SRC] reg.h:1660
 AR_USEC_USEC = 0x0000007F
 AR_USEC_TX_LAT = 0x007FC000
 AR_USEC_RX_LAT = 0x1F800000
+
+# ---- set_dma / OBS / RX-interrupt-mitigation [SRC] hw.c:1193 + reg.h ---------
+AR_STA_ID1_PRESERVE_SEQNUM = 0x20000000   # [SRC] reg.h:1633
+AR_AHB_MODE = 0x4024                    # [SRC] reg.h:1020
+AR_AHB_PREFETCH_RD_EN = 0x00000004
+AR_TXCFG = 0x0030                       # [SRC] reg.h:79
+AR_TXCFG_DMASZ_MASK = 0x00000007
+AR_TXCFG_DMASZ_128B = 5
+AR_FTRIG = 0x000003F0
+AR_FTRIG_S = 4
+AR_FTRIG_256B = 0x00000040
+AR_RXCFG = 0x0034                       # [SRC] reg.h:99
+AR_RXCFG_DMASZ_MASK = 0x00000007
+AR_RXCFG_DMASZ_128B = 5
+AR_RXFIFO_CFG = 0x8114                  # [SRC] reg.h:1823
+AR_OBS = 0x4080                         # non-9300/9340 [SRC] reg.h:1259
+AR_RIMT = 0x002C                        # [SRC] reg.h:64
+AR_RIMT_LAST = 0x0000FFFF
+AR_RIMT_FIRST = 0xFFFF0000

@@ -67,6 +67,9 @@ class AthHw:
         self.globaltxtimeout = 0xFFFFFFFF          # (u32)-1 -> set_global_txtimeout skipped
         self.misc_mode = R.AR_PCU_MIC_NEW_LOC_ENA   # [SRC] hw.c:2558 (no KEYSEARCH cap)
         self.dynack_enabled = False
+        self.tx_trig_level = R.AR_FTRIG_256B >> R.AR_FTRIG_S   # [SRC] hw.c:483 (9271 = 256B)
+        self.rimt_last = 250                       # [SRC] hw.c:410 (non-9300)
+        self.rimt_first = 700
 
     # ---- silicon-revision predicates [SRC] reg.h:837-928 ------------------
     def is_9271(self) -> bool:
@@ -430,6 +433,35 @@ class AthHw:
                  (self.clockrate - 1) | R.SM(rx_lat, R.AR_USEC_RX_LAT)
                  | R.SM(tx_lat, R.AR_USEC_TX_LAT),
                  R.AR_USEC_TX_LAT | R.AR_USEC_RX_LAT | R.AR_USEC_USEC)
+
+    def set_dma(self) -> None:
+        """ath9k_hw_set_dma [SRC] hw.c:1193 — AHB prefetch, 128-byte TX/RX DMA bursts, the TX
+        trigger level, and the RX-FIFO threshold. The 9271 skips the PCU TXBUF-CTRL write."""
+        self.enable_write_buffer()
+        self.rmw(R.AR_AHB_MODE, R.AR_AHB_PREFETCH_RD_EN, 0)     # not 9300
+        self.rmw(R.AR_TXCFG, R.AR_TXCFG_DMASZ_128B, R.AR_TXCFG_DMASZ_MASK)
+        self.write_flush()
+        self.rmw_field(R.AR_TXCFG, R.AR_FTRIG, self.tx_trig_level)   # not 9300
+        self.enable_write_buffer()
+        self.rmw(R.AR_RXCFG, R.AR_RXCFG_DMASZ_128B, R.AR_RXCFG_DMASZ_MASK)
+        self.write(R.AR_RXFIFO_CFG, 0x200)
+        # AR_SREV_9271 -> skip AR_PCU_TXBUF_CTRL.
+        self.write_flush()
+
+    def reset_dma_and_intr(self) -> None:
+        """The ath9k_hw_reset tail after init_global_settings [SRC] hw.c:2006-2024: preserve the
+        sequence number, program DMA, enable the observation bus, and apply RX interrupt
+        mitigation (rx_intr_mitigation is on for the 9271)."""
+        self.rmw(R.AR_STA_ID1, R.AR_STA_ID1_PRESERVE_SEQNUM, 0)   # REG_SET_BIT
+        self.set_dma()
+        self.write(R.AR_OBS, 8)                                   # not MCI
+        self.enable_rmw_buffer()
+        if self.rx_intr_mitigation:
+            self.rmw_field(R.AR_RIMT, R.AR_RIMT_LAST, self.rimt_last)
+            self.rmw_field(R.AR_RIMT, R.AR_RIMT_FIRST, self.rimt_first)
+        if self.tx_intr_mitigation:                              # off on the 9271
+            pass
+        self.rmw_buffer_flush()
 
     def init_mfp(self) -> None:
         """ath9k_hw_init_mfp [SRC] hw.c — CCMP management-frame protection. On 9280_20+ mask

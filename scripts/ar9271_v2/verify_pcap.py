@@ -144,6 +144,7 @@ def _walk_init(w: Walk) -> None:
     w.run(lambda t: w.hw.ani_cache_ini_regs(), "ani-cache-ini-regs")
     w.run(lambda t: w.hw.init_qos(), "init-qos")
     w.run(lambda t: w.hw.init_global_settings(w.chan), "init-global-settings")
+    w.run(lambda t: w.hw.reset_dma_and_intr(), "set-dma-obs-rimt")
 
 
 def run(cap: str | None = None) -> int:
@@ -253,6 +254,9 @@ def run(cap: str | None = None) -> int:
         elif w.i == 459:
             print("  M2e-7 OK: + init_global_settings (SIFS/slot/ACK/CTS/EIFS/USEC timing) "
                   "matched; frontier is STA_ID1 PRESERVE_SEQNUM / set_dma.")
+        elif w.i == 467:
+            print("  M2e-8 OK: + STA_ID1 seqnum, set_dma, AR_OBS, RX-intr-mitigation matched; "
+                  "frontier is init_bb / calibration.")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")
