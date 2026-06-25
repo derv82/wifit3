@@ -62,19 +62,23 @@ class Walk:
         self.wmi = None                     # persistent WMI channel, bound after the handshake
         self.hw = None                      # persistent AthHw, created at chip reset
         self.chan = None                    # the channel being brought up
+        self.value_except_regs: set[int] = set()   # registers whose written value is excepted
+        self.value_excepted = 0
         self.waived: Counter = Counter()
 
     def run(self, fn, label: str):
         """Drive a port handler from the cursor. Both the host-op cursor and the per-ep
         response position persist across calls, so a multi-step WMI conversation (one seq
         counter, one continuous REG_IN stream) replays unbroken."""
-        rd = rp.ReplayDevice(self.ops, self.responses, op_start=self.i, resp_pos=self.resp_pos)
+        rd = rp.ReplayDevice(self.ops, self.responses, op_start=self.i, resp_pos=self.resp_pos,
+                             value_except_regs=self.value_except_regs)
         t = AR9271Transport(rd)
         if self.wmi is not None:
             self.wmi.t = t                  # rebind the persistent WMI to this call's transport
         result = fn(t)
         self.i = rd.i
         self.resp_pos = rd.resp_pos
+        self.value_excepted += rd.value_excepted
         return result
 
     def peek(self) -> dict | None:
@@ -119,7 +123,9 @@ def _walk_init(w: Walk) -> None:
     w.run(lambda t: gpio.led_init(w.hw), "led-gpio")
     from wifit3.chips.ar9271_v2.wmi import WMI_FLUSH_RECV_CMDID
     w.run(lambda t: w.wmi.cmd(WMI_FLUSH_RECV_CMDID, b""), "flush-recv")
-    # ath9k_hw_reset opening: preamble saves + chip_reset(WARM) + init_pll + MAC-gate.
+    # ath9k_hw_reset opening: preamble saves + chip_reset(WARM) + init_pll + MAC-gate +
+    # TSF restore (low word value-excepted: tsf+wall-clock-offset) + JTAG disable.
+    w.value_except_regs.add(R.AR_TSF_L32)
     w.run(lambda t: w.hw.reset_begin(w.chan), "hw-reset-begin")
 
 
@@ -154,6 +160,9 @@ def run(cap: str | None = None) -> int:
 
     for reason, n in w.waived.most_common():
         print(f"  waived {n:5} ops  — {reason}")
+    if w.value_excepted:
+        print(f"  value-excepted {w.value_excepted} write(s) — hardware/wall-clock value "
+              "(register + headers matched)")
 
     if w.i < len(ops):
         front = w.peek()
@@ -191,6 +200,9 @@ def run(cap: str | None = None) -> int:
         elif w.i == 371:
             print("  M2d-1 OK: + ath9k_hw_reset preamble & chip_reset(WARM) matched; frontier "
                   "is the TSF restore (wall-clock-dependent value).")
+        elif w.i == 374:
+            print("  M2d-2 OK: + TSF restore (value-excepted) & JTAG disable matched; frontier "
+                  "is ath9k_hw_process_ini (the initvals tables).")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")

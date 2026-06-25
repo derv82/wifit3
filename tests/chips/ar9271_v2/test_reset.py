@@ -36,7 +36,8 @@ def _writes(dev):
 
 def _hw(dev):
     h = hw.AthHw(WMI(AR9271Transport(dev), ctrl_epid=1))
-    h.reset_power_on = True          # set during init_reset in the real flow
+    h.macVersion = R.AR_SREV_VERSION_9271   # set by read_revisions in the real flow
+    h.reset_power_on = True                 # set during init_reset
     h.chip_fullsleep = False
     return h
 
@@ -72,3 +73,15 @@ def test_reset_begin_key_writes():
     # WARM reset: AR_RTC_RC flush carries MAC_WARM only (no MAC_COLD bit).
     assert (R.AR_RTC_RC, R.AR_RTC_RC_MAC_WARM) in pairs
     assert h.chip_fullsleep is False
+    # TSF restore (low then high) + JTAG disable close the opening.
+    assert (R.AR_TSF_U32, 0) in pairs
+    jtag = [(struct.unpack_from(">III", b, 0)) for c, b in dev.cmds if c == 0x20]
+    assert (R.AR_GPIO_INPUT_EN_VAL, R.AR_GPIO_JTAG_DISABLE, 0) in jtag
+
+
+def test_settsf64_low_then_high():
+    dev = FakeDev()
+    h = _hw(dev)
+    h.settsf64(0x1_2345_6789)
+    pairs = _all_pairs(dev)
+    assert pairs == [(R.AR_TSF_L32, 0x23456789), (R.AR_TSF_U32, 0x1)]

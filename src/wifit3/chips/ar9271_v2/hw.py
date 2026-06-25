@@ -49,6 +49,9 @@ class AthHw:
     def is_9300_20_or_later(self) -> bool:
         return self.macVersion >= 0x1c0           # AR_SREV_VERSION_9300
 
+    def is_9280_20_or_later(self) -> bool:
+        return self.macVersion >= 0x80            # AR_SREV_VERSION_9280 (true for 9271)
+
     # ---- register access (over WMI) ---------------------------------------
     def read(self, reg: int) -> int:
         return self.wmi.reg_read(reg)
@@ -219,6 +222,13 @@ class AthHw:
     def mark_phy_inactive(self) -> None:
         self.write(R.AR_PHY_ACTIVE, R.AR_PHY_ACTIVE_DIS)   # [SRC] hw.c ath9k_hw_mark_phy_inactive
 
+    def settsf64(self, tsf: int) -> None:
+        """ath9k_hw_settsf64 [SRC] mac.c — write the low then high TSF word. The caller passes
+        tsf + a wall-clock offset; in replay the offset is 0 (the low word is value-excepted in
+        the gate, since it can never be byte-reproduced)."""
+        self.write(R.AR_TSF_L32, tsf & 0xffffffff)
+        self.write(R.AR_TSF_U32, (tsf >> 32) & 0xffffffff)
+
     # ---- chip reset (within ath9k_hw_reset) [SRC] hw.c:1519-1541 ----------
     def chip_reset(self, chan) -> None:
         """ath9k_hw_chip_reset: pick WARM unless TX/RX is pending (or the chip is full-asleep),
@@ -246,6 +256,11 @@ class AthHw:
         self.chip_reset(chan)
         # ... and gate the MAC clock after [SRC] hw.c:1937.
         self.write(R.AR9271_RESET_POWER_DOWN_CONTROL, R.AR9271_GATE_MAC_CTL)
+        # Restore TSF (low word value-excepted) [SRC] hw.c:1946-1947.
+        self.settsf64(self.tsf)
+        # Disable JTAG so GPIO 0-3 are usable [SRC] hw.c:1949-1950.
+        if self.is_9280_20_or_later():
+            self.rmw(R.AR_GPIO_INPUT_EN_VAL, R.AR_GPIO_JTAG_DISABLE, 0)
 
 
 def init_reset(wmi: WMI) -> AthHw:
