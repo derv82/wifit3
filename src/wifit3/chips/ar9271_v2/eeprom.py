@@ -81,6 +81,12 @@ def check(hw: AthHw) -> None:
     logger.debug("ar9271_v2: EEPROM ver=0x%x rev=0x%x", ver, rev)
 
 
+def txgain_type(hw: AthHw) -> int:
+    """baseEepHeader.txGainType (4k map byte 31) — get_eeprom(EEP_TXGAIN_TYPE)
+    [SRC] eeprom_4k.c:274. 0 = original/normal power, 1 = high power."""
+    return hw.eeprom[31]
+
+
 def init(hw: AthHw) -> None:
     """ath9k_hw_eeprom_init [SRC] eeprom.c:659 — fill then check the 4k map."""
     fill(hw)

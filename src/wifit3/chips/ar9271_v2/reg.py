@@ -158,6 +158,12 @@ AR_PHY_BASE = 0x9800
 def AR_PHY(n: int) -> int:             # AR_PHY(_n) = AR_PHY_BASE + (_n << 2)
     return AR_PHY_BASE + (n << 2)
 AR_PHY_CHIP_ID = 0x9818                # [SRC] phy.h:43
+AR_PHY_ADC_SERIAL_CTL = 0x9830         # [SRC] ar9002_phy.h:75
+AR_PHY_SEL_INTERNAL_ADDAC = 0x00000000
+AR_PHY_SEL_EXTERNAL_RADIO = 0x00000001
+AR_AN_TOP2 = 0x7894                     # [SRC] reg.h:1457
+AR_AN_TOP2_PWDCLKIND = 0x00400000
+AR5416_EEP_TXGAIN_HIGH_POWER = 1        # [SRC] eeprom.h:174 (0 = original/normal)
 
 # ---- PLL / clock [SRC] reg.h:1334-1400 -------------------------------------
 AR_RTC_PLL_CONTROL = 0x7014            # non-9100/soc
