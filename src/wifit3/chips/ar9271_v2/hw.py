@@ -61,6 +61,12 @@ class AthHw:
         self.dma_beacon_response_time = 1          # [SRC] hw.c:399
         self.rx_intr_mitigation = True             # [SRC] hw.c:404
         self.tx_intr_mitigation = False
+        self.clockrate = R.ATH9K_CLOCK_RATE_2GHZ_OFDM   # set_clockrate (2 GHz OFDM)
+        self.slottime = 9                          # [SRC] hw.c:470
+        self.coverage_class = 0
+        self.globaltxtimeout = 0xFFFFFFFF          # (u32)-1 -> set_global_txtimeout skipped
+        self.misc_mode = R.AR_PCU_MIC_NEW_LOC_ENA   # [SRC] hw.c:2558 (no KEYSEARCH cap)
+        self.dynack_enabled = False
 
     # ---- silicon-revision predicates [SRC] reg.h:837-928 ------------------
     def is_9271(self) -> bool:
@@ -385,6 +391,45 @@ class AthHw:
         for reg in (R.AR_TXOP_0_3, R.AR_TXOP_4_7, R.AR_TXOP_8_11, R.AR_TXOP_12_15):
             self.write(reg, 0xFFFFFFFF)
         self.write_flush()
+
+    def _mac_to_clks(self, usecs: int) -> int:
+        return usecs * self.clockrate
+
+    def init_global_settings(self, chan) -> None:
+        """ath9k_hw_init_global_settings [SRC] hw.c:1051 — SIFS/slot/ACK/CTS/EIFS timing and
+        the AR_USEC latencies. 2.4 GHz / 20 MHz path (no half/quarter rate)."""
+        if self.misc_mode != 0:
+            self.rmw(R.AR_PCU_MISC, self.misc_mode, 0)        # REG_SET_BIT
+
+        sifstime = 10                                          # 2.4 GHz
+        eifs = self.read(R.AR_D_GBL_IFS_EIFS) // self.clockrate
+        reg = self.read(R.AR_USEC)
+        rx_lat = R.MS(reg, R.AR_USEC_RX_LAT)
+        tx_lat = R.MS(reg, R.AR_USEC_TX_LAT)
+        slottime = self.slottime
+
+        slottime += 3 * self.coverage_class
+        acktimeout = slottime + sifstime                       # ack_offset 0 (full rate)
+        ctstimeout = acktimeout
+        # 2.4 GHz early-ACK workaround.
+        acktimeout += 64 - sifstime - self.slottime
+        ctstimeout += 48 - sifstime - self.slottime
+        if self.dynack_enabled:                                # untested (off at cold boot)
+            acktimeout = ctstimeout = self.dynack_ackto
+            slottime = (acktimeout - 3) // 2
+
+        self.write(R.AR_D_GBL_IFS_SIFS, min(self._mac_to_clks(sifstime - 2), 0xFFFF))
+        self.write(R.AR_D_GBL_IFS_SLOT, min(self._mac_to_clks(slottime), 0xFFFF))
+        self.rmw_field(R.AR_TIME_OUT, R.AR_TIME_OUT_ACK,
+                       min(self._mac_to_clks(acktimeout), R.MS(0xFFFFFFFF, R.AR_TIME_OUT_ACK)))
+        self.rmw_field(R.AR_TIME_OUT, R.AR_TIME_OUT_CTS,
+                       min(self._mac_to_clks(ctstimeout), R.MS(0xFFFFFFFF, R.AR_TIME_OUT_CTS)))
+        # globaltxtimeout == (u32)-1 -> set_global_txtimeout skipped.
+        self.write(R.AR_D_GBL_IFS_EIFS, self._mac_to_clks(eifs))
+        self.rmw(R.AR_USEC,
+                 (self.clockrate - 1) | R.SM(rx_lat, R.AR_USEC_RX_LAT)
+                 | R.SM(tx_lat, R.AR_USEC_TX_LAT),
+                 R.AR_USEC_TX_LAT | R.AR_USEC_RX_LAT | R.AR_USEC_USEC)
 
     def init_mfp(self) -> None:
         """ath9k_hw_init_mfp [SRC] hw.c — CCMP management-frame protection. On 9280_20+ mask
