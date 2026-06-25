@@ -103,6 +103,14 @@ AR_PHY_ERR_MASK_2 = 0x8138
 AR_PHY_ERR_OFDM_TIMING = 0x00020000    # [SRC] reg.h:1820
 AR_PHY_ERR_CCK_TIMING = 0x02000000     # [SRC] reg.h:1821
 
+# ---- key cache [SRC] ath/reg.h:42-62 + hw.h:180 ----------------------------
+AR_KEYTABLE_0 = 0x8800
+AR_KEYTABLE_SIZE = 128
+AR_KEYTABLE_TYPE_CLR = 0x00000007
+AR_KEYTABLE_TYPE_TKIP = 0x00000004
+def AR_KEYTABLE(n: int) -> int:        # AR_KEYTABLE(_n) = AR_KEYTABLE_0 + (_n * 32)
+    return AR_KEYTABLE_0 + (n * 32)
+
 # ---- PHY [SRC] phy.h:24-25,43 ----------------------------------------------
 AR_PHY_BASE = 0x9800
 def AR_PHY(n: int) -> int:             # AR_PHY(_n) = AR_PHY_BASE + (_n << 2)
