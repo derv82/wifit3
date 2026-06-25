@@ -133,15 +133,16 @@ class ReplayDevice:
     Divergence. read() serves device->host responses in capture order (filtered by ep)."""
 
     def __init__(self, host_ops: list[dict], responses: list[dict] | None = None,
-                 start: int = 0):
-        self.ops = host_ops
-        self.i = start
+                 op_start: int = 0, resp_pos: dict[int, int] | None = None):
+        self.ops = host_ops                       # full host-op list; op_start is the cursor
+        self.i = op_start
         # Per-ep response queues: reading the REG_IN (0x83) stream must not consume or
-        # discard pending WLAN_RX (0x82) frames, and vice versa.
+        # discard pending WLAN_RX (0x82) frames, and vice versa. resp_pos carries the
+        # progress so a multi-call WMI conversation reads responses continuously.
         self.resp: dict[int, list[bytes]] = {}
         for r in (responses or []):
             self.resp.setdefault(r["ep"], []).append(r["data"])
-        self.resp_pos: dict[int, int] = {}
+        self.resp_pos: dict[int, int] = dict(resp_pos) if resp_pos else {}
 
     def _next(self) -> dict:
         if self.i >= len(self.ops):

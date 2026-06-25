@@ -42,7 +42,8 @@ CAP_DIR = REPO / "usb_dumps_new" / "captures_ath9k_htc_newddevice"
 
 _IMPORT_ERR = None
 try:
-    from wifit3.chips.ar9271_v2 import firmware, htc       # noqa: E402
+    from wifit3.chips.ar9271_v2 import constants as C, firmware, htc, hw  # noqa: E402
+    from wifit3.chips.ar9271_v2.wmi import WMI               # noqa: E402
     from wifit3.chips.ar9271_v2.transport import AR9271Transport  # noqa: E402
 except ImportError as e:                                  # driver not scaffolded yet
     _IMPORT_ERR = e
@@ -57,13 +58,22 @@ class Walk:
         self.ops = ops
         self.responses = responses
         self.i = 0
+        self.resp_pos: dict[int, int] = {}
+        self.wmi = None                     # persistent WMI channel, bound after the handshake
+        self.hw = None                      # persistent AthHw, created at chip reset
         self.waived: Counter = Counter()
 
     def run(self, fn, label: str):
-        rd = rp.ReplayDevice(self.ops[self.i:], self.responses)
+        """Drive a port handler from the cursor. Both the host-op cursor and the per-ep
+        response position persist across calls, so a multi-step WMI conversation (one seq
+        counter, one continuous REG_IN stream) replays unbroken."""
+        rd = rp.ReplayDevice(self.ops, self.responses, op_start=self.i, resp_pos=self.resp_pos)
         t = AR9271Transport(rd)
+        if self.wmi is not None:
+            self.wmi.t = t                  # rebind the persistent WMI to this call's transport
         result = fn(t)
-        self.i += rd.i
+        self.i = rd.i
+        self.resp_pos = rd.resp_pos
         return result
 
     def peek(self) -> dict | None:
@@ -83,11 +93,15 @@ def _walk_init(w: Walk) -> None:
     firmware   13x 4096B RAM writes (bRequest 0x30) + COMP (0x31)   ath9k_hif_usb_download_fw
     htc        READY -> 9x connect_service -> config credits ->      htc_hst.c / htc_drv_init.c
                setup complete
-    --- M2b frontier: WMI register init (ath9k_hw) / calibration / monitor RX filter ---
+    reset      SREV read + power-on chip reset (RTC/RC block)        hw.c __ath9k_hw_init
+    --- M2b frontier: ath9k_hw_setpower(AWAKE) / PHY init / EEPROM / calibration ---
     """
     fw = firmware.load_firmware_blob()
     w.run(lambda t: firmware.download(t, fw), "firmware")
-    w.run(lambda t: htc.handshake(t), "htc-handshake")
+    st = w.run(lambda t: htc.handshake(t), "htc-handshake")
+
+    w.wmi = WMI(None, ctrl_epid=st.endpoints[C.WMI_CONTROL_SVC])
+    w.hw = w.run(lambda t: hw.init_reset(w.wmi), "chip-reset")
 
 
 def run(cap: str | None = None) -> int:
@@ -132,8 +146,11 @@ def run(cap: str | None = None) -> int:
             print("  M1 OK: 14 firmware-download control ops matched; frontier is the HTC "
                   "handshake (M2a).")
         elif w.i == 25:
-            print("  M2a OK: firmware + HTC handshake (9 service connects + config credits + "
-                  "setup complete) matched; frontier is the WMI register init (M2b).")
+            print("  M2a OK: firmware + HTC handshake matched; frontier is the WMI register "
+                  "init (M2b).")
+        elif w.i == 42:
+            print("  M2b-1 OK: + SREV read & power-on chip reset matched; frontier is "
+                  "ath9k_hw_setpower(AWAKE).")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")
