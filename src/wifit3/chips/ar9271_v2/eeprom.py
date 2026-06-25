@@ -88,6 +88,9 @@ def txgain_type(hw: AthHw) -> int:
 
 
 def init(hw: AthHw) -> None:
-    """ath9k_hw_eeprom_init [SRC] eeprom.c:659 — fill then check the 4k map."""
+    """ath9k_hw_eeprom_init [SRC] eeprom.c:659 — fill then check the 4k map, then latch the
+    chain masks (what ath9k_hw_fill_cap_info derives from EEP_RX_MASK/EEP_TX_MASK)."""
     fill(hw)
     check(hw)
+    hw.rxchainmask = hw.eeprom[18]                # baseEepHeader.rxMask
+    hw.txchainmask = hw.eeprom[19]                # baseEepHeader.txMask
