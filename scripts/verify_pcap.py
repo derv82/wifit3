@@ -95,6 +95,8 @@ REGISTRY: dict[str, Chip] = {
     "ar9271": Chip("ar9271", None, "Atheros AR9271 (HTC/WMI)",
                    pointer="event-driven HTC/WMI + firmware re-enumeration -- not a "
                            "register byte-diff; use scripts/ar9271/build_template.py"),
+    "ar9271_v2": Chip("ar9271_v2", "ar9271_v2/verify_pcap.py",
+                      "Atheros AR9271 ath9k_htc clean-room re-port (firmware + HTC/WMI; WIP)"),
 }
 
 

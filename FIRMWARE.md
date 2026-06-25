@@ -1,7 +1,7 @@
 # Firmware provenance
 
-Wifit3 is licensed **GPL-2.0-only** — but the 21 firmware blobs it ships under
-`src/wifit3/chips/<chip>/assets/*.bin` are **not** GPL. Each is a vendor binary that the
+Wifit3 is licensed **GPL-2.0-only** — but the 22 firmware blobs it ships under
+`src/wifit3/chips/<chip>/assets/` (`*.bin`, plus the ath9k `*.fw`) are **not** GPL. Each is a vendor binary that the
 silicon needs loaded at bring-up, redistributed here *verbatim* under its own
 manufacturer's license — exactly as Linux's
 [`linux-firmware`](https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git)
@@ -41,6 +41,7 @@ the verification detail, frame ranges, and hashes; this file is the licensing su
 | `rt3070_fw.bin` | RT3070 | `linux-firmware` `rt2870.bin` (first 4 KB, offset 0) | Ralink redistributable (`LICENCE.ralink-firmware.txt`) | ✅ md5 `d94f0280…`, wire multiwrite == `rt2870.bin[:4096]` |
 | `rt5372_fw.bin` | RT5372 | `linux-firmware` `rt2870.bin` (USB half, offset 4096) | Ralink redistributable (`LICENCE.ralink-firmware.txt`) | ✅ md5 `8d98ca9f…`, `rt2870.bin[4096:]` |
 | `rt5370_fw.bin` | RT5370 | `linux-firmware` `rt2870.bin` (USB half, offset 4096) | Ralink redistributable (`LICENCE.ralink-firmware.txt`) | ✅ md5 `8d98ca9f…`, `rt2870.bin[4096:]` (byte-identical to `rt5372_fw.bin`) |
+| `htc_9271-1.4.0.fw` | AR9271 (ath9k_htc, v2) | `linux-firmware` `ath9k_htc/htc_9271-1.4.0.fw` | Atheros redistributable (`LICENCE.atheros_firmware`) | ✅ md5 `4ed467d4…`, wire FW-download (13 chunks) == blob on all 3 pcaps |
 
 Notes:
 
