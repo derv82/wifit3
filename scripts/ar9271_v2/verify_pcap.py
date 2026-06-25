@@ -119,6 +119,8 @@ def _walk_init(w: Walk) -> None:
     w.run(lambda t: gpio.led_init(w.hw), "led-gpio")
     from wifit3.chips.ar9271_v2.wmi import WMI_FLUSH_RECV_CMDID
     w.run(lambda t: w.wmi.cmd(WMI_FLUSH_RECV_CMDID, b""), "flush-recv")
+    # ath9k_hw_reset opening: preamble saves + chip_reset(WARM) + init_pll + MAC-gate.
+    w.run(lambda t: w.hw.reset_begin(w.chan), "hw-reset-begin")
 
 
 def run(cap: str | None = None) -> int:
@@ -186,6 +188,9 @@ def run(cap: str | None = None) -> int:
         elif w.i == 351:
             print("  M2c-5 OK: + LED GPIO config & WMI_FLUSH_RECV matched; frontier is "
                   "ath9k_hw_reset (DEF_ANTENNA read).")
+        elif w.i == 371:
+            print("  M2d-1 OK: + ath9k_hw_reset preamble & chip_reset(WARM) matched; frontier "
+                  "is the TSF restore (wall-clock-dependent value).")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")

@@ -68,6 +68,24 @@ AR_RTC_FORCE_WAKE_ON_INT = 0x00000002
 AR_STA_ID0 = 0x8000                    # [SRC] ath/reg.h:26 (shared ath common)
 AR_STA_ID1 = 0x8004
 AR_STA_ID1_PWR_SAV = 0x00040000        # [SRC] reg.h:1621
+AR_STA_ID1_BASE_RATE_11B = 0x02000000  # [SRC] reg.h:1629
+
+# ---- reset preamble (ath9k_hw_reset) [SRC] reg.h:395-1721 ------------------
+AR_CR = 0x0008
+AR_CR_RXE = 0x00000004                 # non-9300
+AR_Q_TXE = 0x0840
+AR_TSF_L32 = 0x804c
+AR_TSF_U32 = 0x8050
+AR_DEF_ANTENNA = 0x8058
+AR_CFG_LED = 0x1f04
+AR_CFG_LED_SAVE_MASK = 0x00000c00 | 0x00000380 | 0x00000070 | 0x00000008  # ASSOC|MODE|THRESH|SLOW
+AR_PHY_ACTIVE = 0x981c                 # [SRC] ar9002_phy.h:50
+AR_PHY_ACTIVE_DIS = 0x00000000
+AR_GPIO_INPUT_EN_VAL = 0x4054          # non-9340/non-9300
+AR_GPIO_JTAG_DISABLE = 0x00020000
+AR9271_RESET_POWER_DOWN_CONTROL = 0x50044   # [SRC] reg.h:1615
+AR9271_RADIO_RF_RST = 0x20
+AR9271_GATE_MAC_CTL = 0x4000
 
 # ---- EEPROM access (USB) [SRC] eeprom.h:66-68,177 / reg.h:1250-1256 --------
 AR5416_EEPROM_OFFSET = 0x2000          # EEPROM word window base
