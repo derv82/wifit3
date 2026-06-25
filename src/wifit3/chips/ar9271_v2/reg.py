@@ -81,6 +81,28 @@ AR_RAD2133_SREV_MAJOR = 0xd0
 AR_RAD5122_SREV_MAJOR = 0xe0
 AR_RAD2122_SREV_MAJOR = 0xf0
 
+# ---- ANI / MIB counters [SRC] reg.h:1767-1862 + ath/reg.h:20-24 ------------
+AR_MIBC = 0x0040                       # [SRC] ath/reg.h:20 (shared ath common)
+AR_MIBC_COW = 0x00000001
+AR_MIBC_FMC = 0x00000002
+AR_MIBC_CMC = 0x00000004
+AR_MIBC_MCS = 0x00000008
+
+AR_RTS_OK = 0x8088
+AR_RTS_FAIL = 0x808c
+AR_ACK_FAIL = 0x8090
+AR_FCS_FAIL = 0x8094
+AR_BEACON_CNT = 0x8098
+
+AR_FILT_OFDM = 0x8124
+AR_FILT_CCK = 0x8128
+AR_PHY_ERR_1 = 0x812c
+AR_PHY_ERR_MASK_1 = 0x8130
+AR_PHY_ERR_2 = 0x8134
+AR_PHY_ERR_MASK_2 = 0x8138
+AR_PHY_ERR_OFDM_TIMING = 0x00020000    # [SRC] reg.h:1820
+AR_PHY_ERR_CCK_TIMING = 0x02000000     # [SRC] reg.h:1821
+
 # ---- PHY [SRC] phy.h:24-25,43 ----------------------------------------------
 AR_PHY_BASE = 0x9800
 def AR_PHY(n: int) -> int:             # AR_PHY(_n) = AR_PHY_BASE + (_n << 2)
