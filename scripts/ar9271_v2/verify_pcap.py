@@ -140,6 +140,9 @@ def _walk_init(w: Walk) -> None:
     from wifit3.chips.ar9271_v2 import mac_queue
     mac_queue.init_tx_queues(w.hw)                       # driver-side alloc (no wire ops)
     w.run(lambda t: mac_queue.init_queues(w.hw), "init-queues")
+    w.run(lambda t: w.hw.init_interrupt_masks(), "init-interrupt-masks")
+    w.run(lambda t: w.hw.ani_cache_ini_regs(), "ani-cache-ini-regs")
+    w.run(lambda t: w.hw.init_qos(), "init-qos")
 
 
 def run(cap: str | None = None) -> int:
@@ -243,6 +246,9 @@ def run(cap: str | None = None) -> int:
         elif w.i == 441:
             print("  M2e-5 OK: + init_queues (DQCUMASK + 4 data/CAB/beacon DCU config + per-"
                   "queue IMR) matched; frontier is init_interrupt_masks.")
+        elif w.i == 450:
+            print("  M2e-6 OK: + init_interrupt_masks, ani_cache_ini_regs, init_qos matched; "
+                  "frontier is init_global_settings / PCU.")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")

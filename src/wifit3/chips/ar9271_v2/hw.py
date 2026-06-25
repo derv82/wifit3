@@ -59,6 +59,8 @@ class AthHw:
         self.intr_txqs = 0
         self.sw_beacon_response_time = 6           # [SRC] hw.c:400
         self.dma_beacon_response_time = 1          # [SRC] hw.c:399
+        self.rx_intr_mitigation = True             # [SRC] hw.c:404
+        self.tx_intr_mitigation = False
 
     # ---- silicon-revision predicates [SRC] reg.h:837-928 ------------------
     def is_9271(self) -> bool:
@@ -340,6 +342,49 @@ class AthHw:
         self.write(R.AR_RSSI_THR, R.INIT_RSSI_THR)
         self.write_flush()
         self.set_operating_mode(self.opmode)
+
+    def init_interrupt_masks(self) -> None:
+        """ath9k_hw_init_interrupt_masks [SRC] hw.c:932 — seed AR_IMR / AR_IMR_S2 and the PCIe
+        interrupt-sync registers. The 9271 (not 9300, rx-mitigation on, tx-mitigation off)
+        uses the RXINTM/RXMINTR + TXOK combination."""
+        imr_reg = (R.AR_IMR_TXERR | R.AR_IMR_TXURN | R.AR_IMR_RXERR | R.AR_IMR_RXORN
+                   | R.AR_IMR_BCNMISC)
+        if self.rx_intr_mitigation:
+            imr_reg |= R.AR_IMR_RXINTM | R.AR_IMR_RXMINTR
+        else:
+            imr_reg |= R.AR_IMR_RXOK
+        if self.tx_intr_mitigation:
+            imr_reg |= R.AR_IMR_TXINTM | R.AR_IMR_TXMINTR
+        else:
+            imr_reg |= R.AR_IMR_TXOK
+        self.enable_write_buffer()
+        self.write(R.AR_IMR, imr_reg)
+        self.imrs2_reg |= R.AR_IMR_S2_GTT
+        self.write(R.AR_IMR_S2, self.imrs2_reg)
+        self.write(R.AR_INTR_SYNC_CAUSE, 0xFFFFFFFF)
+        self.write(R.AR_INTR_SYNC_ENABLE, R.AR_INTR_SYNC_DEFAULT)
+        self.write(R.AR_INTR_SYNC_MASK, 0)
+        self.write_flush()
+
+    def ani_cache_ini_regs(self) -> None:
+        """ar5008_hw_ani_cache_ini_regs [SRC] ar5008_phy.c:1169 — read the ANI baseline regs the
+        INI just programmed so the runtime ANI has reference values. Read-only on the wire."""
+        for reg in (R.AR_PHY_SFCORR, R.AR_PHY_SFCORR_LOW, R.AR_PHY_SFCORR_EXT,
+                    R.AR_PHY_FIND_SIG, R.AR_PHY_FIND_SIG_LOW, R.AR_PHY_TIMING5, R.AR_PHY_EXT_CCA):
+            self.read(reg)
+
+    def init_qos(self) -> None:
+        """ath9k_hw_init_qos [SRC] hw.c:715 — the QoS / no-ack / TXOP-limit defaults."""
+        self.enable_write_buffer()
+        self.write(R.AR_MIC_QOS_CONTROL, 0x100AA)
+        self.write(R.AR_MIC_QOS_SELECT, 0x3210)
+        self.write(R.AR_QOS_NO_ACK,
+                   R.SM(2, R.AR_QOS_NO_ACK_TWO_BIT) | R.SM(5, R.AR_QOS_NO_ACK_BIT_OFF)
+                   | R.SM(0, R.AR_QOS_NO_ACK_BYTE_OFF))
+        self.write(R.AR_TXOP_X, R.AR_TXOP_X_VAL)
+        for reg in (R.AR_TXOP_0_3, R.AR_TXOP_4_7, R.AR_TXOP_8_11, R.AR_TXOP_12_15):
+            self.write(reg, 0xFFFFFFFF)
+        self.write_flush()
 
     def init_mfp(self) -> None:
         """ath9k_hw_init_mfp [SRC] hw.c — CCMP management-frame protection. On 9280_20+ mask
