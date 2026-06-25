@@ -28,10 +28,6 @@ A timed-out PBC attempt kept retrying for the rest of the PBC window, blocking o
 `msg_timeout`); raised to 5 s + a client-leaving deauth on PBC teardown. **Still open (minor):**
 a manual **Stop PBC** button so a single timeout can't hold the radio.
 
-### Channel-Filter modal clips OK/Cancel in small terminals
-`ui/screens/channel_filter.py` — the channel list eats the height and hides the buttons.
-Shrink/scroll the list when tight, and/or a taller min-height.
-
 ### PMKID on WPA3→WPA2 transition (PMF:Optional) — "M1 not found" but Data frames seen
 On a WPA3→2 transition AP (PMF:Optional), PMKID reports "M1 not found" while frames appear in
 the Data sparkline right when M1 should arrive — suspect a more complex AKM (SAE/transition)
@@ -115,9 +111,10 @@ from the chip doc. `✅` = nothing open (already HW-confirmed). `🛑`/`⚠️` 
 - ⏳ 5 GHz deauth/TX (ch149) not HW-verified — offline byte-exact only [RTL8821AU_DKMS.md:75].
   (2.4 GHz TX HW-confirmed.)
 
-### rtl8821cu_dkms — 🚧 port in progress (another session) — not part of this sweep
-Blocked at discovery: ZeroCD/USB mode-switch unsolved (enumerates as CD-ROM), offline-replay
--only so far, no HW test yet [RTL8821CU_DKMS.md:37].
+### rtl8821cu_dkms
+- ✅ Landed: 2.4 + 5 GHz Scan/handshake/PMKID/WPS HW-confirmed 2026-06-24 (fixed-ch1 ~6.5 bcn/s,
+  kernel parity). ZeroCD resolved — eject the CD-ROM first (Windows only) [VERIFICATION.md].
+- ⏳ WEP + Stress soak not yet run.
 
 ### rtw88_8814au (mainline 8814au) — prefer the DKMS variant
 - ⏳ Weak 2.4 GHz RX (2G AP −82 dBm vs 5G −54; 0.5–2 bcn/s vs ~10) — 2G AGC/gain suspect [RTL8814AU.md:74].

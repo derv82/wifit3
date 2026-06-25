@@ -17,17 +17,6 @@ session; stability day(s) between.
 
 ## Release blockers
 
-### Documentation
-
-Still to add:
-
-- [ ] `CONTRIBUTING.md` — uv setup, the hardware-testing loop, comment-style rule, the
-  `<CHIP>.md` port-reference doc locations.
-- [ ] **Authorized-use / ethics notice** — a clear "your own networks / authorized testing
-  only" statement (wifite/aircrack carry one), beyond the README one-liner.
-- [ ] `ARCHITECTURE.md` — distill the layer-stack/module-map from `CLAUDE.md` + the
-  `WlanDriver` Protocol contract.
-
 ### Brick-risk disclaimer ⚠️ (userland USB can damage hardware)
 
 **Release blocker — visible before public.** Userland USB writes registers + the FW-download
@@ -45,19 +34,6 @@ community PRs. Required:
   replay the vendor *download* path, never program EFUSE/EEPROM fuses — documented so a
   fuse-write PR is an obvious red flag.
 - [ ] (Optional, post-alpha) first-run acknowledgment for the dev/porting tools.
-
----
-
-## Code quality
-
-- **UI review** (`ui/*`) — biggest blind spot (all agent-authored). Read-only, severity-ranked
-  findings doc first; **no speculative hardening** (flag edge-case handling as optional, never
-  silently add); bias to delete/simplify.
-- **Comment cleanup** — date stamps remain in ~12 `.py` files (heaviest `rt2800usb/reg_init.py`);
-  clean opportunistically or per-module. `chips/ar9271/protocol/wmi.py` is the reference for tone.
-- **Code-quality audit** — full pass for shortcuts / over-complicated edge cases. Known offender:
-  `wlan/packet.py` (802.11 parser) is bare magic numbers (offsets, FC masks, IE tags) → named
-  constants + `[WIRE]` cites.
 
 ---
 
