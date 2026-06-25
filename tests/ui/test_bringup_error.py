@@ -46,7 +46,7 @@ async def test_splash_surfaces_driver_bringup_failure(monkeypatch):
     # path: driver init -> BringUpError -> splash. close() is the partial-claim cleanup.
     iface = SimpleNamespace(
         name="rtl8187", description="RTL8187L (test)", vid=0x0BDA, pid=0x8187,
-        connect=driver.connect, close=AsyncMock())
+        dev=None, connect=driver.connect, close=AsyncMock())
 
     app = WifiteApp()
     async with app.run_test() as pilot:

@@ -211,13 +211,18 @@ class SplashView(Screen):
             # Happy path: just connect. Opening + init is inherent to using the card, so we
             # don't pre-probe — a WinUSB-bound card (the common case) connects with no extra
             # work or lag.
-            if await self._connect(iface):
-                return  # _connect switched to the scanner
+            bringup_err = None
+            try:
+                if await self._connect(iface):
+                    return
+            except BringUpError as e:
+                bringup_err = e
 
             # Connect failed. The fix depends on the OS: Windows usually means "not
             # WinUSB-bound", Linux means "the kernel driver holds it + we lack node access".
             # Both run a blocking, only-on-failure probe before assuming so.
-            await iface.close()
+            if bringup_err is None:
+                await iface.close()
             openable = await asyncio.to_thread(self.device_manager.is_openable, iface)
             vid, pid, desc = iface.vid, iface.pid, iface.description
 
@@ -237,7 +242,7 @@ class SplashView(Screen):
 
             if sys.platform == "win32":
                 if openable:
-                    raise RuntimeError("the card failed to initialize")  # a real fault → modal
+                    raise bringup_err or RuntimeError("the card failed to initialize")
                 # Not openable on Windows → offer the one-time WinUSB install.
                 if not await self.app.push_screen_wait(ConfirmInstallDialog(desc)):
                     status.update("[bold bright_green]Select a card and press START[/bold bright_green]")
@@ -269,7 +274,7 @@ class SplashView(Screen):
                 needs_perm = await asyncio.to_thread(
                     self.device_manager.linux_needs_permission, iface)
                 if not needs_perm:
-                    raise RuntimeError("the card failed to initialize")
+                    raise bringup_err or RuntimeError("the card failed to initialize")
                 # No node access → offer the one-time udev access rule (reuses the install
                 # dialog with Linux wording — a missing REQUIRED link, same shape).
                 others = len(ids_from_registry()) - 1
@@ -325,7 +330,7 @@ class SplashView(Screen):
                 await _refind_and_connect("the card failed to initialize after granting access")
 
             else:
-                raise RuntimeError("the card failed to initialize")
+                raise bringup_err or RuntimeError("the card failed to initialize")
         except BringUpError as e:
             logger.warning("Bring-up failed for %s: %s", getattr(iface, "description", "?"), e)
             detail = f": {e.detail}" if e.detail else ""
