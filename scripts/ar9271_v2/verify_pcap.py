@@ -148,6 +148,7 @@ def _walk_init(w: Walk) -> None:
     w.run(lambda t: phy.init_bb(w.hw, w.chan), "init-bb")
     from wifit3.chips.ar9271_v2 import calib
     w.run(lambda t: calib.init_cal(w.hw, w.chan), "init-cal")
+    w.run(lambda t: w.hw.reset_tail(), "reset-tail")
 
 
 def run(cap: str | None = None) -> int:
@@ -267,6 +268,10 @@ def run(cap: str | None = None) -> int:
             print("  M3 OK: + init_cal (cl_cal carrier-leak, ar9271 pa_cal, loadnf, "
                   "start_nfcal, IQ-cal setup) matched; frontier is the reset tail "
                   "(AR_CFG_LED / restore_chainmask / gen_timer / init_desc).")
+        elif w.i == 522:
+            print("  M4 OK: + ath9k_hw_reset tail (LED+32kHz, init_desc AR9271 byte-swap; "
+                  "restore_chainmask/gen_timer/gpio-override are no-ops) matched; frontier is "
+                  "the post-reset htc-start (txpower update + WMI mode/init/start-recv).")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")

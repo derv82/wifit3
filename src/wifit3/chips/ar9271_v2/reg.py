@@ -391,7 +391,16 @@ AR9285_AN_TOP3_PWDDAC = 0x00800000
 
 # ---- reset_opmode / operating mode [SRC] hw.c + common(ath)/hw.c + reg.h -----
 AR_CFG = 0x0014                         # [SRC] reg.h:29
+AR_CFG_SWTD = 0x00000001                # [SRC] reg.h:30
+AR_CFG_SWTB = 0x00000002
+AR_CFG_SWRD = 0x00000004
+AR_CFG_SWRB = 0x00000008
 AR_CFG_AP_ADHOC_INDICATION = 0x00000020
+AR_CFG_SCLK_32KHZ = 0x00000003          # [SRC] reg.h:664
+AR_DIRECT_CONNECT = 0x83A0              # [SRC] reg.h:2063 (tsf2 gen-timer, unused here)
+AR_DC_AP_STA_EN = 0x00000001
+AR_RESET_TSF = 0x8020                   # [SRC] reg.h:1668
+AR_RESET_TSF2_ONCE = 0x02000000
 AR_ISR = 0x0080                         # [SRC] reg.h:179
 AR_STA_ID1_SADH_MASK = 0x0000FFFF
 AR_STA_ID1_STA_AP = 0x00010000
