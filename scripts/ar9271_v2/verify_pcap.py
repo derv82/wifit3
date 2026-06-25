@@ -133,6 +133,8 @@ def _walk_init(w: Walk) -> None:
     w.run(lambda t: w.hw.init_mfp(), "init-mfp")
     w.run(lambda t: phy.set_delta_slope(w.hw, w.chan), "set-delta-slope")
     w.run(lambda t: phy.spur_mitigate(w.hw, w.chan), "spur-mitigate")
+    from wifit3.chips.ar9271_v2 import phy_board
+    w.run(lambda t: phy_board.set_board_values(w.hw, w.chan), "set-board-values")
 
 
 def run(cap: str | None = None) -> int:
@@ -224,6 +226,9 @@ def run(cap: str | None = None) -> int:
         elif w.i == 405:
             print("  M2e-1 OK: + set_rfmode, init_mfp, set_delta_slope, spur_mitigate matched; "
                   "frontier is eep set_board_values (antenna/gain modal config).")
+        elif w.i == 415:
+            print("  M2e-2 OK: + eep set_board_values (switch/gain/analog-bias/settling) "
+                  "matched; frontier is reset_opmode (STA_ID1 / bssidmask / antenna).")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")

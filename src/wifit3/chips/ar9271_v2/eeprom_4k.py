@@ -136,3 +136,108 @@ class Map4k:
     def get_spur_channel(self, i: int) -> int:
         """modalHeader.spurChans[i].spurChan (__le16) [SRC] eeprom_4k.c get_spur_channel."""
         return self._le16(_SPURCHANS + i * 4)
+
+    # ---- modal header fields used by set_board_values (offsets from _MODAL) -----
+    @property
+    def antCtrlChain0(self) -> int:
+        return struct.unpack_from("<I", self.raw, _MODAL + 0)[0]
+
+    @property
+    def antCtrlCommon(self) -> int:
+        return struct.unpack_from("<I", self.raw, _MODAL + 4)[0]
+
+    @property
+    def switchSettling(self) -> int:
+        return self._u8(_MODAL + 9)
+
+    @property
+    def txRxAttenCh0(self) -> int:
+        return self._u8(_MODAL + 10)
+
+    @property
+    def rxTxMarginCh0(self) -> int:
+        return self._u8(_MODAL + 11)
+
+    @property
+    def adcDesiredSize(self) -> int:
+        return self._u8(_MODAL + 12)
+
+    @property
+    def txEndToXpaOff(self) -> int:
+        return self._u8(_MODAL + 15)
+
+    @property
+    def txEndToRxOn(self) -> int:
+        return self._u8(_MODAL + 16)
+
+    @property
+    def txFrameToXpaOn(self) -> int:
+        return self._u8(_MODAL + 17)
+
+    @property
+    def thresh62(self) -> int:
+        return self._u8(_MODAL + 18)
+
+    @property
+    def iqCalICh0(self) -> int:
+        return self._u8(_MODAL + 22)
+
+    @property
+    def iqCalQCh0(self) -> int:
+        return self._u8(_MODAL + 23)
+
+    @property
+    def modal_version(self) -> int:
+        return self._u8(_MODAL + 37)
+
+    @property
+    def txFrameToDataStart(self) -> int:
+        return self._u8(_MODAL + 28)
+
+    @property
+    def txFrameToPaOn(self) -> int:
+        return self._u8(_MODAL + 29)
+
+    @property
+    def bswAtten0(self) -> int:
+        return self._u8(_MODAL + 31)
+
+    @property
+    def bswMargin0(self) -> int:
+        return self._u8(_MODAL + 32)
+
+    @property
+    def xatten2Db0(self) -> int:
+        return self._u8(_MODAL + 34)
+
+    @property
+    def xatten2Margin0(self) -> int:
+        return self._u8(_MODAL + 35)
+
+    @property
+    def bb_scale_smrt_antenna(self) -> int:
+        return self._u8(_MODAL + 46)
+
+    # nibble-packed bitfields (little-endian: low nibble first) [SRC] eeprom.h:407-440
+    @property
+    def ob(self) -> list[int]:
+        b77, b90, b91 = self._u8(_MODAL + 25), self._u8(_MODAL + 38), self._u8(_MODAL + 39)
+        return [b77 & 0xf, (b77 >> 4) & 0xf, b90 & 0xf, (b90 >> 4) & 0xf, b91 & 0xf]
+
+    @property
+    def db1(self) -> list[int]:
+        b78, b92, b93 = self._u8(_MODAL + 26), self._u8(_MODAL + 40), self._u8(_MODAL + 41)
+        return [b78 & 0xf, (b78 >> 4) & 0xf, b92 & 0xf, (b92 >> 4) & 0xf, b93 & 0xf]
+
+    @property
+    def db2(self) -> list[int]:
+        b88, b94, b95 = self._u8(_MODAL + 36), self._u8(_MODAL + 42), self._u8(_MODAL + 43)
+        return [b88 & 0xf, (b88 >> 4) & 0xf, b94 & 0xf, (b94 >> 4) & 0xf, b95 & 0xf]
+
+    @property
+    def antdiv_ctl1(self) -> int:
+        return (self._u8(_MODAL + 39) >> 4) & 0xf
+
+    @property
+    def antdiv_ctl2(self) -> int:
+        return (self._u8(_MODAL + 41) >> 4) & 0xf
