@@ -38,6 +38,16 @@ class AthHw:
         self.macStaId1 = 0
         self.saveLedState = 0
         self.tsf = 0
+        # MAC/operating-mode state (ath_common) — htc cold-start defaults:
+        self.macaddr = bytearray(6)               # latched from eeprom at init
+        self.bssidmask = bytearray(b"\xff" * 6)   # listen to all (set_bssid_mask default)
+        self.curbssid = bytearray(6)              # 00:00:00:00:00:00 until associated
+        self.curaid = 0
+        self.opmode = R.IFTYPE_STATION             # ath9k_htc default interface type
+        self.is_monitoring = False
+        self.sta_id1_defaults = R.AR_STA_ID1_DEFAULTS
+        self.sw_mgmt_crypto_tx = True
+        self.sw_mgmt_crypto_rx = True
 
     # ---- silicon-revision predicates [SRC] reg.h:837-928 ------------------
     def is_9271(self) -> bool:
@@ -274,6 +284,51 @@ class AthHw:
         # Disable JTAG so GPIO 0-3 are usable [SRC] hw.c:1949-1950.
         if self.is_9280_20_or_later():
             self.rmw(R.AR_GPIO_INPUT_EN_VAL, R.AR_GPIO_JTAG_DISABLE, 0)
+
+    def _setbssidmask(self) -> None:
+        """ath_hw_setbssidmask [SRC] ath/hw.c — program the MAC into STA_ID0/1 (preserving the
+        upper STA_ID1 bits) and the listen-to-all BSSID mask."""
+        self.write(R.AR_STA_ID0, int.from_bytes(self.macaddr[0:4], "little"))
+        id1 = self.read(R.AR_STA_ID1) & ~R.AR_STA_ID1_SADH_MASK
+        id1 |= int.from_bytes(self.macaddr[4:6], "little")
+        self.write(R.AR_STA_ID1, id1)
+        self.write(R.AR_BSSMSKL, int.from_bytes(self.bssidmask[0:4], "little"))
+        self.write(R.AR_BSSMSKU, int.from_bytes(self.bssidmask[4:6], "little"))
+
+    def _write_associd(self) -> None:
+        """ath9k_hw_write_associd [SRC] hw.c — the current BSSID / association id (both 0 at
+        cold start)."""
+        self.write(R.AR_BSS_ID0, int.from_bytes(self.curbssid[0:4], "little"))
+        self.write(R.AR_BSS_ID1, int.from_bytes(self.curbssid[4:6], "little")
+                   | ((self.curaid & 0x3fff) << R.AR_BSS_ID1_AID_S))
+
+    def set_operating_mode(self, opmode: int) -> None:
+        """ath9k_hw_set_operating_mode [SRC] hw.c:1267 — STATION clears the AP/adhoc indication
+        and enables key search (KSRCH_MODE); the AP/adhoc/monitor branches are ported but
+        unused here."""
+        mask = R.AR_STA_ID1_STA_AP | R.AR_STA_ID1_ADHOC
+        bit_set = R.AR_STA_ID1_KSRCH_MODE
+        self.enable_rmw_buffer()
+        if opmode == R.IFTYPE_STATION:
+            self.rmw(R.AR_CFG, 0, R.AR_CFG_AP_ADHOC_INDICATION)   # REG_CLR_BIT
+        elif not self.is_monitoring:                              # untested (AP/adhoc/mesh)
+            bit_set = 0
+        self.rmw(R.AR_STA_ID1, bit_set, mask)
+        self.rmw_buffer_flush()
+
+    def reset_opmode(self, macStaId1: int, saveDefAntenna: int) -> None:
+        """ath9k_hw_reset_opmode [SRC] hw.c:1700 — re-apply the STA id/defaults, BSSID mask,
+        saved antenna, association id, then clear ISR and seed the RSSI threshold."""
+        self.enable_write_buffer()
+        self.rmw(R.AR_STA_ID1, macStaId1 | R.AR_STA_ID1_RTS_USE_DEF | self.sta_id1_defaults,
+                 (~R.AR_STA_ID1_SADH_MASK) & 0xFFFFFFFF)
+        self._setbssidmask()
+        self.write(R.AR_DEF_ANTENNA, saveDefAntenna)
+        self._write_associd()
+        self.write(R.AR_ISR, 0xFFFFFFFF)
+        self.write(R.AR_RSSI_THR, R.INIT_RSSI_THR)
+        self.write_flush()
+        self.set_operating_mode(self.opmode)
 
     def init_mfp(self) -> None:
         """ath9k_hw_init_mfp [SRC] hw.c — CCMP management-frame protection. On 9280_20+ mask

@@ -94,3 +94,4 @@ def init(hw: AthHw) -> None:
     check(hw)
     hw.rxchainmask = hw.eeprom[18]                # baseEepHeader.rxMask
     hw.txchainmask = hw.eeprom[19]                # baseEepHeader.txMask
+    hw.macaddr = bytearray(hw.eeprom[12:18])      # baseEepHeader.macAddr (init_macaddr)
