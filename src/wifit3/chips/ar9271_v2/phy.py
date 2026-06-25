@@ -54,6 +54,64 @@ def process_ini(hw: AthHw, chan: Channel) -> None:
     phy_power.apply_txpower(hw, chan)
 
 
+def set_rfmode(hw: AthHw, chan: Channel) -> None:
+    """ar5008_hw_set_rfmode [SRC] ar5008_phy.c:826 — for 2.4 GHz on 9280_20+ this is just
+    AR_PHY_MODE_DYNAMIC (the RF2GHZ band bit is only set on pre-9280 silicon)."""
+    rf_mode = R.AR_PHY_MODE_DYNAMIC if chan.is_2ghz() else R.AR_PHY_MODE_OFDM
+    if not hw.is_9280_20_or_later():                      # never on the 9271
+        rf_mode |= R.AR_PHY_MODE_RF2GHZ if chan.is_2ghz() else 0
+    hw.write(R.AR_PHY_MODE, rf_mode)
+
+
+def _delta_slope_vals(coef_scaled: int) -> tuple[int, int]:
+    """ath9k_hw_get_delta_slope_vals [SRC] hw.c — split a scaled coefficient into the
+    mantissa/exponent the AR_PHY_TIMING3 / AR_PHY_HALFGI fields carry."""
+    for coef_exp in range(31, 0, -1):
+        if (coef_scaled >> coef_exp) & 0x1:
+            break
+    coef_exp = 14 - (coef_exp - R.COEF_SCALE_S)
+    coef_man = coef_scaled + (1 << (R.COEF_SCALE_S - coef_exp - 1))
+    mantissa = coef_man >> (R.COEF_SCALE_S - coef_exp)
+    exponent = (coef_exp - 16) & 0xffffffff             # u32 wrap (field is masked on write)
+    return mantissa, exponent
+
+
+def set_delta_slope(hw: AthHw, chan: Channel) -> None:
+    """ar5008_hw_set_delta_slope [SRC] ar5008_phy.c:850 — program the OFDM clock delta-slope
+    (full-rate and the 0.9x half-GI variant) from the channel's synth centre."""
+    clock_scaled = 0x64000000                            # 20 MHz (no half/quarter on 9271)
+    coef_scaled = clock_scaled // chan.center_freq       # centers.synth_center (20 MHz)
+    man, exp = _delta_slope_vals(coef_scaled)
+    hw.rmw_field(R.AR_PHY_TIMING3, R.AR_PHY_TIMING3_DSC_MAN, man)
+    hw.rmw_field(R.AR_PHY_TIMING3, R.AR_PHY_TIMING3_DSC_EXP, exp)
+    coef_scaled = (9 * coef_scaled) // 10
+    man, exp = _delta_slope_vals(coef_scaled)
+    hw.rmw_field(R.AR_PHY_HALFGI, R.AR_PHY_HALFGI_DSC_MAN, man)
+    hw.rmw_field(R.AR_PHY_HALFGI, R.AR_PHY_HALFGI_DSC_EXP, exp)
+
+
+def spur_mitigate(hw: AthHw, chan: Channel) -> None:
+    """ar9002_hw_spur_mitigate [SRC] ar9002_phy.c — find an in-band baseband spur from the
+    EEPROM spur table; this card's first 2 GHz spur is AR_NO_SPUR, so the path is the single
+    REG_CLR_BIT(AR_PHY_FORCE_CLKEN_CCK, MRC_MUX) and return. The spur-programming branch is
+    ported behind its guard but not exercised here."""
+    from .eeprom_4k import Map4k
+    eep = Map4k(hw.eeprom)
+    freq = chan.center_freq
+    bb_spur = R.AR_NO_SPUR
+    for i in range(5):                                   # AR_EEPROM_MODAL_SPURS
+        cur = eep.get_spur_channel(i)
+        if cur == R.AR_NO_SPUR:
+            break
+        cur = (cur // 10) + R.AR_BASE_FREQ_2GHZ - freq
+        if -R.AR_SPUR_FEEQ_BOUND_HT20 < cur < R.AR_SPUR_FEEQ_BOUND_HT20:
+            bb_spur = cur
+            break
+    hw.rmw(R.AR_PHY_FORCE_CLKEN_CCK, 0, R.AR_PHY_FORCE_CLKEN_CCK_MRC_MUX)   # REG_CLR_BIT
+    if bb_spur != R.AR_NO_SPUR:
+        raise NotImplementedError("ar9271_v2: in-band spur mitigation not ported (unseen)")
+
+
 def init_chain_masks(hw: AthHw) -> None:
     """ar5008_hw_init_chain_masks [SRC] ar5008_phy.c:813 — program the RX/cal/self-gen chain
     masks from the eeprom-derived chainmask (1T1R on the AR9271). The 3-chain alt-swap and the

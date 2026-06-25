@@ -128,6 +128,11 @@ def _walk_init(w: Walk) -> None:
     w.value_except_regs.add(R.AR_TSF_L32)
     w.run(lambda t: w.hw.reset_begin(w.chan), "hw-reset-begin")
     w.run(lambda t: phy.process_ini(w.hw, w.chan), "process-ini")
+    # ath9k_hw_reset tail: set_rfmode -> init_mfp -> set_delta_slope -> spur_mitigate.
+    w.run(lambda t: phy.set_rfmode(w.hw, w.chan), "set-rfmode")
+    w.run(lambda t: w.hw.init_mfp(), "init-mfp")
+    w.run(lambda t: phy.set_delta_slope(w.hw, w.chan), "set-delta-slope")
+    w.run(lambda t: phy.spur_mitigate(w.hw, w.chan), "spur-mitigate")
 
 
 def run(cap: str | None = None) -> int:
@@ -216,6 +221,9 @@ def run(cap: str | None = None) -> int:
         elif w.i == 398:
             print("  M2d-6 OK: + apply_txpower (TPCRG1 gain cfg + 32 PDADC words + per-rate "
                   "power) matched; frontier is set_rfmode / rf_set_freq.")
+        elif w.i == 405:
+            print("  M2e-1 OK: + set_rfmode, init_mfp, set_delta_slope, spur_mitigate matched; "
+                  "frontier is eep set_board_values (antenna/gain modal config).")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")
