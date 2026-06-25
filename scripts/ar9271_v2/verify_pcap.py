@@ -127,6 +127,7 @@ def _walk_init(w: Walk) -> None:
     # TSF restore (low word value-excepted: tsf+wall-clock-offset) + JTAG disable.
     w.value_except_regs.add(R.AR_TSF_L32)
     w.run(lambda t: w.hw.reset_begin(w.chan), "hw-reset-begin")
+    w.run(lambda t: phy.process_ini(w.hw, w.chan), "process-ini")
 
 
 def run(cap: str | None = None) -> int:
@@ -203,6 +204,9 @@ def run(cap: str | None = None) -> int:
         elif w.i == 374:
             print("  M2d-2 OK: + TSF restore (value-excepted) & JTAG disable matched; frontier "
                   "is ath9k_hw_process_ini (the initvals tables).")
+        elif w.i == 389:
+            print("  M2d-3 OK: + process_ini initvals (iniModes + txgain + iniCommon) matched; "
+                  "frontier is override_ini / set_channel_regs.")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")
