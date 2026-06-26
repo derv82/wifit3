@@ -135,6 +135,51 @@ def cold_bringup(t: AR9271Transport) -> BringupResult:
     return BringupResult(wmi=wmi, hw=hw, endpoints=st.endpoints)
 
 
+def warm_reattach(t: AR9271Transport) -> BringupResult:
+    """Re-attach to an AR9271 already running firmware (warm) — no replug, no re-download.
+
+    The one-shot HTC_READY only fires at firmware boot, so the cold handshake can't be re-run on a
+    warm card; instead reconstruct the firmware's deterministic HTC endpoint map (services connect
+    in SERVICE_CONNECT_ORDER and get endpoints 1..N — verified on the cold capture: CONTROL=1,
+    MGMT=5, DATA_BE=6) and reuse the live WMI channel. The chip's MAC/PHY is already configured
+    (monitor mode, RX streaming) from the previous session, so only the host-side AthHw shadows are
+    repopulated, READ-ONLY (SREV + the 4k EEPROM), to give set_channel's computed reset its inputs.
+    This is the v1 warm path (skip handshake, hardcode endpoints, clear pipe halts) carried to v2.
+
+    Read-only by construction: if the endpoint map is wrong or the pipe is wedged, the SREV read
+    times out and this raises — the caller falls back to a replug prompt. Nothing here can bork the
+    card (no download, no destructive reset), so it is safe to retry without a replug. The caller
+    must clear_halt the pipes first (toggle-bit resync after detaching mid-stream)."""
+    endpoints = {svc: i + 1 for i, svc in enumerate(C.SERVICE_CONNECT_ORDER)}
+    wmi = WMI(t, ctrl_epid=endpoints[C.WMI_CONTROL_SVC])
+    hw = hwmod.AthHw(wmi)
+    # Re-sync the WMI OUT-pipe data toggle: clear_halt is often ignored by the AR9271 hardware, so
+    # the first command after re-attach can be silently dropped on a toggle mismatch (the device
+    # ACKs it as a duplicate, so reg_out "succeeds" but no response comes — a read timeout). Each
+    # resend advances the host toggle, so a couple of retries forces a match [v1 send_wmi_command].
+    # The SREV read is idempotent, so resending is safe; once it answers the toggle is synced for
+    # every later command. A persistent timeout means the firmware is unreachable -> raise -> replug.
+    last_err: Exception | None = None
+    for _ in range(8):
+        try:
+            if hw.read_revisions():
+                break
+        except Exception as e:                     # noqa: BLE001 — timeout/USB error -> resend
+            last_err = e
+    else:
+        raise RuntimeError(f"warm reattach: WMI not responding after toggle resync ({last_err})")
+    if not hw.is_9271():
+        raise RuntimeError(f"warm reattach: unexpected macVersion 0x{hw.macVersion:x}")
+    eeprom.init(hw)                                # read-only: 4k map -> macaddr + chain masks
+    mac_queue.init_tx_queues(hw)                   # driver-side alloc (no wire)
+    # Mirror the firmware's existing monitor state so set_channel re-applies the same RX filter.
+    hw.is_monitoring = True
+    hw.opmode = R.IFTYPE_MONITOR
+    hw.rxfilter_flags = rx.FilterFlags(control=True, pspoll=True, bcn_prbresp_promisc=True,
+                                       other_bss=True)
+    return BringupResult(wmi=wmi, hw=hw, endpoints=endpoints)
+
+
 def full_channel_change(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> None:
     """One ath9k_htc_set_channel hop via a full ath9k_hw_reset [SRC] htc_drv_main.c:225: stop the
     target, reset to ``chan``, restart RX. This is the always-correct retune path (the cold tune

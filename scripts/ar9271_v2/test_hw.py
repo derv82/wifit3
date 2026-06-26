@@ -82,6 +82,8 @@ async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--secs", type=float, default=8.0, help="watch window per channel")
     ap.add_argument("--channels", type=str, default="1,6,11", help="comma-separated channels")
+    ap.add_argument("--no-reset", action="store_true",
+                    help="skip the USB reset — exercise the warm light-reattach on a warm card")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
     if args.debug:
@@ -90,7 +92,8 @@ async def main() -> int:
         logging.getLogger("wifit3.wlan.interface").setLevel(logging.INFO)
     channels = [int(c) for c in args.channels.split(",") if c.strip()]
 
-    _reset_to_cold()
+    if not args.no_reset:
+        _reset_to_cold()
     mgr = WlanDeviceManager()
     ifaces = await mgr.refresh()
     if not ifaces:

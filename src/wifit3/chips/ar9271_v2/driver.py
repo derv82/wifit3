@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import struct
 import time
 from typing import Callable, ClassVar, List, Optional
 
@@ -117,8 +118,38 @@ class AR9271V2Driver:
             self._adopt(bringup.cold_bringup(self.transport))
             return True
 
+        # Warm card (firmware already running from a previous session)? Re-downloading firmware to a
+        # running card re-enters live firmware and crashes it off the bus, and unlike the Realtek
+        # family the AR9271 can't skip the download on warm — the firmware IS the protocol stack and
+        # the one-shot HTC_READY won't fire again. So on warm we light-reattach: reuse the running
+        # firmware + its deterministic HTC endpoint map, re-claim + clear the pipe halts, and
+        # repopulate the host shadows read-only (bringup.warm_reattach). That's read-only and can't
+        # bork the card; if it fails (WMI silent), fall back to a clean replug prompt.
+        _p(0.02, "Probing card state...")
+        if await loop.run_in_executor(None, self._is_chip_warm):
+            self.is_warm = True
+            _p(0.10, "Card warm — re-attaching to running firmware (no replug)...")
+            try:
+                await loop.run_in_executor(None, self._claim, self.transport.dev)
+                await loop.run_in_executor(None, self._clear_pipe_halts)
+                self._reader = RxReaderThread(loop, self._read_once, self._dispatch,
+                                              name="ar9271v2-rx")
+                self._reader.start()
+                res = await loop.run_in_executor(None, bringup.warm_reattach, self.transport)
+                self._adopt(res)
+                _p(1.0, f"AR9271 re-attached warm (ch ?, {self.mac_address})")
+                return True
+            except Exception as e:  # noqa: BLE001 — reattach is read-only; degrade to a replug ask
+                logger.warning("ar9271_v2: warm reattach failed (%s) — falling back to replug", e)
+                if self._reader is not None:
+                    await self._reader.stop()
+                    self._reader = None
+                raise BringUpError(
+                    "AR9271 is warm and couldn't be re-attached to. Please unplug the card, wait a "
+                    "few seconds, replug, and try again.") from e
+
         cold_dev = self.transport.dev
-        _p(0.05, "Downloading AR9271 firmware...")
+        _p(0.10, "Downloading AR9271 firmware...")
         await loop.run_in_executor(None, firmware.download, self.transport, fw)
         try:
             usb.util.dispose_resources(cold_dev)        # release the cold handle as it reboots
@@ -126,14 +157,14 @@ class AR9271V2Driver:
             pass
 
         _p(0.30, "Waiting for AR9271 to re-enumerate...")
-        warm = await self._await_reenumeration()
-        if warm is None:
+        redev = await self._await_reenumeration()
+        if redev is None:
             logger.error("ar9271_v2: card did not re-enumerate after firmware download")
             return False
-        self.transport = AR9271Transport(warm)
+        self.transport = AR9271Transport(redev)
 
         _p(0.40, "Claiming USB interface...")
-        await loop.run_in_executor(None, self._open_warm, warm)
+        await loop.run_in_executor(None, self._claim, redev)
 
         _p(0.45, "Starting RX reader + HTC/WMI init...")
         self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="ar9271v2-rx")
@@ -152,12 +183,54 @@ class AR9271V2Driver:
                 return dev
         return None
 
-    def _open_warm(self, dev: usb.core.Device) -> None:
-        """Configure + claim interface 0 on the re-enumerated (warm) device. The bulk/interrupt
-        pipes the bring-up + RX use need the interface claimed (EP0 control — the firmware download
-        — does not, which is why that succeeds first). Right after re-enumeration Windows is still
-        binding WinUSB, so the claim transiently fails with Access denied (errno 13) [SRC] the v1
-        driver's read-loop tolerated the same; retry through the settle, then the pipes are live."""
+    def _is_chip_warm(self) -> bool:
+        """Detect a warm card (firmware already running) by smoke-testing the bulk-IN pipe: a
+        firmware-running card in monitor mode streams HIF-framed RX (stream tag 0x4e00) on
+        WLAN_RX 0x82, while a cold bootloader is silent there [[warm_reattach]]. Claim interface 0
+        (the bulk pipe needs it), read a few times, and look for the tag. Any failure -> assume
+        cold (the cold path is the safe default; it re-claims after re-enumeration)."""
+        dev = self.transport.dev
+        try:
+            try:
+                dev.set_configuration()
+            except usb.core.USBError:
+                pass                                   # already configured
+            usb.util.claim_interface(dev, 0)
+        except (usb.core.USBError, NotImplementedError) as e:
+            logger.debug("ar9271_v2: warm-probe claim failed (%s) -> assume cold", e)
+            return False
+        try:
+            for _ in range(6):                         # warm returns on the first beacon (~ms)
+                try:
+                    buf = bytes(dev.read(C.EP_WLAN_RX, _RX_BUF_SIZE, 200))
+                except usb.core.USBError:
+                    continue                           # timeout / no traffic this read
+                if len(buf) >= 4 and struct.unpack_from("<H", buf, 2)[0] == rx_decode.HIF_RX_STREAM_TAG:
+                    return True
+            return False
+        finally:
+            try:
+                usb.util.release_interface(dev, 0)
+            except Exception:
+                pass
+
+    def _clear_pipe_halts(self) -> None:
+        """Reset the USB data-toggle bits on the four ath9k pipes. A warm card's pipes were
+        mid-stream when the previous session detached, so host/device toggles can be desynced and
+        the first transfers silently dropped; clear_halt resyncs them [v1 transport.reset_pipes]."""
+        for ep in (C.EP_WLAN_TX, C.EP_WLAN_RX, C.EP_REG_IN, C.EP_REG_OUT):
+            try:
+                self.transport.dev.clear_halt(ep)
+            except Exception as e:                 # noqa: BLE001 — best-effort toggle resync
+                logger.debug("ar9271_v2: clear_halt(0x%02x) skipped: %s", ep, e)
+
+    def _claim(self, dev: usb.core.Device) -> None:
+        """Configure + claim interface 0 on the (re-enumerated, firmware-booted) device. The
+        bulk/interrupt pipes the bring-up + RX use need the interface claimed (EP0 control — the
+        firmware download — does not, which is why that succeeds first). Right after re-enumeration
+        Windows is still binding WinUSB, so the claim transiently fails with Access denied
+        (errno 13) [SRC] the v1 driver's read-loop tolerated the same; retry through the settle,
+        then the pipes are live."""
         last: Optional[Exception] = None
         for _ in range(40):                 # ~6 s of 0.15 s retries through the WinUSB re-bind
             try:
