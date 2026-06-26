@@ -162,6 +162,29 @@ def _walk_init(w: Walk) -> None:
     from wifit3.chips.ar9271_v2 import rx
     w.run(lambda t: rx.host_rx_init(w.hw), "host-rx-init")
     w.run(lambda t: w.wmi.update_cap_target(w.hw.txchainmask), "update-cap-target")
+    # mac80211 promiscuous-monitor configure_filter (FIF_CONTROL|PSPOLL|BCN_PRBRESP_PROMISC|
+    # OTHER_BSS -> 0xc01f) with the LED driven on in between.
+    def _configure_filter_mon(t):
+        flags = rx.FilterFlags(control=True, pspoll=True, bcn_prbresp_promisc=True,
+                               other_bss=True)
+        rfilt = rx.calcrxfilter(w.hw, flags)
+        gpio.set_gpio(w.hw, R.ATH_LED_PIN_9271, 0)
+        rx.setrxfilter(w.hw, rfilt)
+    w.run(_configure_filter_mon, "configure-filter-monitor")
+    # ath9k_htc_add_monitor_interface: create the monitor vif + its self-station.
+    from wifit3.chips.ar9271_v2.wmi import HTC_M_MONITOR
+
+    def _add_monitor(t):
+        w.wmi.vap_create(0, HTC_M_MONITOR, w.hw.macaddr)
+        w.wmi.node_create(w.hw.macaddr, b"\x00" * 6, 0, 0, 1, 0xFFFF)
+        w.hw.is_monitoring = True
+    w.run(_add_monitor, "add-monitor-interface")
+    # ath9k_htc_set_channel opening [SRC] htc_drv_main.c:225: stop the target before reset.
+    from wifit3.chips.ar9271_v2.wmi import (
+        WMI_DISABLE_INTR_CMDID, WMI_DRAIN_TXQ_ALL_CMDID, WMI_STOP_RECV_CMDID)
+    w.run(lambda t: w.wmi.cmd(WMI_DISABLE_INTR_CMDID, b""), "wmi-disable-intr")
+    w.run(lambda t: w.wmi.cmd(WMI_DRAIN_TXQ_ALL_CMDID, b""), "wmi-drain-txq-all")
+    w.run(lambda t: w.wmi.cmd(WMI_STOP_RECV_CMDID, b""), "wmi-stop-recv")
 
 
 def run(cap: str | None = None) -> int:
@@ -293,6 +316,11 @@ def run(cap: str | None = None) -> int:
             print("  M6 OK: + host_rx_init (rxena, STA rx/mcast filters, startpcureceive: "
                   "mib + ani_reset + DIAG-RX clear) and WMI_TARGET_IC_UPDATE matched; frontier "
                   "is the channel-config / tune sweep.")
+        elif w.i == 551:
+            print("  M7 OK: + monitor bring-up (configure_filter 0xc01f + LED, "
+                  "add_monitor_interface VAP/NODE_CREATE) and the set_channel stop sequence "
+                  "(DISABLE_INTR/DRAIN_TXQ_ALL/STOP_RECV) matched; frontier is the channel-"
+                  "change ath9k_hw_reset.")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")

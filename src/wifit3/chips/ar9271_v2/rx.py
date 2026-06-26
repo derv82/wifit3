@@ -7,9 +7,22 @@ pipe later.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from . import ani
 from . import reg as R
 from .hw import AthHw
+
+
+@dataclass
+class FilterFlags:
+    """The mac80211 FIF_* filter flags configure_filter passes through (priv->rxfilter)."""
+    probe_req: bool = False
+    control: bool = False
+    pspoll: bool = False
+    bcn_prbresp_promisc: bool = False
+    other_bss: bool = False
+    mcast_action: bool = False
 
 
 def rxena(hw: AthHw) -> None:
@@ -53,15 +66,39 @@ def setmcastfilter(hw: AthHw, filter0: int, filter1: int) -> None:
     hw.write(R.AR_MCAST_FIL1, filter1)
 
 
-def calcrxfilter(hw: AthHw) -> int:
-    """ath9k_htc_calcrxfilter [SRC] htc_drv_txrx.c:869 — STATION default: ucast/bcast/mcast plus
-    mybeacon, preserving any phy-error bits already set. No monitor / probe-req / control here."""
+def calcrxfilter(hw: AthHw, flags: FilterFlags | None = None, nvifs: int = 1,
+                 conf_is_ht: bool = False) -> int:
+    """ath9k_htc_calcrxfilter [SRC] htc_drv_txrx.c:869 — base ucast/bcast/mcast plus the bits the
+    mac80211 FIF flags, monitor state and opmode select. The STATION default (no flags, one vif,
+    not monitoring) folds down to 0x207 (ucast|bcast|mcast|mybeacon)."""
+    flags = flags or FilterFlags()
     preserve = R.ATH9K_RX_FILTER_PHYERR | R.ATH9K_RX_FILTER_PHYRADAR
     rfilt = (getrxfilter(hw) & preserve) | R.ATH9K_RX_FILTER_UCAST \
         | R.ATH9K_RX_FILTER_BCAST | R.ATH9K_RX_FILTER_MCAST
-    # STATION, single vif, not bcn-promisc -> only our own beacons.
-    rfilt |= R.ATH9K_RX_FILTER_MYBEACON
+    if flags.probe_req:
+        rfilt |= R.ATH9K_RX_FILTER_PROBEREQ
+    if hw.is_monitoring:
+        rfilt |= R.ATH9K_RX_FILTER_PROM
+    if flags.control:
+        rfilt |= R.ATH9K_RX_FILTER_CONTROL
+    if hw.opmode == R.IFTYPE_STATION and nvifs <= 1 and not flags.bcn_prbresp_promisc:
+        rfilt |= R.ATH9K_RX_FILTER_MYBEACON
+    else:
+        rfilt |= R.ATH9K_RX_FILTER_BEACON
+    if conf_is_ht:
+        rfilt |= R.ATH9K_RX_FILTER_COMP_BAR | R.ATH9K_RX_FILTER_UNCOMP_BA_BAR
+    if flags.pspoll:
+        rfilt |= R.ATH9K_RX_FILTER_PSPOLL
+    if nvifs > 1 or flags.other_bss or flags.mcast_action:
+        rfilt |= R.ATH9K_RX_FILTER_MCAST_BCAST_ALL
     return rfilt
+
+
+def configure_filter(hw: AthHw, flags: FilterFlags, nvifs: int = 1,
+                     conf_is_ht: bool = False) -> None:
+    """ath9k_htc_configure_filter [SRC] htc_drv_main.c:1267 — recompute and install the RX
+    filter from the current mac80211 flags."""
+    setrxfilter(hw, calcrxfilter(hw, flags, nvifs, conf_is_ht))
 
 
 def opmode_init(hw: AthHw) -> None:

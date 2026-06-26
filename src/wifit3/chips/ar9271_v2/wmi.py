@@ -27,14 +27,27 @@ from . import htc
 from .transport import AR9271Transport
 
 WMI_GET_FW_VERSION_CMDID = 0x0003
+WMI_DISABLE_INTR_CMDID = 0x0004
+WMI_ENABLE_INTR_CMDID = 0x0005
 WMI_ATH_INIT_CMDID = 0x0006
+WMI_DRAIN_TXQ_ALL_CMDID = 0x000b
 WMI_START_RECV_CMDID = 0x000c
+WMI_STOP_RECV_CMDID = 0x000d
 WMI_FLUSH_RECV_CMDID = 0x000e
 WMI_SET_MODE_CMDID = 0x000f
+WMI_NODE_CREATE_CMDID = 0x0010
+WMI_VAP_CREATE_CMDID = 0x0013
 WMI_REG_READ_CMDID = 0x0014
 WMI_REG_WRITE_CMDID = 0x0015
 WMI_TARGET_IC_UPDATE_CMDID = 0x0018
 WMI_REG_RMW_CMDID = 0x0020
+
+# htc opmodes [SRC] htc.h:57-62
+HTC_M_STA = 1
+HTC_M_IBSS = 0
+HTC_M_HOSTAP = 6
+HTC_M_MONITOR = 8
+HTC_M_WDS = 2
 
 WMI_EVENT_BIT = 0x1000           # command_id & 0x1000 => async event, not a cmd response
 
@@ -74,6 +87,21 @@ class WMI:
             if cmd_id & WMI_EVENT_BIT:
                 continue                                   # async event — not our response
             return body[4:]                                # strip wmi_cmd_hdr -> value(s)
+
+    def vap_create(self, index: int, opmode: int, macaddr: bytes, ath_cap: int = 0,
+                   rtsthreshold: int = 0) -> None:
+        """WMI_VAP_CREATE [SRC] htc_drv_main.c — struct ath9k_htc_target_vif (12 bytes):
+        index, opmode, myaddr[6], ath_cap, rtsthreshold(be16), pad."""
+        hvif = struct.pack(">BB6sBHB", index, opmode, bytes(macaddr), ath_cap, rtsthreshold, 0)
+        self.cmd(WMI_VAP_CREATE_CMDID, hvif)
+
+    def node_create(self, macaddr: bytes, bssid: bytes, sta_index: int, vif_index: int,
+                    is_vif_sta: int, maxampdu: int, flags: int = 0, htcap: int = 0) -> None:
+        """WMI_NODE_CREATE [SRC] htc_drv_main.c — struct ath9k_htc_target_sta (22 bytes):
+        macaddr[6], bssid[6], sta_index, vif_index, is_vif_sta, flags/htcap/maxampdu(be16), pad."""
+        tsta = struct.pack(">6s6sBBBHHHB", bytes(macaddr), bytes(bssid), sta_index, vif_index,
+                           is_vif_sta, flags, htcap, maxampdu, 0)
+        self.cmd(WMI_NODE_CREATE_CMDID, tsta)
 
     def update_cap_target(self, tx_chainmask: int, enable_coex: int = 0) -> None:
         """ath9k_htc_update_cap_target [SRC] htc_drv_main.c:574 — push HW caps to the target:
