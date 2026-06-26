@@ -20,7 +20,7 @@ op names exactly where the next milestone begins.
 RULES (do not violate — this is the whole point of the gate):
   * NEVER edit this file to make it print PASS.
   * NEVER read chips/ar9271/ (the v1 port) — v2 is a blind re-port from the kernel C in
-    data_dumps/ath9k-source-v6.18/. Let THIS wire confirm it.
+    data_dumps/ath9k-source-v6.18.12/. Let THIS wire confirm it.
   * The cursor only advances by reproducing the wire or by an explicit named waiver.
 
     uv run python scripts/verify_pcap.py ar9271_v2 [capture-1|capture-2|capture-3]
@@ -38,7 +38,7 @@ sys.path.insert(0, str(REPO / "scripts" / "ar9271_v2"))
 
 import ar9271_pcap_replay as rp  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps_new" / "captures_ath9k_htc_newddevice"
+CAP_DIR = REPO / "usb_dumps_new2" / "captures_ath9k_htc_newddevice"
 
 _IMPORT_ERR = None
 try:
@@ -203,7 +203,7 @@ def _walk_init(w: Walk) -> None:
     """Cold bring-up, one cursor, no re-anchoring. WIRE ORDER (ath9k_htc):
     firmware download -> [M2 frontier: HTC/WMI handshake + ath9k_hw init].
 
-    Source: data_dumps/ath9k-source-v6.18/ath9k/hif_usb.c.
+    Source: data_dumps/ath9k-source-v6.18.12/hif_usb.c.
 
     firmware   13x 4096B RAM writes (bRequest 0x30) + COMP (0x31)   ath9k_hif_usb_download_fw
     htc        READY -> 9x connect_service -> config credits ->      htc_hst.c / htc_drv_init.c

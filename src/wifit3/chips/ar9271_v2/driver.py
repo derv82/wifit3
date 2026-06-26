@@ -1,13 +1,7 @@
-"""AR9271 (ath9k_htc) driver — clean-room v2 re-port from the v6.18 kernel source.
+"""AR9271 (ath9k_htc) driver — clean-room v2 re-port from the v6.18.12 kernel source.
 
 A fresh bring-up against the mainline ``htc_9271-1.4.0.fw`` protocol, verified op-by-op
-against the cold-boot pcap (``scripts/ar9271_v2/verify_pcap.py``). Ported in milestones:
-
-  M1  firmware download + re-enumerate         <- this commit
-  M2  HTC/WMI handshake + ath9k_hw init (monitor)
-  M3  channel tune (per-channel RF synth + recal)
-  M4  RX path (HIF reassembly + rx-desc decode)
-  M5  TX descriptor build / inject (wire only)
+against the cold-boot pcap (``scripts/ar9271_v2/verify_pcap.py``).
 """
 from __future__ import annotations
 
