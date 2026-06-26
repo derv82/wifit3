@@ -89,6 +89,32 @@ class Walk:
         self.i += 1
 
 
+def _hw_reset_body(w: Walk) -> None:
+    """The body of ath9k_hw_reset shared by the cold bring-up and every channel-change reset:
+    process_ini through the calibration and the reset tail. The caller runs reset_begin first
+    (its preamble differs slightly between the cold and warm paths)."""
+    from wifit3.chips.ar9271_v2 import calib, mac_queue, phy_board
+    w.run(lambda t: phy.process_ini(w.hw, w.chan), "process-ini")
+    w.run(lambda t: phy.set_rfmode(w.hw, w.chan), "set-rfmode")
+    w.run(lambda t: w.hw.init_mfp(), "init-mfp")
+    w.run(lambda t: phy.set_delta_slope(w.hw, w.chan), "set-delta-slope")
+    w.run(lambda t: phy.spur_mitigate(w.hw, w.chan), "spur-mitigate")
+    w.run(lambda t: phy_board.set_board_values(w.hw, w.chan), "set-board-values")
+    w.run(lambda t: w.hw.reset_opmode(w.hw.macStaId1, w.hw.saveDefAntenna), "reset-opmode")
+    w.run(lambda t: phy.rf_set_freq(w.hw, w.chan), "rf-set-freq")
+    if not w.hw.txq:
+        mac_queue.init_tx_queues(w.hw)                   # driver-side alloc (no wire ops)
+    w.run(lambda t: mac_queue.init_queues(w.hw), "init-queues")
+    w.run(lambda t: w.hw.init_interrupt_masks(), "init-interrupt-masks")
+    w.run(lambda t: w.hw.ani_cache_ini_regs(), "ani-cache-ini-regs")
+    w.run(lambda t: w.hw.init_qos(), "init-qos")
+    w.run(lambda t: w.hw.init_global_settings(w.chan), "init-global-settings")
+    w.run(lambda t: w.hw.reset_dma_and_intr(), "set-dma-obs-rimt")
+    w.run(lambda t: phy.init_bb(w.hw, w.chan), "init-bb")
+    w.run(lambda t: calib.init_cal(w.hw, w.chan), "init-cal")
+    w.run(lambda t: w.hw.reset_tail(), "reset-tail")
+
+
 def _walk_init(w: Walk) -> None:
     """Cold bring-up, one cursor, no re-anchoring. WIRE ORDER (ath9k_htc):
     firmware download -> [M2 frontier: HTC/WMI handshake + ath9k_hw init].
@@ -127,28 +153,7 @@ def _walk_init(w: Walk) -> None:
     # TSF restore (low word value-excepted: tsf+wall-clock-offset) + JTAG disable.
     w.value_except_regs.add(R.AR_TSF_L32)
     w.run(lambda t: w.hw.reset_begin(w.chan), "hw-reset-begin")
-    w.run(lambda t: phy.process_ini(w.hw, w.chan), "process-ini")
-    # ath9k_hw_reset tail: set_rfmode -> init_mfp -> set_delta_slope -> spur_mitigate.
-    w.run(lambda t: phy.set_rfmode(w.hw, w.chan), "set-rfmode")
-    w.run(lambda t: w.hw.init_mfp(), "init-mfp")
-    w.run(lambda t: phy.set_delta_slope(w.hw, w.chan), "set-delta-slope")
-    w.run(lambda t: phy.spur_mitigate(w.hw, w.chan), "spur-mitigate")
-    from wifit3.chips.ar9271_v2 import phy_board
-    w.run(lambda t: phy_board.set_board_values(w.hw, w.chan), "set-board-values")
-    w.run(lambda t: w.hw.reset_opmode(w.hw.macStaId1, w.hw.saveDefAntenna), "reset-opmode")
-    w.run(lambda t: phy.rf_set_freq(w.hw, w.chan), "rf-set-freq")
-    from wifit3.chips.ar9271_v2 import mac_queue
-    mac_queue.init_tx_queues(w.hw)                       # driver-side alloc (no wire ops)
-    w.run(lambda t: mac_queue.init_queues(w.hw), "init-queues")
-    w.run(lambda t: w.hw.init_interrupt_masks(), "init-interrupt-masks")
-    w.run(lambda t: w.hw.ani_cache_ini_regs(), "ani-cache-ini-regs")
-    w.run(lambda t: w.hw.init_qos(), "init-qos")
-    w.run(lambda t: w.hw.init_global_settings(w.chan), "init-global-settings")
-    w.run(lambda t: w.hw.reset_dma_and_intr(), "set-dma-obs-rimt")
-    w.run(lambda t: phy.init_bb(w.hw, w.chan), "init-bb")
-    from wifit3.chips.ar9271_v2 import calib
-    w.run(lambda t: calib.init_cal(w.hw, w.chan), "init-cal")
-    w.run(lambda t: w.hw.reset_tail(), "reset-tail")
+    _hw_reset_body(w)
     # ath9k_htc_start tail [SRC] htc_drv_main.c:941: re-apply tx power (priv->txpowlimit=0 at
     # first start), then SET_MODE(11ng) / ATH_INIT / START_RECV.
     import struct
@@ -178,6 +183,7 @@ def _walk_init(w: Walk) -> None:
         w.wmi.vap_create(0, HTC_M_MONITOR, w.hw.macaddr)
         w.wmi.node_create(w.hw.macaddr, b"\x00" * 6, 0, 0, 1, 0xFFFF)
         w.hw.is_monitoring = True
+        w.hw.opmode = R.IFTYPE_MONITOR                  # no other vifs -> hw opmode = monitor
     w.run(_add_monitor, "add-monitor-interface")
     # ath9k_htc_set_channel opening [SRC] htc_drv_main.c:225: stop the target before reset.
     from wifit3.chips.ar9271_v2.wmi import (
@@ -185,6 +191,12 @@ def _walk_init(w: Walk) -> None:
     w.run(lambda t: w.wmi.cmd(WMI_DISABLE_INTR_CMDID, b""), "wmi-disable-intr")
     w.run(lambda t: w.wmi.cmd(WMI_DRAIN_TXQ_ALL_CMDID, b""), "wmi-drain-txq-all")
     w.run(lambda t: w.wmi.cmd(WMI_STOP_RECV_CMDID, b""), "wmi-stop-recv")
+    # ath9k_hw_reset for the channel change (warm: curchan set -> getnf first, htc_reset_init
+    # already cleared -> no RF-reset pulse). Same channel, so process_ini re-runs identically.
+    w.hw.curchan = w.chan
+    w.run(lambda t: w.hw.getnf(w.chan), "warm-getnf")
+    w.run(lambda t: w.hw.reset_begin(w.chan), "warm-reset-begin")
+    _hw_reset_body(w)
 
 
 def run(cap: str | None = None) -> int:
@@ -321,6 +333,10 @@ def run(cap: str | None = None) -> int:
                   "add_monitor_interface VAP/NODE_CREATE) and the set_channel stop sequence "
                   "(DISABLE_INTR/DRAIN_TXQ_ALL/STOP_RECV) matched; frontier is the channel-"
                   "change ath9k_hw_reset.")
+        elif w.i == 721:
+            print("  M8 OK: + the channel-change ath9k_hw_reset (warm: getnf, no RF-reset "
+                  "pulse, MONITOR opmode, txpower clamped to limit 0 -> 0x0a) matched; frontier "
+                  "is the post-reset set_channel tail (START_RECV / host_rx_init / SET_MODE).")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")

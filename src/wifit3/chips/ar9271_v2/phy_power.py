@@ -325,9 +325,12 @@ def _set_txpower(hw: AthHw, chan: Channel, cfg_ctl: int, antenna_reduction: int,
     _set_power_per_rate_table(hw, eep, chan, rates, cfg_ctl, antenna_reduction, power_limit)
     _set_power_cal_table(hw, eep, chan)
 
+    hw.max_power_level = 0                             # reg->max_power_level
     for i in range(Ar5416RateSize):
         if rates[i] > R.MAX_RATE_POWER:
             rates[i] = R.MAX_RATE_POWER
+        if rates[i] > hw.max_power_level:
+            hw.max_power_level = rates[i]
     for i in range(Ar5416RateSize):
         rates[i] -= R.AR5416_PWR_TABLE_OFFSET_DB * 2   # += 10
 
@@ -356,26 +359,21 @@ def _set_txpower(hw: AthHw, chan: Channel, cfg_ctl: int, antenna_reduction: int,
 
 
 def apply_txpower(hw: AthHw, chan: Channel) -> None:
-    """ath9k_hw_apply_txpower [SRC] hw.c:2944 (test=false). On the first (pre-regd) reset
-    ctl = NO_CTL, antenna gain comes from the modal header, and the power limit is the
-    channel default (20 dBm -> 40 half-dB) clamped to MAX_COMBINED_POWER."""
+    """ath9k_hw_apply_txpower [SRC] hw.c:2944 (test=false). The per-rate target powers are
+    clamped to the current regulatory state: chan_pwr = min(channel->max_power*2,
+    MAX_COMBINED_POWER), new_pwr = min(chan_pwr, reg->power_limit). On the cold reset that state
+    is the stack default (max_power 20, power_limit MAX_COMBINED_POWER -> new_pwr 40); after the
+    first update_txpow(0) it drops to 0 (every rate -> 0x0a)."""
     eep = Map4k(hw.eeprom)
-    ctl = NO_CTL
-    chan_pwr = min(_DEFAULT_CHAN_MAX_POWER * 2, _MAX_COMBINED_POWER)
-    new_pwr = min(chan_pwr, _MAX_COMBINED_POWER)
-    _set_txpower(hw, chan, ctl, eep.antennaGainCh0, new_pwr)
+    chan_pwr = min(hw.chan_max_power * 2, _MAX_COMBINED_POWER)
+    new_pwr = min(chan_pwr, hw.reg_power_limit)
+    _set_txpower(hw, chan, NO_CTL, eep.antennaGainCh0, new_pwr)
 
 
 def update_txpow(hw: AthHw, chan: Channel, new_txpow: int) -> None:
-    """ath9k_cmn_update_txpow -> ath9k_hw_set_txpowerlimit [SRC] common.c:74 / hw.c:2966.
-
-    htc-start re-applies tx power with priv->txpowlimit, which is 0 at the first start. Since
-    reg->power_limit was MAX_COMBINED_POWER (init default), the guard fires and the limit drops
-    to 0, clamping every per-rate target to 0 (-> 0x0a after the +10 table offset). The gain cfg
-    and PDADC table are limit-independent, so they reproduce identically to the reset-time
-    apply_txpower."""
-    eep = Map4k(hw.eeprom)
-    power_limit = min(new_txpow, _MAX_COMBINED_POWER)
-    chan_pwr = min(_DEFAULT_CHAN_MAX_POWER * 2, R.MAX_RATE_POWER)
-    new_pwr = min(chan_pwr, power_limit)
-    _set_txpower(hw, chan, NO_CTL, eep.antennaGainCh0, new_pwr)
+    """ath9k_cmn_update_txpow -> ath9k_hw_set_txpowerlimit [SRC] common.c:74 / hw.c:2966 — set
+    reg->power_limit, re-apply, then latch channel->max_power from the resulting max level. The
+    first start passes priv->txpowlimit=0, dropping the limit to 0 (per-rate targets -> 0x0a)."""
+    hw.reg_power_limit = min(new_txpow, _MAX_COMBINED_POWER)
+    apply_txpower(hw, chan)
+    hw.chan_max_power = (hw.max_power_level + 1) // 2          # DIV_ROUND_UP(level, 2)

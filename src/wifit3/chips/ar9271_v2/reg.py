@@ -440,6 +440,7 @@ INIT_RSSI_THR = 0x00000700              # [SRC] hw.h:192
 AR_BSSMSKL = 0x80E0                     # [SRC] reg.h
 AR_BSSMSKU = 0x80E4
 IFTYPE_STATION = 2                      # NL80211_IFTYPE_STATION
+IFTYPE_MONITOR = 6                      # NL80211_IFTYPE_MONITOR
 
 # ---- rf_set_freq (synthesizer) [SRC] ar9002_phy.c:66 + phy.h:20-22 ----------
 AR_PHY_SYNTH_CONTROL = 0x9874           # [SRC] ar9002_phy.h:158
