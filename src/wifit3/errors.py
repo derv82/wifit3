@@ -37,6 +37,10 @@ class BringUpError(Exception):
         super().__init__(f"{stage}: {detail}" if detail else stage)
 
 
+class BringUpPermissionsError(BringUpError):
+    """A bring-up failure the splash resolves by offering the one-time device-access install."""
+
+
 class WifiteFatalError(Exception):
     """An unrecoverable condition the user must fix before wifit3 can run (e.g. no USB backend).
 

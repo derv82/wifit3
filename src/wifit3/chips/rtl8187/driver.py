@@ -29,6 +29,7 @@ Milestone status:
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 from typing import Callable, Optional
 
@@ -36,7 +37,7 @@ import usb.core
 import usb.util
 
 from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
-from wifit3.errors import BringUpError
+from wifit3.errors import BringUpError, BringUpPermissionsError
 
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -112,13 +113,24 @@ class RTL8187Driver:
             if self.dev.is_kernel_driver_active(0):
                 self.dev.detach_kernel_driver(0)
                 logger.info("detached kernel driver from interface 0")
-        except (NotImplementedError, usb.core.USBError) as e:
-            logger.debug("kernel-driver detach skipped: %s", e)
-        try:
-            self.dev.set_configuration()
         except usb.core.USBError as e:
-            raise IOError(f"set_configuration failed: {e}") from e
-        usb.util.claim_interface(self.dev, 0)
+            if e.errno == errno.EACCES:
+                raise BringUpPermissionsError("detach", str(e)) from e
+            logger.debug("kernel-driver detach skipped: %s", e)
+        except NotImplementedError:
+            pass  # Windows
+        try:
+            self.dev.get_active_configuration()  # already configured?
+        except usb.core.USBError as e:
+            if e.errno == errno.EACCES:
+                raise BringUpPermissionsError("open", str(e)) from e
+            self.dev.set_configuration()
+        try:
+            usb.util.claim_interface(self.dev, 0)
+        except usb.core.USBError as e:
+            if e.errno == errno.EACCES:
+                raise BringUpPermissionsError("claim", str(e)) from e
+            raise
         self._claimed = True
         logger.info("claimed USB interface 0")
 

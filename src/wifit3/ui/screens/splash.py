@@ -10,7 +10,7 @@ from textual.containers import Vertical, Center, Horizontal
 from textual import work
 from rich.text import Text
 
-from wifit3.errors import BringUpError, WifiteFatalError
+from wifit3.errors import BringUpError, BringUpPermissionsError, WifiteFatalError
 from wifit3.ui.ansi_art import make_black_transparent
 from wifit3.setup import ids_from_registry
 from wifit3.setup.linux import current_user, install_rule, remove_rule
@@ -218,12 +218,9 @@ class SplashView(Screen):
             except BringUpError as e:
                 bringup_err = e
 
-            # Connect failed. The fix depends on the OS: Windows usually means "not
-            # WinUSB-bound", Linux means "the kernel driver holds it + we lack node access".
-            # Both run a blocking, only-on-failure probe before assuming so.
+            needs_access = isinstance(bringup_err, BringUpPermissionsError)
             if bringup_err is None:
                 await iface.close()
-            openable = await asyncio.to_thread(self.device_manager.is_openable, iface)
             vid, pid, desc = iface.vid, iface.pid, iface.description
 
             async def _refind_and_connect(fail_msg: str) -> None:
@@ -241,9 +238,12 @@ class SplashView(Screen):
                     raise RuntimeError(fail_msg)
 
             if sys.platform == "win32":
+                openable = not needs_access and await asyncio.to_thread(
+                    self.device_manager.is_openable, iface)
                 if openable:
-                    raise bringup_err or RuntimeError("the card failed to initialize")
-                # Not openable on Windows → offer the one-time WinUSB install.
+                    raise bringup_err or RuntimeError(
+                        "the card opens but failed to initialize — replug and try again")
+                # Not WinUSB-bound → offer the one-time WinUSB install.
                 if not await self.app.push_screen_wait(ConfirmInstallDialog(desc)):
                     status.update("[bold bright_green]Select a card and press START[/bold bright_green]")
                     release()
@@ -269,12 +269,11 @@ class SplashView(Screen):
                 await _refind_and_connect("the card failed to initialize after installing WinUSB")
 
             elif sys.platform.startswith("linux"):
-                # On Linux a kernel-claimed card still reads as "openable", so the real signal
-                # is whether the usbfs node is writable. Writable-but-failed = a genuine fault.
-                needs_perm = await asyncio.to_thread(
+                node_writable = not needs_access and not await asyncio.to_thread(
                     self.device_manager.linux_needs_permission, iface)
-                if not needs_perm:
-                    raise bringup_err or RuntimeError("the card failed to initialize")
+                if node_writable:
+                    raise bringup_err or RuntimeError(
+                        "the card has access but failed to initialize — replug and try again")
                 # No node access → offer the one-time udev access rule (reuses the install
                 # dialog with Linux wording — a missing REQUIRED link, same shape).
                 others = len(ids_from_registry()) - 1
