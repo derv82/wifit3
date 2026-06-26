@@ -64,6 +64,7 @@ class Walk:
         self.chan = None                    # the channel being brought up
         self.value_except_regs: set[int] = set()   # registers whose written value is excepted
         self.value_excepted = 0
+        self.async_injected = 0                     # LED-blink ops reproduced at the cursor
         self.waived: Counter = Counter()
 
     def run(self, fn, label: str):
@@ -87,6 +88,33 @@ class Walk:
     def waive(self, reason: str) -> None:
         self.waived[reason] += 1
         self.i += 1
+
+    def _drain_async(self, command_id: int, payload: bytes) -> None:
+        """Reproduce async-producer ops the kernel interleaved at the cursor — the ath9k_htc
+        LED-blink timer's GPIO RMW — through their real handler (gpio.set_gpio), so both the
+        bytes and the shared WMI seq counter stay aligned. Registered as wmi.async_injector, so
+        it runs at the head of every cmd. A cmd that is *itself* a GPIO_IN_OUT RMW (a handler's
+        own set_gpio, or the one we inject here) passes through untouched — that is also what
+        makes this non-recursive; any *other* cmd with an LED op pending at the cursor means the
+        blink timer fired here, so we replay it first. Not a waiver: each op is byte-reproduced."""
+        import struct as _s
+        from wifit3.chips.ar9271_v2 import gpio
+        if (command_id == 0x20 and len(payload) >= 4               # WMI_REG_RMW to the LED pin
+                and _s.unpack_from(">I", payload, 0)[0] == R.AR_GPIO_IN_OUT):
+            return
+        while self.wmi is not None:
+            op = self.wmi.t.dev.peek()
+            if op is None or op.get("ep") != 0x04:
+                return
+            b = bytes(op.get("data") or b"")
+            if len(b) < 24 or _s.unpack_from(">H", b, 8)[0] != 0x20:
+                return
+            reg, set_bits = _s.unpack_from(">II", b, 12)
+            if reg != R.AR_GPIO_IN_OUT:
+                return
+            val = 1 if set_bits == 0 else 0       # set_gpio re-inverts on AR9271 [SRC] hw.c:2835
+            gpio.set_gpio(self.hw, R.ATH_LED_PIN_9271, val)
+            self.async_injected += 1
 
 
 def _hw_reset_body(w: Walk) -> None:
@@ -199,6 +227,53 @@ def _channel_change(w: Walk) -> None:
     w.run(lambda t: w.wmi.cmd(WMI_ENABLE_INTR_CMDID, b""), "hop-enable-intr")
 
 
+def _channel_change_body(w: Walk) -> None:
+    """ath9k_hw_channel_change [SRC] hw.c:1543 — the fast retune the AR9271 runs without a full
+    reset: confirm the QCUs are idle, pause the baseband (rfbus), reprogram the per-channel PHY +
+    synth + TX power, then release. The FCC_BAND_SWITCH block (mark_phy_inactive / init_pll /
+    fast_chan_change) and the band_switch/ini_reloaded set_board_values + init_cal reloads are
+    guarded by caps/flags the 9271 never sets on a within-band hop, so they are skipped."""
+    from wifit3.chips.ar9271_v2 import phy, phy_power
+    w.run(lambda t: [w.hw.numtxpending(q) for q in range(R.AR_NUM_QCU)], "fcc-numtxpending")
+    w.run(lambda t: phy.rfbus_req(w.hw), "fcc-rfbus-req")
+    w.run(lambda t: phy.set_channel_regs(w.hw, w.chan), "fcc-set-channel-regs")
+    w.run(lambda t: phy.rf_set_freq(w.hw, w.chan), "fcc-rf-set-freq")
+    w.hw.set_clockrate()                                  # no wire ops
+    w.run(lambda t: phy_power.apply_txpower(w.hw, w.chan), "fcc-apply-txpower")
+    w.run(lambda t: phy.set_delta_slope(w.hw, w.chan), "fcc-set-delta-slope")
+    w.run(lambda t: phy.spur_mitigate(w.hw, w.chan), "fcc-spur-mitigate")
+    w.run(lambda t: phy.init_bb(w.hw, w.chan), "fcc-init-bb")
+    w.run(lambda t: phy.rfbus_done(w.hw), "fcc-rfbus-done")
+
+
+def _fast_channel_change(w: Walk) -> None:
+    """One ath9k_htc_set_channel hop on the fast path [SRC] htc_drv_main.c:240 (fastcc, caldata
+    NULL): stop the target, then ath9k_hw_reset's fastcc branch [SRC] hw.c:1896 ->
+    ath9k_hw_do_fastcc [SRC] hw.c:1788 (check_alive + channel_change + loadnf + start_nfcal + the
+    AR9271 ANI-reg reload), then restart RX. The fastcc-vs-full decision is read off the wire by
+    _hop_is_full_reset (the kernel's do_fastcc guards), so this just reproduces the fastcc body."""
+    import struct
+    from wifit3.chips.ar9271_v2 import calib, phy, rx
+    from wifit3.chips.ar9271_v2.wmi import (
+        WMI_DISABLE_INTR_CMDID, WMI_DRAIN_TXQ_ALL_CMDID, WMI_ENABLE_INTR_CMDID,
+        WMI_SET_MODE_CMDID, WMI_START_RECV_CMDID, WMI_STOP_RECV_CMDID)
+    w.chan = _next_synth_channel(w)
+    w.run(lambda t: w.wmi.cmd(WMI_DISABLE_INTR_CMDID, b""), "fcc-disable-intr")
+    w.run(lambda t: w.wmi.cmd(WMI_DRAIN_TXQ_ALL_CMDID, b""), "fcc-drain-txq-all")
+    w.run(lambda t: w.wmi.cmd(WMI_STOP_RECV_CMDID, b""), "fcc-stop-recv")
+    w.run(lambda t: w.hw.getnf(w.chan), "fcc-getnf")          # ath9k_hw_reset getnf(curchan)
+    w.run(lambda t: w.hw.check_alive(), "fcc-check-alive")
+    _channel_change_body(w)
+    w.run(lambda t: calib.loadnf(w.hw, w.chan), "fcc-loadnf")
+    w.run(lambda t: calib.start_nfcal(w.hw, update=True), "fcc-start-nfcal")
+    w.run(lambda t: phy.load_ani_reg(w.hw, w.chan), "fcc-load-ani-reg")   # AR9271-only
+    w.run(lambda t: w.wmi.cmd(WMI_START_RECV_CMDID, b""), "fcc-start-recv")
+    w.run(lambda t: rx.host_rx_init(w.hw), "fcc-host-rx-init")
+    w.run(lambda t: w.wmi.cmd(WMI_SET_MODE_CMDID, struct.pack(">H", 1)), "fcc-set-mode")
+    w.run(lambda t: w.wmi.cmd(WMI_ENABLE_INTR_CMDID, b""), "fcc-enable-intr")
+    w.hw.curchan = w.chan
+
+
 def _walk_init(w: Walk) -> None:
     """Cold bring-up, one cursor, no re-anchoring. WIRE ORDER (ath9k_htc):
     firmware download -> [M2 frontier: HTC/WMI handshake + ath9k_hw init].
@@ -219,6 +294,7 @@ def _walk_init(w: Walk) -> None:
     st = w.run(lambda t: htc.handshake(t), "htc-handshake")
 
     w.wmi = WMI(None, ctrl_epid=st.endpoints[C.WMI_CONTROL_SVC])
+    w.wmi.async_injector = w._drain_async       # replay the LED-blink timer's interleaved ops
     w.hw = w.run(lambda t: hw.init_reset(w.wmi), "chip-reset")
     w.run(lambda t: phy.rf_claim(w.hw), "rf-claim")
     w.run(lambda t: eeprom.init(w.hw), "eeprom")
@@ -298,9 +374,10 @@ def _walk_init(w: Walk) -> None:
     while True:
         cmd, reg, set_bits = _peek_wmi(w)
         if cmd == 0x04:                                 # WMI_DISABLE_INTR -> a channel hop
-            if not _hop_is_full_reset(w):
-                break                                   # fast channel change — not ported yet
-            _channel_change(w)
+            if _hop_is_full_reset(w):
+                _channel_change(w)
+            else:
+                _fast_channel_change(w)
         elif cmd == 0x14 and reg == R.AR_RX_FILTER:     # a configure_filter (getrxfilter first)
             w.run(lambda t: rx.configure_filter(w.hw, w.hw.rxfilter_flags), "hop-configure-filter")
         elif cmd == 0x20 and reg == R.AR_GPIO_IN_OUT:   # LED blink (set_gpio on pin 15)
@@ -344,6 +421,9 @@ def run(cap: str | None = None) -> int:
     if w.value_excepted:
         print(f"  value-excepted {w.value_excepted} write(s) — hardware/wall-clock value "
               "(register + headers matched)")
+    if w.async_injected:
+        print(f"  reproduced {w.async_injected} interleaved LED-blink op(s) via gpio.set_gpio "
+              "(byte-matched, seq-aligned)")
 
     if w.i < len(ops):
         front = w.peek()

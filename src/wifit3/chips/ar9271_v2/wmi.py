@@ -67,11 +67,18 @@ class WMI:
         self._mwrite_enabled = 0
         self._mrmw: list[tuple[int, int, int]] = []        # buffered (reg, set, clr)
         self._mrmw_enabled = 0
+        # Verify-harness-only hook: reproduce async-producer ops (the LED-blink timer's GPIO
+        # writes) the kernel interleaved into the command stream, so the shared seq counter
+        # stays aligned. None in production (the real LED is a timer). Called (command_id,
+        # payload) at the head of every cmd, before the seq is taken.
+        self.async_injector = None
 
     # ---- raw command / response -------------------------------------------
     def cmd(self, command_id: int, payload: bytes) -> bytes:
         """Issue one WMI command and return its response body (htc + wmi headers stripped).
         Mirrors ath9k_wmi_cmd_issue: ++seq, frame, send on ctrl_epid [SRC] wmi.c:286-307."""
+        if self.async_injector is not None:
+            self.async_injector(command_id, payload)
         self.tx_seq_id = (self.tx_seq_id + 1) & 0xFFFF
         hdr = struct.pack(">HH", command_id, self.tx_seq_id)
         self.t.reg_out(htc.frame(self.ctrl_epid, hdr + payload))

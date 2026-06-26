@@ -98,6 +98,9 @@ class AthHw:
     def is_9280_20_or_later(self) -> bool:
         return self.macVersion >= 0x80            # AR_SREV_VERSION_9280 (true for 9271)
 
+    def is_9285_12_or_later(self) -> bool:
+        return self.macVersion >= R.AR_SREV_VERSION_9285   # 0xC0 (true for 9271)
+
     # ---- register access (over WMI) ---------------------------------------
     def read(self, reg: int) -> int:
         return self.wmi.reg_read(reg)
@@ -534,6 +537,33 @@ class AthHw:
         else:                                             # untested (pre-9280 silicon)
             self.sw_mgmt_crypto_tx = True
             self.sw_mgmt_crypto_rx = True
+
+    # ---- fast channel change [SRC] hw.c:40-77,1641 + mac.c:65 -------------
+    def check_alive(self) -> bool:
+        """ath9k_hw_check_alive [SRC] hw.c:1641 — confirm the chip is responsive before a fast
+        channel change. The AR9271 (>= 9285 v1.2) answers after the single AR_CFG read; the 9300
+        mac-hang detect and the pre-9285 OBS_BUS_1 poll are not on this card's path."""
+        if self.read(R.AR_CFG) == 0xdeadbeef:
+            return False
+        if self.is_9300_20_or_later():                # untested — AR_SREV_9300 mac-hang detect
+            raise NotImplementedError("ar9271_v2: 9300 check_alive not ported")
+        if self.is_9285_12_or_later():
+            return True
+        raise NotImplementedError("ar9271_v2: pre-9285 check_alive OBS_BUS_1 poll not ported")
+
+    def numtxpending(self, q: int) -> int:
+        """ath9k_hw_numtxpending [SRC] mac.c:65 — frames pending on QCU ``q``: the status count,
+        falling back to the queue's TX-enable bit when the count reads zero."""
+        npend = self.read(R.AR_QSTS(q)) & R.AR_Q_STS_PEND_FR_CNT
+        if npend == 0 and (self.read(R.AR_Q_TXE) & (1 << q)):
+            npend = 1
+        return npend
+
+    def set_clockrate(self) -> None:
+        """ath9k_hw_set_clockrate [SRC] hw.c:40 — cache the MAC clock that _mac_to_clks uses.
+        The AR9271 is 2.4 GHz only (no async-FIFO / fast-clock / HT40 / half / quarter), so this
+        resolves to ATH9K_CLOCK_RATE_2GHZ_OFDM. No wire ops."""
+        self.clockrate = R.ATH9K_CLOCK_RATE_2GHZ_OFDM
 
 
 def init_reset(wmi: WMI) -> AthHw:

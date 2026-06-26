@@ -119,6 +119,37 @@ def init_bb(hw: AthHw, chan: Channel) -> None:
     hw.write(R.AR_PHY_ACTIVE, R.AR_PHY_ACTIVE_EN)
 
 
+def rfbus_req(hw: AthHw) -> bool:
+    """ar5008_hw_rfbus_req [SRC] ar5008_phy.c:887 — ask the baseband to pause RX so the synth can
+    retune, then wait for the grant. Used by the fast-channel-change path."""
+    hw.write(R.AR_PHY_RFBUS_REQ, R.AR_PHY_RFBUS_REQ_EN)
+    return hw.wait(R.AR_PHY_RFBUS_GRANT, R.AR_PHY_RFBUS_GRANT_EN, R.AR_PHY_RFBUS_GRANT_EN)
+
+
+def rfbus_done(hw: AthHw) -> None:
+    """ar5008_hw_rfbus_done [SRC] ar5008_phy.c:894 — release the baseband after the retune. The
+    synth-settling udelay (read AR_PHY_RX_DELAY) has no wire effect beyond the read."""
+    hw.read(R.AR_PHY_RX_DELAY)                            # & AR_PHY_RX_DELAY_DELAY (settle wait)
+    hw.write(R.AR_PHY_RFBUS_REQ, 0)
+
+
+def load_ani_reg(hw: AthHw, chan: Channel) -> None:
+    """ar9002_hw_load_ani_reg [SRC] ar9002_hw.c:426 — re-apply the AR9271 ANI baseline table for
+    the channel's mode (the fast-channel-change path skips process_ini, which is what normally
+    seeds these). modesIndex 4 = 2.4 GHz / 20 MHz. The CCK-detect row preserves the live
+    weak-signal threshold, taking only the rest of the field from the table."""
+    modesIndex = (2 if chan.is_ht40() else 1) if chan.is_5ghz() else (3 if chan.is_ht40() else 4)
+    hw.enable_write_buffer()
+    for row in I.MODES_9271_ANI_reg:
+        reg, val = row[0], row[modesIndex]
+        if reg == R.AR_PHY_CCK_DETECT:
+            val_orig = hw.read(reg)
+            val = ((val & R.AR_PHY_CCK_DETECT_WEAK_SIG_THR_CCK)
+                   | (val_orig & ~R.AR_PHY_CCK_DETECT_WEAK_SIG_THR_CCK)) & 0xFFFFFFFF
+        hw.write(reg, val)
+    hw.write_flush()
+
+
 def rf_set_freq(hw: AthHw, chan: Channel) -> None:
     """ar9002_hw_set_channel [SRC] ar9002_phy.c:66 — program the single-chip synthesizer. The
     AR9271 is 2.4 GHz only, so this is always the fractional 2 GHz path: seed CHANSEL_2G and

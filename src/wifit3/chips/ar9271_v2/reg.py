@@ -32,6 +32,7 @@ AR_SREV_TYPE2_HOST_MODE = 0x00002000
 AR_SREV_REVISION2 = 0x00000F00
 AR_SREV_REVISION2_S = 8
 AR_SREV_VERSION_9271 = 0x140           # [SRC] reg.h:795
+AR_SREV_VERSION_9285 = 0xC0            # [SRC] reg.h:786 (AR_SREV_9285_12_OR_LATER threshold)
 
 # ---- reset / RTC [SRC] reg.h:697-702,1041-1063,1342-1406 -------------------
 AR_WA = 0x4004                         # AR_WA(ah) non-9340 [SRC] reg.h:702 (9300+ only)
@@ -74,6 +75,10 @@ AR_STA_ID1_BASE_RATE_11B = 0x02000000  # [SRC] reg.h:1629
 AR_CR = 0x0008
 AR_CR_RXE = 0x00000004                 # non-9300
 AR_Q_TXE = 0x0840
+AR_NUM_QCU = 10                        # [SRC] reg.h:368
+AR_Q0_STS = 0x0a00                     # [SRC] reg.h:468
+AR_Q_STS_PEND_FR_CNT = 0x00000003      # [SRC] reg.h:479
+def AR_QSTS(i: int) -> int: return AR_Q0_STS + (i << 2)   # AR_QSTS(_i) [SRC] reg.h:478
 AR_TSF_L32 = 0x804c
 AR_TSF_U32 = 0x8050
 AR_DEF_ANTENNA = 0x8058
@@ -446,6 +451,14 @@ IFTYPE_MONITOR = 6                      # NL80211_IFTYPE_MONITOR
 AR_PHY_SYNTH_CONTROL = 0x9874           # [SRC] ar9002_phy.h:158
 AR_PHY_CCK_TX_CTRL = 0xA204             # [SRC] ar9002_phy.h:413
 AR_PHY_CCK_TX_CTRL_JAPAN = 0x00000010
+# fast channel change — baseband rfbus handshake [SRC] ar9002_phy.h:271,393
+AR_PHY_RFBUS_REQ = 0x997C
+AR_PHY_RFBUS_REQ_EN = 0x00000001
+AR_PHY_RFBUS_GRANT = 0x9C20
+AR_PHY_RFBUS_GRANT_EN = 0x00000001
+# ar9002 load_ani_reg CCK weak-signal merge [SRC] ar9002_phy.h:418-419
+AR_PHY_CCK_DETECT = 0xA208
+AR_PHY_CCK_DETECT_WEAK_SIG_THR_CCK = 0x0000003F
 CHANSEL_DIV = 15                        # [SRC] phy.h:20
 def CHANSEL_2G(freq: int) -> int:       # [SRC] phy.h:21
     return (freq * 0x10000) // CHANSEL_DIV
@@ -584,6 +597,7 @@ AR_RXCFG_DMASZ_MASK = 0x00000007
 AR_RXCFG_DMASZ_128B = 5
 AR_RXFIFO_CFG = 0x8114                  # [SRC] reg.h:1823
 AR_OBS = 0x4080                         # non-9300/9340 [SRC] reg.h:1259
+AR_OBS_BUS_1 = 0x806c                   # [SRC] reg.h:1745 (check_alive poll, pre-9285 only)
 AR_RIMT = 0x002C                        # [SRC] reg.h:64
 AR_RIMT_LAST = 0x0000FFFF
 AR_RIMT_FIRST = 0xFFFF0000
