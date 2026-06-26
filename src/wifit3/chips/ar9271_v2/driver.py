@@ -28,7 +28,7 @@ from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
-from . import bringup, chan as chanmod, constants as C, firmware, rx_decode, tx
+from . import bringup, chan as chanmod, constants as C, firmware, reg as R, rx_decode, tx
 from .transport import AR9271Transport
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,7 @@ class AR9271V2Driver:
         DeviceID(C.AR9271_VID, C.AR9271_PID, "Atheros AR9271 / ALFA AWUS036NHA (v2)"),
     ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 14))   # 2.4 GHz only, no 5 GHz radio
-    FAKE_MAC: ClassVar[FakeMacSupport] = FakeMacSupport.UNIMPLEMENTED
+    FAKE_MAC: ClassVar[FakeMacSupport] = FakeMacSupport.SPOOFABLE
 
     def __init__(self, dev: usb.core.Device):
         self.transport = AR9271Transport(dev)
@@ -292,17 +292,23 @@ class AR9271V2Driver:
             if parsed is not None:
                 cb(parsed)
 
-    # ---- TX (wired, not fired — live injection is the user's gate) ---------
-    def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> int:
-        """Transmit one 802.11 frame (aireplay-ng ``--test`` / deauth): allocate a TX slot, build
-        the HTC wrapper (tx_frame_hdr for data, tx_mgmt_hdr otherwise; see ``tx.py``), and bulk-OUT
-        it on the WLAN_TX pipe. Mirrors ath9k_htc_tx -> ath9k_htc_tx_start [SRC] htc_drv_main.c:862
-        / htc_drv_txrx.c:340. The 802.11 frame (incl. its sequence number) is the caller's; only
-        the wrapper and the cookie are ours. Returns the allocated cookie (TX slot).
+    # ---- TX (the UI/attacks await inject_frame; live firing is the user's gate) -------
+    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
+        """Transmit one 802.11 frame (deauth / PMKID auth+assoc / aireplay-ng ``--test``). The
+        WlanDriver contract is async + returns bool; the blocking bulk-OUT is offloaded so a TX
+        burst doesn't stall the event loop (RX runs off-loop on its own thread). ``use_no_ack`` is
+        accepted for the contract — AR9271 injected monitor frames already carry no QoS / no-ACK."""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._emit_frame, bytes(frame_bytes))
+        return True
 
-        Synchronous: the verify gate + unit tests drive it directly. The async ``WlanDriver``
-        wrapper that the UI's deauth path awaits lands with the live-TX wiring (the human gate)."""
-        dot11 = bytes(frame_bytes)
+    def _emit_frame(self, dot11: bytes) -> int:
+        """Sync core: allocate a TX slot, build the HTC wrapper (tx_frame_hdr for data, tx_mgmt_hdr
+        otherwise; see ``tx.py``), and bulk-OUT it on the WLAN_TX pipe. Mirrors ath9k_htc_tx ->
+        ath9k_htc_tx_start [SRC] htc_drv_main.c:862 / htc_drv_txrx.c:340. The 802.11 frame (incl. its
+        sequence number) is the caller's; only the wrapper and the cookie are ours. Returns the
+        allocated cookie (TX slot). The verify gate + unit tests drive this directly (no event loop);
+        the public async ``inject_frame`` wraps it for the UI."""
         cookie = self.tx_slots.get()
         if tx.is_data_frame(dot11):
             frame = tx.build_data_tx(self.data_be_epid, dot11, cookie)
@@ -317,6 +323,31 @@ class AR9271V2Driver:
         path; the verify gate feeds the recorded events, interleaved by capture order."""
         for cookie in tx.txstatus_cookies(event_body):
             self.tx_slots.clear(cookie)
+
+    # ---- active monitor (HW-ACK a chosen MAC) — needed for ACKed conversations (WPS/EAP/PMKID) -
+    async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
+        """Program ``mac`` into AR_STA_ID0/1 so the hardware HW-ACKs frames addressed to it (ath9k
+        matches RA against AR_STA_ID) while staying in monitor mode — the prerequisite for any ACKed
+        conversation (WPS/EAP/PMKID), where the AP retransmits and abandons the session if we don't
+        ACK. Reversed by exit_active_monitor. ``bssid`` is unused (register-MAC ACK is a pure RA
+        match). Mirrors the v1 driver + the Realtek siblings."""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._write_sta_id, bytes(mac))
+        return bytes(mac)
+
+    async def exit_active_monitor(self) -> None:
+        """Restore the card's real EEPROM MAC in AR_STA_ID0/1 (stop ACKing the forged MAC)."""
+        if self.hw is not None:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._write_sta_id, bytes(self.hw.macaddr))
+
+    def _write_sta_id(self, mac: bytes) -> None:
+        """ath_hw_setbssidmask-style STA address write: low 4 bytes -> AR_STA_ID0, high 2 ->
+        AR_STA_ID1 (preserving the upper opmode/KSRCH bits) [SRC] ath/hw.c ath_hw_setbssidmask."""
+        self.hw.write(R.AR_STA_ID0, int.from_bytes(mac[0:4], "little"))
+        id1 = (self.hw.read(R.AR_STA_ID1) & ~R.AR_STA_ID1_SADH_MASK) & 0xFFFFFFFF
+        id1 |= int.from_bytes(mac[4:6], "little")
+        self.hw.write(R.AR_STA_ID1, id1)
 
     async def close(self) -> None:
         if self._reader is not None:

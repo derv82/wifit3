@@ -67,15 +67,25 @@ def _replay_driver(sent):
 
 
 def test_inject_frame_routes_and_allocates_cookies():
+    # _emit_frame is the sync core (the public inject_frame is the async UI wrapper around it).
     sent: list[bytes] = []
     drv = _replay_driver(sent)
 
-    assert drv.inject_frame(PROBE) == 0                            # mgmt, slot 0
-    assert drv.inject_frame(NULL) == 1                             # data, slot 1
+    assert drv._emit_frame(PROBE) == 0                             # mgmt, slot 0
+    assert drv._emit_frame(NULL) == 1                              # data, slot 1
     assert sent[0] == tx.build_mgmt_tx(5, PROBE, 0)
     assert sent[1] == tx.build_data_tx(6, NULL, 1)
 
     # A completion for cookie 0 frees the slot; the next inject reuses it.
     drv.tx_status_event(bytes([1, 0, 0x60, 0x01]))
-    assert drv.inject_frame(RTS) == 0                              # control -> mgmt, slot 0 reused
+    assert drv._emit_frame(RTS) == 0                               # control -> mgmt, slot 0 reused
     assert sent[2] == tx.build_mgmt_tx(5, RTS, 0)
+
+
+async def test_inject_frame_async_returns_bool():
+    # The WlanDriver contract the UI awaits: async, returns True, and actually sends the frame
+    # (regression guard for the "object int can't be used in 'await' expression" crash).
+    sent: list[bytes] = []
+    drv = _replay_driver(sent)
+    assert await drv.inject_frame(PROBE) is True
+    assert sent[0] == tx.build_mgmt_tx(5, PROBE, 0)

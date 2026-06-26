@@ -120,7 +120,7 @@ class Walk:
                 self.drain_tx_status(op.get("frame", 0))     # free slots completed before this op
             if op is not None and op.get("ep") == 0x01:      # bulk-OUT TX -> aireplay-ng injection
                 dot11 = tx.dot11_from_bulk(bytes(op.get("data") or b""))
-                self.driver.inject_frame(dot11)
+                self.driver._emit_frame(dot11)               # sync core (public inject_frame is async)
                 continue
             cmd, reg, set_bits = self._peek_wmi()
             if cmd == 0x04:                                  # WMI_DISABLE_INTR -> a channel hop
