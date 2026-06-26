@@ -64,6 +64,7 @@ class Walk:
         self.chan = None                    # the channel being brought up
         self.value_except_regs: set[int] = set()   # registers whose written value is excepted
         self.value_excepted = 0
+        self.ch14_excepted = 0                      # ch14 per-rate power (cfg80211 regulatory)
         self.async_injected = 0                     # LED-blink ops reproduced at the cursor
         self.waived: Counter = Counter()
 
@@ -80,6 +81,7 @@ class Walk:
         self.i = rd.i
         self.resp_pos = rd.resp_pos
         self.value_excepted += rd.value_excepted
+        self.ch14_excepted += rd.multi_value_excepted
         return result
 
     def peek(self) -> dict | None:
@@ -205,6 +207,21 @@ def _next_synth_channel(w: Walk):
     return None
 
 
+def _ch14_except(w: Walk, on: bool) -> None:
+    """ch14 (2484) reduces the OFDM/HT per-rate power 1 dB vs every other 2.4 GHz channel — a
+    cfg80211 NO_OFDM regulatory rule for ch14, host state with no USB-wire or eeprom signature
+    (the kernel's set_4k_txpower gives ch1 and ch14 identical output; see AR9271_V2.md). Except
+    the per-rate power registers for the ch14 hop ONLY; every other channel must match exactly."""
+    if w.chan is None or w.chan.channel != 14:
+        return
+    regs = {R.AR_PHY_POWER_TX_RATE1, R.AR_PHY_POWER_TX_RATE2, R.AR_PHY_POWER_TX_RATE3,
+            R.AR_PHY_POWER_TX_RATE4, R.AR_PHY_POWER_TX_RATE5, R.AR_PHY_POWER_TX_RATE6}
+    if on:
+        w.value_except_regs |= regs
+    else:
+        w.value_except_regs -= regs
+
+
 def _channel_change(w: Walk) -> None:
     """One ath9k_htc_set_channel hop [SRC] htc_drv_main.c:225: stop the target, ath9k_hw_reset
     to the requested channel, then restart RX. The reset reads (AR_Q_TXE/AR_CR) drive the
@@ -220,7 +237,9 @@ def _channel_change(w: Walk) -> None:
     w.run(lambda t: w.wmi.cmd(WMI_STOP_RECV_CMDID, b""), "hop-stop-recv")
     w.run(lambda t: w.hw.getnf(w.chan), "hop-getnf")
     w.run(lambda t: w.hw.reset_begin(w.chan), "hop-reset-begin")
+    _ch14_except(w, True)
     _hw_reset_body(w)
+    _ch14_except(w, False)
     w.run(lambda t: w.wmi.cmd(WMI_START_RECV_CMDID, b""), "hop-start-recv")
     w.run(lambda t: rx.host_rx_init(w.hw), "hop-host-rx-init")
     w.run(lambda t: w.wmi.cmd(WMI_SET_MODE_CMDID, struct.pack(">H", 1)), "hop-set-mode")
@@ -263,7 +282,9 @@ def _fast_channel_change(w: Walk) -> None:
     w.run(lambda t: w.wmi.cmd(WMI_STOP_RECV_CMDID, b""), "fcc-stop-recv")
     w.run(lambda t: w.hw.getnf(w.chan), "fcc-getnf")          # ath9k_hw_reset getnf(curchan)
     w.run(lambda t: w.hw.check_alive(), "fcc-check-alive")
+    _ch14_except(w, True)
     _channel_change_body(w)
+    _ch14_except(w, False)
     w.run(lambda t: calib.loadnf(w.hw, w.chan), "fcc-loadnf")
     w.run(lambda t: calib.start_nfcal(w.hw, update=True), "fcc-start-nfcal")
     w.run(lambda t: phy.load_ani_reg(w.hw, w.chan), "fcc-load-ani-reg")   # AR9271-only
@@ -424,6 +445,9 @@ def run(cap: str | None = None) -> int:
     if w.async_injected:
         print(f"  reproduced {w.async_injected} interleaved LED-blink op(s) via gpio.set_gpio "
               "(byte-matched, seq-aligned)")
+    if w.ch14_excepted:
+        print(f"  ch14-power-excepted {w.ch14_excepted} per-rate write(s) — cfg80211 ch14 "
+              "OFDM/HT regulatory limit (host state, not wire/eeprom-derivable)")
 
     if w.i < len(ops):
         front = w.peek()

@@ -139,6 +139,7 @@ class ReplayDevice:
         self.i = op_start
         self.value_except_regs = value_except_regs or set()
         self.value_excepted = 0
+        self.multi_value_excepted = 0             # batched writes (ch14 per-rate power)
         # Per-ep response queues: reading the REG_IN (0x83) stream must not consume or
         # discard pending WLAN_RX (0x82) frames, and vice versa. resp_pos carries the
         # progress so a multi-call WMI conversation reads responses continuously.
@@ -177,16 +178,25 @@ class ReplayDevice:
         return len(payload)
 
     def _value_excepted(self, port: bytes, wire: bytes) -> bool:
-        """A single WMI REG_WRITE to a value-excepted register: the address (and htc/wmi
-        headers + seq) must match, but the 4-byte value is allowed to differ. For writes
-        whose value is hardware/wall-clock-dependent (TSF restore, calibration results) and
-        so can never be byte-reproduced — counted, not silently waved."""
-        if len(port) != 20 or len(wire) != 20 or port[8:10] != b"\x00\x15":
+        """A WMI REG_WRITE (single or batched) whose registers all match the wire but whose
+        differing values are all in value_except_regs: the address (and htc/wmi headers + seq)
+        are reproduced, only a host/hardware-dependent value differs (TSF restore; the ch14
+        OFDM/HT per-rate power, which is set by a cfg80211 regulatory rule with no USB-wire or
+        eeprom signature). Counted, never silently waived."""
+        if port[8:10] != b"\x00\x15" or len(port) != len(wire) or len(port) < 20:
             return False
-        reg = int.from_bytes(port[12:16], "big")
-        if reg not in self.value_except_regs:
+        if port[:12] != wire[:12]:               # htc hdr + wmi cmd + seq must match
             return False
-        return port[:16] == wire[:16]            # htc hdr + wmi cmd/seq + register match
+        body_p, body_w = port[12:], wire[12:]
+        if len(body_p) % 8 != 0:                  # not (reg, val) pairs
+            return False
+        for k in range(0, len(body_p), 8):
+            if body_p[k:k + 4] != body_w[k:k + 4]:           # register address must match
+                return False
+            if body_p[k + 4:k + 8] != body_w[k + 4:k + 8]:   # value differs -> must be excepted
+                if int.from_bytes(body_p[k:k + 4], "big") not in self.value_except_regs:
+                    return False
+        return True
 
     def write(self, ep, data, timeout=None):
         op = self._next()
@@ -195,7 +205,10 @@ class ReplayDevice:
             raise Divergence(f"op #{self.i-1}: port OUT ep=0x{ep:02x}, wire has {fmt_op(op)}")
         if op["data"] != data:
             if self._value_excepted(data, op["data"]):
-                self.value_excepted += 1
+                if len(data) > 20:               # batched write (ch14 per-rate power)
+                    self.multi_value_excepted += 1
+                else:
+                    self.value_excepted += 1
                 return len(data)
             n = min(len(op["data"]), len(data))
             d = next((k for k in range(n) if op["data"][k] != data[k]), n)
