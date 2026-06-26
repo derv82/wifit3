@@ -372,8 +372,8 @@ def apply_txpower(hw: AthHw, chan: Channel) -> None:
 
 def update_txpow(hw: AthHw, chan: Channel, new_txpow: int) -> None:
     """ath9k_cmn_update_txpow -> ath9k_hw_set_txpowerlimit [SRC] common.c:74 / hw.c:2966 — set
-    reg->power_limit, re-apply, then latch channel->max_power from the resulting max level. The
-    first start passes priv->txpowlimit=0, dropping the limit to 0 (per-rate targets -> 0x0a)."""
+    reg->power_limit and re-apply. channel->max_power is only touched in test mode (test=false
+    here), so it stays the mac80211 value. The first start passes priv->txpowlimit=0 (per-rate
+    targets -> 0x0a); a later CONF_CHANGE_POWER raises it back (-> 0x28)."""
     hw.reg_power_limit = min(new_txpow, _MAX_COMBINED_POWER)
     apply_txpower(hw, chan)
-    hw.chan_max_power = (hw.max_power_level + 1) // 2          # DIV_ROUND_UP(level, 2)

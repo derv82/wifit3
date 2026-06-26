@@ -53,6 +53,9 @@ class AthHw:
         self.curaid = 0
         self.opmode = R.IFTYPE_STATION             # ath9k_htc default interface type
         self.is_monitoring = False
+        self.nvifs = 1                             # active vifs (affects the RX filter)
+        self.conf_is_ht = False                    # mac80211 HT conf (affects the RX filter)
+        self.rxfilter_flags = None                 # persisted mac80211 FIF_* flags (rx.FilterFlags)
         self.sta_id1_defaults = R.AR_STA_ID1_DEFAULTS
         self.sw_mgmt_crypto_tx = True
         self.sw_mgmt_crypto_rx = True

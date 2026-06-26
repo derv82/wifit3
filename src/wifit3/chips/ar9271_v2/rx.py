@@ -66,12 +66,15 @@ def setmcastfilter(hw: AthHw, filter0: int, filter1: int) -> None:
     hw.write(R.AR_MCAST_FIL1, filter1)
 
 
-def calcrxfilter(hw: AthHw, flags: FilterFlags | None = None, nvifs: int = 1,
-                 conf_is_ht: bool = False) -> int:
+def calcrxfilter(hw: AthHw, flags: FilterFlags | None = None, nvifs: int | None = None,
+                 conf_is_ht: bool | None = None) -> int:
     """ath9k_htc_calcrxfilter [SRC] htc_drv_txrx.c:869 — base ucast/bcast/mcast plus the bits the
-    mac80211 FIF flags, monitor state and opmode select. The STATION default (no flags, one vif,
-    not monitoring) folds down to 0x207 (ucast|bcast|mcast|mybeacon)."""
-    flags = flags or FilterFlags()
+    mac80211 FIF flags, monitor state and opmode select. The flags/nvifs/ht inputs persist on the
+    hw (priv->rxfilter etc.); the STATION default (no flags, one vif, not monitoring) folds down
+    to 0x207 (ucast|bcast|mcast|mybeacon)."""
+    flags = flags if flags is not None else (hw.rxfilter_flags or FilterFlags())
+    nvifs = hw.nvifs if nvifs is None else nvifs
+    conf_is_ht = hw.conf_is_ht if conf_is_ht is None else conf_is_ht
     preserve = R.ATH9K_RX_FILTER_PHYERR | R.ATH9K_RX_FILTER_PHYRADAR
     rfilt = (getrxfilter(hw) & preserve) | R.ATH9K_RX_FILTER_UCAST \
         | R.ATH9K_RX_FILTER_BCAST | R.ATH9K_RX_FILTER_MCAST
@@ -94,11 +97,11 @@ def calcrxfilter(hw: AthHw, flags: FilterFlags | None = None, nvifs: int = 1,
     return rfilt
 
 
-def configure_filter(hw: AthHw, flags: FilterFlags, nvifs: int = 1,
-                     conf_is_ht: bool = False) -> None:
-    """ath9k_htc_configure_filter [SRC] htc_drv_main.c:1267 — recompute and install the RX
-    filter from the current mac80211 flags."""
-    setrxfilter(hw, calcrxfilter(hw, flags, nvifs, conf_is_ht))
+def configure_filter(hw: AthHw, flags: FilterFlags) -> None:
+    """ath9k_htc_configure_filter [SRC] htc_drv_main.c:1267 — persist the mac80211 flags
+    (priv->rxfilter) then recompute and install the RX filter."""
+    hw.rxfilter_flags = flags
+    setrxfilter(hw, calcrxfilter(hw))
 
 
 def opmode_init(hw: AthHw) -> None:

@@ -172,7 +172,8 @@ def _walk_init(w: Walk) -> None:
     def _configure_filter_mon(t):
         flags = rx.FilterFlags(control=True, pspoll=True, bcn_prbresp_promisc=True,
                                other_bss=True)
-        rfilt = rx.calcrxfilter(w.hw, flags)
+        w.hw.rxfilter_flags = flags                      # persist priv->rxfilter
+        rfilt = rx.calcrxfilter(w.hw)
         gpio.set_gpio(w.hw, R.ATH_LED_PIN_9271, 0)
         rx.setrxfilter(w.hw, rfilt)
     w.run(_configure_filter_mon, "configure-filter-monitor")
@@ -197,6 +198,17 @@ def _walk_init(w: Walk) -> None:
     w.run(lambda t: w.hw.getnf(w.chan), "warm-getnf")
     w.run(lambda t: w.hw.reset_begin(w.chan), "warm-reset-begin")
     _hw_reset_body(w)
+    # set_channel tail [SRC] htc_drv_main.c:262: update_txpow (no-op, limit unchanged),
+    # WMI START_RECV, host_rx_init (now monitoring -> 0xc03f), SET_MODE, ENABLE_INTR.
+    from wifit3.chips.ar9271_v2.wmi import WMI_ENABLE_INTR_CMDID
+    w.run(lambda t: w.wmi.cmd(WMI_START_RECV_CMDID, b""), "warm-start-recv")
+    w.run(lambda t: rx.host_rx_init(w.hw), "warm-host-rx-init")
+    w.run(lambda t: w.wmi.cmd(WMI_SET_MODE_CMDID, struct.pack(">H", 1)), "warm-set-mode")
+    w.run(lambda t: w.wmi.cmd(WMI_ENABLE_INTR_CMDID, b""), "warm-enable-intr")
+    # config CONF_CHANGE_POWER: power_level 20 -> txpowlimit 40 raises the limit back from 0.
+    w.run(lambda t: phy_power.update_txpow(w.hw, w.chan, 40), "config-txpow-40")
+    # mac80211 re-applies the (unchanged) monitor filter -> 0xc03f (now with PROM).
+    w.run(lambda t: rx.configure_filter(w.hw, w.hw.rxfilter_flags), "configure-filter-monitor-2")
 
 
 def run(cap: str | None = None) -> int:
@@ -337,6 +349,10 @@ def run(cap: str | None = None) -> int:
             print("  M8 OK: + the channel-change ath9k_hw_reset (warm: getnf, no RF-reset "
                   "pulse, MONITOR opmode, txpower clamped to limit 0 -> 0x0a) matched; frontier "
                   "is the post-reset set_channel tail (START_RECV / host_rx_init / SET_MODE).")
+        elif w.i == 743:
+            print("  M9 OK: + set_channel tail (START_RECV, monitor host_rx_init 0xc03f, "
+                  "SET_MODE, ENABLE_INTR), the CONF_CHANGE_POWER txpow bump (-> 0x28) and the "
+                  "re-applied filter matched; frontier is the channel-hop sweep.")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")
