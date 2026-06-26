@@ -210,6 +210,7 @@ def _gain_boundaries_pdadcs(eep: Map4k, freq: int, t_pd_overlap: int,
                 ss += 1
 
     pdgain_default = 58                     # eeprom_4k path
+    i = num_xpd_gains                       # C leaves i == numXpdGains after the for loop
     while i < R.AR5416_PD_GAINS_IN_MASK:
         boundaries[i] = pdgain_default
         i += 1
@@ -325,9 +326,12 @@ def _set_txpower(hw: AthHw, chan: Channel, cfg_ctl: int, antenna_reduction: int,
     _set_power_per_rate_table(hw, eep, chan, rates, cfg_ctl, antenna_reduction, power_limit)
     _set_power_cal_table(hw, eep, chan)
 
+    hw.max_power_level = 0                             # reg->max_power_level
     for i in range(Ar5416RateSize):
         if rates[i] > R.MAX_RATE_POWER:
             rates[i] = R.MAX_RATE_POWER
+        if rates[i] > hw.max_power_level:
+            hw.max_power_level = rates[i]
     for i in range(Ar5416RateSize):
         rates[i] -= R.AR5416_PWR_TABLE_OFFSET_DB * 2   # += 10
 
@@ -356,11 +360,21 @@ def _set_txpower(hw: AthHw, chan: Channel, cfg_ctl: int, antenna_reduction: int,
 
 
 def apply_txpower(hw: AthHw, chan: Channel) -> None:
-    """ath9k_hw_apply_txpower [SRC] hw.c:2944 (test=false). On the first (pre-regd) reset
-    ctl = NO_CTL, antenna gain comes from the modal header, and the power limit is the
-    channel default (20 dBm -> 40 half-dB) clamped to MAX_COMBINED_POWER."""
+    """ath9k_hw_apply_txpower [SRC] hw.c:2944 (test=false). The per-rate target powers are
+    clamped to the current regulatory state: chan_pwr = min(channel->max_power*2,
+    MAX_COMBINED_POWER), new_pwr = min(chan_pwr, reg->power_limit). On the cold reset that state
+    is the stack default (max_power 20, power_limit MAX_COMBINED_POWER -> new_pwr 40); after the
+    first update_txpow(0) it drops to 0 (every rate -> 0x0a)."""
     eep = Map4k(hw.eeprom)
-    ctl = NO_CTL
-    chan_pwr = min(_DEFAULT_CHAN_MAX_POWER * 2, _MAX_COMBINED_POWER)
-    new_pwr = min(chan_pwr, _MAX_COMBINED_POWER)
-    _set_txpower(hw, chan, ctl, eep.antennaGainCh0, new_pwr)
+    chan_pwr = min(hw.chan_max_power * 2, _MAX_COMBINED_POWER)
+    new_pwr = min(chan_pwr, hw.reg_power_limit)
+    _set_txpower(hw, chan, NO_CTL, eep.antennaGainCh0, new_pwr)
+
+
+def update_txpow(hw: AthHw, chan: Channel, new_txpow: int) -> None:
+    """ath9k_cmn_update_txpow -> ath9k_hw_set_txpowerlimit [SRC] common.c:74 / hw.c:2966 — set
+    reg->power_limit and re-apply. channel->max_power is only touched in test mode (test=false
+    here), so it stays the mac80211 value. The first start passes priv->txpowlimit=0 (per-rate
+    targets -> 0x0a); a later CONF_CHANGE_POWER raises it back (-> 0x28)."""
+    hw.reg_power_limit = min(new_txpow, _MAX_COMBINED_POWER)
+    apply_txpower(hw, chan)

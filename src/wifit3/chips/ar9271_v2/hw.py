@@ -38,6 +38,14 @@ class AthHw:
         self.macStaId1 = 0
         self.saveLedState = 0
         self.tsf = 0
+        self.tsf2_enabled = False                 # set only when a tsf2 gen-timer is allocated
+        self.gpio_mask = 0                         # no GPIO override on the STA bring-up path
+        self.htc_reset_init = True                 # AR9271 RF-reset pulse fires once [SRC] hw.c:1923
+        self.curchan = None                        # set after the first reset (gates getnf)
+        # TX-power regulatory state (ath_regulatory + ieee80211_channel):
+        self.chan_max_power = 20                    # channel->max_power [SRC] common-init.c:26
+        self.reg_power_limit = 254                  # reg->power_limit = MAX_COMBINED_POWER
+        self.max_power_level = 0                    # reg->max_power_level (set by apply_txpower)
         # MAC/operating-mode state (ath_common) — htc cold-start defaults:
         self.macaddr = bytearray(6)               # latched from eeprom at init
         self.bssidmask = bytearray(b"\xff" * 6)   # listen to all (set_bssid_mask default)
@@ -45,6 +53,9 @@ class AthHw:
         self.curaid = 0
         self.opmode = R.IFTYPE_STATION             # ath9k_htc default interface type
         self.is_monitoring = False
+        self.nvifs = 1                             # active vifs (affects the RX filter)
+        self.conf_is_ht = False                    # mac80211 HT conf (affects the RX filter)
+        self.rxfilter_flags = None                 # persisted mac80211 FIF_* flags (rx.FilterFlags)
         self.sta_id1_defaults = R.AR_STA_ID1_DEFAULTS
         self.sw_mgmt_crypto_tx = True
         self.sw_mgmt_crypto_rx = True
@@ -296,16 +307,33 @@ class AthHw:
         self.tsf = self.gettsf64()
         self.saveLedState = self.read(R.AR_CFG_LED) & R.AR_CFG_LED_SAVE_MASK
         self.mark_phy_inactive()
-        # AR9271 + htc_reset_init: pulse the radio RF reset before the chip reset [SRC] hw.c:1924.
-        self.write(R.AR9271_RESET_POWER_DOWN_CONTROL, R.AR9271_RADIO_RF_RST)
+        # AR9271 + htc_reset_init: pulse the radio RF reset around the chip reset, but only on
+        # the first (cold) reset; the channel-change resets skip it [SRC] hw.c:1923-1943.
+        first = self.is_9271() and self.htc_reset_init
+        if first:
+            self.write(R.AR9271_RESET_POWER_DOWN_CONTROL, R.AR9271_RADIO_RF_RST)
         self.chip_reset(chan)
-        # ... and gate the MAC clock after [SRC] hw.c:1937.
-        self.write(R.AR9271_RESET_POWER_DOWN_CONTROL, R.AR9271_GATE_MAC_CTL)
+        if first:
+            self.htc_reset_init = False
+            self.write(R.AR9271_RESET_POWER_DOWN_CONTROL, R.AR9271_GATE_MAC_CTL)
         # Restore TSF (low word value-excepted) [SRC] hw.c:1946-1947.
         self.settsf64(self.tsf)
         # Disable JTAG so GPIO 0-3 are usable [SRC] hw.c:1949-1950.
         if self.is_9280_20_or_later():
             self.rmw(R.AR_GPIO_INPUT_EN_VAL, R.AR_GPIO_JTAG_DISABLE, 0)
+
+    def getnf(self, chan) -> bool:
+        """ath9k_hw_getnf [SRC] calib.c:397 — at the top of a channel-change reset, peek the AGC
+        noise-floor status. If the measurement is still pending (AR_PHY_AGC_CONTROL_NF set) it
+        returns early after the single read; once it completes, ar9002_hw_do_getnf reads the
+        per-chain MINCCA power (one chain / 20 MHz on the 9271) and the history update is pure
+        computation (no further wire ops)."""
+        if self.read(R.AR_PHY_AGC_CONTROL) & R.AR_PHY_AGC_CONTROL_NF:
+            return False                          # NF did not complete in the cal window
+        self.read(R.AR_PHY_CCA)                    # nfarray[0] = MS(.., AR9280_PHY_MINCCA_PWR)
+        self.read(R.AR_PHY_EXT_CCA)                # nfarray[3] only on HT40 (not here)
+        # rxchainmask == 1 -> BIT(1) clear -> the CH1 reads are skipped.
+        return True
 
     def _setbssidmask(self) -> None:
         """ath_hw_setbssidmask [SRC] ath/hw.c — program the MAC into STA_ID0/1 (preserving the
@@ -462,6 +490,38 @@ class AthHw:
         if self.tx_intr_mitigation:                              # off on the 9271
             pass
         self.rmw_buffer_flush()
+
+    def reset_tail(self) -> None:
+        """ath9k_hw_reset close-out after init_cal [SRC] hw.c:2038-2066: restore_chainmask
+        (an ar9003-only private op, absent on ar9002), write the saved LED state OR'd with the
+        32 kHz sleep clock, arm the TSF2 gen-timer (disabled here), set the AR9271 USB
+        descriptor byte-swap (init_desc), then apply any GPIO override (none on this path)."""
+        self.enable_write_buffer()
+        # restore_chainmask: ar9002 has no restore_chainmask private op -> nothing buffered.
+        self.write(R.AR_CFG_LED, self.saveLedState | R.AR_CFG_SCLK_32KHZ)
+        self.write_flush()
+
+        self.gen_timer_start_tsf2()
+        self.init_desc()
+        self.apply_gpio_override()
+
+    def gen_timer_start_tsf2(self) -> None:
+        """ath9k_hw_gen_timer_start_tsf2 [SRC] hw.c:3104 — a no-op until a tsf2 gen-timer is
+        allocated (not on the cold bring-up path)."""
+        if self.tsf2_enabled:                     # untested — no tsf2 timer here
+            self.rmw(R.AR_DIRECT_CONNECT, R.AR_DC_AP_STA_EN, 0)
+            self.rmw(R.AR_RESET_TSF, R.AR_RESET_TSF2_ONCE, 0)
+
+    def init_desc(self) -> None:
+        """ath9k_hw_init_desc [SRC] hw.c:1749 — USB descriptor byte-swap. The AR9271 target
+        wants SWRB|SWTB."""
+        self.write(R.AR_CFG, R.AR_CFG_SWRB | R.AR_CFG_SWTB)
+
+    def apply_gpio_override(self) -> None:
+        """ath9k_hw_apply_gpio_override [SRC] hw.c:1613 — drive any overridden GPIOs. gpio_mask
+        is 0 on the STA bring-up path, so no wire ops are issued."""
+        if self.gpio_mask:                        # untested — GPIO override not ported
+            raise NotImplementedError("ar9271_v2: GPIO override not ported")
 
     def init_mfp(self) -> None:
         """ath9k_hw_init_mfp [SRC] hw.c — CCMP management-frame protection. On 9280_20+ mask
