@@ -115,6 +115,90 @@ def _hw_reset_body(w: Walk) -> None:
     w.run(lambda t: w.hw.reset_tail(), "reset-tail")
 
 
+def _peek_wmi(w: Walk):
+    """Decode the op at the cursor enough to route the scan-dwell loop: returns
+    (command_id, first-register, first-set-bits). register/set-bits are filled for REG_READ
+    (0x14) and REG_RMW (0x20)."""
+    import struct as _s
+    op = w.peek()
+    if not op or op.get("ep") != 0x04:
+        return None, None, None
+    b = bytes(op.get("data") or b"")
+    if len(b) < 12:
+        return None, None, None
+    cmd = _s.unpack_from(">H", b, 8)[0]
+    reg = set_bits = None
+    if cmd == 0x14 and len(b) >= 16:
+        reg = _s.unpack_from(">I", b, 12)[0]
+    elif cmd == 0x20 and len(b) >= 20:
+        reg, set_bits = _s.unpack_from(">II", b, 12)
+    return cmd, reg, set_bits
+
+
+def _hop_is_full_reset(w: Walk) -> bool:
+    """Look past the stop sequence + getnf of the upcoming hop: a full ath9k_hw_reset reads
+    AR_DEF_ANTENNA (reset_begin), while a fast channel change reads AR_CFG first (do_fastcc's
+    check_alive). Whichever appears first within the window decides the path."""
+    import struct as _s
+    for j in range(w.i, min(w.i + 20, len(w.ops))):
+        op = w.ops[j]
+        b = bytes(op.get("data") or b"")
+        if op.get("ep") != 0x04 or len(b) < 16 or _s.unpack_from(">H", b, 8)[0] != 0x14:
+            continue
+        reg = _s.unpack_from(">I", b, 12)[0]
+        if reg == R.AR_DEF_ANTENNA:
+            return True
+        if reg == R.AR_CFG:
+            return False
+    return False
+
+
+def _next_synth_channel(w: Walk):
+    """Peek ahead to the next AR_PHY_SYNTH_CONTROL (0x9874) write and decode the channel it
+    tunes — the mac80211 scan order is the capture's input, so we read the requested frequency
+    off the wire and let the port reproduce the per-channel registers."""
+    import struct as _s
+    from wifit3.chips.ar9271_v2 import chan as chanmod
+    for j in range(w.i, len(w.ops)):
+        op = w.ops[j]
+        data = op.get("data")
+        if not data or op.get("ep") != 0x04:
+            continue
+        b = bytes(data)
+        if len(b) < 12 or _s.unpack_from(">H", b, 8)[0] != 0x15:
+            continue
+        payload = b[12:]
+        for k in range(0, len(payload) - 4, 8):
+            reg, val = _s.unpack_from(">II", payload, k)
+            if reg == 0x9874:
+                freq = round((val & 0x00FFFFFF) * 15 / 0x10000)
+                ch = (freq - 2407) // 5 if freq != 2484 else 14
+                return chanmod.Channel(channel=ch, center_freq=freq)
+    return None
+
+
+def _channel_change(w: Walk) -> None:
+    """One ath9k_htc_set_channel hop [SRC] htc_drv_main.c:225: stop the target, ath9k_hw_reset
+    to the requested channel, then restart RX. The reset reads (AR_Q_TXE/AR_CR) drive the
+    warm-vs-cold decision off the replay, so the same code covers both."""
+    import struct
+    from wifit3.chips.ar9271_v2 import rx
+    from wifit3.chips.ar9271_v2.wmi import (
+        WMI_DISABLE_INTR_CMDID, WMI_DRAIN_TXQ_ALL_CMDID, WMI_ENABLE_INTR_CMDID,
+        WMI_SET_MODE_CMDID, WMI_START_RECV_CMDID, WMI_STOP_RECV_CMDID)
+    w.chan = _next_synth_channel(w)
+    w.run(lambda t: w.wmi.cmd(WMI_DISABLE_INTR_CMDID, b""), "hop-disable-intr")
+    w.run(lambda t: w.wmi.cmd(WMI_DRAIN_TXQ_ALL_CMDID, b""), "hop-drain-txq-all")
+    w.run(lambda t: w.wmi.cmd(WMI_STOP_RECV_CMDID, b""), "hop-stop-recv")
+    w.run(lambda t: w.hw.getnf(w.chan), "hop-getnf")
+    w.run(lambda t: w.hw.reset_begin(w.chan), "hop-reset-begin")
+    _hw_reset_body(w)
+    w.run(lambda t: w.wmi.cmd(WMI_START_RECV_CMDID, b""), "hop-start-recv")
+    w.run(lambda t: rx.host_rx_init(w.hw), "hop-host-rx-init")
+    w.run(lambda t: w.wmi.cmd(WMI_SET_MODE_CMDID, struct.pack(">H", 1)), "hop-set-mode")
+    w.run(lambda t: w.wmi.cmd(WMI_ENABLE_INTR_CMDID, b""), "hop-enable-intr")
+
+
 def _walk_init(w: Walk) -> None:
     """Cold bring-up, one cursor, no re-anchoring. WIRE ORDER (ath9k_htc):
     firmware download -> [M2 frontier: HTC/WMI handshake + ath9k_hw init].
@@ -209,6 +293,21 @@ def _walk_init(w: Walk) -> None:
     w.run(lambda t: phy_power.update_txpow(w.hw, w.chan, 40), "config-txpow-40")
     # mac80211 re-applies the (unchanged) monitor filter -> 0xc03f (now with PROM).
     w.run(lambda t: rx.configure_filter(w.hw, w.hw.rxfilter_flags), "configure-filter-monitor-2")
+    # Channel-hop sweep: each ath9k_htc_set_channel re-tunes via a full ath9k_hw_reset; some
+    # hops are bracketed by sw-scan configure_filter calls. Drive both off the wire.
+    while True:
+        cmd, reg, set_bits = _peek_wmi(w)
+        if cmd == 0x04:                                 # WMI_DISABLE_INTR -> a channel hop
+            if not _hop_is_full_reset(w):
+                break                                   # fast channel change — not ported yet
+            _channel_change(w)
+        elif cmd == 0x14 and reg == R.AR_RX_FILTER:     # a configure_filter (getrxfilter first)
+            w.run(lambda t: rx.configure_filter(w.hw, w.hw.rxfilter_flags), "hop-configure-filter")
+        elif cmd == 0x20 and reg == R.AR_GPIO_IN_OUT:   # LED blink (set_gpio on pin 15)
+            val = 1 if set_bits == 0 else 0
+            w.run(lambda t: gpio.set_gpio(w.hw, R.ATH_LED_PIN_9271, val), "hop-led")
+        else:
+            break
 
 
 def run(cap: str | None = None) -> int:
@@ -353,6 +452,11 @@ def run(cap: str | None = None) -> int:
             print("  M9 OK: + set_channel tail (START_RECV, monitor host_rx_init 0xc03f, "
                   "SET_MODE, ENABLE_INTR), the CONF_CHANGE_POWER txpow bump (-> 0x28) and the "
                   "re-applied filter matched; frontier is the channel-hop sweep.")
+        elif w.i == 1131:
+            print("  M10 OK: + the full-reset channel-hop sweep (per-channel synth/txpower/"
+                  "delta-slope, NF read-back, LED-blink + configure_filter dwell housekeeping) "
+                  "matched; fixed the gain-boundary off-by-one that broke every non-pier "
+                  "channel. Frontier is the first fast channel change (do_fastcc).")
         return 1
 
     print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")

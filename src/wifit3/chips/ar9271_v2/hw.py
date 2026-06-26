@@ -324,11 +324,16 @@ class AthHw:
 
     def getnf(self, chan) -> bool:
         """ath9k_hw_getnf [SRC] calib.c:397 — at the top of a channel-change reset, peek the AGC
-        noise-floor status. If the NF measurement is still pending (AR_PHY_AGC_CONTROL_NF set,
-        as on the cold→warm boundary) it returns early after the single read."""
+        noise-floor status. If the measurement is still pending (AR_PHY_AGC_CONTROL_NF set) it
+        returns early after the single read; once it completes, ar9002_hw_do_getnf reads the
+        per-chain MINCCA power (one chain / 20 MHz on the 9271) and the history update is pure
+        computation (no further wire ops)."""
         if self.read(R.AR_PHY_AGC_CONTROL) & R.AR_PHY_AGC_CONTROL_NF:
             return False                          # NF did not complete in the cal window
-        raise NotImplementedError("ar9271_v2: NF history update not ported (unseen on this wire)")
+        self.read(R.AR_PHY_CCA)                    # nfarray[0] = MS(.., AR9280_PHY_MINCCA_PWR)
+        self.read(R.AR_PHY_EXT_CCA)                # nfarray[3] only on HT40 (not here)
+        # rxchainmask == 1 -> BIT(1) clear -> the CH1 reads are skipped.
+        return True
 
     def _setbssidmask(self) -> None:
         """ath_hw_setbssidmask [SRC] ath/hw.c — program the MAC into STA_ID0/1 (preserving the

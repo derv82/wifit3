@@ -58,12 +58,19 @@ def _rmws(dev):
     return out
 
 
-def _run():
+def _run(ch=1):
     dev = FakeDev()
     h = hw.AthHw(WMI(AR9271Transport(dev), ctrl_epid=1))
     h.eeprom = bytearray(EEPROM)
-    phy_power.apply_txpower(h, chanmod.channel_2ghz(1))
+    phy_power.apply_txpower(h, chanmod.channel_2ghz(ch))
     return dev
+
+
+def test_gain_boundaries_interpolated_channel():
+    # Channel 10 (2457 MHz) falls between piers -> the interpolated PDADC path. The gain-boundary
+    # default fill must not clobber boundary[numXpdGains-1] (the C-loop-index off-by-one).
+    w = _writes(_run(ch=10))
+    assert w[R.AR_PHY_TPCRG5] == 0x0EBAE676      # gainBoundaries[1] = 57, not 58
 
 
 def test_tpcrg1_gain_config():

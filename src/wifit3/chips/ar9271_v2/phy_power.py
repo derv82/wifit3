@@ -210,6 +210,7 @@ def _gain_boundaries_pdadcs(eep: Map4k, freq: int, t_pd_overlap: int,
                 ss += 1
 
     pdgain_default = 58                     # eeprom_4k path
+    i = num_xpd_gains                       # C leaves i == numXpdGains after the for loop
     while i < R.AR5416_PD_GAINS_IN_MASK:
         boundaries[i] = pdgain_default
         i += 1
