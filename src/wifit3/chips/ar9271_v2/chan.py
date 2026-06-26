@@ -41,6 +41,7 @@ class Channel:
 
 
 def channel_2ghz(ch: int) -> Channel:
-    """A 2.4 GHz channel by number. ch1=2412 MHz, +5 MHz/channel (ch14=2484 is special but
-    unused here)."""
-    return Channel(channel=ch, center_freq=2407 + ch * 5, channelFlags=0)
+    """A 2.4 GHz channel by number. ch1=2412 MHz, +5 MHz/channel; ch14 is the special 2484 MHz
+    (not 2477) [SRC] common-init.c ath9k_2ghz_channels[]."""
+    freq = 2484 if ch == 14 else 2407 + ch * 5
+    return Channel(channel=ch, center_freq=freq, channelFlags=0)

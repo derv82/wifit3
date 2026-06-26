@@ -1,34 +1,37 @@
 """Acceptance gate: replay-diff the clean-room ar9271_v2 port against its cold-boot capture.
 
-ONE monotonic walk, ONE cursor, fail-closed — the model from ``scripts/rt5370/verify_pcap.py``
-and ``scripts/rtl8821cu_dkms/verify_pcap.py`` (async producers dispatched to real handlers at
-the cursor). The replay is at the USB layer (``ar9271_pcap_replay.ReplayDevice``) and the REAL
-``chips/ar9271_v2`` transport drives it, so each milestone's handler replays with zero
-reimplementation.
+ONE monotonic walk, ONE cursor, fail-closed — modelled on ``scripts/rtl8821cu_dkms/verify_pcap.py``
+(async producers dispatched to real handlers at the cursor). The replay is at the USB layer
+(``ar9271_pcap_replay.ReplayDevice``) and the REAL ``chips/ar9271_v2`` driver drives it: the gate
+builds ``AR9271V2Driver`` over the ReplayDevice transport and calls its PUBLIC interface —
+``connect`` (firmware + cold bring-up + monitor entry), ``set_channel`` (the channel-hop sweep) and
+``inject_frame`` (the aireplay-ng TX) — so the bytes verified are exactly the product's, with zero
+reimplementation in the gate.
 
-  * **matched**     — the port's real handler reproduces the op byte-for-byte at the cursor.
-  * **waived**      — an explicit, *named*, *counted* boundary for a producer that is NOT the
-                      ath9k_htc kernel driver (e.g. aireplay-ng's TX from the human-fired
-                      injection at the capture tail).
-  * **unaccounted** — anything else STOPS the walk and names the op. That op IS the porting
-                      frontier: the next op to reproduce.
+  * **matched**       — the driver's real method reproduces the op byte-for-byte at the cursor.
+  * **value-excepted**— a write whose register + headers match but whose VALUE is host/hardware
+                        state with no wire/eeprom signature (TSF restore; the ch14 regulatory
+                        per-rate power). Named, counted, never silently waived.
+  * **cookie-excepted**— a TX frame matching the wire except its single TX-slot cookie byte (the
+                        host-scheduling allocation race). Named, counted.
+  * **unaccounted**   — anything else STOPS the walk and names the op: a real divergence to fix.
 
-This port is built in milestones; until the last lands, a clean run ends at the FRONTIER (the
-first not-yet-ported op), not PASS. That is the expected, honest state mid-port — the frontier
-op names exactly where the next milestone begins.
+The cold init + hop sequencing now lives in the driver (``bringup.py`` / ``driver.set_channel``);
+this gate only drives the public methods and reproduces the driver-autonomous async producers
+interleaved into the stream (the LED-blink timer's GPIO writes, the sw-scan configure_filter).
 
 RULES (do not violate — this is the whole point of the gate):
   * NEVER edit this file to make it print PASS.
   * NEVER read chips/ar9271/ (the v1 port) — v2 is a blind re-port from the kernel C in
     data_dumps/ath9k-source-v6.18.12/. Let THIS wire confirm it.
-  * The cursor only advances by reproducing the wire or by an explicit named waiver.
+  * The cursor only advances by reproducing the wire or by an explicit named exception.
 
     uv run python scripts/verify_pcap.py ar9271_v2 [capture-1|capture-2|capture-3]
 """
 from __future__ import annotations
 
+import struct
 import sys
-from collections import Counter
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -42,409 +45,193 @@ CAP_DIR = REPO / "usb_dumps_new2" / "captures_ath9k_htc_newddevice"
 
 _IMPORT_ERR = None
 try:
-    from wifit3.chips.ar9271_v2 import ani, chan as chanmod, constants as C, eeprom, firmware, gpio, htc, hw, key, phy, reg as R  # noqa: E402
-    from wifit3.chips.ar9271_v2.wmi import WMI               # noqa: E402
-    from wifit3.chips.ar9271_v2.transport import AR9271Transport  # noqa: E402
+    from wifit3.chips.ar9271_v2 import constants as C, gpio, reg as R, rx, tx  # noqa: E402
+    from wifit3.chips.ar9271_v2.driver import AR9271V2Driver  # noqa: E402
 except ImportError as e:                                  # driver not scaffolded yet
     _IMPORT_ERR = e
 
+# ch14 (2484) reduces the OFDM/HT per-rate power 1 dB vs every other 2.4 GHz channel — a cfg80211
+# NO_OFDM regulatory rule for ch14, host state with no USB-wire or eeprom signature (the kernel's
+# set_4k_txpower gives ch1 and ch14 identical output; see AR9271_V2.md). The per-rate registers
+# are value-excepted for the ch14 hop ONLY; every other channel must match exactly.
+_CH14_REGS = {R.AR_PHY_POWER_TX_RATE1, R.AR_PHY_POWER_TX_RATE2, R.AR_PHY_POWER_TX_RATE3,
+              R.AR_PHY_POWER_TX_RATE4, R.AR_PHY_POWER_TX_RATE5, R.AR_PHY_POWER_TX_RATE6}
+
+
+def _run_coro(coro):
+    """Drive a driver coroutine to completion. Replay transport I/O is synchronous (no running
+    loop -> the driver's inline path), so one ``send`` runs it straight to its ``return``."""
+    try:
+        coro.send(None)
+    except StopIteration as e:
+        return e.value
+    raise RuntimeError("driver coroutine suspended on a real await; replay is synchronous")
+
 
 class Walk:
-    """One cursor over the whole capture. ``run`` drives a real port handler against the wire
-    from the cursor (a fresh ReplayDevice over the remaining ops, wrapped in the real chip
-    transport); ``waive`` consumes one op of a named non-reproduced producer. Both advance."""
+    """One ReplayDevice cursor over the whole capture, driving the real driver. The device cursor
+    advances by the ops each public-method call consumed; session state (wmi seq, hw shadows) lives
+    on the driver. The TSF restore is value-excepted from the start (the low word is always
+    wall-clock-dependent)."""
 
     def __init__(self, ops: list[dict], responses: list[dict]):
         self.ops = ops
-        self.responses = responses
-        self.i = 0
-        self.resp_pos: dict[int, int] = {}
-        self.wmi = None                     # persistent WMI channel, bound after the handshake
-        self.hw = None                      # persistent AthHw, created at chip reset
-        self.chan = None                    # the channel being brought up
-        self.driver = None                  # AR9271V2Driver, built for TX/inject once hw is up
-        self.value_except_regs: set[int] = set()   # registers whose written value is excepted
-        self.value_excepted = 0
-        self.ch14_excepted = 0                      # ch14 per-rate power (cfg80211 regulatory)
-        self.cookie_excepted = 0                    # TX frames differing only in the slot cookie
-        self.async_injected = 0                     # LED-blink ops reproduced at the cursor
-        self.tx_mgmt_epid: int | None = None        # mgmt service epid (TX cookie byte offset)
-        self.txs_events: list[tuple[int, bytes]] = []   # (frame, event_body) WMI_TXSTATUS
+        self.dev = rp.ReplayDevice(ops, responses, value_except_regs={R.AR_TSF_L32})
+        self.driver = AR9271V2Driver(self.dev)        # the driver wraps dev in AR9271Transport
+        self.chan = None                              # the channel being brought up / hopped to
+        self.async_injected = 0                       # LED-blink ops reproduced at the cursor
+        # TX-status completions (REG_IN WMI_TXSTATUS events) free the slots the injects allocate;
+        # collect them up front and replay them interleaved by frame (see drain_tx_status).
+        self.txs_events = [
+            (r["frame"], bytes(r["data"])[C.HTC_FRAME_HDR_LEN + 4:])
+            for r in responses
+            if r["ep"] == 0x83 and len(bytes(r["data"])) >= C.HTC_FRAME_HDR_LEN + 4
+            and struct.unpack_from(">H", bytes(r["data"]), C.HTC_FRAME_HDR_LEN)[0]
+            == tx.WMI_TXSTATUS_EVENTID
+        ]
         self.txs_i = 0
-        self.waived: Counter = Counter()
 
-    def run(self, fn, label: str):
-        """Drive a port handler from the cursor. Both the host-op cursor and the per-ep
-        response position persist across calls, so a multi-step WMI conversation (one seq
-        counter, one continuous REG_IN stream) replays unbroken."""
-        rd = rp.ReplayDevice(self.ops, self.responses, op_start=self.i, resp_pos=self.resp_pos,
-                             value_except_regs=self.value_except_regs, tx_mgmt_epid=self.tx_mgmt_epid)
-        t = AR9271Transport(rd)
-        if self.wmi is not None:
-            self.wmi.t = t                  # rebind the persistent WMI to this call's transport
-        result = fn(t)
-        self.i = rd.i
-        self.resp_pos = rd.resp_pos
-        self.value_excepted += rd.value_excepted
-        self.ch14_excepted += rd.multi_value_excepted
-        self.cookie_excepted += rd.cookie_excepted
-        return result
+    @property
+    def i(self) -> int:
+        return self.dev.i
 
+    def peek(self) -> dict | None:
+        return self.ops[self.dev.i] if self.dev.i < len(self.ops) else None
+
+    # ---- the walk ---------------------------------------------------------
+    def run(self) -> None:
+        """Cold bring-up through the channel-hop + inject sweep, one cursor, no re-anchoring."""
+        _run_coro(self.driver.connect())
+        # The LED-blink timer interleaves GPIO RMWs into the WMI command stream during the
+        # operational sweep; reproduce them in place via the real gpio.set_gpio so the bytes and
+        # the shared WMI seq counter stay aligned (a waiver would desync every later op).
+        self.driver.wmi.async_injector = self._drain_async
+        self.dev.tx_mgmt_epid = self.driver.mgmt_epid   # arms the TX cookie-byte exception
+        self._operational_sweep()
+
+    def _operational_sweep(self) -> None:
+        """Each ath9k_htc_set_channel re-tunes via driver.set_channel (full or fast, read off the
+        wire); some hops are bracketed by sw-scan configure_filter calls and LED blinks; the
+        aireplay-ng phases bulk-OUT TX frames the driver rebuilds via inject_frame. Drive all off
+        the wire until an op opens no handler (the frontier)."""
+        while True:
+            op = self.peek()
+            if op is not None:
+                self.drain_tx_status(op.get("frame", 0))     # free slots completed before this op
+            if op is not None and op.get("ep") == 0x01:      # bulk-OUT TX -> aireplay-ng injection
+                dot11 = tx.dot11_from_bulk(bytes(op.get("data") or b""))
+                self.driver.inject_frame(dot11)
+                continue
+            cmd, reg, set_bits = self._peek_wmi()
+            if cmd == 0x04:                                  # WMI_DISABLE_INTR -> a channel hop
+                self.chan = self._next_synth_channel()
+                fastcc = not self._hop_is_full_reset()
+                self._ch14_except(True)
+                _run_coro(self.driver.set_channel(self.chan.channel, _fastcc=fastcc))
+                self._ch14_except(False)
+            elif cmd == 0x14 and reg == R.AR_RX_FILTER:      # a configure_filter (getrxfilter first)
+                rx.configure_filter(self.driver.hw, self.driver.hw.rxfilter_flags)
+            elif cmd == 0x20 and reg == R.AR_GPIO_IN_OUT:    # LED blink (set_gpio on pin 15)
+                val = 1 if set_bits == 0 else 0
+                gpio.set_gpio(self.driver.hw, R.ATH_LED_PIN_9271, val)
+            else:
+                break
+
+    # ---- async-producer + wire-peek helpers -------------------------------
     def drain_tx_status(self, frame: int) -> None:
         """Feed the driver every WMI_TXSTATUS completion the kernel processed before ``frame`` —
-        freeing TX slots so the next inject's find_first_zero_bit cookie matches the wire. Read
-        from the raw response stream (independent of the WMI command/response cursor, which skips
-        these events) and interleaved by capture frame number."""
+        freeing TX slots so the next inject's find_first_zero_bit cookie matches the wire."""
         while self.txs_i < len(self.txs_events) and self.txs_events[self.txs_i][0] < frame:
             self.driver.tx_status_event(self.txs_events[self.txs_i][1])
             self.txs_i += 1
 
-    def peek(self) -> dict | None:
-        return self.ops[self.i] if self.i < len(self.ops) else None
-
-    def waive(self, reason: str) -> None:
-        self.waived[reason] += 1
-        self.i += 1
+    def _ch14_except(self, on: bool) -> None:
+        if self.chan is None or self.chan.channel != 14:
+            return
+        if on:
+            self.dev.value_except_regs |= _CH14_REGS
+        else:
+            self.dev.value_except_regs -= _CH14_REGS
 
     def _drain_async(self, command_id: int, payload: bytes) -> None:
-        """Reproduce async-producer ops the kernel interleaved at the cursor — the ath9k_htc
-        LED-blink timer's GPIO RMW — through their real handler (gpio.set_gpio), so both the
-        bytes and the shared WMI seq counter stay aligned. Registered as wmi.async_injector, so
-        it runs at the head of every cmd. A cmd that is *itself* a GPIO_IN_OUT RMW (a handler's
-        own set_gpio, or the one we inject here) passes through untouched — that is also what
-        makes this non-recursive; any *other* cmd with an LED op pending at the cursor means the
-        blink timer fired here, so we replay it first. Not a waiver: each op is byte-reproduced."""
-        import struct as _s
-        from wifit3.chips.ar9271_v2 import gpio
-        if (command_id == 0x20 and len(payload) >= 4               # WMI_REG_RMW to the LED pin
-                and _s.unpack_from(">I", payload, 0)[0] == R.AR_GPIO_IN_OUT):
+        """Reproduce the ath9k_htc LED-blink timer's GPIO RMW the kernel interleaved at the cursor,
+        through its real handler (gpio.set_gpio), so both the bytes and the shared WMI seq counter
+        stay aligned. Registered as wmi.async_injector, run at the head of every cmd. A cmd that is
+        itself a GPIO_IN_OUT RMW (a handler's own set_gpio, or the one injected here) passes
+        through untouched — which also makes this non-recursive."""
+        hw = self.driver.hw
+        if (command_id == 0x20 and len(payload) >= 4
+                and struct.unpack_from(">I", payload, 0)[0] == R.AR_GPIO_IN_OUT):
             return
-        while self.wmi is not None:
-            op = self.wmi.t.dev.peek()
+        while True:
+            op = self.dev.peek()
             if op is None or op.get("ep") != 0x04:
                 return
             b = bytes(op.get("data") or b"")
-            if len(b) < 24 or _s.unpack_from(">H", b, 8)[0] != 0x20:
+            if len(b) < 24 or struct.unpack_from(">H", b, 8)[0] != 0x20:
                 return
-            reg, set_bits = _s.unpack_from(">II", b, 12)
+            reg, set_bits = struct.unpack_from(">II", b, 12)
             if reg != R.AR_GPIO_IN_OUT:
                 return
             val = 1 if set_bits == 0 else 0       # set_gpio re-inverts on AR9271 [SRC] hw.c:2835
-            gpio.set_gpio(self.hw, R.ATH_LED_PIN_9271, val)
+            gpio.set_gpio(hw, R.ATH_LED_PIN_9271, val)
             self.async_injected += 1
 
-
-def _hw_reset_body(w: Walk) -> None:
-    """The body of ath9k_hw_reset shared by the cold bring-up and every channel-change reset:
-    process_ini through the calibration and the reset tail. The caller runs reset_begin first
-    (its preamble differs slightly between the cold and warm paths)."""
-    from wifit3.chips.ar9271_v2 import calib, mac_queue, phy_board
-    w.run(lambda t: phy.process_ini(w.hw, w.chan), "process-ini")
-    w.run(lambda t: phy.set_rfmode(w.hw, w.chan), "set-rfmode")
-    w.run(lambda t: w.hw.init_mfp(), "init-mfp")
-    w.run(lambda t: phy.set_delta_slope(w.hw, w.chan), "set-delta-slope")
-    w.run(lambda t: phy.spur_mitigate(w.hw, w.chan), "spur-mitigate")
-    w.run(lambda t: phy_board.set_board_values(w.hw, w.chan), "set-board-values")
-    w.run(lambda t: w.hw.reset_opmode(w.hw.macStaId1, w.hw.saveDefAntenna), "reset-opmode")
-    w.run(lambda t: phy.rf_set_freq(w.hw, w.chan), "rf-set-freq")
-    if not w.hw.txq:
-        mac_queue.init_tx_queues(w.hw)                   # driver-side alloc (no wire ops)
-    w.run(lambda t: mac_queue.init_queues(w.hw), "init-queues")
-    w.run(lambda t: w.hw.init_interrupt_masks(), "init-interrupt-masks")
-    w.run(lambda t: w.hw.ani_cache_ini_regs(), "ani-cache-ini-regs")
-    w.run(lambda t: w.hw.init_qos(), "init-qos")
-    w.run(lambda t: w.hw.init_global_settings(w.chan), "init-global-settings")
-    w.run(lambda t: w.hw.reset_dma_and_intr(), "set-dma-obs-rimt")
-    w.run(lambda t: phy.init_bb(w.hw, w.chan), "init-bb")
-    w.run(lambda t: calib.init_cal(w.hw, w.chan), "init-cal")
-    w.run(lambda t: w.hw.reset_tail(), "reset-tail")
-
-
-def _peek_wmi(w: Walk):
-    """Decode the op at the cursor enough to route the scan-dwell loop: returns
-    (command_id, first-register, first-set-bits). register/set-bits are filled for REG_READ
-    (0x14) and REG_RMW (0x20)."""
-    import struct as _s
-    op = w.peek()
-    if not op or op.get("ep") != 0x04:
-        return None, None, None
-    b = bytes(op.get("data") or b"")
-    if len(b) < 12:
-        return None, None, None
-    cmd = _s.unpack_from(">H", b, 8)[0]
-    reg = set_bits = None
-    if cmd == 0x14 and len(b) >= 16:
-        reg = _s.unpack_from(">I", b, 12)[0]
-    elif cmd == 0x20 and len(b) >= 20:
-        reg, set_bits = _s.unpack_from(">II", b, 12)
-    return cmd, reg, set_bits
-
-
-def _hop_is_full_reset(w: Walk) -> bool:
-    """Look past the stop sequence + getnf of the upcoming hop: a full ath9k_hw_reset reads
-    AR_DEF_ANTENNA (reset_begin), while a fast channel change reads AR_CFG first (do_fastcc's
-    check_alive). Whichever appears first within the window decides the path."""
-    import struct as _s
-    for j in range(w.i, min(w.i + 20, len(w.ops))):
-        op = w.ops[j]
+    def _peek_wmi(self):
+        """Decode the op at the cursor enough to route the sweep: returns (command_id, first
+        register, first set-bits). register/set-bits are filled for REG_READ (0x14) / REG_RMW
+        (0x20)."""
+        op = self.peek()
+        if not op or op.get("ep") != 0x04:
+            return None, None, None
         b = bytes(op.get("data") or b"")
-        if op.get("ep") != 0x04 or len(b) < 16 or _s.unpack_from(">H", b, 8)[0] != 0x14:
-            continue
-        reg = _s.unpack_from(">I", b, 12)[0]
-        if reg == R.AR_DEF_ANTENNA:
-            return True
-        if reg == R.AR_CFG:
-            return False
-    return False
+        if len(b) < 12:
+            return None, None, None
+        cmd = struct.unpack_from(">H", b, 8)[0]
+        reg = set_bits = None
+        if cmd == 0x14 and len(b) >= 16:
+            reg = struct.unpack_from(">I", b, 12)[0]
+        elif cmd == 0x20 and len(b) >= 20:
+            reg, set_bits = struct.unpack_from(">II", b, 12)
+        return cmd, reg, set_bits
 
+    def _hop_is_full_reset(self) -> bool:
+        """Look past the stop sequence + getnf of the upcoming hop: a full ath9k_hw_reset reads
+        AR_DEF_ANTENNA (reset_begin), a fast channel change reads AR_CFG first (do_fastcc's
+        check_alive). Whichever appears first within the window decides the path."""
+        for j in range(self.i, min(self.i + 20, len(self.ops))):
+            op = self.ops[j]
+            b = bytes(op.get("data") or b"")
+            if op.get("ep") != 0x04 or len(b) < 16 or struct.unpack_from(">H", b, 8)[0] != 0x14:
+                continue
+            reg = struct.unpack_from(">I", b, 12)[0]
+            if reg == R.AR_DEF_ANTENNA:
+                return True
+            if reg == R.AR_CFG:
+                return False
+        return False
 
-def _next_synth_channel(w: Walk):
-    """Peek ahead to the next AR_PHY_SYNTH_CONTROL (0x9874) write and decode the channel it
-    tunes — the mac80211 scan order is the capture's input, so we read the requested frequency
-    off the wire and let the port reproduce the per-channel registers."""
-    import struct as _s
-    from wifit3.chips.ar9271_v2 import chan as chanmod
-    for j in range(w.i, len(w.ops)):
-        op = w.ops[j]
-        data = op.get("data")
-        if not data or op.get("ep") != 0x04:
-            continue
-        b = bytes(data)
-        if len(b) < 12 or _s.unpack_from(">H", b, 8)[0] != 0x15:
-            continue
-        payload = b[12:]
-        for k in range(0, len(payload) - 4, 8):
-            reg, val = _s.unpack_from(">II", payload, k)
-            if reg == 0x9874:
-                freq = round((val & 0x00FFFFFF) * 15 / 0x10000)
-                ch = (freq - 2407) // 5 if freq != 2484 else 14
-                return chanmod.Channel(channel=ch, center_freq=freq)
-    return None
-
-
-def _ch14_except(w: Walk, on: bool) -> None:
-    """ch14 (2484) reduces the OFDM/HT per-rate power 1 dB vs every other 2.4 GHz channel — a
-    cfg80211 NO_OFDM regulatory rule for ch14, host state with no USB-wire or eeprom signature
-    (the kernel's set_4k_txpower gives ch1 and ch14 identical output; see AR9271_V2.md). Except
-    the per-rate power registers for the ch14 hop ONLY; every other channel must match exactly."""
-    if w.chan is None or w.chan.channel != 14:
-        return
-    regs = {R.AR_PHY_POWER_TX_RATE1, R.AR_PHY_POWER_TX_RATE2, R.AR_PHY_POWER_TX_RATE3,
-            R.AR_PHY_POWER_TX_RATE4, R.AR_PHY_POWER_TX_RATE5, R.AR_PHY_POWER_TX_RATE6}
-    if on:
-        w.value_except_regs |= regs
-    else:
-        w.value_except_regs -= regs
-
-
-def _channel_change(w: Walk) -> None:
-    """One ath9k_htc_set_channel hop [SRC] htc_drv_main.c:225: stop the target, ath9k_hw_reset
-    to the requested channel, then restart RX. The reset reads (AR_Q_TXE/AR_CR) drive the
-    warm-vs-cold decision off the replay, so the same code covers both."""
-    import struct
-    from wifit3.chips.ar9271_v2 import rx
-    from wifit3.chips.ar9271_v2.wmi import (
-        WMI_DISABLE_INTR_CMDID, WMI_DRAIN_TXQ_ALL_CMDID, WMI_ENABLE_INTR_CMDID,
-        WMI_SET_MODE_CMDID, WMI_START_RECV_CMDID, WMI_STOP_RECV_CMDID)
-    w.chan = _next_synth_channel(w)
-    w.run(lambda t: w.wmi.cmd(WMI_DISABLE_INTR_CMDID, b""), "hop-disable-intr")
-    w.run(lambda t: w.wmi.cmd(WMI_DRAIN_TXQ_ALL_CMDID, b""), "hop-drain-txq-all")
-    w.run(lambda t: w.wmi.cmd(WMI_STOP_RECV_CMDID, b""), "hop-stop-recv")
-    w.run(lambda t: w.hw.getnf(w.chan), "hop-getnf")
-    w.run(lambda t: w.hw.reset_begin(w.chan), "hop-reset-begin")
-    _ch14_except(w, True)
-    _hw_reset_body(w)
-    _ch14_except(w, False)
-    w.run(lambda t: w.wmi.cmd(WMI_START_RECV_CMDID, b""), "hop-start-recv")
-    w.run(lambda t: rx.host_rx_init(w.hw), "hop-host-rx-init")
-    w.run(lambda t: w.wmi.cmd(WMI_SET_MODE_CMDID, struct.pack(">H", 1)), "hop-set-mode")
-    w.run(lambda t: w.wmi.cmd(WMI_ENABLE_INTR_CMDID, b""), "hop-enable-intr")
-
-
-def _channel_change_body(w: Walk) -> None:
-    """ath9k_hw_channel_change [SRC] hw.c:1543 — the fast retune the AR9271 runs without a full
-    reset: confirm the QCUs are idle, pause the baseband (rfbus), reprogram the per-channel PHY +
-    synth + TX power, then release. The FCC_BAND_SWITCH block (mark_phy_inactive / init_pll /
-    fast_chan_change) and the band_switch/ini_reloaded set_board_values + init_cal reloads are
-    guarded by caps/flags the 9271 never sets on a within-band hop, so they are skipped."""
-    from wifit3.chips.ar9271_v2 import phy, phy_power
-    w.run(lambda t: [w.hw.numtxpending(q) for q in range(R.AR_NUM_QCU)], "fcc-numtxpending")
-    w.run(lambda t: phy.rfbus_req(w.hw), "fcc-rfbus-req")
-    w.run(lambda t: phy.set_channel_regs(w.hw, w.chan), "fcc-set-channel-regs")
-    w.run(lambda t: phy.rf_set_freq(w.hw, w.chan), "fcc-rf-set-freq")
-    w.hw.set_clockrate()                                  # no wire ops
-    w.run(lambda t: phy_power.apply_txpower(w.hw, w.chan), "fcc-apply-txpower")
-    w.run(lambda t: phy.set_delta_slope(w.hw, w.chan), "fcc-set-delta-slope")
-    w.run(lambda t: phy.spur_mitigate(w.hw, w.chan), "fcc-spur-mitigate")
-    w.run(lambda t: phy.init_bb(w.hw, w.chan), "fcc-init-bb")
-    w.run(lambda t: phy.rfbus_done(w.hw), "fcc-rfbus-done")
-
-
-def _fast_channel_change(w: Walk) -> None:
-    """One ath9k_htc_set_channel hop on the fast path [SRC] htc_drv_main.c:240 (fastcc, caldata
-    NULL): stop the target, then ath9k_hw_reset's fastcc branch [SRC] hw.c:1896 ->
-    ath9k_hw_do_fastcc [SRC] hw.c:1788 (check_alive + channel_change + loadnf + start_nfcal + the
-    AR9271 ANI-reg reload), then restart RX. The fastcc-vs-full decision is read off the wire by
-    _hop_is_full_reset (the kernel's do_fastcc guards), so this just reproduces the fastcc body."""
-    import struct
-    from wifit3.chips.ar9271_v2 import calib, phy, rx
-    from wifit3.chips.ar9271_v2.wmi import (
-        WMI_DISABLE_INTR_CMDID, WMI_DRAIN_TXQ_ALL_CMDID, WMI_ENABLE_INTR_CMDID,
-        WMI_SET_MODE_CMDID, WMI_START_RECV_CMDID, WMI_STOP_RECV_CMDID)
-    w.chan = _next_synth_channel(w)
-    w.run(lambda t: w.wmi.cmd(WMI_DISABLE_INTR_CMDID, b""), "fcc-disable-intr")
-    w.run(lambda t: w.wmi.cmd(WMI_DRAIN_TXQ_ALL_CMDID, b""), "fcc-drain-txq-all")
-    w.run(lambda t: w.wmi.cmd(WMI_STOP_RECV_CMDID, b""), "fcc-stop-recv")
-    w.run(lambda t: w.hw.getnf(w.chan), "fcc-getnf")          # ath9k_hw_reset getnf(curchan)
-    w.run(lambda t: w.hw.check_alive(), "fcc-check-alive")
-    _ch14_except(w, True)
-    _channel_change_body(w)
-    _ch14_except(w, False)
-    w.run(lambda t: calib.loadnf(w.hw, w.chan), "fcc-loadnf")
-    w.run(lambda t: calib.start_nfcal(w.hw, update=True), "fcc-start-nfcal")
-    w.run(lambda t: phy.load_ani_reg(w.hw, w.chan), "fcc-load-ani-reg")   # AR9271-only
-    w.run(lambda t: w.wmi.cmd(WMI_START_RECV_CMDID, b""), "fcc-start-recv")
-    w.run(lambda t: rx.host_rx_init(w.hw), "fcc-host-rx-init")
-    w.run(lambda t: w.wmi.cmd(WMI_SET_MODE_CMDID, struct.pack(">H", 1)), "fcc-set-mode")
-    w.run(lambda t: w.wmi.cmd(WMI_ENABLE_INTR_CMDID, b""), "fcc-enable-intr")
-    w.hw.curchan = w.chan
-
-
-def _walk_init(w: Walk) -> None:
-    """Cold bring-up, one cursor, no re-anchoring. WIRE ORDER (ath9k_htc):
-    firmware download -> [M2 frontier: HTC/WMI handshake + ath9k_hw init].
-
-    Source: data_dumps/ath9k-source-v6.18.12/hif_usb.c.
-
-    firmware   13x 4096B RAM writes (bRequest 0x30) + COMP (0x31)   ath9k_hif_usb_download_fw
-    htc        READY -> 9x connect_service -> config credits ->      htc_hst.c / htc_drv_init.c
-               setup complete
-    reset      SREV read + power-on chip reset (RTC/RC block) +       hw.c __ath9k_hw_init
-               setpower(AWAKE) + AR_PHY_CHIP_ID read
-    rf_claim   AR_PHY(0) seed + radio-rev probe                       ar9002_hw.c post_init
-    eeprom     4k map fill (188 words) + magic/checksum/version       eeprom_4k.c / eeprom.c
-    --- M2b frontier: ar9002 analog/initvals tables / ani / calibration ---
-    """
-    fw = firmware.load_firmware_blob()
-    w.run(lambda t: firmware.download(t, fw), "firmware")
-    st = w.run(lambda t: htc.handshake(t), "htc-handshake")
-
-    w.htc_endpoints = st.endpoints
-    w.tx_mgmt_epid = st.endpoints[C.WMI_MGMT_SVC]   # arms the gate's TX cookie-byte exception
-    w.wmi = WMI(None, ctrl_epid=st.endpoints[C.WMI_CONTROL_SVC])
-    w.wmi.async_injector = w._drain_async       # replay the LED-blink timer's interleaved ops
-    w.hw = w.run(lambda t: hw.init_reset(w.wmi), "chip-reset")
-    w.run(lambda t: phy.rf_claim(w.hw), "rf-claim")
-    w.run(lambda t: eeprom.init(w.hw), "eeprom")
-    w.run(lambda t: ani.ani_init(w.hw), "ani-init")
-    w.run(lambda t: key.init_crypto(w.hw), "key-cache-clear")
-    w.run(lambda t: w.wmi.get_fw_version(), "get-fw-version")
-    # ath9k_htc_start's wake path: a COLD chip reset (chip was FULL_SLEEPed after probe),
-    # then init_pll for the initial channel (mac80211 default = ch1, 2412 MHz).
-    w.chan = chanmod.channel_2ghz(1)
-    w.run(lambda t: w.hw.set_reset_reg(R.ATH9K_RESET_COLD), "chip-reset-cold")
-    w.run(lambda t: w.hw.init_pll(w.chan), "init-pll")
-    w.run(lambda t: gpio.led_init(w.hw), "led-gpio")
-    from wifit3.chips.ar9271_v2.wmi import WMI_FLUSH_RECV_CMDID
-    w.run(lambda t: w.wmi.cmd(WMI_FLUSH_RECV_CMDID, b""), "flush-recv")
-    # ath9k_hw_reset opening: preamble saves + chip_reset(WARM) + init_pll + MAC-gate +
-    # TSF restore (low word value-excepted: tsf+wall-clock-offset) + JTAG disable.
-    w.value_except_regs.add(R.AR_TSF_L32)
-    w.run(lambda t: w.hw.reset_begin(w.chan), "hw-reset-begin")
-    _hw_reset_body(w)
-    # ath9k_htc_start tail [SRC] htc_drv_main.c:941: re-apply tx power (priv->txpowlimit=0 at
-    # first start), then SET_MODE(11ng) / ATH_INIT / START_RECV.
-    import struct
-    from wifit3.chips.ar9271_v2 import phy_power
-    from wifit3.chips.ar9271_v2.wmi import (
-        WMI_ATH_INIT_CMDID, WMI_SET_MODE_CMDID, WMI_START_RECV_CMDID)
-    w.run(lambda t: phy_power.update_txpow(w.hw, w.chan, 0), "update-txpow")
-    w.run(lambda t: w.wmi.cmd(WMI_SET_MODE_CMDID, struct.pack(">H", 1)), "wmi-set-mode")
-    w.run(lambda t: w.wmi.cmd(WMI_ATH_INIT_CMDID, b""), "wmi-ath-init")
-    w.run(lambda t: w.wmi.cmd(WMI_START_RECV_CMDID, b""), "wmi-start-recv")
-    from wifit3.chips.ar9271_v2 import rx
-    w.run(lambda t: rx.host_rx_init(w.hw), "host-rx-init")
-    w.run(lambda t: w.wmi.update_cap_target(w.hw.txchainmask), "update-cap-target")
-    # mac80211 promiscuous-monitor configure_filter (FIF_CONTROL|PSPOLL|BCN_PRBRESP_PROMISC|
-    # OTHER_BSS -> 0xc01f) with the LED driven on in between.
-    def _configure_filter_mon(t):
-        flags = rx.FilterFlags(control=True, pspoll=True, bcn_prbresp_promisc=True,
-                               other_bss=True)
-        w.hw.rxfilter_flags = flags                      # persist priv->rxfilter
-        rfilt = rx.calcrxfilter(w.hw)
-        gpio.set_gpio(w.hw, R.ATH_LED_PIN_9271, 0)
-        rx.setrxfilter(w.hw, rfilt)
-    w.run(_configure_filter_mon, "configure-filter-monitor")
-    # ath9k_htc_add_monitor_interface: create the monitor vif + its self-station.
-    from wifit3.chips.ar9271_v2.wmi import HTC_M_MONITOR
-
-    def _add_monitor(t):
-        w.wmi.vap_create(0, HTC_M_MONITOR, w.hw.macaddr)
-        w.wmi.node_create(w.hw.macaddr, b"\x00" * 6, 0, 0, 1, 0xFFFF)
-        w.hw.is_monitoring = True
-        w.hw.opmode = R.IFTYPE_MONITOR                  # no other vifs -> hw opmode = monitor
-    w.run(_add_monitor, "add-monitor-interface")
-    # ath9k_htc_set_channel opening [SRC] htc_drv_main.c:225: stop the target before reset.
-    from wifit3.chips.ar9271_v2.wmi import (
-        WMI_DISABLE_INTR_CMDID, WMI_DRAIN_TXQ_ALL_CMDID, WMI_STOP_RECV_CMDID)
-    w.run(lambda t: w.wmi.cmd(WMI_DISABLE_INTR_CMDID, b""), "wmi-disable-intr")
-    w.run(lambda t: w.wmi.cmd(WMI_DRAIN_TXQ_ALL_CMDID, b""), "wmi-drain-txq-all")
-    w.run(lambda t: w.wmi.cmd(WMI_STOP_RECV_CMDID, b""), "wmi-stop-recv")
-    # ath9k_hw_reset for the channel change (warm: curchan set -> getnf first, htc_reset_init
-    # already cleared -> no RF-reset pulse). Same channel, so process_ini re-runs identically.
-    w.hw.curchan = w.chan
-    w.run(lambda t: w.hw.getnf(w.chan), "warm-getnf")
-    w.run(lambda t: w.hw.reset_begin(w.chan), "warm-reset-begin")
-    _hw_reset_body(w)
-    # set_channel tail [SRC] htc_drv_main.c:262: update_txpow (no-op, limit unchanged),
-    # WMI START_RECV, host_rx_init (now monitoring -> 0xc03f), SET_MODE, ENABLE_INTR.
-    from wifit3.chips.ar9271_v2.wmi import WMI_ENABLE_INTR_CMDID
-    w.run(lambda t: w.wmi.cmd(WMI_START_RECV_CMDID, b""), "warm-start-recv")
-    w.run(lambda t: rx.host_rx_init(w.hw), "warm-host-rx-init")
-    w.run(lambda t: w.wmi.cmd(WMI_SET_MODE_CMDID, struct.pack(">H", 1)), "warm-set-mode")
-    w.run(lambda t: w.wmi.cmd(WMI_ENABLE_INTR_CMDID, b""), "warm-enable-intr")
-    # config CONF_CHANGE_POWER: power_level 20 -> txpowlimit 40 raises the limit back from 0.
-    w.run(lambda t: phy_power.update_txpow(w.hw, w.chan, 40), "config-txpow-40")
-    # mac80211 re-applies the (unchanged) monitor filter -> 0xc03f (now with PROM).
-    w.run(lambda t: rx.configure_filter(w.hw, w.hw.rxfilter_flags), "configure-filter-monitor-2")
-    # The driver, built from the brought-up (wmi, hw): the operational phase drives its public
-    # methods (TX now; set_channel/connect are the remaining convergence — see AR9271_V2.md).
-    import struct as _struct
-    from wifit3.chips.ar9271_v2.driver import AR9271V2Driver
-    from wifit3.chips.ar9271_v2 import tx
-    w.driver = AR9271V2Driver.for_replay(w.wmi, w.hw, w.htc_endpoints)
-    # TX-status completions (REG_IN WMI_TXSTATUS events) free the slots the injects allocate;
-    # collect them up front and replay them interleaved by frame (see Walk.drain_tx_status).
-    w.txs_events = [
-        (r["frame"], bytes(r["data"])[C.HTC_FRAME_HDR_LEN + 4:])
-        for r in w.responses
-        if r["ep"] == 0x83 and len(bytes(r["data"])) >= C.HTC_FRAME_HDR_LEN + 4
-        and _struct.unpack_from(">H", bytes(r["data"]), C.HTC_FRAME_HDR_LEN)[0] == tx.WMI_TXSTATUS_EVENTID
-    ]
-    # Channel-hop sweep: each ath9k_htc_set_channel re-tunes via a full ath9k_hw_reset; some
-    # hops are bracketed by sw-scan configure_filter calls; the aireplay-ng phases inject TX
-    # frames on the WLAN_TX bulk pipe. Drive all off the wire.
-    while True:
-        op = w.peek()
-        if op is not None:
-            w.drain_tx_status(op.get("frame", 0))       # free slots completed before this op
-        if op is not None and op.get("ep") == 0x01:     # bulk-OUT TX -> aireplay-ng injection
-            dot11 = tx.dot11_from_bulk(bytes(op.get("data") or b""))
-            w.run(lambda t: w.driver.inject_frame(dot11), f"inject{len(dot11)}")
-            continue
-        cmd, reg, set_bits = _peek_wmi(w)
-        if cmd == 0x04:                                 # WMI_DISABLE_INTR -> a channel hop
-            if _hop_is_full_reset(w):
-                _channel_change(w)
-            else:
-                _fast_channel_change(w)
-        elif cmd == 0x14 and reg == R.AR_RX_FILTER:     # a configure_filter (getrxfilter first)
-            w.run(lambda t: rx.configure_filter(w.hw, w.hw.rxfilter_flags), "hop-configure-filter")
-        elif cmd == 0x20 and reg == R.AR_GPIO_IN_OUT:   # LED blink (set_gpio on pin 15)
-            val = 1 if set_bits == 0 else 0
-            w.run(lambda t: gpio.set_gpio(w.hw, R.ATH_LED_PIN_9271, val), "hop-led")
-        else:
-            break
+    def _next_synth_channel(self):
+        """Peek ahead to the next AR_PHY_SYNTH_CONTROL (0x9874) write and decode the channel it
+        tunes — the mac80211 scan order is the capture's input, so we read the requested frequency
+        off the wire and let the driver reproduce the per-channel registers."""
+        from wifit3.chips.ar9271_v2 import chan as chanmod
+        for j in range(self.i, len(self.ops)):
+            op = self.ops[j]
+            data = op.get("data")
+            if not data or op.get("ep") != 0x04:
+                continue
+            b = bytes(data)
+            if len(b) < 12 or struct.unpack_from(">H", b, 8)[0] != 0x15:
+                continue
+            payload = b[12:]
+            for k in range(0, len(payload) - 4, 8):
+                reg, val = struct.unpack_from(">II", payload, k)
+                if reg == 0x9874:
+                    freq = round((val & 0x00FFFFFF) * 15 / 0x10000)
+                    ch = (freq - 2407) // 5 if freq != 2484 else 14
+                    return chanmod.Channel(channel=ch, center_freq=freq)
+        return None
 
 
 def run(cap: str | None = None) -> int:
@@ -471,24 +258,22 @@ def run(cap: str | None = None) -> int:
           f"{len(responses)} device responses")
 
     try:
-        _walk_init(w)
+        w.run()
     except rp.Divergence as d:
         print(f"\nDIVERGENCE at op #{w.i}: {d}")
         return 1
 
-    for reason, n in w.waived.most_common():
-        print(f"  waived {n:5} ops  — {reason}")
-    if w.value_excepted:
-        print(f"  value-excepted {w.value_excepted} write(s) — hardware/wall-clock value "
-              "(register + headers matched)")
+    if w.dev.value_excepted:
+        print(f"  value-excepted {w.dev.value_excepted} write(s) — TSF restore (wall-clock value; "
+              "register + headers matched)")
     if w.async_injected:
         print(f"  reproduced {w.async_injected} interleaved LED-blink op(s) via gpio.set_gpio "
               "(byte-matched, seq-aligned)")
-    if w.ch14_excepted:
-        print(f"  ch14-power-excepted {w.ch14_excepted} per-rate write(s) — cfg80211 ch14 "
-              "OFDM/HT regulatory limit (host state, not wire/eeprom-derivable)")
-    if w.cookie_excepted:
-        print(f"  cookie-excepted {w.cookie_excepted} TX frame(s) — TX-slot allocation race "
+    if w.dev.multi_value_excepted:
+        print(f"  ch14-power-excepted {w.dev.multi_value_excepted} per-rate write(s) — cfg80211 "
+              "ch14 OFDM/HT regulatory limit (host state, not wire/eeprom-derivable)")
+    if w.dev.cookie_excepted:
+        print(f"  cookie-excepted {w.dev.cookie_excepted} TX frame(s) — TX-slot allocation race "
               "(host scheduling; full HIF/htc/tx headers + 802.11 matched, only the cookie byte "
               "differs)")
 
@@ -496,117 +281,10 @@ def run(cap: str | None = None) -> int:
         front = w.peek()
         print(f"\nFRONTIER: reproduced {w.i} of {len(ops)} ops; first unaccounted op @{w.i} "
               f"= {rp.fmt_op(front)}")
-        print("  ^ the next op to reproduce (port the next milestone, or add a named waiver).")
-        # Mid-port milestone markers: each frontier op names where the next milestone begins.
-        if w.i == 14:
-            print("  M1 OK: 14 firmware-download control ops matched; frontier is the HTC "
-                  "handshake (M2a).")
-        elif w.i == 25:
-            print("  M2a OK: firmware + HTC handshake matched; frontier is the WMI register "
-                  "init (M2b).")
-        elif w.i == 42:
-            print("  M2b-1 OK: + SREV read & power-on chip reset matched; frontier is "
-                  "ath9k_hw_setpower(AWAKE).")
-        elif w.i == 47:
-            print("  M2b-2 OK: + setpower(AWAKE) & phyRev read matched; frontier is the PHY "
-                  "init writes (analog/initvals).")
-        elif w.i == 77:
-            print("  M2b-3 OK: + rf_claim & 4k EEPROM fill/validate matched; frontier is the "
-                  "ar9002 analog/initvals tables.")
-        elif w.i == 81:
-            print("  M2c-1 OK: + ANI init (PHY-error + MIB counters) matched.")
-        elif w.i == 337:
-            print("  M2c-2 OK: + key-cache clear (128 entries) matched.")
-        elif w.i == 344:
-            print("  M2c-3 OK: + WMI_GET_FW_VERSION & htc-start COLD chip reset matched; "
-                  "frontier is init_pll (channel-aware).")
-        elif w.i == 347:
-            print("  M2c-4 OK: + channel model & init_pll matched; frontier is GPIO config.")
-        elif w.i == 351:
-            print("  M2c-5 OK: + LED GPIO config & WMI_FLUSH_RECV matched; frontier is "
-                  "ath9k_hw_reset (DEF_ANTENNA read).")
-        elif w.i == 371:
-            print("  M2d-1 OK: + ath9k_hw_reset preamble & chip_reset(WARM) matched; frontier "
-                  "is the TSF restore (wall-clock-dependent value).")
-        elif w.i == 374:
-            print("  M2d-2 OK: + TSF restore (value-excepted) & JTAG disable matched; frontier "
-                  "is ath9k_hw_process_ini (the initvals tables).")
-        elif w.i == 389:
-            print("  M2d-3 OK: + process_ini initvals (iniModes + txgain + iniCommon) matched; "
-                  "frontier is override_ini / set_channel_regs.")
-        elif w.i == 394:
-            print("  M2d-4 OK: + override_ini & set_channel_regs (20 MHz) matched; frontier is "
-                  "init_chain_masks / RF banks.")
-        elif w.i == 395:
-            print("  M2d-5 OK: + init_chain_masks (1T1R) matched; frontier is the "
-                  "txpower / RF-bank writes.")
-        elif w.i == 398:
-            print("  M2d-6 OK: + apply_txpower (TPCRG1 gain cfg + 32 PDADC words + per-rate "
-                  "power) matched; frontier is set_rfmode / rf_set_freq.")
-        elif w.i == 405:
-            print("  M2e-1 OK: + set_rfmode, init_mfp, set_delta_slope, spur_mitigate matched; "
-                  "frontier is eep set_board_values (antenna/gain modal config).")
-        elif w.i == 415:
-            print("  M2e-2 OK: + eep set_board_values (switch/gain/analog-bias/settling) "
-                  "matched; frontier is reset_opmode (STA_ID1 / bssidmask / antenna).")
-        elif w.i == 419:
-            print("  M2e-3 OK: + reset_opmode (STA id/defaults, bssidmask, antenna, associd, "
-                  "STATION mode) matched; frontier is rf_set_freq (synthesizer).")
-        elif w.i == 423:
-            print("  M2e-4 OK: + rf_set_freq (2.4 GHz CHANSEL synthesizer) matched; frontier "
-                  "is init_queues (QCU/DCU setup).")
-        elif w.i == 441:
-            print("  M2e-5 OK: + init_queues (DQCUMASK + 4 data/CAB/beacon DCU config + per-"
-                  "queue IMR) matched; frontier is init_interrupt_masks.")
-        elif w.i == 450:
-            print("  M2e-6 OK: + init_interrupt_masks, ani_cache_ini_regs, init_qos matched; "
-                  "frontier is init_global_settings / PCU.")
-        elif w.i == 459:
-            print("  M2e-7 OK: + init_global_settings (SIFS/slot/ACK/CTS/EIFS/USEC timing) "
-                  "matched; frontier is STA_ID1 PRESERVE_SEQNUM / set_dma.")
-        elif w.i == 467:
-            print("  M2e-8 OK: + STA_ID1 seqnum, set_dma, AR_OBS, RX-intr-mitigation matched; "
-                  "frontier is init_bb / calibration.")
-        elif w.i == 469:
-            print("  M2e-9 OK: + init_bb (AR_PHY_ACTIVE enable) matched; frontier is "
-                  "init_cal (IQ/ADC calibration).")
-        elif w.i == 520:
-            print("  M3 OK: + init_cal (cl_cal carrier-leak, ar9271 pa_cal, loadnf, "
-                  "start_nfcal, IQ-cal setup) matched; frontier is the reset tail "
-                  "(AR_CFG_LED / restore_chainmask / gen_timer / init_desc).")
-        elif w.i == 522:
-            print("  M4 OK: + ath9k_hw_reset tail (LED+32kHz, init_desc AR9271 byte-swap; "
-                  "restore_chainmask/gen_timer/gpio-override are no-ops) matched; frontier is "
-                  "the post-reset htc-start (txpower update + WMI mode/init/start-recv).")
-        elif w.i == 528:
-            print("  M5 OK: + htc-start tail (txpowlimit=0 update clamps rates to 0x0a, then "
-                  "WMI SET_MODE(11ng)/ATH_INIT/START_RECV) matched; frontier is the RX path "
-                  "(host_rx_init / cap-target update).")
-        elif w.i == 541:
-            print("  M6 OK: + host_rx_init (rxena, STA rx/mcast filters, startpcureceive: "
-                  "mib + ani_reset + DIAG-RX clear) and WMI_TARGET_IC_UPDATE matched; frontier "
-                  "is the channel-config / tune sweep.")
-        elif w.i == 551:
-            print("  M7 OK: + monitor bring-up (configure_filter 0xc01f + LED, "
-                  "add_monitor_interface VAP/NODE_CREATE) and the set_channel stop sequence "
-                  "(DISABLE_INTR/DRAIN_TXQ_ALL/STOP_RECV) matched; frontier is the channel-"
-                  "change ath9k_hw_reset.")
-        elif w.i == 721:
-            print("  M8 OK: + the channel-change ath9k_hw_reset (warm: getnf, no RF-reset "
-                  "pulse, MONITOR opmode, txpower clamped to limit 0 -> 0x0a) matched; frontier "
-                  "is the post-reset set_channel tail (START_RECV / host_rx_init / SET_MODE).")
-        elif w.i == 743:
-            print("  M9 OK: + set_channel tail (START_RECV, monitor host_rx_init 0xc03f, "
-                  "SET_MODE, ENABLE_INTR), the CONF_CHANGE_POWER txpow bump (-> 0x28) and the "
-                  "re-applied filter matched; frontier is the channel-hop sweep.")
-        elif w.i == 1131:
-            print("  M10 OK: + the full-reset channel-hop sweep (per-channel synth/txpower/"
-                  "delta-slope, NF read-back, LED-blink + configure_filter dwell housekeeping) "
-                  "matched; fixed the gain-boundary off-by-one that broke every non-pier "
-                  "channel. Frontier is the first fast channel change (do_fastcc).")
+        print("  ^ the next op to reproduce, or a real divergence in the converged driver path.")
         return 1
 
-    print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly waived.")
+    print(f"\nPASS: reproduced {w.i} of {len(ops)} ops — every op matched or explicitly excepted.")
     return 0
 
 
