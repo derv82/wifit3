@@ -317,14 +317,36 @@ class SplashView(Screen):
                         self.app.push_screen(SetupErrorDialog(
                             "Linux device-control setup failed", result.message, result.detail))
                     return
-                # The blacklist only guarantees a cold card on the NEXT enumeration, and the card is
-                # still warm from the kernel's firmware upload — so require a physical replug rather
-                # than connecting the tainted device now.
-                self.query_one("#init-progress", ProgressBar).display = False
-                status.update(f"[bold green]✓ {desc} is now wifit3's. "
-                              f"Unplug and replug it, then press START.[/bold green]")
-                release()
-                return
+                # Auto-connect now. install_rule chgrp'd the live node, so wait for it to actually go
+                # writable (udev propagation) behind the spinner before connecting — an unready node
+                # is the EACCES that used to bounce back with a bogus message. The driver then reaches
+                # a clean cold state on its own: AR9271 self-re-enumerates on the firmware download
+                # (that re-enumeration IS the replug), and an already-warm chip reattaches. A physical
+                # replug is only the fallback if that connect fails.
+                self.app.push_screen(PropagatingDialog("Applying device access…"))
+                try:
+                    ready = await self.device_manager.linux_wait_for_access(
+                        iface, want_writable=True)
+                finally:
+                    self.app.pop_screen()
+                if not ready:
+                    release()
+                    self.app.push_screen(SetupErrorDialog(
+                        "Device access didn't take effect",
+                        f"wifit3 now controls {desc}, but it hasn't picked up access yet.",
+                        "Unplug and replug the card, then press START."))
+                    return
+                try:
+                    await _refind_and_connect("the card didn't come up after taking control")
+                except Exception as e:  # noqa: BLE001 — any connect fault → offer the replug fallback
+                    logger.info("post-take-control connect failed for %s: %s", desc, e)
+                    self.query_one("#init-progress", ProgressBar).display = False
+                    release()
+                    self.app.push_screen(SetupErrorDialog(
+                        "Couldn't bring the card up",
+                        f"wifit3 took control of {desc}, but the cold bring-up didn't complete.",
+                        "Unplug and replug the card, then press START."))
+                    return
 
             else:
                 raise bringup_err or RuntimeError("the card failed to initialize")
