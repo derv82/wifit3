@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Callable, ClassVar, List, Optional
 
 import libusb_package
@@ -23,6 +24,7 @@ import usb.util
 
 from wifit3.chips.rx_reader import RxReaderThread
 from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
 from . import bringup, chan as chanmod, constants as C, firmware, rx_decode, tx
@@ -115,8 +117,13 @@ class AR9271V2Driver:
             self._adopt(bringup.cold_bringup(self.transport))
             return True
 
+        cold_dev = self.transport.dev
         _p(0.05, "Downloading AR9271 firmware...")
         await loop.run_in_executor(None, firmware.download, self.transport, fw)
+        try:
+            usb.util.dispose_resources(cold_dev)        # release the cold handle as it reboots
+        except Exception:
+            pass
 
         _p(0.30, "Waiting for AR9271 to re-enumerate...")
         warm = await self._await_reenumeration()
@@ -124,6 +131,9 @@ class AR9271V2Driver:
             logger.error("ar9271_v2: card did not re-enumerate after firmware download")
             return False
         self.transport = AR9271Transport(warm)
+
+        _p(0.40, "Claiming USB interface...")
+        await loop.run_in_executor(None, self._open_warm, warm)
 
         _p(0.45, "Starting RX reader + HTC/WMI init...")
         self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="ar9271v2-rx")
@@ -141,6 +151,26 @@ class AR9271V2Driver:
             if dev is not None:
                 return dev
         return None
+
+    def _open_warm(self, dev: usb.core.Device) -> None:
+        """Configure + claim interface 0 on the re-enumerated (warm) device. The bulk/interrupt
+        pipes the bring-up + RX use need the interface claimed (EP0 control — the firmware download
+        — does not, which is why that succeeds first). Right after re-enumeration Windows is still
+        binding WinUSB, so the claim transiently fails with Access denied (errno 13) [SRC] the v1
+        driver's read-loop tolerated the same; retry through the settle, then the pipes are live."""
+        last: Optional[Exception] = None
+        for _ in range(40):                 # ~6 s of 0.15 s retries through the WinUSB re-bind
+            try:
+                try:
+                    dev.set_configuration()
+                except usb.core.USBError:
+                    pass                    # already configured
+                usb.util.claim_interface(dev, 0)
+                return
+            except (usb.core.USBError, NotImplementedError) as e:
+                last = e
+                time.sleep(0.15)
+        raise BringUpError(f"AR9271 interface not claimable after re-enumeration: {last}")
 
     # ---- channel ----------------------------------------------------------
     async def set_channel(self, channel: int, scan: bool = False, *, _fastcc: bool = False) -> bool:
@@ -165,11 +195,16 @@ class AR9271V2Driver:
 
     # ---- RX (live only; the pcap gate does not model device->host frames) -
     def _read_once(self) -> Optional[bytes]:
-        """Reader-thread side: one blocking bulk-IN read on WLAN_RX (None on a benign timeout)."""
+        """Reader-thread side: one blocking bulk-IN read on WLAN_RX (None on a benign timeout).
+        No traffic is a timeout, not an error — libusb raises USBTimeoutError (Windows WinUSB) or
+        an ETIMEDOUT USBError (Linux); both mean "nothing to read", so swallow them (else the
+        reader counts them as errors and gives up)."""
         try:
             return self.transport.wlan_in(_RX_BUF_SIZE)
+        except usb.core.USBTimeoutError:
+            return None
         except usb.core.USBError as e:
-            if e.errno == 110 or "timeout" in str(e).lower():   # ETIMEDOUT — no traffic
+            if e.errno == 110 or "tim" in str(e).lower():   # ETIMEDOUT / "timed out" / "timeout"
                 return None
             raise
 
