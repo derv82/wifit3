@@ -14,7 +14,7 @@ import usb.core
 
 from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
 
-from . import constants as C, firmware, htc
+from . import constants as C, firmware, htc, tx
 from .transport import AR9271Transport
 
 logger = logging.getLogger(__name__)
@@ -41,18 +41,29 @@ class AR9271V2Driver:
         return cls(dev)
 
     @classmethod
-    def for_replay(cls, wmi, hw) -> "AR9271V2Driver":
+    def for_replay(cls, wmi, hw, endpoints: dict) -> "AR9271V2Driver":
         """Build a driver around an already-brought-up ``(wmi, hw)`` so the verify gate can drive
         its public TX/channel methods against the replayed transport. (The production path is
         ``connect()``; this is the seam where the gate's per-op scaffold converges onto real
         driver methods — see ``scripts/ar9271_v2/verify_pcap.py``.) ``inject_frame`` sends on the
-        WLAN_TX pipe via ``self.wmi.t`` (the transport the gate rebinds per op)."""
+        WLAN_TX pipe via ``self.wmi.t`` (the transport the gate rebinds per op). ``endpoints`` is
+        the HTC service->endpoint map from the handshake (``HTCState.endpoints``)."""
         self = cls.__new__(cls)
         self.wmi = wmi
         self.hw = hw
         self.transport = wmi.t
         self._rx_callback = None
+        self._init_tx(endpoints)
         return self
+
+    def _init_tx(self, endpoints: dict) -> None:
+        """Resolve the TX service endpoints from the HTC handshake map and arm the slot bitmap.
+        The endpoint ids are assigned by connect_service (don't hardcode 5/6) — mgmt frames ride
+        WMI_MGMT_SVC, data frames the BE service (get_htc_epid's default AC) [SRC] htc_drv_txrx.c
+        :102; injected monitor frames carry no QoS, so they all map to BE."""
+        self.mgmt_epid = endpoints[C.WMI_MGMT_SVC]
+        self.data_be_epid = endpoints[C.WMI_DATA_BE_SVC]
+        self.tx_slots = tx.TxSlots()
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_callback = cb
@@ -95,17 +106,30 @@ class AR9271V2Driver:
         raise NotImplementedError("ar9271_v2: set_channel lands with M3")
 
     def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> int:
-        """Reproduce one injected 802.11 frame (aireplay-ng ``--test`` / deauth): build the HTC TX
-        wrapper around ``frame_bytes`` (see ``chips/ar9271_v2/tx.py`` for the wire format) and
-        bulk-OUT it on the WLAN_TX pipe via ``self.wmi.t``. The verify gate drives this against the
-        recorded TX frames; the agent wires TX, live firing stays the user's gate.
+        """Transmit one 802.11 frame (aireplay-ng ``--test`` / deauth): allocate a TX slot, build
+        the HTC wrapper (tx_frame_hdr for data, tx_mgmt_hdr otherwise; see ``tx.py``), and bulk-OUT
+        it on the WLAN_TX pipe. Mirrors ath9k_htc_tx -> ath9k_htc_tx_start [SRC] htc_drv_main.c:862
+        / htc_drv_txrx.c:340. The 802.11 frame (incl. its sequence number) is the caller's; only
+        the wrapper and the cookie are ours. Returns the allocated cookie (TX slot).
 
-        NOT YET PORTED — needs the ``tx_mgmt_hdr``/``tx_frame_hdr`` field fill, the per-frame
-        slot/cookie, and the mgmt(epid 5)/data(epid 6) routing [SRC] htc_drv_txrx.c:222 / :269.
-        (Sync for now so the gate drives it directly; the async WlanDriver wrapper lands with the
-        UI wiring, alongside ``connect()``.)"""
-        raise NotImplementedError(
-            "ar9271_v2: inject_frame TX-descriptor build not yet ported — see chips/ar9271_v2/tx.py")
+        The verify gate drives this against the recorded frames; the agent wires TX, live firing
+        stays the user's gate. (Sync for now so the gate drives it directly; the async WlanDriver
+        wrapper lands with the UI wiring, alongside ``connect()``.)"""
+        dot11 = bytes(frame_bytes)
+        cookie = self.tx_slots.get()
+        if tx.is_data_frame(dot11):
+            frame = tx.build_data_tx(self.data_be_epid, dot11, cookie)
+        else:
+            frame = tx.build_mgmt_tx(self.mgmt_epid, dot11, cookie)
+        self.wmi.t.wlan_out(frame)
+        return cookie
+
+    def tx_status_event(self, event_body: bytes) -> None:
+        """ath9k_htc_txstatus [SRC] htc_drv_txrx.c:647 — a WMI_TXSTATUS event reports completed
+        TX cookies; free each one's slot. In production this is dispatched from the WMI-event RX
+        path; the verify gate feeds the recorded events, interleaved by capture order."""
+        for cookie in tx.txstatus_cookies(event_body):
+            self.tx_slots.clear(cookie)
 
     async def close(self) -> None:
         try:

@@ -66,7 +66,11 @@ class Walk:
         self.value_except_regs: set[int] = set()   # registers whose written value is excepted
         self.value_excepted = 0
         self.ch14_excepted = 0                      # ch14 per-rate power (cfg80211 regulatory)
+        self.cookie_excepted = 0                    # TX frames differing only in the slot cookie
         self.async_injected = 0                     # LED-blink ops reproduced at the cursor
+        self.tx_mgmt_epid: int | None = None        # mgmt service epid (TX cookie byte offset)
+        self.txs_events: list[tuple[int, bytes]] = []   # (frame, event_body) WMI_TXSTATUS
+        self.txs_i = 0
         self.waived: Counter = Counter()
 
     def run(self, fn, label: str):
@@ -74,7 +78,7 @@ class Walk:
         response position persist across calls, so a multi-step WMI conversation (one seq
         counter, one continuous REG_IN stream) replays unbroken."""
         rd = rp.ReplayDevice(self.ops, self.responses, op_start=self.i, resp_pos=self.resp_pos,
-                             value_except_regs=self.value_except_regs)
+                             value_except_regs=self.value_except_regs, tx_mgmt_epid=self.tx_mgmt_epid)
         t = AR9271Transport(rd)
         if self.wmi is not None:
             self.wmi.t = t                  # rebind the persistent WMI to this call's transport
@@ -83,7 +87,17 @@ class Walk:
         self.resp_pos = rd.resp_pos
         self.value_excepted += rd.value_excepted
         self.ch14_excepted += rd.multi_value_excepted
+        self.cookie_excepted += rd.cookie_excepted
         return result
+
+    def drain_tx_status(self, frame: int) -> None:
+        """Feed the driver every WMI_TXSTATUS completion the kernel processed before ``frame`` —
+        freeing TX slots so the next inject's find_first_zero_bit cookie matches the wire. Read
+        from the raw response stream (independent of the WMI command/response cursor, which skips
+        these events) and interleaved by capture frame number."""
+        while self.txs_i < len(self.txs_events) and self.txs_events[self.txs_i][0] < frame:
+            self.driver.tx_status_event(self.txs_events[self.txs_i][1])
+            self.txs_i += 1
 
     def peek(self) -> dict | None:
         return self.ops[self.i] if self.i < len(self.ops) else None
@@ -315,6 +329,8 @@ def _walk_init(w: Walk) -> None:
     w.run(lambda t: firmware.download(t, fw), "firmware")
     st = w.run(lambda t: htc.handshake(t), "htc-handshake")
 
+    w.htc_endpoints = st.endpoints
+    w.tx_mgmt_epid = st.endpoints[C.WMI_MGMT_SVC]   # arms the gate's TX cookie-byte exception
     w.wmi = WMI(None, ctrl_epid=st.endpoints[C.WMI_CONTROL_SVC])
     w.wmi.async_injector = w._drain_async       # replay the LED-blink timer's interleaved ops
     w.hw = w.run(lambda t: hw.init_reset(w.wmi), "chip-reset")
@@ -393,20 +409,28 @@ def _walk_init(w: Walk) -> None:
     w.run(lambda t: rx.configure_filter(w.hw, w.hw.rxfilter_flags), "configure-filter-monitor-2")
     # The driver, built from the brought-up (wmi, hw): the operational phase drives its public
     # methods (TX now; set_channel/connect are the remaining convergence — see AR9271_V2.md).
+    import struct as _struct
     from wifit3.chips.ar9271_v2.driver import AR9271V2Driver
     from wifit3.chips.ar9271_v2 import tx
-    w.driver = AR9271V2Driver.for_replay(w.wmi, w.hw)
+    w.driver = AR9271V2Driver.for_replay(w.wmi, w.hw, w.htc_endpoints)
+    # TX-status completions (REG_IN WMI_TXSTATUS events) free the slots the injects allocate;
+    # collect them up front and replay them interleaved by frame (see Walk.drain_tx_status).
+    w.txs_events = [
+        (r["frame"], bytes(r["data"])[C.HTC_FRAME_HDR_LEN + 4:])
+        for r in w.responses
+        if r["ep"] == 0x83 and len(bytes(r["data"])) >= C.HTC_FRAME_HDR_LEN + 4
+        and _struct.unpack_from(">H", bytes(r["data"]), C.HTC_FRAME_HDR_LEN)[0] == tx.WMI_TXSTATUS_EVENTID
+    ]
     # Channel-hop sweep: each ath9k_htc_set_channel re-tunes via a full ath9k_hw_reset; some
     # hops are bracketed by sw-scan configure_filter calls; the aireplay-ng phases inject TX
     # frames on the WLAN_TX bulk pipe. Drive all off the wire.
     while True:
         op = w.peek()
+        if op is not None:
+            w.drain_tx_status(op.get("frame", 0))       # free slots completed before this op
         if op is not None and op.get("ep") == 0x01:     # bulk-OUT TX -> aireplay-ng injection
             dot11 = tx.dot11_from_bulk(bytes(op.get("data") or b""))
-            try:
-                w.run(lambda t: w.driver.inject_frame(dot11), f"inject{len(dot11)}")
-            except NotImplementedError:
-                break                                   # frontier: inject_frame not yet ported
+            w.run(lambda t: w.driver.inject_frame(dot11), f"inject{len(dot11)}")
             continue
         cmd, reg, set_bits = _peek_wmi(w)
         if cmd == 0x04:                                 # WMI_DISABLE_INTR -> a channel hop
@@ -463,6 +487,10 @@ def run(cap: str | None = None) -> int:
     if w.ch14_excepted:
         print(f"  ch14-power-excepted {w.ch14_excepted} per-rate write(s) — cfg80211 ch14 "
               "OFDM/HT regulatory limit (host state, not wire/eeprom-derivable)")
+    if w.cookie_excepted:
+        print(f"  cookie-excepted {w.cookie_excepted} TX frame(s) — TX-slot allocation race "
+              "(host scheduling; full HIF/htc/tx headers + 802.11 matched, only the cookie byte "
+              "differs)")
 
     if w.i < len(ops):
         front = w.peek()

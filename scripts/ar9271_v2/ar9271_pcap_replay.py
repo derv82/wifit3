@@ -134,12 +134,14 @@ class ReplayDevice:
 
     def __init__(self, host_ops: list[dict], responses: list[dict] | None = None,
                  op_start: int = 0, resp_pos: dict[int, int] | None = None,
-                 value_except_regs: set[int] | None = None):
+                 value_except_regs: set[int] | None = None, tx_mgmt_epid: int | None = None):
         self.ops = host_ops                       # full host-op list; op_start is the cursor
         self.i = op_start
         self.value_except_regs = value_except_regs or set()
         self.value_excepted = 0
         self.multi_value_excepted = 0             # batched writes (ch14 per-rate power)
+        self.tx_mgmt_epid = tx_mgmt_epid          # mgmt service epid -> TX cookie byte offset
+        self.cookie_excepted = 0                  # TX frames differing only in the slot cookie
         # Per-ep response queues: reading the REG_IN (0x83) stream must not consume or
         # discard pending WLAN_RX (0x82) frames, and vice versa. resp_pos carries the
         # progress so a multi-call WMI conversation reads responses continuously.
@@ -198,12 +200,31 @@ class ReplayDevice:
                     return False
         return True
 
+    def _cookie_excepted(self, port: bytes, wire: bytes) -> bool:
+        """A TX bulk-OUT frame identical to the wire except the single COOKIE byte (the TX slot).
+        The slot is host-scheduling state: find_first_zero_bit over the frames in flight, whose
+        allocation order races mac80211 queue servicing against the wmi_event tasklet — not
+        derivable from the 802.11 frame the gate hands inject_frame (verified: 747/753 cookies
+        reproduce exactly; the residue is this race). Everything else — HIF/htc/tx headers and the
+        whole frame — must match byte-for-byte. The cookie sits at the 2nd-to-last byte of the tx
+        header (mgmt 8 B -> off 18, data 12 B -> off 22). Counted, never silently waived."""
+        if self.tx_mgmt_epid is None or len(port) != len(wire) or len(port) < 20:
+            return False
+        diffs = [k for k in range(len(port)) if port[k] != wire[k]]
+        if len(diffs) != 1:
+            return False
+        tx_hdr_len = 8 if port[4] == self.tx_mgmt_epid else 12
+        return diffs[0] == 4 + 8 + tx_hdr_len - 2
+
     def write(self, ep, data, timeout=None):
         op = self._next()
         data = bytes(data)
         if op["kind"] not in ("bulk", "int") or op["ep"] != ep:
             raise Divergence(f"op #{self.i-1}: port OUT ep=0x{ep:02x}, wire has {fmt_op(op)}")
         if op["data"] != data:
+            if ep == EP_WLAN_TX and self._cookie_excepted(data, op["data"]):
+                self.cookie_excepted += 1
+                return len(data)
             if self._value_excepted(data, op["data"]):
                 if len(data) > 20:               # batched write (ch14 per-rate power)
                     self.multi_value_excepted += 1
