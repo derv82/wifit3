@@ -153,6 +153,14 @@ def warm_reattach(t: AR9271Transport) -> BringupResult:
     endpoints = {svc: i + 1 for i, svc in enumerate(C.SERVICE_CONNECT_ORDER)}
     wmi = WMI(t, ctrl_epid=endpoints[C.WMI_CONTROL_SVC])
     hw = hwmod.AthHw(wmi)
+    # The chip was already power-on-reset + RF-reset when the firmware booted, so reflect that in the
+    # host shadow: with reset_power_on=False (the fresh-AthHw default), set_reset_reg would force a
+    # full POWER_ON reset on the first set_channel — that resets the RTC/clocks the RUNNING firmware
+    # depends on and wedges it. reset_power_on=True makes the hop do a lighter MAC-only reset (exactly
+    # what cold hops do), which the firmware survives; htc_reset_init=False skips the one-shot RF
+    # reset pulse (already fired at boot; cold hops don't re-fire it either).
+    hw.reset_power_on = True
+    hw.htc_reset_init = False
     # Re-sync the WMI OUT-pipe data toggle: clear_halt is often ignored by the AR9271 hardware, so
     # the first command after re-attach can be silently dropped on a toggle mismatch (the device
     # ACKs it as a duplicate, so reg_out "succeeds" but no response comes — a read timeout). Each
@@ -172,7 +180,7 @@ def warm_reattach(t: AR9271Transport) -> BringupResult:
         raise RuntimeError(f"warm reattach: unexpected macVersion 0x{hw.macVersion:x}")
     eeprom.init(hw)                                # read-only: 4k map -> macaddr + chain masks
     mac_queue.init_tx_queues(hw)                   # driver-side alloc (no wire)
-    # Mirror the firmware's existing monitor state so set_channel re-applies the same RX filter.
+    # Mirror the firmware's existing monitor state so the reset below re-applies the same RX filter.
     hw.is_monitoring = True
     hw.opmode = R.IFTYPE_MONITOR
     hw.rxfilter_flags = rx.FilterFlags(control=True, pspoll=True, bcn_prbresp_promisc=True,
