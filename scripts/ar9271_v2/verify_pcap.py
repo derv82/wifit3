@@ -62,6 +62,7 @@ class Walk:
         self.wmi = None                     # persistent WMI channel, bound after the handshake
         self.hw = None                      # persistent AthHw, created at chip reset
         self.chan = None                    # the channel being brought up
+        self.driver = None                  # AR9271V2Driver, built for TX/inject once hw is up
         self.value_except_regs: set[int] = set()   # registers whose written value is excepted
         self.value_excepted = 0
         self.ch14_excepted = 0                      # ch14 per-rate power (cfg80211 regulatory)
@@ -390,9 +391,23 @@ def _walk_init(w: Walk) -> None:
     w.run(lambda t: phy_power.update_txpow(w.hw, w.chan, 40), "config-txpow-40")
     # mac80211 re-applies the (unchanged) monitor filter -> 0xc03f (now with PROM).
     w.run(lambda t: rx.configure_filter(w.hw, w.hw.rxfilter_flags), "configure-filter-monitor-2")
+    # The driver, built from the brought-up (wmi, hw): the operational phase drives its public
+    # methods (TX now; set_channel/connect are the remaining convergence — see AR9271_V2.md).
+    from wifit3.chips.ar9271_v2.driver import AR9271V2Driver
+    from wifit3.chips.ar9271_v2 import tx
+    w.driver = AR9271V2Driver.for_replay(w.wmi, w.hw)
     # Channel-hop sweep: each ath9k_htc_set_channel re-tunes via a full ath9k_hw_reset; some
-    # hops are bracketed by sw-scan configure_filter calls. Drive both off the wire.
+    # hops are bracketed by sw-scan configure_filter calls; the aireplay-ng phases inject TX
+    # frames on the WLAN_TX bulk pipe. Drive all off the wire.
     while True:
+        op = w.peek()
+        if op is not None and op.get("ep") == 0x01:     # bulk-OUT TX -> aireplay-ng injection
+            dot11 = tx.dot11_from_bulk(bytes(op.get("data") or b""))
+            try:
+                w.run(lambda t: w.driver.inject_frame(dot11), f"inject{len(dot11)}")
+            except NotImplementedError:
+                break                                   # frontier: inject_frame not yet ported
+            continue
         cmd, reg, set_bits = _peek_wmi(w)
         if cmd == 0x04:                                 # WMI_DISABLE_INTR -> a channel hop
             if _hop_is_full_reset(w):

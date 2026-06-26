@@ -40,6 +40,20 @@ class AR9271V2Driver:
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "AR9271V2Driver":
         return cls(dev)
 
+    @classmethod
+    def for_replay(cls, wmi, hw) -> "AR9271V2Driver":
+        """Build a driver around an already-brought-up ``(wmi, hw)`` so the verify gate can drive
+        its public TX/channel methods against the replayed transport. (The production path is
+        ``connect()``; this is the seam where the gate's per-op scaffold converges onto real
+        driver methods — see ``scripts/ar9271_v2/verify_pcap.py``.) ``inject_frame`` sends on the
+        WLAN_TX pipe via ``self.wmi.t`` (the transport the gate rebinds per op)."""
+        self = cls.__new__(cls)
+        self.wmi = wmi
+        self.hw = hw
+        self.transport = wmi.t
+        self._rx_callback = None
+        return self
+
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_callback = cb
 
@@ -80,8 +94,18 @@ class AR9271V2Driver:
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         raise NotImplementedError("ar9271_v2: set_channel lands with M3")
 
-    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
-        raise NotImplementedError("ar9271_v2: inject_frame lands with M5")
+    def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> int:
+        """Reproduce one injected 802.11 frame (aireplay-ng ``--test`` / deauth): build the HTC TX
+        wrapper around ``frame_bytes`` (see ``chips/ar9271_v2/tx.py`` for the wire format) and
+        bulk-OUT it on the WLAN_TX pipe via ``self.wmi.t``. The verify gate drives this against the
+        recorded TX frames; the agent wires TX, live firing stays the user's gate.
+
+        NOT YET PORTED — needs the ``tx_mgmt_hdr``/``tx_frame_hdr`` field fill, the per-frame
+        slot/cookie, and the mgmt(epid 5)/data(epid 6) routing [SRC] htc_drv_txrx.c:222 / :269.
+        (Sync for now so the gate drives it directly; the async WlanDriver wrapper lands with the
+        UI wiring, alongside ``connect()``.)"""
+        raise NotImplementedError(
+            "ar9271_v2: inject_frame TX-descriptor build not yet ported — see chips/ar9271_v2/tx.py")
 
     async def close(self) -> None:
         try:
