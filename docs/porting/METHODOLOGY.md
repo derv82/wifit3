@@ -18,8 +18,11 @@ reference you ship with it). Terms used below — pcap, timeline, bundle — are
 
 - **uv** for all Python — `uv run …`; bare `python` lacks the deps.
 - **tshark** on PATH — the verify tool and every pcap query shell out to it.
-- **The card, bound to userland** — Windows: WinUSB via Zadig. Linux: `rmmod` the kernel module,
-  then a udev rule (replug re-binds the module, so prefer the rule).
+- **The card, bound to userland** — Windows: WinUSB via Zadig. Linux: the splash's take-control
+  step writes a per-chipset modprobe blacklist + udev access rule and asks for a replug. The
+  blacklist — *not* the udev rule — is what keeps the kernel off the card across replugs (a rule
+  only chmods the node; the kernel still binds + taints cold state). Ad-hoc: `rmmod` the module and
+  run as root.
 
 Porting writes registers and replays the vendor firmware-download path with nothing between you
 and the silicon. A byte-diff catches *inaccurate* sequences, not every *dangerous* one — test on

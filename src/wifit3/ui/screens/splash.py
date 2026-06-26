@@ -12,7 +12,7 @@ from rich.text import Text
 
 from wifit3.errors import BringUpError, BringUpPermissionsError, WifiteFatalError
 from wifit3.ui.ansi_art import make_black_transparent
-from wifit3.setup import ids_from_registry
+from wifit3.setup import target_for_vidpid
 from wifit3.setup.linux import current_user, install_rule, remove_rule
 from wifit3.setup.windows import install_winusb, restore_driver
 from wifit3.ui.screens.confirm_install import ConfirmInstallDialog
@@ -269,64 +269,62 @@ class SplashView(Screen):
                 await _refind_and_connect("the card failed to initialize after installing WinUSB")
 
             elif sys.platform.startswith("linux"):
-                node_writable = not needs_access and not await asyncio.to_thread(
+                tainted = await asyncio.to_thread(
+                    self.device_manager.linux_kernel_driver_bound, iface)
+                no_access = needs_access or await asyncio.to_thread(
                     self.device_manager.linux_needs_permission, iface)
-                if node_writable:
+                if not tainted and not no_access:
+                    # Cold + accessible but still wouldn't init → a genuine bring-up fault, not a
+                    # setup gap.
                     raise bringup_err or RuntimeError(
                         "the card has access but failed to initialize — replug and try again")
-                # No node access → offer the one-time udev access rule (reuses the install
-                # dialog with Linux wording — a missing REQUIRED link, same shape).
-                others = len(ids_from_registry()) - 1
+                target = target_for_vidpid(vid, pid)
+                if target is None:
+                    raise bringup_err or RuntimeError(
+                        "this card isn't a supported chipset for setup")
+                # Offer to hand wifit3 complete control of the chipset (the Linux analog of binding
+                # WinUSB): blacklist the kernel driver so it stops grabbing + tainting the card, and
+                # grant raw USB access. One sudo prompt; reversible via the ✕ button.
                 if not await self.app.push_screen_wait(ConfirmInstallDialog(
                         desc,
-                        title="Wifit3 needs one-time access to talk to this card",
-                        link_label="Device Access",
+                        title="Give wifit3 complete control of this chipset?",
+                        link_label="Take control",
                         warning=(
-                            f"[bold $text-warning]One-time sudo setup:[/bold $text-warning]\n"
-                            f"- Installs a [bold]udev rule file[/] for the current user "
-                            f"([cyan]{current_user()}[/])\n"
-                            f"- Allows Wifit3 to use [italic]any supported wireless cards[/italic] "
-                            f"[bold]without sudo[/bold].\n"
-                            f"- Does [bold]not[/bold] change how the cards work as normal Wi-Fi.\n"
+                            f"[bold $text-warning]One-time sudo setup[/bold $text-warning] "
+                            f"(user [cyan]{current_user()}[/]):\n"
+                            f"- [bold]Blacklists the kernel driver[/] for this chipset so wifit3 "
+                            f"drives it from a clean cold-boot state.\n"
+                            f"- [bold]This card stops working as a normal Wi-Fi adapter[/] until "
+                            f"you uninstall.\n"
+                            f"- Grants raw USB access [bold]without sudo[/bold].\n"
                             f"- [bold green]Reversible:[/bold green] Press "
-                            f"[bold white on red] ✕ [/bold white on red] to remove the rule."),
-                        verb="Grant access for",
-                        confirm_label="Grant access",
-                        also=f" (+ {others} cards)" if others > 0 else "")):
+                            f"[bold white on red] ✕ [/bold white on red] to hand it back."),
+                        verb="Take control of",
+                        confirm_label="Take control")):
                     status.update("[bold bright_green]Select a card and press START[/bold bright_green]")
                     release()
                     return
-                status.update(f"[bold yellow]Granting access for {desc}… "
+                status.update(f"[bold yellow]Taking control of {desc}… "
                               f"(one password prompt)[/bold yellow]")
                 result = await asyncio.to_thread(
-                    install_rule, node=self.device_manager.usb_node_path(iface))
+                    install_rule, target, node=self.device_manager.usb_node_path(iface))
                 if not result.ok:
                     release()
                     if result.cancelled:
                         status.update("[yellow]Setup cancelled.[/yellow]")
                     else:
-                        status.update("[bold red]Couldn't set up device access.[/bold red]")
+                        status.update("[bold red]Couldn't take control of the chipset.[/bold red]")
                         self.app.push_screen(SetupErrorDialog(
-                            "Linux device-access setup failed", result.message, result.detail))
+                            "Linux device-control setup failed", result.message, result.detail))
                     return
-                # install_rule chgrp's the live node as root before returning, so it's normally
-                # writable the instant we get here. Confirm it (behind a spinner) before connecting
-                # — connecting an unready node is the EACCES failure that used to bounce the user
-                # back to the picker with a bogus "replug" message.
-                self.app.push_screen(PropagatingDialog("Applying device access…"))
-                try:
-                    ready = await self.device_manager.linux_wait_for_access(
-                        iface, want_writable=True)
-                finally:
-                    self.app.pop_screen()
-                if not ready:
-                    release()
-                    self.app.push_screen(SetupErrorDialog(
-                        "Device access didn't take effect",
-                        f"The access rule is installed, but {desc} hasn't picked it up.",
-                        "Unplug and replug the card, then press START."))
-                    return
-                await _refind_and_connect("the card failed to initialize after granting access")
+                # The blacklist only guarantees a cold card on the NEXT enumeration, and the card is
+                # still warm from the kernel's firmware upload — so require a physical replug rather
+                # than connecting the tainted device now.
+                self.query_one("#init-progress", ProgressBar).display = False
+                status.update(f"[bold green]✓ {desc} is now wifit3's. "
+                              f"Unplug and replug it, then press START.[/bold green]")
+                release()
+                return
 
             else:
                 raise bringup_err or RuntimeError("the card failed to initialize")
@@ -387,8 +385,13 @@ class SplashView(Screen):
             if os_kind == "win":
                 result = await asyncio.to_thread(restore_driver, iface.vid, iface.pid)
             else:
+                target = target_for_vidpid(iface.vid, iface.pid)
+                if target is None:
+                    status.update("[bold red]This card isn't a supported chipset.[/bold red]")
+                    release()
+                    return
                 result = await asyncio.to_thread(
-                    remove_rule, node=self.device_manager.usb_node_path(iface))
+                    remove_rule, target, node=self.device_manager.usb_node_path(iface))
         except Exception as e:
             logger.exception("Uninstall failed for %s", getattr(iface, "description", "?"))
             status.update(f"[bold red]Uninstall failed: {e}[/bold red]")

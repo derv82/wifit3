@@ -35,6 +35,7 @@ class AR9271Driver:
     ]
     # 2.4 GHz only (no 5 GHz radio).
     SUPPORTED_CHANNELS = list(range(1, 14))
+    KERNEL_MODULES = ["ath9k_htc"]   # Linux take-control blacklist hint (live probe is authoritative)
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     @classmethod

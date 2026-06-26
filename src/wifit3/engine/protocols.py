@@ -78,6 +78,17 @@ class WlanDriver(Protocol):
     2.4 GHz should list 1..13 (or whatever their PHY actually supports).
     """
 
+    # ---- Optional: Linux take-control hint ----------------------------
+    KERNEL_MODULES: ClassVar[List[str]] = []
+    """Optional fallback hint: the Linux kernel module name(s) that bind this
+    chipset (e.g. ``["ath9k_htc"]``). The Linux "hand wifit3 this card"
+    setup blacklists these so the kernel can't grab + taint the cold-boot
+    state. Authoritative discovery is *live* (sysfs bound-driver + ``modprobe
+    -R`` against the plugged-in card); this list is only consulted when the
+    device isn't present to probe, so drivers may leave it empty. List only
+    the leaf USB-binding module, never the shared stack below it
+    (``mac80211``/``cfg80211``/…)."""
+
     @classmethod
     def from_usb_device(
         cls, dev: usb.core.Device, id_entry: DeviceID

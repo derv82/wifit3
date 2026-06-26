@@ -110,16 +110,18 @@ for the first run):
 card on the splash screen and confirm. The bundled installer self-elevates for that one
 step (a single UAC prompt), after which no Administrator privileges are needed to run Wifit3.
 
-**Linux** — Wifit3 installs (with your permission) a `udev` rules file to enable userland access
-to the supported wireless cards. This is a one-time privileged (root) action. Afterward,
-Wifit3 can be run without sudo.
+**Linux** — pick the card on the splash and confirm. Wifit3 takes complete control of that
+chipset: it blacklists the card's kernel driver (so the kernel stops grabbing it) and grants your
+user raw USB access — one privileged prompt — then asks you to replug the card once. While Wifit3
+controls it, the card won't work as a normal Wi-Fi adapter; press **✕** on the splash to hand it
+back to the kernel. Afterward Wifit3 runs without sudo.
 
 ```bash
 uv sync
 uv run wifit3
 ```
 
-**Linux Users**: If you don't want to install the `udev` rules file, you can still run Wifit3 as root:
+**Don't want to hand the chipset over?** Run as root against a manually freed card:
 
 ```bash
 sudo rmmod <kernel_driver>   # e.g. ath9k_htc, rtl8xxxu, mt76x2u, rt2800usb

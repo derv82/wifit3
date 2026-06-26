@@ -229,6 +229,18 @@ class WlanDeviceManager:
         except OSError:
             return True
 
+    def linux_kernel_driver_bound(self, iface: WlanInterface) -> bool:
+        # Linux: is a real kernel Wi-Fi driver bound to this card (so it's tainted, not cold)? Even
+        # when the node is writable (e.g. root), a bound driver means firmware was already uploaded
+        # — the card needs the take-control blacklist + a replug before a clean bring-up.
+        if not sys.platform.startswith("linux") or iface.dev is None:
+            return False
+        from wifit3.setup.linux import kernel_driver_bound
+        try:
+            return kernel_driver_bound([(iface.vid, iface.pid)])
+        except OSError:
+            return False
+
     async def linux_wait_for_access(self, iface: WlanInterface, *, want_writable: bool,
                                     timeout: float = 5.0, interval: float = 0.1) -> bool:
         # Block until the card's usbfs node reaches ``want_writable`` (or ``timeout`` elapses).
