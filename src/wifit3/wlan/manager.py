@@ -64,7 +64,8 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
 
         _DRIVER_CLASSES = {
             # Kernel drivers
-            "ar9271": env_or_none(ENV_AR9271_DRIVER, "v2", AR9271V2Driver) or AR9271Driver,
+            # v2 is the maintained clean-room re-port; WIFIT3_AR9271=v1 falls back to the original.
+            "ar9271": env_or_none(ENV_AR9271_DRIVER, "v1", AR9271Driver) or AR9271V2Driver,
             "rt2500usb": RT2500USBDriver,
             "rt2800usb": RT2800USBDriver,
             "rt3070": RT3070Driver,
