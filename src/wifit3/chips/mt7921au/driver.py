@@ -46,6 +46,13 @@ class MT7921AUDriver:
     # it works), and mt7921u is reported to lack active monitor (openwrt/mt76#839, USB-WiFi#107).
     FAKE_MAC = FakeMacSupport.UNIMPLEMENTED
 
+    # Take-control installs the udev rule + modprobe blocklist, but neither applies until the next
+    # device-add — until then the kernel's mt7921u still owns the interface and our claim/control
+    # transfers EACCES. Auto-connecting into that fails before the driver gets a clean shot. So gate
+    # on a replug: after the rules land, the card re-enumerates cold (kernel blocklisted, udev rule
+    # live) and our cold boot runs on a pristine chip. See MT7921AU.md. (Cold/normal plug unaffected.)
+    LINUX_REPLUG_AFTER_TAKEOVER = True
+
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "MT7921AUDriver":
         return cls(dev)
