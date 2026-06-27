@@ -150,7 +150,7 @@ class SplashView(Screen):
         """Surface a recoverable bring-up failure: a persistent red label (which poll_usb leaves
         alone, unlike the status line) plus a toast."""
         label = self.query_one("#error-label", Label)
-        label.update(f"[bold red]⚠ {message}[/bold red]")
+        label.update(f"[bold red]⚠  {message}[/bold red]")
         label.display = True
         self.notify(message, title="Card bring-up failed", severity="error")
 
@@ -373,14 +373,16 @@ class SplashView(Screen):
             else:
                 raise bringup_err or RuntimeError("the card failed to initialize")
         except BringUpError as e:
-            logger.warning("Bring-up failed for %s: %s", getattr(iface, "description", "?"), e)
+            chipset = getattr(iface, "description", "<UnknownChipset>").split(" (")[0]
+            logger.warning("Bring-up failed for %s: %s", chipset, e)
             detail = f": {e.detail}" if e.detail else ""
-            self._show_error(f"{getattr(iface, 'description', 'Card')} — {e.stage} failed{detail}")
+            self._show_error(f"{chipset} — {e.stage} failed{detail}")
             self.query_one("#init-progress", ProgressBar).display = False
             release()
         except Exception as e:
-            logger.exception("Failed to start %s", getattr(iface, "description", "?"))
-            self._show_error(f"Could not start {getattr(iface, 'description', 'card')}: {e}")
+            chipset = getattr(iface, "description", "<UnknownChipset>").split(" (")[0]
+            logger.exception("Failed to start %s", chipset)
+            self._show_error(f"Could not start {chipset}: {e}")
             self.query_one("#init-progress", ProgressBar).display = False
             release()
 

@@ -194,7 +194,6 @@ class WlanDeviceManager:
                 driver, f"wlan{len(self.interfaces)}", id_entry.description,
                 vid=id_entry.vid, pid=id_entry.pid, dev=dev))
 
-        logger.debug("Discovered %d supported card(s).", len(self.interfaces))
         return self.interfaces
 
     def get_interface(self, name: str) -> Optional[WlanInterface]:
