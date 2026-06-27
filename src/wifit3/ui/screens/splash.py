@@ -346,7 +346,7 @@ class SplashView(Screen):
                     self.app.push_screen(SetupErrorDialog(
                         "Device access didn't take effect",
                         f"wifit3 now controls {desc}, but it hasn't picked up access yet.",
-                        "Unplug and replug the card, then press START."))
+                        action="Unplug and replug the card, then press START."))
                     return
                 try:
                     await _refind_and_connect("the card didn't come up after taking control")
@@ -355,9 +355,9 @@ class SplashView(Screen):
                     self.query_one("#init-progress", ProgressBar).display = False
                     release()
                     self.app.push_screen(SetupErrorDialog(
-                        "Couldn't bring the card up",
+                        "Failed to initialize card",
                         f"wifit3 took control of {desc}, but the cold bring-up didn't complete.",
-                        "Unplug and replug the card, then press START."))
+                        action="Unplug and replug the card, then press START."))
                     return
 
             else:
@@ -454,7 +454,7 @@ class SplashView(Screen):
             self.app.push_screen(SetupErrorDialog(
                 "Access rule removed",
                 f"The rule is gone, but {iface.description} keeps access until it's replugged.",
-                "Unplug and replug the card to fully revoke."))
+                action="Unplug and replug the card to fully revoke."))
         elif result.cancelled:
             status.update("[yellow]Uninstall cancelled.[/yellow]")
         else:

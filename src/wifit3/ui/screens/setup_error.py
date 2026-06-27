@@ -1,7 +1,8 @@
 """Modal shown when a device-setup action fails (WinUSB install/restore).
 
-Renders a title, a human message, and an optional Details line (the raw libwdi / Win32
-code). Dismisses with ``None``; the caller just awaits it for acknowledgement.
+Renders a title, a human message, an optional warning-styled ``action`` line (the next step
+the user should take, e.g. "Unplug and replug…"), and an optional muted ``details`` line (the
+raw libwdi / Win32 code). Dismisses with ``None``; the caller just awaits it for acknowledgement.
 """
 from __future__ import annotations
 
@@ -21,27 +22,35 @@ class SetupErrorDialog(ModalScreen[None]):
     DEFAULT_CSS = """
     SetupErrorDialog { align: center middle; }
     SetupErrorDialog #dialog {
-        width: 60; height: auto; max-width: 90%;
+        width: 72; height: auto; max-width: 90%;
         border: thick $error; background: $surface; padding: 1 2;
     }
     SetupErrorDialog #title {
-        content-align: center middle; margin-bottom: 1; text-style: bold; color: $error;
+        width: 100%; content-align: center middle; margin-bottom: 1;
+        text-style: bold; color: $error;
     }
-    SetupErrorDialog #message { margin-bottom: 1; }
-    SetupErrorDialog #details { color: $text-muted; margin-bottom: 1; }
+    SetupErrorDialog #message { width: 100%; margin-bottom: 1; }
+    SetupErrorDialog #action {
+        width: 100%; margin-bottom: 1; text-style: bold; color: $text-warning;
+    }
+    SetupErrorDialog #details { width: 100%; color: $text-muted; margin-bottom: 1; }
     SetupErrorDialog #button-row { height: auto; align: center middle; }
     """
 
-    def __init__(self, title: str, message: str, details: str | None = None) -> None:
+    def __init__(self, title: str, message: str, details: str | None = None,
+                 *, action: str | None = None) -> None:
         super().__init__()
         self._title = title
         self._message = message
         self._details = details
+        self._action = action
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
             yield Label(self._title, id="title")
             yield Label(self._message, id="message")
+            if self._action:
+                yield Label(self._action, id="action")
             if self._details:
                 yield Label(self._details, id="details")
             with Horizontal(id="button-row"):
