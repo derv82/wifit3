@@ -36,6 +36,15 @@ before it's confirmable:** log the AKM we advertise in the forged assoc + how we
 inbound frame, so it's provable at the UI without the agent. First check: confirm we send
 AKM=PSK in the assoc for *all* cases.
 
+### Warm-attach inherits a foreign driver's chip state — silent RX degradation (release blocker)
+If another driver is installed it sets up the card before take-control; `modprobe -r` unloads it but
+the chip stays *warm* with that foreign config, and our warm-reattach (built for a Wifit3-left-warm
+card) inherits it → connects but RX is silently degraded, non-deterministic (RTL8814AU: ~4 beacons/10s
+vs ~30 after replug). **Fix:** thread `is_dirty` (`kernel_driver_bound`, read pre-detach) into each
+driver's `connect()`; `if is_warm and is_dirty: raise BringUpError(replug)` else continue — cards that
+reset cold on unbind read not-warm and pass. One-time replug/card; subsumes
+`LINUX_REPLUG_AFTER_TAKEOVER`; ~22-driver port.
+
 ---
 
 ## Per-card — HW-verify sweep
