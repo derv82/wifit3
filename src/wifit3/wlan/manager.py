@@ -245,11 +245,13 @@ class WlanDeviceManager:
     async def linux_wait_for_access(self, iface: WlanInterface, *, want_writable: bool,
                                     timeout: float = 5.0, interval: float = 0.1) -> bool:
         # Block until the card's usbfs node reaches ``want_writable`` (or ``timeout`` elapses).
+        vid, pid = iface.vid, iface.pid
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         while True:
-            writable = not self.linux_needs_permission(iface)
-            if writable == want_writable:
+            await self.refresh()
+            current = self.get_interface_by_vidpid(vid, pid)
+            if current is not None and (not self.linux_needs_permission(current)) == want_writable:
                 return True
             if loop.time() >= deadline:
                 return False
