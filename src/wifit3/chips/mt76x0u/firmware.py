@@ -353,12 +353,21 @@ class FirmwareUploader:
         #     which will see WLAN_EN=0 (because we kept it set + then
         #     pre-clean clears it) and do a clean cold-boot upload.
         initial_val = self.t.read32(MT_WLAN_FUN_CTRL)
-        if initial_val & MT_WLAN_FUN_CTRL_WLAN_EN:
+        # The WLAN_RESET cycle below is what actually wakes RX — it must fire on ANY *dirty* chip,
+        # not only WLAN_EN=1. A replug that doesn't power-cycle the dongle (USB passthrough / a VM)
+        # leaves FW resident with WLAN_EN=0: the chip is dirty but the old WLAN_EN-only gate missed
+        # it, so RX stayed dead on the first cold boot while every warm boot worked. So gate on
+        # firmware_running() too, and force WLAN_EN|WLAN_CLK_EN during the reset so it bites from the
+        # WLAN_EN=0 state (mirrors the working warm path). [EXPERIMENT — cold-first-boot no-RX]
+        fw_resident = self.firmware_running()
+        if (initial_val & MT_WLAN_FUN_CTRL_WLAN_EN) or fw_resident:
             self._report(0.01,
-                f"WARM chip detected (WLAN_FUN_CTRL=0x{initial_val:08x}) — "
+                f"Dirty chip (WLAN_FUN_CTRL=0x{initial_val:08x}, fw_running={fw_resident}) — "
                 f"forcing WLAN_RESET hardware cycle")
             val = initial_val
-            val |= MT_WLAN_FUN_CTRL_GPIO_OUT_EN
+            val |= (MT_WLAN_FUN_CTRL_GPIO_OUT_EN
+                    | MT_WLAN_FUN_CTRL_WLAN_EN
+                    | MT_WLAN_FUN_CTRL_WLAN_CLK_EN)
             val &= ~MT_WLAN_FUN_CTRL_FRC_WL_ANT_SEL
             val |= (MT_WLAN_FUN_CTRL_WLAN_RESET
                     | MT_WLAN_FUN_CTRL_WLAN_RESET_RF)
