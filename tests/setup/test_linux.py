@@ -147,7 +147,7 @@ def test_install_cmd_writes_both_files_unloads_module_and_grants_node():
     assert f"install -m 0644 /t/b.conf {blacklist_path('ar9271')}" in cmd
     assert "udevadm control --reload-rules" in cmd
     assert "modprobe -r ath9k_htc" in cmd
-    assert "chgrp sudo /dev/bus/usb/003/053 && chmod 0660 /dev/bus/usb/003/053" in cmd
+    assert "(chgrp sudo /dev/bus/usb/003/053 || true) && (chmod 0660 /dev/bus/usb/003/053 || true)" in cmd
 
 
 def test_install_cmd_root_skips_udev_rule_and_chgrp():
@@ -170,7 +170,8 @@ def test_remove_cmd_deletes_both_files_and_chowns_node_back():
 def test_run_privileged_builds_pkexec_argv(monkeypatch):
     monkeypatch.setattr(lin.shutil, "which", lambda n: f"/usr/bin/{n}")
     captured = {}
-    monkeypatch.setattr(lin.subprocess, "call", lambda argv: captured.update(argv=argv) or 0)
+    monkeypatch.setattr(lin.subprocess, "run",
+                        lambda argv, **kw: captured.update(argv=argv) or lin.subprocess.CompletedProcess(argv, 0))
     assert run_privileged("echo hi", "pkexec") == 0
     assert captured["argv"] == ["/usr/bin/pkexec", "/usr/bin/sh", "-c", "echo hi"]
 

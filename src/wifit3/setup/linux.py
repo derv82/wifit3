@@ -212,7 +212,8 @@ def _install_cmd(*, tmp_rule: str | None, key: str, tmp_blacklist: str | None,
         # keeps it from *loading* on a future cold boot.
         steps.append(f"(modprobe -r {' '.join(modules)} 2>/dev/null || true)")
     if group and node:
-        steps += [f"chgrp {group} {node}", f"chmod 0660 {node}"]
+        # Ignore failures in the ch* commands in case the device re-enumerated to a different node.
+        steps += [f"(chgrp {group} {node} || true)", f"(chmod 0660 {node} || true)"]
     return " && ".join(steps)
 
 
@@ -244,9 +245,15 @@ def run_privileged(shell_cmd: str, method: str) -> int:
     argv = [runner, sh, "-c", shell_cmd]
     logger.info("Linux setup: elevating via %s: sh -c %r", Path(runner).name, shell_cmd)
     try:
-        return subprocess.call(argv)
+        proc = subprocess.run(argv, stderr=subprocess.PIPE, text=True)
     except KeyboardInterrupt:
         return 130
+    if proc.returncode == 0:
+        logger.info("Linux setup: elevated command succeeded")
+    else:
+        logger.warning("Linux setup: elevated command failed (rc=%d): %s",
+                       proc.returncode, (proc.stderr or "").strip())
+    return proc.returncode
 
 
 def _run_as_root(shell_cmd: str) -> int:
