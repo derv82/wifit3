@@ -130,16 +130,59 @@ class MT76x0UDriver:
 
     # ---- Lifecycle ----------------------------------------------------
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
-        """M1: USB reset + claim interface + FW upload to FW_READY ack."""
+        """M1: USB reset + claim + FW upload to FW_READY, then post-FW MAC/PHY bring-up.
+
+        Each blocking phase runs in a worker thread (``asyncio.to_thread``) so the bring-up
+        never freezes the Textual event loop; progress is reported on the loop thread at the
+        chunk boundaries. The RX drainer wires into the loop, so it stays here (not offloaded).
+        """
         WIRE_LOG.marker("begin connect")
+
+        def _p(pct: float, msg: str) -> None:
+            line = f"mt76x0u: {msg}"
+            if progress_cb:
+                progress_cb(pct, line)
+            logger.info(line)
+
+        _p(0.02, "Resetting & Claiming device…")
+        fw_file = await asyncio.to_thread(self._connect_reset_claim)
+        if fw_file is None:
+            return False
+
+        _p(0.06, "Uploading Firmware…")
+        if not await asyncio.to_thread(self._connect_upload_fw, fw_file):
+            return False
+
+        _p(0.45, "Initializing MAC…")
+        if not await asyncio.to_thread(self._connect_init_mac):
+            return False
+
+        _p(0.66, "Clearing tables")
+        if not await asyncio.to_thread(self._connect_clear_tables):
+            return False
+
+        _p(0.84, "Initing & Calibrating PHY…")
+        if not await asyncio.to_thread(self._connect_init_phy):
+            return False
+
+        # ----- Background RX drainer (now that TRX is fully live) -----
+        from .rx import RxDrainer
+        self._rx_drainer = RxDrainer(
+            self.transport, frame_callback=self._on_decoded_rx,
+        )
+        await self._rx_drainer.start()
+
+        WIRE_LOG.marker("end connect")
+        return True
+
+    def _connect_reset_claim(self):
+        """Chunk 1: USB reset + claim + locate FW file. Returns the FW path, or None."""
         # ---- usb_reset_device equivalent. [SRC] mt76x0/usb.c:249
         # The kernel probe path does this BEFORE any chip access. On Linux
         # the implicit usb open often triggers a similar reset; on Windows +
         # WinUSB it doesn't, so we must call it explicitly. Without this the
         # first vendor write after mt76x02u_mcu_fw_reset stalls — the chip's
         # MCU enters a state it never properly recovers from.
-        if progress_cb:
-            progress_cb(0.005, "USB port reset (usb_reset_device equivalent)")
         try:
             self.dev.reset()
             logger.info("MT7610U: dev.reset() OK")
@@ -149,13 +192,11 @@ class MT76x0UDriver:
             # truly gone, the next claim will fail loudly.
             logger.warning("MT7610U: dev.reset() raised %s (continuing)", e)
 
-        if progress_cb:
-            progress_cb(0.01, "Claiming MT7610U interface")
         try:
             self.transport.claim()
         except RuntimeError as e:
             logger.error("MT7610U: %s", e)
-            return False
+            return None
 
         # Locate FW file. Prefer mt7610e (WIRE-verified); fall back to mt7610u
         # only if mt7610e is missing. Refuse to start without either.
@@ -170,20 +211,17 @@ class MT76x0UDriver:
                 fw_file = FW_FILE_FALLBACK
             else:
                 logger.error("MT7610U: no FW file in %s", ASSETS_DIR)
-                return False
+                return None
+        return fw_file
 
-        if progress_cb:
-            progress_cb(0.05, f"Uploading firmware ({fw_file.name})")
-
-        uploader = FirmwareUploader(
+    def _connect_upload_fw(self, fw_file):
+        """Chunk 2: upload firmware to FW_READY (force-reset + re-upload if warm)."""
+        self._uploader = FirmwareUploader(
             self.transport,
-            progress_cb=(
-                lambda pct, msg: progress_cb(0.05 + pct * 0.90, msg)
-                if progress_cb else None
-            ),
+            progress_cb=None,
         )
         try:
-            result = uploader.load_firmware(fw_file)
+            result = self._uploader.load_firmware(fw_file)
         except FirmwareError as e:
             logger.error("MT7610U FW upload failed: %s", e)
             return False
@@ -205,7 +243,10 @@ class MT76x0UDriver:
                 "MT7610U: FW v%s build 0x%04x (%s) — ready after %d poll(s)",
                 h["fw_ver_str"], h["build_ver"], h["build_time"], result["polls"],
             )
+        return True
 
+    def _connect_init_mac(self):
+        """Chunk 3: post-FW MAC/BBP init (init_usb_dma .. init_bbp + RX_FILTR cache)."""
         # Post-FW driver flow mirrors mt76x0u_init_hardware (mt76x0/usb.c:151)
         # which after mcu_init does:
         #   init_usb_dma → wait_for_wpdma → wait_for_mac → reset_csr_bbp →
@@ -216,18 +257,14 @@ class MT76x0UDriver:
         # MAC reg init + wait_for_txrx_idle.
 
         # ---- Post-FW step 6: init_usb_dma (kernel mt76x0_init_usb_dma).
-        if progress_cb:
-            progress_cb(0.91, "init_usb_dma (RX_DROP_OR_PAD toggle)")
         try:
-            uploader.init_usb_dma()
+            self._uploader.init_usb_dma()
         except usb.core.USBError as e:
             logger.error("MT7610U: init_usb_dma failed: %s", e)
             return False
 
         # ---- M3a step 7: wait_for_wpdma. [SRC] mt76x02_dma.h:54-60,
         # [SRC] mt76x0/init.c:175. Returns immediately on USB (no WPDMA busy).
-        if progress_cb:
-            progress_cb(0.92, "wait_for_wpdma")
         if not wait_for_wpdma(self.transport):
             logger.error("MT7610U: wait_for_wpdma timed out")
             return False
@@ -235,19 +272,15 @@ class MT76x0UDriver:
         # ---- M3a step 8: wait_for_mac (second time, post-FW upload).
         # Kernel does this in init_hardware:179. Already done once during M1
         # (after chip_onoff), but the kernel re-checks here too — ported as-is.
-        if progress_cb:
-            progress_cb(0.93, "wait_for_mac (post-FW)")
         try:
-            uploader.wait_for_mac()
+            self._uploader.wait_for_mac()
         except FirmwareError as e:
             logger.error("MT7610U: wait_for_mac (post-FW) failed: %s", e)
             return False
 
         # ---- Post-FW step 9: reset_csr_bbp [SRC] mt76x0/init.c:182.
-        if progress_cb:
-            progress_cb(0.94, "reset_csr_bbp (200ms MAC reset)")
         try:
-            uploader.reset_csr_bbp()
+            self._uploader.reset_csr_bbp()
         except usb.core.USBError as e:
             logger.error("MT7610U: reset_csr_bbp failed: %s", e)
             return False
@@ -255,8 +288,6 @@ class MT76x0UDriver:
         # ---- Post-FW step 10: Q_SELECT [SRC] mt76x0/init.c:183 —
         # `mt76x02_mcu_function_select(dev, Q_SELECT, 1)`.
         # [WIRE] capture-2.pcap:423 payload `01000000 01000000`.
-        if progress_cb:
-            progress_cb(0.95, "MCU Q_SELECT (CMD_FUN_SET_OP, no-wait)")
         try:
             from .constants import Q_SELECT
             self.mcu.function_select(Q_SELECT, 1)
@@ -267,8 +298,6 @@ class MT76x0UDriver:
         # ---- M2 diagnostic: MCU smoke-test ----------------------------
         # Verifies the MCU command channel before we drive the init tables
         # through it. Kept from M2 — not strictly in kernel flow but cheap.
-        if progress_cb:
-            progress_cb(0.96, "MCU CMD_RANDOM_READ smoke test")
         try:
             self.mcu_smoke = mcu_init_smoke_test(self.mcu, self.transport)
             if not self.mcu_smoke["match"]:
@@ -298,8 +327,6 @@ class MT76x0UDriver:
         # Uploads common_mac_reg_table + mt76x0_mac_reg_table via MCU, then
         # 4 direct register tweaks (release MAC reset, EXT_CCA_CFG, FCE_L2_STUFF,
         # WMM_CTRL).
-        if progress_cb:
-            progress_cb(0.96, "init_mac_registers (66 table + 4 direct writes)")
         try:
             init_mac_registers(self.transport, self.mcu)
         except (MCUError, MACInitError, usb.core.USBError) as e:
@@ -307,8 +334,6 @@ class MT76x0UDriver:
             return False
 
         # ---- M3a step 12: wait_for_txrx_idle [SRC] mt76x0/init.c:189.
-        if progress_cb:
-            progress_cb(0.96, "wait_for_txrx_idle (MAC_STATUS TX|RX=0)")
         if not wait_for_txrx_idle(self.transport):
             logger.error("MT7610U: wait_for_txrx_idle timed out")
             return False
@@ -319,8 +344,6 @@ class MT76x0UDriver:
         # ---- M3b: init_bbp [SRC] mt76x0/init.c:192.
         # phy_wait_bbp_ready, then bbp_init_tab (58 pairs MCU), then 20
         # filtered switch_tab entries direct-write, then dcoc_tab (9 pairs MCU).
-        if progress_cb:
-            progress_cb(0.85, "init_bbp (BBP wait + 3 tables)")
         try:
             self.bbp_version = init_bbp(self.transport, self.mcu)
         except (PHYInitError, MCUError, usb.core.USBError) as e:
@@ -337,11 +360,12 @@ class MT76x0UDriver:
         except usb.core.USBError as e:
             logger.error("MT7610U: RX_FILTR_CFG read failed: %s", e)
             return False
+        return True
 
+    def _connect_clear_tables(self):
+        """Chunk 4: clear shared keys + WCIDs, read EEPROM, set MAC address."""
         # ---- M3c step 14: clear all 16x4 shared keys.
         # [SRC] mt76x0/init.c:198-200.
-        if progress_cb:
-            progress_cb(0.88, "clear_shared_keys (16 vifs × 4 keys)")
         try:
             clear_shared_keys(self.transport)
         except usb.core.USBError as e:
@@ -350,8 +374,6 @@ class MT76x0UDriver:
 
         # ---- M3c step 15: clear all 256 WCIDs.
         # [SRC] mt76x0/init.c:202-203.
-        if progress_cb:
-            progress_cb(0.92, "clear_wcids (256 entries)")
         try:
             clear_wcids(self.transport)
         except usb.core.USBError as e:
@@ -360,8 +382,6 @@ class MT76x0UDriver:
 
         # ---- M3c step 16: full eeprom_init.
         # [SRC] mt76x0/init.c:205 + mt76x0/eeprom.c:312-353.
-        if progress_cb:
-            progress_cb(0.96, "eeprom_init (full 512-byte EFUSE)")
         try:
             self.efuse_full = read_efuse_full(self.transport)
         except (EEPROMError, usb.core.USBError) as e:
@@ -384,19 +404,18 @@ class MT76x0UDriver:
         # ---- M3c step 17: mt76x02_mac_setaddr.
         # [SRC] mt76x02_mac.c:727-758. Writes MAC + BSSID regs and clears
         # 16 per-vif BSSID slots.
-        if progress_cb:
-            progress_cb(0.96, "mac_setaddr (MAC + BSSID regs + 16 slot clear)")
         try:
             mac_setaddr(self.transport, self.efuse_full.mac_bytes)
         except (MACInitError, usb.core.USBError) as e:
             logger.error("MT7610U: mac_setaddr failed: %s", e)
             return False
+        return True
 
+    def _connect_init_phy(self):
+        """Chunk 5: phy_init + TXOP/US_CYC + mac_start (TRX enable) + power-on calibrate."""
         # ---- M3d: mt76x0_phy_init.
         # [SRC] mt76x0/phy.c:1207-1215. Wraps:
         #   phy_ant_select → phy_rf_init (RF tables + cal) → set_rxpath → set_txdac.
-        if progress_cb:
-            progress_cb(0.97, "phy_init (ant_select + rf_init + rxpath + txdac)")
         try:
             phy_init(self.transport, self.mcu, self.efuse_full)
         except (PHYInitError, usb.core.USBError) as e:
@@ -441,8 +460,6 @@ class MT76x0UDriver:
             MT_US_CYC_CNT_DEFAULT,
             MT_US_CYC_CNT_MASK,
         )
-        if progress_cb:
-            progress_cb(0.965, "TXOP_CTRL_CFG + US_CYC_CFG (TX EDCA grants)")
         try:
             # MT_US_CYC_CFG: RMW the low 8 bits (CNT field) to 0x1e.
             us_cyc = self.transport.read32(MT_US_CYC_CFG)
@@ -463,8 +480,6 @@ class MT76x0UDriver:
         # mt76x02u_mac_start: staged ENABLE_TX → wait_for_wpdma → write
         # RX_FILTR_CFG → ENABLE_TX|ENABLE_RX → wait_for_wpdma.
         # MT_MAC_SYS_CTRL_ENABLE_RX / _ENABLE_TX already imported at top.
-        if progress_cb:
-            progress_cb(0.97, "mac_start (staged TRX enable)")
         try:
             self.transport.write32(MT_MAC_SYS_CTRL, MT_MAC_SYS_CTRL_ENABLE_TX)
             wait_for_wpdma(self.transport, timeout_ms=200)
@@ -532,8 +547,6 @@ class MT76x0UDriver:
         # actually emit. Kernel calls this from mt76x0u_start after
         # mt76x02u_mac_start. Channel: 6 (we tune properly via set_channel
         # later; this is just the chip's first-time RF cal handshake).
-        if progress_cb:
-            progress_cb(0.98, "phy_calibrate(power_on=True) — CAL_R + CAL_VCO + ...")
         try:
             from .phy import phy_calibrate
             phy_calibrate(self.transport, self.mcu, channel=6, power_on=True)
@@ -541,19 +554,6 @@ class MT76x0UDriver:
         except (MCUError, usb.core.USBError) as e:
             logger.error("MT7610U: initial phy_calibrate failed: %s", e)
             return False
-
-        # ----- Background RX drainer (now that TRX is fully live) -----
-        from .rx import RxDrainer
-        if progress_cb:
-            progress_cb(0.99, "Starting RX drainer")
-        self._rx_drainer = RxDrainer(
-            self.transport, frame_callback=self._on_decoded_rx,
-        )
-        await self._rx_drainer.start()
-
-        if progress_cb:
-            progress_cb(1.00, "MT7610U live — TX gated, RX flowing")
-        WIRE_LOG.marker("end connect")
         return True
 
     def _set_channel_sync(self, channel: int) -> bool:
