@@ -61,7 +61,7 @@ def _load_firmware() -> bytes:
 class Rtl8814auDkmsDriver:
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
         DeviceID(VID_REALTEK, PID_RTL8814AU,
-                 "Realtek RTL8814AU 4T4R (ALFA AWUS1900) — vendor/DKMS port"),
+                 "Realtek RTL8814AU (DKMS) (ALFA AWUS1900)"),
     ]
     # 2.4 GHz + 5 GHz, 20 MHz primary (M5a band switch / M5b select / M5c runtime / M5d TX
     # power) — both bands tune with correct per-rate TX power for RX and inject. Non-DFS 5 GHz

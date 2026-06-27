@@ -12,7 +12,7 @@ chipset**, which writes a per-chipset *pair* of files —
   node, so wifit3 can open it without sudo.
 
 The module list is discovered *live* from the plugged-in card (sysfs bound-driver ∪ ``modprobe -R``
-on its modalias), with the driver's ``KERNEL_MODULES`` as a fallback hint — so it reflects what's
+on its modalias), with the driver's ``CONFLICTING_LINUX_MODULES`` as a fallback hint — so it reflects what's
 actually installed (mainline vs DKMS) rather than a hand-list that rots. Uninstall deletes both
 files; the card returns to its normal Wi-Fi driver on the next replug.
 

@@ -81,7 +81,7 @@ class RTL8188EUSDriver:
     """Driver for the Realtek RTL8188EUS (e.g. TP-Link TL-WN722N v2/v3)."""
 
     SUPPORTED_IDS = [
-        DeviceID(0x2357, 0x010C, "Realtek RTL8188EUS / TP-Link TL-WN722N v2/v3"),
+        DeviceID(0x2357, 0x010C, "Realtek RTL8188EUS (TP-Link TL-WN722N v2/v3)"),
     ]
     # 2.4 GHz only.
     SUPPORTED_CHANNELS = list(range(1, 14))

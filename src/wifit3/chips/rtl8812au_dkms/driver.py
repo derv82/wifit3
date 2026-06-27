@@ -56,7 +56,7 @@ CHANNELS_5G = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124
 class Rtl8812auDkmsDriver:
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
         DeviceID(USB_VID_REALTEK, USB_PID_AWUS036ACH,
-                 "Realtek RTL8812AU 2T2R (ALFA AWUS036ACH) — vendor/DKMS port"),
+                 "Realtek RTL8812AU (DKMS) (ALFA AWUS036ACH)"),
     ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G + CHANNELS_5G
     FAKE_MAC = FakeMacSupport.SPOOFABLE

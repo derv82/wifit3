@@ -78,16 +78,26 @@ class WlanDriver(Protocol):
     2.4 GHz should list 1..13 (or whatever their PHY actually supports).
     """
 
-    # ---- Optional: Linux take-control hint ----------------------------
-    KERNEL_MODULES: ClassVar[List[str]] = []
+    # ---- Optional: Linux take-control metadata ------------------------
+    # Both are read ONLY by the Linux take-control flow (setup + splash), never
+    # by the runtime — they're not a connect() contract.
+    CONFLICTING_LINUX_MODULES: ClassVar[List[str]] = []
     """Optional fallback hint: the Linux kernel module name(s) that bind this
-    chipset (e.g. ``["ath9k_htc"]``). The Linux "hand wifit3 this card"
-    setup blacklists these so the kernel can't grab + taint the cold-boot
-    state. Authoritative discovery is *live* (sysfs bound-driver + ``modprobe
-    -R`` against the plugged-in card); this list is only consulted when the
-    device isn't present to probe, so drivers may leave it empty. List only
-    the leaf USB-binding module, never the shared stack below it
-    (``mac80211``/``cfg80211``/…)."""
+    chipset (e.g. ``["ath9k_htc"]``). Take-control blacklists/unloads these so
+    the kernel can't grab + taint the cold-boot state. Authoritative discovery
+    is *live* (sysfs bound-driver + ``modprobe -R`` against the plugged-in
+    card); this list is only consulted when the device isn't present to probe,
+    so drivers may leave it empty. List only the leaf USB-binding module, never
+    the shared stack below it (``mac80211``/``cfg80211``/…)."""
+
+    LINUX_REPLUG_AFTER_TAKEOVER: ClassVar[bool] = False
+    """Set True when this chip's *warm* bring-up can't recover (e.g. MT7610U
+    comes up but RX never flows). Take-control unloads the kernel driver and
+    leaves the card warm, so for these chips the splash asks for a physical
+    replug (a real power-cycle → cold boot) instead of auto-connecting. Default
+    False: the chip reaches a clean state on its own (AR9271 self-re-enumerates
+    on firmware download), so auto-connect is fine. Linux-only — Windows
+    re-enumerates on WinUSB bind, so it never needs this."""
 
     @classmethod
     def from_usb_device(

@@ -45,7 +45,7 @@ _RSSI_EWMA_N = 8                 # EWMA window: ewma = (ewma*(N-1) + rssi)/N
 
 class RT5370Driver:
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
-        DeviceID(_VID_RALINK, _PID_RT5370, "Ralink RT5370 (RT5390) 1T1R"),
+        DeviceID(_VID_RALINK, _PID_RT5370, "Ralink RT5370 (RT5390)"),
     ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 15))   # 2.4 GHz, 20 MHz
     FAKE_MAC = FakeMacSupport.SPOOFABLE

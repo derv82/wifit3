@@ -56,7 +56,7 @@ def _load_firmware() -> bytes:
 class Rtl8821auDkmsDriver:
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
         DeviceID(USB_VID_REALTEK, USB_PID_AWUS036ACS,
-                 "Realtek RTL8821AU/RTL8811AU 1T1R (ALFA AWUS036ACS) — vendor/DKMS port"),
+                 "Realtek RTL8821AU/RTL8811AU (ALFA AWUS036ACS)"),
     ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G + CHANNELS_5G
     FAKE_MAC = FakeMacSupport.SPOOFABLE

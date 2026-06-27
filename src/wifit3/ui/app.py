@@ -64,6 +64,8 @@ class WifiteApp(App):
     #start-btn {
         height: 3;
         margin-left: 2;
+        color: white;
+        text-style: bold;
     }
     #uninstall-btn {
         height: 3;

@@ -42,6 +42,13 @@ RF regs as `MT_MCU_MEMMAP_RF (0x80000000) + MT_RF(bank,reg)`. So `MT_MAC_CSR0` (
 **5 GHz RX needs the per-channel LNA-gain correction (see Debug log).** It's band- and 5 GHz-subband-specific;
 feeding `lna_gain=0` leaves `MT_BBP(AGC,8)` desensitized. Fixed via `eeprom.lna_gain_for_channel`.
 
+**Warm bring-up doesn't restore RX — a power-cycle is required.** Coming up from a still-running FW
+(force-reset + re-upload) inits clean with no error, but RX never flows; only a real cold boot does.
+The Linux take-control flow unloads the kernel driver and leaves the card warm, so the driver sets
+`LINUX_REPLUG_AFTER_TAKEOVER = True` and the splash asks for a replug instead of auto-connecting. A
+normal cold plug is unaffected. (Why warm fails to arm RX is unconfirmed — likely an RF/DMA power
+state the re-upload doesn't reset.)
+
 ## Orientation
 
 Cold boot is orchestrated in `driver.connect()`: M1 FW upload (`firmware.py`) → post-FW init

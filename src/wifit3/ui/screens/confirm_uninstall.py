@@ -22,14 +22,13 @@ _BODY = {
         "sees it as a normal wireless adapter again.\n[dim]You can re-install it any time "
         "with START.[/dim]"),
     "linux": (
-        "This hands [bold]{name}[/] back to the kernel: it removes wifit3's blacklist + "
-        "access rule for this chipset.\n\n"
-        "[dim]The card returns to its normal Wi-Fi driver on the next replug.[/dim]"),
+        "This uninstalls Wifit3's udev and modprobe rules for the [bold]{name}[/].\n\n"
+        "[dim]The card returns to normal on the next unplug/replug.[/dim]"),
 }
 
 _TITLE = {
     "win": "Uninstall wifit3 driver?",
-    "linux": "Hand this chipset back to the kernel?",
+    "linux": "Uninstall Wifit3's udev + modprobe rules?",
 }
 
 

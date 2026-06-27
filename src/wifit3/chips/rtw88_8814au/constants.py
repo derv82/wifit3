@@ -58,20 +58,20 @@ from wifit3.chips.rtw88_base.registers import (  # noqa: F401
 # The Alfa AWUS1900 enumerates as the Realtek default 0x0bda:0x8813. The rest
 # are the kernel's full table (other vendors' 8814AU dongles).
 USB_IDS_8814AU: tuple[tuple[int, int, str], ...] = (
-    (0x0BDA, 0x8813, "Realtek RTL8814AU (default) / Alfa AWUS1900"),
-    (0x056E, 0x400B, "Elecom WDC-1300SU2 (RTL8814AU)"),
-    (0x056E, 0x400D, "Elecom (RTL8814AU)"),
-    (0x0846, 0x9054, "Netgear A7000 (RTL8814AU)"),
-    (0x0B05, 0x1817, "ASUS USB-AC68 (RTL8814AU)"),
-    (0x0B05, 0x1852, "ASUS (RTL8814AU)"),
-    (0x0B05, 0x1853, "ASUS USB-AC68 (RTL8814AU)"),
-    (0x0E66, 0x0026, "Hawking HW12ACU (RTL8814AU)"),
-    (0x2001, 0x331A, "D-Link DWA-192 (RTL8814AU)"),
-    (0x20F4, 0x809A, "TRENDnet TEW-809UB (RTL8814AU)"),
-    (0x20F4, 0x809B, "TRENDnet (RTL8814AU)"),
-    (0x2357, 0x0106, "TP-Link Archer T9UH (RTL8814AU)"),
-    (0x7392, 0xA834, "Edimax EW-7833UAC (RTL8814AU)"),
-    (0x7392, 0xA833, "Edimax EW-7833 (RTL8814AU)"),
+    (0x0BDA, 0x8813, "Realtek RTL8814AU (Alfa AWUS1900)"),
+    (0x056E, 0x400B, "RTL8814AU (Elecom WDC-1300SU2)"),
+    (0x056E, 0x400D, "RTL8814AU (Elecom)"),
+    (0x0846, 0x9054, "RTL8814AU (Netgear A7000)"),
+    (0x0B05, 0x1817, "RTL8814AU (ASUS USB-AC68)"),
+    (0x0B05, 0x1852, "RTL8814AU (ASUS)"),
+    (0x0B05, 0x1853, "RTL8814AU (ASUS USB-AC68)"),
+    (0x0E66, 0x0026, "RTL8814AU (Hawking HW12ACU)"),
+    (0x2001, 0x331A, "RTL8814AU (D-Link DWA-192)"),
+    (0x20F4, 0x809A, "RTL8814AU (TRENDnet TEW-809UB)"),
+    (0x20F4, 0x809B, "RTL8814AU (TRENDnet)"),
+    (0x2357, 0x0106, "RTL8814AU (TP-Link Archer T9UH)"),
+    (0x7392, 0xA834, "RTL8814AU (Edimax EW-7833UAC)"),
+    (0x7392, 0xA833, "RTL8814AU (Edimax EW-7833)"),
 )
 
 # --- Chip parameters (rtw8814a_hw_spec, rtw8814a.c:2180) -------------------

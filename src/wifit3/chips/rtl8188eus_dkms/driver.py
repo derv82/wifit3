@@ -53,7 +53,7 @@ def _load_firmware() -> bytes:
 class Rtl8188eusDkmsDriver:
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
         DeviceID(VID, PID,
-                 "Realtek RTL8188EUS 1T1R (TL-WN722N v2/v3) — vendor/DKMS port"),
+                 "Realtek RTL8188EUS (DKMS) (TL-WN722N v2/v3)"),
     ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = list(chan.CHANNELS_2G)   # 2.4 GHz, 20 MHz
     FAKE_MAC = FakeMacSupport.SPOOFABLE

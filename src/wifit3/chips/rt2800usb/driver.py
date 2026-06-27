@@ -91,10 +91,10 @@ class RT2800USBDriver:
 
     SUPPORTED_IDS = [
         DeviceID(USB_VID_RALINK, USB_PID_RT3572,
-                 "Ralink RT3572 / ALFA AWUS051NH v2",
+                 "Ralink RT3572 (ALFA AWUS051NH v2)",
                  extras={"chip_id": "rt3572"}),
         DeviceID(USB_VID_RALINK, USB_PID_RT5572,
-                 "Ralink RT5572 / Panda PAU09 N600",
+                 "Ralink RT5572 (Panda PAU09 N600)",
                  extras={"chip_id": "rt5572"}),
     ]
     #     0x3572 silicon (RT3572 / AWUS051NH v2) → 2.4 + 5 GHz non-DFS

@@ -70,6 +70,11 @@ class MT76x0UDriver:
     )
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
+    # Warm bring-up (force-reset + re-upload over a still-running FW) inits clean but RX never
+    # flows — only a real power-cycle does. Take-control leaves the card warm, so ask for a replug
+    # instead of auto-connecting. See MT76X0U.md. (Cold/normal plug is unaffected.)
+    LINUX_REPLUG_AFTER_TAKEOVER = True
+
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device,
                         id_entry: DeviceID) -> "MT76x0UDriver":

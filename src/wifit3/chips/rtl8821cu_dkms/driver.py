@@ -65,7 +65,7 @@ _PRIME_SETTLE_S = 0.1           # VCO settle after each band jump (the old bounc
 
 class Rtl8821cuDkmsDriver:
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
-        DeviceID(USB_VID_REALTEK, USB_PID_8821CU, "Realtek RTL8821CU 802.11ac (8821cu_dkms)"),
+        DeviceID(USB_VID_REALTEK, USB_PID_8821CU, "Realtek RTL8821CU (DKMS)"),
     ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = CHANNELS_2G + CHANNELS_5G
     FAKE_MAC: ClassVar[FakeMacSupport] = FakeMacSupport.SPOOFABLE

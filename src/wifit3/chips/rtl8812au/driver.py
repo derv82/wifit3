@@ -124,7 +124,7 @@ class RTL8812AUDriver:
 
     SUPPORTED_IDS = [
         DeviceID(USB_VID_REALTEK, USB_PID_AWUS036ACH,
-                 "Realtek RTL8812AU / ALFA AWUS036ACH"),
+                 "Realtek RTL8812AU (ALFA AWUS036ACH)"),
     ]
     # 2.4 GHz channels 1..13 + non-DFS 5 GHz (UNII-1 + UNII-3). DFS channels
     # are excluded by default to avoid the regulator-required clearance.

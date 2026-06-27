@@ -120,7 +120,7 @@ class SplashView(Screen):
             start_btn = self.query_one("#start-btn", Button)
             uninstall_btn = self.query_one("#uninstall-btn", Button)
             if interfaces:
-                status.update("[bold bright_green]Select a card and press START[/bold bright_green]")
+                status.update("[bold lightgreen]Select a card and press START[/bold lightgreen]")
                 start_btn.disabled = False
                 uninstall_btn.disabled = False
                 # clear() reset index to None; re-arm the highlight so START has a target.
@@ -245,7 +245,7 @@ class SplashView(Screen):
                         "the card opens but failed to initialize — replug and try again")
                 # Not WinUSB-bound → offer the one-time WinUSB install.
                 if not await self.app.push_screen_wait(ConfirmInstallDialog(desc)):
-                    status.update("[bold bright_green]Select a card and press START[/bold bright_green]")
+                    status.update("[bold lightgreen]Select a card and press START[/bold lightgreen]")
                     release()
                     return
                 status.update(f"[bold yellow]Installing WinUSB driver for {desc}… "
@@ -282,30 +282,31 @@ class SplashView(Screen):
                 if target is None:
                     raise bringup_err or RuntimeError(
                         "this card isn't a supported chipset for setup")
-                # Offer to hand wifit3 complete control of the chipset (the Linux analog of binding
-                # WinUSB): blacklist the kernel driver so it stops grabbing + tainting the card, and
-                # grant raw USB access. One sudo prompt; reversible via the ✕ button.
+                # Offer the Linux take-control: a udev access rule + a modprobe blacklist for this
+                # chipset (one sudo prompt; reversible via the ✕ button). Copy + button text are the
+                # user's exact wording — the setup UX is carefully phrased, don't paraphrase it.
+                chip = desc.split("(")[0].strip()    # just the chipset, no "(Make Model)" adapter
                 if not await self.app.push_screen_wait(ConfirmInstallDialog(
-                        desc,
-                        title="Give wifit3 complete control of this chipset?",
-                        link_label="Take control",
+                        chip,
+                        title="Wifit3 needs complete control of your wireless card",
+                        link_label="udev + modprobe",
                         warning=(
-                            f"[bold $text-warning]One-time sudo setup[/bold $text-warning] "
-                            f"(user [cyan]{current_user()}[/]):\n"
-                            f"- [bold]Blacklists the kernel driver[/] for this chipset so wifit3 "
-                            f"drives it from a clean cold-boot state.\n"
-                            f"- [bold]This card stops working as a normal Wi-Fi adapter[/] until "
-                            f"you uninstall.\n"
-                            f"- Grants raw USB access [bold]without sudo[/bold].\n"
-                            f"- [bold green]Reversible:[/bold green] Press "
-                            f"[bold white on red] ✕ [/bold white on red] to hand it back."),
-                        verb="Take control of",
-                        confirm_label="Take control")):
-                    status.update("[bold bright_green]Select a card and press START[/bold bright_green]")
+                            f"[bold $text-warning]One-time sudo setup for this card:"
+                            f"[/bold $text-warning] (user [cyan]{current_user()}[/cyan]):\n"
+                            f"- Creates [bold]udev rules[/bold] giving userland access to this card.\n"
+                            f"- Creates [bold]modprobe blocklist[/bold] for this card's drivers.\n"
+                            f"- [bold]The card stops working as usual[/bold]: "
+                            f"no [$text-warning]airmon[/], no [$text-warning]iw[/], "
+                            f"no [$text-warning]wifi[/].\n"
+                            f"- [bold cyan]Reversible[/bold cyan]: Press "
+                            f"[white bold on red] x [/white bold on red] to [bold]remove the "
+                            f"udev + modprobe rules[/bold]."),
+                        verb="Install rule + blocklist for",
+                        confirm_label="Install")):
+                    status.update("[bold lightgreen]Select a card and press START[/bold lightgreen]")
                     release()
                     return
-                status.update(f"[bold yellow]Taking control of {desc}… "
-                              f"(one password prompt)[/bold yellow]")
+                status.update(f"[bold yellow]Taking control of {chip}…[/bold yellow]")
                 result = await asyncio.to_thread(
                     install_rule, target, node=self.device_manager.usb_node_path(iface))
                 if not result.ok:
@@ -316,6 +317,17 @@ class SplashView(Screen):
                         status.update("[bold red]Couldn't take control of the chipset.[/bold red]")
                         self.app.push_screen(SetupErrorDialog(
                             "Linux device-control setup failed", result.message, result.detail))
+                    return
+                if target.replug_after_takeover:
+                    # This chip's warm bring-up can't recover (e.g. MT7610U inits clean but RX stays
+                    # dead), and takeover left it warm — only a physical replug (cold boot) fixes it,
+                    # so don't auto-connect.
+                    self.query_one("#init-progress", ProgressBar).display = False
+                    status.update(
+                        f"[bold lightgreen]✓ Rules installed for {chip}[/bold lightgreen]. "
+                        f"Please [italic]Unplug, Replug,[/italic] then press "
+                        f"[black bold on $primary] START [/black bold on $primary]")
+                    release()
                     return
                 # Auto-connect now. install_rule chgrp'd the live node, so wait for it to actually go
                 # writable (udev propagation) behind the spinner before connecting — an unready node
@@ -397,8 +409,8 @@ class SplashView(Screen):
 
         try:
             if not await self.app.push_screen_wait(
-                    ConfirmUninstallDialog(iface.description, os_kind)):
-                status.update("[bold bright_green]Select a card and press START[/bold bright_green]")
+                    ConfirmUninstallDialog(iface.description.split("(")[0].strip(), os_kind)):
+                status.update("[bold lightgreen]Select a card and press START[/bold lightgreen]")
                 release()
                 return
             status.update(f"[bold yellow]Removing wifit3 driver for {iface.description}…[/bold yellow]")

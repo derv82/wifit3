@@ -40,10 +40,10 @@ class AR9271V2Driver:
     """Atheros AR9271 / ALFA AWUS036NHA — 2.4 GHz, soft-MAC, ath9k_htc firmware."""
 
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
-        DeviceID(C.AR9271_VID, C.AR9271_PID, "Atheros AR9271 / ALFA AWUS036NHA (v2)"),
+        DeviceID(C.AR9271_VID, C.AR9271_PID, "Atheros AR9271 (ALFA AWUS036NHA)"),
     ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 14))   # 2.4 GHz only, no 5 GHz radio
-    KERNEL_MODULES: ClassVar[List[str]] = ["ath9k_htc"]            # Linux take-control blacklist hint
+    CONFLICTING_LINUX_MODULES: ClassVar[List[str]] = ["ath9k_htc"]   # take-control blacklist hint
     FAKE_MAC: ClassVar[FakeMacSupport] = FakeMacSupport.SPOOFABLE
 
     def __init__(self, dev: usb.core.Device):

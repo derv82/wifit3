@@ -64,9 +64,9 @@ class ConfirmInstallDialog(ModalScreen[bool]):
         super().__init__()
         self._full = description
         self._also = also          # appended inside the question's bold (e.g. " (+ 119 cards)")
-        # Short name for the diagram box (the chipset half of "Chipset / Adapter", capped so
+        # Short name for the diagram box (the chipset, before the "(Make Model)" suffix, capped so
         # a long name doesn't blow out the box width).
-        self._short = description.split(" / ")[0][:18]
+        self._short = description.split("(")[0].strip()[:18]
         self._pulse_i = 0
         self._title = title
         self._link_label = link_label   # middle (REQUIRED) box: "WinUSB Driver" / "Device Access"

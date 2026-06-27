@@ -23,15 +23,17 @@ class SetupTarget:
     key: str                              # registry/chipset name, e.g. "ar9271" — names the files
     description: str                      # human label of the card the user selected
     ids: tuple[tuple[int, int], ...]      # every VID:PID this driver claims
-    module_hints: tuple[str, ...]         # optional hardcoded fallback module names (KERNEL_MODULES)
+    module_hints: tuple[str, ...]         # fallback names (driver's CONFLICTING_LINUX_MODULES)
+    replug_after_takeover: bool = False   # warm takeover can't recover → make the user replug (cold)
 
 
 def target_for_vidpid(vid: int, pid: int) -> SetupTarget | None:
     """The :class:`SetupTarget` for the driver that claims ``vid:pid`` (or ``None`` if none does).
 
     Live module discovery (sysfs / ``modprobe -R``) is authoritative at install time; the
-    driver's optional ``KERNEL_MODULES`` rides along as a fallback hint for the degenerate
-    "device not plugged in" path. Import is deferred to sidestep the chip-driver import cycle.
+    driver's optional ``CONFLICTING_LINUX_MODULES`` rides along as a fallback hint for the
+    degenerate "device not plugged in" path. Import is deferred to sidestep the chip-driver
+    import cycle.
     """
     from wifit3.wlan.manager import _import_driver_classes
 
@@ -39,9 +41,11 @@ def target_for_vidpid(vid: int, pid: int) -> SetupTarget | None:
         for entry in driver_cls.SUPPORTED_IDS:
             if entry.vid == vid and entry.pid == pid:
                 ids = tuple(sorted({(e.vid, e.pid) for e in driver_cls.SUPPORTED_IDS}))
-                hints = tuple(getattr(driver_cls, "KERNEL_MODULES", ()) or ())
-                return SetupTarget(key=key, description=entry.description, ids=ids,
-                                   module_hints=hints)
+                hints = tuple(getattr(driver_cls, "CONFLICTING_LINUX_MODULES", ()) or ())
+                return SetupTarget(
+                    key=key, description=entry.description, ids=ids, module_hints=hints,
+                    replug_after_takeover=bool(
+                        getattr(driver_cls, "LINUX_REPLUG_AFTER_TAKEOVER", False)))
     return None
 
 

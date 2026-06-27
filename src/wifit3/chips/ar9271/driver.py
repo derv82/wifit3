@@ -31,11 +31,11 @@ class AR9271Driver:
     """
 
     SUPPORTED_IDS = [
-        DeviceID(0x0cf3, 0x9271, "Atheros AR9271 / ALFA AWUS036NHA"),
+        DeviceID(0x0cf3, 0x9271, "Atheros AR9271 (ALFA AWUS036NHA)"),
     ]
     # 2.4 GHz only (no 5 GHz radio).
     SUPPORTED_CHANNELS = list(range(1, 14))
-    KERNEL_MODULES = ["ath9k_htc"]   # Linux take-control blacklist hint (live probe is authoritative)
+    CONFLICTING_LINUX_MODULES = ["ath9k_htc"]   # take-control blacklist hint (live probe is authoritative)
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     @classmethod
