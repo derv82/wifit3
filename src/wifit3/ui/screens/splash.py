@@ -306,7 +306,7 @@ class SplashView(Screen):
                     status.update("[bold lightgreen]Select a card and press START[/bold lightgreen]")
                     release()
                     return
-                status.update(f"[bold yellow]Taking control of {chip}…[/bold yellow]")
+                status.update(f"[bold yellow]Installing udev rule + blocklist for {chip}…[/bold yellow]")
                 result = await asyncio.to_thread(
                     install_rule, target, node=self.device_manager.usb_node_path(iface))
                 if not result.ok:
@@ -314,9 +314,9 @@ class SplashView(Screen):
                     if result.cancelled:
                         status.update("[yellow]Setup cancelled.[/yellow]")
                     else:
-                        status.update("[bold red]Couldn't take control of the chipset.[/bold red]")
+                        status.update("[bold red]Couldn't install the udev rule + blocklist.[/bold red]")
                         self.app.push_screen(SetupErrorDialog(
-                            "Linux device-control setup failed", result.message, result.detail))
+                            "Couldn't install the device rules", result.message, result.detail))
                     return
                 if target.replug_after_takeover:
                     # This chip's warm bring-up can't recover (e.g. MT7610U inits clean but RX stays
@@ -345,18 +345,28 @@ class SplashView(Screen):
                     release()
                     self.app.push_screen(SetupErrorDialog(
                         "Device access didn't take effect",
-                        f"wifit3 now controls {desc}, but it hasn't picked up access yet.",
+                        f"The udev rule + blocklist are installed, but {desc} hasn't picked up "
+                        f"access yet.",
                         action="Unplug and replug the card, then press START."))
                     return
                 try:
-                    await _refind_and_connect("the card didn't come up after taking control")
+                    await _refind_and_connect("the card didn't come up after installing the rules")
                 except Exception as e:  # noqa: BLE001 — any connect fault → offer the replug fallback
-                    logger.info("post-take-control connect failed for %s: %s", desc, e)
+                    logger.info("post-install connect failed for %s: %s", desc, e)
                     self.query_one("#init-progress", ProgressBar).display = False
                     release()
+                    # The rules are in; the failure is in the device init itself. Name the failing
+                    # bring-up stage when we have it (BringUpError) — vague "couldn't bring it up"
+                    # hides the READ/WRITE/firmware step that actually died.
+                    body = (f"The udev rule + blocklist are installed, but {desc} didn't finish its "
+                            f"cold bring-up.")
+                    stage_detail = None
+                    if isinstance(e, BringUpError):
+                        body = (f"The udev rule + blocklist are installed, but {desc} didn't finish "
+                                f"its cold bring-up — {e.stage} failed.")
+                        stage_detail = e.detail or None
                     self.app.push_screen(SetupErrorDialog(
-                        "Failed to initialize card",
-                        f"wifit3 took control of {desc}, but the cold bring-up didn't complete.",
+                        "Failed to initialize card", body, stage_detail,
                         action="Unplug and replug the card, then press START."))
                     return
 

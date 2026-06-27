@@ -48,9 +48,9 @@ _NEVER_BLACKLIST = frozenset({
     "mac80211", "cfg80211", "ath", "ath9k_common", "ath9k_hw",
 })
 
-_REMOVED_MSG = ("Removed wifit3's control of this chipset. Replug the card to restore its normal "
-                "Wi-Fi driver.")
-_REPLUG_MSG = ("wifit3 now controls this chipset. Unplug and replug the card, then press START.")
+_REMOVED_MSG = ("Removed the udev rule + blocklist for this chipset. Replug the card to restore its "
+                "normal Wi-Fi driver.")
+_REPLUG_MSG = ("udev rule + blocklist installed. Unplug and replug the card, then press START.")
 
 
 def _safe(key: str) -> str:
@@ -311,7 +311,7 @@ def install_rule(target: SetupTarget, *, node: str | None = None) -> LinuxSetupR
         if method is None:
             return LinuxSetupResult(
                 ok=False, detail=_manual_hint(target.key),
-                message="No graphical elevator (pkexec/sudo) found to set up device access.")
+                message="No graphical elevator (pkexec/sudo) found to install the udev rule + blocklist.")
         rc = run_privileged(cmd, method)
 
     if rc == 0:
@@ -322,9 +322,9 @@ def install_rule(target: SetupTarget, *, node: str | None = None) -> LinuxSetupR
     if rc == 126:
         return LinuxSetupResult(
             ok=False, cancelled=True,
-            message="Authorization dismissed — wifit3 was not given control of the chipset.")
+            message="Authorization dismissed — the udev rule + blocklist were not installed.")
     return LinuxSetupResult(ok=False, detail=_manual_hint(target.key),
-                            message=f"Couldn't set up device control (exit {rc}).")
+                            message=f"Couldn't install the udev rule + blocklist (exit {rc}).")
 
 
 def remove_rule(target: SetupTarget, *, node: str | None = None) -> LinuxSetupResult:
@@ -337,21 +337,21 @@ def remove_rule(target: SetupTarget, *, node: str | None = None) -> LinuxSetupRe
     if not Path(rpath).exists() and not Path(bpath).exists():
         return LinuxSetupResult(
             ok=True, detail=rpath,
-            message="wifit3 doesn't control this chipset — nothing to remove.")
+            message="No udev rule installed for this chipset — nothing to remove.")
 
     cmd = _remove_cmd(target.key, node)
     if os.geteuid() == 0:
         rc = _run_as_root(cmd)
         return (LinuxSetupResult(ok=True, detail=rpath, message=_REMOVED_MSG) if rc == 0
                 else LinuxSetupResult(ok=False, detail=rpath,
-                                      message=f"Couldn't remove device control (exit {rc})."))
+                                      message=f"Couldn't remove the udev rule + blocklist (exit {rc})."))
 
     method = _choose_escalation_method()
     if method is None:
         return LinuxSetupResult(
             ok=False,
             detail=f"sudo rm -f {rpath} {bpath} && sudo udevadm control --reload-rules",
-            message="No graphical elevator (pkexec/sudo) found to remove device control.")
+            message="No graphical elevator (pkexec/sudo) found to remove the udev rule + blocklist.")
 
     rc = run_privileged(cmd, method)
     if rc == 0:
@@ -359,6 +359,6 @@ def remove_rule(target: SetupTarget, *, node: str | None = None) -> LinuxSetupRe
     if rc == 126:
         return LinuxSetupResult(
             ok=False, cancelled=True,
-            message="Authorization dismissed — wifit3 still controls the chipset.")
+            message="Authorization dismissed — the udev rule + blocklist are still installed.")
     return LinuxSetupResult(ok=False, detail=rpath,
-                            message=f"Couldn't remove device control (exit {rc}).")
+                            message=f"Couldn't remove the udev rule + blocklist (exit {rc}).")
