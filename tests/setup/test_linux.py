@@ -1,11 +1,17 @@
 """Unit tests for the pure + classification helpers in wifit3.setup.linux.
 
 The live path (graphical pkexec → files written → kernel module unloaded → replug → cold card)
-can't be exercised without a real Linux box + hardware, so it's left to the Kali smoke. Everything
-deterministic — live module discovery off a fake sysfs, the rule/blacklist text, the privileged
-argv, and the install/remove classification — is covered here and runs on any OS by forcing the
-platform/euid via monkeypatch.
+can't be exercised without a real Linux box + hardware, so it's left to the Kali smoke. The
+deterministic logic — the rule/blacklist text, the privileged argv, and the install/remove
+classification — is covered here on any OS by forcing the platform/euid via monkeypatch.
+
+The live module-discovery tests are the exception: they stand up a *real* sysfs tree (colon-named
+interface dirs like ``2-1:1.0`` + a ``driver`` symlink), which Windows' filesystem can't represent
+(``:`` is illegal in a path component; symlinks need privilege). The production glob/readlink leans
+on those exact Linux semantics, so faking them faithfully off-Linux isn't possible — ``_fake_sysfs``
+skips on Windows, and these run on the Linux CI leg instead.
 """
+import sys
 from pathlib import Path
 
 import pytest
@@ -40,6 +46,9 @@ def _fake_sysfs(tmp_path, monkeypatch, *, sub="sys", vid=0x0cf3, pid=0x9271, bou
                 modalias="usb:v0CF3p9271d0108dc00dsc00dp00icFFiscFFipFFin00"):
     """Build a minimal /sys/bus/usb/devices tree for one card and point the module at it. ``sub``
     lets one test stand up several distinct trees under the same tmp_path."""
+    if sys.platform == "win32":
+        pytest.skip("fake sysfs needs colon-named interface dirs + a driver symlink — Linux-only "
+                    "filesystem semantics (covered on the Linux CI leg)")
     base = tmp_path / sub
     dev = base / "2-1"
     dev.mkdir(parents=True)

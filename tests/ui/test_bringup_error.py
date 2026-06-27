@@ -68,7 +68,9 @@ async def test_splash_surfaces_driver_bringup_failure(monkeypatch):
         assert toasts, "a bring-up failure should raise a toast"
         args, kwargs = toasts[-1]
         assert kwargs.get("severity") == "error"
-        assert "RTL8187L (test)" in args[0] and "bring-up failed" in args[0]
+        # The splash trims the " (...)" suffix off the description, so the toast names the bare
+        # chipset ("RTL8187L"), not the full "RTL8187L (test)".
+        assert "RTL8187L" in args[0] and "(test)" not in args[0] and "bring-up failed" in args[0]
 
         # The core fix: force a full poll tick (it rewrites the status line) and confirm it
         # leaves the error label alone.
