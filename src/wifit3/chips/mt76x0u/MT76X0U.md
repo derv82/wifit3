@@ -8,7 +8,8 @@ MCU command channel. Dev card is `0e8d:7610` (Sabrent / MediaTek MT7610U).
 
 - Cold boot through PHY init working on hardware: FW upload, post-FW DMA/MAC reset, MCU channel, EFUSE, MAC/BBP/RF init.
 - 2.4 GHz monitor RX: working.
-- 5 GHz monitor RX: working after the per-channel LNA-gain fix (see Gotchas); CH157 soak ~97% of a good card's beacon rate.
+- 5 GHz monitor RX: at kernel parity (per-channel LNA-gain fix; see Gotchas). 2026-06-28 wifit3-vs-`mt76x0u` A/B: 5 GHz breadth 33=33, per-channel ~9.09/s incl. CH157 (~93% ceiling).
+- Full attack suite HW-confirmed (2026-06-28): deauth / handshake / PMKID / WPS-PBC (36 EAPOL, auto-ACK) live-fired on 5 GHz; WEP chopchop + ARP-replay ~300 IVs/s on the 2.4 GHz router.
 - `verify_pcap`: clean against the cold-boot pcap (capture-2).
 - Not ported: the periodic RSSI-driven AGC tracker (`mt76x0_phy_update_channel_gain` / `calibration_work`) — dynamic gain isn't re-seeded, lower-priority gap. RSSI-display (`rssi_offset[]`) half of `read_rx_gain` also unported (display-only).
 
@@ -90,5 +91,4 @@ Fix: ported the `lna_gain` half as `eeprom.lna_gain_for_channel` (reads `MT_EE_L
 RSSI-offset words, band/sub-band select, `!=0 && !=0xff` fallback to lna_5g[0], 0xff→0, s8 sign-extend)
 and threaded the real value into `set_channel_20mhz`. CH157 soak jumped to mean 9.5/s (~97% of ceiling);
 the whole band lifted. Unit test `tests/chips/mt76x0u/test_eeprom_lna_gain.py`. The periodic
-`mt76x0_phy_update_channel_gain` AGC tracker is a separate, lower-priority unported gap. User to HW-test
-the full 5 GHz attack suite.
+`mt76x0_phy_update_channel_gain` AGC tracker is a separate, lower-priority unported gap.

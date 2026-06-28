@@ -11,12 +11,14 @@ byte-for-byte against morrownr's cold-boot captures (both capture-2 and capture-
 monitor RX works on hardware (clean beacons, stable 10+ min on ch1), and is the manager
 default for `0bda:8812` (`WIFIT3_RTL8812=mainline` falls back). 5 GHz tune is byte-for-byte
 verified across all 37 hops including both band crossings and all DFS channels; 5 GHz RX off
-the antenna is pending a live `rx_diag.py --channel 36`.
+the antenna is HW-confirmed at kernel parity (2026-06-28 wifit3-vs-`rtw88_88xxa` A/B: 5 GHz breadth
+57=57, ~9.0–9.18/s on the populated non-DFS channels, RSSI −0.1 dB).
 
 TX is HW-confirmed on 2.4 GHz — deauth, WEP (fake-auth + ARP replay), ChopChop, and WPS
 (PIN brute + PBC), all via the stock engines over `inject_frame` (bulk-OUT 0x02). No TX pcap
 exists (the capture's build injected nothing), so TX is gated by live scripts, not a byte
-diff. 5 GHz TX rides the same path, untested live. A 30-min dual-band soak showed no
+diff. 5 GHz TX is HW-confirmed too (2026-06-28: deauth / handshake / PMKID / WPS-PBC fired live
+on 5 GHz, auto-ACK working). A 30-min dual-band soak showed no
 degradation.
 
 ## Gotchas

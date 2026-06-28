@@ -58,15 +58,6 @@ from the chip doc. `✅` = nothing open (already HW-confirmed). `🛑`/`⚠️` 
 > once-tested per card; re-confirm in the sweep. **rt2500usb + rtl8187 are NONE** (no active
 > mode, by design).
 
-### ar9271 — channel-tune FIXED since the doc; verify
-- ✅ The CH1/CH6-stuck channel bug (the one that started this sweep) is **fixed** —
-  `2bb6f90f` (Jun 21) computes the per-channel synth word, *after* AR9271.md's Jun 10
-  "PORT NOW SUSPECT." **Verify every channel now tunes.**
-- ⏳ Deeper per-channel analog/NF/IQ calibration may still be unported → per-channel RX
-  sensitivity unverified [AR9271.md:28].
-- ⏳ Cleanroom FW only partially promiscuous — drops downlink-unicast (RA = other client);
-  may miss frames [AR9271.md:76].
-
 ### rtl8187 (8187L)
 - ⏳ Injected deauth `duration=0` instead of the unicast-ACK NAV — minor TX-correctness nit
   [RTL8187L.md:296].
@@ -80,11 +71,6 @@ from the chip doc. `✅` = nothing open (already HW-confirmed). `🛑`/`⚠️` 
 ### rt2500usb — ✅ clean (full attack matrix + soak HW-confirmed 2026-06-11)
 ### rt3070 — ✅ no open defects
 ### rt5372 — ✅ clean (byte-perfect, full attack matrix green, 30-min soak, warm reattach)
-
-### mt76x0u
-- ⏳ 5 GHz weak RX — LNA-gain fix landed (3.5 → 9.5 bcn/s on ch157); **full 5 GHz attack
-  suite awaits your HW test** [MT76X0U.md:20,698].
-- ⏳ RX-poll RxReaderThread unverified on HW [MT76X0U.md:7].
 
 ### mt76x2u (AWUS036ACM)
 - ⏳ 5 GHz inject — CCK→OFDM rate fix landed source-side; **awaits 5 GHz HW test** [MT76X2U.md].
@@ -110,10 +96,6 @@ from the chip doc. `✅` = nothing open (already HW-confirmed). `🛑`/`⚠️` 
   legacy driver only. Use 8812 on its default.
 - ⏳ No-UI-feedback-on-wedge applies only if someone opts into mainline [RTL8812AU.md:65];
   the cross-cutting "Hardware-failure UX" item is the real fix.
-
-### rtl8812au_dkms (AWUS036ACH)
-- ⏳ 5 GHz RX + TX off the antenna **untested** — tune is byte-verified, live RX/TX await your
-  HW test (`rx_diag --channel 36`) [RTL8812AU_DKMS.md:69]. (2.4 GHz attack suite HW-confirmed.)
 
 ### rtl8821au (mainline) — ✅ clean (M0-M6 + RX-poll/ToDS HW-confirmed)
 ### rtl8821au_dkms
