@@ -45,7 +45,7 @@ feeding `lna_gain=0` leaves `MT_BBP(AGC,8)` desensitized. Fixed via `eeprom.lna_
 **Warm bring-up doesn't restore RX — a power-cycle is required.** Coming up from a still-running FW
 (force-reset + re-upload) inits clean with no error, but RX never flows; only a real cold boot does.
 (Why warm fails to arm RX is unconfirmed — likely an RF/DMA power state the re-upload doesn't reset.)
-No replug gate is needed, though: take-control's `modprobe -r` cold-re-enumerates the card, so the
+No replug gate is needed, though: device setup's `modprobe -r` cold-re-enumerates the card, so the
 no-replug auto-connect comes up cold with RX flowing.
 
 ## Orientation

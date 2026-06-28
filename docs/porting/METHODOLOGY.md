@@ -18,7 +18,7 @@ reference you ship with it). Terms used below — pcap, timeline, bundle — are
 
 - **uv** for all Python — `uv run …`; bare `python` lacks the deps.
 - **tshark** on PATH — the verify tool and every pcap query shell out to it.
-- **The card, bound to userland** — Windows: WinUSB via Zadig. Linux: the splash's take-control
+- **The card, bound to userland** — Windows: WinUSB via Zadig. Linux: the splash's device-setup
   step writes a per-chipset modprobe blacklist + udev access rule and asks for a replug. The
   blacklist — *not* the udev rule — is what keeps the kernel off the card across replugs (a rule
   only chmods the node; the kernel still binds + taints cold state). Ad-hoc: `rmmod` the module and

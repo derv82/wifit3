@@ -282,7 +282,7 @@ class SplashView(Screen):
                 if target is None:
                     raise bringup_err or RuntimeError(
                         "this card isn't a supported chipset for setup")
-                # Offer the Linux take-control: a udev access rule + a modprobe blacklist for this
+                # Offer the Linux device setup: a udev access rule + a modprobe blacklist for this
                 # chipset (one sudo prompt; reversible via the ✕ button). Copy + button text are the
                 # user's exact wording — the setup UX is carefully phrased, don't paraphrase it.
                 chip = desc.split("(")[0].strip()    # just the chipset, no "(Make Model)" adapter
@@ -318,9 +318,9 @@ class SplashView(Screen):
                         self.app.push_screen(SetupErrorDialog(
                             "Couldn't install the device rules", result.message, result.detail))
                     return
-                if target.replug_after_takeover:
+                if target.replug_after_modprobe:
                     # This chip's warm bring-up can't recover (e.g. MT7610U inits clean but RX stays
-                    # dead), and takeover left it warm — only a physical replug (cold boot) fixes it,
+                    # dead), and the modprobe unload left it warm — only a physical replug (cold boot) fixes it,
                     # so don't auto-connect.
                     self.query_one("#init-progress", ProgressBar).display = False
                     status.update(

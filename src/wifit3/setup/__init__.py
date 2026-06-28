@@ -24,7 +24,7 @@ class SetupTarget:
     description: str                      # human label of the card the user selected
     ids: tuple[tuple[int, int], ...]      # every VID:PID this driver claims
     module_hints: tuple[str, ...]         # fallback names (driver's CONFLICTING_LINUX_MODULES)
-    replug_after_takeover: bool = False   # warm takeover can't recover → make the user replug (cold)
+    replug_after_modprobe: bool = False   # warm card can't recover → make the user replug (cold)
 
 
 def target_for_vidpid(vid: int, pid: int) -> SetupTarget | None:
@@ -44,8 +44,8 @@ def target_for_vidpid(vid: int, pid: int) -> SetupTarget | None:
                 hints = tuple(getattr(driver_cls, "CONFLICTING_LINUX_MODULES", ()) or ())
                 return SetupTarget(
                     key=key, description=entry.description, ids=ids, module_hints=hints,
-                    replug_after_takeover=bool(
-                        getattr(driver_cls, "LINUX_REPLUG_AFTER_TAKEOVER", False)))
+                    replug_after_modprobe=bool(
+                        getattr(driver_cls, "LINUX_REPLUG_AFTER_MODPROBE", False)))
     return None
 
 

@@ -232,7 +232,7 @@ class WlanDeviceManager:
     def linux_kernel_driver_bound(self, iface: WlanInterface) -> bool:
         # Linux: is a real kernel Wi-Fi driver bound to this card (so it's tainted, not cold)? Even
         # when the node is writable (e.g. root), a bound driver means firmware was already uploaded
-        # — the card needs the take-control blacklist + a replug before a clean bring-up.
+        # — the card needs the modprobe blacklist + a replug before a clean bring-up.
         if not sys.platform.startswith("linux") or iface.dev is None:
             return False
         from wifit3.setup.linux import kernel_driver_bound

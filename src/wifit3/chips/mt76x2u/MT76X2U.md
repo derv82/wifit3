@@ -76,9 +76,9 @@ cross-reference.
 ### 2026-06-27 — Linux bring-up validated; no replug gate needed
 
 First Linux (Kali VM) validation. Unlike its connac siblings (mt76x0u, mt7921au), mt76x2u does
-**not** set `LINUX_REPLUG_AFTER_TAKEOVER` and should not: those two can't cold-reset in userland
+**not** set `LINUX_REPLUG_AFTER_MODPROBE` and should not: those two can't cold-reset in userland
 (replug-only), but `power.force_power_cycle` clears this chip's WLAN block to a cold-equivalent
-state without a physical replug, so the take-control no-replug path self-recovers a kernel-warmed
+state without a physical replug, so the device-setup no-replug path self-recovers a kernel-warmed
 chip. Confirmed end-to-end: install-rules→boot, warm reboot, and unplug/replug all succeed; passive
 `test_hw_mt76x2u --phase rx` (27 BSSIDs ch6) and `--phase hop` (107 BSSIDs, 65×2.4 GHz + 42×5 GHz)
 both PASS. Note: `test_hw_mt76x2u`'s default/`all` phase fires live deauth — use `--phase rx|hop`
