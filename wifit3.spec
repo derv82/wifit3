@@ -1,21 +1,15 @@
 # PyInstaller build spec for wifit3 — build with: uv run pyinstaller wifit3.spec
 #
 # Produces a single self-contained onefile binary — dist/wifit3.exe on Windows, dist/wifit3 on
-# Linux (drag-and-drop distributable). PyInstaller does NOT cross-compile: build each target ON
-# that OS (a Linux box/container for the Linux binary). macOS is not a build target.
-# Tradeoff vs onedir: onefile unpacks the ~40 MB bundle into a temp dir on each launch (a
-# slightly slower cold start) and trips AV/SmartScreen more readily. Multiprocessing is
-# unaffected — the WEP cracker's spawned workers reuse the parent's already-extracted dir
-# (freeze_support in __main__.py), so they do not re-unpack per worker. To revert to a onedir
-# bundle (a dist/wifit3/ folder — faster start, friendlier to AV, but the whole folder must
-# ship together), swap the EXE/COLLECT blocks at the bottom of this file.
+# Linux. PyInstaller does NOT cross-compile: build each target ON that OS. macOS is not a build target.
 #
-# This is a CONSOLE app (console=True): Textual needs a real TTY, so a --windowed build
-# would have no stdin/stdout and break. The exe therefore closes-on-double-click like any
-# console program — it is meant to be launched from a terminal.
+# onefile (active) vs onedir tradeoff:
+#   onefile: one binary; unpacks into a temp dir on each launch (slower cold start), trips AV/SmartScreen more.
+#   onedir:  a dist/wifit3/ folder; faster start, friendlier to AV, but ships as the whole folder.
+# To switch to onedir, swap the EXE/COLLECT blocks at the bottom of this file.
 #
-# No UAC manifest (uac_admin=False): the app self-elevates only the bundled wdi-simple.exe
-# child via ShellExecuteExW "runas" (setup/windows.py); elevating the whole TUI would be wrong.
+# Console app (console=True): Textual needs a real TTY, so a --windowed build would have no
+# stdin/stdout and break. The exe closes-on-double-click like any console program — launch from a terminal.
 
 import os
 import sys
