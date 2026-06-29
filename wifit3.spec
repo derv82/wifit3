@@ -14,23 +14,16 @@
 import os
 import sys
 
-from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_data_files
 
-# Assets loaded via Path(__file__).parent / "assets" / ... are invisible to import analysis:
-# firmware blobs (chips/*/assets/*.bin,*.fw), ANSI art (ui/assets/*.ans), and the vendored
-# WinUSB installer (setup/bin/win-x64/wdi-simple.exe). collect_data_files grabs them all,
-# preserving the package-relative layout that Path(__file__) resolves against in the bundle.
+# Collects firmware blobs (*.bin, *.fw), ANSI art (*.ans), and Windows installer (wdi-simple.exe)
 datas = collect_data_files("wifit3")
 if sys.platform != "win32":
-    # wdi-simple.exe (and its PROVENANCE) is the Windows WinUSB binder — setup/windows.py only
-    # ever invokes it under sys.platform == "win32". Drop the whole vendored setup/bin/ tree
-    # from the Linux bundle rather than ship a dead Windows .exe inside it.
+    # /setup/bin/* is 100% windows-specific
     datas = [(src, dest) for (src, dest) in datas
              if "/setup/bin/" not in src.replace("\\", "/")]
 binaries = []
-# Drivers are statically imported in wlan/manager.py, but collect every chips.* submodule
-# anyway so a future dynamic/lazy driver load can't silently drop one from the bundle.
-hiddenimports = collect_submodules("wifit3.chips")
+hiddenimports = []
 
 # libusb_package ships libusb-1.0.dll as a binary (no DLL -> zero USB devices found).
 # textual ships its widgets' built-in .tcss as data files. Pull each fully.
