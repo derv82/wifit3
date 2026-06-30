@@ -198,6 +198,7 @@ class FocusViewV2(Screen):
         self._wpa3_down_attack: Optional[WPA3DowngradeAttack] = None
         self._pending_wps_pin = False   # WPS-PIN launch deferred past on_screen_resume's re-acquire
         self._pbc_campaign: Optional[WpsPbcCapture] = None
+        self._pmkid_campaign: Optional[PmkidHarvestAttack] = None
         # Last packet_stats snapshot, diffed each tick to flicker the endpoint LEDs
         # (router on RX from the target, card on TX we send). None = no baseline yet.
         self._prev_stats = None
@@ -301,6 +302,7 @@ class FocusViewV2(Screen):
         self._stop_generate_ivs()
         self._stop_pbc_capture()
         self._stop_wps_pin()
+        self._stop_pmkid()
 
         ap = getattr(self.app, "target_ap", None)
         self._target_ap = ap
@@ -427,6 +429,8 @@ class FocusViewV2(Screen):
             if result is not None:
                 self._log(treelog.leaf(_save_line(result)))
             self._stop_generate_ivs()
+        if self._pmkid_campaign is not None and self._pmkid_campaign.done:
+            self._finish_pmkid()
         if self._pbc_campaign is not None and self._pbc_campaign.done:
             self._finish_pbc_capture(ap)
         if (ap.wps_pbc_active and not self._pbc_busy() and not ap.has_psk
@@ -564,7 +568,7 @@ class FocusViewV2(Screen):
             if mac:
                 self.run_worker(self._run_deauth_selected(mac), exclusive=True)
         elif bid == "btn-pmkid":
-            self.run_worker(self._run_pmkid_harvest(), exclusive=True)
+            self._start_pmkid()
         elif bid == "btn-wps-pin":
             self._toggle_wps_pin()
         elif bid == "btn-wpa3-down":
@@ -619,27 +623,36 @@ class FocusViewV2(Screen):
 
     # ----- PMKID -------------------------------------------------------------
 
-    async def _run_pmkid_harvest(self) -> None:
-        """Worker: run a PMKID harvest against the focused AP."""
+    def _start_pmkid(self) -> None:
+        if self._pmkid_campaign is not None:        # already harvesting (or finishing) — ignore
+            return
         ap = self._target_ap
         iface = getattr(self.app, "active_interface", None)
         if not ap or not iface:
             self._log("[red]✗ No target / interface — aborting PMKID harvest.[/red]")
             return
-        attack = PmkidHarvestAttack(iface, ap)
-        try:
-            pmkid = await attack.run()
-        except Exception as exc:
-            logger.exception("PMKID harvest crashed")
-            self._log(treelog.leaf_fail(f"PMKID harvest crashed: {escape(str(exc))}"))
+        self._pmkid_campaign = PmkidHarvestAttack(iface, ap)
+        self._pmkid_campaign.run()
+
+    def _finish_pmkid(self) -> None:
+        """Handle a completed harvest (polled from _tick once ``done``): save + log a
+        recovered PMKID, or surface the specific fail_reason."""
+        camp = self._pmkid_campaign
+        self._pmkid_campaign = None
+        if camp is None:
             return
-        essid = escape(ap.ssid or "<hidden>")
-        if pmkid:
-            result = save_pmkid(ap, attack.client_mac)
+        essid = escape(camp.target.ssid or "<hidden>")
+        if camp.pmkid:
+            result = save_pmkid(camp.target, camp.client_mac)
             hint = _save_line(result) if result is not None else None
             self._emit_lines(pmkid_success_lines(essid, hint))
         else:
-            self._emit_lines(pmkid_failure_lines(essid, attack.fail_reason))
+            self._emit_lines(pmkid_failure_lines(essid, camp.fail_reason))
+
+    def _stop_pmkid(self) -> None:
+        if self._pmkid_campaign is not None:
+            self._pmkid_campaign.request_stop()
+            self._pmkid_campaign = None
 
     # ----- WPA3 downgrade ----------------------------------------------------
 
@@ -868,4 +881,5 @@ class FocusViewV2(Screen):
         self._stop_generate_ivs()
         self._stop_pbc_capture()
         self._stop_wps_pin()
+        self._stop_pmkid()
         self.app.pop_screen()

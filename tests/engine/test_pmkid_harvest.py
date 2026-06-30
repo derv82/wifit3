@@ -72,9 +72,10 @@ def _assoc_reqs(iface):
 async def test_success_returns_pmkid_and_bursts_deauth():
     pmkid = bytes(range(16))
     iface = _FakeIface(deliver_m1=True, pmkid=pmkid)
-    a = PmkidHarvestAttack(iface, _target())
-    out = await a.run(m1_timeout=0.05)
-    assert out == pmkid
+    a = PmkidHarvestAttack(iface, _target(), m1_timeout=0.05)
+    await a._loop()
+    await a.teardown()
+    assert a.pmkid == pmkid
     assert a.fail_reason is None
     assert len(_deauths(iface)) == 3                           # 3x leaving-deauth
     assert len(_assoc_reqs(iface)) == 1                        # no retry on success
@@ -82,9 +83,10 @@ async def test_success_returns_pmkid_and_bursts_deauth():
 
 async def test_empty_m1_deauths_does_not_retry_and_says_why():
     iface = _FakeIface(deliver_m1=True, pmkid=None)
-    a = PmkidHarvestAttack(iface, _target())
-    out = await a.run(attempts=3, m1_timeout=0.05)
-    assert out is None
+    a = PmkidHarvestAttack(iface, _target(), attempts=3, m1_timeout=0.05)
+    await a._loop()
+    await a.teardown()
+    assert a.pmkid is None
     assert a.fail_reason is PmkidFail.NO_KDE                   # specific, definitive reason
     assert len(_deauths(iface)) == 3                           # still deauth — we got M1
     assert len(_assoc_reqs(iface)) == 1                        # the fix: ONE attempt, not 3
@@ -92,9 +94,10 @@ async def test_empty_m1_deauths_does_not_retry_and_says_why():
 
 async def test_silent_ap_retries_then_gives_up_without_deauth():
     iface = _FakeIface(deliver_m1=False)
-    a = PmkidHarvestAttack(iface, _target())
-    out = await a.run(attempts=3, m1_timeout=0.02)
-    assert out is None
+    a = PmkidHarvestAttack(iface, _target(), attempts=3, m1_timeout=0.02)
+    await a._loop()
+    await a.teardown()
+    assert a.pmkid is None
     assert a.fail_reason is PmkidFail.NO_RESPONSE
     assert len(_assoc_reqs(iface)) == 3                        # rotate + retry while silent
     assert _deauths(iface) == []                               # never got M1 → nothing to leave
@@ -103,8 +106,9 @@ async def test_silent_ap_retries_then_gives_up_without_deauth():
 async def test_pmf_required_short_circuits_without_tx():
     iface = _FakeIface(deliver_m1=False)
     a = PmkidHarvestAttack(iface, _target(pmf_required=True))
-    out = await a.run()
-    assert out is None
+    await a._loop()
+    await a.teardown()
+    assert a.pmkid is None
     assert a.fail_reason is PmkidFail.PMF_REQUIRED
     assert iface.sent == []                                    # don't even try — no auth/assoc/deauth
 
@@ -113,8 +117,9 @@ async def test_no_psk_akm_short_circuits():
     # SAE-only AP (WPA3) → no PSK PMK to harvest → bail before any TX.
     iface = _FakeIface(deliver_m1=True, pmkid=bytes(16))
     a = PmkidHarvestAttack(iface, _target(akm_suites=(0x08,)))   # 0x08 = SAE
-    out = await a.run()
-    assert out is None
+    await a._loop()
+    await a.teardown()
+    assert a.pmkid is None
     assert a.fail_reason is PmkidFail.NO_PSK_AKM
     assert iface.sent == []
 
@@ -139,9 +144,10 @@ def test_force_psk_akm_rejects_malformed():
 
 async def test_active_monitor_armed_when_supported():
     iface = _FakeIface(deliver_m1=True, pmkid=bytes(range(16)), fake_mac_supported=True)
-    a = PmkidHarvestAttack(iface, _target())
-    out = await a.run(m1_timeout=0.05)
-    assert out == bytes(range(16))
+    a = PmkidHarvestAttack(iface, _target(), m1_timeout=0.05)
+    await a._loop()
+    await a.teardown()
+    assert a.pmkid == bytes(range(16))
     assert iface.fake_mac_arms >= 1            # HW-ACK armed for our forged MAC
     assert iface.fake_mac_clears == 1          # and torn down exactly once at the end
 
@@ -149,9 +155,10 @@ async def test_active_monitor_armed_when_supported():
 async def test_active_monitor_skipped_when_unsupported():
     # FAKE_MAC unsupported → set_fake_mac returns None → keep going un-ACKed, no clear.
     iface = _FakeIface(deliver_m1=True, pmkid=bytes(range(16)))   # fake_mac_supported=False
-    a = PmkidHarvestAttack(iface, _target())
-    out = await a.run(m1_timeout=0.05)
-    assert out == bytes(range(16))             # still harvests via the un-ACKed fallback
+    a = PmkidHarvestAttack(iface, _target(), m1_timeout=0.05)
+    await a._loop()
+    await a.teardown()
+    assert a.pmkid == bytes(range(16))         # still harvests via the un-ACKed fallback
     assert iface.fake_mac_clears == 0          # nothing armed → nothing to clear
 
 
