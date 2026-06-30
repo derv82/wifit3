@@ -139,11 +139,18 @@ def test_wep_status_lines_drops_threshold_once_crossed():
     assert "/10k" not in crossed and "13,982" in crossed
 
 
+# RSN AKM suite numbers (00-0F-AC:N), parallel to the human-readable `akms`.
+_AKM_NUM = {"PSK": 2, "PSK-SHA256": 6, "SAE": 8, "802.1X": 1, "EAP": 1, "FT-PSK": 4}
+
+
 def _rsn_ap(*, encryption="WPA2", akms=("PSK",), wpa3=False, transition_mode=False,
-            pmf_required=False, pmf_capable=False,
+            pmf_required=False, pmf_capable=False, akm_suites=None,
             wps=False, wps_locked=False, wps_version="1.0"):
+    akms = list(akms)
+    if akm_suites is None:
+        akm_suites = [_AKM_NUM[a] for a in akms if a in _AKM_NUM]
     return types.SimpleNamespace(
-        encryption=encryption, akms=list(akms), pairwise_cipher="CCMP",
+        encryption=encryption, akms=akms, akm_suites=akm_suites, pairwise_cipher="CCMP",
         wpa3=wpa3, transition_mode=transition_mode, wep=None,
         pmf_required=pmf_required, pmf_capable=pmf_capable, bssid="aa:bb:cc:dd:ee:ff",
         wps=wps, wps_locked=wps_locked, wps_version=wps_version)
@@ -201,3 +208,89 @@ def test_derive_buttons_wep_labels_and_variants():
     run = fm.derive_buttons(_wep_btn_ap(), fm.Campaigns(wep=_wep_camp(chop=True)))
     assert run.gen_ivs.label == "Stop Replay" and run.gen_ivs.variant == "error"
     assert run.chop.label == "Stop Chop" and run.chop.variant == "warning"
+
+
+# ---------------------------------------------------------------------------
+# CHARACTERIZATION — pins the exact button matrix / mutex / card line that the
+# registry rewrite (Phase B) must reproduce byte-for-byte. The headline + status
+# markup are status functions (untouched by the rewrite) and covered above.
+# (The OPEN/enterprise/SAE PMKID-eligibility *fix* is asserted in Phase B, where
+# the predicate changes — these cases pin only the behaviour that must NOT drift.)
+# ---------------------------------------------------------------------------
+
+
+def _bs(b):
+    """(visible, disabled, label, variant) — compact button-state tuple."""
+    return (b.visible, b.disabled, b.label, b.variant)
+
+
+def test_buttons_wpa2_psk_no_wps_only_pmkid_visible():
+    b = fm.derive_buttons(_rsn_ap(akms=("PSK",), wps=False), fm.Campaigns())
+    assert _bs(b.pmkid) == (True, False, "PMKID", "primary")
+    assert b.wps_pin.visible is False and b.wpa3_down.visible is False
+    assert b.gen_ivs.visible is False and b.chop.visible is False
+
+
+def test_buttons_wpa2_wps_unlocked_pin_enabled():
+    b = fm.derive_buttons(_rsn_ap(wps=True, wps_locked=False), fm.Campaigns())
+    assert _bs(b.wps_pin) == (True, False, "WPS PIN", "primary")
+    assert b.pmkid.visible is True and b.pmkid.disabled is False
+
+
+def test_buttons_wpa2_wps_locked_pin_visible_but_disabled():
+    b = fm.derive_buttons(_rsn_ap(wps=True, wps_locked=True), fm.Campaigns())
+    assert _bs(b.wps_pin) == (True, True, "WPS PIN", "primary")
+
+
+def test_buttons_wpa3_transition_shows_pmkid_and_downgrade():
+    b = fm.derive_buttons(_rsn_ap(wpa3=True, transition_mode=True), fm.Campaigns())
+    assert b.pmkid.visible is True and b.pmkid.disabled is False
+    assert _bs(b.wpa3_down) == (True, False, "WPA ↓", "primary")
+
+
+def test_buttons_wpa3_only_sae_hides_everything():
+    """SAE-only: PMKID isn't crackable, no transition/WPS → no attack buttons."""
+    b = fm.derive_buttons(
+        _rsn_ap(encryption="WPA3", wpa3=True, transition_mode=False, akms=("SAE",)),
+        fm.Campaigns())
+    assert all(not x.visible for x in
+               (b.gen_ivs, b.chop, b.pmkid, b.wps_pin, b.wpa3_down))
+
+
+def test_buttons_mutex_running_wps_disables_siblings():
+    ap = _rsn_ap(wpa3=True, transition_mode=True, wps=True)
+    b = fm.derive_buttons(ap, fm.Campaigns(wps=object()))
+    assert _bs(b.wps_pin) == (True, False, "Stop PIN", "error")
+    assert b.pmkid.disabled is True                      # radio owned by WPS
+    assert _bs(b.wpa3_down) == (True, True, "WPA ↓", "primary")
+
+
+def test_buttons_running_wpa3_down_toggles_and_blocks_pmkid():
+    ap = _rsn_ap(wpa3=True, transition_mode=True)
+    b = fm.derive_buttons(ap, fm.Campaigns(wpa3_down=object()))
+    assert _bs(b.wpa3_down) == (True, False, "Stop ↓", "primary")
+    assert b.pmkid.disabled is True
+
+
+def test_other_long_running_tx_mutex_and_excludes():
+    assert fm.other_long_running_tx(fm.Campaigns()) is False
+    assert fm.other_long_running_tx(fm.Campaigns(wep=object())) is True
+    assert fm.other_long_running_tx(fm.Campaigns(wep=object()), exclude="wep") is False
+    assert fm.other_long_running_tx(fm.Campaigns(pbc_busy=True)) is True
+    assert fm.other_long_running_tx(fm.Campaigns(pbc_busy=True), exclude="pbc") is False
+    assert fm.other_long_running_tx(fm.Campaigns(wps=object()), exclude="wpa3down") is True
+
+
+def test_deauth_blocked_by_mutex_or_pmf():
+    assert fm.deauth_blocked(_rsn_ap(), fm.Campaigns()) is False
+    assert fm.deauth_blocked(_rsn_ap(pmf_required=True), fm.Campaigns()) is True
+    assert fm.deauth_blocked(_rsn_ap(), fm.Campaigns(wep=object())) is True
+
+
+def test_card_dynamic_each_state():
+    assert fm.card_dynamic(fm.Campaigns()) == ""
+    assert fm.card_dynamic(fm.Campaigns(wep=_wep_camp())) == "● replaying"
+    assert fm.card_dynamic(fm.Campaigns(wep=_wep_camp(chop=True))) == "● chopping"
+    assert fm.card_dynamic(fm.Campaigns(wps=object())) == "● WPS PIN"
+    assert fm.card_dynamic(fm.Campaigns(wpa3_down=object())) == "● downgrading"
+    assert fm.card_dynamic(fm.Campaigns(pbc_busy=True)) == "● WPS PBC"
