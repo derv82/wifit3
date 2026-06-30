@@ -1,9 +1,20 @@
 """Tests for the WEP Generate IVs campaign orchestrator."""
+import asyncio
+
 import pytest
 
+from wifit3.engine.attacks.campaign import Campaign
 from wifit3.engine.models import AccessPoint
 from wifit3.wlan.wep_store import WepCaptureStore
 from wifit3.engine.attacks.wep.campaign import WepCampaign
+
+
+@pytest.fixture(autouse=True)
+def _reset_active():
+    """The radio mutex is a Campaign class var — reset it around each test."""
+    Campaign.active = None
+    yield
+    Campaign.active = None
 
 
 async def test_campaign_starts_and_stops_both_subattacks(mocker):
@@ -15,12 +26,13 @@ async def test_campaign_starts_and_stops_both_subattacks(mocker):
     ap = AccessPoint(bssid="11:22:33:44:55:66", ssid="W", channel=6, encryption="WEP")
 
     campaign = WepCampaign(iface, ap)
-    campaign.start()
+    campaign.run()
+    await asyncio.sleep(0.05)            # let _loop start the daemons
     assert campaign.is_active
     assert campaign.fake_auth.is_active
     assert campaign.replay.is_active
 
-    campaign.stop()
+    await campaign.stop()               # cooperative stop + await teardown
     assert not campaign.is_active
     assert not campaign.fake_auth.is_active
     assert not campaign.replay.is_active

@@ -727,7 +727,7 @@ class FocusViewV2(Screen):
             return
         try:
             self._wep_campaign = WepCampaign(iface, ap, log_callback=self._log)
-            self._wep_campaign.start()
+            self._wep_campaign.run()
         except Exception as exc:
             logger.exception("Generate IVs start failed")
             self._log(f"[bold red]✗ Generate IVs failed to start:[/bold red] {escape(str(exc))}")
@@ -736,7 +736,7 @@ class FocusViewV2(Screen):
     def _stop_generate_ivs(self) -> None:
         if not self._wep_campaign:
             return
-        self._wep_campaign.stop()
+        self._wep_campaign.request_stop()
         self._wep_campaign = None
 
     def _toggle_chop(self) -> None:
