@@ -287,6 +287,20 @@ def test_deauth_blocked_by_mutex_or_pmf():
     assert fm.deauth_blocked(_rsn_ap(), fm.Campaigns(wep=object())) is True
 
 
+def test_buttons_open_hides_pmkid():
+    """THE FIX: an open network has no PSK AKM → no PMKID button (was shown)."""
+    b = fm.derive_buttons(_rsn_ap(encryption="OPEN", akms=()), fm.Campaigns())
+    assert b.pmkid.visible is False
+    assert all(not x.visible for x in
+               (b.gen_ivs, b.chop, b.wps_pin, b.wpa3_down))
+
+
+def test_buttons_enterprise_hides_pmkid():
+    """802.1X (enterprise) PMK isn't dictionary-crackable → no PMKID button."""
+    b = fm.derive_buttons(_rsn_ap(akms=("802.1X",)), fm.Campaigns())
+    assert b.pmkid.visible is False
+
+
 def test_card_dynamic_each_state():
     assert fm.card_dynamic(fm.Campaigns()) == ""
     assert fm.card_dynamic(fm.Campaigns(wep=_wep_camp())) == "● replaying"

@@ -22,6 +22,7 @@ from .encryption_format import (
     format_encryption_markup,
     format_pmf_markup,
 )
+from ..engine.attacks.pmkid_harvest import PmkidHarvestAttack
 from ..engine.attacks.wep.crack import CRACK_READY_THRESHOLD
 
 # ---------------------------------------------------------------------------
@@ -534,11 +535,12 @@ def derive_buttons(ap, campaigns: Campaigns) -> ButtonStates:
         variant="warning" if chopping else "primary",
     )
 
-    # --- PMKID (one-shot; SAE PMKID isn't crackable → WPA2 + transition only) ---
-    pmkid_eligible = (not ap.wpa3) or ap.transition_mode
+    # --- PMKID (one-shot; eligibility = the harvest's real PSK-AKM precondition,
+    # so OPEN / enterprise / SAE-only no longer offer an un-harvestable button) ---
+    pmkid_visible = PmkidHarvestAttack.visible(ap)
     pmkid = ButtonState(
-        visible=not wep and pmkid_eligible,
-        disabled=not pmkid_eligible or other_long_running_tx(campaigns),
+        visible=pmkid_visible,
+        disabled=not pmkid_visible or other_long_running_tx(campaigns),
         label="PMKID",
         variant="primary",
     )

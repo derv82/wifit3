@@ -34,7 +34,7 @@ class MockDriver:
 def _beacon(bssid, ssid, ch):
     return {
         "type": "beacon", "bssid": bssid, "ssid": ssid, "channel": ch,
-        "rssi": -40, "encryption": "WPA2", "akms": ["PSK"],
+        "rssi": -40, "encryption": "WPA2", "akms": ["PSK"], "akm_suites": [2],
         "pairwise_cipher": "CCMP", "raw": b"\xff-beacon-raw",
     }
 

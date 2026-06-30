@@ -117,6 +117,28 @@ def _random_client_mac() -> bytes:
 class PmkidHarvestAttack:
     """Run a PMKID harvest against a single AP."""
 
+    # --- Focus button eligibility ---------------------------------------------
+    # The button asks the harvest's OWN question, so it can never offer a harvest
+    # that run() would immediately bail on. (Lifecycle migration onto Campaign is
+    # a later pass; these classmethods are forward-compatible with it.)
+    button_id = "btn-pmkid"
+    key = "pmkid"
+    stoppable = False                  # one-shot; the button never flips to "Stop"
+
+    @classmethod
+    def visible(cls, ap) -> bool:
+        """Shown only when the AP advertises a harvestable (PSK) AKM — exactly the
+        suites run() can crack. Naturally excludes OPEN / enterprise / SAE-only /
+        WEP, none of which carry a PSK AKM (so the OPEN-network PMKID button bug
+        cannot recur)."""
+        return bool(set(_HARVESTABLE_AKMS) & set(getattr(ap, "akm_suites", None) or ()))
+
+    @classmethod
+    def ineligible_reason(cls, ap) -> Optional[str]:
+        """No load-time disable reason today — PMF is a run()-time bail, left as-is
+        to preserve current button behaviour (visible+enabled, fails at runtime)."""
+        return None
+
     def __init__(
         self,
         iface,
