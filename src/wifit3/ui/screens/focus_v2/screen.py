@@ -27,7 +27,6 @@ firing live deauth/inject is the user's explicit action. Installed as the
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 import time
@@ -198,7 +197,7 @@ class FocusViewV2(Screen):
         self._wps_campaign: Optional[WpsCampaign] = None
         self._wpa3_down_attack: Optional[WPA3DowngradeAttack] = None
         self._pending_wps_pin = False   # WPS-PIN launch deferred past on_screen_resume's re-acquire
-        self._pbc_task: Optional[asyncio.Task] = None
+        self._pbc_campaign: Optional[WpsPbcCapture] = None
         # Last packet_stats snapshot, diffed each tick to flicker the endpoint LEDs
         # (router on RX from the target, card on TX we send). None = no baseline yet.
         self._prev_stats = None
@@ -249,7 +248,7 @@ class FocusViewV2(Screen):
     # ----- snapshot building -------------------------------------------------
 
     def _pbc_busy(self) -> bool:
-        return self._pbc_task is not None and not self._pbc_task.done()
+        return self._pbc_campaign is not None and not self._pbc_campaign.done
 
     def _campaigns(self) -> fm.Campaigns:
         return fm.Campaigns(
@@ -428,10 +427,12 @@ class FocusViewV2(Screen):
             if result is not None:
                 self._log(treelog.leaf(_save_line(result)))
             self._stop_generate_ivs()
+        if self._pbc_campaign is not None and self._pbc_campaign.done:
+            self._finish_pbc_capture(ap)
         if (ap.wps_pbc_active and not self._pbc_busy() and not ap.has_psk
                 and self._wep_campaign is None and self._wpa3_down_attack is None
                 and self._wps_campaign is None):
-            self._pbc_task = asyncio.create_task(self._auto_capture_pbc(ap))
+            self._start_pbc_capture(ap)
 
         snap = self._snapshot()
         self._snap = snap
@@ -811,41 +812,52 @@ class FocusViewV2(Screen):
 
     # ----- WPS PBC auto-capture ----------------------------------------------
 
-    async def _auto_capture_pbc(self, ap) -> None:
+    def _start_pbc_capture(self, ap) -> None:
         iface = getattr(self.app, "active_interface", None)
         if not iface:
             return
         self._log("[bold cyan]WPS PushButton:[/bold cyan] [bold green]Window Open[/bold green] "
                   "— auto-capturing PSK")
-        try:
-            outcome = await WpsPbcCapture(
-                iface, ap, log=lambda m: self._log(treelog.branch(m))
-            ).capture()
-            if outcome.result is PinResult.SUCCESS:
-                ap.wps_pbc_psk = outcome.psk
-                name = escape(outcome.ssid or ap.ssid or ap.bssid)
-                self._log(treelog.branch(
-                    f"[black bold on green] Password for {name}: "
-                    f"\"{escape(outcome.psk)}\" [/black bold on green]"))
-                try:
-                    result = save_wps_pbc(ap, outcome.psk)
-                    if result is None:
-                        self._log(treelog.leaf("[dim](save failed)[/dim]"))
-                    else:
-                        self._log(treelog.leaf(_save_line(result)))
-                except Exception:
+        self._pbc_campaign = WpsPbcCapture(
+            iface, ap, log=lambda m: self._log(treelog.branch(m)))
+        self._pbc_campaign.run()
+
+    def _finish_pbc_capture(self, ap) -> None:
+        """Handle a completed PBC attempt (polled from _tick once ``done``): save +
+        log a recovered PSK, or surface the retry/error so the next window retries."""
+        camp = self._pbc_campaign
+        self._pbc_campaign = None
+        if camp is None:
+            return
+        if camp.error is not None:
+            self._log(treelog.leaf_fail(f"capture error: {escape(str(camp.error))}"))
+            return
+        outcome = camp.outcome
+        if outcome is None:
+            return
+        if outcome.result is PinResult.SUCCESS:
+            ap.wps_pbc_psk = outcome.psk
+            name = escape(outcome.ssid or ap.ssid or ap.bssid)
+            self._log(treelog.branch(
+                f"[black bold on green] Password for {name}: "
+                f"\"{escape(outcome.psk)}\" [/black bold on green]"))
+            try:
+                result = save_wps_pbc(ap, outcome.psk)
+                if result is None:
                     self._log(treelog.leaf("[dim](save failed)[/dim]"))
-            else:
-                self._log(treelog.leaf_warn(
-                    f"{outcome.result.value} [dim]({escape(outcome.detail)})[/dim] — "
-                    "retrying while the window's open"))
-        except Exception as exc:
-            self._log(treelog.leaf_fail(f"capture error: {escape(str(exc))}"))
+                else:
+                    self._log(treelog.leaf(_save_line(result)))
+            except Exception:
+                self._log(treelog.leaf("[dim](save failed)[/dim]"))
+        else:
+            self._log(treelog.leaf_warn(
+                f"{outcome.result.value} [dim]({escape(outcome.detail)})[/dim] — "
+                "retrying while the window's open"))
 
     def _stop_pbc_capture(self) -> None:
-        if self._pbc_task is not None:
-            self._pbc_task.cancel()
-            self._pbc_task = None
+        if self._pbc_campaign is not None:
+            self._pbc_campaign.request_stop()
+            self._pbc_campaign = None
 
     # ----- navigation --------------------------------------------------------
 

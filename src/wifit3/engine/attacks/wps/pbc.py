@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+from ..campaign import Campaign
 from .association import (
     WPS_REQ_ENROLLEE, WlanTransport, WpsAssociation, build_client_leaving,
     random_client_mac, str_to_mac,
@@ -43,16 +44,32 @@ class PbcWatcher:
         return [ap for ap in aps if ap.bssid in opened]
 
 
-class WpsPbcCapture:
+class WpsPbcCapture(Campaign):
+    button_id = None        # no button — auto-triggered when a PBC window opens
+    key = "pbc"
+    stoppable = False
+
     def __init__(self, iface, target, our_mac: Optional[bytes] = None, log=None,
                  tx_observer=None):
-        self.iface = iface
+        super().__init__(ap=target, iface=iface)
         self.target = target
         self.bssid = target.bssid.lower()
         self.channel = target.channel
         self.our_mac = our_mac or random_client_mac()
         self.log = log or logger.info
         self.tx_observer = tx_observer        # optional: record our TX (probe pcap)
+        # Set by _loop for the screen to read once `done` — the captured outcome
+        # (SUCCESS carries SSID + PSK), or the error if the attempt blew up.
+        self.outcome: Optional[AttemptOutcome] = None
+        self.error: Optional[Exception] = None
+
+    async def _loop(self) -> None:
+        """One PBC enrollment attempt. The screen reads ``outcome`` once ``done``.
+        capture() self-cleans in its own finally, so teardown() is a no-op."""
+        try:
+            self.outcome = await self.capture()
+        except Exception as exc:
+            self.error = exc
 
     async def capture(self) -> AttemptOutcome:
         """One PBC enrollment attempt. Returns the WpsEnrollee outcome (SUCCESS
