@@ -106,7 +106,11 @@ class Campaign:
                 except Exception:
                     logger.exception("campaign %r crashed in teardown()", self.key)
         finally:
-            Campaign.active = None
+            # Only release the slot if WE still hold it — a synchronous
+            # request_stop() may have freed it already and another campaign may
+            # have since claimed it; an unguarded clear would clobber that one.
+            if Campaign.active is self:
+                Campaign.active = None
 
     async def stop(self) -> None:
         """Cooperative stop: raise the flag, then await the loop draining +
@@ -114,6 +118,16 @@ class Campaign:
         self.stopped = True
         if self._task is not None:
             await self._task
+
+    def request_stop(self) -> None:
+        """Synchronous fire-and-forget stop for sync callers (the screen): flag the
+        stop and free the radio slot NOW, leaving the running task to drain its loop
+        and run teardown on its own. Freeing the slot synchronously lets the next
+        run() claim the radio immediately — matching the pre-base
+        ``create_task(stop())`` semantics without the one-tick refusal race."""
+        self.stopped = True
+        if Campaign.active is self:
+            Campaign.active = None
 
     @property
     def done(self) -> bool:

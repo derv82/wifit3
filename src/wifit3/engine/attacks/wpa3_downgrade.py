@@ -26,6 +26,8 @@ from typing import Callable, Optional
 
 from wifit3.engine.models import AccessPoint
 
+from .campaign import Campaign
+
 logger = logging.getLogger(__name__)
 
 
@@ -65,15 +67,18 @@ class WPA3DowngradeStats:
     started_at: float = field(default_factory=time.time)
 
 
-class WPA3DowngradeAttack:
+class WPA3DowngradeAttack(Campaign):
     """Probe-response spoofing daemon. Sync RX filter + async injection task.
 
-    Lifecycle: ``start()`` registers the RX callback; ``stop()`` unregisters.
-    Safe to start/stop repeatedly. All work happens on the asyncio loop —
-    the RX callback runs on the loop (confirmed: drivers create the RX
-    pump via ``asyncio.create_task``), and per-probe injection is scheduled
-    via ``asyncio.create_task`` on the same loop.
+    Event-driven: ``_loop()`` registers the RX callback and idles until stopped;
+    ``teardown()`` unregisters. The actual work is per-probe forged responses fired
+    from ``_rx_cb``. All work happens on the asyncio loop — the RX callback runs on
+    the loop (drivers create the RX pump via ``asyncio.create_task``), and per-probe
+    injection is scheduled via ``asyncio.create_task`` on the same loop.
     """
+
+    button_id = "btn-wpa3-down"
+    key = "wpa3down"
 
     def __init__(
         self,
@@ -83,7 +88,7 @@ class WPA3DowngradeAttack:
     ):
         if not target.ssid:
             raise ValueError("WPA3 Downgrade requires a known SSID — target is hidden.")
-        self.iface = iface
+        super().__init__(ap=target, iface=iface)
         self.target = target
         self._log = log_callback or (lambda _msg: None)
         self.stats = WPA3DowngradeStats()
@@ -129,10 +134,9 @@ class WPA3DowngradeAttack:
 
     # -- Lifecycle ------------------------------------------------------------
 
-    def start(self) -> None:
-        """Register the RX callback. Idempotent."""
-        if self._active:
-            return
+    async def _loop(self) -> None:
+        """Register the probe-request RX filter, then idle until stopped — the work
+        is event-driven (per-probe forged responses fire from _rx_cb)."""
         self._active = True
         self.stats = WPA3DowngradeStats()
         self.iface.register_rx_callback(self._rx_cb)
@@ -140,25 +144,27 @@ class WPA3DowngradeAttack:
             f"[WPA3-Down] Active on {self.target.bssid} ({self.target.ssid}) "
             f"CH {self.target.channel}"
         )
+        while not self.stopped:
+            await asyncio.sleep(0.2)
 
-    def stop(self) -> WPA3DowngradeStats:
-        """Unregister the RX callback. Returns stats from this run. Idempotent."""
+    async def teardown(self) -> None:
+        """Unregister the RX filter on every exit. Idempotent; ``stats`` lives on as
+        an attribute for the screen to read after stopping."""
         if not self._active:
-            return self.stats
+            return
         self._active = False
         self.iface.unregister_rx_callback(self._rx_cb)
         logger.info(
             f"[WPA3-Down] Stopped: {self.stats.probes_seen} probes seen, "
             f"{self.stats.responses_sent} forged responses sent."
         )
-        return self.stats
 
     # -- Hot path: RX filter + async dispatch --------------------------------
 
     def _rx_cb(self, frame_bytes: bytes, rssi: int, ts: float) -> None:
         """Sync, runs on asyncio loop. Keep this fast — minimal work, defer
         injection to an asyncio task."""
-        if not self._active:
+        if self.stopped or not self._active:   # request_stop() gates us before teardown unregisters
             return
         # Need at least MAC header (24B) + SSID IE tag+len (2B) + 2B for one rate IE start.
         if len(frame_bytes) < 28:

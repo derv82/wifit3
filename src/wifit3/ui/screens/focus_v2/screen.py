@@ -665,7 +665,7 @@ class FocusViewV2(Screen):
             return
         try:
             self._wpa3_down_attack = WPA3DowngradeAttack(iface, ap)
-            self._wpa3_down_attack.start()
+            self._wpa3_down_attack.run()
         except Exception as exc:
             logger.exception("WPA3 Down start failed")
             self._log(f"[bold red]✗ WPA3 Down failed to start:[/bold red] {escape(str(exc))}")
@@ -679,7 +679,9 @@ class FocusViewV2(Screen):
     def _stop_wpa3_down(self) -> None:
         if not self._wpa3_down_attack:
             return
-        stats = self._wpa3_down_attack.stop()
+        attack = self._wpa3_down_attack
+        stats = attack.stats                 # read before request_stop drains the task
+        attack.request_stop()
         self._wpa3_down_attack = None
         duration = max(1, int(time.time() - stats.started_at))
         failed = f" ({stats.responses_failed} failed)" if stats.responses_failed else ""
@@ -781,7 +783,7 @@ class FocusViewV2(Screen):
         if self._wps_campaign is None:
             return
         camp = self._wps_campaign
-        asyncio.create_task(camp.stop())
+        camp.request_stop()
         self._wps_campaign = None
         ssid = escape(camp.target.ssid or camp.bssid)
         if camp.state.found_pin:
