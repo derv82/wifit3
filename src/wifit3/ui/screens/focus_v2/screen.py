@@ -771,7 +771,7 @@ class FocusViewV2(Screen):
             self._log(f"[bold cyan]WPS PIN brute[/bold cyan] started on [bold]{name}[/bold]")
             self._wps_campaign = WpsCampaign(
                 iface, ap, log=lambda m: self._log(treelog.branch(m)))
-            self._wps_campaign.start()
+            self._wps_campaign.run()
         except Exception as exc:
             logger.exception("WPS PIN start failed")
             self._log(f"[bold red]✗ WPS PIN failed to start:[/bold red] {escape(str(exc))}")

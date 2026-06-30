@@ -77,6 +77,7 @@ class Campaign:
         if Campaign.active is not None:
             return False
         Campaign.active = self
+        self.stopped = False
         self._task = asyncio.create_task(self._drive())
         return True
 

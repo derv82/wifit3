@@ -56,7 +56,7 @@ async def test_campaign_finds_pin_via_full_sweep(tmp_path):
 
     c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
                          log=lambda m: None, known_pin=known, psk="hunter2pw")
-    await c._run()
+    await c._loop()
 
     assert c.status == "found"
     assert c.state.found_pin == known
@@ -70,7 +70,7 @@ async def test_campaign_finds_common_pin_fast(tmp_path):
     known = "12345670"                       # in COMMON_PINS
     c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
                          log=lambda m: None, known_pin=known, psk="pw")
-    await c._run()
+    await c._loop()
     assert c.state.found_pin == known
     assert len(c.tried) == 1                 # found on the first common attempt
 
@@ -92,7 +92,7 @@ async def test_resume_verifies_pin_psk_unchanged(tmp_path):
     _write_done_state(tmp_path, known, "originalpsk")
     c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
                          log=lambda m: None, known_pin=known, psk="originalpsk")
-    await c._run()
+    await c._loop()
     assert c.state.phase == "done"
     assert c.state.found_pin == known
     assert c.state.found_psk == "originalpsk"
@@ -106,7 +106,7 @@ async def test_resume_catches_psk_rotation(tmp_path):
     _write_done_state(tmp_path, known, "oldpassword")
     c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
                          log=lambda m: None, known_pin=known, psk="rotatedpassword")
-    await c._run()
+    await c._loop()
     assert c.state.phase == "done"
     assert c.state.found_pin == known
     assert c.state.found_psk == "rotatedpassword"
@@ -128,10 +128,10 @@ async def test_resume_pin_changed_resets_sweep(tmp_path):
     async def one_then_stop(pin):
         attempts.append(pin)
         out = await orig_try(pin)
-        c._stop = True                          # bail before resweeping
+        c.stopped = True                        # bail before resweeping
         return out
     c._try = one_then_stop
-    await c._run()
+    await c._loop()
     assert attempts == [stored]                 # the verify pin
     # Verify saw FIRST_HALF_WRONG → full reset.
     assert c.state.found_pin is None
@@ -149,7 +149,7 @@ async def test_second_half_sweep_skips_already_tested_dummy(tmp_path):
     known = pins.full_pin("1357", "246")
     c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
                          log=lambda m: None, known_pin=known, psk="pw")
-    await c._run()
+    await c._loop()
     dummy = pins.full_pin("1357", "000")
     assert c.tried.count(dummy) == 1   # tried once (the discovery), never again
 
@@ -158,7 +158,7 @@ async def test_first_half_confirmed_switches_phase(tmp_path):
     known = pins.full_pin("2468", "135")
     c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
                          log=lambda m: None, known_pin=known, psk="x")
-    await c._run()
+    await c._loop()
     assert c.state.found_pin == known
     # Once "2468" matched, it must have pinned the first half and swept halves.
     assert c.state.first_half == "2468"
@@ -168,7 +168,7 @@ async def test_run_state_persisted_and_resumed(tmp_path):
     known = pins.full_pin("1357", "246")
     c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
                          log=lambda m: None, known_pin=known, psk="pw")
-    await c._run()
+    await c._loop()
 
     path = _state_path(str(tmp_path), "aa:bb:cc:dd:ee:ff")
     assert path.exists()
@@ -201,13 +201,29 @@ async def test_rate_limit_does_not_skip_untested_pin(tmp_path):
 
     c = RateLimited(_iface(), _target(), state_dir=str(tmp_path),
                     log=lambda m: None, known_pin=known, psk="pw")
-    await c._run()
+    await c._loop()
 
     # First three sessions were all the SAME first pin (2 refused + 1 real test).
     assert c.tried[0] == c.tried[1] == c.tried[2] == pins.COMMON_PINS[0]
     assert c.state.found_pin == known
     # tested counts only real oracle results, never the rate-limited no-ops.
     assert c.state.tested < c.state.attempts
+
+
+async def test_teardown_saves_state_and_clears_fake_mac(tmp_path):
+    # The base lifecycle calls teardown() on every exit — it must checkpoint the
+    # .run resume file and release the active-monitor MAC (the old _run finally).
+    cleared = []
+
+    async def _clear(*_a, **_k):
+        cleared.append(True)
+
+    iface = SimpleNamespace(access_points={}, set_fake_mac=_set_fake_mac, clear_fake_mac=_clear)
+    c = WpsCampaign(iface, _target(), state_dir=str(tmp_path), log=lambda m: None)
+    c.state.tested = 42
+    await c.teardown()
+    assert cleared == [True]
+    assert _state_path(str(tmp_path), "aa:bb:cc:dd:ee:ff").exists()
 
 
 def test_lock_backoff_grows_with_observation():
