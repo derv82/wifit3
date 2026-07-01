@@ -282,12 +282,8 @@ class FocusViewV2(Screen):
         ap = getattr(self.app, "target_ap", None)
         if ap is None:
             return
-        st = fm.derive_buttons(ap, self._campaigns())
-        self._apply_button("#btn-gen-ivs", st.gen_ivs)
-        self._apply_button("#btn-chop", st.chop)
-        self._apply_button("#btn-pmkid", st.pmkid)
-        self._apply_button("#btn-wps-pin", st.wps_pin)
-        self._apply_button("#btn-wpa3-down", st.wpa3_down)
+        for bid, state in fm.derive_buttons(ap).items():
+            self._apply_button(f"#{bid}", state)
 
     # ----- target (re)acquisition --------------------------------------------
 
@@ -448,7 +444,7 @@ class FocusViewV2(Screen):
         # Deauth controls (broadcast + per-client ✕) are greyed when a PMF-Required
         # AP would refuse them, or another long-running TX owns the half-duplex
         # radio (mirrors v1's deauth gating).
-        clients.set_deauth_enabled(not fm.deauth_blocked(ap, self._campaigns()))
+        clients.set_deauth_enabled(not fm.deauth_blocked(ap))
         self._refresh_buttons()
         self._refresh_status_footer()
         # The flow channel self-samples on its own timer (bound in _enter_target).
@@ -568,7 +564,7 @@ class FocusViewV2(Screen):
             if mac:
                 self.run_worker(self._run_deauth_selected(mac), exclusive=True)
         elif bid == "btn-pmkid":
-            self._start_pmkid()
+            self._toggle_pmkid()
         elif bid == "btn-wps-pin":
             self._toggle_wps_pin()
         elif bid == "btn-wpa3-down":
@@ -622,6 +618,13 @@ class FocusViewV2(Screen):
         ))
 
     # ----- PMKID -------------------------------------------------------------
+
+    def _toggle_pmkid(self) -> None:
+        if self._pmkid_campaign is not None:
+            self._stop_pmkid()
+        else:
+            self._start_pmkid()
+        self._refresh_buttons()
 
     def _start_pmkid(self) -> None:
         if self._pmkid_campaign is not None:        # already harvesting (or finishing) — ignore

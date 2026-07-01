@@ -54,6 +54,14 @@ class WepCampaign(Campaign):
 
     button_id = "btn-gen-ivs"
     key = "wep"
+    idle_label = "ARP Replay"
+    run_label = "Stop Replay"
+    idle_variant = "success"
+    run_variant = "error"
+
+    @classmethod
+    def visible(cls, ap) -> bool:
+        return (getattr(ap, "encryption", None) or "").upper() == "WEP"
 
     def __init__(
         self,

@@ -5,8 +5,24 @@ Textual, no interface — so the brains are pinned independent of either screen'
 layout."""
 import types
 
+import pytest
+
+from wifit3.engine.attacks.campaign import Campaign
 from wifit3.engine.attacks.wep.crack import CRACK_READY_THRESHOLD
 from wifit3.ui import focus_model as fm
+
+
+@pytest.fixture(autouse=True)
+def _reset_active():
+    """derive_buttons/mutex read the Campaign.active class var — reset per test."""
+    Campaign.active = None
+    yield
+    Campaign.active = None
+
+
+def _running(key, **extra):
+    """A stand-in for the active campaign (only .key + any extra attrs are read)."""
+    return types.SimpleNamespace(key=key, **extra)
 
 
 def _wep_ap(*, wep_key=None, persisted_wep=False, unique_ivs=0):
@@ -202,12 +218,13 @@ def _wep_btn_ap():
 def test_derive_buttons_wep_labels_and_variants():
     """Idle = ARP Replay (green) / ChopChop (blue, disabled until a campaign);
     running = Stop Replay (red) / Stop Chop (orange)."""
-    idle = fm.derive_buttons(_wep_btn_ap(), fm.Campaigns())
-    assert idle.gen_ivs.label == "ARP Replay" and idle.gen_ivs.variant == "success"
-    assert idle.chop.label == "ChopChop" and idle.chop.disabled is True
-    run = fm.derive_buttons(_wep_btn_ap(), fm.Campaigns(wep=_wep_camp(chop=True)))
-    assert run.gen_ivs.label == "Stop Replay" and run.gen_ivs.variant == "error"
-    assert run.chop.label == "Stop Chop" and run.chop.variant == "warning"
+    idle = fm.derive_buttons(_wep_btn_ap())
+    assert idle["btn-gen-ivs"].label == "ARP Replay" and idle["btn-gen-ivs"].variant == "success"
+    assert idle["btn-chop"].label == "ChopChop" and idle["btn-chop"].disabled is True
+    Campaign.active = _running("wep", chop_active=True)
+    run = fm.derive_buttons(_wep_btn_ap())
+    assert run["btn-gen-ivs"].label == "Stop Replay" and run["btn-gen-ivs"].variant == "error"
+    assert run["btn-chop"].label == "Stop Chop" and run["btn-chop"].variant == "warning"
 
 
 # ---------------------------------------------------------------------------
@@ -225,80 +242,96 @@ def _bs(b):
 
 
 def test_buttons_wpa2_psk_no_wps_only_pmkid_visible():
-    b = fm.derive_buttons(_rsn_ap(akms=("PSK",), wps=False), fm.Campaigns())
-    assert _bs(b.pmkid) == (True, False, "PMKID", "primary")
-    assert b.wps_pin.visible is False and b.wpa3_down.visible is False
-    assert b.gen_ivs.visible is False and b.chop.visible is False
+    b = fm.derive_buttons(_rsn_ap(akms=("PSK",), wps=False))
+    assert _bs(b["btn-pmkid"]) == (True, False, "PMKID", "primary")
+    assert b["btn-wps-pin"].visible is False and b["btn-wpa3-down"].visible is False
+    assert b["btn-gen-ivs"].visible is False and b["btn-chop"].visible is False
 
 
 def test_buttons_wpa2_wps_unlocked_pin_enabled():
-    b = fm.derive_buttons(_rsn_ap(wps=True, wps_locked=False), fm.Campaigns())
-    assert _bs(b.wps_pin) == (True, False, "WPS PIN", "primary")
-    assert b.pmkid.visible is True and b.pmkid.disabled is False
+    b = fm.derive_buttons(_rsn_ap(wps=True, wps_locked=False))
+    assert _bs(b["btn-wps-pin"]) == (True, False, "WPS PIN", "primary")
+    assert b["btn-pmkid"].visible is True and b["btn-pmkid"].disabled is False
 
 
 def test_buttons_wpa2_wps_locked_pin_visible_but_disabled():
-    b = fm.derive_buttons(_rsn_ap(wps=True, wps_locked=True), fm.Campaigns())
-    assert _bs(b.wps_pin) == (True, True, "WPS PIN", "primary")
+    b = fm.derive_buttons(_rsn_ap(wps=True, wps_locked=True))
+    assert _bs(b["btn-wps-pin"]) == (True, True, "WPS PIN", "primary")
 
 
 def test_buttons_wpa3_transition_shows_pmkid_and_downgrade():
-    b = fm.derive_buttons(_rsn_ap(wpa3=True, transition_mode=True), fm.Campaigns())
-    assert b.pmkid.visible is True and b.pmkid.disabled is False
-    assert _bs(b.wpa3_down) == (True, False, "WPA ↓", "primary")
+    b = fm.derive_buttons(_rsn_ap(wpa3=True, transition_mode=True))
+    assert b["btn-pmkid"].visible is True and b["btn-pmkid"].disabled is False
+    assert _bs(b["btn-wpa3-down"]) == (True, False, "WPA ↓", "primary")
 
 
 def test_buttons_wpa3_only_sae_hides_everything():
     """SAE-only: PMKID isn't crackable, no transition/WPS → no attack buttons."""
     b = fm.derive_buttons(
-        _rsn_ap(encryption="WPA3", wpa3=True, transition_mode=False, akms=("SAE",)),
-        fm.Campaigns())
-    assert all(not x.visible for x in
-               (b.gen_ivs, b.chop, b.pmkid, b.wps_pin, b.wpa3_down))
+        _rsn_ap(encryption="WPA3", wpa3=True, transition_mode=False, akms=("SAE",)))
+    assert all(not b[bid].visible for bid in
+               ("btn-gen-ivs", "btn-chop", "btn-pmkid", "btn-wps-pin", "btn-wpa3-down"))
 
 
 def test_buttons_mutex_running_wps_disables_siblings():
     ap = _rsn_ap(wpa3=True, transition_mode=True, wps=True)
-    b = fm.derive_buttons(ap, fm.Campaigns(wps=object()))
-    assert _bs(b.wps_pin) == (True, False, "Stop PIN", "error")
-    assert b.pmkid.disabled is True                      # radio owned by WPS
-    assert _bs(b.wpa3_down) == (True, True, "WPA ↓", "primary")
+    Campaign.active = _running("wps")
+    b = fm.derive_buttons(ap)
+    assert _bs(b["btn-wps-pin"]) == (True, False, "Stop PIN", "error")
+    assert b["btn-pmkid"].disabled is True               # radio owned by WPS
+    assert _bs(b["btn-wpa3-down"]) == (True, True, "WPA ↓", "primary")
 
 
 def test_buttons_running_wpa3_down_toggles_and_blocks_pmkid():
     ap = _rsn_ap(wpa3=True, transition_mode=True)
-    b = fm.derive_buttons(ap, fm.Campaigns(wpa3_down=object()))
-    assert _bs(b.wpa3_down) == (True, False, "Stop ↓", "primary")
-    assert b.pmkid.disabled is True
+    Campaign.active = _running("wpa3down")
+    b = fm.derive_buttons(ap)
+    assert _bs(b["btn-wpa3-down"]) == (True, False, "Stop ↓", "primary")
+    assert b["btn-pmkid"].disabled is True
+
+
+def test_buttons_running_pmkid_shows_stop_and_blocks_others():
+    """PMKID is now a stoppable, radio-owning campaign: while it runs it shows a
+    Stop button AND (the flip) blocks the sibling attacks."""
+    ap = _rsn_ap(wpa3=True, transition_mode=True, wps=True)
+    Campaign.active = _running("pmkid")
+    b = fm.derive_buttons(ap)
+    assert _bs(b["btn-pmkid"]) == (True, False, "Stop PMKID", "error")
+    assert b["btn-wps-pin"].disabled is True
+    assert b["btn-wpa3-down"].disabled is True
 
 
 def test_other_long_running_tx_mutex_and_excludes():
-    assert fm.other_long_running_tx(fm.Campaigns()) is False
-    assert fm.other_long_running_tx(fm.Campaigns(wep=object())) is True
-    assert fm.other_long_running_tx(fm.Campaigns(wep=object()), exclude="wep") is False
-    assert fm.other_long_running_tx(fm.Campaigns(pbc_busy=True)) is True
-    assert fm.other_long_running_tx(fm.Campaigns(pbc_busy=True), exclude="pbc") is False
-    assert fm.other_long_running_tx(fm.Campaigns(wps=object()), exclude="wpa3down") is True
+    assert fm.other_long_running_tx() is False
+    Campaign.active = _running("wep")
+    assert fm.other_long_running_tx() is True
+    assert fm.other_long_running_tx(exclude="wep") is False
+    Campaign.active = _running("pbc")
+    assert fm.other_long_running_tx() is True
+    assert fm.other_long_running_tx(exclude="pbc") is False
+    Campaign.active = _running("wps")
+    assert fm.other_long_running_tx(exclude="wpa3down") is True
 
 
 def test_deauth_blocked_by_mutex_or_pmf():
-    assert fm.deauth_blocked(_rsn_ap(), fm.Campaigns()) is False
-    assert fm.deauth_blocked(_rsn_ap(pmf_required=True), fm.Campaigns()) is True
-    assert fm.deauth_blocked(_rsn_ap(), fm.Campaigns(wep=object())) is True
+    assert fm.deauth_blocked(_rsn_ap()) is False
+    assert fm.deauth_blocked(_rsn_ap(pmf_required=True)) is True
+    Campaign.active = _running("wep")
+    assert fm.deauth_blocked(_rsn_ap()) is True
 
 
 def test_buttons_open_hides_pmkid():
     """THE FIX: an open network has no PSK AKM → no PMKID button (was shown)."""
-    b = fm.derive_buttons(_rsn_ap(encryption="OPEN", akms=()), fm.Campaigns())
-    assert b.pmkid.visible is False
-    assert all(not x.visible for x in
-               (b.gen_ivs, b.chop, b.wps_pin, b.wpa3_down))
+    b = fm.derive_buttons(_rsn_ap(encryption="OPEN", akms=()))
+    assert b["btn-pmkid"].visible is False
+    assert all(not b[bid].visible for bid in
+               ("btn-gen-ivs", "btn-chop", "btn-wps-pin", "btn-wpa3-down"))
 
 
 def test_buttons_enterprise_hides_pmkid():
     """802.1X (enterprise) PMK isn't dictionary-crackable → no PMKID button."""
-    b = fm.derive_buttons(_rsn_ap(akms=("802.1X",)), fm.Campaigns())
-    assert b.pmkid.visible is False
+    b = fm.derive_buttons(_rsn_ap(akms=("802.1X",)))
+    assert b["btn-pmkid"].visible is False
 
 
 def test_card_dynamic_each_state():

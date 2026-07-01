@@ -79,6 +79,14 @@ class WPA3DowngradeAttack(Campaign):
 
     button_id = "btn-wpa3-down"
     key = "wpa3down"
+    idle_label = "WPA ↓"
+    run_label = "Stop ↓"
+    idle_variant = "primary"
+    run_variant = "primary"
+
+    @classmethod
+    def visible(cls, ap) -> bool:
+        return bool(getattr(ap, "wpa3", False) and getattr(ap, "transition_mode", False))
 
     def __init__(
         self,

@@ -60,6 +60,19 @@ class WpsCampaign(Campaign):
 
     button_id = "btn-wps-pin"
     key = "wps"
+    idle_label = "WPS PIN"
+    run_label = "Stop PIN"
+    idle_variant = "primary"
+    run_variant = "error"
+
+    @classmethod
+    def visible(cls, ap) -> bool:
+        return ((getattr(ap, "encryption", None) or "").upper() != "WEP"
+                and bool(getattr(ap, "wps", False)))
+
+    @classmethod
+    def ineligible_reason(cls, ap):
+        return "WPS locked" if getattr(ap, "wps_locked", False) else None
 
     def __init__(self, iface, target, state_dir="captures", log=None,
                  inter_attempt_delay: float = 0.0):

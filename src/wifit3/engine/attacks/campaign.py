@@ -62,6 +62,12 @@ class Campaign:
     button_id: Optional[str] = None   # the Focus button this campaign owns; None = no button (PBC)
     key: str = ""                     # mutex/registry identity: "wep"/"wps"/"wpa3down"/"pmkid"/"pbc"
     stoppable: bool = True            # False = fire-once; button stays disabled, never flips to "Stop X"
+    # Button text/variant the registry-driven derive_buttons paints: idle_* when
+    # this campaign is not running, run_* while it owns the radio (the "Stop X").
+    idle_label: str = ""
+    run_label: str = ""
+    idle_variant: str = "primary"
+    run_variant: str = "error"
 
     def __init__(self, ap, iface, treelog: Optional[TreeLog] = None):
         self.ap = ap

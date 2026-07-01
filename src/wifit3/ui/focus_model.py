@@ -22,8 +22,19 @@ from .encryption_format import (
     format_encryption_markup,
     format_pmf_markup,
 )
+from ..engine.attacks.campaign import Campaign
 from ..engine.attacks.pmkid_harvest import PmkidHarvestAttack
+from ..engine.attacks.wep.campaign import WepCampaign
 from ..engine.attacks.wep.crack import CRACK_READY_THRESHOLD
+from ..engine.attacks.wps.campaign import WpsCampaign
+from ..engine.attacks.wpa3_downgrade import WPA3DowngradeAttack
+
+# Attack-button campaigns in button-row order. Each declares its own
+# visible()/ineligible_reason() + labels; running-state comes from the
+# class-level Campaign.active mutex. WEP's ChopChop is a sub-action of the WEP
+# campaign (not its own entry), painted specially in derive_buttons.
+BUTTON_CAMPAIGNS = [WepCampaign, PmkidHarvestAttack, WpsCampaign, WPA3DowngradeAttack]
+_BUTTON_ORDER = ["btn-gen-ivs", "btn-chop", "btn-pmkid", "btn-wps-pin", "btn-wpa3-down"]
 
 # ---------------------------------------------------------------------------
 # Inputs the screens hand to the derivations.
@@ -43,20 +54,13 @@ class Campaigns:
     pbc_busy: bool = False
 
 
-def other_long_running_tx(campaigns: Campaigns, exclude: str = "") -> bool:
-    """True if any long-running TX activity is running, EXCLUDING the named one
-    (``"wep"`` / ``"wpa3down"`` / ``"wps"`` / ``"pbc"``). Drives the cross-attack
-    button mutex — the half-duplex radio is never shared. Pass the running
-    attack's own name to keep its Stop button live."""
-    if exclude != "wep" and campaigns.wep is not None:
-        return True
-    if exclude != "wpa3down" and campaigns.wpa3_down is not None:
-        return True
-    if exclude != "wps" and campaigns.wps is not None:
-        return True
-    if exclude != "pbc" and campaigns.pbc_busy:
-        return True
-    return False
+def other_long_running_tx(exclude: str = "") -> bool:
+    """True if a campaign OTHER than ``exclude`` owns the radio — the cross-attack
+    mutex (the half-duplex radio is never shared). Reads the single
+    ``Campaign.active`` slot; pass the running attack's own key (``"wep"`` /
+    ``"wps"`` / ``"wpa3down"`` / ``"pmkid"`` / ``"pbc"``) to keep its Stop live."""
+    active = Campaign.active
+    return active is not None and active.key != exclude
 
 
 def is_wep(ap) -> bool:
@@ -502,85 +506,44 @@ class ButtonState:
     variant: str = "primary"
 
 
-@dataclass
-class ButtonStates:
-    gen_ivs: ButtonState
-    chop: ButtonState
-    pmkid: ButtonState
-    wps_pin: ButtonState
-    wpa3_down: ButtonState
-
-
-def derive_buttons(ap, campaigns: Campaigns) -> ButtonStates:
-    """Per-attack visibility + enablement. WEP and WPA targets get disjoint
-    sets: the WPA buttons (PMKID / WPS / WPA↓) are meaningless for WEP, so they
-    hide and Replay/Chop take their place. Pure — the screen does any campaign
-    teardown (e.g. on a recovered key) BEFORE calling this, so it reads the
-    current handles."""
-    wep = is_wep(ap)
-
-    # --- Replay (WEP campaign switch) + Chop (its sub-attack) ---
-    wep_running = campaigns.wep is not None
-    gen = ButtonState(
-        visible=wep,
-        disabled=False,
-        label="Stop Replay" if wep_running else "ARP Replay",
-        variant="error" if wep_running else "success",
-    )
-    chopping = bool(campaigns.wep and campaigns.wep.chop_active)
-    chop = ButtonState(
-        visible=wep,
+def derive_buttons(ap) -> dict[str, ButtonState]:
+    """Per-button state, keyed by button id — registry-driven. Each Campaign class
+    declares its own visible()/ineligible_reason() + labels; running-state is the
+    single ``Campaign.active`` mutex (its Stop button, everyone else disabled).
+    WEP's ChopChop is a WEP sub-action (live only while the WEP campaign runs),
+    painted specially. Pure — the screen tears down finished campaigns BEFORE
+    calling this, so ``Campaign.active`` is current."""
+    active = Campaign.active
+    states: dict[str, ButtonState] = {}
+    for cls in BUTTON_CAMPAIGNS:
+        vis = cls.visible(ap)
+        if active is not None and active.key == cls.key and cls.stoppable:
+            states[cls.button_id] = ButtonState(
+                visible=vis, disabled=False,
+                label=cls.run_label, variant=cls.run_variant)
+        else:
+            other = active is not None and active.key != cls.key
+            states[cls.button_id] = ButtonState(
+                visible=vis,
+                disabled=cls.ineligible_reason(ap) is not None or other,
+                label=cls.idle_label, variant=cls.idle_variant)
+    # ChopChop — a WEP sub-action, enabled only while the WEP campaign runs.
+    wep_running = active is not None and active.key == "wep"
+    chopping = wep_running and getattr(active, "chop_active", False)
+    states["btn-chop"] = ButtonState(
+        visible=WepCampaign.visible(ap),
         disabled=not wep_running,
         label="Stop Chop" if chopping else "ChopChop",
         variant="warning" if chopping else "primary",
     )
-
-    # --- PMKID (one-shot; eligibility = the harvest's real PSK-AKM precondition,
-    # so OPEN / enterprise / SAE-only no longer offer an un-harvestable button) ---
-    pmkid_visible = PmkidHarvestAttack.visible(ap)
-    pmkid = ButtonState(
-        visible=pmkid_visible,
-        disabled=not pmkid_visible or other_long_running_tx(campaigns),
-        label="PMKID",
-        variant="primary",
-    )
-
-    # --- WPS PIN (Start/Stop toggle; WPS-capable + unlocked) ---
-    if campaigns.wps is not None:
-        wps_pin = ButtonState(
-            visible=not wep and bool(ap.wps),
-            disabled=False, label="Stop PIN", variant="error",
-        )
-    else:
-        wps_eligible = bool(ap.wps and not ap.wps_locked)
-        wps_pin = ButtonState(
-            visible=not wep and bool(ap.wps),
-            disabled=not wps_eligible or other_long_running_tx(campaigns, exclude="wps"),
-            label="WPS PIN", variant="primary",
-        )
-
-    # --- WPA Downgrade (WPA3-transition APs only; Start/Stop toggle) ---
-    wpa3down_eligible = bool(ap.wpa3 and ap.transition_mode)
-    if campaigns.wpa3_down is not None:
-        wpa3_down = ButtonState(visible=wpa3down_eligible, disabled=False,
-                                label="Stop ↓", variant="primary")
-    else:
-        wpa3_down = ButtonState(
-            visible=wpa3down_eligible,
-            disabled=not wpa3down_eligible or other_long_running_tx(campaigns, exclude="wpa3down"),
-            label="WPA ↓", variant="primary",
-        )
-
-    return ButtonStates(gen_ivs=gen, chop=chop, pmkid=pmkid,
-                        wps_pin=wps_pin, wpa3_down=wpa3_down)
+    return states
 
 
-def deauth_blocked(ap, campaigns: Campaigns) -> bool:
-    """Deauth bursts are dead when another long-running TX owns the radio OR the
-    AP requires PMF (it rejects unauthenticated deauth). The cursor gate
-    (Selected needs a highlighted row) is the caller's — it's a UI-state concern,
-    not derivable from ``(ap, iface, campaigns)``."""
-    return other_long_running_tx(campaigns) or ap.pmf_required
+def deauth_blocked(ap) -> bool:
+    """Deauth bursts are dead when a campaign owns the radio OR the AP requires PMF
+    (it rejects unauthenticated deauth). The cursor gate (Selected needs a
+    highlighted row) is the caller's — a UI-state concern, not derivable here."""
+    return other_long_running_tx() or ap.pmf_required
 
 
 # ---------------------------------------------------------------------------
@@ -773,9 +736,8 @@ def build_snapshot(ap, iface, campaigns: Campaigns, samples: deque,
     The event log is wired live by the screen, so ``log_lines`` is left empty."""
     rate, _count = beacon_rate(ap, samples, now)
     chipset, card_bssid = card_identity(iface)
-    btns = derive_buttons(ap, campaigns)
-    button_labels = [b.label for b in (btns.gen_ivs, btns.chop, btns.pmkid,
-                                       btns.wps_pin, btns.wpa3_down) if b.visible]
+    btns = derive_buttons(ap)
+    button_labels = [btns[bid].label for bid in _BUTTON_ORDER if btns[bid].visible]
     clients = client_rows(ap, iface) if iface else []
     essid = truncate_ssid(ap.ssid) if ap.ssid else "‹hidden›"
     return FocusSnapshot(

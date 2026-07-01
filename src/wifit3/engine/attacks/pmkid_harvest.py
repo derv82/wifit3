@@ -125,7 +125,11 @@ class PmkidHarvestAttack(Campaign):
     # a later pass; these classmethods are forward-compatible with it.)
     button_id = "btn-pmkid"
     key = "pmkid"
-    stoppable = False                  # one-shot; the button never flips to "Stop"
+    stoppable = True                   # short one-shot, but the user can Stop between attempts
+    idle_label = "PMKID"
+    run_label = "Stop PMKID"
+    idle_variant = "primary"
+    run_variant = "error"
 
     @classmethod
     def visible(cls, ap) -> bool:
@@ -322,6 +326,8 @@ class PmkidHarvestAttack(Campaign):
             await self.iface.send_raw(self._build_auth_req(), use_no_ack=True)
             # Tiny pause so the AP processes the Auth before the Assoc lands.
             await asyncio.sleep(0.1)
+            if self.stopped:               # a Stop between Auth and Assoc lands here
+                return
             await self.iface.send_raw(self._build_assoc_req(), use_no_ack=True)
 
             # Poll the parser-populated handshake dict for our forged MAC's M1.
