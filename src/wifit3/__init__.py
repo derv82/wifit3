@@ -1,5 +1,3 @@
-# wifit3 Package
-
 # Single source of truth for the version. pyproject.toml derives [project].version from
 # this literal at build time (hatchling dynamic version, [tool.hatch.version]), and the
 # release workflow gates the pushed tag against it. Kept as a plain literal so the frozen

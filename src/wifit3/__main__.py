@@ -5,7 +5,7 @@ async def _smoke() -> None:
     """Headless self-test: prove the PyInstaller bundle is intact, then exit. Used by CI to
     catch bundling breaks the unit-test import-smoke can't.
 
-    Two checks, in order of what they prove about the bundle:
+    Two checks:
       1. The bundled libusb shared lib is where ``libusb_package.get_library_path()`` looks
          (``libusb_package/libusb-1.0.*``) and actually loads. A onefile build can misplace it,
          which breaks USB enumeration with "No backend available". We deliberately do NOT
@@ -32,6 +32,7 @@ async def _smoke() -> None:
 
 
 def main() -> None:
+    """Parse CLI args, then run the headless smoke test or launch the TUI."""
     import argparse
 
     from wifit3 import __version__
