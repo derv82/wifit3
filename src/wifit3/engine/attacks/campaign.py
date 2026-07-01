@@ -164,8 +164,3 @@ class Campaign:
         and that string is the once-at-load 'why' (e.g. ``"PMF:Required"``).
         Mirrors the attack's real pre-flight preconditions."""
         return None
-
-
-# The campaign registry: order is button-row + headline/dispatch priority.
-# Populated as each campaign migrates onto the base (Phase C).
-CAMPAIGNS: list[type[Campaign]] = []
