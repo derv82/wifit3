@@ -50,9 +50,13 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
         content-align: center middle;
         margin-bottom: 1;
     }
+    /* The list fills whatever height the dialog gives it (1fr), so on a short
+       terminal it shrinks and scrolls instead of pushing the buttons off — and
+       it never overflows its container. _resize_dialog caps the *dialog* at its
+       natural content height, so on a roomy screen the 1fr has no slack to leave
+       and the list simply hugs its channels. */
     ChannelFilterDialog SelectionList {
         height: 1fr;
-        max-height: 16;
         min-height: 3;
         overflow-y: auto;
         margin-bottom: 1;
@@ -104,8 +108,31 @@ class ChannelFilterDialog(ModalScreen[Optional[List[int]]]):
                 yield Button("OK", variant="primary", id="btn-ok")
                 yield Button("Cancel", variant="default", id="btn-cancel")
 
+    # Rows the dialog spends on everything *except* the channel list's own box:
+    # thick border (2) + vertical padding (2) + title+margin (2) + hotkeys (1)
+    # + hint+margin (2) + list margin-bottom (1) + button row (3). Keep in sync
+    # with DEFAULT_CSS. The list's own box adds one row per channel + a 2-row
+    # border, so the dialog's natural height is len(channels) + 2 + _CHROME_ROWS.
+    _CHROME_ROWS = 13
+
     def on_mount(self) -> None:
+        self._resize_dialog()
         self.query_one("#channel-list", SelectionList).focus()
+
+    def on_resize(self) -> None:
+        self._resize_dialog()
+
+    def _resize_dialog(self) -> None:
+        """Cap the dialog at its natural content height, but never past ~90% of
+        the screen.
+
+        Capping at the natural height leaves the 1fr list no slack, so the dialog
+        hugs its channels (no dead space below the list). When the channels can't
+        all fit in ~90% of the screen, the ceiling wins and the list scrolls.
+        """
+        natural = len(self._supported) + 2 + self._CHROME_ROWS
+        ceiling = int(self.app.size.height * 0.9)
+        self.query_one("#dialog", Vertical).styles.max_height = min(natural, ceiling)
 
     @staticmethod
     def _format_label(channel: int) -> str:
