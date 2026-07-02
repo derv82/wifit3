@@ -135,228 +135,114 @@ class WlanInterface:
         # Live packet dashboard — tally each RX frame against its AP by class. Best-effort.
         self.packet_stats.record_rx(bssid, frame_type)
 
-        # We primarily build APs from beacons and probe responses
-        if frame_type in ("beacon", "probe_resp"):
-            ssid = parsed.get("ssid")
-            channel = parsed.get("channel", self.current_channel)
-            enc = parsed.get("encryption", "OPEN")
-            akms = parsed.get("akms", []) or []
-            akm_suites = parsed.get("akm_suites", []) or []
-            pairwise_cipher = parsed.get("pairwise_cipher")
-            wpa3 = parsed.get("wpa3", False)
-            transition_mode = parsed.get("transition_mode", False)
-            pmf_capable = parsed.get("pmf_capable", False)
-            pmf_required = parsed.get("pmf_required", False)
-            wps = parsed.get("wps", False)
-            wps_locked = parsed.get("wps_locked", False)
-            wps_version = parsed.get("wps_version")
-            wps_config_methods = parsed.get("wps_config_methods", 0)
-            wps_device_password_id = parsed.get("wps_device_password_id")
-            wps_selected_registrar = parsed.get("wps_selected_registrar", False)
+        # Each handler self-guards on frame type and returns True if it claimed the frame —
+        # a home for future frame types / fields. They are NOT exclusive: an eapol frame
+        # updates the client registry AND the handshake.
+        self._on_beacon_frame(parsed)
+        self._on_wepdata_frame(parsed)
+        self._track_client(parsed)
+        self._on_eapol_frame(parsed)
 
-            if bssid not in self.access_points:
-                self.access_points[bssid] = AccessPoint(
-                    bssid=bssid,
-                    ssid=ssid if ssid != "<hidden>" else None,
-                    channel=channel,
-                    signal=rssi,
-                    encryption=enc,
-                    akms=list(akms),
-                    akm_suites=list(akm_suites),
-                    pairwise_cipher=pairwise_cipher,
-                    beacons=1 if frame_type == "beacon" else 0,
-                    wpa3=wpa3,
-                    transition_mode=transition_mode,
-                    pmf_capable=pmf_capable,
-                    pmf_required=pmf_required,
-                    wps=wps,
-                    wps_locked=wps_locked,
-                    wps_version=wps_version,
-                    wps_config_methods=wps_config_methods,
-                    wps_device_password_id=wps_device_password_id,
-                    wps_selected_registrar=wps_selected_registrar,
-                )
-                self._recompute_siblings_for(bssid)
-                if ssid and ssid != "<hidden>":
-                    logger.info(f"[NEW AP] Found '{ssid}' ({bssid}) on CH {channel}")
-            else:
-                ap = self.access_points[bssid]
-                old_channel = ap.channel
-                if frame_type == "beacon":
-                    ap.beacons += 1
+    def _on_beacon_frame(self, parsed: dict) -> bool:
+        """Build/refresh the AP from a beacon or probe response, then (for beacons) stash the
+        raw frame and back-fill handshakes that predate it. True if this was a beacon/probe."""
+        frame_type = parsed.get("type")
+        if frame_type not in ("beacon", "probe_resp"):
+            return False
+        bssid = parsed.get("bssid")
+        rssi = parsed.get("rssi", -100)
+        ssid = parsed.get("ssid")
+        channel = parsed.get("channel", self.current_channel)
+        enc = parsed.get("encryption", "OPEN")
+        akms = parsed.get("akms", []) or []
+        akm_suites = parsed.get("akm_suites", []) or []
+        pairwise_cipher = parsed.get("pairwise_cipher")
+        wpa3 = parsed.get("wpa3", False)
+        transition_mode = parsed.get("transition_mode", False)
+        pmf_capable = parsed.get("pmf_capable", False)
+        pmf_required = parsed.get("pmf_required", False)
+        wps = parsed.get("wps", False)
+        wps_locked = parsed.get("wps_locked", False)
+        wps_version = parsed.get("wps_version")
+        wps_config_methods = parsed.get("wps_config_methods", 0)
+        wps_device_password_id = parsed.get("wps_device_password_id")
+        wps_selected_registrar = parsed.get("wps_selected_registrar", False)
 
-                # Decloak a hidden AP once we see its SSID; tag how (beacon vs probe_resp)
-                # for the UI's decloak event.
-                if ssid and ssid != "<hidden>":
-                    if not ap.ssid or ap.ssid == "<hidden>":
-                        ap.decloak_method = frame_type  # "beacon" or "probe_resp"
-                    ap.ssid = ssid
-
-                # Smooth RSSI (running average)
-                ap.signal = (ap.signal + rssi) // 2
-
-                # Update channel if it shifted — sibling links are
-                # channel-scoped, so re-evaluate on actual moves.
-                ap.channel = channel
-                if old_channel != channel:
-                    self._recompute_siblings_for(bssid)
-                # Keep the strongest encryption evidence ever seen (see _enc_rank): apply
-                # only on equal-or-higher rank, so a dropped IE can't downgrade WPA2->WEP
-                # while WPA*-to-WPA* config refreshes still pass.
-                if _enc_rank(enc) >= _enc_rank(ap.encryption):
-                    ap.encryption = enc
-                    ap.akms = list(akms)
-                    ap.akm_suites = list(akm_suites)
-                    ap.pairwise_cipher = pairwise_cipher
-                    ap.wpa3 = wpa3
-                    ap.transition_mode = transition_mode
-                    ap.pmf_capable = pmf_capable
-                    ap.pmf_required = pmf_required
-                # Only refresh WPS when this frame carried the IE — its absence must not
-                # clear a known WPS flag (but locked/state can change, so re-read if present).
-                if wps:
-                    ap.wps = True
-                    ap.wps_locked = wps_locked
-                    ap.wps_version = wps_version
-                    ap.wps_config_methods = wps_config_methods
-                    ap.wps_device_password_id = wps_device_password_id
-                    ap.wps_selected_registrar = wps_selected_registrar
-
-            # Bump recency — drives stale-row dim-out and "Last Beacon: Ns ago" in Focus.
-            self.access_points[bssid].last_seen = time.time()
-
-            # Stash the latest RSN IE — PMKID harvest echoes it into its Assoc Req.
-            rsn_ie = parsed.get("rsn_ie_raw")
-            if rsn_ie:
-                self.access_points[bssid].rsn_ie = rsn_ie
-
-        # Passive WEP capture: only for APs already classified WEP from a beacon (guards
-        # against a stray ExtIV-clear frame). The store does all the routing.
-        if frame_type == "wep_data" and bssid in self.access_points:
+        if bssid not in self.access_points:
+            self.access_points[bssid] = AccessPoint(
+                bssid=bssid,
+                ssid=ssid if self._is_real_ssid(ssid) else None,
+                channel=channel,
+                signal=rssi,
+                encryption=enc,
+                akms=list(akms),
+                akm_suites=list(akm_suites),
+                pairwise_cipher=pairwise_cipher,
+                beacons=1 if frame_type == "beacon" else 0,
+                wpa3=wpa3,
+                transition_mode=transition_mode,
+                pmf_capable=pmf_capable,
+                pmf_required=pmf_required,
+                wps=wps,
+                wps_locked=wps_locked,
+                wps_version=wps_version,
+                wps_config_methods=wps_config_methods,
+                wps_device_password_id=wps_device_password_id,
+                wps_selected_registrar=wps_selected_registrar,
+            )
+            self._recompute_siblings_for(bssid)
+            if self._is_real_ssid(ssid):
+                logger.info(f"[NEW AP] Found '{ssid}' ({bssid}) on CH {channel}")
+        else:
             ap = self.access_points[bssid]
-            if (ap.encryption or "").upper() == "WEP":
-                stats = self.wep_store.observe(bssid, parsed)
-                if stats is not None and ap.wep is None:
-                    ap.wep = stats
+            old_channel = ap.channel
+            if frame_type == "beacon":
+                ap.beacons += 1
 
-        # Client Tracking
-        if frame_type in ("probe_req", "assoc_req", "reassoc_req", "data", "wep_data", "eapol", "deauth", "assoc_resp"):
-            client_mac = None
-            source = parsed.get("source")
-            dest = parsed.get("dest")
+            if self._is_real_ssid(ssid):
+                self._decloak(ap, ssid, frame_type)
 
-            if frame_type == "probe_req":
-                client_mac = source
-            else:
-                # Deduce client MAC (the one that isn't the BSSID)
-                if source and source != bssid:
-                    client_mac = source
-                elif dest and dest != bssid:
-                    client_mac = dest
+            # Smooth RSSI (running average)
+            ap.signal = (ap.signal + rssi) // 2
 
-            if client_mac and client_mac != "ff:ff:ff:ff:ff:ff" and client_mac not in self.forged_macs:
-                if client_mac not in self.clients:
-                    self.clients[client_mac] = Client(
-                        mac=client_mac,
-                        signal=rssi,
-                        is_self=client_mac in self.self_macs,
-                    )
-                client = self.clients[client_mac]
-                client.signal = (client.signal + rssi) // 2
-                client.packets += 1
+            # Sibling links are channel-scoped, so re-evaluate on an actual channel move.
+            ap.channel = channel
+            if old_channel != channel:
+                self._recompute_siblings_for(bssid)
+            # Keep the strongest encryption evidence ever seen (see _enc_rank): apply only on
+            # equal-or-higher rank, so a dropped IE can't downgrade WPA2->WEP while WPA*-to-WPA*
+            # config refreshes still pass.
+            if _enc_rank(enc) >= _enc_rank(ap.encryption):
+                ap.encryption = enc
+                ap.akms = list(akms)
+                ap.akm_suites = list(akm_suites)
+                ap.pairwise_cipher = pairwise_cipher
+                ap.wpa3 = wpa3
+                ap.transition_mode = transition_mode
+                ap.pmf_capable = pmf_capable
+                ap.pmf_required = pmf_required
+            # Only refresh WPS when this frame carried the IE — its absence must not clear a
+            # known WPS flag (but locked/state can change, so re-read if present).
+            if wps:
+                ap.wps = True
+                ap.wps_locked = wps_locked
+                ap.wps_version = wps_version
+                ap.wps_config_methods = wps_config_methods
+                ap.wps_device_password_id = wps_device_password_id
+                ap.wps_selected_registrar = wps_selected_registrar
 
-                # The client's chosen AKM, from its (Re)Assoc Request RSN IE.
-                assoc_akm = parsed.get("assoc_akm")
-                if assoc_akm is not None:
-                    client.akm_selected = assoc_akm
+        ap = self.access_points[bssid]
+        # Bump recency — drives stale-row dim-out and "Last Beacon: Ns ago" in Focus.
+        ap.last_seen = time.time()
 
-                # Track association
-                if frame_type in ("assoc_req", "reassoc_req", "data", "wep_data", "eapol"):
-                    if bssid:
-                        client.bssid = bssid
-
-                # Track probed SSIDs
-                if frame_type == "probe_req":
-                    ssid = parsed.get("ssid")
-                    if ssid and ssid != "<hidden>":
-                        client.probed_ssids.add(ssid)
-
-                # Decloak via Assoc Req
-                if frame_type == "assoc_req" and bssid in self.access_points:
-                    ssid = parsed.get("ssid")
-                    if ssid and ssid != "<hidden>":
-                        ap = self.access_points[bssid]
-                        if not ap.ssid or ap.ssid == "<hidden>":
-                            ap.decloak_method = "assoc_req"
-                            ap.ssid = ssid
-
-        # Handshake tracking — per-client, never wiped.
-        if frame_type == "eapol" and bssid in self.access_points:
-            client_mac = parsed.get("source") if parsed.get("dest") == bssid else parsed.get("dest")
-            raw_frame = parsed.get("raw")
-            replay = parsed.get("eapol_replay_counter")
-            if client_mac and raw_frame and replay:
-                ap = self.access_points[bssid]
-                hs = ap.handshakes.get(client_mac)
-                if hs is None:
-                    hs = Handshake(
-                        bssid=bssid,
-                        client_mac=client_mac,
-                        beacon_frame=ap.last_beacon_frame,
-                        akm_offered=list(ap.akm_suites),
-                    )
-                    ap.handshakes[client_mac] = hs
-                elif ap.akm_suites:
-                    # Refresh in case the handshake was created before the AP's
-                    # RSN IE was known (EAPOL can precede the first beacon).
-                    hs.akm_offered = list(ap.akm_suites)
-
-                # Forged MACs keep a Handshake (for PMKID) but skip the EAPOL list — those
-                # are just AP retries of M1 we never answer, and would show a false "Partial".
-                is_forged = client_mac in self.forged_macs
-                if not is_forged and not hs.has_frame(raw_frame):
-                    eapol = EapolFrame(
-                        raw=raw_frame,
-                        msg_num=parsed.get("eapol_msg_num", 0),
-                        replay_hex=replay.hex(),
-                        nonce=parsed.get("eapol_nonce", b""),
-                        mic=parsed.get("eapol_mic", b""),
-                        key_data_len=parsed.get("eapol_key_data_len", 0),
-                        eapol_payload=parsed.get("eapol_payload", b""),
-                        timestamp=time.time(),
-                    )
-                    hs.eapol_frames.append(eapol)
-                    msg_label = f"M{eapol.msg_num}" if eapol.msg_num else "EAPOL-?"
-                    logger.info(
-                        f"[{msg_label}] {bssid} <-> {client_mac} "
-                        f"(replay {eapol.replay_hex})"
-                    )
-
-                # Client's negotiated AKM, read from M2's cleartext RSN IE. This is
-                # the authoritative per-association crackability signal (SAE vs PSK)
-                # on a WPA2/WPA3 transition AP. Latest M2 wins.
-                akm = parsed.get("eapol_akm")
-                if akm is not None:
-                    hs.akm_client = akm
-                elif hs.akm_client is None:
-                    # No M2 yet (e.g. a PMKID-only capture) — fall back to the AKM
-                    # the client advertised in its (Re)Assoc Request.
-                    client_obj = self.clients.get(client_mac)
-                    if client_obj is not None and client_obj.akm_selected is not None:
-                        hs.akm_client = client_obj.akm_selected
-
-                # Passive PMKID capture: AP's M1 sometimes carries a PMKID KDE. First wins.
-                pmkid = parsed.get("eapol_pmkid")
-                if pmkid and not hs.pmkid:
-                    hs.pmkid = pmkid
-                    logger.info(
-                        f"[PMKID] {bssid} <-> {client_mac} captured {pmkid.hex()}"
-                    )
+        # Stash the latest RSN IE — PMKID harvest echoes it into its Assoc Req.
+        rsn_ie = parsed.get("rsn_ie_raw")
+        if rsn_ie:
+            ap.rsn_ie = rsn_ie
 
         # Stash the latest beacon and back-fill handshakes missing one (EAPOL can arrive
         # before the first beacon).
-        if frame_type == "beacon" and bssid in self.access_points:
-            ap = self.access_points[bssid]
+        if frame_type == "beacon":
             raw_beacon = parsed.get("raw")
             if raw_beacon:
                 ap.last_beacon_frame = raw_beacon
@@ -365,6 +251,159 @@ class WlanInterface:
                         hs.beacon_frame = raw_beacon
                     if ap.akm_suites and not hs.akm_offered:
                         hs.akm_offered = list(ap.akm_suites)
+        return True
+
+    def _on_wepdata_frame(self, parsed: dict) -> bool:
+        """Route a WEP Data frame into the passive capture store — only for APs already
+        classified WEP from a beacon (guards a stray ExtIV-clear frame). True for wep_data."""
+        if parsed.get("type") != "wep_data":
+            return False
+        bssid = parsed.get("bssid")
+        ap = self.access_points.get(bssid)
+        if ap is not None and (ap.encryption or "").upper() == "WEP":
+            stats = self.wep_store.observe(bssid, parsed)
+            if stats is not None and ap.wep is None:
+                ap.wep = stats
+        return True
+
+    def _track_client(self, parsed: dict) -> bool:
+        """Register/refresh the client STA behind a frame (association, probed SSIDs, decloak
+        via Assoc Req). True for a client-bearing frame type."""
+        frame_type = parsed.get("type")
+        if frame_type not in (
+            "probe_req", "assoc_req", "reassoc_req", "data", "wep_data", "eapol",
+            "deauth", "assoc_resp",
+        ):
+            return False
+        bssid = parsed.get("bssid")
+        rssi = parsed.get("rssi", -100)
+        client_mac = self._client_mac(parsed)
+        if not client_mac or client_mac == "ff:ff:ff:ff:ff:ff" or client_mac in self.forged_macs:
+            return True
+
+        if client_mac not in self.clients:
+            self.clients[client_mac] = Client(
+                mac=client_mac, signal=rssi, is_self=client_mac in self.self_macs,
+            )
+        client = self.clients[client_mac]
+        client.signal = (client.signal + rssi) // 2
+        client.packets += 1
+
+        # The client's chosen AKM, from its (Re)Assoc Request RSN IE.
+        assoc_akm = parsed.get("assoc_akm")
+        if assoc_akm is not None:
+            client.akm_selected = assoc_akm
+
+        if frame_type in ("assoc_req", "reassoc_req", "data", "wep_data", "eapol") and bssid:
+            client.bssid = bssid
+
+        if frame_type == "probe_req" and self._is_real_ssid(parsed.get("ssid")):
+            client.probed_ssids.add(parsed["ssid"])
+
+        if frame_type == "assoc_req":
+            ap = self.access_points.get(bssid)
+            ssid = parsed.get("ssid")
+            if ap is not None and self._is_real_ssid(ssid):
+                self._decloak(ap, ssid, "assoc_req")
+        return True
+
+    def _on_eapol_frame(self, parsed: dict) -> bool:
+        """Track the 4-way handshake / PMKID for a client on a known AP — per-client, never
+        wiped. True for an eapol frame (even when the AP is unknown)."""
+        if parsed.get("type") != "eapol":
+            return False
+        bssid = parsed.get("bssid")
+        ap = self.access_points.get(bssid)
+        if ap is None:
+            return True
+        client_mac = self._client_mac(parsed)
+        raw_frame = parsed.get("raw")
+        replay = parsed.get("eapol_replay_counter")
+        if not (client_mac and raw_frame and replay):
+            return True
+
+        hs = ap.handshakes.get(client_mac)
+        if hs is None:
+            hs = Handshake(
+                bssid=bssid,
+                client_mac=client_mac,
+                beacon_frame=ap.last_beacon_frame,
+                akm_offered=list(ap.akm_suites),
+            )
+            ap.handshakes[client_mac] = hs
+        elif ap.akm_suites:
+            # Refresh in case the handshake was created before the AP's RSN IE was known
+            # (EAPOL can precede the first beacon).
+            hs.akm_offered = list(ap.akm_suites)
+
+        # Forged MACs keep a Handshake (for PMKID) but skip the EAPOL list — those are just AP
+        # retries of M1 we never answer, and would show a false "Partial".
+        if client_mac not in self.forged_macs and not hs.has_frame(raw_frame):
+            eapol = EapolFrame(
+                raw=raw_frame,
+                msg_num=parsed.get("eapol_msg_num", 0),
+                replay_hex=replay.hex(),
+                nonce=parsed.get("eapol_nonce", b""),
+                mic=parsed.get("eapol_mic", b""),
+                key_data_len=parsed.get("eapol_key_data_len", 0),
+                eapol_payload=parsed.get("eapol_payload", b""),
+                timestamp=time.time(),
+            )
+            hs.eapol_frames.append(eapol)
+            msg_label = f"M{eapol.msg_num}" if eapol.msg_num else "EAPOL-?"
+            logger.info(f"[{msg_label}] {bssid} <-> {client_mac} (replay {eapol.replay_hex})")
+
+        # Client's negotiated AKM, read from M2's cleartext RSN IE — the authoritative
+        # per-association crackability signal (SAE vs PSK) on a WPA2/WPA3 transition AP.
+        # Latest M2 wins.
+        akm = parsed.get("eapol_akm")
+        if akm is not None:
+            hs.akm_client = akm
+        elif hs.akm_client is None:
+            # No M2 yet (e.g. a PMKID-only capture) — fall back to the AKM the client
+            # advertised in its (Re)Assoc Request.
+            client_obj = self.clients.get(client_mac)
+            if client_obj is not None and client_obj.akm_selected is not None:
+                hs.akm_client = client_obj.akm_selected
+
+        # Passive PMKID capture: AP's M1 sometimes carries a PMKID KDE. First wins.
+        pmkid = parsed.get("eapol_pmkid")
+        if pmkid and not hs.pmkid:
+            hs.pmkid = pmkid
+            logger.info(f"[PMKID] {bssid} <-> {client_mac} captured {pmkid.hex()}")
+        return True
+
+    @staticmethod
+    def _client_mac(parsed: dict) -> Optional[str]:
+        """The client (non-AP) STA MAC in a frame, decided by the DS bits — or None when there
+        isn't one (WDS 4-address frames). An AP->client frame carries the wired-side origin in
+        addr3, so we key off direction; picking "the address that isn't the BSSID" would mint
+        phantom clients from the gateway/router MAC on any bridged network."""
+        to_ds, from_ds = parsed.get("to_ds"), parsed.get("from_ds")
+        source, dest, bssid = parsed.get("source"), parsed.get("dest"), parsed.get("bssid")
+        if to_ds and not from_ds:       # client -> AP
+            return source
+        if from_ds and not to_ds:       # AP -> client
+            return dest
+        if not to_ds and not from_ds:   # mgmt / IBSS: the endpoint that isn't the AP
+            if source and source != bssid:
+                return source
+            if dest and dest != bssid:
+                return dest
+        return None
+
+    def _decloak(self, ap: AccessPoint, ssid: str, method: str) -> None:
+        """Learn a hidden AP's real SSID: tag how it was revealed on the first reveal, then
+        always refresh the SSID (renames are rare but real; a bad-probe flood is a future
+        concern, fixable then by making this first-write-only)."""
+        if not self._is_real_ssid(ap.ssid):
+            ap.decloak_method = method
+        ap.ssid = ssid
+
+    @staticmethod
+    def _is_real_ssid(ssid: Optional[str]) -> bool:
+        """True for a usable SSID — present and not the hidden-network sentinel."""
+        return bool(ssid) and ssid != "<hidden>"
 
     SIBLING_BIT_DIFF_MAX = 4
 

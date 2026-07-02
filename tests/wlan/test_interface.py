@@ -287,6 +287,37 @@ def test_assoc_req_stamps_client_akm(mocker):
     assert iface.clients[client].akm_selected == 0x02
 
 
+def test_from_ds_client_is_receiver_not_addr3_origin(mocker):
+    """AP->client (FromDS) frames carry the wired-side origin in addr3 (parsed as 'source').
+    The client is the receiver (dest); attributing 'source' minted phantom clients from the
+    gateway/router MAC on bridged networks — the Focus 'hundreds of clients' bug."""
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="t")
+    ap, client = "aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"
+    upstream = "de:ad:be:ef:00:01"   # addr3: DS-side origin, NOT a client of the AP
+    iface._on_frame_parsed({
+        "type": "data", "to_ds": False, "from_ds": True,
+        "bssid": ap, "dest": client, "source": upstream, "rssi": -50,
+    })
+    assert client in iface.clients
+    assert upstream not in iface.clients
+    assert iface.clients[client].bssid == ap
+
+
+def test_to_ds_client_is_sender_not_addr3_da(mocker):
+    """Client->AP (ToDS) frames put the client in addr2 ('source') and the DA in addr3
+    ('dest'), which need not be the AP. The client is the sender."""
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="t")
+    ap, client = "aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"
+    far_da = "de:ad:be:ef:00:02"     # addr3: a downstream DA, not a client
+    iface._on_frame_parsed({
+        "type": "data", "to_ds": True, "from_ds": False,
+        "bssid": ap, "source": client, "dest": far_da, "rssi": -50,
+    })
+    assert client in iface.clients
+    assert far_da not in iface.clients
+    assert iface.clients[client].bssid == ap
+
+
 def test_transition_pmkid_only_classified_via_assoc(mocker):
     """Phase 2 payoff: on a WPA2/WPA3 transition AP a PMKID-only capture (no M2)
     is classified from the client's Assoc-Req AKM — PSK -> crackable, SAE -> not."""
