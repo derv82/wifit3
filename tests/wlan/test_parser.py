@@ -1,7 +1,7 @@
 import struct
 
 
-from wifit3.wlan.packet import WlanFrameParser, WepDataPacket
+from wifit3.wlan.packet import WlanFrameParser, WepDataPacket, BeaconPacket
 
 
 # ---- Beacon builder for RSN-IE tests ---------------------------------------
@@ -473,3 +473,74 @@ def test_channel_absent_when_no_ie_provides_it():
     frame = _build_beacon()
     parsed = WlanFrameParser.parse_80211_frame(frame, -50)
     assert parsed.channel is None
+
+
+# ---- Frame-type dispatch edge cases ----------------------------------------
+# Behaviours the type-dispatch path relies on but the other tests never hit:
+# WDS/ctrl rejection, probe-resp == beacon, the mgmt-subtype labels, corrupt-tag
+# rejection, and the HT-Control header offset.
+
+def test_wds_frame_is_ignored():
+    """A 4-address WDS data frame (to_ds AND from_ds) is intentionally dropped —
+    wifit3 has no use for repeater/mesh links. It passes _is_valid_frame (real
+    addr2/addr3), so the rejection is the parser's own, not the validator's."""
+    fc0 = 0x08                       # data, subtype 0
+    fc1 = 0x01 | 0x02                # to_ds + from_ds = WDS
+    a1 = b"\x11\x22\x33\x44\x55\x66"
+    a2 = b"\xaa\xbb\xcc\xdd\xee\xff"
+    a3 = b"\x77\x88\x99\xaa\xbb\xcc"
+    frame = bytes([fc0, fc1]) + b"\x00\x00" + a1 + a2 + a3 + b"\x00\x00" + b"\x00" * 8
+    assert WlanFrameParser.parse_80211_frame(frame, -50) is None
+
+
+def test_probe_response_parsed_like_beacon():
+    """A probe response (subtype 5) carries the same IE layout as a beacon and
+    must parse identically — same BeaconPacket type, SSID, and encryption."""
+    frame = bytearray(_build_beacon(ssid="ProbeNet", rsn_ie=_rsn_ie(akms=(0x02,))))
+    frame[0] = 0x50                  # mgmt subtype 5 = probe response (was 0x80 beacon)
+    parsed = WlanFrameParser.parse_80211_frame(bytes(frame), -50)
+    assert parsed is not None
+    assert parsed.type == "probe_resp"
+    assert isinstance(parsed, BeaconPacket)
+    assert parsed.ssid == "ProbeNet"
+    assert parsed.encryption == "WPA2-PSK-CCMP"
+
+
+def _minimal_mgmt(fc0: int) -> bytes:
+    """A 24-byte management frame with the given FC0 (type=mgmt + subtype), enough
+    to pass _is_valid_frame for the subtypes that carry no mandatory IEs."""
+    return bytes([fc0, 0x00]) + b"\x00\x00" + b"\x11" * 6 + b"\x22" * 6 + b"\x33" * 6 + b"\x00\x00"
+
+
+def test_assoc_resp_labeled():
+    parsed = WlanFrameParser.parse_80211_frame(_minimal_mgmt(0x10), -50)  # subtype 1
+    assert parsed.type == "assoc_resp"
+
+
+def test_unknown_mgmt_subtype_labeled_generic():
+    parsed = WlanFrameParser.parse_80211_frame(_minimal_mgmt(0xA0), -50)  # subtype 0x0A (action)
+    assert parsed.type == "mgmt_10"
+
+
+def test_beacon_with_control_char_ssid_returns_none():
+    """Passes the structural _is_valid_frame check (tag0=SSID, tag1=rates) but the
+    SSID holds control bytes → _parse_tags rejects it as corrupt → parse None."""
+    frame = _build_beacon(ssid="\x01\x02\x03")
+    assert WlanFrameParser.parse_80211_frame(frame, -50) is None
+
+
+def test_wep_data_with_ht_control_offset():
+    """The Order/HT-Control bit (FC1 0x80) adds a 4-byte HT Control field to the
+    MAC header. The WEP IV must be read past it (offset 28, not 24)."""
+    fc0 = 0x08                       # data, subtype 0
+    fc1 = 0x02 | 0x40 | 0x80         # from_ds + Protected + Order (HT Control present)
+    bssid = b"\x11\x22\x33\x44\x55\x66"
+    client = b"\xaa\xbb\xcc\xdd\xee\xff"
+    mac = bytes([fc0, fc1]) + b"\x00\x00" + client + bssid + client + b"\x00\x00"
+    ht_control = b"\x00\x00\x00\x00"
+    iv = b"\xde\xad\xbe"
+    frame = mac + ht_control + iv + b"\x00" + b"\x00" * 16   # keyid byte ExtIV clear → WEP
+    parsed = WlanFrameParser.parse_80211_frame(frame, -50)
+    assert parsed is not None
+    assert parsed.type == "wep_data"
+    assert parsed.iv == iv
