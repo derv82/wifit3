@@ -57,6 +57,17 @@ def _bssid_byte_diff(a: str, b: str) -> int:
         return 6
     return sum(1 for x, y in zip(pa, pb) if x != y)
 
+
+def _is_group_mac(mac: str) -> bool:
+    """True for a group (multicast/broadcast) MAC — the I/G bit (LSB of the first octet) is
+    set. These are frame destinations (IPv6 ``33:33:…``, IPv4 ``01:00:5e:…``, broadcast
+    ``ff:…``), never client stations, whose NICs are always unicast (even first octet)."""
+    try:
+        return bool(int(mac.split(":", 1)[0], 16) & 1)
+    except (ValueError, IndexError):
+        return True   # unparseable → never treat as a client
+
+
 class WlanInterface:
     """High-level 802.11 abstraction for a hardware driver; the UI talks only to this class."""
     def __init__(self, driver_instance: Any, name: str, description: str,
@@ -278,7 +289,7 @@ class WlanInterface:
         bssid = parsed.get("bssid")
         rssi = parsed.get("rssi", -100)
         client_mac = self._client_mac(parsed)
-        if not client_mac or client_mac == "ff:ff:ff:ff:ff:ff" or client_mac in self.forged_macs:
+        if not client_mac or client_mac in self.forged_macs:
             return True
 
         if client_mac not in self.clients:
@@ -376,21 +387,23 @@ class WlanInterface:
     @staticmethod
     def _client_mac(parsed: dict) -> Optional[str]:
         """The client (non-AP) STA MAC in a frame, decided by the DS bits — or None when there
-        isn't one (WDS 4-address frames). An AP->client frame carries the wired-side origin in
-        addr3, so we key off direction; picking "the address that isn't the BSSID" would mint
-        phantom clients from the gateway/router MAC on any bridged network."""
+        isn't one (WDS 4-address frames, or a group destination). An AP->client frame carries
+        the wired-side origin in addr3, so we key off direction; picking "the address that
+        isn't the BSSID" would mint phantom clients from the gateway/router MAC on a bridged
+        network. Group MACs (multicast/broadcast) are frame destinations, never stations."""
         to_ds, from_ds = parsed.get("to_ds"), parsed.get("from_ds")
         source, dest, bssid = parsed.get("source"), parsed.get("dest"), parsed.get("bssid")
-        if to_ds and not from_ds:       # client -> AP
-            return source
-        if from_ds and not to_ds:       # AP -> client
-            return dest
-        if not to_ds and not from_ds:   # mgmt / IBSS: the endpoint that isn't the AP
+        mac = None
+        if to_ds and not from_ds:        # client -> AP
+            mac = source
+        elif from_ds and not to_ds:      # AP -> client
+            mac = dest
+        elif not to_ds and not from_ds:  # mgmt / IBSS: the endpoint that isn't the AP
             if source and source != bssid:
-                return source
-            if dest and dest != bssid:
-                return dest
-        return None
+                mac = source
+            elif dest and dest != bssid:
+                mac = dest
+        return mac if mac and not _is_group_mac(mac) else None
 
     def _decloak(self, ap: AccessPoint, ssid: str, method: str) -> None:
         """Learn a hidden AP's real SSID: tag how it was revealed on the first reveal, then

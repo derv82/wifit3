@@ -158,7 +158,7 @@ def _wep_data(bssid, client, iv):
 
 def test_wep_ivs_tallied_onto_ap(mocker):
     iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="T")
-    bssid = "11:22:33:44:55:66"
+    bssid = "12:22:33:44:55:66"
     _seed_ap(iface, bssid, "WEP")
 
     iface._on_frame_parsed(_wep_data(bssid, "aa:bb:cc:dd:ee:01", b"\x01\x02\x03"))
@@ -176,11 +176,11 @@ def test_wep_ivs_tallied_onto_ap(mocker):
 
 def test_register_self_mac_creates_you_client(mocker):
     iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="T")
-    mac = iface.register_self_mac(b"\x02\x00\x00\x00\x00\x01", bssid="11:22:33:44:55:66")
+    mac = iface.register_self_mac(b"\x02\x00\x00\x00\x00\x01", bssid="12:22:33:44:55:66")
     assert mac == "02:00:00:00:00:01"
     c = iface.clients[mac]
     assert c.is_self is True
-    assert c.bssid == "11:22:33:44:55:66"
+    assert c.bssid == "12:22:33:44:55:66"
     # Forged self MAC is a distinct concept from the hidden PMKID forged_macs.
     assert mac in iface.self_macs
     assert mac not in iface.forged_macs
@@ -197,7 +197,7 @@ def test_unregister_self_mac_drops_you_client(mocker):
 def test_wep_ivs_ignored_for_non_wep_ap(mocker):
     """Guard: an ExtIV-clear frame on a WPA2 AP must not inflate a WEP count."""
     iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="T")
-    bssid = "11:22:33:44:55:66"
+    bssid = "12:22:33:44:55:66"
     _seed_ap(iface, bssid, "WPA2")
 
     iface._on_frame_parsed(_wep_data(bssid, "aa:bb:cc:dd:ee:01", b"\x01\x02\x03"))
@@ -222,7 +222,7 @@ def test_broadcast_wep_stored_as_arp_candidate_either_direction(mocker):
     """Both ToDS and FromDS broadcast WEP frames are kept — the replay engine
     re-addresses them, so a FromDS relay is as usable as a ToDS request."""
     iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="T")
-    bssid = "11:22:33:44:55:66"
+    bssid = "12:22:33:44:55:66"
     _seed_ap(iface, bssid, "WEP")
     iface._on_frame_parsed(_wep_broadcast(bssid, "aa:bb:cc:dd:ee:01", to_ds=True))
     iface._on_frame_parsed(_wep_broadcast(bssid, "aa:bb:cc:dd:ee:02", to_ds=False))
@@ -248,7 +248,7 @@ def test_real_client_still_creates_handshake_with_eapol_frames(mocker):
         "raw": b"\x00" * 36,
     })
 
-    real_client = "11:22:33:44:55:66"
+    real_client = "12:22:33:44:55:66"
     iface._on_frame_parsed({
         "type": "eapol",
         "bssid": "aa:bb:cc:dd:ee:ff",
@@ -275,7 +275,7 @@ def test_assoc_req_stamps_client_akm(mocker):
     PMKID-only capture on a transition AP can be classified without an M2."""
     mock_driver = mocker.MagicMock()
     iface = WlanInterface(driver_instance=mock_driver, name="wlan0", description="Test")
-    client = "11:22:33:44:55:66"
+    client = "12:22:33:44:55:66"
     iface._on_frame_parsed({
         "type": "assoc_req",
         "bssid": "aa:bb:cc:dd:ee:ff",
@@ -292,7 +292,7 @@ def test_from_ds_client_is_receiver_not_addr3_origin(mocker):
     The client is the receiver (dest); attributing 'source' minted phantom clients from the
     gateway/router MAC on bridged networks — the Focus 'hundreds of clients' bug."""
     iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="t")
-    ap, client = "aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"
+    ap, client = "aa:bb:cc:dd:ee:ff", "12:22:33:44:55:66"
     upstream = "de:ad:be:ef:00:01"   # addr3: DS-side origin, NOT a client of the AP
     iface._on_frame_parsed({
         "type": "data", "to_ds": False, "from_ds": True,
@@ -307,7 +307,7 @@ def test_to_ds_client_is_sender_not_addr3_da(mocker):
     """Client->AP (ToDS) frames put the client in addr2 ('source') and the DA in addr3
     ('dest'), which need not be the AP. The client is the sender."""
     iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="t")
-    ap, client = "aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"
+    ap, client = "aa:bb:cc:dd:ee:ff", "12:22:33:44:55:66"
     far_da = "de:ad:be:ef:00:02"     # addr3: a downstream DA, not a client
     iface._on_frame_parsed({
         "type": "data", "to_ds": True, "from_ds": False,
@@ -318,6 +318,20 @@ def test_to_ds_client_is_sender_not_addr3_da(mocker):
     assert iface.clients[client].bssid == ap
 
 
+def test_group_mac_destination_is_not_a_client(mocker):
+    """Multicast/broadcast MACs (IPv6 33:33, IPv4 01:00:5e, broadcast ff:…) are frame
+    destinations, not stations — a downstream (FromDS) multicast frame would otherwise
+    register its group MAC (addr1) as a phantom client."""
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="t")
+    ap, upstream = "aa:bb:cc:dd:ee:ff", "de:ad:be:ef:00:01"
+    for group in ("33:33:00:00:00:02", "01:00:5e:7f:ff:fa", "ff:ff:ff:ff:ff:ff"):
+        iface._on_frame_parsed({
+            "type": "data", "to_ds": False, "from_ds": True,
+            "bssid": ap, "dest": group, "source": upstream, "rssi": -50,
+        })
+    assert iface.clients == {}
+
+
 def test_transition_pmkid_only_classified_via_assoc(mocker):
     """Phase 2 payoff: on a WPA2/WPA3 transition AP a PMKID-only capture (no M2)
     is classified from the client's Assoc-Req AKM — PSK -> crackable, SAE -> not."""
@@ -326,7 +340,7 @@ def test_transition_pmkid_only_classified_via_assoc(mocker):
     for client_akm, expect_crackable in ((0x02, True), (0x08, False)):
         mock_driver = mocker.MagicMock()
         iface = WlanInterface(driver_instance=mock_driver, name="wlan0", description="Test")
-        bssid, client = "aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"
+        bssid, client = "aa:bb:cc:dd:ee:ff", "12:22:33:44:55:66"
         iface._on_frame_parsed({              # transition beacon: offers PSK + SAE
             "type": "beacon", "bssid": bssid, "source": bssid,
             "dest": "ff:ff:ff:ff:ff:ff", "rssi": -40, "ssid": "T", "channel": 1,
@@ -407,20 +421,20 @@ def test_wlan_interface_decloaking(mocker):
     # Hidden network beacon
     parsed_beacon = {
         "type": "beacon",
-        "bssid": "11:22:33:44:55:66",
+        "bssid": "12:22:33:44:55:66",
         "rssi": -60,
         "ssid": "<hidden>"
     }
     iface._on_frame_parsed(parsed_beacon)
 
-    ap = iface.access_points["11:22:33:44:55:66"]
+    ap = iface.access_points["12:22:33:44:55:66"]
     assert ap.ssid is None
     assert ap.decloak_method is None
 
     # Decloak via probe response
     parsed_probe = {
         "type": "probe_resp",
-        "bssid": "11:22:33:44:55:66",
+        "bssid": "12:22:33:44:55:66",
         "rssi": -60,
         "ssid": "Hidden_No_More"
     }
@@ -436,18 +450,18 @@ def test_wlan_interface_decloaking_via_assoc_req(mocker):
 
     iface._on_frame_parsed({
         "type": "beacon",
-        "bssid": "11:22:33:44:55:66",
+        "bssid": "12:22:33:44:55:66",
         "rssi": -60,
         "ssid": "<hidden>",
     })
-    ap = iface.access_points["11:22:33:44:55:66"]
+    ap = iface.access_points["12:22:33:44:55:66"]
     assert ap.ssid is None
 
     iface._on_frame_parsed({
         "type": "assoc_req",
-        "bssid": "11:22:33:44:55:66",
+        "bssid": "12:22:33:44:55:66",
         "source": "aa:aa:aa:aa:aa:aa",
-        "dest": "11:22:33:44:55:66",
+        "dest": "12:22:33:44:55:66",
         "rssi": -65,
         "ssid": "TestSSID",
     })
@@ -463,26 +477,26 @@ def test_wlan_interface_decloak_method_not_overwritten(mocker):
 
     iface._on_frame_parsed({
         "type": "beacon",
-        "bssid": "11:22:33:44:55:66",
+        "bssid": "12:22:33:44:55:66",
         "rssi": -60,
         "ssid": "<hidden>",
     })
     iface._on_frame_parsed({
         "type": "assoc_req",
-        "bssid": "11:22:33:44:55:66",
+        "bssid": "12:22:33:44:55:66",
         "source": "aa:aa:aa:aa:aa:aa",
-        "dest": "11:22:33:44:55:66",
+        "dest": "12:22:33:44:55:66",
         "rssi": -65,
         "ssid": "TestSSID",
     })
     iface._on_frame_parsed({
         "type": "probe_resp",
-        "bssid": "11:22:33:44:55:66",
+        "bssid": "12:22:33:44:55:66",
         "rssi": -60,
         "ssid": "TestSSID",
     })
 
-    ap = iface.access_points["11:22:33:44:55:66"]
+    ap = iface.access_points["12:22:33:44:55:66"]
     assert ap.decloak_method == "assoc_req"
 
 
