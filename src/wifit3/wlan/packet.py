@@ -1,4 +1,5 @@
 import logging
+import struct
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 
@@ -85,9 +86,11 @@ _BASE_FIELDS = (
 
 
 class WlanFrameParser:
-    """
-    Lightweight, native 802.11 parser for AR9271.
-    Handles WMI_RX_STATUS metadata and extracts a rich dictionary of attributes.
+    """Native, dependency-free 802.11 frame parser (no Scapy).
+
+    Every driver feeds it a bare MPDU (its hardware RX descriptor already stripped)
+    plus an RSSI; :meth:`parse_80211_frame` returns the typed :class:`Packet` subclass
+    for the frame's type.
     """
 
     # --- 802.11 Constants ---
@@ -108,9 +111,9 @@ class WlanFrameParser:
 
     @staticmethod
     def parse_80211_frame(frame: bytes, rssi: int) -> Optional["Packet"]:
-        """
-        Generic 802.11 frame parser.
-        Receives a raw 802.11 frame and an RSSI value.
+        """Generic 802.11 frame parser: a raw MPDU + RSSI -> the matching typed
+        ``Packet`` subclass, or ``None`` if the frame is noise / unparseable / an
+        unsupported type (WDS, most control frames).
         """
         if not WlanFrameParser._is_valid_frame(frame):
             return None
@@ -123,7 +126,6 @@ class WlanFrameParser:
         to_ds = (fc1 & 0x01) != 0
         from_ds = (fc1 & 0x02) != 0
 
-        # Parse MAC Addresses
         addr1 = WlanFrameParser._mac_to_str(frame[4:10])
         addr2 = WlanFrameParser._mac_to_str(frame[10:16])
         addr3 = WlanFrameParser._mac_to_str(frame[16:22])
@@ -294,7 +296,6 @@ class WlanFrameParser:
                     if len(frame) >= eapol_start + 99:
                         eapol_type = frame[eapol_start + 1]
                         if eapol_type == 3:  # EAPOL-Key
-                            import struct
                             key_info = struct.unpack(">H", frame[eapol_start + 5: eapol_start + 7])[0]
                             replay_counter = frame[eapol_start + 9: eapol_start + 17]
                             nonce = frame[eapol_start + 17: eapol_start + 49]
