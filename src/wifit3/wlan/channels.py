@@ -12,14 +12,12 @@ def scan_hop_order(channels: list[int]) -> list[int]:
     then the rest of 2.4 GHz, then 5 GHz.
 
     Front-loads popular channels so the AP table is mostly populated before the first sort
-    tick. Pure reordering — same channels, de-duped (first occurrence wins); non-priority
-    2.4 GHz and 5 GHz keep the caller's original order.
+    tick. Pure reordering — same channels; non-priority 2.4 GHz and 5 GHz keep the caller's
+    original order.
     """
-    seen: set[int] = set()
-    uniq = [c for c in channels if not (c in seen or seen.add(c))]
-    priority = [c for c in _PRIORITY_2G if c in uniq]
-    rest_2g = [c for c in uniq if c <= 14 and c not in _PRIORITY_2G]
-    band_5g = [c for c in uniq if c > 14]
+    priority = [c for c in _PRIORITY_2G if c in channels]
+    rest_2g = [c for c in channels if c <= 14 and c not in _PRIORITY_2G]
+    band_5g = [c for c in channels if c > 14]
     return priority + rest_2g + band_5g
 
 
@@ -30,7 +28,7 @@ def _split_bands(channels: list[int]) -> tuple[list[int], list[int]]:
 
 
 def _compress_runs(channels: list[int], step: int) -> str:
-    """Collapse a sorted channel list into ``a-b, c, d-e``.
+    """Collapse a channel list into ``a-b, c, d-e``.
 
     ``step`` is the spacing between adjacent channels in that band — 1 on 2.4 GHz
     (1,2,3…) and 4 on the 5 GHz UNII grid (36,40,44,48…), so 36,40,44,48 renders

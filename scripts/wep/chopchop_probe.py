@@ -218,7 +218,7 @@ async def capture_chop_target(iface, bssid, wait_s, provoke):
             return frame
         await asyncio.sleep(0.5)
     fail(f"No broadcast WEP frame in {wait_s:.0f}s "
-         f"({iface.wep_store.arp_seen_count(bssid)} seen). Generate LAN "
+         f"({iface.wep_store.broadcast_seen_count(bssid)} seen). Generate LAN "
          "traffic (ping gateway) or use --provoke <client_mac>.")
 
 

@@ -221,7 +221,7 @@ class WepCampaign(Campaign):
         the store yet, so register it as a replay seed, then resume replay to
         loop it."""
         self.chop = None
-        self.iface.wep_store.record_arp_candidate(self.target.bssid, forged_frame)
+        self.iface.wep_store.record_broadcast_frame(self.target.bssid, forged_frame)
         # The chop daemon already logged "✓ ChopChop worked!"; resuming replay
         # speaks for itself via its own "Testing candidate packet…" line.
         self.replay.resume()

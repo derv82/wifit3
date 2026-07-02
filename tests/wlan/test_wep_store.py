@@ -102,14 +102,14 @@ def test_crack_eta_none_when_no_samples():
 def test_arp_candidate_retained_when_size_matches():
     c = WepCaptureStore()
     frame = b"\x00" * 68          # canonical WEP ARP-request length
-    assert c.record_arp_candidate(BSSID, frame) is True
+    assert c.record_broadcast_frame(BSSID, frame) is True
     assert c.arp_candidate_count(BSSID) == 1
     assert c.arp_candidates(BSSID) == [frame]
 
 
 def test_arp_candidate_rejected_on_wrong_size():
     c = WepCaptureStore()
-    assert c.record_arp_candidate(BSSID, b"\x00" * 100) is False
+    assert c.record_broadcast_frame(BSSID, b"\x00" * 100) is False
     assert c.arp_candidate_count(BSSID) == 0
 
 
@@ -118,7 +118,7 @@ def test_arp_candidates_stored_both_directions():
     replay engine re-addresses them and prunes non-yielding ones later."""
     c = WepCaptureStore()
     for i in range(5):
-        c.record_arp_candidate(BSSID, bytes([i]) + b"\x00" * 67)
+        c.record_broadcast_frame(BSSID, bytes([i]) + b"\x00" * 67)
     assert c.arp_candidate_count(BSSID) == 5
 
 
@@ -126,15 +126,15 @@ def test_arp_ring_capped():
     from wifit3.wlan.wep_store import ARP_RING_MAXLEN
     c = WepCaptureStore()
     for i in range(ARP_RING_MAXLEN + 50):
-        c.record_arp_candidate(BSSID, i.to_bytes(2, "big") + b"\x00" * 66)
+        c.record_broadcast_frame(BSSID, i.to_bytes(2, "big") + b"\x00" * 66)
     assert c.arp_candidate_count(BSSID) == ARP_RING_MAXLEN
 
 
-def test_arp_seen_counts_all_sizes():
+def test_broadcast_seen_counts_all_sizes():
     c = WepCaptureStore()
-    c.record_arp_candidate(BSSID, b"\x00" * 68)     # stored
-    c.record_arp_candidate(BSSID, b"\x00" * 368)    # wrong size, still 'seen'
-    assert c.arp_seen_count(BSSID) == 2
+    c.record_broadcast_frame(BSSID, b"\x00" * 68)     # stored
+    c.record_broadcast_frame(BSSID, b"\x00" * 368)    # wrong size, still 'seen'
+    assert c.broadcast_seen_count(BSSID) == 2
     assert c.arp_candidate_count(BSSID) == 1
 
 
@@ -143,8 +143,8 @@ def test_chop_candidates_include_non_arp_broadcast_frames():
     WEP data frame of usable size (incl. IP broadcasts) is kept, even though
     only the ARP-sized one lands in the (replay) ARP ring."""
     c = WepCaptureStore()
-    c.record_arp_candidate(BSSID, b"\x00" * 68)     # ARP-sized → both rings
-    c.record_arp_candidate(BSSID, b"\x00" * 90)     # non-ARP IP-ish → chop only
+    c.record_broadcast_frame(BSSID, b"\x00" * 68)     # ARP-sized → both rings
+    c.record_broadcast_frame(BSSID, b"\x00" * 90)     # non-ARP IP-ish → chop only
     assert c.arp_candidate_count(BSSID) == 1        # ARP ring: ARP-sized only
     assert len(c.chop_candidates(BSSID)) == 2       # chop ring: both
 
@@ -152,7 +152,7 @@ def test_chop_candidates_include_non_arp_broadcast_frames():
 def test_chop_candidates_skip_runts():
     from wifit3.wlan.wep_store import CHOP_MIN_LEN
     c = WepCaptureStore()
-    c.record_arp_candidate(BSSID, b"\x00" * (CHOP_MIN_LEN - 1))   # too short
+    c.record_broadcast_frame(BSSID, b"\x00" * (CHOP_MIN_LEN - 1))   # too short
     assert c.chop_candidates(BSSID) == []
 
 

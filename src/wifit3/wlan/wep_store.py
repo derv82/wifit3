@@ -1,8 +1,8 @@
 """Passive WEP capture store (always-on, RX-only).
 
 The single sink for everything we passively learn from WEP-encrypted Data
-frames on the RX/parse path (via ``WlanInterface._on_frame_parsed``). One
-``observe(bssid, parsed)`` call routes a frame to all the right buckets:
+frames on the RX/parse path. One ``observe(bssid, parsed)`` call routes a frame to all the
+right buckets:
 
   - unique 3-byte IVs (deduped) → the count that drives "ETA to 10k"
   - broadcast ARP-sized frames → replay seeds for the ARP-replay attack
@@ -14,9 +14,7 @@ from the Scanner (channel hopping) and Focus (parked), the only difference
 being how fast frames arrive.
 
 The light, UI-facing counters live on ``AccessPoint.wep`` (a ``WepStats``);
-the heavy buffers live here so the ``WepStats`` model stays cheap to poll. Named
-"store" (not "collector") because it could move to disk if memory ever
-matters, without changing its role.
+the heavy buffers live here so the ``WepStats`` model stays cheap to poll.
 """
 from __future__ import annotations
 
@@ -27,8 +25,7 @@ from typing import Deque, Dict, List, Optional, Set
 from wifit3.engine.models import WepStats
 
 # Unique-IV count at which a 40-bit (5-byte) WEP key typically becomes
-# recoverable with PTW. Drives the Focus "ETA to Nk" line; the actual
-# cracker (future M7) sets its own readiness threshold.
+# recoverable with PTW. Drives the Focus "ETA to Nk" line.
 WEP_CRACK_IV_THRESHOLD = 10_000
 
 # WEP-encrypted ARP REQUEST recognition (passive, no decrypt). ARP requests
@@ -109,6 +106,9 @@ class WepCaptureStore:
     accessors for the UI / cracker (counts, rate, ETA, seeds, samples).
     """
 
+    # Frames whose destination is broadcast are ARP-replay / crack candidates.
+    _BROADCAST = "ff:ff:ff:ff:ff:ff"
+
     def __init__(self, rate_window_s: float = 10.0):
         self._rate_window_s = rate_window_s
         self._unique_ivs: Dict[str, Set[bytes]] = {}
@@ -121,24 +121,19 @@ class WepCaptureStore:
         self._chop_candidates: Dict[str, Deque[bytes]] = {}
         # Per-BSSID count of ALL broadcast WEP frames seen (both directions,
         # any size) — for visibility ("N seen / M usable seeds").
-        self._arp_seen: Dict[str, int] = {}
+        self._broadcast_seen: Dict[str, int] = {}
         # Per-BSSID PTW crack samples: (iv, cipher16) for ARP-sized broadcast
         # frames (known plaintext), deduped by IV. This is the cracker's input
         # — kept separate from the small replay-seed ring because the cracker
         # needs tens of thousands of distinct IVs.
         self._crack_samples: Dict[str, List[tuple]] = {}
         self._crack_ivs: Dict[str, Set[bytes]] = {}
-        # Sample acquisition rate (samples/s), for the crack ETA. Separate from
-        # _rates (unique-IV rate) because samples are the subset that gates the
-        # cracker.
+        # Sample acquisition rate (samples/s), for the crack ETA.
         self._sample_rates: Dict[str, RateTracker] = {}
         # Per-BSSID ring of (iv, leading-cipher) from ANY WEP data frame, for
         # the fragmentation seed. Deduped by IV.
         self._seed_samples: Dict[str, Deque[tuple]] = {}
         self._seed_ivs: Dict[str, Set[bytes]] = {}
-
-    # Frames whose destination is broadcast are ARP-replay / crack candidates.
-    _BROADCAST = "ff:ff:ff:ff:ff:ff"
 
     def observe(self, bssid: str, parsed: dict) -> Optional[WepStats]:
         """Route one parsed WEP Data frame into every relevant bucket.
@@ -154,17 +149,16 @@ class WepCaptureStore:
             return None
         stats = self.record(bssid, iv)
         cipher = parsed.get("wep_cipher")
-        # ANY data frame is a fragmentation seed (LLC/SNAP known-plaintext) —
-        # not just broadcast ARPs. This is what lets frag work with no client
-        # ARP to replay.
+        # ANY data frame is a fragmentation seed (LLC/SNAP known-plaintext),
+        # not just broadcast ARPs.
         if cipher and len(cipher) >= 8:
             self.record_seed_sample(bssid, iv, cipher)
         raw = parsed.get("raw")
         if raw and parsed.get("dest") == self._BROADCAST:
-            # record_arp_candidate returns True iff it was ARP-sized — reuse
+            # record_broadcast_frame returns True iff it was ARP-sized — reuse
             # that as the single size gate for the crack sample too (the
             # ciphertext's plaintext is only known for ARP-sized frames).
-            arp_sized = self.record_arp_candidate(
+            arp_sized = self.record_broadcast_frame(
                 bssid, raw, source=parsed.get("source")
             )
             if arp_sized and cipher and len(cipher) == 16:
@@ -223,30 +217,32 @@ class WepCaptureStore:
             return None
         return remaining / r
 
-    # ---- ARP replay candidates ----------------------------------------------
+    # ---- Broadcast-frame candidates (ARP replay + ChopChop seeds) -----------
 
-    def record_arp_candidate(
+    def record_broadcast_frame(
         self, bssid: str, raw: bytes, source: Optional[str] = None
     ) -> bool:
-        """Stash a broadcast WEP Data frame as an ARP-replay candidate.
+        """File one broadcast WEP Data frame into the candidate rings.
 
-        Counts every broadcast WEP frame seen (for the UI's 'N seen / M usable'
-        visibility) and retains any that match the ARP-request length
-        heuristic, regardless of DS direction — the replay engine re-addresses
-        it into a replayable ToDS frame. Returns True if retained.
+        Counts every broadcast frame seen (for the UI's 'N seen / M usable'
+        visibility), keeps any of usable size as a ChopChop seed, and — for
+        frames matching the ARP-request length heuristic, regardless of DS
+        direction — also keeps it in the ARP-replay ring (the replay engine
+        re-addresses it into a replayable ToDS frame). Returns True if it was
+        ARP-sized (i.e. landed in the ARP ring).
         """
-        self._arp_seen[bssid] = self._arp_seen.get(bssid, 0) + 1
+        self._broadcast_seen[bssid] = self._broadcast_seen.get(bssid, 0) + 1
         # Any broadcast WEP data frame of usable size is a ChopChop seed (ARP or
         # IP alike) — keep a broad ring so ChopChop isn't limited to ARP frames.
         if len(raw) >= CHOP_MIN_LEN:
-            cring = self._chop_candidates.setdefault(
+            chop_ring = self._chop_candidates.setdefault(
                 bssid, deque(maxlen=CHOP_RING_MAXLEN)
             )
-            cring.append(bytes(raw))
+            chop_ring.append(bytes(raw))
         if len(raw) not in ARP_REQUEST_LENGTHS:
             return False
-        ring = self._arp_candidates.setdefault(bssid, deque(maxlen=ARP_RING_MAXLEN))
-        ring.append(bytes(raw))
+        arp_ring = self._arp_candidates.setdefault(bssid, deque(maxlen=ARP_RING_MAXLEN))
+        arp_ring.append(bytes(raw))
         return True
 
     def arp_candidates(self, bssid: str) -> List[bytes]:
@@ -261,10 +257,10 @@ class WepCaptureStore:
     def arp_candidate_count(self, bssid: str) -> int:
         return len(self._arp_candidates.get(bssid, ()))
 
-    def arp_seen_count(self, bssid: str) -> int:
+    def broadcast_seen_count(self, bssid: str) -> int:
         """All broadcast WEP frames seen (any size/direction) — for the UI's
         'N seen / M usable' visibility."""
-        return self._arp_seen.get(bssid, 0)
+        return self._broadcast_seen.get(bssid, 0)
 
     # ---- PTW crack samples --------------------------------------------------
 

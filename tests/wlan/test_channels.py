@@ -19,10 +19,6 @@ def test_scan_hop_order_is_a_permutation():
     assert sorted(scan_hop_order(src)) == sorted(src)
 
 
-def test_scan_hop_order_dedupes_keeping_first():
-    assert scan_hop_order([6, 6, 1, 1, 11]) == [1, 6, 11]
-
-
 def test_scan_hop_order_partial_priority_set():
     # Only the priority channels actually present are front-loaded.
     assert scan_hop_order([1, 2, 3, 4, 5]) == [1, 2, 3, 4, 5]

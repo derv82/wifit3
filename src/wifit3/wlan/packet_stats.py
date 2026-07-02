@@ -41,7 +41,7 @@ _RX_CLASS = {
 
 
 def _zero() -> Dict[str, int]:
-    return dict.fromkeys(PACKET_CLASSES, 0)
+    return {cls: 0 for cls in PACKET_CLASSES}
 
 
 class PacketStats:
@@ -58,9 +58,8 @@ class PacketStats:
             self._counts[bssid][cls] += 1
 
     def record_tx(self, bssid: str, is_deauth: bool) -> None:
-        """Tally an injected frame. Our deauth bursts spike the red DEAUTH
-        line (alongside any ambient deauths we hear); every other inject — WEP
-        replay/fake-auth, WPS, PMKID, WPA3-down, decloak — spikes INJECT."""
+        """Tally an injected frame: deauths spike the DEAUTH line (alongside any ambient
+        deauths we hear); every other inject spikes INJECT."""
         self._counts[bssid][CLASS_DEAUTH if is_deauth else CLASS_INJECT] += 1
 
     def snapshot(self, bssid: str) -> Dict[str, int]:

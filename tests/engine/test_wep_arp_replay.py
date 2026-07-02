@@ -72,7 +72,7 @@ class FakeCollector:
     def arp_candidate_count(self, bssid: str) -> int:
         return len(self._candidates)
 
-    def arp_seen_count(self, bssid: str) -> int:
+    def broadcast_seen_count(self, bssid: str) -> int:
         return len(self._candidates)
 
 
