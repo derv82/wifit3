@@ -6,6 +6,8 @@ import struct
 from wifit3.wlan.interface import WlanInterface
 from wifit3.wlan.packet_stats import PACKET_CLASSES, PacketStats
 
+from tests.frames import pkt
+
 BSSID = "00:11:22:33:44:55"
 CLIENT = "aa:bb:cc:dd:ee:ff"
 
@@ -99,8 +101,8 @@ def _data_frame(bssid=BSSID, client=CLIENT) -> bytes:
 
 def test_interface_rx_tallies_by_class():
     iface = WlanInterface(_FakeDriver(), "wlan0", "Fake")
-    iface._on_frame_parsed({"type": "beacon", "bssid": BSSID, "rssi": -42})
-    iface._on_frame_parsed({"type": "eapol", "bssid": BSSID, "rssi": -42})
+    iface._on_frame_parsed(pkt({"type": "beacon", "bssid": BSSID, "rssi": -42}))
+    iface._on_frame_parsed(pkt({"type": "eapol", "bssid": BSSID, "rssi": -42}))
     snap = iface.packet_stats.snapshot(BSSID)
     assert snap["beacon"] == 1
     assert snap["eapol"] == 1
@@ -108,7 +110,7 @@ def test_interface_rx_tallies_by_class():
 
 def test_interface_rx_skips_broadcast_bssid():
     iface = WlanInterface(_FakeDriver(), "wlan0", "Fake")
-    iface._on_frame_parsed({"type": "beacon", "bssid": "ff:ff:ff:ff:ff:ff", "rssi": -42})
+    iface._on_frame_parsed(pkt({"type": "beacon", "bssid": "ff:ff:ff:ff:ff:ff", "rssi": -42}))
     assert iface.packet_stats.snapshot("ff:ff:ff:ff:ff:ff")["beacon"] == 0
 
 

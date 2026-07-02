@@ -1,7 +1,88 @@
 import logging
+from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
+
+
+# Parsed 802.11 frame, as a typed hierarchy: the fields on ``Packet`` are on every frame;
+# each subclass adds the fields that only exist for its frame type. Accessing (say) an EAPOL
+# field on a BeaconPacket is a hard error (AttributeError / a red squiggle), not a silent None.
+# kw_only so subclass fields need no ordering dance behind the base's ``ssid`` default; slots
+# for a smaller, faster per-frame object than the dict it replaces.
+@dataclass(slots=True, kw_only=True)
+class Packet:
+    type: str                 # airodump-style label: "beacon", "eapol", "wep_data", "mgmt_5", …
+    type_id: int              # 802.11 frame type (0=mgmt, 1=ctrl, 2=data)
+    subtype_id: int
+    bssid: str
+    source: str
+    dest: str
+    to_ds: bool
+    from_ds: bool
+    rssi: int
+    raw: bytes
+    ssid: Optional[str] = None   # on beacon/probe_resp/probe_req/assoc_req; None elsewhere
+
+
+@dataclass(slots=True, kw_only=True)
+class BeaconPacket(Packet):
+    """A beacon or probe response — carries the AP's advertised capabilities (IEs)."""
+    channel: Optional[int] = None
+    encryption: str = "OPEN"
+    akms: List[str] = field(default_factory=list)
+    akm_suites: List[int] = field(default_factory=list)
+    pairwise_cipher: Optional[str] = None
+    wpa3: bool = False
+    transition_mode: bool = False
+    pmf_capable: bool = False
+    pmf_required: bool = False
+    wps: bool = False
+    wps_locked: bool = False
+    wps_state: Optional[int] = None
+    wps_version: Optional[str] = None
+    wps_config_methods: int = 0
+    wps_device_password_id: Optional[int] = None
+    wps_selected_registrar: bool = False
+    rsn_ie_raw: Optional[bytes] = None
+
+
+@dataclass(slots=True, kw_only=True)
+class EapolPacket(Packet):
+    """An EAPOL-Key frame of the 4-way handshake. Fields may be unset (None) on a frame too
+    short to fully extract — the interface guards on ``replay_counter`` before storing."""
+    msg_num: int = 0
+    replay_counter: Optional[bytes] = None
+    nonce: Optional[bytes] = None
+    mic: Optional[bytes] = None
+    key_data_len: int = 0
+    payload: bytes = b""
+    pmkid: Optional[bytes] = None
+    akm: Optional[int] = None
+    key_info: Optional[int] = None
+
+
+@dataclass(slots=True, kw_only=True)
+class WepDataPacket(Packet):
+    """A WEP-encrypted Data frame — the IV + leading ciphertext the WEP suite feeds on."""
+    iv: Optional[bytes] = None
+    keyid: Optional[int] = None
+    cipher: Optional[bytes] = None
+
+
+@dataclass(slots=True, kw_only=True)
+class AssocRequestPacket(Packet):
+    """A (Re)Association Request — carries the client's selected AKM."""
+    assoc_akm: Optional[int] = None
+
+
+# Keys of the base ``Packet`` — used to split a raw parse dict into base vs. type-specific
+# fields when the type-specific keys need renaming (eapol_/wep_ prefixes are dropped).
+_BASE_FIELDS = (
+    "type", "type_id", "subtype_id", "bssid", "source", "dest",
+    "to_ds", "from_ds", "rssi", "raw", "ssid",
+)
+
 
 class WlanFrameParser:
     """
@@ -26,7 +107,7 @@ class WlanFrameParser:
     SUBTYPE_QOS_DATA = 0x08
 
     @staticmethod
-    def parse_80211_frame(frame: bytes, rssi: int) -> Optional[Dict[str, Any]]:
+    def parse_80211_frame(frame: bytes, rssi: int) -> Optional["Packet"]:
         """
         Generic 802.11 frame parser.
         Receives a raw 802.11 frame and an RSSI value.
@@ -182,7 +263,7 @@ class WlanFrameParser:
                         frame[cipher_start : cipher_start + 16]
                     )
                 # Encrypted body — no plaintext LLC/SNAP to find below.
-                return result
+                return WlanFrameParser._to_packet(result)
 
             if len(frame) >= header_len + 8:
                 # The hardware DMA engine pads the 802.11 header so the payload is 4-byte aligned.
@@ -258,7 +339,40 @@ class WlanFrameParser:
         else:
             result["type"] = f"ctrl_{subtype}"
 
-        return result
+        return WlanFrameParser._to_packet(result)
+
+    @staticmethod
+    def _to_packet(r: Dict[str, Any]) -> "Packet":
+        """Wrap a finished parse dict in its typed ``Packet`` subclass.
+
+        Beacon/probe/assoc keys already match their dataclass fields, so they splat directly;
+        the eapol_/wep_-prefixed keys are mapped to the (un-prefixed) subclass fields.
+        """
+        t = r["type"]
+        if t in ("beacon", "probe_resp"):
+            return BeaconPacket(**r)
+        if t in ("assoc_req", "reassoc_req"):
+            return AssocRequestPacket(**r)
+        base = {k: r[k] for k in _BASE_FIELDS if k in r}
+        if t == "eapol":
+            return EapolPacket(
+                **base,
+                msg_num=r.get("eapol_msg_num", 0),
+                replay_counter=r.get("eapol_replay_counter"),
+                nonce=r.get("eapol_nonce"),
+                mic=r.get("eapol_mic"),
+                key_data_len=r.get("eapol_key_data_len", 0),
+                payload=r.get("eapol_payload", b""),
+                pmkid=r.get("eapol_pmkid"),
+                akm=r.get("eapol_akm"),
+                key_info=r.get("eapol_key_info"),
+            )
+        if t == "wep_data":
+            return WepDataPacket(
+                **base,
+                iv=r.get("wep_iv"), keyid=r.get("wep_keyid"), cipher=r.get("wep_cipher"),
+            )
+        return Packet(**r)
 
     # Key Info bit masks (802.11i, 16-bit BE field):
     #   bit 6 = INSTALL, bit 7 = KEY_ACK, bit 8 = KEY_MIC

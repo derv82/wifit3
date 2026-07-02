@@ -20,9 +20,12 @@ from __future__ import annotations
 
 import time
 from collections import deque
-from typing import Deque, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Deque, Dict, List, Optional, Set
 
 from wifit3.engine.models import WepStats
+
+if TYPE_CHECKING:
+    from wifit3.wlan.packet import WepDataPacket
 
 # Unique-IV count at which a 40-bit (5-byte) WEP key typically becomes
 # recoverable with PTW. Drives the Focus "ETA to Nk" line.
@@ -135,7 +138,7 @@ class WepCaptureStore:
         self._seed_samples: Dict[str, Deque[tuple]] = {}
         self._seed_ivs: Dict[str, Set[bytes]] = {}
 
-    def observe(self, bssid: str, parsed: dict) -> Optional[WepStats]:
+    def observe(self, bssid: str, pkt: "WepDataPacket") -> Optional[WepStats]:
         """Route one parsed WEP Data frame into every relevant bucket.
 
         The single RX entry point — the caller (WlanInterface) only has to
@@ -144,23 +147,21 @@ class WepCaptureStore:
         ``WepStats`` (so the caller can attach it to the AP on first sight),
         or None if the frame had no IV.
         """
-        iv = parsed.get("wep_iv")
+        iv = pkt.iv
         if not iv:
             return None
         stats = self.record(bssid, iv)
-        cipher = parsed.get("wep_cipher")
+        cipher = pkt.cipher
         # ANY data frame is a fragmentation seed (LLC/SNAP known-plaintext),
         # not just broadcast ARPs.
         if cipher and len(cipher) >= 8:
             self.record_seed_sample(bssid, iv, cipher)
-        raw = parsed.get("raw")
-        if raw and parsed.get("dest") == self._BROADCAST:
+        raw = pkt.raw
+        if raw and pkt.dest == self._BROADCAST:
             # record_broadcast_frame returns True iff it was ARP-sized — reuse
             # that as the single size gate for the crack sample too (the
             # ciphertext's plaintext is only known for ARP-sized frames).
-            arp_sized = self.record_broadcast_frame(
-                bssid, raw, source=parsed.get("source")
-            )
+            arp_sized = self.record_broadcast_frame(bssid, raw, source=pkt.source)
             if arp_sized and cipher and len(cipher) == 16:
                 self.record_crack_sample(bssid, iv, cipher)
         return stats

@@ -60,11 +60,11 @@ def test_decloak_probe_req_parses_back_with_candidate_ssid():
     parsed = WlanFrameParser.parse_80211_frame(frame, rssi=-30)
 
     assert parsed is not None
-    assert parsed["type"] == "probe_req"
-    assert parsed["bssid"] == "aa:bb:cc:dd:ee:ff"
-    assert parsed["source"] == "02:de:ad:be:ef:aa"
-    assert parsed["dest"] == "aa:bb:cc:dd:ee:ff"
-    assert parsed["ssid"] == "Foo-Guest"
+    assert parsed.type == "probe_req"
+    assert parsed.bssid == "aa:bb:cc:dd:ee:ff"
+    assert parsed.source == "02:de:ad:be:ef:aa"
+    assert parsed.dest == "aa:bb:cc:dd:ee:ff"
+    assert parsed.ssid == "Foo-Guest"
 
 
 def test_decloak_probe_req_handles_empty_ssid_candidate():
@@ -84,7 +84,7 @@ def test_decloak_probe_req_handles_empty_ssid_candidate():
     frame = attack._build_probe_req("X" * 32)
     parsed = WlanFrameParser.parse_80211_frame(frame, rssi=-30)
     assert parsed is not None
-    assert parsed["ssid"] == "X" * 32
+    assert parsed.ssid == "X" * 32
 
 
 def test_decloak_attack_registers_forged_mac():

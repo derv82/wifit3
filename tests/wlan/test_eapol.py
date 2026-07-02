@@ -90,12 +90,12 @@ def test_parser_extracts_full_eapol_fields():
     )
     parsed = WlanFrameParser.parse_80211_frame(frame, -42)
     assert parsed is not None
-    assert parsed["type"] == "eapol"
-    assert parsed["eapol_msg_num"] == 1
-    assert parsed["eapol_nonce"] == anonce
-    assert parsed["eapol_mic"] == mic
-    assert parsed["eapol_replay_counter"] == b"\x00" * 7 + b"\x01"
-    assert parsed["eapol_key_data_len"] == 0
+    assert parsed.type == "eapol"
+    assert parsed.msg_num == 1
+    assert parsed.nonce == anonce
+    assert parsed.mic == mic
+    assert parsed.replay_counter == b"\x00" * 7 + b"\x01"
+    assert parsed.key_data_len == 0
 
 
 # ---- PMKID KDE extraction -------------------------------------------------------
@@ -120,8 +120,8 @@ def test_parser_extracts_pmkid_from_m1_key_data():
     )
     parsed = WlanFrameParser.parse_80211_frame(frame, -42)
     assert parsed is not None
-    assert parsed["eapol_msg_num"] == 1
-    assert parsed.get("eapol_pmkid") == pmkid
+    assert parsed.msg_num == 1
+    assert parsed.pmkid == pmkid
 
 
 def test_parser_no_pmkid_when_key_data_empty():
@@ -134,7 +134,7 @@ def test_parser_no_pmkid_when_key_data_empty():
     )
     parsed = WlanFrameParser.parse_80211_frame(frame, -42)
     assert parsed is not None
-    assert "eapol_pmkid" not in parsed
+    assert parsed.pmkid is None
 
 
 def test_parser_ignores_all_zero_pmkid():
@@ -148,7 +148,7 @@ def test_parser_ignores_all_zero_pmkid():
     )
     parsed = WlanFrameParser.parse_80211_frame(frame, -42)
     assert parsed is not None
-    assert "eapol_pmkid" not in parsed
+    assert parsed.pmkid is None
 
 
 def test_parser_finds_pmkid_among_multiple_kdes():
@@ -164,7 +164,7 @@ def test_parser_finds_pmkid_among_multiple_kdes():
         key_data=other_kde + _pmkid_kde(pmkid),
     )
     parsed = WlanFrameParser.parse_80211_frame(frame, -42)
-    assert parsed.get("eapol_pmkid") == pmkid
+    assert parsed.pmkid == pmkid
 
 
 def test_parser_rejects_truncated_kde():
@@ -180,7 +180,7 @@ def test_parser_rejects_truncated_kde():
     )
     parsed = WlanFrameParser.parse_80211_frame(frame, -42)
     assert parsed is not None
-    assert "eapol_pmkid" not in parsed
+    assert parsed.pmkid is None
 
 
 # ---- M2 client-AKM extraction ---------------------------------------------------
@@ -212,13 +212,13 @@ def _m2(key_data: bytes) -> bytes:
 
 def test_parser_extracts_sae_client_akm_from_m2():
     parsed = WlanFrameParser.parse_80211_frame(_m2(_rsn_keydata(0x08)), -42)
-    assert parsed["eapol_msg_num"] == 2
-    assert parsed["eapol_akm"] == 0x08          # SAE — the useless case
+    assert parsed.msg_num == 2
+    assert parsed.akm == 0x08          # SAE — the useless case
 
 
 def test_parser_extracts_psk_client_akm_from_m2():
     parsed = WlanFrameParser.parse_80211_frame(_m2(_rsn_keydata(0x02)), -42)
-    assert parsed["eapol_akm"] == 0x02          # PSK — crackable
+    assert parsed.akm == 0x02          # PSK — crackable
 
 
 def test_parser_no_client_akm_on_m1():
@@ -231,8 +231,8 @@ def test_parser_no_client_akm_on_m1():
         key_data=_pmkid_kde(bytes(range(16))),
     )
     parsed = WlanFrameParser.parse_80211_frame(frame, -42)
-    assert parsed["eapol_msg_num"] == 1
-    assert "eapol_akm" not in parsed
+    assert parsed.msg_num == 1
+    assert parsed.akm is None
 
 
 # ---- Handshake pair-detection tests --------------------------------------------

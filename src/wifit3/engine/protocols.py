@@ -17,7 +17,10 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass, field
-from typing import Any, Callable, ClassVar, List, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, List, Optional, Protocol
+
+if TYPE_CHECKING:
+    from wifit3.wlan.packet import Packet
 
 import usb.core
 
@@ -115,7 +118,7 @@ class WlanDriver(Protocol):
     is_warm: bool
 
     # ---- Hooks --------------------------------------------------------
-    def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
+    def register_rx_callback(self, cb: Callable[[Packet], None]) -> None:
         """Register a function that receives one parsed-frame dict per
         802.11 frame the driver decodes."""
         ...

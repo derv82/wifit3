@@ -658,7 +658,7 @@ class MT76x0UDriver:
         """
         import time as _time
 
-        from wifit3.wlan.packet import WlanFrameParser
+        from wifit3.wlan.packet import WlanFrameParser, BeaconPacket
 
         from .constants import (
             MT_MAC_SYS_CTRL,
@@ -733,16 +733,15 @@ class MT76x0UDriver:
                 parsed = WlanFrameParser.parse_80211_frame(rx.frame, rx.rssi_dbm)
                 if parsed is None:
                     continue
-                if (parsed.get("type_id") == WlanFrameParser.TYPE_MGMT
-                        and parsed.get("subtype_id") == WlanFrameParser.SUBTYPE_BEACON):
+                if isinstance(parsed, BeaconPacket) and parsed.type == "beacon":
                     ch_beacons += 1
-                    bssid = parsed.get("bssid")
+                    bssid = parsed.bssid
                     if not bssid:
                         continue
                     ch_bssids.add(bssid)
                     entry = bssids_seen.setdefault(bssid, {
-                        "ssid": parsed.get("ssid"),
-                        "encryption": parsed.get("encryption", "?"),
+                        "ssid": parsed.ssid,
+                        "encryption": parsed.encryption,
                         "channel_seen_on": ch,
                         "beacons": 0,
                         "rssi_dbm_max": rx.rssi_dbm,
@@ -753,8 +752,8 @@ class MT76x0UDriver:
                         entry["rssi_dbm_max"] = rx.rssi_dbm
                     entry["channels"].add(ch)
                     # Track the first non-empty SSID we get.
-                    if not entry["ssid"] and parsed.get("ssid"):
-                        entry["ssid"] = parsed.get("ssid")
+                    if not entry["ssid"] and parsed.ssid:
+                        entry["ssid"] = parsed.ssid
 
             per_channel[ch] = {
                 "beacons":      ch_beacons,
@@ -837,8 +836,8 @@ class MT76x0UDriver:
                 counters["parse_failures"] += 1
                 continue
 
-            ftype = parsed.get("type_id")
-            subtype = parsed.get("subtype_id")
+            ftype = parsed.type_id
+            subtype = parsed.subtype_id
             if ftype == WlanFrameParser.TYPE_MGMT:
                 if subtype == WlanFrameParser.SUBTYPE_BEACON:
                     counters["beacon"] += 1
@@ -855,7 +854,7 @@ class MT76x0UDriver:
             elif ftype == WlanFrameParser.TYPE_CTRL:
                 counters["ctrl"] += 1
 
-            bssid = parsed.get("bssid")
+            bssid = parsed.bssid
             if bssid:
                 bssids.add(bssid)
 

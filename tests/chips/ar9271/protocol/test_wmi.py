@@ -15,13 +15,13 @@ def test_parse_rx_frame_real_beacon():
     payload = bytes.fromhex(_REAL_BEACON_HEX)
     parsed = WMIProtocol.parse_rx_frame(payload)
     assert parsed is not None, "real captured beacon must parse"
-    assert parsed["type"] == "beacon"
-    assert parsed["bssid"] == "aa:da:c4:0d:9c:fe"
-    assert parsed["rssi"] == -67   # NOISE_FLOOR (-95) + SNR 28
+    assert parsed.type == "beacon"
+    assert parsed.bssid == "aa:da:c4:0d:9c:fe"
+    assert parsed.rssi == -67   # NOISE_FLOOR (-95) + SNR 28
     # raw is the on-air MPDU body — FCS stripped by parse_rx_frame after the
     # CRC check at protocol/wmi.py validates it (this beacon is non-QoS, so
     # no alignment-padding is stripped between the HTC header and the FCS).
-    assert parsed["raw"] == payload[WMIProtocol.HTC_RX_HEADER_LEN:-4]
+    assert parsed.raw == payload[WMIProtocol.HTC_RX_HEADER_LEN:-4]
 
 
 def test_parse_rx_frame_rejects_missing_magic():
@@ -92,8 +92,8 @@ def _qos_eapol_m1_payload(*, insert_pad: bool = True) -> bytes:
 def test_parse_rx_frame_qos_eapol_padding_stripped():
     parsed = WMIProtocol.parse_rx_frame(_qos_eapol_m1_payload(insert_pad=True))
     assert parsed is not None, "QoS EAPOL must survive the FCS gate after de-pad"
-    assert parsed["type"] == "eapol"
-    assert parsed["eapol_msg_num"] == 1
+    assert parsed.type == "eapol"
+    assert parsed.msg_num == 1
 
 
 def test_strip_alignment_padding_qos_removes_two_bytes():

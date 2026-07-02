@@ -1,5 +1,8 @@
 from wifit3.wlan.interface import WlanInterface
 
+from tests.frames import pkt
+
+
 def test_wlan_interface_caching(mocker):
     # Mock driver
     mock_driver = mocker.MagicMock()
@@ -17,8 +20,8 @@ def test_wlan_interface_caching(mocker):
         "encryption": "WPA2"
     }
     
-    iface._on_frame_parsed(parsed_beacon)
-    
+    iface._on_frame_parsed(pkt(parsed_beacon))
+
     aps = iface.get_access_points()
     assert len(aps) == 1
     assert aps[0].bssid == "aa:bb:cc:dd:ee:ff"
@@ -30,14 +33,14 @@ def test_wlan_interface_caching(mocker):
     
     # Simulate a second beacon updates signal and count
     parsed_beacon["rssi"] = -50
-    iface._on_frame_parsed(parsed_beacon)
+    iface._on_frame_parsed(pkt(parsed_beacon))
     
     aps = iface.get_access_points()
     assert aps[0].beacons == 2
     assert aps[0].signal == -45  # Averaged (-40 + -50) // 2
 
 def _beacon(enc, *, akms=None, rssi=-40):
-    return {
+    return pkt({
         "type": "beacon",
         "bssid": "aa:bb:cc:dd:ee:ff",
         "source": "aa:bb:cc:dd:ee:ff",
@@ -47,7 +50,7 @@ def _beacon(enc, *, akms=None, rssi=-40):
         "channel": 6,
         "encryption": enc,
         "akms": akms or ([] if enc in ("OPEN", "WEP") else ["PSK"]),
-    }
+    })
 
 
 def test_encryption_keeps_strongest_evidence_not_latest(mocker):
@@ -83,7 +86,7 @@ def test_forged_mac_does_not_create_client_or_append_eapol(mocker):
     iface = WlanInterface(driver_instance=mock_driver, name="wlan0", description="Test")
 
     # Beacon to seed AP
-    iface._on_frame_parsed({
+    iface._on_frame_parsed(pkt({
         "type": "beacon",
         "bssid": "aa:bb:cc:dd:ee:ff",
         "source": "aa:bb:cc:dd:ee:ff",
@@ -93,14 +96,14 @@ def test_forged_mac_does_not_create_client_or_append_eapol(mocker):
         "channel": 1,
         "encryption": "WPA2",
         "raw": b"\x00" * 36,
-    })
+    }))
 
     forged = "02:aa:bb:cc:dd:ee"
     iface.register_forged_mac(forged)
 
     # Simulate AP -> us EAPOL M1 with a PMKID KDE already parsed out.
     pmkid = bytes.fromhex("ad2fad48da558cdfeb19cea25e2ce5af")
-    iface._on_frame_parsed({
+    iface._on_frame_parsed(pkt({
         "type": "eapol",
         "bssid": "aa:bb:cc:dd:ee:ff",
         "source": "aa:bb:cc:dd:ee:ff",
@@ -114,7 +117,7 @@ def test_forged_mac_does_not_create_client_or_append_eapol(mocker):
         "eapol_key_data_len": 22,
         "eapol_payload": b"\x00" * 121,
         "eapol_pmkid": pmkid,
-    })
+    }))
 
     # (a) forged MAC must NOT appear in clients
     assert forged not in iface.clients
@@ -129,7 +132,7 @@ def test_forged_mac_does_not_create_client_or_append_eapol(mocker):
 
 
 def _seed_ap(iface, bssid, encryption):
-    iface._on_frame_parsed({
+    iface._on_frame_parsed(pkt({
         "type": "beacon",
         "bssid": bssid,
         "source": bssid,
@@ -139,12 +142,12 @@ def _seed_ap(iface, bssid, encryption):
         "channel": 6,
         "encryption": encryption,
         "raw": b"\x00" * 36,
-    })
+    }))
 
 
 def _wep_data(bssid, client, iv):
     # AP→client: source=client, dest=client, bssid carried separately.
-    return {
+    return pkt({
         "type": "wep_data",
         "bssid": bssid,
         "source": client,
@@ -153,7 +156,7 @@ def _wep_data(bssid, client, iv):
         "wep_iv": iv,
         "wep_keyid": 0,
         "raw": b"\x00" * 40,
-    }
+    })
 
 
 def test_wep_ivs_tallied_onto_ap(mocker):
@@ -206,7 +209,7 @@ def test_wep_ivs_ignored_for_non_wep_ap(mocker):
 
 
 def _wep_broadcast(bssid, source, *, to_ds, length=68):
-    return {
+    return pkt({
         "type": "wep_data",
         "bssid": bssid,
         "source": source,
@@ -215,7 +218,7 @@ def _wep_broadcast(bssid, source, *, to_ds, length=68):
         "rssi": -45,
         "wep_iv": b"\x09\x08\x07",
         "raw": b"\x00" * length,
-    }
+    })
 
 
 def test_broadcast_wep_stored_as_arp_candidate_either_direction(mocker):
@@ -236,7 +239,7 @@ def test_real_client_still_creates_handshake_with_eapol_frames(mocker):
     mock_driver = mocker.MagicMock()
     iface = WlanInterface(driver_instance=mock_driver, name="wlan0", description="Test")
 
-    iface._on_frame_parsed({
+    iface._on_frame_parsed(pkt({
         "type": "beacon",
         "bssid": "aa:bb:cc:dd:ee:ff",
         "source": "aa:bb:cc:dd:ee:ff",
@@ -246,10 +249,10 @@ def test_real_client_still_creates_handshake_with_eapol_frames(mocker):
         "channel": 1,
         "encryption": "WPA2",
         "raw": b"\x00" * 36,
-    })
+    }))
 
     real_client = "12:22:33:44:55:66"
-    iface._on_frame_parsed({
+    iface._on_frame_parsed(pkt({
         "type": "eapol",
         "bssid": "aa:bb:cc:dd:ee:ff",
         "source": "aa:bb:cc:dd:ee:ff",
@@ -262,7 +265,7 @@ def test_real_client_still_creates_handshake_with_eapol_frames(mocker):
         "eapol_mic": b"\x00" * 16,
         "eapol_key_data_len": 0,
         "eapol_payload": b"\x00" * 99,
-    })
+    }))
 
     assert real_client in iface.clients
     ap = iface.access_points["aa:bb:cc:dd:ee:ff"]
@@ -276,14 +279,14 @@ def test_assoc_req_stamps_client_akm(mocker):
     mock_driver = mocker.MagicMock()
     iface = WlanInterface(driver_instance=mock_driver, name="wlan0", description="Test")
     client = "12:22:33:44:55:66"
-    iface._on_frame_parsed({
+    iface._on_frame_parsed(pkt({
         "type": "assoc_req",
         "bssid": "aa:bb:cc:dd:ee:ff",
         "source": client,
         "dest": "aa:bb:cc:dd:ee:ff",
         "rssi": -45,
         "assoc_akm": 0x02,
-    })
+    }))
     assert iface.clients[client].akm_selected == 0x02
 
 
@@ -294,10 +297,10 @@ def test_from_ds_client_is_receiver_not_addr3_origin(mocker):
     iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="t")
     ap, client = "aa:bb:cc:dd:ee:ff", "12:22:33:44:55:66"
     upstream = "de:ad:be:ef:00:01"   # addr3: DS-side origin, NOT a client of the AP
-    iface._on_frame_parsed({
+    iface._on_frame_parsed(pkt({
         "type": "data", "to_ds": False, "from_ds": True,
         "bssid": ap, "dest": client, "source": upstream, "rssi": -50,
-    })
+    }))
     assert client in iface.clients
     assert upstream not in iface.clients
     assert iface.clients[client].bssid == ap
@@ -309,10 +312,10 @@ def test_to_ds_client_is_sender_not_addr3_da(mocker):
     iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="t")
     ap, client = "aa:bb:cc:dd:ee:ff", "12:22:33:44:55:66"
     far_da = "de:ad:be:ef:00:02"     # addr3: a downstream DA, not a client
-    iface._on_frame_parsed({
+    iface._on_frame_parsed(pkt({
         "type": "data", "to_ds": True, "from_ds": False,
         "bssid": ap, "source": client, "dest": far_da, "rssi": -50,
-    })
+    }))
     assert client in iface.clients
     assert far_da not in iface.clients
     assert iface.clients[client].bssid == ap
@@ -325,10 +328,10 @@ def test_group_mac_destination_is_not_a_client(mocker):
     iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="t")
     ap, upstream = "aa:bb:cc:dd:ee:ff", "de:ad:be:ef:00:01"
     for group in ("33:33:00:00:00:02", "01:00:5e:7f:ff:fa", "ff:ff:ff:ff:ff:ff"):
-        iface._on_frame_parsed({
+        iface._on_frame_parsed(pkt({
             "type": "data", "to_ds": False, "from_ds": True,
             "bssid": ap, "dest": group, "source": upstream, "rssi": -50,
-        })
+        }))
     assert iface.clients == {}
 
 
@@ -341,22 +344,22 @@ def test_transition_pmkid_only_classified_via_assoc(mocker):
         mock_driver = mocker.MagicMock()
         iface = WlanInterface(driver_instance=mock_driver, name="wlan0", description="Test")
         bssid, client = "aa:bb:cc:dd:ee:ff", "12:22:33:44:55:66"
-        iface._on_frame_parsed({              # transition beacon: offers PSK + SAE
+        iface._on_frame_parsed(pkt({          # transition beacon: offers PSK + SAE
             "type": "beacon", "bssid": bssid, "source": bssid,
             "dest": "ff:ff:ff:ff:ff:ff", "rssi": -40, "ssid": "T", "channel": 1,
             "encryption": "WPA2/WPA3", "akm_suites": [0x02, 0x08], "raw": b"\x00" * 36,
-        })
-        iface._on_frame_parsed({              # client associates, declaring its AKM
+        }))
+        iface._on_frame_parsed(pkt({          # client associates, declaring its AKM
             "type": "assoc_req", "bssid": bssid, "source": client,
             "dest": bssid, "rssi": -45, "assoc_akm": client_akm,
-        })
-        iface._on_frame_parsed({              # M1 carrying a PMKID KDE, no M2 follows
+        }))
+        iface._on_frame_parsed(pkt({          # M1 carrying a PMKID KDE, no M2 follows
             "type": "eapol", "bssid": bssid, "source": bssid, "dest": client,
             "rssi": -45, "raw": b"\x00" * 100, "eapol_msg_num": 1,
             "eapol_replay_counter": b"\x00" * 8, "eapol_nonce": b"\x01" * 32,
             "eapol_mic": b"\x00" * 16, "eapol_key_data_len": 0,
             "eapol_payload": b"\x00" * 99, "eapol_pmkid": b"\x07" * 16,
-        })
+        }))
         hs = iface.access_points[bssid].handshakes[client]
         assert hs.pmkid == b"\x07" * 16
         assert hs.akm_client == client_akm
@@ -371,7 +374,7 @@ def test_wpa3_and_pmf_flags_propagate_to_access_point(mocker):
     iface = WlanInterface(driver_instance=mock_driver, name="wlan0", description="Test")
 
     # New AP: pure WPA3-SAE, PMF required
-    iface._on_frame_parsed({
+    iface._on_frame_parsed(pkt({
         "type": "beacon",
         "bssid": "aa:bb:cc:dd:ee:ff",
         "source": "aa:bb:cc:dd:ee:ff",
@@ -385,7 +388,7 @@ def test_wpa3_and_pmf_flags_propagate_to_access_point(mocker):
         "pmf_capable": True,
         "pmf_required": True,
         "raw": b"\x00" * 36,
-    })
+    }))
     ap = iface.access_points["aa:bb:cc:dd:ee:ff"]
     assert ap.wpa3 is True
     assert ap.transition_mode is False
@@ -395,7 +398,7 @@ def test_wpa3_and_pmf_flags_propagate_to_access_point(mocker):
 
     # Second beacon: AP switched to transition mode (rare in practice but
     # exercises the update path). Flags must refresh.
-    iface._on_frame_parsed({
+    iface._on_frame_parsed(pkt({
         "type": "beacon",
         "bssid": "aa:bb:cc:dd:ee:ff",
         "source": "aa:bb:cc:dd:ee:ff",
@@ -409,7 +412,7 @@ def test_wpa3_and_pmf_flags_propagate_to_access_point(mocker):
         "pmf_capable": True,
         "pmf_required": False,
         "raw": b"\x00" * 36,
-    })
+    }))
     assert ap.transition_mode is True
     assert ap.pmf_required is False
 
@@ -425,7 +428,7 @@ def test_wlan_interface_decloaking(mocker):
         "rssi": -60,
         "ssid": "<hidden>"
     }
-    iface._on_frame_parsed(parsed_beacon)
+    iface._on_frame_parsed(pkt(parsed_beacon))
 
     ap = iface.access_points["12:22:33:44:55:66"]
     assert ap.ssid is None
@@ -438,7 +441,7 @@ def test_wlan_interface_decloaking(mocker):
         "rssi": -60,
         "ssid": "Hidden_No_More"
     }
-    iface._on_frame_parsed(parsed_probe)
+    iface._on_frame_parsed(pkt(parsed_probe))
 
     assert ap.ssid == "Hidden_No_More"
     assert ap.decloak_method == "probe_resp"
@@ -448,23 +451,23 @@ def test_wlan_interface_decloaking_via_assoc_req(mocker):
     mock_driver = mocker.MagicMock()
     iface = WlanInterface(driver_instance=mock_driver, name="wlan0", description="Test")
 
-    iface._on_frame_parsed({
+    iface._on_frame_parsed(pkt({
         "type": "beacon",
         "bssid": "12:22:33:44:55:66",
         "rssi": -60,
         "ssid": "<hidden>",
-    })
+    }))
     ap = iface.access_points["12:22:33:44:55:66"]
     assert ap.ssid is None
 
-    iface._on_frame_parsed({
+    iface._on_frame_parsed(pkt({
         "type": "assoc_req",
         "bssid": "12:22:33:44:55:66",
         "source": "aa:aa:aa:aa:aa:aa",
         "dest": "12:22:33:44:55:66",
         "rssi": -65,
         "ssid": "TestSSID",
-    })
+    }))
 
     assert ap.ssid == "TestSSID"
     assert ap.decloak_method == "assoc_req"
@@ -475,26 +478,26 @@ def test_wlan_interface_decloak_method_not_overwritten(mocker):
     mock_driver = mocker.MagicMock()
     iface = WlanInterface(driver_instance=mock_driver, name="wlan0", description="Test")
 
-    iface._on_frame_parsed({
+    iface._on_frame_parsed(pkt({
         "type": "beacon",
         "bssid": "12:22:33:44:55:66",
         "rssi": -60,
         "ssid": "<hidden>",
-    })
-    iface._on_frame_parsed({
+    }))
+    iface._on_frame_parsed(pkt({
         "type": "assoc_req",
         "bssid": "12:22:33:44:55:66",
         "source": "aa:aa:aa:aa:aa:aa",
         "dest": "12:22:33:44:55:66",
         "rssi": -65,
         "ssid": "TestSSID",
-    })
-    iface._on_frame_parsed({
+    }))
+    iface._on_frame_parsed(pkt({
         "type": "probe_resp",
         "bssid": "12:22:33:44:55:66",
         "rssi": -60,
         "ssid": "TestSSID",
-    })
+    }))
 
     ap = iface.access_points["12:22:33:44:55:66"]
     assert ap.decloak_method == "assoc_req"
@@ -505,13 +508,13 @@ def test_wlan_interface_decloak_method_not_overwritten(mocker):
 # ---------------------------------------------------------------------------
 
 def _seed_beacon(iface, bssid: str, channel: int, ssid="Foo"):
-    iface._on_frame_parsed({
+    iface._on_frame_parsed(pkt({
         "type": "beacon",
         "bssid": bssid,
         "rssi": -60,
         "ssid": ssid,
         "channel": channel,
-    })
+    }))
 
 
 def test_siblings_last_byte_differs(mocker):

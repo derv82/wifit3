@@ -16,6 +16,8 @@ from wifit3.ui.screens.focus_v2.flow_channel import FlowChannel
 from wifit3.ui.screens.focus_v2.log_band import LogBand
 from wifit3.wlan.interface import WlanInterface
 
+from tests.frames import pkt
+
 
 @pytest.fixture(autouse=True)
 def _isolate_captures_dir(monkeypatch, tmp_path):
@@ -32,15 +34,15 @@ class MockDriver:
 
 
 def _beacon(bssid, ssid, ch):
-    return {
+    return pkt({
         "type": "beacon", "bssid": bssid, "ssid": ssid, "channel": ch,
         "rssi": -40, "encryption": "WPA2", "akms": ["PSK"], "akm_suites": [2],
         "pairwise_cipher": "CCMP", "raw": b"\xff-beacon-raw",
-    }
+    })
 
 
 def _eapol(bssid, client, msg_num, replay, *, to_ap, pmkid=None):
-    return {
+    return pkt({
         "type": "eapol", "bssid": bssid, "rssi": -40,
         "source": client if to_ap else bssid,
         "dest": bssid if to_ap else client,
@@ -52,7 +54,7 @@ def _eapol(bssid, client, msg_num, replay, *, to_ap, pmkid=None):
         "eapol_key_data_len": 0,
         "eapol_payload": bytes(120),
         "eapol_pmkid": pmkid,
-    }
+    })
 
 
 def _log_text(band: LogBand) -> str:
@@ -183,8 +185,8 @@ async def test_v2_reenter_same_target_no_duplicate_client_ids():
     iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
     iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
     ap = iface.access_points[bssid]
-    iface._on_frame_parsed({"type": "data", "bssid": bssid, "source": client,
-                            "dest": bssid, "rssi": -55, "raw": b"d"})
+    iface._on_frame_parsed(pkt({"type": "data", "bssid": bssid, "source": client,
+                                "dest": bssid, "rssi": -55, "raw": b"d"}))
 
     app = _Host(iface, ap)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -212,8 +214,8 @@ async def test_v2_pmf_required_disables_deauth_and_logs():
     iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
     ap = iface.access_points[bssid]
     ap.pmf_required = True
-    iface._on_frame_parsed({"type": "data", "bssid": bssid, "source": client,
-                            "dest": bssid, "rssi": -60, "raw": b"d"})
+    iface._on_frame_parsed(pkt({"type": "data", "bssid": bssid, "source": client,
+                                "dest": bssid, "rssi": -60, "raw": b"d"}))
     app = _Host(iface, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -251,8 +253,8 @@ async def test_v2_button_wiring():
     iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
     ap = iface.access_points[bssid]
     # Register a real client (a data frame) so a ✕ row appears.
-    iface._on_frame_parsed({"type": "data", "bssid": bssid, "source": client,
-                            "dest": bssid, "rssi": -67, "raw": b"d"})
+    iface._on_frame_parsed(pkt({"type": "data", "bssid": bssid, "source": client,
+                                "dest": bssid, "rssi": -67, "raw": b"d"}))
 
     deauthed = []
 

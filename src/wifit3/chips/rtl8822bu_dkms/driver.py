@@ -201,7 +201,7 @@ class Rtl8822buDkmsDriver:
             parsed = WlanFrameParser.parse_80211_frame(frame, rssi)
             if parsed is not None:
                 self._dbg_frames += 1                       # per-dwell tally (see set_channel)
-                if parsed.get("type") == "beacon":
+                if parsed.type == "beacon":
                     self._dbg_beacons += 1
                 cb(parsed)
 
