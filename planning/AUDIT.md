@@ -20,18 +20,23 @@ Committed to `master`:
 - `55110d95` — `interface.py`: `_on_frame_parsed` decomposed (T1) + **phantom-client fix**
 - `cc1e7670` — **multicast-MAC-as-client fix**
 - `d09fd2f4` — **T2**: parser returns a typed `Packet` hierarchy instead of a dict
+- `wlan/manager.py` — comment audit clean; `_match_driver` loop de-shadowed (`.values()`,
+  dropped the unused+shadowed dict-key `entry`). Resolved the `wlan/__init__.py` open
+  question: the `WlanInterface`/`WlanDeviceManager` re-exports were **dead** (production imports
+  `WlanDeviceManager` from `wlan.manager`; tests import `WlanInterface` from `wlan.interface`;
+  nothing does `from wifit3.wlan import …`). Blanked `__init__.py` (matches the empty
+  `ui/__init__.py` precedent) — chose delete-over-fix (YAGNI). **Watch:** `engine/__init__.py`
+  has the *same* unused re-export pattern (`AccessPoint`) — check consumers when we reach `engine/`.
 
-`interface.py` and `channels`/`packet_stats`/`wep_store` are fully audited.
+`interface.py`, `manager.py`, and `channels`/`packet_stats`/`wep_store` are fully audited.
 
 ## Route remaining (in order)
-1. `wlan/manager.py` — small; also resolves the open question of why `WlanInterface` is
-   re-exported from `manager` while `wlan/interface.py` exists (flagged at `wlan/__init__.py`).
-2. `wlan/packet.py` — the parser. **Includes the T2.25 comment pass** (see below).
-3. `engine/` — start with the contracts (`models.py`, `protocols.py`), then the rest, then
+1. `wlan/packet.py` — the parser. **Includes the T2.25 comment pass** (see below).
+2. `engine/` — start with the contracts (`models.py`, `protocols.py`), then the rest, then
    the big `engine/attacks/**` subtree (deepest comments; most likely to hold both gems and
    verbose stragglers).
-4. `ui/` — largest by file count but "docstrings only" per CODE-STYLE, so should move fast.
-5. `setup/` + `src/wifit3/scripts/`.
+3. `ui/` — largest by file count but "docstrings only" per CODE-STYLE, so should move fast.
+4. `setup/` + `src/wifit3/scripts/`.
 
 ## Parked refactors
 - **T2.25 — comment pass on `packet.py`.** Deferred *because* T2 rewrote the file; it's now

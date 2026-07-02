@@ -96,7 +96,7 @@ def env_or_none(key, value, driver):
 
 def _match_driver(dev: usb.core.Device) -> Optional[tuple[Type[WlanDriver], DeviceID]]:
     """Find the first registered driver that claims `dev`."""
-    for entry, driver_cls in _import_driver_classes().items():
+    for driver_cls in _import_driver_classes().values():
         for entry in driver_cls.SUPPORTED_IDS:
             if entry.vid == dev.idVendor and entry.pid == dev.idProduct:
                 return driver_cls, entry
