@@ -27,28 +27,33 @@ Committed to `master`:
   nothing does `from wifit3.wlan import …`). Blanked `__init__.py` (matches the empty
   `ui/__init__.py` precedent) — chose delete-over-fix (YAGNI). **Watch:** `engine/__init__.py`
   has the *same* unused re-export pattern (`AccessPoint`) — check consumers when we reach `engine/`.
+- `f202d744` `283f88b1` `adfbe540` `4e36ae5f` — **`wlan/packet.py` complete**: T2.25 comment
+  pass, then **T2.75** — rebuilt `parse_80211_frame` from the god-method + dict/`_to_packet`
+  plumbing into a thin dispatcher + per-type `Packet` builders (`_parse_mgmt`/`_parse_data`/
+  `_parse_eapol`), deleting `_to_packet`/`_BASE_FIELDS`/prefixes + two dead branches (WDS +6,
+  ctrl label). Backfilled dispatch-edge tests first as the net. Then a quality sweep: module
+  docstring, dead `logger` removal, static→classmethod (`cls.` over the 16-char prefix ×49),
+  mid-class scalar constants localized (RSN reference tables left as their labeled section),
+  dead `try/except` + redundant length-check removed. `pkt()` in `tests/frames.py` rebuilt to
+  construct subclasses directly.
 
-`interface.py`, `manager.py`, and `channels`/`packet_stats`/`wep_store` are fully audited.
+`interface.py`, `manager.py`, `packet.py`, and `channels`/`packet_stats`/`wep_store` are fully audited.
 
 ## Route remaining (in order)
-1. `wlan/packet.py` — the parser. **Includes the T2.25 comment pass** (see below).
-2. `engine/` — start with the contracts (`models.py`, `protocols.py`), then the rest, then
+1. `engine/` — start with the contracts (`models.py`, `protocols.py`), then the rest, then
    the big `engine/attacks/**` subtree (deepest comments; most likely to hold both gems and
    verbose stragglers).
-3. `ui/` — largest by file count but "docstrings only" per CODE-STYLE, so should move fast.
-4. `setup/` + `src/wifit3/scripts/`.
+2. `ui/` — largest by file count but "docstrings only" per CODE-STYLE, so should move fast.
+3. `setup/` + `src/wifit3/scripts/`.
 
 ## Parked refactors
-- **T2.25 — comment pass on `packet.py`.** Deferred *because* T2 rewrote the file; it's now
-  stable, so it's ready for the normal audit lens. Fold into step 2 above.
 - **T2.5 — collapse the two EAPOL types.** `engine.models.EapolFrame` (the persisted
   handshake record) and the parser's `EapolPacket` overlap ~80% but genuinely differ:
   `EapolFrame` has a load-bearing `timestamp` (binds frames to one handshake instance) and
   `replay_hex` (str); `EapolPacket` has the base 802.11 fields + `replay_counter` (bytes) and
-  no timestamp. Kept **out of T2** to avoid touching crackability / `hc22000` / `save` (the
-  "get this wrong and the project is worthless" code). Direction if pursued: rename
-  `models.EapolFrame` → `StoredEapolFrame`, add `timestamp` to `EapolPacket`, then decide
-  whether to merge. Deliberate, standalone effort.
+  no timestamp. Kept **out of T2/T2.75** to avoid touching crackability / `hc22000` / `save`
+  (the "get this wrong and the project is worthless" code). **Decision (2026-07-02):** leave
+  `models.EapolFrame` as-is; revisit the merge when the audit reaches `engine/models.py`.
 - **T3 — unify the two `register_rx_callback` layers.** Two methods share the name with
   different contracts: `Driver.register_rx_callback(Callable[[Packet], None])` (one subscriber,
   the interface) vs `WlanInterface.register_rx_callback(Callable[[bytes, int, float], None])`
@@ -68,6 +73,11 @@ Committed to `master`:
 - Prefer naming over commenting; when unsure, omit.
 
 ## Notes / parked non-blockers
+- **`_format_encryption_label` transition/PSK-name edge** (`packet.py`): `transition_mode`
+  (flag) keys on `_PSK_SUITES` (incl. FT-PSK / SHA384 = 0x04/0x13/0x14), but the label's
+  `has_psk` only matches the plain `"PSK"`/`"PSK-SHA256"` names — so an SAE + FT-PSK-only AP
+  (no plain PSK, rare) gets `transition_mode=True` yet a `"WPA3-SAE"` label. Deferred: rare,
+  and a fix touches crackability-adjacent labeling that needs its own test.
 - **Scanner sibling-SSID flip-flop** (`scanner.py` ~500, hidden-AP `"A1?"`/`"B2?"` guess
   flipping in dense-BSSID environments): left alone by choice — it's a *guess*, and the flip
   signals uncertainty. Not in the audit's path.
