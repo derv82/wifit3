@@ -1,17 +1,7 @@
-"""Load previously-saved captures from ``captures/`` into per-AP history.
-
-Wifit3 writes one artifact per capture, named
-``<ssid>_<bssid-dashes>_<epoch>_<kind>.<ext>`` where ``<kind>`` ∈
-``{handshake, pmkid, wep_key, wps_pin, wps_pbc}`` and the extension follows
-from the kind (``hc22000`` for hashlines, ``txt`` for text creds, ``pcap`` for
-the raw companion). See ``engine.save`` for the producer. On scan start we
-read this directory back so a previously-recovered key or captured
-handshake/PMKID re-surfaces as a badge + a Focus summary.
-
-The parser classifies entirely by filename: ``_handshake`` files contain WPA*02
-hashlines, ``_pmkid`` files contain WPA*01. The ``.pcap`` companion is skipped
-for classification; its hashline sibling carries the verdict.
-"""
+"""Load previously-saved captures from captures/ back into per-AP history, so a
+recovered key or captured handshake/PMKID re-surfaces as a badge + Focus summary
+on the next scan. Classification is by filename; the .pcap companion is skipped
+(its hashline sibling carries the verdict). Counterpart: engine.save."""
 from __future__ import annotations
 
 import logging
@@ -25,7 +15,7 @@ from wifit3.engine.models import PersistedCapture
 logger = logging.getLogger(__name__)
 
 # <ssid>_<bssid>_<epoch>_<kind>.<ext>. SSID may itself contain underscores
-# ("Beachball_2_4"), so anchor on the dash-separated 6-octet BSSID + epoch +
+# ("Basketball_2_4"), so anchor on the dash-separated 6-octet BSSID + epoch +
 # kind + extension from the right; the SSID is whatever's left.
 _NAME_RE = re.compile(
     r"^(?P<ssid>.+)_"
@@ -40,7 +30,7 @@ _WPSPSK_RE = re.compile(r"^PSK:\s*(.+)$", re.MULTILINE)
 
 
 def _bssid_to_colon(dashed: str) -> str:
-    """``f0-af-85-c0-03-0f`` -> ``f0:af:85:c0:03:0f`` (matches AccessPoint.bssid)."""
+    """``aa-bb-cc-dd-ee-ff`` -> ``aa:bb:cc:dd:ee:ff`` (matches AccessPoint.bssid)."""
     return dashed.replace("-", ":").lower()
 
 
@@ -100,8 +90,7 @@ def load_capture_index(captures_dir: Path | str = "captures") -> Dict[str, List[
     """Scan ``captures_dir`` and return {bssid(colon-lower): [PersistedCapture]}.
 
     Missing directory -> empty index (a fresh install has no history). Entries
-    for a BSSID are sorted newest-first so the Focus summary and any "latest"
-    display read naturally.
+    for a BSSID are sorted newest-first.
     """
     index: Dict[str, List[PersistedCapture]] = defaultdict(list)
     root = Path(captures_dir)
@@ -121,13 +110,9 @@ def load_capture_index(captures_dir: Path | str = "captures") -> Dict[str, List[
 
 
 def summarize(index: Dict[str, List[PersistedCapture]]) -> tuple[int, int, int, int]:
-    """(handshakes, pmkids, wep_keys, wps_psks) as a count of *APs* that have
-    each kind.
-
-    De-duped per AP for the Scanner summary line: an AP with 11 saved
-    handshakes counts as one handshake, not eleven. (The Focus view lists every
-    individual artifact — this is only the headline tally.)
-    """
+    """(handshakes, pmkids, wep_keys, wps_psks) as a count of *APs* that have each
+    kind — de-duped per AP: an AP with 11 saved handshakes counts as one, not
+    eleven."""
     hs = pmkid = wep = wps = 0
     for caps in index.values():
         kinds = {c.kind for c in caps}
