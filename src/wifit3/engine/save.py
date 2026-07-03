@@ -1,22 +1,6 @@
-"""Auto-save: typed, content-deduped persistence of every recoverable artifact.
-
-One function per saveable kind (handshake, PMKID, WEP key, WPS-PIN, WPS-PBC),
-each returning a ``SaveResult`` (path + was_new flag) on success, or ``None``
-when there's nothing saveable at all (hidden SSID, no valid pair, empty key).
-A dedupe hit returns ``SaveResult(path=<existing>, was_new=False)`` — the
-caller gets to log "saved" vs "already on disk as X" without re-deriving the
-path. Log formatting lives in the caller: tree-leaf vs root-line is a UI
-decision and the save layer can't know which context it's in.
-
-Filename scheme: ``<safe_ssid>_<bssid-dashed>_<epoch>_<kind>.<ext>``. Kind ∈
-``{handshake, pmkid, wep_key, wps_pin, wps_pbc}``; ext follows from kind.
-
-Dedupe is existence-based — we scan files matching ``*_<bssid>_*_<kind>.<ext>``
-and compare the kind-specific fingerprint (ANonce for handshake, the PMKID for
-PMKID, key hex for WEP, (PIN, PSK) for wps_pin, PSK for wps_pbc). No
-overwrites, no destructive cleanup. Rotation (same client, fresh ANonce / fresh
-PSK) writes a new file.
-"""
+"""Content-deduped auto-save for recovered artifacts — handshakes, PMKIDs,
+WEP keys, WPS credentials. One save_* per kind, each returning a SaveResult
+(or None when there's nothing worth saving). Dedupe never overwrites."""
 from __future__ import annotations
 
 import re
@@ -32,8 +16,7 @@ from wifit3.engine.pcap import write_pcap
 
 @dataclass(frozen=True)
 class SaveResult:
-    """Outcome of a save_* call. ``was_new`` is True for a fresh write, False
-    when the dedupe predicate matched an existing file at ``path``."""
+    """Outcome of a save_*; was_new is False when a dedupe hit returned an existing path."""
     path: Path
     was_new: bool
 
@@ -48,11 +31,10 @@ def _safe_ssid(ssid: Optional[str]) -> str:
 
 
 def _fresh_path(captures_dir: Path, ap: AccessPoint, suffix: str) -> Path:
-    """Build ``captures_dir/<safe_ssid>_<bssid-dashed>_<epoch><suffix>`` with the
-    smallest non-colliding epoch ≥ now. Two saves of different content in the
-    same wall-clock second otherwise overwrite each other — dedupe only catches
-    *identical* content; structurally distinct artifacts (different ANonces /
-    rotated PSK) must land in different files."""
+    """Build captures_dir/<safe_ssid>_<bssid-dashed>_<epoch><suffix>, bumping to
+    the smallest free epoch. Distinct content saved in the same second would
+    otherwise collide — dedupe only catches identical content, so structurally
+    different artifacts (new ANonce / rotated PSK) need their own files."""
     base = f"{_safe_ssid(ap.ssid)}_{ap.bssid.replace(':', '-')}"
     epoch = int(time.time())
     while True:
@@ -82,9 +64,9 @@ def _existing(captures_dir: Path, bssid: str, suffix: str) -> list[Path]:
 
 def _pcap_records_for(ap: AccessPoint, client_mac: str) -> list[tuple[bytes, float]]:
     """Beacon (once, if available) + every EAPOL frame for the client, each
-    paired with its capture timestamp for the pcap. The beacon — for which we
-    keep no per-frame time — is stamped just before the earliest EAPOL frame so
-    it sorts first, falling back to the AP's last-seen beacon time."""
+    paired with its capture timestamp for the pcap. The beacon has no
+    per-frame time, so it's placed first and stamped with the earliest EAPOL
+    timestamp (or the AP's last-seen beacon time when there's none)."""
     hs = ap.handshakes.get(client_mac)
     if hs is None:
         return []
@@ -99,7 +81,7 @@ def _pcap_records_for(ap: AccessPoint, client_mac: str) -> list[tuple[bytes, flo
 
 def _read_hashline_field(path: Path, line_prefix: str, field_index: int) -> set[str]:
     """Asterisk-split each ``WPA*NN*…`` line in *path*; return the values at
-    ``field_index``. Field 0 is ``WPA``. Used by dedupe predicates."""
+    ``field_index``. Field 0 is ``WPA``."""
     out: set[str] = set()
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -154,16 +136,10 @@ def save_pmkid(
     ap: AccessPoint, client_mac: str,
     *, captures_dir: Path = Path("captures"),
 ) -> Optional[SaveResult]:
-    """Persist the PMKID on ``ap.handshakes[client_mac]``.
-
-    Dedupes by (BSSID, PMKID-value). Writes ``_pmkid.hc22000`` only — that's
-    the sole artifact with a consumer (hashcat mode 22000). No pcap companion:
-    nothing reads a PMKID out of a pcap (hcxpcapngtool *produces* hc22000, it
-    doesn't consume one), and on the active-harvest path the M1 that carries
-    the PMKID KDE arrives under a forged client MAC and is never kept in
-    ``messages``, so the pcap would be a beacon-only file anyway.
-    Returns None on hidden SSID / missing PMKID.
-    """
+    """Persist the PMKID on ap.handshakes[client_mac]. Dedupes by (BSSID,
+    PMKID-value); writes _pmkid.hc22000 only — no pcap companion, since nothing
+    reads a PMKID out of a pcap (hcxpcapngtool produces hc22000, never consumes
+    it). Returns None on hidden SSID / missing PMKID."""
     if not ap.ssid:
         return None
     hs = ap.handshakes.get(client_mac)
