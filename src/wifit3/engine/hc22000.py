@@ -2,8 +2,7 @@
 
 The PMKID (``WPA*01``) line is built here; the EAPOL (``WPA*02``) lines and the
 crackability decision both live in ``engine.wpa.handshake`` — the single source
-of truth shared with the capture-event / auto-save path, so a "captured" verdict
-and a writable hashline can never disagree.
+of truth, so a "captured" verdict and a writable hashline can never disagree.
 
 Format spec (one line per hash):
 
@@ -32,7 +31,7 @@ from wifit3.engine.wpa.handshake import mac_compact, ssid_hex
 
 def pmkid_hashline(ssid: str, hs: Handshake) -> Optional[str]:
     """Return a ``WPA*01*…`` line for the PMKID, or None if not available or not
-    crackable. See engine.wpa.handshake."""
+    crackable."""
     if not ssid or not hs.pmkid or len(hs.pmkid) != 16:
         return None
     if not wpa.pmkid_crackable(hs):
@@ -48,10 +47,9 @@ def pmkid_hashline(ssid: str, hs: Handshake) -> Optional[str]:
 
 
 def eapol_hashlines(ssid: str, hs: Handshake) -> List[str]:
-    """One ``WPA*02*…`` line per distinct *crackable* handshake instance (see
-    ``wpa.crackable_pairs``). Empty when the SSID is hidden or no instance is
-    serialisable (e.g. a clipped MIC frame) — i.e. exactly when there's nothing
-    hashcat could crack."""
+    """One ``WPA*02*…`` line per distinct *crackable* handshake instance. Empty
+    when the SSID is hidden or no instance is serialisable (e.g. a clipped MIC
+    frame) — i.e. exactly when there's nothing hashcat could crack."""
     if not ssid:
         return []
     return [wpa.hc22000_line(ssid, hs, pair) for pair in wpa.crackable_pairs(hs)]
