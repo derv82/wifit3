@@ -155,7 +155,7 @@ class CaptureEventDetector:
                 # reported only by the handshake_complete banner below, so "valid 4-way" fires
                 # once, not on every later M1/M3 retransmit.
                 seen_n = self._seen_eapol_count.get(key, 0)
-                frames = hs.eapol_frames
+                frames = hs.messages
                 if len(frames) > seen_n:
                     verdict = wpa.eapol_verdict(hs)
                     crackable = None if verdict == "unknown" else verdict == "crackable"

@@ -7,7 +7,7 @@ from wifit3.engine.hc22000 import (
     pmkid_hashline,
     write_hc22000,
 )
-from wifit3.engine.models import AccessPoint, EapolFrame, Handshake
+from wifit3.engine.models import AccessPoint, HandshakeMessage, Handshake
 
 
 # ---- Test fixtures --------------------------------------------------------------
@@ -34,11 +34,11 @@ def _ef(
     mic: bytes = None,
     key_data_len: int = 0,
     payload_mic: bytes = None,
-) -> EapolFrame:
+) -> HandshakeMessage:
     nonce = nonce if nonce is not None else bytes(range(32))
     mic = mic if mic is not None else b"\xAA" * 16
     payload_mic = payload_mic if payload_mic is not None else mic
-    return EapolFrame(
+    return HandshakeMessage(
         raw=b"\x00" * 24,
         msg_num=msg_num,
         replay_hex=replay.to_bytes(8, "big").hex(),
@@ -56,7 +56,7 @@ def _hs(ssid: str = "TestNet", *frames, with_beacon: bool = True, pmkid: bytes =
         beacon_frame=b"BEACON" if with_beacon else None,
         pmkid=pmkid,
     )
-    hs.eapol_frames.extend(frames)
+    hs.messages.extend(frames)
     return hs
 
 
@@ -218,7 +218,7 @@ def test_format_ap_hashlines_emits_both_pmkid_and_eapol():
         beacon_frame=b"BEACON",
         pmkid=pmkid,
     )
-    hs.eapol_frames.extend([m1, m2])
+    hs.messages.extend([m1, m2])
     ap.handshakes[hs.client_mac] = hs
 
     lines = format_ap_hashlines(ap)
@@ -248,7 +248,7 @@ def test_write_hc22000_creates_file(tmp_path):
         client_mac="11:22:33:44:55:66",
         beacon_frame=b"BEACON",
     )
-    hs.eapol_frames.extend([m1, m2])
+    hs.messages.extend([m1, m2])
     ap.handshakes[hs.client_mac] = hs
 
     path = tmp_path / "x.hc22000"
@@ -268,7 +268,7 @@ def test_write_hc22000_no_hashlines_creates_no_file(tmp_path):
         client_mac="11:22:33:44:55:66",
         beacon_frame=b"BEACON",
     )
-    hs.eapol_frames.extend([_ef(1, 1), _ef(2, 1, key_data_len=22)])
+    hs.messages.extend([_ef(1, 1), _ef(2, 1, key_data_len=22)])
     ap.handshakes[hs.client_mac] = hs
 
     path = tmp_path / "should_not_exist.hc22000"

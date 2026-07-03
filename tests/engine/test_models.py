@@ -1,4 +1,4 @@
-from wifit3.engine.models import AccessPoint, EapolFrame, Handshake, PersistedCapture
+from wifit3.engine.models import AccessPoint, HandshakeMessage, Handshake, PersistedCapture
 
 
 def test_access_point_model_defaults():
@@ -71,10 +71,10 @@ def test_has_psk():
     assert ap5.known_psk is None
 
 
-def _eapol(msg_num: int, replay: int) -> EapolFrame:
+def _eapol(msg_num: int, replay: int) -> HandshakeMessage:
     """A *usable* EAPOL frame: non-zero nonce, real MIC, complete 802.1X payload
     — so M2/M4 qualify as MIC keystones and M1/M3 as ANonce donors."""
-    return EapolFrame(
+    return HandshakeMessage(
         raw=bytes([msg_num, replay & 0xFF]),
         msg_num=msg_num,
         replay_hex=replay.to_bytes(8, "big").hex(),
@@ -93,9 +93,9 @@ def test_handshake_is_complete():
     assert not hs.is_complete
 
     # Single M1 alone → not yet a pair
-    hs.eapol_frames.append(_eapol(1, replay=5))
+    hs.messages.append(_eapol(1, replay=5))
     assert not hs.is_complete
 
     # A matching M2 (same replay counter) completes the pair
-    hs.eapol_frames.append(_eapol(2, replay=5))
+    hs.messages.append(_eapol(2, replay=5))
     assert hs.is_complete

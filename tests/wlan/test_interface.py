@@ -128,7 +128,7 @@ def test_forged_mac_does_not_create_client_or_append_eapol(mocker):
     assert hs.pmkid == pmkid
 
     # (c) EAPOL frames list stays empty — no "Partial x1" in the UI
-    assert hs.eapol_frames == []
+    assert hs.messages == []
 
 
 def _seed_ap(iface, bssid, encryption):
@@ -270,7 +270,7 @@ def test_real_client_still_creates_handshake_with_eapol_frames(mocker):
     assert real_client in iface.clients
     ap = iface.access_points["aa:bb:cc:dd:ee:ff"]
     assert real_client in ap.handshakes
-    assert len(ap.handshakes[real_client].eapol_frames) == 1
+    assert len(ap.handshakes[real_client].messages) == 1
 
 
 def test_assoc_req_stamps_client_akm(mocker):

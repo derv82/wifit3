@@ -5,7 +5,7 @@ import logging
 import time
 from typing import List, Optional, Callable, Any, Dict, Set
 
-from wifit3.engine.models import AccessPoint, Client, Handshake, EapolFrame
+from wifit3.engine.models import AccessPoint, Client, Handshake, HandshakeMessage
 from wifit3.engine.protocols import FakeMacSupport
 from wifit3.wlan.channels import scan_hop_order
 from wifit3.wlan.packet import (
@@ -347,8 +347,8 @@ class WlanInterface:
 
         # Forged MACs keep a Handshake (for PMKID) but skip the EAPOL list — those are just AP
         # retries of M1 we never answer, and would show a false "Partial".
-        if client_mac not in self.forged_macs and not hs.has_frame(raw_frame):
-            eapol = EapolFrame(
+        if client_mac not in self.forged_macs and not hs.has_message(raw_frame):
+            eapol = HandshakeMessage(
                 raw=raw_frame,
                 msg_num=pkt.msg_num,
                 replay_hex=replay.hex(),
@@ -358,7 +358,7 @@ class WlanInterface:
                 eapol_payload=pkt.payload,
                 timestamp=time.time(),
             )
-            hs.eapol_frames.append(eapol)
+            hs.messages.append(eapol)
             msg_label = f"M{eapol.msg_num}" if eapol.msg_num else "EAPOL-?"
             logger.info(f"[{msg_label}] {bssid} <-> {client_mac} (replay {eapol.replay_hex})")
 

@@ -45,7 +45,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional
 
-from wifit3.engine.models import EapolFrame, Handshake
+from wifit3.engine.models import HandshakeMessage, Handshake
 
 # hashcat module_22000 MESSAGEPAIR bytes (EAPOL-source encoded in the low bits).
 _PAIR_M1M2_E2 = 0x00
@@ -177,7 +177,7 @@ class MessageInfo:
         return False
 
 
-def describe(f: EapolFrame) -> MessageInfo:
+def describe(f: HandshakeMessage) -> MessageInfo:
     """Content descriptor for one EAPOL frame."""
     return MessageInfo(
         msg_num=f.msg_num,
@@ -193,8 +193,8 @@ class CrackablePair:
 
     ``anonce_frame`` donates the ANonce; ``mic_frame`` (always M2 or a non-zeroed
     M4) donates the MIC, the SNonce, and the EAPOL bytes."""
-    anonce_frame: EapolFrame
-    mic_frame: EapolFrame
+    anonce_frame: HandshakeMessage
+    mic_frame: HandshakeMessage
     pair_byte: int
 
     @property
@@ -203,11 +203,11 @@ class CrackablePair:
         return self.anonce_frame.nonce
 
 
-def _replay(f: EapolFrame) -> int:
+def _replay(f: HandshakeMessage) -> int:
     return int.from_bytes(bytes.fromhex(f.replay_hex), "big")
 
 
-def _within_window(a: EapolFrame, b: EapolFrame) -> bool:
+def _within_window(a: HandshakeMessage, b: HandshakeMessage) -> bool:
     """True if two frames are close enough in time to be one handshake. Skipped
     when either timestamp is unset (0.0) — keeps fixtures / pre-timestamp
     captures working off the replay-counter rules alone."""
@@ -216,7 +216,7 @@ def _within_window(a: EapolFrame, b: EapolFrame) -> bool:
     return abs(a.timestamp - b.timestamp) <= _EAPOL_PAIR_WINDOW_S
 
 
-def _mic_frame_usable(f: EapolFrame) -> bool:
+def _mic_frame_usable(f: HandshakeMessage) -> bool:
     """Can this frame be the hashline's MIC/EAPOL source? It must carry a real
     MIC, a complete 802.1X payload, AND its embedded nonce (the SNonce hashcat
     reads back) — which is why a zero-nonce M4 is rejected here."""
@@ -240,9 +240,9 @@ def crackable_pairs(hs: Handshake) -> List[CrackablePair]:
     another.."""
     if not eapol_crackable(hs):
         return []
-    pos = {id(f): i for i, f in enumerate(hs.eapol_frames)}
-    by_msg: dict[int, List[EapolFrame]] = {1: [], 2: [], 3: [], 4: []}
-    for f in hs.eapol_frames:
+    pos = {id(f): i for i, f in enumerate(hs.messages)}
+    by_msg: dict[int, List[HandshakeMessage]] = {1: [], 2: [], 3: [], 4: []}
+    for f in hs.messages:
         if f.msg_num in by_msg:
             by_msg[f.msg_num].append(f)
 

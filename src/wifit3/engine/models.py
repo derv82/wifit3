@@ -1,13 +1,15 @@
+"""Engine data contracts: the AP / client / handshake / capture dataclasses shared
+across the parser, attacks, persistence, and UI.
+"""
 import time
 from dataclasses import dataclass, field
 from typing import Optional, List, Literal, Set, Dict, Tuple
 
 
 @dataclass
-class EapolFrame:
-    """
-    A single parsed EAPOL-Key frame, classified by its role in the 4-way
-    handshake (M1/M2/M3/M4) and tagged with the fields a cracker needs.
+class HandshakeMessage:
+    """One EAPOL-Key frame, classified by its role in the 4-way handshake (M1-M4) and
+    tagged with the fields a cracker needs.
     """
     raw: bytes
     msg_num: int  # 1, 2, 3, 4, or 0 if unclassified (group rekey etc.)
@@ -19,29 +21,25 @@ class EapolFrame:
     # frame hashcat embeds in the mode-22000 hashline. May be empty if the
     # capture was truncated.
     eapol_payload: bytes = b""
-    # Arrival time (epoch seconds), stamped by the interface on capture. Used to
-    # bind frames to a single handshake instance: a real 4-way completes in well
-    # under a second, so frames far apart are different associations even if
-    # their replay counters coincide. 0.0 = unset (e.g. unit-test fixtures).
+    # Arrival time (epoch seconds), stamped by the interface on capture. Used to bind
+    # frames to a single handshake instance. 0.0 = unset.
     timestamp: float = 0.0
 
 
 @dataclass
 class Handshake:
-    """
-    Captured WPA/WPA2 4-way handshake (or PMKID) for one (BSSID, client_mac)
-    pair. ``is_complete`` is True only when the stored EAPOL frames actually
-    form a hashcat-crackable pair (M1+M2, M2+M3, M3+M4, or M1+M4) — two M1
-    retries with the same replay counter no longer mistakenly qualify.
+    """Captured WPA/WPA2 4-way handshake (or PMKID) for one (BSSID, client_mac) pair.
+    ``is_complete`` is True only when the stored messages form a hashcat-crackable pair
+    (M1+M2, M2+M3, M3+M4, or M1+M4).
     """
     bssid: str
     client_mac: str
     beacon_frame: Optional[bytes] = None
 
-    # All EAPOL-Key frames we've seen for this client, in arrival order.
+    # All EAPOL-Key messages we've seen for this client, in arrival order.
     # We never wipe — only append-with-dedup — so once a valid pair is
     # captured nothing can clobber it.
-    eapol_frames: List[EapolFrame] = field(default_factory=list)
+    messages: List[HandshakeMessage] = field(default_factory=list)
 
     # Captured PMKID bytes (16 B from the RSN IE in EAPOL M1).
     pmkid: Optional[bytes] = None
@@ -65,17 +63,17 @@ class Handshake:
         return _wpa.crackable_pairs(self)
 
     @staticmethod
-    def _ordered(pair) -> Tuple[EapolFrame, EapolFrame]:
+    def _ordered(pair) -> Tuple[HandshakeMessage, HandshakeMessage]:
         """A CrackablePair rendered as a (lower-msg, higher-msg) frame tuple."""
         return tuple(sorted((pair.anonce_frame, pair.mic_frame),
                             key=lambda f: f.msg_num))
 
-    def find_valid_pair(self) -> Optional[Tuple[EapolFrame, EapolFrame]]:
+    def find_valid_pair(self) -> Optional[Tuple[HandshakeMessage, HandshakeMessage]]:
         """Highest-confidence crackable (lower-msg, higher-msg) pair, or None."""
         pairs = self._crackable_pairs()
         return self._ordered(pairs[0]) if pairs else None
 
-    def valid_pairs_by_instance(self) -> Dict[bytes, Tuple[EapolFrame, EapolFrame]]:
+    def valid_pairs_by_instance(self) -> Dict[bytes, Tuple[HandshakeMessage, HandshakeMessage]]:
         """Each crackable handshake instance (keyed by its ANonce — fresh per
         association) mapped to its (lower-msg, higher-msg) pair. Gated on a
         beacon: we don't announce a capture for an AP we've never heard beacon."""
@@ -95,41 +93,26 @@ class Handshake:
     @property
     def captured_messages(self) -> Set[int]:
         """Set of message numbers (1-4) we've seen, ignoring unclassified."""
-        return {f.msg_num for f in self.eapol_frames if f.msg_num}
+        return {f.msg_num for f in self.messages if f.msg_num}
 
     @property
-    def total_eapol_frames(self) -> int:
-        return len(self.eapol_frames)
+    def total_messages(self) -> int:
+        return len(self.messages)
 
-    def has_frame(self, raw: bytes) -> bool:
-        return any(f.raw == raw for f in self.eapol_frames)
+    def has_message(self, raw: bytes) -> bool:
+        return any(f.raw == raw for f in self.messages)
 
 
 @dataclass
 class WepStats:
-    """Light, UI-facing WEP IV counters for one AP.
-
-    Deliberately just monotonic integers — the heavy buffers (the unique-IV
-    set, full validation packets, captured ARPs) live in
-    ``wlan.wep_store.WepCaptureStore`` so this model stays cheap to poll and
-    serialize. ``WlanInterface`` attaches one of these to an AP the first
-    time a WEP-encrypted Data frame for that BSSID is seen; live IV
-    rate / ETA are computed on demand from the collector, not stored here.
-    """
+    """WEP IV counters for one AP: unique IVs and total WEP frames seen."""
     unique_ivs: int = 0
     total_frames: int = 0
 
 
 @dataclass
 class PersistedCapture:
-    """One previously-saved capture artifact found under captures/ at scan start.
-
-    Read-only history, hydrated onto an AccessPoint by ``engine.capture_history``
-    and matched by BSSID. Kept deliberately separate from the live
-    ``handshakes`` / ``wep_key`` plumbing so it drives only the persisted
-    Scanner badges and the Focus "existing capture data" summary — it never
-    feeds the live CaptureEventDetector banners.
-    """
+    """One previously-saved capture artifact found under captures/."""
     kind: Literal["HS", "PMKID", "WEP", "WPS"]
     timestamp: int                  # epoch seconds, parsed from the filename
     path: str                       # source file under captures/
@@ -143,28 +126,21 @@ class AccessPoint:
     channel: int = 1
     signal: int = -100
     encryption: Optional[str] = "Unknown"
-    # Structured security fields surfaced from the RSN IE parser. The UI uses
-    # these to render colorized + AKM-dimmed labels; `encryption` (above) is
-    # still the airodump-style string for saved captures + logs.
+    # Structured security fields from the RSN IE; `encryption` (above) is the airodump-style string.
     akms: List[str] = field(default_factory=list)
-    # AKM suite numbers (00-0F-AC:N) from the RSN IE, parallel to `akms` (the
-    # human-readable names). The numeric form drives crackability gating
-    # (engine.wpa.handshake) and is stamped onto each Handshake as `akm_offered`.
+    # AKM suite numbers (00-0F-AC:N) from the RSN IE, parallel to `akms` (the names).
     akm_suites: List[int] = field(default_factory=list)
     pairwise_cipher: Optional[str] = None
     beacons: int = 0
     first_seen: float = field(default_factory=time.time)
-    # Most recent beacon/probe-resp timestamp. Drives "Last Beacon: Ns ago"
-    # in FocusViewV2 and the stale-row dim-out in ScannerView.
+    # Most recent beacon/probe-resp timestamp.
     last_seen: float = field(default_factory=time.time)
     wpa3: bool = False
     transition_mode: bool = False
     pmf_capable: bool = False
     pmf_required: bool = False
 
-    # WPS state decoded from the WPS vendor IE (tag 221, OUI 00:50:F2 type 4)
-    # in beacons / probe responses. `wps_locked` is the key attack signal —
-    # locked APs rate-limit PIN attempts so Reaver/Pixie won't progress.
+    # WPS state decoded from the WPS vendor IE (tag 221, OUI 00:50:F2 type 4).
     wps: bool = False
     wps_locked: bool = False
     wps_version: Optional[str] = None  # "1.0" / "2.0"
@@ -174,60 +150,44 @@ class AccessPoint:
     # DevPwId 0x0004, a Push-Button walk window). Drives wps_pbc_active.
     wps_selected_registrar: bool = False
 
-    # Most recent raw beacon bytes — used so per-client handshakes created
-    # AFTER the first beacon still get a beacon stamped onto them.
+    # Most recent raw beacon bytes.
     last_beacon_frame: Optional[bytes] = None
 
-    # Raw RSN IE bytes (tag 48, including the 2-byte tag header) as
-    # advertised in the AP's beacons. Used by the PMKID harvester to echo
-    # the AP's exact RSN config in its forged Assoc Req — some APs reject
-    # mismatched IEs with status 40 / unsupported-cipher.
+    # Raw RSN IE bytes (tag 48, incl. the 2-byte tag header) as advertised in the AP's beacons.
     rsn_ie: Optional[bytes] = None
 
-    # How this AP's SSID was learned, if it was ever hidden. None means
-    # we either never saw it hidden, or it's still hidden. Set once at
-    # the moment of transition by WlanInterface and consumed by the
-    # CaptureEventDetector to surface a "Decloaked" event.
+    # How this AP's SSID was learned, if it was ever hidden.
+    # None = we never saw it hidden, or it's still hidden.
     decloak_method: Optional[str] = None
 
     # BSSIDs we believe are virtual interfaces of the same physical radio (Main + Guest +
-    # IoT on one router). Bidirectional; match rule in WlanInterface._recompute_siblings_for.
+    # IoT on one router). Bidirectional.
     siblings: List[str] = field(default_factory=list)
 
-    # Per-client handshake captures, keyed by client MAC — multiple clients can capture
-    # simultaneously, so we must not overwrite a complete one when a new client's EAPOL arrives.
+    # Per-client handshake captures, keyed by client MAC (clients can capture simultaneously).
     handshakes: Dict[str, Handshake] = field(default_factory=dict)
 
-    # WEP IV counters, populated only for WEP APs once the first encrypted
-    # Data frame arrives (None on every other AP). The Scanner ENCRYPT cell
-    # and Focus CAPTURE panel read this; the live IV-acquisition rate / ETA
-    # come from the WepCaptureStore keyed by this BSSID.
+    # WEP IV counters, populated for WEP APs on the first encrypted Data frame (None otherwise).
     wep: Optional[WepStats] = None
 
-    # Recovered WEP key (the cracker's payoff). Lives on the AP so it survives
-    # the Generate-IVs campaign being torn down, and so Save can write it out.
+    # Recovered WEP key (the cracker's payoff).
     wep_key: Optional[bytes] = None
 
-    # Recovered WPS PSK from a successful Push-Button (PBC) capture. The payoff
-    # of the opportunistic PBC attack; persisted to captures/ on capture.
+    # Recovered WPS PSK from a successful Push-Button (PBC) capture.
     wps_pbc_psk: Optional[str] = None
 
-    # Recovered WPS PIN + the passphrase it yielded, from a successful PIN
-    # brute-force. Kept distinct from wps_pbc_psk so the win-event log can say
-    # which attack found the passphrase (PIN vs Push-Button).
+    # Recovered WPS PIN + the passphrase it yielded, from a successful PIN brute-force.
+    # Kept distinct from wps_pbc_psk (PIN vs Push-Button).
     wps_pin: Optional[str] = None
     wps_pin_psk: Optional[str] = None
 
-    # Read-only capture history loaded from captures/ at scan start, matched to
-    # this AP by BSSID. Drives the persisted Scanner badges + the Focus
-    # "existing capture data" summary; never touches the live capture plumbing.
+    # Read-only capture history loaded from captures/ at scan start.
     persisted: List[PersistedCapture] = field(default_factory=list)
 
     @property
     def wps_pbc_active(self) -> bool:
         """True during a WPS Push-Button walk window — the AP advertises PBC
-        (Device Password ID 0x0004) with an active Selected Registrar. This is
-        the (passive, beacon-derived) trigger for opportunistic PBC capture."""
+        (Device Password ID 0x0004) with an active Selected Registrar."""
         return (
             self.wps
             and self.wps_selected_registrar
@@ -236,10 +196,9 @@ class AccessPoint:
 
     @property
     def known_psk(self) -> Optional[str]:
-        """The passphrase we hold for this AP from any source — recovered live
-        this session (PBC or PIN) or loaded from a prior session's captures/ WPS
-        file — else None. A WPS PIN on its own (no PSK) does not count; PBC would
-        still be worth running to recover the passphrase."""
+        """The passphrase we hold for this AP from any source — recovered this session
+        (PBC/PIN) or loaded from a prior session's captures/ WPS file, else None. A WPS PIN
+        alone (no PSK) does not count."""
         return (
             self.wps_pbc_psk
             or self.wps_pin_psk
@@ -248,27 +207,19 @@ class AccessPoint:
 
     @property
     def has_psk(self) -> bool:
-        """True once we hold this AP's passphrase (see known_psk). Gates the
-        opportunistic PBC auto-invade so a cracked AP is never re-attacked,
-        across views, restarts, and target switches."""
+        """True once we hold this AP's passphrase (see known_psk)."""
         return self.known_psk is not None
 
 
 @dataclass
 class Client:
-    """
-    Represents a wireless client (e.g., a phone or laptop).
-    Maps to the bottom table in airodump-ng.
-    """
+    """A wireless client (e.g. a phone or laptop)."""
     mac: str
     bssid: Optional[str] = None  # The AP it is currently connected to or probing for
     signal: int = -100
     packets: int = 0
     probed_ssids: Set[str] = field(default_factory=set)  # SSIDs this client is actively searching for
     # AKM suite chosen by this client, read from the RSN IE in its (Re)Assoc Request. Latest-wins.
-    # Filled into a capture's Handshake.akm_client when no M2 pins it down (a PMKID-only capture
-    # on a transition AP). See engine.wpa.handshake (eapol_crackable / pmkid_crackable).
     akm_selected: Optional[int] = None
-    # True for the forged STA *we* inject as (e.g. WEP fake-auth). Rendered as
-    # "YOU" in the client table — honest (it's this device, not a stranger)
+    # True for the forged STA *we* inject as (e.g. WEP fake-auth).
     is_self: bool = False

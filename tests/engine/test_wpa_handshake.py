@@ -1,6 +1,6 @@
 """Unit tests for engine/wpa/handshake.py — the single source of truth for
 WPA 4-way crackability + hc22000 emission."""
-from wifit3.engine.models import EapolFrame, Handshake
+from wifit3.engine.models import HandshakeMessage, Handshake
 from wifit3.engine.wpa import handshake as wpa
 
 ANONCE = b"\xaa" * 32
@@ -12,9 +12,9 @@ def _rc(n: int) -> str:
 
 
 def _frame(msg, replay, *, nonce=None, mic=True, complete=True, ts=0.0):
-    """An EapolFrame with the fields crackability cares about. `complete=False`
+    """An HandshakeMessage with the fields crackability cares about. `complete=False`
     simulates a clipped 802.1X payload; `mic=False` an M1-style no-MIC frame."""
-    return EapolFrame(
+    return HandshakeMessage(
         raw=b"",
         msg_num=msg,
         replay_hex=_rc(replay),
@@ -29,7 +29,7 @@ def _frame(msg, replay, *, nonce=None, mic=True, complete=True, ts=0.0):
 def _hs(*frames):
     hs = Handshake(bssid="aa:bb:cc:dd:ee:ff", client_mac="11:22:33:44:55:66",
                    beacon_frame=b"B")
-    hs.eapol_frames.extend(frames)
+    hs.messages.extend(frames)
     return hs
 
 

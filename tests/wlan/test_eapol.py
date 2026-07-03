@@ -4,7 +4,7 @@ import struct
 
 import pytest
 
-from wifit3.engine.models import EapolFrame, Handshake
+from wifit3.engine.models import HandshakeMessage, Handshake
 from wifit3.wlan.packet import WlanFrameParser
 
 
@@ -238,7 +238,7 @@ def test_parser_no_client_akm_on_m1():
 # ---- Handshake pair-detection tests --------------------------------------------
 
 def _ef(msg_num, replay_int, raw=None, *, ts=0.0, nonce=None, mic=True, complete=True):
-    """EapolFrame builder for the model-delegation tests. By default produces a
+    """HandshakeMessage builder for the model-delegation tests. By default produces a
     *usable* frame — a real (non-zero) nonce, a real MIC, and a complete 802.1X
     payload — so M2/M4 qualify as MIC keystones and M1/M3 as ANonce donors, the
     way a clean capture looks. Pass mic=False for an M1-style no-MIC frame or
@@ -246,7 +246,7 @@ def _ef(msg_num, replay_int, raw=None, *, ts=0.0, nonce=None, mic=True, complete
 
     ts=0.0 (default) means 'unset' → the time-window check is skipped, so these
     tests pin the replay-counter + content rules without depending on timing."""
-    return EapolFrame(
+    return HandshakeMessage(
         raw=raw if raw is not None else bytes([msg_num, replay_int % 256]),
         msg_num=msg_num,
         replay_hex=(replay_int).to_bytes(8, "big").hex(),
@@ -264,7 +264,7 @@ def _make_hs(*frames, with_beacon=True):
         client_mac="11:22:33:44:55:66",
         beacon_frame=b"BEACON" if with_beacon else None,
     )
-    hs.eapol_frames.extend(frames)
+    hs.messages.extend(frames)
     return hs
 
 
@@ -404,4 +404,4 @@ def test_captured_messages_set():
 
 def test_total_eapol_frames():
     hs = _make_hs(_ef(1, 5), _ef(1, 5), _ef(3, 6))
-    assert hs.total_eapol_frames == 3
+    assert hs.total_messages == 3

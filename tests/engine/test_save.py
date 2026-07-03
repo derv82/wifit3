@@ -1,7 +1,7 @@
 """Tests for the typed auto-save module (engine.save)."""
 from __future__ import annotations
 
-from wifit3.engine.models import AccessPoint, EapolFrame, Handshake
+from wifit3.engine.models import AccessPoint, HandshakeMessage, Handshake
 from wifit3.engine.save import (
     save_handshake,
     save_pmkid,
@@ -27,11 +27,11 @@ def _eapol_payload(mic: bytes = b"\xFF" * 16, key_data_len: int = 0) -> bytes:
 
 def _ef(msg_num: int, replay: int = 0, nonce: bytes | None = None,
         mic: bytes | None = None, key_data_len: int = 0,
-        payload_mic: bytes | None = None) -> EapolFrame:
+        payload_mic: bytes | None = None) -> HandshakeMessage:
     nonce = nonce if nonce is not None else bytes(range(32))
     mic = mic if mic is not None else b"\xAA" * 16
     payload_mic = payload_mic if payload_mic is not None else mic
-    return EapolFrame(
+    return HandshakeMessage(
         raw=b"\x00" * 24,
         msg_num=msg_num,
         replay_hex=replay.to_bytes(8, "big").hex(),
@@ -56,7 +56,7 @@ def _ap_with_hs(ssid: str = "HomeNet", bssid: str = "aa:bb:cc:dd:ee:ff",
         anonce = anonce if anonce is not None else bytes(b"\xA0" + b"\x00" * 31)
         m1 = _ef(1, replay=5, nonce=anonce, payload_mic=b"\x00" * 16)
         m2 = _ef(2, replay=5, nonce=b"\xB0" + b"\x00" * 31, key_data_len=22)
-        hs.eapol_frames.extend([m1, m2])
+        hs.messages.extend([m1, m2])
     ap.handshakes[client_mac] = hs
     return ap
 

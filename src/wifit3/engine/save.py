@@ -88,7 +88,7 @@ def _pcap_records_for(ap: AccessPoint, client_mac: str) -> list[tuple[bytes, flo
     hs = ap.handshakes.get(client_mac)
     if hs is None:
         return []
-    eapol = [(f.raw, f.timestamp) for f in hs.eapol_frames]
+    eapol = [(f.raw, f.timestamp) for f in hs.messages]
     records: list[tuple[bytes, float]] = []
     if hs.beacon_frame:
         beacon_ts = min((ts for _, ts in eapol if ts > 0), default=ap.last_seen)
@@ -161,7 +161,7 @@ def save_pmkid(
     nothing reads a PMKID out of a pcap (hcxpcapngtool *produces* hc22000, it
     doesn't consume one), and on the active-harvest path the M1 that carries
     the PMKID KDE arrives under a forged client MAC and is never kept in
-    ``eapol_frames``, so the pcap would be a beacon-only file anyway.
+    ``messages``, so the pcap would be a beacon-only file anyway.
     Returns None on hidden SSID / missing PMKID.
     """
     if not ap.ssid:

@@ -6,14 +6,14 @@ detector synthesises from the None→SSID transition it witnesses.
 """
 from __future__ import annotations
 
-from wifit3.engine.models import AccessPoint, EapolFrame, Handshake
+from wifit3.engine.models import AccessPoint, HandshakeMessage, Handshake
 from wifit3.ui.capture_events import CaptureEventDetector, CaptureKind
 
 
 def _ef(msg, rc, nonce, ts):
     """A *usable* EAPOL frame (real MIC + complete 802.1X payload), so an M2 is a
     valid MIC keystone and the detector can fire a real completion banner."""
-    return EapolFrame(
+    return HandshakeMessage(
         raw=bytes([msg]) + rc.to_bytes(8, "big") + nonce[:1],
         msg_num=msg,
         replay_hex=rc.to_bytes(8, "big").hex(),
@@ -34,15 +34,15 @@ def test_handshake_complete_refires_per_instance():
     ap.handshakes[hs.client_mac] = hs
 
     # Instance 1 → one completion banner.
-    hs.eapol_frames += [_ef(1, 5, b"\xaa" * 32, 100.0), _ef(2, 5, b"\x11" * 32, 100.1)]
+    hs.messages += [_ef(1, 5, b"\xaa" * 32, 100.0), _ef(2, 5, b"\x11" * 32, 100.1)]
     n1 = sum(e.kind == "handshake_complete" for e in det.poll(ap))
     assert n1 == 1
     # Re-poll with nothing new (incl. an M3 retransmit of the same instance) →
     # no repeat banner.
-    hs.eapol_frames.append(_ef(3, 6, b"\xaa" * 32, 100.2))
+    hs.messages.append(_ef(3, 6, b"\xaa" * 32, 100.2))
     assert sum(e.kind == "handshake_complete" for e in det.poll(ap)) == 0
     # Instance 2 (fresh ANonce + replay base) → banner fires again.
-    hs.eapol_frames += [_ef(1, 9, b"\xbb" * 32, 200.0), _ef(2, 9, b"\x22" * 32, 200.1)]
+    hs.messages += [_ef(1, 9, b"\xbb" * 32, 200.0), _ef(2, 9, b"\x22" * 32, 200.1)]
     assert sum(e.kind == "handshake_complete" for e in det.poll(ap)) == 1
 
 
@@ -61,7 +61,7 @@ def test_sae_handshake_emits_flagged_eapol_but_no_completion():
     det = CaptureEventDetector(granular_eapol=True)
     ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="X")
     hs = _hs_with(ap, offered=[8])               # SAE-only AP
-    hs.eapol_frames += [_ef(1, 5, b"\xaa" * 32, 100.0), _ef(2, 5, b"\x11" * 32, 100.1)]
+    hs.messages += [_ef(1, 5, b"\xaa" * 32, 100.0), _ef(2, 5, b"\x11" * 32, 100.1)]
     events = list(det.poll(ap))
 
     assert not any(e.kind == CaptureKind.HANDSHAKE for e in events)
@@ -74,7 +74,7 @@ def test_wpa2_handshake_eapol_flagged_crackable():
     det = CaptureEventDetector(granular_eapol=True)
     ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="X")
     hs = _hs_with(ap, offered=[2])               # WPA2-PSK
-    hs.eapol_frames += [_ef(1, 5, b"\xaa" * 32, 100.0), _ef(2, 5, b"\x11" * 32, 100.1)]
+    hs.messages += [_ef(1, 5, b"\xaa" * 32, 100.0), _ef(2, 5, b"\x11" * 32, 100.1)]
     events = list(det.poll(ap))
     assert sum(e.kind == CaptureKind.HANDSHAKE for e in events) == 1
     assert all(e.crackable is True for e in events if e.kind == CaptureKind.EAPOL)

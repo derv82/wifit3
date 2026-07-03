@@ -294,11 +294,11 @@ def count_handshakes(ap):
     n_complete = sum(hs.complete_instances for hs in ap.handshakes.values())
     n_partial = sum(
         1 for hs in ap.handshakes.values()
-        if not hs.is_complete and hs.total_eapol_frames > 0
+        if not hs.is_complete and hs.total_messages > 0
     )
     msg_counts: Counter = Counter()
     for hs in ap.handshakes.values():
-        for f in hs.eapol_frames:
+        for f in hs.messages:
             if f.msg_num:
                 msg_counts[f.msg_num] += 1
     return n_complete, n_partial, msg_counts
