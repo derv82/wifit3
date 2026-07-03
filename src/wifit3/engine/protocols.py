@@ -1,18 +1,6 @@
-"""Wifit3 driver Protocol + device-id registry.
-
-The :class:`WlanDriver` Protocol is wifit3's structural contract for a
-chipset driver. Every driver under ``wifit3.chips.<name>.driver``
-satisfies this Protocol and:
-
-* declares its supported USB VID:PIDs via :attr:`SUPPORTED_IDS`
-* provides a :py:meth:`WlanDriver.from_usb_device` factory so the
-  device manager can instantiate it without knowing chip-specific
-  construction details (transport wrapping, chip-id discriminators,
-  etc.)
-* implements the runtime methods consumed by :class:`WlanInterface`
-  (``connect``, ``set_channel``, ``inject_frame``, ``close``,
-  ``register_rx_callback``)
-"""
+"""Typing contracts for wifit3 chipset drivers: the structural Protocol
+(WlanDriver), its supported-hardware records (DeviceID), and the
+capability/progress helper types (FakeMacSupport, ProgressCallback)."""
 from __future__ import annotations
 
 import enum
@@ -26,6 +14,9 @@ import usb.core
 
 
 class ProgressCallback(Protocol):
+    """Reports incremental driver bring-up status, so a multi-second
+    connect() surfaces progress instead of appearing frozen. `percentage`
+    is a 0..1 fraction (1.0 == done)."""
     def __call__(self, percentage: float, message: str) -> None: ...
 
 
@@ -33,17 +24,16 @@ class FakeMacSupport(enum.Enum):
     """Whether/how a driver can make the radio auto-ACK a chosen MAC.
 
     Auto-ACK for a programmed MAC is the prerequisite for any *ACKed conversation*
-    where the AP addresses us and expects a link-layer ACK — WPS, EAP, and a
-    software FakeAP/EvilTwin. Without it the AP retransmits each frame to its retry
-    limit and abandons the session. A driver that omits FAKE_MAC is UNIMPLEMENTED.
+    where the AP addresses us and expects a link-layer ACK — e.g. WPS and PMKID
+    association. Without it the AP retransmits each frame to its retry limit and
+    abandons the session.
 
-    UNIMPLEMENTED — this driver hasn't ported active-monitor; the silicon may be capable,
-                so steer the user to the card's default/recommended driver, NOT to a
-                hardware limit. (The default for any driver that omits FAKE_MAC.)
+    UNIMPLEMENTED and NONE both mean "can't auto-ACK", for different reasons:
+    UNIMPLEMENTED — this driver hasn't implemented auto-ACK; the silicon may well be
+                capable. (The default when a driver omits FAKE_MAC.)
     NONE      — the silicon genuinely cannot ACK a chosen MAC (hard/un-spoofable MAC,
                 e.g. rtl8187, rt2500usb).
-    FIXED_MAC — it ACKs, but only the card's own MAC; ``enter_active_monitor`` ignores the
-                requested MAC and returns the card's own.
+    FIXED_MAC — it ACKs, but only the card's own MAC.
     SPOOFABLE — it ACKs an arbitrary forged MAC programmed at runtime.
     """
     UNIMPLEMENTED = "unimplemented"
@@ -56,9 +46,9 @@ class FakeMacSupport(enum.Enum):
 class DeviceID:
     """One entry in a driver's supported-hardware list.
 
-    `extras` carries driver-specific construction hints — RT2800USB uses
-    it for `chip_id` (rt5572 / rt3572 / rt5372). Drivers that don't need
-    extras just leave it empty.
+    `extras` carries driver-specific construction hints — e.g. RT2800USB
+    stores a chip-variant discriminator. Drivers that don't need extras
+    just leave it empty.
     """
     vid: int
     pid: int
@@ -75,15 +65,13 @@ class WlanDriver(Protocol):
 
     # ---- Capabilities -------------------------------------------------
     SUPPORTED_CHANNELS: ClassVar[List[int]]
-    """All channel numbers this driver can tune to. Consumed by the UI
-    (channel hopping default, range validation, etc.). 2.4 GHz channels
+    """All channel numbers this driver can tune to. 2.4 GHz channels
     are 1..14; 5 GHz channels are 36..165. Drivers that only support
     2.4 GHz should list 1..13 (or whatever their PHY actually supports).
     """
 
     # ---- Optional: Linux device-setup metadata ------------------------
-    # Both are read ONLY by the Linux device-setup flow (setup + splash), never
-    # by the runtime — they're not a connect() contract.
+    # Not part of the runtime contract — consulted only by Linux device setup.
     CONFLICTING_LINUX_MODULES: ClassVar[List[str]] = []
     """Optional fallback hint: the Linux kernel module name(s) that bind this
     chipset (e.g. ``["ath9k_htc"]``). Device setup blacklists/unloads these so
@@ -98,9 +86,7 @@ class WlanDriver(Protocol):
     comes up but RX never flows). Device setup unloads the kernel driver and
     leaves the card warm, so for these chips the splash asks for a physical
     replug (a real power-cycle → cold boot) instead of auto-connecting. Default
-    False: the chip reaches a clean state on its own (AR9271 self-re-enumerates
-    on firmware download), so auto-connect is fine. Linux-only — Windows
-    re-enumerates on WinUSB bind, so it never needs this."""
+    False: the chip reaches a clean state on its own, so auto-connect is fine."""
 
     @classmethod
     def from_usb_device(
@@ -119,7 +105,7 @@ class WlanDriver(Protocol):
 
     # ---- Hooks --------------------------------------------------------
     def register_rx_callback(self, cb: Callable[[Packet], None]) -> None:
-        """Register a function that receives one parsed-frame dict per
+        """Register a function that receives one parsed Packet per
         802.11 frame the driver decodes."""
         ...
 
@@ -150,7 +136,8 @@ class WlanDriver(Protocol):
     # Soft contract for now: a driver that can ACK a chosen MAC declares
     # FAKE_MAC and implements enter/exit_active_monitor; the interface gates on
     # both via getattr/hasattr, so drivers predating this stay valid (treated as
-    # FakeMacSupport.UNIMPLEMENTED). Promote to a hard member once every driver declares it.
+    # FakeMacSupport.UNIMPLEMENTED).
+    # TODO: promote to a hard member once every driver declares it.
     FAKE_MAC: ClassVar[FakeMacSupport]
     """This radio's ability to auto-ACK a programmed MAC (default UNIMPLEMENTED if absent)."""
 
