@@ -1,16 +1,11 @@
-import logging
+"""Pure-Python 802.11 frame parsing: the typed ``Packet`` hierarchy (one subclass per
+frame type) and the ``WlanFrameParser`` that builds it from raw MPDU bytes.
+"""
 import struct
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 
-logger = logging.getLogger(__name__)
 
-
-# Parsed 802.11 frame, as a typed hierarchy: the fields on ``Packet`` are on every frame;
-# each subclass adds the fields that only exist for its frame type. Accessing (say) an EAPOL
-# field on a BeaconPacket is a hard error (AttributeError / a red squiggle), not a silent None.
-# kw_only so subclass fields need no ordering dance behind the base's ``ssid`` default; slots
-# for a smaller, faster per-frame object than the dict it replaces.
 @dataclass(slots=True, kw_only=True)
 class Packet:
     type: str                 # airodump-style label: "beacon", "eapol", "wep_data", "mgmt_5", …
@@ -78,12 +73,7 @@ class AssocRequestPacket(Packet):
 
 
 class WlanFrameParser:
-    """Native, dependency-free 802.11 frame parser (no Scapy).
-
-    Every driver feeds it a bare MPDU (its hardware RX descriptor already stripped)
-    plus an RSSI; :meth:`parse_80211_frame` returns the typed :class:`Packet` subclass
-    for the frame's type.
-    """
+    """Native 802.11 frame parser."""
 
     # --- 802.11 Constants ---
     TYPE_MGMT = 0x00
@@ -97,17 +87,14 @@ class WlanFrameParser:
     SUBTYPE_PROBE_RESP = 0x05
     SUBTYPE_BEACON = 0x08
     SUBTYPE_DEAUTH = 0x0c
-    
-    SUBTYPE_DATA = 0x00
-    SUBTYPE_QOS_DATA = 0x08
 
-    @staticmethod
-    def parse_80211_frame(frame: bytes, rssi: int) -> Optional["Packet"]:
+    @classmethod
+    def parse_80211_frame(cls, frame: bytes, rssi: int) -> Optional["Packet"]:
         """Generic 802.11 frame parser: a raw MPDU + RSSI -> the matching typed
         ``Packet`` subclass, or ``None`` if the frame is noise / unparseable / an
         unsupported type (WDS, control frames).
         """
-        if not WlanFrameParser._is_valid_frame(frame):
+        if not cls._is_valid_frame(frame):
             return None
 
         fc0 = frame[0]
@@ -118,9 +105,9 @@ class WlanFrameParser:
         to_ds = (fc1 & 0x01) != 0
         from_ds = (fc1 & 0x02) != 0
 
-        addr1 = WlanFrameParser._mac_to_str(frame[4:10])
-        addr2 = WlanFrameParser._mac_to_str(frame[10:16])
-        addr3 = WlanFrameParser._mac_to_str(frame[16:22])
+        addr1 = cls._mac_to_str(frame[4:10])
+        addr2 = cls._mac_to_str(frame[10:16])
+        addr3 = cls._mac_to_str(frame[16:22])
 
         if not to_ds and not from_ds: # Ad-hoc, Mgmt, or Ctrl
             dest = addr1
@@ -134,33 +121,33 @@ class WlanFrameParser:
             bssid = addr1
             source = addr2
             dest = addr3
-        else: # WDS
-            return None # Ignore WDS for now
+        else: # WDS (4-address) — not parsed
+            return None
 
         base: Dict[str, Any] = {
             "type_id": ftype, "subtype_id": subtype, "bssid": bssid,
             "source": source, "dest": dest, "to_ds": to_ds, "from_ds": from_ds,
             "rssi": rssi, "raw": frame,
         }
-        if ftype == WlanFrameParser.TYPE_MGMT:
-            return WlanFrameParser._parse_mgmt(frame, subtype, base)
-        if ftype == WlanFrameParser.TYPE_DATA:
-            return WlanFrameParser._parse_data(frame, fc1, subtype, base)
+        if ftype == cls.TYPE_MGMT:
+            return cls._parse_mgmt(frame, subtype, base)
+        if ftype == cls.TYPE_DATA:
+            return cls._parse_data(frame, fc1, subtype, base)
         return None  # ctrl / reserved — _is_valid_frame already rejects these
 
-    @staticmethod
-    def _parse_mgmt(frame: bytes, subtype: int, base: Dict[str, Any]) -> Optional["Packet"]:
+    @classmethod
+    def _parse_mgmt(cls, frame: bytes, subtype: int, base: Dict[str, Any]) -> Optional["Packet"]:
         """Build the Packet for a management frame.
 
         Beacon / Probe Response carry the AP's IEs (-> BeaconPacket); (Re)Assoc Request
         carries the client's chosen AKM (-> AssocRequestPacket); every other subtype is a
         bare Packet with a type label.
         """
-        if subtype in (WlanFrameParser.SUBTYPE_BEACON, WlanFrameParser.SUBTYPE_PROBE_RESP):
-            tags = WlanFrameParser._parse_tags(frame, subtype)
+        if subtype in (cls.SUBTYPE_BEACON, cls.SUBTYPE_PROBE_RESP):
+            tags = cls._parse_tags(frame, subtype)
             if tags is None:
                 return None
-            type_str = "beacon" if subtype == WlanFrameParser.SUBTYPE_BEACON else "probe_resp"
+            type_str = "beacon" if subtype == cls.SUBTYPE_BEACON else "probe_resp"
             fields: Dict[str, Any] = {
                 "type": type_str,
                 "ssid": tags.get("ssid"),
@@ -174,8 +161,7 @@ class WlanFrameParser:
                 "akm_suites": tags.get("akm_suites", []),
             }
             # Copy channel / rsn_ie_raw / WPS only when the walker found them, so a missing
-            # value keeps the field default. A missing channel must stay None (not 1): the
-            # caller falls back to the tuned channel, and 1 mis-tags DS-Param-less 5 GHz APs.
+            # value keeps the field default.
             for key in ("channel", "rsn_ie_raw", "wps", "wps_locked", "wps_version",
                         "wps_state", "wps_config_methods", "wps_device_password_id",
                         "wps_selected_registrar"):
@@ -183,33 +169,32 @@ class WlanFrameParser:
                     fields[key] = tags[key]
             return BeaconPacket(**base, **fields)
 
-        if subtype in (WlanFrameParser.SUBTYPE_PROBE_REQ, WlanFrameParser.SUBTYPE_ASSOC_REQ):
-            tags = WlanFrameParser._parse_tags(frame, subtype)
+        if subtype in (cls.SUBTYPE_PROBE_REQ, cls.SUBTYPE_ASSOC_REQ):
+            tags = cls._parse_tags(frame, subtype)
             if tags is None:
                 return None
             ssid = tags.get("ssid")
-            if subtype == WlanFrameParser.SUBTYPE_ASSOC_REQ:
-                # Client's selected AKM from the RSN IE past the fixed fields
-                # (24 hdr + cap + listen = 28).
+            if subtype == cls.SUBTYPE_ASSOC_REQ:
+                # Client's selected AKM from the RSN IE (24 hdr + cap + listen = 28).
                 return AssocRequestPacket(
                     **base, type="assoc_req", ssid=ssid,
-                    assoc_akm=WlanFrameParser._first_rsn_akm(frame, 28))
+                    assoc_akm=cls._first_rsn_akm(frame, 28))
             return Packet(**base, type="probe_req", ssid=ssid)
 
-        if subtype == WlanFrameParser.SUBTYPE_REASSOC_REQ:
+        if subtype == cls.SUBTYPE_REASSOC_REQ:
             # +6 past Assoc's offset for the Current AP Address field (34 = 28 + 6).
             return AssocRequestPacket(
                 **base, type="reassoc_req",
-                assoc_akm=WlanFrameParser._first_rsn_akm(frame, 34))
+                assoc_akm=cls._first_rsn_akm(frame, 34))
 
         label = {
-            WlanFrameParser.SUBTYPE_ASSOC_RESP: "assoc_resp",
-            WlanFrameParser.SUBTYPE_DEAUTH: "deauth",
+            cls.SUBTYPE_ASSOC_RESP: "assoc_resp",
+            cls.SUBTYPE_DEAUTH: "deauth",
         }.get(subtype, f"mgmt_{subtype}")
         return Packet(**base, type=label)
 
-    @staticmethod
-    def _parse_data(frame: bytes, fc1: int, subtype: int, base: Dict[str, Any]) -> "Packet":
+    @classmethod
+    def _parse_data(cls, frame: bytes, fc1: int, subtype: int, base: Dict[str, Any]) -> "Packet":
         """Build the Packet for a data frame: WepDataPacket if WEP-protected, EapolPacket
         if it carries an EAPOL-Key handshake, else a bare 'data' Packet.
         """
@@ -219,10 +204,8 @@ class WlanFrameParser:
         if fc1 & 0x80:                # HT Control field present — Order bit (+4)
             header_len += 4
 
-        # Protected (WEP/TKIP/CCMP) frame: the 4 bytes after the MAC header are the IV
-        # header. The Key ID byte's ExtIV bit (0x20) tells WEP (clear → 4-byte IV, a fresh
-        # 3-byte IV the PTW cracker feeds on) from TKIP/CCMP (set → 8-byte extended IV),
-        # without the AP's beacon. Either way the body is ciphertext — no LLC/SNAP below.
+        # Protected frame: the Key ID byte's ExtIV bit (0x20) tells WEP (clear → 4-byte IV)
+        # from TKIP/CCMP (set → 8-byte ext IV). Body is ciphertext either way — no LLC/SNAP.
         if (fc1 & 0x40) and len(frame) >= header_len + 4:
             keyid_byte = frame[header_len + 3]
             if not (keyid_byte & 0x20):   # ExtIV clear → WEP
@@ -231,16 +214,15 @@ class WlanFrameParser:
                     **base, type="wep_data",
                     iv=bytes(frame[header_len : header_len + 3]),
                     keyid=(keyid_byte >> 6) & 0x03,
-                    # First 16 ciphertext bytes: XORed with the known ARP plaintext they
-                    # give the keystream the PTW cracker votes on.
+                    # First 16 ciphertext bytes — the PTW keystream (XOR the known ARP plaintext).
                     cipher=bytes(frame[cipher_start : cipher_start + 16]))
             return Packet(**base, type="data")
 
-        eapol = WlanFrameParser._parse_eapol(frame, header_len, base)
+        eapol = cls._parse_eapol(frame, header_len, base)
         return eapol if eapol is not None else Packet(**base, type="data")
 
-    @staticmethod
-    def _parse_eapol(frame: bytes, header_len: int,
+    @classmethod
+    def _parse_eapol(cls, frame: bytes, header_len: int,
                      base: Dict[str, Any]) -> Optional["EapolPacket"]:
         """Find an EAPOL-Key payload after the MAC header and build an EapolPacket, or None
         if the frame has no EAPOL LLC/SNAP. A frame carrying the EAPOL ethertype but too
@@ -264,7 +246,7 @@ class WlanFrameParser:
         if len(frame) >= eapol_start + 99 and frame[eapol_start + 1] == 3:  # EAPOL-Key
             key_info = struct.unpack(">H", frame[eapol_start + 5: eapol_start + 7])[0]
             key_data_len = struct.unpack(">H", frame[eapol_start + 97: eapol_start + 99])[0]
-            msg_num = WlanFrameParser._classify_eapol_msg(key_info, key_data_len)
+            msg_num = cls._classify_eapol_msg(key_info, key_data_len)
             fields.update(
                 key_info=key_info,
                 replay_counter=frame[eapol_start + 9: eapol_start + 17],
@@ -284,20 +266,14 @@ class WlanFrameParser:
             if key_data_len > 0:
                 key_data = frame[eapol_start + 99: eapol_start + 99 + key_data_len]
                 if key_data:
-                    pmkid = WlanFrameParser._extract_pmkid_kde(key_data)
+                    pmkid = cls._extract_pmkid_kde(key_data)
                     if pmkid is not None:
                         fields["pmkid"] = pmkid
                     if msg_num == 2:
-                        akm = WlanFrameParser._first_rsn_akm(key_data)
+                        akm = cls._first_rsn_akm(key_data)
                         if akm is not None:
                             fields["akm"] = akm
         return EapolPacket(**base, type="eapol", **fields)
-
-    # Key Info bit masks (802.11i, 16-bit BE field):
-    #   bit 6 = INSTALL, bit 7 = KEY_ACK, bit 8 = KEY_MIC
-    _KI_INSTALL = 0x0040
-    _KI_ACK = 0x0080
-    _KI_MIC = 0x0100
 
     @staticmethod
     def _classify_eapol_msg(key_info: int, key_data_len: int) -> int:
@@ -311,9 +287,10 @@ class WlanFrameParser:
         M3: ACK=1, MIC=1, INSTALL=1
         M4: ACK=0, MIC=1, INSTALL=0, key data empty
         """
-        install = bool(key_info & WlanFrameParser._KI_INSTALL)
-        ack = bool(key_info & WlanFrameParser._KI_ACK)
-        mic = bool(key_info & WlanFrameParser._KI_MIC)
+        # 802.11i Key Info (16-bit BE): bit 6 = INSTALL, bit 7 = ACK, bit 8 = MIC.
+        install = bool(key_info & 0x0040)
+        ack = bool(key_info & 0x0080)
+        mic = bool(key_info & 0x0100)
 
         if ack and not mic and not install:
             return 1
@@ -324,14 +301,6 @@ class WlanFrameParser:
             # supplicant's RSN IE, M4 carries nothing.
             return 2 if key_data_len > 0 else 4
         return 0
-
-    # PMKID KDE: 0xDD <len=0x14> 00 0F AC 04 <16-byte PMKID>
-    # Encapsulated in EAPOL-Key Key Data (sometimes within a "GTK/PMKID
-    # KDE wrapper" alongside other KDEs). We walk the Key Data as a
-    # sequence of (Type, Length, Value) records, where Type=0xDD denotes
-    # a vendor-specific KDE and the OUI+DataType discriminates it.
-    _PMKID_KDE_OUI = b"\x00\x0f\xac"
-    _PMKID_KDE_DATA_TYPE = 0x04
 
     @staticmethod
     def _extract_pmkid_kde(key_data: bytes) -> Optional[bytes]:
@@ -353,8 +322,8 @@ class WlanFrameParser:
                 return None
             if kde_type == 0xDD and kde_len >= 4 + 16:
                 if (
-                    key_data[value_start : value_start + 3] == WlanFrameParser._PMKID_KDE_OUI
-                    and key_data[value_start + 3] == WlanFrameParser._PMKID_KDE_DATA_TYPE
+                    key_data[value_start : value_start + 3] == b"\x00\x0f\xac"  # IEEE 802.11 OUI
+                    and key_data[value_start + 3] == 0x04  # PMKID KDE data type
                 ):
                     pmkid = bytes(key_data[value_start + 4 : value_start + 4 + 16])
                     # Some APs include a PMKID KDE with all-zero bytes as a
@@ -364,16 +333,10 @@ class WlanFrameParser:
             i = value_end
         return None
 
-    @staticmethod
-    def _first_rsn_akm(data: bytes, start: int = 0) -> Optional[int]:
-        """First AKM suite (00-0F-AC:N) in the RSN IE within an element/KDE list,
-        or None. ``data`` is walked as (tag, len, value) from ``start``; the RSN
-        IE is a plain element with tag 48 (0x30), and we return the single suite
-        the supplicant selected for this association.
-
-        Shared by the two cleartext sources of the client's chosen AKM: EAPOL M2's
-        Key Data (``start=0``) and a (Re)Assoc Request's IE list (``start`` past
-        the fixed fields).
+    @classmethod
+    def _first_rsn_akm(cls, data: bytes, start: int = 0) -> Optional[int]:
+        """First AKM suite (00-0F-AC:N) in the RSN IE (tag 48) within the element/KDE
+        list, walked from ``start``, or None — the single suite the supplicant selected.
         """
         i = start
         n = len(data)
@@ -385,64 +348,65 @@ class WlanFrameParser:
             if value_end > n:
                 return None
             if tag == 48:  # RSN IE (element id 48)
-                rsn = WlanFrameParser._parse_rsn_ie(data[value_start:value_end])
+                rsn = cls._parse_rsn_ie(data[value_start:value_end])
                 if rsn and rsn["akm_suites"]:
                     return rsn["akm_suites"][0]
                 return None
             i = value_end
         return None
 
-    @staticmethod
-    def _is_valid_frame(frame: bytes) -> bool:
+    @classmethod
+    def _is_valid_frame(cls, frame: bytes) -> bool:
+        """Cheap structural gate before parsing: length, protocol version, mgmt IE
+        ordering (tag 0 SSID first, tag 1 rates), and a data-frame address noise filter.
+        Only MGMT and DATA can pass; CTRL / reserved are rejected here.
+        """
         if len(frame) < 24:
             return False
         fc0 = frame[0]
-        
+
         # Protocol version must be 0
         if (fc0 & 0x03) != 0:
             return False
-        
+
         ftype = (fc0 & 0x0C) >> 2
         subtype = (fc0 & 0xF0) >> 4
-        
-        if ftype == WlanFrameParser.TYPE_MGMT:
+
+        if ftype == cls.TYPE_MGMT:
             # Enforce Strict Tag Ordering for Mgmt Frames
-            if subtype in (WlanFrameParser.SUBTYPE_BEACON, WlanFrameParser.SUBTYPE_PROBE_RESP):
+            if subtype in (cls.SUBTYPE_BEACON, cls.SUBTYPE_PROBE_RESP):
                 ptr = 36
-            elif subtype == WlanFrameParser.SUBTYPE_PROBE_REQ:
+            elif subtype == cls.SUBTYPE_PROBE_REQ:
                 ptr = 24
-            elif subtype == WlanFrameParser.SUBTYPE_DEAUTH:
+            elif subtype == cls.SUBTYPE_DEAUTH:
                 return len(frame) >= 26
             else:
                 return True
-                
+
             if len(frame) <= ptr + 2:
                 return False
-                
+
             # SPEC: Tag 0 (SSID) MUST be first
-            if frame[ptr] != 0: 
+            if frame[ptr] != 0:
                 return False
-                
+
             # Check Tag 1 (Supported Rates)
             t0_len = frame[ptr+1]
             ptr += 2 + t0_len
-            
+
             if len(frame) > ptr + 2:
-                # If Tag 0 is followed by something other than Tag 1, 
+                # If Tag 0 is followed by something other than Tag 1,
                 # it's shifted/corrupt noise.
                 if frame[ptr] != 1:
                     return False
-            
+
             return True
 
-        if ftype == WlanFrameParser.TYPE_DATA:
+        if ftype == cls.TYPE_DATA:
             # Sanity-check addresses to filter random USB noise from real frames.
-            if len(frame) < 24:
-                return False
-                
             addr2 = frame[10:16]
             addr3 = frame[16:22]
-            
+
             # addr2 is always the transmitter (SA) — never legitimately
             # broadcast or zero, so it's a good noise filter.
             if addr2 == b'\x00\x00\x00\x00\x00\x00' or addr2 == b'\xff\xff\xff\xff\xff\xff':
@@ -461,15 +425,6 @@ class WlanFrameParser:
         if len(mac_bytes) != 6:
             return "00:00:00:00:00:00"
         return ":".join(f"{b:02x}" for b in mac_bytes)
-
-    # WPS attribute IDs (big-endian) we care about. WSC spec §12.
-    _WPS_ATTR_VERSION = 0x104A
-    _WPS_ATTR_STATE = 0x1044
-    _WPS_ATTR_AP_SETUP_LOCKED = 0x1057
-    _WPS_ATTR_SELECTED_REGISTRAR = 0x1041
-    _WPS_ATTR_DEVICE_PASSWORD_ID = 0x1012
-    _WPS_ATTR_CONFIG_METHODS = 0x1008
-    _WPS_ATTR_VENDOR_EXTENSION = 0x1049
 
     @staticmethod
     def _wps_version2(vext: bytes) -> Optional[int]:
@@ -491,14 +446,18 @@ class WlanFrameParser:
             j += sub_len
         return None
 
-    @staticmethod
-    def _parse_wps_ie(data: bytes) -> Dict[str, Any]:
+    @classmethod
+    def _parse_wps_ie(cls, data: bytes) -> Dict[str, Any]:
         """Walk the WPS IE's nested big-endian TLVs (``data`` = bytes after
         the OUI + OUI-type) and surface the attacker-relevant subset.
 
         Each TLV is a 2-byte attribute id, 2-byte length, then value.
         Missing attributes leave their fields at the model defaults.
         """
+        # WPS attribute IDs (big-endian), WSC spec §12.
+        ATTR_AP_SETUP_LOCKED, ATTR_STATE, ATTR_CONFIG_METHODS = 0x1057, 0x1044, 0x1008
+        ATTR_DEVICE_PASSWORD_ID, ATTR_SELECTED_REGISTRAR = 0x1012, 0x1041
+        ATTR_VERSION, ATTR_VENDOR_EXTENSION = 0x104A, 0x1049
         out: Dict[str, Any] = {"wps": True}
         version1 = False
         version2 = 0
@@ -511,20 +470,20 @@ class WlanFrameParser:
                 break
             val = data[i:i + ln]
             i += ln
-            if attr == WlanFrameParser._WPS_ATTR_AP_SETUP_LOCKED and ln >= 1:
+            if attr == ATTR_AP_SETUP_LOCKED and ln >= 1:
                 out["wps_locked"] = val[0] == 0x01
-            elif attr == WlanFrameParser._WPS_ATTR_STATE and ln >= 1:
+            elif attr == ATTR_STATE and ln >= 1:
                 out["wps_state"] = val[0]          # 1=unconfigured, 2=configured
-            elif attr == WlanFrameParser._WPS_ATTR_CONFIG_METHODS and ln >= 2:
+            elif attr == ATTR_CONFIG_METHODS and ln >= 2:
                 out["wps_config_methods"] = (val[0] << 8) | val[1]
-            elif attr == WlanFrameParser._WPS_ATTR_DEVICE_PASSWORD_ID and ln >= 2:
+            elif attr == ATTR_DEVICE_PASSWORD_ID and ln >= 2:
                 out["wps_device_password_id"] = (val[0] << 8) | val[1]
-            elif attr == WlanFrameParser._WPS_ATTR_SELECTED_REGISTRAR and ln >= 1:
+            elif attr == ATTR_SELECTED_REGISTRAR and ln >= 1:
                 out["wps_selected_registrar"] = val[0] == 0x01
-            elif attr == WlanFrameParser._WPS_ATTR_VERSION and ln >= 1:
+            elif attr == ATTR_VERSION and ln >= 1:
                 version1 = True
-            elif attr == WlanFrameParser._WPS_ATTR_VENDOR_EXTENSION:
-                v2 = WlanFrameParser._wps_version2(val)
+            elif attr == ATTR_VENDOR_EXTENSION:
+                v2 = cls._wps_version2(val)
                 if v2 is not None:
                     version2 = v2
         if version2 >= 0x20:
@@ -533,16 +492,15 @@ class WlanFrameParser:
             out["wps_version"] = "1.0"
         return out
 
-    @staticmethod
-    def _parse_tags(frame: bytes, subtype: int) -> Optional[Dict[str, Any]]:
-        """
-        Parses 802.11 Information Elements (Tags) from management frames.
-        Returns a dictionary of parsed info (ssid, channel, encryption) or None if corrupt.
+    @classmethod
+    def _parse_tags(cls, frame: bytes, subtype: int) -> Optional[Dict[str, Any]]:
+        """Parse a management frame's Information Elements into a dict (ssid, channel,
+        encryption, …), or None if the frame is corrupt.
         """
         parsed = {}
-        if subtype in (WlanFrameParser.SUBTYPE_BEACON, WlanFrameParser.SUBTYPE_PROBE_RESP):
+        if subtype in (cls.SUBTYPE_BEACON, cls.SUBTYPE_PROBE_RESP):
             ptr = 36 # Skip 24-byte HDR + 12-byte Fixed Params
-        elif subtype == WlanFrameParser.SUBTYPE_PROBE_REQ:
+        elif subtype == cls.SUBTYPE_PROBE_REQ:
             ptr = 24 # 24-byte HDR + 0-byte Fixed Params
         else:
             return parsed
@@ -563,13 +521,6 @@ class WlanFrameParser:
         pairwise_cipher: Optional[str] = None
         akms: List[str] = []
         akm_suites: List[int] = []
-        # Channel sources, in preference order:
-        #   1. DS Parameter Set (tag 3)  — present on every 2.4 GHz beacon,
-        #      OPTIONAL on 5 GHz per 802.11-2020 9.4.2.3 (most APs omit it).
-        #   2. HT Operation (tag 61)     — primary channel byte; present on
-        #      every 802.11n/ac AP regardless of band.
-        #   3. VHT Operation (tag 192)   — channel center freq seg 0;
-        #      tertiary fallback for VHT-only oddities.
         channel_ds: Optional[int] = None
         channel_ht: Optional[int] = None
         channel_vht: Optional[int] = None
@@ -586,7 +537,7 @@ class WlanFrameParser:
             tag_start = ptr + 2
             tag_end = tag_start + tag_len
             if tag_end > len(frame):
-                break # bounds check
+                break
 
             tag_data = frame[tag_start : tag_end]
 
@@ -598,10 +549,7 @@ class WlanFrameParser:
                     # Validate against completely corrupted text
                     if any(b < 0x20 and b not in (0x09, 0x0a, 0x0d) for b in tag_data):
                         return None # Corrupt frame masquerading as valid
-                    try:
-                        parsed["ssid"] = tag_data.decode('utf-8', errors='ignore')
-                    except Exception:
-                        pass
+                    parsed["ssid"] = tag_data.decode('utf-8', errors='ignore')
             elif tag_id == 3: # DS Parameter Set (Channel)
                 if tag_len == 1:
                     channel_ds = tag_data[0]
@@ -609,11 +557,6 @@ class WlanFrameParser:
                 if tag_len >= 1:
                     channel_ht = tag_data[0]
             elif tag_id == 192: # VHT Operation — center freq seg 0 at byte 1
-                # IE layout (802.11ac-2013 8.4.2.157):
-                #   byte 0 = Channel Width
-                #   byte 1 = Channel Center Freq Segment 0  ← primary on 20 MHz
-                #   byte 2 = Channel Center Freq Segment 1
-                #   bytes 3-4 = Basic VHT-MCS Set
                 if tag_len >= 2:
                     channel_vht = tag_data[1]
             elif tag_id == 48: # RSN (WPA2/WPA3)
@@ -621,7 +564,7 @@ class WlanFrameParser:
                 # Preserve the raw IE bytes (with tag header) so the PMKID
                 # harvester can echo the AP's exact RSN config in Assoc Req.
                 parsed["rsn_ie_raw"] = bytes(frame[ptr : tag_end])
-                rsn = WlanFrameParser._parse_rsn_ie(tag_data)
+                rsn = cls._parse_rsn_ie(tag_data)
                 if rsn is not None:
                     pairwise_cipher = rsn["pairwise"]
                     akms = rsn["akms"]
@@ -630,9 +573,9 @@ class WlanFrameParser:
                     pmf_required = rsn["pmf_required"]
                     # SAE-family => WPA3; SAE + a PSK-family suite => transition.
                     # Suite-number based so WPA3-H2E (SAE-EXT-KEY, 24) is caught.
-                    has_wpa3 = bool(WlanFrameParser._SAE_SUITES.intersection(akm_suites))
+                    has_wpa3 = bool(cls._SAE_SUITES.intersection(akm_suites))
                     transition_mode = has_wpa3 and bool(
-                        WlanFrameParser._PSK_SUITES.intersection(akm_suites)
+                        cls._PSK_SUITES.intersection(akm_suites)
                     )
             elif tag_id == 221: # Vendor Specific
                 if tag_len >= 4:
@@ -644,15 +587,14 @@ class WlanFrameParser:
                         elif oui_type == 4: # WPS
                             # tag_data = OUI(3) + type(1) + WPS TLVs.
                             parsed.update(
-                                WlanFrameParser._parse_wps_ie(tag_data[4:])
+                                cls._parse_wps_ie(tag_data[4:])
                             )
 
             ptr = tag_end
 
-        # Pick the best channel signal we have. DS Param IE is authoritative
-        # when present (matches the 2.4 GHz "official" channel byte). HT Op
-        # IE is the only universal cross-band source. Caller (interface.py)
-        # falls back to its tuned channel when we report nothing.
+        # Channel preference: DS Param (tag 3, 2.4 GHz authoritative) → HT Op (tag 61, the
+        # only cross-band source; 5 GHz often omits DS per 802.11-2020 9.4.2.3) → VHT Op
+        # (tag 192, last resort). Caller falls back to its tuned channel if none present.
         if channel_ds is not None:
             parsed["channel"] = channel_ds
         elif channel_ht is not None:
@@ -667,7 +609,7 @@ class WlanFrameParser:
         parsed["pairwise_cipher"] = pairwise_cipher
         parsed["akms"] = akms
         parsed["akm_suites"] = akm_suites
-        parsed["encryption"] = WlanFrameParser._format_encryption_label(
+        parsed["encryption"] = cls._format_encryption_label(
             frame=frame,
             has_rsn=has_rsn,
             has_wpa=has_wpa,
