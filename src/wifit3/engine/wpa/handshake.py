@@ -1,8 +1,8 @@
 """Single source of truth for WPA/WPA2 4-way handshake crackability + hc22000.
 
-The "did we capture a handshake?" verdict (events, CAPTURE-panel counts) AND the
-hc22000 hashline build both route through ``crackable_pairs()``, so a banner can never
-claim a capture that ``save`` then silently refuses — they are literally the same code path.
+The "did we capture a handshake?" verdict AND the hc22000 hashline build both route
+through ``crackable_pairs()``, so a banner can never claim a capture that ``save``
+then silently refuses — they are literally the same code path.
 
 Ground truth — what each 4-way message carries and what hashcat needs
 ---------------------------------------------------------------------
@@ -105,8 +105,7 @@ def eapol_verdict(hs: Handshake) -> str:
 
     The suppressed AKMs are SAE (ephemeral PMK) and FT-PSK (no hashcat FT mode);
     both are strict, so an unconfirmed transition AP returns ``"unknown"`` and we
-    withhold. Every other AKM — plain PSK, PSK-SHA256, and (unchanged) EAP / OWE /
-    legacy — keeps its prior emit behavior; only SAE/FT are newly gated.
+    withhold. Every other AKM — plain PSK, PSK-SHA256, EAP, OWE, and legacy — is emitted.
 
     Inputs are stamped by the interface: ``akm_client`` (the suite the client
     chose, from M2 / (Re)Assoc — authoritative) and ``akm_offered`` (the AP's
@@ -157,8 +156,8 @@ def uncrackable_label(hs: Handshake) -> Optional[str]:
 class MessageInfo:
     """Per-frame content descriptor — the hashcat-relevant fields, for logging.
 
-    ``useful`` answers "does this frame contribute what a crackable pair needs?"
-    so the UI can dim frames that arrived degraded (e.g. a clipped M2)."""
+    ``useful`` answers "does this frame contribute what a crackable pair needs?" —
+    true unless the frame arrived degraded (e.g. a clipped M2)."""
     msg_num: int
     has_nonce: bool       # a real 32-byte, non-zero nonce
     has_mic: bool         # a real 16-byte, non-zero MIC (M1 legitimately has none)
@@ -237,7 +236,7 @@ def crackable_pairs(hs: Handshake) -> List[CrackablePair]:
     "challenge" (M1+M2 / M1+M4), then the temporally nearest donor. Each keystone
     AND each ANonce is emitted once, so spurious cross-association donors collapse
     to the single best pair while a genuine re-handshake (fresh ANonce) adds
-    another.."""
+    another."""
     if not eapol_crackable(hs):
         return []
     pos = {id(f): i for i, f in enumerate(hs.messages)}
