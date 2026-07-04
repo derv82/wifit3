@@ -8,9 +8,8 @@ cooperative ``stopped`` flag — so each subclass writes only its *behaviour*:
 ``_loop()`` + ``teardown()``, plus the ``visible()`` / ``ineligible_reason()``
 classmethods the Focus button row derives from.
 
-Engine-pure: no Textual. The Activity-Log sink is injected as a :class:`TreeLog`
-handle so the bytes a campaign writes are identical to today's
-``screen._log(treelog.branch(m))`` wiring.
+Engine-pure: no Textual — kept free of any UI dependency so the attack logic
+is testable in isolation.
 
 Status/headline/card rendering deliberately stays in ``ui.focus_model`` for now
 (read off the active campaign); per-campaign ``status_*`` properties are a
@@ -22,31 +21,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from . import treelog
-
 logger = logging.getLogger(__name__)
-
-
-class TreeLog:
-    """A campaign's live handle to the Activity Log. Wraps the pure ``treelog``
-    formatters with an injected ``sink`` (the screen's ``_log`` in the app, a
-    ``list.append`` in tests) so a campaign writes ``self.treelog.branch("…")``
-    and the bytes that reach the log are identical to today's
-    ``_log(treelog.branch(m))`` call sites."""
-
-    def __init__(self, sink):
-        self._sink = sink
-
-    def line(self, msg: str) -> None: self._sink(msg)                 # raw, undecorated
-    def header(self, msg: str) -> None: self._sink(treelog.header(msg))
-    def branch(self, msg: str) -> None: self._sink(treelog.branch(msg))
-    def branch_ok(self, msg: str) -> None: self._sink(treelog.branch_ok(msg))
-    def branch_fail(self, msg: str) -> None: self._sink(treelog.branch_fail(msg))
-    def branch_dim(self, msg: str) -> None: self._sink(treelog.branch_dim(msg))
-    def leaf(self, msg: str) -> None: self._sink(treelog.leaf(msg))
-    def leaf_ok(self, msg: str) -> None: self._sink(treelog.leaf_ok(msg))
-    def leaf_fail(self, msg: str) -> None: self._sink(treelog.leaf_fail(msg))
-    def leaf_warn(self, msg: str) -> None: self._sink(treelog.leaf_warn(msg))
 
 
 class Campaign:
@@ -69,10 +44,9 @@ class Campaign:
     idle_variant: str = "primary"
     run_variant: str = "error"
 
-    def __init__(self, ap, iface, treelog: Optional[TreeLog] = None):
+    def __init__(self, ap, iface):
         self.ap = ap
         self.iface = iface
-        self.treelog = treelog
         self.stopped = False
         self._task: Optional[asyncio.Task] = None
 

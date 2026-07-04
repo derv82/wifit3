@@ -2,14 +2,13 @@
 
 Pins the framework contract the per-campaign migrations rely on: the class-level
 ``active`` radio mutex, start/stop, exit-driven teardown (on completion, stop, AND
-crash), and the TreeLog handle's byte-for-byte fidelity to the pure formatters.
+crash).
 """
 import asyncio
 
 import pytest
 
-from wifit3.engine.attacks import treelog
-from wifit3.engine.attacks.campaign import Campaign, TreeLog
+from wifit3.engine.attacks.campaign import Campaign
 
 
 @pytest.fixture(autouse=True)
@@ -150,14 +149,3 @@ async def test_stop_is_idempotent_after_completion():
     await c.stop()
     await c.stop()                       # already done — must not raise
     assert c.done
-
-
-def test_treelog_handle_is_byte_identical_to_pure_formatters():
-    out: list[str] = []
-    tl = TreeLog(out.append)
-    verbs = ["header", "branch", "branch_ok", "branch_fail", "branch_dim",
-             "leaf", "leaf_ok", "leaf_fail", "leaf_warn"]
-    for v in verbs:
-        getattr(tl, v)(v)              # self.treelog.<verb>("<verb>")
-    tl.line("raw")                     # raw line passes through undecorated
-    assert out == [getattr(treelog, v)(v) for v in verbs] + ["raw"]

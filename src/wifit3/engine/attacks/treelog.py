@@ -22,16 +22,6 @@ def branch_ok(msg: str) -> str:
     return f" [dim]├─[/dim][green]✓[/green] {msg}"
 
 
-def branch_fail(msg: str) -> str:
-    """A non-terminal step that failed (├─╳), followed by more lines (reasons)."""
-    return f" [dim]├─[/dim][red]╳[/red] {msg}"
-
-
-def branch_dim(msg: str) -> str:
-    """A non-terminal, inert item (├──) — an enumerated entry, neither action nor status."""
-    return f" [dim]├── {msg}[/dim]"
-
-
 def leaf_ok(msg: str) -> str:
     """The terminal success line that closes the current group (└─✓)."""
     return f" [dim]└─[/dim][green]✓[/green] {msg}"
