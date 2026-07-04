@@ -178,7 +178,8 @@ class ScannerView(Screen):
         # WPS PBC auto-invade. ON by default: any AP that opens a push-button
         # window is auto-captured (unless we already hold its PSK). Press 'w' to
         # opt out. Detection is always-on + passive; only the invade transmits.
-        self._pbc_enabled: bool = True
+        # The enabled flag lives on the app (app.pbc_enabled) so Focus's 'w' toggles
+        # the same setting. Watcher + capturing serialization stay Scanner-local.
         self._pbc_watcher = PbcWatcher()
         self._pbc_capturing = False          # serialize: one invade at a time
 
@@ -691,9 +692,9 @@ class ScannerView(Screen):
 
     def action_wps_pbc_mode(self) -> None:
         """Toggle WPS PBC auto-invade on/off (ON by default)."""
-        self._pbc_enabled = not self._pbc_enabled
+        self.app.pbc_enabled = not self.app.pbc_enabled
         self._log_pbc_status()
-        if self._pbc_enabled:
+        if self.app.pbc_enabled:
             self._arm_open_windows()
 
     def _arm_open_windows(self) -> None:
@@ -721,7 +722,7 @@ class ScannerView(Screen):
     def _log_pbc_status(self) -> None:
         """WPS PBC auto-invade state as a ● header + detail leaf. Shared by
         startup + the 'w' toggle."""
-        if self._pbc_enabled:
+        if self.app.pbc_enabled:
             self._write_log(treelog.header(
                 "[bold]WPS PushButton auto-invade[/bold] is "
                 "[bold green]enabled[/bold green] [dim](press [bold]w[/bold] to toggle)[/dim]"))
@@ -755,7 +756,7 @@ class ScannerView(Screen):
             f"[bold cyan]WPS PushButton [italic]auto-invade:[/italic][/bold cyan] "
             f"[bold green]Open Window[/bold green] on [bold]{label}[/bold] "
             f"[dim](CH {ap.channel})[/dim]")
-        if not self._pbc_enabled:
+        if not self.app.pbc_enabled:
             self._write_log(treelog.leaf("[dim]auto-invade off — press [bold]w[/bold] to enable[/dim]"))
             return
         if ap.has_psk:

@@ -54,6 +54,7 @@ class WepCampaign(Campaign):
 
     button_id = "btn-gen-ivs"
     key = "wep"
+    hotkey = ("r", "Replay")
     idle_label = "ARP Replay"
     run_label = "Stop Replay"
     idle_variant = "success"

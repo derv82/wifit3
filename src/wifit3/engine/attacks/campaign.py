@@ -36,6 +36,10 @@ class Campaign:
 
     button_id: Optional[str] = None   # the Focus button this campaign owns; None = no button (PBC)
     key: str = ""                     # mutex/registry identity: "wep"/"wps"/"wpa3down"/"pmkid"/"pbc"
+    # Focus footer command: (keycap, short label), or None for no hotkey (e.g. PBC,
+    # which is auto-triggered). The keycap must be unique across all campaigns
+    # (BINDINGS is static); the footer key's shown/grayed state mirrors the button.
+    hotkey: Optional[tuple[str, str]] = None
     stoppable: bool = True            # False = fire-once; button stays disabled, never flips to "Stop X"
     # Button text/variant the registry-driven derive_buttons paints: idle_* when
     # this campaign is not running, run_* while it owns the radio (the "Stop X").

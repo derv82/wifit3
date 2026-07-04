@@ -125,6 +125,7 @@ class PmkidHarvestAttack(Campaign):
     # a later pass; these classmethods are forward-compatible with it.)
     button_id = "btn-pmkid"
     key = "pmkid"
+    hotkey = ("p", "PMKID")
     stoppable = True                   # short one-shot, but the user can Stop between attempts
     idle_label = "PMKID"
     run_label = "Stop PMKID"

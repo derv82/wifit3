@@ -111,6 +111,10 @@ class WifiteApp(App):
         self.device_manager = WlanDeviceManager()
         self.active_interface = None
         self.target_ap: Optional[AccessPoint] = None
+        # WPS PBC auto-invade preference, shared across screens (Scanner + Focus
+        # both read/toggle it via 'w'). On by default — the one active-TX exception
+        # to passive-by-default (auto-captures a PSK when any AP's button is pressed).
+        self.pbc_enabled: bool = True
         self.theme = "textual-dark"
 
     def on_mount(self) -> None:

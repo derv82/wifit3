@@ -100,6 +100,12 @@ _ATTACK_BUTTONS = [
     ("btn-wps-pin", "WPS PIN"), ("btn-wpa3-down", "WPA ↓"),
 ]
 
+# Footer-command campaign-key → the button id whose visible/enabled state its
+# hotkey mirrors (check_action reads it off derive_buttons). Chop is the WEP
+# sub-action button; the rest come straight from the campaign registry.
+_CAMPAIGN_BUTTON_ID = {cls.key: cls.button_id for cls in fm.BUTTON_CAMPAIGNS}
+_CAMPAIGN_BUTTON_ID["chop"] = "btn-chop"
+
 
 # A capture filename is `<essid>_<bssid-dashes>_<epoch>_<kind>.<ext>`; this elides
 # the BSSID + timestamp middle, which bloated the save log into ugly left-aligned
@@ -130,8 +136,17 @@ class FocusViewV2(Screen):
     # fixed clients column + fluid log/flow, so nothing varies on these yet.
     HORIZONTAL_BREAKPOINTS = [(0, "-compact"), (100, "-normal"), (140, "-wide")]
 
+    # Attack hotkeys are generated from the campaign registry so the footer, the
+    # top-bar buttons, and the radio mutex all read one source. ChopChop isn't a
+    # Campaign (it's a WEP sub-action), so it gets a hand-written binding. Every
+    # attack key's shown/greyed state is driven by check_action off derive_buttons.
     BINDINGS = [
-        Binding("escape", "go_back", "Back to Scanner", show=True),
+        Binding("escape", "go_back", "Back", show=True),
+        *[Binding(cls.hotkey[0], f"campaign('{cls.key}')", cls.hotkey[1], show=True)
+          for cls in fm.BUTTON_CAMPAIGNS if cls.hotkey],
+        Binding("c", "campaign('chop')", "ChopChop", show=True),
+        Binding("d", "deauth_all", "Deauth all", show=True),
+        Binding("w", "wps_pbc_mode", "WPS PBC", show=True),
         Binding("q", "app.quit", "Quit", show=True),
     ]
 
@@ -203,6 +218,16 @@ class FocusViewV2(Screen):
         # Last packet_stats snapshot, diffed each tick to flicker the endpoint LEDs
         # (router on RX from the target, card on TX we send). None = no baseline yet.
         self._prev_stats = None
+        # camp_key -> the toggle its footer hotkey fires; 'chop' is the WEP
+        # sub-action. Built here so action_campaign is a pure lookup.
+        self._campaign_toggles = {
+            "wep": self._toggle_generate_ivs, "pmkid": self._toggle_pmkid,
+            "wps": self._toggle_wps_pin, "wpa3down": self._toggle_wpa3_down,
+            "chop": self._toggle_chop,
+        }
+        # Last-painted footer signature — _sync_bindings repaints only on change,
+        # so the 10 Hz tick doesn't rebuild the footer every frame.
+        self._binding_sig: Optional[tuple] = None
 
     # ----- compose -----------------------------------------------------------
 
@@ -432,7 +457,8 @@ class FocusViewV2(Screen):
             self._finish_pmkid()
         if self._pbc_campaign is not None and self._pbc_campaign.done:
             self._finish_pbc_capture(ap)
-        if (ap.wps_pbc_active and not self._pbc_busy() and not ap.has_psk
+        if (ap.wps_pbc_active and getattr(self.app, "pbc_enabled", True)
+                and not self._pbc_busy() and not ap.has_psk
                 and self._wep_campaign is None and self._wpa3_down_attack is None
                 and self._wps_campaign is None):
             self._start_pbc_capture(ap)
@@ -448,7 +474,9 @@ class FocusViewV2(Screen):
         # AP would refuse them, or another long-running TX owns the half-duplex
         # radio.
         clients.set_deauth_enabled(not fm.deauth_blocked(ap))
+        clients.set_broadcast_visible(bool(snap.clients))
         self._refresh_buttons()
+        self._sync_bindings()
         self._refresh_status_footer()
         # The flow channel self-samples on its own timer (bound in _enter_target).
         iface = getattr(self.app, "active_interface", None)
@@ -576,6 +604,71 @@ class FocusViewV2(Screen):
             self._toggle_generate_ivs()
         elif bid == "btn-chop":
             self._toggle_chop()
+
+    # ----- command-bar (footer hotkeys) --------------------------------------
+
+    def check_action(self, action: str, parameters: tuple) -> Optional[bool]:
+        """Drive the footer keys off the same state as the buttons. Textual 8.x
+        reads the return as: False → key hidden, None → shown but greyed, True →
+        active. Attack keys mirror derive_buttons (hidden when the button is, greyed
+        when it's disabled); 'd' gates on live clients + the deauth mutex. Everything
+        else (back / quit / pbc) is always available."""
+        ap = self._target_ap
+        if action == "campaign":
+            if ap is None:
+                return False
+            st = fm.derive_buttons(ap).get(_CAMPAIGN_BUTTON_ID.get(parameters[0]))
+            if st is None or not st.visible:
+                return False
+            return None if st.disabled else True
+        if action == "deauth_all":
+            if ap is None or not self._snap.clients:
+                return False               # nothing to deauth — hide the key
+            return None if fm.deauth_blocked(ap) else True
+        return True
+
+    def _sync_bindings(self) -> None:
+        """Repaint the footer only when a key's shown/greyed state changes — the
+        10 Hz tick would otherwise rebuild it every frame. The signature captures
+        everything check_action reads for the conditional keys."""
+        ap = self._target_ap
+        if ap is None:
+            sig: Optional[tuple] = None
+        else:
+            btns = fm.derive_buttons(ap)
+            sig = (tuple((bid, s.visible, s.disabled) for bid, s in btns.items()),
+                   bool(self._snap.clients), fm.deauth_blocked(ap))
+        if sig != self._binding_sig:
+            self._binding_sig = sig
+            self.refresh_bindings()
+
+    def action_deauth_all(self) -> None:
+        """'d' — broadcast-deauth every client (the panel button's twin)."""
+        self.run_worker(self._run_deauth_broadcast(), exclusive=True)
+
+    def action_campaign(self, camp_key: str) -> None:
+        """Toggle the campaign a footer hotkey owns — the button's twin. Only
+        reached when check_action allowed the key (Textual gates the dispatch), so
+        it just fires the matching toggle; the toggles repaint the buttons."""
+        toggle = self._campaign_toggles.get(camp_key)
+        if toggle is not None:
+            toggle()
+        self._sync_bindings()
+
+    def action_wps_pbc_mode(self) -> None:
+        """'w' — toggle the shared WPS PBC auto-invade (app.pbc_enabled). Focus's
+        per-tick auto-capture gates on it, so toggling on grabs an already-open
+        window on the next tick. Mirrors Scanner's 'w' — same setting."""
+        self.app.pbc_enabled = not getattr(self.app, "pbc_enabled", True)
+        self._log_pbc_status()
+
+    def _log_pbc_status(self) -> None:
+        if getattr(self.app, "pbc_enabled", True):
+            self._log("[bold]WPS PushButton auto-invade[/bold] "
+                      "[bold green]enabled[/bold green] [dim](press w to toggle)[/dim]")
+        else:
+            self._log("[bold]WPS PushButton auto-invade[/bold] "
+                      "[yellow]disabled[/yellow] [dim](detect only — press w to toggle)[/dim]")
 
     # ----- deauth ------------------------------------------------------------
 

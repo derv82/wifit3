@@ -96,6 +96,12 @@ class ClientsList(Vertical):
         for btn in self.query(Button):
             btn.disabled = disabled
 
+    def set_broadcast_visible(self, visible: bool) -> None:
+        """Show/hide the pinned 'Deauth all' button. Hidden with no clients — a
+        broadcast deauth with nothing to hit isn't offered (mirrors the 'd' hotkey
+        gate). The per-client ✕ rows carry their own visibility (there are none)."""
+        self.query_one("#deauth-all", Button).display = visible
+
     # ----- helpers -----------------------------------------------------------
 
     def _make_row(self, mac: str, power: int, packets: int) -> Horizontal:

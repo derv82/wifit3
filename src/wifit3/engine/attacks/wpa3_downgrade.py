@@ -79,6 +79,7 @@ class WPA3DowngradeAttack(Campaign):
 
     button_id = "btn-wpa3-down"
     key = "wpa3down"
+    hotkey = ("g", "WPA↓")
     idle_label = "WPA ↓"
     run_label = "Stop ↓"
     idle_variant = "primary"
