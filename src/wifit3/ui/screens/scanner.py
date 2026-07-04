@@ -36,6 +36,10 @@ FADE_DURATION_S = 30.0
 # update jitter without the row starting to fade mid-conversation.
 GRACE_DURATION_S = 7.0
 
+# Cap the fade blend so stale rows stay readable — a full blend into the row
+# bg leaves "black gaps" of unreadable text before eviction.
+MAX_FADE_FACTOR = 0.7
+
 # Sort the table on its own cadence instead of every value-update tick —
 # stops rows from bouncing on every signal/beacon update. Same tick evicts
 # fully-faded APs.
@@ -336,12 +340,13 @@ class ScannerView(Screen):
 
             n_cli = client_counts.get(ap.bssid, 0)
             # Grace window: stay at full brightness as a "this AP is alive"
-            # signal. After that, linear fade to bg over fade_span.
+            # signal. After that, linear fade toward bg over fade_span,
+            # bottoming out at MAX_FADE_FACTOR so text stays readable.
             # When fade is toggled off, all rows render at full brightness.
             if not fade_enabled or age <= GRACE_DURATION_S:
                 factor = 0.0
             else:
-                factor = min(1.0, (age - GRACE_DURATION_S) / fade_span)
+                factor = min(1.0, (age - GRACE_DURATION_S) / fade_span) * MAX_FADE_FACTOR
 
             # Beacon-arrival flash: bump the deadline whenever the count
             # increments since we last saw this AP. First-sight rows skip
