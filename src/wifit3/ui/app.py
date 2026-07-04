@@ -90,51 +90,6 @@ class WifiteApp(App):
         height: 10;
         border-top: solid $primary;
     }
-    #focus-container {
-        padding: 1;
-    }
-    .panel-title {
-        text-style: bold;
-        width: 100%;
-        content-align: center middle;
-        background: $primary;
-        color: auto;
-    }
-    .info-box {
-        border: solid $primary;
-        padding: 0 1;
-    }
-    .panel-body { width: 1fr; height: auto; align-horizontal: center; }
-
-    /* main row: left action column | right summary + log */
-    #main-row { height: 1fr; }
-
-    /* 40 wide so "Stop Replay" fits and TARGET/CLIENTS line up below */
-    #left-col { width: 40; }
-    #panel-target { height: 8; }          /* aligns with the SECURITY|CAPTURE row */
-    /* no box: the buttons carry their own borders; height auto frees space for CLIENTS */
-    #attack-panel { height: auto; border: none; margin-top: 1; }
-    #client-panel { height: 1fr; min-height: 6; }
-    #deauth-row { height: auto; margin-top: 1; }
-
-    /* right column: SECURITY | CAPTURE row, then the tall EVENT LOG */
-    #right-col { width: 1fr; }
-    #top-right { height: 8; }
-    #panel-security { width: 38; }
-    #panel-capture  { width: 38; }
-    /* live packet dashboard; fills the space right of CAPTURE */
-    #panel-activity-box { width: 1fr; min-width: 0; }
-    #panel-activity { height: 1fr; }
-    #event-log-panel { height: 1fr; }
-    #focus-event-log { height: 1fr; border: none; }
-    #lbl-ssid { width: 100%; text-align: center; }
-
-    .button-row { height: auto; align-horizontal: center; }
-    /* 13 fits "Stop Replay"/"Stop Chop"; min-width:0 beats Button's 16 default */
-    #attack-panel Button { width: 13; min-width: 0; }
-    /* flat; height 2 for the stacked "Deauth / Selected" label */
-    #deauth-row Button { width: 1fr; min-width: 0; height: 2; border: none; margin: 0; content-align: center middle; text-align: center; }
-    #deauth-row Button#btn-deauth-sel { margin-right: 1; }
     Button {
         margin-right: 1;
         min-width: 12;
