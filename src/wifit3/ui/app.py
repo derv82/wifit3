@@ -58,6 +58,8 @@ class WifiteApp(App):
     TITLE = "wifit3 - Wireless Auditor"
 
     CSS = """
+    /* Force single-line header to avoid Textual's "click to expand" behavior */
+    Header { height: 1 !important; }
     #ascii-art {
         content-align: center middle;
         margin-bottom: 2;

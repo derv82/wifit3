@@ -12,6 +12,7 @@ from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.ui.screens.focus_v2.art import art_size, breathe
 
 _TOPBAR_H = 3
+_CHROME_H = 2          # Header (1 row) + Footer (1 row)
 _CENTER_MAX, _CENTER_MIN, _BOTTOM_MIN = 13, 7, 6
 
 
@@ -45,12 +46,13 @@ async def test_layout_geometry(w, h):
         assert clients.width == 40
         assert log.x == 0 and log.right == clients.x and clients.right == w
 
+        header, footer = reg("Header"), reg("Footer")
         top, mid, bot = reg("#topbar"), reg("#mid"), reg("#bottom")
-        # Three stacked bands cover the full height with no overlap; the mid band
-        # caps at _CENTER_MAX (full 2-row sparklines), the bottom takes the rest.
-        assert top.y == 0 and top.height == _TOPBAR_H
-        assert top.bottom == mid.y and mid.bottom == bot.y and bot.bottom == h
-        avail = h - _TOPBAR_H
+        assert header.y == 0 and header.height == 1
+        assert footer.bottom == h and footer.height == 1
+        assert top.y == header.bottom and top.height == _TOPBAR_H
+        assert top.bottom == mid.y and mid.bottom == bot.y and bot.bottom == footer.y
+        avail = h - _TOPBAR_H - _CHROME_H
         expected_center = min(_CENTER_MAX, max(_CENTER_MIN, avail - _BOTTOM_MIN))
         assert mid.height == expected_center
         assert bot.height == avail - expected_center

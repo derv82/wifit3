@@ -40,7 +40,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.screen import Screen
-from textual.widgets import Button, Static
+from textual.widgets import Button, Footer, Header, Static
 
 from wifit3.engine.attacks import treelog
 from wifit3.engine.attacks.pmkid_harvest import PmkidHarvestAttack
@@ -74,6 +74,8 @@ logger = logging.getLogger(__name__)
 
 _ENDPOINT_W = 20          # the .ans art is exactly 20 cells wide
 _TOPBAR_H = 3
+# Buffer for Textual's Header & Footer (1 row each)
+_CHROME_H = 2
 # Border + title colour for the LOG / CLIENTS panels. The textual-dark $primary
 # read as near-invisible and matrix green was too loud for the calm lower band;
 # ANSI cyan blends with the rest of the UI (buttons, the [cyan] log highlights).
@@ -208,6 +210,7 @@ class FocusViewV2(Screen):
         # Build from the live target if one is set (real app), else the demo
         # snapshot (geometry tests). self.app is available here.
         self._snap = self._snapshot()
+        yield Header()
         with Horizontal(id="topbar"):
             yield Button("‹ Scanner", id="back")
             # The full attack set is composed once (hidden); derive_buttons shows
@@ -224,6 +227,7 @@ class FocusViewV2(Screen):
         with Horizontal(id="bottom"):
             yield LogBand(self._snap.log_lines, id="log")
             yield ClientsList(self._snap.clients, id="clients")
+        yield Footer()
 
     async def on_mount(self) -> None:
         self._tick_timer = self.set_interval(1 / 10, self._tick)
@@ -457,7 +461,7 @@ class FocusViewV2(Screen):
         bottom (log + clients grow). Also ramp horizontal padding onto the mid row
         on wide terminals so the endpoints aren't glued to the edges — the bottom
         band stays full width."""
-        avail = max(1, self.size.height - _TOPBAR_H)
+        avail = max(1, self.size.height - _TOPBAR_H - _CHROME_H)
         center = min(_CENTER_MAX, max(_CENTER_MIN, avail - _BOTTOM_MIN))
         center = max(1, min(center, avail - 1))
         mid = self.query_one("#mid")
