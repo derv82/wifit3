@@ -122,13 +122,13 @@ class InstallResult:
 
     ``ok`` is all the happy path needs; ``cancelled`` flags the benign "user declined the
     UAC prompt" case (worth a softer message than a real failure); ``wdi_code`` is the raw
-    libwdi return code, surfaced in the error modal's Details box and the logs.
+    libwdi return code.
     """
     ok: bool
     message: str
     cancelled: bool = False
     wdi_code: int | None = None
-    detail: str | None = None   # wdi-simple's own last output line, for the error modal
+    detail: str | None = None   # wdi-simple's own last output line
 
 
 @dataclass(frozen=True)
@@ -136,7 +136,7 @@ class RestoreResult:
     """Outcome of removing a WinUSB/libusb binding so the native driver reclaims the card.
 
     ``cancelled`` is the declined-UAC case; ``detail`` carries the oemNN.inf that was
-    removed (or the one we tried to) for the logs / Details box.
+    removed (or the one we tried to).
     """
     ok: bool
     message: str
