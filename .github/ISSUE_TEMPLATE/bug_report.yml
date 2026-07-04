@@ -1,0 +1,105 @@
+name: Bug report
+description: Something went wrong while wifit3 was driving a supported USB Wi-Fi adapter.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a report — this is wifit3's first public release, so real-world
+        reports on hardware and networks we haven't hit yet are exactly what we need.
+
+        Wifit3 drives USB Wi-Fi hardware at the register level, so a useful report needs your
+        exact card, OS, and the wifit3 output. Please fill in every required field.
+
+        Not a bug? Use the **Discussions** links on the previous page instead — one for
+        "how do I…?" usage questions, one for requesting support for a new adapter.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: >-
+        What did you do, what did you expect, and what happened instead? Name the step or attack
+        (scan, handshake, deauth, PMKID, WEP, WPS) and say whether it ever worked before.
+      placeholder: On the scanner with the AWUS036ACH, channel hopping stops after ~30s and no new APs show up…
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - Windows
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS / kernel version
+      description: "Linux: paste the output of `uname -a`. Windows: edition + build (run `winver`, e.g. Windows 11 Home 24H2 build 26200)."
+      placeholder: "Linux kali 6.8.0-kali3-amd64 … x86_64 GNU/Linux  —or—  Windows 11 Home 24H2 build 26200"
+    validations:
+      required: true
+  - type: dropdown
+    id: chipset
+    attributes:
+      label: Adapter / chipset
+      description: >-
+        Pick your chipset from the supported list. If it isn't here, choose "Other / not sure" —
+        but note wifit3 only works with the chipsets listed here.
+      options:
+        - Atheros AR9271 (ALFA AWUS036NHA)
+        - Realtek RTL8821AU (ALFA AWUS036ACS)
+        - Realtek RTL8812AU (ALFA AWUS036ACH)
+        - MediaTek MT7612U (ALFA AWUS036ACM)
+        - MediaTek MT7610U (ALFA AWUS036ACHM)
+        - MediaTek MT7921AU (ALFA AWUS036AXML / Panda PAU0F)
+        - Realtek RTL8187L (ALFA AWUS036H)
+        - Ralink RT3070 (ALFA AWUS036NH)
+        - Realtek RTL8814AU (ALFA AWUS1900)
+        - Realtek RTL8822BU (TP-Link T3U Plus)
+        - Realtek RTL8188EUS (TP-Link TL-WN722N v2/v3)
+        - Ralink RT5372 (Panda PAU05 / PAU06)
+        - Ralink RT5572 (Panda PAU09 N600)
+        - Ralink RT2570 (Buffalo Nintendo Wi-Fi)
+        - Realtek RTL8821CU
+        - Ralink RT5370
+        - Other / not sure
+    validations:
+      required: true
+  - type: input
+    id: vidpid
+    attributes:
+      label: USB VID:PID
+      description: >-
+        Linux: `lsusb` (e.g. `0bda:8812`). Windows: Device Manager → your adapter → Properties →
+        Details → Hardware Ids (the `VID_xxxx&PID_xxxx`).
+      placeholder: "0bda:8812"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: wifit3 version
+      description: "The release tag (e.g. v1.0.0), or if you're running from source, the git short hash (`git rev-parse --short HEAD`)."
+      placeholder: "v1.0.0  —or—  a1b2c3d"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output / logs
+      description: Paste the relevant wifit3 output or error text. Paste text, not a screenshot, so it stays searchable and copyable.
+      render: text
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before submitting
+      options:
+        - label: My adapter's chipset is on the supported list above (or I selected "Other / not sure").
+          required: true
+        - label: I searched existing issues and this isn't a duplicate.
+          required: true
+        - label: I own the network I was testing, or I am explicitly authorized to test it.
+          required: true
