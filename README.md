@@ -55,6 +55,8 @@ subprocesses, no Scapy — so it runs the same on **Linux and Windows**.
 | Panda PAU05 / PAU06 | Ralink RT5372 | 2.4 GHz |
 | Panda PAU09 N600 | Ralink RT5572 | 2.4 / 5 GHz |
 | Buffalo Nintendo Wi-Fi | Ralink RT2570 | 2.4 GHz |
+| Auscoumer 600 Mbps | Realtek RTL8821CU | 2.4 / 5 GHz |
+| LOTEKOO 150 Mbps | Ralink RT5370 | 2.4 GHz |
 
 [VERIFICATION.md](VERIFICATION.md) has detailed information about each card's capability and performance.
 
