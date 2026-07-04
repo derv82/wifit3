@@ -12,13 +12,17 @@ edit, move on — one section at a time, never a broad sweep or a file-wide ques
   top-level `scripts/**` (throwaway dev tooling; already reviewed separately).
 
 ## Route remaining (in order)
-1. `ui/` — largest by file count but "docstrings only" per CODE-STYLE, so should move fast.
-2. `setup/` + `src/wifit3/scripts/`.
+1. `setup/` (3 files) + `src/wifit3/scripts/` (2) — the home stretch.
 
-`engine/` is fully audited. Its `attacks/**` subtree got a **structural sweep only** (dead
-code + factually-wrong comments), not the full verbose-comment gate — by choice, since the
-attack docs are intentionally exhaustive (pedagogy + bug-transparency). Revisiting them for
-verbosity is optional, not planned.
+`engine/` and `ui/` are fully audited. How each went:
+- `engine/attacks/**` got a **structural sweep only** (dead code + factually-wrong comments),
+  not the full verbose-comment gate — by choice, since the attack docs are intentionally
+  exhaustive (pedagogy + bug-transparency). Revisiting for verbosity is optional, not planned.
+- `ui/` uncovered that the **v1 Focus view was abandoned in place**, not cleaned up. Removed
+  ~900 lines of dead v1 (focus_model builders, themes.py, PacketDashboard, v1 SECURITY-panel
+  markup, v1 CSS, write-only CaptureEvent fields) + fixed its stale references and wrong/stale
+  comments. **Deferred (optional):** ~15 soft consumer-roll-call comments (item 4) and a few
+  "future:" aspirational notes — none wrong, pure polish.
 
 ## Parked refactors
 - **T3 — unify the two `register_rx_callback` layers.** Two methods share the name with
