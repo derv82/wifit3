@@ -18,10 +18,7 @@ from typing import Any, Optional
 
 from rich.markup import escape
 
-from .encryption_format import (
-    format_encryption_markup,
-    format_pmf_markup,
-)
+from .encryption_format import format_encryption_markup
 from ..engine.attacks.campaign import Campaign
 from ..engine.attacks.pmkid_harvest import PmkidHarvestAttack
 from ..engine.attacks.wep.campaign import WepCampaign
@@ -163,26 +160,6 @@ def truncate_ssid(ssid: str, maxlen: int = 24) -> str:
     return ssid[:maxlen - 1].rstrip() + "…"
 
 
-def ssid_chip_markup(ap, maxlen: int = 24) -> str:
-    """The TARGET name as a black-on-cyan chip (truncated), or an italic
-    ‹hidden› marker for a cloaked AP."""
-    if ap.ssid:
-        return f"[black on cyan] {escape(truncate_ssid(ap.ssid, maxlen))} [/black on cyan]"
-    return "[italic cyan]‹hidden›[/italic cyan]"
-
-
-def last_beacon_markup(ap, now: float) -> str:
-    """Staleness chip for the last beacon — doubles as an 'is the card still
-    on-channel?' readout. An active AP sits at 'now'; any drift escalates hard
-    (orange chip by 1 s, red by 3 s) so a deaf card can't be missed."""
-    last_seen_s = max(0, int(now - ap.last_seen))
-    if last_seen_s == 0:
-        return "[green]now[/green]"
-    if last_seen_s < 3:
-        return f"[black bold on orange1] {last_seen_s}s [/black bold on orange1]"
-    return f"[black bold on red] {format_duration(last_seen_s)} [/black bold on red]"
-
-
 def beacon_rate(ap, samples: deque, now: float, window_s: float = 5.0):
     """Windowed beacons/s + cumulative count. A windowed rate (not a
     since-first-seen average) shows how RX is doing *right now*; an average
@@ -201,31 +178,6 @@ def beacon_rate(ap, samples: deque, now: float, window_s: float = 5.0):
 # ---------------------------------------------------------------------------
 # SECURITY — WPS / PMF / WPA3-downgrade.
 # ---------------------------------------------------------------------------
-
-
-def wps_pmf_markup(ap) -> Optional[str]:
-    """The static WPS + PMF line. WPS shows a version + a lock glyph (green 🔓
-    attackable, red 🔒 dead end); PMF only in RSN (WPA2/3). None when neither
-    applies, so the caller hides the line."""
-    if ap.wps:
-        lock = "[red]🔒[/red]" if ap.wps_locked else "[green]🔓[/green]"
-        ver = f"{ap.wps_version} " if ap.wps_version else ""
-        wps_part = f"WPS: {ver}{lock}"
-    else:
-        wps_part = None
-    pmf_part = f"PMF: {format_pmf_markup(ap)}" if (ap.akms or ap.wpa3) else None
-    parts = [p for p in (wps_part, pmf_part) if p]
-    return "  ·  ".join(parts) if parts else None
-
-
-def wpa3_down_markup(attack) -> Optional[str]:
-    """Live WPA2-downgrade status — the per-probe counts surface here instead of
-    flooding the event log. None when the daemon isn't running."""
-    if attack is None:
-        return None
-    st = attack.stats
-    return (f"WPA2↓: [bold green]✓ ON[/bold green] "
-            f"[dim]({st.directed_probes} dir., {st.wildcard_probes} wild.)[/dim]")
 
 
 def _fmt_eta(secs: Optional[float]) -> str:
@@ -304,101 +256,6 @@ def count_handshakes(ap):
     return n_complete, n_partial, msg_counts
 
 
-def handshake_value_markup(ap) -> str:
-    """The Handshake line's VALUE (caller prepends 'Handshake: '). Persisted
-    (captures/) counts back-fill the live ones so a saved handshake reads
-    green + (history) even after a fresh focus."""
-    n_complete, n_partial, msg_counts = count_handshakes(ap)
-    breakdown = " · ".join(f"M{m}×{msg_counts[m]}" for m in sorted(msg_counts))
-    persisted_hs = sum(1 for p in ap.persisted if p.kind == "HS")
-    if n_complete:
-        t = f"[bold green]Captured x{n_complete}[/bold green]"
-        if n_partial:
-            t += f" [dim](+{n_partial} partial)[/dim]"
-        return t
-    if n_partial:
-        return f"[yellow]Partial[/yellow] [dim]{breakdown}[/dim]"
-    if persisted_hs:
-        return f"[bold green]Captured x{persisted_hs}[/bold green] [dim](history)[/dim]"
-    return "[dim]Not captured[/dim]"
-
-
-def pmkid_value_markup(ap) -> str:
-    """The PMKID line's VALUE (caller prepends 'PMKID:'). Persisted counts
-    back-fill the live ones."""
-    n_pmkid = sum(1 for hs in ap.handshakes.values() if hs.pmkid)
-    persisted_pmkid = sum(1 for p in ap.persisted if p.kind == "PMKID")
-    if n_pmkid:
-        return f"[bold green]Captured x{n_pmkid}[/bold green]"
-    if persisted_pmkid:
-        return f"[bold green]Captured x{persisted_pmkid}[/bold green] [dim](history)[/dim]"
-    return "[dim]Not captured[/dim]"
-
-
-def ivs_value_markup(ap, iface) -> str:
-    """The WEP IVs line's VALUE (caller prepends 'IVs: '): unique-IV count +
-    live rate. The usable (crack-sample) count isn't here — it lives in the
-    Crack line (N/10k usable IVs), which is what gates cracking."""
-    n = ap.wep.unique_ivs if ap.wep else 0
-    rate = iface.wep_store.rate(ap.bssid) if iface else 0.0
-    count = f"[bold green]{n:,}[/bold green]" if n else "[red]0[/red]"
-    return f"{count} [dim]({rate:.0f}/s)[/dim]"
-
-
-def replay_status_markup(campaign) -> str:
-    """The Replay-status row's value. Surfaces ChopChop too — while it runs,
-    replay is paused on purpose, so name WHAT'S running (not a bare 'paused' that
-    reads like the attack stalled)."""
-    if campaign is None:
-        return "[dim]not started[/dim]"
-    if campaign.chop_active:
-        return "forging packet [dim]via[/dim] [bold cyan]ChopChop[/bold cyan]"
-    s = campaign.replay.state
-    if s == "replaying":
-        # target_pps = the smooth P&O rate, not the jittery measured effective_pps.
-        return (f"[green]Replaying ARP[/green] "
-                f"[dim]({campaign.replay.target_pps:.0f}pps)[/dim]")
-    if s == "testing":
-        return "[cyan]Trying candidate ARP…[/cyan]"
-    if s == "waiting-arp":
-        return "[yellow]waiting for ARP[/yellow]"
-    if s == "waiting-auth":
-        return "[dim]associating…[/dim]"
-    if s == "paused":
-        return "[dim]paused[/dim]"
-    return "[dim]idle[/dim]"
-
-
-def crack_section(ap, campaign, samples: int):
-    """The two-row Crack section: ``(visible, crack_markup, info_markup)``. Only
-    visible during a running campaign or once a key is found (live or persisted).
-    ``samples`` is the store's usable-IV count for the BSSID."""
-    persisted_wep = next((p for p in ap.persisted if p.kind == "WEP"), None)
-    if campaign is None and ap.wep_key is None and persisted_wep is None:
-        return False, "", ""
-    target_k = CRACK_READY_THRESHOLD // 1000
-
-    if ap.wep_key is not None:
-        # Short status here — the full black-on-cyan KEY banner lives in the
-        # (wide) EVENT LOG (a 104-bit key is too wide for this column).
-        return (True, "Crack: [bold green]✓ Key recovered[/bold green]",
-                "[dim]see EVENT LOG[/dim]")
-    if campaign is None and persisted_wep is not None:
-        return (True,
-                "Crack: [bold green]✓ Key recovered[/bold green] [dim](history)[/dim]",
-                "[dim]see EVENT LOG[/dim]")
-    if samples < CRACK_READY_THRESHOLD:
-        return (True, f"Crack: [white]{samples:,}/{target_k}k usable IVs[/white]",
-                f"[dim]Crack begins at {target_k}k[/dim]")
-    # The store crossed the threshold, but the cracker ingests in batches — until
-    # ITS sample_count reaches the threshold it's still spinning up, not crunching.
-    sc = campaign.cracker.sample_count if campaign else samples
-    status = ("[cyan italic]Starting…[/cyan italic]"
-              if sc < CRACK_READY_THRESHOLD else "[cyan]Cracking…[/cyan]")
-    return (True, f"Crack: {status} [dim]({sc:,} samples)[/dim]",
-            "[dim]Some keys require >40K samples[/dim]")
-
-
 def fakeauth_value_markup(campaign, now: float, compact: bool = False) -> str:
     """Just the fake-auth status value (no 'Fake-Auth:' label) — the state
     machine: associating / associated (+ re-auth countdown) / failed / idle.
@@ -418,12 +275,6 @@ def fakeauth_value_markup(campaign, now: float, compact: bool = False) -> str:
     if fa.state == "failed":
         return f"[red]Failed: {escape(fa.fail_reason or 'unknown')}[/red]"
     return "[dim]Idle[/dim]"
-
-
-def fakeauth_markup(campaign, now: float) -> str:
-    """The SECURITY-panel Fake-Auth line (v1): the 'Fake-Auth:' label + value.
-    ``Off`` when no campaign; otherwise the fake-auth state machine."""
-    return f"Fake-Auth: {fakeauth_value_markup(campaign, now)}"
 
 
 def wep_status_lines(ap, iface, campaign, now: float) -> list[str]:
