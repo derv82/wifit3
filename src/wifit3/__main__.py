@@ -56,7 +56,9 @@ def main() -> None:
     # not drag in Textual + the whole UI just to run RC4 math.
     from wifit3.ui.app import WifiteApp
 
-    WifiteApp().run()
+    # Released builds default to a DEBUG wifit3.log so field bug reports arrive with a
+    # trace already captured; WIFIT3_LOG=off opts out, =trace bumps to the firehose.
+    WifiteApp(default_log_level="debug").run()
 
 
 if __name__ == "__main__":

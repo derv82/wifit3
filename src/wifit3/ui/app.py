@@ -18,21 +18,28 @@ logger = logging.getLogger(__name__)
 _FILE_LOGGING_CONFIGURED = False
 
 
-def _configure_file_logging() -> None:
-    """Opt-in file logging for hardware debugging — off by default.
+def _configure_file_logging(default: Optional[str] = None) -> None:
+    """File logging for hardware debugging → ``wifit3.log`` in the CWD.
 
     The TUI owns the terminal, so stderr logging is invisible (and there's no
     handler anyway): the interface's ``[NEW AP]`` / ``[M1]`` / ``[PMKID]`` frame
-    trace goes nowhere during a normal run. Set ``WIFIT3_LOG=1`` to capture INFO
-    (``WIFIT3_LOG=debug`` for DEBUG incl. frame bytes; ``WIFIT3_LOG=trace`` for the
-    per-USB-transfer firehose) to ``wifit3.log`` in the CWD. Truncated per run so
-    each session's trace stands alone.
+    trace goes nowhere during a normal run — a file is the only place it lands.
+
+    The real launch (``__main__.main``) passes ``default="debug"`` so a released
+    build always leaves a DEBUG trace behind for bug reports; bare ``WifiteApp()``
+    construction (the test suite, the ``--smoke`` self-test) passes no default and
+    stays silent so runs don't litter ``wifit3.log`` or force the root logger to
+    DEBUG. ``WIFIT3_LOG`` overrides either way: ``off``/``0``/``none`` disables,
+    ``1`` is INFO, ``debug`` is DEBUG (incl. frame bytes), ``trace`` is the
+    per-USB-transfer firehose. Truncated per run so each session's trace stands alone.
     """
     global _FILE_LOGGING_CONFIGURED
-    level_env = os.environ.get("WIFIT3_LOG", "").strip().lower()
-    if not level_env or _FILE_LOGGING_CONFIGURED:
+    if _FILE_LOGGING_CONFIGURED:
         return
-    level = log_trace.level_from_env(level_env)
+    setting = os.environ.get("WIFIT3_LOG", "").strip().lower() or (default or "")
+    if setting in ("", "off", "0", "none"):
+        return
+    level = log_trace.level_from_env(setting)
     handler = logging.FileHandler("wifit3.log", mode="w", encoding="utf-8")
     handler.setFormatter(logging.Formatter(
         "%(asctime)s.%(msecs)03d %(levelname)-5s %(name)s: %(message)s",
@@ -96,8 +103,8 @@ class WifiteApp(App):
     }
     """
 
-    def __init__(self):
-        _configure_file_logging()
+    def __init__(self, default_log_level: Optional[str] = None):
+        _configure_file_logging(default_log_level)
         super().__init__()
         self.device_manager = WlanDeviceManager()
         self.active_interface = None
