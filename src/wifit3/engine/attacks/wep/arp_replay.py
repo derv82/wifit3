@@ -114,7 +114,6 @@ class WepArpReplay:
         collector,
         source_mac: Optional[bytes] = None,
         ensure_associated: Optional[Callable[[], Awaitable[bool]]] = None,
-        notify_activity: Optional[Callable[[], None]] = None,
         request_reauth: Optional[Callable[[], None]] = None,
         log_callback: Optional[Callable[[str], None]] = None,
     ):
@@ -129,7 +128,6 @@ class WepArpReplay:
         # Awaited right before a burst — authenticates lazily (returns True iff
         # associated). We only call it once we actually have an ARP to send.
         self._ensure_associated = ensure_associated or _always_associated
-        self._notify_activity = notify_activity or (lambda: None)
         self._request_reauth = request_reauth or (lambda: None)
         self._log = log_callback or (lambda _m: None)
 
@@ -376,8 +374,6 @@ class WepArpReplay:
                 logger.exception("[WEP-ARP] send_raw failed")
                 break
         send_dt = max(1e-3, time.time() - t0)   # burst only — the hardware cap
-        if sent:
-            self._notify_activity()   # our traffic keeps the assoc alive
         # Wait out the remainder of the 1s window (one big sleep — immune to
         # Windows' ~15ms timer granularity). If the burst overran the second
         # (rate beyond the card's reach), no sleep — the card's max IS our cap.

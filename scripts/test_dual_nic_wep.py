@@ -201,7 +201,6 @@ async def main(args) -> None:
         tx, target, tx.wep_store,
         source_mac=fake_auth.source_mac,
         ensure_associated=fake_auth.ensure_associated,
-        notify_activity=fake_auth.notify_activity,
         request_reauth=fake_auth.request_reauth,
         log_callback=lambda m: None,
     )

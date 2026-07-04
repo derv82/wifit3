@@ -99,10 +99,7 @@ class WepCampaign(Campaign):
             source_mac=self.fake_auth.source_mac,
             # Only burst while we're actually associated.
             ensure_associated=self.fake_auth.ensure_associated,
-            # Replay traffic keeps the association alive (suppresses the
-            # disruptive periodic re-auth) ...
-            notify_activity=self.fake_auth.notify_activity,
-            # ... and a replay stall asks for an immediate re-auth instead of
+            # A replay stall asks for an immediate re-auth instead of
             # discarding the (working) seed.
             request_reauth=self.fake_auth.request_reauth,
             log_callback=self._log,
@@ -204,7 +201,6 @@ class WepCampaign(Campaign):
             source_mac=self.fake_auth.source_mac,
             on_forged_arp=self._on_chop_success,
             ensure_associated=self.fake_auth.ensure_associated,
-            notify_activity=self.fake_auth.notify_activity,
             log_callback=self._log,
         )
         self.chop.start()

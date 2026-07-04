@@ -97,9 +97,6 @@ class WepFakeAuth:
         self.source_mac = source_mac or _random_client_mac()
         self.assoc_timeout = assoc_timeout
         self._log = log_callback or (lambda _msg: None)
-        # Last time we did something that keeps the AP's inactivity timer at bay
-        # (auth or injected traffic). Informational only now (no keepalive loop).
-        self._last_activity = 0.0
 
         self.stats = FakeAuthStats()
         # State machine surfaced to the UI. "ready" = armed but not associated
@@ -191,11 +188,6 @@ class WepFakeAuth:
     def is_active(self) -> bool:
         return self._active
 
-    def notify_activity(self) -> None:
-        """Called by the TX paths on each injected burst — our own traffic keeps
-        the association alive, so there's no need for a periodic re-auth."""
-        self._last_activity = time.time()
-
     def request_reauth(self) -> None:
         """Drop our 'associated' belief so the next ``ensure_associated()`` re-
         authenticates (e.g. a replay stall that looks like a silent de-assoc,
@@ -243,7 +235,6 @@ class WepFakeAuth:
                 self.state = "associated"
                 self.fail_reason = None
                 self.next_reauth_at = None
-                self._last_activity = time.time()
                 self.stats.associations += 1
                 if self._announced_failure:
                     self._log(

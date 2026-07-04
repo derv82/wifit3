@@ -215,17 +215,6 @@ async def test_paused_echo_does_not_count(mocker):
     r.stop()
 
 
-async def test_notify_activity_called_on_inject(mocker):
-    coll = FakeCollector({0xAA: 5}, [GOOD])
-    seen = {"n": 0}
-    r = _replay(mocker, coll, notify_activity=lambda: seen.__setitem__("n", seen["n"] + 1))
-    r.start()
-    for _ in range(5):
-        await asyncio.sleep(0)
-    r.stop()
-    assert seen["n"] > 0
-
-
 async def test_unassociated_blocks_tx(mocker):
     """We only inject once ensure_associated() succeeds — a failing one (can't
     fake-auth) holds TX at 'waiting-auth' with nothing sent."""
