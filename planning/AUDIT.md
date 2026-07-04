@@ -12,11 +12,13 @@ edit, move on — one section at a time, never a broad sweep or a file-wide ques
   top-level `scripts/**` (throwaway dev tooling; already reviewed separately).
 
 ## Route remaining (in order)
-1. `engine/` — currently mid-`protocols.py`. Then the rest of `engine/` (`save.py`,
-   `hc22000.py`, `capture_history.py`, `wpa/`), then the big `engine/attacks/**` subtree
-   (deepest comments; most likely to hold both gems and verbose stragglers).
-2. `ui/` — largest by file count but "docstrings only" per CODE-STYLE, so should move fast.
-3. `setup/` + `src/wifit3/scripts/`.
+1. `ui/` — largest by file count but "docstrings only" per CODE-STYLE, so should move fast.
+2. `setup/` + `src/wifit3/scripts/`.
+
+`engine/` is fully audited. Its `attacks/**` subtree got a **structural sweep only** (dead
+code + factually-wrong comments), not the full verbose-comment gate — by choice, since the
+attack docs are intentionally exhaustive (pedagogy + bug-transparency). Revisiting them for
+verbosity is optional, not planned.
 
 ## Parked refactors
 - **T3 — unify the two `register_rx_callback` layers.** Two methods share the name with
