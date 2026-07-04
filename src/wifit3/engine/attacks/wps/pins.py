@@ -12,7 +12,7 @@ check, so we pad it with a fixed valid tail. Once the first half is confirmed
 
 from __future__ import annotations
 
-from typing import Iterator, List, Tuple
+from typing import List, Tuple
 
 from .wsc_crypto import pin_checksum
 
@@ -35,21 +35,6 @@ def full_pin(first4: str, middle3: str) -> str:
     appending the computed checksum as the 8th digit."""
     seven = first4 + middle3
     return seven + str(pin_checksum(int(seven)))
-
-
-def first_half_pins(dummy_middle: str = "000") -> Iterator[Tuple[int, str]]:
-    """Yield (index, pin) for the first-half sweep: every 4-digit P1 with a
-    fixed valid tail. The tail doesn't affect the first-half (R-Hash1) oracle."""
-    for i in range(10000):
-        first4 = f"{i:04d}"
-        yield i, full_pin(first4, dummy_middle)
-
-
-def second_half_pins(first4: str) -> Iterator[Tuple[int, str]]:
-    """Yield (index, pin) for the second-half sweep once ``first4`` is known:
-    every 3-digit middle, checksum appended → 1000 candidates."""
-    for m in range(1000):
-        yield m, full_pin(first4, f"{m:03d}")
 
 
 def split_pin(pin: str) -> Tuple[str, str]:
