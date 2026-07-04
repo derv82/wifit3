@@ -13,7 +13,7 @@ _CLIENT = "aa:bb:cc:dd:ee:ff"
 def _eapol(msg, *, client=_CLIENT, nonce=True, mic=True, eapol=True, pmkid=None):
     return CaptureEvent(
         kind=CaptureKind.EAPOL, bssid=_BSSID, client_mac=client, msg_num=msg,
-        has_nonce=nonce, has_mic=mic, eapol_complete=eapol, useful=True, has_pmkid=pmkid,
+        has_nonce=nonce, has_mic=mic, eapol_complete=eapol, has_pmkid=pmkid,
     )
 
 

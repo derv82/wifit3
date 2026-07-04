@@ -55,9 +55,9 @@ def _hs_with(ap, *, offered, client=None, pmkid=None):
     return hs
 
 
-def test_sae_handshake_emits_flagged_eapol_but_no_completion():
+def test_sae_handshake_emits_eapol_but_no_completion():
     """SAE 4-way: the per-frame trace still fires (so the user sees their phone
-    connect), flagged uncrackable — but no completion banner, since it's useless."""
+    connect) — but no completion banner, since it's useless."""
     det = CaptureEventDetector(granular_eapol=True)
     ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="X")
     hs = _hs_with(ap, offered=[8])               # SAE-only AP
@@ -67,17 +67,15 @@ def test_sae_handshake_emits_flagged_eapol_but_no_completion():
     assert not any(e.kind == CaptureKind.HANDSHAKE for e in events)
     eapols = [e for e in events if e.kind == CaptureKind.EAPOL]
     assert len(eapols) == 2
-    assert all(e.crackable is False for e in eapols)
 
 
-def test_wpa2_handshake_eapol_flagged_crackable():
+def test_wpa2_handshake_emits_completion_banner():
     det = CaptureEventDetector(granular_eapol=True)
     ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="X")
     hs = _hs_with(ap, offered=[2])               # WPA2-PSK
     hs.messages += [_ef(1, 5, b"\xaa" * 32, 100.0), _ef(2, 5, b"\x11" * 32, 100.1)]
     events = list(det.poll(ap))
     assert sum(e.kind == CaptureKind.HANDSHAKE for e in events) == 1
-    assert all(e.crackable is True for e in events if e.kind == CaptureKind.EAPOL)
 
 
 def test_sae_pmkid_suppressed_wpa2_pmkid_emitted():

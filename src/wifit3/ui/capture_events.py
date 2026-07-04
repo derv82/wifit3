@@ -51,25 +51,14 @@ class CaptureEvent:
     msg_num: Optional[int] = None
     replay_hex: Optional[str] = None
     # eapol-only content descriptor (from engine.wpa.describe) — the hashcat-
-    # relevant fields, so the UI can tick each (ANonce/SNonce/MIC/EAPOL) and dim
-    # a frame that arrived degraded. ``useful`` = "contributes to a crackable
-    # pair"; a useful frame is NOT a capture on its own (that's HANDSHAKE).
+    # relevant per-field flags the aggregator ticks (ANonce/SNonce/MIC/EAPOL).
     has_nonce: Optional[bool] = None
     has_mic: Optional[bool] = None
     eapol_complete: Optional[bool] = None
-    useful: Optional[bool] = None
     # M1-only: whether the handshake carries a PMKID (the KDE rides M1's key
     # data). True/False for an M1 frame, None for every other message — so the
-    # renderer ticks PMKID on M1 and omits the field elsewhere.
+    # aggregator ticks PMKID on M1 and omits the field elsewhere.
     has_pmkid: Optional[bool] = None
-    # AKM crackability of the association this frame belongs to (engine.wpa.eapol_verdict)
-    #  - True  = -m 22000-crackable,
-    #  - False = uncrackable (SAE / FT-PSK)
-    #  - None  = not yet known (transition AP, pre-M2).
-    # The renderer flags False frames "SAE ONLY" to avoid misleading the user.
-    crackable: Optional[bool] = None
-    # Why a frame is uncrackable: "SAE" or "FT" or None when crackable/unknown.
-    akm_label: Optional[str] = None
     # handshake_complete-only
     pair_label: Optional[str] = None
     # decloak-only: "probe_resp" | "assoc_req" (future: "mbssid_ie", "beacon_leak")
@@ -157,9 +146,6 @@ class CaptureEventDetector:
                 seen_n = self._seen_eapol_count.get(key, 0)
                 frames = hs.messages
                 if len(frames) > seen_n:
-                    verdict = wpa.eapol_verdict(hs)
-                    crackable = None if verdict == "unknown" else verdict == "crackable"
-                    akm_label = wpa.uncrackable_label(hs)
                     for f in frames[seen_n:]:
                         info = wpa.describe(f)
                         yield CaptureEvent(
@@ -172,13 +158,10 @@ class CaptureEventDetector:
                             has_nonce=info.has_nonce,
                             has_mic=info.has_mic,
                             eapol_complete=info.eapol_complete,
-                            useful=info.useful,
                             # PMKID is parsed onto hs.pmkid in the same frame-
                             # ingest call that appended this frame, so it's known
                             # by the time we surface an M1. Tie it to M1 only.
                             has_pmkid=bool(hs.pmkid) if f.msg_num == 1 else None,
-                            crackable=crackable,
-                            akm_label=akm_label,
                         )
                     self._seen_eapol_count[key] = len(frames)
 
