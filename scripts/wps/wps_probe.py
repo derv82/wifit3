@@ -35,7 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from wifit3.engine.attacks.wps.association import WlanTransport, WpsAssociation, mac_str, str_to_mac
+from wifit3.engine.attacks.wps.association import WlanTransport, WpsAssociation, str_to_mac
 from wifit3.engine.attacks.wps.registrar import PinResult, WpsRegistrar
 from wifit3.wlan.manager import WlanDeviceManager
 
@@ -55,6 +55,10 @@ def info(msg: str) -> None:
 def fail(msg: str) -> None:
     print(f"[FAIL] {msg}")
     sys.exit(1)
+
+
+def mac_str(b: bytes) -> str:
+    return ":".join(f"{x:02x}" for x in b)
 
 
 _LINKTYPE_IEEE802_11 = 105

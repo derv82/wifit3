@@ -43,10 +43,6 @@ _SUBTYPE_DEAUTH = 0x0C
 _SUBTYPE_DISASSOC = 0x0A
 
 
-def mac_str(b: bytes) -> str:
-    return ":".join(f"{x:02x}" for x in b)
-
-
 def str_to_mac(s: str) -> bytes:
     return bytes(int(x, 16) for x in s.split(":"))
 
