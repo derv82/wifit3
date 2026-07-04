@@ -13,7 +13,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label
 
-# Per-OS explanation of what removal does. Both are now per-chipset: Windows is an immediate
+# Per-OS explanation of what removal does. Both are per-chipset: Windows is an immediate
 # per-card WinUSB→native driver swap; Linux deletes this chipset's blacklist + access-rule pair, so
 # the kernel Wi-Fi driver rebinds the card on its next replug.
 _BODY = {

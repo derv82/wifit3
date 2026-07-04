@@ -126,9 +126,9 @@ class ScannerView(Screen):
     ]
 
     # (column_key, display_label). Order here = on-screen order.
-    # Headers are stored without the sort-indicator suffix; _update_column_headers
-    # always appends 2 chars (" ▼", " ▲", or "  ") so column widths stay stable
-    # regardless of which column is currently sorted.
+    # Headers are stored without the sort indicator; _update_column_headers adds a
+    # 2-char sort marker (arrow trailing on text columns, leading on right-aligned
+    # numeric ones) so column widths stay stable regardless of which is sorted.
     _COLUMNS = [
         ("bssid", "BSSID"),
         ("channel", "CH"),
@@ -186,7 +186,7 @@ class ScannerView(Screen):
             table = _APScanTable(cursor_type="row", id="ap-table")
             # Reserve 2 chars in every header so DataTable's auto-width
             # accounts for the sort indicator from creation — otherwise
-            # narrow columns (e.g. "🥓s") get clipped when sorted.
+            # narrow columns (e.g. "🥓") get clipped when sorted.
             for key, label in self._COLUMNS:
                 table.add_column(label + "  ", key=key)
             yield table
@@ -436,9 +436,8 @@ class ScannerView(Screen):
         fg = self._theme_fg
         bacon_style = f"{fg} bold" if flash_bacon else fg
         # WPS cell: empty when absent; "WPS 🔒" when locked (PIN attacks
-        # rate-limited → Reaver/Pixie won't progress). Version (1.0/2.0) is
-        # kept on the model for the Focus panel / Pixie targeting but omitted
-        # here — nearly everything is WPS 2.0, so the digit was just noise.
+        # rate-limited → Reaver/Pixie won't progress). The version (1.0/2.0) is
+        # omitted here — nearly everything is WPS 2.0, so the digit adds noise.
         if ap.wps:
             wps_cell = Text("WPS 🔒" if ap.wps_locked else "WPS", style=fg)
         else:

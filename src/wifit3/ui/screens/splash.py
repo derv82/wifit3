@@ -92,7 +92,7 @@ class SplashView(Screen):
         uninstall_btn = self.query_one("#uninstall-btn", Button)
         uninstall_btn.disabled = True
         uninstall_btn.tooltip = "Uninstall the wifit3 driver / access rule for the selected card"
-        # Poll frequently — discovery opens no devices now, so a tight interval makes plugging
+        # Poll frequently — discovery opens no devices, so a tight interval makes plugging
         # a card in feel instant. The first tick runs immediately (set_interval waits a full
         # period before its first fire).
         self._refresh_timer = self.set_interval(0.5, self.poll_usb)
@@ -331,7 +331,7 @@ class SplashView(Screen):
                     return
                 # Auto-connect now. install_rule chgrp'd the live node, so wait for it to actually go
                 # writable (udev propagation) behind the spinner before connecting — an unready node
-                # is the EACCES that used to bounce back with a bogus message. The driver then reaches
+                # otherwise raises EACCES. The driver then reaches
                 # a clean cold state on its own: AR9271 self-re-enumerates on the firmware download
                 # (that re-enumeration IS the replug), and an already-warm chip reattaches. A physical
                 # replug is only the fallback if that connect fails.

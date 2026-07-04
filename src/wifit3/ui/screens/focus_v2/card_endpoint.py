@@ -1,8 +1,8 @@
 """Card endpoint — the left column. The card art, then its static facts
 (chipset/driver + the card's own BSSID when the driver exposes it) and the
-dynamic line (what the card is doing right now). The attack buttons used to live
-here but moved to the top "action area" — the card column is now just identity +
-live state, vertically centered against the flow channel."""
+dynamic line (what the card is doing right now). Just identity + live state (the
+attack buttons live in the top "action area"), vertically centered against the
+flow channel."""
 from __future__ import annotations
 
 from textual.app import ComposeResult

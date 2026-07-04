@@ -69,7 +69,7 @@ class ConfirmInstallDialog(ModalScreen[bool]):
         self._short = description.split("(")[0].strip()[:18]
         self._pulse_i = 0
         self._title = title
-        self._link_label = link_label   # middle (REQUIRED) box: "WinUSB Driver" / "Device Access"
+        self._link_label = link_label   # middle (REQUIRED) box: "WinUSB Driver" / "udev + modprobe"
         self._warning = warning
         self._verb = verb               # question stem before the card name
         self._confirm_label = confirm_label
