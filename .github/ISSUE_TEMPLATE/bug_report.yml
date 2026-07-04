@@ -13,7 +13,7 @@ body:
         exact card, OS, and the wifit3 output. Please fill in every required field.
 
         Not a bug? Use the **Discussions** links on the previous page instead — one for
-        "how do I…?" usage questions, one for requesting support for a new adapter.
+        "how do I…?" usage questions, one for porting a new adapter (you capture + `/port` + PR).
   - type: textarea
     id: what-happened
     attributes:
