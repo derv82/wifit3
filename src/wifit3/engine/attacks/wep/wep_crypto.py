@@ -63,8 +63,8 @@ def forge_arp_request(
     """Forge a broadcast ARP-request *encrypted body* from recovered keystream.
 
     Plaintext = LLC/SNAP ++ ARP-request (36 B), so needs >= 40 B of keystream.
-    The caller (campaign) prepends the IV+KeyID this keystream belongs to and a
-    ToDS MAC header, then hands it to WepArpReplay. target_mac is all-zero
+    The caller prepends the IV+KeyID this keystream belongs to and a
+    ToDS MAC header before injection. target_mac is all-zero
     (unknown — it's a request)."""
     plaintext = arp_request_plaintext(
         sender_mac=sender_mac, sender_ip=sender_ip, target_ip=target_ip
@@ -97,9 +97,9 @@ def seed_keystream_from_data(
 
 def seed_keystream_from_arp(arp_body: bytes, *, want: int = 8) -> bytes:
     """Seed from a captured broadcast WEP ARP's full encrypted body (``IV(3) ++
-    KeyID(1) ++ RC4(plaintext ++ ICV)``) — the ARP-specific convenience used by
-    the probe. Delegates to :func:`seed_keystream_from_data` with the ARP
-    ethertype. Prefer the data variant for the daemon (works off any frame)."""
+    KeyID(1) ++ RC4(plaintext ++ ICV)``) — the ARP-specific convenience.
+    Delegates to :func:`seed_keystream_from_data` with the ARP ethertype.
+    Prefer the data variant for the daemon (works off any frame)."""
     return seed_keystream_from_data(arp_body[4:], want=want, ethertype=0x0806)
 
 

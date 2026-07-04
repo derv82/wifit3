@@ -4,7 +4,7 @@ Two implementations behind one ``WepCracker`` protocol:
 
 - ``PlaceholderCracker`` — the no-shell-out MVP. It just watches the
   unique-IV count and reports "ready" at the crack threshold; ``recover()``
-  always returns None. This is the seam the UI talks to today.
+  always returns None. Not wired into the campaign — ``PtwCracker`` (below) is.
 - ``PtwCracker`` — a native, self-contained PTW (Pyshkin-Tews-Weinmann 2007)
   key-recovery. No external aircrack. Fed a stream of ``(IV, keystream)``
   samples; the per-IV votes are *additive*, so it ingests incrementally as

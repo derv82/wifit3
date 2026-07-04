@@ -6,10 +6,10 @@ SSID matches its real one. By guessing sibling-suffix variants of a known
 non-hidden sibling's SSID, we shortcut the "wait for a real client" delay
 that pure passive decloak depends on.
 
-Triggered exclusively by the user pressing 'd' in Scanner on a hidden row —
-this module never auto-runs. ``WlanInterface._on_frame_parsed`` is the one
-that actually flips ``ap.ssid`` when the AP echoes back a Probe Response;
-we just poll for that flip per candidate.
+Currently unwired: no Scanner binding or campaign reaches it (it's not in
+``BUTTON_CAMPAIGNS``) — kept as the active-decloak implementation to re-attach
+to a trigger later. When run, ``WlanInterface._on_frame_parsed`` is what flips
+``ap.ssid`` on a Probe Response; we just poll for that flip per candidate.
 """
 from __future__ import annotations
 
@@ -101,9 +101,8 @@ class DecloakAttack:
         self.base_ssid = base_ssid
         self.bssid_bytes = _str_to_mac(target.bssid)
         self.source_mac = source_mac or _random_client_mac()
-        # When non-None, bypass build_candidates() and use this list verbatim.
-        # Powers the Shift+D test action where the user supplies SSIDs to try
-        # directly (e.g. against a known-config router for pipeline checks).
+        # When non-None, bypass build_candidates() and use this list verbatim
+        # (a hook for supplying SSIDs directly; currently exercised only by tests).
         self.candidates_override = candidates_override
         # Register so client/handshake tracking ignores our forged STA.
         self.iface.register_forged_mac(self.source_mac)

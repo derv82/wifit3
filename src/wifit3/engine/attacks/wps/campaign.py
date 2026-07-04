@@ -38,12 +38,12 @@ logger = logging.getLogger(__name__)
 class CampaignState:
     bssid: str
     ssid: str = ""
-    phase: str = "common"   # common | first_half | second_half | done | failed
+    phase: str = "common"   # common | first_half | second_half | done | verify | failed
     common_index: int = 0
     p1_index: int = 0
     p2_index: int = 0
     first_half: Optional[str] = None
-    skip_middle: Optional[str] = None  # The middle-3 of the (8+3+checksum) PIN.
+    skip_middle: Optional[str] = None  # The middle-3 of the (4+3+checksum) PIN.
     found_pin: Optional[str] = None
     found_psk: Optional[str] = None
     attempts: int = 0     # sessions started (incl. rate-limited no-ops)

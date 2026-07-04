@@ -195,7 +195,6 @@ _SBOX = bytes.fromhex(
     "ba78252e1ca6b4c6e8dd741f4bbd8b8a703eb5664803f60e613557b986c11d9e"
     "e1f8981169d98e949b1e87e9ce5528df8ca1890dbfe6426841992d0fb054bb16"
 )
-_INV_SBOX = bytes(256)
 _INV_SBOX = bytearray(256)
 for _i, _v in enumerate(_SBOX):
     _INV_SBOX[_v] = _i
