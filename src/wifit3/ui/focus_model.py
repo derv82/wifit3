@@ -105,8 +105,8 @@ class FocusSnapshot:
 
 
 # Flow rows by family — WEP shows the wep-iv row, WPA/WPA2/WPA3 the eapol row;
-# neither shows on OPEN (mirrors PacketDashboard's encryption gating). The keys
-# match wlan.packet_stats.PACKET_CLASSES so the v2 channel can sample by key.
+# neither shows on OPEN. The keys match wlan.packet_stats.PACKET_CLASSES so the
+# v2 channel can sample by key.
 _FLOW_BEACON = FlowRow("beacon", "beacon", "cyan", 10)
 _FLOW_DATA = FlowRow("data", "data", "blue", 240)
 _FLOW_WEP_IV = FlowRow("wep_iv", "wep iv", "green", 120)
@@ -259,8 +259,7 @@ def count_handshakes(ap):
 def fakeauth_value_markup(campaign, now: float, compact: bool = False) -> str:
     """Just the fake-auth status value (no 'Fake-Auth:' label) — the state
     machine: associating / associated (+ re-auth countdown) / failed / idle.
-    ``compact`` drops the re-auth countdown (the v2 flow footer is width-tight;
-    the countdown stays in v1's wide SECURITY panel)."""
+    ``compact`` drops the re-auth countdown (the flow footer is width-tight)."""
     if campaign is None:
         return "[dim]Off[/dim]"
     fa = campaign.fake_auth
@@ -307,9 +306,7 @@ def encryption_chip(ap) -> str:
 
 def pmf_status_markup(ap) -> str:
     """PMF status for the Focus footer — an escalating 'will deauth work?'
-    gradient: Disabled (dim) → Optional (orange) → Required (red). Distinct from
-    the Scanner's format_pmf_markup (which greens 'Disabled' from a protection
-    POV); here Disabled is neutral info."""
+    gradient: Disabled (dim) → Optional (orange) → Required (red)."""
     if ap.pmf_required:
         return "[red]Required[/red]"
     if ap.pmf_capable:

@@ -4,9 +4,9 @@ then BSSID and the channel. Encryption is NOT shown here — it lives in the log
 ('Target acquired … WPA2'), the under-sparkline footer, and is implied by the
 attack buttons; the channel alone keeps this column uncluttered.
 
-The power line is the live reception-quality meter — the same rainbow
-``render_signal_bar`` (beacons/s out of ~9.8) the v1 view uses — widened to fill
-the column's negative space, with the dBm flush right. No "Beacons:" prefix: the
+The power line is the live reception-quality meter — the rainbow
+``render_signal_bar`` (beacons/s out of ~9.8), widened to fill the column's
+negative space, with the dBm flush right. No "Beacons:" prefix: the
 bar *is* the readout."""
 from __future__ import annotations
 

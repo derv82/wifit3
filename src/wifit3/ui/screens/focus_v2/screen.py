@@ -91,7 +91,7 @@ _BOTTOM_MIN = 6
 _PAD_START = 80
 _PAD_RATE = 0.4
 
-# The full attack-button set (stable ids, shared with v1). All are composed once;
+# The full attack-button set (stable ids). All are composed once;
 # derive_buttons toggles visibility/enablement/label/variant per target + tick.
 _ATTACK_BUTTONS = [
     ("btn-gen-ivs", "ARP Replay"), ("btn-chop", "ChopChop"), ("btn-pmkid", "PMKID"),
@@ -133,9 +133,8 @@ class FocusViewV2(Screen):
         Binding("q", "app.quit", "Quit", show=True),
     ]
 
-    # Deauth pairs per selected client, round-robin'd so each frame pair is
-    # followed by an RX window (matches v1; keeps the half-duplex radio from
-    # TX-saturating when many clients are queued).
+    # Deauth frame-pairs sent to the selected client, each pair followed by an RX
+    # window so the half-duplex radio doesn't TX-saturate.
     _DEAUTH_SEL_ROUNDS = 10
 
     CSS = """
@@ -443,7 +442,7 @@ class FocusViewV2(Screen):
         clients.sync(snap.clients)
         # Deauth controls (broadcast + per-client ✕) are greyed when a PMF-Required
         # AP would refuse them, or another long-running TX owns the half-duplex
-        # radio (mirrors v1's deauth gating).
+        # radio.
         clients.set_deauth_enabled(not fm.deauth_blocked(ap))
         self._refresh_buttons()
         self._refresh_status_footer()
@@ -502,7 +501,7 @@ class FocusViewV2(Screen):
         if any(snap.get(k, 0) > prev.get(k, 0) for k in self._TX_KEYS):
             self.query_one("#card", CardEndpoint).flicker()
 
-    # ----- event log (capture pipeline, duplicated from v1) ------------------
+    # ----- event log (capture pipeline) --------------------------------------
 
     def _drain_capture_events(self, ap, forged_macs: Set[str], now: float) -> None:
         # EAPOL frames + handshake completions go through the aggregator (one tidy

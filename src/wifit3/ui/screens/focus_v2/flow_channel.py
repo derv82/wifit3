@@ -1,7 +1,6 @@
 """The packet-flow channel — the centerpiece.
 
-A multi-row sparkline meter the v1 ``PacketDashboard``'s single-series paint
-can't express: N labelled rows, per-row colour, a trailing ``/s`` rate (or a
+A multi-row sparkline meter: N labelled rows, per-row colour, a trailing ``/s`` rate (or a
 recent count), all flowing **right->left** (newest sample at the right edge,
 history scrolling left — you read the attack's recent past L->R). Height is
 **adaptive**: 2-row (16 levels) when there's vertical room, 1-row (8 levels)
