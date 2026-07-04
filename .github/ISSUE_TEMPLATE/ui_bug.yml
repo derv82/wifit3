@@ -1,0 +1,66 @@
+name: UI bug (chipset-agnostic)
+description: A bug in the terminal UI itself — layout, rendering, navigation, or a TUI crash — not tied to any specific adapter.
+title: "[UI]: "
+labels: ["bug", "ui"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For bugs in the terminal UI that aren't specific to a Wi-Fi adapter — screen layout,
+        rendering, key handling, navigation, a TUI crash. If a card won't scan, inject, or
+        capture, use the **Bug report** template instead so we get the chipset details.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: >-
+        What did you do, what did you expect, and what happened instead? Say which screen (splash,
+        scanner, focus). Screenshots or a screen recording of a visual glitch are welcome — drag
+        them in here.
+      placeholder: On the scanner, shrinking the terminal below ~80 cols overlaps the AP table header with the signal column…
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - Windows
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS / kernel version
+      description: "Linux: `uname -a`. Windows: edition + build (run `winver`)."
+    validations:
+      required: true
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal
+      description: Terminal emulator + window size, if it might matter — UI glitches are often terminal-specific.
+      placeholder: Windows Terminal 1.20, ~120×30
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: wifit3 version
+      description: "Release tag (e.g. v1.0.0) or git short hash (`git rev-parse --short HEAD`)."
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output (if any)
+      description: Paste any traceback or error text as text (not a screenshot) so it stays searchable.
+      render: text
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this isn't a duplicate.
+          required: true
