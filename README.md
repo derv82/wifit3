@@ -1,8 +1,6 @@
-# Wifit3 — Wireless Auditor
+# Wifit3: USB Wireless Auditor
 
-A cross-platform, userland Wi-Fi auditing tool with a terminal UI. Wifit3 talks to USB
-Wi-Fi adapters **directly over USB** (PyUSB) — no `aircrack-ng`/`airmon-ng`
-subprocesses — so it runs the same on **Linux and Windows**.
+A USB-only wireless auditor that runs in userland on Linux and Windows.
 
 <p align="center">
   <img src="screenshots/wifit3-1-splash.png" alt="Wifit3 splash / adapter picker" width="700">
@@ -12,18 +10,28 @@ subprocesses — so it runs the same on **Linux and Windows**.
   <img src="screenshots/wifit3-demo.gif" alt="Wifit3 in action — WPS PushButton PSK capture" width="700">
 </p>
 
+wifit3 is fundamentally different from its predecessor, [wifite2](https://github.com/derv82/wifite2):
+
+* wifit3 embeds its entire driver stack (see [Minnie Drivers](#minnie-drivers)), so it works even when *conflicting* wireless drivers are installed on your operating system. No more driver juggling!
+* One codebase runs the same on both Linux *and Windows*.
+* Only certain (popular) USB cards are supported; non-USB wireless cards are not supported at all.
+* No external wireless tooling: no dependencies on airmon, airodump, aircrack, tshark, etc.
+   * As few dependencies as reasonably possible (we're not porting hashcat!). Just two stacks: USB (PyUSB/libusb) and TUI (Textual/Rich).
+* wifit3 talks to wireless cards directly from userland (no need to run as sudo/Admin).
+   * *Installing* the udev/modprobe permissions (Linux) and WinUSB driver (Windows) does require one-time sudo/Administrator privileges. Afterwards, everything runs from userland.
+   * This install step is built into wifit3, which asks for privileges only when needed.
+
 ## Features
 
-- **Live scan** — APs and clients with channel hopping, signal, encryption,
+- **Live scan**: APs and clients with channel hopping, signal, encryption,
   WPS state, and WPA3/SAE detection.
-- **WPA/WPA2 handshakes** — passive 4-way capture and deauth-triggered capture,
+- **WPA/WPA2 handshakes**: passive 4-way capture and deauth-triggered capture,
   proper handshake validation, compact PCAP saves.
-- **PMKID** — passive capture and active harvest, saves as HashCat .hc22000 files.
+- **PMKID**: passive capture and active harvest, saves as HashCat .hc22000 files.
 - **WPS vectors**: Passive/active PushButton invasion, resumable brute-force sessions.
-- **WEP suite** — ARP replay, ChopChop, fake auth, PTW key recovery.
-- **Live packet dashboard** — real-time per-class sparklines (beacons, data, injects,
+- **WEP suite**: ARP replay, ChopChop, fake auth, PTW key recovery.
+- **Live packet dashboard**: real-time per-class sparklines (beacons, data, injects,
   deauths) for the focused target.
-- **Cross-platform** — one codebase on Linux and Windows.
 
 ### Limitations
 
@@ -60,13 +68,42 @@ subprocesses — so it runs the same on **Linux and Windows**.
 
 [VERIFICATION.md](VERIFICATION.md) has detailed information about each card's capability and performance.
 
+## Installation
+
+Wifit3 uses [`uv`](https://docs.astral.sh/uv/) (requires internet access to pull dependencies
+for the first run):
+
+**Windows** — Wifit3 installs the **WinUSB** driver for your adapter itself: pick the
+card on the splash screen and confirm. The bundled installer self-elevates for that one
+step (a single UAC prompt), after which no Administrator privileges are needed to run Wifit3.
+
+**Linux** — pick the card on the splash and confirm. Wifit3 assumes control of that
+chipset: it blocklists the card's kernel driver (so the kernel stops grabbing it) and grants your
+user raw USB access (one privileged prompt), then asks you to replug the card once.
+Afterward Wifit3 runs without sudo. While Wifit3 controls it, the card won't work as a normal Wi-Fi
+adapter; press **✕** ("uninstall") on the splash to revert permissions so the kernel can use it again.
+
+```bash
+uv sync
+uv run wifit3
+```
+
+**Don't want to hand the chipset over?** Run as root against a manually freed card:
+
+```bash
+sudo rmmod <kernel_driver>   # e.g. ath9k_htc, rtl8xxxu, mt76x2u, rt2800usb
+sudo .venv/bin/python3 -m wifit3
+
+# Replug afterward to revert to give back control to the kernel's driver.
+```
+
 ## Thanks
 
 Wifit3 only exists because of the people who reverse-engineered and maintained the Linux
 drivers we ported from.
 
 **Biggest thanks: Christian "kimo" B. ([@kimocoder](https://github.com/kimocoder))** — who
-took over **wifite2** when its original maintainer stepped away and has kept it alive and
+took over **wifite2** when its original maintainer (me) stepped away and has kept it alive and
 evolving for years since (and maintains `aircrack-ng`'s RTL8188EUS driver, which we port here).
 
 **Special thanks: Sandman** — close friend, and the master to my Linux & wireless-hacking apprenticeship.
@@ -82,52 +119,42 @@ A few more of the driver authors we ported from:
 The full list — every substantive contributor to the drivers we ported, and the cards they
 enabled — is in **[CREDITS.md](CREDITS.md)**.
 
-## Philosophy
+## Minnie Drivers
 
-**(Almost) Zero dependencies.** Wifit3 implements the whole stack itself — the USB device
-drivers (ported from the Linux kernel), 802.11 frame parsing, the crypto, and
-the WEP attacks (ported from aircrack-ng) — instead of shelling out to
-`airmon-ng`, `aireplay-ng`, `tshark`, or `hcxdumptool`. The only runtime dependencies we have
-taken are PyUSB/LibUSB (USB interfacing) and Textual/Rich (TUI libraries). Everything
-else is written in pure Python.
+Wifit3 talks to the wireless cards directly via USB using its built-in "Minnie Drivers":
+miniature userland ports of the Linux drivers. They're *miniature* on purpose: there's no STA (client)
+mode and no AP mode, just the bare minimum to get RX and TX working in Monitor Mode.
 
-**Cross-platform.** The bytes sent to the card are OS-agnostic, so one codebase
-runs on **Linux and Windows**. Point the adapter at the USB stack Wifit3 talks
-through and go. No VM, no Kali boot.
+Talking to the card this way bypasses the operating system's wireless driver stack entirely,
+including Windows' NDIS (Network Driver Interface Specification), which would otherwise prevent
+functionality such as Monitor Mode and injection. And because the bytes sent to the card are the
+same regardless of OS, one codebase runs on both Linux and Windows.
 
-**Userland.** Root/Admin is only required during the one-click setup stage.
-After that, Wifit3 can be run without privilege (no sudo, no UAC popups).
+### Agent-Driven Driver Porting
 
-**Responsive.** No blocking subprocesses. A Textual TUI that updates
-live via async messages — scan, pick a target, attack, save — instead of polling
-another process's output.
+The Minnie Drivers were ported from C to Python by a coding agent (Anthropic's Claude Code), not
+by hand. I want to be upfront about this: if you maintain one of the upstream drivers and
+something in the port looks wrong, that's exactly the feedback I want so I can fix it.
 
-## Installation
+Every port is proven against a pcap-replay test harness that checks the driver reproduces the
+captured USB instructions byte-for-byte, entirely offline, before any hardware is involved. The
+harness is what keeps the port correct; the agent just does the work inside it.
 
-Wifit3 uses [`uv`](https://docs.astral.sh/uv/) (requires internet access to pull dependencies
-for the first run):
+The porting process assumes you have Anthropic's Claude Code. The steps:
 
-**Windows** — Wifit3 installs the **WinUSB** driver for your adapter itself: pick the
-card on the splash screen and confirm. The bundled installer self-elevates for that one
-step (a single UAC prompt), after which no Administrator privileges are needed to run Wifit3.
-
-**Linux** — pick the card on the splash and confirm. Wifit3 takes complete control of that
-chipset: it blacklists the card's kernel driver (so the kernel stops grabbing it) and grants your
-user raw USB access (one privileged prompt), then asks you to replug the card once. While Wifit3
-controls it, the card won't work as a normal Wi-Fi adapter; press **✕** on the splash to hand it
-back to the kernel. Afterward Wifit3 runs without sudo.
-
-```bash
-uv sync
-uv run wifit3
-```
-
-**Don't want to hand the chipset over?** Run as root against a manually freed card:
-
-```bash
-sudo rmmod <kernel_driver>   # e.g. ath9k_htc, rtl8xxxu, mt76x2u, rt2800usb
-sudo .venv/bin/python3 -m wifit3
-```
+1. Capture all USB traffic on a Linux machine that has the target wireless driver installed (along
+   with airmon-ng and aircrack-ng). [capture.py](https://github.com/derv82/wifit3/blob/master/src/wifit3/scripts/capture.py)
+   is an automated script that walks you through it.
+2. Ask Claude to port the driver with the `/port` command, e.g. `/port rt5370`.
+3. Claude asks for the location of the captured traffic (.pcap and .log files).
+4. Claude updates the pcap-replay test harness (see [verify_pcap.py](https://github.com/derv82/wifit3/blob/master/scripts/verify_pcap.py))
+   so the new driver can be tested offline for correctness.
+   1. The harness means hardware is not required during porting.
+5. Once the driver is complete and proven correct offline, Claude asks to test live on real
+   hardware (card plugged in).
+   1. Claude verifies behavior (beacons are seen, RX does not degrade), troubleshoots any issues.
+   2. Claude asks you to test injection/TX (deauths). The agent is instructed to never inject
+      packets itself.
 
 ## License
 
@@ -153,3 +180,7 @@ For use only on networks you own or are explicitly authorized to test.
 kernel driver between it and the silicon. A bad register write, firmware page, or power sequence
 can damage or permanently disable ("brick") a device. **Use at your own risk — there is no
 liability for hardware damage.**
+
+-----
+
+*wifit3 is the end of a 20-year arc that started with a borrowed Slackware laptop and a neighbor's WEP network. [The full story →](FULL-CIRCLE.md)*
