@@ -84,6 +84,7 @@ class RT2500USBDriver:
         self.dev = dev
         self.transport = RT2500USBTransport(dev)
         self._rx_callback: Optional[Callable[[dict], None]] = None
+        self._on_lost: Optional[Callable[[Exception], None]] = None
         self._rx_reader: Optional[RxReaderThread] = None
         self._bulk_in_ep: Optional[int] = None
         self._bulk_out_ep: Optional[int] = None
@@ -114,6 +115,11 @@ class RT2500USBDriver:
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_callback = cb
+
+    def register_disconnect_callback(self, cb: Callable[[Exception], None]) -> None:
+        """Sink for a terminal RX-reader failure (unplug). Forwarded to the RxReaderThread's
+        on_fatal; resolved at call time so registration order vs connect() can't strand it."""
+        self._on_lost = cb
 
     # ---- USB claim helpers ----------------------------------------------
     def _claim(self) -> None:
@@ -240,8 +246,8 @@ class RT2500USBDriver:
             prog(0.9, f"tuned to channel {self.current_channel}")
 
             self._rx_reader = RxReaderThread(
-                loop, self._rx_read_once, self._rx_dispatch, name="rt2500usb-rx"
-            )
+                loop, self._rx_read_once, self._rx_dispatch, name="rt2500usb-rx",
+                on_fatal=lambda e: self._on_lost and self._on_lost(e))
             self._rx_reader.start()
             self.is_warm = True
             prog(1.0, "connected")

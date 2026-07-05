@@ -54,6 +54,7 @@ class AR9271V2Driver:
         self.hw = None                                   # AthHw, set by cold_bringup
         self.endpoints: dict = {}                        # HTC service -> endpoint id
         self._rx_callback: Optional[Callable[[dict], None]] = None
+        self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
 
     @classmethod
@@ -97,6 +98,11 @@ class AR9271V2Driver:
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_callback = cb
 
+    def register_disconnect_callback(self, cb: Callable[[Exception], None]) -> None:
+        """Sink for a terminal RX-reader failure (unplug). Forwarded to the RxReaderThread's
+        on_fatal; resolved at call time so registration order vs connect() can't strand it."""
+        self._on_lost = cb
+
     # ---- bring-up ---------------------------------------------------------
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         """Download firmware, then run the cold bring-up to a monitor receiver on ch1.
@@ -133,8 +139,9 @@ class AR9271V2Driver:
             try:
                 await loop.run_in_executor(None, self._claim, self.transport.dev)
                 await loop.run_in_executor(None, self._clear_pipe_halts)
-                self._reader = RxReaderThread(loop, self._read_once, self._dispatch,
-                                              name="ar9271v2-rx")
+                self._reader = RxReaderThread(
+                    loop, self._read_once, self._dispatch, name="ar9271v2-rx",
+                    on_fatal=lambda e: self._on_lost and self._on_lost(e))
                 self._reader.start()
                 res = await loop.run_in_executor(None, bringup.warm_reattach, self.transport)
                 self._adopt(res)
@@ -168,7 +175,8 @@ class AR9271V2Driver:
         await loop.run_in_executor(None, self._claim, redev)
 
         _p(0.45, "Starting RX reader + HTC/WMI init...")
-        self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="ar9271v2-rx")
+        self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="ar9271v2-rx",
+                                      on_fatal=lambda e: self._on_lost and self._on_lost(e))
         self._reader.start()
         res = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
         self._adopt(res)

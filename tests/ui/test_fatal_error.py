@@ -1,4 +1,7 @@
 """No USB backend -> the Quit-only fatal modal, not Textual's traceback crash."""
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 import usb.core
 from textual.widgets import Collapsible
@@ -9,6 +12,26 @@ from wifit3.ui.screens.fatal_error import FatalErrorModal
 
 def _raise_no_backend(*args, **kwargs):
     raise usb.core.NoBackendError("No backend available")
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_usb_devices")
+async def test_device_lost_from_offloop_context_shows_modal():
+    """The RX reader hands the unplug back via loop.call_soon_threadsafe — a bare loop
+    callback that runs OUTSIDE Textual's message-pump context. Reproduce that exact hop and
+    assert the fatal modal appears (a direct push_screen there crashes with NoActiveAppError;
+    notify_device_lost must defer onto the message queue instead)."""
+    app = WifiteApp()
+    async with app.run_test() as pilot:
+        app.active_interface = SimpleNamespace(name="Test Card")
+        loop = asyncio.get_running_loop()
+        # Exactly how the reader dispatches: a threadsafe hop, not a direct call.
+        loop.call_soon_threadsafe(app.notify_device_lost, usb.core.USBError("gone", errno=19))
+        await pilot.pause()
+        await pilot.pause()
+        assert isinstance(app.screen, FatalErrorModal)
+        assert app.screen._error.title == "Adapter disconnected"
+        assert "Test Card" in app.screen._error.message
 
 
 @pytest.mark.asyncio

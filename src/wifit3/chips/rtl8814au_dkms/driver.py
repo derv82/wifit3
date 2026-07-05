@@ -89,6 +89,7 @@ class Rtl8814auDkmsDriver:
         self.enable_dig: bool = True
         self._wd_state: Optional[WatchdogState] = None
         self._rx_cb: Optional[Callable[[dict], None]] = None
+        self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
         self._dig_task: Optional[asyncio.Task] = None
         # Serializes control-transfer batches (DIG watchdog vs set_channel) so two
@@ -101,6 +102,11 @@ class Rtl8814auDkmsDriver:
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_cb = cb
+
+    def register_disconnect_callback(self, cb: Callable[[Exception], None]) -> None:
+        """Sink for a terminal RX-reader failure (unplug). Forwarded to the RxReaderThread's
+        on_fatal; resolved at call time so registration order vs connect() can't strand it."""
+        self._on_lost = cb
 
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         loop = asyncio.get_running_loop()
@@ -167,7 +173,8 @@ class Rtl8814auDkmsDriver:
         # can't starve RX); each aggregated buffer is split into 802.11 frames and fanned to
         # the rx callback. Reads before enter_monitor just time out harmlessly.
         self._reader = RxReaderThread(
-            loop, self._read_once, self._dispatch, name="8814au-dkms-rx")
+            loop, self._read_once, self._dispatch, name="8814au-dkms-rx",
+            on_fatal=lambda e: self._on_lost and self._on_lost(e))
         self._reader.start()
 
         # Now open the monitor RX gate (accept-all RCR + RXFLTMAP). The reader is already

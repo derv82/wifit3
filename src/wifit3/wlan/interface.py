@@ -7,6 +7,7 @@ from typing import List, Optional, Callable, Any, Dict, Set
 
 from wifit3.engine.models import AccessPoint, Client, Handshake, HandshakeMessage
 from wifit3.engine.protocols import FakeMacSupport
+from wifit3.errors import is_device_gone
 from wifit3.wlan.channels import scan_hop_order
 from wifit3.wlan.packet import (
     WlanFrameParser, Packet, BeaconPacket, EapolPacket, WepDataPacket, AssocRequestPacket,
@@ -103,6 +104,11 @@ class WlanInterface:
         self.self_macs: Set[str] = set()
 
         self._rx_callbacks: List[Callable[[bytes, int, float], None]] = []
+        # Fired once when the adapter is lost (RX reader death, or a hopper tune that hits a
+        # dead pipe). The app subscribes and raises the Quit-only fatal modal. Latched via
+        # _device_lost so multiple error sources can't stack it.
+        self._disconnect_callbacks: List[Callable[[Exception], None]] = []
+        self._device_lost = False
         self._hopping_task: Optional[asyncio.Task] = None
         # The in-flight per-hop set_channel, tracked so stop_hopping() can drain it
         # (a tune runs in an executor thread that cancellation can't stop).
@@ -114,6 +120,10 @@ class WlanInterface:
 
         if hasattr(self.driver, 'register_rx_callback'):
             self.driver.register_rx_callback(self._on_frame_parsed)
+        # Soft opt-in (mirrors register_rx_callback): drivers whose RX reader can report a
+        # terminal failure forward it here. Drivers predating this stay valid.
+        if hasattr(self.driver, 'register_disconnect_callback'):
+            self.driver.register_disconnect_callback(self._on_device_lost)
 
     def _on_frame_parsed(self, pkt: Packet):
         """Mutator callback: takes the driver's parsed frame and updates the registry."""
@@ -563,6 +573,26 @@ class WlanInterface:
         self.self_macs.discard(mac_str)
         self.clients.pop(mac_str, None)
 
+    def register_disconnect_callback(self, callback_func: Callable[[Exception], None]):
+        """Register a subscriber for adapter loss: func(exc). Fired once, on the event loop."""
+        if callback_func not in self._disconnect_callbacks:
+            self._disconnect_callbacks.append(callback_func)
+
+    def _on_device_lost(self, exc: Exception) -> None:
+        """Single sink for 'adapter gone', from any source (RX reader death, a hopper tune on
+        a dead pipe). Latched: fans to subscribers once, and drops the hop flag so the hopper
+        stops poking the dead device. Always invoked on the loop thread."""
+        if self._device_lost:
+            return
+        self._device_lost = True
+        self._is_hopping = False
+        logger.error(f"[{self.name}] adapter lost: {exc}")
+        for cb in list(self._disconnect_callbacks):
+            try:
+                cb(exc)
+            except Exception:
+                logger.exception("Disconnect callback failed")
+
     def register_rx_callback(self, callback_func: Callable[[bytes, int, float], None]):
         """Register a raw-frame subscriber: func(frame_bytes, rssi, timestamp)."""
         if callback_func not in self._rx_callbacks:
@@ -691,7 +721,15 @@ class WlanInterface:
                 self._tune_task = asyncio.ensure_future(
                     self.set_channel(channel, scan=True)
                 )
-                await asyncio.shield(self._tune_task)
+                try:
+                    await asyncio.shield(self._tune_task)
+                except Exception as e:
+                    # The background hopper is the one automatic poker of the USB pipe: on an
+                    # unplug its tune raises here. Surface it as adapter loss (device-gone) and
+                    # stop hopping either way, rather than letting it kill the hop task unhandled.
+                    if is_device_gone(e):
+                        self._on_device_lost(e)
+                    break
                 last_channel = channel
             await asyncio.sleep(interval)
 

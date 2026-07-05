@@ -143,6 +143,7 @@ class RTL8812AUDriver:
         self._dev_lock = threading.Lock()
         self._claimed = False
         self._rx_callback: Optional[Callable[[dict], None]] = None
+        self._on_lost: Optional[Callable[[Exception], None]] = None
         self._rx_reader: Optional[RxReaderThread] = None
         self._dig_state: Optional[DigState] = None
         self._pwrtrack_state: Optional[PwrTrackState] = None
@@ -163,6 +164,11 @@ class RTL8812AUDriver:
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_callback = cb
+
+    def register_disconnect_callback(self, cb: Callable[[Exception], None]) -> None:
+        """Sink for a terminal RX-reader failure (unplug). Forwarded to the RxReaderThread's
+        on_fatal; resolved at call time so registration order vs connect() can't strand it."""
+        self._on_lost = cb
 
     # ---- USB claim helpers ------------------------------------------------
     def _claim(self) -> None:
@@ -379,7 +385,8 @@ class RTL8812AUDriver:
             None, pwrtrack_init, self.transport, self._thermal_meter_efuse)
 
         self._rx_reader = RxReaderThread(
-            loop, self._rx_read_once, self._rx_dispatch, name="rtl8812au-rx"
+            loop, self._rx_read_once, self._rx_dispatch, name="rtl8812au-rx",
+            on_fatal=lambda e: self._on_lost and self._on_lost(e)
         )
         self._rx_reader.start()
         # DIG watchdog: walk OFDM IGI from the false-alarm count every 2 s — the

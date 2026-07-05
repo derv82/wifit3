@@ -58,6 +58,7 @@ class RT3070Driver:
         self._bulk_out_ep: Optional[int] = None
         self._tx_seq: int = 0            # running 802.11 seq stamped into injected frames
         self._rx_cb: Optional[Callable[[dict], None]] = None
+        self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
         self._io_lock = asyncio.Lock()   # serialize the COROUTINES (set_channel vs inject)
         # The REAL hardware serializer. asyncio.Lock guards the coroutine, but a coroutine
@@ -74,6 +75,11 @@ class RT3070Driver:
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_cb = cb
+
+    def register_disconnect_callback(self, cb: Callable[[Exception], None]) -> None:
+        """Sink for a terminal RX-reader failure (unplug). Forwarded to the RxReaderThread's
+        on_fatal; resolved at call time so registration order vs connect() can't strand it."""
+        self._on_lost = cb
 
     # ---- bring-up (blocking; run in an executor) --------------------------
     def _bringup(self) -> None:
@@ -160,7 +166,8 @@ class RT3070Driver:
 
         # bulk-IN RX reader on a dedicated thread (off the event loop so the TUI can't
         # starve RX); each aggregated buffer → 802.11 frames + RSSI → rx callback.
-        self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="rt3070-rx")
+        self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="rt3070-rx",
+                                      on_fatal=lambda e: self._on_lost and self._on_lost(e))
         self._reader.start()
 
         if progress_cb:

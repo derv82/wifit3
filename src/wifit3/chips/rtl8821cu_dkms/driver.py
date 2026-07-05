@@ -80,6 +80,7 @@ class Rtl8821cuDkmsDriver:
         self.is_warm: bool = False
         self.info = None                # EfuseInfo from cold_bringup; set_channel/inject need it
         self._rx_cb: Optional[Callable[[dict], None]] = None
+        self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
         self._wifi_intf: Optional[int] = None       # claimed vendor (WiFi) interface number
         self._io_lock = asyncio.Lock()              # serialize watchdog tick vs set_channel
@@ -92,6 +93,11 @@ class Rtl8821cuDkmsDriver:
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_cb = cb
+
+    def register_disconnect_callback(self, cb: Callable[[Exception], None]) -> None:
+        """Sink for a terminal RX-reader failure (unplug). Forwarded to the RxReaderThread's
+        on_fatal; resolved at call time so registration order vs connect() can't strand it."""
+        self._on_lost = cb
 
     def _claim(self) -> None:
         """Combo card: set the configuration and claim the vendor-specific (class 0xFF) WiFi
@@ -130,7 +136,9 @@ class Rtl8821cuDkmsDriver:
             self.info = bringup.cold_bringup(self.transport)
             return True
         self._claim()
-        self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="8821cu-dkms-rx")
+        self._reader = RxReaderThread(
+            loop, self._read_once, self._dispatch, name="8821cu-dkms-rx",
+            on_fatal=lambda e: self._on_lost and self._on_lost(e))
         self._reader.start()
         self.info = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
         await self._prime_2g_band(loop)
@@ -172,7 +180,8 @@ class Rtl8821cuDkmsDriver:
             logger.exception("RTL8821CU: 2.4 GHz prime bounce failed")
         finally:
             self._reader = RxReaderThread(loop, self._read_once, self._dispatch,
-                                          name="8821cu-dkms-rx")
+                                          name="8821cu-dkms-rx",
+                                          on_fatal=lambda e: self._on_lost and self._on_lost(e))
             self._reader.start()
 
     async def _watchdog_loop(self) -> None:

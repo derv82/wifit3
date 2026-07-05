@@ -108,6 +108,7 @@ class MT76x0UDriver:
         self.last_set_channel_state: Optional[dict] = None
         # M6 — WlanInterface RX hook + background drainer (set in connect()).
         self._rx_callback: Optional[Callable[[dict], None]] = None
+        self._on_lost: Optional[Callable[[Exception], None]] = None
         self._rx_drainer = None   # rx.RxDrainer | None — typed late to dodge circulars
 
     # ---- Hooks --------------------------------------------------------
@@ -115,6 +116,11 @@ class MT76x0UDriver:
         """WlanInterface hook (Protocol). Stored and used by the RxDrainer
         background task started in `connect()`."""
         self._rx_callback = cb
+
+    def register_disconnect_callback(self, cb: Callable[[Exception], None]) -> None:
+        """Sink for a terminal RX-reader failure (unplug). Forwarded to the RxDrainer's
+        RxReaderThread on_fatal; resolved at call time so registration order can't strand it."""
+        self._on_lost = cb
 
     def _on_decoded_rx(self, parsed: dict) -> None:
         """Bridge: each parsed frame from the RxDrainer → the WlanInterface
@@ -164,6 +170,7 @@ class MT76x0UDriver:
         from .rx import RxDrainer
         self._rx_drainer = RxDrainer(
             self.transport, frame_callback=self._on_decoded_rx,
+            on_fatal=lambda e: self._on_lost and self._on_lost(e),
         )
         await self._rx_drainer.start()
 

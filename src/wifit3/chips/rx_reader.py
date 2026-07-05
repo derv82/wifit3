@@ -32,6 +32,8 @@ import threading
 import time
 from typing import Callable, Optional
 
+from wifit3.errors import is_device_gone
+
 logger = logging.getLogger(__name__)
 
 # Rate-limit for the "pending cap hit -> RX dropped" ERROR: log the first drop
@@ -50,6 +52,7 @@ class RxReaderThread:
         pending_cap: int = 256,
         max_errors: int = 5,
         stats: bool = False,
+        on_fatal: Optional[Callable[[Exception], None]] = None,
     ) -> None:
         self._loop = loop
         self._read_once = read_once
@@ -59,6 +62,11 @@ class RxReaderThread:
         self._max_errors = max_errors
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        # Fired (once, on the loop thread) when the reader gives up: an unplug (device-gone
+        # USBError) or a wedged consecutive-error streak. The owner surfaces it as a hard
+        # failure. Latched via _fatal_fired so a give-up can't fire it twice.
+        self._on_fatal = on_fatal
+        self._fatal_fired = False
         # Buffers handed to the loop but not yet dispatched. Advisory soft cap
         # so a momentarily-swamped loop drops here rather than ballooning
         # memory; the ±1 race between the two threads is harmless for a cap.
@@ -112,9 +120,15 @@ class RxReaderThread:
                 consec_errors += 1
                 logger.warning("[%s] read failed (%d/%d): %s",
                                self._name, consec_errors, self._max_errors, e)
+                if is_device_gone(e):
+                    # Unambiguous unplug — don't wait out the strike count.
+                    logger.error("[%s] device gone: %s", self._name, e)
+                    self._fire_fatal(e)
+                    break
                 if consec_errors >= self._max_errors:
                     logger.error("[%s] giving up after %d consecutive errors",
                                  self._name, consec_errors)
+                    self._fire_fatal(e)  # a wedged streak is also a hard failure
                     break
                 time.sleep(0.01)
                 continue
@@ -137,6 +151,14 @@ class RxReaderThread:
             logger.error("[%s] RX reader stopped: %d bulk-IN buffers dropped total "
                          "(loop never drained; RX frames lost)", self._name, self._dropped)
         logger.info("[%s] RX reader thread stopped", self._name)
+
+    def _fire_fatal(self, exc: Exception) -> None:
+        """Hand a terminal reader failure back to the loop thread, exactly once. Runs on the
+        reader thread; the owner's callback runs on the loop (so it may touch the UI)."""
+        if self._fatal_fired or self._on_fatal is None:
+            return
+        self._fatal_fired = True
+        self._loop.call_soon_threadsafe(self._on_fatal, exc)
 
     def _note_drop(self) -> None:
         """A read buffer was discarded because the pending queue is at cap — the loop

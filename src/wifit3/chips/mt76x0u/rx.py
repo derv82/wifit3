@@ -265,10 +265,12 @@ class RxDrainer:
     """
 
     def __init__(self, transport, frame_callback: Optional[Callable] = None,
-                 max_urb_bytes: int = 2048):
+                 max_urb_bytes: int = 2048,
+                 on_fatal: Optional[Callable] = None):
         self.transport = transport
         self.frame_callback = frame_callback
         self.max_urb_bytes = max_urb_bytes
+        self.on_fatal = on_fatal
         self._reader: Optional[RxReaderThread] = None
         # Stats (helpful for debugging)
         self.rx_count = 0
@@ -282,7 +284,8 @@ class RxDrainer:
             return
         loop = asyncio.get_running_loop()
         self._reader = RxReaderThread(
-            loop, self._read_once, self._dispatch, name="mt76x0u-rx"
+            loop, self._read_once, self._dispatch, name="mt76x0u-rx",
+            on_fatal=self.on_fatal,
         )
         self._reader.start()
 

@@ -90,6 +90,7 @@ class Rtl8822buDkmsDriver:
         self._txpwr_pg = None                   # decoded PG TX-power block (per-channel TXAGC)
         self._channel: Optional[int] = None
         self._rx_cb: Optional[Callable[[dict], None]] = None
+        self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
         self._io_lock = asyncio.Lock()
         self._dig_st: Optional[dm_watchdog.DigState] = None
@@ -105,6 +106,11 @@ class Rtl8822buDkmsDriver:
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_cb = cb
+
+    def register_disconnect_callback(self, cb: Callable[[Exception], None]) -> None:
+        """Sink for a terminal RX-reader failure (unplug). Forwarded to the RxReaderThread's
+        on_fatal; resolved at call time so registration order vs connect() can't strand it."""
+        self._on_lost = cb
 
     def _claim(self) -> None:
         """Detach kernel driver / configure / claim interface 0 (OS-level USB plumbing —
@@ -148,7 +154,9 @@ class Rtl8822buDkmsDriver:
             await self._dbg_rx_state(f"post-initial-tune ch{_DEFAULT_CHANNEL}")
 
             # Start the bulk-IN reader before opening the RX gate (an undrained pipe wedges RX FIFO).
-            self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="8822bu-dkms-rx")
+            self._reader = RxReaderThread(
+                loop, self._read_once, self._dispatch, name="8822bu-dkms-rx",
+                on_fatal=lambda e: self._on_lost and self._on_lost(e))
             self._reader.start()
             # The airmon monitor RX-enable (gate-verified vs the capture's monitor switch):
             # MSR no-link, RCR=AAP|APP_PHYSTS|APP_FCS, DRVINFO sniffer-mode, RXFLTMAP0/1/2=0xFFFF.

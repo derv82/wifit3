@@ -2,7 +2,7 @@ import usb.core
 import logging
 import asyncio
 import struct
-from typing import Optional
+from typing import Callable, Optional
 
 from . import mcu, rx
 from ..rx_reader import RxReaderThread
@@ -32,6 +32,9 @@ class MT7921AUTransport:
         self._rx: Optional[RxReaderThread] = None
         self._mcu_rx_queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._callback = None
+        # Terminal RX-reader failure sink (unplug). The driver sets this via its
+        # register_disconnect_callback; start_rx hands it to the RxReaderThread.
+        self._on_fatal: Optional[Callable[[Exception], None]] = None
         # MCU sequence counter — Linux uses 4-bit wrap, skips 0
         self._mcu_seq = 0
 
@@ -51,7 +54,7 @@ class MT7921AUTransport:
         if self._rx is not None:
             return
         self._rx = RxReaderThread(self._loop, self._read_once, self._dispatch,
-                                  name="mt7921au-rx")
+                                  name="mt7921au-rx", on_fatal=self._on_fatal)
         self._rx.start()
 
     async def stop_rx(self):

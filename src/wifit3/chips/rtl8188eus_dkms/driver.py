@@ -67,6 +67,7 @@ class Rtl8188eusDkmsDriver:
         self._dm_seed = None               # dm.DmSeed carried from InitHalDm to the watchdog
         self._rf_chnl: int = 0            # RfRegChnlVal[A], stateful across set_channel
         self._rx_cb: Optional[Callable[[dict], None]] = None
+        self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
         # Runtime DIG/AGC watchdog (M12). Toggleable so a fixed-channel A/B can isolate its
         # effect on per-AP reception (scan_hw.py --no-dig).
@@ -81,6 +82,11 @@ class Rtl8188eusDkmsDriver:
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_cb = cb
+
+    def register_disconnect_callback(self, cb: Callable[[Exception], None]) -> None:
+        """Sink for a terminal RX-reader failure (unplug). Forwarded to the RxReaderThread's
+        on_fatal; resolved at call time so registration order vs connect() can't strand it."""
+        self._on_lost = cb
 
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         loop = asyncio.get_running_loop()
@@ -127,7 +133,8 @@ class Rtl8188eusDkmsDriver:
         # (off the event loop, so the TUI can't starve RX); each aggregated buffer is
         # split into 802.11 frames + RSSI and fanned to the rx callback.
         self._reader = RxReaderThread(
-            loop, self._read_once, self._dispatch, name="8188eus-dkms-rx")
+            loop, self._read_once, self._dispatch, name="8188eus-dkms-rx",
+            on_fatal=lambda e: self._on_lost and self._on_lost(e))
         self._reader.start()
 
         # M12: the runtime phydm DIG/AGC watchdog — adapt the M7 IGI seed to the live

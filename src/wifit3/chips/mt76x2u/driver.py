@@ -110,6 +110,7 @@ class MT76x2UDriver:
         self.transport = MT76x2UTransport(dev)
         self.mcu = McuChannel(self.transport)
         self._rx_callback: Optional[Callable[[dict], None]] = None
+        self._on_lost: Optional[Callable[[Exception], None]] = None
         self._rx_drainer: Optional[RxDrainer] = None
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
@@ -156,6 +157,11 @@ class MT76x2UDriver:
     # ---- Discovery / public state ----------------------------------------
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_callback = cb
+
+    def register_disconnect_callback(self, cb: Callable[[Exception], None]) -> None:
+        """Sink for a terminal RX-reader failure (unplug). Forwarded to the RxDrainer's
+        RxReaderThread on_fatal; resolved at call time so registration order can't strand it."""
+        self._on_lost = cb
 
     async def _cold_init_chip(
         self, progress_cb: Optional[ProgressCallback] = None
@@ -461,6 +467,7 @@ class MT76x2UDriver:
         self._rx_drainer = RxDrainer(
             self.transport,
             frame_callback=self._on_decoded_rx,
+            on_fatal=lambda e: self._on_lost and self._on_lost(e),
         )
         await self._rx_drainer.start()
 

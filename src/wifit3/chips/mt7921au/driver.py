@@ -81,6 +81,11 @@ class MT7921AUDriver:
     def register_rx_callback(self, callback: Callable[[dict], None]):
         self._rx_callback = callback
 
+    def register_disconnect_callback(self, cb: Callable[[Exception], None]) -> None:
+        """Sink for a terminal RX-reader failure (unplug). The transport owns the reader, so
+        forward it there; picked up when start_rx builds the RxReaderThread."""
+        self.transport._on_fatal = cb
+
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         """Bring up monitor mode — cold-boot the firmware, or LIGHT-reattach if it is
         already running (warm).

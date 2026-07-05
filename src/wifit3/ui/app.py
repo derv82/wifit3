@@ -4,12 +4,14 @@ from textual.app import App
 from typing import Optional
 
 from wifit3.chips import log_trace
+from wifit3.errors import WifiteDeviceLostError
 from wifit3.wlan.manager import WlanDeviceManager
 from wifit3.engine.models import AccessPoint
 
 from .screens.splash import SplashView
 from .screens.scanner import ScannerView
 from .screens.focus_v2 import FocusViewV2
+from .screens.fatal_error import FatalErrorModal
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +125,23 @@ class WifiteApp(App):
         self.install_screen(ScannerView(), name="scanner")
         self.install_screen(FocusViewV2(), name="focus")
         self.push_screen("splash")
+
+    def notify_device_lost(self, exc: Exception) -> None:
+        """Adapter vanished mid-run — raise the Quit-only fatal modal.
+
+        This arrives on the event-loop thread via the RX reader's ``call_soon_threadsafe``
+        hop, which runs OUTSIDE Textual's message-pump context (``active_app`` unset), so a
+        direct ``push_screen`` here crashes in the modal's compose (NoActiveAppError). Defer
+        it onto the app's message queue via ``call_later`` — that callback runs in-context.
+        Idempotent: the interface latches so this fires once, and ``_show_device_lost`` guards
+        against re-pushing if the modal is already up."""
+        self.call_later(self._show_device_lost, exc)
+
+    def _show_device_lost(self, exc: Exception) -> None:
+        if isinstance(self.screen, FatalErrorModal):
+            return
+        name = self.active_interface.name if self.active_interface else "the wireless adapter"
+        self.push_screen(FatalErrorModal(WifiteDeviceLostError(name)))
 
     async def action_quit(self):
         if self.active_interface:

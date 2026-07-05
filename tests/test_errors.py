@@ -1,5 +1,27 @@
 """PII scrubbing in the fatal-error trace (WifiteFatalError.trace)."""
-from wifit3.errors import _scrub_paths
+import usb.core
+
+from wifit3.errors import _scrub_paths, is_device_gone
+
+
+def test_device_gone_matches_no_device_backend_code():
+    e = usb.core.USBError("no dev", errno=None)
+    e.backend_error_code = -4  # LIBUSB_ERROR_NO_DEVICE
+    assert is_device_gone(e)
+
+
+def test_device_gone_matches_enodev_errno():
+    assert is_device_gone(usb.core.USBError("no dev", errno=19))
+
+
+def test_device_gone_rejects_timeout_and_io_and_non_usb():
+    timeout = usb.core.USBError("timeout", errno=110)
+    timeout.backend_error_code = -7  # LIBUSB_ERROR_TIMEOUT
+    io = usb.core.USBError("io", errno=5)
+    io.backend_error_code = -1       # LIBUSB_ERROR_IO — too broad to treat as unplug
+    assert not is_device_gone(timeout)
+    assert not is_device_gone(io)
+    assert not is_device_gone(RuntimeError("boom"))
 
 
 def test_scrub_trims_in_tree_frame_to_wifit3_relative():

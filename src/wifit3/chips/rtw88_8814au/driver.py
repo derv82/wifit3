@@ -73,6 +73,7 @@ class RTL8814AUDriver:
         self.dev = dev
         self.transport = RTL8814AUTransport(dev)
         self._rx_callback: Optional[Callable[[dict], None]] = None
+        self._on_lost: Optional[Callable[[Exception], None]] = None
         self._rx_reader: Optional[RxReaderThread] = None
         # Opt-in RX diagnostics (throughput log + RX-DMA register dump) for the
         # intermittent cold-boot "RX-DMA delivers nothing" hunt.
@@ -90,6 +91,11 @@ class RTL8814AUDriver:
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_callback = cb
+
+    def register_disconnect_callback(self, cb: Callable[[Exception], None]) -> None:
+        """Sink for a terminal RX-reader failure (unplug). Forwarded to the RxReaderThread's
+        on_fatal; resolved at call time so registration order vs connect() can't strand it."""
+        self._on_lost = cb
 
     def _claim(self) -> None:
         if self._claimed:
@@ -324,7 +330,8 @@ class RTL8814AUDriver:
         self._bulk_out_eps = list(eps.bulk_out)
         self._rx_reader = RxReaderThread(
             loop, self._rx_read_once, self._rx_dispatch, name="rtl8814au-rx",
-            stats=self._rx_stats)
+            stats=self._rx_stats,
+            on_fatal=lambda e: self._on_lost and self._on_lost(e))
         self._rx_reader.start()
         return True
 

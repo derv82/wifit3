@@ -499,6 +499,8 @@ class SplashView(Screen):
             progress.display = False
             return False
         self.app.active_interface = iface
+        # Surface a mid-run adapter loss (unplug) as the Quit-only fatal modal.
+        iface.register_disconnect_callback(self.app.notify_device_lost)
         progress.progress = 100
         self.query_one("#status-label", Label).update(
             "[bold green]Ready — starting the scanner…[/bold green]")

@@ -1,3 +1,7 @@
+import asyncio
+
+import usb.core
+
 from wifit3.wlan.interface import WlanInterface
 
 from tests.frames import pkt
@@ -637,3 +641,43 @@ def test_siblings_channel_change_drops_stale_link(mocker):
 
     assert iface.access_points["aa:bb:cc:dd:ee:00"].siblings == []
     assert iface.access_points["aa:bb:cc:dd:ee:02"].siblings == []
+
+
+def test_on_device_lost_latches_and_fans_once(mocker):
+    """The disconnect sink fires subscribers exactly once (latched) and trips the hop flag."""
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="t")
+    iface._is_hopping = True
+    seen = []
+    iface.register_disconnect_callback(seen.append)
+
+    first = usb.core.USBError("gone", errno=19)
+    iface._on_device_lost(first)
+    iface._on_device_lost(usb.core.USBError("again", errno=19))  # latched → ignored
+
+    assert seen == [first]
+    assert iface._device_lost is True
+    assert iface._is_hopping is False
+
+
+async def test_hopper_surfaces_device_gone_and_stops(mocker):
+    """An unplug mid-hop: the hopper's tune raises device-gone, the guard routes it to the
+    disconnect sink and stops hopping instead of killing the hop task with an unhandled raise."""
+    driver = mocker.MagicMock()
+
+    async def boom(channel, scan=False):
+        raise usb.core.USBError("no dev", errno=19)   # LIBUSB_ERROR_NO_DEVICE
+
+    driver.set_channel = boom
+    iface = WlanInterface(driver_instance=driver, name="wlan0", description="t")
+    seen = []
+    iface.register_disconnect_callback(seen.append)
+
+    await iface.start_hopping(channels=[1], interval=0.01)
+    for _ in range(100):
+        if seen:
+            break
+        await asyncio.sleep(0.01)
+
+    assert len(seen) == 1 and isinstance(seen[0], usb.core.USBError)
+    assert iface._is_hopping is False
+    await iface.stop_hopping()

@@ -75,6 +75,7 @@ class Rtl8821auDkmsDriver:
         # watchdog's effect on RX breadth (scan_hw.py --no-dig).
         self.enable_dig: bool = True
         self._rx_cb: Optional[Callable[[dict], None]] = None
+        self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
         self._dig_task: Optional[asyncio.Task] = None
         # Serializes control-transfer batches (DIG watchdog vs set_channel) so two
@@ -87,6 +88,11 @@ class Rtl8821auDkmsDriver:
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_cb = cb
+
+    def register_disconnect_callback(self, cb: Callable[[Exception], None]) -> None:
+        """Sink for a terminal RX-reader failure (unplug). Forwarded to the RxReaderThread's
+        on_fatal; resolved at call time so registration order vs connect() can't strand it."""
+        self._on_lost = cb
 
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         loop = asyncio.get_running_loop()
@@ -140,7 +146,8 @@ class Rtl8821auDkmsDriver:
         # event loop, so the TUI can't starve RX); each aggregated buffer is split into
         # 802.11 frames (FCS-stripped, per-frame RSSI) and fanned to the rx callback.
         self._reader = RxReaderThread(
-            loop, self._read_once, self._dispatch, name="8821au-dkms-rx")
+            loop, self._read_once, self._dispatch, name="8821au-dkms-rx",
+            on_fatal=lambda e: self._on_lost and self._on_lost(e))
         self._reader.start()
 
         # M5 §3: monitor opmode entry (Set_MSR NOLINK + RCR accept-all + RXFLTMAP).
