@@ -18,8 +18,17 @@ crackability gate (`handshake.py`) so an EAP-negotiated 4-way is withheld + badg
 Failures must surface *in the Textual UI*, not just dev-only `wifit3.log`. Three tiers:
 1. **Fatal** (no libusb backend) — modal + trace; Copy + Quit. **Done-ish.**
 2. **Functional** (card wedged → replug) — modal + opt-in trace; OK (→ splash auto-recovers
-   on replug) or Quit. **Not started.** Init-time is the easy half (delete the drivers'
-   `except Exception: return False` swallows); the off-thread RX-reader wedge is the hard half.
+   on replug) or Quit. **Partial (`0f8495ac`, 2026-07-04):** mid-run *unplug* (device-gone) is
+   now caught off-thread — RxReaderThread `on_fatal` → interface disconnect sink → Quit-only
+   fatal modal, wired into all 21 RxReaderThread drivers. **Remaining:** the graceful OK→splash
+   replug-recovery variant (today it's Quit-only); init-time swallows (delete the drivers'
+   `except Exception: return False`); and the **ar9271 (mainline) unplug gap** below.
+
+   - ⏳ **ar9271 (mainline) — no instant unplug detection.** It's the one supported card with its
+     own RX loop (not the shared RxReaderThread), so it has no `on_fatal` hook. On unplug it falls
+     back to the interface hopper-guard (the next `set_channel` tune raises device-gone → modal),
+     so detection is delayed to the next hop, not sub-second. Fix: port ar9271 to the shared reader,
+     or give its RX loop an equivalent `on_fatal` → `register_disconnect_callback`.
 3. **Informational** (copied, deauth sent, handshake/PMKID/WEP) — non-blocking toasts. **Not started.**
 
 ### WPS PBC auto-invade can monopolize the radio on timeout (Focus) — mostly fixed
