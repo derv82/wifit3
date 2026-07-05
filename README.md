@@ -2,7 +2,7 @@
 
 A cross-platform, userland Wi-Fi auditing tool with a terminal UI. Wifit3 talks to USB
 Wi-Fi adapters **directly over USB** (PyUSB) — no `aircrack-ng`/`airmon-ng`
-subprocesses, no Scapy — so it runs the same on **Linux and Windows**.
+subprocesses — so it runs the same on **Linux and Windows**.
 
 <p align="center">
   <img src="screenshots/wifit3-1-splash.png" alt="Wifit3 splash / adapter picker" width="700">
@@ -17,7 +17,7 @@ subprocesses, no Scapy — so it runs the same on **Linux and Windows**.
 - **Live scan** — APs and clients with channel hopping, signal, encryption,
   WPS state, and WPA3/SAE detection.
 - **WPA/WPA2 handshakes** — passive 4-way capture and deauth-triggered capture,
-  proper handshake validation, minimalist PCAP saves.
+  proper handshake validation, compact PCAP saves.
 - **PMKID** — passive capture and active harvest, saves as HashCat .hc22000 files.
 - **WPS vectors**: Passive/active PushButton invasion, resumable brute-force sessions.
 - **WEP suite** — ARP replay, ChopChop, fake auth, PTW key recovery.
@@ -71,7 +71,7 @@ evolving for years since (and maintains `aircrack-ng`'s RTL8188EUS driver, which
 
 **Special thanks: Sandman** — close friend, and the master to my Linux & wireless-hacking apprenticeship.
 
-A few more of the giants whose shoulders we stand on:
+A few more of the driver authors we ported from:
 
 - **Nick Morrow** ([@morrownr](https://github.com/morrownr)) — the out-of-tree Realtek USB
   DKMS drivers (RTL8812AU / RTL8814AU / RTL8821AU / RTL8822BU) that keep these cards alive.
@@ -88,18 +88,17 @@ enabled — is in **[CREDITS.md](CREDITS.md)**.
 drivers (ported from the Linux kernel), 802.11 frame parsing, the crypto, and
 the WEP attacks (ported from aircrack-ng) — instead of shelling out to
 `airmon-ng`, `aireplay-ng`, `tshark`, or `hcxdumptool`. The only runtime dependencies we have
-taken are PyUSB/LibUSB (USB interfacing) and Textual/Rich (modern TUI libraries). Everything
-else is written in native Python.
+taken are PyUSB/LibUSB (USB interfacing) and Textual/Rich (TUI libraries). Everything
+else is written in pure Python.
 
 **Cross-platform.** The bytes sent to the card are OS-agnostic, so one codebase
-runs on **Linux and Windows** — point the adapter at the USB stack Wifit3 talks
+runs on **Linux and Windows**. Point the adapter at the USB stack Wifit3 talks
 through and go. No VM, no Kali boot.
 
 **Userland.** Root/Admin is only required during the one-click setup stage.
 After that, Wifit3 can be run without privilege (no sudo, no UAC popups).
 
-**Native and responsive.** No Scapy (it's heavy and triggers a UAC prompt on
-every import on Windows); no blocking subprocesses. A Textual TUI that updates
+**Responsive.** No blocking subprocesses. A Textual TUI that updates
 live via async messages — scan, pick a target, attack, save — instead of polling
 another process's output.
 
@@ -114,7 +113,7 @@ step (a single UAC prompt), after which no Administrator privileges are needed t
 
 **Linux** — pick the card on the splash and confirm. Wifit3 takes complete control of that
 chipset: it blacklists the card's kernel driver (so the kernel stops grabbing it) and grants your
-user raw USB access — one privileged prompt — then asks you to replug the card once. While Wifit3
+user raw USB access (one privileged prompt), then asks you to replug the card once. While Wifit3
 controls it, the card won't work as a normal Wi-Fi adapter; press **✕** on the splash to hand it
 back to the kernel. Afterward Wifit3 runs without sudo.
 
