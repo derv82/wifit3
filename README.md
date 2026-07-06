@@ -88,15 +88,6 @@ uv sync
 uv run wifit3
 ```
 
-**Don't want to hand the chipset over?** Run as root against a manually freed card:
-
-```bash
-sudo rmmod <kernel_driver>   # e.g. ath9k_htc, rtl8xxxu, mt76x2u, rt2800usb
-sudo .venv/bin/python3 -m wifit3
-
-# Replug afterward to revert to give back control to the kernel's driver.
-```
-
 ## Thanks
 
 Wifit3 only exists because of the people who reverse-engineered and maintained the Linux
