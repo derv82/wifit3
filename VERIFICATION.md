@@ -224,16 +224,21 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 ### RT5572
 *Panda PAU09 N600 · 2.4 / 5 GHz · 2T2R*
 
-The best-behaved Ralink — snappy, great beacon rate, balanced 2.4/5 GHz RX.
+> **5 GHz TX is dead** — deauth, PMKID, and WPS all fail on 5 GHz (the injector hardcodes a CCK rate,
+> invalid on 5 GHz; the RF band is set but nothing lands). 2.4 GHz is fully functional. 5 GHz RX
+> (scan + passive handshake capture) is unaffected. Fix scoped in `BUGS.md` (rt2800usb, CCK→OFDM).
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-05-31 | Balanced RX, both bands. |
-| Handshake | ✅ | 2026-05-31 | Full M1–M4. |
-| PMKID | ✅ | 2026-05-31 | Passive + active. |
-| WEP | ✅ | 2026-05-31 | Replay + ChopChop. |
-| WPS | ✅ | 2026-05-31 | PIN + PBC. |
-| Stress | ✅ | 2026-06-10 | 30-min 22-ch dual-band soak, flat. |
+| **Grade** | **84% (B)** | 2026-07-06 | Provisional (soak pending). Dinged by 5 GHz TX + 2.4 breadth. |
+| RX | ⚠️ | 2026-07-06 | Beacon parity (mud2g 6.2/6.4, mud 9.1/9.6 /s); breadth 87 vs kernel 111, 36 vs 38. |
+| Port | ⚠️ | 2026-07-06 | Trails linux — RSSI over-reads +8/+11 dB → link tuner cuts 2.4 breadth; beacon rate at parity. |
+| Handshake | ✅ | 2026-07-06 | 2.4 M1+M2+M4 & M2+M3; 5 GHz passive-capture only. |
+| PMKID | ⚠️ | 2026-07-06 | 2.4 passive + active; 5 GHz dead (no TX). |
+| WEP | ✅ | 2026-07-06 | 2.4 ARP replay 175 IVs/s + ChopChop. |
+| WPS | ⚠️ | 2026-07-06 | 2.4 PBC (21 EAPOL, auto-ACK); 5 GHz assoc fails (no TX). |
+| ACKs | ✅ | 2026-07-06 | Auto-ACK confirmed (WPS + active PMKID). |
+| Stress | ⬜ | — | 20-min re-soak pending; prior 30-min soak was flat. |
 
 → [RT2800USB.md](src/wifit3/chips/rt2800usb/RT2800USB.md)
 

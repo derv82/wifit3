@@ -129,8 +129,10 @@ permanently at the most-sensitive seed. Ported the kernel's ~1 Hz link tuner (`l
 which *raises* VGC when averaged RSSI is strong. Monitor-mode deviation: kernel disables the tuner
 for a pure-monitor interface and feeds it from associated-BSS beacons only; we keep the algorithm
 verbatim but source RSSI from every good frame, and it can only de-sensitise on strong signals so
-weak-signal sensitivity is never reduced. Resets on every channel change. Ported, awaiting HW
-verify; ties to VERIFICATION.md PAU05 Scan.
+weak-signal sensitivity is never reduced. Resets on every channel change. HW (PAU09/RT5572,
+2026-07-06): strong-AP beacon rate is stable at kernel parity (9.1 vs 9.6/s) — the tuner does its
+stability job — but 2.4 breadth trails kernel (87 vs 111 APs); suspected the RSSI over-read
+(EFUSE-aware RSSI, below) drives the de-sensitisation.
 
 ### RT3572 unburned-EFUSE attack pass (2026-05-31)
 
@@ -154,3 +156,9 @@ RSSI is `base_val(-12) - eeprom_offset - lna_gain - raw_byte`, max across paths.
 `eeprom_offset = lna_gain = 0`; `lna_gain` and `rssi_bg_offset0/1` are now read from EFUSE but rx.py
 still uses the simplified form. Wire the EFUSE values in when EEPROM-aware RSSI lands (shares work
 with the per-channel TX power tables).
+
+HW-confirmed (2026-07-06, PAU09 vs kernel): the simplified form over-reads RSSI by **+8.1 dB (2.4)**
+/ **+10.7 dB (5 GHz)** — band-split, as the missing per-band `lna_gain`/`rssi_bg_offset` predicts.
+Not just cosmetic: the over-read feeds the RX-AGC link tuner (above), which de-sensitises on strong
+averaged RSSI, so marginal 2.4 APs drop (breadth 87 vs kernel 111). Wiring the EFUSE values into
+`rx.py` is the lead for closing that breadth gap.

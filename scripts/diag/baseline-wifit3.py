@@ -63,6 +63,8 @@ async def run(args) -> int:
             parsed = WlanFrameParser.parse_80211_frame(raw, rssi)
         except Exception:
             return
+        if cur_channel["ch"] == 0:
+            return  # RX loop runs before the first set_channel; don't bucket pre-sweep frames at ch0
         health.feed(time.monotonic(), parsed, rssi, cur_channel["ch"])
 
     iface.register_rx_callback(on_rx)

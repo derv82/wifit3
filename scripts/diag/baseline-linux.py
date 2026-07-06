@@ -98,9 +98,12 @@ def feed_pcap(health: Health, path: str, channel: int) -> None:
     print(f"  CH{channel:>3}: {n} frames from {Path(path).name}", file=sys.stderr)
 
 
-def capture(iface: str, channel: int, secs: int) -> str:
-    """iw set channel + tcpdump for ``secs`` into a temp pcap; return its path."""
-    subprocess.run(["iw", "dev", iface, "set", "channel", str(channel)], check=True)
+def capture(iface: str, channel: int, secs: int) -> str | None:
+    """iw set channel + tcpdump for ``secs`` into a temp pcap; return its path, or
+    None if the channel can't be tuned (e.g. regulatory-disabled — 2.4 ch12-13 in US)."""
+    if subprocess.run(["iw", "dev", iface, "set", "channel", str(channel)]).returncode != 0:
+        print(f"  CH{channel:>3}: set channel failed (regulatory-disabled?) — skipping", file=sys.stderr)
+        return None
     out = tempfile.NamedTemporaryFile(suffix=f"-ch{channel}.pcap", delete=False).name
     print(f"  CH{channel:>3}: capturing {secs}s...", file=sys.stderr)
     subprocess.run(
@@ -124,7 +127,9 @@ def main() -> int:
     health = Health(args.chip, "linux")
     if args.capture:
         for ch in (int(c) for c in args.channels.split(",") if c.strip()):
-            feed_pcap(health, capture(args.iface, ch, args.secs), ch)
+            path = capture(args.iface, ch, args.secs)
+            if path is not None:
+                feed_pcap(health, path, ch)
     elif args.pcap:
         for spec in args.pcap:
             ch, _, path = spec.partition("=")

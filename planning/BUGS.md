@@ -46,6 +46,12 @@ complex AKM (SAE/transition) routes M1 somewhere we don't match, or we forge the
 wrong AKM. Not yet confirmable without logging: log the AKM we advertise in the forged assoc and how
 we classify each inbound frame. First check: do we send AKM=PSK in the assoc for *all* cases?
 
+### Linux uninstall leaves a shared driver blacklisted when a sibling card is installed
+The Linux modprobe blacklist is written per-*card* but blocks a shared kernel *driver*: RT5372,
+RT5572, and RT3572 all emit `blacklist rt2800usb`, so uninstalling one card leaves a sibling's
+`.conf` blocking the driver for the whole family. Observed: an installed RT5372 kept the RT5572
+(PAU09) from binding `rt2800usb`, and uninstalling the PAU09 never cleared it.
+
 ---
 
 ## Per-card
@@ -58,7 +64,13 @@ Clean, no known bugs: **rt2500usb, rt3070, rt5372, rtl8821au (mainline)**.
 
 ### rt2800usb
 - ⏳ RX-poll (shared RxReaderThread) unverified on HW [RT2800USB.md:7].
-- ⏳ RX-AGC link tuner unverified on HW — weak/unstable RX suspected [RT2800USB.md:18].
+- RSSI over-reads +8/+11 dB (2.4/5 GHz) vs kernel on PAU09 — `eeprom_offset`+`lna_gain` zeroed in
+  `rx.py` [RT2800USB.md:151]. Beacon rate at kernel parity, but 2.4 breadth trails (87 vs 111 APs);
+  suspect the over-read feeds the link tuner [RT2800USB.md:123], de-sensitising marginal APs.
+- 5 GHz TX dead — `build_tx_descriptors` hardcodes `phymode=CCK` (2.4-only) [tx.py:85]; on 5 GHz the
+  RF band is set but frames emit as CCK, so nothing lands. HW-confirmed on RT5572: deauth / PMKID /
+  WPS-assoc all fail on 5 GHz, all work on 2.4; 5 GHz RX unaffected. Fix: band-conditional
+  `TXWI_PHYMODE_OFDM` (=1) + an OFDM rate on 5 GHz, like the MT76x2u CCK→OFDM inject fix.
 - ⏳ Focus → first `set_channel` tune is flaky ("a re-tune fixed it") [RT2800USB.md:525].
 
 ### mt76x2u (AWUS036ACM)
