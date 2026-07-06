@@ -57,7 +57,7 @@ wifit3 is fundamentally different from its predecessor, [wifite2](https://github
 | ALFA AWUS036**AXML** / Panda PAU0F | MediaTek MT7921AU | 2.4 / 5 GHz |
 | ALFA AWUS036**H** | Realtek RTL8187L | 2.4 GHz |
 | ALFA AWUS036**NH** | Ralink RT3070 | 2.4 GHz |
-| ALFA AWUS1900 | Realtek RTL8814AU | 2.4 / 5 GHz |
+| ALFA AWUS1900\* | Realtek RTL8814AU | 2.4 / 5 GHz |
 | TP-Link T3U Plus | Realtek RTL8822BU | 2.4 / 5 GHz |
 | TP-Link TL-WN722N v2/v3 | Realtek RTL8188EUS | 2.4 GHz |
 | Panda PAU05 / PAU06 | Ralink RT5372 | 2.4 GHz |
@@ -65,6 +65,8 @@ wifit3 is fundamentally different from its predecessor, [wifite2](https://github
 | Buffalo Nintendo Wi-Fi | Ralink RT2570 | 2.4 GHz |
 | Auscoumer 600 Mbps | Realtek RTL8821CU | 2.4 / 5 GHz |
 | LOTEKOO 150 Mbps | Ralink RT5370 | 2.4 GHz |
+
+\* Some cards just do not perform well on Linux. Period. wifit3 inherits the same performance gaps as the drivers we port.
 
 [VERIFICATION.md](VERIFICATION.md) has detailed information about each card's capability and performance.
 

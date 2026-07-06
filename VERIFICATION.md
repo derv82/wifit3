@@ -136,6 +136,15 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 ### RTL8814AU
 *ALFA AWUS1900 · 2.4 / 5 GHz · 4T4R*
 
+> 🛑 **Not recommended — the driver's own maintainer says return the card.**
+> Nick Morrow ([@morrownr](https://github.com/morrownr)), maintainer of the out-of-tree
+> RTL8814AU driver this port is built from, calls it "old and hard to maintain," the RX
+> shortfall a "known problem," has no plans to fix it, and
+> [recommends getting a refund on the AWUS1900](https://github.com/morrownr/USB-WiFi/discussions/531#discussioncomment-11123137).
+> Our testing matches: strong nearby 2.4 GHz APs lose ~90% of beacons — a hardware-level
+> limit, present in mainline `rtw88_8814au` too. 5 GHz and distant APs work. Prefer an
+> RTL8812AU / RTL8821AU or MT7921AU.
+
 > **Default = vendor/DKMS port** (table below). `WIFIT3_RTL8814=mainline` opts back (both behave the same).
 
 | Capability | Status | Date | Notes |
