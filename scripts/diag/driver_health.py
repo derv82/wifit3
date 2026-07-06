@@ -22,6 +22,10 @@ import json
 import statistics
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from wifit3.wlan.packet import Packet
 
 
 def band(channel: int) -> str:
@@ -54,15 +58,15 @@ class Health:
         self._ch: dict[int, dict[str, dict]] = {}
         self._t0: dict[int, float] = {}
 
-    def feed(self, ts: float, parsed: dict | None, rssi: int | None, channel: int) -> None:
-        if not parsed or parsed.get("type") != "beacon":
+    def feed(self, ts: float, parsed: "Packet | None", rssi: int | None, channel: int) -> None:
+        if not parsed or parsed.type != "beacon":
             return
-        bssid = (parsed.get("bssid") or "").lower()
+        bssid = (parsed.bssid or "").lower()
         if not bssid:
             return
         aps = self._ch.setdefault(channel, {})
         ap = aps.setdefault(
-            bssid, {"beacons": 0, "rssi": [], "secs": {}, "adv_channel": parsed.get("channel")}
+            bssid, {"beacons": 0, "rssi": [], "secs": {}, "adv_channel": parsed.channel}
         )
         ap["beacons"] += 1
         if rssi is not None:

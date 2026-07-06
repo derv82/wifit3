@@ -70,10 +70,10 @@ class Tally:
             return
         if not p:
             return
-        self.types[p.get("type", "?")] += 1
-        if p.get("type") == "beacon":
+        self.types[p.type] += 1
+        if p.type == "beacon":
             self.beacons += 1
-        b = (p.get("bssid") or "").lower()
+        b = (p.bssid or "").lower()
         if b:
             self.bssids.add(b)
 

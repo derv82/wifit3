@@ -158,17 +158,17 @@ async def phase_rx(driver: MT76x2UDriver, duration_s: float) -> None:
     seen_aps: dict[str, dict] = {}
 
     def on_parsed(frame: dict) -> None:
-        if frame.get("subtype_id") != 8:   # beacon
+        if frame.subtype_id != 8:   # beacon
             return
-        bssid = frame.get("bssid")
+        bssid = frame.bssid
         if not bssid:
             return
         prev = seen_aps.get(bssid)
-        if prev is None or prev["rssi"] < frame["rssi"]:
+        if prev is None or prev["rssi"] < frame.rssi:
             seen_aps[bssid] = {
-                "ssid": frame.get("ssid", "<hidden>"),
-                "rssi": frame["rssi"],
-                "channel": frame.get("channel"),
+                "ssid": frame.ssid,
+                "rssi": frame.rssi,
+                "channel": frame.channel,
             }
 
     driver.register_rx_callback(on_parsed)
@@ -213,18 +213,18 @@ async def phase_hop(driver: MT76x2UDriver, dwell_s: float) -> None:
     per_chan: dict[int, dict[str, dict]] = {}
 
     def on_parsed(frame: dict) -> None:
-        if frame.get("subtype_id") != 8:
+        if frame.subtype_id != 8:
             return
-        bssid = frame.get("bssid")
+        bssid = frame.bssid
         if not bssid:
             return
         ch = driver.current_channel
         bucket = per_chan.setdefault(ch, {})
         prev = bucket.get(bssid)
-        if prev is None or prev["rssi"] < frame["rssi"]:
+        if prev is None or prev["rssi"] < frame.rssi:
             bucket[bssid] = {
-                "ssid": frame.get("ssid", "<hidden>"),
-                "rssi": frame["rssi"],
+                "ssid": frame.ssid,
+                "rssi": frame.rssi,
             }
 
     driver.register_rx_callback(on_parsed)
@@ -310,13 +310,13 @@ async def phase_deauth(driver: MT76x2UDriver, target: str,
 
     def on_parsed(frame: dict) -> None:
         nonlocal eapol_count
-        if frame.get("eapol_present"):
+        if frame.type == "eapol":
             eapol_count += 1
             handshake_frames.append({
-                "bssid": frame.get("bssid"),
-                "src": frame.get("source"),
-                "dst": frame.get("dest"),
-                "rssi": frame.get("rssi"),
+                "bssid": frame.bssid,
+                "src": frame.source,
+                "dst": frame.dest,
+                "rssi": frame.rssi,
             })
 
     driver.register_rx_callback(on_parsed)

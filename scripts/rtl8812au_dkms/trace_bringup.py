@@ -171,8 +171,8 @@ def main() -> int:
             for frame, r in rx.iter_frames(buf):
                 frames += 1
                 parsed = WlanFrameParser.parse_80211_frame(frame, r)
-                if parsed and parsed.get("type") == "beacon":
-                    b = (parsed.get("bssid") or "").lower()
+                if parsed and parsed.type == "beacon":
+                    b = (parsed.bssid or "").lower()
                     if b and b != "ff:ff:ff:ff:ff:ff":
                         beacons[b] += 1
         print(f"[RX baseline] ch{args.channel}: {len(beacons)} APs, {sum(beacons.values())} beacons, "

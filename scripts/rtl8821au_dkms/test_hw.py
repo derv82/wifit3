@@ -28,6 +28,7 @@ import sys
 import time
 from collections import Counter
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
@@ -41,6 +42,9 @@ from wifit3.chips.rtl8821au_dkms import constants as C
 from wifit3.chips.rtl8821au_dkms import bb, chan, firmware, mac, rf
 from wifit3.chips.rtl8821au_dkms.driver import Rtl8821auDkmsDriver
 from wifit3.chips.rtl8821au_dkms.transport import RTL8821AUDkmsTransport
+
+if TYPE_CHECKING:
+    from wifit3.wlan.packet import Packet
 
 # A/B canary — strong nearby AP whose beacon rate is the DIG-health indicator. This
 # BSSID is the deliberately-committed fixed canary (on the git-history PII-scrub list);
@@ -84,20 +88,20 @@ class BeaconTally:
         self.channel: dict = {}     # bssid -> advertised channel (DS/HT/VHT IE)
         self.total_frames = 0
 
-    def __call__(self, parsed: dict) -> None:
+    def __call__(self, parsed: Packet) -> None:
         self.total_frames += 1
-        if parsed.get("type") != "beacon":
+        if parsed.type != "beacon":
             return
-        bssid = (parsed.get("bssid") or "").lower()
+        bssid = (parsed.bssid or "").lower()
         if not bssid or bssid == "ff:ff:ff:ff:ff:ff":
             return
         self.by_bssid[bssid] += 1
         # Track the strongest (max) real dBm; skip the 0 "unknown" sentinel (frames with
         # no PHY status) so it can't mask a real negative value.
-        r = parsed.get("rssi")
+        r = parsed.rssi
         if r and (bssid not in self.rssi or r > self.rssi[bssid]):
             self.rssi[bssid] = r
-        ch = parsed.get("channel")   # the AP's own advertised channel
+        ch = parsed.channel   # the AP's own advertised channel
         if ch:
             self.channel[bssid] = ch
 

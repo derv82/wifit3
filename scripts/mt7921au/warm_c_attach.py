@@ -15,7 +15,7 @@ from wifit3.wlan.packet import WlanFrameParser
 def summarize(frames):
     c = {}
     for f in frames:
-        t = f.get("type", "?"); c[t] = c.get(t, 0) + 1
+        t = f.type; c[t] = c.get(t, 0) + 1
     return c
 
 async def main():

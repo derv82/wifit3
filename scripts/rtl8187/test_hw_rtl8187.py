@@ -331,12 +331,12 @@ def phase_rx(dev, transport: RTL8187Transport) -> None:
         parsed = WlanFrameParser.parse_80211_frame(rx.mpdu, rx.rssi_dbm)
         if parsed is None:
             continue
-        ftype = parsed.get("type", "?")
+        ftype = parsed.type
         type_counts[ftype] = type_counts.get(ftype, 0) + 1
-        subtype = parsed.get("subtype")
+        subtype = parsed.subtype_id
         if subtype is not None:
             subtype_counts[subtype] = subtype_counts.get(subtype, 0) + 1
-        bssid = parsed.get("bssid")
+        bssid = parsed.bssid
         if bssid:
             seen_bssids.add(bssid)
 
@@ -416,9 +416,9 @@ def phase_channel(dev, transport: RTL8187Transport) -> None:
                 continue
             n_parsed += 1
             rssi_samples.append(rx.rssi_dbm)
-            if parsed.get("type") == "beacon":
+            if parsed.type == "beacon":
                 beacons += 1
-                bssid = parsed.get("bssid")
+                bssid = parsed.bssid
                 if bssid:
                     bssids.add(bssid)
 
@@ -485,9 +485,9 @@ def phase_tx(dev, transport: RTL8187Transport) -> None:
         if rx is None or rx.has_fcs_error:
             continue
         parsed = WlanFrameParser.parse_80211_frame(rx.mpdu, rx.rssi_dbm)
-        if parsed is None or parsed.get("type") != "beacon":
+        if parsed is None or parsed.type != "beacon":
             continue
-        bssid_str = parsed.get("bssid")
+        bssid_str = parsed.bssid
         if not bssid_str:
             continue
         bssid_bytes = bytes.fromhex(bssid_str.replace(":", ""))
@@ -602,17 +602,17 @@ def phase_handshake(dev, transport: RTL8187Transport, channel: int, seconds: flo
         if rx is None or rx.has_fcs_error:
             continue
         parsed = WlanFrameParser.parse_80211_frame(rx.mpdu, rx.rssi_dbm)
-        if parsed is None or parsed.get("type") != "eapol":
+        if parsed is None or parsed.type != "eapol":
             continue
         eapol_count += 1
-        msg_num = parsed.get("eapol_msg_num", 0) or 0
+        msg_num = parsed.msg_num or 0
         msg_counts[msg_num] = msg_counts.get(msg_num, 0) + 1
-        bssid = parsed.get("bssid")
+        bssid = parsed.bssid
         if bssid:
             seen_bssids_with_eapol.add(bssid)
         print(
             f"  [t={_t.perf_counter() - (deadline - seconds):.1f}s] "
-            f"M{msg_num} EAPOL from {parsed.get('source', '?')} "
+            f"M{msg_num} EAPOL from {parsed.source} "
             f"on BSSID {bssid} (RSSI {rx.rssi_dbm})"
         )
 

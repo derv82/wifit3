@@ -38,6 +38,7 @@ import struct
 import sys
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
@@ -47,6 +48,9 @@ import usb.core
 from _hwstop import interruptible_sleep
 
 from wifit3.chips.rtl8812au_dkms.driver import Rtl8812auDkmsDriver
+
+if TYPE_CHECKING:
+    from wifit3.wlan.packet import Packet
 
 
 def _str_to_mac(mac_str: str) -> bytes:
@@ -91,14 +95,14 @@ class _HandshakeTally:
         self.eapol_from_ap = 0
         self.tods_data = 0       # any ToDS data frame, any station (broad promiscuity)
 
-    def __call__(self, parsed: dict) -> None:
+    def __call__(self, parsed: Packet) -> None:
         self.frames += 1
-        ftype = parsed.get("type")
-        bssid = (parsed.get("bssid") or "").lower()
-        src = (parsed.get("source") or "").lower()
-        dst = (parsed.get("dest") or "").lower()
-        to_ds = bool(parsed.get("to_ds"))
-        from_ds = bool(parsed.get("from_ds"))
+        ftype = parsed.type
+        bssid = (parsed.bssid or "").lower()
+        src = (parsed.source or "").lower()
+        dst = (parsed.dest or "").lower()
+        to_ds = bool(parsed.to_ds)
+        from_ds = bool(parsed.from_ds)
         involves_client = self.client in (src, dst)
         if ftype == "beacon" and bssid == self.ap:
             self.ap_beacons += 1

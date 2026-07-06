@@ -86,9 +86,9 @@ def run(name: str) -> int:
             if parsed is None:
                 none_parsed += 1                             # control frames + anything unparsed
                 continue
-            types[parsed.get("type", "?")] += 1
-            if parsed.get("ssid"):
-                ssids[parsed["ssid"]] += 1
+            types[parsed.type] += 1
+            if parsed.ssid:
+                ssids[parsed.ssid] += 1
 
     print(f"{name}: {len(rx_bufs)} bulk-IN transfers -> {frames} frames decoded")
     print(f"  FCS CRC-32 valid: {fcs_ok}/{fcs_checked} "

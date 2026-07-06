@@ -16,6 +16,7 @@ import logging
 import sys
 from collections import Counter
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
@@ -23,6 +24,9 @@ import libusb_package
 import usb.core
 
 from wifit3.chips.rtl8822bu_dkms.driver import Rtl8822buDkmsDriver
+
+if TYPE_CHECKING:
+    from wifit3.wlan.packet import Packet
 
 
 async def run(args) -> int:
@@ -41,15 +45,15 @@ async def run(args) -> int:
     tally = Counter()
     bssids: Counter = Counter()
 
-    def cb(parsed: dict) -> None:
+    def cb(parsed: Packet) -> None:
         tally["frames"] += 1
-        t = parsed.get("type")
+        t = parsed.type
         if t == "beacon":
             tally["beacons"] += 1
-            b = (parsed.get("bssid") or "").lower()
+            b = (parsed.bssid or "").lower()
             if b:
                 bssids[b] += 1
-        if parsed.get("to_ds") and not parsed.get("from_ds"):
+        if parsed.to_ds and not parsed.from_ds:
             tally["tods"] += 1
 
     driver.register_rx_callback(cb)

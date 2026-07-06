@@ -441,8 +441,8 @@ def phase_beacon(
             if not parsed:
                 parse_failures += 1
                 continue
-            if parsed.get("subtype_id") == WlanFrameParser.SUBTYPE_BEACON:
-                bssid = parsed.get("bssid") or "?"
+            if parsed.subtype_id == WlanFrameParser.SUBTYPE_BEACON:
+                bssid = parsed.bssid or "?"
                 seen_bssids[bssid] = seen_bssids.get(bssid, 0) + 1
                 if bssid not in seen_ssids:
                     seen_ssids[bssid] = _extract_ssid(mpdu)

@@ -836,9 +836,9 @@ def phase_rx(
         parsed = WlanFrameParser.parse_80211_frame(rx.mpdu, rx.rssi_dbm)
         if parsed is None:
             continue
-        ftype = parsed.get("type", "?")
+        ftype = parsed.type
         type_counts[ftype] = type_counts.get(ftype, 0) + 1
-        bssid = parsed.get("bssid")
+        bssid = parsed.bssid
         if bssid:
             bssids.add(bssid)
 

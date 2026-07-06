@@ -18,6 +18,7 @@ import sys
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
@@ -26,6 +27,9 @@ import usb.core
 
 from wifit3.chips.rtl8822bu_dkms.driver import Rtl8822buDkmsDriver
 from wifit3.wlan.channels import scan_hop_order
+
+if TYPE_CHECKING:
+    from wifit3.wlan.packet import Packet
 
 
 class CountingCtrl:
@@ -71,12 +75,12 @@ async def run(args) -> int:
     frm_by_ch: Counter = Counter()
     bssids_by_ch: dict[int, set] = defaultdict(set)
 
-    def cb(parsed: dict) -> None:
+    def cb(parsed: Packet) -> None:
         ch = driver._channel or 0
         frm_by_ch[ch] += 1
-        if parsed.get("type") == "beacon":
+        if parsed.type == "beacon":
             bcn_by_ch[ch] += 1
-            b = (parsed.get("bssid") or "").lower()
+            b = (parsed.bssid or "").lower()
             if b:
                 bssids_by_ch[ch].add(b)
 

@@ -43,14 +43,14 @@ class BeaconTally:
 
     def __call__(self, parsed: dict) -> None:
         self.total_frames += 1
-        if parsed.get("type") == "beacon":
-            bssid = (parsed.get("bssid") or "").lower()
+        if parsed.type == "beacon":
+            bssid = (parsed.bssid or "").lower()
             if bssid and bssid != "ff:ff:ff:ff:ff:ff":
                 self.by_bssid[bssid] += 1
-                r = parsed.get("rssi")
+                r = parsed.rssi
                 if r and (bssid not in self.rssi or r > self.rssi[bssid]):
                     self.rssi[bssid] = r
-                ssid = parsed.get("ssid")
+                ssid = parsed.ssid
                 if ssid is not None:
                     self.essids.setdefault(bssid, Counter())[ssid] += 1
 

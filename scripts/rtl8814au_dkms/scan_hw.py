@@ -24,6 +24,7 @@ import sys
 import time
 from collections import Counter
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
@@ -31,6 +32,9 @@ import libusb_package
 import usb.core
 
 from wifit3.chips.rtl8814au_dkms.driver import Rtl8814auDkmsDriver
+
+if TYPE_CHECKING:
+    from wifit3.wlan.packet import Packet
 
 
 class BeaconTally:
@@ -43,19 +47,19 @@ class BeaconTally:
         self.essids: dict = {}      # bssid -> Counter of distinct ESSID strings seen
         self.total_frames = 0
 
-    def __call__(self, parsed: dict) -> None:
+    def __call__(self, parsed: Packet) -> None:
         self.total_frames += 1
-        if parsed.get("type") == "beacon":
-            bssid = (parsed.get("bssid") or "").lower()
+        if parsed.type == "beacon":
+            bssid = (parsed.bssid or "").lower()
             if bssid and bssid != "ff:ff:ff:ff:ff:ff":
                 self.by_bssid[bssid] += 1
                 # Track the strongest (max) real dBm; skip the 0 "unknown" sentinel
                 # (frames with no PHY status) so it can't mask a real negative value.
-                r = parsed.get("rssi")
+                r = parsed.rssi
                 if r and (bssid not in self.rssi or r > self.rssi[bssid]):
                     self.rssi[bssid] = r
                 # ESSID-variance canary: record every distinct ESSID seen per BSSID.
-                ssid = parsed.get("ssid")
+                ssid = parsed.ssid
                 if ssid is not None:
                     self.essids.setdefault(bssid, Counter())[ssid] += 1
 

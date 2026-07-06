@@ -300,8 +300,8 @@ def phase_beacon(dev, transport: RTL8822BUTransport,
             )
             if not parsed:
                 continue
-            if parsed.get("subtype_id") == WlanFrameParser.SUBTYPE_BEACON:
-                bssid = parsed.get("bssid") or "?"
+            if parsed.subtype_id == WlanFrameParser.SUBTYPE_BEACON:
+                bssid = parsed.bssid or "?"
                 seen_bssids[bssid] = seen_bssids.get(bssid, 0) + 1
                 if bssid not in seen_ssids:
                     seen_ssids[bssid] = _extract_ssid(mpdu)
@@ -389,9 +389,9 @@ def phase_5g(transport: RTL8822BUTransport, dev) -> None:
             )
             if not parsed:
                 continue
-            if parsed.get("subtype_id") == WlanFrameParser.SUBTYPE_BEACON:
-                seen_bssids[parsed.get("bssid") or "?"] = (
-                    seen_bssids.get(parsed.get("bssid") or "?", 0) + 1
+            if parsed.subtype_id == WlanFrameParser.SUBTYPE_BEACON:
+                seen_bssids[parsed.bssid or "?"] = (
+                    seen_bssids.get(parsed.bssid or "?", 0) + 1
                 )
 
     print(f"  Parsed frames: {total}, distinct 5G BSSIDs: {len(seen_bssids)}")

@@ -53,9 +53,9 @@ class BeaconCollector:
             parsed = WlanFrameParser.parse_80211_frame(raw, rssi)
         except Exception:
             return
-        if not parsed or parsed.get("type") != "beacon":
+        if not parsed or parsed.type != "beacon":
             return
-        bssid = (parsed.get("bssid") or "").lower()
+        bssid = (parsed.bssid or "").lower()
         if bssid:
             self.events.append((time.monotonic(), bssid))
 

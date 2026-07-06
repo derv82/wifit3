@@ -172,7 +172,7 @@ def _walk_parsed(buf: bytes, ref: str) -> int:
         _FRAME_KIND[("mgmt", "ctrl", "data", "ext")[ftype]] += 1
         _FRAME_SIZE[min(len(frame) // 16 * 16, 256)] += 1
         parsed = WlanFrameParser.parse_80211_frame(frame, rssi)
-        if parsed and parsed.get("type") == "beacon" and (parsed.get("bssid") or "").lower() == ref:
+        if parsed and parsed.type == "beacon" and (parsed.bssid or "").lower() == ref:
             n += 1
     if bad_here:
         _GARBAGE_BUFS[0] += 1

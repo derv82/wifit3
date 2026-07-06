@@ -120,7 +120,7 @@ def capture_channel(dev, transport, ep_in, ch: int, is_2g: bool, agg: dict):
             mpdu = bytes(buf[pos + stat.mpdu_offset: pos + stat.mpdu_offset + max(stat.pkt_len - 4, 0)])
             if not stat.is_c2h and stat.phy_status_present and stat.drv_info_sz >= 8:
                 parsed = WlanFrameParser.parse_80211_frame(mpdu, -100)
-                if parsed and parsed.get("subtype_id") == WlanFrameParser.SUBTYPE_BEACON:
+                if parsed and parsed.subtype_id == WlanFrameParser.SUBTYPE_BEACON:
                     ssid = ssid_of(mpdu) or "<hidden>"
                     noshift = decode_phy(buf, pos + RX_PKT_DESC_SZ)
                     withshift = decode_phy(buf, pos + RX_PKT_DESC_SZ + stat.shift)

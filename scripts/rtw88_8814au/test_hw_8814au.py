@@ -452,8 +452,8 @@ def phase_rx(dev, transport: RTL8814AUTransport) -> None:
                 total_frames += 1
                 parsed = WlanFrameParser.parse_80211_frame(
                     mpdu, rssi if rssi is not None else -100)
-                if parsed and parsed.get("subtype_id") == WlanFrameParser.SUBTYPE_BEACON:
-                    bssid = parsed.get("bssid") or "?"
+                if parsed and parsed.subtype_id == WlanFrameParser.SUBTYPE_BEACON:
+                    bssid = parsed.bssid or "?"
                     seen_bssids[bssid] = seen_bssids.get(bssid, 0) + 1
                     seen_ssids.setdefault(bssid, _extract_ssid(mpdu))
                     if rssi is not None:

@@ -110,7 +110,7 @@ def capture(dev, ep_in, dwell):
                 if po + 4 <= len(buf) and (buf[po] & 0xF) == 0:  # page 0 (CCK)
                     mpdu = bytes(buf[pos + stat.mpdu_offset: pos + stat.mpdu_offset + max(stat.pkt_len - 4, 0)])
                     parsed = WlanFrameParser.parse_80211_frame(mpdu, -100)
-                    if parsed and parsed.get("subtype_id") == WlanFrameParser.SUBTYPE_BEACON:
+                    if parsed and parsed.subtype_id == WlanFrameParser.SUBTYPE_BEACON:
                         out[ssid_of(mpdu) or "<hidden>"].append(buf[po + 1])  # P0 PWDB
             nxt = (pos + stat.total_size + 7) & ~7
             if nxt <= pos:

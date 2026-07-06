@@ -126,7 +126,7 @@ class ParseQualityProbe(Probe):
             return
 
         self._total += 1
-        bssid = parsed.get("bssid")
+        bssid = parsed.bssid
         if _bssid_sane(bssid):
             self._oui_sane += 1
         else:
@@ -134,9 +134,9 @@ class ParseQualityProbe(Probe):
             if len(self._examples) < 5 and bssid:
                 self._examples.append(bssid)
 
-        if parsed.get("type") == "beacon":
+        if parsed.type == "beacon":
             self._beacons += 1
-            beacon_ch = parsed.get("channel")
+            beacon_ch = parsed.channel
             if beacon_ch is not None:
                 self._beacons_with_ds += 1
                 # iface.current_channel may legitimately have moved on

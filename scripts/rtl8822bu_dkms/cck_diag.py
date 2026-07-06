@@ -131,8 +131,8 @@ class Tally:
                 mpdu = buf[start:start + pkt_len - rx.FCS_LEN]
                 rssi = rx._decode_rssi(buf[off + rx.RXDESC_SIZE:start]) if physt else None
                 parsed = WlanFrameParser.parse_80211_frame(mpdu, rssi)
-                if parsed and parsed.get("type") == "beacon":
-                    b = (parsed.get("bssid") or "").lower()
+                if parsed and parsed.type == "beacon":
+                    b = (parsed.bssid or "").lower()
                     if b and b != "ff:ff:ff:ff:ff:ff":
                         self.beacons[b][rate] += 1
                         # After the 24B MAC header: timestamp(8) | beacon-interval(2 TU) | cap(2).

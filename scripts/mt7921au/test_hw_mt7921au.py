@@ -111,7 +111,7 @@ async def main(debug: bool):
     if frames:
         counts: dict[str, int] = {}
         for f in frames:
-            t = f.get("type", "unknown")
+            t = f.type
             counts[t] = counts.get(t, 0) + 1
         ok(f"Received {len(frames)} frames: {counts}")
     else:
@@ -136,7 +136,7 @@ async def main(debug: bool):
         await asyncio.sleep(RX_WINDOW)
         g5_total += len(g5_frames)
         if g5_frames:
-            bcn = sum(1 for f in g5_frames if f.get("type") == "beacon")
+            bcn = sum(1 for f in g5_frames if f.type == "beacon")
             ok(f"CH{ch}: {len(g5_frames)} frames ({bcn} beacons)")
         else:
             print(f"[WARN] CH{ch}: no frames (quiet 5 GHz or no AP on this channel)")

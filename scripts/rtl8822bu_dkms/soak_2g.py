@@ -15,6 +15,7 @@ import logging
 import sys
 from collections import Counter
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
@@ -23,13 +24,16 @@ import usb.core
 
 from wifit3.chips.rtl8822bu_dkms.driver import Rtl8822buDkmsDriver
 
+if TYPE_CHECKING:
+    from wifit3.wlan.packet import Packet
+
 
 async def one_run(dev, entry, listen: float) -> tuple[int, int]:
     driver = Rtl8822buDkmsDriver.from_usb_device(dev, entry)
     beacons = Counter()
 
-    def cb(parsed: dict) -> None:
-        if parsed.get("type") == "beacon":
+    def cb(parsed: Packet) -> None:
+        if parsed.type == "beacon":
             beacons["n"] += 1
 
     driver.register_rx_callback(cb)

@@ -13,20 +13,24 @@ import logging
 import sys
 from collections import Counter
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 sys.path.append(str(Path(__file__).parent.parent.parent / "src"))
 
 from wifit3.wlan.manager import WlanDeviceManager  # noqa: E402
 from wifit3.chips.ar9271.constants import WMI_REG_WRITE_CMDID  # noqa: E402
 
+if TYPE_CHECKING:
+    from wifit3.wlan.packet import Packet
+
 # Exact kernel monitor RX-filter REG_WRITE payload [WIRE captures_ath9k_htc
 # frame 3047]: (AR_RX_FILTER=0x803c → 0xC03F), (0x810c → 0).
 KERNEL_RXFILTER_WRITE = bytes.fromhex("0000803c0000c03f0000810c00000000")
 
 
-def categorize(parsed: dict, our_mac: str) -> str:
-    dst = (parsed.get("dest") or "").lower()
-    src = (parsed.get("source") or "").lower()
+def categorize(parsed: "Packet", our_mac: str) -> str:
+    dst = (parsed.dest or "").lower()
+    src = (parsed.source or "").lower()
     if dst.startswith("ff:ff:ff"):
         return "bcast"
     try:
@@ -66,13 +70,13 @@ async def main():
     counts: Counter = Counter()
     samples: list = []
 
-    def cb(parsed: dict):
+    def cb(parsed: "Packet"):
         cat = categorize(parsed, our_mac)
         counts[cat] += 1
         if cat == "UNICAST-OTHERS" and len(samples) < 5:
-            samples.append(f"{parsed.get('source')}->{parsed.get('dest')} "
-                           f"type={parsed.get('type')} "
-                           f"to_ds={parsed.get('to_ds')} from_ds={parsed.get('from_ds')}")
+            samples.append(f"{parsed.source}->{parsed.dest} "
+                           f"type={parsed.type} "
+                           f"to_ds={parsed.to_ds} from_ds={parsed.from_ds}")
 
     # Replace the interface's parsed-frame callback with our categorizer.
     iface.driver.register_rx_callback(cb)

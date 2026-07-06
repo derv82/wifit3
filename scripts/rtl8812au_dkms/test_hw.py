@@ -215,9 +215,9 @@ def main() -> int:
                 for frame, r in rx.iter_frames(buf):
                     frames += 1
                     parsed = WlanFrameParser.parse_80211_frame(frame, r)
-                    if not parsed or parsed.get("type") != "beacon":
+                    if not parsed or parsed.type != "beacon":
                         continue
-                    b = (parsed.get("bssid") or "").lower()
+                    b = (parsed.bssid or "").lower()
                     if not b or b == "ff:ff:ff:ff:ff:ff":
                         continue
                     beacons[b] += 1

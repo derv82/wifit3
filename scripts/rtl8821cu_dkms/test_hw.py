@@ -115,8 +115,8 @@ def _rx_beacons(t, dwell: float):
             else:
                 acc["good"] += 1
                 parsed = WlanFrameParser.parse_80211_frame(buf[mpdu_off:mpdu_off + pkt_len], None)
-                if parsed and parsed.get("type") == "beacon":
-                    b = (parsed.get("bssid") or "").lower()
+                if parsed and parsed.type == "beacon":
+                    b = (parsed.bssid or "").lower()
                     if b and b != "ff:ff:ff:ff:ff:ff":
                         beacons[b] += 1
                         acc["beacons"] += 1

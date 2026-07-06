@@ -152,8 +152,8 @@ def main() -> int:
                 if not parsed:
                     continue
                 valid += 1
-                if parsed.get("type") == "beacon":
-                    b = (parsed.get("bssid") or "").lower()
+                if parsed.type == "beacon":
+                    b = (parsed.bssid or "").lower()
                     if b and b != "ff:ff:ff:ff:ff:ff":
                         beacons[b] += 1
         elapsed = max(time.monotonic() - start, 1e-3)

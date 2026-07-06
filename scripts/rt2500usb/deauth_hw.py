@@ -81,12 +81,12 @@ class _HandshakeTally:
 
     def __call__(self, parsed: dict) -> None:
         self.frames += 1
-        ftype = parsed.get("type")
-        bssid = (parsed.get("bssid") or "").lower()
-        src = (parsed.get("source") or "").lower()
-        dst = (parsed.get("dest") or "").lower()
-        to_ds = bool(parsed.get("to_ds"))
-        from_ds = bool(parsed.get("from_ds"))
+        ftype = parsed.type
+        bssid = (parsed.bssid or "").lower()
+        src = (parsed.source or "").lower()
+        dst = (parsed.dest or "").lower()
+        to_ds = bool(parsed.to_ds)
+        from_ds = bool(parsed.from_ds)
         involves_client = self.client in (src, dst)
         if ftype == "beacon" and bssid == self.ap:
             self.ap_beacons += 1
