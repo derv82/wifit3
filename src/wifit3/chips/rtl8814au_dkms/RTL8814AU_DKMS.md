@@ -19,10 +19,10 @@ through the turn-on tail; the per-channel tunes (2.4 + 5 GHz) are byte-diffed by
 `verify_channels.py`. Monitor RX is fully promiscuous both directions (ToDS M2/M4 seen),
 so WPA handshake capture works.
 
-Known weak spot: the 30-min dual-band soak (2026-06-05) exposed intermittent 2.4 GHz
-dropouts under sustained hopping (one 60 s bucket with zero 2.4 GHz APs; 5 GHz unaffected).
-No progressive degradation, but the 2.4 GHz AGC/DIG/band-recovery path is the prime
-byte-diff target. Scan + Stress are flagged in VERIFICATION.md. 40/80 MHz bonded widths
+The 2026-06-05 soak flagged intermittent 2.4 GHz dropouts under sustained hopping (one 60 s
+bucket with zero 2.4 GHz APs; 5 GHz unaffected), but a 30-min re-soak on 2026-07-06 did not
+reproduce it — 2.4 GHz held 57-79 active APs every bucket, no dropout (see Debug log). Scan +
+Stress are flagged in VERIFICATION.md (the Stress flag predates this re-soak). 40/80 MHz bonded widths
 are out of scope (20 MHz primary only). The full data-frame `update_txdesc` TX path is
 not ported (inject/deauth/replay use the minimal mgmt descriptor at a fixed rate); the
 USB3 firmware/burst branch is unported (latent gap if a card ever links USB3).
@@ -178,3 +178,12 @@ the signal-strength fix (-45 vs -81 dBm) did NOT make 2.4 GHz RX solid: one full
 with zero 2.4 GHz APs (5 GHz unaffected), periodic dips, the jitteriest frame rate of any
 soaked card. No progressive degradation (98→98) and 5 GHz rock-steady, so it survives, but
 the mainline fallback stays until the 2.4 GHz AGC/DIG/band-recovery path is byte-diffed.
+
+### 2026-07-06 — re-soak: 2.4 GHz dropout not reproduced
+
+A 30-min dual-band hopping re-soak (`scripts/diag/reports/rtl8814audkms_20260706-030622.md`,
+22 channels) did NOT reproduce the 2026-06-05 dropout: 2.4 GHz held 57-79 active APs across
+all 31 buckets (min 57, no zero bucket), 5 GHz 28-45, active-BSSID trend rose (101→119, ratio
+1.18). No death, no progressive degradation. Parse-quality WARNs are hopping artifacts (OUI
+garbage 5.0% is dominated by ff:ff:ff:ff:ff:ff broadcast; beacon-channel mismatch 22% is the
+known cross-tune-window effect). Cleared from BUGS.md.

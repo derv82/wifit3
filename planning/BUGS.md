@@ -92,10 +92,6 @@ Clean, no known bugs: **rt2500usb, rt3070, rt5372, rtl8821au (mainline)**.
 - ⏳ Fast-hop RX death — ~1 s of 0 frames/s at 0.25 s dwell; PLL relock eats the dwell [RTL8814AU.md:194].
 - ⚠️ Chip doc contradicts itself on `spur_calibration` (skipped vs ported) and IQK — resolve on HW [RTL8814AU.md:203/318].
 
-### rtl8814au_dkms
-- ⏳ Intermittent 2.4 GHz dropouts under sustained hopping — a 60 s bucket dropped **all** 2.4 GHz
-  APs; the signal-strength fix didn't make the 2.4 GHz path solid [RTL8814AU_DKMS.md:281].
-
 ### rtl8822bu (mainline) — prefer the DKMS variant
 - ⏳ DIG watchdog unverified on HW (IGI was frozen → deaf/saturating) [RTL8822BU.md:18].
 - Limit: EFUSE / TX-power calibration not implemented (mainline is the thinner port).
