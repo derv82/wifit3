@@ -11,7 +11,7 @@ from wifit3.engine.models import AccessPoint
 from .screens.splash import SplashView
 from .screens.scanner import ScannerView
 from .screens.focus_v2 import FocusViewV2
-from .screens.fatal_error import FatalErrorModal
+from .screens.error_modals import FatalErrorModal, RecoverableErrorModal
 
 logger = logging.getLogger(__name__)
 
@@ -127,21 +127,40 @@ class WifiteApp(App):
         self.push_screen("splash")
 
     def notify_device_lost(self, exc: Exception) -> None:
-        """Adapter vanished mid-run — raise the Quit-only fatal modal.
+        """Adapter vanished mid-run — surface the recoverable device-lost modal.
 
         This arrives on the event-loop thread via the RX reader's ``call_soon_threadsafe``
         hop, which runs OUTSIDE Textual's message-pump context (``active_app`` unset), so a
         direct ``push_screen`` here crashes in the modal's compose (NoActiveAppError). Defer
         it onto the app's message queue via ``call_later`` — that callback runs in-context.
         Idempotent: the interface latches so this fires once, and ``_show_device_lost`` guards
-        against re-pushing if the modal is already up."""
+        against re-pushing if a modal is already up."""
         self.call_later(self._show_device_lost, exc)
 
     def _show_device_lost(self, exc: Exception) -> None:
-        if isinstance(self.screen, FatalErrorModal):
+        if isinstance(self.screen, (FatalErrorModal, RecoverableErrorModal)):
             return
         name = self.active_interface.name if self.active_interface else "the wireless adapter"
-        self.push_screen(FatalErrorModal(WifiteDeviceLostError(name)))
+        self.push_screen(RecoverableErrorModal(WifiteDeviceLostError(name)))
+
+    async def recover_to_splash(self) -> None:
+        """Return to the splash screen after the active adapter was lost."""
+        iface = self.active_interface
+        # Unwind to the base default screen (kept by `> 1`), then re-push splash onto it.
+        while len(self.screen_stack) > 1:
+            await self.pop_screen()
+        await self.push_screen("splash")
+        # The installed splash only resumes (on_mount won't re-run), so reset its state explicitly.
+        self.get_screen("splash", SplashView).reset_for_reentry()
+        # Close the dead adapter only once scanner/focus are gone, so their teardown can't read a
+        # half-closed interface.
+        if iface is not None:
+            try:
+                await iface.close()
+            except Exception:
+                logger.debug("Closing the lost adapter failed (already gone)", exc_info=True)
+        self.active_interface = None
+        self.target_ap = None
 
     async def action_quit(self):
         if self.active_interface:

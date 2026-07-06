@@ -18,7 +18,7 @@ from wifit3.setup.windows import install_winusb, restore_driver
 from wifit3.ui.screens.confirm_install import ConfirmInstallDialog
 from wifit3.ui.screens.confirm_uninstall import ConfirmUninstallDialog
 from wifit3.ui.screens.setup_error import SetupErrorDialog
-from wifit3.ui.screens.fatal_error import FatalErrorModal
+from wifit3.ui.screens.error_modals import FatalErrorModal
 from wifit3.ui.screens.propagating import PropagatingDialog
 from wifit3.wlan.manager import WlanDeviceManager
 
@@ -85,18 +85,38 @@ class SplashView(Screen):
                     yield Button("✕", id="uninstall-btn", variant="error")
         yield Footer()
 
-    async def on_mount(self) -> None:
-        self.query_one("#init-progress").display = False
+    def _enter_scanning_mode(self) -> None:
+        """The 'pick a card' resting state: nothing selected, list empty + enabled, progress
+        hidden, START/uninstall disabled until poll_usb finds a card."""
+        self._is_initializing = False
+        self._selected_name = None
+        self._last_signature = None
         self.query_one("#error-label").display = False
-        self.query_one("#start-btn", Button).disabled = True   # enabled once a card appears
-        uninstall_btn = self.query_one("#uninstall-btn", Button)
-        uninstall_btn.disabled = True
-        uninstall_btn.tooltip = "Uninstall the wifit3 driver / access rule for the selected card"
-        # Poll frequently — discovery opens no devices, so a tight interval makes plugging
-        # a card in feel instant. The first tick runs immediately (set_interval waits a full
-        # period before its first fire).
+        self.query_one("#init-progress").display = False
+        device_list = self.query_one("#device-list", ListView)
+        device_list.clear()
+        device_list.disabled = False
+        self.query_one("#start-btn", Button).disabled = True
+        self.query_one("#uninstall-btn", Button).disabled = True
+        self.query_one("#status-label", Label).update("Scanning for compatible hardware…")
+
+    async def on_mount(self) -> None:
+        self.query_one("#uninstall-btn", Button).tooltip = (
+            "Uninstall the wifit3 driver / access rule for the selected card")
+        self._enter_scanning_mode()
+        # Poll frequently — discovery opens no devices, so a tight interval makes plugging a card
+        # in feel instant. call_after_refresh fires the first tick now (set_interval waits a period).
         self._refresh_timer = self.set_interval(0.5, self.poll_usb)
         self.call_after_refresh(self.poll_usb)
+
+    def reset_for_reentry(self) -> None:
+        """Returning to splash (adapter lost): the installed screen only resumes — on_mount doesn't
+        re-run — so restore the scanning state and un-pause the poll timer perform_start left
+        paused before it navigated to the scanner."""
+        self._enter_scanning_mode()
+        if self._refresh_timer is not None:
+            self._refresh_timer.resume()
+        self.call_after_refresh(self.poll_usb)   # repopulate now, not on the next 0.5s tick
 
     async def poll_usb(self) -> None:
         # Skip if a connect/install is running, or a prior scan is still in flight — the bus

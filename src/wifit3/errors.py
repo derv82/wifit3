@@ -79,15 +79,16 @@ class WifiteFatalError(Exception):
         return _scrub_paths(raw)
 
 
-class WifiteDeviceLostError(WifiteFatalError):
-    """The active adapter vanished mid-run (unplugged, or the USB pipe wedged past
-    recovery). Unrecoverable in userland — the WinUSB handle is dead and can't be
-    reopened — so it reuses the Quit-only FatalErrorModal. Replug + restart is the fix.
+class WifiteDeviceLostError(Exception):
+    """The active adapter vanished mid-run (unplug / USB pipe wedged past recovery).
+
+    Recoverable: a replug re-enumerates a fresh handle. Carries ``title`` + ``message``.
     """
 
     def __init__(self, name: str = "the wireless adapter") -> None:
-        super().__init__(
-            "Adapter disconnected",
+        self.title = "Adapter disconnected"
+        self.message = (
             f"Lost contact with {name} — it was unplugged or the USB link dropped.\n"
-            "Replug the card and restart wifit3.",
+            "Replug the card, then press Back to Splash to reconnect."
         )
+        super().__init__(f"{self.title}: {self.message}")
