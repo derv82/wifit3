@@ -23,13 +23,13 @@ Some failures reach only the dev-only `wifit3.log`, not the Textual UI. Still op
   `ar9271_v2` is sub-second. Fix: give v1's RX loop an `on_fatal` → `register_disconnect_callback`,
   or port it to the shared RxReaderThread.
 
-### Warm-attach inherits a foreign driver's chip state → silent RX degradation — release blocker
-If another driver set the card up first, `modprobe -r` unloads it but the chip stays *warm* with
-that foreign config; our warm-reattach inherits it and RX is silently degraded and non-deterministic
-(RTL8814AU: ~4 beacons/10 s vs ~30 after a replug). Fix: thread `is_dirty` (`kernel_driver_bound`,
-read pre-detach) into each driver's `connect()` — `if is_warm and is_dirty: raise
-BringUpError(replug)`, else continue (cards that reset cold on unbind read not-warm and pass).
-~22-driver port; subsumes `LINUX_REPLUG_AFTER_MODPROBE`.
+### Foreign-warmed chip → degraded RX until replug — release blocker
+A card the kernel driver warmed that can't force a cold boot in userland comes up with
+silently-degraded RX after wifit3 takes it over without a replug (RTL8814AU: 5 beacons/20 s vs 106
+after a replug). Cards that self-cold (AR9271, mt76x0u, mt76x2u) are fine; the ones that can't
+(RT*/Realtek) must be physically replugged. Fix: after a successful Linux install, show a "Please
+replug" modal that polls for the card to be unplugged, then falls back to the splash screen, instead
+of auto-connecting.
 
 ### EAP/Enterprise 4-way is reported as crackable
 An EAP (enterprise) 4-way is captured and emitted as "crackable," but its PMK comes from the EAP/MSK
