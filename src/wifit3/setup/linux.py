@@ -113,14 +113,19 @@ def _matching_usb_dirs(ids):
 
 def _bound_modules(ids) -> set[str]:
     """The kernel driver(s) currently bound to the card's interfaces — ground truth for the
-    module that grabbed *this* device on *this* machine."""
+    module that grabbed *this* device on *this* machine. The sysfs *driver* name is not always the
+    *module* name (out-of-tree Realtek: driver ``rtl8814au`` ← module ``8814au``), and modprobe
+    blacklists the *module* — so resolve ``driver/module`` too and keep both."""
     mods: set[str] = set()
     for d in _matching_usb_dirs(ids):
         for intf in sorted(d.glob(f"{d.name}:*")):
             link = intf / "driver"
             try:
                 if link.is_symlink():
-                    mods.add(os.path.basename(os.readlink(link)))
+                    mods.add(os.path.basename(os.readlink(link)))          # sysfs driver name
+                    modlink = link / "module"                              # driver -> its .ko module
+                    if modlink.is_symlink():
+                        mods.add(os.path.basename(os.readlink(modlink)))   # real module to blacklist
             except OSError:
                 pass
     return mods

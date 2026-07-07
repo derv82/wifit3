@@ -43,6 +43,7 @@ def _target(key="ar9271", ids=(AR9271,), hints=("ath9k_htc",)):
 # --- fake sysfs for live module discovery ------------------------------------------------------
 
 def _fake_sysfs(tmp_path, monkeypatch, *, sub="sys", vid=0x0cf3, pid=0x9271, bound="ath9k_htc",
+                module=None,
                 modalias="usb:v0CF3p9271d0108dc00dsc00dp00icFFiscFFipFFin00"):
     """Build a minimal /sys/bus/usb/devices tree for one card and point the module at it. ``sub``
     lets one test stand up several distinct trees under the same tmp_path."""
@@ -62,6 +63,10 @@ def _fake_sysfs(tmp_path, monkeypatch, *, sub="sys", vid=0x0cf3, pid=0x9271, bou
         drivers = base / "drivers" / bound
         drivers.mkdir(parents=True)
         (intf / "driver").symlink_to(drivers)
+        if module:  # out-of-tree drivers expose driver/module -> /sys/module/<ko>
+            moddir = base / "module" / module
+            moddir.mkdir(parents=True)
+            (drivers / "module").symlink_to(moddir)
     monkeypatch.setattr(lin, "SYSFS_USB", str(base))
     return base
 
@@ -69,6 +74,13 @@ def _fake_sysfs(tmp_path, monkeypatch, *, sub="sys", vid=0x0cf3, pid=0x9271, bou
 def test_bound_modules_reads_the_interface_driver_symlink(tmp_path, monkeypatch):
     _fake_sysfs(tmp_path, monkeypatch, bound="ath9k_htc")
     assert lin._bound_modules([AR9271]) == {"ath9k_htc"}
+
+
+def test_bound_modules_resolves_driver_to_module_name(tmp_path, monkeypatch):
+    # Out-of-tree Realtek: the sysfs *driver* is ``rtl8814au`` but the *module* is ``8814au`` —
+    # modprobe blacklists the module, so both names must surface (over-listing is harmless).
+    _fake_sysfs(tmp_path, monkeypatch, bound="rtl8814au", module="8814au")
+    assert lin._bound_modules([AR9271]) == {"rtl8814au", "8814au"}
 
 
 def test_kernel_driver_bound_true_for_real_driver_false_for_usbfs(tmp_path, monkeypatch):
