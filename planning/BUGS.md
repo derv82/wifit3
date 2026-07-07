@@ -85,7 +85,8 @@ Clean, no known bugs: **rt2500usb, rt3070, rt5372, rtl8821au (mainline)**.
 - Limit: mainline RX tops ~77 % with collapses; the DKMS re-port is the better card.
 
 ### rtl8188eus_dkms
-- ⏳ Live RX ~6.5 vs ~8.9 bcn/s vs kernel — RX-perf gap, cause unconfirmed [RTL8188EUS_DKMS.md:12].
+- RX-perf gap confirmed same-driver: wifit3-DKMS 5.3 vs linux-DKMS (8188eu) 7.0 bcn/s on the
+  reference AP (76%); breadth + RSSI match, so it's RX throughput specifically, cause unconfirmed [RTL8188EUS_DKMS.md:12].
 - ⏳ EFUSE antenna/channel-plan hardcoded from the dev card — wrong on other 8188eus units [RTL8188EUS_DKMS.md:62].
 
 ### rtl8812au (mainline, opt-in `WIFIT3_RTL8812=mainline`)
