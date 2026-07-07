@@ -333,3 +333,13 @@ EFUSE_MAX_WORD_UNIT = 4
 # logical-map offsets [SRC] include/hal_pg.h
 EEPROM_XTAL_88E = 0xB9             # crystal cap (AFE trim)
 EEPROM_MAC_ADDR_88EU = 0xD7        # 6-byte MAC
+# Board-option bytes we decode but do not consume. In THIS driver build all but the
+# PA/LNA select are inert on the register wire: CONFIG_ANTENNA_DIVERSITY is off (0xC9
+# never writes, [SRC] autoconf.h:94) and CONFIG_TXPWR_LIMIT_EN is off (0xC1 regulatory
+# is dead code, [SRC] Makefile), and 0xB8 only picks the SW channel list. Only 0xCA[3:2]
+# (external PA/LNA) changes what the chip is programmed with -> guarded fail-loud in efuse.py.
+EEPROM_ChannelPlan_88E = 0xB8      # SW channel/regulatory plan (this card 0xA2; SW-only)
+EEPROM_RF_BOARD_OPTION_88E = 0xC1  # regulatory[2:0] / antdiv[4:3] / interfaceSel[7:5]
+EEPROM_RF_ANTENNA_OPT_88E = 0xC9   # TRxAntDivType (inert: antenna-diversity compiled out)
+EEPROM_RFE_OPTION_88E = 0xCA       # [3:2] ePA/eLNA select, [1:0] rfe_type
+EEPROM_RFE_INTERNAL_PA_LNA = 0x3   # 0xCA[3:2]==3: iPA+iLNA (PHY_SetRFEReg early-returns)

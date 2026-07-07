@@ -25,6 +25,8 @@ from .constants import (
     DEFAULT_CRYSTAL_CAP,
     DISABLE_TRXPKT_BUF_ACCESS,
     EEPROM_MAC_ADDR_88EU,
+    EEPROM_RFE_INTERNAL_PA_LNA,
+    EEPROM_RFE_OPTION_88E,
     EEPROM_TX_PWR_INX_88E,
     EEPROM_XTAL_88E,
     EFUSE_ACCESS_OFF,
@@ -243,6 +245,30 @@ def _phymap_to_logical(phymap: bytes) -> bytes:
     return bytes(table)
 
 
+def assert_board_options_ported(m: bytes) -> None:
+    """Fail loud on an efuse board-option this port does not reproduce.
+
+    We consume MAC / crystal / thermal / TX-power from the real map, but the RF + AGC init
+    is a static replay tuned to THIS dev card's board — internal PA + internal LNA. Of the
+    board-option bytes only the PA/LNA select (``0xCA[3:2]``) changes what the chip is
+    programmed with in this driver build: ``CONFIG_ANTENNA_DIVERSITY`` is off (``0xC9`` never
+    reaches the wire [SRC] autoconf.h:94) and ``CONFIG_TXPWR_LIMIT_EN`` is off (``0xC1``
+    regulatory is dead code [SRC] Makefile), while ``0xB8`` only chooses the SW channel list.
+    A card with an external PA or LNA needs ``PHY_SetRFEReg_8188E`` [SRC] rtl8188e_phycfg.c:1993
+    (writes 0x40 / 0xEE8 / 0x87C) **and** the external-LNA AGC table — neither is ported. So
+    refuse the card by name instead of running silently mis-tuned [[feedback_port_completeness]].
+    ``0xFF`` (blank) is the internal default this dev card autoloads."""
+    rfe = m[EEPROM_RFE_OPTION_88E]
+    pa_lna = (rfe >> 2) & 0x3           # 0=ePA+eLNA, 1=ePA+iLNA, 2=iPA+eLNA, 3=iPA+iLNA
+    if rfe == 0xFF or pa_lna == EEPROM_RFE_INTERNAL_PA_LNA:
+        return
+    ext = [p for p, on in (("PA", pa_lna in (0, 1)), ("LNA", pa_lna in (0, 2))) if on]
+    raise NotImplementedError(
+        f"efuse 0xCA=0x{rfe:02x} -> external {'+'.join(ext)}: PHY_SetRFEReg_8188E + the "
+        f"external-LNA AGC table are not ported (this port assumes internal PA+LNA). "
+        f"Port them before bringing up this unit.")
+
+
 def _s4(n: int) -> int:
     """Signed 4-bit nibble -> int (PG_TXPWR_*_DIFF_TO_S8BIT)."""
     return n - 16 if (n & 0x8) else n
@@ -274,6 +300,7 @@ def read_chip_params(t, bcnhead: int = 0) -> ChipParams:
     t.write8(REG_EFUSE_ACCESS, EFUSE_ACCESS_OFF)
 
     logical = _phymap_to_logical(phymap)
+    assert_board_options_ported(logical)                 # refuse an unported board variant
     cap = logical[EEPROM_XTAL_88E]
     if cap == 0xFF:
         cap = DEFAULT_CRYSTAL_CAP

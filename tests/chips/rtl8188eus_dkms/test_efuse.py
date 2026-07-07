@@ -90,6 +90,25 @@ def test_parse_tx_power_signed_diff_nibbles():
     assert (p.bw20_diff, p.ofdm_diff) == (-1, -8)
 
 
+def test_board_options_internal_pa_lna_passes():
+    # This dev card's 0xCA is blank (0xFF) -> iPA+iLNA default; a programmed [3:2]==3
+    # (0x0C, 0x0F) is also internal. Neither reaches PHY_SetRFEReg -> no raise.
+    for rfe in (0xFF, 0x0C, 0x0F):
+        m = bytearray(b"\xFF" * 512)
+        m[0xCA] = rfe
+        efuse.assert_board_options_ported(bytes(m))   # must not raise
+
+
+def test_board_options_external_pa_lna_fails_loud():
+    # 0xCA[3:2] in {0,1,2} means an external PA and/or LNA the port doesn't handle.
+    import pytest
+    for rfe in (0x00, 0x04, 0x08):                     # ePA+eLNA / ePA+iLNA / iPA+eLNA
+        m = bytearray(b"\xFF" * 512)
+        m[0xCA] = rfe
+        with pytest.raises(NotImplementedError, match="0xCA"):
+            efuse.assert_board_options_ported(bytes(m))
+
+
 def test_iol_efuse_patch_sequence():
     t = Tx(queues={REG_SYS_CFG: [0x37, 0xB7],
                    REG_HMEBOX_E0: [0x00, 0x00, 0x00,   # READ_EFUSE_MAP: init, poll-clear, status
