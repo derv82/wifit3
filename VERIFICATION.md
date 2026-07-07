@@ -100,11 +100,14 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-06-05 | 2.4 + 5 GHz, steady ~9 bcn/s. |
+| **Grade** | **91% (A)** | 2026-07-07 | Clean dual-band on both variants, full attack suite, no wedge. |
+| RX | ✅ | 2026-07-07 | DKMS mud2g 7.0/7.8 (90%), mud 9.3/9.6 (97%), breadth 66/31; mainline 91% too. |
+| Port | ✅ | 2026-07-07 | Matches linux both bands, DKMS + mainline (unlike 8812au, mainline doesn't wedge). |
 | Handshake | ✅ | 2026-06-05 | Deauth → 4-way. |
 | PMKID | ✅ | 2026-06-05 | Passive + active. |
 | WEP | ✅ | 2026-06-05 | Replay + ChopChop. |
 | WPS | ✅ | 2026-06-05 | PIN + PBC. |
+| ACKs | ✅ | 2026-06-05 | HW-ACK forged MAC (WPS/PMKID). |
 | Stress | ✅ | 2026-06-05 | 30-min dual-band soak, flat. |
 
 → [RTL8821AU.md](src/wifit3/chips/rtl8821au/RTL8821AU.md) (mainline) · [RTL8821AU_DKMS.md](src/wifit3/chips/rtl8821au_dkms/RTL8821AU_DKMS.md) (default)
