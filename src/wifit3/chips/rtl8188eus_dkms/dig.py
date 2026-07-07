@@ -217,7 +217,16 @@ def _fa_statistics(t) -> _FaResult:
 # --- phydm_dig (no-link) --------------------------------------------------
 
 def _new_igi_by_fa(igi: int, cnt_all: int) -> int:
-    """``phydm_dig_current_igi_by_fa_th`` with the not-linked step {+2, +1, -2}."""
+    """``phydm_dig_current_igi_by_fa_th`` with the not-linked step {+2, +1, -2}.
+
+    The raise is *unconditional* here, and that is faithful: the vendor gates every IGI
+    *increase* on ``phydm_dig_go_up_check`` (an NHM-histogram test), but that gate
+    early-returns ``true`` whenever ``bb_op_mode == PHYDM_PERFORMANCE_MODE`` [SRC]
+    phydm_dig.c:50 — and this driver assigns ``phydm_op_mode = PHYDM_PERFORMANCE_MODE`` exactly
+    once and never flips it (only SoftAP would use BALANCE) [SRC] hal_dm.c:202. So in monitor
+    mode ``go_up_check`` is always-true dead code and its NHM-gating branches never run. This is
+    also why the NHM 12-bin histogram read in ``_nhm`` is discarded — its only DIG consumer is
+    that inert gate. (Verified comment-blind 2026-07-07; do not re-flag as a port gap.)"""
     if cnt_all > _FA_TH[2]:
         return igi + _STEP[0]
     if cnt_all > _FA_TH[1]:

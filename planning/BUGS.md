@@ -98,14 +98,14 @@ Clean, no known bugs: **rt2500usb, rt3070, rt5372, rtl8821au (mainline)**.
   reference AP — a real ~18% gap (after the 16s-vs-14s span artifact), concentrated on weaker /
   adjacent-channel APs (ch1/2 parity, ch3–11 deficits). Ruled out by live RX-counter instrumentation:
   USB/software drop (we deliver 92–97% of chip-demodulated frames) and gross DIG deafness (IGI parks
-  0x20–0x22, sensitive). Real port simplification found: our DIG omits `phydm_dig_go_up_check` + the
-  NHM→DIG feedback (we read the NHM histogram each tick and discard it), so on noisy channels IGI
-  over-climbs ~2 steps (~1–2 dB) where the vendor stays sensitive — directional but modest, not a full
-  ~18% by itself. No single smoking gun; likely DIG-simplification + small busy-channel pipeline loss
-  (ch11 8%) + sweep span/measurement confounds. Fixable lead (RX-behavior change, not applied): port
-  `phydm_dig_go_up_check` + wire the NHM histogram into DIG; validate with the kernel IGI beside ours
-  (VM). NB mainline had a *smaller* sweep gap than dkms, so a default flip isn't justified on rate
-  [RTL8188EUS_DKMS.md].
+  0x20–0x22, sensitive). DIG is fully faithful in monitor: `phydm_dig_go_up_check` (and its NHM→DIG
+  feedback) is dead code here — it early-returns true in `PHYDM_PERFORMANCE_MODE`, which this driver
+  assigns once and never flips (hal_dm.c:202), so our unconditional IGI raise matches the vendor's
+  0x20→0x22 step. (Verified 2026-07-07; documented in `dig._new_igi_by_fa` — not ported, it'd be a
+  no-op.) No single smoking gun. Remaining port-side lead: a small busy-channel pipeline loss (ch11
+  92% vs ch1 97% of chip-demodulated frames — URB/buffer under load); the rest is sweep
+  span/measurement confounds + environment. NB mainline had a *smaller* sweep gap than dkms, so a
+  default flip isn't justified on rate [RTL8188EUS_DKMS.md].
 - EFUSE board options: resolved for register-wire correctness — antenna (`0xC9`) and regulatory
   (`0xC1`) are inert in this build, channel plan (`0xB8`) is SW-only; the one wire-affecting byte,
   external-PA/LNA (`0xCA[3:2]`), is now fail-loud (`efuse.assert_board_options_ported`). Residual: an

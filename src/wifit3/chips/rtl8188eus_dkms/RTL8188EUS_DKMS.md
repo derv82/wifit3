@@ -142,12 +142,16 @@ Autonomous RX-gap + verify-audit pass (4 captures incl. the new `usb_dumps_new2/
   lowers `rx_gain_range_max`) when the noise is broadband/filterable, keeping the chip sensitive. We
   also read the NHM 12-bin histogram each tick in `_nhm` and **discard it** (no NHM→DIG feedback).
   Measured effect: on busy ch11 our IGI stepped 0x20→0x22 where the gated vendor may hold 0x20 — a
-  modest ~2-step (~1–2 dB) over-climb, in the weak-signal-loss direction but not a full ~18 %
-  explanation. Best read: the gap is this + a small busy-channel pipeline loss (ch11 8 %) + the
-  sweep's span/measurement confounds, no one dominating. **Fixable lead (RX-behavior change, not
-  applied): port `phydm_dig_go_up_check` + feed the already-read NHM histogram into the DIG go-up
-  decision; validate with the kernel's IGI beside ours (VM). verify_pcap can't catch it — the quiet
-  cold-boot capture never drives FA high enough to raise IGI, so the missing gate never fires there.**
+  modest ~2-step (~1–2 dB) over-climb. **Correction (same day, deeper source read): that lead is a
+  dead end — `phydm_dig_go_up_check` early-returns `true` in `PHYDM_PERFORMANCE_MODE` [SRC]
+  phydm_dig.c:50, and this driver assigns `phydm_op_mode = PHYDM_PERFORMANCE_MODE` exactly once and
+  never flips it (only SoftAP would use BALANCE) [SRC] hal_dm.c:202. So the gate + its NHM feedback
+  are always-true dead code in monitor mode, our unconditional IGI raise is already faithful, and our
+  0x20→0x22 step is what the vendor does too. Porting it would be pure dead code, not correctness —
+  not done; instead `dig._new_igi_by_fa` now documents the verified omission.** So the DIG is fully
+  faithful in monitor; the remaining port-side lead is the small **busy-channel pipeline loss** (ch11
+  92% vs ch1 97% of chip-demodulated frames — a URB/buffer-under-load question), the rest being the
+  sweep's span/measurement confounds and environment.
 - **RXFLTMAP before/after (monkeypatched, not committed):** re-adding the pre-`92cdf326`
   `RXFLTMAP0/1/2 = 0xffff` ACK-flood gave the reference AP 6.2/s vs the fixed 6.5/s and 4003 vs 4294 all-AP
   beacons — a real but **marginal +5–7%**, not the theorized big lever. Keep the fix (faithful +
