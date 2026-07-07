@@ -175,10 +175,14 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
+| **Grade** | **93% (A)** | 2026-07-06 | Faithful dual-band port, linux-parity RX, full suite. |
+| RX | ✅ | 2026-07-06 | mud2g 7.6/8.3 (92%), mud 8.9/9.7 (92%); breadth 109/43 (matches, best 2.4); RSSI −1.5 dB. |
+| Port | ✅ | 2026-07-06 | Matches mt76x2u both bands. |
 | Handshake | ✅ | 2026-05-31 | Full M1–M4. |
 | PMKID | ✅ | 2026-05-31 | Passive + active. |
 | WEP | ✅ | 2026-05-31 | Replay + ChopChop. |
 | WPS | ✅ | 2026-05-31 | PIN + PBC. |
+| ACKs | ✅ | 2026-05-31 | WPS PIN/PBC → auto-ACK. |
 | Stress | ✅ | 2026-06-05 | 30-min dual-band soak, flat. |
 
 → [MT76X2U.md](src/wifit3/chips/mt76x2u/MT76X2U.md)
