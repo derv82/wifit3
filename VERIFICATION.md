@@ -219,12 +219,15 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-06-10 | Healthy ~8.5 bcn/s. |
-| Deauth | ✅ | 2026-06-10 | Live deauth → reconnect; byte-match w/ aireplay-ng. |
+| **Grade** | **92% (A)** | 2026-07-06 | Faithful port, linux-parity RX, full attack suite, flat soak. |
+| RX | ✅ | 2026-07-06 | mud2g 6.6 vs linux 7.1 (93%); breadth 75 vs 79; RSSI +0.7 dB; 0 cross-channel. |
+| Port | ✅ | 2026-07-06 | Matches linux (rt2800usb); accurate RSSI — unlike the RT5572 rt2800usb port's +8/+11 offset. |
+| Deauth | ✅ | 2026-06-10 | Live → reconnect; byte-match w/ aireplay-ng. |
 | Handshake | ✅ | 2026-06-10 | Deauth → 4-way (~27 EAPOL/30 s). |
 | PMKID | ✅ | 2026-06-10 | Capture + active extract. |
 | WEP | ✅ | 2026-06-10 | ARP replay + ChopChop. |
 | WPS | ✅ | 2026-06-10 | PIN + PBC. |
+| ACKs | ✅ | 2026-06-10 | WPS PIN/PBC → auto-ACK. |
 | Stress | ✅ | 2026-06-10 | 30-min 14-ch soak (PAU05 + PAU06), flat. |
 
 → [RT5372.md](src/wifit3/chips/rt5372/RT5372.md) (default) · [RT2800USB.md](src/wifit3/chips/rt2800usb/RT2800USB.md) (rt2800usb fallback)
