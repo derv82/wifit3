@@ -106,6 +106,8 @@ Clean, no known bugs: **rt2500usb, rt3070, rt5372, rtl8821au (mainline)**.
 
 ### rtl8821cu_dkms
 - ⏳ WEP + Stress soak not yet run (Scan/handshake/PMKID/WPS confirmed on 2.4 + 5 GHz).
+- No bring-up progress — `connect()` sits at 0% then jumps to 100%, so the UI flashes straight to
+  Scanner with no feedback. Add ~5 `progress_cb` callbacks across the bring-up phases.
 
 ### rtw88_8814au (mainline) — prefer the DKMS variant
 - ⏳ Weak 2.4 GHz RX (2G AP −82 dBm vs 5G −54; 0.5–2 bcn/s vs ~10) — 2G AGC/gain suspect [RTL8814AU.md:74].

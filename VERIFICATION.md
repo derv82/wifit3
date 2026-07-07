@@ -300,12 +300,15 @@ Excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-06-24 | 2.4 + 5 GHz; fixed-ch1 ~6.5 bcn/s (kernel parity). |
+| **Grade** | **90% (A)** | 2026-07-06 | Provisional (soak pending). Faithful dual-band port, full attack suite. |
+| RX | ✅ | 2026-07-06 | mud2g 7.2/8.0 (90%), mud 8.8/9.3 (95%); breadth 73/29 (matches); RSSI +1.1 dB. |
+| Port | ✅ | 2026-07-06 | Matches linux-DKMS both bands. |
 | Handshake | ✅ | 2026-06-24 | 4-way captured. |
-| PMKID | ✅ | 2026-06-24 | Capture + active extract. |
-| WEP | ⬜ | — | Untested. |
+| PMKID | ✅ | 2026-06-24 | Capture + active extract (2.4 + 5). |
+| WEP | ✅ | 2026-07-06 | 2.4 ChopChop + ARP replay ~225 IVs/s (no 5 GHz WEP target). |
 | WPS | ✅ | 2026-06-24 | PBC — ~25 EAPOLs (HW-ACK forged MAC). |
-| Stress | ⬜ | — | Untested. |
+| ACKs | ✅ | 2026-06-24 | HW-ACK forged MAC (WPS + 5 GHz PMKID/deauth). |
+| Stress | ⬜ | — | Soak pending. |
 
 → [RTL8821CU_DKMS.md](src/wifit3/chips/rtl8821cu_dkms/RTL8821CU_DKMS.md)
 
