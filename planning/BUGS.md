@@ -58,6 +58,13 @@ RT5572, and RT3572 all emit `blacklist rt2800usb`, so uninstalling one card leav
 
 Clean, no known bugs: **rt2500usb, rt3070, rt5372, rtl8821au (mainline)**.
 
+### AR9271 (V1) is broken
+- v1 heard 1 AP total, nothing off channel 1 — its channel hopping is dead (mud2g 5.3/s on ch1 only
+  vs v2's 8.0/s across 71 APs, matching linux). v2 is the maintained clean-room re-port + the default.
+  TODO: delete v1 (`chips/ar9271/`), drop the `WIFIT3_AR9271` env var + v1 branch in `manager.py`,
+  remove v1 tests + mainline/v1 doc refs, then move `ar9271_v2` into its place (plain AR9271 driver,
+  no v2 suffix). Purge every v1 remnant *before* the move.
+
 ### rtl8187 (8187L)
 - ⏳ Injected deauth uses `duration=0` instead of the unicast-ACK NAV — minor TX nit [RTL8187L.md:296].
 - Limit: always cold-inits (no warm reattach) — replug to recover.
