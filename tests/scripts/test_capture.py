@@ -346,3 +346,13 @@ def test_injection_plan_5g_included_when_supported(tmp_path):
 
 def test_injection_plan_empty_with_no_targets(tmp_path):
     assert _capture(tmp_path)._injection_plan() == []
+
+
+def test_parse_wifi_ifaces_excludes_p2p():
+    txt = "phy#0\n\tInterface wlan0\n\t\ttype managed\nphy#4\n\tInterface p2p-dev-wlan0\n\tInterface wlan1\n"
+    assert Capture.parse_wifi_ifaces(txt) == {"wlan0", "wlan1"}
+
+
+def test_appeared_iface_picks_the_new_one():
+    after = Capture.parse_wifi_ifaces("\tInterface wlan0\n\tInterface wlan1\n")
+    assert sorted(after - {"wlan0"})[-1] == "wlan1"

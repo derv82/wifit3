@@ -80,7 +80,7 @@ class Capture:
     # different bus after firmware boot. All-buses is immune to the bus number and to
     # re-enumeration; the extract tooling filters by the vendor-control signature anyway.
     USBMON = "usbmon0"
-    BASE_IFACE = "wlan1"
+    BASE_IFACE = "wlan0"
     # Seconds to wait after "INSERT CARD NOW" for the operator to plug in and the
     # device to enumerate, before bringing up monitor mode.
     PLUG_IN_WAIT = 10
@@ -101,6 +101,8 @@ class Capture:
         self.fast_hop = fast_hop
 
         self.start_time = 0.0
+        self.base_iface = self.BASE_IFACE   # overridden in run() by appeared-after-plug detection
+        self.iface_baseline = set()
         self.mon_iface = None
         self.chipset = "unknown"
         self.tshark_proc = None
@@ -212,6 +214,18 @@ class Capture:
         return [line for line in after.splitlines()
                 if line.strip() and line not in before_lines]
 
+    @staticmethod
+    def parse_wifi_ifaces(iw_text):
+        """Non-p2p 802.11 netdev names from `iw dev` — the card's interface is
+        whichever of these appeared after plug-in (never hardcode wlan0/wlan1)."""
+        out = set()
+        for line in iw_text.splitlines():
+            if "Interface " in line:
+                name = line.split("Interface ")[1].strip()
+                if name and not name.startswith("p2p-"):
+                    out.add(name)
+        return out
+
     def throw(self, msg):
         self.logger.log_main(f"\n[ERROR] {msg}")
         self.cleanup()
@@ -284,7 +298,7 @@ class Capture:
         DKMS inventory, and the USB device tree."""
         cmds = [
             ["uname", "-a"],
-            ["ethtool", "-i", iface or self.BASE_IFACE],
+            ["ethtool", "-i", iface or self.base_iface],
             ["iw", "dev"],
             ["lsmod"],
             ["dkms", "status"],
@@ -581,8 +595,8 @@ class Capture:
         if self.mon_iface:
             subprocess.run(["sudo", "airmon-ng", "stop", self.mon_iface], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         else:
-            subprocess.run(["sudo", "airmon-ng", "stop", f"{self.BASE_IFACE}mon"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.run(["sudo", "airmon-ng", "stop", self.BASE_IFACE], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "airmon-ng", "stop", f"{self.base_iface}mon"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "airmon-ng", "stop", self.base_iface], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         self.logger.log_main("[+] Cleanup complete. Safe to unplug.")
 
@@ -639,6 +653,8 @@ class Capture:
         # Baseline the USB tree (our card not plugged yet) so snapshot_usb can
         # report exactly what appears — chipset-agnostic device identification.
         self.lsusb_baseline = self._lsusb()
+        self.iface_baseline = self.parse_wifi_ifaces(
+            subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout)
 
         # Give the operator time to plug the card in and let it enumerate before
         # bringing up monitor mode.
@@ -648,8 +664,19 @@ class Capture:
         # What appeared on the bus is the card.
         self.snapshot_usb("post-plug")
 
+        # The card's netdev is the wlan interface that appeared since the pre-plug
+        # baseline — same "whatever showed up IS the card" logic as the lsusb diff.
+        appeared = sorted(self.parse_wifi_ifaces(
+            subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout)
+            - self.iface_baseline)
+        if appeared:
+            self.base_iface = appeared[-1]
+            self.logger.log_main(f"[*] Card enumerated as: {self.base_iface}")
+        else:
+            self.logger.log_main(f"[!] No new wlan interface appeared; using {self.base_iface}.")
+
         # Monitor-mode bring-up — the one step that must succeed.
-        self.run_cmd(["sudo", "airmon-ng", "start", self.BASE_IFACE], fatal=True, timeout=30)
+        self.run_cmd(["sudo", "airmon-ng", "start", self.base_iface], fatal=True, timeout=30)
 
         # If the bus/device changed here, airmon re-enumerated the card (the
         # usbmon0 all-buses capture still catches it).
@@ -657,10 +684,10 @@ class Capture:
 
         # --- Interface / band / chipset detection ---
         iw_out = subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout
-        self.mon_iface = self.parse_monitor_iface(iw_out, self.BASE_IFACE)
+        self.mon_iface = self.parse_monitor_iface(iw_out, self.base_iface)
         if not self.mon_iface:
-            self.logger.log_main(f"[!] Warning: no monitor interface for {self.BASE_IFACE}. Falling back to {self.BASE_IFACE}.")
-            self.mon_iface = self.BASE_IFACE
+            self.logger.log_main(f"[!] Warning: no monitor interface for {self.base_iface}. Falling back to {self.base_iface}.")
+            self.mon_iface = self.base_iface
 
         freq_out = subprocess.run(["iwlist", self.mon_iface, "freq"], capture_output=True, text=True).stdout
         self.supports_5g = self.detect_5g(freq_out)
@@ -668,7 +695,7 @@ class Capture:
                              else "[!] 5GHz Support NOT detected. Skipping 5GHz sequence.")
 
         airmon_check = subprocess.run(["airmon-ng"], capture_output=True, text=True).stdout
-        self.chipset = self.parse_chipset(airmon_check, self.BASE_IFACE) or "unknown"
+        self.chipset = self.parse_chipset(airmon_check, self.base_iface) or "unknown"
         self.logger.log_main(f"[*] Detected Monitor Interface: {self.mon_iface}")
         self.logger.log_main(f"[*] Detected Chipset/Driver:  {self.chipset}")
 
