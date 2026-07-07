@@ -112,16 +112,23 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 ### RTL8812AU
 *ALFA AWUS036ACH · 2.4 / 5 GHz*
 
-> **Default = vendor/DKMS port** (table below). `WIFIT3_RTL8812=mainline` opts back (fixed-channel only).
+> **Default = vendor/DKMS port** (table below). `WIFIT3_RTL8812=mainline` opts back — but mainline
+> **wedges on 2.4↔5 GHz hopping** (RF synth loses lock; confirmed 2026-07-07, ch153/161 dropped), so
+> it's fixed-channel only. DKMS hops clean. *(The DKMS driver won't compile on kernel 6.19, so the
+> same-driver Port baseline couldn't be re-run fresh — Port ✅ is vs the prior linux-DKMS + a clean
+> live dual-band hop.)*
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-06-05 | 2.4 + 5 GHz, survives dual-band hop. |
+| **Grade** | **91% (A)** | 2026-07-07 | Clean dual-band DKMS default, full attack suite; mainline-wedge is opt-in only. |
+| RX | ✅ | 2026-07-07 | DKMS mud2g 6.4/s, mud 9.2/s, breadth 91/40; no wedge on the dual-band hop. |
+| Port | ✅ | 2026-07-07 | Clean dual-band hop; same-driver baseline stale (6.19 build fails) — see note. |
 | Deauth | ✅ | 2026-06-05 | Client drop + reconnect caught. |
 | Handshake | ✅ | 2026-06-05 | M2/M4 (ToDS) — crackable. |
 | PMKID | ✅ | 2026-06-05 | Capture + active extract. |
 | WEP | ✅ | 2026-06-05 | Replay + ChopChop. |
 | WPS | ✅ | 2026-06-05 | PIN + PBC. |
+| ACKs | ✅ | 2026-06-05 | HW-ACK forged MAC (WPS/PMKID). |
 | Stress | ✅ | 2026-06-05 | 30-min dual-band soak, flat. |
 
 → [RTL8812AU_DKMS.md](src/wifit3/chips/rtl8812au_dkms/RTL8812AU_DKMS.md) (default) · [RTL8812AU.md](src/wifit3/chips/rtl8812au/RTL8812AU.md) (mainline)

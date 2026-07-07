@@ -97,9 +97,11 @@ Clean, no known bugs: **rt2500usb, rt3070, rt5372, rtl8821au (mainline)**.
 - ⏳ EFUSE antenna/channel-plan hardcoded from the dev card — wrong on other 8188eus units [RTL8188EUS_DKMS.md:62].
 
 ### rtl8812au (mainline, opt-in `WIFIT3_RTL8812=mainline`)
-- Mainline still wedges on multi-band hopping (rtw88 HW limit) with no UI feedback. The default
-  (DKMS) driver is clean, so this bites only the opt-in legacy driver; the UI-feedback gap is the
-  "Hardware failures" item above [RTL8812AU.md:65].
+- Mainline wedges on multi-band hopping (rtw88 HW limit) with no UI feedback — confirmed 2026-07-07
+  (RF synth lost lock, ch153/161 dropped to ~0.5/s). The default (DKMS) driver hops clean, so this
+  bites only the opt-in legacy driver; the UI-feedback gap is the "Hardware failures" item above [RTL8812AU.md:65].
+- Note: the OOT DKMS driver (`rtl8812au` 5.13.6) won't compile on kernel 6.19 (`drv_types.h` include
+  path) — no fresh same-driver linux-DKMS baseline possible on this box; graded vs prior + live hop.
 
 ### rtl8821au_dkms
 - ⏳ 5 GHz deauth/TX (ch149) unverified on HW — offline byte-exact only; 2.4 GHz TX is confirmed [RTL8821AU_DKMS.md:75].
