@@ -136,25 +136,27 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 ### RTL8814AU
 *ALFA AWUS1900 · 2.4 / 5 GHz · 4T4R*
 
-> 🛑 **Not recommended — the driver's own maintainer says return the card.**
-> Nick Morrow ([@morrownr](https://github.com/morrownr)), maintainer of the out-of-tree
-> RTL8814AU driver this port is built from, calls it "old and hard to maintain," the RX
-> shortfall a "known problem," has no plans to fix it, and
-> [recommends getting a refund on the AWUS1900](https://github.com/morrownr/USB-WiFi/discussions/531#discussioncomment-11123137).
-> Our testing matches: strong nearby 2.4 GHz APs lose ~90% of beacons — a hardware-level
-> limit, present in mainline `rtw88_8814au` too. 5 GHz and distant APs work. Prefer an
-> RTL8812AU / RTL8821AU or MT7921AU.
+> **Good card, our port wedges it — the D is on us, not the silicon.** Driven directly by the
+> out-of-tree `rtl8814au` (DKMS) driver, the AWUS1900 runs deauth + 2.4/5 GHz hopping cleanly; under
+> wifit3 it wedges (2.4 RX drops, 5 GHz intermittent) once TX + hopping mix. Steady-dwell RX, breadth,
+> and RSSI all match the OOT driver (mud2g 7.1 vs 8.4 bcn/s, RSSI +0.2 dB), so the bug is in our port's
+> TX/hop state handling — fixable, not hardware. 5 GHz steady is strong.
+> *(morrownr, the OOT maintainer, separately advises against the AWUS1900 over his mainline driver's
+> RX shortfall — a different, driver-specific concern from our wedge.)*
 
-> **Default = vendor/DKMS port** (table below). `WIFIT3_RTL8814=mainline` opts back (both behave the same).
+> **Default = vendor/DKMS port.** `WIFIT3_RTL8814=mainline` opts back.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ❌ | 2026-06-17 | Strong nearby AP decays 5→2 bcn/s over 60 s. |
+| **Grade** | **60% (D)** | 2026-07-06 | Port wedges under TX + 2.4/5 GHz hopping; hardware, steady RX, and attacks are fine. |
+| RX | ⚠️ | 2026-07-06 | Steady dwell strong (mud2g 7.1 vs OOT 8.4/s; breadth 82/48); 2.4 drops under hopping. |
+| Port | ⚠️ | 2026-07-06 | Steady RX + RSSI (+0.2 dB) match OOT; wedges under TX+hop where OOT stays clean — dynamic-path bug. |
 | Handshake | ✅ | 2026-06-05 | Deauth → 4-way. |
 | PMKID | ✅ | 2026-06-05 | Passive + active. |
 | WEP | ✅ | 2026-06-05 | Replay + ChopChop. |
 | WPS | ✅ | 2026-06-05 | PIN + PBC. |
-| Stress | ❌ | 2026-06-17 | Strong-near-AP decays within 60 s. |
+| ACKs | ✅ | 2026-06-05 | WPS PIN/PBC completed → auto-ACK works. |
+| Stress | ❌ | 2026-06-17 | Soak decays; wedges under sustained TX+hop. |
 
 → [RTL8814AU.md](src/wifit3/chips/rtw88_8814au/RTL8814AU.md) (mainline) · [RTL8814AU_DKMS.md](src/wifit3/chips/rtl8814au_dkms/RTL8814AU_DKMS.md) (default)
 
