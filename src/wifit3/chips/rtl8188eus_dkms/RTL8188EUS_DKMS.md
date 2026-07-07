@@ -14,10 +14,11 @@ reconnected, 20/20 captured EAPOL to/from it). RX is promiscuous both directions
 data is captured, so the crackable WPA M2 is reachable (no ToDS-filter gap). `verify_pcap` is clean
 end-to-end on all three captures.
 
-Default stays `mainline` until a hardware A/B (`beacon_watch.py`, before/after the RXFLTMAP fix
-below) settles the re-port. Untested/un-walked: uncaptured TX-desc variants, 40 MHz, power-save,
-sreset recovery, and the runtime IQK/LCK/power-track triggers — no wire ground-truth exists for any
-of these.
+Default still ships `mainline`, but the RX A/B that gated the flip has now run (2026-07-07, see Debug
+log): the DKMS port is at **kernel parity** on the reference AP (6.5 vs 6.2 bcn/s), so flipping the
+default to `dkms` is a user decision, not a blocked-on-evidence one. Untested/un-walked: uncaptured
+TX-desc variants, 40 MHz, power-save, sreset recovery, and the runtime IQK/LCK/power-track triggers —
+no wire ground-truth exists for any of these.
 
 ## Gotchas
 
@@ -37,13 +38,20 @@ chip state (extract the real efuse / chip-version from the pcap, never trust the
 claims), then diff our emitted bytes against it. Treat every `always / never runs / no-op / we skip`
 comment as a hypothesis to falsify.
 
-**efuse fields are hardcoded from this one dev card; two are non-default and silently ignored.** We
-decode the full 512 B logical map but use only MAC, TX power, crystal, thermal. This card's antenna
-option (`0xC9 = 0x03`, programmed) and channel plan (`0xB8 = 0xA2`, programmed) are non-default and
-ignored — RX-inert here but wrong for another 8188eus. The PA/LNA option (`0xCA`) is blank `0xFF`, so
-"matches internal iPA+iLNA" only via the blank→internal default; a card with `0xCA` programmed
-external needs `PHY_SetRFEReg_8188E` ported. The fix is to wire from the map we already hold and
-fail-loud (`NotImplementedError` naming the byte) on non-default fields whose handling isn't ported.
+**efuse fields are read live, but board-option bytes are decoded-and-ignored — and only ONE of them
+touches the wire.** MAC / TX-power / crystal / thermal all come from the *real* 512 B logical map,
+not hardcoded. Of the ignored board-option bytes, most are inert **in this driver build**: the
+antenna option (`0xC9 = 0x03`) never reaches the wire (`CONFIG_ANTENNA_DIVERSITY` off, [SRC]
+autoconf.h:94 — `_InitAntenna_Selection` is a no-op), the regulatory bits of the board option
+(`0xC1[2:0]`) are dead code (`CONFIG_TXPWR_LIMIT_EN` off, Makefile), and the channel plan
+(`0xB8 = 0xA2`) only picks the SW channel list (no register write). The *one* byte that changes what
+the chip is programmed with on another unit is the PA/LNA select `0xCA[3:2]`: this card is blank
+`0xFF` → `iPA+iLNA`, so `PHY_SetRFEReg_8188E` early-returns and our static RF/AGC replay matches — but
+a card with an external PA or LNA needs `PHY_SetRFEReg_8188E` [SRC] rtl8188e_phycfg.c:1993 (writes
+0x40 / 0xEE8 / 0x87C) **and** the external-LNA AGC table, neither ported. `efuse.
+assert_board_options_ported` now fails loud (`NotImplementedError` naming `0xCA`) on any
+external-PA/LNA unit rather than running silently mis-tuned. (Verified comment-blind 2026-07-07: all
+four captures are the same physical dev card — identical MAC and identical board bytes.)
 
 **Two more deferred items, non-default but real:** the receiver-blocking NBI notch arms only with
 `rtw_adaptivity_en=1` (e.g. ETSI), and powertrack IQK/LCK only fires on ≥8 °C thermal drift.
@@ -55,8 +63,10 @@ the whole capture. So `chan.set_channel` skipping IQK is correct, and the `0xe30
 look IQK-adjacent are the BB-config table verbatim.
 
 **Two async 2 s producers interleave the single EP0 stream** (load-bearing for replay):
-- An `R REG_SYS_CFG(0xF0)/4` poll fires at arbitrary, non-lock-serialized points — filtered out
-  globally as a named, counted waiver (not the silent-reset timer).
+- The `R REG_SYS_CFG(0xF0)/4` reads are all identified and reproduced now — chip-version at probe,
+  the TX-power-track foundry read at the RF-config tail, and the per-tick `phydm_receiver_blocking`
+  read — **none is waived** (the earlier "global SYS_CFG waiver" is gone; verify_pcap.py has no
+  SYS_CFG filter).
 - The `rtw_dynamic_chk_wk_hdl` tick is one IO-locked burst per ~2 s (never splits a channel tune):
   silent-reset status poll (`sreset.status_check`) then the no-link phydm watchdog
   (`dig.watchdog_tick`) — both reproduced, not waived; DM state carries across all 22 ticks.
@@ -95,6 +105,34 @@ extracted by `scripts/rtl8188eus_dkms/extract_fw.py`.
 - `deauth_hw.py` — live TX smoke test (deauth + reconnect + EAPOL capture).
 
 ## Debug log
+
+### 2026-07-07 — RX gap is at kernel parity; waiver audit; efuse guard landed
+
+Autonomous RX-gap + verify-audit pass (4 captures incl. the new `usb_dumps_new2/captures_8188eu`).
+
+- **RX gap effectively closed — it was the environment, not the port.** 60 s cold soak on the
+  reference AP (−56 dBm, strong), fixed ch1: our DKMS **port** live = **6.5 bcn/s
+  (67% of the 9.77/s ceiling)**; the DKMS **kernel** driver's own bulk-IN on the same AP from the 7/6
+  USB capture (`beacon_watch_usbcap.py`) = **6.2 bcn/s (63%)**. Two independent implementations hit
+  the same ~63–67% on a *strong* AP → the loss is on-air congestion (39 APs on ch1), not a port
+  defect. The doc's old "5.3 vs 7.0 (76%)" is stale (different environment/measurement). A −74 dBm AP
+  out-scored the −56 dBm reference AP in the same run → not sensitivity. **Recommendation: the RXFLTMAP-fix
+  "flip default to dkms" gate can be considered satisfied — the port matches the kernel.**
+- **RXFLTMAP before/after (monkeypatched, not committed):** re-adding the pre-`92cdf326`
+  `RXFLTMAP0/1/2 = 0xffff` ACK-flood gave the reference AP 6.2/s vs the fixed 6.5/s and 4003 vs 4294 all-AP
+  beacons — a real but **marginal +5–7%**, not the theorized big lever. Keep the fix (faithful +
+  slightly better); it is not the whole story.
+- **verify_pcap waiver audit (all 4 PASS):** the only waived ops are aireplay-ng's injected TX —
+  all bulk-OUT sits in the capture tail (82–91% in), zero bulk-OUT between init-end and the first
+  injected frame (the vendor driver TX's nothing in NOLINK monitor), and the waived `REG_TX_RPT_TIME`
+  writes are the firmware RA's timestamp-derived values that aireplay's TX triggers (the init
+  `0xCDF0`/`0x3DF0` writes are *matched*, not waived). Nothing vendor-bring-up is wrongly waived. A
+  true zero-waiver gate would need a *passive* cold-boot capture (no aireplay) — none of the 4 are.
+  Open idea: byte-check the vendor 32 B TX-descriptor prefix of each injected frame (waive only the
+  aireplay 802.11 payload) so the injected txdesc stops being 100% unverified offline.
+- **efuse:** `assert_board_options_ported` added (fail-loud on external PA/LNA `0xCA[3:2]≠3`). See
+  the Gotchas rewrite: `0xC9`/`0xC1`/`0xB8` are inert in this build; `0xCA` is the only wire-affecting
+  board byte and this dev card is internal (`0xFF`). All 4 captures still replay byte-for-byte.
 
 ### 2026-06-16 — the efuse gap class (and why a code-reading audit missed it)
 

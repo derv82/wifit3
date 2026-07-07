@@ -92,9 +92,16 @@ Clean, no known bugs: **rt2500usb, rt3070, rt5372, rtl8821au (mainline)**.
 - Limit: mainline RX tops ~77 % with collapses; the DKMS re-port is the better card.
 
 ### rtl8188eus_dkms
-- RX-perf gap confirmed same-driver: wifit3-DKMS 5.3 vs linux-DKMS (8188eu) 7.0 bcn/s on the
-  reference AP (76%); breadth + RSSI match, so it's RX throughput specifically, cause unconfirmed [RTL8188EUS_DKMS.md:12].
-- ⏳ EFUSE antenna/channel-plan hardcoded from the dev card — wrong on other 8188eus units [RTL8188EUS_DKMS.md:62].
+- RX-perf gap NOT reproduced (2026-07-07): on the reference AP our DKMS port live = 6.5 bcn/s (67%
+  ceiling) vs the DKMS *kernel* driver's own bulk-IN 6.2 (63%) — parity. Both cap ~63–67% on a strong
+  −56 dBm AP → congested-ch1 on-air loss, not a port defect (the old "5.3 vs 7.0/76%" was
+  environment). Open item is now a *decision*: flip the default from `mainline` to `dkms`, since the
+  port matches the kernel [RTL8188EUS_DKMS.md].
+- EFUSE board options: resolved for register-wire correctness — antenna (`0xC9`) and regulatory
+  (`0xC1`) are inert in this build, channel plan (`0xB8`) is SW-only; the one wire-affecting byte,
+  external-PA/LNA (`0xCA[3:2]`), is now fail-loud (`efuse.assert_board_options_ported`). Residual: an
+  external-PA/LNA unit is *refused*, not supported (needs `PHY_SetRFEReg_8188E` + the ext-LNA AGC
+  table) [RTL8188EUS_DKMS.md].
 
 ### rtl8812au (mainline, opt-in `WIFIT3_RTL8812=mainline`)
 - Mainline wedges on multi-band hopping (rtw88 HW limit) with no UI feedback — confirmed 2026-07-07
