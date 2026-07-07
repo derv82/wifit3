@@ -96,12 +96,16 @@ Clean, no known bugs: **rt2500usb, rt3070, rt5372, rtl8821au (mainline)**.
   a strong AP: port 6.5/s ≈ kernel-usbcap 6.2/s (parity). But the 7/6 SAME-SESSION Kali sweep A/B
   (hops 1–13 @ 15 s, our driver vs kernel `8188eu`, same box) shows port 5.3 vs kernel 7.0 on the
   reference AP — a real ~18% gap (after the 16s-vs-14s span artifact), concentrated on weaker /
-  adjacent-channel APs (ch1/2 parity, ch3–11 deficits). Ruled out: per-hop RX ramp, DIG/AGC watchdog
-  (Windows dig on/off = noise), RXFLTMAP flood (fix predates 7/6; fixed-channel A/B only ±5–7%).
-  Suspects: runtime RX-pipeline drop on marginal beacons and/or platform (our driver on Linux vs
-  Windows). Definitive next step: same-session Kali A/B with current code (needs the card attached to
-  the VM). NB mainline had a *smaller* sweep gap than dkms here, so a default flip isn't justified on
-  rate [RTL8188EUS_DKMS.md].
+  adjacent-channel APs (ch1/2 parity, ch3–11 deficits). Ruled out by live RX-counter instrumentation:
+  USB/software drop (we deliver 92–97% of chip-demodulated frames) and gross DIG deafness (IGI parks
+  0x20–0x22, sensitive). Real port simplification found: our DIG omits `phydm_dig_go_up_check` + the
+  NHM→DIG feedback (we read the NHM histogram each tick and discard it), so on noisy channels IGI
+  over-climbs ~2 steps (~1–2 dB) where the vendor stays sensitive — directional but modest, not a full
+  ~18% by itself. No single smoking gun; likely DIG-simplification + small busy-channel pipeline loss
+  (ch11 8%) + sweep span/measurement confounds. Fixable lead (RX-behavior change, not applied): port
+  `phydm_dig_go_up_check` + wire the NHM histogram into DIG; validate with the kernel IGI beside ours
+  (VM). NB mainline had a *smaller* sweep gap than dkms, so a default flip isn't justified on rate
+  [RTL8188EUS_DKMS.md].
 - EFUSE board options: resolved for register-wire correctness — antenna (`0xC9`) and regulatory
   (`0xC1`) are inert in this build, channel plan (`0xB8`) is SW-only; the one wire-affecting byte,
   external-PA/LNA (`0xCA[3:2]`), is now fail-loud (`efuse.assert_board_options_ported`). Residual: an

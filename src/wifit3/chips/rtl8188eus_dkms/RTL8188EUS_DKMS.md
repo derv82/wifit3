@@ -130,6 +130,24 @@ Autonomous RX-gap + verify-audit pass (4 captures incl. the new `usb_dumps_new2/
   a *smaller* sweep gap than dkms on 7/6 (6.1 vs 6.9 = −0.8, vs dkms's −1.7), so a default flip is NOT
   justified on rate. **Definitive next step: a same-session Kali A/B with current code (our driver vs
   kernel on the same box), which needs the card attached to the VM.**
+- **Cause — narrowed by live RX-counter instrumentation (no single smoking gun).** Wired the DIG
+  watchdog to log, per tick, IGI + FA + the chip's own crc_ok/err counters (already read at
+  0xF84/88/90/94 in `_read_fa_counters` and discarded) vs frames we actually deliver. Result: on ch1
+  we deliver **97 %** of chip-demodulated frames (ch11 **92 %**), and IGI parks at **0x20–0x22**
+  (sensitive; our fixed clamp `[0x1c, 0x2a]` matches the vendor no-link `[dm_dig_min, dig_max_of_min]`
+  — verified in `phydm_dig` lines 452/775-798, FA thresholds `{2000,4000,5000}` also match). So it is
+  **neither** a USB/software drop **nor** gross DIG deafness. The one real port simplification found:
+  our `_new_igi_by_fa` raises IGI on FA count **unconditionally**, but the vendor gates every IGI
+  *increase* on `phydm_dig_go_up_check` — an **NHM-noise-histogram** test that blocks the raise (and
+  lowers `rx_gain_range_max`) when the noise is broadband/filterable, keeping the chip sensitive. We
+  also read the NHM 12-bin histogram each tick in `_nhm` and **discard it** (no NHM→DIG feedback).
+  Measured effect: on busy ch11 our IGI stepped 0x20→0x22 where the gated vendor may hold 0x20 — a
+  modest ~2-step (~1–2 dB) over-climb, in the weak-signal-loss direction but not a full ~18 %
+  explanation. Best read: the gap is this + a small busy-channel pipeline loss (ch11 8 %) + the
+  sweep's span/measurement confounds, no one dominating. **Fixable lead (RX-behavior change, not
+  applied): port `phydm_dig_go_up_check` + feed the already-read NHM histogram into the DIG go-up
+  decision; validate with the kernel's IGI beside ours (VM). verify_pcap can't catch it — the quiet
+  cold-boot capture never drives FA high enough to raise IGI, so the missing gate never fires there.**
 - **RXFLTMAP before/after (monkeypatched, not committed):** re-adding the pre-`92cdf326`
   `RXFLTMAP0/1/2 = 0xffff` ACK-flood gave the reference AP 6.2/s vs the fixed 6.5/s and 4003 vs 4294 all-AP
   beacons — a real but **marginal +5–7%**, not the theorized big lever. Keep the fix (faithful +
