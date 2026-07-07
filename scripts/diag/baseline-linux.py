@@ -98,16 +98,61 @@ def feed_pcap(health: Health, path: str, channel: int) -> None:
     print(f"  CH{channel:>3}: {n} frames from {Path(path).name}", file=sys.stderr)
 
 
+def parse_monitor_iface(iw_text: str, base_iface: str) -> str | None:
+    """The monitor-type interface sharing ``base_iface``'s phy (the ``wlanNmon``
+    airmon-ng created). Mirrors ``capture.py``'s parser verbatim so the baseline
+    resolves the same interface the capture pipeline did."""
+    target_phy = current_phy = None
+    for line in iw_text.splitlines():
+        if line.startswith("phy"):
+            current_phy = line.strip().split("#")[-1]
+        if f"Interface {base_iface}" in line:
+            target_phy = current_phy
+            break
+    current_phy = current_iface = None
+    for line in iw_text.splitlines():
+        if line.startswith("phy"):
+            current_phy = line.strip().split("#")[-1]
+        if "Interface " in line:
+            current_iface = line.split("Interface ")[1].strip()
+        if "type monitor" in line and current_phy == target_phy:
+            return current_iface
+    return None
+
+
+def setup_monitor(base_iface: str) -> str:
+    """Bring ``base_iface`` up in monitor mode with the SAME airmon-ng dance the
+    capture pipeline uses [SRC] scripts/capture.py:634,679 — so the kernel driver
+    is in the identical RX config the cold-boot capture recorded and wifit3
+    reproduces. Without ``check kill`` NetworkManager/wpa_supplicant keep scanning
+    and pollute the kernel's RX, biasing the A/B. Returns the monitor iface name."""
+    print(f"[*] airmon-ng check kill + start {base_iface} (matching capture.py)", file=sys.stderr)
+    subprocess.run(["sudo", "airmon-ng", "check", "kill"],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if subprocess.run(["sudo", "airmon-ng", "start", base_iface]).returncode != 0:
+        raise SystemExit(f"[-] airmon-ng start {base_iface} failed")
+    iw_out = subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout
+    mon = parse_monitor_iface(iw_out, base_iface) or f"{base_iface}mon"
+    print(f"[*] monitor interface: {mon}", file=sys.stderr)
+    return mon
+
+
+def teardown_monitor(mon_iface: str) -> None:
+    subprocess.run(["sudo", "airmon-ng", "stop", mon_iface],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def capture(iface: str, channel: int, secs: int) -> str | None:
     """iw set channel + tcpdump for ``secs`` into a temp pcap; return its path, or
-    None if the channel can't be tuned (e.g. regulatory-disabled — 2.4 ch12-13 in US)."""
-    if subprocess.run(["iw", "dev", iface, "set", "channel", str(channel)]).returncode != 0:
+    None if the channel can't be tuned (e.g. regulatory-disabled — 2.4 ch12-13 in US).
+    ``iface`` is the airmon monitor interface (``sudo`` to match the capture pipeline)."""
+    if subprocess.run(["sudo", "iw", "dev", iface, "set", "channel", str(channel)]).returncode != 0:
         print(f"  CH{channel:>3}: set channel failed (regulatory-disabled?) — skipping", file=sys.stderr)
         return None
     out = tempfile.NamedTemporaryFile(suffix=f"-ch{channel}.pcap", delete=False).name
     print(f"  CH{channel:>3}: capturing {secs}s...", file=sys.stderr)
     subprocess.run(
-        ["timeout", str(secs), "tcpdump", "-i", iface, "-w", out, "-U"],
+        ["sudo", "timeout", str(secs), "tcpdump", "-i", iface, "-w", out, "-U"],
         check=False,  # timeout exits non-zero by design
     )
     return out
@@ -117,7 +162,11 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Linux-side card health baseline.")
     p.add_argument("--chip", required=True, help="Chip slug for the output filename.")
     p.add_argument("--capture", action="store_true", help="Capture live (Kali, root).")
-    p.add_argument("--iface", default="wlan0mon", help="Monitor interface (capture mode).")
+    p.add_argument("--iface", default="wlan0",
+                   help="BASE interface (capture mode); airmon-ng brings it to monitor.")
+    p.add_argument("--no-airmon", action="store_true",
+                   help="Skip the airmon-ng dance; use --iface as an existing monitor iface "
+                        "(NOT recommended — the A/B must match how the capture started the driver).")
     p.add_argument("--channels", default="1,6,11", help="Channels (capture mode).")
     p.add_argument("--secs", type=int, default=15, help="Seconds per channel (capture mode).")
     p.add_argument("--pcap", nargs="+", default=[], metavar="CH=FILE",
@@ -126,10 +175,15 @@ def main() -> int:
 
     health = Health(args.chip, "linux")
     if args.capture:
-        for ch in (int(c) for c in args.channels.split(",") if c.strip()):
-            path = capture(args.iface, ch, args.secs)
-            if path is not None:
-                feed_pcap(health, path, ch)
+        mon = args.iface if args.no_airmon else setup_monitor(args.iface)
+        try:
+            for ch in (int(c) for c in args.channels.split(",") if c.strip()):
+                path = capture(mon, ch, args.secs)
+                if path is not None:
+                    feed_pcap(health, path, ch)
+        finally:
+            if not args.no_airmon:
+                teardown_monitor(mon)
     elif args.pcap:
         for spec in args.pcap:
             ch, _, path = spec.partition("=")

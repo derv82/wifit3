@@ -153,6 +153,31 @@ def _peers(path: Path, source: str) -> list[dict]:
     return out
 
 
+def _best_channel_persec(rollup: dict, bssid: str) -> tuple[dict, int]:
+    """(per_sec, span) for ``bssid`` on the channel where it was heard most."""
+    best = None
+    for d in rollup["channels"].values():
+        ap = d["aps"].get(bssid)
+        if ap and (best is None or ap["beacons"] > best[0]):
+            best = (ap["beacons"], ap["per_sec"], d["seconds"])
+    return (best[1], best[2]) if best else ({}, 0)
+
+
+def _rate_matched(w: dict, lin: dict, bssid: str) -> tuple[float, float, int]:
+    """Beacon rate for ``bssid`` in each rollup over a COMMON window — the min of the
+    two observed spans. Removes the dwell/span asymmetry (baseline-wifit3 dwells ~16 s
+    vs baseline-linux ~14 s, and rate = beacons/span) that otherwise reads as a
+    systematic ~12% penalty on wifit3 on every AP. Returns (wrate, lrate, window)."""
+    wps, wspan = _best_channel_persec(w, bssid)
+    lps, lspan = _best_channel_persec(lin, bssid)
+    window = min(wspan, lspan) or max(wspan, lspan)
+    if window == 0:
+        return 0.0, 0.0, 0
+    wsum = sum(v for s, v in wps.items() if int(s) < window)
+    lsum = sum(v for s, v in lps.items() if int(s) < window)
+    return wsum / window, lsum / window, window
+
+
 def diff(wifit3_path: str | Path, linux_path: str | Path) -> None:
     w, lin = load(wifit3_path), load(linux_path)
     chip = w.get("chip", "?")
@@ -172,12 +197,15 @@ def diff(wifit3_path: str | Path, linux_path: str | Path) -> None:
             line += " | best so far" if wn >= best else f" | {best - wn} fewer than best card ({best})"
         out.append(line)
 
-    # Beacon rate from the reference AP (the one linux heard most).
-    ref, lrate = _best_rate(lin)
+    # Beacon rate from the reference AP (the one linux heard most), compared over a
+    # matched window so the baseline-wifit3-vs-baseline-linux dwell asymmetry doesn't
+    # masquerade as a driver gap. 0.3/s tolerance = sampling noise, not a real deficit.
+    ref, _ = _best_rate(lin)
     if ref:
-        wrate = _rate_for(w, ref)
-        line = f"Beacon rate (reference AP): {wrate:.1f}/sec | "
-        line += "matches linux" if wrate >= lrate else f"{lrate - wrate:.1f} below linux ({lrate:.1f}/sec)"
+        wrate, lrate, window = _rate_matched(w, lin, ref)
+        line = f"Beacon rate (reference AP, matched {window}s window): {wrate:.1f}/sec | "
+        line += ("matches linux" if wrate >= lrate - 0.3
+                 else f"{lrate - wrate:.1f} below linux ({lrate:.1f}/sec)")
         out.append(line)
 
     # RSSI agreement on common BSSIDs (same card => a consistent gap is a decode bug).
