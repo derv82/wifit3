@@ -14,11 +14,12 @@ reconnected, 20/20 captured EAPOL to/from it). RX is promiscuous both directions
 data is captured, so the crackable WPA M2 is reachable (no ToDS-filter gap). `verify_pcap` is clean
 end-to-end on all three captures.
 
-Default still ships `mainline`, but the RX A/B that gated the flip has now run (2026-07-07, see Debug
-log): the DKMS port is at **kernel parity** on the reference AP (6.5 vs 6.2 bcn/s), so flipping the
-default to `dkms` is a user decision, not a blocked-on-evidence one. Untested/un-walked: uncaptured
-TX-desc variants, 40 MHz, power-save, sreset recovery, and the runtime IQK/LCK/power-track triggers —
-no wire ground-truth exists for any of these.
+Default still ships `mainline`. The RX A/B is nuanced (2026-07-07, see Debug log): the DKMS port is at
+**kernel parity fixed-channel on a strong AP** (6.5 vs 6.2 bcn/s) but shows a **real ~18 % gap in the
+hopping sweep** (7/6 same-session Kali A/B: 5.3 vs 7.0 on the reference AP, concentrated on weaker
+APs) — and mainline had a *smaller* sweep gap than dkms there, so the flip is **not** justified on RX
+rate yet. Untested/un-walked: uncaptured TX-desc variants, 40 MHz, power-save, sreset recovery, and
+the runtime IQK/LCK/power-track triggers — no wire ground-truth exists for any of these.
 
 ## Gotchas
 
@@ -106,18 +107,29 @@ extracted by `scripts/rtl8188eus_dkms/extract_fw.py`.
 
 ## Debug log
 
-### 2026-07-07 — RX gap is at kernel parity; waiver audit; efuse guard landed
+### 2026-07-07 — RX gap: parity fixed-channel, but REAL in the hopping sweep; waiver audit; efuse guard
 
 Autonomous RX-gap + verify-audit pass (4 captures incl. the new `usb_dumps_new2/captures_8188eu`).
 
-- **RX gap effectively closed — it was the environment, not the port.** 60 s cold soak on the
-  reference AP (−56 dBm, strong), fixed ch1: our DKMS **port** live = **6.5 bcn/s
-  (67% of the 9.77/s ceiling)**; the DKMS **kernel** driver's own bulk-IN on the same AP from the 7/6
-  USB capture (`beacon_watch_usbcap.py`) = **6.2 bcn/s (63%)**. Two independent implementations hit
-  the same ~63–67% on a *strong* AP → the loss is on-air congestion (39 APs on ch1), not a port
-  defect. The doc's old "5.3 vs 7.0 (76%)" is stale (different environment/measurement). A −74 dBm AP
-  out-scored the −56 dBm reference AP in the same run → not sensitivity. **Recommendation: the RXFLTMAP-fix
-  "flip default to dkms" gate can be considered satisfied — the port matches the kernel.**
+- **RX gap: parity on a fixed strong AP, but a REAL ~18% gap in the hopping sweep.** Fixed-channel
+  60 s cold soak on the reference AP (−56 dBm, strong), ch1: our DKMS **port** = **6.5 bcn/s (67% of
+  the 9.77/s ceiling)** vs the DKMS **kernel** driver's own bulk-IN on the same AP from the 7/6 USB
+  capture = **6.2 bcn/s (63%)** — parity. BUT the 7/6 **same-session Kali sweep A/B** (retrieved from
+  the VM: `linux-`/`wifit3-rtl8188eusdkms.json`, hops 1–13 @ 15 s, our driver vs the kernel `8188eu`
+  on the same box 4 min apart) shows **port 5.3 vs kernel 7.0 bcn/s** on the reference AP — a genuine
+  gap (~18 % after the 16 s-vs-14 s span artifact), concentrated on **weaker / adjacent-channel APs**:
+  ch1/2 are parity (+0.0/+0.3), ch3–11 are deficits (ch7 −2.4, ch3 −1.7, ch11 −1.5). So the earlier
+  "gap closed" read held only fixed-channel-on-a-strong-AP; the hopping / weak-signal case is real.
+- **Cause — ruled out so far:** per-hop RX ramp (the reference AP's per-second shape starts strong at
+  sec 0 — no leading-low ramp, so it is not a settle/ramp loss); the DIG/AGC watchdog (a Windows
+  dig-on vs dig-off sweep is pure noise — breadth 90 vs 92, per-channel deltas balanced both ways);
+  the RXFLTMAP flood (the fix `92cdf326` predates the 7/6 run by a month, and the fixed-channel
+  before/after is only ±5–7 %, below). Remaining suspects: a runtime RX-pipeline drop on marginal
+  beacons, and/or a platform component (our PyUSB driver on Linux vs Windows — today's Windows sweep
+  looks healthier: breadth 90, 5–8/s, comparable to/better than the 7/6 linux run). Note mainline had
+  a *smaller* sweep gap than dkms on 7/6 (6.1 vs 6.9 = −0.8, vs dkms's −1.7), so a default flip is NOT
+  justified on rate. **Definitive next step: a same-session Kali A/B with current code (our driver vs
+  kernel on the same box), which needs the card attached to the VM.**
 - **RXFLTMAP before/after (monkeypatched, not committed):** re-adding the pre-`92cdf326`
   `RXFLTMAP0/1/2 = 0xffff` ACK-flood gave the reference AP 6.2/s vs the fixed 6.5/s and 4003 vs 4294 all-AP
   beacons — a real but **marginal +5–7%**, not the theorized big lever. Keep the fix (faithful +
