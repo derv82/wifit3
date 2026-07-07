@@ -212,12 +212,15 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-06-11 | Healthy, 2.4 + 5 GHz. |
+| **Grade** | **80% (B)** | 2026-07-06 | Best-in-batch RX + faithful port; capped by no-auto-ACK (conversational attacks). |
+| RX | ✅ | 2026-07-06 | mud2g 8.6/8.9 (97%), mud 9.3/9.6 (97%); breadth 112/52 (best 2.4, matches); RSSI −1.4 dB. |
+| Port | ✅ | 2026-07-06 | Matches mt76 both bands — the B is the driver's ACK limit, not the port. |
 | Deauth | ✅ | 2026-06-12 | Live deauth dropped client. |
 | Handshake | ✅ | 2026-06-12 | Deauth → 4-way (28 EAPOL, M1–M4). |
 | PMKID | ⚠️ | 2026-06-23 | Auto-ACKing not supported. |
 | WEP | ✅ | 2026-06-12 | ChopChop + ARP replay ~350 IVs/s. |
 | WPS | ⚠️ | 2026-06-23 | Auto-ACKing not supported. |
+| ACKs | ❌ | 2026-06-23 | mt76 has no active-monitor auto-ACK (see note above). |
 | Stress | ✅ | 2026-06-19 | 30-min 38-ch dual-band soak, flat. |
 
 → [MT7921AU.md](src/wifit3/chips/mt7921au/MT7921AU.md)
