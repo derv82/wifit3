@@ -27,7 +27,6 @@ Clean, no known bugs: **rt2500usb, rt2800usb, rt3070, rt5372, rtl8821au (mainlin
 
 ### mt76x2u (AWUS036ACM)
 - ⏳ Endpoint stability across power cycles unknown; channel-switch wants ~2 s settle [MT76X2U.md].
-- ⏳ RX-poll unverified on HW [MT76X2U.md].
 
 ### rtl8188eus (mainline) — prefer the DKMS variant
 - ⏳ Intermittent RX collapse — bad windows hear the reference AP worse than further neighbours [RTL8188EUS.md].

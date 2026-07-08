@@ -74,6 +74,13 @@ cross-reference.
 
 ## Debug log
 
+### 2026-07-08 — RX-poll (RxDrainer) re-verified dual-band
+
+Confirmed the production `RxDrainer` bulk-IN path on hardware. `test_hw --phase rx` (ch6, 12 s): 835
+URBs, 0 dropped, 559 beacons, 25 unique BSSIDs. `--phase hop` (all SUPPORTED_CHANNELS): 110 unique
+BSSIDs (66× 2.4 GHz, 44× 5 GHz), frames on every populated channel, 5 GHz switches settling <300 ms.
+Clears the "RX-poll unverified" line in `BUGS.md`.
+
 ### 2026-07-08 — TSSI enabled by default; the "zeroes TX power" suspicion was false
 
 TSSI had been gated behind `WIFIT3_MT76X2U_TSSI=1` on a suspicion the periodic `tssi_compensate` loop
