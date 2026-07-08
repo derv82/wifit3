@@ -11,10 +11,12 @@ Cold init, firmware boot, and monitor RX all work on hardware — both bands, fi
 hopping, on par with the vendor driver (fixed-ch1 ~6.5 beacons/s vs the kernel's ~6.1–6.6/s).
 Active monitor (HW-ACK a forged MAC) works too — WPS-PBC HW-confirmed (see log).
 
-Two hardware bugs, both invisible to the byte-gate, were found and fixed (see Gotchas + log):
+Three hardware bugs, all invisible to the byte-gate, were found and fixed (see Gotchas + log):
 
 - the cross-band RX coin toss — `_dc_cancellation` is no longer called (its ck320 toggle killed RX).
 - fixed-channel 2.4 GHz dead — a reader-quieted band bounce in `connect` (`_prime_2g_band`).
+- runtime focus RX-dead + transient 5 GHz TX — the same reader-vs-RF18 race at runtime: a reader
+  pause across deliberate (`scan=False`) tunes + `inject` under `_io_lock`.
 
 Not done: ZeroCD discovery (the card enumerates as a CD-ROM — see Gotchas) and warm reattach.
 
@@ -64,6 +66,26 @@ match the vendor C, so grep the bundle's `driver-source/` to cross-reference.
 - `dc_ab.py` / `dc_steps.py` — the A/B harnesses that pinned the dc_cancellation ck320 bug; kept for re-validation.
 
 ## Debug log
+
+### 2026-07-08 — runtime RF18-vs-reader race: focus RX-dead + transient 5 GHz TX
+
+The cold-prime race (a concurrent bulk-IN reverts the `_switch_channel` RF18 read-modify-write) also
+bit at runtime, where only `_prime_2g_band` guarded it — one cause, two symptoms:
+
+- **Focus tune goes RX-dead** (fix a 5 GHz target while hopping 5 GHz): the one-shot `set_channel`
+  RF18 write was reverted by the reader, and with no further hop nothing re-landed it (hopping
+  self-heals, a fixed session doesn't — the cold-prime signature). `set_channel` now pauses the
+  reader across a deliberate (`scan=False`) tune; the hop path (`scan=True`) skips it (no per-hop
+  drain), and no RX is lost — the write already runs with TRX stopped.
+- **Transient 5 GHz TX** (PMKID/deauth needing retries): `inject_frame` held no lock, so a frame
+  could bulk-OUT mid-tune onto a stranded synth; it now runs under `_io_lock`.
+
+The vendor doesn't hit either: its RX is URB-based (no blocking reader to contend with the RF SIPI
+read) and TX is serialized via `setch_mutex` + the command thread — so the reader pause is our
+blocking-reader equivalent and the inject lock matches that discipline. `RxReaderThread` gained an
+opt-in `pause()`/`resume()` (8821cu-only). HW: a `scan=False` sweep of five 5 GHz channels (same-band
+5→5 focus tunes) caught beacons on all, 0 dead / 2 runs; user-confirmed reliable live TX, no RX-rate
+impact.
 
 ### 2026-06-24 — active-monitor (HW-ACK forged MAC)
 

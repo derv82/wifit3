@@ -109,6 +109,41 @@ async def test_reader_fires_on_fatal_immediately_on_device_gone():
 
 
 @pytest.mark.asyncio
+async def test_reader_pause_halts_reads_and_resume_restarts():
+    loop = asyncio.get_running_loop()
+    reads = {"n": 0}
+
+    def read_once():
+        reads["n"] += 1
+        return None  # benign idle -> the loop spins fast, so pause takes effect promptly
+
+    r = RxReaderThread(loop, read_once, lambda b: None, name="pause")
+    r.start()
+    try:
+        await asyncio.sleep(0.03)                       # let it issue some reads
+        paused = await loop.run_in_executor(None, r.pause)
+        assert paused is True                           # reached idle (no read in flight)
+        n_at_pause = reads["n"]
+        await asyncio.sleep(0.08)                       # while paused, no bulk-IN reads issued
+        assert reads["n"] == n_at_pause
+        r.resume()
+        for _ in range(50):                             # reads resume after resume()
+            if reads["n"] > n_at_pause:
+                break
+            await asyncio.sleep(0.02)
+        assert reads["n"] > n_at_pause
+    finally:
+        await r.stop()
+
+
+def test_pause_on_stopped_reader_returns_immediately():
+    # _prime_2g_band pauses an already-stopped reader; pause() must not hang there.
+    r = RxReaderThread(asyncio.new_event_loop(), lambda: None, lambda b: None, name="stopped")
+    assert r.pause() is True
+    r.resume()
+
+
+@pytest.mark.asyncio
 async def test_reader_skips_falsy_buffers():
     loop = asyncio.get_running_loop()
     seq = [b"", None, b"real"]

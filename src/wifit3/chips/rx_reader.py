@@ -40,6 +40,9 @@ logger = logging.getLogger(__name__)
 # immediately, then at most one summary line per this many seconds.
 _DROP_LOG_PERIOD = 2.0
 
+# While paused (pause()), the reader idles in this poll instead of issuing bulk-IN reads.
+_PAUSE_POLL_S = 0.003
+
 
 class RxReaderThread:
     def __init__(
@@ -62,6 +65,11 @@ class RxReaderThread:
         self._max_errors = max_errors
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        # Opt-in pause: a driver that runs a control sequence a concurrent bulk-IN would corrupt
+        # (the 8821cu RF18 read-modify-write) calls pause()/resume() around it. _pause_req asks the
+        # reader to idle; _paused acks that no read is in flight.
+        self._pause_req = threading.Event()
+        self._paused = threading.Event()
         # Fired (once, on the loop thread) when the reader gives up: an unplug (device-gone
         # USBError) or a wedged consecutive-error streak. The owner surfaces it as a hard
         # failure. Latched via _fatal_fired so a give-up can't fire it twice.
@@ -108,12 +116,33 @@ class RxReaderThread:
     def running(self) -> bool:
         return self._running
 
+    def pause(self, wait_timeout: float = 0.25) -> bool:
+        """Stop issuing bulk-IN reads and block until the reader is idle (no read in flight), so a
+        caller can run a control sequence a concurrent bulk-IN would corrupt — the 8821cu RF18
+        read-modify-write, which a live reader reverts. Returns True once idle (False if the
+        in-flight read didn't drain within wait_timeout; the caller proceeds regardless). Pair with
+        resume(). Opt-in; runs on any thread. No RX is lost when the caller has TRX stopped for the
+        write."""
+        self._pause_req.set()
+        if not self._running:
+            return True
+        return self._paused.wait(wait_timeout)
+
+    def resume(self) -> None:
+        """Release a pause(); the reader resumes bulk-IN reads on its next loop."""
+        self._paused.clear()
+        self._pause_req.clear()
+
     # -- thread side ---------------------------------------------------------
 
     def _run(self) -> None:
         consec_errors = 0
         next_report = time.monotonic() + 2.0 if self._stats else float("inf")
         while self._running:
+            if self._pause_req.is_set():
+                self._paused.set()          # ack: no read in flight, a pause() caller may proceed
+                time.sleep(_PAUSE_POLL_S)
+                continue
             try:
                 buf = self._read_once()
             except Exception as e:  # noqa: BLE001 — count + bail, don't crash the thread

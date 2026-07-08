@@ -83,7 +83,7 @@ class Rtl8821cuDkmsDriver:
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
         self._wifi_intf: Optional[int] = None       # claimed vendor (WiFi) interface number
-        self._io_lock = asyncio.Lock()              # serialize watchdog tick vs set_channel
+        self._io_lock = asyncio.Lock()              # serialize set_channel / inject / watchdog / mac-write
         self._wd_state = None
         self._watchdog_task = None
 
@@ -235,25 +235,50 @@ class Rtl8821cuDkmsDriver:
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         """Tune to ``channel`` via the phydm band/channel/bandwidth set (``chan.set_channel``,
         20 MHz). Requires a prior ``connect`` (needs the cached ``info``). Under a real loop the
-        tune is serialized with the watchdog tick (``_io_lock``) and offloaded; the offline gate
-        drives it synchronously (no running loop)."""
+        tune is serialized with inject / the watchdog tick (``_io_lock``) and offloaded; the offline
+        gate drives it synchronously (no running loop).
+
+        A deliberate (non-``scan``) tune pauses the RX reader across the switch: a concurrent
+        bulk-IN reverts the RF18 read-modify-write (documented HW race), and a one-shot focus/attack
+        tune has nothing to re-land it, so it would otherwise strand the synth — dead RX and
+        mis-tuned TX. Hopping (``scan``) self-heals (a later switch lands), so it skips the pause to
+        avoid the per-hop drain. No RX is lost either way: ``chan.set_channel`` stops TRX for the
+        RF18 write."""
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             chan.set_channel(self.transport, self.info, channel)
             return True
         async with self._io_lock:
-            await loop.run_in_executor(None, chan.set_channel, self.transport, self.info, channel)
+            reader = self._reader
+            pause = reader is not None and not scan
+            if pause:
+                await loop.run_in_executor(None, reader.pause)
+            try:
+                await loop.run_in_executor(None, chan.set_channel, self.transport, self.info, channel)
+            finally:
+                if pause:
+                    reader.resume()
         return True
 
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
         """Build the management TX descriptor for ``frame_bytes`` and bulk-OUT [desc][frame].
         BMC is derived from the frame's addr1; ``use_no_ack`` (single-shot, no retry) is the
         injection default the aireplay-ng capture uses. The descriptor builder is byte-verified
-        against that capture by the gate's inject branch."""
+        against that capture by the gate's inject branch.
+
+        Serialized under ``_io_lock`` so TX never overlaps a ``set_channel`` tune — otherwise a
+        frame can go out on a half-switched / stranded synth and the AP never hears it (the
+        transient 5 GHz-TX failures)."""
         pkt = tx.build_mgnt_txdesc(frame_bytes, qsel=_QSEL_MGNT, raid=_RAID_INJECT,
                                    retry_ctrl=not use_no_ack)
-        self.transport.bulk_out(pkt)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.transport.bulk_out(pkt)
+            return True
+        async with self._io_lock:
+            await loop.run_in_executor(None, self.transport.bulk_out, pkt)
         return True
 
     async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
