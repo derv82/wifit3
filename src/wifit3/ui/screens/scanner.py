@@ -556,7 +556,6 @@ class ScannerView(Screen):
             )
             save_result = save_handshake(ap, ev.client_mac)
         elif ev.kind == CaptureKind.UNCRACKABLE_HANDSHAKE:
-            # Not a ✓ win — a captured 4-way we withhold (EAP/OWE: no passphrase).
             msg = (
                 f"[bold yellow]● {escape(ev.value or '?')} 4-way[/bold yellow] on "
                 f"[bold]{ap_label}[/bold] [dim]— not crackable (-m 22000)[/dim]"
@@ -595,7 +594,6 @@ class ScannerView(Screen):
             verb = "saved" if save_result.was_new else "already saved as"
             self._write_log(Text.from_markup(treelog.leaf(
                 f"[dim]({verb} {escape(save_result.path.name)})[/dim]"), emoji=False))
-        # Non-blocking toast for the capture wins (dedup handled by the detector).
         title = CAPTURE_TOAST_TITLES.get(ev.kind)
         if title:
             name = ev.ssid or ev.bssid

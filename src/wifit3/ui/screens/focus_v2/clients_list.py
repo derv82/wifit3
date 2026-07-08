@@ -96,10 +96,8 @@ class ClientsList(Vertical):
         for btn in self.query(Button):
             btn.disabled = disabled
 
-    # The pinned 'Deauth all' button is always visible (composed): a broadcast
-    # deauth to ff:ff:ff:ff:ff:ff is valid even with no *known* clients — it hits
-    # every associated STA. It's greyed, not hidden, when deauth is blocked
-    # (PMF-Required), via set_deauth_enabled above.
+    # 'Deauth all' is always visible (broadcast deauth is valid with no known
+    # clients); set_deauth_enabled greys it when the AP refuses it (PMF-Required).
 
     # ----- helpers -----------------------------------------------------------
 

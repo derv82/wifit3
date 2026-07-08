@@ -98,9 +98,8 @@ class WlanInterface:
         # MACs we forged for active attacks (e.g. PMKID harvest). Frames to these come from
         # the AP, so skip client registration + handshake EAPOL retries (PMKID still runs).
         self.forged_macs: Set[str] = set()
-        # (bssid, forged_mac) pairs for which a Protected (encrypted) Data frame was
-        # seen — a probable EAPOL M1 the parser can't read (PMF/transition AP). The
-        # PMKID harvest reads this to report [PROTECTED] instead of a bare no-M1.
+        # (bssid, forged_mac) that received a Protected Data frame — a probable
+        # unreadable M1 the PMKID harvest reports as [PROTECTED].
         self._protected_to_forged: Set[tuple] = set()
 
         # Forged STA MAC for WEP fake-auth. Unlike forged_macs these ARE registered as a
@@ -168,10 +167,7 @@ class WlanInterface:
         self._track_client(pkt)
         self._on_eapol_frame(pkt)
 
-        # PMKID diagnosis: a Protected (encrypted) Data frame from a known AP to one
-        # of our forged MACs is almost certainly an EAPOL M1 we can't decode (PMF /
-        # WPA3-transition), routed to "data" by the FC Protected bit — note it so the
-        # harvest reports [PROTECTED] rather than a bare "no M1".
+        # A Protected Data frame to a forged MAC ≈ an unreadable M1 (see saw_protected_to_forged).
         if (pkt.protected and pkt.dest in self.forged_macs
                 and bssid in self.access_points):
             self._protected_to_forged.add((bssid.lower(), pkt.dest.lower()))

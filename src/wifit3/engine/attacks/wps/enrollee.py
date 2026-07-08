@@ -47,9 +47,7 @@ class WpsEnrollee:
         self.eapol_start_timeout = eapol_start_timeout
         self.overall_timeout = overall_timeout
         self.log = log or logger.debug
-        # Cooperative-stop probe (Campaign.stopped) — polled before each blocking
-        # recv so a user Stop aborts the ~30 s hold within one msg_timeout instead
-        # of running to the deadline. Default: never stop.
+        # Polled before each blocking recv so a user Stop aborts within one msg_timeout.
         self.should_stop = should_stop or (lambda: False)
 
     async def _send_1x(self, payload_1x: bytes) -> None:

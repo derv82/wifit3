@@ -98,10 +98,7 @@ _PAD_RATE = 0.4
 _ATTACK_BUTTONS = [
     ("btn-gen-ivs", "ARP Replay"), ("btn-chop", "ChopChop"), ("btn-pmkid", "PMKID"),
     ("btn-wps-pin", "WPS PIN"), ("btn-wpa3-down", "WPA ↓"),
-    # PBC has no idle button (it auto-invades an open walk window); this transient
-    # red button is shown by _refresh_buttons ONLY while a PBC capture is running,
-    # so the user can free the radio from a slow/stuck attempt. Not a Campaign in
-    # derive_buttons — driven directly (see _refresh_buttons / _user_stop_pbc).
+    # Transient — shown only while a PBC capture runs; driven directly, not via derive_buttons.
     ("btn-stop-pbc", "Stop PBC"),
 ]
 
@@ -219,9 +216,7 @@ class FocusViewV2(Screen):
         self._wpa3_down_attack: Optional[WPA3DowngradeAttack] = None
         self._pending_wps_pin = False   # WPS-PIN launch deferred past on_screen_resume's re-acquire
         self._pbc_campaign: Optional[WpsPbcCapture] = None
-        # Set when the user manually stops PBC: suppresses the per-tick auto-invade
-        # re-arm for the CURRENT walk window (cleared when the window closes), so
-        # "Stop PBC" actually frees the radio instead of re-arming next tick.
+        # Suppresses PBC auto-invade re-arm for the current window after a manual Stop.
         self._pbc_user_stopped = False
         self._pmkid_campaign: Optional[PmkidHarvestAttack] = None
         # Last packet_stats snapshot, diffed each tick to flicker the endpoint LEDs
@@ -312,8 +307,6 @@ class FocusViewV2(Screen):
         btn.disabled = state.disabled
         btn.label = state.label
         btn.variant = state.variant
-        # Hover tooltip explains WHY a button is disabled (e.g. PMKID on an AP whose
-        # encryption we can't confirm yet) instead of leaving it a mystery.
         btn.tooltip = state.reason or None
 
     def _refresh_buttons(self) -> None:
@@ -324,8 +317,6 @@ class FocusViewV2(Screen):
             return
         for bid, state in fm.derive_buttons(ap).items():
             self._apply_button(f"#{bid}", state)
-        # PBC's transient Stop button: not a Campaign in derive_buttons — shown red
-        # only while a capture is actually running (auto-invade has no idle button).
         stop_pbc = self.query_one("#btn-stop-pbc", Button)
         if self._pbc_busy():
             stopping = getattr(self._pbc_campaign, "stopped", False)
@@ -480,8 +471,7 @@ class FocusViewV2(Screen):
             self._finish_pmkid()
         if self._pbc_campaign is not None and self._pbc_campaign.done:
             self._finish_pbc_capture(ap)
-        # A manual Stop only suppresses THIS window; once it closes, a fresh window
-        # auto-invades again (PBC is on-by-default).
+        # Clear the manual-stop suppression when the window closes — a fresh one re-arms.
         if not ap.wps_pbc_active:
             self._pbc_user_stopped = False
         if (ap.wps_pbc_active and getattr(self.app, "pbc_enabled", True)
@@ -565,9 +555,7 @@ class FocusViewV2(Screen):
         # EAPOL frames + handshake completions go through the aggregator (one tidy
         # tree per client, deferred); PMKID / decloak stay immediate banners.
         for ev in self._events.poll(ap, forged_macs=forged_macs):
-            # Non-blocking toast for the capture wins (dedup handled by the detector);
-            # fired here so it lands whether the event is rendered by the aggregator
-            # (handshake) or _log_capture_event (pmkid) below.
+            # Toast before dispatch so it fires whichever branch renders the event.
             title = CAPTURE_TOAST_TITLES.get(ev.kind)
             if title:
                 name = ev.ssid or ev.bssid
@@ -671,8 +659,7 @@ class FocusViewV2(Screen):
         if action == "deauth_all":
             if ap is None:
                 return False
-            # Broadcast deauth is valid with no known clients (hits every STA); only
-            # greyed when the AP would refuse it (PMF-Required).
+            # Broadcast deauth is valid with no known clients; greyed only on PMF-Required.
             return None if fm.deauth_blocked(ap) else True
         return True
 
@@ -794,8 +781,7 @@ class FocusViewV2(Screen):
             result = save_pmkid(camp.target, camp.client_mac)
             hint = _save_line(result) if result is not None else None
             self._emit_lines(pmkid_success_lines(essid, hint))
-            # The active harvest's forged MAC is skipped by the detector's toast
-            # path, so fire the capture toast here to match the passive PMKID win.
+            # Detector skips forged MACs, so toast the active-harvest win here too.
             self.notify(camp.target.ssid or camp.target.bssid,
                         title=CAPTURE_TOAST_TITLES[CaptureKind.PMKID], timeout=6)
         else:
@@ -995,8 +981,7 @@ class FocusViewV2(Screen):
         if camp is None:
             return
         if getattr(camp, "stopped", False):
-            # User-stopped via the Stop-PBC button: close the tree cleanly now that
-            # the campaign has drained (all its M-branches are already logged).
+            # User-stopped: close the tree now that the campaign has drained.
             self._log(treelog.leaf(
                 "[yellow]stopped[/yellow] [dim](radio freed; auto-invade resumes on "
                 "the next window)[/dim]"))

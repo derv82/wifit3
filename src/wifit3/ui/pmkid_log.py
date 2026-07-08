@@ -53,8 +53,6 @@ def m1(has_pmkid: bool) -> str:
 
 def _fail_leaf(reason: Optional[PmkidFail]) -> str:
     if reason is PmkidFail.PROTECTED:
-        # An M1 DID arrive — encrypted (PMF/transition). Chip it so it reads as "the
-        # AP answered but we can't decode it", not the AP-silent NO_RESPONSE.
         return treelog.leaf_fail(
             "[black bold on orange1] PROTECTED [/black bold on orange1] "
             "[dim]M1 arrived encrypted (PMF/transition) — PMKID unreadable[/dim]")

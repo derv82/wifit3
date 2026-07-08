@@ -19,9 +19,8 @@ class Packet:
     rssi: int
     raw: bytes
     ssid: Optional[str] = None   # on beacon/probe_resp/probe_req/assoc_req; None elsewhere
-    # FC Protected bit on a Data frame: the body is ciphertext, so an EAPOL M1 that
-    # arrives encrypted (PMF / WPA3-transition AP) lands here as "data", never
-    # "eapol" — the PMKID harvest reads this to report [PROTECTED] vs a bare no-M1.
+    # FC Protected bit: an encrypted Data frame (an EAPOL M1 on a PMF/transition AP
+    # lands here as "data", not "eapol" — the PMKID harvest reads it for [PROTECTED]).
     protected: bool = False
 
 
