@@ -22,29 +22,24 @@ Clean, no known bugs: **rt2500usb, rt3070, rt5372, rtl8821au (mainline)**.
   no v2 suffix). Purge every v1 remnant *before* the move.
 
 ### rtl8187 (8187L)
-- ⏳ Injected deauth uses `duration=0` instead of the unicast-ACK NAV — minor TX nit [RTL8187L.md:296].
+- ⏳ Injected deauth uses `duration=0` instead of the unicast-ACK NAV — minor TX nit [RTL8187L.md].
 - Limit: always cold-inits (no warm reattach) — replug to recover.
 
 ### rt2800usb
-- ⏳ RX-poll (shared RxReaderThread) unverified on HW [RT2800USB.md:7].
 - RSSI over-reads +8/+11 dB (2.4/5 GHz) vs kernel on PAU09 — `eeprom_offset`+`lna_gain` zeroed in
-  `rx.py` [RT2800USB.md:151]. Beacon rate at kernel parity, but 2.4 breadth trails (87 vs 111 APs);
-  suspect the over-read feeds the link tuner [RT2800USB.md:123], de-sensitising marginal APs.
-- 5 GHz TX dead — `build_tx_descriptors` hardcodes `phymode=CCK` (2.4-only) [tx.py:85]; on 5 GHz the
-  RF band is set but frames emit as CCK, so nothing lands. HW-confirmed on RT5572: deauth / PMKID /
-  WPS-assoc all fail on 5 GHz, all work on 2.4; 5 GHz RX unaffected. Fix: band-conditional
-  `TXWI_PHYMODE_OFDM` (=1) + an OFDM rate on 5 GHz, like the MT76x2u CCK→OFDM inject fix.
-- ⏳ Focus → first `set_channel` tune is flaky ("a re-tune fixed it") [RT2800USB.md:525].
+  `rx.py` [RT2800USB.md]. Beacon rate at kernel parity, but 2.4 breadth trails (87 vs 111 APs);
+  suspect the over-read feeds the link tuner [RT2800USB.md], de-sensitising marginal APs.
+- ⏳ Focus → first `set_channel` tune is flaky ("a re-tune fixed it") [RT2800USB.md].
 
 ### mt76x2u (AWUS036ACM)
 - ⏳ 5 GHz inject unverified on HW (the CCK→OFDM rate fix is in) [MT76X2U.md].
-- ⏳ TSSI gated off; periodic `tssi_compensate` is suspected of zeroing TX power [MT76X2U.md:194].
-- ⏳ Endpoint stability across power cycles unknown; channel-switch wants ~2 s settle [MT76X2U.md:202-207].
-- ⏳ RX-poll unverified on HW [MT76X2U.md:7].
+- ⏳ TSSI gated off; periodic `tssi_compensate` is suspected of zeroing TX power [MT76X2U.md].
+- ⏳ Endpoint stability across power cycles unknown; channel-switch wants ~2 s settle [MT76X2U.md].
+- ⏳ RX-poll unverified on HW [MT76X2U.md].
 
 ### rtl8188eus (mainline) — prefer the DKMS variant
-- ⏳ Intermittent RX collapse — bad windows hear the reference AP worse than further neighbours [RTL8188EUS.md:38].
-- ⏳ Encryption mislabel (WPA2 shown as "WEP") — fix awaits HW reconfirm [RTL8188EUS.md:27].
+- ⏳ Intermittent RX collapse — bad windows hear the reference AP worse than further neighbours [RTL8188EUS.md].
+- ⏳ Encryption mislabel (WPA2 shown as "WEP") — fix awaits HW reconfirm [RTL8188EUS.md].
 - Limit: mainline RX tops ~77 % with collapses; the DKMS re-port is the better card.
 
 ### rtl8188eus_dkms
@@ -71,12 +66,12 @@ Clean, no known bugs: **rt2500usb, rt3070, rt5372, rtl8821au (mainline)**.
 ### rtl8812au (mainline, opt-in `WIFIT3_RTL8812=mainline`)
 - Mainline wedges on multi-band hopping (rtw88 HW limit) with no UI feedback — confirmed 2026-07-07
   (RF synth lost lock, ch153/161 dropped to ~0.5/s). The default (DKMS) driver hops clean, so this
-  bites only the opt-in legacy driver; no UI surfaces the mid-run RF-synth loss [RTL8812AU.md:65].
+  bites only the opt-in legacy driver; no UI surfaces the mid-run RF-synth loss [RTL8812AU.md].
 - Note: the OOT DKMS driver (`rtl8812au` 5.13.6) won't compile on kernel 6.19 (`drv_types.h` include
   path) — no fresh same-driver linux-DKMS baseline possible on this box; graded vs prior + live hop.
 
 ### rtl8821au_dkms
-- ⏳ 5 GHz deauth/TX (ch149) unverified on HW — offline byte-exact only; 2.4 GHz TX is confirmed [RTL8821AU_DKMS.md:75].
+- ⏳ 5 GHz deauth/TX (ch149) unverified on HW — offline byte-exact only; 2.4 GHz TX is confirmed [RTL8821AU_DKMS.md].
 
 ### rtl8821cu_dkms
 - ⏳ WEP + Stress soak not yet run (Scan/handshake/PMKID/WPS confirmed on 2.4 + 5 GHz).
@@ -84,9 +79,9 @@ Clean, no known bugs: **rt2500usb, rt3070, rt5372, rtl8821au (mainline)**.
   Scanner with no feedback. Add ~5 `progress_cb` callbacks across the bring-up phases.
 
 ### rtw88_8814au (mainline) — prefer the DKMS variant
-- ⏳ Weak 2.4 GHz RX (2G AP −82 dBm vs 5G −54; 0.5–2 bcn/s vs ~10) — 2G AGC/gain suspect [RTL8814AU.md:74].
-- ⏳ Fast-hop RX death — ~1 s of 0 frames/s at 0.25 s dwell; PLL relock eats the dwell [RTL8814AU.md:194].
-- ⚠️ Chip doc contradicts itself on `spur_calibration` (skipped vs ported) and IQK — resolve on HW [RTL8814AU.md:203/318].
+- ⏳ Weak 2.4 GHz RX (2G AP −82 dBm vs 5G −54; 0.5–2 bcn/s vs ~10) — 2G AGC/gain suspect [RTL8814AU.md].
+- ⏳ Fast-hop RX death — ~1 s of 0 frames/s at 0.25 s dwell; PLL relock eats the dwell [RTL8814AU.md].
+- ⚠️ Chip doc contradicts itself on `spur_calibration` (skipped vs ported) and IQK — resolve on HW [RTL8814AU.md].
 
 ### rtl8814au_dkms
 - Wedges under TX + 2.4/5 GHz hopping — 2.4 RX drops, 5 GHz goes intermittent. Steady RX + RSSI match
@@ -95,11 +90,11 @@ Clean, no known bugs: **rt2500usb, rt3070, rt5372, rtl8821au (mainline)**.
   silicon. Fresh OOT usbmon captures for the re-port: `usb_dumps_new2/captures_rtl8814au/` (run 3 = good 2G TX).
 
 ### rtl8822bu (mainline) — prefer the DKMS variant
-- ⏳ DIG watchdog unverified on HW (IGI was frozen → deaf/saturating) [RTL8822BU.md:18].
+- ⏳ DIG watchdog unverified on HW (IGI was frozen → deaf/saturating) [RTL8822BU.md].
 - Limit: EFUSE / TX-power calibration not implemented (mainline is the thinner port).
 
 ### rtl8822bu_dkms
-- ⏳ Strong-AP saturation — DIG must back gain off; near APs (~−41 dBm) need tuning to reach 8–10 bcn/s [RTL8822BU_DKMS.md:21].
-- ⏳ Cold-boot 2.4 GHz synth wedge (~20 % of boots) — `_heal_cold_synth` recovery added; confirm it holds across a soak [RTL8822BU_DKMS.md:44].
-- ⏳ Matched-load RX capture % unconfirmed vs vendor ~84 % (needs a quiet ch1) [RTL8822BU_DKMS.md:41].
-- ⚠️ Chip doc contradicts itself on the TX descriptor (unported vs byte-for-byte 251/251) — resolve [RTL8822BU_DKMS.md:262 vs 225].
+- ⏳ Strong-AP saturation — DIG must back gain off; near APs (~−41 dBm) need tuning to reach 8–10 bcn/s [RTL8822BU_DKMS.md].
+- ⏳ Cold-boot 2.4 GHz synth wedge (~20 % of boots) — `_heal_cold_synth` recovery added; confirm it holds across a soak [RTL8822BU_DKMS.md].
+- ⏳ Matched-load RX capture % unconfirmed vs vendor ~84 % (needs a quiet ch1) [RTL8822BU_DKMS.md].
+- ⚠️ Chip doc contradicts itself on the TX descriptor (unported vs byte-for-byte 251/251) — resolve [RTL8822BU_DKMS.md].
