@@ -48,6 +48,10 @@ SYSFS_USB = "/sys/bus/usb/devices"
 _NEVER_BLACKLIST = frozenset({
     "usbcore", "usbfs", "usbhid", "rfkill",
     "mac80211", "cfg80211", "ath", "ath9k_common", "ath9k_hw",
+    # Bluetooth stack — a combo Wi-Fi+BT card (e.g. RTL8821CU) binds btusb on its BT
+    # interface, and modprobe blacklist is module-global, so blacklisting it kills ALL
+    # system Bluetooth (this card's *and* the laptop's internal BT), not just this Wi-Fi card.
+    "btusb", "bluetooth", "btrtl", "btintel", "btbcm", "btmtk",
 })
 
 _REMOVED_MSG = ("Removed the udev rule + blocklist for this chipset. Replug the card to restore its "
@@ -133,12 +137,27 @@ def _bound_modules(ids) -> set[str]:
     return mods
 
 
+def _card_modaliases(ids):
+    """Every modalias for a matching card — device-level *and* per-interface. USB Wi-Fi drivers
+    (rt2800usb, ...) bind at the *interface* and match its modalias (``…icFFiscFF…``); some
+    devices/kernels expose *only* the interface modalias (no device-level one), so reading the
+    device level alone misses the driver entirely."""
+    for d in _matching_usb_dirs(ids):
+        a = _read(d / "modalias")
+        if a:
+            yield a
+        for intf in sorted(d.glob(f"{d.name}:*")):
+            a = _read(intf / "modalias")
+            if a:
+                yield a
+
+
 def _resolve_via_modalias(ids) -> set[str]:
     """Every module that *could* claim this card per the installed alias table — catches the
     mainline-and-DKMS-both-installed case the bound-driver read alone would miss."""
     if not shutil.which("modprobe"):
         return set()
-    aliases = {a for a in (_read(d / "modalias") for d in _matching_usb_dirs(ids)) if a}
+    aliases = set(_card_modaliases(ids))
     mods: set[str] = set()
     for alias in aliases:
         try:

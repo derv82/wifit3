@@ -116,6 +116,16 @@ def test_resolve_via_modalias_runs_modprobe_R_on_the_cards_modalias(tmp_path, mo
     assert seen["argv"][2].startswith("usb:v0CF3p9271")
 
 
+def test_card_modaliases_reads_interface_level_when_device_level_absent(tmp_path, monkeypatch):
+    # Real PAU09 (rt2800usb) behaviour: no device-level modalias, only the interface one — which is
+    # what the interface-bound driver matches. Reading the device level alone found nothing.
+    base = _fake_sysfs(tmp_path, monkeypatch, vid=0x148f, pid=0x5572, bound=None, modalias=None)
+    (base / "2-1" / "2-1:1.0" / "modalias").write_text(
+        "usb:v148Fp5572d0101dc00dsc00dp00icFFiscFFipFFin00\n")
+    assert set(lin._card_modaliases([(0x148f, 0x5572)])) == {
+        "usb:v148Fp5572d0101dc00dsc00dp00icFFiscFFipFFin00"}
+
+
 def test_discover_unions_bound_modalias_and_hint_and_drops_the_stack(tmp_path, monkeypatch):
     _fake_sysfs(tmp_path, monkeypatch, bound="rtw_8821au")
     monkeypatch.setattr(lin.shutil, "which", lambda n: "/sbin/modprobe")
@@ -126,6 +136,15 @@ def test_discover_unions_bound_modalias_and_hint_and_drops_the_stack(tmp_path, m
     # bound ∪ modalias-resolved ∪ hint, with the shared stack (mac80211) removed.
     assert mods == ["88XXau", "rtw_8821au"]
     assert "mac80211" not in mods
+
+
+def test_discover_never_blacklists_the_bluetooth_stack(tmp_path, monkeypatch):
+    # A combo Wi-Fi+BT card (RTL8821CU) binds btusb on its BT interface; blacklisting it would kill
+    # all system Bluetooth. discover must drop btusb (and the BT stack) and keep only the Wi-Fi leaf.
+    monkeypatch.setattr(lin, "SYSFS_USB", str(tmp_path / "empty"))
+    monkeypatch.setattr(lin, "_resolve_via_modalias", lambda ids: set())
+    t = _target(key="rtl8821cu", hints=("rtl8821cu", "btusb", "bluetooth"))
+    assert discover_kernel_modules(t) == ["rtl8821cu"]
 
 
 def test_discover_falls_back_to_hint_when_card_absent(tmp_path, monkeypatch):
