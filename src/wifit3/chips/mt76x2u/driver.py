@@ -18,6 +18,7 @@ import usb.core
 import usb.util
 
 from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
 from .chan import set_channel_20mhz, phy_channel_calibrate
@@ -231,22 +232,19 @@ class MT76x2UDriver:
         try:
             self._claim_interface()
         except usb.core.USBError as e:
-            logger.error("MT7612U: failed to claim interface: %s", e)
-            return False
+            raise BringUpError("claim", str(e)) from e
 
         try:
             self.transport.assert_expected_endpoints()
         except RuntimeError as e:
-            logger.error(str(e))
-            return False
+            raise BringUpError("endpoints", str(e)) from e
 
         if progress_cb:
             progress_cb(0.10, "Reading MT_ASIC_VERSION")
         try:
             self.asic_version = self.transport.read32(MT_ASIC_VERSION)
         except usb.core.USBError as e:
-            logger.error("MT7612U: ASIC version read failed: %s", e)
-            return False
+            raise BringUpError("asic-version", str(e)) from e
 
         # Low byte is the revision (E1/E3/E4...). High 16 bits are 0x7612 or
         # 0x7662 depending on the silicon strap.
@@ -291,7 +289,7 @@ class MT76x2UDriver:
         # ----- Cold path: power_on + FW upload + MCU init -----
         if not warm:
             if not await self._cold_init_chip(progress_cb):
-                return False
+                raise BringUpError("cold-init", "cold chip init failed")
 
         # ----- EEPROM (idempotent — chip-side EEPROM, FW not required) -----
         if progress_cb:
@@ -302,8 +300,7 @@ class MT76x2UDriver:
             self.nic_conf_0 = read_nic_conf_0(self.transport)
             self.nic_conf_1 = read_nic_conf_1(self.transport)
         except Exception as e:
-            logger.error("MT7612U: EEPROM read failed: %s", e)
-            return False
+            raise BringUpError("eeprom", str(e)) from e
         rx_path = self.nic_conf_0["rx_path"]
         tx_path = self.nic_conf_0["tx_path"]
         self.chainmask = ((tx_path & 0xF) << 8) | (rx_path & 0xF)
@@ -360,7 +357,7 @@ class MT76x2UDriver:
         # ----- MAC bring-up + per-station table clears -----
         mac_bytes = bytes(int(b, 16) for b in self.mac_address.split(":"))
         if not await self._init_mac_tables(mac_bytes, progress_cb):
-            return False
+            raise BringUpError("mac-tables", "MAC table init failed")
 
         # ----- BBP CR table via MCU — first wait_resp command -----
         # If we took the warm-skip path, this is the first command we send
@@ -371,8 +368,7 @@ class MT76x2UDriver:
             progress_cb(0.82, "MCU LOAD_CR (BBP coefficient table)")
         if not await mcu_load_cr(self.mcu, temp_level=0, channel=0):
             if not warm:
-                logger.error("MT7612U: mcu_load_cr failed (cold path)")
-                return False
+                raise BringUpError("mcu-load-cr", "LOAD_CR (BBP table) failed on the cold path")
             # Warm path: force a HARD power cycle + cold init + redo MAC
             # tables + retry. A plain reset_wlan + power_on isn't enough to
             # clear the chip's MCU register state (ROM-patch-applied bit,
@@ -389,20 +385,19 @@ class MT76x2UDriver:
             warm = False
             await force_power_cycle(self.transport)
             if not await self._cold_init_chip(progress_cb):
-                logger.error(
-                    "MT7612U: cold init failed after force_power_cycle. "
-                    "The chip is wedged from the previous session — please "
-                    "unplug and replug the USB device."
+                raise BringUpError(
+                    "cold-init",
+                    "cold init failed after a power cycle — the chip is wedged from the "
+                    "previous session; please unplug and replug the USB device.",
                 )
-                return False
             if not await self._init_mac_tables(mac_bytes, progress_cb):
-                return False
+                raise BringUpError("mac-tables", "MAC table init failed after a power cycle")
             if not await mcu_load_cr(self.mcu, temp_level=0, channel=0):
-                logger.error(
-                    "MT7612U: mcu_load_cr failed after force_power_cycle + "
-                    "cold reset. Please unplug and replug the USB device."
+                raise BringUpError(
+                    "mcu-load-cr",
+                    "LOAD_CR (BBP table) failed after a power cycle + cold reset — please "
+                    "unplug and replug the USB device.",
                 )
-                return False
             logger.info("MT7612U: power-cycle + cold-reset fallback succeeded")
 
         # ----- PHY rxpath/txdac (chainmask-dependent BBP toggles) -----
@@ -432,8 +427,7 @@ class MT76x2UDriver:
             txpower_conf=self._txpower_conf,
             set_txpower_enabled=self._set_txpower_enabled,
         ):
-            logger.error("MT7612U: set_channel(%d) failed", ch)
-            return False
+            raise BringUpError("channel-tune", f"set_channel({ch}) failed")
         # Heavy RF cal inline at bring-up — the kernel runs it on a non-scan
         # settle. Safe to block here: connect() runs in a worker thread, not
         # the UI loop. (Runtime tunes defer this to _periodic_calibrate.)
@@ -448,7 +442,7 @@ class MT76x2UDriver:
         if progress_cb:
             progress_cb(0.95, "Enabling RX (mac_start)")
         if not await mac_start(self.transport, monitor=True):
-            return False
+            raise BringUpError("mac-start", "mac_start (RX enable) failed")
 
         # connect() is idempotent: tear down any prior cal task / RX drainer
         # before (re)starting, so two cal threads or two drainers can never run

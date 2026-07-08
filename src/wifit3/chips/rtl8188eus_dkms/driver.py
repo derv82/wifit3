@@ -29,6 +29,7 @@ from typing import Callable, ClassVar, List, Optional
 import usb.core
 
 from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
@@ -109,10 +110,7 @@ class Rtl8188eusDkmsDriver:
         fw = _load_firmware()
         ready = await loop.run_in_executor(None, firmware.download_firmware, self.transport, fw)
         if not ready:
-            logger.error("RTL8188EUS firmware download did not reach WINTINI_RDY")
-            if progress_cb:
-                progress_cb(1.0, "Firmware NOT ready")
-            return False
+            raise BringUpError("firmware", "download did not reach WINTINI_RDY")
 
         if progress_cb:
             progress_cb(0.7, "Configuring MAC / BB / RF")

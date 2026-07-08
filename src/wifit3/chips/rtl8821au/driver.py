@@ -238,8 +238,7 @@ class RTL8821AUDriver:
             None, download_firmware_validate_legacy, self.transport
         )
         if not ok_run:
-            logger.error("FW_READY_LEGACY not satisfied (REG_MCUFW_CTRL=0x%08x)", last)
-            return False
+            raise BringUpError("firmware", f"FW_READY_LEGACY not satisfied (REG_MCUFW_CTRL=0x{last:08x})")
 
         _progress(0.70, "Post-FW MAC init")
         await loop.run_in_executor(None, post_fw_mac_init, self.transport, fifo)

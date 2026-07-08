@@ -168,8 +168,10 @@ class AR9271V2Driver:
         _p(0.30, "Waiting for AR9271 to re-enumerate...")
         redev = await self._await_reenumeration()
         if redev is None:
-            logger.error("ar9271_v2: card did not re-enumerate after firmware download")
-            return False
+            raise BringUpError(
+                "re-enumeration",
+                "card did not re-enumerate after firmware download — please replug and retry.",
+            )
         self.transport = AR9271Transport(redev)
 
         _p(0.40, "Claiming USB interface...")

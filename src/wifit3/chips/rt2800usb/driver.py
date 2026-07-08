@@ -51,6 +51,7 @@ import usb.core
 import usb.util
 
 from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.errors import BringUpError
 
 from .constants import (
     EEPROM_NIC_CONF1_ANT_DIVERSITY_MASK,
@@ -219,12 +220,11 @@ class RT2800USBDriver:
                 self.chip_id.raw, self.chip_id_hint,
             )
             if not self.chip_id.is_supported:
-                logger.error(
-                    "silicon ID 0x%04x not in M1 supported set "
-                    "(RT3572, RT5390, RT5592)",
-                    self.chip_id.silicon_id,
+                raise BringUpError(
+                    "chip-id",
+                    f"silicon ID 0x{self.chip_id.silicon_id:04x} not in the supported set "
+                    f"(RT3572, RT5390, RT5592)",
                 )
-                return False
 
             _progress(0.60, "Reading permanent MAC")
             mac_bytes = await loop.run_in_executor(
@@ -259,25 +259,20 @@ class RT2800USBDriver:
                     ),
                 )
             except IOError as e:
-                logger.error("firmware load failed: %s", e)
-                return False
+                raise BringUpError("firmware", str(e)) from e
 
             _progress(0.95, "Verifying post-FW state (PBF.READY)")
             from .constants import PBF_SYS_CTRL, PBF_SYS_CTRL_READY
             pbf = await loop.run_in_executor(None, self.transport.read32, PBF_SYS_CTRL)
             if not (pbf & PBF_SYS_CTRL_READY):
-                logger.error(
-                    "post-FW PBF.READY not set (PBF_SYS_CTRL=0x%08x)", pbf
-                )
-                return False
+                raise BringUpError("firmware", f"post-FW PBF.READY not set (PBF_SYS_CTRL=0x{pbf:08x})")
             logger.info("post-FW PBF_SYS_CTRL=0x%08x — READY latched", pbf)
 
             _progress(0.95, "Running rt2800usb_init_registers (M2b-1)")
             try:
                 await loop.run_in_executor(None, usb_init_registers, self.transport)
             except (IOError, usb.core.USBError) as e:
-                logger.error("usb_init_registers failed: %s", e)
-                return False
+                raise BringUpError("usb_init_registers", str(e)) from e
 
             pbf2 = await loop.run_in_executor(None, self.transport.read32, PBF_SYS_CTRL)
             pre_init = 1 << 13
@@ -299,8 +294,7 @@ class RT2800USBDriver:
                     self._eeprom.nic_conf1,
                 )
             except (IOError, usb.core.USBError) as e:
-                logger.error("EFUSE read failed: %s", e)
-                return False
+                raise BringUpError("efuse", str(e)) from e
 
             _progress(0.96, "Running rt2800_init_registers (M2b-2 MAC config)")
             try:
@@ -309,15 +303,13 @@ class RT2800USBDriver:
                     lambda: init_registers(self.transport, self.chip_id.silicon_id),
                 )
             except (IOError, usb.core.USBError) as e:
-                logger.error("init_registers failed: %s", e)
-                return False
+                raise BringUpError("init_registers", str(e)) from e
 
             _progress(0.965, "Preparing BBP (MCU_BOOT_SIGNAL + wait_bbp_ready)")
             try:
                 await loop.run_in_executor(None, prepare_bbp, self.transport)
             except (IOError, usb.core.USBError) as e:
-                logger.error("prepare_bbp failed: %s", e)
-                return False
+                raise BringUpError("prepare_bbp", str(e)) from e
 
             # init_bbp consumes txpath/rxpath only to gate
             # disable_unused_dac_adc (and, on RT5592, to pick BBP antenna
@@ -361,8 +353,7 @@ class RT2800USBDriver:
                     ),
                 )
             except (IOError, usb.core.USBError, ValueError, NotImplementedError) as e:
-                logger.error("init_bbp failed: %s", e)
-                return False
+                raise BringUpError("init_bbp", str(e)) from e
 
             _progress(0.98, "Running init_rfcsr (M2c RF init)")
             try:
@@ -375,8 +366,7 @@ class RT2800USBDriver:
                     ),
                 )
             except (IOError, usb.core.USBError, NotImplementedError) as e:
-                logger.error("init_rfcsr failed: %s", e)
-                return False
+                raise BringUpError("init_rfcsr", str(e)) from e
             if self._rf_cal is not None:
                 logger.info(
                     "RF filter cal: bw20=0x%02x bw40=0x%02x bbp25=0x%02x bbp26=0x%02x",
@@ -414,8 +404,7 @@ class RT2800USBDriver:
                     lambda: enable_radio(self.transport, self.chip_id.silicon_id),
                 )
             except (IOError, usb.core.USBError) as e:
-                logger.error("enable_radio failed: %s", e)
-                return False
+                raise BringUpError("enable_radio", str(e)) from e
 
             # Program the EEPROM-derived MAC so RX matching engine has identity.
             await loop.run_in_executor(
@@ -465,8 +454,7 @@ class RT2800USBDriver:
             return True
 
         except (IOError, usb.core.USBError, NotImplementedError) as e:
-            logger.error("rt2800usb M1 connect failed: %s", e)
-            return False
+            raise BringUpError("init", str(e)) from e
 
     # ---- RX loop --------------------------------------------------------
     # ---- RX callables for the shared RxReaderThread ---------------------

@@ -117,7 +117,14 @@ class WlanDriver(Protocol):
 
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         """Initialise the hardware. May upload firmware, run init sequences,
-        start RX loops, etc. Should yield (0..1, message) progress."""
+        start RX loops, etc. Should yield (0..1, message) progress.
+
+        On a bring-up failure, raise ``BringUpError(stage, detail)`` — do NOT
+        log-and-``return False``. A False return is swallowed into a generic
+        "failed to initialize" and the real stage/detail never reaches the user;
+        the raised error is surfaced by the splash as a setup-error modal naming
+        the failing stage. Returns True on success (the bool return exists for
+        the warm/no-op path)."""
         ...
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:

@@ -13,6 +13,7 @@ from .firmware import MT7921AUFirmwareLoader
 # ruff: noqa: F403, F405
 from .constants import *
 from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
 logger = logging.getLogger(__name__)
@@ -127,8 +128,7 @@ class MT7921AUDriver:
         if progress_cb:
             progress_cb(0.1, "Uploading firmware...")
         if not await self.firmware.load_firmware():
-            logger.error("Failed to load MT7921AU firmware.")
-            return False
+            raise BringUpError("firmware", "MT7921AU firmware load failed")
         self.transport.start_rx()   # idempotent — load_firmware already started it
 
         if progress_cb:

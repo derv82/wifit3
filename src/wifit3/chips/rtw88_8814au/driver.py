@@ -172,8 +172,7 @@ class RTL8814AUDriver:
                 None, download_firmware_validate, self.transport
             )
             if not ok_run:
-                logger.error("FW_READY not satisfied (REG_MCUFW_CTRL=0x%08x)", last)
-                return False
+                raise BringUpError("firmware", f"FW_READY not satisfied (REG_MCUFW_CTRL=0x{last:08x})")
             logger.info("RTL8814AU M1: firmware running (MCUFW_CTRL=0x%08x)", last)
 
         _progress(0.90, "TRX init (queue mapping + FIFO + LLT)")
@@ -201,7 +200,7 @@ class RTL8814AUDriver:
         # silent" lottery). The rx callback is None until connect() returns, so
         # frames drained during bring-up are simply discarded.
         if not await self._start_rx():
-            return False
+            raise BringUpError("rx", "RX pipe failed to start")
 
         # PHY/RF bring-up. The DIG-max-coverage seed + RX-aggregation-off fixes
         # made cold boots reliable, so the deaf re-roll is on probation: 1 attempt
@@ -234,10 +233,10 @@ class RTL8814AUDriver:
             logger.warning("RTL8814AU: RF-deaf on attempt %d/%d — re-rolling phy",
                            attempt + 1, _PHY_RF_ATTEMPTS)
         if not alive:
-            logger.error("RTL8814AU: RF stayed deaf after %d attempts. Please "
-                         "unplug, wait a few seconds, replug, and retry.",
-                         _PHY_RF_ATTEMPTS)
-            return False
+            raise BringUpError(
+                "phy/rf",
+                "RF stayed deaf after bring-up — please unplug, wait a few seconds, replug, and retry.",
+            )
 
         self.current_channel = 1
         self.current_band_is_2g = True

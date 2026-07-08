@@ -14,6 +14,7 @@ import pytest
 import usb.core
 from textual.widgets import Label
 
+from wifit3.chips.rt2800usb.driver import RT2800USBDriver
 from wifit3.chips.rtl8187.driver import RTL8187Driver
 from wifit3.errors import BringUpError
 from wifit3.ui.app import WifiteApp
@@ -27,6 +28,19 @@ async def test_driver_init_io_failure_becomes_bringuperror(monkeypatch):
     driver = RTL8187Driver(Mock())
     monkeypatch.setattr(driver, "_claim",
                         Mock(side_effect=usb.core.USBError("simulated control-transfer failure")))
+
+    with pytest.raises(BringUpError):
+        await driver.connect()
+
+
+@pytest.mark.asyncio
+async def test_rt2800usb_init_io_failure_becomes_bringuperror(monkeypatch):
+    """Second driver, same contract: the swallow-to-BringUpError conversion is a
+    fleet-wide change, so lock one of the converted drivers (rt2800usb wraps its whole
+    connect body) — a USB fault on the claim must raise, not return False."""
+    driver = RT2800USBDriver(Mock())
+    monkeypatch.setattr(driver, "_claim",
+                        Mock(side_effect=usb.core.USBError("simulated claim failure")))
 
     with pytest.raises(BringUpError):
         await driver.connect()

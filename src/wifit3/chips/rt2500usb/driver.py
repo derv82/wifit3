@@ -36,6 +36,7 @@ import usb.core
 import usb.util
 
 from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
 from . import monitor
@@ -222,11 +223,11 @@ class RT2500USBDriver:
                 # pipe often can't be recovered in userland — ask for a replug
                 # rather than thrash. [[feedback_warm_reattach]]
                 prog(0.5, "chip warm but bulk-IN wedged")
-                logger.error(
-                    "rt2500usb: bulk-IN pipe is wedged. Please unplug the "
-                    "device, wait ~5s, replug, and reconnect."
+                raise BringUpError(
+                    "warm reattach",
+                    "bulk-IN pipe is wedged — please unplug the device, wait ~5s, replug, "
+                    "and reconnect.",
                 )
-                return False
             else:
                 prog(0.35, "cold bring-up: init_registers + set_state(AWAKE)")
                 await loop.run_in_executor(
@@ -252,9 +253,10 @@ class RT2500USBDriver:
             self.is_warm = True
             prog(1.0, "connected")
             return True
+        except BringUpError:
+            raise
         except Exception as e:
-            logger.exception("rt2500usb connect failed: %s", e)
-            return False
+            raise BringUpError("init", str(e)) from e
 
     # ---- RX loop --------------------------------------------------------
     # ---- RX callables for the shared RxReaderThread ---------------------

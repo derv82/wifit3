@@ -19,6 +19,7 @@ from typing import Callable, Optional
 import usb.core
 
 from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.errors import BringUpError
 
 from .constants import (
     EP_IN_PKT_RX,
@@ -149,23 +150,23 @@ class MT76x0UDriver:
         _p(0.02, "Resetting & Claiming device…")
         fw_file = await asyncio.to_thread(self._connect_reset_claim)
         if fw_file is None:
-            return False
+            raise BringUpError("reset/claim", "USB reset/claim failed, or the firmware blob is missing")
 
         _p(0.06, "Uploading Firmware…")
         if not await asyncio.to_thread(self._connect_upload_fw, fw_file):
-            return False
+            raise BringUpError("firmware", "firmware upload failed")
 
         _p(0.45, "Initializing MAC…")
         if not await asyncio.to_thread(self._connect_init_mac):
-            return False
+            raise BringUpError("mac", "MAC init failed")
 
         _p(0.66, "Clearing tables")
         if not await asyncio.to_thread(self._connect_clear_tables):
-            return False
+            raise BringUpError("tables", "per-station table clear failed")
 
         _p(0.84, "Initing & Calibrating PHY…")
         if not await asyncio.to_thread(self._connect_init_phy):
-            return False
+            raise BringUpError("phy", "PHY init/calibration failed")
 
         # ----- Background RX drainer (now that TRX is fully live) -----
         from .rx import RxDrainer

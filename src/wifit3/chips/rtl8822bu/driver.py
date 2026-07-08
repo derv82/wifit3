@@ -200,8 +200,7 @@ class RTL8822BUDriver:
             None, download_firmware_validate, self.transport
         )
         if not ok_run:
-            logger.error("FW_READY not satisfied (REG_MCUFW_CTRL=0x%08x)", last)
-            return False
+            raise BringUpError("firmware", f"FW_READY not satisfied (REG_MCUFW_CTRL=0x{last:08x})")
 
         _progress(0.70, "PHY init (mac/bb/agc/rf tables)")
         await loop.run_in_executor(
@@ -233,21 +232,19 @@ class RTL8822BUDriver:
         loop = asyncio.get_event_loop()
         eps = probe_endpoints(self.dev)
         if not eps.bulk_in:
-            logger.error("no bulk-IN endpoint discovered")
-            return False
+            raise BringUpError("endpoints", "no bulk-IN endpoint discovered")
         self._bulk_in_ep = eps.primary_bulk_in
         self._bulk_out_eps = list(eps.bulk_out)
 
         await loop.run_in_executor(None, self._reset_bulk_pipes)
 
         if from_warm and not await self._rx_smoke_test():
-            logger.error(
-                "RTL8822BU: warm reattach succeeded but bulk-IN is wedged "
-                "(no frames in 1500ms). Please unplug + replug the dongle "
-                "and try again — the USB pipe state from the previous "
-                "session can't be reset in userland on Windows/WinUSB."
+            raise BringUpError(
+                "warm reattach",
+                "bulk-IN is wedged (no frames in 1500ms) — please unplug + replug the dongle "
+                "and try again; the USB pipe state from the previous session can't be reset "
+                "in userland on Windows/WinUSB.",
             )
-            return False
 
         # Force the monitor RX filter on BOTH paths — the warm path skips
         # mac_init_for_rx, and the cold init writes the STA RCR (no AAP) that
