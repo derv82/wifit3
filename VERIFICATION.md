@@ -23,6 +23,7 @@ works). *Deauth* is no longer a column — it works on every supported card.
 | [MT7612U](#mt7612u) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8821AU](#rtl8821au) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8812AU](#rtl8812au) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RTL8822BU](#rtl8822bu) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT3070](#rt3070) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5572](#rt5572) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
@@ -31,7 +32,6 @@ works). *Deauth* is no longer a column — it works on every supported card.
 | [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | B |
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ⚠️ | ❌ | ✅ | B |
 | [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ⚠️ | ❌ | ✅ | B |
-| [RTL8822BU](#rtl8822bu) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | C |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | D |
 | [RTL8821CU](#rtl8821cu) | ✅ | ✅ | ✅ | ⬜ | ✅ | ✅ | ⬜ | - |
 | [RT5370](#rt5370) | ✅ | ✅ | ✅ | ⬜ | ✅ | ✅ | ⬜ | - |
@@ -143,12 +143,15 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ❌ | 2026-06-17 | Strong nearby AP ~2.6 bcn/s (both ports). |
+| **Grade** | **90% (A)** | 2026-07-08 | Dual-band kernel-parity RX + full attack suite; supersedes the stale 2026-06-17 Scan ❌. |
+| RX | ✅ | 2026-07-08 | 2.4 6.5 vs 6.4/s (102%), 5 GHz 9.5 vs 9.7/s (99%); breadth 78/36 (2.4 matches; 5 GHz 36 vs 39); RSSI −0.5 dB; 0 silent. |
+| Port | ✅ | 2026-07-08 | Matches linux-DKMS (88x2bu) both bands — beacon rate, breadth, RSSI parity on the same-card A/B. |
 | Deauth | ✅ | 2026-06-16 | Dropped a real laptop + phone. |
 | Handshake | ✅ | 2026-06-16 | Deauth → full M1–M4. |
 | PMKID | ✅ | 2026-06-16 | Passive capture + extract. |
 | WEP | ✅ | 2026-06-16 | ChopChop + ARP replay ~225 IVs/s. |
 | WPS | ✅ | 2026-06-16 | PBC → PSK; PIN → M4. |
+| ACKs | ✅ | 2026-06-16 | HW-ACK forged MAC (WPS PBC/PIN). |
 | Stress | ✅ | 2026-06-16 | 30-min 38-ch soak, flat. |
 
 → [RTL8822BU_DKMS.md](src/wifit3/chips/rtl8822bu_dkms/RTL8822BU_DKMS.md) (default) · [RTL8822BU.md](src/wifit3/chips/rtl8822bu/RTL8822BU.md) (mainline)
