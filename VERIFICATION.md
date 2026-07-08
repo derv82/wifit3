@@ -34,7 +34,7 @@ works). *Deauth* is no longer a column — it works on every supported card.
 | [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ⚠️ | ❌ | ✅ | B |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | D |
 | [RTL8821CU](#rtl8821cu) | ✅ | ✅ | ✅ | ⬜ | ✅ | ✅ | ⬜ | - |
-| [RT5370](#rt5370) | ✅ | ✅ | ✅ | ⬜ | ✅ | ✅ | ⬜ | - |
+| [RT5370](#rt5370) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | - |
 
 ## Per-card notes
 
@@ -339,8 +339,9 @@ Excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate
 | Scan | ✅ | 2026-06-24 | BBP66 link tuning sees nearby AP ~7/s. |
 | Handshake | ✅ | 2026-06-24 | 4-way captured. |
 | PMKID | ✅ | 2026-06-24 | Capture + active extract. |
-| WEP | ⬜ | — | Untested. |
+| WEP | ✅ | 2026-07-08 | 2.4 GHz ChopChop + ARP replay ~200 IVs/s. |
 | WPS | ✅ | 2026-06-24 | PBC — 13 EAPOLs (HW-ACK forged MAC). |
+| ACKs | ✅ | 2026-07-08 | HW-ACK forged MAC (re-confirmed). |
 | Stress | ⬜ | — | Untested. |
 
 → [RT5370.md](src/wifit3/chips/rt5370/RT5370.md)
