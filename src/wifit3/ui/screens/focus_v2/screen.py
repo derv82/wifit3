@@ -566,6 +566,12 @@ class FocusViewV2(Screen):
             result = save_pmkid(ap, ev.client_mac)
             if result is not None:
                 self._log(treelog.leaf(_save_line(result)))
+        elif ev.kind == CaptureKind.EAP_HANDSHAKE:
+            self._log(
+                f"[black bold on yellow] EAP/Enterprise [/black bold on yellow] "
+                f"4-way from [bold]{short_sta(ev.client_mac)}[/bold] "
+                f"[dim]— not crackable (-m 22000)[/dim]"
+            )
         elif ev.kind == CaptureKind.DECLOAK:
             method_label = DECLOAK_METHOD_LABELS.get(ev.method or "", ev.method or "?")
             self._log(

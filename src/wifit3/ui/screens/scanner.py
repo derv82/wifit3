@@ -553,6 +553,12 @@ class ScannerView(Screen):
                 f"[bold]{ap_label}[/bold] from [bold]{client}[/bold]"
             )
             save_result = save_handshake(ap, ev.client_mac)
+        elif ev.kind == CaptureKind.EAP_HANDSHAKE:
+            # Not a ✓ win — a captured 4-way we're deliberately withholding.
+            msg = (
+                f"[bold yellow]● EAP/Enterprise 4-way[/bold yellow] on "
+                f"[bold]{ap_label}[/bold] [dim]— not crackable (-m 22000)[/dim]"
+            )
         elif ev.kind == CaptureKind.PMKID:
             msg = (
                 f"[bold green]✓ PMKID[/bold green] on "

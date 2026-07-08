@@ -238,6 +238,64 @@ def test_no_sae_or_ft_offered_is_unchanged():
     assert len(wpa.crackable_pairs(_m1m2(offered=[]))) == 1
 
 
+# --- EAPOL gate: suppress EAP / Enterprise (PMK from the MSK, no passphrase) --
+
+def test_eap_only_ap_suppresses_handshake():
+    """Enterprise AP (EAP AKM): a full 4-way is captured but the PMK comes from
+    the 802.1X MSK, not a passphrase → hashcat -m 22000 can't touch it."""
+    hs = _m1m2(offered=[1])
+    assert wpa.eapol_verdict(hs) == "uncrackable"
+    assert wpa.crackable_pairs(hs) == []
+    assert wpa.uncrackable_label(hs) == "EAP/Enterprise"
+    assert wpa.eap_capture_label(hs) == "EAP/Enterprise"
+
+
+def test_eap_variants_all_suppressed():
+    """FT-EAP (3), EAP-SHA256 (5), EAP-Suite-B[-192] (11/12), FT-EAP-SHA384 (13)."""
+    for suite in (3, 5, 11, 12, 13):
+        assert wpa.crackable_pairs(_m1m2(offered=[suite])) == [], suite
+
+
+def test_transition_ap_eap_client_suppressed():
+    """WPA2-Enterprise/PSK transition, THIS client negotiated EAP → withheld + badged."""
+    hs = _m1m2(offered=[1, 2], client=1)
+    assert wpa.eapol_verdict(hs) == "uncrackable"
+    assert wpa.eap_capture_label(hs) == "EAP/Enterprise"
+
+
+def test_transition_ap_psk_client_over_eap_is_crackable():
+    """Same transition AP, but this client negotiated PSK → crackable, no EAP badge."""
+    hs = _m1m2(offered=[1, 2], client=2)
+    assert wpa.eapol_verdict(hs) == "crackable"
+    assert len(wpa.crackable_pairs(hs)) == 1
+    assert wpa.eap_capture_label(hs) is None
+
+
+def test_transition_ap_eap_unknown_client_not_badged_eap():
+    """EAP+PSK offered, client unknown: withhold (could be PSK), but don't badge it
+    EAP — we can't confirm which side, so no misleading 'EAP/Enterprise' line."""
+    hs = _m1m2(offered=[1, 2], client=None)
+    assert wpa.eapol_verdict(hs) == "unknown"
+    assert wpa.crackable_pairs(hs) == []
+    assert wpa.eap_capture_label(hs) is None
+
+
+def test_eap_capture_label_needs_a_usable_pairing():
+    """eap_capture_label fires only on a real captured 4-way, not a stray M1 — so
+    the log line means 'you got a handshake but it's enterprise', not noise."""
+    m1_only = _hs(_frame(1, 5, nonce=ANONCE, mic=False))
+    m1_only.akm_offered = [1]
+    assert wpa.uncrackable_label(m1_only) == "EAP/Enterprise"   # AKM says EAP
+    assert wpa.eap_capture_label(m1_only) is None               # but no usable pair
+
+
+def test_eap_capture_label_none_for_sae_and_psk():
+    """The EAP badge is EAP-specific: SAE withholds too but isn't badged EAP, and a
+    plain-PSK capture isn't badged at all."""
+    assert wpa.eap_capture_label(_m1m2(offered=[8])) is None    # SAE → not EAP
+    assert wpa.eap_capture_label(_m1m2(offered=[2])) is None    # crackable PSK
+
+
 # --- PMKID (WPA*01) gate: only plain-PSK (AKM 2) HMAC-SHA1 -------------------
 
 def test_pmkid_plain_psk_crackable():

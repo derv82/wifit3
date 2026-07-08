@@ -33,6 +33,7 @@ class CaptureKind(str, Enum):
     ``str(member)``, which on <3.11 renders the member name, not the value."""
     EAPOL     = "eapol"
     HANDSHAKE = "handshake_complete"
+    EAP_HANDSHAKE = "eap_handshake"  # a complete 4-way withheld: EAP/Enterprise, not -m 22000-crackable
     PMKID     = "pmkid"
     DECLOAK   = "decloak"
     WEP_KEY   = "wep_key"      # recovered WEP key (hex)
@@ -85,6 +86,9 @@ class CaptureEventDetector:
         # instance, so a re-handshake (new ANonce) re-announces.
         self._completed: Set[Tuple[str, str, bytes]] = set()
         self._pmkid: Set[Tuple[str, str]] = set()
+        # BSSIDs for which we've announced a captured-but-uncrackable EAP 4-way
+        # (once per AP — the client roster on an enterprise SSID is large).
+        self._eap_announced: Set[str] = set()
         # BSSIDs we've observed as hidden during this detector's lifetime.
         # Required so we only fire "decloak" on an actual None→SSID transition
         # we witnessed — not for APs that already had an SSID on first poll.
@@ -99,6 +103,7 @@ class CaptureEventDetector:
         self._seen_eapol_count.clear()
         self._completed.clear()
         self._pmkid.clear()
+        self._eap_announced.clear()
         self._seen_hidden.clear()
         self._decloak_announced.clear()
         self._creds_announced.clear()
@@ -179,6 +184,19 @@ class CaptureEventDetector:
                     client_mac=client_mac,
                     ssid=ap.ssid,
                     pair_label=f"M{pair[0].msg_num}+M{pair[1].msg_num}",
+                )
+
+            # EAP/Enterprise 4-way: a structurally-usable handshake arrived, but its
+            # AKM makes the PMK MSK-derived (not a passphrase) — hashcat -m 22000
+            # can't touch it, so valid_pairs_by_instance() above withheld it. Announce
+            # once per AP so the withholding doesn't look like a silent capture failure.
+            if ap.bssid not in self._eap_announced and wpa.eap_capture_label(hs):
+                self._eap_announced.add(ap.bssid)
+                yield CaptureEvent(
+                    kind=CaptureKind.EAP_HANDSHAKE,
+                    bssid=ap.bssid,
+                    client_mac=client_mac,
+                    ssid=ap.ssid,
                 )
 
             if hs.pmkid and key not in self._pmkid and wpa.pmkid_crackable(hs):
