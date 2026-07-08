@@ -53,3 +53,18 @@ exercise the tune path on every common channel, every card:
   - Look for: seeing *other* channels' APs when filtering for one channel.
 
 ---
+
+## Code cleanup / de-vibe
+
+### Delete AR9271 v1
+
+v2 is the maintained clean-room re-port and the default; v1 is dead (heard 1 AP total, channel
+hopping broken — 5.3 bcn/s on ch1 only vs v2's 8.0/s across 71 APs). Remove it:
+- Delete `chips/ar9271/`.
+- Drop the `WIFIT3_AR9271` env var + the v1 branch in `manager.py:68`.
+- Remove v1 tests + mainline/v1 doc refs.
+- Move `ar9271_v2` into its place (plain AR9271 driver, no v2 suffix).
+
+Purge every v1 remnant *before* the move.
+
+---
