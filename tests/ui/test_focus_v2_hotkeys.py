@@ -175,8 +175,14 @@ async def test_footer_shows_campaign_keys_per_family():
         await pilot.pause()
         focus = app.screen
         focus._tick()
-        await pilot.pause()
-        keys = {k.key for k in focus.query(FooterKey)}
+        # The Footer rebuilds its FooterKey children reactively; under full-suite
+        # load a single pause can race that rebuild (empty query). Wait for it.
+        keys: set = set()
+        for _ in range(20):
+            await pilot.pause()
+            keys = {k.key for k in focus.query(FooterKey)}
+            if keys:
+                break
         assert "p" in keys
         assert "r" not in keys and "c" not in keys
         # 'd' still hidden (no clients); 'w' always available.
