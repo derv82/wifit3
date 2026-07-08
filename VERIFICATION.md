@@ -24,6 +24,7 @@ works). *Deauth* is no longer a column — it works on every supported card.
 | [RTL8821AU](#rtl8821au) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8812AU](#rtl8812au) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8822BU](#rtl8822bu) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RTL8821CU](#rtl8821cu) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT3070](#rt3070) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5370](#rt5370) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
@@ -34,7 +35,6 @@ works). *Deauth* is no longer a column — it works on every supported card.
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ⚠️ | ❌ | ✅ | B |
 | [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ⚠️ | ❌ | ✅ | B |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | D |
-| [RTL8821CU](#rtl8821cu) | ✅ | ✅ | ✅ | ⬜ | ✅ | ✅ | ⬜ | - |
 
 ## Per-card notes
 
@@ -319,7 +319,7 @@ Excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| **Grade** | **90% (A)** | 2026-07-06 | Provisional (soak pending). Faithful dual-band port, full attack suite. |
+| **Grade** | **90% (A)** | 2026-07-08 | Faithful dual-band port, full attack suite, flat soak. |
 | RX | ✅ | 2026-07-06 | mud2g 7.2/8.0 (90%), mud 8.8/9.3 (95%); breadth 73/29 (matches); RSSI +1.1 dB. |
 | Port | ✅ | 2026-07-06 | Matches linux-DKMS both bands. |
 | Handshake | ✅ | 2026-06-24 | 4-way captured. |
@@ -327,7 +327,7 @@ Excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate
 | WEP | ✅ | 2026-07-06 | 2.4 ChopChop + ARP replay ~225 IVs/s (no 5 GHz WEP target). |
 | WPS | ✅ | 2026-06-24 | PBC — ~25 EAPOLs (HW-ACK forged MAC). |
 | ACKs | ✅ | 2026-06-24 | HW-ACK forged MAC (WPS + 5 GHz PMKID/deauth). |
-| Stress | ⬜ | — | Soak pending. |
+| Stress | ✅ | 2026-07-08 | 30-min 22-ch soak, flat (trend 1.08, no death-detect). |
 
 → [RTL8821CU_DKMS.md](src/wifit3/chips/rtl8821cu_dkms/RTL8821CU_DKMS.md)
 
