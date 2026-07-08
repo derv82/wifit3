@@ -20,6 +20,7 @@ from wifit3.ui.screens.confirm_uninstall import ConfirmUninstallDialog
 from wifit3.ui.screens.setup_error import SetupErrorDialog
 from wifit3.ui.screens.error_modals import FatalErrorModal
 from wifit3.ui.screens.propagating import PropagatingDialog
+from wifit3.ui.screens.replug import ReplugModal
 from wifit3.wlan.manager import WlanDeviceManager
 
 logger = logging.getLogger(__name__)
@@ -352,16 +353,22 @@ class SplashView(Screen):
                             "Couldn't install the device rules", result.message, result.detail))
                     return
                 if target.replug_after_modprobe:
-                    # This chip's warm bring-up can't recover (e.g. MT7610U inits clean but RX stays
-                    # dead), and the modprobe unload left it warm — only a physical replug (cold boot) fixes it,
-                    # so don't auto-connect.
+                    # This chip can't cold-reset from a kernel-warm state in userland, and the
+                    # modprobe unload left it warm — only a physical replug (real power cycle → cold
+                    # boot) recovers RX. Drive it: a modal watches for the unplug then the replug,
+                    # and only a genuine cold re-enumeration falls through to auto-connect.
                     self.query_one("#init-progress", ProgressBar).display = False
-                    status.update(
-                        f"[bold lightgreen]✓ Rules installed for {chip}[/bold lightgreen]. "
-                        f"Please [italic]Unplug, Replug,[/italic] then press "
-                        f"[black bold on $primary] START [/black bold on $primary]")
-                    release()
-                    return
+                    outcome = await self.app.push_screen_wait(
+                        ReplugModal(self.device_manager, vid, pid, chip))
+                    if outcome != "replugged":
+                        # Skipped or timed out — hand back to the picker with a hint.
+                        status.update(
+                            f"[bold lightgreen]✓ Rules installed for {chip}[/bold lightgreen]. "
+                            f"Unplug, replug, then press "
+                            f"[black bold on $primary] START [/black bold on $primary]")
+                        release()
+                        return
+                    # Cold re-enumeration confirmed → fall through to the shared auto-connect tail.
                 # Auto-connect now. install_rule chgrp'd the live node, so wait for it to actually go
                 # writable (udev propagation) behind the spinner before connecting — an unready node
                 # otherwise raises EACCES. The driver then reaches

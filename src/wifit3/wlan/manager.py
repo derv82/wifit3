@@ -256,6 +256,21 @@ class WlanDeviceManager:
                 return False
             await asyncio.sleep(interval)
 
+    async def linux_wait_for_presence(self, vid: int, pid: int, *, present: bool,
+                                      timeout: float = 120.0, interval: float = 0.3) -> bool:
+        # Block until the card ``vid:pid`` is present (or absent) on the bus, or ``timeout`` elapses.
+        # The replug modal drives it twice — wait for the unplug, then the fresh cold replug.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while True:
+            await self.refresh()
+            here = self.get_interface_by_vidpid(vid, pid) is not None
+            if here == present:
+                return True
+            if loop.time() >= deadline:
+                return False
+            await asyncio.sleep(interval)
+
     async def close_all(self) -> None:
         for iface in self.interfaces:
             await iface.close()
