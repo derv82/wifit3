@@ -20,7 +20,9 @@ from wifit3.engine.capture_history import load_capture_index, summarize
 from wifit3.engine.models import AccessPoint, PersistedCapture
 from wifit3.engine.save import save_handshake, save_pmkid, save_wps_pbc
 
-from ..capture_events import DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind
+from ..capture_events import (
+    CAPTURE_TOAST_TITLES, DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind,
+)
 from ..encryption_format import format_encryption_markup, wep_key_ascii
 from wifit3.wlan.channels import band_label, band_ranges
 
@@ -593,6 +595,17 @@ class ScannerView(Screen):
             verb = "saved" if save_result.was_new else "already saved as"
             self._write_log(Text.from_markup(treelog.leaf(
                 f"[dim]({verb} {escape(save_result.path.name)})[/dim]"), emoji=False))
+        # Non-blocking toast for the capture wins (dedup handled by the detector).
+        title = CAPTURE_TOAST_TITLES.get(ev.kind)
+        if title:
+            name = ev.ssid or ev.bssid
+            if ev.kind == CaptureKind.WEP_KEY:
+                body = f"{name}: {wep_key_ascii(ev.value or '')}"
+            elif ev.pair_label:
+                body = f"{name} ({ev.pair_label})"
+            else:
+                body = name
+            self.notify(body, title=title, timeout=6)
 
     def _write_log(self, text) -> None:
         try:

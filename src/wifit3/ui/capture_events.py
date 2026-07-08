@@ -42,6 +42,17 @@ class CaptureKind(str, Enum):
     WPS_PBC   = "wps_pbc"      # passphrase via WPS Push-Button
 
 
+# Title for the non-blocking toast a view raises on a capture *win*. Kinds absent
+# here are log-only: EAPOL / DECLOAK (not a credential), EAP_HANDSHAKE (a withheld
+# capture), and the WPS_* wins (surfaced by their own campaign-completion path).
+# Centralised so Scanner and Focus raise the same toast for the same event.
+CAPTURE_TOAST_TITLES = {
+    CaptureKind.HANDSHAKE: "Handshake captured",
+    CaptureKind.PMKID:     "PMKID captured",
+    CaptureKind.WEP_KEY:   "WEP key recovered",
+}
+
+
 @dataclass(frozen=True)
 class CaptureEvent:
     kind: CaptureKind

@@ -57,7 +57,7 @@ from wifit3.engine.save import (
 
 from ... import focus_model as fm
 from ...capture_events import (
-    DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind,
+    CAPTURE_TOAST_TITLES, DECLOAK_METHOD_LABELS, CaptureEvent, CaptureEventDetector, CaptureKind,
 )
 from ...capture_log import short_sta
 from ...eapol_aggregate import EapolAggregator
@@ -539,6 +539,19 @@ class FocusViewV2(Screen):
         # EAPOL frames + handshake completions go through the aggregator (one tidy
         # tree per client, deferred); PMKID / decloak stay immediate banners.
         for ev in self._events.poll(ap, forged_macs=forged_macs):
+            # Non-blocking toast for the capture wins (dedup handled by the detector);
+            # fired here so it lands whether the event is rendered by the aggregator
+            # (handshake) or _log_capture_event (pmkid) below.
+            title = CAPTURE_TOAST_TITLES.get(ev.kind)
+            if title:
+                name = ev.ssid or ev.bssid
+                if ev.kind == CaptureKind.WEP_KEY:
+                    body = f"{name}: {wep_key_ascii(ev.value or '')}"
+                elif ev.client_mac:
+                    body = f"{name} — {short_sta(ev.client_mac)}"
+                else:
+                    body = name
+                self.notify(body, title=title, timeout=6)
             if ev.kind == CaptureKind.EAPOL:
                 self._eapol_agg.on_eapol(ev, now)
             elif ev.kind == CaptureKind.HANDSHAKE:

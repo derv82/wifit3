@@ -130,6 +130,33 @@ async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
         assert any(n.endswith("_pmkid.hc22000") for n in saved), saved
 
 
+@pytest.mark.asyncio
+async def test_v2_capture_wins_raise_toasts():
+    """A handshake / PMKID win raises a non-blocking toast (on top of the event-log
+    tree), so a capture isn't silent while the user is watching the radio."""
+    bssid = "aa:bb:cc:dd:ee:01"
+    client = "04:2e:c1:51:43:b8"
+    iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
+    ap = iface.access_points[bssid]
+    app = _Host(iface, ap)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        focus = app.screen
+        toasts: list = []
+        focus.notify = lambda msg, **kw: toasts.append((kw.get("title"), msg))
+
+        replay = b"\x00" * 8
+        iface._on_frame_parsed(_eapol(bssid, client, 1, replay, to_ap=False, pmkid=b"\xaa" * 16))
+        iface._on_frame_parsed(_eapol(bssid, client, 2, replay, to_ap=True))
+        focus._tick()
+        await pilot.pause()
+
+        titles = [t for t, _ in toasts]
+        assert "PMKID captured" in titles, toasts
+        assert "Handshake captured" in titles, toasts
+
+
 def test_save_line_elides_bssid_and_timestamp():
     """The save note keeps the readable head (essid) + tail (kind.ext) and elides
     the BSSID + epoch middle that bloated the log."""
