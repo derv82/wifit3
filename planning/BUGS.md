@@ -12,17 +12,6 @@ contradicts itself; resolve on HW.
 
 ## Cross-cutting (not card-specific)
 
-### Hardware failures don't all surface in the UI — release blocker
-Some failures reach only the dev-only `wifit3.log`, not the Textual UI. Still open:
-- **Bring-up failures are swallowed** — drivers `except Exception: return False` on a failed
-  `connect()`, so nothing reaches the user. Delete those swallows so the failure raises to a modal.
-- **No informational toasts** — "copied", "deauth sent", and handshake/PMKID/WEP captures are
-  silent; they should be non-blocking toasts.
-- **ar9271 v1 unplug detection is delayed** (opt-in `WIFIT3_AR9271=v1` only) — its own RX loop has
-  no `on_fatal`, so an unplug isn't caught until the next `set_channel` hop. The default
-  `ar9271_v2` is sub-second. Fix: give v1's RX loop an `on_fatal` → `register_disconnect_callback`,
-  or port it to the shared RxReaderThread.
-
 ### Foreign-warmed chip → degraded RX until replug — release blocker
 A card the kernel driver warmed that can't force a cold boot in userland comes up with
 silently-degraded RX after wifit3 takes it over without a replug (RTL8814AU: 5 beacons/20 s vs 106
@@ -31,20 +20,14 @@ after a replug). Cards that self-cold (AR9271, mt76x0u, mt76x2u) are fine; the o
 replug" modal that polls for the card to be unplugged, then falls back to the splash screen, instead
 of auto-connecting.
 
-### EAP/Enterprise 4-way is reported as crackable
-An EAP (enterprise) 4-way is captured and emitted as "crackable," but its PMK comes from the EAP/MSK
-exchange, not a passphrase — hashcat `-m 22000` can't touch it. Extend the crackability gate
-(`handshake.py`) to withhold it and badge it "EAP/Enterprise" instead of reporting a capture.
-
-### No manual "Stop PBC" button (Focus)
-A timed-out WPS PBC attempt can hold the radio for the rest of the PBC window, blocking other
-attacks. There's no way to stop it by hand, so a single slow AP monopolizes the radio.
-
-### PMKID fails on a WPA3→WPA2 transition AP (PMF:Optional)
-PMKID reports "M1 not found" while Data frames appear right when M1 should arrive — likely a more
-complex AKM (SAE/transition) routes M1 somewhere we don't match, or we forge the assoc with the
-wrong AKM. Not yet confirmable without logging: log the AKM we advertise in the forged assoc and how
-we classify each inbound frame. First check: do we send AKM=PSK in the assoc for *all* cases?
+### PMKID on a WPA3→WPA2 transition AP (PMF:Optional) — ⏳ HW-confirm pending
+Instrumented + a speculative fix landed (2026-07-07); a run against the transition AP closes it (or
+converts it to a documented limitation). The forged Assoc now advertises PSK with **clean RSN
+capabilities** (we stopped echoing the AP's MFP/BIP tail — a suspected cause), and an M1 that arrives
+*encrypted* (FC Protected bit → the parser routes it to `data`, never `eapol`) is detected and badged
+`[PROTECTED]` in the harvest log instead of a bare "no M1". If `[PROTECTED]` fires on the transition
+AP the Protected-M1 theory holds (PMKID is genuinely unharvestable that way); else the `[PMKID]
+forged Assoc RSN IE …` log + the `interface._on_eapol_frame` classification narrow it further.
 
 ### Linux uninstall leaves a shared driver blacklisted when a sibling card is installed
 The Linux modprobe blacklist is written per-*card* but blocks a shared kernel *driver*: RT5372,
@@ -115,7 +98,7 @@ Clean, no known bugs: **rt2500usb, rt3070, rt5372, rtl8821au (mainline)**.
 ### rtl8812au (mainline, opt-in `WIFIT3_RTL8812=mainline`)
 - Mainline wedges on multi-band hopping (rtw88 HW limit) with no UI feedback — confirmed 2026-07-07
   (RF synth lost lock, ch153/161 dropped to ~0.5/s). The default (DKMS) driver hops clean, so this
-  bites only the opt-in legacy driver; the UI-feedback gap is the "Hardware failures" item above [RTL8812AU.md:65].
+  bites only the opt-in legacy driver; no UI surfaces the mid-run RF-synth loss [RTL8812AU.md:65].
 - Note: the OOT DKMS driver (`rtl8812au` 5.13.6) won't compile on kernel 6.19 (`drv_types.h` include
   path) — no fresh same-driver linux-DKMS baseline possible on this box; graded vs prior + live hop.
 
