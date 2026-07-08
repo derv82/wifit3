@@ -193,7 +193,7 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 | WEP | ✅ | 2026-05-31 | Replay + ChopChop. |
 | WPS | ✅ | 2026-05-31 | PIN + PBC. |
 | ACKs | ✅ | 2026-05-31 | WPS PIN/PBC → auto-ACK. |
-| Stress | ✅ | 2026-06-05 | 30-min dual-band soak, flat. |
+| Stress | ✅ | 2026-07-08 | 30-min 22-ch dual-band soak, flat (TSSI-on default). |
 
 → [MT76X2U.md](src/wifit3/chips/mt76x2u/MT76X2U.md)
 
