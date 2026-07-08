@@ -26,7 +26,6 @@ Clean, no known bugs: **rt2500usb, rt2800usb, rt3070, rt5372, rtl8821au (mainlin
 - Limit: always cold-inits (no warm reattach) — replug to recover.
 
 ### mt76x2u (AWUS036ACM)
-- ⏳ 5 GHz inject unverified on HW (the CCK→OFDM rate fix is in) [MT76X2U.md].
 - ⏳ TSSI gated off; periodic `tssi_compensate` is suspected of zeroing TX power [MT76X2U.md].
 - ⏳ Endpoint stability across power cycles unknown; channel-switch wants ~2 s settle [MT76X2U.md].
 - ⏳ RX-poll unverified on HW [MT76X2U.md].

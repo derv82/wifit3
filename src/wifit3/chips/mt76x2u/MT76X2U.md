@@ -10,7 +10,8 @@ AWUS036ACM), a USB 3.0 device; 15 VID:PIDs are claimed (`constants.py::USB_IDS_M
 Cold init, two-stage firmware boot, and dual-band monitor RX all work on hardware. A 30-min
 dual-band soak (22 channels, 0.25 s hops) ran with no frame-rate sag — active BSSIDs 147→155, 2.4
 GHz ~100+ and 5 GHz ~52 steady. ARP replay works first try and handshakes auto-save (after the
-L2PAD fix, below). TSSI is the one open hardware question (see Gotchas).
+L2PAD fix, below). 5 GHz frame injection is HW-confirmed (2026-07-08). TSSI is the one open
+hardware question (see Gotchas).
 
 ## Gotchas
 
@@ -72,6 +73,12 @@ cross-reference.
 - `verify_pcap.py` — offline cold-boot byte gate against `captures_mt76x2u/capture-1.pcap`.
 
 ## Debug log
+
+### 2026-07-08 — 5 GHz TX confirmed on HW
+
+Live 5 GHz frame injection confirmed working on hardware (AWUS036ACM, `0e8d:7612`). Clears the last
+"5 GHz inject unverified" item in `BUGS.md`. TX power is plainly not zeroed in the default TSSI-off
+config; whether *re-enabling* TSSI zeroes it stays the open question (see Gotchas / the TSSI line).
 
 ### 2026-07-08 — replug default flipped; opt-out now explicit
 
