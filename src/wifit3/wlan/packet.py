@@ -19,6 +19,10 @@ class Packet:
     rssi: int
     raw: bytes
     ssid: Optional[str] = None   # on beacon/probe_resp/probe_req/assoc_req; None elsewhere
+    # FC Protected bit on a Data frame: the body is ciphertext, so an EAPOL M1 that
+    # arrives encrypted (PMF / WPA3-transition AP) lands here as "data", never
+    # "eapol" — the PMKID harvest reads this to report [PROTECTED] vs a bare no-M1.
+    protected: bool = False
 
 
 @dataclass(slots=True, kw_only=True)
@@ -216,7 +220,7 @@ class WlanFrameParser:
                     keyid=(keyid_byte >> 6) & 0x03,
                     # First 16 ciphertext bytes — the PTW keystream (XOR the known ARP plaintext).
                     cipher=bytes(frame[cipher_start : cipher_start + 16]))
-            return Packet(**base, type="data")
+            return Packet(**base, type="data", protected=True)
 
         eapol = cls._parse_eapol(frame, header_len, base)
         return eapol if eapol is not None else Packet(**base, type="data")

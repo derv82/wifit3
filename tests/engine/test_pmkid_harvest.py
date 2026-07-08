@@ -26,10 +26,12 @@ class _FakeIface:
     """Records injected frames; optionally drops an M1 into the handshake dict the
     instant the Assoc Req is sent (simulating the AP's reply)."""
 
-    def __init__(self, deliver_m1: bool, pmkid=None, fake_mac_supported: bool = False):
+    def __init__(self, deliver_m1: bool, pmkid=None, fake_mac_supported: bool = False,
+                 protected: bool = False):
         self._deliver_m1 = deliver_m1
         self._pmkid = pmkid
         self._fake_mac_supported = fake_mac_supported
+        self._protected = protected              # M1 arrived encrypted (PMF/transition)
         self.current_channel = 36
         self.ap = SimpleNamespace(handshakes={})
         self.access_points = {_BSSID: self.ap}
@@ -39,6 +41,9 @@ class _FakeIface:
 
     def register_forged_mac(self, mac):
         pass
+
+    def saw_protected_to_forged(self, bssid, mac):
+        return self._protected
 
     async def set_fake_mac(self, mac, bssid=None):
         if not self._fake_mac_supported:
@@ -103,6 +108,20 @@ async def test_silent_ap_retries_then_gives_up_without_deauth():
     assert _deauths(iface) == []                               # never got M1 → nothing to leave
 
 
+async def test_protected_m1_reported_as_protected():
+    """A transition/PMF AP whose M1 arrives encrypted (routed to unreadable 'data')
+    → no PMKID, but we DID get an answer: reported as PROTECTED, not the AP-silent
+    NO_RESPONSE, so the UI can chip [PROTECTED]."""
+    iface = _FakeIface(deliver_m1=False, protected=True)
+    a = PmkidHarvestAttack(iface, _target(), attempts=2, m1_timeout=0.02)
+    await a._loop()
+    await a.teardown()
+    assert a.pmkid is None
+    assert a.fail_reason is PmkidFail.PROTECTED
+    assert len(_assoc_reqs(iface)) == 2                        # still rotated + retried
+    assert _deauths(iface) == []                               # no readable M1 → nothing to leave
+
+
 async def test_pmf_required_short_circuits_without_tx():
     iface = _FakeIface(deliver_m1=False)
     a = PmkidHarvestAttack(iface, _target(pmf_required=True))
@@ -131,10 +150,15 @@ def test_force_psk_akm_selects_psk_from_sae_first_list():
         "30140100000fac040100000fac040100000fac020000")
 
 
-def test_force_psk_akm_preserves_caps_and_group_mgmt():
-    # PSK + RSN caps (PMF bits) + group-mgmt cipher (BIP) → tail untouched.
+def test_force_psk_akm_cleans_mfp_caps_and_drops_group_mgmt():
+    # A PMF-capable transition AP: RSN caps carry MFPC (0x008c) + a BIP group-mgmt
+    # cipher. We must NOT echo that on our unprotected PSK Assoc — force single PSK,
+    # author clean 0x0000 caps, and drop the MFP tail (group-mgmt cipher).
     rsn = bytes.fromhex("30180100000fac040100000fac040100000fac028c00000fac06")
-    assert _force_psk_akm(rsn) == rsn          # already single-PSK; nothing else moves
+    out = _force_psk_akm(rsn)
+    assert out == bytes.fromhex("30140100000fac040100000fac040100000fac020000")
+    assert out.endswith(b"\x00\x00")           # explicit clean RSN caps (no MFP)
+    assert b"\x0f\xac\x06" not in out          # BIP group-mgmt cipher dropped
 
 
 def test_force_psk_akm_rejects_malformed():

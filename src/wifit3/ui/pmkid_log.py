@@ -30,7 +30,7 @@ _FAIL_LEAF = {
 
 # Reasons reached only AFTER we transmit Auth+Assoc, so their tree echoes those
 # branches. PMF / NO_PSK bail before any TX → header + leaf only.
-_AFTER_TX = (PmkidFail.NO_RESPONSE, PmkidFail.NO_KDE)
+_AFTER_TX = (PmkidFail.NO_RESPONSE, PmkidFail.NO_KDE, PmkidFail.PROTECTED)
 
 
 def header(essid: str) -> str:
@@ -52,6 +52,12 @@ def m1(has_pmkid: bool) -> str:
 
 
 def _fail_leaf(reason: Optional[PmkidFail]) -> str:
+    if reason is PmkidFail.PROTECTED:
+        # An M1 DID arrive — encrypted (PMF/transition). Chip it so it reads as "the
+        # AP answered but we can't decode it", not the AP-silent NO_RESPONSE.
+        return treelog.leaf_fail(
+            "[black bold on orange1] PROTECTED [/black bold on orange1] "
+            "[dim]M1 arrived encrypted (PMF/transition) — PMKID unreadable[/dim]")
     head, why = _FAIL_LEAF.get(reason, ("Harvest failed", ""))
     tail = f" [dim]({why})[/dim]" if why else ""
     return treelog.leaf_fail(f"[bold orange1]{head}[/bold orange1]{tail}")

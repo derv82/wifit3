@@ -135,6 +135,36 @@ def test_forged_mac_does_not_create_client_or_append_eapol(mocker):
     assert hs.messages == []
 
 
+def test_protected_data_to_forged_mac_is_noted(mocker):
+    """A Protected (encrypted) data frame from a known AP to a forged MAC is recorded
+    (a probable unreadable M1 on a PMF/transition AP) so the PMKID harvest can report
+    [PROTECTED]; an unprotected data frame to a forged MAC is not."""
+    iface = WlanInterface(driver_instance=mocker.MagicMock(), name="wlan0", description="t")
+    bssid = "aa:bb:cc:dd:ee:01"
+    forged = "02:11:22:33:44:55"
+    iface._on_frame_parsed(pkt({
+        "type": "beacon", "bssid": bssid, "source": bssid, "dest": "ff:ff:ff:ff:ff:ff",
+        "rssi": -40, "ssid": "N", "channel": 1, "encryption": "WPA2", "raw": b"\x00" * 36,
+    }))
+    iface.register_forged_mac(forged)
+    assert not iface.saw_protected_to_forged(bssid, forged)
+
+    iface._on_frame_parsed(pkt({
+        "type": "data", "bssid": bssid, "source": bssid, "dest": forged,
+        "from_ds": True, "protected": True, "rssi": -45, "raw": b"\x01",
+    }))
+    assert iface.saw_protected_to_forged(bssid, forged)
+
+    # An UNprotected data frame to a forged MAC must NOT be flagged.
+    other = "02:99:88:77:66:55"
+    iface.register_forged_mac(other)
+    iface._on_frame_parsed(pkt({
+        "type": "data", "bssid": bssid, "source": bssid, "dest": other,
+        "from_ds": True, "protected": False, "rssi": -45, "raw": b"\x02",
+    }))
+    assert not iface.saw_protected_to_forged(bssid, other)
+
+
 def _seed_ap(iface, bssid, encryption):
     iface._on_frame_parsed(pkt({
         "type": "beacon",

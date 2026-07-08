@@ -50,6 +50,15 @@ def test_pmf_and_no_psk_are_header_plus_leaf_only():
     assert "No PSK AKM" in no_psk[1]
 
 
+def test_protected_echoes_tx_and_chips_protected():
+    """A transition/PMF AP's encrypted M1: echoes the auth/assoc TX (an M1 DID
+    arrive), then chips [PROTECTED] — not the AP-silent 'No M1 received'."""
+    lines = render_failure(_ESSID, PmkidFail.PROTECTED)
+    assert "Auth request" in lines[1] and "Assoc. request" in lines[2]
+    assert "[black bold on orange1] PROTECTED [/black bold on orange1]" in lines[-1]
+    assert "M1 arrived encrypted" in lines[-1]
+
+
 def test_unknown_reason_falls_back():
     lines = render_failure(_ESSID, None)
     assert "Harvest failed" in lines[-1]
