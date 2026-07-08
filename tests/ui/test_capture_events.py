@@ -69,6 +69,31 @@ def test_sae_handshake_emits_eapol_but_no_completion():
     assert len(eapols) == 2
 
 
+def test_owe_and_eap_emit_withheld_banner_sae_stays_silent():
+    """A withheld 4-way is announced once per AP with its badge (so it's not a silent
+    capture failure) for the false-positive AKMs EAP + OWE; SAE/FT stay silent
+    (they were never mis-reported as crackable)."""
+    det = CaptureEventDetector(granular_eapol=False)
+
+    owe = AccessPoint(bssid="aa:bb:cc:dd:ee:f5", ssid="OpenNet")
+    hs = _hs_with(owe, offered=[18])                          # OWE-only AP
+    hs.messages += [_ef(1, 5, b"\xaa" * 32, 100.0), _ef(2, 5, b"\x11" * 32, 100.1)]
+    ev = [e for e in det.poll(owe) if e.kind == CaptureKind.UNCRACKABLE_HANDSHAKE]
+    assert len(ev) == 1 and ev[0].value == "OWE"
+    assert not any(e.kind == CaptureKind.UNCRACKABLE_HANDSHAKE for e in det.poll(owe))  # once/AP
+
+    eap = AccessPoint(bssid="aa:bb:cc:dd:ee:f6", ssid="CorpNet")
+    hs = _hs_with(eap, offered=[1])                           # EAP-only AP
+    hs.messages += [_ef(1, 5, b"\xaa" * 32, 100.0), _ef(2, 5, b"\x11" * 32, 100.1)]
+    ev = [e for e in det.poll(eap) if e.kind == CaptureKind.UNCRACKABLE_HANDSHAKE]
+    assert len(ev) == 1 and ev[0].value == "EAP/Enterprise"
+
+    sae = AccessPoint(bssid="aa:bb:cc:dd:ee:f7", ssid="Wpa3Net")
+    hs = _hs_with(sae, offered=[8])                           # SAE-only AP → silent
+    hs.messages += [_ef(1, 5, b"\xaa" * 32, 100.0), _ef(2, 5, b"\x11" * 32, 100.1)]
+    assert not any(e.kind == CaptureKind.UNCRACKABLE_HANDSHAKE for e in det.poll(sae))
+
+
 def test_wpa2_handshake_emits_completion_banner():
     det = CaptureEventDetector(granular_eapol=True)
     ap = AccessPoint(bssid="aa:bb:cc:dd:ee:ff", ssid="X")

@@ -247,7 +247,7 @@ def test_eap_only_ap_suppresses_handshake():
     assert wpa.eapol_verdict(hs) == "uncrackable"
     assert wpa.crackable_pairs(hs) == []
     assert wpa.uncrackable_label(hs) == "EAP/Enterprise"
-    assert wpa.eap_capture_label(hs) == "EAP/Enterprise"
+    assert wpa.withheld_capture_label(hs) == "EAP/Enterprise"
 
 
 def test_eap_variants_all_suppressed():
@@ -260,7 +260,7 @@ def test_transition_ap_eap_client_suppressed():
     """WPA2-Enterprise/PSK transition, THIS client negotiated EAP → withheld + badged."""
     hs = _m1m2(offered=[1, 2], client=1)
     assert wpa.eapol_verdict(hs) == "uncrackable"
-    assert wpa.eap_capture_label(hs) == "EAP/Enterprise"
+    assert wpa.withheld_capture_label(hs) == "EAP/Enterprise"
 
 
 def test_transition_ap_psk_client_over_eap_is_crackable():
@@ -268,7 +268,7 @@ def test_transition_ap_psk_client_over_eap_is_crackable():
     hs = _m1m2(offered=[1, 2], client=2)
     assert wpa.eapol_verdict(hs) == "crackable"
     assert len(wpa.crackable_pairs(hs)) == 1
-    assert wpa.eap_capture_label(hs) is None
+    assert wpa.withheld_capture_label(hs) is None
 
 
 def test_transition_ap_eap_unknown_client_not_badged_eap():
@@ -277,23 +277,58 @@ def test_transition_ap_eap_unknown_client_not_badged_eap():
     hs = _m1m2(offered=[1, 2], client=None)
     assert wpa.eapol_verdict(hs) == "unknown"
     assert wpa.crackable_pairs(hs) == []
-    assert wpa.eap_capture_label(hs) is None
+    assert wpa.withheld_capture_label(hs) is None
 
 
-def test_eap_capture_label_needs_a_usable_pairing():
-    """eap_capture_label fires only on a real captured 4-way, not a stray M1 — so
-    the log line means 'you got a handshake but it's enterprise', not noise."""
+def test_withheld_capture_label_needs_a_usable_pairing():
+    """withheld_capture_label fires only on a real captured 4-way, not a stray M1 —
+    so the log line means 'you got a handshake but it's worthless', not noise."""
     m1_only = _hs(_frame(1, 5, nonce=ANONCE, mic=False))
     m1_only.akm_offered = [1]
     assert wpa.uncrackable_label(m1_only) == "EAP/Enterprise"   # AKM says EAP
-    assert wpa.eap_capture_label(m1_only) is None               # but no usable pair
+    assert wpa.withheld_capture_label(m1_only) is None          # but no usable pair
 
 
-def test_eap_capture_label_none_for_sae_and_psk():
-    """The EAP badge is EAP-specific: SAE withholds too but isn't badged EAP, and a
-    plain-PSK capture isn't badged at all."""
-    assert wpa.eap_capture_label(_m1m2(offered=[8])) is None    # SAE → not EAP
-    assert wpa.eap_capture_label(_m1m2(offered=[2])) is None    # crackable PSK
+def test_withheld_capture_label_silent_for_sae_ft_and_psk():
+    """The withheld badge covers only the false-positive AKMs (EAP/OWE): SAE + FT
+    are withheld too but stay silent, and a plain-PSK capture isn't badged at all."""
+    assert wpa.withheld_capture_label(_m1m2(offered=[8])) is None            # SAE → silent
+    assert wpa.withheld_capture_label(_m1m2(offered=[4], client=4)) is None  # FT → silent
+    assert wpa.withheld_capture_label(_m1m2(offered=[2])) is None            # crackable PSK
+
+
+# --- EAPOL gate: suppress OWE / Enhanced Open (PMK from ECDH, no password) ----
+
+def test_owe_only_ap_suppresses_handshake():
+    """OWE (Enhanced Open, AKM 18): a full 4-way is captured but the PMK is ECDH-
+    derived, not a passphrase → hashcat -m 22000 can't touch it; badged 'OWE'."""
+    hs = _m1m2(offered=[18])
+    assert wpa.eapol_verdict(hs) == "uncrackable"
+    assert wpa.crackable_pairs(hs) == []
+    assert wpa.uncrackable_label(hs) == "OWE"
+    assert wpa.withheld_capture_label(hs) == "OWE"
+
+
+def test_owe_client_akm_suppressed_and_badged():
+    """Client's negotiated AKM = OWE → withheld + badged, authoritative even with no
+    beacon AKM list parsed yet."""
+    hs = _m1m2(offered=[], client=18)
+    assert wpa.eapol_verdict(hs) == "uncrackable"
+    assert wpa.withheld_capture_label(hs) == "OWE"
+
+
+def test_owe_label_not_confused_with_sae():
+    """An OWE-only AP must badge 'OWE', never fall through to the 'SAE' default."""
+    assert wpa.uncrackable_label(_m1m2(offered=[18])) == "OWE"
+    assert wpa.withheld_capture_label(_m1m2(offered=[18])) == "OWE"
+
+
+def test_owe_needs_a_usable_pairing():
+    """Like EAP: the OWE badge fires only on a real captured 4-way, not a stray M1."""
+    m1_only = _hs(_frame(1, 5, nonce=ANONCE, mic=False))
+    m1_only.akm_offered = [18]
+    assert wpa.uncrackable_label(m1_only) == "OWE"
+    assert wpa.withheld_capture_label(m1_only) is None
 
 
 # --- PMKID (WPA*01) gate: only plain-PSK (AKM 2) HMAC-SHA1 -------------------

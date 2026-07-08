@@ -33,7 +33,9 @@ class CaptureKind(str, Enum):
     ``str(member)``, which on <3.11 renders the member name, not the value."""
     EAPOL     = "eapol"
     HANDSHAKE = "handshake_complete"
-    EAP_HANDSHAKE = "eap_handshake"  # a complete 4-way withheld: EAP/Enterprise, not -m 22000-crackable
+    # A complete 4-way we withhold because its AKM has no passphrase to crack (EAP/
+    # Enterprise or OWE) — carries the badge in CaptureEvent.value.
+    UNCRACKABLE_HANDSHAKE = "uncrackable_handshake"
     PMKID     = "pmkid"
     DECLOAK   = "decloak"
     WEP_KEY   = "wep_key"      # recovered WEP key (hex)
@@ -43,7 +45,7 @@ class CaptureKind(str, Enum):
 
 
 # Title for the non-blocking toast a view raises on a capture *win*. Kinds absent
-# here are log-only: EAPOL / DECLOAK (not a credential), EAP_HANDSHAKE (a withheld
+# here are log-only: EAPOL / DECLOAK (not a credential), UNCRACKABLE_HANDSHAKE (a withheld
 # capture), and the WPS_* wins (surfaced by their own campaign-completion path).
 # Centralised so Scanner and Focus raise the same toast for the same event.
 CAPTURE_TOAST_TITLES = {
@@ -97,9 +99,9 @@ class CaptureEventDetector:
         # instance, so a re-handshake (new ANonce) re-announces.
         self._completed: Set[Tuple[str, str, bytes]] = set()
         self._pmkid: Set[Tuple[str, str]] = set()
-        # BSSIDs for which we've announced a captured-but-uncrackable EAP 4-way
-        # (once per AP — the client roster on an enterprise SSID is large).
-        self._eap_announced: Set[str] = set()
+        # BSSIDs for which we've announced a captured-but-uncrackable 4-way (EAP or
+        # OWE) — once per AP (an enterprise/open SSID's client roster is large).
+        self._withheld_announced: Set[str] = set()
         # BSSIDs we've observed as hidden during this detector's lifetime.
         # Required so we only fire "decloak" on an actual None→SSID transition
         # we witnessed — not for APs that already had an SSID on first poll.
@@ -114,7 +116,7 @@ class CaptureEventDetector:
         self._seen_eapol_count.clear()
         self._completed.clear()
         self._pmkid.clear()
-        self._eap_announced.clear()
+        self._withheld_announced.clear()
         self._seen_hidden.clear()
         self._decloak_announced.clear()
         self._creds_announced.clear()
@@ -197,17 +199,19 @@ class CaptureEventDetector:
                     pair_label=f"M{pair[0].msg_num}+M{pair[1].msg_num}",
                 )
 
-            # EAP/Enterprise 4-way: a structurally-usable handshake arrived, but its
-            # AKM makes the PMK MSK-derived (not a passphrase) — hashcat -m 22000
-            # can't touch it, so valid_pairs_by_instance() above withheld it. Announce
-            # once per AP so the withholding doesn't look like a silent capture failure.
-            if ap.bssid not in self._eap_announced and wpa.eap_capture_label(hs):
-                self._eap_announced.add(ap.bssid)
+            # A structurally-usable 4-way arrived, but its AKM has no passphrase to
+            # crack (EAP/Enterprise → PMK from the MSK; OWE → PMK from ECDH), so
+            # valid_pairs_by_instance() above withheld it. Announce once per AP,
+            # carrying the badge, so the withholding isn't a silent capture failure.
+            withheld = wpa.withheld_capture_label(hs)
+            if withheld and ap.bssid not in self._withheld_announced:
+                self._withheld_announced.add(ap.bssid)
                 yield CaptureEvent(
-                    kind=CaptureKind.EAP_HANDSHAKE,
+                    kind=CaptureKind.UNCRACKABLE_HANDSHAKE,
                     bssid=ap.bssid,
                     client_mac=client_mac,
                     ssid=ap.ssid,
+                    value=withheld,
                 )
 
             if hs.pmkid and key not in self._pmkid and wpa.pmkid_crackable(hs):

@@ -33,8 +33,8 @@ async def test_scanner_capture_win_raises_toast():
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_usb_devices")
-async def test_scanner_eap_handshake_is_log_only_no_toast():
-    """A withheld EAP/Enterprise 4-way logs but must NOT toast (not a crackable win)."""
+async def test_scanner_withheld_handshake_is_log_only_no_toast():
+    """A withheld EAP/OWE 4-way logs but must NOT toast (not a crackable win)."""
     app = WifiteApp()
     async with app.run_test() as pilot:
         app.push_screen("scanner")
@@ -45,8 +45,8 @@ async def test_scanner_eap_handshake_is_log_only_no_toast():
         scanner.notify = lambda msg, **kw: toasts.append((kw.get("title"), msg))
 
         ap = AccessPoint(bssid="aa:bb:cc:dd:ee:07", ssid="CorpNet", channel=1)
-        ev = CaptureEvent(kind=CaptureKind.EAP_HANDSHAKE, bssid=ap.bssid, ssid=ap.ssid,
-                          client_mac="11:22:33:44:55:66")
+        ev = CaptureEvent(kind=CaptureKind.UNCRACKABLE_HANDSHAKE, bssid=ap.bssid,
+                          ssid=ap.ssid, client_mac="11:22:33:44:55:66", value="OWE")
         scanner._log_capture_event(ev, ap)
 
         assert toasts == [], toasts

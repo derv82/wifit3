@@ -88,42 +88,48 @@ _NC_BIT = 0x80
 #
 #   EAPOL (WPA*02): hashcat reads the Key Descriptor Version from the embedded
 #     frame, so plain PSK (keyver 2) AND PSK-SHA256 (keyver 3 / AES-CMAC) both
-#     crack; FT has no mode; EAP/Enterprise has no passphrase at all.
-#     → uncrackable AKMs = SAE | FT-PSK | EAP.
+#     crack; FT has no mode; EAP/Enterprise has no passphrase; OWE (Enhanced Open)
+#     derives its PMK from an ECDH exchange — no password either.
+#     → uncrackable AKMs = SAE | FT-PSK | EAP | OWE.
 #   PMKID (WPA*01): single-algorithm HMAC-SHA1 → only plain PSK (AKM 2). FT and
 #     the SHA256-PSK AKMs (6 / 20) yield a hash -m 22000 can't take.
 #
-# SAE, FT, and EAP are *strict* (withhold on an unconfirmed transition AP). The
-# SHA256 PMKID is *soft* — AKM 6 is rare, so a PMKID of unknown AKM is assumed to
-# be the common HMAC-SHA1 one unless the AP offers no plain PSK at all.
+# SAE, FT, EAP, and OWE are *strict* (withhold on an unconfirmed transition AP).
+# The SHA256 PMKID is *soft* — AKM 6 is rare, so a PMKID of unknown AKM is assumed
+# to be the common HMAC-SHA1 one unless the AP offers no plain PSK at all.
 _SAE_AKMS = frozenset({8, 9, 24, 25})       # SAE / FT-SAE / SAE-EXT-KEY / FT-SAE-EXT-KEY
 _FT_PSK_AKMS = frozenset({4, 19})           # FT-PSK / FT-PSK-SHA384
 _EAP_AKMS = frozenset({1, 3, 5, 11, 12, 13})  # EAP/FT-EAP/EAP-SHA256/EAP-Suite-B[-192]/FT-EAP-SHA384 (Enterprise)
-_EAPOL_BAD_AKMS = _SAE_AKMS | _FT_PSK_AKMS | _EAP_AKMS  # never -m 22000-crackable as EAPOL
+_OWE_AKMS = frozenset({18})                 # OWE / Enhanced Open — PMK from ECDH, no passphrase
+_EAPOL_BAD_AKMS = _SAE_AKMS | _FT_PSK_AKMS | _EAP_AKMS | _OWE_AKMS  # never -m 22000-crackable as EAPOL
 _PMKID_PSK_AKM = 2                          # the only HMAC-SHA1 (crackable) PMKID
 _EAP_LABEL = "EAP/Enterprise"               # badge for a captured-but-worthless EAP 4-way
+_OWE_LABEL = "OWE"                          # badge for a captured-but-worthless OWE (open) 4-way
 
 
 def eapol_verdict(hs: Handshake) -> str:
     """EAPOL (``WPA*02``) crackability from the negotiated AKM.
 
-    The suppressed AKMs are SAE (ephemeral PMK), FT-PSK (no hashcat FT mode), and
-    EAP/Enterprise (PMK from the 802.1X MSK, no passphrase); all are strict, so an
-    unconfirmed transition AP returns ``"unknown"`` and we withhold. Every other
-    AKM — plain PSK, PSK-SHA256, OWE, and legacy — is emitted.
+    The suppressed AKMs are SAE (ephemeral PMK), FT-PSK (no hashcat FT mode),
+    EAP/Enterprise (PMK from the 802.1X MSK, no passphrase), and OWE (PMK from
+    ECDH, no password); all are strict, so an unconfirmed transition AP returns
+    ``"unknown"`` and we withhold. Every other AKM — plain PSK, PSK-SHA256, and
+    legacy — is emitted.
 
     Inputs are stamped by the interface: ``akm_client`` (the suite the client
     chose, from M2 / (Re)Assoc — authoritative) and ``akm_offered`` (the AP's
     beacon RSN-IE list — the fallback)."""
     offered = set(hs.akm_offered)
     bad = _EAPOL_BAD_AKMS
-    if not (offered & bad):
-        return "crackable"            # no SAE/FT/EAP in play → legacy emit
     if hs.akm_client is not None:
+        # Authoritative: the client's negotiated suite settles it, even if the
+        # beacon AKM list is stale/unseen (M2 can precede the first beacon).
         return "uncrackable" if hs.akm_client in bad else "crackable"
+    if not (offered & bad):
+        return "crackable"            # no SAE/FT/EAP/OWE offered, client unknown → legacy emit
     if offered - bad:
         return "unknown"              # bad + a non-bad AKM offered, client unknown
-    return "uncrackable"              # only SAE/FT/EAP offered
+    return "uncrackable"              # only SAE/FT/EAP/OWE offered
 
 
 def eapol_crackable(hs: Handshake) -> bool:
@@ -145,20 +151,24 @@ def pmkid_crackable(hs: Handshake) -> bool:
 
 
 def uncrackable_label(hs: Handshake) -> Optional[str]:
-    """Short reason an EAPOL capture is uncrackable (``"EAP/Enterprise"`` / ``"FT"``
-    / ``"SAE"``), or None when it *is* crackable."""
+    """Short reason an EAPOL capture is uncrackable (``"EAP/Enterprise"`` / ``"OWE"``
+    / ``"FT"`` / ``"SAE"``), or None when it *is* crackable."""
     if eapol_verdict(hs) != "uncrackable":
         return None
     akm = hs.akm_client
     if akm is not None:
         if akm in _EAP_AKMS:
             return _EAP_LABEL
+        if akm in _OWE_AKMS:
+            return _OWE_LABEL
         return "FT" if akm in _FT_PSK_AKMS else "SAE"
     # Client unknown → reached only when every offered AKM is uncrackable, so
     # name it by the dominant family.
     offered = set(hs.akm_offered)
-    if offered & _EAP_AKMS and not (offered & (_SAE_AKMS | _FT_PSK_AKMS)):
+    if offered & _EAP_AKMS and not (offered & (_SAE_AKMS | _FT_PSK_AKMS | _OWE_AKMS)):
         return _EAP_LABEL
+    if offered & _OWE_AKMS and not (offered & (_SAE_AKMS | _FT_PSK_AKMS | _EAP_AKMS)):
+        return _OWE_LABEL
     if offered & _FT_PSK_AKMS and not (offered & _SAE_AKMS):
         return "FT"
     return "SAE"
@@ -238,21 +248,26 @@ def _mic_frame_usable(f: HandshakeMessage) -> bool:
 def crackable_pairs(hs: Handshake) -> List[CrackablePair]:
     """Every distinct, hashcat-crackable handshake instance for this client — the
     AKM-gated view of ``_pairs_ignoring_akm`` (empty when the negotiated AKM can't
-    be ``-m 22000``-cracked, e.g. SAE / FT-PSK / EAP)."""
+    be ``-m 22000``-cracked, e.g. SAE / FT-PSK / EAP / OWE)."""
     if not eapol_crackable(hs):
         return []
     return _pairs_ignoring_akm(hs)
 
 
-def eap_capture_label(hs: Handshake) -> Optional[str]:
+def withheld_capture_label(hs: Handshake) -> Optional[str]:
     """Badge for a captured 4-way that is confirmed uncrackable *because* its AKM
-    is EAP/Enterprise — else None. Gated on a structurally usable pairing, so it
-    fires only when a real handshake was captured (not on stray EAPOL frames),
-    letting the UI surface 'EAP/Enterprise 4-way — not crackable' instead of
-    dropping the capture silently."""
-    if uncrackable_label(hs) != _EAP_LABEL:
+    has no passphrase to try — EAP/Enterprise or OWE (Enhanced Open) — else None.
+    Gated on a structurally usable pairing, so it fires only when a real handshake
+    was captured (not on stray EAPOL frames), letting the UI surface e.g. 'OWE
+    4-way — not crackable' instead of dropping the capture silently.
+
+    SAE / FT are withheld too but stay silent here: they were never mis-reported as
+    crackable, so they aren't part of this 'we captured a 4-way but it's worthless'
+    surface (only EAP + OWE were the false-positive bugs)."""
+    label = uncrackable_label(hs)
+    if label not in (_EAP_LABEL, _OWE_LABEL):
         return None
-    return _EAP_LABEL if _pairs_ignoring_akm(hs) else None
+    return label if _pairs_ignoring_akm(hs) else None
 
 
 def _pairs_ignoring_akm(hs: Handshake) -> List[CrackablePair]:
