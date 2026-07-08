@@ -160,3 +160,31 @@ The chip's own 5->2.4 re-cycle recovers it, but only after a settle — `_heal_c
 3x back-to-back with no settle and stayed deaf; a bounce after a 0.3 s settle re-locks every time.
 `soak_2g.py` validated 80/80. Not a port miss (bring-up wire is byte-for-byte); a HW synth fault
 userland USB pacing hits.
+
+### 2026-07-08 — HW sweep: DIG-saturation refuted, cold-synth heal holds 0/60, capture% at parity
+
+Three BUGS.md ⏳ items swept on hardware (busy urban 2.4 GHz; strongest AP in range −53 dBm on ch1).
+
+**Strong-AP DIG saturation — refuted at achievable signal levels.** The strongest AP in range
+(CCK-1M, −53 dBm, ch1) captures at 78% (7.7/9.8 bcn/s) with the frozen
+`dig_init` IGI seed (0x20). An IGI sweep 0x10→0x40 (`cck_diag --igisweep`, one tune/environment) is
+**flat** — 5.8–8.7 bcn/s, no monotonic trend, zero dead seconds — so backing gain off does not help
+a strong AP here; there is no saturation signature. The PHYDM watchdog (`--watchdog`) converges IGI
+*down* to 0x1d (more gain), not off, and leaves capture unchanged (77% vs 78%). This is faithful: the
+unlinked/monitor DIG (the only branch wifit3 reaches — never associated) clamps IGI to [0x1c, 0x22]
+and steps by FA count toward the floor; the RSSI-based "back gain off" boundaries live in the
+linked-STA branch that never runs in monitor, and the vendor is identical. The 78%-vs-ideal gap is
+airtime contention on a busy ch1 (435 OFDM + 241 CCK in the 1–13 scan; OFDM bursts to 185–321/s in
+the per-second correlation), not gain. The exact ~−41 dBm near-AP case is untested (no AP that strong
+in range), but the proposed fix mechanism is proven ineffective and the DIG is already
+vendor-faithful. Cleared from BUGS.md; supersedes the 2026-06-16 "DIG must back gain off" expectation.
+
+**Matched-load capture% — within ~6 pts of the vendor reference.** Live 78% on the contended ch1 vs
+the vendor's own recorded ch1 window (`cck_capref.py`: top CCK AP ~8–10 bcn/s ≈ 84%) — but that
+reference is *also* a busy channel (130–456 OFDM/s), so 78-vs-84 is a comparable-load comparison and
+the gap reads as environment. A pristine matched-load number still wants a genuinely quiet ch1, which
+this RF environment doesn't offer; the residual stays in BUGS.md, downgraded.
+
+**Cold-boot 2.4 GHz synth wedge — heal holds 0/60.** `soak_2g.py --runs 60` (each `connect()` a full
+cold OFF→ON cycle): 0/60 boots 2.4 GHz-deaf, every run 58–107 ch1 beacons. `_heal_cold_synth` (the
+settled 5→2.4 re-cycle) holds across a 60-cycle soak (was ~20% deaf pre-fix). Cleared from BUGS.md.

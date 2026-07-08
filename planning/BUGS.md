@@ -12,8 +12,6 @@ contradicts itself; resolve on HW.
 
 ## Per-card
 
-Clean, no known bugs: **rt2500usb, rt2800usb, rt3070, rt5372, mt76x2u, rtl8821au**.
-
 ### rtl8187 (8187L)
 - ⏳ Injected deauth uses `duration=0` instead of the unicast-ACK NAV — minor TX nit [RTL8187L.md].
 - Limit: always cold-inits (no warm reattach) — replug to recover.
@@ -54,7 +52,5 @@ Clean, no known bugs: **rt2500usb, rt2800usb, rt3070, rt5372, mt76x2u, rtl8821au
   silicon. Fresh OOT usbmon captures for the re-port: `usb_dumps_new2/captures_rtl8814au/` (run 3 = good 2G TX).
 
 ### rtl8822bu_dkms
-- ⏳ Strong-AP saturation — DIG must back gain off; near APs (~−41 dBm) need tuning to reach 8–10 bcn/s [RTL8822BU_DKMS.md].
-- ⏳ Cold-boot 2.4 GHz synth wedge (~20 % of boots) — `_heal_cold_synth` recovery added; confirm it holds across a soak [RTL8822BU_DKMS.md].
-- ⏳ Matched-load RX capture % unconfirmed vs vendor ~84 % (needs a quiet ch1) [RTL8822BU_DKMS.md].
-- ⚠️ Chip doc contradicts itself on the TX descriptor (unported vs byte-for-byte 251/251) — resolve [RTL8822BU_DKMS.md].
+- ⏳ Matched-load RX capture %: 78 % live on a busy ch1 vs the vendor's ~84 % busy-ch1 reference
+  (within contention, 2026-07-08) — a clean quiet-ch1 number is still outstanding [RTL8822BU_DKMS.md].
