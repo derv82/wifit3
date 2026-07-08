@@ -12,7 +12,7 @@ contradicts itself; resolve on HW.
 
 ## Per-card
 
-Clean, no known bugs: **rt2500usb, rt3070, rt5372, rtl8821au (mainline)**.
+Clean, no known bugs: **rt2500usb, rt2800usb, rt3070, rt5372, rtl8821au (mainline)**.
 
 ### AR9271 (V1) is broken
 - v1 heard 1 AP total, nothing off channel 1 — its channel hopping is dead (mud2g 5.3/s on ch1 only
@@ -24,12 +24,6 @@ Clean, no known bugs: **rt2500usb, rt3070, rt5372, rtl8821au (mainline)**.
 ### rtl8187 (8187L)
 - ⏳ Injected deauth uses `duration=0` instead of the unicast-ACK NAV — minor TX nit [RTL8187L.md].
 - Limit: always cold-inits (no warm reattach) — replug to recover.
-
-### rt2800usb
-- RSSI over-reads +8/+11 dB (2.4/5 GHz) vs kernel on PAU09 — `eeprom_offset`+`lna_gain` zeroed in
-  `rx.py` [RT2800USB.md]. Beacon rate at kernel parity, but 2.4 breadth trails (87 vs 111 APs);
-  suspect the over-read feeds the link tuner [RT2800USB.md], de-sensitising marginal APs.
-- ⏳ Focus → first `set_channel` tune is flaky ("a re-tune fixed it") [RT2800USB.md].
 
 ### mt76x2u (AWUS036ACM)
 - ⏳ 5 GHz inject unverified on HW (the CCK→OFDM rate fix is in) [MT76X2U.md].

@@ -76,7 +76,10 @@ from .mac import (
 )
 from .reg_init import init_registers
 from .rfcsr import RfFilterCal, init_rfcsr
-from .rx import parse_rx_urb, probe_endpoints, read_rx_burst, rxwi_size_for_silicon
+from .rx import (
+    RssiCal, parse_rx_urb, probe_endpoints, read_rx_burst, rssi_cal_for_channel,
+    rxwi_size_for_silicon,
+)
 from ..rx_reader import RxReaderThread
 from .transport import RT2800USBTransport
 from .tx import inject_frame as _inject_frame, txwi_size_for_silicon
@@ -147,6 +150,7 @@ class RT2800USBDriver:
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
         self.current_channel: int = 1
+        self._rssi_cal = RssiCal()   # refreshed per channel once EEPROM is parsed
         self.chip_id: Optional[ChipId] = None
         self.chip_id_hint = chip_id_hint   # from VID:PID; e.g. "rt5572"
         # Narrow the channel capability to this specific chip if we know
@@ -468,7 +472,7 @@ class RT2800USBDriver:
 
     def _rx_dispatch(self, buf: bytes) -> None:
         """Decode one RX URB → parse → rx callback (on the loop)."""
-        rx = parse_rx_urb(buf, rxwi_size=self._rxwi_size)
+        rx = parse_rx_urb(buf, rxwi_size=self._rxwi_size, rssi_cal=self._rssi_cal)
         if rx is None or rx.has_fcs_error:
             return
         # Feed the link tuner's RSSI average (good frames only — the kernel
@@ -605,6 +609,8 @@ class RT2800USBDriver:
             logger.error("rt2800usb set_channel(%d): %s", channel, e)
             return False
         self.current_channel = channel
+        if self._eeprom is not None:
+            self._rssi_cal = rssi_cal_for_channel(self._eeprom, channel)
         # _set_channel just rewrote BBP66 to the per-channel AGC seed, so the
         # tuner must re-establish from scratch on the new channel (and not
         # carry the old channel's averaged RSSI across the hop).

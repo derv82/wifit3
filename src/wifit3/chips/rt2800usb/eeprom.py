@@ -72,6 +72,9 @@ EEPROM_OFFSET_NIC_CONF1 = 0x1B
 EEPROM_OFFSET_FREQ = 0x1D
 EEPROM_OFFSET_LNA = 0x22
 EEPROM_OFFSET_RSSI_BG = 0x23
+EEPROM_OFFSET_RSSI_BG2 = 0x24    # OFFSET2 (low) + LNA_A1 (high)
+EEPROM_OFFSET_RSSI_A = 0x25      # A OFFSET0 (low) + OFFSET1 (high)
+EEPROM_OFFSET_RSSI_A2 = 0x26     # A2 OFFSET2 (low) + LNA_A2 (high)
 
 # RT5592 IQ calibration byte offsets — kernel uses rt2x00_eeprom_byte()
 # directly, so these are BYTE offsets into the EFUSE dump, not word
@@ -265,10 +268,16 @@ class EepromValues:
     nic_conf0: int            # u16
     nic_conf1: int            # u16
     freq_offset: int          # u8 (low byte of FREQ word)
-    lna_gain_bg: int          # u8 (low byte of LNA word — 2.4 GHz LNA gain)
-    lna_gain_a: int           # u8 (high byte of LNA word — 5 GHz LNA-A gain)
+    lna_gain_bg: int          # u8 LNA_BG — 2.4 GHz LNA gain
+    lna_gain_a: int           # u8 LNA_A0 — 5 GHz ch 15–64 LNA gain
     rssi_bg_offset0: int
     rssi_bg_offset1: int
+    rssi_bg_offset2: int = 0
+    rssi_a_offset0: int = 0
+    rssi_a_offset1: int = 0
+    rssi_a_offset2: int = 0
+    lna_gain_a1: int = 0      # 5 GHz ch 65–128 LNA (RSSI_BG2 high byte)
+    lna_gain_a2: int = 0      # 5 GHz ch > 128 LNA (RSSI_A2 high byte)
     iq_cal: "IqCalibration | None" = None    # RT5592-only; None for other chips
 
     # NIC_CONF1 capability bits — kernel `rt2x00_has_cap_*`.
@@ -335,6 +344,16 @@ def _word(eeprom: bytes, word_offset: int) -> int:
     return eeprom[byte_offset] | (eeprom[byte_offset + 1] << 8)
 
 
+def _sanitize_rssi_offset(raw: int) -> int:
+    """kernel rt2800_validate_eeprom: an RSSI offset with abs > 10 is junk → 0."""
+    return raw if abs(raw) <= 10 else 0
+
+
+def _sanitize_lna(raw: int, default: int) -> int:
+    """kernel rt2800_validate_eeprom: LNA_A1/A2 of 0x00 or 0xff → LNA_A0."""
+    return default if raw in (0x00, 0xFF) else raw
+
+
 # Default crystal-compensation value to use when EFUSE freq_offset is
 # unburned (0x00 or 0xFF). The kernel only checks 0xFFFF in
 # rt2800_validate_eeprom (rt2800lib.c:11088) and falls through with
@@ -391,8 +410,11 @@ def parse_eeprom(eeprom: bytes) -> EepromValues:
         freq = UNBURNED_FREQ_OFFSET_DEFAULT
     lna_word = _word(eeprom, EEPROM_OFFSET_LNA)
     lna_bg = lna_word & 0xFF
-    lna_a = (lna_word >> 8) & 0xFF
+    lna_a0 = (lna_word >> 8) & 0xFF          # LNA_A0; also the default for A1/A2
     rssi_bg = _word(eeprom, EEPROM_OFFSET_RSSI_BG)
+    rssi_bg2 = _word(eeprom, EEPROM_OFFSET_RSSI_BG2)
+    rssi_a = _word(eeprom, EEPROM_OFFSET_RSSI_A)
+    rssi_a2 = _word(eeprom, EEPROM_OFFSET_RSSI_A2)
 
     # RT5592 IQ cal bytes. Always parsed (only RT5572 uses them; other
     # chips just get an unused IqCalibration struct full of zeros).
@@ -423,8 +445,14 @@ def parse_eeprom(eeprom: bytes) -> EepromValues:
         nic_conf1=nic1,
         freq_offset=freq,
         lna_gain_bg=lna_bg,
-        lna_gain_a=lna_a,
-        rssi_bg_offset0=rssi_bg & 0xFF,
-        rssi_bg_offset1=(rssi_bg >> 8) & 0xFF,
+        lna_gain_a=lna_a0,
+        lna_gain_a1=_sanitize_lna((rssi_bg2 >> 8) & 0xFF, lna_a0),
+        lna_gain_a2=_sanitize_lna((rssi_a2 >> 8) & 0xFF, lna_a0),
+        rssi_bg_offset0=_sanitize_rssi_offset(rssi_bg & 0xFF),
+        rssi_bg_offset1=_sanitize_rssi_offset((rssi_bg >> 8) & 0xFF),
+        rssi_bg_offset2=_sanitize_rssi_offset(rssi_bg2 & 0xFF),
+        rssi_a_offset0=_sanitize_rssi_offset(rssi_a & 0xFF),
+        rssi_a_offset1=_sanitize_rssi_offset((rssi_a >> 8) & 0xFF),
+        rssi_a_offset2=_sanitize_rssi_offset(rssi_a2 & 0xFF),
         iq_cal=iq_cal,
     )

@@ -36,7 +36,10 @@ from __future__ import annotations
 import logging
 import struct
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from .eeprom import EepromValues
 
 import usb.core
 
@@ -112,20 +115,55 @@ def rxwi_size_for_silicon(silicon_id: int) -> int:
     return RXWI_DESC_SIZE_4WORDS
 
 
-def _agc_to_rssi_simple(rxwi_w2: int) -> int:
-    """Defer-EEPROM RSSI calc: base_val (-12) minus the strongest signed
-    RSSI byte across the three RX paths."""
-    # Signed bytes (kernel does `s8 rssi0 = rt2x00_get_field32(...)`).
+# base_val is -12 for every silicon this driver supports (-2 only on RT6352,
+# which we don't). [SRC] rt2800lib.c:861.
+_RSSI_BASE_VAL = -12
+
+
+@dataclass(frozen=True)
+class RssiCal:
+    """The per-band RSSI offsets + per-channel LNA gain that kernel
+    rt2800_agc_to_rssi subtracts. All-zero (the default) reproduces the old
+    pre-EEPROM ballpark (base_val - raw only)."""
+    offset0: int = 0
+    offset1: int = 0
+    offset2: int = 0
+    lna_gain: int = 0
+
+
+_DEFAULT_RSSI_CAL = RssiCal()
+
+
+def rssi_cal_for_channel(eeprom: "EepromValues", channel: int) -> RssiCal:
+    """Band offsets (rt2800_agc_to_rssi) + channel-range LNA gain
+    (rt2800_config_lna_gain) for `channel`. [SRC] rt2800lib.c:867-878, 2407-2437."""
+    if channel <= 14:
+        return RssiCal(eeprom.rssi_bg_offset0, eeprom.rssi_bg_offset1,
+                       eeprom.rssi_bg_offset2, eeprom.lna_gain_bg)
+    if channel <= 64:
+        lna = eeprom.lna_gain_a          # LNA_A0
+    elif channel <= 128:
+        lna = eeprom.lna_gain_a1
+    else:
+        lna = eeprom.lna_gain_a2
+    return RssiCal(eeprom.rssi_a_offset0, eeprom.rssi_a_offset1,
+                   eeprom.rssi_a_offset2, lna)
+
+
+def _agc_to_rssi(rxwi_w2: int, cal: RssiCal) -> int:
+    """dBm from the strongest RX path — kernel rt2800_agc_to_rssi:
+    rssiN = base_val - offsetN - lna_gain - rawN (signed byte), else -128."""
     def _signed8(byte_val: int) -> int:
         return byte_val - 256 if byte_val >= 128 else byte_val
 
-    raw0 = (rxwi_w2 & RXWI_W2_RSSI0)
+    raw0 = rxwi_w2 & RXWI_W2_RSSI0
     raw1 = (rxwi_w2 & RXWI_W2_RSSI1) >> 8
     raw2 = (rxwi_w2 & RXWI_W2_RSSI2) >> 16
 
-    rssi0 = -12 - _signed8(raw0) if raw0 else -128
-    rssi1 = -12 - _signed8(raw1) if raw1 else -128
-    rssi2 = -12 - _signed8(raw2) if raw2 else -128
+    base = _RSSI_BASE_VAL
+    rssi0 = base - cal.offset0 - cal.lna_gain - _signed8(raw0) if raw0 else -128
+    rssi1 = base - cal.offset1 - cal.lna_gain - _signed8(raw1) if raw1 else -128
+    rssi2 = base - cal.offset2 - cal.lna_gain - _signed8(raw2) if raw2 else -128
 
     return max(rssi0, rssi1, rssi2)
 
@@ -146,7 +184,9 @@ def _ieee80211_hdrlen(fc0: int, fc1: int) -> int:
     return base
 
 
-def parse_rx_urb(buf: bytes, *, rxwi_size: int = RXWI_DESC_SIZE_4WORDS) -> Optional[RxFrame]:
+def parse_rx_urb(
+    buf: bytes, *, rxwi_size: int = RXWI_DESC_SIZE_4WORDS, rssi_cal: "RssiCal | None" = None,
+) -> Optional[RxFrame]:
     """Decode one bulk-IN URB → RxFrame, or None if malformed.
 
     Returns None when:
@@ -206,7 +246,7 @@ def parse_rx_urb(buf: bytes, *, rxwi_size: int = RXWI_DESC_SIZE_4WORDS) -> Optio
         return None
     mpdu = bytes(body[:mpdu_len])
 
-    rssi = _agc_to_rssi_simple(rxwi_w2)
+    rssi = _agc_to_rssi(rxwi_w2, rssi_cal or _DEFAULT_RSSI_CAL)
 
     return RxFrame(
         mpdu=mpdu,
