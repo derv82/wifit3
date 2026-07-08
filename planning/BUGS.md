@@ -12,14 +12,6 @@ contradicts itself; resolve on HW.
 
 ## Cross-cutting (not card-specific)
 
-### Foreign-warmed chip → degraded RX until replug — release blocker
-A card the kernel driver warmed that can't force a cold boot in userland comes up with
-silently-degraded RX after wifit3 takes it over without a replug (RTL8814AU: 5 beacons/20 s vs 106
-after a replug). Cards that self-cold (AR9271, mt76x0u, mt76x2u) are fine; the ones that can't
-(RT*/Realtek) must be physically replugged. Fix: after a successful Linux install, show a "Please
-replug" modal that polls for the card to be unplugged, then falls back to the splash screen, instead
-of auto-connecting.
-
 ### PMKID on a WPA3→WPA2 transition AP (PMF:Optional) — ⏳ HW-confirm pending
 Instrumented + a speculative fix landed (2026-07-07); a run against the transition AP closes it (or
 converts it to a documented limitation). The forged Assoc now advertises PSK with **clean RSN
@@ -28,12 +20,6 @@ capabilities** (we stopped echoing the AP's MFP/BIP tail — a suspected cause),
 `[PROTECTED]` in the harvest log instead of a bare "no M1". If `[PROTECTED]` fires on the transition
 AP the Protected-M1 theory holds (PMKID is genuinely unharvestable that way); else the `[PMKID]
 forged Assoc RSN IE …` log + the `interface._on_eapol_frame` classification narrow it further.
-
-### Linux uninstall leaves a shared driver blacklisted when a sibling card is installed
-The Linux modprobe blacklist is written per-*card* but blocks a shared kernel *driver*: RT5372,
-RT5572, and RT3572 all emit `blacklist rt2800usb`, so uninstalling one card leaves a sibling's
-`.conf` blocking the driver for the whole family. Observed: an installed RT5372 kept the RT5572
-(PAU09) from binding `rt2800usb`, and uninstalling the PAU09 never cleared it.
 
 ---
 

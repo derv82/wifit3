@@ -259,8 +259,9 @@ verification of A isn't confounded by a resident sibling module.
    reuses the post-install auto-connect tail. 5 tests.
 6. ⏳ **HW sweep (needs the user + hardware)** — resolve every ⚠ in the classification table (kernel-warm each
    RT/Realtek card, confirm the replug modal + cold RX); the two-Ralink shared-module test (RT5372 + PAU09);
-   then delete the two fixed items from `BUGS.md` + update the affected `<CHIP>.md` docs. The BUGS.md
-   deletions are intentionally deferred until HW confirms — code-complete ≠ verified.
+   update the affected `<CHIP>.md` docs. The two `BUGS.md` entries were removed at the Lead's request
+   (2026-07-08) ahead of HW — the fixes are code-complete and BUGS.md tracks *open* items; this plan is now
+   the sole record of the remaining HW verification.
 
 Full suite: 1432 passed. The two Linux-specific bugs are fixed in code; they await the HW sweep before the
 `BUGS.md` entries come out.
