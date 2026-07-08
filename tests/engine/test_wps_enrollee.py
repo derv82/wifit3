@@ -178,3 +178,16 @@ async def test_pbc_psk_with_binary_safe_decode():
     out, _ = await _run(psk="p@ss:w0rd!", ssid="café")
     assert out.psk == "p@ss:w0rd!"
     assert out.ssid == "café"
+
+
+async def test_pbc_enrollee_aborts_on_should_stop():
+    """A cooperative stop (Campaign.stopped, polled via should_stop) bails the
+    enrollee with ABORTED before it blocks on recv — this is what lets the 'Stop
+    PBC' button free the radio promptly instead of running to the ~30 s deadline."""
+    a, b = asyncio.Queue(), asyncio.Queue()
+    enr = WpsEnrollee(_QueueTransport(a, b), BSSID, STA,
+                      msg_timeout=1.0, eapol_start_timeout=1.0,
+                      should_stop=lambda: True)
+    out = await asyncio.wait_for(enr.run(), timeout=5.0)
+    assert out.result is PinResult.ABORTED
+    assert "stopped" in out.detail

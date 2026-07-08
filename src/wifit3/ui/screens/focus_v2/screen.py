@@ -98,6 +98,11 @@ _PAD_RATE = 0.4
 _ATTACK_BUTTONS = [
     ("btn-gen-ivs", "ARP Replay"), ("btn-chop", "ChopChop"), ("btn-pmkid", "PMKID"),
     ("btn-wps-pin", "WPS PIN"), ("btn-wpa3-down", "WPA ↓"),
+    # PBC has no idle button (it auto-invades an open walk window); this transient
+    # red button is shown by _refresh_buttons ONLY while a PBC capture is running,
+    # so the user can free the radio from a slow/stuck attempt. Not a Campaign in
+    # derive_buttons — driven directly (see _refresh_buttons / _user_stop_pbc).
+    ("btn-stop-pbc", "Stop PBC"),
 ]
 
 # Footer-command campaign-key → the button id whose visible/enabled state its
@@ -214,6 +219,10 @@ class FocusViewV2(Screen):
         self._wpa3_down_attack: Optional[WPA3DowngradeAttack] = None
         self._pending_wps_pin = False   # WPS-PIN launch deferred past on_screen_resume's re-acquire
         self._pbc_campaign: Optional[WpsPbcCapture] = None
+        # Set when the user manually stops PBC: suppresses the per-tick auto-invade
+        # re-arm for the CURRENT walk window (cleared when the window closes), so
+        # "Stop PBC" actually frees the radio instead of re-arming next tick.
+        self._pbc_user_stopped = False
         self._pmkid_campaign: Optional[PmkidHarvestAttack] = None
         # Last packet_stats snapshot, diffed each tick to flicker the endpoint LEDs
         # (router on RX from the target, card on TX we send). None = no baseline yet.
@@ -312,6 +321,16 @@ class FocusViewV2(Screen):
             return
         for bid, state in fm.derive_buttons(ap).items():
             self._apply_button(f"#{bid}", state)
+        # PBC's transient Stop button: not a Campaign in derive_buttons — shown red
+        # only while a capture is actually running (auto-invade has no idle button).
+        stop_pbc = self.query_one("#btn-stop-pbc", Button)
+        if self._pbc_busy():
+            stop_pbc.display = True
+            stop_pbc.disabled = False
+            stop_pbc.variant = "error"
+            stop_pbc.label = "Stop PBC"
+        else:
+            stop_pbc.display = False
 
     # ----- target (re)acquisition --------------------------------------------
 
@@ -457,8 +476,12 @@ class FocusViewV2(Screen):
             self._finish_pmkid()
         if self._pbc_campaign is not None and self._pbc_campaign.done:
             self._finish_pbc_capture(ap)
+        # A manual Stop only suppresses THIS window; once it closes, a fresh window
+        # auto-invades again (PBC is on-by-default).
+        if not ap.wps_pbc_active:
+            self._pbc_user_stopped = False
         if (ap.wps_pbc_active and getattr(self.app, "pbc_enabled", True)
-                and not self._pbc_busy() and not ap.has_psk
+                and not self._pbc_busy() and not self._pbc_user_stopped and not ap.has_psk
                 and self._wep_campaign is None and self._wpa3_down_attack is None
                 and self._wps_campaign is None):
             self._start_pbc_capture(ap)
@@ -623,6 +646,8 @@ class FocusViewV2(Screen):
             self._toggle_generate_ivs()
         elif bid == "btn-chop":
             self._toggle_chop()
+        elif bid == "btn-stop-pbc":
+            self._user_stop_pbc()
 
     # ----- command-bar (footer hotkeys) --------------------------------------
 
@@ -989,6 +1014,19 @@ class FocusViewV2(Screen):
         if self._pbc_campaign is not None:
             self._pbc_campaign.request_stop()
             self._pbc_campaign = None
+
+    def _user_stop_pbc(self) -> None:
+        """The transient 'Stop PBC' button: free the radio from a slow/stuck capture
+        and suppress re-arm until the walk window closes (so it doesn't just restart
+        on the next tick). request_stop() frees the radio slot now; the engine polls
+        the stop and tears the fake MAC / transport down within one msg_timeout."""
+        if self._pbc_campaign is None:
+            return
+        self._pbc_user_stopped = True
+        self._stop_pbc_capture()
+        self._log("[yellow]WPS PushButton capture stopped[/yellow] "
+                  "[dim](radio freed; auto-invade resumes on the next window)[/dim]")
+        self._refresh_buttons()
 
     # ----- navigation --------------------------------------------------------
 

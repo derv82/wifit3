@@ -38,6 +38,7 @@ class WpsEnrollee:
         eapol_start_timeout: float = 2.0,
         overall_timeout: float = 30.0,
         log=None,
+        should_stop=None,
     ):
         self.t = transport
         self.bssid = bssid
@@ -46,6 +47,10 @@ class WpsEnrollee:
         self.eapol_start_timeout = eapol_start_timeout
         self.overall_timeout = overall_timeout
         self.log = log or logger.debug
+        # Cooperative-stop probe (Campaign.stopped) — polled before each blocking
+        # recv so a user Stop aborts the ~30 s hold within one msg_timeout instead
+        # of running to the deadline. Default: never stop.
+        self.should_stop = should_stop or (lambda: False)
 
     async def _send_1x(self, payload_1x: bytes) -> None:
         await self.t.send(M.build_data_frame(self.bssid, self.our_mac, self.bssid, payload_1x))
@@ -87,6 +92,8 @@ class WpsEnrollee:
         deadline = time.monotonic() + self.overall_timeout
         timeout = self.eapol_start_timeout
         while time.monotonic() < deadline:
+            if self.should_stop():
+                return AttemptOutcome(PinResult.ABORTED, "<PBC>", detail="stopped by user")
             frame = await self.t.recv(min(timeout, deadline - time.monotonic()))
             timeout = self.msg_timeout
             if frame is None:

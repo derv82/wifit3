@@ -73,7 +73,9 @@ class WpsPbcCapture(Campaign):
 
     async def capture(self) -> AttemptOutcome:
         """One PBC enrollment attempt. Returns the WpsEnrollee outcome (SUCCESS
-        carries the SSID + PSK)."""
+        carries the SSID + PSK); ``ABORTED`` if a cooperative stop landed."""
+        if self.stopped:
+            return AttemptOutcome(PinResult.ABORTED, "<PBC>", detail="stopped before start")
         assoc = WpsAssociation(self.iface, self.bssid, self.target.ssid or "",
                                self.channel, our_mac=self.our_mac,
                                wps_request_type=WPS_REQ_ENROLLEE)
@@ -88,10 +90,14 @@ class WpsPbcCapture(Campaign):
         transport.start()
         outcome = None
         try:
-            if not await assoc.associate():
-                self.log(f"assoc failed ({assoc.fail_reason}); running EAPOL anyway")
-            outcome = await WpsEnrollee(transport, str_to_mac(self.bssid),
-                                        self.our_mac, log=self.log).run()
+            if self.stopped:
+                outcome = AttemptOutcome(PinResult.ABORTED, "<PBC>", detail="stopped by user")
+            else:
+                if not await assoc.associate():
+                    self.log(f"assoc failed ({assoc.fail_reason}); running EAPOL anyway")
+                outcome = await WpsEnrollee(transport, str_to_mac(self.bssid),
+                                            self.our_mac, log=self.log,
+                                            should_stop=lambda: self.stopped).run()
         finally:
             # Abandoning a (possibly mid-exchange) attempt: tell the AP we're
             # leaving so it drops our EAP session. Otherwise it keeps retransmitting

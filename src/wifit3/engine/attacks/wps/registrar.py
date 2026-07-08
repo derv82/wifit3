@@ -42,6 +42,7 @@ class PinResult(Enum):
     SECOND_HALF_WRONG = "second_half_wrong"
     TIMEOUT = "timeout"
     PROTO_ERROR = "proto_error"           # rejected before the M4 oracle (e.g. locked)
+    ABORTED = "aborted"                   # cooperatively stopped mid-exchange (user Stop)
 
 
 @dataclass

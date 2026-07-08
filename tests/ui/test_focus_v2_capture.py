@@ -157,6 +157,54 @@ async def test_v2_capture_wins_raise_toasts():
         assert "Handshake captured" in titles, toasts
 
 
+@pytest.mark.asyncio
+async def test_v2_stop_pbc_button_frees_radio_and_suppresses_rearm():
+    """The transient 'Stop PBC' button: hidden while idle, shown red while a PBC
+    capture runs; pressing it stops the campaign and suppresses the per-tick
+    auto-invade re-arm until the walk window closes (else it just restarts)."""
+    from unittest.mock import Mock
+
+    bssid = "aa:bb:cc:dd:ee:01"
+    iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
+    ap = iface.access_points[bssid]
+    app = _Host(iface, ap)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        focus = app.screen
+        stop_btn = focus.query_one("#btn-stop-pbc", Button)
+
+        focus._refresh_buttons()
+        assert stop_btn.display is False                 # idle → hidden
+
+        camp = Mock()                                    # stand in for a running capture
+        camp.done = False
+        focus._pbc_campaign = camp
+        focus._refresh_buttons()
+        assert stop_btn.display is True and stop_btn.variant == "error"
+
+        focus._user_stop_pbc()
+        camp.request_stop.assert_called_once()           # engine stop requested
+        assert focus._pbc_campaign is None
+        assert focus._pbc_user_stopped is True
+        assert stop_btn.display is False                 # button hides again
+
+        # Window still open → _tick must NOT re-arm PBC (suppressed).
+        ap.wps = True
+        ap.wps_selected_registrar = True
+        ap.wps_device_password_id = 0x0004
+        assert ap.wps_pbc_active
+        focus._start_pbc_capture = Mock()
+        focus._tick()
+        focus._start_pbc_capture.assert_not_called()
+
+        # Window closes → suppression clears so a fresh window re-invades.
+        ap.wps_selected_registrar = False
+        assert not ap.wps_pbc_active
+        focus._tick()
+        assert focus._pbc_user_stopped is False
+
+
 def test_save_line_elides_bssid_and_timestamp():
     """The save note keeps the readable head (essid) + tail (kind.ext) and elides
     the BSSID + epoch middle that bloated the log."""

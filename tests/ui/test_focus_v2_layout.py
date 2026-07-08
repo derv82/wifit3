@@ -63,11 +63,12 @@ async def test_topbar_is_the_action_area_and_card_has_no_buttons():
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         scr = app.screen
-        # Back button + the full conditional attack set (5 fixed ids, shown/hidden
-        # per target by derive_buttons) all live in the top action area; none
-        # remain in the card column.
-        assert len(scr.query("#topbar Button")) == 6
-        for bid in ("btn-gen-ivs", "btn-chop", "btn-pmkid", "btn-wps-pin", "btn-wpa3-down"):
+        # Back button + the full conditional attack set (5 derive_buttons ids +
+        # the transient btn-stop-pbc, all shown/hidden per target/tick) live in the
+        # top action area; none remain in the card column.
+        assert len(scr.query("#topbar Button")) == 7
+        for bid in ("btn-gen-ivs", "btn-chop", "btn-pmkid", "btn-wps-pin",
+                    "btn-wpa3-down", "btn-stop-pbc"):
             assert scr.query_one(f"#topbar #{bid}", Button) is not None
         assert len(scr.query("#card Button")) == 0
 
