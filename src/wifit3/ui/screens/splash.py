@@ -13,7 +13,7 @@ from rich.text import Text
 from wifit3.errors import BringUpError, BringUpPermissionsError, WifiteFatalError
 from wifit3.ui.ansi_art import make_black_transparent
 from wifit3.setup import target_for_vidpid
-from wifit3.setup.linux import current_user, install_rule, remove_rule
+from wifit3.setup.linux import current_user, install_rule, plan_uninstall, remove_rule
 from wifit3.setup.windows import install_winusb, restore_driver
 from wifit3.ui.screens.confirm_install import ConfirmInstallDialog
 from wifit3.ui.screens.confirm_uninstall import ConfirmUninstallDialog
@@ -440,8 +440,27 @@ class SplashView(Screen):
             list_view.focus()
 
         try:
-            if not await self.app.push_screen_wait(
-                    ConfirmUninstallDialog(iface.description.split("(")[0].strip(), os_kind)):
+            name = iface.description.split("(")[0].strip()
+            target = plan = None
+            if os_kind == "linux":
+                # Compute the removal plan first: the card's kernel module(s), the sibling chipsets
+                # sharing them, and whether it has files of its own. Drives the narrow/wide dialog.
+                target = await asyncio.to_thread(target_for_vidpid, iface.vid, iface.pid)
+                if target is None:
+                    status.update("[bold red]This card isn't a supported chipset.[/bold red]")
+                    release()
+                    return
+                plan = await asyncio.to_thread(plan_uninstall, target)
+                if not plan.removable:
+                    status.update(f"[bold green]No wifit3 rules installed for {name}.[/bold green]")
+                    release()
+                    return
+                choice = await self.app.push_screen_wait(ConfirmUninstallDialog(
+                    name, os_kind, siblings=[s.description for s in plan.siblings],
+                    has_own_files=plan.has_own_files))
+            else:
+                choice = await self.app.push_screen_wait(ConfirmUninstallDialog(name, os_kind))
+            if choice is None:
                 status.update("[bold lightgreen]Select a card and press START[/bold lightgreen]")
                 release()
                 return
@@ -451,13 +470,11 @@ class SplashView(Screen):
             if os_kind == "win":
                 result = await asyncio.to_thread(restore_driver, iface.vid, iface.pid)
             else:
-                target = target_for_vidpid(iface.vid, iface.pid)
-                if target is None:
-                    status.update("[bold red]This card isn't a supported chipset.[/bold red]")
-                    release()
-                    return
+                # Wide radius also removes the sibling chipsets so the shared kernel module is freed.
+                also = tuple(s.key for s in plan.siblings) if choice == "wide" else ()
                 result = await asyncio.to_thread(
-                    remove_rule, target, node=self.device_manager.usb_node_path(iface))
+                    remove_rule, target, node=self.device_manager.usb_node_path(iface),
+                    also_keys=also)
         except Exception as e:
             logger.exception("Uninstall failed for %s", getattr(iface, "description", "?"))
             status.update(f"[bold red]Uninstall failed: {e}[/bold red]")
