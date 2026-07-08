@@ -26,12 +26,10 @@ class _FakeIface:
     """Records injected frames; optionally drops an M1 into the handshake dict the
     instant the Assoc Req is sent (simulating the AP's reply)."""
 
-    def __init__(self, deliver_m1: bool, pmkid=None, fake_mac_supported: bool = False,
-                 protected: bool = False):
+    def __init__(self, deliver_m1: bool, pmkid=None, fake_mac_supported: bool = False):
         self._deliver_m1 = deliver_m1
         self._pmkid = pmkid
         self._fake_mac_supported = fake_mac_supported
-        self._protected = protected              # M1 arrived encrypted (PMF/transition)
         self.current_channel = 36
         self.ap = SimpleNamespace(handshakes={})
         self.access_points = {_BSSID: self.ap}
@@ -41,9 +39,6 @@ class _FakeIface:
 
     def register_forged_mac(self, mac):
         pass
-
-    def saw_protected_to_forged(self, bssid, mac):
-        return self._protected
 
     async def set_fake_mac(self, mac, bssid=None):
         if not self._fake_mac_supported:
@@ -106,20 +101,6 @@ async def test_silent_ap_retries_then_gives_up_without_deauth():
     assert a.fail_reason is PmkidFail.NO_RESPONSE
     assert len(_assoc_reqs(iface)) == 3                        # rotate + retry while silent
     assert _deauths(iface) == []                               # never got M1 → nothing to leave
-
-
-async def test_protected_m1_reported_as_protected():
-    """A transition/PMF AP whose M1 arrives encrypted (routed to unreadable 'data')
-    → no PMKID, but we DID get an answer: reported as PROTECTED, not the AP-silent
-    NO_RESPONSE, so the UI can chip [PROTECTED]."""
-    iface = _FakeIface(deliver_m1=False, protected=True)
-    a = PmkidHarvestAttack(iface, _target(), attempts=2, m1_timeout=0.02)
-    await a._loop()
-    await a.teardown()
-    assert a.pmkid is None
-    assert a.fail_reason is PmkidFail.PROTECTED
-    assert len(_assoc_reqs(iface)) == 2                        # still rotated + retried
-    assert _deauths(iface) == []                               # no readable M1 → nothing to leave
 
 
 async def test_pmf_required_short_circuits_without_tx():

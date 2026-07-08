@@ -10,19 +10,6 @@ contradicts itself; resolve on HW.
 
 ---
 
-## Cross-cutting (not card-specific)
-
-### PMKID on a WPA3→WPA2 transition AP (PMF:Optional) — ⏳ HW-confirm pending
-Instrumented + a speculative fix landed (2026-07-07); a run against the transition AP closes it (or
-converts it to a documented limitation). The forged Assoc now advertises PSK with **clean RSN
-capabilities** (we stopped echoing the AP's MFP/BIP tail — a suspected cause), and an M1 that arrives
-*encrypted* (FC Protected bit → the parser routes it to `data`, never `eapol`) is detected and badged
-`[PROTECTED]` in the harvest log instead of a bare "no M1". If `[PROTECTED]` fires on the transition
-AP the Protected-M1 theory holds (PMKID is genuinely unharvestable that way); else the `[PMKID]
-forged Assoc RSN IE …` log + the `interface._on_eapol_frame` classification narrow it further.
-
----
-
 ## Per-card
 
 Clean, no known bugs: **rt2500usb, rt3070, rt5372, rtl8821au (mainline)**.

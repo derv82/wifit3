@@ -98,9 +98,6 @@ class WlanInterface:
         # MACs we forged for active attacks (e.g. PMKID harvest). Frames to these come from
         # the AP, so skip client registration + handshake EAPOL retries (PMKID still runs).
         self.forged_macs: Set[str] = set()
-        # (bssid, forged_mac) that received a Protected Data frame — a probable
-        # unreadable M1 the PMKID harvest reports as [PROTECTED].
-        self._protected_to_forged: Set[tuple] = set()
 
         # Forged STA MAC for WEP fake-auth. Unlike forged_macs these ARE registered as a
         # client, tagged is_self so the UI shows "YOU".
@@ -166,13 +163,6 @@ class WlanInterface:
         self._on_wepdata_frame(pkt)
         self._track_client(pkt)
         self._on_eapol_frame(pkt)
-
-        # A Protected Data frame to a forged MAC ≈ an unreadable M1 (see saw_protected_to_forged).
-        if (pkt.protected and pkt.dest in self.forged_macs
-                and bssid in self.access_points):
-            self._protected_to_forged.add((bssid.lower(), pkt.dest.lower()))
-            logger.info("[PMKID] protected data %s -> %s (bssid %s) — likely an "
-                        "unreadable M1 (PMF/transition)", pkt.source, pkt.dest, bssid)
 
     def _on_beacon_frame(self, pkt: Packet) -> bool:
         """Build/refresh the AP from a beacon or probe response, then (for beacons) stash the
@@ -496,12 +486,6 @@ class WlanInterface:
         else:
             mac_str = str(mac).lower()
         self.forged_macs.add(mac_str)
-
-    def saw_protected_to_forged(self, bssid: str, mac: str) -> bool:
-        """True if a Protected (encrypted) Data frame from ``bssid`` reached forged
-        ``mac`` — lets the PMKID harvest tell 'M1 arrived but was PMF-protected
-        (unreadable)' from 'AP stayed silent'."""
-        return (bssid.lower(), mac.lower()) in self._protected_to_forged
 
     async def set_fake_mac(self, mac: Any, bssid: Any = None) -> Optional[str]:
         """Ask the driver to HW-ACK frames addressed to ``mac`` (active-monitor) — the

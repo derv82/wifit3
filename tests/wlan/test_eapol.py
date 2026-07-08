@@ -235,20 +235,6 @@ def test_parser_no_client_akm_on_m1():
     assert parsed.akm is None
 
 
-def test_protected_data_frame_typed_data_and_flagged():
-    """A CCMP-protected data frame (FC Protected + ExtIV) parses as type 'data'
-    with protected=True — where an encrypted EAPOL M1 lands, so the PMKID harvest
-    can tell 'M1 arrived but was PMF-protected' from 'AP silent'."""
-    bssid = bytes.fromhex("aabbccddee01")
-    sta = bytes.fromhex("021122334455")
-    fc0, fc1 = 0x08, 0x40 | 0x02                          # data; Protected + from_ds
-    hdr = bytes([fc0, fc1]) + b"\x00\x00" + sta + bssid + bssid + b"\x00\x00"
-    ccmp = b"\x00\x00\x00\x20" + b"\x00" * 4 + b"\xde" * 16   # ExtIV (0x20) at KeyID byte
-    parsed = WlanFrameParser.parse_80211_frame(hdr + ccmp, -42)
-    assert parsed.type == "data"
-    assert parsed.protected is True
-
-
 # ---- Handshake pair-detection tests --------------------------------------------
 
 def _ef(msg_num, replay_int, raw=None, *, ts=0.0, nonce=None, mic=True, complete=True):

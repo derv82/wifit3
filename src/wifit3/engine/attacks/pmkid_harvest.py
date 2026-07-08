@@ -46,7 +46,6 @@ class PmkidFail(enum.Enum):
     NO_PSK_AKM = "no_psk_akm"       # AP offers no PSK AKM to harvest (e.g. SAE-only)
     NO_KDE = "no_kde"               # M1 arrived but carried no PMKID KDE
     NO_RESPONSE = "no_response"     # never got an M1 (AP stayed silent)
-    PROTECTED = "protected"         # M1 arrived encrypted (PMF/transition) — parser can't read it
 
 
 def _mac_bytes_to_str(b: bytes) -> str:
@@ -341,7 +340,6 @@ class PmkidHarvestAttack(Campaign):
         # FAKE_MAC capability — we just keep going un-ACKed (auth/sleep/assoc as
         # before). Re-armed per attempt (each rotates the source MAC); teardown()
         # clears it once.
-        saw_protected = False   # a Protected (encrypted) M1 landed as unreadable "data"
         for attempt in range(1, self.attempts + 1):
             if self.stopped:
                 return
@@ -385,18 +383,12 @@ class PmkidHarvestAttack(Campaign):
                     return
                 await asyncio.sleep(0.05)
 
-            if self.iface.saw_protected_to_forged(
-                    self.target.bssid, _mac_bytes_to_str(self.source_mac)):
-                saw_protected = True
             logger.info(
-                f"[PMKID] Attempt {attempt}: no readable M1 "
-                f"({'M1 arrived PROTECTED' if saw_protected else 'AP silent'}) — "
-                f"rotating MAC and retrying."
+                f"[PMKID] Attempt {attempt}: no M1 (AP silent) — rotating MAC and retrying."
             )
             self._rotate_mac()
 
-        # Distinguish a silent AP from one whose M1 arrived encrypted (→ PROTECTED).
-        self.fail_reason = PmkidFail.PROTECTED if saw_protected else PmkidFail.NO_RESPONSE
+        self.fail_reason = PmkidFail.NO_RESPONSE
 
     async def teardown(self) -> None:
         """Release the active-monitor MAC if any attempt armed it (was _loop's finally)."""
