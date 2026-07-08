@@ -324,19 +324,19 @@ class MT76x2UDriver:
             logger.warning("MT7612U: RX high-gain read failed: %s", e)
             self._rx_high_gain_2g = (0, 0)
         # TSSI enable flag from EEPROM. Drives the TSSI init block in
-        # set_channel_20mhz + the periodic tssi_compensate loop.
-        # TSSI is gated OFF by default and only enabled when both the EEPROM
-        # advertises it AND ``WIFIT3_MT76X2U_TSSI=1`` is set — a deliberate
-        # deviation from the kernel (which trusts the EEPROM) because the
-        # tssi_compensate path is suspected of zeroing TX power on this
-        # silicon. See MT76X2U.md "Open / unknown". Needs hardware diagnosis.
+        # set_channel_20mhz + the periodic tssi_compensate loop. Default
+        # trusts the EEPROM (kernel behavior); ``WIFIT3_MT76X2U_TSSI=0`` is a
+        # kill switch if TSSI ever regresses TX power on this silicon. The
+        # EEPROM feeds sane, kernel-faithful slopes/offsets (verified on
+        # 0e8d:7612 2026-07-08), so the old "zeroes TX power" suspicion was
+        # never borne out at the EEPROM layer. See MT76X2U.md.
         try:
             eeprom_tssi = eeprom_tssi_enabled(self.transport)
         except Exception as e:
             logger.warning("MT7612U: TSSI read failed: %s", e)
             eeprom_tssi = False
-        env_tssi = os.environ.get("WIFIT3_MT76X2U_TSSI", "0").strip()
-        self._tssi_enabled = eeprom_tssi and env_tssi == "1"
+        env_tssi = os.environ.get("WIFIT3_MT76X2U_TSSI", "").strip()
+        self._tssi_enabled = False if env_tssi == "0" else eeprom_tssi
         logger.info(
             "MT7612U: TSSI eeprom=%s env=%r → enabled=%s",
             eeprom_tssi, env_tssi, self._tssi_enabled,

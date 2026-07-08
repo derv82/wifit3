@@ -10,8 +10,7 @@ AWUS036ACM), a USB 3.0 device; 15 VID:PIDs are claimed (`constants.py::USB_IDS_M
 Cold init, two-stage firmware boot, and dual-band monitor RX all work on hardware. A 30-min
 dual-band soak (22 channels, 0.25 s hops) ran with no frame-rate sag — active BSSIDs 147→155, 2.4
 GHz ~100+ and 5 GHz ~52 steady. ARP replay works first try and handshakes auto-save (after the
-L2PAD fix, below). 5 GHz frame injection is HW-confirmed (2026-07-08). TSSI is the one open
-hardware question (see Gotchas).
+L2PAD fix, below). 5 GHz frame injection is HW-confirmed (2026-07-08), TSSI active (see Gotchas).
 
 ## Gotchas
 
@@ -23,12 +22,13 @@ order. Windowing to MPDU_LEN first drops the last 2 body bytes — it clipped EA
 (uncrackable handshake) and shrank WEP ARP from 70→68 B (flaky replay). Beacons/mgmt are unaffected
 (24-byte header, no L2PAD), which is why scanning always looked healthy.
 
-**TSSI is gated OFF by default** (`driver.py::_tssi_enabled` needs both the EEPROM flag and
-`WIFIT3_MT76X2U_TSSI=1`), deviating from the kernel which trusts the EEPROM. The periodic
-`tssi_compensate` path is suspected of zeroing TX power on this silicon (observed `tssi_slope=127`,
-near max). The `phy.py` port of `mt76x2_phy_tssi_compensate` audited as matching the kernel, so the
-root cause is more likely the EEPROM read feeding it, or the monitor-mode `avg_rssi_all=-75`
-placeholder. Needs hardware diagnosis before flipping the default back.
+**TSSI is ON by default** (`driver.py::_tssi_enabled` trusts the EEPROM flag, matching the kernel);
+`WIFIT3_MT76X2U_TSSI=0` is a kill switch. It was gated OFF for a while on a suspicion that the periodic
+`tssi_compensate` path zeroed TX power (the flagged `tssi_slope=127` read "near max"). That was a false
+alarm: the EEPROM feeds sane, kernel-faithful slopes/offsets — the 2.4 GHz slope 127 sits right in the
+5 GHz 122–132 cluster, offsets are in range, `target_power` is 34/29 (non-zero) — and the `phy.py` port
+of `mt76x2_phy_tssi_compensate` matches the kernel line-for-line. 5 GHz TX with TSSI active is
+HW-confirmed (2026-07-08: deauth on CH149 landed, compensate loop running `tssi=True`, no errors).
 
 **No patch-semaphore wall.** `rom_protect = !is_mt7612(dev)` is false for this silicon, so the
 `MT_MCU_SEMAPHORE_03` acquisition is skipped — this is the structural reason MT7612U doesn't hit the
@@ -73,6 +73,17 @@ cross-reference.
 - `verify_pcap.py` — offline cold-boot byte gate against `captures_mt76x2u/capture-1.pcap`.
 
 ## Debug log
+
+### 2026-07-08 — TSSI enabled by default; the "zeroes TX power" suspicion was false
+
+TSSI had been gated behind `WIFIT3_MT76X2U_TSSI=1` on a suspicion the periodic `tssi_compensate` loop
+zeroed TX power (the read `tssi_slope=127` looked "near max"). Diagnosed on `0e8d:7612` by cold-booting
+and dumping the EEPROM fields the loop feeds the MCU: they're sane and kernel-faithful — 2.4 GHz slope
+127 sits inside the 5 GHz 122–132 cluster, offsets 17–30, `target_power` 34 (2G)/29 (5G). Both
+target-power reads (2G `0xF6>>8`, 5G `0xF8 & 0xFF` = `MT_EE_RF_2G_RX_HIGH_GAIN`) and the whole
+`mt76x2_phy_tssi_compensate` port match kernel v6.18. Flipped the default to trust the EEPROM (kernel
+behavior) with `=0` as a kill switch. HW-confirmed: deauth burst on CH149 landed with the compensate
+loop running `tssi=True`, no errors — TX not zeroed. Clears the last mt76x2u TSSI item in `BUGS.md`.
 
 ### 2026-07-08 — 5 GHz TX confirmed on HW
 
