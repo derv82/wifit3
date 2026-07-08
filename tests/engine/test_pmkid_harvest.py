@@ -150,15 +150,28 @@ def test_force_psk_akm_selects_psk_from_sae_first_list():
         "30140100000fac040100000fac040100000fac020000")
 
 
-def test_force_psk_akm_cleans_mfp_caps_and_drops_group_mgmt():
-    # A PMF-capable transition AP: RSN caps carry MFPC (0x008c) + a BIP group-mgmt
-    # cipher. We must NOT echo that on our unprotected PSK Assoc — force single PSK,
-    # author clean 0x0000 caps, and drop the MFP tail (group-mgmt cipher).
+def test_force_psk_akm_non_pmf_cleans_caps_and_drops_group_mgmt():
+    # Non-PMF target (default): force single PSK, author clean 0x0000 caps, and never
+    # echo the AP's MFP tail (its raw caps / PMKID list / group-mgmt cipher).
     rsn = bytes.fromhex("30180100000fac040100000fac040100000fac028c00000fac06")
-    out = _force_psk_akm(rsn)
+    out = _force_psk_akm(rsn)                   # pmf_capable=False
     assert out == bytes.fromhex("30140100000fac040100000fac040100000fac020000")
     assert out.endswith(b"\x00\x00")           # explicit clean RSN caps (no MFP)
     assert b"\x0f\xac\x06" not in out          # BIP group-mgmt cipher dropped
+
+
+def test_force_psk_akm_pmf_capable_advertises_mfpc_and_bip():
+    # PMF-capable target (WPA3→WPA2 transition): present as a PMF-*capable* PSK client
+    # so the AP associates us — MFPC=1 (MFPR clear), PMKID-count 0, BIP-CMAC-128 group
+    # mgmt. HW-observed: an MFPC=0 Assoc was ACKed at Auth then silently dropped.
+    rsn = bytes.fromhex("30140100000fac040100000fac040100000fac020000")
+    out = _force_psk_akm(rsn, pmf_capable=True)
+    assert out[0] == 0x30 and out[1] == len(out) - 2         # well-formed RSN IE
+    assert bytes.fromhex("0100000fac02") in out              # forced single PSK AKM
+    # Tail = RSN caps(2) + PMKID-count(2)=0 + BIP-CMAC-128(4).
+    assert out.endswith(bytes.fromhex("0000") + b"\x00\x0f\xac\x06")
+    caps = int.from_bytes(out[-8:-6], "little")
+    assert caps & 0x0080 and not (caps & 0x0040)             # MFPC set, MFPR clear
 
 
 def test_force_psk_akm_rejects_malformed():

