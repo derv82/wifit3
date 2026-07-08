@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -206,35 +207,41 @@ def emit_blacklist_text(target: SetupTarget, modules: list[str]) -> str:
 
 def _install_cmd(*, tmp_rule: str | None, key: str, tmp_blacklist: str | None,
                  modules: list[str], group: str | None, node: str | None) -> str:
+    # Every interpolated value is shlex.quote'd: this string is handed to `sh -c`, so an unquoted
+    # path with a space (a temp dir, a repointed target) would word-split, and a metachar would be
+    # worse. quote() is a no-op on the safe values we actually pass, so the shape is unchanged.
+    q = shlex.quote
     steps: list[str] = []
     if tmp_rule:
-        steps.append(f"install -m 0644 {tmp_rule} {rule_path(key)}")
+        steps.append(f"install -m 0644 {q(tmp_rule)} {q(rule_path(key))}")
     if tmp_blacklist:
-        steps.append(f"install -m 0644 {tmp_blacklist} {blacklist_path(key)}")
+        steps.append(f"install -m 0644 {q(tmp_blacklist)} {q(blacklist_path(key))}")
     steps.append("udevadm control --reload-rules")
     if modules:
         # Best-effort: frees the warm card now and stops an already-resident module re-grabbing the
         # device on replug. Fails harmlessly if another card holds the module — the blacklist still
         # keeps it from *loading* on a future cold boot.
-        steps.append(f"(modprobe -r {' '.join(modules)} 2>/dev/null || true)")
+        mods = " ".join(q(m) for m in modules)
+        steps.append(f"(modprobe -r {mods} 2>/dev/null || true)")
     if group and node:
         # Ignore failures in the ch* commands in case the device re-enumerated to a different node.
-        steps += [f"(chgrp {group} {node} || true)", f"(chmod 0660 {node} || true)"]
+        steps += [f"(chgrp {q(group)} {q(node)} || true)", f"(chmod 0660 {q(node)} || true)"]
     return " && ".join(steps)
 
 
 def _remove_cmd(keys: list[str], node: str | None) -> str:
+    q = shlex.quote
     paths: list[str] = []
     for k in keys:
         paths += [rule_path(k), blacklist_path(k)]
     steps = [
-        f"rm -f {' '.join(paths)}",
+        f"rm -f {' '.join(q(p) for p in paths)}",
         "udevadm control --reload-rules",
     ]
     if node:
         # subshell so `|| true` rescues only the chown, not the rm/reload (equal precedence). Only
         # the selected card's live node is revoked; siblings return to the kernel on their replug.
-        steps.append(f"(chown root:root {node} 2>/dev/null || true)")
+        steps.append(f"(chown root:root {q(node)} 2>/dev/null || true)")
     return " && ".join(steps)
 
 
@@ -518,7 +525,7 @@ def remove_rule(target: SetupTarget, *, node: str | None = None,
 
     method = _choose_escalation_method()
     if method is None:
-        rmpaths = " ".join(p for k in keys for p in (rule_path(k), blacklist_path(k)))
+        rmpaths = " ".join(shlex.quote(p) for k in keys for p in (rule_path(k), blacklist_path(k)))
         return LinuxSetupResult(
             ok=False,
             detail=f"sudo rm -f {rmpaths} && sudo udevadm control --reload-rules",

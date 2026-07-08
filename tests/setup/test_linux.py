@@ -193,6 +193,21 @@ def test_remove_cmd_wide_removes_every_key_but_chowns_only_the_selected_node():
     assert cmd.count("chown root:root") == 1                  # only the one live node
 
 
+def test_remove_cmd_shell_quotes_paths_with_spaces(monkeypatch):
+    # A repointed dir (or a temp dir) with a space must not word-split under `sh -c`.
+    monkeypatch.setattr(lin, "RULE_DIR", "/etc/My Rules")
+    monkeypatch.setattr(lin, "BLACKLIST_DIR", "/etc/My Blocklist")
+    cmd = lin._remove_cmd(["ar9271"], "/dev/bus/usb/003/053")
+    assert "'/etc/My Rules/60-wifit3-ar9271.rules'" in cmd
+    assert "'/etc/My Blocklist/wifit3-ar9271.conf'" in cmd
+
+
+def test_install_cmd_shell_quotes_staged_path_with_spaces():
+    cmd = lin._install_cmd(tmp_rule=None, key="ar9271", tmp_blacklist="/tmp/a b/x.conf",
+                           modules=["ath9k_htc"], group=None, node=None)
+    assert "'/tmp/a b/x.conf'" in cmd
+
+
 # --- run_privileged / _choose_escalation_method ------------------------------------------------
 
 def test_run_privileged_builds_pkexec_argv(monkeypatch):
