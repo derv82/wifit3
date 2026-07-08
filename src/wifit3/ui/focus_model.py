@@ -352,6 +352,7 @@ class ButtonState:
     disabled: bool = False
     label: str = ""
     variant: str = "primary"
+    reason: str = ""      # why it's disabled (shown as the button tooltip); "" when enabled
 
 
 def derive_buttons(ap) -> dict[str, ButtonState]:
@@ -371,10 +372,12 @@ def derive_buttons(ap) -> dict[str, ButtonState]:
                 label=cls.run_label, variant=cls.run_variant)
         else:
             other = active is not None and active.key != cls.key
+            reason = cls.ineligible_reason(ap)
             states[cls.button_id] = ButtonState(
                 visible=vis,
-                disabled=cls.ineligible_reason(ap) is not None or other,
-                label=cls.idle_label, variant=cls.idle_variant)
+                disabled=reason is not None or other,
+                label=cls.idle_label, variant=cls.idle_variant,
+                reason=reason or ("radio busy (another attack running)" if other else ""))
     # ChopChop — a WEP sub-action, enabled only while the WEP campaign runs.
     wep_running = active is not None and active.key == "wep"
     chopping = wep_running and getattr(active, "chop_active", False)

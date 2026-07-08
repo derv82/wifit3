@@ -167,11 +167,20 @@ async def test_v2_stop_pbc_button_frees_radio_and_suppresses_rearm():
     bssid = "aa:bb:cc:dd:ee:01"
     iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
     iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
-    ap = iface.access_points[bssid]
+    ap = iface.access_points[bssid]                      # window CLOSED during mount
     app = _Host(iface, ap)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         focus = app.screen
+        if focus._tick_timer:
+            focus._tick_timer.stop()                     # drive _tick by hand — no auto-invade race
+        focus._start_pbc_capture = Mock()                # never fire the real capture
+        # Now open a PBC walk window (timer stopped, so no real capture auto-arms).
+        # PBC is only stopped while the window is open; suppression holds until close.
+        ap.wps = True
+        ap.wps_selected_registrar = True
+        ap.wps_device_password_id = 0x0004
+        assert ap.wps_pbc_active
         stop_btn = focus.query_one("#btn-stop-pbc", Button)
 
         focus._refresh_buttons()
@@ -179,23 +188,33 @@ async def test_v2_stop_pbc_button_frees_radio_and_suppresses_rearm():
 
         camp = Mock()                                    # stand in for a running capture
         camp.done = False
+        camp.stopped = False
         focus._pbc_campaign = camp
         focus._refresh_buttons()
-        assert stop_btn.display is True and stop_btn.variant == "error"
+        assert stop_btn.display is True and str(stop_btn.label) == "Stop PBC"
 
+        # Stop: request_stop fired, handle KEPT (so the closing 'stopped' line lands
+        # from _finish_pbc_capture once the campaign drains, not mid-logtree), re-arm
+        # suppressed.
         focus._user_stop_pbc()
-        camp.request_stop.assert_called_once()           # engine stop requested
-        assert focus._pbc_campaign is None
+        camp.request_stop.assert_called_once()
+        assert focus._pbc_campaign is camp
         assert focus._pbc_user_stopped is True
-        assert stop_btn.display is False                 # button hides again
 
-        # Window still open → _tick must NOT re-arm PBC (suppressed).
-        ap.wps = True
-        ap.wps_selected_registrar = True
-        ap.wps_device_password_id = 0x0004
-        assert ap.wps_pbc_active
-        focus._start_pbc_capture = Mock()
+        # Draining (stopped, not yet done) → the button shows a disabled 'Stopping…'.
+        camp.stopped = True
+        focus._refresh_buttons()
+        assert stop_btn.display is True and stop_btn.disabled is True
+        assert "Stopping" in str(stop_btn.label)
+
+        # Finishes → _finish_pbc_capture logs the clean closing leaf + drops the handle;
+        # the button hides. Window's still open, but re-arm stays suppressed.
+        camp.done = True
         focus._tick()
+        assert focus._pbc_campaign is None
+        assert "stopped" in _log_text(focus.query_one("#log", LogBand))
+        focus._refresh_buttons()
+        assert stop_btn.display is False
         focus._start_pbc_capture.assert_not_called()
 
         # Window closes → suppression clears so a fresh window re-invades.

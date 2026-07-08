@@ -140,17 +140,27 @@ class PmkidHarvestAttack(Campaign):
 
     @classmethod
     def visible(cls, ap) -> bool:
-        """Shown only when the AP advertises a harvestable (PSK) AKM — exactly the
-        suites run() can crack. Naturally excludes OPEN / enterprise / SAE-only /
-        WEP, none of which carry a PSK AKM (so the OPEN-network PMKID button bug
-        cannot recur)."""
-        return bool(set(_HARVESTABLE_AKMS) & set(getattr(ap, "akm_suites", None) or ()))
+        """Shown when the AP advertises a harvestable (PSK) AKM, OR when its
+        encryption isn't confirmed yet (no RSN IE parsed — e.g. a hidden AP heard
+        only via a data frame): the latter shows the button *disabled with a reason*
+        (ineligible_reason) rather than a silently-missing button. A CONFIRMED
+        non-PSK AP (open / WEP / SAE-only / enterprise) still hides it, so the
+        OPEN-network PMKID button bug can't recur."""
+        akms = set(getattr(ap, "akm_suites", None) or ())
+        if set(_HARVESTABLE_AKMS) & akms:
+            return True                     # confirmed harvestable PSK
+        if akms:
+            return False                    # confirmed AKM(s), none harvestable
+        return getattr(ap, "encryption", None) in (None, "Unknown")   # unconfirmed → disabled
 
     @classmethod
     def ineligible_reason(cls, ap) -> Optional[str]:
-        """No load-time disable reason today — PMF is a run()-time bail, left as-is
-        to preserve current button behaviour (visible+enabled, fails at runtime)."""
-        return None
+        """None (enabled) once a PSK AKM is confirmed; otherwise the 'why' shown on
+        the disabled button. We only reach ``visible()`` without a PSK AKM when the
+        encryption is unconfirmed, so a beacon (RSN IE) is what we're waiting on."""
+        if set(_HARVESTABLE_AKMS) & set(getattr(ap, "akm_suites", None) or ()):
+            return None
+        return "encryption not confirmed yet (no beacon RSN)"
 
     def __init__(
         self,

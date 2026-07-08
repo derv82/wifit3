@@ -328,6 +328,18 @@ def test_buttons_open_hides_pmkid():
                ("btn-gen-ivs", "btn-chop", "btn-wps-pin", "btn-wpa3-down"))
 
 
+def test_buttons_unconfirmed_encryption_shows_pmkid_disabled_with_reason():
+    """A hidden AP heard without a beacon RSN (encryption 'Unknown', no AKM) shows
+    PMKID *disabled with a reason* instead of a silently-missing button — so the user
+    knows WHY. A confirmed-open AP still hides it (test_buttons_open_hides_pmkid)."""
+    st = fm.derive_buttons(_rsn_ap(encryption="Unknown", akms=()))["btn-pmkid"]
+    assert st.visible is True and st.disabled is True
+    assert st.reason and "confirm" in st.reason.lower()
+    # A confirmed-PSK AP is enabled with no reason.
+    ok = fm.derive_buttons(_rsn_ap(akms=("PSK",)))["btn-pmkid"]
+    assert ok.disabled is False and ok.reason == ""
+
+
 def test_buttons_enterprise_hides_pmkid():
     """802.1X (enterprise) PMK isn't dictionary-crackable → no PMKID button."""
     b = fm.derive_buttons(_rsn_ap(akms=("802.1X",)))

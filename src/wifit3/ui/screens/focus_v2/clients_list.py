@@ -96,11 +96,10 @@ class ClientsList(Vertical):
         for btn in self.query(Button):
             btn.disabled = disabled
 
-    def set_broadcast_visible(self, visible: bool) -> None:
-        """Show/hide the pinned 'Deauth all' button. Hidden with no clients — a
-        broadcast deauth with nothing to hit isn't offered (mirrors the 'd' hotkey
-        gate). The per-client ✕ rows carry their own visibility (there are none)."""
-        self.query_one("#deauth-all", Button).display = visible
+    # The pinned 'Deauth all' button is always visible (composed): a broadcast
+    # deauth to ff:ff:ff:ff:ff:ff is valid even with no *known* clients — it hits
+    # every associated STA. It's greyed, not hidden, when deauth is blocked
+    # (PMF-Required), via set_deauth_enabled above.
 
     # ----- helpers -----------------------------------------------------------
 

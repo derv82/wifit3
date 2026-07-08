@@ -69,9 +69,10 @@ def _wpa2_target(bssid="aa:bb:cc:dd:ee:01"):
 
 
 @pytest.mark.asyncio
-async def test_deauth_hotkey_gated_on_clients():
-    """'d' is hidden with no clients (False), active once a client appears (True),
-    and greyed when the AP requires PMF (None)."""
+async def test_deauth_hotkey_gated_on_pmf_not_clients():
+    """'d' (broadcast deauth) is active even with no known clients (True) — it hits
+    every STA — stays active once a client appears (True), and is greyed only when
+    the AP requires PMF (None)."""
     bssid, client = "aa:bb:cc:dd:ee:01", "9c:b6:d0:1a:2b:3c"
     iface, ap = _wpa2_target(bssid)
     app = _Host(iface, ap)
@@ -79,7 +80,7 @@ async def test_deauth_hotkey_gated_on_clients():
         await pilot.pause()
         focus = app.screen
         focus._tick()
-        assert focus.check_action("deauth_all", ()) is False       # no clients → hidden
+        assert focus.check_action("deauth_all", ()) is True        # no clients → still active
 
         iface._on_frame_parsed(_client_data(bssid, client))
         focus._tick()
@@ -91,9 +92,9 @@ async def test_deauth_hotkey_gated_on_clients():
 
 
 @pytest.mark.asyncio
-async def test_deauth_broadcast_button_hidden_without_clients():
-    """The panel's pinned 'Deauth all' button follows the same rule as the 'd'
-    key — hidden with no clients, shown once one appears."""
+async def test_deauth_broadcast_button_always_visible():
+    """The panel's pinned 'Deauth all' button is always visible — a broadcast deauth
+    is valid with no known clients (it hits every associated STA)."""
     bssid, client = "aa:bb:cc:dd:ee:02", "9c:b6:d0:1a:2b:3c"
     iface, ap = _wpa2_target(bssid)
     app = _Host(iface, ap)
@@ -103,12 +104,12 @@ async def test_deauth_broadcast_button_hidden_without_clients():
         focus._tick()
         await pilot.pause()
         bcast = focus.query_one("#clients", ClientsList).query_one("#deauth-all")
-        assert bcast.display is False
+        assert bcast.display is True                                # visible with no clients
 
         iface._on_frame_parsed(_client_data(bssid, client))
         focus._tick()
         await pilot.pause()
-        assert bcast.display is True
+        assert bcast.display is True                                # still visible with a client
 
 
 # ----- campaign hotkeys mirror the buttons (item 3) --------------------------
@@ -185,8 +186,8 @@ async def test_footer_shows_campaign_keys_per_family():
                 break
         assert "p" in keys
         assert "r" not in keys and "c" not in keys
-        # 'd' still hidden (no clients); 'w' always available.
-        assert "w" in keys and "d" not in keys
+        # 'd' (broadcast deauth) is available with no clients; 'w' always available.
+        assert "w" in keys and "d" in keys
 
 
 @pytest.mark.asyncio
