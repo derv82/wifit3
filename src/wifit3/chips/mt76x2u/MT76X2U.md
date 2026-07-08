@@ -34,14 +34,19 @@ HW-confirmed (2026-07-08: deauth on CH149 landed, compensate loop running `tssi=
 `MT_MCU_SEMAPHORE_03` acquisition is skipped — this is the structural reason MT7612U doesn't hit the
 wall that paused MT7921AU.
 
-**The card enumerates as USB mass storage first** (SCSI BBB, EPs 0x81 IN / 0x02 OUT) before exposing
-the wireless EP set. On Windows the WinUSB/Zadig binding plus the first open re-enumerates it into
-wireless mode automatically (no manual switch). `transport.assert_expected_endpoints()` fails fast
-with an actionable error if the wireless EPs are still missing — also the early-detection guard for
-whether the mode switch is stable across power cycles, which is unconfirmed.
+**The Alfa dev card enumerates directly as the wireless device** — `0e8d:7612`, a single
+vendor-specific interface (255/255/255) with the 8-EP wireless set (`0x84`/`0x85` IN, `0x04`–`0x09`
+OUT); no mass-storage stage. Verified on Linux 2026-07-08 (descriptor + dmesg: it comes up as 7612
+with `mt76x2u` binding immediately on every replug). The USB-mass-storage ("DISK") enumeration is a
+*different*, ZeroCD-shimmed knockoff variant that first appears as Realtek `0bda:1a2b` then mode-switches
+to `0e8d:7612` — on Linux it auto-detaches to the MediaTek PID immediately; on Windows the WinUSB/Zadig
+bind does the switch. `transport.assert_expected_endpoints()` is the guard for *that* variant: it fails
+fast if the wireless EPs are missing (device caught mid-switch). On the Alfa the EPs are always present,
+so the mode-switch-across-power-cycles question is a non-issue for it.
 
-**Channel switches may need ~2 s of breathing room** — observed against the vendor stack, not yet
-replicated against the wifit3 driver, so unconfirmed as a real firmware constraint.
+**Channel switches need no settle delay.** An earlier note suspected the vendor stack's ~2 s breathing
+room might be a real firmware constraint; a 30-min soak hopping all 22 channels at 0.5 s dwell
+(2026-07-08) held frame rate steady with no degradation, so the driver re-tunes with no extra wait.
 
 **20 MHz primary only, by design.** `set_channel_20mhz` hardcodes `bw=0` / `ch_group_index=0`; we
 deliberately skip the kernel's 40/80 MHz path. This is the project-wide posture, not a capture gap —
@@ -73,6 +78,20 @@ cross-reference.
 - `verify_pcap.py` — offline cold-boot byte gate against `captures_mt76x2u/capture-1.pcap`.
 
 ## Debug log
+
+### 2026-07-08 — 30-min hop soak clean; enumeration story corrected
+
+Longrun soak (all 22 channels, 0.5 s hop, 30 min): active-BSSID trend 126→131 (flat/up, ratio 1.04),
+frames steady-to-rising (~2.3k→~3.3k per 60 s bucket), 5 GHz active held ~44 throughout (no synth
+loss), no death event. Kills the suspected ~2 s channel-switch settle — dropped from Gotchas. Two soak
+WARNs are benign, not driver defects: 3.9% "garbage OUI" is broadcast `ff:ff:ff:ff:ff:ff` flagged by
+the OUI-sanity heuristic, and 20.8% beacon-channel mismatch is adjacent-channel bleed at 0.5 s dwell.
+Report: `scripts/diag/reports/mt76x2u_20260708-053217.md`.
+
+Also corrected the enumeration Gotcha: the Alfa presents the wireless interface directly (`0e8d:7612`,
+vendor-specific, 8 EPs, no MSD) — the mass-storage "DISK" front-end (Realtek `0bda:1a2b` → mode-switch)
+is a separate ZeroCD knockoff, not the dev card. This retires the last mt76x2u line in `BUGS.md`; the
+card is now in the clean list.
 
 ### 2026-07-08 — RX-poll (RxDrainer) re-verified dual-band
 

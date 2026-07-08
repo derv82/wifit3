@@ -12,7 +12,7 @@ contradicts itself; resolve on HW.
 
 ## Per-card
 
-Clean, no known bugs: **rt2500usb, rt2800usb, rt3070, rt5372, rtl8821au (mainline)**.
+Clean, no known bugs: **rt2500usb, rt2800usb, rt3070, rt5372, mt76x2u, rtl8821au (mainline)**.
 
 ### AR9271 (V1) is broken
 - v1 heard 1 AP total, nothing off channel 1 — its channel hopping is dead (mud2g 5.3/s on ch1 only
@@ -24,9 +24,6 @@ Clean, no known bugs: **rt2500usb, rt2800usb, rt3070, rt5372, rtl8821au (mainlin
 ### rtl8187 (8187L)
 - ⏳ Injected deauth uses `duration=0` instead of the unicast-ACK NAV — minor TX nit [RTL8187L.md].
 - Limit: always cold-inits (no warm reattach) — replug to recover.
-
-### mt76x2u (AWUS036ACM)
-- ⏳ Endpoint stability across power cycles unknown; channel-switch wants ~2 s settle [MT76X2U.md].
 
 ### rtl8188eus (mainline) — prefer the DKMS variant
 - ⏳ Intermittent RX collapse — bad windows hear the reference AP worse than further neighbours [RTL8188EUS.md].
