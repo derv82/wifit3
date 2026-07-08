@@ -152,7 +152,7 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 | WEP | ✅ | 2026-06-16 | ChopChop + ARP replay ~225 IVs/s. |
 | WPS | ✅ | 2026-06-16 | PBC → PSK; PIN → M4. |
 | ACKs | ✅ | 2026-06-16 | HW-ACK forged MAC (WPS PBC/PIN). |
-| Stress | ✅ | 2026-06-16 | 30-min 38-ch soak, flat. |
+| Stress | ✅ | 2026-07-08 | 30-min 38-ch soak, flat (active-AP trend 1.03, no death-detect). |
 
 → [RTL8822BU_DKMS.md](src/wifit3/chips/rtl8822bu_dkms/RTL8822BU_DKMS.md) (default) · [RTL8822BU.md](src/wifit3/chips/rtl8822bu/RTL8822BU.md) (mainline)
 
