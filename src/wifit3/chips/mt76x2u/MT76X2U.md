@@ -73,6 +73,13 @@ cross-reference.
 
 ## Debug log
 
+### 2026-07-08 — replug default flipped; opt-out now explicit
+
+`LINUX_REPLUG_AFTER_MODPROBE` now defaults **True** (replug-required is the safe default), so this
+chip sets `= False` **explicitly** — the 06-27 note's "does not set it" is superseded; the self-cold
+reasoning (`force_power_cycle`) stands. In this family only mt7921au is replug-required (`True`);
+mt76x0u and mt76x2u self-cold and opt out with `False`.
+
 ### 2026-06-27 — Linux bring-up validated; no replug gate needed
 
 First Linux (Kali VM) validation. Unlike its connac siblings (mt76x0u, mt7921au), mt76x2u does

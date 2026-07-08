@@ -74,16 +74,17 @@ class ConfirmUninstallDialog(ModalScreen[str | None]):
         # the two radii. The related cards' kernel driver stays blocked until they're uninstalled too.
         others = ", ".join(f"[bold]{s}[/]" for s in self._siblings)
         n = len(self._siblings)
-        shared = (f"\n\n[$text-warning]This card shares its kernel driver with "
-                  f"{n} other card{'s' if n != 1 else ''} you've handed to wifit3:[/] {others}.")
         if self._has_own:
-            return (base + shared +
-                    "\n\n[dim]“This card only” leaves the driver blocked for the others until you "
-                    "uninstall them too. “All …” frees it for the whole group.[/dim]")
-        # Card has no rules of its own — a sibling is what's blocking it.
-        return (f"[bold]{self._name}[/] has no Wifit3 rules of its own, but its kernel driver is "
-                f"blocked by {n} card{'s' if n != 1 else ''} you've handed to wifit3: {others}."
-                "\n\n[dim]Uninstalling those returns this card to normal on the next replug.[/dim]")
+            # This card has its own rules, but the shared kernel module is also held by sibling
+            # rule(s), so a narrow removal won't free it. Name the blockers; the button counts make
+            # the two radii self-explanatory.
+            return (base +
+                    f"\n\n[$text-warning]The kernel module is also blocked by {n} other "
+                    f"rule{'s' if n != 1 else ''}:[/]\n{others}")
+        # Card has no rules of its own — the block is a sibling's rules. Frame the action around what
+        # actually gets removed (the sibling rules), not "this card", which has nothing to remove.
+        return (f"The card returns to normal (kernel-bound) on the next replug.\n\n"
+                f"Remove wifit3's {n} udev + modprobe rule{'s' if n != 1 else ''} for {others}?")
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
@@ -92,10 +93,12 @@ class ConfirmUninstallDialog(ModalScreen[str | None]):
             with Horizontal(id="button-row"):
                 total = 1 + len(self._siblings)
                 if self._siblings and self._has_own:
-                    yield Button("This card only", variant="primary", id="btn-narrow")
-                    yield Button(f"All {total} cards", variant="primary", id="btn-wide")
+                    yield Button(f"Remove {self._name} (1)", variant="primary", id="btn-narrow")
+                    yield Button(f"Remove All ({total})", variant="primary", id="btn-wide")
                 elif self._siblings:                       # blocked-by-sibling, nothing of its own
-                    yield Button(f"Uninstall {total} cards", variant="primary", id="btn-wide")
+                    sn = len(self._siblings)
+                    yield Button(f"Remove {sn} Rule{'s' if sn != 1 else ''}",
+                                 variant="primary", id="btn-wide")
                 else:                                      # plain single-card uninstall
                     yield Button("Uninstall", variant="primary", id="btn-narrow")
                 yield Button("Cancel", variant="default", id="btn-cancel")

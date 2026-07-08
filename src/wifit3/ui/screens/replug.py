@@ -14,10 +14,11 @@ from textual.containers import Center, Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, LoadingIndicator
 
-_UNPLUG = ("[bold]{name}[/] is set up, but it's still warm from the kernel driver.\n\n"
-           "[bold $text-warning]Unplug the card now[/] — I'll detect it and continue automatically.")
-_REPLUG = ("[bold green]Card removed ✓[/]\n\n"
-           "[bold $text-warning]Now plug it back in[/] — it comes up fresh and connects on its own.")
+_UNPLUG = ("Permissions are installed for the [bold]{name}[/].\n"
+           "A replug is required to refresh the card's state.\n\n"
+           "Waiting for you to [bold $text-warning]unplug the card now…[/]")
+_REPLUG = ("[bold $text-success]Card removed ✓[/]\n\n"
+           "Waiting for you to [bold $text-warning]plug it back in…[/]")
 
 
 class ReplugModal(ModalScreen[str]):
@@ -35,6 +36,7 @@ class ReplugModal(ModalScreen[str]):
     ReplugModal #status { width: 1fr; text-align: center; margin-bottom: 1; }
     ReplugModal #spin { height: 1; margin-bottom: 1; }
     ReplugModal #button-row { height: auto; align: center middle; }
+    ReplugModal #btn-skip { background: $primary; color: auto; }
     """
 
     def __init__(self, device_manager, vid: int, pid: int, name: str) -> None:
@@ -47,12 +49,12 @@ class ReplugModal(ModalScreen[str]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
-            yield Label("One more step — replug the card", id="title")
+            yield Label("[bold $text-warning]Replug Required[/]", id="title")
             yield Label(_UNPLUG.format(name=self._name), id="status")
             with Center(id="spin"):
                 yield LoadingIndicator()
             with Horizontal(id="button-row"):
-                yield Button("Skip (I'll replug + press START)", variant="default", id="btn-skip")
+                yield Button("Skip", id="btn-skip")
 
     def on_mount(self) -> None:
         self.run_worker(self._watch(), exclusive=True)
