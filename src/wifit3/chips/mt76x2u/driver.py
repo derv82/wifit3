@@ -98,6 +98,7 @@ class MT76x2UDriver:
         + [149, 153, 157, 161, 165]
     )
     FAKE_MAC = FakeMacSupport.SPOOFABLE
+    LINUX_REPLUG_AFTER_MODPROBE = False   # self-colds: force_power_cycle → cold-equivalent, no replug
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device,

@@ -81,12 +81,18 @@ class WlanDriver(Protocol):
     so drivers may leave it empty. List only the leaf USB-binding module, never
     the shared stack below it (``mac80211``/``cfg80211``/…)."""
 
-    LINUX_REPLUG_AFTER_MODPROBE: ClassVar[bool] = False
-    """Set True when this chip's *warm* bring-up can't recover (e.g. MT7610U
-    comes up but RX never flows). Device setup unloads the kernel driver and
-    leaves the card warm, so for these chips the splash asks for a physical
-    replug (a real power-cycle → cold boot) instead of auto-connecting. Default
-    False: the chip reaches a clean state on its own, so auto-connect is fine."""
+    LINUX_REPLUG_AFTER_MODPROBE: ClassVar[bool] = True
+    """Whether a Linux install must ask for a physical replug before connecting.
+
+    Device setup unloads the kernel driver (``modprobe -r``) but that leaves the
+    card *warm*. Most silicon can't reach a clean cold state from a kernel-warmed
+    chip in userland, so RX comes up silently degraded unless the user physically
+    replugs (a real power-cycle → cold boot). The **safe default is therefore
+    True** — ask for the replug. A chip that genuinely self-colds in userland
+    opts out with ``False`` (AR9271 re-enumerates on its firmware download,
+    mt76x0u on ``modprobe -r``, mt76x2u via ``force_power_cycle``). Read only via
+    getattr in the Linux setup layer, which also defaults True, so a driver that
+    omits it is treated as replug-required."""
 
     @classmethod
     def from_usb_device(

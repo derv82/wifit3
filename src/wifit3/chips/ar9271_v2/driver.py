@@ -44,6 +44,7 @@ class AR9271V2Driver:
     ]
     SUPPORTED_CHANNELS: ClassVar[List[int]] = list(range(1, 14))   # 2.4 GHz only, no 5 GHz radio
     CONFLICTING_LINUX_MODULES: ClassVar[List[str]] = ["ath9k_htc"]   # modprobe blacklist hint
+    LINUX_REPLUG_AFTER_MODPROBE: ClassVar[bool] = False   # self-colds: FW download re-enumerates
     FAKE_MAC: ClassVar[FakeMacSupport] = FakeMacSupport.SPOOFABLE
 
     def __init__(self, dev: usb.core.Device):

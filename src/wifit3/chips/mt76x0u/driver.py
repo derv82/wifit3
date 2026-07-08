@@ -69,6 +69,7 @@ class MT76x0UDriver:
         + [149, 153, 157, 161, 165]
     )
     FAKE_MAC = FakeMacSupport.SPOOFABLE
+    LINUX_REPLUG_AFTER_MODPROBE = False   # self-colds: modprobe -r cold-re-enumerates the card
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device,

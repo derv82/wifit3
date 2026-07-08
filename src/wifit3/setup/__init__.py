@@ -45,7 +45,7 @@ def target_for_vidpid(vid: int, pid: int) -> SetupTarget | None:
                 return SetupTarget(
                     key=key, description=entry.description, ids=ids, module_hints=hints,
                     replug_after_modprobe=bool(
-                        getattr(driver_cls, "LINUX_REPLUG_AFTER_MODPROBE", False)))
+                        getattr(driver_cls, "LINUX_REPLUG_AFTER_MODPROBE", True)))
     return None
 
 
