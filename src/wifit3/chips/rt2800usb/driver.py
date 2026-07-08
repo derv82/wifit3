@@ -57,6 +57,8 @@ from .constants import (
     EEPROM_NIC_CONF1_ANT_DIVERSITY_MASK,
     EEPROM_NIC_CONF1_ANT_DIVERSITY_SHIFT,
     RT_RT5592,
+    TXWI_PHYMODE_CCK,
+    TXWI_PHYMODE_OFDM,
     USB_PID_RT3572,
     USB_PID_RT5572,
     USB_VID_RALINK,
@@ -615,6 +617,9 @@ class RT2800USBDriver:
             logger.error("inject_frame: connect() must run first")
             return False
         txwi_sz = txwi_size_for_silicon(self.chip_id.silicon_id)
+        # 5 GHz has no CCK modulation, so a CCK-tagged frame is armed but never
+        # emitted; 5 GHz TX must be OFDM (MCS 0 = 6 Mbps OFDM).
+        phymode = TXWI_PHYMODE_OFDM if self.current_channel > 14 else TXWI_PHYMODE_CCK
 
         loop = asyncio.get_event_loop()
         if logger.isEnabledFor(logging.DEBUG) and not self._first_inject_dumped:
@@ -622,8 +627,8 @@ class RT2800USBDriver:
             self._first_inject_dumped = True
 
         logger.debug(
-            "inject_frame: ch=%d len=%d no_ack=%s txwi=%dB frame=%s",
-            self.current_channel, len(frame_bytes), use_no_ack, txwi_sz,
+            "inject_frame: ch=%d len=%d no_ack=%s txwi=%dB phymode=%d frame=%s",
+            self.current_channel, len(frame_bytes), use_no_ack, txwi_sz, phymode,
             frame_bytes[:32].hex(),
         )
         try:
@@ -631,7 +636,7 @@ class RT2800USBDriver:
                 None,
                 lambda: _inject_frame(
                     self.dev, frame_bytes,
-                    txwi_size=txwi_sz, use_no_ack=use_no_ack,
+                    txwi_size=txwi_sz, use_no_ack=use_no_ack, phymode=phymode,
                 ),
             )
             logger.debug("inject_frame: bulk-OUT accepted %d bytes", sent)

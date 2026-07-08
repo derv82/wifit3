@@ -1243,6 +1243,18 @@ def test_build_tx_descriptors_rt5592_uses_5word_txwi():
     assert len(desc) == 4 + 20
 
 
+def test_build_tx_descriptors_phymode_matches_rt5572_capture():
+    """5 GHz TX is OFDM, 2.4 GHz is CCK — the only TXWI byte that differs by band
+    is W0[30:31] PHYMODE. Prefixes are byte-exact vs the kernel rt2800usb RT5572
+    deauth (ch1 CCK, ch149 OFDM)."""
+    from wifit3.chips.rt2800usb.constants import TXWI_PHYMODE_CCK, TXWI_PHYMODE_OFDM
+    from wifit3.chips.rt2800usb.tx import build_tx_descriptors
+    cck = build_tx_descriptors(26, txwi_size=20, use_no_ack=True, mcs=0, phymode=TXWI_PHYMODE_CCK)
+    ofdm = build_tx_descriptors(26, txwi_size=20, use_no_ack=True, mcs=0, phymode=TXWI_PHYMODE_OFDM)
+    assert cck.hex() == "300000050003000000001a80000000000000000000000000"
+    assert ofdm.hex() == "300000050003004000001a80000000000000000000000000"
+
+
 def test_txwi_size_for_silicon():
     from wifit3.chips.rt2800usb.constants import RT_RT3572, RT_RT5392, RT_RT5592
     from wifit3.chips.rt2800usb.tx import txwi_size_for_silicon
