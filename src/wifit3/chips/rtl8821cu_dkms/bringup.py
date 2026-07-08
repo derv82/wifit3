@@ -141,20 +141,52 @@ def set_monitor_mode(t, info) -> None:
         btc.media_status_notify_connect_2g(t)
 
 
-def cold_bringup(t):
-    """The deterministic cold init the driver's connect() runs, in the order the wire shows (see
-    module docstring), through monitor entry. Returns the ``EfuseInfo`` so the operational phase
-    (airodump channel hops + the LED blink) can drive ``chan.set_channel``. Verified byte-for-byte
-    by ``scripts/verify_pcap.py rtl8821cu_dkms``."""
+# Cold bring-up split into coarse phases so connect() can report progress between them: connect()
+# runs each phase in the executor and fires progress_cb on the loop thread in between. The phase
+# order is identical to the flat sequence below, which the byte-for-byte gate drives.
+
+def phase_chip_info(t):
+    """Chip detect + version + EFUSE decode. Returns the ``EfuseInfo`` the later phases extend."""
     _, chip_ver = chipid.mount_get_chip_info(t)
     chipid.read_chip_version(t)
     info = efuse.read_efuse(t)
     info.chip_ver = chip_ver
+    return info
+
+
+def phase_fw_caps(t, info):
+    """Cold power-on + FW download (MAC-hidden report), phydm trim, and RFE board info."""
     read_mac_hidden_rpt(t, info)
     efuse.read_phydm_trim(t, info.phys_map)
     phy.init_hw_info_by_rfe(t, info)
+
+
+def phase_hal_init(t, info):
+    """The full HW init (``_halmac_init_hal`` + tail): power-on, FW, MAC flow/registers, BB/RF,
+    PHYDM, BT-coex, LED — the longest phase."""
     hal_init(t, info)
+
+
+def phase_iface(t, info):
+    """Interface MAC + HW port enable, RX BAR, and the first (ch1 / 20 MHz) channel set."""
     iface_init(t, info)
     init_hw_mlme_ext(t, info)
+
+
+def phase_monitor(t, info):
+    """Monitor opmode / RX-enable (+ combo-card antenna-to-WiFi notify)."""
     set_monitor_mode(t, info)
+
+
+def cold_bringup(t):
+    """The deterministic cold init the driver's connect() runs, in the order the wire shows (see
+    module docstring), through monitor entry. Returns the ``EfuseInfo`` so the operational phase
+    (airodump channel hops + the LED blink) can drive ``chan.set_channel``. Verified byte-for-byte
+    by ``scripts/verify_pcap.py rtl8821cu_dkms``. connect() runs these same phases individually for
+    progress reporting; this flat wrapper is what the no-loop verify path drives."""
+    info = phase_chip_info(t)
+    phase_fw_caps(t, info)
+    phase_hal_init(t, info)
+    phase_iface(t, info)
+    phase_monitor(t, info)
     return info

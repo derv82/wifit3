@@ -140,15 +140,32 @@ class Rtl8821cuDkmsDriver:
             loop, self._read_once, self._dispatch, name="8821cu-dkms-rx",
             on_fatal=lambda e: self._on_lost and self._on_lost(e))
         self._reader.start()
-        self.info = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
+        # Run cold_bringup's phases individually so the UI gets progress between them. Each phase is
+        # offloaded to the executor; progress_cb fires here on the loop thread (never from the
+        # executor thread, which Textual can't repaint from). Order matches bringup.cold_bringup.
+        def _p(frac: float, msg: str) -> None:
+            if progress_cb:
+                progress_cb(frac, msg)
+        t = self.transport
+        _p(0.05, "Reading chip ID / EFUSE")
+        info = await loop.run_in_executor(None, bringup.phase_chip_info, t)
+        _p(0.15, "Powering on + downloading firmware")
+        await loop.run_in_executor(None, bringup.phase_fw_caps, t, info)
+        _p(0.35, "MAC / BB / RF init")
+        await loop.run_in_executor(None, bringup.phase_hal_init, t, info)
+        _p(0.75, "Interface + channel tune")
+        await loop.run_in_executor(None, bringup.phase_iface, t, info)
+        _p(0.85, "Enabling monitor RX")
+        await loop.run_in_executor(None, bringup.phase_monitor, t, info)
+        self.info = info
+        _p(0.90, "Priming 2.4 GHz band")
         await self._prime_2g_band(loop)
         # phydm dynamic-check watchdog (kernel-parity — its ~2 s ticks are in the pcap). DIG runs
         # here; without it the RX AGC sits at full gain and the OFDM false-alarm count floods.
         self._wd_state = watchdog.WatchdogState(
             eeprom_thermal=self.info.eeprom_thermal, thermal_offset=efuse.thermal_offset(self.info))
         self._watchdog_task = loop.create_task(self._watchdog_loop())
-        if progress_cb:
-            progress_cb(1.0, "RTL8821CU monitor up (ch 1 @ 20 MHz)")
+        _p(1.0, "RTL8821CU monitor up (ch 1 @ 20 MHz)")
         return True
 
     async def _prime_2g_band(self, loop: asyncio.AbstractEventLoop) -> None:
