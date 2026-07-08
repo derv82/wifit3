@@ -25,6 +25,7 @@ works). *Deauth* is no longer a column — it works on every supported card.
 | [RTL8812AU](#rtl8812au) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8822BU](#rtl8822bu) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT3070](#rt3070) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RT5370](#rt5370) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5572](#rt5572) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [MT7610U](#mt7610u) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
@@ -34,7 +35,6 @@ works). *Deauth* is no longer a column — it works on every supported card.
 | [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ⚠️ | ❌ | ✅ | B |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | D |
 | [RTL8821CU](#rtl8821cu) | ✅ | ✅ | ✅ | ⬜ | ✅ | ✅ | ⬜ | - |
-| [RT5370](#rt5370) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ | - |
 
 ## Per-card notes
 
@@ -336,13 +336,15 @@ Excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-06-24 | BBP66 link tuning sees nearby AP ~7/s. |
+| **Grade** | **90% (A)** | 2026-07-08 | 2.4 GHz near-kernel RX + full clean attack suite; 1T1R breadth is the only real gap. |
+| RX | ✅ | 2026-07-08 | ref AP 8.6 vs 9.1/s (95%); breadth 50 vs 57; RSSI +0.8 dB (accurate); 9/9 tune, 0 silent. |
+| Port | ✅ | 2026-07-08 | Matches rt2800usb — beacon rate + RSSI parity; accurate RSSI (no RT5572 +8/+11 over-read). |
 | Handshake | ✅ | 2026-06-24 | 4-way captured. |
 | PMKID | ✅ | 2026-06-24 | Capture + active extract. |
 | WEP | ✅ | 2026-07-08 | 2.4 GHz ChopChop + ARP replay ~200 IVs/s. |
 | WPS | ✅ | 2026-06-24 | PBC — 13 EAPOLs (HW-ACK forged MAC). |
 | ACKs | ✅ | 2026-07-08 | HW-ACK forged MAC (re-confirmed). |
-| Stress | ⬜ | — | Untested. |
+| Stress | ✅ | 2026-07-08 | 30-min 14-ch soak, flat (trend 1.22, no death-detect). |
 
 → [RT5370.md](src/wifit3/chips/rt5370/RT5370.md)
 
