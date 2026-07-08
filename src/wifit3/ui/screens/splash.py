@@ -231,12 +231,25 @@ class SplashView(Screen):
             # Happy path: just connect. Opening + init is inherent to using the card, so we
             # don't pre-probe — a WinUSB-bound card (the common case) connects with no extra
             # work or lag.
+            #
+            # Exception (Linux): a card the *kernel* driver has warmed can't cold-reset in userland
+            # on most silicon — warm-reattaching it here yields silently degraded RX. So for a
+            # foreign-warmed, replug-required chip, skip the fast connect and route into the
+            # setup/replug flow. A wifit3-warmed card isn't kernel-bound, so it still takes the fast
+            # path.
             bringup_err = None
-            try:
-                if await self._connect(iface):
-                    return
-            except BringUpError as e:
-                bringup_err = e
+            skip_fast_connect = False
+            if sys.platform.startswith("linux"):
+                t0 = target_for_vidpid(iface.vid, iface.pid)
+                if t0 is not None and t0.replug_after_modprobe:
+                    skip_fast_connect = await asyncio.to_thread(
+                        self.device_manager.linux_kernel_driver_bound, iface)
+            if not skip_fast_connect:
+                try:
+                    if await self._connect(iface):
+                        return
+                except BringUpError as e:
+                    bringup_err = e
 
             needs_access = isinstance(bringup_err, BringUpPermissionsError)
             if bringup_err is None:
