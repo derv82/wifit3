@@ -180,10 +180,17 @@ def test_install_cmd_root_skips_udev_rule_and_chgrp():
 
 
 def test_remove_cmd_deletes_both_files_and_chowns_node_back():
-    cmd = lin._remove_cmd("ar9271", "/dev/bus/usb/003/053")
+    cmd = lin._remove_cmd(["ar9271"], "/dev/bus/usb/003/053")
     assert f"rm -f {rule_path('ar9271')} {blacklist_path('ar9271')}" in cmd
     assert "udevadm control --reload-rules" in cmd
     assert "chown root:root /dev/bus/usb/003/053" in cmd
+
+
+def test_remove_cmd_wide_removes_every_key_but_chowns_only_the_selected_node():
+    cmd = lin._remove_cmd(["rt5372", "rt2800usb"], "/dev/bus/usb/003/053")
+    for k in ("rt5372", "rt2800usb"):
+        assert rule_path(k) in cmd and blacklist_path(k) in cmd
+    assert cmd.count("chown root:root") == 1                  # only the one live node
 
 
 # --- run_privileged / _choose_escalation_method ------------------------------------------------
@@ -333,6 +340,94 @@ def test_remove_rule_non_linux_raises(monkeypatch):
     monkeypatch.setattr(lin.sys, "platform", "win32")
     with pytest.raises(RuntimeError):
         remove_rule(_target())
+
+
+# --- shared-module reference counting (plan_uninstall + narrow/wide remove) ---------------------
+
+def _write_blacklist(key, desc, *modules):
+    """Write a wifit3 blacklist conf the way emit_blacklist_text would (header + blacklist lines),
+    so modules_in_conf / _desc_from_conf read it back. Needs BLACKLIST_DIR pointed at tmp."""
+    lines = [f"# wifit3 hands {desc} ({key}) to userland.", ""]
+    for m in modules:
+        lines += [f"blacklist {m}", f"install {m} /bin/true"]
+    Path(blacklist_path(key)).write_text("\n".join(lines) + "\n")
+
+
+def test_modules_in_conf_parses_blacklist_lines(monkeypatch, tmp_path):
+    _point_paths_at_tmp(monkeypatch, tmp_path)
+    _write_blacklist("rt5372", "Ralink RT5372 (Panda)", "rt2800usb", "rt2800lib")
+    assert lin.modules_in_conf(blacklist_path("rt5372")) == {"rt2800usb", "rt2800lib"}
+
+
+def test_confs_blacklisting_finds_every_holder_of_a_module(monkeypatch, tmp_path):
+    _point_paths_at_tmp(monkeypatch, tmp_path)
+    _write_blacklist("rt5372", "Ralink RT5372", "rt2800usb")
+    _write_blacklist("rt2800usb", "Ralink RT5572 (PAU09)", "rt2800usb")
+    _write_blacklist("ar9271", "Atheros AR9271", "ath9k_htc")
+    assert lin.confs_blacklisting("rt2800usb") == ["rt2800usb", "rt5372"]
+    assert lin.confs_blacklisting("ath9k_htc") == ["ar9271"]
+
+
+def test_plan_uninstall_no_siblings(monkeypatch, tmp_path):
+    _point_paths_at_tmp(monkeypatch, tmp_path)
+    _write_blacklist("ar9271", "Atheros AR9271", "ath9k_htc")
+    plan = lin.plan_uninstall(_target(key="ar9271"))
+    assert plan.own_modules == ("ath9k_htc",)
+    assert plan.siblings == () and plan.has_own_files and plan.removable
+
+
+def test_plan_uninstall_finds_direct_sibling(monkeypatch, tmp_path):
+    _point_paths_at_tmp(monkeypatch, tmp_path)
+    _write_blacklist("rt5372", "Ralink RT5372 (Panda PAU05)", "rt2800usb")
+    _write_blacklist("rt2800usb", "Ralink RT5572 (PAU09)", "rt2800usb")
+    plan = lin.plan_uninstall(_target(key="rt5372"))
+    assert plan.own_modules == ("rt2800usb",) and plan.has_own_files
+    assert [s.key for s in plan.siblings] == ["rt2800usb"]
+    assert plan.siblings[0].description == "Ralink RT5572 (PAU09)"   # parsed from the conf header
+
+
+def test_plan_uninstall_false_negative_card_with_no_conf_of_its_own(monkeypatch, tmp_path):
+    # PAU09 (rt2800usb) was never explicitly installed — only rt5372's blacklist displaced it. Its
+    # module comes from live discovery (mocked), and rt5372 surfaces as the blocker to remove.
+    _point_paths_at_tmp(monkeypatch, tmp_path)
+    _write_blacklist("rt5372", "Ralink RT5372 (Panda)", "rt2800usb")
+    monkeypatch.setattr(lin, "discover_kernel_modules", lambda t: ["rt2800usb"])
+    plan = lin.plan_uninstall(_target(key="rt2800usb"))
+    assert not plan.has_own_files                       # no rt2800usb files installed
+    assert plan.own_modules == ("rt2800usb",)
+    assert [s.key for s in plan.siblings] == ["rt5372"] and plan.removable
+
+
+def _stub_elevation(monkeypatch):
+    monkeypatch.setattr(lin.os, "geteuid", lambda: 1000, raising=False)
+    monkeypatch.setattr(lin, "_choose_escalation_method", lambda: "pkexec")
+    seen = {}
+    monkeypatch.setattr(lin, "run_privileged", lambda cmd, method: seen.update(cmd=cmd) or 0)
+    return seen
+
+
+def test_remove_rule_narrow_leaves_sibling_blocked(monkeypatch, tmp_path):
+    monkeypatch.setattr(lin.sys, "platform", "linux")
+    _point_paths_at_tmp(monkeypatch, tmp_path)
+    _write_blacklist("rt5372", "Ralink RT5372", "rt2800usb")
+    _write_blacklist("rt2800usb", "Ralink RT5572", "rt2800usb")
+    seen = _stub_elevation(monkeypatch)
+    r = remove_rule(_target(key="rt5372"), node="/dev/bus/usb/003/053")
+    assert r.ok
+    assert "rt2800usb" in r.message and "blocked" in r.message.lower()   # names the residual module
+    assert "60-wifit3-rt5372.rules" in seen["cmd"] and "wifit3-rt2800usb.conf" not in seen["cmd"]
+
+
+def test_remove_rule_wide_clears_the_family(monkeypatch, tmp_path):
+    monkeypatch.setattr(lin.sys, "platform", "linux")
+    _point_paths_at_tmp(monkeypatch, tmp_path)
+    _write_blacklist("rt5372", "Ralink RT5372", "rt2800usb")
+    _write_blacklist("rt2800usb", "Ralink RT5572", "rt2800usb")
+    seen = _stub_elevation(monkeypatch)
+    r = remove_rule(_target(key="rt5372"), node="/dev/bus/usb/003/053",
+                    also_keys=("rt2800usb",))
+    assert r.ok and "replug" in r.message.lower() and "blocked" not in r.message.lower()
+    assert "wifit3-rt5372.conf" in seen["cmd"] and "wifit3-rt2800usb.conf" in seen["cmd"]
 
 
 def test_linux_setup_result_defaults():

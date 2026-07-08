@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -222,13 +223,17 @@ def _install_cmd(*, tmp_rule: str | None, key: str, tmp_blacklist: str | None,
     return " && ".join(steps)
 
 
-def _remove_cmd(key: str, node: str | None) -> str:
+def _remove_cmd(keys: list[str], node: str | None) -> str:
+    paths: list[str] = []
+    for k in keys:
+        paths += [rule_path(k), blacklist_path(k)]
     steps = [
-        f"rm -f {rule_path(key)} {blacklist_path(key)}",
+        f"rm -f {' '.join(paths)}",
         "udevadm control --reload-rules",
     ]
     if node:
-        # subshell so `|| true` rescues only the chown, not the rm/reload (equal precedence)
+        # subshell so `|| true` rescues only the chown, not the rm/reload (equal precedence). Only
+        # the selected card's live node is revoked; siblings return to the kernel on their replug.
         steps.append(f"(chown root:root {node} 2>/dev/null || true)")
     return " && ".join(steps)
 
@@ -282,6 +287,134 @@ def _stage(name: str, text: str | None) -> str | None:
     p = str(Path(tempfile.gettempdir()) / name)
     Path(p).write_text(text)
     return p
+
+
+# --- uninstall planning: shared-module reference counting ---------------------------------------
+#
+# One kernel module can back several distinct wifit3 chipsets (rt5372, rt3070, rt2800usb, ... all
+# bind rt2800usb.ko). The blacklist is module-granular, so handing over one such card blocks the
+# module for the whole family. The reference count is *implicit*: modprobe unions every
+# ``/etc/modprobe.d/*.conf``, so a module stays blacklisted while any wifit3 conf still lists it and
+# is lifted only when the last one is removed. We never compute "what to unblacklist" — we read
+# across our own files to (a) tell the user which sibling still blocks a card and (b) offer a wide
+# uninstall that clears the whole family. Only ever our own ``wifit3-*`` files are read or deleted.
+
+_CONF_PREFIX = "wifit3-"
+_CONF_SUFFIX = ".conf"
+_HANDS_RE = re.compile(r"# wifit3 hands (.+) \(([^)]+)\) to userland")
+
+
+@dataclass(frozen=True)
+class SiblingConf:
+    """Another installed wifit3 chipset whose blacklist shares ≥1 kernel module with the target."""
+    key: str
+    description: str
+    modules: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class UninstallPlan:
+    """What removing a chipset entails — drives the splash's narrow/wide uninstall choice."""
+    key: str
+    own_modules: tuple[str, ...]
+    siblings: tuple[SiblingConf, ...]
+    has_own_files: bool
+
+    @property
+    def removable(self) -> bool:
+        """Is there anything for us to remove (our own files, or a sibling blocking this card)?"""
+        return self.has_own_files or bool(self.siblings)
+
+
+def modules_in_conf(path) -> set[str]:
+    """The kernel modules a wifit3 blacklist conf blocks — its ``blacklist <mod>`` lines."""
+    mods: set[str] = set()
+    try:
+        text = Path(path).read_text()
+    except OSError:
+        return mods
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("blacklist "):
+            name = stripped.split(None, 1)[1].strip()
+            if name:
+                mods.add(name)
+    return mods
+
+
+def _installed_blacklist_confs() -> dict[str, Path]:
+    """Every installed wifit3 blacklist conf, keyed by its (filename-safe) chipset key."""
+    base = Path(BLACKLIST_DIR)
+    out: dict[str, Path] = {}
+    if not base.exists():
+        return out
+    for p in sorted(base.glob(f"{_CONF_PREFIX}*{_CONF_SUFFIX}")):
+        out[p.name[len(_CONF_PREFIX):-len(_CONF_SUFFIX)]] = p
+    return out
+
+
+def _desc_from_conf(path: Path) -> str | None:
+    """Recover the human chipset label from a conf's header comment (self-contained; no registry
+    import). Greedy match tolerates parentheses in the description — the ``(key)`` before
+    ``to userland`` anchors it."""
+    try:
+        for line in path.read_text().splitlines():
+            m = _HANDS_RE.match(line.strip())
+            if m:
+                return m.group(1).strip()
+    except OSError:
+        pass
+    return None
+
+
+def confs_blacklisting(module: str) -> list[str]:
+    """The wifit3 chipset keys whose blacklist conf blocks ``module``."""
+    return sorted(k for k, p in _installed_blacklist_confs().items()
+                  if module in modules_in_conf(p))
+
+
+def _target_modules(target: SetupTarget) -> set[str]:
+    """The kernel modules ``target`` blocks: its own conf if installed, else live discovery (which
+    works even on an unbound card via modalias) so the never-explicitly-installed sibling case still
+    resolves. Falls back to the driver's hints when the card can't be probed."""
+    own = Path(blacklist_path(target.key))
+    if own.exists():
+        return modules_in_conf(own)
+    return set(discover_kernel_modules(target))
+
+
+def plan_uninstall(target: SetupTarget) -> UninstallPlan:
+    """What removing ``target`` entails: its kernel modules, the *other* installed wifit3 chipsets
+    that share ≥1 of those modules (direct siblings, non-transitive), and whether ``target`` has
+    files of its own. Scans only wifit3's files."""
+    own_modules = _target_modules(target)
+    self_key = _safe(target.key)
+    siblings: list[SiblingConf] = []
+    for key, path in _installed_blacklist_confs().items():
+        if key == self_key:
+            continue
+        shared = modules_in_conf(path) & own_modules
+        if shared:
+            siblings.append(SiblingConf(key=key, description=_desc_from_conf(path) or key,
+                                        modules=tuple(sorted(shared))))
+    has_own = Path(blacklist_path(target.key)).exists() or Path(rule_path(target.key)).exists()
+    return UninstallPlan(key=target.key, own_modules=tuple(sorted(own_modules)),
+                         siblings=tuple(siblings), has_own_files=has_own)
+
+
+def _residual_blocked(own_modules: set[str], removed_keys: set[str]) -> dict[str, set[str]]:
+    """After removing ``removed_keys``, which of ``own_modules`` are still blocked by a *remaining*
+    wifit3 conf, and by whom. Keyed on the intended removal set (not a filesystem re-scan) so it's
+    correct whether or not the elevated delete has landed yet."""
+    out: dict[str, set[str]] = {}
+    if not own_modules:
+        return out
+    for key, path in _installed_blacklist_confs().items():
+        if key in removed_keys:
+            continue
+        for m in modules_in_conf(path) & own_modules:
+            out.setdefault(m, set()).add(key)
+    return out
 
 
 # --- public install / remove --------------------------------------------------------------------
@@ -339,38 +472,74 @@ def install_rule(target: SetupTarget, *, node: str | None = None) -> LinuxSetupR
                             message=f"Couldn't install the udev rule + blocklist (exit {rc}).")
 
 
-def remove_rule(target: SetupTarget, *, node: str | None = None) -> LinuxSetupResult:
-    """Return ``target``'s chipset to the kernel: delete the per-chipset blacklist + access rule and
-    reload udev. The normal Wi-Fi driver rebinds on the next replug."""
+def remove_rule(target: SetupTarget, *, node: str | None = None,
+                also_keys: tuple[str, ...] = ()) -> LinuxSetupResult:
+    """Return ``target``'s chipset (and any ``also_keys`` siblings) to the kernel: delete their
+    per-chipset blacklist + access-rule pairs and reload udev. The normal Wi-Fi driver rebinds on the
+    next replug.
+
+    ``also_keys`` is the wide-uninstall radius — sibling chipsets sharing ``target``'s kernel module,
+    removed so the shared module is actually freed (see :func:`plan_uninstall`). A narrow uninstall
+    passes none; if that leaves the card's module blocked by a remaining sibling, the success message
+    says so."""
     if not sys.platform.startswith("linux"):
         raise RuntimeError("remove_rule is Linux-only")
 
+    keys = _dedupe([target.key, *also_keys])
     rpath, bpath = rule_path(target.key), blacklist_path(target.key)
-    if not Path(rpath).exists() and not Path(bpath).exists():
+    if not any(Path(rule_path(k)).exists() or Path(blacklist_path(k)).exists() for k in keys):
         return LinuxSetupResult(
             ok=True, detail=rpath,
-            message="No udev rule installed for this chipset — nothing to remove.")
+            message="No wifit3 rules installed for this chipset — nothing to remove.")
 
-    cmd = _remove_cmd(target.key, node)
+    # Read our modules before the elevated delete wipes our conf; the residual scan then tells the
+    # user if a sibling we're *not* removing still holds them.
+    own_modules = modules_in_conf(bpath) if Path(bpath).exists() else set()
+    removed_keys = {_safe(k) for k in keys}
+
+    def _ok() -> LinuxSetupResult:
+        residual = _residual_blocked(own_modules, removed_keys)
+        if residual:
+            mods = ", ".join(sorted(residual))
+            blockers = ", ".join(sorted({k for who in residual.values() for k in who}))
+            return LinuxSetupResult(
+                ok=True, detail=rpath,
+                message=(f"Removed wifit3's rules for this card. Kernel module(s) {mods} stay "
+                         f"blocked by chipset(s) {blockers} still handed to wifit3 — uninstall those "
+                         f"too to fully restore this card. Replug to apply."))
+        return LinuxSetupResult(ok=True, detail=rpath, message=_REMOVED_MSG)
+
+    cmd = _remove_cmd(keys, node)
     if os.geteuid() == 0:
         rc = _run_as_root(cmd)
-        return (LinuxSetupResult(ok=True, detail=rpath, message=_REMOVED_MSG) if rc == 0
+        return (_ok() if rc == 0
                 else LinuxSetupResult(ok=False, detail=rpath,
                                       message=f"Couldn't remove the udev rule + blocklist (exit {rc})."))
 
     method = _choose_escalation_method()
     if method is None:
+        rmpaths = " ".join(p for k in keys for p in (rule_path(k), blacklist_path(k)))
         return LinuxSetupResult(
             ok=False,
-            detail=f"sudo rm -f {rpath} {bpath} && sudo udevadm control --reload-rules",
+            detail=f"sudo rm -f {rmpaths} && sudo udevadm control --reload-rules",
             message="No graphical elevator (pkexec/sudo) found to remove the udev rule + blocklist.")
 
     rc = run_privileged(cmd, method)
     if rc == 0:
-        return LinuxSetupResult(ok=True, detail=rpath, message=_REMOVED_MSG)
+        return _ok()
     if rc == 126:
         return LinuxSetupResult(
             ok=False, cancelled=True,
             message="Authorization dismissed — the udev rule + blocklist are still installed.")
     return LinuxSetupResult(ok=False, detail=rpath,
                             message=f"Couldn't remove the udev rule + blocklist (exit {rc}).")
+
+
+def _dedupe(keys) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for k in keys:
+        if k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out
