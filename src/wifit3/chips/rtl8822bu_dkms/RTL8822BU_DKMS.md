@@ -188,3 +188,14 @@ this RF environment doesn't offer; the residual stays in BUGS.md, downgraded.
 **Cold-boot 2.4 GHz synth wedge — heal holds 0/60.** `soak_2g.py --runs 60` (each `connect()` a full
 cold OFF→ON cycle): 0/60 boots 2.4 GHz-deaf, every run 58–107 ch1 beacons. `_heal_cold_synth` (the
 settled 5→2.4 re-cycle) holds across a 60-cycle soak (was ~20% deaf pre-fix). Cleared from BUGS.md.
+
+### 2026-07-08 — RSSI: reject saturated jgr2 pwdb (impossible +dBm)
+
+The baseline-linux/wifit3 A/B caught one AP reading +47 dB hot vs the kernel. A weak/marginal frame
+can carry a jgr2 pwdb byte in 111..145, which `pwdb-110` decodes to an impossible +1..+35 dBm — the
+formula and `cck_new_agc=1` are both vendor-correct (rx_ant_status=0x3, both paths valid); the vendor
+just survives it via per-STA IIR smoothing (`phydm_process_rssi_for_dm`) that the per-frame path
+can't use, so the garbage landed in the per-AP mean. `rx._path_rssi` now drops any path decoding to
+>0 dBm (OFDM keeps the strongest valid path; saturated CCK / all-paths-bad falls to the floor), while
+keeping the s8 0xFF no-measurement wrap. HW A/B: worst-case RSSI delta +47 → −9 dB, median at parity
+(−0.5 dB / 88 APs), 0 impossible over ~14k live frames. Fix + `test_rx.py` regression in `712ec0b`.

@@ -50,7 +50,3 @@ contradicts itself; resolve on HW.
   the OOT `rtl8814au` driver (mud2g 7.1 vs 8.4/s, RSSI +0.2 dB), and the OOT driver runs
   deauth→hop→deauth on both bands clean — so it's a port dynamic-path (TX/hop state) bug, not the
   silicon. Fresh OOT usbmon captures for the re-port: `usb_dumps_new2/captures_rtl8814au/` (run 3 = good 2G TX).
-
-### rtl8822bu_dkms
-- ⏳ Matched-load RX capture %: 78 % live on a busy ch1 vs the vendor's ~84 % busy-ch1 reference
-  (within contention, 2026-07-08) — a clean quiet-ch1 number is still outstanding [RTL8822BU_DKMS.md].
