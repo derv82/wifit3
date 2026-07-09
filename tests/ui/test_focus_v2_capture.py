@@ -131,9 +131,11 @@ async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_v2_capture_wins_raise_toasts():
-    """A handshake / PMKID win raises a non-blocking toast (on top of the event-log
-    tree), so a capture isn't silent while the user is watching the radio."""
+async def test_v2_capture_wins_do_not_double_toast():
+    """Focus does NOT toast handshake / PMKID wins from its detector. ScannerView sits under
+    it on the screen stack, keeps polling its own detector over EVERY AP, and fires the toast
+    (so wins on OTHER targets still notify while we're focused) — a Focus toast would only
+    duplicate it. The win still lands in Focus's own event log, so it isn't silent locally."""
     bssid = "aa:bb:cc:dd:ee:01"
     client = "04:2e:c1:51:43:b8"
     iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
@@ -145,6 +147,7 @@ async def test_v2_capture_wins_raise_toasts():
         focus = app.screen
         toasts: list = []
         focus.notify = lambda msg, **kw: toasts.append((kw.get("title"), msg))
+        log = focus.query_one("#log", LogBand)
 
         replay = b"\x00" * 8
         iface._on_frame_parsed(_eapol(bssid, client, 1, replay, to_ap=False, pmkid=b"\xaa" * 16))
@@ -153,8 +156,11 @@ async def test_v2_capture_wins_raise_toasts():
         await pilot.pause()
 
         titles = [t for t, _ in toasts]
-        assert "PMKID captured" in titles, toasts
-        assert "Handshake captured" in titles, toasts
+        assert "PMKID captured" not in titles, toasts
+        assert "Handshake captured" not in titles, toasts
+        # …but the capture still surfaces in Focus's event log (Scanner owns the toast).
+        text = _log_text(log)
+        assert "PMKID captured" in text and "Valid 4-Way Handshake" in text, text
 
 
 @pytest.mark.asyncio

@@ -554,18 +554,13 @@ class FocusViewV2(Screen):
     def _drain_capture_events(self, ap, forged_macs: Set[str], now: float) -> None:
         # EAPOL frames + handshake completions go through the aggregator (one tidy
         # tree per client, deferred); PMKID / decloak stay immediate banners.
+        #
+        # No capture toast here on purpose. ScannerView sits under us on the screen stack,
+        # keeps polling its own detector over EVERY AP, and fires the toast — so a capture on
+        # a *different* target while we're focused still notifies (deliberately useful), and a
+        # Focus toast would only double it. The active PMKID harvest (forged MAC, which both
+        # detectors skip) still toasts itself in _finish_pmkid, so that win isn't lost.
         for ev in self._events.poll(ap, forged_macs=forged_macs):
-            # Toast before dispatch so it fires whichever branch renders the event.
-            title = CAPTURE_TOAST_TITLES.get(ev.kind)
-            if title:
-                name = ev.ssid or ev.bssid
-                if ev.kind == CaptureKind.WEP_KEY:
-                    body = f"{name}: {wep_key_ascii(ev.value or '')}"
-                elif ev.client_mac:
-                    body = f"{name} — {short_sta(ev.client_mac)}"
-                else:
-                    body = name
-                self.notify(body, title=title, timeout=6)
             if ev.kind == CaptureKind.EAPOL:
                 self._eapol_agg.on_eapol(ev, now)
             elif ev.kind == CaptureKind.HANDSHAKE:
