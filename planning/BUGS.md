@@ -12,9 +12,6 @@ contradicts itself; resolve on HW.
 
 ## Per-card
 
-### rtl8187 (8187L)
-- Limit: always cold-inits (no warm reattach) — replug to recover.
-
 ### rtl8188eus_dkms
 - RX-perf gap: parity fixed-channel, but REAL in the hopping sweep (2026-07-07). Fixed-channel 60 s on
   a strong AP: port 6.5/s ≈ kernel-usbcap 6.2/s (parity). But the 7/6 SAME-SESSION Kali sweep A/B
