@@ -588,6 +588,10 @@ def run(cap: str | None = None) -> int:
     print("  (cold init → monitor-enable → channel hops via event dispatch); it subsumes the")
     print(f"  anchored [channel tune] blocks ({tune_n} ops), kept as an independent cross-check.")
     print(f"  bulk-OUT TX inject: {tx_n} frames rebuilt byte-for-byte (CCK 2.4 GHz + OFDM 5 GHz).")
+    print("  note: the walk reproduces the kernel's operational config_filter (0x97→0x93), but")
+    print("  the LIVE connect() keeps its monitor-first RX_FILTER_CFG=0x11 shortcut (HW-validated,")
+    print("  deliberately not reconciled) — see RT2800USB.md. The new operational helpers")
+    print("  (config_ant/toggle_rx/config_ps/update_survey) are exercised by the walk, not connect().")
     if not cold_ok:
         print("  Remaining control frontier: the aireplay-ng TX-injection region (TX_STA_FIFO")
         print("  status polling + async link-tuner/filter reapplies) — see FRONTIER above.")
