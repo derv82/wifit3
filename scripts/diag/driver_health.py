@@ -178,11 +178,13 @@ def _rate_matched(w: dict, lin: dict, bssid: str) -> tuple[float, float, int]:
     return wsum / window, lsum / window, window
 
 
-def diff(wifit3_path: str | Path, linux_path: str | Path) -> None:
+def diff(wifit3_path: str | Path, linux_path: str | Path,
+         ref_bssids: list[str] | None = None) -> None:
     w, lin = load(wifit3_path), load(linux_path)
     chip = w.get("chip", "?")
     peers = _peers(Path(wifit3_path), "wifit3")
     out = [f"\nwifit3 vs linux   {chip}\n"]
+    ref_bssids = [b.lower() for b in ref_bssids] if ref_bssids else None
 
     # Breadth, per band.
     for b in ("2.4", "5"):
@@ -197,13 +199,19 @@ def diff(wifit3_path: str | Path, linux_path: str | Path) -> None:
             line += " | best so far" if wn >= best else f" | {best - wn} fewer than best card ({best})"
         out.append(line)
 
-    # Beacon rate from the reference AP (the one linux heard most), compared over a
-    # matched window so the baseline-wifit3-vs-baseline-linux dwell asymmetry doesn't
-    # masquerade as a driver gap. 0.3/s tolerance = sampling noise, not a real deficit.
-    ref, _ = _best_rate(lin)
-    if ref:
+    # Beacon rate from the reference AP(s), compared over a matched window so the
+    # baseline-wifit3-vs-baseline-linux dwell asymmetry doesn't masquerade as a driver
+    # gap. 0.3/s tolerance = sampling noise, not a real deficit. --ref pins one or more
+    # stable reference BSSIDs (e.g. a fixed AP per band); default is the single AP linux
+    # heard most, which can drift to a different transient AP run-to-run.
+    refs = ref_bssids or ([b] if (b := _best_rate(lin)[0]) else [])
+    for ref in refs:
+        label = ref if ref_bssids else "reference AP"
         wrate, lrate, window = _rate_matched(w, lin, ref)
-        line = f"Beacon rate (reference AP, matched {window}s window): {wrate:.1f}/sec | "
+        if window == 0:
+            out.append(f"Beacon rate ({label}): not heard in either capture")
+            continue
+        line = f"Beacon rate ({label}, matched {window}s window): {wrate:.1f}/sec | "
         line += ("matches linux" if wrate >= lrate - 0.3
                  else f"{lrate - wrate:.1f} below linux ({lrate:.1f}/sec)")
         out.append(line)
@@ -247,8 +255,11 @@ def diff(wifit3_path: str | Path, linux_path: str | Path) -> None:
 def main() -> int:
     p = argparse.ArgumentParser(description="Diff two health rollups (wifit3 vs linux).")
     p.add_argument("--diff", nargs=2, metavar=("WIFIT3_JSON", "LINUX_JSON"), required=True)
+    p.add_argument("--ref", nargs="+", metavar="BSSID", default=None,
+                   help="Pin one or more reference BSSIDs for the beacon-rate line "
+                        "(e.g. a fixed AP per band). Default: the single AP linux heard most.")
     args = p.parse_args()
-    diff(args.diff[0], args.diff[1])
+    diff(args.diff[0], args.diff[1], ref_bssids=args.ref)
     return 0
 
 
