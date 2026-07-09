@@ -93,10 +93,15 @@ from the kernel STA path — captured below.
 
 - `test_hw_rt2800usb.py --phase {open,fw,usbinit,macinit,bbpinit,rfinit,rx}` — staged HW bring-up.
 - `rt2800_ctrl_diff.py` — extracts the kernel control-transfer sequence from a pcap; isolated the missing EFUSE walk.
-- `verify_pcap.py` — single-cursor whole-capture byte gate. Drives the port's real helpers
-  in kernel wire order over one cursor; fail-closed, 0 waivers. Covers the full cold bring-up
-  (1781 ops) + 128/128 RF55xx channel-tune blocks on the RT5572 capture; frontier = the
-  operational phase (airmon + hops), still being converged.
+- `verify_pcap.py` — single-cursor whole-capture byte gate, fail-closed, 0 waivers, exit 0.
+  Drives the port's real helpers in kernel wire order over one cursor and now reproduces the
+  RT5572 capture **end to end: 39408/39408 control ops (100%)** — cold bring-up → airmon
+  monitor-enable → the 128-hop channel stream → the aireplay-ng TX-injection region
+  (TX_STA_FIFO drain). Plus `[tx inject]` rebuilds all **753 bulk-OUT TX frames byte-for-byte**
+  (CCK 2.4 GHz + OFDM 5 GHz) via `tx.build_tx_descriptors`, and `[channel tune]` re-verifies
+  128/128 tunes as an independent cross-check. The hop stream runs a STRICT per-hop bracket
+  with per-step opener checks; the only event allowed to interleave out of order is the async
+  `configure_filter` reapply (proven async: 4 reapplies vs 126 hops).
 
 ## Debug log
 
@@ -198,3 +203,33 @@ beacons/hop). What changed, per commit:
   enables are now RMW (were direct writes) + LED_AG/ACT/POLARITY MCU configs (were skipped). The
   monitor `RX_FILTER_CFG`=0x11 stays in `connect()`'s `enable_radio` (kernel applies it in the
   operational phase, not here — to reconcile).
+
+### Operational phase + TX inject: 100% byte-for-byte (2026-07-09)
+
+Converged the rest of the RT5572 capture into the single cursor: **39408/39408 control ops
+byte-for-byte (100%), 0 waivers, exit 0** — cold bring-up → airmon monitor-enable → the
+128-hop channel stream → the aireplay-ng TX-injection region. Also added a `[tx inject]` gate
+that rebuilds all **753 bulk-OUT TX frames byte-for-byte** (502 CCK 2.4 GHz + 251 OFDM 5 GHz).
+The port's TX wire format matches the kernel for every injected frame including the OFDM/5 GHz
+path — so the earlier "5 GHz TX broken" was the config_channel/txpower surface (converged in the
+2026-07-08 work), not the TX descriptor. New walk-only ports: `mac.toggle_rx` / `config_retry_limit`
+/ `config_ps_awake` / `update_survey` and `chan.config_ant`; `tx.build_tx_descriptors` gained
+PACKETID + USB-burst params (defaults unchanged, so the live single-frame inject is byte-identical).
+
+- **Monitor-enable filter dance.** mac80211 passes `FIF_ALLMULTI|FIF_CONTROL|FIF_PSPOLL` →
+  `RX_FILTER_CFG`=0x97, then 0x93 once `CONFIG_MONITORING` is set. The walk reproduces both via the
+  real `config_filter`; the periodic reapplies (12 across the capture) are **async** — proven, not
+  assumed: 4 in the hop phase vs 126 hops, firing 2–396 frames after an RX re-enable. So the hop
+  stream is driven as a strict fixed-order bracket with per-step opener checks, and only the
+  `configure_filter` reapply may interleave (still byte-checked); any other out-of-order op halts
+  the walk (verified: reordering the bracket collapses coverage 37435→2078 ops).
+- **The `0x11` live monitor filter is a deliberate deviation, not yet reconciled.** `connect()`
+  still writes `RX_FILTER_CFG`=0x11 in `enable_radio`'s tail — a monitor-first shortcut that skips
+  the kernel's STA-mode-then-airmon `0x97→0x93` transition (0x11 is a superset-accepting filter:
+  DROP_CRC|DROP_VER only). It is HW-validated and left as-is; the walk reproduces the kernel's
+  operational filter dance separately. The operational helpers above are exercised **only by the
+  walk** — the live channel-hop path (`driver.set_channel`) does its own simplified hop, so the
+  walk proves the helpers are byte-correct but not that the live driver issues them in this order.
+- **TX-status drain.** The injection region is dominated by 1399 `TX_STA_FIFO` read-to-pop polls
+  (the kernel reaping each inject's completion). wifit3 fires TX without this drain loop; the walk
+  reproduces the reads for cursor continuity so it can reach the 2 interleaved hops (127, 128).
