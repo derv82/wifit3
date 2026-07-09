@@ -219,6 +219,58 @@ def config_filter(t: RT2800USBTransport, filter_flags: int = 0,
     t.write32(C.RX_FILTER_CFG, reg)
 
 
+def toggle_rx(t: RT2800USBTransport, enable: bool) -> None:
+    """rt2800usb_start_queue / stop_queue for QID_RX — a MAC_SYS_CTRL RMW of
+    just ENABLE_RX. mac80211 brackets every operational reconfigure (filter,
+    antenna, channel) with an RX off before and on after, so the changes latch
+    while the receiver is quiescent. [SRC] rt2800usb.c:46-92."""
+    from . import constants as C
+    reg = t.read32(C.MAC_SYS_CTRL)
+    if enable:
+        reg |= C.MAC_SYS_CTRL_ENABLE_RX
+    else:
+        reg = reg & ~C.MAC_SYS_CTRL_ENABLE_RX & 0xFFFFFFFF
+    t.write32(C.MAC_SYS_CTRL, reg)
+
+
+def config_retry_limit(t: RT2800USBTransport, short_retry: int = 7,
+                       long_retry: int = 4) -> None:
+    """rt2800_config_retry_limit — TX_RTY_CFG SHORT/LONG retry limits from the
+    mac80211 conf. Defaults are mac80211's hw retry counts (short 7 / long 4),
+    which is what the capture writes. [SRC] rt2800lib.c:5636."""
+    from . import constants as C
+    reg = t.read32(C.TX_RTY_CFG)
+    reg = (reg & ~C.TX_RTY_CFG_SHORT_RTY_LIMIT & 0xFFFFFFFF) | (short_retry & 0xFF)
+    reg = (reg & ~C.TX_RTY_CFG_LONG_RTY_LIMIT & 0xFFFFFFFF) | ((long_retry & 0xFF) << 8)
+    t.write32(C.TX_RTY_CFG, reg)
+
+
+def config_ps_awake(t: RT2800USBTransport) -> None:
+    """rt2800_config_ps for STATE_AWAKE — the only power state a monitor
+    interface visits. Clears the AUTOWAKEUP_CFG auto-sleep fields, then
+    set_device_state(AWAKE) = mcu_request(MCU_WAKEUP, 0xff, 0, 2) (the same
+    MCU wake the cold radio-on issues). [SRC] rt2800lib.c:5649 (else branch) +
+    rt2800usb.c:325-333."""
+    from . import constants as C
+    from .firmware import mcu_request
+    reg = t.read32(C.AUTOWAKEUP_CFG)
+    reg = reg & ~(C.AUTOWAKEUP_CFG_AUTO_LEAD_TIME | C.AUTOWAKEUP_CFG_TBCN_BEFORE_WAKE
+                  | C.AUTOWAKEUP_CFG_AUTOWAKE) & 0xFFFFFFFF
+    t.write32(C.AUTOWAKEUP_CFG, reg)
+    mcu_request(t, C.MCU_WAKEUP, token=0xFF, arg0=0, arg1=2)
+
+
+def update_survey(t: RT2800USBTransport) -> None:
+    """rt2800_update_survey — read the three channel-activity counters to bank
+    the current channel's survey before a channel change (the counters are
+    read-to-accumulate in the kernel; here the reads just replay). [SRC]
+    rt2800lib.c:1255."""
+    from . import constants as C
+    t.read32(C.CH_IDLE_STA)
+    t.read32(C.CH_BUSY_STA)
+    t.read32(C.CH_BUSY_STA_SEC)
+
+
 # ----------------------------------------------------------------------
 # rt2800_enable_radio + rt2800usb_enable_radio — turn RX/TX on at the
 # MAC + WPDMA + USB-DMA level. Without this, the chip is fully

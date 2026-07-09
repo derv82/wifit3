@@ -175,6 +175,9 @@ H2M_MAILBOX_STATUS = 0x701C
 H2M_BBP_AGENT = 0x7028
 FIRMWARE_IMAGE_BASE = 0x3000        # FW chunk destination in chip RAM
 AUTOWAKEUP_CFG = 0x1208             # [SRC] rt2800.h:1044 (0x1010 = MAC_BSSID_DW0, not this)
+AUTOWAKEUP_CFG_AUTO_LEAD_TIME = 0x000000FF     # [SRC] rt2800.h:1045
+AUTOWAKEUP_CFG_TBCN_BEFORE_WAKE = 0x00007F00   # [SRC] rt2800.h:1046
+AUTOWAKEUP_CFG_AUTOWAKE = 0x00008000           # [SRC] rt2800.h:1047
 WPDMA_GLO_CFG = 0x0208
 HOST_CMD_CSR = 0x0404
 MAC_SYS_CTRL = 0x1004
@@ -242,6 +245,8 @@ TXOP_CTRL_CFG = 0x1340
 TX_RTS_CFG = 0x1344
 TX_TIMEOUT_CFG = 0x1348
 TX_RTY_CFG = 0x134C
+TX_RTY_CFG_SHORT_RTY_LIMIT = 0x000000FF   # [SRC] rt2800.h:1365 (mac80211 default 7)
+TX_RTY_CFG_LONG_RTY_LIMIT = 0x0000FF00    # [SRC] rt2800.h:1366 (mac80211 default 4)
 TX_LINK_CFG = 0x1350
 CCK_PROT_CFG = 0x1364
 OFDM_PROT_CFG = 0x1368
@@ -300,6 +305,12 @@ BBP_CSR_CFG_BBP_RW_MODE = 0x00080000
 # BBP3_HT40_MINUS — bit 5. Cleared in HT20 monitor mode at end of
 # config_channel. [SRC] rt2800.h:2234
 BBP3_HT40_MINUS = 0x20
+
+# BBP1/BBP3 antenna-chain selects — set by rt2800_config_ant. [SRC] rt2800.h:2226-2233
+BBP1_TX_POWER_CTRL = 0x03    # bits[1:0] — the -6/-12 dBm TX-power backoff (config_txpower)
+BBP1_TX_ANTENNA = 0x18       # bits[4:3] — TX chain select
+BBP3_RX_ADC = 0x03           # bits[1:0]
+BBP3_RX_ANTENNA = 0x18       # bits[4:3] — RX chain select
 
 # BBP4 bit-fields. MAC_IF_CTRL set by rt2800_bbp4_mac_if_ctrl;
 # BANDWIDTH used by RX filter calibration. [SRC] rt2800.h:2241-2242

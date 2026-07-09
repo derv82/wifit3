@@ -48,14 +48,26 @@ from wifit3.chips.rt2800usb import mac as _mac  # noqa: E402
 from wifit3.chips.rt2800usb import reg_init as _reg  # noqa: E402
 from wifit3.chips.rt2800usb import rfcsr as _rfcsr  # noqa: E402
 from wifit3.chips.rt2800usb.constants import (  # noqa: E402
+    BBP_CSR_CFG,
+    CH_IDLE_STA,
+    FIF_ALLMULTI,
+    FIF_CONTROL,
+    FIF_PSPOLL,
     LDO_CFG0,
     MAC_CSR0,
     MAC_DEBUG_INDEX,
     MAC_DEBUG_INDEX_XTAL,
+    MAC_SYS_CTRL,
+    MAC_SYS_CTRL_ENABLE_RX,
     MCU_WAKEUP,
     RF_CSR_CFG,
     RF_CSR_CFG_WRITE,
     RT_RT5592,
+    RX_FILTER_CFG,
+)
+from wifit3.chips.rt2800usb.link_tuner import (  # noqa: E402
+    get_default_vgc,
+    set_vgc,
 )
 from wifit3.chips.rt2800usb.eeprom import (  # noqa: E402
     EEPROM_OFFSET_FREQ,
@@ -104,7 +116,7 @@ def verify_cold_walk(pcap: Path, dev: int, silicon: int):
                    if o["dir"] == "IN" and o["addr"] == MAC_CSR0), 0)
     w = _Walk(allops[anchor:])
     fw = load_firmware_blob()
-    box: dict = {"ev": None, "chip": None}
+    box: dict = {"ev": None, "chip": None, "xtal": False}
 
     def step(label, fn):
         n = w.run(fn)
@@ -117,7 +129,8 @@ def verify_cold_walk(pcap: Path, dev: int, silicon: int):
              lambda t: box.__setitem__("ev", parse_eeprom(read_eeprom_efuse(t))))
         ev = box["ev"]
         step("probe_hw_gpio (rfkill GPIO_CTRL_DIR2)", lambda t: _mac.probe_hw_gpio(t))
-        step("probe_hw_mode (xtal read)", lambda t: _chan.is_xtal_40mhz(t))
+        step("probe_hw_mode (xtal read)",
+             lambda t: box.__setitem__("xtal", _chan.is_xtal_40mhz(t)))
         step("load_firmware (autorun + blob + MCU boot)",
              lambda t: _fw.load_firmware(t, fw, silicon_id=silicon, progress_cb=None))
         step("set_radio_led (MCU_LED, radio on)",
@@ -144,22 +157,177 @@ def verify_cold_walk(pcap: Path, dev: int, silicon: int):
             txpath=ev.txpath, rxpath=ev.rxpath))
         step("enable_radio_finish (MAC/WPDMA enable + LED)",
              lambda t: _mac.enable_radio_finish(t, ev))
+
+        # ---- operational phase: airmon monitor-enable ----
+        # mac80211 brings the monitor interface up around a quiesced receiver:
+        # toggle RX, set the (STA-default-flags) filter, push the initial
+        # power/retry/PS config, configure antennas + reset the tuner, then
+        # re-filter with CONFIG_MONITORING set and bank the survey. mac80211
+        # passes FIF_ALLMULTI | FIF_CONTROL | FIF_PSPOLL for a monitor interface
+        # (0x97); the monitoring flip (off → on) clears DROP_NOT_TO_ME → 0x93.
+        mon_flags = FIF_ALLMULTI | FIF_CONTROL | FIF_PSPOLL
+        step("toggle_rx on (start QID_RX)", lambda t: _mac.toggle_rx(t, True))
+        step("config_filter (FIF_ALLMULTI|FIF_CONTROL, mon off → 0x97)",
+             lambda t: _mac.config_filter(t, mon_flags, monitoring=False))
+        step("toggle_rx off (stop QID_RX)", lambda t: _mac.toggle_rx(t, False))
+        step("config power+retry+ps (CHANGE_POWER|RETRY|PS)",
+             lambda t: (_chan.config_txpower(t, ev, is_2g=True),
+                        _mac.config_retry_limit(t),
+                        _mac.config_ps_awake(t)))
+        step("config_ant + reset_tuner (BBP antenna + VGC seed)",
+             lambda t: (_chan.config_ant(t, ev.txpath, ev.rxpath),
+                        set_vgc(t, silicon,
+                                get_default_vgc(silicon, 1, ev.lna_gain_bg),
+                                rx_chain_num=ev.rxpath, rssi=0)))
+        step("toggle_rx on", lambda t: _mac.toggle_rx(t, True))
+        step("config_filter (CONFIG_MONITORING on → 0x93)",
+             lambda t: _mac.config_filter(t, mon_flags, monitoring=True))
+        step("toggle_rx off", lambda t: _mac.toggle_rx(t, False))
+        step("update_survey (CH_IDLE/BUSY/BUSY_SEC)", lambda t: _mac.update_survey(t))
+
+        # ---- channel hops ----
+        # Each hop is two mac80211 events driven in the single cursor: a config
+        # (channel) = config_channel + config_txpower + reset_tuner, and a
+        # config_antenna = config_ant + reset_tuner; then start_rx, stop_rx and
+        # a survey bank for the next hop. The channel per hop is reverse-mapped
+        # from the RFCSR8 (N) load + LDO VLEVEL band, then set_channel is driven
+        # for real on the cursor (a wrong channel diverges at the RFCSR9 K bits).
+        xtal = box["xtal"]
+        table = _chan._RF_VALS_5592_XTAL40 if xtal else _chan._RF_VALS_5592_XTAL20
+
+        def sc_kwargs(ch):
+            p1, p2 = _chan.default_power(ev, silicon, ch, xtal)
+            lna = ev.lna_gain_bg if ch <= 14 else ev.lna_gain_a
+            return dict(
+                freq_offset=ev.freq_offset, lna_gain=lna,
+                tx_chain_num=ev.txpath, rx_chain_num=ev.rxpath,
+                has_cap_bt_coexist=ev.has_cap_bt_coexist,
+                has_cap_external_lna_a=ev.has_cap_external_lna_a,
+                has_cap_external_lna_bg=ev.has_cap_external_lna_bg,
+                xtal_40mhz=xtal, iq_cal=ev.iq_cal,
+                default_power1=p1, default_power2=p2, eeprom=ev)
+
+        def detect_ch(rem):
+            """Reverse-map the tune at the cursor to its channel, or None if the
+            cursor isn't on an LDO_CFG0-opened RF55xx config_channel."""
+            if (len(rem) < 8 or rem[0]["dir"] != "IN" or rem[0]["addr"] != LDO_CFG0
+                    or rem[1]["dir"] != "OUT" or rem[1]["addr"] != LDO_CFG0):
+                return None
+            band = (int.from_bytes(rem[1]["data"], "little") >> 26) & 0x7
+            n_low = next((r for j in range(2, 8)
+                          if (r := _rfcsr8_write(rem[j])) is not None), None)
+            if n_low is None:
+                return None
+            is2g = (band == 0)
+            best, best_consumed = None, -1
+            for ch in [c for c, v in table.items()
+                       if (c <= 14) == is2g and (v[0] & 0xFF) == n_low]:
+                rd = rp.ReplayDevice(rem)
+                try:
+                    _chan.set_channel(RT2800USBTransport(rd), silicon, ch, **sc_kwargs(ch))
+                except rp.Divergence:
+                    pass
+                if rd.i > best_consumed:
+                    best, best_consumed = ch, rd.i
+            return best
+
+        # The hop stream is a STRICT synchronous per-hop bracket with exactly one
+        # allowlisted async interloper. Each hop, in fixed kernel order:
+        #   config_channel+txpower → reset_tuner → config_ant → reset_tuner
+        #   → start_rx → stop_rx → update_survey
+        # Every step's opener is checked before its real helper runs (byte-strict).
+        # The ONLY event allowed to appear out of that order is a configure_filter
+        # reapply (RX_FILTER_CFG) — proven async here (4 reapplies vs 126 hops, and
+        # they fire 2–396 frames after an RX re-enable, not inline). It is drained
+        # between bracket steps; it is still driven by the real helper + byte-checked,
+        # only its POSITION is flexible. Any op that is neither the expected next
+        # bracket step NOR an allowlisted async reapply ends the hop phase (a desynced
+        # synchronous op therefore can't be silently absorbed — the walk stops there).
+        def op_at(off=0):
+            j = w.i + off
+            return w.ops[j] if 0 <= j < len(w.ops) else None
+
+        def is_in(o, addr):
+            return o is not None and o["dir"] == "IN" and o["addr"] == addr
+
+        def next_bbp_out_regnum():
+            """Regnum of the first BBP write after the cursor's busy-wait read
+            (distinguishes reset_tuner's BBP83 opener from config_ant's BBP1)."""
+            for k in range(1, 5):
+                o = op_at(k)
+                if (o is not None and o["dir"] == "OUT" and o["addr"] == BBP_CSR_CFG
+                        and len(o.get("data", b"")) == 4):
+                    return (int.from_bytes(o["data"], "little") >> 8) & 0xFF
+            return None
+
+        def toggle_sets_rx():
+            o = op_at(1)
+            if o is not None and o["dir"] == "OUT" and o["addr"] == MAC_SYS_CTRL:
+                return bool(int.from_bytes(o["data"], "little") & MAC_SYS_CTRL_ENABLE_RX)
+            return None
+
+        def drain_filter():
+            n = 0
+            while is_in(op_at(), RX_FILTER_CFG):    # async configure_filter reapply
+                w.run(lambda t: _mac.config_filter(t, mon_flags, monitoring=True))
+                n += 1
+            return n
+
+        hop_start, hops, n_filter = w.i, [], 0
+        while True:
+            n_filter += drain_filter()
+            if not is_in(op_at(), LDO_CFG0):
+                break                                # end of hop stream (injection)
+            ch = detect_ch(w.ops[w.i:])
+            if ch is None:
+                break
+            lna = ev.lna_gain_bg if ch <= 14 else ev.lna_gain_a
+            vgc = get_default_vgc(silicon, ch, lna)
+            # (opener predicate, real helper) for each bracket step after config_channel.
+            bracket = [
+                (lambda: is_in(op_at(), BBP_CSR_CFG) and next_bbp_out_regnum() == 83,
+                 lambda t: set_vgc(t, silicon, vgc, rx_chain_num=ev.rxpath, rssi=0)),
+                (lambda: is_in(op_at(), BBP_CSR_CFG) and next_bbp_out_regnum() == 1,
+                 lambda t: _chan.config_ant(t, ev.txpath, ev.rxpath)),
+                (lambda: is_in(op_at(), BBP_CSR_CFG) and next_bbp_out_regnum() == 83,
+                 lambda t: set_vgc(t, silicon, vgc, rx_chain_num=ev.rxpath, rssi=0)),
+                (lambda: is_in(op_at(), MAC_SYS_CTRL) and toggle_sets_rx() is True,
+                 lambda t: _mac.toggle_rx(t, True)),
+                (lambda: is_in(op_at(), MAC_SYS_CTRL) and toggle_sets_rx() is False,
+                 lambda t: _mac.toggle_rx(t, False)),
+                (lambda: is_in(op_at(), CH_IDLE_STA),
+                 lambda t: _mac.update_survey(t)),
+            ]
+            w.run(lambda t, c=ch: _chan.set_channel(t, silicon, c, **sc_kwargs(c)))
+            for opener_ok, drive in bracket:
+                n_filter += drain_filter()
+                if not opener_ok():
+                    break                            # bracket truncated by injection
+                w.run(drive)
+            else:
+                hops.append(ch)
+                continue
+            break     # a bracket step's opener was absent → hop stream ended
+        if hops:
+            print(f"  OK    {len(hops)} channel hops (strict bracket, "
+                  f"{n_filter} async filter reapplies) +{w.i - hop_start} ops  "
+                  f"(cursor {anchor + w.i})")
+            print(f"        channels covered: {sorted(set(hops))}")
     except rp.Divergence as e:
         fr = w.ops[w.i] if w.i < len(w.ops) else None
         print(f"  STOP  (diverged)\n        {e}")
         print(f"  FRONTIER at op {anchor + w.i}: next kernel op to port"
               f"{' = ' + rp.ReplayDevice._fmt(fr) if fr else ''}.")
         return False, w.i, box["ev"]
-    # All scripted steps reproduced. The cold bring-up is not finished here — the
-    # remaining radio-on / init_registers / init_bbp / init_rfcsr / enable_radio steps are
-    # still being converged, so the next op is the porting frontier.
+    # Cold bring-up + monitor-enable + the channel-hop stream all reproduced in one
+    # cursor. The next op is the porting frontier — the aireplay-ng TX-injection region.
     fr = w.ops[w.i] if w.i < len(w.ops) else None
     print(f"  reproduced {w.i} ops single-cursor byte-for-byte (0 waived) — the full cold"
           " bring-up (probe → EFUSE → firmware → radio-on → init_registers → BBP → RFCSR →"
-          " enable_radio).")
+          " enable_radio) + operational phase (monitor-enable + channel hops).")
     print(f"  FRONTIER at op {anchor + w.i}: next kernel op to port"
-          f"{' = ' + rp.ReplayDevice._fmt(fr) if fr else ''} (operational phase: airmon"
-          " monitor-enable → channel hops).")
+          f"{' = ' + rp.ReplayDevice._fmt(fr) if fr else ''} (aireplay-ng TX-injection"
+          " region: bulk-OUT frames + TX_STA_FIFO polling).")
     return False, w.i, box["ev"]
 
 
@@ -285,18 +453,17 @@ def run(cap: str | None = None) -> int:
     cold_ok, cold_n, ev = verify_cold_walk(pcap, dev, silicon)
     tune_ok, tune_n = verify_channel_tune(pcap, dev, silicon, ev)
 
-    walked = cold_n + tune_n
     total = len(allops)
     print("\n[coverage]")
-    print(f"  {walked} / {total} vendor ops verified byte-for-byte ({100 * walked / total:.1f}%), "
-          f"0 waived.")
-    print(f"  cold bring-up: single-cursor walk to op {cold_n}"
-          f"{' (COMPLETE)' if cold_ok else ' (FRONTIER — convergence in progress)'};"
-          f" channel tunes: {tune_n} ops (anchored per-hop replay).")
+    print(f"  single-cursor walk: {cold_n} / {total} vendor ops verified byte-for-byte "
+          f"({100 * cold_n / total:.1f}%), 0 waived"
+          f"{' — COMPLETE' if cold_ok else f' (FRONTIER at op {cold_n})'}.")
+    print("  the walk drives the full bring-up + operational phase in kernel wire order")
+    print("  (cold init → monitor-enable → channel hops via event dispatch); it subsumes the")
+    print(f"  anchored [channel tune] blocks ({tune_n} ops), kept as an independent cross-check.")
     if not cold_ok:
-        print("  The gap between the cold frontier and the tune blocks (radio-on / init_registers /")
-        print("  init_bbp / init_rfcsr / enable_radio + monitor setup) is being converged to the")
-        print("  kernel op-by-op; it is NOT waived. See the FRONTIER line above for the next op.")
+        print("  Remaining frontier: the aireplay-ng TX-injection region (bulk-OUT frames +")
+        print("  TX_STA_FIFO status polling + async link-tuner/filter reapplies) — see FRONTIER above.")
     return 0 if (cold_ok and tune_ok) else 1
 
 

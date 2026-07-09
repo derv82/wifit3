@@ -31,7 +31,9 @@ from .bbp import (
     bbp_write_with_rx_chain,
 )
 from .constants import (
+    BBP1_TX_ANTENNA,
     BBP3_HT40_MINUS,
+    BBP3_RX_ANTENNA,
     BBP4_BANDWIDTH,
     CH_BUSY_STA,
     CH_BUSY_STA_SEC,
@@ -1387,6 +1389,26 @@ def _compensate_txpower(ev: EepromValues, is_2g: bool, is_rate_b: bool,
     else:
         reg_limit = 0
     return min(max(0, txpower + delta - reg_limit), 0xC)
+
+
+def config_ant(t: RT2800USBTransport, tx_chain_num: int, rx_chain_num: int) -> None:
+    """rt2800_config_ant — program the TX/RX antenna-chain selects into
+    BBP1.TX_ANTENNA + BBP3.RX_ANTENNA, writing BBP3 before BBP1. This is the
+    RT5592 path (no RT3572 BT-coexist branch, no RT3593/RT3883 BBP86). Called
+    from the antenna-config path with the RX quiesced. [SRC] rt2800lib.c:2322."""
+    r1 = bbp_read(t, 1)
+    r3 = bbp_read(t, 3)
+
+    # TX antenna: 1 chain -> field 0; 2 or 3 chains -> field 2.
+    tx_field = 0 if tx_chain_num == 1 else 2
+    r1 = (r1 & ~BBP1_TX_ANTENNA) | ((tx_field << 3) & BBP1_TX_ANTENNA)
+
+    # RX antenna: 1 -> 0, 2 -> 1, 3 -> 2.
+    rx_field = {1: 0, 2: 1, 3: 2}[rx_chain_num]
+    r3 = (r3 & ~BBP3_RX_ANTENNA) | ((rx_field << 3) & BBP3_RX_ANTENNA)
+
+    bbp_write(t, 3, r3 & 0xFF)
+    bbp_write(t, 1, r1 & 0xFF)
 
 
 def config_txpower(t: RT2800USBTransport, ev: EepromValues, is_2g: bool) -> None:
