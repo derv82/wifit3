@@ -120,6 +120,7 @@ def verify_cold_walk(pcap: Path, dev: int, silicon: int):
              lambda t: _mac.set_radio_led(t, ev.word(EEPROM_OFFSET_FREQ)))
         step("mcu_wakeup (MCU_WAKEUP)",
              lambda t: _fw.mcu_request(t, MCU_WAKEUP, token=0xFF, arg0=0, arg1=2))
+        step("usb_enable_radio_dma (USB_DMA_CFG)", lambda t: _mac.usb_enable_radio_dma(t))
     except rp.Divergence as e:
         fr = w.ops[w.i] if w.i < len(w.ops) else None
         print(f"  STOP  (diverged)\n        {e}")

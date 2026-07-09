@@ -237,6 +237,28 @@ def _wait_wpdma_ready(t: RT2800USBTransport) -> bool:
     return False
 
 
+def usb_enable_radio_dma(t: RT2800USBTransport) -> None:
+    """rt2800usb_enable_radio: wait for WPDMA idle, then enable bulk RX/TX DMA via
+    USB_DMA_CFG — RX bulk-agg limit ((rx_limit*DATA_FRAME_SIZE/1024)-3, masked to 8 bits)
+    + agg timeout 128 + RX/TX bulk enable. [SRC] rt2800usb.c:296-318."""
+    from .constants import (
+        DATA_FRAME_SIZE, RX_QUEUE_LIMIT, USB_DMA_CFG, USB_DMA_CFG_PHY_CLEAR,
+        USB_DMA_CFG_RX_BULK_AGG_EN, USB_DMA_CFG_RX_BULK_AGG_LIMIT_MASK,
+        USB_DMA_CFG_RX_BULK_AGG_TIMEOUT_MASK, USB_DMA_CFG_RX_BULK_EN, USB_DMA_CFG_TX_BULK_EN,
+    )
+    if not _wait_wpdma_ready(t):
+        raise IOError("WPDMA never reported idle — chip wedged")
+    reg = 0
+    reg &= ~USB_DMA_CFG_PHY_CLEAR
+    reg &= ~USB_DMA_CFG_RX_BULK_AGG_EN
+    reg |= 128 & USB_DMA_CFG_RX_BULK_AGG_TIMEOUT_MASK
+    agg_limit = (RX_QUEUE_LIMIT * DATA_FRAME_SIZE // 1024) - 3
+    reg |= (agg_limit << 8) & USB_DMA_CFG_RX_BULK_AGG_LIMIT_MASK
+    reg |= USB_DMA_CFG_RX_BULK_EN
+    reg |= USB_DMA_CFG_TX_BULK_EN
+    t.write32(USB_DMA_CFG, reg)
+
+
 def enable_radio(t: RT2800USBTransport, silicon_id: int = 0) -> None:
     """Enable RX + TX on the radio.  Call AFTER all init_* steps.
 
@@ -255,29 +277,15 @@ def enable_radio(t: RT2800USBTransport, silicon_id: int = 0) -> None:
         RT_RT3070,
         RT_RT3071,
         RT_RT3572,
-        USB_DMA_CFG,
-        USB_DMA_CFG_PHY_CLEAR,
-        USB_DMA_CFG_RX_BULK_AGG_EN,
-        USB_DMA_CFG_RX_BULK_AGG_TIMEOUT_MASK,
-        USB_DMA_CFG_RX_BULK_EN,
-        USB_DMA_CFG_TX_BULK_EN,
         WPDMA_GLO_CFG,
         WPDMA_GLO_CFG_ENABLE_RX_DMA,
         WPDMA_GLO_CFG_ENABLE_TX_DMA,
         WPDMA_GLO_CFG_TX_WRITEBACK_DONE,
     )
 
-    # 1) rt2800usb_enable_radio: wait for WPDMA idle, then turn on
-    # USB_DMA_CFG with the bulk-IN/OUT enable bits.  [SRC] rt2800usb.c:296-318
-    if not _wait_wpdma_ready(t):
-        raise IOError("WPDMA never reported idle — chip wedged")
-    reg = 0
-    reg &= ~USB_DMA_CFG_PHY_CLEAR
-    reg &= ~USB_DMA_CFG_RX_BULK_AGG_EN
-    reg |= 128 & USB_DMA_CFG_RX_BULK_AGG_TIMEOUT_MASK
-    reg |= USB_DMA_CFG_RX_BULK_EN
-    reg |= USB_DMA_CFG_TX_BULK_EN
-    t.write32(USB_DMA_CFG, reg)
+    # 1) rt2800usb_enable_radio: wait for WPDMA idle, then turn on USB_DMA_CFG with
+    # the RX bulk-agg limit + bulk-IN/OUT enable bits.  [SRC] rt2800usb.c:296-318
+    usb_enable_radio_dma(t)
 
     # 2) rt2800_enable_radio body. Kernel calls init_registers/init_bbp/
     # init_rfcsr inside this — we already ran those.
