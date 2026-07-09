@@ -264,10 +264,18 @@ class FocusViewV2(Screen):
         await self._enter_target()
 
     async def on_screen_resume(self) -> None:
-        # Re-acquire only on an ACTUAL target change. Returning from a modal (same target) keeps
-        # the live view — log + sparklines — intact instead of jarringly resetting it.
-        if getattr(self.app, "target_ap", None) is not self._target_ap:
+        # Full re-acquire only on a target change; a same-target return keeps the live view.
+        target = getattr(self.app, "target_ap", None)
+        if target is not self._target_ap:
             await self._enter_target()
+        elif target is not None:
+            # Re-set channel when re-entering a target if the channel has changed.
+            iface = getattr(self.app, "active_interface", None)
+            if iface is not None and getattr(iface, "current_channel", None) != target.channel:
+                was = iface.current_channel
+                ok = await iface.set_channel(target.channel, scan=False)
+                logger.info("[FOCUS] re-pin: bssid=%s ch=%s (was %s) -> %s",
+                            target.bssid, target.channel, was, ok)
         if self._pending_wps_pin:
             self._pending_wps_pin = False
             iface = getattr(self.app, "active_interface", None)
@@ -347,6 +355,7 @@ class FocusViewV2(Screen):
         if ap is None:
             return
         iface = getattr(self.app, "active_interface", None)
+        logger.info("[FOCUS] enter: ssid=%r bssid=%s ch=%s", ap.ssid, ap.bssid, ap.channel)
 
         self._beacon_samples.clear()
         self._events.reset()
@@ -1035,4 +1044,7 @@ class FocusViewV2(Screen):
         self._stop_pbc_capture()
         self._stop_wps_pin()
         self._stop_pmkid()
+        ap = self._target_ap
+        logger.info("[FOCUS] leave: ssid=%r bssid=%s",
+                    getattr(ap, "ssid", None), getattr(ap, "bssid", None))
         self.app.pop_screen()

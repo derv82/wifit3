@@ -131,6 +131,41 @@ async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_focus_resume_repins_channel_when_radio_drifted():
+    """Returning to Focus on the SAME target must re-tune to the target's channel when the radio
+    drifted (the Scanner hopper walks it off-channel while Focus is backgrounded) — the
+    same-target resume used to keep the view but skip the tune, parking us on a hop channel with
+    zero beacons. A modal close (no drift) must NOT re-tune (don't disrupt an active attack)."""
+    bssid = "aa:bb:cc:dd:ee:01"
+    iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
+    iface._on_frame_parsed(_beacon(bssid, "TESTNET", 6))
+    ap = iface.access_points[bssid]
+    app = _Host(iface, ap)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        focus = app.screen
+        tuned: list = []
+
+        async def _rec_set(ch, scan=False):
+            tuned.append(ch)
+            iface.current_channel = ch
+            return True
+
+        iface.set_channel = _rec_set
+
+        # Hopper drifted the radio off-channel while we were in Scanner → resume re-pins to ch6.
+        iface.current_channel = 11
+        await focus.on_screen_resume()
+        assert tuned == [6], tuned
+
+        # Already on the target channel (e.g. a modal close) → no needless re-tune.
+        tuned.clear()
+        iface.current_channel = 6
+        await focus.on_screen_resume()
+        assert tuned == [], tuned
+
+
+@pytest.mark.asyncio
 async def test_v2_capture_wins_do_not_double_toast():
     """Focus does NOT toast handshake / PMKID wins from its detector. ScannerView sits under
     it on the screen stack, keeps polling its own detector over EVERY AP, and fires the toast
