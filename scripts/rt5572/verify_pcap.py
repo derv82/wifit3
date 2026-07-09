@@ -40,6 +40,7 @@ import rt2x00_pcap_replay as rp  # noqa: E402
 from wifit3.chips.rt5572 import chan  # noqa: E402
 from wifit3.chips.rt5572 import constants as C  # noqa: E402
 from wifit3.chips.rt5572.bring_up import bring_up  # noqa: E402
+from wifit3.chips.rt5572.monitor import enable_monitor, reapply_filter  # noqa: E402
 from wifit3.chips.rt5572.transport import RT5572Transport  # noqa: E402
 
 CAP_DIR = REPO / "usb_dumps_new2" / "captures_rt2800usb_rt5572"
@@ -110,16 +111,15 @@ def run(cap: str | None = None) -> int:
     ev, xtal, sil = state.eeprom, state.xtal_40mhz, state.chip.silicon_id
 
     # ---- operational phase ----
-    # wifit3 is monitor-first: connect() writes RX_FILTER_CFG=0x11 and never runs the
-    # kernel's airmon STA→monitor dance. So the gate WAIVES that dance, and WAIVES the
-    # airmon per-hop RX-toggle/survey INTERLEAVING (wifit3's set_channel self-brackets
-    # the reconfig with its own RX toggle). It DRIVES the driver's real reconfig_channel
-    # per hop — the RF reconfiguration — byte-checked. aireplay's TX_STA_FIFO polling is
-    # waived (human-fired injection). GREEN ⇔ every hop's RF reconfig matches the kernel,
-    # every deviation named + counted.
+    # The gate DRIVES the driver's real operational code byte-for-byte: enable_monitor()
+    # (the mac80211/airmon monitor bring-up — the same function connect() runs) then
+    # hop_channel() per channel hop (the same function Driver.set_channel runs — an
+    # RX-quiesced config_channel bracket). The only interleave allowed between hops is
+    # mac80211's periodic configure_filter re-push (driven via reapply_filter, still
+    # byte-checked). aireplay-ng's TX_STA_FIFO status polling is the one named waiver
+    # (human-fired injection — its bulk-OUT TX frames are off the control stream).
+    # GREEN ⇔ monitor entry + every hop's RF reconfig match the kernel to the byte.
     table = chan._RF_VALS_5592_XTAL40 if xtal else chan._RF_VALS_5592_XTAL20
-    MON = "airmon STA→monitor entry — wifit3 is monitor-first (writes RX_FILTER_CFG=0x11)"
-    ILV = "airmon per-hop RX-toggle/survey/filter interleaving — wifit3 self-brackets RX"
     AIR = _AIREPLAY_TAIL
 
     def sc_kwargs(ch):
@@ -143,16 +143,23 @@ def run(cap: str | None = None) -> int:
         return o is not None and o["dir"] == "IN" and o["addr"] == C.LDO_CFG0
 
     def detect_ch(rem):
-        if len(rem) < 8 or not is_ldo(rem[0]) or rem[1]["dir"] != "OUT" \
-                or rem[1]["addr"] != C.LDO_CFG0:
+        """Identify the channel a hop tunes to. ``rem`` starts at the hop boundary
+        (stop_queue(RX) → update_survey → config_channel), so skip forward to the
+        LDO_CFG0 read that opens config_channel, then trial each candidate channel
+        and keep the one whose set_channel reproduces the most ops."""
+        off = next((j for j in range(min(8, len(rem))) if is_ldo(rem[j])), None)
+        if off is None:
             return None
-        band = (int.from_bytes(rem[1]["data"], "little") >> 26) & 0x7
-        n = next((r for j in range(2, 8) if (r := rfcsr8_n(rem[j])) is not None), None)
+        sub = rem[off:]
+        if len(sub) < 8 or sub[1]["dir"] != "OUT" or sub[1]["addr"] != C.LDO_CFG0:
+            return None
+        band = (int.from_bytes(sub[1]["data"], "little") >> 26) & 0x7
+        n = next((r for j in range(2, 8) if (r := rfcsr8_n(sub[j])) is not None), None)
         if n is None:
             return None
         best, bc = None, -1
         for ch in [c for c, v in table.items() if (c <= 14) == (band == 0) and (v[0] & 0xFF) == n]:
-            rd = rp.ReplayDevice(rem)
+            rd = rp.ReplayDevice(sub)
             try:
                 chan.set_channel(RT5572Transport(rd), sil, ch, **sc_kwargs(ch))
             except rp.Divergence:
@@ -161,36 +168,50 @@ def run(cap: str | None = None) -> int:
                 best, bc = ch, rd.i
         return best
 
-    # Waive the airmon monitor-enable dance, up to the first config_channel (LDO_CFG0).
-    while w.peek() is not None and not is_ldo(w.peek()):
-        w.waive(MON)
+    # ---- monitor entry: the driver's real enable_monitor(), byte-for-byte ----
+    try:
+        w.run(lambda t: enable_monitor(t, sil, ev, xtal))
+    except rp.Divergence as e:
+        fr = w.peek()
+        print(f"\nFAIL (monitor-entry divergence) at op {w.i}:\n  {e}")
+        if fr:
+            print(f"  frontier = {rp.ReplayDevice._fmt(fr)} @f{fr.get('frame')}")
+        print("  ^ enable_monitor() diverges from the kernel. Fix chips/rt5572/monitor.py.")
+        return 1
+    print(f"  OK  monitor entry: enable_monitor() reproduced {w.i - 1781} ops "
+          "byte-for-byte (config_filter 0x97→0x93 + txpower/retry/ps/ant/vgc).")
 
+    # ---- channel hops: each is a full hop_channel bracket (stop RX → update_survey
+    # → reconfig_channel → start RX). Between hops mac80211 occasionally re-pushes the
+    # monitor filter (reapply_filter, 0x93→0x93). Stop at the aireplay TX region. ----
     hops = []
-    while is_ldo(w.peek()):
+    while w.peek() is not None and w.peek()["addr"] != C.TX_STA_FIFO:
+        if w.peek()["addr"] == C.RX_FILTER_CFG:
+            try:
+                w.run(lambda t: reapply_filter(t))
+            except rp.Divergence as e:
+                print(f"\nFAIL (filter re-push divergence) at op {w.i}:\n  {e}")
+                return 1
+            continue
         ch = detect_ch(w.ops[w.i:])
         if ch is None:
             break
         try:
-            w.run(lambda t, c=ch: chan.reconfig_channel(t, sil, c, **sc_kwargs(c)))
+            w.run(lambda t, c=ch: chan.hop_channel(t, sil, c, **sc_kwargs(c)))
         except rp.Divergence as e:
             fr = w.peek()
-            print(f"\nFAIL (hop reconfig divergence) at op {w.i} (ch{ch}):\n  {e}")
+            print(f"\nFAIL (hop divergence) at op {w.i} (ch{ch}):\n  {e}")
             if fr:
                 print(f"  frontier = {rp.ReplayDevice._fmt(fr)} @f{fr.get('frame')}")
-            print("  ^ reconfig_channel diverges from the kernel per-hop. Fix chips/rt5572.")
+            print("  ^ hop_channel() diverges from the kernel per-hop. Fix chips/rt5572.")
             return 1
         hops.append(ch)
-        # Waive the airmon inter-hop interleaving until the next hop or the injection region.
-        while w.peek() is not None and not is_ldo(w.peek()) and w.peek()["addr"] != C.TX_STA_FIFO:
-            w.waive(ILV)
-        if w.peek() is not None and w.peek()["addr"] == C.TX_STA_FIFO:
-            break
 
-    # Waive the aireplay TX-injection region (TX_STA_FIFO polling + its interleaved tail).
+    # ---- aireplay TX-injection region (waived — human-fired injection) ----
     while w.peek() is not None:
         w.waive(AIR)
 
-    print(f"  OK  hops: {len(hops)} reconfig_channel calls byte-for-byte "
+    print(f"  OK  hops: {len(hops)} hop_channel calls byte-for-byte "
           f"(channels {sorted(set(hops))})")
     for reason, n in w.waived.most_common():
         print(f"  waived {n:6} ops — {reason}")

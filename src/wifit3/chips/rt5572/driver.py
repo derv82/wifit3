@@ -28,12 +28,13 @@ from .constants import (
 from wifit3.wlan.packet import WlanFrameParser
 
 from .chan import (
-    CHANNELS_5G_NON_DFS, default_power as _default_power, set_channel as _set_channel,
+    CHANNELS_5G_NON_DFS, default_power as _default_power, hop_channel,
 )
 from .link_tuner import LINK_TUNE_SECONDS, LinkTuner, compute_link_vgc, set_vgc
 from .mac import (
     ChipId, write_mac_address,
 )
+from .monitor import enable_monitor
 from .bring_up import bring_up
 from .rfcsr import RfFilterCal
 from .rx import (
@@ -193,20 +194,30 @@ class RT5572Driver:
                 None, write_mac_address, self.transport, state.eeprom.mac_address,
             )
 
-            # Monitor-first RX filter. wifit3 is monitor-only and does not model
-            # mac80211's STA-then-airmon state machine, so it opens the filter here
-            # rather than in an operational config_filter. RX_FILTER_CFG=0x11 keeps
-            # only DROP_CRC|DROP_VER (accept everything else). This is a DELIBERATE
-            # deviation from the kernel wire (which reaches 0x93 in the operational
-            # phase) and is NOT part of bring_up()/the cold gate — to be reconciled
-            # in the operational milestone. [[feedback_passive_by_default]]
-            await loop.run_in_executor(None, self.transport.write32, 0x1400, 0x00000011)
+            # Kernel-faithful monitor entry — the mac80211/airmon monitor bring-up
+            # (configure_filter 0x97→0x93 + config_txpower/retry/ps/ant + reset_tuner),
+            # the exact sequence the acceptance gate replays byte-for-byte. Replaces the
+            # old RX_FILTER_CFG=0x11 monitor-first shortcut: 0x93 is still promiscuous
+            # (DROP_NOT_TO_ME clear) but additionally drops PHY-error + duplicate frames,
+            # and this path also lands TX_RTY_CFG (retry 7/4) which the 0x11 shortcut
+            # left at the init default (2/2). RX only, no TX. [[feedback_passive_by_default]]
+            await loop.run_in_executor(
+                None,
+                lambda: enable_monitor(
+                    self.transport, self.chip_id.silicon_id,
+                    self._eeprom, self._xtal_40mhz,
+                ),
+            )
 
-            _progress(0.99, "Tuning to default channel 1 (M4)")
+            _progress(0.99, "Tuning to default channel 1")
             try:
+                # Full hop_channel bracket (stop RX → survey → reconfig → start RX) —
+                # the same per-hop unit set_channel() uses, so the default tune matches
+                # the capture's first channel change. The RX reader isn't running yet,
+                # so the bare register bracket needs no reader pause here.
                 await loop.run_in_executor(
                     None,
-                    lambda: _set_channel(
+                    lambda: hop_channel(
                         self.transport, self.chip_id.silicon_id, 1,
                         **self._channel_kwargs(1),
                     ),
@@ -376,19 +387,16 @@ class RT5572Driver:
         return kwargs
 
     def _tune_bracketed(self, channel: int, kwargs: dict) -> None:
-        """Channel change with the load-bearing RX-quiesce bracket (runs on the
-        executor thread). The kernel disables RX around config_channel or the
-        RF/BBP writes don't latch — the focus-mode dead-radio / band-transition
-        bug. So: pause the RX reader + stop_queue(RX) → reconfig_channel (the
-        gate-verified RF reconfig) → start_queue(RX) + resume the reader. Mirrors
-        the 8821cu "serialize + pause RX reader across deliberate tunes" fix."""
-        from .chan import reconfig_channel
-        from .mac import toggle_rx
+        """Channel change via the shared hop_channel bracket (runs on the executor
+        thread). hop_channel is the gate-verified per-hop unit — stop_queue(RX) →
+        update_survey → reconfig_channel → start_queue(RX). The kernel disables RX
+        around config_channel or the RF/BBP writes don't latch (the focus-mode
+        dead-radio / band-transition bug); we additionally pause the RX reader
+        thread across it so no URB is in flight during the quiesce. Mirrors the
+        8821cu 'serialize + pause RX reader across deliberate tunes' fix."""
         paused = self._rx_reader.pause() if self._rx_reader is not None else False
         try:
-            toggle_rx(self.transport, False)                        # stop_queue(RX)
-            reconfig_channel(self.transport, self.chip_id.silicon_id, channel, **kwargs)
-            toggle_rx(self.transport, True)                         # start_queue(RX)
+            hop_channel(self.transport, self.chip_id.silicon_id, channel, **kwargs)
         finally:
             if paused:
                 self._rx_reader.resume()

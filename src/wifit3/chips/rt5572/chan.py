@@ -1568,3 +1568,23 @@ def reconfig_channel(t: RT5572Transport, silicon_id: int, channel: int,
     set_vgc(t, silicon_id, vgc, rx_chain_num=eeprom.rxpath, rssi=0)     # reset_tuner
     config_ant(t, eeprom.txpath, eeprom.rxpath)                        # config_antenna
     set_vgc(t, silicon_id, vgc, rx_chain_num=eeprom.rxpath, rssi=0)     # reset_tuner
+
+
+def hop_channel(t: RT5572Transport, silicon_id: int, channel: int,
+                **sc_kwargs) -> None:
+    """One full rt2x00mac_config channel change, RX-quiesce bracket included:
+
+        stop_queue(RX) → update_survey → reconfig_channel → start_queue(RX)
+
+    This is the per-hop unit shared by ``Driver.set_channel`` and the acceptance
+    gate. The kernel disables RX around config_channel (else the RF/BBP writes
+    don't latch — the focus-mode dead-radio bug) and banks the outgoing channel's
+    survey counters *before* retuning. ``Driver.set_channel`` additionally
+    pauses/resumes the RX reader thread around this call; the gate drives it bare
+    against the replayed wire. [SRC] rt2x00mac.c:302-350 rt2x00mac_config +
+    rt2800lib.c:5691 rt2800_config (update_survey then config_channel)."""
+    from .mac import toggle_rx, update_survey
+    toggle_rx(t, False)                                   # stop_queue(RX)
+    update_survey(t)                                      # bank outgoing channel's survey
+    reconfig_channel(t, silicon_id, channel, **sc_kwargs)
+    toggle_rx(t, True)                                    # start_queue(RX)
