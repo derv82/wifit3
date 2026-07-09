@@ -75,7 +75,7 @@ from .firmware import load_firmware, load_firmware_blob
 from .link_tuner import LINK_TUNE_SECONDS, LinkTuner, compute_link_vgc, set_vgc
 from .mac import (
     ChipId, enable_radio, is_chip_warm, read_chip_id, read_perm_mac,
-    usb_init_registers, write_mac_address,
+    write_mac_address,
 )
 from .reg_init import init_registers
 from .rfcsr import RfFilterCal, init_rfcsr
@@ -277,18 +277,9 @@ class RT2800USBDriver:
                 raise BringUpError("firmware", f"post-FW PBF.READY not set (PBF_SYS_CTRL=0x{pbf:08x})")
             logger.info("post-FW PBF_SYS_CTRL=0x%08x — READY latched", pbf)
 
-            _progress(0.95, "Running rt2800usb_init_registers (M2b-1)")
-            try:
-                await loop.run_in_executor(None, usb_init_registers, self.transport)
-            except (IOError, usb.core.USBError) as e:
-                raise BringUpError("usb_init_registers", str(e)) from e
-
-            pbf2 = await loop.run_in_executor(None, self.transport.read32, PBF_SYS_CTRL)
-            pre_init = 1 << 13
-            if pbf2 & pre_init:
-                logger.warning(
-                    "post-init PBF still has pre-init bit set (0x%08x)", pbf2
-                )
+            # rt2800usb_init_registers (the USB-reset drv hook) is nested inside
+            # init_registers now (matching rt2800_init_registers: disable_wpdma →
+            # drv_init_registers → MAC block), so it is no longer called separately.
 
             _progress(0.93, "Reading EFUSE (MAC + LNA + freq calibration)")
             try:

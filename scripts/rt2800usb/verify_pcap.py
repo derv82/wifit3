@@ -44,6 +44,7 @@ import rt2x00_pcap_replay as rp  # noqa: E402
 from wifit3.chips.rt2800usb import chan as _chan  # noqa: E402
 from wifit3.chips.rt2800usb import firmware as _fw  # noqa: E402
 from wifit3.chips.rt2800usb import mac as _mac  # noqa: E402
+from wifit3.chips.rt2800usb import reg_init as _reg  # noqa: E402
 from wifit3.chips.rt2800usb.constants import (  # noqa: E402
     LDO_CFG0,
     MAC_CSR0,
@@ -121,6 +122,9 @@ def verify_cold_walk(pcap: Path, dev: int, silicon: int):
         step("mcu_wakeup (MCU_WAKEUP)",
              lambda t: _fw.mcu_request(t, MCU_WAKEUP, token=0xFF, arg0=0, arg1=2))
         step("usb_enable_radio_dma (USB_DMA_CFG)", lambda t: _mac.usb_enable_radio_dma(t))
+        step("wait_wpdma (rt2800_enable_radio)", lambda t: _mac._wait_wpdma_ready(t))
+        step("init_registers (disable_wpdma+usb_reset+MAC block)",
+             lambda t: _reg.init_registers(t, silicon))
     except rp.Divergence as e:
         fr = w.ops[w.i] if w.i < len(w.ops) else None
         print(f"  STOP  (diverged)\n        {e}")

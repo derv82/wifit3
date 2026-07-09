@@ -36,8 +36,18 @@ class FakeTransport:
     use — read32 / write32 / read_multi.
     """
 
+    class _FakeDev:
+        """Minimal usb.core.Device stand-in for the vendor ctrl_transfer that
+        usb_init_registers issues (USB_MODE_RESET, no data phase)."""
+        def ctrl_transfer(self, *args, **kwargs):
+            return b""
+
     def __init__(self) -> None:
         self.regs: dict[int, int] = {}
+        self.dev = self._FakeDev()
+        # MAC_CSR0 (0x1000) must read non-zero so usb_init_registers' wait_csr_ready
+        # passes — it is nested inside init_registers (matching rt2800_init_registers).
+        self.write32(0x1000, 0x55920222)
 
     def write_bytes(self, addr: int, data: Sequence[int]) -> None:
         for i, b in enumerate(data):
@@ -58,6 +68,10 @@ class FakeTransport:
 
     def read_multi(self, addr: int, length: int) -> bytes:
         return bytes(self.regs.get(addr + i, 0) for i in range(length))
+
+    def write_multi(self, addr: int, data) -> None:
+        for i, b in enumerate(bytes(data)):
+            self.regs[addr + i] = b & 0xFF
 
 
 # Alias for tests that use the "RecordingTransport" name from the

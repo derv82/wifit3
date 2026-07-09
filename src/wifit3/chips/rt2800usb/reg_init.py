@@ -180,7 +180,8 @@ _TXOP_CTRL_CFG_EXT_CWMIN = 0x000F0000
 _TX_RTS_CFG_AUTO_RTS_RETRY_LIMIT = 0x000000FF
 _TX_RTS_CFG_RTS_THRES = 0x00FFFF00
 _TX_RTS_CFG_RTS_FBK_EN = 0x01000000
-_IEEE80211_MAX_RTS_THRESHOLD = 2347       # 11-bit standard value
+_IEEE80211_MAX_RTS_THRESHOLD = 2353       # Linux IEEE80211_MAX_RTS_THRESHOLD (0x931),
+                                          # not the 802.11 standard 2347
 
 # XIFS_TIME_CFG
 _XIFS_TIME_CFG_CCKM_SIFS_TIME = 0x000000FF
@@ -231,12 +232,14 @@ def init_registers(t: RT2800USBTransport, silicon_id: int) -> None:
     The function ends with ``CH_TIME_CFG`` enabling channel-busy timers,
     matching the kernel return path.
     """
-    # 1) Disable WPDMA up-front. M2b-1 already did this but kernel
-    # explicitly re-disables here, so we do too (idempotent).
+    # 1) Disable WPDMA up-front.  [SRC] rt2800lib.c rt2800_init_registers
     disable_wpdma(t)
 
-    # 2) drv_init_registers — rt2800usb_init_registers (M2b-1) already
-    # ran in the connect() flow before us. Skip re-running.
+    # 2) drv_init_registers — the USB reset hook (rt2800usb_init_registers): PBF
+    # pre-init clear + MAC/BBP core reset + USB endpoint reset. The kernel nests
+    # this inside rt2800_init_registers right after disable_wpdma; do the same.
+    from .mac import usb_init_registers
+    usb_init_registers(t)
 
     # 3) Basic rate sets.
     t.write32(LEGACY_BASIC_RATE, 0x0000013F)
@@ -254,8 +257,12 @@ def init_registers(t: RT2800USBTransport, silicon_id: int) -> None:
     reg = _set_field32(reg, _BCN_TIME_CFG_TX_TIME_COMPENSATE, 0)
     t.write32(BCN_TIME_CFG, reg)
 
-    # 5) rt2800_config_filter(FIF_ALLMULTI) — opens RX filter for all
-    # multicast. Lands in M3 with the rest of RX config; skip for now.
+    # 5) rt2800_config_filter(FIF_ALLMULTI): drop CRC/PHY/VER errors + all control
+    # frames + duplicates, accept multicast/broadcast. Monitoring is off here (the
+    # monitor filter is re-applied later), so DROP_NOT_TO_ME is set. → 0x1bf97.
+    from .constants import FIF_ALLMULTI
+    from .mac import config_filter
+    config_filter(t, FIF_ALLMULTI, monitoring=False)
 
     # 6) BKOFF_SLOT_CFG
     reg = t.read32(BKOFF_SLOT_CFG)
@@ -447,13 +454,25 @@ def init_registers(t: RT2800USBTransport, silicon_id: int) -> None:
         # claim MAC 00:00:00:00:00:00 and can skew rate/PA-gain lookups
         # even though TX_STA_FIFO still flags TX_SUCCESS. The 4-byte attr
         # = 0 clears the CIPHER bits (no per-station crypto on this WCID).
-        # [SRC] rt2800lib.c:1671-1686
-        t.write32(_MAC_WCID_BASE + i * 8, 0xFFFFFFFF)
-        t.write32(_MAC_WCID_BASE + i * 8 + 4, 0xFFFFFFFF)
+        # [SRC] rt2800lib.c:1671-1686. The kernel writes the 8-byte WCID entry as ONE
+        # register_multiwrite (rt2800_config_wcid), then delete_wcid_attr zeroes the
+        # 4-byte attribute — not two 4-byte WCID writes.
+        t.write_multi(_MAC_WCID_BASE + i * 8, b"\xff" * 8)
         t.write32(_MAC_WCID_ATTRIBUTE_BASE + i * 4, 0)
     for i in range(256):
         # IVEIV entry is 8 bytes; kernel zeros the first word of each.
         t.write32(MAC_IVEIV_TABLE_BASE + i * 8, 0)
+
+    # 23b) Clear all 8 hardware beacon slots — zeroing the whole TXWI invalidates
+    # each beacon. Bases are the non-linear HW_BEACON_BASE0..7; each is cleared over
+    # winfo_size (the TXWI descriptor size: 5 words on RT5592, 4 elsewhere).
+    # [SRC] rt2800lib.c:6259-6263 + rt2800_clear_beacon_register.
+    from .tx import txwi_size_for_silicon
+    _HW_BEACON_BASE = (0x7800, 0x7A00, 0x7C00, 0x7E00, 0x7200, 0x7400, 0x5DC0, 0x5BC0)
+    winfo_size = txwi_size_for_silicon(silicon_id)
+    for base in _HW_BEACON_BASE:
+        for off in range(0, winfo_size, 4):
+            t.write32(base + off, 0)
 
     # 24) USB clock-cycle config.
     reg = t.read32(US_CYC_CNT)

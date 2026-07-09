@@ -184,6 +184,41 @@ def usb_init_registers(t: RT2800USBTransport) -> None:
     t.write32(MAC_SYS_CTRL, 0)
 
 
+def config_filter(t: RT2800USBTransport, filter_flags: int = 0,
+                  monitoring: bool = False) -> None:
+    """rt2800_config_filter — set the RX_FILTER_CFG DROP_* fields from the mac80211
+    filter flags. VER errors are always dropped and broadcast always accepted (no
+    filter for it), per the kernel comment. init_registers calls this with FIF_ALLMULTI
+    and monitoring off (→ 0x1bf97 on this card); monitor-enable re-runs it with
+    monitoring on. [SRC] rt2800lib.c rt2800_config_filter."""
+    from . import constants as C
+    reg = t.read32(C.RX_FILTER_CFG)
+
+    def drop(mask: int, cond: bool) -> None:
+        nonlocal reg
+        reg = (reg | mask) if cond else (reg & ~mask & 0xFFFFFFFF)
+
+    ctrl = bool(filter_flags & C.FIF_CONTROL)
+    drop(C.RX_FILTER_CFG_DROP_CRC_ERROR, not (filter_flags & C.FIF_FCSFAIL))
+    drop(C.RX_FILTER_CFG_DROP_PHY_ERROR, not (filter_flags & C.FIF_PLCPFAIL))
+    drop(C.RX_FILTER_CFG_DROP_NOT_TO_ME, not monitoring)
+    drop(C.RX_FILTER_CFG_DROP_NOT_MY_BSSD, False)
+    drop(C.RX_FILTER_CFG_DROP_VER_ERROR, True)
+    drop(C.RX_FILTER_CFG_DROP_MULTICAST, not (filter_flags & C.FIF_ALLMULTI))
+    drop(C.RX_FILTER_CFG_DROP_BROADCAST, False)
+    drop(C.RX_FILTER_CFG_DROP_DUPLICATE, True)
+    drop(C.RX_FILTER_CFG_DROP_CF_END_ACK, not ctrl)
+    drop(C.RX_FILTER_CFG_DROP_CF_END, not ctrl)
+    drop(C.RX_FILTER_CFG_DROP_ACK, not ctrl)
+    drop(C.RX_FILTER_CFG_DROP_CTS, not ctrl)
+    drop(C.RX_FILTER_CFG_DROP_RTS, not ctrl)
+    drop(C.RX_FILTER_CFG_DROP_PSPOLL, not (filter_flags & C.FIF_PSPOLL))
+    drop(C.RX_FILTER_CFG_DROP_BA, False)
+    drop(C.RX_FILTER_CFG_DROP_BAR, not ctrl)
+    drop(C.RX_FILTER_CFG_DROP_CNTL, not ctrl)
+    t.write32(C.RX_FILTER_CFG, reg)
+
+
 # ----------------------------------------------------------------------
 # rt2800_enable_radio + rt2800usb_enable_radio — turn RX/TX on at the
 # MAC + WPDMA + USB-DMA level. Without this, the chip is fully
