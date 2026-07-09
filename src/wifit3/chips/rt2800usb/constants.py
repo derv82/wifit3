@@ -199,6 +199,9 @@ HOST_CMD_CSR_HOST_COMMAND = 0x000000FF
 # MCU command tokens (rt2800.h:3024-3033)
 MCU_WAKEUP = 0x31        # chip → STATE_AWAKE
 MCU_LED = 0x50           # radio/assoc LED mode (rt2800_brightness_set, USB path)
+MCU_LED_AG_CONF = 0x52       # per-band LED config from EEPROM (enable_radio tail)
+MCU_LED_ACT_CONF = 0x53
+MCU_LED_LED_POLARITY = 0x54
 MCU_CURRENT = 0x36       # RT3070/RT3071/RT3572 USB-only — called by enable_radio
                          # between init_rfcsr and MAC_SYS_CTRL enable.
 MCU_BOOT_SIGNAL = 0x72

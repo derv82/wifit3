@@ -294,7 +294,42 @@ def usb_enable_radio_dma(t: RT2800USBTransport) -> None:
     t.write32(USB_DMA_CFG, reg)
 
 
-def enable_radio(t: RT2800USBTransport, silicon_id: int = 0) -> None:
+def enable_radio_finish(t: RT2800USBTransport, ev) -> None:
+    """Tail of rt2800_enable_radio: MAC_SYS_CTRL TX-only → WPDMA TX/RX DMA →
+    MAC_SYS_CTRL TX+RX (all three are RMW), then the EEPROM LED_AG/ACT/POLARITY MCU
+    commands and a final radio-LED-on (rt2x00leds_led_radio). [SRC] rt2800lib.c
+    rt2800_enable_radio tail."""
+    from . import constants as C
+    from .eeprom import (
+        EEPROM_OFFSET_FREQ, EEPROM_OFFSET_LED_ACT_CONF, EEPROM_OFFSET_LED_AG_CONF,
+        EEPROM_OFFSET_LED_POLARITY,
+    )
+    from .firmware import mcu_request
+
+    reg = t.read32(C.MAC_SYS_CTRL)
+    reg = (reg | C.MAC_SYS_CTRL_ENABLE_TX) & ~C.MAC_SYS_CTRL_ENABLE_RX & 0xFFFFFFFF
+    t.write32(C.MAC_SYS_CTRL, reg)
+    time.sleep(0.000_05)
+
+    reg = t.read32(C.WPDMA_GLO_CFG)
+    reg |= (C.WPDMA_GLO_CFG_ENABLE_TX_DMA | C.WPDMA_GLO_CFG_ENABLE_RX_DMA
+            | C.WPDMA_GLO_CFG_TX_WRITEBACK_DONE)
+    t.write32(C.WPDMA_GLO_CFG, reg & 0xFFFFFFFF)
+
+    reg = t.read32(C.MAC_SYS_CTRL)
+    reg |= C.MAC_SYS_CTRL_ENABLE_TX | C.MAC_SYS_CTRL_ENABLE_RX
+    t.write32(C.MAC_SYS_CTRL, reg)
+
+    for cmd, off in ((C.MCU_LED_AG_CONF, EEPROM_OFFSET_LED_AG_CONF),
+                     (C.MCU_LED_ACT_CONF, EEPROM_OFFSET_LED_ACT_CONF),
+                     (C.MCU_LED_LED_POLARITY, EEPROM_OFFSET_LED_POLARITY)):
+        w = ev.word(off)
+        mcu_request(t, cmd, token=0xFF, arg0=w & 0xFF, arg1=(w >> 8) & 0xFF)
+
+    set_radio_led(t, ev.word(EEPROM_OFFSET_FREQ))
+
+
+def enable_radio(t: RT2800USBTransport, silicon_id: int = 0, ev=None) -> None:
     """Enable RX + TX on the radio.  Call AFTER all init_* steps.
 
     Port of rt2800usb_enable_radio (rt2800usb.c:296-318) +
@@ -305,18 +340,7 @@ def enable_radio(t: RT2800USBTransport, silicon_id: int = 0) -> None:
     MCU_CURRENT request that the kernel makes between init_rfcsr and
     MAC_SYS_CTRL enable. Default 0 = skip (back-compat for RT5392 path).
     """
-    from .constants import (
-        MAC_SYS_CTRL_ENABLE_RX,
-        MAC_SYS_CTRL_ENABLE_TX,
-        MCU_CURRENT,
-        RT_RT3070,
-        RT_RT3071,
-        RT_RT3572,
-        WPDMA_GLO_CFG,
-        WPDMA_GLO_CFG_ENABLE_RX_DMA,
-        WPDMA_GLO_CFG_ENABLE_TX_DMA,
-        WPDMA_GLO_CFG_TX_WRITEBACK_DONE,
-    )
+    from .constants import MCU_CURRENT, RT_RT3070, RT_RT3071, RT_RT3572
 
     # 1) rt2800usb_enable_radio: wait for WPDMA idle, then turn on USB_DMA_CFG with
     # the RX bulk-agg limit + bulk-IN/OUT enable bits.  [SRC] rt2800usb.c:296-318
@@ -346,22 +370,12 @@ def enable_radio(t: RT2800USBTransport, silicon_id: int = 0) -> None:
     # being called earlier, init_bbp/init_rfcsr writes appear OK but
     # the BBP→RF chain never commits and bulk-IN stays silent.
 
-    # 4) MAC_SYS_CTRL: enable TX (RX still off), then 50µs later TX+RX.
-    # Kernel does it as two separate writes with a delay between.
-    t.write32(MAC_SYS_CTRL, MAC_SYS_CTRL_ENABLE_TX)
-    time.sleep(0.000_05)
-
-    # 5) WPDMA_GLO_CFG: enable TX+RX DMA.
-    reg = t.read32(WPDMA_GLO_CFG)
-    reg |= WPDMA_GLO_CFG_ENABLE_TX_DMA
-    reg |= WPDMA_GLO_CFG_ENABLE_RX_DMA
-    reg |= WPDMA_GLO_CFG_TX_WRITEBACK_DONE
-    t.write32(WPDMA_GLO_CFG, reg & 0xFFFFFFFF)
-
-    # 6) MAC_SYS_CTRL: enable both TX and RX.
-    t.write32(MAC_SYS_CTRL, MAC_SYS_CTRL_ENABLE_TX | MAC_SYS_CTRL_ENABLE_RX)
-
-    # 7) LED MCU commands (EEPROM-dependent) — skipped.
+    # 4-7) MAC/WPDMA enable + the EEPROM-derived LED MCU commands — the tail of
+    # rt2800_enable_radio, extracted so the cold-walk verifier can drive it in
+    # isolation (the live-monitor RX_FILTER below is NOT part of the kernel's
+    # enable_radio — that is applied later by airmon).
+    if ev is not None:
+        enable_radio_finish(t, ev)
 
     # 8) Open RX_FILTER_CFG for monitor mode. Default state (after
     # init_registers / chip reset) drops everything not addressed to

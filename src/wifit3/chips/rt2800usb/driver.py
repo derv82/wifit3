@@ -403,7 +403,8 @@ class RT2800USBDriver:
             try:
                 await loop.run_in_executor(
                     None,
-                    lambda: enable_radio(self.transport, self.chip_id.silicon_id),
+                    lambda: enable_radio(self.transport, self.chip_id.silicon_id,
+                                         ev=self._eeprom),
                 )
             except (IOError, usb.core.USBError) as e:
                 raise BringUpError("enable_radio", str(e)) from e

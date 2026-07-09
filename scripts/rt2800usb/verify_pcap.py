@@ -142,6 +142,8 @@ def verify_cold_walk(pcap: Path, dev: int, silicon: int):
         step("init_rfcsr", lambda t: _rfcsr.init_rfcsr(
             t, silicon, freq_offset=ev.freq_offset, chip_rev=chip.revision,
             txpath=ev.txpath, rxpath=ev.rxpath))
+        step("enable_radio_finish (MAC/WPDMA enable + LED)",
+             lambda t: _mac.enable_radio_finish(t, ev))
     except rp.Divergence as e:
         fr = w.ops[w.i] if w.i < len(w.ops) else None
         print(f"  STOP  (diverged)\n        {e}")
