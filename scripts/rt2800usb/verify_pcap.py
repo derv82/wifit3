@@ -154,9 +154,12 @@ def verify_cold_walk(pcap: Path, dev: int, silicon: int):
     # remaining radio-on / init_registers / init_bbp / init_rfcsr / enable_radio steps are
     # still being converged, so the next op is the porting frontier.
     fr = w.ops[w.i] if w.i < len(w.ops) else None
-    print(f"  reproduced {w.i} ops single-cursor byte-for-byte (0 waived).")
+    print(f"  reproduced {w.i} ops single-cursor byte-for-byte (0 waived) — the full cold"
+          " bring-up (probe → EFUSE → firmware → radio-on → init_registers → BBP → RFCSR →"
+          " enable_radio).")
     print(f"  FRONTIER at op {anchor + w.i}: next kernel op to port"
-          f"{' = ' + rp.ReplayDevice._fmt(fr) if fr else ''} (radio-on → init_registers …).")
+          f"{' = ' + rp.ReplayDevice._fmt(fr) if fr else ''} (operational phase: airmon"
+          " monitor-enable → channel hops).")
     return False, w.i, box["ev"]
 
 
