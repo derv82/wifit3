@@ -12,27 +12,6 @@ contradicts itself; resolve on HW.
 
 ## Per-card
 
-### rtl8188eus_dkms
-- RX-perf gap: parity fixed-channel, but REAL in the hopping sweep (2026-07-07). Fixed-channel 60 s on
-  a strong AP: port 6.5/s ≈ kernel-usbcap 6.2/s (parity). But the 7/6 SAME-SESSION Kali sweep A/B
-  (hops 1–13 @ 15 s, our driver vs kernel `8188eu`, same box) shows port 5.3 vs kernel 7.0 on the
-  reference AP — a real ~18% gap (after the 16s-vs-14s span artifact), concentrated on weaker /
-  adjacent-channel APs (ch1/2 parity, ch3–11 deficits). Ruled out by live RX-counter instrumentation:
-  USB/software drop (we deliver 92–97% of chip-demodulated frames) and gross DIG deafness (IGI parks
-  0x20–0x22, sensitive). DIG is fully faithful in monitor: `phydm_dig_go_up_check` (and its NHM→DIG
-  feedback) is dead code here — it early-returns true in `PHYDM_PERFORMANCE_MODE`, which this driver
-  assigns once and never flips (hal_dm.c:202), so our unconditional IGI raise matches the vendor's
-  0x20→0x22 step. (Verified 2026-07-07; documented in `dig._new_igi_by_fa` — not ported, it'd be a
-  no-op.) No single smoking gun. Remaining port-side lead: a small busy-channel pipeline loss (ch11
-  92% vs ch1 97% of chip-demodulated frames — URB/buffer under load); the rest is sweep
-  span/measurement confounds + environment. NB mainline had a *smaller* sweep gap than dkms, so a
-  default flip isn't justified on rate [RTL8188EUS_DKMS.md].
-- EFUSE board options: resolved for register-wire correctness — antenna (`0xC9`) and regulatory
-  (`0xC1`) are inert in this build, channel plan (`0xB8`) is SW-only; the one wire-affecting byte,
-  external-PA/LNA (`0xCA[3:2]`), is now fail-loud (`efuse.assert_board_options_ported`). Residual: an
-  external-PA/LNA unit is *refused*, not supported (needs `PHY_SetRFEReg_8188E` + the ext-LNA AGC
-  table) [RTL8188EUS_DKMS.md].
-
 ### rtl8821au_dkms
 - ⏳ 5 GHz deauth/TX (ch149) unverified on HW — offline byte-exact only; 2.4 GHz TX is confirmed [RTL8821AU_DKMS.md].
 
