@@ -93,7 +93,10 @@ from the kernel STA path — captured below.
 
 - `test_hw_rt2800usb.py --phase {open,fw,usbinit,macinit,bbpinit,rfinit,rx}` — staged HW bring-up.
 - `rt2800_ctrl_diff.py` — extracts the kernel control-transfer sequence from a pcap; isolated the missing EFUSE walk.
-- `verify_pcap.py` — offline cold-boot byte gate (225 ctrl ops on rt5372 + rt5572 captures).
+- `verify_pcap.py` — single-cursor whole-capture byte gate. Drives the port's real helpers
+  in kernel wire order over one cursor; fail-closed, 0 waivers. Covers the full cold bring-up
+  (1781 ops) + 128/128 RF55xx channel-tune blocks on the RT5572 capture; frontier = the
+  operational phase (airmon + hops), still being converged.
 
 ## Debug log
 
@@ -162,3 +165,36 @@ HW-confirmed (2026-07-06, PAU09 vs kernel): the simplified form over-reads RSSI 
 Not just cosmetic: the over-read feeds the RX-AGC link tuner (above), which de-sensitises on strong
 averaged RSSI, so marginal 2.4 APs drop (breadth 87 vs kernel 111). Wiring the EFUSE values into
 `rx.py` is the lead for closing that breadth gap.
+
+### Byte-for-byte convergence to the kernel (2026-07-08)
+
+Rebuilt `verify_pcap` from anchored blocks into a single-cursor whole-capture walk (RT5572/RF5592,
+`usb_dumps_new2/captures_rt2800usb_rt5572`) and converged the port to emit the kernel's exact bytes.
+Cold bring-up now walks **1781 ops byte-for-byte** + **128/128 channel-tune blocks** (80.3% of the
+capture, 0 waivers). Operational phase (airmon monitor-enable + `iw`/airodump hops) still pending.
+RX + PA hardware-verified after each behavioural change (PAU09, cold: RFCSR49/50 = 17/15, ~900
+beacons/hop). What changed, per commit:
+
+- **`9ed7e1a` TX power + cascade.** `chan.default_power` decodes RFCSR49/50 from EEPROM
+  TXPOWER_BG1/BG2 (2.4 GHz) / A1/A2 (5 GHz, per-silicon index) with `txpower_to_dev` clamp; added
+  `config_txpower` (TX_PWR_CFG_0..4 from TXPOWER_BYRATE) to the RF55xx tune. Fixes: `freq_cal_mode1_usb`
+  RFCSR17-already-set short-circuit; NIC_CONF1 capability masks (BT/ext-LNA-BG/A were bits 13/8/9 →
+  14/2/3); `iq_calibrate` 0xFF→0 only on the 2 global comp/imbal bytes (per-band TX0/TX1 raw);
+  `AUTOWAKEUP_CFG` `0x1010`→`0x1208`; added `autorun_detect` (EFUSE + FW paths) + `probe_hw_gpio`.
+  Unburned EFUSE keeps the wire-derived fallback.
+- **`39809cb` verify_pcap walk.** Replaced anchored EFUSE/FW blocks with `verify_cold_walk` (one
+  cursor, kernel order) + explicit coverage reporting.
+- **`749e913` radio-on.** Added `set_radio_led` (MCU_LED from EEPROM_FREQ LED_MODE) + MCU_WAKEUP;
+  MCU_LED / MCU_WAKEUP constants.
+- **`169014c` USB DMA.** `USB_DMA_CFG.RX_BULK_AGG_LIMIT` was omitted (`0xc00080`→`0xc02d80`); split
+  `usb_enable_radio_dma` out of the monolithic `enable_radio`.
+- **`0cacfcd` init_registers.** Nest `usb_init_registers` (drv-hook reset) inside `init_registers`
+  (dropped the duplicate `connect()` call); port `config_filter(FIF_ALLMULTI)` (`RX_FILTER_CFG`=0x1bf97);
+  RTS threshold 2347→**2353** (Linux `IEEE80211_MAX_RTS_THRESHOLD`); WCID entry as one 8-byte
+  multiwrite (was 2× `write32`); port the 8 beacon-slot clears.
+- **`ddda352` init_bbp/rfcsr.** Port the BBP138 RX_ADC1/TX_DAC1 RMW in `normal_mode_setup_5xxx`
+  (threaded txpath/rxpath through `init_rfcsr`). init_bbp needed no change.
+- **`8d9f1dc` enable_radio tail.** Extracted `enable_radio_finish`: MAC_SYS_CTRL / WPDMA_GLO_CFG
+  enables are now RMW (were direct writes) + LED_AG/ACT/POLARITY MCU configs (were skipped). The
+  monitor `RX_FILTER_CFG`=0x11 stays in `connect()`'s `enable_radio` (kernel applies it in the
+  operational phase, not here — to reconcile).
