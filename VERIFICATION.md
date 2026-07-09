@@ -9,36 +9,36 @@ The matrix below captures *how well wifit3 drives each card* right now. Every bl
 either a documented Wifit3 bug or a hardware limitation; the deep per-card detail and history
 live in each chip's `<CHIP>.md` (linked under its table).
 
-**✅** works · **⚠️** works, with a caveat · **❌** tried, broken · **⬜** not run yet — *not* a failure, just unconfirmed
+**✅** works · **⚠️** works, with a caveat · **❌** tried, broken · **⬜** not run yet
 
-**ACKs** — the radio HW-ACKs a chosen MAC (active monitor), the prerequisite for *conversational*
-attacks. ❌ means WPS and *active* PMKID run un-ACKed and frequently time out (passive PMKID still
-works). *Deauth* is no longer a column — it works on every supported card.
+- **RX** — receive: range, reception quality, channel tune. *Passive* captures rely on RX.
+- **TX** — frame injection: Deauths, WPS, WEP, PMKID extraction, etc all rely on TX.
+- **ACKs** — radio HW-ACKs a forged MAC. WPS relies heavily on Auto-ACKing, PMKID less so, Deauth/WEP not at all.
+- **Port** — Performance comparison to the Linux driver port (RX breadth & quality).
+- **Stress** — 30-min channel-hopping soak, only tracks RX degradation over time.
 
 ## Matrix
 
-| Chipset | Scan | Hand-<br>shake | PMKID | WEP | WPS | ACKs | Stress | Grade |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| [AR9271](#ar9271) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [MT7612U](#mt7612u) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8821AU](#rtl8821au) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8812AU](#rtl8812au) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8822BU](#rtl8822bu) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RTL8821CU](#rtl8821cu) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RT3070](#rt3070) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RT5370](#rt5370) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [MT7610U](#mt7610u) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | A |
-| [RT5572](#rt5572) | ⚠️ | ✅ | ⚠️ | ✅ | ⚠️ | ✅ | ⬜ | B |
-| [MT7921AU](#mt7921au) | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ❌ | ✅ | B |
-| [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | B |
-| [RTL8187L](#rtl8187l) | ✅ | ✅ | ✅ | ✅ | ⚠️ | ❌ | ✅ | B |
-| [RT2500USB](#rt2500usb) | ✅ | ✅ | ✅ | ✅ | ⚠️ | ❌ | ✅ | B |
-| [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | D |
+| Chipset | RX | TX | ACKs | Port | Stress | Grade |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|
+| [AR9271](#ar9271) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [MT7612U](#mt7612u) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RTL8821AU](#rtl8821au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RTL8812AU](#rtl8812au) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RTL8822BU](#rtl8822bu) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RTL8821CU](#rtl8821cu) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RT3070](#rt3070) | ✅ | ✅ | ✅ | ⬜ | ✅ | A |
+| [RT5370](#rt5370) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RT5372](#rt5372) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [MT7610U](#mt7610u) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
+| [RT5572](#rt5572) | ✅ | ⚠️ | ✅ | ✅ | ✅ | B |
+| [MT7921AU](#mt7921au) | ✅ | ✅ | ❌ | ✅ | ✅ | B |
+| [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ⚠️ | ✅ | B |
+| [RTL8187L](#rtl8187l) | ✅ | ✅ | ❌ | ⬜ | ✅ | B |
+| [RT2500USB](#rt2500usb) | ✅ | ✅ | ❌ | ⬜ | ⚠️ | B |
+| [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ⚠️ | ❌ | D |
 
 ## Per-card notes
-
-Scan + Deauth work on every supported card unless a note says otherwise.
 
 ### AR9271
 *ALFA AWUS036NHA · 2.4 GHz*
@@ -62,11 +62,15 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-06-12 | Healthy, 215–323 frames/s. |
+| **Grade** | **B** | 2026-06-21 | WEP + passive capture work; WPS flaky (hard-MAC, no auto-ACK). |
+| RX | ✅ | 2026-06-12 | Healthy, 215–323 frames/s. |
+| TX | ✅ | 2026-06-12 | Deauth + WEP inject. |
+| ACKs | ❌ | 2026-06-21 | hard-MAC — cannot ACK a forged MAC. |
+| Port | ⬜ | — | No Linux same-card baseline captured. |
 | Handshake | ✅ | 2026-06-12 | Deauth → 4-way (~3/4 M1–M4). |
 | PMKID | ✅ | 2026-06-12 | Passive + active. |
 | WEP | ✅ | 2026-06-12 | FakeAuth + ARP replay + ChopChop. |
-| WPS | ⚠️ | 2026-06-21 | hard-MAC, card cannot ACK, WPS fails frequently. |
+| WPS | ⚠️ | 2026-06-21 | Fails frequently — hard-MAC can't ACK. |
 | Stress | ✅ | 2026-06-11 | 30-min 13-ch soak, flat. |
 
 → [RTL8187L.md](src/wifit3/chips/rtl8187/RTL8187L.md)
@@ -126,7 +130,7 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 | **Grade** | **91% (A)** | 2026-07-07 | Clean dual-band DKMS default, full attack suite; mainline-wedge is opt-in only. |
 | RX | ✅ | 2026-07-07 | DKMS mud2g 6.4/s, mud 9.2/s, breadth 91/40; no wedge on the dual-band hop. |
 | Port | ✅ | 2026-07-07 | Clean dual-band hop; same-driver baseline stale (6.19 build fails) — see note. |
-| Deauth | ✅ | 2026-06-05 | Client drop + reconnect caught. |
+| TX | ✅ | 2026-06-05 | Client drop + reconnect caught. |
 | Handshake | ✅ | 2026-06-05 | M2/M4 (ToDS) — crackable. |
 | PMKID | ✅ | 2026-06-05 | Capture + active extract. |
 | WEP | ✅ | 2026-06-05 | Replay + ChopChop. |
@@ -146,7 +150,7 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 | **Grade** | **90% (A)** | 2026-07-08 | Dual-band kernel-parity RX + full attack suite; supersedes the stale 2026-06-17 Scan ❌. |
 | RX | ✅ | 2026-07-08 | 2.4 6.5 vs 6.4/s (102%), 5 GHz 9.5 vs 9.7/s (99%); breadth 78/36 (2.4 matches; 5 GHz 36 vs 39); RSSI −0.5 dB; 0 silent. |
 | Port | ✅ | 2026-07-08 | Matches linux-DKMS (88x2bu) both bands — beacon rate, breadth, RSSI parity on the same-card A/B. |
-| Deauth | ✅ | 2026-06-16 | Dropped a real laptop + phone. |
+| TX | ✅ | 2026-06-16 | Dropped a real laptop + phone. |
 | Handshake | ✅ | 2026-06-16 | Deauth → full M1–M4. |
 | PMKID | ✅ | 2026-06-16 | Passive capture + extract. |
 | WEP | ✅ | 2026-06-16 | ChopChop + ARP replay ~225 IVs/s. |
@@ -172,7 +176,7 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | **Grade** | **60% (D)** | 2026-07-06 | Port wedges under TX + 2.4/5 GHz hopping; hardware, steady RX, and attacks are fine. |
-| RX | ⚠️ | 2026-07-06 | Steady dwell strong (mud2g 7.1 vs OOT 8.4/s; breadth 82/48); 2.4 drops under hopping. |
+| RX | ❌ | 2026-07-06 | Steady dwell strong (mud2g 7.1 vs OOT 8.4/s; breadth 82/48) but 2.4 RX drops under channel-hopping — unusable in normal (hopping) operation. |
 | Port | ⚠️ | 2026-07-06 | Steady RX + RSSI (+0.2 dB) match OOT; wedges under TX+hop where OOT stays clean — dynamic-path bug. |
 | Handshake | ✅ | 2026-06-05 | Deauth → 4-way. |
 | PMKID | ✅ | 2026-06-05 | Passive + active. |
@@ -231,7 +235,7 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 | **Grade** | **80% (B)** | 2026-07-06 | Best-in-batch RX + faithful port; capped by no-auto-ACK (conversational attacks). |
 | RX | ✅ | 2026-07-06 | mud2g 8.6/8.9 (97%), mud 9.3/9.6 (97%); breadth 112/52 (best 2.4, matches); RSSI −1.4 dB. |
 | Port | ✅ | 2026-07-06 | Matches mt76 both bands — the B is the driver's ACK limit, not the port. |
-| Deauth | ✅ | 2026-06-12 | Live deauth dropped client. |
+| TX | ✅ | 2026-06-12 | Live deauth dropped client. |
 | Handshake | ✅ | 2026-06-12 | Deauth → 4-way (28 EAPOL, M1–M4). |
 | PMKID | ⚠️ | 2026-06-23 | Auto-ACKing not supported. |
 | WEP | ✅ | 2026-06-12 | ChopChop + ARP replay ~350 IVs/s. |
@@ -248,8 +252,8 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 |---|:--:|---|---|
 | **Grade** | **92% (A)** | 2026-07-06 | Faithful port, linux-parity RX, full attack suite, flat soak. |
 | RX | ✅ | 2026-07-06 | mud2g 6.6 vs linux 7.1 (93%); breadth 75 vs 79; RSSI +0.7 dB; 0 cross-channel. |
-| Port | ✅ | 2026-07-06 | Matches linux (rt2800usb); accurate RSSI — unlike the RT5572 rt2800usb port's +8/+11 offset. |
-| Deauth | ✅ | 2026-06-10 | Live → reconnect; byte-match w/ aireplay-ng. |
+| Port | ✅ | 2026-07-06 | Matches linux (rt2800usb); accurate RSSI (+0.7 dB). |
+| TX | ✅ | 2026-06-10 | Live → reconnect; byte-match w/ aireplay-ng. |
 | Handshake | ✅ | 2026-06-10 | Deauth → 4-way (~27 EAPOL/30 s). |
 | PMKID | ✅ | 2026-06-10 | Capture + active extract. |
 | WEP | ✅ | 2026-06-10 | ARP replay + ChopChop. |
@@ -262,23 +266,23 @@ Scan + Deauth work on every supported card unless a note says otherwise.
 ### RT5572
 *Panda PAU09 N600 · 2.4 / 5 GHz · 2T2R*
 
-> **5 GHz TX is dead** — deauth, PMKID, and WPS all fail on 5 GHz (the injector hardcodes a CCK rate,
-> invalid on 5 GHz; the RF band is set but nothing lands). 2.4 GHz is fully functional. 5 GHz RX
-> (scan + passive handshake capture) is unaffected. Fix scoped in `BUGS.md` (rt2800usb, CCK→OFDM).
+> **5 GHz injection is flaky on nearby APs** — deauth / PMKID / WPS can drop on a strong nearby
+> 5 GHz AP. Distant 5 GHz and all of 2.4 GHz are unaffected.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| **Grade** | **84% (B)** | 2026-07-06 | Provisional (soak pending). Dinged by 5 GHz TX + 2.4 breadth. |
-| RX | ⚠️ | 2026-07-06 | Beacon parity (mud2g 6.2/6.4, mud 9.1/9.6 /s); breadth 87 vs kernel 111, 36 vs 38. |
-| Port | ⚠️ | 2026-07-06 | Trails linux — RSSI over-reads +8/+11 dB → link tuner cuts 2.4 breadth; beacon rate at parity. |
-| Handshake | ✅ | 2026-07-06 | 2.4 M1+M2+M4 & M2+M3; 5 GHz passive-capture only. |
-| PMKID | ⚠️ | 2026-07-06 | 2.4 passive + active; 5 GHz dead (no TX). |
-| WEP | ✅ | 2026-07-06 | 2.4 ARP replay 175 IVs/s + ChopChop. |
-| WPS | ⚠️ | 2026-07-06 | 2.4 PBC (21 EAPOL, auto-ACK); 5 GHz assoc fails (no TX). |
-| ACKs | ✅ | 2026-07-06 | Auto-ACK confirmed (WPS + active PMKID). |
-| Stress | ⬜ | — | 20-min re-soak pending; prior 30-min soak was flat. |
+| **Grade** | **85% (B)** | 2026-07-09 | Kernel-parity dual-band RX, full 2.4 attack suite, auto-ACK; 5 GHz injection flaky on nearby APs. |
+| RX | ✅ | 2026-07-09 | ref AP 2.4 7.7/7.7 (100%), 5 GHz 8.6/9.7 (89%); breadth 103 vs 109 / 38 vs 38 (5 GHz matches); RSSI +0.3 dB; 16/16 tune, 0 silent. |
+| TX | ⚠️ | 2026-07-09 | 2.4 GHz clean; 5 GHz injection flaky on nearby APs (distant 5 GHz + all 2.4 fine). |
+| Port | ✅ | 2026-07-09 | Matches linux (rt2800usb) both bands; accurate RSSI (+0.3 dB — the old +8/+11 over-read is fixed: rx.py applies the per-band EEPROM offset + lna_gain). |
+| Handshake | ✅ | 2026-07-09 | 2.4 deauth → 4-way; 5 GHz passive capture. |
+| PMKID | ✅ | 2026-07-09 | Passive + active (2.4 + distant 5 GHz); 5 GHz nearby harvest limited by TX. |
+| WEP | ✅ | 2026-07-09 | 2.4 ChopChop + ARP replay ~210 IVs/s (no 5 GHz WEP target). |
+| WPS | ✅ | 2026-07-09 | 2.4 PBC (14 EAPOL) + PIN, auto-ACK; 5 GHz nearby assoc limited by TX. |
+| ACKs | ✅ | 2026-07-09 | Auto-ACK forged MAC (WPS PBC/PIN + active PMKID). |
+| Stress | ✅ | 2026-07-09 | 30-min 22-ch soak: 5 GHz flat (34→39), 2.4 mild drift (trend 0.90) but frames/bucket flat → environmental; no death-detect. |
 
-→ [RT2800USB.md](src/wifit3/chips/rt2800usb/RT2800USB.md)
+→ [RT5572.md](src/wifit3/chips/rt5572/RT5572.md)
 
 ### RT3070
 *ALFA AWUS036NH · 2.4 GHz · 1T1R*
@@ -287,8 +291,11 @@ Excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-06-09 | Kernel parity (~8.4 bcn/s vs kernel's 8.9). |
-| Deauth | ✅ | 2026-06-09 | Live deauth dropped client; byte-match w/ aireplay-ng. |
+| **Grade** | **A** | 2026-06-09 | Full 2.4 GHz attack suite, flat soak. |
+| RX | ✅ | 2026-06-09 | Kernel parity (~8.4 bcn/s vs kernel's 8.9). |
+| TX | ✅ | 2026-06-09 | Deauth byte-match w/ aireplay-ng. |
+| ACKs | ✅ | 2026-06-09 | WPS PIN → M4, PBC → PSK (auto-ACK works). |
+| Port | ⬜ | — | No Linux same-card baseline captured. |
 | Handshake | ✅ | 2026-06-09 | Deauth → reconnect; 39 EAPOL/30 s. |
 | PMKID | ✅ | 2026-06-09 | Passive + active extract. |
 | WEP | ✅ | 2026-06-09 | Replay + ChopChop ~300 inj/s (20k IVs <90 s). |
@@ -302,12 +309,16 @@ Excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| Scan | ✅ | 2026-06-11 | ~9 bcn/s, 10+ APs. |
+| **Grade** | **B** | 2026-06-21 | Passive capture + WEP work (slow); WPS flaky (hard-MAC, no auto-ACK). |
+| RX | ✅ | 2026-06-11 | ~9 bcn/s, 10+ APs. |
+| TX | ✅ | 2026-06-11 | Deauth + WEP inject; slow (~60 IVs/s). |
+| ACKs | ❌ | 2026-06-21 | hard-MAC — cannot ACK a forged MAC. |
+| Port | ⬜ | — | No Linux same-card baseline captured. |
 | Handshake | ✅ | 2026-06-11 | Deauth → reconnect; M1+M2+M3. |
 | PMKID | ✅ | 2026-06-11 | Passive + active extract. |
 | WEP | ✅ | 2026-06-11 | ChopChop + ARP replay (slow, ~60 IVs/s). |
-| WPS | ⚠️ | 2026-06-21 | hard-MAC, card cannot ACK, WPS fails frequently. |
-| Stress | ✅ | 2026-06-11 | 30-min 14-ch soak; mild late taper. |
+| WPS | ⚠️ | 2026-06-21 | Fails frequently — hard-MAC can't ACK. |
+| Stress | ⚠️ | 2026-06-11 | 30-min 14-ch soak; mild late taper. |
 
 → [RT2500USB.md](src/wifit3/chips/rt2500usb/RT2500USB.md)
 
@@ -338,7 +349,7 @@ Excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate
 |---|:--:|---|---|
 | **Grade** | **90% (A)** | 2026-07-08 | 2.4 GHz near-kernel RX + full clean attack suite; 1T1R breadth is the only real gap. |
 | RX | ✅ | 2026-07-08 | ref AP 8.6 vs 9.1/s (95%); breadth 50 vs 57; RSSI +0.8 dB (accurate); 9/9 tune, 0 silent. |
-| Port | ✅ | 2026-07-08 | Matches rt2800usb — beacon rate + RSSI parity; accurate RSSI (no RT5572 +8/+11 over-read). |
+| Port | ✅ | 2026-07-08 | Matches rt2800usb — beacon rate + RSSI parity; accurate RSSI (+0.8 dB). |
 | Handshake | ✅ | 2026-06-24 | 4-way captured. |
 | PMKID | ✅ | 2026-06-24 | Capture + active extract. |
 | WEP | ✅ | 2026-07-08 | 2.4 GHz ChopChop + ARP replay ~200 IVs/s. |
