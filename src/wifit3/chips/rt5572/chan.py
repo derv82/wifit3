@@ -1546,3 +1546,25 @@ def set_channel(
         raise NotImplementedError(
             f"set_channel for silicon 0x{silicon_id:04x} not yet validated"
         )
+
+
+def reconfig_channel(t: RT5572Transport, silicon_id: int, channel: int,
+                     **sc_kwargs) -> None:
+    """The RF reconfiguration for a channel change, RX assumed already quiesced:
+
+        config_channel + config_txpower  →  reset_tuner  →  config_ant  →  reset_tuner
+
+    This is the shared per-hop core. ``Driver.set_channel`` brackets it with the
+    load-bearing RX toggle (stop_queue → reconfig → start_queue) — the kernel
+    disables RX around config_channel or the RF/BBP writes don't latch, which is
+    the focus-mode dead-radio / band-transition bug. The acceptance gate drives
+    THIS function per hop, so the reconfig sequence is byte-checked against the
+    kernel. [SRC] rt2x00mac_config (config → reset_tuner) + rt2x00lib_config_antenna
+    (config_ant → reset_tuner), rt2x00config.c."""
+    from .link_tuner import get_default_vgc, set_vgc
+    eeprom = sc_kwargs["eeprom"]
+    vgc = get_default_vgc(silicon_id, channel, sc_kwargs["lna_gain"])
+    set_channel(t, silicon_id, channel, **sc_kwargs)                    # config_channel+txpower
+    set_vgc(t, silicon_id, vgc, rx_chain_num=eeprom.rxpath, rssi=0)     # reset_tuner
+    config_ant(t, eeprom.txpath, eeprom.rxpath)                        # config_antenna
+    set_vgc(t, silicon_id, vgc, rx_chain_num=eeprom.rxpath, rssi=0)     # reset_tuner

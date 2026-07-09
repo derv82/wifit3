@@ -375,6 +375,24 @@ class RT5572Driver:
             )
         return kwargs
 
+    def _tune_bracketed(self, channel: int, kwargs: dict) -> None:
+        """Channel change with the load-bearing RX-quiesce bracket (runs on the
+        executor thread). The kernel disables RX around config_channel or the
+        RF/BBP writes don't latch — the focus-mode dead-radio / band-transition
+        bug. So: pause the RX reader + stop_queue(RX) → reconfig_channel (the
+        gate-verified RF reconfig) → start_queue(RX) + resume the reader. Mirrors
+        the 8821cu "serialize + pause RX reader across deliberate tunes" fix."""
+        from .chan import reconfig_channel
+        from .mac import toggle_rx
+        paused = self._rx_reader.pause() if self._rx_reader is not None else False
+        try:
+            toggle_rx(self.transport, False)                        # stop_queue(RX)
+            reconfig_channel(self.transport, self.chip_id.silicon_id, channel, **kwargs)
+            toggle_rx(self.transport, True)                         # start_queue(RX)
+        finally:
+            if paused:
+                self._rx_reader.resume()
+
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         if self.chip_id is None:
             logger.error("set_channel(%d): connect() must run first", channel)
@@ -383,17 +401,12 @@ class RT5572Driver:
         try:
             async with self._conf_lock:
                 await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: _set_channel(
-                        self.transport, self.chip_id.silicon_id, channel,
-                        **kwargs,
-                    ),
-                )
+                    None, self._tune_bracketed, channel, kwargs)
         except ValueError as e:
-            logger.warning("rt2800usb set_channel: %s", e)
+            logger.warning("rt5572 set_channel: %s", e)
             return False
         except (IOError, usb.core.USBError, NotImplementedError) as e:
-            logger.error("rt2800usb set_channel(%d): %s", channel, e)
+            logger.error("rt5572 set_channel(%d): %s", channel, e)
             return False
         self.current_channel = channel
         if self._eeprom is not None:
