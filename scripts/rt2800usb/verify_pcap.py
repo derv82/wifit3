@@ -49,11 +49,13 @@ from wifit3.chips.rt2800usb.constants import (  # noqa: E402
     MAC_CSR0,
     MAC_DEBUG_INDEX,
     MAC_DEBUG_INDEX_XTAL,
+    MCU_WAKEUP,
     RF_CSR_CFG,
     RF_CSR_CFG_WRITE,
     RT_RT5592,
 )
 from wifit3.chips.rt2800usb.eeprom import (  # noqa: E402
+    EEPROM_OFFSET_FREQ,
     parse_eeprom,
     read_eeprom_efuse,
 )
@@ -99,38 +101,39 @@ def verify_cold_walk(pcap: Path, dev: int, silicon: int):
                    if o["dir"] == "IN" and o["addr"] == MAC_CSR0), 0)
     w = _Walk(allops[anchor:])
     fw = load_firmware_blob()
-    box: dict = {}
-    steps = [
-        ("read_chip_id (MAC_CSR0)", lambda t: _mac.read_chip_id(t)),
-        ("read_eeprom_efuse (autorun + EFUSE loop)",
-         lambda t: box.__setitem__("eeprom", read_eeprom_efuse(t))),
-        ("probe_hw_gpio (rfkill GPIO_CTRL_DIR2)", lambda t: _mac.probe_hw_gpio(t)),
-        ("probe_hw_mode (xtal read)", lambda t: _chan.is_xtal_40mhz(t)),
-        ("load_firmware (autorun + blob + MCU boot)",
-         lambda t: _fw.load_firmware(t, fw, silicon_id=silicon, progress_cb=None)),
-    ]
-    ev = None
-    for label, fn in steps:
-        try:
-            n = w.run(fn)
-            if "eeprom" in box and ev is None:
-                ev = parse_eeprom(box["eeprom"])
-            print(f"  OK    {label:42} +{n:4} ops  (cursor {anchor + w.i})")
-        except rp.Divergence as e:
-            fr = w.ops[w.i] if w.i < len(w.ops) else None
-            print(f"  STOP  {label}")
-            print(f"        {e}")
-            print(f"  FRONTIER at op {anchor + w.i}: next kernel op to port"
-                  f"{' = ' + rp.ReplayDevice._fmt(fr) if fr else ''}.")
-            return False, w.i, ev
+    box: dict = {"ev": None}
+
+    def step(label, fn):
+        n = w.run(fn)
+        print(f"  OK    {label:44} +{n:4} ops  (cursor {anchor + w.i})")
+
+    try:
+        step("read_chip_id (MAC_CSR0)", lambda t: _mac.read_chip_id(t))
+        step("read_eeprom_efuse (autorun + EFUSE loop)",
+             lambda t: box.__setitem__("ev", parse_eeprom(read_eeprom_efuse(t))))
+        ev = box["ev"]
+        step("probe_hw_gpio (rfkill GPIO_CTRL_DIR2)", lambda t: _mac.probe_hw_gpio(t))
+        step("probe_hw_mode (xtal read)", lambda t: _chan.is_xtal_40mhz(t))
+        step("load_firmware (autorun + blob + MCU boot)",
+             lambda t: _fw.load_firmware(t, fw, silicon_id=silicon, progress_cb=None))
+        step("set_radio_led (MCU_LED, radio on)",
+             lambda t: _mac.set_radio_led(t, ev.word(EEPROM_OFFSET_FREQ)))
+        step("mcu_wakeup (MCU_WAKEUP)",
+             lambda t: _fw.mcu_request(t, MCU_WAKEUP, token=0xFF, arg0=0, arg1=2))
+    except rp.Divergence as e:
+        fr = w.ops[w.i] if w.i < len(w.ops) else None
+        print(f"  STOP  (diverged)\n        {e}")
+        print(f"  FRONTIER at op {anchor + w.i}: next kernel op to port"
+              f"{' = ' + rp.ReplayDevice._fmt(fr) if fr else ''}.")
+        return False, w.i, box["ev"]
     # All scripted steps reproduced. The cold bring-up is not finished here — the
-    # radio-on / init_registers / init_bbp / init_rfcsr / enable_radio steps after this
-    # point are still being converged, so the next op is the porting frontier.
+    # remaining radio-on / init_registers / init_bbp / init_rfcsr / enable_radio steps are
+    # still being converged, so the next op is the porting frontier.
     fr = w.ops[w.i] if w.i < len(w.ops) else None
-    print(f"  reproduced {w.i} ops single-cursor byte-for-byte (0 waived), through load_firmware.")
+    print(f"  reproduced {w.i} ops single-cursor byte-for-byte (0 waived).")
     print(f"  FRONTIER at op {anchor + w.i}: next kernel op to port"
-          f"{' = ' + rp.ReplayDevice._fmt(fr) if fr else ''} (radio-on MCU_LED → init_registers …).")
-    return False, w.i, ev
+          f"{' = ' + rp.ReplayDevice._fmt(fr) if fr else ''} (radio-on → init_registers …).")
+    return False, w.i, box["ev"]
 
 
 def _rfcsr8_write(o: dict):

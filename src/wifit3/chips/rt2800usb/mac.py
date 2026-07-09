@@ -95,6 +95,18 @@ def probe_hw_gpio(t: RT2800USBTransport) -> None:
     t.write32(GPIO_CTRL, reg & 0xFFFFFFFF)
 
 
+def set_radio_led(t: RT2800USBTransport, led_mcu_reg: int, enabled: bool = True) -> None:
+    """Set the radio LED via MCU_LED — the USB path of rt2800_brightness_set for
+    LED_TYPE_RADIO: mcu_request(MCU_LED, 0xff, ledmode, enabled ? 0x20 : 0), where
+    ledmode is the EEPROM_FREQ LED_MODE field. ``led_mcu_reg`` is the raw EEPROM FREQ
+    word (the kernel's led_mcu_reg). rt2x00leds turns the radio LED on during
+    rt2x00lib_enable_radio. [SRC] rt2800lib.c:1646-1648, rt2x00leds.c:85."""
+    from .constants import EEPROM_FREQ_LED_MODE, MCU_LED
+    from .firmware import mcu_request
+    ledmode = (led_mcu_reg & EEPROM_FREQ_LED_MODE) >> 8
+    mcu_request(t, MCU_LED, token=0xFF, arg0=ledmode, arg1=0x20 if enabled else 0)
+
+
 def is_chip_warm(t: RT2800USBTransport) -> bool:
     """True iff a prior session left the chip fully initialized.
 

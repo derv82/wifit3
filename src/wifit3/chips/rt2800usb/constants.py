@@ -167,10 +167,16 @@ H2M_MAILBOX_CSR_OWNER = 0xFF000000
 # HOST_CMD_CSR bit-field
 HOST_CMD_CSR_HOST_COMMAND = 0x000000FF
 
-# MCU command tokens (rt2800.h:3026-3033)
+# MCU command tokens (rt2800.h:3024-3033)
+MCU_WAKEUP = 0x31        # chip → STATE_AWAKE
+MCU_LED = 0x50           # radio/assoc LED mode (rt2800_brightness_set, USB path)
 MCU_CURRENT = 0x36       # RT3070/RT3071/RT3572 USB-only — called by enable_radio
                          # between init_rfcsr and MAC_SYS_CTRL enable.
 MCU_BOOT_SIGNAL = 0x72
+
+# EEPROM_FREQ LED config fields — the kernel's led_mcu_reg (rt2800.h:2727-2729)
+EEPROM_FREQ_LED_MODE = 0x7F00      # bits[14:8]
+EEPROM_FREQ_LED_POLARITY = 0x1000  # bit 12
 
 # MAC_SYS_CTRL bit-fields (used in M2b)
 MAC_SYS_CTRL_RESET_CSR = 1 << 0
