@@ -35,7 +35,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [MT7921AU](#mt7921au) | ✅ | ✅ | ❌ | ✅ | ✅ | B |
 | [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ⚠️ | ✅ | B |
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ❌ | ✅ | ✅ | C |
-| [RT2500USB](#rt2500usb) | ✅ | ✅ | ❌ | ⬜ | ⚠️ | B |
+| [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ⬜ | ⚠️ | D |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ⚠️ | ❌ | D |
 
 ## Per-card notes
@@ -309,14 +309,14 @@ Excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| **Grade** | **B** | 2026-06-21 | Passive capture + WEP work (slow); WPS flaky (hard-MAC, no auto-ACK). |
-| RX | ✅ | 2026-06-11 | ~9 bcn/s, 10+ APs. |
-| TX | ✅ | 2026-06-11 | Deauth + WEP inject; slow (~60 IVs/s). |
+| **Grade** | **D** | 2026-07-09 | Full attack suite works when the card is receiving, but RX is extremely flaky — no stable baseline is capturable and it's unreliable in normal use. |
+| RX | ⚠️ | 2026-07-09 | Extremely intermittent — drops to near-dead for long stretches (an unattended ch1–11 sweep captured 0 frames); ~9–10 bcn/s in good spells. |
+| TX | ✅ | 2026-07-09 | Deauth + PMKID + WEP inject; live-confirmed. |
 | ACKs | ❌ | 2026-06-21 | hard-MAC — cannot ACK a forged MAC. |
-| Port | ⬜ | — | No Linux same-card baseline captured. |
+| Port | ⬜ | — | Card too flaky to capture a stable Linux baseline (0 frames on an unattended sweep). |
 | Handshake | ✅ | 2026-06-11 | Deauth → reconnect; M1+M2+M3. |
-| PMKID | ✅ | 2026-06-11 | Passive + active extract. |
-| WEP | ✅ | 2026-06-11 | ChopChop + ARP replay (slow, ~60 IVs/s). |
+| PMKID | ✅ | 2026-07-09 | Passive + active extract. |
+| WEP | ✅ | 2026-07-09 | ChopChop + ARP replay; ~175 IVs/s. |
 | WPS | ⚠️ | 2026-06-21 | Fails frequently — hard-MAC can't ACK. |
 | Stress | ⚠️ | 2026-06-11 | 30-min 14-ch soak; mild late taper. |
 
