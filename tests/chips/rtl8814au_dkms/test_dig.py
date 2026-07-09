@@ -4,7 +4,7 @@ The watchdog adapts live and is not pcap-diffable; these tests pin the FA->IGI s
 logic, the no-link clamp [0x1c, 0x2a], the cnt_all = OFDM-FA (+CCK-FA) read, and the
 write-to-all-4-paths-only-when-changed behaviour.
 """
-from wifit3.chips.rtl8814au_dkms import dig
+from wifit3.chips.rtl8814au_dkms import dig, watchdog
 
 
 class Rec:
@@ -80,3 +80,36 @@ def test_watchdog_resets_fa_counters():
     # The 3-pulse FA/CCA reset: OFDM (0x9a4) + CCK (0xa2c) + page-F CCA (0xb58).
     written = {o[1] for o in rec.ops if o[0] == "W"}
     assert {0x09A4, 0x0A2C, 0x0B58} <= written
+
+
+class W8:
+    """Records 0xa0a byte writes for the CCK-PD adaptation (all _cck_pd touches)."""
+
+    def __init__(self):
+        self.writes = []
+
+    def write8(self, a, v):
+        self.writes.append((a, v))
+
+
+def test_cck_pd_seeds_first_tick_even_on_zero_and_holds():
+    # [SRC phydm_cck_pd_th:1041] the first tick seeds cck_fa_ma = cck_fa unconditionally
+    # (a 0 read seeds 0), so a tick-2 mid-range count averages DOWN into the hold band and
+    # does NOT trip LV_1 — the faithful vendor sequence the pcap gate replays at tick #2.
+    st = watchdog.WatchdogState()               # cck_fa_ma = RESET, cck_pd_lv = LV0
+    t = W8()
+    watchdog._cck_pd(t, st, 0)                   # tick1: seed ma = 0, LV0 unchanged
+    assert st.cck_fa_ma == 0 and not t.writes
+    watchdog._cck_pd(t, st, 2800)               # tick2: ma = (0*3+2800)>>2 = 700 (hold band)
+    assert st.cck_fa_ma == 700 and not t.writes
+
+
+def test_cck_pd_raises_lv1_when_noisy_then_resets_ma():
+    # cck_fa_ma > 1000 -> LV_1 (0xa0a=0x83); the level change resets the MA
+    # [SRC phydm_set_cckpd_lv_type1:62].
+    st = watchdog.WatchdogState()
+    t = W8()
+    watchdog._cck_pd(t, st, 5000)               # seed ma = 5000 > 1000 -> LV1
+    assert t.writes == [(0x0A0A, 0x83)]
+    assert st.cck_pd_lv == watchdog._CCK_PD_LV1
+    assert st.cck_fa_ma == watchdog._CCK_FA_MA_RESET

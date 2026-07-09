@@ -36,8 +36,9 @@ CCK-PD runtime adaptation was unported. Init seeds the most-sensitive level (0xa
 = 0x40); the kernel then *adapts* it, raising to LV_1 (0x83) when the CCK false-alarm MA
 exceeds 1000. Left at LV_0 on a busy channel, the over-sensitive detector is swamped by
 CCK false alarms and misses the real strong CCK beacons. Forcing LV_0→LV_1 roughly
-doubled reference-AP reception. Ported in `dig._cck_pd` (carries `cck_fa_ma` + `cck_pd_lv`);
-seed the MA from the first *real* sample so LV_1 is reached ~4 s in, not ~8 s.
+doubled reference-AP reception. Ported faithfully in `watchdog._cck_pd` (carries
+`cck_fa_ma` + `cck_pd_lv`); the MA seeds from the first tick's raw count, even a 0
+[phydm_cck_pd_th:1041] — the byte-exact vendor sequence the pcap gate replays at tick #2.
 
 **This card is 2T4R on USB, not 4T4R.** The efuse antenna option says 4T4R, but a
 non-superspeed link resolves `rf_path = RF_2T4R → max_tx_cnt = 2`, so the TX-power PG

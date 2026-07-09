@@ -208,26 +208,17 @@ def _dig(t, st: WatchdogState, cnt_all: int) -> None:
 
 
 def _cck_pd(t, st: WatchdogState, cck_fa: int) -> None:
-    """[SRC] phydm_cck_pd_th + phydm_cckpd_type1 (no-link) — adapt the CCK-PD threshold.
+    """[SRC] phydm_cck_pd_th + phydm_cckpd_type1 (no-link) + phydm_set_cckpd_lv_type1.
 
-    Fold this tick's CCK false-alarm count into the moving average, then in the no-link
-    (always-monitor) case raise CCK-PD to LV_1 (0xa0a=0x83) when the channel is noisy
-    (cck_fa_ma > 1000) and drop to LV_0 (0x40) when quiet (< 500); 500..1000 holds the
-    current level. 0xa0a is written only on a level change, which also resets the MA.
-    Without this, CCK-PD is stuck at the over-sensitive LV_0 seed and a busy 2.4 GHz
-    channel swamps the CCK detector with false alarms — it then misses real CCK beacons
-    (e.g. a 1 Mbps-beaconing AP), the dominant 2.4 GHz RX deficit. [HW] raising LV_0->LV_1
-    ~doubled reference-AP CCK reception.
+    Fold this tick's CCK false-alarm count into the moving average [phydm_cck_pd.c:1041-1044],
+    then (no-link, phydm_cckpd_type1:112-118) raise CCK-PD to LV_1 (0xa0a=0x83) when noisy
+    (cck_fa_ma > 1000), drop to LV_0 (0x40) when quiet (< 500), and hold in 500..1000. 0xa0a is
+    written only on a level change [phydm_set_cckpd_lv_type1:56-75], which also resets the MA.
+    Left at the over-sensitive LV_0 seed, a busy 2.4 GHz channel swamps the CCK detector with
+    false alarms and misses real CCK beacons (a 1 Mbps-beaconing AP) — the 2.4 GHz RX deficit.
     """
     if st.cck_fa_ma == _CCK_FA_MA_RESET:
-        # Seed the MA from the first REAL sample. The very first tick after init/retune reads
-        # cck_fa=0 (the CCK FA counter only starts accumulating after the first reset pulse);
-        # seeding the MA with that spurious 0 doubles the ramp to LV_1 (~8 s -> the strong CCK
-        # AP looks dead in Focus for that long). A genuinely quiet channel keeps reading 0,
-        # stays unseeded, and correctly holds LV_0.
-        if cck_fa == 0:
-            return
-        st.cck_fa_ma = cck_fa
+        st.cck_fa_ma = cck_fa                  # first tick seeds the MA (even a 0 read)
     else:
         st.cck_fa_ma = (st.cck_fa_ma * 3 + cck_fa) >> 2
     if st.cck_fa_ma > 1000:
@@ -235,7 +226,7 @@ def _cck_pd(t, st: WatchdogState, cck_fa: int) -> None:
     elif st.cck_fa_ma < 500:
         lv = _CCK_PD_LV0
     else:
-        return                                 # hysteresis band: keep the current level
+        return                                 # hold band: keep the current level
     if lv != st.cck_pd_lv:
         t.write8(_REG_CCK_PD, _CCK_PD_TH[lv])
         st.cck_pd_lv = lv
