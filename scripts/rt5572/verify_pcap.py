@@ -38,7 +38,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 import rt2x00_pcap_replay as rp  # noqa: E402
 from wifit3.chips.rt5572.bring_up import bring_up  # noqa: E402
-from wifit3.chips.rt5572.transport import RT2800USBTransport  # noqa: E402
+from wifit3.chips.rt5572.transport import RT5572Transport  # noqa: E402
 
 CAP_DIR = REPO / "usb_dumps_new2" / "captures_rt2800usb_rt5572"
 MAC_CSR0 = 0x1000
@@ -60,7 +60,7 @@ class Walk:
 
     def run(self, fn):
         rd = rp.ReplayDevice(self.ops[self.i:])
-        result = fn(RT2800USBTransport(rd))
+        result = fn(RT5572Transport(rd))
         self.i += rd.i
         return result
 

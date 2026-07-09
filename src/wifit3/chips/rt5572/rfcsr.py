@@ -47,7 +47,7 @@ from .constants import (
     RT_RT5392,
     RT_RT5592,
 )
-from .transport import RT2800USBTransport
+from .transport import RT5572Transport
 
 # MCU command for freq offset update on USB.  [SRC] rt2800.h
 MCU_FREQ_OFFSET = 0x74
@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------
 # RF_CSR_CFG busy-wait — analogous to _wait_for_bbp.
 # ----------------------------------------------------------------------
-def _wait_for_rfcsr(t: RT2800USBTransport) -> int:
+def _wait_for_rfcsr(t: RT5572Transport) -> int:
     """Poll RF_CSR_CFG until BUSY clears.  Returns the final word, or
     0xFFFFFFFF on timeout (matches kernel's "give up" pattern)."""
     for _ in range(REGISTER_BUSY_COUNT):
@@ -73,7 +73,7 @@ def _wait_for_rfcsr(t: RT2800USBTransport) -> int:
     return 0xFFFFFFFF
 
 
-def rfcsr_write(t: RT2800USBTransport, word: int, value: int) -> None:
+def rfcsr_write(t: RT5572Transport, word: int, value: int) -> None:
     """Write a single RF register.  Mirrors rt2800_rfcsr_write (default
     branch — RT6352/MT7620 uses a separate bit layout we don't need)."""
     reg = _wait_for_rfcsr(t)
@@ -87,7 +87,7 @@ def rfcsr_write(t: RT2800USBTransport, word: int, value: int) -> None:
     t.write32(RF_CSR_CFG, reg)
 
 
-def rfcsr_read(t: RT2800USBTransport, word: int) -> int:
+def rfcsr_read(t: RT5572Transport, word: int) -> int:
     """Read a single RF register.  Returns 0xFF on timeout."""
     reg = _wait_for_rfcsr(t)
     if reg == 0xFFFFFFFF:
@@ -111,7 +111,7 @@ def rfcsr_read(t: RT2800USBTransport, word: int) -> int:
 # by every channel tune on RF53xx / RF55xx silicon.
 # [SRC] rt2800lib.c:2447-2480
 # ----------------------------------------------------------------------
-def freq_cal_mode1_usb(t: RT2800USBTransport, freq_offset: int = 0) -> None:
+def freq_cal_mode1_usb(t: RT5572Transport, freq_offset: int = 0) -> None:
     """USB version of freq_cal_mode1: clamp + MCU_FREQ_OFFSET.
 
     For non-USB the kernel walks the freq trim incrementally; on USB the
@@ -138,7 +138,7 @@ def freq_cal_mode1_usb(t: RT2800USBTransport, freq_offset: int = 0) -> None:
 # rt2800_rf_init_calibration — toggle RFCSR.BIT(7) with a 1ms pause.
 # [SRC] rt2800lib.c:7385-7396
 # ----------------------------------------------------------------------
-def rf_init_calibration(t: RT2800USBTransport, rf_reg: int) -> None:
+def rf_init_calibration(t: RT5572Transport, rf_reg: int) -> None:
     """Trigger a cal cycle on RFCSR[rf_reg] by setting + clearing bit 7."""
     rfcsr = rfcsr_read(t, rf_reg)
     rfcsr |= 0x80
@@ -152,7 +152,7 @@ def rf_init_calibration(t: RT2800USBTransport, rf_reg: int) -> None:
 # rt2800_led_open_drain_enable — OPT_14_CSR bit 0 = 1.
 # [SRC] rt2800lib.c:7311-7318
 # ----------------------------------------------------------------------
-def led_open_drain_enable(t: RT2800USBTransport) -> None:
+def led_open_drain_enable(t: RT5572Transport) -> None:
     reg = t.read32(OPT_14_CSR)
     reg |= OPT_14_CSR_BIT0
     t.write32(OPT_14_CSR, reg & 0xFFFFFFFF)
@@ -166,7 +166,7 @@ def led_open_drain_enable(t: RT2800USBTransport) -> None:
 # defer that (per [[feedback_defer_efuse_on_bring_up]]) so we just
 # do the RX_LO + bbp4 + RX_VCM tail.
 # ----------------------------------------------------------------------
-def normal_mode_setup_5xxx(t: RT2800USBTransport, txpath: int = 2, rxpath: int = 2) -> None:
+def normal_mode_setup_5xxx(t: RT5572Transport, txpath: int = 2, rxpath: int = 2) -> None:
     # BBP138 RX_ADC1 / TX_DAC1: on a single-chain config, power down the unused
     # ADC/DAC. For 2T2R (RT5592) neither branch fires, so this is an unchanged RMW —
     # but the kernel still reads+writes BBP138 here. [SRC] rt2800_normal_mode_setup_5xxx.
@@ -221,7 +221,7 @@ _RT5392_RFCSR_INIT_TABLE = (
 )
 
 
-def init_rfcsr_5392(t: RT2800USBTransport) -> None:
+def init_rfcsr_5392(t: RT5572Transport) -> None:
     """Port of rt2800_init_rfcsr_5392 (rt2800lib.c:8394-8460).
 
     Runs:
@@ -276,7 +276,7 @@ _RT3572_RFCSR_INIT_TABLE = (
 
 
 def _init_rx_filter(
-    t: RT2800USBTransport, *, bw40: bool, filter_target: int
+    t: RT5572Transport, *, bw40: bool, filter_target: int
 ) -> int:
     """Port of rt2800_init_rx_filter (rt2800lib.c:7320-7383).
 
@@ -363,7 +363,7 @@ def _init_rx_filter(
     return rfcsr24
 
 
-def _rx_filter_calibration_3572(t: RT2800USBTransport) -> RfFilterCal:
+def _rx_filter_calibration_3572(t: RT5572Transport) -> RfFilterCal:
     """Port of rt2800_rx_filter_calibration for RT3572 path.
 
     Two _init_rx_filter passes (bw20 / bw40), then capture BBP25/26
@@ -399,7 +399,7 @@ def _rx_filter_calibration_3572(t: RT2800USBTransport) -> RfFilterCal:
 
 
 def _normal_mode_setup_3xxx(
-    t: RT2800USBTransport, *, txmixer_gain_24g: int = 0
+    t: RT5572Transport, *, txmixer_gain_24g: int = 0
 ) -> None:
     """Port of rt2800_normal_mode_setup_3xxx for the RT3572 path.
 
@@ -428,7 +428,7 @@ def _normal_mode_setup_3xxx(
     rfcsr_write(t, 17, rfcsr & 0xFF)
 
 
-def _ldo_cfg0_dance(t: RT2800USBTransport) -> None:
+def _ldo_cfg0_dance(t: RT5572Transport) -> None:
     """LDO_CFG0 two-step write from rt2800_init_rfcsr_3572.
 
     Mirrors lines 7943-7951:
@@ -456,7 +456,7 @@ def _ldo_cfg0_dance(t: RT2800USBTransport) -> None:
 
 
 def init_rfcsr_3572(
-    t: RT2800USBTransport, *, txmixer_gain_24g: int = 0
+    t: RT5572Transport, *, txmixer_gain_24g: int = 0
 ) -> RfFilterCal:
     """Port of rt2800_init_rfcsr_3572 (rt2800lib.c:7900-7956).
 
@@ -519,7 +519,7 @@ _RT5592_RFCSR_INIT_TABLE = (
 
 
 def init_rfcsr_5592(
-    t: RT2800USBTransport,
+    t: RT5572Transport,
     *,
     freq_offset: int = 0,
     chip_rev: int = 0,
@@ -561,7 +561,7 @@ def init_rfcsr_5592(
 
 # Public dispatcher — picks the right RF init for the silicon.
 def init_rfcsr(
-    t: RT2800USBTransport,
+    t: RT5572Transport,
     silicon_id: int,
     *,
     txmixer_gain_24g: int = 0,

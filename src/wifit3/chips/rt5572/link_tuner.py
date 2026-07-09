@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from .bbp import bbp_write, bbp_write_with_rx_chain
 from .constants import RT_RT3572, RT_RT5592
-from .transport import RT2800USBTransport
+from .transport import RT5572Transport
 
 # Returned when no usable RSSI is available, telling the tuner to pick the
 # most-sensitive settings. [SRC] rt2x00link.c:23.
@@ -90,7 +90,7 @@ def compute_link_vgc(
 
 
 def set_vgc(
-    t: RT2800USBTransport, silicon_id: int, vgc: int, *, rx_chain_num: int, rssi: int
+    t: RT5572Transport, silicon_id: int, vgc: int, *, rx_chain_num: int, rssi: int
 ) -> None:
     """Write the VGC level to BBP66 per the silicon's path — rt2800_set_vgc.
 

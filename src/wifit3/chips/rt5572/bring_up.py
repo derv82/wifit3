@@ -41,7 +41,7 @@ from .mac import (
 from .mac import _wait_wpdma_ready as wait_wpdma_ready
 from .reg_init import init_registers
 from .rfcsr import init_rfcsr
-from .transport import RT2800USBTransport
+from .transport import RT5572Transport
 
 ProgressCb = Optional[Callable[[float, str], None]]
 
@@ -56,7 +56,7 @@ class BringUpState:
     xtal_40mhz: bool
 
 
-def bring_up(t: RT2800USBTransport, *, progress: ProgressCb = None) -> BringUpState:
+def bring_up(t: RT5572Transport, *, progress: ProgressCb = None) -> BringUpState:
     """Run the full cold register bring-up against ``t`` and return the decoded state.
 
     Pure register I/O — no USB claim, no threads, no async — so both the live

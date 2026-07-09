@@ -74,7 +74,7 @@ from .constants import (
     XIFS_TIME_CFG,
 )
 from .firmware import disable_wpdma
-from .transport import RT2800USBTransport
+from .transport import RT5572Transport
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +224,7 @@ _CH_TIME_CFG_TMR_EN = 0x00000001
 # ----------------------------------------------------------------------
 # Big MAC init
 # ----------------------------------------------------------------------
-def init_registers(t: RT2800USBTransport, silicon_id: int) -> None:
+def init_registers(t: RT5572Transport, silicon_id: int) -> None:
     """Port of rt2800_init_registers (rt2800lib.c:5836-6374).
 
     Verbatim register-write sequence — every kernel ``rt2x00_set_field32``
@@ -535,7 +535,7 @@ def init_registers(t: RT2800USBTransport, silicon_id: int) -> None:
 
 
 def _write_prot_cfg(
-    t: RT2800USBTransport,
+    t: RT5572Transport,
     addr: int,
     *,
     rate: int,

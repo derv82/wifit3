@@ -1,4 +1,4 @@
-from .driver import RT2800USBDriver
-from .transport import RT2800USBTransport
+from .driver import RT5572Driver
+from .transport import RT5572Transport
 
-__all__ = ['RT2800USBDriver', 'RT2800USBTransport']
+__all__ = ['RT5572Driver', 'RT5572Transport']

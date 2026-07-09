@@ -58,7 +58,7 @@ _DEFAULT_TIMEOUT_MS = 1000   # kernel rt2x00usb default is 1000 ms
 CSR_CACHE_SIZE = 64
 
 
-class RT2800USBTransport:
+class RT5572Transport:
     """Vendor control-transfer transport. Bulk endpoints are claimed by
     the rx/tx modules, not here."""
 

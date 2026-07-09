@@ -41,7 +41,7 @@ from .constants import (
     RT_RT5392,
     RT_RT5592,
 )
-from .transport import RT2800USBTransport
+from .transport import RT5572Transport
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------
 # BBP busy-wait helper (rt2800_regbusy_read on BBP_CSR_CFG.BUSY).
 # ----------------------------------------------------------------------
-def _wait_for_bbp(t: RT2800USBTransport) -> int:
+def _wait_for_bbp(t: RT5572Transport) -> int:
     """Poll BBP_CSR_CFG until BUSY clears.  Returns the final register
     value (caller may read VALUE field from it).  Returns 0xFFFFFFFF on
     timeout — matches the kernel "we couldn't get the BBP" pattern."""
@@ -62,7 +62,7 @@ def _wait_for_bbp(t: RT2800USBTransport) -> int:
     return 0xFFFFFFFF
 
 
-def bbp_write(t: RT2800USBTransport, word: int, value: int) -> None:
+def bbp_write(t: RT5572Transport, word: int, value: int) -> None:
     """Write a single BBP register.  Mirrors rt2800_bbp_write."""
     reg = _wait_for_bbp(t)
     if reg == 0xFFFFFFFF:
@@ -76,7 +76,7 @@ def bbp_write(t: RT2800USBTransport, word: int, value: int) -> None:
     t.write32(BBP_CSR_CFG, reg)
 
 
-def bbp_read(t: RT2800USBTransport, word: int) -> int:
+def bbp_read(t: RT5572Transport, word: int) -> int:
     """Read a single BBP register.  Mirrors rt2800_bbp_read.  Returns
     0xFF on timeout (kernel convention)."""
     reg = _wait_for_bbp(t)
@@ -98,7 +98,7 @@ def bbp_read(t: RT2800USBTransport, word: int) -> int:
 # ----------------------------------------------------------------------
 # Small BBP helpers — direct ports of rt2800lib.c functions.
 # ----------------------------------------------------------------------
-def bbp4_mac_if_ctrl(t: RT2800USBTransport) -> None:
+def bbp4_mac_if_ctrl(t: RT5572Transport) -> None:
     """R-M-W on BBP[4]: set BBP4_MAC_IF_CTRL bit (0x40).
     [SRC] rt2800lib.c:6378-6385"""
     value = bbp_read(t, 4)
@@ -106,7 +106,7 @@ def bbp4_mac_if_ctrl(t: RT2800USBTransport) -> None:
     bbp_write(t, 4, value & 0xFF)
 
 
-def init_freq_calibration(t: RT2800USBTransport) -> None:
+def init_freq_calibration(t: RT5572Transport) -> None:
     """[SRC] rt2800lib.c:6387-6391."""
     bbp_write(t, 142, 1)
     bbp_write(t, 143, 57)
@@ -123,7 +123,7 @@ def init_freq_calibration(t: RT2800USBTransport) -> None:
 # [SRC] rt2800lib.c:6434-6446
 # ----------------------------------------------------------------------
 def disable_unused_dac_adc(
-    t: RT2800USBTransport, *, txpath: int, rxpath: int
+    t: RT5572Transport, *, txpath: int, rxpath: int
 ) -> None:
     value = bbp_read(t, 138)
     if txpath == 1:
@@ -142,7 +142,7 @@ def disable_unused_dac_adc(
 # [SRC] rt2800lib.c:4011-4024
 # ----------------------------------------------------------------------
 def bbp_write_with_rx_chain(
-    t: RT2800USBTransport, word: int, value: int, *, rx_chain_num: int
+    t: RT5572Transport, word: int, value: int, *, rx_chain_num: int
 ) -> None:
     for chain in range(rx_chain_num):
         reg = bbp_read(t, 27)
@@ -163,7 +163,7 @@ MAC_STATUS_CFG = 0x1200
 MAC_STATUS_CFG_BBP_RF_BUSY = 0x00000003   # bits 0+1
 
 
-def wait_bbp_rf_ready(t: RT2800USBTransport) -> bool:
+def wait_bbp_rf_ready(t: RT5572Transport) -> bool:
     """Poll MAC_STATUS_CFG until BBP_RF_BUSY (bits 0-1) clears.
     Returns True on success."""
     for _ in range(REGISTER_BUSY_COUNT):
@@ -175,7 +175,7 @@ def wait_bbp_rf_ready(t: RT2800USBTransport) -> bool:
     return False
 
 
-def wait_bbp_ready(t: RT2800USBTransport) -> bool:
+def wait_bbp_ready(t: RT5572Transport) -> bool:
     """Reactivate BBP after FW load, then poll BBP[0] until it has a
     real value (not 0x00 or 0xff).  Mirrors the kernel comment
     "BBP was enabled after firmware was loaded, but we need to
@@ -193,7 +193,7 @@ def wait_bbp_ready(t: RT2800USBTransport) -> bool:
     return False
 
 
-def prepare_bbp(t: RT2800USBTransport) -> None:
+def prepare_bbp(t: RT5572Transport) -> None:
     """Bring the BBP up between init_registers and init_bbp.
 
     Order from rt2800_enable_radio (rt2800lib.c:10797-10827):
@@ -232,7 +232,7 @@ def prepare_bbp(t: RT2800USBTransport) -> None:
 #   * rev-dependent hw antenna diversity BBP150/151/154 setup
 #   * BBP152 RX_DEFAULT_ANT (uses EEPROM-derived ant index)
 # ----------------------------------------------------------------------
-def init_bbp_53xx(t: RT2800USBTransport, silicon_id: int) -> None:
+def init_bbp_53xx(t: RT5572Transport, silicon_id: int) -> None:
     """Port of rt2800_init_bbp_53xx, RT5390/RT5392 path.
 
     ~30 BBP register writes for the baseband bring-up. EEPROM-dependent
@@ -337,7 +337,7 @@ def init_bbp_53xx(t: RT2800USBTransport, silicon_id: int) -> None:
 # [SRC] rt2800lib.c:6764-6799
 # ----------------------------------------------------------------------
 def init_bbp_3572(
-    t: RT2800USBTransport, *, txpath: int = 2, rxpath: int = 2
+    t: RT5572Transport, *, txpath: int = 2, rxpath: int = 2
 ) -> None:
     bbp_write(t, 31, 0x08)
 
@@ -379,7 +379,7 @@ def init_bbp_3572(
 # RT3052/RT3593/RT5592 family init. Pulled out as a helper because all
 # three share it (kernel rt2800lib.c:6414-6432).
 # ----------------------------------------------------------------------
-def init_bbp_early(t: RT2800USBTransport) -> None:
+def init_bbp_early(t: RT5572Transport) -> None:
     bbp_write(t, 65, 0x2c)
     bbp_write(t, 66, 0x38)
     bbp_write(t, 68, 0x0b)
@@ -428,7 +428,7 @@ _RT5592_GLRT_TABLE = (
 )
 
 
-def bbp_glrt_write(t: RT2800USBTransport, offset: int, value: int) -> None:
+def bbp_glrt_write(t: RT5572Transport, offset: int, value: int) -> None:
     """GLRT-table indirect-write: BBP195=offset, BBP196=value.
 
     The GLRT registers (128..221) aren't directly addressable through
@@ -439,7 +439,7 @@ def bbp_glrt_write(t: RT2800USBTransport, offset: int, value: int) -> None:
     bbp_write(t, 196, value & 0xFF)
 
 
-def init_bbp_5592_glrt(t: RT2800USBTransport) -> None:
+def init_bbp_5592_glrt(t: RT5572Transport) -> None:
     """Replay the 70-byte GLRT init table starting at offset 128."""
     for i, value in enumerate(_RT5592_GLRT_TABLE):
         bbp_glrt_write(t, 128 + i, value)
@@ -463,7 +463,7 @@ def init_bbp_5592_glrt(t: RT2800USBTransport) -> None:
 #     add post-hw-test.
 # ----------------------------------------------------------------------
 def init_bbp_5592(
-    t: RT2800USBTransport,
+    t: RT5572Transport,
     *,
     rxpath: int = 2,
     ant_diversity: int = 0,
@@ -545,7 +545,7 @@ def init_bbp_5592(
 # Public BBP-init dispatcher. Picks the right per-silicon init.
 # ----------------------------------------------------------------------
 def init_bbp(
-    t: RT2800USBTransport,
+    t: RT5572Transport,
     silicon_id: int,
     *,
     txpath: int = 1,

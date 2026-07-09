@@ -1,45 +1,10 @@
-"""rt2800usb driver —Panda PAU09 (RT5572) / ALFA AWUS051NH v2 (RT3572).
+"""rt5572 driver — Panda PAU09 N600 (silicon RT5592 / RF5592), 2.4 + 5 GHz, 2T2R.
 
-  * RT3572 (silicon RT3572): 2.4 GHz, 2T2R — DONE (M-A1).
-                              5 GHz, 2T2R — DONE (M-A2, awaiting hw-verify).
-  * RT5572 (silicon RT5592): 2.4 + 5 GHz, 2T2R — TBD (M-B1 + M-B2).
-
-Family-shared infrastructure (transport, FW upload, MAC config, RX/TX
-descriptor builders, USB end-pad / QSEL=2 / EP=0x02, EFUSE bring-up,
-warm reattach) is silicon-agnostic. Per-silicon code lives in
-``init_bbp_*`` / ``init_rfcsr_*`` / ``_set_channel_*`` functions,
-dispatched at runtime by ``silicon_id``.
-
-Bring-up flow (mirrors ``rt2800_probe_hw`` from
-data_dumps/rt2x00-source-v6.18/rt2800lib.c, with the rt2x00 framework
-+ rt2x00usb layers flattened into wifit3's per-chip module shape):
-
-    connect()
-      ├─ claim USB interface
-      ├─ read_chip_id              MAC_CSR0 → silicon ID + revision      [M1]
-      ├─ read_perm_mac             MAC_ADDR_DW0/DW1                      [M1]
-      ├─ is_chip_warm              WLAN_EN + PBF_SYS_CTRL.READY          [M1]
-      ├─ cold_bring_up
-      │   ├─ rt2x00usb_load_firmware                                     [M2a]
-      │   ├─ rt2800_init_registers                                       [M2b]
-      │   ├─ rt2800_init_bbp                                             [M2b]
-      │   ├─ rt2800_init_rfcsr_5370                                      [M2c]
-      │   └─ rt2800_enable_radio
-      ├─ probe_endpoints + RX loop                                       [M3]
-      └─ set_channel(default)                                            [M4]
-
-Milestone status:
-  * M1:  chip-id probe + warm detection.                              [DONE]
-  * M2a:  rt2870.bin firmware upload + MCU boot.                       [DONE]
-  * M2b-1: rt2800usb_init_registers — USB-side bootstrap.            [DONE]
-  * M2b-2: rt2800_init_registers — big MAC config.                   [DONE]
-  * M2b-3: rt2800_init_bbp_53xx — baseband init.                     [DONE]
-  * M2c: rt2800_init_rfcsr_5392 — RF chain init.                     [DONE]
-  * M3:  RX desc decode + RX loop.                                   [DONE]
-  * M4: set_channel for 2.4 GHz (1..14).                             [DONE]
-  * M5 (current): inject_frame builds TXINFO + TXWI + bulk-OUT 0x06
-    (MGMT EP). 1 Mbps CCK + WCID broadcast + sequence-generated.
-  * M6: see top-level NEXT-STEPS.md.
+Standalone RF5592 port, split from the rt2800usb parent (see RT5572.md for why).
+The cold register bring-up is ``bring_up.bring_up(transport)`` — ONE function shared
+with the acceptance gate (``scripts/rt5572/verify_pcap.py``), so the gate exercises
+exactly what ``connect()`` runs on hardware. connect() = claim → bring_up() →
+write MAC + monitor filter → set_channel(1) → RX loop + link tuner.
 """
 from __future__ import annotations
 
@@ -57,7 +22,6 @@ from .constants import (
     RT_RT5592,
     TXWI_PHYMODE_CCK,
     TXWI_PHYMODE_OFDM,
-    USB_PID_RT3572,
     USB_PID_RT5572,
     USB_VID_RALINK,
 )
@@ -77,48 +41,31 @@ from .rx import (
     rxwi_size_for_silicon,
 )
 from ..rx_reader import RxReaderThread
-from .transport import RT2800USBTransport
+from .transport import RT5572Transport
 from .tx import inject_frame as _inject_frame, txwi_size_for_silicon
 
 logger = logging.getLogger(__name__)
 
 
-class RT2800USBDriver:
-    """Driver for the rt2800usb family (RT3572 / RT5572).
-
-    Per-variant differences (RX/TX desc size, RF init, 5 GHz support)
-    are dispatched at runtime via the ``chip_id`` carried in DeviceID
-    extras + the silicon ID read from MAC_CSR0 at connect() time.
-    """
+class RT5572Driver:
+    """Driver for the Panda PAU09 N600 (silicon RT5592 / RF5592), 2.4 + 5 GHz 2T2R."""
 
     SUPPORTED_IDS = [
-        DeviceID(USB_VID_RALINK, USB_PID_RT3572,
-                 "Ralink RT3572 (ALFA AWUS051NH v2)",
-                 extras={"chip_id": "rt3572"}),
         DeviceID(USB_VID_RALINK, USB_PID_RT5572,
                  "Ralink RT5572 (Panda PAU09 N600)",
                  extras={"chip_id": "rt5572"}),
     ]
-    #     0x3572 silicon (RT3572 / AWUS051NH v2) → 2.4 + 5 GHz non-DFS
-    #     0x5592 silicon (RT5572 / PAU09 N600)   → 2.4 + 5 GHz non-DFS
-    _CHANNELS_BY_CHIP: dict = {
-        "rt3572": list(range(1, 14)) + list(CHANNELS_5G_NON_DFS),
-        "rt5572": list(range(1, 14)) + list(CHANNELS_5G_NON_DFS),
-    }
-    # Class-level fallback = union of all variants. Used only if a hint is
-    # missing (e.g. test code instantiates without going through
-    # from_usb_device). Instance __init__ overlays the per-chip list.
     SUPPORTED_CHANNELS = list(range(1, 14)) + list(CHANNELS_5G_NON_DFS)
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     @classmethod
-    def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RT2800USBDriver":
+    def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RT5572Driver":
         chip_id_hint = id_entry.extras.get("chip_id", "")
         return cls(dev, chip_id_hint=chip_id_hint)
 
     def __init__(self, dev: usb.core.Device, *, chip_id_hint: str = ""):
         self.dev = dev
-        self.transport = RT2800USBTransport(dev)
+        self.transport = RT5572Transport(dev)
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._rx_reader: Optional[RxReaderThread] = None
@@ -148,14 +95,10 @@ class RT2800USBDriver:
         self.current_channel: int = 1
         self._rssi_cal = RssiCal()   # refreshed per channel once EEPROM is parsed
         self.chip_id: Optional[ChipId] = None
-        self.chip_id_hint = chip_id_hint   # from VID:PID; e.g. "rt5572"
-        # Narrow the channel capability to this specific chip if we know
-        # which one we're attached to. Falls through to the class-level
-        # union when the hint is empty (test paths, future variants).
-        per_chip = self._CHANNELS_BY_CHIP.get(chip_id_hint)
-        if per_chip is not None:
-            self.SUPPORTED_CHANNELS = per_chip
-        # RT5592-only: probed at connect() time from MAC_DEBUG_INDEX.XTAL.
+        self.chip_id_hint = chip_id_hint   # from VID:PID; "rt5572"
+        # Probed at connect() time from MAC_DEBUG_INDEX.XTAL; picks which of
+        # rf_vals_5592_xtal20 / xtal40 the channel tune consults (PAU09 N600's
+        # actual xtal isn't documented).
         # Picks which of rf_vals_5592_xtal20 / xtal40 the channel tune
         # consults (PAU09 N600's actual xtal isn't documented).
         self._xtal_40mhz: bool = False

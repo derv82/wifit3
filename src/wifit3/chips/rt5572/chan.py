@@ -119,7 +119,7 @@ from .eeprom import (
     txpower_to_dev,
 )
 from .rfcsr import RfFilterCal, freq_cal_mode1_usb, rfcsr_read, rfcsr_write
-from .transport import RT2800USBTransport
+from .transport import RT5572Transport
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +211,7 @@ CHANNELS_5G_ALL = CHANNELS_5G_NON_DFS + CHANNELS_5G_DFS
 # RF53xx silicon is 2.4 GHz only — caller must not pass channels > 14.
 # ----------------------------------------------------------------------
 def _set_channel_5392(
-    t: RT2800USBTransport,
+    t: RT5572Transport,
     channel: int,
     *,
     freq_offset: int = 0,
@@ -277,7 +277,7 @@ def _set_channel_5392(
 #       rt2800lib.c:11435-11494 (rf_vals_3x channels 1..173)
 # ----------------------------------------------------------------------
 def _set_channel_3572(
-    t: RT2800USBTransport,
+    t: RT5572Transport,
     channel: int,
     *,
     freq_offset: int = 0,
@@ -762,7 +762,7 @@ _RF_VALS_5592_XTAL40 = {
 }
 
 
-def is_xtal_40mhz(t: RT2800USBTransport) -> bool:
+def is_xtal_40mhz(t: RT5572Transport) -> bool:
     """Read MAC_DEBUG_INDEX.XTAL — 1 = 40 MHz crystal, 0 = 20 MHz.
 
     The PAU09 N600's actual xtal isn't documented; we read it at
@@ -779,7 +779,7 @@ def is_xtal_40mhz(t: RT2800USBTransport) -> bool:
 # _set_channel_5592_{2g,5g} after the channel-tune RF writes settle.
 # [SRC] rt2800lib.c:4026-4110
 # ----------------------------------------------------------------------
-def iq_calibrate(t: RT2800USBTransport, channel: int, iq: IqCalChannel | None) -> None:
+def iq_calibrate(t: RT5572Transport, channel: int, iq: IqCalChannel | None) -> None:
     """Apply per-channel IQ trim. If ``iq`` is None, falls back to the
     all-zero kernel default (matches kernel's `cal = 0` when channel is
     outside any known sub-band)."""
@@ -826,7 +826,7 @@ def iq_calibrate(t: RT2800USBTransport, channel: int, iq: IqCalChannel | None) -
 #     proves silent on hw, we pull it forward.
 # ----------------------------------------------------------------------
 def _set_channel_5592_2g(
-    t: RT2800USBTransport,
+    t: RT5572Transport,
     channel: int,
     *,
     n: int,
@@ -1071,7 +1071,7 @@ def _set_channel_5592_2g(
 # for 20/40-MHz secondary-channel pairing; we tune them the same way.
 # ----------------------------------------------------------------------
 def _set_channel_5592_5g(
-    t: RT2800USBTransport,
+    t: RT5572Transport,
     channel: int,
     *,
     n: int,
@@ -1391,7 +1391,7 @@ def _compensate_txpower(ev: EepromValues, is_2g: bool, is_rate_b: bool,
     return min(max(0, txpower + delta - reg_limit), 0xC)
 
 
-def config_ant(t: RT2800USBTransport, tx_chain_num: int, rx_chain_num: int) -> None:
+def config_ant(t: RT5572Transport, tx_chain_num: int, rx_chain_num: int) -> None:
     """rt2800_config_ant — program the TX/RX antenna-chain selects into
     BBP1.TX_ANTENNA + BBP3.RX_ANTENNA, writing BBP3 before BBP1. This is the
     RT5592 path (no RT3572 BT-coexist branch, no RT3593/RT3883 BBP86). Called
@@ -1411,7 +1411,7 @@ def config_ant(t: RT2800USBTransport, tx_chain_num: int, rx_chain_num: int) -> N
     bbp_write(t, 1, r1 & 0xFF)
 
 
-def config_txpower(t: RT2800USBTransport, ev: EepromValues, is_2g: bool) -> None:
+def config_txpower(t: RT5572Transport, ev: EepromValues, is_2g: bool) -> None:
     """Per-rate TX power → BBP1.TX_POWER_CTRL + TX_PWR_CFG_0..4, from the EEPROM
     TXPOWER_BYRATE table [SRC rt2800lib.c:5338-5519 rt2800_config_txpower_rt28xx].
     RF55xx (RT5592) path: the gain-calibration delta is RT3070/71/90/3572-only
@@ -1442,7 +1442,7 @@ def config_txpower(t: RT2800USBTransport, ev: EepromValues, is_2g: bool) -> None
 # Public dispatcher.
 # ----------------------------------------------------------------------
 def set_channel(
-    t: RT2800USBTransport,
+    t: RT5572Transport,
     silicon_id: int,
     channel: int,
     *,

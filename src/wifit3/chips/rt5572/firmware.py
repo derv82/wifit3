@@ -56,7 +56,7 @@ from .constants import (
     USB_MODE_FIRMWARE,
     USB_VENDOR_REQUEST_OUT,
 )
-from .transport import RT2800USBTransport
+from .transport import RT5572Transport
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ def check_firmware_crc(blob_chunk: bytes) -> bool:
 # ----------------------------------------------------------------------
 # WPDMA disable — mirrors rt2800_disable_wpdma (rt2800lib.c:589-601)
 # ----------------------------------------------------------------------
-def disable_wpdma(t: RT2800USBTransport) -> None:
+def disable_wpdma(t: RT5572Transport) -> None:
     from .constants import (
         WPDMA_GLO_CFG,
         WPDMA_GLO_CFG_ENABLE_RX_DMA,
@@ -126,7 +126,7 @@ def disable_wpdma(t: RT2800USBTransport) -> None:
 # ----------------------------------------------------------------------
 # wait_csr_ready — poll MAC_CSR0 until non-zero (rt2800lib.c:549-563)
 # ----------------------------------------------------------------------
-def wait_csr_ready(t: RT2800USBTransport) -> bool:
+def wait_csr_ready(t: RT5572Transport) -> bool:
     from .constants import MAC_CSR0
     for _ in range(REGISTER_BUSY_COUNT):
         reg = t.read32(MAC_CSR0)
@@ -140,7 +140,7 @@ def wait_csr_ready(t: RT2800USBTransport) -> bool:
 # MCU request — port of rt2800_mcu_request (rt2800lib.c:515-547) +
 # WAIT_FOR_MCU (rt2800lib.c:62-65) which polls H2M_MAILBOX_CSR_OWNER.
 # ----------------------------------------------------------------------
-def _wait_for_mcu(t: RT2800USBTransport) -> bool:
+def _wait_for_mcu(t: RT5572Transport) -> bool:
     """Poll H2M_MAILBOX_CSR until the OWNER byte (top 8 bits) is 0
     (i.e. the MCU has consumed the previous request).  Returns True on
     success, False if the MCU never released."""
@@ -154,7 +154,7 @@ def _wait_for_mcu(t: RT2800USBTransport) -> bool:
 
 
 def mcu_request(
-    t: RT2800USBTransport,
+    t: RT5572Transport,
     command: int,
     token: int = 0,
     arg0: int = 0,
@@ -178,7 +178,7 @@ def mcu_request(
 # ----------------------------------------------------------------------
 # Kick the chip into FW-execution mode (USB_MODE_FIRMWARE vendor xfer)
 # ----------------------------------------------------------------------
-def kick_firmware_mode(t: RT2800USBTransport) -> None:
+def kick_firmware_mode(t: RT5572Transport) -> None:
     """vendor_request(bRequest=USB_DEVICE_MODE, wIndex=0, wValue=USB_MODE_FIRMWARE).
 
     Kernel uses REGISTER_TIMEOUT_FIRMWARE_MS (1000 ms) here because the
@@ -198,7 +198,7 @@ def kick_firmware_mode(t: RT2800USBTransport) -> None:
 # Top-level loader
 # ----------------------------------------------------------------------
 def load_firmware(
-    t: RT2800USBTransport,
+    t: RT5572Transport,
     fw_bytes: bytes,
     *,
     silicon_id: int,

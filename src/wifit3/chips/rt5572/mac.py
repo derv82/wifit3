@@ -33,7 +33,7 @@ from .constants import (
     USB_MODE_RESET,
     USB_VENDOR_REQUEST_OUT,
 )
-from .transport import RT2800USBTransport
+from .transport import RT5572Transport
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class ChipId:
     is_supported: bool
 
 
-def read_chip_id(t: RT2800USBTransport) -> ChipId:
+def read_chip_id(t: RT5572Transport) -> ChipId:
     """Read MAC_CSR0 and decode the kernel-style chipset + revision.
 
     Mirrors ``rt2800_probe_rt`` (rt2800lib.c:11987-12031).
@@ -66,7 +66,7 @@ def read_chip_id(t: RT2800USBTransport) -> ChipId:
     )
 
 
-def read_perm_mac(t: RT2800USBTransport) -> bytes:
+def read_perm_mac(t: RT5572Transport) -> bytes:
     """Read 6 permanent MAC bytes from MAC_ADDR_DW0/DW1.
 
     Kernel pulls these from EEPROM at probe time and writes them into
@@ -85,7 +85,7 @@ def read_perm_mac(t: RT2800USBTransport) -> bytes:
     ))
 
 
-def probe_hw_gpio(t: RT2800USBTransport) -> None:
+def probe_hw_gpio(t: RT5572Transport) -> None:
     """Enable rfkill polling: set the rfkill-switch GPIO pin to input direction
     (GPIO_CTRL_DIR2=1). Kernel does this in rt2800_probe_hw, right after
     init_eeprom and before probe_hw_mode (the xtal read). [SRC] rt2800lib.c
@@ -95,7 +95,7 @@ def probe_hw_gpio(t: RT2800USBTransport) -> None:
     t.write32(GPIO_CTRL, reg & 0xFFFFFFFF)
 
 
-def set_radio_led(t: RT2800USBTransport, led_mcu_reg: int, enabled: bool = True) -> None:
+def set_radio_led(t: RT5572Transport, led_mcu_reg: int, enabled: bool = True) -> None:
     """Set the radio LED via MCU_LED — the USB path of rt2800_brightness_set for
     LED_TYPE_RADIO: mcu_request(MCU_LED, 0xff, ledmode, enabled ? 0x20 : 0), where
     ledmode is the EEPROM_FREQ LED_MODE field. ``led_mcu_reg`` is the raw EEPROM FREQ
@@ -107,7 +107,7 @@ def set_radio_led(t: RT2800USBTransport, led_mcu_reg: int, enabled: bool = True)
     mcu_request(t, MCU_LED, token=0xFF, arg0=ledmode, arg1=0x20 if enabled else 0)
 
 
-def is_chip_warm(t: RT2800USBTransport) -> bool:
+def is_chip_warm(t: RT5572Transport) -> bool:
     """True iff a prior session left the chip fully initialized.
 
     Heuristic verified [WIRE M1]: on a freshly-plugged dongle
@@ -136,7 +136,7 @@ def is_chip_warm(t: RT2800USBTransport) -> bool:
 PBF_SYS_CTRL_PRE_INIT = 1 << 13   # bit kernel clears in init_registers
 
 
-def usb_init_registers(t: RT2800USBTransport) -> None:
+def usb_init_registers(t: RT5572Transport) -> None:
     """USB-side bootstrap that runs after FW upload.
 
     Kernel sequence (rt2800usb.c:270-294):
@@ -184,7 +184,7 @@ def usb_init_registers(t: RT2800USBTransport) -> None:
     t.write32(MAC_SYS_CTRL, 0)
 
 
-def config_filter(t: RT2800USBTransport, filter_flags: int = 0,
+def config_filter(t: RT5572Transport, filter_flags: int = 0,
                   monitoring: bool = False) -> None:
     """rt2800_config_filter — set the RX_FILTER_CFG DROP_* fields from the mac80211
     filter flags. VER errors are always dropped and broadcast always accepted (no
@@ -219,7 +219,7 @@ def config_filter(t: RT2800USBTransport, filter_flags: int = 0,
     t.write32(C.RX_FILTER_CFG, reg)
 
 
-def toggle_rx(t: RT2800USBTransport, enable: bool) -> None:
+def toggle_rx(t: RT5572Transport, enable: bool) -> None:
     """rt2800usb_start_queue / stop_queue for QID_RX — a MAC_SYS_CTRL RMW of
     just ENABLE_RX. mac80211 brackets every operational reconfigure (filter,
     antenna, channel) with an RX off before and on after, so the changes latch
@@ -233,7 +233,7 @@ def toggle_rx(t: RT2800USBTransport, enable: bool) -> None:
     t.write32(C.MAC_SYS_CTRL, reg)
 
 
-def config_retry_limit(t: RT2800USBTransport, short_retry: int = 7,
+def config_retry_limit(t: RT5572Transport, short_retry: int = 7,
                        long_retry: int = 4) -> None:
     """rt2800_config_retry_limit — TX_RTY_CFG SHORT/LONG retry limits from the
     mac80211 conf. Defaults are mac80211's hw retry counts (short 7 / long 4),
@@ -245,7 +245,7 @@ def config_retry_limit(t: RT2800USBTransport, short_retry: int = 7,
     t.write32(C.TX_RTY_CFG, reg)
 
 
-def config_ps_awake(t: RT2800USBTransport) -> None:
+def config_ps_awake(t: RT5572Transport) -> None:
     """rt2800_config_ps for STATE_AWAKE — the only power state a monitor
     interface visits. Clears the AUTOWAKEUP_CFG auto-sleep fields, then
     set_device_state(AWAKE) = mcu_request(MCU_WAKEUP, 0xff, 0, 2) (the same
@@ -260,7 +260,7 @@ def config_ps_awake(t: RT2800USBTransport) -> None:
     mcu_request(t, C.MCU_WAKEUP, token=0xFF, arg0=0, arg1=2)
 
 
-def update_survey(t: RT2800USBTransport) -> None:
+def update_survey(t: RT5572Transport) -> None:
     """rt2800_update_survey — read the three channel-activity counters to bank
     the current channel's survey before a channel change (the counters are
     read-to-accumulate in the kernel; here the reads just replay). [SRC]
@@ -279,7 +279,7 @@ def update_survey(t: RT2800USBTransport) -> None:
 # [SRC] rt2800lib.c:10790-10860 (rt2800_enable_radio)
 #       rt2800usb.c:296-318 (rt2800usb_enable_radio)
 # ----------------------------------------------------------------------
-def write_mac_address(t: RT2800USBTransport, mac: bytes, u2me_mask: int = 0x00) -> None:
+def write_mac_address(t: RT5572Transport, mac: bytes, u2me_mask: int = 0x00) -> None:
     """Program the chip's self-MAC into MAC_ADDR_DW0/DW1.
 
     Without this set to a real value, RX may stay silent on some chip
@@ -307,7 +307,7 @@ def write_mac_address(t: RT2800USBTransport, mac: bytes, u2me_mask: int = 0x00) 
     t.write32(0x100C, dw1)   # MAC_ADDR_DW1
 
 
-def _wait_wpdma_ready(t: RT2800USBTransport) -> bool:
+def _wait_wpdma_ready(t: RT5572Transport) -> bool:
     """rt2800_wait_wpdma_ready (rt2800lib.c:566-587) — poll
     WPDMA_GLO_CFG until TX_DMA_BUSY and RX_DMA_BUSY are both clear."""
     from .constants import (
@@ -324,7 +324,7 @@ def _wait_wpdma_ready(t: RT2800USBTransport) -> bool:
     return False
 
 
-def usb_enable_radio_dma(t: RT2800USBTransport) -> None:
+def usb_enable_radio_dma(t: RT5572Transport) -> None:
     """rt2800usb_enable_radio: wait for WPDMA idle, then enable bulk RX/TX DMA via
     USB_DMA_CFG — RX bulk-agg limit ((rx_limit*DATA_FRAME_SIZE/1024)-3, masked to 8 bits)
     + agg timeout 128 + RX/TX bulk enable. [SRC] rt2800usb.c:296-318."""
@@ -346,7 +346,7 @@ def usb_enable_radio_dma(t: RT2800USBTransport) -> None:
     t.write32(USB_DMA_CFG, reg)
 
 
-def enable_radio_finish(t: RT2800USBTransport, ev) -> None:
+def enable_radio_finish(t: RT5572Transport, ev) -> None:
     """Tail of rt2800_enable_radio: MAC_SYS_CTRL TX-only → WPDMA TX/RX DMA →
     MAC_SYS_CTRL TX+RX (all three are RMW), then the EEPROM LED_AG/ACT/POLARITY MCU
     commands and a final radio-LED-on (rt2x00leds_led_radio). [SRC] rt2800lib.c
@@ -381,7 +381,7 @@ def enable_radio_finish(t: RT2800USBTransport, ev) -> None:
     set_radio_led(t, ev.word(EEPROM_OFFSET_FREQ))
 
 
-def enable_radio(t: RT2800USBTransport, silicon_id: int = 0, ev=None) -> None:
+def enable_radio(t: RT5572Transport, silicon_id: int = 0, ev=None) -> None:
     """Enable RX + TX on the radio.  Call AFTER all init_* steps.
 
     Port of rt2800usb_enable_radio (rt2800usb.c:296-318) +
