@@ -363,6 +363,8 @@ class RT2800USBDriver:
                         self.transport, self.chip_id.silicon_id,
                         freq_offset=self._eeprom.freq_offset if self._eeprom else 0,
                         chip_rev=chip_rev,
+                        txpath=self._eeprom.txpath if self._eeprom else 2,
+                        rxpath=self._eeprom.rxpath if self._eeprom else 2,
                     ),
                 )
             except (IOError, usb.core.USBError, NotImplementedError) as e:

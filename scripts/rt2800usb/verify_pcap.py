@@ -42,9 +42,11 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 import rt2x00_pcap_replay as rp  # noqa: E402
 from wifit3.chips.rt2800usb import chan as _chan  # noqa: E402
+from wifit3.chips.rt2800usb import bbp as _bbp  # noqa: E402
 from wifit3.chips.rt2800usb import firmware as _fw  # noqa: E402
 from wifit3.chips.rt2800usb import mac as _mac  # noqa: E402
 from wifit3.chips.rt2800usb import reg_init as _reg  # noqa: E402
+from wifit3.chips.rt2800usb import rfcsr as _rfcsr  # noqa: E402
 from wifit3.chips.rt2800usb.constants import (  # noqa: E402
     LDO_CFG0,
     MAC_CSR0,
@@ -102,14 +104,15 @@ def verify_cold_walk(pcap: Path, dev: int, silicon: int):
                    if o["dir"] == "IN" and o["addr"] == MAC_CSR0), 0)
     w = _Walk(allops[anchor:])
     fw = load_firmware_blob()
-    box: dict = {"ev": None}
+    box: dict = {"ev": None, "chip": None}
 
     def step(label, fn):
         n = w.run(fn)
         print(f"  OK    {label:44} +{n:4} ops  (cursor {anchor + w.i})")
 
     try:
-        step("read_chip_id (MAC_CSR0)", lambda t: _mac.read_chip_id(t))
+        step("read_chip_id (MAC_CSR0)",
+             lambda t: box.__setitem__("chip", _mac.read_chip_id(t)))
         step("read_eeprom_efuse (autorun + EFUSE loop)",
              lambda t: box.__setitem__("ev", parse_eeprom(read_eeprom_efuse(t))))
         ev = box["ev"]
@@ -125,6 +128,20 @@ def verify_cold_walk(pcap: Path, dev: int, silicon: int):
         step("wait_wpdma (rt2800_enable_radio)", lambda t: _mac._wait_wpdma_ready(t))
         step("init_registers (disable_wpdma+usb_reset+MAC block)",
              lambda t: _reg.init_registers(t, silicon))
+        chip = box["chip"]
+        from wifit3.chips.rt2800usb.constants import (
+            EEPROM_NIC_CONF1_ANT_DIVERSITY_MASK, EEPROM_NIC_CONF1_ANT_DIVERSITY_SHIFT,
+        )
+        ant_div = (ev.nic_conf1 & EEPROM_NIC_CONF1_ANT_DIVERSITY_MASK) \
+            >> EEPROM_NIC_CONF1_ANT_DIVERSITY_SHIFT
+        step("prepare_bbp (wait_bbp_rf + H2M + MCU_BOOT + wait_bbp)",
+             lambda t: _bbp.prepare_bbp(t))
+        step("init_bbp", lambda t: _bbp.init_bbp(
+            t, silicon, txpath=ev.txpath, rxpath=ev.rxpath,
+            ant_diversity=ant_div, chip_rev=chip.revision))
+        step("init_rfcsr", lambda t: _rfcsr.init_rfcsr(
+            t, silicon, freq_offset=ev.freq_offset, chip_rev=chip.revision,
+            txpath=ev.txpath, rxpath=ev.rxpath))
     except rp.Divergence as e:
         fr = w.ops[w.i] if w.i < len(w.ops) else None
         print(f"  STOP  (diverged)\n        {e}")

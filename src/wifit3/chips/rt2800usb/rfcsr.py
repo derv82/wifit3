@@ -166,8 +166,16 @@ def led_open_drain_enable(t: RT2800USBTransport) -> None:
 # defer that (per [[feedback_defer_efuse_on_bring_up]]) so we just
 # do the RX_LO + bbp4 + RX_VCM tail.
 # ----------------------------------------------------------------------
-def normal_mode_setup_5xxx(t: RT2800USBTransport) -> None:
-    # Deferred: BBP138 RX_ADC1 / TX_DAC1 setup (needs EEPROM_NIC_CONF0).
+def normal_mode_setup_5xxx(t: RT2800USBTransport, txpath: int = 2, rxpath: int = 2) -> None:
+    # BBP138 RX_ADC1 / TX_DAC1: on a single-chain config, power down the unused
+    # ADC/DAC. For 2T2R (RT5592) neither branch fires, so this is an unchanged RMW —
+    # but the kernel still reads+writes BBP138 here. [SRC] rt2800_normal_mode_setup_5xxx.
+    reg138 = bbp_read(t, 138)
+    if rxpath == 1:
+        reg138 &= ~0x02 & 0xFF      # BBP138_RX_ADC1 = 0
+    if txpath == 1:
+        reg138 |= 0x20              # BBP138_TX_DAC1 = 1
+    bbp_write(t, 138, reg138 & 0xFF)
 
     # Disable RX_LO1.
     rfcsr = rfcsr_read(t, 38)
@@ -515,6 +523,8 @@ def init_rfcsr_5592(
     *,
     freq_offset: int = 0,
     chip_rev: int = 0,
+    txpath: int = 2,
+    rxpath: int = 2,
 ) -> None:
     """Port of rt2800_init_rfcsr_5592 (rt2800lib.c:8462-8503).
 
@@ -541,7 +551,7 @@ def init_rfcsr_5592(
     if chip_rev >= REV_RT5592C:
         bbp_write(t, 103, 0xC0)
 
-    normal_mode_setup_5xxx(t)
+    normal_mode_setup_5xxx(t, txpath=txpath, rxpath=rxpath)
 
     if chip_rev < REV_RT5592C:
         rfcsr_write(t, 27, 0x03)
@@ -557,6 +567,8 @@ def init_rfcsr(
     txmixer_gain_24g: int = 0,
     freq_offset: int = 0,
     chip_rev: int = 0,
+    txpath: int = 2,
+    rxpath: int = 2,
 ):
     """Initialise the RF chain for the given silicon.
 
@@ -570,7 +582,8 @@ def init_rfcsr(
     if silicon_id == RT_RT3572:
         return init_rfcsr_3572(t, txmixer_gain_24g=txmixer_gain_24g)
     if silicon_id == RT_RT5592:
-        init_rfcsr_5592(t, freq_offset=freq_offset, chip_rev=chip_rev)
+        init_rfcsr_5592(t, freq_offset=freq_offset, chip_rev=chip_rev,
+                        txpath=txpath, rxpath=rxpath)
         return None
     if silicon_id == RT_RT5390:
         raise NotImplementedError(
