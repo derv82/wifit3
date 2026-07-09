@@ -121,6 +121,13 @@ def freq_cal_mode1_usb(t: RT2800USBTransport, freq_offset: int = 0) -> None:
 
     code = min(freq_offset & RFCSR17_CODE, FREQ_OFFSET_BOUND)
     rfcsr17 = rfcsr_read(t, 17)
+    # Kernel short-circuit: if RFCSR17.CODE is already at the target, return
+    # without issuing MCU_FREQ_OFFSET. Without it the port fires a redundant MCU
+    # request every tune once RFCSR17 is programmed — a divergence from the
+    # cold-boot capture, which reads RFCSR17 and moves straight on.
+    # [SRC] rt2800lib.c:2457-2461 rt2800_freq_cal_mode1.
+    if ((rfcsr17 & ~RFCSR17_CODE) | (code & RFCSR17_CODE)) == rfcsr17:
+        return
     mcu_request(
         t, MCU_FREQ_OFFSET,
         token=0xFF, arg0=code & 0xFF, arg1=rfcsr17 & 0xFF,

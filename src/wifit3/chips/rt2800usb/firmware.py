@@ -261,8 +261,15 @@ def load_firmware(
     if progress_cb:
         progress_cb(0.20, f"Uploading firmware ({FW_CHUNK_LEN} bytes)")
 
-    # Stream the FW chunk into chip RAM at FIRMWARE_IMAGE_BASE.
-    t.write_multi(FIRMWARE_IMAGE_BASE, chunk)
+    # rt2800usb_write_firmware opens with an autorun_detect: an AutoRun NIC boots
+    # FW from its own flash, so the host skips the RAM upload. Our dongles report
+    # not-autorun, so the upload proceeds — but the probe op is on the wire.
+    # [SRC] rt2800usb.c:210-244.
+    if t.autorun_detect():
+        logger.info("NIC in AutoRun mode — skipping FW RAM upload")
+    else:
+        # Stream the FW chunk into chip RAM at FIRMWARE_IMAGE_BASE.
+        t.write_multi(FIRMWARE_IMAGE_BASE, chunk)
 
     if progress_cb:
         progress_cb(0.60, "Triggering FW execution (USB_MODE_FIRMWARE)")

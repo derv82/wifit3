@@ -101,7 +101,21 @@ from .constants import (
     TX_PIN_CFG_RFTR_EN_BIT,
     TX_PIN_CFG_TRSW_EN_BIT,
 )
-from .eeprom import IqCalChannel, IqCalibration
+from .eeprom import (
+    EEPROM_EIRP_MAX_TX_POWER_2GHZ,
+    EEPROM_EIRP_MAX_TX_POWER_5GHZ,
+    EEPROM_OFFSET_EIRP_MAX_TX_POWER,
+    EEPROM_OFFSET_TXPOWER_A1,
+    EEPROM_OFFSET_TXPOWER_A2,
+    EEPROM_OFFSET_TXPOWER_BG1,
+    EEPROM_OFFSET_TXPOWER_BG2,
+    EEPROM_OFFSET_TXPOWER_BYRATE,
+    EEPROM_TXPOWER_BYRATE_SIZE,
+    EepromValues,
+    IqCalChannel,
+    IqCalibration,
+    txpower_to_dev,
+)
 from .rfcsr import RfFilterCal, freq_cal_mode1_usb, rfcsr_read, rfcsr_write
 from .transport import RT2800USBTransport
 
@@ -822,6 +836,7 @@ def _set_channel_5592_2g(
     tx_chain_num: int = 2,
     rx_chain_num: int = 2,
     has_cap_bt_coexist: bool = False,
+    has_cap_external_lna_bg: bool = False,
     default_power1: int = 0,
     default_power2: int = 0,
     iq_cal: IqCalChannel | None = None,
@@ -971,10 +986,16 @@ def _set_channel_5592_2g(
     bbp_write(t, 86, 0x00)
 
     # BBP82/75 band-specific overwrite. [SRC] 4308-4326 — RT5592 enters
-    # the inner branch (not RT5390/RT5392/RT6352). No has_cap_external_lna_bg
-    # default → BBP82=0x84, BBP75=0x50.
-    bbp_write(t, 82, 0x84)
-    bbp_write(t, 75, 0x50)
+    # the inner branch (not RT5390/RT5392/RT6352). external-LNA-BG splits it:
+    # a card with an external 2.4 GHz LNA writes BBP82=0x62 (twice) + BBP75=0x46;
+    # otherwise BBP82=0x84 (RT5592 is not RT3593) + BBP75=0x50.
+    if has_cap_external_lna_bg:
+        bbp_write(t, 82, 0x62)
+        bbp_write(t, 82, 0x62)
+        bbp_write(t, 75, 0x46)
+    else:
+        bbp_write(t, 82, 0x84)
+        bbp_write(t, 75, 0x50)
 
     # TX_BAND_CFG — HT20, no A bit, BG=1. [SRC] 4347-4351
     reg = t.read32(TX_BAND_CFG_REG)
@@ -1303,6 +1324,99 @@ def _set_channel_5592_5g(
 
 
 # ----------------------------------------------------------------------
+# Per-channel + per-rate TX power (EEPROM-derived).
+#
+# The kernel builds a channel-info array once (rt2800lib.c:11923-11957):
+# 2.4 GHz power1/2 = EEPROM TXPOWER_BG1/BG2[ch-1]; 5 GHz = TXPOWER_A1/A2
+# indexed by the channel's position AFTER the 14 2.4 GHz channels in the
+# per-silicon RF channel table. Each config_channel then clamps via
+# rt2800_txpower_to_dev before writing RFCSR49/50 (RF55xx) or RFCSR12/13
+# (RF3052). The 5 GHz index is per-silicon: RF5592 walks the (larger,
+# half-channel-dense) rf_vals_5592 table, RF3052 walks rf_vals_3x — so the
+# same 5 GHz channel maps to different A1/A2 bytes on the two silicons.
+# ----------------------------------------------------------------------
+def txpower_5g_index(silicon_id: int, channel: int, xtal_40mhz: bool = False) -> int:
+    """Index into the EEPROM TXPOWER_A1/A2 arrays for a 5 GHz ``channel``:
+    its 0-based position among the >14 channels of this silicon's RF table
+    (== kernel ``i - 14``). [SRC] rt2800lib.c:11952-11957."""
+    if silicon_id == RT_RT5592:
+        table = _RF_VALS_5592_XTAL40 if xtal_40mhz else _RF_VALS_5592_XTAL20
+    elif silicon_id == RT_RT3572:
+        table = _RF_VALS_3X
+    else:
+        raise NotImplementedError(f"5 GHz TX-power index for silicon 0x{silicon_id:04x}")
+    return [ch for ch in table if ch > 14].index(channel)
+
+
+def default_power(ev: EepromValues, silicon_id: int, channel: int,
+                  xtal_40mhz: bool = False) -> tuple[int, int]:
+    """Per-channel (chain-0, chain-1) TX power decoded from a BURNED EEPROM and
+    clamped to the device range. Callers gate on ``ev.looks_unburned`` first —
+    an unburned EEPROM has no calibration to decode. [SRC] rt2800lib.c:4170-4177
+    + 11923-11957."""
+    if channel <= 14:
+        p1 = txpower_to_dev(channel, ev.power_byte(EEPROM_OFFSET_TXPOWER_BG1, channel - 1))
+        p2 = txpower_to_dev(channel, ev.power_byte(EEPROM_OFFSET_TXPOWER_BG2, channel - 1))
+    else:
+        idx = txpower_5g_index(silicon_id, channel, xtal_40mhz)
+        p1 = txpower_to_dev(channel, ev.power_byte(EEPROM_OFFSET_TXPOWER_A1, idx))
+        p2 = txpower_to_dev(channel, ev.power_byte(EEPROM_OFFSET_TXPOWER_A2, idx))
+    return p1, p2
+
+
+_TX_PWR_CFG_REGS = (TX_PWR_CFG_0, TX_PWR_CFG_1, TX_PWR_CFG_2, TX_PWR_CFG_3, TX_PWR_CFG_4)
+
+
+def _compensate_txpower(ev: EepromValues, is_2g: bool, is_rate_b: bool,
+                        txpower: int, delta: int) -> int:
+    """Per-rate TX-power compensation [SRC rt2800lib.c:4748-4797
+    rt2800_compensate_txpower], RT5592 (neither RT3593 nor RT3883). With
+    CAPABILITY_POWER_LIMIT clear, reg_limit collapses to 0 and this is just
+    ``min(txpower + delta, 0xC)`` clamped at 0. power_level is the regulatory
+    max in monitor mode, so it is 0 here."""
+    if ev.power_limit:
+        eirp_word = ev.word(EEPROM_OFFSET_EIRP_MAX_TX_POWER)
+        eirp_mask = EEPROM_EIRP_MAX_TX_POWER_2GHZ if is_2g else EEPROM_EIRP_MAX_TX_POWER_5GHZ
+        eirp_shift = 0 if is_2g else 8
+        eirp_criterion = (eirp_word & eirp_mask) >> eirp_shift
+        # OFDM-6M criterion = RATE0 of the 2nd BYRATE word.
+        criterion = ev.word(EEPROM_OFFSET_TXPOWER_BYRATE + 1) & 0x000F
+        power_level = 0
+        eirp = eirp_criterion + (txpower - criterion) + (4 if is_rate_b else 0) + delta
+        reg_limit = (eirp - power_level) if eirp > power_level else 0
+    else:
+        reg_limit = 0
+    return min(max(0, txpower + delta - reg_limit), 0xC)
+
+
+def config_txpower(t: RT2800USBTransport, ev: EepromValues, is_2g: bool) -> None:
+    """Per-rate TX power → BBP1.TX_POWER_CTRL + TX_PWR_CFG_0..4, from the EEPROM
+    TXPOWER_BYRATE table [SRC rt2800lib.c:5338-5519 rt2800_config_txpower_rt28xx].
+    RF55xx (RT5592) path: the gain-calibration delta is RT3070/71/90/3572-only
+    (RT5592 falls in the default case → 0), HT20 bw-comp = 0, and monitor tunes
+    to the regulatory max so reg_delta = 0 → total delta = 0. Same kernel
+    function the (verified) chips/rt5370 port covers for 2.4 GHz."""
+    delta = 0
+    # delta > -6 → BBP1.TX_POWER_CTRL = 0 (no -6/-12 dBm backoff).
+    bbp1 = bbp_read(t, 1)
+    bbp1 = bbp1 & ~0x03            # BBP1_TX_POWER_CTRL bits[1:0] = 0
+    bbp_write(t, 1, bbp1 & 0xFF)
+
+    for reg_i, i in enumerate(range(0, EEPROM_TXPOWER_BYRATE_SIZE, 2)):
+        offset = _TX_PWR_CFG_REGS[reg_i]
+        reg = t.read32(offset)
+        lo = ev.word(EEPROM_OFFSET_TXPOWER_BYRATE + i)
+        hi = ev.word(EEPROM_OFFSET_TXPOWER_BYRATE + i + 1)
+        for k in range(4):
+            tp = _compensate_txpower(ev, is_2g, i == 0, (lo >> (4 * k)) & 0xF, delta)
+            reg = (reg & ~(0xF << (4 * k))) | (tp << (4 * k))
+        for k in range(4):
+            tp = _compensate_txpower(ev, is_2g, False, (hi >> (4 * k)) & 0xF, delta)
+            reg = (reg & ~(0xF << (4 * (4 + k)))) | (tp << (4 * (4 + k)))
+        t.write32(offset, reg & 0xFFFFFFFF)
+
+
+# ----------------------------------------------------------------------
 # Public dispatcher.
 # ----------------------------------------------------------------------
 def set_channel(
@@ -1319,10 +1433,12 @@ def set_channel(
     rx_chain_num: int = 1,
     has_cap_bt_coexist: bool = False,
     has_cap_external_lna_a: bool = False,
+    has_cap_external_lna_bg: bool = False,
     default_power1: int = 0,
     default_power2: int = 0,
     xtal_40mhz: bool = False,
     iq_cal: IqCalibration | None = None,
+    eeprom: EepromValues | None = None,
 ) -> None:
     """Tune to ``channel`` on the given silicon.
 
@@ -1379,6 +1495,7 @@ def set_channel(
                 tx_chain_num=tx_chain_num,
                 rx_chain_num=rx_chain_num,
                 has_cap_bt_coexist=has_cap_bt_coexist,
+                has_cap_external_lna_bg=has_cap_external_lna_bg,
                 default_power1=default_power1,
                 default_power2=default_power2,
                 iq_cal=iq_for_ch,
@@ -1396,6 +1513,13 @@ def set_channel(
                 default_power2=default_power2,
                 iq_cal=iq_for_ch,
             )
+        # Per-rate TX power (config_txpower) runs right after config_channel in
+        # the kernel's CHANGE_CHANNEL sequence. The RF55xx tune above only sets
+        # the analog PA gain (RFCSR49/50); without this the baseband per-rate
+        # power (TX_PWR_CFG_0..4) is left at its init value. [SRC] rt2800lib.c:
+        # 5695 rt2800_config → config_txpower after config_channel.
+        if eeprom is not None:
+            config_txpower(t, eeprom, is_2g=channel <= 14)
     else:
         raise NotImplementedError(
             f"set_channel for silicon 0x{silicon_id:04x} not yet validated"

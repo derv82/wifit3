@@ -1089,9 +1089,11 @@ def test_eeprom_exposes_lna_gain_a_and_capabilities():
     # LNA word at offset 0x22 × 2 = 0x44.
     buf[0x44] = 0x10    # lna_bg
     buf[0x45] = 0x20    # lna_a (high byte of LNA word)
-    # NIC_CONF1 at offset 0x1B × 2 = 0x36. Bits we care about:
-    #   bit 8 = external_lna_bg, bit 9 = external_lna_a, bit 13 = bt_coexist.
-    nic1 = (1 << 9) | (1 << 13)  # external_lna_a + bt_coexist
+    # NIC_CONF1 at offset 0x1B × 2 = 0x36. Kernel EEPROM_NIC_CONF1 field bits
+    # (rt2800.h:2706-2720): bit 2 = EXTERNAL_LNA_2G (bg), bit 3 = EXTERNAL_LNA_5G
+    # (a), bit 14 = BT_COEXIST. (The old port read bits 8/9/13 = BW40M_2G/5G /
+    # INTERNAL_TX_ALC — which mis-decoded RT5572's external LNA-BG as absent.)
+    nic1 = (1 << 3) | (1 << 14)  # external_lna_a + bt_coexist, NOT external_lna_bg
     buf[0x36] = nic1 & 0xFF
     buf[0x37] = (nic1 >> 8) & 0xFF
     # FREQ word — non-empty so default doesn't fire.
@@ -1104,6 +1106,14 @@ def test_eeprom_exposes_lna_gain_a_and_capabilities():
     assert ee.has_cap_bt_coexist is True
     assert ee.has_cap_external_lna_a is True
     assert ee.has_cap_external_lna_bg is False
+    # bit 2 (EXTERNAL_LNA_2G) set → external_lna_bg True: this is the RT5572's
+    # BBP82=0x62 (twice) / BBP75=0x46 tune path.
+    buf[0x36] = ((1 << 2) | (1 << 3)) & 0xFF
+    buf[0x37] = 0x00
+    ee2 = parse_eeprom(bytes(buf))
+    assert ee2.has_cap_external_lna_bg is True
+    assert ee2.has_cap_external_lna_a is True
+    assert ee2.has_cap_bt_coexist is False
 
 
 def test_set_channel_rejects_unsupported_silicon(monkeypatch):
@@ -1618,8 +1628,12 @@ def test_is_xtal_40mhz_reads_mac_debug_index_bit():
 # ----------------------------------------------------------------------
 # M-B2 RT5572 5 GHz tests — _set_channel_5592_5g + IQ cal.
 # ----------------------------------------------------------------------
-def test_iq_calibration_struct_unburned_ff_maps_to_zero():
-    """0xFF bytes in EFUSE → 0 in IqCalibration (kernel convention)."""
+def test_iq_calibration_struct_ff_only_globals_map_to_zero():
+    """kernel rt2800_iq_calibrate: the per-band TX0/TX1 gain/phase cal bytes are
+    written to BBP159 VERBATIM (rt2x00_eeprom_byte, no fallback), even 0xFF —
+    only the two global RF-IQ comp/imbalance bytes get the 0xFF → 0 fallback
+    (rt2800lib.c:4103, 4109). The old port applied 0xFF → 0 to all of them,
+    diverging from a burned-EEPROM 5 GHz tune."""
     from wifit3.chips.rt2800usb.eeprom import parse_eeprom
     buf = bytearray(0x200)
     # All-FF EFUSE bytes — typical for an unprogrammed dongle.
@@ -1631,8 +1645,11 @@ def test_iq_calibration_struct_unburned_ff_maps_to_zero():
     buf[0x3B] = 0x00
     ee = parse_eeprom(bytes(buf))
     assert ee.iq_cal is not None
-    assert ee.iq_cal.tx0_gain_2g == 0
-    assert ee.iq_cal.tx0_phase_2g == 0
+    # Per-band TX cal bytes: raw (0xFF preserved).
+    assert ee.iq_cal.tx0_gain_2g == 0xFF
+    assert ee.iq_cal.tx0_phase_2g == 0xFF
+    assert ee.iq_cal.tx1_gain_5g_hi == 0xFF
+    # Global comp/imbalance controls: 0xFF → 0.
     assert ee.iq_cal.rf_iq_comp == 0
     assert ee.iq_cal.rf_iq_imbal == 0
 
@@ -2009,3 +2026,63 @@ def test_is_chip_warm_distinguishes_cold_pre_init_from_warm():
     # Truly cold (no FW boot) → not warm
     t.write_bytes(PBF_SYS_CTRL, [0, 0, 0, 0])
     assert is_chip_warm(t) is False
+
+
+# ----------------------------------------------------------------------
+# EEPROM-derived TX power (M-B TX-power fix): the RF55xx analog PA
+# (RFCSR49/50) + per-rate TX_PWR_CFG are decoded from the burned EEPROM's
+# TXPOWER_BG/A + BYRATE tables and clamped — not hardcoded / left at 0.
+# ----------------------------------------------------------------------
+def _burned_eeprom(byte_overrides=None):
+    """Build an EepromValues from a synthetic BURNED EFUSE dump."""
+    from wifit3.chips.rt2800usb.eeprom import parse_eeprom
+    buf = bytearray(0x200)
+    buf[0x34] = 0x22          # NIC_CONF0 (word 0x1a): txpath=2 rxpath=2 -> burned
+    buf[0x3a] = 0x11          # FREQ (word 0x1d) non-FF so the unburned default is skipped
+    buf[0x4e] = 0x50          # EIRP_MAX 2GHz low byte >= 0x50 -> power_limit False
+    for off, val in (byte_overrides or {}).items():
+        buf[off] = val
+    return parse_eeprom(bytes(buf))
+
+
+def test_txpower_to_dev_clamps_per_band():
+    """rt2800_txpower_to_dev: 2.4 GHz clamps to [0, 31], 5 GHz to [-7, 15]."""
+    from wifit3.chips.rt2800usb.eeprom import txpower_to_dev
+    assert txpower_to_dev(1, 17) == 17
+    assert txpower_to_dev(1, 40) == 31       # over MAX_G -> 31
+    assert txpower_to_dev(1, -1) == 0        # unburned 0xFF(-1) -> 0, NOT a fallback value
+    assert txpower_to_dev(36, 23) == 15      # over MAX_A -> 15 (the RT5572 5 GHz case)
+    assert txpower_to_dev(36, 8) == 8
+    assert txpower_to_dev(36, -20) == -7     # under MIN_A -> -7
+
+
+def test_default_power_2g_from_bg_tables():
+    """2.4 GHz (power1, power2) = TXPOWER_BG1/BG2[ch-1], clamped."""
+    import wifit3.chips.rt2800usb.chan as chan
+    ev = _burned_eeprom({0x52: 17, 0x57: 13, 0x60: 15})  # BG1 ch1/ch6, BG2 ch1
+    assert chan.default_power(ev, RT_RT5592, 1) == (17, 15)
+    assert chan.default_power(ev, RT_RT5592, 6)[0] == 13
+
+
+def test_default_power_5g_index_is_per_silicon():
+    """5 GHz uses TXPOWER_A1/A2 indexed by the channel's position in THIS
+    silicon's RF table — RF5592 and RF3052 give different indices."""
+    import wifit3.chips.rt2800usb.chan as chan
+    from wifit3.chips.rt2800usb.constants import RT_RT3572
+    ev = _burned_eeprom({0x78: 23})        # A1[0] -> ch36 -> clamp 23 to 15
+    assert chan.default_power(ev, RT_RT5592, 36, xtal_40mhz=True)[0] == 15
+    assert chan.txpower_5g_index(RT_RT5592, 149) != chan.txpower_5g_index(RT_RT3572, 149)
+
+
+def test_config_txpower_byrate_min_0xc():
+    """config_txpower (RF55xx, delta=0): each TX_PWR_CFG rate nibble = min(BYRATE, 0xC)."""
+    import wifit3.chips.rt2800usb.chan as chan
+    from wifit3.chips.rt2800usb.bbp import bbp_read
+    from wifit3.chips.rt2800usb.constants import TX_PWR_CFG_0
+    # BYRATE word0 (0xde) = 0x6666 -> rate0..3 = 6; word1 (0xe0) = 0xaaaa -> 0xa.
+    ev = _burned_eeprom({0xde: 0x66, 0xdf: 0x66, 0xe0: 0xaa, 0xe1: 0xaa})
+    assert ev.power_limit is False
+    t = RfcsrFakeTransport()
+    chan.config_txpower(t, ev, is_2g=True)
+    assert t.read32(TX_PWR_CFG_0) == 0xAAAA6666   # low4=6, high4=0xa
+    assert (bbp_read(t, 1) & 0x03) == 0            # BBP1.TX_POWER_CTRL = 0 (no backoff)

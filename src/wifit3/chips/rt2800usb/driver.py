@@ -66,7 +66,10 @@ from .constants import (
 from wifit3.wlan.packet import WlanFrameParser
 
 from .bbp import init_bbp, prepare_bbp
-from .chan import CHANNELS_5G_NON_DFS, is_xtal_40mhz, set_channel as _set_channel
+from .chan import (
+    CHANNELS_5G_NON_DFS, default_power as _default_power, is_xtal_40mhz,
+    set_channel as _set_channel,
+)
 from .eeprom import parse_eeprom, read_eeprom_efuse
 from .firmware import load_firmware, load_firmware_blob
 from .link_tuner import LINK_TUNE_SECONDS, LinkTuner, compute_link_vgc, set_vgc
@@ -550,41 +553,55 @@ class RT2800USBDriver:
             "freq_offset": self._eeprom.freq_offset,
         }
         if self.chip_id is not None and self.chip_id.silicon_id == 0x3572:
-            # TX power: RT3572's _set_channel writes RFCSR12/13.TX_POWER on
-            # every tune. The kernel sources these per-channel from the EEPROM
-            # TXPOWER_BG/A tables, which we don't parse yet, so we pass a
-            # fallback. RFCSR12.TX_POWER is a 5-bit *backoff* code: a higher
-            # value attenuates more, so the correct fallback is the LOW code the
-            # in-tree driver programs, not a high one. [WIRE] aireplay.pcap on
-            # this card writes RFCSR12=0x6b (chain-0 TX_POWER=11) for 2.4 GHz;
-            # chain-1 (RFCSR13) TX_POWER=0 (single TX chain). 5G uses a 4-bit
-            # split encoding (see _tx_power_5g) and is left at 12 pending a 5G
-            # capture.
-            # TODO: parse EEPROM_TXPOWER_BG1/BG2/A1/A2 per-channel tables when
-            # EFUSE is burned.
+            # RT3572's _set_channel writes RFCSR12/13.TX_POWER per tune. On a
+            # BURNED EFUSE the kernel sources these per-channel from TXPOWER_BG/A;
+            # on an UNBURNED one (the user's AWUS051NH v2, NIC_CONF0=0x0000) there
+            # is nothing to decode, so keep the wire-derived defaults the in-tree
+            # driver programs: RFCSR12=0x6b (chain-0 TX_POWER=11) on 2.4 GHz,
+            # chain-1=0 (single TX chain); 5 GHz at 12 pending a burned-unit 5 GHz
+            # capture. [WIRE] captures_rt3572_tx_diff/aireplay.pcap.
             is_2g = channel <= 14
             # Chain count from the EEPROM default (the unburned fallback returns
             # txpath=1). The in-tree driver transmits on this card with a single
             # TX chain: [WIRE] aireplay.pcap configures RFCSR1/13 + TX_PIN_CFG for
             # one chain (RFCSR13 TX_POWER=0). Match it — 2T2R is not used here.
             txpath = self._eeprom.txpath
+            if self._eeprom.looks_unburned:
+                default_power1, default_power2 = (11, 0) if is_2g else (12, 12)
+            else:
+                default_power1, default_power2 = _default_power(
+                    self._eeprom, 0x3572, channel
+                )
             kwargs.update(
                 cal_result=self._rf_cal,
                 tx_chain_num=txpath,
                 rx_chain_num=self._eeprom.rxpath,
                 has_cap_bt_coexist=self._eeprom.has_cap_bt_coexist,
                 has_cap_external_lna_a=self._eeprom.has_cap_external_lna_a,
-                default_power1=11 if is_2g else 12,
-                default_power2=0 if is_2g else 12,
+                default_power1=default_power1,
+                default_power2=default_power2,
             )
         elif self.chip_id is not None and self.chip_id.silicon_id == RT_RT5592:
+            # RF55xx analog PA gain (RFCSR49/50) comes from the per-channel EEPROM
+            # TXPOWER_BG1/BG2 (2.4 GHz) / A1/A2 (5 GHz), clamped to the device
+            # range. The PAU09's EFUSE is always burned; if a future unburned
+            # RF55xx unit appears this decodes to ~0 (the pre-fix behaviour) and
+            # would need its own wire-derived fallback. Passing ``eeprom`` also
+            # arms the per-rate config_txpower (TX_PWR_CFG_0..4) in set_channel.
+            default_power1, default_power2 = _default_power(
+                self._eeprom, RT_RT5592, channel, self._xtal_40mhz
+            )
             kwargs.update(
                 tx_chain_num=self._eeprom.txpath,
                 rx_chain_num=self._eeprom.rxpath,
                 has_cap_bt_coexist=self._eeprom.has_cap_bt_coexist,
                 has_cap_external_lna_a=self._eeprom.has_cap_external_lna_a,
+                has_cap_external_lna_bg=self._eeprom.has_cap_external_lna_bg,
                 xtal_40mhz=self._xtal_40mhz,
                 iq_cal=self._eeprom.iq_cal,
+                default_power1=default_power1,
+                default_power2=default_power2,
+                eeprom=self._eeprom,
             )
         return kwargs
 

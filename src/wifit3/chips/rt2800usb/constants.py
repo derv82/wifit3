@@ -44,6 +44,7 @@ USB_MODE_RESET = 1
 USB_MODE_UNPLUG = 2
 USB_MODE_TEST = 4
 USB_MODE_FIRMWARE = 8   # used by rt2800usb_write_firmware to kick FW exec
+USB_MODE_AUTORUN = 17   # 0x11 — rt2800usb_autorun_detect probe (IN read of fw_mode)
 
 # Vendor-request timeouts. [SRC] rt2x00usb.h:30-31
 REGISTER_TIMEOUT_MS = 100
@@ -144,7 +145,7 @@ H2M_INT_SRC = 0x7024
 H2M_MAILBOX_STATUS = 0x701C
 H2M_BBP_AGENT = 0x7028
 FIRMWARE_IMAGE_BASE = 0x3000        # FW chunk destination in chip RAM
-AUTOWAKEUP_CFG = 0x1010
+AUTOWAKEUP_CFG = 0x1208             # [SRC] rt2800.h:1044 (0x1010 = MAC_BSSID_DW0, not this)
 WPDMA_GLO_CFG = 0x0208
 HOST_CMD_CSR = 0x0404
 MAC_SYS_CTRL = 0x1004
@@ -319,6 +320,7 @@ LDO_CFG0_LDO_CORE_VLEVEL = 0x1C000000   # bits[28:26]
 # GPIO_CTRL — used by config_channel_rf3052 (band-switch GPIO #7).
 # [SRC] rt2800.h:450-462
 GPIO_CTRL = 0x0228
+GPIO_CTRL_DIR2 = 0x00000400   # rfkill-switch pin direction, set in rt2800_probe_hw
 GPIO_CTRL_VAL7 = 0x00000080
 GPIO_CTRL_DIR7 = 0x00008000
 

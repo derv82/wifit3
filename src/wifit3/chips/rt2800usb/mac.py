@@ -13,6 +13,8 @@ import time
 from dataclasses import dataclass
 
 from .constants import (
+    GPIO_CTRL,
+    GPIO_CTRL_DIR2,
     MAC_ADDR_DW0,
     MAC_ADDR_DW1,
     MAC_CSR0,
@@ -81,6 +83,16 @@ def read_perm_mac(t: RT2800USBTransport) -> bytes:
         dw1 & 0xFF,
         (dw1 >> 8) & 0xFF,
     ))
+
+
+def probe_hw_gpio(t: RT2800USBTransport) -> None:
+    """Enable rfkill polling: set the rfkill-switch GPIO pin to input direction
+    (GPIO_CTRL_DIR2=1). Kernel does this in rt2800_probe_hw, right after
+    init_eeprom and before probe_hw_mode (the xtal read). [SRC] rt2800lib.c
+    rt2800_probe_hw."""
+    reg = t.read32(GPIO_CTRL)
+    reg |= GPIO_CTRL_DIR2
+    t.write32(GPIO_CTRL, reg & 0xFFFFFFFF)
 
 
 def is_chip_warm(t: RT2800USBTransport) -> bool:

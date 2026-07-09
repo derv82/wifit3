@@ -160,6 +160,18 @@ class RT2800USBTransport:
         return bytes(data)
 
     # ---- USB_DEVICE_MODE (FW boot signal + USB resets) ------------------
+    def autorun_detect(self) -> int:
+        """1 if the NIC is in AutoRun mode (skip FW upload), else 0. USB_DEVICE_MODE
+        IN read with the magic USB_MODE_AUTORUN (0x11) in wValue — a distinct request
+        from register_read, so it can't be expressed through read32.
+        [SRC] rt2800usb.c:176-203 rt2800usb_autorun_detect."""
+        from .constants import USB_MODE_AUTORUN
+        data = self.dev.ctrl_transfer(
+            USB_VENDOR_REQUEST_IN, USB_DEVICE_MODE, USB_MODE_AUTORUN, 0, 4, self.timeout_ms,
+        )
+        fw_mode = int.from_bytes(bytes(data), "little")
+        return 1 if (fw_mode & 0x00000003) == 2 else 0
+
     def set_device_mode(self, mode: int, value: int) -> None:
         """USB_DEVICE_MODE vendor request with no data phase.
 

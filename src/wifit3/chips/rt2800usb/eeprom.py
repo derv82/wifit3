@@ -76,6 +76,33 @@ EEPROM_OFFSET_RSSI_BG2 = 0x24    # OFFSET2 (low) + LNA_A1 (high)
 EEPROM_OFFSET_RSSI_A = 0x25      # A OFFSET0 (low) + OFFSET1 (high)
 EEPROM_OFFSET_RSSI_A2 = 0x26     # A2 OFFSET2 (low) + LNA_A2 (high)
 
+# Per-channel + per-rate TX-power word offsets (kernel rt2800_eeprom_map,
+# non-ext format — RT3572/RT5572 are not RT3593/RT3883). Each array is
+# indexed by BYTE (kernel `s8 *default_power1; default_power1[i]`), so the
+# byte offset into the EFUSE dump is (word << 1). [SRC] rt2800lib.c:308-347
+EEPROM_OFFSET_EIRP_MAX_TX_POWER = 0x27
+EEPROM_OFFSET_TXPOWER_DELTA = 0x28
+EEPROM_OFFSET_TXPOWER_BG1 = 0x29     # byte 0x52: 2.4 GHz chain-0 power, ch1..14
+EEPROM_OFFSET_TXPOWER_BG2 = 0x30     # byte 0x60: 2.4 GHz chain-1 power, ch1..14
+EEPROM_OFFSET_TXPOWER_A1 = 0x3C      # byte 0x78: 5 GHz chain-0 power, indexed i-14
+EEPROM_OFFSET_TXPOWER_A2 = 0x53      # byte 0xa6: 5 GHz chain-1 power, indexed i-14
+EEPROM_OFFSET_TXPOWER_BYRATE = 0x6F  # byte 0xde: per-rate power, 9 words
+EEPROM_TXPOWER_BYRATE_SIZE = 9       # [SRC] rt2800.h:2941
+
+# txpower_to_dev clamp bounds [SRC] rt2800.h:3171-3174 + POWER_BOUND clamp in
+# the RF55xx/RF53xx config (rt2800lib.c:3299) applied at write time in chan.py.
+MIN_G_TXPOWER = 0
+MAX_G_TXPOWER = 31
+MIN_A_TXPOWER = -7
+MAX_A_TXPOWER = 15
+
+# EIRP power-limit gate [SRC] rt2800lib.c:11318-11322 rt2800_init_eeprom:
+# CAPABILITY_POWER_LIMIT is set when EEPROM_EIRP_MAX_TX_POWER_2GHZ < 0x50.
+EEPROM_EIRP_MAX_TX_POWER_2GHZ = 0x00FF   # low byte of the EIRP_MAX word
+EEPROM_EIRP_MAX_TX_POWER_5GHZ = 0xFF00   # high byte
+EIRP_MAX_TX_POWER_LIMIT = 0x50
+EEPROM_TXPOWER_BYRATE_RATE = tuple(0x000F << (4 * n) for n in range(4))  # nibble RATE0..3
+
 # RT5592 IQ calibration byte offsets — kernel uses rt2x00_eeprom_byte()
 # directly, so these are BYTE offsets into the EFUSE dump, not word
 # offsets. [SRC] rt2800.h:2963-2988
@@ -145,7 +172,14 @@ def _efuse_read_chunk(t: RT2800USBTransport, byte_offset: int) -> bytes:
 
 
 def read_eeprom_efuse(t: RT2800USBTransport) -> bytes:
-    """Dump all 512 bytes of EFUSE-backed EEPROM."""
+    """Dump all 512 bytes of EFUSE-backed EEPROM.
+
+    Wire order mirrors rt2800usb_read_eeprom (rt2800usb.c:594-608): autorun_detect
+    (skips FW/EEPROM read in AutoRun mode) → efuse_detect → the 32-block loop. The
+    autorun probe is the first vendor op after the MAC_CSR0 chip-id read."""
+    if t.autorun_detect():
+        raise NotImplementedError(
+            "NIC reported AutoRun mode — no wire path validated on this card")
     if not efuse_detect(t):
         raise IOError("EFUSE_CTRL.PRESENT bit not set — no EFUSE on this chip")
     buf = bytearray(EEPROM_SIZE)
@@ -251,10 +285,17 @@ class IqCalChannel:
     rf_iq_imbal: int
 
 
+def _eeprom_byte_raw(buf: bytes, offset: int) -> int:
+    """rt2x00_eeprom_byte — the raw EEPROM byte, no fallback. The kernel writes
+    the TX0/TX1 IQ gain/phase cal bytes verbatim (BBP159), even 0xFF."""
+    return buf[offset] if offset < len(buf) else 0xFF
+
+
 def _eeprom_byte_or_zero(buf: bytes, offset: int) -> int:
-    """rt2x00_eeprom_byte with the kernel's 0xFF → 0 fallback baked in.
-    The IQ comp/imbal control bytes get the same treatment per
-    rt2800lib.c:4103, 4109 (`cal != 0xff ? cal : 0`)."""
+    """rt2x00_eeprom_byte with the kernel's 0xFF → 0 fallback. ONLY the two
+    global IQ comp/imbalance control bytes get this (rt2800lib.c:4103, 4109
+    `cal != 0xff ? cal : 0`); the per-band TX0/TX1 gain/phase bytes do NOT —
+    use _eeprom_byte_raw for those."""
     b = buf[offset] if offset < len(buf) else 0xFF
     return b if b != 0xFF else 0
 
@@ -279,20 +320,22 @@ class EepromValues:
     lna_gain_a1: int = 0      # 5 GHz ch 65–128 LNA (RSSI_BG2 high byte)
     lna_gain_a2: int = 0      # 5 GHz ch > 128 LNA (RSSI_A2 high byte)
     iq_cal: "IqCalibration | None" = None    # RT5592-only; None for other chips
+    raw: bytes = b""          # full 512-byte EFUSE dump, for TX-power byte/word access
 
-    # NIC_CONF1 capability bits — kernel `rt2x00_has_cap_*`.
-    # [SRC] rt2800.h:1815-1828 (EEPROM_NIC_CONF1 layout)
+    # NIC_CONF1 capability bits — kernel `rt2x00_has_cap_*`, set from the
+    # EEPROM_NIC_CONF1 fields in rt2800_init_eeprom (rt2800lib.c:11280-11296).
+    # [SRC] rt2800.h:2706-2720 EEPROM_NIC_CONF1_* field definitions.
     @property
     def has_cap_bt_coexist(self) -> bool:
-        return bool(self.nic_conf1 & 0x2000)         # bit 13
+        return bool(self.nic_conf1 & 0x4000)         # BT_COEXIST, bit 14
 
     @property
     def has_cap_external_lna_bg(self) -> bool:
-        return bool(self.nic_conf1 & 0x0100)         # bit 8
+        return bool(self.nic_conf1 & 0x0004)         # EXTERNAL_LNA_2G, bit 2
 
     @property
     def has_cap_external_lna_a(self) -> bool:
-        return bool(self.nic_conf1 & 0x0200)         # bit 9
+        return bool(self.nic_conf1 & 0x0008)         # EXTERNAL_LNA_5G, bit 3
 
     @property
     def rxpath(self) -> int:
@@ -337,6 +380,35 @@ class EepromValues:
         raw_txpath = (self.nic_conf0 & 0x00F0) >> 4
         return raw_rxpath < 1 or raw_rxpath > 3 or raw_txpath < 1 or raw_txpath > 3
 
+    @property
+    def looks_unburned(self) -> bool:
+        """Public gate for the TX-power fallback: an unburned EFUSE has no
+        per-channel calibration, so the driver keeps its wire-derived
+        hardcoded TX power (see driver._channel_kwargs) instead of decoding
+        garbage bytes. Same signal as the txpath/rxpath unburned handling —
+        the user's AWUS051NH v2 (RT3572) reads NIC_CONF0=0x0000."""
+        return self._nic_conf0_looks_unburned()
+
+    def word(self, word_index: int) -> int:
+        """16-bit LE word at ``word_index`` of the raw EFUSE dump."""
+        off = word_index * 2
+        return self.raw[off] | (self.raw[off + 1] << 8)
+
+    def power_byte(self, word_index: int, i: int) -> int:
+        """Signed per-channel TX-power byte ``i`` of the s8 array based at
+        ``word_index`` [SRC rt2800lib.c:11923-11957 ``default_power1[i]``].
+        Stored as s8 in the EEPROM."""
+        b = self.raw[word_index * 2 + i]
+        return b - 0x100 if b >= 0x80 else b
+
+    @property
+    def power_limit(self) -> bool:
+        """CAPABILITY_POWER_LIMIT — set when the burned EIRP max is below the
+        regulatory limit, which switches on the per-rate EIRP compensation.
+        [SRC] rt2800lib.c:11318-11322 rt2800_init_eeprom."""
+        eirp = self.word(EEPROM_OFFSET_EIRP_MAX_TX_POWER) & EEPROM_EIRP_MAX_TX_POWER_2GHZ
+        return eirp < EIRP_MAX_TX_POWER_LIMIT
+
 
 def _word(eeprom: bytes, word_offset: int) -> int:
     """Read a 16-bit LE word at the given word offset (× 2 = byte offset)."""
@@ -352,6 +424,18 @@ def _sanitize_rssi_offset(raw: int) -> int:
 def _sanitize_lna(raw: int, default: int) -> int:
     """kernel rt2800_validate_eeprom: LNA_A1/A2 of 0x00 or 0xff → LNA_A0."""
     return default if raw in (0x00, 0xFF) else raw
+
+
+def txpower_to_dev(channel: int, txpower: int) -> int:
+    """Clamp a per-channel EEPROM TX-power byte to the chip's device range
+    [SRC rt2800lib.c:4112-4129 rt2800_txpower_to_dev]. RT3572/RT5572 are not
+    RT3593/RT3883, so the EEPROM_TXPOWER_ALC field + the _3593 bounds don't
+    apply. An unburned byte (0xFF→-1, 0x00→0) clamps into range, NOT to a
+    hardcoded value — the hardcoded fallback is a driver-level unburned choice
+    (see driver._channel_kwargs), applied before this."""
+    if channel <= 14:
+        return max(MIN_G_TXPOWER, min(txpower, MAX_G_TXPOWER))
+    return max(MIN_A_TXPOWER, min(txpower, MAX_A_TXPOWER))
 
 
 # Default crystal-compensation value to use when EFUSE freq_offset is
@@ -419,22 +503,22 @@ def parse_eeprom(eeprom: bytes) -> EepromValues:
     # RT5592 IQ cal bytes. Always parsed (only RT5572 uses them; other
     # chips just get an unused IqCalibration struct full of zeros).
     iq_cal = IqCalibration(
-        tx0_gain_2g=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX0_2G),
-        tx0_phase_2g=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX0_2G),
-        tx1_gain_2g=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX1_2G),
-        tx1_phase_2g=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX1_2G),
-        tx0_gain_5g_lo=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX0_CH36_TO_CH64_5G),
-        tx0_phase_5g_lo=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX0_CH36_TO_CH64_5G),
-        tx1_gain_5g_lo=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX1_CH36_TO_CH64_5G),
-        tx1_phase_5g_lo=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX1_CH36_TO_CH64_5G),
-        tx0_gain_5g_mid=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX0_CH100_TO_CH138_5G),
-        tx0_phase_5g_mid=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX0_CH100_TO_CH138_5G),
-        tx1_gain_5g_mid=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX1_CH100_TO_CH138_5G),
-        tx1_phase_5g_mid=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX1_CH100_TO_CH138_5G),
-        tx0_gain_5g_hi=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX0_CH140_TO_CH165_5G),
-        tx0_phase_5g_hi=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX0_CH140_TO_CH165_5G),
-        tx1_gain_5g_hi=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX1_CH140_TO_CH165_5G),
-        tx1_phase_5g_hi=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX1_CH140_TO_CH165_5G),
+        tx0_gain_2g=_eeprom_byte_raw(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX0_2G),
+        tx0_phase_2g=_eeprom_byte_raw(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX0_2G),
+        tx1_gain_2g=_eeprom_byte_raw(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX1_2G),
+        tx1_phase_2g=_eeprom_byte_raw(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX1_2G),
+        tx0_gain_5g_lo=_eeprom_byte_raw(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX0_CH36_TO_CH64_5G),
+        tx0_phase_5g_lo=_eeprom_byte_raw(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX0_CH36_TO_CH64_5G),
+        tx1_gain_5g_lo=_eeprom_byte_raw(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX1_CH36_TO_CH64_5G),
+        tx1_phase_5g_lo=_eeprom_byte_raw(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX1_CH36_TO_CH64_5G),
+        tx0_gain_5g_mid=_eeprom_byte_raw(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX0_CH100_TO_CH138_5G),
+        tx0_phase_5g_mid=_eeprom_byte_raw(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX0_CH100_TO_CH138_5G),
+        tx1_gain_5g_mid=_eeprom_byte_raw(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX1_CH100_TO_CH138_5G),
+        tx1_phase_5g_mid=_eeprom_byte_raw(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX1_CH100_TO_CH138_5G),
+        tx0_gain_5g_hi=_eeprom_byte_raw(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX0_CH140_TO_CH165_5G),
+        tx0_phase_5g_hi=_eeprom_byte_raw(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX0_CH140_TO_CH165_5G),
+        tx1_gain_5g_hi=_eeprom_byte_raw(eeprom, EEPROM_BYTE_IQ_GAIN_CAL_TX1_CH140_TO_CH165_5G),
+        tx1_phase_5g_hi=_eeprom_byte_raw(eeprom, EEPROM_BYTE_IQ_PHASE_CAL_TX1_CH140_TO_CH165_5G),
         rf_iq_comp=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_RF_IQ_COMPENSATION_CONTROL),
         rf_iq_imbal=_eeprom_byte_or_zero(eeprom, EEPROM_BYTE_RF_IQ_IMBALANCE_COMPENSATION),
     )
@@ -455,4 +539,5 @@ def parse_eeprom(eeprom: bytes) -> EepromValues:
         rssi_a_offset1=_sanitize_rssi_offset((rssi_a >> 8) & 0xFF),
         rssi_a_offset2=_sanitize_rssi_offset(rssi_a2 & 0xFF),
         iq_cal=iq_cal,
+        raw=bytes(eeprom),
     )
