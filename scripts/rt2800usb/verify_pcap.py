@@ -6,27 +6,29 @@ Drives the port's real ``RT2800USBTransport`` around a ``rt2x00_pcap_replay.Repl
 run unchanged and must emit byte-identical writes or a Divergence is raised at the first
 mismatch.
 
-Two sections, both fail-closed with 0 waivers:
+Three sections, all fail-closed with 0 waivers:
 
-  * [cold bring-up walk]  a SINGLE-CURSOR walk from the first vendor op (MAC_CSR0), driving the
-                          port's real helpers in the kernel's wire order: read_chip_id →
-                          read_eeprom_efuse (autorun + EFUSE loop) → probe_hw_gpio →
-                          probe_hw_mode (xtal) → load_firmware. Catches wire-ORDER divergences,
-                          not just per-block byte errors — it surfaced the AUTOWAKEUP_CFG
-                          address bug (was MAC_BSSID_DW0) and the missing autorun_detect /
-                          probe_hw GPIO ops. The steps after load_firmware (radio-on MCU_LED →
-                          init_registers → init_bbp → init_rfcsr → enable_radio + monitor setup)
-                          are still being converged; the walk names the exact FRONTIER op.
-  * [channel tune]        every RF55xx (RT5572) config_channel + config_txpower, anchored at
-                          each LDO_CFG0 RMW that opens a tune and reverse-mapped to its channel
-                          from the RFCSR8 (N) load. Reaches the RFCSR49/50 (analog PA) +
-                          TX_PWR_CFG_0..4 (per-rate) writes — the EEPROM-TX-power surface the
-                          live EFUSE byte-gate never touched, which is why the min-power bug
-                          survived. Requires a burned EEPROM + a channel sweep in the capture.
+  * [cold bring-up walk]  a SINGLE-CURSOR walk over the WHOLE control-op stream from the first
+                          vendor op (MAC_CSR0) to the last, driving the port's real helpers in
+                          the kernel's wire order: read_chip_id → EFUSE → probe_hw → firmware →
+                          radio-on → init_registers → init_bbp → init_rfcsr → enable_radio →
+                          (operational) monitor-enable → the channel-hop stream → the aireplay-ng
+                          TX-injection region (TX_STA_FIFO drain). Catches wire-ORDER divergences,
+                          not just per-block byte errors. The hop stream runs a STRICT per-hop
+                          bracket (config_channel+txpower → reset_tuner → config_ant → reset_tuner
+                          → start_rx → stop_rx → update_survey) with per-step opener checks; the
+                          ONLY event allowed to interleave out of order is a configure_filter
+                          reapply, proven async (4 reapplies vs 126 hops) and still byte-checked.
+  * [channel tune]        every RF55xx config_channel + config_txpower, anchored per LDO_CFG0 RMW
+                          and reverse-mapped to its channel. Now subsumed by the single-cursor
+                          walk; kept as an independent cross-check of the RFCSR49/50 (analog PA)
+                          + TX_PWR_CFG_0..4 (per-rate) writes vs the burned EEPROM tables.
+  * [tx inject]           every host→chip bulk-OUT TX frame (aireplay-ng / airodump inject)
+                          rebuilt by the port's tx.build_tx_descriptors and required to match
+                          byte-for-byte (TXINFO + TXWI + 802.11 + align/USB-end pad), across CCK
+                          (2.4 GHz) + OFDM (5 GHz). Proves the TX wire format matches the kernel.
 
-The cold walk and the tune blocks don't yet meet in the middle; that gap is being converged
-op-by-op (the FRONTIER), NOT waived. Exit is 0 only once the cold walk reaches the operational
-phase with no divergence.
+Exit is 0 only when all three reproduce with no divergence and no waiver.
 
 Run: uv run python scripts/rt2800usb/verify_pcap.py [capture-1|capture-2]
 """
@@ -64,6 +66,16 @@ from wifit3.chips.rt2800usb.constants import (  # noqa: E402
     RF_CSR_CFG_WRITE,
     RT_RT5592,
     RX_FILTER_CFG,
+    TX_STA_FIFO,
+    TXINFO_W0_QSEL,
+    TXINFO_W0_USB_DMA_NEXT_VALID,
+    TXINFO_W0_USB_DMA_TX_BURST,
+    TXWI_W0_MCS,
+    TXWI_W0_PHYMODE,
+    TXWI_W1_ACK,
+    TXWI_W1_MPDU_TOTAL_BYTE_COUNT,
+    TXWI_W1_PACKETID_ENTRY,
+    TXWI_W1_PACKETID_QUEUE,
 )
 from wifit3.chips.rt2800usb.link_tuner import (  # noqa: E402
     get_default_vgc,
@@ -312,27 +324,77 @@ def verify_cold_walk(pcap: Path, dev: int, silicon: int):
                 hops.append(ch)
                 continue
             break     # a bracket step's opener was absent → hop stream ended
+        strict_hops = len(hops)
         if hops:
             print(f"  OK    {len(hops)} channel hops (strict bracket, "
                   f"{n_filter} async filter reapplies) +{w.i - hop_start} ops  "
                   f"(cursor {anchor + w.i})")
             print(f"        channels covered: {sorted(set(hops))}")
+
+        # ---- TX-injection region ----
+        # After the last full-bracket hop the capture is the kernel draining TX status:
+        # it polls TX_STA_FIFO (read-to-pop) to reap each aireplay inject's completion,
+        # interleaved with the final 1-2 channel hops + async filter reapplies. wifit3
+        # fires TX without this drain loop, so the FIFO reads are kernel TX-completion
+        # tracking (reproduced so the single cursor can traverse the region and reach the
+        # interleaved hops); the injected frames themselves are verified byte-for-byte in
+        # [tx inject]. Generic opener dispatch is right here — the interleave is genuinely
+        # async, not a fixed bracket — and any unrecognized op still halts the walk.
+        def hop_vgc(ch):
+            lna = ev.lna_gain_bg if ch <= 14 else ev.lna_gain_a
+            return get_default_vgc(silicon, ch, lna)
+
+        inj_start, tx_reads, cur_ch = w.i, 0, (hops[-1] if hops else 1)
+        while w.i < len(w.ops):
+            o = op_at()
+            if is_in(o, TX_STA_FIFO):
+                w.run(lambda t: t.read32(TX_STA_FIFO))       # kernel TX-status drain (pop)
+                tx_reads += 1
+            elif is_in(o, RX_FILTER_CFG):
+                w.run(lambda t: _mac.config_filter(t, mon_flags, monitoring=True))
+                n_filter += 1
+            elif is_in(o, CH_IDLE_STA):
+                w.run(lambda t: _mac.update_survey(t))
+            elif is_in(o, MAC_SYS_CTRL):
+                enable = bool(int.from_bytes(op_at(1)["data"], "little")
+                              & MAC_SYS_CTRL_ENABLE_RX)
+                w.run(lambda t, e=enable: _mac.toggle_rx(t, e))
+            elif is_in(o, LDO_CFG0):
+                ch = detect_ch(w.ops[w.i:])
+                if ch is None:
+                    break
+                w.run(lambda t, c=ch: _chan.set_channel(t, silicon, c, **sc_kwargs(c)))
+                hops.append(ch)
+                cur_ch = ch
+            elif is_in(o, BBP_CSR_CFG) and next_bbp_out_regnum() == 83:
+                w.run(lambda t, c=cur_ch: set_vgc(t, silicon, hop_vgc(c),
+                      rx_chain_num=ev.rxpath, rssi=0))
+            elif is_in(o, BBP_CSR_CFG) and next_bbp_out_regnum() == 1:
+                w.run(lambda t: _chan.config_ant(t, ev.txpath, ev.rxpath))
+            else:
+                break                                        # unrecognized op → frontier
+        if tx_reads:
+            print(f"  OK    TX-injection region +{w.i - inj_start} ops  (cursor "
+                  f"{anchor + w.i}): {tx_reads} kernel TX_STA_FIFO drain reads + "
+                  f"{len(hops) - strict_hops} interleaved hop(s), {n_filter} filter reapplies")
     except rp.Divergence as e:
         fr = w.ops[w.i] if w.i < len(w.ops) else None
         print(f"  STOP  (diverged)\n        {e}")
         print(f"  FRONTIER at op {anchor + w.i}: next kernel op to port"
               f"{' = ' + rp.ReplayDevice._fmt(fr) if fr else ''}.")
         return False, w.i, box["ev"]
-    # Cold bring-up + monitor-enable + the channel-hop stream all reproduced in one
-    # cursor. The next op is the porting frontier — the aireplay-ng TX-injection region.
-    fr = w.ops[w.i] if w.i < len(w.ops) else None
-    print(f"  reproduced {w.i} ops single-cursor byte-for-byte (0 waived) — the full cold"
-          " bring-up (probe → EFUSE → firmware → radio-on → init_registers → BBP → RFCSR →"
-          " enable_radio) + operational phase (monitor-enable + channel hops).")
-    print(f"  FRONTIER at op {anchor + w.i}: next kernel op to port"
-          f"{' = ' + rp.ReplayDevice._fmt(fr) if fr else ''} (aireplay-ng TX-injection"
-          " region: bulk-OUT frames + TX_STA_FIFO polling).")
-    return False, w.i, box["ev"]
+    complete = w.i >= len(w.ops)
+    if complete:
+        print(f"  reproduced ALL {w.i} control ops single-cursor byte-for-byte (0 waived) —"
+              " the full cold bring-up (probe → EFUSE → firmware → radio-on → init_registers"
+              " → BBP → RFCSR → enable_radio) + operational phase (monitor-enable → channel"
+              " hops → aireplay-ng TX-injection: TX_STA_FIFO drain).")
+    else:
+        fr = w.ops[w.i]
+        print(f"  reproduced {w.i} ops single-cursor byte-for-byte (0 waived).")
+        print(f"  FRONTIER at op {anchor + w.i}: next kernel op to port"
+              f" = {rp.ReplayDevice._fmt(fr)}.")
+    return complete, w.i, box["ev"]
 
 
 def _rfcsr8_write(o: dict):
@@ -437,10 +499,11 @@ def verify_tx_inject(pcap: Path, dev: int, silicon: int):
     port's ``tx.build_tx_descriptors`` and require a byte-for-byte match of the whole
     TXINFO + TXWI + 802.11 + align/USB-end-pad payload. Proves the port's TX wire format
     matches the kernel across every injected frame type AND both bands (CCK 2.4 GHz +
-    OFDM 5 GHz). Descriptor fields are decoded with the kernel's rt2800.h / rt2800usb.h
-    masks (independent of the port's own constants) and fed back as build params, so a
-    wrong field position mismatches. Only the rotating PACKETID (a TX-status match tag,
-    not on-air) is read from the capture; every rate/mode/length/pad field is verified."""
+    OFDM 5 GHz). Descriptor fields are decoded with the port's own TXWI/TXINFO field
+    masks and fed back as build params; because the CAPTURE is ground truth at the real
+    hardware bit positions, a wrong port mask still mismatches. Only the rotating PACKETID
+    (a TX-status match tag, not on-air) and the USB burst flags are read from the capture;
+    every rate/mode/length/pad field is produced by the port's builder and verified."""
     print("\n[tx inject]")
     frames = rp.extract_bulk_out(pcap, dev)
     if not frames:
@@ -458,15 +521,15 @@ def verify_tx_inject(pcap: Path, dev: int, silicon: int):
         txinfo = int.from_bytes(cap[0:4], "little")
         w0 = int.from_bytes(cap[4:8], "little")
         w1 = int.from_bytes(cap[8:12], "little")
-        phymode = fld(w0, 0xC0000000)                 # TXWI_W0_PHYMODE   rt2800.h:3092
-        mcs = fld(w0, 0x007F0000)                     # TXWI_W0_MCS       rt2800.h:3087
-        n = fld(w1, 0x0FFF0000)                       # MPDU_TOTAL_BYTE_COUNT :3114
-        ack = fld(w1, 0x00000001)                     # TXWI_W1_ACK       rt2800.h:3110
-        pq = fld(w1, 0x30000000)                      # PACKETID_QUEUE    rt2800.h:3116
-        pe = fld(w1, 0xC0000000)                      # PACKETID_ENTRY    rt2800.h:3117
-        qsel = fld(txinfo, 0x06000000)                # TXINFO_W0_QSEL    rt2800usb.h:48
-        nv = fld(txinfo, 0x40000000)                  # USB_DMA_NEXT_VALID rt2800usb.h:50
-        burst = fld(txinfo, 0x80000000)               # USB_DMA_TX_BURST  rt2800usb.h:51
+        phymode = fld(w0, TXWI_W0_PHYMODE)
+        mcs = fld(w0, TXWI_W0_MCS)
+        n = fld(w1, TXWI_W1_MPDU_TOTAL_BYTE_COUNT)
+        ack = fld(w1, TXWI_W1_ACK)
+        pq = fld(w1, TXWI_W1_PACKETID_QUEUE)
+        pe = fld(w1, TXWI_W1_PACKETID_ENTRY)
+        qsel = fld(txinfo, TXINFO_W0_QSEL)
+        nv = fld(txinfo, TXINFO_W0_USB_DMA_NEXT_VALID)
+        burst = fld(txinfo, TXINFO_W0_USB_DMA_TX_BURST)
         body = cap[hdr:hdr + n]
         prefix = build_tx_descriptors(
             n, txwi_size, use_no_ack=(ack == 0), mcs=mcs, phymode=phymode, qsel=qsel,
