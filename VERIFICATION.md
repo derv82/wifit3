@@ -33,7 +33,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [MT7610U](#mt7610u) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RT5572](#rt5572) | ✅ | ⚠️ | ✅ | ✅ | ✅ | B |
 | [MT7921AU](#mt7921au) | ✅ | ✅ | ❌ | ✅ | ✅ | B |
-| [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ⚠️ | ✅ | B |
+| [RTL8188EUS](#rtl8188eus) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ❌ | ✅ | ✅ | C |
 | [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ⬜ | ⚠️ | D |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ⚠️ | ❌ | D |
@@ -78,21 +78,20 @@ live in each chip's `<CHIP>.md` (linked under its table).
 ### RTL8188EUS
 *TP-Link TL-WN722N v2/v3 · 2.4 GHz*
 
-> **Default = vendor/DKMS port.** `WIFIT3_RTL8188=mainline` opts back. DKMS is the default for
-> *stability*, not raw rate: the mainline `rtl8xxxu` RX collapsed under test (needed an airmon
-> re-kick), while DKMS stayed steady. Same-driver baselines: DKMS port trails its driver ~24%
-> (5.3 vs 7.0 bcn/s), mainline port is closer (6.1 vs 6.9) — so the DKMS port is where the RX work is.
+> Ported from the [aircrack-ng/rtl8188eus](https://github.com/aircrack-ng/rtl8188eus) vendor/DKMS
+> port. There is a separate (weaker) port for the mainline kernel v6.18 driver (opt-in via
+> `WIFIT3_RTL8188=mainline`), but the default DKMS port out-performs mainline (as expected).
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| **Grade** | **80% (B)** | 2026-07-06 | All attacks work; DKMS-default port leaves ~24% RX on the table. |
-| RX | ⚠️ | 2026-07-06 | DKMS default 5.3 vs linux-DKMS 7.0 bcn/s (76%); breadth 78 vs 71 (matches). |
-| Port | ⚠️ | 2026-07-06 | DKMS port trails its driver ~24% on beacon rate (RSSI +0.2 dB, breadth fine — RX throughput only). |
-| Handshake | ✅ | 2026-05-19 | Passive 4-way. |
-| PMKID | ✅ | 2026-05-19 | Active harvest — instant. |
-| WEP | ✅ | 2026-06-16 | ChopChop 32/32; ARP replay 200+ IVs/s. |
-| WPS | ✅ | 2026-05-31 | PIN + PBC. |
-| ACKs | ✅ | 2026-05-31 | WPS PIN/PBC completed → auto-ACK works. |
+| **Grade** | **90% (A)** | 2026-07-09 | Kernel-parity RX + full attack suite, all re-confirmed. |
+| RX | ✅ | 2026-07-09 | DKMS port 7.7 vs linux-DKMS 7.29/s (matches); breadth 102 vs 91 (≥ linux); RSSI −0.6 dB; 11/11 tune, 0 silent, 0 cross. |
+| Port | ✅ | 2026-07-09 | Matches linux-DKMS (8188eu): 98% total beacons (6570 vs 6693), breadth 102 ≥ 91, RSSI −0.6 dB, 11/11 tune. |
+| Handshake | ✅ | 2026-07-09 | Deauth → 4-way. |
+| PMKID | ✅ | 2026-07-09 | Active extract. |
+| WEP | ✅ | 2026-07-09 | ChopChop + ARP replay ~175 IVs/s. |
+| WPS | ✅ | 2026-07-09 | PBC (~20 EAPOL) + PIN. |
+| ACKs | ✅ | 2026-07-09 | Auto-ACK forged MAC (WPS PBC). |
 | Stress | ✅ | 2026-06-16 | 30-min soak flat (mainline degrades/collapses). |
 
 → [RTL8188EUS_DKMS.md](src/wifit3/chips/rtl8188eus_dkms/RTL8188EUS_DKMS.md) (default) · [RTL8188EUS.md](src/wifit3/chips/rtl8188eus/RTL8188EUS.md) (mainline)
