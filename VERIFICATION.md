@@ -34,7 +34,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RT5572](#rt5572) | ✅ | ⚠️ | ✅ | ✅ | ✅ | B |
 | [MT7921AU](#mt7921au) | ✅ | ✅ | ❌ | ✅ | ✅ | B |
 | [RTL8188EUS](#rtl8188eus) | ⚠️ | ✅ | ✅ | ⚠️ | ✅ | B |
-| [RTL8187L](#rtl8187l) | ✅ | ✅ | ❌ | ⬜ | ✅ | B |
+| [RTL8187L](#rtl8187l) | ✅ | ✅ | ❌ | ✅ | ✅ | C |
 | [RT2500USB](#rt2500usb) | ✅ | ✅ | ❌ | ⬜ | ⚠️ | B |
 | [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ⚠️ | ❌ | D |
 
@@ -62,14 +62,14 @@ live in each chip's `<CHIP>.md` (linked under its table).
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| **Grade** | **B** | 2026-06-21 | WEP + passive capture work; WPS flaky (hard-MAC, no auto-ACK). |
-| RX | ✅ | 2026-06-12 | Healthy, 215–323 frames/s. |
-| TX | ✅ | 2026-06-12 | Deauth + WEP inject. |
+| **Grade** | **71% (C)** | 2026-07-09 | Kernel-parity RX (breadth ≥ linux) + full 2.4 attack suite; capped by the low 802.11g RX ceiling, no auto-ACK, flaky WPS, and ~175 IVs/s WEP. |
+| RX | ✅ | 2026-07-09 | ref AP 5.9 vs linux 6.7/s (88%); breadth 59 vs 54 (≥ linux); RSSI −0.9 dB; 11/11 tune, 0 silent, 0 cross. |
+| TX | ✅ | 2026-07-09 | Deauth (byte-match aireplay incl. ACK-NAV) + WEP inject; live-confirmed. |
 | ACKs | ❌ | 2026-06-21 | hard-MAC — cannot ACK a forged MAC. |
-| Port | ⬜ | — | No Linux same-card baseline captured. |
+| Port | ✅ | 2026-07-09 | Matches linux (rtl8187): breadth 59 vs 54, RSSI −0.9 dB, 11/11 tune; beacon rate 88% (5.9 vs 6.7/s — single-AP variance on this low-rate card). |
 | Handshake | ✅ | 2026-06-12 | Deauth → 4-way (~3/4 M1–M4). |
 | PMKID | ✅ | 2026-06-12 | Passive + active. |
-| WEP | ✅ | 2026-06-12 | FakeAuth + ARP replay + ChopChop. |
+| WEP | ✅ | 2026-07-09 | FakeAuth + ARP replay + ChopChop; ~175 IVs/s. |
 | WPS | ⚠️ | 2026-06-21 | Fails frequently — hard-MAC can't ACK. |
 | Stress | ✅ | 2026-06-11 | 30-min 13-ch soak, flat. |
 
