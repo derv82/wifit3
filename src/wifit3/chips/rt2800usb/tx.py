@@ -36,6 +36,8 @@ import usb.core
 from .constants import (
     RT_RT5592,
     TXINFO_W0_QSEL,
+    TXINFO_W0_USB_DMA_NEXT_VALID,
+    TXINFO_W0_USB_DMA_TX_BURST,
     TXINFO_W0_USB_DMA_TX_PKT_LEN,
     TXINFO_W0_WIV,
     TXWI_DESC_SIZE_4WORDS,
@@ -84,6 +86,10 @@ def build_tx_descriptors(
     mcs: int = 0,
     phymode: int = TXWI_PHYMODE_CCK,
     qsel: int = QSEL_EDCA,
+    packetid_queue: int = 0,
+    packetid_entry: int = 2,
+    next_valid: int = 0,
+    tx_burst: int = 0,
 ) -> bytes:
     """Build the TXINFO + TXWI prefix for an 802.11 frame.
 
@@ -99,8 +105,11 @@ def build_tx_descriptors(
     txinfo_w0 = _set_field32(txinfo_w0, TXINFO_W0_USB_DMA_TX_PKT_LEN, pkt_len)
     txinfo_w0 = _set_field32(txinfo_w0, TXINFO_W0_WIV, 1)
     txinfo_w0 = _set_field32(txinfo_w0, TXINFO_W0_QSEL, qsel)
-    # USB_DMA_NEXT_VALID = 0 (single packet)
-    # USB_DMA_TX_BURST = 0 (no burst)
+    # USB-DMA burst flags. Both 0 for a single-frame inject; the kernel sets
+    # TX_BURST on frames it aggregates back-to-back in one USB submission, and
+    # NEXT_VALID when another frame follows in the same submission.
+    txinfo_w0 = _set_field32(txinfo_w0, TXINFO_W0_USB_DMA_NEXT_VALID, next_valid)
+    txinfo_w0 = _set_field32(txinfo_w0, TXINFO_W0_USB_DMA_TX_BURST, tx_burst)
 
     # TXWI_W0 — rate + PHY mode + TX_OP
     # Kernel uses HT_TXOP_NONE (3) for mgmt: chip skips RTS/CTS handshake.
@@ -125,8 +134,8 @@ def build_tx_descriptors(
     txwi_w1 = _set_field32(txwi_w1, TXWI_W1_NSEQ, 0)              # use seqctl from frame
     txwi_w1 = _set_field32(txwi_w1, TXWI_W1_WIRELESS_CLI_ID, 0)   # broadcast/unassoc
     txwi_w1 = _set_field32(txwi_w1, TXWI_W1_MPDU_TOTAL_BYTE_COUNT, frame_len)
-    txwi_w1 = _set_field32(txwi_w1, TXWI_W1_PACKETID_QUEUE, 0)
-    txwi_w1 = _set_field32(txwi_w1, TXWI_W1_PACKETID_ENTRY, 2)
+    txwi_w1 = _set_field32(txwi_w1, TXWI_W1_PACKETID_QUEUE, packetid_queue)
+    txwi_w1 = _set_field32(txwi_w1, TXWI_W1_PACKETID_ENTRY, packetid_entry)
 
     # TXWI W2..(N-1) are IV/EIV/etc — kernel zeros them when no
     # encryption is in play. Pad to txwi_size.

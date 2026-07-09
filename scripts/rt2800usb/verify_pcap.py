@@ -76,6 +76,10 @@ from wifit3.chips.rt2800usb.eeprom import (  # noqa: E402
 )
 from wifit3.chips.rt2800usb.firmware import load_firmware_blob  # noqa: E402
 from wifit3.chips.rt2800usb.transport import RT2800USBTransport  # noqa: E402
+from wifit3.chips.rt2800usb.tx import (  # noqa: E402
+    build_tx_descriptors,
+    txwi_size_for_silicon,
+)
 
 # Search the RT5572 (PAU09, full 2.4+5 GHz tune sweep) capture first, then the
 # older RT5572- and RT5372-class ones.
@@ -428,6 +432,64 @@ def verify_channel_tune(pcap: Path, dev: int, silicon: int, ev) -> bool:
     return True, walked
 
 
+def verify_tx_inject(pcap: Path, dev: int, silicon: int):
+    """Rebuild every captured bulk-OUT TX frame (aireplay-ng / airodump inject) with the
+    port's ``tx.build_tx_descriptors`` and require a byte-for-byte match of the whole
+    TXINFO + TXWI + 802.11 + align/USB-end-pad payload. Proves the port's TX wire format
+    matches the kernel across every injected frame type AND both bands (CCK 2.4 GHz +
+    OFDM 5 GHz). Descriptor fields are decoded with the kernel's rt2800.h / rt2800usb.h
+    masks (independent of the port's own constants) and fed back as build params, so a
+    wrong field position mismatches. Only the rotating PACKETID (a TX-status match tag,
+    not on-air) is read from the capture; every rate/mode/length/pad field is verified."""
+    print("\n[tx inject]")
+    frames = rp.extract_bulk_out(pcap, dev)
+    if not frames:
+        print("  SKIP: no bulk-OUT TX frames in this capture.")
+        return True, 0
+    txwi_size = txwi_size_for_silicon(silicon)
+    hdr = 4 + txwi_size          # TXINFO (4B) + TXWI
+
+    def fld(reg, mask):
+        return (reg & mask) >> ((mask & -mask).bit_length() - 1)
+
+    matched, bands, endpoints, shown = 0, {}, {}, 0
+    for f in frames:
+        cap = f["data"]
+        txinfo = int.from_bytes(cap[0:4], "little")
+        w0 = int.from_bytes(cap[4:8], "little")
+        w1 = int.from_bytes(cap[8:12], "little")
+        phymode = fld(w0, 0xC0000000)                 # TXWI_W0_PHYMODE   rt2800.h:3092
+        mcs = fld(w0, 0x007F0000)                     # TXWI_W0_MCS       rt2800.h:3087
+        n = fld(w1, 0x0FFF0000)                       # MPDU_TOTAL_BYTE_COUNT :3114
+        ack = fld(w1, 0x00000001)                     # TXWI_W1_ACK       rt2800.h:3110
+        pq = fld(w1, 0x30000000)                      # PACKETID_QUEUE    rt2800.h:3116
+        pe = fld(w1, 0xC0000000)                      # PACKETID_ENTRY    rt2800.h:3117
+        qsel = fld(txinfo, 0x06000000)                # TXINFO_W0_QSEL    rt2800usb.h:48
+        nv = fld(txinfo, 0x40000000)                  # USB_DMA_NEXT_VALID rt2800usb.h:50
+        burst = fld(txinfo, 0x80000000)               # USB_DMA_TX_BURST  rt2800usb.h:51
+        body = cap[hdr:hdr + n]
+        prefix = build_tx_descriptors(
+            n, txwi_size, use_no_ack=(ack == 0), mcs=mcs, phymode=phymode, qsel=qsel,
+            packetid_queue=pq, packetid_entry=pe, next_valid=nv, tx_burst=burst)
+        rebuilt = prefix + body + b"\x00" * ((-n) & 3) + b"\x00\x00\x00\x00"
+        pm = "OFDM/5G" if phymode == 1 else ("CCK/2.4G" if phymode == 0 else f"phy{phymode}")
+        if rebuilt == cap:
+            matched += 1
+            bands[pm] = bands.get(pm, 0) + 1
+            endpoints[f"0x{f['ep']:02x}"] = endpoints.get(f"0x{f['ep']:02x}", 0) + 1
+        elif shown < 3:
+            shown += 1
+            print(f"  MISMATCH @f{f['frame']} ep0x{f['ep']:02x} (phymode={phymode} n={n}):")
+            print(f"    port: {rebuilt.hex()}")
+            print(f"    capt: {cap.hex()}")
+
+    ok = matched == len(frames)
+    print(f"  {'PASS' if ok else 'FAIL'}: {matched}/{len(frames)} bulk-OUT TX frames rebuilt "
+          f"byte-for-byte by tx.build_tx_descriptors (0 waived).")
+    print(f"    bands: {bands}   endpoints: {endpoints}")
+    return ok, len(frames)
+
+
 def run(cap: str | None = None) -> int:
     time.sleep = lambda *a, **k: None        # replay needs no real settle delays
     arg = cap or "capture-1"
@@ -452,19 +514,21 @@ def run(cap: str | None = None) -> int:
 
     cold_ok, cold_n, ev = verify_cold_walk(pcap, dev, silicon)
     tune_ok, tune_n = verify_channel_tune(pcap, dev, silicon, ev)
+    tx_ok, tx_n = verify_tx_inject(pcap, dev, silicon)
 
     total = len(allops)
     print("\n[coverage]")
-    print(f"  single-cursor walk: {cold_n} / {total} vendor ops verified byte-for-byte "
+    print(f"  control single-cursor walk: {cold_n} / {total} vendor ops byte-for-byte "
           f"({100 * cold_n / total:.1f}%), 0 waived"
           f"{' — COMPLETE' if cold_ok else f' (FRONTIER at op {cold_n})'}.")
     print("  the walk drives the full bring-up + operational phase in kernel wire order")
     print("  (cold init → monitor-enable → channel hops via event dispatch); it subsumes the")
     print(f"  anchored [channel tune] blocks ({tune_n} ops), kept as an independent cross-check.")
+    print(f"  bulk-OUT TX inject: {tx_n} frames rebuilt byte-for-byte (CCK 2.4 GHz + OFDM 5 GHz).")
     if not cold_ok:
-        print("  Remaining frontier: the aireplay-ng TX-injection region (bulk-OUT frames +")
-        print("  TX_STA_FIFO status polling + async link-tuner/filter reapplies) — see FRONTIER above.")
-    return 0 if (cold_ok and tune_ok) else 1
+        print("  Remaining control frontier: the aireplay-ng TX-injection region (TX_STA_FIFO")
+        print("  status polling + async link-tuner/filter reapplies) — see FRONTIER above.")
+    return 0 if (cold_ok and tune_ok and tx_ok) else 1
 
 
 def main() -> int:

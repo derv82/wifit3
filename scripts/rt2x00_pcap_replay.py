@@ -156,6 +156,24 @@ def extract_ops(pcap: Path, dev: int, window=None, start=None) -> list[dict]:
     return ops
 
 
+def extract_bulk_out(pcap: Path, dev: int) -> list[dict]:
+    """Ordered bulk-OUT submissions (host->chip TX frames) for the card. Each op is
+    ``{ep, data (bytes), frame}`` -- the TXINFO+TXWI+802.11+pad payload the driver
+    wrote to an AC_* bulk-OUT endpoint (aireplay-ng / airodump inject). Unlike the
+    register conversation these are on their own endpoints and carry the full TX
+    descriptor, so a TX-fidelity gate can rebuild them from the port's tx.py."""
+    rows = _tshark(pcap,
+                   f"usb.device_address=={dev} && usb.transfer_type==0x03 && "
+                   "usb.endpoint_address<0x80 && usb.capdata",
+                   ["frame.number", "usb.endpoint_address", "usb.capdata"])
+    out = []
+    for frame, ep, data in rows:
+        payload = _hex(data)
+        if payload:
+            out.append({"ep": int(ep, 0), "data": payload, "frame": int(frame)})
+    return out
+
+
 class Divergence(AssertionError):
     pass
 
