@@ -49,6 +49,7 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
         from wifit3.chips.rt3070.driver import RT3070Driver
         from wifit3.chips.rt5370.driver import RT5370Driver
         from wifit3.chips.rt5372.driver import RT5372Driver
+        from wifit3.chips.rt5572.driver import RT5572Driver
         from wifit3.chips.rtl8187.driver import RTL8187Driver
         from wifit3.chips.rtl8188eus.driver import RTL8188EUSDriver
         from wifit3.chips.rtl8188eus_dkms.driver import Rtl8188eusDkmsDriver
@@ -71,6 +72,7 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
             "rt3070": RT3070Driver,
             "rt5370": RT5370Driver,
             "rt5372": RT5372Driver,
+            "rt5572": RT5572Driver,
             "rtl8187": RTL8187Driver,
             "mt76x0u": MT76x0UDriver,
             "mt76x2u": MT76x2UDriver,

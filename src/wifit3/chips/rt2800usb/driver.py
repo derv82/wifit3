@@ -60,7 +60,6 @@ from .constants import (
     TXWI_PHYMODE_CCK,
     TXWI_PHYMODE_OFDM,
     USB_PID_RT3572,
-    USB_PID_RT5572,
     USB_VID_RALINK,
 )
 from wifit3.wlan.packet import WlanFrameParser
@@ -102,15 +101,11 @@ class RT2800USBDriver:
         DeviceID(USB_VID_RALINK, USB_PID_RT3572,
                  "Ralink RT3572 (ALFA AWUS051NH v2)",
                  extras={"chip_id": "rt3572"}),
-        DeviceID(USB_VID_RALINK, USB_PID_RT5572,
-                 "Ralink RT5572 (Panda PAU09 N600)",
-                 extras={"chip_id": "rt5572"}),
+        # 148f:5572 (RT5572 / PAU09) is now the standalone chips/rt5572 driver.
     ]
     #     0x3572 silicon (RT3572 / AWUS051NH v2) → 2.4 + 5 GHz non-DFS
-    #     0x5592 silicon (RT5572 / PAU09 N600)   → 2.4 + 5 GHz non-DFS
     _CHANNELS_BY_CHIP: dict = {
         "rt3572": list(range(1, 14)) + list(CHANNELS_5G_NON_DFS),
-        "rt5572": list(range(1, 14)) + list(CHANNELS_5G_NON_DFS),
     }
     # Class-level fallback = union of all variants. Used only if a hint is
     # missing (e.g. test code instantiates without going through
