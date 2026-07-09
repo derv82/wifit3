@@ -149,10 +149,16 @@ def capture(iface: str, channel: int, secs: int) -> str | None:
     if subprocess.run(["sudo", "iw", "dev", iface, "set", "channel", str(channel)]).returncode != 0:
         print(f"  CH{channel:>3}: set channel failed (regulatory-disabled?) — skipping", file=sys.stderr)
         return None
-    out = tempfile.NamedTemporaryFile(suffix=f"-ch{channel}.pcap", delete=False).name
+    # Hand tcpdump a FRESH (not-yet-created) path in a temp dir. Two Debian/Kali tcpdump
+    # quirks bite otherwise: (1) it drops privileges to the unprivileged `tcpdump` user, so
+    # -Z root keeps it as root to write the savefile; (2) even as root it refuses to write a
+    # PRE-EXISTING file it doesn't own, so NamedTemporaryFile (which pre-creates a kali-owned
+    # 0600 file) fails with "Permission denied". A fresh path lets tcpdump create it itself
+    # (root:root 0644, world-readable — so the unprivileged parse below can still read it).
+    out = str(Path(tempfile.mkdtemp()) / f"ch{channel}.pcap")
     print(f"  CH{channel:>3}: capturing {secs}s...", file=sys.stderr)
     subprocess.run(
-        ["sudo", "timeout", str(secs), "tcpdump", "-i", iface, "-w", out, "-U"],
+        ["sudo", "timeout", str(secs), "tcpdump", "-i", iface, "-w", out, "-U", "-Z", "root"],
         check=False,  # timeout exits non-zero by design
     )
     return out
