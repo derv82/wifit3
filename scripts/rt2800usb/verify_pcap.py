@@ -1,37 +1,32 @@
-"""Acceptance gate: replay-diff rt2800usb (Ralink RT3572 / RT5372 / RT5572) bring-up blocks
-against its cold-boot capture.
+"""Acceptance gate: replay-diff rt2800usb (Ralink RT3572 / RT5372 / RT5572) against its
+cold-boot capture. Goal: the port emits the exact bytes the Linux kernel driver did.
 
 Drives the port's real ``RT2800USBTransport`` around a ``rt2x00_pcap_replay.ReplayDevice``
 (a fake usb dev that replays the chip's recorded ctrl_transfers), so the port's real helpers
 run unchanged and must emit byte-identical writes or a Divergence is raised at the first
 mismatch.
 
-This is an *anchored-block* verifier (not the single-cursor whole-capture walk the clean-room
-ports use): each block is extracted from the capture by an anchor predicate and replayed in
-isolation, so coverage grows block by block without re-porting the whole driver. Blocks:
+Two sections, both fail-closed with 0 waivers:
 
-  * [EFUSE walk]      the 32-iteration EFUSE read loop (``read_eeprom_efuse``), anchored on
-                      the first EFUSE_CTRL touch. Catches the ADDRESS_IN byte-vs-word bug.
-  * [firmware upload] the rt2870.bin USB half (4096 bytes streamed to FIRMWARE_IMAGE_BASE
-                      over 64-byte chunked control writes), anchored at the first chunk.
-  * [channel tune]    every RF55xx (RT5572) config_channel + config_txpower, anchored at
-                      each LDO_CFG0 RMW that opens a tune and reverse-mapped to its channel
-                      from the RFCSR8 (N) load. Reaches the RFCSR49/50 (analog PA) +
-                      TX_PWR_CFG_0..4 (per-rate) writes -- the EEPROM-TX-power surface the
-                      live EFUSE byte-gate never touched, which is why the min-power bug
-                      survived. Requires a burned EEPROM + a channel sweep in the capture.
+  * [cold bring-up walk]  a SINGLE-CURSOR walk from the first vendor op (MAC_CSR0), driving the
+                          port's real helpers in the kernel's wire order: read_chip_id →
+                          read_eeprom_efuse (autorun + EFUSE loop) → probe_hw_gpio →
+                          probe_hw_mode (xtal) → load_firmware. Catches wire-ORDER divergences,
+                          not just per-block byte errors — it surfaced the AUTOWAKEUP_CFG
+                          address bug (was MAC_BSSID_DW0) and the missing autorun_detect /
+                          probe_hw GPIO ops. The steps after load_firmware (radio-on MCU_LED →
+                          init_registers → init_bbp → init_rfcsr → enable_radio + monitor setup)
+                          are still being converged; the walk names the exact FRONTIER op.
+  * [channel tune]        every RF55xx (RT5572) config_channel + config_txpower, anchored at
+                          each LDO_CFG0 RMW that opens a tune and reverse-mapped to its channel
+                          from the RFCSR8 (N) load. Reaches the RFCSR49/50 (analog PA) +
+                          TX_PWR_CFG_0..4 (per-rate) writes — the EEPROM-TX-power surface the
+                          live EFUSE byte-gate never touched, which is why the min-power bug
+                          survived. Requires a burned EEPROM + a channel sweep in the capture.
 
-Known divergence flagged for a separate session: the full ``load_firmware`` preamble opens
-with ``write32(AUTOWAKEUP_CFG, 0)``, which this USB capture never issues -- that write is
-PCI/SoC-only in rt2800lib.c, so the USB port should skip it. The blob upload below is
-verified independently of that preamble.
-
-Counter (2026-06-10): the "PCI/SoC-only" reading above is falsified -- ``rt2800lib.c:731``
-writes ``AUTOWAKEUP_CFG`` *unconditionally*, above the ``is_pci`` guard (which holds only
-``AUX_CTRL``/``PWR_PIN_CFG``). So the write matches the kernel and gating it out would be a
-regression. The remaining open question is the wire-absence claim itself -- which this
-*anchored-block* verifier can't settle, since it never replays the preamble. A single-cursor
-full-walk would.
+The cold walk and the tune blocks don't yet meet in the middle; that gap is being converged
+op-by-op (the FRONTIER), NOT waived. Exit is 0 only once the cold walk reaches the operational
+phase with no divergence.
 
 Run: uv run python scripts/rt2800usb/verify_pcap.py [capture-1|capture-2]
 """
@@ -47,8 +42,9 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 import rt2x00_pcap_replay as rp  # noqa: E402
 from wifit3.chips.rt2800usb import chan as _chan  # noqa: E402
+from wifit3.chips.rt2800usb import firmware as _fw  # noqa: E402
+from wifit3.chips.rt2800usb import mac as _mac  # noqa: E402
 from wifit3.chips.rt2800usb.constants import (  # noqa: E402
-    FIRMWARE_IMAGE_BASE,
     LDO_CFG0,
     MAC_CSR0,
     MAC_DEBUG_INDEX,
@@ -56,10 +52,8 @@ from wifit3.chips.rt2800usb.constants import (  # noqa: E402
     RF_CSR_CFG,
     RF_CSR_CFG_WRITE,
     RT_RT5592,
-    USB_MULTI_WRITE,
 )
 from wifit3.chips.rt2800usb.eeprom import (  # noqa: E402
-    EFUSE_CTRL,
     parse_eeprom,
     read_eeprom_efuse,
 )
@@ -75,63 +69,68 @@ CAP_DIRS = [
 ]
 
 
-def _is_efuse_ctrl(o: dict) -> bool:
-    """First touch of EFUSE_CTRL == rt2800_efuse_detect's PRESENT read, which opens the
-    EFUSE read loop; anchor the block there so read_eeprom_efuse replays op-for-op."""
-    return o["addr"] == EFUSE_CTRL
+class _Walk:
+    """One cursor over the capture from the first vendor op. ``run`` drives a real port
+    helper against the wire from the cursor (a fresh ReplayDevice over the remaining ops in
+    the real transport) and advances by however many ops it reproduced; a Divergence stops
+    the walk at the exact frontier -- the first op the port did NOT reproduce."""
+
+    def __init__(self, ops: list[dict]):
+        self.ops = ops
+        self.i = 0
+
+    def run(self, fn) -> int:
+        rd = rp.ReplayDevice(self.ops[self.i:])
+        fn(RT2800USBTransport(rd))
+        self.i += rd.i
+        return rd.i
 
 
-def _is_fw_chunk_start(o: dict) -> bool:
-    """The firmware upload streams to FIRMWARE_IMAGE_BASE (0x3000) in 64-byte chunks at
-    incrementing addresses; anchor on the first chunk (the base address)."""
-    return (o["dir"] == "OUT" and o["breq"] == USB_MULTI_WRITE
-            and o["addr"] == FIRMWARE_IMAGE_BASE)
-
-
-def verify_efuse(pcap: Path, dev: int) -> bool:
-    """Anchored block: replay the port's real ``read_eeprom_efuse`` against the capture's
-    EFUSE read loop. The shipping reader writes ``EFUSE_CTRL.ADDRESS_IN`` as a BYTE offset,
-    but the chip (and the kernel, ``rt2800lib.c`` ``i += 8`` words) treat it as a u16-WORD
-    index -- so the buggy reader diverges on the 2nd iteration's KICK write. A word-offset
-    reader (``ADDRESS_IN = offset // 2``) reproduces the whole loop byte-for-byte."""
-    print("\n[EFUSE walk]")
-    block = rp.extract_ops(pcap, dev, start=_is_efuse_ctrl)
-    rd = rp.ReplayDevice(block)
-    t = RT2800USBTransport(rd)
-    try:
-        eeprom = read_eeprom_efuse(t)
-    except rp.Divergence as e:
-        print(f"  FAIL (divergence): {e}")
-        print(f"  reproduced {rd.i} EFUSE ops before diverging "
-              f"-- the ADDRESS_IN byte-vs-word bug (see RT2800USB.md).")
-        return False, rd.i
-    ev = parse_eeprom(eeprom)
-    print(f"  PASS: EFUSE read loop reproduced byte-for-byte over {rd.i} ctrl ops (0 waived).")
-    print(f"  capture-unit decode: NIC_CONF0=0x{ev.nic_conf0:04x} "
-          f"(rxpath={ev.rxpath} txpath={ev.txpath}), freq_offset={ev.freq_offset}, "
-          f"lna_gain_bg=0x{ev.lna_gain_bg:02x}, rssi_bg0=0x{ev.rssi_bg_offset0:02x}")
-    return True, rd.i
-
-
-def verify_fw(pcap: Path, dev: int, fw: bytes) -> bool:
-    """Anchored block: stream the bundled rt2870.bin and byte-verify it against the wire."""
-    print("\n[firmware upload]")
-    block = rp.extract_ops(pcap, dev, start=_is_fw_chunk_start)
-    rd = rp.ReplayDevice(block)
-    t = RT2800USBTransport(rd)
-    try:
-        t.write_multi(FIRMWARE_IMAGE_BASE, fw)   # 64-byte chunks, incrementing address
-    except rp.Divergence as e:
-        print(f"  FAIL (divergence): {e}")
-        print(f"  reproduced {rd.i} firmware chunks before diverging")
-        return False, rd.i
-    print(f"  PASS: rt2870.bin upload verified byte-for-byte -- {len(fw)} bytes over {rd.i} "
-          f"chunked control writes from 0x{FIRMWARE_IMAGE_BASE:04x} (0 waived).")
-    print("  NOTE: load_firmware's preamble write32(AUTOWAKEUP_CFG, 0) is reportedly absent "
-          "from this USB capture -- but the 'PCI/SoC-only' reading is falsified (rt2800lib.c:731 "
-          "writes it unconditionally, above the is_pci guard). Disputed; this anchored verifier "
-          "never walks the preamble, so a single-cursor full-walk is what would adjudicate it.")
-    return True, rd.i
+def verify_cold_walk(pcap: Path, dev: int, silicon: int):
+    """Single-cursor walk of the cold bring-up in the kernel's exact wire order, fail-closed:
+    read_chip_id -> read_eeprom_efuse (autorun + EFUSE loop) -> probe_hw_gpio -> probe_hw_mode
+    (xtal) -> load_firmware. Every op must reproduce byte-for-byte or the walk stops and names
+    the frontier (the next kernel op to port). No anchoring, no waivers -- unlike the old
+    anchored EFUSE/FW blocks, this catches wire-ORDER divergences (it already surfaced the
+    AUTOWAKEUP_CFG address bug + the missing autorun_detect / probe_hw GPIO ops)."""
+    print("\n[cold bring-up walk]")
+    allops = rp.extract_ops(pcap, dev)
+    anchor = next((i for i, o in enumerate(allops)
+                   if o["dir"] == "IN" and o["addr"] == MAC_CSR0), 0)
+    w = _Walk(allops[anchor:])
+    fw = load_firmware_blob()
+    box: dict = {}
+    steps = [
+        ("read_chip_id (MAC_CSR0)", lambda t: _mac.read_chip_id(t)),
+        ("read_eeprom_efuse (autorun + EFUSE loop)",
+         lambda t: box.__setitem__("eeprom", read_eeprom_efuse(t))),
+        ("probe_hw_gpio (rfkill GPIO_CTRL_DIR2)", lambda t: _mac.probe_hw_gpio(t)),
+        ("probe_hw_mode (xtal read)", lambda t: _chan.is_xtal_40mhz(t)),
+        ("load_firmware (autorun + blob + MCU boot)",
+         lambda t: _fw.load_firmware(t, fw, silicon_id=silicon, progress_cb=None)),
+    ]
+    ev = None
+    for label, fn in steps:
+        try:
+            n = w.run(fn)
+            if "eeprom" in box and ev is None:
+                ev = parse_eeprom(box["eeprom"])
+            print(f"  OK    {label:42} +{n:4} ops  (cursor {anchor + w.i})")
+        except rp.Divergence as e:
+            fr = w.ops[w.i] if w.i < len(w.ops) else None
+            print(f"  STOP  {label}")
+            print(f"        {e}")
+            print(f"  FRONTIER at op {anchor + w.i}: next kernel op to port"
+                  f"{' = ' + rp.ReplayDevice._fmt(fr) if fr else ''}.")
+            return False, w.i, ev
+    # All scripted steps reproduced. The cold bring-up is not finished here — the
+    # radio-on / init_registers / init_bbp / init_rfcsr / enable_radio steps after this
+    # point are still being converged, so the next op is the porting frontier.
+    fr = w.ops[w.i] if w.i < len(w.ops) else None
+    print(f"  reproduced {w.i} ops single-cursor byte-for-byte (0 waived), through load_firmware.")
+    print(f"  FRONTIER at op {anchor + w.i}: next kernel op to port"
+          f"{' = ' + rp.ReplayDevice._fmt(fr) if fr else ''} (radio-on MCU_LED → init_registers …).")
+    return False, w.i, ev
 
 
 def _rfcsr8_write(o: dict):
@@ -164,21 +163,20 @@ def _find_rf55xx_tune_starts(ops: list[dict]) -> list[tuple[int, int, int]]:
     return starts
 
 
-def verify_channel_tune(pcap: Path, dev: int, silicon: int) -> bool:
+def verify_channel_tune(pcap: Path, dev: int, silicon: int, ev) -> bool:
     """Anchored block(s): replay the port's real ``chan.set_channel`` (config_channel
     + config_txpower) against every RF55xx channel tune in the capture and require a
     byte-for-byte match. This is the gate that reaches the RFCSR49/50 (analog PA) +
     TX_PWR_CFG_0..4 (per-rate) writes the live EFUSE byte-gate never touches -- the
     surface the EEPROM TX-power bug hid behind. Each tune is reverse-mapped to its
     channel from the RFCSR8 (N) load + LDO VLEVEL band, then driven with the same
-    EEPROM-derived kwargs driver._channel_kwargs() builds."""
+    EEPROM-derived kwargs driver._channel_kwargs() builds. ``ev`` is the EEPROM the
+    cold walk already decoded from this capture."""
     print("\n[channel tune]")
-    if silicon != RT_RT5592:
+    if silicon != RT_RT5592 or ev is None:
         print(f"  SKIP: RF55xx tune replay only (capture silicon 0x{silicon:04x}); "
               "the RF3052/RF53xx tune paths need their init-derived calibration state.")
         return True, 0
-    ev = parse_eeprom(read_eeprom_efuse(RT2800USBTransport(rp.ReplayDevice(
-        rp.extract_ops(pcap, dev, start=lambda o: o["addr"] == EFUSE_CTRL)))))
     allops = rp.extract_ops(pcap, dev)
     mdi = next((o for o in allops if o["dir"] == "IN" and o["addr"] == MAC_DEBUG_INDEX), None)
     xtal = bool(int.from_bytes(mdi["data"], "little") & MAC_DEBUG_INDEX_XTAL) if mdi else False
@@ -254,21 +252,22 @@ def run(cap: str | None = None) -> int:
     print(f"{name}: card=dev{dev}, {len(allops)} vendor ops, silicon=0x{silicon:04x}, "
           f"fw={len(fw)}B")
 
-    efuse_ok, efuse_n = verify_efuse(pcap, dev)
-    fw_ok, fw_n = verify_fw(pcap, dev, fw)
-    tune_ok, tune_n = verify_channel_tune(pcap, dev, silicon)
+    cold_ok, cold_n, ev = verify_cold_walk(pcap, dev, silicon)
+    tune_ok, tune_n = verify_channel_tune(pcap, dev, silicon, ev)
 
-    walked = efuse_n + fw_n + tune_n
+    walked = cold_n + tune_n
     total = len(allops)
     print("\n[coverage]")
-    print(f"  {walked} / {total} vendor ops walked byte-for-byte ({100 * walked / total:.1f}%), "
+    print(f"  {walked} / {total} vendor ops verified byte-for-byte ({100 * walked / total:.1f}%), "
           f"0 waived.")
-    print(f"  {total - walked} ops ({100 * (total - walked) / total:.1f}%) NOT walked (and not "
-          "waived): the cold bring-up (init_registers / init_bbp / init_rfcsr / enable_radio +")
-    print("  MAC config), the airmon/monitor setup, and per-hop the stop-rx / update-survey")
-    print("  (pre-tune) and config_ant / reset_tuner (post-tune) tails this anchored-block gate")
-    print("  brackets out. This is NOT a single-cursor whole-capture walk (cf. verify_pcap rt5370).")
-    return 0 if (efuse_ok and fw_ok and tune_ok) else 1
+    print(f"  cold bring-up: single-cursor walk to op {cold_n}"
+          f"{' (COMPLETE)' if cold_ok else ' (FRONTIER — convergence in progress)'};"
+          f" channel tunes: {tune_n} ops (anchored per-hop replay).")
+    if not cold_ok:
+        print("  The gap between the cold frontier and the tune blocks (radio-on / init_registers /")
+        print("  init_bbp / init_rfcsr / enable_radio + monitor setup) is being converged to the")
+        print("  kernel op-by-op; it is NOT waived. See the FRONTIER line above for the next op.")
+    return 0 if (cold_ok and tune_ok) else 1
 
 
 def main() -> int:
