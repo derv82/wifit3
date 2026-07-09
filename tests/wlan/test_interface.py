@@ -681,3 +681,41 @@ async def test_hopper_surfaces_device_gone_and_stops(mocker):
     assert len(seen) == 1 and isinstance(seen[0], usb.core.USBError)
     assert iface._is_hopping is False
     await iface.stop_hopping()
+
+
+async def test_deauth_sets_unicast_ack_nav(mocker):
+    """A client-targeted deauth burst carries the unicast-ACK NAV (0x013A) in the duration
+    of both spoofed frames — the destination (addr1) ACKs, so we reserve SIFS + a 1 Mbps
+    ACK. Built in the shared interface path, so this holds for every driver."""
+    driver = mocker.MagicMock()
+    driver.inject_frame = mocker.AsyncMock(return_value=True)
+    iface = WlanInterface(driver_instance=driver, name="wlan0", description="t")
+
+    await iface.deauth("aa:bb:cc:dd:ee:ff", "00:11:22:33:44:55", burst_count=1)
+
+    frames = [c.args[0] for c in driver.inject_frame.call_args_list]
+    client_deauth, ap_deauth = frames[0], frames[1]
+    # client_deauth addr1 = client (unicast) → NAV 0x013A (little-endian)
+    assert client_deauth[4:10] == bytes.fromhex("001122334455")
+    assert client_deauth[2:4] == b"\x3a\x01"
+    # ap_deauth addr1 = AP (unicast) → NAV 0x013A
+    assert ap_deauth[4:10] == bytes.fromhex("aabbccddeeff")
+    assert ap_deauth[2:4] == b"\x3a\x01"
+
+
+async def test_broadcast_deauth_zeroes_nav_for_group_target(mocker):
+    """'Deauth all' addresses the client frame to ff:ff:ff:ff:ff:ff — a group address that
+    is never ACKed, so its NAV is 0; the AP-directed frame stays unicast → 0x013A."""
+    driver = mocker.MagicMock()
+    driver.inject_frame = mocker.AsyncMock(return_value=True)
+    iface = WlanInterface(driver_instance=driver, name="wlan0", description="t")
+
+    await iface.deauth("aa:bb:cc:dd:ee:ff", "ff:ff:ff:ff:ff:ff", burst_count=1)
+
+    frames = [c.args[0] for c in driver.inject_frame.call_args_list]
+    client_deauth, ap_deauth = frames[0], frames[1]
+    # client_deauth addr1 = broadcast → NAV 0
+    assert client_deauth[4:10] == b"\xff\xff\xff\xff\xff\xff"
+    assert client_deauth[2:4] == b"\x00\x00"
+    # ap_deauth addr1 = AP (unicast) → NAV 0x013A
+    assert ap_deauth[2:4] == b"\x3a\x01"

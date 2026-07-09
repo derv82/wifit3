@@ -494,6 +494,8 @@ def test_build_deauth_structure():
     # Frame Control = 0xC0 0x00 (mgmt, deauth)
     assert f[0] == 0xC0
     assert f[1] == 0x00
+    # Duration/NAV = 0 for a broadcast target (group-addressed frames are not ACKed)
+    assert f[2:4] == b"\x00\x00"
     # addr1 = target (broadcast)
     assert f[4:10] == BROADCAST_MAC
     # addr2 = src (defaults to bssid)
@@ -503,6 +505,18 @@ def test_build_deauth_structure():
     # Reason code (LE) = CLASS3 = 7
     assert f[24] == DEAUTH_REASON_CLASS3
     assert f[25] == 0
+
+
+def test_build_deauth_unicast_sets_ack_nav():
+    """A unicast target gets the ACK NAV (0x013A) in duration; broadcast gets 0. Matches
+    aireplay-ng: the addressed STA ACKs, so we reserve SIFS + a 1 Mbps ACK for it."""
+    from wifit3.chips.rtl8187.tx import build_deauth
+
+    bssid = bytes.fromhex("aabbccddeeff")
+    client = bytes.fromhex("001122334455")   # unicast (even first octet)
+    f = build_deauth(client, bssid)
+    # Duration = 0x013A little-endian (the unicast-ACK NAV)
+    assert f[2:4] == b"\x3a\x01"
 
 
 def test_config_channel_dispatches_z2_set_tx_power(monkeypatch):

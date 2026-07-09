@@ -13,7 +13,6 @@ contradicts itself; resolve on HW.
 ## Per-card
 
 ### rtl8187 (8187L)
-- ⏳ Injected deauth uses `duration=0` instead of the unicast-ACK NAV — minor TX nit [RTL8187L.md].
 - Limit: always cold-inits (no warm reattach) — replug to recover.
 
 ### rtl8188eus_dkms

