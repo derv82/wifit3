@@ -11,7 +11,7 @@ tree cross-checked against the cold-boot pcap, never from the mainline-derived `
 - TX (deauth, fake-auth, WEP replay, ChopChop, WPS PIN/PBC, PMKID): user-confirmed live.
 - Warm reattach and a 30-min dual-band 38-channel soak: clean (no degradation).
 - `verify_pcap` / `verify_channels`: clean against the cold-boot pcap (all 36 hops byte-exact).
-- 5 GHz deauth/TX: only the RX side is agent-verified; live 5 GHz TX is the user's call.
+- 5 GHz deauth/TX (ch149): user-confirmed live.
 - Open polish: ch153 spur notch (minor RX), 40/80 MHz width (out of scope).
 
 ## Gotchas

@@ -12,9 +12,6 @@ contradicts itself; resolve on HW.
 
 ## Per-card
 
-### rtl8821au_dkms
-- ⏳ 5 GHz deauth/TX (ch149) unverified on HW — offline byte-exact only; 2.4 GHz TX is confirmed [RTL8821AU_DKMS.md].
-
 ### rtl8814au_dkms
 - Wedges under TX + 2.4/5 GHz hopping — 2.4 RX drops, 5 GHz goes intermittent. Steady RX + RSSI match
   the OOT `rtl8814au` driver (mud2g 7.1 vs 8.4/s, RSSI +0.2 dB), and the OOT driver runs
