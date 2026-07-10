@@ -283,3 +283,20 @@ at phydm.c:2188, immediately before `phydm_dig`; also `odm_dtc`, `phydm_receiver
 port the missing noise-detection member so DIG raises IGI correctly on a busy channel on its own — no
 hardcode, no cache, not environment-specific. Diagnostics kept: `rx_death_repro{,_linux}.py`,
 `rx_wedge_regdiff.py`, `rx_wedge_poke.py`, `rx_dwell_char.py`.
+
+**Root cause + real fix (same day): a concurrency race, not DIG.** Extracting the Linux driver's IGI
+trajectory *from the captures* (instrument the verify_pcap walk to log each tick's IGI + FA) showed the
+kernel driver on a ch1-after-5g dwell climbs IGI 0x1c→0x2a over ~8 ticks — *identical to ours* — but
+with FA ≈ 8000/tick (front-end active), while our live FA is <2000 (front-end blocked, IGI can't
+climb). So DIG is faithful; our RX front-end reads no energy after a 5→2 dwell. Walking the band-switch
+code against the vendor (`PHY_SwitchWirelessBand8814A`) confirmed `switch_wireless_band_2g` is
+byte-faithful (clock-gate bracket, CCK regs, order) and `phy_sw_band` reads the HW band marker — so the
+register writes aren't the gap. The gap is dynamic and invisible to verify_pcap (single-threaded
+replay, no concurrent reader): **`set_channel` did not pause the `RxReaderThread` across the tune**, so
+a concurrent bulk-IN corrupts the tune's RF/RX-path reconfig and strands 2.4 GHz RX deaf. A scan hop
+self-heals (a later tune re-lands); a one-shot dwell has nothing to re-land it → the ~15 s wedge until
+the DIG watchdog's IGI write happens to re-kick RX. The `rtl8821cu_dkms` driver already had this pause
+(RF18 RMW race); the 8814au port dropped it — a port-completeness miss. **Fix:** pause the RX reader
+across a non-scan (dwell) tune in `set_channel` (mirrors 8821cu). Verified: SIT healthy from t=0, IGI
+climbs 0x1e→0x2a *naturally* (matching the Linux trajectory), breadth 39–65/s — no hardcode, no
+over-correction; verify_pcap stays 100%.

@@ -276,10 +276,25 @@ class Rtl8814auDkmsDriver:
         Sets the per-rate TX power for the channel's band (M2e / M5d), so both RX and
         inject/deauth use correct power on either band. The register I/O is ``_tune`` (shared
         with the pcap gate); this serializes it off the event loop against the DIG watchdog.
-        """
+
+        A deliberate (non-``scan``) tune pauses the RX reader across the switch. The band switch
+        gates the RX clock off, reconfigures the CCK/OFDM path, and gates it back on
+        (``PHY_SwitchWirelessBand8814A``); a concurrent bulk-IN read corrupts that reconfig and
+        strands 2.4 GHz RX deaf. A one-shot dwell has no later switch to re-land it (a scan hop
+        self-heals, so it skips the pause), so it would otherwise wedge ~15 s until the DIG
+        watchdog happens to re-kick RX. verify_pcap can't catch this — it replays the writes
+        single-threaded with no concurrent reader. Mirrors the rtl8821cu_dkms fix."""
         loop = asyncio.get_running_loop()
         async with self._io_lock:   # don't race the DIG watchdog's control I/O
-            await loop.run_in_executor(None, self._tune, self.transport, channel)
+            reader = self._reader
+            pause = reader is not None and not scan
+            if pause:
+                await loop.run_in_executor(None, reader.pause)
+            try:
+                await loop.run_in_executor(None, self._tune, self.transport, channel)
+            finally:
+                if pause:
+                    reader.resume()
         return True
 
     def _inject(self, t, frame_bytes: bytes, *, hw_rate: int = DESC_RATE1M,
