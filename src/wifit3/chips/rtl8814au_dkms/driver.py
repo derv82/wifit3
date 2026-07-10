@@ -292,6 +292,8 @@ class Rtl8814auDkmsDriver:
                 await loop.run_in_executor(None, reader.pause)
             try:
                 await loop.run_in_executor(None, self._tune, self.transport, channel)
+                if pause:      # band switch re-enabled RX with no read posted -> re-prime the pipe
+                    await loop.run_in_executor(None, self.transport.reset_rx_pipe)
             finally:
                 if pause:
                     reader.resume()

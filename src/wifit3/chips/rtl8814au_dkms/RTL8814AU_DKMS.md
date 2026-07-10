@@ -308,6 +308,21 @@ so a bring-up warmup won't help — it's per-transition, not cold state). The in
 t=0" verification was on an rx_death_repro run that happened to END same-band, so it never exercised a
 band-switch dwell. So the real scan→focus case (hop 2.4↔5, then dwell a 2.4 target) is NOT fixed. The
 residual is band-switch-specific and dynamic (the writes are byte-faithful and the tune is now
-race-free, yet the front-end stays blocked after a clean 5→2 switch while Linux's is active, FA ~8000):
-a settle/re-acquire step the vendor does that we don't — the next thread (candidate: a delay or DIG
-re-kick right after the 5→2 switch; the vendor has a `SwChnlInProgress` timer path we collapsed).
+race-free).
+
+**Resolved — the 5→2 residual was a bulk-IN PIPE STALL (RX plumbing), not a register gap.** A deep dive
+found the vendor's runtime channel switch has NO delays and NO active lock (the `SwChnlInProgress`
+spinlock is dead `#if 0` code), and no DM re-init on channel change — so the band-switch *code* matches
+Linux; the gap is in our userland RX plumbing. `rx_pipe_probe.py` (per-second raw-USB-buffers vs
+frames vs beacons during the wedge) was decisive: during the 5→2 wedge `raw_bufs/s = 0` for ~16 s
+(zero USB data, not garbage), then snaps to 100+/s. The band switch re-enables RX (clock-gate on) while
+the RX reader is PAUSED (the same-band fix), so RX data arrives with no read posted → the chip RX FIFO
+overflows and stalls the pipe; the reader only retries out of it ~16 s later. This is the codebase's own
+"start the reader before RX-enable or the cold pipe wedges" gotcha, at runtime. The kernel URB survives
+it; our thread doesn't. **Fix (part 2):** `transport.reset_rx_pipe()` (clear_halt the bulk-IN endpoint)
+called in `set_channel` right after the tune, while the reader is still paused (no read in flight). So
+the complete fix is two parts: (1) pause the RX reader across a dwell tune — same-band race; (2)
+re-prime the pipe after it — band-switch clock-gate stall. Verified: 5→2 dwell healthy from sec 1
+(mean 7.6/s, 0 zero-seconds), 3/3 repeated cycles healthy (was 3/3 dead), same-band still healthy,
+verify_pcap still 100%. Not a divergence from Linux — correct RX-pipe handling of the band-switch RX
+re-enable that the kernel URB does for free.

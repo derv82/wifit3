@@ -108,5 +108,16 @@ class Rtl8814auTransport:
                 return None
             raise
 
+    def reset_rx_pipe(self) -> None:
+        """Clear a bulk-IN endpoint halt. The band switch re-enables RX (clock-gate on) while
+        the RX reader is paused, so RX data arrives with no read posted → the chip's RX FIFO
+        overflows and stalls the pipe (raw_bufs = 0 for ~16 s until the reader retries out of
+        it). Best-effort: a non-halted pipe just raises, which we swallow. Call with the reader
+        paused so no read is in flight on the endpoint."""
+        try:
+            self.dev.clear_halt(self._bulk_in_ep())
+        except Exception:  # noqa: BLE001 — non-halted pipe / backend without clear_halt
+            pass
+
     def close(self) -> None:
         usb.util.dispose_resources(self.dev)
