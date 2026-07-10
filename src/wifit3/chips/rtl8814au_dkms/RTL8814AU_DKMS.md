@@ -188,3 +188,22 @@ all 31 buckets (min 57, no zero bucket), 5 GHz 28-45, active-BSSID trend rose (1
 1.18). No death, no progressive degradation. Parse-quality WARNs are hopping artifacts (OUI
 garbage 5.0% is dominated by ff:ff:ff:ff:ff:ff broadcast; beacon-channel mismatch 22% is the
 known cross-tune-window effect). Cleared from BUGS.md.
+
+### 2026-07-09 — M3c halrf: thermal TX-power tracking ported (verify_pcap → IQK frontier)
+
+The watchdog's halrf member was a stub (thermal re-arm only); the thermal-DELTA correction that
+fires from tick #2 was unported — the verify_pcap operational frontier. Ported the vendor
+`odm_txpowertracking_check_ce` + `..._callback_thermal_meter` MIX_MODE path (`powertrack.py` +
+`powertrack_tbl.py` delta-swing tables): the two-phase arm/read gate, thermal averaging,
+`odm_get_tracking_table` per-path index walk, and the per-path TXAGC (0xX94) / BB-swing (0xX1C)
+writes; plus `odm_clear_txpowertracking_state` (incl. the `thermal_value → eeprom` re-base at
+halphyrf_ce.c:162) and the `phy_SetBBSwingByBand` `default_ofdm_index` band adjust on each hop.
+`eeprom_thermal` now reads from efuse 0xBA. The tick-2 BB-swing (0x197) is COMPUTED (eeprom 0x23,
+thermal 25 → delta 10 → 2G down-table 4 → idx 24−4=20 → `tx_scaling_table_jaguar[20]`), not
+hardcoded. verify_pcap capture-1 now reaches the 8814A IQK backup (`R 0x0520`, op 10338 — the next
+milestone, `do_iqk_8814a`); capture-3 reaches op 13509 (4 ticks, both bands, incl. the 5 GHz
+band-switch correction) before the pre-existing LED-mid-hop harness-interleave limit. The gate's
+`Walk.run` now credits ops matched before a mid-handler divergence (fail-closed unchanged), so the
+frontier reports the true deepest-reproduced op. RX-neutral (TX-power thermal compensation) — ported
+for capture fidelity, not an RX fix. Preceded by the faithful CCK-PD unconditional-seed fix that
+cleared the tick-2 CCK divergence.

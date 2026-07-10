@@ -60,7 +60,14 @@ class Walk:
 
     def run(self, fn, label: str):
         t = rp.ReplayTransport(self.ops[self.i:])
-        result = fn(t)
+        try:
+            result = fn(t)
+        except rp.Divergence:
+            self.i += max(t.i - 1, 0)   # the diverging op did not match; credit only matched ops
+            raise
+        except BaseException:
+            self.i += t.i               # a port/harness error consumed t.i matched ops
+            raise
         self.i += t.i
         return result
 
@@ -117,7 +124,11 @@ def _walk_operational(w: Walk, p: efuse.ChipParams, band: int,
     interleave: channel hops (carry the lagging software band), the LED blink (carries an ON/OFF
     phase), and the dynamic-check tick (sreset + phydm_watchdog, carrying DM state). The first op
     that opens no wired handler STOPS the walk and is returned as the frontier."""
-    st = watchdog.WatchdogState(cur_ig_value=igi_seed, nhm_igi=igi_seed)
+    st = watchdog.WatchdogState(cur_ig_value=igi_seed, nhm_igi=igi_seed,
+                                eeprom_thermal=p.eeprom_thermal,
+                                bb_swing_diff_2g=p.bb_swing_diff_2g,
+                                bb_swing_diff_5g=p.bb_swing_diff_5g)
+    cur_channel = INIT_CHANNEL   # the halrf thermal track selects its delta-swing table from it
     hops = ticks = leds = 0
     while w.i < len(w.ops):
         o = w.peek()
@@ -131,6 +142,9 @@ def _walk_operational(w: Walk, p: efuse.ChipParams, band: int,
                     current_band=b), f"hop{ch}")
             except (rp.Divergence, Exception) as e:  # noqa: BLE001
                 return hops, ticks, leds, _frontier(w, o, f"hop ch{ch}", e)
+            # phy_SwChnlAndSetBwMode8814A clears the TX-power-track state on every channel set.
+            watchdog.powertrack.on_channel_switch(st, cur_channel, ch)
+            cur_channel = ch
             hops += 1
             continue
         if o["kind"] == "R" and o.get("addr") == _OP_LED:
@@ -142,7 +156,7 @@ def _walk_operational(w: Walk, p: efuse.ChipParams, band: int,
             continue
         if o["kind"] == "R" and o.get("addr") == _OP_TICK:
             try:
-                w.run(lambda t: watchdog.tick(t, st), f"tick#{ticks + 1}")
+                w.run(lambda t, c=cur_channel: watchdog.tick(t, st, c), f"tick#{ticks + 1}")
             except (rp.Divergence, Exception) as e:  # noqa: BLE001
                 return hops, ticks, leds, _frontier(w, o, f"tick #{ticks + 1}", e)
             ticks += 1
@@ -155,7 +169,9 @@ def _frontier(w: Walk, o: dict, label: str, e: Exception) -> dict:
     kind = type(e).__name__
     print(f"\n  {label} {'DIVERGED' if isinstance(e, rp.Divergence) else 'ERROR'} "
           f"at op {w.i}:\n    {kind}: {e}")
-    return o
+    # w.run credits the ops reproduced before the stop, so the cursor now sits on the first
+    # unaccounted op (e.g. a partially-ported watchdog tick that reaches an unported sub-step).
+    return w.peek() or o
 
 
 def run(cap: str | None = None) -> int:

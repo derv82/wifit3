@@ -46,6 +46,9 @@ class ChipParams(NamedTuple):
     tx_power_5g: tuple  # 4x PathTxPwr (paths A..D), 5 GHz
     bb_swing: tuple    # 4x 11-bit TxScale value (paths A..D), 2.4 GHz
     bb_swing_5g: tuple  # 4x 11-bit TxScale value (paths A..D), 5 GHz
+    eeprom_thermal: int  # thermal-meter PG base (rf->eeprom_thermal); TX-power-tracking seed (M3c)
+    bb_swing_diff_2g: int  # bb_swing_diff dB per band; band-switch default_ofdm_index adjust (M3c)
+    bb_swing_diff_5g: int
 
 
 def _efuse_one_byte_read(t, addr: int) -> int:
@@ -146,6 +149,16 @@ def _parse_crystal_cap(m: bytes) -> int:
     return C.EEPROM_DEFAULT_CRYSTAL_CAP if v == 0xFF else v
 
 
+def _parse_thermal(m: bytes) -> int:
+    """[SRC] rtl8814a_hal_init.c:1182-1190 — efuse 0xBA, else 8814A default 0x18.
+
+    Feeds ``rf->eeprom_thermal``, the TX-power-tracking base the runtime watchdog compares the
+    live RF thermal meter against (M3c). 0xff (unburned) falls back to EEPROM_Default_ThermalMeter.
+    """
+    v = m[C.EEPROM_THERMAL_METER_8814]
+    return C.EEPROM_DEFAULT_THERMAL_METER_8814A if v == 0xFF else v
+
+
 # 2.4G PG TX-power block per path (18 B: 6 CCK base, 5 BW40 base, 7 diff bytes);
 # per-path stride 0x2A (2G block + 5G block). [SRC] hal_load_pg_txpwr_info_path_2g,
 # pg_txpwr_saddr=0x10. [WIRE] reproduces the cold-boot txagc (0x1998) writes.
@@ -240,6 +253,19 @@ def _parse_bb_swing(m: bytes, byte_off: int) -> tuple:
     return tuple(_BB_SWING[(swing >> (2 * p)) & 0x3] for p in range(4))
 
 
+# TxScale value -> BB-swing dB (bb_swing_diff), inverse of _BB_SWING [SRC PHY_GetTxBBSwing_8814A].
+_BBSWING_DB = {C.BBSWING_DEFAULT: 0, 0x16A: -3, 0x101: -6, 0x0B6: -9}
+
+
+def _bb_swing_diff(swing: tuple) -> int:
+    """[SRC] PHY_GetTxBBSwing_8814A — the per-band bb_swing_diff dB (path-A swing).
+
+    Feeds phy_SetBBSwingByBand's ``default_ofdm_index += BBDiffBetweenBand*2`` on a band switch
+    (M3c power-track). Path A is representative (the registry swing is band-global).
+    """
+    return _BBSWING_DB.get(swing[0], 0)
+
+
 def _parse_bb_swing_2g(m: bytes) -> tuple:
     """2.4 GHz per-path TxScale, from efuse byte 0xC6 (M4e)."""
     return _parse_bb_swing(m, C.EEPROM_TX_BBSWING_2G)
@@ -285,4 +311,7 @@ def read_chip_params(t) -> ChipParams:
         tx_power_5g=_parse_tx_power_5g(m),
         bb_swing=_parse_bb_swing_2g(m),
         bb_swing_5g=_parse_bb_swing_5g(m),
+        eeprom_thermal=_parse_thermal(m),
+        bb_swing_diff_2g=_bb_swing_diff(_parse_bb_swing_2g(m)),
+        bb_swing_diff_5g=_bb_swing_diff(_parse_bb_swing_5g(m)),
     )

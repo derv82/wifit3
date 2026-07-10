@@ -376,6 +376,8 @@ EEPROM_XTAL = 0xB9             # EEPROM_XTAL_8814 (crystal_cap)
 EEPROM_RFE_OPTION = 0xCA       # EEPROM_RFE_OPTION_8814 (rfe_type, bit7 + [6:0])
 EEPROM_TX_BBSWING_2G = 0xC6    # EEPROM_TX_BBSWING_2G_8814 (2-bit BB-swing index per path)
 EEPROM_TX_BBSWING_5G = 0xC7    # EEPROM_TX_BBSWING_5G_8814 (2-bit BB-swing index per path)
+EEPROM_THERMAL_METER_8814 = 0xBA   # EEPROM_THERMAL_METER_8814 [SRC] hal_pg.h:179 (thermal PG base)
+EEPROM_DEFAULT_THERMAL_METER_8814A = 0x18  # [SRC] hal_pg.h:793 (used when the byte is unburned)
 EEPROM_DEFAULT_CRYSTAL_CAP = 0x20  # EEPROM_Default_CrystalCap_8814
 RFE_TYPE_8814AU_FALLBACK = 1   # hal_ReadRFEType_8814A 8814AU branch
 

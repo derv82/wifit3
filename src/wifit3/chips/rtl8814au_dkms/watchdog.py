@@ -20,13 +20,15 @@ and the linked / DFS / TDMA branches do not apply.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Optional
 
+from . import powertrack
 from .bb import _set_reg_masked as _bb32
+from .constants import EEPROM_DEFAULT_THERMAL_METER_8814A
 from .dig import (
     _IGI_MASK, _IGI_MAX, _IGI_MIN, _REG_IGI, _new_igi_by_fa, _reset_fa_cnt,
 )
-from .rf import set_rf_masked
 
 WATCHDOG_PERIOD_S = 2.0        # kernel dynamic-check cadence
 
@@ -91,11 +93,10 @@ _LED_GPI_VAL = (1 << 0) | (1 << 1) | (1 << 5) | (1 << 6)       # gpi value (clea
 
 
 # halrf_watchdog -> phydm_rf_watchdog -> odm_txpowertracking_check [SRC halphyrf_ce.c:1151]:
-# the thermal-meter read of RF reg 0x42 (R 0x2908 path-A readback) paired with a re-trigger
-# write (W 0xc90); halrf_dpk_track is a no-op on 8814A. TX-thermal compensation, RX-irrelevant,
-# but on the wire each tick. The first call runs the txpwrtrack init (a no-change RMW of 0x440).
-_REG_THERMAL_RF = 0x42         # RF_T_METER; read via the path-A RF-readback window (0x2908)
-_THERMAL_TRIGGER = 0x30000     # RF 0x42[17:16] = 3 re-arms the meter for the next measurement
+# the two-phase thermal-meter gate (arm one tick, read + correct the next). The arm and the
+# callback both read RF reg 0x42 (R 0x2908 path-A readback); the arm writes it back (W 0xc90),
+# the callback applies the per-path TXAGC/BB-swing correction (see powertrack.py). halrf_dpk_track
+# is a no-op on 8814A. The first call runs the txpwrtrack init (a no-change RMW of 0x440).
 _REG_TXPWRTRACK_INIT = 0x0440  # BB reg touched once on the first txpwrtrack init (no change)
 
 
@@ -129,6 +130,38 @@ class WatchdogState:
     nhm_include_set: bool = False
     nhm_period: int = 0
     clm_period: int = _CLM_PERIOD_MAX
+    # phydm TX-power-tracking (M3c halrf) carried state [SRC halrf_powertracking_ce.c:588 init +
+    # halphyrf_ce.c callback]. eeprom_thermal is the PG base (seed at connect from efuse 0xBA);
+    # thermal_value / _iqk / _lck all start at that base [ITEM 9]. default_ofdm_index==24 is the
+    # fresh-BB swing index (0xc1c[31:21]==0x200 -> get_swing_index 24). p_rate_index is the
+    # no-link low-rate that selects the CCK vs OFDM delta-swing table.
+    tm_trigger: int = 0
+    eeprom_thermal: int = EEPROM_DEFAULT_THERMAL_METER_8814A
+    p_rate_index: int = powertrack.NO_LINK_TX_RATE
+    bb_swing_diff_2g: int = 0     # band-switch default_ofdm_index adjust (phy_SetBBSwingByBand)
+    bb_swing_diff_5g: int = 0
+    default_ofdm_index: int = 24
+    thermal_value: Optional[int] = None
+    thermal_value_iqk: Optional[int] = None
+    thermal_value_lck: Optional[int] = None
+    thermal_value_delta: int = 0
+    thermal_value_avg_index: int = 0
+    thermal_value_avg: list = field(default_factory=lambda: [0, 0, 0, 0])
+    bb_swing_idx_ofdm_base: list = field(default_factory=lambda: [24, 24, 24, 24])
+    bb_swing_idx_ofdm: list = field(default_factory=lambda: [24, 24, 24, 24])
+    absolute_ofdm_swing_idx: list = field(default_factory=lambda: [0, 0, 0, 0])
+    delta_power_index: list = field(default_factory=lambda: [0, 0, 0, 0])
+    delta_power_index_last: list = field(default_factory=lambda: [0, 0, 0, 0])
+    power_index_offset: list = field(default_factory=lambda: [0, 0, 0, 0])
+
+    def __post_init__(self) -> None:
+        # thermal baselines all seed to the EFUSE thermal base (ITEM 9).
+        if self.thermal_value is None:
+            self.thermal_value = self.eeprom_thermal
+        if self.thermal_value_iqk is None:
+            self.thermal_value_iqk = self.eeprom_thermal
+        if self.thermal_value_lck is None:
+            self.thermal_value_lck = self.eeprom_thermal
 
 
 def led_blink(t, st: WatchdogState) -> None:
@@ -247,24 +280,20 @@ def _adaptivity(t, st: WatchdogState) -> None:
     _bb32(t, _REG_EDCCA, 0xFF00, th_h2l & 0xFF)    # MASKBYTE1 = H2L
 
 
-def _halrf(t, st: WatchdogState) -> None:
-    """[SRC] halrf_watchdog -> odm_txpowertracking_check — read + re-arm the RF thermal meter.
+def _halrf(t, st: WatchdogState, channel: int) -> None:
+    """[SRC] halrf_watchdog -> odm_txpowertracking_check — the RF thermal-meter track.
 
-    On the first call the txpwrtrack init touches a BB reg once (no change here); every call
-    reads RF 0x42 (the path-A readback at 0x2908) and re-arms it (RF 0x42[17:16]=3 -> 0xc90).
-
-    SCOPE: this reproduces only the no-thermal-delta path. When the averaged thermal value
-    diverges from the EFUSE base, odm_txpowertracking_callback_thermal_meter applies a per-path
-    TX-power swing/OFDM-index correction (0xc94/0xc1c/... per path) via the tracking-table LUT.
-    That correction — TX-power thermal compensation, RX-irrelevant — is NOT ported; it is the
-    capture gate's remaining frontier (first delta tick). The runtime watchdog only needs the
-    re-arm, so the driver's RX behaviour is unaffected by the omission.
+    The first call runs the txpwrtrack init (a no-change RMW of 0x440). Then the two-phase
+    check_ce gate (powertrack.txpowertracking_check_ce): one tick arms RF 0x42, the next reads
+    it and applies the per-path TXAGC/BB-swing correction from the delta-swing tables. TX-power
+    thermal compensation — RX-irrelevant, but on the wire each tick. The channel selects the
+    delta-swing table (2.4 GHz CCK/OFDM vs a 5 GHz sub-band).
     """
     if not st.txpwrtrack_init:
         v = t.read32(_REG_TXPWRTRACK_INIT)
         t.write32(_REG_TXPWRTRACK_INIT, v)             # first-run init: no-change RMW
         st.txpwrtrack_init = True
-    set_rf_masked(t, "a", _REG_THERMAL_RF, _THERMAL_TRIGGER, 0x3)
+    powertrack.txpowertracking_check_ce(t, st, channel)
 
 
 def _set_nhm_th(t, igi: int) -> None:
@@ -320,11 +349,13 @@ def _env_mntr(t, st: WatchdogState) -> None:
     _bb32(t, _REG_CCX, 1 << 0, 1)
 
 
-def tick(t, st: WatchdogState) -> int:
+def tick(t, st: WatchdogState, channel: int) -> int:
     """One dynamic-check tick: sreset poll + the phydm_watchdog members, in wire order.
 
-    Mutates ``st`` (carried IGI / CCX state) and returns ``cnt_all`` (the FA count this tick)
-    for the driver's debug log. The DIG IGI after the tick is ``st.cur_ig_value``.
+    Mutates ``st`` (carried IGI / CCX / TX-power-track state) and returns ``cnt_all`` (the FA
+    count this tick) for the driver's debug log. The DIG IGI after the tick is ``st.cur_ig_value``.
+    ``channel`` is the currently-tuned channel — the halrf thermal track selects the delta-swing
+    table by band/sub-band from it.
     """
     _sreset_status_check(t)
     _hw_setting_nbi(t)
@@ -334,6 +365,6 @@ def tick(t, st: WatchdogState) -> int:
     _dig(t, st, cnt_all)
     _cck_pd(t, st, cck_fa)
     _adaptivity(t, st)
-    _halrf(t, st)
+    _halrf(t, st, channel)
     _env_mntr(t, st)
     return cnt_all

@@ -43,6 +43,7 @@ from .efuse import read_chip_params
 from .firmware import bring_up
 from .mac import hal_init_turn_on, mac_init_misc, phy_mac_config
 from .monitor import _set_macaddr, enable_rx_bar, enter_monitor, set_sta_opmode
+from .powertrack import on_channel_switch
 from .rf import phy_rf_config
 from .rx import iter_frames
 from .transport import Rtl8814auTransport
@@ -164,8 +165,12 @@ class Rtl8814auDkmsDriver:
         self._current_band, igi_seed = await loop.run_in_executor(
             None, _phy_config, self.transport)
         # Seed the runtime watchdog's carried state from the InitHalDm DIG seed (cur_ig_value
-        # and the CCX nhm_igi both start at the AGC-default IGI).
-        self._wd_state = WatchdogState(cur_ig_value=igi_seed, nhm_igi=igi_seed)
+        # and the CCX nhm_igi both start at the AGC-default IGI); eeprom_thermal seeds the M3c
+        # TX-power-track baselines (WatchdogState.__post_init__ derives thermal_value/_iqk/_lck).
+        self._wd_state = WatchdogState(cur_ig_value=igi_seed, nhm_igi=igi_seed,
+                                       eeprom_thermal=params.eeprom_thermal,
+                                       bb_swing_diff_2g=params.bb_swing_diff_2g,
+                                       bb_swing_diff_5g=params.bb_swing_diff_5g)
         self._channel = _DEFAULT_CHANNEL
 
         # M3b-3a: start the bulk-IN RX reader BEFORE the monitor RX gate opens. It keeps a
@@ -208,7 +213,8 @@ class Rtl8814auDkmsDriver:
             while True:
                 await asyncio.sleep(WATCHDOG_PERIOD_S)
                 async with self._io_lock:
-                    fa = await loop.run_in_executor(None, watchdog_tick, self.transport, st)
+                    ch = self._channel or _DEFAULT_CHANNEL
+                    fa = await loop.run_in_executor(None, watchdog_tick, self.transport, st, ch)
                 logger.debug("RTL8814AU watchdog: IGI=0x%02x fa=%d", st.cur_ig_value, fa)
         except asyncio.CancelledError:
             pass
@@ -259,6 +265,11 @@ class Rtl8814auDkmsDriver:
             self._current_band = await loop.run_in_executor(
                 None, set_channel_bw, self.transport, channel, self._tx_power,
                 self._tx_power_5g, self._bb_swing_2g, self._bb_swing_5g, self._current_band)
+            # phy_SwChnlAndSetBwMode8814A clears the TX-power-track state on every channel set
+            # (band switches re-base default_ofdm_index). Software only; under the lock so the
+            # watchdog tick never reads a half-updated state.
+            if self._wd_state is not None and self._channel is not None:
+                on_channel_switch(self._wd_state, self._channel, channel)
         self._channel = channel
         return True
 
