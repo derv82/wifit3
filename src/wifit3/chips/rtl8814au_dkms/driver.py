@@ -36,6 +36,7 @@ from .chan import init_tune, set_channel_bw, set_rfe_reg_init
 from .constants import (
     BAND_MAX, BBSWING_DEFAULT, CHANNELS_2G, CHANNELS_5G_NON_DFS, PID_RTL8814AU, VID_REALTEK,
 )
+from .dig import _IGI_MAX, write_igi
 from .dm import init_hal_dm
 from .watchdog import WATCHDOG_PERIOD_S, WatchdogState
 from .watchdog import tick as watchdog_tick
@@ -276,11 +277,28 @@ class Rtl8814auDkmsDriver:
         Sets the per-rate TX power for the channel's band (M2e / M5d), so both RX and
         inject/deauth use correct power on either band. The register I/O is ``_tune`` (shared
         with the pcap gate); this serializes it off the event loop against the DIG watchdog.
-        """
+
+        ``scan=False`` (a dwell — the focus view sits on one channel) reached after 5 GHz
+        hopping can land with IGI stuck at the floor, where a busy 2.4 GHz band saturates the
+        RX front-end deaf (silent ~15 s until the DIG watchdog happens to move IGI). On such a
+        dwell we force IGI up to the anti-saturation max — the value *edge* un-sticks RX at once;
+        the watchdog re-adapts down from there on a quiet channel. Scoped to dwells because a
+        scan hop re-tunes fast enough that RX never wedges. Deliberate post-100% divergence (the
+        vendor recovers via FA-driven IGI churn we don't reproduce); verify_pcap drives ``_tune``
+        directly, not this wrapper, so the gate is unaffected."""
         loop = asyncio.get_running_loop()
         async with self._io_lock:   # don't race the DIG watchdog's control I/O
             await loop.run_in_executor(None, self._tune, self.transport, channel)
+            if not scan and channel in CHANNELS_2G and self._wd_state is not None:
+                await loop.run_in_executor(None, self._unstick_2g_rx, self.transport)
         return True
+
+    def _unstick_2g_rx(self, t) -> None:
+        """Force IGI to the anti-saturation max on a 2.4 GHz dwell (see ``set_channel``). Both
+        the HW write and the carried DIG state move, so the next watchdog tick adapts from here
+        rather than fighting a stale ``cur_ig_value``."""
+        write_igi(t, _IGI_MAX)
+        self._wd_state.cur_ig_value = _IGI_MAX
 
     def _inject(self, t, frame_bytes: bytes, *, hw_rate: int = DESC_RATE1M,
                 rate_id: int = RATEID_IDX_B) -> None:

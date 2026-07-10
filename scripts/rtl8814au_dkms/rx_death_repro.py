@@ -107,14 +107,22 @@ async def run(args: argparse.Namespace) -> int:
             while time.monotonic() < t_end:
                 ch = hop[i % len(hop)]
                 cur["ch"] = ch
-                await iface.set_channel(ch)
+                await iface.set_channel(ch, scan=True)   # scan hop: no dwell un-stick
                 await asyncio.sleep(args.hop_dwell)
                 i += 1
-        print(f"[*] SIT phase: ch{args.sit_channel} for {args.sit_secs}s", file=sys.stderr)
+        rt = args.sit_retune_secs
+        print(f"[*] SIT phase: ch{args.sit_channel} for {args.sit_secs}s"
+              f"{f' (re-tune every {rt}s)' if rt else ''}", file=sys.stderr)
         cur["phase"] = "sit"
         cur["ch"] = args.sit_channel
         await iface.set_channel(args.sit_channel)
-        await asyncio.sleep(args.sit_secs)
+        if rt > 0:
+            t_end = time.monotonic() + args.sit_secs
+            while time.monotonic() < t_end:
+                await asyncio.sleep(rt)
+                await iface.set_channel(args.sit_channel)   # periodic re-tune during the dwell
+        else:
+            await asyncio.sleep(args.sit_secs)
     finally:
         samp.cancel()
         await mgr.close_all()
@@ -132,6 +140,9 @@ def main() -> int:
     p.add_argument("--ref", default=None, help="pin a 2.4 GHz reference BSSID (runtime only).")
     p.add_argument("--no-dig", action="store_true", help="freeze IGI at the M3a seed (control).")
     p.add_argument("--skip-hop", action="store_true", help="sit-only control (no HOP phase).")
+    p.add_argument("--sit-retune-secs", type=float, default=0.0,
+                   help="re-tune set_channel(sit) every N s during SIT (fix-test: does a re-tune "
+                        "un-wedge RX?). 0 = tune once and idle.")
     args = p.parse_args()
     try:
         return asyncio.run(run(args))

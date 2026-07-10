@@ -243,3 +243,28 @@ set into the recipe (`new2/` prefix; dev-addr auto-detect). Result: 2.4 GHz cap-
 new2/cap-{1,2,3} all PASS 100% (~2013 injections total). This is the "reach 100% byte-for-byte before
 diverging" bar met — the DIG-pin-while-hopping RX divergence is now the next, deliberate, post-100%
 step.
+
+### 2026-07-10 — the 2.4 GHz hop→dwell RX wedge: root cause + fix (IGI un-stick)
+
+Symptom (field): after the scanner hops 2.4↔5 GHz then dwells on a 2.4 GHz channel, RX goes silent
+~15 s before self-healing. Characterized it end-to-end with `rx_death_repro.py` (hop→sit, +`--no-dig`
+/`--skip-hop`/`--sit-retune-secs` controls): DIG-on → 15 s dead then recovers; DIG-off → dead forever;
+cold-sit (no hop) → healthy; a periodic re-tune → healthy. So the DIG watchdog is the *recovery*, not
+the cause, and the trigger is the hop→dwell transition — **not** the "free-running DIG goes deaf"
+theory from the handoff. A clean single-session A/B on the kernel driver (`rx_death_repro_linux.py
+--ab`, 60 s + 90 s hop) is healthy, so it's **our port's gap, not the driver's** (earlier "dead" Linux
+runs were an airmon monitor-cycle degradation confound, recoverable via a sysfs `authorized` USB
+reset). Register diff (`rx_wedge_regdiff.py`): BB *control* regs identical healthy-vs-wedged, only CCK
+FA counters differ — a saturated front-end, not a wrong threshold. Poke test (`rx_wedge_poke.py`):
+re-writing IGI with the **same** value does nothing; raising IGI to 0x2a revives RX instantly. So the
+front-end un-sticks only on an IGI *value edge*: after 5 GHz hops (low FA) IGI drifts to the floor, and
+landing on a busy 2.4 GHz band at a low IGI saturates it deaf. The vendor recovers via FA-driven IGI
+churn every tick (`odm_write_dig` is on-change, but its FA keeps moving); our carried-state DIG can
+stick at the floor. Why this hid behind verify_pcap: the captures only ever *hop* (IGI changes every
+tick → writes every tick), so a long static dwell — where on-change and every-tick diverge — is in no
+capture. **Fix:** on a `scan=False` (dwell) tune to a 2.4 GHz channel, force IGI to the anti-saturation
+max (`_IGI_MAX` 0x2a) in the async `set_channel` wrapper (`driver._unstick_2g_rx` + `dig.write_igi`);
+the value edge un-sticks RX immediately and the watchdog re-adapts down. Scoped to dwells (a scan hop
+re-tunes fast enough to never wedge). Verified: the SIT phase is now healthy from t=0 (IGI 0x2a→0x26,
+mud2g 5.7–9/s) vs the prior 15 s blackout; verify_pcap stays 100% (the wrapper isn't on the `_tune`
+path the gate drives). Deliberate post-100% divergence.
