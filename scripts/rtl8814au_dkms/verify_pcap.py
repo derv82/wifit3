@@ -58,8 +58,10 @@ class Walk:
         self.ops = ops
         self.i = 0
 
-    def run(self, fn, label: str):
+    def run(self, fn, label: str, interleave=None):
         t = rp.ReplayTransport(self.ops[self.i:])
+        if interleave is not None:
+            t.interleave = lambda addr: interleave(t, addr)
         try:
             result = fn(t)
         except rp.Divergence:
@@ -130,6 +132,20 @@ def _walk_operational(w: Walk, p: efuse.ChipParams, band: int,
                                 bb_swing_diff_5g=p.bb_swing_diff_5g)
     cur_channel = INIT_CHANNEL   # the halrf thermal track selects its delta-swing table from it
     hops = ticks = leds = 0
+
+    def _drain_led(t, addr):
+        """The LED-blink timer (0x0060) runs on its own ~2 s cadence, so the wire splices its
+        R/W pair into whatever handler is mid-flight (a tune's txagc burst, an IQK one-shot). Drain
+        each interleaved blink through the real led_blink at the cursor so the handler resumes
+        byte-aligned. Skips 0x0060 itself so led_blink's own ops don't re-enter this."""
+        nonlocal leds
+        if addr == _OP_LED:
+            return
+        while (t.i < len(t.ops) and t.ops[t.i]["kind"] == "R"
+               and t.ops[t.i].get("addr") == _OP_LED):
+            watchdog.led_blink(t, st)
+            leds += 1
+
     while w.i < len(w.ops):
         o = w.peek()
         if o["kind"] == "R" and o.get("addr") == _OP_HOP:
@@ -139,7 +155,7 @@ def _walk_operational(w: Walk, p: efuse.ChipParams, band: int,
             try:
                 band = w.run(lambda t, c=ch, b=band: chan.set_channel_bw(
                     t, c, p.tx_power, p.tx_power_5g, p.bb_swing, p.bb_swing_5g,
-                    current_band=b), f"hop{ch}")
+                    current_band=b), f"hop{ch}", interleave=_drain_led)
             except (rp.Divergence, Exception) as e:  # noqa: BLE001
                 return hops, ticks, leds, _frontier(w, o, f"hop ch{ch}", e)
             # phy_SwChnlAndSetBwMode8814A clears the TX-power-track state on every channel set.
@@ -156,7 +172,8 @@ def _walk_operational(w: Walk, p: efuse.ChipParams, band: int,
             continue
         if o["kind"] == "R" and o.get("addr") == _OP_TICK:
             try:
-                w.run(lambda t, c=cur_channel: watchdog.tick(t, st, c), f"tick#{ticks + 1}")
+                w.run(lambda t, c=cur_channel: watchdog.tick(t, st, c),
+                      f"tick#{ticks + 1}", interleave=_drain_led)
             except (rp.Divergence, Exception) as e:  # noqa: BLE001
                 return hops, ticks, leds, _frontier(w, o, f"tick #{ticks + 1}", e)
             ticks += 1

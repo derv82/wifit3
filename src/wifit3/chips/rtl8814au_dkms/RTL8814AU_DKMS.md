@@ -207,3 +207,16 @@ band-switch correction) before the pre-existing LED-mid-hop harness-interleave l
 frontier reports the true deepest-reproduced op. RX-neutral (TX-power thermal compensation) — ported
 for capture fidelity, not an RX fix. Preceded by the faithful CCK-PD unconditional-seed fix that
 cleared the tick-2 CCK divergence.
+
+### 2026-07-09 — verify_pcap: drain the interleaved LED blink (async producer)
+
+The LED-blink timer (0x0060 R/W) fires on its own ~2 s cadence, so the wire splices its op pair
+into whatever handler is mid-flight — a channel tune's txagc burst or an IQK one-shot. The
+single-cursor harness dispatched hops/ticks/LED atomically, so a mid-handler LED desynced the walk
+(the frontier on capture-2 op 8212 / capture-3 op 13509). Added an optional `interleave` hook to the
+shared `ReplayTransport` (default off — no effect on other chips) that the 8814au recipe drives to
+drain each interleaved blink through the real `led_blink` at the cursor (byte-verified, non-recursive
+— it skips 0x0060 so the blink's own ops don't re-enter). Result: capture-2 → op 29274/29811 (98%,
+reaches the aireplay TX bulk-OUT), capture-3 → op 29862/30582 (98%, reaches an IQK at tick #40).
+capture-1 unchanged (its IQK precedes any LED). Remaining frontiers: the 8814A IQK (cap-1/cap-3) and
+the aireplay injection (cap-2).

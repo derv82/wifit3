@@ -196,6 +196,11 @@ class ReplayTransport:
     def __init__(self, ops):
         self.ops = ops
         self.i = 0
+        # Optional interleave hook(addr): drains an independent async producer's ops that the
+        # wire splices into the current handler (e.g. the LED-blink timer firing mid-tune/mid-IQK).
+        # Default None -> no effect. Called before each register op with the addr the port wants;
+        # the hook must skip its own producer's addr so it stays non-recursive.
+        self.interleave = None
 
     def _next(self, want):
         if self.i >= len(self.ops):
@@ -205,6 +210,8 @@ class ReplayTransport:
         return op
 
     def _read(self, addr, width):
+        if self.interleave is not None:
+            self.interleave(addr)
         op = self._next(f"read(0x{addr:04x}/{width})")
         if op["kind"] != "R" or op["addr"] != addr or op["width"] != width:
             raise Divergence(
@@ -213,6 +220,8 @@ class ReplayTransport:
         return op["value"]
 
     def _write(self, addr, width, value):
+        if self.interleave is not None:
+            self.interleave(addr)
         op = self._next(f"write(0x{addr:04x}/{width})")
         if (op["kind"] != "W" or op["addr"] != addr or op["width"] != width
                 or op["value"] != value):
