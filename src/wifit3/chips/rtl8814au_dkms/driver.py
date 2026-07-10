@@ -47,7 +47,7 @@ from .powertrack import on_channel_switch
 from .rf import phy_rf_config
 from .rx import iter_frames
 from .transport import Rtl8814auTransport
-from .tx import TXBF_GID_NONE, build_mgmt_txdesc
+from .tx import DESC_RATE1M, RATEID_IDX_B, TXBF_GID_NONE, build_mgmt_txdesc
 
 logger = logging.getLogger(__name__)
 
@@ -282,16 +282,22 @@ class Rtl8814auDkmsDriver:
             await loop.run_in_executor(None, self._tune, self.transport, channel)
         return True
 
-    def _inject(self, t, frame_bytes: bytes) -> None:
+    def _inject(self, t, frame_bytes: bytes, *, hw_rate: int = DESC_RATE1M,
+                rate_id: int = RATEID_IDX_B) -> None:
         """One monitor-injected mgmt frame in wire order — the body ``inject_frame``'s executor
         runs, shared with the pcap gate. Builds the update_txdesc mgmt descriptor (M4a) and sends
         ``[desc | frame]`` on the bulk-OUT pipe. ``frame_bytes`` is the MPDU without FCS (HW
-        appends it); BMC is read from addr1's group bit, matching update_txdesc."""
+        appends it); BMC is read from addr1's group bit, matching update_txdesc.
+
+        ``hw_rate``/``rate_id`` default to the fixed CCK-1M management rate wifite's own deauths
+        ride; a userspace injector (aireplay-ng) picks them per-frame via radiotap, so the pcap
+        gate reads the recorded pair back and passes it here to byte-verify the descriptor."""
         bmc = bool(frame_bytes[4] & 0x01)   # addr1 group-address (multicast) bit
         # GID is the target psta's txbf_g_id: a broadcast pseudo-STA keeps the SU-default 63,
         # a real unicast STA (no beamforming here) is 0 (matches the wire across probe/RTS/auth).
         gid = TXBF_GID_NONE if bmc else 0
-        desc = build_mgmt_txdesc(len(frame_bytes), bmc=bmc, gid=gid)
+        desc = build_mgmt_txdesc(len(frame_bytes), hw_rate=hw_rate, rate_id=rate_id,
+                                 bmc=bmc, gid=gid)
         t.bulk_out(desc + frame_bytes)
 
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:

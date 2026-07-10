@@ -8,18 +8,21 @@ fate as the cursor advances:
   * unaccounted   — anything else STOPS the walk and names the op: the porting frontier,
                     the next op to reproduce. PASS <=> zero unaccounted.
 
-This capture has **no aireplay-ng injection** (every bulk-OUT is a firmware-download
-packet in frames 6145-6667), so there is **no legitimate waiver** — the whole control
-conversation, init + airmon STA->monitor dance + airodump hops + the phydm dynamic-check
-watchdog, is reproduce-or-fail to the last frame.
+There is **no legitimate waiver** — every op reproduce-or-fail to the last frame: the whole
+control conversation (init + airmon STA->monitor dance + airodump hops + the phydm
+dynamic-check watchdog) AND the aireplay-ng bulk-OUT injections. Two capture sets are wired:
+``usb_dumps_new`` (2.4 GHz aireplay, the default) and ``usb_dumps_new2`` (5 GHz injection,
+select with a ``new2/`` prefix). Both PASS 100% byte-for-byte.
 
 We do not run airmon/airodump/iw against our port; the chip only sees register writes, so
 the vendor-driver writes those tools trigger are ours to reproduce. wifit3 is the trigger:
 the bring-up + airmon dance is the deterministic init walk; the operational phase dispatches
-each burst to the real handler at the cursor — a channel hop (set_channel_bw) or a
-dynamic-check tick (the sreset poll + phydm watchdog) — distinguished by a unique opener.
+each burst to the real handler at the cursor — a channel hop (set_channel_bw), a dynamic-check
+tick (the sreset poll + phydm watchdog), or a frame injection (update_txdesc + bulk-OUT) —
+distinguished by a unique opener. The LED blink and injection run on their own timers, so they
+splice into a mid-flight handler; ``_drain_async`` drains each at the cursor.
 
-    uv run python scripts/rtl8814au_dkms/verify_pcap.py [capture-N[.pcap]]
+    uv run python scripts/rtl8814au_dkms/verify_pcap.py [[new2/]capture-N]
 """
 from __future__ import annotations
 
@@ -36,8 +39,16 @@ from wifit3.chips.rtl8814au_dkms import monitor, watchdog  # noqa: E402
 from wifit3.chips.rtl8814au_dkms import constants as C  # noqa: E402
 from wifit3.chips.rtl8814au_dkms.driver import Rtl8814auDkmsDriver  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps_new" / "captures_rtl8814au"
-DEV_ADDR = {"capture-1": 51, "capture-2": 53, "capture-3": 54}
+# Two capture sets. Select the 5 GHz one with a "new2/" prefix (e.g. "new2/capture-1");
+# a bare capture name defaults to the 2.4 GHz set.
+CAP_DIRS = {
+    "new":  REPO / "usb_dumps_new"  / "captures_rtl8814au",   # Kali 6.18, 2.4 GHz aireplay
+    "new2": REPO / "usb_dumps_new2" / "captures_rtl8814au",   # Kali 6.19 (this VM), 5 GHz injection
+}
+# dev-addr per (set, capture); anything absent falls back to find_card_device(pcap).
+DEV_ADDR = {
+    ("new", "capture-1"): 51, ("new", "capture-2"): 53, ("new", "capture-3"): 54,
+}
 
 INIT_CHANNEL = 1                 # the cold-boot connect-time tune target
 _ANCHOR_ADDR = C.REG_SYS_CFG1    # 0xF0 — read_chip_version, the first vendor op
@@ -85,6 +96,16 @@ def _peek_channel(ops: list[dict], i: int, window: int = 120) -> int | None:
     return None
 
 
+def _peek_txrate(desc: bytes) -> tuple[int, int]:
+    """An injected frame's (rate_id, tx_rate) are runtime inputs — aireplay-ng picks them per
+    frame via radiotap, so read them back from the recorded descriptor the way _peek_channel
+    reads the tune target. update_txdesc's RATE_ID is word1[20:16] and TX_RATE is word4[6:0]
+    [SRC rtl8814au_xmit.c:106,232]; the driver rebuilds the other 38 bytes from the frame."""
+    rate_id = (int.from_bytes(desc[4:8], "little") >> 16) & 0x1F
+    hw_rate = int.from_bytes(desc[16:20], "little") & 0x7F
+    return rate_id, hw_rate
+
+
 def _walk_bringup(w: Walk) -> Rtl8814auDkmsDriver:
     """Cold bring-up through the SHARED driver method — the gate exercises ``driver._bringup``,
     the exact sequence ``connect()`` runs (EFUSE -> firmware -> MAC/BB/RF -> tune -> InitHalDm ->
@@ -109,18 +130,27 @@ def _walk_operational(w: Walk, driver: Rtl8814auDkmsDriver) -> tuple[int, int, i
     st = driver._wd_state
     hops = ticks = leds = injects = 0
 
-    def _drain_led(t, addr):
-        """The LED-blink timer (0x0060) runs on its own ~2 s cadence, so the wire splices its
-        R/W pair into whatever handler is mid-flight (a tune's txagc burst, an IQK one-shot). Drain
-        each interleaved blink through the real led_blink at the cursor so the handler resumes
-        byte-aligned. Skips 0x0060 itself so led_blink's own ops don't re-enter this."""
-        nonlocal leds
+    def _drain_async(t, addr):
+        """Two independent producers run on their own timers, so the wire splices them into
+        whatever handler is mid-flight (a tune's txagc burst, an IQK one-shot, a watchdog tick):
+        the LED blink (0x0060 R/W pair, ~2 s cadence) and aireplay's frame injection (a bulk-OUT).
+        Drain each at the cursor through its real handler so the host handler resumes byte-aligned.
+        Skips 0x0060 itself so led_blink's own ops don't re-enter this."""
+        nonlocal leds, injects
         if addr == _OP_LED:
             return
-        while (t.i < len(t.ops) and t.ops[t.i]["kind"] == "R"
-               and t.ops[t.i].get("addr") == _OP_LED):
-            watchdog.led_blink(t, st)
-            leds += 1
+        while t.i < len(t.ops):
+            nxt = t.ops[t.i]
+            if nxt["kind"] == "R" and nxt.get("addr") == _OP_LED:
+                watchdog.led_blink(t, st)
+                leds += 1
+            elif nxt["kind"] == "B":
+                rec = bytes(nxt["data"])
+                rate_id, hw_rate = _peek_txrate(rec[:C.TXDESC_SIZE])
+                driver._inject(t, rec[C.TXDESC_SIZE:], hw_rate=hw_rate, rate_id=rate_id)
+                injects += 1
+            else:
+                break
 
     while w.i < len(w.ops):
         o = w.peek()
@@ -131,7 +161,7 @@ def _walk_operational(w: Walk, driver: Rtl8814auDkmsDriver) -> tuple[int, int, i
             try:
                 # driver._tune = set_channel_bw + on_channel_switch, the body set_channel runs;
                 # it advances driver._current_band / driver._channel just like the live hop.
-                w.run(lambda t, c=ch: driver._tune(t, c), f"hop{ch}", interleave=_drain_led)
+                w.run(lambda t, c=ch: driver._tune(t, c), f"hop{ch}", interleave=_drain_async)
             except (rp.Divergence, Exception) as e:  # noqa: BLE001
                 return hops, ticks, leds, injects, _frontier(w, o, f"hop ch{ch}", e)
             hops += 1
@@ -146,7 +176,7 @@ def _walk_operational(w: Walk, driver: Rtl8814auDkmsDriver) -> tuple[int, int, i
         if o["kind"] == "R" and o.get("addr") == _OP_TICK:
             try:
                 w.run(lambda t: watchdog.tick(t, st, driver._channel),
-                      f"tick#{ticks + 1}", interleave=_drain_led)
+                      f"tick#{ticks + 1}", interleave=_drain_async)
             except (rp.Divergence, Exception) as e:  # noqa: BLE001
                 return hops, ticks, leds, injects, _frontier(w, o, f"tick #{ticks + 1}", e)
             ticks += 1
@@ -155,9 +185,14 @@ def _walk_operational(w: Walk, driver: Rtl8814auDkmsDriver) -> tuple[int, int, i
             # aireplay TX injection: the wire's bulk-OUT is [40-byte TX desc | 802.11 frame].
             # Feed the frame to driver._inject (the body inject_frame runs) and check the
             # rebuilt [desc | frame] against the wire — verifies our update_txdesc descriptor.
-            frame = bytes(o["data"])[C.TXDESC_SIZE:]
+            # rate_id/tx_rate are aireplay's per-frame radiotap picks (a Null rides VHT MCS9,
+            # deauths ride CCK 1M), read back from the recorded desc like _peek_channel.
+            rec = bytes(o["data"])
+            frame = rec[C.TXDESC_SIZE:]
+            rate_id, hw_rate = _peek_txrate(rec[:C.TXDESC_SIZE])
             try:
-                w.run(lambda t, f=frame: driver._inject(t, f), f"inject#{injects + 1}")
+                w.run(lambda t, f=frame, r=rate_id, hr=hw_rate:
+                      driver._inject(t, f, hw_rate=hr, rate_id=r), f"inject#{injects + 1}")
             except (rp.Divergence, Exception) as e:  # noqa: BLE001
                 return hops, ticks, leds, injects, _frontier(w, o, f"inject #{injects + 1}", e)
             injects += 1
@@ -177,12 +212,17 @@ def _frontier(w: Walk, o: dict, label: str, e: Exception) -> dict:
 
 def run(cap: str | None = None) -> int:
     time.sleep = lambda *a, **k: None        # replay needs no real settle delays
-    name = Path(cap or "capture-1").stem
-    pcap = CAP_DIR / f"{name}.pcap"
+    raw = cap or "capture-1"
+    setkey, _, rest = raw.partition("/")     # optional "<set>/<capture>" selector
+    if rest and setkey in CAP_DIRS:
+        cap_dir, name = CAP_DIRS[setkey], Path(rest).stem
+    else:
+        setkey, cap_dir, name = "new", CAP_DIRS["new"], Path(raw).stem
+    pcap = cap_dir / f"{name}.pcap"
     if not pcap.exists():
         print(f"FAIL: no such capture {pcap}")
         return 1
-    dev = DEV_ADDR.get(name) or rp.find_card_device(pcap)
+    dev = DEV_ADDR.get((setkey, name)) or rp.find_card_device(pcap)
     rp.audit_coverage(pcap, dev)
 
     full = rp.extract_ops(pcap, dev)
@@ -222,7 +262,8 @@ def run(cap: str | None = None) -> int:
         return 1
 
     print(f"\nPASS: reproduced all {w.i} of {total} ops single-cursor — entire cold-boot "
-          f"capture byte-for-byte (init + airmon + {hops} hops + {ticks} watchdog ticks).")
+          f"capture byte-for-byte (init + airmon + {hops} hops + {ticks} watchdog ticks + "
+          f"{injects} injections).")
     return 0
 
 

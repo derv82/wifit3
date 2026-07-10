@@ -14,17 +14,21 @@ Registered as the DEFAULT driver for `0bda:8813` (`WIFIT3_RTL8814=mainline` fall
 Cold init + firmware boot, 2.4 + 5 GHz monitor RX, RSSI, and the full attack suite
 (deauth, handshake, PMKID, WEP replay + chopchop, WPS PIN + PBC) all hardware-proven.
 5 GHz inject/deauth confirmed on air (a live ch36 deauth captured the reconnect 4-way,
-34/34 EAPOL on target). `verify_pcap` reproduces all three cold boots byte-for-byte
-through the turn-on tail; the per-channel tunes (2.4 + 5 GHz) are byte-diffed by
-`verify_channels.py`. Monitor RX is fully promiscuous both directions (ToDS M2/M4 seen),
-so WPA handshake capture works.
+34/34 EAPOL on target). `verify_pcap` reproduces **all six** cold boots — both the 2.4 GHz
+(`usb_dumps_new`) and 5 GHz-injection (`usb_dumps_new2`, `new2/` prefix) sets — 100%
+byte-for-byte end-to-end, init through every airodump hop, phydm watchdog tick, LED blink, and
+aireplay bulk-OUT injection (probe/RTS/auth/deauth + the VHT-MCS9 Null). The per-channel tunes
+(2.4 + 5 GHz) are also byte-diffed by `verify_channels.py`. Monitor RX is fully promiscuous both
+directions (ToDS M2/M4 seen), so WPA handshake capture works.
 
 The 2026-06-05 soak flagged intermittent 2.4 GHz dropouts under sustained hopping (one 60 s
 bucket with zero 2.4 GHz APs; 5 GHz unaffected), but a 30-min re-soak on 2026-07-06 did not
 reproduce it — 2.4 GHz held 57-79 active APs every bucket, no dropout (see Debug log). Scan +
 Stress are flagged in VERIFICATION.md (the Stress flag predates this re-soak). 40/80 MHz bonded widths
-are out of scope (20 MHz primary only). The full data-frame `update_txdesc` TX path is
-not ported (inject/deauth/replay use the minimal mgmt descriptor at a fixed rate); the
+are out of scope (20 MHz primary only). Our own inject/deauth/replay ride the `update_txdesc` mgmt
+descriptor at a fixed CCK-1M rate, but that descriptor is now byte-verified against every aireplay
+injected frame kind and rate (`_inject` takes `hw_rate`/`rate_id`, and the gate reads aireplay's
+radiotap picks back from the recorded desc — a VHT-MCS9 Null and CCK deauths both reproduce). The
 USB3 firmware/burst branch is unported (latent gap if a card ever links USB3).
 
 ## Gotchas
@@ -220,3 +224,22 @@ drain each interleaved blink through the real `led_blink` at the cursor (byte-ve
 reaches the aireplay TX bulk-OUT), capture-3 → op 29862/30582 (98%, reaches an IQK at tick #40).
 capture-1 unchanged (its IQK precedes any LED). Remaining frontiers: the 8814A IQK (cap-1/cap-3) and
 the aireplay injection (cap-2).
+
+### 2026-07-10 — verify_pcap: 100% on all six captures (aireplay rate + injection interleave)
+
+Closed the last two frontiers, so every capture in both sets reproduces byte-for-byte. (1) The
+aireplay injection stalled on a QoS-Null frame whose descriptor RATE_ID=9 / TX_RATE=0x35 (VHT 1SS
+MCS9) can't be derived from the 802.11 frame — it's aireplay's per-frame radiotap pick, set into
+`pattrib->raid` / `pattrib->rate` upstream of `update_txdesc` [xmit.c:106,232]. Read the pair back
+from the recorded desc (`_peek_txrate`, mirroring `_peek_channel`'s tune-target read) and thread it
+into `_inject(hw_rate, rate_id)` → `build_mgmt_txdesc`; all 40 desc bytes (incl. the XOR checksum)
+then match for every injected kind — probe req, RTS, auth, deauth, and the VHT Null — confirming the
+descriptor construction is byte-correct given aireplay's rate input, not just for the CCK default.
+(2) A second async producer: aireplay's inject timer fires mid-tick, so a bulk-OUT splices into a
+watchdog tick's per-RF-path burst (new2/cap-3 op 29699, a probe req between the path-C and path-D
+`0xX90` writes) — same phenomenon as the LED blink. Generalized `_drain_led` → `_drain_async` to
+drain both an LED pair and an injection bulk-OUT at the cursor. Also wired the 5 GHz `usb_dumps_new2`
+set into the recipe (`new2/` prefix; dev-addr auto-detect). Result: 2.4 GHz cap-{1,2,3} and 5 GHz
+new2/cap-{1,2,3} all PASS 100% (~2013 injections total). This is the "reach 100% byte-for-byte before
+diverging" bar met — the DIG-pin-while-hopping RX divergence is now the next, deliberate, post-100%
+step.
