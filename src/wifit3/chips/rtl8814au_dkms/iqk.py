@@ -211,7 +211,7 @@ def _iqk_one_shot(t, st) -> None:
                 _bb32(t, 0x9a4, (1 << 21) | (1 << 20), pi)
                 if idx == TX_IQK:
                     iqk_cmd = 0xf8000001 | (st.band_width + 3) << 8 | (1 << (4 + pi))
-                else:  # RX_IQK
+                elif idx == RX_IQK:
                     if st.current_band_type == ODM_BAND_2_4G:
                         set_rf_masked(t, path, RF_0xdf, 1 << 11, 0x1)
                         set_rf_masked(t, path, RF_0x56, 0xfffff, 0x51ce1)
@@ -247,7 +247,7 @@ def _iqk_one_shot(t, st) -> None:
             if not fail:
                 if idx == TX_IQK:
                     st.iqc_matrix[idx][pi] = t.read32(0x1b38)
-                else:  # RX_IQK
+                elif idx == RX_IQK:
                     t.write32(0x1b3c, 0x20000000)
                     st.iqc_matrix[idx][pi] = t.read32(0x1b3c)
 

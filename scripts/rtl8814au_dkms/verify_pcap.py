@@ -32,13 +32,11 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "scripts"))
 
 import rtw88_pcap_replay as rp  # noqa: E402
-from wifit3.chips.rtl8814au_dkms import (  # noqa: E402
-    bb, chan, dm, efuse, firmware, mac, monitor, rf, watchdog,
-)
+from wifit3.chips.rtl8814au_dkms import monitor, watchdog  # noqa: E402
 from wifit3.chips.rtl8814au_dkms import constants as C  # noqa: E402
+from wifit3.chips.rtl8814au_dkms.driver import Rtl8814auDkmsDriver  # noqa: E402
 
 CAP_DIR = REPO / "usb_dumps_new" / "captures_rtl8814au"
-FW_BIN = REPO / "src" / "wifit3" / "chips" / "rtl8814au_dkms" / "assets" / "rtl8814au_fw.bin"
 DEV_ADDR = {"capture-1": 51, "capture-2": 53, "capture-3": 54}
 
 INIT_CHANNEL = 1                 # the cold-boot connect-time tune target
@@ -87,50 +85,28 @@ def _peek_channel(ops: list[dict], i: int, window: int = 120) -> int | None:
     return None
 
 
-def _walk_init(w: Walk, fw: bytes) -> tuple[efuse.ChipParams, int]:
-    """Probe + deterministic bring-up, in driver source order, threaded through one cursor.
-    Mirrors driver.py connect(): EFUSE -> firmware -> MAC/BB/RF -> tune -> InitHalDm ->
-    RFE-true -> turn-on tail. Returns (params, the DIG IGI seed the watchdog carries)."""
-    p = w.run(efuse.read_chip_params, "efuse")                            # probe (pre power-on)
-    w.run(lambda t: firmware.bring_up(t, fw), "bring-up")                 # M1: pwr-on -> FW ready
-    w.run(mac.phy_mac_config, "mac-cfg")                                  # MAC register table
-    w.run(mac.mac_init_misc, "mac-misc")                                  # hal_init MISC stage
-    w.run(lambda t: bb.phy_bb_config(t, p.rfe_type, p.crystal_cap), "bb-cfg")
-    w.run(lambda t: rf.phy_rf_config(t, p.rfe_type), "rf-cfg")
-    w.run(lambda t: chan.init_tune(t, INIT_CHANNEL, p.tx_power, p.tx_power_5g,
-                                   p.bb_swing, p.bb_swing_5g), "init-tune")
-    igi_seed = w.run(dm.init_hal_dm, "init-hal-dm")                       # phydm DIG/AGC seed
-    w.run(lambda t: chan.set_rfe_reg_init(t, p.rfe_type), "rfe-init")     # PHY_SetRFEReg(TRUE)
-    w.run(lambda t: mac.hal_init_turn_on(t, p.mac_address), "turn-on")    # turn-on tail + MAC
-    return p, igi_seed
+def _walk_bringup(w: Walk) -> Rtl8814auDkmsDriver:
+    """Cold bring-up through the SHARED driver method — the gate exercises ``driver._bringup``,
+    the exact sequence ``connect()`` runs (EFUSE -> firmware -> MAC/BB/RF -> tune -> InitHalDm ->
+    RFE-true -> turn-on -> airmon STA dance), so a change to the driver's bring-up can't silently
+    drift from the gate. ``enter_monitor`` is the one op ``connect()`` defers past the bulk-IN
+    reader (RX-FIFO ordering), so it runs here as its own step. The driver is constructed with no
+    transport — ``_bringup``/``_tune`` take the ReplayTransport as ``t``, so nothing touches live
+    USB; the instance just carries the same band / channel / TX-power / watchdog state it does live.
+    """
+    driver = Rtl8814auDkmsDriver(None)
+    w.run(driver._bringup, "bringup")                     # the exact connect() cold register path
+    w.run(monitor.enter_monitor, "monitor")               # deferred RX gate (post-reader in connect)
+    return driver
 
 
-def _walk_airmon(w: Walk, p: efuse.ChipParams) -> int:
-    """The airmon STA->monitor dance — reproduced, not skipped. init_hw_mlme_ext's RX-BAR +
-    channel re-tune, then hw_var_set_opmode(STATION) then hw_var_set_opmode(MONITOR).
-
-    init_hw_mlme_ext resets the software band to BAND_MAX, so the ch1 retune (chip already
-    2.4 GHz, no switch) skips CCK txagc. Returns the band the dance leaves committed."""
-    w.run(monitor.enable_rx_bar, "rx-bar")                                # init_hw_mlme_ext
-    band = w.run(lambda t: chan.set_channel_bw(t, INIT_CHANNEL, p.tx_power, p.tx_power_5g,
-                                               p.bb_swing, p.bb_swing_5g,
-                                               current_band=C.BAND_MAX), "retune")
-    w.run(lambda t: monitor.set_sta_opmode(t, p.mac_address), "sta-opmode")
-    w.run(monitor.enter_monitor, "monitor")
-    return band
-
-
-def _walk_operational(w: Walk, p: efuse.ChipParams, band: int,
-                      igi_seed: int) -> tuple[int, int, int, dict | None]:
-    """Dispatch each operational burst to the real vendor handler at the cursor. Three producers
-    interleave: channel hops (carry the lagging software band), the LED blink (carries an ON/OFF
-    phase), and the dynamic-check tick (sreset + phydm_watchdog, carrying DM state). The first op
-    that opens no wired handler STOPS the walk and is returned as the frontier."""
-    st = watchdog.WatchdogState(cur_ig_value=igi_seed, nhm_igi=igi_seed,
-                                eeprom_thermal=p.eeprom_thermal,
-                                bb_swing_diff_2g=p.bb_swing_diff_2g,
-                                bb_swing_diff_5g=p.bb_swing_diff_5g)
-    cur_channel = INIT_CHANNEL   # the halrf thermal track selects its delta-swing table from it
+def _walk_operational(w: Walk, driver: Rtl8814auDkmsDriver) -> tuple[int, int, int, dict | None]:
+    """Dispatch each operational burst to the real driver method at the cursor. Three producers
+    interleave: channel hops (``driver._tune`` — the body ``set_channel`` runs), the LED blink
+    (carries an ON/OFF phase), and the dynamic-check tick (``watchdog.tick`` — the DIG watchdog's
+    body, carrying DM state). The driver instance carries the band / channel / watchdog state
+    across bursts exactly as it does live. The first op opening no wired handler STOPS the walk."""
+    st = driver._wd_state
     hops = ticks = leds = 0
 
     def _drain_led(t, addr):
@@ -153,14 +129,11 @@ def _walk_operational(w: Walk, p: efuse.ChipParams, band: int,
             if ch is None:
                 break
             try:
-                band = w.run(lambda t, c=ch, b=band: chan.set_channel_bw(
-                    t, c, p.tx_power, p.tx_power_5g, p.bb_swing, p.bb_swing_5g,
-                    current_band=b), f"hop{ch}", interleave=_drain_led)
+                # driver._tune = set_channel_bw + on_channel_switch, the body set_channel runs;
+                # it advances driver._current_band / driver._channel just like the live hop.
+                w.run(lambda t, c=ch: driver._tune(t, c), f"hop{ch}", interleave=_drain_led)
             except (rp.Divergence, Exception) as e:  # noqa: BLE001
                 return hops, ticks, leds, _frontier(w, o, f"hop ch{ch}", e)
-            # phy_SwChnlAndSetBwMode8814A clears the TX-power-track state on every channel set.
-            watchdog.powertrack.on_channel_switch(st, cur_channel, ch)
-            cur_channel = ch
             hops += 1
             continue
         if o["kind"] == "R" and o.get("addr") == _OP_LED:
@@ -172,7 +145,7 @@ def _walk_operational(w: Walk, p: efuse.ChipParams, band: int,
             continue
         if o["kind"] == "R" and o.get("addr") == _OP_TICK:
             try:
-                w.run(lambda t, c=cur_channel: watchdog.tick(t, st, c),
+                w.run(lambda t: watchdog.tick(t, st, driver._channel),
                       f"tick#{ticks + 1}", interleave=_drain_led)
             except (rp.Divergence, Exception) as e:  # noqa: BLE001
                 return hops, ticks, leds, _frontier(w, o, f"tick #{ticks + 1}", e)
@@ -200,7 +173,6 @@ def run(cap: str | None = None) -> int:
         return 1
     dev = DEV_ADDR.get(name) or rp.find_card_device(pcap)
     rp.audit_coverage(pcap, dev)
-    fw = FW_BIN.read_bytes()
 
     full = rp.extract_ops(pcap, dev)
     anchor = next((j for j, o in enumerate(full)
@@ -215,19 +187,17 @@ def run(cap: str | None = None) -> int:
 
     w = Walk(ops)
     try:
-        p, igi_seed = _walk_init(w, fw)
-        print(f"  init: reproduced {w.i} ops single-cursor (efuse -> turn-on tail, no gaps)")
-        init_end = w.i
-        band = _walk_airmon(w, p)
-        print(f"  airmon: reproduced {w.i - init_end} ops (RX-BAR + retune + STA + monitor)")
+        driver = _walk_bringup(w)
+        print(f"  bring-up: reproduced {w.i} ops single-cursor via driver._bringup "
+              f"(efuse -> turn-on -> airmon -> monitor, no gaps)")
     except rp.Divergence as e:
-        print(f"\nFAIL (init/airmon divergence) at op {w.i}:\n  {e}")
+        print(f"\nFAIL (bring-up divergence) at op {w.i}:\n  {e}")
         return 1
     except Exception as e:  # noqa: BLE001
         print(f"\nERROR (harness/port bug) at op {w.i}: {type(e).__name__}: {e}")
         return 2
 
-    hops, ticks, leds, frontier = _walk_operational(w, p, band, igi_seed)
+    hops, ticks, leds, frontier = _walk_operational(w, driver)
     print(f"  operational: {hops} channel hops + {ticks} dynamic-check ticks + {leds} LED "
           f"blinks reproduced")
 

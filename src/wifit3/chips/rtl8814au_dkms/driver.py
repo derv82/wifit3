@@ -109,69 +109,61 @@ class Rtl8814auDkmsDriver:
         on_fatal; resolved at call time so registration order vs connect() can't strand it."""
         self._on_lost = cb
 
-    async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
-        loop = asyncio.get_running_loop()
-        # All bring-up does blocking synchronous USB I/O; keep it off the event loop.
+    def _bringup(self, t):
+        """Cold register-I/O bring-up in wire order — the ONE source of truth for the sequence,
+        shared verbatim by ``connect()`` (live) and ``scripts/rtl8814au_dkms/verify_pcap.py``
+        (replay), so the gate verifies THIS code, not a copy.
 
-        # EFUSE read (vendor probe order: before _InitPowerOn). Yields rfe_type
-        # (BB phy_cond discriminator), crystal_cap, and the MAC address.
-        if progress_cb:
-            progress_cb(0.0, "Reading EFUSE / chip parameters")
-        params = await loop.run_in_executor(None, read_chip_params, self.transport)
+        Every op here is in the cold-boot capture byte-for-byte: EFUSE probe, firmware upload,
+        MAC/BB/RF config, connect-time tune, InitHalDm DIG/AGC seed, RFE-true, turn-on tail, and
+        the airmon STA->monitor dance up to STA opmode. The parts that are NOT register I/O in the
+        capture stay in ``connect()``: the libusb setup, the bulk-IN reader thread, the
+        ``enter_monitor`` RX gate (deferred so the reader is posted first, else the RX FIFO
+        overflows), and the DIG watchdog task. Sets the per-band TX-power / bb-swing / MAC / band /
+        channel + runtime watchdog state the operational path reads; returns the ChipParams.
+        """
+        params = read_chip_params(t)                                  # EFUSE probe (pre power-on)
         self.mac_address = params.mac_address
-        self._tx_power = params.tx_power
-        self._tx_power_5g = params.tx_power_5g
-        self._bb_swing_2g = params.bb_swing
-        self._bb_swing_5g = params.bb_swing_5g
-        logger.info("RTL8814AU efuse: rfe_type=%d crystal_cap=0x%02x mac=%s bb_swing=%s",
-                    params.rfe_type, params.crystal_cap,
-                    params.mac_address or "<none>",
-                    "/".join(f"0x{v:03x}" for v in params.bb_swing))
-
-        if progress_cb:
-            progress_cb(0.2, "Uploading firmware (3081 IDDMA)")
-        fw = _load_firmware()
-        ready = await loop.run_in_executor(None, bring_up, self.transport, fw)
-        if not ready:
+        self._tx_power, self._tx_power_5g = params.tx_power, params.tx_power_5g
+        self._bb_swing_2g, self._bb_swing_5g = params.bb_swing, params.bb_swing_5g
+        if not bring_up(t, _load_firmware()):                         # M1: pwr-on -> FW ready
             raise BringUpError("firmware", "MCU never signalled ready (CPU_DL_READY timeout)")
-
-        # Deterministic init chain M2a -> M3b-2 (all pcap-verified). Keep it in sync
-        # with scripts/rtl8814au_dkms/verify_pcap.py.
-        if progress_cb:
-            progress_cb(0.7, "Configuring MAC / BB / RF registers")
-
-        def _phy_config(t):
-            phy_mac_config(t)     # MAC register table
-            mac_init_misc(t)      # hal_init MISC stage
-            phy_bb_config(t, params.rfe_type, params.crystal_cap)  # PHY_BBConfig8814
-            phy_rf_config(t, params.rfe_type)                      # PHY_RFConfig8814A
-            init_tune(t, _DEFAULT_CHANNEL, params.tx_power, params.tx_power_5g,
-                      self._bb_swing_2g, self._bb_swing_5g)  # ch tune + TX power (commits 2.4G)
-            igi_seed = init_hal_dm(t)                              # InitHalDm DIG/AGC seed (IGI)
-            set_rfe_reg_init(t, params.rfe_type)                   # PHY_SetRFEReg8814A(TRUE)
-            hal_init_turn_on(t, self.mac_address)                  # turn-on tail + MAC addr
-            # airmon STA->monitor dance — reach monitor the way the vendor does, not via a
-            # shortcut. init_hw_mlme_ext resets the band to BAND_MAX (so the retune skips CCK).
-            enable_rx_bar(t)                                       # init_hw_mlme_ext RX-BAR
-            band = set_channel_bw(t, _DEFAULT_CHANNEL, params.tx_power, params.tx_power_5g,
-                                  self._bb_swing_2g, self._bb_swing_5g, current_band=BAND_MAX)
-            set_sta_opmode(t, self.mac_address)                   # hw_var_set_opmode(STATION)
-            # enter_monitor (the accept-all monitor RCR — the RX gate) is intentionally NOT
-            # here. It runs only after the bulk-IN reader is already draining (below), so the
-            # chip's RX FIFO is never left filling with no host read posted. Opening the gate
-            # with no reader overflows the FIFO at startup and leaves RX degraded.
-            return band, igi_seed
-
-        self._current_band, igi_seed = await loop.run_in_executor(
-            None, _phy_config, self.transport)
-        # Seed the runtime watchdog's carried state from the InitHalDm DIG seed (cur_ig_value
-        # and the CCX nhm_igi both start at the AGC-default IGI); eeprom_thermal seeds the M3c
-        # TX-power-track baselines (WatchdogState.__post_init__ derives thermal_value/_iqk/_lck).
+        phy_mac_config(t)                                             # MAC register table
+        mac_init_misc(t)                                             # hal_init MISC stage
+        phy_bb_config(t, params.rfe_type, params.crystal_cap)        # PHY_BBConfig8814
+        phy_rf_config(t, params.rfe_type)                            # PHY_RFConfig8814A
+        init_tune(t, _DEFAULT_CHANNEL, params.tx_power, params.tx_power_5g,
+                  self._bb_swing_2g, self._bb_swing_5g)              # ch tune + TX power (2.4G)
+        igi_seed = init_hal_dm(t)                                    # InitHalDm DIG/AGC seed (IGI)
+        set_rfe_reg_init(t, params.rfe_type)                         # PHY_SetRFEReg8814A(TRUE)
+        hal_init_turn_on(t, self.mac_address)                        # turn-on tail + MAC addr
+        # airmon STA->monitor dance: init_hw_mlme_ext resets the band to BAND_MAX (so the retune
+        # skips CCK). enter_monitor is deferred to connect() (RX-FIFO ordering).
+        enable_rx_bar(t)                                             # init_hw_mlme_ext RX-BAR
+        self._current_band = set_channel_bw(
+            t, _DEFAULT_CHANNEL, params.tx_power, params.tx_power_5g,
+            self._bb_swing_2g, self._bb_swing_5g, current_band=BAND_MAX)
+        set_sta_opmode(t, self.mac_address)                         # hw_var_set_opmode(STATION)
+        self._channel = _DEFAULT_CHANNEL
+        # Runtime watchdog state seeded from the DIG IGI + EFUSE thermal/bb-swing (M3c). Carried
+        # (not re-read) across ticks; the CCX nhm_igi also starts at the AGC-default IGI.
         self._wd_state = WatchdogState(cur_ig_value=igi_seed, nhm_igi=igi_seed,
                                        eeprom_thermal=params.eeprom_thermal,
                                        bb_swing_diff_2g=params.bb_swing_diff_2g,
                                        bb_swing_diff_5g=params.bb_swing_diff_5g)
-        self._channel = _DEFAULT_CHANNEL
+        return params
+
+    async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
+        loop = asyncio.get_running_loop()
+        # The cold bring-up is blocking synchronous USB I/O; run the shared _bringup off the
+        # event loop. It is the exact sequence the pcap gate replays.
+        if progress_cb:
+            progress_cb(0.0, "Cold bring-up: EFUSE -> firmware -> MAC/BB/RF -> monitor")
+        params = await loop.run_in_executor(None, self._bringup, self.transport)
+        logger.info("RTL8814AU efuse: rfe_type=%d crystal_cap=0x%02x mac=%s bb_swing=%s",
+                    params.rfe_type, params.crystal_cap,
+                    params.mac_address or "<none>",
+                    "/".join(f"0x{v:03x}" for v in params.bb_swing))
 
         # M3b-3a: start the bulk-IN RX reader BEFORE the monitor RX gate opens. It keeps a
         # blocking bulk read posted on a dedicated thread (off the event loop, so the TUI
@@ -254,23 +246,30 @@ class Rtl8814auDkmsDriver:
         for parsed in frames:
             cb(parsed)
 
+    def _tune(self, t, channel: int) -> int:
+        """One channel tune in wire order — the body ``set_channel``'s executor runs, shared
+        verbatim with the pcap gate. ``set_channel_bw`` does the PHY retune (band switch on a
+        2.4<->5 GHz crossing + the per-rate TX power); ``on_channel_switch`` mirrors
+        phy_SwChnlAndSetBwMode8814A's per-set TX-power-track clear + band-rebase. Advances the
+        tracked band + channel; returns the (possibly updated) software band."""
+        band = set_channel_bw(t, channel, self._tx_power, self._tx_power_5g,
+                              self._bb_swing_2g, self._bb_swing_5g, self._current_band)
+        if self._wd_state is not None:
+            on_channel_switch(self._wd_state, self._channel, channel)
+        self._current_band = band
+        self._channel = channel
+        return band
+
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         """Tune to a 2.4 GHz or 5 GHz channel at 20 MHz (band-switches on a crossing).
 
         Sets the per-rate TX power for the channel's band (M2e / M5d), so both RX and
-        inject/deauth use correct power on either band.
+        inject/deauth use correct power on either band. The register I/O is ``_tune`` (shared
+        with the pcap gate); this serializes it off the event loop against the DIG watchdog.
         """
         loop = asyncio.get_running_loop()
         async with self._io_lock:   # don't race the DIG watchdog's control I/O
-            self._current_band = await loop.run_in_executor(
-                None, set_channel_bw, self.transport, channel, self._tx_power,
-                self._tx_power_5g, self._bb_swing_2g, self._bb_swing_5g, self._current_band)
-            # phy_SwChnlAndSetBwMode8814A clears the TX-power-track state on every channel set
-            # (band switches re-base default_ofdm_index). Software only; under the lock so the
-            # watchdog tick never reads a half-updated state.
-            if self._wd_state is not None and self._channel is not None:
-                on_channel_switch(self._wd_state, self._channel, channel)
-        self._channel = channel
+            await loop.run_in_executor(None, self._tune, self.transport, channel)
         return True
 
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:

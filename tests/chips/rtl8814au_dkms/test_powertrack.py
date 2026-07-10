@@ -50,9 +50,9 @@ def test_check_ce_arms_then_corrects_all_paths_to_0x197():
     for r in (0x0C1C, 0x0E1C, 0x181C, 0x1A1C):
         reads[r] = 0x40000053                              # bits[31:21] = 0x200 (0 dB base)
     st = watchdog.WatchdogState(eeprom_thermal=35)
-    st.thermal_value_iqk = 25                              # == the read thermal: delta_iqk 0, no
-    #                                                        IQK re-cal fires (that's a separate
-    #                                                        milestone; isolate the pwr correction)
+    st.thermal_value_iqk = 25       # == the read thermal -> delta_iqk 0 -> the IQK re-cal does NOT
+    #                                 fire, isolating the pwr correction here (the IQK trigger +
+    #                                 one-shots are exercised in test_iqk.py).
     t = Rec(reads)
 
     powertrack.txpowertracking_check_ce(t, st, 4)          # tick 1: arm
