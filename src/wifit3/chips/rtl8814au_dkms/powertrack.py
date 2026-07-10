@@ -21,6 +21,7 @@ Register defs [SRC halrf_8814a_ce.c:30-39]; the swing math is
 from __future__ import annotations
 
 from . import constants as C
+from . import iqk
 from .bb import _set_reg_masked as _bb32
 from .rf import _rf_read, set_rf_masked
 from . import powertrack_tbl as T
@@ -243,6 +244,7 @@ def _callback_thermal_meter(t, st, channel: int) -> None:
     # delta / delta_lck / delta_iqk — absolute differences vs the carried thermal baselines.
     delta = abs(thermal_value - st.thermal_value)
     delta_lck = abs(thermal_value - st.thermal_value_lck)
+    delta_iqk = abs(thermal_value - st.thermal_value_iqk)
 
     # LCK: 8814A only records thermal_value_lck (phy_lc_calibrate is IC-mask-excluded for 8814A,
     # so no register I/O) [SRC halphyrf_ce.c:548-566].
@@ -273,7 +275,14 @@ def _callback_thermal_meter(t, st, channel: int) -> None:
     # Record the last power-tracking thermal value [SRC halphyrf_ce.c:749].
     st.thermal_value = thermal_value
 
-    # The do_iqk_8814a trigger (delta_iqk >= threshold) tails here — the NEXT milestone, unported.
+    # do_iqk_8814a trigger [SRC halphyrf_ce.c:782-793], AFTER the thermal_value store-back: on a
+    # thermal swing >= THRESHOLD_IQK vs the last IQK, re-run the calibrate. The no-link gates
+    # (is_scan_in_process / rfk_forbidden / is_iqk_in_progress) are all constant-false in this
+    # monitor build; the caller sets thermal_value_iqk (do_iqk_8814a re-affirms it).
+    if not st.rfk_forbidden and not st.is_iqk_in_progress:
+        if delta_iqk >= THRESHOLD_IQK:
+            st.thermal_value_iqk = thermal_value
+            iqk.do_iqk_8814a(t, st, channel)
 
 
 def clear_txpowertracking_state(st) -> None:
@@ -314,6 +323,10 @@ def on_channel_switch(st, old_channel: int, new_channel: int) -> None:
         if new_band != C.BAND_ON_2_4G:
             bb_diff_between_band = -1 * bb_diff_between_band
         st.default_ofdm_index += bb_diff_between_band * 2
+        # A 2.4G<->5G crossing is exactly when phy_SwBand8814A commits current_band_type to the
+        # target band (the IQK's *dm->band_type); a same-band hop leaves it lagging (BAND_MAX
+        # until the first crossing). Mirrors chan.phy_sw_band's HW-marker decision.
+        st.current_band_type = new_band
     clear_txpowertracking_state(st)
 
 

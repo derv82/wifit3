@@ -25,7 +25,7 @@ from typing import Optional
 
 from . import powertrack
 from .bb import _set_reg_masked as _bb32
-from .constants import EEPROM_DEFAULT_THERMAL_METER_8814A
+from .constants import BAND_MAX, EEPROM_DEFAULT_THERMAL_METER_8814A
 from .dig import (
     _IGI_MASK, _IGI_MAX, _IGI_MIN, _REG_IGI, _new_igi_by_fa, _reset_fa_cnt,
 )
@@ -153,6 +153,19 @@ class WatchdogState:
     delta_power_index: list = field(default_factory=lambda: [0, 0, 0, 0])
     delta_power_index_last: list = field(default_factory=lambda: [0, 0, 0, 0])
     power_index_offset: list = field(default_factory=lambda: [0, 0, 0, 0])
+    # phydm IQK (M3d halrf) persistent dm_iqk_info [SRC halrf_iqk.h:54]. do_iqk_8814a fires from
+    # the thermal track on a >= THRESHOLD_IQK delta; these carry across ticks. current_band_type
+    # mirrors the vendor lagging *dm->band_type (BAND_MAX until a 5G<->2.4G crossing commits a
+    # band — see on_channel_switch); band_width is CHANNEL_WIDTH_20 (0), the only width here.
+    current_band_type: int = BAND_MAX
+    band_width: int = 0
+    rfk_forbidden: bool = False
+    is_iqk_in_progress: bool = False
+    iqk_firstrun: bool = True
+    iqk_times: int = 0
+    iqk_lok_fail: list = field(default_factory=lambda: [True, True, True, True])
+    iqk_fail: list = field(default_factory=lambda: [[True] * 4, [True] * 4])
+    iqc_matrix: list = field(default_factory=lambda: [[0x20000000] * 4, [0x20000000] * 4])
 
     def __post_init__(self) -> None:
         # thermal baselines all seed to the EFUSE thermal base (ITEM 9).
