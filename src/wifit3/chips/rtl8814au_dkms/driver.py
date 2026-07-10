@@ -109,7 +109,7 @@ class Rtl8814auDkmsDriver:
         on_fatal; resolved at call time so registration order vs connect() can't strand it."""
         self._on_lost = cb
 
-    def _bringup(self, t):
+    def _bringup(self, t, progress=None):
         """Cold register-I/O bring-up in wire order — the ONE source of truth for the sequence,
         shared verbatim by ``connect()`` (live) and ``scripts/rtl8814au_dkms/verify_pcap.py``
         (replay), so the gate verifies THIS code, not a copy.
@@ -122,23 +122,30 @@ class Rtl8814auDkmsDriver:
         overflows), and the DIG watchdog task. Sets the per-band TX-power / bb-swing / MAC / band /
         channel + runtime watchdog state the operational path reads; returns the ChipParams.
         """
+        progress = progress or (lambda *a: None)   # the gate calls _bringup(t) with no progress
+        progress(0.0, "Reading EFUSE / chip parameters")
         params = read_chip_params(t)                                  # EFUSE probe (pre power-on)
         self.mac_address = params.mac_address
         self._tx_power, self._tx_power_5g = params.tx_power, params.tx_power_5g
         self._bb_swing_2g, self._bb_swing_5g = params.bb_swing, params.bb_swing_5g
+        progress(0.1, "Uploading firmware (3081 IDDMA)")
         if not bring_up(t, _load_firmware()):                         # M1: pwr-on -> FW ready
             raise BringUpError("firmware", "MCU never signalled ready (CPU_DL_READY timeout)")
+        progress(0.55, "Configuring MAC / BB / RF registers")
         phy_mac_config(t)                                             # MAC register table
         mac_init_misc(t)                                             # hal_init MISC stage
         phy_bb_config(t, params.rfe_type, params.crystal_cap)        # PHY_BBConfig8814
         phy_rf_config(t, params.rfe_type)                            # PHY_RFConfig8814A
+        progress(0.75, "Channel tune + TX power")
         init_tune(t, _DEFAULT_CHANNEL, params.tx_power, params.tx_power_5g,
                   self._bb_swing_2g, self._bb_swing_5g)              # ch tune + TX power (2.4G)
+        progress(0.88, "DIG/AGC seed + turn-on tail")
         igi_seed = init_hal_dm(t)                                    # InitHalDm DIG/AGC seed (IGI)
         set_rfe_reg_init(t, params.rfe_type)                         # PHY_SetRFEReg8814A(TRUE)
         hal_init_turn_on(t, self.mac_address)                        # turn-on tail + MAC addr
         # airmon STA->monitor dance: init_hw_mlme_ext resets the band to BAND_MAX (so the retune
         # skips CCK). enter_monitor is deferred to connect() (RX-FIFO ordering).
+        progress(0.94, "Monitor setup (STA -> monitor)")
         enable_rx_bar(t)                                             # init_hw_mlme_ext RX-BAR
         self._current_band = set_channel_bw(
             t, _DEFAULT_CHANNEL, params.tx_power, params.tx_power_5g,
@@ -156,10 +163,13 @@ class Rtl8814auDkmsDriver:
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         loop = asyncio.get_running_loop()
         # The cold bring-up is blocking synchronous USB I/O; run the shared _bringup off the
-        # event loop. It is the exact sequence the pcap gate replays.
-        if progress_cb:
-            progress_cb(0.0, "Cold bring-up: EFUSE -> firmware -> MAC/BB/RF -> monitor")
-        params = await loop.run_in_executor(None, self._bringup, self.transport)
+        # event loop (the exact sequence the pcap gate replays). _bringup emits phase progress
+        # from the executor thread — marshal each call back onto the loop so the UI callback runs
+        # where it expects to; the loop processes them live while awaiting the executor.
+        def _emit(pct: float, msg: str) -> None:
+            if progress_cb:
+                loop.call_soon_threadsafe(progress_cb, pct, msg)
+        params = await loop.run_in_executor(None, self._bringup, self.transport, _emit)
         logger.info("RTL8814AU efuse: rfe_type=%d crystal_cap=0x%02x mac=%s bb_swing=%s",
                     params.rfe_type, params.crystal_cap,
                     params.mac_address or "<none>",
