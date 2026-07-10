@@ -36,7 +36,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | [RTL8188EUS](#rtl8188eus) | ✅ | ✅ | ✅ | ✅ | ✅ | A |
 | [RTL8187L](#rtl8187l) | ✅ | ✅ | ❌ | ✅ | ✅ | C |
 | [RT2500USB](#rt2500usb) | ⚠️ | ✅ | ❌ | ⬜ | ⚠️ | D |
-| [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ⚠️ | ❌ | D |
+| [RTL8814AU](#rtl8814au) | ❌ | ✅ | ✅ | ⚠️ | ✅ | D |
 
 ## Per-card notes
 
@@ -162,27 +162,22 @@ live in each chip's `<CHIP>.md` (linked under its table).
 ### RTL8814AU
 *ALFA AWUS1900 · 2.4 / 5 GHz · 4T4R*
 
-> **Good card, our port wedges it — the D is on us, not the silicon.** Driven directly by the
-> out-of-tree `rtl8814au` (DKMS) driver, the AWUS1900 runs deauth + 2.4/5 GHz hopping cleanly; under
-> wifit3 it wedges (2.4 RX drops, 5 GHz intermittent) once TX + hopping mix. Steady-dwell RX, breadth,
-> and RSSI all match the OOT driver (mud2g 7.1 vs 8.4 bcn/s, RSSI +0.2 dB), so the bug is in our port's
-> TX/hop state handling — fixable, not hardware. 5 GHz steady is strong.
-> *(morrownr, the OOT maintainer, separately advises against the AWUS1900 over his mainline driver's
-> RX shortfall — a different, driver-specific concern from our wedge.)*
+> The maintainer of the DKMS driver advises to "get a refund" for the card, blaming both the
+> card and the driver. We ported that driver.
 
 > **Default = vendor/DKMS port.** `WIFIT3_RTL8814=mainline` opts back.
 
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
-| **Grade** | **60% (D)** | 2026-07-06 | Port wedges under TX + 2.4/5 GHz hopping; hardware, steady RX, and attacks are fine. |
-| RX | ❌ | 2026-07-06 | Steady dwell strong (mud2g 7.1 vs OOT 8.4/s; breadth 82/48) but 2.4 RX drops under channel-hopping — unusable in normal (hopping) operation. |
-| Port | ⚠️ | 2026-07-06 | Steady RX + RSSI (+0.2 dB) match OOT; wedges under TX+hop where OOT stays clean — dynamic-path bug. |
+| **Grade** | **60% (D)** | 2026-07-10 | RX-gated; steady + hopping RX and the full attack suite are fine. |
+| RX | ❌ | 2026-07-10 | Steady + hopping match linux (mud2g 7.9/s, mud 9.7/s, breadth 65/50, RSSI +0.0 dB), but dwelling on a 2.4 channel after a 2.4↔5 hop goes dead ~15 s before it self-heals. |
+| Port | ⚠️ | 2026-07-10 | Steady + round-robin RX match linux-DKMS (breadth/rate/RSSI parity); the hop→dwell wedge not yet reproduced on the Linux driver. |
 | Handshake | ✅ | 2026-06-05 | Deauth → 4-way. |
-| PMKID | ✅ | 2026-06-05 | Passive + active. |
+| PMKID | ✅ | 2026-06-05 | Passive + active (2.4 + 5 GHz). |
 | WEP | ✅ | 2026-06-05 | Replay + ChopChop. |
 | WPS | ✅ | 2026-06-05 | PIN + PBC. |
 | ACKs | ✅ | 2026-06-05 | WPS PIN/PBC completed → auto-ACK works. |
-| Stress | ❌ | 2026-06-17 | Soak decays; wedges under sustained TX+hop. |
+| Stress | ✅ | 2026-07-10 | 30-min 22-ch round-robin soak flat (2.4 active BSSIDs 57→67, trend 1.11) — continuous hopping swallows the dead-dwells. |
 
 → [RTL8814AU.md](src/wifit3/chips/rtw88_8814au/RTL8814AU.md) (mainline) · [RTL8814AU_DKMS.md](src/wifit3/chips/rtl8814au_dkms/RTL8814AU_DKMS.md) (default)
 
