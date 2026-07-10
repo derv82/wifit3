@@ -26,6 +26,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
@@ -134,6 +135,10 @@ def setup_monitor(base_iface: str) -> str:
     iw_out = subprocess.run(["iw", "dev"], capture_output=True, text=True).stdout
     mon = parse_monitor_iface(iw_out, base_iface) or f"{base_iface}mon"
     print(f"[*] monitor interface: {mon}", file=sys.stderr)
+    # A freshly-airmon'd monitor iface isn't receiving the instant airmon returns, so the
+    # FIRST channel's tcpdump can start before the RX path is live and capture nothing (an
+    # empty pcap → 0 beacons on ch1, the busiest 2.4 GHz channel). Settle before the sweep.
+    time.sleep(3)
     return mon
 
 
