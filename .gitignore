@@ -27,6 +27,7 @@ data_dumps/
 usb_dumps*/
 kali/
 scripts/diag/*.json
+scripts/diag/history/
 scratch/
 *.log
 # Probe captures (WEP frag/chopchop, WPS, …) — real on-air frames from the

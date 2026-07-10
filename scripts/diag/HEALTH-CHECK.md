@@ -10,7 +10,9 @@ back-to-back**, so a difference is the driver or the RF — never the test tooli
 - `driver_health.py` — shared core: both collectors call `feed(ts, parsed, rssi, channel)`, so
   grouping is identical. It writes the JSON rollup and prints the diff.
 
-Fixed filenames, no timestamps — re-running a card overwrites its file, so nothing goes stale.
+Fixed filenames, no timestamps — re-running a card overwrites its file, so the diff never goes
+stale. The overwritten run isn't lost: `to_json` first copies it into `history/` (gitignored,
+stamped with that run's mtime), so driver-health history accrues over time for every card.
 
 ## Rules
 - **One parser, both sides.** `WlanFrameParser.parse_80211_frame()` takes raw bytes.

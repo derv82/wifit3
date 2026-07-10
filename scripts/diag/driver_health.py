@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import statistics
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -96,8 +98,23 @@ class Health:
         return {"chip": self.chip, "source": self.source, "channels": chans}
 
     def to_json(self, path: str | Path) -> None:
-        Path(path).write_text(json.dumps(self.rollup(), indent=2), encoding="utf-8")
+        path = Path(path)
+        _archive(path)   # snapshot the prior run before overwriting, so history isn't lost
+        path.write_text(json.dumps(self.rollup(), indent=2), encoding="utf-8")
         print(f"[+] wrote {path}", file=sys.stderr)
+
+
+def _archive(path: Path) -> None:
+    """Copy an existing rollup into ``history/`` before it is overwritten, stamped with the
+    file's own mtime (i.e. when THAT run was captured, not now). The working files keep their
+    fixed names — the diff stays fresh + recomputable — while every prior run is preserved.
+    ``history/`` is gitignored (rollups carry live BSSIDs, which never go to git)."""
+    if not path.exists():
+        return
+    hist = path.parent / "history"
+    hist.mkdir(exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(path.stat().st_mtime))
+    shutil.copy2(path, hist / f"{path.stem}-{stamp}.json")
 
 
 def load(path: str | Path) -> dict:
