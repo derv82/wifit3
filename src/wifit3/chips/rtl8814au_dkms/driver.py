@@ -47,7 +47,7 @@ from .powertrack import on_channel_switch
 from .rf import phy_rf_config
 from .rx import iter_frames
 from .transport import Rtl8814auTransport
-from .tx import build_mgmt_txdesc
+from .tx import TXBF_GID_NONE, build_mgmt_txdesc
 
 logger = logging.getLogger(__name__)
 
@@ -282,29 +282,33 @@ class Rtl8814auDkmsDriver:
             await loop.run_in_executor(None, self._tune, self.transport, channel)
         return True
 
+    def _inject(self, t, frame_bytes: bytes) -> None:
+        """One monitor-injected mgmt frame in wire order — the body ``inject_frame``'s executor
+        runs, shared with the pcap gate. Builds the update_txdesc mgmt descriptor (M4a) and sends
+        ``[desc | frame]`` on the bulk-OUT pipe. ``frame_bytes`` is the MPDU without FCS (HW
+        appends it); BMC is read from addr1's group bit, matching update_txdesc."""
+        bmc = bool(frame_bytes[4] & 0x01)   # addr1 group-address (multicast) bit
+        # GID is the target psta's txbf_g_id: a broadcast pseudo-STA keeps the SU-default 63,
+        # a real unicast STA (no beamforming here) is 0 (matches the wire across probe/RTS/auth).
+        gid = TXBF_GID_NONE if bmc else 0
+        desc = build_mgmt_txdesc(len(frame_bytes), bmc=bmc, gid=gid)
+        t.bulk_out(desc + frame_bytes)
+
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
         """Transmit one 802.11 management frame (e.g. a deauth).
 
-        Builds the management TX descriptor (M4a) and sends ``[desc | frame]`` on the
-        bulk-OUT pipe — the same RtOutPipe[0] the firmware download uses, which is where
-        the MGMT queue maps. ``frame_bytes`` is the MPDU *without* FCS (the HW appends
-        it). Serialized with ``set_channel`` / the DIG watchdog via ``_io_lock`` so the
-        frame is never emitted mid-retune. TX is explicit-action only (passive-by-
-        default): nothing on the scan/connect path calls this.
-
-        ``use_no_ack`` is accepted for API compatibility; the minimal mgmt descriptor
-        uses the HW-default ACK/retry policy for now (revisit when deauth is exercised
-        live in M4c). TX-FIFO/queue prerequisites are covered by the M2b MISC stage
-        (MACTXEN + queue/page) — to confirm on the live smoke test.
+        The descriptor + bulk-OUT is ``_inject`` (shared with the pcap gate, which replays the
+        recorded aireplay injection against it). Sends on the same RtOutPipe[0] the firmware
+        download uses, where the MGMT queue maps. Serialized with ``set_channel`` / the DIG
+        watchdog via ``_io_lock`` so the frame is never emitted mid-retune. TX is explicit-action
+        only (passive-by-default): nothing on the scan/connect path calls this. ``use_no_ack`` is
+        accepted for API compatibility (the descriptor carries the update_txdesc retry policy).
         """
         if len(frame_bytes) < 10:           # need addr1 (bytes [4:10]) to read BMC
             return False
         loop = asyncio.get_running_loop()
-        bmc = bool(frame_bytes[4] & 0x01)   # addr1 group-address (multicast) bit
-        desc = build_mgmt_txdesc(len(frame_bytes), bmc=bmc)
         async with self._io_lock:           # don't TX mid-retune (set_channel/DIG)
-            await loop.run_in_executor(
-                None, self.transport.bulk_out, desc + frame_bytes)
+            await loop.run_in_executor(None, self._inject, self.transport, frame_bytes)
         return True
 
     async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:

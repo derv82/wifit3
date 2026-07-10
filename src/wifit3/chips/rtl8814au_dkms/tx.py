@@ -29,6 +29,11 @@ RATEID_IDX_B = 8
 # DESC hardware rate codes [SRC hal_com.h] (the MRateToHwRate output).
 DESC_RATE1M = 0x00
 DESC_RATE6M = 0x04
+# update_txdesc MGNT-path constants [SRC rtl8814au_xmit.c:105-299]:
+MGMT_MACID = 1               # pattrib->mac_id for a no-STA monitor-injected mgmt frame (wire=1)
+TXBF_GID_NONE = 0x3F         # pattrib->txbf_g_id default = 63 (no MU/beamforming group)
+MGMT_DATA_RETRY_LIMIT = 12   # retry_ctrl off -> DATA_RETRY_LIMIT 12 [xmit.c:263]
+SW_DEFINE_FIXED_RATE = 0x01  # DriverFixedRate -> SWDefineContent |= 0x01 [xmit.c:289-290]
 
 
 def _set_bits(desc: bytearray, byte_off: int, bit_start: int, bit_len: int,
@@ -42,28 +47,36 @@ def _set_bits(desc: bytearray, byte_off: int, bit_start: int, bit_len: int,
 
 
 def build_mgmt_txdesc(pkt_len: int, *, hw_rate: int = DESC_RATE1M,
-                      rate_id: int = RATEID_IDX_B, bmc: bool = False) -> bytes:
+                      rate_id: int = RATEID_IDX_B, bmc: bool = False,
+                      gid: int = TXBF_GID_NONE) -> bytes:
     """Build the 40-byte TX descriptor for one management frame.
 
-    [SRC] rtl8814a_fill_fake_txdesc, not-PS-Poll / not-data-frame case: LAST_SEG,
-    OFFSET=TXDESC_SIZE, PKT_SIZE, QUEUE_SEL=QSLT_MGNT, RATE_ID, HWSEQ_EN (HW assigns the
-    sequence number), USE_RATE + TX_RATE (send at the fixed rate, no rate adaptation),
-    SEC_TYPE=0 (the injected frame is already final — no HW encryption), then the
-    descriptor checksum. ``bmc`` sets the broadcast/multicast bit when addr1 is a group
-    address (e.g. a broadcast deauth); `update_txdesc` derives it from the frame, the
-    caller passes it here. The checksum covers the first 32 bytes with its own field
-    zeroed, so it is computed last (HWSEQ_EN at offset 32 sits outside that range).
+    [SRC] update_txdesc MGNT_FRAMETAG path [rtl8814au_xmit.c:42-302] — the descriptor the
+    kernel builds for a monitor-injected management frame (this is what aireplay-ng's deauth /
+    probe emit on the wire; NOT rtl8814a_fill_fake_txdesc, which is the internal null/PS-Poll
+    descriptor). Fields: LAST_SEG, DISQSELSEQ (non-QoS: HW ignores the frame seq-ctl), OFFSET,
+    PKT_SIZE, MACID, QUEUE_SEL=QSLT_MGNT, RATE_ID, GID (no BF group), USE_RATE + TX_RATE (fixed
+    rate), RETRY_LIMIT_ENABLE + DATA_RETRY_LIMIT, SW_DEFINE (DriverFixedRate bit), HWSEQ_EN, then
+    the checksum. ``bmc`` sets the group-address bit (a broadcast deauth/probe). The checksum
+    covers the first 32 bytes with its own field zeroed, so it is computed last (HWSEQ_EN at
+    offset 32 sits outside that range).
     """
     d = bytearray(TXDESC_SIZE)
     _set_bits(d, 0, 26, 1, 1)               # LAST_SEG
+    _set_bits(d, 0, 31, 1, 1)               # DISQSELSEQ (non-QoS mgmt, xmit.c:116)
     _set_bits(d, 0, 16, 8, TXDESC_SIZE)     # OFFSET (descriptor bytes ahead of the MPDU)
     _set_bits(d, 0, 0, 16, pkt_len)         # PKT_SIZE
     if bmc:
         _set_bits(d, 0, 24, 1, 1)           # BMC (group-addressed frame)
+    _set_bits(d, 4, 0, 7, MGMT_MACID)       # MACID (no-STA monitor default)
     _set_bits(d, 4, 8, 5, QSLT_MGNT)        # QUEUE_SEL
     _set_bits(d, 4, 16, 5, rate_id)         # RATE_ID
-    _set_bits(d, 32, 15, 1, 1)              # HWSEQ_EN
+    _set_bits(d, 8, 24, 6, gid)             # GID (txbf_g_id: SU-default 63 for mgmt/data, 0 ctrl)
     _set_bits(d, 12, 8, 1, 1)               # USE_RATE
     _set_bits(d, 16, 0, 7, hw_rate)         # TX_RATE
+    _set_bits(d, 16, 17, 1, 1)              # RETRY_LIMIT_ENABLE
+    _set_bits(d, 16, 18, 6, MGMT_DATA_RETRY_LIMIT)  # DATA_RETRY_LIMIT
+    _set_bits(d, 24, 0, 12, SW_DEFINE_FIXED_RATE)   # SW_DEFINE (DriverFixedRate)
+    _set_bits(d, 32, 15, 1, 1)              # HWSEQ_EN
     _set_bits(d, 28, 0, 16, txdesc_checksum(d))   # TX_DESC_CHECKSUM (field zeroed first)
     return bytes(d)

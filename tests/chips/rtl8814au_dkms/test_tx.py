@@ -28,6 +28,20 @@ def test_size_and_default_fields():
     assert _field(d, 16, 0, 7) == tx.DESC_RATE1M
 
 
+def test_mgmt_txdesc_matches_update_txdesc_mgnt_path():
+    """The descriptor matches update_txdesc's MGNT_FRAMETAG path (what aireplay injects), not the
+    minimal fill_fake_txdesc: DISQSELSEQ, MACID, GID, RETRY limit, SW_DEFINE."""
+    d = tx.build_mgmt_txdesc(42, bmc=True)                    # broadcast -> GID SU-default 63
+    assert _field(d, 0, 31, 1) == 1                           # DISQSELSEQ (non-QoS)
+    assert _field(d, 4, 0, 7) == tx.MGMT_MACID                # MACID = 1
+    assert _field(d, 8, 24, 6) == tx.TXBF_GID_NONE            # GID = 0x3f (broadcast psta)
+    assert _field(d, 16, 17, 1) == 1                          # RETRY_LIMIT_ENABLE
+    assert _field(d, 16, 18, 6) == tx.MGMT_DATA_RETRY_LIMIT   # DATA_RETRY_LIMIT = 12
+    assert _field(d, 24, 0, 12) == tx.SW_DEFINE_FIXED_RATE    # SW_DEFINE = 1 (DriverFixedRate)
+    # A unicast target has no SU group -> GID 0.
+    assert _field(tx.build_mgmt_txdesc(26, bmc=False, gid=0), 8, 24, 6) == 0
+
+
 def test_bmc_and_rate_params():
     d = tx.build_mgmt_txdesc(100, hw_rate=tx.DESC_RATE6M,
                              rate_id=tx.RATEID_IDX_G, bmc=True)

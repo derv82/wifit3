@@ -107,7 +107,7 @@ def _walk_operational(w: Walk, driver: Rtl8814auDkmsDriver) -> tuple[int, int, i
     body, carrying DM state). The driver instance carries the band / channel / watchdog state
     across bursts exactly as it does live. The first op opening no wired handler STOPS the walk."""
     st = driver._wd_state
-    hops = ticks = leds = 0
+    hops = ticks = leds = injects = 0
 
     def _drain_led(t, addr):
         """The LED-blink timer (0x0060) runs on its own ~2 s cadence, so the wire splices its
@@ -133,14 +133,14 @@ def _walk_operational(w: Walk, driver: Rtl8814auDkmsDriver) -> tuple[int, int, i
                 # it advances driver._current_band / driver._channel just like the live hop.
                 w.run(lambda t, c=ch: driver._tune(t, c), f"hop{ch}", interleave=_drain_led)
             except (rp.Divergence, Exception) as e:  # noqa: BLE001
-                return hops, ticks, leds, _frontier(w, o, f"hop ch{ch}", e)
+                return hops, ticks, leds, injects, _frontier(w, o, f"hop ch{ch}", e)
             hops += 1
             continue
         if o["kind"] == "R" and o.get("addr") == _OP_LED:
             try:
                 w.run(lambda t: watchdog.led_blink(t, st), f"led#{leds + 1}")
             except (rp.Divergence, Exception) as e:  # noqa: BLE001
-                return hops, ticks, leds, _frontier(w, o, f"led #{leds + 1}", e)
+                return hops, ticks, leds, injects, _frontier(w, o, f"led #{leds + 1}", e)
             leds += 1
             continue
         if o["kind"] == "R" and o.get("addr") == _OP_TICK:
@@ -148,11 +148,22 @@ def _walk_operational(w: Walk, driver: Rtl8814auDkmsDriver) -> tuple[int, int, i
                 w.run(lambda t: watchdog.tick(t, st, driver._channel),
                       f"tick#{ticks + 1}", interleave=_drain_led)
             except (rp.Divergence, Exception) as e:  # noqa: BLE001
-                return hops, ticks, leds, _frontier(w, o, f"tick #{ticks + 1}", e)
+                return hops, ticks, leds, injects, _frontier(w, o, f"tick #{ticks + 1}", e)
             ticks += 1
             continue
+        if o["kind"] == "B":
+            # aireplay TX injection: the wire's bulk-OUT is [40-byte TX desc | 802.11 frame].
+            # Feed the frame to driver._inject (the body inject_frame runs) and check the
+            # rebuilt [desc | frame] against the wire — verifies our update_txdesc descriptor.
+            frame = bytes(o["data"])[C.TXDESC_SIZE:]
+            try:
+                w.run(lambda t, f=frame: driver._inject(t, f), f"inject#{injects + 1}")
+            except (rp.Divergence, Exception) as e:  # noqa: BLE001
+                return hops, ticks, leds, injects, _frontier(w, o, f"inject #{injects + 1}", e)
+            injects += 1
+            continue
         break  # frontier: unknown opener
-    return hops, ticks, leds, w.peek()
+    return hops, ticks, leds, injects, w.peek()
 
 
 def _frontier(w: Walk, o: dict, label: str, e: Exception) -> dict:
@@ -197,9 +208,9 @@ def run(cap: str | None = None) -> int:
         print(f"\nERROR (harness/port bug) at op {w.i}: {type(e).__name__}: {e}")
         return 2
 
-    hops, ticks, leds, frontier = _walk_operational(w, driver)
+    hops, ticks, leds, injects, frontier = _walk_operational(w, driver)
     print(f"  operational: {hops} channel hops + {ticks} dynamic-check ticks + {leds} LED "
-          f"blinks reproduced")
+          f"blinks + {injects} TX injections reproduced")
 
     if frontier is not None:
         fa = frontier
