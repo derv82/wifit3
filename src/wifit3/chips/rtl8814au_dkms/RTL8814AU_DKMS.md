@@ -268,3 +268,18 @@ the value edge un-sticks RX immediately and the watchdog re-adapts down. Scoped 
 re-tunes fast enough to never wedge). Verified: the SIT phase is now healthy from t=0 (IGI 0x2a→0x26,
 mud2g 5.7–9/s) vs the prior 15 s blackout; verify_pcap stays 100% (the wrapper isn't on the `_tune`
 path the gate drives). Deliberate post-100% divergence.
+
+**Reverted (same day).** Characterizing that hardcode across channels (`rx_dwell_char.py`, --no-unstick
+A/B) showed it was the wrong fix: it lands IGI in the high part of the DIG hold band and *sticks* there
+(the watchdog doesn't walk it back down), so on a busy channel it hears ~2× fewer APs than the natural
+DIG settle (ch1 forced-0x2a all/s 21–43 / nBSSID 7–15 vs natural climb-from-floor 56–98 / 16–23, which
+settles ~0x27), and 0x2a is really just CH1's local noise floor — environment-specific. 5 GHz dwell is
+unaffected either way (IGI walks 0x2a→0x1c, all APs heard). Ruled OUT as the cause: the FA thresholds
+(`_FA_TH` {2000,4000,5000} = the vendor's exact no-link/non-DFS `phydm_fa_threshold_check` values) and
+the fixed IGI floor 0x1c (= no-link `DIG_MIN`; the dynamic `rssi_min` floor is the linked path only).
+So the DIG decision + bounds are faithful, yet the vendor doesn't saturate-deaf on a busy 2.4 dwell and
+we do — pointing at a `phydm_watchdog` member we don't port at all (prime suspect `phydm_noisy_detection`
+at phydm.c:2188, immediately before `phydm_dig`; also `odm_dtc`, `phydm_receiver_blocking`). Next:
+port the missing noise-detection member so DIG raises IGI correctly on a busy channel on its own — no
+hardcode, no cache, not environment-specific. Diagnostics kept: `rx_death_repro{,_linux}.py`,
+`rx_wedge_regdiff.py`, `rx_wedge_poke.py`, `rx_dwell_char.py`.

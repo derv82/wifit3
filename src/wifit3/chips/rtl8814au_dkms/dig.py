@@ -98,14 +98,6 @@ def _new_igi_by_fa(igi: int, fa_cnt: int) -> int:
     return igi
 
 
-def write_igi(t, igi: int) -> None:
-    """Write ``igi`` into all four per-path IGI registers (odm_write_dig -> the per-path
-    RMW phydm_write_dig_reg_c50 does). The 8814A front-end un-sticks from a saturated-deaf
-    state only on an IGI *value edge*, so callers pass a value that differs from the current."""
-    for reg in _REG_IGI:
-        _bb32(t, reg, _IGI_MASK, igi)
-
-
 def watchdog_tick(t) -> DigTick:
     """One DIG watchdog iteration; returns the resulting :class:`DigTick`.
 
