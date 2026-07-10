@@ -297,6 +297,17 @@ a concurrent bulk-IN corrupts the tune's RF/RX-path reconfig and strands 2.4 GHz
 self-heals (a later tune re-lands); a one-shot dwell has nothing to re-land it → the ~15 s wedge until
 the DIG watchdog's IGI write happens to re-kick RX. The `rtl8821cu_dkms` driver already had this pause
 (RF18 RMW race); the 8814au port dropped it — a port-completeness miss. **Fix:** pause the RX reader
-across a non-scan (dwell) tune in `set_channel` (mirrors 8821cu). Verified: SIT healthy from t=0, IGI
-climbs 0x1e→0x2a *naturally* (matching the Linux trajectory), breadth 39–65/s — no hardcode, no
-over-correction; verify_pcap stays 100%.
+across a non-scan (dwell) tune in `set_channel` (mirrors 8821cu). verify_pcap stays 100%.
+
+**Correction — the pause is a PARTIAL fix.** An A/B with `hopdwell_watch.py` (pre/post, per-second
+histogram after a controlled last hop) showed: pre-fix, BOTH a same-band (2→2) and a band-switch (5→2)
+dwell were dead the full 15 s. Post-fix, a **same-band dwell is fully fixed** (healthy from t=0, mean
+7.9/s, 0 zero-seconds) — and the multi-channel baseline rose +48% because most sweep dwells are
+same-band. **But a 5→2 (band-switch) dwell still wedges 8–15 s, every time** (3/3 repeated cycles dead,
+so a bring-up warmup won't help — it's per-transition, not cold state). The initial "SIT healthy from
+t=0" verification was on an rx_death_repro run that happened to END same-band, so it never exercised a
+band-switch dwell. So the real scan→focus case (hop 2.4↔5, then dwell a 2.4 target) is NOT fixed. The
+residual is band-switch-specific and dynamic (the writes are byte-faithful and the tune is now
+race-free, yet the front-end stays blocked after a clean 5→2 switch while Linux's is active, FA ~8000):
+a settle/re-acquire step the vendor does that we don't — the next thread (candidate: a delay or DIG
+re-kick right after the 5→2 switch; the vendor has a `SwChnlInProgress` timer path we collapsed).
