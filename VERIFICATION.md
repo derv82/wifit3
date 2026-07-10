@@ -171,7 +171,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 |---|:--:|---|---|
 | **Grade** | **60% (D)** | 2026-07-10 | RX-gated; steady + hopping RX and the full attack suite are fine. |
 | RX | ❌ | 2026-07-10 | Steady + hopping match linux (mud2g 7.9/s, mud 9.7/s, breadth 65/50, RSSI +0.0 dB), but dwelling on a 2.4 channel after a 2.4↔5 hop goes dead ~15 s before it self-heals. |
-| Port | ⚠️ | 2026-07-10 | Steady + round-robin RX match linux-DKMS (breadth/rate/RSSI parity); the hop→dwell wedge not yet reproduced on the Linux driver. |
+| Port | ⚠️ | 2026-07-10 | Steady + round-robin RX match linux-DKMS (breadth/rate/RSSI parity), but the hop→dwell wedge is ours — the Linux driver handles the same hop→dwell cleanly, so it's a port gap. |
 | Handshake | ✅ | 2026-06-05 | Deauth → 4-way. |
 | PMKID | ✅ | 2026-06-05 | Passive + active (2.4 + 5 GHz). |
 | WEP | ✅ | 2026-06-05 | Replay + ChopChop. |
