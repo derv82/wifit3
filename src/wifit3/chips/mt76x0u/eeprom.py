@@ -219,13 +219,22 @@ def _sign_extend(val: int, width_bits: int) -> int:
     return val
 
 
-def decode_chip_cap(cache: EEPROMCache) -> dict:
+def decode_chip_cap(
+    cache: EEPROMCache, is_mt7630: bool = False, no_2ghz: bool = False,
+) -> dict:
     """Port of `mt76x0_set_chip_cap` + `mt76x02_eeprom_parse_hw_cap`.
 
     [SRC] mt76x0/eeprom.c:48-80 + mt76x02_eeprom.c:72-89.
 
     Returns a dict with has_2ghz, has_5ghz, tx_path, rx_path,
     nic_conf_0/1, plus a list of warnings the kernel would log.
+
+    ``is_mt7630`` / ``no_2ghz`` are the two runtime discriminators that mask a
+    band off the board-type default; both default to the captured reference
+    (0x7650, no quirk) so its decode is unchanged:
+      - ``no_2ghz`` (Archer T1U USB `driver_info=1`) masks 2 GHz. [SRC] eeprom.c:57-60
+      - ``is_mt7630`` (ASIC ver >> 16 == 0x7630, the WiFi-2.4G+BT combo strap)
+        masks 5 GHz. [SRC] eeprom.c:62-65
     """
     nic0 = cache.get_u16(MT_EE_NIC_CONF_0)
     nic1 = cache.get_u16(MT_EE_NIC_CONF_1)
@@ -237,6 +246,11 @@ def decode_chip_cap(cache: EEPROMCache) -> dict:
         has_2g, has_5g = True, False
     else:
         has_2g, has_5g = True, True     # default (kernel fall-through)
+
+    if no_2ghz:
+        has_2g = False
+    if is_mt7630:
+        has_5g = False
 
     rx_path = nic0 & 0x000F
     tx_path = (nic0 & 0x00F0) >> 4
@@ -351,12 +365,19 @@ class EFUSEFullInfo:
     cache: EEPROMCache          # raw cache for future per-channel TX power lookups
 
 
-def read_efuse_full(transport: MT76x0UTransport) -> EFUSEFullInfo:
+def read_efuse_full(
+    transport: MT76x0UTransport, is_mt7630: bool = False, no_2ghz: bool = False,
+) -> EFUSEFullInfo:
     """Port of `mt76x0_eeprom_init` (mt76x0/eeprom.c:312-353).
 
     Loads the full 512-byte EFUSE into a cache, validates chip_id, reads
     version/fae, extracts MAC, decodes chip_cap + temp_offset + freq_offset.
     Returns an EFUSEFullInfo populated with all decoded fields.
+
+    ``is_mt7630`` / ``no_2ghz`` gate the band-capability masks in
+    ``decode_chip_cap`` and default to the captured reference (no mask), so its
+    decode — and therefore every downstream wire write keyed on has_2ghz/
+    has_5ghz (phy_ant_select) — is byte-identical.
 
     Does NOT write MAC to chip registers — caller is responsible for calling
     `mt76x02_mac_setaddr` separately (the kernel does this in eeprom_init but
@@ -377,7 +398,7 @@ def read_efuse_full(transport: MT76x0UTransport) -> EFUSEFullInfo:
     mac_bytes = cache.get_bytes(MT_EE_MAC_ADDR, 6)
     mac_str = ":".join(f"{b:02x}" for b in mac_bytes)
 
-    cap = decode_chip_cap(cache)
+    cap = decode_chip_cap(cache, is_mt7630=is_mt7630, no_2ghz=no_2ghz)
     for w in cap["warnings"]:
         logger.warning("EEPROM cap: %s", w)
 

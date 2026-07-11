@@ -198,6 +198,11 @@ MT_HEADER_TRANS_CTRL_REG          = 0x0260
 # shares 0x0230 with FCE_DMA_ADDR but post-FW the chip treats it as WMM.
 MT_WMM_CTRL                       = 0x0230
 
+# ASIC version — [SRC] mt76x02_regs.h:9. `mt76_chip = rev >> 16` [SRC] mt76.h:1231,
+# where `rev = mt76_rr(MT_ASIC_VERSION)` [SRC] mt76x0/usb.c:266. High 16 bits are the
+# chip strap (0x7610 WiFi-only / 0x7630 combo-2.4G / 0x7650 dual) — the is_mt7630 gate.
+MT_ASIC_VERSION                   = 0x0000
+
 # MAC + addr + BSSID — [SRC] mt76x02_regs.h:267-294
 MT_MAC_CSR0                       = 0x1000   # ASIC version probe (wait_for_mac)
 MT_MAC_SYS_CTRL                   = 0x1004   # [SRC] mt76x02_regs.h:269

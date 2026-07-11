@@ -29,7 +29,7 @@ class _ConcurrencyCounter:
         self.max_concurrent = 0
         self._lk = threading.Lock()
 
-    def __call__(self, transport, mcu, channel, efuse_full=None):
+    def __call__(self, transport, mcu, channel, efuse_full=None, is_mt7630=False):
         with self._lk:
             self._inside += 1
             self.max_concurrent = max(self.max_concurrent, self._inside)
@@ -49,6 +49,7 @@ def _make_driver() -> MT76x0UDriver:
     d.efuse_full = None
     d.transport = None
     d.mcu = None
+    d.is_mt7630 = False
     d.last_set_channel_state = None
     return d
 

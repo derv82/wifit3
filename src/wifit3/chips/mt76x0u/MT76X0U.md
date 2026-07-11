@@ -13,6 +13,48 @@ MCU command channel. Dev card is `0e8d:7610` (Sabrent / MediaTek MT7610U).
 - `verify_pcap`: clean against the cold-boot pcap (capture-2).
 - Not ported: the periodic RSSI-driven AGC tracker (`mt76x0_phy_update_channel_gain` / `calibration_work`) — dynamic gain isn't re-seeded, lower-priority gap. RSSI-display (`rssi_offset[]`) half of `read_rx_gain` also unported (display-only).
 
+## EEPROM / strap variants (cross-card generalization)
+
+The driver runs on any card in `USB_IDS_MT76X0U`, not just the captured `0e8d:7610` (a 0x7650
+dual-band die). MediaTek keeps per-chip calibration + config in EFUSE; nearly all of it is
+**values** consumed by computation and already card-agnostic: TX-power (`eeprom.get_tx_power_*`,
+unported RX-only), RX LNA gain (`eeprom.lna_gain_for_channel`, threaded per-tune), XTAL/`freq_offset`
++ `temp_offset`, and the ext-PA branch (`phy_set_chan_rf_params` reads `nic_conf_0` PA_INT bits live).
+The 1T1R chainmask is a whole-family constant (mt76x0 has no 2-stream part), not a reference hardcode.
+
+The real init-gating discriminators the `SUPPORTED_IDS` admit, now runtime-gated (default = the
+captured 0x7650 reference, so its recorded path is byte-identical):
+
+- **`is_mt7630`** — the 2.4G-WiFi+BT combo strap, `mt76_chip = ASIC_VERSION >> 16 == 0x7630`
+  ([SRC] mt76x0/usb.c:266 + mt76.h:1231), read live in `driver._connect_init_mac`. Gates three
+  USB-live branches: `eeprom.decode_chip_cap` masks off `has_5ghz` ([SRC] eeprom.c:62-65);
+  `phy._apply_rf_patch_override` writes `RF(5,2)=0x1d` vs `0x0c` ([SRC] phy.c:1143-1146);
+  `phy.phy_calibrate` returns before any op ([SRC] phy.c:866-867). The reference reads 0x7650 →
+  `is_mt7630=False` → all three take the else/run path.
+- **`no_2ghz`** — the TP-Link Archer T1U (`2357:0105`) USB `driver_info=1` quirk ([SRC] usb.c:35,245),
+  keyed on the matched USB id (not EFUSE). `eeprom.decode_chip_cap` masks off `has_2ghz`
+  ([SRC] eeprom.c:57-60).
+
+`is_mt7610e` (RF(0,3)/RF(0,21)/RF(5,2) arms) is **mmio-only** ([SRC] mt76x0.h:31-36 requires
+`mt76_is_mmio`) so it is dead on USB for every strap — `RF(0,3)=0x73` / `RF(0,21)=0x12` stay constant.
+Unit tests: `tests/chips/mt76x0u/test_chip_variant.py`.
+
+### Residual gaps (documented, not gated)
+
+- **`phy_ant_select` writes only WLAN_FUN_CTRL + COEXCFG3.** The kernel also writes `MT_CMB_CTRL`
+  (`ee_ant`, incl. the `is_mt7630 |= BIT14|BIT11` arm [SRC] phy.c:462), `MT_CSR_EE_CFG1`, and clears
+  `COEXCFG0` BIT(2) ([SRC] phy.c:465-468). These three are omitted for **all** cards (the port
+  predates the audit and the recorded wire agrees at that cursor). Because `ee_ant` is never written,
+  the `is_mt7630` antenna arm has nowhere to land; porting it would require adding the base
+  `MT_CMB_CTRL` write, which would change the reference path — so it is left as a whole-card residual,
+  not a 0x7630 gate.
+- **`SUPPORTED_CHANNELS` is static.** `no_2ghz` / `is_mt7630` mask the advertised band capability
+  (`has_2ghz`/`has_5ghz`) but the class-level channel list still lists both bands; a masked band
+  yields empty RX rather than a pruned hop list (same shape as the mt76x2u board_type residual).
+- **`mt76x0_phy_update_channel_gain` AGC tracker + `phy_set_gain_val` DFS arm** (the `!is_mt7630`
+  branch [SRC] phy.c:1063) are unported for every card — a whole-subsystem gap, not a reference
+  hardcode (see the 2026-06-21 log).
+
 ## Gotchas
 
 **Silicon identifies as MT7650.** `MAC_CSR0` reads `0x76502000` — an MT7650-family chip behind a

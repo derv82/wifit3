@@ -92,6 +92,14 @@ class MT76x0UDriver:
         self._hw_lock = threading.Lock()
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
+        # Runtime silicon strap: mt76_chip = ASIC_VERSION >> 16 (0x7610 WiFi-only /
+        # 0x7630 combo-2.4G+BT / 0x7650 dual). Read in _connect_init_mac; defaults
+        # to the captured reference (0x7650, is_mt7630=False) so unread == reference.
+        self.chip_id: Optional[int] = None
+        self.is_mt7630: bool = False
+        # Archer T1U USB `driver_info = 1` quirk → mask out 2 GHz. Keyed on the
+        # matched USB id, not EEPROM. [SRC] mt76x0/usb.c:245-246 + usb.c:35.
+        self.no_2ghz: bool = (id_entry.vid, id_entry.pid) == (0x2357, 0x0105)
         self._rx_callback: Optional[Callable[[dict], None]] = None
         # M1 + M2 + M3a + M3b + M3c + M3d results, populated by connect().
         self.fw_info: Optional[dict] = None
@@ -314,6 +322,21 @@ class MT76x0UDriver:
                 "MT7610U: MCU CMD_RANDOM_READ round-trip OK "
                 "(MAC_CSR0 via MCU = 0x%08x)", self.mcu_smoke["via_mcu_read"],
             )
+            # ---- Runtime chip strap. mt76_chip = mt76_rr(MT_ASIC_VERSION) >> 16
+            # [SRC] mt76x0/usb.c:266 + mt76.h:1231. is_mt7630 (combo 2.4G+BT die)
+            # gates: eeprom has_5ghz mask, RF(5,2) patch value, phy_calibrate skip.
+            # The captured reference reads 0x7650 → is_mt7630 stays False → its
+            # every downstream wire op is byte-identical. This read is absent from
+            # the verify_pcap cursor (which drives functions, not connect()).
+            from .constants import MT_ASIC_VERSION
+            asic_version = self.transport.read32(MT_ASIC_VERSION)
+            self.chip_id = (asic_version >> 16) & 0xFFFF
+            self.is_mt7630 = self.chip_id == 0x7630
+            logger.info(
+                "MT7610U: ASIC_VERSION=0x%08x → chip=0x%04x (%s)",
+                asic_version, self.chip_id,
+                "mt7630 combo (2.4G+BT, no 5GHz)" if self.is_mt7630 else "mt7610/7650",
+            )
         except (MCUError, usb.core.USBError) as e:
             # Even after the warm-boot force-reupload, MCU smoke can fail
             # if the chip's MAC/RX-DMA is so wedged that a USB reset +
@@ -387,7 +410,9 @@ class MT76x0UDriver:
         # ---- M3c step 16: full eeprom_init.
         # [SRC] mt76x0/init.c:205 + mt76x0/eeprom.c:312-353.
         try:
-            self.efuse_full = read_efuse_full(self.transport)
+            self.efuse_full = read_efuse_full(
+                self.transport, is_mt7630=self.is_mt7630, no_2ghz=self.no_2ghz,
+            )
         except (EEPROMError, usb.core.USBError) as e:
             logger.error("MT7610U: eeprom_init failed: %s", e)
             return False
@@ -421,7 +446,8 @@ class MT76x0UDriver:
         # [SRC] mt76x0/phy.c:1207-1215. Wraps:
         #   phy_ant_select → phy_rf_init (RF tables + cal) → set_rxpath → set_txdac.
         try:
-            phy_init(self.transport, self.mcu, self.efuse_full)
+            phy_init(self.transport, self.mcu, self.efuse_full,
+                     is_mt7630=self.is_mt7630)
         except (PHYInitError, usb.core.USBError) as e:
             logger.error("MT7610U: phy_init failed: %s", e)
             return False
@@ -553,7 +579,8 @@ class MT76x0UDriver:
         # later; this is just the chip's first-time RF cal handshake).
         try:
             from .phy import phy_calibrate
-            phy_calibrate(self.transport, self.mcu, channel=6, power_on=True)
+            phy_calibrate(self.transport, self.mcu, channel=6, power_on=True,
+                          is_mt7630=self.is_mt7630)
             logger.info("MT7610U: initial phy_calibrate(power_on=True) OK")
         except (MCUError, usb.core.USBError) as e:
             logger.error("MT7610U: initial phy_calibrate failed: %s", e)
@@ -587,7 +614,7 @@ class MT76x0UDriver:
                 for _invocation in (1, 2):
                     self.last_set_channel_state = set_channel_20mhz(
                         self.transport, self.mcu, channel,
-                        efuse_full=self.efuse_full,
+                        efuse_full=self.efuse_full, is_mt7630=self.is_mt7630,
                     )
                 self.current_channel = channel
                 logger.info("MT7610U: set_channel(%d) OK", channel)

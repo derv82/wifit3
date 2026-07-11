@@ -174,37 +174,44 @@ def phy_ant_select(
 # ---------------------------------------------------------------------------
 
 
-def _apply_rf_patch_override(reg: int, val: int) -> int:
+def _apply_rf_patch_override(reg: int, val: int, is_mt7630: bool = False) -> int:
     """Port of kernel mt76x0_rf_patch_reg_array's per-entry switch
     ([SRC] mt76x0/phy.c:1116-1155).
 
     Overrides the table value for three specific RF registers based on
-    chip variant. For our dev card (USB MT7610U, NOT mt7610e or mt7630)
-    all three overrides return values that happen to match the table
-    verbatim — but we keep the logic so the chip-variant guarantees are
-    explicit, not coincidence.
+    chip variant:
+      - MT_RF(0, 3): the 0x70(7630)/0x63 split is inside `if mt76_is_mmio` —
+        USB always takes the else, 0x73, for every strap incl. 0x7630.
+      - MT_RF(0, 21): 0x10(mt7610e)/0x12; is_mt7610e requires mmio so USB is
+        always 0x12.
+      - MT_RF(5, 2): 0x1d(7630)/0x00(mt7610e)/0x0c — the is_mt7630 arm is the
+        one USB-live strap branch. [SRC] mt76x0/phy.c:1143-1146.
+
+    ``is_mt7630`` defaults False (the captured 0x7650 reference), so the RF(5,2)
+    write is 0x0c and the whole override is byte-identical to the recorded card.
     """
-    # Our chip: USB (not mmio), not mt7610e, not mt7630.
+    # USB (not mmio) → is_mt7610e is always false; only is_mt7630 is USB-live.
     if reg == MT_RF(0, 3):
-        return 0x73        # USB branch
+        return 0x73        # USB else-branch (mmio-only 7630/else split above)
     if reg == MT_RF(0, 21):
-        return 0x12        # not-mt7610e branch
+        return 0x12        # not-mt7610e branch (mt7610e is mmio-only)
     if reg == MT_RF(5, 2):
-        return 0x0C        # neither mt7630 nor mt7610e branch
+        return 0x1D if is_mt7630 else 0x0C
     return val
 
 
 def rf_patch_reg_array(
-    mcu: MCUChannel, table: list[tuple[int, int]],
+    mcu: MCUChannel, table: list[tuple[int, int]], is_mt7630: bool = False,
 ) -> None:
     """Port of `mt76x0_rf_patch_reg_array` (mt76x0/phy.c:1116-1155).
 
     Iterates the table writing each entry via rf_wr after applying the
     chip-variant override. Per-entry write (NOT batched via RF_RANDOM_WRITE)
-    because the kernel writes one at a time.
+    because the kernel writes one at a time. ``is_mt7630`` gates the RF(5,2)
+    value; default False = reference.
     """
     for reg, raw_val in table:
-        val = _apply_rf_patch_override(reg, raw_val)
+        val = _apply_rf_patch_override(reg, raw_val, is_mt7630=is_mt7630)
         rf_wr(mcu, reg, val)
 
 
@@ -225,9 +232,12 @@ def _filter_bw_switch_default(bw_band: int) -> bool:
 
 
 def phy_rf_init(
-    mcu: MCUChannel, freq_offset: int,
+    mcu: MCUChannel, freq_offset: int, is_mt7630: bool = False,
 ) -> None:
     """Port of `mt76x0_phy_rf_init` (mt76x0/phy.c:1157-1205).
+
+    ``is_mt7630`` is forwarded to the RF-patch overrides (RF(5,2)); default
+    False = the captured 0x7650 reference.
 
     Steps in kernel order:
       1. rf_patch_reg_array(RF_CENTRAL_TAB)            — bank 0 init
@@ -242,11 +252,11 @@ def phy_rf_init(
     """
     logger.info("phy_rf_init: rf_central_tab (%d entries, patched)",
                 len(RF_CENTRAL_TAB))
-    rf_patch_reg_array(mcu, RF_CENTRAL_TAB)
+    rf_patch_reg_array(mcu, RF_CENTRAL_TAB, is_mt7630=is_mt7630)
 
     logger.info("phy_rf_init: rf_2g_channel_0_tab (%d entries, patched)",
                 len(RF_2G_CHANNEL_0_TAB))
-    rf_patch_reg_array(mcu, RF_2G_CHANNEL_0_TAB)
+    rf_patch_reg_array(mcu, RF_2G_CHANNEL_0_TAB, is_mt7630=is_mt7630)
 
     logger.info("phy_rf_init: rf_5g_channel_0_tab (%d entries via MCU)",
                 len(RF_5G_CHANNEL_0_TAB))
@@ -581,7 +591,7 @@ def init_agc_gain(transport: MT76x0UTransport) -> tuple[int, int]:
 
 def phy_calibrate(
     transport: MT76x0UTransport, mcu: MCUChannel,
-    channel: int, power_on: bool = False,
+    channel: int, power_on: bool = False, is_mt7630: bool = False,
 ) -> None:
     """Port of `mt76x0_phy_calibrate` (mt76x0/phy.c:861-911).
 
@@ -601,7 +611,9 @@ def phy_calibrate(
     EFUSE NIC_CONF_1 BIT(13) which is set per-card; for our card we treat
     it as disabled (display-only field).
 
-    Kernel is_mt7630 short-circuit — we never match (USB 7610U).
+    ``is_mt7630`` short-circuits the whole routine — the combo strap skips
+    calibration entirely. [SRC] mt76x0/phy.c:867. Default False = the captured
+    0x7650 reference (calibration runs), so its wire is unchanged.
     """
     import time as _time
     from .constants import (
@@ -613,6 +625,11 @@ def phy_calibrate(
         MT_BBP_IBI,
         MT_TX_ALC_CFG_0,
     )
+
+    if is_mt7630:
+        # [SRC] mt76x0/phy.c:866-867 — `if (is_mt7630(dev)) return;`
+        logger.info("phy_calibrate: is_mt7630 → skipped (combo strap)")
+        return
 
     is_5ghz = channel > 14
 
@@ -831,7 +848,7 @@ def phy_set_chan_rf_params(
 
 def set_channel_20mhz(
     transport: MT76x0UTransport, mcu: MCUChannel, channel: int,
-    efuse_full=None,
+    efuse_full=None, is_mt7630: bool = False,
 ) -> dict:
     """Port of `mt76x0_phy_set_channel` for 20 MHz monitor RX.
 
@@ -929,7 +946,8 @@ def set_channel_20mhz(
                 agc_gain_init[0], agc_gain_init[1])
 
     # Step 16: mt76x0_phy_calibrate(power_on=False).
-    phy_calibrate(transport, mcu, channel=channel, power_on=False)
+    phy_calibrate(transport, mcu, channel=channel, power_on=False,
+                  is_mt7630=is_mt7630)
 
     # Step 17 SKIPPED: mt76x0_phy_set_txpower — TX path only.
     logger.info("set_channel_20mhz: M4a complete (TX power deferred — RX-only)")
@@ -966,7 +984,7 @@ def set_channel_20mhz(
 
 
 def phy_init(
-    transport: MT76x0UTransport, mcu: MCUChannel, efuse_full,
+    transport: MT76x0UTransport, mcu: MCUChannel, efuse_full, is_mt7630: bool = False,
 ) -> None:
     """Port of `mt76x0_phy_init` (mt76x0/phy.c:1207-1215).
 
@@ -975,6 +993,11 @@ def phy_init(
       2. phy_rf_init
       3. phy_set_rxpath
       4. phy_set_txdac
+
+    ``is_mt7630`` is forwarded to phy_rf_init (RF(5,2) override); default False =
+    the captured 0x7650 reference. The band caps (has_2ghz/has_5ghz) that drive
+    phy_ant_select already carry any is_mt7630/no_2ghz mask applied when the
+    efuse was decoded.
 
     Skips the kernel's `INIT_DELAYED_WORK(&dev->cal_work, ...)` — that
     schedules periodic calibration, which is a wifit3 monitor-mode no-op.
@@ -985,7 +1008,7 @@ def phy_init(
         has_5ghz=efuse_full.has_5ghz,
         efuse_cache=efuse_full.cache,
     )
-    phy_rf_init(mcu, freq_offset=efuse_full.freq_offset)
+    phy_rf_init(mcu, freq_offset=efuse_full.freq_offset, is_mt7630=is_mt7630)
     phy_set_rxpath(transport)
     phy_set_txdac(transport)
 
