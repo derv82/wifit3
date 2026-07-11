@@ -23,14 +23,15 @@ def _radio_write(t, path: int, addr: int, data: int) -> None:
     set_rf_reg(t, path, addr, RFREG_WRITE_MASK, data)
 
 
-def phy_rf_config(t, params: JaguarParams | None = None) -> None:
+def phy_rf_config(t, params: JaguarParams | None = None, is_c_cut: bool = True) -> None:
     """M3 part 2: RADIO_A (path A) then RADIO_B (path B), both via SIPI."""
     # phy_RFSerialRead brackets each RF SIPI read with a rCCAonSec (0x838[3]) toggle ONLY on
     # non-C-cut 8812a: `Offset != 0 && !(IS_VENDOR_8812A_C_CUT || 8821)` [SRC]
     # rtl8812a_phycfg.c:107/132. The AWUS036ACH is C-cut -- REG_SYS_CFG[15:12]=1 and 8812
     # adds +1 -> CUTVersion=2=C_CUT -- so the toggle is skipped (morrownr's pcap shows the
-    # RF reads go straight to the 0xC00 PI-mode probe, no 0x838 writes).
-    t._rf_read_cca_off = False
+    # RF reads go straight to the 0xC00 PI-mode probe, no 0x838 writes). A non-C-cut 8812a
+    # card (runtime is_c_cut=False) enables the toggle for every later masked RF read.
+    t._rf_read_cca_off = not is_c_cut
     p = params or JaguarParams()
     apply_table(RF_RADIOA, lambda a, d: _radio_write(t, RF_PATH_A, a, d), p)
     apply_table(RF_RADIOB, lambda a, d: _radio_write(t, RF_PATH_B, a, d), p)

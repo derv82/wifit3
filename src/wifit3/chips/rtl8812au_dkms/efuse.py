@@ -62,6 +62,7 @@ class ChipParams(NamedTuple):
     rfe_type: int
     autoload_fail: bool
     sys_cfg: int                   # raw REG_SYS_CFG (0xF0); seeds build_jaguar_params' cut_version
+    is_c_cut: bool                 # 8812a CUTVersion == C_CUT (gates phy_FixSpur + RF-read CCA)
     tx_power_2g: List[PathTxPwr]   # [path A, path B]
     tx_power_5g: List[PathTxPwr]   # [path A, path B]
     bb_swing_2g: List[int]         # [path A, path B] TxScale
@@ -89,43 +90,75 @@ def _parse_mac_address(m: bytes) -> Optional[str]:
     return ":".join(f"{b:02x}" for b in mac)
 
 
-def _parse_rfe_type(m: bytes) -> int:
-    """[SRC] Hal_ReadRFEType_8812A — registry default is "use efuse"; for the 8812AU a
-    blank (0xFF) efuse means rfe_type 0. The BIT7 external-PA/LNA encodings need the
-    board-option flags we don't decode; on the AWUS036ACH 0xCA is a plain value."""
-    rfe = m[EEPROM_RFE_OPTION]
-    if rfe == 0xFF:
-        return 0                       # 8812AU blank-efuse default
-    if rfe & 0x80:
-        return 0                       # external-PA/LNA encoded; 8812AU falls back to 0
-    return rfe & 0x3F
+C_CUT_VERSION = 2                  # [SRC] HalVerDef.h:58 (CUTVersion enum)
 
 
-def _parse_board_type(m: bytes) -> tuple:
-    """[SRC] hal_ReadPAType_8812A (rtl8812a_hal_init.c:1126) + Hal_ReadAmplifierType_8812A
-    (:1192) + hal_dm.c:382-405 board_type assembly.
+def _ext_amplifier_flags(m: bytes) -> tuple:
+    """[SRC] hal_ReadPAType_8812A (rtl8812a_hal_init.c:1126) — the 4 external-PA/LNA flags.
 
-    The 8812AU reads PAType from 0xBC (shared 2G/5G) and LNAType from 0xBD (2G) / 0xBF (5G),
-    treating 0xFF as 0. A band is "external PA/LNA" only when BOTH of its two flag bits are
-    set [SRC :1143-1144,1158-1159]:
-      ExternalPA_2G  = PAType_2G[5] & PAType_2G[4]      ExternalLNA_2G = LNAType_2G[7] & LNAType_2G[3]
-      external_pa_5g = PAType_5G[1] & PAType_5G[0]      external_lna_5g = LNAType_5G[7] & LNAType_5G[3]
-    Each set flag lights its ODM_BOARD bit (GPA bit3 / GLNA bit4 / APA bit6 / ALNA bit7).
-    BT (bit2) needs the chip-version-gated EEPROMBluetoothCoexist read (:821-890); the
-    AWUS036ACH is a non-BT board, so BT stays 0 and the BT decode is not ported.
-
-    The four type_* sub-codes [SRC :1200-1221] pack the per-path ext type, but only when a
-    band has BOTH paths external; extType bits live in 0xBD/0xBF [6,2] (PA B/A) and [5:4,1:0]
-    (LNA B/A). On this card all sub-fields read 0.
+    Registry amplifier type is AUTO (userland has no registry override), so PAType/LNAType come
+    from efuse (0xFF -> 0). A band is "external" only when BOTH of its two flag bits are set
+    [SRC :1143-1144,1158-1159]. Returns (ext_pa_2g, ext_lna_2g, ext_pa_5g, ext_lna_5g) —
+    consumed by BOTH the board_type assembly and Hal_ReadRFEType_8812A's BIT7 decode.
     """
     pa = 0 if m[EEPROM_PA_TYPE] == 0xFF else m[EEPROM_PA_TYPE]
     lna_2g = 0 if m[EEPROM_LNA_TYPE_2G] == 0xFF else m[EEPROM_LNA_TYPE_2G]
     lna_5g = 0 if m[EEPROM_LNA_TYPE_5G] == 0xFF else m[EEPROM_LNA_TYPE_5G]
+    ext_pa_2g = bool((pa & (1 << 5)) and (pa & (1 << 4)))
+    ext_lna_2g = bool((lna_2g & (1 << 7)) and (lna_2g & (1 << 3)))
+    ext_pa_5g = bool((pa & (1 << 1)) and (pa & (1 << 0)))
+    ext_lna_5g = bool((lna_5g & (1 << 7)) and (lna_5g & (1 << 3)))
+    return ext_pa_2g, ext_lna_2g, ext_pa_5g, ext_lna_5g
 
-    ext_pa_2g = (pa & (1 << 5)) and (pa & (1 << 4))
-    ext_lna_2g = (lna_2g & (1 << 7)) and (lna_2g & (1 << 3))
-    ext_pa_5g = (pa & (1 << 1)) and (pa & (1 << 0))
-    ext_lna_5g = (lna_5g & (1 << 7)) and (lna_5g & (1 << 3))
+
+def _parse_is_c_cut(sys_cfg: int) -> bool:
+    """[SRC] IS_VENDOR_8812A_C_CUT (HalVerDef.h:194) — 8812a silicon cut == C_CUT.
+
+    read_chip_version_8812a sets version_id.CUTVersion = REG_SYS_CFG[15:12] + 1 for the 8812
+    [SRC rtl8812a_hal_init.c:3383-3385]. C_CUT is CUTVersion 2, i.e. REG_SYS_CFG[15:12] == 1
+    (the captured AWUS036ACH). Non-C-cut silicon takes the shorter phy_FixSpur branch (chan.py)
+    and the RF-read CCA-on-secondary toggle (rf.py) — both gated on this."""
+    return (((sys_cfg >> 12) & 0xF) + 1) == C_CUT_VERSION
+
+
+def _parse_rfe_type(m: bytes, ext: tuple, autoload_fail: bool) -> int:
+    """[SRC] Hal_ReadRFEType_8812A (rtl8812a_hal_init.c:1296), 8812AU, registry RFE = AUTO(64).
+
+    A blank (0xFF) or autoload-fail efuse -> rfe_type 0 (the 8812AU default). A BIT7-set 0xCA
+    encodes the RFE type from the external-PA/LNA flags (3/0/2/4). Otherwise rfe_type = 0xCA[5:0],
+    with the 2013 workaround forcing a bogus type-4-with-external-amp burn back to 0 on the
+    8812AU. ``ext`` = (ext_pa_2g, ext_lna_2g, ext_pa_5g, ext_lna_5g) from _ext_amplifier_flags.
+    The captured AWUS036ACH burns 0xCA[5:0]=3 (BIT7 clear) -> rfe_type 3.
+    """
+    ext_pa_2g, ext_lna_2g, ext_pa_5g, ext_lna_5g = ext
+    rfe = m[EEPROM_RFE_OPTION]
+    if autoload_fail or rfe == 0xFF:
+        return 0                                     # 8812AU blank / autoload-fail default
+    if rfe & 0x80:                                   # external-PA/LNA-encoded rfe_type
+        if ext_lna_5g:
+            if ext_pa_5g:
+                return 3 if (ext_lna_2g and ext_pa_2g) else 0
+            return 2
+        return 4
+    rfe_type = rfe & 0x3F
+    if rfe_type == 4 and (ext_pa_5g or ext_pa_2g or ext_lna_5g or ext_lna_2g):
+        return 0                                     # 8812AU incorrect-EFUSE-map workaround
+    return rfe_type
+
+
+def _parse_board_type(m: bytes, ext: tuple) -> tuple:
+    """[SRC] Hal_ReadAmplifierType_8812A (rtl8812a_hal_init.c:1192) + hal_dm.c:382-405
+    board_type assembly.
+
+    Each set external flag lights its ODM_BOARD bit (GPA bit3 / GLNA bit4 / APA bit6 / ALNA
+    bit7). BT (bit2) needs the chip-version-gated EEPROMBluetoothCoexist read (:821-890); the
+    AWUS036ACH is a non-BT board, so BT stays 0 and the BT decode is not ported.
+
+    The four type_* sub-codes [SRC :1200-1221] pack the per-path ext type, but only when a
+    band has BOTH paths external; extType bits live in 0xBD/0xBF [6,2] (PA B/A) and [5:4,1:0]
+    (LNA B/A). On the AWUS036ACH all sub-fields read 0.
+    """
+    ext_pa_2g, ext_lna_2g, ext_pa_5g, ext_lna_5g = ext
 
     board_type = 0
     if ext_lna_2g:
@@ -138,16 +171,17 @@ def _parse_board_type(m: bytes) -> tuple:
         board_type |= ODM_BOARD_EXT_PA_5G
 
     # type_*: per-path ext-type sub-codes, decoded only when BOTH paths of a band are ext.
-    # [SRC] Hal_ReadAmplifierType_8812A:1211-1221.
+    # [SRC] Hal_ReadAmplifierType_8812A:1211-1221 (extType bits from the RAW 0xBD/0xBF bytes).
+    lna2, lna5 = m[EEPROM_LNA_TYPE_2G], m[EEPROM_LNA_TYPE_5G]
     type_gpa = type_apa = type_glna = type_alna = 0
-    if (pa & (1 << 5)) and (pa & (1 << 4)):            # 2G PA both paths ext
-        type_gpa = (((m[EEPROM_LNA_TYPE_2G] >> 6) & 1) << 2) | ((m[EEPROM_LNA_TYPE_2G] >> 2) & 1)
-    if (pa & (1 << 1)) and (pa & (1 << 0)):            # 5G PA both paths ext
-        type_apa = (((m[EEPROM_LNA_TYPE_5G] >> 6) & 1) << 2) | ((m[EEPROM_LNA_TYPE_5G] >> 2) & 1)
-    if (lna_2g & (1 << 7)) and (lna_2g & (1 << 3)):    # 2G LNA both paths ext
-        type_glna = (((m[EEPROM_LNA_TYPE_2G] >> 4) & 3) << 2) | (m[EEPROM_LNA_TYPE_2G] & 3)
-    if (lna_5g & (1 << 7)) and (lna_5g & (1 << 3)):    # 5G LNA both paths ext
-        type_alna = (((m[EEPROM_LNA_TYPE_5G] >> 4) & 3) << 2) | (m[EEPROM_LNA_TYPE_5G] & 3)
+    if ext_pa_2g:
+        type_gpa = (((lna2 >> 6) & 1) << 2) | ((lna2 >> 2) & 1)
+    if ext_pa_5g:
+        type_apa = (((lna5 >> 6) & 1) << 2) | ((lna5 >> 2) & 1)
+    if ext_lna_2g:
+        type_glna = (((lna2 >> 4) & 3) << 2) | (lna2 & 3)
+    if ext_lna_5g:
+        type_alna = (((lna5 >> 4) & 3) << 2) | (lna5 & 3)
 
     return board_type, type_glna, type_gpa, type_alna, type_apa
 
@@ -257,14 +291,16 @@ def read_chip_params(t) -> ChipParams:
         tx5g.append(_parse_tx_power_5g(m, off))
         off += _PG_5G_LEN
 
-    board_type, type_glna, type_gpa, type_alna, type_apa = _parse_board_type(m)
+    ext = _ext_amplifier_flags(m)                       # Hal_ReadAmplifierType before ReadRFEType
+    board_type, type_glna, type_gpa, type_alna, type_apa = _parse_board_type(m, ext)
 
     return ChipParams(
         crystal_cap=_parse_crystal_cap(m),
         mac_address=_parse_mac_address(m),
-        rfe_type=_parse_rfe_type(m),
+        rfe_type=_parse_rfe_type(m, ext, autoload_fail),
         autoload_fail=autoload_fail,
         sys_cfg=sys_cfg,
+        is_c_cut=_parse_is_c_cut(sys_cfg),
         tx_power_2g=tx2g,
         tx_power_5g=tx5g,
         bb_swing_2g=[_parse_bb_swing(m, EEPROM_TX_BBSWING_2G, p) for p in range(2)],

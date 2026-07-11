@@ -82,7 +82,8 @@ def set_monitor_mode(t, channel, params) -> None:
 
     # set channel (airmon's nl80211 set-channel == our runtime tune, re-run)
     chan.set_channel_bw(t, channel, bb_swing_2g_a=params.bb_swing_2g[0],
-                        bb_swing_2g_b=params.bb_swing_2g[1], rfe_type=params.rfe_type)
+                        bb_swing_2g_b=params.bb_swing_2g[1], rfe_type=params.rfe_type,
+                        is_c_cut=params.is_c_cut)
     txpower.set_tx_power(t, channel, params.tx_power_2g)
 
     # opmode tail: MAC addr, beacon-related regs, MSR->NOLINK, monitor RCR

@@ -68,6 +68,47 @@ known rtw88 limitation, worst on 5 GHz") and stays dead; dkms climbs throughout 
 Matched-coverage throughput is tied — the earlier "mainline faster" gap was only mainline
 skipping DFS.
 
+## EFUSE / silicon variants — any-card support
+
+The port runs on any RTL8812AU card that enumerates as `0bda:8812`, not only the captured
+ALFA AWUS036ACH (rfe_type=3, C-cut, board_type 0xD8). Two kinds of discriminator: **values**
+(crystal_cap, per-rate TX power, bb-swing, MAC) are consumed by computation, so any burn
+already works; **branches** (rfe_type, silicon cut, board_type ext-PA/LNA) select code paths.
+The BB/RF/AGC tables (`bb_phy_reg_tbl`, `bb_agc_tbl`, `rf_radio{a,b}_tbl`) carry every
+board_type/cut row inline and are resolved by `phy_cond` (`build_jaguar_params` threads the
+runtime cut + board_type) — a different board_type/cut card walks ported-but-untested *rows*,
+not unported code.
+
+Generalized branches (all keyed on the runtime EFUSE / cut; the rfe=3 / C-cut wire is
+byte-unchanged — see `verify_pcap` capture-2 6213 + capture-3 6376, `verify_channels` 37/37):
+- `efuse._parse_rfe_type` — `Hal_ReadRFEType_8812A` BIT7 external-PA/LNA decode (3/0/2/4) + the
+  2013 type-4-with-ext-amp workaround. Was hardcoded to 0 for any BIT7-set burn; now decodes
+  from the `_ext_amplifier_flags` (ext-PA/LNA) the port already reads for board_type.
+- `chan._set_rfe_2g` — added the vendor `rfe_type == 5` case (path-A partial pinmux byte +
+  inv-byte RMW clearing BIT0). It previously fell through the 0/1/2/4 branch and mis-wrote a
+  full 0x77777777 pinmux + inv 0x000. (`_set_rfe_5g` already had all cases 0–6.)
+- `chan._fix_spur` + `rf._rf_read_cca_off` — `phy_FixSpur_8812A` cut branch (non-C-cut does
+  only the 2.4 GHz 0x8AC[9:8] workaround, no 0x8AC[11:10]/0x8C4[30]) and `phy_RFSerialRead`'s
+  CCA-on-secondary toggle (non-C-cut brackets every masked RF read). Both were hardcoded to
+  C-cut; now gated on the runtime `is_c_cut` (`REG_SYS_CFG[15:12]+1 == C_CUT(2)`).
+
+`connect()` logs the detected config once — `sys_cfg / cut / rfe_type / board_type /
+crystal_cap / mac / bb_swing`, tagged `[untested variant]` when the card is not (rfe_type=3,
+C-cut) — so an odd card is diagnosable from one line.
+
+### Untested variants (ported-from-C, hardware-unverified; residual gaps)
+Only the ALFA (rfe=3, C-cut) capture exists, so the branches below are ported 1:1 from the
+vendor C and run "give-it-a-shot", not fail-loud:
+- **Non-C-cut FixSpur + RF-read CCA toggle** — the CCA toggle is functionally load-bearing (a
+  B-cut card's masked RF reads latch stale without it); ported but hardware-untested.
+- **rfe_type ≠ 3 RFE pinmux** (cases 0/1/2/4/5/6, both bands) — ported, only rfe=3 is pcap-gated.
+- **`phy_InitRssiTRSW` rfe==3 `rssi_trsw` seed** — sets driver-struct vars only consumed by
+  `odm_LNAPowerControl` (not run in this port); no wire effect, so not ported for other rfe.
+- **BT-coex RFE sub-path** (`CONFIG_BT_COEXIST` rfe_type 1) — non-BT board; not ported.
+- **`phy_SpurCalibration_8812A`** — `mp_mode`-gated, never runs in this (mp_mode=0) build.
+- **Registry RFE / amplifier overrides** (`GetRegRFEType`/`GetRegAmplifierType`) — userland has
+  no registry, so the decode assumes AUTO(64) throughout.
+
 ## Orientation
 
 C-cut 2T2R Jaguar; `REG_SYS_CFG = 0x04411137`. Cold bring-up runs efuse → FW → MAC → BB/RF →

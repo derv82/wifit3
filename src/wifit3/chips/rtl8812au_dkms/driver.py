@@ -129,10 +129,18 @@ class Rtl8812auDkmsDriver:
                 "probe", "implausible REG_SYS_CFG=0x%08x — card wedged or the USB plug fell "
                 "out; unplug ~5 s, replug, retry" % params.sys_cfg)
         jp = efuse.build_jaguar_params(params, params.sys_cfg)
-        logger.info("RTL8812AU efuse: sys_cfg=0x%08x cut=%d rfe_type=%d crystal_cap=0x%02x "
-                    "mac=%s bb_swing 2g=%s", params.sys_cfg, jp.cut_version, params.rfe_type,
-                    params.crystal_cap, params.mac_address or "<blank>",
-                    "/".join(f"0x{v:03x}" for v in params.bb_swing_2g))
+        # Detected per-card config — an odd card (rfe_type != 3, non-C-cut silicon, other
+        # board_type / fuse) is diagnosable from this one line. Only the ALFA AWUS036ACH
+        # (rfe_type=3, C-cut) is pcap-gated; other rfe_type / cut branches are ported-from-C
+        # but hardware-untested (see RTL8812AU_DKMS.md "EFUSE variants").
+        logger.info(
+            "RTL8812AU config: sys_cfg=0x%08x cut=%d%s rfe_type=%d board_type=0x%02x "
+            "crystal_cap=0x%02x mac=%s bb_swing_2g=%s%s",
+            params.sys_cfg, jp.cut_version, " (C-cut)" if params.is_c_cut else "",
+            params.rfe_type, params.board_type, params.crystal_cap,
+            params.mac_address or "<blank>",
+            "/".join(f"0x{v:03x}" for v in params.bb_swing_2g),
+            "" if (params.is_c_cut and params.rfe_type == 3) else "  [untested variant]")
 
         if progress_cb:
             progress_cb(0.2, "Uploading firmware")
@@ -151,9 +159,10 @@ class Rtl8812auDkmsDriver:
             mac.phy_mac_config(t)                                           # M2: MAC reg table
             mac.mac_init_misc(t)                                            # M2: queue/MISC + CR
             bb.phy_bb_config(t, crystal_cap=params.crystal_cap, params=jp)  # M3: BB+AGC+xtal
-            rf.phy_rf_config(t, params=jp)                                  # M3: RadioA + RadioB
+            rf.phy_rf_config(t, params=jp, is_c_cut=params.is_c_cut)         # M3: RadioA + RadioB
             chan.set_chnl_bw(t, ch=_DEFAULT_CHANNEL, bb_swing_2g_a=params.bb_swing_2g[0],
-                             bb_swing_2g_b=params.bb_swing_2g[1], rfe_type=params.rfe_type)  # M4
+                             bb_swing_2g_b=params.bb_swing_2g[1], rfe_type=params.rfe_type,
+                             is_c_cut=params.is_c_cut)                       # M4
             txpower.set_tx_power(t, _DEFAULT_CHANNEL, params.tx_power_2g)    # M-TXPWR: per-rate
             mac.hal_init_misc_pre(t)                                        # M5 §1a
             dig.init_hal_dm(t, search_edcca=True)                          # M5 §2: DIG/AGC/EDCCA
@@ -243,7 +252,8 @@ class Rtl8812auDkmsDriver:
             chan.set_channel_bw(t, channel, bb_swing_2g_a=params.bb_swing_2g[0],
                                 bb_swing_2g_b=params.bb_swing_2g[1],
                                 bb_swing_5g_a=params.bb_swing_5g[0],
-                                bb_swing_5g_b=params.bb_swing_5g[1], rfe_type=params.rfe_type)
+                                bb_swing_5g_b=params.bb_swing_5g[1], rfe_type=params.rfe_type,
+                                is_c_cut=params.is_c_cut)
             if not scan:
                 if channel <= 14:
                     txpower.set_tx_power(t, channel, params.tx_power_2g)

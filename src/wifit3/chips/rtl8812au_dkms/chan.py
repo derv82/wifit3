@@ -43,8 +43,10 @@ def _set_rfe_2g(t, rfe_type: int) -> None:
     """[SRC] phy_SetRFEReg8812(BAND_ON_2_4G) — RFE pinmux/inv for both paths.
 
     rfe_type 0/1/2 all resolve to pinmux 0x77777777 / inv 0x000 on this non-BT board;
-    types 3-6 (external-PA/LNA / antenna-select boards) differ. (TxScale is NOT part of
-    this function — it is phy_SetBBSwingByBand_8812A, the band-switch tail; see below.)
+    types 3-6 (external-PA/LNA / antenna-select boards) differ. Case 5 is a path-A partial
+    write (pinmux byte2 + inv byte3 clear BIT0), mirroring the 5 GHz case-5 layout. rfe_type
+    ∉ {0..6} follows the vendor switch `default:` (no-op). (TxScale is NOT part of this
+    function — it is phy_SetBBSwingByBand_8812A, the band-switch tail; see below.)
     """
     if rfe_type == 3:
         set_bb(t, _RFE_PINMUX[RF_PATH_A], 0xFFFFFFFF, 0x54337770)
@@ -52,6 +54,11 @@ def _set_rfe_2g(t, rfe_type: int) -> None:
         set_bb(t, _RFE_INV[RF_PATH_A], _MASK_RFEINV, 0x010)
         set_bb(t, _RFE_INV[RF_PATH_B], _MASK_RFEINV, 0x010)
         set_bb(t, 0x0900, 0x00000303, 0x1)              # r_ANTSEL_SW
+    elif rfe_type == 5:
+        t.write8(_RFE_PINMUX[RF_PATH_A] + 2, 0x77)      # partial pinmux byte (path A)
+        set_bb(t, _RFE_PINMUX[RF_PATH_B], 0xFFFFFFFF, 0x77777777)
+        t.write8(_RFE_INV[RF_PATH_A] + 3, t.read8(_RFE_INV[RF_PATH_A] + 3) & ~0x01)  # inv byte3 &= ~BIT0
+        set_bb(t, _RFE_INV[RF_PATH_B], _MASK_RFEINV, 0x000)
     elif rfe_type == 6:
         set_bb(t, _RFE_PINMUX[RF_PATH_A], 0xFFFFFFFF, 0x07772770)
         set_bb(t, _RFE_PINMUX[RF_PATH_B], 0xFFFFFFFF, 0x07772770)
@@ -191,23 +198,31 @@ def _rf_mod_ag(t, path: int, ch: int) -> None:
     set_rf_reg(t, path, RF_CHNLBW, _RF_MOD_AG, v)
 
 
-def _fix_spur(t, ch: int) -> None:
-    """[SRC] phy_FixSpur_8812A (rtl8812a_phycfg.c:1474) — C-cut 8812a branch (this card is
-    C-cut), 20 MHz. Three BB writes: 0x8AC[11:10]=2 (the 0x3 case is 40 MHz ch11 only, never
-    at 20 MHz), then the 2480 MHz ADC-clock workaround — ch 13/14 set 0x8AC[9:8]=3 + 0x8C4[30]
-    =1 (160M ADC), every other 2.4 GHz channel sets 0x8AC[9:8]=2 + 0x8C4[30]=0.
+def _fix_spur(t, ch: int, is_c_cut: bool = True) -> None:
+    """[SRC] phy_FixSpur_8812A (rtl8812a_phycfg.c:1474), 20 MHz. Two silicon branches:
+
+    C-cut (the captured card) writes the ADC-FIFO-clock fix 0x8AC[11:10]=2 (the 0x3 case is
+    40 MHz ch11 only, never at 20 MHz), then the 2480 MHz ADC-clock workaround — ch 13/14 set
+    0x8AC[9:8]=3 + 0x8C4[30]=1 (160M ADC), every other 2.4 GHz channel sets 0x8AC[9:8]=2 +
+    0x8C4[30]=0. Non-C-cut 8812a does ONLY the 2480 MHz workaround, and only on 2.4 GHz
+    (ch 13/14 -> 0x8AC[9:8]=3; ch<=14 -> 0x8AC[9:8]=2; 5 GHz untouched), with no 0x8C4[30].
     """
-    set_bb(t, 0x08AC, 0x00000C00, 0x2)              # 0x8AC[11:10]
-    if ch in (13, 14):
-        set_bb(t, 0x08AC, 0x00000300, 0x3)          # 0x8AC[9:8]
-        set_bb(t, 0x08C4, 0x40000000, 0x1)          # 0x8C4[30]
-    else:
-        set_bb(t, 0x08AC, 0x00000300, 0x2)
-        set_bb(t, 0x08C4, 0x40000000, 0x0)
+    if is_c_cut:
+        set_bb(t, 0x08AC, 0x00000C00, 0x2)          # 0x8AC[11:10]
+        if ch in (13, 14):
+            set_bb(t, 0x08AC, 0x00000300, 0x3)      # 0x8AC[9:8]
+            set_bb(t, 0x08C4, 0x40000000, 0x1)      # 0x8C4[30]
+        else:
+            set_bb(t, 0x08AC, 0x00000300, 0x2)
+            set_bb(t, 0x08C4, 0x40000000, 0x0)
+    elif ch in (13, 14):
+        set_bb(t, 0x08AC, 0x00000300, 0x3)          # non-C-cut 8812a: 2.4 GHz ch 13/14
+    elif ch <= 14:
+        set_bb(t, 0x08AC, 0x00000300, 0x2)          # non-C-cut 8812a: other 2.4 GHz
 
 
 def _sw_chnl(t, ch: int, bb_swing_2g_a: int, bb_swing_2g_b: int,
-             bb_swing_5g_a: int, bb_swing_5g_b: int, rfe_type: int) -> None:
+             bb_swing_5g_a: int, bb_swing_5g_b: int, rfe_type: int, is_c_cut: bool = True) -> None:
     """[SRC] phy_SwChnl8812: phy_SwBand (conditional band switch) + fc_area + per-path channel."""
     cur_5g = bool(t.read8(REG_CCK_CHECK) & 0x80)   # phy_SwBand8812 band marker
     want_5g = ch > 14
@@ -218,11 +233,11 @@ def _sw_chnl(t, ch: int, bb_swing_2g_a: int, bb_swing_2g_b: int,
     _fc_area(t, ch)
     for path in (RF_PATH_A, RF_PATH_B):            # 2T2R: both radios
         _rf_mod_ag(t, path, ch)
-        _fix_spur(t, ch)                           # phy_FixSpur_8812A (per-path, before chnl)
+        _fix_spur(t, ch, is_c_cut)                 # phy_FixSpur_8812A (per-path, before chnl)
         set_rf_reg(t, path, RF_CHNLBW, 0xFF, ch)   # channel byte0
 
 
-def _post_set_bw_20(t, ch: int) -> None:
+def _post_set_bw_20(t, ch: int, is_c_cut: bool = True) -> None:
     """[SRC] phy_PostSetBwMode8812 (CH20) + PHY_RF6052SetBandwidth8812 (CH20, both paths)."""
     t.write16(0x0668, t.read16(0x0668) & 0xFE7F)   # phy_SetRegBW_8812: clear BIT7,8
     t.write8(REG_DATA_SC, 0x00)                     # 20 MHz, secondary=0
@@ -230,23 +245,26 @@ def _post_set_bw_20(t, ch: int) -> None:
     set_bb(t, 0x08AC, 0x003003C3, 0x00300200)
     set_bb(t, 0x08C4, 0x40000000, 0x0)
     set_bb(t, 0x0848, 0x03C00000, 0x7)              # 2T2R L1PeakTH (1R would be 8)
-    _fix_spur(t, ch)
+    _fix_spur(t, ch, is_c_cut)
     # PHY_RF6052SetBandwidth8812 (CH20): RF 0x18[11:10]=3, both paths
     set_rf_reg(t, RF_PATH_A, RF_CHNLBW, (1 << 11) | (1 << 10), 3)
     set_rf_reg(t, RF_PATH_B, RF_CHNLBW, (1 << 11) | (1 << 10), 3)
 
 
 def set_chnl_bw(t, ch: int = 1, bb_swing_2g_a: int = BB_SWING_DEFAULT,
-                bb_swing_2g_b: int = BB_SWING_DEFAULT, rfe_type: int = 0) -> None:
+                bb_swing_2g_b: int = BB_SWING_DEFAULT, rfe_type: int = 0,
+                is_c_cut: bool = True) -> None:
     """Connect-time tune (M4): unconditional 2.4 GHz band switch + channel + 20 MHz BW."""
     _switch_band_2g(t, bb_swing_2g_a, bb_swing_2g_b, rfe_type)
-    _sw_chnl(t, ch, bb_swing_2g_a, bb_swing_2g_b, BB_SWING_DEFAULT, BB_SWING_DEFAULT, rfe_type)
-    _post_set_bw_20(t, ch)
+    _sw_chnl(t, ch, bb_swing_2g_a, bb_swing_2g_b, BB_SWING_DEFAULT, BB_SWING_DEFAULT, rfe_type,
+             is_c_cut)
+    _post_set_bw_20(t, ch, is_c_cut)
 
 
 def set_channel_bw(t, ch: int, bb_swing_2g_a: int = BB_SWING_DEFAULT,
                    bb_swing_2g_b: int = BB_SWING_DEFAULT, bb_swing_5g_a: int = BB_SWING_DEFAULT,
-                   bb_swing_5g_b: int = BB_SWING_DEFAULT, rfe_type: int = 0) -> None:
+                   bb_swing_5g_b: int = BB_SWING_DEFAULT, rfe_type: int = 0,
+                   is_c_cut: bool = True) -> None:
     """Runtime hop (M7): phy_SwChnl (band switch only on a 2.4<->5 crossing) + channel + BW."""
-    _sw_chnl(t, ch, bb_swing_2g_a, bb_swing_2g_b, bb_swing_5g_a, bb_swing_5g_b, rfe_type)
-    _post_set_bw_20(t, ch)
+    _sw_chnl(t, ch, bb_swing_2g_a, bb_swing_2g_b, bb_swing_5g_a, bb_swing_5g_b, rfe_type, is_c_cut)
+    _post_set_bw_20(t, ch, is_c_cut)

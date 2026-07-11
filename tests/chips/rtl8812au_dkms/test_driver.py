@@ -11,7 +11,7 @@ import wifit3.chips.rtl8812au_dkms.driver as drv
 
 def _fake_params():
     return SimpleNamespace(bb_swing_2g=[0x200, 0x200], bb_swing_5g=[0x200, 0x200],
-                           rfe_type=3, tx_power_2g="2g", tx_power_5g="5g")
+                           rfe_type=3, is_c_cut=True, tx_power_2g="2g", tx_power_5g="5g")
 
 
 def _patch_tune(monkeypatch, calls):
