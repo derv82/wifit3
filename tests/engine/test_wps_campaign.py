@@ -273,3 +273,62 @@ def test_run_progress_line_exhausted():
     from wifit3.engine.attacks.wps.campaign import CampaignState, run_progress_line
     line = run_progress_line(CampaignState(bssid="x", phase="failed", tested=11000))
     assert "exhausted" in line
+
+
+# ---- dead-first-half skip (no re-trying a ruled-out prefix) ------------------
+
+def test_dead_first_half_skips_shared_prefix_common(tmp_path):
+    # 12345670 and 12345678 share first half "1234". Once 12345670 is first-half-wrong,
+    # 12345678 is a guaranteed first-half-wrong too — it must be skipped.
+    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    assert "12345670" in pins.COMMON_PINS and "12345678" in pins.COMMON_PINS
+
+    seen = []
+    for _ in range(len(pins.COMMON_PINS) + 5):
+        p = c._next_pin()
+        if p is None or c.state.phase != "common":
+            break
+        seen.append(p)
+        c._apply_outcome(p, AttemptOutcome(PinResult.FIRST_HALF_WRONG, p))
+
+    assert seen[0] == "12345670"
+    assert "1234" in c.state.dead_first_halves
+    assert "12345678" not in seen           # skipped — prefix already dead
+
+
+def test_dead_first_half_skips_common_prefix_in_sweep(tmp_path):
+    # A COMMON prefix ruled out (e.g. "0000" via 00000000) is not re-tried when the
+    # first-half sweep reaches p1_index 0.
+    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    c.state.phase = "first_half"
+    c.state.dead_first_halves = ["0000"]
+    c.state.p1_index = 0
+    p = c._next_pin()
+    assert p is not None and p[:4] != "0000"   # 0000 skipped
+    assert c.state.p1_index == 1
+
+
+# ---- one-shot-per-MAC detection + rotation ----------------------------------
+
+def test_one_shot_per_mac_rotates_after_learning(tmp_path):
+    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    mac0 = c.our_mac
+    # Fresh MAC's first attempt reaches the oracle — no rotation yet (not learned).
+    c._after_attempt_mac_check(AttemptOutcome(PinResult.FIRST_HALF_WRONG, "0000000", reached_m1=True))
+    assert c._mac_reached_oracle and not c._ap_one_shot and c.our_mac == mac0
+    # Same MAC now gets no reply → learn one-shot + rotate.
+    c._after_attempt_mac_check(AttemptOutcome(PinResult.TIMEOUT, "0000000", reached_m1=False))
+    assert c._ap_one_shot and c.our_mac != mac0
+    # Learned: an oracle result now rotates proactively (spent MAC).
+    mac1 = c.our_mac
+    c._after_attempt_mac_check(AttemptOutcome(PinResult.FIRST_HALF_WRONG, "0001000", reached_m1=True))
+    assert c.our_mac != mac1
+
+
+def test_fresh_mac_no_reply_does_not_trip_one_shot(tmp_path):
+    # A no-reply on a MAC that never reached the oracle is NOT the one-shot tell — leave it
+    # to the strike/lock path (far / rate-limited AP), don't rotate here.
+    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    mac0 = c.our_mac
+    c._after_attempt_mac_check(AttemptOutcome(PinResult.TIMEOUT, "0000000", reached_m1=False))
+    assert not c._ap_one_shot and c.our_mac == mac0
