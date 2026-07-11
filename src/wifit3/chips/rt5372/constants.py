@@ -516,6 +516,13 @@ FREQ_OFFSET_BOUND = 0x5F                  # [SRC rt2800lib.c:2445] freq_cal_mode
 RF59_NON_BT = (0x8f, 0x8f, 0x8f, 0x8f, 0x8f, 0x8f, 0x8f,
                0x8d, 0x8a, 0x88, 0x88, 0x87, 0x87, 0x86)
 
+# RFCSR59 per-channel table, BT-coexist RT5392 [SRC rt2800lib.c:3448-3450] (r59_bt).
+# Selected when EEPROM NIC_CONF1 BT_COEXIST is set; RT5392 (rt != RT5390) skips the
+# rev-gated r55/r59_bt_rev arm (rt2x00_rt_rev_gte(RT5390,..) is false), so it writes
+# only RFCSR59 from this table — the BT analogue of RF59_NON_BT above.
+RF59_BT = (0x8b, 0x8b, 0x8b, 0x8b, 0x8b, 0x8b, 0x8b,
+           0x8a, 0x89, 0x88, 0x88, 0x86, 0x85, 0x84)
+
 # BBP antenna / chain-select / TX-power-control / bandwidth fields [SRC rt2800.h:2226-2246]
 BBP1_TX_POWER_CTRL = 0x03
 BBP1_TX_ANTENNA = 0x18

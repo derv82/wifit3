@@ -163,12 +163,11 @@ def config_channel_rf53xx(t: RT5372Transport, chip: ChipInfo, ev: EepromValues,
 
     freq_cal_mode1(t, ev)
 
-    # bt_coexist is clear on PAU05/PAU06 → the non-BT arm. RT5392 (rt != RT5390) is not
-    # the rev-gated r55/r59 path, so it always writes only RFCSR59 from r59_non_bt
-    # [SRC rt2800lib.c:3465-3473].
-    if ev.bt_coexist:
-        raise NotImplementedError("#TODO untestable: BT-combo r55/r59 tables (no BT card)")
-    t.rfcsr_write(59, C.RF59_NON_BT[channel - 1])
+    # RFCSR59 per-channel [SRC rt2800lib.c:3430-3474]. On RT5392 (rt != RT5390) both the
+    # bt_coexist and non-bt arms collapse to a single RFCSR59 write from a per-channel
+    # table (the rev-gated r55/r59_*_rev arms are RT5390F+-only). EEPROM NIC_CONF1
+    # BT_COEXIST picks the table; PAU05/PAU06 read bt_coexist=0 → RF59_NON_BT.
+    t.rfcsr_write(59, (C.RF59_BT if ev.bt_coexist else C.RF59_NON_BT)[channel - 1])
 
 
 def config_channel(t: RT5372Transport, chip: ChipInfo, ev: EepromValues,

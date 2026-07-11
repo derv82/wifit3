@@ -172,6 +172,26 @@ class EepromValues:
         b = self.raw[word_index * 2 + i]
         return b - 0x100 if b >= 0x80 else b
 
+    @property
+    def chip_id_word(self) -> int:
+        """EEPROM word 0 = EEPROM_CHIP_ID — the RF id source for RT5390/RT5392 silicon
+        [SRC rt2800lib.c:11187-11191]. Reference PAU05/PAU06 read 0x5372 (RF5372)."""
+        return self.word(C.EEPROM_CHIP_ID)
+
+    @property
+    def rf_type_nibble(self) -> int:
+        """NIC_CONF0.RF_TYPE (bits[11:8]) — the RF id source for non-RT53xx silicon
+        [SRC rt2800lib.c:11201]. This driver's RT5392 silicon reads EEPROM_CHIP_ID
+        instead; kept for the faithful resolve_rf_chip fallback."""
+        return C.get_field(self.word(C.EEPROM_NIC_CONF0), C.EEPROM_NIC_CONF0_RF_TYPE)
+
+    @property
+    def looks_unburned(self) -> bool:
+        """Blank/erased-EFUSE tell: EEPROM_CHIP_ID reads 0x0000/0xffff. Retail RT5392
+        dongles ship burned (reference reads 0x5372); an erased one still comes up on
+        the silicon-default rf53xx tune (see resolve_rf_chip)."""
+        return self.chip_id_word in (0x0000, 0xFFFF)
+
 
 def parse_eeprom(buf: bytes) -> EepromValues:
     """Decode the fields the bring-up needs [SRC rt2800lib.c:11171-11243
@@ -216,3 +236,52 @@ def parse_eeprom(buf: bytes) -> EepromValues:
             C.get_field(word(C.EEPROM_RSSI_BG2), C.EEPROM_RSSI_BG2_OFFSET2),
         ),
     )
+
+
+# ----------------------------------------------------------------------
+# RF companion-chip identification — the Ralink discriminator.
+#
+# The rt2800 family separates two ids: the RT *MAC silicon* (read from
+# MAC_CSR0, drives rt2800_init_bbp / rt2800_init_rfcsr — switched on chip.rt)
+# and the *RF chip* (encoded in the EEPROM, drives rt2800_config_channel —
+# switched on chip.rf). The same silicon can pair with different RF chips: this
+# driver's RT5392 silicon reports RF5372 (2T2R, reference) OR RF5370 (1T1R) OR
+# RF5390/RF5392, distinguished ONLY by EEPROM_CHIP_ID — so the RF id and the
+# antenna chain count must come from the runtime EEPROM, never the silicon.
+# All four RT5390/RT5392 RF variants share config_channel_rf53xx, so the tune
+# path is fixed for every card this driver admits [SRC rt2800lib.c:4207-4216].
+# ----------------------------------------------------------------------
+RF_NAMES = {
+    C.RF5370: "RF5370", C.RF5372: "RF5372", C.RF5390: "RF5390", C.RF5392: "RF5392",
+}
+
+# RF chips this port has a config_channel path for: the rt2800_config_channel_rf53xx
+# family that RT5390/RT5392 silicon pairs with. Reference reads RF5372.
+_PORTED_RF_CHIPS = frozenset({C.RF5370, C.RF5372, C.RF5390, C.RF5392})
+
+
+@dataclass(frozen=True)
+class RfChip:
+    """RF companion chip resolved from the runtime EEPROM.
+
+    ``rf_id`` is the raw kernel RF constant (0x0000/0xffff when the EFUSE read is
+    unburned/unreadable). ``ported`` says whether this driver has a config_channel
+    path for it. An unrecognised/unburned read is NOT ported but is still run on the
+    silicon's default rf53xx tune (the kernel -ENODEVs on an unknown RF; we do not,
+    so an odd/erased-EEPROM card still comes up)."""
+    rf_id: int
+    name: str
+    ported: bool
+
+
+def resolve_rf_chip(silicon_id: int, ev: EepromValues) -> RfChip:
+    """1:1 port of the RF-chipset identification block of rt2800_init_eeprom
+    [SRC rt2800lib.c:11182-11235]: RT5390/RT5392 (this driver's silicon) take the RF
+    id from EEPROM_CHIP_ID; any other silicon reads NIC_CONF0.RF_TYPE. Unlike the
+    kernel this does NOT fail on an unknown RF — a blank/erased EFUSE is run on the
+    silicon default (config_channel_rf53xx) with an 'untested variant' log warning."""
+    if silicon_id in (C.RT5390, C.RT5392):
+        rf = ev.chip_id_word
+    else:
+        rf = ev.rf_type_nibble
+    return RfChip(rf_id=rf, name=RF_NAMES.get(rf, f"0x{rf:04x}"), ported=rf in _PORTED_RF_CHIPS)

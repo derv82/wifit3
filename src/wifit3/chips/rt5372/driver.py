@@ -152,10 +152,21 @@ class RT5372Driver:
         # bulk-OUT (rt2x00usb assigns endpoints to queues in descriptor order).
         self._bulk_out_ep = min(eps.bulk_out) if eps.bulk_out else None
         mode = "WARM reattach (skipped FW + init)" if self.is_warm else "cold bring-up"
-        logger.info("RT5372 %s: mac=%s rf=0x%04x %dT%dR ext_lna_2g=%s freq_off=%d",
-                    mode, self.mac_address, self._eeprom.rf_type, self._eeprom.tx_chain_num,
-                    self._eeprom.rx_chain_num, self._eeprom.external_lna_bg,
-                    self._eeprom.freq_offset)
+        # Resolve the RF companion chip from the runtime EEPROM so this driver runs on
+        # ANY 148f:5372 card regardless of EEPROM contents (RF5372 2T2R reference /
+        # RF5370 1T1R / RF5390 / RF5392 / erased). [SRC rt2800lib.c:11182-11235].
+        rf = eeprom.resolve_rf_chip(self._chip.rt, self._eeprom)
+        logger.info(
+            "RT5372 %s: mac=%s silicon=0x%04x rf=%s %dT%dR ext_lna_2g=%s bt_coex=%s "
+            "freq_off=%d eeprom=%s", mode, self.mac_address, self._chip.rt, rf.name,
+            self._eeprom.tx_chain_num, self._eeprom.rx_chain_num,
+            self._eeprom.external_lna_bg, self._eeprom.bt_coexist, self._eeprom.freq_offset,
+            "unburned" if self._eeprom.looks_unburned else "burned")
+        if not rf.ported and not self._eeprom.looks_unburned:
+            logger.warning(
+                "untested variant: EEPROM RF chip %s on RT5392 silicon has no ported "
+                "config_channel path — running the silicon-default rf53xx tune "
+                "(kernel would -ENODEV)", rf.name)
 
         if progress_cb:
             progress_cb(0.5, f"RT5372: {mode}")
