@@ -215,3 +215,26 @@ async def test_correct_first_half_wrong_second():
 async def test_psk_only_revealed_on_full_match():
     out = await _run("12345670", "12340000")
     assert out.psk is None
+
+
+async def test_nack_carries_config_error_and_reached_m1():
+    # A NACK is the AP *answering*: reached_m1 is set once the exchange started, and
+    # the config-error stamped into the NACK is de-swallowed onto the outcome
+    # (FakeEnrollee's build_wsc_nack uses the default code 0 = "No Error").
+    out = await _run("12345670", "99995670")
+    assert out.result is PinResult.FIRST_HALF_WRONG
+    assert out.reached_m1 is True
+    assert out.config_error == 0
+
+
+async def test_silent_ap_reads_as_no_response():
+    # No enrollee on the wire → the registrar reports a timeout ("AP didn't
+    # respond"), NOT a NACK, and never claims the WSC exchange started.
+    a, b = asyncio.Queue(), asyncio.Queue()
+    reg = WpsRegistrar(_QueueTransport(a, b), BSSID, STA,
+                       eapol_start_timeout=0.2, msg_timeout=0.2, overall_timeout=1.0)
+    out = await asyncio.wait_for(reg.try_pin("12345670"), timeout=5.0)
+    assert out.result is PinResult.TIMEOUT
+    assert out.reached_m1 is False
+    assert out.config_error is None
+    assert "didn't respond" in out.detail

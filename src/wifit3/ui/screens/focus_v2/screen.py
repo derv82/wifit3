@@ -46,7 +46,7 @@ from wifit3.engine.attacks import treelog
 from wifit3.engine.attacks.pmkid_harvest import PmkidHarvestAttack
 from wifit3.engine.attacks.wep.campaign import WepCampaign
 from wifit3.engine.attacks.wpa3_downgrade import WPA3DowngradeAttack
-from wifit3.engine.attacks.wps.campaign import WpsCampaign
+from wifit3.engine.attacks.wps.campaign import WpsCampaign, load_run_state, run_progress_line
 from wifit3.engine.attacks.wps.pbc import WpsPbcCapture
 from wifit3.engine.attacks.wps.registrar import PinResult
 from wifit3.engine.protocols import FakeMacSupport
@@ -429,23 +429,30 @@ class FocusViewV2(Screen):
         newest capture of that kind — with the per-kind count baked in as a dim
         ``(N)``, so an AP with 20 PMKIDs lists a single row. The old inline
         '— N handshakes, M PMKIDs' summary + '(+N older)' leaf are gone (the (N)
-        and the date carry that information more tersely)."""
-        if not ap.persisted:
+        and the date carry that information more tersely). An in-progress WPS PIN
+        sweep (its `wps_<bssid>.run` resume file) rides on as a trailing leaf —
+        distinct from a saved WPS PSK, which is a finished credential, not progress."""
+        wps_state = load_run_state("captures", ap.bssid)
+        wps_progress = run_progress_line(wps_state) if wps_state else None
+        if not ap.persisted and not wps_progress:
             return
         by_kind: dict[str, list] = {}
         for cap in sorted(ap.persisted, key=lambda c: c.timestamp, reverse=True):
             by_kind.setdefault(cap.kind, []).append(cap)
 
         nouns = {"HS": "Handshake", "PMKID": "PMKID", "WEP": "WEP Key", "WPS": "WPS PSK"}
-        self._log("[bold]Existing captures[/bold] in [cyan]captures/[/cyan]:")
-
         # Newest of each kind, newest kind first; (count) rides each row. The
         # label column is padded to a common width so the dates line up.
         rows = sorted(((k, caps[0], len(caps)) for k, caps in by_kind.items()),
                       key=lambda r: r[1].timestamp, reverse=True)
-        label_w = max(len(f"{nouns[k]} ({n})") for k, _cap, n in rows)
+        if rows:
+            self._log("[bold]Existing captures[/bold] in [cyan]captures/[/cyan]:")
+        label_w = max((len(f"{nouns[k]} ({n})") for k, _cap, n in rows), default=0)
         for i, (kind, cap, n) in enumerate(rows):
-            line = treelog.leaf if i == len(rows) - 1 else treelog.branch
+            # The WPS progress leaf, if present, takes the └ — so a saved row is
+            # the last leaf only when nothing follows it.
+            last = i == len(rows) - 1 and wps_progress is None
+            line = treelog.leaf if last else treelog.branch
             pad = " " * (label_w - len(f"{nouns[kind]} ({n})"))
             label = f"[bold cyan]{nouns[kind]}[/bold cyan] [dim]({n})[/dim]{pad}"
             dt = datetime.fromtimestamp(cap.timestamp)
@@ -458,6 +465,10 @@ class FocusViewV2(Screen):
             else:
                 self._log(line(f"{label}  [white]{dt:%Y-%m-%d}[/white] "
                                f"[dim]{dt:%H:%M}[/dim]"))
+        if wps_progress is not None:
+            # Under the captures header as a leaf when there are rows; a lone line
+            # (no orphan tree connector) when the sweep is all there is to show.
+            self._log(treelog.leaf(wps_progress) if rows else wps_progress)
 
     # ----- per-tick paint ----------------------------------------------------
 

@@ -234,3 +234,42 @@ def test_lock_backoff_grows_with_observation():
     lt._observed_durations.append(120.0)
     lt.end_lock()
     assert 130 <= lt.backoff() <= 140         # learned ~ max*1.1, clamped
+
+
+# ---- .run progress surfacing (load_run_state / run_progress_line) -----------
+
+def test_load_run_state_roundtrip_and_missing(tmp_path):
+    from wifit3.engine.attacks.wps.campaign import load_run_state
+    assert load_run_state(str(tmp_path), "aa:bb:cc:dd:ee:ff") is None   # nothing on disk
+    _write_done_state(tmp_path, "12345670", "pw")
+    st = load_run_state(str(tmp_path), "aa:bb:cc:dd:ee:ff")
+    assert st is not None and st.found_pin == "12345670" and st.phase == "done"
+    # Corrupt file → None, not a crash.
+    _state_path(str(tmp_path), "aa:bb:cc:dd:ee:ff").write_text("{not json")
+    assert load_run_state(str(tmp_path), "aa:bb:cc:dd:ee:ff") is None
+
+
+def test_run_progress_line_cracked_is_silent():
+    from wifit3.engine.attacks.wps.campaign import CampaignState, run_progress_line
+    # A cracked run is reported by the saved WPS PSK row, not by a progress line.
+    assert run_progress_line(CampaignState(bssid="x", phase="done",
+                                           found_pin="12345670")) is None
+
+
+def test_run_progress_line_first_half_uses_11k():
+    from wifit3.engine.attacks.wps.campaign import CampaignState, run_progress_line
+    line = run_progress_line(CampaignState(bssid="x", phase="first_half", tested=3200))
+    assert "3,200" in line and "11,000" in line
+
+
+def test_run_progress_line_second_half_uses_1k():
+    from wifit3.engine.attacks.wps.campaign import CampaignState, run_progress_line
+    line = run_progress_line(CampaignState(bssid="x", phase="second_half",
+                                           first_half="1357", p2_index=970))
+    assert "970" in line and "1,000" in line and "1357" in line
+
+
+def test_run_progress_line_exhausted():
+    from wifit3.engine.attacks.wps.campaign import CampaignState, run_progress_line
+    line = run_progress_line(CampaignState(bssid="x", phase="failed", tested=11000))
+    assert "exhausted" in line

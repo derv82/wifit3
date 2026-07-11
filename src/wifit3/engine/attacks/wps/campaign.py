@@ -29,7 +29,7 @@ from ..campaign import Campaign
 from . import pins as pinmod
 from .association import WlanTransport, WpsAssociation, random_client_mac, str_to_mac
 from .lock import LockTracker
-from .registrar import AttemptOutcome, PinResult, WpsRegistrar
+from .registrar import AttemptOutcome, PinResult, WpsRegistrar, config_error_name
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,38 @@ class CampaignState:
 
 def _state_path(state_dir, bssid: str) -> Path:
     return Path(state_dir) / f"wps_{bssid.lower().replace(':', '-')}.run"
+
+
+def load_run_state(state_dir, bssid: str) -> Optional[CampaignState]:
+    """Read the on-disk .run resume state for a BSSID (no side effects), or None if
+    there's no sweep on file / it's unreadable. Lets Focus surface prior WPS-PIN
+    progress at target-acquisition without spinning up a campaign."""
+    path = _state_path(state_dir, bssid)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+        return CampaignState(**{k: data[k] for k in data if k in CampaignState.__annotations__})
+    except Exception:
+        return None
+
+
+def run_progress_line(state: CampaignState) -> Optional[str]:
+    """One-line WPS-PIN sweep progress (rich markup) for the Focus history, or None
+    when there's nothing to add: a cracked sweep already shows as a saved WPS PSK
+    row, and an unstarted one has no news. Denominators mirror
+    focus_model.wps_status_markup — 11k during the first half, 1k once it's locked."""
+    if state.found_pin:
+        return None                        # the _wps_pin.txt row already reports the win
+    if state.phase == "failed":
+        return (f"[bold]WPS PIN[/bold] sweep [red]exhausted[/red] "
+                f"[dim]({state.tested:,} tried · not found)[/dim]")
+    if state.phase == "second_half" and state.first_half:
+        # First half locked — the live keyspace is the 1,000-candidate second half.
+        return (f"[bold]WPS PIN[/bold] sweep: [cyan]{state.p2_index}[/cyan]/1,000 "
+                f"[dim]· first half [green]{state.first_half}[/green] locked[/dim]")
+    return (f"[bold]WPS PIN[/bold] sweep: [cyan]{state.tested:,}[/cyan]/11,000 "
+            f"[dim]· resumes where it left off[/dim]")
 
 
 class WpsCampaign(Campaign):
@@ -474,7 +506,10 @@ class WpsCampaign(Campaign):
             self.log(f"{label} → [dark_orange]second half wrong[/dark_orange] "
                      f"[dim bold]\\[M6][/dim bold]")
         elif out.result is PinResult.PROTO_ERROR:
-            self.log(f"{label} → [yellow]AP refused[/yellow] "
+            # De-swallowed reason: the AP answered with a NACK carrying a config-error.
+            why = (config_error_name(out.config_error)
+                   if out.config_error is not None else (out.detail or "no reason"))
+            self.log(f"{label} → [yellow]AP refused[/yellow] [dim]({why})[/dim] "
                      f"[dim bold]\\[NACK][/dim bold]")
         elif out.result is PinResult.TIMEOUT:
-            self.log(f"{label} → [dim]no response[/dim] [dim bold]\\[…][/dim bold]")
+            self.log(f"{label} → [dim]AP didn't respond[/dim] [dim bold]\\[no reply][/dim bold]")

