@@ -155,6 +155,13 @@ class WpsRegistrar:
 
             p = M.parse_rx_frame(frame)
             if p is None:
+                # An EAPOL frame we couldn't parse, arriving mid-exchange, is suspicious —
+                # a malformed/unexpected M5 would look exactly like this and otherwise be
+                # dropped silently (a false first-half-wrong). Beacons/data (no EAPOL
+                # LLC/SNAP) stay quiet.
+                if (highest_mt or last_sent) and M._LLC_SNAP_EAPOL in frame:
+                    self.log(f"[WPS] <- UNPARSED EAPOL ({len(frame)}B, last_sent={last_sent}): "
+                             f"{frame[:48].hex()}")
                 continue
 
             if p.is_identity_request:
@@ -183,7 +190,11 @@ class WpsRegistrar:
 
             mt = p.wsc_msg_type
             if mt and mt < highest_mt:
-                continue                     # stale retransmit of a stage we've already passed
+                # Stale retransmit of a stage we've already passed. Surfaced because a real
+                # M5 (0x05) dropped here would read as a false first-half-wrong.
+                self.log(f"[WPS] <- stale msg_type=0x{mt:02x} (< 0x{highest_mt:02x}), "
+                         f"dropping (last_sent={last_sent})")
+                continue
             if mt in (M.WPS_M1, M.WPS_M3, M.WPS_M5, M.WPS_M7):
                 highest_mt = mt
             if mt == M.WPS_M1:
