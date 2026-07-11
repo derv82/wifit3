@@ -1,342 +1,57 @@
 # RTL8814AU (8814au_dkms)
 
-A cleanroom port of the Realtek PHYDM/ODM vendor source (morrownr `8814au` 5.8.5.1).
-RTL8814AU silicon: 4T4R (2T4R on a non-superspeed USB link), dual-band 802.11ac,
-HALMAC + PHYDM, firmware-based. ALFA AWUS1900, USB `0bda:8813`. This is NOT the
-mainline-`rtw88`-derived `chips/rtw88_8814au/` — different addresses, init flow, and
-firmware-download mechanism. The whole reason for the re-port is the vendor driver's
-2.4 GHz monitor RX breadth (the mainline driver miscalibrates and reads close APs ~36 dB
-low). Standalone — does not import `chips/rtw88_base/`. Playbook: `docs/porting/METHODOLOGY.md`.
+## Captured Wireless Card
+- Dual-band 2.4 + 5 GHz — **4T4R silicon, 2T4R over USB-2** (a non-superspeed link caps the TX chains).
+- Device: ALFA AWUS1900, `0bda:8813`, captured over USB 2.0.
+- Captures: `usb_dumps_new/captures_rtl8814au/` (2.4 GHz), `usb_dumps_new2/captures_rtl8814au/` (5 GHz inject).
 
-## Status
+## Linux Driver Source
+- Link: https://github.com/morrownr/8814au — **not** aircrack-ng/rtl8814au.
+- Type: DKMS (PHYDM/ODM vendor tree).
+- Version: commit `b1866ce2b857a8dfe2e147e19eb8eca0a842ce18` (v5.8.5.1, 2026-02-11).
+- Location (vendored in-repo): `usb_dumps_new/captures_rtl8814au/driver-source/`.
 
-Registered as the DEFAULT driver for `0bda:8813` (`WIFIT3_RTL8814=mainline` falls back).
-Cold init + firmware boot, 2.4 + 5 GHz monitor RX, RSSI, and the full attack suite
-(deauth, handshake, PMKID, WEP replay + chopchop, WPS PIN + PBC) all hardware-proven.
-5 GHz inject/deauth confirmed on air (a live ch36 deauth captured the reconnect 4-way,
-34/34 EAPOL on target). `verify_pcap` reproduces **all six** cold boots — both the 2.4 GHz
-(`usb_dumps_new`) and 5 GHz-injection (`usb_dumps_new2`, `new2/` prefix) sets — 100%
-byte-for-byte end-to-end, init through every airodump hop, phydm watchdog tick, LED blink, and
-aireplay bulk-OUT injection (probe/RTS/auth/deauth + the VHT-MCS9 Null). The per-channel tunes
-(2.4 + 5 GHz) are also byte-diffed by `verify_channels.py`. Monitor RX is fully promiscuous both
-directions (ToDS M2/M4 seen), so WPA handshake capture works.
+## Python Port Details
+- VID/PID: `0bda:8813`; the default driver for it (`WIFIT3_RTL8814=mainline` selects the rtw88 port).
+- Status: **complete for this card, with [known problems](#known-problems)** — full bring-up, 2.4 + 5 GHz monitor RX + RSSI, and TX (deauth, handshake, PMKID, WEP replay + chopchop, WPS), all hardware-proven. `verify_pcap` reproduces all six cold-boot captures 100% byte-for-byte; `verify_pcap_selftest.py` confirms the gate FAILs on a mutation in each op-class.
+- Related port: mainline rtw88 @ `chips/rtw88_8814au/`.
+- Non-obvious in the port (would cost a maintainer time):
+  - Firmware uploads as beacon-queue TX packets on bulk EP `0x02` (3081 IDDMA), not an EP0 block-write.
+  - RF registers are memory-mapped: write via the per-path LSSI reg (`0xc90`/`0xe90`/`0x1890`/`0x1a90`), read via `read32(base + addr*4)` (`0x2800`/`0x2c00`/`0x3800`/`0x3c00`); `0xfe`/`0xffe` are 50 ms settles.
+  - TX-power-by-rate + regulatory-limit tables are compiled off; per-rate power collapses to `clamp(efuse_base + nTX_diff + 2, 0, 63)`.
 
-The 2026-06-05 soak flagged intermittent 2.4 GHz dropouts under sustained hopping (one 60 s
-bucket with zero 2.4 GHz APs; 5 GHz unaffected), but a 30-min re-soak on 2026-07-06 did not
-reproduce it — 2.4 GHz held 57-79 active APs every bucket, no dropout (see Debug log). Scan +
-Stress are flagged in VERIFICATION.md (the Stress flag predates this re-soak). 40/80 MHz bonded widths
-are out of scope (20 MHz primary only). Our own inject/deauth/replay ride the `update_txdesc` mgmt
-descriptor at a fixed CCK-1M rate, but that descriptor is now byte-verified against every aireplay
-injected frame kind and rate (`_inject` takes `hw_rate`/`rate_id`, and the gate reads aireplay's
-radiotap picks back from the recorded desc — a VHT-MCS9 Null and CCK deauths both reproduce). The
-USB3 firmware/burst branch is unported (latent gap if a card ever links USB3).
+## Known Problems
+- **Card can wedge (radio silence) when it crosses 5 GHz → a 2.4 GHz channel and parks there.** Hopping hides it (a re-tune un-wedges); only a static dwell exposes it. Port-vs-silicon is unresolved — a fresh-replug kernel card didn't reproduce it, a cycled one did (Debug log). Graded low.
+- 2.4 GHz RX under sustained hopping is jittery — one soak saw a 60 s dropout, a later one didn't.
+- 20 MHz primary only (40/80 out of scope); the USB3 firmware/burst branch is unported.
 
-## Gotchas
-
-**The 8814A's strong-AP RX inversion was CCK packet-detection, not gain.** A close
-CCK-only beacon (1 Mbps) was heard worst in the room while loud OFDM neighbours were
-fine — the classic "gain too high / saturation" look, but it is NOT that. Root cause:
-CCK-PD runtime adaptation was unported. Init seeds the most-sensitive level (0xa0a LV_0
-= 0x40); the kernel then *adapts* it, raising to LV_1 (0x83) when the CCK false-alarm MA
-exceeds 1000. Left at LV_0 on a busy channel, the over-sensitive detector is swamped by
-CCK false alarms and misses the real strong CCK beacons. Forcing LV_0→LV_1 roughly
-doubled reference-AP reception. Ported faithfully in `watchdog._cck_pd` (carries
-`cck_fa_ma` + `cck_pd_lv`); the MA seeds from the first tick's raw count, even a 0
-[phydm_cck_pd_th:1041] — the byte-exact vendor sequence the pcap gate replays at tick #2.
-
-**This card is 2T4R on USB, not 4T4R.** The efuse antenna option says 4T4R, but a
-non-superspeed link resolves `rf_path = RF_2T4R → max_tx_cnt = 2`, so the TX-power PG
-loader never loads the 3rd-stream diff (`efuse.MAX_TX_CNT = 2` caps it). The 2.4 GHz gate
-never caught this (its 3rd-stream diffs are 0 or nss=1-only); path C's 5 GHz fuse — a
-nonzero 3rd-stream BW20 diff the wire does *not* apply — exposed it. nss=1 (the inject
-rate) is unaffected.
-
-**Firmware does NOT block-write over EP0.** It uses the 3081 IDDMA reserved-page path:
-the blob streams as beacon-queue TX packets on bulk EP `0x02` (40-byte TX desc + payload),
-and the 3081 DDMA channel copies each block into MCU IMEM/DMEM with a running checksum.
-There is no 8814au blob in linux-firmware — the vendor C array (`array_mp_8814a_fw_nic`,
-68320 B) is the source of truth. The legacy `_WriteFW`/`_BlockWrite` path is dead code.
-
-**TX-power tables are dead code in this build.** It compiles with
-`CONFIG_TXPWR_BY_RATE_EN=0` and `CONFIG_TXPWR_LIMIT_EN=0`, so the whole power-by-rate
-(`phy_reg_pg`) and regulatory-limit (`txpwr_lmt`) machinery returns 0 / a non-binding
-ceiling. The per-(path,rate) index collapses to `clamp(efuse_base + nTX_diff + 2, 0, 63)`.
-None of that table machinery is ported.
-
-**Band detection is stateless — the chip holds the current band in a register.**
-REG_CCK_CHECK (0x454) bit7 records the band (5G→0x80, 2.4G→0x00); the tune path reads it
-back and switches only on a real 2.4↔5 GHz crossing. No software prev-band state is
-tracked, so any crossing (e.g. 165→2) is handled. The band switch is the first op of
-the channel-tune path.
-
-**RF register access is memory-mapped, not at the RF address.** A write rides the
-per-path LSSI write register (A 0xc90 / B 0xe90 / C 0x1890 / D 0x1A90) as
-`(addr<<20 | data) & 0x0FFFFFFF`; a read is a direct `read32(base + addr*4)` (base A
-0x2800 / B 0x2c00 / C 0x3800 / D 0x3c00). Pseudo addresses 0xfe/0xffe are 50 ms settling
-delays, not writes.
-
-**Monitor RX deliberately diverges from the cold-boot pcap.** The capture was taken under
-airmon-ng driving a *STA-initialised* driver through the cfg80211 STA→monitor dance (~300
-ops). wifit3 is always-monitor, so `monitor.enter_monitor` runs only the vendor monitor
-opmode entry (the last 10 ops: Set_MSR NOLINK + RCR `0x90003b2f` accept-all + RXFLTMAP0/1/2
-`0xffff`), skipping the STA-mode artifacts. So `verify_pcap` stops at the turn-on tail;
-the monitor block is verified out-of-line by `verify_pcap.verify_monitor_block`.
-
-**A crc/icv-error frame is skipped, not bailed on.** `rx.iter_frames` continues the
-USB-aggregated buffer walk past a bad frame (the vendor STA does `goto _exit` for
-`mp_mode==0`); monitor must keep the good frames aggregated after a bad one. Only a
-malformed descriptor length (no recoverable next-frame boundary) ends the walk. Frames
-are FCS-stripped before the callback ([project_rx_frames_include_fcs]).
-
-**Per-channel 2.4 GHz spur/NBI notch is real and was nearly skipped.** On 2.4 GHz ch 4-8
-(spur 2440 MHz) and ch14 (2480) the tune computes a per-channel NBI notch tap; every other
-channel disables NBI. The original skip-rationale ("2.4G has no spur") mispredicted, hidden
-because `verify_pcap` only diffed ch1 (a no-spur channel). On 5 GHz only ch153 needs a real
-notch at 20 MHz (the other 5 GHz notches are `#if 0` in the vendor source); ch140's case is
-rfe-0-only, so this rfe-1 card needs no ch140 notch.
-
-**WinUSB RX timeout errno differs from libusb.** `transport.bulk_in` originally treated
-only errno-110 as a benign timeout, so the Windows error (`[Errno 10060] ... timed out` —
-no "timeout" substring) was re-raised; 5 consecutive timeouts on quiet DFS channels tripped
-`RxReaderThread`'s fatal limit and killed RX. Fixed by catching pyusb's `USBTimeoutError`
-(+ errno 110/10060). 5 GHz has many empty channels and hit this where busy 2.4 GHz never did.
-
-**The 5 GHz TxBBSwing fuse is burned on this card** (0xC7 = index 1, -3 dB, all four
-paths) — unlike the unburned 2.4 GHz fuse (0xC6, 0 dB), so the 0 dB default would have been
-wrong on 5 GHz. Both decode in `efuse`; `chan._set_bb_swing` writes the per-path TxScale.
-
-## Orientation
-
-`driver.connect()` chains EFUSE → firmware → MAC/BB/RF config → channel tune → TX power →
-DIG seed → turn-on tail → monitor entry, then starts the RX reader + DIG watchdog. Bring-up
-mirrors `rtl8814au_hal_init`; names match the vendor C, so grep
-`usb_dumps_new/captures_rtl8814au/driver-source/` to cross-reference.
-
-The probe-phase efuse read (`efuse.read_chip_params`) runs first and recovers `rfe_type`
-(the BB-walker branch discriminator), `crystal_cap`, and the MAC live from the card — nothing
-is hardcoded. BB/RF config walk flat-u32 tables through the shared phydm conditional walker
-(`phy_cond._walk_table`); only `driver1` is compared (cut/package/interface/rfe nibbles),
-and empirically only `rfe_type` selects branches in this card's taken path. Channel tune
-(`chan`) unifies the 2.4 + 5 GHz fc-area / RF-mod / AGC-select into one range table. RSSI is
-`rx.decode_rssi` (OFDM `((pwdb_all>>1)&0x7f)-110` for an `is_mp_chip`; CCK via a gain-index
-lookup). The runtime DIG/AGC watchdog (`dig.watchdog_tick`) adapts IGI within [0x1c, 0x2a]
-every 2 s, serialized with `set_channel`; `--no-dig` toggles it for A/B testing.
+## Driver Entry Points
+Feature → where to start reading. Names match the vendor C (grep `usb_dumps_new/captures_rtl8814au/driver-source/`).
+- Bring-up: `driver.connect` → `_bringup` (EFUSE → firmware → MAC/BB/RF → tune → DIG seed → turn-on → monitor); mirrors `rtl8814au_hal_init`.
+- EFUSE / chip params: `efuse.read_chip_params` — `rfe_type`, `crystal_cap`, MAC, per-path TX-power, bb-swing.
+- Firmware upload: `firmware.bring_up` (3081 IDDMA bulk path).
+- BB / RF init: `bb.phy_bb_config`, `rf.phy_rf_config` — flat-u32 tables walked by `phy_cond`.
+- Channel tune / band switch: `chan.set_channel_bw`, `chan.switch_wireless_band_2g` / `_5g`.
+- RX: `rx.iter_frames` + `rx.decode_rssi`; the `RxReaderThread` posts before `monitor.enter_monitor` opens the RCR.
+- TX / inject: `tx.build_mgmt_txdesc` + `driver._inject`.
+- Runtime watchdog: `watchdog.tick` — DIG (IGI ∈ [0x1c, 0x2a]), CCK-PD, EDCCA/CCX, thermal + IQK.
 
 ## Scripts
-
-- `verify_pcap.py` — replays all three cold boots; byte-diff gate through the turn-on tail.
-- `verify_efuse_pcap.py` — byte-diffs the probe-phase efuse read.
-- `verify_channels.py` — per-channel tune byte-diff (2.4 + 5 GHz), the standing tune gate.
-- `scan_hw.py` — live beacon/AP count (`--band 2g|5g|all`); the end-to-end RX check + ESSID-variance canary.
-- `ab_scan.py` — staggered replug-between-runs A/B vs the mainline driver.
-- `rx_saturation_probe.py` — per-AP CCK/OFDM, `--cck-pd`/`--cck-rx-path` sweeps, DIG `cck_pd_lv` trace.
-- `cck_state_diff.py` / `rf_state_diff.py` — live MAC/BB and per-path RF state vs the kernel.
-- `dump_tune_regs.py` — dump live tune registers.
-- `extract_fw.py` / `extract_bb_tables.py` / `extract_rf_tables.py` — pull the FW blob + flat-u32 tables from the vendor C.
-- `deauth_hw.py` / `wep_replay_hw.py` — live deauth and WEP replay harnesses (targeted-only, `--dry-run`).
+- **Gates:** `verify_pcap.py` (byte-diff the whole cold-boot capture), `verify_pcap_selftest.py` (mutate each op-class, assert the gate FAILs), `verify_efuse_pcap.py` (efuse read).
+- **Live RX:** `scan_hw.py` (beacon/AP count, `--band`), `ab_scan.py` (replug A/B vs mainline), `rx_saturation_probe.py` (per-AP CCK/OFDM + `cck_pd_lv` trace).
+- **Register diffs:** `cck_state_diff.py`, `rf_state_diff.py`, `dump_tune_regs.py` (live vs kernel).
+- **TX (live, targeted, `--dry-run`):** `deauth_hw.py`, `wep_replay_hw.py`.
+- **Vendor extraction:** `extract_fw.py`, `extract_bb_tables.py`, `extract_rf_tables.py`.
+- **Smoke:** `test_hw.py`.
+- **Wedge investigation (one-offs, deletable once the wedge is closed):** `rx_scan_wedge{,_linux}.py`, `rx_death_repro{,_linux}.py`, `rx_dwell_char.py`, `rx_pipe_probe.py`, `rx_wedge_{poke,regdiff,cure,settle}.py`, `hopdwell_watch.py`.
 
 ## Debug log
 
-### 2026-06 — strong-AP RX deficit: CCK-PD adaptation (root cause)
-
-The 2.4 GHz reference AP (CCK-only, 1 Mbps beacons) was heard worst of the room (~3/s,
-ranked #6-8) while loud OFDM neighbours were fine and the aggregate looked healthy — the
-saturation *look*, but not saturation. Ruled out in source (not via the gate): init/tune
-match the kernel; live regs were correctly 20 MHz/ch1; IQK/LCK/pwr-track are commented out
-for the 8814A; RxGainOffset / `phy_ModifyInitialGain` are MP-only no-ops. The actual cause
-was unported CCK-PD runtime adaptation (now a Gotcha). Two supporting RX-path fixes landed
-the same effort: decode moved off the asyncio loop onto the reader thread (the loop held the
-GIL and gapped reads under the 4T4R flood), and the RX reader is started *before*
-`enter_monitor` opens the accept-all RCR (kernel order: post URBs, then write RCR
-— [project_rx_reader_start_ordering]). Result: ~3/s ranked #6-8 → 6.7/s, median 7, ranked
-#1, zero dead seconds. Residual ~6.7 vs MT7921's 8.1/s (same room/USB2) is chip-inherent —
-a bias-free deep-dive (operational-tail by-register, live MAC + every BB page byte-diff, all
-4 RF paths) found no remaining RX divergence; the 8814A is simply a weaker CCK receiver in a
-busy channel (its own kernel's 8.7/s was on a *quiet* channel).
-
-### 2026-06 — DIG regression refuted by controlled A/B
-
-The runtime DIG watchdog was the prime suspect for a strong-AP RX regression; a fixed-channel
-and hopping A/B (DIG ON vs OFF) refutes it. The per-tick `fa_cnt` stays bounded and bounces
-(it does not climb monotonically), so the OFDM/CCK/page-F CCA reset pulses do clear the
-counters. Fixed-ch1 30 s, the strongest AP (~-44 dBm) held 150-197 beacons with DIG ON,
-matching DIG OFF (150-185). IGI rides up to the 0x2a ceiling on a busy band and steps back
-down on quiet channels; 0x2a is the least-sensitive bound but sits well below the strong AP's
-level, so it doesn't deafen RX. A single DIG-OFF outlier drove the original "halved frames"
-worry and did not repeat; the earlier "collapse" was an uncontrolled hop-vs-fixed comparison
-at a different time. Beacon *count* follows beacon interval / multi-BSSID radios, not RSSI.
-
-### 2026-06 — the one unported watchdog member (RX-neutral)
-
-The halrf TX-power thermal-delta tail (the `verify_pcap` frontier at tick #2) is the only
-periodic write the watchdog doesn't model. Confirmed RX-neutral by op-trace (not by label):
-the tick's RX work (DIG, EDCCA, NHM, FA reads) is all modeled; the unported tail reads a
-power/thermal reference (read-only here), reads/writes-back the TX AFE unchanged, and writes
-the TX digital scale (`bb_swing`/`ele_D`) while preserving the low RX-IQ bits — TX power only,
-no RX register modified. Porting it would complete the watchdog + advance the gate but is
-large/stateful (per-path swing LUT + thermal MA) and RX-neutral.
-
-### 2026-06-05 — soak: intermittent 2.4 GHz dropouts under sustained hopping
-
-The 30-min dual-band soak (`scripts/diag/reports/rtl8814audkms_20260605-231039.md`) showed
-the signal-strength fix (-45 vs -81 dBm) did NOT make 2.4 GHz RX solid: one full 60 s bucket
-with zero 2.4 GHz APs (5 GHz unaffected), periodic dips, the jitteriest frame rate of any
-soaked card. No progressive degradation (98→98) and 5 GHz rock-steady, so it survives, but
-the mainline fallback stays until the 2.4 GHz AGC/DIG/band-recovery path is byte-diffed.
-
-### 2026-07-06 — re-soak: 2.4 GHz dropout not reproduced
-
-A 30-min dual-band hopping re-soak (`scripts/diag/reports/rtl8814audkms_20260706-030622.md`,
-22 channels) did NOT reproduce the 2026-06-05 dropout: 2.4 GHz held 57-79 active APs across
-all 31 buckets (min 57, no zero bucket), 5 GHz 28-45, active-BSSID trend rose (101→119, ratio
-1.18). No death, no progressive degradation. Parse-quality WARNs are hopping artifacts (OUI
-garbage 5.0% is dominated by ff:ff:ff:ff:ff:ff broadcast; beacon-channel mismatch 22% is the
-known cross-tune-window effect). Cleared from BUGS.md.
-
-### 2026-07-09 — M3c halrf: thermal TX-power tracking ported (verify_pcap → IQK frontier)
-
-The watchdog's halrf member was a stub (thermal re-arm only); the thermal-DELTA correction that
-fires from tick #2 was unported — the verify_pcap operational frontier. Ported the vendor
-`odm_txpowertracking_check_ce` + `..._callback_thermal_meter` MIX_MODE path (`powertrack.py` +
-`powertrack_tbl.py` delta-swing tables): the two-phase arm/read gate, thermal averaging,
-`odm_get_tracking_table` per-path index walk, and the per-path TXAGC (0xX94) / BB-swing (0xX1C)
-writes; plus `odm_clear_txpowertracking_state` (incl. the `thermal_value → eeprom` re-base at
-halphyrf_ce.c:162) and the `phy_SetBBSwingByBand` `default_ofdm_index` band adjust on each hop.
-`eeprom_thermal` now reads from efuse 0xBA. The tick-2 BB-swing (0x197) is COMPUTED (eeprom 0x23,
-thermal 25 → delta 10 → 2G down-table 4 → idx 24−4=20 → `tx_scaling_table_jaguar[20]`), not
-hardcoded. verify_pcap capture-1 now reaches the 8814A IQK backup (`R 0x0520`, op 10338 — the next
-milestone, `do_iqk_8814a`); capture-3 reaches op 13509 (4 ticks, both bands, incl. the 5 GHz
-band-switch correction) before the pre-existing LED-mid-hop harness-interleave limit. The gate's
-`Walk.run` now credits ops matched before a mid-handler divergence (fail-closed unchanged), so the
-frontier reports the true deepest-reproduced op. RX-neutral (TX-power thermal compensation) — ported
-for capture fidelity, not an RX fix. Preceded by the faithful CCK-PD unconditional-seed fix that
-cleared the tick-2 CCK divergence.
-
-### 2026-07-09 — verify_pcap: drain the interleaved LED blink (async producer)
-
-The LED-blink timer (0x0060 R/W) fires on its own ~2 s cadence, so the wire splices its op pair
-into whatever handler is mid-flight — a channel tune's txagc burst or an IQK one-shot. The
-single-cursor harness dispatched hops/ticks/LED atomically, so a mid-handler LED desynced the walk
-(the frontier on capture-2 op 8212 / capture-3 op 13509). Added an optional `interleave` hook to the
-shared `ReplayTransport` (default off — no effect on other chips) that the 8814au recipe drives to
-drain each interleaved blink through the real `led_blink` at the cursor (byte-verified, non-recursive
-— it skips 0x0060 so the blink's own ops don't re-enter). Result: capture-2 → op 29274/29811 (98%,
-reaches the aireplay TX bulk-OUT), capture-3 → op 29862/30582 (98%, reaches an IQK at tick #40).
-capture-1 unchanged (its IQK precedes any LED). Remaining frontiers: the 8814A IQK (cap-1/cap-3) and
-the aireplay injection (cap-2).
-
-### 2026-07-10 — verify_pcap: 100% on all six captures (aireplay rate + injection interleave)
-
-Closed the last two frontiers, so every capture in both sets reproduces byte-for-byte. (1) The
-aireplay injection stalled on a QoS-Null frame whose descriptor RATE_ID=9 / TX_RATE=0x35 (VHT 1SS
-MCS9) can't be derived from the 802.11 frame — it's aireplay's per-frame radiotap pick, set into
-`pattrib->raid` / `pattrib->rate` upstream of `update_txdesc` [xmit.c:106,232]. Read the pair back
-from the recorded desc (`_peek_txrate`, mirroring `_peek_channel`'s tune-target read) and thread it
-into `_inject(hw_rate, rate_id)` → `build_mgmt_txdesc`; all 40 desc bytes (incl. the XOR checksum)
-then match for every injected kind — probe req, RTS, auth, deauth, and the VHT Null — confirming the
-descriptor construction is byte-correct given aireplay's rate input, not just for the CCK default.
-(2) A second async producer: aireplay's inject timer fires mid-tick, so a bulk-OUT splices into a
-watchdog tick's per-RF-path burst (new2/cap-3 op 29699, a probe req between the path-C and path-D
-`0xX90` writes) — same phenomenon as the LED blink. Generalized `_drain_led` → `_drain_async` to
-drain both an LED pair and an injection bulk-OUT at the cursor. Also wired the 5 GHz `usb_dumps_new2`
-set into the recipe (`new2/` prefix; dev-addr auto-detect). Result: 2.4 GHz cap-{1,2,3} and 5 GHz
-new2/cap-{1,2,3} all PASS 100% (~2013 injections total). This is the "reach 100% byte-for-byte before
-diverging" bar met — the DIG-pin-while-hopping RX divergence is now the next, deliberate, post-100%
-step.
-
-### 2026-07-10 — the 2.4 GHz hop→dwell RX wedge: root cause + fix (IGI un-stick)
-
-Symptom (field): after the scanner hops 2.4↔5 GHz then dwells on a 2.4 GHz channel, RX goes silent
-~15 s before self-healing. Characterized it end-to-end with `rx_death_repro.py` (hop→sit, +`--no-dig`
-/`--skip-hop`/`--sit-retune-secs` controls): DIG-on → 15 s dead then recovers; DIG-off → dead forever;
-cold-sit (no hop) → healthy; a periodic re-tune → healthy. So the DIG watchdog is the *recovery*, not
-the cause, and the trigger is the hop→dwell transition — **not** the "free-running DIG goes deaf"
-theory from the handoff. A clean single-session A/B on the kernel driver (`rx_death_repro_linux.py
---ab`, 60 s + 90 s hop) is healthy, so it's **our port's gap, not the driver's** (earlier "dead" Linux
-runs were an airmon monitor-cycle degradation confound, recoverable via a sysfs `authorized` USB
-reset). Register diff (`rx_wedge_regdiff.py`): BB *control* regs identical healthy-vs-wedged, only CCK
-FA counters differ — a saturated front-end, not a wrong threshold. Poke test (`rx_wedge_poke.py`):
-re-writing IGI with the **same** value does nothing; raising IGI to 0x2a revives RX instantly. So the
-front-end un-sticks only on an IGI *value edge*: after 5 GHz hops (low FA) IGI drifts to the floor, and
-landing on a busy 2.4 GHz band at a low IGI saturates it deaf. The vendor recovers via FA-driven IGI
-churn every tick (`odm_write_dig` is on-change, but its FA keeps moving); our carried-state DIG can
-stick at the floor. Why this hid behind verify_pcap: the captures only ever *hop* (IGI changes every
-tick → writes every tick), so a long static dwell — where on-change and every-tick diverge — is in no
-capture. **Fix:** on a `scan=False` (dwell) tune to a 2.4 GHz channel, force IGI to the anti-saturation
-max (`_IGI_MAX` 0x2a) in the async `set_channel` wrapper (`driver._unstick_2g_rx` + `dig.write_igi`);
-the value edge un-sticks RX immediately and the watchdog re-adapts down. Scoped to dwells (a scan hop
-re-tunes fast enough to never wedge). Verified: the SIT phase is now healthy from t=0 (IGI 0x2a→0x26,
-mud2g 5.7–9/s) vs the prior 15 s blackout; verify_pcap stays 100% (the wrapper isn't on the `_tune`
-path the gate drives). Deliberate post-100% divergence.
-
-**Reverted (same day).** Characterizing that hardcode across channels (`rx_dwell_char.py`, --no-unstick
-A/B) showed it was the wrong fix: it lands IGI in the high part of the DIG hold band and *sticks* there
-(the watchdog doesn't walk it back down), so on a busy channel it hears ~2× fewer APs than the natural
-DIG settle (ch1 forced-0x2a all/s 21–43 / nBSSID 7–15 vs natural climb-from-floor 56–98 / 16–23, which
-settles ~0x27), and 0x2a is really just CH1's local noise floor — environment-specific. 5 GHz dwell is
-unaffected either way (IGI walks 0x2a→0x1c, all APs heard). Ruled OUT as the cause: the FA thresholds
-(`_FA_TH` {2000,4000,5000} = the vendor's exact no-link/non-DFS `phydm_fa_threshold_check` values) and
-the fixed IGI floor 0x1c (= no-link `DIG_MIN`; the dynamic `rssi_min` floor is the linked path only).
-So the DIG decision + bounds are faithful, yet the vendor doesn't saturate-deaf on a busy 2.4 dwell and
-we do — pointing at a `phydm_watchdog` member we don't port at all (prime suspect `phydm_noisy_detection`
-at phydm.c:2188, immediately before `phydm_dig`; also `odm_dtc`, `phydm_receiver_blocking`). Next:
-port the missing noise-detection member so DIG raises IGI correctly on a busy channel on its own — no
-hardcode, no cache, not environment-specific. Diagnostics kept: `rx_death_repro{,_linux}.py`,
-`rx_wedge_regdiff.py`, `rx_wedge_poke.py`, `rx_dwell_char.py`.
-
-**Root cause + real fix (same day): a concurrency race, not DIG.** Extracting the Linux driver's IGI
-trajectory *from the captures* (instrument the verify_pcap walk to log each tick's IGI + FA) showed the
-kernel driver on a ch1-after-5g dwell climbs IGI 0x1c→0x2a over ~8 ticks — *identical to ours* — but
-with FA ≈ 8000/tick (front-end active), while our live FA is <2000 (front-end blocked, IGI can't
-climb). So DIG is faithful; our RX front-end reads no energy after a 5→2 dwell. Walking the band-switch
-code against the vendor (`PHY_SwitchWirelessBand8814A`) confirmed `switch_wireless_band_2g` is
-byte-faithful (clock-gate bracket, CCK regs, order) and `phy_sw_band` reads the HW band marker — so the
-register writes aren't the gap. The gap is dynamic and invisible to verify_pcap (single-threaded
-replay, no concurrent reader): **`set_channel` did not pause the `RxReaderThread` across the tune**, so
-a concurrent bulk-IN corrupts the tune's RF/RX-path reconfig and strands 2.4 GHz RX deaf. A scan hop
-self-heals (a later tune re-lands); a one-shot dwell has nothing to re-land it → the ~15 s wedge until
-the DIG watchdog's IGI write happens to re-kick RX. The `rtl8821cu_dkms` driver already had this pause
-(RF18 RMW race); the 8814au port dropped it — a port-completeness miss. **Fix:** pause the RX reader
-across a non-scan (dwell) tune in `set_channel` (mirrors 8821cu). verify_pcap stays 100%.
-
-**Correction — the pause is a PARTIAL fix.** An A/B with `hopdwell_watch.py` (pre/post, per-second
-histogram after a controlled last hop) showed: pre-fix, BOTH a same-band (2→2) and a band-switch (5→2)
-dwell were dead the full 15 s. Post-fix, a **same-band dwell is fully fixed** (healthy from t=0, mean
-7.9/s, 0 zero-seconds) — and the multi-channel baseline rose +48% because most sweep dwells are
-same-band. **But a 5→2 (band-switch) dwell still wedges 8–15 s, every time** (3/3 repeated cycles dead,
-so a bring-up warmup won't help — it's per-transition, not cold state). The initial "SIT healthy from
-t=0" verification was on an rx_death_repro run that happened to END same-band, so it never exercised a
-band-switch dwell. So the real scan→focus case (hop 2.4↔5, then dwell a 2.4 target) is NOT fixed. The
-residual is band-switch-specific and dynamic (the writes are byte-faithful and the tune is now
-race-free).
-
-**Resolved — the 5→2 residual was a bulk-IN PIPE STALL (RX plumbing), not a register gap.** A deep dive
-found the vendor's runtime channel switch has NO delays and NO active lock (the `SwChnlInProgress`
-spinlock is dead `#if 0` code), and no DM re-init on channel change — so the band-switch *code* matches
-Linux; the gap is in our userland RX plumbing. `rx_pipe_probe.py` (per-second raw-USB-buffers vs
-frames vs beacons during the wedge) was decisive: during the 5→2 wedge `raw_bufs/s = 0` for ~16 s
-(zero USB data, not garbage), then snaps to 100+/s. The band switch re-enables RX (clock-gate on) while
-the RX reader is PAUSED (the same-band fix), so RX data arrives with no read posted → the chip RX FIFO
-overflows and stalls the pipe; the reader only retries out of it ~16 s later. This is the codebase's own
-"start the reader before RX-enable or the cold pipe wedges" gotcha, at runtime. The kernel URB survives
-it; our thread doesn't. **Fix (part 2):** `transport.reset_rx_pipe()` (clear_halt the bulk-IN endpoint)
-called in `set_channel` right after the tune, while the reader is still paused (no read in flight). So
-the complete fix is two parts: (1) pause the RX reader across a dwell tune — same-band race; (2)
-re-prime the pipe after it — band-switch clock-gate stall. Verified: 5→2 dwell healthy from sec 1
-(mean 7.6/s, 0 zero-seconds), 3/3 repeated cycles healthy (was 3/3 dead), same-band still healthy,
-verify_pcap still 100%. Not a divergence from Linux — correct RX-pipe handling of the band-switch RX
-re-enable that the kernel URB does for free.
-
-**NOT actually resolved (2026-07-10, later).** Field test disproved it: in the real app, set the
-channel filter to 5 GHz, scan ~30–50 s, then filter to one 2.4 GHz channel (ch6) → ~40 s of silence,
-watchdog logging `IGI=0x1c fa=0` every tick. The bug is the **scanner path (`scan=True`)**; both fix
-parts are scoped to `scan=False`, so neither the pause nor `reset_rx_pipe` ever fires on the path the
-user hits. The `hopdwell_watch` A/B dwelled with `scan=False`, so it validated the fixed branch, not the
-real trigger — same test-doesn't-match-trigger error as the earlier over-claims. Also `fa=0` (BB
-counting ZERO false alarms on a noisy channel) means the front-end is genuinely OFF, not just an
-insensitive/stalled USB pipe — a `clear_halt` can't revive a dead front-end, so the pipe-stall
-diagnosis likely applied only to the scan=False variant (or was partly stochastic recovery). NEXT: (1)
-key the fix off the **5↔2 band cross**, not scan-vs-dwell; (2) re-run `rx_pipe_probe.py` on the
-`scan=True` path — if `raw_bufs=0` AND `fa=0`, it's the front-end/CCK-OFDM clock not re-enabling, not
-the pipe, and the band-switch RX re-enable itself is the target. Commits `9a264bd`/`49d86d1` fix a
-scan=False variant only, not the scanner case.
+### 2026-07-10 — the 5→2 hop→dwell RX wedge (unresolved)
+After a 5→2 band cross followed by a static dwell, RX can go dead (four RF paths read mode `0x00`=0,
+`fa`=0). Ruled out: the RX reader (a `--pause-cross` A/B was 5/12 vs 4/12) and a settle race (10/20 ms
+no help). Re-issuing `switch_wireless_band_2g` revives it but caps ~15% residual. Port-vs-silicon is
+**contested**: a matched N-trial repro had our port 12/32 (~38%) and a *cycled* kernel card 9/32
+(~28%), but a *fresh-replug* kernel card was 0/10 — consistent with the airmon-cycle degradation
+confound, so the kernel rate isn't established. No in-driver fix stays at parity with the vendor.
+Repro: `rx_scan_wedge{,_linux}.py`.
