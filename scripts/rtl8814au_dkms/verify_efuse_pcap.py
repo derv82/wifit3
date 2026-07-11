@@ -7,7 +7,9 @@ that feeds back the chip's recorded reads, asserts the port emits byte-identical
 EFUSE_CTRL traffic, and cross-checks the decoded params against the values the BB
 config independently confirmed (rfe_type=1, crystal_cap=0x23).
 
-Run: ``uv run python scripts/rtl8814au_dkms/verify_efuse_pcap.py [capture-N]``
+Run: ``uv run python scripts/rtl8814au_dkms/verify_efuse_pcap.py [[new2/]capture-N]``
+(a bare name is the 2.4 GHz "new" set; prefix "new2/" for the 5 GHz set — same
+selector as verify_pcap.py).
 """
 from __future__ import annotations
 
@@ -25,21 +27,31 @@ import verify_pcap as vp  # noqa: E402
 
 from wifit3.chips.rtl8814au_dkms import efuse  # noqa: E402
 
-CAP_DIR = REPO / "usb_dumps_new" / "captures_rtl8814au"
 # Expected decoded params (same physical card across all three boots).
 EXP_RFE_TYPE = 1
 EXP_CRYSTAL_CAP = 0x23
 
 
 def main() -> int:
-    name = Path(sys.argv[1] if len(sys.argv) > 1 else "capture-1").stem
-    pcap = CAP_DIR / f"{name}.pcap"
+    # Resolve the "<set>/<capture>" selector + dev-addr the same way verify_pcap.run does
+    # (DEV_ADDR is keyed by (set, name); anything absent falls back to find_card_device).
+    raw = sys.argv[1] if len(sys.argv) > 1 else "capture-1"
+    setkey, _, rest = raw.partition("/")
+    if rest and setkey in vp.CAP_DIRS:
+        cap_dir, name = vp.CAP_DIRS[setkey], Path(rest).stem
+    else:
+        setkey, cap_dir, name = "new", vp.CAP_DIRS["new"], Path(raw).stem
+    pcap = cap_dir / f"{name}.pcap"
+    if not pcap.exists():
+        print(f"FAIL: no such capture {pcap}")
+        return 1
+    dev = vp.DEV_ADDR.get((setkey, name)) or rp.find_card_device(pcap)
 
     # The efuse read is the first vendor-register traffic in the capture; trim to the
     # chip-version read (REG_SYS_CFG1, 0xF0). The window end is generous — the port stops at
     # EFUSE access-off, so later ops are simply left unconsumed.
-    print(f"Extracting EFUSE op stream from {pcap.name} (dev {vp.DEV_ADDR[name]})...")
-    ops = rp.extract_ops(pcap, vp.DEV_ADDR[name], (1, 7000), start_addr=0x00F0)
+    print(f"Extracting EFUSE op stream from {pcap.name} (dev {dev})...")
+    ops = rp.extract_ops(pcap, dev, (1, 7000), start_addr=0x00F0)
     print(f"  {len(ops)} ops in the probe/efuse window")
 
     time.sleep = lambda *a, **k: None
