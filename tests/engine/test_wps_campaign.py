@@ -359,6 +359,16 @@ def test_lost_reply_no_retry_for_silent_ap(tmp_path):
         PinResult.FIRST_HALF_WRONG, "01030006", via_timeout=True)) is False
 
 
+def test_config_error_setup_locked_locks_immediately(tmp_path):
+    # An explicit WPS Setup-Locked NACK (config_error 15) is a lock, not a wrong PIN: lock at
+    # once and do not advance the keyspace.
+    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    before = c.state.common_index
+    c._apply_outcome("12345670", AttemptOutcome(PinResult.PROTO_ERROR, "12345670", config_error=15))
+    assert c.lock.is_locked(beacon_locked=False)
+    assert c.state.common_index == before
+
+
 def test_lost_reply_retry_is_bounded(tmp_path):
     c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
     c._ap_sends_nacks = True

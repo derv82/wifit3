@@ -306,6 +306,12 @@ class WpsCampaign(Campaign):
     def _apply_outcome(self, pin: str, out: AttemptOutcome) -> None:
         """Advance the keyspace from one successful attempt."""
         st = self.state
+        # WPS_CFG_SETUP_LOCKED (config_error 15): the AP explicitly says WPS is locked — a lock,
+        # never a wrong PIN, whatever the stage. Don't advance the keyspace. (AirLink locks
+        # *silently* via assoc-fail instead; this is the spec path for APs that signal it.)
+        if out.config_error == 15:
+            self.lock.note_setup_locked()
+            return
         if out.result in (PinResult.PROTO_ERROR, PinResult.TIMEOUT):
             self.lock.note_pre_oracle_reject()
             return
@@ -590,10 +596,14 @@ class WpsCampaign(Campaign):
             self.log(f"{label} → [dark_orange]second half wrong[/dark_orange] "
                      f"[dim bold]\\[M6][/dim bold]")
         elif out.result is PinResult.PROTO_ERROR:
-            # De-swallowed reason: the AP answered with a NACK carrying a config-error.
-            why = (config_error_name(out.config_error)
-                   if out.config_error is not None else (out.detail or "no reason"))
-            self.log(f"{label} → [yellow]AP refused[/yellow] [dim]({why})[/dim] "
-                     f"[dim bold]\\[NACK][/dim bold]")
+            if out.detail == "assoc failed":   # not a NACK — we never associated (AP often locked)
+                self.log(f"{label} → [yellow]couldn't associate[/yellow] "
+                         f"[dim bold]\\[no assoc][/dim bold]")
+            else:
+                # De-swallowed reason: the AP answered with a NACK carrying a config-error.
+                why = (config_error_name(out.config_error)
+                       if out.config_error is not None else (out.detail or "no reason"))
+                self.log(f"{label} → [yellow]AP refused[/yellow] [dim]({why})[/dim] "
+                         f"[dim bold]\\[NACK][/dim bold]")
         elif out.result is PinResult.TIMEOUT:
             self.log(f"{label} → [dim]AP didn't respond[/dim] [dim bold]\\[no reply][/dim bold]")
