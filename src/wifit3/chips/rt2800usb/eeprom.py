@@ -412,6 +412,22 @@ class EepromValues:
         eirp = self.word(EEPROM_OFFSET_EIRP_MAX_TX_POWER) & EEPROM_EIRP_MAX_TX_POWER_2GHZ
         return eirp < EIRP_MAX_TX_POWER_LIMIT
 
+    @property
+    def rf_type(self) -> int:
+        """RF companion-chip id from NIC_CONF0.RF_TYPE (bits[11:8]) — kernel
+        EEPROM_NIC_CONF0_RF_TYPE = FIELD16(0x0f00). This is how RT28xx/RT30xx
+        (incl. RT3572) encode which RF chip is fitted, distinct from the RT MAC
+        silicon read from MAC_CSR0. 0 on an unburned EEPROM (retail RT3572
+        dongles read NIC_CONF0=0x0000). [SRC] rt2800.h:2683, rt2800lib.c:11201."""
+        return (self.nic_conf0 & 0x0F00) >> 8
+
+    @property
+    def chip_id_word(self) -> int:
+        """EEPROM word 0 = EEPROM_CHIP_ID — the RF id source for RT5390/RT5392/
+        RT3290/RT6352 silicon (those read EEPROM_CHIP_ID, not NIC_CONF0.RF_TYPE).
+        [SRC] rt2800lib.c:11187-11191, rt2800_eeprom_map[EEPROM_CHIP_ID]=0x0000."""
+        return self.word(0)
+
 
 def _word(eeprom: bytes, word_offset: int) -> int:
     """Read a 16-bit LE word at the given word offset (× 2 = byte offset)."""
@@ -544,3 +560,91 @@ def parse_eeprom(eeprom: bytes) -> EepromValues:
         iq_cal=iq_cal,
         raw=bytes(eeprom),
     )
+
+
+# ----------------------------------------------------------------------
+# RF companion-chip identification — the Ralink discriminator.
+#
+# The rt2800 family separates two ids: the RT *MAC silicon* (read from
+# MAC_CSR0, drives rt2800_init_bbp / rt2800_init_rfcsr) and the *RF chip*
+# (encoded in the EEPROM, drives rt2800_config_channel). For most RT28xx/
+# RT30xx the RF chip is NIC_CONF0.RF_TYPE; RT5390/RT5392/RT3290/RT6352 read
+# EEPROM_CHIP_ID; RT5350/RT5592/RT3352/RT3883 hardcode their sole RF. The
+# same silicon can therefore pair with different RF chips (e.g. RT3070 →
+# RF3020/RF3021/RF3022/RF3070), so the RF chip — not the silicon — is the
+# real config_channel discriminator.
+#
+# RF chip ids [SRC] rt2800.h:49-73.
+# ----------------------------------------------------------------------
+RF3020 = 0x0005
+RF3021 = 0x0007
+RF3022 = 0x0008
+RF3052 = 0x0009
+RF3053 = 0x000D
+RF5592 = 0x000F
+RF3320 = 0x000B
+RF3322 = 0x000C
+RF3070 = 0x3070
+RF3290 = 0x3290
+RF3853 = 0x3853
+RF5350 = 0x5350
+RF5360 = 0x5360
+RF5362 = 0x5362
+RF5370 = 0x5370
+RF5372 = 0x5372
+RF5390 = 0x5390
+RF5392 = 0x5392
+
+RF_NAMES = {
+    RF3020: "RF3020", RF3021: "RF3021", RF3022: "RF3022", RF3052: "RF3052",
+    RF3053: "RF3053", RF5592: "RF5592", RF3320: "RF3320", RF3322: "RF3322",
+    RF3070: "RF3070", RF3290: "RF3290", RF3853: "RF3853", RF5350: "RF5350",
+    RF5360: "RF5360", RF5362: "RF5362", RF5370: "RF5370", RF5372: "RF5372",
+    RF5390: "RF5390", RF5392: "RF5392",
+}
+
+# RF chips this port has a config_channel path for. RT3572 only ever reaches
+# RF3052; the RF5390/5392/5592 entries cover the family-shared tune code
+# retained from before the per-chip driver split. [SRC] rt2800lib.c:4185-4220
+# (rt2800_config_channel RF switch: RF3052→rf3052, RF539x→rf53xx, RF5592→rf55xx).
+_PORTED_RF_CHIPS = frozenset({RF3052, RF5390, RF5392, RF5592})
+
+
+@dataclass(frozen=True)
+class RfChip:
+    """RF companion chip resolved from the runtime EEPROM.
+
+    ``rf_id`` is the raw kernel RF constant (0 when the EEPROM read is
+    unburned/unreadable). ``ported`` says whether this driver has a
+    config_channel path for it. An unrecognised/unburned read is NOT ported
+    but is still run on the silicon's default tune (the kernel -ENODEVs on an
+    unknown RF; we do not, so an erased-EEPROM retail dongle still comes up)."""
+    rf_id: int
+    name: str
+    ported: bool
+
+
+def resolve_rf_chip(silicon_id: int, ev: EepromValues) -> RfChip:
+    """1:1 port of the RF-chipset identification block of rt2800_init_eeprom
+    (rt2800lib.c:11182-11235): RT5390/RT5392/RT3290/RT6352 take the RF id from
+    EEPROM_CHIP_ID; RT3352/RT3883/RT5350/RT5592 hardcode their sole RF; all
+    others (incl. RT3572) read NIC_CONF0.RF_TYPE. Unlike the kernel this does
+    NOT fail on an unknown RF — an unburned EEPROM (RF_TYPE==0) is expected on
+    retail RT3572 dongles, and the caller runs it on the silicon default."""
+    from .constants import (
+        RT_RT3290, RT_RT3352, RT_RT3883, RT_RT5350, RT_RT5390, RT_RT5392,
+        RT_RT5592, RT_RT6352,
+    )
+    if silicon_id in (RT_RT5390, RT_RT5392, RT_RT3290, RT_RT6352):
+        rf = ev.chip_id_word
+    elif silicon_id == RT_RT3352:
+        rf = RF3322
+    elif silicon_id == RT_RT3883:
+        rf = RF3853
+    elif silicon_id == RT_RT5350:
+        rf = RF5350
+    elif silicon_id == RT_RT5592:
+        rf = RF5592
+    else:
+        rf = ev.rf_type
+    return RfChip(rf_id=rf, name=RF_NAMES.get(rf, f"0x{rf:04x}"), ported=rf in _PORTED_RF_CHIPS)

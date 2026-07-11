@@ -1096,6 +1096,75 @@ def test_eeprom_nic_conf0_impossible_values_treated_as_unburned():
     assert ee.rxpath == 2
 
 
+# ---- RF-chip identification (kernel rt2800_init_eeprom) ---------------------
+def test_eeprom_rf_type_decodes_nic_conf0_bits_11_8():
+    """NIC_CONF0.RF_TYPE = FIELD16(0x0f00) — the RF-chip nibble a burned RT3572
+    EEPROM encodes (RF3052 = 0x9), independent of the antenna low byte."""
+    from wifit3.chips.rt2800usb.eeprom import RF3052, parse_eeprom
+    buf = bytearray(0x200)
+    # NIC_CONF0 word 0x1A → byte 0x34/0x35; RF3052 (0x9 in the high nibble) + 2T2R.
+    buf[0x34] = 0x22   # txpath=2, rxpath=2
+    buf[0x35] = 0x09   # RF_TYPE nibble = RF3052
+    ee = parse_eeprom(bytes(buf))
+    assert ee.rf_type == RF3052
+    assert ee.txpath == 2 and ee.rxpath == 2
+
+
+def test_resolve_rf_chip_rt3572_burned_is_rf3052_ported():
+    from wifit3.chips.rt2800usb.eeprom import RF3052, parse_eeprom, resolve_rf_chip
+    buf = bytearray(0x200)
+    buf[0x34] = 0x22   # 2T2R
+    buf[0x35] = 0x09   # RF3052
+    rf = resolve_rf_chip(RT_RT3572, parse_eeprom(bytes(buf)))
+    assert rf.rf_id == RF3052
+    assert rf.name == "RF3052"
+    assert rf.ported is True
+
+
+def test_resolve_rf_chip_rt3572_unburned_gives_zero_not_fail():
+    """Reference AWUS051NH v2: unburned NIC_CONF0=0x0000 → RF_TYPE 0. Kernel
+    would -ENODEV; we return rf_id=0 (ported=False) and the caller runs the
+    silicon default (RF3052) so the erased-EEPROM dongle still comes up."""
+    from wifit3.chips.rt2800usb.eeprom import parse_eeprom, resolve_rf_chip
+    rf = resolve_rf_chip(RT_RT3572, parse_eeprom(bytes(0x200)))
+    assert rf.rf_id == 0
+    assert rf.ported is False
+
+
+def test_resolve_rf_chip_rt5392_reads_chip_id_word():
+    """RT5390/RT5392 silicon take the RF id from EEPROM_CHIP_ID (word 0), not
+    NIC_CONF0.RF_TYPE. [SRC] rt2800lib.c:11187-11191."""
+    from wifit3.chips.rt2800usb.eeprom import RF5392, parse_eeprom, resolve_rf_chip
+    buf = bytearray(0x200)
+    buf[0x00] = 0x92   # EEPROM_CHIP_ID = 0x5392 (RF5392)
+    buf[0x01] = 0x53
+    rf = resolve_rf_chip(RT_RT5392, parse_eeprom(bytes(buf)))
+    assert rf.rf_id == RF5392
+    assert rf.ported is True
+
+
+def test_resolve_rf_chip_rt5592_hardcoded_rf5592():
+    """RT5592 silicon hardcodes RF5592 regardless of EEPROM contents.
+    [SRC] rt2800lib.c:11198-11199."""
+    from wifit3.chips.rt2800usb.eeprom import RF5592, parse_eeprom, resolve_rf_chip
+    rf = resolve_rf_chip(RT_RT5592, parse_eeprom(bytes(0x200)))
+    assert rf.rf_id == RF5592
+    assert rf.ported is True
+
+
+def test_resolve_rf_chip_unknown_rf_marked_unported():
+    """A burned RT3572 EEPROM claiming an RF the port has no tune path for
+    (RF3022 = 0x8) is flagged unported, not crashed — the driver still runs the
+    silicon default and logs an 'untested variant' warning."""
+    from wifit3.chips.rt2800usb.eeprom import RF3022, parse_eeprom, resolve_rf_chip
+    buf = bytearray(0x200)
+    buf[0x34] = 0x22   # 2T2R
+    buf[0x35] = 0x08   # RF3022 nibble — not a ported path
+    rf = resolve_rf_chip(RT_RT3572, parse_eeprom(bytes(buf)))
+    assert rf.rf_id == RF3022
+    assert rf.ported is False
+
+
 def test_eeprom_exposes_lna_gain_a_and_capabilities():
     """M-A2: per-band LNA + NIC_CONF1 capability flags must be plumbed
     so _channel_kwargs() can hand the right values to set_channel."""

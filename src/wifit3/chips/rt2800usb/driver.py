@@ -69,7 +69,7 @@ from .chan import (
     CHANNELS_5G_NON_DFS, default_power as _default_power, is_xtal_40mhz,
     set_channel as _set_channel,
 )
-from .eeprom import parse_eeprom, read_eeprom_efuse
+from .eeprom import parse_eeprom, read_eeprom_efuse, resolve_rf_chip
 from .firmware import load_firmware, load_firmware_blob
 from .link_tuner import LINK_TUNE_SECONDS, LinkTuner, compute_link_vgc, set_vgc
 from .mac import (
@@ -290,6 +290,25 @@ class RT2800USBDriver:
                 )
             except (IOError, usb.core.USBError) as e:
                 raise BringUpError("efuse", str(e)) from e
+
+            # Kernel rt2800_init_eeprom RF-chip + antenna identification, ported
+            # so this driver runs on ANY card with its PID regardless of the
+            # EEPROM's RF variant / antenna config. [SRC] rt2800lib.c:11182-11243.
+            rf = resolve_rf_chip(self.chip_id.silicon_id, self._eeprom)
+            logger.info(
+                "detected config: silicon=%s rf=%s antenna=%dT%dR freq_off=%d "
+                "ext_lna(bg/a)=%s/%s bt_coex=%s eeprom=%s",
+                self.chip_id.name, rf.name, self._eeprom.txpath, self._eeprom.rxpath,
+                self._eeprom.freq_offset, self._eeprom.has_cap_external_lna_bg,
+                self._eeprom.has_cap_external_lna_a, self._eeprom.has_cap_bt_coexist,
+                "unburned" if self._eeprom.looks_unburned else "burned",
+            )
+            if not rf.ported and rf.rf_id != 0:
+                logger.warning(
+                    "untested variant: EEPROM RF chip %s on %s silicon has no "
+                    "ported config_channel path — running the silicon default "
+                    "tune (kernel would too)", rf.name, self.chip_id.name,
+                )
 
             _progress(0.96, "Running rt2800_init_registers (M2b-2 MAC config)")
             try:

@@ -89,6 +89,54 @@ The RxReaderThread + ToDS-promiscuous-filter (`RX_FILTER_CFG=0x11`, DROP_NOT_TO_
 ported RX-AGC link tuner (`link_tuner.py` + `driver._link_tuner_loop`) are monitor-mode deviations
 from the kernel STA path — captured below.
 
+## EEPROM variants (RF-chip / antenna)
+
+Ralink cards have no Realtek-style `rfe_type`. The rt2800 family separates **two**
+ids: the **RT MAC silicon** (read from `MAC_CSR0`; drives `rt2800_init_bbp` /
+`rt2800_init_rfcsr`, both switched on `chip.rt`) and the **RF companion chip**
+(EEPROM-encoded; drives `rt2800_config_channel`, switched on `chip.rf`). Same
+silicon can pair with different RF chips, so the **RF chip is the real
+config_channel discriminator** — see `eeprom.resolve_rf_chip` (a 1:1 port of the
+RF-id block of `rt2800_init_eeprom`, [SRC] rt2800lib.c:11182-11235):
+
+| RT silicon (`MAC_CSR0`)     | RF-id source        | `config_channel` path |
+|-----------------------------|---------------------|-----------------------|
+| RT2860/2872, RT3070/3071/3090/3390, **RT3572** | `NIC_CONF0.RF_TYPE` (bits[11:8]) | RF3020/21/22/3320→rf3xxx · **RF3052→rf3052** · RF3070→rf53xx |
+| RT5390/RT5392/RT3290/RT6352 | `EEPROM_CHIP_ID` (word 0) | RF5370/72/90/92→rf53xx |
+| RT3352→RF3322, RT3883→RF3853, RT5350→RF5350, RT5592→RF5592 | hardcoded per silicon | rf3322 / rf3853 / rf53xx / rf55xx |
+
+**For sibling ports this is the key trap:** the RF chip is NOT derivable from the
+silicon alone. RT3070 silicon can be RF3020/3021/3022 (→ rf3xxx) **or** RF3070 (→
+rf53xx) — different `config_channel` functions selected by `NIC_CONF0.RF_TYPE`.
+RT5370/RT5372 share silicon but differ in `EEPROM_CHIP_ID`. A sibling that
+hardcodes one RF per silicon will mis-tune the others.
+
+**This driver (RT3572) is a 1:1 silicon↔RF case** — RT3572 always pairs with
+RF3052, so the port's silicon-keyed tune dispatch (`chan.set_channel(silicon_id)`)
+is byte-equivalent to the kernel's RF-keyed dispatch. `resolve_rf_chip` is now
+read + logged at connect (the one-line `detected config:` line) and guards an
+unexpected/unported RF with an `untested variant:` warning rather than failing —
+the kernel `-ENODEV`s an unknown RF, we give it a shot (a retail RT3572 with an
+**unburned** EEPROM reads `RF_TYPE=0`, which the kernel would reject).
+
+**Antenna is already runtime-gated, no hardcode to fix.** `NIC_CONF0.TXPATH/RXPATH`
+flow through `eeprom.txpath/rxpath` → `chan.set_channel` (RFCSR1 chain power-downs,
+TX_PIN_CFG PA/LNA enables) and `bbp.disable_unused_dac_adc` (raw fields). A burned
+2T2R RT3572 and the tested unburned-→-1T1R AWUS051NH v2 both take the correct
+branch; `ANT_DIVERSITY` (NIC_CONF1) is RT3070/3090/3352/3390-only, so RT3572
+always uses `ANTENNA_A` (no diversity branch).
+
+**Residual EEPROM-gated gaps (pinned to the unburned reference, need a burned
+RT3572 to verify):**
+- `chan._set_channel_3572` writes `_RT3572_TX_PWR_CFG_DEFAULTS` (per-rate
+  `TX_PWR_CFG_0..4`) unconditionally. A burned card should derive these from
+  `EEPROM_TXPOWER_BYRATE` via `rt2800_config_txpower_rt28xx`, including the
+  RT3070/71/90/**3572** gain-cal delta that the RT5592 `config_txpower` path skips.
+- `txmixer_gain_24g`/`_5g` (`EEPROM_TXMIXER_GAIN_BG/A`, [SRC] rt2800lib.c:
+  10996-11024) are pinned to 0. On a burned card these gate the RFCSR16/17
+  `TXMIXER_GAIN` writes in `config_channel_rf3052` + `normal_mode_setup_3xxx`.
+  Both are TX-power *values* (RX unaffected); left for a burned-unit capture.
+
 ## Scripts
 
 - `test_hw_rt2800usb.py --phase {open,fw,usbinit,macinit,bbpinit,rfinit,rx}` — staged HW bring-up.
