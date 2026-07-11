@@ -140,6 +140,7 @@ class WatchdogState:
     p_rate_index: int = powertrack.NO_LINK_TX_RATE
     bb_swing_diff_2g: int = 0     # band-switch default_ofdm_index adjust (phy_SetBBSwingByBand)
     bb_swing_diff_5g: int = 0
+    rfe_type: int = 1             # gates phydm_dynamic_nbi_switch_8814a (default = captured card)
     default_ofdm_index: int = 24
     thermal_value: Optional[int] = None
     thermal_value_iqk: Optional[int] = None
@@ -200,10 +201,14 @@ def _sreset_status_check(t) -> None:
     t.read32(_REG_RXDMA_STATUS)
 
 
-def _hw_setting_nbi(t) -> None:
-    """[SRC] phydm_hwsetting_8814a -> phydm_dynamic_nbi_switch_8814a (rfe_type 1).
+def _hw_setting_nbi(t, rfe_type: int = 1) -> None:
+    """[SRC] phydm_hwsetting_8814a -> phydm_dynamic_nbi_switch_8814a.
 
-    No-link rssi_min (<=15) clears the NBI notch enable; a no-change RMW on the wire."""
+    Gated on rfe_type ∈ {0,1,6,7} (any other rfe leaves NBI untouched, matching the vendor).
+    For the captured card (rfe 1) the no-link rssi_min (<=15) clears the NBI notch enable;
+    a no-change RMW on the wire."""
+    if rfe_type not in (0, 1, 6, 7):
+        return
     _bb32(t, _REG_NBI, _NBI_NOTCH_EN, 0)
 
 
@@ -371,7 +376,7 @@ def tick(t, st: WatchdogState, channel: int) -> int:
     table by band/sub-band from it.
     """
     _sreset_status_check(t)
-    _hw_setting_nbi(t)
+    _hw_setting_nbi(t, st.rfe_type)
     cnt_all, cck_fa = _fa_cnt_statistics(t)
     _get_dbg_port_info(t)
     _reset_fa_cnt(t)

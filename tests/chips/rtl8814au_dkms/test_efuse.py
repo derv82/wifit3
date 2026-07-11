@@ -67,6 +67,27 @@ def test_parse_rfe_type():
     assert efuse._parse_rfe_type(bytes(m)) == C.RFE_TYPE_8814AU_FALLBACK
 
 
+def test_rf_path_decision():
+    # [SRC] rtl8814a_rfpath_decision — antenna option (0xC9) + link speed -> rf_path.
+    # Over USB 2 (not super-speed) every antenna option collapses to RF_2T4R.
+    for opt in (0xFF, 0xEE, 0x66, 0x6F, 0x00):
+        assert efuse._rf_path_decision(opt, is_super_speed=False, autoload_fail=False) == efuse.RF_2T4R
+    # SuperSpeed promotes a 4T4R/3T3R part to RF_3T3R; a 2T part stays RF_2T4R.
+    assert efuse._rf_path_decision(0xFF, True, False) == efuse.RF_3T3R   # 4T4R part
+    assert efuse._rf_path_decision(0xEE, True, False) == efuse.RF_3T3R   # 3T3R part
+    assert efuse._rf_path_decision(0x66, True, False) == efuse.RF_2T4R   # 2T2R part, not promoted
+    assert efuse._rf_path_decision(0x6F, True, False) == efuse.RF_2T4R   # 2T4R part
+    # Autoload failure ignores the byte and defaults to RF_2T4R even on a super-speed link.
+    assert efuse._rf_path_decision(0xFF, True, autoload_fail=True) == efuse.RF_2T4R
+
+
+def test_max_tx_cnt():
+    # [SRC] hal_intf.c:293 min(3, rf_type_to_rf_tx_cnt): RF_2T4R->2, RF_3T3R->3, RF_4T4R->3.
+    assert efuse._max_tx_cnt(efuse.RF_2T4R) == 2
+    assert efuse._max_tx_cnt(efuse.RF_3T3R) == 3
+    assert efuse._max_tx_cnt(efuse.RF_4T4R) == 3
+
+
 def test_parse_crystal_cap():
     m = bytearray(b"\xFF" * C.EFUSE_MAP_LEN)
     m[C.EEPROM_XTAL] = 0x23

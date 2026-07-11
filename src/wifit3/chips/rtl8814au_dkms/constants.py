@@ -299,11 +299,16 @@ bOFDMEN = BIT(29)
 bCCKEN = BIT(28)
 REG_SYS_CFG3_2 = 0x1002       # REG_SYS_CFG3_8814A+2; bit0 gates CCK/OFDM clock
 rAGC_table_Jaguar2 = 0x0958   # 2.4G AGC-table select [4:0] = 0
-RFE_PINMUX = (0x0CB0, 0x0EB0, 0x18B4, 0x1AB4)  # rA..D_RFE_Pinmux (2.4G = 0x77777777)
-RFE_PINMUX_VAL = 0x77777777
-RFE_PINMUX_VAL_5G = 0x33173317     # rA/B/C_RFE_Pinmux, 5G band, rfe_type 1
-RFE_PINMUX_D_VAL_5G = 0x77177717   # rD_RFE_Pinmux, 5G band, rfe_type 1 (D differs from A/B/C)
-REG_RFE_INV = 0x1ABC          # RFE inv: [27:20] = 0x77 (2.4G) / 0x33 (5G), WiFi
+RFE_PINMUX = (0x0CB0, 0x0EB0, 0x18B4, 0x1AB4)  # rA..D_RFE_Pinmux_Jaguar
+REG_RFE_INV = 0x1ABC          # RFE inv (0x1ABC[27:20]), WiFi (BT-coex off)
+# [SRC] PHY_SetRFEReg8814A rfe_type switch [rtl8814a_phycfg.c:1040/1070] — per band,
+# (A/B/C pinmux, D pinmux, inv nibble). D=None => skip the D-path write (rfe 0/default 2.4G
+# writes A/B/C only). Values keyed by rfe_type; RFE_PINMUX_*_DEFAULT is case 0 + the switch
+# `default:`. The captured ALFA card is rfe_type=1.
+RFE_PINMUX_2G = {2: (0x72707270, 0x77707770, 0x72), 1: (0x77777777, 0x77777777, 0x77)}
+RFE_PINMUX_2G_DEFAULT = (0x77777777, None, 0x77)
+RFE_PINMUX_5G = {2: (0x37173717, 0x77177717, 0x37), 1: (0x33173317, 0x77177717, 0x33)}
+RFE_PINMUX_5G_DEFAULT = (0x54775477, 0x54775477, 0x54)
 rTxPath = 0x080C              # 2.4G: [7:4] = 0x2
 rCCK_RX = 0x0A04              # 2.4G: [27:24] = 0x5  (== rCCK_RX_Jaguar)
 REG_CCK_CHECK = 0x0454        # 2.4G = 0 (bit7 selects 5G CCK)
@@ -374,6 +379,7 @@ EFUSE_REAL_CONTENT_LEN = 1024  # EFUSE_REAL_CONTENT_LEN_8814A (addr ceiling)
 EEPROM_MAC_ADDR = 0xD8         # EEPROM_MAC_ADDR_8814AU, 6 B
 EEPROM_XTAL = 0xB9             # EEPROM_XTAL_8814 (crystal_cap)
 EEPROM_RFE_OPTION = 0xCA       # EEPROM_RFE_OPTION_8814 (rfe_type, bit7 + [6:0])
+EEPROM_TRX_ANTENNA_OPTION = 0xC9  # EEPROM_TRX_ANTENNA_OPTION_8814 [hal_pg.h:194] (rf_path decision)
 EEPROM_TX_BBSWING_2G = 0xC6    # EEPROM_TX_BBSWING_2G_8814 (2-bit BB-swing index per path)
 EEPROM_TX_BBSWING_5G = 0xC7    # EEPROM_TX_BBSWING_5G_8814 (2-bit BB-swing index per path)
 EEPROM_THERMAL_METER_8814 = 0xBA   # EEPROM_THERMAL_METER_8814 [SRC] hal_pg.h:179 (thermal PG base)

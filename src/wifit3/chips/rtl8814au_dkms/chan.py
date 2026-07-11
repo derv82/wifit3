@@ -37,20 +37,29 @@ def phy_config_bb(t) -> None:
     _bb32(t, C.rOFDMCCKEN, C.bOFDMEN | C.bCCKEN, 0x3)
 
 
-def _set_rfe_reg_2g(t) -> None:
-    """[SRC] PHY_SetRFEReg8814A(FALSE, 2.4G), rfe_type=1 — RFE pinmux + inv."""
-    for reg in C.RFE_PINMUX:
-        t.write32(reg, C.RFE_PINMUX_VAL)
-    _bb32(t, C.REG_RFE_INV, 0x0FF00000, 0x77)
+def _set_rfe_reg_2g(t, rfe_type: int = 1) -> None:
+    """[SRC] PHY_SetRFEReg8814A(FALSE, 2.4G) — per-rfe_type RFE pinmux + inv nibble.
+
+    A/B/C share one pinmux word; D differs (or is skipped for rfe 0/default, which writes
+    A/B/C only). rfe_type ∉ {1,2} falls to the switch `default:` (== rfe 0). The captured
+    card is rfe_type=1 (all four = 0x77777777, inv 0x77)."""
+    a_c, d_val, inv = C.RFE_PINMUX_2G.get(rfe_type, C.RFE_PINMUX_2G_DEFAULT)
+    for reg in C.RFE_PINMUX[:3]:
+        t.write32(reg, a_c)
+    if d_val is not None:
+        t.write32(C.RFE_PINMUX[3], d_val)
+    _bb32(t, C.REG_RFE_INV, 0x0FF00000, inv)
 
 
 def set_rfe_reg_init(t, rfe_type: int) -> None:
-    """[SRC] PHY_SetRFEReg8814A(bInit=TRUE) — RFE control enable + GPIO pinmux.
+    """[SRC] PHY_SetRFEReg8814A(bInit=TRUE) — RFE control enable + GPIO antenna-select.
 
-    Run once from the hal_init turn-on block. Enables the RFE control field
-    (0x1994[3:0]=0xf) and drives the GPIO antenna-select pins: rfe 1/2 set
-    0x42[23:20]=0xf (|0xf0), rfe 0 sets 0x42[23:22]=2b'11 (|0xc0).
-    """
+    Run once from the hal_init turn-on block. The vendor switch has cases 0/1/2 only (no
+    default): rfe 1/2 enable 0x1994[3:0]=0xf and set GPIO 0x42[23:20]=0xf (|0xf0); rfe 0
+    sets GPIO 0x42[23:22]=2b'11 (|0xc0). Any other rfe_type is a no-op on the wire (the
+    vendor leaves 0x1994 + GPIO untouched) — an untested variant, run as the vendor would."""
+    if rfe_type not in (0, 1, 2):
+        return
     _bb32(t, C.RFE_8814_REG, 0xF, 0xF)
     gpio_bits = 0xF0 if rfe_type in (1, 2) else 0xC0
     v = t.read8(C.REG_GPIO_IO_SEL_8814A)
@@ -76,11 +85,11 @@ def _set_bw_reg_adc_agc_20(t) -> None:
     _bb32(t, C.rAGC_table_Jaguar, 0xF000, 0x6)  # AGC: 0x82c[15:12] = 6
 
 
-def switch_wireless_band_2g(t, bb_swing: tuple) -> None:
+def switch_wireless_band_2g(t, bb_swing: tuple, rfe_type: int = 1) -> None:
     """[SRC] PHY_SwitchWirelessBand8814A(BAND_ON_2_4G), 20 MHz, mp_mode=0."""
     _bb8_clear_set(t, C.REG_SYS_CFG3_2, 0x01, False)   # gate CCK/OFDM clock off
     _bb32(t, C.rAGC_table_Jaguar2, 0x1F, 0x0)          # 2.4G AGC table select
-    _set_rfe_reg_2g(t)
+    _set_rfe_reg_2g(t, rfe_type)
     _bb32(t, C.rTxPath, 0xF0, 0x2)
     _bb32(t, C.rCCK_RX, 0x0F000000, 0x5)
     _bb32(t, C.rOFDMCCKEN, C.bOFDMEN | C.bCCKEN, 0x3)
@@ -91,19 +100,21 @@ def switch_wireless_band_2g(t, bb_swing: tuple) -> None:
     _bb8_clear_set(t, C.REG_SYS_CFG3_2, 0x01, True)     # gate CCK/OFDM clock on
 
 
-def _set_rfe_reg_5g(t) -> None:
-    """[SRC] PHY_SetRFEReg8814A(FALSE, 5G), rfe_type=1 — RFE pinmux + inv.
+def _set_rfe_reg_5g(t, rfe_type: int = 1) -> None:
+    """[SRC] PHY_SetRFEReg8814A(FALSE, 5G) — per-rfe_type RFE pinmux + inv nibble.
 
-    Paths A/B/C share 0x33173317; path D differs (0x77177717). The inv nibble is 0x33
-    (vs 0x77 on 2.4 GHz).
+    Paths A/B/C share one word; path D differs (rfe 1/2). rfe_type ∉ {1,2} falls to the
+    switch `default:` (== rfe 0: all four = 0x54775477, inv 0x54). rfe_type=1 (captured):
+    A/B/C=0x33173317, D=0x77177717, inv 0x33 (vs 0x77 on 2.4 GHz).
     """
+    a_c, d_val, inv = C.RFE_PINMUX_5G.get(rfe_type, C.RFE_PINMUX_5G_DEFAULT)
     for reg in C.RFE_PINMUX[:3]:
-        t.write32(reg, C.RFE_PINMUX_VAL_5G)
-    t.write32(C.RFE_PINMUX[3], C.RFE_PINMUX_D_VAL_5G)
-    _bb32(t, C.REG_RFE_INV, 0x0FF00000, 0x33)
+        t.write32(reg, a_c)
+    t.write32(C.RFE_PINMUX[3], d_val)
+    _bb32(t, C.REG_RFE_INV, 0x0FF00000, inv)
 
 
-def switch_wireless_band_5g(t, bb_swing: tuple) -> None:
+def switch_wireless_band_5g(t, bb_swing: tuple, rfe_type: int = 1) -> None:
     """[SRC] PHY_SwitchWirelessBand8814A(BAND_ON_5G), 20 MHz, mp_mode=0.
 
     Differs from the 2.4 GHz branch in both values and order: the CCK_CHECK bit7 band
@@ -116,7 +127,7 @@ def switch_wireless_band_5g(t, bb_swing: tuple) -> None:
     t.write8(C.REG_CCK_CHECK, 0x80)                    # CCK_CHECK bit7 = 5G band marker
     _bb32(t, C.REG_A80, 1 << 18, 0x1)                  # enable CCK Tx even when CCK is off
     # 0x958 AGC-table select is postponed to the channel switch (M5b).
-    _set_rfe_reg_5g(t)
+    _set_rfe_reg_5g(t, rfe_type)
     _bb32(t, C.rTxPath, 0xF0, 0x0)
     _bb32(t, C.rCCK_RX, 0x0F000000, 0xF)
     _bb32(t, C.rOFDMCCKEN, C.bOFDMEN | C.bCCKEN, 0x2)   # OFDM only (CCK off)
@@ -126,7 +137,7 @@ def switch_wireless_band_5g(t, bb_swing: tuple) -> None:
 
 
 def phy_sw_band(t, channel: int, bb_swing_2g: tuple, bb_swing_5g: tuple,
-                current_band: int) -> int:
+                current_band: int, rfe_type: int = 1) -> int:
     """[SRC] phy_SwBand8814A — switch the RF band only on a 2.4G<->5G crossing.
 
     The switch *decision* uses the chip's hardware band marker (REG_CCK_CHECK bit7: 5G if
@@ -141,9 +152,9 @@ def phy_sw_band(t, channel: int, bb_swing_2g: tuple, bb_swing_5g: tuple,
     if tgt_5g == cur_5g:
         return current_band                            # no switch -> software band unchanged
     if tgt_5g:
-        switch_wireless_band_5g(t, bb_swing_5g)
+        switch_wireless_band_5g(t, bb_swing_5g, rfe_type)
         return C.BAND_ON_5G
-    switch_wireless_band_2g(t, bb_swing_2g)
+    switch_wireless_band_2g(t, bb_swing_2g, rfe_type)
     return C.BAND_ON_2_4G
 
 
@@ -172,7 +183,7 @@ def _rf_mod_ag(channel: int) -> int:
 
 
 def _phy_sw_chnl(t, channel: int, bb_swing_2g: tuple, bb_swing_5g: tuple,
-                 current_band: int) -> int:
+                 current_band: int, rfe_type: int = 1) -> int:
     """[SRC] phy_SwChnl8814A — band switch (on a crossing) then channel select (2.4G / 5G).
 
     The fc-area / RF_MOD_AG / AGC-table-select block is one channel-range table spanning
@@ -182,7 +193,7 @@ def _phy_sw_chnl(t, channel: int, bb_swing_2g: tuple, bb_swing_5g: tuple,
     phy_ModifyInitialGain here) is skipped — this build is mp_mode=0; the runtime spur cal
     rides phy_SetBwMode (_spur_nbi). Returns the (possibly updated) software band.
     """
-    new_band = phy_sw_band(t, channel, bb_swing_2g, bb_swing_5g, current_band)  # phy_SwBand8814A
+    new_band = phy_sw_band(t, channel, bb_swing_2g, bb_swing_5g, current_band, rfe_type)  # phy_SwBand8814A
     _bb32(t, C.rFc_area, 0x1FFE0000, _fc_area(channel))
     mod_ag = _rf_mod_ag(channel)
     for path in _RF_PATHS:                    # RF 0x18 = channel | (RF_MOD_AG << 8)
@@ -233,39 +244,51 @@ def _nbi_reg_idx(channel: int, f_intf: int) -> int:
     return 0
 
 
-def _spur_nbi(t, channel: int) -> None:
-    """[SRC] phy_SpurCalibration_8814A (CSI) + phydm_spur_nbi_setting_8814a (NBI).
+def _ch153_csi_notch(t) -> None:
+    """[SRC] phy_SpurCalibration_8814A ch153 @ 20 MHz (rfe 0/1/2) — CSI notch on."""
+    _bb32(t, C.rNBI_Setting, 0x000FE000, 0x1E >> 1)
+    _bb32(t, C.rCSI_Mask_Setting1, 0x1, 0x1)
+    t.write32(C.rCSI_FIX_MASK[0], 0x0)            # rCSI_Fix_Mask0
+    t.write32(C.rCSI_FIX_MASK[1], 0x0)            # rCSI_Fix_Mask1
+    t.write32(C.rCSI_FIX_MASK[2], 0x0)            # rCSI_Fix_Mask6
+    _bb32(t, C.rCSI_FIX_MASK[3], 1 << 16, 0x1)    # rCSI_Fix_Mask7[16] = 1
 
-    Band-neutral. phy_SpurCalibration_8814A keeps a per-channel CSI notch for one 5 GHz
-    channel (rfe 1/2 @ 20 MHz: ch153 — M5f); every other channel resets the NBI tap + CSI
-    masks. Then phydm_spur_nbi_setting_8814a sets a per-channel NBI tap + enable on a
-    2.4 GHz spur channel (ch 4-8 / ch 14) and disables NBI everywhere else (including all
-    5 GHz channels, ch153 included). Byte-diffed per channel by the single-cursor verify_pcap.
+
+def _reset_nbi_csi(t) -> None:
+    """[SRC] phy_SpurCalibration_8814A Reset_NBI_CSI branch — reset the NBI tap + CSI masks."""
+    _bb32(t, C.rNBI_Setting, 0x000FE000, 0xFC >> 1)
+    _bb32(t, C.rCSI_Mask_Setting1, 0x1, 0x0)
+    for reg in C.rCSI_FIX_MASK:
+        t.write32(reg, 0x0)
+
+
+def _spur_nbi(t, channel: int, rfe_type: int = 1) -> None:
+    """[SRC] phy_SpurCalibration_8814A (CSI) + phydm_spur_nbi_setting_8814a (NBI), 20 MHz.
+
+    Both halves are rfe_type-gated. CSI (phy_SpurCalibration_8814A): rfe 1/2 notch only
+    ch153; rfe 0 also notches ch153 (its extra ch140 8814AE MP-Rx AGC tweak is NOT ported —
+    stateful save/restore, DFS-only, an untested variant); rfe ∉ {0,1,2} always resets. NBI
+    (phydm_spur_nbi_setting_8814a): rfe ∈ {0,1,6,7} tap+enable on a 2.4 GHz spur (ch 4-8 /
+    ch 14) and disable elsewhere (incl. every 5 GHz channel); any other rfe_type leaves NBI
+    untouched. The captured card (rfe 1) notches ch153, enables NBI on ch 4-8/14, disables
+    otherwise — byte-diffed per channel by the single-cursor verify_pcap.
     """
-    # phy_SpurCalibration_8814A
-    if channel == 153:                       # rfe 1/2 @ 20 MHz — the only active 5 GHz notch
-        _bb32(t, C.rNBI_Setting, 0x000FE000, 0x1E >> 1)
-        _bb32(t, C.rCSI_Mask_Setting1, 0x1, 0x1)
-        t.write32(C.rCSI_FIX_MASK[0], 0x0)            # rCSI_Fix_Mask0
-        t.write32(C.rCSI_FIX_MASK[1], 0x0)            # rCSI_Fix_Mask1
-        t.write32(C.rCSI_FIX_MASK[2], 0x0)            # rCSI_Fix_Mask6
-        _bb32(t, C.rCSI_FIX_MASK[3], 1 << 16, 0x1)    # rCSI_Fix_Mask7[16] = 1
-    else:                                    # reset the NBI tap + CSI mask/fix-mask
-        _bb32(t, C.rNBI_Setting, 0x000FE000, 0xFC >> 1)
-        _bb32(t, C.rCSI_Mask_Setting1, 0x1, 0x0)
-        for reg in C.rCSI_FIX_MASK:
-            t.write32(reg, 0x0)
-    # phydm_spur_nbi_setting_8814a: a 2.4 GHz spur channel sets the per-channel notch tap
-    # then enables NBI; every other channel (incl. 5 GHz / ch153) just disables NBI.
-    f_intf = _SPUR_INTF.get(channel)
-    if f_intf is None:
-        _bb32(t, C.rNBI_Setting, C.NBI_EN_BIT, 0x0)
+    # phy_SpurCalibration_8814A (CHANNEL_WIDTH_20)
+    if rfe_type in (0, 1, 2) and channel == 153:
+        _ch153_csi_notch(t)
     else:
-        _bb32(t, C.rNBI_Setting, 0x000FC000, _nbi_reg_idx(channel, f_intf))
-        _bb32(t, C.rNBI_Setting, C.NBI_EN_BIT, 0x1)
+        _reset_nbi_csi(t)
+    # phydm_spur_nbi_setting_8814a — only rfe ∈ {0,1,6,7} touches NBI
+    if rfe_type in (0, 1, 6, 7):
+        f_intf = _SPUR_INTF.get(channel)
+        if f_intf is None:
+            _bb32(t, C.rNBI_Setting, C.NBI_EN_BIT, 0x0)
+        else:
+            _bb32(t, C.rNBI_Setting, 0x000FC000, _nbi_reg_idx(channel, f_intf))
+            _bb32(t, C.rNBI_Setting, C.NBI_EN_BIT, 0x1)
 
 
-def _phy_set_bw_mode_20(t, channel: int) -> None:
+def _phy_set_bw_mode_20(t, channel: int, rfe_type: int = 1) -> None:
     """[SRC] phy_SetBwMode8814A — CHANNEL_WIDTH_20."""
     v = t.read16(C.REG_TRXPTCL_CTL)           # MAC bw: clear BIT7|BIT8
     t.write16(C.REG_TRXPTCL_CTL, v & ~((1 << 7) | (1 << 8)))
@@ -274,12 +297,12 @@ def _phy_set_bw_mode_20(t, channel: int) -> None:
     for path in _RF_PATHS:                    # RF bw: 0x18[11:10] = 3
         set_rf_masked(t, path, C.RF_CHNLBW, C.RF_CHNLBW_BW_MASK, 0x3)
     # phy_ADC_CLK_8814A runs only on A-cut silicon (this card is not A-cut).
-    _spur_nbi(t, channel)
+    _spur_nbi(t, channel, rfe_type)
 
 
 def set_channel_bw(t, channel: int, tx_power_2g: tuple, tx_power_5g: tuple,
                    bb_swing_2g: tuple, bb_swing_5g: tuple,
-                   current_band: int = C.BAND_ON_2_4G) -> int:
+                   current_band: int = C.BAND_ON_2_4G, rfe_type: int = 1) -> int:
     """Tune to a 2.4 GHz / 5 GHz channel at 20 MHz, then set the per-rate TX power.
 
     [SRC] phy_SwChnlAndSetBwMode8814A: phy_SwChnl -> phy_SetBwMode ->
@@ -293,25 +316,25 @@ def set_channel_bw(t, channel: int, tx_power_2g: tuple, tx_power_5g: tuple,
     init_hw_mlme_ext, before any 5G<->2.4G crossing) skips CCK, matching the wire.
     """
     if channel in C.CHANNELS_2G:
-        new_band = _phy_sw_chnl(t, channel, bb_swing_2g, bb_swing_5g, current_band)
-        _phy_set_bw_mode_20(t, channel)
+        new_band = _phy_sw_chnl(t, channel, bb_swing_2g, bb_swing_5g, current_band, rfe_type)
+        _phy_set_bw_mode_20(t, channel, rfe_type)
         set_tx_power(t, channel, tx_power_2g, write_cck=(new_band == C.BAND_ON_2_4G))  # M2e
         return new_band
     if channel in C.CHANNELS_5G:
-        new_band = _phy_sw_chnl(t, channel, bb_swing_2g, bb_swing_5g, current_band)
-        _phy_set_bw_mode_20(t, channel)
+        new_band = _phy_sw_chnl(t, channel, bb_swing_2g, bb_swing_5g, current_band, rfe_type)
+        _phy_set_bw_mode_20(t, channel, rfe_type)
         set_tx_power_5g(t, channel, tx_power_5g)      # M5d (no CCK on 5 GHz)
         return new_band
     raise NotImplementedError(f"RTL8814AU DKMS port: channel {channel} not supported")
 
 
 def init_tune(t, channel: int, tx_power_2g: tuple, tx_power_5g: tuple,
-              bb_swing_2g: tuple, bb_swing_5g: tuple) -> int:
+              bb_swing_2g: tuple, bb_swing_5g: tuple, rfe_type: int = 1) -> int:
     """Connect-time tune: PHY_ConfigBB + 2.4G band switch + set channel/bw + TX power.
 
     The explicit 2.4 GHz band switch commits ``current_band_type = BAND_ON_2_4G``, so the
     init tune writes CCK txagc. Returns the committed band."""
     phy_config_bb(t)
-    switch_wireless_band_2g(t, bb_swing_2g)            # commits current_band_type = 2.4G
+    switch_wireless_band_2g(t, bb_swing_2g, rfe_type)  # commits current_band_type = 2.4G
     return set_channel_bw(t, channel, tx_power_2g, tx_power_5g, bb_swing_2g, bb_swing_5g,
-                          current_band=C.BAND_ON_2_4G)
+                          current_band=C.BAND_ON_2_4G, rfe_type=rfe_type)

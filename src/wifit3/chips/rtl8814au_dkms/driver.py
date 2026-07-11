@@ -59,6 +59,22 @@ def _load_firmware() -> bytes:
     return (resources.files(__package__) / "assets" / _FW_ASSET).read_bytes()
 
 
+# rf_path value -> name, for the connect-time config log [SRC] rtw_sta_info.h rf_type enum.
+_RF_PATH_NAMES = {2: "RF_2T2R", 4: "RF_2T4R", 5: "RF_3T3R", 7: "RF_4T4R"}
+
+
+def _detect_super_speed(transport: Rtl8814auTransport) -> bool:
+    """USB SuperSpeed (USB 3.x) link? [SRC] IS_SUPER_SPEED_USB -> usb_speed == RTW_USB_SPEED_3.
+
+    libusb speed codes: 4=SUPER, 5=SUPER_PLUS. Unknown/None (or no backend support) -> assume
+    not super-speed, which resolves rf_path to RF_2T4R — the safe, capture-matching default."""
+    try:
+        speed = transport.dev.speed
+    except Exception:  # noqa: BLE001 — any backend hiccup means "treat as USB 2"
+        return False
+    return speed is not None and speed >= 4
+
+
 class Rtl8814auDkmsDriver:
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
         DeviceID(VID_REALTEK, PID_RTL8814AU,
@@ -77,6 +93,11 @@ class Rtl8814auDkmsDriver:
         # Vendor lagging current_band_type. init_hw_mlme_ext resets it to BAND_MAX, so 2.4 GHz
         # hops skip CCK txagc until a 5G<->2.4G crossing commits a band (matches the wire).
         self._current_band: int = BAND_MAX
+        # EFUSE-decoded per-card config (set in _bringup). rfe_type gates the RFE pinmux +
+        # spur/NBI branches (chan.py); is_super_speed only promotes a 4T/3T part to RF_3T3R
+        # (efuse rf_path). Default rfe_type=1 is the captured ALFA card.
+        self._rfe_type: int = 1
+        self._is_super_speed: bool = False
         self._tx_power: tuple = ()  # per-path efuse TX-power info, 2.4 GHz (M2e)
         self._tx_power_5g: tuple = ()  # per-path efuse TX-power info, 5 GHz (M5d)
         # Per-path BB-swing (TxScale) per band — phy_SetBBSwingByBand on a band switch.
@@ -124,8 +145,9 @@ class Rtl8814auDkmsDriver:
         """
         progress = progress or (lambda *a: None)   # the gate calls _bringup(t) with no progress
         progress(0.0, "Reading EFUSE / chip parameters")
-        params = read_chip_params(t)                                  # EFUSE probe (pre power-on)
+        params = read_chip_params(t, self._is_super_speed)            # EFUSE probe (pre power-on)
         self.mac_address = params.mac_address
+        self._rfe_type = params.rfe_type
         self._tx_power, self._tx_power_5g = params.tx_power, params.tx_power_5g
         self._bb_swing_2g, self._bb_swing_5g = params.bb_swing, params.bb_swing_5g
         progress(0.1, "Uploading firmware (3081 IDDMA)")
@@ -138,7 +160,7 @@ class Rtl8814auDkmsDriver:
         phy_rf_config(t, params.rfe_type)                            # PHY_RFConfig8814A
         progress(0.75, "Channel tune + TX power")
         init_tune(t, _DEFAULT_CHANNEL, params.tx_power, params.tx_power_5g,
-                  self._bb_swing_2g, self._bb_swing_5g)              # ch tune + TX power (2.4G)
+                  self._bb_swing_2g, self._bb_swing_5g, params.rfe_type)  # ch tune + TX power (2.4G)
         progress(0.88, "DIG/AGC seed + turn-on tail")
         igi_seed = init_hal_dm(t)                                    # InitHalDm DIG/AGC seed (IGI)
         set_rfe_reg_init(t, params.rfe_type)                         # PHY_SetRFEReg8814A(TRUE)
@@ -149,7 +171,7 @@ class Rtl8814auDkmsDriver:
         enable_rx_bar(t)                                             # init_hw_mlme_ext RX-BAR
         self._current_band = set_channel_bw(
             t, _DEFAULT_CHANNEL, params.tx_power, params.tx_power_5g,
-            self._bb_swing_2g, self._bb_swing_5g, current_band=BAND_MAX)
+            self._bb_swing_2g, self._bb_swing_5g, current_band=BAND_MAX, rfe_type=params.rfe_type)
         set_sta_opmode(t, self.mac_address)                         # hw_var_set_opmode(STATION)
         self._channel = _DEFAULT_CHANNEL
         # Runtime watchdog state seeded from the DIG IGI + EFUSE thermal/bb-swing (M3c). Carried
@@ -157,11 +179,16 @@ class Rtl8814auDkmsDriver:
         self._wd_state = WatchdogState(cur_ig_value=igi_seed, nhm_igi=igi_seed,
                                        eeprom_thermal=params.eeprom_thermal,
                                        bb_swing_diff_2g=params.bb_swing_diff_2g,
-                                       bb_swing_diff_5g=params.bb_swing_diff_5g)
+                                       bb_swing_diff_5g=params.bb_swing_diff_5g,
+                                       rfe_type=params.rfe_type)
         return params
 
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         loop = asyncio.get_running_loop()
+        # USB link speed decides rf_path (RF_2T4R over USB 2, RF_3T3R for a SuperSpeed 3T/4T
+        # part). Read it once here (the pcap gate never calls connect(), so its _bringup keeps
+        # the __init__ default False -> RF_2T4R, byte-matching the capture).
+        self._is_super_speed = _detect_super_speed(self.transport)
         # The cold bring-up is blocking synchronous USB I/O; run the shared _bringup off the
         # event loop (the exact sequence the pcap gate replays). _bringup emits phase progress
         # from the executor thread — marshal each call back onto the loop so the UI callback runs
@@ -170,10 +197,18 @@ class Rtl8814auDkmsDriver:
             if progress_cb:
                 loop.call_soon_threadsafe(progress_cb, pct, msg)
         params = await loop.run_in_executor(None, self._bringup, self.transport, _emit)
-        logger.info("RTL8814AU efuse: rfe_type=%d crystal_cap=0x%02x mac=%s bb_swing=%s",
-                    params.rfe_type, params.crystal_cap,
-                    params.mac_address or "<none>",
-                    "/".join(f"0x{v:03x}" for v in params.bb_swing))
+        # Detected per-card config — an odd card (rfe_type != 1, other antenna/rf_path, unusual
+        # fuse) is diagnosable from this one line. rfe_type != 1 and rf_path != RF_2T4R run
+        # ported-but-hardware-untested branches (see RTL8814AU_DKMS.md "Untested variants").
+        logger.info(
+            "RTL8814AU config: rfe_type=%d rf_path=%s antenna=0x%02x max_tx=%d link=%s "
+            "crystal_cap=0x%02x mac=%s bb_swing=%s%s",
+            params.rfe_type, _RF_PATH_NAMES.get(params.rf_path, f"0x{params.rf_path:x}"),
+            params.antenna_option, params.max_tx_cnt,
+            "USB3" if self._is_super_speed else "USB2",
+            params.crystal_cap, params.mac_address or "<none>",
+            "/".join(f"0x{v:03x}" for v in params.bb_swing),
+            "" if params.rfe_type == 1 else "  [untested variant]")
 
         # M3b-3a: start the bulk-IN RX reader BEFORE the monitor RX gate opens. It keeps a
         # blocking bulk read posted on a dedicated thread (off the event loop, so the TUI
@@ -263,7 +298,8 @@ class Rtl8814auDkmsDriver:
         phy_SwChnlAndSetBwMode8814A's per-set TX-power-track clear + band-rebase. Advances the
         tracked band + channel; returns the (possibly updated) software band."""
         band = set_channel_bw(t, channel, self._tx_power, self._tx_power_5g,
-                              self._bb_swing_2g, self._bb_swing_5g, self._current_band)
+                              self._bb_swing_2g, self._bb_swing_5g, self._current_band,
+                              self._rfe_type)
         if self._wd_state is not None:
             on_channel_switch(self._wd_state, self._channel, channel)
         self._current_band = band

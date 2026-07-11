@@ -42,6 +42,9 @@ class ChipParams(NamedTuple):
     mac_address: Optional[str]
     chip_version: int
     autoload_fail: bool
+    antenna_option: int  # efuse 0xC9 raw (rf_path decision input; 0xFF => 4T4R part)
+    rf_path: int         # resolved rf_type (RF_2T4R over USB 2, RF_3T3R for a SuperSpeed 3T part)
+    max_tx_cnt: int      # effective TX stream count (per-stream diff loading gate)
     tx_power: tuple    # 4x PathTxPwr (paths A..D), 2.4 GHz
     tx_power_5g: tuple  # 4x PathTxPwr (paths A..D), 5 GHz
     bb_swing: tuple    # 4x 11-bit TxScale value (paths A..D), 2.4 GHz
@@ -165,16 +168,44 @@ def _parse_thermal(m: bytes) -> int:
 _TXPWR_PATH_OFF = (0x10, 0x3A, 0x64, 0x8E)
 
 
-# Effective TX stream count. hal_spec starts max_tx_cnt=3 [rtl8814a_hal_init.c:2990], but
-# get_rf_path_8814a resolves rf_path = RF_2T4R for USB (the efuse 0xC9 antenna option is
-# 4T4R, but a non-super-speed link drops to 2T4R) [rtl8814a_hal_init.c:1109-1157], and
-# max_tx_cnt = min(3, rf_type_to_rf_tx_cnt(RF_2T4R)=2) [hal_intf.c:293] -> 2. The PG loader
-# only loads per-stream diffs for streams < max_tx_cnt, so the 3rd-stream diff stays 0.
-# [WIRE] confirmed: the cold-boot txagc applies the 1st/2nd-stream BW20 diffs but NOT the
-# 3rd (path C ch36-64 byte 0xC9=0xff yet the 3rd-stream notch is absent). Super-speed USB
-# would give RF_3T3R (max_tx_cnt=3), but that only changes nss>=3 TX power, which monitor
-# inject (fixed nss=1 rate) never uses, so this is a safe, capture-matching default.
-MAX_TX_CNT = 2
+# RF-type enum [SRC] rtw_sta_info.h:79 (the values the decision below produces / consumes).
+RF_2T2R, RF_2T4R, RF_3T3R, RF_4T4R = 2, 4, 5, 7
+# _rf_type_to_rf_tx_cnt[] [SRC] rtw_rf.c:544 — TX stream count per rf_type.
+_RF_TX_CNT = {RF_2T2R: 2, RF_2T4R: 2, RF_3T3R: 3, RF_4T4R: 4}
+
+
+def _rf_path_decision(antenna_option: int, is_super_speed: bool, autoload_fail: bool) -> int:
+    """[SRC] rtl8814a_rfpath_decision:1102 — antenna option (efuse 0xC9) -> final rf_path.
+
+    The efuse byte picks trx_antenna (4T4R/3T3R/2T2R/2T4R, else default 2T4R). With no registry
+    override (the runtime default), a 4T4R/3T3R part is promoted to RF_3T3R only on a SuperSpeed
+    (USB 3) link; every other case — incl. every antenna over USB 2 — resolves to RF_2T4R.
+    """
+    if autoload_fail:
+        trx = RF_2T4R
+    elif antenna_option == 0xFF:
+        trx = RF_4T4R
+    elif antenna_option == 0xEE:
+        trx = RF_3T3R
+    elif antenna_option == 0x66:
+        trx = RF_2T2R
+    else:                                    # 0x6F or any other burn -> 2T4R
+        trx = RF_2T4R
+    if trx in (RF_4T4R, RF_3T3R) and is_super_speed:
+        return RF_3T3R
+    return RF_2T4R
+
+
+def _max_tx_cnt(rf_path: int) -> int:
+    """[SRC] hal_intf.c:293 — min(hal_spec max_tx_cnt=3, rf_type_to_rf_tx_cnt(rf_path)).
+
+    Effective TX stream count. RF_2T4R (USB 2, this card) -> 2; RF_3T3R (SuperSpeed 3T part) -> 3.
+    The PG loader only loads per-stream diffs for streams < max_tx_cnt, so a 2T part's 3rd-stream
+    diff stays 0. [WIRE] the cold-boot txagc applies the 1st/2nd-stream diffs but NOT the 3rd,
+    confirming max_tx_cnt=2 for the captured card. A 3rd stream only changes nss>=3 TX power,
+    which fixed-nss=1 monitor inject never uses.
+    """
+    return min(3, _RF_TX_CNT.get(rf_path, 1))
 
 
 def _s4(n: int) -> int:
@@ -182,12 +213,12 @@ def _s4(n: int) -> int:
     return n - 16 if (n & 0x8) else n
 
 
-def _cap(diffs: tuple) -> tuple:
-    """Zero per-stream diffs for streams >= MAX_TX_CNT (the loader leaves them unloaded)."""
-    return tuple(d if k < MAX_TX_CNT else 0 for k, d in enumerate(diffs))
+def _cap(diffs: tuple, max_tx_cnt: int) -> tuple:
+    """Zero per-stream diffs for streams >= max_tx_cnt (the loader leaves them unloaded)."""
+    return tuple(d if k < max_tx_cnt else 0 for k, d in enumerate(diffs))
 
 
-def _parse_tx_power(m: bytes) -> tuple:
+def _parse_tx_power(m: bytes, max_tx_cnt: int) -> tuple:
     """[SRC] hal_load_pg_txpwr_info_path_2g — per-path base + nTX diff nibbles.
 
     Diff bytes (offsets 11..17 of the path block) pack signed nibbles:
@@ -201,14 +232,14 @@ def _parse_tx_power(m: bytes) -> tuple:
         cck_base = tuple(m[base + i] for i in range(6))
         bw40_base = tuple(m[base + 6 + i] for i in range(5))
         d = [m[base + 11 + i] for i in range(7)]
-        bw20_diff = _cap((_s4(d[0] >> 4), _s4(d[1] & 0xF), _s4(d[3] & 0xF)))
-        ofdm_diff = _cap((_s4(d[0] & 0xF), _s4(d[2] >> 4), _s4(d[4] >> 4)))
-        cck_diff = _cap((0, _s4(d[2] & 0xF), _s4(d[4] & 0xF)))
+        bw20_diff = _cap((_s4(d[0] >> 4), _s4(d[1] & 0xF), _s4(d[3] & 0xF)), max_tx_cnt)
+        ofdm_diff = _cap((_s4(d[0] & 0xF), _s4(d[2] >> 4), _s4(d[4] >> 4)), max_tx_cnt)
+        cck_diff = _cap((0, _s4(d[2] & 0xF), _s4(d[4] & 0xF)), max_tx_cnt)
         paths.append(PathTxPwr(cck_base, bw40_base, cck_diff, ofdm_diff, bw20_diff))
     return tuple(paths)
 
 
-def _parse_tx_power_5g(m: bytes) -> tuple:
+def _parse_tx_power_5g(m: bytes, max_tx_cnt: int) -> tuple:
     """[SRC] hal_load_pg_txpwr_info_path_5g — per-path 5 GHz base + nTX diff nibbles.
 
     The 24 B 5 GHz PG block follows the 18 B 2.4G block in each path's 0x2A stride (so it
@@ -219,7 +250,7 @@ def _parse_tx_power_5g(m: bytes) -> tuple:
       18: MSB=OFDM[2T] LSB=OFDM[3T]   19: LSB=OFDM[4T]   20-23: BW80/BW160[1-4T]
     There is no CCK on 5 GHz. For 20 MHz only the BW40 base + OFDM/BW20 diffs are used;
     BW40/BW80/BW160 diffs are 40/80/160 MHz, out of scope. Per-stream diffs are capped at
-    MAX_TX_CNT (the loader leaves higher streams unloaded). Returns a `PathTxPwr` per path
+    ``max_tx_cnt`` (the loader leaves higher streams unloaded). Returns a `PathTxPwr` per path
     with cck_* empty.
     """
     paths = []
@@ -227,8 +258,8 @@ def _parse_tx_power_5g(m: bytes) -> tuple:
         b5 = base + 18                          # 5 GHz block follows the 2.4G block
         bw40_base = tuple(m[b5 + i] for i in range(14))
         b14, b15, b16, b18 = m[b5 + 14], m[b5 + 15], m[b5 + 16], m[b5 + 18]
-        ofdm_diff = _cap((_s4(b14 & 0xF), _s4(b18 >> 4), _s4(b18 & 0xF)))   # 1T, 2T, 3T
-        bw20_diff = _cap((_s4(b14 >> 4), _s4(b15 & 0xF), _s4(b16 & 0xF)))   # 1T, 2T, 3T
+        ofdm_diff = _cap((_s4(b14 & 0xF), _s4(b18 >> 4), _s4(b18 & 0xF)), max_tx_cnt)  # 1T,2T,3T
+        bw20_diff = _cap((_s4(b14 >> 4), _s4(b15 & 0xF), _s4(b16 & 0xF)), max_tx_cnt)  # 1T,2T,3T
         paths.append(PathTxPwr((), bw40_base, (), ofdm_diff, bw20_diff))
     return tuple(paths)
 
@@ -284,12 +315,14 @@ def _parse_mac_address(m: bytes) -> Optional[str]:
     return ":".join(f"{b:02x}" for b in mac)
 
 
-def read_chip_params(t) -> ChipParams:
+def read_chip_params(t, is_super_speed: bool = False) -> ChipParams:
     """Probe-phase chip-info + efuse read. [WIRE] cap1 frames 51..5677.
 
     Reproduces the capture's pre-power-on sequence: chip-version read, autoload
     check, EFUSE access-on, the byte loop, access-off. Returns the decoded params
-    the BB config consumes.
+    the BB config consumes. ``is_super_speed`` is the USB link speed (IS_SUPER_SPEED_USB):
+    it only promotes a 4T4R/3T3R part's rf_path to RF_3T3R; over USB 2 every card is RF_2T4R,
+    so the default (False) reproduces the captured card and keeps the pcap gate byte-exact.
     """
     chip_version = t.read32(C.REG_SYS_CFG1)                 # ReadChipVersion
     ee = t.read8(C.REG_9346CR)
@@ -301,14 +334,20 @@ def read_chip_params(t) -> ChipParams:
     m = _read_logical_map(t)
     t.write8(C.REG_EFUSE_ACCESS, C.EFUSE_ACCESS_OFF)
 
+    antenna_option = m[C.EEPROM_TRX_ANTENNA_OPTION]
+    rf_path = _rf_path_decision(antenna_option, is_super_speed, autoload_fail)
+    max_tx_cnt = _max_tx_cnt(rf_path)
     return ChipParams(
         rfe_type=_parse_rfe_type(m),
         crystal_cap=_parse_crystal_cap(m),
         mac_address=_parse_mac_address(m),
         chip_version=chip_version,
         autoload_fail=autoload_fail,
-        tx_power=_parse_tx_power(m),
-        tx_power_5g=_parse_tx_power_5g(m),
+        antenna_option=antenna_option,
+        rf_path=rf_path,
+        max_tx_cnt=max_tx_cnt,
+        tx_power=_parse_tx_power(m, max_tx_cnt),
+        tx_power_5g=_parse_tx_power_5g(m, max_tx_cnt),
         bb_swing=_parse_bb_swing_2g(m),
         bb_swing_5g=_parse_bb_swing_5g(m),
         eeprom_thermal=_parse_thermal(m),

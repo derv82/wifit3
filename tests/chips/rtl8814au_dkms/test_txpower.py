@@ -25,10 +25,10 @@ def test_efuse_diff_unpacking():
     m[base:base + 6] = bytes([0x20] * 6)          # CCK base
     m[base + 6:base + 11] = bytes([0x20] * 5)     # BW40 base
     m[base + 11:base + 18] = bytes([0, 0, 0, 0, 0xEE, 0xEE, 0xEE])
-    pp = efuse._parse_tx_power(bytes(m))[0]
+    pp = efuse._parse_tx_power(bytes(m), 2)[0]
     assert pp.cck_base == (0x20,) * 6
     assert pp.bw40_base == (0x20,) * 5
-    # The 0xee bytes encode -2 on the 3rd stream, but MAX_TX_CNT=2 zeros it (the loader
+    # The 0xee bytes encode -2 on the 3rd stream, but max_tx_cnt=2 zeros it (the loader
     # leaves the 3rd-stream diff unloaded); the 1st/2nd-stream diffs here are 0 anyway.
     assert pp.bw20_diff == (0, 0, 0)
     assert pp.ofdm_diff == (0, 0, 0)
@@ -98,10 +98,10 @@ def test_parse_tx_power_5g_unpacks_block():
     m[b5 + 15] = 0x53        # (BW40[2T]=5), BW20[2T]=3
     m[b5 + 16] = 0x74        # (BW40[3T]=7), BW20[3T]=4
     m[b5 + 18] = 0x65        # OFDM[2T]=6, OFDM[3T]=5
-    pp = efuse._parse_tx_power_5g(bytes(m))[0]
+    pp = efuse._parse_tx_power_5g(bytes(m), 2)[0]
     assert pp.bw40_base == tuple(range(0x30, 0x3E))
     assert pp.cck_base == () and pp.cck_diff == ()
-    # 1st/2nd-stream diffs loaded; 3rd-stream zeroed by MAX_TX_CNT=2.
+    # 1st/2nd-stream diffs loaded; 3rd-stream zeroed by max_tx_cnt=2.
     assert pp.ofdm_diff == (1, 6, 0)               # 1T, 2T, (3T -> 0)
     assert pp.bw20_diff == (2, 3, 0)
 

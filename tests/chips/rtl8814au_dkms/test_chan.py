@@ -259,3 +259,87 @@ def test_set_rfe_reg_init_rfe0_uses_c0():
     rec = Rec(reads={0x1994: 0x77, 0x42: 0x00})
     chan.set_rfe_reg_init(rec, 0)
     assert ("W8", 0x42, 0xC0) in rec.ops
+
+
+def test_set_rfe_reg_init_unknown_rfe_is_noop():
+    # The vendor bInit switch has cases 0/1/2 only (no default) -> rfe 3 touches nothing.
+    rec = Rec(reads={0x1994: 0x77, 0x42: 0x00})
+    chan.set_rfe_reg_init(rec, 3)
+    assert rec.ops == []
+
+
+# --- RFE pinmux per rfe_type [SRC PHY_SetRFEReg8814A rtl8814a_phycfg.c:1040/1070] ----------
+def test_switch_wireless_band_2g_rfe0_skips_path_d():
+    # rfe 0 (== switch default): A/B/C = 0x77777777, NO path-D write, inv [27:20]=0x77.
+    rec = Rec(reads={0x1002: 0x01})
+    chan.switch_wireless_band_2g(rec, _SW, rfe_type=0)
+    w = rec.ops
+    assert ("W32", 0x0CB0, 0x77777777) in w
+    assert ("W32", 0x0EB0, 0x77777777) in w
+    assert ("W32", 0x18B4, 0x77777777) in w
+    assert not any(o[0] == "W32" and o[1] == 0x1AB4 for o in w)   # path D skipped
+    assert ("W32", 0x1ABC, 0x07700000) in w
+
+
+def test_switch_wireless_band_2g_rfe2():
+    # rfe 2: A/B/C = 0x72707270, D = 0x77707770, inv [27:20]=0x72.
+    rec = Rec(reads={0x1002: 0x01})
+    chan.switch_wireless_band_2g(rec, _SW, rfe_type=2)
+    w = rec.ops
+    assert ("W32", 0x0CB0, 0x72707270) in w
+    assert ("W32", 0x18B4, 0x72707270) in w
+    assert ("W32", 0x1AB4, 0x77707770) in w
+    assert ("W32", 0x1ABC, 0x07200000) in w
+
+
+def test_switch_wireless_band_5g_rfe0():
+    # rfe 0 (== switch default): all four paths = 0x54775477, inv [27:20]=0x54.
+    rec = Rec(reads={0x1002: 0x01})
+    chan.switch_wireless_band_5g(rec, _SW, rfe_type=0)
+    w = rec.ops
+    for reg in (0x0CB0, 0x0EB0, 0x18B4, 0x1AB4):
+        assert ("W32", reg, 0x54775477) in w
+    assert ("W32", 0x1ABC, 0x05400000) in w
+
+
+def test_switch_wireless_band_5g_rfe2():
+    # rfe 2: A/B/C = 0x37173717, D = 0x77177717, inv [27:20]=0x37.
+    rec = Rec(reads={0x1002: 0x01})
+    chan.switch_wireless_band_5g(rec, _SW, rfe_type=2)
+    w = rec.ops
+    assert ("W32", 0x0CB0, 0x37173717) in w
+    assert ("W32", 0x1AB4, 0x77177717) in w
+    assert ("W32", 0x1ABC, 0x03700000) in w
+
+
+# --- spur/NBI rfe gating [SRC phy_SpurCalibration_8814A + phydm_spur_nbi_setting_8814a] -----
+def test_spur_nbi_rfe2_skips_nbi_on_2g_spur():
+    # rfe 2 is NOT in {0,1,6,7}: phydm_spur_nbi_setting_8814a leaves NBI untouched. ch6 would
+    # be a spur under rfe 1, but rfe 2 writes NO 0x87c NBI tap/enable/disable — only the CSI
+    # reset (non-153) touches 0x87c[19:13].
+    rec = Rec(reads={0x87C: 0x000FC000})
+    chan._spur_nbi(rec, 6, rfe_type=2)
+    nbi_writes = [o for o in rec.ops if o[0] == "W32" and o[1] == 0x87C]
+    # Only the SpurCalibration reset tap (0xfc>>1) — never an enable (bit13) or notch tap.
+    assert all(w[2] == 0x000FC000 for w in nbi_writes)
+    assert not any(w[2] & (1 << 13) for w in nbi_writes)
+
+
+def test_spur_nbi_rfe2_ch153_notch_without_nbi_disable():
+    # rfe 2 still notches ch153 (SpurCalibration rfe 1/2), but skips the phydm NBI disable.
+    rec = Rec(reads={0x87C: 0x0, 0x874: 0x0, 0x89C: 0x0})
+    chan._spur_nbi(rec, 153, rfe_type=2)
+    w = rec.ops
+    assert ("W32", 0x087C, (0x1E >> 1) << 13) in w   # ch153 notch tap
+    assert ("W32", 0x089C, 1 << 16) in w             # fix-mask7[16] = 1
+    # No trailing NBI-disable write (rfe 2 skips phydm_spur_nbi_setting_8814a entirely).
+    last_87c = [o for o in w if o[0] == "W32" and o[1] == 0x087C][-1]
+    assert last_87c[2] == (0x1E >> 1) << 13          # last 0x87c write is the notch, not a disable
+
+
+def test_spur_nbi_unknown_rfe_only_resets_csi():
+    # rfe ∉ {0,1,2}: no ch153 notch (always reset), and rfe ∉ {0,1,6,7}: no NBI writes.
+    rec = Rec(reads={0x87C: 0x000FC000})
+    chan._spur_nbi(rec, 153, rfe_type=3)
+    nbi_writes = [o for o in rec.ops if o[0] == "W32" and o[1] == 0x87C]
+    assert all(w[2] == 0x000FC000 for w in nbi_writes)   # reset only, no notch, no enable/disable
