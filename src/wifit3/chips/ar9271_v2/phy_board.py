@@ -5,6 +5,11 @@ ath9k_hw_4k_set_board_values programs the antenna/switch config, the per-chain g
 RF2G3/RF2G4 shift registers), and the RF-control / settling / CCA timing from the modal
 header. Single chain, 2.4 GHz; the multi-chain and antenna-diversity-combining branches are
 ported behind their guards but not exercised on this card.
+
+Board-variance branches gated on the runtime EEPROM (the reference card is modal-header v4,
+txGainType 0, bb_desired_scale 0, so all take their reference path): the ob/db modal-version
+remap (v0/v1 vs v>=2, ``_ob_db_by_version``) and the txGainType==0 smart-antenna
+bb_desired_scale TX-pwrctrl block (``_apply_bb_desired_scale``).
 """
 from __future__ import annotations
 
@@ -61,9 +66,44 @@ def _set_ant_diversity(hw: AthHw, eep: Map4k) -> None:
     hw.read(R.AR_PHY_CCK_DETECT)
 
 
+def _ob_db_by_version(eep: Map4k) -> tuple[list[int], list[int], list[int]]:
+    """ob/db1/db2 selected by the modal-header version [SRC] eeprom_4k.c:826-859. The default
+    (version >= 2) takes the five distinct nibbles as decoded; version 1 replicates the [1] nibble
+    across [1..4]; version 0 replicates [0] across all five, sourcing db2 from db1_0 (a kernel
+    quirk). The AR9271 shift-RMW consumes only ob[0..2] + db1[0] + db2[0], so on this card the
+    version only moves ob[2] and (for v0) db2[0]; the full arrays are built to mirror the C 1:1."""
+    ob, db1, db2 = eep.ob, eep.db1, eep.db2
+    if eep.modal_version >= 2:
+        return ob, db1, db2
+    if eep.modal_version == 1:
+        return [ob[0]] + [ob[1]] * 4, [db1[0]] + [db1[1]] * 4, [db2[0]] + [db2[1]] * 4
+    return [ob[0]] * 5, [db1[0]] * 5, [db1[0]] * 5      # v0: db2 <- db1_0 [SRC] eeprom_4k.c:857
+
+
+def _apply_bb_desired_scale(hw: AthHw, eep: Map4k) -> None:
+    """ath9k_hw_4k_set_board_values tail [SRC] eeprom_4k.c:1007 — when txGainType == 0 and the
+    modal bb_desired_scale is non-zero, spread the 5-bit scale across the packed TX-pwrctrl fields
+    (BIT(0)|BIT(5)|... field starts). Skipped otherwise; the reference card is txGainType 0 with
+    bb_desired_scale 0, so this is inert there and byte-identical."""
+    bb_scale = eep.bb_scale_smrt_antenna & R.EEP_4K_BB_DESIRED_SCALE_MASK
+    if eep.raw[31] != 0 or bb_scale == 0:              # txGainType != 0 or scale 0 -> nothing
+        return
+    hw.enable_rmw_buffer()
+    mask = (1 << 0) | (1 << 5) | (1 << 10) | (1 << 15) | (1 << 20) | (1 << 25)
+    hw.rmw(R.AR_PHY_TX_PWRCTRL8, mask * bb_scale, mask * 0x1f)
+    hw.rmw(R.AR_PHY_TX_PWRCTRL10, mask * bb_scale, mask * 0x1f)
+    hw.rmw(R.AR_PHY_CH0_TX_PWRCTRL12, mask * bb_scale, mask * 0x1f)
+    mask = (1 << 0) | (1 << 5) | (1 << 15)
+    hw.rmw(R.AR_PHY_TX_PWRCTRL9, mask * bb_scale, mask * 0x1f)
+    mask = (1 << 0) | (1 << 5)
+    hw.rmw(R.AR_PHY_CH0_TX_PWRCTRL11, mask * bb_scale, mask * 0x1f)
+    hw.rmw(R.AR_PHY_CH0_TX_PWRCTRL13, mask * bb_scale, mask * 0x1f)
+    hw.rmw_buffer_flush()
+
+
 def _set_analog_bias(hw: AthHw, eep: Map4k) -> None:
     """The AR9271 OB/DB shift-register writes [SRC] eeprom_4k.c (AR_SREV_9271 branch)."""
-    ob, db1, db2 = eep.ob, eep.db1, eep.db2
+    ob, db1, db2 = _ob_db_by_version(eep)
     hw.enable_rmw_buffer()
     hw.rmw_field(R.AR9285_AN_RF2G3, R.AR9271_AN_RF2G3_OB_cck, ob[0])
     hw.rmw_field(R.AR9285_AN_RF2G3, R.AR9271_AN_RF2G3_OB_psk, ob[1])
@@ -82,8 +122,6 @@ def set_board_values(hw: AthHw, chan: Channel) -> None:
 
     if eep.modal_version >= 3:
         _set_ant_diversity(hw, eep)
-    if eep.modal_version < 2:                     # untested (the ob/db remap differs pre-v2)
-        raise NotImplementedError("ar9271_v2: modal header version < 2 not ported (unseen)")
     _set_analog_bias(hw, eep)
 
     hw.enable_rmw_buffer()
@@ -103,6 +141,4 @@ def set_board_values(hw: AthHw, chan: Channel) -> None:
     # rev >= 3 swSettleHt40 only applies to HT40 (this card runs 20 MHz).
     hw.rmw_buffer_flush()
 
-    bb_scale = eep.bb_scale_smrt_antenna & R.EEP_4K_BB_DESIRED_SCALE_MASK
-    if eep.raw[31] == 0 and bb_scale != 0:        # txGainType == 0
-        raise NotImplementedError("ar9271_v2: bb_desired_scale TX-pwrctrl block not ported (unseen)")
+    _apply_bb_desired_scale(hw, eep)

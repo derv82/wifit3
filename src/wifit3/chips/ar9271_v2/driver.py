@@ -86,6 +86,23 @@ class AR9271V2Driver:
         self.endpoints = res.endpoints
         self.mac_address = ":".join(f"{b:02x}" for b in res.hw.macaddr)
         self._init_tx(res.endpoints)
+        self._log_detected_config(res.hw)
+
+    def _log_detected_config(self, hw) -> None:
+        """One-line EEPROM-config summary: the board discriminators that pick the runtime-gated
+        branches (tx-gain table, modal-header version, bb_desired_scale, in-band spur). Purely
+        informational — no wire effect. The reference card reads: normal-power, modal v4,
+        bb_scale 0, no in-band spur."""
+        from .eeprom_4k import Map4k
+        eep = Map4k(hw.eeprom)
+        high = hw.eeprom[31] == R.AR5416_EEP_TXGAIN_HIGH_POWER
+        bb_scale = eep.bb_scale_smrt_antenna & R.EEP_4K_BB_DESIRED_SCALE_MASK
+        spur = eep.get_spur_channel(0) != R.AR_NO_SPUR
+        logger.info(
+            "ar9271_v2 EEPROM config: %s tx-gain, modal v%d, eep-rev 0x%x, bb_scale=%d, "
+            "in-band-spur=%s, tx/rx-mask=%d/%d",
+            "high-power" if high else "normal-power", eep.modal_version, eep.eeprom_rev,
+            bb_scale, spur, hw.txchainmask, hw.rxchainmask)
 
     def _init_tx(self, endpoints: dict) -> None:
         """Resolve the TX service endpoints from the HTC handshake map and arm the slot bitmap.

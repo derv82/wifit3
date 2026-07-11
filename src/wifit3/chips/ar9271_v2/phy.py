@@ -109,7 +109,13 @@ def spur_mitigate(hw: AthHw, chan: Channel) -> None:
             break
     hw.rmw(R.AR_PHY_FORCE_CLKEN_CCK, 0, R.AR_PHY_FORCE_CLKEN_CCK_MRC_MUX)   # REG_CLR_BIT
     if bb_spur != R.AR_NO_SPUR:
-        raise NotImplementedError("ar9271_v2: in-band spur mitigation not ported (unseen)")
+        # The notch-filter programming (ar9002_hw_spur_mitigate tail + ar5008_hw_cmn_spur_mitigate,
+        # ~24 further PHY regs) is unported: the reference card's spurChans[0] is AR_NO_SPUR, as is
+        # every AR9271 4k EEPROM seen, so this path has no wire to verify against. Documented residual
+        # in AR9271_V2.md; a card with a populated 2 GHz spur table would need it ported.
+        raise NotImplementedError(
+            f"ar9271_v2: untested variant: in-band 2 GHz spur (bb_spur={bb_spur}) — notch-filter "
+            "mitigation not ported (reference EEPROM has no in-band spur)")
 
 
 def init_bb(hw: AthHw, chan: Channel) -> None:

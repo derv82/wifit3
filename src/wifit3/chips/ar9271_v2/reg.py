@@ -370,6 +370,13 @@ AR_PHY_RF_CTL2 = 0x9824                 # [SRC] ar9002_phy.h:54
 AR_PHY_TX_END_DATA_START = 0x000000FF
 AR_PHY_TX_END_PA_ON = 0x0000FF00
 EEP_4K_BB_DESIRED_SCALE_MASK = 0x1f     # [SRC] eeprom.h
+# bb_desired_scale (smart-antenna) TX-pwrctrl regs — set_board_values txGainType==0 branch.
+AR_PHY_TX_PWRCTRL8 = 0xa278             # [SRC] ar9002_phy.h:493
+AR_PHY_TX_PWRCTRL9 = 0xa27C             # [SRC] ar9002_phy.h:495
+AR_PHY_TX_PWRCTRL10 = 0xa394            # [SRC] ar9002_phy.h:497
+AR_PHY_CH0_TX_PWRCTRL11 = 0xa398        # [SRC] ar9002_phy.h:507
+AR_PHY_CH0_TX_PWRCTRL12 = 0xa3dc        # [SRC] ar9002_phy.h:509
+AR_PHY_CH0_TX_PWRCTRL13 = 0xa3e0        # [SRC] ar9002_phy.h:510
 CHAIN_BLOCK1_OFFSET = 0x1000            # block-1 = block-0 + 0x1000
 
 # ---- calibration (ar9002_hw_init_cal): cl_cal / pa_cal / NF / IQ setup ----
