@@ -85,6 +85,21 @@ def config_error_name(code: Optional[int]) -> str:
 # After this many EAP-Req/Identity with no M1, the AP is "stuck at identity" (won't proceed).
 _IDENTITY_STALL = 8
 
+# 802.11 reason codes (disassoc/deauth) — the AP's stated reason for kicking us.
+_DISASSOC_REASONS = {
+    1: "unspecified", 2: "prev-auth-invalid", 3: "deauth-leaving", 4: "inactivity",
+    5: "AP-overloaded", 6: "class2-from-nonauth", 7: "class3-from-nonassoc", 8: "disassoc-leaving",
+    9: "not-authenticated", 15: "4way-timeout", 16: "group-key-timeout", 23: "802.1X-auth-failed",
+}
+
+
+def disassoc_reason(frame: bytes) -> str:
+    """Reason code (name) from a disassoc/deauth frame body, or '?' if too short."""
+    if len(frame) < 26:
+        return "?"
+    code = int.from_bytes(frame[24:26], "little")
+    return _DISASSOC_REASONS.get(code, str(code))
+
 # 802.11 management subtypes — so the WPS trace can name a frame the AP sends us but that
 # isn't WSC (a DISASSOC/DEAUTH = the AP kicking us; the rest are the assoc handshake).
 _MGMT_SUBTYPES = {
@@ -166,7 +181,7 @@ class WpsRegistrar:
         self._last_1x_frame = None
         identity_reqs = 0            # count EAP-Req/Identity — detect the "stuck at identity" stall
         nonwsc_seen: set = set()    # distinct non-WSC frame kinds the AP sent (logged once each)
-        saw_disassoc = False        # AP kicked us off (mgmt DISASSOC/DEAUTH) — a clear refusal
+        disassoc_why: Optional[str] = None   # set if AP kicked us (mgmt DISASSOC/DEAUTH) + why
 
         def _out(result: PinResult, **kw) -> AttemptOutcome:
             # Every outcome carries reached_m1 so the campaign can tell a silent AP
@@ -211,8 +226,8 @@ class WpsRegistrar:
                              "(timeout-as-NACK)")
                     return _out(PinResult.SECOND_HALF_WRONG, detail="no reply after M6",
                                 via_timeout=True)
-                if saw_disassoc:
-                    return _out(PinResult.TIMEOUT, detail="AP disassociated us")
+                if disassoc_why is not None:
+                    return _out(PinResult.TIMEOUT, detail=f"AP disassociated us ({disassoc_why})")
                 if identity_reqs >= _IDENTITY_STALL:
                     return _out(PinResult.TIMEOUT,
                                 detail=f"stalled at identity ({identity_reqs}x), no M1")
@@ -229,9 +244,11 @@ class WpsRegistrar:
                 if is_eapol or kind not in nonwsc_seen:
                     nonwsc_seen.add(kind)
                     tag = f"UNPARSED EAPOL/{kind}" if is_eapol else kind
-                    self.log(f"[WPS] <- {tag} from AP ({len(frame)}B): {frame[:56].hex()}")
+                    extra = (f" reason={disassoc_reason(frame)}"
+                             if kind in ("mgmt/DISASSOC", "mgmt/DEAUTH") else "")
+                    self.log(f"[WPS] <- {tag}{extra} from AP ({len(frame)}B): {frame[:56].hex()}")
                 if kind in ("mgmt/DISASSOC", "mgmt/DEAUTH"):
-                    saw_disassoc = True
+                    disassoc_why = disassoc_reason(frame)
                 continue
 
             if p.is_identity_request:
