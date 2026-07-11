@@ -26,6 +26,16 @@ from __future__ import annotations
 from typing import NamedTuple, Optional
 
 from . import constants as C
+from .phy_cond import JaguarParams
+
+# ODM board_type bitfield [SRC] hal_dm.c:382-405 — the GLNA/GPA/ALNA/APA/BT bits the
+# JaguarSeries phy_cond walker matches against. On 8821a the board_type is assembled
+# from the four external-PA/LNA flags (Hal_ReadPAType_8821A); BT comes from a separate
+# REG_MULTI_FUNC_CTRL probe (non-BT board here, so BT stays 0 — see build_jaguar_params).
+ODM_BOARD_EXT_PA_2G = 1 << 3      # ODM_BOARD_EXT_PA  (2G PA)
+ODM_BOARD_EXT_LNA_2G = 1 << 4     # ODM_BOARD_EXT_LNA (2G LNA)
+ODM_BOARD_EXT_PA_5G = 1 << 6
+ODM_BOARD_EXT_LNA_5G = 1 << 7
 
 
 class PathTxPwr(NamedTuple):
@@ -46,6 +56,8 @@ class ChipParams(NamedTuple):
     tx_power_5g: PathTxPwr   # path A, 5 GHz (bw40_base = 14 UNII groups; no CCK)
     bb_swing_2g: int         # path-A TxScale (0x0C1C[31:21]) for 2.4 GHz
     bb_swing_5g: int         # path-A TxScale for 5 GHz
+    ext_lna_2g: bool         # ExternalLNA_2G — gates the phy_SetRFEReg8821 2.4 GHz pinmux
+    board_type: int          # ODM ext-LNA/PA bitfield — the phy_cond walker's board input
 
 
 def _efuse_one_byte_read(t, addr: int) -> int:
@@ -205,6 +217,56 @@ def _parse_bb_swing(m: bytes, byte_off: int) -> int:
     return _BB_SWING[sw & 0x3]
 
 
+def _ext_amplifier_flags(m: bytes, autoload_fail: bool) -> tuple:
+    """[SRC] Hal_ReadPAType_8821A (rtl8812a_hal_init.c:1230) — the 4 external-PA/LNA flags.
+
+    Registry amplifier type is AUTO (userland has no registry override), so PAType/LNAType
+    come from efuse (0xFF -> 0). Unlike the 8812's dual-bit test, the 8821 keys each flag on
+    a SINGLE bit: ExternalPA_2G=PAType_2G[4], ExternalLNA_2G=LNAType_2G[3],
+    external_pa_5g=PAType_5G[0], external_lna_5g=LNAType_5G[3]. PAType_2G and PAType_5G both
+    read from EEPROM_PA_TYPE_8821AU (0xBC). An autoload-fail efuse -> all flags 0 (the
+    registry-AUTO else path). Returns (ext_pa_2g, ext_lna_2g, ext_pa_5g, ext_lna_5g).
+    """
+    if autoload_fail:
+        return False, False, False, False
+    pa = m[C.EEPROM_PA_TYPE_8821AU]
+    lna_2g = m[C.EEPROM_LNA_TYPE_2G_8821AU]
+    lna_5g = m[C.EEPROM_LNA_TYPE_5G_8821AU]
+    if pa == 0xFF:
+        pa = 0
+    if lna_2g == 0xFF:
+        lna_2g = 0
+    if lna_5g == 0xFF:
+        lna_5g = 0
+    ext_pa_2g = bool(pa & (1 << 4))
+    ext_lna_2g = bool(lna_2g & (1 << 3))
+    ext_pa_5g = bool(pa & (1 << 0))
+    ext_lna_5g = bool(lna_5g & (1 << 3))
+    return ext_pa_2g, ext_lna_2g, ext_pa_5g, ext_lna_5g
+
+
+def _parse_board_type(ext: tuple) -> int:
+    """[SRC] hal_dm.c:382-405 — assemble the ODM board_type from the external flags.
+
+    Each set external flag lights its ODM_BOARD bit (GPA bit3 / GLNA bit4 / APA bit6 / ALNA
+    bit7). BT (bit2) needs the REG_MULTI_FUNC_CTRL BT_FUNC_EN probe (rtl8812a_hal_init.c:831);
+    the AWUS036ACS is a non-BT board, so BT stays 0 and the BT decode is not ported. The
+    per-path type_* sub-codes (TypeGLNA/TypeGPA/...) are 8812-only — Hal_ReadPAType_8821A does
+    not set them — so they stay 0 for the 8821 walker.
+    """
+    ext_pa_2g, ext_lna_2g, ext_pa_5g, ext_lna_5g = ext
+    board_type = 0
+    if ext_lna_2g:
+        board_type |= ODM_BOARD_EXT_LNA_2G
+    if ext_lna_5g:
+        board_type |= ODM_BOARD_EXT_LNA_5G
+    if ext_pa_2g:
+        board_type |= ODM_BOARD_EXT_PA_2G
+    if ext_pa_5g:
+        board_type |= ODM_BOARD_EXT_PA_5G
+    return board_type
+
+
 def _parse_mac_address(m: bytes) -> Optional[str]:
     """[SRC] Hal_GetEfuseDefinition / hal_config_macaddr — efuse 0x107..0x10C."""
     mac = m[C.EEPROM_MAC_ADDR_8821AU:C.EEPROM_MAC_ADDR_8821AU + 6]
@@ -231,6 +293,7 @@ def read_chip_params(t) -> ChipParams:
     m = _read_logical_map(t)
     t.write8(C.REG_EFUSE_ACCESS, C.EFUSE_ACCESS_OFF)
 
+    ext = _ext_amplifier_flags(m, autoload_fail)   # Hal_ReadPAType_8821A
     return ChipParams(
         crystal_cap=_parse_crystal_cap(m),
         mac_address=_parse_mac_address(m),
@@ -240,4 +303,20 @@ def read_chip_params(t) -> ChipParams:
         tx_power_5g=_parse_tx_power_5g(m),
         bb_swing_2g=_parse_bb_swing(m, C.EEPROM_TX_BBSWING_2G),
         bb_swing_5g=_parse_bb_swing(m, C.EEPROM_TX_BBSWING_5G),
+        ext_lna_2g=ext[1],
+        board_type=_parse_board_type(ext),
     )
+
+
+def build_jaguar_params(params: ChipParams) -> JaguarParams:
+    """Thread the EFUSE-decoded board params into the phy_cond walker inputs.
+
+    The 8821a JaguarSeries BB/AGC/RADIO tables branch on board_type (ext-LNA/PA) and the
+    USB/CE interface (kept at the JaguarParams defaults). They carry NO cut-version- or
+    package-gated rows (every condition header's cut[27:24] and QFN[15:12] fields read 0),
+    so cut_version is left at its default 0 — it has no effect on any taken row. type_* stay
+    0 (the 8821 hal never populates TypeGLNA/GPA/ALNA/APA). For the reference AWUS036ACS
+    (board_type 0) this reproduces the hardcoded default exactly; an ext-PA/LNA card walks
+    its own (ported-but-untested) board rows.
+    """
+    return JaguarParams(board_type=params.board_type)

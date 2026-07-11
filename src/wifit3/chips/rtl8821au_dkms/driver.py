@@ -31,7 +31,7 @@ from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
-from . import bb, chan, dig, efuse, firmware, mac, monitor, rf, txpower
+from . import bb, chan, dig, efuse, firmware, mac, monitor, phy_cond, rf, txpower
 from .constants import USB_PID_AWUS036ACS, USB_VID_REALTEK
 from .rx import iter_frames
 from .transport import RTL8821AUDkmsTransport
@@ -69,6 +69,10 @@ class Rtl8821auDkmsDriver:
         self._tx_power_5g = None                 # efuse PathTxPwr (path A, 5 GHz)
         self._bb_swing_2g: int = chan.BB_SWING_DEFAULT
         self._bb_swing_5g: int = chan.BB_SWING_DEFAULT
+        # Runtime fuse-derived branch selectors (default = the reference AWUS036ACS values,
+        # so a value-less construction reproduces the recorded card byte-for-byte).
+        self._ext_lna_2g: bool = False           # efuse LNAType_2G[3] — RFE pinmux branch
+        self._jaguar_params = phy_cond.JaguarParams()  # phy_cond walker inputs (board_type)
         self._channel: Optional[int] = None
         self.is_warm: bool = False
         # Runtime DIG/AGC watchdog. Toggleable so a fixed-channel A/B can isolate the
@@ -109,10 +113,17 @@ class Rtl8821auDkmsDriver:
         self._tx_power_5g = params.tx_power_5g
         self._bb_swing_2g = params.bb_swing_2g
         self._bb_swing_5g = params.bb_swing_5g
+        self._ext_lna_2g = params.ext_lna_2g
+        self._jaguar_params = efuse.build_jaguar_params(params)
         logger.info("RTL8821AU efuse: crystal_cap=0x%02x mac=%s cck_base[0]=0x%02x "
                     "bb_swing 2g=0x%03x 5g=0x%03x", params.crystal_cap,
                     params.mac_address or "<blank>", params.tx_power.cck_base[0],
                     params.bb_swing_2g, params.bb_swing_5g)
+        # Detected board config — the runtime-fuse branches that make this driver card-
+        # agnostic (ext-LNA RFE pinmux + phy_cond board_type). Reference reads 0/0x00.
+        logger.info("RTL8821AU config: ext_lna_2g=%d board_type=0x%02x%s",
+                    params.ext_lna_2g, params.board_type,
+                    "" if params.board_type == 0 else " (untested variant: external PA/LNA board)")
 
         if progress_cb:
             progress_cb(0.2, "Uploading firmware")
@@ -129,9 +140,11 @@ class Rtl8821auDkmsDriver:
         def _init(t):
             mac.phy_mac_config(t)                     # M2: MAC register table
             mac.mac_init_misc(t)                      # M2: queue/MISC + REG_CR
-            bb.phy_bb_config(t, crystal_cap=self._crystal_cap)  # M3: BB PHY_REG + AGC + xtal
-            rf.phy_rf_config(t)                       # M3: RadioA
-            chan.set_chnl_bw(t, _DEFAULT_CHANNEL, self._bb_swing_2g)  # M4: 2.4 GHz tune
+            bb.phy_bb_config(t, crystal_cap=self._crystal_cap,
+                             params=self._jaguar_params)        # M3: BB PHY_REG + AGC + xtal
+            rf.phy_rf_config(t, self._jaguar_params)  # M3: RadioA
+            chan.set_chnl_bw(t, _DEFAULT_CHANNEL, self._bb_swing_2g,
+                             self._ext_lna_2g)        # M4: 2.4 GHz tune
             txpower.set_tx_power(t, _DEFAULT_CHANNEL, self._tx_power)  # M-TXPWR: per-rate txagc
             mac.hal_init_misc_pre(t)                  # M5 §1a: security + MISC11
             dig.init_hal_dm(t, search_edcca=True)     # M5 §2: phydm DIG/AGC/EDCCA seed
@@ -211,7 +224,8 @@ class Rtl8821auDkmsDriver:
         loop = asyncio.get_running_loop()
 
         def _tune(t):
-            chan.set_channel_bw(t, channel, self._bb_swing_2g, self._bb_swing_5g)
+            chan.set_channel_bw(t, channel, self._bb_swing_2g, self._bb_swing_5g,
+                                self._ext_lna_2g)
             if not scan:
                 if channel <= 14:
                     txpower.set_tx_power(t, channel, self._tx_power)

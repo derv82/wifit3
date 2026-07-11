@@ -12,6 +12,10 @@ tree cross-checked against the cold-boot pcap, never from the mainline-derived `
 - Warm reattach and a 30-min dual-band 38-channel soak: clean (no degradation).
 - `verify_pcap` / `verify_channels`: clean against the cold-boot pcap (all 36 hops byte-exact).
 - 5 GHz deauth/TX (ch149): user-confirmed live.
+- Runs on **any RTL8821AU/RTL8811AU EFUSE burn**, not just this ALFA's — the two fuse-derived
+  branches (ext-LNA RFE pinmux, phy_cond board_type) are runtime-detected (see
+  [EFUSE variants](#efuse-variants--any-card-support)); non-reference branches are ported-from-C,
+  hardware-untested.
 - Open polish: ch153 spur notch (minor RX), 40/80 MHz width (out of scope).
 
 ## Gotchas
@@ -46,6 +50,47 @@ values. The replay-diff gate skips this window deliberately.
 **Scope:** 20 MHz primary only (no 40/80). SW-seq fragmentation is not reintroduced (hwseq only).
 `# TODO(8812au):` breadcrumbs mark every point the vendor source branches on chip (RF path 1×1 vs
 2×2, RFE option, pwr-seq table, FW blob, per-rate txpower) so the 8812au decision stays cheap.
+
+## EFUSE variants — any-card support
+
+Two kinds of fuse data. **Values** (crystal_cap, per-rate TX-power, bb_swing, MAC) are consumed
+by computation, so any burn already works. **Branches** select code paths — these are where a
+non-reference card diverges, and they are now gated on the runtime fuse (`efuse.read_chip_params`
+→ `driver`), so a value-less path stays the reference AWUS036ACS byte-for-byte (`verify_pcap`
+proves it). The card reads `ext_lna_2g=0`, `board_type=0x00` (blank amplifier bytes 0xBC/0xBD/0xBF).
+
+**Runtime-gated branches (reference = default; non-reference ported-from-C, hardware-untested):**
+- **ExternalLNA_2G RFE pinmux** — `chan._set_rfe_2g` ports both arms of `phy_SetRFEReg8821`
+  (2.4 GHz): bypass (`ext_lna_2g=0`, pinmux b'111, `0xCB4=0x10000077`) vs external-LNA-on
+  (`ext_lna_2g=1`, pinmux b'010, `0xCB4=0x10100077`). Keyed on `LNAType_2G[3]` (efuse 0xBD). The
+  5 GHz RFE (`phy_SetRFEReg8821` else-branch) has no external-LNA arm → `_switch_band_5g` is
+  card-independent.
+- **phy_cond `board_type`** — the 8821a BB/AGC/RADIO tables carry board-gated condition rows
+  (e.g. AGC `0x8000020c` = interface-USB + ALNA|APA). `efuse.build_jaguar_params` threads the ODM
+  board_type (from the four external PA/LNA flags of `Hal_ReadPAType_8821A`) into
+  `bb.phy_bb_config` / `rf.phy_rf_config`. An external-PA/LNA card then walks its own
+  (ported-but-untested) rows instead of the reference's.
+
+**Deliberately NOT threaded (not a real-world variant on this build), with the vendor reason:**
+- **cut_version / package** — every 8821a table condition header has cut[27:24] = QFN[15:12] = 0,
+  so no row is silicon-cut- or package-gated. `cut_version` stays 0 (no effect on any taken row).
+- **phy_FixSpur_8812A** — a no-op on 8821 (it is `IS_VENDOR_8812A_C_CUT || IS_HARDWARE_TYPE_8812`
+  only), so `chan` correctly omits it for all cards; the RF-read CCA-on-secondary toggle is likewise
+  always skipped on 8821 (`IS_HARDWARE_TYPE_8821`), so `rf._rf_serial_read` omits it.
+- **rf_type** — the 8821a is 1T1R; path-B is written unconditionally only where the vendor does.
+- **AGC-table-select MP-chip branch** — `IS_VENDOR_8821A_MP_CHIP` is TRUE for every normal (retail)
+  chip, so `chan` hardcodes the `0xC1C[11:8]` arm; only test/non-normal silicon takes the
+  `0x82C[1:0]` arm (not a shipped card).
+- **antenna-diversity DPDT gate** — `phydm_set_ext_band_switch_8821A` is vendor-gated on
+  `drv_ant_band_switch && AntDivCfg==0`, but `CONFIG_ANTENNA_DIVERSITY` is compiled out
+  (autoconf.h:97), so `AntDivCfg` is always 0 and the DPDT always fires; `chan._ext_band_switch`
+  runs it unconditionally to match. (This card's `rf_board_opt` BIT3=1, so an antdiv-enabled build
+  WOULD gate it — a latent build-time dependency, not a runtime fuse gap.)
+
+**Residual not ported:** the BT `board_type` bit (`ODM_BOARD_BT`) — needs the
+`REG_MULTI_FUNC_CTRL` `BT_FUNC_EN` probe + the BTCoexist stack; a BT-combo module is out of scope
+(same call as the 8812/8814 siblings). `type_glna/gpa/alna/apa` stay 0 (`Hal_ReadPAType_8821A`
+never sets them — those are 8812-only), so a board_type-set card matches only the type-0 rows.
 
 ## Orientation
 
@@ -84,3 +129,15 @@ matrix showed it ties 5 GHz, edges 2.4 GHz (canary ~11 dB stronger), breadth ≥
 rates flat the whole run, frames steady ~1.4–1.8 k/60 s. The diag WARNs are benign — the OUI
 "garbage" is broadcast/wildcard BSSIDs (`ff:ff:ff:ff:ff:ff`) and the beacon-channel mismatch is
 fast-hop adjacent-channel bleed.
+
+### 2026-07-11 — generalize across EFUSE burns (any 8821au/8811au card)
+
+Swept the vendor source for every 8821-relevant fuse-derived branch and closed the two that
+hardcoded the reference discriminator (see [EFUSE variants](#efuse-variants--any-card-support)):
+`ext_lna_2g` (RFE pinmux, `phy_SetRFEReg8821`) and `board_type` (the phy_cond BB/AGC/RF walker
+inputs). Both default to the reference values, so `verify_pcap` (2532 ops through M4+TXpwr, +44
+through M5) and `verify_channels` (36/36 hops) stay byte-exact through the generalized code. The
+other candidate branches (cut/package, phy_FixSpur, RF-read CCA, MP-chip AGC select, antenna-div
+DPDT) are card-independent on this build (documented with the vendor reason). Added `test_efuse.py`
++ `test_chan.py` for the variant (non-reference) values. BT board_type bit + `type_*` remain
+unported residuals (BT-combo module out of scope).

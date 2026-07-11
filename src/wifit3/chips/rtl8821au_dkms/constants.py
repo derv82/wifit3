@@ -123,6 +123,12 @@ EEPROM_MAC_ADDR_8821AU = 0x107
 PG_TXPWR_SADDR = 0x10          # hal_spec->pg_txpwr_saddr — TX-power PG block start
 EEPROM_TX_BBSWING_2G = 0xC6    # per-path TxScale index (2.4 GHz)
 EEPROM_TX_BBSWING_5G = 0xC7    # per-path TxScale index (5 GHz)
+# Amplifier-type PG bytes [SRC] hal_pg.h:144-146 (8812AU/8821AU shared offsets),
+# decoded by Hal_ReadPAType_8821A (rtl8812a_hal_init.c:1230). PAType 2G+5G packed at
+# 0xBC; per-band LNAType at 0xBD (2G) / 0xBF (5G).
+EEPROM_PA_TYPE_8821AU = 0xBC
+EEPROM_LNA_TYPE_2G_8821AU = 0xBD
+EEPROM_LNA_TYPE_5G_8821AU = 0xBF
 
 # Bit shorthands used by inline pokes.
 BIT0, BIT1, BIT2, BIT6, BIT7 = BIT(0), BIT(1), BIT(2), BIT(6), BIT(7)
