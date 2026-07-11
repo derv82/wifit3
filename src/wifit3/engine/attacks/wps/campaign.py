@@ -606,4 +606,6 @@ class WpsCampaign(Campaign):
                 self.log(f"{label} → [yellow]AP refused[/yellow] [dim]({why})[/dim] "
                          f"[dim bold]\\[NACK][/dim bold]")
         elif out.result is PinResult.TIMEOUT:
-            self.log(f"{label} → [dim]AP didn't respond[/dim] [dim bold]\\[no reply][/dim bold]")
+            # out.detail distinguishes silence vs "AP disassociated us" vs "stalled at identity".
+            self.log(f"{label} → [dim]{out.detail or 'AP didn’t respond'}[/dim] "
+                     f"[dim bold]\\[no reply][/dim bold]")

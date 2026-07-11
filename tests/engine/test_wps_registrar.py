@@ -238,3 +238,13 @@ async def test_silent_ap_reads_as_no_response():
     assert out.reached_m1 is False
     assert out.config_error is None
     assert "didn't respond" in out.detail
+
+
+def test_describe_frame_names_mgmt_and_data():
+    from wifit3.engine.attacks.wps.registrar import describe_frame
+    # The WPS trace must name non-WSC frames so a disassoc/deauth (AP kicking us) is legible.
+    assert describe_frame(b"\xa0" + b"\x00" * 24) == "mgmt/DISASSOC"
+    assert describe_frame(b"\xc0" + b"\x00" * 24) == "mgmt/DEAUTH"
+    assert describe_frame(b"\xb0" + b"\x00" * 24) == "mgmt/auth"
+    assert describe_frame(b"\x08" + b"\x00" * 24) == "data"
+    assert describe_frame(b"\x88" + b"\x00" * 24) == "qos-data"

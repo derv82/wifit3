@@ -82,6 +82,34 @@ def config_error_name(code: Optional[int]) -> str:
     return WSC_CONFIG_ERRORS.get(code, f"unknown(0x{code:02x})")
 
 
+# After this many EAP-Req/Identity with no M1, the AP is "stuck at identity" (won't proceed).
+_IDENTITY_STALL = 8
+
+# 802.11 management subtypes — so the WPS trace can name a frame the AP sends us but that
+# isn't WSC (a DISASSOC/DEAUTH = the AP kicking us; the rest are the assoc handshake).
+_MGMT_SUBTYPES = {
+    0: "assoc-req", 1: "assoc-resp", 2: "reassoc-req", 3: "reassoc-resp", 4: "probe-req",
+    5: "probe-resp", 8: "beacon", 9: "atim", 10: "DISASSOC", 11: "auth", 12: "DEAUTH", 13: "action",
+}
+
+
+def describe_frame(frame: bytes) -> str:
+    """A short human name for a raw 802.11 frame (FC byte only) — for the WPS conversation
+    trace, so a non-WSC reply (disassoc, data flood) is legible instead of silently dropped."""
+    if len(frame) < 1:
+        return "empty"
+    fc0 = frame[0]
+    ftype = (fc0 >> 2) & 0x3
+    subtype = (fc0 >> 4) & 0xf
+    if ftype == 0:
+        return f"mgmt/{_MGMT_SUBTYPES.get(subtype, subtype)}"
+    if ftype == 1:
+        return f"ctrl/{subtype}"
+    if ftype == 2:
+        return "data" if subtype < 8 else "qos-data"
+    return f"?/{ftype}.{subtype}"
+
+
 class WpsRegistrar:
     def __init__(
         self,
@@ -136,6 +164,9 @@ class WpsRegistrar:
         reached_m1 = False           # did the AP send M1 (WSC exchange actually started)?
         resends_left = self.max_resends   # in-session resend budget; refreshed on each AP reply
         self._last_1x_frame = None
+        identity_reqs = 0            # count EAP-Req/Identity — detect the "stuck at identity" stall
+        nonwsc_seen: set = set()    # distinct non-WSC frame kinds the AP sent (logged once each)
+        saw_disassoc = False        # AP kicked us off (mgmt DISASSOC/DEAUTH) — a clear refusal
 
         def _out(result: PinResult, **kw) -> AttemptOutcome:
             # Every outcome carries reached_m1 so the campaign can tell a silent AP
@@ -180,22 +211,38 @@ class WpsRegistrar:
                              "(timeout-as-NACK)")
                     return _out(PinResult.SECOND_HALF_WRONG, detail="no reply after M6",
                                 via_timeout=True)
+                if saw_disassoc:
+                    return _out(PinResult.TIMEOUT, detail="AP disassociated us")
+                if identity_reqs >= _IDENTITY_STALL:
+                    return _out(PinResult.TIMEOUT,
+                                detail=f"stalled at identity ({identity_reqs}x), no M1")
                 return _out(PinResult.TIMEOUT, detail="AP didn't respond")
 
             p = M.parse_rx_frame(frame)
             if p is None:
-                # An EAPOL frame we couldn't parse, arriving mid-exchange, is suspicious —
-                # a malformed/unexpected M5 would look exactly like this and otherwise be
-                # dropped silently (a false first-half-wrong). Beacons/data (no EAPOL
-                # LLC/SNAP) stay quiet.
-                if (highest_mt or last_sent) and M._LLC_SNAP_EAPOL in frame:
-                    self.log(f"[WPS] <- UNPARSED EAPOL ({len(frame)}B, last_sent={last_sent}): "
-                             f"{frame[:48].hex()}")
+                # Not WSC. Log what the AP actually sent (once per kind) so a non-WSC reply is
+                # legible instead of silently dropped: a mgmt DISASSOC/DEAUTH is the AP kicking
+                # us off; an unparsable EAPOL is a possibly-malformed M-message; a data flood is
+                # the AP treating us as an associated client (IPv6/ARP/etc., not WPS).
+                kind = describe_frame(frame)
+                is_eapol = M._LLC_SNAP_EAPOL in frame
+                if is_eapol or kind not in nonwsc_seen:
+                    nonwsc_seen.add(kind)
+                    tag = f"UNPARSED EAPOL/{kind}" if is_eapol else kind
+                    self.log(f"[WPS] <- {tag} from AP ({len(frame)}B): {frame[:56].hex()}")
+                if kind in ("mgmt/DISASSOC", "mgmt/DEAUTH"):
+                    saw_disassoc = True
                 continue
 
             if p.is_identity_request:
                 if highest_mt == 0:          # ignore identity retransmits once WSC starts
-                    self.log(f"[WPS] <- EAP-Req/Identity (id {p.eap_id}); -> Identity response")
+                    identity_reqs += 1
+                    if identity_reqs == 1:
+                        self.log(f"[WPS] <- EAP-Req/Identity (id {p.eap_id}); -> Identity response")
+                    elif identity_reqs == _IDENTITY_STALL:
+                        self.log(f"[WPS] AP re-requested Identity {identity_reqs}x without reaching "
+                                 f"M1 — it may require a link-layer ACK we don't send (auto-ACK); "
+                                 f"still answering")
                     await self._send_1x(M.eap_identity_response(p.eap_id))
                 continue
 
