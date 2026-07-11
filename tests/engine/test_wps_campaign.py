@@ -13,7 +13,7 @@ from wifit3.engine.attacks.wps.registrar import AttemptOutcome, PinResult
 from wifit3.engine.attacks.wps.wsc_crypto import pin_is_valid
 
 
-def _target(bssid="aa:bb:cc:dd:ee:ff", ssid="Net", ch=1):
+def _target(bssid="02:00:00:00:00:ff", ssid="Net", ch=1):
     return SimpleNamespace(bssid=bssid, ssid=ssid, channel=ch, wps_locked=False)
 
 
@@ -75,7 +75,7 @@ async def test_campaign_finds_common_pin_fast(tmp_path):
     assert len(c.tried) == 1                 # found on the first common attempt
 
 
-def _write_done_state(tmp_path, found_pin, found_psk, bssid="aa:bb:cc:dd:ee:ff"):
+def _write_done_state(tmp_path, found_pin, found_psk, bssid="02:00:00:00:00:ff"):
     """Write a .run state file mimicking a previously-successful campaign."""
     import json
     p = tmp_path / f"wps_{bssid.replace(':', '-')}.run"
@@ -170,7 +170,7 @@ async def test_run_state_persisted_and_resumed(tmp_path):
                          log=lambda m: None, known_pin=known, psk="pw")
     await c._loop()
 
-    path = _state_path(str(tmp_path), "aa:bb:cc:dd:ee:ff")
+    path = _state_path(str(tmp_path), "02:00:00:00:00:ff")
     assert path.exists()
     import json
     data = json.loads(path.read_text())
@@ -223,7 +223,7 @@ async def test_teardown_saves_state_and_clears_fake_mac(tmp_path):
     c.state.tested = 42
     await c.teardown()
     assert cleared == [True]
-    assert _state_path(str(tmp_path), "aa:bb:cc:dd:ee:ff").exists()
+    assert _state_path(str(tmp_path), "02:00:00:00:00:ff").exists()
 
 
 def test_lock_backoff_grows_with_observation():
@@ -240,13 +240,13 @@ def test_lock_backoff_grows_with_observation():
 
 def test_load_run_state_roundtrip_and_missing(tmp_path):
     from wifit3.engine.attacks.wps.campaign import load_run_state
-    assert load_run_state(str(tmp_path), "aa:bb:cc:dd:ee:ff") is None   # nothing on disk
+    assert load_run_state(str(tmp_path), "02:00:00:00:00:ff") is None   # nothing on disk
     _write_done_state(tmp_path, "12345670", "pw")
-    st = load_run_state(str(tmp_path), "aa:bb:cc:dd:ee:ff")
+    st = load_run_state(str(tmp_path), "02:00:00:00:00:ff")
     assert st is not None and st.found_pin == "12345670" and st.phase == "done"
     # Corrupt file → None, not a crash.
-    _state_path(str(tmp_path), "aa:bb:cc:dd:ee:ff").write_text("{not json")
-    assert load_run_state(str(tmp_path), "aa:bb:cc:dd:ee:ff") is None
+    _state_path(str(tmp_path), "02:00:00:00:00:ff").write_text("{not json")
+    assert load_run_state(str(tmp_path), "02:00:00:00:00:ff") is None
 
 
 def test_run_progress_line_cracked_is_silent():
@@ -332,3 +332,34 @@ def test_fresh_mac_no_reply_does_not_trip_one_shot(tmp_path):
     mac0 = c.our_mac
     c._after_attempt_mac_check(AttemptOutcome(PinResult.TIMEOUT, "0000000", reached_m1=False))
     assert not c._ap_one_shot and c.our_mac == mac0
+
+
+# ---- OUI-known default PINs (known_pins) ------------------------------------
+
+def test_known_pins_for_oui_lookup():
+    from wifit3.engine.attacks.wps.known_pins import known_pins_for
+    # 0018E7 is in the table; lookup is separator- and case-insensitive.
+    a = known_pins_for("00:18:e7:11:22:33")
+    b = known_pins_for("0018E7112233")
+    assert a and a == b
+    assert all(len(p) == 8 and p.isdigit() for p in a)
+    assert known_pins_for("ff:ff:ff:00:00:00") == []      # unknown OUI
+
+
+def test_campaign_seeds_oui_pins_ahead_of_common(tmp_path):
+    from wifit3.engine.attacks.wps.known_pins import known_pins_for
+    oui_pins = known_pins_for("00:18:e7:aa:bb:cc")
+    assert oui_pins                                       # precondition: OUI in table
+    c = WpsCampaign(_iface(), _target(bssid="00:18:e7:aa:bb:cc"),
+                    state_dir=str(tmp_path), log=lambda m: None)
+    assert c._oui_pin_count == len(oui_pins)
+    assert c._common_pins[:len(oui_pins)] == oui_pins     # OUI pins first
+    assert pins.COMMON_PINS[0] in c._common_pins          # then the generic list
+    assert len(c._common_pins) == len(set(c._common_pins))  # deduped
+
+
+def test_campaign_no_oui_match_is_just_common(tmp_path):
+    c = WpsCampaign(_iface(), _target(bssid="ff:ff:ff:aa:bb:cc"),
+                    state_dir=str(tmp_path), log=lambda m: None)
+    assert c._oui_pin_count == 0
+    assert c._common_pins == list(pins.COMMON_PINS)

@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Optional
 
 from ..campaign import Campaign
+from . import known_pins
 from . import pins as pinmod
 from .association import WlanTransport, WpsAssociation, random_client_mac, str_to_mac
 from .lock import LockTracker
@@ -146,8 +147,11 @@ class WpsCampaign(Campaign):
         self._lock_end_at: Optional[float] = None
         self._consecutive_locks_no_progress = 0
 
-        # COMMON-phase candidates (OUI-known default PINs can seed the front of this).
-        self._common_pins = list(pinmod.COMMON_PINS)
+        # COMMON-phase candidates: OUI-known factory PINs first (highest hit-rate for this
+        # hardware family), then the generic COMMON list. Deduped, order preserved.
+        oui_pins = known_pins.known_pins_for(self.bssid)
+        self._oui_pin_count = len(oui_pins)
+        self._common_pins = list(dict.fromkeys(oui_pins + list(pinmod.COMMON_PINS)))
 
         # One-shot-per-MAC detection. Some APs answer the first WSC exchange from a client
         # MAC then ignore it. _mac_reached_oracle = did the current MAC get a real reply;
@@ -376,6 +380,9 @@ class WpsCampaign(Campaign):
         self.status = "running"
         name = self.target.ssid or self.bssid
         logger.debug("WPS campaign start on %s (mac %s)", name, self.our_mac.hex())
+        if self._oui_pin_count:
+            self.log(f"OUI match: [cyan]{self._oui_pin_count}[/cyan] known default "
+                     f"PIN(s) — [dim]seeded ahead of the brute sweep[/dim]")
 
         # When resuming with a previously-recovered PIN, re-verify it against the AP
         if self.state.phase == "done" and self.state.found_pin:
