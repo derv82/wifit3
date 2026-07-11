@@ -6,38 +6,86 @@ Known bugs + QoL nits live in `BUGS.md`.
 
 ## High Priority
 
-### WPS PIN Progress
+### WPS PIN Progress  — ✓ implemented this session
 
-When we first target an AP, we fetch the captures from disk to show handshake/pmkid/wep/psk counts.
-We need to show the WPS PIN brute force progress (if a wps-XX_XX_XX.run file exists).
-Ideally it would get printed along with the handshake & pmkid counts.
+When we first target an AP, `_log_persisted_history` (`focus_v2/screen.py`) surfaces the on-disk
+handshake/PMKID/WEP/WPS counts. Add the in-progress WPS PIN sweep state, read from the
+`wps_<bssid>.run` resume file (colons→dashes) — which is NOT in `load_capture_index()`, so it needs
+its own JSON read keyed by BSSID.
 
-    |-> WPS PIN Progress: {N/11k if first_half|N/1k if second_half}
+    |-> WPS PIN sweep: {N/11k during first-half | N/1k once first-half is locked}
 
-Also we need to get rid of the `12345678` PIN (checksum doesn't match, does reaver/bully use this one?)
+The `N/11k | N/1k` formatter already exists (`focus_model.wps_status_markup`, plus the campaign's
+`_load_state` resumed message) — factor a pure `progress_from_state(dict)->str` and call it here.
+Show it only for *in-progress* runs: a cracked run already surfaces as a saved WPS PSK row, and a
+failed/exhausted run should say so, not show a frozen bar.
 
-### Improve 802.11 Logs
+(The `12345678` checksum question turned into a real defect — see **WPS PIN reliability** below. The
+checksum-invalid common PINs stay; the fix is that the sweep must stop looping on them.)
 
-We log every relevant (?) 802.11 frame to debug logs.
+### Improve 802.11 Logs — consistency pass
 
-    [RXFRAME]  {type}  to_ds= from_ds= attr1 -> addr2 (bssid addr3)
+The gripe is *inconsistency*, not volume. `[NEW AP]` (interface.py:233, free-form, INFO) breaks the
+column layout that `[RXFRAME]` (DEBUG) otherwise holds, so next to the structured frame traces it
+reads as noise. The RX filter is already sane — data/eapol/wep_data/assoc_resp/deauth/mgmt_*, no
+beacons/probes/control (interface.py:160) — so the fix is formatting, not filtering.
 
-Ideally the logs would only show relevant packets. "data" isn't too relevant...
-I dunno, we don't see too many data logs. I wonder what the criteria is for printing these... Most cards aren't tuned to 40mhz/80mhz so.. yea.
+- **Unify every frame line under one `[RXFRAME]` schema.** Fold the new-AP event into it:
+  `[RXFRAME] beacon   New AP on Ch {ch}: {bssid} ("{ssid}")`. One padded `{type}` column, then a
+  per-type detail; `[TXFRAME]` mirrors the same column so injects align with RX.
+- **Keep `data` frames** — reframe them as the monitor-mode-health signal they are (seeing data to
+  MACs that aren't ours = promiscuous capture working), rather than dropping them as "not relevant."
+- **`[TXFRAME]` stays DEBUG-guarded**, not INFO — a deauth burst / WPS sweep would flood it.
+- **Per-driver TX hex dump** (`rt2800usb/tx.py:188`, `rt3070`/`rt5370`/`rt5372`/`rt5572`, `mt76x2u`…) —
+  inconsistent prefixes, all DEBUG; normalize the format string (per-driver sweep, anti-DRY).
 
-Eapol packets, mgmt/auth/assoc packets, injection packets: those are relevant.
+The `wlan0`-in-logs bug is **fixed** — `interface.py` now logs the driver's `_chipset`, not the
+synthetic `self.name`. `self.name = wlan{N}` stays as the unique interface handle (it's the
+splash/manager selection key and disambiguates two identical cards); the full rename waits for
+**Multi-card support**.
 
-`[TXFRAME]` is always relevant. Maybe we could clean up the per-driver `TX (bulk_OUT EP 0x01 (56b): {56 bytes in hex}`
+### WPS PIN reliability — retriable vs. "this PIN is wrong"
 
-And some straight up wrong logs:
-- `[FAKEMAC]` mentions "wlan0", should only mention the chipset/driver.
-- Likewise for `wifit3.wlan.interface: Stopped channel hopping on wlan0`
-- There is no `wlan0` in wifit3. This is very misleading.
+The campaign *correctly* retries retriable failures forever — this is intentional and regression-
+tested (`test_wps_campaign.py:186`: a `PROTO_ERROR` must NOT advance the keyspace, else a locked /
+rate-limited / distant AP makes us skip good PINs and the whole brute-force is worthless). The real
+gap is narrower: we never *read* the AP's stated reason, so we can't distinguish a retriable refusal
+from a definitive "PIN rejected." The **only** signals that may ever advance a PIN are
+`FIRST/SECOND_HALF_WRONG` and an actual AP PIN/checksum-rejected error.
+
+**Design (agreed):** advance ONLY on `*_HALF_WRONG` or a confirmed "PIN rejected" config-error;
+everything else retries with **infinite patience** — no skip-after-N caps, no give-up bails (a far /
+locked / silent AP is still a valid target, just slow). Terminology: a `WSC_NACK` is the AP
+*answering* with a config-error code; a timeout is **"AP didn't respond"** — not a NACK.
+
+**Done (this session):** de-swallow `ATTR_CONFIG_ERROR` — the registrar parses it, logs it by name,
+and carries it (+ `reached_m1`) on `AttemptOutcome`; the per-attempt log shows the reason; the silent
+case now reads "AP didn't respond." **Pending hardware:** capture which config-error code the APs
+that choke on a checksum-invalid PIN (e.g. `12345678`) actually send, then map *that specific code* →
+advance. Until it's confirmed, nothing new auto-advances (play-it-safe). Note: the checksum-VALID
+sweep never emits a bad-checksum PIN, so a "checksum rejected" error can only occur for the COMMON
+literals — advancing there just moves to the next common PIN.
 
 
 -----
 
 ## Low Priority
+
+### OUI-Specific WPS PIN Selection — blocked on licensing
+
+Airgeddon ships `known_pins.db` — an OUI→default-PIN map (534 OUIs / ~1,800 PINs in the current
+`v1s1t0r1sh3r3/airgeddon` master; the F4dl0 fork is older/smaller at 318). Given a target BSSID's
+OUI (first 6 hex), seed those known default PINs *ahead* of the generic COMMON/brute sweep — far
+higher hit-rate than the generic list. Slots into the existing `common`-phase machine with no new
+oracle logic (each is a full 8-digit PIN; `first_half_ok` still short-circuits to the second-half
+sweep). ~5% of entries are checksum-invalid — they're *observed* factory PINs, which is exactly why
+keeping our own checksum-invalid commons is defensible.
+
+**Blocked:** airgeddon is **GPLv3**; wifit3 is **GPLv2** — incompatible, so we cannot copy the DB in.
+A bare OUI→PIN mapping is arguably uncopyrightable fact, but the file isn't; the clean path is
+re-deriving from a primary source with proper attribution (the WHENCE discipline we already hold for
+firmware). Deferred until that's sorted. Companion to the OUI→vendor table the client-fingerprinting
+item wants.
 
 ### Multi-card support (Minnie Drivers v2)
 
