@@ -147,9 +147,17 @@ class WpsRegistrar:
                 # No reply within the window. After M4/M6 a silent drop is the
                 # half-wrong oracle (reaver's timeout-as-NACK); otherwise the AP
                 # just isn't talking.
+                # Distinguish an explicit NACK (logged above) from timeout-as-NACK: a
+                # *silent* drop after M4/M6 is only ASSUMED wrong. If a correct first half
+                # ever reads as wrong, this is the line to look for — it means the AP's M5
+                # never reached us (lost/late), not that it said no.
                 if last_sent == "M4":
+                    self.log("[WPS] no reply after M4 → assuming first-half-wrong "
+                             "(timeout-as-NACK; an M5 may have been lost)")
                     return _out(PinResult.FIRST_HALF_WRONG, detail="no reply after M4")
                 if last_sent == "M6":
+                    self.log("[WPS] no reply after M6 → assuming second-half-wrong "
+                             "(timeout-as-NACK)")
                     return _out(PinResult.SECOND_HALF_WRONG, detail="no reply after M6")
                 return _out(PinResult.TIMEOUT, detail="AP didn't respond")
 
