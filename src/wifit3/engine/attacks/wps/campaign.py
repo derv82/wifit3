@@ -96,6 +96,7 @@ def run_progress_line(state: CampaignState) -> Optional[str]:
 class WpsCampaign(Campaign):
     _SAVE_EVERY = 16   # checkpoint the .run file every N attempts
     _MAX_TIMEOUT_RETRIES = 8   # retries of a silent (lost-reply) attempt before conceding
+    _REFUSAL_BAIL = 3   # consecutive active refusals (disassoc / identity-stall) before giving up
 
     button_id = "btn-wps-pin"
     key = "wps"
@@ -161,6 +162,11 @@ class WpsCampaign(Campaign):
         # persistently-dropping RX still advances instead of wedging.
         self._ap_sends_nacks = False
         self._timeout_retries = 0
+        # An AP that *actively* refuses external-registrar WPS — disassociates us, or engages EAP but
+        # stalls at Identity and never sends M1 — isn't crackable (WPS ext-reg disabled, or it's
+        # 802.1X). Count consecutive refusals and bail rather than soft-lock-churn forever. (Mere
+        # silence is NOT a refusal — that stays infinite-patience, could be a distant AP.)
+        self._consecutive_refusals = 0
 
     # ---- persistence --------------------------------------------------------
     def _load_state(self) -> CampaignState:
@@ -441,6 +447,22 @@ class WpsCampaign(Campaign):
                 # EWMA: Exponentially Weighted Moving Average. tl;dr math
                 self._attempt_ewma = 0.7 * self._attempt_ewma + 0.3 * (time.monotonic() - t0)
                 self.state.attempts += 1
+
+                if out.refused:   # AP actively rejected external-registrar WPS — never advances
+                    self._consecutive_refusals += 1
+                    # Log each one (no dedup) so the disassoc-vs-identity-stall variation is visible.
+                    self.log(f"trying [cyan]{pin}[/cyan] → [yellow]{out.detail}[/yellow] "
+                             f"[dim bold]\\[refused #{self._consecutive_refusals}][/dim bold]")
+                    if self._consecutive_refusals >= self._REFUSAL_BAIL:
+                        self.status = "failed"
+                        self.log("[red]giving up[/red] — this AP actively refuses external-registrar "
+                                 "WPS (disassoc / stalls at Identity, no M1). It likely has WPS "
+                                 "external-registrar disabled, or it's 802.1X/enterprise — not "
+                                 "crackable by PIN.")
+                        self._save_state()
+                        break
+                    continue                       # bounded retry; never advance the keyspace
+                self._consecutive_refusals = 0
 
                 if self._should_retry_lost_reply(pin, out):
                     # Session already reset by _try; the retry re-associates fresh (same MAC).

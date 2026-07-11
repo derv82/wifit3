@@ -359,6 +359,37 @@ def test_lost_reply_no_retry_for_silent_ap(tmp_path):
         PinResult.FIRST_HALF_WRONG, "01030006", via_timeout=True)) is False
 
 
+async def test_active_refusal_bails_not_churns(tmp_path):
+    # An AP that actively refuses (disassoc / identity-stall) is given up on after _REFUSAL_BAIL
+    # consecutive refusals — not soft-lock-churned forever. Mere silence would NOT bail.
+    class Refusing(WpsCampaign):
+        async def _try(self, pin):
+            return AttemptOutcome(PinResult.TIMEOUT, pin, refused=True,
+                                  detail="AP disassociated us (802.1X-auth-failed)")
+
+    c = Refusing(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    await c._loop()
+    assert c.status == "failed"
+    assert c.state.tested == 0
+    assert c.state.attempts == c._REFUSAL_BAIL       # bailed promptly, didn't churn the sweep
+
+
+async def test_silence_does_not_bail(tmp_path):
+    # A pure-silence TIMEOUT (refused=False) must NOT bail — infinite patience (could be a far AP).
+    hits = {"n": 0}
+
+    class Silent(WpsCampaign):
+        async def _try(self, pin):
+            hits["n"] += 1
+            if hits["n"] >= 5:
+                self.request_stop()                  # stop the otherwise-infinite retry
+            return AttemptOutcome(PinResult.TIMEOUT, pin, detail="AP didn't respond")
+
+    c = Silent(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    await c._loop()
+    assert hits["n"] >= 5                             # kept retrying (no bail), until we stopped it
+
+
 def test_config_error_setup_locked_locks_immediately(tmp_path):
     # An explicit WPS Setup-Locked NACK (config_error 15) is a lock, not a wrong PIN: lock at
     # once and do not advance the keyspace.

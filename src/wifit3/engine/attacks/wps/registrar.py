@@ -55,6 +55,8 @@ class AttemptOutcome:
     config_error: Optional[int] = None    # WSC ATTR_CONFIG_ERROR from a NACK — the AP's stated reason
     reached_m1: bool = False              # did the AP start the WSC exchange (send M1) at all?
     via_timeout: bool = False             # result inferred from silence (timeout-as-NACK), not a real NACK
+    refused: bool = False                 # AP actively refused external-registrar WPS (disassoc /
+    #                                       persistent identity-stall) — NOT mere silence
 
     @property
     def first_half_ok(self) -> bool:
@@ -227,11 +229,12 @@ class WpsRegistrar:
                     return _out(PinResult.SECOND_HALF_WRONG, detail="no reply after M6",
                                 via_timeout=True)
                 if disassoc_why is not None:
-                    return _out(PinResult.TIMEOUT, detail=f"AP disassociated us ({disassoc_why})")
+                    return _out(PinResult.TIMEOUT, detail=f"AP disassociated us ({disassoc_why})",
+                                refused=True)
                 if identity_reqs >= _IDENTITY_STALL:
-                    return _out(PinResult.TIMEOUT,
+                    return _out(PinResult.TIMEOUT, refused=True,
                                 detail=f"stalled at identity ({identity_reqs}x), no M1")
-                return _out(PinResult.TIMEOUT, detail="AP didn't respond")
+                return _out(PinResult.TIMEOUT, detail="AP didn't respond")   # mere silence: not refused
 
             p = M.parse_rx_frame(frame)
             if p is None:
