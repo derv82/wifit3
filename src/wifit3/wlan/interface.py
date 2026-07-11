@@ -513,15 +513,15 @@ class WlanInterface:
         support = getattr(self.driver, "FAKE_MAC", FakeMacSupport.UNIMPLEMENTED)
         unavailable = support in (FakeMacSupport.NONE, FakeMacSupport.UNIMPLEMENTED)
         if unavailable or not hasattr(self.driver, "enter_active_monitor"):
-            logger.info("set_fake_mac: %s (%s) — active-monitor unavailable (%s)",
-                        self.name, self._chipset, support.value)
+            logger.info("set_fake_mac: %s — active-monitor unavailable (%s)",
+                        self._chipset, support.value)
             return None
         mac_b = self._to_mac_bytes(mac)
         bssid_b = self._to_mac_bytes(bssid) if bssid is not None else None
         assumed = await self.driver.enter_active_monitor(mac_b, bssid_b)
         self.register_forged_mac(assumed)
         assumed_str = ":".join(f"{b:02x}" for b in assumed)
-        logger.info("[FAKEMAC] %s (%s) now HW-ACKing %s", self.name, self._chipset, assumed_str)
+        logger.info("[FAKEMAC] %s now HW-ACKing %s", self._chipset, assumed_str)
         return assumed_str
 
     async def clear_fake_mac(self) -> None:
@@ -529,7 +529,7 @@ class WlanInterface:
         monitor. Idempotent and safe on drivers without the capability."""
         if hasattr(self.driver, "exit_active_monitor"):
             await self.driver.exit_active_monitor()
-            logger.info("[FAKEMAC] %s (%s) restored plain monitor", self.name, self._chipset)
+            logger.info("[FAKEMAC] %s restored plain monitor", self._chipset)
 
     @staticmethod
     def _to_mac_bytes(mac: Any) -> bytes:
@@ -603,7 +603,7 @@ class WlanInterface:
             return
         self._device_lost = True
         self._is_hopping = False
-        logger.error(f"[{self.name}] adapter lost: {exc}")
+        logger.error(f"[{self._chipset}] adapter lost: {exc}")
         for cb in list(self._disconnect_callbacks):
             try:
                 cb(exc)
@@ -636,7 +636,7 @@ class WlanInterface:
             # Live packet dashboard — tally this inject (deauth vs other) by AP.
             self._record_tx(frame_bytes)
             return await self.driver.inject_frame(frame_bytes, use_no_ack)
-        logger.warning(f"Driver for {self.name} does not support injection.")
+        logger.warning(f"Driver for {self._chipset} does not support injection.")
         return False
 
     def _record_tx(self, frame_bytes: bytes) -> None:
@@ -721,7 +721,7 @@ class WlanInterface:
             self._hopping_task = asyncio.create_task(self._hop_loop(channels, interval))
             logger.info(
                 "Started channel hopping on %s across %d channel(s) every %.2fs",
-                self.name, len(channels), interval,
+                self._chipset, len(channels), interval,
             )
 
     async def _hop_loop(self, channels: List[int], interval: float):
@@ -777,7 +777,7 @@ class WlanInterface:
                     await tune
                 except Exception:
                     pass
-            logger.info(f"Stopped channel hopping on {self.name}")
+            logger.info(f"Stopped channel hopping on {self._chipset}")
 
     async def close(self):
         """Halts the driver loops and releases the USB interface."""
