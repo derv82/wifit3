@@ -50,6 +50,48 @@ bugs survived byte-faithful ports. It PASSES while EXCEPTING (and reporting) the
 `_dc_cancellation` block we skip; the except is signature-checked (the unique `0xc10` write) so it
 can't mask a real divergence.
 
+## EFUSE variants (board burn)
+
+The driver runs on any card matching `SUPPORTED_IDS` regardless of its EFUSE burn. The pcap-gated
+reference card is **rfe_type_expand 0x22** (raw 0xCA): BTG default RF set, cut 4, 1-antenna at the
+main port, phydm package-1, combo (BT fused on), crystal 0x2e. `connect()` logs the detected burn
+once (`RTL8821CU board: ...`), tagging `[untested variant]` when the burn differs (only the
+reference is HW-verified).
+
+Two kinds of fuse data. **Values** (crystal, TX-power PG, MAC, thermal/kfree trim) feed computation
+— any value already works (read at runtime, never hardcoded). **Branches** select code paths; each
+is runtime-gated on the fuse, so a non-reference card takes its own path while the reference wire is
+byte-identical:
+
+- **rfe_type_expand** → `phy.init_hw_info_by_rfe`: default RF set (BTG/WLG), the phydm table
+  discriminators (`rfe>>3`, package-1 override), the DPDT default (0xcb4) — all rfe cases ported 1:1
+  [SRC] phydm_hal_api8821c.c:328.
+- **rfe / cut / package** → the PHY_REG / AGC / RADIOA init tables are the full vendor arrays
+  (verbatim row counts) walked by `phy_cond.walk`; a different card resolves different rows.
+- **default_rf_set (BTG/WLG)** → `chan._switch_rf_set`, the BTG AGC-diff table (`bb.phy_agc_config`,
+  BTG-only per [SRC] phydm_hwconfig.c:1225 — a WLG card correctly applies none), the TX-power
+  RF_PATH_B lookup (`txpower`).
+- **rfe module type / single_ant_path** → `btc._decode_rfe` (all 32 module types [SRC]
+  halbtc8821c1ant.c:2474) + the single-ant park in `btc.power_on_setting`.
+
+Generalization gaps closed (were hardcoded to the reference; now runtime-gated, reference
+byte-identical):
+
+- **A-cut RF 0xb8 LCK fix** — `chan._switch_channel` / `_switch_channel_5g` gate the RF 0xb8
+  read/bit19/write on `cut == ODM_CUT_A` [SRC] phydm_hal_api8821c.c:831-950. The reference (cut 4)
+  never touches RF 0xb8.
+- **rfe_type-2 "1212 module" 5G-RX fix** — `mac.hal_init_misc` writes PAD_CTRL1+3 = 0x36 only for a
+  raw rfe of 2 [SRC] rtl8821c_halinit.c:257. The reference (rfe 0x22) skips it.
+
+Residual gaps (vendor-ported but HW-untested; only the reference burn is pcap+HW gated):
+
+- Every non-reference branch above is vendor-ported but hardware-untested — hence the connect tag.
+- **2-antenna board** (`ant_num == 2`): only the 1-antenna BT-coex module (`halbtc8821c1ant`) is
+  ported, not `halbtc8821c2ant`. connect() warns; the card "gives it a shot" on the 1-antenna path.
+- **IQK / TX-power tracking** (`config_phydm_set_ant_path`, `default_ant_num_8821c`) is unported for
+  ALL cards (monitor mode never sets `bNeedIQK`), so its antenna-number branch is moot here.
+- The A-cut `phydm_ccapar*` tables are `#if 0` in the vendor build (compiled out — not a gap).
+
 ## Orientation
 
 Start at `bringup.cold_bringup` — init → power seq → firmware → MAC → BB → RF, in kernel order.

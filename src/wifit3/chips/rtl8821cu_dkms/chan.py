@@ -16,6 +16,7 @@ _MASKDWORD = 0xFFFFFFFF
 _KFREE_GAIN_BMASK = 0x7C000        # RF 0x55/0x65 [18:14] kfree gain field
 _BAND_2_4G, _BAND_5G = 0, 1       # [SRC] include/rtw_rf.h:97
 _SWITCH_TO_BTG, _SWITCH_TO_WLG, _SWITCH_TO_WLA = 0, 1, 2   # [SRC] phydm_hal_api8821c.h rf_set enum
+_ODM_CUT_A = 0                    # [SRC] phydm_pre_define.h:753 — A-cut LCK fix branch (RF 0xb8)
 
 
 def _need_switch_band(t, channel: int) -> bool:
@@ -98,12 +99,15 @@ def _set_bb_swing_by_band_5g(t) -> None:
     set_bb_reg(t, 0x0C1C, 0xFFE00000, 0x200)
 
 
-def _switch_channel_5g(t, central_ch: int) -> None:
+def _switch_channel_5g(t, central_ch: int, cut: int) -> None:
     """config_phydm_switch_channel_8821c [SRC] phydm_hal_api8821c.c:865 (5G arm): set the RF band/
     channel word (RF 0x18 + the >64 sub-band bits BIT17/BIT18), the AGC table index by sub-band
     (0xc1c[11:8]: 36-64->1, 100-144->2, >=149->3), the clock-offset central frequency (0x860), then
-    write RF 0x18 with TRX stopped. No CCK-TX-filter (5G has no CCK); cut != A so no RF 0xb8."""
+    write RF 0x18 with TRX stopped. No CCK-TX-filter (5G has no CCK). An A-cut part additionally
+    read-modify-writes RF 0xb8[19] for the 5285-5375 MHz (ch 57-75) LCK-fail fix [SRC] :831-950 —
+    gated on the runtime cut, so the pcap card (cut 4) never touches RF 0xb8 (byte-identical)."""
     rf18 = read_rf(t, 0x18)
+    rf_b8 = read_rf(t, 0xB8) if cut == _ODM_CUT_A else 0    # [SRC] :831 A-cut only
     rf18 = (rf18 & ~((1 << 18) | (1 << 17) | 0xFF)) | central_ch
     if 100 <= central_ch <= 140:
         rf18 |= 1 << 17
@@ -124,6 +128,8 @@ def _switch_channel_5g(t, central_ch: int) -> None:
     else:                                                   # 118-177
         fc = 0x412
     set_bb_reg(t, 0x0860, 0x1FFE0000, fc)
+    if cut == _ODM_CUT_A:                                   # [SRC] :919-924 A-cut LCK fix 0xb8[19]
+        rf_b8 = (rf_b8 & ~(1 << 19)) if 57 <= central_ch <= 75 else (rf_b8 | (1 << 19))
     if central_ch == 153:
         _csi_mask_setting_5760(t, central_ch)              # FUNC_ENABLE: notch the 5760 MHz spur
     else:
@@ -132,6 +138,8 @@ def _switch_channel_5g(t, central_ch: int) -> None:
     dm.stop_ic_trx(t, True, ts)
     write_rf(t, 0x18, rf18)
     dm.stop_ic_trx(t, False, ts)
+    if cut == _ODM_CUT_A:                                   # [SRC] :949-950 write RF 0xb8
+        write_rf(t, 0xB8, rf_b8)
 
 
 # --- CSI-mask 5760 MHz spur notch (5G ch 151/153/155) [SRC] phydm_api.c:1190 -
@@ -192,14 +200,19 @@ def _set_bb_swing_by_band_2g(t) -> None:
     set_bb_reg(t, 0x0C1C, 0xFFE00000, 0x200)
 
 
-def _switch_channel(t, central_ch: int) -> None:
+def _switch_channel(t, central_ch: int, cut: int) -> None:
     """config_phydm_switch_channel_8821c [SRC] phydm_hal_api8821c.c:812 (2.4 GHz arm): set the RF
     band/channel word (RF 0x18), select AGC table 0 (0xc1c[11:8]), the clock-offset central
-    frequency (0x860[28:17]=0x96a), and re-apply the cached CCK-TX-filter regs (ch != 14)."""
+    frequency (0x860[28:17]=0x96a), and re-apply the cached CCK-TX-filter regs (ch != 14). An A-cut
+    part additionally sets RF 0xb8[19] (LCK fix) [SRC] :831-950 — gated on the runtime cut, so the
+    pcap card (cut 4) never touches RF 0xb8 (byte-identical)."""
     rf18 = read_rf(t, 0x18)
+    rf_b8 = read_rf(t, 0xB8) if cut == _ODM_CUT_A else 0    # [SRC] :831 A-cut only
     rf18 = (rf18 & ~((1 << 18) | (1 << 17) | 0xFF)) | central_ch
     set_bb_reg(t, 0x0C1C, 0x00000F00, 0x0)                 # AGC table idx 0
     set_bb_reg(t, 0x0860, 0x1FFE0000, 0x96A)               # clock-offset fc
+    if cut == _ODM_CUT_A:                                   # [SRC] :851-852 A-cut LCK fix 0xb8[19]=1
+        rf_b8 |= 1 << 19
     set_bb_reg(t, 0x0A24, _MASKDWORD, t.rega24)            # cached CCK TX filter
     set_bb_reg(t, 0x0A28, 0x0000FFFF, t.rega28 & 0xFFFF)
     set_bb_reg(t, 0x0AAC, _MASKDWORD, t.regaac)
@@ -207,6 +220,8 @@ def _switch_channel(t, central_ch: int) -> None:
     dm.stop_ic_trx(t, True, ts)
     write_rf(t, 0x18, rf18)
     dm.stop_ic_trx(t, False, ts)
+    if cut == _ODM_CUT_A:                                   # [SRC] :949-950 write RF 0xb8
+        write_rf(t, 0xB8, rf_b8)
     # phydm_ccapar_8821c is #if 0 (and cut != B) -> silent.
 
 
@@ -306,9 +321,9 @@ def set_channel(t, info, channel: int) -> None:
             _switch_band(t, info, central_ch)
             _set_bb_swing_by_band_2g(t)
     if is_5g:
-        _switch_channel_5g(t, central_ch)
+        _switch_channel_5g(t, central_ch, info.chip_ver)
     else:
-        _switch_channel(t, central_ch)
+        _switch_channel(t, central_ch, info.chip_ver)
     _config_kfree(t, info, channel)
     # set bandwidth (20 MHz, primary-channel index 0)
     _mac_switch_bandwidth(t, channel, 0)

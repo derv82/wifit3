@@ -410,14 +410,17 @@ _BIT_MGNT_XMIT_ACK = 1 << 12       # FWHW_TXQ_CTRL — ack for xmit mgmt frames
 _BIT_MAC_SEC_EN = 1 << 9           # CR :18758
 _CHK_TSF_EN_CBSSID = 0x03          # BIT_CHK_TSF_EN | BIT_CHK_TSF_CBSSID :15374-15375
 _DRV_INFO_SZ = 4                   # config_rx_info set DRV_INFO_PHY_STATUS (= 4 B, nonzero)
+REG_PAD_CTRL1 = 0x0064             # [SRC] halmac_reg_8821c.h:48 REG_PAD_CTRL1_8821C
 
 
-def hal_init_misc(t) -> None:
+def hal_init_misc(t, info) -> None:
     """rtl8821c_hal_init_misc [SRC] rtl8821c_halinit.c:203 — the driver-level post-hal_init setup
     `airmon-ng` reaches: clear the security CAM, open the RX filter maps (accept all mgmt + all
     data, ps-poll-only ctrl), sync RCR (drop CRC/ICV/PWRMGT err frames, keep PHY-status), enable
     the mgmt-xmit ack + MAC security engine, disable BAR, and turn the RX-TSF address filter on.
-    This is the block that actually makes monitor-mode RX flow."""
+    This is the block that actually makes monitor-mode RX flow. An rfe_type-2 ("1212") board also
+    takes a PAD_CTRL1 5G-RX fix [SRC] :257 — gated on the runtime EFUSE rfe (raw 0xCA), so the pcap
+    card (rfe 0x22) skips it byte-identically."""
     t.write32(REG_CAMCMD, _BIT_SECCAM_POLLING | _BIT_SECCAM_CLR)     # invalidate_cam_all
     t.write16(REG_RXFLTMAP1, 0x0400)                                # ps-poll only, ctrl off
     t.write16(REG_RXFLTMAP2, 0xFFFF)                                # all data
@@ -432,6 +435,8 @@ def hal_init_misc(t) -> None:
     t.write8(REG_MISC_CTRL, 0x03)                                   # disable secondary CCA 20/40M
     t.write16(REG_CR, t.read16(REG_CR) | _BIT_MAC_SEC_EN)
     t.write8(REG_NAN_RX_TSF_FILTER, _CHK_TSF_EN_CBSSID)
+    if info.rfe_type == 2:                                          # "1212 module" 5G-RX fix [SRC] :257
+        t.write8(REG_PAD_CTRL1 + 3, 0x36)
 
 
 # --- rtl8821c_phy_bf_init [SRC] rtl8821c_phy.c (CONFIG_BEAMFORMING) ----------

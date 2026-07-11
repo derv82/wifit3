@@ -31,7 +31,7 @@ from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
-from . import bringup, chan, efuse, mac, tx, watchdog
+from . import bringup, chan, efuse, mac, phy, tx, watchdog
 from .constants import USB_PID_8821CU, USB_VID_REALTEK
 from .rf import read_rf
 from .rx import iter_frames
@@ -61,6 +61,11 @@ _WATCHDOG_PERIOD_S = 2.0        # phydm dynamic-check cadence [SRC] rtw_cmd.c rt
 _PRIME_5G_CH = 36
 _PRIME_2G_CH = 1
 _PRIME_SETTLE_S = 0.1           # VCO settle after each band jump (the old bounce lacked this)
+
+# The pcap-gated reference card's EFUSE burn. A card whose burn differs selects ported-but-hardware-
+# untested branches (walker rows / cut / rf_set / rfe-2 / ant port), so connect() tags it once.
+_REF_RFE_TYPE = 0x22            # rfe_type_expand (raw 0xCA): BTG, 1-Ant@main, combo
+_REF_CUT = 4                    # hal chip_ver / dm cut_version
 
 
 class Rtl8821cuDkmsDriver:
@@ -158,6 +163,7 @@ class Rtl8821cuDkmsDriver:
         _p(0.85, "Enabling monitor RX")
         await loop.run_in_executor(None, bringup.phase_monitor, t, info)
         self.info = info
+        self._log_detected_config(info)
         _p(0.90, "Priming 2.4 GHz band")
         await self._prime_2g_band(loop)
         # phydm dynamic-check watchdog (kernel-parity — its ~2 s ticks are in the pcap). DIG runs
@@ -167,6 +173,25 @@ class Rtl8821cuDkmsDriver:
         self._watchdog_task = loop.create_task(self._watchdog_loop())
         _p(1.0, "RTL8821CU monitor up (ch 1 @ 20 MHz)")
         return True
+
+    def _log_detected_config(self, info) -> None:
+        """One-line log of the EFUSE-derived board burn at connect. The pcap-gated reference card is
+        rfe_type_expand 0x22 (BTG / cut 4 / 1-Ant@main / combo); the runtime EFUSE branches
+        (chan cut-A RF 0xb8, mac rfe-2 PAD_CTRL1, the phydm table walker's cut/rfe/package rows,
+        default_rf_set AGC-diff, btc RFE decode) are ported from vendor C but only this burn is
+        HW-verified, so a different burn is tagged. A 2-antenna board has no ported coex module
+        (only the 1-antenna path is ported) and is called out as a genuinely untested variant."""
+        rf_set = "BTG" if info.default_rf_set == phy.SWITCH_TO_BTG else "WLG"
+        ant_port = "main" if info.single_ant_path == 1 else "aux"
+        untested = info.rfe_type != _REF_RFE_TYPE or info.chip_ver != _REF_CUT
+        logger.info(
+            "RTL8821CU board: rfe_type=0x%02x rf_set=%s cut=%d %d-Ant@%s package=%d xtal=0x%02x "
+            "bt_coex=%s%s", info.rfe_type, rf_set, info.chip_ver, info.ant_num, ant_port,
+            info.phydm_package_type, info.crystal_cap, info.bt_coexist,
+            " [untested variant]" if untested else "")
+        if info.ant_num == 2:
+            logger.warning("RTL8821CU: untested variant: 2-antenna board — only the 1-antenna "
+                           "BT-coex path is ported; antenna routing may be wrong.")
 
     async def _prime_2g_band(self, loop: asyncio.AbstractEventLoop) -> None:
         """Wake 2.4 GHz RX with a real cross-band LO jump. After cold init the chip sits on ch1 but

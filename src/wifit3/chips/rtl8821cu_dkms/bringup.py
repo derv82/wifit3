@@ -101,7 +101,7 @@ def hal_init(t, info) -> None:
     mac.init_interface_cfg(t)
     # rtl8821c_hal_init tail (after _halmac_init_hal): the driver misc/monitor RX-filter setup,
     # then the PHYDM dynamic-mechanism init (DIG/CCK-PD/adaptivity/...).
-    mac.hal_init_misc(t)
+    mac.hal_init_misc(t, info)
     dm.phy_init_haldm(t, info)
     # rtl8821c_hal_init tail after phy_init_haldm: beamforming MU-MIMO/TXBF defaults.
     mac.phy_bf_init(t)
