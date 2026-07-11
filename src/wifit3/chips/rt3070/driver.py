@@ -51,6 +51,7 @@ class RT3070Driver:
         self.is_warm: bool = False
         self._chip = None
         self._eeprom: Optional[eeprom.EepromValues] = None
+        self._rf: Optional[eeprom.RfChip] = None   # RF companion resolved from the EEPROM
         self._drv = None                 # DrvData (RX-filter calibration) from init
         self._channel: Optional[int] = None
         self._lna_gain: int = 0          # current-channel LNA gain (RSSI conversion)
@@ -103,6 +104,24 @@ class RT3070Driver:
         self._eeprom = eeprom.parse_eeprom(buf)
         self.mac_address = ":".join(f"{b:02x}" for b in self._eeprom.mac)
 
+        # Runtime EEPROM config identification, ported from rt2800_init_eeprom so this driver
+        # runs on ANY 148f:3070 regardless of EEPROM contents (not just the RF3020 reference).
+        ev, chip = self._eeprom, self._chip
+        self._rf = eeprom.resolve_rf_chip(ev)
+        logger.info(
+            "RT3070 config: silicon=0x%04x rev=0x%04x rf=%s antenna=%dT%dR freq_off=%d "
+            "ext_lna_bg=%s ext_tx_alc=%s ant_div=%d power_limit=%s",
+            chip.rt, chip.rev, self._rf.name, ev.tx_chain_num, ev.rx_chain_num,
+            ev.freq_offset, ev.external_lna_bg, ev.external_tx_alc, ev.ant_diversity,
+            ev.power_limit,
+        )
+        if not self._rf.ported and self._rf.rf_id != 0:
+            logger.warning(
+                "RT3070 untested variant: EEPROM RF chip %s is not in the ported rf3xxx set; "
+                "running the RT30xx silicon-default channel tune (the kernel would -ENODEV). "
+                "Reference card is RF3020.", self._rf.name,
+            )
+
         if mac.is_chip_warm(t):
             self.is_warm = True
             # The RX-filter cal already ran on the first cold boot; recover its result from
@@ -115,7 +134,6 @@ class RT3070Driver:
 
         firmware.upload(t, firmware.load_firmware_blob())        # FW load + MCU boot
 
-        ev, chip = self._eeprom, self._chip
         mac.set_radio_led(t, ev)                                 # radio LED on
         mac.wakeup(t)                                            # STATE_AWAKE
         mac.usb_enable_radio_dma(t)                              # USB DMA aggregation
@@ -154,8 +172,8 @@ class RT3070Driver:
         # on capture-1: every aireplay deauth (FC=0xc0) rode bulk-OUT EP 0x01.
         self._bulk_out_ep = min(eps.bulk_out) if eps.bulk_out else None
         mode = "WARM reattach (skipped FW + init)" if self.is_warm else "cold bring-up"
-        logger.info("RT3070 %s: mac=%s rf=0x%04x %dT%dR ext_lna_2g=%s freq_off=%d",
-                    mode, self.mac_address, self._eeprom.rf_type, self._eeprom.tx_chain_num,
+        logger.info("RT3070 %s: mac=%s rf=%s %dT%dR ext_lna_2g=%s freq_off=%d",
+                    mode, self.mac_address, self._rf.name, self._eeprom.tx_chain_num,
                     self._eeprom.rx_chain_num, self._eeprom.external_lna_bg,
                     self._eeprom.freq_offset)
 

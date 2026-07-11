@@ -16,7 +16,9 @@ rt2x00config.c:104-163]. That is the 120-op block airodump/iw repeats per hop.
 Scope: RF3020 (and its RF2020/3021/3022/3320 2.4 GHz siblings) take ``config_channel_rf3xxx``;
 the other RF families and the RT3352/3593/3883/5592/6352 BBP arms are different silicon
 this driver does not claim, so — like ``mac.init_registers`` — only the reachable RF30xx
-2.4 GHz path is transcribed; foreign-family arms raise ``#TODO untestable``.
+2.4 GHz path is transcribed. ``config_channel`` runs any RF companion (incl. an unburned /
+mislabeled EEPROM RF_TYPE) on that RF30xx silicon-default tune rather than -ENODEV; the
+driver names + flags an untested variant once at connect [SRC rt2800lib.c:4185-4227].
 """
 from __future__ import annotations
 
@@ -27,9 +29,6 @@ from .eeprom import EepromValues
 from .link_tuner import reset_tuner
 from .state import DrvData
 from .transport import RT3070Transport
-
-# RF families that route to config_channel_rf3xxx [SRC rt2800lib.c:4185-4192].
-_RF3XXX = (C.RF2020, C.RF3020, C.RF3021, C.RF3022, C.RF3320)
 
 
 def _clamp(value: int, lo: int, hi: int) -> int:
@@ -141,7 +140,9 @@ def config_ant(t: RT3070Transport, chip: ChipInfo, ev: EepromValues) -> None:
 
     if ev.rx_chain_num == 1:
         if (chip.is_rt(C.RT3070) or chip.is_rt(C.RT3090)) and ev.ant_diversity:
-            _set_ant_diversity(t)                  # #TODO untestable: not set on this card
+            # default_ant.rx from ANT_DIVERSITY: 1/2 → ANTENNA_A, 3 → ANTENNA_B
+            # [SRC rt2800lib.c:11251-11264]. Reference card has ANT_DIVERSITY=0 ⇒ skipped.
+            _set_ant_diversity(t, rx_ant_a=ev.ant_diversity != 3)
         r3 = set_field(r3, C.BBP3_RX_ANTENNA, 0)
     elif ev.rx_chain_num == 2:
         r3 = set_field(r3, C.BBP3_RX_ANTENNA, 1)   # #TODO untestable: 2T2R
@@ -152,11 +153,19 @@ def config_ant(t: RT3070Transport, chip: ChipInfo, ev: EepromValues) -> None:
     t.bbp_write(1, r1)
 
 
-def _set_ant_diversity(t: RT3070Transport) -> None:
-    """[SRC rt2800lib.c:2301-2320 rt2800_set_ant_diversity]. #TODO untestable:
-    EEPROM ANT_DIVERSITY is clear on this card, so config_ant never calls this."""
-    raise NotImplementedError(
-        "#TODO untestable: SW antenna diversity (EEPROM ANT_DIVERSITY unset on this card)")
+def _set_ant_diversity(t: RT3070Transport, rx_ant_a: bool) -> None:
+    """SW antenna diversity for 1-chain RT3070/RT3090 with EEPROM ANT_DIVERSITY set
+    [SRC rt2800lib.c:2300-2320 rt2800_set_ant_diversity], USB path. ``rx_ant_a`` is
+    default_ant.rx == ANTENNA_A; it drives the MCU eesk pin (A→1) and the GPIO3 output
+    bit (A→0). The PCI E2PROM_CSR arm is a different bus. Reference card has
+    ANT_DIVERSITY=0, so config_ant never reaches this — runtime-gated, byte-identical."""
+    eesk_pin = 1 if rx_ant_a else 0
+    gpio_bit3 = 0 if rx_ant_a else 1
+    t.mcu_request(C.MCU_ANT_SELECT, 0xFF, eesk_pin, 0)
+    reg = t.register_read(C.GPIO_CTRL)
+    reg = set_field(reg, C.GPIO_CTRL_DIR3, 0)
+    reg = set_field(reg, C.GPIO_CTRL_VAL3, gpio_bit3)
+    t.register_write(C.GPIO_CTRL, reg)
 
 
 # ---------------------------------------------------------------------------
@@ -231,12 +240,14 @@ def config_channel(t: RT3070Transport, chip: ChipInfo, ev: EepromValues,
     # tx_chain_num <= 2 here ⇒ no default_power3.
 
     rf = C.RF_VALS_3X_2G[channel]
-    if ev.rf_type in _RF3XXX:
-        config_channel_rf3xxx(t, ev, drv, rf, power1, power2)
-    else:
-        # #TODO untestable: RF3052/RF3053/RF3290/RF53xx/RF55xx/RF7620 — different
-        # radios this driver does not claim (148f:3070 is RF3020).
-        raise NotImplementedError(f"#TODO untestable: RF type 0x{ev.rf_type:04x} channel tune")
+    # config_channel RF dispatch [SRC rt2800lib.c:4185-4227]. The only tune this driver
+    # ports is config_channel_rf3xxx — the radios RT3070/3071/3090 silicon ships (RF2020/
+    # 3020/3021/3022/3320, eeprom.PORTED_RF_CHIPS). A runtime EEPROM whose NIC_CONF0.RF_TYPE
+    # is outside that set (unburned/mislabeled 148f:3070, or the kernel's rf3052/rf3053/
+    # rf3322/rf55xx radios this driver doesn't claim) is run on that same silicon-default
+    # tune rather than -ENODEV'd like the kernel, so the card still comes up; driver._bringup
+    # logs it once as an untested variant.
+    config_channel_rf3xxx(t, ev, drv, rf, power1, power2)
 
     # RF3020 is NOT in the RF3070/RF3290/RF53xx VCO list, so the rfcsr30/rfcsr3
     # VCO-cal block [SRC 4228-4255] is not taken on this card.

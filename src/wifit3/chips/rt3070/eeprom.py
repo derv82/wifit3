@@ -210,3 +210,53 @@ def parse_eeprom(buf: bytes) -> EepromValues:
             C.get_field(word(C.EEPROM_RSSI_BG2), C.EEPROM_RSSI_BG2_OFFSET2),
         ),
     )
+
+
+# ----------------------------------------------------------------------
+# RF companion-chip identification — the Ralink config_channel discriminator.
+#
+# The rt2800 family carries two ids: the RT *MAC silicon* (MAC_CSR0, drives
+# rt2800_init_bbp / rt2800_init_rfcsr) and the *RF companion chip* (EEPROM-encoded,
+# drives rt2800_config_channel). For the silicon this driver claims (RT3070/3071/3090)
+# rt2800_init_eeprom resolves the RF from NIC_CONF0.RF_TYPE — NOT EEPROM_CHIP_ID, which
+# is only read for RT5390/5392/3290/6352 silicon (this card's EEPROM_CHIP_ID reads 0x3070,
+# a landmine that would mis-select RF3070→config_channel_rf53xx). The same RT3070 silicon
+# can pair with different RF companions, so the RF — not the silicon — decides the tune.
+# [SRC] rt2800lib.c:11182-11235.
+# ----------------------------------------------------------------------
+RF_NAMES = {
+    C.RF2820: "RF2820", C.RF2850: "RF2850", C.RF2720: "RF2720", C.RF2750: "RF2750",
+    C.RF3020: "RF3020", C.RF2020: "RF2020", C.RF3021: "RF3021", C.RF3022: "RF3022",
+    C.RF3052: "RF3052", C.RF2853: "RF2853", C.RF3320: "RF3320", C.RF3322: "RF3322",
+    C.RF3053: "RF3053", C.RF5592: "RF5592", C.RF3070: "RF3070",
+}
+
+# RF companions this driver has a config_channel path for: the config_channel_rf3xxx set
+# [SRC rt2800lib.c:4185-4192]. RT3070/3071/3090 silicon natively ships one of these; the
+# other kernel arms (rf3052/rf3053/rf3322/rf55xx) are foreign radios this driver does not
+# claim, so an EEPROM RF_TYPE outside this set is an unburned/mislabeled 148f:3070.
+PORTED_RF_CHIPS = frozenset({C.RF2020, C.RF3020, C.RF3021, C.RF3022, C.RF3320})
+
+
+@dataclass(frozen=True)
+class RfChip:
+    """RF companion chip resolved from the runtime EEPROM. ``rf_id`` is the raw kernel RF
+    constant (0 on an unburned NIC_CONF0.RF_TYPE); ``ported`` is whether this driver has a
+    config_channel path for it. An unrecognised/unburned read is NOT ported but is still run
+    on config_channel_rf3xxx (the RT30xx silicon default) — the kernel -ENODEVs on an unknown
+    RF; we do not, so an erased-EEPROM retail dongle still tunes."""
+    rf_id: int
+    name: str
+    ported: bool
+
+
+def resolve_rf_chip(ev: EepromValues) -> RfChip:
+    """Resolve the RF companion of a 148f:3070 card [SRC rt2800lib.c:11182-11235
+    rt2800_init_eeprom]. The RT3070/3071/3090 silicon this driver claims all take the
+    NIC_CONF0.RF_TYPE branch (``ev.rf_type``) — the EEPROM_CHIP_ID branch is RT5390/5392/
+    3290/6352-only and would mis-read this card's word0=0x3070 as RF3070. Unlike the kernel
+    this does NOT fail on an unknown RF: a 148f:3070 with an unburned/foreign RF_TYPE is
+    expected, and the caller runs it on the config_channel_rf3xxx silicon default (see
+    chan.config_channel)."""
+    rf = ev.rf_type
+    return RfChip(rf_id=rf, name=RF_NAMES.get(rf, f"0x{rf:04x}"), ported=rf in PORTED_RF_CHIPS)

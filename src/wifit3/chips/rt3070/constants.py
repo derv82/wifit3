@@ -55,13 +55,25 @@ REV_RT3070E = 0x0200
 REV_RT3070F = 0x0201
 REV_RT3071E = 0x0211
 
-# RF chip ids [SRC rt2800.h:53-63] (EEPROM NIC_CONF0 RF_TYPE field)
+# RF companion-chip ids [SRC rt2800.h:49-73]. On RT30xx silicon the RF id is the 4-bit
+# NIC_CONF0.RF_TYPE field, so only 0x1-0xF are reachable for the cards this driver claims;
+# RF3070 (0x3070) is an EEPROM_CHIP_ID-encoded id on OTHER silicon. LANDMINE: this card's
+# word0 (EEPROM_CHIP_ID) reads 0x3070, so RT3070 silicon MUST resolve its RF from RF_TYPE
+# (0x05=RF3020), never EEPROM_CHIP_ID [SRC rt2800lib.c:11187-11201].
+RF2820 = 0x0001                          # blank-EEPROM NIC_CONF0 default [SRC rt2800lib.c:11053]
+RF2850 = 0x0002
+RF2720 = 0x0003
+RF2750 = 0x0004
 RF3020 = 0x0005
 RF2020 = 0x0006
 RF3021 = 0x0007
 RF3022 = 0x0008
+RF3052 = 0x0009
+RF2853 = 0x000A
 RF3320 = 0x000B
-RF2820 = 0x0001                          # blank-EEPROM NIC_CONF0 default [SRC rt2800lib.c:11053]
+RF3322 = 0x000C
+RF3053 = 0x000D
+RF5592 = 0x000F
 RF3070 = 0x3070
 
 # LED mode (blank-EEPROM FREQ default) [SRC rt2x00reg.h:41]
@@ -118,7 +130,9 @@ EFUSE_DATA3 = 0x059C
 
 # --- GPIO control (rfkill direction) [SRC rt2800.h:442,453] ----------------
 GPIO_CTRL = 0x0228
+GPIO_CTRL_VAL3 = 0x00000008              # [SRC rt2800.h:446] SW ant-diversity GPIO output
 GPIO_CTRL_DIR2 = 0x00000400
+GPIO_CTRL_DIR3 = 0x00000800              # [SRC rt2800.h:454] 0 = output (ant-diversity)
 
 # --- firmware / MCU mailbox [SRC rt2800usb.h:25, rt2800.h:2112-2143,575] ----
 FIRMWARE_IMAGE_BASE = 0x3000
@@ -145,6 +159,7 @@ MCU_LED_STRENGTH = 0x51
 MCU_LED_AG_CONF = 0x52
 MCU_LED_ACT_CONF = 0x53
 MCU_LED_LED_POLARITY = 0x54
+MCU_ANT_SELECT = 0x73                    # [SRC rt2800.h:3034] SW ant-diversity eesk pin
 MCU_BOOT_SIGNAL = 0x72
 
 # --- indirect BBP register access [SRC rt2800.h:808-814] -------------------
