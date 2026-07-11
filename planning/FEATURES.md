@@ -6,6 +6,50 @@ Known bugs + QoL nits live in `BUGS.md`.
 
 ## High Priority
 
+### WPS PIN Progress
+
+When we first target an AP, we fetch the captures from disk to show handshake/pmkid/wep/psk counts.
+We need to show the WPS PIN brute force progress (if a wps-XX_XX_XX.run file exists).
+Ideally it would get printed along with the handshake & pmkid counts.
+
+    |-> WPS PIN Progress: {N/11k if first_half|N/1k if second_half}
+
+Also we need to get rid of the `12345678` PIN (checksum doesn't match, does reaver/bully use this one?)
+
+### Improve 802.11 Logs
+
+We log every relevant (?) 802.11 frame to debug logs.
+
+    [RXFRAME]  {type}  to_ds= from_ds= attr1 -> addr2 (bssid addr3)
+
+Ideally the logs would only show relevant packets. "data" isn't too relevant...
+I dunno, we don't see too many data logs. I wonder what the criteria is for printing these... Most cards aren't tuned to 40mhz/80mhz so.. yea.
+
+Eapol packets, mgmt/auth/assoc packets, injection packets: those are relevant.
+
+`[TXFRAME]` is always relevant. Maybe we could clean up the per-driver `TX (bulk_OUT EP 0x01 (56b): {56 bytes in hex}`
+
+And some straight up wrong logs:
+- `[FAKEMAC]` mentions "wlan0", should only mention the chipset/driver.
+- Likewise for `wifit3.wlan.interface: Stopped channel hopping on wlan0`
+- There is no `wlan0` in wifit3. This is very misleading.
+
+
+-----
+
+## Low Priority
+
+### Multi-card support (Minnie Drivers v2)
+
+Run 2+ USB cards in one session — pool RX, split TX. Possible because drivers are generic
+(`WlanDriver`, no global state); the work is making the layer *above* them multi-instance.
+Capabilities: pooled RX (~2× beacons/EAPOL, union AP list), hot-plug add/remove mid-session,
+split the channel set across cards, dedicate one card to TX so a deauth can't deafen our own
+RX, one-card-per-target. **Complexity: big refactor** — `WlanInterface` goes per-card and a
+new `CardPool` orchestrator owns the fleet, merged model, channel arbitration, and TX routing.
+Enumeration is mostly there (`WlanDeviceManager`); everything downstream of "I have N
+interfaces" is singular today.
+
 ### Test & Fix macOS support
 
 Figure out how to detect & access drivers from userland in OSX.
@@ -89,17 +133,6 @@ per-target log only. Mirroring it for the scanner would be a separate, optional 
 
 **Complexity.** Low — one dataclass field, one append in `_log`, one replay branch in
 `_enter_target`. No threading, no disk, no new widgets.
-
-### Multi-card support (Minnie Drivers v2)
-
-Run 2+ USB cards in one session — pool RX, split TX. Possible because drivers are generic
-(`WlanDriver`, no global state); the work is making the layer *above* them multi-instance.
-Capabilities: pooled RX (~2× beacons/EAPOL, union AP list), hot-plug add/remove mid-session,
-split the channel set across cards, dedicate one card to TX so a deauth can't deafen our own
-RX, one-card-per-target. **Complexity: big refactor** — `WlanInterface` goes per-card and a
-new `CardPool` orchestrator owns the fleet, merged model, channel arbitration, and TX routing.
-Enumeration is mostly there (`WlanDeviceManager`); everything downstream of "I have N
-interfaces" is singular today.
 
 ### WinUSB-install mascot — "WiFFy" — post-alpha, Windows-only delight
 
