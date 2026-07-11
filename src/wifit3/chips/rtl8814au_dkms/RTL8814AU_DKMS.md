@@ -326,3 +326,17 @@ re-prime the pipe after it — band-switch clock-gate stall. Verified: 5→2 dwe
 (mean 7.6/s, 0 zero-seconds), 3/3 repeated cycles healthy (was 3/3 dead), same-band still healthy,
 verify_pcap still 100%. Not a divergence from Linux — correct RX-pipe handling of the band-switch RX
 re-enable that the kernel URB does for free.
+
+**NOT actually resolved (2026-07-10, later).** Field test disproved it: in the real app, set the
+channel filter to 5 GHz, scan ~30–50 s, then filter to one 2.4 GHz channel (ch6) → ~40 s of silence,
+watchdog logging `IGI=0x1c fa=0` every tick. The bug is the **scanner path (`scan=True`)**; both fix
+parts are scoped to `scan=False`, so neither the pause nor `reset_rx_pipe` ever fires on the path the
+user hits. The `hopdwell_watch` A/B dwelled with `scan=False`, so it validated the fixed branch, not the
+real trigger — same test-doesn't-match-trigger error as the earlier over-claims. Also `fa=0` (BB
+counting ZERO false alarms on a noisy channel) means the front-end is genuinely OFF, not just an
+insensitive/stalled USB pipe — a `clear_halt` can't revive a dead front-end, so the pipe-stall
+diagnosis likely applied only to the scan=False variant (or was partly stochastic recovery). NEXT: (1)
+key the fix off the **5↔2 band cross**, not scan-vs-dwell; (2) re-run `rx_pipe_probe.py` on the
+`scan=True` path — if `raw_bufs=0` AND `fa=0`, it's the front-end/CCK-OFDM clock not re-enabling, not
+the pipe, and the band-switch RX re-enable itself is the target. Commits `9a264bd`/`49d86d1` fix a
+scan=False variant only, not the scanner case.
