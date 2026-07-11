@@ -308,32 +308,6 @@ def test_dead_first_half_skips_common_prefix_in_sweep(tmp_path):
     assert c.state.p1_index == 1
 
 
-# ---- one-shot-per-MAC detection + rotation ----------------------------------
-
-def test_one_shot_per_mac_rotates_after_learning(tmp_path):
-    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
-    mac0 = c.our_mac
-    # Fresh MAC's first attempt reaches the oracle — no rotation yet (not learned).
-    c._after_attempt_mac_check(AttemptOutcome(PinResult.FIRST_HALF_WRONG, "0000000", reached_m1=True))
-    assert c._mac_reached_oracle and not c._ap_one_shot and c.our_mac == mac0
-    # Same MAC now gets no reply → learn one-shot + rotate.
-    c._after_attempt_mac_check(AttemptOutcome(PinResult.TIMEOUT, "0000000", reached_m1=False))
-    assert c._ap_one_shot and c.our_mac != mac0
-    # Learned: an oracle result now rotates proactively (spent MAC).
-    mac1 = c.our_mac
-    c._after_attempt_mac_check(AttemptOutcome(PinResult.FIRST_HALF_WRONG, "0001000", reached_m1=True))
-    assert c.our_mac != mac1
-
-
-def test_fresh_mac_no_reply_does_not_trip_one_shot(tmp_path):
-    # A no-reply on a MAC that never reached the oracle is NOT the one-shot tell — leave it
-    # to the strike/lock path (far / rate-limited AP), don't rotate here.
-    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
-    mac0 = c.our_mac
-    c._after_attempt_mac_check(AttemptOutcome(PinResult.TIMEOUT, "0000000", reached_m1=False))
-    assert not c._ap_one_shot and c.our_mac == mac0
-
-
 # ---- OUI-known default PINs (known_pins) ------------------------------------
 
 def test_known_pins_for_oui_lookup():

