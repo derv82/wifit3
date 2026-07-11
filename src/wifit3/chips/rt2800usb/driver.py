@@ -592,6 +592,7 @@ class RT2800USBDriver:
                 rx_chain_num=self._eeprom.rxpath,
                 has_cap_bt_coexist=self._eeprom.has_cap_bt_coexist,
                 has_cap_external_lna_a=self._eeprom.has_cap_external_lna_a,
+                has_cap_external_lna_bg=self._eeprom.has_cap_external_lna_bg,
                 txmixer_gain_24g=self._eeprom.txmixer_gain_bg,
                 txmixer_gain_5g=self._eeprom.txmixer_gain_a,
                 default_power1=default_power1,

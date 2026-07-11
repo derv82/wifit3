@@ -288,6 +288,7 @@ def _set_channel_3572(
     rx_chain_num: int = 2,
     has_cap_bt_coexist: bool = False,
     has_cap_external_lna_a: bool = False,
+    has_cap_external_lna_bg: bool = False,
     cal_result: Optional[RfFilterCal] = None,
     default_power1: int = 0,
     default_power2: int = 0,
@@ -487,11 +488,21 @@ def _set_channel_3572(
 
     # BBP82/75 — band-specific. [SRC] rt2800lib.c:4308-4345
     if is_2g:
-        # 2.4G else-branch: not RT5390/RT5392/RT6352 so this runs.
-        # has_cap_external_lna_bg requires EEPROM; without it, else
-        # branch: BBP82 = 0x84 (RT3572 is not RT3593), BBP75 = 0x50.
-        bbp_write(t, 82, 0x84)
-        bbp_write(t, 75, 0x50)
+        # 2.4G RX-AGC front-end coefficients (RT3572 is not RT5390/RT5392/
+        # RT6352, so this block runs). external_lna_bg (NIC_CONF1.
+        # EXTERNAL_LNA_2G) selects the coefficients for a card with an
+        # external 2.4 GHz LNA: BBP82=0x62 (written twice, mirroring the
+        # kernel) + BBP75=0x46; else (RT3572 is not RT3593) BBP82=0x84 +
+        # BBP75=0x50. [SRC] rt2800lib.c:4312-4322. [WIRE] the AWUS051NH v2
+        # takes the external-LNA branch — captures_rt3572_tx_diff/aireplay.pcap
+        # writes BBP82=0x62 (×2) + BBP75=0x46 on every 2.4 GHz tune.
+        if has_cap_external_lna_bg:
+            bbp_write(t, 82, 0x62)
+            bbp_write(t, 82, 0x62)
+            bbp_write(t, 75, 0x46)
+        else:
+            bbp_write(t, 82, 0x84)
+            bbp_write(t, 75, 0x50)
     else:
         # 5G branch: RT3572 → BBP82 = 0x94.
         bbp_write(t, 82, 0x94)
@@ -1497,6 +1508,7 @@ def set_channel(
             rx_chain_num=rx_chain_num,
             has_cap_bt_coexist=has_cap_bt_coexist,
             has_cap_external_lna_a=has_cap_external_lna_a,
+            has_cap_external_lna_bg=has_cap_external_lna_bg,
             default_power1=default_power1,
             default_power2=default_power2,
         )

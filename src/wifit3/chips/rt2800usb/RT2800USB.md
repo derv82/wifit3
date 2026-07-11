@@ -169,6 +169,37 @@ risks regressing that match. RX is unaffected either way.
 
 ## Debug log
 
+### RT3572 2.4-GHz TX still weak after RFCSR16 fix — it is the unburned cal, not a missing register (2026-07-11)
+
+Follow-up to the RFCSR16 fix below: 2.4-GHz inject still under-performed on the
+AWUS051NH v2 even with `txmixer=(4,2)` / RFCSR16=0x4c confirmed live. Re-diffed the
+port's `_set_channel_3572(channel=1)` output against the in-tree driver's
+`captures_rt3572_tx_diff/aireplay.pcap` (same card) at the **decoded RFCSR/BBP/reg
+level** (decode both indirect writes, not just raw `RF_CSR_CFG`/`BBP_CSR_CFG` words).
+Result: **every TX-enable register now matches the kernel byte-for-byte** — RFCSR1
+chain-PD (0xf1), RFCSR12/13 TX_POWER (0x6b/0x60), RFCSR16 TXMIXER (0x4c), TX_PIN_CFG
+PA/LNA (0x00050302), TX_BAND_CFG (0x04), TX_PWR_CFG_0..4 (0xccccaaaa/0xccccaacc), BBP1.
+The **only** remaining code divergence was RX-side: kernel wrote BBP82=0x62 (×2) +
+BBP75=0x46, we wrote BBP82=0x84 + BBP75=0x50 — the `has_cap_external_lna_bg` branch
+[SRC rt2800lib.c:4312-4322]. The RF3052 tune ignored NIC_CONF1.EXTERNAL_LNA_2G
+(hardcoded the internal-LNA else-branch). This card has an external 2.4-GHz LNA
+(NIC_CONF1 bit 2 burned), so the kernel takes the external branch on every 2.4-GHz
+tune. Fixed: thread `has_cap_external_lna_bg` through `_channel_kwargs` →
+`set_channel` → `_set_channel_3572` (5 GHz already honored `external_lna_a`). This is
+BBP RX-AGC, not a TX enable, so it aligns the 2.4-GHz tune to full byte-parity and may
+improve 2.4 RX/ACK-hearing on this external-LNA card, but is **not** expected to make
+2.4 TX strong.
+
+Honest conclusion: there is **no missing 2.4-GHz TX-enable register**. The in-tree
+driver on this same card only achieves *weak/partial* 2.4-GHz deauth (aireplay.log:
+partial ACK counts, e.g. `[16| 8 ACKs]` of 64 — not zero, not strong), which is the
+signature of the missing factory power/RF cal, not a code gap. A **burned EFUSE**
+would supply the real per-channel TX power (TXPOWER_BG1/BG2 → RFCSR12/13), per-rate
+power (TXPOWER_BYRATE → TX_PWR_CFG, vs our wire-derived 0xccccaaaa hardcode), and a
+real RX-filter cal (RFCSR24/31, vs the railed 0x6b) — collectively strong 2.4 TX.
+Needs a properly-burned RT3572 to confirm. RF5592 verify_pcap unaffected (39408/39408,
+0 waived, exit 0).
+
 ### RT3572 2.4-GHz TX dead: RFCSR16 TXMIXER_GAIN pinned to 0 (2026-07-11)
 
 Symptom: on the AWUS051NH v2, 5 GHz TX + 2.4/5 GHz RX worked, but 2.4 GHz

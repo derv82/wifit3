@@ -842,6 +842,36 @@ def test_set_channel_3572_5g_writes_bbp82_0x94(monkeypatch):
     assert bbp_read(t2g, 82) == 0x84
 
 
+def test_set_channel_3572_2g_bbp82_75_honor_external_lna_bg(monkeypatch):
+    """RT3572 2.4 GHz RX-AGC front-end coefficients branch on
+    has_cap_external_lna_bg (NIC_CONF1.EXTERNAL_LNA_2G): an external 2.4 GHz
+    LNA card writes BBP82=0x62 + BBP75=0x46; the internal-LNA default writes
+    BBP82=0x84 + BBP75=0x50. [SRC] rt2800lib.c:4312-4322. [WIRE] the
+    AWUS051NH v2 takes the external-LNA branch (captures_rt3572_tx_diff/
+    aireplay.pcap: BBP82=0x62 ×2 + BBP75=0x46 on every 2.4 GHz tune)."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.bbp import bbp_read
+    from wifit3.chips.rt2800usb.constants import RT_RT3572
+    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15,
+                      bbp25=0, bbp26=0)
+
+    t_ext = RfcsrFakeTransport()
+    chan_mod.set_channel(t_ext, RT_RT3572, 1, cal_result=cal,
+                         tx_chain_num=1, rx_chain_num=1,
+                         has_cap_external_lna_bg=True)
+    assert bbp_read(t_ext, 82) == 0x62
+    assert bbp_read(t_ext, 75) == 0x46
+
+    t_int = RfcsrFakeTransport()
+    chan_mod.set_channel(t_int, RT_RT3572, 1, cal_result=cal,
+                         tx_chain_num=1, rx_chain_num=1,
+                         has_cap_external_lna_bg=False)
+    assert bbp_read(t_int, 82) == 0x84
+    assert bbp_read(t_int, 75) == 0x50
+
+
 def test_set_channel_3572_5g_bbp25_26_hardcoded(monkeypatch):
     """5 GHz hardcodes BBP25 = 0x09, BBP26 = 0xFF (IQ phase correction);
     2.4 GHz restores from cal_result.bbp25/26."""
