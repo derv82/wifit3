@@ -86,7 +86,7 @@ def send_frame(dev: usb.core.Device, ep: int, frame: bytes, *, use_no_ack: bool 
     """Build + bulk-OUT one frame on ``ep``. The driver gates this behind an explicit
     user action — nothing on the scan/connect path calls it [[passive_by_default]]."""
     payload = build_frame(frame, use_no_ack=use_no_ack)
-    logger.debug("rt3070 bulk-OUT EP 0x%02x (%dB): %s", ep, len(payload), payload.hex())
+    logger.debug("bulk-OUT EP 0x%02x (%dB): %s", ep, len(payload), payload.hex())
     return dev.write(ep, payload, timeout_ms)
 
 
