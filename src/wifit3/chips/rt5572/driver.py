@@ -30,6 +30,7 @@ from wifit3.wlan.packet import WlanFrameParser
 from .chan import (
     CHANNELS_5G_NON_DFS, default_power as _default_power, hop_channel,
 )
+from .eeprom import resolve_rf_chip
 from .link_tuner import LINK_TUNE_SECONDS, LinkTuner, compute_link_vgc, set_vgc
 from .mac import (
     ChipId, write_mac_address,
@@ -182,6 +183,31 @@ class RT5572Driver:
                     f"silicon ID 0x{self.chip_id.silicon_id:04x} not supported "
                     "(rt5572 expects RT5592)",
                 )
+
+            # Kernel rt2800_init_eeprom RF-chip identification, ported so this
+            # driver runs on ANY 148f:5572 card regardless of the EEPROM's
+            # antenna/cal contents. RT5592 silicon hardcodes RF5592, so the
+            # decode confirms (not infers) the RF; the antenna path + all
+            # per-unit cal (freq_offset/lna/iq/xtal/txpower) are already read
+            # from the runtime EEPROM and threaded through bring_up + the tune.
+            # [SRC] rt2800lib.c:11182-11243.
+            rf = resolve_rf_chip(self.chip_id.silicon_id, self._eeprom)
+            logger.info(
+                "detected config: silicon=%s rf=%s antenna=%dT%dR freq_off=%d "
+                "ext_lna(bg/a)=%s/%s bt_coex=%s xtal=%sMHz eeprom=%s",
+                self.chip_id.name, rf.name, self._eeprom.txpath, self._eeprom.rxpath,
+                self._eeprom.freq_offset, self._eeprom.has_cap_external_lna_bg,
+                self._eeprom.has_cap_external_lna_a, self._eeprom.has_cap_bt_coexist,
+                "40" if self._xtal_40mhz else "20",
+                "unburned" if self._eeprom.looks_unburned else "burned",
+            )
+            if not rf.ported and rf.rf_id != 0:
+                logger.warning(
+                    "untested variant: EEPROM RF chip %s on %s silicon has no "
+                    "ported config_channel path — running the silicon default "
+                    "tune (kernel would too)", rf.name, self.chip_id.name,
+                )
+
             if self._rf_cal is not None:
                 logger.info(
                     "RF filter cal: bw20=0x%02x bw40=0x%02x bbp25=0x%02x bbp26=0x%02x",
