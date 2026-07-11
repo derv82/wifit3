@@ -293,7 +293,12 @@ Post-FCS-fix, a single `--pin <correct>` run walked the full
 identity→M1→M2→M3→M4→M5→M6→M7 exchange and recovered the PSK. **The first-half
 oracle (M5) and PSK extraction (M7) both confirmed on real hardware.**
 
-### Top speed lever: link-layer ACK (the "why so many M1" finding)
+### Top speed lever: link-layer ACK (the "why so many M1" finding) — ⚠ SUPERSEDED
+
+> **Reversed by hardware (2026-07-11) — see "Hardware reliability overhaul" below.** Auto-ACK was
+> proven *harmful*: it kills the AP's retransmit safety net (dropped frame → false wrong-PIN). The
+> retransmits are the reliability mechanism, not a cost to eliminate — and they aren't the per-attempt
+> bottleneck (the AP's ~1.24s DH is). We do NOT arm auto-ACK. Original reasoning kept below for record.
 
 The AP retransmits each message ~15× because **our injected STA never sends an
 802.11 ACK** — it's not a firmware-level client, so the chip's MAC filter
@@ -306,11 +311,34 @@ to ~7 frames — a ~10× speedup, directly serving the speed goal. Per-chip MAC
 work, so it goes through the careful per-driver hardware loop, not a blind edit.
 Bully's `--noacks` exists for the same reason.
 
+### Hardware reliability overhaul (2026-07-11, AirLink89300 / mt76x2u — agent-run lab)
+
+Rebuilt the exchange from live ground-truth (`scripts/wps/wps_lab.py`) after the field showed constant
+false "first half wrong" / missed cracks. Every prior heuristic was re-proven; most were **flaky-TX
+artifacts**, not real AP behaviour:
+
+- **Auto-ACK (active-monitor) is HARMFUL** (supersedes the "link-layer ACK" lever above). Drift-
+  controlled A/B: 5/7 vs 3/7 crack. It kills the AP's retransmit safety net → a dropped M5/M7 is
+  permanent → scored as a wrong PIN. The retransmit "cost" is a non-issue (the AP's DH/M3 at a
+  dead-consistent ~1.24s dominates per-attempt time). Campaign no longer arms active-monitor.
+- **one-shot-per-MAC: FALSE** (6/11 same-MAC reuses cracked) → removed proactive MAC rotation.
+- **one-shot-per-ASSOCIATION: TRUE** (real WSC) — a 2nd exchange on a kept-alive assoc is refused
+  pre-oracle ("Device Password Auth Failure") → re-associate per PIN (`_try` resets the session).
+- **Association was the top failure (~29%)** → `_send_until` resends auth/assoc while silent, 3→5
+  attempts, longer auth window (the biggest single lever once auto-ACK was off).
+- **Timeouts too short** (M1 up to ~4.3s) → eapol_start 2→7s; **in-session resend** of the last frame
+  on a per-stage timeout (no MAC rotation) covers a dropped M2/M4/M6.
+- **AirLink locks *silently*** — it stops answering associations (no config_error=15, no beacon flag);
+  the 3-strike soft-lock catches that (necessary). `config_error=15` adds the spec path for APs that signal.
+- Checksum-invalid commons (11111111/88888888/10000005) do NOT choke — that was TX-loss too.
+
+**Result:** cracks live AirLink end-to-end, 1 attempt/pin, no soft-lock churn. Driver-agnostic
+(registrar/association/campaign) — should carry to every card; validate each with `wps_lab.py`.
+**HW TX-ACK (deferred):** feasible on mt76x2u (`wcid.py` + an AP WCID + reading `MT_TX_STAT_FIFO`
+→ `inject_frame(wait_for_ack=…)`) as a low-latency alt to resend; revisit only if a card needs it.
+
 ### Pending (user will hardware-test; agent does not run hardware)
 
-- **Full `--campaign` sweep on hardware** — single-PIN is confirmed; the
-  COMMON→first-half→second-half sweep + lock backoff + `.run` resume still want a
-  real multi-attempt run (and will be ~15× faster once auto-ACK lands).
 - **UI Focus integration (M8)** — a WPS panel + start/pause behind an explicit
   button ([[feedback_passive_by_default]]). Not yet wired.
 - **PixieWPS (M7)** — deferred; revisit the dependency question (numpy for the
