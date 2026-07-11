@@ -363,3 +363,36 @@ def test_campaign_no_oui_match_is_just_common(tmp_path):
                     state_dir=str(tmp_path), log=lambda m: None)
     assert c._oui_pin_count == 0
     assert c._common_pins == list(pins.COMMON_PINS)
+
+
+# ---- lost-reply retry (timeout-as-NACK on a known-NACKing AP) ----------------
+
+def test_lost_reply_retries_for_nacking_ap(tmp_path):
+    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    # An explicit NACK (config_error set) proves the AP answers wrong guesses.
+    c._should_retry_lost_reply("00000000", AttemptOutcome(
+        PinResult.FIRST_HALF_WRONG, "00000000", config_error=18))
+    assert c._ap_sends_nacks
+    # A *silent* first-half-wrong is now a lost reply, not a rejection → retry.
+    assert c._should_retry_lost_reply("01030006", AttemptOutcome(
+        PinResult.FIRST_HALF_WRONG, "01030006", via_timeout=True)) is True
+
+
+def test_lost_reply_no_retry_for_silent_ap(tmp_path):
+    # No NACK ever seen → a silent timeout is genuine timeout-as-NACK; advance, don't retry.
+    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    assert c._should_retry_lost_reply("01030006", AttemptOutcome(
+        PinResult.FIRST_HALF_WRONG, "01030006", via_timeout=True)) is False
+
+
+def test_lost_reply_retry_is_bounded(tmp_path):
+    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    c._ap_sends_nacks = True
+    out = AttemptOutcome(PinResult.FIRST_HALF_WRONG, "01030006", via_timeout=True)
+    trues = 0
+    for _ in range(50):
+        if c._should_retry_lost_reply("01030006", out):
+            trues += 1
+        else:
+            break
+    assert trues == c._MAX_TIMEOUT_RETRIES   # concedes after the cap, doesn't wedge

