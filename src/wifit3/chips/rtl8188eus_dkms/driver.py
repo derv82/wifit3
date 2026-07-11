@@ -34,8 +34,8 @@ from wifit3.wlan.packet import WlanFrameParser
 
 from ..rx_reader import RxReaderThread
 from . import (
-    bb, chan, dig, dm, efuse, firmware, mac, monitor, powertrack, pwrseq, rf, sreset, tx,
-    txpower,
+    bb, chan, dig, dm, efuse, firmware, mac, monitor, phy_cond, powertrack, pwrseq, rf,
+    sreset, tx, txpower,
 )
 from .constants import DEFAULT_INIT_CHANNEL, PID, VID
 from .rx import iter_frames
@@ -64,6 +64,7 @@ class Rtl8188eusDkmsDriver:
         self.mac_address: Optional[bytes] = None
         self._channel: Optional[int] = None
         self._tx_power = None              # path-A efuse TX-power info (TxPwr2G)
+        self._board = None                 # efuse board options (BoardOptions; set in connect)
         self._eeprom_thermal = 0x18        # efuse thermal base (set from efuse in connect)
         self._dm_seed = None               # dm.DmSeed carried from InitHalDm to the watchdog
         self._rf_chnl: int = 0            # RfRegChnlVal[A], stateful across set_channel
@@ -101,9 +102,20 @@ class Rtl8188eusDkmsDriver:
         # the 0xff/autoload-fail default is EEPROM_Default_ThermalMeter_88E 0x18).
         raw_thermal = params.efuse_map[0xBA]
         self._eeprom_thermal = 0x18 if raw_thermal == 0xFF else raw_thermal
+        self._board = params.board
         logger.info("RTL8188EUS efuse: crystal_cap=0x%02x mac=%s",
                     params.crystal_cap,
                     params.mac_address.hex(":") if params.mac_address else "<none>")
+        # Board-option config log (efuse 0xCA). The reference card is internal PA+LNA;
+        # an external-PA/LNA burn drives PHY_SetRFEReg_8188E + the board-gated init-table
+        # rows and is untested on hardware (only the internal card is pcap-gated).
+        b = params.board
+        if b.external_pa_2g or b.external_lna_2g:
+            logger.info("RTL8188EUS board [untested variant]: external PA=%s LNA=%s "
+                        "type_glna=0x%x -> PHY_SetRFEReg + board-gated init tables active",
+                        b.external_pa_2g, b.external_lna_2g, b.type_glna)
+        else:
+            logger.info("RTL8188EUS board: internal PA+LNA (reference config)")
 
         if progress_cb:
             progress_cb(0.25, "Uploading firmware")
@@ -200,9 +212,13 @@ class Rtl8188eusDkmsDriver:
         with scripts/rtl8188eus_dkms/verify_pcap.py), then the monitor opmode entry. The
         firmware was already uploaded in connect()."""
         t = self.transport
-        mac.phy_mac_config(t)                                   # M2a
-        bb.phy_bb_config(t, crystal_cap=params.crystal_cap)     # M2b
-        rf.phy_rf_config(t)                                     # M2c
+        # phydm board/LNA-type driver words gate the board-conditional init-table rows
+        # (internal PA+LNA -> the reference walk). Derived from efuse 0xCA.
+        dw = phy_cond.build_driver_words(
+            params.board.external_lna_2g, params.board.external_pa_2g, params.board.type_glna)
+        mac.phy_mac_config(t, dw)                               # M2a
+        bb.phy_bb_config(t, crystal_cap=params.crystal_cap, driver_words=dw)   # M2b
+        rf.phy_rf_config(t, dw)                                 # M2c
         efuse.iol_efuse_patch(t)                                # M2d
         mac.init_tx_buffer_boundary(t)
         mac.init_llt(t)                                         # M2e
@@ -212,6 +228,7 @@ class Rtl8188eusDkmsDriver:
         mac.invalidate_cam_all(t)                               # M4c
         txpower.set_tx_power(t, params.tx_power, DEFAULT_INIT_CHANNEL)  # M5
         mac.init_misc11_tail(t)                                 # M6
+        bb.phy_set_rfe_reg(t, params.board)                    # PHY_SetRFEReg_8188E (MISC11 tail)
         self._dm_seed = dm.init_hal_dm(t)                       # M7 — and carry the DM seed
         dm.init_hal_tail(t)                                     # M8 (power-track + LCK)
         mac.set_macid(t, self.mac_address or b"\x00" * 6)      # HW_VAR_MAC_ADDR (airmon)

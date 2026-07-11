@@ -39,20 +39,21 @@ chip state (extract the real efuse / chip-version from the pcap, never trust the
 claims), then diff our emitted bytes against it. Treat every `always / never runs / no-op / we skip`
 comment as a hypothesis to falsify.
 
-**efuse fields are read live, but board-option bytes are decoded-and-ignored — and only ONE of them
-touches the wire.** MAC / TX-power / crystal / thermal all come from the *real* 512 B logical map,
-not hardcoded. Of the ignored board-option bytes, most are inert **in this driver build**: the
-antenna option (`0xC9 = 0x03`) never reaches the wire (`CONFIG_ANTENNA_DIVERSITY` off, [SRC]
-autoconf.h:94 — `_InitAntenna_Selection` is a no-op), the regulatory bits of the board option
-(`0xC1[2:0]`) are dead code (`CONFIG_TXPWR_LIMIT_EN` off, Makefile), and the channel plan
-(`0xB8 = 0xA2`) only picks the SW channel list (no register write). The *one* byte that changes what
-the chip is programmed with on another unit is the PA/LNA select `0xCA[3:2]`: this card is blank
-`0xFF` → `iPA+iLNA`, so `PHY_SetRFEReg_8188E` early-returns and our static RF/AGC replay matches — but
-a card with an external PA or LNA needs `PHY_SetRFEReg_8188E` [SRC] rtl8188e_phycfg.c:1993 (writes
-0x40 / 0xEE8 / 0x87C) **and** the external-LNA AGC table, neither ported. `efuse.
-assert_board_options_ported` now fails loud (`NotImplementedError` naming `0xCA`) on any
-external-PA/LNA unit rather than running silently mis-tuned. (Verified comment-blind 2026-07-07: all
-four captures are the same physical dev card — identical MAC and identical board bytes.)
+**efuse fields are read live, and the ONE wire-affecting board option is now runtime-gated.** MAC /
+TX-power / crystal / thermal all come from the *real* 512 B logical map, not hardcoded. Of the
+board-option bytes, most are inert **in this driver build**: the antenna option (`0xC9 = 0x03`) never
+reaches the wire (`CONFIG_ANTENNA_DIVERSITY` off, [SRC] autoconf.h:94 — `_InitAntenna_Selection` is a
+no-op), the regulatory bits of the board option (`0xC1[2:0]`) are dead code (`CONFIG_TXPWR_LIMIT_EN`
+off, Makefile), the channel plan (`0xB8 = 0xA2`) only picks the SW channel list (no register write),
+and `rfe_type` (`0xCA[1:0]`) never gates a table row nor changes `PHY_SetRFEReg`'s single case-0 arm.
+The *one* byte that changes what the chip is programmed with on another unit is the PA/LNA select
+`0xCA[3:2]` (+ its gain-select `0xCA[6:4]`): this card is blank `0xFF` → `iPA+iLNA`, so the reference
+walk + a no-op `PHY_SetRFEReg_8188E`. As of 2026-07-11 an **external-PA/LNA burn is ported and
+runtime-gated** (`efuse.read_board_options` → `phy_cond.build_driver_words` drives the board-gated
+MAC/PHY_REG/AGC/RADIO_A table rows, and `bb.phy_set_rfe_reg` emits the `0x40 / 0xEE8 / 0x87C` writes).
+The fail-loud `assert_board_options_ported` is gone. (Verified comment-blind 2026-07-07: all four
+captures are the same physical dev card — internal PA+LNA, identical MAC and board bytes; the external
+path is source-ported but **hardware-untested** — see the Debug log.)
 
 **Two more deferred items, non-default but real:** the receiver-blocking NBI notch arms only with
 `rtw_adaptivity_en=1` (e.g. ETSI), and powertrack IQK/LCK only fires on ≥8 °C thermal drift.
@@ -106,6 +107,40 @@ extracted by `scripts/rtl8188eus_dkms/extract_fw.py`.
 - `deauth_hw.py` — live TX smoke test (deauth + reconnect + EAPOL capture).
 
 ## Debug log
+
+### 2026-07-11 — generalize the EFUSE board options (external PA/LNA), reference byte-identical
+
+Replaced the fail-loud `assert_board_options_ported` with a real runtime decode so the driver runs on
+any `2357:010c` card regardless of the `0xCA` burn, not just this internal-PA/LNA dev unit. rf_type is
+fixed 1T1R, so the only fuse discriminator that reaches the wire is `0xCA[3:2]` PA/LNA select (+ the
+`0xCA[6:4]` GLNA gain-select). Ported 1:1 from the vendor C:
+
+- `efuse.read_board_options` — `Hal_ReadPAType_8188E` (0xCA[3:2] → ExternalPA/LNA_2G) +
+  `Hal_ReadAmplifierType_8188E` (0xCA[6:4] → TypeGLNA), AUTO/registry-default path. Returned in
+  `ChipParams.board`.
+- `phy_cond.build_driver_words` — feeds ExternalLNA/PA → phydm `board_type` (GLNA/GPA) and TypeGLNA →
+  `driver2` into `check_positive`, so the **board-gated rows already present** in the MAC/PHY_REG/AGC/
+  RADIO_A tables fire on an external card. Empirically confirmed the tables *do* carry ext-LNA/PA
+  branches (walk diffs for GLNA/GPA); the internal card's words equal the module defaults → identical
+  walk. `walk_table` / `phy_mac_config` / `phy_bb_config` / `phy_rf_config` gained an optional
+  `driver_words` arg (default = reference), so positional callers (verify scripts/tests) are unchanged.
+- `bb.phy_set_rfe_reg` — `PHY_SetRFEReg_8188E` (MISC11 tail, [SRC] usb_halinit.c:1568), the
+  `0x40[3:2]=3 / 0xEE8[28]=1 / 0x87C[0]=0` writes, gated on ExternalPA||ExternalLNA. rfe_type has a
+  single case-0 arm so the three writes are rfe_type-independent. No-op on the internal dev card.
+
+`connect()` logs the detected board once (internal = reference; external tagged `[untested variant]`).
+Gate: `verify_pcap.py` PASS byte-for-byte on all 4 captures (5769/5829/5752/5661), `phy_set_rfe_reg`
+consuming 0 wire ops. `verify_channels.py` is RED both before and after this change (pre-existing: its
+width-4-only SYS_CFG filter vs `rf.phy_rf_config`'s foundry `read32` — proven on pristine HEAD, not my
+change). Unit tests + ruff (scoped) green.
+
+**Residuals (source-ported, hardware-untested — only the internal card is pcap-gated):** the whole
+external-PA/LNA path (RFEReg + board-gated table rows + TypeGLNA gain sub-table) has no wire
+ground-truth. Minor faithful omissions, all inert on real cards: the autoload-*fail* TypeGLNA=0x1
+quirk (we decode the autoload-OK AUTO path; inert because autoload-fail forces ExternalLNA=0, making
+type_glna a don't-care); BT-coex (`EEPROMBluetoothCoexist` → ODM_BOARD_BT) is not parsed but no 88EU
+init table gates on the BT bit; 5G ext-PA/LNA (ALNA/APA) is `#if 0` in the vendor. External-PA does
+*not* touch the normal TX-power path (only MP-mode `hal_mp.c` reads it), so no txpower gap.
 
 ### 2026-07-07 — RX gap: parity fixed-channel, but REAL in the hopping sweep; waiver audit; efuse guard
 

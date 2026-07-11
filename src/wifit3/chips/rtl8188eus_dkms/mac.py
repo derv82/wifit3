@@ -36,10 +36,12 @@ MAX_AGGR_NUM = 0x07  # [SRC] include/Hal8188EPhyCfg.h (USB build; 0x0B is PCI-on
 _LLT_POLL_CAP = 1000
 
 
-def phy_mac_config(t) -> None:
+def phy_mac_config(t, driver_words=None) -> None:
     """Apply ``array_mp_8188e_mac_reg`` (each taken row is an 8-bit write), then the
-    AMPDU aggregation number to REG_MAX_AGGR_NUM."""
-    phy_cond.walk_table(MAC_REG, lambda addr, val: t.write8(addr, val & 0xFF))
+    AMPDU aggregation number to REG_MAX_AGGR_NUM. ``driver_words`` (d1,d2,d4) gates the
+    board-conditional rows; ``None`` = the reference card's internal-PA/LNA walk."""
+    d1, d2, d4 = driver_words if driver_words else (None, None, None)
+    phy_cond.walk_table(MAC_REG, lambda addr, val: t.write8(addr, val & 0xFF), d1, d2, d4)
     val = (MAX_AGGR_NUM << 8) | MAX_AGGR_NUM
     t.write16(REG_MAX_AGGR_NUM, val)
 
@@ -189,10 +191,9 @@ def init_misc11_tail(t) -> None:
     """The hal_init MISC11 tail after TX power [SRC] usb_halinit.c:1556-1568: disable
     BAR (REG_BAR_MODE_CTRL) and enable HW sequence numbering (REG_HWSEQ_CTRL=0xFF).
 
-    The two MISC11 helpers around these writes emit nothing on this card:
-    ``_InitAntenna_Selection`` is compiled out (CONFIG_ANTENNA_DIVERSITY off), and
-    ``PHY_SetRFEReg_8188E`` returns early because this card has no external PA/LNA
-    (efuse RFE option 0xCA[3:2] = iPA+iLNA -> ExternalPA_2G == ExternalLNA_2G == 0).
-    A board with an external PA/LNA would need PHY_SetRFEReg_8188E ported here."""
+    ``_InitAntenna_Selection`` is compiled out (CONFIG_ANTENNA_DIVERSITY off) so it
+    emits nothing. The other MISC11 helper, ``PHY_SetRFEReg_8188E`` [SRC]
+    usb_halinit.c:1568, runs after this in the caller (``bb.phy_set_rfe_reg``); it is a
+    no-op on an internal-PA/LNA board like this dev card."""
     t.write32(C.REG_BAR_MODE_CTRL, C.BAR_MODE_CTRL_DISABLE)
     t.write8(C.REG_HWSEQ_CTRL, 0xFF)

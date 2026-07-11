@@ -90,23 +90,34 @@ def test_parse_tx_power_signed_diff_nibbles():
     assert (p.bw20_diff, p.ofdm_diff) == (-1, -8)
 
 
-def test_board_options_internal_pa_lna_passes():
-    # This dev card's 0xCA is blank (0xFF) -> iPA+iLNA default; a programmed [3:2]==3
-    # (0x0C, 0x0F) is also internal. Neither reaches PHY_SetRFEReg -> no raise.
+def _board(rfe: int):
+    m = bytearray(b"\xFF" * 512)
+    m[0xCA] = rfe
+    return efuse.read_board_options(bytes(m))
+
+
+def test_board_options_internal_pa_lna_reference():
+    # This dev card's 0xCA is blank (0xFF) -> [3:2]=3 iPA+iLNA, [6:4]=7 -> TypeGLNA 0;
+    # a programmed [3:2]==3 (0x0C, 0x0F) is also internal.
     for rfe in (0xFF, 0x0C, 0x0F):
-        m = bytearray(b"\xFF" * 512)
-        m[0xCA] = rfe
-        efuse.assert_board_options_ported(bytes(m))   # must not raise
+        b = _board(rfe)
+        assert (b.external_pa_2g, b.external_lna_2g) == (False, False)
 
 
-def test_board_options_external_pa_lna_fails_loud():
-    # 0xCA[3:2] in {0,1,2} means an external PA and/or LNA the port doesn't handle.
-    import pytest
-    for rfe in (0x00, 0x04, 0x08):                     # ePA+eLNA / ePA+iLNA / iPA+eLNA
-        m = bytearray(b"\xFF" * 512)
-        m[0xCA] = rfe
-        with pytest.raises(NotImplementedError, match="0xCA"):
-            efuse.assert_board_options_ported(bytes(m))
+def test_board_options_external_pa_lna_decoded():
+    # 0xCA[3:2]: 0=ePA+eLNA, 1=ePA+iLNA, 2=iPA+eLNA (external PA and/or LNA).
+    assert (_board(0x00).external_pa_2g, _board(0x00).external_lna_2g) == (True, True)
+    assert (_board(0x04).external_pa_2g, _board(0x04).external_lna_2g) == (True, False)
+    assert (_board(0x08).external_pa_2g, _board(0x08).external_lna_2g) == (False, True)
+
+
+def test_board_options_type_glna_gain_select():
+    # 0xCA[6:4]: 0->0x1 (10dB), 2->0x2 (14dB), everything else -> 0x0. Keep [3:2]=2
+    # (ext LNA) so the byte is a realistic ext-LNA burn.
+    assert _board(0b0000_1000).type_glna == 0x1   # [6:4]=0
+    assert _board(0b0010_1000).type_glna == 0x2   # [6:4]=2
+    assert _board(0b0001_1000).type_glna == 0x0   # [6:4]=1 (unsupported)
+    assert _board(0xFF).type_glna == 0x0          # [6:4]=7 -> reference card
 
 
 def test_iol_efuse_patch_sequence():

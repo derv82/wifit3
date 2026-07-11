@@ -15,6 +15,7 @@ from . import phy_cond
 from .bb_agc_tab_tbl import AGC_TAB
 from .bb_phy_reg_tbl import PHY_REG
 from .constants import (
+    BIT,
     bCCKEn,
     bOFDMEn,
     BB_DELAY_ADDRS,
@@ -30,16 +31,18 @@ from .constants import (
 )
 
 
-def phy_bb_config(t, crystal_cap: int = DEFAULT_CRYSTAL_CAP) -> None:
+def phy_bb_config(t, crystal_cap: int = DEFAULT_CRYSTAL_CAP, driver_words=None) -> None:
     # Enable BB and RF.
     reg = t.read16(REG_SYS_FUNC_EN)
     t.write16(REG_SYS_FUNC_EN, (reg | SYS_FUNC_BB_ENABLE) & 0xFFFF)
     t.write8(REG_RF_CTRL, RF_CTRL_INIT)
     t.write8(REG_SYS_FUNC_EN, FEN_BB_USB)
 
-    # Config BB (PHY_REG) and AGC (AGC_TAB).
-    phy_cond.walk_table(PHY_REG, _emit_phy(t))
-    phy_cond.walk_table(AGC_TAB, lambda addr, data: t.write32(addr, data))
+    # Config BB (PHY_REG) and AGC (AGC_TAB). driver_words (d1,d2,d4) gates the
+    # board/LNA-conditional rows; None = the reference card's internal-PA/LNA walk.
+    d1, d2, d4 = driver_words if driver_words else (None, None, None)
+    phy_cond.walk_table(PHY_REG, _emit_phy(t), d1, d2, d4)
+    phy_cond.walk_table(AGC_TAB, lambda addr, data: t.write32(addr, data), d1, d2, d4)
 
     set_crystal_cap(t, crystal_cap)
 
@@ -81,3 +84,23 @@ def bb_turn_on_block(t) -> None:
     in rFPGA0_RFMOD (0x800), each a separate masked RMW."""
     set_bb_reg(t, rFPGA0_RFMOD, bCCKEn, 0x1)
     set_bb_reg(t, rFPGA0_RFMOD, bOFDMEn, 0x1)
+
+
+# RFE control BB registers [SRC] PHY_SetRFEReg_8188E rtl8188e_phycfg.c:2007-2009 (the
+# vendor uses these addresses as literals; no reg.h symbol exists).
+_REG_RFE_CTRL = 0x40      # 0x40[3:2] = 0x3
+_REG_RFE_PINMUX = 0xEE8   # 0xEE8[28] = 0x1
+_REG_RFE_INV = 0x87C      # 0x87C[0] = 0x0
+
+
+def phy_set_rfe_reg(t, board) -> None:
+    """``PHY_SetRFEReg_8188E`` [SRC] rtl8188e_phycfg.c:1993, called from the MISC11 tail
+    [SRC] usb_halinit.c:1568. Early-returns (no wire ops) unless the board has an
+    external PA or LNA, so this dev card (internal PA+LNA) is unaffected. The switch on
+    rfe_type has only a case-0/default arm, so the three writes are rfe_type-independent
+    (88EU rfe_type is always 0)."""
+    if not (board.external_pa_2g or board.external_lna_2g):
+        return
+    set_bb_reg(t, _REG_RFE_CTRL, BIT(2) | BIT(3), 0x3)     # 0x3 << 2
+    set_bb_reg(t, _REG_RFE_PINMUX, BIT(28), 0x1)
+    set_bb_reg(t, _REG_RFE_INV, BIT(0), 0x0)

@@ -45,7 +45,7 @@ from .constants import (
 from .rf_radio_a_tbl import RADIO_A
 
 
-def phy_rf_config(t) -> None:
+def phy_rf_config(t, driver_words=None) -> None:
     # Store original RFENV control type (path A).
     rfenv = bb.query_bb_reg(t, RF_INTFS_A, bRFSI_RFENV)
     # Set RF_ENV enable, then output high.
@@ -54,8 +54,10 @@ def phy_rf_config(t) -> None:
     # Set 3-wire address (4 bits) and data (12 bits) length selectors to 0.
     bb.set_bb_reg(t, RF_HSSI_PARA2_A, b3WireAddressLength, 0x0)
     bb.set_bb_reg(t, RF_HSSI_PARA2_A, b3WireDataLength, 0x0)
-    # Load the radio-A table.
-    phy_cond.walk_table(RADIO_A, _emit_rf(t))
+    # Load the radio-A table. driver_words (d1,d2,d4) gates the board/PA-conditional
+    # rows; None = the reference card's internal-PA/LNA walk.
+    d1, d2, d4 = driver_words if driver_words else (None, None, None)
+    phy_cond.walk_table(RADIO_A, _emit_rf(t), d1, d2, d4)
     # Restore RFENV control type.
     bb.set_bb_reg(t, RF_INTFS_A, bRFSI_RFENV, rfenv)
     # Select + load the TX-power-tracking table [SRC] odm_config_rf_with_tx_pwr_track_header_file

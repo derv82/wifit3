@@ -6,6 +6,7 @@ full-32-bit writes.
 """
 from wifit3.chips.rtl8188eus_dkms import bb
 from wifit3.chips.rtl8188eus_dkms.constants import REG_AFE_XTAL_CTRL
+from wifit3.chips.rtl8188eus_dkms.efuse import BoardOptions
 
 
 class Tx:
@@ -68,3 +69,19 @@ def test_bb_turn_on_block():
     t = RegTx({0x0800: 0x80040000})
     bb.bb_turn_on_block(t)
     assert t.w32 == [(0x0800, 0x81040000), (0x0800, 0x83040000)]
+
+
+def test_phy_set_rfe_reg_internal_is_noop():
+    # Reference card (internal PA+LNA): PHY_SetRFEReg_8188E early-returns, no wire ops.
+    t = RegTx({})
+    bb.phy_set_rfe_reg(t, BoardOptions(external_pa_2g=False, external_lna_2g=False,
+                                       type_glna=0x0))
+    assert t.w32 == []
+
+
+def test_phy_set_rfe_reg_external_writes_three():
+    # External PA or LNA: 0x40[3:2]=0x3, 0xEE8[28]=1, 0x87C[0]=0 (RMW each).
+    t = RegTx({0x40: 0x0, 0xEE8: 0x0, 0x87C: 0x1})
+    bb.phy_set_rfe_reg(t, BoardOptions(external_pa_2g=False, external_lna_2g=True,
+                                       type_glna=0x1))
+    assert t.w32 == [(0x40, 0x0000000C), (0xEE8, 0x10000000), (0x87C, 0x00000000)]

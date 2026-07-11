@@ -25,7 +25,6 @@ from .constants import (
     DEFAULT_CRYSTAL_CAP,
     DISABLE_TRXPKT_BUF_ACCESS,
     EEPROM_MAC_ADDR_88EU,
-    EEPROM_RFE_INTERNAL_PA_LNA,
     EEPROM_RFE_OPTION_88E,
     EEPROM_TX_PWR_INX_88E,
     EEPROM_XTAL_88E,
@@ -92,11 +91,20 @@ class TxPwr2G(NamedTuple):
     bw20_diff: int     # BW20 (HT) 1TX diff
 
 
+class BoardOptions(NamedTuple):
+    """RFE/amplifier board options decoded from efuse 0xCA (the AUTO / registry-default
+    path). [SRC] Hal_ReadPAType_8188E + Hal_ReadAmplifierType_8188E."""
+    external_pa_2g: bool
+    external_lna_2g: bool
+    type_glna: int      # ext-LNA gain-table select fed to phydm (0x0/0x1/0x2)
+
+
 class ChipParams(NamedTuple):
     crystal_cap: int
     mac_address: bytes
     efuse_map: bytes   # the 512-byte logical map
     tx_power: TxPwr2G  # path-A 2.4G TX-power PG decode
+    board: BoardOptions  # external PA/LNA board options (drive the phydm table walk + RFE)
 
 
 def iol_mode_enable(t, enable: bool, fw_ready: bool = True) -> None:
@@ -245,28 +253,33 @@ def _phymap_to_logical(phymap: bytes) -> bytes:
     return bytes(table)
 
 
-def assert_board_options_ported(m: bytes) -> None:
-    """Fail loud on an efuse board-option this port does not reproduce.
+# 0xCA[3:2] PA/LNA select -> (ExternalPA_2G, ExternalLNA_2G) [SRC] Hal_ReadPAType_8188E
+# rtl8188e_hal_init.c:3060 (ePA+eLNA=0, ePA+iLNA=1, iPA+eLNA=2, iPA+iLNA=3).
+_PA_LNA_2G = {0: (True, True), 1: (True, False), 2: (False, True), 3: (False, False)}
+# GLNA gain-select 0xCA[6:4] -> TypeGLNA [SRC] Hal_ReadAmplifierType_8188E:3146 (0->0x1
+# 10dB, 2->0x2 14dB, others->0x0 unsupported).
+_GLNA_TYPE = {0: 0x1, 2: 0x2}
 
-    We consume MAC / crystal / thermal / TX-power from the real map, but the RF + AGC init
-    is a static replay tuned to THIS dev card's board — internal PA + internal LNA. Of the
-    board-option bytes only the PA/LNA select (``0xCA[3:2]``) changes what the chip is
-    programmed with in this driver build: ``CONFIG_ANTENNA_DIVERSITY`` is off (``0xC9`` never
-    reaches the wire [SRC] autoconf.h:94) and ``CONFIG_TXPWR_LIMIT_EN`` is off (``0xC1``
-    regulatory is dead code [SRC] Makefile), while ``0xB8`` only chooses the SW channel list.
-    A card with an external PA or LNA needs ``PHY_SetRFEReg_8188E`` [SRC] rtl8188e_phycfg.c:1993
-    (writes 0x40 / 0xEE8 / 0x87C) **and** the external-LNA AGC table — neither is ported. So
-    refuse the card by name instead of running silently mis-tuned [[feedback_port_completeness]].
-    ``0xFF`` (blank) is the internal default this dev card autoloads."""
+
+def read_board_options(m: bytes) -> BoardOptions:
+    """Decode the external PA/LNA board options from the logical efuse map, AUTO path
+    (the registry amplifier/GLNA-type overrides default to 0 / AUTO). [SRC]
+    Hal_ReadPAType_8188E rtl8188e_hal_init.c:3044 + Hal_ReadAmplifierType_8188E:3122.
+
+    Wire effect: ExternalPA_2G/ExternalLNA_2G set the phydm board_type (GPA/GLNA) and
+    type_glna words that gate board-conditional rows in the MAC/PHY_REG/AGC/RADIO_A
+    init tables [SRC] hal_dm.c:224-260, and arm PHY_SetRFEReg_8188E (bb.phy_set_rfe_reg).
+    A blank 0xCA (0xFF, this dev card) decodes to internal PA+LNA (bits[3:2]=3) with
+    TypeGLNA 0 -> the reference walk. Of the other 0xCA/board bytes none reaches the
+    wire in this build: ``CONFIG_ANTENNA_DIVERSITY`` off (0xC9 [SRC] autoconf.h:94),
+    ``CONFIG_TXPWR_LIMIT_EN`` off (0xC1 [SRC] Makefile), 0xB8 only picks the SW channel
+    list, and rfe_type (0xCA[1:0]) never gates a table row nor changes PHY_SetRFEReg's
+    single case-0 arm."""
     rfe = m[EEPROM_RFE_OPTION_88E]
-    pa_lna = (rfe >> 2) & 0x3           # 0=ePA+eLNA, 1=ePA+iLNA, 2=iPA+eLNA, 3=iPA+iLNA
-    if rfe == 0xFF or pa_lna == EEPROM_RFE_INTERNAL_PA_LNA:
-        return
-    ext = [p for p, on in (("PA", pa_lna in (0, 1)), ("LNA", pa_lna in (0, 2))) if on]
-    raise NotImplementedError(
-        f"efuse 0xCA=0x{rfe:02x} -> external {'+'.join(ext)}: PHY_SetRFEReg_8188E + the "
-        f"external-LNA AGC table are not ported (this port assumes internal PA+LNA). "
-        f"Port them before bringing up this unit.")
+    ext_pa, ext_lna = _PA_LNA_2G[(rfe >> 2) & 0x3]         # 0xCA[3:2]
+    type_glna = _GLNA_TYPE.get((rfe >> 4) & 0x7, 0x0)      # 0xCA[6:4]
+    return BoardOptions(external_pa_2g=ext_pa, external_lna_2g=ext_lna,
+                        type_glna=type_glna)
 
 
 def _s4(n: int) -> int:
@@ -300,10 +313,10 @@ def read_chip_params(t, bcnhead: int = 0) -> ChipParams:
     t.write8(REG_EFUSE_ACCESS, EFUSE_ACCESS_OFF)
 
     logical = _phymap_to_logical(phymap)
-    assert_board_options_ported(logical)                 # refuse an unported board variant
     cap = logical[EEPROM_XTAL_88E]
     if cap == 0xFF:
         cap = DEFAULT_CRYSTAL_CAP
     mac = logical[EEPROM_MAC_ADDR_88EU:EEPROM_MAC_ADDR_88EU + 6]
     return ChipParams(crystal_cap=cap, mac_address=mac, efuse_map=logical,
-                      tx_power=_parse_tx_power(logical))
+                      tx_power=_parse_tx_power(logical),
+                      board=read_board_options(logical))

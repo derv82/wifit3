@@ -127,6 +127,7 @@ def _walk_init(w: Walk, out: dict) -> None:
     w.run(lambda t: mac.invalidate_cam_all(t), "cam-clear")
     w.run(lambda t: txpower.set_tx_power(t, params.tx_power, DEFAULT_INIT_CHANNEL), "tx-power")
     w.run(lambda t: mac.init_misc11_tail(t), "misc11")
+    w.run(lambda t: bb.phy_set_rfe_reg(t, params.board), "rfe")  # no-op on internal board
     (dm_seed, _) = w.run(lambda t: dm.init_hal_dm(t), "init-hal-dm")
     out["dm_seed"] = dm_seed                                  # carried into the watchdog
     w.run(lambda t: dm.init_hal_tail(t), "hal-tail")

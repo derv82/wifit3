@@ -46,7 +46,25 @@ def build_driver1() -> int:
     )
 
 
-DRIVER1 = build_driver1()  # 0x00040200 on this card
+DRIVER1 = build_driver1()  # 0x00040200 on this card (internal PA+LNA, board_type 0)
+
+
+def build_driver_words(external_lna_2g: bool, external_pa_2g: bool,
+                       type_glna: int) -> tuple[int, int, int]:
+    """Assemble (driver1, driver2, driver4) from the runtime efuse board options.
+    [SRC] check_positive (halhwimg8188e_bb.c:30-54) + the ODM_CMNINFO feed
+    (hal_dm.c:224-260). The board_type byte re-packs to _board_type[0]=GLNA(ext-LNA
+    2G), [1]=GPA(ext-PA 2G), [2]=ALNA, [3]=APA (both 5G, always 0 on 88EU), [4]=BT
+    (no 88EU init table gates on it). type_gpa/alna/apa are never set on 88EU, so the
+    only non-zero type field is type_glna (0x0/0x1/0x2) and driver4 is always 0.
+
+    A default (internal PA+LNA, type_glna 0) returns exactly the module DRIVER* words,
+    so the reference card walks byte-identically."""
+    board_type = (int(bool(external_lna_2g)) << 0) | (int(bool(external_pa_2g)) << 1)
+    driver1 = (DRIVER1 & ~0x1F) | board_type            # replace the 5 _board_type bits
+    driver2 = type_glna & 0xFF                           # (type_glna) | gpa<<8 | ... (all 0)
+    driver4 = (type_glna & 0xFF00) >> 8                  # 0 for TypeGLNA <= 0x2
+    return driver1, driver2, driver4
 
 
 def check_positive(cond1: int, cond2: int, cond4: int,
@@ -78,8 +96,15 @@ def check_positive(cond1: int, cond2: int, cond4: int,
             and (cond4 & bit_mask) == (driver4 & bit_mask))
 
 
-def walk_table(table, emit: Callable[[int, int], None]) -> None:
-    """[SRC] odm_read_and_config_mp_8188e_* — call ``emit(addr, value)`` per taken row."""
+def walk_table(table, emit: Callable[[int, int], None],
+               driver1: int | None = None, driver2: int | None = None,
+               driver4: int | None = None) -> None:
+    """[SRC] odm_read_and_config_mp_8188e_* — call ``emit(addr, value)`` per taken row.
+    The driver words gate the board/LNA-conditional branches; ``None`` uses the
+    module defaults (internal PA+LNA, the reference card)."""
+    d1 = DRIVER1 if driver1 is None else driver1
+    d2 = DRIVER2 if driver2 is None else driver2
+    d4 = DRIVER4 if driver4 is None else driver4
     i, n = 0, len(table)
     is_matched, is_skipped = True, False
     pre_v1 = pre_v2 = 0
@@ -96,7 +121,7 @@ def walk_table(table, emit: Callable[[int, int], None]) -> None:
                     pre_v1, pre_v2 = v1, v2
             elif v1 & _BIT30:                     # negative condition (pairing word)
                 if not is_skipped:
-                    if check_positive(pre_v1, pre_v2, v2):
+                    if check_positive(pre_v1, pre_v2, v2, d1, d2, d4):
                         is_matched, is_skipped = True, True
                     else:
                         is_matched, is_skipped = False, False
