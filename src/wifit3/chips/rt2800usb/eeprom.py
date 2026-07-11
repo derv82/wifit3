@@ -79,6 +79,14 @@ EEPROM_OFFSET_RSSI_BG2 = 0x24    # OFFSET2 (low) + LNA_A1 (high)
 EEPROM_OFFSET_RSSI_A = 0x25      # A OFFSET0 (low) + OFFSET1 (high)
 EEPROM_OFFSET_RSSI_A2 = 0x26     # A2 OFFSET2 (low) + LNA_A2 (high)
 
+# TX mixer gain -> RFCSR16.TXMIXER_GAIN (bits[2:0]). The words overlap the
+# RSSI_BG2/RSSI_A2 words above (kernel map comment "overlaps with RSSI_*"); only
+# bits[2:0] belong to TXMIXER_GAIN. [SRC] rt2800lib.c:324-327 (map),
+# rt2800.h:2785 EEPROM_TXMIXER_GAIN_BG_VAL / 2802 EEPROM_TXMIXER_GAIN_A_VAL.
+EEPROM_OFFSET_TXMIXER_GAIN_BG = 0x24
+EEPROM_OFFSET_TXMIXER_GAIN_A = 0x26
+EEPROM_TXMIXER_GAIN_VAL = 0x0007
+
 # Per-channel + per-rate TX-power word offsets (kernel rt2800_eeprom_map,
 # non-ext format — RT3572/RT5572 are not RT3593/RT3883). Each array is
 # indexed by BYTE (kernel `s8 *default_power1; default_power1[i]`), so the
@@ -403,6 +411,34 @@ class EepromValues:
         Stored as s8 in the EEPROM."""
         b = self.raw[word_index * 2 + i]
         return b - 0x100 if b >= 0x80 else b
+
+    def _txmixer_gain(self, word_index: int) -> int:
+        """RFCSR16.TXMIXER_GAIN source: field bits[2:0] of the EEPROM word, or
+        0 when the low byte reads 0xff (unburned). Independent of NIC_CONF0, so
+        it is read even when NIC_CONF0 itself looks unburned (this card:
+        NIC_CONF0=0x0000 but word 0x24=0x0004 -> gain 4). RT3572 is not
+        RT3593/RT3883, so the kernel's early return-0 for those chips does not
+        apply here. [SRC] rt2800lib.c:10996 rt2800_get_txmixer_gain_24g /
+        11011 rt2800_get_txmixer_gain_5g."""
+        off = word_index * 2
+        if off + 1 >= len(self.raw):
+            return 0
+        word = self.raw[off] | (self.raw[off + 1] << 8)
+        if (word & 0x00FF) == 0x00FF:
+            return 0
+        return word & EEPROM_TXMIXER_GAIN_VAL
+
+    @property
+    def txmixer_gain_bg(self) -> int:
+        """2.4 GHz TX mixer gain (EEPROM word 0x24) -> RFCSR16 in the RF3052
+        2.4 GHz tune. [SRC] rt2800lib.c:10996."""
+        return self._txmixer_gain(EEPROM_OFFSET_TXMIXER_GAIN_BG)
+
+    @property
+    def txmixer_gain_a(self) -> int:
+        """5 GHz TX mixer gain (EEPROM word 0x26) -> RFCSR16 in the RF3052
+        5 GHz tune. [SRC] rt2800lib.c:11011."""
+        return self._txmixer_gain(EEPROM_OFFSET_TXMIXER_GAIN_A)
 
     @property
     def power_limit(self) -> bool:

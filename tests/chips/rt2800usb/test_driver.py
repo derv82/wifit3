@@ -1200,6 +1200,79 @@ def test_eeprom_exposes_lna_gain_a_and_capabilities():
     assert ee2.has_cap_bt_coexist is False
 
 
+def test_eeprom_txmixer_gain_decode_and_fallback():
+    """RFCSR16.TXMIXER_GAIN source: EEPROM words 0x24 (2.4 GHz) / 0x26 (5 GHz),
+    bits[2:0], with the kernel's low-byte-0xff -> 0 fallback. This is the field
+    that was pinned to 0, killing 2.4 GHz TX on the burned-mixer/unburned-conf0
+    AWUS051NH v2. [SRC] rt2800lib.c:10996 / 11011."""
+    from wifit3.chips.rt2800usb.eeprom import parse_eeprom
+    # AWUS051NH v2 profile: word 0x24 = 0x0004, word 0x26 = 0x0002.
+    buf = bytearray(0x200)
+    buf[0x24 * 2] = 0x04    # 24g low byte -> gain bits[2:0] = 4
+    buf[0x24 * 2 + 1] = 0x00
+    buf[0x26 * 2] = 0x02    # 5g low byte -> gain 2
+    buf[0x26 * 2 + 1] = 0x00
+    ee = parse_eeprom(bytes(buf))
+    assert ee.txmixer_gain_bg == 4
+    assert ee.txmixer_gain_a == 2
+
+    # Only bits[2:0] belong to TXMIXER_GAIN (the word overlaps RSSI_BG2/A2).
+    buf[0x24 * 2] = 0x2C    # low byte 0x2c -> bits[2:0] = 4
+    ee = parse_eeprom(bytes(buf))
+    assert ee.txmixer_gain_bg == 4
+
+    # Genuinely-unburned low byte 0xff -> 0 (kernel fallback).
+    buf[0x24 * 2] = 0xFF
+    ee = parse_eeprom(bytes(buf))
+    assert ee.txmixer_gain_bg == 0
+
+    # A hand-built EepromValues with no raw dump -> 0 (no EEPROM to read).
+    from wifit3.chips.rt2800usb.eeprom import EepromValues
+    bare = EepromValues(
+        mac_address=b"\x00" * 6, nic_conf0=0, nic_conf1=0, freq_offset=0,
+        lna_gain_bg=0, lna_gain_a=0, rssi_bg_offset0=0, rssi_bg_offset1=0,
+    )
+    assert bare.txmixer_gain_bg == 0
+    assert bare.txmixer_gain_a == 0
+
+
+def test_set_channel_3572_2g_rfcsr16_honors_txmixer_gain(monkeypatch):
+    """RF3052 2.4 GHz tune: RFCSR16 base 0x4c with TXMIXER_GAIN (bits[2:0]) set
+    from the EEPROM. gain 4 -> 0x4c (matches the in-tree capture); gain 0 ->
+    0x48 (the old pinned-to-0 bug that zeroed the 2.4 GHz TX mixer gain).
+    [SRC] rt2800lib.c:2739-2742."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.constants import RT_RT3572
+    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal, rfcsr_read
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15, bbp25=0x44, bbp26=0x55)
+
+    t = RfcsrFakeTransport()
+    chan_mod.set_channel(t, RT_RT3572, 1, cal_result=cal,
+                         tx_chain_num=1, rx_chain_num=1, txmixer_gain_24g=4)
+    assert rfcsr_read(t, 16) == 0x4C
+
+    t0 = RfcsrFakeTransport()
+    chan_mod.set_channel(t0, RT_RT3572, 1, cal_result=cal,
+                         tx_chain_num=1, rx_chain_num=1, txmixer_gain_24g=0)
+    assert rfcsr_read(t0, 16) == 0x48
+
+
+def test_set_channel_3572_5g_rfcsr16_honors_txmixer_gain(monkeypatch):
+    """RF3052 5 GHz tune: RFCSR16 base 0x7a with TXMIXER_GAIN from EEPROM.
+    gain 2 -> 0x7a. [SRC] rt2800lib.c:2761-2764."""
+    import wifit3.chips.rt2800usb.chan as chan_mod
+    from wifit3.chips.rt2800usb.constants import RT_RT3572
+    from wifit3.chips.rt2800usb.rfcsr import RfFilterCal, rfcsr_read
+    monkeypatch.setattr(chan_mod.time, "sleep", lambda *_a, **_kw: None)
+    cal = RfFilterCal(calibration_bw20=0x10, calibration_bw40=0x15, bbp25=0x44, bbp26=0x55)
+
+    t = RfcsrFakeTransport()
+    chan_mod.set_channel(t, RT_RT3572, 36, cal_result=cal,
+                         tx_chain_num=1, rx_chain_num=1, txmixer_gain_5g=2)
+    assert rfcsr_read(t, 16) == 0x7A
+
+
 def test_set_channel_rejects_unsupported_silicon(monkeypatch):
     """An unknown silicon ID raises NotImplementedError. (RT5592 was
     ported in M-B1 — exercised by test_set_channel_5592_2g_* below.)"""

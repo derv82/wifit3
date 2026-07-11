@@ -14,8 +14,10 @@ re-capture, WEP ARP replay + chop/frag). Warm reattach is detected but not yet t
 always cold-restarts. EEPROM-aware RSSI, per-channel TX power (RT5392), and a 93C66 EEPROM fallback
 for pre-EFUSE RT2870 dongles are deferred polish.
 
-The AWUS051NH v2 (RT3572) test unit has an **erased EFUSE** and can't be cleanly verified — see
-Gotchas. A properly-burned RT3572 is needed to confirm that family's attack stack.
+The AWUS051NH v2 (RT3572) test unit has a **partially-burned EFUSE** (NIC_CONF0/RF-cal erased, but
+RSSI/TXMIXER/BYRATE regions populated) and can't be cleanly verified — see Gotchas. Its 2.4-GHz TX
+(inject/deauth) was dead until the TXMIXER_GAIN fix (see the residuals section); 5 GHz TX + 2.4/5 GHz
+RX already worked. A properly-burned RT3572 is still needed to confirm that family's attack stack.
 
 ## Gotchas
 
@@ -126,16 +128,30 @@ TX_PIN_CFG PA/LNA enables) and `bbp.disable_unused_dac_adc` (raw fields). A burn
 branch; `ANT_DIVERSITY` (NIC_CONF1) is RT3070/3090/3352/3390-only, so RT3572
 always uses `ANTENNA_A` (no diversity branch).
 
-**Residual EEPROM-gated gaps (pinned to the unburned reference, need a burned
-RT3572 to verify):**
-- `chan._set_channel_3572` writes `_RT3572_TX_PWR_CFG_DEFAULTS` (per-rate
-  `TX_PWR_CFG_0..4`) unconditionally. A burned card should derive these from
-  `EEPROM_TXPOWER_BYRATE` via `rt2800_config_txpower_rt28xx`, including the
-  RT3070/71/90/**3572** gain-cal delta that the RT5592 `config_txpower` path skips.
-- `txmixer_gain_24g`/`_5g` (`EEPROM_TXMIXER_GAIN_BG/A`, [SRC] rt2800lib.c:
-  10996-11024) are pinned to 0. On a burned card these gate the RFCSR16/17
-  `TXMIXER_GAIN` writes in `config_channel_rf3052` + `normal_mode_setup_3xxx`.
-  Both are TX-power *values* (RX unaffected); left for a burned-unit capture.
+**TXMIXER_GAIN — was the 2.4-GHz-TX-dead bug (FIXED, pending live test):**
+`txmixer_gain_24g`/`_5g` (`EEPROM_TXMIXER_GAIN_BG`=word 0x24 / `_A`=word 0x26,
+bits[2:0], [SRC] rt2800lib.c:10996/11011) were pinned to 0. They gate the
+`RFCSR16.TXMIXER_GAIN` write in `config_channel_rf3052`. The AWUS051NH v2's
+NIC_CONF0 is unburned (0x0000) but these two mixer-gain words are **burned**
+(word 0x24=0x0004 → 24g gain 4, word 0x26=0x0002 → 5g gain 2 — confirmed from
+`captures_rt3572_tx_diff/aireplay.pcap`, EFUSE block words 32-39). Pinning to 0
+wrote **RFCSR16=0x48 on 2.4 GHz where the in-tree driver writes 0x4c** — zeroing
+the 2.4-GHz TX mixer gain, which is what killed CCK (2.4 GHz) inject/deauth. 5 GHz
+uses base 0x7a and OFDM, so its smaller gain (2) mismatch (0x78 vs kernel 0x7a) was
+survivable → 5 GHz TX worked, 2.4 didn't. Now `EepromValues.txmixer_gain_bg/_a`
+port `rt2800_get_txmixer_gain_{24g,5g}` (word, low-byte-0xff→0 fallback) and feed
+`_channel_kwargs` → RFCSR16 matches the kernel wire on both bands. RF5592 is
+unaffected (its RF55xx tune has no RFCSR16 TXMIXER write); verify_pcap stays
+39408/39408.
+
+**Not the bug — `_RT3572_TX_PWR_CFG_DEFAULTS` is already byte-exact.** The
+per-rate `TX_PWR_CFG_0..4` hardcode reproduces `aireplay.pcap` exactly
+(0xccccaaaa / 0xccccaacc×4 — verified on the wire), so it is NOT why 2.4 TX
+failed. A differently-burned RT3572 would still want these derived from
+`EEPROM_TXPOWER_BYRATE` via `rt2800_config_txpower_rt28xx` (incl. the
+RT3070/71/90/**3572** gain-cal delta the RF5592 `config_txpower` path skips);
+left as-is because it is byte-correct for the reference card and rewriting it
+risks regressing that match. RX is unaffected either way.
 
 ## Scripts
 
@@ -152,6 +168,25 @@ RT3572 to verify):**
   `configure_filter` reapply (proven async: 4 reapplies vs 126 hops).
 
 ## Debug log
+
+### RT3572 2.4-GHz TX dead: RFCSR16 TXMIXER_GAIN pinned to 0 (2026-07-11)
+
+Symptom: on the AWUS051NH v2, 5 GHz TX + 2.4/5 GHz RX worked, but 2.4 GHz
+inject/deauth was dead (live-confirmed). Diffed our `config_channel_rf3052`
+2.4-GHz output against the in-tree driver's `captures_rt3572_tx_diff/aireplay.pcap`
+(same card): every register matched **except RFCSR16 — kernel writes 0x4c, we
+wrote 0x48**. RFCSR16 base is 0x4c with `TXMIXER_GAIN` in bits[2:0]; the kernel
+sources that field from `rt2800_get_txmixer_gain_24g` (EEPROM word 0x24). We pinned
+`txmixer_gain_24g=0`, clearing bits[2:0] (0x4c→0x48) and zeroing the 2.4-GHz TX
+mixer gain → CCK/2.4 TX emits ~nothing. Reconstructed EFUSE word 0x24 from the
+pcap's EFUSE block (words 32-39) = **0x0004** → gain 4 → 0x4c: the mixer region is
+burned even though NIC_CONF0 is 0x0000. 5 GHz uses base 0x7a + OFDM and word 0x26
+= 0x0002 (gain 2), a smaller mismatch (0x78 vs 0x7a) that stayed on-air — hence the
+2.4-only failure. Fix: `EepromValues.txmixer_gain_bg/_a` port
+`rt2800_get_txmixer_gain_{24g,5g}` (word 0x24/0x26, low-byte-0xff→0), threaded into
+`_channel_kwargs`. The `_RT3572_TX_PWR_CFG_DEFAULTS` were a red herring — the wire
+shows them byte-exact (0xccccaaaa / 0xccccaacc). Needs a live 2.4-GHz deauth to
+confirm on-air; RF5592 verify_pcap unaffected (39408/39408).
 
 ### EFUSE: the RX blocker
 

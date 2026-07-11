@@ -580,12 +580,20 @@ class RT2800USBDriver:
                 default_power1, default_power2 = _default_power(
                     self._eeprom, 0x3572, channel
                 )
+            # TXMIXER_GAIN gates RFCSR16 in the RF3052 tune. It lives in EEPROM
+            # words 0x24/0x26 (bits[2:0]), which are burned on this card even
+            # though NIC_CONF0 is not (word 0x24=0x0004 -> 24g gain 4). Pinning
+            # it to 0 wrote RFCSR16=0x48 instead of 0x4c on 2.4 GHz, zeroing the
+            # TX mixer gain -> dead 2.4 GHz (CCK) TX. The kernel reads these two
+            # words per band. [SRC] rt2800lib.c:2739-2742 (24g) / 2761-2764 (5g).
             kwargs.update(
                 cal_result=self._rf_cal,
                 tx_chain_num=txpath,
                 rx_chain_num=self._eeprom.rxpath,
                 has_cap_bt_coexist=self._eeprom.has_cap_bt_coexist,
                 has_cap_external_lna_a=self._eeprom.has_cap_external_lna_a,
+                txmixer_gain_24g=self._eeprom.txmixer_gain_bg,
+                txmixer_gain_5g=self._eeprom.txmixer_gain_a,
                 default_power1=default_power1,
                 default_power2=default_power2,
             )
