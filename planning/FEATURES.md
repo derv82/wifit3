@@ -23,7 +23,7 @@ failed/exhausted run should say so, not show a frozen bar.
 (The `12345678` checksum question turned into a real defect — see **WPS PIN reliability** below. The
 checksum-invalid common PINs stay; the fix is that the sweep must stop looping on them.)
 
-### Improve 802.11 Logs — consistency pass
+### Improve 802.11 Logs — consistency pass  — ✓ implemented this session
 
 The gripe is *inconsistency*, not volume. `[NEW AP]` (interface.py:233, free-form, INFO) breaks the
 column layout that `[RXFRAME]` (DEBUG) otherwise holds, so next to the structured frame traces it
@@ -39,10 +39,12 @@ beacons/probes/control (interface.py:160) — so the fix is formatting, not filt
 - **Per-driver TX hex dump** (`rt2800usb/tx.py:188`, `rt3070`/`rt5370`/`rt5372`/`rt5572`, `mt76x2u`…) —
   inconsistent prefixes, all DEBUG; normalize the format string (per-driver sweep, anti-DRY).
 
-The `wlan0`-in-logs bug is **fixed** — `interface.py` now logs the driver's `_chipset`, not the
-synthetic `self.name`. `self.name = wlan{N}` stays as the unique interface handle (it's the
-splash/manager selection key and disambiguates two identical cards); the full rename waits for
-**Multi-card support**.
+**Done this session:** `[NEW AP]` folded into a `[RXFRAME] beacon` line; `[RXFRAME]`/`[TXFRAME]`
+share one padded-type column via `_fmt_frame` (to_ds/from_ds dropped as noise; data frames kept);
+the five Ralink drivers' bulk-OUT hex dumps normalized to one format. The `wlan0`-in-logs bug is
+fixed — `interface.py` logs the driver's `_chipset`, not the synthetic `self.name`. `self.name =
+wlan{N}` stays as the unique interface handle (splash/manager selection key, disambiguates two
+identical cards); the full rename waits for **Multi-card support**.
 
 ### WPS PIN reliability — retriable vs. "this PIN is wrong"
 
