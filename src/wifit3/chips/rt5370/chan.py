@@ -164,10 +164,17 @@ def config_channel_rf53xx(t: RT5370Transport, chip: ChipInfo, ev: EepromValues,
 
     freq_cal_mode1(t, ev)
 
-    # bt_coexist is clear on this card → the non-BT arm [SRC rt2800lib.c:3452-3482].
+    # Per-channel r55/r59 tables [SRC rt2800lib.c:3431-3482], gated on the EEPROM
+    # NIC_CONF1 BT_COEXIST (runtime, not silicon) so a BT-combo 148f:5370 card comes up
+    # instead of failing loud. The reference card is bt_coexist-clear + rev-F → the
+    # non-BT _rev arm, byte-identical.
     if ev.bt_coexist:
-        raise NotImplementedError("#TODO untestable: BT-combo r55/r59 tables (no BT card)")
-    if chip.rt_rev_gte(C.RT5390, C.REV_RT5390F):
+        if chip.rt_rev_gte(C.RT5390, C.REV_RT5390F):
+            t.rfcsr_write(55, C.RF55_BT_REV[channel - 1])
+            t.rfcsr_write(59, C.RF59_BT_REV[channel - 1])
+        else:
+            t.rfcsr_write(59, C.RF59_BT[channel - 1])
+    elif chip.rt_rev_gte(C.RT5390, C.REV_RT5390F):
         # rev >= REV_RT5390F (this card, rev 0x0502): RFCSR55 + RFCSR59 from the _rev
         # tables [SRC rt2800lib.c:3453-3464].
         t.rfcsr_write(55, C.RF55_NON_BT_REV[channel - 1])
@@ -213,7 +220,7 @@ def config_channel(t: RT5370Transport, chip: ChipInfo, ev: EepromValues,
 
     # TX_PIN_CFG: PA/LNA path enables [SRC 4356-4411]. tx_pin starts at 0 (non-RT6352).
     tx_pin = 0
-    tx_pin = _config_tx_pin_pa(tx_pin, ev.tx_chain_num, channel)
+    tx_pin = _config_tx_pin_pa(tx_pin, ev.tx_chain_num, channel, ev.bt_coexist)
     tx_pin = _config_tx_pin_lna(tx_pin, ev.rx_chain_num)
     tx_pin = set_field(tx_pin, C.TX_PIN_CFG_RFTR_EN, 1)
     tx_pin = set_field(tx_pin, C.TX_PIN_CFG_TRSW_EN, 1)
@@ -234,10 +241,12 @@ def config_channel(t: RT5370Transport, chip: ChipInfo, ev: EepromValues,
     t.register_read(C.CH_BUSY_STA_SEC)
 
 
-def _config_tx_pin_pa(tx_pin: int, tx_chain_num: int, channel: int) -> int:
+def _config_tx_pin_pa(tx_pin: int, tx_chain_num: int, channel: int,
+                      bt_coexist: bool) -> int:
     """TX_PIN_CFG PA-enable switch [SRC rt2800lib.c:4363-4388]. This card is 1T1R so only
     the primary G0 PA is enabled; the secondary (2T2R) and tertiary (3T3R) arms are #TODO
-    untestable here. No BT-coexist."""
+    untestable here. A BT-combo card forces G0 on unconditionally [SRC :4382-4386] — on
+    2.4 GHz (is_g=1) that equals the non-BT value, so it never changes the reference wire."""
     is_a = int(channel > 14)
     is_g = int(channel <= 14)
     if tx_chain_num >= 3:
@@ -247,7 +256,7 @@ def _config_tx_pin_pa(tx_pin: int, tx_chain_num: int, channel: int) -> int:
         tx_pin = set_field(tx_pin, C.TX_PIN_CFG_PA_PE_A1_EN, is_a)
         tx_pin = set_field(tx_pin, C.TX_PIN_CFG_PA_PE_G1_EN, is_g)
     tx_pin = set_field(tx_pin, C.TX_PIN_CFG_PA_PE_A0_EN, is_a)
-    tx_pin = set_field(tx_pin, C.TX_PIN_CFG_PA_PE_G0_EN, is_g)       # no BT-coexist
+    tx_pin = set_field(tx_pin, C.TX_PIN_CFG_PA_PE_G0_EN, 1 if bt_coexist else is_g)
     return tx_pin
 
 

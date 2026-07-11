@@ -164,10 +164,22 @@ class RT5370Driver:
         # bulk-OUT (rt2x00usb assigns endpoints to queues in descriptor order).
         self._bulk_out_ep = min(eps.bulk_out) if eps.bulk_out else None
         mode = "WARM reattach (skipped FW + init)" if self.is_warm else "cold bring-up"
-        logger.info("RT5370 %s: mac=%s rf=0x%04x %dT%dR ext_lna_2g=%s freq_off=%d",
-                    mode, self.mac_address, self._eeprom.rf_type, self._eeprom.tx_chain_num,
-                    self._eeprom.rx_chain_num, self._eeprom.external_lna_bg,
-                    self._eeprom.freq_offset)
+        # Kernel rt2800_init_eeprom RF-chip resolution, ported so this driver runs on ANY
+        # 148f:5370 card regardless of the EEPROM RF / antenna / BT burn. [SRC rt2800lib.c:11187].
+        ev = self._eeprom
+        rf = eeprom.resolve_rf_chip(self._chip.rt, ev)
+        logger.info(
+            "RT5370 %s: mac=%s silicon=0x%04x/rev0x%04x rf=%s antenna=%dT%dR "
+            "ext_lna_2g=%s bt_coex=%s ant_div=%d freq_off=%d eeprom=%s",
+            mode, self.mac_address, self._chip.rt, self._chip.rev, rf.name,
+            ev.tx_chain_num, ev.rx_chain_num, ev.external_lna_bg, ev.bt_coexist,
+            ev.ant_diversity, ev.freq_offset,
+            "unburned" if ev.looks_unburned else "burned")
+        if not rf.ported and rf.rf_id != 0:
+            logger.warning(
+                "RT5370 untested variant: EEPROM RF chip %s has no ported config_channel "
+                "path — running the rf53xx default tune (the kernel would dispatch "
+                "elsewhere); RX/monitor should still work", rf.name)
 
         if progress_cb:
             progress_cb(0.5, f"RT5370: {mode}")
