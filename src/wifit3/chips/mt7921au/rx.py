@@ -29,7 +29,7 @@ def classify(data: bytes):
     return None
 
 
-def decode_frame(data: bytes):
+def decode_frame(data: bytes, antenna_mask: int = 0x3):
     """mt7921_mac_fill_rx — return (mpdu_offset, mpdu_end, rssi, fcs_err) or None.
 
     ``mpdu_end`` is MT_RXD0_LENGTH — the RX byte count (RXD + MPDU, FCS already
@@ -40,8 +40,11 @@ def decode_frame(data: bytes):
 
     Group sizes (words): group 0 = 6; +4 group_4; +4 group_1; +2 group_2;
     group_3 = 2 (P-RXV), +6+12 more when group_5. hdr_gap = words*4 +
-    2*remove_pad. RSSI = max over chains 0/1 (antenna_mask 0x3) of
-    to_rssi(RCPIi) = (rcpi - 220) / 2.
+    2*remove_pad. RSSI = max of to_rssi(RCPIi) = (rcpi - 220) / 2 over the
+    hweight8(antenna_mask) chains the card populates — the kernel's
+    ``for i in range(hweight8(mphy->antenna_mask))`` [SRC mt7921/mac.c:365-378].
+    ``antenna_mask`` is the runtime per-card value (NicCaps.antenna_mask); the 0x3
+    default is the captured 2x2 reference (chains 0,1).
     """
     if len(data) < 24:
         return None
@@ -75,8 +78,8 @@ def decode_frame(data: bytes):
             if (rxv_word + 2) * 4 > len(data):
                 return None
             v1 = struct.unpack_from("<I", data, (rxv_word + 1) * 4)[0]
-        for shift in (0, 8):                    # antenna_mask 0x3 -> chains 0,1
-            sig = (((v1 >> shift) & 0xFF) - 220) // 2
+        for i in range(bin(antenna_mask).count("1")):   # hweight8(antenna_mask) chains
+            sig = (((v1 >> (i * 8)) & 0xFF) - 220) // 2  # to_rssi(RCPIi)
             if sig < 0:
                 rssi = max(rssi, sig)
 

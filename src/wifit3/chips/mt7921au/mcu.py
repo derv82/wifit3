@@ -15,6 +15,8 @@ cites the source function. Values come from constants.py (grepped from regs.h),
 never typed from memory.
 """
 import struct
+from dataclasses import dataclass
+from typing import Optional
 
 # ruff: noqa: F403, F405
 from .constants import *
@@ -155,17 +157,54 @@ def get_nic_capability():
 # {type:u32, len:u32, data[len]} TLVs. Confirmed: the parser reproduces the captured MAC.
 _NIC_CAPAB_PAYLOAD_OFF = 36
 MT_NIC_CAP_MAC_ADDR = 0x07
+MT_NIC_CAP_PHY = 0x08
 MT_NIC_CAP_6G = 0x18
+# mt7921_mcu_parse_phy_cap: hw_path bit WF0_24G/WF0_5G gate 2.4/5 GHz; nss -> antenna_mask.
+_WF0_24G = 1 << 0
+_WF0_5G = 1 << 1
+# struct mt7921_phy_cap byte offsets this reads (ht,vht,_5g,max_bw,nss,dbdc,tx_ldpc,
+# rx_ldpc,tx_stbc,rx_stbc,hw_path,he). [SRC mt7921/mcu.c:528-541]
+_PHY_CAP_NSS = 4
+_PHY_CAP_HW_PATH = 10
 
 
-def parse_nic_capability(resp):
-    """Walk the GET_NIC_CAPAB reply TLVs (mt7921_mcu_get_nic_capability) for the
-    values bring-up consumes. ``resp`` is the raw send_mcu_command buffer. Returns
-    {"mac": <colon-str|None>, "has_6ghz": <int>}; unrecognised TLVs are stepped
-    over, as the kernel switch falls through default."""
-    out = {"mac": None, "has_6ghz": 0}
+@dataclass
+class NicCaps:
+    """Per-card capability from the GET_NIC_CAPAB firmware reply — the host-side values
+    the connac2 bring-up branches on (band gating in txpower, antenna_mask in SET_RX_PATH
+    and the RX RSSI chain loop). Defaults reproduce the captured reference units (pau0f +
+    AXML, both identical: nss=2 -> antenna_mask 0x3, 2.4+5 GHz present). has_6ghz defaults
+    False, matching the kernel leaving phy->cap.has_6ghz 0 when the MT_NIC_CAP_6G TLV is
+    absent; a real reply always carries the PHY TLV, so the 2.4/5 GHz + antenna_mask
+    defaults are only a give-it-a-shot fallback for a malformed reply.
+    [SRC mt7921/mcu.c:525-554,596-601]"""
+    mac: Optional[str] = None
+    antenna_mask: int = 0x3
+    has_2ghz: bool = True
+    has_5ghz: bool = True
+    has_6ghz: bool = False
+
+    @property
+    def is_reference(self) -> bool:
+        """True when the caps match the captured pau0f/AXML units (both identical:
+        antenna_mask 0x3, 2.4+5+6 GHz present) — the config the cold-boot pcap gate
+        covers. A card differing in any field walks the ported runtime derivation,
+        which has no capture to gate it (logged '[untested variant]')."""
+        return (self.antenna_mask == 0x3 and self.has_2ghz
+                and self.has_5ghz and self.has_6ghz)
+
+
+def parse_nic_capability(resp) -> NicCaps:
+    """Walk the GET_NIC_CAPAB reply TLVs (mt7921_mcu_get_nic_capability) for the per-card
+    caps bring-up consumes: MAC (MT_NIC_CAP_MAC_ADDR), the PHY cap (MT_NIC_CAP_PHY ->
+    antenna_mask from nss, has_2ghz/has_5ghz from hw_path — a 1:1 port of
+    mt7921_mcu_parse_phy_cap), and 6 GHz support (MT_NIC_CAP_6G). ``resp`` is the raw
+    send_mcu_command buffer. Unrecognised TLVs are stepped over, as the kernel switch
+    falls through default; fields with no TLV keep their reference NicCaps defaults.
+    [SRC mt7921/mcu.c:556-622]"""
+    caps = NicCaps()
     if not resp or len(resp) < _NIC_CAPAB_PAYLOAD_OFF + 4:
-        return out
+        return caps
     body = resp[_NIC_CAPAB_PAYLOAD_OFF:]
     n_element = struct.unpack_from("<H", body, 0)[0]
     off = 4
@@ -178,11 +217,21 @@ def parse_nic_capability(resp):
             break
         data = body[off:off + tlv_len]
         if tlv_type == MT_NIC_CAP_MAC_ADDR and tlv_len >= 6:
-            out["mac"] = ":".join(f"{b:02x}" for b in data[:6])
+            caps.mac = ":".join(f"{b:02x}" for b in data[:6])
+        elif tlv_type == MT_NIC_CAP_PHY and tlv_len > _PHY_CAP_HW_PATH:
+            # antenna_mask = BIT(nss) - 1; has_2ghz/has_5ghz = hw_path & BIT(WF0_*).
+            # Guard nss==0 (implausible) so a garbled reply keeps the reference mask
+            # rather than a zero antenna_mask that would break RX/SET_RX_PATH.
+            nss = data[_PHY_CAP_NSS]
+            hw_path = data[_PHY_CAP_HW_PATH]
+            if nss:
+                caps.antenna_mask = (1 << nss) - 1
+            caps.has_2ghz = bool(hw_path & _WF0_24G)
+            caps.has_5ghz = bool(hw_path & _WF0_5G)
         elif tlv_type == MT_NIC_CAP_6G and tlv_len >= 1:
-            out["has_6ghz"] = data[0]
+            caps.has_6ghz = bool(data[0])
         off += tlv_len
-    return out
+    return caps
 
 
 def fw_log_2_host(ctrl):
@@ -234,7 +283,10 @@ def set_mac_enable(band, enable):
 
 # CH_SWITCH reasons (mt76_connac_mcu.h). SET_RX_PATH and monitor mode use NORMAL.
 CH_SWITCH_NORMAL = 0
-# mt7921 is 2x2: phy->mt76->antenna_mask = chainmask = 0x3.
+# Reference default: the captured pau0f/AXML units are 2x2 (nss=2 -> antenna_mask =
+# chainmask = 0x3). The runtime value is derived per-card from the GET_NIC_CAPAB PHY
+# cap (NicCaps.antenna_mask) and threaded into set_chan_info; this default keeps the
+# reference wire byte-identical and covers callers that pass no mask.
 ANTENNA_MASK = 0x3
 # Default chandef at __mt7921_start, before any channel is set (observed on the
 # wire in the start-time SET_RX_PATH; deterministic across units/captures):

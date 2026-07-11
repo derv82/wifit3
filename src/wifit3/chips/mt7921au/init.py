@@ -15,7 +15,7 @@ The single-cursor CHECK 3 gate (scripts/mt7921au/verify_pcap.py) drives this
 against the captured wire; every op here reproduces the capture byte-for-byte.
 """
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from . import mac, mcu, txpower
 # ruff: noqa: F403, F405
@@ -28,6 +28,10 @@ logger = logging.getLogger(__name__)
 class InitState:
     """Carried across the bring-up; fields fill in as blocks complete."""
     nic_capab_resp: bytes = b""
+    # Per-card capability parsed from nic_capab_resp (mcu.parse_nic_capability) — the
+    # runtime discriminator the band-gating (txpower) and antenna_mask (SET_RX_PATH)
+    # branches read. Defaults to the reference config until the reply is parsed.
+    caps: mcu.NicCaps = field(default_factory=mcu.NicCaps)
 
 
 async def post_boot_init(t) -> InitState:
@@ -55,10 +59,13 @@ async def _run_firmware_tail(t, state: InitState) -> None:
     this firmware/region it emits no command here (its CHIP_CONFIG lands later,
     during regd_update), so the wire is just these two commands back to back.
     """
-    # GET_NIC_CAPAB (query): the reply carries the MAC address + PHY/chip caps,
-    # parsed when the monitor entry (DEV_INFO) needs them.
+    # GET_NIC_CAPAB (query): the reply carries the MAC address + PHY/chip caps. Parse
+    # it now so the band-gating + antenna_mask branches downstream (_regd_and_start)
+    # read this card's real capability, mirroring mt7921_mcu_get_nic_capability filling
+    # phy->cap before __mt7921_start uses it. [SRC mt7921/mcu.c:645, init.c __mt7921_start]
     cmd, payload = mcu.get_nic_capability()
     state.nic_capab_resp = await t.send_mcu_command(cmd, payload) or b""
+    state.caps = mcu.parse_nic_capability(state.nic_capab_resp)
 
     cmd, payload = mcu.fw_log_2_host(1)
     await t.send_mcu_command(cmd, payload, wait_resp=False)
@@ -88,10 +95,10 @@ async def _regd_and_start(t, state: InitState) -> None:
     cmd, payload = mcu.set_channel_domain()
     await t.send_mcu_command(cmd, payload, wait_resp=False)
 
-    # mt76_connac_mcu_set_rate_txpower — regulatory per-rate SKU limits, one
-    # command per 8-channel batch across 2.4/5/6 GHz. (The kernel's per-batch
-    # reg_rr(MT_PSE_BASE) is absent from the capture, so we omit it.)
-    await _set_rate_txpower(t)
+    # mt76_connac_mcu_set_rate_txpower — regulatory per-rate SKU limits, one command
+    # per 8-channel batch, per band the card advertises (state.caps: has_2ghz/5ghz/6ghz).
+    # (The kernel's per-batch reg_rr(MT_PSE_BASE) is absent from the capture, so we omit it.)
+    await _set_rate_txpower(t, state.caps)
 
     # mt7921_init_work tail: set_deep_sleep(ds_enable). USB leaves ds_enable=0,
     # so this is "KeepFullPwr 1" (deep sleep off).
@@ -103,14 +110,15 @@ async def _regd_and_start(t, state: InitState) -> None:
     await t.send_mcu_command(cmd, payload)
     cmd, payload = mcu.set_channel_domain()             # SET_CHAN_DOMAIN (again)
     await t.send_mcu_command(cmd, payload, wait_resp=False)
-    cmd, payload = mcu.set_chan_info(mcu.EXT_CMD_SET_RX_PATH, mcu.DEFAULT_CHANDEF)
-    await t.send_mcu_command(cmd, payload)              # SET_RX_PATH
-    await _set_rate_txpower(t)                           # set_tx_sar_pwr -> txpower
+    cmd, payload = mcu.set_chan_info(mcu.EXT_CMD_SET_RX_PATH, mcu.DEFAULT_CHANDEF,
+                                     antenna_mask=state.caps.antenna_mask)  # SET_RX_PATH
+    await t.send_mcu_command(cmd, payload)
+    await _set_rate_txpower(t, state.caps)               # set_tx_sar_pwr -> txpower
     mac.reset_counters(t)                                # mt792x_mac_reset_counters
 
 
-async def _set_rate_txpower(t) -> None:
-    for payload in txpower.rate_txpower_payloads():
+async def _set_rate_txpower(t, caps) -> None:
+    for payload in txpower.rate_txpower_payloads(caps):
         cmd, p = mcu.set_rate_txpower(payload)
         await t.send_mcu_command(cmd, p, wait_resp=False)
 

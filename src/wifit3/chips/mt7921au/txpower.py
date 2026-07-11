@@ -86,12 +86,35 @@ def _build_sku(band_idx, tp):
     return bytes(sku)
 
 
-def rate_txpower_payloads():
-    """One SET_RATE_TX_POWER payload per 8-channel batch, across 2.4/5/6 GHz, in
-    wire order. Each payload = tx_power_tlv(44) + n_chan x sku_tlv(1+161)."""
+def rate_txpower_payloads(caps=None):
+    """One SET_RATE_TX_POWER payload per 8-channel batch, in wire order. Each payload =
+    tx_power_tlv(44) + n_chan x sku_tlv(1+161).
+
+    The band set is gated on the runtime NIC caps: 2.4/5/6 GHz is emitted iff
+    has_2ghz/has_5ghz/has_6ghz, and last_ch (which flags the last batch's last_msg)
+    is the last channel of the highest present band — a 1:1 port of
+    mt76_connac_mcu_set_rate_txpower + the last_ch pick in mt76_connac_mcu_rate_txpower_band
+    [SRC mt76_connac_mcu.c:2183-2188,2260-2284]. ``caps=None`` (or the reference units,
+    all bands present) reproduces the captured wire: 2.4+5+6 GHz, last_ch 233."""
     from . import regdomain as rd
-    bands = [(0, CHAN_2GHZ, 1), (1, CHAN_5GHZ, 2), (2, CHAN_6GHZ, 3)]
-    last_ch = CHAN_6GHZ[-1]   # has_6ghz -> last 6 GHz channel (233)
+    has_2 = True if caps is None else caps.has_2ghz
+    has_5 = True if caps is None else caps.has_5ghz
+    has_6 = True if caps is None else caps.has_6ghz
+    bands = []
+    if has_2:
+        bands.append((0, CHAN_2GHZ, 1))
+    if has_5:
+        bands.append((1, CHAN_5GHZ, 2))
+    if has_6:
+        bands.append((2, CHAN_6GHZ, 3))
+    if has_6:
+        last_ch = CHAN_6GHZ[-1]
+    elif has_5:
+        last_ch = CHAN_5GHZ[-1]
+    elif has_2:
+        last_ch = CHAN_2GHZ[-1]
+    else:
+        return []
     payloads = []
     for band_idx, ch_list, tlv_band in bands:
         n = len(ch_list)

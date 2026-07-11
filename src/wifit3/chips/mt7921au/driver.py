@@ -74,6 +74,10 @@ class MT7921AUDriver:
         self.is_warm: bool = False
         self.mac_address: Optional[str] = None
         self._nic_has_6ghz: int = 0
+        # Per-card antenna_mask (chains the RX RSSI loop reads + SET_RX_PATH streams),
+        # derived from the GET_NIC_CAPAB PHY cap on cold boot. 0x3 = the captured 2x2
+        # reference; a warm reattach (no post-boot init) keeps this default.
+        self._antenna_mask: int = 0x3
         # 802.11 TX sequence counter (number in seq_ctrl bits [4:15], so it steps
         # by 0x10). The chip transmits the seq we stamp (TXD SN_VALID), so we own
         # it — see tx.stamp_seq_ctrl. Touched on the event loop only (no lock).
@@ -135,10 +139,11 @@ class MT7921AUDriver:
             progress_cb(0.6, "Configuring device...")
         logger.info("Running MT7921AU post-boot init...")
         self._init_state = await chip_init.post_boot_init(self.transport)
-        caps = mcu.parse_nic_capability(self._init_state.nic_capab_resp)
-        self.mac_address = caps["mac"]
-        self._nic_has_6ghz = caps["has_6ghz"]
-        logger.info("MT7921AU silicon MAC: %s", self.mac_address)
+        caps = self._init_state.caps
+        self.mac_address = caps.mac
+        self._antenna_mask = caps.antenna_mask
+        self._nic_has_6ghz = int(caps.has_6ghz)
+        self._log_nic_caps(caps)
 
         # Enter monitor mode on the initial channel (the RX reader routes the
         # monitor commands' acks back, and 802.11 frames to _on_raw_rx).
@@ -151,6 +156,21 @@ class MT7921AUDriver:
             progress_cb(1.0, "Done")
         logger.info("MT7921AU monitor mode ready (cold boot) on channel %d.", self._channel)
         return True
+
+    def _log_nic_caps(self, caps: mcu.NicCaps) -> None:
+        """Log the per-card GET_NIC_CAPAB config the cold bring-up branched on, once.
+        Tagged '[untested variant]' when the caps differ from the captured pau0f/AXML
+        reference (antenna_mask 0x3, 2.4+5+6 GHz) — such a card runs the ported runtime
+        derivation give-it-a-shot, with no cold-boot capture to gate it."""
+        n = bin(caps.antenna_mask).count("1")
+        summary = (f"MAC {caps.mac}, antenna_mask 0x{caps.antenna_mask:x} ({n}x{n}), "
+                   f"bands 2.4={int(caps.has_2ghz)} 5={int(caps.has_5ghz)} 6={int(caps.has_6ghz)}")
+        if caps.is_reference:
+            logger.info("MT7921AU NIC caps: %s", summary)
+        else:
+            logger.warning("MT7921AU NIC caps [untested variant]: %s (reference: "
+                           "antenna_mask 0x3, all bands). Running the ported runtime "
+                           "derivation.", summary)
 
     async def _warm_reattach(self, progress_cb: Optional[ProgressCallback]) -> bool:
         """Light reattach to firmware that is already running in monitor mode — the
@@ -241,7 +261,7 @@ class MT7921AUDriver:
     def _on_raw_rx(self, data: bytes):
         """Decode one 802.11 frame off EP 0x84 (MCU responses are demuxed away by
         the transport). Strips the connac2 RX descriptor, then parses the MPDU."""
-        decoded = rx.decode_frame(data)
+        decoded = rx.decode_frame(data, self._antenna_mask)
         if decoded is None:
             return
         mpdu_off, mpdu_end, rssi, fcs_err = decoded
