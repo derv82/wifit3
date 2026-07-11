@@ -88,6 +88,13 @@ def _deauth_nav_bytes(dest_mac: str) -> bytes:
     return nav.to_bytes(2, "little")
 
 
+def _fmt_frame(tag: str, ftype: str, src, dest, bssid) -> str:
+    """One consistent line for a captured/injected 802.11 frame:
+    ``[TAG] type      src → dst  (bssid …)``. Shared by [RXFRAME]/[TXFRAME] (and the
+    new-AP beacon line) so every frame log reads in the same padded-type column."""
+    return f"[{tag}] {ftype:<9} {src} → {dest}  (bssid {bssid})"
+
+
 class WlanInterface:
     """High-level 802.11 abstraction for a hardware driver; the UI talks only to this class."""
     def __init__(self, driver_instance: Any, name: str, description: str,
@@ -154,18 +161,16 @@ class WlanInterface:
             self._fire_rx_callbacks(pkt.raw, rssi)
 
         # Debug trace of attack-relevant RX — data/EAPOL plus the AP's mgmt replies
-        # (assoc-resp, auth=mgmt_11, deauth), so a whole exchange is visible: whether the AP
-        # answers our auth/assoc at all, not just whether data reaches us. Beacons/probes
-        # stay out as noise; control frames never reach here. Guarded so it's free when off.
+        # (assoc-resp, auth=mgmt_11, deauth), so a whole exchange is visible. Data frames
+        # stay in on purpose: seeing data addressed to MACs that aren't ours is the sign
+        # monitor mode is actually promiscuous. Beacons log their own [RXFRAME] line on
+        # first sighting (see _on_beacon_frame); control frames never reach here.
         if (
             frame_type in ("data", "eapol", "wep_data", "assoc_resp", "reassoc_resp",
                            "deauth", "disassoc")
             or frame_type.startswith("mgmt_")
         ) and logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "[RXFRAME] %-9s to_ds=%s from_ds=%s %s -> %s (bssid %s)",
-                frame_type, pkt.to_ds, pkt.from_ds, pkt.source, pkt.dest, bssid,
-            )
+            logger.debug("%s", _fmt_frame("RXFRAME", frame_type, pkt.source, pkt.dest, bssid))
 
         if not bssid or bssid == "Unknown" or bssid == "ff:ff:ff:ff:ff:ff":
             return
@@ -230,7 +235,8 @@ class WlanInterface:
             )
             self._recompute_siblings_for(bssid)
             if self._is_real_ssid(ssid):
-                logger.info(f"[NEW AP] Found '{ssid}' ({bssid}) on CH {channel}")
+                logger.info('[RXFRAME] %-9s New AP on Ch %s: %s ("%s")',
+                            "beacon", channel, bssid, ssid)
         else:
             ap = self.access_points[bssid]
             old_channel = ap.channel
@@ -648,11 +654,8 @@ class WlanInterface:
                 return
             # Mirror of [RXFRAME] for our injects — reappearing as RX would mean chip loopback.
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(
-                    "[TXFRAME] %-9s to_ds=%s from_ds=%s %s -> %s (bssid %s)",
-                    parsed.type, parsed.to_ds, parsed.from_ds,
-                    parsed.source, parsed.dest, parsed.bssid,
-                )
+                logger.debug("%s", _fmt_frame("TXFRAME", parsed.type,
+                                              parsed.source, parsed.dest, parsed.bssid))
             bssid = parsed.bssid
             if bssid and bssid not in ("Unknown", "ff:ff:ff:ff:ff:ff"):
                 self.packet_stats.record_tx(bssid, parsed.type == "deauth")
