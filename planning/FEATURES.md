@@ -73,21 +73,19 @@ literals — advancing there just moves to the next common PIN.
 
 ## Low Priority
 
-### OUI-Specific WPS PIN Selection — blocked on licensing
+### OUI-Specific WPS PIN Selection — ✓ implemented this session
 
-Airgeddon ships `known_pins.db` — an OUI→default-PIN map (534 OUIs / ~1,800 PINs in the current
-`v1s1t0r1sh3r3/airgeddon` master; the F4dl0 fork is older/smaller at 318). Given a target BSSID's
-OUI (first 6 hex), seed those known default PINs *ahead* of the generic COMMON/brute sweep — far
-higher hit-rate than the generic list. Slots into the existing `common`-phase machine with no new
-oracle logic (each is a full 8-digit PIN; `first_half_ok` still short-circuits to the second-half
-sweep). ~5% of entries are checksum-invalid — they're *observed* factory PINs, which is exactly why
-keeping our own checksum-invalid commons is defensible.
+A target's OUI (first 6 hex of the BSSID) → known factory PINs, seeded ahead of the generic COMMON
+list + 11k sweep (`known_pins.py` + `known_pins.json`, 534 OUIs / 1807 PINs; `campaign.py` seeds
+`_common_pins`, logs an "OUI match: N known default PIN(s)" line). Slots into the existing
+`common`-phase machine — each is a full 8-digit PIN, `first_half_ok` still short-circuits to the
+second-half sweep, and the dead-first-half skip dedups shared prefixes among the seeded PINs.
 
-**Blocked:** airgeddon is **GPLv3**; wifit3 is **GPLv2** — incompatible, so we cannot copy the DB in.
-A bare OUI→PIN mapping is arguably uncopyrightable fact, but the file isn't; the clean path is
-re-deriving from a primary source with proper attribution (the WHENCE discipline we already hold for
-firmware). Deferred until that's sorted. Companion to the OUI→vendor table the client-fingerprinting
-item wants.
+**Licensing (resolved):** airgeddon is **GPLv3**, wifite3 **GPLv2** — so we did NOT copy its
+`known_pins.db`. The OUI↔PIN pairs are *facts* (a family ships/computes a given PIN), uncopyrightable
+under Feist; `known_pins.json` is our own re-expression of those facts, credited to airgeddon's
+compilation in `known_pins.py`. Data-only reuse with attribution — the maintainers' call, documented.
+Future: an OUI→vendor table (companion to client-fingerprinting) could name the matched vendor.
 
 ### Multi-card support (Minnie Drivers v2)
 
