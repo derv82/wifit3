@@ -61,7 +61,7 @@ def cold_bringup(t):
     bb.phy_parameter_init(t, post=True)    # PHYDM POST_SETTING (OFDM/CCK on)
     usbphy.init_usb_cfg(t)                 # init_interface_cfg: RX-DMA burst mode + drop-data
     t.read32(const.REG_RCR)                # hal_init tail: HW_VAR_RCR sync read-back
-    cal.config_trx_mode(t)                 # config_phydm_trx_mode: 2T2R TX/RX path + RF mode
+    cal.config_trx_mode(t, rfe_type=e.rfe_type, cut=info.chip_ver)   # config_phydm_trx_mode: TX/RX path
     cal.aac_check(t)                       # one-off AAC check (RF_A 0xC9) before the DM init
     cal.rfe_init(t)                        # phydm_rfe_8822b_init: RFE pin mux (DM init start)
     st = cal.DmState()                     # PHYDM software state seeded here, used by dc_cancellation

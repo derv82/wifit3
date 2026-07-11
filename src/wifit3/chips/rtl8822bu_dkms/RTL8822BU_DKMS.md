@@ -79,6 +79,34 @@ cross-capture artifact, not a port bug. Everything earlier is byte-clean on all 
 Do NOT open `chips/rtl8822bu/`, `chips/rtw88_base/`, or `scripts/rtl8822bu/` — reading them
 produces a hybrid. The shared gate engine `scripts/rtw88_pcap_replay.py` is fine (family tooling).
 
+## Board variants (non-reference EFUSE burns)
+
+The pcap-gated card is **rfe_type 3 (iFEM), D-cut, 2T2R**. The driver runs on any card matching
+`SUPPORTED_IDS` regardless of burn: fuse VALUES (crystal / TX-power PG / MAC / PA-bias / thermal)
+are read at runtime, and the cut/rfe-conditional BB/AGC/RF tables are the FULL vendor tables resolved
+by the `phy_cond` walker on the RUNTIME `cut`/`rfe_type` (package is a table don't-care on 8822b —
+`Hal_EfuseParsePackageType` is empty; the walker output is identical for all package values). The
+few genuinely FEM-branched runtime functions are gated on the runtime `rfe_type`/`cut`:
+
+- `chan._ccapar_by_rfe` — the CCA-param table (`phydm_ccapar_by_rfe_8822b`): iFEM-RFE (rfe
+  3/5/12/15/16/17/19, the reference) / plain-iFEM / eFEM / 2G-iFEM+5G-eFEM hybrid (rfe 2/9), + the
+  eFEM 0x83c seed, the rfe-5/col-3 and cut-B 0x830 substitutions, and the rfe-16 big-jump.
+- `chan._rfe_pinmux` — the per-channel RFE pin/antenna mux (`phydm_rfe_8822b`): dispatches to
+  `_rfe_ifem` (all iFEM rfe), `_rfe_efem` (rfe 1/2/6/7/9, incl. the B-cut/rfe<2 PAPE arm), or
+  `_rfe_4_11` (rfe 4/11).
+- `chan._switch_band_rxhp` — the switch_band SoML RxHP arm (`config_phydm_switch_band_8822b`): the
+  rfe∈{3,5,8,17} vs eFEM∈{1,6,7,9} 0x8cc/0x8d8 seed + the rfe∈{12,19} RF-0xb3 write.
+
+`connect()` logs the detected burn once and tags a non-reference `rfe_type`/`cut` `[untested
+variant]` (ported from vendor C, only the reference is HW-verified).
+
+**Untested-variant residuals** (ported-but-hardware-untested unless noted; only the rfe-3/D-cut
+reference is pcap-gated): the eFEM / hybrid / 4-11 CCA + pinmux paths, the eFEM B-cut PAPE arm, and
+the rfe-12/19 RF-0xb3. **Not ported** (give-it-a-shot iFEM fallback, warned at connect): the OEM
+`phydm_8822b_type15_rfe` / `type18_rfe` pinmux (Microsoft/Roku SKUs) and the compile-guarded
+2T3R/2T4R/smart-antenna rfe types (absent from this build). rf_type is chip-fixed 2T2R, so there is
+no 1T/antenna-count fuse to branch on.
+
 ## Orientation
 
 RTL8822B is a 2T2R dual-band 11ac chip; register IO is the Realtek `bRequest=0x05` vendor control

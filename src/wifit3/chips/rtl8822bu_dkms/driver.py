@@ -44,6 +44,15 @@ CHANNELS_2G = list(range(1, 14))
 CHANNELS_5G = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124,
                128, 132, 136, 140, 144, 149, 153, 157, 161, 165]
 
+# The pcap-gated reference card's EFUSE/chip-cut burn (TP-Link Archer T3U+). A card whose burn
+# differs runs ported-but-hardware-untested branches (FEM CCA table / RFE pinmux / SoML RxHP arm),
+# so connect() tags it once. rfe_type 3 = iFEM, cut 3 = ODM_CUT_D.
+_REF_RFE_TYPE = 3
+_REF_CUT = 3
+# rfe types whose per-channel RFE PINMUX is NOT ported (OEM-only phydm_8822b_type15/18_rfe); the
+# dispatch runs the iFEM pinmux as a give-it-a-shot fallback, and connect() escalates the warning.
+_RFE_PINMUX_UNPORTED = frozenset({15, 18})
+
 
 def _rx_state_line(t) -> str:
     """Read back the band-dependent RX-path registers for the cold-wedge diagnostic.
@@ -87,6 +96,11 @@ class Rtl8822buDkmsDriver:
         self.transport = transport
         self.mac_address: Optional[str] = None
         self._chip = None                       # (info, efuse) from cold_bringup
+        # Runtime EFUSE/chip-cut discriminators (set after cold_bringup). Default = the pcap-gated
+        # reference card (rfe_type 3 iFEM, D-cut); a non-reference burn re-selects the FEM CCA
+        # table + RFE pinmux + SoML RxHP arm in chan.set_channel_bw.
+        self._rfe_type: int = _REF_RFE_TYPE
+        self._cut: int = _REF_CUT
         self._txpwr_pg = None                   # decoded PG TX-power block (per-channel TXAGC)
         self._channel: Optional[int] = None
         self._rx_cb: Optional[Callable[[dict], None]] = None
@@ -136,18 +150,19 @@ class Rtl8822buDkmsDriver:
                 progress_cb(0.1, "Cold bring-up: chip-ID / EFUSE / FW / MAC / BB / RF")
             info, e = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
             self._chip = (info, e)
+            self._rfe_type, self._cut = e.rfe_type, info.chip_ver
             self._txpwr_pg = txpower.parse_pg(e.log_map)
             if e.mac_address:                          # program the card's own MAC (TX source/ACK)
                 await loop.run_in_executor(None, mac.set_mac_addr, self.transport, e.mac_address)
                 self.mac_address = e.mac_address
-            logger.info("RTL8822BU cold init done: cut=%d rfe_type=%d crystal_cap=0x%02x",
-                        info.chip_ver, e.rfe_type, e.crystal_cap)
+            self._log_detected_config(info, e)
 
             if progress_cb:
                 progress_cb(0.8, f"Tuning to channel {_DEFAULT_CHANNEL} @ 20 MHz")
 
             def _initial_tune(t):
-                chan.set_channel_bw(t, _DEFAULT_CHANNEL, txpwr_pg=self._txpwr_pg)
+                chan.set_channel_bw(t, _DEFAULT_CHANNEL, txpwr_pg=self._txpwr_pg,
+                                    rfe_type=self._rfe_type, cut=self._cut)
 
             await loop.run_in_executor(None, _initial_tune, self.transport)
             self._channel = _DEFAULT_CHANNEL
@@ -180,6 +195,22 @@ class Rtl8822buDkmsDriver:
             return True
         except (IOError, usb.core.USBError, NotImplementedError) as e:
             raise BringUpError("bring-up", str(e)) from e
+
+    def _log_detected_config(self, info, e) -> None:
+        """One-line log of the EFUSE/chip-cut burn at connect. The pcap-gated reference card is
+        rfe_type 3 (iFEM) / D-cut / 2T2R; the runtime FEM branches (chan._ccapar_by_rfe FEM CCA
+        table, chan._rfe_pinmux, the switch_band SoML RxHP arm) are ported from vendor C but only
+        this burn is hardware-verified, so a different burn is tagged. rfe 15/18 (OEM pinmux) is
+        not ported and runs the iFEM fallback — called out as a genuinely untested variant."""
+        untested = e.rfe_type != _REF_RFE_TYPE or info.chip_ver != _REF_CUT
+        logger.info(
+            "RTL8822BU board: rfe_type=%d cut=%d rf=2T2R crystal_cap=0x%02x thermal=0x%02x "
+            "mac=%s%s", e.rfe_type, info.chip_ver, e.crystal_cap, e.thermal_meter,
+            e.mac_address or "<none>", "  [untested variant]" if untested else "")
+        if e.rfe_type in _RFE_PINMUX_UNPORTED:
+            logger.warning("RTL8822BU: untested variant: rfe_type=%d RFE pinmux "
+                           "(phydm_8822b_type%d_rfe) is not ported — running the iFEM fallback; "
+                           "antenna routing may be wrong.", e.rfe_type, e.rfe_type)
 
     async def _watchdog_loop(self) -> None:
         """Run `phydm_watchdog` every ~2 s (the vendor cadence) — read the FA counters, adapt the RX
@@ -230,8 +261,10 @@ class Rtl8822buDkmsDriver:
             logger.warning("8822bu cold 2.4 GHz synth unlocked (RF18 bit15) — settle + re-cycle "
                            "5->2.4 GHz (try %d)", attempt + 1)
             time.sleep(0.3)
-            chan.set_channel_bw(t, _HEAL_5G_CHANNEL, prev_ch=_DEFAULT_CHANNEL, txpwr_pg=self._txpwr_pg)
-            chan.set_channel_bw(t, _DEFAULT_CHANNEL, prev_ch=_HEAL_5G_CHANNEL, txpwr_pg=self._txpwr_pg)
+            chan.set_channel_bw(t, _HEAL_5G_CHANNEL, prev_ch=_DEFAULT_CHANNEL,
+                                txpwr_pg=self._txpwr_pg, rfe_type=self._rfe_type, cut=self._cut)
+            chan.set_channel_bw(t, _DEFAULT_CHANNEL, prev_ch=_HEAL_5G_CHANNEL,
+                                txpwr_pg=self._txpwr_pg, rfe_type=self._rfe_type, cut=self._cut)
         if sipi.read_rf_reg(t, sipi.RF_PATH_A, 0x18) & (1 << 15):
             logger.error("8822bu 2.4 GHz synth still unlocked after re-cycles — RX may be deaf on 2.4 GHz")
 
@@ -257,7 +290,8 @@ class Rtl8822buDkmsDriver:
         self._dbg_frames = self._dbg_beacons = 0
 
         def _tune(t):
-            chan.set_channel_bw(t, channel, prev_ch=prev, txpwr_pg=self._txpwr_pg)
+            chan.set_channel_bw(t, channel, prev_ch=prev, txpwr_pg=self._txpwr_pg,
+                                rfe_type=self._rfe_type, cut=self._cut)
 
         async with self._io_lock:
             await loop.run_in_executor(None, _tune, self.transport)

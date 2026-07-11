@@ -530,8 +530,11 @@ def _config_rx_path(t, rx_path: int) -> None:
 
 
 def config_trx_mode(t, central_ch: int = 0, tx_path: int = BB_PATH_AB,
-                    rx_path: int = BB_PATH_AB, sel_1ss: int = BB_PATH_A) -> None:
-    """[SRC] config_phydm_trx_mode_8822b — 2T2R path/mode config after the BB/RF tables."""
+                    rx_path: int = BB_PATH_AB, sel_1ss: int = BB_PATH_A,
+                    rfe_type: int = 3, cut: int = 3) -> None:
+    """[SRC] config_phydm_trx_mode_8822b — 2T2R path/mode config after the BB/RF tables.
+    `rfe_type`/`cut` pick the FEM CCA table + eFEM 0x83c gate in the trailing ccapar (reference
+    rfe 3 / D-cut -> iFEM-RFE, no 0x83c)."""
     sipi.set_bb_reg(t, 0x0C08, 0xFFFF, 0x3231 if (tx_path | rx_path) & BB_PATH_A else 0x1111)
     sipi.set_bb_reg(t, 0x0E08, 0xFFFF, 0x3231 if (tx_path | rx_path) & BB_PATH_B else 0x1111)
     _config_tx_path(t, tx_path, sel_1ss, sel_1ss)
@@ -550,5 +553,6 @@ def config_trx_mode(t, central_ch: int = 0, tx_path: int = BB_PATH_AB,
     sipi.set_rf_reg(t, sipi.RF_PATH_A, RF_0xEF, _FULL, 0x00000)
     sipi.set_rf_reg(t, sipi.RF_PATH_A, RF_0xEF, _FULL, 0x00000)
     chan._igi_toggle(t)                                       # let RF enter RX mode
-    chan._ccapar_by_rfe(t, central_ch, bw20=True)             # central_ch 0 -> col 1 (2.4G/2R)
+    chan._ccapar_by_rfe(t, central_ch, True, rfe_type, cut,   # central_ch 0 -> col 1 (2.4G/2R)
+                        ant_2r=(rx_path == BB_PATH_AB))
     # phydm_rfe_8822b(central_ch): channel 0 -> returns without writing.
