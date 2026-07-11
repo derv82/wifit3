@@ -1,9 +1,9 @@
 # RTL8814AU (8814au_dkms)
 
 ## Captured Wireless Card
-- Dual-band 2.4 + 5 GHz — **4T4R silicon, 2T4R over USB-2** (a non-superspeed link caps the TX chains).
+- Dual-band 2.4 + 5 GHz — **4T4R silicon, 2T4R over USB-2**.
 - Device: ALFA AWUS1900, `0bda:8813`, captured over USB 2.0.
-- Captures: `usb_dumps_new/captures_rtl8814au/` (2.4 GHz), `usb_dumps_new2/captures_rtl8814au/` (5 GHz inject).
+- Captures: `find . -name captures_rtl8814au` (two dirs).
 
 ## Linux Driver Source
 - Link: https://github.com/morrownr/8814au — **not** aircrack-ng/rtl8814au.
@@ -53,5 +53,5 @@ After a 5→2 band cross followed by a static dwell, RX can go dead (four RF pat
 no help). Re-issuing `switch_wireless_band_2g` revives it but caps ~15% residual. Port-vs-silicon is
 **contested**: a matched N-trial repro had our port 12/32 (~38%) and a *cycled* kernel card 9/32
 (~28%), but a *fresh-replug* kernel card was 0/10 — consistent with the airmon-cycle degradation
-confound, so the kernel rate isn't established. No in-driver fix stays at parity with the vendor.
+confound, so the kernel rate isn't established.
 Repro: `rx_scan_wedge{,_linux}.py`.

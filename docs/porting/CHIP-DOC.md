@@ -1,41 +1,50 @@
 # The chip reference doc
 
-Every chip dir ships a `<CHIP>.md` — a short reference a maintainer or the next agent reads before
-touching the driver. Write it for someone who would reject a wall of text in a PR.
+Every chip dir ships a `<CHIP>.md`: the facts about the port you can't get faster by reading the
+code. Facts only — verifiable by a human or an LLM. No assumptions, no "we thought X", no
+cautionary tales written as suspense, no anthropomorphizing. If a line isn't verifiable, or a
+reader would learn it faster from the code, cut it. Use bullets where the content is a list; one
+line per bullet.
 
-The test for every line: **could a reader get this faster by reading the code?** If yes, leave it
-out. The doc is for what *isn't* in the code — what works, what's broken, and the non-obvious
-things that cost you.
+`chips/rtl8814au_dkms/RTL8814AU_DKMS.md` is the worked example.
 
-Style: prose for anything that explains; bullets only for genuinely list-shaped things, and a
-bullet is one line. If a thought needs two lines, write it as a sentence or cut it. The reference
-body (everything above the dated log) should fit on a screen — if it's longer, you're transcribing
-the code.
+## Sections, in order
 
-What goes in, and nothing else:
+**Captured Wireless Card** — bands, TX/RX chains, exact device model, USB link speed; `VID:PID`;
+where the captures live.
 
-- **Status** — what works, what's broken, what's untested, on hardware. The thing you can't get
-  from the code.
-- **Gotchas** — the non-obvious, hard-won facts (a ZeroCD enumeration, a single RX-gating bit,
-  "this card is marginal even under the vendor driver"). If you'd learn it by reading the code, it
-  doesn't belong.
-- **Orientation** — a one-line silicon summary and a handful of pointers to where to start
-  reading. Names match the C; that's the cross-reference. Not the whole call graph.
-- **Scripts** — the reusable diagnostics, one line each.
-- **Debug log** — dated, append-only, at the bottom. The "why we found it" stories live here,
-  once. No op-offset progress stamps ("GREEN @ 8033"), no "VERIFIED" stamps, ever.
+**Linux Driver Source** — upstream repo link; type (mainline / DKMS); exact commit hash (+ version,
+date); where it's vendored in-repo. Pin the commit, not just a version — it makes a `file:line`
+citation resolvable.
 
-Skeleton:
+**Python Port Details** — `VID:PID` and how the driver is selected; a one-line status (what works
+on hardware, what the verify gate proves); related ports; then a short **Non-obvious in the port**
+bullet list — the few implementation facts that would cost a maintainer time. Not a catch-all;
+only what bites.
+
+**Known Problems** — bulleted. Each bullet: what breaks, when, and the current known state.
+
+**Driver Entry Points** — feature → where to start reading, one bullet each. Names match the vendor
+C, so the name is the cross-reference.
+
+**Scripts** — the reusable diagnostics, grouped, one line each. Mark the one-offs that are safe to
+delete.
+
+**Debug log** — dated, append-only, at the bottom. One entry per durable finding: the fact and how
+it was established. No "we suspected X, turned out Y" essays, no op-offset progress stamps, no
+"VERIFIED" stamps. When a finding hardens into a caveat, move it up into Known Problems or the
+code; keep a dated entry only while it still helps (an open problem plus what's been ruled out).
+
+## Skeleton
 
 ```
-# <CHIP>            one line: family, kind of port, source
+# <CHIP>
 
-## Status          works / broken / untested — on hardware
-## Gotchas         the non-obvious, hard-won stuff
-## Orientation     silicon one-liner + a few pointers into the code
-## Scripts         reusable diagnostics, one line each
-## Debug log       dated, append-only; the stories, kept out of the reference body
+## Captured Wireless Card    card, VID:PID, captures dir
+## Linux Driver Source       repo, type, pinned commit, vendored path
+## Python Port Details       VID:PID + selection, status, related ports, non-obvious traps
+## Known Problems            what breaks, when, current state — bulleted
+## Driver Entry Points       feature -> module/function, one bullet each
+## Scripts                   reusable diagnostics, grouped, one line each
+## Debug log                 dated, append-only; durable findings, no essays
 ```
-
-Write it as the port stabilizes, not every milestone. When a dated finding becomes a durable
-caveat, promote it up into Gotchas; the dated entry keeps the "why we found it."
