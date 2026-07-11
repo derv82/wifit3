@@ -15,18 +15,28 @@ import struct
 
 from wifit3.chips.rt2500usb.bbp import eeprom_bbp_overrides, reset_tuner
 from wifit3.chips.rt2500usb.chan import (
+    RF_VALS_2522,
+    RF_VALS_2523,
+    RF_VALS_2524,
+    RF_VALS_2525,
+    RF_VALS_2525E,
+    RF_VALS_5222,
     antenna_defaults,
     config_ant,
     config_channel,
+    is_rf_ported,
     rf_write,
 )
 from wifit3.chips.rt2500usb import monitor
 from wifit3.chips.rt2500usb.constants import (
     ANTENNA_A,
+    DEFAULT_TXPOWER,
     EEPROM_SIZE,
     MAC_CSR20,
     MAC_CSR20_ACTIVITY,
     MAC_CSR20_LINK,
+    PHY_CSR5,
+    PHY_CSR5_CCK_FLIP,
     PHY_CSR7,
     MAC_CSR1,
     MAC_CSR1_HOST_READY,
@@ -36,7 +46,13 @@ from wifit3.chips.rt2500usb.constants import (
     MAC_CSR17_RF_CURR_STATE,
     PHY_CSR9,
     PHY_CSR10,
+    RF2522,
+    RF2523,
+    RF2524,
+    RF2525,
     RF2525E,
+    RF3_TXPOWER,
+    RF5222,
     STATE_AWAKE,
     TXRX_CSR1,
     TXRX_CSR1_AUTO_SEQUENCE,
@@ -322,6 +338,107 @@ def test_config_ant_runs_for_rf2525e():
     # Should issue BBP (PHY_CSR7) writes + PHY_CSR5/6 writes without error.
     config_ant(t, RF2525E, ANTENNA_A, ANTENNA_A)
     assert t.writes  # at least some writes happened
+
+
+# ----------------------------------------------------------------------
+# RF-chip generalization: every EEPROM RF variant, not just the reference
+# ----------------------------------------------------------------------
+def _rf_write_values(t: "FakeTransport") -> list[int]:
+    """Reconstruct each rf_write's full 20-bit value from the PHY_CSR9 (low 16)
+    + PHY_CSR10 (high byte) write pair the serial RF programming emits."""
+    vals: list[int] = []
+    low: int | None = None
+    for addr, val in t.writes:
+        if isinstance(addr, str):
+            continue
+        if addr == PHY_CSR9:
+            low = val & 0xFFFF
+        elif addr == PHY_CSR10 and low is not None:
+            vals.append(low | ((val & 0xFF) << 16))
+            low = None
+    return vals
+
+
+def _expected_rf(table, channel, txpower):
+    rf1, rf2, rf3, rf4 = table[channel]
+    rf3 = set_field16(rf3, RF3_TXPOWER, txpower)
+    return [rf1, rf2, rf3] + ([rf4] if rf4 else [])
+
+
+def test_rf_tables_cover_all_six_chips():
+    for rf in (RF2522, RF2523, RF2524, RF2525, RF2525E, RF5222):
+        assert is_rf_ported(rf)
+    assert not is_rf_ported(0x07)   # not one of the six
+    for table in (RF_VALS_2522, RF_VALS_2523, RF_VALS_2524,
+                  RF_VALS_2525, RF_VALS_2525E, RF_VALS_5222):
+        assert set(table) == set(range(1, 15))
+
+
+def test_rf_vals_match_kernel_literals():
+    # Transcription guard vs rt2500usb.c rf_vals_* arrays (spot channels).
+    assert RF_VALS_2522[1] == (0x00002050, 0x000c1fda, 0x00000101, 0x00000000)
+    assert RF_VALS_2523[1] == (0x00022010, 0x00000c9e, 0x000e0111, 0x00000a1b)
+    assert RF_VALS_2524[14] == (0x00032020, 0x00000d1a, 0x00000101, 0x00000a03)
+    assert RF_VALS_5222[14] == (0x00022020, 0x000011ae, 0x00000101, 0x00000a1b)
+
+
+def test_config_channel_rf2522_plain_no_halfband_no_rf4():
+    # RF2522: plain rf1/rf2/rf3 writes, no half-band pre-tune, no RF[4].
+    t = FakeTransport()
+    assert config_channel(t, RF2522, 1, txpower=DEFAULT_TXPOWER) is True
+    assert _rf_write_values(t) == _expected_rf(RF_VALS_2522, 1, DEFAULT_TXPOWER)
+
+
+def test_config_channel_rf5222_no_halfband_with_rf4():
+    # RF5222: four writes (rf1..rf4), no half-band (that is RF2525E-only).
+    t = FakeTransport()
+    assert config_channel(t, RF5222, 6, txpower=DEFAULT_TXPOWER) is True
+    vals = _rf_write_values(t)
+    assert vals == _expected_rf(RF_VALS_5222, 6, DEFAULT_TXPOWER)
+    assert len(vals) == 4                       # RF2525E ch would be 6 (half-band pair)
+
+
+def test_config_channel_unknown_rf_gives_it_a_shot():
+    # An RF value the kernel doesn't know must NOT raise — it falls back to the
+    # RF2525 table (plain writes) and tunes anyway.
+    t = FakeTransport()
+    assert config_channel(t, 0x07, 1, txpower=DEFAULT_TXPOWER) is True
+    assert _rf_write_values(t) == _expected_rf(RF_VALS_2525, 1, DEFAULT_TXPOWER)
+
+
+def test_config_channel_rf2525e_reference_unchanged():
+    # The hardware-verified reference path is byte-identical: half-band RF[2]
+    # pre-write + RF[4] pre-write, then rf1..rf4 — six RF writes for ch1.
+    t = FakeTransport()
+    config_channel(t, RF2525E, 1, txpower=DEFAULT_TXPOWER)
+    vals = _rf_write_values(t)
+    assert vals[0] == 0x000008AA                 # half-band pre-tune (ch1)
+    assert len(vals) == 6
+
+
+def test_config_ant_iq_flip_for_rf5222():
+    # The antenna path already generalizes: RF5222 flips TX I/Q like RF2525E.
+    t = FakeTransport()
+    config_ant(t, RF5222, ANTENNA_A, ANTENNA_A)
+    assert t.regs[PHY_CSR5] & PHY_CSR5_CCK_FLIP
+
+
+def _eeprom_with_rf(rf_type: int) -> bytes:
+    """Synthetic EEPROM whose ANTENNA word reports ``rf_type`` with tx/rx=A."""
+    ee = bytearray(_synthetic_eeprom())
+    word = set_field16(0, 0x000C, ANTENNA_A)     # EEPROM_ANTENNA_TX_DEFAULT
+    word = set_field16(word, 0x0030, ANTENNA_A)  # EEPROM_ANTENNA_RX_DEFAULT
+    word = set_field16(word, 0xF800, rf_type)    # EEPROM_ANTENNA_RF_TYPE
+    ee[0x16], ee[0x17] = word & 0xFF, (word >> 8) & 0xFF
+    return bytes(ee)
+
+
+def test_parse_eeprom_non_reference_rf_variant():
+    # A card reporting RF2522 (not the RF2525E reference) parses cleanly.
+    drv = RT2500USBDriver(dev=None)
+    drv._parse_eeprom(_eeprom_with_rf(RF2522))
+    assert drv.rf_type == RF2522
+    assert (drv._ant_tx, drv._ant_rx) == (ANTENNA_A, ANTENNA_A)
 
 
 # ----------------------------------------------------------------------

@@ -5,7 +5,12 @@ and PHY_CSR10 (high bits + RF_BUSY trigger + bit count). RF registers are
 **write-only** — there is no read path. Port of rt2500usb.c:
   * rt2500usb_rf_write       (179-206)
   * rt2500usb_config_channel (582-611)
-  * rf_vals_bg_2525 / 2525e tables (1574-1610)
+  * rf_vals_bg_{2522,2523,2524,2525,2525e} + rf_vals_5222 (1511-1660)
+
+The RF chip is a per-card runtime discriminator (EEPROM_ANTENNA_RF_TYPE); all
+six kernel rf_vals tables are ported so the driver tunes whichever synth the
+EEPROM reports. The RT2500USB.md reference unit is RF2525E; the other five are
+ported 1:1 but not hardware-verified (see config_channel's untested-variant log).
 
 Verified against usb_dumps/captures_rt2500usb/capture-2 channel-1 set
 (frames 1237-1271): the RF2525E "half-band first" RF[2] write
@@ -44,6 +49,9 @@ from .constants import (
     PHY_CSR10_RF_IF_SELECT,
     PHY_CSR10_RF_NUMBER_OF_BITS,
     PHY_CSR10_RF_VALUE,
+    RF2522,
+    RF2523,
+    RF2524,
     RF2525,
     RF2525E,
     RF3_TXPOWER,
@@ -55,6 +63,66 @@ logger = logging.getLogger(__name__)
 
 # rf_channel tables: channel -> (rf1, rf2, rf3, rf4). rf3 carries the
 # TXPOWER field, overwritten per-tune. rf4 == 0 means "no RF[4] write".
+# One table per RF chip, keyed by EEPROM_ANTENNA_RF_TYPE; all six are ported
+# 1:1 from the kernel rf_vals_* arrays so the driver tunes whatever synth the
+# card's EEPROM reports. Only the 2.4 GHz channels (1-14) are carried — the
+# driver is 2.4 GHz-only (SUPPORTED_CHANNELS), so RF5222's 5 GHz rows
+# (rt2500usb.c:1632-1659) are intentionally omitted.
+
+# rt2500usb.c:1511-1526 (RF2522). rf4 == 0: RF2522 issues no RF[4] write.
+RF_VALS_2522: dict[int, tuple[int, int, int, int]] = {
+    1:  (0x00002050, 0x000c1fda, 0x00000101, 0x00000000),
+    2:  (0x00002050, 0x000c1fee, 0x00000101, 0x00000000),
+    3:  (0x00002050, 0x000c2002, 0x00000101, 0x00000000),
+    4:  (0x00002050, 0x000c2016, 0x00000101, 0x00000000),
+    5:  (0x00002050, 0x000c202a, 0x00000101, 0x00000000),
+    6:  (0x00002050, 0x000c203e, 0x00000101, 0x00000000),
+    7:  (0x00002050, 0x000c2052, 0x00000101, 0x00000000),
+    8:  (0x00002050, 0x000c2066, 0x00000101, 0x00000000),
+    9:  (0x00002050, 0x000c207a, 0x00000101, 0x00000000),
+    10: (0x00002050, 0x000c208e, 0x00000101, 0x00000000),
+    11: (0x00002050, 0x000c20a2, 0x00000101, 0x00000000),
+    12: (0x00002050, 0x000c20b6, 0x00000101, 0x00000000),
+    13: (0x00002050, 0x000c20ca, 0x00000101, 0x00000000),
+    14: (0x00002050, 0x000c20fa, 0x00000101, 0x00000000),
+}
+
+# rt2500usb.c:1532-1547 (RF2523).
+RF_VALS_2523: dict[int, tuple[int, int, int, int]] = {
+    1:  (0x00022010, 0x00000c9e, 0x000e0111, 0x00000a1b),
+    2:  (0x00022010, 0x00000ca2, 0x000e0111, 0x00000a1b),
+    3:  (0x00022010, 0x00000ca6, 0x000e0111, 0x00000a1b),
+    4:  (0x00022010, 0x00000caa, 0x000e0111, 0x00000a1b),
+    5:  (0x00022010, 0x00000cae, 0x000e0111, 0x00000a1b),
+    6:  (0x00022010, 0x00000cb2, 0x000e0111, 0x00000a1b),
+    7:  (0x00022010, 0x00000cb6, 0x000e0111, 0x00000a1b),
+    8:  (0x00022010, 0x00000cba, 0x000e0111, 0x00000a1b),
+    9:  (0x00022010, 0x00000cbe, 0x000e0111, 0x00000a1b),
+    10: (0x00022010, 0x00000d02, 0x000e0111, 0x00000a1b),
+    11: (0x00022010, 0x00000d06, 0x000e0111, 0x00000a1b),
+    12: (0x00022010, 0x00000d0a, 0x000e0111, 0x00000a1b),
+    13: (0x00022010, 0x00000d0e, 0x000e0111, 0x00000a1b),
+    14: (0x00022010, 0x00000d1a, 0x000e0111, 0x00000a03),
+}
+
+# rt2500usb.c:1553-1568 (RF2524).
+RF_VALS_2524: dict[int, tuple[int, int, int, int]] = {
+    1:  (0x00032020, 0x00000c9e, 0x00000101, 0x00000a1b),
+    2:  (0x00032020, 0x00000ca2, 0x00000101, 0x00000a1b),
+    3:  (0x00032020, 0x00000ca6, 0x00000101, 0x00000a1b),
+    4:  (0x00032020, 0x00000caa, 0x00000101, 0x00000a1b),
+    5:  (0x00032020, 0x00000cae, 0x00000101, 0x00000a1b),
+    6:  (0x00032020, 0x00000cb2, 0x00000101, 0x00000a1b),
+    7:  (0x00032020, 0x00000cb6, 0x00000101, 0x00000a1b),
+    8:  (0x00032020, 0x00000cba, 0x00000101, 0x00000a1b),
+    9:  (0x00032020, 0x00000cbe, 0x00000101, 0x00000a1b),
+    10: (0x00032020, 0x00000d02, 0x00000101, 0x00000a1b),
+    11: (0x00032020, 0x00000d06, 0x00000101, 0x00000a1b),
+    12: (0x00032020, 0x00000d0a, 0x00000101, 0x00000a1b),
+    13: (0x00032020, 0x00000d0e, 0x00000101, 0x00000a1b),
+    14: (0x00032020, 0x00000d1a, 0x00000101, 0x00000a03),
+}
+
 # rt2500usb.c:1574-1589 (RF2525) and 1595-1610 (RF2525E).
 RF_VALS_2525: dict[int, tuple[int, int, int, int]] = {
     1:  (0x00022020, 0x00080c9e, 0x00060111, 0x00000a1b),
@@ -98,7 +166,44 @@ RF2525E_HALFBAND: dict[int, int] = {
     13: 0x00000902, 14: 0x00000906,
 }
 
-_RF_TABLES = {RF2525: RF_VALS_2525, RF2525E: RF_VALS_2525E}
+# rt2500usb.c:1617-1630 (RF5222, 2.4 GHz rows only; 5 GHz rows omitted — the
+# driver is 2.4 GHz-only). RF5222 shares RF2525E/RF5222's TX I/Q flip but has
+# no half-band pre-tune (that is RF2525E-only in config_channel).
+RF_VALS_5222: dict[int, tuple[int, int, int, int]] = {
+    1:  (0x00022020, 0x00001136, 0x00000101, 0x00000a0b),
+    2:  (0x00022020, 0x0000113a, 0x00000101, 0x00000a0b),
+    3:  (0x00022020, 0x0000113e, 0x00000101, 0x00000a0b),
+    4:  (0x00022020, 0x00001182, 0x00000101, 0x00000a0b),
+    5:  (0x00022020, 0x00001186, 0x00000101, 0x00000a0b),
+    6:  (0x00022020, 0x0000118a, 0x00000101, 0x00000a0b),
+    7:  (0x00022020, 0x0000118e, 0x00000101, 0x00000a0b),
+    8:  (0x00022020, 0x00001192, 0x00000101, 0x00000a0b),
+    9:  (0x00022020, 0x00001196, 0x00000101, 0x00000a0b),
+    10: (0x00022020, 0x0000119a, 0x00000101, 0x00000a0b),
+    11: (0x00022020, 0x0000119e, 0x00000101, 0x00000a0b),
+    12: (0x00022020, 0x000011a2, 0x00000101, 0x00000a0b),
+    13: (0x00022020, 0x000011a6, 0x00000101, 0x00000a0b),
+    14: (0x00022020, 0x000011ae, 0x00000101, 0x00000a1b),
+}
+
+_RF_TABLES: dict[int, dict[int, tuple[int, int, int, int]]] = {
+    RF2522: RF_VALS_2522, RF2523: RF_VALS_2523, RF2524: RF_VALS_2524,
+    RF2525: RF_VALS_2525, RF2525E: RF_VALS_2525E, RF5222: RF_VALS_5222,
+}
+
+# The one RF chip this port is hardware-verified against (the RT2500USB.md unit).
+VERIFIED_RF = RF2525E
+# Fallback for an RF value outside the six the kernel knows: plain rf1..rf4
+# writes with no RF2525E half-band pre-tune — a best-effort "give it a shot"
+# rather than a hard failure. Warned once per unknown RF type (below).
+_FALLBACK_RF = RF2525
+_warned_unknown_rf: set[int] = set()
+
+
+def is_rf_ported(rf_type: int) -> bool:
+    """True if a kernel rf_vals table exists for ``rf_type`` (one of the six
+    RT2500 RF chips). Used by the driver to log an untested-variant notice."""
+    return rf_type in _RF_TABLES
 
 
 def rf_write(t: RT2500USBTransport, word: int, value: int) -> bool:
@@ -134,14 +239,22 @@ def config_channel(
 ) -> bool:
     """Tune the RF to ``channel`` (rt2500usb.c:582-611).
 
+    ``rf_type`` is the per-card EEPROM RF chip (EEPROM_ANTENNA_RF_TYPE); each
+    of the six known chips has its own rf_vals table. An RF value outside that
+    set (a chip the kernel itself doesn't know) falls back to the RF2525 table
+    and logs once — a "give it a shot" instead of a hard failure. Only RF2525E
+    gets the half-band pre-tune below, so the fallback stays plain-write.
+
     Returns True if every RF write completed without an RF_BUSY timeout.
     """
     table = _RF_TABLES.get(rf_type)
     if table is None:
-        raise NotImplementedError(
-            f"config_channel: RF type 0x{rf_type:x} not yet ported "
-            "(only RF2525 / RF2525E)."
-        )
+        if rf_type not in _warned_unknown_rf:
+            logger.warning("config_channel: unknown RF type 0x%x (not one of the six "
+                           "RT2500 chips) — untested; tuning with the RF2525 fallback "
+                           "table", rf_type)
+            _warned_unknown_rf.add(rf_type)
+        table = _RF_TABLES[_FALLBACK_RF]
     if channel not in table:
         raise ValueError(f"channel {channel} out of range for this RF")
 

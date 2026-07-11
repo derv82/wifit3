@@ -61,6 +61,21 @@ the verify gate. Names match the kernel C — grep `data_dumps/rt2x00-source-v6.
 
 ## Debug log
 
+### 2026-07-11 — RF-chip generalization (runtime EEPROM, not reference-locked)
+
+`chan.config_channel` used to carry only the RF2525/RF2525E rf_vals tables and
+raise `NotImplementedError` for any other RF chip. Ported the four missing
+kernel tables (RF2522/RF2523/RF2524 + RF5222's 2.4 GHz rows) so the driver tunes
+whatever `EEPROM_ANTENNA_RF_TYPE` the card reports; an RF value outside the six
+now falls back to RF2525 with a one-shot "untested variant" log instead of
+crashing. The reference unit (RF2525E) path is byte-identical — half-band
+pre-tune stays RF2525E-only, and the pcap gate still reproduces cap-1/cap-2 with
+zero waivers. The antenna path (`config_ant` TX I/Q flip, `antenna_defaults`
+SW→HW) and the BBP/RSSI tune words were already runtime-EEPROM-driven; only the
+RF table switch was reference-locked. `EEPROM_NIC` HardwareRadio/DynamicTxAgc/LED
+flags gate no register write in the RX/TX/monitor path (LED-trigger + rfkill
+only) — nothing to generalize there.
+
 ### 2026-06-11 — operational re-port + RX AGC fix
 
 The original port only reproduced `init_registers` + `init_bbp` (123 of 3215 control ops);

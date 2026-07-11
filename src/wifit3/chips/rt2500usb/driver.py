@@ -41,7 +41,7 @@ from wifit3.wlan.packet import WlanFrameParser
 
 from . import monitor
 from .bbp import init_bbp
-from .chan import antenna_defaults
+from .chan import VERIFIED_RF, antenna_defaults, is_rf_ported
 from .constants import (
     DEFAULT_RSSI_OFFSET,
     EEPROM_ANTENNA,
@@ -49,6 +49,7 @@ from .constants import (
     EEPROM_CALIBRATE_OFFSET,
     EEPROM_CALIBRATE_OFFSET_RSSI,
     EEPROM_MAC_ADDR_0,
+    RF_NAMES,
     RT2500USB_DEVICE_TABLE,
 )
 from .mac import (
@@ -72,7 +73,8 @@ class RT2500USBDriver:
     SUPPORTED_IDS = [
         DeviceID(vid, pid, desc) for (vid, pid, desc) in RT2500USB_DEVICE_TABLE
     ]
-    # RF2525/RF2525E are 2.4 GHz only (channels 1-14).
+    # 2.4 GHz channels 1-14 — the band every RT2500 RF chip tunes (RF5222 also
+    # has 5 GHz rows, but this driver is 2.4 GHz-only; see chan.RF_VALS_5222).
     SUPPORTED_CHANNELS = list(range(1, 15))
     # NONE: rt2500usb has no hardware autoresponder — it can't ACK any MAC.
     FAKE_MAC = FakeMacSupport.NONE
@@ -162,6 +164,7 @@ class RT2500USBDriver:
         antenna = eeprom[ant_off] | (eeprom[ant_off + 1] << 8)
         self.rf_type = get_field16(antenna, EEPROM_ANTENNA_RF_TYPE)
         self._ant_tx, self._ant_rx = antenna_defaults(antenna)
+        self._log_rf_variant()
 
         cal_off = EEPROM_CALIBRATE_OFFSET * 2
         cal = eeprom[cal_off] | (eeprom[cal_off + 1] << 8)
@@ -169,6 +172,21 @@ class RT2500USBDriver:
             DEFAULT_RSSI_OFFSET if cal == 0xFFFF
             else get_field16(cal, EEPROM_CALIBRATE_OFFSET_RSSI)
         )
+
+    def _log_rf_variant(self) -> None:
+        """Classify the EEPROM RF chip once at connect. RF2525E is the
+        hardware-verified reference; the other four kernel-known chips tune
+        from ported-but-unverified rf_vals tables; anything else falls back to
+        RF2525 (chan.config_channel). No hard failure on any of them."""
+        name = RF_NAMES.get(self.rf_type, f"0x{self.rf_type:x}")
+        if self.rf_type == VERIFIED_RF:
+            return
+        if is_rf_ported(self.rf_type):
+            logger.info("RF chip %s: kernel rf_vals table ported, not yet "
+                        "hardware-verified on this port (reference is RF2525E)", name)
+        else:
+            logger.warning("RF chip %s is not one of the six RT2500 RF chips — "
+                           "untested; channel tuning will use the RF2525 fallback", name)
 
     # ---- warm probe -----------------------------------------------------
     async def _smoke_test_rx(self, loop) -> bool:
