@@ -8,10 +8,14 @@ Mirrors:
   - data_dumps/mt76-source-v6.18/mt76x02_usb_mcu.c      (__mt76x02u_mcu_fw_send_data,
                                                          mt76x02u_mcu_fw_reset)
 
-MT7612 quirk: `rom_protect = !is_mt7612(dev)` evaluates false on this silicon,
-so we skip the MT_MCU_SEMAPHORE_03 acquire/release dance entirely — that's
-the structural reason MT7612U doesn't hit the patch-semaphore wall that
-paused MT7921AU. [SRC] mt76x2/usb_mcu.c:59.
+ROM-patch semaphore: `rom_protect = !is_mt7612(dev)`. On the reference 0x7612
+(WiFi-only) `is_mt7612` is true, so `rom_protect` is false and the
+MT_MCU_SEMAPHORE_03 acquire/release dance is skipped — the structural reason
+MT7612U doesn't hit the patch-semaphore wall that paused MT7921AU. Any other
+mt76x2 strap the driver claims (e.g. the MT7662U `0e8d:7632`, a WiFi+BT combo)
+reports chip != 0x7612, so `rom_protect` is true and the ROM patch must hold
+MT_MCU_SEMAPHORE_03 against the on-chip BT core. `is_mt7612` is passed in from
+the runtime ASIC-version read. [SRC] mt76x2/usb_mcu.c:59,65-70,138-139.
 """
 from __future__ import annotations
 
@@ -39,6 +43,7 @@ from .constants import (
     MT_FCE_SKIP_FS,
     MT_MCU_CLOCK_CTL,
     MT_MCU_COM_REG0,
+    MT_MCU_SEMAPHORE_03,
     MT_TX_CPU_FROM_FCE_BASE_PTR,
     MT_TX_CPU_FROM_FCE_CPU_DESC_IDX,
     MT_TX_CPU_FROM_FCE_MAX_COUNT,
@@ -259,16 +264,33 @@ def _load_asset(name: str, expected_size: int) -> bytes:
 # ---------------------------------------------------------------------------
 # Top-level upload routines.
 # ---------------------------------------------------------------------------
-async def load_rom_patch(transport: MT76x2UTransport, asic_rev: int) -> bool:
+async def load_rom_patch(transport: MT76x2UTransport, asic_rev: int,
+                         is_mt7612: bool = True) -> bool:
     """Upload the MT7662 ROM patch.
 
     Returns True on success (including "already applied"). [SRC] mt76x2/usb_mcu.c:57.
+
+    ``rom_protect = !is_mt7612`` — on non-0x7612 mt76x2 combo silicon the ROM
+    patch shares MT_MCU_SEMAPHORE_03 with the on-chip BT core and must hold it
+    across the load. The reference 0x7612 (``is_mt7612=True``) has no BT
+    contender, so the acquire/release is skipped and its path is byte-identical.
+    [SRC] mt76x2/usb_mcu.c:59,65-70,138-139.
     """
+    rom_protect = not is_mt7612
+    if rom_protect and not await _poll_reg32_msec(
+        transport, MT_MCU_SEMAPHORE_03, 1, 1, timeout_ms=600
+    ):
+        logger.error("could not get hardware semaphore for ROM patch")
+        return False
+
     rev_e3 = asic_rev >= MT76XX_REV_E3
     patch_reg = MT_MCU_CLOCK_CTL if rev_e3 else MT_MCU_COM_REG0
     patch_mask = 1 << 0 if rev_e3 else 1 << 1
 
-    # Idempotency check — re-upload is harmless but slower.
+    # Idempotency check — re-upload is harmless but slower. The kernel's
+    # rom_protect path returns here still holding the semaphore
+    # ([SRC] usb_mcu.c:80-83); wifit3 only reaches this on the cold path, where
+    # the patch reg is never hot, so the early-out is effectively dead code.
     cur = transport.read32(patch_reg)
     if cur & patch_mask:
         logger.info("ROM patch already applied (reg 0x%04x = 0x%08x)", patch_reg, cur)
@@ -289,14 +311,19 @@ async def load_rom_patch(transport: MT76x2UTransport, asic_rev: int) -> bool:
         label="ROM patch",
     )
     if not ok:
+        if rom_protect:
+            transport.write32(MT_MCU_SEMAPHORE_03, 1)   # release [SRC] usb_mcu.c:139
         return False
 
     _enable_patch(transport)
     _reset_wmt(transport)
     await asyncio.sleep(0.020)  # kernel: mdelay(20)
 
-    if not await _poll_reg32_msec(transport, patch_reg, patch_mask, patch_mask,
-                                  timeout_ms=100):
+    applied = await _poll_reg32_msec(transport, patch_reg, patch_mask, patch_mask,
+                                     timeout_ms=100)
+    if rom_protect:
+        transport.write32(MT_MCU_SEMAPHORE_03, 1)   # release [SRC] usb_mcu.c:139
+    if not applied:
         logger.error("ROM patch failed to apply (reg 0x%04x never went hot)",
                      patch_reg)
         return False
@@ -347,8 +374,12 @@ async def load_main_firmware(transport: MT76x2UTransport, asic_rev: int) -> bool
     return True
 
 
-async def upload_firmware(transport: MT76x2UTransport, asic_rev: int) -> bool:
-    """Run the full 2-stage upload: ROM patch then main FW."""
-    if not await load_rom_patch(transport, asic_rev):
+async def upload_firmware(transport: MT76x2UTransport, asic_rev: int,
+                          is_mt7612: bool = True) -> bool:
+    """Run the full 2-stage upload: ROM patch then main FW.
+
+    ``is_mt7612`` gates the ROM-patch semaphore (see ``load_rom_patch``);
+    defaults to the reference 0x7612 (semaphore skipped)."""
+    if not await load_rom_patch(transport, asic_rev, is_mt7612=is_mt7612):
         return False
     return await load_main_firmware(transport, asic_rev)

@@ -12,6 +12,57 @@ dual-band soak (22 channels, 0.25 s hops) ran with no frame-rate sag — active 
 GHz ~100+ and 5 GHz ~52 steady. ARP replay works first try and handshakes auto-save (after the
 L2PAD fix, below). 5 GHz frame injection is HW-confirmed (2026-07-08), TSSI active (see Gotchas).
 
+## EEPROM / strap variants (cross-card generalization)
+
+The driver is written to run on any card in `USB_IDS_MT76X2U`, not just the Alfa `0e8d:7612`.
+MediaTek stores per-chip calibration + config in EEPROM/eFuse; nearly all of it is **values**
+consumed by computation (already card-agnostic): TX-power tables (`eeprom.read_rate_power` /
+`read_power_info`), RX LNA/high-gain offsets (`read_rx_high_gain_2g/5g`), XTAL trim
+(`mac._compute_xtal_trim` + `NIC_CONF_2.XTAL_OPTION` switch), and the RSSI/temp fields. The
+EEPROM-derived **branches** are all already runtime-gated with every case ported:
+
+- **chainmask** (`NIC_CONF_0` rx_path/tx_path) → `phy_set_rxpath` / `phy_set_txdac` / `mcu_set_channel`.
+- **ext-PA** per band (`mt76x02_ext_pa_enabled` = `!NIC_CONF_0.pa_int`) → `driver._ext_pa_for`, both
+  branches in `phy_set_txpower_regs` / `phy_configure_tx_delay` / `tssi_compensate` / TSSI-init flag.
+- **ext-LNA** per band (`mt76x2_has_ext_lna` = `NIC_CONF_1.lna_ext`) → `phy_set_gain_val` /
+  `update_channel_gain` (both `has_ext_lna` branches).
+- **TSSI** (`NIC_CONF_1.tx_alc_en` gated by `temp_tx_alc`) → `driver._tssi_enabled`.
+- **bt_rcal_valid** (`EE_BT_RCAL_RESULT` != 0xff) → gates `MCU_CAL_R`.
+
+The one genuine reference-hardcoded discriminator was the **chip strap**
+`is_mt7612 = (ASIC_VERSION >> 16) == 0x7612` — a WiFi-only die vs a WiFi+BT combo (0x7662/0x7632,
+e.g. the claimed MT7662U `0e8d:7632`). Two USB-path branches key on it and are now gated on the
+runtime ASIC read (`driver.is_mt7612`), defaulting to the reference so its recorded path is
+byte-identical:
+
+- `firmware.load_rom_patch` — `rom_protect = !is_mt7612`: a combo die shares `MT_MCU_SEMAPHORE_03`
+  with its on-chip BT core, so the ROM-patch load must acquire it (poll, 600 ms) and release it
+  (write 1). 0x7612 skips the dance. [SRC] `mt76x2/usb_mcu.c:59,65-70,138-139`
+- `mac.mac_reset` — the `COEXCFG0` BT-coex clear runs only for 0x7612. [SRC] `mt76x2/usb_mac.c:84`
+
+Connect logs the detected strap (`chip=0x7612, mt7612 (WiFi-only)` vs `combo (WiFi+BT, rom_protect)`).
+
+**MediaTek EEPROM discriminator model (for sibling mt76x0u / mt7921au ports):** on mt76x2 the
+per-card variance is overwhelmingly *values*; the only true init-gating branches are `NIC_CONF_0`
+(rx/tx path, pa_int → ext-PA, board_type) + `NIC_CONF_1` (lna_ext, tx_alc_en, temp_tx_alc) + the
+`is_mt7612` strap, all read live from EEPROM / the ASIC-version register. `mt76x02_eeprom_get`
+grep-points are the map. Temp-compensation (`mt76x2_get_temp_comp`) is **PCI-only** — never called
+on the USB `usb_phy.c` path, so it is not a gap for the USB drivers.
+
+### Residual gaps (documented, not board-discriminators)
+
+- **`mcu_init_gain` gain hardcoded to 0** (`chan.set_channel_20mhz` → `phy.mcu_init_gain`). The
+  kernel passes `dev->cal.rx.mcu_gain` from `mt76x2_read_rx_gain` (`mt76x02_get_rx_gain`:
+  LNA_GAIN + RSSI_OFFSET fields). wifit3 ports only the `high_gain` half of `read_rx_gain`; the
+  `mcu_gain` / `rssi_offset` / `lna_gain` values are unported and default to 0. This is a value
+  simplification affecting **all** cards identically (incl. the reference), not a hardcoded-to-
+  reference branch, so it is out of scope for cross-card generalization — but re-porting it would
+  improve RX sensitivity on every card.
+- **`board_type` / band capability not enforced** (`mt76x02_eeprom_parse_hw_cap`). `SUPPORTED_CHANNELS`
+  statically advertises both bands. Every claimed ID is a dual-band 2T2R MT7612U/MT7662U, so no
+  single-band strap exists to gate against; a hypothetical 2GHz-only board would simply get empty RX
+  on 5 GHz rather than a clean skip.
+
 ## Gotchas
 
 **Remove the L2 alignment pad BEFORE trimming to MPDU_LEN.** mt76x02 sets `MT_RXINFO_L2PAD` and

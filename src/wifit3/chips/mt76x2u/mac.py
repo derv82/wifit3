@@ -250,10 +250,15 @@ _MAC_INITVALS = (
 )
 
 
-async def mac_reset(transport: MT76x2UTransport) -> bool:
+async def mac_reset(transport: MT76x2UTransport, is_mt7612: bool = True) -> bool:
     """Full MAC reset + initvals load.
 
     [SRC] mt76x2/usb_mac.c:62 (mt76x2u_mac_reset).
+
+    ``is_mt7612`` gates the COEXCFG0 BT-coexistence clear (kernel does it only
+    for the WiFi-only 0x7612 strap). Defaults to the reference 0x7612 so its
+    recorded path is unchanged; a WiFi+BT combo (chip != 0x7612) keeps coex
+    enabled. [SRC] mt76x2/usb_mac.c:84.
     """
     transport.write32(MT_WPDMA_GLO_CFG, (1 << 4) | (1 << 5))
     transport.write32(MT_PBF_TX_MAX_PCNT, 0xefef3f1f)
@@ -278,8 +283,10 @@ async def mac_reset(transport: MT76x2UTransport) -> bool:
         0,
     )
 
-    # MT7612 disables BT coexistence at the MAC layer.
-    transport.rmw32(MT_COEXCFG0, MT_COEXCFG0_COEX_EN, 0)
+    # MT7612 (WiFi-only) disables BT coexistence at the MAC layer; a WiFi+BT
+    # combo strap (chip != 0x7612) leaves it enabled. [SRC] mt76x2/usb_mac.c:84.
+    if is_mt7612:
+        transport.rmw32(MT_COEXCFG0, MT_COEXCFG0_COEX_EN, 0)
 
     transport.rmw32(MT_EXT_CCA_CFG, 0xf000, 0xf000)
     transport.rmw32(MT_TX_ALC_CFG_4, 1 << 31, 0)

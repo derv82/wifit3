@@ -118,6 +118,10 @@ class MT76x2UDriver:
         self.is_warm: bool = False
         self.asic_version: Optional[int] = None
         self.asic_rev: Optional[int] = None
+        # Chip strap discriminator: WiFi-only 0x7612 vs WiFi+BT combo (0x7662/
+        # 0x7632/...). Gates the ROM-patch semaphore + COEXCFG0 clear. Refined
+        # from the runtime ASIC-version read in connect(); default = reference.
+        self.is_mt7612: bool = True
         self.eeprom_chip_id: Optional[int] = None
         self.nic_conf_0: Optional[dict] = None
         self.nic_conf_1: Optional[dict] = None
@@ -184,7 +188,8 @@ class MT76x2UDriver:
             return False
         if progress_cb:
             progress_cb(0.30, "Uploading firmware (ROM patch + main FW)")
-        if not await upload_firmware(self.transport, self.asic_rev):
+        if not await upload_firmware(self.transport, self.asic_rev,
+                                     is_mt7612=self.is_mt7612):
             logger.error("MT7612U: firmware upload failed")
             return False
         if not await wait_for_mac(self.transport):
@@ -207,7 +212,7 @@ class MT76x2UDriver:
         warm-reattach fallback re-runs it after a forced cold reset."""
         if progress_cb:
             progress_cb(0.75, "MAC reset + initvals + setaddr")
-        if not await mac_reset(self.transport):
+        if not await mac_reset(self.transport, is_mt7612=self.is_mt7612):
             return False
         mac_setaddr(self.transport, mac_bytes)
         if not await wait_for_txrx_idle(self.transport):
@@ -249,10 +254,16 @@ class MT76x2UDriver:
         # Low byte is the revision (E1/E3/E4...). High 16 bits are 0x7612 or
         # 0x7662 depending on the silicon strap.
         self.asic_rev = self.asic_version & 0xFF
+        # [SRC] mt76x2/mt76x2.h:26 — is_mt7612 = mt76_chip == 0x7612, where
+        # mt76_chip = rev >> 16 ([SRC] mt76.h:1231). Drives the WiFi-only vs
+        # WiFi+BT-combo branches (ROM-patch semaphore, COEXCFG0 clear).
+        self.is_mt7612 = (self.asic_version >> 16) == 0x7612
         logger.info(
-            "MT7612U: ASIC version=0x%08x (rev=0x%02x, %sE3+)",
+            "MT7612U: ASIC version=0x%08x (rev=0x%02x, %sE3+, chip=0x%04x, %s)",
             self.asic_version, self.asic_rev,
             "" if self.asic_rev >= MT76XX_REV_E3 else "PRE-",
+            self.asic_version >> 16,
+            "mt7612 (WiFi-only)" if self.is_mt7612 else "combo (WiFi+BT, rom_protect)",
         )
 
         # ----- Cold/warm gate -----
