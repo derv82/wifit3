@@ -30,7 +30,6 @@ ENV_RTL8821_DRIVER = "WIFIT3_RTL8821"
 ENV_RTL8812_DRIVER = "WIFIT3_RTL8812"
 ENV_RTL8188_DRIVER = "WIFIT3_RTL8188"
 ENV_RTL8822_DRIVER = "WIFIT3_RTL8822"
-ENV_AR9271_DRIVER = "WIFIT3_AR9271"
 
 _DRIVER_CLASSES: Dict[str, Type[WlanDriver]] | None = None
 
@@ -39,7 +38,6 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
     """Import every driver class once (deferred to sidestep the import cycle)."""
     global _DRIVER_CLASSES
     if _DRIVER_CLASSES is None:
-        from wifit3.chips.ar9271.driver import AR9271Driver
         from wifit3.chips.ar9271_v2.driver import AR9271V2Driver
         from wifit3.chips.mt76x0u.driver import MT76x0UDriver
         from wifit3.chips.mt76x2u.driver import MT76x2UDriver
@@ -65,8 +63,7 @@ def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
 
         _DRIVER_CLASSES = {
             # Kernel drivers
-            # v2 is the maintained clean-room re-port; WIFIT3_AR9271=v1 falls back to the original.
-            "ar9271": env_or_none(ENV_AR9271_DRIVER, "v1", AR9271Driver) or AR9271V2Driver,
+            "ar9271": AR9271V2Driver,
             "rt2500usb": RT2500USBDriver,
             "rt2800usb": RT2800USBDriver,
             "rt3070": RT3070Driver,

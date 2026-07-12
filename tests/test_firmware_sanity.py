@@ -1,9 +1,9 @@
 from pathlib import Path
 
 def test_ar9271_firmware_exists():
-    # Construct path identical to how the manager does it
+    # ar9271_v2 is the shipped ar9271 driver; blob named by ar9271_v2.constants.FIRMWARE_NAME
     base_dir = Path(__file__).parent.parent
-    fw_path = base_dir / "src" / "wifit3" / "chips" / "ar9271" / "assets" / "htc_9271_cleanroom.fw"
+    fw_path = base_dir / "src" / "wifit3" / "chips" / "ar9271_v2" / "assets" / "htc_9271-1.4.0.fw"
     
     assert fw_path.exists(), f"AR9271 Firmware missing at {fw_path}"
     assert fw_path.stat().st_size > 10000, "AR9271 Firmware file is too small to be valid."

@@ -16,9 +16,8 @@ family -- ``rtw88_pcap_replay.py`` for Realtek (vendor bRequest 0x05); a Ralink
 
 mt76 (MediaTek) is in scope: mt76x2u / mt76x0u do register I/O over vendor bRequest 0x06/0x07
 (the mt76-USB codec) and a single-cursor walk reproduces cold-boot + FW + MCU + TX; mt7921au
-is connac2's unified bus with its own decoder. AR9271 is event-driven HTC/WMI with firmware
-re-enumeration -- it has its own harness (scripts/ar9271/build_template.py) and is listed
-below only as a pointer.
+is connac2's unified bus with its own decoder; ar9271_v2 is event-driven HTC/WMI with firmware
+re-enumeration and its own decoder (ar9271_v2/verify_pcap.py).
 """
 from __future__ import annotations
 
@@ -94,9 +93,6 @@ REGISTRY: dict[str, Chip] = {
                     "MediaTek MT7612U mt76-USB (vendor 0x06/0x07; cold-boot + FW + MCU + TX)"),
     "mt76x0u": Chip("mt76x0u", "mt76x0u/verify_pcap.py",
                     "MediaTek MT7610U mt76-USB (vendor 0x06/0x07; cold-boot + FW + 2.4 GHz TX)"),
-    "ar9271": Chip("ar9271", None, "Atheros AR9271 (HTC/WMI)",
-                   pointer="event-driven HTC/WMI + firmware re-enumeration -- not a "
-                           "register byte-diff; use scripts/ar9271/build_template.py"),
     "ar9271_v2": Chip("ar9271_v2", "ar9271_v2/verify_pcap.py",
                       "Atheros AR9271 ath9k_htc clean-room re-port (firmware + HTC/WMI; WIP)"),
 }
