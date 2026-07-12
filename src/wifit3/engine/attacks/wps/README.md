@@ -311,7 +311,7 @@ to ~7 frames — a ~10× speedup, directly serving the speed goal. Per-chip MAC
 work, so it goes through the careful per-driver hardware loop, not a blind edit.
 Bully's `--noacks` exists for the same reason.
 
-### Hardware reliability overhaul (2026-07-11, AirLink89300 / mt76x2u — agent-run lab)
+### Hardware reliability overhaul (2026-07-11, mt76x2u — agent-run lab)
 
 Rebuilt the exchange from live ground-truth (`scripts/wps/wps_lab.py`) after the field showed constant
 false "first half wrong" / missed cracks. Every prior heuristic was re-proven; most were **flaky-TX
@@ -328,11 +328,12 @@ artifacts**, not real AP behaviour:
   attempts, longer auth window (the biggest single lever once auto-ACK was off).
 - **Timeouts too short** (M1 up to ~4.3s) → eapol_start 2→7s; **in-session resend** of the last frame
   on a per-stage timeout (no MAC rotation) covers a dropped M2/M4/M6.
-- **AirLink locks *silently*** — it stops answering associations (no config_error=15, no beacon flag);
-  the 3-strike soft-lock catches that (necessary). `config_error=15` adds the spec path for APs that signal.
+- **Some APs lock *silently*** — the test AP stopped answering associations (no config_error=15, no
+  beacon flag); the 3-strike soft-lock catches that (necessary). `config_error=15` adds the spec path
+  for APs that signal it.
 - Checksum-invalid commons (11111111/88888888/10000005) do NOT choke — that was TX-loss too.
 
-**Result:** cracks live AirLink end-to-end, 1 attempt/pin, no soft-lock churn. Driver-agnostic
+**Result:** cracks the live test AP end-to-end, 1 attempt/pin, no soft-lock churn. Driver-agnostic
 (registrar/association/campaign) — should carry to every card; validate each with `wps_lab.py`.
 **HW TX-ACK (deferred):** feasible on mt76x2u (`wcid.py` + an AP WCID + reading `MT_TX_STAT_FIFO`
 → `inject_frame(wait_for_ack=…)`) as a low-latency alt to resend; revisit only if a card needs it.
