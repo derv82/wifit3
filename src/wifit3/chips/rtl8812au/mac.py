@@ -473,6 +473,21 @@ def init_wmac_setting(transport: RTL8812AUTransport) -> None:
     transport.write32(REG_MAR + 4, 0xFFFFFFFF)
 
 
+# RXFLTMAP1 gates ctrl subtypes; init_wmac_setting leaves it at 0x0400 (ps-poll only).
+# Bit 13 = ACK, opened on demand so monitor RX can see the AP's ACK to our injects.
+RXFLTMAP1_ACK = 1 << 13
+
+
+def admit_ack_frames(transport: RTL8812AUTransport) -> None:
+    """RXFLTMAP1 |= BIT(13) — let RX see the AP's ACKs to our injects. Off by default."""
+    transport.write16(REG_RXFLTMAP1, transport.read16(REG_RXFLTMAP1) | RXFLTMAP1_ACK)
+
+
+def drop_ack_frames(transport: RTL8812AUTransport) -> None:
+    """Clear RXFLTMAP1 BIT(13) — restore the default monitor ctrl filter."""
+    transport.write16(REG_RXFLTMAP1, transport.read16(REG_RXFLTMAP1) & ~RXFLTMAP1_ACK)
+
+
 def init_adaptive_ctrl(transport: RTL8812AUTransport) -> None:
     """Mirrors `rtw88xxa_init_adaptive_ctrl` (rtw88xxa.c:522)."""
     transport.write32_mask(REG_RRSR, 0xFFFFF, 0xFFFF1)

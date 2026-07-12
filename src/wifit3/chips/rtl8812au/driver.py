@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 from typing import Callable, Optional
 
 import usb.core
@@ -76,8 +77,10 @@ from .firmware import (
 from .fifo import set_trx_fifo_info
 from .mac import (
     ChipState,
+    admit_ack_frames,
     apply_monitor_rx_filter,
     configure_rx_aggregation,
+    drop_ack_frames,
     init_queue_priority,
     init_queue_reserved_page,
     init_tx_buffer_boundary,
@@ -155,6 +158,14 @@ class RTL8812AUDriver:
         self._bulk_in_ep: Optional[int] = None
         self._bulk_out_eps: list[int] = []
         self._efuse = EfuseDefaults()
+        # Observe the AP's ACK to our injects (did our TX land). Off by default.
+        self._ack_detect_on: bool = False
+        self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
+        self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
+        self._all_acks_seen: int = 0
+        self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
+        self._tx_frames: int = 0
+        self._tx_unacked: int = 0
 
         # WlanDriver Protocol surface area.
         self.mac_address: Optional[str] = None
@@ -475,7 +486,11 @@ class RTL8812AUDriver:
         init_tx_buffer_boundary(self.transport, fifo)
         init_queue_priority(self.transport)
 
-    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
+    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True,
+                           wait_for_ack: float = 0.0, max_resends: int = 0) -> bool:
+        """``wait_for_ack > 0`` (with TX-ACK detection armed) waits for the AP's ACK and resends
+        up to ``max_resends`` times if none comes, returning whether it landed; ``0`` =
+        fire-and-forget (current behaviour)."""
         if not self._bulk_out_eps:
             logger.error("inject_frame: no bulk-OUT endpoints (driver not connected?)")
             return False
@@ -494,15 +509,38 @@ class RTL8812AUDriver:
             with self._dev_lock:
                 return write_bulk(self.dev, ep, payload, timeout_ms=200)
 
-        try:
-            sent = await loop.run_in_executor(None, _do_inject)
-        except usb.core.USBError as e:
-            logger.error("inject_frame: bulk-OUT to 0x%02x failed: %s", ep, e)
-            return False
-        if sent != len(payload):
-            logger.warning("inject_frame: short write %d/%d to 0x%02x", sent, len(payload), ep)
-            return False
-        return True
+        ta = bytes(frame_bytes[10:16]) if len(frame_bytes) >= 16 else None
+        if self._ack_detect_on and ta is not None:
+            self._our_tx_macs.add(ta)       # TA — the AP's ACK comes back to this
+        ack_gated = wait_for_ack > 0 and self._ack_detect_on and ta is not None
+        for _ in range(max_resends + 1):
+            try:
+                t0 = time.monotonic()
+                sent = await loop.run_in_executor(None, _do_inject)
+            except usb.core.USBError as e:
+                logger.error("inject_frame: bulk-OUT to 0x%02x failed: %s", ep, e)
+                return False
+            if sent != len(payload):
+                logger.warning("inject_frame: short write %d/%d to 0x%02x", sent, len(payload), ep)
+                return False
+            self._tx_frames += 1
+            if not ack_gated:
+                return True
+            if await self._await_ack(ta, t0, wait_for_ack):
+                return True
+        self._tx_unacked += 1
+        return False
+
+    async def _await_ack(self, ta: bytes, since: float, window: float) -> bool:
+        """True if the tap observed an ACK to ``ta`` after ``since``, within ``window`` s.
+        _rx_dispatch runs on this loop, so a sleep yield lets a just-arrived ACK's timestamp
+        land between checks."""
+        deadline = since + window
+        while time.monotonic() < deadline:
+            if self._ack_last_ts.get(ta, 0.0) > since:
+                return True
+            await asyncio.sleep(0.001)
+        return False
 
     # ---- RX loop ----------------------------------------------------------
     # ---- RX callables for the shared RxReaderThread ---------------------
@@ -543,9 +581,20 @@ class RTL8812AUDriver:
     def _rx_dispatch(self, buf: bytes) -> None:
         """Decode a bulk buffer into MPDUs → parse → rx callback (on the loop)."""
         cb = self._rx_callback
-        if not cb:
+        if not cb and not self._ack_detect_on:
             return
         for stat, mpdu, rssi in iter_bulk_frames(buf):
+            # A 10-byte 0xD4 frame is an ACK (the parser drops control frames). RA=mpdu[4:10]
+            # is the STA the AP ACKed; keep only ACKs to a MAC we inject as.
+            if self._ack_detect_on and len(mpdu) == 10 and mpdu[0] == 0xD4:
+                self._all_acks_seen += 1
+                ra = mpdu[4:10]
+                if ra in self._our_tx_macs:
+                    self._ack_sightings[ra.hex()] = self._ack_sightings.get(ra.hex(), 0) + 1
+                    self._ack_last_ts[ra] = time.monotonic()   # for inject wait-for-ack
+                continue
+            if not cb:
+                continue
             parsed = WlanFrameParser.parse_80211_frame(
                 mpdu, rssi if rssi is not None else -100
             )
@@ -554,6 +603,39 @@ class RTL8812AUDriver:
                     cb(parsed)
                 except Exception:
                     logger.exception("RX callback raised")
+
+    async def enable_ack_detect(self) -> None:
+        """Admit ACK control frames (RXFLTMAP1 bit13) so the tap can see the AP's ACKs to us.
+        Not enter_active_monitor, which makes the chip emit ACKs."""
+        loop = asyncio.get_event_loop()
+
+        def _admit():
+            with self._dev_lock:
+                admit_ack_frames(self.transport)
+
+        await loop.run_in_executor(None, _admit)
+        self._ack_sightings.clear()
+        self._ack_last_ts.clear()
+        self._all_acks_seen = 0
+        self._tx_frames = 0
+        self._tx_unacked = 0
+        self._ack_detect_on = True
+        logger.info("RTL8812AU TX-ACK detection ON (RXFLTMAP1 bit13) — observing our TX delivery")
+
+    async def disable_ack_detect(self) -> None:
+        """Restore the default monitor RX filter (clear RXFLTMAP1 bit13)."""
+        loop = asyncio.get_event_loop()
+
+        def _drop():
+            with self._dev_lock:
+                drop_ack_frames(self.transport)
+
+        await loop.run_in_executor(None, _drop)
+        self._ack_detect_on = False
+
+    def acks_seen(self, mac: bytes) -> int:
+        """Count of ACKs observed addressed to ``mac`` (an injected source MAC) since enable."""
+        return self._ack_sightings.get(bytes(mac).hex(), 0)
 
     async def _dig_watchdog(self, period_s: float = 2.0) -> None:
         """Periodic DIG tick — mirrors rtw_watch_dog_work (@ HZ*2) → rtw_phy_dig.

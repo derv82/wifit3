@@ -64,6 +64,7 @@ from .constants import (
     REG_RQPN,
     REG_RQPN_NPQ,
     REG_RX_DRVINFO_SZ,
+    REG_RXFLTMAP1,
     REG_TDECTRL,
     REG_TRXFF_BNDY,
     REG_TXPKTBUF_BCNQ_BDNY,
@@ -315,6 +316,22 @@ def apply_monitor_rx_filter(t: RTL8188EUSTransport) -> None:
     rcr = t.read32(REG_RCR)
     logger.info("RX filter readback: RCR=0x%08x (ACCEPT_AP=%d)",
                 rcr, 1 if rcr & 0x1 else 0)
+
+
+# ACK is ctrl subtype 13; RXFLTMAP1 bit N gates ctrl subtype N. The 8188e fileops never
+# programs RXFLTMAP (it's left at the HW default), so admit bit13 explicitly on demand so
+# monitor RX sees the AP's ACK to our injects. RCR already has ACCEPT_CTRL_FRAME.
+RXFLTMAP1_ACK = 1 << 13
+
+
+def admit_ack_frames(t: RTL8188EUSTransport) -> None:
+    """RXFLTMAP1 |= BIT(13) — let RX see the AP's ACKs to our injects. Off by default."""
+    t.write16(REG_RXFLTMAP1, t.read16(REG_RXFLTMAP1) | RXFLTMAP1_ACK)
+
+
+def drop_ack_frames(t: RTL8188EUSTransport) -> None:
+    """Clear RXFLTMAP1 BIT(13) — restore the default monitor ctrl filter."""
+    t.write16(REG_RXFLTMAP1, t.read16(REG_RXFLTMAP1) & ~RXFLTMAP1_ACK)
 
 
 def enable_rx_data_path(t: RTL8188EUSTransport) -> None:

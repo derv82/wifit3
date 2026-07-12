@@ -188,6 +188,7 @@ REG_HIMR0 = 0x00B0                       # regs.h:238 (interrupt mask 0)
 REG_HISR0 = 0x00B4                       # regs.h:272 (interrupt status 0)
 REG_HIMR1 = 0x00B8                       # regs.h:273 (interrupt mask 1)
 REG_RCR = 0x0608                         # regs.h:746 (RX Control Register)
+REG_RXFLTMAP1 = 0x06A2                    # regs.h — ctrl-subtype accept map (bit N = subtype N)
 REG_RX_DRVINFO_SZ = 0x060F               # regs.h:787
 REG_USB_SPECIAL_OPTION = 0xFE55          # regs.h:1248
 USB_SPEC_INT_BULK_SELECT = 1 << 4        # regs.h:1250
