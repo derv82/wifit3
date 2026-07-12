@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 from typing import Callable, Optional
 
 import usb.core
@@ -115,6 +116,15 @@ class RT2500USBDriver:
         # cancelled one) finishes. [[project_rt3070 RX-DMA wedge pattern]]
         self._io_lock = asyncio.Lock()
         self._hw_lock = threading.Lock()
+
+        # Observe the AP's ACK to our injects (did our TX land). Off by default.
+        self._ack_detect_on: bool = False
+        self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
+        self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
+        self._all_acks_seen: int = 0
+        self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
+        self._tx_frames: int = 0
+        self._tx_unacked: int = 0
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_callback = cb
@@ -289,12 +299,56 @@ class RT2500USBDriver:
         rx = parse_rx_urb(buf, rssi_offset=self._rssi_offset)
         if rx is None or rx.has_fcs_error:
             return
-        parsed = WlanFrameParser.parse_80211_frame(rx.mpdu, rx.rssi_dbm)
+        mpdu = rx.mpdu
+        # A 10-byte 0xD4 frame is an ACK (the parser drops control frames). mpdu[4:10]
+        # is the RA the AP ACKed; keep only ACKs to a MAC we inject as.
+        if self._ack_detect_on and len(mpdu) == 10 and mpdu[0] == 0xD4:
+            self._all_acks_seen += 1
+            ra = mpdu[4:10]
+            if ra in self._our_tx_macs:
+                self._ack_sightings[ra.hex()] = self._ack_sightings.get(ra.hex(), 0) + 1
+                self._ack_last_ts[ra] = time.monotonic()   # for inject wait-for-ack
+            return
+        parsed = WlanFrameParser.parse_80211_frame(mpdu, rx.rssi_dbm)
         if parsed is not None and self._rx_callback is not None:
             try:
                 self._rx_callback(parsed)
             except Exception as e:
                 logger.exception("rx_callback raised: %s", e)
+
+    # ---- TX-ACK detection -----------------------------------------------
+    async def enable_ack_detect(self) -> None:
+        """Arm the ACK tap. Pure software flag — the monitor RX filter already clears
+        TXRX_CSR2_DROP_CONTROL (mac.config_filter, = FIF_CONTROL) and DROP_NOT_TO_ME, so
+        the hardware forwards ACK control frames (incl. to a forged TA) to bulk-IN; no
+        register write needed. The RT2570 has no auto-ACK engine (FAKE_MAC.NONE), so this
+        is RX-side only — it never emits an ACK."""
+        self._ack_sightings.clear()
+        self._ack_last_ts.clear()
+        self._all_acks_seen = 0
+        self._tx_frames = 0
+        self._tx_unacked = 0
+        self._ack_detect_on = True
+        logger.info("rt2500usb TX-ACK detection ON — observing our TX delivery")
+
+    async def disable_ack_detect(self) -> None:
+        """Disarm the ACK tap (software flag only; the monitor RX filter is unchanged)."""
+        self._ack_detect_on = False
+
+    def acks_seen(self, mac: bytes) -> int:
+        """Count of ACKs observed addressed to ``mac`` (an injected source MAC) since enable."""
+        return self._ack_sightings.get(bytes(mac).hex(), 0)
+
+    async def _await_ack(self, ta: bytes, since: float, window: float) -> bool:
+        """True if the tap observed an ACK to ``ta`` after ``since``, within ``window`` s.
+        _rx_dispatch runs on this loop, so a sleep yield lets a just-arrived ACK's timestamp
+        land between checks."""
+        deadline = since + window
+        while time.monotonic() < deadline:
+            if self._ack_last_ts.get(ta, 0.0) > since:
+                return True
+            await asyncio.sleep(0.001)
+        return False
 
     # ---- channel tune ---------------------------------------------------
     def _tune(self, channel: int) -> bool:
@@ -330,21 +384,39 @@ class RT2500USBDriver:
         with self._hw_lock:
             return _tx_inject(self.dev, self._bulk_out_ep, frame_bytes, ack)
 
-    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
+    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True,
+                           wait_for_ack: float = 0.0, max_resends: int = 0) -> bool:
         """Inject a raw 802.11 frame (no FCS) at 1 Mbps CCK. Only ever
-        called behind an explicit user action [[passive_by_default]]."""
+        called behind an explicit user action [[passive_by_default]].
+
+        ``wait_for_ack > 0`` (with TX-ACK detection armed) waits for the AP's ACK and
+        resends the same frame up to ``max_resends`` times if none comes, returning whether
+        it landed; ``0`` = fire-and-forget (byte-identical to the prior behaviour)."""
         if self._bulk_out_ep is None:
             logger.error("rt2500usb: no bulk-OUT endpoint; cannot inject")
             return False
-        try:
-            async with self._io_lock:
-                sent = await asyncio.get_event_loop().run_in_executor(
-                    None, self._do_inject, frame_bytes, not use_no_ack
-                )
-        except Exception as e:
-            logger.error("rt2500usb inject_frame failed: %s", e)
-            return False
-        return sent > 0
+        ta = bytes(frame_bytes[10:16]) if len(frame_bytes) >= 16 else None   # AP ACKs back to TA
+        if self._ack_detect_on and ta is not None:
+            self._our_tx_macs.add(ta)
+        loop = asyncio.get_event_loop()
+        ack_gated = wait_for_ack > 0 and self._ack_detect_on and ta is not None
+        for _ in range(max_resends + 1):
+            try:
+                async with self._io_lock:
+                    t0 = time.monotonic()
+                    sent = await loop.run_in_executor(
+                        None, self._do_inject, frame_bytes, not use_no_ack
+                    )
+            except Exception as e:
+                logger.error("rt2500usb inject_frame failed: %s", e)
+                return False
+            self._tx_frames += 1
+            if not ack_gated:
+                return sent > 0             # fire-and-forget (deauth / current behaviour)
+            if sent > 0 and await self._await_ack(ta, t0, wait_for_ack):
+                return True                 # landed — the AP ACKed it
+        self._tx_unacked += 1
+        return False                        # never ACKed after every send
 
     # ---- teardown -------------------------------------------------------
     async def close(self) -> None:
