@@ -134,6 +134,8 @@ class WpsCampaign(Campaign):
         self._tx_ack = hasattr(getattr(iface, "driver", None), "enable_ack_detect")
         self._ack_wait = 0.05      # s to wait for the AP's ACK before resending our frame
         self._ack_resends = 4      # max resends of an un-ACKed M-frame
+        # If AP ever ACK'd any of our frames (0 ACKs detection).
+        self._ap_ever_acked = False
         self.lock = LockTracker()
 
         self.state = self._load_state()
@@ -456,6 +458,8 @@ class WpsCampaign(Campaign):
                 prev_phase = self.state.phase
                 t0 = time.monotonic()
                 out = await self._try(pin)
+                if self._tx_ack and not self._ap_ever_acked and self.iface.driver.acks_seen(self.our_mac):
+                    self._ap_ever_acked = True
                 # EWMA: Exponentially Weighted Moving Average. tl;dr math
                 self._attempt_ewma = 0.7 * self._attempt_ewma + 0.3 * (time.monotonic() - t0)
                 self.state.attempts += 1
@@ -518,6 +522,12 @@ class WpsCampaign(Campaign):
         backoff entirely. Hard locks (beacon WPS-Locked) ALWAYS wait — the AP
         is saying it won't do WPS at all, no point retrying immediately.
         """
+        # Don't treat a silent AP (0 ACKs) as locked.
+        if not beacon_locked and self._tx_ack and not self._ap_ever_acked:
+            self.log("[yellow]TX not reaching AP[/yellow] [dim]— retrying, no backoff[/dim]")
+            self.lock.note_progress()
+            self._last_attempt_sig = None
+            return
         self.lock.begin_lock()
         # "hard" = AP itself advertises WPS locked in its beacons (matches the 🔒
         # in the SECURITY row). "soft" = our backoff after N pre-oracle rejects;
@@ -640,7 +650,9 @@ class WpsCampaign(Campaign):
                      f"[dim bold]\\[M6][/dim bold]")
         elif out.result is PinResult.PROTO_ERROR:
             if out.detail == "assoc failed":   # not a NACK — we never associated (AP often locked)
-                self.log(f"{label} → [yellow]no assoc[/yellow]")
+                no_ack = (" [bold dim](0 TX ACKs)[/bold dim]"
+                          if self._tx_ack and not self._ap_ever_acked else "")
+                self.log(f"{label} → [yellow]no assoc[/yellow]{no_ack}")
             else:
                 # De-swallowed reason: the AP answered with a NACK carrying a config-error.
                 why = (config_error_name(out.config_error)
