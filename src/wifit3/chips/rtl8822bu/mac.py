@@ -298,6 +298,25 @@ def apply_monitor_rx_filter(transport: RTL8822BUTransport) -> None:
     )
 
 
+# ACK is control subtype 13; bit N of RXFLTMAP1 gates control subtype N. mac_init_for_rx
+# leaves RXFLTMAP1=0x0FFF (bit13 clear), so the AP's ACKs to our injects are dropped by
+# default; TX-ACK detection opens only bit13.
+REG_RXFLTMAP1 = 0x06A2
+RXFLTMAP1_ACK = 1 << 13
+
+
+def admit_ack_frames(transport: RTL8822BUTransport) -> None:
+    """RXFLTMAP1 |= BIT(13): let RX see the AP's ACKs to our injects. Off by default."""
+    transport.write16(REG_RXFLTMAP1,
+                      transport.read16(REG_RXFLTMAP1) | RXFLTMAP1_ACK)
+
+
+def drop_ack_frames(transport: RTL8822BUTransport) -> None:
+    """Clear RXFLTMAP1 BIT(13) — restore the default monitor ctrl filter."""
+    transport.write16(REG_RXFLTMAP1,
+                      transport.read16(REG_RXFLTMAP1) & ~RXFLTMAP1_ACK)
+
+
 def init_priority_queue_8822b(transport: RTL8822BUTransport) -> None:
     """Port of mac.c:1192..1230 `__priority_queue_cfg` for 8822b on USB.
 

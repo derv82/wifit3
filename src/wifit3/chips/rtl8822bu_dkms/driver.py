@@ -107,6 +107,14 @@ class Rtl8822buDkmsDriver:
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
         self._io_lock = asyncio.Lock()
+        # Observe the AP's ACK to our injects (did our TX land). Off by default.
+        self._ack_detect_on: bool = False
+        self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
+        self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
+        self._all_acks_seen: int = 0
+        self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
+        self._tx_frames: int = 0
+        self._tx_unacked: int = 0
         self._dig_st: Optional[dm_watchdog.DigState] = None
         self._watchdog_task: Optional[asyncio.Task] = None
         # Per-dwell RX tally (DEBUG only) — proves which channels are deaf when the
@@ -234,15 +242,46 @@ class Rtl8822buDkmsDriver:
 
     def _dispatch(self, buf: bytes) -> None:
         cb = self._rx_cb
-        if cb is None:
+        if cb is None and not self._ack_detect_on:
             return
         for frame, rssi in iter_frames(buf):
+            # A 10-byte 0xD4 frame is an ACK (the parser drops control frames). RA=frame[4:10]
+            # is the STA the AP ACKed; keep only ACKs to a MAC we inject as.
+            if self._ack_detect_on and len(frame) == 10 and frame[0] == 0xD4:
+                self._all_acks_seen += 1
+                ra = frame[4:10]
+                if ra in self._our_tx_macs:
+                    self._ack_sightings[ra.hex()] = self._ack_sightings.get(ra.hex(), 0) + 1
+                    self._ack_last_ts[ra] = time.monotonic()   # for inject wait-for-ack
+                continue
+            if cb is None:
+                continue
             parsed = WlanFrameParser.parse_80211_frame(frame, rssi)
             if parsed is not None:
                 self._dbg_frames += 1                       # per-dwell tally (see set_channel)
                 if parsed.type == "beacon":
                     self._dbg_beacons += 1
                 cb(parsed)
+
+    async def enable_ack_detect(self) -> None:
+        """Arm the ACK tap. Pure software flag — enable_monitor already accept-alls RXFLTMAP1
+        (all ctrl subtypes incl. ACK are admitted), so no register write. Not
+        enter_active_monitor, which makes the chip emit ACKs."""
+        self._ack_sightings.clear()
+        self._ack_last_ts.clear()
+        self._all_acks_seen = 0
+        self._tx_frames = 0
+        self._tx_unacked = 0
+        self._ack_detect_on = True
+        logger.info("RTL8822BU TX-ACK detection ON — observing our TX delivery")
+
+    async def disable_ack_detect(self) -> None:
+        """Disarm the ACK tap (software flag only; the RX filter is left at the monitor default)."""
+        self._ack_detect_on = False
+
+    def acks_seen(self, mac: bytes) -> int:
+        """Count of ACKs observed addressed to ``mac`` (an injected source MAC) since enable."""
+        return self._ack_sightings.get(bytes(mac).hex(), 0)
 
     def _heal_cold_synth(self, t) -> None:
         """Recover the intermittent cold-boot 2.4 GHz synth wedge (~20% of cold boots).
@@ -300,15 +339,43 @@ class Rtl8822buDkmsDriver:
             await self._dbg_rx_state(f"post-tune ch{channel} (band change)")
         return True
 
-    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
+    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True,
+                           wait_for_ack: float = 0.0, max_resends: int = 0) -> bool:
         """Build the fill_fake_txdesc descriptor (`tx.build_inject_txdesc`) and bulk-OUT the frame.
         Live TX is the user's explicit action — the agent never calls this; the descriptor build is
-        unit-tested in test_tx.py (no TX in the passive capture to pcap-diff)."""
+        unit-tested in test_tx.py (no TX in the passive capture to pcap-diff).
+
+        ``wait_for_ack > 0`` (with TX-ACK detection armed) waits for the AP's ACK and resends up
+        to ``max_resends`` times if none comes, returning whether it landed; ``0`` =
+        fire-and-forget (byte-identical to the prior behaviour)."""
         payload = tx.build_inject_txdesc(bytes(frame_bytes))
+        ta = bytes(frame_bytes[10:16]) if len(frame_bytes) >= 16 else None
+        if self._ack_detect_on and ta is not None:
+            self._our_tx_macs.add(ta)       # TA — the AP's ACK comes back to this
         loop = asyncio.get_running_loop()
-        async with self._io_lock:
-            await loop.run_in_executor(None, self.transport.bulk_out, payload)
-        return True
+        ack_gated = wait_for_ack > 0 and self._ack_detect_on and ta is not None
+        for _ in range(max_resends + 1):
+            async with self._io_lock:
+                t0 = time.monotonic()
+                await loop.run_in_executor(None, self.transport.bulk_out, payload)
+            self._tx_frames += 1
+            if not ack_gated:
+                return True                 # fire-and-forget (deauth / current behaviour)
+            if await self._await_ack(ta, t0, wait_for_ack):
+                return True                 # landed — the AP ACKed it
+        self._tx_unacked += 1
+        return False                        # never ACKed after every send
+
+    async def _await_ack(self, ta: bytes, since: float, window: float) -> bool:
+        """True if the tap observed an ACK to ``ta`` after ``since``, within ``window`` s.
+        The tap runs on the reader thread; this loop-side poll yields (asyncio.sleep) so a
+        just-arrived ACK's timestamp is observed between checks."""
+        deadline = since + window
+        while time.monotonic() < deadline:
+            if self._ack_last_ts.get(ta, 0.0) > since:
+                return True
+            await asyncio.sleep(0.001)
+        return False
 
     async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
         """Re-point REG_MACID to ``mac`` so the hardware HW-ACKs frames to it.

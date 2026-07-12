@@ -98,6 +98,24 @@ def apply_monitor_rcr(transport: RTL8814AUTransport) -> None:
     logger.info("RX filter: RCR=0x%08x (AAP=%d)", rcr, 1 if rcr & 0x1 else 0)
 
 
+# ACK is control subtype 13; bit N of RXFLTMAP1 gates control subtype N. mac_init_for_rx
+# leaves RXFLTMAP1=RXFLTMAP1_8814A (0x0400, bit13 clear), so the AP's ACKs to our injects
+# are dropped by default; TX-ACK detection opens only bit13.
+RXFLTMAP1_ACK = 1 << 13
+
+
+def admit_ack_frames(transport: RTL8814AUTransport) -> None:
+    """RXFLTMAP1 |= BIT(13): let RX see the AP's ACKs to our injects. Off by default."""
+    transport.write16(C.REG_RXFLTMAP1,
+                      transport.read16(C.REG_RXFLTMAP1) | RXFLTMAP1_ACK)
+
+
+def drop_ack_frames(transport: RTL8814AUTransport) -> None:
+    """Clear RXFLTMAP1 BIT(13) — restore the default monitor ctrl filter (RXFLTMAP1_8814A)."""
+    transport.write16(C.REG_RXFLTMAP1,
+                      transport.read16(C.REG_RXFLTMAP1) & ~RXFLTMAP1_ACK)
+
+
 def tune_monitor_cck_sensitivity(transport: RTL8814AUTransport) -> None:
     """Maximise CCK RX sensitivity for monitor (beacons are 1 Mbps CCK).
 
