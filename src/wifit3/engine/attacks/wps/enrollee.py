@@ -23,7 +23,8 @@ import time
 
 from . import messages as M
 from . import wsc_crypto as wc
-from .registrar import AttemptOutcome, PinResult, WpsTransport
+from .registrar import (AttemptOutcome, PinResult, WpsTransport, config_error_name,
+                        describe_frame, disassoc_reason)
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,9 @@ class WpsEnrollee:
         msg_timeout: float = 5.0,
         eapol_start_timeout: float = 2.0,
         overall_timeout: float = 30.0,
+        max_resends: int = 2,
+        ack_wait: float = 0.0,
+        ack_resends: int = 0,
         log=None,
         should_stop=None,
     ):
@@ -46,12 +50,22 @@ class WpsEnrollee:
         self.msg_timeout = msg_timeout
         self.eapol_start_timeout = eapol_start_timeout
         self.overall_timeout = overall_timeout
+        # max_resends: in-session re-prompts on a silent window (no MAC rotation). ack_wait>0:
+        # each frame waits for the AP's link-ACK and resends up to ack_resends times.
+        self.max_resends = max_resends
+        self.ack_wait = ack_wait
+        self.ack_resends = ack_resends
+        self._last_1x_frame = None
         self.log = log or logger.debug
         # Polled before each blocking recv so a user Stop aborts within one msg_timeout.
         self.should_stop = should_stop or (lambda: False)
 
     async def _send_1x(self, payload_1x: bytes) -> None:
-        await self.t.send(M.build_data_frame(self.bssid, self.our_mac, self.bssid, payload_1x))
+        frame = M.build_data_frame(self.bssid, self.our_mac, self.bssid, payload_1x)
+        self._last_1x_frame = frame
+        landed = await self.t.send(frame, wait_for_ack=self.ack_wait, max_resends=self.ack_resends)
+        if self.ack_wait > 0 and landed is False:
+            self.log(f"[WPS] → frame un-ACKed after {self.ack_resends + 1} sends (AP not hearing us)")
 
     async def run(self) -> AttemptOutcome:
         """Drive EAPOL-Start → Identity → M1..M7 → extract the PSK from M8."""
@@ -65,6 +79,7 @@ class WpsEnrollee:
         pkr = nonce_r = authkey = keywrapkey = psk1 = psk2 = None
         highest_mt = 0          # stale-retransmit guard (WSC never runs backward)
         sent_m1 = False
+        resends_left = self.max_resends   # in-session resend budget; refreshed on every AP frame
 
         # Log each protocol stage once — the AP retransmits each message, so
         # without this the event log floods with duplicate M2/M4/M6 lines.
@@ -95,10 +110,27 @@ class WpsEnrollee:
             frame = await self.t.recv(min(timeout, deadline - time.monotonic()))
             timeout = self.msg_timeout
             if frame is None:
+                # No frame in the window. On no-ACK hardware the AP's reply or our last frame
+                # may have dropped — resend our last frame (no MAC rotation) to re-prompt before
+                # giving up (mirrors the registrar's in-session resend).
+                if resends_left > 0 and self._last_1x_frame is not None:
+                    resends_left -= 1
+                    await self.t.send(self._last_1x_frame)
+                    continue
                 return AttemptOutcome(PinResult.TIMEOUT, "<PBC>", detail="no EAP response")
+            resends_left = self.max_resends   # AP is talking → fresh silence budget
 
             p = M.parse_rx_frame(frame)
             if p is None:
+                # A DEAUTH/DISASSOC tore down our EAP session — resending into a dead session
+                # just burns the walk window (observed: 30s to a timeout a fresh attempt then
+                # won). Abort now so the caller retries with a fresh MAC + association. Other
+                # non-WSC frames are ignored.
+                kind = describe_frame(frame)
+                if kind in ("mgmt/DEAUTH", "mgmt/DISASSOC"):
+                    why = disassoc_reason(frame)
+                    self.log(f"[WPS] ← {kind} reason={why} (AP dropped us) — abandoning to retry")
+                    return AttemptOutcome(PinResult.TIMEOUT, "<PBC>", detail=f"deauth ({why})")
                 continue
 
             if p.is_identity_request:
@@ -109,9 +141,13 @@ class WpsEnrollee:
                 continue
 
             if p.is_eap_failure or p.wsc_msg_type == M.WPS_WSC_NACK:
+                # Decode the AP's stated reason (WSC ATTR_CONFIG_ERROR). Code 12 = "Multiple PBC
+                # sessions" = we tripped the AP's overlap guard (likely our own rapid retries).
+                ce_raw = p.attrs.get(M.ATTR_CONFIG_ERROR)
+                ce = int.from_bytes(ce_raw[:2], "big") if ce_raw and len(ce_raw) >= 2 else None
                 phase("← EAP-FAIL/NACK")
                 return AttemptOutcome(PinResult.PROTO_ERROR, "<PBC>",
-                                      detail="EAP-FAIL/NACK (overlap or refused)")
+                                      detail=f"NACK: {config_error_name(ce)}", config_error=ce)
 
             # WSC_Start (an opcode, not a msg-type) kicks off M1.
             if p.wsc_opcode == M.WSC_START and p.wsc_msg_type == 0:

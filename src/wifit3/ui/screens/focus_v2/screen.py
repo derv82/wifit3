@@ -91,6 +91,10 @@ _BOTTOM_MIN = 6
 _PAD_START = 80
 _PAD_RATE = 0.4
 
+# Cooldown between PBC enrollment retries. PIN attempts naturally space ~3s and work; the PBC 10Hz
+# re-arm otherwise hammers a persnickety AP every ~100ms (fresh MAC each) and trips it. Match ~3s.
+_PBC_RETRY_COOLDOWN_S = 3.0
+
 # The full attack-button set (stable ids). All are composed once;
 # derive_buttons toggles visibility/enablement/label/variant per target + tick.
 _ATTACK_BUTTONS = [
@@ -215,6 +219,7 @@ class FocusViewV2(Screen):
         self._pbc_campaign: Optional[WpsPbcCapture] = None
         # Suppresses PBC auto-invade re-arm for the current window after a manual Stop.
         self._pbc_user_stopped = False
+        self._pbc_retry_after = 0.0   # monotonic time before which we won't re-arm a PBC retry
         self._pmkid_campaign: Optional[PmkidHarvestAttack] = None
         # Last packet_stats snapshot, diffed each tick to flicker the endpoint LEDs
         # (router on RX from the target, card on TX we send). None = no baseline yet.
@@ -488,6 +493,7 @@ class FocusViewV2(Screen):
         if not ap.wps_pbc_active:
             self._pbc_user_stopped = False
         if (ap.wps_pbc_active and getattr(self.app, "pbc_enabled", True)
+                and time.monotonic() >= self._pbc_retry_after
                 and not self._pbc_busy() and not self._pbc_user_stopped and not ap.has_psk
                 and self._wep_campaign is None and self._wpa3_down_attack is None
                 and self._wps_campaign is None):
@@ -1011,9 +1017,10 @@ class FocusViewV2(Screen):
             except Exception:
                 self._log(treelog.leaf("[dim](save failed)[/dim]"))
         else:
+            self._pbc_retry_after = time.monotonic() + _PBC_RETRY_COOLDOWN_S
             self._log(treelog.leaf_warn(
                 f"{outcome.result.value} [dim]({escape(outcome.detail)})[/dim] — "
-                "retrying while the window's open"))
+                f"retrying in {_PBC_RETRY_COOLDOWN_S:.0f}s while the window's open"))
 
     def _stop_pbc_capture(self) -> None:
         if self._pbc_campaign is not None:
