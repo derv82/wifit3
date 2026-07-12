@@ -561,11 +561,6 @@ class WlanInterface:
         return (f"⚠  [orange1][bold]Active Monitor[/bold] {reason} "
                 f"for [bold]{self._chipset}[/bold][/orange1]")
 
-    def active_monitor_status(self) -> FakeMacSupport:
-        """The current driver's active-monitor capability, for UX gating (e.g. the WPS-PIN
-        confirm modal). Undeclared drivers default to UNIMPLEMENTED."""
-        return getattr(self.driver, "FAKE_MAC", FakeMacSupport.UNIMPLEMENTED)
-
     def register_self_mac(self, mac: Any, bssid: Optional[str] = None) -> str:
         """Mark ``mac`` as our own forged STA and surface it in the client
         table tagged ``is_self`` (rendered "YOU"). Accepts bytes or a string;

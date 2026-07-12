@@ -49,8 +49,6 @@ from wifit3.engine.attacks.wpa3_downgrade import WPA3DowngradeAttack
 from wifit3.engine.attacks.wps.campaign import WpsCampaign, load_run_state, run_progress_line
 from wifit3.engine.attacks.wps.pbc import WpsPbcCapture
 from wifit3.engine.attacks.wps.registrar import PinResult
-from wifit3.engine.protocols import FakeMacSupport
-from ..active_monitor_warning import ActiveMonitorWarningDialog
 from wifit3.engine.save import (
     save_handshake, save_pmkid, save_wep_key, save_wps_pbc, save_wps_pin,
 )
@@ -214,7 +212,6 @@ class FocusViewV2(Screen):
         self._wep_campaign: Optional[WepCampaign] = None
         self._wps_campaign: Optional[WpsCampaign] = None
         self._wpa3_down_attack: Optional[WPA3DowngradeAttack] = None
-        self._pending_wps_pin = False   # WPS-PIN launch deferred past on_screen_resume's re-acquire
         self._pbc_campaign: Optional[WpsPbcCapture] = None
         # Suppresses PBC auto-invade re-arm for the current window after a manual Stop.
         self._pbc_user_stopped = False
@@ -276,12 +273,6 @@ class FocusViewV2(Screen):
                 ok = await iface.set_channel(target.channel, scan=False)
                 logger.info("[FOCUS] re-pin: bssid=%s ch=%s (was %s) -> %s",
                             target.bssid, target.channel, was, ok)
-        if self._pending_wps_pin:
-            self._pending_wps_pin = False
-            iface = getattr(self.app, "active_interface", None)
-            if self._target_ap is not None and iface is not None:
-                self._launch_wps_pin(self._target_ap, iface)
-                self._refresh_buttons()
 
     def on_resize(self) -> None:
         self._distribute()
@@ -922,19 +913,12 @@ class FocusViewV2(Screen):
         if not ap or not iface:
             self._log("[red]✗ No target / interface — cannot start WPS PIN.[/red]")
             return
-        # No HW-ACK for a spoofed MAC → an 11k-PIN un-ACKed sweep is unreliable; confirm first.
-        support = iface.active_monitor_status()
-        if support not in (FakeMacSupport.SPOOFABLE, FakeMacSupport.FIXED_MAC):
-            self.app.push_screen(
-                ActiveMonitorWarningDialog(support is FakeMacSupport.NONE), self._wps_pin_warned)
-            return
+        # A card that can't HW-ACK a spoofed MAC still runs PIN fine — the campaign gates resends
+        # on TX-ACK-detect instead. Surface the capability as a soft note (like PBC), never a gate.
+        warning = iface.active_monitor_warning()
+        if isinstance(warning, str):
+            self._log(warning)
         self._launch_wps_pin(ap, iface)
-
-    def _wps_pin_warned(self, proceed: bool) -> None:
-        # Defer the launch: dismissing the modal fires on_screen_resume -> _enter_target, which
-        # tears campaigns down + clears the log. _enter_target launches the pending campaign at
-        # its end, so it (and its log) survive the re-acquire.
-        self._pending_wps_pin = proceed
 
     def _launch_wps_pin(self, ap, iface) -> None:
         try:
