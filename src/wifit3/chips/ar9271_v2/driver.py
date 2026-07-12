@@ -57,6 +57,17 @@ class AR9271V2Driver:
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
+        self._init_ack_state()
+
+    def _init_ack_state(self) -> None:
+        # Observe the AP's ACK to our injects (did our TX land). Off by default.
+        self._ack_detect_on: bool = False
+        self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
+        self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
+        self._all_acks_seen: int = 0
+        self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
+        self._tx_frames: int = 0
+        self._tx_unacked: int = 0
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "AR9271V2Driver":
@@ -75,6 +86,7 @@ class AR9271V2Driver:
         self.endpoints = endpoints
         self._rx_callback = None
         self._reader = None
+        self._init_ack_state()
         self._init_tx(endpoints)
         return self
 
@@ -314,22 +326,80 @@ class AR9271V2Driver:
         """Loop side: split the bulk-IN transfer into (mpdu, rssi) pairs (FCS stripped) and fan
         each parsed dict to the rx callback."""
         cb = self._rx_callback
-        if cb is None:
+        if cb is None and not self._ack_detect_on:
             return
         for frame, rssi in rx_decode.iter_frames(buf):
-            parsed = WlanFrameParser.parse_80211_frame(frame, rssi)
-            if parsed is not None:
-                cb(parsed)
+            # A 10-byte 0xD4 frame is an ACK (the parser drops control frames). RA=frame[4:10]
+            # is the STA the AP ACKed; keep only ACKs to a MAC we inject as.
+            if self._ack_detect_on and len(frame) == 10 and frame[0] == 0xD4:
+                self._all_acks_seen += 1
+                ra = frame[4:10]
+                if ra in self._our_tx_macs:
+                    self._ack_sightings[ra.hex()] = self._ack_sightings.get(ra.hex(), 0) + 1
+                    self._ack_last_ts[ra] = time.monotonic()   # for inject wait-for-ack
+                continue
+            if cb is not None:
+                parsed = WlanFrameParser.parse_80211_frame(frame, rssi)
+                if parsed is not None:
+                    cb(parsed)
 
     # ---- TX (the UI/attacks await inject_frame; live firing is the user's gate) -------
-    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
+    async def enable_ack_detect(self) -> None:
+        """Arm the ACK tap. Pure software flag — the monitor RX filter already sets
+        ATH9K_RX_FILTER_CONTROL (calcrxfilter, FIF_CONTROL), so ACK control frames are admitted;
+        no register write needed. Not enter_active_monitor, which makes the chip emit ACKs."""
+        self._ack_sightings.clear()
+        self._ack_last_ts.clear()
+        self._all_acks_seen = 0
+        self._tx_frames = 0
+        self._tx_unacked = 0
+        self._ack_detect_on = True
+        logger.info("AR9271 TX-ACK detection ON — observing our TX delivery")
+
+    async def disable_ack_detect(self) -> None:
+        """Disarm the ACK tap (software flag only; the RX filter is left at the monitor default)."""
+        self._ack_detect_on = False
+
+    def acks_seen(self, mac: bytes) -> int:
+        """Count of ACKs observed addressed to ``mac`` (an injected source MAC) since enable."""
+        return self._ack_sightings.get(bytes(mac).hex(), 0)
+
+    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True,
+                           wait_for_ack: float = 0.0, max_resends: int = 0) -> bool:
         """Transmit one 802.11 frame (deauth / PMKID auth+assoc / aireplay-ng ``--test``). The
         WlanDriver contract is async + returns bool; the blocking bulk-OUT is offloaded so a TX
         burst doesn't stall the event loop (RX runs off-loop on its own thread). ``use_no_ack`` is
-        accepted for the contract — AR9271 injected monitor frames already carry no QoS / no-ACK."""
+        accepted for the contract — AR9271 injected monitor frames already carry no QoS / no-ACK.
+
+        ``wait_for_ack > 0`` (with TX-ACK detection armed) waits for the AP's ACK and resends the
+        same frame up to ``max_resends`` times if none comes, returning whether it landed; ``0`` =
+        fire-and-forget (byte-identical to the prior behaviour)."""
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._emit_frame, bytes(frame_bytes))
-        return True
+        ta = bytes(frame_bytes[10:16]) if len(frame_bytes) >= 16 else None   # AP ACKs back to TA
+        if self._ack_detect_on and ta is not None:
+            self._our_tx_macs.add(ta)
+        ack_gated = wait_for_ack > 0 and self._ack_detect_on and ta is not None
+        for _ in range(max_resends + 1):
+            t0 = time.monotonic()
+            await loop.run_in_executor(None, self._emit_frame, bytes(frame_bytes))
+            self._tx_frames += 1
+            if not ack_gated:
+                return True                 # fire-and-forget (deauth / WEP / current behaviour)
+            if await self._await_ack(ta, t0, wait_for_ack):
+                return True                 # landed — the AP ACKed it
+        self._tx_unacked += 1
+        return False                        # never ACKed after every send
+
+    async def _await_ack(self, ta: bytes, since: float, window: float) -> bool:
+        """True if the tap observed an ACK to ``ta`` after ``since``, within ``window`` s.
+        _dispatch runs on this loop, so a sleep yield lets a just-arrived ACK's timestamp land
+        between checks."""
+        deadline = since + window
+        while time.monotonic() < deadline:
+            if self._ack_last_ts.get(ta, 0.0) > since:
+                return True
+            await asyncio.sleep(0.001)
+        return False
 
     def _emit_frame(self, dot11: bytes) -> int:
         """Sync core: allocate a TX slot, build the HTC wrapper (tx_frame_hdr for data, tx_mgmt_hdr

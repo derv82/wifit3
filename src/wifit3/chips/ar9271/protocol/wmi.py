@@ -166,6 +166,24 @@ class WMIProtocol:
         # (WEP ARP detect, ChopChop ICV, Fragmentation seed).
         return WlanFrameParser.parse_80211_frame(frame[:-4], rssi)
 
+    @classmethod
+    def ack_ra(cls, payload: bytes) -> Optional[bytes]:
+        """RA of a valid link-layer ACK in this RX event, else None — the raw pre-parse tap for
+        TX-ACK detection. An ACK is a 10-byte 0xD4 MPDU (14 on the wire, +FCS); parse_rx_frame
+        hands it to the parser, which drops control frames, so the ACK is read straight off the
+        wire here. Applies the same RX-header gates parse_rx_frame does (magic distinguishes RX
+        events, rs_status/declared-length/FCS reject corrupt frames)."""
+        if len(payload) < cls.HTC_RX_HEADER_LEN + 14:
+            return None
+        if payload[10:16] != cls._RX_MAGIC or payload[6] != cls._RX_STATUS_OK:
+            return None
+        frame = payload[cls.HTC_RX_HEADER_LEN:]
+        if len(frame) != 14 or frame[0] != 0xD4:
+            return None
+        if zlib.crc32(frame[:-4]) & 0xFFFFFFFF != int.from_bytes(frame[-4:], "little"):
+            return None
+        return frame[4:10]
+
     @staticmethod
     def _strip_alignment_padding(frame: bytes) -> bytes:
         """Strip ath9k's DMA alignment padding inserted *after* the MAC header.

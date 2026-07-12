@@ -65,6 +65,15 @@ class AR9271Driver:
         self.total_credits = 0
         self._rx_callback = None
 
+        # Observe the AP's ACK to our injects (did our TX land). Off by default.
+        self._ack_detect_on: bool = False
+        self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
+        self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
+        self._all_acks_seen: int = 0
+        self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
+        self._tx_frames: int = 0
+        self._tx_unacked: int = 0
+
         # EP 0 for HTC/WMI Management, EP 1 for WMI Commands/Events
         self.transport.subscribe(0, self._on_htc_control)
 
@@ -346,6 +355,14 @@ class AR9271Driver:
                 
             # 3. Handle live RX traffic (Beacons, Data, etc.)
             elif ev_id in [WMI_RECV_PDU_EVENTID, WMI_RECV_PDU_V14_ID, WMI_RECV_PDU_V14_BCN_ID]:
+                if self._ack_detect_on:
+                    ra = self.wmi.ack_ra(wmi_payload)
+                    if ra is not None:
+                        self._all_acks_seen += 1
+                        if ra in self._our_tx_macs:
+                            self._ack_sightings[ra.hex()] = self._ack_sightings.get(ra.hex(), 0) + 1
+                            self._ack_last_ts[ra] = time.monotonic()  # for inject wait-for-ack
+                        return                # an ACK is never handed to the frame parser
                 parsed = self.wmi.parse_rx_frame(wmi_payload)
                 if parsed and self._rx_callback:
                     self._rx_callback(parsed)
@@ -411,19 +428,67 @@ class AR9271Driver:
         await self._apply_monitor_rx_filter()
         return True
 
-    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
+    async def enable_ack_detect(self) -> None:
+        """Arm the ACK tap. Pure software flag — the monitor RX filter (RX_FILTER_MONITOR 0xC03F)
+        already sets ATH9K_RX_FILTER_CONTROL, so the firmware forwards ACK control frames; no
+        register write needed. Not enter_active_monitor, which makes the chip emit ACKs."""
+        self._ack_sightings.clear()
+        self._ack_last_ts.clear()
+        self._all_acks_seen = 0
+        self._tx_frames = 0
+        self._tx_unacked = 0
+        self._ack_detect_on = True
+        logger.info("AR9271 TX-ACK detection ON — observing our TX delivery")
+
+    async def disable_ack_detect(self) -> None:
+        """Disarm the ACK tap (software flag only; the RX filter stays at the monitor default)."""
+        self._ack_detect_on = False
+
+    def acks_seen(self, mac: bytes) -> int:
+        """Count of ACKs observed addressed to ``mac`` (an injected source MAC) since enable."""
+        return self._ack_sightings.get(bytes(mac).hex(), 0)
+
+    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True,
+                           wait_for_ack: float = 0.0, max_resends: int = 0) -> bool:
         """
         Injects a raw 802.11 frame onto the air.
         Wraps the frame in the `ath_tx_status` hardware descriptor.
+
+        ``wait_for_ack > 0`` (with TX-ACK detection armed) waits for the AP's ACK and resends the
+        same frame up to ``max_resends`` times if none comes, returning whether it landed; ``0`` =
+        fire-and-forget (byte-identical to the prior behaviour).
         """
+        ta = bytes(frame_bytes[10:16]) if len(frame_bytes) >= 16 else None   # AP ACKs back to TA
+        if self._ack_detect_on and ta is not None:
+            self._our_tx_macs.add(ta)
         # Pack the hardware TX descriptor (rate 0x0B, no_ack flag)
         tx_payload = self.meta.pack_tx(frame_bytes, rate_idx=0x0B, no_ack=use_no_ack)
-        
+
         # Dispatch to the dynamic Data endpoint (usually EP 5)
         # is_wmi=False means it uses the standard 8-byte HTC header, not the WMI variant
         # is_data=True means it must go to Bulk OUT (EP 0x01) with a 4-byte HIF header!
-        await self.transport.send(self.data_endpoint_id, tx_payload, is_wmi=False, is_data=True)
-        return True
+        ack_gated = wait_for_ack > 0 and self._ack_detect_on and ta is not None
+        for _ in range(max_resends + 1):
+            t0 = time.monotonic()
+            await self.transport.send(self.data_endpoint_id, tx_payload, is_wmi=False, is_data=True)
+            self._tx_frames += 1
+            if not ack_gated:
+                return True                 # fire-and-forget (deauth / WEP / current behaviour)
+            if await self._await_ack(ta, t0, wait_for_ack):
+                return True                 # landed — the AP ACKed it
+        self._tx_unacked += 1
+        return False                        # never ACKed after every send
+
+    async def _await_ack(self, ta: bytes, since: float, window: float) -> bool:
+        """True if the tap observed an ACK to ``ta`` after ``since``, within ``window`` s.
+        _on_wmi_packet runs on this loop, so a sleep yield lets a just-arrived ACK's timestamp
+        land between checks."""
+        deadline = since + window
+        while time.monotonic() < deadline:
+            if self._ack_last_ts.get(ta, 0.0) > since:
+                return True
+            await asyncio.sleep(0.001)
+        return False
 
     async def enter_active_monitor(self, mac: bytes, bssid=None) -> bytes:
         """Program ``mac`` into AR_STA_ID0/1 so the hardware HW-ACKs frames to it (ath9k
