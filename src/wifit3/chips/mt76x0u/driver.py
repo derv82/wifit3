@@ -1047,12 +1047,12 @@ class MT76x0UDriver:
                 logger.error("MT7610U: inject_frame USB error: %s", e)
                 return False
 
-        if not ack_gated:
-            return _send()                  # fire-and-forget (deauth / WEP / current behaviour)
         for _ in range(max_resends + 1):
             t0 = time.monotonic()
             ok = _send()
             self._tx_frames += 1
+            if not ack_gated:
+                return ok                   # fire-and-forget (deauth / WEP / current behaviour)
             if ok and await self._await_ack(ta, t0, wait_for_ack):
                 return True                 # landed — the AP ACKed it
         self._tx_unacked += 1

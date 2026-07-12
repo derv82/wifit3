@@ -720,14 +720,13 @@ class MT76x2UDriver:
         if self._ack_detect_on and ta is not None:
             self._our_tx_macs.add(ta)
         ack_gated = wait_for_ack > 0 and self._ack_detect_on and ta is not None
-        if not ack_gated:
-            return await _inject_frame(self.transport, frame_bytes,
-                                       ack=not use_no_ack, channel=self.current_channel)
         for _ in range(max_resends + 1):
             t0 = time.monotonic()
             ok = await _inject_frame(self.transport, frame_bytes,
                                      ack=not use_no_ack, channel=self.current_channel)
             self._tx_frames += 1
+            if not ack_gated:
+                return ok                   # fire-and-forget (deauth / WEP / current behaviour)
             if ok and await self._await_ack(ta, t0, wait_for_ack):
                 return True                 # landed — the AP ACKed it
         self._tx_unacked += 1
