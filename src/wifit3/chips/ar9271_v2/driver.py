@@ -381,7 +381,15 @@ class AR9271V2Driver:
         ack_gated = wait_for_ack > 0 and self._ack_detect_on and ta is not None
         for _ in range(max_resends + 1):
             t0 = time.monotonic()
-            await loop.run_in_executor(None, self._emit_frame, bytes(frame_bytes))
+            cookie = await loop.run_in_executor(None, self._emit_frame, bytes(frame_bytes))
+            # Free the TX slot now. The bitmap only exists to hold an in-flight skb until its
+            # WMI_TXSTATUS arrives (kernel ath9k_htc_txstatus -> tx_clear_slot [SRC]
+            # htc_drv_txrx.c:647); userland inject is fire-and-forget — no skb to track and nothing
+            # consumes TXSTATUS at runtime, so the slot is done once bulk-OUT queues the frame.
+            # Without this the 256-slot bitmap leaks one per frame and throws ENOBUFS after 256:
+            # fatal to high-rate WEP replay/chopchop, invisible to low-volume deauth/PMKID/WPS.
+            # (The verify gate drives _emit_frame + feeds recorded TXSTATUS directly — untouched.)
+            self.tx_slots.clear(cookie)
             self._tx_frames += 1
             if not ack_gated:
                 return True                 # fire-and-forget (deauth / WEP / current behaviour)

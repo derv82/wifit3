@@ -89,3 +89,15 @@ async def test_inject_frame_async_returns_bool():
     drv = _replay_driver(sent)
     assert await drv.inject_frame(PROBE) is True
     assert sent[0] == tx.build_mgmt_tx(5, PROBE, 0)
+
+
+async def test_inject_frame_recycles_slots_past_bitmap():
+    # Fire-and-forget inject must free its TX slot at emit time — nothing consumes WMI_TXSTATUS at
+    # runtime to free it. Regression for the 256-slot leak that jammed high-rate WEP replay/chopchop
+    # on AR9271 with ENOBUFS (low-volume deauth/PMKID/WPS stayed under the cap and hid it).
+    sent: list[bytes] = []
+    drv = _replay_driver(sent)
+    n = tx.MAX_TX_BUF_NUM + 10                                     # well past the 256-slot bitmap
+    for _ in range(n):
+        assert await drv.inject_frame(PROBE) is True               # would raise ENOBUFS at 257
+    assert len(sent) == n
