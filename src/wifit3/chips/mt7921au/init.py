@@ -152,3 +152,16 @@ async def enter_monitor(t, channel: int) -> None:
     await t.send_mcu_command(cmd, p, wait_resp=False)
     cmd, p = mcu.config_sniffer(channel)                # initial channel
     await t.send_mcu_command(cmd, p, wait_resp=False)
+
+
+async def admit_ack_frames(t) -> None:
+    """Clear RFCR DROP_UNWANTED_CTL so monitor RX sees the AP's ACKs to our injected MAC
+    (same bit_op path as the DROP_OTHER_BEACON clear in enter_monitor). Off by default."""
+    cmd, p = mcu.set_rxfilter(0, mcu.MT7921_FIF_BIT_CLR, mcu.MT_WF_RFCR_DROP_UNWANTED_CTL)
+    await t.send_mcu_command(cmd, p, wait_resp=False)
+
+
+async def drop_ack_frames(t) -> None:
+    """Restore the monitor default (re-set DROP_UNWANTED_CTL)."""
+    cmd, p = mcu.set_rxfilter(0, mcu.MT7921_FIF_BIT_SET, mcu.MT_WF_RFCR_DROP_UNWANTED_CTL)
+    await t.send_mcu_command(cmd, p, wait_resp=False)

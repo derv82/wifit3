@@ -371,6 +371,7 @@ MT7921_FILTER_FCSFAIL = 1 << 2
 MT7921_FILTER_CONTROL = 1 << 5
 MT7921_FILTER_OTHER_BSS = 1 << 6
 MT_WF_RFCR_DROP_OTHER_BEACON = 1 << 11   # mt792x_regs.h
+MT_WF_RFCR_DROP_UNWANTED_CTL = 1 << 21   # drops ACKs to a MAC that isn't ours (mt76_connac_regs.h)
 MT7921_FIF_BIT_SET = 1 << 0
 MT7921_FIF_BIT_CLR = 1 << 1
 # config_sniffer ch_band: 2.4 GHz -> 1, 5 GHz -> 2, 6 GHz -> 3.
