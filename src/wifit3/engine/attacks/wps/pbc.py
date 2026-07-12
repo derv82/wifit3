@@ -78,7 +78,8 @@ class WpsPbcCapture(Campaign):
             return AttemptOutcome(PinResult.ABORTED, "<PBC>", detail="stopped before start")
         assoc = WpsAssociation(self.iface, self.bssid, self.target.ssid or "",
                                self.channel, our_mac=self.our_mac,
-                               wps_request_type=WPS_REQ_ENROLLEE)
+                               wps_request_type=WPS_REQ_ENROLLEE,
+                               should_stop=lambda: self.stopped)
         assoc.start()
         armed = await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
         tx_ack = hasattr(getattr(self.iface, "driver", None), "enable_ack_detect")

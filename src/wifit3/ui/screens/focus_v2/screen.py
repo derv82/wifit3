@@ -59,8 +59,7 @@ from ...capture_events import (
 )
 from ...capture_log import short_sta
 from ...eapol_aggregate import EapolAggregator
-from ...pmkid_log import render_failure as pmkid_failure_lines
-from ...pmkid_log import render_success as pmkid_success_lines
+from ... import pmkid_log
 from ...encryption_format import wep_key_ascii
 from .card_endpoint import CardEndpoint
 from .clients_list import ClientsList
@@ -767,7 +766,7 @@ class FocusViewV2(Screen):
 
     def _toggle_pmkid(self) -> None:
         if self._pmkid_campaign is not None:
-            self._stop_pmkid()
+            self._user_stop_pmkid()
         else:
             self._start_pmkid()
         self._refresh_buttons()
@@ -780,31 +779,45 @@ class FocusViewV2(Screen):
         if not ap or not iface:
             self._log("[red]✗ No target / interface — aborting PMKID harvest.[/red]")
             return
-        self._pmkid_campaign = PmkidHarvestAttack(iface, ap)
+        # Header now, then the harvest streams its own auth/assoc/M1 branches (each
+        # plain string wrapped in treelog.branch); _finish_pmkid closes the verdict.
+        self._log(pmkid_log.header(escape(ap.ssid or ap.bssid)))
+        self._pmkid_campaign = PmkidHarvestAttack(
+            iface, ap, log=lambda m: self._log(treelog.branch(m)))
         self._pmkid_campaign.run()
 
     def _finish_pmkid(self) -> None:
-        """Handle a completed harvest (polled from _tick once ``done``): save + log a
-        recovered PMKID, or surface the specific fail_reason."""
+        """Handle a completed harvest (polled from _tick once ``done``): progress
+        already streamed live, so emit ONLY the terminal verdict (save + chip, or the
+        give-up leaf) — the header + branches were logged as the harvest ran."""
         camp = self._pmkid_campaign
         self._pmkid_campaign = None
         if camp is None:
             return
-        essid = escape(camp.target.ssid or "<hidden>")
         if camp.pmkid:
             result = save_pmkid(camp.target, camp.client_mac)
             hint = _save_line(result) if result is not None else None
-            self._emit_lines(pmkid_success_lines(essid, hint))
+            self._emit_lines(pmkid_log.verdict_success(hint))
             # Detector skips forged MACs, so toast the active-harvest win here too.
             self.notify(camp.target.ssid or camp.target.bssid,
                         title=CAPTURE_TOAST_TITLES[CaptureKind.PMKID], timeout=6)
+        elif getattr(camp, "stopped", False):
+            self._log(treelog.leaf_fail("[yellow]Stopped[/yellow] PMKID harvesting"))
         else:
-            self._emit_lines(pmkid_failure_lines(essid, camp.fail_reason))
+            self._emit_lines(pmkid_log.verdict_failure(camp.fail_reason))
 
     def _stop_pmkid(self) -> None:
         if self._pmkid_campaign is not None:
             self._pmkid_campaign.request_stop()
             self._pmkid_campaign = None
+
+    def _user_stop_pmkid(self) -> None:
+        """The 'Stop PMKID' button: request_stop() frees the radio now; KEEP the handle
+        so _finish_pmkid (fired from _tick once the campaign drains) logs the closing
+        'Stopped' leaf. Nulling it here (as the teardown _stop_pmkid does) would leave
+        the tree branch hanging."""
+        if self._pmkid_campaign is not None:
+            self._pmkid_campaign.request_stop()
 
     # ----- WPA3 downgrade ----------------------------------------------------
 

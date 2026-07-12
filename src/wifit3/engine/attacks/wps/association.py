@@ -18,7 +18,7 @@ import logging
 import os
 import struct
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +133,9 @@ class WpsAssociation:
     def __init__(self, iface, bssid: str, ssid: str, channel: int,
                  our_mac: Optional[bytes] = None, assoc_timeout: float = 1.5,
                  auth_timeout: float = 1.0,
-                 wps_request_type: int = WPS_REQ_REGISTRAR):
+                 wps_request_type: int = WPS_REQ_REGISTRAR,
+                 assoc_extra_ies: Optional[bytes] = None,
+                 should_stop: Optional[Callable[[], bool]] = None):
         self.iface = iface
         self.bssid = bssid.lower()
         self.bssid_bytes = str_to_mac(self.bssid)
@@ -144,6 +146,13 @@ class WpsAssociation:
         self.auth_timeout = auth_timeout
         # Registrar (PIN attack) vs Enrollee (PBC capture) intent in the assoc IE.
         self.wps_request_type = wps_request_type
+        # A complete trailing IE (tag+len+body) to send INSTEAD of the WPS vendor
+        # IE — e.g. the PMKID harvester's forged single-AKM=PSK RSN IE. None keeps
+        # the default WPS registrar/enrollee IE (byte-identical to before).
+        self.assoc_extra_ies = assoc_extra_ies
+        # Polled in associate()/_send_until so a user Stop aborts the resend loop
+        # promptly instead of injecting for the full auth+assoc budget.
+        self.should_stop = should_stop or (lambda: False)
         self.associated = False
         self.fail_reason: Optional[str] = None
         self._auth_ok = False
@@ -162,12 +171,16 @@ class WpsAssociation:
         cap = struct.pack("<H", _CAP_ESS_PRIVACY)
         listen = struct.pack("<H", 0x0001)
         ssid = self.ssid.encode("utf-8", "ignore")[:32]
-        wps_ie = _wps_assoc_ie(self.wps_request_type)
+        if self.assoc_extra_ies is not None:
+            trailer = self.assoc_extra_ies         # already a complete IE (tag+len+body)
+        else:
+            wps_ie = _wps_assoc_ie(self.wps_request_type)
+            trailer = bytes([0xDD, len(wps_ie)]) + wps_ie
         ies = (
             bytes([0x00, len(ssid)]) + ssid
             + bytes([0x01, len(_SUPPORTED_RATES)]) + _SUPPORTED_RATES
             + bytes([0x32, len(_EXT_SUPPORTED_RATES)]) + _EXT_SUPPORTED_RATES
-            + bytes([0xDD, len(wps_ie)]) + wps_ie
+            + trailer
         )
         return self._hdr(b"\x00\x00") + cap + listen + ies
 
@@ -200,6 +213,8 @@ class WpsAssociation:
         if self.iface.current_channel != self.channel:
             await self.iface.set_channel(self.channel)
         for _ in range(attempts):
+            if self.should_stop():
+                return False
             self._auth_ok = False
             self._assoc_ok = False
             await self._send_until(self._auth_req(), lambda: self._auth_ok, self.auth_timeout)
@@ -220,7 +235,7 @@ class WpsAssociation:
         every ``resend_after`` while still silent (covers a lost TX or a lost AP reply)."""
         deadline = time.time() + timeout
         last_send = 0.0
-        while time.time() < deadline and not done():
+        while time.time() < deadline and not done() and not self.should_stop():
             if time.time() - last_send >= resend_after:
                 await self.iface.send_raw(frame, use_no_ack=True)
                 last_send = time.time()

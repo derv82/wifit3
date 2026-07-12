@@ -258,7 +258,8 @@ class WpsCampaign(Campaign):
             armed = await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
             self._ack = armed is not None
             self.assoc = WpsAssociation(self.iface, self.bssid, self.target.ssid or "",
-                                        self.channel, our_mac=self.our_mac)
+                                        self.channel, our_mac=self.our_mac,
+                                        should_stop=lambda: self.stopped)
             self.assoc.start()
             self.transport = WlanTransport(self.iface, str_to_mac(self.bssid), self.our_mac,
                                            ack=self._ack)

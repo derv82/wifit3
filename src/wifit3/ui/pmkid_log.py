@@ -57,27 +57,36 @@ def _fail_leaf(reason: Optional[PmkidFail]) -> str:
     return treelog.leaf_fail(f"[bold orange1]{head}[/bold orange1]{tail}")
 
 
-def render_success(essid: str, save_hint: Optional[str]) -> list[str]:
-    """Header → auth → assoc → ``M1 … PMKID✓`` → ``✓ PMKID Extracted`` chip, closed
-    by the ``saved/exists: …`` leaf. ``save_hint`` None (hidden SSID / save failed)
-    makes the chip the closing leaf."""
-    lines = [header(essid), auth_req(), assoc_req(), m1(True)]
+def verdict_success(save_hint: Optional[str]) -> list[str]:
+    """The terminal success line(s) only — the ``✓ PMKID Extracted`` chip closed by
+    the ``saved/exists: …`` leaf (or the chip alone as the closing leaf when
+    ``save_hint`` is None). Emitted on its own once progress streams live."""
     if save_hint:
-        lines.append(treelog.branch(_EXTRACTED))
-        lines.append(treelog.leaf(save_hint))
-    else:
-        lines.append(treelog.leaf(_EXTRACTED))
-    return lines
+        return [treelog.branch(_EXTRACTED), treelog.leaf(save_hint)]
+    return [treelog.leaf(_EXTRACTED)]
+
+
+def verdict_failure(reason: Optional[PmkidFail]) -> list[str]:
+    """The terminal give-up line only (bold-orange ``└─╳`` leaf). Emitted on its own
+    once the auth/assoc/M1 branches stream live."""
+    return [_fail_leaf(reason)]
+
+
+def render_success(essid: str, save_hint: Optional[str]) -> list[str]:
+    """Header → auth → assoc → ``M1 … PMKID✓`` → the success verdict. Atomic-dump
+    form; the streaming path emits ``header`` + branches + ``verdict_success``
+    separately."""
+    return [header(essid), auth_req(), assoc_req(), m1(True)] + verdict_success(save_hint)
 
 
 def render_failure(essid: str, reason: Optional[PmkidFail]) -> list[str]:
     """Header, the auth/assoc branches (only for reasons reached after TX), an
     ``M1 … PMKID✗`` branch (NO_KDE only — its M1 arrived KDE-less), then the
-    bold-orange give-up leaf."""
+    failure verdict. Atomic-dump form (see ``verdict_failure`` for the streaming
+    terminal line)."""
     lines = [header(essid)]
     if reason in _AFTER_TX:
         lines += [auth_req(), assoc_req()]
     if reason is PmkidFail.NO_KDE:
         lines.append(m1(False))
-    lines.append(_fail_leaf(reason))
-    return lines
+    return lines + verdict_failure(reason)

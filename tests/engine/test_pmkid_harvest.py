@@ -23,8 +23,10 @@ def _target(pmf_required=False, pmf_capable=False, akm_suites=(0x02,), rsn_ie=No
 
 
 class _FakeIface:
-    """Records injected frames; optionally drops an M1 into the handshake dict the
-    instant the Assoc Req is sent (simulating the AP's reply)."""
+    """Records injected frames. Answers WpsAssociation's Auth/Assoc Reqs with the
+    matching Resp (status 0) via the registered rx callback, and — when
+    ``deliver_m1`` — drops an M1 into the handshake dict the instant the Assoc Req
+    is sent (simulating the AP's reply)."""
 
     def __init__(self, deliver_m1: bool, pmkid=None, fake_mac_supported: bool = False):
         self._deliver_m1 = deliver_m1
@@ -36,9 +38,16 @@ class _FakeIface:
         self.sent: list = []
         self.fake_mac_arms = 0
         self.fake_mac_clears = 0
+        self._cb = None
 
     def register_forged_mac(self, mac):
         pass
+
+    def register_rx_callback(self, cb):
+        self._cb = cb
+
+    def unregister_rx_callback(self, cb):
+        self._cb = None
 
     async def set_fake_mac(self, mac, bssid=None):
         if not self._fake_mac_supported:
@@ -52,12 +61,31 @@ class _FakeIface:
     async def set_channel(self, ch):
         self.current_channel = ch
 
+    @staticmethod
+    def _auth_resp(our_mac: bytes, bssid: bytes) -> bytes:
+        # mgmt/auth (0xB0); addr1=us; body: algo, seq=2, status=0 (@28:30).
+        return (b"\xb0\x00\x00\x00" + our_mac + bssid + bssid + b"\x00\x00"
+                + b"\x00\x00" + b"\x02\x00" + b"\x00\x00")
+
+    @staticmethod
+    def _assoc_resp(our_mac: bytes, bssid: bytes) -> bytes:
+        # mgmt/assoc-resp (0x10); addr1=us; body: cap, status=0 (@26:28), aid.
+        return (b"\x10\x00\x00\x00" + our_mac + bssid + bssid + b"\x00\x00"
+                + b"\x00\x00" + b"\x00\x00" + b"\x01\x00")
+
     async def send_raw(self, frame: bytes, use_no_ack: bool = True) -> bool:
         self.sent.append(bytes(frame))
-        # Assoc Req (mgmt subtype 0 -> fc0 == 0x00) -> the AP "replies" with M1.
-        if self._deliver_m1 and frame[0] == 0x00:
-            src = ":".join(f"{b:02x}" for b in frame[10:16])   # addr2 = our forged MAC
-            self.ap.handshakes[src] = SimpleNamespace(pmkid=self._pmkid, akm_client=None)
+        our_mac = bytes(frame[10:16])            # addr2 = our forged MAC
+        bssid = bytes(frame[4:10])               # addr1 = BSSID
+        subtype = (frame[0] & 0xF0) >> 4
+        if self._cb is not None and subtype == 0x0B:          # Auth Req → Auth Resp
+            self._cb(self._auth_resp(our_mac, bssid), -40, 0.0)
+        elif frame[0] == 0x00:                                 # Assoc Req
+            if self._cb is not None:
+                self._cb(self._assoc_resp(our_mac, bssid), -40, 0.0)
+            if self._deliver_m1:                              # the AP "replies" with M1
+                src = ":".join(f"{b:02x}" for b in our_mac)
+                self.ap.handshakes[src] = SimpleNamespace(pmkid=self._pmkid, akm_client=None)
         return True
 
 
