@@ -166,6 +166,9 @@ RXFLTMAP_ACCEPT_ALL = 0xFFFF
 # HW_VAR_ENABLE_RX_BAR (init_hw_mlme_ext) opens only the BlockAckReq ctrl subtype
 # [SRC] hal_com.c:10257 — RXFLTMAP1 |= BIT(8). NOT accept-all.
 RXFLTMAP1_RX_BAR = BIT(8)
+# ACK is ctrl subtype 13; bit N of RXFLTMAP1 gates ctrl subtype N. Off by default —
+# accept-all in this word cost RX, so TX-ACK detection opens only bit13.
+RXFLTMAP1_ACK = BIT(13)
 # hw_var_set_monitor RCR: RCR_AAP|APM|AM|AB|APWRMGT|ADF|ACF|AMF|APP_PHYST_RXFF|APPFCS.
 # No ACRC32/AICV (the 8188e #if 0 — CRC/ICV frames drop in recvbuf2recvframe).
 RCR_MONITOR_VALUE = 0x9000382F

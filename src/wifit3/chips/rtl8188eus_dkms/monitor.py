@@ -55,3 +55,13 @@ def enter_monitor(t) -> None:
     """``hw_var_set_opmode(_HW_STATE_MONITOR_)`` — net-type NOLINK + the monitor RCR/RXFLTMAP2."""
     _set_msr(t, C.MSR_NOLINK)
     _hw_var_set_monitor(t)
+
+
+def admit_ack_frames(t) -> None:
+    """RXFLTMAP1 |= BIT(13): let RX see the AP's ACKs to our injects. Off by default."""
+    t.write16(C.REG_RXFLTMAP1, t.read16(C.REG_RXFLTMAP1) | C.RXFLTMAP1_ACK)
+
+
+def drop_ack_frames(t) -> None:
+    """Clear RXFLTMAP1 BIT(13) — restore the default monitor ctrl filter."""
+    t.write16(C.REG_RXFLTMAP1, t.read16(C.REG_RXFLTMAP1) & ~C.RXFLTMAP1_ACK)
