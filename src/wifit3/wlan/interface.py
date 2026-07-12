@@ -636,11 +636,19 @@ class WlanInterface:
 
     async def send_raw(
         self, frame_bytes: bytes, use_no_ack: bool = True,
+        wait_for_ack: float = 0.0, max_resends: int = 0,
     ) -> bool:
-        """Inject a raw 802.11 frame. The driver wraps it in the hardware TX descriptors."""
+        """Inject a raw 802.11 frame. ``wait_for_ack``/``max_resends`` request ACK-gated
+        delivery; only drivers with TX-ACK detection honour them."""
         if hasattr(self.driver, 'inject_frame'):
             # Live packet dashboard — tally this inject (deauth vs other) by AP.
             self._record_tx(frame_bytes)
+            if wait_for_ack > 0:
+                try:
+                    return await self.driver.inject_frame(
+                        frame_bytes, use_no_ack, wait_for_ack=wait_for_ack, max_resends=max_resends)
+                except TypeError:   # driver predates the ACK-gated params
+                    return await self.driver.inject_frame(frame_bytes, use_no_ack)
             return await self.driver.inject_frame(frame_bytes, use_no_ack)
         logger.warning(f"Driver for {self._chipset} does not support injection.")
         return False

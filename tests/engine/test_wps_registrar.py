@@ -29,8 +29,10 @@ class _QueueTransport:
     def __init__(self, tx: asyncio.Queue, rx: asyncio.Queue):
         self._tx, self._rx = tx, rx
 
-    async def send(self, frame: bytes) -> None:
+    async def send(self, frame: bytes, wait_for_ack: float = 0.0,
+                   max_resends: int = 0) -> bool:
         await self._tx.put(frame)
+        return True
 
     async def recv(self, timeout: float):
         try:

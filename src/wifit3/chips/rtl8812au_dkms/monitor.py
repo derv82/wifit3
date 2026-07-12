@@ -43,18 +43,16 @@ def enter_monitor(t) -> None:
     _hw_var_set_monitor(t)
 
 
-# ACK control-subtype (RXFLTMAP1 bit13) — off in the monitor default (0x0520). Flip it on to admit
-# the AP's ACK to our injected frames so monitor RX can OBSERVE TX delivery (aireplay-style, RX-side
-# — NOT enter_active_monitor's AP-side auto-ACK). Scoped to bit13 so RX breadth is otherwise
-# unchanged (an accept-all RXFLTMAP1 measurably cost RX on the rtl8188eus).
+# RXFLTMAP1 bit13 admits ACK control frames so RX can see the AP's ACKs to us (off by default).
+# Scoped to bit13 — accept-all here cost RX on rtl8188eus.
 RXFLTMAP1_ACK = 1 << 13
 
 
-def enable_ack_rx(t) -> None:
+def admit_ack_frames(t) -> None:
     t.write16(REG_RXFLTMAP1, t.read16(REG_RXFLTMAP1) | RXFLTMAP1_ACK)
 
 
-def disable_ack_rx(t) -> None:
+def drop_ack_frames(t) -> None:
     t.write16(REG_RXFLTMAP1, t.read16(REG_RXFLTMAP1) & ~RXFLTMAP1_ACK)
 
 

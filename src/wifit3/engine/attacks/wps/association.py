@@ -105,10 +105,11 @@ class WlanTransport:
         self._active = False
         self.iface.unregister_rx_callback(self._rx_cb)
 
-    async def send(self, frame: bytes) -> None:
+    async def send(self, frame: bytes, wait_for_ack: float = 0.0, max_resends: int = 0) -> bool:
         if self.tx_observer is not None:
             self.tx_observer(frame)
-        await self.iface.send_raw(frame, use_no_ack=not self.ack)
+        return await self.iface.send_raw(frame, use_no_ack=not self.ack,
+                                         wait_for_ack=wait_for_ack, max_resends=max_resends)
 
     async def recv(self, timeout: float) -> Optional[bytes]:
         try:

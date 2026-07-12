@@ -57,7 +57,7 @@ def _stage_of(msg: str) -> str | None:
 
 
 async def _one(iface, bssid, ssid, channel, our_mac, pin, msg_timeout, cap,
-               max_resends=0, auto_ack=False):
+               max_resends=0, auto_ack=False, ack_wait=0.0, ack_resends=0):
     """Run one full attempt; return a dict of stage->relative-ms + assoc timing + outcome.
 
     auto_ack=True arms active-monitor (chip HW-ACKs the AP's frames to our forged MAC, so the
@@ -86,7 +86,8 @@ async def _one(iface, bssid, ssid, channel, our_mac, pin, msg_timeout, cap,
         transport.start()
         reg = WpsRegistrar(transport, str_to_mac(bssid), our_mac,
                            msg_timeout=msg_timeout, eapol_start_timeout=max(7.0, msg_timeout),
-                           overall_timeout=msg_timeout * 8, max_resends=max_resends, log=log)
+                           overall_timeout=msg_timeout * 8, max_resends=max_resends,
+                           ack_wait=ack_wait, ack_resends=ack_resends, log=log)
         out = await reg.try_pin(pin)
     finally:
         transport.stop()
@@ -119,11 +120,16 @@ async def mode_timing(iface, tgt, args):
     print(f"\n=== TIMING: {args.attempts} attempts, mac-mode={args.mac_mode}, "
           f"per-msg timeout={args.timeout}s, resends={args.max_resends}, "
           f"auto_ack={args.auto_ack} ===")
-    if args.ack_detect and hasattr(iface.driver, "enable_ack_rx"):
-        await iface.driver.enable_ack_rx()
-        print("  ACK-RX detection ON (RXFLTMAP1 bit13) — counting ACKs to our injected MAC")
+    if args.ack_resend:
+        args.ack_detect = True    # ACK-gated resend needs the ACK signal
+    if args.ack_detect and hasattr(iface.driver, "enable_ack_detect"):
+        await iface.driver.enable_ack_detect()
+        mode = "ACK-gated resend" if args.ack_resend else "detection only"
+        extra = (f" — wait {args.ack_wait*1000:.0f}ms, up to {args.ack_resends} resends"
+                 if args.ack_resend else "")
+        print(f"  TX-ACK {mode} ON (RXFLTMAP1 bit13){extra}")
     elif args.ack_detect:
-        print("  (--ack-detect: this driver has no ACK-RX support; skipping)")
+        print("  (--ack-detect: this driver has no TX-ACK-detect support; skipping)")
     rows = []
     cap: list = []
     for i in range(args.attempts):
@@ -136,7 +142,9 @@ async def mode_timing(iface, tgt, args):
         elif args.ab == "resend":
             rs = 0 if i % 2 == 0 else 2
         r = await _one(iface, bssid, ssid, channel, mac, pin, args.timeout, cap,
-                       max_resends=rs, auto_ack=aa)
+                       max_resends=rs, auto_ack=aa,
+                       ack_wait=(args.ack_wait if args.ack_resend else 0.0),
+                       ack_resends=(args.ack_resends if args.ack_resend else 0))
         r["i"] = i
         r["mac"] = ":".join(f"{b:02x}" for b in mac)
         r["cond"] = f"aa={int(aa)},rs={rs}"
@@ -184,11 +192,16 @@ async def mode_timing(iface, tgt, args):
     if args.ack_detect and hasattr(iface.driver, "acks_seen"):
         macs = {bytes.fromhex(r["mac"].replace(":", "")) for r in rows}
         ours = sum(iface.driver.acks_seen(m) for m in macs)
-        total = sum(getattr(iface.driver, "_ack_sightings", {}).values())
-        print("\n  --- ACK detection (A1) ---")
-        print(f"  ACKs seen to OUR MAC(s): {ours}   (all ACKs on channel: {total})")
-        print("  → ours > 0 ⇒ RX-side ACK detection WORKS (we observe the AP ACKing our TX)")
-        await iface.driver.disable_ack_rx()
+        total = getattr(iface.driver, "_all_acks_seen", 0)
+        print("\n  --- TX-ACK detection ---")
+        print(f"  ACKs the AP sent to OUR MAC(s): {ours}   (all ACKs on channel: {total})")
+        tx = getattr(iface.driver, "_tx_frames", None)
+        if tx is not None:
+            print(f"  frames WE transmitted (incl resends): {tx}")
+        unacked = getattr(iface.driver, "_tx_unacked", None)
+        if unacked is not None:
+            print(f"  our frames that went UN-ACKed (failed TX): {unacked}")
+        await iface.driver.disable_ack_detect()
 
     await iface.clear_fake_mac()   # leave the card in plain monitor
     ts = int(time.time())
@@ -281,7 +294,13 @@ def main() -> int:
     p.add_argument("--ab", choices=["none", "auto_ack", "resend"], default="none",
                    help="interleave this variable per attempt for a drift-controlled A/B")
     p.add_argument("--ack-detect", action="store_true",
-                   help="A1: enable RX-side ACK detection (RXFLTMAP1 bit13); count ACKs to our MAC")
+                   help="enable RX-side ACK detection (RXFLTMAP1 bit13); count ACKs to our MAC")
+    p.add_argument("--ack-resend", action="store_true",
+                   help="ACK-gate each WPS M-frame (resend until the AP ACKs); implies --ack-detect")
+    p.add_argument("--ack-wait", type=float, default=0.05,
+                   help="seconds to wait for the AP's ACK before resending (default 0.05)")
+    p.add_argument("--ack-resends", type=int, default=4,
+                   help="max resends of an un-ACKed M-frame (default 4)")
     p.add_argument("--delay", type=float, default=0.0, help="sleep between attempts (s)")
     p.add_argument("--pin", default=None)
     p.add_argument("--bssid", default=None)

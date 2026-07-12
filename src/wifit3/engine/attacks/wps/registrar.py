@@ -32,7 +32,8 @@ logger = logging.getLogger(__name__)
 
 
 class WpsTransport(Protocol):
-    async def send(self, frame: bytes) -> None: ...
+    async def send(self, frame: bytes, wait_for_ack: float = 0.0,
+                   max_resends: int = 0) -> bool: ...
     async def recv(self, timeout: float) -> Optional[bytes]: ...
 
 
@@ -137,6 +138,8 @@ class WpsRegistrar:
         eapol_start_timeout: float = 7.0,
         overall_timeout: float = 25.0,
         max_resends: int = 2,
+        ack_wait: float = 0.0,
+        ack_resends: int = 0,
         should_stop: Optional[Callable[[], bool]] = None,
         log=None,
     ):
@@ -158,13 +161,19 @@ class WpsRegistrar:
         # per-stage timeout, resend the LAST frame in the SAME session (no MAC rotation) up
         # to this many times before conceding. The budget refreshes each time the AP replies.
         self.max_resends = max_resends
+        # ack_wait>0: each M-frame waits for the AP's ACK and resends up to ack_resends times
+        # before moving on, instead of shot-and-prayed.
+        self.ack_wait = ack_wait
+        self.ack_resends = ack_resends
         self.log = log or logger.debug
         self._last_1x_frame: Optional[bytes] = None
 
     async def _send_1x(self, payload_1x: bytes) -> None:
         frame = M.build_data_frame(self.bssid, self.our_mac, self.bssid, payload_1x)
         self._last_1x_frame = frame
-        await self.t.send(frame)
+        landed = await self.t.send(frame, wait_for_ack=self.ack_wait, max_resends=self.ack_resends)
+        if self.ack_wait > 0 and landed is False:
+            self.log(f"[WPS] -> frame un-ACKed after {self.ack_resends + 1} sends (AP not hearing us)")
 
     async def try_pin(self, pin: str) -> AttemptOutcome:
         """Run one full EAPOL-Start→M1..M7 exchange for ``pin``."""
