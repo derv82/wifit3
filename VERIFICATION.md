@@ -48,11 +48,11 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | **Grade** | **92% (A)** | 2026-07-06 | v2 faithful; consistency confirmed on a 2nd AR9271 unit. |
 | RX | ✅ | 2026-07-06 | v2 mud2g 8.0 vs linux 8.4 (95%); breadth 71 vs 65; RSSI +2.2 dB. |
 | Port | ✅ | 2026-07-06 | v2 matches ath9k_htc; v1 deleted 2026-07-12 (was broken — 1 AP, dead hopping). |
-| Handshake | ✅ | 2026-05-25 | Full M1–M4, warm + cold. |
-| PMKID | ✅ | 2026-05-25 | First-try, cold boot, real APs. |
-| WEP | ✅ | 2026-05-31 | Replay + ChopChop. |
-| WPS | ✅ | 2026-05-31 | PIN + PBC. |
-| ACKs | ✅ | 2026-05-31 | WPS PIN/PBC → auto-ACK. |
+| Handshake | ✅ | 2026-07-12 | v2 confirmed (M1–M4). |
+| PMKID | ✅ | 2026-07-12 | v2 confirmed (extraction). |
+| WEP | ✅ | 2026-07-12 | v2: ChopChop + ARP replay, ~200 IVs/s. |
+| WPS | ✅ | 2026-07-12 | v2: PIN + PBC. |
+| ACKs | ✅ | 2026-07-12 | v2: auto-RX-ACK — <30 EAPOL frames/PBC. |
 | Stress | ✅ | 2026-06-05 | 30-min 13-ch soak, flat. |
 
 → [AR9271_V2.md](src/wifit3/chips/ar9271_v2/AR9271_V2.md)
