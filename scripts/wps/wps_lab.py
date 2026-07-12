@@ -119,6 +119,11 @@ async def mode_timing(iface, tgt, args):
     print(f"\n=== TIMING: {args.attempts} attempts, mac-mode={args.mac_mode}, "
           f"per-msg timeout={args.timeout}s, resends={args.max_resends}, "
           f"auto_ack={args.auto_ack} ===")
+    if args.ack_detect and hasattr(iface.driver, "enable_ack_rx"):
+        await iface.driver.enable_ack_rx()
+        print("  ACK-RX detection ON (RXFLTMAP1 bit13) — counting ACKs to our injected MAC")
+    elif args.ack_detect:
+        print("  (--ack-detect: this driver has no ACK-RX support; skipping)")
     rows = []
     cap: list = []
     for i in range(args.attempts):
@@ -175,6 +180,15 @@ async def mode_timing(iface, tgt, args):
               f"of the {n-1} REUSES, {later_m5} still reached M5+.")
         print("  → many reuses reach M5  ⇒ one-shot-per-MAC is FALSE (was a TX-loss artifact).")
         print("  → only #0 reaches M5    ⇒ one-shot-per-MAC is REAL.")
+
+    if args.ack_detect and hasattr(iface.driver, "acks_seen"):
+        macs = {bytes.fromhex(r["mac"].replace(":", "")) for r in rows}
+        ours = sum(iface.driver.acks_seen(m) for m in macs)
+        total = sum(getattr(iface.driver, "_ack_sightings", {}).values())
+        print("\n  --- ACK detection (A1) ---")
+        print(f"  ACKs seen to OUR MAC(s): {ours}   (all ACKs on channel: {total})")
+        print("  → ours > 0 ⇒ RX-side ACK detection WORKS (we observe the AP ACKing our TX)")
+        await iface.driver.disable_ack_rx()
 
     await iface.clear_fake_mac()   # leave the card in plain monitor
     ts = int(time.time())
@@ -266,6 +280,8 @@ def main() -> int:
                    help="arm active-monitor (chip HW-ACKs AP frames; kills AP retransmits)")
     p.add_argument("--ab", choices=["none", "auto_ack", "resend"], default="none",
                    help="interleave this variable per attempt for a drift-controlled A/B")
+    p.add_argument("--ack-detect", action="store_true",
+                   help="A1: enable RX-side ACK detection (RXFLTMAP1 bit13); count ACKs to our MAC")
     p.add_argument("--delay", type=float, default=0.0, help="sleep between attempts (s)")
     p.add_argument("--pin", default=None)
     p.add_argument("--bssid", default=None)

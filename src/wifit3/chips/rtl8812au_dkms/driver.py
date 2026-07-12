@@ -77,6 +77,12 @@ class Rtl8812auDkmsDriver:
         # Serializes control-transfer batches (DIG watchdog vs set_channel) so two
         # executor threads never drive EP0 at once; the RX reader uses bulk-IN.
         self._io_lock = asyncio.Lock()
+        # A1: aireplay-style RX-side ACK detection. When enabled, _dispatch taps ACK control
+        # frames (RA = an injected source MAC) so we can observe whether an injected frame
+        # reached the AP — the "did my TX land" signal, without HW TX-ACK. Off by default
+        # (leaves the monitor RX filter at its exact default breadth).
+        self._ack_rx_enabled: bool = False
+        self._ack_sightings: dict[str, int] = {}   # RA hex -> count of ACKs seen
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "Rtl8812auDkmsDriver":
@@ -227,12 +233,41 @@ class Rtl8812auDkmsDriver:
         """Loop side: split the aggregated bulk-IN buffer into (frame, rssi) pairs and fan
         each parsed dict to the rx callback. FCS already stripped by the base RX walk."""
         cb = self._rx_cb
-        if cb is None:
+        if cb is None and not self._ack_rx_enabled:
             return
         for frame, rssi in iter_frames(buf):
-            parsed = WlanFrameParser.parse_80211_frame(frame, rssi)
-            if parsed is not None:
-                cb(parsed)
+            # A1 ACK tap: a 10-byte type=1/subtype=13 (FC byte 0xD4) control frame is an ACK.
+            # The parser drops control frames, so observe it here, before parse — RA (frame[4:10])
+            # is the STA the AP ACKed, i.e. our injected source MAC when the AP got our frame.
+            if self._ack_rx_enabled and len(frame) == 10 and frame[0] == 0xD4:
+                ra = frame[4:10].hex()
+                self._ack_sightings[ra] = self._ack_sightings.get(ra, 0) + 1
+                continue
+            if cb is not None:
+                parsed = WlanFrameParser.parse_80211_frame(frame, rssi)
+                if parsed is not None:
+                    cb(parsed)
+
+    async def enable_ack_rx(self) -> None:
+        """A1: admit ACK control frames (RXFLTMAP1 bit13) so _dispatch's tap can observe the
+        AP's ACK to our injected frames. Toggleable; NOT enter_active_monitor (that's AP-side)."""
+        loop = asyncio.get_running_loop()
+        async with self._io_lock:
+            await loop.run_in_executor(None, monitor.enable_ack_rx, self.transport)
+        self._ack_sightings.clear()
+        self._ack_rx_enabled = True
+        logger.info("RTL8812AU ACK-RX enabled (RXFLTMAP1 bit13) — observing TX delivery")
+
+    async def disable_ack_rx(self) -> None:
+        """Restore the default monitor RX filter (clear RXFLTMAP1 bit13)."""
+        loop = asyncio.get_running_loop()
+        async with self._io_lock:
+            await loop.run_in_executor(None, monitor.disable_ack_rx, self.transport)
+        self._ack_rx_enabled = False
+
+    def acks_seen(self, mac: bytes) -> int:
+        """Count of ACKs observed addressed to ``mac`` (an injected source MAC) since enable."""
+        return self._ack_sightings.get(bytes(mac).hex(), 0)
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         """Tune to a 2.4 GHz or 5 GHz channel at 20 MHz primary.
