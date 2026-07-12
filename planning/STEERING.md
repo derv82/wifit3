@@ -63,7 +63,7 @@ our port.
 machine — OFDM and CCK immunity levels, spur-immunity level, firstep level, OFDM weak-signal
 detection, MRC-CCK — applied via `ath9k_hw_ani_control` [SRC ani.c:149-271]. Driven by PHY-error
 counts. Our ar9271 port implements **none** of it; the driver sets only the monitor RX filter
-[SRC ar9271/driver.py:385-409] and otherwise runs at hardware/init defaults.
+[SRC ar9271_v2/bringup.py:102-108] and otherwise runs at hardware/init defaults.
 
 **Realtek (rtw88 mainline + phydm/ODM dkms) — IGI @ 0xc50.** Single OFDM initial-gain index,
 `ODM_REG_IGI_A_11AC`, field `[6:0]`, written on change. `rtw_phy_dig` walks IGI from the

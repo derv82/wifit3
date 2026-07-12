@@ -56,15 +56,13 @@ exercise the tune path on every common channel, every card:
 
 ## Code cleanup / de-vibe
 
-### Delete AR9271 v1
+### Delete AR9271 v1 — ✅ DONE (2026-07-12)
 
-v2 is the maintained clean-room re-port and the default; v1 is dead (heard 1 AP total, channel
-hopping broken — 5.3 bcn/s on ch1 only vs v2's 8.0/s across 71 APs). Remove it:
-- Delete `chips/ar9271/`.
-- Drop the `WIFIT3_AR9271` env var + the v1 branch in `manager.py:68`.
-- Remove v1 tests + mainline/v1 doc refs.
-- Move `ar9271_v2` into its place (plain AR9271 driver, no v2 suffix).
-
-Purge every v1 remnant *before* the move.
+v2 is the maintained clean-room re-port and the default; v1 was dead (heard 1 AP total, channel
+hopping broken — 5.3 bcn/s on ch1 only vs v2's 8.0/s across 71 APs). Done:
+- ✅ Deleted `chips/ar9271/`, its tests, `scripts/ar9271/`, and the verify_pcap stub (254f6eb).
+- ✅ Dropped the `WIFIT3_AR9271` env var + v1 branch; registry `"ar9271"` → `AR9271V2Driver`.
+- ✅ Purged v1 doc refs (CLAUDE.md, VERIFICATION.md, STEERING.md).
+- ⏸ Deliberately NOT renaming `ar9271_v2` → plain `ar9271` (kept the suffix for now — derv's call).
 
 ---

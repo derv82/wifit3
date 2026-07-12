@@ -32,7 +32,7 @@ uv run wifit3                     # or: uv run python -m wifit3
 
 # Tests
 uv run pytest                          # all tests
-uv run pytest tests/chips/ar9271/      # single module
+uv run pytest tests/chips/ar9271_v2/   # single module
 uv run pytest tests/wlan/test_parser.py::test_wlan_frame_parser_extracts_ssid
 
 # Lint (lint only — NEVER format)
@@ -94,7 +94,7 @@ chips/<chipset>/
        <chip>_fw.bin         Firmware blob (pcap-extracted, byte-verified vs linux-firmware)
 ```
 
-Not every chip uses every module — `mac.py`/`phy.py`/`chan.py`/`tx.py` etc. are the rtw88-family split. AR9271 lives mostly in `driver.py` + `protocol/`. MT7921AU has its own `firmware.py` + `sequences/`. Add modules as the chip's protocol needs them.
+Not every chip uses every module — `mac.py`/`phy.py`/`chan.py`/`tx.py` etc. are the rtw88-family split. AR9271 (ath9k_htc) splits across `driver.py` + `hw`/`phy`/`tx`/`rx`/`wmi`/`htc`. MT7921AU has its own `firmware.py` + `sequences/`. Add modules as the chip's protocol needs them.
 
 ### Supported Hardware
 
