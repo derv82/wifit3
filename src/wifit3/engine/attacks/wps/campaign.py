@@ -128,7 +128,7 @@ class WpsCampaign(Campaign):
         self.our_mac = random_client_mac()
         self.assoc: Optional[WpsAssociation] = None
         self.transport: Optional[WlanTransport] = None
-        self._ack = False   # set per-session in _ensure_session from set_fake_mac (active-monitor)
+        self._ack = False   # PIN sweep runs auto-ACK OFF (see _ensure_session); every TX goes no-ACK
         self.lock = LockTracker()
 
         self.state = self._load_state()
@@ -156,10 +156,10 @@ class WpsCampaign(Campaign):
         self._common_pins = list(dict.fromkeys(oui_pins + list(pinmod.COMMON_PINS)))
 
         # A silent timeout after M4/M6 is only *assumed* wrong (timeout-as-NACK). Once an
-        # AP has proven it sends explicit NACKs, a silent drop is instead a LOST reply — our
-        # HW auto-ACK'd the AP's M-frame so it won't resend — so we retry the same PIN rather
-        # than advance past a possibly-correct half. Bounded (_MAX_TIMEOUT_RETRIES) so a
-        # persistently-dropping RX still advances instead of wedging.
+        # AP has proven it sends explicit NACKs, a silent drop is instead a LOST reply — on a
+        # weak link we can miss every one of the AP's M-frame retransmits — so we retry the
+        # same PIN rather than advance past a possibly-correct half. Bounded
+        # (_MAX_TIMEOUT_RETRIES) so a persistently-dropping RX still advances instead of wedging.
         self._ap_sends_nacks = False
         self._timeout_retries = 0
         # An AP that *actively* refuses external-registrar WPS — disassociates us, or engages EAP but
