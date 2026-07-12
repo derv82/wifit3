@@ -331,6 +331,8 @@ MT_TX_PROT_CFG8                = 0x13E8
 MT_PIFS_TX_CFG                 = 0x13EC
 
 MT_RX_FILTR_CFG                = 0x1400
+# SET drops that frame class; CLEAR admits it. [SRC] mt76x02_regs.h:524
+MT_RX_FILTR_CFG_ACK            = 1 << 10   # link-layer ACK
 MT_AUTO_RSP_CFG                = 0x1404
 MT_LEGACY_BASIC_RATE           = 0x1408
 MT_HT_BASIC_RATE               = 0x140C

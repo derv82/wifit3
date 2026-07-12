@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -28,6 +29,7 @@ from .constants import (
     MT_MAC_SYS_CTRL_ENABLE_RX,
     MT_MAC_SYS_CTRL_ENABLE_TX,
     MT_RX_FILTR_CFG,
+    MT_RX_FILTR_CFG_ACK,
     USB_IDS_MT76X0U,
 )
 from .eeprom import EEPROMError, EFUSEFullInfo, read_efuse_full
@@ -43,6 +45,7 @@ from .mac import (
 )
 from .mcu import MCUChannel, MCUError, mcu_init_smoke_test
 from .phy import PHYInitError, init_bbp, phy_init, set_channel_20mhz
+from . import rx as rx_mod
 from .transport import MT76x0UTransport
 from .wire_log import WIRE_LOG
 
@@ -120,6 +123,14 @@ class MT76x0UDriver:
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._rx_drainer = None   # rx.RxDrainer | None — typed late to dodge circulars
+        # Observe the AP's ACK to our injects (did our TX land). Off by default.
+        self._ack_detect_on: bool = False
+        self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
+        self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
+        self._all_acks_seen: int = 0
+        self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
+        self._tx_frames: int = 0
+        self._tx_unacked: int = 0
 
     # ---- Hooks --------------------------------------------------------
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
@@ -138,6 +149,21 @@ class MT76x0UDriver:
         cb = self._rx_callback
         if cb is not None:
             cb(parsed)
+
+    def _on_raw_rx(self, data: bytes) -> None:
+        """Pre-parse tap for TX-ACK detection (RxDrainer raw_callback). A 10-byte
+        0xD4 MPDU is an 802.11 ACK; RA is the STA the AP ACKed. When armed, keep
+        only ACKs to a MAC we inject as. decode_rx_packet drops these short control
+        frames later, so this is the only place they're seen."""
+        if not self._ack_detect_on:
+            return
+        ra = rx_mod.ack_ra(data)
+        if ra is None:
+            return
+        self._all_acks_seen += 1
+        if ra in self._our_tx_macs:
+            self._ack_sightings[ra.hex()] = self._ack_sightings.get(ra.hex(), 0) + 1
+            self._ack_last_ts[ra] = time.monotonic()   # for inject wait-for-ack
 
     # ---- Lifecycle ----------------------------------------------------
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
@@ -180,6 +206,7 @@ class MT76x0UDriver:
         from .rx import RxDrainer
         self._rx_drainer = RxDrainer(
             self.transport, frame_callback=self._on_decoded_rx,
+            raw_callback=self._on_raw_rx,
             on_fatal=lambda e: self._on_lost and self._on_lost(e),
         )
         await self._rx_drainer.start()
@@ -939,30 +966,97 @@ class MT76x0UDriver:
                 logger.warning("drain_bulk_in: USBError: %s", e)
         return stats
 
-    async def inject_frame(self, frame_bytes: bytes,
-                           use_no_ack: bool = True) -> bool:
+    def _set_ack_admit(self, admit: bool) -> int:
+        """RMW MT_RX_FILTR_CFG bit 10 (MT_RX_FILTR_CFG_ACK): clear to admit the AP's
+        link-layer ACKs into monitor RX, set to restore the drop. Under _hw_lock so it
+        can't interleave a set_channel register batch. Returns the new value."""
+        with self._hw_lock:
+            cur = self.transport.read32(MT_RX_FILTR_CFG)
+            new = cur & ~MT_RX_FILTR_CFG_ACK if admit else cur | MT_RX_FILTR_CFG_ACK
+            if new != cur:
+                self.transport.write32(MT_RX_FILTR_CFG, new)
+            return new
+
+    async def enable_ack_detect(self) -> None:
+        """Admit ACK control frames (clear RX_FILTR_CFG_ACK) so the tap sees the AP's
+        ACKs to our injected MAC. Not active monitor, which makes the chip emit ACKs."""
+        loop = asyncio.get_running_loop()
+        new = await loop.run_in_executor(None, self._set_ack_admit, True)
+        self._ack_sightings.clear()
+        self._ack_last_ts.clear()
+        self._all_acks_seen = 0
+        self._tx_frames = 0
+        self._tx_unacked = 0
+        self._ack_detect_on = True
+        logger.info("MT7610U TX-ACK detection ON (RX_FILTR_CFG=0x%08x, ACK bit clear) "
+                    "— observing our TX delivery", new)
+
+    async def disable_ack_detect(self) -> None:
+        """Restore the default monitor RX filter (re-set RX_FILTR_CFG_ACK)."""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._set_ack_admit, False)
+        self._ack_detect_on = False
+
+    def acks_seen(self, mac: bytes) -> int:
+        """Count of ACKs observed addressed to ``mac`` (an injected source MAC) since enable."""
+        return self._ack_sightings.get(bytes(mac).hex(), 0)
+
+    async def _await_ack(self, ta: bytes, since: float, window: float) -> bool:
+        """True if the tap observed an ACK to ``ta`` after ``since``, within ``window`` s.
+        _on_raw_rx runs on this loop, so a sleep yield lets a just-arrived ACK's timestamp
+        land between checks."""
+        deadline = since + window
+        while time.monotonic() < deadline:
+            if self._ack_last_ts.get(ta, 0.0) > since:
+                return True
+            await asyncio.sleep(0.001)
+        return False
+
+    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True,
+                           wait_for_ack: float = 0.0, max_resends: int = 0) -> bool:
         """M6a — inject a raw 802.11 frame via EP 0x09 (MGMT queue).
 
         `use_no_ack=True` (Protocol default) skips ACK_REQ — appropriate
         for spoofed-source frames (deauths/disassocs) where the target
         wouldn't ACK to a random MAC anyway. Pass False for unicast frames
         from a real associated station MAC.
+
+        ``wait_for_ack > 0`` (with TX-ACK detection armed) waits for the AP's ACK and
+        resends the identical frame up to ``max_resends`` times if none comes, returning
+        whether it landed; ``0`` = fire-and-forget (current behaviour).
         """
         from .tx import TXError, inject_80211_frame
-        try:
-            n = inject_80211_frame(
-                self.transport, frame_bytes,
-                request_ack=not use_no_ack, wcid=0xFF,
-            )
-            logger.debug("MT7610U: inject_frame(%d bytes) → %d bulk-OUT bytes",
-                         len(frame_bytes), n)
-            return True
-        except TXError as e:
-            logger.error("MT7610U: inject_frame failed: %s", e)
-            return False
-        except usb.core.USBError as e:
-            logger.error("MT7610U: inject_frame USB error: %s", e)
-            return False
+        ta = bytes(frame_bytes[10:16]) if len(frame_bytes) >= 16 else None   # TA — the AP ACKs back to this
+        if self._ack_detect_on and ta is not None:
+            self._our_tx_macs.add(ta)
+        ack_gated = wait_for_ack > 0 and self._ack_detect_on and ta is not None
+
+        def _send() -> bool:
+            try:
+                n = inject_80211_frame(
+                    self.transport, frame_bytes,
+                    request_ack=not use_no_ack, wcid=0xFF,
+                )
+                logger.debug("MT7610U: inject_frame(%d bytes) → %d bulk-OUT bytes",
+                             len(frame_bytes), n)
+                return True
+            except TXError as e:
+                logger.error("MT7610U: inject_frame failed: %s", e)
+                return False
+            except usb.core.USBError as e:
+                logger.error("MT7610U: inject_frame USB error: %s", e)
+                return False
+
+        if not ack_gated:
+            return _send()                  # fire-and-forget (deauth / WEP / current behaviour)
+        for _ in range(max_resends + 1):
+            t0 = time.monotonic()
+            ok = _send()
+            self._tx_frames += 1
+            if ok and await self._await_ack(ta, t0, wait_for_ack):
+                return True                 # landed — the AP ACKed it
+        self._tx_unacked += 1
+        return False                        # never ACKed after every send
 
     async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
         """Set MT_MAC_ADDR_DW0/1 to ``mac`` with U2ME_MASK=0xff so the autoresponder

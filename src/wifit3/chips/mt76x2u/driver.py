@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import Callable, Optional
 
 import usb.core
@@ -30,6 +31,8 @@ from .constants import (
     MT76X2_RSSI_GAIN_THRESH_5G,
     MT_CALIBRATE_INTERVAL_S,
     MT_MCU_COM_REG0,
+    MT_RX_FILTR_CFG,
+    MT_RX_FILTR_CFG_ACK,
     MT76XX_REV_E3,
     USB_IDS_MT76X2U,
 )
@@ -71,7 +74,7 @@ from .power import (
     wait_for_mac,
     wait_for_wpdma_idle,
 )
-from .rx import RxDrainer
+from .rx import RxDrainer, ack_ra as rx_ack_ra
 from .transport import MT76x2UTransport
 from .tx import inject_frame as _inject_frame
 from .skey import shared_key_table_clear
@@ -159,6 +162,14 @@ class MT76x2UDriver:
             "WIFIT3_MT76X2U_SET_TXPOWER", "1"
         ).strip()
         self._set_txpower_enabled: bool = env_setpwr != "0"
+        # Observe the AP's ACK to our injects (did our TX land). Off by default.
+        self._ack_detect_on: bool = False
+        self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
+        self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
+        self._all_acks_seen: int = 0
+        self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
+        self._tx_frames: int = 0
+        self._tx_unacked: int = 0
 
     # ---- Discovery / public state ----------------------------------------
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
@@ -473,6 +484,7 @@ class MT76x2UDriver:
         self._rx_drainer = RxDrainer(
             self.transport,
             frame_callback=self._on_decoded_rx,
+            raw_callback=self._on_raw_rx,
             on_fatal=lambda e: self._on_lost and self._on_lost(e),
         )
         await self._rx_drainer.start()
@@ -502,6 +514,21 @@ class MT76x2UDriver:
         if parsed is None:
             return
         cb(parsed)
+
+    def _on_raw_rx(self, data: bytes) -> None:
+        """Pre-parse tap for TX-ACK detection (RxDrainer raw_callback). A 10-byte
+        0xD4 MPDU is an 802.11 ACK; RA is the STA the AP ACKed. When armed, keep only
+        ACKs to a MAC we inject as. The parser drops control frames, so the decode path
+        never surfaces them as parsed dicts."""
+        if not self._ack_detect_on:
+            return
+        ra = rx_ack_ra(data)
+        if ra is None:
+            return
+        self._all_acks_seen += 1
+        if ra in self._our_tx_macs:
+            self._ack_sightings[ra.hex()] = self._ack_sightings.get(ra.hex(), 0) + 1
+            self._ack_last_ts[ra] = time.monotonic()   # for inject wait-for-ack
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         if channel not in self.SUPPORTED_CHANNELS:
@@ -637,11 +664,74 @@ class MT76x2UDriver:
         except asyncio.CancelledError:
             pass
 
-    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True) -> bool:
+    def _set_ack_admit(self, admit: bool) -> int:
+        """RMW MT_RX_FILTR_CFG bit 10 (MT_RX_FILTR_CFG_ACK): clear to admit the AP's
+        link-layer ACKs into monitor RX, set to restore the drop. Returns the new value."""
+        cur = self.transport.read32(MT_RX_FILTR_CFG)
+        new = cur & ~MT_RX_FILTR_CFG_ACK if admit else cur | MT_RX_FILTR_CFG_ACK
+        if new != cur:
+            self.transport.write32(MT_RX_FILTR_CFG, new)
+        return new
+
+    async def enable_ack_detect(self) -> None:
+        """Admit ACK control frames (clear RX_FILTR_CFG_ACK) so the tap sees the AP's
+        ACKs to our injected MAC. Not active monitor, which makes the chip emit ACKs."""
+        async with self._cal_lock:                  # kernel mt76.mutex — no interleave with a tune
+            new = self._set_ack_admit(True)
+        self._ack_sightings.clear()
+        self._ack_last_ts.clear()
+        self._all_acks_seen = 0
+        self._tx_frames = 0
+        self._tx_unacked = 0
+        self._ack_detect_on = True
+        logger.info("MT7612U TX-ACK detection ON (RX_FILTR_CFG=0x%08x, ACK bit clear) "
+                    "— observing our TX delivery", new)
+
+    async def disable_ack_detect(self) -> None:
+        """Restore the default monitor RX filter (re-set RX_FILTR_CFG_ACK)."""
+        async with self._cal_lock:
+            self._set_ack_admit(False)
+        self._ack_detect_on = False
+
+    def acks_seen(self, mac: bytes) -> int:
+        """Count of ACKs observed addressed to ``mac`` (an injected source MAC) since enable."""
+        return self._ack_sightings.get(bytes(mac).hex(), 0)
+
+    async def _await_ack(self, ta: bytes, since: float, window: float) -> bool:
+        """True if the tap observed an ACK to ``ta`` after ``since``, within ``window`` s.
+        _on_raw_rx runs on this loop, so a sleep yield lets a just-arrived ACK's timestamp
+        land between checks."""
+        deadline = since + window
+        while time.monotonic() < deadline:
+            if self._ack_last_ts.get(ta, 0.0) > since:
+                return True
+            await asyncio.sleep(0.001)
+        return False
+
+    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True,
+                           wait_for_ack: float = 0.0, max_resends: int = 0) -> bool:
         # `use_no_ack=True` (the wifit3 convention) → ack=False on the chip. Pass the
         # tuned channel so a 5 GHz inject goes out as OFDM (CCK is 2.4 GHz-only).
-        return await _inject_frame(self.transport, frame_bytes,
-                                   ack=not use_no_ack, channel=self.current_channel)
+        #
+        # ``wait_for_ack > 0`` (with TX-ACK detection armed) waits for the AP's ACK and
+        # resends the identical frame up to ``max_resends`` times if none comes; ``0`` =
+        # fire-and-forget (current behaviour).
+        ta = bytes(frame_bytes[10:16]) if len(frame_bytes) >= 16 else None   # TA — the AP ACKs back to this
+        if self._ack_detect_on and ta is not None:
+            self._our_tx_macs.add(ta)
+        ack_gated = wait_for_ack > 0 and self._ack_detect_on and ta is not None
+        if not ack_gated:
+            return await _inject_frame(self.transport, frame_bytes,
+                                       ack=not use_no_ack, channel=self.current_channel)
+        for _ in range(max_resends + 1):
+            t0 = time.monotonic()
+            ok = await _inject_frame(self.transport, frame_bytes,
+                                     ack=not use_no_ack, channel=self.current_channel)
+            self._tx_frames += 1
+            if ok and await self._await_ack(ta, t0, wait_for_ack):
+                return True                 # landed — the AP ACKed it
+        self._tx_unacked += 1
+        return False                        # never ACKed after every send
 
     async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
         """Re-point the self-MAC to ``mac`` so the autoresponder HW-ACKs frames to it

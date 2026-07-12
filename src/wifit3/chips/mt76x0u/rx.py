@@ -161,6 +161,20 @@ def decode_rx_packet(data: bytes) -> Optional[RxFrame]:
     )
 
 
+def ack_ra(data: bytes) -> Optional[bytes]:
+    """RA (addr1) of a 10-byte 0xD4 802.11 ACK carried in a bulk-IN buffer, else None.
+    The MPDU begins at HEADER_SIZE; ctl.MPDU_LEN gives its length. Used by the driver's
+    TX-ACK tap — decode_rx_packet drops these short control frames before the parser."""
+    if len(data) < HEADER_SIZE + 10:
+        return None
+    ctl = struct.unpack_from("<I", data, MT_DMA_HDR_LEN + 4)[0]
+    if (ctl & MT_RXWI_CTL_MPDU_LEN_MASK) >> MT_RXWI_CTL_MPDU_LEN_SHIFT != 10:
+        return None
+    if data[HEADER_SIZE] != 0xD4:
+        return None
+    return bytes(data[HEADER_SIZE + 4:HEADER_SIZE + 10])
+
+
 def _ieee80211_hdrlen(fc0: int, fc1: int) -> int:
     """Compute the 802.11 MAC header length from frame_control bytes.
     [SRC] mt76x2u/rx.py:124-138 (same logic — IEEE 802.11-2020 §9.2)."""
@@ -265,10 +279,12 @@ class RxDrainer:
     """
 
     def __init__(self, transport, frame_callback: Optional[Callable] = None,
+                 raw_callback: Optional[Callable] = None,
                  max_urb_bytes: int = 2048,
                  on_fatal: Optional[Callable] = None):
         self.transport = transport
         self.frame_callback = frame_callback
+        self.raw_callback = raw_callback
         self.max_urb_bytes = max_urb_bytes
         self.on_fatal = on_fatal
         self._reader: Optional[RxReaderThread] = None
@@ -316,6 +332,11 @@ class RxDrainer:
         from wifit3.wlan.packet import WlanFrameParser
 
         self.rx_count += 1
+        if self.raw_callback is not None:
+            try:
+                self.raw_callback(bytes(buf))
+            except Exception as e:
+                logger.debug("RxDrainer raw_callback error: %s", e)
         rx = decode_rx_packet(bytes(buf))
         if rx is None:
             self.decode_failures += 1

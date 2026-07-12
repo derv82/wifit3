@@ -120,6 +120,20 @@ def decode_urb(urb: bytes) -> Optional[dict]:
     }
 
 
+def ack_ra(data: bytes) -> Optional[bytes]:
+    """RA (addr1) of a 10-byte 0xD4 802.11 ACK carried in a bulk-IN URB, else None.
+    The MPDU begins at _HEADER_LEN; ctl.MPDU_LEN gives its length. Used by the driver's
+    TX-ACK tap, which runs before the parser (which drops control frames)."""
+    if len(data) < _HEADER_LEN + 10:
+        return None
+    ctl = struct.unpack_from("<I", data, 8)[0]
+    if (ctl >> _CTL_MPDU_LEN_SHIFT) & _CTL_MPDU_LEN_MASK != 10:
+        return None
+    if data[_HEADER_LEN] != 0xD4:
+        return None
+    return bytes(data[_HEADER_LEN + 4:_HEADER_LEN + 10])
+
+
 def _ieee80211_hdrlen(fc0: int, fc1: int) -> int:
     """Compute the 802.11 header length from frame_control bytes."""
     ftype = (fc0 & 0x0C) >> 2
