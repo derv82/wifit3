@@ -23,7 +23,7 @@ import os
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Protocol
+from typing import Callable, Optional, Protocol
 
 from . import messages as M
 from . import wsc_crypto as wc
@@ -137,8 +137,12 @@ class WpsRegistrar:
         eapol_start_timeout: float = 7.0,
         overall_timeout: float = 25.0,
         max_resends: int = 2,
+        should_stop: Optional[Callable[[], bool]] = None,
         log=None,
     ):
+        # Polled right after every RX wait so a user Stop / AP-switch aborts the exchange within
+        # one recv window, instead of blocking up to overall_timeout on a chatty AP.
+        self.should_stop = should_stop
         self.t = transport
         self.bssid = bssid
         self.our_mac = our_mac
@@ -202,6 +206,8 @@ class WpsRegistrar:
         timeout = self.eapol_start_timeout
         while time.monotonic() < overall_deadline:
             frame = await self.t.recv(min(timeout, overall_deadline - time.monotonic()))
+            if self.should_stop is not None and self.should_stop():
+                return _out(PinResult.ABORTED, detail="stopped")   # abort before any late logging
             timeout = self.msg_timeout
             if frame is None:
                 # No reply in the window. Our injected frames land no-ACK/no-retry, so the

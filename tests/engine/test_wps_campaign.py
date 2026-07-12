@@ -112,31 +112,20 @@ async def test_resume_catches_psk_rotation(tmp_path):
     assert c.state.found_psk == "rotatedpassword"
 
 
-async def test_resume_pin_changed_resets_sweep(tmp_path):
-    # AP admin changed the PIN to one with a different first half — verify
-    # invalidates, full sweep restarts from "common".
+def test_resume_pin_changed_resets_sweep(tmp_path):
+    # AP admin changed the PIN to one with a different first half — the resume-time verify
+    # sees FIRST_HALF_WRONG and invalidates everything, restarting the sweep from "common".
     stored = pins.full_pin("1357", "246")
-    new = pins.full_pin("9876", "543")          # different first half
     _write_done_state(tmp_path, stored, "oldpassword")
-    c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
-                         log=lambda m: None, known_pin=new, psk="newpassword")
-    # We don't run a full sweep here (it'd take 1k+ attempts); just trip the
-    # first verify attempt by limiting the harness.
-    orig_try = c._try
-    attempts = []
-
-    async def one_then_stop(pin):
-        attempts.append(pin)
-        out = await orig_try(pin)
-        c.stopped = True                        # bail before resweeping
-        return out
-    c._try = one_then_stop
-    await c._loop()
-    assert attempts == [stored]                 # the verify pin
+    c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
+    assert c.state.found_pin == stored
+    c.state.phase = "verify"                     # _loop switches done→verify on resume
+    c._apply_outcome(stored, AttemptOutcome(PinResult.FIRST_HALF_WRONG, stored))
     # Verify saw FIRST_HALF_WRONG → full reset.
     assert c.state.found_pin is None
     assert c.state.found_psk is None
     assert c.state.first_half is None
+    assert c.state.phase == "common"
     assert c.state.phase == "common"
     assert c.state.common_index == 0
 

@@ -249,3 +249,13 @@ def test_describe_frame_names_mgmt_and_data():
     assert describe_frame(b"\xb0" + b"\x00" * 24) == "mgmt/auth"
     assert describe_frame(b"\x08" + b"\x00" * 24) == "data"
     assert describe_frame(b"\x88" + b"\x00" * 24) == "qos-data"
+
+
+async def test_should_stop_aborts_promptly():
+    # A user Stop mid-exchange must abort within one recv window (ABORTED), not block up to
+    # overall_timeout — else the interrupted attempt logs long after Stop was clicked.
+    a, b = asyncio.Queue(), asyncio.Queue()
+    reg = WpsRegistrar(_QueueTransport(a, b), BSSID, STA, eapol_start_timeout=0.2,
+                       msg_timeout=0.2, overall_timeout=30.0, should_stop=lambda: True)
+    out = await asyncio.wait_for(reg.try_pin("12345670"), timeout=2.0)   # << 30s overall
+    assert out.result is PinResult.ABORTED

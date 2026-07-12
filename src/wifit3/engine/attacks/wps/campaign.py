@@ -270,7 +270,8 @@ class WpsCampaign(Campaign):
         if not await self._ensure_session():
             return AttemptOutcome(PinResult.PROTO_ERROR, pin, detail="assoc failed")
         self.transport.drain()
-        reg = WpsRegistrar(self.transport, str_to_mac(self.bssid), self.our_mac)
+        reg = WpsRegistrar(self.transport, str_to_mac(self.bssid), self.our_mac,
+                           should_stop=lambda: self.stopped)
         try:
             return await reg.try_pin(pin)
         finally:
@@ -449,6 +450,10 @@ class WpsCampaign(Campaign):
                 # EWMA: Exponentially Weighted Moving Average. tl;dr math
                 self._attempt_ewma = 0.7 * self._attempt_ewma + 0.3 * (time.monotonic() - t0)
                 self.state.attempts += 1
+
+                if self.stopped:
+                    break   # Stopped mid-attempt (user Stop / AP switch): bail BEFORE logging or
+                    #         advancing — else the interrupted result leaks into the next session's log.
 
                 if out.refused:   # AP actively rejected external-registrar WPS — never advances
                     self._consecutive_refusals += 1
