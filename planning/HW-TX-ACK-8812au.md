@@ -183,3 +183,51 @@ macid/media-status exist, (b) the RX walk surfaces C2H TX reports, and (c) an on
   delivery holds; tune DATA_RETRY_LIMIT.
 - **M3 — Protocol/interface:** once proven on 8812au, lift to the driver Protocol (`inject_frame(wait_for_ack=…)`) and
   port per-driver.
+
+---
+
+## Cheaper alternative: software (RX-side) ACK detection — aireplay-style [RECOMMENDED POC]
+
+Recon 2026-07-11. The distant-drop problem is "did our TX reach the AP." The AP hardware-ACKs any unicast
+frame it receives (association-independent); in monitor mode we can just **RECEIVE that ACK — RX-side, NOT
+STA-only** (this is how aireplay counts ACKs). Much cheaper than the HW port above.
+
+**Already in place:** RCR admits the control-frame class (`RCR_ACF` bit12 in `RCR_MONITOR_VALUE=0x9000382F`,
+`monitor.py:17`, `driver.py:192-193`); `RCR_AAP` (bit0) = promiscuous, so ACKs to our forged MAC are admitted;
+`iter_frames` (`rtl88xxau_base/rx.py:61-86`) already passes a 10-byte ACK (only drops crc/icv/rpt_sel).
+
+**What blocks ACKs today (two gates):**
+- **RXFLTMAP1 subtype filter** — `mac.py:149` writes `0x0420`; `set_monitor_mode` ORs BIT8 → `0x0520`. **ACK is
+  control subtype 13 (BIT13=0x2000), not set → filtered before the bulk-IN pipe.**
+- **Parser drops control frames** — `packet.py:136` (only MGMT/DATA), `:364` rejects `<24` B; driver forwards only
+  parsed frames (`driver.py:233-235`), so the existing rx-callback fan-out never sees an ACK.
+
+**Minimal change:** `RXFLTMAP1 |= BIT(13)` — scope to bit 13, NOT `0xffff` (an over-broad ACK-flood measurably cost
+RX on rtl8188eus, `RTL8188EUS_DKMS.md:217-222`). Toggleable, in the post-gate monitor tail (like the RCR re-open at
+`driver.py:192-193`). RCR needs no change.
+
+**POC hooks:**
+1. `enable_ack_rx(t)` — the one register write, toggleable.
+2. Raw ACK tap in `driver._dispatch` (`driver.py:232-235`), BEFORE parse: `if len(frame)==10 and frame[0]==0xD4:`
+   record `frame[4:10]` (RA) + ts; hand to the loop via `call_soon_threadsafe` into a last-ACK-per-MAC map / Event.
+3. `inject_frame(wait_for_ack=…)` — repurpose the ignored `use_no_ack` (`driver.py:283-284`): arm the watcher for the
+   frame's source MAC, bulk-OUT, wait a short window for a matching ACK, return bool.
+4. Wire conditional resend in `WlanTransport.send`/`_send_until` (`association.py:108-111,217-224`) + `interface.send_raw`.
+   **Safe:** worst case (RX-missed ACK) degrades to today's unconditional resend — no regression.
+
+**Do NOT use `enter_active_monitor`** (`driver.py:296-302`) — that's the AP-side auto-ACK the WPS lab found harmful.
+This observes the AP's ACK to us; it changes nothing about the AP's retransmit.
+
+**Milestones:**
+- **A1 — prove detection — ✅ PROVEN 2026-07-11 (8812au):** enable BIT13 + raw ACK tap; inject during a normal WPS
+  attempt; confirm we RX ACKs with `RA == our_mac`. Result: **544 ACKs to our MAC / 863 on channel**, in pure monitor
+  mode — settles the on-air unknown (BIT13 does land ACKs under the monitor RCR). Off by default; `wps_lab --ack-detect`.
+- **A1.5 — conditional resend (immediate win A1 unlocks):** the association layer blind-resends every 0.4 s
+  (`association.py:217-224`); with the ACK signal, resend only when *no* ACK was seen → cut the on-air chatter (this run
+  injected enough to draw 544 ACKs) and speed each attempt. No loss regime needed to benefit.
+- **A2 — conditional resend + measure benefit:** needs a LOSSY link. Resend only on no-ACK; measure delivery/latency
+  vs blind resend.
+
+**Cost vs the HW port:** 1 register bit + a raw tap, vs unported H2C mailbox + macid/media-status + C2H TX-report
+decode. Gives coarse "an ACK appeared" (ms-scale software resend), not per-frame `retry_cnt` / SIFS-fast HW
+retransmit — but ~90% of the distant-AP value.
