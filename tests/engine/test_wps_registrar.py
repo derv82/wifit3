@@ -237,7 +237,8 @@ async def test_silent_ap_reads_as_no_response():
     assert out.result is PinResult.TIMEOUT
     assert out.reached_m1 is False
     assert out.config_error is None
-    assert "didn't respond" in out.detail
+    assert not out.refused                 # mere silence is NOT an active refusal
+    assert "no reply" in out.detail
 
 
 def test_describe_frame_names_mgmt_and_data():

@@ -480,7 +480,9 @@ class FocusViewV2(Screen):
         # Campaign lifecycle side effects (kept here, not in focus_model): close a
         # finished WPS-PIN campaign, auto-save + tear down a cracked WEP campaign,
         # and opportunistically grab an open WPS push-button window.
-        if self._wps_campaign is not None and self._wps_campaign.state.phase == "done":
+        if self._wps_campaign is not None and (
+                self._wps_campaign.state.phase == "done"
+                or self._wps_campaign.status in ("failed", "error")):
             self._stop_wps_pin()
         if self._wep_campaign is not None and self._wep_campaign.recovered_key is not None:
             result = save_wep_key(ap, self._wep_campaign.recovered_key)
@@ -971,6 +973,9 @@ class FocusViewV2(Screen):
                     self._log(treelog.leaf(_save_line(result)))
             except Exception:
                 self._log(treelog.leaf("[dim](save failed)[/dim]"))
+        elif getattr(camp, "fail_reason", None):
+            self._log(treelog.leaf_fail(
+                f"[bold red]giving up:[/bold red] [yellow]{escape(camp.fail_reason)}[/yellow]"))
         else:
             self._log(treelog.leaf(
                 f"[yellow]WPS PIN stopped[/yellow] "

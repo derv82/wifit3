@@ -229,12 +229,11 @@ class WpsRegistrar:
                     return _out(PinResult.SECOND_HALF_WRONG, detail="no reply after M6",
                                 via_timeout=True)
                 if disassoc_why is not None:
-                    return _out(PinResult.TIMEOUT, detail=f"AP disassociated us ({disassoc_why})",
-                                refused=True)
+                    return _out(PinResult.TIMEOUT, detail=f"disassoc ({disassoc_why})", refused=True)
                 if identity_reqs >= _IDENTITY_STALL:
                     return _out(PinResult.TIMEOUT, refused=True,
-                                detail=f"stalled at identity ({identity_reqs}x), no M1")
-                return _out(PinResult.TIMEOUT, detail="AP didn't respond")   # mere silence: not refused
+                                detail=f"stalled at ID {identity_reqs}x, no M1")
+                return _out(PinResult.TIMEOUT, detail="no reply")   # mere silence: not refused
 
             p = M.parse_rx_frame(frame)
             if p is None:
@@ -339,7 +338,7 @@ class WpsRegistrar:
                 self.log(f"[WPS] <- unexpected msg_type=0x{mt:02x}, ignoring")
                 continue
 
-        return _out(PinResult.TIMEOUT, detail="AP didn't respond (exchange stalled)")
+        return _out(PinResult.TIMEOUT, detail="no reply (stalled)")
 
     @staticmethod
     def _extract_psk(p, keywrapkey):

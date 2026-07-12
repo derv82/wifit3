@@ -167,6 +167,8 @@ class WpsCampaign(Campaign):
         # 802.1X). Count consecutive refusals and bail rather than soft-lock-churn forever. (Mere
         # silence is NOT a refusal — that stays infinite-patience, could be a distant AP.)
         self._consecutive_refusals = 0
+        self.fail_reason: Optional[str] = None   # terse give-up reason; Focus renders the fail-leaf
+        self._last_logged_pin: Optional[str] = None   # log the PIN only when it changes (save width)
 
     # ---- persistence --------------------------------------------------------
     def _load_state(self) -> CampaignState:
@@ -450,15 +452,12 @@ class WpsCampaign(Campaign):
 
                 if out.refused:   # AP actively rejected external-registrar WPS — never advances
                     self._consecutive_refusals += 1
-                    # Log each one (no dedup) so the disassoc-vs-identity-stall variation is visible.
-                    self.log(f"trying [cyan]{pin}[/cyan] → [yellow]{out.detail}[/yellow] "
-                             f"[dim bold]\\[refused #{self._consecutive_refusals}][/dim bold]")
+                    # Log each one (no dedup) so the disassoc-vs-identity-stall variation shows.
+                    self.log(f"{self._attempt_prefix(pin)} → [yellow]{out.detail}[/yellow] "
+                             f"[dim bold]\\[#{self._consecutive_refusals}][/dim bold]")
                     if self._consecutive_refusals >= self._REFUSAL_BAIL:
-                        self.status = "failed"
-                        self.log("[red]giving up[/red] — this AP actively refuses external-registrar "
-                                 "WPS (disassoc / stalls at Identity, no M1). It likely has WPS "
-                                 "external-registrar disabled, or it's 802.1X/enterprise — not "
-                                 "crackable by PIN.")
+                        self.status = "failed"        # Focus renders the fail-leaf from fail_reason
+                        self.fail_reason = f"AP refused before M1 {self._REFUSAL_BAIL}×"
                         self._save_state()
                         break
                     continue                       # bounded retry; never advance the keyspace
@@ -588,6 +587,14 @@ class WpsCampaign(Campaign):
         self.our_mac = random_client_mac()
         logger.debug("WPS rotated MAC %s -> %s", old.hex(), self.our_mac.hex())
 
+    def _attempt_prefix(self, pin: str) -> str:
+        """Colour the PIN when it changed since the last logged line, else a short continuation
+        marker aligned under it — most of a WPS log line's width is the 8-digit PIN + 'trying'."""
+        if pin == self._last_logged_pin:
+            return "[dim]     ↳[/dim]"
+        self._last_logged_pin = pin
+        return f"[cyan]{pin}[/cyan]"
+
     def _log_attempt(self, pin: str, out: AttemptOutcome,
                      prev_first_half: Optional[str]) -> None:
         """One concise line per PIN attempt — what was tested, what came back,
@@ -607,7 +614,7 @@ class WpsCampaign(Campaign):
             return  # Avoid duplicate attempt logs
         self._last_attempt_sig = sig
 
-        label = f"trying [cyan]{pin}[/cyan]"
+        label = self._attempt_prefix(pin)
         if first_half_just_confirmed:
             self.log(f"{label} → [green]first half OK[/green] "
                      f"[dim bold]\\[M5][/dim bold]")
@@ -619,15 +626,12 @@ class WpsCampaign(Campaign):
                      f"[dim bold]\\[M6][/dim bold]")
         elif out.result is PinResult.PROTO_ERROR:
             if out.detail == "assoc failed":   # not a NACK — we never associated (AP often locked)
-                self.log(f"{label} → [yellow]couldn't associate[/yellow] "
-                         f"[dim bold]\\[no assoc][/dim bold]")
+                self.log(f"{label} → [yellow]no assoc[/yellow]")
             else:
                 # De-swallowed reason: the AP answered with a NACK carrying a config-error.
                 why = (config_error_name(out.config_error)
-                       if out.config_error is not None else (out.detail or "no reason"))
-                self.log(f"{label} → [yellow]AP refused[/yellow] [dim]({why})[/dim] "
-                         f"[dim bold]\\[NACK][/dim bold]")
+                       if out.config_error is not None else (out.detail or "?"))
+                self.log(f"{label} → [yellow]refused: {why}[/yellow]")
         elif out.result is PinResult.TIMEOUT:
-            # out.detail distinguishes silence vs "AP disassociated us" vs "stalled at identity".
-            self.log(f"{label} → [dim]{out.detail or 'AP didn’t respond'}[/dim] "
-                     f"[dim bold]\\[no reply][/dim bold]")
+            # Only non-refused timeouts reach here (refused ones log in the loop). Terse.
+            self.log(f"{label} → [dim]{out.detail or 'no reply'}[/dim]")
