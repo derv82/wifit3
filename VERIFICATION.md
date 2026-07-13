@@ -375,11 +375,6 @@ hand **and** a clean cold-boot USB capture to port against (the process is
 `docs/porting/METHODOLOGY.md`). Good candidates are the USB adapters morrownr recommends for
 Kali: <https://github.com/morrownr/USB-WiFi/blob/main/home/Recommended_Adapters_for_Kali_Linux.md>
 
-**En route (ordered, awaiting delivery):**
-
-- **Deal4Go K2-544DW** — **AR9271** · *consistency test* (already supported on the AWUS036NHA).
-  Confirms a second AR9271 card behaves identically — the "any AR9271 works" claim.
-
 **Wishlist (not yet bought):**
 
 - **TP-Link Archer T2U Plus** — RTL8821AU / RTL8811AU.
