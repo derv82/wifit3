@@ -1,6 +1,24 @@
 # WPS OUI / Default-PIN — algorithmic replacement for `known_pins.json`
 
-**Status:** RESEARCH / PLAN (not yet implemented). Captured 2026-07-11.
+**Status:** ✅ IMPLEMENTED 2026-07-12. Captured 2026-07-11.
+
+**Shipped:** runtime generators (`wps_algos.py`) replace `known_pins.json` (deleted);
+`known_pins.py` is a thin BSSID→candidates seam. Dispatch is **gate-not-flood** — brand algorithms
+fire only on a matching OUI, so a hard-locking AP's ~3-attempt budget isn't spent on
+wrong-manufacturer guesses:
+- **Broad** (every AP): `pin24` (ComputePIN) + `pin_airocon` (Realtek) — these can't be OUI-gated
+  because the chips ship under *brand* OUIs (the IEEE registry has 2 Realtek / 31 Broadcom OUIs).
+- **Brand-gated:** `pin_dlink`/`pin_dlink1` (D-Link), `pin_asus` (ASUS), via a 297-OUI
+  D-Link/ASUS/Belkin table (`wps_router_ouis.py`) generated from the public IEEE registry
+  (`scripts/wps/gen_router_ouis.py`) and **lazy-imported** so it never touches app startup.
+- Generic always-try constants stay in `pins.COMMON_PINS`.
+
+**Dropped** (deliberately not seeded — just points inside the Group-4 keyspace sweep, so seeding
+them only burns the lockout budget): the speculative N-bit / inverted-NIC variants (§2.2, §2.7) and
+the whole per-family static-constant tier (§2.8). **Deferred (still open):** Belkin (§2.4 — needs
+the M1 serial, so an exchange-flow change first). The §4–§5 "emit the full deduped set" plan was
+superseded by the gate-not-flood decision; the detail below is kept as the reference for the
+deferred Belkin work + the algorithm derivations.
 **Why this doc exists:** the shipped `src/wifit3/engine/attacks/wps/known_pins.json` (534 OUIs)
 was copied from **airgeddon**'s `known_pins.db`, which is **GPLv3**. Wifit3 is **GPLv2**
 (incompatible), and copying the whole curated compilation risks a "thin" compilation copyright
