@@ -28,6 +28,7 @@ class RouterEndpoint(Vertical):
         super().__init__(**kwargs)
         self._snap = snap
         self._width = art_size("focus-ap.ans")[0]      # endpoint column width
+        self._last: dict[str, str] = {}                # last-pushed label value; skip no-op repaints
 
     def compose(self) -> ComposeResult:
         yield Label(self._power_line(self._snap), classes="ap-power", id="ap-power")
@@ -37,12 +38,21 @@ class RouterEndpoint(Vertical):
         yield Label(f"channel {self._snap.ap_channel}", classes="ap-static", id="ap-chan")
 
     def update_dynamic(self, snap) -> None:
-        """Refresh the power meter (every tick) + the identity facts (cheap; they
-        only change on a target switch)."""
+        """Power meter repaints every tick (the live readout); the identity facts
+        only change on a target switch, so guard them — Textual's ``Label.update``
+        refreshes unconditionally, so re-pushing an unchanged label 10x/s burns CPU
+        and wipes any text selection on it. (``ClientsList.sync`` guards the same way.)"""
         self.query_one("#ap-power", Label).update(self._power_line(snap))
-        self.query_one("#ap-essid", Label).update(self._essid_markup(snap.ap_essid))
-        self.query_one("#ap-bssid", Label).update(snap.ap_bssid)
-        self.query_one("#ap-chan", Label).update(f"channel {snap.ap_channel}")
+        self._push("#ap-essid", self._essid_markup(snap.ap_essid))
+        self._push("#ap-bssid", snap.ap_bssid)
+        self._push("#ap-chan", f"channel {snap.ap_channel}")
+
+    def _push(self, sel: str, value: str) -> None:
+        """Update the label only when its value changed — skip the no-op repaint."""
+        if self._last.get(sel) == value:
+            return
+        self._last[sel] = value
+        self.query_one(sel, Label).update(value)
 
     def flicker(self) -> None:
         """Pulse the router LED — the screen calls this on RX from the target."""
