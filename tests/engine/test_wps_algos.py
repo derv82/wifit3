@@ -57,8 +57,8 @@ def test_asus_oui_gates_asus_generator():
 
 def test_oui_table_has_expected_families():
     vendors = set(wps_router_ouis.OUI_VENDOR.values())
-    assert vendors == {"dlink", "asus", "belkin"}
-    assert len(wps_router_ouis.OUI_VENDOR) > 200            # ~297 from IEEE, sanity floor
+    assert vendors == {"dlink", "asus", "belkin", "thomson", "edimax", "upvel", "huawei"}
+    assert len(wps_router_ouis.OUI_VENDOR) > 300           # ~2359 from IEEE, sanity floor
 
 
 def test_oui_table_is_lazy_loaded():
@@ -71,3 +71,15 @@ def test_oui_table_is_lazy_loaded():
         f"assert {_OUI_MOD!r} in sys.modules, 'table not imported after pins_for'"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_vendor_statics_are_checksum_valid():
+    for vendor_pins in A._VENDOR_STATICS.values():
+        for p in vendor_pins:
+            assert len(p) == 8 and p.isdigit() and pin_is_valid(p), p
+
+
+def test_brand_static_pin_seeded_for_matching_oui():
+    thomson_oui = next(o for o, v in wps_router_ouis.OUI_VENDOR.items() if v == "thomson")
+    mac = bytes.fromhex(thomson_oui + "010203")
+    assert "67958146" in A.pins_for(mac)                    # Thomson's fixed default PIN

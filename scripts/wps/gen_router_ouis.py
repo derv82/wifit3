@@ -24,10 +24,15 @@ _IEEE_CSV = "https://standards-oui.ieee.org/oui/oui.csv"
 # Organization-name substring (lowercased) -> our vendor key. Arcadyan is the ODM behind
 # Belkin's Arcadyan-built routers, so it folds into the Belkin family.
 _VENDOR_MATCH = {
-    "d-link":   "dlink",
-    "asus":     "asus",
-    "belkin":   "belkin",
-    "arcadyan": "belkin",
+    "d-link":      "dlink",
+    "asus":        "asus",
+    "belkin":      "belkin",
+    "arcadyan":    "belkin",
+    "thomson":     "thomson",
+    "technicolor": "thomson",   # Thomson's router line became Technicolor
+    "edimax":      "edimax",
+    "upvel":       "upvel",
+    "huawei":      "huawei",
 }
 
 _OUT = (Path(__file__).resolve().parents[2]
