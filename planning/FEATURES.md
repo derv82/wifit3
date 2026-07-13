@@ -17,6 +17,8 @@ new `CardPool` orchestrator owns the fleet, merged model, channel arbitration, a
 Enumeration is mostly there (`WlanDeviceManager`); everything downstream of "I have N
 interfaces" is singular today.
 
+→ Full design brain-dump (seams, dedup design, milestones — needs ironing): `planning/MULTICARD.md`
+
 ### Test & Fix macOS support
 
 Figure out how to detect & access drivers from userland in OSX.
