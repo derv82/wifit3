@@ -115,6 +115,10 @@ already runs off-thread and the REQUIRED-badge pulse timer machinery is reusable
 
 Three cards + RSSI trilateration + a drag-to-place UI. Fun, novel, not soon. 😄
 
+### Belkin WPS PINs from the M1 serial — deferred
+
+Derive Belkin (Arcadyan) default PINs from the serial in the WPS M1 message — deferred because PIN candidates are generated at campaign start from the BSSID, before M1 is available.
+
 ------------
 
 ## Chopping Block / Graveyard
