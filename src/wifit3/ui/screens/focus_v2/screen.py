@@ -205,6 +205,7 @@ class FocusViewV2(Screen):
         super().__init__(**kwargs)
         self._snap = fm.fake_snapshot()
         self._target_ap = None
+        self._last_status: list[str] | None = None   # last-pushed headline; skip no-op repaints
         # Windowed beacon-rate samples (caller-owned; see focus_model.beacon_rate).
         self._beacon_samples: deque = deque()
         # Granular: surfaces every new EAPOL frame, not just completions.
@@ -503,7 +504,9 @@ class FocusViewV2(Screen):
 
         snap = self._snapshot()
         self._snap = snap
-        self.query_one("#status", Static).update(self._render_status(snap.status))
+        if snap.status != self._last_status:
+            self._last_status = snap.status
+            self.query_one("#status", Static).update(self._render_status(snap.status))
         self.query_one("#card", CardEndpoint).update_dynamic(snap)
         self.query_one("#router", RouterEndpoint).update_dynamic(snap)
         clients = self.query_one("#clients", ClientsList)
