@@ -689,9 +689,11 @@ async def test_deauth_sets_unicast_ack_nav(mocker):
     ACK. Built in the shared interface path, so this holds for every driver."""
     driver = mocker.MagicMock()
     driver.inject_frame = mocker.AsyncMock(return_value=True)
+    driver.enable_ack_detect = mocker.AsyncMock()
+    driver.disable_ack_detect = mocker.AsyncMock()
     iface = WlanInterface(driver_instance=driver, name="wlan0", description="t")
 
-    await iface.deauth("aa:bb:cc:dd:ee:ff", "00:11:22:33:44:55", burst_count=1)
+    await iface.deauth_client("aa:bb:cc:dd:ee:ff", "00:11:22:33:44:55", rounds=1)
 
     frames = [c.args[0] for c in driver.inject_frame.call_args_list]
     client_deauth, ap_deauth = frames[0], frames[1]
@@ -703,19 +705,57 @@ async def test_deauth_sets_unicast_ack_nav(mocker):
     assert ap_deauth[2:4] == b"\x3a\x01"
 
 
-async def test_broadcast_deauth_zeroes_nav_for_group_target(mocker):
-    """'Deauth all' addresses the client frame to ff:ff:ff:ff:ff:ff — a group address that
-    is never ACKed, so its NAV is 0; the AP-directed frame stays unicast → 0x013A."""
+async def test_deauth_client_tallies_per_direction_acks(mocker):
+    """deauth_client arms TX-ACK detection and returns a per-direction ACK tally: an
+    AP→Client frame ACKed = the CLIENT heard us; a Client→AP frame ACKed = the AP heard us.
+    Here the client ACKs every AP→Client frame but the AP ACKs none."""
+    driver = mocker.MagicMock()
+    driver.enable_ack_detect = mocker.AsyncMock()
+    driver.disable_ack_detect = mocker.AsyncMock()
+    # inject_frame returns True (ACKed) for the AP→Client frame (addr2 = AP), False otherwise.
+    async def _inject(frame, use_no_ack=True, wait_for_ack=0.0, max_resends=0):
+        return frame[10:16] == bytes.fromhex("aabbccddeeff")   # addr2 = spoofed AP
+    driver.inject_frame = mocker.AsyncMock(side_effect=_inject)
+    iface = WlanInterface(driver_instance=driver, name="wlan0", description="t")
+
+    res = await iface.deauth_client("aa:bb:cc:dd:ee:ff", "00:11:22:33:44:55", rounds=4)
+
+    driver.enable_ack_detect.assert_awaited_once()
+    driver.disable_ack_detect.assert_awaited_once()
+    assert res.measured and res.client_sent == 4 and res.ap_sent == 4
+    assert res.client_acks == 4 and res.ap_acks == 0      # client heard us, AP silent
+    assert res.total_acked == 4 and res.total_sent == 8
+
+
+async def test_deauth_client_unmeasured_without_ack_detect(mocker):
+    """A driver with no TX-ACK detection still sends both directions, but the result is
+    measured=False and reports no ACK counts (fire-and-forget)."""
+    driver = mocker.MagicMock(spec=["inject_frame"])   # no enable/disable_ack_detect
+    driver.inject_frame = mocker.AsyncMock(return_value=True)
+    iface = WlanInterface(driver_instance=driver, name="wlan0", description="t")
+
+    res = await iface.deauth_client("aa:bb:cc:dd:ee:ff", "00:11:22:33:44:55", rounds=3)
+
+    assert not res.measured
+    assert res.client_sent == 3 and res.ap_sent == 3
+    assert res.client_acks == 0 and res.ap_acks == 0      # True inject is not an ACK signal
+    assert driver.inject_frame.await_count == 6
+
+
+async def test_broadcast_deauth_only_group_frame_nav_zero(mocker):
+    """'Deauth all' sends a single AP→ff:ff:ff:ff:ff:ff wave — a group address that is never
+    ACKed, so NAV is 0. One direction only: there is NO reverse (broadcast→AP) frame — that
+    would de-auth nobody. Broadcast is fire-and-forget (never arms TX-ACK detection)."""
     driver = mocker.MagicMock()
     driver.inject_frame = mocker.AsyncMock(return_value=True)
     iface = WlanInterface(driver_instance=driver, name="wlan0", description="t")
 
-    await iface.deauth("aa:bb:cc:dd:ee:ff", "ff:ff:ff:ff:ff:ff", burst_count=1)
+    sent = await iface.deauth_broadcast("aa:bb:cc:dd:ee:ff", count=3)
 
     frames = [c.args[0] for c in driver.inject_frame.call_args_list]
-    client_deauth, ap_deauth = frames[0], frames[1]
-    # client_deauth addr1 = broadcast → NAV 0
-    assert client_deauth[4:10] == b"\xff\xff\xff\xff\xff\xff"
-    assert client_deauth[2:4] == b"\x00\x00"
-    # ap_deauth addr1 = AP (unicast) → NAV 0x013A
-    assert ap_deauth[2:4] == b"\x3a\x01"
+    assert sent == 3 and len(frames) == 3                 # one direction, no reverse frame
+    driver.enable_ack_detect.assert_not_called()
+    for f in frames:
+        assert f[4:10] == b"\xff\xff\xff\xff\xff\xff"      # addr1 = broadcast
+        assert f[10:16] == bytes.fromhex("aabbccddeeff")   # addr2 = AP (spoofed source)
+        assert f[2:4] == b"\x00\x00"                       # group dest → NAV 0

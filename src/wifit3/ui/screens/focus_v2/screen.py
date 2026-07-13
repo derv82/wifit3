@@ -156,6 +156,9 @@ class FocusViewV2(Screen):
     # Deauth frame-pairs sent to the selected client, each pair followed by an RX
     # window so the half-duplex radio doesn't TX-saturate.
     _DEAUTH_SEL_ROUNDS = 10
+    # Broadcast de-auth: AP→ff:ff:ff:ff:ff:ff frames in one wave (never ACKed, so no
+    # per-frame confirmation — one direction only, no junk reverse frame).
+    _DEAUTH_BCAST_COUNT = 20
 
     CSS = """
     FocusViewV2 { layout: vertical; background: $surface; }
@@ -728,17 +731,15 @@ class FocusViewV2(Screen):
         if not ap or not iface:
             self._log("[red]✗ No target / interface — aborting Broadcast.[/red]")
             return
-        BROADCAST = "ff:ff:ff:ff:ff:ff"
         self._log("[bold]Broadcast de-auth — all clients[/bold]")
         try:
-            await iface.deauth(ap.bssid, BROADCAST)
+            sent = await iface.deauth_broadcast(ap.bssid, count=self._DEAUTH_BCAST_COUNT)
         except Exception as exc:
             logger.exception("Broadcast deauth crashed")
             self._log(treelog.leaf_fail(f"Broadcast failed: {escape(str(exc))}"))
             return
-        self._log(treelog.leaf_ok(
-            "[bold green]Sent 20 broadcast deauth frames[/bold green] [dim](10 bursts)[/dim]"
-        ))
+        # Broadcast frames are never ACKed — a neutral leaf (no green ✓, no ACK verdict).
+        self._log(treelog.leaf(f"sent {sent} de-auth frames [dim](AP→broadcast)[/dim]"))
 
     async def _run_deauth_selected(self, mac: str) -> None:
         """Worker: deauth a specific client (the inline ✕ that was clicked)."""
@@ -752,15 +753,24 @@ class FocusViewV2(Screen):
         # which client this MAC is, so that's all the line carries.
         self._log(f"[bold]De-authenticating Client {escape(mac)}[/bold]")
         try:
-            for _ in range(self._DEAUTH_SEL_ROUNDS):
-                await iface.deauth(ap.bssid, mac, burst_count=1)
+            res = await iface.deauth_client(ap.bssid, mac, rounds=self._DEAUTH_SEL_ROUNDS)
         except Exception as exc:
             logger.exception("Deauth %s crashed", mac)
             self._log(treelog.leaf_fail(f"Deauth failed: {escape(str(exc))}"))
             return
-        self._log(treelog.leaf_ok(
-            "[bold green]Sent 20 deauth frames[/bold green] [dim](10× client + AP)[/dim]"
-        ))
+        self._log(treelog.branch(
+            f"sent {res.total_sent} de-auth frames "
+            f"[dim](AP→Client ×{res.client_sent}, Client→AP ×{res.ap_sent})[/dim]"))
+        if not res.measured:                      # card lacks TX-ACK detection — nothing to confirm
+            self._log(treelog.leaf("[dim]delivery not measured (no TX-ACK on this card)[/dim]"))
+            return
+        detail = f"[dim](client {res.client_acks}/{res.client_sent} · AP {res.ap_acks}/{res.ap_sent})[/dim]"
+        if res.total_acked:
+            self._log(treelog.leaf_ok(
+                f"[bold][cyan]{res.total_acked}[/cyan]/{res.total_sent} de-auths ACK'd[/bold] {detail}"))
+        else:
+            self._log(treelog.leaf_fail(
+                f"[bold]0/{res.total_sent} de-auths ACK'd[/bold] [dim]— AP & client silent (deaf ears)[/dim]"))
 
     # ----- PMKID -------------------------------------------------------------
 

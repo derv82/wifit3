@@ -14,7 +14,7 @@ from wifit3.ui.screens.focus_v2 import FocusViewV2
 from wifit3.ui.screens.focus_v2.clients_list import ClientsList
 from wifit3.ui.screens.focus_v2.flow_channel import FlowChannel
 from wifit3.ui.screens.focus_v2.log_band import LogBand
-from wifit3.wlan.interface import WlanInterface
+from wifit3.wlan.interface import WlanInterface, DeauthResult
 
 from tests.frames import pkt
 
@@ -380,7 +380,7 @@ async def test_v2_target_acquired_log_names_encryption():
 @pytest.mark.asyncio
 async def test_v2_button_wiring():
     """The attack buttons are encryption-conditional (derive_buttons), the inline
-    ✕ maps to the right client, and that mapping reaches iface.deauth — proving
+    ✕ maps to the right client, and that mapping reaches iface.deauth_client — proving
     the trigger wiring with NO live TX (the recorder stands in for the radio)."""
     bssid = "aa:bb:cc:dd:ee:01"
     client = "9c:b6:d0:1a:2b:3c"
@@ -393,10 +393,11 @@ async def test_v2_button_wiring():
 
     deauthed = []
 
-    async def _record_deauth(ap_bssid, client_bssid, burst_count=10):
-        deauthed.append((ap_bssid, client_bssid, burst_count))
+    async def _record_deauth(ap_bssid, client_bssid, rounds=10):
+        deauthed.append((ap_bssid, client_bssid, rounds))
+        return DeauthResult(client_sent=rounds, ap_sent=rounds, measured=True)
 
-    iface.deauth = _record_deauth  # stand in for the radio — no real TX
+    iface.deauth_client = _record_deauth  # stand in for the radio — no real TX
 
     app = _Host(iface, ap)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -415,7 +416,7 @@ async def test_v2_button_wiring():
         btn_id = next(b for b, m in clients._by_button.items() if m == client)
         assert clients.client_mac(btn_id) == client
         await focus._run_deauth_selected(client)
-        assert deauthed and all(c == (bssid, client, 1) for c in deauthed), deauthed
+        assert deauthed == [(bssid, client, 10)], deauthed
 
 
 @pytest.mark.asyncio

