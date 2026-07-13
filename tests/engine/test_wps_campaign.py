@@ -7,7 +7,7 @@ switch, success/PSK capture, and .run resume — without a radio or fake enrolle
 
 from types import SimpleNamespace
 
-from wifit3.engine.attacks.wps import pins
+from wifit3.engine.attacks.wps import known_pins, pins
 from wifit3.engine.attacks.wps.campaign import WpsCampaign, _state_path
 from wifit3.engine.attacks.wps.registrar import AttemptOutcome, PinResult
 from wifit3.engine.attacks.wps.wsc_crypto import pin_is_valid
@@ -66,7 +66,8 @@ async def test_campaign_finds_pin_via_full_sweep(tmp_path):
     assert len(c.tried) <= len(pins.COMMON_PINS) + 10000 + 1000
 
 
-async def test_campaign_finds_common_pin_fast(tmp_path):
+async def test_campaign_finds_common_pin_fast(tmp_path, monkeypatch):
+    monkeypatch.setattr(known_pins, "known_pins_for", lambda bssid: [])   # isolate COMMON phase
     known = "12345670"                       # in COMMON_PINS
     c = ScriptedCampaign(_iface(), _target(), state_dir=str(tmp_path),
                          log=lambda m: None, known_pin=known, psk="pw")
@@ -170,10 +171,11 @@ async def test_run_state_persisted_and_resumed(tmp_path):
     assert c2.state.found_pin == known
 
 
-async def test_rate_limit_does_not_skip_untested_pin(tmp_path):
+async def test_rate_limit_does_not_skip_untested_pin(tmp_path, monkeypatch):
     # The AP refuses the first two sessions before the M4 oracle (rate-limiting):
     # PROTO_ERROR must NOT advance the keyspace, so the SAME pin is retried until
     # it's actually tested. (Regression for the skip-on-PROTO_ERROR bug.)
+    monkeypatch.setattr(known_pins, "known_pins_for", lambda bssid: [])   # isolate COMMON phase
     known = pins.full_pin("1357", "246")
 
     class RateLimited(ScriptedCampaign):
@@ -266,7 +268,8 @@ def test_run_progress_line_exhausted():
 
 # ---- dead-first-half skip (no re-trying a ruled-out prefix) ------------------
 
-def test_dead_first_half_skips_shared_prefix_common(tmp_path):
+def test_dead_first_half_skips_shared_prefix_common(tmp_path, monkeypatch):
+    monkeypatch.setattr(known_pins, "known_pins_for", lambda bssid: [])   # isolate COMMON phase
     # 12345670 and 12345678 share first half "1234". Once 12345670 is first-half-wrong,
     # 12345678 is a guaranteed first-half-wrong too — it must be skipped.
     c = WpsCampaign(_iface(), _target(), state_dir=str(tmp_path), log=lambda m: None)
@@ -297,35 +300,40 @@ def test_dead_first_half_skips_common_prefix_in_sweep(tmp_path):
     assert c.state.p1_index == 1
 
 
-# ---- OUI-known default PINs (known_pins) ------------------------------------
+# ---- BSSID-derived default PINs (known_pins) --------------------------------
 
-def test_known_pins_for_oui_lookup():
+def test_known_pins_for_generates_valid_candidates():
     from wifit3.engine.attacks.wps.known_pins import known_pins_for
-    # 0018E7 is in the table; lookup is separator- and case-insensitive.
-    a = known_pins_for("00:18:e7:11:22:33")
-    b = known_pins_for("0018E7112233")
+    # Computed from the BSSID at runtime; separator- and case-insensitive.
+    a = known_pins_for("00:11:22:33:44:55")
+    b = known_pins_for("001122334455")
     assert a and a == b
-    assert all(len(p) == 8 and p.isdigit() for p in a)
-    assert known_pins_for("ff:ff:ff:00:00:00") == []      # unknown OUI
+    assert all(len(p) == 8 and p.isdigit() and pin_is_valid(p) for p in a)
+    assert len(a) == len(set(a))                          # deduped
+    assert known_pins_for("00:11:22") == []               # not a full MAC
 
 
 def test_campaign_seeds_oui_pins_ahead_of_common(tmp_path):
     from wifit3.engine.attacks.wps.known_pins import known_pins_for
     oui_pins = known_pins_for("00:18:e7:aa:bb:cc")
-    assert oui_pins                                       # precondition: OUI in table
+    assert oui_pins                                       # generated from the BSSID
     c = WpsCampaign(_iface(), _target(bssid="00:18:e7:aa:bb:cc"),
                     state_dir=str(tmp_path), log=lambda m: None)
     assert c._oui_pin_count == len(oui_pins)
-    assert c._common_pins[:len(oui_pins)] == oui_pins     # OUI pins first
+    assert c._common_pins[:len(oui_pins)] == oui_pins     # BSSID-derived pins first
     assert pins.COMMON_PINS[0] in c._common_pins          # then the generic list
     assert len(c._common_pins) == len(set(c._common_pins))  # deduped
 
 
-def test_campaign_no_oui_match_is_just_common(tmp_path):
-    c = WpsCampaign(_iface(), _target(bssid="ff:ff:ff:aa:bb:cc"),
+def test_campaign_seeds_generated_pins_for_any_bssid(tmp_path):
+    from wifit3.engine.attacks.wps.known_pins import known_pins_for
+    # No OUI is "unknown" now — the generators fire for every BSSID.
+    bssid = "fe:dc:ba:98:76:54"
+    c = WpsCampaign(_iface(), _target(bssid=bssid),
                     state_dir=str(tmp_path), log=lambda m: None)
-    assert c._oui_pin_count == 0
-    assert c._common_pins == list(pins.COMMON_PINS)
+    assert c._oui_pin_count > 0
+    assert c._common_pins[:c._oui_pin_count] == known_pins_for(bssid)
+    assert all(p in c._common_pins for p in pins.COMMON_PINS)  # generic list still follows
 
 
 # ---- lost-reply retry (timeout-as-NACK on a known-NACKing AP) ----------------
