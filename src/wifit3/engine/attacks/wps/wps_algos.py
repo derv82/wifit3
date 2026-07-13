@@ -12,8 +12,8 @@ us the PIN applies:
   (Realtek owns 2 OUIs and Broadcom 31, confirming these are keyed on the chip, not the brand.)
 * **Brand-keyed** (tried only on a matching OUI — see :mod:`wps_router_ouis`): the generators
   ``pin_dlink`` / ``pin_dlink1`` (D-Link) and ``pin_asus`` (ASUS), plus a few fixed per-brand
-  default PINs (``_VENDOR_STATICS``): Thomson, Edimax, Upvel, Huawei HG532x, D-Link DSL-2740R.
-  Aimed by OUI, so they never cost the lockout budget on other brands' APs.
+  default PINs (``_VENDOR_STATICS``): Thomson, Edimax, Upvel, D-Link DSL-2740R. Aimed by OUI,
+  so they never cost the lockout budget on other brands' APs.
 
 Algorithm descriptions: bertof/WPS-pin-generator; the devttys0 write-ups; 3WiFi
 (3wifi.stascorp.com/wpspin). To check for newer vendor-specific PINs, see airgeddon's
@@ -110,7 +110,6 @@ _VENDOR_STATICS: Dict[str, Tuple[str, ...]] = {
     "thomson": ("67958146",),
     "edimax":  ("35611530",),
     "upvel":   ("20854836", "43977680", "05294176"),   # Upvel + UR-814AC + UR-825AC
-    "huawei":  ("34259283",),                          # HG532x
 }
 
 

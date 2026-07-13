@@ -57,8 +57,8 @@ def test_asus_oui_gates_asus_generator():
 
 def test_oui_table_has_expected_families():
     vendors = set(wps_router_ouis.OUI_VENDOR.values())
-    assert vendors == {"dlink", "asus", "belkin", "thomson", "edimax", "upvel", "huawei"}
-    assert len(wps_router_ouis.OUI_VENDOR) > 300           # ~2359 from IEEE, sanity floor
+    assert vendors == {"dlink", "asus", "belkin", "thomson", "edimax", "upvel"}
+    assert len(wps_router_ouis.OUI_VENDOR) > 300           # ~331 from IEEE, sanity floor
 
 
 def test_oui_table_is_lazy_loaded():

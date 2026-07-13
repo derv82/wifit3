@@ -32,7 +32,6 @@ _VENDOR_MATCH = {
     "technicolor": "thomson",   # Thomson's router line became Technicolor
     "edimax":      "edimax",
     "upvel":       "upvel",
-    "huawei":      "huawei",
 }
 
 _OUT = (Path(__file__).resolve().parents[2]
