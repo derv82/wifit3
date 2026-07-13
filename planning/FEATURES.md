@@ -26,15 +26,6 @@ Each plist declares the adapter's VID:PID with a high `IOProbeScore` so the kern
 binds the do-nothing kext and leaves the USB interface unclaimed for libusb. 
 Unverified — no macOS hardware tested. Parked until someone wants it.
 
-### Config persistence — pre-alpha
-
-**Problem.** Nothing persists — theme (hardcoded `textual-dark`), WPS PBC auto-invade, paths,
-and Scanner sort all reset every launch.
-
-**Approach.** A TOML file via `platformdirs` (`tomllib` is stdlib 3.11+) — `~/.config/wifit3/`
-on Linux, `%APPDATA%` on Windows, `~/Library/Application Support` on macOS. Sticky: theme,
-Scanner sort, PBC auto-invade, capture dir, channel-filter defaults. **Complexity: low.**
-
 ### Client fingerprinting — if time allows
 
 **Problem.** Clients show bare MACs; a device class (phone / laptop / PS5 / IoT) speeds target
@@ -47,22 +38,6 @@ confidence)`, blank if low; full breakdown in the Focus detail panel.
 **Complexity.** Moderate — display is the hard part, not the resolver. (Killed a full
 OUI→vendor DB in the Scanner table: cells too cramped for vendor strings, and an OUI names the
 Wi-Fi *module* maker, not the device — disambiguation needs IE fingerprinting anyway.)
-
-### Deauth effectiveness feedback (sent / ACKed) — if time allows
-
-**Problem.** Deauth is fire-and-forget — we show frames *sent*, not *landed*. A unicast deauth
-is hardware-ACKed, so "N sent → M ACKed" is a real reachability readout in Focus.
-
-**Approach** (no live-TX needed to design):
-- **Sniff ACKs** — RX already sees control frames; an ACK is FC=0xD4 with RA = our spoofed src,
-  correlate by timing against each deauth sent. Driver-agnostic.
-- **HW retry tally (rtl8187 only)** — `0xFFFA` cumulative retry count rises when un-ACKed;
-  coarser, and L has no TX-status URB, so ACK-sniff is the portable route.
-
-**Related (tiny):** `build_deauth` writes `duration = 0`; a correct injector sets the
-unicast-ACK NAV (`SIFS + ACK@rate`, e.g. `0x013a` @ 1 Mbps) — one line, do it here.
-
-**Complexity.** Low-moderate; the ACK-sniff correlator is the real work.
 
 ### Per-AP persistent log — if time allows
 

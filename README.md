@@ -173,7 +173,3 @@ For use only on networks you own or are explicitly authorized to test.
 kernel driver between it and the silicon. A bad register write, firmware page, or power sequence
 can damage or permanently disable ("brick") a device. **Use at your own risk — there is no
 liability for hardware damage.**
-
------
-
-*wifit3 is the end of a 20-year arc that started with a borrowed Slackware laptop and a neighbor's WEP network. [The full story →](FULL-CIRCLE.md)*

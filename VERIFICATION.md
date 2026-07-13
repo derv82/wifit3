@@ -1,10 +1,5 @@
 # Wifit3 — Hardware Verification
 
-Wifit3 drives these USB radios directly and (mostly) correctly by imitating Linux drivers.
-
-- Some drivers are a complete byte-perfect port of a known-good driver.
-- Others merely imitate one — the bare-minimum hardware operations for a working radio.
-
 The matrix below captures *how well wifit3 drives each card* right now. Every blemish is
 either a documented Wifit3 bug or a hardware limitation; the deep per-card detail and history
 live in each chip's `<CHIP>.md` (linked under its table).
