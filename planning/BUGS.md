@@ -10,10 +10,4 @@ contradicts itself; resolve on HW.
 
 ---
 
-## Per-card
-
-### rtl8814au_dkms
-- Wedges under TX + 2.4/5 GHz hopping — 2.4 RX drops, 5 GHz goes intermittent. Steady RX + RSSI match
-  the OOT `rtl8814au` driver (mud2g 7.1 vs 8.4/s, RSSI +0.2 dB), and the OOT driver runs
-  deauth→hop→deauth on both bands clean — so it's a port dynamic-path (TX/hop state) bug, not the
-  silicon. Fresh OOT usbmon captures for the re-port: `usb_dumps_new2/captures_rtl8814au/` (run 3 = good 2G TX).
+_No open bugs._

@@ -162,8 +162,9 @@ live in each chip's `<CHIP>.md` (linked under its table).
 ### RTL8814AU
 *ALFA AWUS1900 · 2.4 / 5 GHz · 4T4R*
 
-> The maintainer of the DKMS driver advises to "get a refund" for the card, blaming both the
-> card and the driver. We ported that driver.
+> The maintainer of the DKMS driver says Realtek's support for this driver is subpar, that the
+> driver itself is not good, and advises not using cards that rely on this driver
+> ([morrownr/8814au#37](https://github.com/morrownr/8814au/issues/37#issuecomment-900581613)).
 
 > **Default = vendor/DKMS port.** `WIFIT3_RTL8814=mainline` opts back.
 
