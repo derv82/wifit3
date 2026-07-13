@@ -403,7 +403,7 @@ def main() -> int:
     p.add_argument("--dwell", type=float, default=1.5,
                    help="Per-channel dwell time for --phase hop (default 1.5)")
     p.add_argument("--target", type=str, default="aa:bb:cc:dd:ee:01",
-                   help="BSSID for --phase deauth (default: your NETGEAR router)")
+                   help="BSSID for --phase deauth (default: your AP)")
     p.add_argument("--count", type=int, default=10,
                    help="Number of deauths to inject (default 10)")
     p.add_argument("--debug", action="store_true",

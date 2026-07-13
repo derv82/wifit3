@@ -24,7 +24,7 @@ from rich.text import Text
 CANDIDATES = [("Cyan (shipped)", "cyan"), ("Matrix green", "#00ff00"), ("Grey", "grey50")]
 
 _LOG_LINES = [
-    "[dim]19:42:01[/dim]  [bold]Target acquired:[/bold] [black bold on cyan] NETGEAR91 [/]",
+    "[dim]19:42:01[/dim]  [bold]Target acquired:[/bold] [black bold on cyan] HomeNetwork [/]",
     "[dim]19:42:01[/dim]   [dim]├─►[/dim] [dim]Encryption:[/dim] WPA2",
     "[dim]19:42:04[/dim]  [black bold on green] ✓ Valid 4-Way Handshake (M1+M2) [/]",
 ]

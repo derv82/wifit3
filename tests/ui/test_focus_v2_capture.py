@@ -77,7 +77,7 @@ class _Host(App):
 @pytest.mark.asyncio
 async def test_v2_surfaces_passive_handshake_and_pmkid(tmp_path):
     bssid = "aa:bb:cc:dd:ee:01"
-    client = "04:2e:c1:51:43:b8"
+    client = "b2:c3:d4:e5:f6:07"
     iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
     iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
     ap = iface.access_points[bssid]
@@ -172,7 +172,7 @@ async def test_v2_capture_wins_do_not_double_toast():
     (so wins on OTHER targets still notify while we're focused) — a Focus toast would only
     duplicate it. The win still lands in Focus's own event log, so it isn't silent locally."""
     bssid = "aa:bb:cc:dd:ee:01"
-    client = "04:2e:c1:51:43:b8"
+    client = "b2:c3:d4:e5:f6:07"
     iface = WlanInterface(MockDriver(), "wlanX", "Mock card")
     iface._on_frame_parsed(_beacon(bssid, "TESTNET", 1))
     ap = iface.access_points[bssid]

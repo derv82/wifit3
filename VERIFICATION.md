@@ -41,7 +41,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | **Grade** | **92% (A)** | 2026-07-06 | v2 faithful; consistency confirmed on a 2nd AR9271 unit. |
-| RX | ✅ | 2026-07-06 | v2 mud2g 8.0 vs linux 8.4 (95%); breadth 71 vs 65; RSSI +2.2 dB. |
+| RX | ✅ | 2026-07-06 | v2 ref2g 8.0 vs linux 8.4 (95%); breadth 71 vs 65; RSSI +2.2 dB. |
 | Port | ✅ | 2026-07-06 | v2 matches ath9k_htc; v1 deleted 2026-07-12 (was broken — 1 AP, dead hopping). |
 | Handshake | ✅ | 2026-07-12 | v2 confirmed (M1–M4). |
 | PMKID | ✅ | 2026-07-12 | v2 confirmed (extraction). |
@@ -99,7 +99,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | **Grade** | **91% (A)** | 2026-07-07 | Clean dual-band on both variants, full attack suite, no wedge. |
-| RX | ✅ | 2026-07-07 | DKMS mud2g 7.0/7.8 (90%), mud 9.3/9.6 (97%), breadth 66/31; mainline 91% too. |
+| RX | ✅ | 2026-07-07 | DKMS ref2g 7.0/7.8 (90%), ref5g 9.3/9.6 (97%), breadth 66/31; mainline 91% too. |
 | Port | ✅ | 2026-07-07 | Matches linux both bands, DKMS + mainline (unlike 8812au, mainline doesn't wedge). |
 | Handshake | ✅ | 2026-06-05 | Deauth → 4-way. |
 | PMKID | ✅ | 2026-06-05 | Passive + active. |
@@ -122,7 +122,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | **Grade** | **91% (A)** | 2026-07-07 | Clean dual-band DKMS default, full attack suite; mainline-wedge is opt-in only. |
-| RX | ✅ | 2026-07-07 | DKMS mud2g 6.4/s, mud 9.2/s, breadth 91/40; no wedge on the dual-band hop. |
+| RX | ✅ | 2026-07-07 | DKMS ref2g 6.4/s, ref5g 9.2/s, breadth 91/40; no wedge on the dual-band hop. |
 | Port | ✅ | 2026-07-07 | Clean dual-band hop; same-driver baseline stale (6.19 build fails) — see note. |
 | TX | ✅ | 2026-06-05 | Client drop + reconnect caught. |
 | Handshake | ✅ | 2026-06-05 | M2/M4 (ToDS) — crackable. |
@@ -166,7 +166,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | **Grade** | **60% (D)** | 2026-07-10 | RX-gated; steady + hopping RX and the full attack suite are fine. |
-| RX | ❌ | 2026-07-10 | Steady + hopping match linux (mud2g 7.9/s, mud 9.7/s, breadth 65/50, RSSI +0.0 dB), but dwelling on a 2.4 channel after a 2.4↔5 hop goes dead ~15 s before it self-heals. |
+| RX | ❌ | 2026-07-10 | Steady + hopping match linux (ref2g 7.9/s, ref5g 9.7/s, breadth 65/50, RSSI +0.0 dB), but dwelling on a 2.4 channel after a 2.4↔5 hop goes dead ~15 s before it self-heals. |
 | Port | ⚠️ | 2026-07-10 | Steady + round-robin RX match linux-DKMS (breadth/rate/RSSI parity), but the hop→dwell wedge is ours — the Linux driver handles the same hop→dwell cleanly, so it's a port gap. |
 | Handshake | ✅ | 2026-06-05 | Deauth → 4-way. |
 | PMKID | ✅ | 2026-06-05 | Passive + active (2.4 + 5 GHz). |
@@ -183,7 +183,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | **Grade** | **93% (A)** | 2026-07-06 | Faithful dual-band port, linux-parity RX, full suite. |
-| RX | ✅ | 2026-07-06 | mud2g 7.6/8.3 (92%), mud 8.9/9.7 (92%); breadth 109/43 (matches, best 2.4); RSSI −1.5 dB. |
+| RX | ✅ | 2026-07-06 | ref2g 7.6/8.3 (92%), ref5g 8.9/9.7 (92%); breadth 109/43 (matches, best 2.4); RSSI −1.5 dB. |
 | Port | ✅ | 2026-07-06 | Matches mt76x2u both bands. |
 | Handshake | ✅ | 2026-05-31 | Full M1–M4. |
 | PMKID | ✅ | 2026-05-31 | Passive + active. |
@@ -200,7 +200,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | **Grade** | **93% (A)** | 2026-07-07 | Faithful dual-band port, linux-parity RX, full suite. |
-| RX | ✅ | 2026-07-07 | mud2g 7.1/7.3 (97%), mud 9.3/9.7 (96%); breadth 132/34 (best 2.4, matches). |
+| RX | ✅ | 2026-07-07 | ref2g 7.1/7.3 (97%), ref5g 9.3/9.7 (96%); breadth 132/34 (best 2.4, matches). |
 | Port | ✅ | 2026-07-07 | Matches mt76x0u both bands. |
 | Handshake | ✅ | 2026-05-31 | M1+M2. |
 | PMKID | ✅ | 2026-05-31 | Passive + active. |
@@ -223,7 +223,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | **Grade** | **80% (B)** | 2026-07-06 | Best-in-batch RX + faithful port; capped by no-auto-ACK (conversational attacks). |
-| RX | ✅ | 2026-07-06 | mud2g 8.6/8.9 (97%), mud 9.3/9.6 (97%); breadth 112/52 (best 2.4, matches); RSSI −1.4 dB. |
+| RX | ✅ | 2026-07-06 | ref2g 8.6/8.9 (97%), ref5g 9.3/9.6 (97%); breadth 112/52 (best 2.4, matches); RSSI −1.4 dB. |
 | Port | ✅ | 2026-07-06 | Matches mt76 both bands — the B is the driver's ACK limit, not the port. |
 | TX | ✅ | 2026-06-12 | Live deauth dropped client. |
 | Handshake | ✅ | 2026-06-12 | Deauth → 4-way (28 EAPOL, M1–M4). |
@@ -241,7 +241,7 @@ live in each chip's `<CHIP>.md` (linked under its table).
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | **Grade** | **92% (A)** | 2026-07-06 | Faithful port, linux-parity RX, full attack suite, flat soak. |
-| RX | ✅ | 2026-07-06 | mud2g 6.6 vs linux 7.1 (93%); breadth 75 vs 79; RSSI +0.7 dB; 0 cross-channel. |
+| RX | ✅ | 2026-07-06 | ref2g 6.6 vs linux 7.1 (93%); breadth 75 vs 79; RSSI +0.7 dB; 0 cross-channel. |
 | Port | ✅ | 2026-07-06 | Matches linux (rt2800usb); accurate RSSI (+0.7 dB). |
 | TX | ✅ | 2026-06-10 | Live → reconnect; byte-match w/ aireplay-ng. |
 | Handshake | ✅ | 2026-06-10 | Deauth → 4-way (~27 EAPOL/30 s). |
@@ -321,7 +321,7 @@ Excellent 2.4 GHz front-end (external LNA) — strong range, signal, and TX rate
 | Capability | Status | Date | Notes |
 |---|:--:|---|---|
 | **Grade** | **90% (A)** | 2026-07-08 | Faithful dual-band port, full attack suite, flat soak. |
-| RX | ✅ | 2026-07-06 | mud2g 7.2/8.0 (90%), mud 8.8/9.3 (95%); breadth 73/29 (matches); RSSI +1.1 dB. |
+| RX | ✅ | 2026-07-06 | ref2g 7.2/8.0 (90%), ref5g 8.8/9.3 (95%); breadth 73/29 (matches); RSSI +1.1 dB. |
 | Port | ✅ | 2026-07-06 | Matches linux-DKMS both bands. |
 | Handshake | ✅ | 2026-06-24 | 4-way captured. |
 | PMKID | ✅ | 2026-06-24 | Capture + active extract (2.4 + 5). |

@@ -626,8 +626,8 @@ def fake_snapshot() -> FocusSnapshot:
         card_bssid="00:c0:ca:11:22:33",
         card_dynamic="● deauthing",
         buttons=["Extract PMKID", "WPA Downgrade", "WPS Brute Force"],
-        ap_essid="NETGEAR91",
-        ap_bssid="a8:fc:b7:0e:1d:42",
+        ap_essid="HomeNetwork",
+        ap_bssid="a2:b3:c4:d5:e6:f0",
         ap_channel=6,
         ap_encryption="WPA2/CCMP",
         flow=[
@@ -639,7 +639,7 @@ def fake_snapshot() -> FocusSnapshot:
         ],
         clients=[
             ClientRow("fa:11:22:33:44:aa", -79, 10),
-            ClientRow("04:2e:c1:51:43:b8", -80, 134),
+            ClientRow("b2:c3:d4:e5:f6:07", -80, 134),
             ClientRow("9c:b6:d0:1a:2b:3c", -67, 512),
             ClientRow("3a:f1:08:77:aa:01", -83, 22),
             ClientRow("de:ad:be:ef:00:42", -75, 88),
@@ -653,7 +653,7 @@ def fake_snapshot() -> FocusSnapshot:
             "19:42:03  Deauth ▸ fa:11:…:aa",
             "19:42:04  M1 captured (ANonce)",
             "19:42:05  Waiting for M2…",
-            "19:42:06  Deauth ▸ 04:2e:…:b8",
+            "19:42:06  Deauth ▸ b2:c3:…:07",
             "19:42:07  Client reassoc",
             "19:42:08  M1 captured (ANonce)",
             "19:42:09  Waiting for M2…",

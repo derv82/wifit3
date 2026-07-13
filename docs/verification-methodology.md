@@ -76,7 +76,7 @@ real-world APs in a US environment.
 ## Metric definitions
 
 - **Beacon rate** — beacons/sec from a **pinned reference AP** (by BSSID, supplied at runtime — kept
-  out of git). Current references: `mud2g` (2.4 GHz, ch1) and `mud` (5 GHz, ch149; can drift — reject
+  out of git). Current references: `ref2g` (2.4 GHz, ch1) and `ref5g` (5 GHz, ch149; can drift — reject
   the run if it's off-channel). Read straight from the baseline rollup.
 - **Breadth / channel tune / RSSI** — from `driver_health` (APs per band; channels that heard their
   own beacons / silent / cross-channel; median RSSI delta vs Linux on shared APs).

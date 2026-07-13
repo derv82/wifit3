@@ -11,7 +11,7 @@ from wifit3.chips.rtw88_base.registers import (
 from wifit3.chips.rtw88_8814au.tx import build_deauth_frame, build_tx_desc_mgmt
 
 _AP = bytes.fromhex("aabbccddee01")
-_CLIENT = bytes.fromhex("042ec15143b8")
+_CLIENT = bytes.fromhex("b2c3d4e5f607")
 
 
 class TestTxDesc:

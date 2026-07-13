@@ -46,8 +46,8 @@ async def test_hw(debug: bool = False):
     await asyncio.sleep(2)
     
     print("[*] Firing Deauth test...")
-    # Using the specific AP and iPhone MACs
-    await iface.deauth("aa:bb:cc:dd:ee:01", "04:2E:C1:51:43:B8")
+    # Using example AP + client MACs
+    await iface.deauth("aa:bb:cc:dd:ee:01", "B2:C3:D4:E5:F6:07")
 
     print("[*] Waiting 15 seconds to observe traffic (look for handshakes!)...")
     await asyncio.sleep(15)

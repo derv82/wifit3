@@ -41,8 +41,8 @@
 set -u
 
 # ---- config ------------------------------------------------------------
-TARGET_BSSID="aa:bb:cc:dd:ee:01"   # user's AP    (matches test_hw.py:50)
-CLIENT_BSSID="04:2E:C1:51:43:B8"   # user's phone (matches test_hw.py:50)
+TARGET_BSSID="aa:bb:cc:dd:ee:01"   # example AP    (matches test_hw.py:50)
+CLIENT_BSSID="B2:C3:D4:E5:F6:07"   # example client (matches test_hw.py:50)
 CHANNEL=1                          # matches test_hw.py:39
 BASE_IFACE="wlan1"                 # default; auto-detected from the bound driver below
 USBMON="usbmon3"                   # default; auto-synced to the card's USB bus below

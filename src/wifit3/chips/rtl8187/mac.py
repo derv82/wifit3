@@ -109,8 +109,8 @@ def read_perm_mac(t: RTL8187Transport) -> bytes:
 
     On the 8187L the EEPROM is auto-loaded into MAC0..5 on USB
     enumeration, so this returns the real MAC straight from a cold
-    plug. (See M1 hw-test ground truth: AWUS036H reads back
-    ``00:c0:ca:4e:ca:e0`` immediately.)
+    plug (verified against M1 hw-test ground truth: the AWUS036H's
+    factory ALFA MAC ``00:c0:ca:xx:xx:xx`` reads back immediately).
     """
     return t.read_bytes(REG_MAC0, 6)
 

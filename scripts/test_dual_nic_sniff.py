@@ -27,7 +27,7 @@ sys.path.append(str(Path(__file__).parent.parent / "src"))
 from wifit3.wlan.manager import WlanDeviceManager
 
 AP_MAC = "aa:bb:cc:dd:ee:01"
-CLIENT_MAC = "04:2e:c1:51:43:b8"
+CLIENT_MAC = "b2:c3:d4:e5:f6:07"
 CHANNEL = 1
 BURST_COUNT = 20
 

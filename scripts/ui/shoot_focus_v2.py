@@ -26,8 +26,8 @@ sys.stdout.reconfigure(encoding="utf-8")  # block glyphs vs Windows cp1252 stdou
 SIZES = [(80, 24), (80, 30), (100, 35), (120, 40), (180, 45)]
 REGIONS = ["#topbar", "#mid", "#bottom", "#card", "#flow", "#router", "#log", "#clients"]
 
-_BSSID = "a8:fc:b7:0e:1d:42"
-_CLIENTS = ["fa:11:22:33:44:aa", "04:2e:c1:51:43:b8", "9c:b6:d0:1a:2b:3c"]
+_BSSID = "a2:b3:c4:d5:e6:f0"
+_CLIENTS = ["fa:11:22:33:44:aa", "b2:c3:d4:e5:f6:07", "9c:b6:d0:1a:2b:3c"]
 
 
 class MockDriver:
@@ -61,7 +61,7 @@ def _eapol(bssid, client, msg_num, replay, *, to_ap, pmkid=None):
 def _build_iface() -> tuple[WlanInterface, object]:
     """A WPA2 target mid-capture: 3 clients, one completed handshake + PMKID."""
     iface = WlanInterface(MockDriver(), "wlan0", "Alfa AWUS036H")
-    iface._on_frame_parsed(_beacon(_BSSID, "NETGEAR91", 6))
+    iface._on_frame_parsed(_beacon(_BSSID, "HomeNetwork", 6))
     ap = iface.access_points[_BSSID]
     for i, c in enumerate(_CLIENTS):
         for _ in range(10 * (i + 1)):
