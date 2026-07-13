@@ -16,6 +16,7 @@ class CardEndpoint(Vertical):
     def __init__(self, snap, **kwargs) -> None:
         super().__init__(**kwargs)
         self._snap = snap
+        self._last_dynamic: str | None = None      # last-pushed dynamic line; skip no-op repaints
 
     def compose(self) -> ComposeResult:
         yield BreathingArt("focus-card.ans", classes="endpoint-art")
@@ -32,8 +33,13 @@ class CardEndpoint(Vertical):
         yield dyn
 
     def update_dynamic(self, snap) -> None:
-        """Refresh the live 'what the card is doing' line each tick. Identity
-        (chipset / BSSID) is static per card, set once at compose."""
+        """Refresh the live 'what the card is doing' line — only when it changed.
+        Identity (chipset / BSSID) is static per card, set once at compose.
+        Textual's ``Label.update`` refreshes unconditionally, so guarding skips
+        the no-op repaint that otherwise fires every tick."""
+        if snap.card_dynamic == self._last_dynamic:
+            return
+        self._last_dynamic = snap.card_dynamic
         dyn = self.query_one("#card-dynamic", Label)
         dyn.update(snap.card_dynamic)
         dyn.display = bool(snap.card_dynamic)
