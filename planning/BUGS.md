@@ -30,17 +30,9 @@ belongs at the interface; the driver should obey a bool it's handed.
 separately decides which of those is the client STA. One concept split across two files.
 Consolidate in place — no new module.
 
-### Duplicated frame construction
-`auth_req` / `assoc_req` are byte-identical between `attacks/wep/fake_auth.py` and
-`attacks/wps/association.py`; the deauth MPDU bytes are hand-rolled in three spots
-(`wlan/interface.py`, `attacks/pmkid_harvest.py`, `attacks/wps/association.py`). Dedupe within
-the existing files.
-
-### Scattered resend / timing magic numbers
-Resend intervals for "one protocol step" disagree across ~10 files (0.4 / 0.05 / 0.02 / 0.3 s)
-with no shared rationale. Give them one named home with a reason per value.
-
-### Dead driver probe in `focus_model.card_identity`
-`getattr(driver, "chipset", None)` is 0/22 — always None, always falls back to the card
-description. Harmless but dead; remove the probe or implement it. _(The sibling `card_mac`/`mac`
-probe was the card-endpoint MAC-display bug — now fixed to read `mac_address`.)_
+### Duplicated deauth-frame construction
+The deauth MPDU bytes are hand-rolled in three spots — `wlan/interface.py::_deauth_frame`,
+`attacks/pmkid_harvest.py::_build_deauth`, and `attacks/auth_assoc.py::build_client_leaving`.
+Dedupe within the existing files. (`fake_auth`'s auth/assoc builders overlap
+`auth_assoc.Association`'s byte-for-byte but are deliberately left separate — WEP's lazy
+lifecycle differs; not a dup to chase.)

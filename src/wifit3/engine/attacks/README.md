@@ -14,7 +14,7 @@ What lives here:
 
 `WlanInterface` primitives they build on:
 - `await iface.deauth(ap_bssid, client_bssid, burst_count=10)` — a no-ACK deauth burst.
-- `await iface.send_raw(...)` — inject a raw 802.11 frame.
+- `await iface.send_no_wait(...)` / `send_until_ack(...)` — inject a raw 802.11 frame.
 - `iface.register_rx_callback(cb)` — `cb(frame_bytes, rssi, timestamp)`, a low-latency RX
   feed that bypasses the UI-polled AP registry (how the WEP/WPS state machines run).
 

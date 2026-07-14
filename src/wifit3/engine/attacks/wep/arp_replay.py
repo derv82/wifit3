@@ -371,7 +371,7 @@ class WepArpReplay:
                 self.stats.injected += 1
                 sent += 1
             except Exception:
-                logger.exception("[WEP-ARP] send_raw failed")
+                logger.exception(f"[WEP-ARP] failed to send frame during burst (sent={sent})")
                 break
         send_dt = max(1e-3, time.time() - t0)   # burst only — the hardware cap
         # Wait out the remainder of the 1s window (one big sleep — immune to

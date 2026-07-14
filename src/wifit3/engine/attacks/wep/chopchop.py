@@ -309,7 +309,7 @@ class WepChopChop:
         try:
             await self.iface.send_no_wait(frame)
         except Exception:
-            logger.exception("[WEP-Chop] send_raw failed")
+            logger.exception("[WEP-Chop] failed to send guess frame")
             return
 
     async def _await_assoc(self) -> bool:

@@ -1,7 +1,7 @@
 """802.11 open-auth + association against one AP, plus a live-interface transport.
 
 ``WlanTransport`` adapts a ``WlanInterface`` to a ``send``/``recv``/``drain``
-contract: TX via ``send_raw``; RX via an ``asyncio.Queue`` fed by a registered
+contract: TX via ``send_until_ack``/``send_no_wait``; RX via an ``asyncio.Queue`` fed by a registered
 callback that keeps only AP→us frames (Addr1==our MAC, Addr2==BSSID) — so a caller
 never trips over its own echoed TX or unrelated traffic.
 

@@ -555,14 +555,13 @@ def derive_headline(ap, iface, campaigns: Campaigns) -> list[str]:
 
 
 def card_identity(iface) -> tuple[str, str | None]:
-    """``(chipset/label, own_bssid_or_None)`` for the card endpoint. The chipset
-    label prefers a driver-exposed name, falling back to the human card
-    description; the BSSID is shown only when the driver exposes its own MAC."""
+    """``(chipset/label, own_bssid_or_None)`` for the card endpoint. The label is the
+    human card description (trimmed to the chipset before any '/'); the BSSID is shown
+    only when the driver exposes its own MAC."""
     if iface is None:
         return "no card", None
     driver = getattr(iface, "driver", None)
-    label = (getattr(driver, "chipset", None)
-             or getattr(iface, "description", None)
+    label = (getattr(iface, "description", None)
              or getattr(iface, "name", None) or "card")
     # DeviceID descriptions are "chipset / marketing name" (e.g. "Mediatek
     # MT7921AU / ALFA AWUS036AXML"). The endpoint wants just the chipset — and

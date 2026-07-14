@@ -215,7 +215,7 @@ class WPA3DowngradeAttack(Campaign):
         try:
             ok = await self.iface.send_no_wait(frame)
         except Exception:
-            logger.exception("[WPA3-Down] send_raw failed")
+            logger.exception("[WPA3-Down] failed to send probe-resp")
             ok = False
         if ok:
             self.stats.responses_sent += 1

@@ -51,7 +51,7 @@ WPS is EAP-over-EAPOL (ethertype `0x888e`) inside ordinary 802.11 data frames �
 the same inject+sniff path PMKID already uses. Confirmed reusable plumbing:
 
 - `pmkid_harvest.py` already forges a client MAC + builds Auth/Assoc-Req frames.
-- `interface.send_raw(..., use_no_ack=True)` — the inject primitive.
+- `interface.send_no_wait(frame)` / `send_until_ack(frame, max_retries)` — the inject primitives.
 - `interface.register_rx_callback(cb)` — raw frame bytes for a low-latency
   state machine (we do *not* drive WPS off the UI-polled AP registry).
 - `interface.register_forged_mac(mac)` — keeps our fake STA out of the client list.
@@ -147,9 +147,9 @@ engine/attacks/wps/
 - `WpsCampaign` is the only object the UI talks to. Like `WepArpReplay` it's
   the single TX activity on the radio, so it gets `pause()/resume()` and the
   campaign owns association lifecycle, the PIN iterator, lock/backoff, and ETA.
-- `WlanInterface` is **unchanged** — we lean entirely on existing `send_raw`
-  + `register_rx_callback`. No driver/chip touch (answers "do we alter
-  chipsets?" — no).
+- `WlanInterface` needs no WPS-specific changes — we lean on its
+  `send_no_wait`/`send_until_ack` + `register_rx_callback`. No driver/chip touch
+  (answers "do we alter chipsets?" — no).
 
 RX routing: the campaign registers an RX callback, filters to frames
 to/from our forged MAC + target BSSID with ethertype `0x888e`, and feeds an

@@ -1,11 +1,11 @@
 """WpsRegistrar — the per-PIN EAP/WSC state machine (transport-agnostic).
 
 Drives one PIN attempt as an external WPS Registrar against an Enrollee (the
-AP). Knows nothing about USB: it is handed a transport with ``send(frame)`` /
-``recv(timeout)`` and builds/parses full 802.11 data frames via ``messages``.
-The live adapter (``association.WlanTransport``) wires this to
-``WlanInterface.send_raw`` + ``register_rx_callback``; tests wire it to an
-in-process fake enrollee.
+AP). Knows nothing about USB: it is handed a transport with
+``send_until_ack``/``send_no_wait`` + ``recv(timeout)`` and builds/parses full 802.11
+data frames via ``messages``. The live adapter (``auth_assoc.WlanTransport``) wires
+this to ``WlanInterface.send_until_ack``/``send_no_wait`` + ``register_rx_callback``;
+tests wire it to an in-process fake enrollee.
 
 The split-PIN oracle, mapped from what arrives after each message we send:
 
