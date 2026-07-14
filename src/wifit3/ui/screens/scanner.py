@@ -42,6 +42,11 @@ GRACE_DURATION_S = 7.0
 # bg leaves "black gaps" of unreadable text before eviction.
 MAX_FADE_FACTOR = 0.7
 
+# Quantize the fade into this many discrete brightness steps, so a row re-renders
+# only when it crosses a step (~every 2 s) instead of on every 15 Hz tick — the
+# render-key guard in refresh_table skips the unchanged ticks. [surprise-why]
+_FADE_STEPS = 10
+
 # Sort the table on its own cadence instead of every value-update tick —
 # stops rows from bouncing on every signal/beacon update. Same tick evicts
 # fully-faded APs.
@@ -75,6 +80,16 @@ def _fade_text(text: Text, factor: float, bg: tuple[int, int, int]) -> Text:
     out.style = _fade(out.style)
     out.spans = [Span(sp.start, sp.end, _fade(sp.style)) for sp in out.spans]
     return out
+
+
+def _cells_key(cells: List[Text]) -> tuple:
+    """A cheap, comparable fingerprint of a row's pre-fade cells — plain text plus
+    styles (base + spans). Two ticks with the same fingerprint would render the row
+    identically, so its repaint can be skipped."""
+    return tuple(
+        (c.plain, str(c.style), tuple((s.start, s.end, str(s.style)) for s in c.spans))
+        for c in cells
+    )
 
 
 class _APScanTable(DataTable):
@@ -171,6 +186,9 @@ class ScannerView(Screen):
         # cell highlight. Cleared alongside ap_cache during eviction.
         self._prev_beacons: Dict[str, int] = {}
         self._beacon_flash_until: Dict[str, float] = {}
+        # Per-BSSID last render key (fade bucket + cell content); skip a row's
+        # repaint while unchanged. Cleared alongside ap_cache during eviction.
+        self._render_key: Dict[str, tuple] = {}
         # Fade toggle (default on). When off: rows stay at full brightness
         # regardless of age, and the silent-AP eviction pass is skipped.
         self._fade_enabled: bool = True
@@ -349,7 +367,10 @@ class ScannerView(Screen):
             if not fade_enabled or age <= GRACE_DURATION_S:
                 factor = 0.0
             else:
-                factor = min(1.0, (age - GRACE_DURATION_S) / fade_span) * MAX_FADE_FACTOR
+                # Quantize into _FADE_STEPS levels so the render key (below) is
+                # stable between steps and the repaint is skipped on those ticks.
+                prog = min(1.0, (age - GRACE_DURATION_S) / fade_span)
+                factor = round(prog * _FADE_STEPS) / _FADE_STEPS * MAX_FADE_FACTOR
 
             # Beacon-arrival flash: bump the deadline whenever the count
             # increments since we last saw this AP. First-sight rows skip
@@ -361,14 +382,17 @@ class ScannerView(Screen):
             self._prev_beacons[ap.bssid] = ap.beacons
             flash_bacon = now < self._beacon_flash_until.get(ap.bssid, 0.0)
 
-            cells = [
-                _fade_text(c, factor, bg)
-                for c in self._build_cells(ap, n_cli, flash_bacon=flash_bacon)
-            ]
+            raw = self._build_cells(ap, n_cli, flash_bacon=flash_bacon)
+            # Render key = fade bucket + bg + pre-fade cell content. An unchanged
+            # key means the row would repaint identically, so skip both the fade
+            # blend and the update_cell writes — this is what stops the fade
+            # animation from re-rendering the table every 15 Hz tick. [surprise-why]
+            render_key = (factor, bg, _cells_key(raw))
 
             if ap.bssid not in self.ap_cache:
                 self.ap_cache[ap.bssid] = ap
-                table.add_row(*cells, key=ap.bssid)
+                self._render_key[ap.bssid] = render_key
+                table.add_row(*(_fade_text(c, factor, bg) for c in raw), key=ap.bssid)
             else:
                 # Decloak event — already logged here.
                 old_ssid = self.ap_cache[ap.bssid].ssid
@@ -382,8 +406,11 @@ class ScannerView(Screen):
                     )
 
                 self.ap_cache[ap.bssid] = ap
-                for (key, _), cell in zip(self._COLUMNS, cells):
-                    table.update_cell(ap.bssid, key, cell)
+                if self._render_key.get(ap.bssid) != render_key:
+                    self._render_key[ap.bssid] = render_key
+                    cells = [_fade_text(c, factor, bg) for c in raw]
+                    for (col_key, _), cell in zip(self._COLUMNS, cells):
+                        table.update_cell(ap.bssid, col_key, cell)
 
             # Drain new capture events for this AP into the log.
             self._drain_capture_events(ap, iface.forged_macs)
@@ -420,6 +447,7 @@ class ScannerView(Screen):
             self.ap_cache.pop(bssid, None)
             self._prev_beacons.pop(bssid, None)
             self._beacon_flash_until.pop(bssid, None)
+            self._render_key.pop(bssid, None)
             try:
                 table.remove_row(bssid)
             except Exception:
@@ -934,6 +962,7 @@ class ScannerView(Screen):
             self.ap_cache.pop(bssid, None)
             self._prev_beacons.pop(bssid, None)
             self._beacon_flash_until.pop(bssid, None)
+            self._render_key.pop(bssid, None)
             try:
                 table.remove_row(bssid)
             except Exception:
