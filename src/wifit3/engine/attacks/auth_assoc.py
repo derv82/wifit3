@@ -1,14 +1,14 @@
-"""Live glue: a WlanInterface-backed transport for WpsRegistrar, plus the
-802.11 association a WPS exchange needs.
+"""802.11 open-auth + association against one AP, plus a live-interface transport.
 
-``WlanTransport`` adapts ``WlanInterface`` to the registrar's ``send``/``recv``
+``WlanTransport`` adapts a ``WlanInterface`` to a ``send``/``recv``/``drain``
 contract: TX via ``send_raw``; RX via an ``asyncio.Queue`` fed by a registered
-callback that keeps only AP→us frames (Addr1==our MAC, Addr2==BSSID) — so the
-registrar never trips over its own echoed TX or unrelated traffic.
+callback that keeps only AP→us frames (Addr1==our MAC, Addr2==BSSID) — so a caller
+never trips over its own echoed TX or unrelated traffic.
 
-``WpsAssociation`` does Open-System auth + an Association Request carrying the
-WPS *Registrar* IE (reaver's ``WPS_REGISTRAR_TAG``), so a WPA2/WPS AP accepts us
-and starts the EAP-WSC exchange. No RSN IE / 4-way handshake — WPS *is* the auth.
+``Association`` does Open-System auth + an Association Request. The assoc-req carries
+whatever trailing IE the caller supplies (``assoc_trailer_ies``) — a WPS vendor IE, a
+forged RSN IE for PMKID, or nothing — so this module knows no protocol above the
+802.11 skeleton.
 """
 
 from __future__ import annotations
@@ -22,20 +22,10 @@ from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
-# Supported-rates menu (same as the PMKID harvester — APs only check it parses).
+# Supported-rates menu (APs only check it parses).
 _SUPPORTED_RATES = bytes([0x82, 0x84, 0x8B, 0x96, 0x0C, 0x12, 0x18, 0x24])
 _EXT_SUPPORTED_RATES = bytes([0x30, 0x48, 0x60, 0x6C])
 _CAP_ESS_PRIVACY = 0x0011
-
-# tag 221 vendor IE: OUI 00:50:F2 type 04 (WPS), Version=1.0, Request Type byte.
-# (reaver src/builder.c WPS_REGISTRAR_TAG ends in 02 = Registrar.)
-_WPS_IE_PREFIX = bytes.fromhex("0050f204104a000110103a0001")
-WPS_REQ_ENROLLEE = 0x01
-WPS_REQ_REGISTRAR = 0x02
-
-
-def _wps_assoc_ie(request_type: int) -> bytes:
-    return _WPS_IE_PREFIX + bytes([request_type])
 
 _SUBTYPE_ASSOC_RESP = 0x01
 _SUBTYPE_AUTH = 0x0B
@@ -68,7 +58,7 @@ def build_client_leaving(bssid: bytes, our_mac: bytes, deauth: bool = True) -> b
 
 
 class WlanTransport:
-    """Registrar transport over a live WlanInterface."""
+    """Send/recv/drain over a live WlanInterface."""
 
     def __init__(self, iface, bssid: bytes, our_mac: bytes, tx_observer=None, ack=False):
         self.iface = iface
@@ -127,14 +117,13 @@ class WlanTransport:
                 break
 
 
-class WpsAssociation:
-    """Open-System auth + WPS-registrar Association against one AP."""
+class Association:
+    """Open-System auth + Association Request against one AP."""
 
     def __init__(self, iface, bssid: str, ssid: str, channel: int,
                  our_mac: Optional[bytes] = None, assoc_timeout: float = 1.5,
                  auth_timeout: float = 1.0,
-                 wps_request_type: int = WPS_REQ_REGISTRAR,
-                 assoc_extra_ies: Optional[bytes] = None,
+                 assoc_trailer_ies: bytes = b"",
                  should_stop: Optional[Callable[[], bool]] = None):
         self.iface = iface
         self.bssid = bssid.lower()
@@ -144,12 +133,10 @@ class WpsAssociation:
         self.our_mac = our_mac or random_client_mac()
         self.assoc_timeout = assoc_timeout
         self.auth_timeout = auth_timeout
-        # Registrar (PIN attack) vs Enrollee (PBC capture) intent in the assoc IE.
-        self.wps_request_type = wps_request_type
-        # A complete trailing IE (tag+len+body) to send INSTEAD of the WPS vendor
-        # IE — e.g. the PMKID harvester's forged single-AKM=PSK RSN IE. None keeps
-        # the default WPS registrar/enrollee IE (byte-identical to before).
-        self.assoc_extra_ies = assoc_extra_ies
+        # A complete trailing IE (tag+len+body) appended to the Assoc Request — e.g. a
+        # WPS vendor IE (registrar/enrollee intent) or PMKID's forged single-AKM RSN IE.
+        # Empty = a bare Assoc Request (SSID + rates only).
+        self.assoc_trailer_ies = assoc_trailer_ies
         # Polled in associate()/_send_until so a user Stop aborts the resend loop
         # promptly instead of injecting for the full auth+assoc budget.
         self.should_stop = should_stop or (lambda: False)
@@ -171,16 +158,11 @@ class WpsAssociation:
         cap = struct.pack("<H", _CAP_ESS_PRIVACY)
         listen = struct.pack("<H", 0x0001)
         ssid = self.ssid.encode("utf-8", "ignore")[:32]
-        if self.assoc_extra_ies is not None:
-            trailer = self.assoc_extra_ies         # already a complete IE (tag+len+body)
-        else:
-            wps_ie = _wps_assoc_ie(self.wps_request_type)
-            trailer = bytes([0xDD, len(wps_ie)]) + wps_ie
         ies = (
             bytes([0x00, len(ssid)]) + ssid
             + bytes([0x01, len(_SUPPORTED_RATES)]) + _SUPPORTED_RATES
             + bytes([0x32, len(_EXT_SUPPORTED_RATES)]) + _EXT_SUPPORTED_RATES
-            + trailer
+            + self.assoc_trailer_ies
         )
         return self._hdr(b"\x00\x00") + cap + listen + ies
 

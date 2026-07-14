@@ -22,13 +22,8 @@ is both wrong and unnecessary. _Location: each driver's `inject_frame` + RX-ACK 
 decision is interface-level state: are we active-monitor-armed for this TA (hardware ACKs) or
 just spoofing in monitor (no hardware ACK)? The interface already tracks the forged MAC
 (`forged_macs` / `set_fake_mac`); the driver re-derives a redundant copy. Only one caller ever
-passes a non-default value (`attacks/wps/association.py::send`, `not self.ack`). The state
+passes a non-default value (`attacks/auth_assoc.py::WlanTransport.send`, `not self.ack`). The state
 belongs at the interface; the driver should obey a bool it's handed.
-
-### `WpsAssociation` / `WlanTransport` trapped in `attacks/wps/`
-They're generic send / recv / await-reply primitives, but `pmkid_harvest` (not a WPS attack)
-reaches into the WPS namespace to import `WpsAssociation`. Mislocated module boundary. Keep it
-as **one** class in a neutral home — do not grow a new abstraction layer around it.
 
 ### Two homes for 802.11 address-role logic
 `wlan/packet.py` maps addr1/2/3 → (source, dest, bssid) by the DS bits; `interface._client_mac`

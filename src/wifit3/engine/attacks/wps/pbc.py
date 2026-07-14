@@ -16,10 +16,10 @@ import logging
 from typing import Optional
 
 from ..campaign import Campaign
-from .association import (
-    WPS_REQ_ENROLLEE, WlanTransport, WpsAssociation, build_client_leaving,
-    random_client_mac, str_to_mac,
+from ..auth_assoc import (
+    Association, WlanTransport, build_client_leaving, random_client_mac, str_to_mac,
 )
+from .assoc_ie import WPS_REQ_ENROLLEE, wps_assoc_ie
 from .enrollee import WpsEnrollee
 from .registrar import AttemptOutcome, PinResult
 
@@ -76,10 +76,10 @@ class WpsPbcCapture(Campaign):
         carries the SSID + PSK); ``ABORTED`` if a cooperative stop landed."""
         if self.stopped:
             return AttemptOutcome(PinResult.ABORTED, "<PBC>", detail="stopped before start")
-        assoc = WpsAssociation(self.iface, self.bssid, self.target.ssid or "",
-                               self.channel, our_mac=self.our_mac,
-                               wps_request_type=WPS_REQ_ENROLLEE,
-                               should_stop=lambda: self.stopped)
+        assoc = Association(self.iface, self.bssid, self.target.ssid or "",
+                            self.channel, our_mac=self.our_mac,
+                            assoc_trailer_ies=wps_assoc_ie(WPS_REQ_ENROLLEE),
+                            should_stop=lambda: self.stopped)
         assoc.start()
         armed = await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
         tx_ack = hasattr(getattr(self.iface, "driver", None), "enable_ack_detect")

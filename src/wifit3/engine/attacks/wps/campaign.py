@@ -28,7 +28,8 @@ from typing import Optional
 from ..campaign import Campaign
 from . import known_pins
 from . import pins as pinmod
-from .association import WlanTransport, WpsAssociation, random_client_mac, str_to_mac
+from ..auth_assoc import Association, WlanTransport, random_client_mac, str_to_mac
+from .assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
 from .lock import LockTracker
 from .registrar import AttemptOutcome, PinResult, WpsRegistrar, config_error_name
 
@@ -126,7 +127,7 @@ class WpsCampaign(Campaign):
         self.inter_attempt_delay = inter_attempt_delay
 
         self.our_mac = random_client_mac()
-        self.assoc: Optional[WpsAssociation] = None
+        self.assoc: Optional[Association] = None
         self.transport: Optional[WlanTransport] = None
         self._ack = False   # set per session in _ensure_session (True once fake_mac is armed)
         # TX-ACK: driver can see the AP's ACKs to us, so we resend a lost frame instead of
@@ -259,9 +260,10 @@ class WpsCampaign(Campaign):
             # that can't spoof-ACK → _ack stays False (AP retransmits, we reply to each).
             armed = await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
             self._ack = armed is not None
-            self.assoc = WpsAssociation(self.iface, self.bssid, self.target.ssid or "",
-                                        self.channel, our_mac=self.our_mac,
-                                        should_stop=lambda: self.stopped)
+            self.assoc = Association(self.iface, self.bssid, self.target.ssid or "",
+                                     self.channel, our_mac=self.our_mac,
+                                     assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR),
+                                     should_stop=lambda: self.stopped)
             self.assoc.start()
             self.transport = WlanTransport(self.iface, str_to_mac(self.bssid), self.our_mac,
                                            ack=self._ack)

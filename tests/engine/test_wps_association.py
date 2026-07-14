@@ -1,4 +1,4 @@
-"""WpsAssociation: wait for the Auth Resp before the Assoc Req.
+"""Association: wait for the Auth Resp before the Assoc Req.
 
 An AP drops an Assoc from a not-yet-authenticated STA, so the old blind 0.1s gap
 raced cold/slow APs and whiffed first contact (the ~50/50 first-WPS-PBC timeout).
@@ -7,7 +7,7 @@ falling back to sending it anyway if no matchable Auth Resp arrives.
 """
 import struct
 
-from wifit3.engine.attacks.wps.association import WpsAssociation
+from wifit3.engine.attacks.auth_assoc import Association
 
 _BSSID = "34:21:09:00:01:ff"
 _BSSID_B = bytes.fromhex("3421090001ff")
@@ -62,7 +62,7 @@ def _subtypes(iface):
 
 async def test_waits_for_auth_resp_then_sends_assoc():
     iface = _RespIface()
-    a = WpsAssociation(iface, _BSSID, "Net", 1, our_mac=_US)
+    a = Association(iface, _BSSID, "Net", 1, our_mac=_US)
     a.start()
     assert await a.associate() is True
     assert a._auth_ok and a._assoc_ok
@@ -72,7 +72,7 @@ async def test_waits_for_auth_resp_then_sends_assoc():
 async def test_falls_back_to_assoc_when_no_auth_resp():
     # AP answers Assoc but not Auth — we still associate, via the auth_timeout fallback.
     iface = _RespIface(answer_auth=False)
-    a = WpsAssociation(iface, _BSSID, "Net", 1, our_mac=_US, auth_timeout=0.05)
+    a = Association(iface, _BSSID, "Net", 1, our_mac=_US, auth_timeout=0.05)
     a.start()
     assert await a.associate() is True
     assert a._auth_ok is False                   # never saw an Auth Resp
@@ -80,7 +80,7 @@ async def test_falls_back_to_assoc_when_no_auth_resp():
 
 
 def test_rx_cb_sets_auth_ok_on_status0_resp():
-    a = WpsAssociation(_RespIface(), _BSSID, "Net", 1, our_mac=_US)
+    a = Association(_RespIface(), _BSSID, "Net", 1, our_mac=_US)
     a._active = True
     a._rx_cb(_auth_resp(0), -40, 0.0)
     assert a._auth_ok is True

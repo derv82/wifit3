@@ -23,7 +23,7 @@ def _target(pmf_required=False, pmf_capable=False, akm_suites=(0x02,), rsn_ie=No
 
 
 class _FakeIface:
-    """Records injected frames. Answers WpsAssociation's Auth/Assoc Reqs with the
+    """Records injected frames. Answers Association's Auth/Assoc Reqs with the
     matching Resp (status 0) via the registered rx callback, and — when
     ``deliver_m1`` — drops an M1 into the handshake dict the instant the Assoc Req
     is sent (simulating the AP's reply)."""

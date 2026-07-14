@@ -28,9 +28,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from wps_probe import discover_iface, find_ap, load_default_target, write_pcap  # noqa: E402
 
-from wifit3.engine.attacks.wps.association import (  # noqa: E402
-    WlanTransport, WpsAssociation, random_client_mac, str_to_mac,
+from wifit3.engine.attacks.auth_assoc import (  # noqa: E402
+    Association, WlanTransport, random_client_mac, str_to_mac,
 )
+from wifit3.engine.attacks.wps.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie  # noqa: E402
 from wifit3.engine.attacks.wps.registrar import WpsRegistrar  # noqa: E402
 
 # Safety: the lab only targets the BSSID configured in data_dumps/wps_pin.txt (gitignored) —
@@ -74,7 +75,8 @@ async def _one(iface, bssid, ssid, channel, our_mac, pin, msg_timeout, cap,
         await iface.set_fake_mac(our_mac, str_to_mac(bssid))
     else:
         await iface.clear_fake_mac()
-    assoc = WpsAssociation(iface, bssid, ssid, channel, our_mac=our_mac)
+    assoc = Association(iface, bssid, ssid, channel, our_mac=our_mac,
+                        assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR))
     assoc.start()
     transport = WlanTransport(iface, str_to_mac(bssid), our_mac, ack=auto_ack,
                               tx_observer=lambda fr: cap.append((time.time(), bytes(fr))))

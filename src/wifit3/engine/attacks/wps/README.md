@@ -118,9 +118,9 @@ engine/attacks/wps/
                       TIMEOUT / PROTO_ERROR. Owns the session DH keypair+nonces.
                       Exposes the pixie bundle (PKE,PKR,E-Hash1/2,E-Nonce,
                       AuthKey) after M3.
-  association.py    WpsAssociation — forge auth+assoc, KEEP-ALIVE across PINs,
-                      re-assoc only on failure. Reuses pmkid_harvest builders.
-                      The single-association experiment lives here.
+  assoc_ie.py       WPS Association vendor IE (registrar/enrollee intent). The
+                      generic auth+assoc engine (Association) now lives in
+                      ../auth_assoc.py — KEEP-ALIVE across PINs, re-assoc on failure.
   timing.py         Adaptive per-message timeout (bully's avg+avg/8+5ms, per
                       M-type) + per-AP latency stats. The measurement rig.
   pins.py           PIN keyspace: checksum, two-halves split, ordering,
@@ -161,7 +161,7 @@ UI-polled registry entirely.
 1. **One association across many PINs.** *Neither* tool does this — both
    re-associate every PIN. If even some of the fleet tolerate back-to-back EAP
    sessions on one association, that deletes the biggest per-attempt cost.
-   `WpsAssociation` keeps the assoc alive and only re-associates on a failed
+   `Association` keeps the assoc alive and only re-associates on a failed
    exchange; `timing.py` measures whether keeping it alive triggers *harder*
    rate-limiting on a given router (the honest risk to watch).
 2. **Per-AP adaptive timing**, pushed past bully: learn each router's real

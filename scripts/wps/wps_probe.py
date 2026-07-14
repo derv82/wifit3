@@ -35,7 +35,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from wifit3.engine.attacks.wps.association import WlanTransport, WpsAssociation, str_to_mac
+from wifit3.engine.attacks.auth_assoc import Association, WlanTransport, str_to_mac
+from wifit3.engine.attacks.wps.assoc_ie import WPS_REQ_REGISTRAR, wps_assoc_ie
 from wifit3.engine.attacks.wps.registrar import PinResult, WpsRegistrar
 from wifit3.wlan.manager import WlanDeviceManager
 
@@ -136,7 +137,8 @@ async def find_ap(iface, channel: int, bssid: str | None, ssid: str | None, scan
 async def run_one_attempt(iface, bssid: str, ssid: str, channel: int, our_mac: bytes,
                           pin: str, expect: str, capture: list) -> None:
     step(f"Attempt PIN {pin}  (expect: {expect})")
-    assoc = WpsAssociation(iface, bssid, ssid, channel, our_mac=our_mac)
+    assoc = Association(iface, bssid, ssid, channel, our_mac=our_mac,
+                        assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR))
     assoc.start()
     # Record our TX frames into the same capture list as RX → full-conversation pcap.
     transport = WlanTransport(iface, str_to_mac(bssid), our_mac,
