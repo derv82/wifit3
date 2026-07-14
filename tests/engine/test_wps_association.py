@@ -46,6 +46,9 @@ class _RespIface:
     async def set_channel(self, ch):
         self.current_channel = ch
 
+    async def send_no_wait(self, frame, *, use_no_ack=True):
+        return await self.send_raw(frame, use_no_ack=use_no_ack)
+
     async def send_raw(self, frame, use_no_ack=True):
         self.sent.append(bytes(frame))
         subtype = (frame[0] & 0xF0) >> 4

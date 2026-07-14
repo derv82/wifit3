@@ -133,7 +133,6 @@ class WpsCampaign(Campaign):
         # TX-ACK: driver can see the AP's ACKs to us, so we resend a lost frame instead of
         # guessing. Cards without it fall back to the timeout-as-NACK path.
         self._tx_ack = hasattr(getattr(iface, "driver", None), "enable_ack_detect")
-        self._ack_wait = 0.02      # s to wait for the AP's ACK before resending our frame
         self._ack_resends = 1      # max resends of an un-ACKed M-frame
         # If AP ever ACK'd any of our frames (0 ACKs detection).
         self._ap_ever_acked = False
@@ -280,7 +279,7 @@ class WpsCampaign(Campaign):
             return AttemptOutcome(PinResult.PROTO_ERROR, pin, detail="assoc failed")
         self.transport.drain()
         reg = WpsRegistrar(self.transport, str_to_mac(self.bssid), self.our_mac,
-                           ack_wait=self._ack_wait if self._tx_ack else 0.0,
+                           tx_ack=self._tx_ack,
                            ack_resends=self._ack_resends if self._tx_ack else 0,
                            should_stop=lambda: self.stopped)
         try:

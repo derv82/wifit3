@@ -123,6 +123,7 @@ def _fa_live(mocker, **kw):
     Assoc Resp, so _auth_round times out → 'failed') unless we patch it."""
     fa = _fa(mocker, assoc_timeout=0.01, **kw)
     fa.iface.send_raw = mocker.AsyncMock(return_value=True)
+    fa.iface.send_no_wait = mocker.AsyncMock(return_value=True)
     fa.iface.set_channel = mocker.AsyncMock(return_value=True)
     fa.iface.current_channel = 6
     fa._active = True
@@ -135,6 +136,7 @@ async def test_start_arms_without_authenticating(mocker):
     RX); it sends NO auth/assoc frames until ensure_associated() is called."""
     iface = mocker.MagicMock()
     iface.send_raw = mocker.AsyncMock(return_value=True)
+    iface.send_no_wait = mocker.AsyncMock(return_value=True)
     ap = AccessPoint(
         bssid="11:22:33:44:55:66", ssid="W", channel=6, encryption="WEP"
     )
@@ -143,7 +145,7 @@ async def test_start_arms_without_authenticating(mocker):
     await asyncio.sleep(0)
     assert fa.state == "ready"
     assert fa.stats.auth_attempts == 0
-    iface.send_raw.assert_not_called()
+    iface.send_no_wait.assert_not_called()
     fa.stop()
 
 
@@ -193,6 +195,7 @@ async def test_ensure_associated_logs_recovery_after_a_failure(mocker):
 async def test_start_stop_wiring(mocker):
     iface = mocker.MagicMock()
     iface.send_raw = mocker.AsyncMock(return_value=True)
+    iface.send_no_wait = mocker.AsyncMock(return_value=True)
     iface.set_channel = mocker.AsyncMock(return_value=True)
     iface.current_channel = 6
     ap = AccessPoint(

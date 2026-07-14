@@ -191,7 +191,7 @@ def _relaying_iface(key: bytes, daemon_box, min_relay: int = 0):
     box["d"] = daemon_box
     return SimpleNamespace(register_rx_callback=lambda c: None,
                            unregister_rx_callback=lambda c: None,
-                           send_raw=send_raw), box
+                           send_raw=send_raw, send_no_wait=send_raw), box
 
 
 @pytest.mark.slow

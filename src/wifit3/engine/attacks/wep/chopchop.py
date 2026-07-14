@@ -307,7 +307,7 @@ class WepChopChop:
     async def _send_tagged(self, body_cipher: bytes, guess: int) -> None:
         frame = self._forge_frame(body_cipher, self._tagged_da(guess))
         try:
-            await self.iface.send_raw(frame, use_no_ack=True)
+            await self.iface.send_no_wait(frame)
         except Exception:
             logger.exception("[WEP-Chop] send_raw failed")
             return

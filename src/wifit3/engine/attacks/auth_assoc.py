@@ -95,11 +95,16 @@ class WlanTransport:
         self._active = False
         self.iface.unregister_rx_callback(self._rx_cb)
 
-    async def send(self, frame: bytes, wait_for_ack: float = 0.0, max_resends: int = 0) -> bool:
+    async def send_until_ack(self, frame: bytes, max_retries: int = 0) -> bool:
         if self.tx_observer is not None:
             self.tx_observer(frame)
-        return await self.iface.send_raw(frame, use_no_ack=not self.ack,
-                                         wait_for_ack=wait_for_ack, max_resends=max_resends)
+        return await self.iface.send_until_ack(frame, max_retries=max_retries,
+                                               use_no_ack=not self.ack)
+
+    async def send_no_wait(self, frame: bytes) -> bool:
+        if self.tx_observer is not None:
+            self.tx_observer(frame)
+        return await self.iface.send_no_wait(frame, use_no_ack=not self.ack)
 
     async def recv(self, timeout: float) -> Optional[bytes]:
         try:
@@ -219,7 +224,7 @@ class Association:
         last_send = 0.0
         while time.time() < deadline and not done() and not self.should_stop():
             if time.time() - last_send >= resend_after:
-                await self.iface.send_raw(frame, use_no_ack=True)
+                await self.iface.send_no_wait(frame)
                 last_send = time.time()
             await asyncio.sleep(0.02)
 

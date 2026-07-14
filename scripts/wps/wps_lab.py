@@ -58,7 +58,7 @@ def _stage_of(msg: str) -> str | None:
 
 
 async def _one(iface, bssid, ssid, channel, our_mac, pin, msg_timeout, cap,
-               max_resends=0, auto_ack=False, ack_wait=0.0, ack_resends=0):
+               max_resends=0, auto_ack=False, tx_ack=False, ack_resends=0):
     """Run one full attempt; return a dict of stage->relative-ms + assoc timing + outcome.
 
     auto_ack=True arms active-monitor (chip HW-ACKs the AP's frames to our forged MAC, so the
@@ -89,7 +89,7 @@ async def _one(iface, bssid, ssid, channel, our_mac, pin, msg_timeout, cap,
         reg = WpsRegistrar(transport, str_to_mac(bssid), our_mac,
                            msg_timeout=msg_timeout, eapol_start_timeout=max(7.0, msg_timeout),
                            overall_timeout=msg_timeout * 8, max_resends=max_resends,
-                           ack_wait=ack_wait, ack_resends=ack_resends, log=log)
+                           tx_ack=tx_ack, ack_resends=ack_resends, log=log)
         out = await reg.try_pin(pin)
     finally:
         transport.stop()
@@ -127,8 +127,7 @@ async def mode_timing(iface, tgt, args):
     if args.ack_detect and hasattr(iface.driver, "enable_ack_detect"):
         await iface.driver.enable_ack_detect()
         mode = "ACK-gated resend" if args.ack_resend else "detection only"
-        extra = (f" — wait {args.ack_wait*1000:.0f}ms, up to {args.ack_resends} resends"
-                 if args.ack_resend else "")
+        extra = (f" — up to {args.ack_resends} resends" if args.ack_resend else "")
         print(f"  TX-ACK {mode} ON (RXFLTMAP1 bit13){extra}")
     elif args.ack_detect:
         print("  (--ack-detect: this driver has no TX-ACK-detect support; skipping)")
@@ -145,7 +144,7 @@ async def mode_timing(iface, tgt, args):
             rs = 0 if i % 2 == 0 else 2
         r = await _one(iface, bssid, ssid, channel, mac, pin, args.timeout, cap,
                        max_resends=rs, auto_ack=aa,
-                       ack_wait=(args.ack_wait if args.ack_resend else 0.0),
+                       tx_ack=args.ack_resend,
                        ack_resends=(args.ack_resends if args.ack_resend else 0))
         r["i"] = i
         r["mac"] = ":".join(f"{b:02x}" for b in mac)

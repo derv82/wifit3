@@ -367,7 +367,7 @@ class WepArpReplay:
             if not self._active:
                 break
             try:
-                await self.iface.send_raw(frame, use_no_ack=True)
+                await self.iface.send_no_wait(frame)
                 self.stats.injected += 1
                 sent += 1
             except Exception:

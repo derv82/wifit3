@@ -20,6 +20,7 @@ def _reset_active():
 async def test_campaign_starts_and_stops_both_subattacks(mocker):
     iface = mocker.MagicMock()
     iface.send_raw = mocker.AsyncMock(return_value=True)
+    iface.send_no_wait = mocker.AsyncMock(return_value=True)
     iface.set_channel = mocker.AsyncMock(return_value=True)
     iface.current_channel = 6
     iface.wep_store = WepCaptureStore()
@@ -48,6 +49,7 @@ async def test_campaign_recovers_key_from_collected_samples(mocker):
 
     iface = mocker.MagicMock()
     iface.send_raw = mocker.AsyncMock(return_value=True)
+    iface.send_no_wait = mocker.AsyncMock(return_value=True)
     iface.set_channel = mocker.AsyncMock(return_value=True)
     iface.current_channel = 6
     iface.wep_store = WepCaptureStore()

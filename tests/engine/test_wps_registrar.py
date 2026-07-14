@@ -34,6 +34,14 @@ class _QueueTransport:
         await self._tx.put(frame)
         return True
 
+    async def send_until_ack(self, frame: bytes, max_retries: int = 0) -> bool:
+        await self._tx.put(frame)
+        return True
+
+    async def send_no_wait(self, frame: bytes) -> bool:
+        await self._tx.put(frame)
+        return True
+
     async def recv(self, timeout: float):
         try:
             return await asyncio.wait_for(self._rx.get(), timeout)

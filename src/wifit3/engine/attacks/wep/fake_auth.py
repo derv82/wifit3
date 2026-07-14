@@ -266,9 +266,9 @@ class WepFakeAuth:
         self._assoc_ok = False
         self.stats.auth_attempts += 1
 
-        await self.iface.send_raw(self._build_auth_req(), use_no_ack=True)
+        await self.iface.send_no_wait(self._build_auth_req())
         await asyncio.sleep(0.1)  # let the AP process Auth before Assoc lands
-        await self.iface.send_raw(self._build_assoc_req(), use_no_ack=True)
+        await self.iface.send_no_wait(self._build_assoc_req())
 
         deadline = time.time() + self.assoc_timeout
         while time.time() < deadline and self._active and not self._assoc_ok:

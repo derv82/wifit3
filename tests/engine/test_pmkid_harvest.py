@@ -73,6 +73,13 @@ class _FakeIface:
         return (b"\x10\x00\x00\x00" + our_mac + bssid + bssid + b"\x00\x00"
                 + b"\x00\x00" + b"\x00\x00" + b"\x01\x00")
 
+    async def send_no_wait(self, frame: bytes, *, use_no_ack: bool = True) -> bool:
+        return await self.send_raw(frame, use_no_ack=use_no_ack)
+
+    async def send_until_ack(self, frame: bytes, max_retries: int = 0, *,
+                             use_no_ack: bool = True) -> bool:
+        return await self.send_raw(frame, use_no_ack=use_no_ack)
+
     async def send_raw(self, frame: bytes, use_no_ack: bool = True) -> bool:
         self.sent.append(bytes(frame))
         our_mac = bytes(frame[10:16])            # addr2 = our forged MAC

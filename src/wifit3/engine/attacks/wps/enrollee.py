@@ -39,7 +39,7 @@ class WpsEnrollee:
         eapol_start_timeout: float = 2.0,
         overall_timeout: float = 30.0,
         max_resends: int = 2,
-        ack_wait: float = 0.0,
+        tx_ack: bool = False,
         ack_resends: int = 0,
         log=None,
         should_stop=None,
@@ -50,10 +50,10 @@ class WpsEnrollee:
         self.msg_timeout = msg_timeout
         self.eapol_start_timeout = eapol_start_timeout
         self.overall_timeout = overall_timeout
-        # max_resends: in-session re-prompts on a silent window (no MAC rotation). ack_wait>0:
+        # max_resends: in-session re-prompts on a silent window (no MAC rotation). tx_ack:
         # each frame waits for the AP's link-ACK and resends up to ack_resends times.
         self.max_resends = max_resends
-        self.ack_wait = ack_wait
+        self.tx_ack = tx_ack
         self.ack_resends = ack_resends
         self._last_1x_frame = None
         self.log = log or logger.debug
@@ -63,9 +63,12 @@ class WpsEnrollee:
     async def _send_1x(self, payload_1x: bytes) -> None:
         frame = M.build_data_frame(self.bssid, self.our_mac, self.bssid, payload_1x)
         self._last_1x_frame = frame
-        landed = await self.t.send(frame, wait_for_ack=self.ack_wait, max_resends=self.ack_resends)
-        if self.ack_wait > 0 and landed is False:
-            self.log(f"[WPS] → frame un-ACKed after {self.ack_resends + 1} sends (AP not hearing us)")
+        if self.tx_ack:
+            landed = await self.t.send_until_ack(frame, max_retries=self.ack_resends)
+            if landed is False:
+                self.log(f"[WPS] → frame un-ACKed after {self.ack_resends + 1} sends (AP not hearing us)")
+        else:
+            await self.t.send_no_wait(frame)
 
     async def run(self) -> AttemptOutcome:
         """Drive EAPOL-Start → Identity → M1..M7 → extract the PSK from M8."""
@@ -115,7 +118,7 @@ class WpsEnrollee:
                 # giving up (mirrors the registrar's in-session resend).
                 if resends_left > 0 and self._last_1x_frame is not None:
                     resends_left -= 1
-                    await self.t.send(self._last_1x_frame)
+                    await self.t.send_no_wait(self._last_1x_frame)
                     continue
                 return AttemptOutcome(PinResult.TIMEOUT, "<PBC>", detail="no EAP response")
             resends_left = self.max_resends   # AP is talking → fresh silence budget

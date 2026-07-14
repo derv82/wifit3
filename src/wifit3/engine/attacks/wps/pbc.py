@@ -104,7 +104,7 @@ class WpsPbcCapture(Campaign):
                                             should_stop=lambda: self.stopped,
                                             msg_timeout=8.0, eapol_start_timeout=6.0,
                                             overall_timeout=40.0,
-                                            ack_wait=0.05 if tx_ack else 0.0,
+                                            tx_ack=tx_ack,
                                             ack_resends=4 if tx_ack else 0).run()
         finally:
             # Abandoning a (possibly mid-exchange) attempt: tell the AP we're
@@ -114,7 +114,7 @@ class WpsPbcCapture(Campaign):
             # Skipped on SUCCESS (the exchange already completed cleanly).
             if outcome is None or outcome.result is not PinResult.SUCCESS:
                 try:
-                    await self.iface.send_raw(
+                    await self.iface.send_no_wait(
                         build_client_leaving(str_to_mac(self.bssid), self.our_mac))
                 except Exception:
                     logger.debug("PBC leaving-deauth failed", exc_info=True)

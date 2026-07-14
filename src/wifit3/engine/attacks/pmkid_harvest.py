@@ -237,7 +237,7 @@ class PmkidHarvestAttack(Campaign):
         could drop unnoticed — send a small burst so 'we're leaving' lands."""
         frame = self._build_deauth()
         for _ in range(count):
-            await self.iface.send_raw(frame, use_no_ack=True)
+            await self.iface.send_no_wait(frame)
             await asyncio.sleep(0.003)
 
     async def _loop(self) -> None:

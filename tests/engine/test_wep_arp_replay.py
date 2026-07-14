@@ -89,6 +89,7 @@ def _replay(mocker, collector, **kw):
         return True
 
     iface.send_raw = _send
+    iface.send_no_wait = _send
     r = WepArpReplay(iface, ap, collector, **kw)
     # Instant cycles for logic tests: a tiny burst (rate is now a per-window
     # packet COUNT) + a zero-length window (no 1s wait). start() re-reads
