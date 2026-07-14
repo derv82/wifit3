@@ -569,7 +569,7 @@ def card_identity(iface) -> tuple[str, str | None]:
     # the full string overflows the 20-col card column, truncating to a dangling
     # "/". Keep the part before the slash.
     label = str(label).split("/")[0].strip() or "card"
-    mac = getattr(driver, "card_mac", None) or getattr(driver, "mac", None)
+    mac = getattr(driver, "mac_address", None)
     if isinstance(mac, (bytes, bytearray)) and len(mac) == 6:
         mac = ":".join(f"{b:02x}" for b in mac)
     return str(label), (str(mac) if mac else None)
