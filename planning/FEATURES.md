@@ -96,6 +96,29 @@ Three cards + RSSI trilateration + a drag-to-place UI. Fun, novel, not soon. �
 
 Derive Belkin (Arcadyan) default PINs from the serial in the WPS M1 message — deferred because PIN candidates are generated at campaign start from the BSSID, before M1 is available.
 
+### VAULT — loot manager (working joke name: "HACKLEBOX")
+
+**Problem.** Half of Wifite's UX is effectively the OS file manager — squinting at `captures/` full
+of long BSSID-encoded filenames. The loot (handshakes, PMKIDs, cracked PSKs) deserves a real view,
+not a directory listing.
+
+**What.** One screen that owns everything we've captured/cracked: handshakes, PMKIDs, PSKs,
+passwords, the occasional WPS PIN (→ its PSK), WEP keys (nobody uses WEP, but still). Per-entry:
+add / remove / export / copy. Bulk: **Export all as Zip**, **Show directory** (`open captures/` /
+`explorer.exe captures/`) for the folks who still want the files.
+
+**Check button.** Re-authenticate against the live AP and confirm a stored PSK still works — the
+association layer we're untangling now is exactly the primitive this needs (open-auth + assoc +
+4-way with the candidate PSK). Rare to *have* a plaintext password, but when we do, verifying it is
+a genuinely nice touch.
+
+**Launch Hashcat.** Per-entry button to fire hashcat with the right mode/hashline (leans on the
+per-attack mode map noted in the enterprise graveyard entry). Cracked PSKs auto-add back into the
+VAULT — the loop closes itself.
+
+**Complexity.** Moderate — mostly a new screen over the existing `engine/save` + `hc22000` layers;
+the "Check" path reuses the association primitive; hashcat launch is a subprocess + parse.
+
 ------------
 
 ## Chopping Block / Graveyard
