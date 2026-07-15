@@ -46,6 +46,8 @@ verification), and credits for the upstream driver's authors in CREDITS.md.
   `feat(attacks): …`. One logical change per commit; for driver work, one milestone per commit.
 - PR body: what changed and why. For a driver, link the `<CHIP>.md` and note what was
   hardware-tested vs pcap-only.
+- Keep real network identifiers out of commits, PR bodies, committed logs, and fixtures (SSIDs,
+  BSSIDs, MACs, hostnames) — generalize ("the WPA2 AP under test") or redact to `aa:bb:cc:**:**:**`.
 
 ## Licensing
 

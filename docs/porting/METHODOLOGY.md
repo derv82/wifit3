@@ -5,8 +5,9 @@ translate; a recorded USB capture of that same driver talking to *this* card is 
 your work against. You hold both, so a finished port isn't a guess — it's a translation you can
 verify against the wire.
 
-Two companion docs: **CODE-STYLE.md** (how to write the port) and **CHIP-DOC.md** (the per-chip
-reference you ship with it). Terms used below — pcap, timeline, bundle — are defined at the end.
+Three companion docs: **CODE-STYLE.md** (how to write the port), **CHIP-DOC.md** (the per-chip
+reference you ship with it), and **GOTCHAS.md** (recurring traps from past bring-ups). Terms used
+below — pcap, timeline, bundle — are defined at the end.
 
 > **Read only this chip's C source while porting.** Don't crib from another chip's driver in this
 > tree: a sibling carries its own bugs and pulls you off the source (one chip was ported as
