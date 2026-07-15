@@ -20,6 +20,8 @@ import struct
 import time
 from typing import Callable, Optional
 
+from wifit3.wlan.interface import build_deauth
+
 logger = logging.getLogger(__name__)
 
 # Supported-rates menu (APs only check it parses).
@@ -50,11 +52,7 @@ def build_client_leaving(bssid: bytes, our_mac: bytes, deauth: bool = True) -> b
     message to our now-dead MAC and won't start a fresh session for the next
     attempt's new MAC — the "stuck at Identity" lockout. Reason 3 = STA leaving
     (deauth); reason 8 = STA leaving (disassoc). addr1=AP, addr2=us, addr3=AP."""
-    subtype = _SUBTYPE_DEAUTH if deauth else _SUBTYPE_DISASSOC
-    reason = 3 if deauth else 8
-    return (bytes([subtype << 4, 0x00]) + b"\x00\x00"        # frame control + duration
-            + bssid + our_mac + bssid + b"\x00\x00"          # addr1/2/3 + seq_ctrl
-            + struct.pack("<H", reason))
+    return build_deauth(bssid, our_mac, bssid, 3 if deauth else 8, disassoc=not deauth)
 
 
 class WlanTransport:

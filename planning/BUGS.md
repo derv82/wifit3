@@ -24,15 +24,3 @@ just spoofing in monitor (no hardware ACK)? The interface already tracks the for
 (`forged_macs` / `set_fake_mac`); the driver re-derives a redundant copy. Only one caller ever
 passes a non-default value (`attacks/auth_assoc.py::WlanTransport.send`, `not self.ack`). The state
 belongs at the interface; the driver should obey a bool it's handed.
-
-### Two homes for 802.11 address-role logic
-`wlan/packet.py` maps addr1/2/3 → (source, dest, bssid) by the DS bits; `interface._client_mac`
-separately decides which of those is the client STA. One concept split across two files.
-Consolidate in place — no new module.
-
-### Duplicated deauth-frame construction
-The deauth MPDU bytes are hand-rolled in three spots — `wlan/interface.py::_deauth_frame`,
-`attacks/pmkid_harvest.py::_build_deauth`, and `attacks/auth_assoc.py::build_client_leaving`.
-Dedupe within the existing files. (`fake_auth`'s auth/assoc builders overlap
-`auth_assoc.Association`'s byte-for-byte but are deliberately left separate — WEP's lazy
-lifecycle differs; not a dup to chase.)

