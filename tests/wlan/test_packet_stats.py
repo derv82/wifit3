@@ -78,6 +78,9 @@ class _FakeDriver:
     def register_rx_callback(self, cb):
         self._cb = cb
 
+    def register_disconnect_callback(self, cb):
+        pass
+
     async def inject_frame(self, frame_bytes, use_no_ack=True):
         self.injected.append(frame_bytes)
         return True

@@ -28,7 +28,7 @@ from typing import Callable, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -87,6 +87,7 @@ class RTL8821AUDriver:
     # (149..165). DFS channels are excluded by default to avoid the
     # regulator-required clearance dance.
     SUPPORTED_CHANNELS = list(range(1, 14)) + list(CHANNELS_5G_NON_DFS)
+    FAKE_MAC = FakeMacSupport.UNIMPLEMENTED   # active-monitor not ported for this variant
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RTL8821AUDriver":

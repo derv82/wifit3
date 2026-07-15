@@ -130,9 +130,9 @@ class WpsCampaign(Campaign):
         self.assoc: Optional[Association] = None
         self.transport: Optional[WlanTransport] = None
         self._ack = False   # set per session in _ensure_session (True once fake_mac is armed)
-        # TX-ACK: driver can see the AP's ACKs to us, so we resend a lost frame instead of
-        # guessing. Cards without it fall back to the timeout-as-NACK path.
-        self._tx_ack = hasattr(getattr(iface, "driver", None), "enable_ack_detect")
+        # TX-ACK: every driver can see the AP's ACKs to us, so we resend a lost frame
+        # instead of guessing.
+        self._tx_ack = True
         self._ack_resends = 1      # max resends of an un-ACKed M-frame
         # If AP ever ACK'd any of our frames (0 ACKs detection).
         self._ap_ever_acked = False

@@ -32,6 +32,9 @@ class MockDriver:
     def register_rx_callback(self, cb):
         pass
 
+    def register_disconnect_callback(self, cb):
+        pass
+
 
 def _beacon(bssid, ssid, ch):
     return pkt({

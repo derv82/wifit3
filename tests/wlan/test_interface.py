@@ -727,21 +727,6 @@ async def test_deauth_client_tallies_per_direction_acks(mocker):
     assert res.total_acked == 4 and res.total_sent == 8
 
 
-async def test_deauth_client_unmeasured_without_ack_detect(mocker):
-    """A driver with no TX-ACK detection still sends both directions, but the result is
-    measured=False and reports no ACK counts (fire-and-forget)."""
-    driver = mocker.MagicMock(spec=["inject_frame"])   # no enable/disable_ack_detect
-    driver.inject_frame = mocker.AsyncMock(return_value=True)
-    iface = WlanInterface(driver_instance=driver, name="wlan0", description="t")
-
-    res = await iface.deauth_client("aa:bb:cc:dd:ee:ff", "00:11:22:33:44:55", rounds=3)
-
-    assert not res.measured
-    assert res.client_sent == 3 and res.ap_sent == 3
-    assert res.client_acks == 0 and res.ap_acks == 0      # True inject is not an ACK signal
-    assert driver.inject_frame.await_count == 6
-
-
 async def test_broadcast_deauth_only_group_frame_nav_zero(mocker):
     """'Deauth all' sends a single AP→ff:ff:ff:ff:ff:ff wave — a group address that is never
     ACKed, so NAV is 0. One direction only: there is NO reverse (broadcast→AP) frame — that

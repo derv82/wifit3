@@ -20,7 +20,7 @@ from typing import Callable, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -73,6 +73,7 @@ class RTL8822BUDriver:
     ]
     # 2.4 GHz channels 1..13 + non-DFS 5 GHz (UNII-1 + UNII-3).
     SUPPORTED_CHANNELS = list(range(1, 14)) + list(CHANNELS_5G_NON_DFS)
+    FAKE_MAC = FakeMacSupport.UNIMPLEMENTED   # active-monitor not ported for this variant
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device,

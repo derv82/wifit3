@@ -115,6 +115,11 @@ class WlanDriver(Protocol):
         802.11 frame the driver decodes."""
         ...
 
+    def register_disconnect_callback(self, cb: Callable[[], None]) -> None:
+        """Register a function called when the RX reader hits a terminal failure
+        (device unplugged / pipe wedged)."""
+        ...
+
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
         """Initialise the hardware. May upload firmware, run init sequences,
         start RX loops, etc. Should yield (0..1, message) progress.
@@ -145,14 +150,27 @@ class WlanDriver(Protocol):
         """Stop RX loops, release the USB interface."""
         ...
 
-    # ---- Optional capability: active monitor (HW-ACK a chosen MAC) -----
-    # Soft contract for now: a driver that can ACK a chosen MAC declares
-    # FAKE_MAC and implements enter/exit_active_monitor; the interface gates on
-    # both via getattr/hasattr, so drivers predating this stay valid (treated as
-    # FakeMacSupport.UNIMPLEMENTED).
-    # TODO: promote to a hard member once every driver declares it.
+    # ---- TX-ACK detection (watch RX for the AP's link-ACK to our TX) ---
+    async def enable_ack_detect(self) -> None:
+        """Start observing the AP's link-layer ACKs to our injected frames (admit ACK
+        control frames if the chip filters them, and reset the per-session tally)."""
+        ...
+
+    async def disable_ack_detect(self) -> None:
+        """Stop observing ACKs and restore the default monitor RX filter."""
+        ...
+
+    def acks_seen(self, mac: bytes) -> int:
+        """How many ACKs addressed to ``mac`` (an injected source MAC) were seen since
+        the last ``enable_ack_detect``."""
+        ...
+
+    # ---- Active monitor (HW-ACK a chosen MAC) — capability-flagged by FAKE_MAC --
+    # Every driver declares FAKE_MAC. The interface reads it directly and calls
+    # enter/exit_active_monitor only when it is SPOOFABLE/FIXED_MAC, so a card that
+    # can't (NONE) or hasn't ported it (UNIMPLEMENTED) simply omits the two methods.
     FAKE_MAC: ClassVar[FakeMacSupport]
-    """This radio's ability to auto-ACK a programmed MAC (default UNIMPLEMENTED if absent)."""
+    """This radio's ability to auto-ACK a programmed MAC."""
 
     async def enter_active_monitor(
         self, mac: bytes, bssid: Optional[bytes] = None

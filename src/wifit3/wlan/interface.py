@@ -167,12 +167,9 @@ class WlanInterface:
         # mid-stop would orphan a hop task that ping-pongs the chip across channels.
         self._hop_lock = asyncio.Lock()
 
-        if hasattr(self.driver, 'register_rx_callback'):
-            self.driver.register_rx_callback(self._on_frame_parsed)
-        # Soft opt-in (mirrors register_rx_callback): drivers whose RX reader can report a
-        # terminal failure forward it here. Drivers predating this stay valid.
-        if hasattr(self.driver, 'register_disconnect_callback'):
-            self.driver.register_disconnect_callback(self._on_device_lost)
+        self.driver.register_rx_callback(self._on_frame_parsed)
+        # Drivers whose RX reader can report a terminal failure forward it here.
+        self.driver.register_disconnect_callback(self._on_device_lost)
 
     def _on_frame_parsed(self, pkt: Packet):
         """Mutator callback: takes the driver's parsed frame and updates the registry."""
@@ -541,9 +538,8 @@ class WlanInterface:
         (firmware-offload radios only). Also registers the MAC as forged. Accepts bytes
         or a colon-string. Returns the MAC armed, or None if the card can't spoof one
         (FakeMacSupport.NONE / absent); a FIXED_MAC card returns its own MAC."""
-        support = getattr(self.driver, "FAKE_MAC", FakeMacSupport.UNIMPLEMENTED)
-        unavailable = support in (FakeMacSupport.NONE, FakeMacSupport.UNIMPLEMENTED)
-        if unavailable or not hasattr(self.driver, "enter_active_monitor"):
+        support = self.driver.FAKE_MAC
+        if support in (FakeMacSupport.NONE, FakeMacSupport.UNIMPLEMENTED):
             logger.info("set_fake_mac: %s — active-monitor unavailable (%s)",
                         self._chipset, support.value)
             return None
@@ -558,7 +554,7 @@ class WlanInterface:
     async def clear_fake_mac(self) -> None:
         """Inverse of set_fake_mac: stop HW-ACKing the forged MAC, restore plain
         monitor. Idempotent and safe on drivers without the capability."""
-        if hasattr(self.driver, "exit_active_monitor"):
+        if self.driver.FAKE_MAC in (FakeMacSupport.SPOOFABLE, FakeMacSupport.FIXED_MAC):
             await self.driver.exit_active_monitor()
             logger.info("[FAKEMAC] %s restored plain monitor", self._chipset)
 
@@ -579,7 +575,7 @@ class WlanInterface:
         """Treelog warning (rich markup) if this card can't HW-ACK a spoofed MAC, else None.
         WPS still runs — un-ACKed, so expect timeouts/retries. NONE = the silicon can't
         (hard MAC); UNIMPLEMENTED = this driver didn't port active-monitor."""
-        support = getattr(self.driver, "FAKE_MAC", FakeMacSupport.UNIMPLEMENTED)
+        support = self.driver.FAKE_MAC
         if support in (FakeMacSupport.SPOOFABLE, FakeMacSupport.FIXED_MAC):
             return None
         reason = "not possible (hard-MAC)" if support is FakeMacSupport.NONE else "not implemented"
@@ -660,18 +656,12 @@ class WlanInterface:
     ) -> bool:
         """Inject a raw 802.11 frame. ``wait_for_ack``/``max_resends`` request ACK-gated
         delivery; only drivers with TX-ACK detection honour them."""
-        if hasattr(self.driver, 'inject_frame'):
-            # Live packet dashboard — tally this inject (deauth vs other) by AP.
-            self._record_tx(frame_bytes)
-            if wait_for_ack > 0:
-                try:
-                    return await self.driver.inject_frame(
-                        frame_bytes, use_no_ack, wait_for_ack=wait_for_ack, max_resends=max_resends)
-                except TypeError:   # driver predates the ACK-gated params
-                    return await self.driver.inject_frame(frame_bytes, use_no_ack)
-            return await self.driver.inject_frame(frame_bytes, use_no_ack)
-        logger.warning(f"Driver for {self._chipset} does not support injection.")
-        return False
+        # Live packet dashboard — tally this inject (deauth vs other) by AP.
+        self._record_tx(frame_bytes)
+        if wait_for_ack > 0:
+            return await self.driver.inject_frame(
+                frame_bytes, use_no_ack, wait_for_ack=wait_for_ack, max_resends=max_resends)
+        return await self.driver.inject_frame(frame_bytes, use_no_ack)
 
     #: Fixed link-ACK wait: an 802.11 ACK returns within SIFS (~10 µs); 20 ms covers
     #: USB/RX-tap latency with wide margin. One window for every ACK we ever wait for.
@@ -766,26 +756,21 @@ class WlanInterface:
                     rounds, target_chan, ap_bssid, client_bssid)
 
         driver = self.driver
-        measure = all(hasattr(driver, n) for n in ("enable_ack_detect", "disable_ack_detect"))
-        res = DeauthResult(measured=measure)
-        if measure:
-            await driver.enable_ack_detect()
+        res = DeauthResult(measured=True)
+        await driver.enable_ack_detect()
         try:
             for _ in range(rounds):
-                landed_c = await (self.send_until_ack(client_deauth) if measure
-                                  else self.send_no_wait(client_deauth))
+                landed_c = await self.send_until_ack(client_deauth)
                 res.client_sent += 1
-                if measure and landed_c:
+                if landed_c:
                     res.client_acks += 1
-                landed_a = await (self.send_until_ack(ap_deauth) if measure
-                                  else self.send_no_wait(ap_deauth))
+                landed_a = await self.send_until_ack(ap_deauth)
                 res.ap_sent += 1
-                if measure and landed_a:
+                if landed_a:
                     res.ap_acks += 1
                 await asyncio.sleep(0.01)
         finally:
-            if measure:
-                await driver.disable_ack_detect()
+            await driver.disable_ack_detect()
         return res
 
 
@@ -801,9 +786,7 @@ class WlanInterface:
                 return
 
             if not channels:
-                channels = getattr(self.driver, "SUPPORTED_CHANNELS", None)
-                if not channels:
-                    channels = [1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 5, 10]
+                channels = self.driver.SUPPORTED_CHANNELS or [1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 5, 10]
 
             # Hop busy channels (1/6/11) first so the AP list fills before the scanner's
             # first sort tick. SUPPORTED_CHANNELS stays sequential for the filter UI.

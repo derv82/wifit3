@@ -231,9 +231,7 @@ class ScannerView(Screen):
         if summary:
             rows.append(summary)
         if iface:
-            hopped = self._channel_filter or list(
-                getattr(iface.driver, "SUPPORTED_CHANNELS", None) or []
-            )
+            hopped = self._channel_filter or list(iface.driver.SUPPORTED_CHANNELS)
             rows.append(
                 "Hopping [italic]all available channels[/italic] "
                 f"[bold cyan]{band_label(hopped)}[/bold cyan]"
@@ -904,7 +902,7 @@ class ScannerView(Screen):
             log.write("[bold red][!] No active interface.[/bold red]")
             return
 
-        supported = getattr(iface.driver, "SUPPORTED_CHANNELS", None)
+        supported = iface.driver.SUPPORTED_CHANNELS
         if not supported:
             log.write(
                 "[bold red][!] Driver did not declare SUPPORTED_CHANNELS.[/bold red]"

@@ -37,7 +37,7 @@ from typing import Callable, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, ProgressCallback
+from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -87,6 +87,7 @@ class RTL8188EUSDriver:
     ]
     # 2.4 GHz only.
     SUPPORTED_CHANNELS = list(range(1, 14))
+    FAKE_MAC = FakeMacSupport.UNIMPLEMENTED   # active-monitor not ported for this variant
 
     @classmethod
     def from_usb_device(

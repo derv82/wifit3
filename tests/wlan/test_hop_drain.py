@@ -31,6 +31,9 @@ class _OrphanProneDriver:
     def register_rx_callback(self, cb):
         pass
 
+    def register_disconnect_callback(self, cb):
+        pass
+
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         loop = asyncio.get_running_loop()
 

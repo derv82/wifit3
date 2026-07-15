@@ -82,9 +82,7 @@ class WpsPbcCapture(Campaign):
                             should_stop=lambda: self.stopped)
         assoc.start()
         armed = await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
-        tx_ack = hasattr(getattr(self.iface, "driver", None), "enable_ack_detect")
-        if tx_ack:
-            await self.iface.driver.enable_ack_detect()
+        await self.iface.driver.enable_ack_detect()
         warning = self.iface.active_monitor_warning()
         if isinstance(warning, str):
             self.log(warning)
@@ -104,8 +102,8 @@ class WpsPbcCapture(Campaign):
                                             should_stop=lambda: self.stopped,
                                             msg_timeout=8.0, eapol_start_timeout=6.0,
                                             overall_timeout=40.0,
-                                            tx_ack=tx_ack,
-                                            ack_resends=4 if tx_ack else 0).run()
+                                            tx_ack=True,
+                                            ack_resends=4).run()
         finally:
             # Abandoning a (possibly mid-exchange) attempt: tell the AP we're
             # leaving so it drops our EAP session. Otherwise it keeps retransmitting
@@ -118,8 +116,7 @@ class WpsPbcCapture(Campaign):
                         build_client_leaving(str_to_mac(self.bssid), self.our_mac))
                 except Exception:
                     logger.debug("PBC leaving-deauth failed", exc_info=True)
-            if tx_ack:
-                await self.iface.driver.disable_ack_detect()
+            await self.iface.driver.disable_ack_detect()
             await self.iface.clear_fake_mac()
             transport.stop()
             assoc.stop()
