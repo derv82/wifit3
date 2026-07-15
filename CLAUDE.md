@@ -4,7 +4,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Session Cheatsheet
 
-- **Platform**: Dev machine is Windows + PowerShell. Bash tool is available, but respect the PowerShell-isms (no `&&` chaining, no Unix `grep`/`tail`, never pass `-c` to `tshark` since it limits *input* not output).
 - **Git**: Commit directly to `master`; branch, switch branches, or make worktrees only when asked. The working tree is shared across concurrent sessions — `git status` may show files, and tests may fail, from work that isn't yours; stage only your task's files (`git add <paths>`, never `-A`/`.`).
 - **Comments / code style**: a small closed allowlist — docstrings, citations/magic-value notes, phase landmarks, surprise-why; everything else is noise. When unsure, omit; prefer naming over commenting. Full rules in `docs/porting/CODE-STYLE.md`.
 - **Cross-platform by design**: Wifit3 uses PyUSB + `libusb_package` so drivers run on Windows (with Zadig binding the device to WinUSB) AND Linux (after `rmmod <kernel_driver>`). No Kali boot is needed for normal dev — that's the whole point of going userland.
@@ -13,8 +12,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Porting / bringing up a chip?** The playbook lives in `docs/porting/METHODOLOGY.md` (or run `/port <chip>`): port from the C source, verify each milestone against the cold-boot pcap, commit each. Run the loop to a stopping point yourself — surface only for a decision you can't make from source+pcap, the live-TX gate, a committed milestone, or a real block. Don't narrate progress.
 - **Register READs can mutate device state — never assume two reads commute, never reorder them vs the capture.** Read-to-clear status regs, latch-on-read pairs, FIFO pops, indirect-access auto-advance: `READ X; READ Y` ≠ `READ Y; READ X` on silicon, and out-of-order reads strand the card in a state the capture never visited. So the verify tool's strict-positional cursor (reads included) is a *correctness* gate, not pedantry — a reordered-read divergence is a real driver bug to fix, never a tolerance to add.
 - **Per-chipset port-reference docs**: each chip dir has a `<CHIP>.md` — a short README for the chip (status, gotchas, orientation, scripts, dated debug log). Keep it to what isn't already in the code. Template + rules in `docs/porting/CHIP-DOC.md`.
-- **Human-facing docs are the face of the project.** `README.md` + `VERIFICATION.md`: edit only when the user asks (then just do it — terse, observational, no port-accuracy braggadocio; that belongs in `<CHIP>.md` + commits). Prefer prose direction over multiple-choice for these.
-- **Within `chips/`, driver *implementation* is deliberately anti-DRY: don't assume a shared family base.** Some families share infra (`chips/rtw88_base/`, `chips/rtl88xxau_base/`), but many are separate per-chip implementations with their *own* transports (`rt2800usb` uses `read32/write32`; `rt3070`/`rt5372` use `register_read/register_write`), and a chip's mainline vs `_dkms` variant are independent. *Why:* a shared core meant a fix for one card forced re-testing every card and risked regressing the others. *So:* porting a cross-cutting change (a new capability, a core fix) is a **separate port into each driver's own structure** — the mechanism (registers) transfers, the code does not. Check the actual imports before assuming a sibling inherits anything. **Scope (read before citing this):** it governs per-chip *implementation/behavior inside `chips/`* and the hardware-retest cost of sharing it. It does NOT govern class or interface design, and it does NOT apply to the driver *contract*. The driver interface is the opposite: a single base `Driver` (ABC) that every `chips/*/driver.py` inherits is **required**. A shared *shape* carries no behavior, so it has zero hardware-retest cost and never falls under this rule.
+- **Human-facing docs are the face of the project.** `README.md` + `VERIFICATION.md`: edit only when the user asks, and show the proposed edit for approval before writing (terse, observational, no port-accuracy braggadocio; that belongs in `<CHIP>.md` + commits). Prefer prose direction over multiple-choice for these.
+- **Within `chips/`, don't re-use code from another driver.** *Why:* a shared core meant a fix for one card forced re-testing every card and risked regressing the others.
 - **Lead's rule**: discuss class design (`Driver` vs `WlanInterface` responsibilities, etc.) BEFORE execution. Treat the user as Senior Lead.
 - **Never write to auto-memory without asking.** Before saving or updating any file under the auto-memory dir (`MEMORY.md` + its entries), show the user the proposed entry and wait for explicit approval. This overrides the default proactive-save behavior — the user owns what goes into always-loaded context.
 - **Planning docs** (NOT auto-loaded — open as needed): `planning/RELEASE-PLAN.md` (road to release + logistics + code-quality/de-vibe), `planning/FEATURES.md` (capabilities to build), `planning/BUGS.md` (defects + QoL to fix). Current per-card state: `VERIFICATION.md` (grading process: `docs/verification-methodology.md`). Porting playbook: `docs/porting/` (or `/port <chip>`).
@@ -50,51 +49,28 @@ Tests require no hardware — all USB interactions are mocked via `pytest-mock`.
 
 Wifit3 is a userland 802.11 auditing tool. It communicates directly with USB wireless cards via **PyUSB** — no `aircrack-ng` subprocess wrappers, no Scapy. The TUI is built on **Textual**.
 
-### Layer Stack (top to bottom)
+### Where things live
+
+Not a clean top-to-bottom stack (the real flow is more tangled), but the points of interest:
 
 ```
-ui/                      Textual screens (Splash → Scanner → Focus)
-  └─ WifiteApp           Central app; holds WlanDeviceManager + active interface
+ui/      Textual screens (Splash → Scanner → Focus); WifiteApp holds the device manager + active interface
+wlan/    WlanDeviceManager (USB scan, VID:PID → driver), WlanInterface (802.11 abstraction:
+         channel hopping, AP/Client registry, handshake tracking), WlanFrameParser (pure-Python parser)
+engine/  models.py (Pydantic: AccessPoint, Client, Handshake); attacks/ (SAE probe, etc.)
+chips/   driver.py is the Driver ABC; one dir per chip subclasses it
 
-wlan/
-  ├─ WlanDeviceManager   Scans USB bus, maps VID:PID → driver class, returns WlanInterface
-  ├─ WlanInterface       Device-agnostic 802.11 abstraction consumed by UI
-  │    - channel hopping (asyncio task)
-  │    - AP/Client registry (built from parsed frames)
-  │    - Handshake tracking (EAPOL M1/M2 pair via replay counter)
-  └─ WlanFrameParser     Pure-Python 802.11 frame parser (no Scapy)
-
-engine/
-  ├─ models.py           Pydantic: AccessPoint, Client, Handshake
-  └─ attacks/            Attack implementations (SAE probe, etc.)
-
-chips/driver.py            The `Driver` ABC every chips/*/driver.py subclasses; + DeviceID / FakeMacSupport
-chips/rtw88_base/          Shared rtw88-family infrastructure (used by 8821au, 8822bu, ...)
-  ├─ transport.py        Generic vendor-control xfer (bRequest=0x05) for all rtw88 USB chips
-  ├─ phy_cond.py         rtw_parse_tbl_phy_cond walker (handles both 8812a/8821a bitfield-rfe and 8822b/c scalar-rfe)
-  ├─ power_seq.py        Generic run_pwr_seq runtime (CMD codes + flag constants); per-chip TABLES live in the chip dir
-  ├─ rf_sipi.py          SIPI read_rf / write_rf_masked primitives, path-A or path-B parameterised
-  ├─ registers.py        Family-shared MAC/PHY reg.h symbols (REG_SYS_CFG1, REG_MCUFW_CTRL, REG_CR, iDDMA, ...)
-  ├─ tx_common.py        TX-desc XOR checksum + dma_mapping → bulk-OUT-index lookup
-  └─ rx_common.py        24-byte rx_pkt_desc decoder + bulk-IN endpoint probe + frame iterator
-
-chips/<chipset>/
-  ├─ driver.py           Subclasses the `Driver` ABC (chips/driver.py); declares SUPPORTED_IDS + SUPPORTED_CHANNELS
-  ├─ transport.py        Raw USB read/write (control transfers + bulk I/O)
-  ├─ firmware.py         Firmware upload logic
-  ├─ constants.py        Register addresses, command IDs, magic bytes
-  ├─ mac.py / phy.py     (post-bring-up family) MAC / BB / RF / EFUSE port from kernel C
-  ├─ chan.py / fifo.py   Channel tune, set_channel, FIFO partitioning
-  ├─ rx.py / tx.py       RX descriptor decode + frame iter / TX descriptor build + bulk-OUT
-  ├─ power_seq.py        rtw_pwr_seq_cmd translations + run_pwr_seq runtime
-  ├─ phy_cond.py         rtw_parse_tbl_phy_cond walker (for rtw88-family init tables)
-  └─ assets/ or sequences/
-       init.py / tuning.py   Captured USB register-write sequences (replayed at runtime)
-       *_tbl.py              For rtw88 family: flat-u32 init tables ported 1:1 from kernel C
-       <chip>_fw.bin         Firmware blob (pcap-extracted, byte-verified vs linux-firmware)
+A chip dir (chips/<chipset>/) is typically shaped:
+  driver.py         subclasses the Driver ABC; declares SUPPORTED_IDS + SUPPORTED_CHANNELS
+  transport.py      raw USB read/write (control transfers + bulk I/O)
+  firmware.py       firmware upload
+  constants.py      register addresses, command IDs, magic bytes
+  mac.py / phy.py   MAC / BB / RF / EFUSE port from kernel C
+  chan.py / fifo.py channel tune, set_channel, FIFO partitioning
+  rx.py / tx.py     RX descriptor decode + frame iter / TX descriptor build + bulk-OUT
 ```
 
-Not every chip uses every module — `mac.py`/`phy.py`/`chan.py`/`tx.py` etc. are the rtw88-family split. AR9271 (ath9k_htc) splits across `driver.py` + `hw`/`phy`/`tx`/`rx`/`wmi`/`htc`. MT7921AU has its own `firmware.py` + `sequences/`. Add modules as the chip's protocol needs them.
+Not every chip uses every module; add modules as the chip's protocol needs them.
 
 ### Supported Hardware
 
@@ -124,7 +100,7 @@ See `chips/<chipset>/<CHIP>.md` for per-chipset protocol notes — FW upload pat
 ```
 transport._rx_loop()
   → driver._on_raw_rx()       strips hardware descriptor (RXD/RXWI), extracts RSSI
-  → WlanFrameParser.parse_80211_frame()   returns dict
+  → WlanFrameParser.parse_80211_frame()   returns Packet
   → WlanInterface._on_frame_parsed()      updates AP/Client registry
   → UI ScannerView polls interface.get_access_points() via Textual timer
 ```
