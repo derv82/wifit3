@@ -23,4 +23,7 @@ decision is interface-level state: are we active-monitor-armed for this TA (hard
 just spoofing in monitor (no hardware ACK)? The interface already tracks the forged MAC
 (`forged_macs` / `set_fake_mac`); the driver re-derives a redundant copy. Only one caller ever
 passes a non-default value (`attacks/auth_assoc.py::WlanTransport.send`, `not self.ack`). The state
-belongs at the interface; the driver should obey a bool it's handed.
+belongs at the interface; the driver should obey a bool it is given.
+
+> **Both items above are per-driver (all 22) and coupled. Before touching either, run the full
+> 22-driver understanding pass first — the brief is `planning/ACK-STATE-DEEP-DIVE.md`.**
