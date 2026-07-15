@@ -121,10 +121,7 @@ class RT2500USBDriver(Driver):
         self._ack_detect_on: bool = False
         self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
         self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
-        self._all_acks_seen: int = 0
         self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
-        self._tx_frames: int = 0
-        self._tx_unacked: int = 0
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_callback = cb
@@ -303,7 +300,6 @@ class RT2500USBDriver(Driver):
         # A 10-byte 0xD4 frame is an ACK (the parser drops control frames). mpdu[4:10]
         # is the RA the AP ACKed; keep only ACKs to a MAC we inject as.
         if self._ack_detect_on and len(mpdu) == 10 and mpdu[0] == 0xD4:
-            self._all_acks_seen += 1
             ra = mpdu[4:10]
             if ra in self._our_tx_macs:
                 self._ack_sightings[ra.hex()] = self._ack_sightings.get(ra.hex(), 0) + 1
@@ -325,9 +321,6 @@ class RT2500USBDriver(Driver):
         is RX-side only — it never emits an ACK."""
         self._ack_sightings.clear()
         self._ack_last_ts.clear()
-        self._all_acks_seen = 0
-        self._tx_frames = 0
-        self._tx_unacked = 0
         self._ack_detect_on = True
         logger.info("rt2500usb TX-ACK detection ON — observing our TX delivery")
 
@@ -410,12 +403,10 @@ class RT2500USBDriver(Driver):
             except Exception as e:
                 logger.error("rt2500usb inject_frame failed: %s", e)
                 return False
-            self._tx_frames += 1
             if not ack_gated:
                 return sent > 0             # fire-and-forget (deauth / current behaviour)
             if sent > 0 and await self._await_ack(ta, t0, wait_for_ack):
                 return True                 # landed — the AP ACKed it
-        self._tx_unacked += 1
         return False                        # never ACKed after every send
 
     # ---- teardown -------------------------------------------------------

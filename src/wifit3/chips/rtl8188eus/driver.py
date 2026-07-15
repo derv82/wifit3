@@ -113,10 +113,7 @@ class RTL8188EUSDriver(Driver):
         self._ack_detect_on: bool = False
         self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
         self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
-        self._all_acks_seen: int = 0
         self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
-        self._tx_frames: int = 0
-        self._tx_unacked: int = 0
 
     # ---- Driver Protocol surface ------------------------------------
 
@@ -204,12 +201,10 @@ class RTL8188EUSDriver(Driver):
             except (IOError, usb.core.USBError):
                 logger.exception("inject_frame failed")
                 return False
-            self._tx_frames += 1
             if not ack_gated:
                 return True
             if await self._await_ack(ta, t0, wait_for_ack):
                 return True
-        self._tx_unacked += 1
         return False
 
     async def _await_ack(self, ta: bytes, since: float, window: float) -> bool:
@@ -442,7 +437,6 @@ class RTL8188EUSDriver(Driver):
             # A 10-byte 0xD4 frame is an ACK (the parser drops control frames). RA=mpdu[4:10]
             # is the STA the AP ACKed; keep only ACKs to a MAC we inject as.
             if self._ack_detect_on and len(mpdu) == 10 and mpdu[0] == 0xD4:
-                self._all_acks_seen += 1
                 ra = mpdu[4:10]
                 if ra in self._our_tx_macs:
                     self._ack_sightings[ra.hex()] = self._ack_sightings.get(ra.hex(), 0) + 1
@@ -466,9 +460,6 @@ class RTL8188EUSDriver(Driver):
         await loop.run_in_executor(None, admit_ack_frames, self.transport)
         self._ack_sightings.clear()
         self._ack_last_ts.clear()
-        self._all_acks_seen = 0
-        self._tx_frames = 0
-        self._tx_unacked = 0
         self._ack_detect_on = True
         logger.info("RTL8188EUS TX-ACK detection ON (RXFLTMAP1 bit13) — observing our TX delivery")
 

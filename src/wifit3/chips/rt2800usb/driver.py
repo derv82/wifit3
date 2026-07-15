@@ -170,10 +170,7 @@ class RT2800USBDriver(Driver):
         self._ack_detect_on: bool = False
         self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
         self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
-        self._all_acks_seen: int = 0
         self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
-        self._tx_frames: int = 0
-        self._tx_unacked: int = 0
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_callback = cb
@@ -502,7 +499,6 @@ class RT2800USBDriver(Driver):
         # A 10-byte 0xD4 frame is an ACK (the parser drops control frames). RA=mpdu[4:10]
         # is the STA the AP ACKed; when armed, keep only ACKs to a MAC we inject as.
         if self._ack_detect_on and len(rx.mpdu) == 10 and rx.mpdu[0] == 0xD4:
-            self._all_acks_seen += 1
             ra = bytes(rx.mpdu[4:10])
             if ra in self._our_tx_macs:
                 self._ack_sightings[ra.hex()] = self._ack_sightings.get(ra.hex(), 0) + 1
@@ -719,7 +715,6 @@ class RT2800USBDriver(Driver):
             except usb.core.USBError as e:
                 logger.error("rt2800usb inject_frame USBError: %s", e)
                 return False
-            self._tx_frames += 1
             logger.debug("inject_frame: bulk-OUT accepted %d bytes", sent)
             if logger.isEnabledFor(logging.DEBUG):
                 await loop.run_in_executor(None, self._dump_tx_counters, "post-inject")
@@ -727,7 +722,6 @@ class RT2800USBDriver(Driver):
                 return True                 # fire-and-forget (deauth / WEP / current behaviour)
             if await self._await_ack(ta, t0, wait_for_ack):
                 return True                 # landed — the AP ACKed it
-        self._tx_unacked += 1
         return False                        # never ACKed after every send
 
     async def enable_ack_detect(self) -> None:
@@ -736,9 +730,6 @@ class RT2800USBDriver(Driver):
         flag — no register write. Not enter_active_monitor, which makes the chip emit ACKs."""
         self._ack_sightings.clear()
         self._ack_last_ts.clear()
-        self._all_acks_seen = 0
-        self._tx_frames = 0
-        self._tx_unacked = 0
         self._ack_detect_on = True
         logger.info("rt2800usb TX-ACK detection ON (monitor RX filter already admits ACKs) — "
                     "observing our TX delivery")

@@ -36,7 +36,6 @@ def test_tap_counts_ack_to_our_mac():
     d._ack_detect_on = True
     d._dispatch(_ack_buf(ra))
     assert d.acks_seen(ra) == 1
-    assert d._all_acks_seen == 1
     assert ra in d._ack_last_ts
     assert d._parsed == []          # an ACK is never handed to the frame parser
 
@@ -46,7 +45,6 @@ def test_tap_ignores_ack_to_foreign_mac():
     ra = bytes.fromhex("aabbccddeeff")
     d._ack_detect_on = True
     d._dispatch(_ack_buf(ra))
-    assert d._all_acks_seen == 1    # seen on-channel
     assert d.acks_seen(ra) == 0     # but not one of ours
     assert d._ack_last_ts == {}
 
@@ -56,7 +54,6 @@ def test_tap_off_by_default():
     ra = bytes.fromhex("020000000001")
     d._our_tx_macs.add(ra)
     d._dispatch(_ack_buf(ra))       # _ack_detect_on stays False
-    assert d._all_acks_seen == 0
     assert d.acks_seen(ra) == 0
 
 

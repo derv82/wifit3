@@ -64,10 +64,7 @@ class AR9271V2Driver(Driver):
         self._ack_detect_on: bool = False
         self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
         self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
-        self._all_acks_seen: int = 0
         self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
-        self._tx_frames: int = 0
-        self._tx_unacked: int = 0
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "AR9271V2Driver":
@@ -332,7 +329,6 @@ class AR9271V2Driver(Driver):
             # A 10-byte 0xD4 frame is an ACK (the parser drops control frames). RA=frame[4:10]
             # is the STA the AP ACKed; keep only ACKs to a MAC we inject as.
             if self._ack_detect_on and len(frame) == 10 and frame[0] == 0xD4:
-                self._all_acks_seen += 1
                 ra = frame[4:10]
                 if ra in self._our_tx_macs:
                     self._ack_sightings[ra.hex()] = self._ack_sightings.get(ra.hex(), 0) + 1
@@ -350,9 +346,6 @@ class AR9271V2Driver(Driver):
         no register write needed. Not enter_active_monitor, which makes the chip emit ACKs."""
         self._ack_sightings.clear()
         self._ack_last_ts.clear()
-        self._all_acks_seen = 0
-        self._tx_frames = 0
-        self._tx_unacked = 0
         self._ack_detect_on = True
         logger.info("AR9271 TX-ACK detection ON — observing our TX delivery")
 
@@ -390,12 +383,10 @@ class AR9271V2Driver(Driver):
             # fatal to high-rate WEP replay/chopchop, invisible to low-volume deauth/PMKID/WPS.
             # (The verify gate drives _emit_frame + feeds recorded TXSTATUS directly — untouched.)
             self.tx_slots.clear(cookie)
-            self._tx_frames += 1
             if not ack_gated:
                 return True                 # fire-and-forget (deauth / WEP / current behaviour)
             if await self._await_ack(ta, t0, wait_for_ack):
                 return True                 # landed — the AP ACKed it
-        self._tx_unacked += 1
         return False                        # never ACKed after every send
 
     async def _await_ack(self, ta: bytes, since: float, window: float) -> bool:

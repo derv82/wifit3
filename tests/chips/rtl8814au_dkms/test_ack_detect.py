@@ -33,7 +33,6 @@ def test_tap_counts_ack_to_our_mac():
     d.transport.bulk_in.return_value = _ack_buf(ra)
     assert d._read_once() is None       # the ACK is tapped, never yielded as a parsed frame
     assert d.acks_seen(ra) == 1
-    assert d._all_acks_seen == 1
     assert ra in d._ack_last_ts
 
 
@@ -43,7 +42,6 @@ def test_tap_ignores_ack_to_foreign_mac():
     d._ack_detect_on = True
     d.transport.bulk_in.return_value = _ack_buf(ra)
     assert d._read_once() is None
-    assert d._all_acks_seen == 1        # seen on-channel
     assert d.acks_seen(ra) == 0         # but not one of ours
     assert d._ack_last_ts == {}
 
@@ -54,7 +52,6 @@ def test_tap_off_by_default():
     d._our_tx_macs.add(ra)
     d.transport.bulk_in.return_value = _ack_buf(ra)   # _ack_detect_on stays False
     assert d._read_once() is None       # ACK is a control frame -> the parser drops it anyway
-    assert d._all_acks_seen == 0
     assert d.acks_seen(ra) == 0
 
 
