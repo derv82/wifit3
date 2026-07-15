@@ -75,7 +75,7 @@ A few things hold for every driver:
   messages and the chip doc, never in code.
 - Start the chip's reference doc (CHIP-DOC.md) as you go.
 
-The `WlanDriver` Protocol your `driver.py` must satisfy is in CLAUDE.md → "Adding a New Chipset".
+The `Driver` ABC your `driver.py` must subclass is in CLAUDE.md → "Adding a New Chipset".
 
 ## Step 2 — Port the whole graph; skip nothing by name
 

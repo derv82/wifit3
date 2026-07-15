@@ -1,4 +1,4 @@
-"""RTL8187L driver — glues the bring-up chain onto the WlanDriver Protocol.
+"""RTL8187L driver — glues the bring-up chain onto the Driver Protocol.
 
 Composition only: every step delegates to the layered modules in this
 package (mac.py, rtl8225.py, chan.py, rx.py, tx.py, transport.py).
@@ -24,7 +24,7 @@ Milestone status:
   * M4: set_channel via rtl8225 set_chan + cached RfSetup.            [DONE]
   * M5: inject_frame + tx_hdr + bulk-OUT 0x02.                        [DONE]
   * M6 (current): handshake capture phase + ground-truth doc at
-    chips/rtl8187/RTL8187L.md. WlanDriver protocol surface complete.
+    chips/rtl8187/RTL8187L.md. Driver protocol surface complete.
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ from typing import Callable, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError, BringUpPermissionsError
 
 from wifit3.wlan.packet import WlanFrameParser
@@ -59,7 +59,7 @@ from .tx import inject_frame as _inject_frame
 logger = logging.getLogger(__name__)
 
 
-class RTL8187Driver:
+class RTL8187Driver(Driver):
     """Driver for the Realtek RTL8187L (e.g. ALFA AWUS036H).
 
     2.4 GHz only, hard-MAC chipset (no firmware blob). Bring-up is a
@@ -97,7 +97,7 @@ class RTL8187Driver:
         # frame — see tx.stamp_seq_ctrl. Updated on the event loop only (no lock needed).
         self._tx_seqno: int = 0
 
-        # WlanDriver Protocol surface area.
+        # Driver Protocol surface area.
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
         self.current_channel: int = 1

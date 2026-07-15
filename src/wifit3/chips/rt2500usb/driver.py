@@ -23,7 +23,7 @@ framework layers flattened into wifit3's per-chip module shape):
       └─ _rx_loop              EP 0x81 → RXD-at-end decode → parser      [M3]
 
 Milestone status: M1-M3 hw-verified; M4 (this driver) wires them into the
-WlanDriver Protocol + manager registration. M5 = inject_frame (TX).
+Driver Protocol + manager registration. M5 = inject_frame (TX).
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ from typing import Callable, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -68,7 +68,7 @@ from .tx import inject as _tx_inject
 logger = logging.getLogger(__name__)
 
 
-class RT2500USBDriver:
+class RT2500USBDriver(Driver):
     """Driver for the Ralink RT2570 (rt2500usb family)."""
 
     SUPPORTED_IDS = [
@@ -101,7 +101,7 @@ class RT2500USBDriver:
         self._ant_rx: int = 0
         self._rssi_offset: int = DEFAULT_RSSI_OFFSET
 
-        # WlanDriver Protocol surface area.
+        # Driver Protocol surface area.
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
         self.current_channel: int = 1

@@ -14,14 +14,14 @@ from .firmware import MT7921AUFirmwareLoader
 # but ruff can't see them statically, so suppress the import-* lints file-wide.
 # ruff: noqa: F403, F405
 from .constants import *
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
 logger = logging.getLogger(__name__)
 
 
-class MT7921AUDriver:
+class MT7921AUDriver(Driver):
     """Userspace driver for the MediaTek MT7921AU (Wi-Fi 6).
 
     Bring-up state (see chips/mt7921au/MT7921AU.md): firmware boot (firmware.py),
@@ -68,11 +68,10 @@ class MT7921AUDriver:
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._init_state: Optional[chip_init.InitState] = None
         self._channel = self.SUPPORTED_CHANNELS[0]
-        # WlanDriver protocol runtime state. is_warm reflects the bring-up path taken
-        # by connect(): True when we light-reattached to already-running firmware
-        # (_warm_reattach), False on a cold boot. mac_address is parsed from the
-        # GET_NIC_CAPAB reply during cold boot (MT_NIC_CAP_MAC_ADDR TLV); it stays None
-        # on a warm reattach, which skips post-boot init.
+        # is_warm reflects the bring-up path taken by connect(): True when we light-reattached
+        # to already-running firmware (_warm_reattach), False on a cold boot. mac_address is
+        # parsed from the GET_NIC_CAPAB reply during cold boot (MT_NIC_CAP_MAC_ADDR TLV); it
+        # stays None on a warm reattach, which skips post-boot init.
         self.is_warm: bool = False
         self.mac_address: Optional[str] = None
         self._nic_has_6ghz: int = 0

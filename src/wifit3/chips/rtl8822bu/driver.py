@@ -1,4 +1,4 @@
-"""RTL8822BU driver — full WlanDriver Protocol implementation.
+"""RTL8822BU driver — full Driver Protocol implementation.
 
 Bring-up flow (mirrors `mac.c:rtw_mac_power_on` + `mac.c:__rtw_download_firmware`):
 
@@ -20,7 +20,7 @@ from typing import Callable, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -65,7 +65,7 @@ from .tx import (
 logger = logging.getLogger(__name__)
 
 
-class RTL8822BUDriver:
+class RTL8822BUDriver(Driver):
     """Driver for Realtek RTL8822BU (TP-Link T3U, ASUS USB-AC55, Edimax, ...)."""
 
     SUPPORTED_IDS = [

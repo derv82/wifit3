@@ -45,7 +45,7 @@ from wifit3.chips.mt76x0u.constants import (
     USB_IDS_MT76X0U,
 )
 from wifit3.chips.mt76x0u.driver import MT76x0UDriver
-from wifit3.engine.protocols import DeviceID
+from wifit3.chips.driver import DeviceID
 
 
 def setup_logging(debug: bool) -> None:

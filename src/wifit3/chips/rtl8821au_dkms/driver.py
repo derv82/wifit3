@@ -27,7 +27,7 @@ from typing import Callable, ClassVar, List, Optional
 
 import usb.core
 
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -54,7 +54,7 @@ def _load_firmware() -> bytes:
     return (resources.files(__package__) / "assets" / _FW_ASSET).read_bytes()
 
 
-class Rtl8821auDkmsDriver:
+class Rtl8821auDkmsDriver(Driver):
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
         DeviceID(USB_VID_REALTEK, USB_PID_AWUS036ACS,
                  "Realtek RTL8821AU/RTL8811AU (ALFA AWUS036ACS)"),

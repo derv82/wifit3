@@ -27,7 +27,7 @@ from typing import Callable, ClassVar, List, Optional
 
 import usb.core
 
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -76,7 +76,7 @@ def _detect_super_speed(transport: Rtl8814auTransport) -> bool:
     return speed is not None and speed >= 4
 
 
-class Rtl8814auDkmsDriver:
+class Rtl8814auDkmsDriver(Driver):
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
         DeviceID(VID_REALTEK, PID_RTL8814AU,
                  "Realtek RTL8814AU (DKMS) (ALFA AWUS1900)"),

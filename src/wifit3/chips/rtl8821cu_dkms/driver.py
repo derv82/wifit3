@@ -28,7 +28,7 @@ import usb.core
 import usb.util
 
 from wifit3.chips.rx_reader import RxReaderThread
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -69,7 +69,7 @@ _REF_RFE_TYPE = 0x22            # rfe_type_expand (raw 0xCA): BTG, 1-Ant@main, c
 _REF_CUT = 4                    # hal chip_ver / dm cut_version
 
 
-class Rtl8821cuDkmsDriver:
+class Rtl8821cuDkmsDriver(Driver):
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
         DeviceID(USB_VID_REALTEK, USB_PID_8821CU, "Realtek RTL8821CU (DKMS)"),
     ]

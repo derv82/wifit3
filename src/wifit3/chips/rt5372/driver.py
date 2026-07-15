@@ -25,7 +25,7 @@ from typing import Callable, ClassVar, List, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -41,7 +41,7 @@ _PID_RT5372 = 0x5372
 _SCAN_START_CHANNEL = 1            # first channel tuned at connect
 
 
-class RT5372Driver:
+class RT5372Driver(Driver):
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
         DeviceID(_VID_RALINK, _PID_RT5372, "Ralink RT5372/RT5392 (Panda PAU05+06)"),
     ]

@@ -1,6 +1,6 @@
 """Hardware-free regression for the RTL8188EUS (DKMS) driver orchestration.
 
-Covers the WlanDriver surface that does not need live USB: the device IDs / channel set,
+Covers the Driver surface that does not need live USB: the device IDs / channel set,
 the stateful RfRegChnlVal threading through set_channel, the RX dispatch, the (not-yet-wired)
 inject_frame, and the manager registration + env-var ordering. asyncio_mode=auto runs the
 async tests without a decorator.

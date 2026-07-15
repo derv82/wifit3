@@ -29,7 +29,7 @@ from typing import Callable, ClassVar, List, Optional
 
 import usb.core
 
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -52,7 +52,7 @@ def _load_firmware() -> bytes:
     return (resources.files(__package__) / "assets" / _FW_ASSET).read_bytes()
 
 
-class Rtl8188eusDkmsDriver:
+class Rtl8188eusDkmsDriver(Driver):
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
         DeviceID(VID, PID,
                  "Realtek RTL8188EUS (DKMS) (TL-WN722N v2/v3)"),

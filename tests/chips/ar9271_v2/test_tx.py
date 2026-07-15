@@ -83,7 +83,7 @@ def test_inject_frame_routes_and_allocates_cookies():
 
 
 async def test_inject_frame_async_returns_bool():
-    # The WlanDriver contract the UI awaits: async, returns True, and actually sends the frame
+    # The Driver contract the UI awaits: async, returns True, and actually sends the frame
     # (regression guard for the "object int can't be used in 'await' expression" crash).
     sent: list[bytes] = []
     drv = _replay_driver(sent)

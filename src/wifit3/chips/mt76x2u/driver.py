@@ -1,4 +1,4 @@
-"""MT76x2U / MT7612U driver — WlanDriver Protocol implementation (M0 scaffold).
+"""MT76x2U / MT7612U driver — Driver Protocol implementation (M0 scaffold).
 
 SPDX-License-Identifier: GPL-2.0-or-later
 Ported from Linux mt76 (kernel v6.18) by wifit3, 2026.
@@ -18,7 +18,7 @@ from typing import Callable, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -83,7 +83,7 @@ from .wcid import wcid_table_clear
 logger = logging.getLogger(__name__)
 
 
-class MT76x2UDriver:
+class MT76x2UDriver(Driver):
     """Driver for MT7612U-family USB cards (Alfa AWUS036ACM, ASUS USB-AC54, ...).
 
     M0 only does enough to confirm we can talk to the chip; M1 picks up at

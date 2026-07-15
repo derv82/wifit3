@@ -14,8 +14,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Register READs can mutate device state — never assume two reads commute, never reorder them vs the capture.** Read-to-clear status regs, latch-on-read pairs, FIFO pops, indirect-access auto-advance: `READ X; READ Y` ≠ `READ Y; READ X` on silicon, and out-of-order reads strand the card in a state the capture never visited. So the verify tool's strict-positional cursor (reads included) is a *correctness* gate, not pedantry — a reordered-read divergence is a real driver bug to fix, never a tolerance to add.
 - **Per-chipset port-reference docs**: each chip dir has a `<CHIP>.md` — a short README for the chip (status, gotchas, orientation, scripts, dated debug log). Keep it to what isn't already in the code. Template + rules in `docs/porting/CHIP-DOC.md`.
 - **Human-facing docs are the face of the project.** `README.md` + `VERIFICATION.md`: edit only when the user asks (then just do it — terse, observational, no port-accuracy braggadocio; that belongs in `<CHIP>.md` + commits). Prefer prose direction over multiple-choice for these.
-- **Drivers are deliberately anti-DRY — don't assume a shared family base.** Some families share infra (`chips/rtw88_base/`, `chips/rtl88xxau_base/`), but many are separate per-chip implementations with their *own* transports (`rt2800usb` uses `read32/write32`; `rt3070`/`rt5372` use `register_read/register_write`), and a chip's mainline vs `_dkms` variant are independent. *Why:* a shared core meant a fix for one card forced re-testing every card and risked regressing the others. *So:* porting a cross-cutting change (a new capability, a core fix) is a **separate port into each driver's own structure** — the mechanism (registers) transfers, the code does not. Check the actual imports before assuming a sibling inherits anything.
-- **Lead's rule**: discuss class design (`GenericDriver` vs `WlanInterface` responsibilities, etc.) BEFORE execution. Treat the user as Senior Lead.
+- **Within `chips/`, driver *implementation* is deliberately anti-DRY: don't assume a shared family base.** Some families share infra (`chips/rtw88_base/`, `chips/rtl88xxau_base/`), but many are separate per-chip implementations with their *own* transports (`rt2800usb` uses `read32/write32`; `rt3070`/`rt5372` use `register_read/register_write`), and a chip's mainline vs `_dkms` variant are independent. *Why:* a shared core meant a fix for one card forced re-testing every card and risked regressing the others. *So:* porting a cross-cutting change (a new capability, a core fix) is a **separate port into each driver's own structure** — the mechanism (registers) transfers, the code does not. Check the actual imports before assuming a sibling inherits anything. **Scope (read before citing this):** it governs per-chip *implementation/behavior inside `chips/`* and the hardware-retest cost of sharing it. It does NOT govern class or interface design, and it does NOT apply to the driver *contract*. The driver interface is the opposite: a single base `Driver` (ABC) that every `chips/*/driver.py` inherits is **required**. A shared *shape* carries no behavior, so it has zero hardware-retest cost and never falls under this rule.
+- **Lead's rule**: discuss class design (`Driver` vs `WlanInterface` responsibilities, etc.) BEFORE execution. Treat the user as Senior Lead.
 - **Never write to auto-memory without asking.** Before saving or updating any file under the auto-memory dir (`MEMORY.md` + its entries), show the user the proposed entry and wait for explicit approval. This overrides the default proactive-save behavior — the user owns what goes into always-loaded context.
 - **Planning docs** (NOT auto-loaded — open as needed): `planning/RELEASE-PLAN.md` (road to release + logistics + code-quality/de-vibe), `planning/FEATURES.md` (capabilities to build), `planning/BUGS.md` (defects + QoL to fix). Current per-card state: `VERIFICATION.md` (grading process: `docs/verification-methodology.md`). Porting playbook: `docs/porting/` (or `/port <chip>`).
 
@@ -66,9 +66,9 @@ wlan/
 
 engine/
   ├─ models.py           Pydantic: AccessPoint, Client, Handshake
-  ├─ protocols.py        WlanDriver structural Protocol (typing contract for drivers)
   └─ attacks/            Attack implementations (SAE probe, etc.)
 
+chips/driver.py            The `Driver` ABC every chips/*/driver.py subclasses; + DeviceID / FakeMacSupport
 chips/rtw88_base/          Shared rtw88-family infrastructure (used by 8821au, 8822bu, ...)
   ├─ transport.py        Generic vendor-control xfer (bRequest=0x05) for all rtw88 USB chips
   ├─ phy_cond.py         rtw_parse_tbl_phy_cond walker (handles both 8812a/8821a bitfield-rfe and 8822b/c scalar-rfe)
@@ -79,7 +79,7 @@ chips/rtw88_base/          Shared rtw88-family infrastructure (used by 8821au, 8
   └─ rx_common.py        24-byte rx_pkt_desc decoder + bulk-IN endpoint probe + frame iterator
 
 chips/<chipset>/
-  ├─ driver.py           Implements WlanDriver Protocol; declares SUPPORTED_IDS + SUPPORTED_CHANNELS
+  ├─ driver.py           Subclasses the `Driver` ABC (chips/driver.py); declares SUPPORTED_IDS + SUPPORTED_CHANNELS
   ├─ transport.py        Raw USB read/write (control transfers + bulk I/O)
   ├─ firmware.py         Firmware upload logic
   ├─ constants.py        Register addresses, command IDs, magic bytes
@@ -105,7 +105,7 @@ See `README.md` for the user-facing supported-cards table, and `VERIFICATION.md`
 The manager is a generic VID:PID discovery loop — each driver declares its own hardware. To register a new chip:
 
 1. Create `src/wifit3/chips/<name>/` with at minimum `driver.py`, `transport.py`, `constants.py` (+ `firmware.py` if the chip needs a FW upload).
-2. `driver.py` must satisfy the `WlanDriver` Protocol (`wifit3.engine.protocols`). Concretely:
+2. `driver.py` must subclass the `Driver` ABC (`wifit3.chips.driver`); Python enforces the surface at instantiation. Concretely:
    - Class attr `SUPPORTED_IDS: list[DeviceID]` — every VID:PID this driver claims, with a human-readable description and any chip-id discriminator in `extras={}`.
    - Class attr `SUPPORTED_CHANNELS: list[int]` — every channel the driver can tune to (consumed by `WlanInterface.start_hopping`).
    - Classmethod `from_usb_device(cls, dev, id_entry) -> Driver` — driver-side construction (transport wrapping, chip_id reads from `extras`, etc.). Keeps the manager free of chip-specific switches.

@@ -17,7 +17,7 @@ import libusb_package
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, WlanDriver
+from wifit3.chips.driver import DeviceID, Driver
 from wifit3.errors import WifiteFatalError
 
 from .interface import WlanInterface
@@ -31,10 +31,10 @@ ENV_RTL8812_DRIVER = "WIFIT3_RTL8812"
 ENV_RTL8188_DRIVER = "WIFIT3_RTL8188"
 ENV_RTL8822_DRIVER = "WIFIT3_RTL8822"
 
-_DRIVER_CLASSES: Dict[str, Type[WlanDriver]] | None = None
+_DRIVER_CLASSES: Dict[str, Type[Driver]] | None = None
 
 
-def _import_driver_classes() -> Dict[str, Type[WlanDriver]]:
+def _import_driver_classes() -> Dict[str, Type[Driver]]:
     """Import every driver class once (deferred to sidestep the import cycle)."""
     global _DRIVER_CLASSES
     if _DRIVER_CLASSES is None:
@@ -93,7 +93,7 @@ def env_or_none(key, value, driver):
     return None
 
 
-def _match_driver(dev: usb.core.Device) -> Optional[tuple[Type[WlanDriver], DeviceID]]:
+def _match_driver(dev: usb.core.Device) -> Optional[tuple[Type[Driver], DeviceID]]:
     """Find the first registered driver that claims `dev`."""
     for driver_cls in _import_driver_classes().values():
         for entry in driver_cls.SUPPORTED_IDS:

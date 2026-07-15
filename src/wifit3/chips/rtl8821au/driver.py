@@ -1,4 +1,4 @@
-"""RTL8821AU driver — glues the bring-up chain onto the WlanDriver Protocol.
+"""RTL8821AU driver — glues the bring-up chain onto the Driver Protocol.
 
 Composition only: every step delegates to the layered modules in this
 package (mac.py, firmware.py, phy.py, chan.py, rx.py, transport.py).
@@ -28,7 +28,7 @@ from typing import Callable, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -73,7 +73,7 @@ from .tx import (
 logger = logging.getLogger(__name__)
 
 
-class RTL8821AUDriver:
+class RTL8821AUDriver(Driver):
     """Driver for the Realtek RTL8821AU (e.g. ALFA AWUS036ACS).
 
     Single-chain RX (synchronous bulk reads polled in a worker thread).
@@ -112,7 +112,7 @@ class RTL8821AUDriver:
         self._tx_frames: int = 0
         self._tx_unacked: int = 0
 
-        # WlanDriver Protocol surface area.
+        # Driver Protocol surface area.
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
         self.current_channel: int = 1

@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from wifit3.chips.mt76x2u.driver import MT76x2UDriver
-from wifit3.engine.protocols import DeviceID
+from wifit3.chips.driver import DeviceID
 
 
 def _make_driver_with_mock_transport(monkeypatch):

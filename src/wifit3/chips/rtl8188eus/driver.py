@@ -37,7 +37,7 @@ from typing import Callable, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -79,7 +79,7 @@ from .tx import pick_bulk_out_mgmt, send_mgmt_frame
 logger = logging.getLogger(__name__)
 
 
-class RTL8188EUSDriver:
+class RTL8188EUSDriver(Driver):
     """Driver for the Realtek RTL8188EUS (e.g. TP-Link TL-WN722N v2/v3)."""
 
     SUPPORTED_IDS = [
@@ -118,7 +118,7 @@ class RTL8188EUSDriver:
         self._tx_frames: int = 0
         self._tx_unacked: int = 0
 
-    # ---- WlanDriver Protocol surface ------------------------------------
+    # ---- Driver Protocol surface ------------------------------------
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_callback = cb

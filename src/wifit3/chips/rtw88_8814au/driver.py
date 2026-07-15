@@ -1,4 +1,4 @@
-"""RTL8814AU driver (Alfa AWUS1900) — WlanDriver Protocol implementation.
+"""RTL8814AU driver (Alfa AWUS1900) — Driver Protocol implementation.
 
 Bring-up: `connect()` runs M1 power-on + iDDMA FW upload (cold only) -> M2
 TRX/FIFO/LLT -> M4 EFUSE -> M3 PHY/RF (BB/AGC/RF x4) + channel tune, with an
@@ -23,7 +23,7 @@ from typing import Callable, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 _BAND_RELOCK_ATTEMPTS = 4
 
 
-class RTL8814AUDriver:
+class RTL8814AUDriver(Driver):
     """Driver for Realtek RTL8814AU (Alfa AWUS1900, 4T4R). M1: FW upload only."""
 
     SUPPORTED_IDS = [

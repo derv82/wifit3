@@ -24,7 +24,7 @@ import usb.core
 import usb.util
 
 from wifit3.chips.rx_reader import RxReaderThread
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 _RX_BUF_SIZE = 16384          # [SRC] hif_usb.h:60 MAX_RX_BUF_SIZE — one bulk-IN read
 
 
-class AR9271V2Driver:
+class AR9271V2Driver(Driver):
     """Atheros AR9271 / ALFA AWUS036NHA — 2.4 GHz, soft-MAC, ath9k_htc firmware."""
 
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
@@ -367,7 +367,7 @@ class AR9271V2Driver:
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True,
                            wait_for_ack: float = 0.0, max_resends: int = 0) -> bool:
         """Transmit one 802.11 frame (deauth / PMKID auth+assoc / aireplay-ng ``--test``). The
-        WlanDriver contract is async + returns bool; the blocking bulk-OUT is offloaded so a TX
+        Driver contract is async + returns bool; the blocking bulk-OUT is offloaded so a TX
         burst doesn't stall the event loop (RX runs off-loop on its own thread). ``use_no_ack`` is
         accepted for the contract — AR9271 injected monitor frames already carry no QoS / no-ACK.
 

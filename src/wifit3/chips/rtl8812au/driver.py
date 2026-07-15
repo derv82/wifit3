@@ -45,7 +45,7 @@ from typing import Callable, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -117,7 +117,7 @@ _RX_READ_TIMEOUT_MS = 30
 _RX_SILENCE_WARN_AFTER = 300
 
 
-class RTL8812AUDriver:
+class RTL8812AUDriver(Driver):
     """Driver for the Realtek RTL8812AU (e.g. ALFA AWUS036ACH).
 
     M3-b status: cold-boot + FW upload + MAC + PHY init + channel 1 tune +
@@ -168,7 +168,7 @@ class RTL8812AUDriver:
         self._tx_frames: int = 0
         self._tx_unacked: int = 0
 
-        # WlanDriver Protocol surface area.
+        # Driver Protocol surface area.
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
         self.current_channel: int = 1

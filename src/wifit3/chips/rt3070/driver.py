@@ -23,7 +23,7 @@ from typing import Callable, ClassVar, List, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -39,7 +39,7 @@ _PID_RT3070 = 0x3070
 _SCAN_START_CHANNEL = 1            # first channel tuned at connect
 
 
-class RT3070Driver:
+class RT3070Driver(Driver):
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
         DeviceID(_VID_RALINK, _PID_RT3070, "Ralink RT3070 (ALFA AWUS036NH)"),
     ]

@@ -24,7 +24,7 @@ from typing import Callable, ClassVar, List, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -84,7 +84,7 @@ def _rx_state_line(t) -> str:
     )
 
 
-class Rtl8822buDkmsDriver:
+class Rtl8822buDkmsDriver(Driver):
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
         DeviceID(USB_VID_REALTEK, USB_PID_T3U_PLUS,
                  "Realtek RTL8822BU (DKMS) (TP-Link Archer T3U+)"),

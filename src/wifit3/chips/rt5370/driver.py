@@ -26,7 +26,7 @@ from typing import Callable, ClassVar, List, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -44,7 +44,7 @@ _AGC_INTERVAL_S = 1.0            # link-tuner cadence (kernel rt2x00link runs ~1
 _RSSI_EWMA_N = 8                 # EWMA window: ewma = (ewma*(N-1) + rssi)/N
 
 
-class RT5370Driver:
+class RT5370Driver(Driver):
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
         DeviceID(_VID_RALINK, _PID_RT5370, "Ralink RT5370 (RT5390)"),
     ]

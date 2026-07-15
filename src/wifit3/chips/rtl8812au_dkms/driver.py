@@ -32,7 +32,7 @@ from typing import Callable, ClassVar, List, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 from wifit3.wlan.packet import WlanFrameParser
 
@@ -54,7 +54,7 @@ CHANNELS_5G = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124
                128, 132, 136, 140, 144, 149, 153, 157, 161, 165]
 
 
-class Rtl8812auDkmsDriver:
+class Rtl8812auDkmsDriver(Driver):
     SUPPORTED_IDS: ClassVar[List[DeviceID]] = [
         DeviceID(USB_VID_REALTEK, USB_PID_AWUS036ACH,
                  "Realtek RTL8812AU (DKMS) (ALFA AWUS036ACH)"),

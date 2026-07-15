@@ -9,7 +9,7 @@ Known bugs + QoL nits live in `BUGS.md`.
 ### Multi-card support (Minnie Drivers v2)
 
 Run 2+ USB cards in one session — pool RX, split TX. Possible because drivers are generic
-(`WlanDriver`, no global state); the work is making the layer *above* them multi-instance.
+(no global state); the work is making the layer *above* them multi-instance.
 Capabilities: pooled RX (~2× beacons/EAPOL, union AP list), hot-plug add/remove mid-session,
 split the channel set across cards, dedicate one card to TX so a deauth can't deafen our own
 RX, one-card-per-target. **Complexity: big refactor** — `WlanInterface` goes per-card and a

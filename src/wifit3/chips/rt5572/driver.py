@@ -16,7 +16,7 @@ from typing import Callable, Optional
 import usb.core
 import usb.util
 
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 
 from .constants import (
@@ -50,7 +50,7 @@ from .tx import inject_frame as _inject_frame, txwi_size_for_silicon
 logger = logging.getLogger(__name__)
 
 
-class RT5572Driver:
+class RT5572Driver(Driver):
     """Driver for the Panda PAU09 N600 (silicon RT5592 / RF5592), 2.4 + 5 GHz 2T2R."""
 
     SUPPORTED_IDS = [
@@ -92,7 +92,7 @@ class RT5572Driver:
         # TX_BAND_CFG, RFCSR1/12/13 — these don't change frame-to-frame.
         self._first_inject_dumped: bool = False
 
-        # WlanDriver Protocol surface area.
+        # Driver Protocol surface area.
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
         self.current_channel: int = 1

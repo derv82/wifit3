@@ -1,4 +1,4 @@
-"""MT76x0U / MT7610U driver — WlanDriver Protocol implementation (M1).
+"""MT76x0U / MT7610U driver — Driver Protocol implementation (M1).
 
 Ported from Linux mt76 (kernel v6.18) for wifit3, 2026.
 
@@ -19,7 +19,7 @@ from typing import Callable, Optional
 
 import usb.core
 
-from wifit3.engine.protocols import DeviceID, FakeMacSupport, ProgressCallback
+from wifit3.chips.driver import DeviceID, Driver, FakeMacSupport, ProgressCallback
 from wifit3.errors import BringUpError
 
 from .constants import (
@@ -57,7 +57,7 @@ FW_FILE_PRIMARY = ASSETS_DIR / "mt7610e_linux-firmware.bin"
 FW_FILE_FALLBACK = ASSETS_DIR / "mt7610u_linux-firmware.bin"
 
 
-class MT76x0UDriver:
+class MT76x0UDriver(Driver):
     """Driver for MT7610U-family USB cards (e.g. Alfa AWUS036ACHM). WIRE-verified on 0e8d:7610."""
 
     SUPPORTED_IDS = [

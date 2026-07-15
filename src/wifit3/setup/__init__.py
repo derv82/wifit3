@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from wifit3.engine.protocols import DeviceID
+from wifit3.chips.driver import DeviceID
 
 
 @dataclass(frozen=True)
