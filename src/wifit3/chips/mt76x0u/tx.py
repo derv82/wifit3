@@ -199,6 +199,27 @@ def inject_80211_frame(
     return len(pkt)
 
 
+def stamp_seq_ctrl(frame: bytearray, seqno: int) -> int:
+    """Stamp an incrementing 802.11 sequence number into seq_ctrl (bytes 22-23),
+    preserving the fragment number (low 4 bits); return the advanced seqno.
+
+    build_txwi never sets NSEQ, so the mt76x02 chip transmits the seq_ctrl already in the
+    MPDU. build_deauth_frame leaves it 0, so without this every inject shares seq 0: an AP
+    dedups a multi-frame conversation as retransmissions, and a retransmit histogram folds
+    a whole run into one bucket (bench-confirmed 2026-07-16 on the MT7610U). The number
+    lives in bits [4:15], so one step is 0x10; a fragment burst (frag>0) reuses one number.
+    """
+    if len(frame) < 24:               # control frames carry no seq_ctrl
+        return seqno
+    frag = frame[22] & 0x0F
+    if frag == 0:
+        seqno = (seqno + 0x10) & 0xFFF0
+    sctl = seqno | frag
+    frame[22] = sctl & 0xFF           # seq_ctrl is __le16
+    frame[23] = (sctl >> 8) & 0xFF
+    return seqno
+
+
 # ---------------------------------------------------------------------------
 # Frame builders for common attacks. Kept here (vs in attacks/) so the TX
 # path's reference frames are colocated with the codec.
