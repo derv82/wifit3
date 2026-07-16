@@ -45,9 +45,11 @@ class MT7921AUDriver(Driver):
         100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144,
         149, 153, 157, 161, 165,
     ]
-    # Auto-ACK doesn't appear to work: one WPS PBC exchange logs ~120 EAPOL (vs ~15-25 when
-    # it works), and mt7921u is reported to lack active monitor (openwrt/mt76#839, USB-WiFi#107).
-    FAKE_MAC = FakeMacSupport.UNIMPLEMENTED
+    # Bench (rx_autoack, 2026-07-16): auto-ACKs a spoofed MAC via active monitor on both
+    # bands (2G 102/100, 5G 100/100); does NOT ACK its own silicon MAC. Behaves SPOOFABLE.
+    # (An earlier read of ~120 EAPOL per WPS PBC and openwrt/mt76#839 suggested otherwise;
+    # the direct auto-ACK bench overrides it.)
+    FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     # Device setup installs the udev rule + modprobe blocklist, but neither applies until the next
     # device-add — until then the kernel's mt7921u still owns the interface and our claim/control
