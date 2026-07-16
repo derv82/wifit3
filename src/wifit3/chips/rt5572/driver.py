@@ -114,6 +114,7 @@ class RT5572Driver(Driver):
         self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
         self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
         self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
+        self._tx_seq: int = 0            # running 802.11 seq stamped into injected frames
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_callback = cb
@@ -470,6 +471,20 @@ class RT5572Driver(Driver):
         return True
 
     # ---- TX inject (M5) -------------------------------------------------
+    def _stamp_seq(self, frame: bytes) -> bytes:
+        """Stamp the next running sequence number into the frame's seqctl (bytes 22-23,
+        ``seqnum << 4`` little-endian). The TXWI sets NSEQ=0, so the chip transmits the
+        frame's own seqctl; without this every inject shares seq=0 and a receiver's
+        duplicate filter (or a retransmit histogram) folds them into one. Returns a copy;
+        the caller's bytes are untouched."""
+        if len(frame) < 24:
+            return frame
+        seq = self._tx_seq & 0xFFF
+        self._tx_seq = (self._tx_seq + 1) & 0xFFF
+        buf = bytearray(frame)
+        buf[22:24] = ((seq << 4) & 0xFFFF).to_bytes(2, "little")
+        return bytes(buf)
+
     async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True,
                            wait_for_ack: float = 0.0, max_resends: int = 0) -> bool:
         """Transmit one 802.11 frame on the MGMT bulk-OUT pipe.
@@ -484,6 +499,7 @@ class RT5572Driver(Driver):
         # 5 GHz has no CCK modulation, so a CCK-tagged frame is armed but never
         # emitted; 5 GHz TX must be OFDM (MCS 0 = 6 Mbps OFDM).
         phymode = TXWI_PHYMODE_OFDM if self.current_channel > 14 else TXWI_PHYMODE_CCK
+        frame_bytes = self._stamp_seq(frame_bytes)   # stamp once (a resend re-sends the identical frame)
         ta = bytes(frame_bytes[10:16]) if len(frame_bytes) >= 16 else None  # AP ACKs back to this
         if self._ack_detect_on and ta is not None:
             self._our_tx_macs.add(ta)
