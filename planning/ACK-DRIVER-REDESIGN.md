@@ -99,78 +99,23 @@ chip emit ACKs for a forged MAC.
 
 ---
 
-## ACK feature model (working definitions — NOT authoritative, verify on hardware)
+## ACK feature model (proposed glossary)
 
-Three separate features that `use_no_ack` / `ack_detect` have been conflating. Names are proposed.
-Grounded in our own code where cited; every "why the silicon does X" claim is unverified.
+Four features that `use_no_ack` / `ack_detect` had been conflating. Names are proposals for the
+redesign; the hardware behaviour is measured in the two tables below.
 
-### A — RX ACK Admission  (proposed `enable_rx_acks` / `disable_rx_acks`; today `enable_ack_detect`)
-- Configures the RX/MAC filter so ACK control frames (FC=0xD4) reach our RX feed. Receive-side
-  only, changes no TX behavior. `record_ack` needs it ON to see any ACK.
-- Mechanism split (per ACK-STATE-FINDINGS axis B): 10 drivers flip a register (Realtek RXFLTMAP1
-  b13 / MediaTek MT_RX_FILTR_CFG b10 / mt7921au FW MCU); 12 rely on the monitor filter already
-  admitting ACKs (SW flag).
-
-### B — HW ACK-Retry  (the `use_no_ack` descriptor knob)
-- A TX-descriptor setting: expect the recipient's ACK, retransmit up to N times if absent.
-  Fire-and-forget, no landing report reaches software.
-- 8821cu: inject builds the txdesc with `retry_ctrl = not use_no_ack` → `RTS_DATA_RTY_LMT` = 6 or 0
-  (`driver.py:335-336`, `tx.py:92`). Its txdesc `mac_id` defaults to `RTW_DEFAULT_MGMT_MACID = 1`
-  (`tx.py:24,50,75`).
-- Split (FINDINGS axis A): 9 wire an ACK bit, 2 wire a retry limit (8821cu, 8187), 11 ignore it.
-
-### C — SW ACK-Detection  (`record_ack` + `inject_frame(wait_for_ack)`)
-- Software sets `_tx_mac_address` = injected Addr2, sends once, watches RX for an ACK whose RA ==
-  that Addr2, resends up to `max_resends`, returns whether it landed (`_tx_ack_seen`).
-- Works under spoofing (matches the Addr2 we control). Gives a landing signal. Requires A.
-
-### Adjacent: Active Monitor  (`enter_active_monitor`)
-- 8821cu: writes the (spoofed) MAC into `REG_MACID` (0x0610), the port-0 MAC register
-  (`driver.py:367` → `mac.py:291`). Makes the card HW-ACK frames sent TO that MAC.
-
-### Bench A/B run, 2026-07-15 (a script run + my reading of it — NOT proof, NOT authoritative)
-
-What ran: `scripts/ack_lab/ack_lab.py`. One card injects a client->AP deauth carrying a FIXED fake
-Addr2 (02:11:22:33:44:55) at a target; the other card, in monitor, counts on-air copies per HW
-sequence number. Exact commands (8821cu injecting, 8812au sniffing; `--inject-card 8812au` swaps the
-roles and uses HW-default retry; `<real-AP>` = a BSSID passed at runtime, not stored here):
-
-    ack_lab.py --target <real-AP>          --channel 1   --retry 15 --active-monitor 0 --count 300
-    ack_lab.py --target 12:34:56:78:9a:bc  --channel 1   --retry 15 --active-monitor 0 --count 300
-    ack_lab.py --target <real-AP>          --channel 149 --retry 15 --active-monitor 0 --count 150
-    ack_lab.py --target 12:34:56:78:9a:bc  --channel 149 --retry 15 --active-monitor 0 --count 150
-
-What was OBSERVED — average on-air copies per injected frame (n = 100-300 per cell):
-
-| injector            | band | real AP | unreachable addr |
-|---------------------|------|---------|------------------|
-| 8821cu (retry=15)   | 2.4G | 1.77    | 14.45 |
-| 8821cu (retry=15)   | 5G   | 1.23    | 15.82 |
-| 8812au (HW default) | 2.4G | 1.19    | 39.39 |
-| 8812au (HW default) | 5G   | 1.01    | 32.92 |
-
-Also observed: `--retry 0` on the 8821cu gave a flat 1.00; active-monitor ON vs OFF made no measurable
-difference on the same cell (1.72 vs 1.76). The 8812au retransmitted to ~48 against the unreachable
-address (its HW-default limit).
-
-What this is CONSISTENT WITH (my interpretation, not established): the card retransmits an injected
-frame until the destination ACKs, capped at the retry limit, and does so for a fake source MAC with
-active monitor off. Real AP -> few copies; unreachable address -> many.
-
-Holes that keep this from being proof:
-- **The sniffer never captured a single ACK (AP_acks=0 in every run).** The "AP ACKs -> HW stops" step
-  is inferred from the copy count dropping, not observed. Some other difference between a present AP
-  and an absent address could suppress retransmits.
-- One fake MAC, one unreachable address, one frame type (deauth), one sniffer with real capture loss
-  (real-AP seqs_seen < count). No randomization, no repeats across time/position.
-- Two Realtek cards only.
-
-Toward proof: capture the AP's ACK and tie each low-copy frame to a seen ACK; vary the fake MAC and the
-unreachable target; a non-Realtek card; repeat runs. Until then this is suggestive, not a conclusion.
-
-(One observation worth keeping regardless: the 8812au — labelled "A3 / use_no_ack IGNORED, no retry
-field" in FINDINGS — still retransmitted ~48x to the unreachable address, so "IGNORED" is not "no
-retry"; its HW retry is on by default. That label is misleading whatever we decide about B.)
+- **A. RX ACK Admission** (`enable_rx_acks` / `disable_rx_acks`; today `enable_ack_detect`): the RX/MAC
+  filter setting that lets ACK frames (FC=0xD4) reach our RX feed. Receive-side only; `record_ack` needs
+  it on. Register-driven cards flip a bit (Realtek RXFLTMAP1 / MediaTek MT_RX_FILTR_CFG); monitor-mode
+  cards already admit ACKs.
+- **B. HW ACK-Retry** (the `use_no_ack` descriptor knob): a TX-descriptor setting to expect the
+  recipient's ACK and retransmit up to N times if absent. Fire-and-forget, no landing report to
+  software. Measured in "HW ACK-Based Retries" below.
+- **C. SW ACK-Detection** (`record_ack` + `inject_frame(wait_for_ack)`): software sets `_tx_mac_address`
+  to the injected Addr2, sends, watches RX for an ACK to that Addr2, resends up to `max_resends`, and
+  returns whether it landed. Works under spoofing. Requires A.
+- **Active Monitor** (`enter_active_monitor`): writes a (spoofed) MAC into the card's MAC register so the
+  hardware auto-ACKs frames sent to it. Measured in "HW Auto-ACK" below.
 
 ---
 
