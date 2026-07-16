@@ -207,42 +207,42 @@ Every control returning ~0 is what validates a run.
 
 ## HW ACK-Based Retries -- comparison (bench, 2026-07-16)
 
-Does the card's hardware stop retransmitting an injected frame once the target ACKs? "real AP" is a
-target that answers (lower copies = it stopped sooner). "dead target" is an address nothing answers,
-so its copy count is 1 + the card's retry count and approximates the HW retry limit (sniffer capture
-loss makes it a slight undercount; the 8812au's histogram peaks near 48). Median on-air copies per
-inject.
+Does the card's hardware stop retransmitting an injected frame once the target ACKs? Median on-air
+copies per inject: "real AP" answers (lower = it stopped sooner); "dead target" never answers, so its
+count is ~1 + the retry limit (AM state does not change it; sniffer loss makes it a slight undercount).
+A row with only a 2G figure is a 2.4 GHz-only radio.
 
-| card | stops on the target's ACK? | copies, real AP | copies, dead target (approx retry limit) |
-|------|----------------------------|-----------------|------------------------------------------|
-| RTL8812AU  | yes, spoofed source             | 2G ~1, 5G ~1 | 2G ~39, 5G ~33 |
-| RTL8822BU  | yes, spoofed source             | 2G 1, 5G 3-4 | 2G ~10, 5G ~13 |
-| RTL8821AU  | yes, spoofed source             | 2G 1, 5G 1 | 2G ~42, 5G ~49 |
-| RTL8821CU  | yes, spoofed source             | 2G 1, 5G 1 | 2G ~7, 5G ~7 |
-| RTL8188EUS | yes, spoofed source             | 2G 1 (2.4 GHz only) | 2G ~13 |
-| RTL8814AU  | yes, spoofed source             | 2G 1, 5G 1 | 2G ~13, 5G ~13 |
-| AR9271     | yes, spoofed source             | 2G 1 (2.4 GHz only) | 2G ~8 |
-| MT7612U    | yes, but only active-monitor ON | AM on: 2G 1, 5G 1 (AM off: 2G 11, 5G 16, ACKs ignored) | 2G ~13, 5G ~16 |
-| MT7610U    | yes, but only active-monitor ON | AM on: 2G 1, 5G 1 (AM off: 2G 12, 5G 16, ACKs ignored) | 2G ~16, 5G ~16 |
-| MT7921AU   | yes, but only active-monitor ON | AM on: 2G 1, 5G 1 (AM off: 2G 13, 5G 15, ACKs ignored) | 2G ~13, 5G ~15 |
-| RT3070     | yes, but only active-monitor ON | AM on: 2G 1 (AM off: 2G 7, ACKs ignored; 2.4 GHz only) | 2G ~8 |
-| RT5370     | yes, but only active-monitor ON | AM on: 2G ~2 (AM off: 2G 7, ACKs ignored; 2.4 GHz only) | 2G ~8 |
-| RT5372     | yes, but only active-monitor ON | AM on: 2G 1 (AM off: 2G 7, ACKs ignored; 2.4 GHz only) | 2G ~8 |
-| RT5572     | yes, but only active-monitor ON | AM on: 2G 1 (AM off: 2G 7, ACKs ignored). 5G stop unconfirmed (no ACK-back seen) | 2G ~8, 5G ~8 |
-| RTL8187L   | own silicon MAC only            | spoofed 5-6, silicon 1 | ~6 |
-| RT2500USB  | no, never recognizes ACKs       | 2G ~14 (ACKs ignored; 2.4 GHz only) | 2G ~16 |
+| card | stops on the target's ACK? | real AP (AM off) | real AP (AM on) | dead target (retry limit) |
+|------|----------------------------|------------------|-----------------|---------------------------|
+| RTL8812AU  | yes, keyed on Addr2 | 2G ~1, 5G ~1 † | 2G ~1, 5G ~1 † | 2G ~39, 5G ~33 |
+| RTL8822BU  | yes, keyed on Addr2 | 2G 1, 5G 3-4 † | 2G 1, 5G 3-4 † | 2G ~10, 5G ~13 |
+| RTL8821AU  | yes, keyed on Addr2 | 2G 1, 5G 1 | 2G 1, 5G 1 | 2G ~42, 5G ~49 |
+| RTL8821CU  | yes, keyed on Addr2 | 2G 1, 5G 1 | 2G 1, 5G 1 | 2G ~7, 5G ~7 |
+| RTL8188EUS | yes, keyed on Addr2 | 2G 1 | 2G 1 | 2G ~13 |
+| RTL8814AU  | yes, keyed on Addr2 | 2G 1, 5G 1 | 2G 1, 5G 1 | 2G ~13, 5G ~13 |
+| AR9271     | yes, keyed on Addr2 | 2G 1 | 2G 1 | 2G ~8 |
+| MT7612U    | yes, needs active monitor | 2G 11, 5G 16 | 2G 1, 5G 1 | 2G ~13, 5G ~16 |
+| MT7610U    | yes, needs active monitor | 2G 12, 5G 16 | 2G 1, 5G 1 | 2G ~16, 5G ~16 |
+| MT7921AU   | yes, needs active monitor | 2G 13, 5G 15 | 2G 1, 5G 1 | 2G ~13, 5G ~15 |
+| RT3070     | yes, needs active monitor | 2G 7 | 2G 1 | 2G ~8 |
+| RT5370     | yes, needs active monitor | 2G 7 | 2G ~2 | 2G ~8 |
+| RT5372     | yes, needs active monitor | 2G 7 | 2G 1 | 2G ~8 |
+| RT5572     | yes, needs active monitor | 2G 7 | 2G 1 (5G: no ACK seen) | 2G ~8, 5G ~8 |
+| RTL8187L   | only its own silicon MAC | silicon 1, spoofed 5-6 | N/A (no AM) | ~6 |
+| RT2500USB  | no, ignores ACKs | 2G ~14 | N/A (no AM) | 2G ~16 |
 
-The stop-on-ACK mechanism splits by chip vendor. Realtek (8812 / 8821 / 8821cu / 8822 / 8814 / 8188eus)
-and Atheros (AR9271) key the ACK match on the frame's own Addr2, so a spoofed source stops on ACK with
-no active monitor needed. The MediaTek/Ralink family (mt76x0u 7610, mt76x2u 7612, mt7921au, rt3070 /
-rt5370 / rt5372 / rt5572) keys on the source MAC only once active monitor has registered it: with active monitor OFF it
-retransmits to its ~8-15 limit even while the AP ACKs every copy (see the high ACKs-back count in that
-pass); with it ON it collapses to a median of 1. Two outliers sit outside both families: the 8187 keys on its own hardware MAC only (it has
-no active monitor to reprogram), and the RT2500USB has no ACK-based retry stop at all, retransmitting
-its full ~16 limit for every unicast inject regardless of ACKs (and it does not auto-ACK either), so it
-can never report a landing. An earlier read called the 7921 "fixed count regardless of ACKs", but that
-was the active-monitor-ON pass being skipped because its FAKE_MAC was mis-flagged UNIMPLEMENTED (now
-SPOOFABLE, and the AM-ON pass runs).
+† 8812au / 8822bu AM-on is inferred, not independently measured: the Realtek/Atheros group keys on Addr2
+and is AM-independent (both columns matched on the five measured siblings), so it equals AM-off. RT3572
+(rt2800usb) is omitted: its unburned-EFUSE TX is too weak to measure, though its auto-ACK confirmed it
+SPOOFABLE (see below).
+
+The stop-on-ACK match splits by chip vendor. Realtek (8812 / 8821 / 8821cu / 8822 / 8814 / 8188eus) and
+Atheros (AR9271) key on the frame's own Addr2, so both columns match (AM-independent). The MediaTek and
+Ralink family (mt76x0u / mt76x2u / mt7921au, rt3070 / rt5370 / rt5372 / rt5572) keys on the source MAC
+only once active monitor registers it: AM off ignores the ACK and retries to the limit, AM on collapses
+to 1. The 8187 keys on its own silicon MAC only; the RT2500USB has no ACK-based retry stop at all. (The
+7921's old "fixed count regardless" label was just its AM-on pass being skipped when FAKE_MAC was
+mis-flagged UNIMPLEMENTED.)
 
 ## HW Auto-ACK -- comparison (bench, 2026-07-16, n=100)
 
