@@ -211,6 +211,29 @@ def build_deauth(target_mac: bytes, bssid: bytes,
     )
 
 
+def stamp_seq_ctrl(frame: bytearray, seqno: int) -> int:
+    """Stamp an incrementing 802.11 sequence number into seq_ctrl (bytes 22-23),
+    preserving the fragment number (low 4 bits); return the advanced seqno.
+
+    The mt76x02 chip transmits the seq_ctrl already present in the MPDU: the 20-byte
+    txwi carries no sequence field and build_txwi sets no NSEQ bit, so bytes 22-23 go
+    on the wire verbatim (bench-confirmed 2026-07-16: injects left at seq 0 all arrived
+    as seq 0, folding a whole retransmit run into one sequence number). Without this
+    every inject reuses seq 0 and an AP dedups a multi-frame conversation as
+    retransmissions. The number lives in bits [4:15], so one step is 0x10; a fragment
+    burst (frag>0) reuses one sequence number.
+    """
+    if len(frame) < 24:               # control frames carry no seq_ctrl
+        return seqno
+    frag = frame[22] & 0x0F
+    if frag == 0:
+        seqno = (seqno + 0x10) & 0xFFF0
+    sctl = seqno | frag
+    frame[22] = sctl & 0xFF           # seq_ctrl is __le16
+    frame[23] = (sctl >> 8) & 0xFF
+    return seqno
+
+
 async def inject_frame(transport: MT76x2UTransport, frame_802_11: bytes,
                        ack: bool = False, channel: int = 0) -> bool:
     """Send a raw 802.11 frame via bulk-OUT EP 0x07 (AC_VO).

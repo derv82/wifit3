@@ -76,7 +76,7 @@ from .power import (
 )
 from .rx import RxDrainer, ack_ra as rx_ack_ra
 from .transport import MT76x2UTransport
-from .tx import inject_frame as _inject_frame
+from .tx import inject_frame as _inject_frame, stamp_seq_ctrl
 from .skey import shared_key_table_clear
 from .wcid import wcid_table_clear
 
@@ -167,6 +167,7 @@ class MT76x2UDriver(Driver):
         self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
         self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
         self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
+        self._tx_seqno: int = 0   # incrementing 802.11 seq stamped per inject (see tx.stamp_seq_ctrl)
 
     # ---- Discovery / public state ----------------------------------------
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
@@ -709,6 +710,12 @@ class MT76x2UDriver(Driver):
         # ``wait_for_ack > 0`` (with TX-ACK detection armed) waits for the AP's ACK and
         # resends the identical frame up to ``max_resends`` times if none comes; ``0`` =
         # fire-and-forget (current behaviour).
+        # Stamp an incrementing seq before the resend loop: the mt76x02 chip sends whatever
+        # seq is in the MPDU, so without this every inject reuses seq 0. Stamped once so a
+        # resend re-sends the identical frame (a true HW retransmit, not a new sequence).
+        buf = bytearray(frame_bytes)
+        self._tx_seqno = stamp_seq_ctrl(buf, self._tx_seqno)
+        frame_bytes = bytes(buf)
         ta = bytes(frame_bytes[10:16]) if len(frame_bytes) >= 16 else None   # TA — the AP ACKs back to this
         if self._ack_detect_on and ta is not None:
             self._our_tx_macs.add(ta)
