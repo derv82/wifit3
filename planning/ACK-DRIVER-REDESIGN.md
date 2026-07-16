@@ -247,8 +247,10 @@ Does the card's hardware answer a frame addressed to it with an ACK? Numbers are
   silicon MAC), so it is now `SPOOFABLE`. [fixed]
 - **MT7612U** auto-ACKs a spoofed MAC AND its own silicon MAC (the silicon-MAC ACK is where it differs
   from the 7921); already flagged `SPOOFABLE`, which stands.
-- **RTL8187L** is flagged `NONE` but auto-ACKs its own silicon MAC (behaves `FIXED_MAC`); it just
-  cannot be given a spoofed MAC. [still to fix]
+- **RTL8187L** was flagged `NONE`; it auto-ACKs its own silicon MAC (not a forged one, and it has no
+  active monitor to program one), so it is now `FIXED_MAC`. Re-confirmed on the bench 2026-07-16:
+  injecting as the silicon MAC stops on the AP's ACK (median 1 copy), a spoofed source never does
+  (median 5, its ACKs ignored). [fixed]
 
 Caveats: one bench, these five adapters, one AP-free RX setup (the prober self-detects the ACK). Not a
 substitute for reading the silicon, but the controls hold.
