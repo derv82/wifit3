@@ -214,8 +214,8 @@ A row with only a 2G figure is a 2.4 GHz-only radio.
 
 | card | stops on the target's ACK? | real AP (AM off) | real AP (AM on) | dead target (retry limit) |
 |------|----------------------------|------------------|-----------------|---------------------------|
-| RTL8812AU  | yes, keyed on Addr2 | 2G ~1, 5G ~1 † | 2G ~1, 5G ~1 † | 2G ~39, 5G ~33 |
-| RTL8822BU  | yes, keyed on Addr2 | 2G 1, 5G 3-4 † | 2G 1, 5G 3-4 † | 2G ~10, 5G ~13 |
+| RTL8812AU  | yes, keyed on Addr2 | 2G 1, 5G 3 | 2G 1, 5G 1 | 2G ~41, 5G ~49 |
+| RTL8822BU  | yes, keyed on Addr2 | 2G 1, 5G 2 | 2G 1, 5G 1 | 2G ~11, 5G ~13 |
 | RTL8821AU  | yes, keyed on Addr2 | 2G 1, 5G 1 | 2G 1, 5G 1 | 2G ~42, 5G ~49 |
 | RTL8821CU  | yes, keyed on Addr2 | 2G 1, 5G 1 | 2G 1, 5G 1 | 2G ~7, 5G ~7 |
 | RTL8188EUS | yes, keyed on Addr2 | 2G 1 | 2G 1 | 2G ~13 |
@@ -231,18 +231,17 @@ A row with only a 2G figure is a 2.4 GHz-only radio.
 | RTL8187L   | only its own silicon MAC | silicon 1, spoofed 5-6 | N/A (no AM) | ~6 |
 | RT2500USB  | no, ignores ACKs | 2G ~14 | N/A (no AM) | 2G ~16 |
 
-† 8812au / 8822bu AM-on is inferred, not independently measured: the Realtek/Atheros group keys on Addr2
-and is AM-independent (both columns matched on the five measured siblings), so it equals AM-off. RT3572
-(rt2800usb) is omitted: its unburned-EFUSE TX is too weak to measure, though its auto-ACK confirmed it
-SPOOFABLE (see below).
+RT3572 (rt2800usb) is omitted from this table: its unburned-EFUSE TX is too weak to elicit AP ACKs, so
+its retry behaviour is unmeasured. Its auto-ACK still confirmed it SPOOFABLE (see below).
 
 The stop-on-ACK match splits by chip vendor. Realtek (8812 / 8821 / 8821cu / 8822 / 8814 / 8188eus) and
-Atheros (AR9271) key on the frame's own Addr2, so both columns match (AM-independent). The MediaTek and
-Ralink family (mt76x0u / mt76x2u / mt7921au, rt3070 / rt5370 / rt5372 / rt5572) keys on the source MAC
-only once active monitor registers it: AM off ignores the ACK and retries to the limit, AM on collapses
-to 1. The 8187 keys on its own silicon MAC only; the RT2500USB has no ACK-based retry stop at all. (The
-7921's old "fixed count regardless" label was just its AM-on pass being skipped when FAKE_MAC was
-mis-flagged UNIMPLEMENTED.)
+Atheros (AR9271) key on the frame's own Addr2, so they stop without active monitor: both columns are ~1
+on 2.4 GHz, and on 5 GHz AM-off runs at most a copy or two above AM-on (8812au 3, 8822bu 2). The MediaTek
+and Ralink family (mt76x0u / mt76x2u / mt7921au, rt3070 / rt5370 / rt5372 / rt5572) keys on the source
+MAC only once active monitor registers it: AM off ignores the ACK and retries to the limit, AM on
+collapses to 1. The 8187 keys on its own silicon MAC only; the RT2500USB has no ACK-based retry stop at
+all. (The 7921's old "fixed count regardless" label was just its AM-on pass being skipped when FAKE_MAC
+was mis-flagged UNIMPLEMENTED.)
 
 ## HW Auto-ACK -- comparison (bench, 2026-07-16, n=100)
 
@@ -288,9 +287,8 @@ Does the card's hardware answer a frame addressed to it with an ACK? Numbers are
   auto-ACK was not read (spoofed auto-ACK confirmed on both bands).
 - **RT3572 (rt2800usb driver)** auto-ACKs a spoofed MAC and its own silicon MAC (103 / 102 per 100), so
   `SPOOFABLE` is confirmed. The one test unit has an unburned EFUSE, so its injected TX is too weak to
-  reach the AP (0 ACKs back on every scenario) and the retry family could not be measured; it is almost
-  certainly the Ralink needs-active-monitor pattern like its siblings. Its inject carried the same
-  missing-seq-stamp bug, now fixed.
+  reach the AP (0 ACKs back on every scenario): its retry family is unmeasured, not inferred. Its inject
+  carried the same missing-seq-stamp bug, now fixed.
 - **RT2500USB** stays `NONE`, confirmed: it does not auto-ACK even its own silicon MAC (0/100), and its
   TX retransmits blindly (~14, ACKs ignored) with no ACK recognition. A genuinely passive legacy chip.
 
