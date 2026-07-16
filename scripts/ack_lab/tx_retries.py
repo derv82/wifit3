@@ -147,10 +147,16 @@ async def main(a) -> None:
         for i in ifaces:
             print(f"      {i.description}  (ch {i.driver.SUPPORTED_CHANNELS[:4]}...)")
         return
-    sniffer = next((i for i in ifaces if i is not injector
-                    and a.channel in i.driver.SUPPORTED_CHANNELS), None)
+    if a.sniffer_card:
+        sniffer = next((i for i in ifaces if i is not injector and a.sniffer_card.lower() in
+                        (i.description or "").lower()
+                        and a.channel in i.driver.SUPPORTED_CHANNELS), None)
+    else:
+        sniffer = next((i for i in ifaces if i is not injector
+                        and a.channel in i.driver.SUPPORTED_CHANNELS), None)
     if sniffer is None:
-        print(f"[-] no second card supports channel {a.channel} to sniff with")
+        which = f"'{a.sniffer_card}' " if a.sniffer_card else ""
+        print(f"[-] no {which}second card supports channel {a.channel} to sniff with")
         return
     print(f"[+] injector: {injector.description}")
     print(f"[+] sniffer:  {sniffer.description}")
@@ -207,6 +213,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description="ACK-retry lab: retransmit histogram, active monitor off vs on")
     p.add_argument("--target", required=True, help="AP BSSID to inject at, e.g. the valid-AP case")
     p.add_argument("--inject-card", default="", help="substring of the injector adapter name, e.g. rtl or mt")
+    p.add_argument("--sniffer-card", default="", help="substring of the sniffer adapter name (default: first other on channel)")
     p.add_argument("--channel", type=int, default=1)
     p.add_argument("--src", default=FAKE_SRC, help="fake client MAC we inject as (Addr2)")
     p.add_argument("--count", type=int, default=100, help="inject_frame() calls per scenario")
