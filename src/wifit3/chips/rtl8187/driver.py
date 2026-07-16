@@ -74,8 +74,10 @@ class RTL8187Driver(Driver):
     # it (rtl818x_channels[13].center_freq=2484) but we leave it off the
     # default hop list to match the other 2.4 GHz drivers.
     SUPPORTED_CHANNELS = list(range(1, 14))
-    # NONE: rtl8187 monitor is passive RX — no hardware ACK engine, so nothing to spoof.
-    FAKE_MAC = FakeMacSupport.NONE
+    # FIXED_MAC: the 8187L auto-ACKs its own silicon MAC in monitor mode (bench 2026-07-16:
+    # 111 ACKs / 100 injects to the silicon MAC), but has no active monitor to program a
+    # forged MAC, so a spoofed source is never ACKed.
+    FAKE_MAC = FakeMacSupport.FIXED_MAC
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RTL8187Driver":
@@ -278,8 +280,9 @@ class RTL8187Driver(Driver):
     async def enable_ack_detect(self) -> None:
         """Arm the ACK tap. Pure software flag — the monitor RX_CONF already sets
         RX_CONF_CTRL (mac.configure_filter, = FIF_CONTROL), so the hardware forwards ACK
-        control frames to bulk-IN; no register write needed. The 8187L has no auto-ACK
-        engine (FAKE_MAC.NONE), so this is RX-side only — it never emits an ACK."""
+        control frames to bulk-IN; no register write needed. This arms only the RX tap that
+        counts ACKs; it does not touch the card's own auto-ACK responder, which HW-ACKs the
+        card's silicon MAC regardless (FAKE_MAC.FIXED_MAC)."""
         self._ack_sightings.clear()
         self._ack_last_ts.clear()
         self._ack_detect_on = True
