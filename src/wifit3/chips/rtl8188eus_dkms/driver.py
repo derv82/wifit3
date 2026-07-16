@@ -62,7 +62,8 @@ class Rtl8188eusDkmsDriver(Driver):
 
     def __init__(self, transport: Rtl8188eusTransport):
         self.transport = transport
-        self.mac_address: Optional[bytes] = None
+        self.mac_address: Optional[str] = None    # colon-hex per the Driver ABC
+        self._mac_bytes: Optional[bytes] = None    # raw 6 bytes for register writes
         self._channel: Optional[int] = None
         self._tx_power = None              # path-A efuse TX-power info (TxPwr2G)
         self._board = None                 # efuse board options (BoardOptions; set in connect)
@@ -102,7 +103,8 @@ class Rtl8188eusDkmsDriver(Driver):
         if progress_cb:
             progress_cb(0.0, "Power-on + reading EFUSE / chip parameters")
         params = await loop.run_in_executor(None, self._power_on_and_read_efuse)
-        self.mac_address = params.mac_address
+        self._mac_bytes = params.mac_address
+        self.mac_address = params.mac_address.hex(":") if params.mac_address else None
         self._tx_power = params.tx_power
         # Thermal base for the power-track watchdog (efuse EEPROM_THERMAL_METER_88E 0xBA;
         # the 0xff/autoload-fail default is EEPROM_Default_ThermalMeter_88E 0x18).
@@ -237,7 +239,7 @@ class Rtl8188eusDkmsDriver(Driver):
         bb.phy_set_rfe_reg(t, params.board)                    # PHY_SetRFEReg_8188E (MISC11 tail)
         self._dm_seed = dm.init_hal_dm(t)                       # M7 — and carry the DM seed
         dm.init_hal_tail(t)                                     # M8 (power-track + LCK)
-        mac.set_macid(t, self.mac_address or b"\x00" * 6)      # HW_VAR_MAC_ADDR (airmon)
+        mac.set_macid(t, self._mac_bytes or b"\x00" * 6)      # HW_VAR_MAC_ADDR (airmon)
         # monitor opmode is entered in connect() AFTER the channel re-tune (wire order).
 
     def _read_once(self) -> Optional[bytes]:
@@ -349,8 +351,8 @@ class Rtl8188eusDkmsDriver(Driver):
 
     async def exit_active_monitor(self) -> None:
         """Restore the card's real MAC in REG_MACID."""
-        if self.mac_address:
-            await self._set_self_mac(self.mac_address)
+        if self._mac_bytes:
+            await self._set_self_mac(self._mac_bytes)
 
     async def _set_self_mac(self, mac_bytes: bytes) -> None:
         loop = asyncio.get_running_loop()
