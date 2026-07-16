@@ -265,6 +265,7 @@ Does the card's hardware answer a frame addressed to it with an ACK? Numbers are
 | RT5370     | yes (2G 102)           | 0   | yes (2G 100)         | 0 |
 | RT5372     | yes (2G 100)           | 0   | yes (2G 101)         | 0 |
 | RT5572     | yes (2G 102, 5G 100)   | 0   | yes (2G 101, 5G 100) | 0 |
+| RT3572     | yes (2G 103)           | 0   | yes (2G 102)         | 0 |
 | RTL8187L   | n/a (no active monitor) | n/a | yes (2G 111)        | 0 |
 | RT2500USB  | n/a (no active monitor) | n/a | no (2G 0)           | 0 |
 
@@ -282,9 +283,14 @@ Does the card's hardware answer a frame addressed to it with an ACK? Numbers are
   silicon-MAC auto-ACK where it could be read); no flag change. Their TX stop-on-ACK family is in the
   retry table above (the Realtek and Atheros cards key on Addr2; the MediaTek mt76x0u / mt76x2u and the
   Ralink rt30xx / rt53xx / rt5572 need active monitor). Two notes: the missing-seq-stamp bug (every
-  inject left seq 0, folding the retry histogram into one bucket) hit mt76x2u, mt76x0u and rt5572, each
-  now fixed to stamp an incrementing seqctl; the 8821cu came up warm so its silicon-MAC auto-ACK was not
-  read (spoofed auto-ACK confirmed on both bands).
+  inject left seq 0, folding the retry histogram into one bucket) hit mt76x2u, mt76x0u, rt5572 and
+  rt2800usb, each now fixed to stamp an incrementing seqctl; the 8821cu came up warm so its silicon-MAC
+  auto-ACK was not read (spoofed auto-ACK confirmed on both bands).
+- **RT3572 (rt2800usb driver)** auto-ACKs a spoofed MAC and its own silicon MAC (103 / 102 per 100), so
+  `SPOOFABLE` is confirmed. The one test unit has an unburned EFUSE, so its injected TX is too weak to
+  reach the AP (0 ACKs back on every scenario) and the retry family could not be measured; it is almost
+  certainly the Ralink needs-active-monitor pattern like its siblings. Its inject carried the same
+  missing-seq-stamp bug, now fixed.
 - **RT2500USB** stays `NONE`, confirmed: it does not auto-ACK even its own silicon MAC (0/100), and its
   TX retransmits blindly (~14, ACKs ignored) with no ACK recognition. A genuinely passive legacy chip.
 
@@ -292,8 +298,8 @@ Scope: the mainline (non-DKMS) Realtek variants (rtl8188eus, rtl8812au, rtl8821a
 rtw88_8814au stay `UNIMPLEMENTED` by choice: active monitor was never ported for them, so they are out
 of scope for this sweep, not regressions. The bench targets the DKMS drivers we ship.
 
-Caveats: one bench, these sixteen adapters, one AP-free RX setup (the prober self-detects the ACK). Not
-a substitute for reading the silicon, but the controls hold.
+Caveats: one bench, these seventeen adapters, one AP-free RX setup (the prober self-detects the ACK).
+Not a substitute for reading the silicon, but the controls hold.
 
 Note on the retry histogram: the tx_retries per-inject copy count is only valid once each inject
 carries a distinct 802.11 sequence number. The MT76 chips transmit the MPDU's seq_ctrl verbatim, so a
