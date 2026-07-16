@@ -215,14 +215,19 @@ inject.
 
 | card | stops on the target's ACK? | copies, real AP | copies, dead target (approx retry limit) |
 |------|----------------------------|-----------------|------------------------------------------|
-| RTL8812AU | yes, spoofed source        | 2G ~1, 5G ~1 | 2G ~39, 5G ~33 |
-| RTL8822BU | yes, spoofed source        | 2G 1, 5G 3-4 | 2G ~10, 5G ~13 |
-| MT7921AU  | no, fixed count regardless | 2G 13, 5G 12 | 2G 13, 5G 12 |
-| RTL8187L  | own silicon MAC only       | spoofed 5-6, silicon 1 | ~6 |
+| RTL8812AU | yes, spoofed source           | 2G ~1, 5G ~1 | 2G ~39, 5G ~33 |
+| RTL8822BU | yes, spoofed source           | 2G 1, 5G 3-4 | 2G ~10, 5G ~13 |
+| MT7612U   | yes, but only active-monitor ON | AM on: 2G 1, 5G 1 (AM off: 2G 11, 5G 16, ACKs ignored) | 2G ~13, 5G ~16 |
+| MT7921AU  | yes, but only active-monitor ON | AM on: 2G 1, 5G 1 (AM off: 2G 13, 5G 15, ACKs ignored) | 2G ~13, 5G ~15 |
+| RTL8187L  | own silicon MAC only          | spoofed 5-6, silicon 1 | ~6 |
 
 The Realtek 8812/8821/8822 key the ACK match on the frame's own Addr2, so a spoofed source stops on
-ACK with no active monitor needed. The 8187 keys on its own hardware MAC. The mt7921au retransmits a
-fixed count regardless of ACKs.
+ACK with no active monitor needed. The 8187 keys on its own hardware MAC. The MT76 family (7612 + 7921)
+keys on the source MAC only once active monitor has registered it: with active monitor OFF both
+retransmit to their ~15 limit even while the AP ACKs every copy (see the high ACKs-back count in that
+pass); with it ON they collapse to a median of 1. An earlier read called the 7921 "fixed count
+regardless of ACKs", but that was the active-monitor-ON pass being skipped because its FAKE_MAC was
+mis-flagged UNIMPLEMENTED (now SPOOFABLE, and the AM-ON pass runs).
 
 ## HW Auto-ACK -- comparison (bench, 2026-07-16, n=100)
 
@@ -233,14 +238,23 @@ Does the card's hardware answer a frame addressed to it with an ACK? Numbers are
 |------|--------------------|---------------------|-----------------|-----------------|
 | RTL8812AU | yes (2G 104, 5G 100)   | 0   | yes (2G 107, 5G 100) | 0 |
 | RTL8822BU | yes (2G 108, 5G 100)   | 0   | yes (2G 111, 5G 100) | 0 |
+| MT7612U   | yes (2G 97, 5G 80)     | 0   | yes (2G 104, 5G 100) | 0 |
 | MT7921AU  | yes (2G 102, 5G 100)   | 0   | no (2G 0)            | 0 |
 | RTL8187L  | n/a (no active monitor) | n/a | yes (2G 111)        | 0 |
 
-Two `FAKE_MAC` flags disagree with this bench:
-- **MT7921AU** is flagged `UNIMPLEMENTED` but auto-ACKs a spoofed MAC on both bands (behaves
-  `SPOOFABLE`). It ACKs only a MAC that active monitor programs, not its own silicon MAC.
+`FAKE_MAC` flags reconciled against this bench:
+- **MT7921AU** was flagged `UNIMPLEMENTED`; it auto-ACKs a spoofed MAC on both bands (not its own
+  silicon MAC), so it is now `SPOOFABLE`. [fixed]
+- **MT7612U** auto-ACKs a spoofed MAC AND its own silicon MAC (the silicon-MAC ACK is where it differs
+  from the 7921); already flagged `SPOOFABLE`, which stands.
 - **RTL8187L** is flagged `NONE` but auto-ACKs its own silicon MAC (behaves `FIXED_MAC`); it just
-  can't be handed a spoofed MAC.
+  cannot be given a spoofed MAC. [still to fix]
 
-Caveats: one bench, these four adapters, one AP-free RX setup (the prober self-detects the ACK). Not a
+Caveats: one bench, these five adapters, one AP-free RX setup (the prober self-detects the ACK). Not a
 substitute for reading the silicon, but the controls hold.
+
+Note on the retry histogram: the tx_retries per-inject copy count is only valid once each inject
+carries a distinct 802.11 sequence number. The MT76 chips transmit the MPDU's seq_ctrl verbatim, so a
+driver that never stamps one sends every inject as seq 0 and the sniffer folds a whole run into one
+bucket. mt7921au already stamped (tx.stamp_seq_ctrl); mt76x2u did not until 2026-07-16, so its numbers
+here are from the post-fix build.
