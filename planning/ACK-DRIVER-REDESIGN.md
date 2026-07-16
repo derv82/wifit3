@@ -217,22 +217,27 @@ inject.
 |------|----------------------------|-----------------|------------------------------------------|
 | RTL8812AU  | yes, spoofed source             | 2G ~1, 5G ~1 | 2G ~39, 5G ~33 |
 | RTL8822BU  | yes, spoofed source             | 2G 1, 5G 3-4 | 2G ~10, 5G ~13 |
+| RTL8821AU  | yes, spoofed source             | 2G 1, 5G 1 | 2G ~42, 5G ~49 |
 | RTL8188EUS | yes, spoofed source             | 2G 1 (2.4 GHz only) | 2G ~13 |
 | AR9271     | yes, spoofed source             | 2G 1 (2.4 GHz only) | 2G ~8 |
 | MT7612U    | yes, but only active-monitor ON | AM on: 2G 1, 5G 1 (AM off: 2G 11, 5G 16, ACKs ignored) | 2G ~13, 5G ~16 |
 | MT7921AU   | yes, but only active-monitor ON | AM on: 2G 1, 5G 1 (AM off: 2G 13, 5G 15, ACKs ignored) | 2G ~13, 5G ~15 |
 | RT3070     | yes, but only active-monitor ON | AM on: 2G 1 (AM off: 2G 7, ACKs ignored; 2.4 GHz only) | 2G ~8 |
+| RT5370     | yes, but only active-monitor ON | AM on: 2G ~2 (AM off: 2G 7, ACKs ignored; 2.4 GHz only) | 2G ~8 |
 | RTL8187L   | own silicon MAC only            | spoofed 5-6, silicon 1 | ~6 |
+| RT2500USB  | no, never recognizes ACKs       | 2G ~14 (ACKs ignored; 2.4 GHz only) | 2G ~16 |
 
 The stop-on-ACK mechanism splits by chip vendor. Realtek (8812 / 8821 / 8822 / 8188eus) and Atheros
 (AR9271) key the ACK match on the frame's own Addr2, so a spoofed source stops on ACK with no active
 monitor needed. The MediaTek/Ralink family (mt76x2u 7612, mt7921au, rt3070) keys on the source MAC only
 once active monitor has registered it: with active monitor OFF it retransmits to its ~8-15 limit even
 while the AP ACKs every copy (see the high ACKs-back count in that pass); with it ON it collapses to a
-median of 1. The 8187 is the outlier, keying on its own hardware MAC only (it has no active monitor to
-reprogram). An earlier read called the 7921 "fixed count regardless of ACKs", but that was the
-active-monitor-ON pass being skipped because its FAKE_MAC was mis-flagged UNIMPLEMENTED (now SPOOFABLE,
-and the AM-ON pass runs).
+median of 1. Two outliers sit outside both families: the 8187 keys on its own hardware MAC only (it has
+no active monitor to reprogram), and the RT2500USB has no ACK-based retry stop at all, retransmitting
+its full ~16 limit for every unicast inject regardless of ACKs (and it does not auto-ACK either), so it
+can never report a landing. An earlier read called the 7921 "fixed count regardless of ACKs", but that
+was the active-monitor-ON pass being skipped because its FAKE_MAC was mis-flagged UNIMPLEMENTED (now
+SPOOFABLE, and the AM-ON pass runs).
 
 ## HW Auto-ACK -- comparison (bench, 2026-07-16, n=100)
 
@@ -243,12 +248,15 @@ Does the card's hardware answer a frame addressed to it with an ACK? Numbers are
 |------|--------------------|---------------------|-----------------|-----------------|
 | RTL8812AU  | yes (2G 104, 5G 100)   | 0   | yes (2G 107, 5G 100) | 0 |
 | RTL8822BU  | yes (2G 108, 5G 100)   | 0   | yes (2G 111, 5G 100) | 0 |
+| RTL8821AU  | yes (2G 100, 5G 100)   | 0   | yes (2G 101, 5G 100) | 0 |
 | RTL8188EUS | yes (2G 100)           | 0   | yes (2G 100)         | 0 |
 | AR9271     | yes (2G 100)           | 0   | yes (2G 100)         | 0 |
 | MT7612U    | yes (2G 97, 5G 80)     | 0   | yes (2G 104, 5G 100) | 0 |
 | MT7921AU   | yes (2G 102, 5G 100)   | 0   | no (2G 0)            | 0 |
 | RT3070     | yes (2G 100)           | 0   | yes (2G 101)         | 0 |
+| RT5370     | yes (2G 102)           | 0   | yes (2G 100)         | 0 |
 | RTL8187L   | n/a (no active monitor) | n/a | yes (2G 111)        | 0 |
+| RT2500USB  | n/a (no active monitor) | n/a | no (2G 0)           | 0 |
 
 `FAKE_MAC` flags reconciled against this bench:
 - **MT7921AU** was flagged `UNIMPLEMENTED`; it auto-ACKs a spoofed MAC on both bands (not its own
@@ -259,15 +267,18 @@ Does the card's hardware answer a frame addressed to it with an ACK? Numbers are
   active monitor to program one), so it is now `FIXED_MAC`. Re-confirmed on the bench 2026-07-16:
   injecting as the silicon MAC stops on the AP's ACK (median 1 copy), a spoofed source never does
   (median 5, its ACKs ignored). [fixed]
-- **AR9271, RT3070, RTL8188EUS (DKMS)** were already `SPOOFABLE` and the bench agrees (spoofed auto-ACK
-  via active monitor, plus silicon-MAC auto-ACK); no change. Their TX stop-on-ACK family is in the
-  retry table above (AR9271 and 8188eus key on Addr2; rt3070 needs active monitor).
+- **AR9271, RT3070, RT5370, RTL8188EUS (DKMS), RTL8821AU (DKMS)** were already `SPOOFABLE` and the bench
+  agrees (spoofed auto-ACK via active monitor, plus silicon-MAC auto-ACK); no change. Their TX
+  stop-on-ACK family is in the retry table above (AR9271, 8188eus and 8821au key on Addr2; rt3070 and
+  rt5370 need active monitor).
+- **RT2500USB** stays `NONE`, confirmed: it does not auto-ACK even its own silicon MAC (0/100), and its
+  TX retransmits blindly (~14, ACKs ignored) with no ACK recognition. A genuinely passive legacy chip.
 
 Scope: the mainline (non-DKMS) Realtek variants (rtl8188eus, rtl8812au, rtl8821au, rtl8822bu) and
 rtw88_8814au stay `UNIMPLEMENTED` by choice: active monitor was never ported for them, so they are out
 of scope for this sweep, not regressions. The bench targets the DKMS drivers we ship.
 
-Caveats: one bench, these eight adapters, one AP-free RX setup (the prober self-detects the ACK). Not a
+Caveats: one bench, these eleven adapters, one AP-free RX setup (the prober self-detects the ACK). Not a
 substitute for reading the silicon, but the controls hold.
 
 Note on the retry histogram: the tx_retries per-inject copy count is only valid once each inject
