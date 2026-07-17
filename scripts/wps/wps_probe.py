@@ -101,12 +101,20 @@ def derive_wrong_pin(pin: str) -> str:
     return pin[:7] + flipped
 
 
-async def discover_iface(debug: bool):
+async def discover_iface(debug: bool, card: str = ""):
     mgr = WlanDeviceManager()
     ifaces = await mgr.refresh()
     if not ifaces:
         fail("No supported wifit3 card found. Plug it in (Zadig→WinUSB on Windows) and retry.")
-    iface = ifaces[0]
+    if card:
+        matches = [i for i in ifaces
+                   if card.lower() in f"{i.name} {i.description}".lower()]
+        if not matches:
+            found = ", ".join(i.name for i in ifaces)
+            fail(f"No card matches '{card}'. Found: {found}")
+        iface = matches[0]
+    else:
+        iface = ifaces[0]
     info(f"Using {iface.name}: {iface.description}")
     if not await iface.connect(progress_cb=lambda p, m: None):
         fail("Driver connect() failed — replug and retry.")
