@@ -96,6 +96,7 @@ class RTL8188EUSDriver(Driver):
         return cls(dev)
 
     def __init__(self, dev: usb.core.Device):
+        super().__init__()          # base owns the ACK tally (_ack_detect_on / _our_tx_macs / _ack_counts)
         self.dev = dev
         self.transport = RTL8188EUSTransport(dev)
         self.mac_address: Optional[str] = None
@@ -109,11 +110,6 @@ class RTL8188EUSDriver(Driver):
         self._claimed: bool = False
         self.current_channel: int = 1
         self._efuse: EfuseDefaults = EfuseDefaults()  # fallback defaults until cold path parses
-        # Observe the AP's ACK to our injects (did our TX land). Off by default.
-        self._ack_detect_on: bool = False
-        self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
-        self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
-        self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
 
     # ---- Driver Protocol surface ------------------------------------
 
@@ -162,17 +158,11 @@ class RTL8188EUSDriver(Driver):
             logger.exception("set_channel(%d) failed", channel)
             return False
 
-    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True,
-                           wait_for_ack: float = 0.0, max_resends: int = 0) -> bool:
-        """Inject a single MGMT frame via bulk-OUT (currently MGMT-only).
-
-        `use_no_ack` is accepted for Protocol compatibility but ignored — the
-        retry-limit field in the TX descriptor controls retransmission.
-
-        ``wait_for_ack > 0`` (with TX-ACK detection armed) waits for the AP's ACK and resends
-        up to ``max_resends`` times if none comes, returning whether it landed; ``0`` =
-        fire-and-forget (current behaviour).
-        """
+    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+        """Build the MGMT TX descriptor (HW ACK-retry limit ``self.DEFAULT_HW_ACK_RETRIES``) and
+        send ``[desc | frame]`` once on the bulk-OUT pipe (currently MGMT-only). BMC is derived
+        from addr1's group bit. The retry-limit field in the TX descriptor controls HW
+        retransmission."""
         loop = asyncio.get_running_loop()
         if self._mgmt_bulk_out is None:
             eps = await loop.run_in_executor(None, probe_endpoints, self.dev)
@@ -184,39 +174,23 @@ class RTL8188EUSDriver(Driver):
             addr1 = frame_bytes[4:10]
             is_bcast = (addr1[0] & 0x01) != 0  # I/G bit
 
-        ta = bytes(frame_bytes[10:16]) if len(frame_bytes) >= 16 else None
-        if self._ack_detect_on and ta is not None:
-            self._our_tx_macs.add(ta)       # TA — the AP's ACK comes back to this
-        ack_gated = wait_for_ack > 0 and self._ack_detect_on and ta is not None
-        for _ in range(max_resends + 1):
-            try:
-                t0 = time.monotonic()
-                await loop.run_in_executor(
-                    None,
-                    lambda: send_mgmt_frame(
-                        self.dev, self._mgmt_bulk_out, frame_bytes,
-                        is_broadcast=is_bcast,
-                    ),
-                )
-            except (IOError, usb.core.USBError):
-                logger.exception("inject_frame failed")
-                return False
-            if not ack_gated:
-                return True
-            if await self._await_ack(ta, t0, wait_for_ack):
-                return True
-        return False
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda: send_mgmt_frame(
+                    self.dev, self._mgmt_bulk_out, frame_bytes,
+                    is_broadcast=is_bcast, retry_limit=self.DEFAULT_HW_ACK_RETRIES,
+                ),
+            )
+        except (IOError, usb.core.USBError):
+            logger.exception("inject_frame failed")
+            return False
+        return True
 
-    async def _await_ack(self, ta: bytes, since: float, window: float) -> bool:
-        """True if the tap observed an ACK to ``ta`` after ``since``, within ``window`` s.
-        _rx_dispatch runs on this loop, so a sleep yield lets a just-arrived ACK's timestamp
-        land between checks."""
-        deadline = since + window
-        while time.monotonic() < deadline:
-            if self._ack_last_ts.get(ta, 0.0) > since:
-                return True
-            await asyncio.sleep(0.001)
-        return False
+    def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
+        """Realtek HW assigns the 802.11 sequence number (fill_txdesc_v3's seq counter takes
+        over), so the frame goes out unchanged."""
+        return frame_bytes
 
     async def close(self) -> None:
         """Stop the RX reader + release USB. Idempotent."""
@@ -434,13 +408,10 @@ class RTL8188EUSDriver(Driver):
         if cb is None and not self._ack_detect_on:
             return
         for _desc, mpdu, rssi in iter_bulk_frames(buf):
-            # A 10-byte 0xD4 frame is an ACK (the parser drops control frames). RA=mpdu[4:10]
-            # is the STA the AP ACKed; keep only ACKs to a MAC we inject as.
-            if self._ack_detect_on and len(mpdu) == 10 and mpdu[0] == 0xD4:
-                ra = mpdu[4:10]
-                if ra in self._our_tx_macs:
-                    self._ack_sightings[ra.hex()] = self._ack_sightings.get(ra.hex(), 0) + 1
-                    self._ack_last_ts[ra] = time.monotonic()   # for inject wait-for-ack
+            # A 10-byte 0xD4 frame is an ACK (the parser drops control frames); the base tallies
+            # it iff the ACK tap is armed and RA=mpdu[4:10] is a MAC we inject as.
+            if len(mpdu) == 10 and mpdu[0] == 0xD4:
+                self.record_ack(mpdu)
                 continue
             if cb is None:
                 continue
@@ -453,25 +424,18 @@ class RTL8188EUSDriver(Driver):
                 except Exception:
                     logger.exception("RX callback raised")
 
-    async def enable_ack_detect(self) -> None:
-        """Admit ACK control frames (RXFLTMAP1 bit13) so the tap can see the AP's ACKs to us.
-        Not enter_active_monitor, which makes the chip emit ACKs."""
+    async def _enable_rx_acks(self) -> None:
+        """Register write: admit ACK control frames (RXFLTMAP1 bit13) so the tap can see the
+        AP's ACKs to us. The 8188e fileops leaves RXFLTMAP at the HW default (ACKs filtered), so
+        this bit must be opened explicitly (the base arms the tally). Not enter_active_monitor,
+        which makes the chip EMIT ACKs."""
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, admit_ack_frames, self.transport)
-        self._ack_sightings.clear()
-        self._ack_last_ts.clear()
-        self._ack_detect_on = True
-        logger.info("RTL8188EUS TX-ACK detection ON (RXFLTMAP1 bit13) — observing our TX delivery")
 
-    async def disable_ack_detect(self) -> None:
+    async def _disable_rx_acks(self) -> None:
         """Restore the default monitor RX filter (clear RXFLTMAP1 bit13)."""
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, drop_ack_frames, self.transport)
-        self._ack_detect_on = False
-
-    def acks_seen(self, mac: bytes) -> int:
-        """Count of ACKs observed addressed to ``mac`` (an injected source MAC) since enable."""
-        return self._ack_sightings.get(bytes(mac).hex(), 0)
 
     # ---- power-on internals --------------------------------------------
 

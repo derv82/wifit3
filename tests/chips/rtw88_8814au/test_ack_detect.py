@@ -1,12 +1,14 @@
 """rtw88_8814au TX-ACK detection: the RX tap that counts the AP's link-layer ACKs to a MAC we
-inject as, and the inject wait-for-ack poll. No hardware — synthetic frames.
+inject as, plus the inject descriptor's HW ACK-retry wiring. No hardware (synthetic frames).
 
-mac_init_for_rx leaves RXFLTMAP1=0x0400 (ACK bit13 clear), so detection admits ctrl subtype 13;
-the tap lives in _rx_dispatch (the parser drops the ACK before it reaches the callback)."""
+mac_init_for_rx leaves RXFLTMAP1=0x0400 (ACK bit13 clear), so ``_enable_rx_acks`` is a real
+register write (admit ctrl subtype 13); the tap lives in ``_rx_dispatch`` (the parser drops the
+ACK before it reaches the callback). The tally and arming live on the ``Driver`` base
+(``record_ack`` / ``enable_rx_acks`` / ``acks_seen``)."""
 import struct
-import time
 from unittest.mock import MagicMock
 
+from wifit3.chips.rtw88_8814au.constants import TX_PKT_DESC_SZ
 from wifit3.chips.rtw88_8814au.driver import RTL8814AUDriver
 
 
@@ -21,51 +23,80 @@ def _ack_buf(ra: bytes) -> bytes:
     return bytes(desc) + bytes(mpdu) + b"\x00\x00\x00\x00"
 
 
+def _mgmt_frame(ta: bytes = bytes.fromhex("020000000001")) -> bytes:
+    """A 24-B deauth: FC=0xC0, addr1 (RA), addr2 (TA=our injected source), addr3, seqctl."""
+    return (b"\xc0\x00\x00\x00" + bytes.fromhex("aabbccddeeff") + ta
+            + bytes.fromhex("aabbccddeeff") + b"\x00\x00")
+
+
 def _driver() -> RTL8814AUDriver:
     d = RTL8814AUDriver(MagicMock())
+    # admit_ack_frames/drop_ack_frames read-modify-write RXFLTMAP1; stub the transport regs
+    # (0x0400 = the ACK-bit-clear default) so _enable_rx_acks runs without real USB.
+    d.transport.read16 = lambda addr: 0x0400
+    d.transport.write16 = lambda addr, val: None
     d._parsed = []
     d.register_rx_callback(d._parsed.append)
     return d
 
 
-def test_tap_counts_ack_to_our_mac():
+async def test_tap_counts_ack_to_our_mac():
     d = _driver()
     ra = bytes.fromhex("020000000001")
+    await d.enable_rx_acks()                    # arms the base tally (clears _our_tx_macs)
     d._our_tx_macs.add(ra)
-    d._ack_detect_on = True
     d._rx_dispatch(_ack_buf(ra))
     assert d.acks_seen(ra) == 1
-    assert ra in d._ack_last_ts
-    assert d._parsed == []          # an ACK is never handed to the frame parser
+    assert d._parsed == []                      # an ACK is never handed to the frame parser
 
 
-def test_tap_ignores_ack_to_foreign_mac():
+async def test_tap_ignores_ack_to_foreign_mac():
     d = _driver()
     ra = bytes.fromhex("aabbccddeeff")
-    d._ack_detect_on = True
-    d._rx_dispatch(_ack_buf(ra))
-    assert d.acks_seen(ra) == 0     # but not one of ours
-    assert d._ack_last_ts == {}
+    await d.enable_rx_acks()
+    d._rx_dispatch(_ack_buf(ra))                # armed, but ra is not one of ours
+    assert d.acks_seen(ra) == 0
 
 
 def test_tap_off_by_default():
     d = _driver()
     ra = bytes.fromhex("020000000001")
     d._our_tx_macs.add(ra)
-    d._rx_dispatch(_ack_buf(ra))    # _ack_detect_on stays False
+    d._rx_dispatch(_ack_buf(ra))                # never enabled -> _ack_detect_on stays False
     assert d.acks_seen(ra) == 0
 
 
-async def test_await_ack_true_when_ts_fresh():
+async def test_disable_rx_acks_stops_the_tally():
     d = _driver()
-    ta = bytes.fromhex("020000000001")
-    since = time.monotonic()
-    d._ack_last_ts[ta] = since + 1.0            # ACK landed after `since`
-    assert await d._await_ack(ta, since, 0.05) is True
+    ra = bytes.fromhex("020000000001")
+    await d.enable_rx_acks()
+    d._our_tx_macs.add(ra)
+    await d.disable_rx_acks()
+    d._rx_dispatch(_ack_buf(ra))
+    assert d.acks_seen(ra) == 0
 
 
-async def test_await_ack_false_on_timeout():
+def test_stamp_tx_seq_is_identity():
     d = _driver()
-    ta = bytes.fromhex("020000000001")
-    since = time.monotonic()
-    assert await d._await_ack(ta, since, 0.005) is False   # no ts recorded -> window elapses
+    frame = _mgmt_frame()
+    assert d._stamp_tx_seq(frame) is frame      # Realtek HW-stamps; frame goes out unchanged
+
+
+async def test_inject_builds_descriptor_with_hw_retry_limit():
+    d = _driver()
+    d._bulk_out_eps = [0x02]                     # HIGH lane -> out_ep[0]
+    sent: list[bytes] = []
+
+    def _write(ep, payload, timeout):
+        sent.append(bytes(payload))
+        return len(payload)
+
+    d.dev.write = _write
+    frame = _mgmt_frame()
+    assert await d.inject_frame(frame) is True   # base entry -> _stamp_tx_seq -> _inject_frame
+    assert len(sent) == 1
+    pkt = sent[0]
+    w4 = int.from_bytes(pkt[0x10:0x14], "little")
+    assert (w4 >> 17) & 1 == 1                              # RTY_LMT_EN
+    assert (w4 >> 18) & 0x3F == d.DEFAULT_HW_ACK_RETRIES    # DATA_RTY_LMT
+    assert pkt[TX_PKT_DESC_SZ:] == frame                    # HW-stamp: payload byte-for-byte

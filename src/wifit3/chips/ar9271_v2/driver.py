@@ -48,6 +48,7 @@ class AR9271V2Driver(Driver):
     FAKE_MAC: ClassVar[FakeMacSupport] = FakeMacSupport.SPOOFABLE
 
     def __init__(self, dev: usb.core.Device):
+        super().__init__()          # base owns the ACK tally (_ack_detect_on / _our_tx_macs / _ack_counts)
         self.transport = AR9271Transport(dev)
         self.is_warm = False
         self.mac_address: Optional[str] = None
@@ -57,14 +58,6 @@ class AR9271V2Driver(Driver):
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._on_lost: Optional[Callable[[Exception], None]] = None
         self._reader: Optional[RxReaderThread] = None
-        self._init_ack_state()
-
-    def _init_ack_state(self) -> None:
-        # Observe the AP's ACK to our injects (did our TX land). Off by default.
-        self._ack_detect_on: bool = False
-        self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
-        self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
-        self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "AR9271V2Driver":
@@ -83,7 +76,7 @@ class AR9271V2Driver(Driver):
         self.endpoints = endpoints
         self._rx_callback = None
         self._reader = None
-        self._init_ack_state()
+        Driver.__init__(self)       # base ACK tally (for_replay bypasses __init__)
         self._init_tx(endpoints)
         return self
 
@@ -149,7 +142,7 @@ class AR9271V2Driver(Driver):
         except RuntimeError:
             # Gate path: one transport throughout, no re-enumeration, no RX reader.
             firmware.download(self.transport, fw)
-            self._adopt(bringup.cold_bringup(self.transport))
+            self._adopt(bringup.cold_bringup(self.transport, self.DEFAULT_HW_ACK_RETRIES))
             return True
 
         # Warm card (firmware already running from a previous session)? Re-downloading firmware to a
@@ -170,7 +163,8 @@ class AR9271V2Driver(Driver):
                     loop, self._read_once, self._dispatch, name="ar9271v2-rx",
                     on_fatal=lambda e: self._on_lost and self._on_lost(e))
                 self._reader.start()
-                res = await loop.run_in_executor(None, bringup.warm_reattach, self.transport)
+                res = await loop.run_in_executor(None, bringup.warm_reattach, self.transport,
+                                                 self.DEFAULT_HW_ACK_RETRIES)
                 self._adopt(res)
                 _p(1.0, f"AR9271 re-attached warm (ch ?, {self.mac_address})")
                 return True
@@ -207,7 +201,8 @@ class AR9271V2Driver(Driver):
         self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="ar9271v2-rx",
                                       on_fatal=lambda e: self._on_lost and self._on_lost(e))
         self._reader.start()
-        res = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
+        res = await loop.run_in_executor(None, bringup.cold_bringup, self.transport,
+                                         self.DEFAULT_HW_ACK_RETRIES)
         self._adopt(res)
         _p(1.0, f"AR9271 monitor up (ch 1, {self.mac_address})")
         return True
@@ -326,79 +321,51 @@ class AR9271V2Driver(Driver):
         if cb is None and not self._ack_detect_on:
             return
         for frame, rssi in rx_decode.iter_frames(buf):
-            # A 10-byte 0xD4 frame is an ACK (the parser drops control frames). RA=frame[4:10]
-            # is the STA the AP ACKed; keep only ACKs to a MAC we inject as.
-            if self._ack_detect_on and len(frame) == 10 and frame[0] == 0xD4:
-                ra = frame[4:10]
-                if ra in self._our_tx_macs:
-                    self._ack_sightings[ra.hex()] = self._ack_sightings.get(ra.hex(), 0) + 1
-                    self._ack_last_ts[ra] = time.monotonic()   # for inject wait-for-ack
+            # A 10-byte 0xD4 frame is an ACK (the parser drops control frames); the base tallies it
+            # iff the ACK tap is armed and RA=frame[4:10] is a MAC we inject as.
+            if len(frame) == 10 and frame[0] == 0xD4:
+                self.record_ack(frame)
                 continue
             if cb is not None:
                 parsed = WlanFrameParser.parse_80211_frame(frame, rssi)
                 if parsed is not None:
                     cb(parsed)
 
+    # ---- RX-ACK detection (admit the recipient's ACK to RX) ---------------
+    async def _enable_rx_acks(self) -> None:
+        """No-op: the monitor RX filter already sets ATH9K_RX_FILTER_CONTROL (calcrxfilter runs
+        with FIF_CONTROL, see bringup.cold_bringup), so the recipient's ACK control frames
+        (FC=0xD4) already reach RX. Nothing to enable on the chip; the base arms the tally.
+        Not enter_active_monitor, which makes the chip EMIT ACKs for a chosen MAC."""
+        return
+
+    async def _disable_rx_acks(self) -> None:
+        """No-op, matching ``_enable_rx_acks``: the monitor RX filter is left at its default."""
+        return
+
     # ---- TX (the UI/attacks await inject_frame; live firing is the user's gate) -------
-    async def enable_ack_detect(self) -> None:
-        """Arm the ACK tap. Pure software flag — the monitor RX filter already sets
-        ATH9K_RX_FILTER_CONTROL (calcrxfilter, FIF_CONTROL), so ACK control frames are admitted;
-        no register write needed. Not enter_active_monitor, which makes the chip emit ACKs."""
-        self._ack_sightings.clear()
-        self._ack_last_ts.clear()
-        self._ack_detect_on = True
-        logger.info("AR9271 TX-ACK detection ON — observing our TX delivery")
-
-    async def disable_ack_detect(self) -> None:
-        """Disarm the ACK tap (software flag only; the RX filter is left at the monitor default)."""
-        self._ack_detect_on = False
-
-    def acks_seen(self, mac: bytes) -> int:
-        """Count of ACKs observed addressed to ``mac`` (an injected source MAC) since enable."""
-        return self._ack_sightings.get(bytes(mac).hex(), 0)
-
-    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True,
-                           wait_for_ack: float = 0.0, max_resends: int = 0) -> bool:
-        """Transmit one 802.11 frame (deauth / PMKID auth+assoc / aireplay-ng ``--test``). The
-        Driver contract is async + returns bool; the blocking bulk-OUT is offloaded so a TX
-        burst doesn't stall the event loop (RX runs off-loop on its own thread). ``use_no_ack`` is
-        accepted for the contract — AR9271 injected monitor frames already carry no QoS / no-ACK.
-
-        ``wait_for_ack > 0`` (with TX-ACK detection armed) waits for the AP's ACK and resends the
-        same frame up to ``max_resends`` times if none comes, returning whether it landed; ``0`` =
-        fire-and-forget (byte-identical to the prior behaviour)."""
+    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+        """Build the HTC TX wrapper for ``frame_bytes`` and bulk-OUT it once on the WLAN_TX pipe.
+        The chip's own HW ACK-retry (AR_DRETRY_LIMIT STA short/long, programmed to
+        ``self.DEFAULT_HW_ACK_RETRIES`` at MAC-queue init, not per-frame) is the only
+        retransmission. The blocking bulk-OUT is offloaded so a TX burst doesn't stall the event
+        loop; the pcap gate + unit tests drive ``_emit_frame`` directly (no running loop)."""
         loop = asyncio.get_running_loop()
-        ta = bytes(frame_bytes[10:16]) if len(frame_bytes) >= 16 else None   # AP ACKs back to TA
-        if self._ack_detect_on and ta is not None:
-            self._our_tx_macs.add(ta)
-        ack_gated = wait_for_ack > 0 and self._ack_detect_on and ta is not None
-        for _ in range(max_resends + 1):
-            t0 = time.monotonic()
-            cookie = await loop.run_in_executor(None, self._emit_frame, bytes(frame_bytes))
-            # Free the TX slot now. The bitmap only exists to hold an in-flight skb until its
-            # WMI_TXSTATUS arrives (kernel ath9k_htc_txstatus -> tx_clear_slot [SRC]
-            # htc_drv_txrx.c:647); userland inject is fire-and-forget — no skb to track and nothing
-            # consumes TXSTATUS at runtime, so the slot is done once bulk-OUT queues the frame.
-            # Without this the 256-slot bitmap leaks one per frame and throws ENOBUFS after 256:
-            # fatal to high-rate WEP replay/chopchop, invisible to low-volume deauth/PMKID/WPS.
-            # (The verify gate drives _emit_frame + feeds recorded TXSTATUS directly — untouched.)
-            self.tx_slots.clear(cookie)
-            if not ack_gated:
-                return True                 # fire-and-forget (deauth / WEP / current behaviour)
-            if await self._await_ack(ta, t0, wait_for_ack):
-                return True                 # landed — the AP ACKed it
-        return False                        # never ACKed after every send
+        cookie = await loop.run_in_executor(None, self._emit_frame, bytes(frame_bytes))
+        # Free the TX slot at emit time. The bitmap only holds an in-flight skb until its
+        # WMI_TXSTATUS arrives (kernel ath9k_htc_txstatus -> tx_clear_slot [SRC] htc_drv_txrx.c:647);
+        # userland inject is fire-and-forget — nothing consumes TXSTATUS at runtime, so the slot is
+        # done once bulk-OUT queues the frame. Without this the 256-slot bitmap leaks one per frame
+        # and throws ENOBUFS after 256: fatal to high-rate WEP replay/chopchop, invisible to
+        # low-volume deauth/PMKID/WPS. (The verify gate drives _emit_frame directly — untouched.)
+        self.tx_slots.clear(cookie)
+        return True
 
-    async def _await_ack(self, ta: bytes, since: float, window: float) -> bool:
-        """True if the tap observed an ACK to ``ta`` after ``since``, within ``window`` s.
-        _dispatch runs on this loop, so a sleep yield lets a just-arrived ACK's timestamp land
-        between checks."""
-        deadline = since + window
-        while time.monotonic() < deadline:
-            if self._ack_last_ts.get(ta, 0.0) > since:
-                return True
-            await asyncio.sleep(0.001)
-        return False
+    def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
+        """Identity: the AR9271 does not software-stamp a sequence here (the injected frame carries
+        the caller's own seqctl and ath9k leaves the sequence to hardware), so it goes out
+        unchanged."""
+        return frame_bytes
 
     def _emit_frame(self, dot11: bytes) -> int:
         """Sync core: allocate a TX slot, build the HTC wrapper (tx_frame_hdr for data, tx_mgmt_hdr

@@ -1,10 +1,10 @@
 """rtl8188eus TX-ACK detection: the RX tap that counts the AP's link-layer ACKs to a MAC we
-inject as, and the inject wait-for-ack poll. No hardware — synthetic frames.
+inject as. No hardware — synthetic frames.
 
-The tap lives in _rx_dispatch (raw MPDUs), before the parser drops the ACK control frame.
-Frames are fed via a monkeypatched iter_bulk_frames, matching the local rx_dispatch tests
-(RXFLTMAP1 bit13 is opened by enable_ack_detect; the 8188e otherwise leaves RXFLTMAP default)."""
-import time
+The tap lives in _rx_dispatch (raw MPDUs), before the parser drops the ACK control frame. The
+tally and arming live on the Driver base (record_ack / enable_rx_acks / acks_seen); _enable_rx_acks
+opens RXFLTMAP1 bit13 (the 8188e otherwise leaves RXFLTMAP default). Frames are fed via a
+monkeypatched iter_bulk_frames, matching the local rx_dispatch tests."""
 from unittest.mock import MagicMock
 
 import wifit3.chips.rtl8188eus.driver as drv
@@ -26,11 +26,10 @@ def test_tap_counts_ack_to_our_mac(monkeypatch):
     d = _driver()
     ra = bytes.fromhex("020000000001")
     d._our_tx_macs.add(ra)
-    d._ack_detect_on = True
+    d._ack_detect_on = True                     # base state: the tally is armed
     monkeypatch.setattr(drv, "iter_bulk_frames", lambda buf: [(None, _ack_mpdu(ra), -40)])
     d._rx_dispatch(b"BULK")
     assert d.acks_seen(ra) == 1
-    assert ra in d._ack_last_ts
     assert d._parsed == []          # an ACK is never handed to the frame parser
 
 
@@ -40,8 +39,7 @@ def test_tap_ignores_ack_to_foreign_mac(monkeypatch):
     d._ack_detect_on = True
     monkeypatch.setattr(drv, "iter_bulk_frames", lambda buf: [(None, _ack_mpdu(ra), -40)])
     d._rx_dispatch(b"BULK")
-    assert d.acks_seen(ra) == 0     # but not one of ours
-    assert d._ack_last_ts == {}
+    assert d.acks_seen(ra) == 0     # armed, but ra is not one of ours
 
 
 def test_tap_off_by_default(monkeypatch):
@@ -49,22 +47,11 @@ def test_tap_off_by_default(monkeypatch):
     ra = bytes.fromhex("020000000001")
     d._our_tx_macs.add(ra)
     monkeypatch.setattr(drv, "iter_bulk_frames", lambda buf: [(None, _ack_mpdu(ra), -40)])
-    monkeypatch.setattr(drv.WlanFrameParser, "parse_80211_frame",
-                        staticmethod(lambda mpdu, rssi: None))  # parser drops the ctrl frame
-    d._rx_dispatch(b"BULK")         # _ack_detect_on stays False
+    d._rx_dispatch(b"BULK")         # _ack_detect_on stays False -> record_ack is a no-op
     assert d.acks_seen(ra) == 0
 
 
-async def test_await_ack_true_when_ts_fresh():
+def test_stamp_tx_seq_is_identity():
     d = _driver()
-    ta = bytes.fromhex("020000000001")
-    since = time.monotonic()
-    d._ack_last_ts[ta] = since + 1.0            # ACK landed after `since`
-    assert await d._await_ack(ta, since, 0.05) is True
-
-
-async def test_await_ack_false_on_timeout():
-    d = _driver()
-    ta = bytes.fromhex("020000000001")
-    since = time.monotonic()
-    assert await d._await_ack(ta, since, 0.005) is False   # no ts recorded -> window elapses
+    frame = (b"\xc0\x00\x00\x00" + b"\xff" * 6 + bytes.fromhex("020000000001") + b"\x00" * 8)
+    assert d._stamp_tx_seq(frame) is frame   # Realtek HW-stamps; frame goes out unchanged

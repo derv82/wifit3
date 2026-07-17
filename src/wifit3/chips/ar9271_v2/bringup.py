@@ -63,14 +63,18 @@ def hw_reset_body(wmi: WMI, hw: hwmod.AthHw, chan: chanmod.Channel) -> None:
     hw.reset_tail()
 
 
-def cold_bringup(t: AR9271Transport) -> BringupResult:
+def cold_bringup(t: AR9271Transport, sta_retry_limit: int = R.INIT_SSH_RETRY) -> BringupResult:
     """Take a freshly firmware-booted AR9271 to a monitor-mode receiver on ch1. The firmware is
     already downloaded + the chip re-enumerated; this runs the HTC/WMI handshake, ath9k_hw init,
     ath9k_htc_start, the RX path, the monitor vif, and the initial set_channel — the exact wire of
-    ``_walk_init`` in the verify gate. [SRC] htc_drv_init.c + hw.c + htc_drv_main.c."""
+    ``_walk_init`` in the verify gate. [SRC] htc_drv_init.c + hw.c + htc_drv_main.c.
+
+    ``sta_retry_limit`` seeds the AR_DRETRY_LIMIT STA short/long HW ACK-retry count that
+    init_queues writes (the driver passes its DEFAULT_HW_ACK_RETRIES)."""
     st = htc.handshake(t)
     wmi = WMI(t, ctrl_epid=st.endpoints[C.WMI_CONTROL_SVC])
     hw = hwmod.init_reset(wmi)
+    hw.sta_retry_limit = sta_retry_limit
     phy.rf_claim(hw)
     eeprom.init(hw)
     ani.ani_init(hw)
@@ -135,7 +139,7 @@ def cold_bringup(t: AR9271Transport) -> BringupResult:
     return BringupResult(wmi=wmi, hw=hw, endpoints=st.endpoints)
 
 
-def warm_reattach(t: AR9271Transport) -> BringupResult:
+def warm_reattach(t: AR9271Transport, sta_retry_limit: int = R.INIT_SSH_RETRY) -> BringupResult:
     """Re-attach to an AR9271 already running firmware (warm) — no replug, no re-download.
 
     The one-shot HTC_READY only fires at firmware boot, so the cold handshake can't be re-run on a
@@ -153,6 +157,7 @@ def warm_reattach(t: AR9271Transport) -> BringupResult:
     endpoints = {svc: i + 1 for i, svc in enumerate(C.SERVICE_CONNECT_ORDER)}
     wmi = WMI(t, ctrl_epid=endpoints[C.WMI_CONTROL_SVC])
     hw = hwmod.AthHw(wmi)
+    hw.sta_retry_limit = sta_retry_limit           # AR_DRETRY_LIMIT STA retry (set on the first hop)
     # The chip was already power-on-reset + RF-reset when the firmware booted, so reflect that in the
     # host shadow: with reset_power_on=False (the fresh-AthHw default), set_reset_reg would force a
     # full POWER_ON reset on the first set_channel — that resets the RTC/clocks the RUNNING firmware

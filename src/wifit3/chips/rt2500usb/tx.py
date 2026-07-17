@@ -59,13 +59,16 @@ _USB_MAXPACKET_FS = 64          # RT2570 is full-speed; bulk maxpacket 64.
 _TX_TIMEOUT_MS = 200
 
 
-def build_tx_desc(frame_len: int, *, ack: bool = False) -> bytes:
+def build_tx_desc(frame_len: int, *, ack: bool = False,
+                  retry_limit: int = _RETRY_LIMIT) -> bytes:
     """Build the 5×u32 LE TX descriptor for a 1 Mbps CCK frame of
-    ``frame_len`` bytes (excluding the FCS the chip appends)."""
+    ``frame_len`` bytes (excluding the FCS the chip appends). ``retry_limit`` fills the
+    4-bit TXD_W0_RETRY_LIMIT field; the default (15) is the value the capture's aireplay-ng
+    deauth carried, and the inject path passes its own HW ACK-retry limit."""
     plcp_len = (frame_len + 4) * 8      # +4 FCS, ×8 µs/byte at 1 Mbps
 
     word0 = 0
-    word0 = set_field(word0, TXD_W0_RETRY_LIMIT, _RETRY_LIMIT)
+    word0 = set_field(word0, TXD_W0_RETRY_LIMIT, retry_limit)
     word0 = set_field(word0, TXD_W0_ACK, 1 if ack else 0)
     word0 = set_field(word0, TXD_W0_NEW_SEQ, 1)     # chip assigns sequence
     word0 = set_field(word0, TXD_W0_IFS, 0)
@@ -95,9 +98,10 @@ def _tx_data_len(buf_len: int, usb_maxpacket: int = _USB_MAXPACKET_FS) -> int:
 
 
 def build_tx_urb(frame: bytes, *, ack: bool = False,
+                 retry_limit: int = _RETRY_LIMIT,
                  usb_maxpacket: int = _USB_MAXPACKET_FS) -> bytes:
     """TXD + frame, zero-padded to the length rt2x00usb would send."""
-    buf = build_tx_desc(len(frame), ack=ack) + frame
+    buf = build_tx_desc(len(frame), ack=ack, retry_limit=retry_limit) + frame
     length = _tx_data_len(len(buf), usb_maxpacket)
     if length > len(buf):
         buf = buf + b"\x00" * (length - len(buf))
@@ -105,11 +109,13 @@ def build_tx_urb(frame: bytes, *, ack: bool = False,
 
 
 def inject(dev: usb.core.Device, ep_out: int, frame: bytes,
-           ack: bool = False, *, usb_maxpacket: int = _USB_MAXPACKET_FS) -> int:
+           ack: bool = False, *, retry_limit: int = _RETRY_LIMIT,
+           usb_maxpacket: int = _USB_MAXPACKET_FS) -> int:
     """Send one raw 802.11 frame (no FCS) out the bulk-OUT endpoint.
     Returns the number of bytes written.
 
-    ``ack`` is positional-or-keyword so the driver can forward it through
-    ``loop.run_in_executor`` (which only passes positional args)."""
-    urb = build_tx_urb(frame, ack=ack, usb_maxpacket=usb_maxpacket)
+    ``retry_limit`` fills TXD_W0_RETRY_LIMIT; the driver passes its
+    ``DEFAULT_HW_ACK_RETRIES``. ``ack`` is positional-or-keyword so it can ride
+    ``loop.run_in_executor`` (which only passes positional args) unchanged."""
+    urb = build_tx_urb(frame, ack=ack, retry_limit=retry_limit, usb_maxpacket=usb_maxpacket)
     return dev.write(ep_out, urb, _TX_TIMEOUT_MS)

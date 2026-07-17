@@ -506,15 +506,16 @@ class FakeUsbDev:
 
 
 async def test_driver_inject_frame_path():
-    """Regression: driver.inject_frame forwards ``ack`` positionally through
-    run_in_executor → tx.inject. A keyword-only ``ack`` broke this live."""
+    """The base inject_frame → _stamp_tx_seq (HW-assigned seq, unchanged) → _inject_frame
+    builds the TXD and bulk-outs it once. The descriptor carries the HW ACK-retry limit
+    (DEFAULT_HW_ACK_RETRIES) in TXD_W0_RETRY_LIMIT, not the capture's aireplay value."""
     drv = RT2500USBDriver(dev=FakeUsbDev())
     drv._bulk_out_ep = 0x01
     frame = _synthetic_beacon()
 
-    sent_ok = await drv.inject_frame(frame, use_no_ack=True)
+    sent_ok = await drv.inject_frame(frame)
     assert sent_ok is True
 
     ep, buf = drv.dev.last_write
     assert ep == 0x01
-    assert buf[:20] == build_tx_desc(len(frame), ack=False)
+    assert buf[:20] == build_tx_desc(len(frame), retry_limit=drv.DEFAULT_HW_ACK_RETRIES)

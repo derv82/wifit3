@@ -47,7 +47,8 @@ def _is_multicast_or_broadcast(addr: bytes) -> bool:
     return bool(addr[0] & 0x01)
 
 
-def build_tx_desc_mgmt(mpdu: bytes, *, band_is_2g: bool = True) -> bytes:
+def build_tx_desc_mgmt(mpdu: bytes, *, band_is_2g: bool = True,
+                       retry_limit: int | None = None) -> bytes:
     """Build a 48-byte tx_pkt_desc for an MGMT-queue injection.
 
     Mirrors `rtw_tx_fill_tx_desc` (tx.c:35) for the MGMT path. Differences
@@ -55,6 +56,11 @@ def build_tx_desc_mgmt(mpdu: bytes, *, band_is_2g: bool = True) -> bytes:
       - DESC size 48
       - `old_datarate_fb_limit = false` (rtw8822b.c:2547) → no FB_LIMIT
       - 16-u16 checksum written at W7 (offset 28) — same as 8821a
+
+    ``retry_limit`` (when not None) caps the HW ACK-retry count via RTY_LMT_EN (W4[17]) plus
+    the 6-bit RTS_DATA_RTY_LMT (W4[18:24]) — the same 8822b descriptor bits the DKMS sibling
+    byte-verifies against the recorded aireplay TX. The inject path passes
+    ``DEFAULT_HW_ACK_RETRIES``; left None the field stays clear (the HW global retry applies).
     """
     if len(mpdu) < 10:
         raise ValueError(f"MPDU too short ({len(mpdu)} bytes) for mgmt injection")
@@ -92,6 +98,9 @@ def build_tx_desc_mgmt(mpdu: bytes, *, band_is_2g: bool = True) -> bytes:
     )
     w4 = rate & 0x7F                       # W4[6:0]    DATARATE
     # 8822b has old_datarate_fb_limit=False (rtw8822b.c:2547) — no FB_LIMIT.
+    if retry_limit is not None:
+        w4 |= (1 << 17)                    # W4[17]     RTY_LMT_EN
+        w4 |= (retry_limit & 0x3F) << 18   # W4[18:24]  RTS_DATA_RTY_LMT (HW ACK-retry cap)
     w5 = 0
     w6 = 0
     w7 = 0                                 # checksum filled below

@@ -89,14 +89,17 @@ def config_erp(t: RT3070Transport, *, short_preamble: bool, cts_protection: bool
     t.register_write(C.BCN_TIME_CFG, reg)
 
 
-def initial_config(t: RT3070Transport, chip: ChipInfo, ev: EepromValues) -> None:
+def initial_config(t: RT3070Transport, chip: ChipInfo, ev: EepromValues,
+                   short_retry: int = DEFAULT_SHORT_RETRY) -> None:
     """The first ``rt2x00mac_config`` after the radio is up — flags POWER|RETRY|PS,
     no channel change [SRC rt2x00mac.c:307-352]. Same stop/antenna/start frame as
-    ``chan.set_channel`` but the body runs txpower + retry + ps instead of a tune."""
+    ``chan.set_channel`` but the body runs txpower + retry + ps instead of a tune.
+    ``short_retry`` sets TX_RTY_CFG SHORT_RTY_LIMIT (the driver routes its
+    DEFAULT_HW_ACK_RETRIES here); the mac80211/capture default is 7."""
     mac.stop_queue_rx(t)
     lna_gain = chan.config_lna_gain(ev, 0)        # rf.channel=0 ⇒ 2.4 GHz BG arm
     chan.config_txpower(t, chip, ev)              # CONF_CHANGE_POWER
-    config_retry_limit(t)                         # CONF_CHANGE_RETRY_LIMITS
+    config_retry_limit(t, short_retry=short_retry)  # CONF_CHANGE_RETRY_LIMITS
     config_ps(t)                                  # CONF_CHANGE_PS
     chan.config_ant(t, chip, ev)                  # rt2x00lib_config_antenna
     reset_tuner(t, chip, lna_gain)               # config_antenna's reset_tuner
@@ -104,9 +107,10 @@ def initial_config(t: RT3070Transport, chip: ChipInfo, ev: EepromValues) -> None
 
 
 def enable_monitor(t: RT3070Transport, chip: ChipInfo, ev: EepromValues,
-                   drv: DrvData) -> None:
+                   drv: DrvData, short_retry: int = DEFAULT_SHORT_RETRY) -> None:
     """Bring up monitor mode: interface-up filter (0x97) → initial config →
-    monitor filter (0x93). Mirrors the ``airmon-ng start`` callback order."""
+    monitor filter (0x93). Mirrors the ``airmon-ng start`` callback order.
+    ``short_retry`` routes to TX_RTY_CFG SHORT_RTY_LIMIT (default 7)."""
     mac.config_filter(t, MONITOR_FILTER, monitoring=False)   # 0x97
-    initial_config(t, chip, ev)
+    initial_config(t, chip, ev, short_retry=short_retry)
     mac.config_filter(t, MONITOR_FILTER, monitoring=True)    # 0x93

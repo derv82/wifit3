@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-import time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -81,6 +80,7 @@ class MT76x0UDriver(Driver):
         return cls(dev, id_entry)
 
     def __init__(self, dev: usb.core.Device, id_entry: DeviceID):
+        super().__init__()          # base owns the ACK tally (_ack_detect_on / _our_tx_macs / _ack_counts)
         self.dev = dev
         self.id_entry = id_entry
         self.transport = MT76x0UTransport(dev)
@@ -122,13 +122,10 @@ class MT76x0UDriver(Driver):
         # M6 — WlanInterface RX hook + background drainer (set in connect()).
         self._rx_callback: Optional[Callable[[dict], None]] = None
         self._on_lost: Optional[Callable[[Exception], None]] = None
-        self._rx_drainer = None   # rx.RxDrainer | None — typed late to dodge circulars
-        # Observe the AP's ACK to our injects (did our TX land). Off by default.
-        self._ack_detect_on: bool = False
-        self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
-        self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
-        self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
-        self._tx_seqno: int = 0   # incrementing 802.11 seq stamped per inject (see tx.stamp_seq_ctrl)
+        self._rx_drainer = None   # rx.RxDrainer or None (typed late to dodge circulars)
+        # Incrementing 802.11 seq software-stamped per inject via _stamp_tx_seq (build_txwi sets
+        # no NSEQ, so the chip transmits the MPDU's seq_ctrl as-is). The base owns the ACK tally.
+        self._tx_seqno: int = 0
 
     # ---- Hooks --------------------------------------------------------
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
@@ -149,18 +146,14 @@ class MT76x0UDriver(Driver):
             cb(parsed)
 
     def _on_raw_rx(self, data: bytes) -> None:
-        """Pre-parse tap for TX-ACK detection (RxDrainer raw_callback). A 10-byte
-        0xD4 MPDU is an 802.11 ACK; RA is the STA the AP ACKed. When armed, keep
-        only ACKs to a MAC we inject as. decode_rx_packet drops these short control
-        frames later, so this is the only place they're seen."""
-        if not self._ack_detect_on:
-            return
+        """Pre-parse tap for TX-ACK detection (RxDrainer raw_callback). ``ack_ra`` confirms the
+        bulk-IN buffer carries a 10-byte 0xD4 ACK and returns its RA; the base ``record_ack``
+        tallies it when the tally is armed and the RA is a MAC we inject as (record_ack reads the
+        RA at frame[4:10], so the 4 leading bytes are immaterial). decode_rx_packet drops these
+        short control frames later, so this tap is the only place they are seen."""
         ra = rx_mod.ack_ra(data)
-        if ra is None:
-            return
-        if ra in self._our_tx_macs:
-            self._ack_sightings[ra.hex()] = self._ack_sightings.get(ra.hex(), 0) + 1
-            self._ack_last_ts[ra] = time.monotonic()   # for inject wait-for-ack
+        if ra is not None:
+            self.record_ack(b"\x00\x00\x00\x00" + ra)
 
     # ---- Lifecycle ----------------------------------------------------
     async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
@@ -379,7 +372,8 @@ class MT76x0UDriver(Driver):
         # 4 direct register tweaks (release MAC reset, EXT_CCA_CFG, FCE_L2_STUFF,
         # WMM_CTRL).
         try:
-            init_mac_registers(self.transport, self.mcu)
+            init_mac_registers(self.transport, self.mcu,
+                               short_retry_limit=self.DEFAULT_HW_ACK_RETRIES)
         except (MCUError, MACInitError, usb.core.USBError) as e:
             logger.error("MT7610U: init_mac_registers failed: %s", e)
             return False
@@ -974,87 +968,48 @@ class MT76x0UDriver(Driver):
                 self.transport.write32(MT_RX_FILTR_CFG, new)
             return new
 
-    async def enable_ack_detect(self) -> None:
-        """Admit ACK control frames (clear RX_FILTR_CFG_ACK) so the tap sees the AP's
-        ACKs to our injected MAC. Not active monitor, which makes the chip emit ACKs."""
+    async def _enable_rx_acks(self) -> None:
+        """Admit the AP's link-layer ACK control frames (FC=0xD4) into monitor RX by clearing
+        MT_RX_FILTR_CFG bit 10 (MT_RX_FILTR_CFG_ACK), so the tap can see ACKs to our injected
+        MAC. The base arms the tally; this hook is only the chip register write. (Not active
+        monitor, which makes the chip EMIT ACKs.)"""
         loop = asyncio.get_running_loop()
         new = await loop.run_in_executor(None, self._set_ack_admit, True)
-        self._ack_sightings.clear()
-        self._ack_last_ts.clear()
-        self._ack_detect_on = True
-        logger.info("MT7610U TX-ACK detection ON (RX_FILTR_CFG=0x%08x, ACK bit clear) "
-                    "— observing our TX delivery", new)
+        logger.info("MT7610U RX-ACK admit ON (RX_FILTR_CFG=0x%08x, ACK bit clear)", new)
 
-    async def disable_ack_detect(self) -> None:
-        """Restore the default monitor RX filter (re-set RX_FILTR_CFG_ACK)."""
+    async def _disable_rx_acks(self) -> None:
+        """Restore the default monitor RX filter (re-set MT_RX_FILTR_CFG_ACK), matching
+        ``_enable_rx_acks``."""
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._set_ack_admit, False)
-        self._ack_detect_on = False
 
-    def acks_seen(self, mac: bytes) -> int:
-        """Count of ACKs observed addressed to ``mac`` (an injected source MAC) since enable."""
-        return self._ack_sightings.get(bytes(mac).hex(), 0)
+    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+        """Build the mt76x02 DMA-info + TXWI for ``frame_bytes`` and bulk-OUT it once over
+        EP 0x07 (AC_VO). The frame always requests ACK, so the chip's own HW retry (limit set
+        globally in TX_RTY_CFG at connect) retransmits an un-ACKed unicast. The sequence number
+        is already stamped by ``_stamp_tx_seq`` (the base calls it before this)."""
+        from .tx import TXError, inject_80211_frame
+        try:
+            n = inject_80211_frame(self.transport, frame_bytes, request_ack=True, wcid=0xFF)
+        except TXError as e:
+            logger.error("MT7610U: inject_frame failed: %s", e)
+            return False
+        except usb.core.USBError as e:
+            logger.error("MT7610U: inject_frame USB error: %s", e)
+            return False
+        logger.debug("MT7610U: _inject_frame(%d bytes) -> %d bulk-OUT bytes",
+                     len(frame_bytes), n)
+        return True
 
-    async def _await_ack(self, ta: bytes, since: float, window: float) -> bool:
-        """True if the tap observed an ACK to ``ta`` after ``since``, within ``window`` s.
-        _on_raw_rx runs on this loop, so a sleep yield lets a just-arrived ACK's timestamp
-        land between checks."""
-        deadline = since + window
-        while time.monotonic() < deadline:
-            if self._ack_last_ts.get(ta, 0.0) > since:
-                return True
-            await asyncio.sleep(0.001)
-        return False
-
-    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True,
-                           wait_for_ack: float = 0.0, max_resends: int = 0) -> bool:
-        """M6a — inject a raw 802.11 frame via EP 0x09 (MGMT queue).
-
-        `use_no_ack=True` (Protocol default) skips ACK_REQ — appropriate
-        for spoofed-source frames (deauths/disassocs) where the target
-        wouldn't ACK to a random MAC anyway. Pass False for unicast frames
-        from a real associated station MAC.
-
-        ``wait_for_ack > 0`` (with TX-ACK detection armed) waits for the AP's ACK and
-        resends the identical frame up to ``max_resends`` times if none comes, returning
-        whether it landed; ``0`` = fire-and-forget (current behaviour).
-        """
-        from .tx import TXError, inject_80211_frame, stamp_seq_ctrl
-        # Stamp an incrementing seq before the resend loop: build_txwi sets no NSEQ, so the
-        # mt76x02 chip sends the MPDU's seqctl as-is; without this every inject reuses seq 0.
-        # Stamped once so a resend re-sends the identical frame (a true HW retransmit).
+    def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
+        """Software-stamp an incrementing 802.11 sequence number into seq_ctrl. build_txwi sets
+        no NSEQ, so the mt76x02 chip transmits the MPDU's seq_ctrl as-is; without this every
+        inject reuses seq 0 and the AP dedups a multi-frame run as retransmissions. The base
+        calls this once before ``_inject_frame`` (a resend re-sends the identical frame)."""
+        from .tx import stamp_seq_ctrl
         buf = bytearray(frame_bytes)
         self._tx_seqno = stamp_seq_ctrl(buf, self._tx_seqno)
-        frame_bytes = bytes(buf)
-        ta = bytes(frame_bytes[10:16]) if len(frame_bytes) >= 16 else None   # TA — the AP ACKs back to this
-        if self._ack_detect_on and ta is not None:
-            self._our_tx_macs.add(ta)
-        ack_gated = wait_for_ack > 0 and self._ack_detect_on and ta is not None
-
-        def _send() -> bool:
-            try:
-                n = inject_80211_frame(
-                    self.transport, frame_bytes,
-                    request_ack=not use_no_ack, wcid=0xFF,
-                )
-                logger.debug("MT7610U: inject_frame(%d bytes) → %d bulk-OUT bytes",
-                             len(frame_bytes), n)
-                return True
-            except TXError as e:
-                logger.error("MT7610U: inject_frame failed: %s", e)
-                return False
-            except usb.core.USBError as e:
-                logger.error("MT7610U: inject_frame USB error: %s", e)
-                return False
-
-        for _ in range(max_resends + 1):
-            t0 = time.monotonic()
-            ok = _send()
-            if not ack_gated:
-                return ok                   # fire-and-forget (deauth / WEP / current behaviour)
-            if ok and await self._await_ack(ta, t0, wait_for_ack):
-                return True                 # landed — the AP ACKed it
-        return False                        # never ACKed after every send
+        return bytes(buf)
 
     async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
         """Set MT_MAC_ADDR_DW0/1 to ``mac`` with U2ME_MASK=0xff so the autoresponder

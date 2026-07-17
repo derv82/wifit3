@@ -45,11 +45,18 @@ def _is_multicast_or_broadcast(addr: bytes) -> bool:
     return bool(addr[0] & 0x01)
 
 
-def build_tx_desc_mgmt(mpdu: bytes, *, band_is_2g: bool = True) -> bytes:
+def build_tx_desc_mgmt(mpdu: bytes, *, band_is_2g: bool = True,
+                       retry_limit: int | None = None) -> bytes:
     """Build a 40-byte tx_pkt_desc for an MGMT-queue injection.
 
     Mirrors rtw_tx_fill_tx_desc for the MGMT path. 8814a packs 10 u32 (40 B)
     and, unlike the 8812a, sets NO DATARATE_FB_LIMIT (old_datarate_fb_limit=false).
+
+    ``retry_limit`` (when not None) sets the per-frame HW ACK-retry limit in W4: the
+    Realtek 40-byte desc carries RTY_LMT_EN (W4[17]) + DATA_RTY_LMT (W4[23:18], 6-bit),
+    the same bits as the rtl88xxau/rtl8xxxu siblings. The rtw88 reference leaves them 0
+    and relies on the global REG_RETRY_LIMIT instead; the inject path opts in per frame so
+    each injected frame carries its own limit. None (the FW/HW-test callers) keeps them 0.
     """
     if len(mpdu) < 10:
         raise ValueError(f"MPDU too short ({len(mpdu)} bytes) for mgmt injection")
@@ -78,6 +85,9 @@ def build_tx_desc_mgmt(mpdu: bytes, *, band_is_2g: bool = True) -> bytes:
     w2 = 0
     w3 = (1 << 8) | (1 << 10)              # W3[8] USE_RATE, W3[10] DISDATAFB
     w4 = rate & 0x7F                       # W4[6:0] DATARATE (no FB_LIMIT)
+    if retry_limit is not None:
+        w4 |= 1 << 17                      # W4[17] RTY_LMT_EN
+        w4 |= (retry_limit & 0x3F) << 18   # W4[23:18] DATA_RTY_LMT (6-bit)
     w5 = w6 = w7 = 0                        # w7 = checksum, filled below
     w8 = 1 << 15                           # W8[15] EN_HWSEQ
     w9 = 0

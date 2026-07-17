@@ -21,19 +21,23 @@ from .firmware import _set_le32_bits
 
 
 def build_inject_txdesc(frame: bytes, *, qsel: int = TXDESC_QSEL_MGNT, macid: int = 1,
-                        hw_rate: int = DESC_RATE1M, rate_id: int = RATEID_IDX_B) -> bytes:
+                        hw_rate: int = DESC_RATE1M, rate_id: int = RATEID_IDX_B,
+                        retry_limit: int = 12) -> bytes:
     """48-byte injector descriptor prepended to `frame` = the bulk-OUT payload.
 
     Reproduces the **`update_txdesc` MGNT branch** [SRC] rtl8822bu_xmit.c — the path the kernel's
     `rtw_mgnt_xmit` (aireplay-ng's route) actually takes, byte-diffed against the captured injector:
     LS + OFFSET=48 + TXPKTSIZE, MACID = `RTW_DEFAULT_MGMT_MACID` (1, the bcast/self station), QSEL=MGNT,
-    RATE_ID, USE_RATE + DATARATE (fixed rate), RTY_LMT_EN + RTS_DATA_RTY_LMT=12 (no retry-ctrl), G_ID =
+    RATE_ID, USE_RATE + DATARATE (fixed rate), RTY_LMT_EN + RTS_DATA_RTY_LMT, G_ID =
     the RA station's beamforming group (63 broadcast / 0 unicast; wifit3 never beamforms), SW_DEFINE=1 (the DriverFixedRate
     flag for the USE_RATE path), DISQSELSEQ + EN_HWSEQ (HW stamps the sequence number; !qos_en). BMC
     (word0[24]) when addr1 (frame[4]) is group-addressed. Field offsets [SRC] halmac_tx_desc_nic.h;
     XOR-16 checksum over the first 32 bytes [SRC] halmac_common_8822b.c fill_txdesc_check_sum_8822b.
     Rides bulk-OUT EP 0x05 (MGNT qsel -> HIGH pipe -> RtOutPipe[0]). Only the frame's own seqctl varies
-    per send (HW-assigned), so the 48-byte descriptor is byte-identical to the captured aireplay TX."""
+    per send (HW-assigned), so the 48-byte descriptor is byte-identical to the captured aireplay TX.
+
+    `retry_limit` fills the 6-bit RTS_DATA_RTY_LMT (the HW ACK-retry cap); the default is 12 (the
+    value the captured aireplay injector carries), and the inject path passes `DEFAULT_HW_ACK_RETRIES`."""
     d = bytearray(TX_DESC_SIZE_88XX)
     _set_le32_bits(d, 0x00, 0, 16, len(frame))          # TXPKTSIZE  word0[0:16]
     _set_le32_bits(d, 0x00, 16, 8, TX_DESC_SIZE_88XX)   # OFFSET     word0[16:24] (desc bytes)
@@ -52,7 +56,7 @@ def build_inject_txdesc(frame: bytes, *, qsel: int = TXDESC_QSEL_MGNT, macid: in
     _set_le32_bits(d, 0x0C, 8, 1, 1)                    # USE_RATE   word3[8]
     _set_le32_bits(d, 0x10, 0, 7, hw_rate)              # DATARATE   word4[0:7] (fixed)
     _set_le32_bits(d, 0x10, 17, 1, 1)                   # RTY_LMT_EN word4[17]
-    _set_le32_bits(d, 0x10, 18, 6, 12)                  # RTS_DATA_RTY_LMT word4[18:24] (=12)
+    _set_le32_bits(d, 0x10, 18, 6, retry_limit)         # RTS_DATA_RTY_LMT word4[18:24]
     _set_le32_bits(d, 0x18, 0, 12, 1)                   # SW_DEFINE  word6[0:12] (DriverFixedRate)
     _set_le32_bits(d, 0x20, 15, 1, 1)                   # EN_HWSEQ   word8[15]
     chksum = 0

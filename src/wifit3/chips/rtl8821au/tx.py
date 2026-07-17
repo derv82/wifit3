@@ -60,7 +60,8 @@ def _is_multicast_or_broadcast(addr: bytes) -> bool:
     return bool(addr[0] & 0x01)
 
 
-def build_tx_desc_mgmt(mpdu: bytes, *, band_is_2g: bool = True) -> bytes:
+def build_tx_desc_mgmt(mpdu: bytes, *, band_is_2g: bool = True,
+                       retry_limit: int | None = None) -> bytes:
     """Build the 40-byte tx_pkt_desc for MGMT-queue injection.
 
     Mirrors the fields set by `rtw_tx_rsvd_page_pkt_info_update` + the mgmt
@@ -68,6 +69,11 @@ def build_tx_desc_mgmt(mpdu: bytes, *, band_is_2g: bool = True) -> bytes:
     the 802.11 sequence number (W8 EN_HWSEQ set, tx.c:81). Used by deauth,
     fake-auth, and ARP replay — all unfragmented, so the seq number is
     irrelevant. W8/W9 sit past the checksummed region (words 0..7).
+
+    ``retry_limit`` (when not None) caps the HW ACK-retry count via RTY_LMT_EN (W4[17]) plus
+    the 6-bit DATA_RT_LMT (W4[18:24]) — the same 8821a descriptor bits the DKMS sibling
+    byte-verifies against the recorded aireplay TX. The inject path passes
+    ``DEFAULT_HW_ACK_RETRIES``; left None the field stays clear (the HW global retry applies).
     """
     if len(mpdu) < 10:
         raise ValueError(f"MPDU too short ({len(mpdu)} bytes) for mgmt injection")
@@ -110,6 +116,9 @@ def build_tx_desc_mgmt(mpdu: bytes, *, band_is_2g: bool = True) -> bytes:
     w4 = (rate & 0x7F)                     # W4[6:0]    DATARATE
     # 8821a has old_datarate_fb_limit=True (rtw8821a.c:1188) → set FB_LIMIT=0x1f
     w4 |= (0x1F & 0x1F) << 8               # W4[12:8]   DATARATE_FB_LIMIT
+    if retry_limit is not None:
+        w4 |= (1 << 17)                    # W4[17]     RTY_LMT_EN
+        w4 |= (retry_limit & 0x3F) << 18   # W4[18:24]  DATA_RT_LMT (HW ACK-retry cap)
 
     w5 = 0
     w6 = 0

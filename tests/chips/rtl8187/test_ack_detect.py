@@ -1,10 +1,10 @@
 """rtl8187 TX-ACK detection: the RX tap that counts the AP's link-layer ACKs to a MAC we
-inject as, and the inject wait-for-ack poll. No hardware — synthetic frames.
+inject as, plus the inject path's HW ACK-retry + software seq wiring. No hardware (synthetic frames).
 
 The 8187L admits ACK control frames in monitor by default (RX_CONF_CTRL is set in
-mac.configure_filter, = FIF_CONTROL), so ack-detect is a pure software flag."""
+mac.configure_filter, = FIF_CONTROL), so ``_enable_rx_acks`` is a documented no-op. The tally and
+arming live on the ``Driver`` base (``record_ack`` / ``enable_rx_acks`` / ``acks_seen``)."""
 import struct
-import time
 from unittest.mock import MagicMock
 
 from wifit3.chips.rtl8187.driver import RTL8187Driver
@@ -23,6 +23,12 @@ def _ack_buf(ra: bytes) -> bytes:
     return frame + trailer
 
 
+def _mgmt_frame(ta: bytes = bytes.fromhex("020000000001")) -> bytes:
+    """A 24-B deauth: FC=0xC0, addr1 (RA), addr2 (TA=our injected source), addr3, seqctl=0."""
+    return (b"\xc0\x00\x00\x00" + bytes.fromhex("aabbccddeeff") + ta
+            + bytes.fromhex("aabbccddeeff") + b"\x00\x00")
+
+
 def _driver() -> RTL8187Driver:
     d = RTL8187Driver(MagicMock())
     d._parsed = []
@@ -30,44 +36,57 @@ def _driver() -> RTL8187Driver:
     return d
 
 
-def test_tap_counts_ack_to_our_mac():
+async def test_tap_counts_ack_to_our_mac():
     d = _driver()
     ra = bytes.fromhex("020000000001")
+    await d.enable_rx_acks()                    # arms the base tally (clears _our_tx_macs)
     d._our_tx_macs.add(ra)
-    d._ack_detect_on = True
     d._rx_dispatch(_ack_buf(ra))
     assert d.acks_seen(ra) == 1
-    assert ra in d._ack_last_ts
-    assert d._parsed == []          # an ACK is never handed to the frame parser
+    assert d._parsed == []                      # an ACK is never handed to the frame parser
 
 
-def test_tap_ignores_ack_to_foreign_mac():
+async def test_tap_ignores_ack_to_foreign_mac():
     d = _driver()
     ra = bytes.fromhex("aabbccddeeff")
-    d._ack_detect_on = True
-    d._rx_dispatch(_ack_buf(ra))
-    assert d.acks_seen(ra) == 0     # but not one of ours
-    assert d._ack_last_ts == {}
+    await d.enable_rx_acks()
+    d._rx_dispatch(_ack_buf(ra))                # armed, but ra is not one of ours
+    assert d.acks_seen(ra) == 0
 
 
 def test_tap_off_by_default():
     d = _driver()
     ra = bytes.fromhex("020000000001")
     d._our_tx_macs.add(ra)
-    d._rx_dispatch(_ack_buf(ra))    # _ack_detect_on stays False
+    d._rx_dispatch(_ack_buf(ra))                # never enabled -> _ack_detect_on stays False
     assert d.acks_seen(ra) == 0
 
 
-async def test_await_ack_true_when_ts_fresh():
+async def test_disable_rx_acks_stops_the_tally():
     d = _driver()
-    ta = bytes.fromhex("020000000001")
-    since = time.monotonic()
-    d._ack_last_ts[ta] = since + 1.0            # ACK landed after `since`
-    assert await d._await_ack(ta, since, 0.05) is True
+    ra = bytes.fromhex("020000000001")
+    await d.enable_rx_acks()
+    d._our_tx_macs.add(ra)
+    await d.disable_rx_acks()
+    d._rx_dispatch(_ack_buf(ra))
+    assert d.acks_seen(ra) == 0
 
 
-async def test_await_ack_false_on_timeout():
+def test_stamp_tx_seq_advances_and_writes_seqctl():
     d = _driver()
-    ta = bytes.fromhex("020000000001")
-    since = time.monotonic()
-    assert await d._await_ack(ta, since, 0.005) is False   # no ts recorded -> window elapses
+    out = d._stamp_tx_seq(_mgmt_frame())
+    assert (out[22] | (out[23] << 8)) == 0x10   # first frame -> seq 1 (bits [4:15]), frag 0
+    assert d._tx_seqno == 0x10
+    out2 = d._stamp_tx_seq(_mgmt_frame())
+    assert (out2[22] | (out2[23] << 8)) == 0x20  # next frame advances one sequence
+
+
+async def test_inject_wires_hw_retry_limit():
+    d = _driver()
+    sent: list[bytes] = []
+    d.dev.write = lambda ep, payload, timeout: (sent.append(bytes(payload)), len(payload))[1]
+    frame = _mgmt_frame()
+    assert await d.inject_frame(frame) is True   # base entry -> _stamp_tx_seq -> _inject_frame
+    assert len(sent) == 1
+    retry = int.from_bytes(sent[0][8:12], "little")            # tx_hdr __le32 retry = (n-1)<<8
+    assert ((retry >> 8) & 0xFF) == d.DEFAULT_HW_ACK_RETRIES - 1

@@ -31,7 +31,6 @@ from __future__ import annotations
 import asyncio
 import errno
 import logging
-import time
 from typing import Callable, Optional
 
 import usb.core
@@ -54,7 +53,7 @@ from .rtl8225 import RfSetup, TxPower, build_rf_init
 from .rx import parse_rx_urb, probe_endpoints, read_rx_burst
 from ..rx_reader import RxReaderThread
 from .transport import RTL8187Transport
-from .tx import inject_frame as _inject_frame
+from .tx import inject_frame as _tx_inject, stamp_seq_ctrl
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +83,7 @@ class RTL8187Driver(Driver):
         return cls(dev)
 
     def __init__(self, dev: usb.core.Device):
+        super().__init__()          # base owns the ACK tally (_ack_detect_on / _our_tx_macs / _ack_counts)
         self.dev = dev
         self.transport = RTL8187Transport(dev)
         self._rx_callback: Optional[Callable[[dict], None]] = None
@@ -104,12 +104,6 @@ class RTL8187Driver(Driver):
         self.is_warm: bool = False
         self.current_channel: int = 1
         self.chip_variant: Optional[ChipVariant] = None
-
-        # Observe the AP's ACK to our injects (did our TX land). Off by default.
-        self._ack_detect_on: bool = False
-        self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
-        self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
-        self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
 
     # ---- discovery hook ---------------------------------------------------
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
@@ -261,13 +255,10 @@ class RTL8187Driver(Driver):
         if rx is None or rx.has_fcs_error:
             return
         mpdu = rx.mpdu
-        # A 10-byte 0xD4 frame is an ACK (the parser drops control frames). mpdu[4:10]
-        # is the RA the AP ACKed; keep only ACKs to a MAC we inject as.
-        if self._ack_detect_on and len(mpdu) == 10 and mpdu[0] == 0xD4:
-            ra = mpdu[4:10]
-            if ra in self._our_tx_macs:
-                self._ack_sightings[ra.hex()] = self._ack_sightings.get(ra.hex(), 0) + 1
-                self._ack_last_ts[ra] = time.monotonic()   # for inject wait-for-ack
+        # A 10-byte 0xD4 frame is an ACK (the parser drops control frames); the base tallies it
+        # iff the ACK tap is armed and RA=mpdu[4:10] is a MAC we inject as.
+        if len(mpdu) == 10 and mpdu[0] == 0xD4:
+            self.record_ack(mpdu)
             return
         parsed = WlanFrameParser.parse_80211_frame(mpdu, rx.rssi_dbm)
         if parsed is not None and self._rx_callback is not None:
@@ -276,36 +267,17 @@ class RTL8187Driver(Driver):
             except Exception as e:
                 logger.exception("rx_callback raised: %s", e)
 
-    # ---- TX-ACK detection -----------------------------------------------
-    async def enable_ack_detect(self) -> None:
-        """Arm the ACK tap. Pure software flag — the monitor RX_CONF already sets
-        RX_CONF_CTRL (mac.configure_filter, = FIF_CONTROL), so the hardware forwards ACK
-        control frames to bulk-IN; no register write needed. This arms only the RX tap that
-        counts ACKs; it does not touch the card's own auto-ACK responder, which HW-ACKs the
-        card's silicon MAC regardless (FAKE_MAC.FIXED_MAC)."""
-        self._ack_sightings.clear()
-        self._ack_last_ts.clear()
-        self._ack_detect_on = True
-        logger.info("RTL8187 TX-ACK detection ON — observing our TX delivery")
+    # ---- RX-ACK detection -----------------------------------------------
+    async def _enable_rx_acks(self) -> None:
+        """No-op: monitor entry sets RX_CONF_CTRL (mac.configure_filter, = FIF_CONTROL), so the
+        hardware already forwards ACK control frames (FC=0xD4) to bulk-IN. Nothing to enable on the
+        chip (the base arms the tally). This does not touch the card's own auto-ACK responder, which
+        HW-ACKs the card's silicon MAC regardless (FAKE_MAC.FIXED_MAC)."""
+        return
 
-    async def disable_ack_detect(self) -> None:
-        """Disarm the ACK tap (software flag only; the monitor RX filter is unchanged)."""
-        self._ack_detect_on = False
-
-    def acks_seen(self, mac: bytes) -> int:
-        """Count of ACKs observed addressed to ``mac`` (an injected source MAC) since enable."""
-        return self._ack_sightings.get(bytes(mac).hex(), 0)
-
-    async def _await_ack(self, ta: bytes, since: float, window: float) -> bool:
-        """True if the tap observed an ACK to ``ta`` after ``since``, within ``window`` s.
-        _rx_dispatch runs on this loop, so a sleep yield lets a just-arrived ACK's timestamp
-        land between checks."""
-        deadline = since + window
-        while time.monotonic() < deadline:
-            if self._ack_last_ts.get(ta, 0.0) > since:
-                return True
-            await asyncio.sleep(0.001)
-        return False
+    async def _disable_rx_acks(self) -> None:
+        """No-op, matching ``_enable_rx_acks``: the monitor RX filter is left untouched."""
+        return
 
     # ---- channel tune (M4) -----------------------------------------------
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
@@ -328,54 +300,34 @@ class RTL8187Driver(Driver):
         return True
 
     # ---- TX inject (M5) --------------------------------------------------
-    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True,
-                           wait_for_ack: float = 0.0, max_resends: int = 0) -> bool:
-        """Build tx_hdr + bulk-OUT inject.
+    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+        """Build tx_hdr + bulk-OUT ``frame_bytes`` once, over EP 0x02, with the chip's HW ACK-retry
+        limit set to ``self.DEFAULT_HW_ACK_RETRIES``. The 802.11 sequence number is already stamped
+        by ``_stamp_tx_seq``."""
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda: _tx_inject(self.dev, frame_bytes,
+                                   retry_count=self.DEFAULT_HW_ACK_RETRIES),
+            )
+        except usb.core.USBError as e:
+            logger.error("RTL8187 inject_frame USBError: %s", e)
+            return False
+        except ValueError as e:
+            logger.warning("RTL8187 inject_frame bad frame: %s", e)
+            return False
+        return True
 
-        ``use_no_ack=True`` is the "fire-and-forget" mode used for
-        spoofed frames (deauths, EAPOL inject) — the chip is told to
-        send the frame *once* (``retry_count=1``) instead of retrying
-        7× waiting for an ACK from a sender we're impersonating. Real
-        retries would let the TX FIFO back up past the bulk-OUT
-        timeout. ``use_no_ack=False`` uses ``RETRY_COUNT=7`` for
-        normal unicast TX (where we actually want delivery).
-
-        ``wait_for_ack > 0`` (with TX-ACK detection armed) waits for the AP's ACK and
-        resends the same frame up to ``max_resends`` times if none comes, returning whether
-        it landed; ``0`` = fire-and-forget (byte-identical to the prior behaviour).
-        """
-        from .tx import RETRY_COUNT, stamp_seq_ctrl
-        retry_count = 1 if use_no_ack else RETRY_COUNT
-        ta = bytes(frame_bytes[10:16]) if len(frame_bytes) >= 16 else None   # AP ACKs back to TA
-        if self._ack_detect_on and ta is not None:
-            self._our_tx_macs.add(ta)
-        # Stamp an incrementing 802.11 sequence number ONCE (the 8187L L-path has no hardware
-        # seq assignment; the AP dedups our association/EAPOL frames otherwise). Resends reuse
-        # the same seq so the AP treats them as retransmissions. Done on the loop before the
-        # blocking write, so _tx_seqno needs no lock.
+    def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
+        """Stamp an incrementing 802.11 sequence number (step 0x10, the number lives in seq_ctrl
+        bits [4:15]). The 8187L L-path has NO hardware seq assignment (HW_SEQNUM is 8187B-only), so
+        without this every inject leaves seq=0 and an AP dedups our multi-frame association/EAPOL
+        conversation as retransmissions (PMKID / WPS); see tx.stamp_seq_ctrl. Runs on the event loop
+        before the blocking write, so ``_tx_seqno`` needs no lock."""
         buf = bytearray(frame_bytes)
         self._tx_seqno = stamp_seq_ctrl(buf, self._tx_seqno)
-        frame_to_send = bytes(buf)
-        loop = asyncio.get_event_loop()
-        ack_gated = wait_for_ack > 0 and self._ack_detect_on and ta is not None
-        for _ in range(max_resends + 1):
-            try:
-                t0 = time.monotonic()
-                await loop.run_in_executor(
-                    None,
-                    lambda: _inject_frame(self.dev, frame_to_send, retry_count=retry_count),
-                )
-            except usb.core.USBError as e:
-                logger.error("RTL8187 inject_frame USBError: %s", e)
-                return False
-            except ValueError as e:
-                logger.warning("RTL8187 inject_frame bad frame: %s", e)
-                return False
-            if not ack_gated:
-                return True                 # fire-and-forget (deauth / EAPOL / current behaviour)
-            if await self._await_ack(ta, t0, wait_for_ack):
-                return True                 # landed — the AP ACKed it
-        return False                        # never ACKed after every send
+        return bytes(buf)
 
     async def close(self) -> None:
         if self._rx_reader is not None:

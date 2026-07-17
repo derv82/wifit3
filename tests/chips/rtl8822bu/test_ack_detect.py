@@ -1,12 +1,13 @@
 """rtl8822bu TX-ACK detection: the RX tap that counts the AP's link-layer ACKs to a MAC we
-inject as, and the inject wait-for-ack poll. No hardware — synthetic frames.
+inject as, plus the inject descriptor's HW ACK-retry wiring. No hardware — synthetic frames.
 
-The tap lives in _rx_dispatch (the parser drops control frames like the ACK before they
-reach the callback)."""
+The tap lives in _rx_dispatch (the parser drops control frames like the ACK before they reach the
+callback). ``_enable_rx_acks`` opens RXFLTMAP1 bit13; the tally and arming live on the ``Driver``
+base (``record_ack`` / ``enable_rx_acks`` / ``acks_seen``)."""
 import struct
-import time
 from unittest.mock import MagicMock
 
+import wifit3.chips.rtl8822bu.driver as drv
 from wifit3.chips.rtl8822bu.driver import RTL8822BUDriver
 
 
@@ -32,10 +33,9 @@ def test_tap_counts_ack_to_our_mac():
     d = _driver()
     ra = bytes.fromhex("020000000001")
     d._our_tx_macs.add(ra)
-    d._ack_detect_on = True
+    d._ack_detect_on = True         # arm the base tally (bypasses the RXFLTMAP1 register write)
     d._rx_dispatch(_ack_buf(ra))
     assert d.acks_seen(ra) == 1
-    assert ra in d._ack_last_ts
     assert d._parsed == []          # an ACK is never handed to the frame parser
 
 
@@ -44,8 +44,7 @@ def test_tap_ignores_ack_to_foreign_mac():
     ra = bytes.fromhex("aabbccddeeff")
     d._ack_detect_on = True
     d._rx_dispatch(_ack_buf(ra))
-    assert d.acks_seen(ra) == 0     # but not one of ours
-    assert d._ack_last_ts == {}
+    assert d.acks_seen(ra) == 0     # armed, but not one of ours
 
 
 def test_tap_off_by_default():
@@ -56,16 +55,26 @@ def test_tap_off_by_default():
     assert d.acks_seen(ra) == 0
 
 
-async def test_await_ack_true_when_ts_fresh():
+def test_stamp_tx_seq_is_identity():
     d = _driver()
-    ta = bytes.fromhex("020000000001")
-    since = time.monotonic()
-    d._ack_last_ts[ta] = since + 1.0            # ACK landed after `since`
-    assert await d._await_ack(ta, since, 0.05) is True
+    frame = b"\xc0\x00\x00\x00" + b"\x11" * 6 + b"\x22" * 6 + b"\x33" * 6 + b"\x00\x00"
+    assert d._stamp_tx_seq(frame) is frame      # Realtek HW-stamps; frame goes out unchanged
 
 
-async def test_await_ack_false_on_timeout():
+async def test_inject_builds_descriptor_with_hw_retry_limit(monkeypatch):
     d = _driver()
-    ta = bytes.fromhex("020000000001")
-    since = time.monotonic()
-    assert await d._await_ack(ta, since, 0.005) is False   # no ts recorded -> window elapses
+    d._bulk_out_eps = [0x05, 0x06, 0x08]
+    sent: list[bytes] = []
+
+    def _fake_write(dev, ep, payload, timeout_ms=200):
+        sent.append(bytes(payload))
+        return len(payload)
+
+    monkeypatch.setattr(drv, "write_bulk", _fake_write)   # module-level ref used by _inject_frame
+    frame = b"\xc0\x00\x00\x00" + b"\x11" * 6 + b"\x22" * 6 + b"\x33" * 6 + b"\x00\x00"
+    assert await d.inject_frame(frame) is True
+    assert len(sent) == 1
+    desc = sent[0][:48]
+    rty = (int.from_bytes(desc[0x10:0x14], "little") >> 18) & 0x3F   # RTS_DATA_RTY_LMT
+    assert rty == d.DEFAULT_HW_ACK_RETRIES
+    assert sent[0][48:] == frame                # HW-stamp: 48-B descriptor then frame unchanged

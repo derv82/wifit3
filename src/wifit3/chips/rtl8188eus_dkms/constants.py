@@ -98,6 +98,7 @@ QSLT_MGNT = 0x12            # management queue
 RATE_ID_SHT = 16            # txdw1 RAID (rate-adaptive id) shift
 RTY_LMT_EN = BIT(17)        # txdw5 retry-limit enable
 DATA_RETRY_LIMIT_12 = 0x00300000  # txdw5 retry limit = 12 (no retry_ctrl) [SRC] :482
+DATA_RETRY_LIMIT_SHT = 18   # txdw5 DATA_RETRY_LIMIT field shift (6-bit) [SRC] rtl8188e_xmit.h:482
 # Monitor-injected mgmt frames carry these pattrib defaults on the wire (mac_id 1, raid 6),
 # constant across the captured probe-req + deauth [WIRE] cap1 aireplay TX.
 MGMT_INJECT_MACID = 1

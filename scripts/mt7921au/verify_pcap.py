@@ -45,7 +45,10 @@ from wifit3.chips.mt7921au import init as mt_init
 from wifit3.chips.mt7921au import mcu as mt_mcu
 from wifit3.chips.mt7921au import mac as mt_mac
 from wifit3.chips.mt7921au import tx as mt_tx
-from wifit3.chips.mt7921au.constants import MT_MIB_SDR9, MT_MIB_SDR3, MT_SDIO_TXD_SIZE
+from wifit3.chips.mt7921au.constants import (
+    MT_MIB_SDR9, MT_MIB_SDR3, MT_SDIO_TXD_SIZE, MT_TXD3_REM_TX_COUNT, MT_TXD3_NO_ACK,
+)
+from wifit3.chips.driver import Driver
 from wifit3.chips.mt7921au.firmware import MT7921AUFirmwareLoader
 from wifit3.chips.mt7921au.transport import MT7921AUTransport
 
@@ -620,6 +623,25 @@ def _sniffer_channel(f):
     return f[64]                                       # control_ch
 
 
+# The ACK redesign injects with HW ACK-retry = Driver.DEFAULT_HW_ACK_RETRIES and NO_ACK clear,
+# so the chip retransmits until the recipient ACKs (keyed on Addr2). The captured aireplay
+# reference used mac80211's injected-frame default (REM_TX_COUNT=15, NO_ACK set). Those two TXD3
+# fields are the ONE intended divergence; every other descriptor byte must still match the wire
+# exactly. TXD3 is at byte 16 (4-byte SDIO/USB header + connac2 TXD word 3, see tx.build_tx).
+_TXD3_OFF = 4 + 3 * 4                                   # SDIO/USB header + txwi word 3
+_TXD3_ACKCFG_MASK = MT_TXD3_REM_TX_COUNT | MT_TXD3_NO_ACK
+
+
+def _mask_txd3_ackcfg(buf: bytes) -> bytes:
+    """Zero the REM_TX_COUNT / NO_ACK bits of TXD3 so a byte compare ignores only that field."""
+    if len(buf) < _TXD3_OFF + 4:
+        return buf
+    b = bytearray(buf)
+    w = int.from_bytes(b[_TXD3_OFF:_TXD3_OFF + 4], "little") & ~_TXD3_ACKCFG_MASK
+    b[_TXD3_OFF:_TXD3_OFF + 4] = w.to_bytes(4, "little")
+    return bytes(b)
+
+
 def check_tx(pkts, dev):
     from collections import Counter
     evs = build_bulk_stream(pkts, dev)
@@ -653,27 +675,40 @@ def check_tx(pkts, dev):
     by_kind = Counter()
     by_band = Counter()
     first_bad = None
+    ackcfg_excepted = 0
     for ep, wire, frame, band_5ghz in txs:
         built, out_ep = mt_tx.build_tx(frame, band_5ghz=band_5ghz)
         fc_stype = frame[0] & 0xFC
         by_kind[_FC_NAME.get(fc_stype, f"0x{frame[0]:02x}")] += 1
         by_band["5GHz" if band_5ghz else "2.4GHz"] += 1
-        if bytes(built) != wire or out_ep != ep:
-            ok = False
-            if first_bad is None:
-                n = min(len(built), len(wire))
-                d = next((i for i in range(n) if built[i] != wire[i]), n)
-                first_bad = (f"band={'5GHz' if band_5ghz else '2.4GHz'} "
-                             f"ep wire=0x{ep:02x} built=0x{out_ep:02x}; byte {d}: "
-                             f"built {built[d:d+4].hex() if d < len(built) else '-'} vs "
-                             f"wire {wire[d:d+4].hex() if d < len(wire) else '-'} "
-                             f"(len {len(built)} vs {len(wire)})")
+        if bytes(built) == wire and out_ep == ep:
+            continue
+        # Accept the intended TXD3 REM_TX_COUNT/NO_ACK divergence ONLY when every other byte
+        # (and the endpoint) still matches; count it. Anything else is a real failure.
+        if out_ep == ep and _mask_txd3_ackcfg(built) == _mask_txd3_ackcfg(wire):
+            ackcfg_excepted += 1
+            continue
+        ok = False
+        if first_bad is None:
+            n = min(len(built), len(wire))
+            d = next((i for i in range(n) if built[i] != wire[i]), n)
+            first_bad = (f"band={'5GHz' if band_5ghz else '2.4GHz'} "
+                         f"ep wire=0x{ep:02x} built=0x{out_ep:02x}; byte {d}: "
+                         f"built {built[d:d+4].hex() if d < len(built) else '-'} vs "
+                         f"wire {wire[d:d+4].hex() if d < len(wire) else '-'} "
+                         f"(len {len(built)} vs {len(wire)})")
     n09 = sum(1 for ep, *_ in txs if ep == 0x09)
     print(f"  {len(txs)} TX frames ({n09} on EP 0x09 mgmt, {len(txs) - n09} on EP 0x04 data): "
           f"{dict(by_kind)}")
     print(f"  band split (from config_sniffer on the wire): {dict(by_band)}")
+    if ackcfg_excepted:
+        print(f"  ack-cfg-excepted {ackcfg_excepted} TX frame(s); TXD3 differs by design: inject "
+              f"sets REM_TX_COUNT={Driver.DEFAULT_HW_ACK_RETRIES} + NO_ACK clear (retry until "
+              f"Addr2 ACKs); aireplay ref used REM_TX_COUNT=15 + NO_ACK set. Every other byte matched.")
     if ok:
-        print("  [PASS] every TX frame rebuilt byte-for-byte (descriptor + endpoint, both bands)")
+        tail = ("descriptor + endpoint; TXD3 ACK-cfg excepted above" if ackcfg_excepted
+                else "descriptor + endpoint, both bands")
+        print(f"  [PASS] every TX frame rebuilt byte-for-byte ({tail})")
         return True
     print(f"  [FAIL] {first_bad}")
     return False

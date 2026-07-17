@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-import time
 from typing import Callable, ClassVar, List, Optional
 
 import usb.core
@@ -47,6 +46,7 @@ class RT3070Driver(Driver):
     FAKE_MAC = FakeMacSupport.SPOOFABLE
 
     def __init__(self, transport: RT3070Transport):
+        super().__init__()          # base owns the ACK tally (_ack_detect_on / _our_tx_macs / _ack_counts)
         self.transport = transport
         self.mac_address: Optional[str] = None
         self.is_warm: bool = False
@@ -70,15 +70,6 @@ class RT3070Driver(Driver):
         # A threading.Lock held by the executor work blocks that second thread until the
         # first (even a cancelled one) finishes. Verified against wifit3.log @ 20:34:22.
         self._hw_lock = threading.Lock()
-        # Observe the AP's ACK to our injects (did our TX land). Off by default.
-        # The monitor RX filter (RX_FILTER_CFG=0x93, DROP_ACK/DROP_NOT_TO_ME clear)
-        # already admits the AP's ACK to any RA, so arming is a pure software flag —
-        # no register write (unlike the Realtek/MediaTek ports whose monitor RCR drops
-        # control frames).
-        self._ack_detect_on: bool = False
-        self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
-        self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
-        self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
 
     @classmethod
     def from_usb_device(cls, dev: usb.core.Device, id_entry: DeviceID) -> "RT3070Driver":
@@ -156,7 +147,8 @@ class RT3070Driver(Driver):
         mac.set_radio_led(t, ev)                                # leds-radio on
         mac.start_queue_rx(t)                                   # enable RX queue
 
-        monitor.enable_monitor(t, chip, ev, self._drv)         # airmon monitor entry
+        monitor.enable_monitor(t, chip, ev, self._drv,         # airmon monitor entry
+                               short_retry=self.DEFAULT_HW_ACK_RETRIES)
 
     def _tune(self, channel: int) -> None:
         # Runs on an executor thread; _hw_lock guarantees only one hardware op touches
@@ -210,13 +202,10 @@ class RT3070Driver(Driver):
         if cb is None and not self._ack_detect_on:
             return
         for frame, rssi in iter_frames(buf, self._eeprom, self._lna_gain):
-            # A 10-byte 0xD4 frame is an ACK (the parser drops control frames). RA=frame[4:10]
-            # is the STA the AP ACKed; when armed, keep only ACKs to a MAC we inject as.
-            if self._ack_detect_on and len(frame) == 10 and frame[0] == 0xD4:
-                ra = bytes(frame[4:10])
-                if ra in self._our_tx_macs:
-                    self._ack_sightings[ra.hex()] = self._ack_sightings.get(ra.hex(), 0) + 1
-                    self._ack_last_ts[ra] = time.monotonic()   # for inject wait-for-ack
+            # A 10-byte 0xD4 frame is an ACK (the parser drops control frames); the base tallies
+            # it iff the ACK tap is armed and RA=frame[4:10] is a MAC we inject as.
+            if len(frame) == 10 and frame[0] == 0xD4:
+                self.record_ack(frame)
                 continue
             if cb is not None:
                 parsed = WlanFrameParser.parse_80211_frame(frame, rssi)
@@ -230,72 +219,41 @@ class RT3070Driver(Driver):
         self._channel = channel
         return True
 
-    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True,
-                           wait_for_ack: float = 0.0, max_resends: int = 0) -> bool:
-        """Transmit one 802.11 frame (e.g. deauth / WEP replay) on the MGMT bulk-OUT
-        pipe. Explicit-action only — nothing on the scan/connect path calls this
-        [[passive_by_default]]. Serialized via ``_io_lock`` so it never races a retune.
-
-        ``wait_for_ack > 0`` (with TX-ACK detection armed) waits for the AP's ACK and
-        resends the identical frame up to ``max_resends`` times if none comes, returning
-        whether it landed; ``0`` = fire-and-forget (current behaviour)."""
+    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+        """Transmit one 802.11 frame (e.g. deauth / WEP replay) on the MGMT bulk-OUT pipe.
+        The TXWI ACK bit is set ON so the chip retries up to the global TX_RTY_CFG
+        SHORT_RTY_LIMIT = ``self.DEFAULT_HW_ACK_RETRIES`` (set at monitor entry). The seq is
+        already stamped by the base. Explicit-action only — nothing on the scan/connect path
+        calls this [[passive_by_default]]. Serialized via ``_io_lock`` so it never races a retune."""
         if not frame_bytes:
             return False
         if self._bulk_out_ep is None:
             logger.error("RT3070 inject: no bulk-OUT endpoint")
             return False
-        frame = self._stamp_seq(frame_bytes)   # stamp once — a resend re-sends the identical frame
-        ta = bytes(frame[10:16]) if len(frame) >= 16 else None   # AP ACKs back to this
-        if self._ack_detect_on and ta is not None:
-            self._our_tx_macs.add(ta)
         loop = asyncio.get_running_loop()
-        ack_gated = wait_for_ack > 0 and self._ack_detect_on and ta is not None
-        for _ in range(max_resends + 1):
-            async with self._io_lock:
-                t0 = time.monotonic()
-                await loop.run_in_executor(None, self._do_inject, frame, use_no_ack)
-            if not ack_gated:
-                return True                 # fire-and-forget (deauth / WEP / current behaviour)
-            if await self._await_ack(ta, t0, wait_for_ack):
-                return True                 # landed — the AP ACKed it
-        return False                        # never ACKed after every send
+        async with self._io_lock:
+            await loop.run_in_executor(None, self._do_inject, frame_bytes)
+        return True
 
-    async def enable_ack_detect(self) -> None:
-        """Arm the ACK tap. The Ralink monitor RX filter already admits the AP's ACK to
-        any RA (RX_FILTER_CFG DROP_ACK + DROP_NOT_TO_ME clear), so this is a pure software
-        flag — no register write. Not enter_active_monitor, which makes the chip emit ACKs."""
-        self._ack_sightings.clear()
-        self._ack_last_ts.clear()
-        self._ack_detect_on = True
-        logger.info("RT3070 TX-ACK detection ON (monitor RX filter already admits ACKs) — "
-                    "observing our TX delivery")
+    async def _enable_rx_acks(self) -> None:
+        """No-op: the Ralink monitor RX filter (RX_FILTER_CFG=0x93, DROP_ACK + DROP_NOT_TO_ME
+        clear) already admits the AP's ACK control frames to any RA, so there is nothing to
+        enable on the chip (the base arms the tally). Not enter_active_monitor, which makes
+        the chip EMIT ACKs."""
+        return
 
-    async def disable_ack_detect(self) -> None:
-        """Disarm the ACK tap (software flag; the monitor RX filter is left untouched)."""
-        self._ack_detect_on = False
+    async def _disable_rx_acks(self) -> None:
+        """No-op, matching ``_enable_rx_acks``: the monitor RX filter is left untouched."""
+        return
 
-    def acks_seen(self, mac: bytes) -> int:
-        """Count of ACKs observed addressed to ``mac`` (an injected source MAC) since enable."""
-        return self._ack_sightings.get(bytes(mac).hex(), 0)
-
-    async def _await_ack(self, ta: bytes, since: float, window: float) -> bool:
-        """True if the tap observed an ACK to ``ta`` after ``since``, within ``window`` s.
-        _dispatch runs on this loop, so a sleep yield lets a just-arrived ACK's timestamp
-        land between checks."""
-        deadline = since + window
-        while time.monotonic() < deadline:
-            if self._ack_last_ts.get(ta, 0.0) > since:
-                return True
-            await asyncio.sleep(0.001)
-        return False
-
-    def _do_inject(self, frame: bytes, use_no_ack: bool) -> None:
+    def _do_inject(self, frame: bytes) -> None:
         # Executor thread; share _hw_lock with _tune so an inject can never collide with
-        # an in-flight (or cancelled-but-draining) channel tune on the USB device.
+        # an in-flight (or cancelled-but-draining) channel tune on the USB device. ACK bit ON
+        # (use_no_ack=False) so the chip requests the AP's ACK + retries un-ACKed frames.
         with self._hw_lock:
-            tx.send_frame(self.transport.dev, self._bulk_out_ep, frame, use_no_ack=use_no_ack)
+            tx.send_frame(self.transport.dev, self._bulk_out_ep, frame, use_no_ack=False)
 
-    def _stamp_seq(self, frame: bytes) -> bytes:
+    def _stamp_tx_seq(self, frame: bytes) -> bytes:
         """Stamp the next running sequence number into the frame's seqctl (bytes 22-23,
         ``seqnum << 4`` little-endian) — TXWI NSEQ=0 means the chip transmits the frame's
         own seqctl, so without this every inject shares seq=0 and a receiver's duplicate

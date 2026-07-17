@@ -101,6 +101,13 @@ class Walk:
     # ---- the walk ---------------------------------------------------------
     def run(self) -> None:
         """Cold bring-up through the channel-hop + inject sweep, one cursor, no re-anchoring."""
+        # The vendor cold-boot capture programmed AR_DRETRY_LIMIT with the kernel default
+        # INIT_SSH_RETRY (32); wifit3 ships DEFAULT_HW_ACK_RETRIES=7 by design (fewer HW ACK
+        # retries per inject). Drive the verify at the captured retry so every init_queues
+        # AR_DRETRY_LIMIT write (cold init + each per-hop re-init) matches byte-for-byte and the
+        # single cursor keeps full cold-boot coverage. Runtime still uses 7; this verifies the
+        # port's byte fidelity, not that one config value.
+        self.driver.DEFAULT_HW_ACK_RETRIES = R.INIT_SSH_RETRY
         _run_coro(self.driver.connect())
         # The LED-blink timer interleaves GPIO RMWs into the WMI command stream during the
         # operational sweep; reproduce them in place via the real gpio.set_gpio so the bytes and

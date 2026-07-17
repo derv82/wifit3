@@ -42,6 +42,16 @@ class TestTxDesc:
         w0 = struct.unpack_from("<I", build_tx_desc_mgmt(bcast), 0)[0]
         assert (w0 >> 24) & 1 == 1               # BMC bit for broadcast addr1
 
+    def test_no_retry_limit_by_default(self):
+        w4 = struct.unpack_from("<I", build_tx_desc_mgmt(b"\x00" * 26), 16)[0]
+        assert (w4 >> 17) & 1 == 0               # RTY_LMT_EN clear -> global REG_RETRY_LIMIT
+        assert (w4 >> 18) & 0x3F == 0
+
+    def test_retry_limit_sets_w4_fields(self):
+        w4 = struct.unpack_from("<I", build_tx_desc_mgmt(b"\x00" * 26, retry_limit=7), 16)[0]
+        assert (w4 >> 17) & 1 == 1               # RTY_LMT_EN
+        assert (w4 >> 18) & 0x3F == 7            # DATA_RTY_LMT (6-bit)
+
 
 class TestDeauthFrame:
     def test_addressing_and_type(self):

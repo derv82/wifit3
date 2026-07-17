@@ -125,9 +125,12 @@ def reset_txqueue(hw: AthHw, q: int) -> None:
     hw.write(R.AR_DLCL_IFS(q),
              R.SM(cwmin, R.AR_D_LCL_IFS_CWMIN) | R.SM(qi.tqi_cwmax, R.AR_D_LCL_IFS_CWMAX)
              | R.SM(qi.tqi_aifs, R.AR_D_LCL_IFS_AIFS))
+    # STA short/long retry come from hw.sta_retry_limit (the driver's DEFAULT_HW_ACK_RETRIES; the
+    # kernel default INIT_SSH_RETRY/INIT_SLG_RETRY is the AthHw fallback). Our injects are short
+    # un-RTS frames, so this STA-retry count is what bounds their HW ACK-based retransmission.
     hw.write(R.AR_DRETRY_LIMIT(q),
-             R.SM(R.INIT_SSH_RETRY, R.AR_D_RETRY_LIMIT_STA_SH)
-             | R.SM(R.INIT_SLG_RETRY, R.AR_D_RETRY_LIMIT_STA_LG)
+             R.SM(hw.sta_retry_limit, R.AR_D_RETRY_LIMIT_STA_SH)
+             | R.SM(hw.sta_retry_limit, R.AR_D_RETRY_LIMIT_STA_LG)
              | R.SM(qi.tqi_shretry, R.AR_D_RETRY_LIMIT_FR_SH))
     hw.write(R.AR_QMISC(q), R.AR_Q_MISC_DCU_EARLY_TERM_REQ)
     hw.write(R.AR_DMISC(q), R.AR_D_MISC_CW_BKOFF_EN | R.AR_D_MISC_FRAG_WAIT_EN | 0x2)

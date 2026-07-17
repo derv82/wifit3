@@ -18,6 +18,7 @@ import struct
 
 # ruff: noqa: F403, F405
 from .constants import *
+from wifit3.chips.driver import Driver
 
 # 802.11 frame-control bits we read off the injected frame.
 _FCTL_FTYPE     = 0x000C   # type field (bits 2-3)
@@ -81,7 +82,8 @@ def stamp_seq_ctrl(frame: bytearray, seqno: int) -> int:
 
 
 def build_tx(frame: bytes, band_5ghz: bool = False,
-             wcid_idx: int = MT792x_WTBL_RESERVED, no_ack: bool = True,
+             wcid_idx: int = MT792x_WTBL_RESERVED,
+             retry_count: int = Driver.DEFAULT_HW_ACK_RETRIES,
              pid: int = 0) -> tuple[bytes, int]:
     """Build the USB bulk-OUT bytes for raw 802.11 ``frame`` and pick its endpoint.
 
@@ -90,6 +92,11 @@ def build_tx(frame: bytes, band_5ghz: bool = False,
     lowest-rate, HCCA endpoint 0x09); data frames take their AC (BE -> 0x04). The
     monitor vif uses the reserved wcid, the sequence number comes from the frame,
     and the rate is the band's lowest basic rate.
+
+    ``retry_count`` fills MT_TXD3_REM_TX_COUNT (the HW ACK-based retry limit). The frame
+    always requests an ACK (NO_ACK is never set), so the chip retransmits it up to
+    ``retry_count`` times until the recipient ACKs. The driver passes its
+    ``DEFAULT_HW_ACK_RETRIES``; that HW retry is inject_frame's only retransmission.
     """
     if len(frame) < 24:
         raise ValueError(f"802.11 frame too short to inject: {len(frame)} bytes")
@@ -143,9 +150,9 @@ def build_tx(frame: bytes, band_5ghz: bool = False,
         val2 |= _fp(MT_TXD2_FRAG, MT_TX_FRAG_LAST)
     txwi[2] = val2
 
-    val3 = _fp(MT_TXD3_REM_TX_COUNT, 15)
-    if no_ack:
-        val3 |= MT_TXD3_NO_ACK
+    # Always request an ACK (NO_ACK stays clear) so the chip HW-retries up to retry_count
+    # times; the base's inject_frame relies on that HW retry as the only retransmission.
+    val3 = _fp(MT_TXD3_REM_TX_COUNT, retry_count)
     # Injected frame: carry its own sequence number (SEQ_TO_SN = seqno >> 4).
     val3 |= MT_TXD3_SN_VALID | _fp(MT_TXD3_SEQ, seq_ctrl >> 4)
     txwi[3] = val3

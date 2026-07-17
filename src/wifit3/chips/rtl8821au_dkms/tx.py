@@ -58,7 +58,8 @@ def txdesc_checksum(desc: bytearray) -> int:
 
 
 def build_mgmt_txdesc(pkt_len: int, *, hw_rate: int = DESC_RATE1M,
-                      rate_id: int = RATEID_IDX_B, bmc: bool = False) -> bytes:
+                      rate_id: int = RATEID_IDX_B, bmc: bool = False,
+                      retry_limit: int | None = None) -> bytes:
     """Build the 40-byte TX descriptor for one injected frame.
 
     [SRC] rtl8812a_fill_fake_txdesc (not-PsPoll, not-data-frame case): FIRST_SEG +
@@ -69,6 +70,11 @@ def build_mgmt_txdesc(pkt_len: int, *, hw_rate: int = DESC_RATE1M,
     group address (e.g. a broadcast deauth); the caller derives it from the frame. The
     checksum covers the first 32 bytes with its own field zeroed, so it is computed last
     (HWSEQ_EN at byte 32 sits outside that range and does not affect it).
+
+    ``retry_limit`` (when not None) caps the HW ACK-retry count: it sets RTY_LMT_EN plus
+    the 6-bit RTS_DATA_RTY_LMT [SRC] rtl8812a_xmit.h SET_TX_DESC_DATA_RETRY_LIMIT. The
+    inject path passes ``DEFAULT_HW_ACK_RETRIES``; left None the field stays clear (the
+    fake-txdesc's historical default, so the HW global retry register applies).
     """
     d = bytearray(TXDESC_SIZE)
     _set_bits(d, 0, 27, 1, 1)               # FIRST_SEG
@@ -83,5 +89,8 @@ def build_mgmt_txdesc(pkt_len: int, *, hw_rate: int = DESC_RATE1M,
     _set_bits(d, 32, 15, 1, 1)              # HWSEQ_EN
     _set_bits(d, 12, 8, 1, 1)               # USE_RATE
     _set_bits(d, 16, 0, 7, hw_rate)         # TX_RATE
+    if retry_limit is not None:
+        _set_bits(d, 16, 17, 1, 1)          # RTY_LMT_EN
+        _set_bits(d, 16, 18, 6, retry_limit)  # RTS_DATA_RTY_LMT (6-bit HW ACK-retry limit)
     _set_bits(d, 28, 0, 16, txdesc_checksum(d))   # TX_DESC_CHECKSUM (field zeroed first)
     return bytes(d)

@@ -30,7 +30,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-import time
 from typing import Callable, Optional
 
 import usb.core
@@ -85,6 +84,7 @@ class RT2500USBDriver(Driver):
         return cls(dev)
 
     def __init__(self, dev: usb.core.Device):
+        super().__init__()          # base owns the ACK tally (_ack_detect_on / _our_tx_macs / _ack_counts)
         self.dev = dev
         self.transport = RT2500USBTransport(dev)
         self._rx_callback: Optional[Callable[[dict], None]] = None
@@ -116,12 +116,6 @@ class RT2500USBDriver(Driver):
         # cancelled one) finishes. [[project_rt3070 RX-DMA wedge pattern]]
         self._io_lock = asyncio.Lock()
         self._hw_lock = threading.Lock()
-
-        # Observe the AP's ACK to our injects (did our TX land). Off by default.
-        self._ack_detect_on: bool = False
-        self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
-        self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
-        self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
         self._rx_callback = cb
@@ -297,13 +291,10 @@ class RT2500USBDriver(Driver):
         if rx is None or rx.has_fcs_error:
             return
         mpdu = rx.mpdu
-        # A 10-byte 0xD4 frame is an ACK (the parser drops control frames). mpdu[4:10]
-        # is the RA the AP ACKed; keep only ACKs to a MAC we inject as.
-        if self._ack_detect_on and len(mpdu) == 10 and mpdu[0] == 0xD4:
-            ra = mpdu[4:10]
-            if ra in self._our_tx_macs:
-                self._ack_sightings[ra.hex()] = self._ack_sightings.get(ra.hex(), 0) + 1
-                self._ack_last_ts[ra] = time.monotonic()   # for inject wait-for-ack
+        # A 10-byte 0xD4 frame is an ACK (the parser drops control frames); the base tallies
+        # it iff the ACK tap is armed and RA=mpdu[4:10] is a MAC we inject as.
+        if len(mpdu) == 10 and mpdu[0] == 0xD4:
+            self.record_ack(mpdu)
             return
         parsed = WlanFrameParser.parse_80211_frame(mpdu, rx.rssi_dbm)
         if parsed is not None and self._rx_callback is not None:
@@ -312,36 +303,18 @@ class RT2500USBDriver(Driver):
             except Exception as e:
                 logger.exception("rx_callback raised: %s", e)
 
-    # ---- TX-ACK detection -----------------------------------------------
-    async def enable_ack_detect(self) -> None:
-        """Arm the ACK tap. Pure software flag — the monitor RX filter already clears
-        TXRX_CSR2_DROP_CONTROL (mac.config_filter, = FIF_CONTROL) and DROP_NOT_TO_ME, so
-        the hardware forwards ACK control frames (incl. to a forged TA) to bulk-IN; no
-        register write needed. The RT2570 has no auto-ACK engine (FAKE_MAC.NONE), so this
-        is RX-side only — it never emits an ACK."""
-        self._ack_sightings.clear()
-        self._ack_last_ts.clear()
-        self._ack_detect_on = True
-        logger.info("rt2500usb TX-ACK detection ON — observing our TX delivery")
+    # ---- RX-ACK detection ------------------------------------------------
+    async def _enable_rx_acks(self) -> None:
+        """No-op: the monitor RX filter already admits the AP's ACK control frames. The
+        cold/warm bring-up leaves TXRX_CSR2 with DROP_CONTROL (FIF_CONTROL) and DROP_NOT_TO_ME
+        clear (mac.config_filter), so an ACK (FC=0xD4, even to a forged TA) reaches bulk-IN
+        with nothing to enable on the chip (the base arms the tally). The RT2570 has no
+        auto-ACK responder (FAKE_MAC.NONE), so this is RX-side only: it never emits an ACK."""
+        return
 
-    async def disable_ack_detect(self) -> None:
-        """Disarm the ACK tap (software flag only; the monitor RX filter is unchanged)."""
-        self._ack_detect_on = False
-
-    def acks_seen(self, mac: bytes) -> int:
-        """Count of ACKs observed addressed to ``mac`` (an injected source MAC) since enable."""
-        return self._ack_sightings.get(bytes(mac).hex(), 0)
-
-    async def _await_ack(self, ta: bytes, since: float, window: float) -> bool:
-        """True if the tap observed an ACK to ``ta`` after ``since``, within ``window`` s.
-        _rx_dispatch runs on this loop, so a sleep yield lets a just-arrived ACK's timestamp
-        land between checks."""
-        deadline = since + window
-        while time.monotonic() < deadline:
-            if self._ack_last_ts.get(ta, 0.0) > since:
-                return True
-            await asyncio.sleep(0.001)
-        return False
+    async def _disable_rx_acks(self) -> None:
+        """No-op, matching _enable_rx_acks: the monitor RX filter is left untouched."""
+        return
 
     # ---- channel tune ---------------------------------------------------
     def _tune(self, channel: int) -> bool:
@@ -371,43 +344,38 @@ class RT2500USBDriver(Driver):
         return ok
 
     # ---- TX -------------------------------------------------------------
-    def _do_inject(self, frame_bytes: bytes, ack: bool) -> int:
+    def _do_inject(self, frame_bytes: bytes) -> int:
         # Shares _hw_lock with _tune so an inject can never collide with an
         # in-flight (or cancelled-but-draining) channel tune on the device.
         with self._hw_lock:
-            return _tx_inject(self.dev, self._bulk_out_ep, frame_bytes, ack)
+            return _tx_inject(self.dev, self._bulk_out_ep, frame_bytes,
+                              retry_limit=self.DEFAULT_HW_ACK_RETRIES)
 
-    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True,
-                           wait_for_ack: float = 0.0, max_resends: int = 0) -> bool:
-        """Inject a raw 802.11 frame (no FCS) at 1 Mbps CCK. Only ever
-        called behind an explicit user action [[passive_by_default]].
-
-        ``wait_for_ack > 0`` (with TX-ACK detection armed) waits for the AP's ACK and
-        resends the same frame up to ``max_resends`` times if none comes, returning whether
-        it landed; ``0`` = fire-and-forget (byte-identical to the prior behaviour)."""
+    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+        """Build the 5x u32 TXD (HW retry limit = ``self.DEFAULT_HW_ACK_RETRIES`` in the 4-bit
+        TXD_W0_RETRY_LIMIT field) and bulk-OUT [TXD][frame] once at 1 Mbps CCK. The RT2570
+        retries up to that limit BLINDLY: the rt2x00 legacy MAC has no ACK-based early stop, so
+        a retransmit fires whether or not the AP ACKed (FAKE_MAC.NONE). Serialized under
+        _hw_lock (via _do_inject) so a send never collides with a channel tune on this
+        full-speed chip's control endpoint. The seq is HW-assigned (see _stamp_tx_seq); the
+        base already registered the frame's Addr2 for the ACK tally when armed. Only ever
+        reached behind an explicit user action [[passive_by_default]]."""
         if self._bulk_out_ep is None:
             logger.error("rt2500usb: no bulk-OUT endpoint; cannot inject")
             return False
-        ta = bytes(frame_bytes[10:16]) if len(frame_bytes) >= 16 else None   # AP ACKs back to TA
-        if self._ack_detect_on and ta is not None:
-            self._our_tx_macs.add(ta)
         loop = asyncio.get_event_loop()
-        ack_gated = wait_for_ack > 0 and self._ack_detect_on and ta is not None
-        for _ in range(max_resends + 1):
-            try:
-                async with self._io_lock:
-                    t0 = time.monotonic()
-                    sent = await loop.run_in_executor(
-                        None, self._do_inject, frame_bytes, not use_no_ack
-                    )
-            except Exception as e:
-                logger.error("rt2500usb inject_frame failed: %s", e)
-                return False
-            if not ack_gated:
-                return sent > 0             # fire-and-forget (deauth / current behaviour)
-            if sent > 0 and await self._await_ack(ta, t0, wait_for_ack):
-                return True                 # landed — the AP ACKed it
-        return False                        # never ACKed after every send
+        try:
+            async with self._io_lock:
+                sent = await loop.run_in_executor(None, self._do_inject, frame_bytes)
+        except Exception as e:
+            logger.error("rt2500usb inject_frame failed: %s", e)
+            return False
+        return sent > 0
+
+    def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
+        """The chip assigns the 802.11 sequence number (TXD_W0_NEW_SEQ=1 +
+        TXRX_CSR1_AUTO_SEQUENCE set at init), so the frame goes out unchanged."""
+        return frame_bytes
 
     # ---- teardown -------------------------------------------------------
     async def close(self) -> None:

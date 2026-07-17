@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from .constants import (
     BMC,
-    DATA_RETRY_LIMIT_12,
+    DATA_RETRY_LIMIT_SHT,
     FSG,
     LSG,
     MGMT_INJECT_MACID,
@@ -58,13 +58,16 @@ def txdesc_checksum(desc: bytes) -> int:
     return cs & 0xFFFF
 
 
-def build_mgmt_txdesc(pkt_len: int, *, bmc: bool = False, seqnum: int = 0) -> bytes:
+def build_mgmt_txdesc(pkt_len: int, *, bmc: bool = False, seqnum: int = 0,
+                      retry_limit: int = 12) -> bytes:
     """Build the 32-byte management TX descriptor for one injected frame [SRC] update_txdesc
     MGNT_FRAMETAG branch (rtl8188eu_xmit.c:445). ``bmc`` sets the broadcast/multicast bit when
     addr1 is a group address (e.g. a broadcast deauth). ``seqnum`` is the frame's 802.11
     sequence number, which the driver copies into txdw3 (the wire confirms desc-seq ==
-    frame-seqctrl>>4 across every injected frame). No SEC_TYPE — the frame is already final
-    (no HW encryption). Rate is the driver default DESC_RATE1M (MRateToHwRate=0)."""
+    frame-seqctrl>>4 across every injected frame). ``retry_limit`` fills txdw5 DATA_RETRY_LIMIT
+    (6-bit); the default 12 is the vendor cold-boot value, and the inject path passes its own HW
+    ACK-retry limit. No SEC_TYPE — the frame is already final (no HW encryption). Rate is the
+    driver default DESC_RATE1M (MRateToHwRate=0)."""
     d = bytearray(TXDESC_SIZE)
     dw0 = (OWN | FSG | LSG
            | (((TXDESC_SIZE + OFFSET_SZ) << OFFSET_SHT) & 0x00FF0000)
@@ -77,6 +80,6 @@ def build_mgmt_txdesc(pkt_len: int, *, bmc: bool = False, seqnum: int = 0) -> by
            | ((MGMT_INJECT_RAID << RATE_ID_SHT) & 0x000F0000))  #      RAID
     _put32(d, 12, (8 << 28) | ((seqnum << 16) & 0x0FFF0000))  # txdw3: EN_HWSEQ | seq number
     _put32(d, 16, (1 << 7) | (1 << 8))                       # txdw4: HW_SSN | USERATE
-    _put32(d, 20, RTY_LMT_EN | DATA_RETRY_LIMIT_12)          # txdw5: retry-limit en + 12, rate 0
+    _put32(d, 20, RTY_LMT_EN | ((retry_limit & 0x3F) << DATA_RETRY_LIMIT_SHT))  # txdw5: retry-limit en + N, rate 0
     _put32(d, 28, txdesc_checksum(d))                        # txdw7: checksum (computed last)
     return bytes(d)

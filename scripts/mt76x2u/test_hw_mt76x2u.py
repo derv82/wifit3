@@ -330,7 +330,7 @@ async def phase_deauth(driver: MT76x2UDriver, target: str,
     print(f"  Frame bytes:    {frame.hex()}")
 
     for i in range(count):
-        if not await driver.inject_frame(frame, use_no_ack=True):
+        if not await driver.inject_frame(frame):
             fail(f"inject_frame failed on attempt {i + 1}")
         await asyncio.sleep(0.05)
     ok(f"Sent {count} deauth frames.")

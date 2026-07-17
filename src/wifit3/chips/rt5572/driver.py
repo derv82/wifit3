@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from typing import Callable, Optional
 
 import usb.core
@@ -45,7 +44,7 @@ from .rx import (
 )
 from ..rx_reader import RxReaderThread
 from .transport import RT5572Transport
-from .tx import inject_frame as _inject_frame, txwi_size_for_silicon
+from .tx import inject_frame as _tx_inject_frame, txwi_size_for_silicon
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +66,7 @@ class RT5572Driver(Driver):
         return cls(dev, chip_id_hint=chip_id_hint)
 
     def __init__(self, dev: usb.core.Device, *, chip_id_hint: str = ""):
+        super().__init__()          # base owns the ACK tally (_ack_detect_on / _our_tx_macs / _ack_counts)
         self.dev = dev
         self.transport = RT5572Transport(dev)
         self._rx_callback: Optional[Callable[[dict], None]] = None
@@ -105,15 +105,6 @@ class RT5572Driver(Driver):
         # Picks which of rf_vals_5592_xtal20 / xtal40 the channel tune
         # consults (PAU09 N600's actual xtal isn't documented).
         self._xtal_40mhz: bool = False
-        # Observe the AP's ACK to our injects (did our TX land). Off by default.
-        # The monitor RX filter (RX_FILTER_CFG=0x93, DROP_ACK/DROP_NOT_TO_ME clear)
-        # already admits the AP's ACK to any RA, so arming is a pure software flag —
-        # no register write (unlike the Realtek/MediaTek ports whose monitor RCR drops
-        # control frames).
-        self._ack_detect_on: bool = False
-        self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
-        self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
-        self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
         self._tx_seq: int = 0            # running 802.11 seq stamped into injected frames
 
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
@@ -243,6 +234,7 @@ class RT5572Driver(Driver):
                 lambda: enable_monitor(
                     self.transport, self.chip_id.silicon_id,
                     self._eeprom, self._xtal_40mhz,
+                    short_retry=self.DEFAULT_HW_ACK_RETRIES,
                 ),
             )
 
@@ -296,13 +288,10 @@ class RT5572Driver(Driver):
         rx = parse_rx_urb(buf, rxwi_size=self._rxwi_size, rssi_cal=self._rssi_cal)
         if rx is None or rx.has_fcs_error:
             return
-        # A 10-byte 0xD4 frame is an ACK (the parser drops control frames). RA=mpdu[4:10]
-        # is the STA the AP ACKed; when armed, keep only ACKs to a MAC we inject as.
-        if self._ack_detect_on and len(rx.mpdu) == 10 and rx.mpdu[0] == 0xD4:
-            ra = bytes(rx.mpdu[4:10])
-            if ra in self._our_tx_macs:
-                self._ack_sightings[ra.hex()] = self._ack_sightings.get(ra.hex(), 0) + 1
-                self._ack_last_ts[ra] = time.monotonic()   # for inject wait-for-ack
+        # A 10-byte 0xD4 frame is an ACK (the parser drops control frames); the base tallies it
+        # iff the ACK tap is armed and RA=mpdu[4:10] is a MAC we inject as.
+        if len(rx.mpdu) == 10 and rx.mpdu[0] == 0xD4:
+            self.record_ack(rx.mpdu)
             return
         # Feed the link tuner's RSSI average (good frames only — the kernel
         # likewise only counts successfully-received frames).
@@ -471,7 +460,7 @@ class RT5572Driver(Driver):
         return True
 
     # ---- TX inject (M5) -------------------------------------------------
-    def _stamp_seq(self, frame: bytes) -> bytes:
+    def _stamp_tx_seq(self, frame: bytes) -> bytes:
         """Stamp the next running sequence number into the frame's seqctl (bytes 22-23,
         ``seqnum << 4`` little-endian). The TXWI sets NSEQ=0, so the chip transmits the
         frame's own seqctl; without this every inject shares seq=0 and a receiver's
@@ -485,13 +474,10 @@ class RT5572Driver(Driver):
         buf[22:24] = ((seq << 4) & 0xFFFF).to_bytes(2, "little")
         return bytes(buf)
 
-    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True,
-                           wait_for_ack: float = 0.0, max_resends: int = 0) -> bool:
-        """Transmit one 802.11 frame on the MGMT bulk-OUT pipe.
-
-        ``wait_for_ack > 0`` (with TX-ACK detection armed) waits for the AP's ACK and
-        resends the identical frame up to ``max_resends`` times if none comes, returning
-        whether it landed; ``0`` = fire-and-forget (current behaviour)."""
+    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+        """Build TXINFO + TXWI (TXWI ACK bit ON so the chip retries up to the global
+        TX_RTY_CFG SHORT_RTY_LIMIT = ``self.DEFAULT_HW_ACK_RETRIES``, set at monitor entry)
+        and bulk-OUT ``frame_bytes`` once. The seq is already stamped by the base."""
         if self.chip_id is None:
             logger.error("inject_frame: connect() must run first")
             return False
@@ -499,75 +485,40 @@ class RT5572Driver(Driver):
         # 5 GHz has no CCK modulation, so a CCK-tagged frame is armed but never
         # emitted; 5 GHz TX must be OFDM (MCS 0 = 6 Mbps OFDM).
         phymode = TXWI_PHYMODE_OFDM if self.current_channel > 14 else TXWI_PHYMODE_CCK
-        frame_bytes = self._stamp_seq(frame_bytes)   # stamp once (a resend re-sends the identical frame)
-        ta = bytes(frame_bytes[10:16]) if len(frame_bytes) >= 16 else None  # AP ACKs back to this
-        if self._ack_detect_on and ta is not None:
-            self._our_tx_macs.add(ta)
-
         loop = asyncio.get_event_loop()
         if logger.isEnabledFor(logging.DEBUG) and not self._first_inject_dumped:
             await loop.run_in_executor(None, self._dump_tx_state, "pre-first-inject")
             self._first_inject_dumped = True
+        try:
+            sent = await loop.run_in_executor(
+                None,
+                lambda: _tx_inject_frame(
+                    self.dev, frame_bytes,
+                    txwi_size=txwi_sz, use_no_ack=False, phymode=phymode,
+                ),
+            )
+        except ValueError as e:
+            logger.warning("rt5572 inject_frame bad frame: %s", e)
+            return False
+        except usb.core.USBError as e:
+            logger.error("rt5572 inject_frame USBError: %s", e)
+            return False
+        logger.debug("inject_frame: ch=%d len=%d txwi=%dB phymode=%d bulk-OUT accepted %d bytes",
+                     self.current_channel, len(frame_bytes), txwi_sz, phymode, sent)
+        if logger.isEnabledFor(logging.DEBUG):
+            await loop.run_in_executor(None, self._dump_tx_counters, "post-inject")
+        return True
 
-        logger.debug(
-            "inject_frame: ch=%d len=%d no_ack=%s txwi=%dB phymode=%d frame=%s",
-            self.current_channel, len(frame_bytes), use_no_ack, txwi_sz, phymode,
-            frame_bytes[:32].hex(),
-        )
-        ack_gated = wait_for_ack > 0 and self._ack_detect_on and ta is not None
-        for _ in range(max_resends + 1):
-            try:
-                t0 = time.monotonic()
-                sent = await loop.run_in_executor(
-                    None,
-                    lambda: _inject_frame(
-                        self.dev, frame_bytes,
-                        txwi_size=txwi_sz, use_no_ack=use_no_ack, phymode=phymode,
-                    ),
-                )
-            except ValueError as e:
-                logger.warning("rt5572 inject_frame bad frame: %s", e)
-                return False
-            except usb.core.USBError as e:
-                logger.error("rt5572 inject_frame USBError: %s", e)
-                return False
-            logger.debug("inject_frame: bulk-OUT accepted %d bytes", sent)
-            if logger.isEnabledFor(logging.DEBUG):
-                await loop.run_in_executor(None, self._dump_tx_counters, "post-inject")
-            if not ack_gated:
-                return True                 # fire-and-forget (deauth / WEP / current behaviour)
-            if await self._await_ack(ta, t0, wait_for_ack):
-                return True                 # landed — the AP ACKed it
-        return False                        # never ACKed after every send
+    async def _enable_rx_acks(self) -> None:
+        """No-op: the Ralink monitor RX filter (RX_FILTER_CFG=0x93, DROP_ACK + DROP_NOT_TO_ME
+        clear) already admits the AP's ACK control frames to any RA, so there is nothing to
+        enable on the chip (the base arms the tally). Not enter_active_monitor, which makes
+        the chip EMIT ACKs."""
+        return
 
-    async def enable_ack_detect(self) -> None:
-        """Arm the ACK tap. The Ralink monitor RX filter already admits the AP's ACK to
-        any RA (RX_FILTER_CFG DROP_ACK + DROP_NOT_TO_ME clear), so this is a pure software
-        flag — no register write. Not enter_active_monitor, which makes the chip emit ACKs."""
-        self._ack_sightings.clear()
-        self._ack_last_ts.clear()
-        self._ack_detect_on = True
-        logger.info("rt5572 TX-ACK detection ON (monitor RX filter already admits ACKs) — "
-                    "observing our TX delivery")
-
-    async def disable_ack_detect(self) -> None:
-        """Disarm the ACK tap (software flag; the monitor RX filter is left untouched)."""
-        self._ack_detect_on = False
-
-    def acks_seen(self, mac: bytes) -> int:
-        """Count of ACKs observed addressed to ``mac`` (an injected source MAC) since enable."""
-        return self._ack_sightings.get(bytes(mac).hex(), 0)
-
-    async def _await_ack(self, ta: bytes, since: float, window: float) -> bool:
-        """True if the tap observed an ACK to ``ta`` after ``since``, within ``window`` s.
-        _rx_dispatch runs on this loop, so a sleep yield lets a just-arrived ACK's timestamp
-        land between checks."""
-        deadline = since + window
-        while time.monotonic() < deadline:
-            if self._ack_last_ts.get(ta, 0.0) > since:
-                return True
-            await asyncio.sleep(0.001)
-        return False
+    async def _disable_rx_acks(self) -> None:
+        """No-op, matching ``_enable_rx_acks``: the monitor RX filter is left untouched."""
+        return
 
     def _dump_tx_state(self, tag: str) -> None:
         """One-shot dump of TX-side register state. Called on the first

@@ -48,7 +48,8 @@ def _set_bits(desc: bytearray, byte_off: int, bit_start: int, bit_len: int,
 
 def build_mgmt_txdesc(pkt_len: int, *, hw_rate: int = DESC_RATE1M,
                       rate_id: int = RATEID_IDX_B, bmc: bool = False,
-                      gid: int = TXBF_GID_NONE) -> bytes:
+                      gid: int = TXBF_GID_NONE,
+                      retry_limit: int = MGMT_DATA_RETRY_LIMIT) -> bytes:
     """Build the 40-byte TX descriptor for one management frame.
 
     [SRC] update_txdesc MGNT_FRAMETAG path [rtl8814au_xmit.c:42-302] — the descriptor the
@@ -60,6 +61,10 @@ def build_mgmt_txdesc(pkt_len: int, *, hw_rate: int = DESC_RATE1M,
     the checksum. ``bmc`` sets the group-address bit (a broadcast deauth/probe). The checksum
     covers the first 32 bytes with its own field zeroed, so it is computed last (HWSEQ_EN at
     offset 32 sits outside that range).
+
+    ``retry_limit`` fills the 6-bit DATA_RETRY_LIMIT (the HW ACK-retry cap); the default is the
+    kernel's ``MGMT_DATA_RETRY_LIMIT`` (12, the value the recorded aireplay capture carries), and
+    the inject path passes its own ``DEFAULT_HW_ACK_RETRIES``.
     """
     d = bytearray(TXDESC_SIZE)
     _set_bits(d, 0, 26, 1, 1)               # LAST_SEG
@@ -75,7 +80,7 @@ def build_mgmt_txdesc(pkt_len: int, *, hw_rate: int = DESC_RATE1M,
     _set_bits(d, 12, 8, 1, 1)               # USE_RATE
     _set_bits(d, 16, 0, 7, hw_rate)         # TX_RATE
     _set_bits(d, 16, 17, 1, 1)              # RETRY_LIMIT_ENABLE
-    _set_bits(d, 16, 18, 6, MGMT_DATA_RETRY_LIMIT)  # DATA_RETRY_LIMIT
+    _set_bits(d, 16, 18, 6, retry_limit)    # DATA_RETRY_LIMIT
     _set_bits(d, 24, 0, 12, SW_DEFINE_FIXED_RATE)   # SW_DEFINE (DriverFixedRate)
     _set_bits(d, 32, 15, 1, 1)              # HWSEQ_EN
     _set_bits(d, 28, 0, 16, txdesc_checksum(d))   # TX_DESC_CHECKSUM (field zeroed first)

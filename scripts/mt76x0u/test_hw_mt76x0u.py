@@ -422,7 +422,7 @@ async def phase_tx_smoke(driver: MT76x0UDriver) -> None:
     import time as _t
     t0 = _t.monotonic()
     for i in range(10):
-        ok_inj = await driver.inject_frame(frame, use_no_ack=True)
+        ok_inj = await driver.inject_frame(frame)
         if ok_inj:
             n_ok += 1
         else:

@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import time
 from typing import Callable, Optional
 
 import usb.core
@@ -76,7 +75,7 @@ from .power import (
 )
 from .rx import RxDrainer, ack_ra as rx_ack_ra
 from .transport import MT76x2UTransport
-from .tx import inject_frame as _inject_frame, stamp_seq_ctrl
+from .tx import inject_frame as tx_inject_frame, stamp_seq_ctrl
 from .skey import shared_key_table_clear
 from .wcid import wcid_table_clear
 
@@ -110,6 +109,7 @@ class MT76x2UDriver(Driver):
         return cls(dev, id_entry)
 
     def __init__(self, dev: usb.core.Device, id_entry: DeviceID):
+        super().__init__()          # base owns the ACK tally (_ack_detect_on / _our_tx_macs / _ack_counts)
         self.dev = dev
         self.id_entry = id_entry
         self.transport = MT76x2UTransport(dev)
@@ -162,12 +162,9 @@ class MT76x2UDriver(Driver):
             "WIFIT3_MT76X2U_SET_TXPOWER", "1"
         ).strip()
         self._set_txpower_enabled: bool = env_setpwr != "0"
-        # Observe the AP's ACK to our injects (did our TX land). Off by default.
-        self._ack_detect_on: bool = False
-        self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
-        self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
-        self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
-        self._tx_seqno: int = 0   # incrementing 802.11 seq stamped per inject (see tx.stamp_seq_ctrl)
+        # Incrementing 802.11 seq software-stamped per inject via _stamp_tx_seq (build_txwi sets
+        # no NSEQ, so the chip transmits the MPDU's seq_ctrl as-is). The base owns the ACK tally.
+        self._tx_seqno: int = 0
 
     # ---- Discovery / public state ----------------------------------------
     def register_rx_callback(self, cb: Callable[[dict], None]) -> None:
@@ -221,7 +218,8 @@ class MT76x2UDriver(Driver):
         warm-reattach fallback re-runs it after a forced cold reset."""
         if progress_cb:
             progress_cb(0.75, "MAC reset + initvals + setaddr")
-        if not await mac_reset(self.transport, is_mt7612=self.is_mt7612):
+        if not await mac_reset(self.transport, is_mt7612=self.is_mt7612,
+                               short_retry_limit=self.DEFAULT_HW_ACK_RETRIES):
             return False
         mac_setaddr(self.transport, mac_bytes)
         if not await wait_for_txrx_idle(self.transport):
@@ -514,18 +512,14 @@ class MT76x2UDriver(Driver):
         cb(parsed)
 
     def _on_raw_rx(self, data: bytes) -> None:
-        """Pre-parse tap for TX-ACK detection (RxDrainer raw_callback). A 10-byte
-        0xD4 MPDU is an 802.11 ACK; RA is the STA the AP ACKed. When armed, keep only
-        ACKs to a MAC we inject as. The parser drops control frames, so the decode path
-        never surfaces them as parsed dicts."""
-        if not self._ack_detect_on:
-            return
+        """Pre-parse tap for TX-ACK detection (RxDrainer raw_callback). ``ack_ra`` confirms the
+        bulk-IN URB carries a 10-byte 0xD4 ACK and returns its RA; the base ``record_ack`` tallies
+        it when the tally is armed and the RA is a MAC we inject as (record_ack reads the RA at
+        frame[4:10], so the 4 leading bytes are immaterial). The parser drops these control frames,
+        so the decode path never surfaces them as parsed dicts."""
         ra = rx_ack_ra(data)
-        if ra is None:
-            return
-        if ra in self._our_tx_macs:
-            self._ack_sightings[ra.hex()] = self._ack_sightings.get(ra.hex(), 0) + 1
-            self._ack_last_ts[ra] = time.monotonic()   # for inject wait-for-ack
+        if ra is not None:
+            self.record_ack(b"\x00\x00\x00\x00" + ra)
 
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         if channel not in self.SUPPORTED_CHANNELS:
@@ -670,65 +664,38 @@ class MT76x2UDriver(Driver):
             self.transport.write32(MT_RX_FILTR_CFG, new)
         return new
 
-    async def enable_ack_detect(self) -> None:
-        """Admit ACK control frames (clear RX_FILTR_CFG_ACK) so the tap sees the AP's
-        ACKs to our injected MAC. Not active monitor, which makes the chip emit ACKs."""
-        async with self._cal_lock:                  # kernel mt76.mutex — no interleave with a tune
+    async def _enable_rx_acks(self) -> None:
+        """Admit the AP's link-layer ACK control frames (FC=0xD4) into monitor RX by clearing
+        MT_RX_FILTR_CFG bit 10 (MT_RX_FILTR_CFG_ACK), so the tap can see ACKs to our injected
+        MAC. The base arms the tally; this hook is only the chip register write. (Not active
+        monitor, which makes the chip EMIT ACKs.)"""
+        async with self._cal_lock:                  # kernel mt76.mutex: no interleave with a tune
             new = self._set_ack_admit(True)
-        self._ack_sightings.clear()
-        self._ack_last_ts.clear()
-        self._ack_detect_on = True
-        logger.info("MT7612U TX-ACK detection ON (RX_FILTR_CFG=0x%08x, ACK bit clear) "
-                    "— observing our TX delivery", new)
+        logger.info("MT7612U RX-ACK admit ON (RX_FILTR_CFG=0x%08x, ACK bit clear)", new)
 
-    async def disable_ack_detect(self) -> None:
-        """Restore the default monitor RX filter (re-set RX_FILTR_CFG_ACK)."""
+    async def _disable_rx_acks(self) -> None:
+        """Restore the default monitor RX filter (re-set MT_RX_FILTR_CFG_ACK), matching
+        ``_enable_rx_acks``."""
         async with self._cal_lock:
             self._set_ack_admit(False)
-        self._ack_detect_on = False
 
-    def acks_seen(self, mac: bytes) -> int:
-        """Count of ACKs observed addressed to ``mac`` (an injected source MAC) since enable."""
-        return self._ack_sightings.get(bytes(mac).hex(), 0)
+    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+        """Build the mt76x02 TXINFO + TXWI for ``frame_bytes`` and bulk-OUT it once over EP 0x07
+        (AC_VO). The frame always requests ACK, so the chip's own HW retry (limit set globally in
+        TX_RTY_CFG at connect) retransmits an un-ACKed unicast. The tuned channel selects the TXWI
+        rate band (OFDM on 5 GHz, CCK on 2.4 GHz). The sequence number is already stamped by
+        ``_stamp_tx_seq`` (the base calls it before this)."""
+        return await tx_inject_frame(self.transport, frame_bytes,
+                                     ack=True, channel=self.current_channel)
 
-    async def _await_ack(self, ta: bytes, since: float, window: float) -> bool:
-        """True if the tap observed an ACK to ``ta`` after ``since``, within ``window`` s.
-        _on_raw_rx runs on this loop, so a sleep yield lets a just-arrived ACK's timestamp
-        land between checks."""
-        deadline = since + window
-        while time.monotonic() < deadline:
-            if self._ack_last_ts.get(ta, 0.0) > since:
-                return True
-            await asyncio.sleep(0.001)
-        return False
-
-    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True,
-                           wait_for_ack: float = 0.0, max_resends: int = 0) -> bool:
-        # `use_no_ack=True` (the wifit3 convention) → ack=False on the chip. Pass the
-        # tuned channel so a 5 GHz inject goes out as OFDM (CCK is 2.4 GHz-only).
-        #
-        # ``wait_for_ack > 0`` (with TX-ACK detection armed) waits for the AP's ACK and
-        # resends the identical frame up to ``max_resends`` times if none comes; ``0`` =
-        # fire-and-forget (current behaviour).
-        # Stamp an incrementing seq before the resend loop: the mt76x02 chip sends whatever
-        # seq is in the MPDU, so without this every inject reuses seq 0. Stamped once so a
-        # resend re-sends the identical frame (a true HW retransmit, not a new sequence).
+    def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
+        """Software-stamp an incrementing 802.11 sequence number into seq_ctrl. The 20-byte txwi
+        carries no sequence field and build_txwi sets no NSEQ, so the mt76x02 chip transmits the
+        MPDU's seq_ctrl as-is; without this every inject reuses seq 0 and the AP dedups a
+        multi-frame run as retransmissions. The base calls this once before ``_inject_frame``."""
         buf = bytearray(frame_bytes)
         self._tx_seqno = stamp_seq_ctrl(buf, self._tx_seqno)
-        frame_bytes = bytes(buf)
-        ta = bytes(frame_bytes[10:16]) if len(frame_bytes) >= 16 else None   # TA — the AP ACKs back to this
-        if self._ack_detect_on and ta is not None:
-            self._our_tx_macs.add(ta)
-        ack_gated = wait_for_ack > 0 and self._ack_detect_on and ta is not None
-        for _ in range(max_resends + 1):
-            t0 = time.monotonic()
-            ok = await _inject_frame(self.transport, frame_bytes,
-                                     ack=not use_no_ack, channel=self.current_channel)
-            if not ack_gated:
-                return ok                   # fire-and-forget (deauth / WEP / current behaviour)
-            if ok and await self._await_ack(ta, t0, wait_for_ack):
-                return True                 # landed — the AP ACKed it
-        return False                        # never ACKed after every send
+        return bytes(buf)
 
     async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
         """Re-point the self-MAC to ``mac`` so the autoresponder HW-ACKs frames to it

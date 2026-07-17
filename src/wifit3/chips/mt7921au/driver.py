@@ -1,6 +1,4 @@
-import asyncio
 import logging
-import time
 from pathlib import Path
 from typing import Optional, Callable
 
@@ -63,6 +61,7 @@ class MT7921AUDriver(Driver):
         return cls(dev)
 
     def __init__(self, dev):
+        super().__init__()   # base owns the ACK tally (_ack_detect_on / _our_tx_macs / _ack_counts)
         self.dev = dev
         self.transport = MT7921AUTransport(dev)
         self.firmware = MT7921AUFirmwareLoader(self.transport, Path(__file__).parent / "assets")
@@ -83,13 +82,8 @@ class MT7921AUDriver(Driver):
         self._antenna_mask: int = 0x3
         # 802.11 TX sequence counter (number in seq_ctrl bits [4:15], so it steps
         # by 0x10). The chip transmits the seq we stamp (TXD SN_VALID), so we own
-        # it — see tx.stamp_seq_ctrl. Touched on the event loop only (no lock).
+        # it (see tx.stamp_seq_ctrl). Touched on the event loop only (no lock).
         self._tx_seqno: int = 0
-        # Observe the AP's ACK to our injects (did our TX land). Off by default.
-        self._ack_detect_on: bool = False
-        self._our_tx_macs: set[bytes] = set()      # source MACs we inject as
-        self._ack_sightings: dict[str, int] = {}   # our-MAC -> ACK count
-        self._ack_last_ts: dict[bytes, float] = {}  # our-MAC -> ts of last ACK
 
     def register_rx_callback(self, callback: Callable[[dict], None]):
         self._rx_callback = callback
@@ -220,74 +214,39 @@ class MT7921AUDriver(Driver):
         self._channel = channel
         return True
 
-    async def inject_frame(self, frame_bytes: bytes, use_no_ack: bool = True,
-                           wait_for_ack: float = 0.0, max_resends: int = 0) -> bool:
-        """Transmit a raw 802.11 frame.
-
-        Builds the connac2 TX descriptor (tx.build_tx, byte-verified by verify_pcap
-        CHECK 4 against the captured aireplay TX) and sends it on the frame's USB
-        bulk-OUT endpoint — mgmt/ctrl on HCCA (0x09), data on AC_BE (0x04). The TX
-        rate is the current channel's band basic rate. The hardware appends the FCS,
-        so pass the bare MPDU.
-
-        ``wait_for_ack > 0`` (with TX-ACK detection armed) waits for the AP's ACK and
-        resends the same frame up to ``max_resends`` times if none comes, returning
-        whether it landed; ``0`` = fire-and-forget (current behaviour).
-        """
-        # Stamp an incrementing sequence number (frag-preserving) before building
-        # the descriptor — the chip sends whatever seq we provide, so without this
-        # every injected frame reuses seq 0 and the AP dedups interactive attacks.
-        # Stamped once: a resend re-sends the identical frame (a true retransmit).
-        buf = bytearray(frame_bytes)
-        self._tx_seqno = tx.stamp_seq_ctrl(buf, self._tx_seqno)
-        ta = bytes(buf[10:16]) if len(buf) >= 16 else None   # TA — the AP ACKs back to this
-        if self._ack_detect_on and ta is not None:
-            self._our_tx_macs.add(ta)
+    async def _inject_frame(self, frame_bytes: bytes) -> bool:
+        """Build the connac2 TX descriptor (HW ACK-retry limit ``self.DEFAULT_HW_ACK_RETRIES``,
+        byte-verified by verify_pcap CHECK 4 against the captured aireplay TX) and send it once
+        on the frame's USB bulk-OUT endpoint: mgmt/ctrl on HCCA (0x09), data on AC_BE (0x04).
+        The seq is already stamped (``_stamp_tx_seq``) and the hardware appends the FCS, so pass
+        the bare MPDU. The TX rate is the current channel's band basic rate."""
         try:
-            wire, endpoint = tx.build_tx(bytes(buf), band_5ghz=self._channel > 14,
-                                         no_ack=use_no_ack)
+            wire, endpoint = tx.build_tx(frame_bytes, band_5ghz=self._channel > 14,
+                                         retry_count=self.DEFAULT_HW_ACK_RETRIES)
         except ValueError as e:
             logger.error("MT7921AU inject_frame: %s", e)
             return False
-        ack_gated = wait_for_ack > 0 and self._ack_detect_on and ta is not None
-        for _ in range(max_resends + 1):
-            t0 = time.monotonic()
-            ok = await self.transport.send_bulk_checked(wire, endpoint)
-            if not ack_gated:
-                return ok                   # fire-and-forget (deauth / WEP / current behaviour)
-            if ok and await self._await_ack(ta, t0, wait_for_ack):
-                return True                 # landed — the AP ACKed it
-        return False                        # never ACKed after every send
+        return await self.transport.send_bulk_checked(wire, endpoint)
 
-    async def _await_ack(self, ta: bytes, since: float, window: float) -> bool:
-        """True if the tap observed an ACK to ``ta`` after ``since``, within ``window`` s.
-        _on_raw_rx runs on this loop, so a sleep yield lets a just-arrived ACK's timestamp
-        land between checks."""
-        deadline = since + window
-        while time.monotonic() < deadline:
-            if self._ack_last_ts.get(ta, 0.0) > since:
-                return True
-            await asyncio.sleep(0.001)
-        return False
+    def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
+        """Software-stamp an incrementing 802.11 sequence number (frag-preserving, one step is
+        0x10). build_tx sets the TXD SN_VALID with this seq, so the chip transmits exactly what
+        we stamp; without it every inject reuses seq 0 and an AP dedups our multi-frame attacks
+        (ChopChop, fragmentation, fake-auth) as retransmissions. See tx.stamp_seq_ctrl."""
+        buf = bytearray(frame_bytes)
+        self._tx_seqno = tx.stamp_seq_ctrl(buf, self._tx_seqno)
+        return bytes(buf)
 
-    async def enable_ack_detect(self) -> None:
-        """Admit ACK control frames (clear RFCR DROP_UNWANTED_CTL) so the tap can see the
-        AP's ACKs to us. Not active monitor, which makes the chip emit ACKs."""
+    async def _enable_rx_acks(self) -> None:
+        """Clear RFCR DROP_UNWANTED_CTL via the FW MCU so monitor RX admits the AP's ACK control
+        frames (FC=0xD4) to a MAC we inject as. A real register write (MCU call), not a no-op;
+        the base arms the tally and clears the counts. Distinct from active monitor, which makes
+        the chip EMIT ACKs."""
         await chip_init.admit_ack_frames(self.transport)
-        self._ack_sightings.clear()
-        self._ack_last_ts.clear()
-        self._ack_detect_on = True
-        logger.info("MT7921AU TX-ACK detection ON (RFCR DROP_UNWANTED_CTL clear) — "
-                    "observing our TX delivery")
 
-    async def disable_ack_detect(self) -> None:
-        """Restore the default monitor RX filter (set RFCR DROP_UNWANTED_CTL)."""
+    async def _disable_rx_acks(self) -> None:
+        """Restore the monitor default (re-set RFCR DROP_UNWANTED_CTL)."""
         await chip_init.drop_ack_frames(self.transport)
-        self._ack_detect_on = False
-
-    def acks_seen(self, mac: bytes) -> int:
-        """Count of ACKs observed addressed to ``mac`` (an injected source MAC) since enable."""
-        return self._ack_sightings.get(bytes(mac).hex(), 0)
 
     async def enter_active_monitor(self, mac: bytes, bssid: Optional[bytes] = None) -> bytes:
         """Arm HW auto-ACK for ``mac`` by programming it as the device omac (connac2
@@ -328,13 +287,10 @@ class MT7921AUDriver(Driver):
         frame_bytes = data[mpdu_off:mpdu_end]
         if len(frame_bytes) < 10:
             return
-        # A 10-byte 0xD4 frame is an ACK (the parser drops control frames). RA=frame[4:10]
-        # is the STA the AP ACKed; when armed, keep only ACKs to a MAC we inject as.
-        if self._ack_detect_on and len(frame_bytes) == 10 and frame_bytes[0] == 0xD4:
-            ra = frame_bytes[4:10]
-            if ra in self._our_tx_macs:
-                self._ack_sightings[ra.hex()] = self._ack_sightings.get(ra.hex(), 0) + 1
-                self._ack_last_ts[ra] = time.monotonic()   # for inject wait-for-ack
+        # A 10-byte 0xD4 frame is an ACK (the parser drops control frames); the base tallies it
+        # iff the ACK tap is armed and RA=frame[4:10] is a MAC we inject as.
+        if len(frame_bytes) == 10 and frame_bytes[0] == 0xD4:
+            self.record_ack(frame_bytes)
             return
         try:
             parsed = self.parser.parse_80211_frame(frame_bytes, rssi)

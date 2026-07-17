@@ -1,9 +1,13 @@
 """rtl8188eus_dkms TX-ACK detection: the RX tap that counts the AP's link-layer ACKs to a
-MAC we inject as, and the inject wait-for-ack poll. No hardware — synthetic frames."""
+MAC we inject as, plus the inject descriptor's HW ACK-retry wiring. No hardware (synthetic frames).
+
+``_enable_rx_acks`` opens RXFLTMAP1 bit13 (the 8188e defaults to filtering ACKs); the tap lives
+in ``_dispatch`` (raw frames), before the parser drops the ACK control frame. The tally and
+arming live on the ``Driver`` base (``record_ack`` / ``enable_rx_acks`` / ``acks_seen``)."""
 import struct
-import time
 from unittest.mock import MagicMock
 
+from wifit3.chips.rtl8188eus_dkms import tx
 from wifit3.chips.rtl8188eus_dkms.driver import Rtl8188eusDkmsDriver
 
 
@@ -18,6 +22,12 @@ def _ack_buf(ra: bytes) -> bytes:
     return bytes(desc) + bytes(mpdu) + b"\x00\x00\x00\x00"
 
 
+def _mgmt_frame(ta: bytes = bytes.fromhex("020000000001")) -> bytes:
+    """A 24-B deauth: FC=0xC0, addr1 (RA), addr2 (TA=our injected source), addr3, seqctl."""
+    return (b"\xc0\x00\x00\x00" + bytes.fromhex("aabbccddeeff") + ta
+            + bytes.fromhex("aabbccddeeff") + b"\x00\x00")
+
+
 def _driver() -> Rtl8188eusDkmsDriver:
     d = Rtl8188eusDkmsDriver(MagicMock())
     d._parsed = []
@@ -25,44 +35,56 @@ def _driver() -> Rtl8188eusDkmsDriver:
     return d
 
 
-def test_tap_counts_ack_to_our_mac():
+async def test_tap_counts_ack_to_our_mac():
     d = _driver()
     ra = bytes.fromhex("020000000001")
+    await d.enable_rx_acks()                    # arms the base tally (clears _our_tx_macs)
     d._our_tx_macs.add(ra)
-    d._ack_detect_on = True
     d._dispatch(_ack_buf(ra))
     assert d.acks_seen(ra) == 1
-    assert ra in d._ack_last_ts
-    assert d._parsed == []          # an ACK is never handed to the frame parser
+    assert d._parsed == []                      # an ACK is never handed to the frame parser
 
 
-def test_tap_ignores_ack_to_foreign_mac():
+async def test_tap_ignores_ack_to_foreign_mac():
     d = _driver()
     ra = bytes.fromhex("aabbccddeeff")
-    d._ack_detect_on = True
-    d._dispatch(_ack_buf(ra))
-    assert d.acks_seen(ra) == 0     # but not one of ours
-    assert d._ack_last_ts == {}
+    await d.enable_rx_acks()
+    d._dispatch(_ack_buf(ra))                   # armed, but ra is not one of ours
+    assert d.acks_seen(ra) == 0
 
 
 def test_tap_off_by_default():
     d = _driver()
     ra = bytes.fromhex("020000000001")
     d._our_tx_macs.add(ra)
-    d._dispatch(_ack_buf(ra))       # _ack_detect_on stays False
+    d._dispatch(_ack_buf(ra))                   # never enabled -> _ack_detect_on stays False
     assert d.acks_seen(ra) == 0
 
 
-async def test_await_ack_true_when_ts_fresh():
+async def test_disable_rx_acks_stops_the_tally():
     d = _driver()
-    ta = bytes.fromhex("020000000001")
-    since = time.monotonic()
-    d._ack_last_ts[ta] = since + 1.0            # ACK landed after `since`
-    assert await d._await_ack(ta, since, 0.05) is True
+    ra = bytes.fromhex("020000000001")
+    await d.enable_rx_acks()
+    d._our_tx_macs.add(ra)
+    await d.disable_rx_acks()
+    d._dispatch(_ack_buf(ra))
+    assert d.acks_seen(ra) == 0
 
 
-async def test_await_ack_false_on_timeout():
+def test_stamp_tx_seq_is_identity():
     d = _driver()
-    ta = bytes.fromhex("020000000001")
-    since = time.monotonic()
-    assert await d._await_ack(ta, since, 0.005) is False   # no ts recorded -> window elapses
+    frame = _mgmt_frame()
+    assert d._stamp_tx_seq(frame) is frame      # Realtek HW-stamps; frame goes out unchanged
+
+
+async def test_inject_builds_descriptor_with_hw_retry_limit():
+    d = _driver()
+    sent: list[bytes] = []
+    d.transport.bulk_out = lambda pkt: sent.append(pkt)
+    frame = _mgmt_frame()
+    assert await d.inject_frame(frame) is True   # base entry -> _stamp_tx_seq -> _inject_frame
+    assert len(sent) == 1
+    pkt = sent[0]
+    rty = (int.from_bytes(pkt[20:24], "little") >> 18) & 0x3F    # txdw5 DATA_RETRY_LIMIT
+    assert rty == d.DEFAULT_HW_ACK_RETRIES
+    assert pkt[tx.TXDESC_SIZE:] == frame         # HW-stamp: payload byte-for-byte unchanged

@@ -48,12 +48,14 @@ def fill_checksum(buf: bytearray) -> None:
 
 def build_mgnt_txdesc(payload: bytes, *, qsel: int, rate_hw: int = _HWRATE_1M,
                       mac_id: int = RTW_DEFAULT_MGMT_MACID, raid: int = RATEID_IDX_B,
-                      retry_ctrl: bool = True, mbssid: int = 0, hw_port: int = 0,
+                      retry_limit: int = 6, mbssid: int = 0, hw_port: int = 0,
                       hw_ssn_sel: int = 0, qos_en: bool = False, seqnum: int = 0) -> bytes:
     """``update_txdesc`` MGNT_FRAMETAG branch: build [48-byte desc][payload] with the HW XOR
     checksum. ``qsel`` is the caller's queue (BEACON for a reserved-page FW chunk, MGNT for a
-    deauth/inject frame). The NDPA/beamformer sub-branch and the DATA_FRAMETAG branch are not
-    ported — no path this driver drives (FW reserved-page download, deauth) takes them.
+    deauth/inject frame). ``retry_limit`` fills RTS_DATA_RTY_LMT (6-bit); the default 6 is the
+    value the capture's FW reserved-page full-descriptor chunks carry, and the inject path passes
+    its own HW ACK-retry limit. The NDPA/beamformer sub-branch and the DATA_FRAMETAG branch are
+    not ported (no path this driver drives takes them: FW reserved-page download, deauth).
 
     BMC follows the kernel: ``rtw_hal_mgnt_xmit`` runs ``update_mgntframe_attrib_addr`` [SRC]
     hal_intf.c:885 / rtw_mlme_ext.c:7794 first, copying ``ra = addr1`` (the frame's bytes 4-9)
@@ -89,7 +91,7 @@ def build_mgnt_txdesc(payload: bytes, *, qsel: int, rate_hw: int = _HWRATE_1M,
     _set_field(buf, 0x0C, 8, 1, 1)                      # USE_RATE
     _set_field(buf, 0x10, 0, 7, rate_hw)                # DATARATE
     _set_field(buf, 0x10, 17, 1, 1)                     # RTY_LMT_EN
-    _set_field(buf, 0x10, 18, 6, 6 if retry_ctrl else 0)  # RTS_DATA_RTY_LMT
+    _set_field(buf, 0x10, 18, 6, retry_limit)           # RTS_DATA_RTY_LMT (6-bit)
 
     _set_field(buf, 0x18, 0, 12, 0x01)                  # SW_DEFINE (DriverFixedRate)
 

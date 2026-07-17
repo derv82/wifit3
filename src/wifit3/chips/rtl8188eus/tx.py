@@ -108,13 +108,15 @@ def build_deauth(bssid: bytes, client: bytes, reason: int = REASON_CODE_CLASS3_F
 # ---- descriptor builder ---------------------------------------------
 
 
-def build_tx_desc_mgmt(pkt_len: int, is_broadcast: bool) -> bytearray:
+def build_tx_desc_mgmt(pkt_len: int, is_broadcast: bool,
+                       retry_limit: int = TXDESC32_RETRY_LIMIT_MGNT) -> bytearray:
     """Construct a 32-byte tx descriptor for a MGMT frame.
 
     Mirrors `rtl8xxxu_tx` (core.c:5449-5466) for the common header +
     `rtl8xxxu_fill_txdesc_v3` MGMT branch (core.c:5357-5362, 5395-5397).
-    Checksum is NOT computed here — caller must call `calc_tx_desc_csum`
-    on the finished descriptor + MPDU layout (csum field cleared first).
+    `retry_limit` fills the txdw5 retry-limit field (default 6, the vendor MGMT value); the
+    inject path passes its own HW ACK-retry limit. Checksum is NOT computed here — caller must
+    call `calc_tx_desc_csum` on the finished descriptor + MPDU layout (csum field cleared first).
     """
     desc = bytearray(TX_DESC_SZ_8188E)
 
@@ -145,10 +147,10 @@ def build_tx_desc_mgmt(pkt_len: int, is_broadcast: bool) -> bytearray:
     txdw4 = TXDESC32_USE_DRIVER_RATE
     struct.pack_into("<I", desc, 16, txdw4)
 
-    # txdw5: rate=0 (1Mbps CCK — most robust), retry limit (6) + enable (lines 5358-5361)
+    # txdw5: rate=0 (1Mbps CCK — most robust), retry limit + enable (lines 5358-5361)
     txdw5 = (
         0  # rate field, low 8 bits
-        | (TXDESC32_RETRY_LIMIT_MGNT << TXDESC32_RETRY_LIMIT_SHIFT)
+        | ((retry_limit & 0x3F) << TXDESC32_RETRY_LIMIT_SHIFT)
         | TXDESC32_RETRY_LIMIT_ENABLE
     )
     struct.pack_into("<I", desc, 20, txdw5)
@@ -189,15 +191,16 @@ def send_mgmt_frame(
     mpdu: bytes,
     *,
     is_broadcast: bool = False,
+    retry_limit: int = TXDESC32_RETRY_LIMIT_MGNT,
     timeout_ms: int = 200,
 ) -> int:
     """Send a single MGMT frame: build descriptor, checksum, bulk-OUT write.
 
-    Returns the number of bytes actually written (descriptor + MPDU).
-    Raises `usb.core.USBError` on USB-level failure (e.g. timeout, pipe
-    stall, no device).
+    `retry_limit` is threaded into the TX descriptor's retry-limit field (default 6). Returns
+    the number of bytes actually written (descriptor + MPDU). Raises `usb.core.USBError` on
+    USB-level failure (e.g. timeout, pipe stall, no device).
     """
-    desc = build_tx_desc_mgmt(len(mpdu), is_broadcast)
+    desc = build_tx_desc_mgmt(len(mpdu), is_broadcast, retry_limit=retry_limit)
     calc_tx_desc_csum(desc)
     urb = bytes(desc) + mpdu
     written = dev.write(ep_out, urb, timeout_ms)
