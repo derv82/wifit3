@@ -688,14 +688,14 @@ async def test_deauth_sets_unicast_ack_nav(mocker):
     of both spoofed frames — the destination (addr1) ACKs, so we reserve SIFS + a 1 Mbps
     ACK. Built in the shared interface path, so this holds for every driver."""
     driver = mocker.MagicMock()
-    driver.inject_frame = mocker.AsyncMock(return_value=True)
-    driver.enable_ack_detect = mocker.AsyncMock()
-    driver.disable_ack_detect = mocker.AsyncMock()
+    driver.inject_frame_slow_retry = mocker.AsyncMock(return_value=True)
+    driver.enable_rx_acks = mocker.AsyncMock()
+    driver.disable_rx_acks = mocker.AsyncMock()
     iface = WlanInterface(driver_instance=driver, name="wlan0", description="t")
 
     await iface.deauth_client("aa:bb:cc:dd:ee:ff", "00:11:22:33:44:55", rounds=1)
 
-    frames = [c.args[0] for c in driver.inject_frame.call_args_list]
+    frames = [c.args[0] for c in driver.inject_frame_slow_retry.call_args_list]
     client_deauth, ap_deauth = frames[0], frames[1]
     # client_deauth addr1 = client (unicast) → NAV 0x013A (little-endian)
     assert client_deauth[4:10] == bytes.fromhex("001122334455")
@@ -710,18 +710,18 @@ async def test_deauth_client_tallies_per_direction_acks(mocker):
     AP→Client frame ACKed = the CLIENT heard us; a Client→AP frame ACKed = the AP heard us.
     Here the client ACKs every AP→Client frame but the AP ACKs none."""
     driver = mocker.MagicMock()
-    driver.enable_ack_detect = mocker.AsyncMock()
-    driver.disable_ack_detect = mocker.AsyncMock()
-    # inject_frame returns True (ACKed) for the AP→Client frame (addr2 = AP), False otherwise.
-    async def _inject(frame, use_no_ack=True, wait_for_ack=0.0, max_resends=0):
+    driver.enable_rx_acks = mocker.AsyncMock()
+    driver.disable_rx_acks = mocker.AsyncMock()
+    # slow-retry returns True (ACKed) for the AP->Client frame (addr2 = AP), False otherwise.
+    async def _inject(frame, max_resends=0):
         return frame[10:16] == bytes.fromhex("aabbccddeeff")   # addr2 = spoofed AP
-    driver.inject_frame = mocker.AsyncMock(side_effect=_inject)
+    driver.inject_frame_slow_retry = mocker.AsyncMock(side_effect=_inject)
     iface = WlanInterface(driver_instance=driver, name="wlan0", description="t")
 
     res = await iface.deauth_client("aa:bb:cc:dd:ee:ff", "00:11:22:33:44:55", rounds=4)
 
-    driver.enable_ack_detect.assert_awaited_once()
-    driver.disable_ack_detect.assert_awaited_once()
+    driver.enable_rx_acks.assert_awaited_once()
+    driver.disable_rx_acks.assert_awaited_once()
     assert res.measured and res.client_sent == 4 and res.ap_sent == 4
     assert res.client_acks == 4 and res.ap_acks == 0      # client heard us, AP silent
     assert res.total_acked == 4 and res.total_sent == 8

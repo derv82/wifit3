@@ -55,7 +55,7 @@ async def probe(prober, dst: bytes, count: int, interval: float) -> int:
     a0 = prober.driver.acks_seen(src)
     for _ in range(count):
         try:
-            await prober.driver.inject_frame(frame, use_no_ack=True)   # send once, no self-retry
+            await prober.driver.inject_frame(frame)   # HW ACK-retry stops on the DUT's auto-ACK
         except Exception as e:                       # noqa: BLE001
             print(f"[-] inject failed: {e}")
             break
@@ -91,7 +91,7 @@ async def main(a) -> None:
         return
     await asyncio.gather(dut.set_channel(a.channel), prober.set_channel(a.channel))
     try:
-        await prober.driver.enable_ack_detect()
+        await prober.driver.enable_rx_acks()
     except Exception as e:                            # noqa: BLE001
         print(f"[-] prober ACK tap unavailable: {e}")
     prober.driver._our_tx_macs.add(mac_bytes(PROBE_SRC))

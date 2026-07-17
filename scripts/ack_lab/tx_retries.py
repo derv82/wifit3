@@ -114,7 +114,7 @@ async def run_scenario(injector, sniffer, counter: CopyCounter, *, active_monito
     acks0 = sniffer.driver.acks_seen(src)
     for _ in range(count):
         try:
-            await drv.inject_frame(frame, use_no_ack=False)   # use_no_ack=False keeps HW retry on
+            await drv.inject_frame(frame)   # HW ACK-retry on by default (DEFAULT_HW_ACK_RETRIES)
         except Exception as e:                    # noqa: BLE001
             print(f"[-] inject failed: {e}")
             break
@@ -171,7 +171,7 @@ async def main(a) -> None:
     counter = CopyCounter()
     sniffer.register_rx_callback(counter)
     try:
-        await sniffer.driver.enable_ack_detect()   # admit + tally the AP's ACKs on the sniffer
+        await sniffer.driver.enable_rx_acks()   # admit + tally the AP's ACKs on the sniffer
     except Exception as e:                          # noqa: BLE001
         print(f"[-] sniffer ACK detection unavailable: {e}")
     await asyncio.sleep(SETTLE)

@@ -58,15 +58,13 @@ def build_client_leaving(bssid: bytes, our_mac: bytes, deauth: bool = True) -> b
 class WlanTransport:
     """Send/recv/drain over a live WlanInterface."""
 
-    def __init__(self, iface, bssid: bytes, our_mac: bytes, tx_observer=None, ack=False):
+    def __init__(self, iface, bssid: bytes, our_mac: bytes, tx_observer=None):
         self.iface = iface
         self.bssid = bssid
         self.our_mac = our_mac
         # Optional callback(frame_bytes) invoked on every TX — lets a probe
         # record our injected frames alongside RX for a full-conversation pcap.
         self.tx_observer = tx_observer
-        # ack=True requires active station mode (see interface.py:set_fake_mac).
-        self.ack = ack
         self._q: asyncio.Queue = asyncio.Queue()
         self._loop = asyncio.get_event_loop()
         self._active = False
@@ -96,13 +94,12 @@ class WlanTransport:
     async def send_until_ack(self, frame: bytes, max_retries: int = 0) -> bool:
         if self.tx_observer is not None:
             self.tx_observer(frame)
-        return await self.iface.send_until_ack(frame, max_retries=max_retries,
-                                               use_no_ack=not self.ack)
+        return await self.iface.send_until_ack(frame, max_retries=max_retries)
 
     async def send_no_wait(self, frame: bytes) -> bool:
         if self.tx_observer is not None:
             self.tx_observer(frame)
-        return await self.iface.send_no_wait(frame, use_no_ack=not self.ack)
+        return await self.iface.send_no_wait(frame)
 
     async def recv(self, timeout: float) -> Optional[bytes]:
         try:

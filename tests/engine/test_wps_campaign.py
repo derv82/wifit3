@@ -30,13 +30,14 @@ async def _noop_async(*_a, **_k):
 
 
 def _driver():
-    return SimpleNamespace(enable_ack_detect=_noop_async, disable_ack_detect=_noop_async,
-                           acks_seen=lambda _mac: 0)
+    return SimpleNamespace()
 
 
 def _iface():
     return SimpleNamespace(access_points={}, driver=_driver(),
-                           set_fake_mac=_set_fake_mac, clear_fake_mac=_clear_fake_mac)
+                           set_fake_mac=_set_fake_mac, clear_fake_mac=_clear_fake_mac,
+                           enable_rx_acks=_noop_async, disable_rx_acks=_noop_async,
+                           acks_seen=lambda _mac: 0)
 
 
 class ScriptedCampaign(WpsCampaign):
@@ -218,7 +219,8 @@ async def test_teardown_saves_state_and_clears_fake_mac(tmp_path):
     async def _clear(*_a, **_k):
         cleared.append(True)
 
-    iface = SimpleNamespace(access_points={}, driver=_driver(), set_fake_mac=_set_fake_mac, clear_fake_mac=_clear)
+    iface = SimpleNamespace(access_points={}, driver=_driver(), set_fake_mac=_set_fake_mac, clear_fake_mac=_clear,
+                            enable_rx_acks=_noop_async, disable_rx_acks=_noop_async, acks_seen=lambda _mac: 0)
     c = WpsCampaign(iface, _target(), state_dir=str(tmp_path), log=lambda m: None)
     c.state.tested = 42
     await c.teardown()

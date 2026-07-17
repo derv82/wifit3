@@ -129,7 +129,6 @@ class WpsCampaign(Campaign):
         self.our_mac = random_client_mac()
         self.assoc: Optional[Association] = None
         self.transport: Optional[WlanTransport] = None
-        self._ack = False   # set per session in _ensure_session (True once fake_mac is armed)
         # TX-ACK: every driver can see the AP's ACKs to us, so we resend a lost frame
         # instead of guessing.
         self._tx_ack = True
@@ -222,7 +221,7 @@ class WpsCampaign(Campaign):
         self._teardown()
         await self.iface.clear_fake_mac()
         if self._tx_ack:
-            await self.iface.driver.disable_ack_detect()
+            await self.iface.disable_rx_acks()
 
     def pause(self) -> None:
         self._paused = True
@@ -255,17 +254,15 @@ class WpsCampaign(Campaign):
     # ---- the sweep ----------------------------------------------------------
     async def _ensure_session(self) -> bool:
         if self.assoc is None:
-            # Arm fake_mac so the chip HW-ACKs the AP → it stops retransmitting. None on a card
-            # that can't spoof-ACK → _ack stays False (AP retransmits, we reply to each).
-            armed = await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
-            self._ack = armed is not None
+            # Arm fake_mac so the chip HW-ACKs the AP so it stops retransmitting. A no-op return
+            # on a card that can't spoof-ACK (the AP then retransmits and we reply to each).
+            await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
             self.assoc = Association(self.iface, self.bssid, self.target.ssid or "",
                                      self.channel, our_mac=self.our_mac,
                                      assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR),
                                      should_stop=lambda: self.stopped)
             self.assoc.start()
-            self.transport = WlanTransport(self.iface, str_to_mac(self.bssid), self.our_mac,
-                                           ack=self._ack)
+            self.transport = WlanTransport(self.iface, str_to_mac(self.bssid), self.our_mac)
             self.transport.start()
         if not self.assoc.associated:
             return await self.assoc.associate()
@@ -414,7 +411,7 @@ class WpsCampaign(Campaign):
     async def _loop(self) -> None:
         self.status = "running"
         if self._tx_ack:
-            await self.iface.driver.enable_ack_detect()
+            await self.iface.enable_rx_acks()
         name = self.target.ssid or self.bssid
         logger.debug("WPS campaign start on %s (mac %s)", name, self.our_mac.hex())
         if self._oui_pin_count:
@@ -459,7 +456,7 @@ class WpsCampaign(Campaign):
                 prev_phase = self.state.phase
                 t0 = time.monotonic()
                 out = await self._try(pin)
-                if self._tx_ack and not self._ap_ever_acked and self.iface.driver.acks_seen(self.our_mac):
+                if self._tx_ack and not self._ap_ever_acked and self.iface.acks_seen(self.our_mac):
                     self._ap_ever_acked = True
                 # EWMA: Exponentially Weighted Moving Average. tl;dr math
                 self._attempt_ewma = 0.7 * self._attempt_ewma + 0.3 * (time.monotonic() - t0)

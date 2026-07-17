@@ -631,34 +631,37 @@ class WlanInterface:
             except Exception as e:
                 logger.error(f"RX Callback failed: {e}")
 
-    async def send_raw(
-        self, frame_bytes: bytes, use_no_ack: bool = True,
-        wait_for_ack: float = 0.0, max_resends: int = 0,
-    ) -> bool:
-        """Inject a raw 802.11 frame. ``wait_for_ack``/``max_resends`` request ACK-gated
-        delivery; only drivers with TX-ACK detection honour them."""
-        # Live packet dashboard — tally this inject (deauth vs other) by AP.
+    async def send_no_wait(self, frame_bytes: bytes) -> bool:
+        """Inject a frame fire-and-forget: no software ACK wait, no software resend. The chip's
+        own HW ACK-based retry still applies."""
+        self._record_tx(frame_bytes)                 # live packet dashboard (deauth vs other)
+        return await self.driver.inject_frame(frame_bytes)
+
+    async def send_until_ack(self, frame_bytes: bytes, max_retries: int = 0) -> bool:
+        """Inject a frame, then watch the monitor tap for the recipient's link-ACK, resending up
+        to ``max_retries`` times on silence; returns whether it landed. Needs ``enable_rx_acks()``
+        armed first, else fire-and-forget. Best-effort (see ``Driver.inject_frame_slow_retry``)."""
         self._record_tx(frame_bytes)
-        if wait_for_ack > 0:
-            return await self.driver.inject_frame(
-                frame_bytes, use_no_ack, wait_for_ack=wait_for_ack, max_resends=max_resends)
-        return await self.driver.inject_frame(frame_bytes, use_no_ack)
+        return await self.driver.inject_frame_slow_retry(frame_bytes, max_resends=max_retries)
 
-    #: Fixed link-ACK wait: an 802.11 ACK returns within SIFS (~10 µs); 20 ms covers
-    #: USB/RX-tap latency with wide margin. One window for every ACK we ever wait for.
-    MAX_ACK_DELAY = 0.02
+    async def enable_rx_acks(self) -> None:
+        """Arm the driver's ACK tally so ``send_until_ack`` / ``acks_seen`` can observe the
+        recipient's ACKs. A register write or a no-op, depending on the card."""
+        await self.driver.enable_rx_acks()
 
-    async def send_no_wait(self, frame_bytes: bytes, *, use_no_ack: bool = True) -> bool:
-        """Inject a frame fire-and-forget — no ACK wait, no resend."""
-        return await self.send_raw(frame_bytes, use_no_ack=use_no_ack)
+    async def disable_rx_acks(self) -> None:
+        """Disarm the ACK tally (inverse of ``enable_rx_acks``)."""
+        await self.driver.disable_rx_acks()
 
-    async def send_until_ack(self, frame_bytes: bytes, max_retries: int = 0, *,
-                             use_no_ack: bool = True) -> bool:
-        """Inject a frame and wait up to ``MAX_ACK_DELAY`` for the AP's link-ACK, resending
-        up to ``max_retries`` times on silence; returns whether it landed. Fire-and-forget
-        unless the driver's TX-ACK detection is armed."""
-        return await self.send_raw(frame_bytes, use_no_ack=use_no_ack,
-                                   wait_for_ack=self.MAX_ACK_DELAY, max_resends=max_retries)
+    def acks_seen(self, mac: bytes) -> int:
+        """ACKs the driver has tallied to source MAC ``mac`` since ``enable_rx_acks``.
+        Approximate and chipset-dependent (see ``Driver.acks_seen``)."""
+        return self.driver.acks_seen(mac)
+
+    @property
+    def supported_channels(self) -> List[int]:
+        """Channels the active driver can tune to (delegates to the driver)."""
+        return self.driver.SUPPORTED_CHANNELS
 
     def _record_tx(self, frame_bytes: bytes) -> None:
         """Classify an outgoing frame for the packet dashboard (deauth vs other), reusing
@@ -713,17 +716,14 @@ class WlanInterface:
 
     async def deauth_client(self, ap_bssid: str, client_bssid: str,
                             rounds: int = 10) -> DeauthResult:
-        """De-auth one client both ways, measuring how many frames each endpoint ACKed.
+        """De-auth one client both ways, tallying how many frames each endpoint ACKed.
 
-        AP→Client frames are ACKed by the CLIENT (the ACK's RA is the AP MAC we spoofed as
-        sender); Client→AP frames are ACKed by the AP (RA = the client MAC we spoofed). With
-        a driver that has TX-ACK detection we arm it, send each frame ACK-gated within
-        ``MAX_ACK_DELAY``, and tally the per-direction landings — no resends, so exactly
-        ``2*rounds`` frames still go out. Without it we still send, but the result is
-        ``measured=False`` and the caller reports no ACK verdict.
-
-        use_no_ack: we spoof the source, so any hardware ACK-retry would target the real
-        endpoints — the TX-ACK detection reads the ACK off the monitor RX instead."""
+        AP->Client frames are ACKed by the CLIENT (the ACK's RA is the AP MAC we spoofed as
+        sender); Client->AP frames are ACKed by the AP (RA = the client MAC we spoofed). We arm
+        the RX-ACK tally, send each frame with ``send_until_ack``, and count the per-direction
+        hits. The count is best-effort: a busy AP's own traffic to the spoofed MACs pollutes it,
+        and some cards over-count (see ``Driver.acks_seen``), so treat it as a rough signal, not
+        a delivery guarantee."""
         ap_bssid = ap_bssid.lower()
         client_bssid = client_bssid.lower()
         target_chan = self._deauth_channel(ap_bssid)
@@ -736,7 +736,7 @@ class WlanInterface:
 
         driver = self.driver
         res = DeauthResult(measured=True)
-        await driver.enable_ack_detect()
+        await driver.enable_rx_acks()
         try:
             for _ in range(rounds):
                 landed_c = await self.send_until_ack(client_deauth)
@@ -749,7 +749,7 @@ class WlanInterface:
                     res.ap_acks += 1
                 await asyncio.sleep(0.01)
         finally:
-            await driver.disable_ack_detect()
+            await driver.disable_rx_acks()
         return res
 
 
@@ -765,7 +765,7 @@ class WlanInterface:
                 return
 
             if not channels:
-                channels = self.driver.SUPPORTED_CHANNELS or [1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 5, 10]
+                channels = self.supported_channels or [1, 6, 11, 2, 7, 12, 3, 8, 13, 4, 9, 5, 10]
 
             # Hop busy channels (1/6/11) first so the AP list fills before the scanner's
             # first sort tick. SUPPORTED_CHANNELS stays sequential for the filter UI.

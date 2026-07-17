@@ -81,7 +81,7 @@ class _FakeDriver:
     def register_disconnect_callback(self, cb):
         pass
 
-    async def inject_frame(self, frame_bytes, use_no_ack=True):
+    async def inject_frame(self, frame_bytes):
         self.injected.append(frame_bytes)
         return True
 
@@ -117,25 +117,25 @@ def test_interface_rx_skips_broadcast_bssid():
     assert iface.packet_stats.snapshot("ff:ff:ff:ff:ff:ff")["beacon"] == 0
 
 
-async def test_send_raw_classifies_deauth():
+async def test_send_no_wait_classifies_deauth():
     iface = WlanInterface(_FakeDriver(), "wlan0", "Fake")
-    await iface.send_raw(_deauth_frame())
+    await iface.send_no_wait(_deauth_frame())
     snap = iface.packet_stats.snapshot(BSSID)
     assert snap["deauth"] == 1
     assert snap["inject"] == 0
 
 
-async def test_send_raw_classifies_other_inject():
+async def test_send_no_wait_classifies_other_inject():
     iface = WlanInterface(_FakeDriver(), "wlan0", "Fake")
-    await iface.send_raw(_data_frame())
+    await iface.send_no_wait(_data_frame())
     snap = iface.packet_stats.snapshot(BSSID)
     assert snap["inject"] == 1
     assert snap["deauth"] == 0
 
 
-async def test_send_raw_tally_never_breaks_tx_on_garbage():
+async def test_send_no_wait_tally_never_breaks_tx_on_garbage():
     iface = WlanInterface(_FakeDriver(), "wlan0", "Fake")
     # A too-short / unparseable frame must still inject (tally is best-effort).
-    ok = await iface.send_raw(b"\x00\x01")
+    ok = await iface.send_no_wait(b"\x00\x01")
     assert ok is True
     assert iface.driver.injected == [b"\x00\x01"]

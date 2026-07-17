@@ -81,14 +81,14 @@ class WpsPbcCapture(Campaign):
                             assoc_trailer_ies=wps_assoc_ie(WPS_REQ_ENROLLEE),
                             should_stop=lambda: self.stopped)
         assoc.start()
-        armed = await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
-        await self.iface.driver.enable_ack_detect()
+        await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
+        await self.iface.enable_rx_acks()
         warning = self.iface.active_monitor_warning()
         if isinstance(warning, str):
             self.log(warning)
             self.log("[dim]Continuing anyway (expect failures/timeouts)[/dim]")
         transport = WlanTransport(self.iface, str_to_mac(self.bssid), self.our_mac,
-                                  tx_observer=self.tx_observer, ack=armed is not None)
+                                  tx_observer=self.tx_observer)
         transport.start()
         outcome = None
         try:
@@ -116,7 +116,7 @@ class WpsPbcCapture(Campaign):
                         build_client_leaving(str_to_mac(self.bssid), self.our_mac))
                 except Exception:
                     logger.debug("PBC leaving-deauth failed", exc_info=True)
-            await self.iface.driver.disable_ack_detect()
+            await self.iface.disable_rx_acks()
             await self.iface.clear_fake_mac()
             transport.stop()
             assoc.stop()
