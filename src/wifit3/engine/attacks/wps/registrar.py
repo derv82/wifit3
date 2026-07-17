@@ -209,11 +209,8 @@ class WpsRegistrar:
         await self._send_1x(M.eapol_start())
         self.log(f"[WPS] -> EAPOL-Start (pin {pin})")
 
-        # The AP retransmits each message because our injected STA never sends an
-        # 802.11 ACK (it's not a firmware-level client, so hardware auto-ACK never
-        # fires). We reply to every retransmit of the CURRENT stage — our only
-        # delivery insurance, since we TX no-ACK — but the stale-message guard
-        # below drops retransmits of stages we've already passed.
+        # We answer every retransmit of the CURRENT stage as delivery insurance; the
+        # stale-message guard below drops retransmits of stages we have already passed.
         overall_deadline = time.monotonic() + self.overall_timeout
         timeout = self.eapol_start_timeout
         while time.monotonic() < overall_deadline:
