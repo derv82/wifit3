@@ -331,6 +331,14 @@ def set_deep_sleep(enable):
 DEV_INFO_ACTIVE = 0
 UNI_BSS_INFO_BASIC = 0
 CONNECTION_INFRA_AP = (1 << 1) | (1 << 16)   # STA_TYPE_AP | NETWORK_INFRA = 0x10002
+# conn_type=0: a BSS that carries its peer bssid but is NOT an active infra-STA connection.
+# The monitor auto-ACK (enter_active_monitor) sources its ACK MAC from the DEV omac ONLY while the
+# BSS is not INFRA_AP+active; that combination switches the firmware to a peer-STA/WCID association
+# context we never populate (no add_sta), so the card auto-ACKs nothing. Yet a real AP's frames are
+# only auto-ACKed when the peer bssid IS programmed (bssid=0 -> the FW won't ACK them). So active
+# monitor needs bssid + conn_type=0. Bench-confirmed on the AXML (scripts/ack_lab bisect + real-AP
+# assoc A/B vs AirLink, 2026-07-17): INFRA_AP+bssid -> 0 ACKs; conn_type=0+bssid -> auto-ACKs.
+CONNECTION_MONITOR = 0
 
 
 def uni_dev_info(active=True, omac_addr=b"\x00" * 6):
@@ -343,16 +351,18 @@ def uni_dev_info(active=True, omac_addr=b"\x00" * 6):
     return MCU_UNI_CMD(UNI_CMD_DEV_INFO_UPDATE), hdr + tlv
 
 
-def uni_bss_info(active=True, bssid=b"\x00" * 6):
+def uni_bss_info(active=True, bssid=b"\x00" * 6, conn_type=CONNECTION_INFRA_AP):
     """mt76_connac_mcu_uni_add_dev — BSS_INFO half, MCU_UNI_CMD(BSS_INFO_UPDATE).
     hdr{bss_idx, pad[3]} + mt76_connac_bss_basic_tlv (32 B). ``bssid`` is the peer
-    AP; zero (the bring-up default) for plain monitor."""
+    AP; zero (the bring-up default) for plain monitor. ``conn_type`` defaults to the
+    bring-up INFRA_AP (keeps the cold-boot capture byte-identical); active monitor
+    passes CONNECTION_MONITOR (0) so the omac auto-ACK survives (see its constant)."""
     hdr = struct.pack("<B3x", 0)
     basic = struct.pack(
         "<HHBBBBIBB6sHHBBHHBB",
         UNI_BSS_INFO_BASIC, 32,         # tag, len
         1 if active else 0, 0, 0, 0,    # active, omac_idx, hw_bss_idx, band_idx
-        CONNECTION_INFRA_AP,            # conn_type
+        conn_type,                      # conn_type
         1, 0,                           # conn_state, wmm_idx
         bssid,                          # bssid
         0, 0,                           # bmc_tx_wlan_idx, bcn_interval

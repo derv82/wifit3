@@ -252,11 +252,15 @@ class MT7921AUDriver(Driver):
         """Arm HW auto-ACK for ``mac`` by programming it as the device omac (connac2
         ACKs on RA==omac); return the MAC armed. The monitor BSS is already active from
         bring-up, so this is DEV_INFO with a non-zero omac, plus the peer ``bssid`` into
-        the BSS when given. Reversed by exit_active_monitor."""
+        the BSS when given. The BSS goes in as CONNECTION_MONITOR (conn_type=0), NOT the
+        bring-up INFRA_AP: the AP's frames are auto-ACKed only when the peer bssid is
+        programmed, but INFRA_AP+bssid switches the firmware to a peer-STA context (no
+        add_sta) that kills the omac auto-ACK entirely (mcu.CONNECTION_MONITOR).
+        Reversed by exit_active_monitor."""
         cmd, payload = mcu.uni_dev_info(True, bytes(mac))
         await self.transport.send_mcu_command(cmd, payload, wait_resp=False)
         if bssid is not None:
-            cmd, payload = mcu.uni_bss_info(True, bytes(bssid))
+            cmd, payload = mcu.uni_bss_info(True, bytes(bssid), conn_type=mcu.CONNECTION_MONITOR)
             await self.transport.send_mcu_command(cmd, payload, wait_resp=False)
         return bytes(mac)
 
