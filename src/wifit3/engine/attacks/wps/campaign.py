@@ -255,8 +255,12 @@ class WpsCampaign(Campaign):
     async def _ensure_session(self) -> bool:
         if self.assoc is None:
             # Arm fake_mac so the chip HW-ACKs the AP so it stops retransmitting. A no-op return
-            # on a card that can't spoof-ACK (the AP then retransmits and we reply to each).
-            await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
+            # on a card that can't spoof-ACK (the AP then retransmits and we reply to each). A
+            # FIXED_MAC card returns its silicon MAC (it ACKs only that), so adopt whatever was
+            # armed and associate/inject as it — else the chip never honors the ACKs and storms.
+            armed = await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
+            if armed:
+                self.our_mac = str_to_mac(armed)
             self.assoc = Association(self.iface, self.bssid, self.target.ssid or "",
                                      self.channel, our_mac=self.our_mac,
                                      assoc_trailer_ies=wps_assoc_ie(WPS_REQ_REGISTRAR),

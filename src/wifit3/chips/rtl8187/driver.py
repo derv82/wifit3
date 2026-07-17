@@ -279,6 +279,22 @@ class RTL8187Driver(Driver):
         """No-op, matching ``_enable_rx_acks``: the monitor RX filter is left untouched."""
         return
 
+    # ---- Active monitor (FIXED_MAC: HW-ACKs only the card's own silicon MAC) ----
+    async def enter_active_monitor(self, mac: bytes,
+                                   bssid: Optional[bytes] = None) -> bytes:
+        """FIXED_MAC: the RTL8187 auto-ACK responder answers only frames addressed to the card's
+        own silicon MAC; there is no register to aim it at a forged one. So this is a no-op that
+        reports the silicon MAC, and the caller associates/injects as it, so the chip's HW ACKs are
+        honored (no retransmit storm). ``mac``/``bssid`` are ignored. Falls back to the requested
+        MAC if the silicon MAC has not been read yet (connect() populates it)."""
+        if not self.mac_address:
+            return bytes(mac)
+        return bytes(int(x, 16) for x in self.mac_address.split(":"))
+
+    async def exit_active_monitor(self) -> None:
+        """No-op: enter_active_monitor programmed nothing (the silicon-MAC auto-ACK is always on)."""
+        return
+
     # ---- channel tune (M4) -----------------------------------------------
     async def set_channel(self, channel: int, scan: bool = False) -> bool:
         if self._rf_setup is None or self._power is None:

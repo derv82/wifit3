@@ -282,6 +282,10 @@ class PmkidHarvestAttack(Campaign):
                 return
             armed = await self.iface.set_fake_mac(self.source_mac, self.bssid_bytes)
             self._armed = self._armed or (armed is not None)
+            # A FIXED_MAC card returns its silicon MAC (it ACKs only that); associate/inject as
+            # whatever was armed so the chip honors the ACKs. No-op for SPOOFABLE (armed == source).
+            if armed:
+                self.source_mac = _str_to_mac(armed)
             logger.info(
                 f"[PMKID] Attempt {attempt}/{self.attempts}: Auth + Assoc Req to "
                 f"{self.target.bssid} as {_mac_bytes_to_str(self.source_mac)}"

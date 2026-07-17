@@ -76,13 +76,18 @@ class WpsPbcCapture(Campaign):
         carries the SSID + PSK); ``ABORTED`` if a cooperative stop landed."""
         if self.stopped:
             return AttemptOutcome(PinResult.ABORTED, "<PBC>", detail="stopped before start")
+        # Arm active monitor BEFORE building the session: a FIXED_MAC card returns its silicon MAC
+        # (it ACKs only that), so we must associate/inject as whatever was armed, else the chip
+        # never honors the ACKs. A no-op (None) on cards that can't spoof-ACK.
+        armed = await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
+        if armed:
+            self.our_mac = str_to_mac(armed)
+        await self.iface.enable_rx_acks()
         assoc = Association(self.iface, self.bssid, self.target.ssid or "",
                             self.channel, our_mac=self.our_mac,
                             assoc_trailer_ies=wps_assoc_ie(WPS_REQ_ENROLLEE),
                             should_stop=lambda: self.stopped)
         assoc.start()
-        await self.iface.set_fake_mac(self.our_mac, str_to_mac(self.bssid))
-        await self.iface.enable_rx_acks()
         warning = self.iface.active_monitor_warning()
         if isinstance(warning, str):
             self.log(warning)
