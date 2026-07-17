@@ -25,6 +25,14 @@ import importlib.util
 import sys
 from pathlib import Path
 
+# Windows consoles default to cp1252; recipes print arrows / em-dashes in their status lines
+# (e.g. rt2800usb / rt5572). Force UTF-8 so a non-ASCII char can never crash a run mid-walk.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 REPO = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO / "scripts"
 
