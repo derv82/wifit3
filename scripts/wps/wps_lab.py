@@ -353,8 +353,8 @@ async def main_async(args) -> int:
         print("REFUSING: target is not the configured test router "
               "(data_dumps/wps_pin.txt). Use --force only if you own it.")
         return 2
-    tgt = {"bssid": bssid, "ssid": d.get("ssid", ""),
-           "channel": int(d.get("channel", "1")), "pin": args.pin or d.get("pin")}
+    tgt = {"bssid": bssid, "ssid": args.ssid or d.get("ssid", ""),
+           "channel": args.channel or int(d.get("channel", "1")), "pin": args.pin or d.get("pin")}
     _mgr, iface = await discover_iface(args.debug, args.card)
     await find_ap(iface, tgt["channel"], bssid, tgt["ssid"], args.scan_secs)
     tap = sniffer = None
@@ -416,6 +416,8 @@ def main() -> int:
                    help="substring of a 2nd card to sniff the over-the-air frame timeline (e.g. 8812)")
     p.add_argument("--pin", default=None)
     p.add_argument("--bssid", default=None)
+    p.add_argument("--channel", type=int, default=0, help="override target channel (default: from config)")
+    p.add_argument("--ssid", default="", help="override target ssid (default: from config)")
     p.add_argument("--scan-secs", type=float, default=6.0)
     p.add_argument("--force", action="store_true")
     p.add_argument("--debug", action="store_true")
