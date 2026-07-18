@@ -90,8 +90,8 @@ classDiagram
 
     WlanTransport --> WlanInterface : holds .iface, calls send_*/recv/register_rx
     Association   --> WlanInterface : holds .iface, calls send_no_wait/set_channel/register_rx
-    WpsCampaign   --> WlanInterface : direct: set_fake_mac/enable_rx_acks/clear_fake_mac/acks_seen
-    WpsPbcCapture --> WlanInterface : direct: set_fake_mac/enable_rx_acks/send_no_wait
+    WpsCampaign   --> WlanInterface : direct set_fake_mac/enable_rx_acks/clear_fake_mac/acks_seen
+    WpsPbcCapture --> WlanInterface : direct set_fake_mac/enable_rx_acks/send_no_wait
     WlanInterface --> Driver : holds .driver, delegates inject/ack/monitor
 ```
 
@@ -130,7 +130,7 @@ graph TD
 
     A1 -->|reg.try_pin| R1
     R1 -->|per M-msg| R2
-    R1 -->|in-session resend registrar.py:230| T2
+    R1 -->|in-session resend| T2
     R2 -->|tx_ack| T1
     R2 -->|else| T2
     A1 -->|_ensure_session| A2
@@ -140,7 +140,7 @@ graph TD
     AS2 -->|"iface.send_no_wait auth_assoc.py:222 (BYPASS Transport)"| I2
     P1 -->|enrollee.run| E1
     E1 -->|per M-msg| E2
-    E1 -->|resend enrollee.py:121| T2
+    E1 -->|resend| T2
     E2 -->|tx_ack| T1
     E2 -->|else| T2
     P1 -->|"leaving-deauth iface.send_no_wait pbc.py:120 (BYPASS Assoc+Transport)"| I2
@@ -148,7 +148,7 @@ graph TD
     T2 -->|iface.send_no_wait| I2
     I1 -->|driver.inject_frame_slow_retry| D1
     I2 -->|driver.inject_frame| D2
-    D1 -->|loop driver.py:140| D2
+    D1 -->|loop| D2
     D2 --> D3
 ```
 
