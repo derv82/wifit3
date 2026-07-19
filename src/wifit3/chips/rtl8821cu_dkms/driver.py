@@ -304,15 +304,14 @@ class Rtl8821cuDkmsDriver(Driver):
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
         """Build the management TX descriptor for ``frame_bytes`` (HW ACK-retry limit
-        ``self.DEFAULT_HW_ACK_RETRIES``) and bulk-OUT [desc][frame] once. BMC is derived from the
+        RETRY_COUNT=6) and bulk-OUT [desc][frame] once. BMC is derived from the
         frame's addr1; the descriptor builder is byte-verified against the aireplay-ng capture by
         the gate's inject branch.
 
         Serialized under ``_io_lock`` so TX never overlaps a ``set_channel`` tune: otherwise a
         frame can go out on a half-switched / stranded synth and the AP never hears it (the
         transient 5 GHz-TX failures). The no-loop gate path bulk-outs synchronously."""
-        pkt = tx.build_mgnt_txdesc(frame_bytes, qsel=_QSEL_MGNT, raid=_RAID_INJECT,
-                                   retry_limit=self.DEFAULT_HW_ACK_RETRIES)
+        pkt = tx.build_mgnt_txdesc(frame_bytes, qsel=_QSEL_MGNT, raid=_RAID_INJECT)
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:

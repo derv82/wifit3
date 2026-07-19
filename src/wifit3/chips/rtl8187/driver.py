@@ -318,14 +318,13 @@ class RTL8187Driver(Driver):
     # ---- TX inject (M5) --------------------------------------------------
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
         """Build tx_hdr + bulk-OUT ``frame_bytes`` once, over EP 0x02, with the chip's HW ACK-retry
-        limit set to ``self.DEFAULT_HW_ACK_RETRIES``. The 802.11 sequence number is already stamped
+        limit set to ``RETRY_COUNT`` (7). The 802.11 sequence number is already stamped
         by ``_stamp_tx_seq``."""
         loop = asyncio.get_event_loop()
         try:
             await loop.run_in_executor(
                 None,
-                lambda: _tx_inject(self.dev, frame_bytes,
-                                   retry_count=self.DEFAULT_HW_ACK_RETRIES),
+                lambda: _tx_inject(self.dev, frame_bytes),
             )
         except usb.core.USBError as e:
             logger.error("RTL8187 inject_frame USBError: %s", e)

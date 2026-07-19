@@ -86,29 +86,24 @@ def config_erp(t: RT5372Transport, *, short_preamble: bool, cts_protection: bool
     t.register_write(C.BCN_TIME_CFG, reg)
 
 
-def initial_config(t: RT5372Transport, chip: ChipInfo, ev: EepromValues,
-                   short_retry: int = DEFAULT_SHORT_RETRY) -> None:
+def initial_config(t: RT5372Transport, chip: ChipInfo, ev: EepromValues) -> None:
     """The first ``rt2x00mac_config`` after the radio is up — flags POWER|RETRY|PS, no
     channel change [SRC rt2x00mac.c:307-352]. Same stop/antenna/start frame as
-    ``chan.set_channel`` but the body runs txpower + retry + ps instead of a tune.
-    ``short_retry`` sets TX_RTY_CFG SHORT_RTY_LIMIT (the driver routes its
-    DEFAULT_HW_ACK_RETRIES here); the mac80211/capture default is 7."""
+    ``chan.set_channel`` but the body runs txpower + retry + ps instead of a tune."""
     mac.stop_queue_rx(t)
     lna_gain = chan.config_lna_gain(ev, 0)        # rf.channel=0 ⇒ 2.4 GHz BG arm
     chan.config_txpower(t, chip, ev)              # CONF_CHANGE_POWER
-    config_retry_limit(t, short_retry=short_retry)  # CONF_CHANGE_RETRY_LIMITS
+    config_retry_limit(t)                         # CONF_CHANGE_RETRY_LIMITS
     config_ps(t)                                  # CONF_CHANGE_PS
     chan.config_ant(t, chip, ev)                  # rt2x00lib_config_antenna
     reset_tuner(t, chip, lna_gain)               # config_antenna's reset_tuner
     mac.start_queue_rx(t)                         # config_antenna's refcounted start_queue
 
 
-def enable_monitor(t: RT5372Transport, chip: ChipInfo, ev: EepromValues, drv=None,
-                   short_retry: int = DEFAULT_SHORT_RETRY) -> None:
+def enable_monitor(t: RT5372Transport, chip: ChipInfo, ev: EepromValues, drv=None) -> None:
     """Bring up monitor mode: interface-up filter (0x97) → initial config → monitor
     filter (0x93). Mirrors the ``airmon-ng start`` callback order. ``drv`` is unused
-    (RT5392 has no init-derived calibration). ``short_retry`` routes to TX_RTY_CFG
-    SHORT_RTY_LIMIT (default 7)."""
+    (RT5392 has no init-derived calibration)."""
     mac.config_filter(t, MONITOR_FILTER, monitoring=False)   # 0x97
-    initial_config(t, chip, ev, short_retry=short_retry)
+    initial_config(t, chip, ev)
     mac.config_filter(t, MONITOR_FILTER, monitoring=True)    # 0x93

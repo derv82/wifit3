@@ -372,8 +372,7 @@ class MT76x0UDriver(Driver):
         # 4 direct register tweaks (release MAC reset, EXT_CCA_CFG, FCE_L2_STUFF,
         # WMM_CTRL).
         try:
-            init_mac_registers(self.transport, self.mcu,
-                               short_retry_limit=self.DEFAULT_HW_ACK_RETRIES)
+            init_mac_registers(self.transport, self.mcu)
         except (MCUError, MACInitError, usb.core.USBError) as e:
             logger.error("MT7610U: init_mac_registers failed: %s", e)
             return False

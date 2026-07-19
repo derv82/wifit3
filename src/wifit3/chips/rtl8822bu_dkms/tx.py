@@ -36,8 +36,8 @@ def build_inject_txdesc(frame: bytes, *, qsel: int = TXDESC_QSEL_MGNT, macid: in
     Rides bulk-OUT EP 0x05 (MGNT qsel -> HIGH pipe -> RtOutPipe[0]). Only the frame's own seqctl varies
     per send (HW-assigned), so the 48-byte descriptor is byte-identical to the captured aireplay TX.
 
-    `retry_limit` fills the 6-bit RTS_DATA_RTY_LMT (the HW ACK-retry cap); the default is 12 (the
-    value the captured aireplay injector carries), and the inject path passes `DEFAULT_HW_ACK_RETRIES`."""
+    `retry_limit` fills the 6-bit RTS_DATA_RTY_LMT (the HW ACK-retry cap); the default is 12, the
+    value the captured aireplay injector carries."""
     d = bytearray(TX_DESC_SIZE_88XX)
     _set_le32_bits(d, 0x00, 0, 16, len(frame))          # TXPKTSIZE  word0[0:16]
     _set_le32_bits(d, 0x00, 16, 8, TX_DESC_SIZE_88XX)   # OFFSET     word0[16:24] (desc bytes)

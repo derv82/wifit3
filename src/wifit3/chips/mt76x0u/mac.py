@@ -43,7 +43,6 @@ from .constants import (
     MT_SKEY_MODE,
     MT_SKEY_MODE_MASK,
     MT_SKEY_MODE_SHIFT,
-    MT_TX_RETRY_CFG,
     MT_WCID_ADDR,
     MT_WCID_ATTR,
     MT_WCID_ATTR_BSS_IDX_EXT,
@@ -117,7 +116,6 @@ def wait_for_txrx_idle(
 
 def init_mac_registers(
     transport: MT76x0UTransport, mcu: MCUChannel,
-    short_retry_limit: int | None = None,
 ) -> None:
     """Port of `mt76x0_init_mac_registers` (mt76x0/init.c:110-134).
 
@@ -132,24 +130,10 @@ def init_mac_registers(
     The two table writes go through the MCU command channel — the wire
     address is `MT_MCU_MEMMAP_WLAN + reg`. The 4 explicit writes go via
     direct vendor xfers (transport.write32 / set_bits / clear_bits).
-
-    ``short_retry_limit`` (when given) overrides TX_RTY_CFG SHORT_RTY_LIMIT (bits 0-7).
-    mt76x02 sets the HW ACK-based retry count in this global register at init, not
-    per-frame; the per-frame TXWI only carries the ACK-request bit. Our injects are short
-    un-RTS frames, so the driver routes DEFAULT_HW_ACK_RETRIES here, leaving the LONG / 11B /
-    mode bytes untouched. Left None (the default) keeps the capture's recorded 0x0f, so the
-    verify_pcap cold cursor stays byte-exact.
     """
-    common = COMMON_MAC_REG_TABLE
-    if short_retry_limit is not None:
-        common = [
-            (reg, (val & ~0xFF) | (short_retry_limit & 0xFF)) if reg == MT_TX_RETRY_CFG
-            else (reg, val)
-            for reg, val in COMMON_MAC_REG_TABLE
-        ]
     logger.info("init_mac_registers: uploading common_mac_reg_table (%d pairs)",
-                len(common))
-    mcu.random_write(MT_MCU_MEMMAP_WLAN, common)
+                len(COMMON_MAC_REG_TABLE))
+    mcu.random_write(MT_MCU_MEMMAP_WLAN, COMMON_MAC_REG_TABLE)
 
     logger.info("init_mac_registers: uploading mt76x0_mac_reg_table (%d pairs)",
                 len(MT76X0_MAC_REG_TABLE))

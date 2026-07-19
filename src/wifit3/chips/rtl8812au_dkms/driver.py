@@ -288,7 +288,7 @@ class Rtl8812auDkmsDriver(Driver):
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
         """Build the vendor fake TX descriptor (``rtl8812a_fill_fake_txdesc``, the shared base
-        builder — it IS the 8812a function; HW ACK-retry limit ``self.DEFAULT_HW_ACK_RETRIES``)
+        builder, the 8812a function; no retry-limit field, HW global retry)
         and send ``[desc | frame]`` once on bulk-OUT 0x02 (the 8812's MGMT queue).
         ``frame_bytes`` is the MPDU *without* FCS (the HW appends it). A WEP ARP-replay frame
         is already encrypted and injected raw (the descriptor's SEC_TYPE = 0). Serialized with
@@ -301,8 +301,7 @@ class Rtl8812auDkmsDriver(Driver):
             return False
         loop = asyncio.get_running_loop()
         bmc = bool(frame_bytes[4] & 0x01)   # addr1 group-address (multicast/broadcast) bit
-        payload = build_mgmt_txdesc(len(frame_bytes), bmc=bmc,
-                                    retry_limit=self.DEFAULT_HW_ACK_RETRIES) + frame_bytes
+        payload = build_mgmt_txdesc(len(frame_bytes), bmc=bmc) + frame_bytes
         async with self._io_lock:           # don't TX mid-retune (set_channel / DIG)
             await loop.run_in_executor(None, self.transport.bulk_out, payload)
         return True

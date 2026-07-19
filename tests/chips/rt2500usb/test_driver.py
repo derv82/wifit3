@@ -507,8 +507,8 @@ class FakeUsbDev:
 
 async def test_driver_inject_frame_path():
     """The base inject_frame → _stamp_tx_seq (HW-assigned seq, unchanged) → _inject_frame
-    builds the TXD and bulk-outs it once. The descriptor carries the HW ACK-retry limit
-    (DEFAULT_HW_ACK_RETRIES) in TXD_W0_RETRY_LIMIT, not the capture's aireplay value."""
+    builds the TXD and bulk-outs it once. The descriptor carries the rt2x00 HW ACK-retry
+    limit (_RETRY_LIMIT=15) in TXD_W0_RETRY_LIMIT."""
     drv = RT2500USBDriver(dev=FakeUsbDev())
     drv._bulk_out_ep = 0x01
     frame = _synthetic_beacon()
@@ -518,4 +518,4 @@ async def test_driver_inject_frame_path():
 
     ep, buf = drv.dev.last_write
     assert ep == 0x01
-    assert buf[:20] == build_tx_desc(len(frame), retry_limit=drv.DEFAULT_HW_ACK_RETRIES)
+    assert buf[:20] == build_tx_desc(len(frame), retry_limit=15)

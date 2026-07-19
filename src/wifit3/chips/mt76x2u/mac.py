@@ -250,8 +250,7 @@ _MAC_INITVALS = (
 )
 
 
-async def mac_reset(transport: MT76x2UTransport, is_mt7612: bool = True,
-                    short_retry_limit: int | None = None) -> bool:
+async def mac_reset(transport: MT76x2UTransport, is_mt7612: bool = True) -> bool:
     """Full MAC reset + initvals load.
 
     [SRC] mt76x2/usb_mac.c:62 (mt76x2u_mac_reset).
@@ -260,21 +259,12 @@ async def mac_reset(transport: MT76x2UTransport, is_mt7612: bool = True,
     for the WiFi-only 0x7612 strap). Defaults to the reference 0x7612 so its
     recorded path is unchanged; a WiFi+BT combo (chip != 0x7612) keeps coex
     enabled. [SRC] mt76x2/usb_mac.c:84.
-
-    ``short_retry_limit`` (when given) overrides TX_RTY_CFG SHORT_RTY_LIMIT (bits 0-7).
-    mt76x02 sets the HW ACK-based retry count in this global register at init, not per-frame;
-    the per-frame TXWI only carries the ACK-request bit. Our injects are short un-RTS frames,
-    so the driver routes DEFAULT_HW_ACK_RETRIES here, leaving the LONG / 11B / mode bytes
-    untouched. Left None (the default) keeps the capture's recorded 0x0f, so the verify_pcap
-    cold cursor stays byte-exact.
     """
     transport.write32(MT_WPDMA_GLO_CFG, (1 << 4) | (1 << 5))
     transport.write32(MT_PBF_TX_MAX_PCNT, 0xefef3f1f)
     transport.write32(MT_PBF_RX_MAX_PCNT, 0x0000febf)
 
     for addr, val in _MAC_INITVALS:
-        if addr == MT_TX_RETRY_CFG and short_retry_limit is not None:
-            val = (val & ~0xFF) | (short_retry_limit & 0xFF)
         transport.write32(addr, val)
 
     # Post-table overrides (these override entries in the initvals).

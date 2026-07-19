@@ -82,5 +82,5 @@ async def test_inject_builds_descriptor_with_hw_retry_limit():
     assert await d.inject_frame(frame) is True   # base entry -> _stamp_tx_seq -> _inject_frame
     sent = d.transport.bulk_out.call_args.args[0]
     rty = (int.from_bytes(sent[0x10:0x14], "little") >> 18) & 0x3F   # RTS_DATA_RTY_LMT
-    assert rty == d.DEFAULT_HW_ACK_RETRIES
+    assert rty == 12
     assert sent[48:] == frame        # HW-stamp: 48-B descriptor then the frame unchanged

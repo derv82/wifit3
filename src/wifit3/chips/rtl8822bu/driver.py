@@ -339,14 +339,13 @@ class RTL8822BUDriver(Driver):
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
         """Transmit one 802.11 management frame once (e.g. a deauth). Builds the MGMT tx_pkt_desc
-        (HW ACK-retry limit ``self.DEFAULT_HW_ACK_RETRIES``) and bulk-OUTs ``[desc | frame]``."""
+        (no retry-limit field, HW global retry) and bulk-OUTs ``[desc | frame]``."""
         if not self._bulk_out_eps:
             logger.error("inject_frame: no bulk-OUT endpoints")
             return False
         try:
             desc = build_tx_desc_mgmt(
                 frame_bytes, band_is_2g=self.current_band_is_2g,
-                retry_limit=self.DEFAULT_HW_ACK_RETRIES,
             )
         except ValueError as e:
             logger.error("inject_frame: bad MPDU: %s", e)

@@ -114,8 +114,8 @@ def inject(dev: usb.core.Device, ep_out: int, frame: bytes,
     """Send one raw 802.11 frame (no FCS) out the bulk-OUT endpoint.
     Returns the number of bytes written.
 
-    ``retry_limit`` fills TXD_W0_RETRY_LIMIT; the driver passes its
-    ``DEFAULT_HW_ACK_RETRIES``. ``ack`` is positional-or-keyword so it can ride
+    ``retry_limit`` fills TXD_W0_RETRY_LIMIT (default ``_RETRY_LIMIT``=15). ``ack`` is
+    positional-or-keyword so it can ride
     ``loop.run_in_executor`` (which only passes positional args) unchanged."""
     urb = build_tx_urb(frame, ack=ack, retry_limit=retry_limit, usb_maxpacket=usb_maxpacket)
     return dev.write(ep_out, urb, _TX_TIMEOUT_MS)

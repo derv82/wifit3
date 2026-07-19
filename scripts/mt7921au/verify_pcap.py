@@ -48,7 +48,6 @@ from wifit3.chips.mt7921au import tx as mt_tx
 from wifit3.chips.mt7921au.constants import (
     MT_MIB_SDR9, MT_MIB_SDR3, MT_SDIO_TXD_SIZE, MT_TXD3_REM_TX_COUNT, MT_TXD3_NO_ACK,
 )
-from wifit3.chips.driver import Driver
 from wifit3.chips.mt7921au.firmware import MT7921AUFirmwareLoader
 from wifit3.chips.mt7921au.transport import MT7921AUTransport
 
@@ -623,11 +622,11 @@ def _sniffer_channel(f):
     return f[64]                                       # control_ch
 
 
-# The ACK redesign injects with HW ACK-retry = Driver.DEFAULT_HW_ACK_RETRIES and NO_ACK clear,
-# so the chip retransmits until the recipient ACKs (keyed on Addr2). The captured aireplay
-# reference used mac80211's injected-frame default (REM_TX_COUNT=15, NO_ACK set). Those two TXD3
-# fields are the ONE intended divergence; every other descriptor byte must still match the wire
-# exactly. TXD3 is at byte 16 (4-byte SDIO/USB header + connac2 TXD word 3, see tx.build_tx).
+# Runtime injects with NO_ACK clear (request an ACK, retry until Addr2 ACKs); the captured
+# aireplay reference set NO_ACK. REM_TX_COUNT now matches (both 15), so NO_ACK is the one intended
+# divergence. The ACK-cfg field (NO_ACK + REM_TX_COUNT) is masked below so the byte compare ignores
+# it; every other descriptor byte must still match the wire exactly. TXD3 is at byte 16 (4-byte
+# SDIO/USB header + connac2 TXD word 3, see tx.build_tx).
 _TXD3_OFF = 4 + 3 * 4                                   # SDIO/USB header + txwi word 3
 _TXD3_ACKCFG_MASK = MT_TXD3_REM_TX_COUNT | MT_TXD3_NO_ACK
 
@@ -702,9 +701,9 @@ def check_tx(pkts, dev):
           f"{dict(by_kind)}")
     print(f"  band split (from config_sniffer on the wire): {dict(by_band)}")
     if ackcfg_excepted:
-        print(f"  ack-cfg-excepted {ackcfg_excepted} TX frame(s); TXD3 differs by design: inject "
-              f"sets REM_TX_COUNT={Driver.DEFAULT_HW_ACK_RETRIES} + NO_ACK clear (retry until "
-              f"Addr2 ACKs); aireplay ref used REM_TX_COUNT=15 + NO_ACK set. Every other byte matched.")
+        print(f"  ack-cfg-excepted {ackcfg_excepted} TX frame(s); NO_ACK differs by design: inject "
+              f"clears NO_ACK (retry until Addr2 ACKs); the aireplay ref set NO_ACK. "
+              f"REM_TX_COUNT matches (15); every other byte matched.")
     if ok:
         tail = ("descriptor + endpoint; TXD3 ACK-cfg excepted above" if ackcfg_excepted
                 else "descriptor + endpoint, both bands")

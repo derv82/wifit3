@@ -18,7 +18,6 @@ import struct
 
 # ruff: noqa: F403, F405
 from .constants import *
-from wifit3.chips.driver import Driver
 
 # 802.11 frame-control bits we read off the injected frame.
 _FCTL_FTYPE     = 0x000C   # type field (bits 2-3)
@@ -83,7 +82,7 @@ def stamp_seq_ctrl(frame: bytearray, seqno: int) -> int:
 
 def build_tx(frame: bytes, band_5ghz: bool = False,
              wcid_idx: int = MT792x_WTBL_RESERVED,
-             retry_count: int = Driver.DEFAULT_HW_ACK_RETRIES,
+             retry_count: int = 15,   # mac80211 injected-frame REM_TX_COUNT [captures_mt7921u]
              pid: int = 0) -> tuple[bytes, int]:
     """Build the USB bulk-OUT bytes for raw 802.11 ``frame`` and pick its endpoint.
 
@@ -95,8 +94,8 @@ def build_tx(frame: bytes, band_5ghz: bool = False,
 
     ``retry_count`` fills MT_TXD3_REM_TX_COUNT (the HW ACK-based retry limit). The frame
     always requests an ACK (NO_ACK is never set), so the chip retransmits it up to
-    ``retry_count`` times until the recipient ACKs. The driver passes its
-    ``DEFAULT_HW_ACK_RETRIES``; that HW retry is inject_frame's only retransmission.
+    ``retry_count`` times until the recipient ACKs. That HW retry is inject_frame's only
+    retransmission.
     """
     if len(frame) < 24:
         raise ValueError(f"802.11 frame too short to inject: {len(frame)} bytes")

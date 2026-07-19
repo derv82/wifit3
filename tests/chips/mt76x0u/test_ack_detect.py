@@ -105,16 +105,6 @@ async def test_inject_requests_ack_and_sends_once():
     assert txwi[4] & MT_TXWI_ACK_CTL_REQ                 # ACK requested (HW retry armed)
 
 
-def test_init_mac_registers_routes_retry_limit():
-    transport = MagicMock()
-    transport.read32 = MagicMock(return_value=0)
-    mcu = MagicMock()
-    init_mac_registers(transport, mcu, short_retry_limit=7)
-    table = dict(mcu.random_write.call_args_list[0].args[1])
-    assert table[MT_TX_RETRY_CFG] & 0xFF == 7                     # SHORT_RTY_LIMIT
-    assert table[MT_TX_RETRY_CFG] == (0x47D01F0F & ~0xFF) | 7     # LONG/11B/mode bytes untouched
-
-
 def test_init_mac_registers_default_keeps_captured_retry():
     transport = MagicMock()
     transport.read32 = MagicMock(return_value=0)

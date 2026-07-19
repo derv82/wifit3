@@ -142,7 +142,7 @@ class AR9271V2Driver(Driver):
         except RuntimeError:
             # Gate path: one transport throughout, no re-enumeration, no RX reader.
             firmware.download(self.transport, fw)
-            self._adopt(bringup.cold_bringup(self.transport, self.DEFAULT_HW_ACK_RETRIES))
+            self._adopt(bringup.cold_bringup(self.transport))
             return True
 
         # Warm card (firmware already running from a previous session)? Re-downloading firmware to a
@@ -163,8 +163,7 @@ class AR9271V2Driver(Driver):
                     loop, self._read_once, self._dispatch, name="ar9271v2-rx",
                     on_fatal=lambda e: self._on_lost and self._on_lost(e))
                 self._reader.start()
-                res = await loop.run_in_executor(None, bringup.warm_reattach, self.transport,
-                                                 self.DEFAULT_HW_ACK_RETRIES)
+                res = await loop.run_in_executor(None, bringup.warm_reattach, self.transport)
                 self._adopt(res)
                 _p(1.0, f"AR9271 re-attached warm (ch ?, {self.mac_address})")
                 return True
@@ -201,8 +200,7 @@ class AR9271V2Driver(Driver):
         self._reader = RxReaderThread(loop, self._read_once, self._dispatch, name="ar9271v2-rx",
                                       on_fatal=lambda e: self._on_lost and self._on_lost(e))
         self._reader.start()
-        res = await loop.run_in_executor(None, bringup.cold_bringup, self.transport,
-                                         self.DEFAULT_HW_ACK_RETRIES)
+        res = await loop.run_in_executor(None, bringup.cold_bringup, self.transport)
         self._adopt(res)
         _p(1.0, f"AR9271 monitor up (ch 1, {self.mac_address})")
         return True
@@ -346,8 +344,8 @@ class AR9271V2Driver(Driver):
     # ---- TX (the UI/attacks await inject_frame; live firing is the user's gate) -------
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
         """Build the HTC TX wrapper for ``frame_bytes`` and bulk-OUT it once on the WLAN_TX pipe.
-        The chip's own HW ACK-retry (AR_DRETRY_LIMIT STA short/long, programmed to
-        ``self.DEFAULT_HW_ACK_RETRIES`` at MAC-queue init, not per-frame) is the only
+        The chip's own HW ACK-retry (AR_DRETRY_LIMIT STA short/long, programmed to the kernel
+        INIT_SSH_RETRY/INIT_SLG_RETRY at MAC-queue init, not per-frame) is the only
         retransmission. The blocking bulk-OUT is offloaded so a TX burst doesn't stall the event
         loop; the pcap gate + unit tests drive ``_emit_frame`` directly (no running loop)."""
         loop = asyncio.get_running_loop()

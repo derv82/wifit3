@@ -72,6 +72,5 @@ async def test_inject_builds_descriptor_with_hw_retry_limit(monkeypatch):
     assert await d.inject_frame(frame) is True
     assert len(sent) == 1
     desc = sent[0][:40]
-    rty = (int.from_bytes(desc[0x10:0x14], "little") >> 18) & 0x3F   # DATA_RT_LMT
-    assert rty == d.DEFAULT_HW_ACK_RETRIES
+    assert (int.from_bytes(desc[0x10:0x14], "little") >> 17) & 1 == 0   # RTY_LMT_EN clear -> HW global retry
     assert sent[0][40:] == frame                # HW-stamp: frame appended unchanged

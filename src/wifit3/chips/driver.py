@@ -55,10 +55,6 @@ class Driver(ABC):
     """Whether Linux setup must request a physical replug before ``connect()`` (default
     True: a kernel-warmed chip usually can't reach a clean cold state in userland)."""
 
-    DEFAULT_HW_ACK_RETRIES: ClassVar[int] = 7
-    """Hardware ACK-based retry limit: the chip retransmits an un-ACKed unicast frame up to
-    this many times. Retries fire in ~10usec incremented transmissions if no ACKs are seen."""
-
     MAX_ACK_DELAY: ClassVar[float] = 0.02
     """Default wait window for ``inject_frame_slow_retry``. An 802.11 ACK returns within SIFS
     (~10 us); ACKs via RxReader arrive ~20 ms later (averaged ~15 ms on Windows)."""
@@ -117,7 +113,7 @@ class Driver(ABC):
 
     async def inject_frame(self, frame_bytes: bytes) -> bool:
         """Transmit one raw 802.11 frame, fire-and-forget. The chip's own HW ACK-based retry
-        (up to ``DEFAULT_HW_ACK_RETRIES``) is the only retransmission. When the ACK tally is
+        (the driver's per-chip retry limit) is the only retransmission. When the ACK tally is
         armed, the frame's Addr2 is registered so ``record_ack`` counts its ACKs. For a
         software retry that blocks on the recipient's ACK, use ``inject_frame_slow_retry``."""
         if self._ack_detect_on:
@@ -149,8 +145,7 @@ class Driver(ABC):
 
     @abstractmethod
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        """Build the chip's TX descriptor (HW ACK-retry limit = ``self.DEFAULT_HW_ACK_RETRIES``)
-        and send ``frame_bytes`` once over bulk-OUT."""
+        """Build the chip's TX descriptor and send ``frame_bytes`` once over bulk-OUT."""
         ...
 
     @abstractmethod

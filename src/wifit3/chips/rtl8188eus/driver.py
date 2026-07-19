@@ -159,7 +159,7 @@ class RTL8188EUSDriver(Driver):
             return False
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        """Build the MGMT TX descriptor (HW ACK-retry limit ``self.DEFAULT_HW_ACK_RETRIES``) and
+        """Build the MGMT TX descriptor (HW ACK-retry limit 6, the vendor MGMT value) and
         send ``[desc | frame]`` once on the bulk-OUT pipe (currently MGMT-only). BMC is derived
         from addr1's group bit. The retry-limit field in the TX descriptor controls HW
         retransmission."""
@@ -179,7 +179,7 @@ class RTL8188EUSDriver(Driver):
                 None,
                 lambda: send_mgmt_frame(
                     self.dev, self._mgmt_bulk_out, frame_bytes,
-                    is_broadcast=is_bcast, retry_limit=self.DEFAULT_HW_ACK_RETRIES,
+                    is_broadcast=is_bcast,
                 ),
             )
         except (IOError, usb.core.USBError):

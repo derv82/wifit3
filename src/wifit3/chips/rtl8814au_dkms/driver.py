@@ -355,21 +355,20 @@ class Rtl8814auDkmsDriver(Driver):
                 rate_id: int = RATEID_IDX_B) -> None:
         """One monitor-injected mgmt frame in wire order — the body ``_inject_frame``'s executor
         runs, shared with the pcap gate. Builds the update_txdesc mgmt descriptor (M4a; HW
-        ACK-retry limit ``self.DEFAULT_HW_ACK_RETRIES``) and sends ``[desc | frame]`` on the
+        ACK-retry limit 12, the vendor MGMT value) and sends ``[desc | frame]`` on the
         bulk-OUT pipe. ``frame_bytes`` is the MPDU without FCS (HW appends it); BMC is read from
         addr1's group bit, matching update_txdesc.
 
         ``hw_rate``/``rate_id`` default to the fixed CCK-1M management rate wifite's own deauths
         ride; a userspace injector (aireplay-ng) picks them per-frame via radiotap, so the pcap
         gate reads the recorded pair back and passes it here to byte-verify the descriptor. (The
-        gate's inject byte-check now diverges only at DATA_RETRY_LIMIT: the capture carries 12,
-        we emit ``DEFAULT_HW_ACK_RETRIES``.)"""
+        gate's inject byte-check matches the capture, including DATA_RETRY_LIMIT=12.)"""
         bmc = bool(frame_bytes[4] & 0x01)   # addr1 group-address (multicast) bit
         # GID is the target psta's txbf_g_id: a broadcast pseudo-STA keeps the SU-default 63,
         # a real unicast STA (no beamforming here) is 0 (matches the wire across probe/RTS/auth).
         gid = TXBF_GID_NONE if bmc else 0
         desc = build_mgmt_txdesc(len(frame_bytes), hw_rate=hw_rate, rate_id=rate_id,
-                                 bmc=bmc, gid=gid, retry_limit=self.DEFAULT_HW_ACK_RETRIES)
+                                 bmc=bmc, gid=gid)
         t.bulk_out(desc + frame_bytes)
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:

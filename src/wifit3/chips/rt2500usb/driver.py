@@ -348,11 +348,10 @@ class RT2500USBDriver(Driver):
         # Shares _hw_lock with _tune so an inject can never collide with an
         # in-flight (or cancelled-but-draining) channel tune on the device.
         with self._hw_lock:
-            return _tx_inject(self.dev, self._bulk_out_ep, frame_bytes,
-                              retry_limit=self.DEFAULT_HW_ACK_RETRIES)
+            return _tx_inject(self.dev, self._bulk_out_ep, frame_bytes)
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        """Build the 5x u32 TXD (HW retry limit = ``self.DEFAULT_HW_ACK_RETRIES`` in the 4-bit
+        """Build the 5x u32 TXD (HW retry limit 15, the rt2x00 aireplay value, in the 4-bit
         TXD_W0_RETRY_LIMIT field) and bulk-OUT [TXD][frame] once at 1 Mbps CCK. The RT2570
         retries up to that limit BLINDLY: the rt2x00 legacy MAC has no ACK-based early stop, so
         a retransmit fires whether or not the AP ACKed (FAKE_MAC.NONE). Serialized under

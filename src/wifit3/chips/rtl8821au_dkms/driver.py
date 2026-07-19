@@ -257,7 +257,7 @@ class Rtl8821auDkmsDriver(Driver):
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
         """Transmit one 802.11 frame (M6) — deauth, fake-auth, or WEP ARP replay.
 
-        Builds the fake TX descriptor (M6; HW ACK-retry limit ``self.DEFAULT_HW_ACK_RETRIES``)
+        Builds the fake TX descriptor (M6; no retry-limit field, HW global retry)
         and sends ``[desc | frame]`` once on the bulk-OUT pipe (ep 0x09, the MGMT queue).
         ``frame_bytes`` is the MPDU *without* FCS (the HW appends it). For WEP ARP replay the
         frame is already WEP-encrypted and is injected raw (the descriptor's SEC_TYPE = 0).
@@ -272,8 +272,7 @@ class Rtl8821auDkmsDriver(Driver):
             return False
         loop = asyncio.get_running_loop()
         bmc = bool(frame_bytes[4] & 0x01)   # addr1 group-address (multicast) bit
-        payload = build_mgmt_txdesc(len(frame_bytes), bmc=bmc,
-                                    retry_limit=self.DEFAULT_HW_ACK_RETRIES) + frame_bytes
+        payload = build_mgmt_txdesc(len(frame_bytes), bmc=bmc) + frame_bytes
         async with self._io_lock:           # don't TX mid-retune (set_channel/DIG)
             await loop.run_in_executor(None, self.transport.bulk_out, payload)
         return True

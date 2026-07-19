@@ -104,19 +104,6 @@ async def test_inject_requests_ack_and_sends_once():
     assert txwi[4] & _TXWI_ACK_CTL_REQ                   # ACK requested (HW retry armed)
 
 
-async def test_mac_reset_routes_retry_limit(monkeypatch):
-    from wifit3.chips.mt76x2u import mac as mac_mod
-    monkeypatch.setattr(mac_mod, "_mac_fixup_xtal", lambda t: None)
-    transport = MagicMock()
-    transport.read32 = MagicMock(return_value=0)
-    writes: list[tuple[int, int]] = []
-    transport.write32 = lambda reg, val: writes.append((reg, val))
-    assert await mac_mod.mac_reset(transport, short_retry_limit=7) is True
-    retry = [v for (r, v) in writes if r == MT_TX_RETRY_CFG]
-    assert retry and retry[0] & 0xFF == 7                     # SHORT_RTY_LIMIT
-    assert retry[0] == (0x47F01F0F & ~0xFF) | 7              # LONG/11B/mode bytes untouched
-
-
 async def test_mac_reset_default_keeps_captured_retry(monkeypatch):
     from wifit3.chips.mt76x2u import mac as mac_mod
     monkeypatch.setattr(mac_mod, "_mac_fixup_xtal", lambda t: None)

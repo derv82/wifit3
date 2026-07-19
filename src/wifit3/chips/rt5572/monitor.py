@@ -49,16 +49,14 @@ MON_FILTER_FLAGS = FIF_ALLMULTI | FIF_CONTROL | FIF_PSPOLL
 
 
 def enable_monitor(t: RT5572Transport, silicon_id: int, ev: EepromValues,
-                   xtal_40mhz: bool = False, short_retry: int = 7) -> None:
+                   xtal_40mhz: bool = False) -> None:
     """Bring the monitor interface up: the mac80211 start → configure_filter →
     config → configure_filter sequence, in the kernel's exact wire order.
 
     Leaves RX_FILTER_CFG at 0x93 (promiscuous monitor) — the kernel-faithful
     replacement for wifit3's old ``RX_FILTER_CFG=0x11`` monitor-first shortcut.
     Pure register I/O (no threads / async), so both connect() (via an executor)
-    and the offline gate (via a ReplayDevice) drive the identical sequence.
-    ``short_retry`` sets TX_RTY_CFG SHORT_RTY_LIMIT (the driver routes its
-    DEFAULT_HW_ACK_RETRIES here); the mac80211/capture default is 7."""
+    and the offline gate (via a ReplayDevice) drive the identical sequence."""
     # rt2x00lib_enable_radio tail: start_queue(RX). [SRC] rt2x00dev.c:76
     toggle_rx(t, True)
     # configure_filter #1 — CONFIG_MONITORING not yet set → still drops not-to-me.
@@ -68,7 +66,7 @@ def enable_monitor(t: RT5572Transport, silicon_id: int, ev: EepromValues,
     # then config_antenna, then start RX. [SRC] rt2x00mac.c:302-350
     toggle_rx(t, False)
     config_txpower(t, ev, is_2g=True)                                # CHANGE_POWER
-    config_retry_limit(t, short_retry=short_retry)                   # CHANGE_RETRY_LIMITS
+    config_retry_limit(t)                                            # CHANGE_RETRY_LIMITS
     config_ps_awake(t)                                              # CHANGE_PS
 
     # config_antenna → config_ant + reset_tuner. reset_tuner writes the default VGC

@@ -72,8 +72,8 @@ def build_tx_desc_mgmt(mpdu: bytes, *, band_is_2g: bool = True,
 
     ``retry_limit`` (when not None) caps the HW ACK-retry count via RTY_LMT_EN (W4[17]) plus
     the 6-bit DATA_RT_LMT (W4[18:24]) — the same 8821a descriptor bits the DKMS sibling
-    byte-verifies against the recorded aireplay TX. The inject path passes
-    ``DEFAULT_HW_ACK_RETRIES``; left None the field stays clear (the HW global retry applies).
+    byte-verifies against the recorded aireplay TX. The inject path leaves ``retry_limit`` None,
+    so the field stays clear and the HW global retry applies.
     """
     if len(mpdu) < 10:
         raise ValueError(f"MPDU too short ({len(mpdu)} bytes) for mgmt injection")

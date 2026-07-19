@@ -73,7 +73,7 @@ from .eeprom import parse_eeprom, read_eeprom_efuse, resolve_rf_chip
 from .firmware import load_firmware, load_firmware_blob
 from .link_tuner import LINK_TUNE_SECONDS, LinkTuner, compute_link_vgc, set_vgc
 from .mac import (
-    ChipId, config_retry_limit, enable_radio, is_chip_warm, read_chip_id,
+    ChipId, enable_radio, is_chip_warm, read_chip_id,
     read_perm_mac, write_mac_address,
 )
 from .reg_init import init_registers
@@ -430,16 +430,6 @@ class RT2800USBDriver(Driver):
                 None, write_mac_address, self.transport, self._eeprom.mac_address,
             )
 
-            # HW ACK-based retry limit for injects: TX_RTY_CFG SHORT_RTY_LIMIT (our injects
-            # are short un-RTS frames). The live monitor-first RX_FILTER_CFG=0x11 shortcut
-            # skips the mac80211 config_retry_limit that would otherwise land this, so apply
-            # it here; self.DEFAULT_HW_ACK_RETRIES is the per-card override (default 7 = the
-            # mac80211/capture value). Cold reg_init leaves TX_RTY_CFG at its capture-exact 2.
-            await loop.run_in_executor(
-                None,
-                lambda: config_retry_limit(self.transport,
-                                           short_retry=self.DEFAULT_HW_ACK_RETRIES),
-            )
 
             # Probe xtal for RT5592 (RF5592 has dual xtal-20/40 channel
             # tables; the silicon surfaces which crystal is fitted via
@@ -686,7 +676,7 @@ class RT2800USBDriver(Driver):
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
         """Build TXINFO + TXWI (TXWI ACK bit ON so the chip retries up to the global
-        TX_RTY_CFG SHORT_RTY_LIMIT = ``self.DEFAULT_HW_ACK_RETRIES``, set at connect) and
+        TX_RTY_CFG SHORT_RTY_LIMIT (reg_init's capture value 2), set at connect) and
         bulk-OUT ``frame_bytes`` once. The seq is already stamped by the base."""
         if self.chip_id is None:
             logger.error("inject_frame: connect() must run first")

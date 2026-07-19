@@ -63,8 +63,7 @@ def build_mgmt_txdesc(pkt_len: int, *, hw_rate: int = DESC_RATE1M,
     offset 32 sits outside that range).
 
     ``retry_limit`` fills the 6-bit DATA_RETRY_LIMIT (the HW ACK-retry cap); the default is the
-    kernel's ``MGMT_DATA_RETRY_LIMIT`` (12, the value the recorded aireplay capture carries), and
-    the inject path passes its own ``DEFAULT_HW_ACK_RETRIES``.
+    kernel's ``MGMT_DATA_RETRY_LIMIT`` (12, the value the recorded aireplay capture carries).
     """
     d = bytearray(TXDESC_SIZE)
     _set_bits(d, 0, 26, 1, 1)               # LAST_SEG

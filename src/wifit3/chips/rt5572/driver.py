@@ -234,7 +234,6 @@ class RT5572Driver(Driver):
                 lambda: enable_monitor(
                     self.transport, self.chip_id.silicon_id,
                     self._eeprom, self._xtal_40mhz,
-                    short_retry=self.DEFAULT_HW_ACK_RETRIES,
                 ),
             )
 
@@ -476,7 +475,7 @@ class RT5572Driver(Driver):
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
         """Build TXINFO + TXWI (TXWI ACK bit ON so the chip retries up to the global
-        TX_RTY_CFG SHORT_RTY_LIMIT = ``self.DEFAULT_HW_ACK_RETRIES``, set at monitor entry)
+        TX_RTY_CFG SHORT_RTY_LIMIT (mac80211 default 7), set at monitor entry)
         and bulk-OUT ``frame_bytes`` once. The seq is already stamped by the base."""
         if self.chip_id is None:
             logger.error("inject_frame: connect() must run first")

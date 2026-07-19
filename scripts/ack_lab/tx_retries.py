@@ -114,7 +114,7 @@ async def run_scenario(injector, sniffer, counter: CopyCounter, *, active_monito
     acks0 = sniffer.driver.acks_seen(src)
     for _ in range(count):
         try:
-            await drv.inject_frame(frame)   # HW ACK-retry on by default (DEFAULT_HW_ACK_RETRIES)
+            await drv.inject_frame(frame)   # HW ACK-retry on by default (per-chip retry limit)
         except Exception as e:                    # noqa: BLE001
             print(f"[-] inject failed: {e}")
             break

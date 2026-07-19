@@ -147,8 +147,7 @@ class RT3070Driver(Driver):
         mac.set_radio_led(t, ev)                                # leds-radio on
         mac.start_queue_rx(t)                                   # enable RX queue
 
-        monitor.enable_monitor(t, chip, ev, self._drv,         # airmon monitor entry
-                               short_retry=self.DEFAULT_HW_ACK_RETRIES)
+        monitor.enable_monitor(t, chip, ev, self._drv)         # airmon monitor entry
 
     def _tune(self, channel: int) -> None:
         # Runs on an executor thread; _hw_lock guarantees only one hardware op touches
@@ -222,7 +221,7 @@ class RT3070Driver(Driver):
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
         """Transmit one 802.11 frame (e.g. deauth / WEP replay) on the MGMT bulk-OUT pipe.
         The TXWI ACK bit is set ON so the chip retries up to the global TX_RTY_CFG
-        SHORT_RTY_LIMIT = ``self.DEFAULT_HW_ACK_RETRIES`` (set at monitor entry). The seq is
+        SHORT_RTY_LIMIT (mac80211 default 7, set at monitor entry). The seq is
         already stamped by the base. Explicit-action only — nothing on the scan/connect path
         calls this [[passive_by_default]]. Serialized via ``_io_lock`` so it never races a retune."""
         if not frame_bytes:

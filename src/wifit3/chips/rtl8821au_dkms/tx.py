@@ -73,8 +73,8 @@ def build_mgmt_txdesc(pkt_len: int, *, hw_rate: int = DESC_RATE1M,
 
     ``retry_limit`` (when not None) caps the HW ACK-retry count: it sets RTY_LMT_EN plus
     the 6-bit RTS_DATA_RTY_LMT [SRC] rtl8812a_xmit.h SET_TX_DESC_DATA_RETRY_LIMIT. The
-    inject path passes ``DEFAULT_HW_ACK_RETRIES``; left None the field stays clear (the
-    fake-txdesc's historical default, so the HW global retry register applies).
+    inject path leaves it None, so the field stays clear (the fake-txdesc's historical
+    default, so the HW global retry register applies).
     """
     d = bytearray(TXDESC_SIZE)
     _set_bits(d, 0, 27, 1, 1)               # FIRST_SEG

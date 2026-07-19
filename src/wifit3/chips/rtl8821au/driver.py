@@ -364,13 +364,12 @@ class RTL8821AUDriver(Driver):
     # ---- inject_frame (MGMT queue, bulk-OUT) ------------------------------
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
         """Inject a raw 802.11 frame once via the MGMT queue (the hardware assigns the 802.11
-        sequence number; HW ACK-retry limit ``self.DEFAULT_HW_ACK_RETRIES``)."""
+        sequence number; no retry-limit field, so the HW global retry applies)."""
         if not self._bulk_out_eps:
             logger.error("inject_frame: no bulk-OUT endpoints (driver not connected?)")
             return False
         try:
-            desc = build_tx_desc_mgmt(frame_bytes, band_is_2g=True,
-                                      retry_limit=self.DEFAULT_HW_ACK_RETRIES)
+            desc = build_tx_desc_mgmt(frame_bytes, band_is_2g=True)
         except ValueError as e:
             logger.error("inject_frame: bad MPDU: %s", e)
             return False

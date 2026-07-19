@@ -61,9 +61,6 @@ class AthHw:
         self.sw_mgmt_crypto_rx = True
         # TX-queue subsystem (ath9k_tx_queue_info[]) + interrupt-mask shadows:
         self.txq: list = []                        # populated by mac_queue.init_tx_queues
-        # AR_DRETRY_LIMIT STA short/long HW ACK-retry count (the driver overrides the kernel default
-        # with DEFAULT_HW_ACK_RETRIES before init_queues writes it):
-        self.sta_retry_limit = R.INIT_SSH_RETRY
         self.txok_interrupt_mask = 0
         self.txerr_interrupt_mask = 0
         self.txdesc_interrupt_mask = 0

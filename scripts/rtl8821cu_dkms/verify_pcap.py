@@ -220,13 +220,13 @@ def run(cap: str | None = None) -> int:
     print(f"{pcap.name}: card=dev{dev_addr}, {total} ctrl+bulk ops")
 
     w = Walk(ops)
-    # The vendor cold-boot capture injects its MGNT deauths with RTS_DATA_RTY_LMT=0 (RTY_LMT_EN
-    # set, retry count 0 — raw aireplay inject); wifit3 injects with DEFAULT_HW_ACK_RETRIES=7 by
-    # design. Drive the verify at the captured retry so the inject TX descriptor matches the wire
-    # byte-for-byte (confirmed: every one of the 90 bytes) and the single cursor keeps its
-    # coverage. Runtime still injects with 7; this verifies the port's byte fidelity, not that one
-    # config value.
-    w.driver.DEFAULT_HW_ACK_RETRIES = 0
+    # The vendor cold-boot capture injects its MGNT deauths with RTS_DATA_RTY_LMT=0 (raw aireplay
+    # inject: RTY_LMT_EN set, retry 0); runtime injects retry_ctrl=True (RETRY_COUNT=6). Build the
+    # verify's inject at the captured retry so the TX descriptor matches the wire byte-for-byte; this
+    # verifies the port's byte fidelity, not the retry config value.
+    import wifit3.chips.rtl8821cu_dkms.tx as _cu_tx
+    _cu_build = _cu_tx.build_mgnt_txdesc
+    _cu_tx.build_mgnt_txdesc = lambda *a, **k: _cu_build(*a, **{**k, "retry_ctrl": False})
     try:
         _run(w.driver.connect())
     except rp.Divergence as e:

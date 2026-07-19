@@ -26,6 +26,7 @@ RATEID_IDX_B = 8                # [SRC] ieee80211.h:248 — raid for WIRELESS_11
 _HWRATE_1M = 0                  # MRateToHwRate(MGN_1M): DESC_RATE1M
 
 _QSEL_BEACON = 0x10             # [SRC] halmac_type.h HALMAC_TXDESC_QSEL_BEACON
+RETRY_COUNT = 6                 # [SRC] hal/rtl8821c/rtl8821c_ops.c:3217
 
 
 def _set_field(buf: bytearray, off: int, start: int, length: int, value: int) -> None:
@@ -48,13 +49,12 @@ def fill_checksum(buf: bytearray) -> None:
 
 def build_mgnt_txdesc(payload: bytes, *, qsel: int, rate_hw: int = _HWRATE_1M,
                       mac_id: int = RTW_DEFAULT_MGMT_MACID, raid: int = RATEID_IDX_B,
-                      retry_limit: int = 6, mbssid: int = 0, hw_port: int = 0,
+                      retry_ctrl: bool = True, mbssid: int = 0, hw_port: int = 0,
                       hw_ssn_sel: int = 0, qos_en: bool = False, seqnum: int = 0) -> bytes:
     """``update_txdesc`` MGNT_FRAMETAG branch: build [48-byte desc][payload] with the HW XOR
     checksum. ``qsel`` is the caller's queue (BEACON for a reserved-page FW chunk, MGNT for a
-    deauth/inject frame). ``retry_limit`` fills RTS_DATA_RTY_LMT (6-bit); the default 6 is the
-    value the capture's FW reserved-page full-descriptor chunks carry, and the inject path passes
-    its own HW ACK-retry limit. The NDPA/beamformer sub-branch and the DATA_FRAMETAG branch are
+    deauth/inject frame). ``retry_ctrl`` enables RTS_DATA_RTY_LMT (True → RETRY_COUNT retries,
+    False → single-shot). The NDPA/beamformer sub-branch and the DATA_FRAMETAG branch are
     not ported (no path this driver drives takes them: FW reserved-page download, deauth).
 
     BMC follows the kernel: ``rtw_hal_mgnt_xmit`` runs ``update_mgntframe_attrib_addr`` [SRC]
@@ -91,7 +91,7 @@ def build_mgnt_txdesc(payload: bytes, *, qsel: int, rate_hw: int = _HWRATE_1M,
     _set_field(buf, 0x0C, 8, 1, 1)                      # USE_RATE
     _set_field(buf, 0x10, 0, 7, rate_hw)                # DATARATE
     _set_field(buf, 0x10, 17, 1, 1)                     # RTY_LMT_EN
-    _set_field(buf, 0x10, 18, 6, retry_limit)           # RTS_DATA_RTY_LMT (6-bit)
+    _set_field(buf, 0x10, 18, 6, RETRY_COUNT if retry_ctrl else 0)  # RTS_DATA_RTY_LMT [SRC] rtl8821c_ops.c:3216
 
     _set_field(buf, 0x18, 0, 12, 0x01)                  # SW_DEFINE (DriverFixedRate)
 

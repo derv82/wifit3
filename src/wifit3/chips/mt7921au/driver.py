@@ -234,14 +234,13 @@ class MT7921AUDriver(Driver):
         return True
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        """Build the connac2 TX descriptor (HW ACK-retry limit ``self.DEFAULT_HW_ACK_RETRIES``,
+        """Build the connac2 TX descriptor (HW ACK-retry limit 15, NO_ACK clear,
         byte-verified by verify_pcap CHECK 4 against the captured aireplay TX) and send it once
         on the frame's USB bulk-OUT endpoint: mgmt/ctrl on HCCA (0x09), data on AC_BE (0x04).
         The seq is already stamped (``_stamp_tx_seq``) and the hardware appends the FCS, so pass
         the bare MPDU. The TX rate is the current channel's band basic rate."""
         try:
-            wire, endpoint = tx.build_tx(frame_bytes, band_5ghz=self._channel > 14,
-                                         retry_count=self.DEFAULT_HW_ACK_RETRIES)
+            wire, endpoint = tx.build_tx(frame_bytes, band_5ghz=self._channel > 14)
         except ValueError as e:
             logger.error("MT7921AU inject_frame: %s", e)
             return False

@@ -480,15 +480,14 @@ class RTL8812AUDriver(Driver):
         init_queue_priority(self.transport)
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        """Build the MGMT tx_pkt_desc (HW ACK-retry limit ``self.DEFAULT_HW_ACK_RETRIES``) and
+        """Build the MGMT tx_pkt_desc (no retry-limit field, HW global retry) and
         send ``[desc | frame]`` once on the MGMT bulk-OUT pipe. Serialized with RX/tune via
         ``_dev_lock`` so a bulk-OUT never overlaps a bulk-IN read or a tune sequence."""
         if not self._bulk_out_eps:
             logger.error("inject_frame: no bulk-OUT endpoints (driver not connected?)")
             return False
         try:
-            desc = build_tx_desc_mgmt(frame_bytes, band_is_2g=self.current_band_is_2g,
-                                      retry_limit=self.DEFAULT_HW_ACK_RETRIES)
+            desc = build_tx_desc_mgmt(frame_bytes, band_is_2g=self.current_band_is_2g)
         except ValueError as e:
             logger.error("inject_frame: bad MPDU: %s", e)
             return False

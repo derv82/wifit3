@@ -429,15 +429,14 @@ class RTL8814AUDriver(Driver):
             return False
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
-        """Build the 40-byte MGMT tx_pkt_desc (HW ACK-retry limit self.DEFAULT_HW_ACK_RETRIES)
+        """Build the 40-byte MGMT tx_pkt_desc (no retry-limit field, HW global retry)
         and bulk-OUT [desc][frame] once over the HIGH lane. The base registers the frame's Addr2
         for the ACK tally (when armed) and stamps the seq via _stamp_tx_seq before calling this."""
         if not self._bulk_out_eps:
             logger.error("inject_frame: no bulk-OUT endpoints")
             return False
         try:
-            desc = tx.build_tx_desc_mgmt(frame_bytes, band_is_2g=self.current_band_is_2g,
-                                         retry_limit=self.DEFAULT_HW_ACK_RETRIES)
+            desc = tx.build_tx_desc_mgmt(frame_bytes, band_is_2g=self.current_band_is_2g)
         except ValueError as e:
             logger.error("inject_frame: bad MPDU: %s", e)
             return False

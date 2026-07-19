@@ -96,5 +96,5 @@ async def test_inject_builds_descriptor_with_hw_retry_limit():
     d.transport.send_bulk_checked.assert_awaited_once()
     wire = d.transport.send_bulk_checked.await_args.args[0]
     txd3 = int.from_bytes(wire[16:20], "little")           # txwi[3]: [SDIO 4B][txwi 3*4B]
-    assert (txd3 >> 11) & 0x1F == d.DEFAULT_HW_ACK_RETRIES  # MT_TXD3_REM_TX_COUNT
+    assert (txd3 >> 11) & 0x1F == 15                        # MT_TXD3_REM_TX_COUNT
     assert txd3 & tx.MT_TXD3_NO_ACK == 0                    # always request an ACK now

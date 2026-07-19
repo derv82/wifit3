@@ -97,6 +97,5 @@ async def test_inject_builds_descriptor_with_hw_retry_limit():
     assert len(sent) == 1
     pkt = sent[0]
     w4 = int.from_bytes(pkt[0x10:0x14], "little")
-    assert (w4 >> 17) & 1 == 1                              # RTY_LMT_EN
-    assert (w4 >> 18) & 0x3F == d.DEFAULT_HW_ACK_RETRIES    # DATA_RTY_LMT
+    assert (w4 >> 17) & 1 == 0                              # RTY_LMT_EN clear -> HW global retry
     assert pkt[TX_PKT_DESC_SZ:] == frame                    # HW-stamp: payload byte-for-byte

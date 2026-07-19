@@ -218,8 +218,7 @@ class MT76x2UDriver(Driver):
         warm-reattach fallback re-runs it after a forced cold reset."""
         if progress_cb:
             progress_cb(0.75, "MAC reset + initvals + setaddr")
-        if not await mac_reset(self.transport, is_mt7612=self.is_mt7612,
-                               short_retry_limit=self.DEFAULT_HW_ACK_RETRIES):
+        if not await mac_reset(self.transport, is_mt7612=self.is_mt7612):
             return False
         mac_setaddr(self.transport, mac_bytes)
         if not await wait_for_txrx_idle(self.transport):
