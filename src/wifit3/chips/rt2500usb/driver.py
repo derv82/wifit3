@@ -58,6 +58,7 @@ from .mac import (
     is_chip_warm,
     read_revision,
     start_queue_rx,
+    stop_queue_rx,
 )
 from .rx import parse_rx_urb, probe_endpoints, read_rx_burst
 from ..rx_reader import RxReaderThread
@@ -345,10 +346,22 @@ class RT2500USBDriver(Driver):
 
     # ---- TX -------------------------------------------------------------
     def _do_inject(self, frame_bytes: bytes) -> int:
-        # Shares _hw_lock with _tune so an inject can never collide with an
-        # in-flight (or cancelled-but-draining) channel tune on the device.
+        # The RT2570 is half-duplex: while its RX engine is receiving a strong
+        # co-channel signal (a target AP on its own channel), the bulk-OUT write
+        # DEFERS behind RX and routinely hits the 200 ms TX timeout, silently
+        # dropping the frame. On the AP's channel that caps injection at ~37/s
+        # (RX-engine disabled: ~1300/s), which throttles the injection-bound WEP
+        # paths (chopchop, ARP replay). Quiescing the RX MAC engine for just the
+        # write frees TX and lands the frame reliably (bench ch6, on-air via a
+        # sniffer: ~37/s -> ~510/s sustained, RX unharmed). The RX-off window is
+        # ~1 ms, inside _hw_lock so it can't overlap a tune; the reader thread's
+        # next bulk-IN read simply times out benignly and resumes on restore.
         with self._hw_lock:
-            return _tx_inject(self.dev, self._bulk_out_ep, frame_bytes)
+            stop_queue_rx(self.transport)
+            try:
+                return _tx_inject(self.dev, self._bulk_out_ep, frame_bytes)
+            finally:
+                start_queue_rx(self.transport)
 
     async def _inject_frame(self, frame_bytes: bytes) -> bool:
         """Build the 5x u32 TXD (HW retry limit 15, the rt2x00 aireplay value, in the 4-bit

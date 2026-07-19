@@ -495,14 +495,26 @@ def test_driver_registered_in_manager():
 
 
 class FakeUsbDev:
-    """Records the last bulk write so we can assert inject_frame's path."""
+    """Records the last bulk write so we can assert inject_frame's path. Also models the
+    control endpoint (a tiny CSR store) because inject now quiesces the RX engine — a
+    TXRX_CSR2 read-modify-write via stop/start_queue_rx — around the bulk-OUT write."""
 
     def __init__(self):
         self.last_write = None
+        self._regs: dict[int, int] = {}
 
     def write(self, ep, buf, timeout):
         self.last_write = (ep, bytes(buf))
         return len(buf)
+
+    def ctrl_transfer(self, rt, req, val, idx, data_or_len, timeout):
+        if isinstance(data_or_len, int):                 # vendor IN: CSR read
+            v = self._regs.get(idx, 0)
+            return bytes((v & 0xFF, (v >> 8) & 0xFF))[:data_or_len]
+        b = bytes(data_or_len)                            # vendor OUT: CSR write
+        if len(b) == 2:
+            self._regs[idx] = b[0] | (b[1] << 8)
+        return len(b)
 
 
 async def test_driver_inject_frame_path():
