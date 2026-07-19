@@ -162,11 +162,16 @@ async def main(a) -> None:
     print(f"[+] sniffer:  {sniffer.description}")
 
     print("[*] connecting both cards...")
-    inj_ok, snf_ok = await asyncio.gather(injector.connect(), sniffer.connect())
+    # Connect sequentially, not via gather: two Realtek cards driving RF-register bring-up over
+    # USB at once can collide (rtl8821au_dkms loses its handle mid-config). The app connects one
+    # card at a time; mirror that.
+    inj_ok = await injector.connect()
+    snf_ok = await sniffer.connect()
     if not (inj_ok and snf_ok):
         print(f"[-] connect failed (injector={inj_ok} sniffer={snf_ok})")
         return
-    await asyncio.gather(injector.set_channel(a.channel), sniffer.set_channel(a.channel))
+    await injector.set_channel(a.channel)
+    await sniffer.set_channel(a.channel)
 
     counter = CopyCounter()
     sniffer.register_rx_callback(counter)
