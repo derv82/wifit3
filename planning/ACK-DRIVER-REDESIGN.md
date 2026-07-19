@@ -174,19 +174,23 @@ A row with only a 2G figure is a 2.4 GHz-only radio.
 | RT5372     | yes, needs active monitor | 2G 7 | 2G 1 | 2G ~8 |
 | RT5572     | yes, needs active monitor | 2G 7 | 2G 1 (5G: no ACK seen) | 2G ~8, 5G ~8 |
 | RTL8187L   | only its own silicon MAC | silicon 1, spoofed 5-6 | N/A (no AM) | ~6 |
-| RT2500USB  | no, ignores ACKs | 2G ~14 | N/A (no AM) | 2G ~16 |
+| RT2500USB | yes, keyed on self-MAC [1] | 2G 1/~15 (ack=off/on) | 2G 1 | 2G 1/~15 (ack=off/on) |
 
 RT3572 (rt2800usb) is omitted from this table: its unburned-EFUSE TX is too weak to elicit AP ACKs, so
 its retry behaviour is unmeasured. Its auto-ACK still confirmed it SPOOFABLE (see below).
+
+[1] RT2500USB corrected 2026-07-19. The original "no, ignores ACKs / 2G ~14 / ~16" was wrong the
+self-MAC register (MAC_CSR2/3/4) never programmed.
 
 The stop-on-ACK match splits by chip vendor. Realtek (8812 / 8821 / 8821cu / 8822 / 8814 / 8188eus) and
 Atheros (AR9271) key on the frame's own Addr2, so they stop without active monitor: both columns are ~1
 on 2.4 GHz, and on 5 GHz AM-off runs at most a copy or two above AM-on (8812au 3, 8822bu 2). The MediaTek
 and Ralink family (mt76x0u / mt76x2u / mt7921au, rt3070 / rt5370 / rt5372 / rt5572) keys on the source
 MAC only once active monitor registers it: AM off ignores the ACK and retries to the limit, AM on
-collapses to 1. The 8187 keys on its own silicon MAC only; the RT2500USB has no ACK-based retry stop at
-all. (The 7921's old "fixed count regardless" label was just its AM-on pass being skipped when FAKE_MAC
-was mis-flagged UNIMPLEMENTED.)
+collapses to 1. The 8187 keys on its own silicon MAC only. The RT2500USB ships ack=False (one copy, no
+retries); the silicon could stop-on-ACK if the self-MAC were programmed, but no shipped code does that
+(note [1]). (The 7921's old "fixed count regardless" label was just its AM-on pass being skipped when
+FAKE_MAC was mis-flagged UNIMPLEMENTED.)
 
 ## HW Auto-ACK -- comparison (bench, 2026-07-16, n=100)
 
@@ -234,15 +238,15 @@ Does the card's hardware answer a frame addressed to it with an ACK? Numbers are
   `SPOOFABLE` is confirmed. The one test unit has an unburned EFUSE, so its injected TX is too weak to
   reach the AP (0 ACKs back on every scenario): its retry family is unmeasured, not inferred. Its inject
   carried the same missing-seq-stamp bug, now fixed.
-- **RT2500USB** stays `NONE`, confirmed: it does not auto-ACK even its own silicon MAC (0/100), and its
-  TX retransmits blindly (~14, ACKs ignored) with no ACK recognition. A genuinely passive legacy chip.
+- **RT2500USB** stays `NONE` on the auto-ACK (emit) axis, confirmed and root-caused 2026-07-19: it does
+  not auto-ACK even its own silicon MAC (0/100), and re-testing with MAC_CSR2/3/4 programmed still gave
+  0. Root cause: the RT2570 has no `AUTO_RSP_CFG` (autoresponder enable) and no `UNICAST_TO_ME_MASK`.
+  Its ACK emission is coupled to the RX address filter (TXRX_CSR2 `DROP_NOT_TO_ME`), which monitor mode
+  must clear to receive foreign frames, so the responder never fires.
 
 Scope: the mainline (non-DKMS) Realtek variants (rtl8188eus, rtl8812au, rtl8821au, rtl8822bu) and
 rtw88_8814au stay `UNIMPLEMENTED` by choice: active monitor was never ported for them, so they are out
 of scope for this sweep, not regressions. The bench targets the DKMS drivers we ship.
-
-Caveats: one bench, these seventeen adapters, one AP-free RX setup (the prober self-detects the ACK).
-Not a substitute for reading the silicon, but the controls hold.
 
 Note on the retry histogram: the tx_retries per-inject copy count is only valid once each inject
 carries a distinct 802.11 sequence number. The MT76 chips transmit the MPDU's seq_ctrl verbatim, so a
