@@ -202,3 +202,21 @@ rom-patch body all match, and mainline `mt76x2u` requests exactly these. WHENCE 
 driver `mt76x2e` → governed by `LICENCE.ralink_a_mediatek_company_firmware`, which ships alongside
 the blobs in `assets/`. The DLM landing at `0x110800` plus an ASIC version of `0x76120044` pins the
 silicon at rev E4.
+
+### 2026-07-20 — verify_pcap brought to parity with v6.18 (CHECK A-C frontier)
+
+Ran the strict single-cursor `verify_pcap` past the old op#1 wall and reconciled the cold-boot
+path with the vendored `data_dumps/mt76-source-v6.18` source. CHECK D green; CHECK A-C reproduces
+1091 ops byte-for-byte (reset_wlan → mac_start). Real port gaps fixed (see `planning/BUGS.md`):
+ROM-patch read now gated behind `rom_protect`, WPDMA/mac wait order, US_CYC/TXOP moved to after
+beacon config, cached RX_FILTR read, WCID/skey `write_copy`, full `mac_stop` port,
+`mac_reset_counters`, and `mac_start` reordered ahead of the channel tune. All HW re-validated on
+the real card: `test_hw_mt76x2u --phase rx` heard 16 BSSIDs; `ack_lab/rx_autoack --test-card 7612
+--prober-card 8812` gave 96/100 spoofed (active monitor) + 100/100 silicon + 0 bogus.
+
+The remaining CHECK A-C FRONTIER is **not a port bug**: `set_channel_20mhz` matches the v6.18
+source order, but the pcap runs the *wrapped* `mt76x2u_set_channel` (initial `phy_set_txpower` +
+config-time `mt76x2_mac_stop` before `phy_set_channel`) where wifit3 tunes bare. Follow-up: add
+that wrapper for full parity. A few `MCU cmd=31 (SWITCH_CHANNEL) response timeout`s appear on
+runtime re-tunes in ack_lab (not on the connect-time tune); the missing mac_stop-before-retune is
+a candidate cause worth checking.

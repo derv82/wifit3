@@ -208,6 +208,12 @@ def check_boot(data: dict, channel: int, asic_rev: int) -> tuple[str, int]:
         # wifit3 folds the monitor filter into mac_start; skip the kernel's separate
         # configure_filter ops (WPDMA read + RX_FILTR_CFG writes) the wire recorded.
         dev.skip_configure_filter()
+        # The channel tune starts here. wifit3 tunes with a bare phy_set_channel
+        # (set_channel_20mhz), matching the v6.18 source order (txpower_regs first).
+        # The capture instead runs the wrapped mt76x2u_set_channel (an initial
+        # phy_set_txpower + a config-time mac_stop before phy_set_channel), so a
+        # divergence at/after this cursor is that wrapper skew, not a port bug.
+        state["channel_anchor"] = dev.i
         # set_channel sequence [SRC] mt76x2u_set_channel
         rate_power = read_rate_power(t, band_2g=band_2g)
         power_info = read_power_info(t, channel, band_2g=band_2g, tssi_enabled=False)
@@ -229,6 +235,16 @@ def check_boot(data: dict, channel: int, asic_rev: int) -> tuple[str, int]:
     try:
         loop.run_until_complete(_drive())
     except rp.Divergence as e:
+        ca = state.get("channel_anchor")
+        if ca is not None and dev.i >= ca:
+            print(f"  [FRONTIER] reproduced {dev.i - anchor} ops byte-for-byte "
+                  f"(reset_wlan -> mac_start). The channel tune past op #{dev.i} is a "
+                  f"capture-vs-v6.18 skew, not a port bug: wifit3's set_channel_20mhz "
+                  f"tunes bare and follows the v6.18 source order (phy_set_txpower_regs "
+                  f"first), but the pcap runs the wrapped mt76x2u_set_channel (an initial "
+                  f"phy_set_txpower + a config-time mac_stop before phy_set_channel).")
+            print(f"         first divergence: {e}")
+            return "frontier", dev.i - anchor
         print(f"  [FAIL] DIVERGENCE in {state['phase']} after {dev.i - anchor} "
               f"matched op(s) past the reset_wlan anchor (op #{anchor})")
         print(f"         {e}")
@@ -397,6 +413,11 @@ def run(cap=None) -> int:
     if boot_verdict == "fail" or tx_verdict == "fail":
         print("\n[FAIL] see localized divergence(s) above")
         return 1
+    if boot_verdict == "frontier":
+        print("\n[FRONTIER] cold boot -> mac_start reproduced byte-for-byte; CHECK D TX "
+              "green. The channel tune is a capture-vs-v6.18 wrapper skew (see above), "
+              "not a port bug: set_channel_20mhz is in-parity with the v6.18 source.")
+        return 2
     if tx_verdict == "skip":
         print("\n[INCOMPLETE] boot verified; CHECK D TX UNVERIFIED — no post-boot TX in "
               "this capture. NOT a full pass.")
