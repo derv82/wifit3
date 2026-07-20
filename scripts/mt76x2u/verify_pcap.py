@@ -66,6 +66,7 @@ from wifit3.chips.mt76x2u.mac import (  # noqa: E402
     mac_reset,
     mac_setaddr,
     mac_start,
+    mac_stop,
     wait_for_txrx_idle,
 )
 from wifit3.chips.mt76x2u.mcu import McuChannel, mcu_init  # noqa: E402
@@ -193,6 +194,7 @@ def check_boot(data: dict, channel: int, asic_rev: int) -> tuple[str, int]:
             raise rp.Divergence("mcu_load_cr returned False")
         phy_set_rxpath(t, chainmask)
         phy_set_txdac(t, chainmask)
+        await mac_stop(t)                               # [SRC] usb_init.c:187
         rate_power = read_rate_power(t, band_2g=band_2g)
         power_info = read_power_info(t, channel, band_2g=band_2g, tssi_enabled=False)
         ext_pa = (not nic0.get("pa_int_2g", True)) if band_2g \

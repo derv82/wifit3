@@ -308,6 +308,7 @@ MT_TX_SW_CFG1                  = 0x1334
 MT_TX_SW_CFG2                  = 0x1338
 MT_TXOP_CTRL_CFG               = 0x1340
 MT_TX_RTS_CFG                  = 0x1344
+MT_TX_RTS_CFG_RETRY_LIMIT      = 0xFF       # GENMASK(7, 0) — retry-limit field
 MT_TX_TIMEOUT_CFG              = 0x1348
 MT_TX_RETRY_CFG                = 0x134C
 MT_TX_LINK_CFG                 = 0x1350

@@ -429,6 +429,10 @@ class MT76x2UDriver(Driver):
         phy_set_rxpath(self.transport, self.chainmask)
         phy_set_txdac(self.transport, self.chainmask)
 
+        # [SRC] mt76x2/usb_init.c:187 — init_hardware ends by quiescing the MAC;
+        # the start path below re-enables it via set_channel_20mhz + mac_start.
+        await mac_stop(self.transport)
+
         # ----- Channel tune + mac_start + RX drainer -----
         if progress_cb:
             progress_cb(0.90, f"Tuning to ch {self.current_channel}")

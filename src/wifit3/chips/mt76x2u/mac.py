@@ -29,6 +29,8 @@ from .constants import (
     MT_AMPDU_MAX_LEN_20M2S,
     MT_AUTO_RSP_CFG,
     MT_AUX_CLK_CFG,
+    MT_BBP_CORE_BASE,
+    MT_BBP_IBI_BASE,
     MT_BKOFF_SLOT_CFG,
     MT_BKOFF_SLOT_CFG_CC_DELAY_MASK,
     MT_BKOFF_SLOT_CFG_CC_DELAY_SHIFT,
@@ -133,15 +135,21 @@ from .constants import (
     MT_TX_PWR_CFG_9,
     MT_TX_RETRY_CFG,
     MT_TX_RTS_CFG,
+    MT_TX_RTS_CFG_RETRY_LIMIT,
     MT_TX_SW_CFG0,
     MT_TX_SW_CFG1,
     MT_TX_SW_CFG2,
     MT_TX_SW_CFG3,
     MT_TX_TIMEOUT_CFG,
     MT_TXOP_CTRL_CFG,
+    MT_TXOP_ED_CCA_EN,
     MT_TXOP_HLDR_ET,
+    MT_TXOP_HLDR_TX40M_BLK_EN,
     MT_US_CYC_CFG,
     MT_US_CYC_CNT_MASK,
+    MT_USB_DMA_CFG_RX_BUSY,
+    MT_USB_DMA_CFG_TX_BUSY,
+    MT_USB_U3DMA_CFG,
     MT_VHT_HT_FBK_CFG1,
     MT_WMM_AIFSN,
     MT_WMM_CWMAX,
@@ -612,12 +620,73 @@ async def mac_start(transport: MT76x2UTransport,
 
 
 async def mac_stop(transport: MT76x2UTransport) -> None:
-    """Clear ENABLE_TX|RX. Lightweight stop — full kernel `mt76x2u_mac_stop`
-    drains queues etc. but for our close() path this is sufficient.
+    """`mt76x2u_mac_stop` — [SRC] mt76x2/usb_mac.c:95.
+
+    Quiesces the MAC: trim the RTS retry limit, clear ED-CCA + 40M-block, drain
+    the TX DMA and TxQ page counts, disable MAC TX+RX, wait for the MAC to go
+    idle, drain the RxQ page counts + RX DMA, then restore the RTS config. The
+    kernel runs this at the tail of init_hardware (before the start path
+    re-enables via mac_start) and on teardown. The `i > 10` / `count > 10` guards
+    force a minimum number of poll iterations exactly as the kernel does, so the
+    recorded cold-boot wire is reproduced under replay.
     """
-    transport.rmw32(
-        MT_MAC_SYS_CTRL,
-        MT_MAC_SYS_CTRL_ENABLE_TX | MT_MAC_SYS_CTRL_ENABLE_RX,
-        0,
-    )
-    await asyncio.sleep(0.005)
+    u3dma = MT_VEND_TYPE_CFG | MT_USB_U3DMA_CFG
+    ibi12 = MT_BBP_IBI_BASE + 12 * 4        # MT_BBP(IBI, 12)
+    core4 = MT_BBP_CORE_BASE + 4 * 4        # MT_BBP(CORE, 4)
+
+    rts_cfg = transport.read32(MT_TX_RTS_CFG)
+    transport.write32(MT_TX_RTS_CFG, rts_cfg & ~MT_TX_RTS_CFG_RETRY_LIMIT)
+
+    transport.rmw32(MT_TXOP_CTRL_CFG, MT_TXOP_ED_CCA_EN, 0)
+    transport.rmw32(MT_TXOP_HLDR_ET, MT_TXOP_HLDR_TX40M_BLK_EN, 0)
+
+    # wait tx dma to stop
+    for i in range(2000):
+        if not (transport.read32(u3dma) & MT_USB_DMA_CFG_TX_BUSY) and i > 10:
+            break
+
+    # page count on TxQ (undocumented page-count regs, per the kernel)
+    for _ in range(200):
+        if (not (transport.read32(0x0438) & 0xFFFFFFFF)
+                and not (transport.read32(0x0A30) & 0x000000FF)
+                and not (transport.read32(0x0A34) & 0xFF00FF00)):
+            break
+
+    transport.rmw32(MT_MAC_SYS_CTRL,
+                    MT_MAC_SYS_CTRL_ENABLE_RX | MT_MAC_SYS_CTRL_ENABLE_TX, 0)
+
+    # wait for the MAC to become idle
+    stopped = False
+    for _ in range(1000):
+        if (not (transport.read32(MT_MAC_STATUS) & MT_MAC_STATUS_TX)
+                and not transport.read32(ibi12)):
+            stopped = True
+            break
+
+    if not stopped:
+        transport.rmw32(core4, 1 << 1, 1 << 1)
+        transport.rmw32(core4, 1 << 1, 0)
+        transport.rmw32(core4, 1 << 0, 1 << 0)
+        transport.rmw32(core4, 1 << 0, 0)
+
+    # page count on RxQ
+    count = 0
+    for _ in range(200):
+        if (not (transport.read32(0x0430) & 0x00FF0000)
+                and not (transport.read32(0x0A30) & 0xFFFFFFFF)
+                and not (transport.read32(0x0A34) & 0xFFFFFFFF)):
+            count += 1
+            if count > 10:
+                break
+
+    # wait for MAC RX to stop
+    for _ in range(2000):
+        if not (transport.read32(MT_MAC_STATUS) & MT_MAC_STATUS_RX):
+            break
+
+    # wait rx dma to stop
+    for i in range(2000):
+        if not (transport.read32(u3dma) & MT_USB_DMA_CFG_RX_BUSY) and i > 10:
+            break
+
+    transport.write32(MT_TX_RTS_CFG, rts_cfg)
